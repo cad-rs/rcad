@@ -221,25 +221,22 @@ impl Shape {
 
 impl PartialEq for Shape {
     fn eq(&self, other: &Self) -> bool {
-        if self.index != usize::MAX && other.index != usize::MAX {
-            self.index == other.index
-                && self.location == other.location
-                && self.orientation as u8 == other.orientation as u8
-        } else {
-            Arc::as_ptr(&self.data) == Arc::as_ptr(&other.data)
-                && self.location == other.location
-                && self.orientation as u8 == other.orientation as u8
-        }
+        // OCCT TopTools_ShapeMapHasher: identity is the TShape* handle (+ Location).
+        // The `index` field is only a BRep-access hint (usize::MAX for synthetic
+        // shapes) and is NOT part of shape identity: distinct input BReps can
+        // reuse the same index range, so index-based equality would conflate
+        // distinct shapes. Always compare by the Arc data pointer.
+        Arc::as_ptr(&self.data) == Arc::as_ptr(&other.data)
+            && self.location == other.location
+            && self.orientation as u8 == other.orientation as u8
     }
 }
 impl Eq for Shape {}
 impl std::hash::Hash for Shape {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        if self.index != usize::MAX {
-            self.index.hash(state);
-        } else {
-            (Arc::as_ptr(&self.data) as u64).hash(state);
-        }
+        (Arc::as_ptr(&self.data) as u64).hash(state);
+        self.location.hash(state);
+        self.orientation.hash(state);
     }
 }
 

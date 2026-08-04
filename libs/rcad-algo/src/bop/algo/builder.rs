@@ -9,6 +9,7 @@ use crate::bop::algo::builder_face::BuilderFace;
 use crate::bop::ds::DS;
 use crate::bop::ds::pave::SharedPB;
 use crate::bop::int_tools::context::IntToolsContext;
+use rcad_kernel::geom::SurfaceEval;
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
     TShape, TVertexData, TEdgeData, TWireData, TFaceData,
@@ -129,6 +130,40 @@ fn type_to_explore(the_dim: i32) -> topods::ShapeType {
 /// OCCT BOPTools_AlgoTools::Dimension — max dimension of a shape.
 fn shape_dimension(s: &Shape) -> i32 {
     crate::bop::tools::algo_tools::dimensions(s.shape_type()).1
+}
+
+/// OCCT BOPAlgo_Tools::FillMap(Shape, Shape, IndexedDataMap<Shape, List<Shape>>)
+/// (BOPAlgo_Tools.hxx L84-102) — bidirectional connection for the SD back-and-forth map.
+fn fill_map_faces(n1: &Shape, n2: &Shape, the_map: &mut HashMap<Shape, Vec<Shape>>) {
+    the_map.entry(n1.clone()).or_default().push(n2.clone());
+    the_map.entry(n2.clone()).or_default().push(n1.clone());
+}
+
+/// OCCT BOPAlgo_Tools::MakeBlocks (BOPAlgo_Tools.hxx L46-80) — connected components
+/// of the SD back-and-forth map.
+fn make_blocks_faces(the_map: &HashMap<Shape, Vec<Shape>>) -> Vec<Vec<Shape>> {
+    let mut a_m_fence: HashSet<u64> = HashSet::new();
+    let mut a_m_blocks: Vec<Vec<Shape>> = Vec::new();
+    for (n, _) in the_map {
+        if !a_m_fence.insert(n.ptr_id()) {
+            continue;
+        }
+        let mut a_chain: Vec<Shape> = vec![n.clone()];
+        let mut i = 0;
+        while i < a_chain.len() {
+            let n1 = &a_chain[i];
+            if let Some(a_li) = the_map.get(n1) {
+                for n2 in a_li {
+                    if a_m_fence.insert(n2.ptr_id()) {
+                        a_chain.push(n2.clone());
+                    }
+                }
+            }
+            i += 1;
+        }
+        a_m_blocks.push(a_chain);
+    }
+    a_m_blocks
 }
 
 impl<'a> Builder<'a> {
@@ -593,70 +628,480 @@ impl<'a> Builder<'a> {
         self.fill_internal_vertices();
     }
 
-    /// OCCT BOPAlgo_Builder::BuildSplitFaces (BOPAlgo_Builder_2.cxx L233-380).
-    /// For each source face, builds a BuilderFace with section edges.
+    /// OCCT BOPAlgo_Builder::BuildSplitFaces (BOPAlgo_Builder_2.cxx L233-555).
+    ///
+    /// For each source face with intersection data, builds a BuilderFace fed
+    /// with the full edge set (bounding edges + their images + IN edges +
+    /// section edges). Faces without section/IN edges but with modified wires
+    /// or alone vertices take the BuildDraftFace fast path.
     fn build_split_faces(&mut self) {
         let a_nb_s = self.ds.nb_source_shapes();
+        // aFacesIm: DS face index -> area shapes (OCCT IndexedDataMap<int, List<Shape>>).
+        let mut a_faces_im: HashMap<usize, Vec<Shape>> = HashMap::new();
+        // aVBF: pending BuilderFace tasks (face_idx, face, edges).
+        let mut a_vbf: Vec<(usize, Shape, Vec<Shape>)> = Vec::new();
+
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != topods::ShapeType::Face {
                 continue;
             }
-            // OCCT L275-279: Check HasFaceInfo
+            // OCCT L275-279: bHasFaceInfo check.
             if !self.ds.has_face_info(i) {
                 continue;
             }
-            // OCCT L275-279: Check HasFaceInfo
-            if !self.ds.has_face_info(i) { continue; }
+            let a_f = self.brep_sr(i);
             let a_fi = self.ds.face_info(i).clone();
-            let has_sc = !a_fi.pave_blocks_sc.is_empty();
-            let has_in = !a_fi.pave_blocks_in.is_empty();
-            let has_av = !a_fi.vertices_in.is_empty();
-            if !has_sc && !has_in && !has_av { continue; }
-            // OCCT: section edges from PaveBlocksSc
-            let section_edges: Vec<Shape> = a_fi.pave_blocks_sc.iter()
-                .filter_map(|&pb_idx| {
-                    if pb_idx >= self.ds.pave_blocks_pool.len() { return None; }
-                    let ei = self.ds.pave_blocks_pool[pb_idx].first()
-                        .and_then(|pb| {
-                            let e = pb.0.read().unwrap().edge;
-                            if e < self.ds.nb_shapes() { Some(e) } else { None }
-                        })?;
-                    Some(self.brep_sr(ei))
-                })
-                .collect();
-            if section_edges.is_empty() { continue; }
-            let face_s = self.brep_sr(i);
-            let mut bf = BuilderFace::new(&self.ds);
-            bf.my_face = Some(face_s.clone());
-            bf.my_face_index = Some(i);
-            bf.my_edges = section_edges;
-            bf.perform();
-            if !bf.my_areas.is_empty() {
-                for img in &bf.my_areas {
-                    self.my_images.entry(face_s.clone())
-                        .or_default()
-                        .push(img.clone());
+            // OCCT L286-287: AloneVertices(i, aLIAV).
+            let a_liav = self.alone_vertices(i);
+            let a_nb_pb_in = a_fi.pave_blocks_in.len();
+            let a_nb_pb_on = a_fi.pave_blocks_on.len();
+            let a_nb_pb_sc = a_fi.pave_blocks_sc.len();
+            let a_nb_av = a_liav.len();
+            // OCCT L293-296: not complete -> skip.
+            if a_nb_pb_in == 0 && a_nb_pb_on == 0 && a_nb_pb_sc == 0 && a_nb_av == 0 {
+                continue;
+            }
+
+            // OCCT L298-351: only alone vertices / On PBs -> draft-face fast path.
+            if a_nb_pb_in == 0 && a_nb_pb_sc == 0 {
+                let mut has_internals = false;
+                if a_nb_av == 0 {
+                    // OCCT L315-330: check wires for internal edges or modifications.
+                    let mut has_modified = false;
+                    for a_w in self.shape_sub_shapes(&a_f) {
+                        if a_w.shape_type() != topods::ShapeType::Wire {
+                            continue;
+                        }
+                        let mut w_has_internal = false;
+                        if let TShape::Wire(wd) = &*a_w.data {
+                            for e in &wd.edges {
+                                if e.orientation == topods::Orientation::Internal {
+                                    w_has_internal = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if w_has_internal {
+                            has_internals = true;
+                            break;
+                        }
+                        if self.images_of(&a_w).is_some() {
+                            has_modified = true;
+                        }
+                    }
+                    if !has_internals && !has_modified {
+                        continue;
+                    }
                 }
+                if !has_internals {
+                    // OCCT L344: BuildDraftFace fast path — face image directly.
+                    if let Some(a_fd) = self.build_draft_face(&a_f) {
+                        a_faces_im.entry(i).or_default().push(a_fd);
+                        continue;
+                    }
+                }
+            }
+
+            // OCCT L353: aMFence.Clear() — per-face fence for closed edges.
+            let mut a_mfence: HashSet<u64> = HashSet::new();
+            // OCCT L355-357: aFF = aF; aFF.Orientation(FORWARD).
+            let a_ff = Shape::new(a_f.data.clone(), a_f.location, topods::Orientation::Forward);
+            // OCCT L359: 1. Build the edges set aLE.
+            let mut a_le: Vec<Shape> = Vec::new();
+
+            // OCCT L362-465: 1.1 Bounding edges.
+            let mut is_checked = false;
+            let mut is_u_closed = false;
+            let mut is_v_closed = false;
+            for a_e in self.face_edges(&a_ff) {
+                let an_ori_e = a_e.orientation;
+                // OCCT L369: if !myImages.IsBound(aE).
+                if self.images_of(&a_e).is_none() {
+                    if an_ori_e == topods::Orientation::Internal {
+                        let mut a_ee = a_e.clone();
+                        a_ee.orientation = topods::Orientation::Forward;
+                        a_le.push(a_ee.clone());
+                        a_ee.orientation = topods::Orientation::Reversed;
+                        a_le.push(a_ee);
+                    } else {
+                        a_le.push(a_e);
+                    }
+                    continue;
+                }
+                // OCCT L387-393: GeomLib::IsClosed(aSurf, tol, isUClosed, isVClosed).
+                if !is_checked {
+                    let (uc, vc) = self.surface_is_closed(&a_f);
+                    is_u_closed = uc;
+                    is_v_closed = vc;
+                    is_checked = true;
+                }
+                // OCCT L395-404: bIsClosed = seam edge on closed surface.
+                let mut b_is_closed = false;
+                if (is_u_closed || is_v_closed) && self.edge_closed_on_face(&a_e, &a_f) {
+                    let (is_ui, is_vi) = self.is_edge_isoline(&a_e, &a_f);
+                    b_is_closed = (is_u_closed && is_ui) || (is_v_closed && is_vi);
+                }
+                // OCCT L406: bIsDegenerated = BRep_Tool::Degenerated(aE).
+                let b_is_degenerated = a_e.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
+                // OCCT L408: aLIE = myImages.Find(aE).
+                let a_lie = self.images_of(&a_e).unwrap_or_default();
+                for a_sp0 in &a_lie {
+                    let mut a_sp = a_sp0.clone();
+                    // OCCT L413-418: degenerated -> keep original orientation.
+                    if b_is_degenerated {
+                        a_sp.orientation = an_ori_e;
+                        a_le.push(a_sp);
+                        continue;
+                    }
+                    // OCCT L420-427: INTERNAL -> forward + reversed.
+                    if an_ori_e == topods::Orientation::Internal {
+                        a_sp.orientation = topods::Orientation::Forward;
+                        a_le.push(a_sp.clone());
+                        a_sp.orientation = topods::Orientation::Reversed;
+                        a_le.push(a_sp);
+                        continue;
+                    }
+                    // OCCT L429-455: closed seam edge -> dedupe via aMFence.
+                    if b_is_closed {
+                        if a_mfence.insert(a_sp.ptr_id()) {
+                            if !self.edge_closed_on_face(&a_sp, &a_f) {
+                                // OCCT L435-446: DoSplitSEAMOnFace(aSp, aF) / (aE, aSp, aF).
+                                // Pending translation (BOPTools_AlgoTools3D.cxx):
+                                // inserts seam vertices on the split edge. Only affects
+                                // the closed-surface seam handling, not planar faces.
+                            }
+                            a_sp.orientation = topods::Orientation::Forward;
+                            a_le.push(a_sp.clone());
+                            a_sp.orientation = topods::Orientation::Reversed;
+                            a_le.push(a_sp);
+                        }
+                        continue;
+                    }
+                    // OCCT L457-463: regular split edge.
+                    a_sp.orientation = an_ori_e;
+                    // OCCT L458: IsSplitToReverseWithWarn(aSp, aE) — pending translation
+                    // (BOPTools_AlgoTools.cxx L1302-1531), needs Extrema_LocateExtPC.
+                    a_le.push(a_sp);
+                }
+            }
+
+            // OCCT L469-480: 1.2 In edges (forward + reversed).
+            for &pb_idx in &a_fi.pave_blocks_in {
+                if let Some(n_sp) = self.pb_edge(pb_idx) {
+                    let mut a_sp = self.brep_sr(n_sp);
+                    a_sp.orientation = topods::Orientation::Forward;
+                    a_le.push(a_sp.clone());
+                    a_sp.orientation = topods::Orientation::Reversed;
+                    a_le.push(a_sp);
+                }
+            }
+            // OCCT L483-494: 1.3 Section edges (forward + reversed).
+            for &pb_idx in &a_fi.pave_blocks_sc {
+                if let Some(n_sp) = self.pb_edge(pb_idx) {
+                    let mut a_sp = self.brep_sr(n_sp);
+                    a_sp.orientation = topods::Orientation::Forward;
+                    a_le.push(a_sp.clone());
+                    a_sp.orientation = topods::Orientation::Reversed;
+                    a_le.push(a_sp);
+                }
+            }
+            // OCCT L496-500: BuildPCurveForEdgesOnPlane(aLE, aFF) — planar fast path.
+            // Pending translation (BRepLib.cxx); only adds pcurves, does not change
+            // the edge set or entity counts.
+            // OCCT L502-505: aBF.SetFace(aF); aBF.SetShapes(aLE); SetRunParallel.
+            a_vbf.push((i, a_f, a_le));
+        }
+
+        // OCCT L515-521: perform all BuilderFace tasks.
+        for (fi, a_f, a_le) in &a_vbf {
+            let mut a_bf = BuilderFace::new(&self.ds);
+            a_bf.my_face = Some(a_f.clone());
+            a_bf.my_face_index = Some(*fi);
+            a_bf.my_edges = a_le.clone();
+            a_bf.perform();
+            // OCCT L527-531: aFacesIm.Add(myDS->Index(aBF.Face()), aBF.Areas()).
+            if !a_bf.my_areas.is_empty() {
+                a_faces_im.entry(*fi).or_default().extend(a_bf.my_areas);
+            }
+        }
+
+        // OCCT L534-552: apply orientation and append areas to myImages.
+        for (fi, a_lfr) in a_faces_im {
+            let a_f = self.brep_sr(fi);
+            let an_ori_f = a_f.orientation;
+            let p_lf_im = self.my_images.entry(a_f).or_default();
+            for mut a_fr in a_lfr {
+                if an_ori_f == topods::Orientation::Reversed {
+                    a_fr.orientation = topods::Orientation::Reversed;
+                }
+                p_lf_im.push(a_fr);
             }
         }
     }
 
+    /// OCCT BOPDS_DS::AloneVertices (BOPDS_DS.cxx L1028-1062).
+    /// Vertices of the face not belonging to any boundary edge: endpoints of
+    /// PaveBlocksIn/PaveBlocksSc plus VerticesIn/VerticesSc not already seen.
+    fn alone_vertices(&self, face_idx: usize) -> Vec<usize> {
+        if !self.ds.has_face_info(face_idx) {
+            return Vec::new();
+        }
+        let a_fi = self.ds.face_info(face_idx);
+        let mut a_mi: HashSet<usize> = HashSet::new();
+        for pb_set in [&a_fi.pave_blocks_in, &a_fi.pave_blocks_sc] {
+            for &pb_idx in pb_set {
+                if let Some(pool) = self.ds.pave_blocks_pool.get(pb_idx) {
+                    if let Some(pb) = pool.first() {
+                        let r = pb.0.read().unwrap();
+                        a_mi.insert(r.pave1.vertex_idx);
+                        a_mi.insert(r.pave2.vertex_idx);
+                    }
+                }
+            }
+        }
+        let mut result: Vec<usize> = Vec::new();
+        for v in a_fi.vertices_in.iter().chain(a_fi.vertices_sc.iter()) {
+            if a_mi.insert(*v) {
+                result.push(*v);
+            }
+        }
+        result
+    }
+
+    /// Edge DS index from a pave-block pool entry (OCCT aPB->Edge()).
+    fn pb_edge(&self, pb_idx: usize) -> Option<usize> {
+        let pool = self.ds.pave_blocks_pool.get(pb_idx)?;
+        let pb = pool.first()?;
+        let e = pb.0.read().unwrap().edge;
+        if e < self.ds.nb_shapes() {
+            Some(e)
+        } else {
+            None
+        }
+    }
+
+    /// Look up myImages by TShape pointer + location, ignoring orientation.
+    /// OCCT: myImages is keyed by TopTools_ShapeMapHasher which hashes only
+    /// TShape* + Location, so IsBound(aE) matches regardless of orientation.
+    fn images_of(&self, key: &Shape) -> Option<Vec<Shape>> {
+        for (k, v) in &self.my_images {
+            if k.ptr_id() == key.ptr_id() && k.location == key.location {
+                return Some(v.clone());
+            }
+        }
+        None
+    }
+
+    /// Boundary edges of a face with wire-composed orientation.
+    /// OCCT TopExp_Explorer(aFF, TopAbs_EDGE) — BOPAlgo_Builder_2.cxx L363-365.
+    fn face_edges(&self, a_f: &Shape) -> Vec<Shape> {
+        let mut result: Vec<Shape> = Vec::new();
+        for a_w in self.shape_sub_shapes(a_f) {
+            if a_w.shape_type() != topods::ShapeType::Wire {
+                continue;
+            }
+            if let TShape::Wire(wd) = &*a_w.data {
+                result.extend(wd.edges.iter().map(|sr| {
+                    Shape::new(sr.data.clone(), sr.location, sr.orientation)
+                }));
+            }
+        }
+        result
+    }
+
+    /// OCCT GeomLib::IsClosed(aSurf, aTol, isUClosed, isVClosed) — surface
+    /// closed-ness in U and V (BOPAlgo_Builder_2.cxx L389-393).
+    fn surface_is_closed(&self, a_f: &Shape) -> (bool, bool) {
+        let Some(surf) = a_f.as_face().and_then(|fd| fd.surface.clone()) else {
+            return (false, false);
+        };
+        (surf.is_u_closed(), surf.is_v_closed())
+    }
+
+    /// OCCT BRep_Tool::IsClosed(aE, aF) — the edge has two pcurves on the
+    /// closed surface (seam edge). BOPAlgo_Builder_2.cxx L397.
+    fn edge_closed_on_face(&self, a_e: &Shape, a_f: &Shape) -> bool {
+        let f_index = a_f.index;
+        a_e.as_edge()
+            .map(|ed| {
+                ed.representations.iter().any(|r| {
+                    matches!(
+                        r,
+                        topods::CurveRepresentation::CurveOnClosedSurface { face, .. }
+                            if *face == f_index
+                    )
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    /// OCCT BOPTools_AlgoTools2D::IsEdgeIsoline(aE, aF, isUIso, isVIso).
+    /// True when the edge's pcurve is an axis-aligned line in the face UV space.
+    fn is_edge_isoline(&self, a_e: &Shape, a_f: &Shape) -> (bool, bool) {
+        let mut is_u_iso = false;
+        let mut is_v_iso = false;
+        let pcurve = a_e.as_edge().and_then(|ed| {
+            ed.pcurves.get(&a_f.index).map(|(pc, _, _)| pc.clone())
+        });
+        if let Some(pc) = pcurve {
+            if let rcad_kernel::geom::Curve2d::Line(l) = pc {
+                let d = l.direction;
+                is_u_iso = d.y == 0.0 && d.x != 0.0;
+                is_v_iso = d.x == 0.0 && d.y != 0.0;
+            }
+            // Circle pcurves (sphere/cylinder caps) handled per OCCT L...
+            // (isUIsoline = first==0 && last==2PI); pending — rare in these patterns.
+        }
+        (is_u_iso, is_v_iso)
+    }
+
+    /// OCCT BuildDraftFace (BOPAlgo_Builder_2.cxx L1052-1189).
+    /// Builds a new face from the original face by replacing each boundary
+    /// edge with its images. Returns None when the BuilderFace algorithm must
+    /// be used instead (internal edges / multi-connected vertices / unified edges).
+    fn build_draft_face(&self, the_face: &Shape) -> Option<Shape> {
+        let a_surf = the_face.as_face().and_then(|fd| fd.surface.clone())?;
+        let a_tol = the_face.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
+        // OCCT L1073-1074: aVerticesCounter — multi-connexity detection.
+        let mut a_vertices_counter: HashMap<u64, Vec<Shape>> = HashMap::new();
+        // OCCT L1078: aMEdges — edges-unification fence.
+        let mut a_m_edges: HashSet<u64> = HashSet::new();
+
+        // OCCT L1081-1181: rebuild each wire of the face.
+        let mut new_wires: Vec<Shape> = Vec::new();
+        for a_w in self.shape_sub_shapes(the_face) {
+            if a_w.shape_type() != topods::ShapeType::Wire {
+                continue;
+            }
+            // OCCT L1091-1095: skip empty wires.
+            let w_edges: Vec<Shape> = if let TShape::Wire(wd) = &*a_w.data {
+                wd.edges.iter().map(|sr| Shape::new(sr.data.clone(), sr.location, sr.orientation)).collect()
+            } else {
+                Vec::new()
+            };
+            if w_edges.is_empty() {
+                continue;
+            }
+            let mut new_edges: Vec<Shape> = Vec::new();
+            for a_e in &w_edges {
+                let an_ori_e = a_e.orientation;
+                // OCCT L1105-1110: internal edges may split the face -> BuilderFace.
+                if an_ori_e == topods::Orientation::Internal {
+                    return None;
+                }
+                // OCCT L1113-1115: degenerated / closed on face checks.
+                let b_is_degenerated = a_e.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
+                let b_is_closed = self.edge_closed_on_face(a_e, the_face);
+                // OCCT L1118: theImages.Seek(aE).
+                let p_le_im = self.images_of(a_e);
+                if p_le_im.is_none() {
+                    // OCCT L1121-1131: multi-connected / unified edge -> BuilderFace.
+                    if !b_is_degenerated && self.has_multi_connected(a_e, &mut a_vertices_counter) {
+                        return None;
+                    }
+                    if !b_is_closed && !a_m_edges.insert(a_e.ptr_id()) {
+                        return None;
+                    }
+                    new_edges.push(a_e.clone());
+                    continue;
+                }
+                // OCCT L1137-1175: replace by images.
+                for a_sp0 in &p_le_im.unwrap() {
+                    let mut a_sp = a_sp0.clone();
+                    if !b_is_degenerated && self.has_multi_connected(&a_sp, &mut a_vertices_counter) {
+                        return None;
+                    }
+                    if !b_is_closed && !a_m_edges.insert(a_sp.ptr_id()) {
+                        return None;
+                    }
+                    // OCCT L1154: aSp.Orientation(anOriE).
+                    a_sp.orientation = an_ori_e;
+                    if b_is_degenerated {
+                        new_edges.push(a_sp);
+                        continue;
+                    }
+                    // OCCT L1163-1166: seam split — DoSplitSEAMOnFace pending.
+                    if b_is_closed && !self.edge_closed_on_face(&a_sp, the_face) {
+                        // Pending: BOPTools_AlgoTools3D::DoSplitSEAMOnFace(aSp, theFace).
+                    }
+                    // OCCT L1169-1172: IsSplitToReverseWithWarn pending.
+                    new_edges.push(a_sp);
+                }
+            }
+            // OCCT L1178-1180: MakeWire(aNewWire) + orientation + closed flag.
+            let new_wire = Shape::new(
+                std::sync::Arc::new(TShape::Wire(TWireData {
+                    my_shapes: vec![],
+                    flags: tshape_flags::DEFAULT,
+                    edges: new_edges,
+                })),
+                0,
+                a_w.orientation,
+            );
+            new_wires.push(new_wire);
+        }
+        // OCCT L1066: MakeFace(aDraftFace, aS, aLoc, aTol) — face without wires.
+        let mut draft_face = Shape::new(
+            std::sync::Arc::new(TShape::Face(TFaceData {
+                my_shapes: vec![],
+                flags: tshape_flags::DEFAULT,
+                surface: Some(a_surf),
+                surface_location: 0,
+                outer_wire: new_wires.first().cloned().unwrap_or_else(Shape::null),
+                inner_wires: new_wires.into_iter().skip(1).collect(),
+                sample_point: None,
+                uv_domain: None,
+                internal_vertices: vec![],
+                tolerance: a_tol,
+                natural_restriction: false,
+            })),
+            0,
+            topods::Orientation::Forward,
+        );
+        // OCCT L1183-1186: reverse if the original face was reversed.
+        if the_face.orientation == topods::Orientation::Reversed {
+            draft_face.orientation = topods::Orientation::Reversed;
+        }
+        Some(draft_face)
+    }
+
+    /// OCCT HasMultiConnected (BOPAlgo_Builder_2.cxx L1014-1045).
+    /// Returns true when any vertex of the edge is shared by more than two edges.
+    fn has_multi_connected(&self, the_edge: &Shape, the_map: &mut HashMap<u64, Vec<Shape>>) -> bool {
+        let verts: Vec<Shape> = match &*the_edge.data {
+            TShape::Edge(ed) => vec![
+                Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
+                Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
+            ],
+            _ => Vec::new(),
+        };
+        for v in verts {
+            let list = the_map.entry(v.ptr_id()).or_default();
+            if !list.iter().any(|e| e.ptr_id() == the_edge.ptr_id()) {
+                list.push(the_edge.clone());
+            }
+            if list.len() > 2 {
+                return true;
+            }
+        }
+        false
+    }
+
     /// OCCT BOPAlgo_Builder::FillSameDomainFaces (Builder_2.cxx L580-780).
     fn fill_same_domain_faces(&mut self) {
-        // OCCT L584-589: get FF interferences, empty check
+        // OCCT L584-589: get FF interferences, empty check.
         let a_ffs = &self.ds.interf_ff;
         if a_ffs.is_empty() { return; }
 
-        // OCCT L597-649: Build face-to-parent solid map
-        // Maps each source face to its parent solid, including propagated image faces
+        // OCCT L597-649: build face-to-parent solid map (with image propagation).
         let mut a_face_to_parent: HashMap<u64, u64> = HashMap::new(); // face_ptr_id → solid_ptr_id
         let a_nb_src = self.ds.nb_source_shapes();
         for i_src in 0..a_nb_src {
             let a_si = self.ds.shape_info(i_src);
             if a_si.shape_type != topods::ShapeType::Solid { continue; }
             let a_solid = self.brep_sr(i_src);
-            // Iterate solid's sub-shape shells → faces
+            // Iterate solid's sub-shape shells → faces.
             for &shi in &a_si.sub_shapes {
                 if shi >= self.ds.nb_shapes() { continue; }
                 let sh_info = self.ds.shape_info(shi);
@@ -668,8 +1113,23 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        // OCCT L619-648: propagate the parent solid to the image faces.
+        let mut a_propagation: HashMap<u64, u64> = HashMap::new();
+        for (a_src, a_l_im) in &self.my_images {
+            let p_parent = a_face_to_parent.get(&a_src.ptr_id()).copied();
+            if let Some(parent) = p_parent {
+                for a_piece in a_l_im {
+                    if !a_face_to_parent.contains_key(&a_piece.ptr_id()) {
+                        a_propagation.insert(a_piece.ptr_id(), parent);
+                    }
+                }
+            }
+        }
+        for (k, v) in a_propagation {
+            a_face_to_parent.entry(k).or_insert(v);
+        }
 
-        // OCCT L654-684: collect face indices from FF interferences
+        // OCCT L654-684: collect face indices from FF interferences.
         let mut a_fi_vec: Vec<usize> = Vec::new();
         let mut a_m_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for ff in a_ffs {
@@ -680,29 +1140,25 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-
-        // OCCT L687: sort indices
+        // OCCT L687: sort indices.
         a_fi_vec.sort();
 
-        // OCCT L690-694: map edge-sets → list of faces, planar face fence
-        // rcad: edge_set = sorted Vec of (edge_ptr_id, curve_type) for face boundary edges
+        // OCCT L690-694: map edge-sets → list of faces, planar face fence.
+        // rcad: edge_set = sorted Vec of (edge_ptr_id, curve_type) for the face boundary
+        // (approximation of OCCT BOPTools_Set, which also folds in curve orientations).
         let mut an_e_set_faces: std::collections::HashMap<Vec<(u64, u32)>, Vec<Shape>> =
             std::collections::HashMap::new();
         let mut a_mf_planar: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
-        // OCCT L697-741: for each face, compute edge set
+        // OCCT L697-741: for each face, compute edge set.
         for &n_f in &a_fi_vec {
             let a_f = self.brep_sr(n_f);
+            // OCCT L707-718: check if planar (Plane surface, closed bbox).
+            let b_check_planar = if let Some(surf) = self.ds.face_surface(n_f) {
+                matches!(surf, rcad_kernel::geom::Surface3::Plane(_))
+            } else { false };
 
-            // OCCT L707-718: check if planar
-            let b_check_planar = {
-                // Get surface type from face_info
-                if let Some(surf) = self.ds.face_surface(n_f) {
-                    matches!(surf, rcad_kernel::geom::Surface3::Plane(_))
-                } else { false }
-            };
-
-            // OCCT L720-740: get face images (or face itself), add edge set
+            // OCCT L720-740: get face images (or face itself), add edge set.
             let face_list: Vec<Shape> = if let Some(imgs) = self.my_images.get(&a_f) {
                 imgs.clone()
             } else {
@@ -710,13 +1166,11 @@ impl<'a> Builder<'a> {
             };
 
             for f_piece in &face_list {
-                // Build edge set: (edge_ptr_id, edge_type_code) for each boundary edge
                 let mut edge_set: Vec<(u64, u32)> = Vec::new();
                 let edges = self.ds.face_boundary_edges(n_f);
                 for &ei in &edges {
                     if ei >= self.ds.nb_shapes() { continue; }
                     let e_ptr = self.ds.shape(ei).ptr_id();
-                    // Get curve type code (0=Line, 1=Circle, 2=Ellipse, 3=Other)
                     let curve_type = match self.ds.edge_curve(ei) {
                         Some(c) => match c {
                             rcad_kernel::geom::Curve3::Line(_) => 0u32,
@@ -737,36 +1191,102 @@ impl<'a> Builder<'a> {
             }
         }
 
-        // OCCT L750-780: find faces with same edge set → check SD pairs
-        let mut to_remove: Vec<Shape> = Vec::new();
+        // OCCT L743-748: aDMSLS — back-and-forth SD map; aVPSB — pairs for analysis.
+        let mut a_dmsls: HashMap<Shape, Vec<Shape>> = HashMap::new();
+        let mut a_vpsb: Vec<(Shape, Shape)> = Vec::new();
+
+        // OCCT L750-791: check pairs of faces with equal edge set.
         for (_edge_set, faces) in &an_e_set_faces {
             if faces.len() < 2 { continue; }
-
             for i1 in 0..faces.len() {
                 let f1 = &faces[i1];
                 let parent1 = a_face_to_parent.get(&f1.ptr_id()).copied();
-                let b_planar1 = a_mf_planar.contains(&f1.ptr_id());
-
+                let b_check_planar = a_mf_planar.contains(&f1.ptr_id());
                 for i2 in (i1 + 1)..faces.len() {
                     let f2 = &faces[i2];
                     let parent2 = a_face_to_parent.get(&f2.ptr_id()).copied();
-
-                    // OCCT L776-779: skip if both from same parent solid
+                    // OCCT L776-779: two faces of one solid cannot be SD.
                     if let (Some(p1), Some(p2)) = (parent1, parent2) {
                         if p1 == p2 { continue; }
                     }
-
-                    // OCCT L782: if planar face → accept as SD
-                    if b_planar1 {
-                        to_remove.push(f2.clone());
+                    // OCCT L780-785: planar bounded faces → SD without additional check.
+                    if b_check_planar && a_mf_planar.contains(&f2.ptr_id()) {
+                        fill_map_faces(f1, f2, &mut a_dmsls);
+                        continue;
                     }
+                    // OCCT L786-791: add pair for analysis.
+                    a_vpsb.push((f1.clone(), f2.clone()));
                 }
             }
         }
 
-        // Remove SD faces from images (keep one per group)
-        for r in &to_remove {
-            self.my_images.remove(r);
+        // OCCT L799-822: perform the pair analysis.
+        for (f1, f2) in &a_vpsb {
+            // OCCT BOPAlgo_PairOfShapeBoolean::Perform (L94-105) →
+            // BOPTools_AlgoTools::AreFacesSameDomain (BOPTools_AlgoTools.cxx L1139-1205).
+            // rcad: existing are_faces_same_domain on DS indices (plane-check stub).
+            let n_f1 = self.ds.index(f1);
+            let n_f2 = self.ds.index(f2);
+            let flag = if n_f1 >= 0 && n_f2 >= 0 {
+                crate::bop::tools::algo_tools::are_faces_same_domain(
+                    n_f1 as usize, n_f2 as usize, self.ds, self.my_fuzzy_value,
+                )
+            } else {
+                false
+            };
+            if flag {
+                fill_map_faces(f1, f2, &mut a_dmsls);
+            }
+        }
+
+        // OCCT L826: MakeBlocks(aDMSLS, aMBlocks).
+        let a_m_blocks = make_blocks_faces(&a_dmsls);
+
+        // OCCT L830-882: fill same domain faces map.
+        for a_lsd in &a_m_blocks {
+            // Find the SD face: the original face (in DS) with minimal index;
+            // otherwise the first face of the group.
+            let mut p_fsd: Option<Shape> = None;
+            let mut n_f_min: isize = std::isize::MAX;
+            for a_f in a_lsd {
+                let n_f = self.ds.index(a_f);
+                if n_f >= 0 {
+                    // OCCT L858: original face — consider it split into itself.
+                    self.my_images.entry(a_f.clone()).or_default().push(a_f.clone());
+                    if n_f < n_f_min {
+                        n_f_min = n_f;
+                        p_fsd = Some(a_f.clone());
+                    }
+                }
+            }
+            let p_fsd = match p_fsd {
+                Some(fsd) => fsd,
+                None => match a_lsd.first() {
+                    Some(f) => f.clone(),
+                    None => continue,
+                },
+            };
+            // OCCT L876-881: bind all faces of the group to the SD face.
+            for a_f in a_lsd {
+                self.my_shapes_sd.insert(a_f.clone(), p_fsd.clone());
+            }
+        }
+
+        // OCCT L886-921: update images with SD faces and fill origins.
+        for i in 0..a_nb_src {
+            let a_si = self.ds.shape_info(i);
+            if a_si.shape_type != topods::ShapeType::Face { continue; }
+            let a_f = self.brep_sr(i);
+            let Some(a_lf_im) = self.my_images.get_mut(&a_f) else { continue };
+            for a_f_im in a_lf_im.iter_mut() {
+                // OCCT L906-910: replace the image with its SD face.
+                if let Some(a_fsd) = self.my_shapes_sd.get(a_f_im) {
+                    *a_f_im = a_fsd.clone();
+                }
+                // OCCT L913-919: fill the map of origins.
+                let p_lf_or = self.my_origins.entry(a_f_im.clone()).or_default();
+                p_lf_or.push(a_f.clone());
+            }
         }
     }
 
