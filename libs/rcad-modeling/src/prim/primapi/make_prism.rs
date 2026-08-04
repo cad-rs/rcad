@@ -87,13 +87,19 @@ pub fn make_prism_brep(
     // parameter (the edge length) x the extrusion height.  OCCT prism faces
     // carry finite UV domains (BRepPrim_Build::MakeFace).
     let cap_uv = [0.0, w, 0.0, d];
+    // OCCT BRepPrimAPI_MakePrism lateral faces carry the v-parameter running
+    // from -1 (top) to 0 (bottom): the base-z=0 edge lies at v=0 (the uv bounds
+    // are (0,1,-1,0)).  To reproduce that, the lateral v-dir is reversed here
+    // (v=-z), so the z=0 boundary is at vmax=0.  This matches the reference
+    // prism's FF domain classification (ClassifyLin2d rejects lines coincident
+    // with the v=vmax boundary).
     let faces = [
         rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::Z, DVec3::X)), wires[0].clone(), vec![], None, Some(cap_uv), vec![], true)),
         t.add_tface(Some(pln(DVec3::new(0.0, 0.0, h), DVec3::Z, DVec3::X)), wires[1].clone(), vec![], None, Some(cap_uv), vec![], true),
-        rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::Y, -DVec3::X)), wires[2].clone(), vec![], None, Some([0.0, w, 0.0, h]), vec![], true)),
-        t.add_tface(Some(pln(DVec3::new(w, d, 0.0), DVec3::Y, -DVec3::X)), wires[3].clone(), vec![], None, Some([0.0, w, 0.0, h]), vec![], true),
-        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::X, DVec3::Y)), wires[4].clone(), vec![], None, Some([0.0, d, 0.0, h]), vec![], true)),
-        t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::X, DVec3::Y)), wires[5].clone(), vec![], None, Some([0.0, d, 0.0, h]), vec![], true),
+        rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::Y, DVec3::X)), wires[2].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true)),
+        t.add_tface(Some(pln(DVec3::new(w, d, 0.0), DVec3::Y, DVec3::X)), wires[3].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true),
+        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::X, -DVec3::Y)), wires[4].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true)),
+        t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::X, -DVec3::Y)), wires[5].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true),
     ];
     let shell = t.add_tshell(faces.to_vec());
     t.add_tsolid(vec![shell]);
