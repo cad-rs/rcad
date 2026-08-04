@@ -172,29 +172,99 @@ impl<'a> BuilderSolid<'a> {
         self.my_solids = new_solids;
     }
 
-    /// OCCT BOPAlgo_BuilderSolid::IsGrowthShell (BuilderSolid.cxx L864+).
-    /// Checks if shell is a growth (outer) shell or a hole (inner) shell.
-    fn is_hole_shell(&self, _faces: &[Shape], hole_face_ptrs: &HashSet<u64>) -> bool {
-        // OCCT L870: if any face matches hole face marker, it's a hole
-        if _faces.iter().any(|f| hole_face_ptrs.contains(&f.ptr_id())) {
-            return true;
+    /// OCCT BOPAlgo_BuilderSolid::PerformAreas (BuilderSolid.cxx L422-427).
+    /// A shell is a hole when: (1) fast check IsGrowthShell fails — the shell
+    /// does not contain a previously-found hole face; and (2) IsHole succeeds —
+    /// the shell is a "hole in space" (its faces are oriented with the material
+    /// outside, so the point at infinity is IN the shell-solid).
+    fn is_hole_shell(&self, faces: &[Shape], hole_face_ptrs: &HashSet<u64>) -> bool {
+        // OCCT IsGrowthShell (L864-879): if the shell contains any hole-face
+        // marker it bounds a hole from the outside → it is a growth, not a hole.
+        if faces.iter().any(|f| hole_face_ptrs.contains(&f.ptr_id())) {
+            return false;
         }
-        // OCCT L873-890: classify point on shell relative to growth solids
-        // rcad: shell is a hole if its faces' centroid is IN a growth solid
-        if _faces.is_empty() { return false; }
-        // Compute centroid of first face (OCCT: uses point on face)
-        let centroid = Self::face_centroid(&_faces[0]);
-        // Check against each source solid via context
-        let a_nb_s = self.ds.nb_source_shapes();
-        for i in 0..a_nb_s {
-            if self.ds.shape_info(i).shape_type != ShapeType::Solid { continue; }
-            let state = self.my_context.solid_classifier_perform(
-                self.ds, i, centroid, 1e-7);
-            if state == 3 { // IN → this shell is inside a solid → hole
-                return true;
+        // OCCT IsHole (L823-831): the shell is a hole-in-space (inverted).
+        self.is_hole_in_space(faces)
+    }
+
+    /// OCCT BOPAlgo_BuilderSolid::IsHole (BuilderSolid.cxx L823-831) via
+    /// BRepClass3d_SClassifier::PerformInfinitePoint (L82-199). From a point on
+    /// a face, cast a ray along the reversed outward normal into the material;
+    /// at the closest crossing, an EXIT means the material is inside (growth),
+    /// an ENTER means the material is outside (hole-in-space).
+    fn is_hole_in_space(&self, faces: &[Shape]) -> bool {
+        if faces.is_empty() {
+            return false;
+        }
+        for f in faces {
+            let p = Self::face_centroid(f);
+            let n = match Self::face_outward_normal(f) {
+                Some(n) => n,
+                None => continue,
+            };
+            let d = -n;
+            let mut best_t = f64::MAX;
+            let mut best_denom = 0.0f64;
+            for f2 in faces {
+                if f2.ptr_id() == f.ptr_id() {
+                    continue;
+                }
+                let n2 = match Self::face_outward_normal(f2) {
+                    Some(n2) => n2,
+                    None => continue,
+                };
+                let denom = d.dot(n2);
+                if denom.abs() < 1e-12 {
+                    continue;
+                }
+                // t for plane (x - origin)·n2 = 0 along ray p + t·d.
+                let t = match Self::face_plane_origin(f2) {
+                    Some(o2) => (o2 - p).dot(n2) / denom,
+                    None => continue,
+                };
+                if t > 1e-7 && t < best_t {
+                    best_t = t;
+                    best_denom = denom;
+                }
+            }
+            if best_t < f64::MAX {
+                // denom > 0 → ray moves toward +n2 (outside) → EXIT → growth.
+                // denom < 0 → ray moves toward -n2 (material) → ENTER → hole.
+                return best_denom < 0.0;
             }
         }
         false
+    }
+
+    /// Outward normal of a face: the surface normal flipped by the face
+    /// orientation (OCCT BRepClass3d_SClassifier::FaceNormal L606-627).
+    fn face_outward_normal(f: &Shape) -> Option<DVec3> {
+        match &*f.data {
+            TShape::Face(fd) => {
+                let surf = fd.surface.as_ref()?;
+                let n = match surf {
+                    rcad_kernel::geom::Surface3::Plane(pl) => pl.normal,
+                    _ => return None, // curved surfaces need point evaluation
+                };
+                Some(if f.orientation == rcad_kernel::topods::Orientation::Reversed {
+                    -n
+                } else {
+                    n
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Origin point of a planar face's surface.
+    fn face_plane_origin(f: &Shape) -> Option<DVec3> {
+        match &*f.data {
+            TShape::Face(fd) => match fd.surface.as_ref()? {
+                rcad_kernel::geom::Surface3::Plane(pl) => Some(pl.origin),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// Compute face centroid from its outer wire vertices.

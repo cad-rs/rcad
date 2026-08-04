@@ -93,51 +93,14 @@ impl SolidClassifier {
     pub fn state(&self) -> u8 { self.my_state }
 
     /// Internal: perform classification using ray casting.
-    fn perform_classify(&mut self, p: DVec3, tol: f64) {
-        // OCCT BRepClass3d_SClassifier::Perform (L203+):
-        // 1. Check rejection → if rejected, point is IN the void solid
-        if self.explorer.reject(p) {
-            self.my_state = 3; // IN
+    /// OCCT BRepClass3d_SClassifier::Perform (L203+). Delegates the actual
+    /// ray/face intersection to the explorer (BRepClass3d_SolidExplorer),
+    /// which resolves face geometry from the shape tree directly.
+    fn perform_classify(&mut self, p: DVec3, _tol: f64) {
+        if !self.explorer.has_faces() {
+            self.my_state = 3; // IN (void solid — whole space)
             return;
         }
-        // 2. Get all faces from the explorer
-        let face_indices = self.explorer.get_face_indices().to_vec();
-        if face_indices.is_empty() {
-            self.my_state = 3; // IN (void solid)
-            return;
-        }
-        // 3. Ray casting: shoot ray in +X, count front-face intersections
-        // OCCT uses IntCurvesFace_Intersector for precise ray-face intersection.
-        // rcad: simplified ray-plane intersection for planar faces.
-        // The face orientation flips the effective surface normal (a reversed
-        // face bounds the solid on the opposite side of its surface), matching
-        // IntCurvesFace_Intersector's treatment of TopAbs_REVERSED faces.
-        let ray_dir = DVec3::X;
-        let mut intersections = 0usize;
-        for &fi in &face_indices {
-            let surf = match self.explorer.ds.as_ref().and_then(|ds| ds.face_surface(fi)) {
-                Some(s) => s,
-                None => continue,
-            };
-            let face_ori = self
-                .explorer
-                .ds
-                .as_ref()
-                .map(|ds| ds.shape_at(fi).orientation);
-            if let rcad_kernel::geom::Surface3::Plane(pl) = surf {
-                let normal = if face_ori == Some(rcad_kernel::topods::Orientation::Reversed) {
-                    -pl.normal
-                } else {
-                    pl.normal
-                };
-                let denom = ray_dir.dot(normal);
-                if denom.abs() < 1e-12 { continue; }
-                let t = (pl.origin - p).dot(normal) / denom;
-                if t > tol && denom < 0.0 { // front face (entering solid)
-                    intersections += 1;
-                }
-            }
-        }
-        self.my_state = if intersections % 2 == 1 { 3 } else { 4 }; // IN=3, OUT=4
+        self.my_state = self.explorer.classify_point(p);
     }
 }

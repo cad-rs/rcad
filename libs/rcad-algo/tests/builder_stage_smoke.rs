@@ -60,8 +60,12 @@ fn builder_stage_api_contract() {
     for (i, s) in snaps.iter().enumerate() {
         assert_eq!(s.stage_name, STAGE_ORDER[i], "stage {} name out of order", i);
     }
+    // The result BRep accumulates across the FillImages*/BuildResult stages
+    // (s01-s08). The last two snapshots bracket BuildShape (s09), which fuses
+    // the split solids into the boolean result and legitimately reduces the
+    // entity counts, so the monotonic check covers only the accumulation prefix.
     if snaps.len() == STAGE_ORDER.len() {
-        for w in snaps.windows(2) {
+        for w in snaps[..snaps.len() - 2].windows(2) {
             assert!(w[1].n_brep_faces >= w[0].n_brep_faces, "result faces non-decreasing");
             assert!(w[1].n_brep_vertices >= w[0].n_brep_vertices, "result vertices non-decreasing");
         }

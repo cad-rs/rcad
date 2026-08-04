@@ -116,6 +116,40 @@ fn count_brep_entities(b: &topods::BRep) -> (usize, usize, usize, usize, usize) 
     (v, e, f, sh, so)
 }
 
+/// Collect the face Shapes of a solid/compound via tree traversal.
+/// OCCT TopExp_Explorer(aSolid, TopAbs_FACE).
+fn collect_solid_faces(s: &Shape) -> Vec<Shape> {
+    let mut result: Vec<Shape> = Vec::new();
+    let mut stack: Vec<Shape> = vec![s.clone()];
+    while let Some(sh) = stack.pop() {
+        match &*sh.data {
+            TShape::Solid(sd) => {
+                for x in &sd.shells {
+                    stack.push(x.clone());
+                }
+            }
+            TShape::CompSolid(cd) => {
+                for x in cd {
+                    stack.push(x.clone());
+                }
+            }
+            TShape::Compound(cd) => {
+                for x in cd {
+                    stack.push(x.clone());
+                }
+            }
+            TShape::Shell(sd) => {
+                for x in &sd.faces {
+                    stack.push(x.clone());
+                }
+            }
+            TShape::Face(_) => result.push(sh),
+            _ => {}
+        }
+    }
+    result
+}
+
 /// OCCT BOPAlgo_BOP::TypeToExplore (BOPAlgo_BOP.cxx L1574-1597).
 fn type_to_explore(the_dim: i32) -> topods::ShapeType {
     match the_dim {
@@ -1388,7 +1422,7 @@ impl<'a> Builder<'a> {
             a_source_solids.push(a_solid);
         }
         // OCCT L197-208: classify the faces relative to the solids.
-        let an_in_parts = self.classify_faces(&a_lfaces, &a_lsolids, &a_lsolids_src);
+        let an_in_parts = self.classify_faces(&a_lfaces, &a_lsolids, &a_lsolids_src, &a_solids_if);
         // OCCT L210-262: analyze the results of classification.
         for a_solid in &a_source_solids {
             let a_sd = match a_draft_solid.get(&a_solid.ptr_id()) {
@@ -1504,15 +1538,32 @@ impl<'a> Builder<'a> {
     /// semantic translation: classifies a point of each face against each solid.
     /// The BVH box culling and connexity-block optimizations are omitted; the
     /// point-in-solid test is delegated to IntTools_Context::solid_classifier_perform.
+    /// The solid's own faces (and its internal faces) are excluded from the
+    /// classification (OCCT BOPAlgo_FillIn3DParts::Perform aMSF filter).
     fn classify_faces(
         &self,
         faces: &[Shape],
         solids: &[Shape],
         solids_src: &[usize],
+        a_solids_if: &HashMap<u64, Vec<Shape>>,
     ) -> HashMap<u64, Vec<Shape>> {
         let mut in_parts: HashMap<u64, Vec<Shape>> = HashMap::new();
         for (k, a_sd) in solids.iter().enumerate() {
+            // aMSF = own faces of the draft solid + its internal faces.
+            let mut a_msf: HashSet<u64> = HashSet::new();
+            for f in collect_solid_faces(a_sd) {
+                a_msf.insert(f.ptr_id());
+            }
+            if let Some(lif) = a_solids_if.get(&a_sd.ptr_id()) {
+                for f in lif {
+                    a_msf.insert(f.ptr_id());
+                }
+            }
             for a_f in faces {
+                // OCCT L1389: skip the solid's own faces.
+                if a_msf.contains(&a_f.ptr_id()) {
+                    continue;
+                }
                 // Compute face centroid for classification.
                 let centroid = Self::face_centroid(a_f);
                 // OCCT L1505-1509: IsInternalFace → point-in-solid.

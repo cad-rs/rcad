@@ -923,28 +923,15 @@ impl IntToolsContext {
 
     /// OCCT IntTools_Context::SolidClassifier (IntTools_Context.cxx L312-322).
     /// Returns a point-in-solid classifier.
-    /// rcad: delegates to brep_class3d::SolidClassifier.
+    /// rcad: delegates to brep_class3d::SolidClassifier, which explores the
+    /// solid shape's faces directly (OCCT BRepClass3d explores the TopoDS
+    /// shape, never BOPDS).
     pub fn solid_classifier_perform(&self, ds: &DS, solid_idx: usize, point: DVec3, tol: f64) -> u8 {
         let si = ds.shape_info(solid_idx);
         let s_shape = si.shape.clone();
 
-        // Collect face indices from solid sub-shapes for classification
-        let mut explorer = SolidExplorer::new();
-        for &shi in &si.sub_shapes {
-            if shi >= ds.nb_shapes() { continue; }
-            let sh_info = ds.shape_info(shi);
-            if sh_info.shape_type != rcad_kernel::topods::ShapeType::Shell { continue; }
-            for &fi in &sh_info.sub_shapes {
-                if fi >= ds.nb_shapes() { continue; }
-                if ds.shape_info(fi).shape_type == rcad_kernel::topods::ShapeType::Face {
-                    explorer.add_face_index(fi);
-                }
-            }
-        }
-
         // OCCT: create BRepClass3d_SolidClassifier with the solid
         let mut clsf = SolidClassifier::from_shape(&s_shape);
-        clsf.explorer = explorer;
 
         // OCCT: SolidClassifier::Perform(P, Tol)
         clsf.perform(point, tol);
