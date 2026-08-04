@@ -2193,7 +2193,7 @@ fn decompose_result(
                         the_q_surf,
                         the_p_surf,
                         &to_sp_pnt(&a_ref_pt),
-                        &a_vert,
+                        &mut a_vert,
                         &mut sp_new,
                         is_reversed,
                     ) {

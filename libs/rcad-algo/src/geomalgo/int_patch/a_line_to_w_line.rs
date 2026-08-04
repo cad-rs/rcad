@@ -1013,7 +1013,7 @@ fn continue_after_special_point(
             let a_vec_dv_t = transform_vec(a_vec_dv, q_frame);
             let mut a_u_quad = if is_reversed { new_point.u1 } else { new_point.u2 };
             let mut is_iso_chosen = false;
-            process_cone_ref(
+            super::special_points::process_cone(
                 ref_pt,
                 a_vec_du_t,
                 a_vec_dv_t,
@@ -1047,24 +1047,6 @@ fn continue_after_special_point(
     };
     adjust_point_and_vertex(ref_pt, &an_arr_of_period, new_point, None);
     true
-}
-
-/// rcad: ProcessCone called from ContinueAfterSpecialPoint (L1041-1044).
-fn process_cone_ref(
-    pt_iso: &PntOn2S,
-    du_of_p_surf: DVec3,
-    dv_of_p_surf: DVec3,
-    cone: &rcad_kernel::geom::ConicalSurface,
-    is_reversed: bool,
-    u_quad: &mut f64,
-    is_iso_chosen: &mut bool,
-) {
-    let _ = cone;
-    // Same as special_points::process_cone; rcad keeps the tangent-plane
-    // projection of the intersection line at the apex.
-    let axis = rcad_kernel::geom::any_perpendicular(DVec3::Z).normalize_or_zero();
-    let _ = axis;
-    let _ = (pt_iso, du_of_p_surf, dv_of_p_surf, is_reversed, u_quad, is_iso_chosen);
 }
 
 /// Transform a vector into a coordinate system (OCCT gp_Trsf::Transform).

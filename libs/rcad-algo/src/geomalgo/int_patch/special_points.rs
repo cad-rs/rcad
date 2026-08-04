@@ -293,50 +293,163 @@ fn process_sphere(
 /// intersection line at the cone apex is computed from the tangent plane of the
 /// parametric surface; its X/Y coordinates give the U-quad of the apex.
 pub fn process_cone(
-    _pt_iso: &PntOn2S,
+    pt_iso: &PntOn2S,
     du_of_p_surf: DVec3,
     dv_of_p_surf: DVec3,
     cone: &rcad_kernel::geom::ConicalSurface,
-    _is_reversed: bool,
+    is_reversed: bool,
     u_quad: &mut f64,
     is_iso_chosen: &mut bool,
 ) -> bool {
+    // OCCT ProcessCone (IntPatch_SpecialPoints.cxx L589-719).
     *is_iso_chosen = false;
+
+    // A plane tangent to the 2nd (intersected) surface.  Its normal.
     let a_tg_plane_z = du_of_p_surf.cross(dv_of_p_surf);
     let a_sq_mod_tg = a_tg_plane_z.length_squared();
-    if a_sq_mod_tg < rcad_kernel::precision::CONFUSION * rcad_kernel::precision::CONFUSION {
+    if a_sq_mod_tg < rcad_kernel::precision::SQUARE_CONFUSION {
         *is_iso_chosen = true;
     }
-    // Tangent to the intersection line: the cone generatrix in the plane
-    // tangent to the parametric surface.  (The full OCCT algorithm also solves
-    // a non-linear system; for the apex tangent direction the generatrix
-    // direction is used here.)
-    if *is_iso_chosen {
-        *u_quad = 0.0;
-        return true;
-    }
-    // The tangent line of the intersection at the apex is the intersection of
-    // the cone with the plane tangent to the parametric surface.  Its direction
-    // projected to the cone's X-Y plane gives (cos Uq, sin Uq).
-    let axis = cone.axis_dir();
-    let x_dir = cone.ref_dir.normalize_or_zero();
-    let y_dir = axis.cross(x_dir).normalize_or_zero();
-    let _ = y_dir;
-    // Normal of the tangent plane of the parametric surface.
-    let n = a_tg_plane_z.normalize_or_zero();
-    // A direction in the tangent plane: pick a vector perpendicular to n and to
-    // the cone generatrix direction near the apex.
-    let gen_dir = DVec3::Z;
-    let t = n.cross(gen_dir).normalize_or_zero();
-    let t = if t.length_squared() < 1e-12 {
-        rcad_kernel::geom::any_perpendicular(n).normalize_or_zero()
+
+    let mut a_tg_iline = [DVec3::ZERO; 2];
+    let a_nb_tangent = if !*is_iso_chosen {
+        get_tangent_to_int_line_for_cone(
+            cone.half_angle_rad,
+            a_tg_plane_z / a_sq_mod_tg.sqrt(),
+            &mut a_tg_iline,
+        )
     } else {
-        t
+        0
     };
-    let d = t.normalize_or_zero();
-    let u = (d.dot(y_dir)).atan2(d.dot(x_dir));
-    *u_quad = u;
+
+    if a_nb_tangent == 0 {
+        *is_iso_chosen = true;
+    } else {
+        let a_period = std::f64::consts::TAU;
+        let (a_u_iso, _a_v_iso) = if is_reversed {
+            (pt_iso.u2, pt_iso.v2)
+        } else {
+            (pt_iso.u1, pt_iso.v1)
+        };
+        let a_u_iso = elclib_in_period(a_u_iso, 0.0, a_period);
+
+        // Sought U-parameter in the apex point: of the two possible values pick
+        // the one nearer to aUIso.
+        let mut a_min_delta = f64::MAX;
+        for an_idx in 0..a_nb_tangent {
+            // Vector {cos(a), sin(a)}.
+            let mut a_vec_cs = DVec2::new(a_tg_iline[an_idx].x, a_tg_iline[an_idx].y);
+            let a_sq_mod = a_vec_cs.length_squared();
+            if a_sq_mod < rcad_kernel::precision::SQUARE_CONFUSION {
+                *is_iso_chosen = true;
+                break;
+            }
+            a_vec_cs /= a_sq_mod.sqrt();
+
+            // Angle in range [0, PI/2].
+            let mut an_uq = if a_vec_cs.x.abs() < a_vec_cs.y.abs() {
+                a_vec_cs.x.abs().acos()
+            } else {
+                a_vec_cs.y.abs().asin()
+            };
+
+            // Convert angles to the range [0, 2*PI].
+            if a_vec_cs.y < 0.0 {
+                if a_vec_cs.x > 0.0 {
+                    an_uq = -an_uq;
+                } else {
+                    an_uq += std::f64::consts::PI;
+                }
+            } else if a_vec_cs.x < 0.0 {
+                an_uq = std::f64::consts::PI - an_uq;
+            }
+
+            // Select the parameter the nearest to aUIso.
+            an_uq = elclib_in_period(an_uq, 0.0, a_period);
+            let mut a_delta = (an_uq - a_u_iso).abs();
+            if a_delta > std::f64::consts::PI {
+                a_delta = a_period - a_delta;
+            }
+            if a_delta < a_min_delta {
+                a_min_delta = a_delta;
+                *u_quad = an_uq;
+            }
+        }
+    }
+
+    if *is_iso_chosen {
+        // Cannot find the UV-coordinate for the quadric in the pole; use the
+        // iso parameter of the reference point.
+        let (a_u_iso, _a_v_iso) = if is_reversed {
+            (pt_iso.u2, pt_iso.v2)
+        } else {
+            (pt_iso.u1, pt_iso.v1)
+        };
+        *u_quad = a_u_iso;
+    }
     true
+}
+
+/// OCCT ElCLib::InPeriod (ElCLib.cxx L95-...) — wrap a parameter into
+/// [theUFirst, theULast).
+fn elclib_in_period(u: f64, u_first: f64, u_last: f64) -> f64 {
+    if rcad_kernel::precision::is_infinite_value(u)
+        || rcad_kernel::precision::is_infinite_value(u_first)
+        || rcad_kernel::precision::is_infinite_value(u_last)
+    {
+        return u;
+    }
+    let a_period = u_last - u_first;
+    if a_period < f64::EPSILON * u_last {
+        return u;
+    }
+    u_first.max(u + a_period * ((u_first - u) / a_period).ceil())
+}
+
+/// OCCT IntPatch_SpecialPoints::GetTangentToIntLineForCone (L749-798).
+fn get_tangent_to_int_line_for_cone(cone_semi_angle: f64, pln_normal: DVec3, result: &mut [DVec3; 2]) -> usize {
+    let a_null_tol = f64::EPSILON;
+    let a_tan_a = cone_semi_angle.tan();
+    let a_a = pln_normal.z / a_tan_a - pln_normal.x;
+    let a_b = pln_normal.y;
+    let a_c = pln_normal.z / a_tan_a + pln_normal.x;
+
+    if a_a.abs() < a_null_tol {
+        if a_b.abs() > a_null_tol {
+            // The plane goes along the cone generatrix.
+            get_tangent(cone_semi_angle, -a_c / (a_b + a_b), &mut result[0]);
+            return 1;
+        }
+        // The cone and the plane have only one common point (the apex).
+        return 0;
+    }
+
+    // Discriminant.
+    let a_discr = pln_normal.z / cone_semi_angle.sin();
+    let a_discr = 1.0 - a_discr * a_discr;
+
+    if a_discr.abs() < a_null_tol {
+        // The plane goes along the cone generatrix.
+        get_tangent(cone_semi_angle, -a_b / a_a, &mut result[0]);
+        return 1;
+    } else if a_discr > 0.0 {
+        let a_rd = a_discr.sqrt();
+        get_tangent(cone_semi_angle, (-a_b + a_rd) / a_a, &mut result[0]);
+        get_tangent(cone_semi_angle, (-a_b - a_rd) / a_a, &mut result[1]);
+        return 2;
+    }
+    // We will never come here.
+    0
+}
+
+/// OCCT IntPatch_SpecialPoints::GetTangent (L138-148) — computes the tangent
+/// having the given parameter.
+fn get_tangent(cone_semi_angle: f64, parameter: f64, result: &mut DVec3) {
+    let a_w2 = parameter * parameter;
+    let a_cos_un = (1.0 - a_w2) / (1.0 + a_w2);
+    let a_sin_un = 2.0 * parameter / (1.0 + a_w2);
+    let a_tan_a = cone_semi_angle.tan();
+    *result = DVec3::new(a_tan_a * a_cos_un, a_tan_a * a_sin_un, 1.0);
 }
 
 /// OCCT IntPatch_SpecialPoints::AddSingularPole (L806-959).
@@ -348,7 +461,7 @@ pub fn add_singular_pole(
     q_surf: &Surface3,
     p_surf: &Surface3,
     pt_iso: &PntOn2S,
-    vertex: &PatchPoint,
+    vertex: &mut PatchPoint,
     added_point: &mut PntOn2S,
     is_reversed: bool,
 ) -> bool {
@@ -427,7 +540,10 @@ pub fn add_singular_pole(
         added_point.set_value(p_mid, a_u_quad, a_v_quad, a_u0, a_v0);
     }
 
+    // OCCT L933-956: when the added point coincides with the vertex, or when
+    // the iso was chosen, the vertex value is replaced by theAddedPoint.
     if is_same {
+        vertex.set_value(*added_point);
         return true;
     }
 
@@ -439,6 +555,8 @@ pub fn add_singular_pole(
             set_period(q_surf, p_surf, &mut an_arr_of_period);
         }
         adjust_point_and_vertex(&vertex.pnt, &an_arr_of_period, added_point, None);
+    } else {
+        vertex.set_value(*added_point);
     }
 
     true
