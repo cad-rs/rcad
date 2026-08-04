@@ -11,6 +11,7 @@
 // solving the quadratic in Z and mapping (U,V) through the surface frame.
 
 use glam::DVec3;
+use rcad_kernel::math::direct_polynomial_roots::DirectPolynomialRoots;
 use rcad_kernel::precision::PCONFUSION;
 
 const TWO_PI: f64 = std::f64::consts::TAU;
@@ -381,22 +382,21 @@ impl MathTrigFunctionRoots {
                 }
                 return;
             } else {
-                // quadratic: (E-C) + 2D t + (E+C) t^2 for t=tan(x/2)  — the OCCT
-                // path solves the cos/sin quadratic via the direct polynomial
-                // in t.  Equivalent to solving c*cos + d*sin + e = 0 directly.
+                // quadratic: (E-C) + 2D t + (E+C) t^2 for t=tan(x/2)  — OCCT
+                // L217: math_DirectPolynomialRoots Resol(E-C, 2*D, E+C).
                 let aa = e - c;
                 let bb = 2.0 * d;
                 let cc = e + c;
-                let roots = solve_poly2(aa, bb, cc);
-                if roots.0 == -2 {
+                let resol = DirectPolynomialRoots::new_quadratic(aa, bb, cc);
+                if !resol.is_done() {
                     self.done = false;
                     return;
-                } else if roots.0 == -1 {
+                } else if !resol.infinite_roots() {
+                    nzer = resol.nb_solutions();
+                    for i in 0..nzer { zer[i] = resol.value(i + 1); }
+                } else {
                     self.infinite_status = true;
                     return;
-                } else {
-                    nzer = roots.0 as usize;
-                    for i in 0..nzer { zer[i] = roots.1[i]; }
                 }
             }
         } else {
@@ -475,16 +475,17 @@ impl MathTrigFunctionRoots {
             let mut nzer4 = 0usize;
             loop {
                 bko = false;
-                let roots = solve_poly4(ko[0], ko[1], ko[2], ko[3], ko[4]);
-                if roots.0 == -2 {
+                // OCCT L367: math_DirectPolynomialRoots Resol4(ko(1..5)).
+                let resol4 = DirectPolynomialRoots::new_quartic(ko[0], ko[1], ko[2], ko[3], ko[4]);
+                if !resol4.is_done() {
                     self.done = false;
                     return;
-                } else if roots.0 == -1 {
+                } else if !resol4.infinite_roots() {
+                    nzer4 = resol4.nb_solutions();
+                    for i in 0..nzer4 { zer[i] = resol4.value(i + 1); }
+                } else {
                     self.infinite_status = true;
                     return;
-                } else {
-                    nzer4 = roots.0 as usize;
-                    for i in 0..nzer4 { zer[i] = roots.1[i]; }
                 }
                 // sort
                 for i in 0..nzer4 {
@@ -613,64 +614,6 @@ fn trig_value_deriv(a: f64, b: f64, c: f64, d: f64, e: f64, u: f64) -> (f64, f64
     // Correct derivative of a cos^2 + 2b cos sin + c cos + d sin:
     let df = -2.0 * a * co * s + 2.0 * b * (co * co - s * s) - c * s + d * co;
     (f, df)
-}
-
-/// OCCT math_DirectPolynomialRoots for a quadratic.  Returns (-2, _) = not
-/// done, (-1, _) = infinite roots, else (n, roots).
-fn solve_poly2(a: f64, b: f64, c: f64) -> (i32, [f64; 4]) {
-    let mut out = [0.0f64; 4];
-    if a.abs() < 1e-30 && b.abs() < 1e-30 && c.abs() < 1e-30 {
-        return (-1, out);
-    }
-    if a.abs() < 1e-30 {
-        // linear b t + c = 0
-        if b.abs() < 1e-30 {
-            return (0, out);
-        }
-        out[0] = -c / b;
-        return (1, out);
-    }
-    let disc = b * b - 4.0 * a * c;
-    if disc < 0.0 {
-        return (0, out);
-    }
-    let sq = disc.sqrt();
-    out[0] = (-b + sq) / (2.0 * a);
-    out[1] = (-b - sq) / (2.0 * a);
-    let n = if disc.abs() < 1e-30 { 1 } else { 2 };
-    (n, out)
-}
-
-/// OCCT math_DirectPolynomialRoots for a quartic.  Returns (-2, _) = not done,
-/// (-1, _) = infinite, else (n, roots).
-fn solve_poly4(a: f64, b: f64, c: f64, d: f64, e: f64) -> (i32, [f64; 4]) {
-    let mut out = [0.0f64; 4];
-    let eps = 1e-30;
-    if a.abs() < eps && b.abs() < eps && c.abs() < eps && d.abs() < eps && e.abs() < eps {
-        return (-1, out);
-    }
-    if a.abs() < eps {
-        return solve_poly3(b, c, d, e);
-    }
-    let roots = rcad_kernel::math::math_poly::solve_quartic(a, b, c, d, e);
-    let n = roots.len().min(4) as i32;
-    for (i, r) in roots.iter().enumerate().take(n as usize) {
-        out[i] = *r;
-    }
-    (n, out)
-}
-
-fn solve_poly3(a: f64, b: f64, c: f64, d: f64) -> (i32, [f64; 4]) {
-    let mut out = [0.0f64; 4];
-    if a.abs() < 1e-30 {
-        return solve_poly2(b, c, d);
-    }
-    let roots = rcad_kernel::math::math_poly::solve_cubic(a, b, c, d);
-    let n = roots.len().min(4) as i32;
-    for (i, r) in roots.iter().enumerate().take(n as usize) {
-        out[i] = *r;
-    }
-    (n, out)
 }
 
 // ============================================================================
