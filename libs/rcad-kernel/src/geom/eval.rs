@@ -1608,6 +1608,10 @@ pub(crate) fn bspline_tangent_analytic(
         return DVec3::ZERO;
     }
 
+    // OCCT: a NULL weight array (non-rational curve) is treated as all weights
+    // equal to 1.0 (BSplCLib weight accessor, cf. math/bspl.rs wgt).
+    let ws: Vec<f64> = if weights.is_empty() { vec![1.0; n] } else { weights.to_vec() };
+
     let p = degree as f64;
     let m = n - 1; // number of derivative control points
 
@@ -1620,8 +1624,8 @@ pub(crate) fn bspline_tangent_analytic(
             w_prime.push(DVec3::ZERO);
         } else {
             let s = p / denom;
-            a_prime.push(s * (weights[i + 1] * points[i + 1] - weights[i] * points[i]));
-            w_prime.push(DVec3::new(s * (weights[i + 1] - weights[i]), 0.0, 0.0));
+            a_prime.push(s * (ws[i + 1] * points[i + 1] - ws[i] * points[i]));
+            w_prime.push(DVec3::new(s * (ws[i + 1] - ws[i]), 0.0, 0.0));
         }
     }
 
@@ -1656,6 +1660,10 @@ pub(crate) fn bspline_tangent_analytic_2d(
         return DVec2::ZERO;
     }
 
+    // OCCT: a NULL weight array (non-rational curve) is treated as all weights
+    // equal to 1.0 (BSplCLib weight accessor, cf. math/bspl.rs wgt).
+    let ws: Vec<f64> = if weights.is_empty() { vec![1.0; n] } else { weights.to_vec() };
+
     let p = degree as f64;
     let m = n - 1;
 
@@ -1668,8 +1676,8 @@ pub(crate) fn bspline_tangent_analytic_2d(
             w_prime.push(DVec2::ZERO);
         } else {
             let s = p / denom;
-            a_prime.push(s * (weights[i + 1] * points[i + 1] - weights[i] * points[i]));
-            w_prime.push(DVec2::new(s * (weights[i + 1] - weights[i]), 0.0));
+            a_prime.push(s * (ws[i + 1] * points[i + 1] - ws[i] * points[i]));
+            w_prime.push(DVec2::new(s * (ws[i + 1] - ws[i]), 0.0));
         }
     }
 
