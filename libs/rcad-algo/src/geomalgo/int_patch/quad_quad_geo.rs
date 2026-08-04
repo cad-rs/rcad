@@ -681,8 +681,17 @@ impl QuadQuadGeo {
                 self.param1bis = dist.abs();
                 self.param2bis = dist.abs();
             } else {
+                // OCCT L856-858: center = IntAna_IntConicQuad(axec, P).Point(1)
+                // — the intersection of the cone axis line with the plane.
+                // t = -dist/denom; keep the sign of denom (a negative denom must
+                // not be clamped to +1e-16, which would explode the division).
                 let denom = a * axis_dir.x + b * axis_dir.y + c_n * axis_dir.z;
-                let centre = apex - dist * axis_dir / denom.max(1e-16);
+                let denom_s = if denom.abs() < 1e-16 {
+                    if denom < 0.0 { -1e-16 } else { 1e-16 }
+                } else {
+                    denom
+                };
+                let centre = apex - dist * axis_dir / denom_s;
                 let distance = apex.distance(centre);
                 if costa.abs() < tol_ang {
                     self.typeres = AnaResultType::Parabola;
