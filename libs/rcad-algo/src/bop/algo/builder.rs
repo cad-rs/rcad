@@ -862,8 +862,13 @@ impl<'a> Builder<'a> {
                     }
                     // OCCT L457-463: regular split edge.
                     a_sp.orientation = an_ori_e;
-                    // OCCT L458: IsSplitToReverseWithWarn(aSp, aE) — pending translation
-                    // (BOPTools_AlgoTools.cxx L1302-1531), needs Extrema_LocateExtPC.
+                    // OCCT L458: IsSplitToReverseWithWarn(aSp, aE) — reverse the
+                    // split edge when its direction differs from the original.
+                    let (b_to_reverse, _err) =
+                        crate::bop::tools::algo_tools::is_split_to_reverse_edge(&a_sp, &a_e);
+                    if b_to_reverse {
+                        a_sp.orientation = flip_orientation(a_sp.orientation);
+                    }
                     a_le.push(a_sp);
                 }
             }

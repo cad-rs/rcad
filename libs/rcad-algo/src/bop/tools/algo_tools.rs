@@ -479,6 +479,90 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape) -> (bool, i32) {
     (a_cos < 0.0, 0)
 }
 
+/// OCCT BOPTools_AlgoTools::IsSplitToReverse(edge) (BOPTools_AlgoTools.cxx
+/// L1456-1531) — true when the split edge a_sp has the opposite direction to
+/// the original edge a_e. rcad: straight/analytic edge translation.
+pub fn is_split_to_reverse_edge(a_sp: &Shape, a_e: &Shape) -> (bool, i32) {
+    use rcad_kernel::topods::TShape;
+    // OCCT L1461-1468: degenerated edges are not processed.
+    let sp_degen = a_sp
+        .as_edge()
+        .map(|ed| ed.degenerated)
+        .unwrap_or(true);
+    let e_degen = a_e.as_edge().map(|ed| ed.degenerated).unwrap_or(true);
+    if sp_degen || e_degen {
+        return (false, 1);
+    }
+    // OCCT L1472-1477: same curve handle -> compare orientations only.
+    let c_sp = a_sp.as_edge().and_then(|ed| ed.curve.clone());
+    let c_or = a_e.as_edge().and_then(|ed| ed.curve.clone());
+    if let (Some(c1), Some(c2)) = (&c_sp, &c_or) {
+        if curves_same(c1, c2) {
+            return (a_sp.orientation != a_e.orientation, 0);
+        }
+    }
+    // OCCT L1480-1531: compare the tangent vectors at a sample point.
+    let t_sp = edge_tangent_3d(a_sp);
+    let t_or = edge_tangent_3d(a_e);
+    match (t_sp, t_or) {
+        (Some(vs), Some(vo)) => (vs.dot(vo) < 0.0, 0),
+        _ => (false, 4),
+    }
+}
+
+/// Edge tangent at the parameterization direction (straight edges).
+/// OCCT BOPTools_AlgoTools2D::EdgeTangent — the curve derivative, reversed for
+/// a REVERSED edge.
+pub fn edge_tangent_3d(e: &Shape) -> Option<glam::DVec3> {
+    use rcad_kernel::topods::TShape;
+    match &*e.data {
+        TShape::Edge(ed) => {
+            let p1 = match &*ed.first.data {
+                TShape::Vertex(vd) => vd.point,
+                _ => return None,
+            };
+            let p2 = match &*ed.last.data {
+                TShape::Vertex(vd) => vd.point,
+                _ => return None,
+            };
+            let d = p2 - p1;
+            if d.length_squared() < 1e-24 {
+                return None;
+            }
+            let mut t = d.normalize();
+            if e.orientation == rcad_kernel::topods::Orientation::Reversed {
+                t = -t;
+            }
+            Some(t)
+        }
+        _ => None,
+    }
+}
+
+/// Geometric identity of two 3D curves (rcad equivalent of OCCT's Geom_Curve
+/// handle equality in IsSplitToReverse L1474).
+fn curves_same(a: &rcad_kernel::geom::Curve3, b: &rcad_kernel::geom::Curve3) -> bool {
+    use rcad_kernel::geom::Curve3;
+    const TOL: f64 = 1e-9;
+    match (a, b) {
+        (Curve3::Line(l1), Curve3::Line(l2)) => {
+            (l1.origin - l2.origin).length() < TOL && l1.direction.dot(l2.direction) > 1.0 - TOL
+        }
+        (Curve3::Circle(c1), Curve3::Circle(c2)) => {
+            (c1.center - c2.center).length() < TOL
+                && c1.normal.dot(c2.normal) > 1.0 - TOL
+                && (c1.radius - c2.radius).abs() < TOL
+        }
+        (Curve3::Ellipse(e1), Curve3::Ellipse(e2)) => {
+            (e1.center - e2.center).length() < TOL
+                && e1.normal.dot(e2.normal) > 1.0 - TOL
+                && (e1.major_radius - e2.major_radius).abs() < TOL
+                && (e1.minor_radius - e2.minor_radius).abs() < TOL
+        }
+        _ => false,
+    }
+}
+
 /// Geometric identity of two analytic surfaces (rcad equivalent of OCCT's
 /// Geom_Surface handle equality in IsSplitToReverse L1338). Same direction for
 /// the axis/normal; the reference directions (u_dir/v_dir) are not compared —
