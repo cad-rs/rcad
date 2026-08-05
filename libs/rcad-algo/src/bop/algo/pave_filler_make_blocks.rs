@@ -497,14 +497,17 @@ impl PaveFiller {
                     }
                     // OCCT L1035: aLPBC.Append(aPB)
                     self.ds.intersection_curves[cid].pave_blocks.push(a_pb.clone());
-                    // OCCT: the PB is appended to the curve's PB list; its edge is
-                    // the new section edge.  OCCT does NOT give the section edge a
-                    // PaveBlocksPool entry (BOPDS_Curve::myPaveBlocks holds the PBs);
-                    // rcad adds an orphan pool entry so FaceInfo::PaveBlocksSc can
-                    // reference it by pool index, but leaves the edge's reference
-                    // unset (ShapeInfo::HasPaveBlocks == false) to match OCCT's
-                    // PaveBlocksPool counting.
-                    a_pb.0.write().unwrap().edge = n_e;
+                    // OCCT L1074-1075: the PB is appended to the curve's PB list.
+                    // Its edge is NOT set here — the section edge TShape created by
+                    // MakeEdge is appended to the DS only in PostTreatFF (L1536-1540,
+                    // bOld==false branch: myDS->Append(aSx); aPB1->SetEdge(iE)).
+                    // Setting the edge early would make PostTreatFF take the
+                    // bOld==true branch and add the PB to aDMExEdges, which then
+                    // excludes it from FaceInfo::PaveBlocksSc (UpdateFaceInfo L1757).
+                    // rcad keeps an orphan pool entry so FaceInfo::PaveBlocksSc can
+                    // reference the PB by pool index; the edge is left unset until
+                    // PostTreatFF sets it (mirroring OCCT, where the section edge's
+                    // ShapeInfo has no PaveBlocks reference).
                     self.ds.pave_blocks_pool.push(vec![a_pb.clone()]);
                     // OCCT L1038-1045: keep info for post treatment.
                     let e_shape = self.ds.shape(n_e).clone();
