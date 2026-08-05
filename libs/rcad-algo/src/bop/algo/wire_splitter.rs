@@ -7,11 +7,13 @@
 // - TopoDS_Edge/Vertex/Face/Wire -> rcad Shape; a wire is Vec<Shape> (edge order).
 // - TopTools_ShapeMapHasher identity -> Shape::is_same (ptr_id + location).
 // - BRepAdaptor_Surface -> SurfaceAdaptor (analytic UResolution/VResolution).
-// - Geom2dInt_GInter (RefineAngle2D 2D curve intersection) not yet ported:
-//   RefineAngle2D returns false and the iCntInt==2 fallback of RefineAngles is kept.
+// - Geom2dInt_GInter -> crate::topalgo::brep_class::g_inter::GInter (used by
+//   RefineAngle2D, BOPAlgo_WireSplitter_1.cxx L1058-1150).
 
 use crate::bop::ds::DS;
 use crate::bop::int_tools::context::IntToolsContext;
+use crate::geomalgo::int_res2d::Domain;
+use crate::topalgo::brep_class::g_inter::GInter;
 use glam::{DVec2, DVec3};
 use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3};
@@ -340,7 +342,7 @@ fn split_block(
     }
 
     // OCCT L324: RefineAngles(myFace, mySmartMap, theContext).
-    refine_angles(&mut my_smart_map);
+    refine_angles(face, face_index, &mut my_smart_map, ds);
 
     // 4. Path building.
     for i in 0..a_nb {
@@ -594,12 +596,18 @@ fn mark_edge_passed(
 /// OCCT RefineAngles (BOPAlgo_WireSplitter_1.cxx L930-1054) — refines the
 /// angles of the internal (section) edges at a vertex where exactly two
 /// boundary edges meet, pushing the internal edges out of the boundary wedge.
-/// The geometric refinement (RefineAngle2D, L1058-1149, Geom2dInt_GInter) is
-/// not ported yet; the iCntInt==2 fallback of OCCT L1021-1025 is kept.
-fn refine_angles(my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>) {
+/// RefineAngle2D (L1058-1150) is translated via Geom2dInt_GInter; the
+/// iCntInt==2 fallback of OCCT L1021-1025 is kept for the not-refined case.
+fn refine_angles(
+    _face: &Shape,
+    face_index: usize,
+    my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>,
+    ds: &DS,
+) {
     let a_nb = my_smart_map.len();
     for i in 0..a_nb {
-        let (_, leinfo) = &mut my_smart_map[i];
+        let (a_v_sh, leinfo) = &mut my_smart_map[i];
+        let a_v = a_v_sh.clone();
         // aA1 = angle of the outgoing boundary edge; aA2 = incoming boundary.
         let mut a_a1 = 0.0;
         let mut a_a2 = 0.0;
@@ -637,21 +645,21 @@ fn refine_angles(my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>) {
             if a_da < a_delta {
                 continue; // already inside
             }
-            // bRefined = RefineAngle2D(aV, aE, myFace, aA1, aA2, aDelta, aA, ctx)
-            // — not ported (Geom2dInt_GInter). The iCntInt==2 fallback remains.
-            let b_refined = false;
-            let a_a_new;
-            if b_refined {
-                a_a_new = a_a;
-            } else if i_cnt_int == 2 {
-                a_a_new = if a_a <= a_a1 {
-                    a_a1 + rcad_kernel::core::precision::ANGULAR
-                } else {
-                    a_a2 - rcad_kernel::core::precision::ANGULAR
-                };
-            } else {
-                continue;
-            }
+            // OCCT L1016: bRefined = RefineAngle2D(aV, aE, myFace, aA1, aA2,
+            // aDelta, aA, ctx) — aA is set to the refined angle when it returns
+            // true, so the bind uses the refined value.
+            let a_a_new = match refine_angle_2d(&a_v, a_e, face_index, a_a1, a_a2, a_delta, ds) {
+                Some(a_angle) => a_angle,
+                // OCCT L1021-1025: iCntInt==2 fallback.
+                None if i_cnt_int == 2 => {
+                    if a_a <= a_a1 {
+                        a_a1 + rcad_kernel::core::precision::ANGULAR
+                    } else {
+                        a_a2 - rcad_kernel::core::precision::ANGULAR
+                    }
+                }
+                None => continue,
+            };
             a_dmsr.insert(a_e.ptr_id(), a_a_new);
         }
         if a_dmsr.is_empty() {
@@ -672,6 +680,92 @@ fn refine_angles(my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>) {
             a_ei.set_angle(a_a);
         }
     }
+}
+
+/// OCCT RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1058-1150) — refines the
+/// angle of the internal edge aE at vertex aV by intersecting its pcurve with
+/// the two boundary-edge directions and taking the refined angle when it falls
+/// inside the boundary wedge. Returns Some(aAngle) when refined (OCCT bRet).
+fn refine_angle_2d(
+    a_v: &Shape,
+    a_e: &Shape,
+    face_index: usize,
+    a_a1: f64,
+    a_a2: f64,
+    a_delta: f64,
+    ds: &DS,
+) -> Option<f64> {
+    let a_cf = 0.01;
+    let a_tol_int = 1e-10;
+    // BOPTools_AlgoTools2D::CurveOnSurface(aE, myFace, aC2D, aT1, aT2, aTol, ctx).
+    let (a_c2d, a_t1, a_t2) = match edge_pcurve(a_e, face_index, ds) {
+        Some(v) => v,
+        None => return None,
+    };
+    // BRep_Tool::Parameter(aV, aE, myFace).
+    let a_tv = match vertex_param_on_edge(a_v, a_e) {
+        Some(t) => t,
+        None => return None,
+    };
+    let a_pv = curve2d_point(&a_c2d, a_tv);
+    // aTOp = the parameter at the opposite end of the edge range.
+    let a_top = if (a_tv - a_t1).abs() < (a_tv - a_t2).abs() { a_t2 } else { a_t1 };
+    let max_dt = 0.3 * (a_t2 - a_t1);
+    let a_p1 = curve2d_point(&a_c2d, a_t1);
+    let a_p2 = curve2d_point(&a_c2d, a_t2);
+    // aDomain1.SetValues(aP1, aT1, aTolInt, aP2, aT2, aTolInt).
+    let a_domain1 = Domain::bounded(a_p1, a_t1, a_tol_int, a_p2, a_t2, a_tol_int);
+    // aDomain2: the default (infinite) domain of the implicit line.
+    let a_domain2 = Domain::infinite();
+    for i in 0..2 {
+        // aAi = (!i) ? aA1 : (aA2 + M_PI).
+        let a_ai = if i == 0 { a_a1 } else { a_a2 + std::f64::consts::PI };
+        let a_diri = DVec2::new(a_ai.cos(), a_ai.sin());
+        // aGInter.Perform(aGAC1, aDomain1, aGAC2, aDomain2, aTolInt, aTolInt);
+        // rcad GInter: the pcurve is the parametric curve, the line the implicit.
+        let a_g_inter = GInter::new(
+            a_pv,
+            a_diri,
+            &a_domain2,
+            &a_c2d,
+            &a_domain1,
+            a_tol_int,
+            a_tol_int,
+        );
+        if !a_g_inter.is_done() {
+            continue;
+        }
+        let a_nb_p = a_g_inter.nb_points();
+        let mut a_t1_max = a_tv;
+        let mut a_t2_max = -1.0;
+        for j in 1..=a_nb_p {
+            let a_ipj = a_g_inter.point(j);
+            // OCCT: aT1j = ParamOnFirst (pcurve), aT2j = ParamOnSecond (line);
+            // rcad GInter stores the line parameter first, the curve second.
+            let a_t1j = a_ipj.param_on_second();
+            let a_t2j = a_ipj.param_on_first();
+            if a_t2j > a_t2_max && (a_t1j - a_tv).abs() < max_dt {
+                a_t2_max = a_t2j;
+                a_t1_max = a_t1j;
+            }
+        }
+        if a_t2_max > 0.0 {
+            let d_t = a_top - a_t1_max;
+            if d_t.abs() < a_tol_int {
+                continue;
+            }
+            let a_t = a_t1_max + a_cf * d_t;
+            let a_p = curve2d_point(&a_c2d, a_t);
+            let a_v2d = a_p - a_pv;
+            let a_dir2d = a_v2d.normalize_or_zero();
+            let a_angle = angle_from_dir(a_dir2d);
+            let a_da = clock_wise_angle(a_a2, a_angle);
+            if a_da < a_delta {
+                return Some(a_angle);
+            }
+        }
+    }
+    None
 }
 
 /// OCCT ClockWiseAngle (L631-669).
@@ -811,10 +905,10 @@ fn angle_2d(
 }
 
 /// OCCT Angle (L869-880) — angle of a 2D direction against +X, in [0, 2π).
+/// aRefDir.Angle(aDir2D) = signed CCW angle from (1,0) to aDir2D, normalized
+/// into [0, 2π) (gp_Dir2d::Angle, gp_Dir2d.cxx L26-65).
 fn angle_from_dir(a_dir2d: DVec2) -> f64 {
-    let mut an_angle = a_dir2d.x.atan2(a_dir2d.y).mul_add(-1.0, 0.0);
-    // OCCT: gp_Dir2d::Angle(aRefDir) — angle from reference dir (+X) to aDir2d.
-    an_angle = (a_dir2d.y).atan2(a_dir2d.x);
+    let mut an_angle = (a_dir2d.y).atan2(a_dir2d.x);
     if an_angle < 0.0 {
         an_angle += std::f64::consts::PI * 2.0;
     }

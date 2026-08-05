@@ -2104,26 +2104,48 @@ impl<'a> Builder<'a> {
         result
     }
 
-    /// OCCT TopExp::MapShapesAndAncestors — build ancestor map (vertex→edge, vertex→face, edge→face).
+    /// OCCT TopExp::MapShapesAndAncestors (TopExp.cxx L80-120) — maps each
+    /// VERTEX to its ancestor EDGEs and FACEs, and each EDGE to its ancestor
+    /// FACEs, over the FULL shape hierarchy of S (a source solid or its split
+    /// images). The one-level scan previously used missed every ancestor, so
+    /// the FillInternalShapes filter never dropped boundary V/E of the solids.
     fn map_shapes_and_ancestors(s: &Shape, map: &mut std::collections::HashMap<u64, Vec<u64>>) {
-        // OCCT: for each VERTEX, record its ancestor EDGEs; for each VERTEX/EDGE, record ancestor FACEs.
-        // rcad: use shape_sub_shapes to walk the hierarchy
-        let subs = Self::shape_sub_shapes_static(s);
-        for sub in &subs {
-            let sub_type = sub.shape_type();
-            let sub_id = sub.ptr_id();
-            // Find ancestors by scanning all sub-shapes at the parent level
-            for parent in &subs {
-                let parent_type = parent.shape_type();
-                if parent_type == topods::ShapeType::Face
-                    && (sub_type == topods::ShapeType::Vertex || sub_type == topods::ShapeType::Edge)
-                {
-                    map.entry(sub_id).or_default().push(parent.ptr_id());
-                }
-                if parent_type == topods::ShapeType::Edge && sub_type == topods::ShapeType::Vertex {
-                    map.entry(sub_id).or_default().push(parent.ptr_id());
-                }
+        // OCCT L90-107: for each ancestor of type TA, append it to the list of
+        // every descendant of type TS. TA=FACE, TS∈{VERTEX,EDGE}; TA=EDGE,
+        // TS=VERTEX (the three MapShapesAndAncestors calls at L770-772).
+        let mut faces: Vec<Shape> = Vec::new();
+        Self::collect_sub_shapes_of_type(s, topods::ShapeType::Face, &mut faces);
+        for f in &faces {
+            let mut subs: Vec<Shape> = Vec::new();
+            Self::collect_sub_shapes_of_type(f, topods::ShapeType::Vertex, &mut subs);
+            Self::collect_sub_shapes_of_type(f, topods::ShapeType::Edge, &mut subs);
+            for ts in &subs {
+                map.entry(ts.ptr_id()).or_default().push(f.ptr_id());
             }
+        }
+        let mut edges: Vec<Shape> = Vec::new();
+        Self::collect_sub_shapes_of_type(s, topods::ShapeType::Edge, &mut edges);
+        for e in &edges {
+            let mut vs: Vec<Shape> = Vec::new();
+            Self::collect_sub_shapes_of_type(e, topods::ShapeType::Vertex, &mut vs);
+            for v in &vs {
+                map.entry(v.ptr_id()).or_default().push(e.ptr_id());
+            }
+        }
+    }
+
+    /// Recursively collect all sub-shapes of the given type from S, at any depth
+    /// (OCCT TopExp_Explorer with the ToFind type).
+    fn collect_sub_shapes_of_type(
+        s: &Shape,
+        t: topods::ShapeType,
+        out: &mut Vec<Shape>,
+    ) {
+        for ss in Self::shape_sub_shapes_static(s) {
+            if ss.shape_type() == t {
+                out.push(ss.clone());
+            }
+            Self::collect_sub_shapes_of_type(&ss, t, out);
         }
     }
 
