@@ -1480,7 +1480,6 @@ impl<'a> Builder<'a> {
         }
         // OCCT L154-195: get all solids, build draft solids.
         let mut a_lsolids: Vec<Shape> = Vec::new();
-        let mut a_lsolids_src: Vec<usize> = Vec::new(); // DS index per draft solid
         let mut a_solids_if: HashMap<u64, Vec<Shape>> = HashMap::new();
         let mut a_draft_solid: HashMap<u64, Shape> = HashMap::new();
         let mut a_source_solids: Vec<Shape> = Vec::new();
@@ -1494,13 +1493,12 @@ impl<'a> Builder<'a> {
             let mut a_lif: Vec<Shape> = Vec::new();
             let a_sd = self.build_draft_solid(&a_solid, &mut a_lif);
             a_lsolids.push(a_sd.clone());
-            a_lsolids_src.push(i);
             a_solids_if.insert(a_sd.ptr_id(), a_lif);
             a_draft_solid.insert(a_solid.ptr_id(), a_sd.clone());
             a_source_solids.push(a_solid);
         }
-        // OCCT L197-208: classify the faces relative to the solids.
-        let an_in_parts = self.classify_faces(&a_lfaces, &a_lsolids, &a_lsolids_src, &a_solids_if);
+        // OCCT L197-208: classify the faces relative to the draft solids.
+        let an_in_parts = self.classify_faces(&a_lfaces, &a_lsolids, &a_solids_if);
         // OCCT L210-262: analyze the results of classification.
         for a_solid in &a_source_solids {
             let a_sd = match a_draft_solid.get(&a_solid.ptr_id()) {
@@ -1629,20 +1627,21 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Tools::ClassifyFaces (BOPAlgo_Tools.cxx L1622-1747) —
-    /// semantic translation: classifies a point of each face against each solid.
-    /// The BVH box culling and connexity-block optimizations are omitted; the
-    /// point-in-solid test is delegated to IntTools_Context::solid_classifier_perform.
-    /// The solid's own faces (and its internal faces) are excluded from the
-    /// classification (OCCT BOPAlgo_FillIn3DParts::Perform aMSF filter).
+    /// semantic translation: classifies a point of each face against each
+    /// DRAFT solid (the OCCT target is aLSolids = the draft solids, not the
+    /// source solids; BOPAlgo_FillIn3DParts::Perform uses mySolid).  The BVH
+    /// box culling and connexity-block optimizations are omitted; the
+    /// point-in-solid test is delegated to the SolidClassifier.  The solid's
+    /// own faces (and its internal faces) are excluded from the classification
+    /// (OCCT BOPAlgo_FillIn3DParts::Perform aMSF filter).
     fn classify_faces(
         &self,
         faces: &[Shape],
         solids: &[Shape],
-        solids_src: &[usize],
         a_solids_if: &HashMap<u64, Vec<Shape>>,
     ) -> HashMap<u64, Vec<Shape>> {
         let mut in_parts: HashMap<u64, Vec<Shape>> = HashMap::new();
-        for (k, a_sd) in solids.iter().enumerate() {
+        for a_sd in solids {
             // aMSF = own faces of the draft solid + its internal faces.
             let mut a_msf: HashSet<u64> = HashSet::new();
             for f in collect_solid_faces(a_sd) {
@@ -1660,11 +1659,12 @@ impl<'a> Builder<'a> {
                 }
                 // Compute face centroid for classification.
                 let centroid = Self::face_centroid(a_f);
-                // OCCT L1505-1509: IsInternalFace → point-in-solid.
-                let state = self
-                    .my_context
-                    .solid_classifier_perform(&self.ds, solids_src[k], centroid, 1e-7);
-                if state == 3 {
+                // OCCT L1505-1509: IsInternalFace → point-in-solid against the
+                // draft solid aSd (BOPAlgo_FillIn3DParts::Perform mySolid).
+                let mut clsf =
+                    crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(a_sd);
+                clsf.perform(centroid, 1e-7);
+                if clsf.my_state == 3 {
                     // IN
                     in_parts.entry(a_sd.ptr_id()).or_default().push(a_f.clone());
                 }
