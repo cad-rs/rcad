@@ -66,7 +66,7 @@ pub struct Builder<'a> {
     pub(crate) my_map_fence: HashSet<u64>, // L494: myMapFence
     pub(crate) my_entry_point: i32,        // L498: myEntryPoint
     pub(crate) my_images: HashMap<Shape, Vec<Shape>>,      // L499: myImages
-    pub(crate) my_shapes_sd: HashMap<Shape, Shape>,        // L500: myShapesSD
+    pub(crate) my_shapes_sd: HashMap<(u64, u32), Shape>,   // L500: myShapesSD (TopTools_ShapeMapHasher: TShape+Location, ignores orientation)
     pub(crate) my_origins: HashMap<Shape, Vec<Shape>>,     // L501: myOrigins
     pub(crate) my_in_parts: HashMap<Shape, Vec<Shape>>,    // L502: myInParts
     pub(crate) my_non_destructive: bool,   // L503: myNonDestructive
@@ -207,12 +207,19 @@ fn shape_sub_shapes_free(s: &Shape) -> Vec<Shape> {
 /// All edge Shapes of a face (outer + inner wires).
 /// OCCT TopExp_Explorer(aFace, TopAbs_EDGE).
 fn face_edges(face: &Shape) -> Vec<Shape> {
+    // OCCT TopExp_Explorer(face, TopAbs_EDGE) descends face -> wire -> edge
+    // with cumOri=true, composing each parent's orientation into the edge
+    // (TopExp_Explorer.cxx L152; TopoDS_Iterator.cxx L35-37, L72-80).
     let mut out = Vec::new();
     if let TShape::Face(fd) = &*face.data {
+        let f_or = face.orientation;
         for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
             if let TShape::Wire(wd) = &*w.data {
+                let w_or = w.orientation;
                 for e in &wd.edges {
-                    out.push(Shape::new(e.data.clone(), e.location, e.orientation));
+                    let mut e2 = Shape::new(e.data.clone(), e.location, e.orientation);
+                    e2.orientation = f_or.compose(w_or).compose(e.orientation);
+                    out.push(e2);
                 }
             }
         }
@@ -474,8 +481,13 @@ fn get_face_off(
         let mut a_angle = angle_with_ref(a_dbf1, a_dbf2, a_dtf);
         // OCCT L1065-1082: near-zero angle handling.
         if a_angle.abs() < rcad_kernel::ANGULAR {
-            if a_f2.ptr_id() == the_f1.ptr_id() {
+            // aF2 == theF1 (IsEqual: same TShape+location+orientation) -> PI.
+            if a_f2.is_partner(the_f1) && a_f2.orientation == the_f1.orientation {
                 a_angle = std::f64::consts::PI;
+            // aF2.IsSame(theF1) (same TShape+location, any orientation) -> 2*PI.
+            } else if a_f2.is_partner(the_f1) {
+                a_angle = two_pi;
+            // bi-normal direction could not be reliably computed -> 2*PI.
             } else if b_is_computed.is_none() {
                 a_angle = two_pi;
             }
@@ -513,11 +525,12 @@ fn is_internal_face_core(
         Some(e) => e,
         None => return 0,
     };
-    // OCCT L951-966: for an INTERNAL edge, or when the two faces are the same,
-    // aE2 = aE1 with FORWARD/REVERSED orientations; otherwise the edge as it
-    // appears in the second face.
+    // OCCT L951-966: for an INTERNAL edge, or when the two faces are the same
+    // (IsEqual: same TShape + Location + Orientation), aE2 = aE1 with
+    // FORWARD/REVERSED orientations; otherwise the edge as it appears in the
+    // second face.
     let (a_e1_used, a_e2) = if a_e1.orientation == topods::Orientation::Internal
-        || the_face1.ptr_id() == the_face2.ptr_id()
+        || (the_face1.is_partner(the_face2) && the_face1.orientation == the_face2.orientation)
     {
         let mut e1 = a_e1.clone();
         e1.orientation = topods::Orientation::Forward;
@@ -541,8 +554,9 @@ fn is_internal_face_core(
     if !is_done {
         return 2;
     }
+    // OCCT L983: theFace.IsEqual(aFOff) — same TShape + Location + Orientation.
     match a_f_off {
-        Some(f) if f.ptr_id() == the_face.ptr_id() => 1,
+        Some(f) if f.is_partner(the_face) && f.orientation == the_face.orientation => 1,
         _ => 0,
     }
 }
@@ -1079,7 +1093,7 @@ impl<'a> Builder<'a> {
             // OCCT L56: myImages.Bound(aV, ...)->Append(aVSD);
             self.my_images.entry(aV.clone()).or_default().push(aVSD.clone());
             // OCCT L58: myShapesSD.Bind(aV, aVSD);
-            self.my_shapes_sd.insert(aV.clone(), aVSD.clone());
+            self.my_shapes_sd.insert((aV.ptr_id(), aV.location), aVSD.clone());
             // OCCT L60-65: myOrigins — find or create list, append
             self.my_origins.entry(aVSD).or_default().push(aV);
         }
@@ -1120,7 +1134,7 @@ impl<'a> Builder<'a> {
                     let nSp = { let r = aPB.read(); r.edge };
                     let aSp = self.brep_sr(nSp);
                     // OCCT L118: myShapesSD.Bind(aSp, aSpR);
-                    self.my_shapes_sd.insert(aSp, aSpR.clone());
+                    self.my_shapes_sd.insert((aSp.ptr_id(), aSp.location), aSpR.clone());
                 }
             }
         }
@@ -1848,9 +1862,10 @@ impl<'a> Builder<'a> {
         // OCCT L697-741: for each face, compute edge set.
         for &n_f in &a_fi_vec {
             let a_f = self.brep_sr(n_f);
-            // OCCT L707-718: check if planar (Plane surface, closed bbox).
+            // OCCT L707-718: check if planar (Plane surface, bounded bbox).
             let b_check_planar = if let Some(surf) = self.ds.face_surface(n_f) {
                 matches!(surf, rcad_kernel::geom::Surface3::Plane(_))
+                    && !self.ds.shape_info(n_f).bbox.is_open()
             } else { false };
 
             // OCCT L720-740: get face images (or face itself), add edge set.
@@ -1900,6 +1915,11 @@ impl<'a> Builder<'a> {
                 let b_check_planar = a_mf_planar.contains(&f1.ptr_id());
                 for i2 in (i1 + 1)..faces.len() {
                     let f2 = &faces[i2];
+                    // OCCT L767: aF1.IsSame(aF2) — same TShape + Location, any
+                    // orientation — the pair is not analyzed.
+                    if f1.is_partner(f2) {
+                        continue;
+                    }
                     let parent2 = a_face_to_parent.get(&f2.ptr_id()).copied();
                     // OCCT L776-779: two faces of one solid cannot be SD.
                     if let (Some(p1), Some(p2)) = (parent1, parent2) {
@@ -1964,7 +1984,8 @@ impl<'a> Builder<'a> {
             };
             // OCCT L876-881: bind all faces of the group to the SD face.
             for a_f in a_lsd {
-                self.my_shapes_sd.insert(a_f.clone(), p_fsd.clone());
+                self.my_shapes_sd
+                    .insert((a_f.ptr_id(), a_f.location), p_fsd.clone());
             }
         }
 
@@ -1976,7 +1997,7 @@ impl<'a> Builder<'a> {
             let Some(a_lf_im) = self.my_images.get_mut(&a_f) else { continue };
             for a_f_im in a_lf_im.iter_mut() {
                 // OCCT L906-910: replace the image with its SD face.
-                if let Some(a_fsd) = self.my_shapes_sd.get(a_f_im) {
+                if let Some(a_fsd) = self.my_shapes_sd.get(&(a_f_im.ptr_id(), a_f_im.location)) {
                     *a_f_im = a_fsd.clone();
                 }
                 // OCCT L913-919: fill the map of origins.
@@ -1986,33 +2007,151 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// OCCT BOPAlgo_Builder::FillInternalVertices (Builder_2.cxx L929+).
+    /// OCCT BOPAlgo_Builder::FillInternalVertices (Builder_2.cxx L929-1008).
+    ///
+    /// Adds vertices strictly inside face images as INTERNAL vertices. OCCT
+    /// collects (vertex, face-image) pairs and classifies each with
+    /// IntTools_Context::ComputeVF (iFlag == 0), then mutates the face in place
+    /// with BRep_Builder().Add — preserving the TShape identity of Same-Domain
+    /// faces shared across image lists.
     fn fill_internal_vertices(&mut self) {
-        let n = self.ds.nb_source_shapes();
-        for i in 0..n {
-            if self.ds.shape_info(i).shape_type != topods::ShapeType::Face { continue; }
-            let fs = self.brep_sr(i);
-            if !self.my_images.contains_key(&fs) { continue; }
-            if !self.ds.has_face_info(i) { continue; }
-            let v_pts: Vec<glam::DVec3> = self.ds.face_info(i).vertices_in.iter()
-                .map(|&vi| self.ds.vertex_point_by_idx(vi)).collect();
-            if v_pts.is_empty() { continue; }
-            if let Some(imgs) = self.my_images.get_mut(&fs) {
-                for pt in &v_pts {
-                    for img in imgs.iter_mut() {
-                        let ts = Arc::make_mut(&mut img.data);
-                        if let TShape::Face(fd) = ts {
-                            fd.internal_vertices.push(Shape::new(
-                                Arc::new(TShape::Vertex(rcad_kernel::topods::TVertexData {
-                                    my_shapes: vec![], flags: tshape_flags::DEFAULT,
-                                    point: *pt, tolerance: 1e-7, points: vec![],
-                                })), 0, topods::Orientation::Forward,
-                            ));
-                        }
+        // OCCT L935: vector of Vertex/Face pairs for classification.
+        // rcad pair: (source face index, DS vertex index, face image).
+        let mut a_vvfi: Vec<(usize, usize, Shape)> = Vec::new();
+        // OCCT L937-938: iterate all source shapes.
+        let a_nb_s = self.ds.nb_source_shapes();
+        for i in 0..a_nb_s {
+            let a_si = self.ds.shape_info(i);
+            // OCCT L941-944: only faces are processed.
+            if a_si.shape_type != topods::ShapeType::Face {
+                continue;
+            }
+            // OCCT L951-956: aF = aSI.Shape(); pLFIm = myImages.Seek(aF);
+            // if (!pLFIm) continue.
+            let a_f = self.brep_sr(i);
+            let Some(p_lf_im) = self.my_images.get(&a_f).cloned() else {
+                continue;
+            };
+            // OCCT L959-960: myDS->AloneVertices(i, aLIAV).
+            let a_liav = self.alone_vertices(i);
+            // OCCT L963-978: build (vertex, face-image) pairs.
+            for &n_v in &a_liav {
+                for a_f_im in &p_lf_im {
+                    a_vvfi.push((i, n_v, a_f_im.clone()));
+                }
+            }
+        }
+        // OCCT L988-1006: classify each pair and add the internal vertices.
+        for (i, n_v, a_f_im) in a_vvfi {
+            // OCCT BOPAlgo_VFI::Perform (L188-200):
+            //   myContext->ComputeVF(myV, myF, aT1, aT2, dummy, myFuzzyValue);
+            //   myIsInternal = (iFlag == 0).
+            if !self.point_in_face_image(&a_f_im, n_v) {
+                continue;
+            }
+            // OCCT L966-967: aV = Vertex(v); aV.Orientation(INTERNAL).
+            let a_v = Shape::new(
+                Arc::new(TShape::Vertex(TVertexData {
+                    my_shapes: vec![],
+                    flags: tshape_flags::DEFAULT,
+                    point: self.ds.vertex_point_by_idx(n_v),
+                    tolerance: self.ds.vertex_tolerance_by_idx(n_v),
+                    points: vec![],
+                })),
+                0,
+                topods::Orientation::Internal,
+            );
+            // OCCT L1005: BRep_Builder().Add(aF, aV) — mutate the face in
+            // place, keeping the TShape identity of Same-Domain faces shared
+            // across image lists. rcad: the pair holds a clone of the image
+            // Arc, so the image entry in myImages is located by ptr_id and
+            // mutated there.
+            self.add_internal_vertex_to_image(i, a_f_im.ptr_id(), a_v);
+        }
+    }
+
+    /// OCCT L1005: BRep_Builder().Add(aF, aV) — add the INTERNAL vertex to the
+    /// face image stored in myImages. rcad: the pair carries a clone of the
+    /// image Arc; the image is located by (source face, ptr_id) and mutated via
+    /// Arc::make_mut. A Same-Domain face shared across image lists is cloned
+    /// only when the classification accepted a truly internal vertex — the
+    /// boundary vertices of the s06 4→3 case are rejected by the
+    /// classification, so the shared SD identity is preserved.
+    fn add_internal_vertex_to_image(&mut self, i: usize, a_ptr: u64, a_v: Shape) {
+        let a_f = self.brep_sr(i);
+        if let Some(imgs) = self.my_images.get_mut(&a_f) {
+            for img in imgs.iter_mut() {
+                if img.ptr_id() != a_ptr {
+                    continue;
+                }
+                let ts = Arc::make_mut(&mut img.data);
+                if let TShape::Face(fd) = ts {
+                    fd.internal_vertices.push(a_v);
+                }
+                return;
+            }
+        }
+    }
+
+    /// OCCT IntTools_Context::ComputeVF (IntTools_Context.cxx L546-591) applied
+    /// to a face image (split piece) instead of a DS face. OCCT projects the
+    /// vertex onto the face surface and classifies the UV point with the face's
+    /// FClass2d (strictly inside → internal). rcad's FClass2d is DS-index based
+    /// and split pieces are not registered in the DS, so the piece's UV polygon
+    /// is rebuilt by projecting its wire vertices onto the piece's surface.
+    fn point_in_face_image(&self, piece: &Shape, n_v: usize) -> bool {
+        let a_p = self.ds.vertex_point_by_idx(n_v);
+        let (surf, outer_wire, a_tol_f) = match &*piece.data {
+            TShape::Face(fd) => (fd.surface.clone(), fd.outer_wire.clone(), fd.tolerance),
+            _ => return false,
+        };
+        let Some(surf) = surf else { return false; };
+        // 1. GeomAPI_ProjectPointOnSurf: closest UV of the vertex.
+        let (a_uv, a_proj) = crate::bop::closest_point_on_surface(&surf, a_p);
+        let a_dist = (a_proj - a_p).length();
+        // OCCT L597-604: aTolV + aTolF + theFuzz distance check.
+        let a_tol_v = self.ds.vertex_tolerance_by_idx(n_v);
+        let a_tol_sum = a_tol_v + a_tol_f + self.my_fuzzy_value.max(rcad_kernel::CONFUSION);
+        if a_dist > a_tol_sum {
+            return false;
+        }
+        // 2. Build the UV boundary polygon from the piece's wire vertices.
+        // OCCT IntTools_FClass2d::Init samples the boundary edges' pcurves;
+        // rcad projects the wire vertices onto the piece's surface instead.
+        let mut a_poly: Vec<glam::DVec2> = Vec::new();
+        if let TShape::Wire(wd) = &*outer_wire.data {
+            for e in &wd.edges {
+                if let TShape::Edge(ed) = &*e.data {
+                    if let TShape::Vertex(vd) = &*ed.last.data {
+                        let (uv, _) = crate::bop::closest_point_on_surface(&surf, vd.point);
+                        a_poly.push(uv);
                     }
                 }
             }
         }
+        if a_poly.len() < 3 {
+            return false;
+        }
+        // 3. On-boundary check: the vertex's UV within tolerance of any
+        //    boundary segment (OCCT FClass2d ON state — not internal).
+        let a_tol_on = a_tol_f.max(rcad_kernel::CONFUSION);
+        for i in 0..a_poly.len() {
+            let a = a_poly[i];
+            let b = a_poly[(i + 1) % a_poly.len()];
+            let ab = b - a;
+            let len2 = ab.length_squared();
+            if len2 < 1e-30 {
+                continue;
+            }
+            let ap = a_uv - a;
+            let t = (ap.dot(ab) / len2).clamp(0.0, 1.0);
+            let d = (ap - t * ab).length();
+            if d <= a_tol_on {
+                return false;
+            }
+        }
+        // 4. Strictly inside the UV polygon (OCCT IsPointInFace, ON excluded).
+        rcad_kernel::base::gprop::tri::point_in_polygon_2d(&a_poly, a_uv)
     }
 
     /// OCCT BOPAlgo_Builder::FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
@@ -2150,7 +2289,7 @@ impl<'a> Builder<'a> {
                 if let Some(imgs) = self.my_images.get(&a_f).cloned() {
                     for a_fx in &imgs {
                         // OCCT L311: if myShapesSD.IsBound(aFx) — SD face.
-                        if self.my_shapes_sd.contains_key(a_fx) {
+                        if self.my_shapes_sd.contains_key(&(a_fx.ptr_id(), a_fx.location)) {
                             if a_or_f == topods::Orientation::Internal {
                                 // OCCT L313-317: aFx.Orientation(aOrF); theLIF.Append.
                                 let mut fx = a_fx.clone();
@@ -2366,8 +2505,13 @@ impl<'a> Builder<'a> {
                 // OCCT L1505-1509: IsInternalFace on the representative face.
                 let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol) == 1;
                 if std::env::var("RCAD_MB_DEBUG").is_ok() {
-                    println!("[CF] solid={} block=[{}] repFace={} is_in={}",
-                        a_sd.ptr_id(), a_lcb.len(), a_fc, is_in);
+                    let bb = shape_bbox(a_fc_shape)
+                        .map(|(mn, mx)| format!("[{:.3},{:.3},{:.3}]-[{:.3},{:.3},{:.3}]", mn.x, mn.y, mn.z, mx.x, mx.y, mx.z))
+                        .unwrap_or_default();
+                    let edges: Vec<String> = face_edges(a_fc_shape).iter()
+                        .map(|e| format!("{}", e.ptr_id() & 0xfff)).collect();
+                    println!("[CF] solid={} block=[{}] repFace={} is_in={} bbox={} edges=[{}]",
+                        a_sd.ptr_id(), a_lcb.len(), a_fc, is_in, bb, edges.join(","));
                 }
                 if is_in {
                     // OCCT L1510-1517: the whole connexity block is IN.
@@ -2504,7 +2648,7 @@ impl<'a> Builder<'a> {
                     .push(a_s.clone());
                 // OCCT L611-614: if same-domain, bind myShapesSD[aSR] = aSx.
                 if b_flag_sd {
-                    self.my_shapes_sd.insert(a_sr, a_sx);
+                    self.my_shapes_sd.insert((a_sr.ptr_id(), a_sr.location), a_sx);
                 }
             }
         }

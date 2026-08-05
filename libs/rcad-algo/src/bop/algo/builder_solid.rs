@@ -7,6 +7,7 @@ use crate::bop::algo::{Alert, Report};
 use crate::bop::algo::shell_splitter::{make_connexity_blocks, make_shells};
 use crate::bop::ds::DS;
 use crate::bop::int_tools::context::IntToolsContext;
+use rcad_kernel::geom::CurveEval;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{self, ShapeType, TShape, TSolidData, TShellData, TFaceData, TWireData, tshape_flags};
 use std::collections::{HashSet, HashMap, VecDeque};
@@ -334,17 +335,21 @@ impl<'a> BuilderSolid<'a> {
         Self::is_hole_in_space(faces)
     }
 
-    /// OCCT IsInside (BuilderSolid.cxx L835-860) — classify a point of the
-    /// hole (reference point of its faces) relative to the solid.
+    /// OCCT IsInside (BuilderSolid.cxx L835-860) — classify the first face of
+    /// the shell relative to the solid via BOPTools_AlgoTools::ComputeState.
     fn is_inside(faces: &[Shape], solid: &Shape) -> bool {
-        let pt = Self::shell_reference_point(faces);
-        Self::point_classify(solid, pt) == 3 // TopAbs_IN
+        let Some(a_f) = faces.first() else {
+            return false;
+        };
+        Self::compute_state_on_solid(a_f, solid) == 3 // TopAbs_IN
     }
 
-    /// IsInside(aSolid, bSolid) — a point of solid a classified against solid b.
+    /// IsInside(aSolid, bSolid) — classify the first face of solid a against b.
     fn is_inside_solid(a: &Shape, b: &Shape) -> bool {
-        let pt = Self::solid_reference_point(a);
-        Self::point_classify(b, pt) == 3 // TopAbs_IN
+        let Some(a_f) = Self::first_face(a) else {
+            return false;
+        };
+        Self::compute_state_on_solid(&a_f, b) == 3 // TopAbs_IN
     }
 
     /// Classify a point relative to a solid (OCCT BRepClass3d_SolidClassifier).
@@ -355,12 +360,109 @@ impl<'a> BuilderSolid<'a> {
         clsf.my_state
     }
 
-    /// Reference point of a solid: the reference point of its outer shell faces.
-    fn solid_reference_point(solid: &Shape) -> DVec3 {
-        match Self::solid_shell_faces(solid) {
-            Some(faces) => Self::shell_reference_point(&faces),
-            None => DVec3::ZERO,
+    /// OCCT BOPTools_AlgoTools::ComputeState(aF, aSolid, aTol, aBounds)
+    /// (BOPTools_AlgoTools.cxx L660-715): try an edge of the face not on the
+    /// solid (classify the edge midpoint), else classify a point inside the face.
+    fn compute_state_on_solid(a_f: &Shape, solid: &Shape) -> u8 {
+        let solid_edges = Self::solid_edges(solid);
+        for e in face_edges(a_f) {
+            if e.as_edge().map_or(true, |ed| ed.degenerated) {
+                continue;
+            }
+            if !solid_edges.contains(&e.ptr_id()) {
+                let p = Self::edge_midpoint(&e);
+                return Self::point_classify(solid, p);
+            }
         }
+        let p = Self::face_centroid(a_f);
+        Self::point_classify(solid, p)
+    }
+
+    /// All edge ptr_ids of a solid (OCCT TopExp::MapShapes(aSolid, TopAbs_EDGE)).
+    fn solid_edges(solid: &Shape) -> HashSet<u64> {
+        let mut set: HashSet<u64> = HashSet::new();
+        let mut stack: Vec<Shape> = vec![solid.clone()];
+        while let Some(sh) = stack.pop() {
+            match &*sh.data {
+                TShape::Solid(sd) => {
+                    for x in &sd.shells {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::CompSolid(cd) => {
+                    for x in cd {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::Compound(cd) => {
+                    for x in cd {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::Shell(sd) => {
+                    for x in &sd.faces {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::Face(_) => {
+                    for e in face_edges(&sh) {
+                        set.insert(e.ptr_id());
+                    }
+                }
+                _ => {}
+            }
+        }
+        set
+    }
+
+    /// The first face of a shape (OCCT TopExp_Explorer(shape, TopAbs_FACE)).
+    fn first_face(shape: &Shape) -> Option<Shape> {
+        let mut stack: Vec<Shape> = vec![shape.clone()];
+        while let Some(sh) = stack.pop() {
+            match &*sh.data {
+                TShape::Solid(sd) => {
+                    for x in &sd.shells {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::CompSolid(cd) => {
+                    for x in cd {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::Compound(cd) => {
+                    for x in cd {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::Shell(sd) => {
+                    for x in &sd.faces {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::Face(_) => return Some(sh),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Middle point of an edge (OCCT IntTools_Tools::IntermediatePoint on the
+    /// 3D curve).
+    fn edge_midpoint(edge: &Shape) -> DVec3 {
+        if let TShape::Edge(ed) = &*edge.data {
+            if let Some(curve) = &ed.curve {
+                let t = crate::bop::int_tools::face_make_curve::intermediate_point(
+                    ed.range[0],
+                    ed.range[1],
+                );
+                return curve.point_at(t);
+            }
+            if let TShape::Vertex(vd) = &*ed.first.data {
+                return vd.point;
+            }
+        }
+        DVec3::ZERO
     }
 
     /// Canonical key of a shell face set (OCCT TopoDS_Shape map key equivalent).
@@ -368,35 +470,6 @@ impl<'a> BuilderSolid<'a> {
         let mut v: Vec<u64> = faces.iter().map(|f| f.ptr_id()).collect();
         v.sort();
         v
-    }
-
-    /// Reference point of a shell: average of its face centroids.
-    fn shell_reference_point(faces: &[Shape]) -> DVec3 {
-        if faces.is_empty() {
-            return DVec3::ZERO;
-        }
-        let mut acc = DVec3::ZERO;
-        for f in faces {
-            acc += Self::face_centroid(f);
-        }
-        acc / faces.len() as f64
-    }
-
-    /// Collect the faces of a solid's outer shell (first shell with faces).
-    fn solid_shell_faces(solid: &Shape) -> Option<Vec<Shape>> {
-        match &*solid.data {
-            TShape::Solid(sd) => {
-                for sh in &sd.shells {
-                    if let TShape::Shell(ss) = &*sh.data {
-                        if !ss.faces.is_empty() {
-                            return Some(ss.faces.clone());
-                        }
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
     }
 
     /// OCCT BOPAlgo_BuilderSolid::IsHole (BuilderSolid.cxx L823-831) via
@@ -445,7 +518,15 @@ impl<'a> BuilderSolid<'a> {
                     continue;
                 }
                 let w = (g_o - p).dot(g_n) / denom;
-                if w < parmin {
+                // OCCT L168-171: parmin = WParameter(imin) is assigned for the
+                // minimal parameter of every face unconditionally, so a later
+                // face with an equal parameter (w <= parmin) overwrites the
+                // transition. The probe face itself always sits at w=0 (the ray
+                // starts on its surface); a second copy of the same face with the
+                // reversed orientation also lands at w=0 and its Out transition
+                // then wins, which is how a degenerate double-face shell
+                // (a face in both orientations) is detected as a hole.
+                if w <= parmin {
                     parmin = w;
                     // OCCT int_cs transition: cos_dir = nSurf · dirCurve; <0 -> In,
                     // >0 -> Out (IntCurveSurface_InterUtils.pxx L856-895).

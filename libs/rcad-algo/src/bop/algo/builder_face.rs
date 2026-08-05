@@ -65,38 +65,69 @@ impl<'a> BuilderFace<'a> {
 
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
 
-    /// OCCT BOPAlgo_BuilderFace::PerformShapesToAvoid (BuilderFace.cxx L152-312).
-    /// Identifies edges with free boundaries (vertices with only one edge).
+    /// OCCT BOPAlgo_BuilderFace::PerformShapesToAvoid (BuilderFace.cxx L152-235).
+    /// Iteratively marks edges with a free boundary (a vertex used by at most
+    /// one non-avoided edge, or by two IsSame copies of one edge) as "to avoid".
     fn perform_shapes_to_avoid(&mut self) {
         // OCCT L160: myShapesToAvoid.Clear()
         self.my_shapes_to_avoid.clear();
-        // OCCT L164-310: iterate until no more edges found
+        // OCCT L164-234: iterate until no more edges are found.
         loop {
             let mut b_found = false;
-            // OCCT L173-181: build vertex→[edges] map
-            let mut a_mve: std::collections::HashMap<u64, Vec<u64>> =
-                std::collections::HashMap::new();
-            for e in &self.my_edges {
-                if self.my_shapes_to_avoid.contains(&e.ptr_id()) { continue; }
-                let verts = Self::edge_vertices(e);
-                for v in &verts {
-                    a_mve.entry(v.ptr_id()).or_default().push(e.ptr_id());
+            // OCCT L173-182: aMVE — vertex → [edges] (skipping avoided edges).
+            let mut a_mve: HashMap<u64, (Shape, Vec<Shape>)> = HashMap::new();
+            for a_e in &self.my_edges {
+                if self.my_shapes_to_avoid.contains(&a_e.ptr_id()) { continue; }
+                for a_v in Self::edge_vertices(a_e) {
+                    let entry = a_mve
+                        .entry(a_v.ptr_id())
+                        .or_insert_with(|| (a_v.clone(), Vec::new()));
+                    entry.1.push(a_e.clone());
                 }
             }
-            // OCCT L184-260: find edges whose vertices have count ≤ 1
-            for e in &self.my_edges {
-                if self.my_shapes_to_avoid.contains(&e.ptr_id()) { continue; }
-                let verts = Self::edge_vertices(e);
-                for v in &verts {
-                    let count = a_mve.get(&v.ptr_id()).map_or(0, |l| l.len());
-                    if count <= 1 {
-                        self.my_shapes_to_avoid.insert(e.ptr_id());
+            // OCCT L186-228: for each vertex decide.
+            for (_vptr, (a_v, a_le)) in &a_mve {
+                let a_nb_e = a_le.len();
+                if a_nb_e == 0 { continue; }
+                let a_e1 = &a_le[0];
+                if a_nb_e == 1 {
+                    // OCCT L198-210: single edge at the vertex.
+                    if a_e1.as_edge().map_or(true, |ed| ed.degenerated) {
+                        continue;
+                    }
+                    if a_v.orientation == rcad_kernel::topods::Orientation::Internal {
+                        continue;
+                    }
+                    b_found = true;
+                    self.my_shapes_to_avoid.insert(a_e1.ptr_id());
+                } else if a_nb_e == 2 {
+                    // OCCT L211-227: two edges at the vertex.
+                    let a_e2 = &a_le[1];
+                    if a_e2.is_partner(a_e1) {
+                        let vv = Self::edge_vertices(a_e1);
+                        if vv.len() >= 2 && vv[0].is_partner(&vv[1]) {
+                            // Degenerated ring — both ends are the same vertex.
+                            continue;
+                        }
                         b_found = true;
-                        break;
+                        self.my_shapes_to_avoid.insert(a_e1.ptr_id());
+                        self.my_shapes_to_avoid.insert(a_e2.ptr_id());
                     }
                 }
             }
             if !b_found { break; }
+        }
+    }
+
+    /// OCCT IntTools_Context::IsInfiniteFace — a face without a bounded outer
+    /// wire is treated as infinite (unbounded surface).
+    fn is_infinite_face(face: &Shape) -> bool {
+        match &*face.data {
+            TShape::Face(fd) => match &*fd.outer_wire.data {
+                TShape::Wire(wd) => wd.edges.is_empty(),
+                _ => true,
+            },
+            _ => true,
         }
     }
 
@@ -173,9 +204,9 @@ impl<'a> BuilderFace<'a> {
                             }
                         }
                     }
-                    if wire_edges.len() >= 2 {
-                        self.my_loops_internal.push(wire_edges);
-                    }
+                    // OCCT L351-381: the wire is appended unconditionally
+                    // (a single-edge wire is a valid internal wire).
+                    self.my_loops_internal.push(wire_edges);
                 }
             }
         }
@@ -189,8 +220,44 @@ impl<'a> BuilderFace<'a> {
             _ => None,
         }) { Some(v) => v, None => return };
         let a_surf = match a_surf_opt { Some(s) => s, None => return };
-        // OCCT L401-414: empty loops → infinite face
-        if self.my_loops.is_empty() { return; }
+        // OCCT L401-414: empty loops — an infinite face becomes a face without
+        // wires.
+        if self.my_loops.is_empty() {
+            let is_infinite = self
+                .my_face
+                .as_ref()
+                .map(Self::is_infinite_face)
+                .unwrap_or(false);
+            if is_infinite {
+                let natural_restriction = self
+                    .my_face
+                    .as_ref()
+                    .and_then(|f| match &*f.data {
+                        TShape::Face(fd) => Some(fd.natural_restriction),
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+                let face_tshape = TShape::Face(rcad_kernel::topods::TFaceData {
+                    my_shapes: vec![],
+                    flags: tshape_flags::DEFAULT,
+                    surface: Some(a_surf.clone()),
+                    surface_location: 0,
+                    outer_wire: Shape::null(),
+                    inner_wires: vec![],
+                    sample_point: None,
+                    uv_domain: None,
+                    internal_vertices: vec![],
+                    tolerance: a_tol,
+                    natural_restriction,
+                });
+                self.my_areas.push(Shape::new(
+                    std::sync::Arc::new(face_tshape),
+                    0,
+                    rcad_kernel::topods::Orientation::Forward,
+                ));
+            }
+            return;
+        }
 
         // OCCT L417-423: growth faces + hole faces + hole edge map
         let mut a_new_faces: Vec<Shape> = Vec::new();
