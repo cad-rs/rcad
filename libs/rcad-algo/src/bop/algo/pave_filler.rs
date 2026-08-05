@@ -4298,6 +4298,14 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     if n_e >= self.ds.nb_shapes() { continue; }
                     for m in 0..2 {
                         if !an_ef_pairs.insert((n_e, n_f[m])) { continue; }
+                        // OCCT L744-752: the section-edge MPC has SetFlag(true);
+                        // in Perform, when the edge already has a pcurve on the
+                        // face (attached by MakePCurve at section creation,
+                        // BOPAlgo_PaveFiller_6.cxx L1066-1072) it is kept — only
+                        // UpdateVertices is called. Never overwrite it with a
+                        // projection. Edges without a pcurve (null FirstCurve2d)
+                        // are projected here, matching the MPC null-branch.
+                        if self.edge_has_pcurve(n_e, n_f[m]) { continue; }
                         let f_s = self.ds.shape(n_f[m]).clone();
                         let surf2 = match &*f_s.data {
                             rcad_kernel::topods::TShape::Face(fd) => fd.surface.clone(),

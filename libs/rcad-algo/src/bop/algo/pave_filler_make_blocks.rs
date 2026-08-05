@@ -469,9 +469,32 @@ impl PaveFiller {
                     let n_e = {
                         self.append_edge(&ic_curve, a_t1, a_t2, n_v1, n_v2, a_tol_r3d)
                     };
-                    // OCCT L1026-1032: MakePCurve — rcad stores the section pcurves
-                    // on the intersection curve (already computed by FF); the edge
-                    // geometry is the trimmed 3D curve.
+                    // OCCT L1026-1032: BOPTools_AlgoTools::MakePCurve(aES, aF1,
+                    // aF2, aIC, PCurveOnS1(), PCurveOnS2(), ctx) — attach the exact
+                    // FF 2D intersection curves (aIC.FirstCurve2d/SecondCurve2d)
+                    // to the section edge, trimmed to the edge's range [aT1, aT2]
+                    // (BOPTools_AlgoTools.cxx L1657-1725).  When the pcurve is null
+                    // OCCT falls back to BuildPCurveForEdgeOnFace (projection);
+                    // rcad leaves the edge without a pcurve in that case and
+                    // make_pcurves part 2 (projection) supplies it later.
+                    let a_c2d1 = self.ds.intersection_curves[cid].pcurve1.clone();
+                    if let Some(a_c2d) = a_c2d1 {
+                        self.ds.mutate_shape_data(n_e, |ts| {
+                            if let topods::TShape::Edge(ed) = ts {
+                                ed.pcurves.insert(n_f1, (a_c2d, a_t1, a_t2));
+                            }
+                        });
+                        self.ds.remap_shape_idx(n_e);
+                    }
+                    let a_c2d2 = self.ds.intersection_curves[cid].pcurve2.clone();
+                    if let Some(a_c2d) = a_c2d2 {
+                        self.ds.mutate_shape_data(n_e, |ts| {
+                            if let topods::TShape::Edge(ed) = ts {
+                                ed.pcurves.insert(n_f2, (a_c2d, a_t1, a_t2));
+                            }
+                        });
+                        self.ds.remap_shape_idx(n_e);
+                    }
                     // OCCT L1035: aLPBC.Append(aPB)
                     self.ds.intersection_curves[cid].pave_blocks.push(a_pb.clone());
                     // OCCT: the PB is appended to the curve's PB list; its edge is
