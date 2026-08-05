@@ -59,17 +59,17 @@ impl MakeCylinder {
         let lateral_surf = Surface3::Cylinder(CylindricalSurface {
             origin: o, axis: self.z_axis, radius: r, ref_dir: self.x_axis,
         });
-        // OCCT BRepPrim_OneAxis::BottomFace/TopFace build the cap planes with
-        // gp_Pln(gp_Ax3(P, Axes.Direction(), Axes.XDirection())) — the plane
-        // frame's X direction is the cylinder's reference direction, NOT the
-        // gp_Ax3(P, Direction) default frame.  Using Plane::new (default frame)
-        // misaligns the cap UV rectangle for rotated cylinders (ref_dir != X)
-        // and shifts the FF SOnBounds boundary crossings.
+        // OCCT BRepPrim_OneAxis::BottomFace (BRepPrim_OneAxis.cxx L488-505):
+        // MakeFace with gp_Pln(axes) where axes = myAxes.Translated(V) — the
+        // plane normal is the cylinder's +Z direction (NOT -Z), u=X, v=Y.
+        // The face is then ReverseFace'd so its outward normal is -Z. rcad
+        // carries the +Z normal on the plane and the direction on the face
+        // orientation flag (BottomFace is reversed), matching make_cone.rs.
         let bot_plane = Surface3::Plane(Plane {
             origin: o,
-            normal: -self.z_axis,
+            normal: self.z_axis,
             u_dir: self.x_axis,
-            v_dir: -self.y_axis,
+            v_dir: self.y_axis,
         });
         let top_plane = Surface3::Plane(Plane {
             origin: self.local(0.0, 0.0, h),
@@ -88,7 +88,9 @@ impl MakeCylinder {
         let top_wire = t.add_twire(vec![rev(e_top)]);
 
         let f_lat = t.add_tface(Some(lateral_surf), lat_wire, vec![], None, None, vec![], true);
-        let f_bot = t.add_tface(Some(bot_plane), bot_wire, vec![], None, None, vec![], true);
+        // OCCT BRepPrim_OneAxis::BottomFace (L502): ReverseFace.
+        let f_bot_fwd = t.add_tface(Some(bot_plane), bot_wire, vec![], None, None, vec![], true);
+        let f_bot = rev(f_bot_fwd);
         let f_top = t.add_tface(Some(top_plane), top_wire, vec![], None, None, vec![], true);
 
         let shell = t.add_tshell(vec![f_lat, f_bot, f_top]);

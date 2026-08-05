@@ -104,6 +104,77 @@ fn polygon_properties(pts: &[DVec2]) -> (f64, f64) {
     (the_area, the_perimeter)
 }
 
+/// OCCT BRepTools_WireExplorer (BRepTools_WireExplorer.cxx L121-390) —
+/// reorder a wire's edges into a continuous loop following the effective
+/// edge orientations (V1 -> V2). For a closed wire the explorer starts at the
+/// first stored edge's V1 and walks the vertex-adjacency chain. Returns the
+/// edges in traversal order (only FORWARD/REVERSED edges).
+fn order_wire_edges(
+    ds: &dyn ShapeSource,
+    edges: &[(usize, Orientation)],
+) -> Vec<(usize, Orientation)> {
+    use std::collections::HashMap;
+    let n = edges.len();
+    let mut by_start: HashMap<(u64, u32), Vec<usize>> = HashMap::new();
+    let mut edge_v2: Vec<(u64, u32)> = Vec::with_capacity(n);
+    for (i, &(ei, ori)) in edges.iter().enumerate() {
+        let verts = match ds.shape_at(ei) {
+            Shape { data, .. } => match &*data {
+                TShape::Edge(ed) => (
+                    ed.first.ptr_id(),
+                    ed.first.location,
+                    ed.last.ptr_id(),
+                    ed.last.location,
+                ),
+                _ => continue,
+            },
+        };
+        // OCCT TopExp::Vertices(E, V1, V2, true): for a REVERSED edge V1 is
+        // the last vertex (traversal is reversed).
+        let v1 = if ori == Orientation::Reversed {
+            (verts.2, verts.3)
+        } else {
+            (verts.0, verts.1)
+        };
+        let v2 = if ori == Orientation::Reversed {
+            (verts.0, verts.1)
+        } else {
+            (verts.2, verts.3)
+        };
+        edge_v2.push(v2);
+        by_start.entry(v1).or_default().push(i);
+    }
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut used = vec![false; n];
+    let mut result = Vec::with_capacity(n);
+    // Closed wire: start from the first stored edge (V1 of that edge).
+    let mut cur = 0usize;
+    result.push(edges[cur]);
+    used[cur] = true;
+    let mut cur_v2 = edge_v2[cur];
+    while result.len() < n {
+        let next_opt = by_start.get(&cur_v2).and_then(|list| list.iter().copied().find(|&i| !used[i]));
+        match next_opt {
+            Some(i) => {
+                result.push(edges[i]);
+                used[i] = true;
+                cur_v2 = edge_v2[i];
+            }
+            None => break,
+        }
+    }
+    // If the walk did not visit every edge (e.g. a wire containing a closed
+    // edge — cylinder/cone lateral seam — where the first stored edge is the
+    // closed circle), the stored order already samples the boundary correctly.
+    // Fall back to the stored order rather than dropping edges.
+    if result.len() < n {
+        return edges.to_vec();
+    }
+    result
+}
+
 /// OCCT ElCLib::Parameter / ElCLib::Value on a gp_Lin2d(origin, dir) with
 /// unit direction.
 fn elclib_parameter(line_origin: DVec2, line_dir: DVec2, p: DVec2) -> f64 {
@@ -328,17 +399,44 @@ impl FClass2d {
             let mut seq_pnt2d: Vec<DVec2> = Vec::new();
 
             let mut nb_edges = wire_edge_idxs.len() as i32;
+            // OCCT BRepTools_WireExplorer: reorder the wire edges into a
+            // continuous loop before sampling. BRepPrim_GWedge stores the
+            // min-face wires REVERSED with a permuted edge list; the
+            // WireExplorer walks the vertex-adjacency chain to recover the
+            // traversal order. Sampling in stored order yields a self-crossing
+            // UV polygon. The face orientation is forced FORWARD by
+            // IntTools_FClass2d::Init (L105), so only the wire orientation is
+            // compounded into each edge (TopoDS_Iterator semantics).
+            let wire_edges_ordered: Vec<(usize, Orientation)> = {
+                let mut pairs: Vec<(usize, Orientation)> = Vec::new();
+                for (k, &ei) in wire_edge_idxs.iter().enumerate() {
+                    if ei >= ds.nb_shapes() {
+                        continue;
+                    }
+                    let stored_ori = wire_edge_shapes
+                        .get(k)
+                        .map(|s| s.orientation)
+                        .unwrap_or(Orientation::Forward);
+                    let ori = if wire_shape.orientation == Orientation::Reversed {
+                        match stored_ori {
+                            Orientation::Forward => Orientation::Reversed,
+                            Orientation::Reversed => Orientation::Forward,
+                            other => other,
+                        }
+                    } else {
+                        stored_ori
+                    };
+                    if ori != Orientation::Forward && ori != Orientation::Reversed {
+                        continue;
+                    }
+                    pairs.push((ei, ori));
+                }
+                order_wire_edges(ds, &pairs)
+            };
 
-            for (k, &ei) in wire_edge_idxs.iter().enumerate() {
+            for (_k, &(ei, ori)) in wire_edges_ordered.iter().enumerate() {
                 nb_edges -= 1;
                 if ei >= ds.nb_shapes() {
-                    continue;
-                }
-                let ori = wire_edge_shapes
-                    .get(k)
-                    .map(|s| s.orientation)
-                    .unwrap_or(Orientation::Forward);
-                if ori != Orientation::Forward && ori != Orientation::Reversed {
                     continue;
                 }
 
@@ -585,14 +683,8 @@ impl FClass2d {
                         seq_pnt2d.clear();
                         fleche_u = 0.0;
                         fleche_v = 0.0;
-                        for (k2, &ei2) in wire_edge_idxs.iter().enumerate() {
-                            let ori2 = wire_edge_shapes
-                                .get(k2)
-                                .map(|s| s.orientation)
-                                .unwrap_or(Orientation::Forward);
-                            if ori2 != Orientation::Forward && ori2 != Orientation::Reversed {
-                                continue;
-                            }
+                        // Same WireExplorer loop order as the main sampling.
+                        for &(ei2, ori2) in wire_edges_ordered.iter() {
                             if ei2 >= ds.nb_shapes() {
                                 continue;
                             }
