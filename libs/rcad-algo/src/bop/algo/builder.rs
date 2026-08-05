@@ -1262,19 +1262,20 @@ impl<'a> Builder<'a> {
             };
 
             for f_piece in &face_list {
+                // OCCT L720-740: iterate the FACE IMAGE's edges (TopExp_Explorer
+                // aF over the split piece), not the original face's boundary —
+                // two coplanar images share an identical boundary edge set.
                 let mut edge_set: Vec<(u64, u32)> = Vec::new();
-                let edges = self.ds.face_boundary_edges(n_f);
-                for &ei in &edges {
-                    if ei >= self.ds.nb_shapes() { continue; }
-                    let e_ptr = self.ds.shape(ei).ptr_id();
-                    let curve_type = match self.ds.edge_curve(ei) {
-                        Some(c) => match c {
-                            rcad_kernel::geom::Curve3::Line(_) => 0u32,
-                            rcad_kernel::geom::Curve3::Circle(_) => 1u32,
-                            rcad_kernel::geom::Curve3::Ellipse(_) => 2u32,
+                for e_shape in self.face_edges(f_piece) {
+                    let e_ptr = e_shape.ptr_id();
+                    let curve_type = match &*e_shape.data {
+                        TShape::Edge(ed) => match &ed.curve {
+                            Some(rcad_kernel::geom::Curve3::Line(_)) => 0u32,
+                            Some(rcad_kernel::geom::Curve3::Circle(_)) => 1u32,
+                            Some(rcad_kernel::geom::Curve3::Ellipse(_)) => 2u32,
                             _ => 3u32,
                         },
-                        None => 3u32,
+                        _ => 3u32,
                     };
                     edge_set.push((e_ptr, curve_type));
                 }

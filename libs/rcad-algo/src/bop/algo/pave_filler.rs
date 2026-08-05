@@ -756,12 +756,14 @@ impl PaveFiller {
         // OCCT L163-180: if (nSD != -1) update existing SD else create new
         let n_v;
         if n_sd != usize::MAX {
-            // OCCT L167-169: update existing SD vertex's point and tolerance
-            let si = self.ds.change_shape_info(n_sd);
-            if let rcad_kernel::topods::TShape::Vertex(vd) = &mut *Arc::make_mut(&mut si.shape.data) {
-                vd.point = centroid;
-                vd.tolerance = max_tol;
-            }
+            // OCCT L167-169: update existing SD vertex's point and tolerance.
+            // In-place (OCCT UpdateVertex) to keep the vertex identity.
+            self.ds.mutate_shape_data(n_sd, |ts| {
+                if let rcad_kernel::topods::TShape::Vertex(vd) = ts {
+                    vd.point = centroid;
+                    vd.tolerance = max_tol;
+                }
+            });
             self.ds.remap_shape_idx(n_sd);
             n_v = n_sd;
         } else {
@@ -3014,13 +3016,18 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // Path 1: update tolerance and box
         let tol_old = self.ds.vertex_tolerance_by_idx(n_vnew);
         if tol_new > tol_old {
+            // In-place (OCCT BRep_Builder UpdateVertex): keeps the vertex
+            // identity (DS entry + face-wire references) intact — see
+            // set_vertex_tolerance. Arc::make_mut would clone a shared vertex.
+            let pt = self.ds.vertex_point_by_idx(n_vnew);
+            self.ds.mutate_shape_data(n_vnew, |ts| {
+                if let rcad_kernel::topods::TShape::Vertex(vd) = ts {
+                    vd.tolerance = tol_new;
+                }
+            });
             let si = self.ds.change_shape_info(n_vnew);
-            if let rcad_kernel::topods::TShape::Vertex(vd) = &mut *Arc::make_mut(&mut si.shape.data) {
-                vd.tolerance = tol_new;
-                // OCCT L120-123: update bounding box (point+gap)
-                si.bbox = BndBox::from_point(vd.point);
-                si.bbox.set_gap(tol_new + rcad_kernel::CONFUSION);
-            }
+            si.bbox = BndBox::from_point(pt);
+            si.bbox.set_gap(tol_new + rcad_kernel::CONFUSION);
             self.ds.remap_shape_idx(n_vnew);
             self.my_increased_ss.insert(n_v);
         }
@@ -4316,9 +4323,17 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             uv.push(u);
         }
         if uv.len() < 2 { return None; }
-        Some(rcad_kernel::geom::Curve2d::BSpline(
-            rcad_kernel::geom::BSplineCurve2::approximate(&uv)
-        ))
+        let mut c = rcad_kernel::geom::BSplineCurve2::approximate(&uv);
+        // approximate() normalizes the parameterization to [0,1] (chord-length).
+        // OCCT pcurves are parameterized by the edge's 3D range, and the
+        // WireSplitter evaluates curve2d_point(pc, t) with the vertex parameter t
+        // in that range — rescale the knots so the stored range is the curve's
+        // own domain.
+        let (r0, r1) = (range[0], range[1]);
+        if r1 > r0 {
+            c.knots = c.knots.iter().map(|k| r0 + (r1 - r0) * k).collect();
+        }
+        Some(rcad_kernel::geom::Curve2d::BSpline(c))
     }
 
     /// OCCT BOPAlgo_PaveFiller::ProcessDE (_8.cxx L54-131).

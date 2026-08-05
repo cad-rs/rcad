@@ -590,11 +590,16 @@ impl PaveFiller {
 
     fn set_vertex_tolerance(&mut self, idx: usize, tol: f64) {
         if idx < self.ds.shapes.len() {
-            let si = self.ds.change_shape_info(idx);
-            let ts = Arc::make_mut(&mut si.shape.data);
-            if let topods::TShape::Vertex(ref mut vd) = *ts {
-                vd.tolerance = tol;
-            }
+            // In-place (OCCT BRep_Builder UpdateVertex): every reference to the
+            // vertex observes the new tolerance without cloning the TShape.
+            // Arc::make_mut would clone a shared vertex and split its identity
+            // (DS entry vs face-wire references), disconnecting the WireSplitter
+            // vertex map. Safe because the DS owns a private input copy.
+            self.ds.mutate_shape_data(idx, |ts| {
+                if let topods::TShape::Vertex(vd) = ts {
+                    vd.tolerance = tol;
+                }
+            });
             self.ds.remap_shape_idx(idx);
         }
     }
