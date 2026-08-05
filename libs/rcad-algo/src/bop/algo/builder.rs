@@ -573,7 +573,10 @@ impl<'a> Builder<'a> {
         let sub_shapes = self.shape_sub_shapes(the_s);
         let mut has_modified = false;
         for ss in &sub_shapes {
-            if let Some(imgs) = self.my_images.get(ss) {
+            // OCCT myImages.IsBound(aS) keys by TopTools_ShapeMapHasher
+            // (orientation-insensitive); the composed orientation of the
+            // sub-shape (e.g. a Reversed wire edge) must not hide its images.
+            if let Some(imgs) = self.images_of(ss) {
                 if imgs.len() != 1 || imgs[0].ptr_id() != ss.ptr_id() {
                     has_modified = true;
                     break;
@@ -591,7 +594,7 @@ impl<'a> Builder<'a> {
 
         // OCCT L247-272: iterate sub-shapes, add images or originals
         for ss in &sub_shapes {
-            let p_lss_im = self.my_images.get(ss);
+            let p_lss_im = self.images_of(ss);
             match p_lss_im {
                 None => {
                     // OCCT L253-257: no splits, add sub-shape itself

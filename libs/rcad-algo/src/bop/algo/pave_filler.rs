@@ -833,7 +833,7 @@ impl PaveFiller {
         for &(a, b) in &pairs {
             let (v, e) = if self.ds.shapes[a].shape_type == ShapeType::Vertex { (a, b) } else { (b, a) };
             let p = self.ds.vertex_point_by_idx(v);
-            eprintln!("[DBGVE] pair ({},{}) V({:.3},{:.3},{:.3}) E{}", a, b, p.x, p.y, p.z, e);
+            let _ = (v, e, p);
         }
         if i_size == 0 {
             return;
