@@ -579,6 +579,21 @@ impl PaveFiller {
         self.update_pave_blocks(&a_dm_new_sd);
         // OCCT L1136: PutSEInOtherFaces
         self.put_se_in_other_faces();
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            for (cid, ic) in self.ds.intersection_curves.iter().enumerate() {
+                let mut pbs = String::new();
+                for p in &ic.pave_blocks {
+                    let r = p.0.read().unwrap();
+                    pbs.push_str(&format!(" [e={} V({},{}) t({:.4},{:.4})]",
+                        r.edge, r.pave1.vertex_idx, r.pave2.vertex_idx,
+                        r.pave1.param, r.pave2.param));
+                }
+                println!("[MBR-END] cid={} nPB_on_curve={}{}", cid, ic.pave_blocks.len(), pbs);
+            }
+            let f26 = self.ds.face_info(26);
+            println!("[MBR-END] face26 PB_in={:?} PB_on={:?} PB_sc={:?}",
+                f26.pave_blocks_in, f26.pave_blocks_on, f26.pave_blocks_sc);
+        }
     }
 
     // ====================================================================
@@ -1933,9 +1948,16 @@ impl PaveFiller {
             if a_pb.0.read().unwrap().has_edge() {
                 continue;
             }
-            // OCCT L4348: IsMicroEdge.
+            // OCCT L4348: BOPTools_AlgoTools::IsMicroEdge(aSI, ctx, false) —
+            // checked on the section edge shape, since the section PB carries no
+            // edge reference yet (SetEdge is deferred to PostTreatFF).
             let n_e = { let r = a_pb.0.read().unwrap(); r.original_edge };
-            let is_micro = self.is_micro_edge(&a_pb);
+            let is_micro = self.is_micro_section_edge(a_si);
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                let r = a_pb.0.read().unwrap();
+                println!("[MBR] REMOVE_MICRO e={} origE={} V({},{}) t({:.4},{:.4}) is_micro={}",
+                    r.edge, n_e, r.pave1.vertex_idx, r.pave2.vertex_idx, r.pave1.param, r.pave2.param, is_micro);
+            }
             if !is_micro {
                 continue;
             }
@@ -2126,8 +2148,16 @@ impl PaveFiller {
                     if a_pb1.0.read().unwrap().has_edge() {
                         a_dm_ex_edges.insert(pb_ptr(&a_pb1), vec![pb_ptr(&a_pb1)]);
                     } else {
-                        let i_e = self.append_shape_with_box(&a_s);
-                        a_pb1.0.write().unwrap().edge = i_e;
+                        // rcad: the section edge was already appended by append_edge
+                        // in MakeBlocks; reuse that entry (OCCT appends aSx here —
+                        // PostTreatFF L1536-1540).
+                        let mut i_e = self.ds.index(&a_s);
+                        if i_e < 0 {
+                            i_e = self.append_shape_with_box(&a_s) as isize;
+                        } else {
+                            self.rebuild_edge_box(i_e as usize);
+                        }
+                        a_pb1.0.write().unwrap().edge = i_e as usize;
                     }
                 }
             }
@@ -2301,8 +2331,22 @@ impl PaveFiller {
                     if b_old {
                         a_dm_ex_edges.get_mut(&pb_ptr(&a_pb1)).unwrap().push(pb_ptr(&a_pb1));
                     } else {
-                        let i_e = self.append_shape_with_box(a_sx);
-                        a_pb1.0.write().unwrap().edge = i_e;
+                        // rcad: the section edge was already appended to the DS by
+                        // append_edge in MakeBlocks (a_sx is a clone of that entry),
+                        // whereas OCCT appends aSx here for the first time
+                        // (PostTreatFF L1536-1540). Reuse the existing entry to avoid
+                        // a duplicate DS edge; fall back to appending if absent.
+                        let mut i_e = self.ds.index(a_sx);
+                        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                            println!("[MBR] POSTTREAT-APPEND idx={} nb_shapes={} sx_type={:?}",
+                                i_e, self.ds.nb_shapes(), a_sx.shape_type());
+                        }
+                        if i_e < 0 {
+                            i_e = self.append_shape_with_box(a_sx) as isize;
+                        } else {
+                            self.rebuild_edge_box(i_e as usize);
+                        }
+                        a_pb1.0.write().unwrap().edge = i_e as usize;
                     }
                 } else {
                     let a_lpbx: Vec<SharedPB> = a_pf.ds().pave_blocks(n_sx).to_vec();
@@ -2310,6 +2354,11 @@ impl PaveFiller {
                     // micro edge check.
                     let is_micro = a_nb_lpbx == 0
                         || (a_nb_lpbx == 1 && !a_lpbx[0].0.read().unwrap().has_shrunk_data());
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        let (v1, v2) = a_pb1.0.read().unwrap().indices();
+                        println!("[MBR] POSTTREAT b_old={} hasPB={} nb_lpbx={} is_micro={} V({},{}) i_c={}",
+                            b_old, b_has_pave_blocks, a_nb_lpbx, is_micro, v1, v2, i_c);
+                    }
                     if is_micro {
                         // remove aPB1 from the curve's PB list.
                         let cid = if i_x < self.ds.interf_ff.len()

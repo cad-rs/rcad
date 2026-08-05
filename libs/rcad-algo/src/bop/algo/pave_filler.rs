@@ -192,61 +192,87 @@ impl ShrunkRange {
         a_pnt_v2: DVec3,
         a_tol_v2: f64,
     ) -> bool {
-        // OCCT L184: if (theParV2 - theParV1 < Precision::PConfusion()) return false;
-        if self.a_t2 - self.a_t1 < rcad_kernel::PCONFUSION {
-            return false;
-        }
-        // OCCT L189: bool isInfParV1, isInfParV2
-        let is_inf_par_v1 = rcad_kernel::is_infinite_value(self.a_t1);
-        let is_inf_par_v2 = rcad_kernel::is_infinite_value(self.a_t2);
-        // OCCT L191-199: aMaxPar
-        let mut a_max_par = 0.0;
-        if !is_inf_par_v1 {
-            a_max_par = self.a_t1.abs();
-        }
-        if !is_inf_par_v2 {
-            a_max_par = a_max_par.max(self.a_t2.abs());
-        }
-        // OCCT L201-202: anEps
-        let an_eps = (shrunk_range_resolution(curve, self.a_t1, self.a_t2, a_tol_e) * 0.1)
-            .max(epsilon(a_max_par))
-            .max(rcad_kernel::PCONFUSION);
-        // OCCT L204-225: first endpoint
-        if is_inf_par_v1 {
-            self.my_ts1 = self.a_t1;
-        } else {
-            if !find_nearest_valid_point(
-                curve, self.a_t1, self.a_t2, true,
-                a_pnt_v1, a_tol_v1, an_eps,
-                &mut self.my_ts1,
-            ) {
-                return false;
-            }
-            if self.a_t2 - self.my_ts1 < an_eps {
-                return false;
-            }
-        }
-        // OCCT L227-248: second endpoint
-        if is_inf_par_v2 {
-            self.my_ts2 = self.a_t2;
-        } else {
-            if !find_nearest_valid_point(
-                curve, self.a_t1, self.a_t2, false,
-                a_pnt_v2, a_tol_v2, an_eps,
-                &mut self.my_ts2,
-            ) {
-                return false;
-            }
-            if self.my_ts2 - self.a_t1 < an_eps {
-                return false;
-            }
-        }
-        // OCCT L250-255: check ordering
-        if self.my_ts1 > self.my_ts2 {
-            return false;
-        }
-        true
+        find_valid_range_params(
+            curve, self.a_t1, self.a_t2, a_tol_e,
+            a_pnt_v1, a_tol_v1, a_pnt_v2, a_tol_v2,
+            &mut self.my_ts1, &mut self.my_ts2,
+        )
     }
+}
+
+/// OCCT BRepLib::FindValidRange (BRepLib_1.cxx L173-258) with an explicit
+/// parameter range (a_t1, a_t2) instead of a ShrunkRange's PB. Used by
+/// ShrunkRange::find_valid_range and by the section-edge micro check
+/// (BOPTools_AlgoTools::IsMicroEdge), where the PB has no edge reference.
+fn find_valid_range_params(
+    curve: &Curve3,
+    a_t1: f64,
+    a_t2: f64,
+    a_tol_e: f64,
+    a_pnt_v1: DVec3,
+    a_tol_v1: f64,
+    a_pnt_v2: DVec3,
+    a_tol_v2: f64,
+    out_ts1: &mut f64,
+    out_ts2: &mut f64,
+) -> bool {
+    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+        eprintln!("[TRACE] find_valid_range_params t=[{:.6},{:.6}]", a_t1, a_t2);
+    }
+    // OCCT L184: if (theParV2 - theParV1 < Precision::PConfusion()) return false;
+    if a_t2 - a_t1 < rcad_kernel::PCONFUSION {
+        return false;
+    }
+    // OCCT L189: bool isInfParV1, isInfParV2
+    let is_inf_par_v1 = rcad_kernel::is_infinite_value(a_t1);
+    let is_inf_par_v2 = rcad_kernel::is_infinite_value(a_t2);
+    // OCCT L191-199: aMaxPar
+    let mut a_max_par = 0.0;
+    if !is_inf_par_v1 {
+        a_max_par = a_t1.abs();
+    }
+    if !is_inf_par_v2 {
+        a_max_par = a_max_par.max(a_t2.abs());
+    }
+    // OCCT L201-202: anEps
+    let an_eps = (shrunk_range_resolution(curve, a_t1, a_t2, a_tol_e) * 0.1)
+        .max(epsilon(a_max_par))
+        .max(rcad_kernel::PCONFUSION);
+    // OCCT L204-225: first endpoint
+    if is_inf_par_v1 {
+        *out_ts1 = a_t1;
+    } else {
+        if !find_nearest_valid_point(
+            curve, a_t1, a_t2, true,
+            a_pnt_v1, a_tol_v1, an_eps,
+            out_ts1,
+        ) {
+            return false;
+        }
+        if a_t2 - *out_ts1 < an_eps {
+            return false;
+        }
+    }
+    // OCCT L227-248: second endpoint
+    if is_inf_par_v2 {
+        *out_ts2 = a_t2;
+    } else {
+        if !find_nearest_valid_point(
+            curve, a_t1, a_t2, false,
+            a_pnt_v2, a_tol_v2, an_eps,
+            out_ts2,
+        ) {
+            return false;
+        }
+        if *out_ts2 - a_t1 < an_eps {
+            return false;
+        }
+    }
+    // OCCT L250-255: check ordering
+    if *out_ts1 > *out_ts2 {
+        return false;
+    }
+    true
 }
 
 // OCCT Epsilon(double) — BRepLib_1.cxx L26 — machine-epsilon scaled by value.
@@ -273,28 +299,31 @@ pub(crate) fn shrunk_range_resolution(curve: &Curve3, t1: f64, t2: f64, tol: f64
 
 // OCCT GCPnts_AbscissaPoint::Length — adaptive arc length.
 // Simplified: Simpson integration with tolerance-based subdivision.
+// Depth-limited so a pathological range (e.g. a section edge spanning many
+// periods) converges instead of overflowing the stack, mirroring the bounded
+// iteration of OCCT's AbscissaPoint.
 fn shrunk_range_arc_length(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
     if (t2 - t1).abs() < 1e-15 { return 0.0; }
-    // Simple adaptive Simpson
-    fn simpson_step(curve: &Curve3, a: f64, b: f64, fa: f64, fb: f64, fm: f64, tol: f64) -> f64 {
+    // Simple adaptive Simpson (depth-limited).
+    fn simpson_step(curve: &Curve3, a: f64, b: f64, fa: f64, fb: f64, fm: f64, tol: f64, depth: u32) -> f64 {
         let m = (a + b) * 0.5;
         let h = (b - a) * 0.5;
         let fm1 = curve.derivative_at(a + h * 0.5).length();
         let fm2 = curve.derivative_at(m + h * 0.5).length();
         let s1 = h / 3.0 * (fa + 4.0 * fm + fb);
         let s2 = h / 6.0 * (fa + 4.0 * fm1 + 2.0 * fm + 4.0 * fm2 + fb);
-        if (s2 - s1).abs() < tol {
+        if (s2 - s1).abs() < tol || depth >= 24 {
             s2
         } else {
-            let left = simpson_step(curve, a, m, fa, fm, fm1, tol * 0.5);
-            let right = simpson_step(curve, m, b, fm, fb, fm2, tol * 0.5);
+            let left = simpson_step(curve, a, m, fa, fm, fm1, tol * 0.5, depth + 1);
+            let right = simpson_step(curve, m, b, fm, fb, fm2, tol * 0.5, depth + 1);
             left + right
         }
     }
     let fa = curve.derivative_at(t1).length();
     let fb = curve.derivative_at(t2).length();
     let fm = curve.derivative_at((t1 + t2) * 0.5).length();
-    simpson_step(curve, t1, t2, fa, fb, fm, tol)
+    simpson_step(curve, t1, t2, fa, fb, fm, tol, 0)
 }
 
 // OCCT BndLib_Add3dCurve::Add — build bounding box for curve subrange.
@@ -2706,6 +2735,71 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         let a_e_range = self.ds.shapes[n_e].shape.as_edge()
             .map(|ed| ed.range).unwrap_or([0.0, 0.0]);
         self.analyze_shrunk_data(the_pb, &sr, n_e, a_e_range);
+    }
+
+    /// OCCT BOPTools_AlgoTools::IsMicroEdge (BOPTools_AlgoTools.cxx L2075-2112),
+    /// evaluated on a section edge shape.
+    ///
+    /// A section PB in MakeBlocks carries no edge reference (SetEdge is deferred
+    /// to PostTreatFF), so rcad cannot drive the micro check through the PB like
+    /// fill_shrunk_data_pb does. OCCT checks the section edge shape directly —
+    /// same here.
+    pub(crate) fn is_micro_section_edge(&self, a_e: &Shape) -> bool {
+        let a_ed = match &*a_e.data {
+            topods::TShape::Edge(ed) => ed,
+            _ => return true,
+        };
+        // OCCT L2084: bRet = (Degenerated(aE) || !IsGeometric(aE))
+        if a_ed.degenerated || a_ed.curve.is_none() {
+            return true;
+        }
+        let curve = a_ed.curve.clone().unwrap();
+        // OCCT L2090-2099: curve range and vertex parameters on the edge.
+        let (a_t1, a_t2) = (a_ed.range[0], a_ed.range[1]);
+        let (a_p1, mut a_tol_v1) = match &*a_ed.first.data {
+            topods::TShape::Vertex(vd) => (vd.point, vd.tolerance),
+            _ => return true,
+        };
+        let (a_p2, mut a_tol_v2) = match &*a_ed.last.data {
+            topods::TShape::Vertex(vd) => (vd.point, vd.tolerance),
+            _ => return true,
+        };
+        let a_tol_e = a_ed.tolerance;
+        // OCCT IntTools_ShrunkRange::Perform (IntTools_ShrunkRange.cxx L107-191).
+        let a_dtol = rcad_kernel::CONFUSION;
+        let a_pdtol = rcad_kernel::PCONFUSION;
+        if a_t2 - a_t1 < a_pdtol {
+            return true;
+        }
+        if a_tol_v1 < a_tol_e {
+            a_tol_v1 = a_tol_e;
+        }
+        if a_tol_v2 < a_tol_e {
+            a_tol_v2 = a_tol_e;
+        }
+        a_tol_v1 += a_dtol;
+        a_tol_v2 += a_dtol;
+        let mut a_ts1 = 0.0;
+        let mut a_ts2 = 0.0;
+        if !find_valid_range_params(
+            &curve, a_t1, a_t2, a_tol_e, a_p1, a_tol_v1, a_p2, a_tol_v2,
+            &mut a_ts1, &mut a_ts2,
+        ) {
+            return true;
+        }
+        if a_ts2 - a_ts1 < a_pdtol {
+            return true;
+        }
+        let mut a_ptol_e = shrunk_range_resolution(&curve, a_ts1, a_ts2, a_tol_e);
+        let a_ptol_e_min = (a_t2 - a_t1) * 0.01;
+        if a_ptol_e > a_ptol_e_min {
+            a_ptol_e = a_ptol_e_min;
+        }
+        let a_length = shrunk_range_arc_length(&curve, a_ts1, a_ts2, a_ptol_e);
+        if a_length < a_dtol {
+            return true;
+        }
+        false
     }
 
     /// OCCT BOPAlgo_PaveFiller::AnalyzeShrunkData (PaveFiller_3.cxx L766-824).

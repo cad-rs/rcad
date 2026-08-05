@@ -9,7 +9,7 @@ use crate::bop::algo::builder_face::BuilderFace;
 use crate::bop::ds::DS;
 use crate::bop::ds::pave::SharedPB;
 use crate::bop::int_tools::context::IntToolsContext;
-use rcad_kernel::geom::{CurveEval, SurfaceEval};
+use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
     TShape, TVertexData, TEdgeData, TWireData, TFaceData,
@@ -198,6 +198,579 @@ fn shape_sub_shapes_free(s: &Shape) -> Vec<Shape> {
     }
 }
 
+// ============================================================================
+// BOPTools_AlgoTools::IsInternalFace (BOPTools_AlgoTools.cxx L807-891) +
+// BOPAlgo_FillIn3DParts connexity-block classification
+// (BOPAlgo_Tools.cxx L1334-1615).
+// ============================================================================
+
+/// All edge Shapes of a face (outer + inner wires).
+/// OCCT TopExp_Explorer(aFace, TopAbs_EDGE).
+fn face_edges(face: &Shape) -> Vec<Shape> {
+    let mut out = Vec::new();
+    if let TShape::Face(fd) = &*face.data {
+        for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+            if let TShape::Wire(wd) = &*w.data {
+                for e in &wd.edges {
+                    out.push(Shape::new(e.data.clone(), e.location, e.orientation));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// All (point, tolerance) pairs of the boundary vertices of a shape.
+fn shape_vertices(s: &Shape) -> Vec<(DVec3, f64)> {
+    let mut out = Vec::new();
+    let mut stack: Vec<Shape> = vec![s.clone()];
+    while let Some(sh) = stack.pop() {
+        match &*sh.data {
+            TShape::Vertex(vd) => out.push((vd.point, vd.tolerance)),
+            TShape::Edge(ed) => {
+                stack.push(ed.first.clone());
+                stack.push(ed.last.clone());
+            }
+            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+            TShape::Face(fd) => {
+                stack.push(fd.outer_wire.clone());
+                stack.extend(fd.inner_wires.iter().cloned());
+            }
+            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
+            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned()),
+            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Compound(cd) => stack.extend(cd.iter().cloned()),
+        }
+    }
+    out
+}
+
+/// All edge Shapes of a shape (faces -> wires -> edges).
+fn shape_edges(s: &Shape) -> Vec<Shape> {
+    let mut out = Vec::new();
+    let mut stack: Vec<Shape> = vec![s.clone()];
+    while let Some(sh) = stack.pop() {
+        match &*sh.data {
+            TShape::Edge(_) => out.push(sh),
+            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+            TShape::Face(fd) => {
+                stack.push(fd.outer_wire.clone());
+                stack.extend(fd.inner_wires.iter().cloned());
+            }
+            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
+            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned()),
+            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Compound(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Vertex(_) => {}
+        }
+    }
+    out
+}
+
+/// Edge -> faces connection map of a solid.
+/// OCCT TopExp::MapShapesAndAncestors(theSolid, EDGE, FACE, theMEF).
+fn build_edge_face_map(solid: &Shape) -> HashMap<u64, Vec<Shape>> {
+    let mut map: HashMap<u64, Vec<Shape>> = HashMap::new();
+    for f in collect_solid_faces(solid) {
+        for e in face_edges(&f) {
+            map.entry(e.ptr_id()).or_default().push(f.clone());
+        }
+    }
+    map
+}
+
+/// Find the edge Shape in a face's wires with the given edge identity.
+/// OCCT BOPTools_AlgoTools::GetEdgeOnFace.
+fn find_edge_on_face(edge_ptr_id: u64, face: &Shape) -> Option<Shape> {
+    for e in face_edges(face) {
+        if e.ptr_id() == edge_ptr_id {
+            return Some(e);
+        }
+    }
+    None
+}
+
+fn edge_data(edge: &Shape) -> Option<&TEdgeData> {
+    if let TShape::Edge(ed) = &*edge.data {
+        Some(ed)
+    } else {
+        None
+    }
+}
+
+/// GetNormalToFaceOnEdge (BOPTools_AlgoTools3D.cxx L351-376).
+/// Surface normal at the edge parameter aT on the face, computed via the
+/// edge's pcurve on the face and the surface first derivatives.
+fn get_normal_to_face_on_edge(edge: &Shape, face: &Shape, a_t: f64) -> Option<DVec3> {
+    let ed = edge_data(edge)?;
+    let fd = if let TShape::Face(fd) = &*face.data {
+        fd
+    } else {
+        return None;
+    };
+    let surf = fd.surface.as_ref()?;
+    // OCCT L365: CurveOnSurface(aE, aF1, aC2D1, aTolPC) — the pcurve of the
+    // edge on the face (same parameterization as the 3D curve, SameParameter).
+    if let Some((pc, _, _)) = ed.pcurves.get(&face.index) {
+        // OCCT L367-369: aC2D1->D0(aT, aP2D).
+        let uv = pc.point_at(a_t);
+        // OCCT L371-375: aS1->D1(U, V, aP, aD1U, aD1V); aDNF1 = aDD1U ^ aDD1V.
+        let (_p, d1u, d1v) = surf.derivatives(uv.x, uv.y);
+        let n = d1u.cross(d1v);
+        if n.length_squared() >= 1e-24 {
+            return Some(n.normalize());
+        }
+    }
+    // Fallback when the edge pcurve is not addressable by the face index (the
+    // draft solid faces are synthetic wrappers with index == usize::MAX):
+    // evaluate the surface normal at the domain center.  For planar faces this
+    // equals the OCCT GetNormalToFaceOnEdge result (the normal is constant).
+    let dom = surf.default_domain();
+    let u = if dom[0].is_finite() && dom[1].is_finite() {
+        0.5 * (dom[0] + dom[1])
+    } else {
+        0.0
+    };
+    let v = if dom[2].is_finite() && dom[3].is_finite() {
+        0.5 * (dom[2] + dom[3])
+    } else {
+        0.0
+    };
+    let n = surf.normal_at(u, v);
+    if n.length_squared() < 1e-24 {
+        return None;
+    }
+    Some(n.normalize())
+}
+
+/// EdgeTangent (BOPTools_AlgoTools2D.cxx L74-98).
+/// Unit tangent of the edge curve at aT, reversed for REVERSED edges.
+/// Returns None for degenerated edges or zero-length tangents.
+fn edge_tangent(edge: &Shape, a_t: f64) -> Option<DVec3> {
+    let ed = edge_data(edge)?;
+    if ed.degenerated {
+        return None;
+    }
+    let curve = ed.curve.as_ref()?;
+    let mut tg = curve.tangent_at(a_t);
+    let m = tg.length();
+    if m < 1e-12 {
+        return None;
+    }
+    tg /= m;
+    if edge.orientation == topods::Orientation::Reversed {
+        tg = -tg;
+    }
+    Some(tg)
+}
+
+/// GetFaceDir (BOPTools_AlgoTools.cxx L2118-2160).
+/// Computes the face normal aDN at the edge parameter aT (reversed for
+/// REVERSED faces) and the bi-normal direction aDB = aDN ^ aDTgt.
+/// Returns None when the directions cannot be computed reliably.
+/// (The FindPointInFace bi-normal refinement is not reproduced here; for
+/// planar faces aDB = aDN ^ aDTgt already points into the face.)
+fn get_face_dir(
+    a_e: &Shape,
+    a_f: &Shape,
+    _a_p: DVec3,
+    a_t: f64,
+    a_dtgt: DVec3,
+) -> Option<(DVec3, DVec3)> {
+    // OCCT L2133-2137: normal on edge, reversed for REVERSED faces.
+    let mut dn = get_normal_to_face_on_edge(a_e, a_f, a_t)?;
+    if a_f.orientation == topods::Orientation::Reversed {
+        dn = -dn;
+    }
+    // OCCT L2140: aDB = aDN ^ aDTgt.
+    let db = dn.cross(a_dtgt);
+    Some((dn, db))
+}
+
+/// Signed angle from d1 to d2 around the reference axis d_ref.
+/// OCCT BOPTools_AlgoTools::AngleWithRef (L1938-1967).
+fn angle_with_ref(d1: DVec3, d2: DVec3, d_ref: DVec3) -> f64 {
+    let half_pi = std::f64::consts::FRAC_PI_2;
+    let cross = d1.cross(d2);
+    let sinus = cross.length();
+    let cosinus = d1.dot(d2);
+    let beta = if sinus >= 0.0 {
+        half_pi * (1.0 - cosinus)
+    } else {
+        std::f64::consts::TAU - half_pi * (3.0 + cosinus)
+    };
+    if cross.dot(d_ref) < 0.0 {
+        -beta
+    } else {
+        beta
+    }
+}
+
+/// GetFaceOff (BOPTools_AlgoTools.cxx L994-1102) — select the candidate face
+/// whose bi-normal direction has the minimal angle to the reference face's
+/// bi-normal, computed in the plane perpendicular to the edge tangent.
+///
+/// candidates: (edge_in_face, face) pairs.  Returns `(aFOff, bRet)` where
+/// `bRet` is false when the minimal angle can not be found reliably.
+fn get_face_off(
+    the_e1: &Shape,
+    the_f1: &Shape,
+    candidates: &[(Shape, Shape)],
+) -> (Option<Shape>, bool) {
+    // OCCT L1012-1016: 3D curve, intermediate point, point on the curve.
+    let ed1 = match edge_data(the_e1) {
+        Some(e) => e,
+        None => return (None, false),
+    };
+    let curve1 = match ed1.curve.as_ref() {
+        Some(c) => c,
+        None => return (None, false),
+    };
+    let a_t = crate::bop::int_tools::face_make_curve::intermediate_point(
+        ed1.range[0],
+        ed1.range[1],
+    );
+    let a_px = curve1.point_at(a_t);
+
+    // OCCT L1018-1020: EdgeTangent(theE1, aT, aVTgt); aDTgt = Dir(aVTgt);
+    // aOr = theE1.Orientation().
+    let a_dtgt = match edge_tangent(the_e1, a_t) {
+        Some(v) => v,
+        None => return (None, false),
+    };
+    let a_or = the_e1.orientation;
+
+    // OCCT L1026-1037: GetFaceDir(theE1, theF1, ...) → (aDN1, aDBF).
+    let (a_dn1, a_dbf1) = match get_face_dir(the_e1, the_f1, a_px, a_t, a_dtgt) {
+        Some(d) => d,
+        None => return (None, false),
+    };
+    // OCCT L1038: aDTF = aDN1 ^ aDBF.
+    let a_dtf = a_dn1.cross(a_dbf1);
+
+    // OCCT L1012: aAngleMin = 100.  L1042: anAngleCriteria = Precision::Confusion().
+    let two_pi = std::f64::consts::TAU;
+    let mut a_angle_min = 100.0;
+    let an_angle_criteria = rcad_kernel::CONFUSION;
+    // OCCT L1044: bRet = true.
+    let mut b_ret = true;
+    let mut a_f_off: Option<Shape> = None;
+
+    // OCCT L1045-1100: iterate the candidates.
+    for (a_e2, a_f2) in candidates {
+        // OCCT L1052: aDTgt2 = (aE2.Orientation() == aOr) ? aDTgt : aDTgt.Reversed().
+        let mut a_dtgt2 = a_dtgt;
+        if a_e2.orientation != a_or {
+            a_dtgt2 = -a_dtgt2;
+        }
+        // OCCT L1053-1061: GetFaceDir(aE2, aF2, ...) → (aDN2, aDBF2).
+        // When it fails, bIsComputed=false and aDBF2 keeps the fallback value.
+        let b_is_computed = get_face_dir(a_e2, a_f2, a_px, a_t, a_dtgt2);
+        let (_a_dn2, a_dbf2) = match b_is_computed {
+            Some(d) => d,
+            None => (DVec3::ZERO, DVec3::ZERO),
+        };
+        // OCCT L1063: aAngle = AngleWithRef(aDBF, aDBF2, aDTF).
+        let mut a_angle = angle_with_ref(a_dbf1, a_dbf2, a_dtf);
+        // OCCT L1065-1082: near-zero angle handling.
+        if a_angle.abs() < rcad_kernel::ANGULAR {
+            if a_f2.ptr_id() == the_f1.ptr_id() {
+                a_angle = std::f64::consts::PI;
+            } else if b_is_computed.is_none() {
+                a_angle = two_pi;
+            }
+        }
+        // OCCT L1085-1089: the minimal angle can not be found.
+        if a_angle.abs() < an_angle_criteria
+            || (a_angle - a_angle_min).abs() < an_angle_criteria
+        {
+            b_ret = false;
+        }
+        // OCCT L1091-1094: normalize to [0, 2*PI).
+        if a_angle < 0.0 {
+            a_angle = two_pi + a_angle;
+        }
+        // OCCT L1096-1100: the minimal angle wins.
+        if a_angle < a_angle_min {
+            a_angle_min = a_angle;
+            a_f_off = Some(a_f2.clone());
+        }
+    }
+    (a_f_off, b_ret)
+}
+
+/// IsInternalFace core (BOPTools_AlgoTools.cxx L939-990) — angle-based check
+/// of `the_face` against the pair (the_face1, the_face2) sharing `the_edge`.
+/// Returns 0 = not IN, 1 = IN, 2 = unable.
+fn is_internal_face_core(
+    the_face: &Shape,
+    the_edge: &Shape,
+    the_face1: &Shape,
+    the_face2: &Shape,
+) -> i32 {
+    // OCCT L950-966: edge copies on both faces.
+    let a_e1 = match find_edge_on_face(the_edge.ptr_id(), the_face1) {
+        Some(e) => e,
+        None => return 0,
+    };
+    // OCCT L951-966: for an INTERNAL edge, or when the two faces are the same,
+    // aE2 = aE1 with FORWARD/REVERSED orientations; otherwise the edge as it
+    // appears in the second face.
+    let (a_e1_used, a_e2) = if a_e1.orientation == topods::Orientation::Internal
+        || the_face1.ptr_id() == the_face2.ptr_id()
+    {
+        let mut e1 = a_e1.clone();
+        e1.orientation = topods::Orientation::Forward;
+        let mut e2 = a_e1.clone();
+        e2.orientation = topods::Orientation::Reversed;
+        (e1, e2)
+    } else {
+        let e2 = find_edge_on_face(the_edge.ptr_id(), the_face2).unwrap_or_else(|| a_e1.clone());
+        (a_e1.clone(), e2)
+    };
+
+    // OCCT L968-974: candidates (theEdge, theFace) and (aE2, theFace2).
+    let candidates = [
+        (the_edge.clone(), the_face.clone()),
+        (a_e2.clone(), the_face2.clone()),
+    ];
+
+    // OCCT L976-989: GetFaceOff — the minimal-angle face; bRet=false means
+    // the minimal angle can not be found (iRet = 2).
+    let (a_f_off, is_done) = get_face_off(&a_e1_used, the_face1, &candidates);
+    if !is_done {
+        return 2;
+    }
+    match a_f_off {
+        Some(f) if f.ptr_id() == the_face.ptr_id() => 1,
+        _ => 0,
+    }
+}
+
+/// IsInternalFace (BOPTools_AlgoTools.cxx L807-891) — checks whether
+/// `the_face` is internal to `the_solid`.  First tries the edge-angle method
+/// on the solid's edge -> face map `a_mef`, then falls back to ComputeState.
+/// `the_tol` = Precision::Confusion() (used by the ComputeState fallback).
+fn is_internal_face(
+    the_face: &Shape,
+    the_solid: &Shape,
+    a_mef: &HashMap<u64, Vec<Shape>>,
+    the_tol: f64,
+) -> i32 {
+    let mut i_ret = 0;
+    let mut found_edge = false;
+    for a_e in face_edges(the_face) {
+        // OCCT L832-846: edge on the solid, not INTERNAL, not degenerated.
+        let Some(a_lf) = a_mef.get(&a_e.ptr_id()) else {
+            continue;
+        };
+        if a_e.orientation == topods::Orientation::Internal {
+            continue;
+        }
+        if edge_data(&a_e).map_or(true, |ed| ed.degenerated) {
+            continue;
+        }
+        let a_nb_f = a_lf.len();
+        if a_nb_f == 1 {
+            // OCCT L851-861: single neighbor face — internal edge of a membrane.
+            let a_f1 = &a_lf[0];
+            let e_on_f1 = find_edge_on_face(a_e.ptr_id(), a_f1);
+            if let Some(ef1) = e_on_f1 {
+                if ef1.orientation == topods::Orientation::Internal {
+                    i_ret = is_internal_face_core(the_face, &a_e, a_f1, a_f1);
+                    found_edge = true;
+                    break;
+                }
+            }
+            continue;
+        } else if a_nb_f == 2 {
+            // OCCT L864-873: two neighbor faces — angle-based method.
+            let a_f1 = &a_lf[0];
+            let a_f2 = &a_lf[1];
+            i_ret = is_internal_face_core(the_face, &a_e, a_f1, a_f2);
+            if i_ret != 2 {
+                found_edge = true;
+                break;
+            }
+        }
+    }
+    if found_edge && i_ret != 2 {
+        return i_ret;
+    }
+    // OCCT L882-891: ComputeState fallback.
+    if compute_state_face(the_face, the_solid, the_tol) == 3 {
+        1
+    } else {
+        0
+    }
+}
+
+/// ComputeState (BOPTools_AlgoTools.cxx L660-715) — classify a face against a
+/// solid: try an edge of the face not on the solid (classify the edge
+/// midpoint), else classify a point inside the face.
+fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f64) -> u8 {
+    let solid_edges: HashSet<u64> = collect_solid_faces(the_solid)
+        .iter()
+        .flat_map(|f| face_edges(f))
+        .map(|e| e.ptr_id())
+        .collect();
+    for e in face_edges(the_face) {
+        if edge_data(&e).map_or(true, |ed| ed.degenerated) {
+            continue;
+        }
+        if !solid_edges.contains(&e.ptr_id()) {
+            // OCCT L683-685: classify the middle point of the edge.
+            let p = edge_midpoint(&e);
+            let mut clsf =
+                crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(
+                    the_solid,
+                );
+            clsf.perform(p, the_tol);
+            return clsf.my_state;
+        }
+    }
+    // OCCT L688-712: all edges on the solid — classify a point inside the face.
+    let p = face_centroid(the_face);
+    let mut clsf = crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(
+        the_solid,
+    );
+    clsf.perform(p, the_tol);
+    clsf.my_state
+}
+
+/// Middle point of an edge — OCCT ComputeState(edge) uses
+/// IntTools_Tools::IntermediatePoint (L778) for the parameter.
+fn edge_midpoint(edge: &Shape) -> DVec3 {
+    match edge_data(edge) {
+        Some(ed) => {
+            if let Some(curve) = &ed.curve {
+                let t = crate::bop::int_tools::face_make_curve::intermediate_point(
+                    ed.range[0],
+                    ed.range[1],
+                );
+                curve.point_at(t)
+            } else if let TShape::Vertex(vd) = &*ed.first.data {
+                vd.point
+            } else {
+                DVec3::ZERO
+            }
+        }
+        None => DVec3::ZERO,
+    }
+}
+
+/// Compute face centroid from its bounding vertices.
+fn face_centroid(face: &Shape) -> DVec3 {
+    match &*face.data {
+        TShape::Face(fd) => {
+            let mut pts: Vec<DVec3> = Vec::new();
+            if let TShape::Wire(wd) = &*fd.outer_wire.data {
+                for e in &wd.edges {
+                    if let TShape::Edge(ed) = &*e.data {
+                        if let TShape::Vertex(vd) = &*ed.first.data {
+                            pts.push(vd.point);
+                        }
+                        if let TShape::Vertex(vd) = &*ed.last.data {
+                            pts.push(vd.point);
+                        }
+                    }
+                }
+            }
+            if pts.is_empty() {
+                return DVec3::ZERO;
+            }
+            pts.iter().sum::<DVec3>() / pts.len() as f64
+        }
+        _ => DVec3::ZERO,
+    }
+}
+
+/// Bounding box of a shape — vertices plus sampled edge-curve points
+/// (semantic equivalent of OCCT BRepBndLib::Add, which also covers curve
+/// extents beyond the boundary vertices).
+fn shape_bbox(s: &Shape) -> Option<(DVec3, DVec3)> {
+    let mut min = DVec3::splat(f64::INFINITY);
+    let mut max = DVec3::splat(f64::NEG_INFINITY);
+    let mut any = false;
+    for (p, _tol) in shape_vertices(s) {
+        if !p.is_finite() {
+            continue;
+        }
+        min = min.min(p);
+        max = max.max(p);
+        any = true;
+    }
+    for e in shape_edges(s) {
+        if let Some(ed) = edge_data(&e) {
+            if let Some(curve) = &ed.curve {
+                let [t1, t2] = ed.range;
+                for k in 0..=8 {
+                    let t = t1 + (t2 - t1) * (k as f64) / 8.0;
+                    let p = curve.point_at(t);
+                    if !p.is_finite() {
+                        continue;
+                    }
+                    min = min.min(p);
+                    max = max.max(p);
+                    any = true;
+                }
+            }
+        }
+    }
+    if any {
+        Some((min, max))
+    } else {
+        None
+    }
+}
+
+/// MakeConnexityBlock (BOPAlgo_FillIn3DParts member, BOPAlgo_Tools.cxx L1555-1615).
+///
+/// Collects the connexity block of faces (indices into `faces`) reachable
+/// from `f_start` through edges not on the solid boundary (`a_mse`) and not
+/// degenerated.  Faces touching a solid boundary edge are recorded in
+/// `a_face_to_classify` (the first such face) as the block representative.
+fn make_connexity_block(
+    f_start: usize,
+    a_mse: &HashSet<u64>,
+    a_mefp: &HashMap<u64, Vec<usize>>,
+    a_mf_done: &mut HashSet<usize>,
+    a_lcb: &mut Vec<usize>,
+    a_face_to_classify: &mut Option<usize>,
+    faces: &[Shape],
+) {
+    // OCCT L1566-1570: add the start element.
+    a_lcb.push(f_start);
+    if a_mefp.is_empty() {
+        return;
+    }
+    // OCCT L1572-1614: iterate the growing block (breadth-first).
+    let mut i = 0;
+    while i < a_lcb.len() {
+        let a_f = a_lcb[i];
+        i += 1;
+        for a_e in face_edges(&faces[a_f]) {
+            // OCCT L1589-1596: border edge of the solid.
+            if a_mse.contains(&a_e.ptr_id())
+                || edge_data(&a_e).map_or(false, |ed| ed.degenerated)
+            {
+                if a_face_to_classify.is_none() {
+                    *a_face_to_classify = Some(a_f);
+                }
+                continue;
+            }
+            // OCCT L1598-1611: expand through faces sharing this edge.
+            if let Some(p_lf) = a_mefp.get(&a_e.ptr_id()) {
+                for &a_f_to_add in p_lf {
+                    if a_mf_done.insert(a_f_to_add) {
+                        a_lcb.push(a_f_to_add);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// OCCT BOPAlgo_BOP::TypeToExplore (BOPAlgo_BOP.cxx L1574-1597).
 fn type_to_explore(the_dim: i32) -> topods::ShapeType {
     match the_dim {
@@ -360,6 +933,10 @@ impl<'a> Builder<'a> {
                     n_brep_shells: sh,
                     n_brep_solids: so,
                 });
+                if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                    println!("[BLD-SNAP] {} V={} E={} F={} Shell={} Solid={}",
+                        $name, v, e, f, sh, so);
+                }
             }};
         }
         let partial = |s: &Option<topods::BRep>| s.clone().unwrap_or_default();
@@ -743,6 +1320,10 @@ impl<'a> Builder<'a> {
             let a_nb_pb_on = a_fi.pave_blocks_on.len();
             let a_nb_pb_sc = a_fi.pave_blocks_sc.len();
             let a_nb_av = a_liav.len();
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                println!("[BLD-F] face={} PB_in={} PB_on={} PB_sc={} nAV={}",
+                    i, a_nb_pb_in, a_nb_pb_on, a_nb_pb_sc, a_nb_av);
+            }
             // OCCT L293-296: not complete -> skip.
             if a_nb_pb_in == 0 && a_nb_pb_on == 0 && a_nb_pb_sc == 0 && a_nb_av == 0 {
                 continue;
@@ -911,6 +1492,9 @@ impl<'a> Builder<'a> {
             a_bf.my_edges = a_le.clone();
             a_bf.perform();
             // OCCT L527-531: aFacesIm.Add(myDS->Index(aBF.Face()), aBF.Areas()).
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                println!("[BLD-F] face={} n_edges={} n_areas={}", fi, a_le.len(), a_bf.my_areas.len());
+            }
             if !a_bf.my_areas.is_empty() {
                 a_faces_im.entry(*fi).or_default().extend(a_bf.my_areas);
             }
@@ -1478,6 +2062,19 @@ impl<'a> Builder<'a> {
                 a_lfaces.push(a_s.clone());
             }
         }
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            println!("[F3DP] nFaces={}", a_lfaces.len());
+            let mut n_img = 0;
+            for i in 0..a_nb_s {
+                if self.ds.shape_info(i).shape_type != topods::ShapeType::Face { continue; }
+                let a_s = self.brep_sr(i);
+                if let Some(imgs) = self.my_images.get(&a_s) {
+                    n_img += imgs.len();
+                    println!("[F3DP] srcFace={} nImages={}", i, imgs.len());
+                }
+            }
+            println!("[F3DP] totalImages={}", n_img);
+        }
         // OCCT L154-195: get all solids, build draft solids.
         let mut a_lsolids: Vec<Shape> = Vec::new();
         let mut a_solids_if: HashMap<u64, Vec<Shape>> = HashMap::new();
@@ -1626,14 +2223,18 @@ impl<'a> Builder<'a> {
         )
     }
 
-    /// OCCT BOPAlgo_Tools::ClassifyFaces (BOPAlgo_Tools.cxx L1622-1747) —
-    /// semantic translation: classifies a point of each face against each
-    /// DRAFT solid (the OCCT target is aLSolids = the draft solids, not the
-    /// source solids; BOPAlgo_FillIn3DParts::Perform uses mySolid).  The BVH
-    /// box culling and connexity-block optimizations are omitted; the
-    /// point-in-solid test is delegated to the SolidClassifier.  The solid's
-    /// own faces (and its internal faces) are excluded from the classification
-    /// (OCCT BOPAlgo_FillIn3DParts::Perform aMSF filter).
+    /// OCCT BOPAlgo_Tools::ClassifyFaces (BOPAlgo_Tools.cxx L1622-1747) +
+    /// BOPAlgo_FillIn3DParts::Perform (BOPAlgo_Tools.cxx L1334-1519).
+    ///
+    /// Classifies result faces relatively draft solids using connexity blocks:
+    ///   1. Selects the faces not belonging to the solid (L1380-1393).
+    ///   2. Groups them into connexity blocks connected through edges not on
+    ///      the solid boundary (MakeConnexityBlock, L1555-1615).
+    ///   3. Classifies a single representative face of each block with
+    ///      IsInternalFace (L1505-1509) and marks the whole block IN together.
+    ///
+    /// The solid's own faces (and its internal faces) are excluded from the
+    /// classification (OCCT BOPAlgo_FillIn3DParts::Perform aMSF filter).
     fn classify_faces(
         &self,
         faces: &[Shape],
@@ -1643,58 +2244,144 @@ impl<'a> Builder<'a> {
         let mut in_parts: HashMap<u64, Vec<Shape>> = HashMap::new();
         for a_sd in solids {
             // aMSF = own faces of the draft solid + its internal faces.
+            // aMSE = edges of the draft solid (OCCT L1366-1368).
             let mut a_msf: HashSet<u64> = HashSet::new();
+            let mut a_mse: HashSet<u64> = HashSet::new();
             for f in collect_solid_faces(a_sd) {
                 a_msf.insert(f.ptr_id());
+                for e in face_edges(&f) {
+                    a_mse.insert(e.ptr_id());
+                }
             }
             if let Some(lif) = a_solids_if.get(&a_sd.ptr_id()) {
                 for f in lif {
                     a_msf.insert(f.ptr_id());
                 }
             }
-            for a_f in faces {
-                // OCCT L1389: skip the solid's own faces.
+
+            // OCCT L1380-1393: select the faces whose bounding box interferes
+            // with the solid's box and which are not the solid's own faces.
+            // (OCCT builds a BVH tree of face boxes; the interference test is
+            // equivalent here, BOPTools_BoxTreeSelector.)
+            let solid_bbox = shape_bbox(a_sd);
+            let mut a_ivec: Vec<usize> = Vec::new();
+            for (i, a_f) in faces.iter().enumerate() {
                 if a_msf.contains(&a_f.ptr_id()) {
                     continue;
                 }
-                // Compute face centroid for classification.
-                let centroid = Self::face_centroid(a_f);
-                // OCCT L1505-1509: IsInternalFace → point-in-solid against the
-                // draft solid aSd (BOPAlgo_FillIn3DParts::Perform mySolid).
-                let mut clsf =
-                    crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(a_sd);
-                clsf.perform(centroid, 1e-7);
-                if clsf.my_state == 3 {
-                    // IN
-                    in_parts.entry(a_sd.ptr_id()).or_default().push(a_f.clone());
+                if let Some((smin, smax)) = solid_bbox {
+                    let Some((fmin, fmax)) = shape_bbox(a_f) else {
+                        continue;
+                    };
+                    if fmax.x < smin.x
+                        || fmin.x > smax.x
+                        || fmax.y < smin.y
+                        || fmin.y > smax.y
+                        || fmax.z < smin.z
+                        || fmin.z > smax.z
+                    {
+                        continue;
+                    }
+                }
+                a_ivec.push(i);
+            }
+            // OCCT L1398-1403: sort the selected indices.
+            a_ivec.sort_unstable();
+
+            // OCCT L1405-1417: the solid has no faces -> all selected faces are IN.
+            if a_msf.is_empty() {
+                for &i in &a_ivec {
+                    in_parts.entry(a_sd.ptr_id()).or_default().push(faces[i].clone());
+                }
+                continue;
+            }
+
+            // OCCT L1419-1428: EF map of the faces to process.
+            let mut a_mefp: HashMap<u64, Vec<usize>> = HashMap::new();
+            for &i in &a_ivec {
+                for e in face_edges(&faces[i]) {
+                    a_mefp.entry(e.ptr_id()).or_default().push(i);
+                }
+            }
+
+            // OCCT L1498-1502: EF map of the solid (built once).
+            let a_mef = build_edge_face_map(a_sd);
+
+            // OCCT L1508: Precision::Confusion() — tolerance of the IsInternalFace
+            // classification (used by the ComputeState fallback).
+            let the_tol = rcad_kernel::CONFUSION;
+
+            // OCCT L1437-1438: fence map to avoid processing faces twice.
+            let mut a_mf_done: HashSet<usize> = HashSet::new();
+
+            // OCCT L1444-1518: main classification loop over connexity blocks.
+            for &k in &a_ivec {
+                if !a_mf_done.insert(k) {
+                    continue;
+                }
+
+                // OCCT L1460-1465: make the connexity block of face k.
+                let mut a_lcb: Vec<usize> = Vec::new();
+                let mut a_face_to_classify: Option<usize> = None;
+                make_connexity_block(
+                    k,
+                    &a_mse,
+                    &a_mefp,
+                    &mut a_mf_done,
+                    &mut a_lcb,
+                    &mut a_face_to_classify,
+                    faces,
+                );
+
+                // OCCT L1467-1491: fast check that all block vertices interfere
+                // with the solid's bounding box; otherwise the block is out.
+                if let Some((smin, smax)) = solid_bbox {
+                    let mut b_out = false;
+                    for &bfi in &a_lcb {
+                        for (p, gap) in shape_vertices(&faces[bfi]) {
+                            if p.x - gap > smax.x
+                                || p.x + gap < smin.x
+                                || p.y - gap > smax.y
+                                || p.y + gap < smin.y
+                                || p.z - gap > smax.z
+                                || p.z + gap < smin.z
+                            {
+                                b_out = true;
+                                break;
+                            }
+                        }
+                        if b_out {
+                            break;
+                        }
+                    }
+                    if b_out {
+                        continue;
+                    }
+                }
+
+                // OCCT L1493-1496: representative face for the classification.
+                let a_fc = a_face_to_classify.unwrap_or(k);
+                let a_fc_shape = &faces[a_fc];
+
+                // OCCT L1505-1509: IsInternalFace on the representative face.
+                let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol) == 1;
+                if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                    println!("[CF] solid={} block=[{}] repFace={} is_in={}",
+                        a_sd.ptr_id(), a_lcb.len(), a_fc, is_in);
+                }
+                if is_in {
+                    // OCCT L1510-1517: the whole connexity block is IN.
+                    let entry = in_parts.entry(a_sd.ptr_id()).or_default();
+                    for &bfi in &a_lcb {
+                        let bf = &faces[bfi];
+                        if !entry.iter().any(|s| s.ptr_id() == bf.ptr_id()) {
+                            entry.push(bf.clone());
+                        }
+                    }
                 }
             }
         }
         in_parts
-    }
-
-    /// Compute face centroid from its bounding vertices.
-    fn face_centroid(face: &Shape) -> DVec3 {
-        match &*face.data {
-            TShape::Face(fd) => {
-                let mut pts: Vec<DVec3> = Vec::new();
-                if let TShape::Wire(wd) = &*fd.outer_wire.data {
-                    for e in &wd.edges {
-                        if let TShape::Edge(ed) = &*e.data {
-                            if let TShape::Vertex(vd) = &*ed.first.data {
-                                pts.push(vd.point);
-                            }
-                            if let TShape::Vertex(vd) = &*ed.last.data {
-                                pts.push(vd.point);
-                            }
-                        }
-                    }
-                }
-                if pts.is_empty() { return DVec3::ZERO; }
-                pts.iter().sum::<DVec3>() / pts.len() as f64
-            }
-            _ => DVec3::ZERO,
-        }
     }
 
     /// OCCT BOPAlgo_Builder::BuildSplitSolids (BOPAlgo_Builder_3.cxx L413-618).
@@ -1734,6 +2421,10 @@ impl<'a> Builder<'a> {
                 .get(&a_s)
                 .cloned()
                 .unwrap_or_default();
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                let nd = a_sd.as_solid().map(|s| s.shells.len()).unwrap_or(0);
+                println!("[BSS] solid={} nInFaces={} draftShells={}", a_s.ptr_id(), p_lfin.len(), nd);
+            }
             if p_lfin.is_empty() {
                 let idx = *a_solids_im_idx.entry(a_s.ptr_id()).or_insert_with(|| {
                     a_solids_im.push((a_s.clone(), Vec::new()));
@@ -1764,8 +2455,14 @@ impl<'a> Builder<'a> {
             }
             // OCCT L514-517: BOPAlgo_SplitSolid for THIS solid only.
             let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(&self.ds);
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                println!("[BSS] solid={} nInputShapes={}", a_s.ptr_id(), a_sfs.len());
+            }
             bs.my_shapes = a_sfs;
             bs.perform();
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                println!("[BSS] solid={} nResultSolids={}", a_s.ptr_id(), bs.my_solids.len());
+            }
             // OCCT L542: aSolidsIm.Add(aBS.Solid(), aBS.Areas()).
             let idx = *a_solids_im_idx.entry(a_s.ptr_id()).or_insert_with(|| {
                 a_solids_im.push((a_s.clone(), Vec::new()));
