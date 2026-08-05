@@ -150,6 +150,54 @@ fn collect_solid_faces(s: &Shape) -> Vec<Shape> {
     result
 }
 
+/// OCCT TopoDS_Shape::Reverse — flips the orientation.
+fn flip_orientation(o: topods::Orientation) -> topods::Orientation {
+    match o {
+        topods::Orientation::Forward => topods::Orientation::Reversed,
+        topods::Orientation::Reversed => topods::Orientation::Forward,
+        topods::Orientation::Internal => topods::Orientation::External,
+        topods::Orientation::External => topods::Orientation::Internal,
+    }
+}
+
+/// OCCT BRep_Tool::IsClosed(aShell) — a shell is closed when every edge is
+/// shared by exactly two faces.
+fn shell_is_closed(faces: &[Shape]) -> bool {
+    let mut edge_count: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    for f in faces {
+        for w in shape_sub_shapes_free(f) {
+            for e in shape_sub_shapes_free(&w) {
+                *edge_count.entry(e.ptr_id()).or_insert(0) += 1;
+            }
+        }
+    }
+    !edge_count.is_empty() && edge_count.values().all(|&c| c == 2)
+}
+
+/// Walk the direct sub-shapes of a Shape (module-level helper; a Face yields
+/// its wires, a Wire yields its edges).
+fn shape_sub_shapes_free(s: &Shape) -> Vec<Shape> {
+    match &*s.data {
+        TShape::Face(fd) => {
+            let mut v = vec![Shape::new(
+                fd.outer_wire.data.clone(),
+                fd.outer_wire.location,
+                fd.outer_wire.orientation,
+            )];
+            v.extend(fd.inner_wires.iter().map(|w| {
+                Shape::new(w.data.clone(), w.location, w.orientation)
+            }));
+            v
+        }
+        TShape::Wire(wd) => wd
+            .edges
+            .iter()
+            .map(|e| Shape::new(e.data.clone(), e.location, e.orientation))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// OCCT BOPAlgo_BOP::TypeToExplore (BOPAlgo_BOP.cxx L1574-1597).
 fn type_to_explore(the_dim: i32) -> topods::ShapeType {
     match the_dim {
@@ -1498,9 +1546,16 @@ impl<'a> Builder<'a> {
                                 fx.orientation = topods::Orientation::Internal;
                                 the_lif.push(fx);
                             } else {
-                                // OCCT L321-326: IsSplitToReverseWithWarn pending.
+                                // OCCT L321-326: IsSplitToReverseWithWarn(aFx, aF, ctx, report).
+                                // rcad: the warning alert is omitted (diagnostic only).
+                                let (b_to_reverse, _err) =
+                                    crate::bop::tools::algo_tools::is_split_to_reverse_face(a_fx, &a_f);
+                                let mut fx = a_fx.clone();
+                                if b_to_reverse {
+                                    fx.orientation = flip_orientation(fx.orientation);
+                                }
                                 i_flag = 1;
-                                a_shd_subs.push(a_fx.clone());
+                                a_shd_subs.push(fx);
                             }
                         } else {
                             // OCCT L333-344: aFx.Orientation(aOrF).
@@ -1526,10 +1581,15 @@ impl<'a> Builder<'a> {
             }
             // OCCT L362-366: if any face was added, close and add the shell.
             if i_flag != 0 {
+                // OCCT L364: aShD.Closed(BRep_Tool::IsClosed(aShD)).
+                let mut flags = tshape_flags::DEFAULT;
+                if shell_is_closed(&a_shd_subs) {
+                    flags |= tshape_flags::CLOSED;
+                }
                 let a_shd = Shape::new(
                     std::sync::Arc::new(TShape::Shell(TShellData {
                         my_shapes: vec![],
-                        flags: tshape_flags::DEFAULT,
+                        flags,
                         faces: a_shd_subs,
                     })),
                     0,

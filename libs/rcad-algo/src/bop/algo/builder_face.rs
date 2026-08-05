@@ -126,7 +126,7 @@ impl<'a> BuilderFace<'a> {
         // OCCT L268-271: BOPAlgo_WireSplitter(aWSp) with the wire edge set.
         let a_face = self.my_face.clone().unwrap_or_else(Shape::null);
         let a_face_index = self.my_face_index.unwrap_or(usize::MAX);
-        let wires = crate::bop::algo::wire_splitter::split_into_wires(&a_face, a_face_index, &edges);
+        let wires = crate::bop::algo::wire_splitter::split_into_wires(&a_face, a_face_index, &edges, &self.ds);
 
         // OCCT L277-283: store result wires into myLoops
         self.my_loops = wires;

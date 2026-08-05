@@ -7,6 +7,7 @@ use crate::bop::ds::DS;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
 use rcad_kernel::topods::{Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
+use std::sync::Arc;
 
 // ====================================================================
 // DTolerance — OCCT BOPTools_AlgoTools::DTolerance()
@@ -417,6 +418,128 @@ pub fn make_pcurve(
     _ds: &mut DS,
 ) {
     // rcad: pcurve creation is handled by MakePCurves step in PaveFiller
+}
+
+// ====================================================================
+// IsSplitToReverse — OCCT BOPTools_AlgoTools::IsSplitToReverse (Face, L1324-1436)
+// ====================================================================
+/// OCCT BOPTools_AlgoTools::IsSplitToReverse(theFSp, theFSr, theContext, theError).
+/// Determines whether the split face `theFSp` must be reversed to be oriented
+/// consistently with the original face `theFSr`.
+///
+/// Returns `(bToReverse, errCode)`; `errCode == 0` means the check succeeded.
+///
+/// Fast path (OCCT L1336-1341): when the two faces share the same surface
+/// handle, only their orientations are compared. Otherwise a point inside the
+/// split face is found, the surface normals at that point are computed on both
+/// surfaces, and the result is whether the normals point in opposite directions
+/// (OCCT L1383-1435). The point is the centroid of the face's outer-wire vertex
+/// endpoints projected onto the surface (rcad semantic equivalent of
+/// BOPTools_AlgoTools3D::PointInFace).
+pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape) -> (bool, i32) {
+    // OCCT L1336-1341: same surface handle -> compare orientations only.
+    // rcad: surfaces are value types, so "same surface" means geometric identity
+    // of the analytic surface parameters.
+    let surf_sp = f_sp.as_face().and_then(|fd| fd.surface.clone());
+    let surf_or = f_sr.as_face().and_then(|fd| fd.surface.clone());
+    if let (Some(s1), Some(s2)) = (&surf_sp, &surf_or) {
+        if surface_same(s1, s2) {
+            return (f_sp.orientation != f_sr.orientation, 0);
+        }
+    }
+    // OCCT L1344-1380: find a point inside the split face.
+    let p3d = face_reference_point(f_sp);
+    let (uv_sp, _) = match surf_sp.as_ref() {
+        Some(s) => crate::bop::closest_point_on_surface(s, p3d),
+        None => return (false, 1),
+    };
+    // OCCT L1383-1392: normal direction of the split face at the point.
+    let mut dn_sp = match surf_sp.as_ref() {
+        Some(s) => s.normal_at(uv_sp.x, uv_sp.y),
+        None => return (false, 2),
+    };
+    if f_sp.orientation == Orientation::Reversed {
+        dn_sp = -dn_sp;
+    }
+    // OCCT L1401-1414: project the point from the split face on the original face.
+    let (uv_or, _) = match surf_or.as_ref() {
+        Some(s) => crate::bop::closest_point_on_surface(s, p3d),
+        None => return (false, 3),
+    };
+    // OCCT L1418-1431: normal direction for the original face in this point.
+    let mut dn_or = match surf_or.as_ref() {
+        Some(s) => s.normal_at(uv_or.x, uv_or.y),
+        None => return (false, 4),
+    };
+    if f_sr.orientation == Orientation::Reversed {
+        dn_or = -dn_or;
+    }
+    // OCCT L1434-1435: compare the normals.
+    let a_cos = dn_sp.dot(dn_or);
+    (a_cos < 0.0, 0)
+}
+
+/// Geometric identity of two analytic surfaces (rcad equivalent of OCCT's
+/// Geom_Surface handle equality in IsSplitToReverse L1338). Same direction for
+/// the axis/normal; the reference directions (u_dir/v_dir) are not compared —
+/// the parameterization orientation is irrelevant for the orientation decision.
+fn surface_same(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3) -> bool {
+    use rcad_kernel::geom::Surface3;
+    const TOL: f64 = 1e-9;
+    match (a, b) {
+        (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+            (p1.origin - p2.origin).length() < TOL
+                && p1.normal.dot(p2.normal) > 1.0 - TOL
+        }
+        (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+            (c1.origin - c2.origin).length() < TOL
+                && c1.axis.dot(c2.axis) > 1.0 - TOL
+                && (c1.radius - c2.radius).abs() < TOL
+        }
+        (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
+            (s1.center - s2.center).length() < TOL && (s1.radius - s2.radius).abs() < TOL
+        }
+        (Surface3::Cone(c1), Surface3::Cone(c2)) => {
+            (c1.apex - c2.apex).length() < TOL
+                && c1.axis.dot(c2.axis) > 1.0 - TOL
+                && (c1.radius - c2.radius).abs() < TOL
+                && (c1.half_angle_rad - c2.half_angle_rad).abs() < TOL
+        }
+        (Surface3::Torus(t1), Surface3::Torus(t2)) => {
+            (t1.center - t2.center).length() < TOL
+                && t1.axis.dot(t2.axis) > 1.0 - TOL
+                && (t1.major_radius - t2.major_radius).abs() < TOL
+                && (t1.minor_radius - t2.minor_radius).abs() < TOL
+        }
+        _ => false,
+    }
+}
+
+/// Reference point of a face: centroid of the outer-wire edge endpoint vertices.
+fn face_reference_point(f: &Shape) -> glam::DVec3 {
+    match f.as_face() {
+        Some(fd) => {
+            let mut pts: Vec<glam::DVec3> = Vec::new();
+            if let TShape::Wire(wd) = &*fd.outer_wire.data {
+                for e in &wd.edges {
+                    if let TShape::Edge(ed) = &*e.data {
+                        if let TShape::Vertex(vd) = &*ed.first.data {
+                            pts.push(vd.point);
+                        }
+                        if let TShape::Vertex(vd) = &*ed.last.data {
+                            pts.push(vd.point);
+                        }
+                    }
+                }
+            }
+            if pts.is_empty() {
+                glam::DVec3::ZERO
+            } else {
+                pts.iter().sum::<glam::DVec3>() / pts.len() as f64
+            }
+        }
+        None => glam::DVec3::ZERO,
+    }
 }
 
 // ====================================================================

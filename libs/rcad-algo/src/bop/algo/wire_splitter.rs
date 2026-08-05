@@ -10,6 +10,7 @@
 // - Geom2dInt_GInter (RefineAngle2D 2D curve intersection) not yet ported:
 //   RefineAngle2D returns false and the iCntInt==2 fallback of RefineAngles is kept.
 
+use crate::bop::ds::DS;
 use crate::bop::int_tools::context::IntToolsContext;
 use glam::{DVec2, DVec3};
 use indexmap::IndexMap;
@@ -181,7 +182,12 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
 
 /// OCCT BOPAlgo_WireSplitter::Perform (L91-118) + MakeWires (L164-226).
 /// Returns the loops as edge sequences.
-pub(crate) fn split_into_wires(face: &Shape, face_index: usize, edges: &[Shape]) -> Vec<Vec<Shape>> {
+pub(crate) fn split_into_wires(
+    face: &Shape,
+    face_index: usize,
+    edges: &[Shape],
+    ds: &DS,
+) -> Vec<Vec<Shape>> {
     if edges.is_empty() {
         return Vec::new();
     }
@@ -198,7 +204,7 @@ pub(crate) fn split_into_wires(face: &Shape, face_index: usize, edges: &[Shape])
     }
     let a_context = IntToolsContext::new();
     for mut cb in a_vcb {
-        split_block(face, face_index, &mut cb, &a_context);
+        split_block(face, face_index, &mut cb, &a_context, ds);
         for l in &cb.loops {
             result.push(l.clone());
         }
@@ -213,7 +219,13 @@ fn make_wire(a_le: &[Shape]) -> Vec<Shape> {
 }
 
 /// OCCT BOPAlgo_WireSplitter::SplitBlock (BOPAlgo_WireSplitter_1.cxx L113-355).
-fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_context: &IntToolsContext) {
+fn split_block(
+    face: &Shape,
+    face_index: usize,
+    cb: &mut ConnexityBlock,
+    the_context: &IntToolsContext,
+    ds: &DS,
+) {
     let my_edges = cb.shapes.clone();
     // mySmartMap: vertex ptr -> (vertex shape, list of EdgeInfo).
     let mut my_smart_map: IndexMap<u64, (Shape, Vec<EdgeInfo>)> = IndexMap::new();
@@ -225,7 +237,7 @@ fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_con
 
     // 1. Fill mySmartMap.
     for a_e in &my_edges {
-        if !has_curve_on_surface(a_e, face_index) {
+        if !has_curve_on_surface(a_e, face_index, ds) {
             continue;
         }
         let mut b_is_closed = is_degenerated(a_e) || is_closed_on_face(a_e, face);
@@ -309,6 +321,8 @@ fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_con
     // 3. Angles in mySmartMap.
     let a_gas = SurfaceAdaptor::from_face(face);
     for i in 0..a_nb {
+        // OCCT uses ChangeEdges() — a mutable reference into mySmartMap; the
+        // angles/inside flags set here must persist for the Path building.
         let (a_v_sh, mut leinfo) = my_smart_map.get_index(i).unwrap().1.clone();
         for a_ei in leinfo.iter_mut() {
             let a_e = a_ei.edge().clone();
@@ -317,8 +331,11 @@ fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_con
             let b_is_in = a_ei.is_in();
             let a_or = if b_is_in { Orientation::Reversed } else { Orientation::Forward };
             a_vv.orientation = a_or;
-            let a_angle = angle_2d(&a_vv, &a_e, face_index, &a_gas, b_is_in, the_context);
+            let a_angle = angle_2d(&a_vv, &a_e, face_index, &a_gas, b_is_in, the_context, ds);
             a_ei.set_angle(a_angle);
+        }
+        if let Some((_, val)) = my_smart_map.get_index_mut(i) {
+            val.1 = leinfo;
         }
     }
 
@@ -332,7 +349,18 @@ fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_con
             let a_ei_mut = a_ei.clone();
             let a_e_outa = a_ei_mut.edge().clone();
             let b_is_out = !a_ei_mut.is_in();
-            let b_is_not_passed = !a_ei_mut.passed();
+            // OCCT reads the live EdgeInfo from mySmartMap; Path() marks edges
+            // passed, so re-read the current flag instead of the stale clone.
+            let cur_passed = my_smart_map
+                .get_index(i)
+                .unwrap()
+                .1
+                .1
+                .iter()
+                .find(|e| e.edge().is_same(&a_e_outa) && e.is_in() == a_ei_mut.is_in())
+                .map(|e| e.passed())
+                .unwrap_or(true);
+            let b_is_not_passed = !cur_passed;
             if b_is_out && b_is_not_passed {
                 let mut a_ls: Vec<Shape> = Vec::new();
                 let mut a_vert_va: Vec<Shape> = Vec::new();
@@ -349,6 +377,7 @@ fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_con
                     &mut a_coord_va,
                     cb,
                     &mut my_smart_map,
+                    ds,
                 );
             }
         }
@@ -370,6 +399,7 @@ fn path(
     a_coord_va: &mut Vec<DVec2>,
     cb: &mut ConnexityBlock,
     my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>,
+    ds: &DS,
 ) {
     let mut a_va = a_v_first.clone();
     let mut a_e_outa = a_e_first.clone();
@@ -387,17 +417,21 @@ fn path(
             }
         }
         an_edge_info.set_passed(true);
+        // OCCT L406: anEdgeInfo->SetPassed(true) — the edge info is a reference
+        // INTO mySmartMap, so the flag must be written back to the map, not
+        // only tracked locally; the outer loop reads the live flag.
+        mark_edge_passed(my_smart_map, &a_va, &a_e_outa, an_edge_info.is_in());
         a_ls.push(a_e_outa.clone());
         a_vert_va.push(a_va.clone());
         an_info_seq.push(an_edge_info.clone());
 
         let mut p_va = a_va.clone();
         p_va.orientation = Orientation::Forward;
-        let a_pa = coord_2d(&p_va, &a_e_outa, face_index);
+        let a_pa = coord_2d(&p_va, &a_e_outa, face_index, ds);
         a_coord_va.push(a_pa);
 
         let a_vb = get_next_vertex(&p_va, &a_e_outa);
-        let a_pb = coord_2d(&a_vb, &a_e_outa, face_index);
+        let a_pb = coord_2d(&a_vb, &a_e_outa, face_index, ds);
 
         let a_lei_opt = my_smart_map.get(&a_vb.ptr_id());
         let a_lei: Vec<EdgeInfo> = a_lei_opt.map(|(_, l)| l.clone()).unwrap_or_default();
@@ -505,7 +539,7 @@ fn path(
                     an_angle = a_two_pi;
                 } else {
                     if b_is_closed {
-                        let a_p2dx = coord_2d_vf(&a_e, face_index);
+                        let a_p2dx = coord_2d_vf(&a_e, face_index, ds);
                         let a_d2 = a_p2dx.distance_squared(a_pb);
                         if a_d2 > a_tol2d2 {
                             continue;
@@ -539,6 +573,24 @@ fn path(
     }
 }
 
+/// Mark the EdgeInfo for (vertex, edge, in-flag) as passed in mySmartMap.
+/// OCCT Path (L406) sets the flag on a reference into the map.
+fn mark_edge_passed(
+    my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>,
+    a_v: &Shape,
+    a_e: &Shape,
+    in_flag: bool,
+) {
+    if let Some((_, leinfo)) = my_smart_map.get_mut(&a_v.ptr_id()) {
+        if let Some(ei) = leinfo
+            .iter_mut()
+            .find(|ei| ei.edge().is_same(a_e) && ei.is_in() == in_flag)
+        {
+            ei.set_passed(true);
+        }
+    }
+}
+
 /// OCCT ClockWiseAngle (L631-669).
 fn clock_wise_angle(a_angle_in: f64, a_angle_out: f64) -> f64 {
     let a_two_pi = std::f64::consts::PI * 2.0;
@@ -564,23 +616,23 @@ fn clock_wise_angle(a_angle_in: f64, a_angle_out: f64) -> f64 {
 }
 
 /// OCCT Coord2d (L673-684) — 2D parameter of a vertex on an edge in a face.
-fn coord_2d(a_v1: &Shape, a_e1: &Shape, face_index: usize) -> DVec2 {
+fn coord_2d(a_v1: &Shape, a_e1: &Shape, face_index: usize, ds: &DS) -> DVec2 {
     let a_t = match vertex_param_on_edge(a_v1, a_e1) {
         Some(t) => t,
         None => return DVec2::ZERO,
     };
-    match edge_pcurve(a_e1, face_index) {
+    match edge_pcurve(a_e1, face_index, ds) {
         Some((c, _, _)) => curve2d_point(&c, a_t),
         None => DVec2::ZERO,
     }
 }
 
 /// OCCT Coord2dVf (L688-707) — 2D coord of the FORWARD endpoint of an edge.
-fn coord_2d_vf(a_e: &Shape, face_index: usize) -> DVec2 {
+fn coord_2d_vf(a_e: &Shape, face_index: usize, ds: &DS) -> DVec2 {
     let a_coord = 99.0;
     for v in edge_vertices(a_e) {
         if v.orientation == Orientation::Forward {
-            return coord_2d(&v, a_e, face_index);
+            return coord_2d(&v, a_e, face_index, ds);
         }
     }
     DVec2::new(a_coord, a_coord)
@@ -604,7 +656,9 @@ fn angle_in(a_e_in: &Shape, a_lei_info: &[EdgeInfo]) -> f64 {
     for an_edge_info in a_lei_info {
         let a_e = an_edge_info.edge();
         let an_is_in = an_edge_info.is_in();
-        if an_is_in && a_e.is_equal(a_e_in) {
+        // OCCT L747: aE == aEIn — TopoDS_Shape::operator== is IsSame
+        // (orientation-insensitive); a Reversed copy of the same edge matches.
+        if an_is_in && a_e.is_same(a_e_in) {
             return an_edge_info.angle();
         }
     }
@@ -631,12 +685,13 @@ fn angle_2d(
     a_gas: &SurfaceAdaptor,
     b_is_in: bool,
     _the_context: &IntToolsContext,
+    ds: &DS,
 ) -> f64 {
     let a_tv = match vertex_param_on_edge(a_v, an_edge) {
         Some(t) => t,
         None => return 0.0,
     };
-    let (a_c2d, a_first, a_last) = match edge_pcurve(an_edge, face_index) {
+    let (a_c2d, a_first, a_last) = match edge_pcurve(an_edge, face_index, ds) {
         Some(v) => v,
         None => return 0.0,
     };
@@ -831,22 +886,49 @@ fn edge_vertices(e: &Shape) -> [Shape; 2] {
     }
 }
 
-fn edge_pcurve(e: &Shape, face_index: usize) -> Option<(Curve2d, f64, f64)> {
+fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f64)> {
     match &*e.data {
         // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face identity.
         // rcad keys the edge pcurve map by the DS face index.
-        TShape::Edge(ed) => ed.pcurves.get(&face_index).cloned(),
+        TShape::Edge(ed) => {
+            if let Some(v) = ed.pcurves.get(&face_index) {
+                return Some(v.clone());
+            }
+            // make_pcurves inserts pcurves through Arc::make_mut, which clones
+            // shared edges: the DS shape receives the pcurve while the face-wire
+            // edge (same logical edge) does not. OCCT mutates edge TShapes in
+            // place, so the pcurve is visible from either reference; here fall
+            // back to the DS canonical shape.
+            if let Some(idx) = ds.map_shape_index.get(&(e.ptr_id(), e.location)) {
+                if let Some(ed2) = ds.shape_info(*idx).shape.as_edge() {
+                    if let Some(v) = ed2.pcurves.get(&face_index) {
+                        return Some(v.clone());
+                    }
+                }
+            }
+            None
+        }
         _ => None,
     }
 }
 
-fn has_curve_on_surface(e: &Shape, face_index: usize) -> bool {
+fn has_curve_on_surface(e: &Shape, face_index: usize, ds: &DS) -> bool {
     match &*e.data {
         // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face identity.
         // rcad keys the edge pcurve map by the DS face index (make_pcurves uses
         // FaceInfo::Index()), so the DS index — not the Shape's BRep `index` —
-        // is the matching key.
-        TShape::Edge(ed) => ed.pcurves.contains_key(&face_index),
+        // is the matching key. Same DS-canonical fallback as edge_pcurve.
+        TShape::Edge(ed) => {
+            if ed.pcurves.contains_key(&face_index) {
+                return true;
+            }
+            if let Some(idx) = ds.map_shape_index.get(&(e.ptr_id(), e.location)) {
+                if let Some(ed2) = ds.shape_info(*idx).shape.as_edge() {
+                    return ed2.pcurves.contains_key(&face_index);
+                }
+            }
+            false
+        }
         _ => false,
     }
 }
@@ -877,7 +959,20 @@ fn is_closed_on_face(e: &Shape, face: &Shape) -> bool {
 /// OCCT BRep_Tool::Parameter(aV, aE, aF) — vertex parameter on the edge.
 fn vertex_param_on_edge(v: &Shape, e: &Shape) -> Option<f64> {
     match &*e.data {
-        TShape::Edge(ed) => ed.vertex_params.get(&v.index).copied(),
+        TShape::Edge(ed) => {
+            if let Some(t) = ed.vertex_params.get(&v.index) {
+                return Some(*t);
+            }
+            // DS-created edges (push_edge) have empty vertex_params; the param is
+            // only stored on the source BRep edges. OCCT reads the stored param;
+            // computing it from the geometry here is the semantic equivalent.
+            let curve = ed.curve.as_ref()?;
+            let p = match &*v.data {
+                TShape::Vertex(vd) => vd.point,
+                _ => return None,
+            };
+            Some(crate::bop::closest_point_on_curve(curve, p).0)
+        }
         _ => None,
     }
 }
