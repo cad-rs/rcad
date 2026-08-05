@@ -223,10 +223,13 @@ impl<'a> BuilderFace<'a> {
 
             // OCCT L441-447: IsGrowthWire + FClass2d::IsHole
             let b_is_growth = {
-                // OCCT L441: IsGrowthWire(aWire, aMHE) — fast check via hole edge markers
-                let fast_growth = !loop_edges.iter().any(|e| a_mhe.contains(&e.ptr_id()));
-                if !fast_growth {
-                    false
+                // OCCT L441: IsGrowthWire(aWire, aMHE) — returns true when the
+                // wire contains any hole-face edge (BOPAlgo_BuilderFace.cxx
+                // L898-913: theMHE.Contains(aIt.Value())). Only when it has no
+                // hole edge is the FClass2d classification run.
+                let has_hole_edge = loop_edges.iter().any(|e| a_mhe.contains(&e.ptr_id()));
+                if has_hole_edge {
+                    true
                 } else {
                     // OCCT L445-446: FClass2d(aFace).IsHole()
                     let fi = self.my_face_index.unwrap_or(0);
