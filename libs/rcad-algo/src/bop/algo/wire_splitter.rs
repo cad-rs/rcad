@@ -317,7 +317,7 @@ fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_con
             let b_is_in = a_ei.is_in();
             let a_or = if b_is_in { Orientation::Reversed } else { Orientation::Forward };
             a_vv.orientation = a_or;
-            let a_angle = angle_2d(&a_vv, &a_e, face, &a_gas, b_is_in, the_context);
+            let a_angle = angle_2d(&a_vv, &a_e, face_index, &a_gas, b_is_in, the_context);
             a_ei.set_angle(a_angle);
         }
     }
@@ -339,7 +339,7 @@ fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_con
                 let mut a_coord_va: Vec<DVec2> = Vec::new();
                 path(
                     &a_gas,
-                    face,
+                    face_index,
                     &a_vert_map,
                     &a_va_sh,
                     &a_e_outa,
@@ -360,7 +360,7 @@ fn split_block(face: &Shape, face_index: usize, cb: &mut ConnexityBlock, the_con
 #[allow(clippy::too_many_arguments)]
 fn path(
     a_gas: &SurfaceAdaptor,
-    my_face: &Shape,
+    face_index: usize,
     a_vert_map: &HashMap<u64, bool>,
     a_v_first: &Shape,
     a_e_first: &Shape,
@@ -393,11 +393,11 @@ fn path(
 
         let mut p_va = a_va.clone();
         p_va.orientation = Orientation::Forward;
-        let a_pa = coord_2d(&p_va, &a_e_outa, my_face);
+        let a_pa = coord_2d(&p_va, &a_e_outa, face_index);
         a_coord_va.push(a_pa);
 
         let a_vb = get_next_vertex(&p_va, &a_e_outa);
-        let a_pb = coord_2d(&a_vb, &a_e_outa, my_face);
+        let a_pb = coord_2d(&a_vb, &a_e_outa, face_index);
 
         let a_lei_opt = my_smart_map.get(&a_vb.ptr_id());
         let a_lei: Vec<EdgeInfo> = a_lei_opt.map(|(_, l)| l.clone()).unwrap_or_default();
@@ -505,7 +505,7 @@ fn path(
                     an_angle = a_two_pi;
                 } else {
                     if b_is_closed {
-                        let a_p2dx = coord_2d_vf(&a_e, my_face);
+                        let a_p2dx = coord_2d_vf(&a_e, face_index);
                         let a_d2 = a_p2dx.distance_squared(a_pb);
                         if a_d2 > a_tol2d2 {
                             continue;
@@ -564,23 +564,23 @@ fn clock_wise_angle(a_angle_in: f64, a_angle_out: f64) -> f64 {
 }
 
 /// OCCT Coord2d (L673-684) — 2D parameter of a vertex on an edge in a face.
-fn coord_2d(a_v1: &Shape, a_e1: &Shape, a_f: &Shape) -> DVec2 {
+fn coord_2d(a_v1: &Shape, a_e1: &Shape, face_index: usize) -> DVec2 {
     let a_t = match vertex_param_on_edge(a_v1, a_e1) {
         Some(t) => t,
         None => return DVec2::ZERO,
     };
-    match edge_pcurve(a_e1, a_f) {
+    match edge_pcurve(a_e1, face_index) {
         Some((c, _, _)) => curve2d_point(&c, a_t),
         None => DVec2::ZERO,
     }
 }
 
 /// OCCT Coord2dVf (L688-707) — 2D coord of the FORWARD endpoint of an edge.
-fn coord_2d_vf(a_e: &Shape, a_f: &Shape) -> DVec2 {
+fn coord_2d_vf(a_e: &Shape, face_index: usize) -> DVec2 {
     let a_coord = 99.0;
     for v in edge_vertices(a_e) {
         if v.orientation == Orientation::Forward {
-            return coord_2d(&v, a_e, a_f);
+            return coord_2d(&v, a_e, face_index);
         }
     }
     DVec2::new(a_coord, a_coord)
@@ -627,7 +627,7 @@ fn get_next_vertex(a_v: &Shape, a_e: &Shape) -> Shape {
 fn angle_2d(
     a_v: &Shape,
     an_edge: &Shape,
-    my_face: &Shape,
+    face_index: usize,
     a_gas: &SurfaceAdaptor,
     b_is_in: bool,
     _the_context: &IntToolsContext,
@@ -636,7 +636,7 @@ fn angle_2d(
         Some(t) => t,
         None => return 0.0,
     };
-    let (a_c2d, a_first, a_last) = match edge_pcurve(an_edge, my_face) {
+    let (a_c2d, a_first, a_last) = match edge_pcurve(an_edge, face_index) {
         Some(v) => v,
         None => return 0.0,
     };
@@ -813,17 +813,29 @@ fn curve2d_resolution(c: &Curve2d, tol: f64) -> f64 {
 
 fn edge_vertices(e: &Shape) -> [Shape; 2] {
     match &*e.data {
-        TShape::Edge(ed) => [
-            Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-            Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
-        ],
+        // OCCT TopoDS_Iterator(aE) iterates the edge vertices in the edge's
+        // traversal direction: for a Forward edge [V1(Fwd), V2(Rev)], for a
+        // Reversed edge [V2(Fwd), V1(Rev)] (BOPAlgo_WireSplitter_1.cxx L149-158).
+        // rcad's TShape stores first/last both Forward, so derive the vertex
+        // orientations from the edge orientation.
+        TShape::Edge(ed) => {
+            if e.orientation == Orientation::Reversed {
+                [Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Forward),
+                 Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Reversed)]
+            } else {
+                [Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Forward),
+                 Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Reversed)]
+            }
+        }
         _ => [Shape::null(), Shape::null()],
     }
 }
 
-fn edge_pcurve(e: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)> {
+fn edge_pcurve(e: &Shape, face_index: usize) -> Option<(Curve2d, f64, f64)> {
     match &*e.data {
-        TShape::Edge(ed) => ed.pcurves.get(&face.index).cloned(),
+        // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face identity.
+        // rcad keys the edge pcurve map by the DS face index.
+        TShape::Edge(ed) => ed.pcurves.get(&face_index).cloned(),
         _ => None,
     }
 }
