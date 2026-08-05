@@ -2491,18 +2491,23 @@ impl PaveFiller {
         for bpc in &mut a_vbpc {
             bpc.perform(&self.ds);
         }
-        // Phase 3 (L916-930): update edges with computed pcurves
+        // Phase 3 (L916-930): update edges with computed pcurves.
+        // In-place (OCCT BRep_Builder semantics): every reference to the edge —
+        // the DS entry and the face-wire edges — observes the pcurve, preserving
+        // the single-object identity that WireSplitter and downstream modules
+        // key by. Safe because the DS holds a private copy of the input
+        // (clone_arguments_private), so the mutation never leaks into the input.
         for bpc in &a_vbpc {
             if bpc.is_to_update() {
                 let ei = bpc.edge_idx();
                 let fi = bpc.face_idx();
                 let range = self.ds.shape(ei).as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
                 if let Some(pc) = bpc.pcurve().cloned() {
-                    let si = self.ds.change_shape_info(ei);
-                    let ts = Arc::make_mut(&mut si.shape.data);
-                    if let topods::TShape::Edge(ref mut ed) = *ts {
-                        ed.pcurves.insert(fi, (pc, range[0], range[1]));
-                    }
+                    self.ds.mutate_shape_data(ei, |ts| {
+                        if let topods::TShape::Edge(ed) = ts {
+                            ed.pcurves.insert(fi, (pc, range[0], range[1]));
+                        }
+                    });
                     self.ds.remap_shape_idx(ei);
                 }
             }
@@ -4275,16 +4280,18 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
             }
 
-            // Compute and store pcurves for all collected edges
+            // Compute and store pcurves for all collected edges.
+            // In-place (OCCT BRep_Builder semantics) — see make_pcurves for the
+            // identity rationale; safe because the DS owns a private input copy.
             for &n_e in edges_in.iter().chain(edges_on.iter()) {
                 if let Some(curve) = self.ds.edge_curve(n_e) {
                     let range = self.ds.edge_range(n_e);
                     if let Some(pc) = Self::pcurve_2d(curve, surf, range) {
-                        let mut si = self.ds.change_shape_info(n_e);
-                        let ts = Arc::make_mut(&mut si.shape.data);
-                        if let rcad_kernel::topods::TShape::Edge(ed) = ts {
-                            ed.pcurves.insert(n_f1, (pc, range[0], range[1]));
-                        }
+                        self.ds.mutate_shape_data(n_e, |ts| {
+                            if let rcad_kernel::topods::TShape::Edge(ed) = ts {
+                                ed.pcurves.insert(n_f1, (pc, range[0], range[1]));
+                            }
+                        });
                         self.ds.remap_shape_idx(n_e);
                     }
                 }

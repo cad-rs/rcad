@@ -668,11 +668,40 @@ impl DS {
     pub fn set_arguments(&mut self, a: Vec<Shape>) { self.arguments = a; }
     pub fn arguments(&self) -> &[Shape] { &self.arguments }
 
+    // ================================================================    // Non-destructive input
+    // ================================================================
+    /// Deep-clone the argument graph so every TShape reachable from the
+    /// arguments is owned solely by the DS. In-place edits via
+    /// mutate_shape_data (OCCT BRep_Builder semantics) then never leak into the
+    /// caller's BRep — rcad's implementation of the OCCT SetNonDestructive
+    /// contract "do not modify the input shapes" (OCCT reaches it by never
+    /// editing input; rcad edits a private copy instead).
+    ///
+    /// The clone preserves each Shape's `index` (the original BRep slot) because
+    /// TEdgeData::vertex_params is keyed by the BRep vertex index, and preserves
+    /// `location`/`orientation`. Shared TShapes (a vertex referenced by several
+    /// edges, an edge shared by two faces) map to a single private Arc, so the
+    /// graph topology and identity structure are unchanged.
+    pub(crate) fn clone_arguments_private(&mut self) {
+        if self.arguments.is_empty() {
+            return;
+        }
+        let mut cache: HashMap<u64, Arc<TShape>> = HashMap::new();
+        let cloned: Vec<Shape> = self.arguments
+            .iter()
+            .map(|s| clone_shape_graph(s, &mut cache))
+            .collect();
+        self.arguments = cloned;
+    }
+
     // ================================================================    // Init
     // ================================================================
     /// BOPDS_DS::Init ?builds shape index, ranges, and bounding boxes.
     // OCCT BOPDS_DS.cxx L285-324
     pub fn init(&mut self, fuzz: f64) {
+        // Non-destructive mode: hold a private copy so in-place edits never
+        // mutate the caller's BRep (stage tests reuse one input across runs).
+        self.clone_arguments_private();
         if self.arguments.is_empty() { return; }
         let args = self.arguments.clone();
         let mut i1 = 0usize;
@@ -2147,6 +2176,78 @@ impl DS {
 // ===
 // Free function: extract sub-shapes of a Shape (TopExp_Explorer equivalent)
 // ===
+// ===
+// Non-destructive deep clone: clone the TShape graph with shared-node
+// memoization (old ptr_id -> private Arc). Preserves Shape::index (BRep slot)
+// so vertex_params lookups by BRep vertex index still match, and preserves
+// location/orientation.
+// ===
+fn clone_shape_graph(s: &Shape, cache: &mut HashMap<u64, Arc<TShape>>) -> Shape {
+    let ptr = s.ptr_id();
+    if let Some(arc) = cache.get(&ptr) {
+        return Shape {
+            data: arc.clone(),
+            index: s.index,
+            location: s.location,
+            orientation: s.orientation,
+        };
+    }
+    let new_data = clone_tshape(s.data.as_ref(), cache);
+    let new_arc = Arc::new(new_data);
+    cache.insert(ptr, new_arc.clone());
+    Shape {
+        data: new_arc,
+        index: s.index,
+        location: s.location,
+        orientation: s.orientation,
+    }
+}
+
+fn clone_shapes(list: &[Shape], cache: &mut HashMap<u64, Arc<TShape>>) -> Vec<Shape> {
+    list.iter().map(|s| clone_shape_graph(s, cache)).collect()
+}
+
+fn clone_tshape(ts: &TShape, cache: &mut HashMap<u64, Arc<TShape>>) -> TShape {
+    match ts {
+        TShape::Vertex(vd) => TShape::Vertex(topods::TVertexData {
+            my_shapes: clone_shapes(&vd.my_shapes, cache),
+            ..vd.clone()
+        }),
+        TShape::Edge(ed) => TShape::Edge(topods::TEdgeData {
+            my_shapes: clone_shapes(&ed.my_shapes, cache),
+            first: clone_shape_graph(&ed.first, cache),
+            last: clone_shape_graph(&ed.last, cache),
+            ..ed.clone()
+        }),
+        TShape::Wire(wd) => TShape::Wire(topods::TWireData {
+            my_shapes: clone_shapes(&wd.my_shapes, cache),
+            edges: clone_shapes(&wd.edges, cache),
+            flags: wd.flags,
+        }),
+        TShape::Face(fd) => TShape::Face(topods::TFaceData {
+            my_shapes: clone_shapes(&fd.my_shapes, cache),
+            outer_wire: clone_shape_graph(&fd.outer_wire, cache),
+            inner_wires: clone_shapes(&fd.inner_wires, cache),
+            internal_vertices: clone_shapes(&fd.internal_vertices, cache),
+            ..fd.clone()
+        }),
+        TShape::Shell(sd) => TShape::Shell(topods::TShellData {
+            my_shapes: clone_shapes(&sd.my_shapes, cache),
+            faces: clone_shapes(&sd.faces, cache),
+            flags: sd.flags,
+        }),
+        TShape::Solid(sd) => TShape::Solid(topods::TSolidData {
+            my_shapes: clone_shapes(&sd.my_shapes, cache),
+            shells: clone_shapes(&sd.shells, cache),
+            internal_vertices: clone_shapes(&sd.internal_vertices, cache),
+            internal_edges: clone_shapes(&sd.internal_edges, cache),
+            flags: sd.flags,
+        }),
+        TShape::CompSolid(shapes) => TShape::CompSolid(clone_shapes(shapes, cache)),
+        TShape::Compound(shapes) => TShape::Compound(clone_shapes(shapes, cache)),
+    }
+}
+
 fn sub_shapes_of(s: &Shape) -> Vec<Shape> {
     // Preserve original BRep index so edge_vertex_params can look up vertex_params.
     let cp = |sr: &Shape| Shape::from_parts(sr.data.clone(), sr.index, sr.location, sr.orientation);
