@@ -801,7 +801,11 @@ fn angle_2d(
     };
     let a_pv1 = curve2d_point(&a_c2d, a_tv1);
     let a_pv = curve2d_point(&a_c2d, a_tv);
-    let a_v2d = if b_is_in { a_pv1 - a_pv } else { a_pv - a_pv1 };
+    // OCCT Angle2D L857-859: aV2D = bIsIN ? (aPV - aPV1) : (aPV1 - aPV).
+    // bIsIN (REVERSED endpoint): direction from the interior point toward the
+    // vertex (arrival); !bIsIN (FORWARD endpoint): direction from the vertex
+    // toward the interior (departure).
+    let a_v2d = if b_is_in { a_pv - a_pv1 } else { a_pv1 - a_pv };
     let a_dir2d = a_v2d.normalize_or_zero();
     angle_from_dir(a_dir2d)
 }

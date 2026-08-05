@@ -4246,8 +4246,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     /// OCCT BOPAlgo_PaveFiller::MakePCurves (_7.cxx L589-850).
     fn make_pcurves(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
-        // OCCT L592-595: check avoid flags
-        // OCCT L606-700: 1. Process face info — IN and ON PBs
+        // OCCT L592-595: myAvoidBuildPCurve || (!PCurveOnS1 && !PCurveOnS2) -> return.
+        // rcad: PCurveOnS1/2 default true; the avoid flag is not present.
+        // OCCT L606-700: 1. Process face info — IN and ON PBs.
         let a_nb_fi = self.ds.face_info_pool.len();
         for fi_idx in 0..a_nb_fi {
             let fi = self.ds.face_info_pool[fi_idx].clone();
@@ -4259,52 +4260,165 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             };
             let Some(ref surf) = surf else { continue; };
 
-            // OCCT L619-631: PaveBlocksIn — add all IN PBs
-            let mut edges_in: Vec<usize> = Vec::new();
+            // OCCT L619-631: PaveBlocksIn — pcurve by projection.
             for &pb_idx in fi.pave_blocks_in.iter() {
                 if pb_idx >= self.ds.pave_blocks_pool.len() { continue; }
-                for pb in &self.ds.pave_blocks_pool[pb_idx] {
-                    let n_e = pb.0.read().unwrap().edge;
-                    if n_e < self.ds.nb_shapes() { edges_in.push(n_e); }
-                }
-            }
-            // OCCT L634-699: PaveBlocksOn — skip if pcurve already exists
-            let mut edges_on: Vec<usize> = Vec::new();
-            for &pb_idx in fi.pave_blocks_on.iter() {
-                if pb_idx >= self.ds.pave_blocks_pool.len() { continue; }
-                for pb in &self.ds.pave_blocks_pool[pb_idx] {
+                let pbs = self.ds.pave_blocks_pool[pb_idx].clone();
+                for pb in &pbs {
                     let n_e = pb.0.read().unwrap().edge;
                     if n_e >= self.ds.nb_shapes() { continue; }
-                    // Check if pcurve already exists
-                    let has_pc = {
-                        let si = self.ds.shape_info(n_e);
-                        match &*si.shape.data {
-                            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.contains_key(&n_f1),
-                            _ => false,
-                        }
-                    };
-                    if !has_pc { edges_on.push(n_e); }
+                    self.build_pcurve_mpc(n_e, n_f1, surf, None);
                 }
             }
-
-            // Compute and store pcurves for all collected edges.
-            // In-place (OCCT BRep_Builder semantics) — see make_pcurves for the
-            // identity rationale; safe because the DS owns a private input copy.
-            for &n_e in edges_in.iter().chain(edges_on.iter()) {
-                if let Some(curve) = self.ds.edge_curve(n_e) {
-                    let range = self.ds.edge_range(n_e);
-                    if let Some(pc) = Self::pcurve_2d(curve, surf, range) {
-                        self.ds.mutate_shape_data(n_e, |ts| {
-                            if let rcad_kernel::topods::TShape::Edge(ed) = ts {
-                                ed.pcurves.insert(n_f1, (pc, range[0], range[1]));
-                            }
-                        });
-                        self.ds.remap_shape_idx(n_e);
+            // OCCT L634-699: PaveBlocksOn — skip if pcurve exists; a CommonBlock
+            // provides the pcurve-copy source (paired edge with a pcurve).
+            for &pb_idx in fi.pave_blocks_on.iter() {
+                if pb_idx >= self.ds.pave_blocks_pool.len() { continue; }
+                let pbs = self.ds.pave_blocks_pool[pb_idx].clone();
+                for pb in &pbs {
+                    let n_e = pb.0.read().unwrap().edge;
+                    if n_e >= self.ds.nb_shapes() { continue; }
+                    if self.edge_has_pcurve(n_e, n_f1) { continue; }
+                    let src = self.cb_pcurve_source(pb, n_f1);
+                    self.build_pcurve_mpc(n_e, n_f1, surf, src);
+                }
+            }
+        }
+        // OCCT L702-850: 2. Process section edges. P-curves on them must already
+        // be computed; the MPCs still provide the UpdateVertices call (flag).
+        let mut an_ef_pairs: HashSet<(usize, usize)> = HashSet::new();
+        let a_ffs = self.ds.interf_ff.clone();
+        for a_ff in &a_ffs {
+            let n_f = [a_ff.f1, a_ff.f2];
+            for &cid in &a_ff.curves {
+                if cid >= self.ds.intersection_curves.len() { continue; }
+                let a_lpb = self.ds.intersection_curves[cid].pave_blocks.clone();
+                for pb in &a_lpb {
+                    let n_e = pb.0.read().unwrap().edge;
+                    if n_e >= self.ds.nb_shapes() { continue; }
+                    for m in 0..2 {
+                        if !an_ef_pairs.insert((n_e, n_f[m])) { continue; }
+                        let f_s = self.ds.shape(n_f[m]).clone();
+                        let surf2 = match &*f_s.data {
+                            rcad_kernel::topods::TShape::Face(fd) => fd.surface.clone(),
+                            _ => continue,
+                        };
+                        if let Some(ref surf2) = surf2 {
+                            self.build_pcurve_mpc(n_e, n_f[m], surf2, None);
+                        }
                     }
                 }
             }
         }
-        // OCCT L702-850: 2. Process section edges
+    }
+
+    /// OCCT BOPAlgo_MPC::Perform (BOPAlgo_PaveFiller_7.cxx L218-293). Computes
+    /// the pcurve of an edge on a face. With a copy source the pcurve is taken
+    /// from the paired edge (AttachExistingPCurve); otherwise it is projected
+    /// (BuildPCurveForEdgeOnFace). In-place (OCCT BRep_Builder semantics) — safe
+    /// because the DS owns a private input copy.
+    fn build_pcurve_mpc(&mut self, n_e: usize, n_f: usize, surf: &Surface3, src: Option<usize>) {
+        // OCCT L239-249: attach the pcurve from the paired edge.
+        if let Some(src_e) = src {
+            if let Some(pc) = Self::copy_pcurve(&self.ds, src_e, n_e, n_f) {
+                let range = self.ds.edge_range(n_e);
+                self.ds.mutate_shape_data(n_e, |ts| {
+                    if let rcad_kernel::topods::TShape::Edge(ed) = ts {
+                        ed.pcurves.insert(n_f, (pc, range[0], range[1]));
+                    }
+                });
+                self.ds.remap_shape_idx(n_e);
+                return;
+            }
+        }
+        // OCCT L248: BuildPCurveForEdgeOnFace — projection.
+        if let Some(curve) = self.ds.edge_curve(n_e) {
+            let range = self.ds.edge_range(n_e);
+            if let Some(pc) = Self::pcurve_2d(curve, surf, range) {
+                self.ds.mutate_shape_data(n_e, |ts| {
+                    if let rcad_kernel::topods::TShape::Edge(ed) = ts {
+                        ed.pcurves.insert(n_f, (pc, range[0], range[1]));
+                    }
+                });
+                self.ds.remap_shape_idx(n_e);
+            }
+        }
+    }
+
+    /// OCCT BOPTools_AlgoTools2D::HasCurveOnSurface — the edge already has a
+    /// pcurve on the face.
+    fn edge_has_pcurve(&self, n_e: usize, n_f: usize) -> bool {
+        if n_e >= self.ds.nb_shapes() { return false; }
+        match &*self.ds.shape(n_e).data {
+            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.contains_key(&n_f),
+            _ => false,
+        }
+    }
+
+    /// OCCT L640-676: the CommonBlock copy source — a paired PB in the same
+    /// CommonBlock whose original edge already has a pcurve on this face.
+    fn cb_pcurve_source(&self, pb: &SharedPB, n_f: usize) -> Option<usize> {
+        let cb_idx = pb.0.read().unwrap().common_block_idx?;
+        let pbs: Vec<SharedPB> = {
+            let cb = &self.ds.common_blocks[cb_idx];
+            cb.pave_blocks().iter().map(|(p, _)| p.clone()).collect()
+        };
+        if pbs.len() < 2 { return None; }
+        let pb_ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
+        for pbx in &pbs {
+            if std::sync::Arc::as_ptr(&pbx.0) as u64 == pb_ptr { continue; }
+            let n_ex = pbx.0.read().unwrap().original_edge;
+            if n_ex >= self.ds.nb_shapes() { continue; }
+            if self.edge_has_pcurve(n_ex, n_f) {
+                return Some(n_ex);
+            }
+        }
+        None
+    }
+
+    /// OCCT BOPTools_AlgoTools2D::AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx
+    /// L44-130): copy the paired edge's pcurve onto the section edge, reversing
+    /// the direction when the section edge is split to reverse (IsSplitToReverse).
+    /// The pcurve is re-sampled over the section edge's range (GeomLib::SameRange)
+    /// by mapping 3D positions.
+    fn copy_pcurve(ds: &DS, src_e: usize, dst_e: usize, n_f: usize) -> Option<rcad_kernel::geom::Curve2d> {
+        use rcad_kernel::geom::Curve2dEval;
+        let (src_pc, src_first, src_last) = Self::edge_pcurve_of(ds, src_e, n_f)?;
+        let src_curve = ds.edge_curve(src_e)?;
+        let dst_curve = ds.edge_curve(dst_e)?;
+        let dst_range = ds.edge_range(dst_e);
+        let dst_shape = ds.shape(dst_e).clone();
+        let src_shape = ds.shape(src_e).clone();
+        let (to_reverse, _) = algo_tools::is_split_to_reverse_edge(&dst_shape, &src_shape);
+        let n = 23usize;
+        let mut uv: Vec<glam::DVec2> = Vec::with_capacity(n + 1);
+        for i in 0..=n {
+            let t = dst_range[0] + i as f64 * (dst_range[1] - dst_range[0]) / n as f64;
+            let p = dst_curve.point_at(t);
+            let sp = closest_point_on_curve_range(src_curve, p, src_first, src_last, 64);
+            // OCCT L68-79: the copied pcurve is reversed when IsSplitToReverse.
+            let s = if to_reverse {
+                src_first + src_last - sp.param
+            } else {
+                sp.param
+            };
+            uv.push(Curve2dEval::point_at(&src_pc, s));
+        }
+        if uv.len() < 2 { return None; }
+        let mut c = rcad_kernel::geom::BSplineCurve2::approximate(&uv);
+        if dst_range[1] > dst_range[0] {
+            c.knots = c.knots.iter().map(|k| dst_range[0] + (dst_range[1] - dst_range[0]) * k).collect();
+        }
+        Some(rcad_kernel::geom::Curve2d::BSpline(c))
+    }
+
+    /// BRep_Tool::CurveOnSurface — the edge's pcurve on the face, if any.
+    fn edge_pcurve_of(ds: &DS, n_e: usize, n_f: usize) -> Option<(rcad_kernel::geom::Curve2d, f64, f64)> {
+        if n_e >= ds.nb_shapes() { return None; }
+        match &*ds.shape(n_e).data {
+            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.get(&n_f).cloned(),
+            _ => None,
+        }
     }
 
 
