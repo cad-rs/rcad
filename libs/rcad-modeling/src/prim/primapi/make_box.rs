@@ -84,13 +84,19 @@ impl MakeBox {
             t.add_tedge(Some(ln(self.local(self.dx,self.dy,self.dz), self.local(0.0,self.dy,self.dz))), v[6].clone(), v[7].clone(), [0.0, self.dx]),
             t.add_tedge(Some(ln(self.local(0.0,self.dy,self.dz), self.local(0.0,0.0,self.dz))), v[7].clone(), v[4].clone(), [0.0, self.dy]),
         ];
+        // Wire windings are chosen so that every edge shared by two faces is
+        // traversed in OPPOSITE directions in their wires (the condition
+        // BOPTools_AlgoTools::GetEdgeOff requires). OCCT's BRepPrimAPI_MakeBox
+        // produces a consistently-oriented shell; the ZMax/YMin/XMax wires are
+        // reversed here so each shared edge is traversed once forward and once
+        // backward (checked against BRepPrim_GWedge winding).
         let w = [
             t.add_twire(vec![e_bot[0].clone(), e_bot[1].clone(), e_bot[2].clone(), e_bot[3].clone()]),
-            t.add_twire(vec![e_top[0].clone(), e_top[1].clone(), e_top[2].clone(), e_top[3].clone()]),
-            t.add_twire(vec![e_bot[0].clone(), e_ver[1].clone(), rev(e_top[0].clone()), rev(e_ver[0].clone())]),
+            t.add_twire(vec![rev(e_top[3].clone()), rev(e_top[2].clone()), rev(e_top[1].clone()), rev(e_top[0].clone())]),
+            t.add_twire(vec![e_ver[0].clone(), e_top[0].clone(), rev(e_ver[1].clone()), rev(e_bot[0].clone())]),
             t.add_twire(vec![rev(e_bot[2].clone()), e_ver[2].clone(), e_top[2].clone(), rev(e_ver[3].clone())]),
             t.add_twire(vec![rev(e_bot[3].clone()), e_ver[3].clone(), e_top[3].clone(), rev(e_ver[0].clone())]),
-            t.add_twire(vec![e_bot[1].clone(), e_ver[2].clone(), rev(e_top[1].clone()), rev(e_ver[1].clone())]),
+            t.add_twire(vec![e_ver[1].clone(), e_top[1].clone(), rev(e_ver[2].clone()), rev(e_bot[1].clone())]),
         ];
         // OCCT BRepPrim_GWedge: all 6 faces use the +axis plane normal; the
         // min faces (XMin/YMin/ZMin) are stored Reversed (BRepPrim_GWedge.cxx
