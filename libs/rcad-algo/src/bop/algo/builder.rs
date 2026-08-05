@@ -997,6 +997,11 @@ impl<'a> Builder<'a> {
     /// Boundary edges of a face with wire-composed orientation.
     /// OCCT TopExp_Explorer(aFF, TopAbs_EDGE) — BOPAlgo_Builder_2.cxx L363-365.
     fn face_edges(&self, a_f: &Shape) -> Vec<Shape> {
+        // OCCT TopExp_Explorer(aFF, TopAbs_EDGE) descends face -> wire -> edge
+        // with cumOri=true, composing each parent's orientation into the edge.
+        // BRepPrim_GWedge stores the MIN-face wires REVERSED (ReverseFace), so
+        // their edge orientations come out flipped here — matching OCCT's
+        // BuildSplitFaces anOriE values.
         let mut result: Vec<Shape> = Vec::new();
         for a_w in self.shape_sub_shapes(a_f) {
             if a_w.shape_type() != topods::ShapeType::Wire {
@@ -1004,7 +1009,9 @@ impl<'a> Builder<'a> {
             }
             if let TShape::Wire(wd) = &*a_w.data {
                 result.extend(wd.edges.iter().map(|sr| {
-                    Shape::new(sr.data.clone(), sr.location, sr.orientation)
+                    let mut e = Shape::new(sr.data.clone(), sr.location, sr.orientation);
+                    e.orientation = topods::Orientation::compose(a_w.orientation, e.orientation);
+                    e
                 }));
             }
         }
@@ -1775,13 +1782,16 @@ impl<'a> Builder<'a> {
             // Compute the same-domain dedup results first (immutable borrows).
             let mut results: Vec<(Shape, Shape, bool)> = Vec::new();
             for a_sr in a_lsr {
-                // OCCT L593-601: BOPTools_Set of aSR's faces; aMST.Added(aST).Shape().
+                // OCCT L593-601: BOPTools_Set of aSR's faces. aMST.Added(aST)
+                // INSERTS the face set on first sight and returns the existing
+                // entry on later sights, so a later solid sharing the same
+                // face set dedups to the first one.
                 let a_st = self.shape_face_set(a_sr);
                 let b_flag_sd = a_mst.contains_key(&a_st);
                 let a_sx = a_mst
-                    .get(&a_st)
-                    .cloned()
-                    .unwrap_or_else(|| a_sr.clone());
+                    .entry(a_st)
+                    .or_insert_with(|| a_sr.clone())
+                    .clone();
                 results.push((a_sr.clone(), a_sx, b_flag_sd));
             }
             let p_lsx = self.my_images.entry(a_s.clone()).or_default();
