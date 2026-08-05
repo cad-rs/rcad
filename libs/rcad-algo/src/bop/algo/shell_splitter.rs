@@ -759,20 +759,29 @@ fn face_edge_ptrs(face: &Shape) -> Vec<u64> {
     face_edges(face).iter().map(|e| e.ptr_id()).collect()
 }
 
-/// Extract edge Shapes from a Face Shape (outer + inner wires).
+/// Extract edge Shapes from a Face Shape (outer + inner wires), composing the
+/// face and wire orientations into each edge (OCCT TopExp_Explorer composes
+/// the parent orientation at every level: TopExp_Explorer.cxx L152, L110-170;
+/// TopoDS_Iterator.cxx L35-37, L72-80).
 fn face_edges(face: &Shape) -> Vec<Shape> {
     let mut edges = Vec::new();
     match &*face.data {
         TShape::Face(fd) => {
             if let TShape::Wire(wd) = &*fd.outer_wire.data {
+                let w_or = fd.outer_wire.orientation;
                 for e in &wd.edges {
-                    edges.push(e.clone());
+                    let mut e2 = e.clone();
+                    e2.orientation = face.orientation.compose(w_or).compose(e.orientation);
+                    edges.push(e2);
                 }
             }
             for iw in &fd.inner_wires {
                 if let TShape::Wire(wd) = &*iw.data {
+                    let w_or = iw.orientation;
                     for e in &wd.edges {
-                        edges.push(e.clone());
+                        let mut e2 = e.clone();
+                        e2.orientation = face.orientation.compose(w_or).compose(e.orientation);
+                        edges.push(e2);
                     }
                 }
             }

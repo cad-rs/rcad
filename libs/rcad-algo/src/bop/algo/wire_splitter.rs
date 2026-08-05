@@ -339,8 +339,8 @@ fn split_block(
         }
     }
 
-    // RefineAngles(myFace, mySmartMap, theContext) — pending Geom2dInt_GInter.
-    // refine_angles(face, &mut my_smart_map, the_context);
+    // OCCT L324: RefineAngles(myFace, mySmartMap, theContext).
+    refine_angles(&mut my_smart_map);
 
     // 4. Path building.
     for i in 0..a_nb {
@@ -591,6 +591,89 @@ fn mark_edge_passed(
     }
 }
 
+/// OCCT RefineAngles (BOPAlgo_WireSplitter_1.cxx L930-1054) — refines the
+/// angles of the internal (section) edges at a vertex where exactly two
+/// boundary edges meet, pushing the internal edges out of the boundary wedge.
+/// The geometric refinement (RefineAngle2D, L1058-1149, Geom2dInt_GInter) is
+/// not ported yet; the iCntInt==2 fallback of OCCT L1021-1025 is kept.
+fn refine_angles(my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>) {
+    let a_nb = my_smart_map.len();
+    for i in 0..a_nb {
+        let (_, leinfo) = &mut my_smart_map[i];
+        // aA1 = angle of the outgoing boundary edge; aA2 = incoming boundary.
+        let mut a_a1 = 0.0;
+        let mut a_a2 = 0.0;
+        let mut i_cnt_bnd = 0usize;
+        let mut i_cnt_int = 0usize;
+        for a_ei in leinfo.iter() {
+            let b_is_in = a_ei.is_in();
+            let a_a = a_ei.angle();
+            if !a_ei.is_inside() {
+                i_cnt_bnd += 1;
+                if !b_is_in {
+                    a_a1 = a_a;
+                } else {
+                    a_a2 = a_a;
+                }
+            } else {
+                i_cnt_int += 1;
+            }
+        }
+        if i_cnt_bnd != 2 {
+            continue;
+        }
+        let a_delta = clock_wise_angle(a_a2, a_a1);
+        // Refine the internal OUT edges (edge ptr -> new angle, aDMSR).
+        let mut a_dmsr: HashMap<u64, f64> = HashMap::new();
+        for a_ei in leinfo.iter() {
+            let a_e = a_ei.edge();
+            let b_is_boundary = !a_ei.is_inside();
+            let b_is_in = a_ei.is_in();
+            if b_is_boundary || b_is_in {
+                continue;
+            }
+            let a_a = a_ei.angle();
+            let a_da = clock_wise_angle(a_a2, a_a);
+            if a_da < a_delta {
+                continue; // already inside
+            }
+            // bRefined = RefineAngle2D(aV, aE, myFace, aA1, aA2, aDelta, aA, ctx)
+            // — not ported (Geom2dInt_GInter). The iCntInt==2 fallback remains.
+            let b_refined = false;
+            let a_a_new;
+            if b_refined {
+                a_a_new = a_a;
+            } else if i_cnt_int == 2 {
+                a_a_new = if a_a <= a_a1 {
+                    a_a1 + rcad_kernel::core::precision::ANGULAR
+                } else {
+                    a_a2 - rcad_kernel::core::precision::ANGULAR
+                };
+            } else {
+                continue;
+            }
+            a_dmsr.insert(a_e.ptr_id(), a_a_new);
+        }
+        if a_dmsr.is_empty() {
+            continue;
+        }
+        // OCCT L1033-1053: update the angles.
+        for a_ei in leinfo.iter_mut() {
+            let a_e = a_ei.edge();
+            let b_is_in = a_ei.is_in();
+            let a_a = match a_dmsr.get(&a_e.ptr_id()) {
+                Some(v) => *v,
+                None => continue,
+            };
+            let mut a_a = a_a;
+            if b_is_in {
+                a_a = a_a + std::f64::consts::PI;
+            }
+            a_ei.set_angle(a_a);
+        }
+    }
+}
+
 /// OCCT ClockWiseAngle (L631-669).
 fn clock_wise_angle(a_angle_in: f64, a_angle_out: f64) -> f64 {
     let a_two_pi = std::f64::consts::PI * 2.0;
@@ -656,9 +739,10 @@ fn angle_in(a_e_in: &Shape, a_lei_info: &[EdgeInfo]) -> f64 {
     for an_edge_info in a_lei_info {
         let a_e = an_edge_info.edge();
         let an_is_in = an_edge_info.is_in();
-        // OCCT L747: aE == aEIn — TopoDS_Shape::operator== is IsSame
-        // (orientation-insensitive); a Reversed copy of the same edge matches.
-        if an_is_in && a_e.is_same(a_e_in) {
+        // OCCT L747: aE == aEIn — TopoDS_Shape::operator== is IsEqual
+        // (orientation-sensitive); a Reversed copy of the same edge does NOT
+        // match (BOPAlgo_WireSplitter_1.cxx L747).
+        if an_is_in && a_e.is_equal(a_e_in) {
             return an_edge_info.angle();
         }
     }
@@ -868,15 +952,14 @@ fn curve2d_resolution(c: &Curve2d, tol: f64) -> f64 {
 
 fn edge_vertices(e: &Shape) -> [Shape; 2] {
     match &*e.data {
-        // OCCT TopoDS_Iterator(aE) iterates the edge vertices in the edge's
-        // traversal direction: for a Forward edge [V1(Fwd), V2(Rev)], for a
-        // Reversed edge [V2(Fwd), V1(Rev)] (BOPAlgo_WireSplitter_1.cxx L149-158).
-        // rcad's TShape stores first/last both Forward, so derive the vertex
-        // orientations from the edge orientation.
+        // OCCT TopoDS_Iterator(aE) with cumOri=true (default) composes the edge
+        // orientation into the vertices (TopoDS_Iterator.cxx L35-37, L72-80):
+        // the stored TEdge nodes [V1(Fwd), V2(Rev)] become [V1(Rev), V2(Fwd)]
+        // for a REVERSED edge — same order, orientations composed.
         TShape::Edge(ed) => {
             if e.orientation == Orientation::Reversed {
-                [Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Forward),
-                 Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Reversed)]
+                [Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Reversed),
+                 Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Forward)]
             } else {
                 [Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Forward),
                  Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Reversed)]

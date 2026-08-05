@@ -400,46 +400,64 @@ impl<'a> BuilderSolid<'a> {
     }
 
     /// OCCT BOPAlgo_BuilderSolid::IsHole (BuilderSolid.cxx L823-831) via
-    /// BRepClass3d_SClassifier::PerformInfinitePoint (L82-199). From a point on
-    /// a face, cast a ray along the reversed outward normal. The closest
-    /// crossing is the probe face itself (t=0): the ray passes from the
-    /// +normal side to the -normal side. If the +normal side is INSIDE the
-    /// material (the shell is inverted — material outside, void inside), the
-    /// probe-face crossing is an EXIT, so the point at infinity is IN → hole.
+    /// BRepClass3d_SClassifier::PerformInfinitePoint (SClassifier.cxx L82-199).
     ///
-    /// Material-side check: a closed shell's interior reference is the centroid
-    /// of the face centroids. A face points toward the interior (inverted) iff
-    /// the reference centroid lies on the +outward-normal side of the face.
+    /// Casts a ray from a face's inner point along the reversed oriented normal
+    /// (OCCT L141: aLin(aPoint, -aDN)) and finds the closest intersection with
+    /// the shell's faces (OCCT L143-180). The ray starts on the probe face
+    /// itself at w=0; its transition is In (the ray is opposite to the face
+    /// normal). A closest-intersection transition of Out means the ray exits
+    /// the material at the closest face, so the point at infinity is IN → hole
+    /// (OCCT L184-189); a transition of In means the infinite point is OUT
+    /// (OCCT L192-195).
     fn is_hole_in_space(faces: &[Shape]) -> bool {
         if faces.is_empty() {
             return false;
         }
-        // Interior reference point = average of the face centroids.
-        let mut acc = DVec3::ZERO;
-        let mut n_pts = 0usize;
+        // OCCT L125-198: try each face as the probe (up to 10 random points per
+        // face; rcad uses the face centroid). The first definitive answer wins.
         for f in faces {
             let p = Self::face_centroid(f);
-            acc += p;
-            n_pts += 1;
-        }
-        if n_pts == 0 {
-            return false;
-        }
-        let sc = acc / n_pts as f64;
-        for f in faces {
             let n = match Self::face_outward_normal(f) {
                 Some(n) => n,
                 None => continue,
             };
-            let o = match Self::face_plane_origin(f) {
-                Some(o) => o,
-                None => continue,
-            };
-            // OCCT PerformInfinitePoint: probe-face crossing is an EXIT (hole)
-            // when the +normal side holds the material, i.e. the interior
-            // reference lies on the +n side of the face.
-            if (sc - o).dot(n) > 0.0 {
+            if n.length_squared() < 1e-12 {
+                continue;
+            }
+            // OCCT L141: the ray direction is the reversed normal.
+            let ray_dir = -n;
+            // Find the closest intersection of the ray with all the faces
+            // (OCCT L143-180, the minimal WParameter wins).
+            let mut parmin = f64::MAX;
+            let mut best = 0u8; // 0=no valid transition, 1=In, 2=Out
+            for g in faces {
+                let g_n = match Self::face_outward_normal(g) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let g_o = match Self::face_plane_origin(g) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let denom = ray_dir.dot(g_n);
+                if denom.abs() < 1e-12 {
+                    continue;
+                }
+                let w = (g_o - p).dot(g_n) / denom;
+                if w < parmin {
+                    parmin = w;
+                    // OCCT int_cs transition: cos_dir = nSurf · dirCurve; <0 -> In,
+                    // >0 -> Out (IntCurveSurface_InterUtils.pxx L856-895).
+                    best = if denom > 0.0 { 2 } else { 1 };
+                }
+            }
+            if best == 2 {
+                // OCCT L184-189: transition Out -> the infinite point is IN.
                 return true;
+            } else if best == 1 {
+                // OCCT L192-195: transition In -> the infinite point is OUT.
+                return false;
             }
         }
         false
@@ -664,20 +682,28 @@ pub(crate) fn face_edge_ptrs(face: &Shape) -> Vec<u64> {
     edges
 }
 
-/// Extract edge Shapes from a Face Shape (outer + inner wires).
+/// Extract edge Shapes from a Face Shape (outer + inner wires), composing the
+/// face and wire orientations into each edge (OCCT TopExp_Explorer composes
+/// the parent orientation at every level: TopExp_Explorer.cxx L152, L110-170).
 fn face_edges(face: &Shape) -> Vec<Shape> {
     let mut edges = Vec::new();
     match &*face.data {
         TShape::Face(fd) => {
             if let TShape::Wire(wd) = &*fd.outer_wire.data {
+                let w_or = fd.outer_wire.orientation;
                 for e in &wd.edges {
-                    edges.push(e.clone());
+                    let mut e2 = e.clone();
+                    e2.orientation = face.orientation.compose(w_or).compose(e.orientation);
+                    edges.push(e2);
                 }
             }
             for iw in &fd.inner_wires {
                 if let TShape::Wire(wd) = &*iw.data {
+                    let w_or = iw.orientation;
                     for e in &wd.edges {
-                        edges.push(e.clone());
+                        let mut e2 = e.clone();
+                        e2.orientation = face.orientation.compose(w_or).compose(e.orientation);
+                        edges.push(e2);
                     }
                 }
             }

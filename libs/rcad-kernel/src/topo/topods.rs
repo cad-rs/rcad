@@ -36,6 +36,22 @@ impl Orientation {
     pub const fn is_forward(self) -> bool {
         matches!(self, Orientation::Forward)
     }
+
+    /// OCCT TopAbs::Compose (TopAbs.hxx L69-78) — the cumulated orientation of
+    /// a sub-shape with orientation `other` inside a parent with orientation
+    /// `self`. External dominates, then Internal, then Forward/Reversed xor.
+    pub const fn compose(self, other: Orientation) -> Orientation {
+        match self {
+            Orientation::Forward => other,
+            Orientation::Reversed => match other {
+                Orientation::Forward => Orientation::Reversed,
+                Orientation::Reversed => Orientation::Forward,
+                o => o,
+            },
+            Orientation::Internal => Orientation::Internal,
+            Orientation::External => Orientation::External,
+        }
+    }
 }
 
 /// OCCT TopAbs_State — classification result (TopAbs_State.hxx L27-30).
