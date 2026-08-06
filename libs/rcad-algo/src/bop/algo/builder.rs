@@ -1353,17 +1353,18 @@ impl<'a> Builder<'a> {
                         if a_w.shape_type() != topods::ShapeType::Wire {
                             continue;
                         }
-                        let mut w_has_internal = false;
-                        if let TShape::Wire(wd) = &*a_w.data {
-                            for e in &wd.edges {
-                                if e.orientation == topods::Orientation::Internal {
-                                    w_has_internal = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if w_has_internal {
-                            has_internals = true;
+                        // OCCT L320-321: only the FIRST edge of each wire is
+                        // checked for INTERNAL orientation — OCCT wires store
+                        // internal edges first, so the first edge decides.
+                        let first_is_internal = match &*a_w.data {
+                            TShape::Wire(wd) => wd.edges
+                                .first()
+                                .map(|e| e.orientation == topods::Orientation::Internal)
+                                .unwrap_or(false),
+                            _ => false,
+                        };
+                        has_internals = first_is_internal;
+                        if has_internals {
                             break;
                         }
                         if self.images_of(&a_w).is_some() {
@@ -1482,14 +1483,16 @@ impl<'a> Builder<'a> {
                 }
             }
             // OCCT L483-494: 1.3 Section edges (forward + reversed).
+            // OCCT reads aPB->Edge() with no null-check — PostTreatFF always
+            // sets the edge on section PBs, so a missing edge here is a bug.
             for &pb_idx in &a_fi.pave_blocks_sc {
-                if let Some(n_sp) = self.pb_edge(pb_idx) {
-                    let mut a_sp = self.brep_sr(n_sp);
-                    a_sp.orientation = topods::Orientation::Forward;
-                    a_le.push(a_sp.clone());
-                    a_sp.orientation = topods::Orientation::Reversed;
-                    a_le.push(a_sp);
-                }
+                let n_sp = self.pb_edge(pb_idx)
+                    .expect("section pave block must reference an edge (OCCT PostTreatFF sets it)");
+                let mut a_sp = self.brep_sr(n_sp);
+                a_sp.orientation = topods::Orientation::Forward;
+                a_le.push(a_sp.clone());
+                a_sp.orientation = topods::Orientation::Reversed;
+                a_le.push(a_sp);
             }
             // OCCT L496-500: BuildPCurveForEdgesOnPlane(aLE, aFF) — planar fast path.
             // Pending translation (BRepLib.cxx); only adds pcurves, does not change
@@ -1509,9 +1512,11 @@ impl<'a> Builder<'a> {
             if std::env::var("RCAD_MB_DEBUG").is_ok() {
                 println!("[BLD-F] face={} n_edges={} n_areas={}", fi, a_le.len(), a_bf.my_areas.len());
             }
-            if !a_bf.my_areas.is_empty() {
-                a_faces_im.entry(*fi).or_default().extend(a_bf.my_areas);
-            }
+            // OCCT binds every split face to its areas, even an empty list —
+            // a face whose areas could not be built contributes nothing to the
+            // result (build_draft_solid drops it). Skipping the bind would keep
+            // the original face, which OCCT does not do.
+            a_faces_im.entry(*fi).or_default().extend(a_bf.my_areas);
         }
 
         // OCCT L534-552: apply orientation and append areas to myImages.

@@ -2446,6 +2446,10 @@ impl PaveFiller {
         if !self.my_arguments.is_empty() {
             self.ds.set_arguments(std::mem::take(&mut self.my_arguments));
         }
+        // Only the primary DS deep-clones its arguments (non-destructive
+        // contract); nested PaveFillers (PostTreatFF fuse, checker) keep the
+        // argument shapes by reference so `DS::index(aSx)` resolves them.
+        self.ds.clone_arguments = self.my_is_primary;
         self.ds.init(self.my_fuzzy_value);
         // OCCT L204: myContext = new IntTools_Context
         self.my_context = IntToolsContext::new();

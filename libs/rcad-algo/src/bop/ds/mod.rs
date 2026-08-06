@@ -616,6 +616,12 @@ pub struct DS {
     pub intersection_curves: Vec<crate::bop::int_tools::face_face::IntersectionCurve>,
     // CommonBlock storage (OCCT: myMapPBCB, but stored as Vec for index-based access)
     pub common_blocks: Vec<CommonBlock>,
+    /// Deep-clone the argument shapes in `init` (OCCT keeps arguments by
+    /// reference; rcad clones only the primary DS so in-place edits never leak
+    /// into the caller's BRep). Nested PaveFillers (e.g. PostTreatFF fuse) keep
+    /// the arguments by reference so `DS::index(aSx)` resolves the section
+    /// edges back to the main DS, exactly as OCCT's `myDS->Index(aSx)` does.
+    pub clone_arguments: bool,
 }
 
 impl DS {
@@ -634,6 +640,7 @@ impl DS {
             interf_zz: Vec::new(), interfered: HashSet::new(),
             common_blocks: Vec::new(),
             intersection_curves: Vec::new(),
+            clone_arguments: true,
         }
     }
 
@@ -701,7 +708,11 @@ impl DS {
     pub fn init(&mut self, fuzz: f64) {
         // Non-destructive mode: hold a private copy so in-place edits never
         // mutate the caller's BRep (stage tests reuse one input across runs).
-        self.clone_arguments_private();
+        // Nested PaveFillers (clone_arguments=false) keep the arguments by
+        // reference so `DS::index(aSx)` matches the original section edges.
+        if self.clone_arguments {
+            self.clone_arguments_private();
+        }
         if self.arguments.is_empty() { return; }
         let args = self.arguments.clone();
         let mut i1 = 0usize;

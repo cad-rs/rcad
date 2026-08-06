@@ -2248,6 +2248,10 @@ impl PaveFiller {
         let mut a_pf = PaveFiller::new();
         a_pf.my_run_parallel = self.my_run_parallel;
         a_pf.my_non_destructive = self.my_non_destructive;
+        // OCCT PostTreatFF runs a non-primary BOPAlgo_PaveFiller to fuse the
+        // section edges; it keeps the arguments by reference (no deep clone) so
+        // aPDS->Index(aSx) resolves the section edges back to the main DS.
+        a_pf.my_is_primary = false;
         a_pf.set_arguments(a_ls.clone());
         let prog = NoopProgress;
         let a_ps = ProgressScope::new(&prog, "Intersection of section edges", 100);
