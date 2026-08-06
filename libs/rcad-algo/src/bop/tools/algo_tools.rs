@@ -4,6 +4,10 @@
 // Functions translated 1:1 from OCCT.
 
 use crate::bop::ds::DS;
+use crate::bop::int_tools::context::IntToolsContext;
+use crate::bop::int_tools::face_make_curve::intermediate_point;
+use crate::topalgo::brep_top_adaptor::fclass2d::FClass2d;
+use crate::topalgo::shape_source::ShapeSource;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
 use rcad_kernel::topods::{Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
@@ -370,28 +374,198 @@ pub fn update_vertex(_v_idx: usize, _dist: f64, _ds: &mut DS) {
 }
 
 // ====================================================================
-// AreFacesSameDomain — OCCT BOPTools_AlgoTools::AreFacesSameDomain (L1139+)
+// AreFacesSameDomain — OCCT BOPTools_AlgoTools::AreFacesSameDomain
+// (BOPTools_AlgoTools.cxx L1139-1205)
 // ====================================================================
 /// Checks if two faces are geometrically coincident (same domain).
+///
+/// OCCT finds a point inside the first face (BOPTools_AlgoTools3D::PointInFace)
+/// and checks its validity for the second face (IntTools_Context::
+/// IsValidPointForFace). If valid — the faces are same domain.
 pub fn are_faces_same_domain(
-    f1_idx: usize, f2_idx: usize,
+    f1: usize,
+    f2: usize,
+    context: &mut IntToolsContext,
     ds: &DS,
     fuzz: f64,
 ) -> bool {
-    // OCCT: find point inside F1, check if valid for F2
-    // rcad: check if surfaces match and vertices are close
-    let s1 = match ds.face_surface(f1_idx) { Some(s) => s, None => return false };
-    let s2 = match ds.face_surface(f2_idx) { Some(s) => s, None => return false };
-    // Check surface type match
-    use rcad_kernel::geom::Surface3;
-    match (&s1, &s2) {
-        (Surface3::Plane(p1), Surface3::Plane(p2)) => {
-            let d = (p1.origin - p2.origin).length();
-            let nd = 1.0 - p1.normal.dot(p2.normal).abs();
-            d < fuzz && nd < fuzz
-        }
-        _ => false, // non-planar SD check not implemented
+    // OCCT L1149-1155: the idea is to find a point inside the first face and
+    // check its validity for the second face. If valid — the faces are SD.
+    let mut b_faces_sd = false;
+    // OCCT L1162-1168: find point inside the first face.
+    let (i_err, a_p1, _a_p2d1) = point_in_face(f1, ds);
+    if i_err != 0 {
+        // OCCT L1169-1170: unable to find the point.
+        return b_faces_sd;
     }
+    // OCCT L1176-1179: compute the tolerance of the faces, taking into account
+    // the deviation of the edges from the surfaces.
+    let mut a_tol_f1 = ds.face_tolerance(f1);
+    let mut a_tol_f2 = ds.face_tolerance(f2);
+    // OCCT L1181-1198: find maximal tolerance of edges. The faces should have
+    // the same boundaries, so it does not matter which face to explore.
+    let mut a_tol_e_max = -1.0;
+    for a_e in face_edge_indices(ds, f1) {
+        if !ds.is_edge_degenerated(a_e) {
+            let a_tol_e = ds.edge_tolerance(a_e);
+            if a_tol_e > a_tol_e_max {
+                a_tol_e_max = a_tol_e;
+            }
+        }
+    }
+    if a_tol_e_max > a_tol_f1 {
+        a_tol_f1 = a_tol_e_max;
+    }
+    if a_tol_e_max > a_tol_f2 {
+        a_tol_f2 = a_tol_e_max;
+    }
+    // OCCT L1201-1203: checking criteria.
+    let a_tol = a_tol_f1 + a_tol_f2 + fuzz.max(rcad_kernel::CONFUSION);
+    // OCCT L1202: project and classify the point on the second face.
+    b_faces_sd = context.is_valid_point_for_face(a_p1, f2, ds, a_tol);
+    b_faces_sd
+}
+
+// ====================================================================
+// PointInFace — OCCT BOPTools_AlgoTools3D::PointInFace
+// (BOPTools_AlgoTools3D.cxx L906-938)
+// ====================================================================
+/// Finds a point inside the face `f` (OCCT L906-938 wrapper).
+///
+/// Returns `(iErr, theP, theP2D)`: `iErr == 0` on success, with `theP` the 3D
+/// point and `theP2D` its UV parameters on the face surface.
+fn point_in_face(f: usize, ds: &DS) -> (i32, glam::DVec3, glam::DVec2) {
+    // OCCT L918-919: theContext->UVBounds(theF, aUMin, aUMax, aVMin, aVMax).
+    // rcad: BRepTools::UVBounds equivalent — the boundary-sampled rect.
+    let [a_umin, a_umax, a_vmin, a_vmax] = ds.face_actual_uv_bounds(f);
+    let _ = (a_vmin, a_vmax); // OCCT: V bounds are computed but unused.
+    // OCCT L921-924: aD2D = gp_Dir2d::D::Y; aUx = IntermediatePoint(aUMin, aUMax).
+    let mut a_ux = intermediate_point(a_umin, a_umax);
+    // OCCT L926-936: two attempts, the second with a translated (mirrored) line.
+    let mut i_err = 1;
+    let mut a_p = glam::DVec3::ZERO;
+    let mut a_p2d = glam::DVec2::ZERO;
+    for _ in 0..2 {
+        let (err, p, p2d) = point_in_face_line(f, a_ux, ds);
+        i_err = err;
+        if i_err == 0 {
+            a_p = p;
+            a_p2d = p2d;
+            break;
+        }
+        // OCCT L931-934: possible reason — incorrect computation of the 2d box
+        // of the face. Try the translated (mirrored) line.
+        a_ux = a_umax - (a_ux - a_umin);
+    }
+    (i_err, a_p, a_p2d)
+}
+
+// ====================================================================
+// PointInFace (line) — OCCT BOPTools_AlgoTools3D::PointInFace
+// (BOPTools_AlgoTools3D.cxx L942-988)
+// ====================================================================
+/// Finds a point inside the face `f` on the vertical 2D line U = aUx.
+///
+/// OCCT trims the line with the face boundary via the per-face
+/// Geom2dHatch_Hatcher (theContext->Hatcher(theF), IntTools_Context.cxx
+/// L343-394) and takes the middle of the first inside domain. rcad has no
+/// Geom2dHatch subsystem: the equivalent intersects the line with the face's
+/// UV boundary polygon (FClass2d sampling of the boundary pcurves) and applies
+/// the same parity rule (the line starts OUTSIDE the bounded face at v = -inf).
+fn point_in_face_line(f: usize, a_ux: f64, ds: &DS) -> (i32, glam::DVec3, glam::DVec2) {
+    // OCCT L981-1011: trim + compute domains; aNbDomains == 0 → iErr = 2.
+    let Some(&(a_v1, a_v2)) = hatch_line_intervals(f, a_ux, ds).first() else {
+        return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
+    };
+    // OCCT L1023-1025: aVx = IntermediatePoint(aV1, aV2) (theDt2D is 0).
+    let a_vx = intermediate_point(a_v1, a_v2);
+    // OCCT L1027-1028: theL2D->D0(aVx, theP2D); aS->D0(theP2D, theP).
+    let a_p2d = glam::DVec2::new(a_ux, a_vx);
+    let Some(a_s) = ds.face_surface(f) else {
+        return (1, glam::DVec3::ZERO, a_p2d);
+    };
+    let a_p = a_s.point_at(a_p2d.x, a_p2d.y);
+    (0, a_p, a_p2d)
+}
+
+// ====================================================================
+// Hatch line intervals — rcad equivalent of Geom2dHatch_Hatcher domains
+// ====================================================================
+/// rcad equivalent of the Geom2dHatch_Hatcher domain computation
+/// (Geom2dHatch_Hatcher.cxx Trim L361-1019 + ComputeDomains L1144-1810) for a
+/// vertical 2D line U = aUx: returns the inside intervals [v1, v2] of the face
+/// crossed by the line.
+///
+/// The boundary is the FClass2d UV polygon (the face's sampled boundary
+/// pcurves). The line starts OUTSIDE the bounded face at v = -inf, so the
+/// inside intervals are the pairs of sorted crossing v-values (even-odd rule).
+/// The half-open rule `lo.x <= aUx < hi.x` counts each vertex crossing exactly
+/// once; degenerate zero-width intervals (tangency at a U-extremum vertex,
+/// which the hatcher merges by its 2D confusion aTolHatch2D = 1e-8) are dropped.
+fn hatch_line_intervals(f: usize, a_ux: f64, ds: &DS) -> Vec<(f64, f64)> {
+    // OCCT IntTools_Context::FClass2d tolerance (face tolerance floored at
+    // CONFUSION) — the same classifier tolerance used by the pipeline.
+    let fclass = FClass2d::new(ds, f, ds.face_tolerance(f).max(rcad_kernel::CONFUSION));
+    let mut vs: Vec<f64> = Vec::new();
+    for poly in fclass.uv_polygons() {
+        let n = poly.len();
+        for i in 0..n {
+            let a = poly[i];
+            let b = poly[(i + 1) % n];
+            let (lo, hi) = if a.x <= b.x { (a, b) } else { (b, a) };
+            if lo.x <= a_ux && a_ux < hi.x {
+                // v-coordinate of the crossing (the line is (aUx, t)).
+                let t = (a_ux - lo.x) / (hi.x - lo.x);
+                vs.push(lo.y + t * (hi.y - lo.y));
+            }
+        }
+    }
+    if vs.len() < 2 {
+        return Vec::new();
+    }
+    vs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    const HATCH_CONFUSION: f64 = 1e-8; // OCCT aTolHatch2D (IntTools_Context.cxx L350)
+    let mut intervals: Vec<(f64, f64)> = Vec::new();
+    let mut k = 0;
+    while k + 1 < vs.len() {
+        let (v1, v2) = (vs[k], vs[k + 1]);
+        if v2 - v1 > HATCH_CONFUSION {
+            intervals.push((v1, v2));
+        }
+        k += 2;
+    }
+    intervals
+}
+
+/// DS edge indices of the face's boundary (OCCT TopExp_Explorer(theF,
+/// TopAbs_EDGE) in AreFacesSameDomain L1187).
+fn face_edge_indices(ds: &DS, f: usize) -> Vec<usize> {
+    let mut edges: Vec<usize> = Vec::new();
+    let fshape = ds.shape_at(f);
+    let face_data = match &*fshape.data {
+        TShape::Face(fd) => fd,
+        _ => return edges,
+    };
+    let wires: Vec<Shape> = std::iter::once(face_data.outer_wire.clone())
+        .chain(face_data.inner_wires.iter().cloned())
+        .collect();
+    for ws in wires {
+        let Some(wi) = ds.map_shape_index(ws.ptr_id(), ws.location) else { continue };
+        if wi >= ds.nb_shapes() || ds.shape_type(wi) != ShapeType::Wire {
+            continue;
+        }
+        let wshape = ds.shape_at(wi);
+        let wire_edges = match &*wshape.data {
+            TShape::Wire(w) => w.edges.clone(),
+            _ => Vec::new(),
+        };
+        for eshape in wire_edges {
+            if let Some(ei) = ds.map_shape_index(eshape.ptr_id(), eshape.location) {
+                edges.push(ei);
+            }
+        }
+    }
+    edges
 }
 
 // ====================================================================

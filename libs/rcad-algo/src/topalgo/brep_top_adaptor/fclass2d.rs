@@ -290,6 +290,12 @@ pub struct FClass2d {
     /// pcurve-less faces the fallback falls back to the polygon ON/domain
     /// result.
     has_pcurves: bool,
+    /// rcad: raw per-wire UV boundary polygons (final orientation-normalized
+    /// sampling of the boundary pcurves). Exposed for the hatcher-equivalent
+    /// "point in face" (BOPTools_AlgoTools3D::PointInFace), which intersects a
+    /// vertical 2D line with the boundary. Not an OCCT field — OCCT trims the
+    /// exact pcurves via Geom2dHatch_Hatcher; rcad reuses this sampling.
+    uv_polygons: Vec<Vec<DVec2>>,
 }
 
 impl FClass2d {
@@ -310,6 +316,7 @@ impl FClass2d {
             v_max: f64::NEG_INFINITY,
             my_is_hole: true,
             has_pcurves: true,
+            uv_polygons: Vec::new(),
         };
         f.init(ds, face_idx, tol_uv);
         f
@@ -318,6 +325,14 @@ impl FClass2d {
     /// OCCT IntTools_FClass2d::IsHole — the face's outer wire is a hole.
     pub fn is_hole(&self) -> bool {
         self.my_is_hole
+    }
+
+    /// rcad: the face's per-wire UV boundary polygons (the final
+    /// orientation-normalized pcurve sampling, one per classifiable wire).
+    /// Used by the PointInFace hatcher equivalent to intersect a vertical 2D
+    /// line with the face boundary. Not an OCCT method — see `uv_polygons`.
+    pub fn uv_polygons(&self) -> &[Vec<DVec2>] {
+        &self.uv_polygons
     }
 
     /// OCCT IntTools_FClass2d::PerformInfinitePoint.
@@ -344,6 +359,7 @@ impl FClass2d {
         self.has_pcurves = true;
         self.tab_class.clear();
         self.tab_orien.clear();
+        self.uv_polygons.clear();
 
         let a_pr_cf = CONFUSION;
         let a_pr_cf2 = a_pr_cf * a_pr_cf;
@@ -665,6 +681,7 @@ impl FClass2d {
                     self.u_max,
                     self.v_max,
                 ));
+                self.uv_polygons.push(Vec::new());
                 bad_wire = 1;
                 self.tab_orien.push(-1);
             } else if wire_is_not_empty {
@@ -783,6 +800,7 @@ impl FClass2d {
                         fleche_v = self.toluv;
                     }
 
+                    self.uv_polygons.push(seq_pnt2d.clone());
                     self.tab_class.push(Class2d::new(
                         &seq_pnt2d,
                         fleche_u,
@@ -806,6 +824,7 @@ impl FClass2d {
                     bad_wire = 1;
                     self.tab_orien.push(-1);
                     seq_pnt2d.clear();
+                    self.uv_polygons.push(Vec::new());
                     self.tab_class.push(Class2d::new(
                         &seq_pnt2d,
                         fleche_u,

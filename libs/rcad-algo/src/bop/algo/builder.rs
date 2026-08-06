@@ -2499,12 +2499,13 @@ impl<'a> Builder<'a> {
         for (f1, f2) in &a_vpsb {
             // OCCT BOPAlgo_PairOfShapeBoolean::Perform (L94-105) →
             // BOPTools_AlgoTools::AreFacesSameDomain (BOPTools_AlgoTools.cxx L1139-1205).
-            // rcad: existing are_faces_same_domain on DS indices (plane-check stub).
+            // rcad: are_faces_same_domain on DS indices with the shared context
+            // (PointInFace + IsValidPointForFace).
             let n_f1 = self.ds.index(f1);
             let n_f2 = self.ds.index(f2);
             let flag = if n_f1 >= 0 && n_f2 >= 0 {
                 crate::bop::tools::algo_tools::are_faces_same_domain(
-                    n_f1 as usize, n_f2 as usize, self.ds, self.my_fuzzy_value,
+                    n_f1 as usize, n_f2 as usize, &mut self.my_context, self.ds, self.my_fuzzy_value,
                 )
             } else {
                 false
