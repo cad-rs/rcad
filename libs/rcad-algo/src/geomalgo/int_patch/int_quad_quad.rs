@@ -11,8 +11,9 @@
 // solving the quadratic in Z and mapping (U,V) through the surface frame.
 
 use glam::DVec3;
+use rcad_kernel::geom::SurfaceEval;
 use rcad_kernel::math::direct_polynomial_roots::DirectPolynomialRoots;
-use rcad_kernel::precision::PCONFUSION;
+use rcad_kernel::precision::{PCONFUSION, SQUARE_CONFUSION};
 
 const TWO_PI: f64 = std::f64::consts::TAU;
 
@@ -1461,7 +1462,9 @@ impl IntAnaCurve {
             if i > 0 && (a_params[i] - a_params[i - 1]) < rcad_kernel::precision::PCONFUSION {
                 continue;
             }
-            let Some((u, v, _, _, _, _)) = self.internal_uv_value(a_params[i]) else { continue };
+            let Some((u, v, _, _, _, _)) = self.internal_uv_value(a_params[i]) else {
+                continue;
+            };
             let a_p = self.internal_value(u, v);
             let mut a_sq_tol;
             if a_params[i] == a_theta
@@ -1527,6 +1530,62 @@ impl IntAnaCurve {
 
 /// OCCT IntAna_IntQuadQuad — intersection of a cylinder or cone with a general
 /// quadric.  Used when IntAna_QuadQuadGeo returns IntAna_NoGeometricSolution.
+/// OCCT IntAna_IntQuadQuad::AddSpecialPoints (IntAna_IntQuadQuad.cxx L50-118).
+///
+/// Sometimes the boundaries theTheta1 and theTheta2 are computed with some
+/// inaccuracy, and special points (cone apex or sphere pole(s)), true
+/// intersection points, lie out of the domain [theTheta1, theTheta2] of the
+/// ALine.  This corrects those boundaries to make the special points be
+/// included in the domain of the ALine.
+///
+/// rcad mapping: OCCT ElSLib::Parameters(gp_Cylinder) -> CylindricalSurface
+/// world_to_uv, ElSLib::Value(u,v,gp_Cylinder) -> point_at(u,v).  The atan2
+/// range difference (OCCT [0,2PI) vs rcad (-PI,PI]) is absorbed by the
+/// half-period clamps below.
+fn add_special_points(
+    quad: &IntAnaQuadric,
+    cyl: &rcad_kernel::geom::CylindricalSurface,
+    theta1: &mut f64,
+    theta2: &mut f64,
+) {
+    let a_period = TWO_PI;
+    if quad.special_points.is_empty() {
+        return;
+    }
+    let mut a_max_delta: f64 = 0.0;
+    for a_pt in &quad.special_points {
+        let uv = cyl.world_to_uv(*a_pt);
+        let a_u = uv.x;
+        let a_v = uv.y;
+        let a_p_proj = cyl.point_at(a_u, a_v);
+        if a_pt.distance_squared(a_p_proj) > SQUARE_CONFUSION {
+            // a_pt is not an intersection point
+            continue;
+        }
+        let mut a_delta1 = (a_u - *theta1).min(0.0);
+        let mut a_delta2 = (a_u - *theta2).max(0.0);
+        if a_delta1 < -std::f64::consts::PI {
+            // Must be a_delta1 = min(a_u - theta1 + a_period, 0.0).
+            // But a_u - theta1 + a_period >= 0 always.
+            a_delta1 = 0.0;
+        }
+        if a_delta2 > std::f64::consts::PI {
+            // Must be a_delta2 = max(a_u - theta2 - a_period, 0.0).
+            // But a_u - theta2 - a_period <= 0 always.
+            a_delta2 = 0.0;
+        }
+        let a_delta = (-a_delta1).max(a_delta2);
+        a_max_delta = a_max_delta.max(a_delta);
+    }
+    if a_max_delta != 0.0 {
+        *theta1 -= a_max_delta;
+        *theta2 += a_max_delta;
+        if (*theta2 - *theta1) > a_period {
+            *theta2 = *theta1 + a_period;
+        }
+    }
+}
+
 pub struct IntQuadQuad {
     done: bool,
     identical: bool,
@@ -1657,8 +1716,9 @@ impl IntQuadQuad {
                             if autrepar < 0.0 { autrepar = theta1 + 0.1; }
                             let qwet = mtf.value(autrepar);
                             if qwet >= 0.0 {
-                                let a_param = theta1 + TWO_PI;
-                                let t1 = theta1;
+                                let mut a_param = theta1 + TWO_PI;
+                                let mut t1 = theta1;
+                                add_special_points(quad, cyl, &mut t1, &mut a_param);
                                 let c0 = IntAnaCurve::set_cylinder_quad_values(
                                     cyl, qxx, qyy, qzz, qxy, qxz, qyz, qx, qy, qz, q1,
                                     self.my_epsilon, t1, a_param, un_seul_z_par_theta, z_positif);
@@ -1675,8 +1735,8 @@ impl IntQuadQuad {
                 }
                 if !un_pt_tg {
                     for i in 0..nbsol_dis {
-                        let theta1 = pol_dis.value(i);
-                        let theta2 = if i + 1 < nbsol_dis { pol_dis.value(i + 1) } else { pol_dis.value(0) + TWO_PI };
+                        let mut theta1 = pol_dis.value(i);
+                        let mut theta2 = if i + 1 < nbsol_dis { pol_dis.value(i + 1) } else { pol_dis.value(0) + TWO_PI };
                         if (theta2 - theta1).abs() <= 1e-12 {
                             // tangent point — skip
                         } else {
@@ -1686,6 +1746,7 @@ impl IntQuadQuad {
                             if qwet >= 0.0 {
                                 let theta3 = if i + 2 < nbsol_dis { pol_dis.value(i + 2) } else { pol_dis.value(0) + TWO_PI };
                                 if (theta3 - theta2) < 5e-8 {
+                                    add_special_points(quad, cyl, &mut theta1, &mut theta2);
                                     let c0 = IntAnaCurve::set_cylinder_quad_values(
                                         cyl, qxx, qyy, qzz, qxy, qxz, qyz, qx, qy, qz, q1,
                                         self.my_epsilon, theta1, theta2, un_seul_z_par_theta, z_positif);
@@ -1697,6 +1758,7 @@ impl IntQuadQuad {
                                     self.curves[self.nb_curves] = Some(c1);
                                     self.nb_curves += 1;
                                 } else {
+                                    add_special_points(quad, cyl, &mut theta1, &mut theta2);
                                     let c0 = IntAnaCurve::set_cylinder_quad_values(
                                         cyl, qxx, qyy, qzz, qxy, qxz, qyz, qx, qy, qz, q1,
                                         self.my_epsilon, theta1, theta2, deux_z_par_theta, z_indifferent);
