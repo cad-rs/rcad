@@ -1650,22 +1650,30 @@ impl<'a> Builder<'a> {
             .unwrap_or(false)
     }
 
-    /// OCCT BOPTools_AlgoTools2D::IsEdgeIsoline(aE, aF, isUIso, isVIso).
-    /// True when the edge's pcurve is an axis-aligned line in the face UV space.
+    /// OCCT BOPTools_AlgoTools2D::IsEdgeIsoline (L669-698) — true when the
+    /// edge's pcurve is tangent to the U or V axis in the face UV space.
+    /// is_u_iso = U-isoline (constant U), is_v_iso = V-isoline (constant V).
     fn is_edge_isoline(&self, a_e: &Shape, a_f: &Shape) -> (bool, bool) {
         let mut is_u_iso = false;
         let mut is_v_iso = false;
         let pcurve = a_e.as_edge().and_then(|ed| {
-            ed.pcurves.get(&a_f.index).map(|(pc, _, _)| pc.clone())
+            ed.pcurves.get(&a_f.index).map(|(pc, f, l)| (pc.clone(), *f, *l))
         });
-        if let Some(pc) = pcurve {
-            if let rcad_kernel::geom::Curve2d::Line(l) = pc {
-                let d = l.direction;
-                is_u_iso = d.y == 0.0 && d.x != 0.0;
-                is_v_iso = d.x == 0.0 && d.y != 0.0;
+        if let Some((pc, a_first, a_last)) = pcurve {
+            // aPC->D1(0.5*(aFirst+aLast), aP, aT)
+            let a_t = pc.derivative_at(0.5 * (a_first + a_last));
+            let a_sq_magn = a_t.length_squared();
+            if a_sq_magn <= 1e-15 {
+                // gp::Resolution()
+                return (false, false);
             }
-            // Circle pcurves (sphere/cylinder caps) handled per OCCT L...
-            // (isUIsoline = first==0 && last==2PI); pending — rare in these patterns.
+            let a_t = a_t / a_sq_magn.sqrt();
+            // aRefVDir(0,1), aRefUDir(1,0); CrossMagnitude(aT, aRefV) = |aT.X|.
+            let a_tol = rcad_kernel::core::precision::ANGULAR; // Precision::Angular()
+            let a_dpv = a_t.x.abs();
+            let a_dpu = a_t.y.abs();
+            is_u_iso = a_dpv <= a_tol;
+            is_v_iso = a_dpu <= a_tol;
         }
         (is_u_iso, is_v_iso)
     }

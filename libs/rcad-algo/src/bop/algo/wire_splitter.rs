@@ -251,7 +251,6 @@ fn split_block(
         for (i, a_v) in verts.iter().enumerate() {
             let vptr = a_v.ptr_id();
             let entry = my_smart_map.entry(vptr).or_insert_with(|| (a_v.clone(), Vec::new()));
-            let leix = entry.1.len();
             let mut a_ei = EdgeInfo::new();
             a_ei.set_edge(a_e);
             let a_or = a_v.orientation;
@@ -270,7 +269,6 @@ fn split_block(
             } else {
                 a_vert_map.insert(vptr, b_is_closed);
             }
-            let _ = leix;
         }
     }
     let a_nb = my_smart_map.len();
@@ -445,7 +443,6 @@ fn path(
         // Scan back for the loop-closing vertex.
         let mut a_buf: Vec<Shape> = Vec::new();
         let mut b_has_edge = false;
-        let mut closed_break = false;
         {
             let a_nb2 = a_ls.len();
             let mut i = a_nb2;
@@ -501,17 +498,14 @@ fn path(
                     a_vert_va.truncate(a_nbj);
                     a_coord_va.truncate(a_nbj);
                     an_info_seq.truncate(a_nbj);
-                    let _ = a_vb.clone();
                     a_e_outa = a_ls[a_nbj - 1].clone();
                     an_edge_info = an_info_seq[a_nbj - 1].clone();
-                    closed_break = true;
+                    // OCCT L522: `break` exits only the inner scan loop; the
+                    // flow falls through to the aEOutb selection below.
                     break;
                 }
                 i -= 1;
             }
-        }
-        if closed_break {
-            continue;
         }
 
         // Select the next edge.
@@ -876,8 +870,18 @@ fn angle_2d(
     let tol2d = 2.0 * tolerance_2d(a_v, a_gas);
     let mut dt = curve2d_resolution(&a_c2d, tol2d).max(rcad_kernel::core::precision::PCONFUSION);
 
-    // OCCT L820-833: for non-line curves adjust dt by curvature (GeomLProp_CLProps2d).
-    // Pending: curvature-based dt adjustment for non-line p-curves.
+    // OCCT L814-833: for non-line curves adjust dt by curvature
+    // (GeomLProp_CLProps2d). aType = aGAC2D.GetType().
+    if !matches!(a_c2d, Curve2d::Line(_)) {
+        // GeomLProp_CLProps2d LProp(aC2D, aTV, 2, Precision::PConfusion()).
+        // LProp.Curvature() is the signed curvature; the positive branch only.
+        let r = a_c2d.curvature_at(a_tv);
+        if r > rcad_kernel::core::precision::PCONFUSION {
+            let r = 1.0 / r;
+            let cosphi = r / (r + tol2d);
+            dt = dt.max(cosphi.acos()); // to avoid small dt for big R.
+        }
+    }
 
     // OCCT L835-845: aTX = 0.05*(aLast-aFirst).
     let mut a_tx = 0.05 * (a_last - a_first);
