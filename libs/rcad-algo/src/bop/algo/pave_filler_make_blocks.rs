@@ -2966,7 +2966,7 @@ impl PaveFiller {
             Some(c) => c.clone(),
             None => return usize::MAX,
         };
-        let n_sp = self.ds.push_edge(curve, [a_t1, a_t2], n_v1, n_v2);
+        let n_sp = self.ds.push_edge_inherit(curve, [a_t1, a_t2], n_v1, n_v2, Some(n_e));
         let a_tol = self.ds.edge_tolerance(n_e);
         self.ds.mutate_shape_data(n_sp, |ts| {
             if let topods::TShape::Edge(ed) = ts {

@@ -12610,3 +12610,62 @@ fn builder_stage_prism_x_cylinder_common() {
 
     check_builder_stages(&a, &b, BooleanOpType::Intersection, "P029", stages);
 }
+
+/// ======================================================================
+/// Seam data-model verification: the cylinder seam edge must carry a
+/// CurveOnClosedSurface representation reachable from the DS (BRep_Tool::IsClosed
+/// equivalent, BOPAlgo_WireSplitter_1.cxx L147).
+/// ======================================================================
+#[test]
+fn seam_curve_on_closed_surface_reaches_ds() {
+    use rcad_kernel::topods::CurveRepresentation;
+    use rcad_kernel::topods::TShape;
+
+    let a = make_cylinder_brep(
+        DVec3::new(0.0, 0.0, 0.0), DVec3::Z, DVec3::X, 1.0, 2.0)
+        .expect("cylinder a");
+    let mut filler = PaveFiller::new();
+    filler.set_arguments(vec![root_shape(&a, 0)]);
+    filler.set_fuzzy_value(0.0);
+    let a_prog = NoopProgress;
+    let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+    filler.perform(&a_ps);
+    let ds = filler.ds();
+
+    // Find the lateral face in the DS and its preserved BRep index.
+    let mut lat_ds = None;
+    let mut lat_brep = usize::MAX;
+    for i in 0..ds.nb_shapes() {
+        if ds.shape_info(i).shape_type != rcad_kernel::topods::ShapeType::Face {
+            continue;
+        }
+        if let Some(surf) = ds.shape(i).as_face().and_then(|fd| fd.surface.clone()) {
+            if matches!(surf, rcad_kernel::geom::Surface3::Cylinder(_)) {
+                lat_ds = Some(i);
+                lat_brep = ds.shape(i).index;
+                break;
+            }
+        }
+    }
+    let lat_ds = lat_ds.expect("lateral face in DS");
+
+    // Find a DS edge with a CurveOnClosedSurface representation on the lateral face.
+    let mut found = false;
+    for i in 0..ds.nb_shapes() {
+        if ds.shape_info(i).shape_type != rcad_kernel::topods::ShapeType::Edge {
+            continue;
+        }
+        if let TShape::Edge(ed) = &*ds.shape(i).data {
+            if ed.representations.iter().any(|r| {
+                matches!(r, CurveRepresentation::CurveOnClosedSurface { face, .. }
+                    if *face == lat_brep)
+            }) {
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found,
+        "seam CurveOnClosedSurface representation (face BRep index {}) must be reachable in the DS (lateral DS index {})",
+        lat_brep, lat_ds);
+}

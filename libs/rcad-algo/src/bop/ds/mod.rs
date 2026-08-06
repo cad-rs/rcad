@@ -1860,6 +1860,18 @@ impl DS {
     /// Push an edge into the DS (BRep_Builder equivalent).
     pub fn push_edge(&mut self, curve: rcad_kernel::geom::Curve3, range: [f64; 2],
         first: usize, last: usize) -> usize {
+        self.push_edge_inherit(curve, range, first, last, None)
+    }
+
+    /// OCCT BOPTools_AlgoTools::MakeSplitEdge (BOPTools_AlgoTools_2.cxx L138-183):
+    /// a split edge is an EmptyCopy of the source edge — it shares the source's
+    /// TShape, so it inherits the source's curve representations (CurveOnSurface
+    /// / CurveOnClosedSurface pcurves on the source faces). When `src` is a
+    /// source edge index, copy its `representations` and `pcurves` onto the new
+    /// split edge (the parameterization of the source edge is preserved for
+    /// same-parameter splits).
+    pub fn push_edge_inherit(&mut self, curve: rcad_kernel::geom::Curve3, range: [f64; 2],
+        first: usize, last: usize, src: Option<usize>) -> usize {
         let empty_vertex = Shape::new(
             Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
         );
@@ -1869,12 +1881,19 @@ impl DS {
         let v_last = self.shapes.get(last)
             .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Forward))
             .unwrap_or(empty_vertex);
+        let (pcurves, representations) = match src {
+            Some(src_e) if src_e < self.shapes.len() => match &*self.shapes[src_e].shape.data {
+                TShape::Edge(ed) => (ed.pcurves.clone(), ed.representations.clone()),
+                _ => (HashMap::new(), Vec::new()),
+            },
+            _ => (HashMap::new(), Vec::new()),
+        };
         let ed = rcad_kernel::topods::TEdgeData {
             curve: Some(curve.clone()), range,
             first: v_first, last: v_last,
             tolerance: 0.0, same_parameter: true, same_range: true,
-            degenerated: false, pcurves: HashMap::new(),
-            representations: Vec::new(), vertex_params: HashMap::new(),
+            degenerated: false, pcurves,
+            representations, vertex_params: HashMap::new(),
             my_shapes: Vec::new(), flags: 0,
         };
         let s = Shape::new(Arc::new(TShape::Edge(ed)), 0, topods::Orientation::Forward);

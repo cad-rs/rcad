@@ -1131,6 +1131,25 @@ pub fn nb_faces(&self) -> usize {
         }
     }
 
+    /// Mutate an edge's TShape in place, preserving Arc identity. OCCT
+    /// `BRep_Builder::UpdateEdge` edits the edge TShape in place (BRepPrim adds
+    /// pcurves to an edge that is already referenced by a wire); `Arc::make_mut`
+    /// would clone-on-write and split the identity, leaving the wire edges on
+    /// the old data. Safe because the primitive is being built sequentially.
+    pub fn edge_mut_inplace(&mut self, r: Shape) -> &mut TEdgeData {
+        // SAFETY: the caller holds &mut BRep (exclusive borrow of the tshape
+        // slot) and is building the shape sequentially; every other reference
+        // (face wires) observes the change, matching OCCT BRep_Builder::UpdateEdge
+        // editing the edge TShape in place.
+        let ptr = Arc::as_ptr(&self.tshapes[r.index]) as *mut TShape;
+        unsafe {
+            match &mut *ptr {
+                TShape::Edge(e) => e,
+                _ => panic!("edge_mut_inplace: Shape {} is not an Edge", r.index),
+            }
+        }
+    }
+
     /// Mutate a wire's data.
     pub fn wire_mut(&mut self, r: Shape) -> &mut TWireData {
         match Arc::make_mut(&mut self.tshapes[r.index]) {
@@ -2046,6 +2065,45 @@ impl BRepBuilder {
                 face: face.index,
                 pcurve,
                 range: [ta, tb],
+            });
+        ed.tolerance = ed.tolerance.max(tol);
+    }
+
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC1, aC2, aF, theTol) — set two
+    /// pcurves of an edge on the same face. The edge lies on the closing curve
+    /// (seam) of a closed surface and carries a BRep_CurveOnClosedSurface
+    /// representation (BRepPrim_OneAxis::LateralFace L434-438).
+    ///
+    /// `aFirst`/`aLast` are the edge's first and last parameter (BRep_Tool::Range);
+    /// both pcurves are evaluated over the same parameter interval as the edge
+    /// (same-parameter edge). The second pcurve is stored under the shifted key
+    /// `face.index + nb_faces` (rcad convention read by
+    /// [`BRepTool::curve_on_surface_second`]).
+    pub fn update_edge_pcurve_closed(
+        &mut self,
+        brep: &mut BRep,
+        edge: Shape,
+        pcurve1: Curve2d,
+        pcurve2: Curve2d,
+        face: Shape,
+        a_first: f64,
+        a_last: f64,
+        tol: f64,
+    ) {
+        let nb_faces = brep.nb_faces();
+        let ed = brep.edge_mut(edge);
+        ed.pcurves
+            .insert(face.index, (pcurve1.clone(), a_first, a_last));
+        ed.pcurves.insert(
+            face.index + nb_faces,
+            (pcurve2.clone(), a_first, a_last),
+        );
+        ed.representations
+            .push(CurveRepresentation::CurveOnClosedSurface {
+                face: face.index,
+                pcurve1,
+                pcurve2,
+                range: [a_first, a_last],
             });
         ed.tolerance = ed.tolerance.max(tol);
     }

@@ -769,6 +769,9 @@ impl SurfaceEval for ConicalSurface {
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, 0.0, f64::INFINITY]
     }
+    fn is_u_closed(&self) -> bool {
+        true
+    }
     fn is_u_periodic(&self) -> bool {
         true
     }
@@ -1040,6 +1043,51 @@ impl SurfaceEval for Surface3 {
             Surface3::TriBezier(s) => s.default_domain(),
             Surface3::Offset(s) => s.default_domain(),
             Surface3::Trimmed(s) => s.default_domain(),
+        }
+    }
+    fn is_u_closed(&self) -> bool {
+        // OCCT Geom_Surface::IsUClosed — elementary surfaces of revolution are
+        // closed in U (cylinder/cone/sphere/torus), planes and others are not.
+        match self {
+            Surface3::Plane(_) => false,
+            Surface3::Cylinder(s) => s.is_u_closed(),
+            Surface3::Sphere(s) => s.is_u_closed(),
+            Surface3::Cone(s) => s.is_u_closed(),
+            Surface3::Torus(s) => s.is_u_closed(),
+            Surface3::Ellipsoid(_) => false,
+            Surface3::Helicoid(_) => false,
+            Surface3::Pipe(_) => false,
+            Surface3::BSpline(_) => false,
+            Surface3::LinearExtrusion(_) => false,
+            Surface3::Revolution(_) => false,
+            Surface3::Ruled(_) => false,
+            Surface3::Coons(_) => false,
+            Surface3::Bezier(_) => false,
+            Surface3::TriBezier(_) => false,
+            Surface3::Offset(_) => false,
+            Surface3::Trimmed(_) => false,
+        }
+    }
+    fn is_v_closed(&self) -> bool {
+        // OCCT Geom_Surface::IsVClosed — only the torus is closed in V.
+        match self {
+            Surface3::Plane(_) => false,
+            Surface3::Cylinder(s) => s.is_v_closed(),
+            Surface3::Sphere(s) => s.is_v_closed(),
+            Surface3::Cone(s) => s.is_v_closed(),
+            Surface3::Torus(s) => s.is_v_closed(),
+            Surface3::Ellipsoid(_) => false,
+            Surface3::Helicoid(_) => false,
+            Surface3::Pipe(_) => false,
+            Surface3::BSpline(_) => false,
+            Surface3::LinearExtrusion(_) => false,
+            Surface3::Revolution(_) => false,
+            Surface3::Ruled(_) => false,
+            Surface3::Coons(_) => false,
+            Surface3::Bezier(_) => false,
+            Surface3::TriBezier(_) => false,
+            Surface3::Offset(_) => false,
+            Surface3::Trimmed(_) => false,
         }
     }
     fn is_u_periodic(&self) -> bool {

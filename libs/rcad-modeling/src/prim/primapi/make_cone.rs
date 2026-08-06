@@ -16,9 +16,11 @@
 // rev(StartEdge)], BottomWire = [rev(BottomEdge)], TopWire = [TopEdge].
 // Supports local coordinate system (gp_Ax2).
 
-use glam::DVec3;
-use rcad_kernel::geom::{Circle3, ConicalSurface, Curve3, Line3, Plane, Surface3};
-use rcad_kernel::topods::{self, Orientation, Shape};
+use glam::{DVec2, DVec3};
+use rcad_kernel::geom::{
+    Circle2d, Circle3, Curve2d, Curve3, ConicalSurface, Line2d, Line3, Plane, Surface3,
+};
+use rcad_kernel::topods::{self, CurveRepresentation, Orientation, Shape};
 use rcad_kernel::BRep;
 
 pub struct MakeCone {
@@ -96,22 +98,69 @@ impl MakeCone {
         // connected closed loop and the FClass2d uv polygon a simple rectangle.
         let lat_wire = t.add_twire(vec![e_top.clone(), rev(e_seam.clone()), rev(e_bot.clone()), e_seam.clone()]);
         // OCCT BottomWire (L757-782): [rev(BottomEdge)]
-        let bot_wire = t.add_twire(vec![rev(e_bot)]);
+        let bot_wire = t.add_twire(vec![rev(e_bot.clone())]);
         // OCCT TopWire (L726-756): [TopEdge]
-        let top_wire = t.add_twire(vec![e_top]);
+        let top_wire = t.add_twire(vec![e_top.clone()]);
         let f_lat = t.add_tface(Some(lat_surf), lat_wire, vec![], None, None, vec![], true);
         let f_bot_fwd = t.add_tface(Some(bot_plane), bot_wire, vec![], None, None, vec![], true);
         // OCCT BRepPrim_OneAxis::BottomFace (L501-503): ReverseFace.
         let f_bot = rev(f_bot_fwd);
-        let mut shell_faces = vec![f_lat, f_bot];
+        let mut shell_faces = vec![f_lat.clone(), f_bot.clone()];
         // OCCT BRepPrim_OneAxis::HasTop() (BRepPrim_OneAxis.cxx L293-310):
         // the top face exists only when !VMaxInfinite && !MeridianClosed &&
         // !MeridianOnAxis(myVMax). For the cone the meridian at VMax is at
         // distance R2 from the axis, so HasTop() == (R2 != 0). The top face
         // (OCCT TopFace L448-484) is a plane at z=H with +Z normal.
+        let mut f_top: Option<Shape> = None;
         if self.r2 > 1e-12 {
-            let f_top = t.add_tface(Some(top_plane), top_wire, vec![], None, None, vec![], true);
-            shell_faces.push(f_top);
+            let f_top_f = t.add_tface(Some(top_plane), top_wire, vec![], None, None, vec![], true);
+            f_top = Some(f_top_f.clone());
+            shell_faces.push(f_top_f);
+        }
+        // OCCT BRepPrim_OneAxis::LateralFace (L399-438): parametric curves on
+        // the lateral face. myVMin=0, myVMax=seam_len, myMeridianOffset=0. The
+        // seam is a closed edge of a full revolution — two pcurves at u=2*PI and
+        // u=0 as a CurveOnClosedSurface (L434-438); the cap circles are V-isolines.
+        let lat_i = f_lat.index;
+        // EBOTTOM: gp_Lin2d((0, myVMin), X)
+        t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
+            lat_i,
+            (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
+        );
+        // ETOP: gp_Lin2d((0, myVMax), X)
+        t.edge_mut_inplace(e_top.clone()).pcurves.insert(
+            lat_i,
+            (Curve2d::Line(Line2d::new(DVec2::new(0.0, seam_len), DVec2::X)), 0.0, std::f64::consts::TAU),
+        );
+        // ESTART seam closed edge: pcurve1 at u=myAngle, pcurve2 at u=0.
+        t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
+            lat_i,
+            (Curve2d::Line(Line2d::new(DVec2::new(std::f64::consts::TAU, 0.0), DVec2::Y)), 0.0, seam_len),
+        );
+        let nb_faces = t.nb_faces();
+        t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
+            lat_i + nb_faces,
+            (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::Y)), 0.0, seam_len),
+        );
+        t.edge_mut_inplace(e_seam.clone())
+            .representations
+            .push(CurveRepresentation::CurveOnClosedSurface {
+                face: lat_i,
+                pcurve1: Curve2d::Line(Line2d::new(DVec2::new(std::f64::consts::TAU, 0.0), DVec2::Y)),
+                pcurve2: Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::Y)),
+                range: [0.0, seam_len],
+            });
+        // OCCT BRepPrim_OneAxis::TopFace/BottomFace (L465-468/L506-509): cap
+        // circle pcurves — gp_Circ2d((0,0), MeridianValue(V).X()).
+        t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
+            f_bot.index,
+            (Curve2d::Circle(Circle2d::new(DVec2::ZERO, self.r1)), 0.0, std::f64::consts::TAU),
+        );
+        if let Some(f_top) = f_top {
+            t.edge_mut_inplace(e_top.clone()).pcurves.insert(
+                f_top.index,
+                (Curve2d::Circle(Circle2d::new(DVec2::ZERO, self.r2)), 0.0, std::f64::consts::TAU),
+            );
         }
         let shell = t.add_tshell(shell_faces);
         t.add_tsolid(vec![shell]);

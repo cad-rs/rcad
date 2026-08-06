@@ -4284,7 +4284,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 };
                 // OCCT L465-515: create new split edge
                 if let Some(curve) = self.ds.edge_curve(sp_e) {
-                    let new_ei = self.ds.push_edge(curve.clone(), [sp_t1, sp_t2], sp_v1, sp_v2);
+                    let new_ei = self.ds.push_edge_inherit(curve.clone(), [sp_t1, sp_t2], sp_v1, sp_v2, Some(sp_e));
                     if let Some(cb_idx) = cb_f {
                         // OCCT L536-545: aCBk->SetEdge(nSp) — sets the edge of all
                         //   PaveBlocks in the common block.
@@ -4424,6 +4424,13 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     /// (BuildPCurveForEdgeOnFace). In-place (OCCT BRep_Builder semantics) — safe
     /// because the DS owns a private input copy.
     fn build_pcurve_mpc(&mut self, n_e: usize, n_f: usize, surf: &Surface3, src: Option<usize>) {
+        // OCCT L233-236: if the edge already has a pcurve on the face, do not
+        // rebuild it (only the periodic adjustment, which a line pcurve at the
+        // seam does not need). Input-shape pcurves are keyed by the face's BRep
+        // index, so edge_has_pcurve consults both the DS index and the BRep index.
+        if self.edge_has_pcurve(n_e, n_f) {
+            return;
+        }
         // OCCT L239-249: attach the pcurve from the paired edge.
         if let Some(src_e) = src {
             if let Some(pc) = Self::copy_pcurve(&self.ds, src_e, n_e, n_f) {
@@ -4452,11 +4459,20 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPTools_AlgoTools2D::HasCurveOnSurface — the edge already has a
-    /// pcurve on the face.
+    /// pcurve on the face. OCCT matches the face's surface; rcad keys the edge
+    /// pcurve map by the DS face index, but input-shape pcurves (make_cylinder
+    /// etc.) are keyed by the face's preserved BRep index — both are consulted.
     fn edge_has_pcurve(&self, n_e: usize, n_f: usize) -> bool {
         if n_e >= self.ds.nb_shapes() { return false; }
+        let brep_f = if n_f < self.ds.nb_shapes() {
+            self.ds.shape(n_f).index
+        } else {
+            n_f
+        };
         match &*self.ds.shape(n_e).data {
-            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.contains_key(&n_f),
+            rcad_kernel::topods::TShape::Edge(ed) => {
+                ed.pcurves.contains_key(&n_f) || ed.pcurves.contains_key(&brep_f)
+            }
             _ => false,
         }
     }

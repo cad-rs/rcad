@@ -1072,11 +1072,35 @@ fn edge_vertices(e: &Shape) -> [Shape; 2] {
 }
 
 fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f64)> {
+    // OCCT BRep_Tool::CurveOnSurface(aE, aF) — the edge's pcurve on the face.
+    // rcad keys the edge pcurve map by the DS face index, but input-shape
+    // pcurves (make_cylinder etc.) are keyed by the Shape's BRep `index`; the
+    // DS face preserves that BRep index, so both keys are consulted.
+    let brep_face = if face_index < ds.nb_shapes() {
+        ds.shape(face_index).index
+    } else {
+        face_index
+    };
     match &*e.data {
-        // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face identity.
-        // rcad keys the edge pcurve map by the DS face index.
         TShape::Edge(ed) => {
+            // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-360): a closed
+            // surface seam edge (CurveOnClosedSurface) returns the second pcurve
+            // for a REVERSED edge and the first otherwise — the two wire
+            // instances of the seam map to u=2*PI and u=0.
+            if let Some(r) = ed.representations.iter().find_map(|r| match r {
+                rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                    face, pcurve1, pcurve2, range,
+                } if *face == brep_face => Some((pcurve1.clone(), pcurve2.clone(), *range)),
+                _ => None,
+            }) {
+                let (pc1, pc2, range) = r;
+                let pc = if e.orientation == Orientation::Reversed { pc2 } else { pc1 };
+                return Some((pc, range[0], range[1]));
+            }
             if let Some(v) = ed.pcurves.get(&face_index) {
+                return Some(v.clone());
+            }
+            if let Some(v) = ed.pcurves.get(&brep_face) {
                 return Some(v.clone());
             }
             // make_pcurves inserts pcurves through Arc::make_mut, which clones
@@ -1087,6 +1111,9 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
             if let Some(idx) = ds.map_shape_index.get(&(e.ptr_id(), e.location)) {
                 if let Some(ed2) = ds.shape_info(*idx).shape.as_edge() {
                     if let Some(v) = ed2.pcurves.get(&face_index) {
+                        return Some(v.clone());
+                    }
+                    if let Some(v) = ed2.pcurves.get(&brep_face) {
                         return Some(v.clone());
                     }
                 }
@@ -1104,12 +1131,25 @@ fn has_curve_on_surface(e: &Shape, face_index: usize, ds: &DS) -> bool {
         // FaceInfo::Index()), so the DS index — not the Shape's BRep `index` —
         // is the matching key. Same DS-canonical fallback as edge_pcurve.
         TShape::Edge(ed) => {
+            let brep_face = if face_index < ds.nb_shapes() {
+                ds.shape(face_index).index
+            } else {
+                face_index
+            };
             if ed.pcurves.contains_key(&face_index) {
+                return true;
+            }
+            if ed.pcurves.contains_key(&brep_face) {
                 return true;
             }
             if let Some(idx) = ds.map_shape_index.get(&(e.ptr_id(), e.location)) {
                 if let Some(ed2) = ds.shape_info(*idx).shape.as_edge() {
-                    return ed2.pcurves.contains_key(&face_index);
+                    if ed2.pcurves.contains_key(&face_index) {
+                        return true;
+                    }
+                    if ed2.pcurves.contains_key(&brep_face) {
+                        return true;
+                    }
                 }
             }
             false
@@ -1172,4 +1212,76 @@ fn vertex_tolerance(v: &Shape) -> f64 {
 
 fn curve2d_point(c: &Curve2d, t: f64) -> DVec2 {
     Curve2dEval::point_at(c, t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bop::algo::pave_filler::PaveFiller;
+    use rcad_kernel::core::message::{NoopProgress, ProgressScope};
+    use rcad_kernel::geom::Surface3;
+    use rcad_kernel::topods::{CurveRepresentation, ShapeType, TShape};
+
+    fn root_shape(brep: &rcad_kernel::BRep) -> Shape {
+        for ts in &brep.tshapes {
+            if let TShape::Solid(_) | TShape::Shell(_) = ts.as_ref() {
+                return Shape::new(ts.clone(), 0, Orientation::Forward);
+            }
+        }
+        panic!("no root Solid/Shell in BRep");
+    }
+
+    #[test]
+    fn seam_edge_pcurve_u_two_pi_vs_zero() {
+        let a = rcad_modeling::make_cylinder_brep(
+            glam::DVec3::ZERO, glam::DVec3::Z, glam::DVec3::X, 1.0, 2.0)
+            .expect("cylinder");
+        let mut filler = PaveFiller::new();
+        filler.set_arguments(vec![root_shape(&a)]);
+        filler.set_fuzzy_value(0.0);
+        let prog = NoopProgress;
+        let ps = ProgressScope::new(&prog, "test", 100);
+        filler.perform(&ps);
+        let ds = filler.ds();
+
+        // lateral face DS index
+        let mut lat = usize::MAX;
+        for i in 0..ds.nb_shapes() {
+            if ds.shape_info(i).shape_type != ShapeType::Face { continue; }
+            if let Some(Surface3::Cylinder(_)) = ds.shape(i).as_face().and_then(|fd| fd.surface.clone()) {
+                lat = i;
+                break;
+            }
+        }
+        // seam edge DS index (Line curve with a CurveOnClosedSurface representation)
+        let mut seam = usize::MAX;
+        for i in 0..ds.nb_shapes() {
+            if ds.shape_info(i).shape_type != ShapeType::Edge { continue; }
+            if let TShape::Edge(ed) = &*ds.shape(i).data {
+                if matches!(ed.curve, Some(rcad_kernel::geom::Curve3::Line(_)))
+                    && ed.representations.iter().any(|r| matches!(r, CurveRepresentation::CurveOnClosedSurface { .. }))
+                {
+                    seam = i;
+                    break;
+                }
+            }
+        }
+        assert_ne!(lat, usize::MAX, "lateral face not found");
+        assert_ne!(seam, usize::MAX, "seam edge not found");
+        let seam_shape = ds.shape(seam).clone();
+        let forward = Shape::new(seam_shape.data.clone(), seam_shape.location, Orientation::Forward);
+        let reversed = Shape::new(seam_shape.data.clone(), seam_shape.location, Orientation::Reversed);
+        let pc_f = edge_pcurve(&forward, lat, ds).expect("forward pcurve");
+        let pc_r = edge_pcurve(&reversed, lat, ds).expect("reversed pcurve");
+        // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-360): forward -> pcurve1 (u=2PI),
+        // reversed -> pcurve2 (u=0). Evaluate at t=1 (mid height).
+        let p_f = curve2d_point(&pc_f.0, 1.0);
+        let p_r = curve2d_point(&pc_r.0, 1.0);
+        assert!((p_f.x - std::f64::consts::TAU).abs() < 1e-9,
+            "forward seam UV.u must be 2*PI, got {}", p_f.x);
+        assert!(p_r.x.abs() < 1e-9,
+            "reversed seam UV.u must be 0, got {}", p_r.x);
+        assert!((p_f.x - p_r.x).abs() > 1.0,
+            "the two seam instances must differ by ~2*PI in u (loop-close check)");
+    }
 }
