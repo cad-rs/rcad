@@ -1373,10 +1373,12 @@ impl DS {
             if !self.is_new_shape(v1) && !self.is_new_shape(v2) {
                 let oe = pb.0.read().unwrap().original_edge;
                 if oe < self.nb_shapes() { self.shapes[oe].reference = -1; }
-                let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
-                for e in &mut self.pave_blocks_pool {
-                    e.retain(|spb| std::sync::Arc::as_ptr(&spb.0) as u64 != ptr);
-                }
+                // OCCT BOPDS_DS::ReleasePaveBlocks (BOPDS_DS.cxx L1540) also
+                // clears the pool list, but rcad face-info sets (PaveBlocksOn/In/Sc)
+                // reference PBs by pool index and the builder reads Edge() from
+                // them (BOPAlgo_Builder_2.cxx L487). Keep the PB in the pool so
+                // the pool index stays resolvable; reference=-1 already marks the
+                // edge as released, so has_pave_blocks() still returns false.
             }
         }
     }

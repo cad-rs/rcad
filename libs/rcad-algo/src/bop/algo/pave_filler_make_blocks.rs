@@ -2261,7 +2261,9 @@ impl PaveFiller {
             return;
         }
         // OCCT L1398-1405: tolerance cache for common blocks.
-        // aMCBTol — compute-on-demand; aMEPB — one PB per intersection edge.
+        // aMCBTol — compute-on-demand; aMEPB — one PB per intersection edge,
+        // shared across all section shapes (OCCT L1450, outside the loop).
+        let mut a_me_pb: HashMap<usize, SharedPB> = HashMap::new();
         // OCCT L1407-1656: map the fused shapes back into myDS.
         let a_ls2: Vec<Shape> = a_ls.clone();
         for a_sx in &a_ls2 {
@@ -2408,8 +2410,6 @@ impl PaveFiller {
                         }
                     }
                     if a_nb_lpbx > 0 {
-                        // aMEPB — avoid duplicate PBs for the same intersection edge.
-                        let mut a_me_pb: HashMap<usize, SharedPB> = HashMap::new();
                         for a_pbx in &a_lpbx {
                             let a_pbrx = a_pf.ds().real_pave_block(a_pbx);
                             let (a_pave0, a_pave1) = {
@@ -2489,7 +2489,13 @@ impl PaveFiller {
                                 let a_pave_r2 = Pave::new(a_pave[1].vertex_idx, a_pave[1].param);
                                 let mut pb = PaveBlock::new(i_e, a_pave_r1, a_pave_r2);
                                 pb.original_edge = i_e;
-                                SharedPB::new(pb)
+                                let spb = SharedPB::new(pb);
+                                // OCCT L1672-1696: the new PB replaces the removed aPB1
+                                // in the curve's PB list / aDMExEdges; UpdateFaceInfo
+                                // adds it by handle to PaveBlocksSc (L1778). rcad stores
+                                // pool indices, so allocate a pool entry for it.
+                                self.ds.pave_blocks_pool.push(vec![spb.clone()]);
+                                spb
                             });
                             if b_old {
                                 p_pbc.0.write().unwrap().set_original_edge(
@@ -2992,11 +2998,15 @@ impl PaveFiller {
             }
         }
         // 3. from Face Info.
+        // OCCT removes the PB handles whose Edge() is in theEdges (L3951-3968);
+        // rcad face info stores pool indices. Step 1 already emptied the pool
+        // entries of the removed PBs, so a now-empty pool entry means every PB
+        // it held referenced a removed edge — drop that index from all three sets.
         let a_nb_src = self.ds.nb_source_shapes();
         for i in 0..a_nb_src {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != ShapeType::Face || !a_si.has_reference() { continue; }
-            // Collect the pool indices whose PBs refer to removed edges.
+            // Collect the pool indices whose pool entry became empty.
             let to_remove: Vec<usize> = {
                 let fi = self.ds.face_info(i);
                 let mut tr = Vec::new();
@@ -3006,9 +3016,7 @@ impl PaveFiller {
                 {
                     let pool_idx = *pool_idx;
                     if pool_idx >= self.ds.pave_blocks_pool.len() { continue; }
-                    let has_bad = self.ds.pave_blocks_pool[pool_idx].iter()
-                        .any(|pb| the_edges.contains(&pb.0.read().unwrap().edge));
-                    if has_bad {
+                    if self.ds.pave_blocks_pool[pool_idx].is_empty() {
                         tr.push(pool_idx);
                     }
                 }
