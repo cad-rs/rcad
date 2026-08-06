@@ -1376,10 +1376,12 @@ pub(crate) fn de_boor_homo(
         }
         span
     };
+    // OCCT BSplCLib: a NULL weight array (non-rational curve) is treated as
+    // all weights equal to 1.0. Missing trailing entries are likewise 1.0.
     let mut d: Vec<[f64; 4]> = (0..=degree)
         .map(|j| {
             let idx = (k - degree + j).min(n - 1);
-            let w = weights[idx];
+            let w = weights.get(idx).copied().unwrap_or(1.0);
             [points[idx].x * w, points[idx].y * w, points[idx].z * w, w]
         })
         .collect();
@@ -1434,10 +1436,12 @@ pub(crate) fn de_boor_homo_2d(
         }
         span
     };
+    // OCCT BSplCLib: a NULL weight array (non-rational curve) is treated as
+    // all weights equal to 1.0. Missing trailing entries are likewise 1.0.
     let mut d: Vec<[f64; 3]> = (0..=degree)
         .map(|j| {
             let idx = (k - degree + j).min(n - 1);
-            let w = weights[idx];
+            let w = weights.get(idx).copied().unwrap_or(1.0);
             [points[idx].x * w, points[idx].y * w, w]
         })
         .collect();
@@ -1553,10 +1557,12 @@ pub(crate) fn de_boor_2d(degree: usize, knots: &[f64], points: &[DVec2], weights
     };
 
     // Homogeneous control points [x*w, y*w, w]
+    // OCCT BSplCLib: a NULL weight array (non-rational curve) is treated as
+    // all weights equal to 1.0. Missing trailing entries are likewise 1.0.
     let mut d: Vec<[f64; 3]> = (0..=degree)
         .map(|j| {
             let idx = (k - degree + j).min(n - 1);
-            let w = weights[idx];
+            let w = weights.get(idx).copied().unwrap_or(1.0);
             [points[idx].x * w, points[idx].y * w, w]
         })
         .collect();

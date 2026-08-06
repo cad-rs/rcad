@@ -57,8 +57,6 @@ pub struct Builder<'a> {
     pub(crate) my_tools: Vec<Shape>,        // BOPAlgo_BOP::myTools
     pub(crate) my_rc: Vec<Shape>,           // BOPAlgo_BOP::myRC (result compound contents)
     pub(crate) my_dims: [i32; 2],           // BOPAlgo_BOP::myDims ([0]=obj, [1]=tool)
-    // BOPAlgo_Builder::FillIn3DParts theDraftSolids: source solid ptr_id → draft solid.
-    pub(crate) my_draft_solids: HashMap<u64, Shape>,
     // ── BOPAlgo_Builder.hxx L492-505 ───────────────────────────
     pub(crate) ds: &'a DS,                 // L496: myDS (borrowed from PaveFiller)
     pub(crate) my_context: IntToolsContext, // L497: myContext
@@ -854,7 +852,6 @@ impl<'a> Builder<'a> {
             my_tools: Vec::new(),
             my_rc: Vec::new(),
             my_dims: [3, 3],
-            my_draft_solids: HashMap::new(),
             my_context: IntToolsContext::new(),
             my_arguments: Vec::new(),
             my_map_fence: HashSet::new(),
@@ -2180,9 +2177,11 @@ impl<'a> Builder<'a> {
             }
         }
         if !has_solid { return; }
-        self.fill_in_3d_parts();
+        // OCCT L78: local draft-solids map passed through the s06 chain.
+        let mut a_draft_solids: HashMap<u64, Shape> = HashMap::new();
+        self.fill_in_3d_parts(&mut a_draft_solids);
         if self.has_errors() { return; }
-        self.build_split_solids();
+        self.build_split_solids(&a_draft_solids);
         if self.has_errors() { return; }
         self.fill_internal_shapes();
     }
@@ -2190,7 +2189,7 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::FillIn3DParts (BOPAlgo_Builder_3.cxx L97-263).
     /// Collects all faces and draft solids, classifies faces as IN/OUT relative
     /// to each solid, and fills myInParts + myDraftSolids.
-    fn fill_in_3d_parts(&mut self) {
+    fn fill_in_3d_parts(&mut self, the_draft_solids: &mut HashMap<u64, Shape>) {
         // OCCT L113-150: get all faces (source + their images).
         let a_nb_s = self.ds.nb_source_shapes();
         let mut a_lfaces: Vec<Shape> = Vec::new();
@@ -2271,7 +2270,7 @@ impl<'a> Builder<'a> {
                 }
             }
             // OCCT L241: theDraftSolids.Bind(aSolid, aSDraft).
-            self.my_draft_solids.insert(a_solid.ptr_id(), a_sd.clone());
+            the_draft_solids.insert(a_solid.ptr_id(), a_sd.clone());
             // OCCT L243-261: combine IN and internal faces into myInParts.
             let a_nb_int = a_l_internal.len();
             if a_nb_int != 0 || a_nb_in != 0 {
@@ -2544,7 +2543,7 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::BuildSplitSolids (BOPAlgo_Builder_3.cxx L413-618).
     /// Each source solid is split independently by a separate BOPAlgo_SplitSolid;
     /// only its own split pieces are assigned to its images.
-    fn build_split_solids(&mut self) {
+    fn build_split_solids(&mut self, the_draft_solids: &HashMap<u64, Shape>) {
         // OCCT L425-427: map of same-domain solids face sets (BOPTools_Set -> shape).
         let mut a_mst: HashMap<Vec<u64>, Shape> = HashMap::new();
         // OCCT L432-461: find same-domain solids for non-interfered solids.
@@ -2556,7 +2555,7 @@ impl<'a> Builder<'a> {
             let a_s = self.brep_sr(i);
             if !a_mfence.insert(a_s.ptr_id()) { continue; }
             // OCCT L451-454: if theDraftSolids.IsBound(aS) continue;
-            if self.my_draft_solids.contains_key(&a_s.ptr_id()) { continue; }
+            if the_draft_solids.contains_key(&a_s.ptr_id()) { continue; }
             // OCCT L456-459: aST.Add(aS, TopAbs_FACE).
             let a_st = self.shape_face_set(&a_s);
             a_mst.entry(a_st).or_insert_with(|| a_s.clone());
@@ -2570,8 +2569,8 @@ impl<'a> Builder<'a> {
             if a_si.shape_type != topods::ShapeType::Solid { continue; }
             let a_s = self.brep_sr(i);
             // OCCT L478-481: if !theDraftSolids.IsBound(aS) continue;
-            if !self.my_draft_solids.contains_key(&a_s.ptr_id()) { continue; }
-            let a_sd = self.my_draft_solids.get(&a_s.ptr_id()).unwrap().clone();
+            if !the_draft_solids.contains_key(&a_s.ptr_id()) { continue; }
+            let a_sd = the_draft_solids.get(&a_s.ptr_id()).unwrap().clone();
             // OCCT L484-489: if no IN faces -> the draft solid itself, no split.
             let p_lfin: Vec<Shape> = self
                 .my_in_parts
