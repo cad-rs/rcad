@@ -1386,16 +1386,22 @@ impl<'a> Builder<'a> {
                 }
                 Some(imgs) => {
                     // OCCT L260-271: add each image (split)
-                    for a_ss_im in imgs {
-                        // OCCT L265-269: IsSplitToReverseWithWarn(aSSIm, aSS) — reverses aSSIm
-                        // when its geometry is oppositely oriented to aSS. Pending translation
-                        // (BOPTools_AlgoTools.cxx L1302-1531): needs Extrema_LocateExtPC point
-                        // projection + Geom_Curve/Surface handle-equality, absent in rcad. Only
-                        // affects sub-shape orientation, not entity counts.
+                    for a_ss_im0 in imgs {
+                        // OCCT L265-269: IsSplitToReverseWithWarn(aSSIm, aSS) —
+                        // reverse aSSIm when its geometry is oppositely oriented to aSS.
+                        let mut a_ss_im = a_ss_im0.clone();
+                        if !a_ss_im.is_equal(ss)
+                            && crate::bop::tools::algo_tools::is_split_to_reverse_edge(
+                                &a_ss_im, ss,
+                            )
+                            .0
+                        {
+                            a_ss_im.orientation = flip_orientation(a_ss_im.orientation);
+                        }
                         match the_type {
-                            topods::ShapeType::Wire => new_edges.push(a_ss_im.clone()),
-                            topods::ShapeType::Shell => new_faces.push(a_ss_im.clone()),
-                            topods::ShapeType::CompSolid => new_comps.push(a_ss_im.clone()),
+                            topods::ShapeType::Wire => new_edges.push(a_ss_im),
+                            topods::ShapeType::Shell => new_faces.push(a_ss_im),
+                            topods::ShapeType::CompSolid => new_comps.push(a_ss_im),
                             _ => {}
                         }
                     }
@@ -2212,20 +2218,15 @@ impl<'a> Builder<'a> {
                         continue;
                     }
                     // OCCT L1163-1166: seam split — DoSplitSEAMOnFace(aSp, theFace)
-                    // / (aE, aSp, theFace).
+                    // (overload 1 only, no fallback/warning in BuildDraftFace).
                     if b_is_closed && !self.edge_closed_on_face(&a_sp, the_face) {
-                        if !self.do_split_seam_on_face(&a_sp, the_face)
-                            && !self.do_split_seam_on_face_origin(a_e, &a_sp, the_face)
-                        {
-                            self.my_report.add_warning(
-                                crate::bop::algo::Alert::UnableToMakeClosedEdgeOnFace(vec![
-                                    the_face.clone(),
-                                    a_sp.clone(),
-                                ]),
-                            );
-                        }
+                        self.do_split_seam_on_face(&a_sp, the_face);
                     }
-                    // OCCT L1169-1172: IsSplitToReverseWithWarn pending.
+                    // OCCT L1169-1172: IsSplitToReverseWithWarn(aSp, aE) — reverse
+                    // the split when its geometry is oppositely oriented to aE.
+                    if crate::bop::tools::algo_tools::is_split_to_reverse_edge(&a_sp, a_e).0 {
+                        a_sp.orientation = flip_orientation(a_sp.orientation);
+                    }
                     new_edges.push(a_sp);
                 }
             }
