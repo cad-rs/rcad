@@ -303,10 +303,48 @@ fn edge_data(edge: &Shape) -> Option<&TEdgeData> {
     }
 }
 
+/// Geometric equality of two surfaces. The result-image faces carry the same
+/// surface as their DS source face, so the edge pcurve keyed by the source
+/// face index can be located by matching the surface (OCCT BRep_Tool::IsClosed
+/// and BRep_Tool::CurveOnSurface match the face's surface handle; rcad stores
+/// pcurves keyed by the DS face index).
+fn surface_same(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3) -> bool {
+    use rcad_kernel::geom::Surface3;
+    const T: f64 = 1e-9;
+    let v = |x: DVec3, y: DVec3| (x - y).length() < T;
+    match (a, b) {
+        (Surface3::Plane(a), Surface3::Plane(b)) => {
+            v(a.origin, b.origin)
+                && v(a.normal, b.normal)
+                && v(a.u_dir, b.u_dir)
+                && v(a.v_dir, b.v_dir)
+        }
+        (Surface3::Cylinder(a), Surface3::Cylinder(b)) => {
+            v(a.origin, b.origin) && v(a.axis, b.axis) && (a.radius - b.radius).abs() < T
+        }
+        (Surface3::Sphere(a), Surface3::Sphere(b)) => {
+            v(a.center, b.center) && v(a.axis, b.axis) && (a.radius - b.radius).abs() < T
+        }
+        (Surface3::Cone(a), Surface3::Cone(b)) => {
+            v(a.apex, b.apex)
+                && v(a.axis, b.axis)
+                && (a.radius - b.radius).abs() < T
+                && (a.half_angle_rad - b.half_angle_rad).abs() < T
+        }
+        (Surface3::Torus(a), Surface3::Torus(b)) => {
+            v(a.center, b.center)
+                && v(a.axis, b.axis)
+                && (a.major_radius - b.major_radius).abs() < T
+                && (a.minor_radius - b.minor_radius).abs() < T
+        }
+        _ => false,
+    }
+}
+
 /// GetNormalToFaceOnEdge (BOPTools_AlgoTools3D.cxx L351-376).
 /// Surface normal at the edge parameter aT on the face, computed via the
 /// edge's pcurve on the face and the surface first derivatives.
-fn get_normal_to_face_on_edge(edge: &Shape, face: &Shape, a_t: f64) -> Option<DVec3> {
+fn get_normal_to_face_on_edge(edge: &Shape, face: &Shape, a_t: f64, ds: &DS) -> Option<DVec3> {
     let ed = edge_data(edge)?;
     let fd = if let TShape::Face(fd) = &*face.data {
         fd
@@ -316,7 +354,24 @@ fn get_normal_to_face_on_edge(edge: &Shape, face: &Shape, a_t: f64) -> Option<DV
     let surf = fd.surface.as_ref()?;
     // OCCT L365: CurveOnSurface(aE, aF1, aC2D1, aTolPC) — the pcurve of the
     // edge on the face (same parameterization as the 3D curve, SameParameter).
-    if let Some((pc, _, _)) = ed.pcurves.get(&face.index) {
+    // The result faces (images) are synthetic wrappers with index == usize::MAX,
+    // so when the index-keyed lookup misses, match the pcurve by the face's
+    // surface (OCCT matches the face's surface handle).
+    let pc = ed
+        .pcurves
+        .get(&face.index)
+        .or_else(|| {
+            ed.pcurves.iter().find_map(|(k, v)| {
+                if let Some(fs) = ds.face_surface(*k) {
+                    if surface_same(surf, &fs) {
+                        return Some(v);
+                    }
+                }
+                None
+            })
+        })
+        .map(|(pc, _, _)| pc);
+    if let Some(pc) = pc {
         // OCCT L367-369: aC2D1->D0(aT, aP2D).
         let uv = pc.point_at(a_t);
         // OCCT L371-375: aS1->D1(U, V, aP, aD1U, aD1V); aDNF1 = aDD1U ^ aDD1V.
@@ -381,9 +436,10 @@ fn get_face_dir(
     _a_p: DVec3,
     a_t: f64,
     a_dtgt: DVec3,
+    ds: &DS,
 ) -> Option<(DVec3, DVec3)> {
     // OCCT L2133-2137: normal on edge, reversed for REVERSED faces.
-    let mut dn = get_normal_to_face_on_edge(a_e, a_f, a_t)?;
+    let mut dn = get_normal_to_face_on_edge(a_e, a_f, a_t, ds)?;
     if a_f.orientation == topods::Orientation::Reversed {
         dn = -dn;
     }
@@ -421,6 +477,7 @@ fn get_face_off(
     the_e1: &Shape,
     the_f1: &Shape,
     candidates: &[(Shape, Shape)],
+    ds: &DS,
 ) -> (Option<Shape>, bool) {
     // OCCT L1012-1016: 3D curve, intermediate point, point on the curve.
     let ed1 = match edge_data(the_e1) {
@@ -446,7 +503,7 @@ fn get_face_off(
     let a_or = the_e1.orientation;
 
     // OCCT L1026-1037: GetFaceDir(theE1, theF1, ...) → (aDN1, aDBF).
-    let (a_dn1, a_dbf1) = match get_face_dir(the_e1, the_f1, a_px, a_t, a_dtgt) {
+    let (a_dn1, a_dbf1) = match get_face_dir(the_e1, the_f1, a_px, a_t, a_dtgt, ds) {
         Some(d) => d,
         None => return (None, false),
     };
@@ -470,7 +527,7 @@ fn get_face_off(
         }
         // OCCT L1053-1061: GetFaceDir(aE2, aF2, ...) → (aDN2, aDBF2).
         // When it fails, bIsComputed=false and aDBF2 keeps the fallback value.
-        let b_is_computed = get_face_dir(a_e2, a_f2, a_px, a_t, a_dtgt2);
+        let b_is_computed = get_face_dir(a_e2, a_f2, a_px, a_t, a_dtgt2, ds);
         let (_a_dn2, a_dbf2) = match b_is_computed {
             Some(d) => d,
             None => (DVec3::ZERO, DVec3::ZERO),
@@ -517,6 +574,7 @@ fn is_internal_face_core(
     the_edge: &Shape,
     the_face1: &Shape,
     the_face2: &Shape,
+    ds: &DS,
 ) -> i32 {
     // OCCT L950-966: edge copies on both faces.
     let a_e1 = match find_edge_on_face(the_edge.ptr_id(), the_face1) {
@@ -548,7 +606,7 @@ fn is_internal_face_core(
 
     // OCCT L976-989: GetFaceOff — the minimal-angle face; bRet=false means
     // the minimal angle can not be found (iRet = 2).
-    let (a_f_off, is_done) = get_face_off(&a_e1_used, the_face1, &candidates);
+    let (a_f_off, is_done) = get_face_off(&a_e1_used, the_face1, &candidates, ds);
     if !is_done {
         return 2;
     }
@@ -568,6 +626,7 @@ fn is_internal_face(
     the_solid: &Shape,
     a_mef: &HashMap<u64, Vec<Shape>>,
     the_tol: f64,
+    ds: &DS,
 ) -> i32 {
     let mut i_ret = 0;
     let mut found_edge = false;
@@ -589,7 +648,7 @@ fn is_internal_face(
             let e_on_f1 = find_edge_on_face(a_e.ptr_id(), a_f1);
             if let Some(ef1) = e_on_f1 {
                 if ef1.orientation == topods::Orientation::Internal {
-                    i_ret = is_internal_face_core(the_face, &a_e, a_f1, a_f1);
+                    i_ret = is_internal_face_core(the_face, &a_e, a_f1, a_f1, ds);
                     found_edge = true;
                     break;
                 }
@@ -599,7 +658,7 @@ fn is_internal_face(
             // OCCT L864-873: two neighbor faces — angle-based method.
             let a_f1 = &a_lf[0];
             let a_f2 = &a_lf[1];
-            i_ret = is_internal_face_core(the_face, &a_e, a_f1, a_f2);
+            i_ret = is_internal_face_core(the_face, &a_e, a_f1, a_f2, ds);
             if i_ret != 2 {
                 found_edge = true;
                 break;
@@ -2515,7 +2574,7 @@ impl<'a> Builder<'a> {
                 let a_fc_shape = &faces[a_fc];
 
                 // OCCT L1505-1509: IsInternalFace on the representative face.
-                let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol) == 1;
+                let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol, &self.ds) == 1;
                 if std::env::var("RCAD_MB_DEBUG").is_ok() {
                     let bb = shape_bbox(a_fc_shape)
                         .map(|(mn, mx)| format!("[{:.3},{:.3},{:.3}]-[{:.3},{:.3},{:.3}]", mn.x, mn.y, mn.z, mx.x, mx.y, mx.z))
