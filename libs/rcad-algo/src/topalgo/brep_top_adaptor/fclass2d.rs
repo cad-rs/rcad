@@ -21,7 +21,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::topods::{Orientation, ShapeType, TShape};
+use rcad_kernel::topods::{Orientation, ShapeType, TShape, TWireData, tshape_flags};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::{CONFUSION, SQUARE_CONFUSION};
 
@@ -315,7 +315,30 @@ pub struct FClass2d {
 impl FClass2d {
     /// OCCT constructor: IntTools_FClass2d(aFace, TolUV) → Init(Face, Toluv).
     pub fn new(ds: &dyn ShapeSource, face_idx: usize, tol_uv: f64) -> Self {
-        let mut f = FClass2d {
+        let mut f = FClass2d::blank(face_idx, tol_uv);
+        f.init(ds, face_idx, tol_uv, None);
+        f
+    }
+
+    /// OCCT IntTools_Context::FClass2d(aFace) where aFace is a temporary face
+    /// built from a single analyzed loop wire (BOPAlgo_BuilderFace.cxx
+    /// L437-445): the loop edges form the face's only (outer) wire. The DS face
+    /// index supplies the surface and the edge pcurves (BRep_Tool::CurveOnSurface
+    /// matches by surface identity, so the temp face reuses the DS face's
+    /// pcurves).
+    pub fn new_for_loop(
+        ds: &dyn ShapeSource,
+        face_idx: usize,
+        tol_uv: f64,
+        loop_edges: &[Shape],
+    ) -> Self {
+        let mut f = FClass2d::blank(face_idx, tol_uv);
+        f.init(ds, face_idx, tol_uv, Some(loop_edges));
+        f
+    }
+
+    fn blank(face_idx: usize, tol_uv: f64) -> Self {
+        FClass2d {
             tab_class: Vec::new(),
             tab_orien: Vec::new(),
             toluv: tol_uv,
@@ -331,9 +354,7 @@ impl FClass2d {
             my_is_hole: true,
             has_pcurves: true,
             uv_polygons: Vec::new(),
-        };
-        f.init(ds, face_idx, tol_uv);
-        f
+        }
     }
 
     /// OCCT IntTools_FClass2d::IsHole — the face's outer wire is a hole.
@@ -365,8 +386,16 @@ impl FClass2d {
         self.perform(ds, p, false)
     }
 
-    /// OCCT IntTools_FClass2d::Init (IntTools_FClass2d.cxx L77-621).
-    pub fn init(&mut self, ds: &dyn ShapeSource, a_face: usize, tol_uv: f64) {
+    /// OCCT IntTools_FClass2d::Init (IntTools_FClass2d.cxx L77-621). When
+    /// `loop_edges` is Some, the classifier is built on a temporary face whose
+    /// only wire is the analyzed loop (BOPAlgo_BuilderFace.cxx L437-445).
+    pub fn init(
+        &mut self,
+        ds: &dyn ShapeSource,
+        a_face: usize,
+        tol_uv: f64,
+        loop_edges: Option<&[Shape]>,
+    ) {
         self.toluv = tol_uv;
         self.face = a_face;
         self.my_is_hole = true;
@@ -391,26 +420,38 @@ impl FClass2d {
         // The DS face's sub_shapes are flattened to edge+vertex indices by
         // prepare_faces (BOPDS_DS.cxx L1767-1773). The ordered boundary wires
         // live in the face TShape (outer_wire + inner_wires).
-        let fshape = ds.shape_at(a_face);
-        let face_data = match &*fshape.data {
-            TShape::Face(fd) => fd,
-            _ => return,
+        let face_wire_shapes: Vec<Shape> = match loop_edges {
+            Some(edges) => {
+                // OCCT BOPAlgo_BuilderFace.cxx L437-439:
+                //   aBB.MakeFace(aFace, aS, aLoc, aTol); aBB.Add(aFace, aWire);
+                // The loop wire is the temporary face's only (outer) wire.
+                let wire = Shape::new(
+                    std::sync::Arc::new(TShape::Wire(TWireData {
+                        my_shapes: vec![],
+                        flags: tshape_flags::DEFAULT,
+                        edges: edges.to_vec(),
+                    })),
+                    0,
+                    Orientation::Forward,
+                );
+                vec![wire]
+            }
+            None => {
+                let fshape = ds.shape_at(a_face);
+                let face_data = match &*fshape.data {
+                    TShape::Face(fd) => fd,
+                    _ => return,
+                };
+                std::iter::once(face_data.outer_wire.clone())
+                    .chain(face_data.inner_wires.iter().cloned())
+                    .collect()
+            }
         };
-        let face_wire_shapes: Vec<Shape> = std::iter::once(face_data.outer_wire.clone())
-            .chain(face_data.inner_wires.iter().cloned())
-            .collect();
 
         for (wire_idx, wire_shape) in face_wire_shapes.iter().enumerate() {
-            let Some(wi) = ds.map_shape_index(wire_shape.ptr_id(), wire_shape.location) else {
-                continue;
-            };
-            if wi >= ds.nb_shapes() || ds.shape_type(wi) != ShapeType::Wire {
-                continue;
-            }
-            let wshape = ds.shape_at(wi);
-            let wire_edge_shapes = match &*wshape.data {
+            let wire_edge_shapes = match &*wire_shape.data {
                 TShape::Wire(w) => w.edges.clone(),
-                _ => Vec::new(),
+                _ => continue,
             };
             // Edge DS indices (via the ptr_id → index map), in wire order.
             let mut wire_edge_idxs: Vec<usize> = Vec::with_capacity(wire_edge_shapes.len());

@@ -303,9 +303,10 @@ impl<'a> BuilderFace<'a> {
                 if has_hole_edge {
                     true
                 } else {
-                    // OCCT L445-446: FClass2d(aFace).IsHole()
+                    // OCCT L445-446: FClass2d(aFace).IsHole() — aFace is the
+                    // temporary face built from the analyzed loop wire.
                     let fi = self.my_face_index.unwrap_or(0);
-                    let is_hole = self.my_context.fclass2d_is_hole(self.ds, fi, &a_surf);
+                    let is_hole = self.my_context.fclass2d_is_hole(self.ds, fi, loop_edges);
                     !is_hole
                 }
             };

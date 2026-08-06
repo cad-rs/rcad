@@ -14,6 +14,7 @@ use crate::topalgo::brep_top_adaptor::fclass2d::{FClass2d, State};
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval, Curve2dEval};
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use rcad_kernel::topods::{ShapeType, TShape};
+use rcad_kernel::topo_shape::Shape;
 use glam::{DVec2, DVec3};
 
 // ====================================================================
@@ -905,20 +906,26 @@ impl IntToolsContext {
 
     /// OCCT BRep_Tool::Tolerance(aF) — the face tolerance used to build the
     /// FClass2d classifier (IntTools_Context::FClass2d, IntTools_Context.cxx
-    /// L225-242). Floored at CONFUSION so the ON tolerance is non-zero.
+    /// L225-242; aTolF = BRep_Tool::Tolerance(aFF), where aFF carries the DS
+    /// face tolerance aTol = BRep_Tool::Tolerance(myFace),
+    /// BOPAlgo_BuilderFace.cxx L396).
     fn classifier_tol(ds: &DS, fi: usize) -> f64 {
-        ds.face_tolerance(fi).max(rcad_kernel::CONFUSION)
+        ds.face_tolerance(fi)
     }
 
     // ====================================================================
     // UVBounds — OCCT UVBounds
     // ====================================================================
 
-    /// OCCT IntTools_FClass2d::IsHole — checks if the face wire is a hole.
+    /// OCCT IntTools_FClass2d::IsHole — checks if the wire is a hole.
     /// Uses BRepTopAdaptor_FClass2d (brep_top_adaptor) for classification.
-    pub fn fclass2d_is_hole(&self, ds: &DS, fi: usize, _surf: &rcad_kernel::geom::Surface3) -> bool {
-        // OCCT: create BRepTopAdaptor_FClass2d(aF, Tol)
-        FClass2d::new(ds, fi, 1e-7).is_hole()
+    /// `loop_edges` is the analyzed loop wire of a temporary face
+    /// (BOPAlgo_BuilderFace.cxx L437-445: aBB.MakeFace(aFace, aS, aLoc, aTol);
+    /// aBB.Add(aFace, aWire); IntTools_Context::FClass2d(aFace)).
+    pub fn fclass2d_is_hole(&self, ds: &DS, fi: usize, loop_edges: &[Shape]) -> bool {
+        // OCCT IntTools_Context::FClass2d(aF) -- IntTools_Context.cxx L225-242,
+        // aTolF = BRep_Tool::Tolerance(aFF).
+        FClass2d::new_for_loop(ds, fi, Self::classifier_tol(ds, fi), loop_edges).is_hole()
     }
 
     /// OCCT IntTools_Context::SolidClassifier (IntTools_Context.cxx L312-322).

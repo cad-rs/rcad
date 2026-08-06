@@ -697,7 +697,7 @@ fn refine_angle_2d(
         None => return None,
     };
     // BRep_Tool::Parameter(aV, aE, myFace).
-    let a_tv = match vertex_param_on_edge(a_v, a_e) {
+    let a_tv = match vertex_param_on_edge(a_v, a_e, face_index, ds) {
         Some(t) => t,
         None => return None,
     };
@@ -788,7 +788,7 @@ fn clock_wise_angle(a_angle_in: f64, a_angle_out: f64) -> f64 {
 
 /// OCCT Coord2d (L673-684) — 2D parameter of a vertex on an edge in a face.
 fn coord_2d(a_v1: &Shape, a_e1: &Shape, face_index: usize, ds: &DS) -> DVec2 {
-    let a_t = match vertex_param_on_edge(a_v1, a_e1) {
+    let a_t = match vertex_param_on_edge(a_v1, a_e1, face_index, ds) {
         Some(t) => t,
         None => return DVec2::ZERO,
     };
@@ -859,7 +859,7 @@ fn angle_2d(
     _the_context: &IntToolsContext,
     ds: &DS,
 ) -> f64 {
-    let a_tv = match vertex_param_on_edge(a_v, an_edge) {
+    let a_tv = match vertex_param_on_edge(a_v, an_edge, face_index, ds) {
         Some(t) => t,
         None => return 0.0,
     };
@@ -1071,6 +1071,22 @@ fn edge_vertices(e: &Shape) -> [Shape; 2] {
     }
 }
 
+/// OCCT E.Oriented(TopAbs_FORWARD) — the edge normalized to FORWARD orientation.
+/// The stored TEdge nodes [V1(Fwd), V2(Rev)] are returned as [V1(Fwd), V2(Rev)]
+/// ALWAYS, independent of the edge's stored orientation (the parent composition
+/// uses the FORWARD orientation of the normalized copy). Used by
+/// BRep_Tool::Parameter (BRep_Tool.cxx L1532-1597); do NOT use for
+/// GetNextVertex / smart-map EdgeInfo which iterate the edge as stored.
+fn edge_vertices_forward(e: &Shape) -> [Shape; 2] {
+    match &*e.data {
+        TShape::Edge(ed) => [
+            Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Forward),
+            Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Reversed),
+        ],
+        _ => [Shape::null(), Shape::null()],
+    }
+}
+
 fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f64)> {
     // OCCT BRep_Tool::CurveOnSurface(aE, aF) — the edge's pcurve on the face.
     // rcad keys the edge pcurve map by the DS face index, but input-shape
@@ -1182,21 +1198,58 @@ fn is_closed_on_face(e: &Shape, face: &Shape) -> bool {
 }
 
 /// OCCT BRep_Tool::Parameter(aV, aE, aF) — vertex parameter on the edge.
-fn vertex_param_on_edge(v: &Shape, e: &Shape) -> Option<f64> {
+fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Option<f64> {
+    // OCCT BRep_Tool::Parameter(V, E, F) -- BRep_Tool.cxx L1519-1523,
+    // Parameter(V, E, S, L) L1532-1597. Used by Coord2d (BOPAlgo_WireSplitter_1.cxx
+    // L700-712), Coord2dVf (L715-728), Angle2D (L817), RefineAngle (L1112).
     match &*e.data {
         TShape::Edge(ed) => {
-            if let Some(t) = ed.vertex_params.get(&v.index) {
-                return Some(*t);
+            // OCCT L1541-1561: iterate E.Oriented(TopAbs_FORWARD). The stored
+            // TEdge nodes are [V1, V2]; composed with the FORWARD orientation of
+            // the normalized copy they are [V1(Fwd), V2(Rev)]. A self-loop edge
+            // has V1 and V2 the same TShape, so V matches twice.
+            let verts = edge_vertices_forward(e);
+            let mut rev = false;
+            let mut vf: Option<Shape> = None;
+            for vcur in verts.iter() {
+                if v.is_same(vcur) {
+                    if vf.is_none() {
+                        vf = Some(vcur.clone());
+                    } else {
+                        rev = e.orientation == Orientation::Reversed;
+                        if vcur.orientation == v.orientation {
+                            vf = Some(vcur.clone());
+                        }
+                    }
+                }
             }
-            // DS-created edges (push_edge) have empty vertex_params; the param is
-            // only stored on the source BRep edges. OCCT reads the stored param;
-            // computing it from the geometry here is the semantic equivalent.
-            let curve = ed.curve.as_ref()?;
-            let p = match &*v.data {
-                TShape::Vertex(vd) => vd.point,
-                _ => return None,
-            };
-            Some(crate::bop::closest_point_on_curve(curve, p).0)
+            let orient = vf
+                .as_ref()
+                .map(|s| s.orientation)
+                .unwrap_or(Orientation::Internal);
+            // OCCT L1569-1581: BRep_Tool::Range(E, S, L, f, l) -- the pcurve
+            // range of E on the face surface (edge_pcurve selects the second
+            // pcurve for a REVERSED seam edge, matching CurveOnSurface).
+            let (_, f, l) = edge_pcurve(e, face_index, ds)?;
+            match orient {
+                Orientation::Forward => Some(if rev { l } else { f }),
+                Orientation::Reversed => Some(if rev { f } else { l }),
+                // OCCT L1583-1597 (INTERNAL or VF null): search the vertex's
+                // PointRepresentation on the pcurve; L1601-1660 falls back to the
+                // 3D curve. rcad approximates the point-rep search with the
+                // stored vertex param, then the closest point on the 3D curve.
+                _ => {
+                    if let Some(t) = ed.vertex_params.get(&v.index) {
+                        return Some(*t);
+                    }
+                    let curve = ed.curve.as_ref()?;
+                    let p = match &*v.data {
+                        TShape::Vertex(vd) => vd.point,
+                        _ => return None,
+                    };
+                    Some(crate::bop::closest_point_on_curve(curve, p).0)
+                }
+            }
         }
         _ => None,
     }
