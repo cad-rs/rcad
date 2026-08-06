@@ -1165,10 +1165,6 @@ impl<'a> Builder<'a> {
                     n_brep_shells: sh,
                     n_brep_solids: so,
                 });
-                if std::env::var("RCAD_MB_DEBUG").is_ok() {
-                    println!("[BLD-SNAP] {} V={} E={} F={} Shell={} Solid={}",
-                        $name, v, e, f, sh, so);
-                }
             }};
         }
         let partial = |s: &Option<topods::BRep>| s.clone().unwrap_or_default();
@@ -1558,10 +1554,6 @@ impl<'a> Builder<'a> {
             let a_nb_pb_on = a_fi.pave_blocks_on.len();
             let a_nb_pb_sc = a_fi.pave_blocks_sc.len();
             let a_nb_av = a_liav.len();
-            if std::env::var("RCAD_MB_DEBUG").is_ok() {
-                println!("[BLD-F] face={} PB_in={} PB_on={} PB_sc={} nAV={}",
-                    i, a_nb_pb_in, a_nb_pb_on, a_nb_pb_sc, a_nb_av);
-            }
             // OCCT L293-296: not complete -> skip.
             if a_nb_pb_in == 0 && a_nb_pb_on == 0 && a_nb_pb_sc == 0 && a_nb_av == 0 {
                 continue;
@@ -1741,9 +1733,6 @@ impl<'a> Builder<'a> {
             a_bf.my_edges = a_le.clone();
             a_bf.perform();
             // OCCT L527-531: aFacesIm.Add(myDS->Index(aBF.Face()), aBF.Areas()).
-            if std::env::var("RCAD_MB_DEBUG").is_ok() {
-                println!("[BLD-F] face={} n_edges={} n_areas={}", fi, a_le.len(), a_bf.my_areas.len());
-            }
             // OCCT binds every split face to its areas, even an empty list —
             // a face whose areas could not be built contributes nothing to the
             // result (build_draft_solid drops it). Skipping the bind would keep
@@ -2763,19 +2752,6 @@ impl<'a> Builder<'a> {
                 a_lfaces.push(a_s.clone());
             }
         }
-        if std::env::var("RCAD_MB_DEBUG").is_ok() {
-            println!("[F3DP] nFaces={}", a_lfaces.len());
-            let mut n_img = 0;
-            for i in 0..a_nb_s {
-                if self.ds.shape_info(i).shape_type != topods::ShapeType::Face { continue; }
-                let a_s = self.brep_sr(i);
-                if let Some(imgs) = self.my_images.get(&a_s) {
-                    n_img += imgs.len();
-                    println!("[F3DP] srcFace={} nImages={}", i, imgs.len());
-                }
-            }
-            println!("[F3DP] totalImages={}", n_img);
-        }
         // OCCT L154-195: get all solids, build draft solids.
         let mut a_lsolids: Vec<Shape> = Vec::new();
         let mut a_solids_if: HashMap<u64, Vec<Shape>> = HashMap::new();
@@ -3066,15 +3042,6 @@ impl<'a> Builder<'a> {
 
                 // OCCT L1505-1509: IsInternalFace on the representative face.
                 let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol, &self.ds) == 1;
-                if std::env::var("RCAD_MB_DEBUG").is_ok() {
-                    let bb = shape_bbox(a_fc_shape)
-                        .map(|(mn, mx)| format!("[{:.3},{:.3},{:.3}]-[{:.3},{:.3},{:.3}]", mn.x, mn.y, mn.z, mx.x, mx.y, mx.z))
-                        .unwrap_or_default();
-                    let edges: Vec<String> = face_edges(a_fc_shape).iter()
-                        .map(|e| format!("{}", e.ptr_id() & 0xfff)).collect();
-                    println!("[CF] solid={} block=[{}] repFace={} is_in={} bbox={} edges=[{}]",
-                        a_sd.ptr_id(), a_lcb.len(), a_fc, is_in, bb, edges.join(","));
-                }
                 if is_in {
                     // OCCT L1510-1517: the whole connexity block is IN.
                     let entry = in_parts.entry(a_sd.ptr_id()).or_default();
@@ -3127,10 +3094,6 @@ impl<'a> Builder<'a> {
                 .get(&a_s)
                 .cloned()
                 .unwrap_or_default();
-            if std::env::var("RCAD_MB_DEBUG").is_ok() {
-                let nd = a_sd.as_solid().map(|s| s.shells.len()).unwrap_or(0);
-                println!("[BSS] solid={} nInFaces={} draftShells={}", a_s.ptr_id(), p_lfin.len(), nd);
-            }
             if p_lfin.is_empty() {
                 let idx = *a_solids_im_idx.entry(a_s.ptr_id()).or_insert_with(|| {
                     a_solids_im.push((a_s.clone(), Vec::new()));
@@ -3161,14 +3124,8 @@ impl<'a> Builder<'a> {
             }
             // OCCT L514-517: BOPAlgo_SplitSolid for THIS solid only.
             let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(&self.ds);
-            if std::env::var("RCAD_MB_DEBUG").is_ok() {
-                println!("[BSS] solid={} nInputShapes={}", a_s.ptr_id(), a_sfs.len());
-            }
             bs.my_shapes = a_sfs;
             bs.perform();
-            if std::env::var("RCAD_MB_DEBUG").is_ok() {
-                println!("[BSS] solid={} nResultSolids={}", a_s.ptr_id(), bs.my_solids.len());
-            }
             // OCCT L542: aSolidsIm.Add(aBS.Solid(), aBS.Areas()).
             let idx = *a_solids_im_idx.entry(a_s.ptr_id()).or_insert_with(|| {
                 a_solids_im.push((a_s.clone(), Vec::new()));
