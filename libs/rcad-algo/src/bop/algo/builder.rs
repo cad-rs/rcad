@@ -12,7 +12,8 @@ use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools::face_make_curve::intermediate_point;
 use rcad_kernel::base::extrema::ExtPC2d;
 use rcad_kernel::geom::{
-    translate_curve2d, Curve2d, Curve2dEval, CurveEval, Surface3, SurfaceEval, TrimmedCurve2,
+    translate_curve2d, BSplineCurve2, Curve2d, Curve2dEval, CurveEval, Plane, Surface3, SurfaceEval,
+    TrimmedCurve2,
 };
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
@@ -574,6 +575,35 @@ fn min_step_3d(
         a_dt_max = a_dt_min;
     }
     a_dt_max
+}
+
+/// Project a 3D curve onto a plane (the plane pcurve, OCCT BRepLib plane
+/// projection). Samples the curve over its range, computes the plane UV
+/// (u = (p-O)·u_dir, v = (p-O)·v_dir), and approximates a BSpline2d rescaled
+/// to the curve's parameter range.
+fn project_edge_on_plane(curve: &rcad_kernel::geom::Curve3, pl: &Plane, range: [f64; 2]) -> Option<Curve2d> {
+    use rcad_kernel::geom::Curve3;
+    if !range[1].is_finite() || !range[0].is_finite() {
+        return None;
+    }
+    let n = 23usize;
+    let dt = (range[1] - range[0]) / n as f64;
+    let mut uv: Vec<DVec2> = Vec::with_capacity(n + 1);
+    for i in 0..=n {
+        let t = range[0] + i as f64 * dt;
+        let p = curve.point_at(t);
+        let u = (p - pl.origin).dot(pl.u_dir);
+        let v = (p - pl.origin).dot(pl.v_dir);
+        uv.push(DVec2::new(u, v));
+    }
+    if uv.len() < 2 {
+        return None;
+    }
+    let mut c = BSplineCurve2::approximate(&uv);
+    if range[1] > range[0] {
+        c.knots = c.knots.iter().map(|k| range[0] + (range[1] - range[0]) * k).collect();
+    }
+    Some(Curve2d::BSpline(c))
 }
 
 /// Signed angle from d1 to d2 around the reference axis d_ref.
@@ -1695,9 +1725,10 @@ impl<'a> Builder<'a> {
                 a_sp.orientation = topods::Orientation::Reversed;
                 a_le.push(a_sp);
             }
-            // OCCT L496-500: BuildPCurveForEdgesOnPlane(aLE, aFF) — planar fast path.
-            // Pending translation (BRepLib.cxx); only adds pcurves, does not change
-            // the edge set or entity counts.
+            // OCCT L496-500: if (!NonDestructive()) BRepLib::BuildPCurveForEdgesOnPlane(aLE, aFF).
+            if !self.my_non_destructive {
+                self.build_pcurve_for_edges_on_plane(&a_le, &a_f);
+            }
             // OCCT L502-505: aBF.SetFace(aF); aBF.SetShapes(aLE); SetRunParallel.
             a_vbf.push((i, a_f, a_le));
         }
@@ -2122,6 +2153,42 @@ impl<'a> Builder<'a> {
             self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c2, a_c1, a_ts1, a_ts2, a_tol);
         }
         true
+    }
+
+    /// OCCT BRepLib::BuildPCurveForEdgesOnPlane (BRepLib_1.cxx L313-339 with the
+    /// template loop L122-130): for each edge in `a_le` lacking a stored pcurve
+    /// on the plane face, project the edge's 3D curve onto the plane and store
+    /// the pcurve (BRep_Tool::CurveOnSurface's plane projection branch).
+    fn build_pcurve_for_edges_on_plane(&self, a_le: &[Shape], a_f: &Shape) {
+        let face_brep = a_f.index;
+        let surf = match a_f.as_face().and_then(|fd| fd.surface.clone()) {
+            Some(s) => s,
+            None => return,
+        };
+        let Surface3::Plane(pl) = surf else { return };
+        for a_e in a_le {
+            let is_stored = a_e
+                .as_edge()
+                .map(|ed| ed.pcurves.contains_key(&face_brep))
+                .unwrap_or(true);
+            if is_stored {
+                continue;
+            }
+            let Some(curve) = a_e.as_edge().and_then(|ed| ed.curve.clone()) else {
+                continue;
+            };
+            let range = a_e.as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
+            let Some(pc) = project_edge_on_plane(&curve, &pl, range) else {
+                continue;
+            };
+            let e_idx = self.ds.index(a_e) as usize;
+            if e_idx >= self.ds.nb_shapes() {
+                continue;
+            }
+            let a_tol = a_e.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
+            self.ds
+                .update_edge_pcurve_shared(e_idx, face_brep, pc, range[0], range[1], a_tol);
+        }
     }
 
     /// OCCT BOPTools_AlgoTools2D::IsEdgeIsoline (L669-698) — true when the

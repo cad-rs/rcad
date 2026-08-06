@@ -885,6 +885,40 @@ impl DS {
         }
     }
 
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC2d, aF, theTol) — attach a single
+    /// pcurve of an edge on a face (BRep_CurveOnSurface). `face_index` is the
+    /// face's BRep index, matching the key the input-shape pcurves use. Works
+    /// with `&self` (single-threaded in-place TShape edit).
+    pub fn update_edge_pcurve_shared(
+        &self,
+        edge_idx: usize,
+        face_index: usize,
+        pcurve: Curve2d,
+        a_first: f64,
+        a_last: f64,
+        tol: f64,
+    ) {
+        if edge_idx >= self.shapes.len() {
+            return;
+        }
+        let data = &self.shapes[edge_idx].shape.data;
+        let ptr = Arc::as_ptr(data) as *mut TShape;
+        // SAFETY: single-threaded; the caller passes owned pcurves, so no
+        // &TShape borrow is alive inside the closure.
+        unsafe {
+            if let TShape::Edge(ed) = &mut *ptr {
+                ed.pcurves.insert(face_index, (pcurve.clone(), a_first, a_last));
+                ed.representations
+                    .push(CurveRepresentation::CurveOnSurface {
+                        face: face_index,
+                        pcurve,
+                        range: [a_first, a_last],
+                    });
+                ed.tolerance = ed.tolerance.max(tol);
+            }
+        }
+    }
+
     pub fn mutate_shape_data(&mut self, idx: usize, f: impl FnOnce(&mut TShape)) {
         if idx >= self.shapes.len() {
             return;
