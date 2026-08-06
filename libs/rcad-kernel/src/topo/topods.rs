@@ -1,5 +1,6 @@
-use crate::geom::{Curve2d, Curve3, Surface3};
-use crate::core::precision::CONFUSION;
+use crate::geom::{Curve2d, Curve3, Surface3, SurfaceEval};
+use crate::core::precision::{CONFUSION, parametric_default};
+use std::f64::consts::PI;
 pub use crate::topo::topo_shape::Shape;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
@@ -1522,25 +1523,113 @@ impl BRepTool for BRep {
     }
 }
 
-/// Surface-aware UResolution (OCCT: BRepAdaptor_Surface::UResolution).
-pub fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
+/// OCCT GeomAdaptor_Surface::Load(S) — unwraps a Geom_RectangularTrimmedSurface
+/// to its basis surface while keeping the trimmed parameter bounds
+/// (GeomAdaptor_Surface.cxx L417-430). Returns the basis surface and the
+/// parameter range (u1,u2,v1,v2) the adaptor reports.
+pub fn surface_adaptor_basis_and_bounds(surf: &Surface3) -> (&Surface3, [f64; 4]) {
     match surf {
-        Surface3::Sphere(s) => tol3d / s.radius.max(1e-15),
-        Surface3::Cylinder(c) => tol3d / c.radius.max(1e-15),
-        Surface3::Cone(_) => tol3d * 1e-3,
-        Surface3::Torus(t) => tol3d / t.major_radius.max(1e-15),
-        _ => tol3d,
+        Surface3::Trimmed(ts) => (ts.basis.as_ref(), ts.trim),
+        s => (s, s.default_domain()),
     }
 }
 
-/// Surface-aware VResolution (OCCT: BRepAdaptor_Surface::VResolution).
+/// OCCT GeomAdaptor_Surface::UResolution (GeomAdaptor_Surface.cxx L1819-1896).
+/// The adaptor wraps the stored surface; its parameter bounds come from
+/// Geom_Surface::Bounds() (a Geom_RectangularTrimmedSurface reports its trim).
+pub fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
+    let (basis, [_, _, v1, v2]) = surface_adaptor_basis_and_bounds(surf);
+    let mut res = match basis {
+        Surface3::Torus(t) => {
+            let r = t.major_radius + t.minor_radius;
+            if r > CONFUSION {
+                tol3d / (2.0 * r)
+            } else {
+                0.0
+            }
+        }
+        Surface3::Sphere(s) => {
+            if s.radius > CONFUSION {
+                tol3d / (2.0 * s.radius)
+            } else {
+                0.0
+            }
+        }
+        Surface3::Cylinder(c) => {
+            if c.radius > CONFUSION {
+                tol3d / (2.0 * c.radius)
+            } else {
+                0.0
+            }
+        }
+        Surface3::Cone(c) => {
+            // OCCT L1856-1867: unbounded cone (V range > 1e10) -> unknown
+            // resolution, return Precision::Parametric(R3d). Otherwise the
+            // resolution is R3d / R where R is the larger of the VFirst/VLast
+            // iso-circle radii.
+            if v2 - v1 > 1e10 {
+                return parametric_default(tol3d);
+            }
+            let rayon1 = c.radius_at_slant(v2);
+            let rayon2 = c.radius_at_slant(v1);
+            let r = rayon1.max(rayon2);
+            return if r > CONFUSION { tol3d / r } else { 0.0 };
+        }
+        Surface3::Plane(_) => return tol3d,
+        // SurfaceOfExtrusion L1824-1827: BasisCurve->Resolution(R3d). A straight
+        // profile line yields R3d; curved profiles are approximated by R3d.
+        Surface3::LinearExtrusion(_) => return tol3d,
+        // BezierSurface/BSplineSurface L1872-1881: surface->Resolution(...).
+        Surface3::Bezier(_) | Surface3::BSpline(_) => return tol3d,
+        // OffsetSurface L1882-1885: BasisAdaptor->UResolution(R3d).
+        Surface3::Offset(_) => return tol3d,
+        // default L1886-1888: Precision::Parametric(R3d).
+        _ => return parametric_default(tol3d),
+    };
+    // OCCT L1890-1895.
+    if res <= 1.0 {
+        2.0 * res.asin()
+    } else {
+        2.0 * PI
+    }
+}
+
+/// OCCT GeomAdaptor_Surface::VResolution (GeomAdaptor_Surface.cxx L1900-1962).
 pub fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
-    match surf {
-        Surface3::Sphere(s) => tol3d / s.radius.max(1e-15),
-        Surface3::Cylinder(_) => tol3d,
-        Surface3::Cone(_) => tol3d,
-        Surface3::Torus(t) => tol3d / t.minor_radius.max(1e-15),
-        _ => tol3d,
+    let (basis, _) = surface_adaptor_basis_and_bounds(surf);
+    let mut res = match basis {
+        Surface3::Torus(t) => {
+            let r = t.minor_radius;
+            if r > CONFUSION {
+                tol3d / (2.0 * r)
+            } else {
+                0.0
+            }
+        }
+        Surface3::Sphere(s) => {
+            if s.radius > CONFUSION {
+                tol3d / (2.0 * s.radius)
+            } else {
+                0.0
+            }
+        }
+        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Plane(_) => return tol3d,
+        // SurfaceOfRevolution L1906-1909: BasisCurve->Resolution(R3d).
+        Surface3::Revolution(_) => return tol3d,
+        // SurfaceOfExtrusion L1928-1933: return R3d.
+        Surface3::LinearExtrusion(_) => return tol3d,
+        // BezierSurface/BSplineSurface L1934-1943: surface->Resolution(...).
+        Surface3::Bezier(_) | Surface3::BSpline(_) => return tol3d,
+        // OffsetSurface L1944-1947: BasisAdaptor->VResolution(R3d).
+        Surface3::Offset(_) => return tol3d,
+        // default L1948-1950: Precision::Parametric(R3d).
+        _ => return parametric_default(tol3d),
+    };
+    // OCCT L1952-1962.
+    if res <= 1.0 {
+        2.0 * res.asin()
+    } else {
+        2.0 * PI
     }
 }
 

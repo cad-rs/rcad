@@ -12,13 +12,14 @@ use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools::face_make_curve::intermediate_point;
 use rcad_kernel::base::extrema::ExtPC2d;
 use rcad_kernel::geom::{
-    translate_curve2d, BSplineCurve2, Curve2d, Curve2dEval, CurveEval, Plane, Surface3, SurfaceEval,
-    TrimmedCurve2,
+    translate_curve2d, BezierSurface, BSplineCurve2, BSplineSurface, Curve2d, Curve2dEval,
+    CurveEval, Plane, Surface3, SurfaceEval, TrimmedCurve2,
 };
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
-    u_resolution_for_surface, v_resolution_for_surface, CurveRepresentation, Orientation, TShape,
-    TVertexData, TEdgeData, TWireData, TFaceData, TShellData, TSolidData, tshape_flags,
+    surface_adaptor_basis_and_bounds, u_resolution_for_surface, v_resolution_for_surface,
+    CurveRepresentation, Orientation, TShape, TVertexData, TEdgeData, TWireData, TFaceData,
+    TShellData, TSolidData, tshape_flags,
 };
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::PCONFUSION;
@@ -1626,9 +1627,11 @@ impl<'a> Builder<'a> {
                     }
                     continue;
                 }
-                // OCCT L387-393: GeomLib::IsClosed(aSurf, tol, isUClosed, isVClosed).
+                // OCCT L387-393: GeomLib::IsClosed(aSurf, BRep_Tool::Tolerance(aE),
+                // isUClosed, isVClosed).
                 if !is_checked {
-                    let (uc, vc) = self.surface_is_closed(&a_f);
+                    let a_tol_e = a_e.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
+                    let (uc, vc) = self.surface_is_closed(&a_f, a_tol_e);
                     is_u_closed = uc;
                     is_v_closed = vc;
                     is_checked = true;
@@ -1845,13 +1848,247 @@ impl<'a> Builder<'a> {
         result
     }
 
-    /// OCCT GeomLib::IsClosed(aSurf, aTol, isUClosed, isVClosed) — surface
-    /// closed-ness in U and V (BOPAlgo_Builder_2.cxx L389-393).
-    fn surface_is_closed(&self, a_f: &Shape) -> (bool, bool) {
+    /// OCCT GeomLib::IsClosed(aSurf, aTol, isUClosed, isVClosed)
+    /// (GeomLib.cxx L2693-2868). Geometric closed-ness of the face surface in U
+    /// and V, sampled with the edge tolerance (BOPAlgo_Builder_2.cxx L387-393:
+    /// aTol = BRep_Tool::Tolerance(aE)).
+    fn surface_is_closed(&self, a_f: &Shape, a_tol: f64) -> (bool, bool) {
         let Some(surf) = a_f.as_face().and_then(|fd| fd.surface.clone()) else {
             return (false, false);
         };
-        (surf.is_u_closed(), surf.is_v_closed())
+        // GeomAdaptor_Surface aGAS(S) (GeomAdaptor_Surface.cxx L417-430): a
+        // RectangularTrimmedSurface is unwrapped to its basis surface while
+        // keeping the trimmed parameter bounds.
+        let (basis, [mut u1, mut u2, mut v1, mut v2]) = surface_adaptor_basis_and_bounds(&surf);
+        let tol2 = a_tol * a_tol;
+        match basis {
+            // OCCT L2713-2715: GeomAbs_Plane.
+            Surface3::Plane(_) => (false, false),
+            // OCCT L2716-2733: GeomAbs_SurfaceOfExtrusion falls through to
+            // GeomAbs_Cylinder when its u range is finite.
+            Surface3::LinearExtrusion(_) | Surface3::Cylinder(_) => {
+                if matches!(basis, Surface3::LinearExtrusion(_))
+                    && (u1.is_infinite() || u2.is_infinite())
+                {
+                    return (false, false);
+                }
+                if v1.is_infinite() {
+                    v1 = 0.0;
+                }
+                let p1 = basis.point_at(u1, v1);
+                let p2 = basis.point_at(u2, v1);
+                (p1.distance_squared(p2) <= tol2, false)
+            }
+            // OCCT L2734-2755: GeomAbs_Cone.
+            Surface3::Cone(c) => {
+                // find v with maximal distance from axis
+                if !(v1.is_infinite() || v2.is_infinite()) {
+                    let an_apex = c.apex_point();
+                    let p1 = basis.point_at(u1, v1);
+                    let p2 = basis.point_at(u1, v2);
+                    if p2.distance_squared(an_apex) > p1.distance_squared(an_apex) {
+                        v1 = v2;
+                    }
+                } else {
+                    v1 = 0.0;
+                }
+                let p1 = basis.point_at(u1, v1);
+                let p2 = basis.point_at(u2, v1);
+                (p1.distance_squared(p2) <= tol2, false)
+            }
+            // OCCT L2756-2773: GeomAbs_Sphere.
+            Surface3::Sphere(_) => {
+                // find v with maximal distance from axis
+                if v1 * v2 <= 0.0 {
+                    v1 = 0.0;
+                } else if v1 < 0.0 {
+                    v1 = v2;
+                }
+                let p1 = basis.point_at(u1, v1);
+                let p2 = basis.point_at(u2, v1);
+                (p1.distance_squared(p2) <= tol2, false)
+            }
+            // OCCT L2774-2781: GeomAbs_Torus.
+            Surface3::Torus(_) => {
+                let ures = u_resolution_for_surface(&surf, a_tol);
+                let vres = v_resolution_for_surface(&surf, a_tol);
+                let u_period = std::f64::consts::PI * 2.0;
+                let v_period = std::f64::consts::PI * 2.0;
+                ((u2 - u1) >= u_period - ures, (v2 - v1) >= v_period - vres)
+            }
+            // OCCT L2782-2787: GeomAbs_BSplineSurface.
+            Surface3::BSpline(bs) => (
+                Self::is_bspl_u_closed(bs, u1, u2, a_tol),
+                Self::is_bspl_v_closed(bs, v1, v2, a_tol),
+            ),
+            // OCCT L2788-2793: GeomAbs_BezierSurface.
+            Surface3::Bezier(bz) => (
+                Self::is_bz_u_closed(bz, u1, u2, a_tol),
+                Self::is_bz_v_closed(bz, v1, v2, a_tol),
+            ),
+            // OCCT L2794-2863: GeomAbs_SurfaceOfRevolution /
+            // GeomAbs_OffsetSurface / GeomAbs_OtherSurface — 23-point sampling.
+            _ => {
+                let mut nbp = 23;
+                if v1.is_infinite() {
+                    v1 = v1.signum();
+                }
+                if v2.is_infinite() {
+                    v2 = v2.signum();
+                }
+                // SurfaceOfRevolution keeps its u range; Offset/Other clamp it.
+                if !matches!(basis, Surface3::Revolution(_)) {
+                    if u1.is_infinite() {
+                        u1 = u1.signum();
+                    }
+                    if u2.is_infinite() {
+                        u2 = u2.signum();
+                    }
+                }
+                let mut is_u_closed = true;
+                let mut dt = (v2 - v1) / (nbp as f64 - 1.0);
+                let mut res = u_resolution_for_surface(&surf, a_tol).max(PCONFUSION);
+                if dt <= res {
+                    nbp = ((v2 - v1) / (2.0 * res)) as i32 + 1;
+                    nbp = nbp.max(2);
+                    dt = (v2 - v1) / (nbp as f64 - 1.0);
+                }
+                for i in 0..nbp {
+                    let t = if i == nbp - 1 { v2 } else { v1 + i as f64 * dt };
+                    let p1 = basis.point_at(u1, t);
+                    let p2 = basis.point_at(u2, t);
+                    if p1.distance_squared(p2) > tol2 {
+                        is_u_closed = false;
+                        break;
+                    }
+                }
+                nbp = 23;
+                let mut is_v_closed = true;
+                dt = (u2 - u1) / (nbp as f64 - 1.0);
+                res = v_resolution_for_surface(&surf, a_tol).max(PCONFUSION);
+                if dt <= res {
+                    nbp = ((u2 - u1) / (2.0 * res)) as i32 + 1;
+                    nbp = nbp.max(2);
+                    dt = (u2 - u1) / (nbp as f64 - 1.0);
+                }
+                for i in 0..nbp {
+                    let t = if i == nbp - 1 { u2 } else { u1 + i as f64 * dt };
+                    let p1 = basis.point_at(t, v1);
+                    let p2 = basis.point_at(t, v2);
+                    if p1.distance_squared(p2) > tol2 {
+                        is_v_closed = false;
+                        break;
+                    }
+                }
+                (is_u_closed, is_v_closed)
+            }
+        }
+    }
+
+    /// OCCT GeomLib::IsBSplUClosed (GeomLib.cxx L2872-2891). S->UIso(U1) /
+    /// S->UIso(U2) at the boundary knots evaluate to the first/last control
+    /// rows of the tensor-product control net.
+    fn is_bspl_u_closed(s: &BSplineSurface, _u1: f64, _u2: f64, a_tol: f64) -> bool {
+        if s.control_points.is_empty() {
+            return false;
+        }
+        let a_pf = &s.control_points[0];
+        let a_pl = &s.control_points[s.control_points.len() - 1];
+        let wf = if s.weights.is_empty() {
+            None
+        } else {
+            Some(s.weights[0].as_slice())
+        };
+        let wl = if s.weights.is_empty() {
+            None
+        } else {
+            Some(s.weights[s.weights.len() - 1].as_slice())
+        };
+        Self::compare_weight_poles(a_pf, wf, a_pl, wl, 2.0 * a_tol)
+    }
+
+    /// OCCT GeomLib::IsBSplVClosed (GeomLib.cxx L2895-2914). S->VIso(V1) /
+    /// S->VIso(V2) at the boundary knots evaluate to the first/last control
+    /// columns of the tensor-product control net.
+    fn is_bspl_v_closed(s: &BSplineSurface, _v1: f64, _v2: f64, a_tol: f64) -> bool {
+        if s.control_points.is_empty() || s.control_points[0].is_empty() {
+            return false;
+        }
+        let a_pf: Vec<DVec3> = s.control_points.iter().map(|row| row[0]).collect();
+        let a_pl: Vec<DVec3> = s
+            .control_points
+            .iter()
+            .map(|row| row[row.len() - 1])
+            .collect();
+        let wf_vec: Vec<f64> = if s.weights.is_empty() {
+            Vec::new()
+        } else {
+            s.weights.iter().map(|row| row[0]).collect()
+        };
+        let wl_vec: Vec<f64> = if s.weights.is_empty() {
+            Vec::new()
+        } else {
+            s.weights.iter().map(|row| row[row.len() - 1]).collect()
+        };
+        let wf = if wf_vec.is_empty() {
+            None
+        } else {
+            Some(wf_vec.as_slice())
+        };
+        let wl = if wl_vec.is_empty() {
+            None
+        } else {
+            Some(wl_vec.as_slice())
+        };
+        Self::compare_weight_poles(&a_pf, wf, &a_pl, wl, 2.0 * a_tol)
+    }
+
+    /// OCCT GeomLib::IsBzUClosed (GeomLib.cxx L2918-2936).
+    fn is_bz_u_closed(s: &BezierSurface, _u1: f64, _u2: f64, a_tol: f64) -> bool {
+        if s.control_points.is_empty() {
+            return false;
+        }
+        let a_pf = &s.control_points[0];
+        let a_pl = &s.control_points[s.control_points.len() - 1];
+        Self::compare_weight_poles(a_pf, None, a_pl, None, 2.0 * a_tol)
+    }
+
+    /// OCCT GeomLib::IsBzVClosed (GeomLib.cxx L2940-2958).
+    fn is_bz_v_closed(s: &BezierSurface, _v1: f64, _v2: f64, a_tol: f64) -> bool {
+        if s.control_points.is_empty() || s.control_points[0].is_empty() {
+            return false;
+        }
+        let a_pf: Vec<DVec3> = s.control_points.iter().map(|row| row[0]).collect();
+        let a_pl: Vec<DVec3> = s
+            .control_points
+            .iter()
+            .map(|row| row[row.len() - 1])
+            .collect();
+        Self::compare_weight_poles(&a_pf, None, &a_pl, None, 2.0 * a_tol)
+    }
+
+    /// OCCT GeomLib::CompareWeightPoles (GeomLib.cxx L2960-2987) — poles scaled
+    /// by their weights, pairwise within theTol (gp_XYZ::IsEqual).
+    fn compare_weight_poles(
+        a_pf: &[DVec3],
+        wf: Option<&[f64]>,
+        a_pl: &[DVec3],
+        wl: Option<&[f64]>,
+        a_tol: f64,
+    ) -> bool {
+        if a_pf.len() != a_pl.len() {
+            return false;
+        }
+        for i in 0..a_pf.len() {
+            let a_w1 = wf.map(|w| w[i]).unwrap_or(1.0);
+            let a_w2 = wl.map(|w| w[i]).unwrap_or(1.0);
+            let a_pole1 = a_pf[i] * a_w1;
+            let a_pole2 = a_pl[i] * a_w2;
+            if (a_pole1 - a_pole2).length() > a_tol {
+                return false;
+            }
+        }
+        true
     }
 
     /// OCCT BRep_Tool::IsClosed(aE, aF) — the edge has two pcurves on the
