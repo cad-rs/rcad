@@ -35,7 +35,7 @@ fn empty_vertex_data() -> rcad_kernel::topods::TVertexData {
 }
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve3, Surface3};
-use rcad_kernel::topods::{self, Orientation, ShapeType, TShape, TVertexData};
+use rcad_kernel::topods::{self, CurveRepresentation, Orientation, ShapeType, TShape, TVertexData};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::base::bnd_lib::surface_bounding_box;
 use rcad_kernel::curve_bounding_box;
@@ -841,6 +841,50 @@ impl DS {
     /// looks up (BOPAlgo_Builder_1.cxx L97, Builder_2.cxx L369). Arc::make_mut
     /// would clone-on-write a shared TShape, splitting that identity (the DS
     /// entry points to the clone while the face wires keep the original).
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC1, aC2, aF, theTol) — attach two
+    /// pcurves of an edge on the same face (CurveOnClosedSurface — a seam edge
+    /// of a closed surface). `face_index` is the face's BRep index, matching the
+    /// key the input-shape pcurves/representations use. The second pcurve is
+    /// stored at the shifted key `face_index + face_count` (rcad convention,
+    /// BRepTool::curve_on_surface_second).
+    ///
+    /// Takes `&self`: OCCT edits the edge TShape in place during the Builder
+    /// (which borrows the DS immutably); the pipeline is single-threaded and the
+    /// caller must not hold a `&TShape` borrow across the call.
+    pub fn update_edge_closed_surface(
+        &self,
+        edge_idx: usize,
+        face_index: usize,
+        pcurve1: Curve2d,
+        pcurve2: Curve2d,
+        a_first: f64,
+        a_last: f64,
+        tol: f64,
+    ) {
+        if edge_idx >= self.shapes.len() {
+            return;
+        }
+        let n_faces = self.face_count();
+        let data = &self.shapes[edge_idx].shape.data;
+        let ptr = Arc::as_ptr(data) as *mut TShape;
+        // SAFETY: the pipeline is single-threaded and no other &TShape for this
+        // Arc is alive inside the closure (the caller passes owned pcurves).
+        unsafe {
+            if let TShape::Edge(ed) = &mut *ptr {
+                ed.pcurves.insert(face_index, (pcurve1.clone(), a_first, a_last));
+                ed.pcurves.insert(face_index + n_faces, (pcurve2.clone(), a_first, a_last));
+                ed.representations
+                    .push(CurveRepresentation::CurveOnClosedSurface {
+                        face: face_index,
+                        pcurve1,
+                        pcurve2,
+                        range: [a_first, a_last],
+                    });
+                ed.tolerance = ed.tolerance.max(tol);
+            }
+        }
+    }
+
     pub fn mutate_shape_data(&mut self, idx: usize, f: impl FnOnce(&mut TShape)) {
         if idx >= self.shapes.len() {
             return;

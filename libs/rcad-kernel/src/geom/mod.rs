@@ -1756,6 +1756,66 @@ pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
     }
 }
 
+/// OCCT Geom2d_Curve::Translate(gp_Vec2d) — translate a 2D curve by `offset`.
+pub fn translate_curve2d(curve: &Curve2d, offset: DVec2) -> Curve2d {
+    match curve {
+        Curve2d::Line(l) => Curve2d::Line(l.translate(offset)),
+        Curve2d::Circle(c) => Curve2d::Circle(Circle2d {
+            center: c.center + offset,
+            ..*c
+        }),
+        Curve2d::Ellipse(e) => Curve2d::Ellipse(Ellipse2d {
+            center: e.center + offset,
+            ..*e
+        }),
+        Curve2d::Parabola(p) => Curve2d::Parabola(Parabola2d {
+            origin: p.origin + offset,
+            ..*p
+        }),
+        Curve2d::Hyperbola(h) => Curve2d::Hyperbola(Hyperbola2d {
+            center: h.center + offset,
+            ..*h
+        }),
+        Curve2d::CircleInvolute(c) => Curve2d::CircleInvolute(CircleInvolute2d {
+            center: c.center + offset,
+            ..*c
+        }),
+        Curve2d::ArchimedeanSpiral(s) => Curve2d::ArchimedeanSpiral(ArchimedeanSpiral2d {
+            center: s.center + offset,
+            ..*s
+        }),
+        Curve2d::LogarithmicSpiral(s) => Curve2d::LogarithmicSpiral(LogarithmicSpiral2d {
+            center: s.center + offset,
+            ..*s
+        }),
+        Curve2d::SineWave(s) => Curve2d::SineWave(*s),
+        Curve2d::BSpline(b) => Curve2d::BSpline(BSplineCurve2 {
+            control_points: b.control_points.iter().map(|&p| p + offset).collect(),
+            ..b.clone()
+        }),
+        Curve2d::Bezier(b) => Curve2d::Bezier(BezierCurve2 {
+            control_points: b.control_points.iter().map(|&p| p + offset).collect(),
+            ..b.clone()
+        }),
+        Curve2d::Trimmed(t) => Curve2d::Trimmed(TrimmedCurve2 {
+            curve: Box::new(translate_curve2d(&t.curve, offset)),
+            ..t.clone()
+        }),
+        Curve2d::Offset(o) => Curve2d::Offset(OffsetCurve2d {
+            basis: Box::new(translate_curve2d(&o.basis, offset)),
+            ..o.clone()
+        }),
+        Curve2d::AHTBezier(b) => Curve2d::AHTBezier(AHTBezierCurve2 {
+            control_points: b.control_points.iter().map(|&p| p + offset).collect(),
+            ..b.clone()
+        }),
+        Curve2d::TBezier(b) => Curve2d::TBezier(TBezierCurve2 {
+            control_points: b.control_points.iter().map(|&p| p + offset).collect(),
+            ..b.clone()
+        }),
+    }
+}
+
 /// OCCT-aligned: apply TopLoc_Location transform to a Surface3.
 pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
     match surface {

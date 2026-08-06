@@ -9,15 +9,21 @@ use crate::bop::algo::builder_face::BuilderFace;
 use crate::bop::ds::DS;
 use crate::bop::ds::pave::SharedPB;
 use crate::bop::int_tools::context::IntToolsContext;
-use rcad_kernel::geom::{Curve2dEval, CurveEval, Surface3, SurfaceEval};
+use crate::bop::int_tools::face_make_curve::intermediate_point;
+use rcad_kernel::base::extrema::ExtPC2d;
+use rcad_kernel::geom::{
+    translate_curve2d, Curve2d, Curve2dEval, CurveEval, Surface3, SurfaceEval, TrimmedCurve2,
+};
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
-    TShape, TVertexData, TEdgeData, TWireData, TFaceData,
-    TShellData, TSolidData, tshape_flags,
+    u_resolution_for_surface, v_resolution_for_surface, CurveRepresentation, Orientation, TShape,
+    TVertexData, TEdgeData, TWireData, TFaceData, TShellData, TSolidData, tshape_flags,
 };
 use rcad_kernel::topo_shape::Shape;
+use rcad_kernel::PCONFUSION;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use glam::DVec2;
 use glam::DVec3;
 
 /// Boolean operation error type.
@@ -1629,10 +1635,17 @@ impl<'a> Builder<'a> {
                     if b_is_closed {
                         if a_mfence.insert(a_sp.ptr_id()) {
                             if !self.edge_closed_on_face(&a_sp, &a_f) {
-                                // OCCT L435-446: DoSplitSEAMOnFace(aSp, aF) / (aE, aSp, aF).
-                                // Pending translation (BOPTools_AlgoTools3D.cxx):
-                                // inserts seam vertices on the split edge. Only affects
-                                // the closed-surface seam handling, not planar faces.
+                                // OCCT L435-446: DoSplitSEAMOnFace(aSp, aF) /
+                                // DoSplitSEAMOnFace(aE, aSp, aF).
+                                if !self.do_split_seam_on_face(&a_sp, &a_f)
+                                    && !self.do_split_seam_on_face_origin(&a_e, &a_sp, &a_f)
+                                {
+                                    self.my_report.add_warning(
+                                        crate::bop::algo::Alert::UnableToMakeClosedEdgeOnFace(
+                                            vec![a_f.clone(), a_sp.clone()],
+                                        ),
+                                    );
+                                }
                             }
                             a_sp.orientation = topods::Orientation::Forward;
                             a_le.push(a_sp.clone());
@@ -1832,6 +1845,279 @@ impl<'a> Builder<'a> {
             .unwrap_or(false)
     }
 
+    /// OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace(aSplit, aF)
+    /// (BOPTools_AlgoTools3D.cxx L58-232). The split edge `a_split` lies on a
+    /// closed surface but is not yet marked closed: creates the second pcurve
+    /// by translating the existing pcurve by one period, and stores both as a
+    /// CurveOnClosedSurface representation.
+    fn do_split_seam_on_face(&self, a_split: &Shape, a_f: &Shape) -> bool {
+        let mut b_is_left = false;
+        let mut an_u_period = 0.0;
+        let mut an_v_period = 0.0;
+        let mut a_sp = a_split.clone();
+        a_sp.orientation = Orientation::Forward;
+        let a_tol = a_sp.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
+        //
+        // OCCT L79-81: aS = BRep_Tool::Surface(aF); aS->Bounds(...).
+        let Some(a_s) = a_f.as_face().and_then(|fd| fd.surface.clone()) else {
+            return false;
+        };
+        let [a_u_min, a_u_max, a_v_min, a_v_max] = a_s.default_domain();
+        //
+        // OCCT L84-94: IsUClosed / IsVClosed -> period.
+        let mut b_is_u_periodic = a_s.is_u_closed();
+        let mut b_is_v_periodic = a_s.is_v_closed();
+        if b_is_u_periodic {
+            an_u_period = a_u_max - a_u_min;
+        }
+        if b_is_v_periodic {
+            an_v_period = a_v_max - a_v_min;
+        }
+        //
+        // OCCT L96-147: rectangular trimmed surface -> check basis surface.
+        if !b_is_u_periodic && !b_is_v_periodic {
+            let (basis, _trim) = match &a_s {
+                Surface3::Trimmed(ts) => (ts.basis.as_ref().clone(), ts.trim),
+                _ => return false,
+            };
+            b_is_u_periodic = basis.is_u_periodic();
+            b_is_v_periodic = basis.is_v_periodic();
+            if b_is_u_periodic || b_is_v_periodic {
+                let [u0, u1, v0, v1] = basis.default_domain();
+                an_u_period = if b_is_u_periodic { u1 - u0 } else { 0.0 };
+                an_v_period = if b_is_v_periodic { v1 - v0 } else { 0.0 };
+            } else {
+                let b_is_u_closed = basis.is_u_closed();
+                let b_is_v_closed = basis.is_v_closed();
+                let [a_glob_u_min, a_glob_u_max, a_glob_v_min, a_glob_v_max] = basis.default_domain();
+                if b_is_u_closed
+                    && (a_u_min - a_glob_u_min).abs() < a_tol
+                    && (a_u_max - a_glob_u_max).abs() < a_tol
+                {
+                    b_is_u_periodic = true;
+                    an_u_period = a_u_max - a_u_min;
+                }
+                if b_is_v_closed
+                    && (a_v_min - a_glob_v_min).abs() < a_tol
+                    && (a_v_max - a_glob_v_max).abs() < a_tol
+                {
+                    b_is_v_periodic = true;
+                    an_v_period = a_v_max - a_v_min;
+                }
+            }
+            if !(b_is_u_periodic || b_is_v_periodic) {
+                return false;
+            }
+        }
+        //
+        // OCCT L150-153: C2D1 = CurveOnSurface(aSp, aF, a, b);
+        // aT = IntermediatePoint(a, b); C2D1->D1(aT, aP2D, aVec2D).
+        let face_brep = a_f.index;
+        let (c2d1, a, b) = match a_sp
+            .as_edge()
+            .and_then(|ed| ed.pcurves.get(&face_brep).cloned())
+        {
+            Some(v) => v,
+            None => return false,
+        };
+        let a_t = intermediate_point(a, b);
+        let a_p2d = c2d1.point_at(a_t);
+        let a_vec2d = c2d1.derivative_at(a_t);
+        let a_dir2d1 = a_vec2d.normalize_or_zero();
+        let a_dox = DVec2::X;
+        let a_doy = DVec2::Y;
+        //
+        // OCCT L156-164.
+        let mut an_u = a_p2d.x;
+        let mut an_v = a_p2d.y;
+        let mut an_u1 = an_u;
+        let mut an_v1 = an_v;
+        //
+        let d_u = u_resolution_for_surface(&a_s, a_tol);
+        let d_v = v_resolution_for_surface(&a_s, a_tol);
+        //
+        // OCCT L166-192: if near UMin/UMax or VMin/VMax, shift by one period.
+        if an_u_period > 0.0 {
+            if (an_u - a_u_min).abs() < d_u {
+                b_is_left = true;
+                an_u1 = an_u + an_u_period;
+            } else if (an_u - a_u_max).abs() < d_u {
+                b_is_left = false;
+                an_u1 = an_u - an_u_period;
+            }
+        }
+        if an_v_period > 0.0 {
+            if (an_v - a_v_min).abs() < d_v {
+                b_is_left = true;
+                an_v1 = an_v + an_v_period;
+            } else if (an_v - a_v_max).abs() < d_v {
+                b_is_left = false;
+                an_v1 = an_v - an_v_period;
+            }
+        }
+        // OCCT L194-197.
+        if an_u1 == an_u && an_v1 == an_v {
+            return false;
+        }
+        //
+        // OCCT L199: aScPr = (anU1 == anU) ? aDir2D1 * aDOX : aDir2D1 * aDOY.
+        let a_sc_pr = if an_u1 == an_u {
+            a_dir2d1.dot(a_dox)
+        } else {
+            a_dir2d1.dot(a_doy)
+        };
+        //
+        // OCCT L201-207: trimmed copies; aC2 translated by (anU1-anU, anV1-anV).
+        let a_c1 = Curve2d::Trimmed(TrimmedCurve2 {
+            curve: Box::new(c2d1.clone()),
+            t_min: a,
+            t_max: b,
+        });
+        let a_c2_base = Curve2d::Trimmed(TrimmedCurve2 {
+            curve: Box::new(c2d1),
+            t_min: a,
+            t_max: b,
+        });
+        let a_tr_v = DVec2::new(an_u1 - an_u, an_v1 - an_v);
+        let a_c2 = translate_curve2d(&a_c2_base, a_tr_v);
+        //
+        // OCCT L209-230: BB.UpdateEdge(aSp, aC1, aC2, aF, aTol) depending on
+        // bIsLeft and aScPr.
+        let sp_idx = self.ds.index(&a_sp) as usize;
+        if sp_idx >= self.ds.nb_shapes() {
+            return false;
+        }
+        if !b_is_left {
+            if a_sc_pr < 0.0 {
+                self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c2, a_c1, a, b, a_tol);
+            } else {
+                self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c1, a_c2, a, b, a_tol);
+            }
+        } else if a_sc_pr < 0.0 {
+            self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c1, a_c2, a, b, a_tol);
+        } else {
+            self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c2, a_c1, a, b, a_tol);
+        }
+        true
+    }
+
+    /// OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace(aEOrigin, aESplit, aFace)
+    /// (BOPTools_AlgoTools3D.cxx L236-327). The split edge carries a single
+    /// pcurve; projects its midpoint onto the original seam's two pcurves and
+    /// builds the second pcurve translated to the opposite seam line.
+    fn do_split_seam_on_face_origin(
+        &self,
+        a_e_origin: &Shape,
+        a_e_split: &Shape,
+        a_face: &Shape,
+    ) -> bool {
+        // OCCT L240-243.
+        if !self.edge_closed_on_face(a_e_origin, a_face) {
+            return false;
+        }
+        if self.edge_closed_on_face(a_e_split, a_face) {
+            return true;
+        }
+        //
+        // OCCT L250-257: aC2DSplit = CurveOnSurface(aESplit, aFace, aTS1, aTS2).
+        let mut a_e_split_f = a_e_split.clone();
+        a_e_split_f.orientation = Orientation::Forward;
+        let face_brep = a_face.index;
+        let (a_c2d_split, a_ts1, a_ts2) = match a_e_split_f
+            .as_edge()
+            .and_then(|ed| ed.pcurves.get(&face_brep).cloned())
+        {
+            Some(v) => v,
+            None => return false,
+        };
+        //
+        // OCCT L263-267: the original seam's two pcurves (forward -> pcurve1,
+        // reversed -> pcurve2).
+        let (a_c2d1, a_c2d2, a_t1, a_t2) = match a_e_origin.as_edge().and_then(|ed| {
+            ed.representations.iter().find_map(|r| match r {
+                CurveRepresentation::CurveOnClosedSurface {
+                    face, pcurve1, pcurve2, range,
+                } if *face == face_brep => {
+                    Some((pcurve1.clone(), pcurve2.clone(), range[0], range[1]))
+                }
+                _ => None,
+            })
+        }) {
+            Some(v) => v,
+            None => return false,
+        };
+        //
+        // OCCT L269-272: aT = IntermediatePoint(aTS1, aTS2); D1 -> aPMid, aVTgt.
+        let a_t = intermediate_point(a_ts1, a_ts2);
+        let a_p_mid = a_c2d_split.point_at(a_t);
+        let a_v_tgt = a_c2d_split.derivative_at(a_t);
+        //
+        // OCCT L275-282: project the midpoint onto the two original pcurves.
+        let a_proj1 = ExtPC2d::new(a_p_mid, &a_c2d1, 1e-12, a_t1, a_t2);
+        let a_proj2 = ExtPC2d::new(a_p_mid, &a_c2d2, 1e-12, a_t1, a_t2);
+        if a_proj1.nb_ext() == 0 && a_proj2.nb_ext() == 0 {
+            return false;
+        }
+        let a_dist1 = if a_proj1.nb_ext() > 0 {
+            a_proj1.square_distance(1)
+        } else {
+            f64::MAX
+        };
+        let a_dist2 = if a_proj2.nb_ext() > 0 {
+            a_proj2.square_distance(1)
+        } else {
+            f64::MAX
+        };
+        // OCCT L287-290: PConfusion check.
+        if a_dist1 > PCONFUSION && a_dist2 > PCONFUSION {
+            return false;
+        }
+        //
+        // OCCT L293-294: aNewPnt = closer opposite-curve point.
+        let a_new_pnt = if a_dist1 < a_dist2 {
+            a_c2d2.point_at(a_proj1.point(1).param)
+        } else {
+            a_c2d1.point_at(a_proj2.point(1).param)
+        };
+        //
+        // OCCT L296-303: trimmed copies; aC2 translated from aPMid to aNewPnt.
+        let a_c1 = Curve2d::Trimmed(TrimmedCurve2 {
+            curve: Box::new(a_c2d_split.clone()),
+            t_min: a_ts1,
+            t_max: a_ts2,
+        });
+        let a_c2_base = Curve2d::Trimmed(TrimmedCurve2 {
+            curve: Box::new(a_c2d_split),
+            t_min: a_ts1,
+            t_max: a_ts2,
+        });
+        let a_tr_vec = a_new_pnt - a_p_mid;
+        let a_c2 = translate_curve2d(&a_c2_base, a_tr_vec);
+        //
+        // OCCT L305-314: aVTgtOrigin at the projection point.
+        let (a_p_proj, a_v_tgt_origin) = if a_dist1 < a_dist2 {
+            let t = a_proj1.point(1).param;
+            (a_c2d1.point_at(t), a_c2d1.derivative_at(t))
+        } else {
+            let t = a_proj2.point(1).param;
+            (a_c2d2.point_at(t), a_c2d2.derivative_at(t))
+        };
+        //
+        // OCCT L316-325: aDot = aVTgt . aVTgtOrigin.
+        let a_dot = a_v_tgt.dot(a_v_tgt_origin);
+        let a_tol = a_e_split_f.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
+        let sp_idx = self.ds.index(&a_e_split_f) as usize;
+        if sp_idx >= self.ds.nb_shapes() {
+            return false;
+        }
+        if (a_dist1 < a_dist2) == (a_dot > 0.0) {
+            self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c1, a_c2, a_ts1, a_ts2, a_tol);
+        } else {
+            self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c2, a_c1, a_ts1, a_ts2, a_tol);
+        }
+        true
+    }
+
     /// OCCT BOPTools_AlgoTools2D::IsEdgeIsoline (L669-698) — true when the
     /// edge's pcurve is tangent to the U or V axis in the face UV space.
     /// is_u_iso = U-isoline (constant U), is_v_iso = V-isoline (constant V).
@@ -1864,7 +2150,7 @@ impl<'a> Builder<'a> {
     /// Builds a new face from the original face by replacing each boundary
     /// edge with its images. Returns None when the BuilderFace algorithm must
     /// be used instead (internal edges / multi-connected vertices / unified edges).
-    fn build_draft_face(&self, the_face: &Shape) -> Option<Shape> {
+    fn build_draft_face(&mut self, the_face: &Shape) -> Option<Shape> {
         let a_surf = the_face.as_face().and_then(|fd| fd.surface.clone())?;
         let a_tol = the_face.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
         // OCCT L1073-1074: aVerticesCounter — multi-connexity detection.
@@ -1925,9 +2211,19 @@ impl<'a> Builder<'a> {
                         new_edges.push(a_sp);
                         continue;
                     }
-                    // OCCT L1163-1166: seam split — DoSplitSEAMOnFace pending.
+                    // OCCT L1163-1166: seam split — DoSplitSEAMOnFace(aSp, theFace)
+                    // / (aE, aSp, theFace).
                     if b_is_closed && !self.edge_closed_on_face(&a_sp, the_face) {
-                        // Pending: BOPTools_AlgoTools3D::DoSplitSEAMOnFace(aSp, theFace).
+                        if !self.do_split_seam_on_face(&a_sp, the_face)
+                            && !self.do_split_seam_on_face_origin(a_e, &a_sp, the_face)
+                        {
+                            self.my_report.add_warning(
+                                crate::bop::algo::Alert::UnableToMakeClosedEdgeOnFace(vec![
+                                    the_face.clone(),
+                                    a_sp.clone(),
+                                ]),
+                            );
+                        }
                     }
                     // OCCT L1169-1172: IsSplitToReverseWithWarn pending.
                     new_edges.push(a_sp);

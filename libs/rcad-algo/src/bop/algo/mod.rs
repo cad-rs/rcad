@@ -114,4 +114,7 @@ pub enum Alert {
     PostTreatFF,
     /// BOPAlgo_AlertSolidBuilderFailed — solid builder failed to build solids.
     SolidBuilderFailed,
+    /// BOPAlgo_AlertUnableToMakeClosedEdgeOnFace — a seam (closed-surface) edge
+    /// could not be split on the face. Carries the (face, split edge) shapes.
+    UnableToMakeClosedEdgeOnFace(Vec<rcad_kernel::topo_shape::Shape>),
 }
