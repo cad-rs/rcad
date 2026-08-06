@@ -9,7 +9,7 @@ use crate::bop::algo::builder_face::BuilderFace;
 use crate::bop::ds::DS;
 use crate::bop::ds::pave::SharedPB;
 use crate::bop::int_tools::context::IntToolsContext;
-use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
+use rcad_kernel::geom::{Curve2dEval, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
     TShape, TVertexData, TEdgeData, TWireData, TFaceData,
@@ -426,26 +426,148 @@ fn edge_tangent(edge: &Shape, a_t: f64) -> Option<DVec3> {
 
 /// GetFaceDir (BOPTools_AlgoTools.cxx L2118-2160).
 /// Computes the face normal aDN at the edge parameter aT (reversed for
-/// REVERSED faces) and the bi-normal direction aDB = aDN ^ aDTgt.
-/// Returns None when the directions cannot be computed reliably.
-/// (The FindPointInFace bi-normal refinement is not reproduced here; for
-/// planar faces aDB = aDN ^ aDTgt already points into the face.)
+/// REVERSED faces) and the bi-normal direction aDB = aDN ^ aDTgt. When the
+/// face is not small (theSmallFaces false), FindPointInFace refines aDB to
+/// point into the face (OCCT L2145-2157); the GetApproxNormalToFaceOnEdge
+/// fallback is not ported (keeps the unrefined aDB).
 fn get_face_dir(
     a_e: &Shape,
     a_f: &Shape,
-    _a_p: DVec3,
+    a_p: DVec3,
     a_t: f64,
     a_dtgt: DVec3,
     ds: &DS,
+    a_dt: f64,
+    b_small_faces: bool,
 ) -> Option<(DVec3, DVec3)> {
     // OCCT L2133-2137: normal on edge, reversed for REVERSED faces.
     let mut dn = get_normal_to_face_on_edge(a_e, a_f, a_t, ds)?;
     if a_f.orientation == topods::Orientation::Reversed {
         dn = -dn;
     }
-    // OCCT L2140: aDB = aDN ^ aDTgt.
-    let db = dn.cross(a_dtgt);
+    // OCCT L2139-2140: aTolE = Tolerance(aE); aDB = aDN ^ aDTgt.
+    let a_tol_e = edge_data(a_e).map(|e| e.tolerance).unwrap_or(0.0);
+    let mut db = dn.cross(a_dtgt);
+    // OCCT L2145-2157: refine the bi-normal by FindPointInFace (skipped for
+    // small faces). The plane aProjPL is (aP, aDTgt).
+    if !b_small_faces {
+        if !find_point_in_face(a_f, a_p, &mut db, a_dt, a_tol_e, a_dtgt, ds) {
+            // fallback GetApproxNormalToFaceOnEdge not ported — keep aDB.
+        }
+    }
     Some((dn, db))
+}
+
+/// OCCT BOPTools_AlgoTools::FindPointInFace (BOPTools_AlgoTools.cxx L2168-2239).
+/// Finds a point inside the face in the aDB direction and refines aDB to point
+/// from the edge point aP toward it, constrained to the plane perpendicular to
+/// the edge tangent aDTgt (the aProjPL plane). Returns false when the
+/// projection fails or the movement converges.
+fn find_point_in_face(
+    a_f: &Shape,
+    a_p: DVec3,
+    a_db: &mut DVec3,
+    a_dt: f64,
+    a_tol_e: f64,
+    a_dtgt: DVec3,
+    ds: &DS,
+) -> bool {
+    let fd = match &*a_f.data {
+        TShape::Face(fd) => fd,
+        _ => return false,
+    };
+    let Some(surf) = fd.surface.as_ref() else { return false };
+    // OCCT L2182-2190: tolerance / iteration / eps parameters.
+    let mut a_d_tol = rcad_kernel::ANGULAR;
+    let a_pm = a_p.length();
+    if a_pm > 1000.0 {
+        a_d_tol = 5e-16 * a_pm;
+    }
+    let mut a_nb_it_max = 15;
+    let an_eps = rcad_kernel::SQUARE_CONFUSION;
+    // aProjPL — projection onto the plane (aP, aDTgt) (OCCT L2166 + L2201).
+    let proj_plane = |p: DVec3| -> DVec3 { p - a_dtgt * (p - a_p).dot(a_dtgt) };
+    // aProj — projection onto the face's surface (OCCT theContext->ProjPS(aF)).
+    let proj_surf = |p: DVec3| -> (DVec3, f64) {
+        let (_, pr) = crate::bop::closest_point_on_surface(surf, p);
+        (pr, (p - pr).length())
+    };
+    // OCCT L2194-2212: project the edge point, then step by 2*tolE in aDB.
+    let (mut a_ps, _) = proj_surf(a_p);
+    a_ps = proj_plane(a_ps);
+    a_ps = a_ps + 2.0 * a_tol_e * (*a_db);
+    let (a_ps2, _) = proj_surf(a_ps);
+    a_ps = proj_plane(a_ps2);
+    // OCCT L2214-2238: iterate — step by aDt, re-project, refine aDB.
+    loop {
+        let a_p1 = a_ps + a_dt * (*a_db);
+        let (a_p_out_raw, a_dist) = proj_surf(a_p1);
+        let a_p_out = proj_plane(a_p_out_raw);
+        let a_v = a_p_out - a_ps;
+        if a_v.length_squared() < an_eps {
+            return false;
+        }
+        *a_db = a_v.normalize();
+        a_nb_it_max -= 1;
+        if a_dist <= a_d_tol || a_nb_it_max <= 0 {
+            return a_dist < a_d_tol;
+        }
+    }
+}
+
+/// OCCT BOPTools_AlgoTools::MinStep3D (BOPTools_AlgoTools.cxx L2243-2354).
+/// The 3D step aDt for FindPointInFace: max(2*(tolE+tolF)) over the candidate
+/// faces, clamped to aDtMin which grows with the surface radius. rcad: the
+/// UResolution/VResolution small-face check is not ported (bSmallFaces=false).
+fn min_step_3d(
+    the_e1: &Shape,
+    the_f1: &Shape,
+    candidates: &[(Shape, Shape)],
+    a_p: DVec3,
+) -> f64 {
+    let a_tol_e = edge_data(the_e1).map(|e| e.tolerance).unwrap_or(0.0);
+    let mut a_dt_max: f64 = -1.0;
+    let mut a_dt_min: f64 = 5e-6;
+    // OCCT L2252-2258: theLCS + (theE1, theF1).
+    let mut a_lcs: Vec<(&Shape, &Shape)> = candidates.iter().map(|(e, f)| (e, f)).collect();
+    a_lcs.push((the_e1, the_f1));
+    for (_, a_f) in a_lcs {
+        let a_tol_f = a_f.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
+        let a_dt = 2.0 * (a_tol_e + a_tol_f);
+        if a_dt > a_dt_max {
+            a_dt_max = a_dt;
+        }
+        // OCCT L2277-2304: surface radius based aDtMin.
+        let mut a_r = 0.0;
+        if let Some(fd) = a_f.as_face() {
+            if let Some(surf) = &fd.surface {
+                match surf {
+                    Surface3::Cylinder(c) => a_r = c.radius,
+                    Surface3::Cone(c) => {
+                        // aR = distance from aP to the cone axis (gp_Lin::Distance).
+                        let w = a_p - c.apex;
+                        a_r = (w - c.axis * w.dot(c.axis)).length();
+                    }
+                    Surface3::Sphere(s) => {
+                        a_dt_min = a_dt_min.max(5e-4);
+                        a_r = s.radius;
+                    }
+                    Surface3::Torus(t) => a_r = t.major_radius,
+                    _ => a_dt_min = a_dt_min.max(5e-4),
+                }
+            }
+        }
+        // OCCT L2306-2310: large radius grows the minimum step.
+        if a_r > 100.0 {
+            let d = 10.0 * rcad_kernel::PCONFUSION;
+            a_dt_min = a_dt_min.max((d * d + 2.0 * d * a_r).sqrt());
+        }
+    }
+    // OCCT L2313-2316.
+    if a_dt_max < a_dt_min {
+        a_dt_max = a_dt_min;
+    }
+    a_dt_max
 }
 
 /// Signed angle from d1 to d2 around the reference axis d_ref.
@@ -502,8 +624,12 @@ fn get_face_off(
     };
     let a_or = the_e1.orientation;
 
-    // OCCT L1026-1037: GetFaceDir(theE1, theF1, ...) → (aDN1, aDBF).
-    let (a_dn1, a_dbf1) = match get_face_dir(the_e1, the_f1, a_px, a_t, a_dtgt, ds) {
+    // OCCT L1026-1028: MinStep3D(theE1, theF1, theLCSOff, aPx, ..., bSmallFaces).
+    let a_dt3d = min_step_3d(the_e1, the_f1, candidates, a_px);
+    // rcad: the UResolution/VResolution small-face check is not ported.
+    let b_small_faces = false;
+    // OCCT L1029-1037: GetFaceDir(theE1, theF1, ...) → (aDN1, aDBF).
+    let (a_dn1, a_dbf1) = match get_face_dir(the_e1, the_f1, a_px, a_t, a_dtgt, ds, a_dt3d, b_small_faces) {
         Some(d) => d,
         None => return (None, false),
     };
@@ -527,7 +653,7 @@ fn get_face_off(
         }
         // OCCT L1053-1061: GetFaceDir(aE2, aF2, ...) → (aDN2, aDBF2).
         // When it fails, bIsComputed=false and aDBF2 keeps the fallback value.
-        let b_is_computed = get_face_dir(a_e2, a_f2, a_px, a_t, a_dtgt2, ds);
+        let b_is_computed = get_face_dir(a_e2, a_f2, a_px, a_t, a_dtgt2, ds, a_dt3d, b_small_faces);
         let (_a_dn2, a_dbf2) = match b_is_computed {
             Some(d) => d,
             None => (DVec3::ZERO, DVec3::ZERO),
