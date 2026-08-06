@@ -141,13 +141,19 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
             a_edge_map.entry(e.ptr_id()).or_insert_with(|| e.clone());
         }
     }
-    // OCCT L397-407: dedup equivalent faces per edge (one seam edge maps two
-    // equivalent faces). In rcad each face stores each edge once, so no
-    // duplicates exist in the per-face edge lists.
+    // OCCT L381-403: dedup equivalent faces per edge. A seam edge of a
+    // periodic face (cylinder/cone/sphere lateral wire stores the seam edge
+    // twice) maps the same face twice; aFM (TopTools_ShapeMapHasher,
+    // orientation-insensitive) keeps the first occurrence only.
+    for a_lf in a_ef_map.values_mut() {
+        if a_lf.len() > 1 {
+            let mut a_fm: HashSet<u64> = HashSet::new();
+            a_lf.retain(|&fi| a_fm.insert(faces[fi].ptr_id()));
+        }
+    }
     //
     // aProcessedFaces — IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>
     // (orientation-insensitive); stores the face as currently oriented.
-    let mut a_processed: Vec<usize> = Vec::new();
     let mut a_processed_keys: HashSet<u64> = HashSet::new();
     // New shell contents (face indices, in the order faces get added).
     let mut a_shell_new: Vec<usize> = Vec::new();
@@ -177,7 +183,6 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
         //
         if !b_is_processed1 && !b_is_processed2 {
             a_processed_keys.insert(faces[f1_idx].ptr_id());
-            a_processed.push(f1_idx);
             a_shell_new.push(f1_idx);
             b_is_processed1 = true;
         }
@@ -187,21 +192,23 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
         //
         if b_is_processed1 && !b_is_processed2 {
             if an_or_e1 == an_or_e2 {
-                if !edge_closed_on_face(&a_e, f1_idx) && !edge_closed_on_face(&a_e, f2_idx) {
+                if !edge_closed_on_face(&a_e, faces[f1_idx].index)
+                    && !edge_closed_on_face(&a_e, faces[f2_idx].index)
+                {
                     faces[f2_idx].orientation = flip_orientation(faces[f2_idx].orientation);
                 }
             }
             a_processed_keys.insert(faces[f2_idx].ptr_id());
-            a_processed.push(f2_idx);
             a_shell_new.push(f2_idx);
         } else if !b_is_processed1 && b_is_processed2 {
             if an_or_e1 == an_or_e2 {
-                if !edge_closed_on_face(&a_e, f1_idx) && !edge_closed_on_face(&a_e, f2_idx) {
+                if !edge_closed_on_face(&a_e, faces[f1_idx].index)
+                    && !edge_closed_on_face(&a_e, faces[f2_idx].index)
+                {
                     faces[f1_idx].orientation = flip_orientation(faces[f1_idx].orientation);
                 }
             }
             a_processed_keys.insert(faces[f1_idx].ptr_id());
-            a_processed.push(f1_idx);
             a_shell_new.push(f1_idx);
         }
     }
@@ -230,7 +237,9 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
 }
 
 /// OCCT BRep_Tool::IsClosed(aE, aF) — the edge has two pcurves on the closed
-/// surface (seam edge). BOPAlgo_Builder_2.cxx L397.
+/// surface (seam edge). BOPAlgo_Builder_2.cxx L397. `f_index` is the face's
+/// BRep-slot index (`Shape::index`), matching the `face` field stored in the
+/// edge's CurveOnClosedSurface representation.
 fn edge_closed_on_face(a_e: &Shape, f_index: usize) -> bool {
     a_e.as_edge()
         .map(|ed| {
