@@ -661,9 +661,10 @@ impl SphericalSurface {
         }
     }
 
-    /// Spherical coordinates of world point `p`: longitude `u` ∈ (−π, π], colatitude `v` ∈ [0, π],
-    /// matching [`SurfaceEval::point_at`] / `properties` sphere helpers (radial projection when `p`
-    /// is off the surface).
+    /// Spherical coordinates of world point `p`: longitude `u` ∈ (−π, π],
+    /// latitude `v` ∈ [−π/2, π/2] (0 = equator, +π/2 = axis pole), matching
+    /// [`SurfaceEval::point_at`] / `properties` sphere helpers and OCCT
+    /// `ElSLib::SphereD0` (radial projection when `p` is off the surface).
     pub fn world_to_uv(self, p: DVec3) -> DVec2 {
         let ax = self.axis.normalize_or_zero();
         let r = self.radius;
@@ -675,7 +676,9 @@ impl SphericalSurface {
             return DVec2::ZERO;
         }
         let w = w.normalize();
-        let v = w.dot(ax).clamp(-1.0, 1.0).acos();
+        // OCCT ElSLib::SphereD0: the axis component is R*sin(V), so
+        // V = asin(w.A) (0 = equator, +pi/2 = axis pole).
+        let v = w.dot(ax).clamp(-1.0, 1.0).asin();
         let x_ax = self.ref_dir.normalize();
         let y_ax = ax.cross(x_ax).normalize();
         let w_t = w - ax * w.dot(ax);
@@ -689,19 +692,21 @@ impl SphericalSurface {
 }
 
 impl SurfaceEval for SphericalSurface {
-    /// u = longitude [0, 2π], v = colatitude [0, π] (0 = north pole).
+    /// OCCT ElSLib::SphereD0: P = O + R*(cos(v)*radial + sin(v)*A),
+    /// radial = cos(u)X + sin(u)Y.  u = longitude [0, 2π], v = latitude
+    /// [−π/2, π/2] (0 = equator, +π/2 = axis pole).
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let x_ax = self.ref_dir.normalize();
         let y_ax = self.axis.cross(x_ax).normalize();
         self.center
-            + self.radius * (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * self.axis)
+            + self.radius * (v.cos() * (u.cos() * x_ax + u.sin() * y_ax) + v.sin() * self.axis)
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
         let p = self.point_at(u, v);
         (p - self.center).normalize_or_zero()
     }
     fn default_domain(&self) -> [f64; 4] {
-        [0.0, 2.0 * PI, 0.0, PI]
+        [0.0, 2.0 * PI, -PI / 2.0, PI / 2.0]
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
         let x_ax = self.ref_dir.normalize();
@@ -709,27 +714,28 @@ impl SurfaceEval for SphericalSurface {
         let (su, cu) = u.sin_cos();
         let (sv, cv) = v.sin_cos();
         let radial = cu * x_ax + su * y_ax;
-        let p = self.center + self.radius * (sv * radial + cv * self.axis);
-        let dpu = self.radius * sv * (-su * x_ax + cu * y_ax);
-        let dpv = self.radius * (cv * radial - sv * self.axis);
+        let p = self.center + self.radius * (cv * radial + sv * self.axis);
+        let dpu = self.radius * cv * (-su * x_ax + cu * y_ax);
+        let dpv = self.radius * (-sv * radial + cv * self.axis);
         (p, dpu, dpv)
     }
     fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
-        // OCCT Geom_SphericalSurface::D2. In the basis (X, Y, A) with
-        // radial = cos(u)X + sin(u)Y:
-        //   Puu = R sin(v)(-cos(u)X - sin(u)Y)
-        //   Puv = R cos(v)(-sin(u)X + cos(u)Y)
+        // OCCT Geom_SphericalSurface::D2 (ElSLib::SphereD2). In the basis
+        // (X, Y, A) with radial = cos(u)X + sin(u)Y and
+        // P = O + R*(cos(v)*radial + sin(v)*A):
+        //   Puu = R cos(v)(-cos(u)X - sin(u)Y)
+        //   Puv = -R sin(v)(-sin(u)X + cos(u)Y)
         //   Pvv = -(P - center)
         let x_ax = self.ref_dir.normalize();
         let y_ax = self.axis.cross(x_ax).normalize();
         let (su, cu) = u.sin_cos();
         let (sv, cv) = v.sin_cos();
         let radial = cu * x_ax + su * y_ax;
-        let p = self.center + self.radius * (sv * radial + cv * self.axis);
-        let dpu = self.radius * sv * (-su * x_ax + cu * y_ax);
-        let dpv = self.radius * (cv * radial - sv * self.axis);
-        let d2u = self.radius * sv * (-cu * x_ax - su * y_ax);
-        let duv = self.radius * cv * (-su * x_ax + cu * y_ax);
+        let p = self.center + self.radius * (cv * radial + sv * self.axis);
+        let dpu = self.radius * cv * (-su * x_ax + cu * y_ax);
+        let dpv = self.radius * (-sv * radial + cv * self.axis);
+        let d2u = self.radius * cv * (-cu * x_ax - su * y_ax);
+        let duv = -self.radius * sv * (-su * x_ax + cu * y_ax);
         let d2v = -(p - self.center);
         (p, dpu, dpv, d2u, duv, d2v)
     }

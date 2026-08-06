@@ -116,7 +116,9 @@ pub fn closest_point_on_surface(
             let w = (point - sph.center).normalize_or_zero();
             let u_axis = sph.ref_dir;
             let v_axis = sph.axis.cross(u_axis);
-            let theta = w.dot(sph.axis).clamp(-1.0, 1.0).acos();
+            // OCCT ElSLib::SphereD0: the axis component is R*sin(v), so
+            // v = asin(w.axis) (0 = equator, +pi/2 = axis pole).
+            let theta = w.dot(sph.axis).clamp(-1.0, 1.0).asin();
             let phi = w.dot(v_axis).atan2(w.dot(u_axis));
             SurfaceProjection {
                 point,

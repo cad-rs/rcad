@@ -88,7 +88,7 @@ impl FClass2dOfFClassifier {
     pub fn compare(&mut self, edge: &ClassEdge, or_: rcad_kernel::topods::Orientation, ds: &dyn ShapeSource) {
         // Intersect the edge and the segment.
         self.closest = 0;
-        self.intersector.perform(&self.lin, self.param, self.tolerance, edge, ds);
+        self.intersector.perform(&self.lin, self.param, self.tolerance, edge, or_, ds);
         if !self.intersector.is_done() {
             return;
         }
@@ -221,7 +221,7 @@ impl FClass2dOfFClassifier {
             // aPClosest is Head or End of the edge: update the complex
             // transition.
             let (a_tang2d, a_norm2d, a_curv) =
-                self.intersector.local_geometry(edge, ds, a_p_closest.param_on_second());
+                self.intersector.local_geometry(edge, or_, ds, a_p_closest.param_on_second());
             if self.first_trans {
                 self.trans.reset(self.lin.direction);
                 self.first_trans = false;

@@ -42,7 +42,11 @@ impl MakeSphere {
             north.clone(), south.clone(),
             [3.0 * pi / 2.0, 5.0 * pi / 2.0]);
         let e_bot = t.add_tedge(None, south.clone(), south.clone(), [0.0, pi * r]);
-        let wire = t.add_twire(vec![e_top.clone(), e_seam.clone(), e_bot.clone(), rev(e_seam.clone())]);
+        // OCCT BRepPrim_OneAxis::LateralWire (BRepPrim_OneAxis.cxx L660-684):
+        // [rev(TopEdge), EndEdge, BottomEdge, rev(StartEdge)] — the pole
+        // degenerate edges are reversed, the seam End instance (u=2*PI) is
+        // forward and the Start instance (u=0) is reversed.
+        let wire = t.add_twire(vec![rev(e_top.clone()), e_seam.clone(), e_bot.clone(), rev(e_seam.clone())]);
         // OCCT BRepPrim_Sphere (L43-48, L63): the sphere surface uses
         // Geom_SphericalSurface(Axes(), R) with the polar axis = Axes().ZDirection()
         // (the north pole at +Z, PMIN=0/PMAX=PI/2 colatitude).  The meridian seam

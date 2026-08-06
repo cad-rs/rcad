@@ -12,9 +12,51 @@
 // the dependency direction matches OCCT: topalgo (TKTopAlgo) depends only on
 // rcad-kernel (TKBRep), and bop (TKBO) depends on topalgo.
 
-use rcad_kernel::geom::Surface3;
+use rcad_kernel::geom::{Curve2d, Surface3};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::ShapeType;
+use rcad_kernel::topods::{CurveRepresentation, Orientation, ShapeType, TShape};
+
+/// OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-360) — the edge's pcurve
+/// on the face, with the seam (CurveOnClosedSurface) pcurve selected by the
+/// edge orientation in the face: FORWARD → pcurve1 (the u=2*PI image of the
+/// seam), REVERSED → pcurve2 (the u=0 image). The returned range is the edge's
+/// forward parameter range; the caller reverses it when the edge is REVERSED.
+/// rcad keys the edge pcurve map by the DS face index, but input-shape pcurves
+/// (make_cylinder etc.) are keyed by the face's preserved BRep `index` — both
+/// keys are consulted.
+pub fn edge_pcurve_on_face(
+    ds: &dyn ShapeSource,
+    edge_idx: usize,
+    face_idx: usize,
+    ori: Orientation,
+) -> Option<(Curve2d, f64, f64)> {
+    let brep_face = if face_idx < ds.nb_shapes() {
+        ds.shape_at(face_idx).index
+    } else {
+        face_idx
+    };
+    match &*ds.shape_at(edge_idx).data {
+        TShape::Edge(ed) => {
+            if let Some((pc1, pc2, range)) = ed.representations.iter().find_map(|r| match r {
+                CurveRepresentation::CurveOnClosedSurface {
+                    face,
+                    pcurve1,
+                    pcurve2,
+                    range,
+                } if *face == brep_face => Some((pcurve1.clone(), pcurve2.clone(), *range)),
+                _ => None,
+            }) {
+                let pc = if ori == Orientation::Reversed { pc2 } else { pc1 };
+                return Some((pc, range[0], range[1]));
+            }
+            ed.pcurves
+                .get(&face_idx)
+                .cloned()
+                .or_else(|| ed.pcurves.get(&brep_face).cloned())
+        }
+        _ => None,
+    }
+}
 
 /// BOPDS-style shape data source for the classifiers.
 pub trait ShapeSource: Send + Sync {

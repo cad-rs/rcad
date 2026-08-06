@@ -7,10 +7,10 @@ use rcad_kernel::base::extrema::ExtPC2d;
 use rcad_kernel::base::geom_lprop::ClProps2d;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Line2d};
 use rcad_kernel::topo::topods::{u_resolution_for_surface, v_resolution_for_surface};
-use rcad_kernel::topods::TShape;
+use rcad_kernel::topods::{Orientation, TShape};
 use rcad_kernel::PCONFUSION;
 
-use crate::topalgo::shape_source::ShapeSource;
+use crate::topalgo::shape_source::{edge_pcurve_on_face, ShapeSource};
 use crate::topalgo::brep_class::bnd_box2d::BndBox2d;
 use crate::topalgo::brep_class::edge::ClassEdge;
 use crate::topalgo::brep_class::g_inter::GInter;
@@ -181,22 +181,22 @@ impl Intersector {
     }
 
     /// OCCT BRepClass_Intersector::Perform (BRepClass_Intersector.cxx L329-441).
-    pub fn perform(&mut self, line: &Line2d, p: f64, tol: f64, edge: &ClassEdge, ds: &dyn ShapeSource) {
+    /// `ori` is the edge's orientation in the face — used to select the seam
+    /// (CurveOnClosedSurface) pcurve (BRep_Tool::CurveOnSurface semantics).
+    pub fn perform(
+        &mut self,
+        line: &Line2d,
+        p: f64,
+        tol: f64,
+        edge: &ClassEdge,
+        ori: Orientation,
+        ds: &dyn ShapeSource,
+    ) {
         self.points.clear();
         self.segments.clear();
         self.done = false;
 
-        let ee = edge.edge();
-        let f = edge.face();
-        let eshape = ds.shape_at(ee);
-        let edge_data = match &*eshape.data {
-            TShape::Edge(ed) => ed,
-            _ => {
-                self.done = false;
-                return;
-            }
-        };
-        let Some((a_c2d, deb, fin)) = edge_data.pcurves.get(&f).cloned() else {
+        let Some((a_c2d, deb, fin)) = edge_pcurve_on_face(ds, edge.edge(), edge.face(), ori) else {
             self.done = false;
             return;
         };
@@ -277,19 +277,17 @@ impl Intersector {
 
     /// OCCT BRepClass_Intersector::LocalGeometry (BRepClass_Intersector.cxx
     /// L445-474) — tangent, normal, and curvature of the edge at parameter U.
-    pub fn local_geometry(&self, edge: &ClassEdge, ds: &dyn ShapeSource, u: f64) -> (DVec2, DVec2, f64) {
-        let ee = edge.edge();
-        let f = edge.face();
-        let eshape = ds.shape_at(ee);
-        let edge_data = match &*eshape.data {
-            TShape::Edge(ed) => ed,
-            _ => return (DVec2::ZERO, DVec2::ZERO, 0.0),
-        };
-        let (fpar, lpar) = match edge_data.pcurves.get(&f) {
-            Some((_, fp, lp)) => (*fp, *lp),
-            None => (0.0, 0.0),
-        };
-        let Some(a_pcurve) = edge_data.pcurves.get(&f).map(|(c, _, _)| c.clone()) else {
+    /// `ori` is the edge's orientation in the face (seam pcurve selection).
+    pub fn local_geometry(
+        &self,
+        edge: &ClassEdge,
+        ori: Orientation,
+        ds: &dyn ShapeSource,
+        u: f64,
+    ) -> (DVec2, DVec2, f64) {
+        let Some((a_pcurve, fpar, lpar)) =
+            edge_pcurve_on_face(ds, edge.edge(), edge.face(), ori)
+        else {
             return (DVec2::ZERO, DVec2::ZERO, 0.0);
         };
 

@@ -9,7 +9,7 @@ use rcad_kernel::geom::{Curve2dEval, Line2d};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, TShape};
 
-use crate::topalgo::shape_source::ShapeSource;
+use crate::topalgo::shape_source::{edge_pcurve_on_face, ShapeSource};
 use crate::topalgo::brep_class::edge::ClassEdge;
 
 // OCCT BRepClass_FaceExplorer.cxx L30-32.
@@ -138,16 +138,11 @@ impl FaceExplorer {
     /// Compute the face's UV bounds from the boundary pcurves.
     fn compute_face_bounds(&mut self, ds: &dyn ShapeSource) {
         self.bounds_computed = true;
-        for &(ei, _) in &self.face_edges {
+        for &(ei, ori) in &self.face_edges {
             if ei >= ds.nb_shapes() {
                 continue;
             }
-            let eshape = ds.shape_at(ei);
-            let edge_data = match &*eshape.data {
-                TShape::Edge(ed) => ed,
-                _ => continue,
-            };
-            let Some((c2d, f, l)) = edge_data.pcurves.get(&self.face).cloned() else {
+            let Some((c2d, f, l)) = edge_pcurve_on_face(ds, ei, self.face, ori) else {
                 continue;
             };
             const N: usize = 16;
@@ -192,17 +187,8 @@ impl FaceExplorer {
                 self.cur_edge_par = PROBING_START;
                 continue;
             }
-            let eshape = ds.shape_at(ei);
-            let edge_data = match &*eshape.data {
-                TShape::Edge(ed) => ed,
-                _ => {
-                    self.cur_edge_ind += 1;
-                    self.cur_edge_par = PROBING_START;
-                    continue;
-                }
-            };
             let Some((a_c2d, mut a_f_par, mut a_l_par)) =
-                edge_data.pcurves.get(&self.face).cloned()
+                edge_pcurve_on_face(ds, ei, self.face, ori)
             else {
                 // rcad: no pcurve — this edge cannot provide a probing point.
                 self.cur_edge_ind += 1;

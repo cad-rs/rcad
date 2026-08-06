@@ -25,7 +25,7 @@ use rcad_kernel::topods::{Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::{CONFUSION, SQUARE_CONFUSION};
 
-use crate::topalgo::shape_source::ShapeSource;
+use crate::topalgo::shape_source::{edge_pcurve_on_face, ShapeSource};
 use crate::topalgo::brep_class::face_classifier::FClassifier;
 use crate::topalgo::brep_top_adaptor::class2d::{Class2d, Class2dResult};
 use crate::topalgo::gcpnts::QuasiUniformDeflection;
@@ -155,7 +155,19 @@ fn order_wire_edges(
     used[cur] = true;
     let mut cur_v2 = edge_v2[cur];
     while result.len() < n {
-        let next_opt = by_start.get(&cur_v2).and_then(|list| list.iter().copied().find(|&i| !used[i]));
+        // Among the unused edges starting at the current vertex, prefer a
+        // closed-loop edge (V2 == current vertex) — OCCT BRepTools_WireExplorer
+        // traverses a loop (cylinder/cone lateral TopEdge/BottomEdge circle)
+        // in place before leaving the vertex. Without this, the cylinder wire
+        // [TopR, EndF, BottomF, StartR] walks [TopR, StartR, EndF] and skips
+        // the bottom circle, producing a self-crossing UV polygon. Fall back
+        // to the first unused edge otherwise.
+        let next_opt = by_start.get(&cur_v2).and_then(|list| {
+            list.iter()
+                .copied()
+                .filter(|&i| !used[i])
+                .min_by_key(|&i| if edge_v2[i] == cur_v2 { 0 } else { 1 })
+        });
         match next_opt {
             Some(i) => {
                 result.push(edges[i]);
@@ -224,16 +236,18 @@ impl EdgeEval {
                 // OCCT periodic seam (BRepPrim_OneAxis::LateralWire): the seam
                 // edge's End instance sits at the periodic image u=2*PI (the
                 // edge has a 2D Location), while Start sits at u=0. rcad's DS
-                // has no 2D edge Locations, so the End (Reversed) image is
-                // reconstructed by shifting u by one period. A seam edge is a
-                // line on a U-periodic surface of revolution, or the meridian
-                // circle of a sphere (BRepPrim_Sphere::SetMeridian — the arc
-                // in the XZ plane).
+                // has no 2D edge Locations, so the End (FORWARD) image is
+                // reconstructed by shifting u by one period (the projected u of
+                // the seam's 3D line is u=0; the FORWARD End instance maps to
+                // u=2*PI, the REVERSED Start instance stays at u=0). A seam edge
+                // is a line on a U-periodic surface of revolution, or the
+                // meridian circle of a sphere (BRepPrim_Sphere::SetMeridian —
+                // the arc in the XZ plane).
                 let is_u_per = surface_periodic(surf).0;
                 let is_seam = matches!(c3d, Curve3::Line(_))
                     || (matches!(c3d, Curve3::Circle(_)) && matches!(surf, Surface3::Sphere(_)));
                 let mut u_out = uv.x;
-                if is_u_per && is_seam && *ori == Orientation::Reversed {
+                if is_u_per && is_seam && *ori == Orientation::Forward {
                     u_out += std::f64::consts::TAU;
                 }
                 (DVec2::new(u_out, uv.y), Some(p3d))
@@ -464,7 +478,9 @@ impl FClass2d {
                     TShape::Edge(ed) => ed,
                     _ => continue,
                 };
-                let pcurve = edge_data.pcurves.get(&a_face).cloned();
+                // Seam (CurveOnClosedSurface) pcurves are selected by the edge
+                // orientation (FORWARD → u=2*PI, REVERSED → u=0).
+                let pcurve = edge_pcurve_on_face(ds, ei, a_face, ori);
                 let edge_curve = edge_data.curve.clone();
 
                 // OCCT L166-190: degenerated edge checks.
@@ -711,7 +727,7 @@ impl FClass2d {
                                 _ => continue,
                             };
                             // OCCT BRep_Tool::Range(edge, Face, pfbid, plbid).
-                            let Some((c2d, f, l)) = ed2.pcurves.get(&a_face).cloned() else {
+                            let Some((c2d, f, l)) = edge_pcurve_on_face(ds, ei2, a_face, ori2) else {
                                 // rcad: no pcurve to re-discretize — stop the
                                 // refinement loop (documented adaptation).
                                 is_changed = false;

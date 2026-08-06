@@ -92,11 +92,13 @@ impl MakeCone {
             v_dir: self.y_axis,
         });
         // OCCT LateralWire (BRepPrim_OneAxis.cxx L660-684):
-        //   [TopEdge(fwd), EndEdge(rev), BottomEdge(rev), StartEdge(fwd)].
+        //   [rev(TopEdge), EndEdge, BottomEdge, rev(StartEdge)] — AddWireEdge
+        //   with direct=false for Top/Start, direct=true for End/Bottom.
         // The seam (VEdge) appears twice — the End instance at the periodic
-        // image u=2*PI, the Start at u=0. This order makes the lateral wire a
-        // connected closed loop and the FClass2d uv polygon a simple rectangle.
-        let lat_wire = t.add_twire(vec![e_top.clone(), rev(e_seam.clone()), rev(e_bot.clone()), e_seam.clone()]);
+        // image u=2*PI (forward), the Start at u=0 (reversed). This order makes
+        // the lateral wire a connected closed loop and the FClass2d uv polygon
+        // a simple rectangle (OCCT winding, CCW in uv).
+        let lat_wire = t.add_twire(vec![rev(e_top.clone()), e_seam.clone(), e_bot.clone(), rev(e_seam.clone())]);
         // OCCT BottomWire (L757-782): [rev(BottomEdge)]
         let bot_wire = t.add_twire(vec![rev(e_bot.clone())]);
         // OCCT TopWire (L726-756): [TopEdge]
