@@ -151,7 +151,7 @@ impl<'a> BuilderSolid<'a> {
         }
         // OCCT L259-284: ShellSplitter.Perform -> shells appended to myLoops.
         let blocks = make_connexity_blocks(&a_start);
-        let shells = make_shells(&blocks);
+        let shells = make_shells(&blocks, self.ds);
         for shell in shells {
             if !shell.is_empty() {
                 self.my_loops.push(shell);

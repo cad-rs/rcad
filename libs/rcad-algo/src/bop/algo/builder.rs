@@ -595,7 +595,7 @@ fn angle_with_ref(d1: DVec3, d2: DVec3, d_ref: DVec3) -> f64 {
 ///
 /// candidates: (edge_in_face, face) pairs.  Returns `(aFOff, bRet)` where
 /// `bRet` is false when the minimal angle can not be found reliably.
-fn get_face_off(
+pub(crate) fn get_face_off(
     the_e1: &Shape,
     the_f1: &Shape,
     candidates: &[(Shape, Shape)],

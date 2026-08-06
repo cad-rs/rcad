@@ -4,10 +4,10 @@
 // Performs: MakeConnexityBlocks -> MakeShells (regular blocks directly,
 // non-regular blocks via SplitBlock + RefineShell).
 
+use crate::bop::ds::DS;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{self, Orientation, TShape};
 use std::collections::{HashMap, HashSet, VecDeque};
-use glam::DVec3;
 
 /// OCCT BOPTools_ConnexityBlock — a connected block of faces with regularity.
 #[derive(Debug, Clone)]
@@ -107,7 +107,7 @@ pub fn make_connexity_blocks(shapes: &[Shape]) -> Vec<ConnexityBlock> {
 /// OCCT BOPAlgo_ShellSplitter::MakeShells (BOPAlgo_ShellSplitter.cxx L621-679).
 /// Regular blocks become shells directly (via MakeShell, which orients the
 /// faces); non-regular blocks are split via SplitBlock.
-pub fn make_shells(blocks: &[ConnexityBlock]) -> Vec<Vec<Shape>> {
+pub fn make_shells(blocks: &[ConnexityBlock], ds: &DS) -> Vec<Vec<Shape>> {
     let mut shells: Vec<Vec<Shape>> = Vec::new();
     for cb in blocks {
         if cb.regular {
@@ -118,7 +118,7 @@ pub fn make_shells(blocks: &[ConnexityBlock]) -> Vec<Vec<Shape>> {
             shells.push(a_shell);
         } else {
             // OCCT L651-678: SplitBlock.
-            let loops = split_block(&cb.shapes);
+            let loops = split_block(&cb.shapes, ds);
             for lp in loops {
                 shells.push(lp);
             }
@@ -273,7 +273,7 @@ fn shape_map_key(s: &Shape) -> (u64, Orientation) {
 }
 
 /// OCCT BOPAlgo_ShellSplitter::SplitBlock (BOPAlgo_ShellSplitter.cxx L153-421).
-fn split_block(shapes: &[Shape]) -> Vec<Vec<Shape>> {
+fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
     // OCCT L176-182: aMFaces — all faces of the block (orientation-sensitive).
     let mut a_mfaces: HashSet<(u64, Orientation)> =
         shapes.iter().map(|f| shape_map_key(f)).collect();
@@ -380,8 +380,10 @@ fn split_block(shapes: &[Shape]) -> Vec<Vec<Shape>> {
                 if a_lf.is_empty() {
                     continue;
                 }
-                // OCCT L314-341: prepare the candidate list.
-                let mut a_lcs_off: Vec<Shape> = Vec::new();
+                // OCCT L314-341: prepare the candidate list. Each candidate is
+                // the couple (aEL, aFL): aEL is the edge in aFL that is the same
+                // shape as aE with the reversed orientation (GetEdgeOff).
+                let mut a_lcs_off: Vec<(Shape, Shape)> = Vec::new();
                 let mut a_nb_ways_inside = 0usize;
                 let mut a_sel_f: Option<Shape> = None;
                 for a_fl in &a_lf {
@@ -394,14 +396,15 @@ fn split_block(shapes: &[Shape]) -> Vec<Vec<Shape>> {
                         continue;
                     }
                     // OCCT L328: GetEdgeOff(aE, aFL, aEL).
-                    if !get_edge_off(&e, a_fl) {
-                        continue;
-                    }
+                    let a_el = match get_edge_off(&e, a_fl) {
+                        Some(el) => el,
+                        None => continue,
+                    };
                     if is_boundary && !a_boundary_faces.contains(&a_fl.ptr_id()) {
                         a_nb_ways_inside += 1;
                         a_sel_f = Some(a_fl.clone());
                     }
-                    a_lcs_off.push(a_fl.clone());
+                    a_lcs_off.push((a_el, a_fl.clone()));
                 }
                 let a_nb_off = a_lcs_off.len();
                 if a_nb_off == 0 {
@@ -410,9 +413,10 @@ fn split_block(shapes: &[Shape]) -> Vec<Vec<Shape>> {
                 // OCCT L349-361: select the next face.
                 if !is_boundary || a_nb_ways_inside != 1 {
                     if a_nb_off == 1 {
-                        a_sel_f = Some(a_lcs_off[0].clone());
+                        a_sel_f = Some(a_lcs_off[0].1.clone());
                     } else if a_nb_off > 1 {
-                        a_sel_f = get_face_off(&e, &a_f, &a_lcs_off);
+                        // OCCT L359: GetFaceOff(aE, aF, aLCSOff, aSelF, aContext).
+                        a_sel_f = super::builder::get_face_off(&e, &a_f, &a_lcs_off, ds).0;
                     }
                 }
                 if let Some(a_sel) = a_sel_f {
@@ -466,79 +470,17 @@ fn split_block(shapes: &[Shape]) -> Vec<Vec<Shape>> {
 /// OCCT BOPTools_AlgoTools::GetEdgeOff (BOPTools_AlgoTools.cxx L1107-1135).
 /// Finds the edge in the face theF2 that is the same shape as theE1 and has
 /// the reversed orientation.
-fn get_edge_off(a_e1: &Shape, a_f2: &Shape) -> bool {
+fn get_edge_off(a_e1: &Shape, a_f2: &Shape) -> Option<Shape> {
     let a_or1 = a_e1.orientation;
     let a_or1c = reverse_orientation(a_or1);
     for e in face_edges(a_f2) {
         if e.ptr_id() == a_e1.ptr_id() {
             if e.orientation == a_or1c {
-                return true;
+                return Some(e);
             }
         }
     }
-    false
-}
-
-/// OCCT BOPTools_AlgoTools::GetFaceOff (BOPTools_AlgoTools.cxx L994-1103) —
-/// selects the candidate face with the minimal signed angle around the shared
-/// edge, measured between the face bi-normal directions (aDB = aDN ^ aDTgt).
-///
-/// rcad: semantic translation for straight/analytic edges. aT = edge tangent
-/// at the intermediate point; aP/aT only feed the MinStep3D/FindPointInFace
-/// refinement of aDB, which is a no-op for planar faces and is omitted here.
-fn get_face_off(a_e1: &Shape, a_f1: &Shape, candidates: &[Shape]) -> Option<Shape> {
-    // OCCT L1014-1019: aT = IntermediatePoint; aPx = aC3D->D0(aT);
-    // aVTgt = EdgeTangent(aE1, aT) (reversed for a REVERSED edge).
-    let a_t = edge_tangent(a_e1)?;
-    let a_or = a_e1.orientation;
-    // OCCT GetFaceDir(aE1, aF1) L2118-2160: aDN1 = normal to the face at the
-    // edge point (flipped by the face orientation); aDBF = aDN1 ^ aDTgt.
-    let a_dn1 = face_normal_at(a_e1, a_f1)?;
-    let a_dbf = a_dn1.cross(a_t);
-    // OCCT L1038: aDTF = aDN1 ^ aDBF.
-    let a_dtf = a_dn1.cross(a_dbf);
-    let mut a_angle_min = 100.0f64;
-    let mut a_sel: Option<Shape> = None;
-    for a_f2 in candidates {
-        // OCCT L1052: aDTgt2 = (aE2.Orientation() == aOr) ? aDTgt :
-        // aDTgt.Reversed(). GetEdgeOff guarantees the candidate edge aE2 has
-        // the reversed orientation, so the tangent is flipped.
-        let a_dtgt2 = -a_t;
-        // OCCT GetFaceDir(aE2, aF2): aDN2; aDBF2 = aDN2 ^ aDTgt2.
-        let a_dn2 = face_normal_at(a_e1, a_f2)?;
-        let a_dbf2 = a_dn2.cross(a_dtgt2);
-        // OCCT L1063: aAngle = AngleWithRef(aDBF, aDBF2, aDTF).
-        let mut a_angle = angle_with_ref_bop(a_dbf, a_dbf2, a_dtf);
-        // OCCT L1065-1083: near-zero angle special cases set the angle to PI or
-        // 2*PI when aF2 equals (or IsSame as) theF1, or when bIsComputed is
-        // false. In split_block the current face is filtered out as a candidate,
-        // so aF2 never equals/IsSame theF1, and the planar/analytic faces
-        // supported by face_normal_at always compute the bi-normal (bIsComputed
-        // true). Thus the generic branch below applies in practice.
-        // OCCT L1091-1094: map the negative angles into the [0, 2*PI) range.
-        if a_angle < 0.0 {
-            a_angle = std::f64::consts::TAU + a_angle;
-        }
-        // OCCT L1096-1100: keep the minimal angle.
-        if a_angle < a_angle_min {
-            a_angle_min = a_angle;
-            a_sel = Some(a_f2.clone());
-        }
-    }
-    a_sel
-}
-
-/// OCCT BOPTools_AlgoTools::AngleWithRef (BOPTools_AlgoTools.cxx L1946-1975).
-/// Signed angle aBeta = PI/2*(1 - d1.d2), sign from (d1 x d2).dRef.
-/// (The |d1 x d2| >= 0 branch is always taken, so the else-branch is dead.)
-fn angle_with_ref_bop(d1: DVec3, d2: DVec3, d_ref: DVec3) -> f64 {
-    let a_xyz = d1.cross(d2);
-    let a_cosinus = d1.dot(d2);
-    let mut a_beta = 0.5 * std::f64::consts::PI * (1.0 - a_cosinus);
-    if a_xyz.dot(d_ref) < 0.0 {
-        a_beta = -a_beta;
-    }
-    a_beta
+    None
 }
 
 /// OCCT BOPAlgo_ShellSplitter::RefineShell (BOPAlgo_ShellSplitter.cxx L443-617).
@@ -589,11 +531,13 @@ fn refine_shell(a_shell: &[Shape], a_mef: &HashMap<u64, Vec<usize>>) -> Vec<Vec<
         return vec![a_shell.to_vec()];
     }
     // OCCT L520-617: split the shell into sub-shells grown from each face
-    // without crossing the branch edges.
-    let mut a_mf_processed: HashSet<u64> = HashSet::new();
+    // without crossing the branch edges. aMFProcessed is NCollection_Map
+    // (orientation-sensitive), aMFB is an IndexedMap with
+    // TopTools_ShapeMapHasher (orientation-insensitive).
+    let mut a_mf_processed: HashSet<(u64, Orientation)> = HashSet::new();
     let mut shells: Vec<Vec<Shape>> = Vec::new();
     for a_f1 in a_shell {
-        if !a_mf_processed.insert(a_f1.ptr_id()) {
+        if !a_mf_processed.insert(shape_map_key(a_f1)) {
             continue;
         }
         // OCCT L536-601: BFS from aF1 avoiding the branch edges.
@@ -626,7 +570,7 @@ fn refine_shell(a_shell: &[Shape], a_mef: &HashMap<u64, Vec<usize>>) -> Vec<Vec<
                         if a_mfb.iter().any(|f| f.ptr_id() == a_fp1.ptr_id()) {
                             continue;
                         }
-                        if a_mf_processed.insert(a_fp1.ptr_id()) {
+                        if a_mf_processed.insert(shape_map_key(a_fp1)) {
                             a_mfb.push(a_fp1.clone());
                             a_lfp1.push(a_fp1.clone());
                         }
@@ -695,71 +639,6 @@ fn reverse_orientation(o: Orientation) -> Orientation {
         Orientation::Reversed => Orientation::Forward,
         Orientation::Internal => Orientation::Internal,
         Orientation::External => Orientation::External,
-    }
-}
-
-/// Midpoint of an edge from its two vertices.
-fn edge_midpoint(e: &Shape) -> Option<DVec3> {
-    match &*e.data {
-        TShape::Edge(ed) => {
-            let p1 = vertex_point(&ed.first)?;
-            let p2 = vertex_point(&ed.last)?;
-            Some((p1 + p2) * 0.5)
-        }
-        _ => None,
-    }
-}
-
-/// Edge tangent at the edge parameterization direction (straight edges).
-/// OCCT BOPTools_AlgoTools2D::EdgeTangent (BOPTools_AlgoTools2D.cxx L74-103):
-/// the curve derivative at aT, normalized, reversed for a REVERSED edge.
-fn edge_tangent(e: &Shape) -> Option<DVec3> {
-    match &*e.data {
-        TShape::Edge(ed) => {
-            let d = vertex_point(&ed.last)? - vertex_point(&ed.first)?;
-            if d.length_squared() < 1e-24 {
-                None
-            } else {
-                let mut t = d.normalize();
-                if e.orientation == Orientation::Reversed {
-                    t = -t;
-                }
-                Some(t)
-            }
-        }
-        _ => None,
-    }
-}
-
-fn vertex_point(v: &Shape) -> Option<DVec3> {
-    match &*v.data {
-        TShape::Vertex(vd) => Some(vd.point),
-        _ => None,
-    }
-}
-
-/// Outward normal of a face at the shared edge's midpoint.
-/// OCCT BOPTools_AlgoTools3D::GetNormalToFaceOnEdge + GetFaceDir L2133-2137:
-/// the surface normal at the edge point, flipped by the face orientation.
-fn face_normal_at(a_e: &Shape, a_f: &Shape) -> Option<DVec3> {
-    use rcad_kernel::geom::SurfaceEval;
-    let p = edge_midpoint(a_e)?;
-    match &*a_f.data {
-        TShape::Face(fd) => {
-            let surf = fd.surface.as_ref()?;
-            let n = match surf {
-                rcad_kernel::geom::Surface3::Plane(pl) => pl.normal,
-                _ => {
-                    // Project the edge point onto the surface and evaluate the
-                    // normal there (analytic surfaces dispatch in
-                    // closest_point_on_surface).
-                    let (uv, _) = crate::bop::closest_point_on_surface(surf, p);
-                    surf.normal_at(uv.x, uv.y)
-                }
-            };
-            Some(if a_f.orientation == Orientation::Reversed { -n } else { n })
-        }
-        _ => None,
     }
 }
 
