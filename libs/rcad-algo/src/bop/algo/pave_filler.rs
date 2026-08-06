@@ -4248,10 +4248,13 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         if it_found {
                             // OCCT L446-455: the pave block is found — no split.
                             //   aCB->SetRealPaveBlock(it.Value()); aCB->SetEdge(nE);
-                            //   ComputeToleranceOfCB + UpdateEdgeTolerance (rcad: tolerance stub).
+                            //   ComputeToleranceOfCB + UpdateEdgeTolerance.
                             b_to_split = false;
                             if let Some(cb_idx) = cb_f {
                                 self.ds.common_blocks[cb_idx].set_edge(found_e);
+                                let a_tol =
+                                    Self::compute_tolerance_of_cb(cb_idx, &self.ds);
+                                self.update_edge_tolerance(found_e, a_tol);
                             }
                         } else if cb_f.is_none() && a_lpb.len() == 1 {
                             // OCCT L457-461: no common block, single-PB edge — no split
@@ -4475,6 +4478,64 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
             _ => false,
         }
+    }
+
+    /// OCCT BOPAlgo_Tools::ComputeToleranceOfCB (BOPAlgo_Tools.cxx L248-356):
+    /// the max tolerance of a common block — max of the real edge tolerance,
+    /// the sampled distances to the other block edges (projected points), and
+    /// the sampled distances to the block's faces.
+    fn compute_tolerance_of_cb(cb_idx: usize, ds: &DS) -> f64 {
+        let cb = &ds.common_blocks[cb_idx];
+        let mut a_tol_max = 0.0;
+        let Some(a_pbr) = cb.pave_block1() else { return a_tol_max; };
+        let n_e = a_pbr.0.read().unwrap().original_edge();
+        let a_e_or = ds.shape(n_e);
+        a_tol_max = a_e_or.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
+        let a_lpb: Vec<SharedPB> = cb.pave_blocks().iter().map(|(p, _)| p.clone()).collect();
+        let a_lfi = cb.faces();
+        if a_lpb.len() < 2 && a_lfi.is_empty() {
+            return a_tol_max;
+        }
+        let a_nb_pnt = 11usize;
+        let a_pbr_range = a_pbr.0.read().unwrap().range();
+        let (mut a_t1, a_t2) = (a_pbr_range.0, a_pbr_range.1);
+        let a_dt = (a_t2 - a_t1) / (a_nb_pnt as f64 + 1.0);
+        let Some(a_c3d) = ds.edge_curve(n_e) else { return a_tol_max; };
+        // max distance between the edges.
+        for pb in &a_lpb {
+            if std::sync::Arc::ptr_eq(&pb.0, &a_pbr.0) {
+                continue;
+            }
+            let n_e2 = pb.0.read().unwrap().original_edge();
+            let a_tol = ds.edge_tolerance(n_e2);
+            let Some(e2_curve) = ds.edge_curve(n_e2) else { continue };
+            a_t1 = a_pbr_range.0;
+            for _ in 1..=a_nb_pnt {
+                a_t1 += a_dt;
+                let a_p = a_c3d.point_at(a_t1);
+                let (_, a_proj) = crate::bop::closest_point_on_curve(&e2_curve, a_p);
+                let a_tol_new = a_tol + (a_p - a_proj).length();
+                if a_tol_new > a_tol_max {
+                    a_tol_max = a_tol_new;
+                }
+            }
+        }
+        // max distance to the faces.
+        for &n_f in a_lfi {
+            let a_tol = ds.shape(n_f).as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
+            let Some(surf) = ds.face_surface(n_f) else { continue };
+            a_t1 = a_pbr_range.0;
+            for _ in 1..=a_nb_pnt {
+                a_t1 += a_dt;
+                let a_p = a_c3d.point_at(a_t1);
+                let (_, a_proj) = crate::bop::closest_point_on_surface(&surf, a_p);
+                let a_tol_new = a_tol + (a_p - a_proj).length();
+                if a_tol_new > a_tol_max {
+                    a_tol_max = a_tol_new;
+                }
+            }
+        }
+        a_tol_max
     }
 
     /// OCCT L640-676: the CommonBlock copy source — a paired PB in the same

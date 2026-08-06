@@ -1462,7 +1462,7 @@ impl PaveFiller {
     // UpdateEdgeTolerance — OCCT BOPAlgo_PaveFiller::UpdateEdgeTolerance
     // (PaveFiller_10.cxx L63-101)
     // ====================================================================
-    fn update_edge_tolerance(&mut self, n_e: usize, the_tol: f64) {
+    pub(crate) fn update_edge_tolerance(&mut self, n_e: usize, the_tol: f64) {
         // OCCT L69-85: safe input mode — avoid modifying the input shapes.
         if self.my_non_destructive && !self.ds.is_new_shape(n_e) {
             return;
