@@ -5,3 +5,5 @@ dist/
 /*.svg
 .claude/
 Cargo.lock
+output/
+pipeline_dumps/
