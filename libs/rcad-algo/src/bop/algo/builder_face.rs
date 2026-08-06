@@ -6,9 +6,12 @@
 use crate::bop::algo::Report;
 use crate::bop::ds::DS;
 use crate::bop::int_tools::context::IntToolsContext;
+use crate::topalgo::brep_top_adaptor::class2d::{Class2d, Class2dResult};
+use glam::DVec2;
+use rcad_kernel::geom::{Curve2d, Curve2dEval};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{TShape, TWireData, TEdgeData, tshape_flags};
-use std::collections::{HashMap, HashSet, VecDeque};
+use rcad_kernel::topods::{TShape, TWireData, tshape_flags};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// OCCT BOPAlgo_BuilderFace — splits a face using section edges.
@@ -25,6 +28,7 @@ pub struct BuilderFace<'a> {
     pub my_loops: Vec<Vec<Shape>>,      // OCCT: myLoops (result wires)
     pub my_loops_internal: Vec<Vec<Shape>>, // OCCT: myLoopsInternal (internal wires)
     my_shapes_to_avoid: HashSet<u64>,   // OCCT: myShapesToAvoid
+    my_avoid_internal_shapes: bool,      // OCCT: myAvoidInternalShapes (BuilderArea)
     my_context: IntToolsContext,         // OCCT: myContext
 }
 
@@ -41,6 +45,7 @@ impl<'a> BuilderFace<'a> {
             my_loops: Vec::new(),
             my_loops_internal: Vec::new(),
             my_shapes_to_avoid: HashSet::new(),
+            my_avoid_internal_shapes: false,
             my_context: IntToolsContext::new(),
         }
     }
@@ -320,41 +325,388 @@ impl<'a> BuilderFace<'a> {
             return;
         }
 
-        // OCCT L468-540: combine holes with growth faces
-        let mut result_faces: Vec<Shape> = Vec::new();
-        // OCCT L470-476: classify holes relative to growths via point containment
-        for (fi, face) in a_new_faces.iter().enumerate() {
-            let mut inner_wires: Vec<Shape> = Vec::new();
-            // OCCT L480-520: for each hole, check if inside this growth face
-            for hole_face in &a_hole_faces {
-                if let TShape::Face(hfd) = &*hole_face.data {
-                    // Simplified: first hole goes to first growth
-                    if inner_wires.is_empty() {
-                        inner_wires.push(hfd.outer_wire.clone());
+        // OCCT L468-540: classify the holes relative to the growth faces.
+        // aHoleFaceMap: hole index -> growth index (most specific / innermost).
+        let fi = self.my_face_index.unwrap_or(0);
+        let a_nb_h = a_hole_faces.len();
+        let mut a_hole_face_map: HashMap<usize, usize> = HashMap::new();
+        // OCCT L470-491: prepare the hole UV boxes (BOPTools_Box2dTree). rcad
+        // scans linearly; the tree is a performance structure, the overlap
+        // predicate is preserved.
+        let hole_boxes: Vec<Option<[f64; 4]>> = a_hole_faces
+            .iter()
+            .map(|hf| wire_uv_bounds(self.ds, fi, &face_wire_edges(hf)))
+            .collect();
+        for (gfi, face) in a_new_faces.iter().enumerate() {
+            let g_edges = face_wire_edges(face);
+            let g_box = match wire_uv_bounds(self.ds, fi, &g_edges) {
+                Some(b) => b,
+                None => continue,
+            };
+            for (hi, hf) in a_hole_faces.iter().enumerate() {
+                // OCCT: selector — candidate holes whose UV box intersects.
+                let h_box = match hole_boxes[hi] {
+                    Some(b) => b,
+                    None => continue,
+                };
+                if !boxes_overlap(g_box, h_box) {
+                    continue;
+                }
+                // OCCT L518: if (!IsInside(aHole, aFace, myContext)) continue;
+                let h_edges = face_wire_edges(hf);
+                if !is_inside_wire(self.ds, fi, &h_edges, &g_edges) {
+                    continue;
+                }
+                // OCCT L522-533: keep the most specific (innermost) face.
+                match a_hole_face_map.get(&hi) {
+                    Some(&old_gfi) => {
+                        let old_g_edges = face_wire_edges(&a_new_faces[old_gfi]);
+                        if is_inside_wire(self.ds, fi, &g_edges, &old_g_edges) {
+                            a_hole_face_map.insert(hi, gfi);
+                        }
+                    }
+                    None => {
+                        a_hole_face_map.insert(hi, gfi);
                     }
                 }
             }
-            if let TShape::Face(fd) = &*face.data {
-                result_faces.push(Shape::new(
+        }
+        // OCCT L536-553: back map — face -> its holes.
+        let mut a_face_holes: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (hi, gfi) in &a_hole_face_map {
+            a_face_holes.entry(*gfi).or_default().push(*hi);
+        }
+        // OCCT L556-580: unused holes — a new face if the original face is
+        // unbounded (BRepBndLib box has open sides; rcad: infinite face).
+        if a_nb_h != a_hole_face_map.len() {
+            let is_open = self
+                .my_face
+                .as_ref()
+                .map(Self::is_infinite_face)
+                .unwrap_or(false);
+            if is_open {
+                let mut an_unused: Vec<Shape> = Vec::new();
+                for (hi, hf) in a_hole_faces.iter().enumerate() {
+                    if !a_hole_face_map.contains_key(&hi) {
+                        if let TShape::Face(hfd) = &*hf.data {
+                            an_unused.push(hfd.outer_wire.clone());
+                        }
+                    }
+                }
+                let a_face = Shape::new(
                     std::sync::Arc::new(TShape::Face(rcad_kernel::topods::TFaceData {
                         my_shapes: vec![], flags: tshape_flags::DEFAULT,
-                        surface: fd.surface.clone(), surface_location: 0,
-                        outer_wire: fd.outer_wire.clone(),
-                        inner_wires, sample_point: None, uv_domain: None,
+                        surface: Some(a_surf.clone()), surface_location: 0,
+                        outer_wire: Shape::null(),
+                        inner_wires: an_unused,
+                        sample_point: None, uv_domain: None,
                         internal_vertices: vec![], tolerance: a_tol,
                         natural_restriction: false,
                     })),
                     0, rcad_kernel::topods::Orientation::Forward,
-                ));
+                );
+                a_new_faces.push(a_face);
             }
+        }
+        // OCCT L583-613: add the holes to the faces and append to myAreas.
+        let mut result_faces: Vec<Shape> = Vec::new();
+        for (gfi, face) in a_new_faces.iter().enumerate() {
+            let mut a_face = face.clone();
+            if let Some(holes) = a_face_holes.get(&gfi) {
+                let mut inner_wires: Vec<Shape> = Vec::new();
+                for &hi in holes {
+                    if let TShape::Face(hfd) = &*a_hole_faces[hi].data {
+                        inner_wires.push(hfd.outer_wire.clone());
+                    }
+                }
+                if let TShape::Face(fd) = &*a_face.data {
+                    a_face = Shape::new(
+                        std::sync::Arc::new(TShape::Face(rcad_kernel::topods::TFaceData {
+                            my_shapes: vec![], flags: tshape_flags::DEFAULT,
+                            surface: fd.surface.clone(), surface_location: 0,
+                            outer_wire: fd.outer_wire.clone(),
+                            inner_wires, sample_point: None, uv_domain: None,
+                            internal_vertices: vec![], tolerance: a_tol,
+                            natural_restriction: false,
+                        })),
+                        0, rcad_kernel::topods::Orientation::Forward,
+                    );
+                }
+            }
+            result_faces.push(a_face);
         }
         // OCCT L543-613: internal wires
         self.my_areas = result_faces;
     }
 
-    /// OCCT BOPAlgo_BuilderFace::PerformInternalShapes (BuilderFace.cxx L618+).
+    /// OCCT BOPAlgo_BuilderFace::PerformInternalShapes (BuilderFace.cxx L618-750).
+    /// Classifies the internal loops (myLoopsInternal) relatively the area faces
+    /// and adds them as internal wires to the faces that contain them.
     fn perform_internal_shapes(&mut self) {
-        // OCCT: adds internal wires from unconnected vertices
-        // rcad: internal vertices handled by FillInternalVertices in Builder.
+        // OCCT L620-622: myAvoidInternalShapes.
+        if self.my_avoid_internal_shapes {
+            return;
+        }
+        // OCCT L624-626: myLoopsInternal.IsEmpty().
+        if self.my_loops_internal.is_empty() {
+            return;
+        }
+        let fi = self.my_face_index.unwrap_or(0);
+        // OCCT L638-664: map of internal edges + their UV boxes.
+        let mut edges_map: Vec<Shape> = Vec::new();
+        let mut edges_idx: HashMap<u64, usize> = HashMap::new();
+        let mut edge_boxes: Vec<[f64; 4]> = Vec::new();
+        for wire in &self.my_loops_internal {
+            for e in wire {
+                if edges_idx.contains_key(&e.ptr_id()) {
+                    continue;
+                }
+                let box_e = match edge_pcurve_on_face(e, fi, self.ds) {
+                    Some((pc, t1, t2)) => {
+                        let mut b: [f64; 4] = [
+                            f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY,
+                        ];
+                        for k in 0..=3 {
+                            let t = t1 + (t2 - t1) * (k as f64) / 3.0;
+                            let p = Curve2dEval::point_at(&pc, t);
+                            b[0] = b[0].min(p.x);
+                            b[1] = b[1].max(p.x);
+                            b[2] = b[2].min(p.y);
+                            b[3] = b[3].max(p.y);
+                        }
+                        b
+                    }
+                    None => continue,
+                };
+                edges_idx.insert(e.ptr_id(), edges_map.len());
+                edges_map.push(e.clone());
+                edge_boxes.push(box_e);
+            }
+        }
+        if edges_map.is_empty() {
+            return;
+        }
+        // OCCT L673-740: classify the edges relatively the area faces.
+        let a_medone: HashSet<usize> = HashSet::new();
+        let mut a_medone = a_medone;
+        let mut a_face_holes: HashMap<usize, Vec<Vec<Shape>>> = HashMap::new();
+        for (ai, face) in self.my_areas.iter().enumerate() {
+            let f_edges = face_wire_edges(face);
+            let f_box = match wire_uv_bounds(self.ds, fi, &f_edges) {
+                Some(b) => b,
+                None => continue,
+            };
+            // OCCT L687-708: collect the edges inside the face.
+            let mut edges_inside: Vec<Shape> = Vec::new();
+            for (ei, e) in edges_map.iter().enumerate() {
+                if a_medone.contains(&ei) {
+                    continue;
+                }
+                // OCCT: BOPTools_Box2dTreeSelector — candidate via UV box.
+                if !boxes_overlap(f_box, edge_boxes[ei]) {
+                    continue;
+                }
+                // OCCT L703: if (IsInside(aE, aF, myContext)).
+                if is_inside_wire(self.ds, fi, &[e.clone()], &f_edges) {
+                    edges_inside.push(e.clone());
+                    a_medone.insert(ei);
+                }
+            }
+            if edges_inside.is_empty() {
+                continue;
+            }
+            // OCCT L712: MakeInternalWires(anEdgesInside, aLSI).
+            let a_lsi = make_internal_wires(&edges_inside);
+            a_face_holes.entry(ai).or_default().extend(a_lsi);
+            // OCCT L730-736: early exit when all edges are classified.
+            if a_medone.len() == edges_map.len() {
+                break;
+            }
+        }
+        // Add the internal wires to the faces (OCCT aBB.Add(aF, aWI)).
+        let mut result_faces: Vec<Shape> = Vec::new();
+        for (ai, face) in self.my_areas.iter().enumerate() {
+            let mut a_face = face.clone();
+            if let Some(wires) = a_face_holes.get(&ai) {
+                let mut inner_wires: Vec<Shape> = Vec::new();
+                if let TShape::Face(fd) = &*a_face.data {
+                    inner_wires = fd.inner_wires.clone();
+                }
+                for w in wires {
+                    inner_wires.push(Shape::new(
+                        std::sync::Arc::new(TShape::Wire(TWireData {
+                            my_shapes: vec![], flags: tshape_flags::DEFAULT,
+                            edges: w.clone(),
+                        })),
+                        0, rcad_kernel::topods::Orientation::Forward,
+                    ));
+                }
+                if let TShape::Face(fd) = &*a_face.data {
+                    a_face = Shape::new(
+                        std::sync::Arc::new(TShape::Face(rcad_kernel::topods::TFaceData {
+                            my_shapes: vec![], flags: tshape_flags::DEFAULT,
+                            surface: fd.surface.clone(), surface_location: 0,
+                            outer_wire: fd.outer_wire.clone(),
+                            inner_wires, sample_point: None, uv_domain: None,
+                            internal_vertices: vec![], tolerance: fd.tolerance,
+                            natural_restriction: fd.natural_restriction,
+                        })),
+                        0, rcad_kernel::topods::Orientation::Forward,
+                    );
+                }
+            }
+            result_faces.push(a_face);
+        }
+        // OCCT L742-750: unused edges — warning (rcad: edges left unused are
+        // simply not added; the alert is not modelled).
+        self.my_areas = result_faces;
     }
+}
+
+/// OCCT MakeInternalWires (BOPAlgo_BuilderFace.cxx L756-805) — groups the
+/// connected internal edges into wires (edges set with INTERNAL orientation).
+fn make_internal_wires(edges: &[Shape]) -> Vec<Vec<Shape>> {
+    use rcad_kernel::topods::Orientation;
+    // aMVE: vertex -> edges.
+    let mut a_mve: HashMap<u64, Vec<Shape>> = HashMap::new();
+    for e in edges {
+        for v in BuilderFace::edge_vertices(e) {
+            a_mve.entry(v.ptr_id()).or_default().push(e.clone());
+        }
+    }
+    let mut a_added: HashSet<u64> = HashSet::new();
+    let mut wires: Vec<Vec<Shape>> = Vec::new();
+    for e in edges {
+        if !a_added.insert(e.ptr_id()) {
+            continue;
+        }
+        let mut a_w: Vec<Shape> = vec![e.clone()];
+        // Grow the wire through shared vertices.
+        let mut i = 0;
+        while i < a_w.len() {
+            let cur = &a_w[i];
+            for v in BuilderFace::edge_vertices(cur) {
+                if let Some(le) = a_mve.get(&v.ptr_id()) {
+                    for ex in le {
+                        if a_added.insert(ex.ptr_id()) {
+                            let mut a_el = ex.clone();
+                            a_el.orientation = Orientation::Internal;
+                            a_w.push(a_el);
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+        wires.push(a_w);
+    }
+    wires
+}
+
+// ---- hole-classification helpers (OCCT BOPAlgo_BuilderFace.cxx L468-613) ----
+
+/// OCCT BRep_Tool::CurveOnSurface(aE, aF) — the edge's pcurve on the face,
+/// keyed by the DS face index (with the DS-canonical fallback).
+fn edge_pcurve_on_face(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f64)> {
+    match &*e.data {
+        TShape::Edge(ed) => {
+            if let Some(v) = ed.pcurves.get(&face_index) {
+                return Some(v.clone());
+            }
+            if let Some(idx) = ds.map_shape_index.get(&(e.ptr_id(), e.location)) {
+                if let Some(ed2) = ds.shape_info(*idx).shape.as_edge() {
+                    if let Some(v) = ed2.pcurves.get(&face_index) {
+                        return Some(v.clone());
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// The edges of a draft face's outer wire (OCCT TopoDS_Iterator(aF)).
+fn face_wire_edges(face: &Shape) -> Vec<Shape> {
+    match &*face.data {
+        TShape::Face(fd) => match &*fd.outer_wire.data {
+            TShape::Wire(wd) => wd.edges.clone(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// Sample a wire's pcurves into a closed 2D polygon and its UV box
+/// (OCCT BRepTools::AddUVBounds + the wire's 2D boundary).
+fn wire_uv_polygon(ds: &DS, face_index: usize, edges: &[Shape]) -> Option<(Vec<DVec2>, [f64; 4])> {
+    let mut pts: Vec<DVec2> = Vec::new();
+    let mut b: [f64; 4] = [f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY];
+    for e in edges {
+        let (pc, t1, t2) = match edge_pcurve_on_face(e, face_index, ds) {
+            Some(v) => v,
+            None => continue,
+        };
+        let n = match pc {
+            Curve2d::Line(_) => 1,
+            Curve2d::Circle(_) | Curve2d::Ellipse(_) => 6,
+            _ => 3,
+        };
+        for k in 0..=n {
+            let t = t1 + (t2 - t1) * (k as f64) / (n as f64);
+            let p = Curve2dEval::point_at(&pc, t);
+            b[0] = b[0].min(p.x);
+            b[1] = b[1].max(p.x);
+            b[2] = b[2].min(p.y);
+            b[3] = b[3].max(p.y);
+            pts.push(p);
+        }
+    }
+    if pts.len() < 3 {
+        return None;
+    }
+    Some((pts, b))
+}
+
+/// The UV bounds of a wire (min/max over the sampled pcurves).
+fn wire_uv_bounds(ds: &DS, face_index: usize, edges: &[Shape]) -> Option<[f64; 4]> {
+    wire_uv_polygon(ds, face_index, edges).map(|(_, b)| b)
+}
+
+fn boxes_overlap(a: [f64; 4], b: [f64; 4]) -> bool {
+    a[0] <= b[1] && b[0] <= a[1] && a[2] <= b[3] && b[2] <= a[3]
+}
+
+/// Classify a point against a closed 2D polygon (OCCT IntTools_FClass2d
+/// Perform — strictly IN).
+fn point_in_wire_polygon(poly: &[DVec2], ub: [f64; 4], p: DVec2) -> bool {
+    let c = Class2d::new(poly, 1e-7, 1e-7, ub[0], ub[2], ub[1], ub[3]);
+    c.si_dans(p) == Class2dResult::Inside
+}
+
+/// OCCT IsInside (BOPAlgo_BuilderFace.cxx L842-897) — the wire `the_wire` is
+/// inside the face `the_f` when the first non-degenerated edge of the wire, not
+/// shared with the face, has its pcurve midpoint classified IN the face.
+fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], face_edges: &[Shape]) -> bool {
+    let face_set: HashSet<u64> = face_edges.iter().map(|e| e.ptr_id()).collect();
+    let (poly, ub) = match wire_uv_polygon(ds, face_index, face_edges) {
+        Some(v) => v,
+        None => return false,
+    };
+    for e in wire_edges {
+        let degen = e.as_edge().map(|ed| ed.degenerated).unwrap_or(true);
+        if degen {
+            continue;
+        }
+        if face_set.contains(&e.ptr_id()) {
+            return false;
+        }
+        let (pc, t1, t2) = match edge_pcurve_on_face(e, face_index, ds) {
+            Some(v) => v,
+            None => continue,
+        };
+        let p = Curve2dEval::point_at(&pc, 0.5 * (t1 + t2));
+        return point_in_wire_polygon(&poly, ub, p);
+    }
+    false
 }
