@@ -1946,10 +1946,14 @@ impl DS {
     /// TShape, so it inherits the source's curve representations (CurveOnSurface
     /// / CurveOnClosedSurface pcurves on the source faces). When `src` is a
     /// source edge index, copy its `representations` and `pcurves` onto the new
-    /// split edge (the parameterization of the source edge is preserved for
-    /// same-parameter splits).
+    /// split edge. OCCT BRep_Builder::Range (BRep_Builder.cxx L1091-1117) then
+    /// re-ranges every inherited curve representation to the split sub-range;
+    /// rcad mirrors this in the copied pcurves and representations below.
     pub fn push_edge_inherit(&mut self, curve: rcad_kernel::geom::Curve3, range: [f64; 2],
         first: usize, last: usize, src: Option<usize>) -> usize {
+        // OCCT MakeSplitEdge (BOPTools_AlgoTools_2.cxx L172-179): the split
+        // edge's range is always stored ascending.
+        let range = if range[0] < range[1] { range } else { [range[1], range[0]] };
         let empty_vertex = Shape::new(
             Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
         );
@@ -1961,7 +1965,31 @@ impl DS {
             .unwrap_or(empty_vertex);
         let (pcurves, representations) = match src {
             Some(src_e) if src_e < self.shapes.len() => match &*self.shapes[src_e].shape.data {
-                TShape::Edge(ed) => (ed.pcurves.clone(), ed.representations.clone()),
+                TShape::Edge(ed) => {
+                    // OCCT BRep_Builder::Range(E, aP1, aP2) (BRep_Builder.cxx
+                    // L1091-1117), called from MakeSplitEdge (BOPTools_AlgoTools_2.cxx
+                    // L172-179) with Only3d=false: the range is applied to ALL
+                    // curve representations, including the inherited
+                    // CurveOnSurface / CurveOnClosedSurface pcurves.
+                    let pcurves = ed.pcurves.iter().map(|(&k, (pc, _, _))| {
+                        (k, (pc.clone(), range[0], range[1]))
+                    }).collect();
+                    let representations = ed.representations.iter().map(|r| match r {
+                        CurveRepresentation::CurveOnSurface { face, pcurve, .. } => {
+                            CurveRepresentation::CurveOnSurface {
+                                face: *face, pcurve: pcurve.clone(), range,
+                            }
+                        }
+                        CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, .. } => {
+                            CurveRepresentation::CurveOnClosedSurface {
+                                face: *face, pcurve1: pcurve1.clone(),
+                                pcurve2: pcurve2.clone(), range,
+                            }
+                        }
+                        other => other.clone(),
+                    }).collect();
+                    (pcurves, representations)
+                }
                 _ => (HashMap::new(), Vec::new()),
             },
             _ => (HashMap::new(), Vec::new()),
