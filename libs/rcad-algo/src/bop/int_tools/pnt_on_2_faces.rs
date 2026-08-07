@@ -14,3 +14,26 @@ impl PntOn2Faces {
     pub fn index(&self) -> i32 { self.index }
 }
 impl Default for PntOn2Faces { fn default() -> Self { Self::new() } }
+
+/// OCCT IntSurf_PntOn2S — a point given by its UV parameters on two surfaces.
+/// Used by BOPAlgo_PaveFiller::GetEFPnts to pass Edge-Face intersection points
+/// into IntTools_FaceFace (SetList) as starting points for intersection curves.
+#[derive(Debug, Clone)]
+pub struct PntOn2S {
+    pub uv1: (f64, f64),
+    pub uv2: (f64, f64),
+}
+
+impl PntOn2S {
+    pub fn new() -> Self {
+        PntOn2S { uv1: (0.0, 0.0), uv2: (0.0, 0.0) }
+    }
+    pub fn set_value(&mut self, u1: f64, v1: f64, u2: f64, v2: f64) {
+        self.uv1 = (u1, v1);
+        self.uv2 = (u2, v2);
+    }
+    pub fn parameters(&self) -> (f64, f64, f64, f64) {
+        (self.uv1.0, self.uv1.1, self.uv2.0, self.uv2.1)
+    }
+}
+impl Default for PntOn2S { fn default() -> Self { Self::new() } }

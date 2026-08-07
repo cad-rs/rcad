@@ -21,12 +21,14 @@ use crate::bop::ds::{
 };
 use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::int_tools::context::IntToolsContext;
+use crate::bop::int_tools::pnt_on_2_faces::PntOn2S;
 use crate::bop::int_tools;
 use rcad_kernel::base::proj_lib::project_on_surface;
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use crate::bop::tools::algo_tools;
 use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::geom::Surface3;
+use rcad_kernel::geom::Curve2dEval;
 use rcad_kernel::{Curve3, CurveEval};
 use rcad_kernel::topods::{self, ShapeType};
 use std::collections::{HashSet, HashMap};
@@ -2124,7 +2126,7 @@ impl PaveFiller {
 
     fn perform_ff(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
-        // OCCT L285-290: myIterator->Initialize(FACE, FACE)
+        // OCCT L299: myIterator->Initialize(FACE, FACE); iSize = ExpectedLength()
         let pairs: Vec<(usize, usize)> = if let Some(it) = &self.my_iterator {
             it.pairs(ShapeType::Face, ShapeType::Face).to_vec()
         } else {
@@ -2152,13 +2154,21 @@ impl PaveFiller {
         }
         if pairs.is_empty() { return; }
 
+        // OCCT L328-333: options for the intersection algorithm
+        let b_approx = self.my_section_attribute.approximation;
+        let b_comp_c2d1 = self.my_section_attribute.pcurve_on_s1;
+        let b_comp_c2d2 = self.my_section_attribute.pcurve_on_s2;
+        let an_approx_tol = 1.0e-7;
+        // Post-processing options
+        let b_split_curve = false;
+
         let mut new_ff: Vec<InterferenceFF> = Vec::new();
 
         // OCCT L336-360: collect all pairs of Edge/Edge interferences to check
         // if some faces have to be moved to obtain more precise intersection.
         let mut a_ee_map: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
         for a_ee in &self.ds.interf_ee {
-            if a_ee.new_vertex != 0 {
+            if a_ee.new_vertex != usize::MAX {
                 // OCCT HasIndexNew() -> IndexNew().  BOPDS_Pair orders the pair.
                 let pair = if a_ee.e1 <= a_ee.e2 { (a_ee.e1, a_ee.e2) } else { (a_ee.e2, a_ee.e1) };
                 a_ee_map.entry(pair).or_default().push(a_ee.new_vertex);
@@ -2166,22 +2176,31 @@ impl PaveFiller {
         }
 
         for &(i, j) in &pairs {
+            // OCCT L513-519: for the Glue mode just add all interferences of
+            // that type (empty FF), without performing the intersection.
+            if self.my_glue != GlueEnum::GlueOff {
+                new_ff.push(InterferenceFF {
+                    f1: i, f2: j,
+                    curves: Vec::new(),
+                    points: Vec::new(),
+                    tangent_faces: false,
+                });
+                continue;
+            }
             let Some(s1) = self.ds.face_surface(i) else { continue; };
             let Some(s2) = self.ds.face_surface(j) else { continue; };
 
             // OCCT L373-391: check if the planes are really interfering (share
             // more than one boundary vertex); otherwise skip the pair.
-            if self.my_glue == GlueEnum::GlueOff {
-                if matches!((&s1, &s2), (Surface3::Plane(_), Surface3::Plane(_))) {
-                    if !self.check_planes(i, j) {
-                        new_ff.push(InterferenceFF {
-                            f1: i, f2: j,
-                            curves: Vec::new(),
-                            points: Vec::new(),
-                            tangent_faces: false,
-                        });
-                        continue;
-                    }
+            if matches!((&s1, &s2), (Surface3::Plane(_), Surface3::Plane(_))) {
+                if !self.check_planes(i, j) {
+                    new_ff.push(InterferenceFF {
+                        f1: i, f2: j,
+                        curves: Vec::new(),
+                        points: Vec::new(),
+                        tangent_faces: false,
+                    });
+                    continue;
                 }
             }
 
@@ -2239,19 +2258,37 @@ impl PaveFiller {
 
             let uv1 = self.ds.face_actual_uv_bounds(i);
             let uv2 = self.ds.face_actual_uv_bounds(j);
-            // OCCT L495: aTolFF = max(aShiftValue, ToleranceFF(aBAS1, aBAS2)).
+            // OCCT L496-497: aTolFF = max(aShiftValue, ToleranceFF(aBAS1, aBAS2)).
             let a_tol_ff = a_shift_value
                 .max(tolerance_ff(&s1, &s2, self.ds.face_tolerance(i), self.ds.face_tolerance(j)));
             let mut ff = int_tools::face_face::FaceFace::new();
-            // OCCT L492: SetFaces(aFShifted1, aFShifted2).
+            // OCCT L491-495: aFaceFace.SetRunParallel(myRunParallel);
+            // SetIndices(nF1, nF2); SetFaces(aFShifted1, aFShifted2);
+            // SetBoxes(myDS->ShapeInfo(nF1).Box(), myDS->ShapeInfo(nF2).Box()).
             ff.set_surfaces(a_f_shifted1, a_f_shifted2);
             ff.set_uv_bounds(uv1, uv2);
             ff.set_face_indices(i, j);
+            ff.set_boxes(self.ds.shape_info(i).bbox.clone(), self.ds.shape_info(j).bbox.clone());
+            // OCCT L498: SetTolFF(aTolFF).
+            ff.set_tol_ff(a_tol_ff);
             ff.set_tolerances(self.ds.face_tolerance(i), self.ds.face_tolerance(j));
+            // OCCT L500-506: GetEFPnts(nF1, nF2, aListOfPnts); if (aNbLP) SetList.
+            let a_list_of_pnts = self.get_ef_pnts(i, j);
+            if !a_list_of_pnts.is_empty() {
+                ff.set_list(a_list_of_pnts);
+            }
+            // OCCT L508-510: SetParameters(bApprox, bCompC2D1, bCompC2D2, anApproxTol).
+            ff.set_parameters(b_approx, b_comp_c2d1, b_comp_c2d2, an_approx_tol);
             ff.set_fuzzy_value(self.my_fuzzy_value);
             ff.perform(&self.ds);
             let tangent_faces = ff.tangent_faces();
+            // OCCT L543-556: if (!aFaceFace.IsDone() || aFaceFace.HasErrors())
+            // → empty FF + AddIntersectionFailedWarning; rcad FaceFace has no
+            // error channel — a failed Perform yields no curves.
             if !ff.has_intersection() {
+                // OCCT L545-552: aFF.SetIndices; aFF.Init(0, 0);
+                // AddIntersectionFailedWarning(Face1(), Face2()).
+                self.my_report.add_warning(Alert::IntersectionFailed(i, j));
                 // OCCT: empty FF interference is still added for the pair
                 new_ff.push(InterferenceFF {
                     f1: i, f2: j,
@@ -2261,17 +2298,43 @@ impl PaveFiller {
                 });
                 continue;
             }
+            // OCCT L558-563: aFaceFace.PrepareLines3D(bSplitCurve);
+            // aFaceFace.ApplyTrsf().
+            ff.prepare_lines_3d(b_split_curve);
+            ff.apply_trsf();
             let curves = ff.make_curves();
+            let a_nb_curves = curves.len();
+            // OCCT L565-572: aCvsX = aFaceFace.Lines(); aPntsX = aFaceFace.Points();
+            // aNbCurves/aNbPoints; if (aNbCurves || aNbPoints) myDS->AddInterf(nF1, nF2).
+            // rcad: points 由 IntTools_FaceFace 生成；rcad FaceFace 暂不产出孤立点。
+            if a_nb_curves > 0 {
+                self.ds.add_interf(i, j);
+            }
+            // OCCT L578-581: aFF.SetIndices(nF1, nF2); SetTangentFaces(bTangentFaces);
+            // Init(aNbCurves, aNbPoints).
+            // OCCT L583-590: aBoxExpandValue = aTolFF (+ max vertex tol when curves exist).
+            let a_max_vertex_tol = if a_nb_curves > 0 {
+                self.ds.face_max_vertex_tolerance(i)
+                    .max(self.ds.face_max_vertex_tolerance(j))
+            } else {
+                0.0
+            };
+            let a_box_expand_value = a_tol_ff + a_max_vertex_tol;
             let mut curve_ids: Vec<usize> = Vec::new();
             for mut c in curves {
-                // OCCT L607: aNC.SetTolerance(max(aIC.Tolerance(), aTolFF)).
+                // OCCT L599-607: bIsValid = CheckCurve(aIC, aBox); if valid →
+                // SetCurve(aIC); aBox.Enlarge(aBoxExpandValue); SetBox(aBox);
+                // SetTolerance(max(aIC.Tolerance(), aTolFF)).
+                let (b_is_valid, a_box) = int_tools::face_face::check_curve(&c);
+                if !b_is_valid {
+                    continue;
+                }
                 if c.tolerance < a_tol_ff {
                     c.tolerance = a_tol_ff;
                 }
-                // OCCT L597-607: IntTools_Tools::CheckCurve — reject degenerate
-                // point-like curves before adding them to the FF interference.
-                if !int_tools::face_face::check_curve(&c) {
-                    continue;
+                if let Some([mn, mx]) = a_box {
+                    let grow = glam::DVec3::splat(a_box_expand_value);
+                    c.bbox = Some((mn - grow, mx + grow));
                 }
                 let cid = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(c);
@@ -2283,9 +2346,108 @@ impl PaveFiller {
                 points: Vec::new(),
                 tangent_faces,
             });
-            self.ds.add_interf(i, j);
         }
         self.ds.interf_ff.extend(new_ff);
+    }
+
+    /// OCCT BOPAlgo_PaveFiller::GetEFPnts (BOPAlgo_PaveFiller_6.cxx L2665-2740).
+    ///
+    /// Collects the Edge-Face intersection points belonging to both faces
+    /// nF1/nF2 as IntSurf_PntOn2S (UV on each face), to be passed to
+    /// IntTools_FaceFace::SetList — the intersection curves are then started
+    /// from these points (used by the Param-Param intersector).
+    fn get_ef_pnts(&mut self, n_f1: usize, n_f2: usize) -> Vec<PntOn2S> {
+        // OCCT L2673-2676: collect indexes of all shapes from nF1 and nF2.
+        let mut a_mi: HashSet<usize> = HashSet::new();
+        a_mi.insert(n_f1);
+        a_mi.extend(self.ds.shape_info(n_f1).sub_shapes.iter().copied());
+        a_mi.insert(n_f2);
+        a_mi.extend(self.ds.shape_info(n_f2).sub_shapes.iter().copied());
+        //
+        let mut a_list_of_pnts: Vec<PntOn2S> = Vec::new();
+        let a_nb_efs = self.ds.interf_ef.len();
+        for i in 0..a_nb_efs {
+            let a_ef = self.ds.interf_ef[i].clone();
+            // OCCT L2682: if (aEF.HasIndexNew())
+            if a_ef.new_vertex == usize::MAX {
+                continue;
+            }
+            let n_e = a_ef.edge;
+            let n_f_opposite = a_ef.face;
+            // OCCT L2684: if (aMI.Contains(nE) && aMI.Contains(nFOpposite))
+            if !(a_mi.contains(&n_e) && a_mi.contains(&n_f_opposite)) {
+                continue;
+            }
+            // OCCT L2686-2688: aPar = aCP.VertexParameter1(); the edge 3D curve.
+            let a_par = a_ef.edge_param;
+            let a_curve = match self.ds.edge_curve(n_e) {
+                Some(c) => c.clone(),
+                None => continue,
+            };
+            //
+            // OCCT L2690-2691: nF = (nFOpposite == nF1) ? nF2 : nF1
+            let n_f = if n_f_opposite == n_f1 { n_f2 } else { n_f1 };
+            //
+            // OCCT L2692-2694: aPCurve = BRep_Tool::CurveOnSurface(aE, aF, f, l)
+            let a_pcurve = crate::topalgo::shape_source::edge_pcurve_on_face(
+                &self.ds,
+                n_e,
+                n_f,
+                topods::Orientation::Forward,
+            );
+            //
+            // OCCT L2696: GeomAPI_ProjectPointOnSurf& aProj = myContext->ProjPS(aFOpposite)
+            //
+            // OCCT L2698: aCurve->D0(aPar, aPoint)
+            let a_point = a_curve.point_at(a_par);
+            let mut a_pnt = PntOn2S::new();
+            // OCCT L2696-2736: project aPoint onto the opposite face (and, when
+            // the edge has no pcurve on the other face, onto both faces). The
+            // projectors are obtained inside short blocks to keep the mutable
+            // borrow of my_context exclusive.
+            let a_u_v_opp = {
+                let a_proj = self.my_context.proj_ps(&self.ds, n_f_opposite);
+                a_proj.perform(a_point);
+                if a_proj.nb_points() > 0 {
+                    Some(a_proj.lower_distance_parameters())
+                } else {
+                    None
+                }
+            };
+            if let Some((a_pc, _, _)) = a_pcurve {
+                // OCCT L2701: aP2d = aPCurve->Value(aPar)
+                let a_p2d = a_pc.point_at(a_par);
+                if let Some((u1, v1)) = a_u_v_opp {
+                    // OCCT L2704: aProj.LowerDistanceParameters(U1, V1)
+                    if n_f == n_f1 {
+                        a_pnt.set_value(a_p2d.x, a_p2d.y, u1, v1);
+                    } else {
+                        a_pnt.set_value(u1, v1, a_p2d.x, a_p2d.y);
+                    }
+                    a_list_of_pnts.push(a_pnt);
+                }
+            } else if let Some((u2, v2)) = a_u_v_opp {
+                // OCCT L2716-2736: no pcurve — project onto both faces.
+                let a_u_v_1 = {
+                    let a_proj1 = self.my_context.proj_ps(&self.ds, n_f);
+                    a_proj1.perform(a_point);
+                    if a_proj1.nb_points() > 0 {
+                        Some(a_proj1.lower_distance_parameters())
+                    } else {
+                        None
+                    }
+                };
+                if let Some((u1, v1)) = a_u_v_1 {
+                    if n_f == n_f1 {
+                        a_pnt.set_value(u1, v1, u2, v2);
+                    } else {
+                        a_pnt.set_value(u2, v2, u1, v1);
+                    }
+                    a_list_of_pnts.push(a_pnt);
+                }
+            }
+        }
+        a_list_of_pnts
     }
 
     // ====================================================================

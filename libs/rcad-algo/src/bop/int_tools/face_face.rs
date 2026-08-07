@@ -6,6 +6,7 @@
 
 use rcad_kernel::geom::{
     Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, CurveEval, SurfaceEval,
+    TrimmedCurve3,
 };
 use glam::{DVec2, DVec3};
 
@@ -92,6 +93,9 @@ pub struct IntersectionCurve {
     pub tang_tolerance: f64,
     /// BOPDS_Curve::myPaveBlocks — sub-blocks created by MakeBlocks section-edge split.
     pub pave_blocks: Vec<SharedPB>,
+    /// OCCT BOPDS_Curve::myBox — the curve's bounding box (BOPAlgo_PaveFiller_6.cxx
+    /// L599-606: CheckCurve(aIC, aBox); aBox.Enlarge(aBoxExpandValue); SetBox(aBox)).
+    pub bbox: Option<(DVec3, DVec3)>,
 }
 
 /// OCCT IntTools_Tools::IsDirsCoinside (IntTools_Tools.cxx L164-173): two unit
@@ -165,7 +169,8 @@ pub fn prepare_lines_3d(
 /// reject the curve when the box is thin — all three extents below
 /// 3 * Precision::Confusion() (a degenerate point-like curve).  The box is
 /// computed over the curve's clipped parameter range [t_range].
-pub fn check_curve(c: &IntersectionCurve) -> bool {
+/// Returns (valid, box) matching OCCT's CheckCurve(aIC, aBox) out-parameter.
+pub fn check_curve(c: &IntersectionCurve) -> (bool, Option<[DVec3; 2]>) {
     let a_tol = c.tolerance.max(c.tang_tolerance);
     let a_tol_cmp = 3.0 * rcad_kernel::CONFUSION;
     match rcad_kernel::curve_bounding_box_range(&c.curve, c.t_range[0], c.t_range[1], a_tol) {
@@ -174,9 +179,9 @@ pub fn check_curve(c: &IntersectionCurve) -> bool {
             let thin = (mx.x - mn.x) < a_tol_cmp
                 && (mx.y - mn.y) < a_tol_cmp
                 && (mx.z - mn.z) < a_tol_cmp;
-            !thin
+            (!thin, Some([mn, mx]))
         }
-        None => false,
+        None => (false, None),
     }
 }
 
@@ -578,6 +583,7 @@ fn perform_planes(
         tolerance: tol_f1.max(tol_f2),
         tang_tolerance: 0.0,
         pave_blocks: Vec::new(),
+            bbox: None,
     };
 
     // Computation of the tangential tolerance
@@ -599,6 +605,21 @@ pub struct FaceFace {
     tol1: f64,
     tol2: f64,
     fuzzy: f64,
+    /// OCCT BOPAlgo_FaceFace::myTolFF — tolerance for the intersection curves.
+    tol_ff: f64,
+    /// OCCT BOPAlgo_FaceFace::myBox1/myBox2 — boxes of the faces (SetBoxes).
+    box1: rcad_kernel::math::bnd::BndBox,
+    box2: rcad_kernel::math::bnd::BndBox,
+    /// OCCT IntTools_FaceFace::myListOfPnts — EF intersection points (SetList).
+    list_of_pnts: Vec<crate::bop::int_tools::pnt_on_2_faces::PntOn2S>,
+    /// OCCT IntTools_FaceFace::myApprox/myApprox1/myApprox2/myTolApprox (SetParameters).
+    approx: bool,
+    approx1: bool,
+    approx2: bool,
+    tol_approx: f64,
+    /// OCCT BOPAlgo_FaceFace::myTrsf — inverse of the TrsfToPoint translation;
+    /// applied to the produced curves in ApplyTrsf.
+    my_trsf: Option<glam::DAffine3>,
     curves: Vec<IntersectionCurve>,
     /// Raw IntPatch lines before MakeCurve domain clipping (OCCT myIntersector lines).
     lines: Vec<IntPatchLine>,
@@ -629,6 +650,15 @@ impl FaceFace {
             tol1: 1e-7,
             tol2: 1e-7,
             fuzzy: rcad_kernel::CONFUSION,
+            tol_ff: 1e-7,
+            box1: rcad_kernel::math::bnd::BndBox::new(),
+            box2: rcad_kernel::math::bnd::BndBox::new(),
+            list_of_pnts: Vec::new(),
+            approx: true,
+            approx1: true,
+            approx2: true,
+            tol_approx: 1.0e-7,
+            my_trsf: None,
             curves: Vec::new(),
             lines: Vec::new(),
             face1: 0,
@@ -646,6 +676,30 @@ impl FaceFace {
     pub fn set_uv_bounds(&mut self, uv1: [f64; 4], uv2: [f64; 4]) {
         self.uv1 = uv1;
         self.uv2 = uv2;
+    }
+
+    /// OCCT BOPAlgo_FaceFace::SetBoxes (BOPAlgo_PaveFiller_6.cxx L177-179).
+    pub fn set_boxes(&mut self, box1: rcad_kernel::math::bnd::BndBox, box2: rcad_kernel::math::bnd::BndBox) {
+        self.box1 = box1;
+        self.box2 = box2;
+    }
+
+    /// OCCT BOPAlgo_FaceFace::SetTolFF (BOPAlgo_PaveFiller_6.cxx L181-183).
+    pub fn set_tol_ff(&mut self, tol_ff: f64) {
+        self.tol_ff = tol_ff;
+    }
+
+    /// OCCT IntTools_FaceFace::SetList (IntTools_FaceFace.cxx L244-247).
+    pub fn set_list(&mut self, list_of_pnts: Vec<crate::bop::int_tools::pnt_on_2_faces::PntOn2S>) {
+        self.list_of_pnts = list_of_pnts;
+    }
+
+    /// OCCT IntTools_FaceFace::SetParameters (IntTools_FaceFace.cxx L217-227).
+    pub fn set_parameters(&mut self, to_approx_c3d: bool, to_approx_c2d_on_s1: bool, to_approx_c2d_on_s2: bool, approximation_tolerance: f64) {
+        self.approx = to_approx_c3d;
+        self.approx1 = to_approx_c2d_on_s1;
+        self.approx2 = to_approx_c2d_on_s2;
+        self.tol_approx = approximation_tolerance;
     }
 
     pub fn set_tolerances(&mut self, t1: f64, t2: f64) {
@@ -675,8 +729,38 @@ impl FaceFace {
     pub fn make_curves(&self) -> Vec<IntersectionCurve> {
         self.curves.clone()
     }
+    /// Raw IntPatch lines (before MakeCurve domain clipping).
+    pub fn raw_lines(&self) -> &[IntPatchLine] {
+        &self.lines
+    }
     pub fn points(&self) -> Vec<crate::bop::int_tools::pnt_on_2_faces::PntOn2Faces> {
         Vec::new()
+    }
+
+    /// OCCT IntTools_FaceFace::PrepareLines3D (IntTools_FaceFace.cxx L1932-2013),
+    /// called from BOPAlgo_PaveFiller::PerformFF (BOPAlgo_PaveFiller_6.cxx L566)
+    /// with bSplitCurve from the SectionAttribute.
+    pub fn prepare_lines_3d(&mut self, b_to_split: bool) {
+        let s1 = self.surf1.clone();
+        let s2 = self.surf2.clone();
+        if !b_to_split {
+            // OCCT L1937-1968: with bToSplit==false the closed-curve step is
+            // skipped; only the Plane/Cone 4-line RejectLines step applies.
+            self.curves = prepare_lines_3d(&s1, &s2, std::mem::take(&mut self.curves));
+        } else {
+            // OCCT L1937-1961: IntTools_Tools::SplitCurve for each closed curve.
+            let mut a_new_cvs: Vec<IntersectionCurve> = Vec::new();
+            for ic in std::mem::take(&mut self.curves) {
+                let a_seq = split_closed_curve(&ic);
+                if a_seq.is_empty() {
+                    a_new_cvs.push(ic);
+                } else {
+                    a_new_cvs.extend(a_seq);
+                }
+            }
+            // OCCT L1970-2003: Plane/Cone 4-line RejectLines step.
+            self.curves = prepare_lines_3d(&s1, &s2, a_new_cvs);
+        }
     }
 
     /// OCCT IntTools_FaceFace::Perform — compute intersection.
@@ -686,6 +770,22 @@ impl FaceFace {
         self.tangent_faces = false;
         let s1 = self.surf1.clone();
         let s2 = self.surf2.clone();
+        // OCCT BOPAlgo_FaceFace::Perform (BOPAlgo_PaveFiller_6.cxx L180-235):
+        // if the combined box of the two faces is far from the origin, move
+        // both faces to the origin to increase the accuracy of intersection;
+        // the produced curves are transformed back in ApplyTrsf.
+        let a_trsf = trsf_to_point(&self.box1, &self.box2);
+        let s1 = if a_trsf.is_some() {
+            transform_surface_ref(&s1, &a_trsf.unwrap())
+        } else {
+            s1
+        };
+        let s2 = if a_trsf.is_some() {
+            transform_surface_ref(&s2, &a_trsf.unwrap())
+        } else {
+            s2
+        };
+        self.my_trsf = a_trsf;
         let a_fuzz = self.fuzzy / 2.0;
         let tol_f1 = self.tol1 + a_fuzz;
         let tol_f2 = self.tol2 + a_fuzz;
@@ -756,9 +856,9 @@ impl FaceFace {
                     tol,
                     &self.lines,
                 );
-                // OCCT BOPAlgo_PaveFiller_6.cxx L558:
-                // aFaceFace.PrepareLines3D(bSplitCurve) with bSplitCurve=false.
-                self.curves = prepare_lines_3d(&s1, &s2, std::mem::take(&mut self.curves));
+                // OCCT: PrepareLines3D(bSplitCurve) is NOT part of Perform —
+                // it is called from BOPAlgo_PaveFiller::PerformFF (L566) after
+                // Perform, so MakeCurve output is passed through unchanged here.
                 self.done = true;
             }
         }
@@ -797,10 +897,85 @@ impl FaceFace {
         // clips them to the face UV domains.
         self.lines = inter.sequence_of_line().to_vec();
     }
+
+    /// OCCT BOPAlgo_FaceFace::ApplyTrsf (BOPAlgo_PaveFiller_6.cxx L252-267).
+    /// Transforms the produced curves and points back from the shifted
+    /// position (TrsfToPoint) to the original location.
+    pub fn apply_trsf(&mut self) {
+        if !self.is_done() {
+            return;
+        }
+        if let Some(trsf) = self.my_trsf.take() {
+            for c in self.curves.iter_mut() {
+                c.curve = rcad_kernel::geom::transform_curve(&c.curve, &trsf);
+            }
+        }
+    }
 }
 
 impl Default for FaceFace {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// OCCT IntTools_Tools::SplitCurve (IntTools_Tools.cxx L191-245): split a
+/// closed 3D curve into two trimmed halves at its parameter midpoint.  Used
+/// by IntTools_FaceFace::PrepareLines3D only when bToSplit==true; the PaveFiller
+/// path always passes bToSplit=false.
+fn split_closed_curve(ic: &IntersectionCurve) -> Vec<IntersectionCurve> {
+    use rcad_kernel::geom::CurveEval;
+    let a_c3d = &ic.curve;
+    if !a_c3d.is_closed() {
+        return Vec::new();
+    }
+    let (a_f, a_l) = (ic.t_range[0], ic.t_range[1]);
+    let a_mid = 0.5 * (a_f + a_l);
+    let a_c3d_new_f = Curve3::Trimmed(TrimmedCurve3::new(a_c3d.clone(), a_f, a_mid));
+    let a_c3d_new_l = Curve3::Trimmed(TrimmedCurve3::new(a_c3d.clone(), a_mid, a_l));
+    let mut a_out = Vec::with_capacity(2);
+    for c3 in [a_c3d_new_f, a_c3d_new_l] {
+        a_out.push(IntersectionCurve {
+            curve: c3,
+            t_range: [a_f, a_l],
+            pcurve1: ic.pcurve1.clone(),
+            pcurve2: ic.pcurve2.clone(),
+            tolerance: ic.tolerance,
+            tang_tolerance: ic.tang_tolerance,
+            pave_blocks: Vec::new(),
+            bbox: None,
+        });
+    }
+    a_out
+}
+
+/// OCCT BOPAlgo_Tools::TrsfToPoint (BOPAlgo_Tools.cxx L1912-1940).
+/// Returns the translation moving the combined box of the two faces to the
+/// origin when the shapes are located far from the origin (distance criterion
+/// 1e5); None keeps the shapes in place.
+fn trsf_to_point(
+    box1: &rcad_kernel::math::bnd::BndBox,
+    box2: &rcad_kernel::math::bnd::BndBox,
+) -> Option<glam::DAffine3> {
+    let mut a_box = box1.clone();
+    a_box.add_box(box2);
+    let mn = a_box.corner_min()?;
+    let mx = a_box.corner_max()?;
+    let a_bcenter = (mn + mx) / 2.0;
+    let a_pb_dist = a_bcenter.length();
+    const A_CRITERIA: f64 = 1.0e5;
+    if a_pb_dist < A_CRITERIA {
+        return None;
+    }
+    let a_b_size = (mx - mn).length();
+    if a_b_size / a_pb_dist > 1.0 / A_CRITERIA {
+        return None;
+    }
+    let trsf = glam::DAffine3::from_translation(-mn);
+    Some(trsf)
+}
+
+/// Transform a surface by an affine transform (inverse of the OCCT Move).
+fn transform_surface_ref(s: &Surface3, trsf: &glam::DAffine3) -> Surface3 {
+    rcad_kernel::geom::transform_surface(s, trsf)
 }

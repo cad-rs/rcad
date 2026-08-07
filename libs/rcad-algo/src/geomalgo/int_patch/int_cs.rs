@@ -75,6 +75,12 @@ pub struct IntCurveSurface {
     points: Vec<IntersectionPoint>,
     segments: Vec<IntersectionSegment>,
     is_parallel: bool,
+    /// OCCT Adaptor3d_CurveOnSurface::FirstParameter/LastParameter — the 2D
+    /// boundary arc parameter domain.  The IntCS W() must be validated and
+    /// period-wrapped against this domain (IntCurveSurface_InterUtils
+    /// ComputeAppendPoint uses CurveTool::FirstParameter/LastParameter),
+    /// NOT against the 3D curve's geometric domain.
+    curve_domain: Option<[f64; 2]>,
 }
 
 /// OCCT IntCurveSurface_Inter.pxx constants.
@@ -89,6 +95,7 @@ impl IntCurveSurface {
             points: Vec::new(),
             segments: Vec::new(),
             is_parallel: false,
+            curve_domain: None,
         }
     }
 
@@ -96,7 +103,11 @@ impl IntCurveSurface {
     ///
     /// curve: a canonic 3D curve whose parameter equals the 2D arc parameter
     /// (the CurveOnSurface parameterization).  surface: the quadric surface.
-    pub fn perform(&mut self, curve: &Curve3, surface: &Surface3) {
+    pub fn perform(&mut self, curve: &Curve3, surface: &Surface3, curve_domain: [f64; 2]) {
+        // OCCT IntCurveSurface_HInter::Perform(Adaptor3d_CurveOnSurface, ...):
+        // W0/W1 come from CurveTool::FirstParameter/LastParameter on the
+        // curve-on-surface, i.e. the 2D boundary arc parameter domain.
+        self.curve_domain = Some(curve_domain);
         self.points.clear();
         self.segments.clear();
         self.is_parallel = false;
@@ -156,9 +167,10 @@ impl IntCurveSurface {
         // OCCT AppendIntAna -> ProcessIntAna: for each IntAna point, compute
         // surface params (ComputeParamsOnQuadric) and validate+transition via
         // ComputeAppendPoint.
+        let w0_w1 = self.curve_domain.unwrap_or(curve.default_domain());
         for (p, w) in ana_points {
             let (u, v) = compute_params_on_quadric(&quad, p);
-            if let Some(pt) = compute_append_point(curve, w, surface, u, v) {
+            if let Some(pt) = compute_append_point(curve, w, surface, u, v, w0_w1) {
                 self.points.push(pt);
             }
         }
@@ -207,9 +219,13 @@ fn compute_append_point(
     surface: &Surface3,
     su: f64,
     sv: f64,
+    curve_domain: [f64; 2],
 ) -> Option<IntersectionPoint> {
-    let dom = curve.default_domain();
-    let (w0, w1) = (dom[0], dom[1]);
+    // OCCT IntCurveSurface_InterUtils::ComputeAppendPoint: W0/W1 =
+    // CurveTool::FirstParameter/LastParameter — on the curve-on-surface these
+    // are the 2D boundary arc parameter bounds (NOT the 3D curve geometric
+    // domain).  The W range check and period wrap use this domain.
+    let (w0, w1) = (curve_domain[0], curve_domain[1]);
     let surf_dom = surface.default_domain();
     let (u0, u1) = (surf_dom[0], surf_dom[1]);
     let (v0, v1) = (surf_dom[2], surf_dom[3]);

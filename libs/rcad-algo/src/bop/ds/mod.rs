@@ -2073,6 +2073,29 @@ impl DS {
         }).unwrap_or(0.0)
     }
 
+    /// OCCT BRep_Tool::MaxTolerance(face, TopAbs_VERTEX) — the maximum vertex
+    /// tolerance over all vertices of the face (BOPAlgo_PaveFiller_6.cxx L593).
+    pub fn face_max_vertex_tolerance(&self, fi: usize) -> f64 {
+        let mut a_max: f64 = 0.0;
+        let mut stack: Vec<usize> = vec![fi];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(i) = stack.pop() {
+            if !seen.insert(i) {
+                continue;
+            }
+            let si = match self.shapes.get(i) {
+                Some(s) => s,
+                None => continue,
+            };
+            if si.shape_type == ShapeType::Vertex {
+                a_max = a_max.max(self.vertex_tolerance_by_idx(i));
+                continue;
+            }
+            stack.extend(si.sub_shapes.iter().copied());
+        }
+        a_max
+    }
+
     /// Vertex point (alias for vertex_point_by_idx).
     pub fn vertex_point(&self, i: usize) -> glam::DVec3 { self.vertex_point_by_idx(i) }
 

@@ -954,7 +954,11 @@ fn bounded_arc(
                     && !is_degenerated_quadric(&quadric)
                 {
                     let quad_surf = quadric_to_surface3(&quadric);
-                    int_cs.perform(&curve3, &quad_surf);
+                    // OCCT IntStart_SearchOnBoundaries.gxx L465: IntCS.Perform(HConS, GAHsurf)
+                    // where HConS is the curve-on-surface — its parameter domain
+                    // (FirstParameter/LastParameter) is the 2D boundary arc domain
+                    // [Pdeb, Pfin], which ComputeAppendPoint uses for the W checks.
+                    int_cs.perform(&curve3, &quad_surf, [p_deb, p_fin]);
                 }
             }
             is_int_cs_done = int_cs.is_done();
@@ -1486,12 +1490,21 @@ pub fn curve_on_surface(
                 // U = const -> meridian circle through the poles: plane spanned
                 // by {axis, ux}, i.e. normal = z x ux, x_dir = z, y_dir = ux.
                 let ux = u0.cos() * x + u0.sin() * y;
+                // OCCT Adaptor3d_CurveOnSurface::EvalKPart (Adaptor3d_CurveOnSurface.cxx
+                // L1657-1676) + ElSLib::SphereUIso (ElSLib.cxx L1738-1749): for a
+                // sphere Iso-U arc the 3D curve is the meridian circle with
+                // X = cx (the radial direction at U) and Y = Z (the sphere axis),
+                // so the circle parameter equals the sphere V parameter (the 2D
+                // arc parameter).  rcad's curve_on_surface must use the same
+                // frame, otherwise the IntCS intersection parameter (W) drifts
+                // from the arc parameter and the SOnBounds vertex placement
+                // (which compares W against the arc bounds) drops points.
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center: s.center,
-                        normal: z.cross(ux).normalize_or_zero(),
-                        x_dir: z,
-                        y_dir: ux,
+                        normal: ux.cross(z).normalize_or_zero(),
+                        x_dir: ux,
+                        y_dir: z,
                         radius: r,
                     }),
                     CurveType3d::Circle,

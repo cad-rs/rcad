@@ -234,6 +234,7 @@ fn make_restriction_curves(
             tolerance: tol,
             tang_tolerance: 0.0,
             pave_blocks: Vec::new(),
+            bbox: None,
         });
     }
     out
@@ -762,6 +763,7 @@ fn make_part_curve(
                 tolerance,
                 tang_tolerance: line.tang_tolerance,
                 pave_blocks: Vec::new(),
+            bbox: None,
             })
         }
         IntPatchIType::Circle | IntPatchIType::Ellipse => {
@@ -780,6 +782,7 @@ fn make_part_curve(
                     tolerance: tol,
                     tang_tolerance: line.tang_tolerance,
                     pave_blocks: Vec::new(),
+            bbox: None,
                 })
             } else if a_nb_parts == 1 {
                 // OCCT L1074-1103: accept the full circle.
@@ -791,6 +794,7 @@ fn make_part_curve(
                     tolerance: tol,
                     tang_tolerance: line.tang_tolerance,
                     pave_blocks: Vec::new(),
+            bbox: None,
                 })
             } else {
                 // OCCT L1109-1165: test 18 points around the circle.
@@ -813,6 +817,7 @@ fn make_part_curve(
                             tolerance: tol,
                             tang_tolerance: line.tang_tolerance,
                             pave_blocks: Vec::new(),
+            bbox: None,
                         });
                     }
                 }
@@ -840,6 +845,7 @@ fn make_part_curve(
                 tolerance: tol,
                 tang_tolerance: line.tang_tolerance,
                 pave_blocks: Vec::new(),
+            bbox: None,
             })
         }
         _ => None,
