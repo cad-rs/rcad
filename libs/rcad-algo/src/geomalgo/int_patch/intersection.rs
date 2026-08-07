@@ -550,11 +550,12 @@ impl IntPatchIntersection {
         // OCCT L1850-1904: if (isWLExist) { build boxes, periodic array,
         //   critical points; IntPatch_WLineTool::ExtendTwoWLines(...); }
         if is_wl_exist {
-            // OCCT L1852-1867: Bnd_Box2d aBx1/aBx2 from the surface UV domains.
-            let d1 = s1.default_domain();
-            let d2 = s2.default_domain();
-            let mut a_bx1 = [d1[0], d1[2], d1[1], d1[3]];
-            let mut a_bx2 = [d2[0], d2[2], d2[1], d2[3]];
+            // OCCT L1852-1867: Bnd_Box2d aBx1/aBx2 from the surface UV
+            // domains.  OCCT uses theS1->FirstUParameter()/FirstVParameter()
+            // etc. — the GeomAdaptor_Surface was loaded (IntTools_FaceFace)
+            // with the corrected face UV bounds, which is the rcad uv1/uv2.
+            let mut a_bx1 = [uv1[0], uv1[2], uv1[1], uv1[3]];
+            let mut a_bx2 = [uv2[0], uv2[2], uv2[1], uv2[3]];
             a_bx1 = enlarge_box2d(a_bx1, rcad_kernel::precision::PCONFUSION);
             a_bx2 = enlarge_box2d(a_bx2, rcad_kernel::precision::PCONFUSION);
             // OCCT L1869-1872: anArrOfPeriod.
