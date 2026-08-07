@@ -604,42 +604,55 @@ fn extend_two_wl(
     let (p1, p2) = (wl1_n, wl2_n);
     match mode {
         ExtendMode::FirstFirst => {
-            // wl2's points (2..N) prepended to wl1.
+            // OCCT L1187-1192: for (aNPt = 2; aNPt <= aNbPts; aNPt++)
+            //   theWLine1->Curve()->InsertBefore(1, theWLine2->Point(aNPt)).
+            // Each InsertBefore(1) shifts right, so wl2's points 2..N land
+            // REVERSED at the front: [wl2_N, ..., wl2_2, wl1_1, ..., wl1_N1].
             let mut joined: Vec<WLinePnt> = Vec::new();
-            for pt in slin[wl2_idx].wline_pnts.iter().skip(1) {
+            for pt in slin[wl2_idx].wline_pnts.iter().skip(1).rev() {
                 joined.push(*pt);
             }
             for pt in slin[wl1_idx].wline_pnts.iter() {
                 joined.push(*pt);
             }
-            // Re-index wl1 vertices: + (p2 - 1).
+            // OCCT L1194-1199: wl1 vertices stay in place, shifted by +(N2-1).
             for v in slin[wl1_idx].vertices.iter_mut() {
                 v.param_on_line += (p2 - 1) as f64;
             }
-            // Re-index wl2 vertices: N - cur + 1; add to wl1.
+            // OCCT L1201-1207: for (aNVtx = NbVertex; aNVtx >= 1; aNVtx--)
+            //   SetParameter(N2 - cur + 1); AddVertex(v, true) = svtx.Prepend.
+            // Iterating NbVertex..1 and prepending each leaves the wl2 vertices
+            // at the front in their ORIGINAL order (last iteration = Vertex(1)
+            // lands first).
             let wl2_verts = std::mem::take(&mut slin[wl2_idx].vertices);
-            for mut v in wl2_verts {
+            for mut v in wl2_verts.into_iter().rev() {
                 v.param_on_line = p2 as f64 - v.param_on_line + 1.0;
-                slin[wl1_idx].vertices.push(v);
+                slin[wl1_idx].vertices.insert(0, v);
             }
             slin[wl1_idx].wline_pnts = joined;
         }
         ExtendMode::FirstLast => {
-            // wl2's points (N-1..1) prepended to wl1.
+            // OCCT L1278-1283: for (aNPt = aNbPts - 1; aNPt >= 1; aNPt--)
+            //   theWLine1->Curve()->InsertBefore(1, theWLine2->Point(aNPt)).
+            // Each InsertBefore(1) shifts right, so the last insertion (Point(1))
+            // lands first — net ASCENDING [wl2_1, ..., wl2_{N2-1}] at the front
+            // (the connection point aNbPts is dropped).
             let mut joined: Vec<WLinePnt> = Vec::new();
-            for pt in slin[wl2_idx].wline_pnts.iter().rev().skip(1) {
+            for pt in slin[wl2_idx].wline_pnts.iter().take(wl2_n - 1) {
                 joined.push(*pt);
             }
             for pt in slin[wl1_idx].wline_pnts.iter() {
                 joined.push(*pt);
             }
+            // OCCT L1285-1290: wl1 vertices stay in place, shifted by +(N2-1).
             for v in slin[wl1_idx].vertices.iter_mut() {
                 v.param_on_line += (p2 - 1) as f64;
             }
+            // OCCT L1292-1296: wl2 vertices iterated aNVtx = NbVertex..1 and
+            // prepended WITHOUT re-indexing their parameters.
             let wl2_verts = std::mem::take(&mut slin[wl2_idx].vertices);
-            for mut v in wl2_verts {
-                v.param_on_line = p2 as f64 - v.param_on_line + 1.0;
-                slin[wl1_idx].vertices.push(v);
+            for v in wl2_verts.into_iter().rev() {
+                slin[wl1_idx].vertices.insert(0, v);
             }
             slin[wl1_idx].wline_pnts = joined;
         }
@@ -657,13 +670,17 @@ fn extend_two_wl(
             slin[wl1_idx].wline_pnts = joined;
         }
         ExtendMode::LastLast => {
-            // wl2's points (N-1..1) appended to wl1.
+            // OCCT L1448-1453: for (aNPt = NbPnts(wl2) - 1; aNPt >= 1; aNPt--)
+            //   theWLine1->Curve()->Add(theWLine2->Point(aNPt)).
             let mut joined = slin[wl1_idx].wline_pnts.clone();
             for pt in slin[wl2_idx].wline_pnts.iter().rev().skip(1) {
                 joined.push(*pt);
             }
+            // OCCT L1455-1461: wl2 vertices iterated NbVertex..1, SetParameter
+            // (NbPnts1+NbPnts2 - cur), appended — reverse iteration yields the
+            // wl2 vertices reversed at the end.
             let wl2_verts = std::mem::take(&mut slin[wl2_idx].vertices);
-            for mut v in wl2_verts {
+            for mut v in wl2_verts.into_iter().rev() {
                 v.param_on_line = p1 as f64 + p2 as f64 - v.param_on_line;
                 slin[wl1_idx].vertices.push(v);
             }
@@ -688,17 +705,31 @@ fn wl1_first_last_vertex_ok(wl: &IntPatchLine) -> bool {
 
 /// Remove the first and/or last endpoint vertex (OCCT RemoveVertex(1/N)).
 fn remove_endpoint_vertex(slin: &mut Vec<IntPatchLine>, idx: usize, front: bool, back: bool) {
-    let n = slin[idx].wline_pnts.len() as f64;
-    let mut kept: Vec<super::IntPatchVertex> = Vec::new();
-    for v in slin[idx].vertices.drain(..) {
-        let at_front = (v.param_on_line - 1.0).abs() <= 1e-9;
-        let at_back = (v.param_on_line - n).abs() <= 1e-9;
-        if (front && at_front) || (back && at_back) {
-            continue;
+    let verts = &mut slin[idx].vertices;
+    // OCCT L1175-1185 / L1266-1276 / L1355-1365 / L1436-1446: removes the
+    // contiguous run at the front (all sharing the first vertex's parameter) or
+    // at the back (all sharing the last vertex's parameter), matching the
+    // while (Vertex(1)/Vertex(NbVertex).ParameterOnLine() == aPrm) RemoveVertex
+    // loops.  The run is bounded by the FIRST endpoint value only — vertices
+    // further along with the same parameter are kept.
+    if front {
+        if let Some(prm) = verts.first().map(|v| v.param_on_line) {
+            let mut k = 0;
+            while k < verts.len() && (verts[k].param_on_line - prm).abs() <= 1e-9 {
+                k += 1;
+            }
+            verts.drain(..k);
         }
-        kept.push(v);
     }
-    slin[idx].vertices = kept;
+    if back {
+        if let Some(prm) = verts.last().map(|v| v.param_on_line) {
+            let mut k = verts.len();
+            while k > 0 && (verts[k - 1].param_on_line - prm).abs() <= 1e-9 {
+                k -= 1;
+            }
+            verts.truncate(k);
+        }
+    }
 }
 
 /// OCCT static IsNeedSkipWL (L1842-1867).

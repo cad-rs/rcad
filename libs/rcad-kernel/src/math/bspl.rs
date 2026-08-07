@@ -403,15 +403,21 @@ pub fn segment_bspline_curve(
         return None;
     }
 
-    // Work in homogeneous coordinates.
+    // Work in homogeneous coordinates. A NULL weight array (non-rational curve)
+    // is treated as all weights equal to 1.0 (OCCT BSplCLib weight accessor).
+    let all_ones: Vec<f64> = if b.weights.is_empty() {
+        vec![1.0; b.control_points.len()]
+    } else {
+        b.weights.clone()
+    };
     let mut knots = b.knots.clone();
     let mut wpts: Vec<DVec3> = b
         .control_points
         .iter()
-        .zip(&b.weights)
+        .zip(&all_ones)
         .map(|(p, w)| *p * *w)
         .collect();
-    let mut wts: Vec<f64> = b.weights.clone();
+    let mut wts: Vec<f64> = all_ones;
 
     // Clamp a to multiplicity Degree+1.
     let target = degree + 1;
