@@ -801,6 +801,9 @@ fn is_out_rect(u: f64, v: f64, rect: &[f64; 4]) -> bool {
 /// 3D distance
 /// within theTol3d; when theTol2d >= 0 the UV params of both surfaces must
 /// also coincide within theTol2d.
+/// OCCT IntSurf_PntOn2S::IsSame (IntSurf_PntOn2S.cxx L85-108):
+///   3D distance check, then gp_Pnt2d::IsEqual on (u1,v1) and (u2,v2) —
+///   gp_Pnt2d::IsEqual = Distance(theOther) <= theTol2D (2D Euclidean).
 fn pnt_is_same(a: &WLinePnt, b: &WLinePnt, tol3d: f64, tol2d: f64) -> bool {
     if a.p3d.distance_squared(b.p3d) > tol3d * tol3d {
         return false;
@@ -808,13 +811,15 @@ fn pnt_is_same(a: &WLinePnt, b: &WLinePnt, tol3d: f64, tol2d: f64) -> bool {
     if tol2d < 0.0 {
         return true; // Compare 3D-points only.
     }
-    if (a.u1 - b.u1).abs() > tol2d || (a.v1 - b.v1).abs() > tol2d {
+    // OCCT: aP1.IsEqual(aP2, theTol2D) — 2D Euclidean distance on S1 params.
+    let d1 = ((a.u1 - b.u1).powi(2) + (a.v1 - b.v1).powi(2)).sqrt();
+    if d1 > tol2d {
         return false;
     }
-    if (a.u2 - b.u2).abs() > tol2d || (a.v2 - b.v2).abs() > tol2d {
-        return false;
-    }
-    true
+    // OCCT: aP1.SetCoord(u2, v2); aP2.SetCoord(aU2, aV2);
+    //       aP1.IsEqual(aP2, theTol2D) — 2D Euclidean distance on S2 params.
+    let d2 = ((a.u2 - b.u2).powi(2) + (a.v2 - b.v2).powi(2)).sqrt();
+    d2 <= tol2d
 }
 
 /// OCCT-aligned: IntPatch_WLineTool::CheckArgumentsToExtend (L918-1067).
