@@ -37,9 +37,18 @@ impl MakeSphere {
         let seam = Circle3::new(c, -self.y_axis, r);
         let pi = std::f64::consts::PI;
         let e_top = t.add_tedge(None, north.clone(), north.clone(), [0.0, pi * r]);
+        // OCCT BRepPrim_OneAxis::EndEdge (BRepPrim_OneAxis.cxx L1035-1060):
+        // AddEdgeVertex(E, TopEndVertex(), myVMax+off, false) then
+        // AddEdgeVertex(E, BottomEndVertex(), myVMin+off, true) — so V1 =
+        // BottomEndVertex (south), V2 = TopEndVertex (north). The meridian arc
+        // [3*PI/2, 5*PI/2] runs south -> north, consistent with the edge
+        // V1/V2 order. (V1/V2 roles drive BRepTools_WireExplorer traversal:
+        // with V1=south the sphere lateral wire walks
+        // [rev(Top), rev(Start), Bottom, End], a clean UV rectangle; with the
+        // roles swapped it degenerates into a self-crossing bowtie polygon.)
         let e_seam = t.add_tedge(
             Some(Curve3::Circle(seam)),
-            north.clone(), south.clone(),
+            south.clone(), north.clone(),
             [3.0 * pi / 2.0, 5.0 * pi / 2.0]);
         let e_bot = t.add_tedge(None, south.clone(), south.clone(), [0.0, pi * r]);
         // OCCT BRepPrim_OneAxis::LateralWire (BRepPrim_OneAxis.cxx L660-684):
