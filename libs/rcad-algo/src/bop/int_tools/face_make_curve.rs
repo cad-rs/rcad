@@ -954,7 +954,9 @@ fn quadric_uv_params(surf: &Surface3, p: DVec3) -> Option<DVec2> {
     }
 }
 
-/// OCCT IntTools_Tools::IntermediatePoint (IntTools_Tools.cxx L222-229):
+/// OCCT-aligned: BOPTools_AlgoTools2D::IntermediatePoint
+/// (BOPTools_AlgoTools2D.cxx L404-411), identical to
+/// IntTools_Tools::IntermediatePoint (IntTools_Tools.cxx L254-259):
 ///   the parameter dividing the range [aFirst, aLast] at the ratio
 ///   10 * e^(-PI) = 0.43213918.
 pub(crate) fn intermediate_point(a_first: f64, a_last: f64) -> f64 {

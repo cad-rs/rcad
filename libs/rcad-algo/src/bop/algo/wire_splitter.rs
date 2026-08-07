@@ -1092,14 +1092,21 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
     // rcad keys the edge pcurve map by the DS face index, but input-shape
     // pcurves (make_cylinder etc.) are keyed by the Shape's BRep `index`; the
     // DS face preserves that BRep index, so both keys are consulted.
-    let brep_face = if face_index < ds.nb_shapes() {
-        ds.shape(face_index).index
+    //
+    // OCCT BRep_Tool.cxx L310-313: the face-based CurveOnSurface(aE, aF)
+    // reverses the local edge when the face is REVERSED, so the effective
+    // reversed flag is the XOR of the edge and face orientations. The face
+    // orientation is read from the DS face shape, which preserves the source
+    // face's orientation (BRep_Tool::Surface / BuilderFace SetFace).
+    let (brep_face, face_reversed) = if face_index < ds.nb_shapes() {
+        let fs = ds.shape(face_index);
+        (fs.index, fs.orientation == Orientation::Reversed)
     } else {
-        face_index
+        (face_index, false)
     };
     match &*e.data {
         TShape::Edge(ed) => {
-            // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-360): a closed
+            // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-361): a closed
             // surface seam edge (CurveOnClosedSurface) returns the second pcurve
             // for a REVERSED edge and the first otherwise — the two wire
             // instances of the seam map to u=2*PI and u=0.
@@ -1110,7 +1117,8 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
                 _ => None,
             }) {
                 let (pc1, pc2, range) = r;
-                let pc = if e.orientation == Orientation::Reversed { pc2 } else { pc1 };
+                let e_reversed = (e.orientation == Orientation::Reversed) != face_reversed;
+                let pc = if e_reversed { pc2 } else { pc1 };
                 return Some((pc, range[0], range[1]));
             }
             if let Some(v) = ed.pcurves.get(&face_index) {
