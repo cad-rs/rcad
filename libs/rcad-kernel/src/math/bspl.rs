@@ -8,7 +8,7 @@
 //! OCCT source: src/FoundationClasses/TKMath/BSplCLib/BSplCLib.cxx
 //!             src/FoundationClasses/TKMath/BSplSLib/BSplSLib.cxx
 
-use crate::geom::{BezierSurface, BSplineSurface};
+use crate::geom::{BezierCurve3, BezierSurface, BSplineCurve3, BSplineSurface};
 use glam::{DVec2, DVec3};
 
 /// Find the knot span index `k` such that `knots[k] <= t < knots[k+1]`.
@@ -793,6 +793,218 @@ pub fn bezier_surface_resolution(s: &BezierSurface, tol3d: f64) -> (f64, f64) {
         v_rational,
         tol3d,
     )
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 1D curve Resolution — GeomAdaptor_Curve::Resolution subchain
+// (GeomAdaptor_Curve.cxx L1116-1148 -> Geom_BezierCurve/Geom_BSplineCurve
+//  ::Resolution -> BSplCLib::Resolution 1D flat-array overload)
+// ══════════════════════════════════════════════════════════════════════════
+
+/// Rational() weight-variation detection for curves.
+/// OCCT `Geom_BSplineCurve::Rational` (Geom_BSplineCurve.cxx L98-108) and
+/// `Geom_BezierCurve::Rational` (Geom_BezierCurve.cxx L60-73): a curve is
+/// rational iff some adjacent weight difference exceeds `gp::Resolution()`
+/// which equals `RealSmall()` = DBL_MIN (gp.hxx L60) = `f64::MIN_POSITIVE`.
+/// NOTE: this threshold differs from the surface `Rational()` detection
+/// (1-ULP Epsilon in `surface_rational_flags`).
+fn curve_rational(weights: &[f64]) -> bool {
+    if weights.is_empty() {
+        return false;
+    }
+    let mut current = weights[0];
+    for &w in &weights[1..] {
+        let delta = w - current;
+        if delta.abs() > f64::MIN_POSITIVE {
+            return true;
+        }
+        current = w;
+    }
+    false
+}
+
+/// OCCT `BSplCLib::PrepareUnperiodize` (BSplCLib.cxx L2967-3020): for a
+/// periodic curve, count the knots/poles of the unperiodized curve.
+/// `mults` is 0-based (rcad `compress_knots` output); OCCT's 1-based
+/// `Mults(Lower()+k)` maps to `mults[k]`. Returns (nb_knots, nb_poles).
+fn prepare_unperiodize(degree: usize, mults: &[usize]) -> (usize, usize) {
+    // OCCT L2972-2980: NbKnots = Mults.Length(), NbPoles = -Degree - 1 + sum(Mults).
+    let mut nb_knots = mults.len();
+    let mut nb_poles = mults.iter().sum::<usize>() - (degree + 1);
+
+    // OCCT L2983-3000: add knots at the beginning to raise the multiplicities
+    // to Degree + 1.  k starts at Mults.Upper() - 1 (1-based) = 0-based len - 2.
+    let mut sigma = mults[0];
+    let mut k = mults.len() - 2;
+    while sigma < degree + 1 {
+        sigma += mults[k];
+        nb_poles += mults[k];
+        k -= 1;
+        nb_knots += 1;
+    }
+    if sigma > degree + 1 {
+        nb_poles -= sigma - degree - 1;
+    }
+
+    // OCCT L3002-3018: add knots at the end to raise the multiplicities to
+    // Degree + 1.  k starts at Mults.Lower() + 1 (1-based = 2) = 0-based 1.
+    let mut sigma = mults[mults.len() - 1];
+    let mut k = 1;
+    while sigma < degree + 1 {
+        sigma += mults[k];
+        nb_poles += mults[k];
+        k += 1;
+        nb_knots += 1;
+    }
+    if sigma > degree + 1 {
+        nb_poles -= sigma - degree - 1;
+    }
+
+    (nb_knots, nb_poles)
+}
+
+/// OCCT `BSplCLib::Resolution` 1D flat-array overload (BSplCLib.cxx L4316-4820),
+/// ArrayDimension = 3 case (BSplCLib_CurveComputation.pxx L1947-1965).
+/// `flat_knots` is the fully expanded knot vector (rcad `BSplineCurve3.knots`,
+/// or `[0;deg+1] ++ [1;deg+1]` for Bezier); `weights` mirrors the OCCT
+/// `Weights()` accessor — NULL (non-rational) maps to `None`.
+/// The flat `Poles` double array maps to `[DVec3]` (semantic, bottom-level).
+/// OCCT tail (L4811-4820): NO `sqrt(2)` factor, guard `RealSmall()` = DBL_MIN.
+pub fn bspl_curve_resolution(
+    poles: &[DVec3],
+    weights: Option<&[f64]>,
+    flat_knots: &[f64],
+    degree: usize,
+    tol3d: f64,
+) -> f64 {
+    let deg1 = degree + 1;
+    let deg2 = (degree << 1) + 1;
+    let num_poles = flat_knots.len() - deg1; // local, from FlatKnots.Length()
+    let num_poles_count = poles.len(); // the NumPoles argument (== num_poles for clamped)
+    let mut max_derivative = 0.0f64;
+
+    if let Some(wg) = weights {
+        // OCCT L4446-4459: rational branch — minimum weight scan.
+        let mut min_weights = wg[0];
+        for &w in &wg[1..num_poles_count] {
+            if w < min_weights {
+                min_weights = w;
+            }
+        }
+        // OCCT L4461-4527: windowed derivative estimate.
+        for ii in 1..num_poles {
+            let ii_index = ii % num_poles_count;
+            let ii_minus = (ii - 1) % num_poles_count;
+            let p_ii = poles[ii_index];
+            let p_mi = poles[ii_minus];
+            let wg_ii_index = wg[ii_index];
+            let wg_ii_minus = wg[ii_minus];
+            let mut inverse = flat_knots[ii + degree] - flat_knots[ii];
+            inverse = 1.0 / inverse;
+            let lower = if ii >= deg1 { ii - deg1 } else { 0 };
+            let upper = if deg2 + ii > num_poles { num_poles } else { deg2 + ii };
+            for jj in lower..upper {
+                let p_jj = poles[jj % num_poles_count];
+                let mut value = 0.0;
+                let mut factor =
+                    (p_jj.x - p_ii.x) * wg_ii_index - (p_jj.x - p_mi.x) * wg_ii_minus;
+                if factor < 0.0 {
+                    factor = -factor;
+                }
+                value += factor;
+                factor = (p_jj.y - p_ii.y) * wg_ii_index - (p_jj.y - p_mi.y) * wg_ii_minus;
+                if factor < 0.0 {
+                    factor = -factor;
+                }
+                value += factor;
+                factor = (p_jj.z - p_ii.z) * wg_ii_index - (p_jj.z - p_mi.z) * wg_ii_minus;
+                if factor < 0.0 {
+                    factor = -factor;
+                }
+                value += factor;
+                value *= inverse;
+                if max_derivative < value {
+                    max_derivative = value;
+                }
+            }
+        }
+        // OCCT L4527: divide by the minimum weight.
+        max_derivative /= min_weights;
+    } else {
+        // OCCT L4529-4569: non-rational branch — adjacent pole differences.
+        for ii in 1..num_poles {
+            let ii_index = ii % num_poles_count;
+            let ii_minus = (ii - 1) % num_poles_count;
+            let p_ii = poles[ii_index];
+            let p_mi = poles[ii_minus];
+            let mut inverse = flat_knots[ii + degree] - flat_knots[ii];
+            inverse = 1.0 / inverse;
+            let mut value = 0.0;
+            let mut factor = p_ii.x - p_mi.x;
+            if factor < 0.0 {
+                factor = -factor;
+            }
+            value += factor;
+            factor = p_ii.y - p_mi.y;
+            if factor < 0.0 {
+                factor = -factor;
+            }
+            value += factor;
+            factor = p_ii.z - p_mi.z;
+            if factor < 0.0 {
+                factor = -factor;
+            }
+            value += factor;
+            value *= inverse;
+            if max_derivative < value {
+                max_derivative = value;
+            }
+        }
+    }
+
+    // OCCT L4811-4820: tail.
+    max_derivative *= degree as f64;
+    if max_derivative > f64::MIN_POSITIVE {
+        tol3d / max_derivative
+    } else {
+        tol3d / f64::MIN_POSITIVE
+    }
+}
+
+/// OCCT `Geom_BezierCurve::Resolution` (Geom_BezierCurve.cxx L743-758):
+/// `BSplCLib::Resolution` over `KnotSequence()` = FlatBezierKnots(deg) =
+/// `[0;deg+1] ++ [1;deg+1]` (L857-870), with `Weights()` (nullptr if
+/// non-rational) and `Tolerance3D = 1.`; result scaled by the caller.
+pub fn bezier_curve_resolution(c: &BezierCurve3, tol3d: f64) -> f64 {
+    let degree = c.control_points.len() - 1;
+    let flat_knots: Vec<f64> = std::iter::repeat_n(0.0, degree + 1)
+        .chain(std::iter::repeat_n(1.0, degree + 1))
+        .collect();
+    let rational = curve_rational(&c.weights);
+    let weights = if rational { Some(&c.weights[..]) } else { None };
+    bspl_curve_resolution(&c.control_points, weights, &flat_knots, degree, tol3d)
+}
+
+/// OCCT `Geom_BSplineCurve::Resolution` (Geom_BSplineCurve_1.cxx L756-798):
+/// periodic branch unperiodizes the poles (PrepareUnperiodize + modulo wrap)
+/// and keeps `myFlatKnots`; non-periodic passes the poles directly.  Both pass
+/// `Weights()` (nullptr if non-rational) and `Tolerance3D = 1.`.  OCCT builds
+/// `new_weights` in the periodic branch but the `Resolution` call passes
+/// `Weights()` (the original array), so only `new_poles` is needed in rcad.
+pub fn bspline_curve_resolution(c: &BSplineCurve3, tol3d: f64) -> f64 {
+    let rational = curve_rational(&c.weights);
+    let weights = if rational { Some(&c.weights[..]) } else { None };
+    if c.is_periodic {
+        let (_, mults) = compress_knots(&c.knots);
+        let (_nb_knots, nb_poles) = prepare_unperiodize(c.degree, &mults);
+        let mut new_poles = Vec::with_capacity(nb_poles);
+        for ii in 1..=nb_poles {
+            new_poles.push(c.control_points[(ii - 1) % c.control_points.len()]);
+        }
+        bspl_curve_resolution(&new_poles, weights, &c.knots, c.degree, tol3d)
+    } else {
+        bspl_curve_resolution(&c.control_points, weights, &c.knots, c.degree, tol3d)
+    }
 }
 
 #[cfg(test)]

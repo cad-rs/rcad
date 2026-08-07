@@ -1,6 +1,9 @@
 use crate::geom::{Curve2d, Curve3, Surface3, SurfaceEval};
 use crate::core::precision::{CONFUSION, parametric_default};
-use crate::math::bspl::{bezier_surface_resolution, bspline_surface_resolution};
+use crate::math::bspl::{
+    bezier_curve_resolution, bezier_surface_resolution, bspline_curve_resolution,
+    bspline_surface_resolution,
+};
 use std::f64::consts::PI;
 pub use crate::topo::topo_shape::Shape;
 use glam::DVec3;
@@ -1535,14 +1538,46 @@ pub fn surface_adaptor_basis_and_bounds(surf: &Surface3) -> (&Surface3, [f64; 4]
     }
 }
 
+/// OCCT-aligned: GeomAdaptor_Curve::Resolution (GeomAdaptor_Curve.cxx
+/// L1116-1148). Line -> R3d; Circle -> 2*asin(R3d/(2R)) when R > R3d/2 else
+/// 2*PI; Ellipse -> R3d / MajorRadius; Bezier/BSpline -> the curve's
+/// Resolution (Geom_BezierCurve/Geom_BSplineCurve, see math/bspl.rs);
+/// TrimmedCurve unwraps to its basis (GeomAdaptor_Curve::load L252-255); all
+/// remaining curve types (OffsetCurve/Hyperbola/Parabola/OtherCurve) ->
+/// Precision::Parametric(R3d) = R3d * 0.01.
+pub fn curve_resolution(curve: &Curve3, r3d: f64) -> f64 {
+    match curve {
+        Curve3::Line(_) => r3d,
+        Curve3::Circle(c) => {
+            let r = c.radius;
+            if r > r3d / 2.0 {
+                2.0 * (r3d / (2.0 * r)).asin()
+            } else {
+                2.0 * PI
+            }
+        }
+        Curve3::Ellipse(e) => r3d / e.major_radius,
+        Curve3::Bezier(b) => bezier_curve_resolution(b, r3d),
+        Curve3::BSpline(b) => bspline_curve_resolution(b, r3d),
+        Curve3::Trimmed(t) => curve_resolution(&t.curve, r3d),
+        // GeomAbs_OffsetCurve / Hyperbola / Parabola / OtherCurve -> default.
+        Curve3::Offset(_)
+        | Curve3::Hyperbola(_)
+        | Curve3::Parabola(_)
+        | Curve3::CircularHelix(_)
+        | Curve3::SineWave(_) => parametric_default(r3d),
+    }
+}
+
 /// OCCT-aligned: GeomAdaptor_Surface::UResolution (GeomAdaptor_Surface.cxx
 /// L1819-1896). Analytic branches (Torus/Sphere/Cylinder/Cone/Plane) are 1:1;
 /// the adaptor wraps the stored surface and its parameter bounds come from
 /// Geom_Surface::Bounds() (a Geom_RectangularTrimmedSurface reports its trim).
 /// Bezier/BSpline call Geom_Surface::Resolution(Tol, Ures, Vres) = Tol *
 /// UMaxDerivInv (BSplSLib::Resolution, see math/bspl.rs) and Offset recurses
-/// the basis adaptor. Only the SurfaceOfExtrusion branch (BasisCurve->
-/// Resolution, a 1D curve chain) still approximates with R3d.
+/// the basis adaptor. The SurfaceOfExtrusion branch calls BasisCurve->
+/// Resolution (GeomAdaptor_Curve::Resolution -> curve_resolution, the 1D
+/// curve chain in math/bspl.rs).
 pub fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
     let (basis, [_, _, v1, v2]) = surface_adaptor_basis_and_bounds(surf);
     let mut res = match basis {
@@ -1582,9 +1617,9 @@ pub fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
             return if r > CONFUSION { tol3d / r } else { 0.0 };
         }
         Surface3::Plane(_) => return tol3d,
-        // SurfaceOfExtrusion L1824-1827: BasisCurve->Resolution(R3d). A straight
-        // profile line yields R3d; curved profiles are approximated by R3d.
-        Surface3::LinearExtrusion(_) => return tol3d,
+        // SurfaceOfExtrusion L1824-1827: BasisCurve->Resolution(R3d) — the 1D
+        // curve chain (curve_resolution, GeomAdaptor_Curve::Resolution).
+        Surface3::LinearExtrusion(e) => return curve_resolution(&e.profile, tol3d),
         // BezierSurface/BSplineSurface L1872-1881: surface->Resolution(R3d,
         // Ures, Vres) -> Ures = R3d * UMaxDerivInv (BSplSLib::Resolution).
         Surface3::Bezier(b) => {
@@ -1612,9 +1647,9 @@ pub fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
 /// L1900-1962). Analytic branches (Torus/Sphere/Cylinder/Cone/Plane, plus
 /// Extrusion returning R3d) are 1:1; Bezier/BSpline call Geom_Surface::
 /// Resolution(Tol, Ures, Vres) = Tol * VMaxDerivInv (BSplSLib::Resolution,
-/// see math/bspl.rs) and Offset recurses the basis adaptor. Only the
-/// SurfaceOfRevolution branch (BasisCurve->Resolution, a 1D curve chain)
-/// still approximates with R3d.
+/// see math/bspl.rs) and Offset recurses the basis adaptor. The
+/// SurfaceOfRevolution branch calls BasisCurve->Resolution (GeomAdaptor_Curve::
+/// Resolution -> curve_resolution, the 1D curve chain in math/bspl.rs).
 pub fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
     let (basis, _) = surface_adaptor_basis_and_bounds(surf);
     let mut res = match basis {
@@ -1634,9 +1669,9 @@ pub fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
             }
         }
         Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Plane(_) => return tol3d,
-        // SurfaceOfRevolution L1906-1909: BasisCurve->Resolution(R3d); straight
-        // basis yields R3d, curved approximated by R3d.
-        Surface3::Revolution(_) => return tol3d,
+        // SurfaceOfRevolution L1906-1909: BasisCurve->Resolution(R3d) — the 1D
+        // curve chain (curve_resolution, GeomAdaptor_Curve::Resolution).
+        Surface3::Revolution(r) => return curve_resolution(&r.profile, tol3d),
         // SurfaceOfExtrusion L1928-1933: return R3d.
         Surface3::LinearExtrusion(_) => return tol3d,
         // BezierSurface/BSplineSurface L1934-1943: surface->Resolution(R3d,
