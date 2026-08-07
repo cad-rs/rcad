@@ -8,6 +8,7 @@
 //! OCCT source: src/FoundationClasses/TKMath/BSplCLib/BSplCLib.cxx
 //!             src/FoundationClasses/TKMath/BSplSLib/BSplSLib.cxx
 
+use crate::geom::{BezierSurface, BSplineSurface};
 use glam::{DVec2, DVec3};
 
 /// Find the knot span index `k` such that `knots[k] <= t < knots[k+1]`.
@@ -446,6 +447,352 @@ pub fn segment_bspline_curve(
         weights: sub_wts.to_vec(),
         is_periodic: false,
     })
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// BSplSLib::Resolution — max derivative bound and parametric resolution
+// ══════════════════════════════════════════════════════════════════════════
+
+/// OCCT `Standard_Real::Epsilon` (Standard_Real.hxx L242-246): the absolute
+/// difference between `x` and the next representable double of the same sign
+/// (one ULP). Used as the weight-variation threshold in `Rational()`.
+#[inline]
+fn occt_epsilon(x: f64) -> f64 {
+    if x >= 0.0 {
+        x.next_up() - x
+    } else {
+        x - x.next_down()
+    }
+}
+
+/// OCCT `Rational()` weight-variation detection (Geom_BSplineSurface.cxx
+/// L110-138 / Geom_BezierSurface.cxx L443-469). Returns `(URational,
+/// VRational)` with OCCT's naming: `URational` is set when the weights vary
+/// along the columns (the V direction), `VRational` when they vary along the
+/// rows (the U direction). Note OCCT names are opposite to intuition — these
+/// flags are passed straight into `BSplSLib::Resolution` where `URational`
+/// guards the U-direction loop and `VRational` the V-direction loop.
+pub(crate) fn surface_rational_flags(weights: &[Vec<f64>]) -> (bool, bool) {
+    // OCCT L110-124: VRational = weights vary along rows (I, I+1, fixed J).
+    let mut v_rational = false;
+    'v_outer: for v in 0..weights[0].len() {
+        for u in 0..weights.len() - 1 {
+            let w = weights[u][v];
+            if (w - weights[u + 1][v]).abs() > occt_epsilon(w.abs()) {
+                v_rational = true;
+                break 'v_outer;
+            }
+        }
+    }
+    // OCCT L126-137: URational = weights vary along columns (J, J+1, fixed I).
+    let mut u_rational = false;
+    'u_outer: for u in 0..weights.len() {
+        for v in 0..weights[u].len() - 1 {
+            let w = weights[u][v];
+            if (w - weights[u][v + 1]).abs() > occt_epsilon(w.abs()) {
+                u_rational = true;
+                break 'u_outer;
+            }
+        }
+    }
+    (u_rational, v_rational)
+}
+
+/// OCCT `BSplSLib::Resolution` (BSplSLib.cxx L3519-3858): bounds the maximum
+/// surface derivative over the knot spans and returns the parametric
+/// resolution from a 3D tolerance:
+///
+///   U/VTolerance = Tolerance3D / (MaxDerivative * sqrt(2))
+///
+/// `poles` is the control point grid `[u][v]` and `weights` the weight grid
+/// (only read when `u_rational`/`v_rational` is set; the rational branch also
+/// divides by the minimum weight). `flat_knots_u`/`flat_knots_v` are the fully
+/// expanded knot sequences (clamped, non-periodic — rcad surfaces carry no
+/// periodic flag). `u_rational`/`v_rational` are the stored `myURational`/
+/// `myVRational` flags from `surface_rational_flags`.
+///
+/// Indexing follows OCCT 1-based `NCollection_Array1/Array2` access: a flat
+/// knot index `i` maps to `flat_knots[i - 1]`, a pole `Poles.Value(ii, jj)`
+/// to `poles[ii - 1][jj - 1]`. All modulos over `poles_length` are replicated
+/// verbatim (they are identities for a clamped grid, but OCCT applies them).
+/// Returns `(utol, vtol)`, both 0.0 when a max derivative is 0.
+pub fn bspl_surface_resolution(
+    poles: &[Vec<DVec3>],
+    weights: &[Vec<f64>],
+    flat_knots_u: &[f64],
+    flat_knots_v: &[f64],
+    u_degree: usize,
+    v_degree: usize,
+    u_rational: bool,
+    v_rational: bool,
+    tol3d: f64,
+) -> (f64, f64) {
+    let mut max_derivative = [0.0f64; 2];
+
+    let p_row_length = poles[0].len();
+    let p_col_length = poles.len();
+
+    // OCCT L3556-3571: min weight over the whole grid (only when rational).
+    let mut min_weights = 0.0;
+    if u_rational || v_rational {
+        min_weights = weights[0][0];
+        for u in 0..p_col_length {
+            for v in 0..p_row_length {
+                let w = weights[u][v];
+                if w < min_weights {
+                    min_weights = w;
+                }
+            }
+        }
+    }
+
+    let ud1 = u_degree + 1;
+    let vd1 = v_degree + 1;
+    let num_poles_u = flat_knots_u.len() - ud1;
+    let num_poles_v = flat_knots_v.len() - vd1;
+    let poles_length_u = p_col_length;
+    let poles_length_v = p_row_length;
+
+    // OCCT L3578-3710: U direction (URational guards the U loop).
+    if u_rational {
+        let ud2 = u_degree * 2;
+        let vd2 = v_degree * 2;
+        for ii in 2..=num_poles_u {
+            let ii_index = (ii - 1) % poles_length_u + 1;
+            let ii_minus = (ii - 2) % poles_length_u + 1;
+            let mut inverse = flat_knots_u[ii + u_degree - 1] - flat_knots_u[ii - 1];
+            inverse = 1.0 / inverse;
+            let lower0 = (ii as isize - ud1 as isize).max(1) as usize;
+            let upper0 = (ii + ud2 + 1).min(num_poles_u);
+            for jj in 1..=num_poles_v {
+                let jj_index = (jj - 1) % poles_length_v + 1;
+                let lower1 = (jj as isize - vd1 as isize).max(1) as usize;
+                let upper1 = (jj + vd2 + 1).min(num_poles_v);
+                let pij = poles[ii_index - 1][jj_index - 1];
+                let wij = weights[ii_index - 1][jj_index - 1];
+                let pmj = poles[ii_minus - 1][jj_index - 1];
+                let wmj = weights[ii_minus - 1][jj_index - 1];
+                let (xij, yij, zij) = (pij.x, pij.y, pij.z);
+                let (xmj, ymj, zmj) = (pmj.x, pmj.y, pmj.z);
+                for pp in lower0..=upper0 {
+                    let pp_index = (pp - 1) % poles_length_u + 1;
+                    for qq in lower1..=upper1 {
+                        let qq_index = (qq - 1) % poles_length_v + 1;
+                        let ppq = poles[pp_index - 1][qq_index - 1];
+                        let (xpq, ypq, zpq) = (ppq.x, ppq.y, ppq.z);
+                        let mut value = 0.0;
+                        let mut factor = (xpq - xij) * wij;
+                        factor -= (xpq - xmj) * wmj;
+                        if factor < 0.0 {
+                            factor = -factor;
+                        }
+                        value += factor;
+                        factor = (ypq - yij) * wij;
+                        factor -= (ypq - ymj) * wmj;
+                        if factor < 0.0 {
+                            factor = -factor;
+                        }
+                        value += factor;
+                        factor = (zpq - zij) * wij;
+                        factor -= (zpq - zmj) * wmj;
+                        if factor < 0.0 {
+                            factor = -factor;
+                        }
+                        value += factor;
+                        value *= inverse;
+                        if max_derivative[0] < value {
+                            max_derivative[0] = value;
+                        }
+                    }
+                }
+            }
+        }
+        max_derivative[0] /= min_weights;
+    } else {
+        // OCCT L3671-3708: non-rational U direction (pure adjacent difference).
+        for ii in 2..=num_poles_u {
+            let ii_index = (ii - 1) % poles_length_u + 1;
+            let ii_minus = (ii - 2) % poles_length_u + 1;
+            let mut inverse = flat_knots_u[ii + u_degree - 1] - flat_knots_u[ii - 1];
+            inverse = 1.0 / inverse;
+            for jj in 1..=num_poles_v {
+                let jj_index = (jj - 1) % poles_length_v + 1;
+                let pij = poles[ii_index - 1][jj_index - 1];
+                let pmj = poles[ii_minus - 1][jj_index - 1];
+                let mut value = 0.0;
+                let mut factor = pij.x - pmj.x;
+                if factor < 0.0 {
+                    factor = -factor;
+                }
+                value += factor;
+                factor = pij.y - pmj.y;
+                if factor < 0.0 {
+                    factor = -factor;
+                }
+                value += factor;
+                factor = pij.z - pmj.z;
+                if factor < 0.0 {
+                    factor = -factor;
+                }
+                value += factor;
+                value *= inverse;
+                if max_derivative[0] < value {
+                    max_derivative[0] = value;
+                }
+            }
+        }
+    }
+    max_derivative[0] *= u_degree as f64;
+
+    // OCCT L3711-3843: V direction (VRational guards the V loop; ii is now
+    // the V index, jj the U index).
+    if v_rational {
+        let ud2 = u_degree * 2;
+        let vd2 = v_degree * 2;
+        for ii in 2..=num_poles_v {
+            let ii_index = (ii - 1) % poles_length_v + 1;
+            let ii_minus = (ii - 2) % poles_length_v + 1;
+            let mut inverse = flat_knots_v[ii + v_degree - 1] - flat_knots_v[ii - 1];
+            inverse = 1.0 / inverse;
+            let lower0 = (ii as isize - vd1 as isize).max(1) as usize;
+            let upper0 = (ii + vd2 + 1).min(num_poles_v);
+            for jj in 1..=num_poles_u {
+                let jj_index = (jj - 1) % poles_length_u + 1;
+                let lower1 = (jj as isize - ud1 as isize).max(1) as usize;
+                let upper1 = (jj + ud2 + 1).min(num_poles_u);
+                let pji = poles[jj_index - 1][ii_index - 1];
+                let wji = weights[jj_index - 1][ii_index - 1];
+                let pjm = poles[jj_index - 1][ii_minus - 1];
+                let wjm = weights[jj_index - 1][ii_minus - 1];
+                let (xji, yji, zji) = (pji.x, pji.y, pji.z);
+                let (xjm, yjm, zjm) = (pjm.x, pjm.y, pjm.z);
+                // OCCT L3757-3796: pp iterates the U window slice but the
+                // pole is read as Value(qq_index, pp_index) with the modulos
+                // crossed (L3759/L3764) — replicated verbatim.
+                for pp in lower1..=upper1 {
+                    let pp_index = (pp - 1) % poles_length_v + 1;
+                    for qq in lower0..=upper0 {
+                        let qq_index = (qq - 1) % poles_length_u + 1;
+                        let pqp = poles[qq_index - 1][pp_index - 1];
+                        let (xqp, yqp, zqp) = (pqp.x, pqp.y, pqp.z);
+                        let mut value = 0.0;
+                        let mut factor = (xqp - xji) * wji;
+                        factor -= (xqp - xjm) * wjm;
+                        if factor < 0.0 {
+                            factor = -factor;
+                        }
+                        value += factor;
+                        factor = (yqp - yji) * wji;
+                        factor -= (yqp - yjm) * wjm;
+                        if factor < 0.0 {
+                            factor = -factor;
+                        }
+                        value += factor;
+                        factor = (zqp - zji) * wji;
+                        factor -= (zqp - zjm) * wjm;
+                        if factor < 0.0 {
+                            factor = -factor;
+                        }
+                        value += factor;
+                        value *= inverse;
+                        if max_derivative[1] < value {
+                            max_derivative[1] = value;
+                        }
+                    }
+                }
+            }
+        }
+        max_derivative[1] /= min_weights;
+    } else {
+        // OCCT L3804-3841: non-rational V direction.
+        for ii in 2..=num_poles_v {
+            let ii_index = (ii - 1) % poles_length_v + 1;
+            let ii_minus = (ii - 2) % poles_length_v + 1;
+            let mut inverse = flat_knots_v[ii + v_degree - 1] - flat_knots_v[ii - 1];
+            inverse = 1.0 / inverse;
+            for jj in 1..=num_poles_u {
+                let jj_index = (jj - 1) % poles_length_u + 1;
+                let pji = poles[jj_index - 1][ii_index - 1];
+                let pjm = poles[jj_index - 1][ii_minus - 1];
+                let mut value = 0.0;
+                let mut factor = pji.x - pjm.x;
+                if factor < 0.0 {
+                    factor = -factor;
+                }
+                value += factor;
+                factor = pji.y - pjm.y;
+                if factor < 0.0 {
+                    factor = -factor;
+                }
+                value += factor;
+                factor = pji.z - pjm.z;
+                if factor < 0.0 {
+                    factor = -factor;
+                }
+                value += factor;
+                value *= inverse;
+                if max_derivative[1] < value {
+                    max_derivative[1] = value;
+                }
+            }
+        }
+    }
+    max_derivative[1] *= v_degree as f64;
+
+    // OCCT L3844-3857.
+    max_derivative[0] *= std::f64::consts::SQRT_2;
+    max_derivative[1] *= std::f64::consts::SQRT_2;
+    if max_derivative[0] != 0.0 && max_derivative[1] != 0.0 {
+        (tol3d / max_derivative[0], tol3d / max_derivative[1])
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+/// OCCT `Geom_BSplineSurface::Resolution` (Geom_BSplineSurface_1.cxx
+/// L2197-2222): `BSplSLib::Resolution` over the stored (already expanded)
+/// knot vectors with the construction-time rational flags.
+pub fn bspline_surface_resolution(s: &BSplineSurface, tol3d: f64) -> (f64, f64) {
+    let u_deg = s.degree_u;
+    let v_deg = s.degree_v;
+    let (u_rational, v_rational) = surface_rational_flags(&s.weights);
+    bspl_surface_resolution(
+        &s.control_points,
+        &s.weights,
+        &s.knots_u,
+        &s.knots_v,
+        u_deg,
+        v_deg,
+        u_rational,
+        v_rational,
+        tol3d,
+    )
+}
+
+/// OCCT `Geom_BezierSurface::Resolution` (Geom_BezierSurface.cxx L1991-2037):
+/// `BSplSLib::Resolution` over the flat knot sequences `[0;deg+1] ++ [1;deg+1]`
+/// in each direction (UKnots()/UMultiplicities() both pass the unit interval).
+pub fn bezier_surface_resolution(s: &BezierSurface, tol3d: f64) -> (f64, f64) {
+    let u_deg = s.control_points.len() - 1;
+    let v_deg = s.control_points[0].len() - 1;
+    let flat_u: Vec<f64> = std::iter::repeat_n(0.0, u_deg + 1)
+        .chain(std::iter::repeat_n(1.0, u_deg + 1))
+        .collect();
+    let flat_v: Vec<f64> = std::iter::repeat_n(0.0, v_deg + 1)
+        .chain(std::iter::repeat_n(1.0, v_deg + 1))
+        .collect();
+    let (u_rational, v_rational) = surface_rational_flags(&s.weights);
+    bspl_surface_resolution(
+        &s.control_points,
+        &s.weights,
+        &flat_u,
+        &flat_v,
+        u_deg,
+        v_deg,
+        u_rational,
+        v_rational,
+        tol3d,
+    )
 }
 
 #[cfg(test)]
