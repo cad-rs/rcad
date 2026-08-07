@@ -5,7 +5,9 @@
 //
 // Translation notes:
 // - TopoDS_Edge/Vertex/Face/Wire -> rcad Shape; a wire is Vec<Shape> (edge order).
-// - TopTools_ShapeMapHasher identity -> Shape::is_same (ptr_id + location).
+// - TopTools_ShapeMapHasher identity (TShape + Location) -> Shape::is_partner;
+//   TopoDS_Shape::IsSame is also TShape + Location (is_partner); IsPartner is
+//   TShape only (Shape::is_same); IsEqual adds Orientation (Shape::is_equal).
 // - BRepAdaptor_Surface -> SurfaceAdaptor (analytic UResolution/VResolution).
 // - Geom2dInt_GInter -> crate::topalgo::brep_class::g_inter::GInter (used by
 //   RefineAngle2D, BOPAlgo_WireSplitter_1.cxx L1058-1150).
@@ -97,35 +99,37 @@ impl ConnexityBlock {
 /// marks a block irregular when any edge is repeated or any vertex has more
 /// than two incident edges.
 pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
-    // aMFence: dedup start elements; aMNRegular: repeated (multi-connexity) edges.
-    let mut a_mfence: HashSet<u64> = HashSet::new();
-    let mut a_mn_regular: HashSet<u64> = HashSet::new();
+    // aMFence: dedup start elements; aMNRegular: repeated (multi-connexity)
+    // edges. OCCT aMFence/aMNRegular (AlgoTools.cxx L194-195) use
+    // TopTools_ShapeMapHasher — key identity TShape + Location.
+    let mut a_mfence: HashSet<(u64, u32)> = HashSet::new();
+    let mut a_mn_regular: HashSet<(u64, u32)> = HashSet::new();
     let mut a_c_start: Vec<Shape> = Vec::new();
     for a_s in edges {
-        if a_mfence.insert(a_s.ptr_id()) {
+        if a_mfence.insert((a_s.ptr_id(), a_s.location)) {
             a_c_start.push(a_s.clone());
         } else {
-            a_mn_regular.insert(a_s.ptr_id());
+            a_mn_regular.insert((a_s.ptr_id(), a_s.location));
         }
     }
     // Map vertices to incident edges (MapShapesAndAncestors).
-    let mut a_c_map: HashMap<u64, Vec<u64>> = HashMap::new(); // vertex ptr -> edge ptrs
-    let mut a_edge_ptr_to_idx: HashMap<u64, usize> = HashMap::new(); // edge ptr -> index in a_c_start
+    let mut a_c_map: HashMap<(u64, u32), Vec<(u64, u32)>> = HashMap::new(); // vertex -> edges
+    let mut a_edge_ptr_to_idx: HashMap<(u64, u32), usize> = HashMap::new(); // edge -> index in a_c_start
     for (ei, e) in a_c_start.iter().enumerate() {
-        a_edge_ptr_to_idx.insert(e.ptr_id(), ei);
+        a_edge_ptr_to_idx.insert((e.ptr_id(), e.location), ei);
         for v in edge_vertices(e) {
-            let l = a_c_map.entry(v.ptr_id()).or_default();
-            if !l.contains(&e.ptr_id()) {
-                l.push(e.ptr_id());
+            let l = a_c_map.entry((v.ptr_id(), v.location)).or_default();
+            if !l.contains(&(e.ptr_id(), e.location)) {
+                l.push((e.ptr_id(), e.location));
             }
         }
     }
     // BFS blocks over edges via shared vertices.
     let n = a_c_start.len();
-    let mut a_mfence2: HashSet<u64> = HashSet::new();
+    let mut a_mfence2: HashSet<(u64, u32)> = HashSet::new();
     let mut a_blocks: Vec<Vec<usize>> = Vec::new();
     for s in 0..n {
-        if !a_mfence2.insert(a_c_start[s].ptr_id()) {
+        if !a_mfence2.insert((a_c_start[s].ptr_id(), a_c_start[s].location)) {
             continue;
         }
         let mut a_l_block: Vec<usize> = vec![s];
@@ -133,10 +137,10 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
         while i < a_l_block.len() {
             let ei = a_l_block[i];
             for v in edge_vertices(&a_c_start[ei]) {
-                if let Some(l) = a_c_map.get(&v.ptr_id()) {
+                if let Some(l) = a_c_map.get(&(v.ptr_id(), v.location)) {
                     for &ep in l {
                         if let Some(&eidx) = a_edge_ptr_to_idx.get(&ep) {
-                            if a_mfence2.insert(a_c_start[eidx].ptr_id()) {
+                            if a_mfence2.insert((a_c_start[eidx].ptr_id(), a_c_start[eidx].location)) {
                                 a_l_block.push(eidx);
                             }
                         }
@@ -154,7 +158,7 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
         let mut b_regular = true;
         for &bi in &block {
             let a_s = a_c_start[bi].clone();
-            if a_mn_regular.contains(&a_s.ptr_id()) {
+            if a_mn_regular.contains(&(a_s.ptr_id(), a_s.location)) {
                 b_regular = false;
                 let mut f = a_s.clone();
                 f.orientation = Orientation::Forward;
@@ -167,7 +171,9 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
                 if b_regular {
                     // Check no multi-connected vertices on this edge.
                     for v in edge_vertices(&a_s) {
-                        let cnt = a_c_map.get(&v.ptr_id()).map_or(0, |l| l.len());
+                        let cnt = a_c_map
+                            .get(&(v.ptr_id(), v.location))
+                            .map_or(0, |l| l.len());
                         if cnt != 2 {
                             b_regular = false;
                             break;
@@ -229,12 +235,14 @@ fn split_block(
     ds: &DS,
 ) {
     let my_edges = cb.shapes.clone();
-    // mySmartMap: vertex ptr -> (vertex shape, list of EdgeInfo).
-    let mut my_smart_map: IndexMap<u64, (Shape, Vec<EdgeInfo>)> = IndexMap::new();
-    // aVertMap: vertex ptr -> closed flag.
-    let mut a_vert_map: HashMap<u64, bool> = HashMap::new();
-    // aMS: edge identity fence with the odd/closed semantics of OCCT.
-    let mut a_ms: HashSet<u64> = HashSet::new();
+    // mySmartMap: vertex (TShape + Location) -> (vertex shape, list of EdgeInfo).
+    // OCCT mySmartMap (WireSplitter_1.cxx L126-128) uses TopTools_ShapeMapHasher.
+    let mut my_smart_map: IndexMap<(u64, u32), (Shape, Vec<EdgeInfo>)> = IndexMap::new();
+    // aVertMap: vertex -> closed flag (OCCT MyDataMapOfShapeBoolean, L130/L47).
+    let mut a_vert_map: HashMap<(u64, u32), bool> = HashMap::new();
+    // aMS: edge identity fence with the odd/closed semantics of OCCT (L128,
+    // TopTools_ShapeMapHasher).
+    let mut a_ms: HashSet<(u64, u32)> = HashSet::new();
     let mut a_v1 = Shape::null();
 
     // 1. Fill mySmartMap.
@@ -244,13 +252,13 @@ fn split_block(
         }
         let mut b_is_closed = is_degenerated(a_e) || is_closed_on_face(a_e, face);
         // OCCT L149: if (!aMS.Add(aE) && !bIsClosed) aMS.Remove(aE);
-        if !a_ms.insert(a_e.ptr_id()) && !b_is_closed {
-            a_ms.remove(&a_e.ptr_id());
+        if !a_ms.insert((a_e.ptr_id(), a_e.location)) && !b_is_closed {
+            a_ms.remove(&(a_e.ptr_id(), a_e.location));
         }
         let verts = edge_vertices(a_e);
         for (i, a_v) in verts.iter().enumerate() {
-            let vptr = a_v.ptr_id();
-            let entry = my_smart_map.entry(vptr).or_insert_with(|| (a_v.clone(), Vec::new()));
+            let vkey = (a_v.ptr_id(), a_v.location);
+            let entry = my_smart_map.entry(vkey).or_insert_with(|| (a_v.clone(), Vec::new()));
             let mut a_ei = EdgeInfo::new();
             a_ei.set_edge(a_e);
             let a_or = a_v.orientation;
@@ -260,14 +268,16 @@ fn split_block(
             if i == 0 {
                 a_v1 = a_v.clone();
             } else {
-                b_is_closed = b_is_closed || a_v1.is_same(a_v);
+                // OCCT L173: bIsClosed = bIsClosed || aV1.IsSame(aV) — same
+                // TShape AND Location.
+                b_is_closed = b_is_closed || a_v1.is_partner(a_v);
             }
-            if a_vert_map.contains_key(&vptr) {
+            if a_vert_map.contains_key(&vkey) {
                 if b_is_closed {
-                    a_vert_map.insert(vptr, b_is_closed);
+                    a_vert_map.insert(vkey, b_is_closed);
                 }
             } else {
-                a_vert_map.insert(vptr, b_is_closed);
+                a_vert_map.insert(vkey, b_is_closed);
             }
         }
     }
@@ -292,9 +302,13 @@ fn split_block(
     }
     // Second part of bNothingToDo: check edges on TShape coincidence.
     if b_nothing_to_do {
-        let mut a_map_ee: HashMap<u64, Vec<u64>> = HashMap::new();
+        // OCCT aMapEE (L234-236) — TopTools_ShapeMapHasher, key TShape + Location.
+        let mut a_map_ee: HashMap<(u64, u32), Vec<u64>> = HashMap::new();
         for a_e in &my_edges {
-            a_map_ee.entry(a_e.ptr_id()).or_default().push(a_e.ptr_id());
+            a_map_ee
+                .entry((a_e.ptr_id(), a_e.location))
+                .or_default()
+                .push(a_e.ptr_id());
         }
         let mut b_flag = true;
         for (_, a_l_ex) in &a_map_ee {
@@ -326,7 +340,7 @@ fn split_block(
         let (a_v_sh, mut leinfo) = my_smart_map.get_index(i).unwrap().1.clone();
         for a_ei in leinfo.iter_mut() {
             let a_e = a_ei.edge().clone();
-            a_ei.set_is_inside(!a_ms.contains(&a_e.ptr_id()));
+            a_ei.set_is_inside(!a_ms.contains(&(a_e.ptr_id(), a_e.location)));
             let mut a_vv = a_v_sh.clone();
             let b_is_in = a_ei.is_in();
             let a_or = if b_is_in { Orientation::Reversed } else { Orientation::Forward };
@@ -390,7 +404,7 @@ fn split_block(
 fn path(
     a_gas: &SurfaceAdaptor,
     face_index: usize,
-    a_vert_map: &HashMap<u64, bool>,
+    a_vert_map: &HashMap<(u64, u32), bool>,
     a_v_first: &Shape,
     a_e_first: &Shape,
     a_ei_first: EdgeInfo,
@@ -398,7 +412,7 @@ fn path(
     a_vert_va: &mut Vec<Shape>,
     a_coord_va: &mut Vec<DVec2>,
     cb: &mut ConnexityBlock,
-    my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>,
+    my_smart_map: &mut IndexMap<(u64, u32), (Shape, Vec<EdgeInfo>)>,
     ds: &DS,
 ) {
     let mut a_va = a_v_first.clone();
@@ -412,7 +426,8 @@ fn path(
         // Do not escape through the edge from which you enter.
         let a_nb = a_ls.len();
         if a_nb == 1 {
-            if a_ls[a_nb - 1].is_same(&a_e_outa) {
+            // OCCT L411-416: anEPrev.IsSame(aEOuta) — same TShape AND Location.
+            if a_ls[a_nb - 1].is_partner(&a_e_outa) {
                 return;
             }
         }
@@ -433,12 +448,17 @@ fn path(
         let a_vb = get_next_vertex(&p_va, &a_e_outa);
         let a_pb = coord_2d(&a_vb, &a_e_outa, face_index, ds);
 
-        let a_lei_opt = my_smart_map.get(&a_vb.ptr_id());
+        // OCCT L427: mySmartMap.FindFromKey(aVb) — key TShape + Location.
+        let a_lei_opt = my_smart_map.get(&(a_vb.ptr_id(), a_vb.location));
         let a_lei: Vec<EdgeInfo> = a_lei_opt.map(|(_, l)| l.clone()).unwrap_or_default();
 
         let a_tol2d = 2.0 * tolerance_2d(&a_vb, a_gas);
         let a_tol2d2 = a_tol2d * a_tol2d;
-        let b_is_closed = a_vert_map.get(&a_vb.ptr_id()).copied().unwrap_or(false);
+        // OCCT L432: aVertMap.Find(aVb).
+        let b_is_closed = a_vert_map
+            .get(&(a_vb.ptr_id(), a_vb.location))
+            .copied()
+            .unwrap_or(false);
 
         // Scan back for the loop-closing vertex.
         let mut a_buf: Vec<Shape> = Vec::new();
@@ -458,7 +478,8 @@ fn path(
                         continue;
                     }
                 }
-                let an_is_same_v = a_v_prev.is_same(&a_vb);
+                // OCCT L461: anIsSameV = aVPrev.IsSame(aVb) — TShape + Location.
+                let an_is_same_v = a_v_prev.is_partner(&a_vb);
                 let mut an_is_same_v2d = an_is_same_v;
                 if an_is_same_v {
                     if b_is_closed {
@@ -478,7 +499,8 @@ fn path(
                 if an_is_same_v && an_is_same_v2d {
                     let mut i_priz = 1;
                     if a_buf.len() == 2 {
-                        if a_buf[0].is_same(&a_buf[1]) {
+                        // OCCT L477: aBuf.First().IsSame(aBuf.Last()) — TShape + Location.
+                        if a_buf[0].is_partner(&a_buf[1]) {
                             i_priz = 0;
                         }
                     }
@@ -531,7 +553,8 @@ fn path(
                     break;
                 }
                 let mut an_angle;
-                if a_e.is_same(&a_e_outa) {
+                // OCCT L564: aE.IsSame(aEOuta) — TShape + Location.
+                if a_e.is_partner(&a_e_outa) {
                     an_angle = a_two_pi;
                 } else {
                     if b_is_closed {
@@ -572,15 +595,15 @@ fn path(
 /// Mark the EdgeInfo for (vertex, edge, in-flag) as passed in mySmartMap.
 /// OCCT Path (L406) sets the flag on a reference into the map.
 fn mark_edge_passed(
-    my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>,
+    my_smart_map: &mut IndexMap<(u64, u32), (Shape, Vec<EdgeInfo>)>,
     a_v: &Shape,
     a_e: &Shape,
     in_flag: bool,
 ) {
-    if let Some((_, leinfo)) = my_smart_map.get_mut(&a_v.ptr_id()) {
+    if let Some((_, leinfo)) = my_smart_map.get_mut(&(a_v.ptr_id(), a_v.location)) {
         if let Some(ei) = leinfo
             .iter_mut()
-            .find(|ei| ei.edge().is_same(a_e) && ei.is_in() == in_flag)
+            .find(|ei| ei.edge().is_partner(a_e) && ei.is_in() == in_flag)
         {
             ei.set_passed(true);
         }
@@ -595,7 +618,7 @@ fn mark_edge_passed(
 fn refine_angles(
     _face: &Shape,
     face_index: usize,
-    my_smart_map: &mut IndexMap<u64, (Shape, Vec<EdgeInfo>)>,
+    my_smart_map: &mut IndexMap<(u64, u32), (Shape, Vec<EdgeInfo>)>,
     ds: &DS,
 ) {
     let a_nb = my_smart_map.len();
@@ -625,8 +648,10 @@ fn refine_angles(
             continue;
         }
         let a_delta = clock_wise_angle(a_a2, a_a1);
-        // Refine the internal OUT edges (edge ptr -> new angle, aDMSR).
-        let mut a_dmsr: HashMap<u64, f64> = HashMap::new();
+        // Refine the internal OUT edges (edge -> new angle, aDMSR). OCCT aDMSR
+        // (WireSplitter_1.cxx L933) is DataMap<TopoDS_Shape, double,
+        // TopTools_ShapeMapHasher> — key TShape + Location.
+        let mut a_dmsr: HashMap<(u64, u32), f64> = HashMap::new();
         for a_ei in leinfo.iter() {
             let a_e = a_ei.edge();
             let b_is_boundary = !a_ei.is_inside();
@@ -654,7 +679,7 @@ fn refine_angles(
                 }
                 None => continue,
             };
-            a_dmsr.insert(a_e.ptr_id(), a_a_new);
+            a_dmsr.insert((a_e.ptr_id(), a_e.location), a_a_new);
         }
         if a_dmsr.is_empty() {
             continue;
@@ -663,7 +688,7 @@ fn refine_angles(
         for a_ei in leinfo.iter_mut() {
             let a_e = a_ei.edge();
             let b_is_in = a_ei.is_in();
-            let a_a = match a_dmsr.get(&a_e.ptr_id()) {
+            let a_a = match a_dmsr.get(&(a_e.ptr_id(), a_e.location)) {
                 Some(v) => *v,
                 None => continue,
             };

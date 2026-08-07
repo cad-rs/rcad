@@ -8,6 +8,7 @@ use crate::bop::ds::DS;
 use crate::bop::int_tools::context::IntToolsContext;
 use crate::topalgo::brep_top_adaptor::class2d::{Class2d, Class2dResult};
 use glam::DVec2;
+use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve2d, Curve2dEval};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{TShape, TWireData, tshape_flags};
@@ -52,6 +53,8 @@ impl<'a> BuilderFace<'a> {
 
     /// OCCT BOPAlgo_BuilderFace::Perform (BOPAlgo_BuilderFace.cxx L117-148).
     pub fn perform(&mut self) {
+        // OCCT L121: GetReport()->Clear().
+        self.my_report.clear();
         if self.my_face.is_none() {
             return;
         }
@@ -80,18 +83,20 @@ impl<'a> BuilderFace<'a> {
         loop {
             let mut b_found = false;
             // OCCT L173-182: aMVE — vertex → [edges] (skipping avoided edges).
-            let mut a_mve: HashMap<u64, (Shape, Vec<Shape>)> = HashMap::new();
+            // OCCT aMVE is NCollection_IndexedDataMap with TopTools_ShapeMapHasher
+            // (L156-157) — insertion order, key identity TShape + Location.
+            let mut a_mve: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
             for a_e in &self.my_edges {
                 if self.my_shapes_to_avoid.contains(&a_e.ptr_id()) { continue; }
                 for a_v in Self::edge_vertices(a_e) {
                     let entry = a_mve
-                        .entry(a_v.ptr_id())
+                        .entry((a_v.ptr_id(), a_v.location))
                         .or_insert_with(|| (a_v.clone(), Vec::new()));
                     entry.1.push(a_e.clone());
                 }
             }
             // OCCT L186-228: for each vertex decide.
-            for (_vptr, (a_v, a_le)) in &a_mve {
+            for ((_vptr, _vloc), (a_v, a_le)) in &a_mve {
                 let a_nb_e = a_le.len();
                 if a_nb_e == 0 { continue; }
                 let a_e1 = &a_le[0];
@@ -108,13 +113,14 @@ impl<'a> BuilderFace<'a> {
                 } else if a_nb_e == 2 {
                     // OCCT L211-227: two edges at the vertex.
                     let a_e2 = &a_le[1];
-                    // OCCT L214: aE2.IsSame(aE1) — same TShape, any location.
-                    if a_e2.is_same(a_e1) {
+                    // OCCT L214: aE2.IsSame(aE1) — same TShape AND Location
+                    // (TopTools_ShapeMapHasher semantics, orientation ignored).
+                    if a_e2.is_partner(a_e1) {
                         // OCCT L216-221: TopExp::Vertices(aE1, aV1x, aV2x) —
                         // if both endpoints are the same vertex (degenerated
                         // ring), skip.
                         let vv = Self::edge_vertices(a_e1);
-                        if vv.len() >= 2 && vv[0].is_same(&vv[1]) {
+                        if vv.len() >= 2 && vv[0].is_partner(&vv[1]) {
                             // Degenerated ring — both ends are the same vertex.
                             continue;
                         }
@@ -206,28 +212,34 @@ impl<'a> BuilderFace<'a> {
         // edges, connecting them at shared vertices.
         self.my_loops_internal.clear();
         // OCCT L330-335: aVEMap — vertex -> [avoid edges] via
-        // MapShapesAndAncestors(aEE, VERTEX, EDGE).
+        // MapShapesAndAncestors(aEE, VERTEX, EDGE). aVEMap (L244-245) uses
+        // TopTools_ShapeMapHasher — key identity TShape + Location.
         let avoid_edges: Vec<Shape> = self.my_edges.iter()
             .filter(|e| self.my_shapes_to_avoid.contains(&e.ptr_id()))
             .cloned()
             .collect();
-        let mut a_ve_map: HashMap<u64, Vec<Shape>> = HashMap::new();
+        let mut a_ve_map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
         for a_ee in &avoid_edges {
             for a_v in Self::edge_vertices(a_ee) {
-                let l = a_ve_map.entry(a_v.ptr_id()).or_default();
+                let l = a_ve_map
+                    .entry((a_v.ptr_id(), a_v.location))
+                    .or_default();
                 if !l.iter().any(|e| e.ptr_id() == a_ee.ptr_id()) {
                     l.push(a_ee.clone());
                 }
             }
         }
         // OCCT L337-382: per-start wire growth with the aMAdded fence; the
-        // loop stops (bFlag) once every avoided edge is collected.
+        // loop stops (bFlag) once every avoided edge is collected. OCCT
+        // aMAdded (L246) is NCollection_Map<TopoDS_Shape> with the DEFAULT
+        // hasher — TopoDS_Shape::HashCode includes TShape + Location +
+        // Orientation, so the fence is orientation-sensitive.
         let a_nb_ea = avoid_edges.len();
-        let mut a_m_added: HashSet<u64> = HashSet::new();
+        let mut a_m_added: HashSet<(u64, u32, rcad_kernel::topods::Orientation)> = HashSet::new();
         let mut b_flag = true;
         for a_ee in &avoid_edges {
             if !b_flag { break; }
-            if !a_m_added.insert(a_ee.ptr_id()) { continue; }
+            if !a_m_added.insert((a_ee.ptr_id(), a_ee.location, a_ee.orientation)) { continue; }
             // OCCT L350-353: make new wire and add the start edge.
             let mut a_w: Vec<Shape> = vec![a_ee.clone()];
             // OCCT L355-379: grow through the vertices of the added edges.
@@ -235,9 +247,9 @@ impl<'a> BuilderFace<'a> {
             while i < a_w.len() && b_flag {
                 let a_e = &a_w[i];
                 for a_v in Self::edge_vertices(a_e) {
-                    if let Some(a_le) = a_ve_map.get(&a_v.ptr_id()) {
+                    if let Some(a_le) = a_ve_map.get(&(a_v.ptr_id(), a_v.location)) {
                         for a_ex in a_le {
-                            if a_m_added.insert(a_ex.ptr_id()) {
+                            if a_m_added.insert((a_ex.ptr_id(), a_ex.location, a_ex.orientation)) {
                                 a_w.push(a_ex.clone());
                                 if a_m_added.len() == a_nb_ea {
                                     b_flag = false;
@@ -303,7 +315,7 @@ impl<'a> BuilderFace<'a> {
         // OCCT L417-423: growth faces + hole faces + hole edge map
         let mut a_new_faces: Vec<Shape> = Vec::new();
         let mut a_hole_faces: Vec<Shape> = Vec::new();
-        let mut a_mhe: HashSet<u64> = HashSet::new();
+        let mut a_mhe: HashSet<(u64, u32)> = HashSet::new();
 
         // OCCT L427-458: classify each loop
         for loop_edges in &self.my_loops {
@@ -335,7 +347,7 @@ impl<'a> BuilderFace<'a> {
                 // wire contains any hole-face edge (BOPAlgo_BuilderFace.cxx
                 // L898-913: theMHE.Contains(aIt.Value())). Only when it has no
                 // hole edge is the FClass2d classification run.
-                let has_hole_edge = loop_edges.iter().any(|e| a_mhe.contains(&e.ptr_id()));
+                let has_hole_edge = loop_edges.iter().any(|e| a_mhe.contains(&(e.ptr_id(), e.location)));
                 if has_hole_edge {
                     true
                 } else {
@@ -352,7 +364,7 @@ impl<'a> BuilderFace<'a> {
                 a_new_faces.push(a_face);
             } else {
                 a_hole_faces.push(a_face);
-                for e in loop_edges { a_mhe.insert(e.ptr_id()); }
+                for e in loop_edges { a_mhe.insert((e.ptr_id(), e.location)); }
             }
         }
 
@@ -489,13 +501,15 @@ impl<'a> BuilderFace<'a> {
             return;
         }
         let fi = self.my_face_index.unwrap_or(0);
-        // OCCT L638-664: map of internal edges + their UV boxes.
+        // OCCT L638-664: map of internal edges + their UV boxes. OCCT
+        // anEdgesMap (L637) is IndexedMap with TopTools_ShapeMapHasher —
+        // key identity TShape + Location.
         let mut edges_map: Vec<Shape> = Vec::new();
-        let mut edges_idx: HashMap<u64, usize> = HashMap::new();
+        let mut edges_idx: HashMap<(u64, u32), usize> = HashMap::new();
         let mut edge_boxes: Vec<[f64; 4]> = Vec::new();
         for wire in &self.my_loops_internal {
             for e in wire {
-                if edges_idx.contains_key(&e.ptr_id()) {
+                if edges_idx.contains_key(&(e.ptr_id(), e.location)) {
                     continue;
                 }
                 let box_e = match edge_pcurve_on_face(e, fi, self.ds) {
@@ -515,7 +529,7 @@ impl<'a> BuilderFace<'a> {
                     }
                     None => continue,
                 };
-                edges_idx.insert(e.ptr_id(), edges_map.len());
+                edges_idx.insert((e.ptr_id(), e.location), edges_map.len());
                 edges_map.push(e.clone());
                 edge_boxes.push(box_e);
             }
@@ -600,32 +614,43 @@ impl<'a> BuilderFace<'a> {
     }
 }
 
-/// OCCT MakeInternalWires (BOPAlgo_BuilderFace.cxx L756-805) — groups the
+/// OCCT MakeInternalWires (BOPAlgo_BuilderFace.cxx L782-838) — groups the
 /// connected internal edges into wires (edges set with INTERNAL orientation).
+/// aMVE (L788-789) and aAddedMap (L786-787) use TopTools_ShapeMapHasher —
+/// key identity TShape + Location, orientation ignored.
 fn make_internal_wires(edges: &[Shape]) -> Vec<Vec<Shape>> {
     use rcad_kernel::topods::Orientation;
     // aMVE: vertex -> edges.
-    let mut a_mve: HashMap<u64, Vec<Shape>> = HashMap::new();
+    let mut a_mve: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
     for e in edges {
         for v in BuilderFace::edge_vertices(e) {
-            a_mve.entry(v.ptr_id()).or_default().push(e.clone());
+            a_mve
+                .entry((v.ptr_id(), v.location))
+                .or_default()
+                .push(e.clone());
         }
     }
-    let mut a_added: HashSet<u64> = HashSet::new();
+    let mut a_added: HashSet<(u64, u32)> = HashSet::new();
     let mut wires: Vec<Vec<Shape>> = Vec::new();
     for e in edges {
-        if !a_added.insert(e.ptr_id()) {
+        if !a_added.insert((e.ptr_id(), e.location)) {
             continue;
         }
-        let mut a_w: Vec<Shape> = vec![e.clone()];
+        // OCCT L810: aEE.Orientation(TopAbs_INTERNAL) — the start edge is
+        // added with INTERNAL orientation.
+        let mut a_w: Vec<Shape> = vec![{
+            let mut e0 = e.clone();
+            e0.orientation = Orientation::Internal;
+            e0
+        }];
         // Grow the wire through shared vertices.
         let mut i = 0;
         while i < a_w.len() {
             let cur = &a_w[i];
             for v in BuilderFace::edge_vertices(cur) {
-                if let Some(le) = a_mve.get(&v.ptr_id()) {
+                if let Some(le) = a_mve.get(&(v.ptr_id(), v.location)) {
                     for ex in le {
-                        if a_added.insert(ex.ptr_id()) {
+                        if a_added.insert((ex.ptr_id(), ex.location)) {
                             let mut a_el = ex.clone();
                             a_el.orientation = Orientation::Internal;
                             a_w.push(a_el);
