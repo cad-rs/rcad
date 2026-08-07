@@ -3101,7 +3101,7 @@ impl<'a> Builder<'a> {
         // OCCT L113-150: get all faces (source + their images).
         let a_nb_s = self.ds.nb_source_shapes();
         let mut a_lfaces: Vec<Shape> = Vec::new();
-        let mut a_m_fence: HashSet<u64> = HashSet::new();
+        let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != topods::ShapeType::Face {
@@ -3111,7 +3111,7 @@ impl<'a> Builder<'a> {
             // OCCT L131-148: add images, or the face itself with its box.
             if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)).cloned() {
                 for a_s_im in &imgs {
-                    if a_m_fence.insert(a_s_im.ptr_id()) {
+                    if a_m_fence.insert((a_s_im.ptr_id(), a_s_im.location)) {
                         a_lfaces.push(a_s_im.clone());
                     }
                 }
@@ -3568,15 +3568,17 @@ impl<'a> Builder<'a> {
     }
     /// OCCT BOPAlgo_Builder::FillInternalShapes (Builder_3.cxx L622-830).
     fn fill_internal_shapes(&mut self) {
-        // OCCT L631-644: local lists/maps
+        // OCCT L631-644: local lists/maps. aMFence (L639) and aMSI (IndexedMap)
+        // use TopTools_ShapeMapHasher (TShape + Location).
         let mut a_lsc: Vec<Shape> = Vec::new();
-        let mut a_m_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut a_m_fence: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
         let mut a_l_args: Vec<Shape> = Vec::new();
         // aMSI indexed map → rcad: Vec<Shape> with dedup
         let mut a_msi: Vec<Shape> = Vec::new();
-        let mut a_msi_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        // Map for ancestor lookup (vertex→[edges], vertex→[faces], edge→[faces])
-        let mut a_msx: std::collections::HashMap<u64, Vec<u64>> = std::collections::HashMap::new();
+        let mut a_msi_fence: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
+        // Map for ancestor lookup (vertex→[edges], vertex→[faces], edge→[faces]).
+        // OCCT aMSx (Builder_3.cxx L635-636) — TopTools_ShapeMapHasher.
+        let mut a_msx: std::collections::HashMap<(u64, u32), Vec<u64>> = std::collections::HashMap::new();
 
         // OCCT L653-659: TreatCompound on arguments → flatten into aLSC
         let a_arguments = &self.ds.arguments;
@@ -3589,7 +3591,7 @@ impl<'a> Builder<'a> {
             let a_type = a_s.shape_type();
             if a_type == topods::ShapeType::Wire {
                 for ss in self.shape_sub_shapes(a_s) {
-                    if a_m_fence.insert(ss.ptr_id()) {
+                    if a_m_fence.insert((ss.ptr_id(), ss.location)) {
                         a_l_args.push(ss);
                     }
                 }
@@ -3605,15 +3607,15 @@ impl<'a> Builder<'a> {
                 || a_type == topods::ShapeType::Edge
                 || a_type == topods::ShapeType::Wire
             {
-                if a_m_fence.insert(a_s.ptr_id()) {
+                if a_m_fence.insert((a_s.ptr_id(), a_s.location)) {
                     if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                         for img in imgs {
-                            if a_msi_fence.insert(img.ptr_id()) {
+                            if a_msi_fence.insert((img.ptr_id(), img.location)) {
                                 a_msi.push(img.clone());
                             }
                         }
                     } else {
-                        if a_msi_fence.insert(a_s.ptr_id()) {
+                        if a_msi_fence.insert((a_s.ptr_id(), a_s.location)) {
                             a_msi.push(a_s.clone());
                         }
                     }
@@ -3625,8 +3627,8 @@ impl<'a> Builder<'a> {
         a_m_fence.clear();
         let a_nb_s = self.ds.nb_source_shapes();
         let mut a_ls_d: Vec<Shape> = Vec::new();
-        // aMSOr: original solids without images (OCCT L785).
-        let mut a_ms_or: HashSet<u64> = HashSet::new();
+        // aMSOr: original solids without images (OCCT L785, TopTools_ShapeMapHasher).
+        let mut a_ms_or: HashSet<(u64, u32)> = HashSet::new();
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != topods::ShapeType::Solid { continue; }
@@ -3640,12 +3642,12 @@ impl<'a> Builder<'a> {
             for a_si_internal in &a_mx {
                 if let Some(imgs) = self.my_images.get(&(a_si_internal.ptr_id(), a_si_internal.location)) {
                     for img in imgs {
-                        if a_msi_fence.insert(img.ptr_id()) {
+                        if a_msi_fence.insert((img.ptr_id(), img.location)) {
                             a_msi.push(img.clone());
                         }
                     }
                 } else {
-                    if a_msi_fence.insert(a_si_internal.ptr_id()) {
+                    if a_msi_fence.insert((a_si_internal.ptr_id(), a_si_internal.location)) {
                         a_msi.push(a_si_internal.clone());
                     }
                 }
@@ -3654,17 +3656,17 @@ impl<'a> Builder<'a> {
             // OCCT L760-787: build ancestor map from split solids
             if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                 for a_sp in imgs {
-                    if a_m_fence.insert(a_sp.ptr_id()) {
+                    if a_m_fence.insert((a_sp.ptr_id(), a_sp.location)) {
                         Self::map_shapes_and_ancestors(a_sp, &mut a_msx);
                         a_ls_d.push(a_sp.clone());
                     }
                 }
             } else {
-                if a_m_fence.insert(a_s.ptr_id()) {
+                if a_m_fence.insert((a_s.ptr_id(), a_s.location)) {
                     Self::map_shapes_and_ancestors(&a_s, &mut a_msx);
                     a_ls_d.push(a_s.clone());
                     // OCCT L785: aMSOr.Add(aS).
-                    a_ms_or.insert(a_s.ptr_id());
+                    a_ms_or.insert((a_s.ptr_id(), a_s.location));
                 }
             }
         }
@@ -3672,7 +3674,7 @@ impl<'a> Builder<'a> {
         // OCCT L792-809: filter aMSI — keep only shapes not tied to split solid faces
         let mut a_ls_i: Vec<Shape> = Vec::new();
         for a_si in &a_msi {
-            if let Some(ancestors) = a_msx.get(&a_si.ptr_id()) {
+            if let Some(ancestors) = a_msx.get(&(a_si.ptr_id(), a_si.location)) {
                 if ancestors.is_empty() {
                     a_ls_i.push(a_si.clone());
                 }
@@ -3701,7 +3703,7 @@ impl<'a> Builder<'a> {
                     i_si += 1;
                     continue;
                 }
-                if a_ms_or.contains(&a_sd.ptr_id()) {
+                if a_ms_or.contains(&(a_sd.ptr_id(), a_sd.location)) {
                     // OCCT L846-858: make a new solid aSdx (copy of aSd + aSI).
                     let a_sdx = Self::solid_copy_add(&a_sd, &a_si);
                     // OCCT L860-861: myImages[aSd].Append(aSdx).
@@ -3715,7 +3717,7 @@ impl<'a> Builder<'a> {
                         .or_default()
                         .push(a_sd.clone());
                     // OCCT L867-868: aMSOr.Remove(aSd); aSd = aSdx.
-                    a_ms_or.remove(&a_sd.ptr_id());
+                    a_ms_or.remove(&(a_sd.ptr_id(), a_sd.location));
                     a_sd = a_sdx;
                 } else {
                     // OCCT L871-873: aBB.Add(aSd, aSI).
@@ -3835,7 +3837,12 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPTools_AlgoTools::TreatCompound — flatten compound shapes.
-    fn treat_compound(s: &Shape, result: &mut Vec<Shape>, fence: &mut std::collections::HashSet<u64>) {
+    /// The fence uses TopTools_ShapeMapHasher (TShape + Location).
+    fn treat_compound(
+        s: &Shape,
+        result: &mut Vec<Shape>,
+        fence: &mut std::collections::HashSet<(u64, u32)>,
+    ) {
         if s.shape_type() == topods::ShapeType::Compound {
             if let TShape::Compound(children) = &*s.data {
                 for child in children {
@@ -3843,7 +3850,7 @@ impl<'a> Builder<'a> {
                 }
             }
         } else {
-            if fence.insert(s.ptr_id()) {
+            if fence.insert((s.ptr_id(), s.location)) {
                 result.push(s.clone());
             }
         }
@@ -3883,10 +3890,14 @@ impl<'a> Builder<'a> {
     /// FACEs, over the FULL shape hierarchy of S (a source solid or its split
     /// images). The one-level scan previously used missed every ancestor, so
     /// the FillInternalShapes filter never dropped boundary V/E of the solids.
-    fn map_shapes_and_ancestors(s: &Shape, map: &mut std::collections::HashMap<u64, Vec<u64>>) {
+    fn map_shapes_and_ancestors(
+        s: &Shape,
+        map: &mut std::collections::HashMap<(u64, u32), Vec<u64>>,
+    ) {
         // OCCT L90-107: for each ancestor of type TA, append it to the list of
         // every descendant of type TS. TA=FACE, TS∈{VERTEX,EDGE}; TA=EDGE,
         // TS=VERTEX (the three MapShapesAndAncestors calls at L770-772).
+        // OCCT aMSx (L635-636) uses TopTools_ShapeMapHasher — TShape + Location.
         let mut faces: Vec<Shape> = Vec::new();
         Self::collect_sub_shapes_of_type(s, topods::ShapeType::Face, &mut faces);
         for f in &faces {
@@ -3894,7 +3905,9 @@ impl<'a> Builder<'a> {
             Self::collect_sub_shapes_of_type(f, topods::ShapeType::Vertex, &mut subs);
             Self::collect_sub_shapes_of_type(f, topods::ShapeType::Edge, &mut subs);
             for ts in &subs {
-                map.entry(ts.ptr_id()).or_default().push(f.ptr_id());
+                map.entry((ts.ptr_id(), ts.location))
+                    .or_default()
+                    .push(f.ptr_id());
             }
         }
         let mut edges: Vec<Shape> = Vec::new();
@@ -3903,7 +3916,9 @@ impl<'a> Builder<'a> {
             let mut vs: Vec<Shape> = Vec::new();
             Self::collect_sub_shapes_of_type(e, topods::ShapeType::Vertex, &mut vs);
             for v in &vs {
-                map.entry(v.ptr_id()).or_default().push(e.ptr_id());
+                map.entry((v.ptr_id(), v.location))
+                    .or_default()
+                    .push(e.ptr_id());
             }
         }
     }
@@ -4137,8 +4152,8 @@ impl<'a> Builder<'a> {
             return;
         }
         // OCCT L923-1107: CUT/COMMON container logic.
-        // OCCT L936-937: aMSRC = MapShapes(myRC).
-        let mut a_msrc: HashSet<u64> = HashSet::new();
+        // OCCT L936-937: aMSRC = MapShapes(myRC) — TopTools_ShapeMapHasher.
+        let mut a_msrc: HashSet<(u64, u32)> = HashSet::new();
         for s in &self.my_rc {
             self.add_all_sub_shapes(s, &mut a_msrc);
         }
@@ -4159,11 +4174,11 @@ impl<'a> Builder<'a> {
             for a_s in self.shape_sub_shapes(a_sc) {
                 if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                     for a_s_im in imgs {
-                        if a_msrc.contains(&a_s_im.ptr_id()) {
+                        if a_msrc.contains(&(a_s_im.ptr_id(), a_s_im.location)) {
                             a_rc.push(a_s_im.clone());
                         }
                     }
-                } else if a_msrc.contains(&a_s.ptr_id()) {
+                } else if a_msrc.contains(&(a_s.ptr_id(), a_s.location)) {
                     a_rc.push(a_s.clone());
                 }
             }
@@ -4195,14 +4210,14 @@ impl<'a> Builder<'a> {
         self.remove_duplicates(&mut a_lc_res);
         // OCCT L1055-1063: aResult compound of containers.
         let mut a_result: Vec<Shape> = a_lc_res;
-        // OCCT L1066-1067: aMSResult = MapShapes(aResult).
-        let mut a_ms_result: HashSet<u64> = HashSet::new();
+        // OCCT L1066-1067: aMSResult = MapShapes(aResult) — TopTools_ShapeMapHasher.
+        let mut a_ms_result: HashSet<(u64, u32)> = HashSet::new();
         for s in &a_result {
             self.add_all_sub_shapes(s, &mut a_ms_result);
         }
         // OCCT L1069-1080: get input non-container shapes.
         let mut a_ls_non_cont: Vec<Shape> = Vec::new();
-        let mut a_m_inp_fence: HashSet<u64> = HashSet::new();
+        let mut a_m_inp_fence: HashSet<(u64, u32)> = HashSet::new();
         for i in 0..2 {
             let a_ls: &[Shape] = if i == 0 { self.object_shapes() } else { &self.my_tools };
             for a_s in a_ls {
@@ -4213,11 +4228,15 @@ impl<'a> Builder<'a> {
         for a_s in &a_ls_non_cont {
             if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                 for a_s_im in imgs {
-                    if a_msrc.contains(&a_s_im.ptr_id()) && a_ms_result.insert(a_s_im.ptr_id()) {
+                    if a_msrc.contains(&(a_s_im.ptr_id(), a_s_im.location))
+                        && a_ms_result.insert((a_s_im.ptr_id(), a_s_im.location))
+                    {
                         a_result.push(a_s_im.clone());
                     }
                 }
-            } else if a_msrc.contains(&a_s.ptr_id()) && a_ms_result.insert(a_s.ptr_id()) {
+            } else if a_msrc.contains(&(a_s.ptr_id(), a_s.location))
+                && a_ms_result.insert((a_s.ptr_id(), a_s.location))
+            {
                 a_result.push(a_s.clone());
             }
         }
@@ -4230,13 +4249,13 @@ impl<'a> Builder<'a> {
         let mut a_c: Vec<Shape> = Vec::new();
         // OCCT L608-623: A. Fuse — collect shapes of TypeToExplore(dim0) from myShape.
         if self.my_operation == BooleanOpType::Union {
-            let mut a_m_fence: HashSet<u64> = HashSet::new();
+            let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
             let a_type = type_to_explore(self.my_dims[0]);
             let my_shape = self.my_shape.clone().unwrap_or_default();
             // OCCT: TopExp_Explorer aExp(myShape, aType).
             for ts in &my_shape.tshapes {
                 let sh = Shape::new(ts.clone(), 0, topods::Orientation::Forward);
-                if sh.shape_type() == a_type && a_m_fence.insert(sh.ptr_id()) {
+                if sh.shape_type() == a_type && a_m_fence.insert((sh.ptr_id(), sh.location)) {
                     a_c.push(sh);
                 }
             }
@@ -4257,7 +4276,7 @@ impl<'a> Builder<'a> {
             };
             for a_s in a_ls {
                 let mut a_list: Vec<Shape> = Vec::new();
-                let mut a_fence: HashSet<u64> = HashSet::new();
+                let mut a_fence: HashSet<(u64, u32)> = HashSet::new();
                 Self::treat_compound(a_s, &mut a_list, &mut a_fence);
                 for a_ss in a_list {
                     let i_dim = shape_dimension(&a_ss);
@@ -4381,12 +4400,12 @@ impl<'a> Builder<'a> {
         }
         // OCCT L800-823: filter result for COMMON.
         if b_common {
-            let mut a_m_fence: HashSet<u64> = HashSet::new();
+            let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
             let mut a_cx: Vec<Shape> = Vec::new();
             for i_dim in (i_dim_min..=3).rev() {
                 let a_type = type_to_explore(i_dim);
                 for sh in self.shapes_of_type_in_shapes(&a_c, a_type) {
-                    if a_m_fence.insert(sh.ptr_id()) {
+                    if a_m_fence.insert((sh.ptr_id(), sh.location)) {
                         a_cx.push(sh.clone());
                         // OCCT L818: TopExp::MapShapes(aS, aMFence).
                         self.add_all_sub_shapes(&sh, &mut a_m_fence);
@@ -4582,10 +4601,11 @@ impl<'a> Builder<'a> {
     /// OCCT TopExp::MapShapes(aS, aType, aMap) — collect all sub-shapes of a type.
     fn map_shapes_of_type(&self, s: &Shape, t: topods::ShapeType) -> Vec<Shape> {
         let mut out: Vec<Shape> = Vec::new();
-        let mut seen: HashSet<u64> = HashSet::new();
+        // OCCT TopExp::MapShapes uses TopTools_ShapeMapHasher — TShape + Location.
+        let mut seen: HashSet<(u64, u32)> = HashSet::new();
         let mut stack: Vec<Shape> = vec![s.clone()];
         while let Some(cur) = stack.pop() {
-            if !seen.insert(cur.ptr_id()) {
+            if !seen.insert((cur.ptr_id(), cur.location)) {
                 continue;
             }
             if cur.shape_type() == t {
@@ -4601,10 +4621,10 @@ impl<'a> Builder<'a> {
     /// Collect shapes of a type across a list of shapes (dedup).
     fn shapes_of_type_in_shapes(&self, shapes: &[Shape], t: topods::ShapeType) -> Vec<Shape> {
         let mut out: Vec<Shape> = Vec::new();
-        let mut seen: HashSet<u64> = HashSet::new();
+        let mut seen: HashSet<(u64, u32)> = HashSet::new();
         for s in shapes {
             for sh in self.map_shapes_of_type(s, t) {
-                if seen.insert(sh.ptr_id()) {
+                if seen.insert((sh.ptr_id(), sh.location)) {
                     out.push(sh);
                 }
             }
@@ -4613,8 +4633,8 @@ impl<'a> Builder<'a> {
     }
 
     /// Insert a shape and all its sub-shapes into a fence (TopExp::MapShapes).
-    fn add_all_sub_shapes(&self, s: &Shape, fence: &mut HashSet<u64>) {
-        fence.insert(s.ptr_id());
+    fn add_all_sub_shapes(&self, s: &Shape, fence: &mut HashSet<(u64, u32)>) {
+        fence.insert((s.ptr_id(), s.location));
         for sub in self.shape_sub_shapes(s) {
             self.add_all_sub_shapes(&sub, fence);
         }
@@ -4683,14 +4703,115 @@ impl<'a> Builder<'a> {
     /// OCCT BOPTools_AlgoTools::MakeConnexityBlocks(aRC, aT1, aT2, aLCB).
     /// rcad: minimal — each shape its own block. Solid arguments produce no
     /// containers, so this is not exercised by the stage tests.
+    /// OCCT BOPTools_AlgoTools::MakeConnexityBlocks (BOPTools_AlgoTools.cxx
+    /// L187-256) — groups `shapes` into connexity blocks by shared elements of
+    /// type aT1 (the connection type); shapes repeated in the input mark the
+    /// block non-regular (expanded to both orientations).
     fn make_connexity_blocks_shapes(
         shapes: &[Shape],
-        _a_t1: topods::ShapeType,
+        a_t1: topods::ShapeType,
         _a_t2: topods::ShapeType,
         out: &mut Vec<Vec<Shape>>,
     ) {
-        for s in shapes {
-            out.push(vec![s.clone()]);
+        // OCCT L194-210: aMFence/aMNRegular — dedup the start elements.
+        // TopTools_ShapeMapHasher (TShape + Location).
+        let mut a_mfence: HashSet<(u64, u32)> = HashSet::new();
+        let mut a_mn_regular: HashSet<(u64, u32)> = HashSet::new();
+        let mut a_c_start: Vec<Shape> = Vec::new();
+        for a_s in shapes {
+            if a_mfence.insert((a_s.ptr_id(), a_s.location)) {
+                a_c_start.push(a_s.clone());
+            } else {
+                a_mn_regular.insert((a_s.ptr_id(), a_s.location));
+            }
+        }
+        // OCCT L212-216: the connection map — MapShapesAndAncestors(aCStart,
+        // aT1, aT2, aCMap): aT1 element -> [aT2 shapes] (TopTools_ShapeMapHasher).
+        let mut a_c_map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
+        for s in &a_c_start {
+            let mut subs: Vec<Shape> = Vec::new();
+            Self::collect_sub_shapes_of_type_static(s, a_t1, &mut subs);
+            for sub in subs {
+                let skey = (s.ptr_id(), s.location);
+                let l = a_c_map.entry((sub.ptr_id(), sub.location)).or_default();
+                if !l.iter().any(|e| (e.ptr_id(), e.location) == skey) {
+                    l.push(s.clone());
+                }
+            }
+        }
+        // OCCT L118-150: BFS blocks over the aT2 elements via shared aT1.
+        let mut a_mfence2: HashSet<(u64, u32)> = HashSet::new();
+        let mut a_lcb: Vec<Vec<Shape>> = Vec::new();
+        for s in &a_c_start {
+            if !a_mfence2.insert((s.ptr_id(), s.location)) {
+                continue;
+            }
+            let mut a_l_block: Vec<Shape> = vec![s.clone()];
+            let mut i = 0;
+            while i < a_l_block.len() {
+                let mut subs: Vec<Shape> = Vec::new();
+                Self::collect_sub_shapes_of_type_static(&a_l_block[i], a_t1, &mut subs);
+                for sub in subs {
+                    if let Some(l) = a_c_map.get(&(sub.ptr_id(), sub.location)) {
+                        for s2 in l {
+                            if a_mfence2.insert((s2.ptr_id(), s2.location)) {
+                                a_l_block.push(s2.clone());
+                            }
+                        }
+                    }
+                }
+                i += 1;
+            }
+            a_lcb.push(a_l_block);
+        }
+        // OCCT L218-254: save the blocks, checking their regularity.
+        for block in &a_lcb {
+            let mut a_lcs: Vec<Shape> = Vec::new();
+            let mut b_regular = true;
+            for a_s in block {
+                if a_mn_regular.contains(&(a_s.ptr_id(), a_s.location)) {
+                    b_regular = false;
+                    let mut f = a_s.clone();
+                    f.orientation = topods::Orientation::Forward;
+                    a_lcs.push(f);
+                    let mut r = a_s.clone();
+                    r.orientation = topods::Orientation::Reversed;
+                    a_lcs.push(r);
+                } else {
+                    a_lcs.push(a_s.clone());
+                    if b_regular {
+                        // OCCT L243-247: every connection element of the shape
+                        // must be used by exactly 2 shapes.
+                        let mut subs: Vec<Shape> = Vec::new();
+                        Self::collect_sub_shapes_of_type_static(a_s, a_t1, &mut subs);
+                        for sub in subs {
+                            let cnt = a_c_map
+                                .get(&(sub.ptr_id(), sub.location))
+                                .map_or(0, |l| l.len());
+                            if cnt != 2 {
+                                b_regular = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            out.push(a_lcs);
+        }
+    }
+
+    /// Recursively collect all sub-shapes of the given type (static version of
+    /// collect_sub_shapes_of_type for use in associated functions).
+    fn collect_sub_shapes_of_type_static(
+        s: &Shape,
+        t: topods::ShapeType,
+        out: &mut Vec<Shape>,
+    ) {
+        for ss in Self::shape_sub_shapes_static(s) {
+            if ss.shape_type() == t {
+                out.push(ss.clone());
+            }
+            Self::collect_sub_shapes_of_type_static(&ss, t, out);
         }
     }
 
