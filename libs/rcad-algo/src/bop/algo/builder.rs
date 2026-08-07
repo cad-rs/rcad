@@ -2565,9 +2565,10 @@ impl<'a> Builder<'a> {
         let a_surf = the_face.as_face().and_then(|fd| fd.surface.clone())?;
         let a_tol = the_face.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
         // OCCT L1073-1074: aVerticesCounter — multi-connexity detection.
-        let mut a_vertices_counter: HashMap<u64, Vec<Shape>> = HashMap::new();
-        // OCCT L1078: aMEdges — edges-unification fence.
-        let mut a_m_edges: HashSet<u64> = HashSet::new();
+        // OCCT map keys use TopTools_ShapeMapHasher (TShape + Location).
+        let mut a_vertices_counter: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
+        // OCCT L1078: aMEdges — edges-unification fence (TopTools_ShapeMapHasher).
+        let mut a_m_edges: HashSet<(u64, u32)> = HashSet::new();
 
         // OCCT L1081-1181: rebuild each wire of the face.
         let mut new_wires: Vec<Shape> = Vec::new();
@@ -2601,7 +2602,7 @@ impl<'a> Builder<'a> {
                     if !b_is_degenerated && self.has_multi_connected(a_e, &mut a_vertices_counter) {
                         return None;
                     }
-                    if !b_is_closed && !a_m_edges.insert(a_e.ptr_id()) {
+                    if !b_is_closed && !a_m_edges.insert((a_e.ptr_id(), a_e.location)) {
                         return None;
                     }
                     new_edges.push(a_e.clone());
@@ -2613,7 +2614,7 @@ impl<'a> Builder<'a> {
                     if !b_is_degenerated && self.has_multi_connected(&a_sp, &mut a_vertices_counter) {
                         return None;
                     }
-                    if !b_is_closed && !a_m_edges.insert(a_sp.ptr_id()) {
+                    if !b_is_closed && !a_m_edges.insert((a_sp.ptr_id(), a_sp.location)) {
                         return None;
                     }
                     // OCCT L1154: aSp.Orientation(anOriE).
@@ -2674,7 +2675,12 @@ impl<'a> Builder<'a> {
 
     /// OCCT HasMultiConnected (BOPAlgo_Builder_2.cxx L1014-1045).
     /// Returns true when any vertex of the edge is shared by more than two edges.
-    fn has_multi_connected(&self, the_edge: &Shape, the_map: &mut HashMap<u64, Vec<Shape>>) -> bool {
+    /// The map uses TopTools_ShapeMapHasher (TShape + Location).
+    fn has_multi_connected(
+        &self,
+        the_edge: &Shape,
+        the_map: &mut HashMap<(u64, u32), Vec<Shape>>,
+    ) -> bool {
         let verts: Vec<Shape> = match &*the_edge.data {
             TShape::Edge(ed) => vec![
                 Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
@@ -2683,8 +2689,10 @@ impl<'a> Builder<'a> {
             _ => Vec::new(),
         };
         for v in verts {
-            let list = the_map.entry(v.ptr_id()).or_default();
-            if !list.iter().any(|e| e.ptr_id() == the_edge.ptr_id()) {
+            let vkey = (v.ptr_id(), v.location);
+            let list = the_map.entry(vkey).or_default();
+            let ekey = (the_edge.ptr_id(), the_edge.location);
+            if !list.iter().any(|e| (e.ptr_id(), e.location) == ekey) {
                 list.push(the_edge.clone());
             }
             if list.len() > 2 {
@@ -2701,7 +2709,9 @@ impl<'a> Builder<'a> {
         if a_ffs.is_empty() { return; }
 
         // OCCT L597-649: build face-to-parent solid map (with image propagation).
-        let mut a_face_to_parent: HashMap<u64, u64> = HashMap::new(); // face_ptr_id → solid_ptr_id
+        // OCCT aFaceToParent (L593-594) is DataMap<Shape, Shape,
+        // TopTools_ShapeMapHasher> — key identity TShape + Location.
+        let mut a_face_to_parent: HashMap<(u64, u32), u64> = HashMap::new(); // face → solid
         let a_nb_src = self.ds.nb_source_shapes();
         for i_src in 0..a_nb_src {
             let a_si = self.ds.shape_info(i_src);
@@ -2715,18 +2725,21 @@ impl<'a> Builder<'a> {
                 for &fi in &sh_info.sub_shapes {
                     if fi >= self.ds.nb_shapes() { continue; }
                     let a_f = self.brep_sr(fi);
-                    a_face_to_parent.entry(a_f.ptr_id()).or_insert(a_solid.ptr_id());
+                    a_face_to_parent
+                        .entry((a_f.ptr_id(), a_f.location))
+                        .or_insert(a_solid.ptr_id());
                 }
             }
         }
         // OCCT L619-648: propagate the parent solid to the image faces.
-        let mut a_propagation: HashMap<u64, u64> = HashMap::new();
+        let mut a_propagation: HashMap<(u64, u32), u64> = HashMap::new();
         for (a_src, a_l_im) in &self.my_images {
-            let p_parent = a_face_to_parent.get(&a_src.0).copied();
+            let p_parent = a_face_to_parent.get(&a_src).copied();
             if let Some(parent) = p_parent {
                 for a_piece in a_l_im {
-                    if !a_face_to_parent.contains_key(&a_piece.ptr_id()) {
-                        a_propagation.insert(a_piece.ptr_id(), parent);
+                    let pk = (a_piece.ptr_id(), a_piece.location);
+                    if !a_face_to_parent.contains_key(&pk) {
+                        a_propagation.insert(pk, parent);
                     }
                 }
             }
@@ -2750,13 +2763,16 @@ impl<'a> Builder<'a> {
         a_fi_vec.sort();
 
         // OCCT L690-694: map edge-sets → list of faces, planar face fence.
-        // OCCT BOPTools_Set: the set of the face's boundary edge TShapes
-        // (TopTools_ShapeMapHasher — TShape identity, orientation ignored,
-        // duplicates removed by the map). rcad: sorted deduped Vec of edge
-        // ptr_ids.
-        let mut an_e_set_faces: std::collections::HashMap<Vec<u64>, Vec<Shape>> =
+        // OCCT anESetFaces is IndexedDataMap<BOPTools_Set, List<Shape>>; the
+        // BOPTools_Set is built by AddEdgeSet → BOPTools_Set::Add(theS, EDGE)
+        // (BOPTools_Set.cxx L124-166): degenerated edges are skipped (L132-137),
+        // INTERNAL edges are expanded to FORWARD+REVERSED (L139-148), and
+        // IsEqual (L81-99) compares the expanded count first, then the
+        // deduplicated TShape+Location set. rcad: (count, sorted unique
+        // (ptr_id, location)).
+        let mut an_e_set_faces: std::collections::HashMap<(usize, Vec<(u64, u32)>), Vec<Shape>> =
             std::collections::HashMap::new();
-        let mut a_mf_planar: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut a_mf_planar: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
 
         // OCCT L697-741: for each face, compute edge set.
         for &n_f in &a_fi_vec {
@@ -2775,24 +2791,31 @@ impl<'a> Builder<'a> {
             };
 
             for f_piece in &face_list {
-                // OCCT L720-740: iterate the FACE IMAGE's edges (TopExp_Explorer
-                // aF over the split piece), not the original face's boundary —
-                // two coplanar images share an identical boundary edge set.
-                // OCCT BOPTools_Set::Add dedupes by TShape identity, so the
-                // repeated wire instances of one TShape (e.g. a seam edge used
-                // twice in a wire) count once.
-                let mut edge_set: Vec<u64> = Vec::new();
+                // OCCT AddEdgeSet (L562-571) — BOPTools_Set::Add(theS, EDGE).
+                let mut count: usize = 0;
+                let mut edge_set: Vec<(u64, u32)> = Vec::new();
                 for e_shape in self.face_edges(f_piece) {
-                    let e_ptr = e_shape.ptr_id();
-                    if !edge_set.contains(&e_ptr) {
-                        edge_set.push(e_ptr);
+                    // OCCT BOPTools_Set.cxx L132-137: degenerated edges skipped.
+                    let degen = e_shape.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
+                    if degen {
+                        continue;
+                    }
+                    count += 1;
+                    let ekey = (e_shape.ptr_id(), e_shape.location);
+                    if !edge_set.contains(&ekey) {
+                        edge_set.push(ekey);
+                    }
+                    // OCCT BOPTools_Set.cxx L139-148: INTERNAL edges expanded
+                    // to FORWARD + REVERSED entries (count +1).
+                    if e_shape.orientation == topods::Orientation::Internal {
+                        count += 1;
                     }
                 }
                 edge_set.sort_unstable();
 
-                an_e_set_faces.entry(edge_set).or_default().push(f_piece.clone());
+                an_e_set_faces.entry((count, edge_set)).or_default().push(f_piece.clone());
                 if b_check_planar {
-                    a_mf_planar.insert(f_piece.ptr_id());
+                    a_mf_planar.insert((f_piece.ptr_id(), f_piece.location));
                 }
             }
         }
@@ -2806,17 +2829,17 @@ impl<'a> Builder<'a> {
             if faces.len() < 2 { continue; }
             for i1 in 0..faces.len() {
                 let f1 = &faces[i1];
-                let parent1 = a_face_to_parent.get(&f1.ptr_id()).copied();
-                let b_check_planar = a_mf_planar.contains(&f1.ptr_id());
+                let parent1 = a_face_to_parent.get(&(f1.ptr_id(), f1.location)).copied();
+                let b_check_planar = a_mf_planar.contains(&(f1.ptr_id(), f1.location));
                 for i2 in (i1 + 1)..faces.len() {
                     let f2 = &faces[i2];
-                    let parent2 = a_face_to_parent.get(&f2.ptr_id()).copied();
+                    let parent2 = a_face_to_parent.get(&(f2.ptr_id(), f2.location)).copied();
                     // OCCT L776-779: two faces of one solid cannot be SD.
                     if let (Some(p1), Some(p2)) = (parent1, parent2) {
                         if p1 == p2 { continue; }
                     }
                     // OCCT L780-785: planar bounded faces → SD without additional check.
-                    if b_check_planar && a_mf_planar.contains(&f2.ptr_id()) {
+                    if b_check_planar && a_mf_planar.contains(&(f2.ptr_id(), f2.location)) {
                         fill_map_faces(f1, f2, &mut a_dmsls);
                         continue;
                     }
