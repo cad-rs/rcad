@@ -5,9 +5,14 @@
 
 use crate::bop::algo::{Alert, Report};
 use crate::bop::algo::shell_splitter::{make_connexity_blocks, make_shells};
+use crate::bop::closest_point_on_surface;
 use crate::bop::ds::DS;
+use crate::bop::int_tools::bean_face_intersector::{
+    BeanFaceIntersector, BRepAdaptorCurve, BRepAdaptorSurface,
+};
 use crate::bop::int_tools::context::IntToolsContext;
-use rcad_kernel::geom::CurveEval;
+use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{self, ShapeType, TShape, TSolidData, TShellData, TFaceData, TWireData, tshape_flags};
 use std::collections::{HashSet, HashMap, VecDeque};
@@ -62,6 +67,23 @@ impl<'a> BuilderSolid<'a> {
         if self.has_errors() { return; }
         // OCCT L124: PerformInternalShapes
         self.perform_internal_shapes();
+    }
+
+
+    /// TEMP DEBUG (remove): count faces under a solid shape.
+    fn count_faces(s: &Shape) -> usize {
+        match &*s.data {
+            TShape::Solid(sd) => {
+                let mut n = 0;
+                for sh in &sd.my_shapes {
+                    n += Self::count_faces(sh);
+                }
+                n
+            }
+            TShape::Shell(sd) => sd.my_shapes.len(),
+            TShape::Face(_) => 1,
+            _ => 0,
+        }
     }
 
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
@@ -153,9 +175,7 @@ impl<'a> BuilderSolid<'a> {
         let blocks = make_connexity_blocks(&a_start);
         let shells = make_shells(&blocks, self.ds);
         for shell in shells {
-            if !shell.is_empty() {
-                self.my_loops.push(shell);
-            }
+            self.my_loops.push(shell);
         }
         // OCCT L287-331: post-treatment — collect all faces of the loops and
         // of myShapesToAvoid; add the remaining faces to myShapesToAvoid.
@@ -509,28 +529,52 @@ impl<'a> BuilderSolid<'a> {
                     Some(v) => v,
                     None => continue,
                 };
-                let g_o = match Self::face_plane_origin(g) {
-                    Some(v) => v,
-                    None => continue,
+                // Planar faces: analytic intersection; non-planar faces:
+                // OCCT L160-181 uses IntCurvesFace_Intersector (Line x Face).
+                let w = match Self::face_plane_origin(g) {
+                    Some(g_o) => {
+                        let denom = ray_dir.dot(g_n);
+                        if denom.abs() < 1e-12 {
+                            continue;
+                        }
+                        let w = (g_o - p).dot(g_n) / denom;
+                        // OCCT IntCurvesFace_Intersector.cxx L291: accept only
+                        // intersections whose UV lies inside the face domain
+                        // (Classify(Puv) == IN/ON).
+                        if let Some((u_min, u_max, v_min, v_max)) = Self::face_uv_domain(g) {
+                            let pint = p + ray_dir * w;
+                            let (u, vv) = match &*g.data {
+                                TShape::Face(fd) => match fd.surface.as_ref() {
+                                    Some(Surface3::Plane(pl)) => {
+                                        let rel = pint - pl.origin;
+                                        (rel.dot(pl.u_dir), rel.dot(pl.v_dir))
+                                    }
+                                    _ => continue,
+                                },
+                                _ => continue,
+                            };
+                            if u < u_min || u > u_max || vv < v_min || vv > v_max {
+                                continue;
+                            }
+                        }
+                        w
+                    }
+                    None => match Self::ray_surface_param(p, ray_dir, g) {
+                        Some(w) => w,
+                        None => continue,
+                    },
                 };
-                let denom = ray_dir.dot(g_n);
-                if denom.abs() < 1e-12 {
-                    continue;
-                }
-                let w = (g_o - p).dot(g_n) / denom;
-                // OCCT L168-171: parmin = WParameter(imin) is assigned for the
-                // minimal parameter of every face unconditionally, so a later
-                // face with an equal parameter (w <= parmin) overwrites the
-                // transition. The probe face itself always sits at w=0 (the ray
-                // starts on its surface); a second copy of the same face with the
-                // reversed orientation also lands at w=0 and its Out transition
-                // then wins, which is how a degenerate double-face shell
-                // (a face in both orientations) is detected as a hole.
-                if w <= parmin {
+                // OCCT L172-179: parmin is the minimal WParameter; the
+                // comparison is STRICT (<), so among equal parameters the
+                // first one (the probe face itself at w=0 with its In
+                // transition) wins and a second copy of the same face with the
+                // reversed orientation (also w=0, Out transition) does NOT
+                // overwrite it.
+                if w < parmin {
                     parmin = w;
                     // OCCT int_cs transition: cos_dir = nSurf · dirCurve; <0 -> In,
                     // >0 -> Out (IntCurveSurface_InterUtils.pxx L856-895).
-                    best = if denom > 0.0 { 2 } else { 1 };
+                    best = if ray_dir.dot(g_n) > 0.0 { 2 } else { 1 };
                 }
             }
             if best == 2 {
@@ -544,16 +588,16 @@ impl<'a> BuilderSolid<'a> {
         false
     }
 
-    /// Outward normal of a face: the surface normal flipped by the face
-    /// orientation (OCCT BRepClass3d_SClassifier::FaceNormal L606-627).
+    /// Outward normal of a face: the surface normal at the face centroid,
+    /// flipped by the face orientation (OCCT BRepClass3d_SClassifier::FaceNormal
+    /// SClassifier.cxx L606-627 — supports arbitrary surfaces).
     fn face_outward_normal(f: &Shape) -> Option<DVec3> {
         match &*f.data {
             TShape::Face(fd) => {
                 let surf = fd.surface.as_ref()?;
-                let n = match surf {
-                    rcad_kernel::geom::Surface3::Plane(pl) => pl.normal,
-                    _ => return None, // curved surfaces need point evaluation
-                };
+                let p = Self::face_centroid(f);
+                let (u, _) = closest_point_on_surface(surf, p);
+                let n = surf.normal_at(u.x, u.y);
                 Some(if f.orientation == rcad_kernel::topods::Orientation::Reversed {
                     -n
                 } else {
@@ -564,6 +608,52 @@ impl<'a> BuilderSolid<'a> {
         }
     }
 
+    /// Parameter of the closest intersection of the ray `p + t*dir` with a
+    /// non-planar face, if any (OCCT PerformInfinitePoint L160-181 uses
+    /// IntCurvesFace_Intersector; rcad: BeanFaceIntersector is its translation).
+    fn ray_surface_param(p: DVec3, dir: DVec3, face: &Shape) -> Option<f64> {
+        let surface = match &*face.data {
+            TShape::Face(fd) => fd.surface.as_ref()?.clone(),
+            _ => return None,
+        };
+        let line = Curve3::Line(rcad_kernel::geom::Line3 {
+            origin: p,
+            direction: dir,
+        });
+        let adapt_curve = BRepAdaptorCurve::new(line);
+        let adapt_surf = BRepAdaptorSurface::new(surface);
+        let mut bfi = BeanFaceIntersector::with_adaptors(
+            adapt_curve.clone(),
+            adapt_surf.clone(),
+            CONFUSION,
+            CONFUSION,
+        );
+        // OCCT L171: Intersector3d.Perform(aLin, -RealLast(), parmin).
+        bfi.set_bean_parameters(-f64::MAX, f64::MAX);
+        bfi.set_surface_parameters(
+            adapt_surf.first_u_parameter(),
+            adapt_surf.last_u_parameter(),
+            adapt_surf.first_v_parameter(),
+            adapt_surf.last_v_parameter(),
+        );
+        bfi.perform();
+        if !bfi.is_done() {
+            return None;
+        }
+        // OCCT L172-179: the minimal WParameter wins.
+        let mut parmin = f64::MAX;
+        for r in bfi.result() {
+            if r.first() < parmin {
+                parmin = r.first();
+            }
+        }
+        if parmin == f64::MAX {
+            None
+        } else {
+            Some(parmin)
+        }
+    }
+
     /// Origin point of a planar face's surface.
     fn face_plane_origin(f: &Shape) -> Option<DVec3> {
         match &*f.data {
@@ -571,6 +661,51 @@ impl<'a> BuilderSolid<'a> {
                 rcad_kernel::geom::Surface3::Plane(pl) => Some(pl.origin),
                 _ => None,
             },
+            _ => None,
+        }
+    }
+
+    /// UV bounding box of the face boundary vertices (OCCT
+    /// BRepTopAdaptor_TopolTool::Classify in IntCurvesFace_Intersector.cxx L257
+    /// accepts only intersections whose UV lies inside the face domain; the
+    /// boundary UV AABB is the equivalent conservative filter, L291).
+    fn face_uv_domain(f: &Shape) -> Option<(f64, f64, f64, f64)> {
+        match &*f.data {
+            TShape::Face(fd) => {
+                let surf = fd.surface.as_ref()?;
+                let mut u_min = f64::MAX;
+                let mut u_max = f64::MIN;
+                let mut v_min = f64::MAX;
+                let mut v_max = f64::MIN;
+                let mut any = false;
+                let mut push_wire = |wsr: &Shape| {
+                    if let TShape::Wire(wd) = &*wsr.data {
+                        for e in &wd.edges {
+                            if let TShape::Edge(ed) = &*e.data {
+                                for vsr in [&ed.first, &ed.last] {
+                                    if let TShape::Vertex(vd) = &*vsr.data {
+                                        let (uv, _) = closest_point_on_surface(surf, vd.point);
+                                        u_min = u_min.min(uv.x);
+                                        u_max = u_max.max(uv.x);
+                                        v_min = v_min.min(uv.y);
+                                        v_max = v_max.max(uv.y);
+                                        any = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+                push_wire(&fd.outer_wire);
+                for iw in &fd.inner_wires {
+                    push_wire(iw);
+                }
+                if any {
+                    Some((u_min, u_max, v_min, v_max))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -647,15 +782,18 @@ impl<'a> BuilderSolid<'a> {
             self.my_solids.push(solid);
             return;
         }
-        // OCCT L661-681: classify the internal faces relative to the areas
-        // (BOPAlgo_Tools::ClassifyFaces — semantic point-in-solid per face).
+        // OCCT L673-681: classify the internal faces relative to the areas via
+        // BOPAlgo_Tools::ClassifyFaces (theSolidsIF is an empty map here, L680).
+        let a_mslf_map = crate::bop::algo::builder::Builder::classify_faces(
+            self.ds,
+            &a_mfs,
+            &self.my_solids,
+            &HashMap::new(),
+        );
         let mut a_mslf: HashMap<usize, Vec<Shape>> = HashMap::new();
         for (si, solid) in self.my_solids.iter().enumerate() {
-            for a_f in &a_mfs {
-                let pt = Self::face_centroid(a_f);
-                if Self::point_classify(solid, pt) == 3 {
-                    a_mslf.entry(si).or_default().push(a_f.clone());
-                }
+            if let Some(lf) = a_mslf_map.get(&solid.ptr_id()) {
+                a_mslf.insert(si, lf.clone());
             }
         }
         // OCCT L685-722: update the solids by their internal faces.
@@ -725,9 +863,14 @@ impl<'a> BuilderSolid<'a> {
                 }
                 i += 1;
             }
+            // OCCT L816: aShell.Closed(BRep_Tool::IsClosed(aShell)).
+            let mut flags = tshape_flags::DEFAULT;
+            if crate::bop::algo::builder::shell_is_closed(&a_shell) {
+                flags |= tshape_flags::CLOSED;
+            }
             let shell_tshape = TShape::Shell(TShellData {
                 my_shapes: vec![],
-                flags: tshape_flags::DEFAULT,
+                flags,
                 faces: a_shell,
             });
             shells.push(Shape::new(
@@ -795,18 +938,42 @@ fn face_edges(face: &Shape) -> Vec<Shape> {
 }
 
 /// OCCT BRep_Tool::IsClosed(aE, aF) — the edge has two pcurves on the closed
-/// surface (seam edge). BOPAlgo_Builder_2.cxx L397.
+/// OCCT BRep_Tool::IsClosed(aE, aF) (BRep_Tool.cxx L795-841) — the edge has
+/// two pcurves on the closed surface of the face (seam edge). OCCT matches
+/// the CurveOnClosedSurface representation by the face's SURFACE handle and
+/// returns false for plane faces outright (IsPlane short-circuit, L819-822).
+/// rcad keys the representation by the face's BRep index: try the exact index
+/// match first (original faces), then fall back to the surface-level match for
+/// the BuilderSolid split-image faces whose index does not preserve the
+/// original face's (BOPAlgo_BuilderSolid.cxx L196).
 fn edge_closed_on_face(a_e: &Shape, a_f: &Shape) -> bool {
     let f_index = a_f.index;
-    a_e.as_edge()
-        .map(|ed| {
-            ed.representations.iter().any(|r| {
-                matches!(
-                    r,
-                    topods::CurveRepresentation::CurveOnClosedSurface { face, .. }
-                        if *face == f_index
-                )
-            })
-        })
-        .unwrap_or(false)
+    let ed = match a_e.as_edge() {
+        Some(ed) => ed,
+        None => return false,
+    };
+    // OCCT L825-840: any CurveOnClosedSurface on the edge whose surface
+    // matches the face's surface — exact index match for original faces.
+    if ed.representations.iter().any(|r| {
+        matches!(
+            r,
+            topods::CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == f_index
+        )
+    }) {
+        return true;
+    }
+    // OCCT L819-822: if (IsPlane(S)) return false.
+    match &*a_f.data {
+        TShape::Face(fd) => {
+            if matches!(fd.surface, Some(rcad_kernel::geom::Surface3::Plane(_))) {
+                return false;
+            }
+        }
+        _ => return false,
+    }
+    // Fallback: split-face images share the original face's closed surface;
+    // any CurveOnClosedSurface on the edge matches that surface.
+    ed.representations
+        .iter()
+        .any(|r| matches!(r, topods::CurveRepresentation::CurveOnClosedSurface { .. }))
 }

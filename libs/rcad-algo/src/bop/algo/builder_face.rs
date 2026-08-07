@@ -108,9 +108,13 @@ impl<'a> BuilderFace<'a> {
                 } else if a_nb_e == 2 {
                     // OCCT L211-227: two edges at the vertex.
                     let a_e2 = &a_le[1];
-                    if a_e2.is_partner(a_e1) {
+                    // OCCT L214: aE2.IsSame(aE1) — same TShape, any location.
+                    if a_e2.is_same(a_e1) {
+                        // OCCT L216-221: TopExp::Vertices(aE1, aV1x, aV2x) —
+                        // if both endpoints are the same vertex (degenerated
+                        // ring), skip.
                         let vv = Self::edge_vertices(a_e1);
-                        if vv.len() >= 2 && vv[0].is_partner(&vv[1]) {
+                        if vv.len() >= 2 && vv[0].is_same(&vv[1]) {
                             // Degenerated ring — both ends are the same vertex.
                             continue;
                         }
@@ -137,13 +141,25 @@ impl<'a> BuilderFace<'a> {
     }
 
     /// Get edge endpoint vertex Shapes.
+    /// OCCT TopoDS_Iterator(aE) with cumOri=true (default) composes the edge
+    /// orientation into the vertices (TopoDS_Iterator.cxx L35-37, L72-80): the
+    /// stored TEdge nodes [V1(Fwd), V2(Rev)] become [V1(Rev), V2(Fwd)] for a
+    /// REVERSED edge — same order, orientations composed.
     fn edge_vertices(e: &Shape) -> Vec<Shape> {
+        use rcad_kernel::topods::Orientation;
         match &*e.data {
             TShape::Edge(ed) => {
-                vec![
-                    Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-                    Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
-                ]
+                if e.orientation == Orientation::Reversed {
+                    vec![
+                        Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Reversed),
+                        Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Forward),
+                    ]
+                } else {
+                    vec![
+                        Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Forward),
+                        Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Reversed),
+                    ]
+                }
             }
             _ => Vec::new(),
         }
@@ -167,53 +183,73 @@ impl<'a> BuilderFace<'a> {
         // OCCT L277-283: store result wires into myLoops
         self.my_loops = wires;
 
-        // OCCT L284-321: Post-treatment — find unprocessed edges
-        let mut processed: HashSet<u64> = HashSet::new();
+        // OCCT L284-321: Post-treatment — find unprocessed edges.
+        // a. collect all edges that are in loops (OCCT L287-298).
+        let mut a_mep: HashSet<u64> = HashSet::new();
         for loop_edges in &self.my_loops {
             for e in loop_edges {
-                processed.insert(e.ptr_id());
+                a_mep.insert(e.ptr_id());
             }
         }
-        // Add unprocessed edges to myShapesToAvoid (OCCT L319)
+        // b. collect all edges that are to avoid (OCCT L304-310).
+        for &eptr in &self.my_shapes_to_avoid {
+            a_mep.insert(eptr);
+        }
+        // c. add all edges that are not processed to myShapesToAvoid (OCCT L312-321).
         for e in &self.my_edges {
-            if !processed.contains(&e.ptr_id()) {
+            if !a_mep.contains(&e.ptr_id()) {
                 self.my_shapes_to_avoid.insert(e.ptr_id());
             }
         }
 
-        // OCCT L327-382: Internal wires from avoided edges
+        // OCCT L327-382: 2. Internal Wires — build wires from the avoided
+        // edges, connecting them at shared vertices.
         self.my_loops_internal.clear();
-        let a_nb_ea = self.my_shapes_to_avoid.len();
-        if a_nb_ea > 0 {
-            let mut a_added: HashSet<u64> = HashSet::new();
-            for e in &self.my_edges {
-                if self.my_shapes_to_avoid.contains(&e.ptr_id()) && a_added.insert(e.ptr_id()) {
-                    // Build wire from connected avoided edges
-                    let mut wire_edges: Vec<Shape> = vec![(*e).clone()];
-                    // Walk edges via shared vertices
-                    let mut changed = true;
-                    while changed {
-                        changed = false;
-                        for e2 in &self.my_edges {
-                            if !self.my_shapes_to_avoid.contains(&e2.ptr_id()) { continue; }
-                            if a_added.contains(&e2.ptr_id()) { continue; }
-                            // Check if e2 shares a vertex with any edge in the wire
-                            if wire_edges.iter().any(|we| {
-                                let we_verts = BuilderFace::edge_vertices(we);
-                                let e2_verts = BuilderFace::edge_vertices(e2);
-                                we_verts.iter().any(|wv| e2_verts.iter().any(|ev| wv.ptr_id() == ev.ptr_id()))
-                            }) {
-                                a_added.insert(e2.ptr_id());
-                                wire_edges.push((*e2).clone());
-                                changed = true;
+        // OCCT L330-335: aVEMap — vertex -> [avoid edges] via
+        // MapShapesAndAncestors(aEE, VERTEX, EDGE).
+        let avoid_edges: Vec<Shape> = self.my_edges.iter()
+            .filter(|e| self.my_shapes_to_avoid.contains(&e.ptr_id()))
+            .cloned()
+            .collect();
+        let mut a_ve_map: HashMap<u64, Vec<Shape>> = HashMap::new();
+        for a_ee in &avoid_edges {
+            for a_v in Self::edge_vertices(a_ee) {
+                let l = a_ve_map.entry(a_v.ptr_id()).or_default();
+                if !l.iter().any(|e| e.ptr_id() == a_ee.ptr_id()) {
+                    l.push(a_ee.clone());
+                }
+            }
+        }
+        // OCCT L337-382: per-start wire growth with the aMAdded fence; the
+        // loop stops (bFlag) once every avoided edge is collected.
+        let a_nb_ea = avoid_edges.len();
+        let mut a_m_added: HashSet<u64> = HashSet::new();
+        let mut b_flag = true;
+        for a_ee in &avoid_edges {
+            if !b_flag { break; }
+            if !a_m_added.insert(a_ee.ptr_id()) { continue; }
+            // OCCT L350-353: make new wire and add the start edge.
+            let mut a_w: Vec<Shape> = vec![a_ee.clone()];
+            // OCCT L355-379: grow through the vertices of the added edges.
+            let mut i = 0;
+            while i < a_w.len() && b_flag {
+                let a_e = &a_w[i];
+                for a_v in Self::edge_vertices(a_e) {
+                    if let Some(a_le) = a_ve_map.get(&a_v.ptr_id()) {
+                        for a_ex in a_le {
+                            if a_m_added.insert(a_ex.ptr_id()) {
+                                a_w.push(a_ex.clone());
+                                if a_m_added.len() == a_nb_ea {
+                                    b_flag = false;
+                                }
                             }
                         }
                     }
-                    // OCCT L351-381: the wire is appended unconditionally
-                    // (a single-edge wire is a valid internal wire).
-                    self.my_loops_internal.push(wire_edges);
                 }
+                i += 1;
             }
+            // OCCT L380-381: aW.Closed(IsClosed(aW)); myLoopsInternal.Append(aW).
+            self.my_loops_internal.push(a_w);
         }
     }
 

@@ -88,8 +88,17 @@ impl MakeCylinder {
         // wire a connected closed loop and the FClass2d uv polygon a simple
         // rectangle (OCCT winding, CCW in uv).
         let lat_wire = t.add_twire(vec![rev(e_top.clone()), e_seam.clone(), e_bot.clone(), rev(e_seam.clone())]);
-        let bot_wire = t.add_twire(vec![e_bot.clone()]);
-        let top_wire = t.add_twire(vec![rev(e_top.clone())]);
+        // OCCT BRepPrim_OneAxis::TopWire (L736-744): AddWireEdge(WTOP, TopEdge(),
+        // true) — direct=true, so the top circle enters the top wire FORWARD.
+        // OCCT BRepPrim_OneAxis::BottomWire (L761-765): AddWireEdge(WBOTTOM,
+        // BottomEdge(), false) — direct=false, so the bottom circle enters the
+        // bottom wire REVERSED (BRepPrim_Builder::AddWireEdge L184-193).
+        // These directions make the shared cap/lateral circle edges run
+        // oppositely in the two wires (required by the shell builders'
+        // GetEdgeOff reverse-orientation match, BOPTools_AlgoTools.cxx
+        // L1107-1135).
+        let bot_wire = t.add_twire(vec![rev(e_bot.clone())]);
+        let top_wire = t.add_twire(vec![e_top.clone()]);
 
         let f_lat = t.add_tface(Some(lateral_surf), lat_wire, vec![], None, None, vec![], true);
         // OCCT BRepPrim_OneAxis::BottomFace (L502): ReverseFace.

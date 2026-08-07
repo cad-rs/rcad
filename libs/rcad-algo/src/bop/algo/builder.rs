@@ -157,8 +157,7 @@ fn collect_solid_faces(s: &Shape) -> Vec<Shape> {
 }
 
 /// OCCT TopoDS_Shape::Reverse — flips the orientation.
-fn flip_orientation(o: topods::Orientation) -> topods::Orientation {
-    match o {
+fn flip_orientation(o: topods::Orientation) -> topods::Orientation {    match o {
         topods::Orientation::Forward => topods::Orientation::Reversed,
         topods::Orientation::Reversed => topods::Orientation::Forward,
         topods::Orientation::Internal => topods::Orientation::External,
@@ -168,16 +167,55 @@ fn flip_orientation(o: topods::Orientation) -> topods::Orientation {
 
 /// OCCT BRep_Tool::IsClosed(aShell) — a shell is closed when every edge is
 /// shared by exactly two faces.
-fn shell_is_closed(faces: &[Shape]) -> bool {
-    let mut edge_count: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+/// BRep_Tool::IsClosed(SHELL) equivalent (BRep_Tool.cxx L1707-1733):
+/// parity pairing of boundary edges (each edge appearing an even number of
+/// times cancels out) plus at least one boundary edge present.
+pub(crate) fn shell_is_closed(faces: &[Shape]) -> bool {
+    let mut a_map: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut has_bound = false;
     for f in faces {
         for w in shape_sub_shapes_free(f) {
             for e in shape_sub_shapes_free(&w) {
-                *edge_count.entry(e.ptr_id()).or_insert(0) += 1;
+                // OCCT L1719-1723: skip degenerated and INTERNAL/EXTERNAL edges.
+                let is_degen = e.as_edge().map(|ed| ed.degenerated).unwrap_or(true);
+                if is_degen
+                    || e.orientation == topods::Orientation::Internal
+                    || e.orientation == topods::Orientation::External
+                {
+                    continue;
+                }
+                has_bound = true;
+                if !a_map.insert(e.ptr_id()) {
+                    a_map.remove(&e.ptr_id());
+                }
             }
         }
     }
-    !edge_count.is_empty() && edge_count.values().all(|&c| c == 2)
+    has_bound && a_map.is_empty()
+}
+
+/// BRep_Tool::IsClosed(WIRE) equivalent (BRep_Tool.cxx L1734-1756):
+/// parity pairing of boundary vertices plus at least one boundary vertex.
+fn wire_is_closed(edges: &[Shape]) -> bool {
+    let mut a_map: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut has_bound = false;
+    for e in edges {
+        if let Some(ed) = e.as_edge() {
+            for v in [&ed.first, &ed.last] {
+                // OCCT L1745-1747: skip INTERNAL/EXTERNAL vertices.
+                if v.orientation == topods::Orientation::Internal
+                    || v.orientation == topods::Orientation::External
+                {
+                    continue;
+                }
+                has_bound = true;
+                if !a_map.insert(v.ptr_id()) {
+                    a_map.remove(&v.ptr_id());
+                }
+            }
+        }
+    }
+    has_bound && a_map.is_empty()
 }
 
 /// Walk the direct sub-shapes of a Shape (module-level helper; a Face yields
@@ -1322,7 +1360,12 @@ impl<'a> Builder<'a> {
             // OCCT L89-91: aE = myDS->Shape(i); aLPB = myDS->PaveBlocks(i);
             let aE = self.brep_sr(i);
             let aLPB: Vec<SharedPB> = self.ds.pave_blocks(i).to_vec();
-            // OCCT L95: pLS = myImages.Bound(aE, ...)
+            // OCCT L95: pLS = myImages.Bound(aE, List()) — the image list is
+            // bound UNCONDITIONALLY: an edge with no pave blocks (a small
+            // edge) gets an empty image list and is thus avoided in the result
+            // (OCCT comment L93-94: "The small edges, having no pave blocks,
+            // will have the empty list of images").
+            self.my_images.entry(aE.clone()).or_default();
             // OCCT L96-120: iterate pave blocks
             for aPB in &aLPB {
                 // OCCT L100-102: aPBR = myDS->RealPaveBlock(aPB); nSpR = aPBR->Edge();
@@ -1331,7 +1374,7 @@ impl<'a> Builder<'a> {
                 // OCCT L103-104: aSpR = myDS->Shape(nSpR);
                 let aSpR = self.brep_sr(nSpR);
                 // OCCT L105: pLS->Append(aSpR);
-                self.my_images.entry(aE.clone()).or_default().push(aSpR.clone());
+                self.my_images.get_mut(&aE).unwrap().push(aSpR.clone());
                 // OCCT L107-112: pLOr = myOrigins.ChangeSeek(aSpR); append aE
                 self.my_origins.entry(aSpR.clone()).or_default().push(aE.clone());
                 // OCCT L114-119: if (IsCommonBlockOnEdge(aPB)) → myShapesSD.Bind(aSp, aSpR)
@@ -1407,14 +1450,19 @@ impl<'a> Builder<'a> {
                     for a_ss_im0 in imgs {
                         // OCCT L265-269: IsSplitToReverseWithWarn(aSSIm, aSS) —
                         // reverse aSSIm when its geometry is oppositely oriented to aSS.
+                        // OCCT BOPTools_AlgoTools::IsSplitToReverse (L1263-1300)
+                        // dispatches by sub-shape type: EDGE -> edge overload,
+                        // FACE -> face overload, other types -> no reversal.
                         let mut a_ss_im = a_ss_im0.clone();
-                        if !a_ss_im.is_equal(ss)
-                            && crate::bop::tools::algo_tools::is_split_to_reverse_edge(
-                                &a_ss_im, ss,
-                            )
-                            .0
-                        {
-                            a_ss_im.orientation = flip_orientation(a_ss_im.orientation);
+                        if !a_ss_im.is_equal(ss) {
+                            let b_to_rev = match the_type {
+                                topods::ShapeType::Wire => crate::bop::tools::algo_tools::is_split_to_reverse_edge(&a_ss_im, ss).0,
+                                topods::ShapeType::Shell => crate::bop::tools::algo_tools::is_split_to_reverse_face(&a_ss_im, ss).0,
+                                _ => false,
+                            };
+                            if b_to_rev {
+                                a_ss_im.orientation = flip_orientation(a_ss_im.orientation);
+                            }
                         }
                         match the_type {
                             topods::ShapeType::Wire => new_edges.push(a_ss_im),
@@ -1427,17 +1475,35 @@ impl<'a> Builder<'a> {
             }
         }
 
+        // OCCT L274: aCIm.Closed(BRep_Tool::IsClosed(aCIm))
+        let mut container_flags = tshape_flags::DEFAULT;
+        match the_type {
+            topods::ShapeType::Wire => {
+                if wire_is_closed(&new_edges) {
+                    container_flags |= tshape_flags::CLOSED;
+                }
+            }
+            topods::ShapeType::Shell => {
+                if shell_is_closed(&new_faces) {
+                    container_flags |= tshape_flags::CLOSED;
+                }
+            }
+            // CompSolid: BRep_Tool::IsClosed(COMPSOLID) returns the shape's
+            // own Closed flag, which is never set here.
+            _ => {}
+        }
+
         // Build new container TShape
         let new_container: TShape = match the_type {
             topods::ShapeType::Wire => {
                 TShape::Wire(TWireData {
-                    my_shapes: vec![], flags: tshape_flags::DEFAULT,
+                    my_shapes: vec![], flags: container_flags,
                     edges: new_edges,
                 })
             }
             topods::ShapeType::Shell => {
                 TShape::Shell(TShellData {
-                    my_shapes: vec![], flags: tshape_flags::DEFAULT,
+                    my_shapes: vec![], flags: container_flags,
                     faces: new_faces,
                 })
             }
@@ -2082,21 +2148,45 @@ impl<'a> Builder<'a> {
         true
     }
 
-    /// OCCT BRep_Tool::IsClosed(aE, aF) — the edge has two pcurves on the
-    /// closed surface (seam edge). BOPAlgo_Builder_2.cxx L397.
+    /// OCCT BRep_Tool::IsClosed(aE, aF) (BRep_Tool.cxx L795-841) — the edge
+    /// has two pcurves on the closed surface of the face (seam edge).
+    /// OCCT matches the CurveOnClosedSurface representation by the face's
+    /// SURFACE handle (IsCurveOnSurface(S, l)) and returns false for plane
+    /// faces outright (IsPlane short-circuit, L819-822). rcad keys the
+    /// representation by the face's BRep index: try the exact index match
+    /// first (original faces), then fall back to the surface-level match for
+    /// split-face images whose index does not preserve the original face's
+    /// (BOPAlgo_Builder_2.cxx L397).
     fn edge_closed_on_face(&self, a_e: &Shape, a_f: &Shape) -> bool {
         let f_index = a_f.index;
-        a_e.as_edge()
-            .map(|ed| {
-                ed.representations.iter().any(|r| {
-                    matches!(
-                        r,
-                        topods::CurveRepresentation::CurveOnClosedSurface { face, .. }
-                            if *face == f_index
-                    )
-                })
-            })
-            .unwrap_or(false)
+        // OCCT L825-840: any CurveOnClosedSurface on the edge whose surface
+        // matches the face's surface — exact index match for original faces.
+        let ed = match a_e.as_edge() {
+            Some(ed) => ed,
+            None => return false,
+        };
+        if ed.representations.iter().any(|r| {
+            matches!(
+                r,
+                topods::CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == f_index
+            )
+        }) {
+            return true;
+        }
+        // OCCT L819-822: if (IsPlane(S)) return false.
+        match &*a_f.data {
+            TShape::Face(fd) => {
+                if matches!(fd.surface, Some(rcad_kernel::geom::Surface3::Plane(_))) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        // Fallback: split-face images share the original face's closed
+        // surface; any CurveOnClosedSurface on the edge matches that surface.
+        ed.representations
+            .iter()
+            .any(|r| matches!(r, topods::CurveRepresentation::CurveOnClosedSurface { .. }))
     }
 
     /// OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace(aSplit, aF)
@@ -2634,9 +2724,11 @@ impl<'a> Builder<'a> {
         a_fi_vec.sort();
 
         // OCCT L690-694: map edge-sets → list of faces, planar face fence.
-        // rcad: edge_set = sorted Vec of (edge_ptr_id, curve_type) for the face boundary
-        // (approximation of OCCT BOPTools_Set, which also folds in curve orientations).
-        let mut an_e_set_faces: std::collections::HashMap<Vec<(u64, u32)>, Vec<Shape>> =
+        // OCCT BOPTools_Set: the set of the face's boundary edge TShapes
+        // (TopTools_ShapeMapHasher — TShape identity, orientation ignored,
+        // duplicates removed by the map). rcad: sorted deduped Vec of edge
+        // ptr_ids.
+        let mut an_e_set_faces: std::collections::HashMap<Vec<u64>, Vec<Shape>> =
             std::collections::HashMap::new();
         let mut a_mf_planar: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
@@ -2660,21 +2752,17 @@ impl<'a> Builder<'a> {
                 // OCCT L720-740: iterate the FACE IMAGE's edges (TopExp_Explorer
                 // aF over the split piece), not the original face's boundary —
                 // two coplanar images share an identical boundary edge set.
-                let mut edge_set: Vec<(u64, u32)> = Vec::new();
+                // OCCT BOPTools_Set::Add dedupes by TShape identity, so the
+                // repeated wire instances of one TShape (e.g. a seam edge used
+                // twice in a wire) count once.
+                let mut edge_set: Vec<u64> = Vec::new();
                 for e_shape in self.face_edges(f_piece) {
                     let e_ptr = e_shape.ptr_id();
-                    let curve_type = match &*e_shape.data {
-                        TShape::Edge(ed) => match &ed.curve {
-                            Some(rcad_kernel::geom::Curve3::Line(_)) => 0u32,
-                            Some(rcad_kernel::geom::Curve3::Circle(_)) => 1u32,
-                            Some(rcad_kernel::geom::Curve3::Ellipse(_)) => 2u32,
-                            _ => 3u32,
-                        },
-                        _ => 3u32,
-                    };
-                    edge_set.push((e_ptr, curve_type));
+                    if !edge_set.contains(&e_ptr) {
+                        edge_set.push(e_ptr);
+                    }
                 }
-                edge_set.sort_by(|a, b| a.0.cmp(&b.0));
+                edge_set.sort_unstable();
 
                 an_e_set_faces.entry(edge_set).or_default().push(f_piece.clone());
                 if b_check_planar {
@@ -2696,11 +2784,6 @@ impl<'a> Builder<'a> {
                 let b_check_planar = a_mf_planar.contains(&f1.ptr_id());
                 for i2 in (i1 + 1)..faces.len() {
                     let f2 = &faces[i2];
-                    // OCCT L767: aF1.IsSame(aF2) — same TShape + Location, any
-                    // orientation — the pair is not analyzed.
-                    if f1.is_partner(f2) {
-                        continue;
-                    }
                     let parent2 = a_face_to_parent.get(&f2.ptr_id()).copied();
                     // OCCT L776-779: two faces of one solid cannot be SD.
                     if let (Some(p1), Some(p2)) = (parent1, parent2) {
@@ -3005,7 +3088,7 @@ impl<'a> Builder<'a> {
             a_source_solids.push(a_solid);
         }
         // OCCT L197-208: classify the faces relative to the draft solids.
-        let an_in_parts = self.classify_faces(&a_lfaces, &a_lsolids, &a_solids_if);
+        let an_in_parts = Self::classify_faces(&self.ds, &a_lfaces, &a_lsolids, &a_solids_if);
         // OCCT L210-262: analyze the results of classification.
         for a_solid in &a_source_solids {
             let a_sd = match a_draft_solid.get(&a_solid.ptr_id()) {
@@ -3133,20 +3216,10 @@ impl<'a> Builder<'a> {
         )
     }
 
-    /// OCCT BOPAlgo_Tools::ClassifyFaces (BOPAlgo_Tools.cxx L1622-1747) +
-    /// BOPAlgo_FillIn3DParts::Perform (BOPAlgo_Tools.cxx L1334-1519).
-    ///
-    /// Classifies result faces relatively draft solids using connexity blocks:
-    ///   1. Selects the faces not belonging to the solid (L1380-1393).
-    ///   2. Groups them into connexity blocks connected through edges not on
-    ///      the solid boundary (MakeConnexityBlock, L1555-1615).
-    ///   3. Classifies a single representative face of each block with
-    ///      IsInternalFace (L1505-1509) and marks the whole block IN together.
-    ///
-    /// The solid's own faces (and its internal faces) are excluded from the
-    /// classification (OCCT BOPAlgo_FillIn3DParts::Perform aMSF filter).
-    fn classify_faces(
-        &self,
+    /// OCCT BOPAlgo_Tools::ClassifyFaces (BOPAlgo_Tools.cxx L1622-1747) —
+    /// classifies faces relative to solids using connexity blocks.
+    pub(crate) fn classify_faces(
+        ds: &DS,
         faces: &[Shape],
         solids: &[Shape],
         a_solids_if: &HashMap<u64, Vec<Shape>>,
@@ -3274,7 +3347,7 @@ impl<'a> Builder<'a> {
                 let a_fc_shape = &faces[a_fc];
 
                 // OCCT L1505-1509: IsInternalFace on the representative face.
-                let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol, &self.ds) == 1;
+                let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol, ds) == 1;
                 if is_in {
                     // OCCT L1510-1517: the whole connexity block is IN. Each
                     // face appears in exactly one block (aMFDone fence), so no

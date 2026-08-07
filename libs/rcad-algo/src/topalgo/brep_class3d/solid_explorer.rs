@@ -2,8 +2,13 @@
 // Exploration of a BRep Shape for classification.
 // Provides face iteration, bounding box rejection, and BVH tree.
 
+use crate::bop::closest_point_on_surface;
+use crate::bop::int_tools::bean_face_intersector::{
+    BeanFaceIntersector, BRepAdaptorCurve, BRepAdaptorSurface,
+};
 use crate::topalgo::shape_source::ShapeSource;
-use rcad_kernel::geom::{Plane as PlaneGeom, Surface3};
+use rcad_kernel::geom::{Curve3, Plane as PlaneGeom, Surface3, SurfaceEval};
+use rcad_kernel::precision::CONFUSION;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, TShape};
 use glam::DVec3;
@@ -29,6 +34,10 @@ pub struct SolidExplorer {
     // Used for classification without a DS reference (OCCT BRepClass3d
     // explores the TopoDS_Shape directly, never BOPDS).
     face_surfaces: Vec<ExplorerFace>,
+    // OCCT aMapEV (BRepClass3d_SClassifier L213): vertices and edges of the
+    // solid — a point within their tolerance is ON the boundary.
+    vertices: Vec<DVec3>,
+    edges: Vec<Option<Curve3>>,
 }
 
 impl SolidExplorer {
@@ -38,6 +47,8 @@ impl SolidExplorer {
             shape: None,
             face_indices: Vec::new(),
             face_surfaces: Vec::new(),
+            vertices: Vec::new(),
+            edges: Vec::new(),
         }
     }
 
@@ -45,6 +56,8 @@ impl SolidExplorer {
         self.shape = None;
         self.face_indices.clear();
         self.face_surfaces.clear();
+        self.vertices.clear();
+        self.edges.clear();
     }
 
     /// OCCT: InitShape(S) — initialize the explorer with a solid shape.
@@ -54,6 +67,8 @@ impl SolidExplorer {
         self.shape = Some(s.clone());
         self.face_indices.clear();
         self.face_surfaces.clear();
+        self.vertices.clear();
+        self.edges.clear();
         let mut stack: Vec<Shape> = vec![s.clone()];
         while let Some(sh) = stack.pop() {
             match &*sh.data {
@@ -76,6 +91,12 @@ impl SolidExplorer {
                     for x in &sd.faces {
                         stack.push(x.clone());
                     }
+                }
+                TShape::Vertex(vd) => {
+                    self.vertices.push(vd.point);
+                }
+                TShape::Edge(ed) => {
+                    self.edges.push(ed.curve.clone());
                 }
                 TShape::Face(fd) => {
                     let uv_bounds = fd.surface.as_ref().and_then(|surf| match surf {
@@ -102,6 +123,8 @@ impl SolidExplorer {
             shape: Some(s.clone()),
             face_indices: Vec::new(),
             face_surfaces: Vec::new(),
+            vertices: Vec::new(),
+            edges: Vec::new(),
         };
         exp.init_shape(s);
         exp
@@ -115,13 +138,19 @@ impl SolidExplorer {
         false
     }
 
-    /// OCCT BRepClass3d_SClassifier::Perform — a point within the tolerance of
-    /// a face of the solid is ON the boundary (state ON), not IN.
+    /// OCCT BRepClass3d_SClassifier::Perform (L212-228) — a point within the
+    /// tolerance of a VERTEX or EDGE of the solid is ON the boundary
+    /// (aMapEV tree selection); the distance to a face interior is NOT an ON
+    /// test. rcad: vertices by point distance, edges by curve distance.
     pub fn point_on_face(&self, p: DVec3, tol: f64) -> bool {
-        for f in &self.face_surfaces {
-            if let Surface3::Plane(pl) = &f.surf {
-                let d = (p - pl.origin).dot(pl.normal).abs();
-                if d <= tol && in_face_uv(f.uv_bounds, pl, p) {
+        for v in &self.vertices {
+            if (p - *v).length() <= tol {
+                return true;
+            }
+        }
+        for e in &self.edges {
+            if let Some(curve) = e {
+                if curve_point_distance(curve, p) <= tol {
                     return true;
                 }
             }
@@ -144,29 +173,40 @@ impl SolidExplorer {
         self.face_indices.push(fi);
     }
 
-    /// Classify point using ray casting (simplified).
-    /// OCCT IntCurvesFace_Intersector: the face's orientation flips the
-    /// effective surface normal (a reversed face bounds the solid on the
-    /// opposite side of its surface). Even-odd rule: a point is IN when a ray
-    /// from it crosses the solid boundary an odd number of times. Only
+    /// Classify point using ray casting (even-odd rule: a point is IN when a
+    /// ray from it crosses the solid boundary an odd number of times). Only
     /// intersections inside the face's UV domain are counted.
+    /// OCCT BRepClass3d_SClassifier::Perform uses IntCurvesFace_Intersector
+    /// (Line x Face) for every face — including curved ones; rcad: planar
+    /// faces use the analytic intersection, curved faces use BeanFaceIntersector
+    /// (the IntCurvesFace_Intersector translation).
     pub fn classify_point(&self, p: DVec3) -> u8 {
         let ray_dir = DVec3::X;
         let mut intersections = 0usize;
         if !self.face_surfaces.is_empty() {
             for f in &self.face_surfaces {
-                if let Surface3::Plane(pl) = &f.surf {
-                    let normal = if f.ori == Orientation::Reversed {
-                        -pl.normal
-                    } else {
-                        pl.normal
-                    };
-                    let denom = ray_dir.dot(normal);
-                    if denom.abs() < 1e-12 {
-                        continue;
+                let t = match &f.surf {
+                    Surface3::Plane(pl) => {
+                        let normal = if f.ori == Orientation::Reversed {
+                            -pl.normal
+                        } else {
+                            pl.normal
+                        };
+                        let denom = ray_dir.dot(normal);
+                        if denom.abs() < 1e-12 {
+                            continue;
+                        }
+                        let t = (pl.origin - p).dot(normal) / denom;
+                        if t > 1e-7 && in_face_uv(f.uv_bounds, pl, p + ray_dir * t) {
+                            Some(t)
+                        } else {
+                            None
+                        }
                     }
-                    let t = (pl.origin - p).dot(normal) / denom;
-                    if t > 1e-7 && in_face_uv(f.uv_bounds, pl, p + ray_dir * t) {
+                    _ => Self::ray_face_param(p, ray_dir, f),
+                };
+                if let Some(t) = t {
+                    if t > 1e-7 {
                         intersections += 1;
                     }
                 }
@@ -192,10 +232,62 @@ impl SolidExplorer {
                     if t > 1e-7 {
                         intersections += 1;
                     }
+                } else {
+                    let ef = ExplorerFace {
+                        surf: surf.clone(),
+                        ori: face_ori,
+                        uv_bounds: None,
+                    };
+                    if let Some(t) = Self::ray_face_param(p, ray_dir, &ef) {
+                        if t > 1e-7 {
+                            intersections += 1;
+                        }
+                    }
                 }
             }
         }
         if intersections % 2 == 1 { 3 } else { 4 } // IN=3, OUT=4
+    }
+
+    /// Parameter of the closest intersection of the ray `p + t*dir` with a
+    /// curved face (OCCT BRepClass3d_SClassifier uses IntCurvesFace_Intersector
+    /// for the Line x Face intersection; BeanFaceIntersector is its translation).
+    fn ray_face_param(p: DVec3, dir: DVec3, f: &ExplorerFace) -> Option<f64> {
+        let line = Curve3::Line(rcad_kernel::geom::Line3 {
+            origin: p,
+            direction: dir,
+        });
+        let adapt_curve = BRepAdaptorCurve::new(line);
+        let adapt_surf = BRepAdaptorSurface::new(f.surf.clone());
+        let mut bfi = BeanFaceIntersector::with_adaptors(
+            adapt_curve.clone(),
+            adapt_surf.clone(),
+            CONFUSION,
+            CONFUSION,
+        );
+        bfi.set_bean_parameters(-f64::MAX, f64::MAX);
+        bfi.set_surface_parameters(
+            adapt_surf.first_u_parameter(),
+            adapt_surf.last_u_parameter(),
+            adapt_surf.first_v_parameter(),
+            adapt_surf.last_v_parameter(),
+        );
+        bfi.perform();
+        if !bfi.is_done() {
+            return None;
+        }
+        // OCCT BRepClass3d_SClassifier: the intersection closest to the point.
+        let mut parmin = f64::MAX;
+        for r in bfi.result() {
+            if r.first() < parmin {
+                parmin = r.first();
+            }
+        }
+        if parmin == f64::MAX {
+            None
+        } else {
+            Some(parmin)
+        }
     }
 
     /// Set the shape-source reference for face index lookups.
@@ -265,4 +357,11 @@ fn in_face_uv(uv_bounds: Option<[f64; 4]>, pl: &PlaneGeom, q: DVec3) -> bool {
         }
         None => true,
     }
+}
+
+/// Distance from a point to a 3D curve (OCCT GeomAPI_ProjectPointOnCurve —
+/// the minimal distance over the curve).
+fn curve_point_distance(curve: &Curve3, p: DVec3) -> f64 {
+    let proj = rcad_kernel::base::extrema::closest_point_on_curve(curve, p, 64);
+    proj.distance
 }
