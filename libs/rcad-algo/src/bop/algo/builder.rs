@@ -71,10 +71,13 @@ pub struct Builder<'a> {
     pub(crate) my_arguments: Vec<Shape>,   // L492: myArguments
     pub(crate) my_map_fence: HashSet<u64>, // L494: myMapFence
     pub(crate) my_entry_point: i32,        // L498: myEntryPoint
-    pub(crate) my_images: HashMap<Shape, Vec<Shape>>,      // L499: myImages
+    // OCCT L499-502: myImages/myOrigins/myInParts are NCollection_DataMap
+    // with TopTools_ShapeMapHasher — key identity is TShape + Location,
+    // orientation is IGNORED. rcad keys by (ptr_id, location) to match.
+    pub(crate) my_images: HashMap<(u64, u32), Vec<Shape>>,      // L499: myImages
     pub(crate) my_shapes_sd: HashMap<(u64, u32), Shape>,   // L500: myShapesSD (TopTools_ShapeMapHasher: TShape+Location, ignores orientation)
-    pub(crate) my_origins: HashMap<Shape, Vec<Shape>>,     // L501: myOrigins
-    pub(crate) my_in_parts: HashMap<Shape, Vec<Shape>>,    // L502: myInParts
+    pub(crate) my_origins: HashMap<(u64, u32), Vec<Shape>>,     // L501: myOrigins
+    pub(crate) my_in_parts: HashMap<(u64, u32), Vec<Shape>>,    // L502: myInParts
     pub(crate) my_non_destructive: bool,   // L503: myNonDestructive
     pub(crate) my_glue: GlueEnum,          // L504: myGlue
     pub(crate) my_check_inverted: bool,    // L505: myCheckInverted
@@ -156,12 +159,14 @@ fn collect_solid_faces(s: &Shape) -> Vec<Shape> {
     result
 }
 
-/// OCCT TopoDS_Shape::Reverse — flips the orientation.
-fn flip_orientation(o: topods::Orientation) -> topods::Orientation {    match o {
+/// OCCT TopAbs::Reverse (TopAbs.hxx L64-75) — flips the orientation.
+/// FORWARD<->REVERSED; INTERNAL and EXTERNAL are unchanged.
+fn flip_orientation(o: topods::Orientation) -> topods::Orientation {
+    match o {
         topods::Orientation::Forward => topods::Orientation::Reversed,
         topods::Orientation::Reversed => topods::Orientation::Forward,
-        topods::Orientation::Internal => topods::Orientation::External,
-        topods::Orientation::External => topods::Orientation::Internal,
+        topods::Orientation::Internal => topods::Orientation::Internal,
+        topods::Orientation::External => topods::Orientation::External,
     }
 }
 
@@ -768,15 +773,20 @@ fn is_internal_face_core(
     the_face2: &Shape,
     ds: &DS,
 ) -> i32 {
-    // OCCT L950-966: edge copies on both faces.
+    // OCCT L950-966: edge copies on both faces. GetEdgeOnFace leaves aE1
+    // null on failure (orientation FORWARD by default); the angle method then
+    // cannot be applied (L978-982: GetFaceOff returns false -> iRet = 2), so
+    // a missing edge copy maps to 2, not 0.
     let a_e1 = match find_edge_on_face(the_edge.ptr_id(), the_face1) {
         Some(e) => e,
-        None => return 0,
+        None => return 2,
     };
     // OCCT L951-966: for an INTERNAL edge, or when the two faces are the same
     // (IsEqual: same TShape + Location + Orientation), aE2 = aE1 with
     // FORWARD/REVERSED orientations; otherwise the edge as it appears in the
-    // second face.
+    // second face. GetEdgeOnFace(aE, theFace2, aE2) always succeeds here —
+    // theFace2 is an element of theMEF(aE) (OCCT L862-864), so it contains
+    // the edge.
     let (a_e1_used, a_e2) = if a_e1.orientation == topods::Orientation::Internal
         || (the_face1.is_partner(the_face2) && the_face1.orientation == the_face2.orientation)
     {
@@ -951,7 +961,7 @@ fn face_centroid(face: &Shape) -> DVec3 {
 /// Bounding box of a shape — vertices plus sampled edge-curve points
 /// (semantic equivalent of OCCT BRepBndLib::Add, which also covers curve
 /// extents beyond the boundary vertices).
-fn shape_bbox(s: &Shape) -> Option<(DVec3, DVec3)> {
+pub(crate) fn shape_bbox(s: &Shape) -> Option<(DVec3, DVec3)> {
     let mut min = DVec3::splat(f64::INFINITY);
     let mut max = DVec3::splat(f64::NEG_INFINITY);
     let mut any = false;
@@ -1051,28 +1061,44 @@ fn shape_dimension(s: &Shape) -> i32 {
 }
 
 /// OCCT BOPAlgo_Tools::FillMap(Shape, Shape, IndexedDataMap<Shape, List<Shape>>)
-/// (BOPAlgo_Tools.hxx L84-102) — bidirectional connection for the SD back-and-forth map.
-fn fill_map_faces(n1: &Shape, n2: &Shape, the_map: &mut HashMap<Shape, Vec<Shape>>) {
-    the_map.entry(n1.clone()).or_default().push(n2.clone());
-    the_map.entry(n2.clone()).or_default().push(n1.clone());
+/// (BOPAlgo_Tools.hxx L84-102) — bidirectional connection for the SD back-and-forth
+/// map. OCCT aDMSLS (BOPAlgo_Builder_2.cxx L747) uses TopTools_ShapeMapHasher —
+/// key identity is TShape + Location, orientation is ignored; rcad keys by
+/// (ptr_id, location) and keeps one representative Shape per key for the chains.
+fn fill_map_faces(
+    n1: &Shape,
+    n2: &Shape,
+    the_map: &mut HashMap<(u64, u32), (Shape, Vec<Shape>)>,
+) {
+    let e1 = the_map
+        .entry((n1.ptr_id(), n1.location))
+        .or_insert_with(|| (n1.clone(), Vec::new()));
+    e1.1.push(n2.clone());
+    let e2 = the_map
+        .entry((n2.ptr_id(), n2.location))
+        .or_insert_with(|| (n2.clone(), Vec::new()));
+    e2.1.push(n1.clone());
 }
 
 /// OCCT BOPAlgo_Tools::MakeBlocks (BOPAlgo_Tools.hxx L46-80) — connected components
-/// of the SD back-and-forth map.
-fn make_blocks_faces(the_map: &HashMap<Shape, Vec<Shape>>) -> Vec<Vec<Shape>> {
-    let mut a_m_fence: HashSet<u64> = HashSet::new();
+/// of the SD back-and-forth map. The fence uses the map's hasher
+/// (TopTools_ShapeMapHasher = TShape + Location).
+fn make_blocks_faces(the_map: &HashMap<(u64, u32), (Shape, Vec<Shape>)>) -> Vec<Vec<Shape>> {
+    let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
     let mut a_m_blocks: Vec<Vec<Shape>> = Vec::new();
-    for (n, _) in the_map {
-        if !a_m_fence.insert(n.ptr_id()) {
+    for (k, (n, _)) in the_map {
+        if !a_m_fence.insert(*k) {
             continue;
         }
+        // Start the chain with the representative shape of the key (OCCT
+        // aChain.Append(n), n being the map key).
         let mut a_chain: Vec<Shape> = vec![n.clone()];
         let mut i = 0;
         while i < a_chain.len() {
             let n1 = &a_chain[i];
-            if let Some(a_li) = the_map.get(n1) {
+            if let Some((_, a_li)) = the_map.get(&(n1.ptr_id(), n1.location)) {
                 for n2 in a_li {
-                    if a_m_fence.insert(n2.ptr_id()) {
+                    if a_m_fence.insert((n2.ptr_id(), n2.location)) {
                         a_chain.push(n2.clone());
                     }
                 }
@@ -1335,11 +1361,11 @@ impl<'a> Builder<'a> {
             // OCCT L54: const TopoDS_Shape& aVSD = myDS->Shape(nVSD);
             let aVSD = self.brep_sr(nVSD);
             // OCCT L56: myImages.Bound(aV, ...)->Append(aVSD);
-            self.my_images.entry(aV.clone()).or_default().push(aVSD.clone());
+            self.my_images.entry((aV.ptr_id(), aV.location)).or_default().push(aVSD.clone());
             // OCCT L58: myShapesSD.Bind(aV, aVSD);
             self.my_shapes_sd.insert((aV.ptr_id(), aV.location), aVSD.clone());
             // OCCT L60-65: myOrigins — find or create list, append
-            self.my_origins.entry(aVSD).or_default().push(aV);
+            self.my_origins.entry((aVSD.ptr_id(), aVSD.location)).or_default().push(aV);
         }
     }
 
@@ -1365,7 +1391,7 @@ impl<'a> Builder<'a> {
             // edge) gets an empty image list and is thus avoided in the result
             // (OCCT comment L93-94: "The small edges, having no pave blocks,
             // will have the empty list of images").
-            self.my_images.entry(aE.clone()).or_default();
+            self.my_images.entry((aE.ptr_id(), aE.location)).or_default();
             // OCCT L96-120: iterate pave blocks
             for aPB in &aLPB {
                 // OCCT L100-102: aPBR = myDS->RealPaveBlock(aPB); nSpR = aPBR->Edge();
@@ -1374,9 +1400,9 @@ impl<'a> Builder<'a> {
                 // OCCT L103-104: aSpR = myDS->Shape(nSpR);
                 let aSpR = self.brep_sr(nSpR);
                 // OCCT L105: pLS->Append(aSpR);
-                self.my_images.get_mut(&aE).unwrap().push(aSpR.clone());
+                self.my_images.get_mut(&(aE.ptr_id(), aE.location)).unwrap().push(aSpR.clone());
                 // OCCT L107-112: pLOr = myOrigins.ChangeSeek(aSpR); append aE
-                self.my_origins.entry(aSpR.clone()).or_default().push(aE.clone());
+                self.my_origins.entry((aSpR.ptr_id(), aSpR.location)).or_default().push(aE.clone());
                 // OCCT L114-119: if (IsCommonBlockOnEdge(aPB)) → myShapesSD.Bind(aSp, aSpR)
                 if self.ds.is_common_block_on_edge(aPB) {
                     // OCCT L116-117: nSp = aPB->Edge(); aSp = myDS->Shape(nSp);
@@ -1520,7 +1546,7 @@ impl<'a> Builder<'a> {
         );
 
         // OCCT L275: myImages.Bound(theS, ...)->Append(aCIm)
-        self.my_images.entry(the_s.clone()).or_default().push(container_shape);
+        self.my_images.entry((the_s.ptr_id(), the_s.location)).or_default().push(container_shape);
     }
 
     /// Extract immediate sub-shapes from a Shape (OCCT TopoDS_Iterator equivalent).
@@ -1804,7 +1830,7 @@ impl<'a> Builder<'a> {
         for (fi, a_lfr) in a_faces_im {
             let a_f = self.brep_sr(fi);
             let an_ori_f = a_f.orientation;
-            let p_lf_im = self.my_images.entry(a_f).or_default();
+            let p_lf_im = self.my_images.entry((a_f.ptr_id(), a_f.location)).or_default();
             for mut a_fr in a_lfr {
                 if an_ori_f == topods::Orientation::Reversed {
                     a_fr.orientation = topods::Orientation::Reversed;
@@ -1867,13 +1893,13 @@ impl<'a> Builder<'a> {
         // adds the clone's — so resolve the lookup by DS index.
         let key_idx = self.ds.map_shape_index.get(&(key.ptr_id(), key.location)).copied();
         for (k, v) in &self.my_images {
-            if k.ptr_id() == key.ptr_id() && k.location == key.location {
+            if k.0 == key.ptr_id() && k.1 == key.location {
                 return Some(v.clone());
             }
         }
         if let Some(ki) = key_idx {
             for (k, v) in &self.my_images {
-                if self.ds.map_shape_index.get(&(k.ptr_id(), k.location)).copied() == Some(ki) {
+                if self.ds.map_shape_index.get(&(k.0, k.1)).copied() == Some(ki) {
                     return Some(v.clone());
                 }
             }
@@ -2696,7 +2722,7 @@ impl<'a> Builder<'a> {
         // OCCT L619-648: propagate the parent solid to the image faces.
         let mut a_propagation: HashMap<u64, u64> = HashMap::new();
         for (a_src, a_l_im) in &self.my_images {
-            let p_parent = a_face_to_parent.get(&a_src.ptr_id()).copied();
+            let p_parent = a_face_to_parent.get(&a_src.0).copied();
             if let Some(parent) = p_parent {
                 for a_piece in a_l_im {
                     if !a_face_to_parent.contains_key(&a_piece.ptr_id()) {
@@ -2742,7 +2768,7 @@ impl<'a> Builder<'a> {
             } else { false };
 
             // OCCT L720-740: get face images (or face itself), add edge set.
-            let face_list: Vec<Shape> = if let Some(imgs) = self.my_images.get(&a_f) {
+            let face_list: Vec<Shape> = if let Some(imgs) = self.my_images.get(&(a_f.ptr_id(), a_f.location)) {
                 imgs.clone()
             } else {
                 vec![a_f.clone()]
@@ -2772,7 +2798,7 @@ impl<'a> Builder<'a> {
         }
 
         // OCCT L743-748: aDMSLS — back-and-forth SD map; aVPSB — pairs for analysis.
-        let mut a_dmsls: HashMap<Shape, Vec<Shape>> = HashMap::new();
+        let mut a_dmsls: HashMap<(u64, u32), (Shape, Vec<Shape>)> = HashMap::new();
         let mut a_vpsb: Vec<(Shape, Shape)> = Vec::new();
 
         // OCCT L750-791: check pairs of faces with equal edge set.
@@ -2833,7 +2859,7 @@ impl<'a> Builder<'a> {
                 let n_f = self.ds.index(a_f);
                 if n_f >= 0 {
                     // OCCT L858: original face — consider it split into itself.
-                    self.my_images.entry(a_f.clone()).or_default().push(a_f.clone());
+                    self.my_images.entry((a_f.ptr_id(), a_f.location)).or_default().push(a_f.clone());
                     if n_f < n_f_min {
                         n_f_min = n_f;
                         p_fsd = Some(a_f.clone());
@@ -2859,14 +2885,14 @@ impl<'a> Builder<'a> {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != topods::ShapeType::Face { continue; }
             let a_f = self.brep_sr(i);
-            let Some(a_lf_im) = self.my_images.get_mut(&a_f) else { continue };
+            let Some(a_lf_im) = self.my_images.get_mut(&(a_f.ptr_id(), a_f.location)) else { continue };
             for a_f_im in a_lf_im.iter_mut() {
                 // OCCT L906-910: replace the image with its SD face.
                 if let Some(a_fsd) = self.my_shapes_sd.get(&(a_f_im.ptr_id(), a_f_im.location)) {
                     *a_f_im = a_fsd.clone();
                 }
                 // OCCT L913-919: fill the map of origins.
-                let p_lf_or = self.my_origins.entry(a_f_im.clone()).or_default();
+                let p_lf_or = self.my_origins.entry((a_f_im.ptr_id(), a_f_im.location)).or_default();
                 p_lf_or.push(a_f.clone());
             }
         }
@@ -2894,7 +2920,7 @@ impl<'a> Builder<'a> {
             // OCCT L951-956: aF = aSI.Shape(); pLFIm = myImages.Seek(aF);
             // if (!pLFIm) continue.
             let a_f = self.brep_sr(i);
-            let Some(p_lf_im) = self.my_images.get(&a_f).cloned() else {
+            let Some(p_lf_im) = self.my_images.get(&(a_f.ptr_id(), a_f.location)).cloned() else {
                 continue;
             };
             // OCCT L959-960: myDS->AloneVertices(i, aLIAV).
@@ -2944,7 +2970,7 @@ impl<'a> Builder<'a> {
     /// classification, so the shared SD identity is preserved.
     fn add_internal_vertex_to_image(&mut self, i: usize, a_ptr: u64, a_v: Shape) {
         let a_f = self.brep_sr(i);
-        if let Some(imgs) = self.my_images.get_mut(&a_f) {
+        if let Some(imgs) = self.my_images.get_mut(&(a_f.ptr_id(), a_f.location)) {
             for img in imgs.iter_mut() {
                 if img.ptr_id() != a_ptr {
                     continue;
@@ -3056,7 +3082,7 @@ impl<'a> Builder<'a> {
             }
             let a_s = self.brep_sr(i);
             // OCCT L131-148: add images, or the face itself with its box.
-            if let Some(imgs) = self.my_images.get(&a_s).cloned() {
+            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)).cloned() {
                 for a_s_im in &imgs {
                     if a_m_fence.insert(a_s_im.ptr_id()) {
                         a_lfaces.push(a_s_im.clone());
@@ -3088,7 +3114,18 @@ impl<'a> Builder<'a> {
             a_source_solids.push(a_solid);
         }
         // OCCT L197-208: classify the faces relative to the draft solids.
-        let an_in_parts = Self::classify_faces(&self.ds, &a_lfaces, &a_lsolids, &a_solids_if);
+        // OCCT L193: aShapeBoxMap.Bind(aSD, aBoxS) — the solid's box in the
+        // classification is the SOURCE solid's box (L179-183, from the DS or
+        // built by BuildBndBoxSolid), not the draft solid's own bbox.
+        let mut a_shape_box_map: HashMap<u64, (DVec3, DVec3)> = HashMap::new();
+        for a_solid in &a_source_solids {
+            if let Some(bb) = shape_bbox(a_solid) {
+                let a_sd = a_draft_solid.get(&a_solid.ptr_id()).unwrap();
+                a_shape_box_map.insert(a_sd.ptr_id(), bb);
+            }
+        }
+        let an_in_parts =
+            Self::classify_faces(&self.ds, &a_lfaces, &a_lsolids, &a_solids_if, &a_shape_box_map);
         // OCCT L210-262: analyze the results of classification.
         for a_solid in &a_source_solids {
             let a_sd = match a_draft_solid.get(&a_solid.ptr_id()) {
@@ -3102,7 +3139,7 @@ impl<'a> Builder<'a> {
                 // OCCT L227-238: check if the shells of the solid have an image.
                 let mut b_has_image = false;
                 for sh in self.shape_sub_shapes(a_solid) {
-                    if self.my_images.contains_key(&sh) {
+                    if self.my_images.contains_key(&(sh.ptr_id(), sh.location)) {
                         b_has_image = true;
                         break;
                     }
@@ -3116,7 +3153,7 @@ impl<'a> Builder<'a> {
             // OCCT L243-261: combine IN and internal faces into myInParts.
             let a_nb_int = a_l_internal.len();
             if a_nb_int != 0 || a_nb_in != 0 {
-                let p_lin = self.my_in_parts.entry(a_solid.clone()).or_default();
+                let p_lin = self.my_in_parts.entry((a_solid.ptr_id(), a_solid.location)).or_default();
                 p_lin.extend(a_l_in_faces);
                 p_lin.extend(a_l_internal);
             }
@@ -3140,7 +3177,7 @@ impl<'a> Builder<'a> {
             for a_f in self.shape_sub_shapes(&a_sh) {
                 let a_or_f = a_f.orientation;
                 // OCCT L303: if myImages.IsBound(aF) — replace by images.
-                if let Some(imgs) = self.my_images.get(&a_f).cloned() {
+                if let Some(imgs) = self.my_images.get(&(a_f.ptr_id(), a_f.location)).cloned() {
                     for a_fx in &imgs {
                         // OCCT L311: if myShapesSD.IsBound(aFx) — SD face.
                         if self.my_shapes_sd.contains_key(&(a_fx.ptr_id(), a_fx.location)) {
@@ -3218,11 +3255,16 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Tools::ClassifyFaces (BOPAlgo_Tools.cxx L1622-1747) —
     /// classifies faces relative to solids using connexity blocks.
+    /// `a_shape_box_map`: draft-solid ptr_id -> bbox of the SOURCE solid
+    /// (OCCT theShapeBoxMap, filled at Builder_3.cxx L193; empty when the
+    /// caller has no cached boxes — then the draft solid's own bbox is used,
+    /// matching OCCT L1699-1711 where BRepBndLib::Add builds the box).
     pub(crate) fn classify_faces(
         ds: &DS,
         faces: &[Shape],
         solids: &[Shape],
         a_solids_if: &HashMap<u64, Vec<Shape>>,
+        a_shape_box_map: &HashMap<u64, (DVec3, DVec3)>,
     ) -> HashMap<u64, Vec<Shape>> {
         let mut in_parts: HashMap<u64, Vec<Shape>> = HashMap::new();
         for a_sd in solids {
@@ -3236,6 +3278,10 @@ impl<'a> Builder<'a> {
                     a_mse.insert(e.ptr_id());
                 }
             }
+            // OCCT L1371: bIsEmpty is evaluated BEFORE the own INTERNAL faces
+            // are added to aMSF (L1374-1378) — a solid made of INTERNAL faces
+            // only is treated as empty by the classification below.
+            let b_is_empty = a_msf.is_empty();
             if let Some(lif) = a_solids_if.get(&a_sd.ptr_id()) {
                 for f in lif {
                     a_msf.insert(f.ptr_id());
@@ -3246,7 +3292,12 @@ impl<'a> Builder<'a> {
             // with the solid's box and which are not the solid's own faces.
             // (OCCT builds a BVH tree of face boxes; the interference test is
             // equivalent here, BOPTools_BoxTreeSelector.)
-            let solid_bbox = shape_bbox(a_sd);
+            // OCCT L1694-1712: the solid's box comes from theShapeBoxMap (the
+            // source solid's box, filled by the caller) or is built here.
+            let solid_bbox = a_shape_box_map
+                .get(&a_sd.ptr_id())
+                .copied()
+                .or_else(|| shape_bbox(a_sd));
             let mut a_ivec: Vec<usize> = Vec::new();
             for (i, a_f) in faces.iter().enumerate() {
                 if a_msf.contains(&a_f.ptr_id()) {
@@ -3272,18 +3323,22 @@ impl<'a> Builder<'a> {
             a_ivec.sort_unstable();
 
             // OCCT L1405-1417: the solid has no faces -> all selected faces are IN.
-            if a_msf.is_empty() {
+            if b_is_empty {
                 for &i in &a_ivec {
                     in_parts.entry(a_sd.ptr_id()).or_default().push(faces[i].clone());
                 }
                 continue;
             }
 
-            // OCCT L1419-1428: EF map of the faces to process.
+            // OCCT L1419-1428: EF map of the faces to process. Built only when
+            // more than one face is selected (L1422: if (aNbFP > 1)); with a
+            // single face the connexity block is the face itself.
             let mut a_mefp: HashMap<u64, Vec<usize>> = HashMap::new();
-            for &i in &a_ivec {
-                for e in face_edges(&faces[i]) {
-                    a_mefp.entry(e.ptr_id()).or_default().push(i);
+            if a_ivec.len() > 1 {
+                for &i in &a_ivec {
+                    for e in face_edges(&faces[i]) {
+                        a_mefp.entry(e.ptr_id()).or_default().push(i);
+                    }
                 }
             }
 
@@ -3367,7 +3422,11 @@ impl<'a> Builder<'a> {
     /// only its own split pieces are assigned to its images.
     fn build_split_solids(&mut self, the_draft_solids: &HashMap<u64, Shape>) {
         // OCCT L425-427: map of same-domain solids face sets (BOPTools_Set -> shape).
-        let mut a_mst: HashMap<Vec<u64>, Shape> = HashMap::new();
+        // BOPTools_Set::IsEqual (BOPTools_Set.cxx L81-99) compares the total
+        // entry count (INTERNAL faces expanded to FORWARD+REVERSED, L139-148)
+        // first, then the deduplicated, orientation-insensitive set of faces —
+        // key is (count, sorted unique face ids).
+        let mut a_mst: HashMap<(usize, Vec<u64>), Shape> = HashMap::new();
         // OCCT L432-461: find same-domain solids for non-interfered solids.
         let a_nb_s = self.ds.nb_source_shapes();
         let mut a_mfence: HashSet<u64> = HashSet::new();
@@ -3396,7 +3455,7 @@ impl<'a> Builder<'a> {
             // OCCT L484-489: if no IN faces -> the draft solid itself, no split.
             let p_lfin: Vec<Shape> = self
                 .my_in_parts
-                .get(&a_s)
+                .get(&(a_s.ptr_id(), a_s.location))
                 .cloned()
                 .unwrap_or_default();
             if p_lfin.is_empty() {
@@ -3438,7 +3497,10 @@ impl<'a> Builder<'a> {
             });
             a_solids_im[idx].1.extend(bs.my_solids.clone());
             // OCCT L544-577: merge the split solid's report into the main
-            // report, converting all sub-split errors into warnings.
+            // report, converting all sub-split errors into warnings. OCCT
+            // additionally wraps TopoDS_AlertWithShape alerts into a compound
+            // of the solid + the alert shape (L559-569); rcad keeps the alert
+            // as-is — diagnostics only, no topology impact.
             for a in bs.report().errors() {
                 self.my_report.add_warning(a.clone());
             }
@@ -3446,7 +3508,7 @@ impl<'a> Builder<'a> {
         // OCCT L580-617: add new solids to the images map (same-domain dedup).
         for (a_s, a_lsr) in &a_solids_im {
             // OCCT L586: if !myImages.IsBound(aS).
-            if self.my_images.contains_key(a_s) { continue; }
+            if self.my_images.contains_key(&(a_s.ptr_id(), a_s.location)) { continue; }
             // Compute the same-domain dedup results first (immutable borrows).
             let mut results: Vec<(Shape, Shape, bool)> = Vec::new();
             for a_sr in a_lsr {
@@ -3462,12 +3524,12 @@ impl<'a> Builder<'a> {
                     .clone();
                 results.push((a_sr.clone(), a_sx, b_flag_sd));
             }
-            let p_lsx = self.my_images.entry(a_s.clone()).or_default();
+            let p_lsx = self.my_images.entry((a_s.ptr_id(), a_s.location)).or_default();
             for (a_sr, a_sx, b_flag_sd) in results {
                 p_lsx.push(a_sx.clone());
                 // OCCT L604-609: myOrigins[aSx].Append(aS).
                 self.my_origins
-                    .entry(a_sx.clone())
+                    .entry((a_sx.ptr_id(), a_sx.location))
                     .or_default()
                     .push(a_s.clone());
                 // OCCT L611-614: if same-domain, bind myShapesSD[aSR] = aSx.
@@ -3517,7 +3579,7 @@ impl<'a> Builder<'a> {
                 || a_type == topods::ShapeType::Wire
             {
                 if a_m_fence.insert(a_s.ptr_id()) {
-                    if let Some(imgs) = self.my_images.get(a_s) {
+                    if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                         for img in imgs {
                             if a_msi_fence.insert(img.ptr_id()) {
                                 a_msi.push(img.clone());
@@ -3549,7 +3611,7 @@ impl<'a> Builder<'a> {
 
             // OCCT L741-758: add internal shapes to aMSI
             for a_si_internal in &a_mx {
-                if let Some(imgs) = self.my_images.get(a_si_internal) {
+                if let Some(imgs) = self.my_images.get(&(a_si_internal.ptr_id(), a_si_internal.location)) {
                     for img in imgs {
                         if a_msi_fence.insert(img.ptr_id()) {
                             a_msi.push(img.clone());
@@ -3563,7 +3625,7 @@ impl<'a> Builder<'a> {
             }
 
             // OCCT L760-787: build ancestor map from split solids
-            if let Some(imgs) = self.my_images.get(&a_s) {
+            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                 for a_sp in imgs {
                     if a_m_fence.insert(a_sp.ptr_id()) {
                         Self::map_shapes_and_ancestors(a_sp, &mut a_msx);
@@ -3617,12 +3679,12 @@ impl<'a> Builder<'a> {
                     let a_sdx = Self::solid_copy_add(&a_sd, &a_si);
                     // OCCT L860-861: myImages[aSd].Append(aSdx).
                     self.my_images
-                        .entry(a_sd.clone())
+                        .entry((a_sd.ptr_id(), a_sd.location))
                         .or_default()
                         .push(a_sdx.clone());
                     // OCCT L863-865: myOrigins[aSdx].Append(aSd).
                     self.my_origins
-                        .entry(a_sdx.clone())
+                        .entry((a_sdx.ptr_id(), a_sdx.location))
                         .or_default()
                         .push(a_sd.clone());
                     // OCCT L867-868: aMSOr.Remove(aSd); aSd = aSdx.
@@ -3698,6 +3760,13 @@ impl<'a> Builder<'a> {
 
     /// OCCT aBB.MakeSolid(aSdx); copy all sub-shapes of aSd; aBB.Add(aSdx, aSI)
     /// (BOPAlgo_Builder_3.cxx L849-858).
+    ///
+    /// Architecture note: OCCT aBB.Add(aSd, aSI) accepts any sub-shape,
+    /// including a WIRE (OwnInternalShapes collects all non-SHELL direct
+    /// sub-shapes, Builder_3.cxx L891-905). rcad's TSolidData stores internal
+    /// vertices/edges in dedicated fields and has no internal-wire slot; the
+    /// WIRE case is dropped. The boolean sources (cylinders/boxes/prisms) carry
+    /// no internal wires, so the divergence is not exercised by the stage tests.
     fn solid_copy_add(a_sd: &Shape, a_si: &Shape) -> Shape {
         let mut shells = Vec::new();
         let mut internal_v = Vec::new();
@@ -3896,7 +3965,7 @@ impl<'a> Builder<'a> {
             return;
         }
         // OCCT L285-295: check if compound has images
-        if let Some(imgs) = self.my_images.get(the_c) {
+        if let Some(imgs) = self.my_images.get(&(the_c.ptr_id(), the_c.location)) {
             // OCCT L289-293: recursively process existing images
             let imgs_clone = imgs.clone();
             for img in &imgs_clone {
@@ -3908,7 +3977,7 @@ impl<'a> Builder<'a> {
         let subs = self.shape_sub_shapes(the_c);
         let mut has_modified = false;
         for ss in &subs {
-            if self.my_images.contains_key(ss) {
+            if self.my_images.contains_key(&(ss.ptr_id(), ss.location)) {
                 has_modified = true;
                 break;
             }
@@ -3919,7 +3988,7 @@ impl<'a> Builder<'a> {
         // OCCT L345-358: add the_s to myImages with new compound
         let mut new_shapes: Vec<Shape> = Vec::new();
         for ss in &subs {
-            if let Some(ss_imgs) = self.my_images.get(ss) {
+            if let Some(ss_imgs) = self.my_images.get(&(ss.ptr_id(), ss.location)) {
                 new_shapes.extend(ss_imgs.iter().cloned());
             } else {
                 new_shapes.push(ss.clone());
@@ -3929,7 +3998,7 @@ impl<'a> Builder<'a> {
             std::sync::Arc::new(TShape::Compound(new_shapes)),
             0, topods::Orientation::Forward,
         );
-        self.my_images.entry(the_c.clone()).or_default().push(comp_shape);
+        self.my_images.entry((the_c.ptr_id(), the_c.location)).or_default().push(comp_shape);
     }
 
     /// OCCT BOPAlgo_Builder::PrepareHistory (BOPAlgo_Builder_4.cxx L164-252).
@@ -3958,7 +4027,7 @@ impl<'a> Builder<'a> {
 
             // OCCT L205: LocModified → check myImages
             let mut is_modified = false;
-            if let Some(imgs) = self.my_images.get(&a_s) {
+            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                 for a_sp in imgs {
                     // OCCT L214-217: check if result contains the split
                     // rcad: check via shape_remap (shape was added to result)
@@ -3972,7 +4041,7 @@ impl<'a> Builder<'a> {
 
             // OCCT L234-243: LocGenerated — check myImages for shapes generated
             // from this shape (e.g., edges generated from vertices)
-            if let Some(imgs) = self.my_images.get(&a_s) {
+            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                 for _a_g in imgs {
                     if self.shape_remap.contains_key(&_a_g.ptr_id()) {
                         // OCCT L241: myHistory->AddGenerated(aS, aG)
@@ -4047,7 +4116,7 @@ impl<'a> Builder<'a> {
             let mut a_rc: Vec<Shape> = Vec::new();
             // OCCT L968-990: add splits of sub-shapes contained in aMSRC.
             for a_s in self.shape_sub_shapes(a_sc) {
-                if let Some(imgs) = self.my_images.get(&a_s) {
+                if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                     for a_s_im in imgs {
                         if a_msrc.contains(&a_s_im.ptr_id()) {
                             a_rc.push(a_s_im.clone());
@@ -4101,7 +4170,7 @@ impl<'a> Builder<'a> {
         }
         // OCCT L1082-1104: put non-container shapes in the result.
         for a_s in &a_ls_non_cont {
-            if let Some(imgs) = self.my_images.get(a_s) {
+            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
                 for a_s_im in imgs {
                     if a_msrc.contains(&a_s_im.ptr_id()) && a_ms_result.insert(a_s_im.ptr_id()) {
                         a_result.push(a_s_im.clone());
@@ -4169,8 +4238,8 @@ impl<'a> Builder<'a> {
         let mut a_m_args_im_fence: HashSet<u64> = HashSet::new();
         let mut a_m_tools_im: Vec<Shape> = Vec::new();
         let mut a_m_tools_im_fence: HashSet<u64> = HashSet::new();
-        let mut a_m_set_args: HashMap<Vec<u64>, Shape> = HashMap::new();
-        let mut a_m_set_tools: HashMap<Vec<u64>, Shape> = HashMap::new();
+        let mut a_m_set_args: HashMap<(usize, Vec<u64>), Shape> = HashMap::new();
+        let mut a_m_set_tools: HashMap<(usize, Vec<u64>), Shape> = HashMap::new();
         let mut b_check_edges = false;
         for i in 0..2 {
             let a_ms: &Vec<Shape> = if i == 0 { &a_m_args } else { &a_m_tools };
@@ -4189,7 +4258,7 @@ impl<'a> Builder<'a> {
                         continue;
                     }
                 }
-                if let Some(imgs) = self.my_images.get(a_s).cloned() {
+                if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)).cloned() {
                     for a_s_im in &imgs {
                         if a_ms_im_fence.insert(a_s_im.ptr_id()) {
                             a_ms_im.push(a_s_im.clone());
@@ -4372,7 +4441,7 @@ impl<'a> Builder<'a> {
         }
         // OCCT L1191-1220: process untouched solids.
         let mut a_dmsts: Vec<Shape> = Vec::new();
-        let mut a_dmsts_fence: HashSet<Vec<u64>> = HashSet::new();
+        let mut a_dmsts_fence: HashSet<(usize, Vec<u64>)> = HashSet::new();
         for a_sx in &a_mu_sols {
             let mut in_mfs = false;
             for a_f in self.map_shapes_of_type(a_sx, topods::ShapeType::Face) {
@@ -4510,15 +4579,28 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// BOPTools_Set equivalent: sorted face ptr_ids of a shape (map key).
-    fn shape_face_set(&self, s: &Shape) -> Vec<u64> {
-        let mut faces: Vec<u64> = self
-            .map_shapes_of_type(s, topods::ShapeType::Face)
-            .iter()
-            .map(|f| f.ptr_id())
-            .collect();
-        faces.sort();
-        faces
+    /// OCCT BOPTools_Set::Add(aS, TopAbs_FACE) (BOPTools_Set.cxx L124-166) —
+    /// every INTERNAL face is expanded into FORWARD + REVERSED entries
+    /// (L139-148), so the entry count (myNbShapes) differs between sets whose
+    /// faces differ only by an INTERNAL orientation; IsEqual (L81-99) compares
+    /// the count first, then the orientation-insensitive set of TShapes.
+    /// The (count, sorted unique ids) pair reproduces both: the count is the
+    /// expanded entry count, the sorted ids are the deduplicated set — two
+    /// sets with the same faces but different INTERNAL expansion points (e.g.
+    /// {A_INTERNAL, B} vs {A, B_INTERNAL}) compare equal, as in OCCT.
+    fn shape_face_set(&self, s: &Shape) -> (usize, Vec<u64>) {
+        let mut count: usize = 0;
+        let mut ids: Vec<u64> = Vec::new();
+        for f in self.map_shapes_of_type(s, topods::ShapeType::Face) {
+            count += 1;
+            ids.push(f.ptr_id());
+            if f.orientation == topods::Orientation::Internal {
+                count += 1;
+            }
+        }
+        ids.sort();
+        ids.dedup();
+        (count, ids)
     }
 
     /// OCCT BOPAlgo_BOP::CollectContainers (BOPAlgo_BOP.cxx L1601-1621).
@@ -4633,7 +4715,7 @@ impl<'a> Builder<'a> {
         for a_s in &a_arguments {
             if a_s.shape_type() != the_type { continue; }
             // OCCT L145-152: check for images
-            if let Some(imgs) = self.my_images.get(a_s).cloned() {
+            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)).cloned() {
                 for a_s_im in &imgs {
                     if a_m_fence.insert(a_s_im.ptr_id()) {
                         self.add_shape_to_result(a_s_im);

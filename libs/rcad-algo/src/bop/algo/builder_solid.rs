@@ -11,6 +11,7 @@ use crate::bop::int_tools::bean_face_intersector::{
     BeanFaceIntersector, BRepAdaptorCurve, BRepAdaptorSurface,
 };
 use crate::bop::int_tools::context::IntToolsContext;
+use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 use rcad_kernel::topo_shape::Shape;
@@ -134,8 +135,10 @@ impl<'a> BuilderSolid<'a> {
                 } else if a_nb_f == 2 {
                     // OCCT L191-209: aNbF==2, same face (IsSame) && !IsClosed
                     // && edge != INTERNAL -> avoid both copies.
+                    // OCCT L194: aF2.IsSame(aF1) — same TShape AND Location
+                    // (TopTools_ShapeMapHasher semantics, orientation ignored).
                     let a_f2 = &a_lf[1];
-                    if a_f2.ptr_id() == a_f1.ptr_id() {
+                    if a_f2.ptr_id() == a_f1.ptr_id() && a_f2.location == a_f1.location {
                         if edge_closed_on_face(a_e, a_f1) { continue; }
                         if a_or_e == topods::Orientation::Internal { continue; }
                         b_found = true;
@@ -284,9 +287,32 @@ impl<'a> BuilderSolid<'a> {
         // OCCT L460-530: classify holes relative to the solids. For each hole
         // find the innermost growth solid containing it (IsInside), keeping the
         // smaller solid when two nested growths both contain the hole.
+        // OCCT L462-478: BVH tree of the hole-shell boxes (BRepBndLib::Add);
+        // OCCT L493-502: each solid's box; OCCT L499-509: the BoxTreeSelector
+        // pre-filters the hole shells — only those whose box interferes with
+        // the solid's box reach the IsInside test.
+        let mut hole_boxes: Vec<Option<(DVec3, DVec3)>> = Vec::new();
+        for hs in &hole_shells {
+            let shell_shape = self.build_shell_shape(hs);
+            hole_boxes.push(crate::bop::algo::builder::shape_bbox(&shell_shape));
+        }
         let mut a_hole_solid: HashMap<Vec<u64>, usize> = HashMap::new();
         for (si, solid) in new_solids.iter().enumerate() {
-            for hs in &hole_shells {
+            let solid_box = crate::bop::algo::builder::shape_bbox(solid);
+            for (hi, hs) in hole_shells.iter().enumerate() {
+                // OCCT L506-509: BVH pre-filter — skip holes whose box does
+                // not interfere with the solid's box (IsInside would be OUT).
+                if let (Some((smin, smax)), Some((hmin, hmax))) = (solid_box, hole_boxes[hi]) {
+                    if hmax.x < smin.x
+                        || hmin.x > smax.x
+                        || hmax.y < smin.y
+                        || hmin.y > smax.y
+                        || hmax.z < smin.z
+                        || hmin.z > smax.z
+                    {
+                        continue;
+                    }
+                }
                 // OCCT L511: if (!IsInside(aHole, aSolid)) continue;
                 if !Self::is_inside(hs, solid) { continue; }
                 let hkey = Self::hole_shell_key(hs);
@@ -357,6 +383,9 @@ impl<'a> BuilderSolid<'a> {
 
     /// OCCT IsInside (BuilderSolid.cxx L835-860) — classify the first face of
     /// the shell relative to the solid via BOPTools_AlgoTools::ComputeState.
+    /// OCCT L844-850: when the shell has no faces, PerformInfinitePoint is
+    /// used instead; rcad's hole shells always carry faces (they come from
+    /// myLoops), so the empty-shell branch maps to false here.
     fn is_inside(faces: &[Shape], solid: &Shape) -> bool {
         let Some(a_f) = faces.first() else {
             return false;
@@ -783,14 +812,21 @@ impl<'a> BuilderSolid<'a> {
             return;
         }
         // OCCT L673-681: classify the internal faces relative to the areas via
-        // BOPAlgo_Tools::ClassifyFaces (theSolidsIF is an empty map here, L680).
+        // BOPAlgo_Tools::ClassifyFaces. OCCT passes myBoxes (the boxes of the
+        // areas built in PerformAreas) as theShapeBoxMap; rcad has no box cache,
+        // so the empty map makes classify_faces build the boxes itself
+        // (equivalent to OCCT L1699-1711). theSolidsIF is an empty map here
+        // (OCCT L680).
         let a_mslf_map = crate::bop::algo::builder::Builder::classify_faces(
             self.ds,
             &a_mfs,
             &self.my_solids,
             &HashMap::new(),
+            &HashMap::new(),
         );
-        let mut a_mslf: HashMap<usize, Vec<Shape>> = HashMap::new();
+        // OCCT aMSLF is NCollection_IndexedDataMap — insertion order; IndexMap
+        // reproduces it (a HashMap would iterate in random order).
+        let mut a_mslf: IndexMap<usize, Vec<Shape>> = IndexMap::new();
         for (si, solid) in self.my_solids.iter().enumerate() {
             if let Some(lf) = a_mslf_map.get(&solid.ptr_id()) {
                 a_mslf.insert(si, lf.clone());

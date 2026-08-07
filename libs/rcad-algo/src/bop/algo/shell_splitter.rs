@@ -5,6 +5,7 @@
 // non-regular blocks via SplitBlock + RefineShell).
 
 use crate::bop::ds::DS;
+use indexmap::IndexMap;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{self, Orientation, TShape};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -133,8 +134,10 @@ pub fn make_shells(blocks: &[ConnexityBlock], ds: &DS) -> Vec<Vec<Shape>> {
 /// orientation). Seam edges (BRep_Tool::IsClosed(aE, aF)) are not flipped.
 fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
     // OCCT L385-387: TopExp::MapShapesAndAncestors(aShell, EDGE, FACE, aEFMap).
-    let mut a_ef_map: HashMap<u64, Vec<usize>> = HashMap::new();
-    let mut a_edge_map: HashMap<u64, Shape> = HashMap::new();
+    // OCCT aEFMap is NCollection_IndexedDataMap — iteration is in insertion
+    // order; IndexMap reproduces that order (a HashMap would be random).
+    let mut a_ef_map: IndexMap<u64, Vec<usize>> = IndexMap::new();
+    let mut a_edge_map: IndexMap<u64, Shape> = IndexMap::new();
     for (fi, f) in faces.iter().enumerate() {
         for e in face_edges(f) {
             a_ef_map.entry(e.ptr_id()).or_default().push(fi);
@@ -278,7 +281,9 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
     let mut a_mfaces: HashSet<(u64, Orientation)> =
         shapes.iter().map(|f| shape_map_key(f)).collect();
     // Edge -> (edge shape, [faces]) map for the faces still in aMFaces.
-    let mut a_ef_map: HashMap<u64, (Shape, Vec<Shape>)> = HashMap::new();
+    // OCCT aEFMap is NCollection_IndexedDataMap — insertion order; IndexMap
+    // reproduces it (a HashMap would iterate in random order).
+    let mut a_ef_map: IndexMap<u64, (Shape, Vec<Shape>)> = IndexMap::new();
     // OCCT L184-222: remove the faces with free edges, iteratively.
     loop {
         a_ef_map.clear();
@@ -345,8 +350,8 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
         // OCCT L260-266: MakeShell; Add(aShell, aFF);
         // MapShapesAndAncestors(aShell, EDGE, FACE, aMEFP).
         let mut a_shell: Vec<Shape> = vec![a_ff.clone()];
-        // Edge -> [face indices in the shell] (OCCT aMEFP).
-        let mut a_mefp: HashMap<u64, Vec<usize>> = HashMap::new();
+        // Edge -> [face indices in the shell] (OCCT aMEFP — IndexedDataMap).
+        let mut a_mefp: IndexMap<u64, Vec<usize>> = IndexMap::new();
         for e in face_edges(a_ff) {
             a_mefp.entry(e.ptr_id()).or_default().push(0);
         }
@@ -485,7 +490,7 @@ fn get_edge_off(a_e1: &Shape, a_f2: &Shape) -> Option<Shape> {
 
 /// OCCT BOPAlgo_ShellSplitter::RefineShell (BOPAlgo_ShellSplitter.cxx L443-617).
 /// Splits a shell on the edges shared by more than two faces (branch edges).
-fn refine_shell(a_shell: &[Shape], a_mef: &HashMap<u64, Vec<usize>>) -> Vec<Vec<Shape>> {
+fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<u64, Vec<usize>>) -> Vec<Vec<Shape>> {
     if a_shell.is_empty() {
         return Vec::new();
     }
