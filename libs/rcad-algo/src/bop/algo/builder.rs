@@ -1443,7 +1443,11 @@ impl<'a> Builder<'a> {
             // (orientation-insensitive); the composed orientation of the
             // sub-shape (e.g. a Reversed wire edge) must not hide its images.
             if let Some(imgs) = self.images_of(ss) {
-                if imgs.len() != 1 || imgs[0].ptr_id() != ss.ptr_id() {
+                // OCCT L228-229: pLFIm->Extent() != 1 ||
+                // !pLFIm->First().IsSame(aSS) — IsSame = TShape + Location.
+                if imgs.len() != 1
+                    || (imgs[0].ptr_id(), imgs[0].location) != (ss.ptr_id(), ss.location)
+                {
                     has_modified = true;
                     break;
                 }
@@ -3966,8 +3970,8 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Builder::FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-217).
     fn fill_images_compounds(&mut self) {
-        // OCCT L199-201: fence map + NbSourceShapes
-        let mut a_mfp: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        // OCCT L199-201: fence map + NbSourceShapes — TopTools_ShapeMapHasher.
+        let mut a_mfp: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
         let a_nb_s = self.ds.nb_source_shapes();
         // OCCT L202-216: for each source compound, call FillImagesCompound
         for i in 0..a_nb_s {
@@ -3982,46 +3986,60 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::FillImagesCompound (BOPAlgo_Builder_1.cxx L278-360).
-    fn fill_images_compound(&mut self, the_c: &Shape, the_mfp: &mut std::collections::HashSet<u64>) {
-        // OCCT L282-283: check if already processed
-        if !the_mfp.insert(the_c.ptr_id()) {
+    /// OCCT L285-299: iterate the sub-shapes, recursively processing nested
+    /// compounds, and set bInterferred when any sub-shape has images. Only then
+    /// build a new compound from the sub-shape images (each image taking the
+    /// sub-shape's orientation, L348-356) and Bind it as theS's image (L362-365).
+    fn fill_images_compound(
+        &mut self,
+        the_c: &Shape,
+        the_mfp: &mut std::collections::HashSet<(u64, u32)>,
+    ) {
+        // OCCT L282-283: if (!theMFP.Add(theS)) return; — the fence uses
+        // TopTools_ShapeMapHasher (TShape + Location).
+        if !the_mfp.insert((the_c.ptr_id(), the_c.location)) {
             return;
         }
-        // OCCT L285-295: check if compound has images
-        if let Some(imgs) = self.my_images.get(&(the_c.ptr_id(), the_c.location)) {
-            // OCCT L289-293: recursively process existing images
-            let imgs_clone = imgs.clone();
-            for img in &imgs_clone {
-                self.fill_images_compound(img, the_mfp);
-            }
-            return;
-        }
-        // OCCT L300-340: build new compound from sub-shape images
+        // OCCT L285-299: bInterferred.
+        let mut b_interferred = false;
         let subs = self.shape_sub_shapes(the_c);
-        let mut has_modified = false;
         for ss in &subs {
+            // OCCT L292-294: recursively process nested compounds.
+            if ss.shape_type() == topods::ShapeType::Compound {
+                self.fill_images_compound(ss, the_mfp);
+            }
+            // OCCT L295-297: if (myImages.IsBound(aSx)) bInterferred = true.
             if self.my_images.contains_key(&(ss.ptr_id(), ss.location)) {
-                has_modified = true;
-                break;
+                b_interferred = true;
             }
         }
-        if !has_modified {
+        if !b_interferred {
             return;
         }
-        // OCCT L345-358: add the_s to myImages with new compound
+        // OCCT L301-344: MakeContainer(COMPOUND, aCIm); iterate sub-shapes.
         let mut new_shapes: Vec<Shape> = Vec::new();
         for ss in &subs {
+            let a_or_x = ss.orientation;
             if let Some(ss_imgs) = self.my_images.get(&(ss.ptr_id(), ss.location)) {
-                new_shapes.extend(ss_imgs.iter().cloned());
+                // OCCT L348-356: each image gets the sub-shape's orientation.
+                for a_sx_im0 in ss_imgs {
+                    let mut a_sx_im = a_sx_im0.clone();
+                    a_sx_im.orientation = a_or_x;
+                    new_shapes.push(a_sx_im);
+                }
             } else {
+                // OCCT L358-360: no images — add the sub-shape itself.
                 new_shapes.push(ss.clone());
             }
         }
+        // OCCT L362-365: myImages.Bind(theS, List(aCIm)) — replace the images.
         let comp_shape = Shape::new(
             std::sync::Arc::new(TShape::Compound(new_shapes)),
-            0, topods::Orientation::Forward,
+            0,
+            topods::Orientation::Forward,
         );
-        self.my_images.entry((the_c.ptr_id(), the_c.location)).or_default().push(comp_shape);
+        self.my_images
+            .insert((the_c.ptr_id(), the_c.location), vec![comp_shape]);
     }
 
     /// OCCT BOPAlgo_Builder::PrepareHistory (BOPAlgo_Builder_4.cxx L164-252).
@@ -4731,8 +4749,8 @@ impl<'a> Builder<'a> {
     /// When arguments are solids, the intermediate calls (VERTEX..SHELL, COMPOUND)
     /// are no-ops; only BuildResult(SOLID) adds shapes into the result compound.
     fn build_result(&mut self, the_type: topods::ShapeType) {
-        // OCCT L133: fence map
-        let mut a_m_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        // OCCT L133: fence map — TopTools_ShapeMapHasher (TShape + Location).
+        let mut a_m_fence: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
         // OCCT L136-167: iterate myArguments, filter by theType
         let a_arguments = self.my_arguments.clone();
         for a_s in &a_arguments {
@@ -4740,12 +4758,12 @@ impl<'a> Builder<'a> {
             // OCCT L145-152: check for images
             if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)).cloned() {
                 for a_s_im in &imgs {
-                    if a_m_fence.insert(a_s_im.ptr_id()) {
+                    if a_m_fence.insert((a_s_im.ptr_id(), a_s_im.location)) {
                         self.add_shape_to_result(a_s_im);
                     }
                 }
             } else {
-                if a_m_fence.insert(a_s.ptr_id()) {
+                if a_m_fence.insert((a_s.ptr_id(), a_s.location)) {
                     self.add_shape_to_result(a_s);
                 }
             }
