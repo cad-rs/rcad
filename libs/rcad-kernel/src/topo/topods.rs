@@ -1534,9 +1534,13 @@ pub fn surface_adaptor_basis_and_bounds(surf: &Surface3) -> (&Surface3, [f64; 4]
     }
 }
 
-/// OCCT GeomAdaptor_Surface::UResolution (GeomAdaptor_Surface.cxx L1819-1896).
-/// The adaptor wraps the stored surface; its parameter bounds come from
+/// OCCT-aligned: GeomAdaptor_Surface::UResolution (GeomAdaptor_Surface.cxx
+/// L1819-1896). Analytic branches (Torus/Sphere/Cylinder/Cone/Plane) are 1:1;
+/// the adaptor wraps the stored surface and its parameter bounds come from
 /// Geom_Surface::Bounds() (a Geom_RectangularTrimmedSurface reports its trim).
+/// Parametric branches (Bezier/BSpline/Offset/Extrusion) approximate OCCT's
+/// Geom_Surface::Resolution(Tol, Ures, Vres) = Tol * UMaxDerivInv (which calls
+/// BSplSLib::Resolution) with R3d; full translation is pending.
 pub fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
     let (basis, [_, _, v1, v2]) = surface_adaptor_basis_and_bounds(surf);
     let mut res = match basis {
@@ -1579,9 +1583,12 @@ pub fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
         // SurfaceOfExtrusion L1824-1827: BasisCurve->Resolution(R3d). A straight
         // profile line yields R3d; curved profiles are approximated by R3d.
         Surface3::LinearExtrusion(_) => return tol3d,
-        // BezierSurface/BSplineSurface L1872-1881: surface->Resolution(...).
+        // BezierSurface/BSplineSurface L1872-1881: OCCT calls
+        // surface->Resolution(R3d, Ures, Vres) -> Ures = R3d * UMaxDerivInv
+        // (BSplSLib::Resolution); rcad approximates with R3d (translation pending).
         Surface3::Bezier(_) | Surface3::BSpline(_) => return tol3d,
-        // OffsetSurface L1882-1885: BasisAdaptor->UResolution(R3d).
+        // OffsetSurface L1882-1885: OCCT recurses BasisAdaptor->UResolution(R3d);
+        // rcad approximates with R3d.
         Surface3::Offset(_) => return tol3d,
         // default L1886-1888: Precision::Parametric(R3d).
         _ => return parametric_default(tol3d),
@@ -1594,7 +1601,11 @@ pub fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
     }
 }
 
-/// OCCT GeomAdaptor_Surface::VResolution (GeomAdaptor_Surface.cxx L1900-1962).
+/// OCCT-aligned: GeomAdaptor_Surface::VResolution (GeomAdaptor_Surface.cxx
+/// L1900-1962). Analytic branches (Torus/Sphere/Cylinder/Cone/Plane, plus
+/// Revolution/Extrusion returning R3d) are 1:1; parametric branches
+/// (Bezier/BSpline/Offset) approximate OCCT's Resolution(Tol, Ures, Vres)
+/// = Tol * VMaxDerivInv with R3d; full translation is pending.
 pub fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
     let (basis, _) = surface_adaptor_basis_and_bounds(surf);
     let mut res = match basis {
@@ -1614,13 +1625,17 @@ pub fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
             }
         }
         Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Plane(_) => return tol3d,
-        // SurfaceOfRevolution L1906-1909: BasisCurve->Resolution(R3d).
+        // SurfaceOfRevolution L1906-1909: BasisCurve->Resolution(R3d); straight
+        // basis yields R3d, curved approximated by R3d.
         Surface3::Revolution(_) => return tol3d,
         // SurfaceOfExtrusion L1928-1933: return R3d.
         Surface3::LinearExtrusion(_) => return tol3d,
-        // BezierSurface/BSplineSurface L1934-1943: surface->Resolution(...).
+        // BezierSurface/BSplineSurface L1934-1943: OCCT calls
+        // surface->Resolution(R3d, Ures, Vres) -> Vres = R3d * VMaxDerivInv
+        // (BSplSLib::Resolution); rcad approximates with R3d (translation pending).
         Surface3::Bezier(_) | Surface3::BSpline(_) => return tol3d,
-        // OffsetSurface L1944-1947: BasisAdaptor->VResolution(R3d).
+        // OffsetSurface L1944-1947: OCCT recurses BasisAdaptor->VResolution(R3d);
+        // rcad approximates with R3d.
         Surface3::Offset(_) => return tol3d,
         // default L1948-1950: Precision::Parametric(R3d).
         _ => return parametric_default(tol3d),
