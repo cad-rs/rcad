@@ -2316,18 +2316,23 @@ impl<'a> Builder<'a> {
         let a_v_tgt = a_c2d_split.derivative_at(a_t);
         //
         // OCCT L275-282: project the midpoint onto the two original pcurves.
-        let a_proj1 = ExtPC2d::new(a_p_mid, &a_c2d1, 1e-12, a_t1, a_t2);
-        let a_proj2 = ExtPC2d::new(a_p_mid, &a_c2d2, 1e-12, a_t1, a_t2);
+        // Geom2dAPI_ProjectPointOnCurve::Init -> Extrema_ExtPC2d ->
+        // Extrema_GGExtPC default theTolF = 1.0e-10.
+        let a_proj1 = ExtPC2d::new(a_p_mid, &a_c2d1, 1e-10, a_t1, a_t2);
+        let a_proj2 = ExtPC2d::new(a_p_mid, &a_c2d2, 1e-10, a_t1, a_t2);
         if a_proj1.nb_ext() == 0 && a_proj2.nb_ext() == 0 {
             return false;
         }
+        // OCCT L284-285: aDist1 = LowerDistance() = sqrt(SquareDistance())
+        // (Geom2dAPI_ProjectPointOnCurve.cxx L178) — non-squared distance,
+        // compared against PConfusion() below.
         let a_dist1 = if a_proj1.nb_ext() > 0 {
-            a_proj1.square_distance(1)
+            a_proj1.square_distance(1).sqrt()
         } else {
             f64::MAX
         };
         let a_dist2 = if a_proj2.nb_ext() > 0 {
-            a_proj2.square_distance(1)
+            a_proj2.square_distance(1).sqrt()
         } else {
             f64::MAX
         };
@@ -2430,8 +2435,8 @@ impl<'a> Builder<'a> {
             // aPC->D1(0.5*(aFirst+aLast), aP, aT)
             let a_t = pc.derivative_at(0.5 * (a_first + a_last));
             let a_sq_magn = a_t.length_squared();
-            if a_sq_magn <= 1e-15 {
-                // gp::Resolution()
+            // gp::Resolution() = RealSmall() = DBL_MIN = f64::MIN_POSITIVE
+            if a_sq_magn <= f64::MIN_POSITIVE {
                 return (false, false);
             }
             let a_t = a_t / a_sq_magn.sqrt();
