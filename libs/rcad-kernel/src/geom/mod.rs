@@ -1756,7 +1756,18 @@ pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
     }
 }
 
-/// OCCT Geom2d_Curve::Translate(gp_Vec2d) — translate a 2D curve by `offset`.
+/// OCCT-aligned: Geom2d_Curve::Translate(gp_Vec2d) = Geom2d_Geometry::Translate
+/// (Geom2d_Geometry.cxx L64-70, Transform with translation trsf), per-type
+/// Transform implementations. Line/Circle/Ellipse/Hyperbola/Parabola translate
+/// the conic position; Bezier/BSpline transform poles; TrimmedCurve translates
+/// the basis and keeps the trim (Geom2d_TrimmedCurve.cxx L287-293, the
+/// re-trimmed parameters are unchanged for a translation since
+/// TransformedParameter(U, translation) = U); OffsetCurve translates the basis
+/// and keeps the offset (Geom2d_OffsetCurve.cxx L414-419, offsetValue *= |ScaleFactor|
+/// = unchanged for a translation). The rcad-only analytic types
+/// (SineWave, CircleInvolute, ArchimedeanSpiral, LogarithmicSpiral, AHTBezier,
+/// TBezier) have no OCCT Geom2d counterpart; they translate their defining
+/// elements (SineWave is translation-invariant as it is stored phase-only).
 pub fn translate_curve2d(curve: &Curve2d, offset: DVec2) -> Curve2d {
     match curve {
         Curve2d::Line(l) => Curve2d::Line(l.translate(offset)),
