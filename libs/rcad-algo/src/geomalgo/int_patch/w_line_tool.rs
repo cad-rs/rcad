@@ -33,27 +33,37 @@ enum WlsConnectionType {
     ReqExtend,
 }
 
-/// OCCT static MinMax (L56-64).
+/// OCCT-aligned: IntPatch_WLineTool::MinMax (L56-64).
 fn min_max(a: &mut f64, b: &mut f64) {
     if *a > *b {
         std::mem::swap(a, b);
     }
 }
 
-/// OCCT Bnd_Range::IsIntersected(P, Period): whether the range [r1, r2]
-/// (extended by the periodic copies) contains the point P.
+/// OCCT-aligned: Bnd_Range::IsIntersected (Bnd_Range.cxx L65-128).
+/// Whether [r1, r2] (myFirst=r1, myLast=r2 — never void in
+/// CheckArgumentsToExtend) contains p or a periodic copy of it.  Returns
+/// truthy for In or Boundary, falsy for Out.
 fn range_is_intersected(r1: f64, r2: f64, p: f64, period: f64) -> bool {
-    if period == 0.0 {
-        return p >= r1 && p <= r2;
-    }
-    let k0 = ((r1 - p) / period).floor() as i64;
-    for k in (k0 - 1)..=(k0 + 1) {
-        let val = p + k as f64 * period;
-        if val >= r1 && val <= r2 {
-            return true;
+    let a_df = r1 - p;
+    let a_dl = r2 - p;
+    let a_period = period.abs();
+    if a_period <= f64::MIN_POSITIVE {
+        let a_delta = a_df * a_dl;
+        if a_delta.abs() <= f64::EPSILON {
+            return true; // myFirst or myLast lies ON the value: Boundary
         }
+        return a_delta < 0.0; // In
     }
-    false
+    let a_val1 = a_df / a_period;
+    let a_val2 = a_dl / a_period;
+    let a_par1 = a_val1.floor() as i64;
+    let a_par2 = a_val2.floor() as i64;
+    if a_par1 != a_par2 {
+        return true; // In, or Boundary when myLast lies on the seam-edge
+    }
+    // a_par1 == a_par2: truthy only when myFirst lies on the seam-edge.
+    (a_val1 - a_par1 as f64).abs() <= f64::EPSILON
 }
 
 /// OCCT IntPatch_WLineTool::JoinWLines (L1605-1838).
@@ -282,7 +292,7 @@ fn check_arguments_to_join(
     a_cross.length_squared() < 1.0e-4 * a_sq13 * a_sq13
 }
 
-/// OCCT IntPatch_WLineTool::ExtendTwoWLines (L1874-2153).
+/// OCCT-aligned: IntPatch_WLineTool::ExtendTwoWLines (L1874-2153).
 ///
 /// For pairs of WLines that meet at an endpoint (within theToler3D), extends one
 /// of them through the shared point so that the pair forms a single smooth
@@ -350,8 +360,8 @@ pub fn extend_two_w_lines(
             if !(pnt_is_same(&a_pnt_f_wl1, &a_pnt_f_wl2, tol_3d, PCONFUSION)
                 || pnt_is_same(&a_pnt_f_wl1, &a_pnt_l_wl2, tol_3d, PCONFUSION))
             {
-                if pnt_is_same(&a_pnt_f_wl1, &a_pnt_f_wl2, tol_3d, 0.0)
-                    || pnt_is_same(&a_pnt_f_wl1, &a_pnt_l_wl2, tol_3d, 0.0)
+                if pnt_is_same(&a_pnt_f_wl1, &a_pnt_f_wl2, tol_3d, -1.0)
+                    || pnt_is_same(&a_pnt_f_wl1, &a_pnt_l_wl2, tol_3d, -1.0)
                 {
                     a_check_result |= WT_DIS_FIRST_FIRST | WT_DIS_FIRST_LAST;
                 }
@@ -360,8 +370,8 @@ pub fn extend_two_w_lines(
             if !(pnt_is_same(&a_pnt_l_wl1, &a_pnt_f_wl2, tol_3d, PCONFUSION)
                 || pnt_is_same(&a_pnt_l_wl1, &a_pnt_l_wl2, tol_3d, PCONFUSION))
             {
-                if pnt_is_same(&a_pnt_l_wl1, &a_pnt_f_wl2, tol_3d, 0.0)
-                    || pnt_is_same(&a_pnt_l_wl1, &a_pnt_l_wl2, tol_3d, 0.0)
+                if pnt_is_same(&a_pnt_l_wl1, &a_pnt_f_wl2, tol_3d, -1.0)
+                    || pnt_is_same(&a_pnt_l_wl1, &a_pnt_l_wl2, tol_3d, -1.0)
                 {
                     a_check_result |= WT_DIS_LAST_FIRST | WT_DIS_LAST_LAST;
                 }
@@ -369,22 +379,22 @@ pub fn extend_two_w_lines(
 
             for pt in list_of_critical_points.iter() {
                 if (a_check_result & (WT_DIS_FIRST_FIRST | WT_DIS_FIRST_LAST)) == 0 {
-                    if pt.distance_squared(a_pnt_f_wl1.p3d) < CONFUSION * CONFUSION {
+                    if pt.distance_squared(a_pnt_f_wl1.p3d) < CONFUSION {
                         a_check_result |= WT_DIS_FIRST_FIRST | WT_DIS_FIRST_LAST;
                     }
                 }
                 if (a_check_result & (WT_DIS_LAST_FIRST | WT_DIS_LAST_LAST)) == 0 {
-                    if pt.distance_squared(a_pnt_l_wl1.p3d) < CONFUSION * CONFUSION {
+                    if pt.distance_squared(a_pnt_l_wl1.p3d) < CONFUSION {
                         a_check_result |= WT_DIS_LAST_FIRST | WT_DIS_LAST_LAST;
                     }
                 }
                 if (a_check_result & (WT_DIS_FIRST_FIRST | WT_DIS_LAST_FIRST)) == 0 {
-                    if pt.distance_squared(a_pnt_f_wl2.p3d) < CONFUSION * CONFUSION {
+                    if pt.distance_squared(a_pnt_f_wl2.p3d) < CONFUSION {
                         a_check_result |= WT_DIS_FIRST_FIRST | WT_DIS_LAST_FIRST;
                     }
                 }
                 if (a_check_result & (WT_DIS_FIRST_LAST | WT_DIS_LAST_LAST)) == 0 {
-                    if pt.distance_squared(a_pnt_l_wl2.p3d) < CONFUSION * CONFUSION {
+                    if pt.distance_squared(a_pnt_l_wl2.p3d) < CONFUSION {
                         a_check_result |= WT_DIS_FIRST_LAST | WT_DIS_LAST_LAST;
                     }
                 }
@@ -508,8 +518,9 @@ enum ExtendMode {
     LastLast,
 }
 
-/// OCCT ExtendTwoWLFirstFirst/FirstLast/LastFirst/LastLast (L1126-1464): shared
-/// by the four modes; extends wl1 through its start/end point and joins wl2.
+/// OCCT-aligned: IntPatch_WLineTool::ExtendTwoWLFirstFirst/FirstLast/
+/// LastFirst/LastLast (L1126-1464): shared by the four modes; extends wl1
+/// through its start/end point and joins wl2.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn extend_two_wl(
     s1: &Surface3,
@@ -692,18 +703,22 @@ fn extend_two_wl(
     *has_been_joined = true;
 }
 
-/// OCCT WLine::Vertex(1).ParameterOnLine() == 1 and
+/// OCCT-aligned: IntPatch_WLineTool::ExtendTwoWLines L1910-1918 (exact
+/// integer param checks): Vertex(1).ParameterOnLine() == 1 and
 /// Vertex(NbVertex).ParameterOnLine() == NbPnts.
 fn wl1_first_last_vertex_ok(wl: &IntPatchLine) -> bool {
     if wl.vertices.is_empty() || wl.wline_pnts.is_empty() {
         return false;
     }
-    let first_param = wl.vertices.iter().map(|v| v.param_on_line).fold(f64::INFINITY, f64::min);
-    let last_param = wl.vertices.iter().map(|v| v.param_on_line).fold(f64::NEG_INFINITY, f64::max);
-    (first_param - 1.0).abs() <= 1e-9 && (last_param - wl.wline_pnts.len() as f64).abs() <= 1e-9
+    // OCCT L1910-1918: Vertex(1).ParameterOnLine() == 1 and
+    // Vertex(NbVertex).ParameterOnLine() == NbPnts (exact integer params).
+    wl.vertices[0].param_on_line == 1.0
+        && wl.vertices[wl.vertices.len() - 1].param_on_line == wl.wline_pnts.len() as f64
 }
 
-/// Remove the first and/or last endpoint vertex (OCCT RemoveVertex(1/N)).
+/// OCCT-aligned: IntPatch_WLineTool::ExtendTwoWL* L1175-1185 etc (the
+/// while (Vertex(1)/Vertex(NbVertex).ParameterOnLine() == aPrm) RemoveVertex
+/// loops).  Remove the first and/or last endpoint vertex run.
 fn remove_endpoint_vertex(slin: &mut Vec<IntPatchLine>, idx: usize, front: bool, back: bool) {
     let verts = &mut slin[idx].vertices;
     // OCCT L1175-1185 / L1266-1276 / L1355-1365 / L1436-1446: removes the
@@ -715,7 +730,8 @@ fn remove_endpoint_vertex(slin: &mut Vec<IntPatchLine>, idx: usize, front: bool,
     if front {
         if let Some(prm) = verts.first().map(|v| v.param_on_line) {
             let mut k = 0;
-            while k < verts.len() && (verts[k].param_on_line - prm).abs() <= 1e-9 {
+            // OCCT: while (Vertex(1).ParameterOnLine() == aPrm) RemoveVertex(1);
+            while k < verts.len() && verts[k].param_on_line == prm {
                 k += 1;
             }
             verts.drain(..k);
@@ -724,7 +740,9 @@ fn remove_endpoint_vertex(slin: &mut Vec<IntPatchLine>, idx: usize, front: bool,
     if back {
         if let Some(prm) = verts.last().map(|v| v.param_on_line) {
             let mut k = verts.len();
-            while k > 0 && (verts[k - 1].param_on_line - prm).abs() <= 1e-9 {
+            // OCCT: while (Vertex(NbVertex).ParameterOnLine() == aPrm)
+            //   RemoveVertex(NbVertex);
+            while k > 0 && verts[k - 1].param_on_line == prm {
                 k -= 1;
             }
             verts.truncate(k);
@@ -732,20 +750,17 @@ fn remove_endpoint_vertex(slin: &mut Vec<IntPatchLine>, idx: usize, front: bool,
     }
 }
 
-/// OCCT static IsNeedSkipWL (L1842-1867).
+/// OCCT-aligned: IntPatch_WLineTool::IsNeedSkipWL (L1842-1867).
 fn is_need_skip_wl(wl: &IntPatchLine, box_s1: &[f64; 4], box_s2: &[f64; 4], arr_periods: &[f64; 4]) -> bool {
     let a_nb_vtx = wl.vertices.len();
+    // OCCT L1850-1860: Vertex params are 1-based point indices; Point(pmid)
+    // indexes wline_pnts at pmid-1 (rcad Vec is 0-based).  No bounds guards in
+    // OCCT — the callers guarantee Vertex(1)@1 .. Vertex(NbVertex)@NbPnts.
     for i in 0..a_nb_vtx.saturating_sub(1) {
         let a_firstp = wl.vertices[i].param_on_line;
         let a_lastp = wl.vertices[i + 1].param_on_line;
         let pmid = ((a_firstp + a_lastp) / 2.0) as usize;
-        if pmid == 0 {
-            continue;
-        }
-        if pmid >= wl.wline_pnts.len() {
-            continue;
-        }
-        let a_pmid = &wl.wline_pnts[pmid];
+        let a_pmid = &wl.wline_pnts[pmid - 1];
         if is_out_of_domain(box_s1, box_s2, a_pmid, arr_periods) {
             return true;
         }
@@ -753,7 +768,7 @@ fn is_need_skip_wl(wl: &IntPatchLine, box_s1: &[f64; 4], box_s2: &[f64; 4], arr_
     false
 }
 
-/// OCCT static IsOutOfDomain (L891-917).
+/// OCCT-aligned: IntPatch_WLineTool::IsOutOfDomain (L891-911).
 fn is_out_of_domain(box_s1: &[f64; 4], box_s2: &[f64; 4], p_on2s: &WLinePnt, arr_periods: &[f64; 4]) -> bool {
     let a_u1 = in_period(p_on2s.u1, box_s1[0], box_s1[0] + arr_periods[0]);
     let a_v1 = in_period(p_on2s.v1, box_s1[1], box_s1[1] + arr_periods[1]);
@@ -762,7 +777,8 @@ fn is_out_of_domain(box_s1: &[f64; 4], box_s2: &[f64; 4], p_on2s: &WLinePnt, arr
     is_out_rect(a_u1, a_v1, box_s1) || is_out_rect(a_u2, a_v2, box_s2)
 }
 
-/// OCCT ElCLib::InPeriod(par, min, max) — the point in the period interval.
+/// OCCT-aligned: ElCLib::InPeriod (TKMath ElCLib.cxx L424-448) — the point
+/// in the period interval.
 fn in_period(par: f64, min: f64, max: f64) -> f64 {
     let period = max - min;
     if period <= 0.0 || period.is_infinite() {
@@ -775,17 +791,33 @@ fn in_period(par: f64, min: f64, max: f64) -> f64 {
     min + p
 }
 
+/// OCCT-aligned: Bnd_Box2d::IsOut for a point (box gap 0, boundary not out).
 /// Is the 2D point (u, v) outside the rectangle [u_min, v_min, u_max, v_max]?
 fn is_out_rect(u: f64, v: f64, rect: &[f64; 4]) -> bool {
     u < rect[0] || u > rect[2] || v < rect[1] || v > rect[3]
 }
 
-/// OCCT IntSurf_PntOn2S::IsSame(thePnt, theTol3d, theTol2d).
-fn pnt_is_same(a: &WLinePnt, b: &WLinePnt, tol3d: f64, _tol2d: f64) -> bool {
-    a.p3d.distance(b.p3d) <= tol3d
+/// OCCT-aligned: IntSurf_PntOn2S::IsSame (IntSurf_PntOn2S.cxx L85-113).
+/// 3D distance
+/// within theTol3d; when theTol2d >= 0 the UV params of both surfaces must
+/// also coincide within theTol2d.
+fn pnt_is_same(a: &WLinePnt, b: &WLinePnt, tol3d: f64, tol2d: f64) -> bool {
+    if a.p3d.distance_squared(b.p3d) > tol3d * tol3d {
+        return false;
+    }
+    if tol2d < 0.0 {
+        return true; // Compare 3D-points only.
+    }
+    if (a.u1 - b.u1).abs() > tol2d || (a.v1 - b.v1).abs() > tol2d {
+        return false;
+    }
+    if (a.u2 - b.u2).abs() > tol2d || (a.v2 - b.v2).abs() > tol2d {
+        return false;
+    }
+    true
 }
 
-/// OCCT static CheckArgumentsToExtend (L918-1067).
+/// OCCT-aligned: IntPatch_WLineTool::CheckArgumentsToExtend (L918-1067).
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn check_arguments_to_extend(
     s1: &Surface3,
@@ -876,7 +908,7 @@ fn check_arguments_to_extend(
     WlsConnectionType::ReqExtend
 }
 
-/// OCCT static IsIntersectionPoint (L734-804).
+/// OCCT-aligned: IntPatch_WLineTool::IsIntersectionPoint (L734-804).
 fn is_intersection_point(
     pmid: DVec3,
     s1: &Surface3,
@@ -899,12 +931,15 @@ fn is_intersection_point(
 
     adjust_uv(ref_pt, arr_periods, new_pt);
 
-    let a_p1 = s1.point_at(new_pt.u1, new_pt.v1);
-    let a_p2 = s2.point_at(new_pt.u2, new_pt.v2);
+    // OCCT L800-801: evaluate the surfaces at the ORIGINAL aU1/aV1/aU2/aV2
+    // locals (before AdjustPointAndVertex), not at the adjusted new_pt params.
+    let a_p1 = s1.point_at(a_u1, a_v1);
+    let a_p2 = s2.point_at(a_u2, a_v2);
     a_p1.distance_squared(a_p2) <= tol * tol
 }
 
-/// ElSLib::Parameters for the point on the surface (analytic UV inversion).
+/// OCCT-aligned: ElSLib::Parameters per surface type (IsIntersectionPoint
+/// L744-794 switch).  Data-model adapter: analytic UV inversion.
 fn surface_parameters(surf: &Surface3, p: DVec3) -> (f64, f64) {
     match surf {
         Surface3::Plane(pl) => {
@@ -931,8 +966,8 @@ fn surface_parameters(surf: &Surface3, p: DVec3) -> (f64, f64) {
     }
 }
 
-/// OCCT IntPatch_SpecialPoints::AdjustPointAndVertex: shifts periodic params of
-/// new_point to be within half a period of ref_pt.
+/// OCCT-aligned: IntPatch_SpecialPoints::AdjustPointAndVertex (L1082-1128):
+/// shifts periodic params of new_point to be within half a period of ref_pt.
 fn adjust_uv(ref_pt: &WLinePnt, arr_periods: &[f64; 4], new_point: &mut WLinePnt) {
     let mut a_par = [new_point.u1, new_point.v1, new_point.u2, new_point.v2];
     let mut a_ref_par = [0.0f64; 2];
@@ -963,7 +998,8 @@ fn adjust_uv(ref_pt: &WLinePnt, arr_periods: &[f64; 4], new_point: &mut WLinePnt
     new_point.v2 = a_par[3];
 }
 
-/// OCCT static ExtendFirst (L810-850): adds thePnt to the beginning of the line.
+/// OCCT-aligned: IntPatch_WLineTool::ExtendFirst (L810-850): adds thePnt to
+/// the beginning of the line.
 fn extend_first(slin: &mut Vec<IntPatchLine>, idx: usize, added_pt: WLinePnt) {
     let n = slin[idx].wline_pnts.len();
     if n == 0 {
@@ -972,7 +1008,8 @@ fn extend_first(slin: &mut Vec<IntPatchLine>, idx: usize, added_pt: WLinePnt) {
     if added_pt.p3d.distance(slin[idx].wline_pnts[0].p3d) <= CONFUSION {
         slin[idx].wline_pnts[0] = added_pt;
         for v in slin[idx].vertices.iter_mut() {
-            if (v.param_on_line - 1.0).abs() > 1e-9 {
+            // OCCT L822: if (aVert.ParameterOnLine() != 1) break;
+            if v.param_on_line != 1.0 {
                 break;
             }
             v.u1 = added_pt.u1;
@@ -985,7 +1022,8 @@ fn extend_first(slin: &mut Vec<IntPatchLine>, idx: usize, added_pt: WLinePnt) {
     }
     slin[idx].wline_pnts.insert(0, added_pt);
     for v in slin[idx].vertices.iter_mut() {
-        if (v.param_on_line - 1.0).abs() <= 1e-9 {
+        // OCCT L840: if (aVert.ParameterOnLine() == 1) ... else +1.
+        if v.param_on_line == 1.0 {
             v.u1 = added_pt.u1;
             v.v1 = added_pt.v1;
             v.u2 = added_pt.u2;
@@ -997,7 +1035,8 @@ fn extend_first(slin: &mut Vec<IntPatchLine>, idx: usize, added_pt: WLinePnt) {
     }
 }
 
-/// OCCT static ExtendLast (L856-884): adds thePnt to the end of the line.
+/// OCCT-aligned: IntPatch_WLineTool::ExtendLast (L856-884): adds thePnt to
+/// the end of the line.
 fn extend_last(slin: &mut Vec<IntPatchLine>, idx: usize, added_pt: WLinePnt) {
     let n = slin[idx].wline_pnts.len();
     if n == 0 {
@@ -1010,7 +1049,8 @@ fn extend_last(slin: &mut Vec<IntPatchLine>, idx: usize, added_pt: WLinePnt) {
     }
     let new_n = slin[idx].wline_pnts.len();
     for v in slin[idx].vertices.iter_mut().rev() {
-        if (v.param_on_line - n as f64).abs() > 1e-9 {
+        // OCCT L875: if (aVert.ParameterOnLine() != aNbPnts) break;
+        if v.param_on_line != n as f64 {
             break;
         }
         v.u1 = added_pt.u1;
