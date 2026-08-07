@@ -12,8 +12,8 @@ use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools::face_make_curve::intermediate_point;
 use rcad_kernel::base::extrema::ExtPC2d;
 use rcad_kernel::geom::{
-    translate_curve2d, BezierSurface, BSplineCurve2, BSplineSurface, Curve2d, Curve2dEval,
-    CurveEval, Plane, Surface3, SurfaceEval, TrimmedCurve2,
+    translate_curve2d, BezierSurface, BSplineSurface, Curve2d, Curve2dEval, CurveEval, Plane,
+    Surface3, SurfaceEval, TrimmedCurve2,
 };
 use rcad_kernel::topods;
 use rcad_kernel::topods::{
@@ -578,33 +578,24 @@ fn min_step_3d(
     a_dt_max
 }
 
-/// Project a 3D curve onto a plane (the plane pcurve, OCCT BRepLib plane
-/// projection). Samples the curve over its range, computes the plane UV
-/// (u = (p-O)·u_dir, v = (p-O)·v_dir), and approximates a BSpline2d rescaled
-/// to the curve's parameter range.
-fn project_edge_on_plane(curve: &rcad_kernel::geom::Curve3, pl: &Plane, range: [f64; 2]) -> Option<Curve2d> {
-    use rcad_kernel::geom::Curve3;
-    if !range[1].is_finite() || !range[0].is_finite() {
-        return None;
-    }
-    let n = 23usize;
-    let dt = (range[1] - range[0]) / n as f64;
-    let mut uv: Vec<DVec2> = Vec::with_capacity(n + 1);
-    for i in 0..=n {
-        let t = range[0] + i as f64 * dt;
-        let p = curve.point_at(t);
-        let u = (p - pl.origin).dot(pl.u_dir);
-        let v = (p - pl.origin).dot(pl.v_dir);
-        uv.push(DVec2::new(u, v));
-    }
-    if uv.len() < 2 {
-        return None;
-    }
-    let mut c = BSplineCurve2::approximate(&uv);
-    if range[1] > range[0] {
-        c.knots = c.knots.iter().map(|k| range[0] + (range[1] - range[0]) * k).collect();
-    }
-    Some(Curve2d::BSpline(c))
+/// OCCT BRepLib::BuildPCurveForEdgeOnPlane -> BRep_Tool::CurveOnPlane
+/// (BRep_Tool.cxx L379-450) -> GeomProjLib::ProjectOnPlane -> ProjLib_Plane ->
+/// Geom2dAdaptor::MakeCurve: project the edge's 3D curve onto the plane and
+/// return the 2D pcurve in the plane's (u, v) space.
+///
+/// Returns None where OCCT stores no pcurve: the projected curve is a BSpline
+/// / Bezier / Other (Geom2dAdaptor::MakeCurve throws, Geom2dAdaptor.cxx
+/// L92-93), or the projected ellipse/parabola/hyperbola minor axis would need
+/// a clockwise orientation that rcad's 2D conics cannot represent.
+///
+/// OCCT-aligned: rcad-kernel/src/base/geom_proj_lib/project_on_plane.rs
+fn project_edge_on_plane(
+    curve: &rcad_kernel::geom::Curve3,
+    pl: &Plane,
+    range: [f64; 2],
+) -> Option<Curve2d> {
+    use rcad_kernel::base::geom_proj_lib::project_on_plane::curve_on_plane;
+    curve_on_plane(curve, range, pl)
 }
 
 /// Signed angle from d1 to d2 around the reference axis d_ref.

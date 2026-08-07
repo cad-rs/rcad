@@ -14,6 +14,11 @@ use crate::geom::{
 };
 use crate::base::proj_lib;
 
+/// OCCT-aligned plane pcurve projection chain (BRep_Tool::CurveOnPlane ->
+/// GeomProjLib::ProjectOnPlane -> ProjLib_ProjectOnPlane -> ProjLib_Plane ->
+/// Geom2dAdaptor::MakeCurve).
+pub mod project_on_plane;
+
 const TOL_DEFAULT: f64 = 1e-7;
 
 /// Project a 3D curve onto a surface, returning the 2D pcurve.
