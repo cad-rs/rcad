@@ -445,8 +445,9 @@ fn line_constructor_parts(
     result
 }
 
-/// OCCT GeomInt_LineConstructor WLine path (L152-328).  WLine vertices carry
-/// integer point indices; consecutive pairs are classified on the stored UVs.
+/// OCCT-aligned: GeomInt_LineConstructor::Perform WLine path (L152-328).
+/// WLine vertices carry integer point indices; consecutive pairs are
+/// classified on the stored UVs.
 fn line_constructor_wline_parts(
     surf1: &Surface3,
     uv1: [f64; 4],
@@ -459,8 +460,9 @@ fn line_constructor_wline_parts(
     for i in 0..nbvtx.saturating_sub(1) {
         let firstp = line.vertices[i].param_on_line;
         let lastp = line.vertices[i + 1].param_on_line;
-        // OCCT L162: if (firstp != lastp).
-        if (firstp - lastp).abs() > PCONFUSION {
+        // OCCT L162: if (firstp != lastp) — exact inequality (the GLine path
+        // L354 uses abs > PConfusion, the WLine path does not).
+        if firstp != lastp {
             // OCCT L163: if (lastp != firstp + 1) — any non-adjacent pair (incl.
             // fractional parameter gaps) uses the midpoint-classification branch.
             if (lastp - firstp) != 1.0 {
@@ -481,16 +483,22 @@ fn line_constructor_wline_parts(
                 // respect the quadric domain; classify the interpolated midpoint
                 // of the two endpoint points (OCCT L203-204: Point((int)firstp),
                 // Point((int)lastp) — the actual polyline points, 1-based).
+                // OCCT L205-213: AdjustPeriodic each endpoint's params on both
+                // surfaces FIRST, then average the adjusted params.
                 let pf = line.wline_pnts[firstp as usize - 1];
                 let pl = line.wline_pnts[lastp as usize - 1];
-                let mu1 = 0.5 * (pf.u1 + pl.u1);
-                let mv1 = 0.5 * (pf.v1 + pl.v1);
-                let mu2 = 0.5 * (pf.u2 + pl.u2);
-                let mv2 = 0.5 * (pf.v2 + pl.v2);
+                let a_uvf1 = adjust_periodic_uv(surf1, DVec2::new(pf.u1, pf.v1), uv1);
+                let a_uvf2 = adjust_periodic_uv(surf2, DVec2::new(pf.u2, pf.v2), uv2);
+                let a_uvl1 = adjust_periodic_uv(surf1, DVec2::new(pl.u1, pl.v1), uv1);
+                let a_uvl2 = adjust_periodic_uv(surf2, DVec2::new(pl.u2, pl.v2), uv2);
+                let mu1 = 0.5 * (a_uvf1.x + a_uvl1.x);
+                let mv1 = 0.5 * (a_uvf1.y + a_uvl1.y);
+                let mu2 = 0.5 * (a_uvf2.x + a_uvl2.x);
+                let mv2 = 0.5 * (a_uvf2.y + a_uvl2.y);
                 let pmid = 0.5 * (pf.p3d + pl.p3d);
-                let in1 = in_uv_rect_adjusted(surf1, uv1, pmid, mu1, mv1);
+                let in1 = in_uv_rect(DVec2::new(mu1, mv1), uv1, PCONFUSION * 35.0);
                 if in1 {
-                    let in2 = in_uv_rect_adjusted(surf2, uv2, pmid, mu2, mv2);
+                    let in2 = in_uv_rect(DVec2::new(mu2, mv2), uv2, PCONFUSION * 35.0);
                     if in2 {
                         result.push([firstp, lastp]);
                     }
@@ -516,11 +524,47 @@ fn line_constructor_wline_parts(
             }
         }
     }
-    // OCCT L257-326: the bCond merging applies to Plane x (Extrusion/Revolution)
-    // faces only — not reachable in the analytic FF stage (the WLine vertices
-    // carry integer point indices; the bCond block rewrites overlapping
-    // intervals for Plane/Extrusion|Revolution pairs only).
-    //
+    // OCCT L257-326: when the pair count is > 1 and one surface is a Plane and
+    // the other a SurfaceOfExtrusion/Revolution, collapse contiguous pairs that
+    // share an integer point index into one interval.
+    let a_nb_parts = result.len();
+    if a_nb_parts > 1 {
+        let mut b_cond = false;
+        if matches!(surf1, Surface3::Plane(_)) {
+            if matches!(surf2, Surface3::LinearExtrusion(_) | Surface3::Revolution(_)) {
+                b_cond = !b_cond;
+            }
+        } else if matches!(surf2, Surface3::Plane(_)) {
+            if matches!(surf1, Surface3::LinearExtrusion(_) | Surface3::Revolution(_)) {
+                b_cond = !b_cond;
+            }
+        }
+        if b_cond {
+            // OCCT L293-312: walk the flat seqp; a param whose integer index has
+            // not been seen yet is appended, otherwise the last appended param is
+            // removed (dropping the shared endpoint of two contiguous pairs).
+            let mut a_map: std::collections::HashSet<i64> = std::collections::HashSet::new();
+            let mut a_seq_tmp: Vec<f64> = Vec::new();
+            for pair in result.iter() {
+                for &lastp in pair.iter() {
+                    let an_index = lastp as i64;
+                    if a_map.insert(an_index) {
+                        a_seq_tmp.push(lastp);
+                    } else {
+                        a_seq_tmp.pop();
+                    }
+                }
+            }
+            // OCCT L314-324: rebuild the pairs from the merged flat sequence.
+            result.clear();
+            let a_nb = a_seq_tmp.len() / 2;
+            for i in 0..a_nb {
+                let firstp = a_seq_tmp[2 * i];
+                let lastp = a_seq_tmp[2 * i + 1];
+                result.push([firstp, lastp]);
+            }
+        }
+    }
     // OCCT L342-361: a WLine whose vertex intervals are all rejected produces no
     // parts (there is no "keep the full range a priori" fallback).  The start
     // vertex required for a non-empty interval is inserted by IntPatch_WLine::
