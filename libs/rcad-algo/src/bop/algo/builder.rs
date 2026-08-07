@@ -3280,13 +3280,12 @@ impl<'a> Builder<'a> {
                 // OCCT L1505-1509: IsInternalFace on the representative face.
                 let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol, &self.ds) == 1;
                 if is_in {
-                    // OCCT L1510-1517: the whole connexity block is IN.
+                    // OCCT L1510-1517: the whole connexity block is IN. Each
+                    // face appears in exactly one block (aMFDone fence), so no
+                    // duplicate check is needed — OCCT just Appends.
                     let entry = in_parts.entry(a_sd.ptr_id()).or_default();
                     for &bfi in &a_lcb {
-                        let bf = &faces[bfi];
-                        if !entry.iter().any(|s| s.ptr_id() == bf.ptr_id()) {
-                            entry.push(bf.clone());
-                        }
+                        entry.push(faces[bfi].clone());
                     }
                 }
             }
