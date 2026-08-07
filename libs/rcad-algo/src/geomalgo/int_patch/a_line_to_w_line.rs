@@ -20,6 +20,16 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 use rcad_kernel::precision::CONFUSION;
 
+/// OCCT `Epsilon(theValue)` (Standard_Real.hxx L242-245): the distance from
+/// theValue to the next representable double in the direction of ±∞.
+fn occt_epsilon(the_value: f64) -> f64 {
+    if the_value >= 0.0 {
+        the_value.next_up() - the_value
+    } else {
+        the_value - the_value.next_down()
+    }
+}
+
 /// OCCT IntPatch_ALineToWLine.
 pub struct ALineToWLine {
     my_s1: Surface3,
@@ -47,6 +57,36 @@ impl ALineToWLine {
             my_tol_transition: 1e-8,
             my_tol_3d: CONFUSION,
         }
+    }
+
+    /// OCCT L212-215: SetTol3D.
+    pub fn set_tol_3d(&mut self, a_tol: f64) {
+        self.my_tol_3d = a_tol;
+    }
+
+    /// OCCT L219-222: Tol3D.
+    pub fn tol_3d(&self) -> f64 {
+        self.my_tol_3d
+    }
+
+    /// OCCT L226-229: SetTolTransition.
+    pub fn set_tol_transition(&mut self, a_tol: f64) {
+        self.my_tol_transition = a_tol;
+    }
+
+    /// OCCT L233-236: TolTransition.
+    pub fn tol_transition(&self) -> f64 {
+        self.my_tol_transition
+    }
+
+    /// OCCT L240-243: SetTolOpenDomain.
+    pub fn set_tol_open_domain(&mut self, a_tol: f64) {
+        self.my_tol_open_domain = a_tol;
+    }
+
+    /// OCCT L247-250: TolOpenDomain.
+    pub fn tol_open_domain(&self) -> f64 {
+        self.my_tol_open_domain
     }
 
     /// OCCT MakeWLine(aline, theLines) (L361-378): the first/last parameter of
@@ -141,7 +181,7 @@ impl ALineToWLine {
         let mut a_parameter = f_par;
         while a_parameter < l_par {
             let mut a_step = (l_par - a_parameter) / (self.my_nb_points_in_wline as f64 - 1.0);
-            if a_step < f64::EPSILON * l_par {
+            if a_step < occt_epsilon(l_par) {
                 break;
             }
 
@@ -485,7 +525,7 @@ impl ALineToWLine {
                 if is_step_reduced {
                     is_step_reduced = false;
                     a_step = (l_par - a_parameter) / (self.my_nb_points_in_wline as f64 - 1.0);
-                    if a_step < f64::EPSILON * l_par {
+                    if a_step < occt_epsilon(l_par) {
                         break;
                     }
                     a_l_par = a_vert_params.last().copied().unwrap_or(l_par);
@@ -541,22 +581,6 @@ impl ALineToWLine {
                     v2: p.v2,
                 })
                 .collect();
-
-            for v in a_seq_vertex.iter() {
-                let mut a_vtx = v.clone();
-                if a_vtx.param_on_line == -1.0 {
-                    a_vtx.param_on_line = wline_pnts.len() as f64;
-                }
-                let idx = a_vtx.param_on_line as usize;
-                if idx >= 1 && idx <= wline_pnts.len() {
-                    let w = &mut wline_pnts[idx - 1];
-                    w.p3d = a_vtx.pnt.p;
-                    w.u1 = a_vtx.pnt.u1;
-                    w.v1 = a_vtx.pnt.v1;
-                    w.u2 = a_vtx.pnt.u2;
-                    w.v2 = a_vtx.pnt.v2;
-                }
-            }
 
             // OCCT L939-947: add the vertices (aSeqVertex) to the WLine; a
             // vertex with parameter -1 (closed curve) is set to the last point.
@@ -989,8 +1013,10 @@ fn continue_after_special_point(
     if sp_type == SpecPntType::None {
         return false;
     }
-    // OCCT L1004-1007: theNewPoint.IsSame(theRefPt, Confusion, theTol2D).
-    if new_point.p.distance(ref_pt.p) <= CONFUSION || new_point.p.distance(ref_pt.p) <= tol_2d {
+    // OCCT L1004-1007: theNewPoint.IsSame(theRefPt, Confusion, theTol2D) —
+    // 3D distance within Confusion AND (when theTol2D >= 0) the 2D parameters
+    // of both surfaces within theTol2D.
+    if new_point.is_same_3d_2d(ref_pt, CONFUSION, tol_2d) {
         return false;
     }
 
@@ -1022,10 +1048,13 @@ fn continue_after_special_point(
                 &mut a_u_quad,
                 &mut is_iso_chosen,
             );
+            // OCCT L1044: theNewPoint.SetValue(!theIsReversed, aUquad, aVquad)
+            // — the quadric U is written to S1 when !isReversed, to S2 when
+            // isReversed.
             if is_reversed {
-                new_point.u1 = a_u_quad;
-            } else {
                 new_point.u2 = a_u_quad;
+            } else {
+                new_point.u1 = a_u_quad;
             }
         }
     }

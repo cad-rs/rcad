@@ -45,6 +45,25 @@ impl PntOn2S {
     pub fn is_same(&self, o: &PntOn2S, tol: f64) -> bool {
         self.p.distance(o.p) <= tol
     }
+    /// OCCT IntSurf_PntOn2S::IsSame(Other, Tol3D, Tol2D) (IntSurf_PntOn2S.cxx
+    /// L85-113): 3D distance within theTol3D AND, when theTol2D >= 0, the 2D
+    /// parameters on both surfaces within theTol2D.
+    pub fn is_same_3d_2d(&self, o: &PntOn2S, tol_3d: f64, tol_2d: f64) -> bool {
+        if self.p.distance(o.p) > tol_3d {
+            return false;
+        }
+        if tol_2d < 0.0 {
+            return true;
+        }
+        let a_p1 = DVec2::new(self.u1, self.v1);
+        let a_p2 = DVec2::new(o.u1, o.v1);
+        if a_p1.distance(a_p2) > tol_2d {
+            return false;
+        }
+        let a_p1 = DVec2::new(self.u2, self.v2);
+        let a_p2 = DVec2::new(o.u2, o.v2);
+        a_p1.distance(a_p2) <= tol_2d
+    }
 }
 
 /// OCCT IntPatch_Point (a subset needed by ALineToWLine): a point on the line
