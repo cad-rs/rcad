@@ -35,26 +35,30 @@ pub fn make_prism_brep(
         t.add_tvertex(DVec3::new(0.0, d, h)),
     ];
     let ln = |a: DVec3, b: DVec3| Curve3::Line(Line3::new(a, b - a));
+    // OCCT BRepLib_MakeEdge forces V1=FWD, V2=REV (BRepLib_MakeEdge.cxx L772-774);
+    // BRepBuilderAPI_MakePrism edges are built via MakeEdge, so the last vertex
+    // of every prism edge carries the REVERSED orientation.
+    let rev_v = |v: &Shape| Shape { orientation: rcad_kernel::topods::Orientation::Reversed, ..v.clone() };
     // Bottom edges (z=0).
     let b_ed = [
-        t.add_tedge(Some(ln(DVec3::new(0.0, 0.0, 0.0), DVec3::new(w, 0.0, 0.0))), v[0].clone(), v[1].clone(), [0.0, w]),
-        t.add_tedge(Some(ln(DVec3::new(w, 0.0, 0.0), DVec3::new(w, d, 0.0))), v[1].clone(), v[2].clone(), [0.0, d]),
-        t.add_tedge(Some(ln(DVec3::new(w, d, 0.0), DVec3::new(0.0, d, 0.0))), v[2].clone(), v[3].clone(), [0.0, w]),
-        t.add_tedge(Some(ln(DVec3::new(0.0, d, 0.0), DVec3::new(0.0, 0.0, 0.0))), v[3].clone(), v[0].clone(), [0.0, d]),
+        t.add_tedge(Some(ln(DVec3::new(0.0, 0.0, 0.0), DVec3::new(w, 0.0, 0.0))), v[0].clone(), rev_v(&v[1]), [0.0, w]),
+        t.add_tedge(Some(ln(DVec3::new(w, 0.0, 0.0), DVec3::new(w, d, 0.0))), v[1].clone(), rev_v(&v[2]), [0.0, d]),
+        t.add_tedge(Some(ln(DVec3::new(w, d, 0.0), DVec3::new(0.0, d, 0.0))), v[2].clone(), rev_v(&v[3]), [0.0, w]),
+        t.add_tedge(Some(ln(DVec3::new(0.0, d, 0.0), DVec3::new(0.0, 0.0, 0.0))), v[3].clone(), rev_v(&v[0]), [0.0, d]),
     ];
     // Vertical edges.
     let e_ver = [
-        t.add_tedge(Some(ln(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, h))), v[0].clone(), v[4].clone(), [0.0, h]),
-        t.add_tedge(Some(ln(DVec3::new(w, 0.0, 0.0), DVec3::new(w, 0.0, h))), v[1].clone(), v[5].clone(), [0.0, h]),
-        t.add_tedge(Some(ln(DVec3::new(w, d, 0.0), DVec3::new(w, d, h))), v[2].clone(), v[6].clone(), [0.0, h]),
-        t.add_tedge(Some(ln(DVec3::new(0.0, d, 0.0), DVec3::new(0.0, d, h))), v[3].clone(), v[7].clone(), [0.0, h]),
+        t.add_tedge(Some(ln(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, h))), v[0].clone(), rev_v(&v[4]), [0.0, h]),
+        t.add_tedge(Some(ln(DVec3::new(w, 0.0, 0.0), DVec3::new(w, 0.0, h))), v[1].clone(), rev_v(&v[5]), [0.0, h]),
+        t.add_tedge(Some(ln(DVec3::new(w, d, 0.0), DVec3::new(w, d, h))), v[2].clone(), rev_v(&v[6]), [0.0, h]),
+        t.add_tedge(Some(ln(DVec3::new(0.0, d, 0.0), DVec3::new(0.0, d, h))), v[3].clone(), rev_v(&v[7]), [0.0, h]),
     ];
     // Top edges (z=h).
     let t_ed = [
-        t.add_tedge(Some(ln(DVec3::new(0.0, 0.0, h), DVec3::new(w, 0.0, h))), v[4].clone(), v[5].clone(), [0.0, w]),
-        t.add_tedge(Some(ln(DVec3::new(w, 0.0, h), DVec3::new(w, d, h))), v[5].clone(), v[6].clone(), [0.0, d]),
-        t.add_tedge(Some(ln(DVec3::new(w, d, h), DVec3::new(0.0, d, h))), v[6].clone(), v[7].clone(), [0.0, w]),
-        t.add_tedge(Some(ln(DVec3::new(0.0, d, h), DVec3::new(0.0, 0.0, h))), v[7].clone(), v[4].clone(), [0.0, d]),
+        t.add_tedge(Some(ln(DVec3::new(0.0, 0.0, h), DVec3::new(w, 0.0, h))), v[4].clone(), rev_v(&v[5]), [0.0, w]),
+        t.add_tedge(Some(ln(DVec3::new(w, 0.0, h), DVec3::new(w, d, h))), v[5].clone(), rev_v(&v[6]), [0.0, d]),
+        t.add_tedge(Some(ln(DVec3::new(w, d, h), DVec3::new(0.0, d, h))), v[6].clone(), rev_v(&v[7]), [0.0, w]),
+        t.add_tedge(Some(ln(DVec3::new(0.0, d, h), DVec3::new(0.0, 0.0, h))), v[7].clone(), rev_v(&v[4]), [0.0, d]),
     ];
 
     // Wires.  Bottom/top follow BRepPrim_GWedge; the lateral wires follow the

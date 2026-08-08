@@ -36,7 +36,12 @@ impl MakeSphere {
         // the north pole, lying in the XZ plane.
         let seam = Circle3::new(c, -self.y_axis, r);
         let pi = std::f64::consts::PI;
-        let e_top = t.add_tedge(None, north.clone(), north.clone(), [0.0, pi * r]);
+        let rev_v = |v: &Shape| Shape { orientation: rcad_kernel::topods::Orientation::Reversed, ..v.clone() };
+        // Pole degenerate edges are closed (both endpoints the same pole);
+        // OCCT stores the coincident endpoint nodes with opposite
+        // orientations, so the WireSplitter's in/out pairing at the pole
+        // vertex works.
+        let e_top = t.add_tedge(None, north.clone(), rev_v(&north), [0.0, pi * r]);
         // OCCT BRepPrim_OneAxis::EndEdge (BRepPrim_OneAxis.cxx L1035-1060):
         // AddEdgeVertex(E, TopEndVertex(), myVMax+off, false) then
         // AddEdgeVertex(E, BottomEndVertex(), myVMin+off, true) — so V1 =
@@ -48,9 +53,9 @@ impl MakeSphere {
         // roles swapped it degenerates into a self-crossing bowtie polygon.)
         let e_seam = t.add_tedge(
             Some(Curve3::Circle(seam)),
-            south.clone(), north.clone(),
+            south.clone(), rev_v(&north),
             [3.0 * pi / 2.0, 5.0 * pi / 2.0]);
-        let e_bot = t.add_tedge(None, south.clone(), south.clone(), [0.0, pi * r]);
+        let e_bot = t.add_tedge(None, south.clone(), rev_v(&south), [0.0, pi * r]);
         // OCCT BRepPrim_OneAxis::LateralWire (BRepPrim_OneAxis.cxx L660-684):
         // [rev(TopEdge), EndEdge, BottomEdge, rev(StartEdge)] — the pole
         // degenerate edges are reversed, the seam End instance (u=2*PI) is

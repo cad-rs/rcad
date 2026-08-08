@@ -54,9 +54,13 @@ impl MakeCylinder {
         let top_circle = Circle3::new_with_ref_dir(self.local(0.0, 0.0, h), self.z_axis, r, self.x_axis);
         let seam_line = Line3::new(self.local(r, 0.0, 0.0), self.z_axis * h);
 
-        let e_bot = t.add_tedge(Some(Curve3::Circle(bot_circle)), bot_v.clone(), bot_v.clone(), [0.0, std::f64::consts::TAU]);
-        let e_top = t.add_tedge(Some(Curve3::Circle(top_circle)), top_v.clone(), top_v.clone(), [0.0, std::f64::consts::TAU]);
-        let e_seam = t.add_tedge(Some(Curve3::Line(seam_line)), bot_v.clone(), top_v.clone(), [0.0, h]);
+        let rev_v = |v: &Shape| Shape { orientation: rcad_kernel::topods::Orientation::Reversed, ..v.clone() };
+        // Closed circular edges: OCCT stores the two coincident endpoint nodes
+        // with opposite orientations ([V:FWD, V:REV], AddEdgeVertex direct),
+        // so the WireSplitter's in/out pairing at the seam vertex works.
+        let e_bot = t.add_tedge(Some(Curve3::Circle(bot_circle)), bot_v.clone(), rev_v(&bot_v), [0.0, std::f64::consts::TAU]);
+        let e_top = t.add_tedge(Some(Curve3::Circle(top_circle)), top_v.clone(), rev_v(&top_v), [0.0, std::f64::consts::TAU]);
+        let e_seam = t.add_tedge(Some(Curve3::Line(seam_line)), bot_v.clone(), rev_v(&top_v), [0.0, h]);
 
         let lateral_surf = Surface3::Cylinder(CylindricalSurface {
             origin: o, axis: self.z_axis, radius: r, ref_dir: self.x_axis,

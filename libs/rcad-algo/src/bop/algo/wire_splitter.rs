@@ -1091,18 +1091,28 @@ fn edge_vertices(e: &Shape) -> [Shape; 2] {
     match &*e.data {
         // OCCT TopoDS_Iterator(aE) with cumOri=true (default) composes the edge
         // orientation into the vertices (TopoDS_Iterator.cxx L35-37, L72-80):
-        // the stored TEdge nodes [V1(Fwd), V2(Rev)] become [V1(Rev), V2(Fwd)]
-        // for a REVERSED edge — same order, orientations composed.
+        // each stored vertex keeps its stored orientation composed with the
+        // edge's own orientation; a REVERSED edge iterates [last, first].
         TShape::Edge(ed) => {
             if e.orientation == Orientation::Reversed {
-                [Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Reversed),
-                 Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Forward)]
+                [Shape::new(ed.last.data.clone(), ed.last.location, flip_ori(ed.last.orientation)),
+                 Shape::new(ed.first.data.clone(), ed.first.location, flip_ori(ed.first.orientation))]
             } else {
-                [Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Forward),
-                 Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Reversed)]
+                [Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
+                 Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation)]
             }
         }
         _ => [Shape::null(), Shape::null()],
+    }
+}
+
+/// Compose a REVERSED parent orientation into a stored vertex orientation
+/// (TopAbs::Compose(REVERSED, x) flips FWD<->REV; other orientations pass).
+fn flip_ori(o: Orientation) -> Orientation {
+    match o {
+        Orientation::Forward => Orientation::Reversed,
+        Orientation::Reversed => Orientation::Forward,
+        other => other,
     }
 }
 

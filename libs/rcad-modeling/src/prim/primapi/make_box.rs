@@ -75,54 +75,56 @@ impl MakeBox {
         let ln = |a: DVec3, b: DVec3| Curve3::Line(Line3::new(a, b - a));
         // OCCT BRepPrim_GWedge::Edge(): the curve runs from the low (d1)
         // coordinate to the high one (Line() D = +axis), but the vertices are
-        // added in the order (dd2=high, dd1=low) — Edge::AddEdgeVertex first
-        // adds Vertex(d1,d2,dd2) then Vertex(d1,d2,dd1).  So every box edge
-        // TShape stores [high-parameter vertex, low-parameter vertex]:
-        //   Z-edges:   (x,y,dz) -> (x,y,0)
-        //   Y-edges:   (x,dy,z) -> (x,0,z)
-        //   X-edges:   (dx,y,z) -> (0,y,z)
+        // added in the order (dd2=high, dd1=low) with AddEdgeVertex(direct):
+        // direct=false REVERSES the vertex (BRepPrim_Builder.cxx L143-155), so
+        // the high-parameter vertex is stored REVERSED and the low one FORWARD:
+        //   Z-edges:   [rev(x,y,dz), (x,y,0)]
+        //   Y-edges:   [rev(x,dy,z), (x,0,z)]
+        //   X-edges:   [rev(dx,y,z), (0,y,z)]
         // The curve is still +axis (first vertex sits at the curve's high end).
         let e_z = [
             // x=0,y=0 (edge4), x=0,y=1 (edge9), x=1,y=0 (edge14), x=1,y=1 (edge19)
-            t.add_tedge(Some(ln(self.local(0.0, 0.0, 0.0), self.local(0.0, 0.0, self.dz))), v[0].clone(), v[1].clone(), [0.0, self.dz]),
-            t.add_tedge(Some(ln(self.local(0.0, self.dy, 0.0), self.local(0.0, self.dy, self.dz))), v[2].clone(), v[3].clone(), [0.0, self.dz]),
-            t.add_tedge(Some(ln(self.local(self.dx, 0.0, 0.0), self.local(self.dx, 0.0, self.dz))), v[4].clone(), v[5].clone(), [0.0, self.dz]),
-            t.add_tedge(Some(ln(self.local(self.dx, self.dy, 0.0), self.local(self.dx, self.dy, self.dz))), v[6].clone(), v[7].clone(), [0.0, self.dz]),
+            t.add_tedge(Some(ln(self.local(0.0, 0.0, 0.0), self.local(0.0, 0.0, self.dz))), rev(v[0].clone()), v[1].clone(), [0.0, self.dz]),
+            t.add_tedge(Some(ln(self.local(0.0, self.dy, 0.0), self.local(0.0, self.dy, self.dz))), rev(v[2].clone()), v[3].clone(), [0.0, self.dz]),
+            t.add_tedge(Some(ln(self.local(self.dx, 0.0, 0.0), self.local(self.dx, 0.0, self.dz))), rev(v[4].clone()), v[5].clone(), [0.0, self.dz]),
+            t.add_tedge(Some(ln(self.local(self.dx, self.dy, 0.0), self.local(self.dx, self.dy, self.dz))), rev(v[6].clone()), v[7].clone(), [0.0, self.dz]),
         ];
         let e_y = [
             // x=0,z=0 (edge11), x=0,z=1 (edge7), x=1,z=0 (edge21), x=1,z=1 (edge17)
-            t.add_tedge(Some(ln(self.local(0.0, 0.0, 0.0), self.local(0.0, self.dy, 0.0))), v[3].clone(), v[1].clone(), [0.0, self.dy]),
-            t.add_tedge(Some(ln(self.local(0.0, 0.0, self.dz), self.local(0.0, self.dy, self.dz))), v[2].clone(), v[0].clone(), [0.0, self.dy]),
-            t.add_tedge(Some(ln(self.local(self.dx, 0.0, 0.0), self.local(self.dx, self.dy, 0.0))), v[7].clone(), v[5].clone(), [0.0, self.dy]),
-            t.add_tedge(Some(ln(self.local(self.dx, 0.0, self.dz), self.local(self.dx, self.dy, self.dz))), v[6].clone(), v[4].clone(), [0.0, self.dy]),
+            t.add_tedge(Some(ln(self.local(0.0, 0.0, 0.0), self.local(0.0, self.dy, 0.0))), rev(v[3].clone()), v[1].clone(), [0.0, self.dy]),
+            t.add_tedge(Some(ln(self.local(0.0, 0.0, self.dz), self.local(0.0, self.dy, self.dz))), rev(v[2].clone()), v[0].clone(), [0.0, self.dy]),
+            t.add_tedge(Some(ln(self.local(self.dx, 0.0, 0.0), self.local(self.dx, self.dy, 0.0))), rev(v[7].clone()), v[5].clone(), [0.0, self.dy]),
+            t.add_tedge(Some(ln(self.local(self.dx, 0.0, self.dz), self.local(self.dx, self.dy, self.dz))), rev(v[6].clone()), v[4].clone(), [0.0, self.dy]),
         ];
         let e_x = [
             // y=0,z=0 (edge24), y=0,z=1 (edge25), y=1,z=0 (edge28), y=1,z=1 (edge29)
-            t.add_tedge(Some(ln(self.local(0.0, 0.0, 0.0), self.local(self.dx, 0.0, 0.0))), v[5].clone(), v[1].clone(), [0.0, self.dx]),
-            t.add_tedge(Some(ln(self.local(0.0, 0.0, self.dz), self.local(self.dx, 0.0, self.dz))), v[4].clone(), v[0].clone(), [0.0, self.dx]),
-            t.add_tedge(Some(ln(self.local(0.0, self.dy, 0.0), self.local(self.dx, self.dy, 0.0))), v[7].clone(), v[3].clone(), [0.0, self.dx]),
-            t.add_tedge(Some(ln(self.local(0.0, self.dy, self.dz), self.local(self.dx, self.dy, self.dz))), v[6].clone(), v[2].clone(), [0.0, self.dx]),
+            t.add_tedge(Some(ln(self.local(0.0, 0.0, 0.0), self.local(self.dx, 0.0, 0.0))), rev(v[5].clone()), v[1].clone(), [0.0, self.dx]),
+            t.add_tedge(Some(ln(self.local(0.0, 0.0, self.dz), self.local(self.dx, 0.0, self.dz))), rev(v[4].clone()), v[0].clone(), [0.0, self.dx]),
+            t.add_tedge(Some(ln(self.local(0.0, self.dy, 0.0), self.local(self.dx, self.dy, 0.0))), rev(v[7].clone()), v[3].clone(), [0.0, self.dx]),
+            t.add_tedge(Some(ln(self.local(0.0, self.dy, self.dz), self.local(self.dx, self.dy, self.dz))), rev(v[6].clone()), v[2].clone(), [0.0, self.dx]),
         ];
         // Wires match OCCT BRepPrim_GWedge::Wire() exactly: each face wire is
-        // [Edge(d1,dd4)F, Edge(d1,dd3)F, Edge(d1,dd2)R, Edge(d1,dd1)R] with
-        // dd1..dd4 per face group (verified against OCCT DSLIST P002:
-        // x=0 wire=[4,7,9,11], x=1=[14,17,19,21], y=0=[24,14,25,4],
-        // y=1=[28,19,29,9], z=0=[11,28,21,24], z=1=[7,29,17,25]).
+        // [Edge(d1,dd4), Edge(d1,dd3), Edge(d1,dd2), Edge(d1,dd1)] with
+        // AddWireEdge(..., direct): direct=false REVERSES the edge
+        // (BRepPrim_Builder.cxx L184-192), so dd4/dd3 are stored REVERSED and
+        // dd2/dd1 FORWARD — the opposite of the previous reading. Verified
+        // against OCCT DSLIST P002 wire edge indices and the WireSplitter
+        // in/out flags (y=1 wire [28,19,29,9] renders [R,R,F,F]).
         // The edges are shared across wires: OCCT AddWireEdge stores the
-        // orientation (false/true = FORWARD/REVERSED) but the DS edge index is
-        // the TShape, so the wire just references the edge instance.
+        // orientation but the DS edge index is the TShape, so the wire just
+        // references the edge instance.
         // OCCT BRepPrim_GWedge::Face() reverses the MIN faces (XMin/YMin/ZMin,
         // i%2==0) via myBuilder.ReverseFace(), which also reverses their wires.
         // The wires of w[0]/w[2]/w[4] are therefore stored REVERSED here to
         // match; the pipeline's face-edge iteration composes the wire
         // orientation (TopExp_Explorer cumOri semantics).
         let w = [
-            rev(t.add_twire(vec![e_z[0].clone(), e_y[1].clone(), rev(e_z[1].clone()), rev(e_y[0].clone())])),
-            t.add_twire(vec![e_z[2].clone(), e_y[3].clone(), rev(e_z[3].clone()), rev(e_y[2].clone())]),
-            rev(t.add_twire(vec![e_x[0].clone(), e_z[2].clone(), rev(e_x[1].clone()), rev(e_z[0].clone())])),
-            t.add_twire(vec![e_x[2].clone(), e_z[3].clone(), rev(e_x[3].clone()), rev(e_z[1].clone())]),
-            rev(t.add_twire(vec![e_y[0].clone(), e_x[2].clone(), rev(e_y[2].clone()), rev(e_x[0].clone())])),
-            t.add_twire(vec![e_y[1].clone(), e_x[3].clone(), rev(e_y[3].clone()), rev(e_x[1].clone())]),
+            rev(t.add_twire(vec![rev(e_z[0].clone()), rev(e_y[1].clone()), e_z[1].clone(), e_y[0].clone()])),
+            t.add_twire(vec![rev(e_z[2].clone()), rev(e_y[3].clone()), e_z[3].clone(), e_y[2].clone()]),
+            rev(t.add_twire(vec![rev(e_x[0].clone()), rev(e_z[2].clone()), e_x[1].clone(), e_z[0].clone()])),
+            t.add_twire(vec![rev(e_x[2].clone()), rev(e_z[3].clone()), e_x[3].clone(), e_z[1].clone()]),
+            rev(t.add_twire(vec![rev(e_y[0].clone()), rev(e_x[2].clone()), e_y[2].clone(), e_x[0].clone()])),
+            t.add_twire(vec![rev(e_y[1].clone()), rev(e_x[3].clone()), e_y[3].clone(), e_x[1].clone()]),
         ];
         // OCCT BRepPrim_GWedge: all 6 faces use the +axis plane normal; the
         // min faces (XMin/YMin/ZMin) are stored Reversed (BRepPrim_GWedge.cxx

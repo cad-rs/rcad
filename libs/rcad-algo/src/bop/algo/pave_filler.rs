@@ -3380,9 +3380,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     // OCCT BOPAlgo_PaveFiller::UpdateVerticesOfCB (PaveFiller_3.cxx L959-993).
     fn update_vertices_of_cb(&mut self) {
         let mut a_mpb_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        let a_nb_pbp = self.ds.pave_blocks_pool.len();
-        for i in 0..a_nb_pbp {
-            let a_lpb = self.ds.pave_blocks_pool[i].clone();
+        for a_lpb in self.ds.pave_blocks_pool.clone().into_values() {
             for a_pb in &a_lpb {
                 let a_cb_idx = self.ds.common_block(a_pb);
                 let a_cb_idx = match a_cb_idx { Some(idx) => idx, None => continue, };
@@ -4145,7 +4143,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 let pb_pool_idx = {
                     let ptr = std::sync::Arc::as_ptr(&a_pb.0);
                     let mut found = usize::MAX;
-                    for (pi, pool) in self.ds.pave_blocks_pool.iter().enumerate() {
+                    for (&pi, pool) in self.ds.pave_blocks_pool.iter() {
                         for spb in pool {
                             if std::sync::Arc::as_ptr(&spb.0) == ptr {
                                 found = pi;
@@ -4197,7 +4195,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
 
             // L1184-1186: myDS->ChangeFaceInfo(nF).ChangePaveBlocksIn().Add(aPB);
-            if let Some(pool) = self.ds.pave_blocks_pool.get(pb_pool_idx) {
+            if let Some(pool) = self.ds.pave_blocks_pool.get(&pb_pool_idx) {
                 let pb_ptrs: Vec<u64> = pool.iter()
                     .map(|pb| std::sync::Arc::as_ptr(&pb.0) as u64).collect();
                 drop(pool);
@@ -4215,7 +4213,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         for (ptr, faces) in &a_mpbli {
             // Find the SharedPB from its pointer
             let mut pb_found: Option<SharedPB> = None;
-            'outer: for pool in &self.ds.pave_blocks_pool {
+            'outer: for pool in self.ds.pave_blocks_pool.values() {
                 for spb in pool {
                     if std::sync::Arc::as_ptr(&spb.0) as u64 == *ptr {
                         pb_found = Some(spb.clone());
@@ -4396,14 +4394,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             self.ds.update_common_block_with_sd_vertices(cb);
         }
 
-        let a_nb_pbp = self.ds.pave_blocks_pool.len();
-        if a_nb_pbp == 0 { return; }
+        if self.ds.pave_blocks_pool.is_empty() { return; }
         // OCCT L386: aMCB fence for CommonBlocks
         let mut a_mcb: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let ms_debug = std::env::var("RCAD_MS_DEBUG").is_ok();
         let nb_src = self.ds.nb_source_shapes();
-        for i in 0..a_nb_pbp {
-            let a_lpb = self.ds.pave_blocks_pool[i].clone();
+        for a_lpb in self.ds.pave_blocks_pool.clone().into_values() {
             for a_pb in &a_lpb {
                 // OCCT L410-414: skip degenerated edges
                 let pb = a_pb.0.read().unwrap();
@@ -4527,8 +4523,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     fn remove_micro_edges(&mut self) {
         let mut a_micro_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut a_mpb_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        for i in 0..self.ds.pave_blocks_pool.len() {
-            let pb_list = self.ds.pave_blocks_pool[i].clone();
+        for pb_list in self.ds.pave_blocks_pool.clone().into_values() {
             if pb_list.len() < 2 { continue; }
             // OCCT L4407-4410: skip degenerated edges
             if pb_list.is_empty() { continue; }
@@ -4554,7 +4549,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         }
         // OCCT L4434: RemovePaveBlocks
         for ei in &a_micro_edges {
-            for pool in &mut self.ds.pave_blocks_pool {
+            for pool in self.ds.pave_blocks_pool.values_mut() {
                 pool.retain(|pb| pb.0.read().unwrap().edge != *ei);
             }
         }

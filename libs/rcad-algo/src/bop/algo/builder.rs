@@ -2173,7 +2173,7 @@ impl<'a> Builder<'a> {
 
     /// Edge DS index from a pave-block pool entry (OCCT aPB->Edge()).
     fn pb_edge(&self, pb_idx: usize) -> Option<usize> {
-        let pool = self.ds.pave_blocks_pool.get(pb_idx)?;
+        let pool = self.ds.pave_blocks_pool.get(&pb_idx)?;
         let pb = pool.first()?;
         let e = pb.0.read().unwrap().edge;
         if e < self.ds.nb_shapes() {

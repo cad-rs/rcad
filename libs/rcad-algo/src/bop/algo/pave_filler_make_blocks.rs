@@ -468,7 +468,7 @@ impl PaveFiller {
                     // reference the PB by pool index; the edge is left unset until
                     // PostTreatFF sets it (mirroring OCCT, where the section edge's
                     // ShapeInfo has no PaveBlocks reference).
-                    self.ds.pave_blocks_pool.push(vec![a_pb.clone()]);
+                    self.ds.pave_blocks_pool.entry(usize::MAX).or_default().push(a_pb.clone());
                     // OCCT L1038-1045: keep info for post treatment.
                     let e_shape = self.ds.shape(n_e).clone();
                     let mut a_cpb = CoupleOfPBs::new(a_cur_ind, j);
@@ -2382,7 +2382,7 @@ impl PaveFiller {
                                 // in the curve's PB list / aDMExEdges; UpdateFaceInfo
                                 // adds it by handle to PaveBlocksSc (L1778). rcad stores
                                 // pool indices, so allocate a pool entry for it.
-                                self.ds.pave_blocks_pool.push(vec![spb.clone()]);
+                                self.ds.pave_blocks_pool.entry(i_e).or_default().push(spb.clone());
                                 spb
                             });
                             if b_old {
@@ -2426,13 +2426,13 @@ impl PaveFiller {
         }
     }
 
-    /// Pool index of a SharedPB (OCCT: PaveBlock handle → pool position).
+    /// Pool key of a SharedPB (OCCT: PaveBlock handle → pool position).
     fn pb_pool_index(&self, pb: &SharedPB) -> Option<(usize, usize)> {
         let ptr = Arc::as_ptr(&pb.0);
-        for (pi, pool) in self.ds.pave_blocks_pool.iter().enumerate() {
+        for (&key, pool) in self.ds.pave_blocks_pool.iter() {
             for (li, spb) in pool.iter().enumerate() {
                 if Arc::as_ptr(&spb.0) == ptr {
-                    return Some((pi, li));
+                    return Some((key, li));
                 }
             }
         }
@@ -2611,7 +2611,7 @@ impl PaveFiller {
 
     /// Resolve a PB key (u64 pointer) to a SharedPB.
     fn find_pb_by_key(&self, key: u64) -> Option<SharedPB> {
-        for pool in &self.ds.pave_blocks_pool {
+        for pool in self.ds.pave_blocks_pool.values() {
             for p in pool {
                 if pb_ptr(p) == key {
                     return Some(p.clone());
@@ -2643,12 +2643,10 @@ impl PaveFiller {
         // remove old PBs from the pool (by original edge).
         for a_pb1 in &a_lpb1 {
             let n_e = a_pb1.0.read().unwrap().original_edge;
-            if n_e < self.ds.pave_blocks_pool.len() {
-                let mut pool = self.ds.pave_blocks_pool[n_e].clone();
+            if let Some(pool) = self.ds.pave_blocks_pool.get_mut(&n_e) {
                 if let Some(pos) = pool.iter().position(|p| pb_ptr(p) == pb_ptr(a_pb1)) {
                     pool.remove(pos);
                 }
-                self.ds.pave_blocks_pool[n_e] = pool;
             }
         }
         // OCCT L3327-3446: 2. update pave blocks (create new common blocks).
@@ -2719,10 +2717,9 @@ impl PaveFiller {
                     let cb_idx = self.ds.add_common_block(&[spb.clone()]);
                     self.ds.set_common_block(&spb, cb_idx);
                     self.ds.common_blocks[cb_idx].set_faces(a_faces.clone());
-                    // myDS->ChangePaveBlocks(nE).Append(aPB2n)
-                    if n_e < self.ds.pave_blocks_pool.len() {
-                        self.ds.pave_blocks_pool[n_e].push(spb.clone());
-                    }
+                    // myDS->ChangePaveBlocks(nE).Append(aPB2n) — IndexedDataMap
+                    // grows on demand; the key may be usize::MAX ("no original edge").
+                    self.ds.pave_blocks_pool.entry(n_e).or_default().push(spb.clone());
                 }
                 // aLPBNew.Append(aCB->PaveBlock1())
                 let first = a_lpb1.first().cloned();
@@ -2736,10 +2733,8 @@ impl PaveFiller {
             let _ = a_lpb_new;
         } else {
             let n_e = a_pbf.0.read().unwrap().original_edge;
-            if n_e < self.ds.pave_blocks_pool.len() {
-                for a_pb in a_lpb {
-                    self.ds.pave_blocks_pool[n_e].push(a_pb.clone());
-                }
+            for a_pb in a_lpb {
+                self.ds.pave_blocks_pool.entry(n_e).or_default().push(a_pb.clone());
             }
         }
         // OCCT L3448-3496: project the edge on the faces.
@@ -2788,9 +2783,8 @@ impl PaveFiller {
                 an_all_pbs.extend(self.ds.intersection_curves[cid].pave_blocks.clone());
             }
         }
-        let a_nb_pbp = self.ds.pave_blocks_pool.len();
-        for i in 0..a_nb_pbp {
-            an_all_pbs.extend(self.ds.pave_blocks_pool[i].clone());
+        for a_lpb in self.ds.pave_blocks_pool.values() {
+            an_all_pbs.extend(a_lpb.clone());
         }
         for a_pb in &an_all_pbs {
             let mut a_pb = a_pb.clone();
@@ -2868,7 +2862,7 @@ impl PaveFiller {
     // ====================================================================
     fn remove_pave_blocks(&mut self, the_edges: &HashSet<usize>) {
         // 1. from the Pave Blocks Pool.
-        for pool in &mut self.ds.pave_blocks_pool {
+        for pool in self.ds.pave_blocks_pool.values_mut() {
             pool.retain(|pb| !the_edges.contains(&pb.0.read().unwrap().edge));
         }
         // 2. from section curves.
@@ -2966,9 +2960,7 @@ impl PaveFiller {
         // 2. find the max tolerance of edges containing the vertices.
         let mut a_mvi_tol: HashMap<usize, f64> = HashMap::new();
         let mut a_mvi_pbs: HashMap<usize, Vec<SharedPB>> = HashMap::new();
-        let a_nb_pbp = self.ds.pave_blocks_pool.len();
-        for i in 0..a_nb_pbp {
-            let a_lpb = self.ds.pave_blocks_pool[i].clone();
+        for a_lpb in self.ds.pave_blocks_pool.values().cloned() {
             for a_pb in &a_lpb {
                 let n_e = { let r = a_pb.0.read().unwrap(); r.edge };
                 if n_e == usize::MAX { continue; }

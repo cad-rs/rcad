@@ -601,7 +601,7 @@ pub struct DS {
     pub shapes: Vec<ShapeInfo>,
     // (ptr_id, location) ?flat index  (TopoDS_Shape ?int map)
     pub map_shape_index: HashMap<(u64, u32), usize>,
-    pub pave_blocks_pool: Vec<Vec<SharedPB>>,
+    pub pave_blocks_pool: HashMap<usize, Vec<SharedPB>>,
     pub map_pb_cb: HashMap<u64, usize>,
     pub face_info_pool: Vec<FaceInfo>,
     pub shapes_sd: HashMap<usize, usize>,
@@ -631,7 +631,7 @@ impl DS {
         DS {
             arguments: Vec::new(), nb_source_shapes: 0, ranges: Vec::new(),
             shapes: Vec::new(), map_shape_index: HashMap::new(),
-            pave_blocks_pool: Vec::new(), map_pb_cb: HashMap::new(),
+            pave_blocks_pool: HashMap::new(), map_pb_cb: HashMap::new(),
             face_info_pool: Vec::new(), shapes_sd: HashMap::new(), map_ve: HashMap::new(),
             interf_tb: HashSet::new(),
             interf_vv: Vec::new(), interf_ve: Vec::new(), interf_vf: Vec::new(),
@@ -948,23 +948,25 @@ impl DS {
     }
 
     // Pave blocks pool
-    pub fn pave_blocks_pool(&self) -> &[Vec<SharedPB>] { &self.pave_blocks_pool }
-    pub fn change_pave_blocks_pool(&mut self) -> &mut Vec<Vec<SharedPB>> { &mut self.pave_blocks_pool }
+    // OCCT: myPaveBlocksMap — IndexedDataMap<int, List<PaveBlock>> keyed by
+    // edge index; rcad: HashMap for the same sparse, arbitrary-key semantics
+    // (keys include original-edge indices and usize::MAX for "no original edge").
+    pub fn pave_blocks_pool(&self) -> &HashMap<usize, Vec<SharedPB>> { &self.pave_blocks_pool }
+    pub fn change_pave_blocks_pool(&mut self) -> &mut HashMap<usize, Vec<SharedPB>> { &mut self.pave_blocks_pool }
     pub fn has_pave_blocks(&self, i: usize) -> bool { self.shapes[i].has_reference() }
     /// OCCT: myPaveBlocksMap(theIndex) — pave blocks of edge by shape index.
     pub fn pave_blocks(&self, i: usize) -> &[SharedPB] {
         if self.has_pave_blocks(i) {
-            &self.pave_blocks_pool[self.shapes[i].reference as usize]
+            let key = self.shapes[i].reference as usize;
+            self.pave_blocks_pool.get(&key).map_or(&[], |v| v.as_slice())
         } else {
             &[]
         }
     }
-    /// OCCT BOPDS_DS::ChangePaveBlocks — returns mutable ref to existing pave blocks.
-    /// OCCT assumes InitPaveBlocks was called first. rcad: panics if not initialized.
+    /// OCCT BOPDS_DS::ChangePaveBlocks — returns mutable ref to existing pave
+    /// blocks, creating the entry on demand (IndexedDataMap semantics).
     pub fn change_pave_blocks(&mut self, i: usize) -> &mut Vec<SharedPB> {
-        let idx = self.shapes[i].reference;
-        assert!(idx >= 0, "change_pave_blocks({}): not initialized, call init_pave_blocks first", i);
-        &mut self.pave_blocks_pool[idx as usize]
+        self.pave_blocks_pool.entry(i).or_default()
     }
 
     /// Get vertex parameters on an edge (OCCT: BRep_Tool::Parameter).
@@ -1007,14 +1009,14 @@ impl DS {
     }
     pub fn is_common_block_on_edge(&self, pb: &SharedPB) -> bool { self.common_block(pb).is_some() }
 
-    /// Pool index of a SharedPB (OCCT: PaveBlock handle → pool position).
-    /// Returns `(pool_index, position_within_pool)`.
+    /// Pool key of a SharedPB (OCCT: PaveBlock handle → pool position).
+    /// Returns `(pool_key, position_within_pool)`.
     pub fn pb_pool_index(&self, pb: &SharedPB) -> Option<(usize, usize)> {
         let ptr = std::sync::Arc::as_ptr(&pb.0);
-        for (pi, pool) in self.pave_blocks_pool.iter().enumerate() {
+        for (&key, pool) in self.pave_blocks_pool.iter() {
             for (li, spb) in pool.iter().enumerate() {
                 if std::sync::Arc::as_ptr(&spb.0) == ptr {
-                    return Some((pi, li));
+                    return Some((key, li));
                 }
             }
         }
@@ -1023,10 +1025,20 @@ impl DS {
 
     /// Resolve a PB pointer id (as stored in FaceInfo PaveBlocksOn/In/Sc) back
     /// to the SharedPB.  OCCT stores handle<BOPDS_PaveBlock> directly; rcad
-    /// stores the Arc pointer id and looks it up here.
+    /// stores the Arc pointer id and looks it up here.  OCCT keeps PBs alive
+    /// via reference counts wherever they are held — the pool, the section
+    /// curves (BOPDS_Curve::PaveBlocks) and the common blocks — so the lookup
+    /// scans the same holders.
     pub fn pb_from_ptr(&self, ptr: u64) -> Option<SharedPB> {
-        for pool in &self.pave_blocks_pool {
+        for pool in self.pave_blocks_pool.values() {
             for spb in pool {
+                if std::sync::Arc::as_ptr(&spb.0) as u64 == ptr {
+                    return Some(spb.clone());
+                }
+            }
+        }
+        for ic in &self.intersection_curves {
+            for spb in &ic.pave_blocks {
                 if std::sync::Arc::as_ptr(&spb.0) as u64 == ptr {
                     return Some(spb.clone());
                 }
@@ -1394,7 +1406,7 @@ impl DS {
         if std::env::var("RCAD_EE_DEBUG").is_ok() {
             eprintln!("[EE-DBG] update_sd: shapes_sd={:?}", self.shapes_sd);
         }
-        for list in self.pave_blocks_pool.clone() {
+        for list in self.pave_blocks_pool.values().cloned() {
             for pb in &list { self.update_pave_block_with_sd_vertices(pb); }
         }
     }
@@ -1445,8 +1457,8 @@ impl DS {
             let p0 = Pave { vertex_idx: 0, param: 0.0 };
             SharedPB::new(PaveBlock::new(edge_idx, p0, p0))
         };
-        self.pave_blocks_pool.push(vec![spb]);
-        self.shapes[edge_idx].reference = (self.pave_blocks_pool.len() - 1) as i64;
+        self.pave_blocks_pool.entry(edge_idx).or_default().push(spb);
+        self.shapes[edge_idx].reference = edge_idx as i64;
     }
 
     pub fn init_pave_blocks_for_vertex(&mut self, v: usize) {
@@ -1459,9 +1471,10 @@ impl DS {
         // untouched single-PB edge (both vertices original, not a common
         // block), drop the edge's reference and Clear the pool list so the
         // edge is marked Deleted.
-        for i in 0..self.pave_blocks_pool.len() {
-            if self.pave_blocks_pool[i].len() != 1 { continue; }
-            let pb = &self.pave_blocks_pool[i][0];
+        let keys: Vec<usize> = self.pave_blocks_pool.keys().copied().collect();
+        for key in keys {
+            if self.pave_blocks_pool[&key].len() != 1 { continue; }
+            let pb = &self.pave_blocks_pool[&key][0];
             if self.is_common_block(pb) { continue; }
             let (v1, v2) = {
                 let r = pb.0.read().unwrap();
@@ -1472,8 +1485,11 @@ impl DS {
                 if oe < self.nb_shapes() { self.shapes[oe].reference = -1; }
                 // OCCT: aPaveBlockList.Clear() — the pool entry becomes empty,
                 // marking the edge as Deleted (RefineFaceInfoOn then drops the
-                // released PBs from the face sets).
-                self.pave_blocks_pool[i].clear();
+                // released PBs from the face sets). The handle may still be
+                // referenced by FaceInfo sets (On/In/Sc), keeping the object
+                // alive there; rcad stores pointer ids, so the entry is kept
+                // empty but the key remains to preserve the face references.
+                self.pave_blocks_pool.get_mut(&key).unwrap().clear();
             }
         }
     }

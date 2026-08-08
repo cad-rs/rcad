@@ -782,10 +782,13 @@ impl FClass2d {
                                 break;
                             }
                             let nbp = a_discr.nb_points() as i32;
-                            let (mut i_step, mut i, i_end): (i32, i32, i32) = (1, 1, nbp + 1);
+                            let (mut i_step, mut i, mut i_end): (i32, i32, i32) = (1, 1, nbp + 1);
                             if ori2 == Orientation::Reversed {
                                 i_step = -1;
                                 i = nbp;
+                                // OCCT L494-499: iEnd = 0 for reversed edges —
+                                // the loop stops before Parameter(0).
+                                i_end = 0;
                             }
                             if firstpoint == 2 {
                                 i += i_step;

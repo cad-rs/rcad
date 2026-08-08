@@ -59,9 +59,12 @@ impl MakeCone {
         let seam_dir = self.x_axis * (self.r2 - self.r1) + self.z_axis * self.h;
         let seam = Line3::new(self.local(self.r1, 0.0, 0.0), seam_dir);
         let seam_len = ((self.r2 - self.r1).powi(2) + self.h * self.h).sqrt();
-        let e_bot = t.add_tedge(Some(Curve3::Circle(bot_circle)), bot_v.clone(), bot_v.clone(), [0.0, std::f64::consts::TAU]);
-        let e_top = t.add_tedge(Some(Curve3::Circle(top_circle)), top_v.clone(), top_v.clone(), [0.0, std::f64::consts::TAU]);
-        let e_seam = t.add_tedge(Some(Curve3::Line(seam)), bot_v.clone(), top_v.clone(), [0.0, seam_len]);
+        let rev_v = |v: &Shape| Shape { orientation: rcad_kernel::topods::Orientation::Reversed, ..v.clone() };
+        // Closed circular edges: OCCT stores the two coincident endpoint nodes
+        // with opposite orientations ([V:FWD, V:REV], AddEdgeVertex direct).
+        let e_bot = t.add_tedge(Some(Curve3::Circle(bot_circle)), bot_v.clone(), rev_v(&bot_v), [0.0, std::f64::consts::TAU]);
+        let e_top = t.add_tedge(Some(Curve3::Circle(top_circle)), top_v.clone(), rev_v(&top_v), [0.0, std::f64::consts::TAU]);
+        let e_seam = t.add_tedge(Some(Curve3::Line(seam)), bot_v.clone(), rev_v(&top_v), [0.0, seam_len]);
         // OCCT BRepPrim_Cone::LateralFace builds the lateral gp_Cone from the
         // full Ax3 (Axes().XDirection defines u=0), so the ref_dir is threaded
         // into the surface.  Without it, a cone rotated around its axis loses
