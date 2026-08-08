@@ -1514,26 +1514,26 @@ impl DS {
 
     // ================================================================    // BuildBndBoxSolid ?compute solid bounding box from sub-shapes
     // ================================================================
-    pub fn build_bnd_box_solid(&self, idx: usize, the_box: &mut (DVec3, DVec3, f64), _ci: bool) {
-        let subs: Vec<usize> = self.shapes[idx].sub_shapes.clone();
-        let mut faces: Vec<usize> = Vec::new();
-        for &shi in &subs {
-            if shi < self.nb_shapes() && self.shapes[shi].shape_type == ShapeType::Shell {
-                faces.extend(self.shapes[shi].sub_shapes.clone());
-            }
-        }
-        for &fi in &faces {
-            if fi < self.nb_shapes() && self.shapes[fi].shape_type == ShapeType::Face {
-                // OCCT L1415-1422: theBox.Add(aFaceBoundBox). Face boxes are
-                // built by prepare_faces (BOPDS_DS.cxx L1696-1779), so the
-                // cached box is read here directly (the &mut self version
-                // called build_bnd_box which only returned the cache for a
-                // non-void face box).
-                if !self.shapes[fi].bbox.is_void() {
+    /// OCCT BOPDS_DS::BuildBndBoxSolid (BOPDS_DS.cxx L1390-1437).
+    pub fn build_bnd_box_solid(&self, idx: usize, the_box: &mut (DVec3, DVec3, f64), the_check_inverted: bool) {
+        let a_shape_info = &self.shapes[idx];
+        let mut an_is_open_box = false;
+        for &a_sub_shape_index in &a_shape_info.sub_shapes {
+            if a_sub_shape_index >= self.nb_shapes() { continue; }
+            let a_shell_info = &self.shapes[a_sub_shape_index];
+            if a_shell_info.shape_type != ShapeType::Shell { continue; }
+            for &a_face_index in &a_shell_info.sub_shapes {
+                if a_face_index >= self.nb_shapes() { continue; }
+                let a_face_info = &self.shapes[a_face_index];
+                if a_face_info.shape_type != ShapeType::Face { continue; }
+                // OCCT L1415-1418: theBox.Add(aFaceBoundBox) — corner union,
+                // gap = max of the gaps.
+                let a_face_bound_box = &a_face_info.bbox;
+                if !a_face_bound_box.is_void() {
                     let b = (
-                        self.shapes[fi].bbox.raw_min(),
-                        self.shapes[fi].bbox.raw_max(),
-                        self.shapes[fi].bbox.get_gap(),
+                        a_face_bound_box.raw_min(),
+                        a_face_bound_box.raw_max(),
+                        a_face_bound_box.get_gap(),
                     );
                     if the_box.0.x.is_infinite() {
                         the_box.0 = b.0; the_box.1 = b.1; the_box.2 = b.2;
@@ -1543,14 +1543,108 @@ impl DS {
                         the_box.2 = the_box.2.max(b.2);
                     }
                 }
-                if self.shapes[fi].bbox.is_void() {
-                    // open face ?solid is unbounded
-                    the_box.0 = DVec3::splat(f64::NEG_INFINITY);
-                    the_box.1 = DVec3::splat(f64::INFINITY);
-                    return;
+                // OCCT L1419-1420: anIsOpenBox = aFaceBoundBox.IsOpen().
+                an_is_open_box = a_face_bound_box.is_open();
+                if an_is_open_box { break; }
+            }
+            // OCCT L1422-1426: IsOpenShell when no face box is open.
+            if !an_is_open_box {
+                an_is_open_box = Self::is_open_shell(&self.shapes[a_sub_shape_index].shape);
+            }
+            if an_is_open_box { break; }
+        }
+        if an_is_open_box {
+            // OCCT L1429: theBox.SetWhole().
+            the_box.0 = DVec3::splat(f64::NEG_INFINITY);
+            the_box.1 = DVec3::splat(f64::INFINITY);
+            the_box.2 = 0.0;
+        } else if the_check_inverted {
+            // OCCT L1430-1437: IsInvertedSolid -> SetWhole().
+            if Self::is_inverted_solid(&self.shapes[idx].shape) {
+                the_box.0 = DVec3::splat(f64::NEG_INFINITY);
+                the_box.1 = DVec3::splat(f64::INFINITY);
+                the_box.2 = 0.0;
+            }
+        }
+    }
+
+    /// OCCT BOPTools_AlgoTools::IsOpenShell (BOPTools_AlgoTools.cxx L2358-2390).
+    /// True when some non-degenerated edge of the shell is used by exactly one
+    /// non-INTERNAL/EXTERNAL face.
+    fn is_open_shell(a_sh: &Shape) -> bool {
+        // TopExp::MapShapesAndAncestors(aSh, TopAbs_EDGE, TopAbs_FACE, aMEF).
+        let mut a_mef: HashMap<(u64, u32), (Shape, Vec<Shape>)> = HashMap::new();
+        let mut faces: Vec<Shape> = Vec::new();
+        let mut stack: Vec<Shape> = vec![a_sh.clone()];
+        while let Some(sh) = stack.pop() {
+            match &*sh.data {
+                TShape::Shell(sd) => {
+                    for f in &sd.faces { stack.push(f.clone()); }
+                }
+                TShape::Face(_) => faces.push(sh),
+                _ => {}
+            }
+        }
+        for f in &faces {
+            for e in Self::face_edges_flat(f) {
+                let entry = a_mef
+                    .entry((e.ptr_id(), e.location))
+                    .or_insert_with(|| (e.clone(), Vec::new()));
+                entry.1.push(f.clone());
+            }
+        }
+        for (_, (a_e, a_lf)) in &a_mef {
+            let degen = match &*a_e.data {
+                TShape::Edge(ed) => ed.degenerated,
+                _ => true,
+            };
+            if degen {
+                continue;
+            }
+            let mut a_nb_f = 0;
+            for a_f in a_lf {
+                let a_or_f = a_f.orientation;
+                if a_or_f == Orientation::Internal || a_or_f == Orientation::External {
+                    continue;
+                }
+                a_nb_f += 1;
+            }
+            if a_nb_f == 1 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// OCCT BOPTools_AlgoTools::IsInvertedSolid (BOPTools_AlgoTools.cxx L2406-2417).
+    /// The infinite point is classified IN the solid => the solid is inverted.
+    fn is_inverted_solid(a_solid: &Shape) -> bool {
+        let mut a_sc =
+            crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(a_solid);
+        a_sc.perform_infinite_point(1e-7);
+        a_sc.state() == 3 // TopAbs_IN
+    }
+
+    /// All edge Shapes of a face (outer + inner wires) with composed
+    /// orientation. OCCT TopExp_Explorer(aFace, TopAbs_EDGE) with cumOri=true.
+    fn face_edges_flat(face: &Shape) -> Vec<Shape> {
+        let mut out = Vec::new();
+        if let TShape::Face(fd) = &*face.data {
+            let f_or = face.orientation;
+            let mut wires: Vec<&Shape> = vec![&fd.outer_wire];
+            wires.extend(fd.inner_wires.iter());
+            for w in wires {
+                if let TShape::Wire(wd) = &*w.data {
+                    let w_or = w.orientation;
+                    for e in &wd.edges {
+                        let mut e2 = Shape::new(e.data.clone(), e.location, e.orientation);
+                        e2.orientation = f_or.compose(w_or).compose(e.orientation);
+                        out.push(e2);
+                    }
                 }
             }
         }
+        out
     }
 
     // ================================================================    // Helpers ?DS internal
