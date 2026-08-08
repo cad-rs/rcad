@@ -3087,8 +3087,11 @@ impl<'a> Builder<'a> {
         for v in verts {
             let vkey = (v.ptr_id(), v.location);
             let list = the_map.entry(vkey).or_default();
-            let ekey = (the_edge.ptr_id(), the_edge.location);
-            if !list.iter().any(|e| (e.ptr_id(), e.location) == ekey) {
+            // OCCT L1035: pList->Contains(theEdge) — TopoDS_Shape::operator==
+            // is IsEqual (TShape + Location + Orientation), so two instances of
+            // the same TShape with different orientations are distinct.
+            let ekey = (the_edge.ptr_id(), the_edge.location, the_edge.orientation);
+            if !list.iter().any(|e| (e.ptr_id(), e.location, e.orientation) == ekey) {
                 list.push(the_edge.clone());
             }
             if list.len() > 2 {
