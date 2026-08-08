@@ -191,19 +191,21 @@ impl<'a> BuilderFace<'a> {
 
         // OCCT L284-321: Post-treatment — find unprocessed edges.
         // a. collect all edges that are in loops (OCCT L287-298).
-        let mut a_mep: HashSet<u64> = HashSet::new();
+        // OCCT aMEP (L285) is NCollection_Map<TopoDS_Shape> — default hasher
+        // TShape + Location + Orientation.
+        let mut a_mep: HashSet<(u64, u32, rcad_kernel::topods::Orientation)> = HashSet::new();
         for loop_edges in &self.my_loops {
             for e in loop_edges {
-                a_mep.insert(e.ptr_id());
+                a_mep.insert((e.ptr_id(), e.location, e.orientation));
             }
         }
         // b. collect all edges that are to avoid (OCCT L304-310).
-        for &(eptr, _el, _eo) in &self.my_shapes_to_avoid {
-            a_mep.insert(eptr);
+        for &key in &self.my_shapes_to_avoid {
+            a_mep.insert(key);
         }
         // c. add all edges that are not processed to myShapesToAvoid (OCCT L312-321).
         for e in &self.my_edges {
-            if !a_mep.contains(&e.ptr_id()) {
+            if !a_mep.contains(&(e.ptr_id(), e.location, e.orientation)) {
                 self.my_shapes_to_avoid.insert((e.ptr_id(), e.location, e.orientation));
             }
         }
