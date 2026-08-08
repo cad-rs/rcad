@@ -1600,8 +1600,9 @@ impl<'a> Builder<'a> {
     /// or alone vertices take the BuildDraftFace fast path.
     fn build_split_faces(&mut self) {
         let a_nb_s = self.ds.nb_source_shapes();
-        // aFacesIm: DS face index -> area shapes (OCCT IndexedDataMap<int, List<Shape>>).
-        let mut a_faces_im: HashMap<usize, Vec<Shape>> = HashMap::new();
+        // aFacesIm: DS face index -> area shapes (OCCT IndexedDataMap<int,
+        // List<Shape>>, Builder_2.cxx L256 — insertion order, iterated at L535).
+        let mut a_faces_im: IndexMap<usize, Vec<Shape>> = IndexMap::new();
         // aVBF: pending BuilderFace tasks (face_idx, face, edges).
         let mut a_vbf: Vec<(usize, Shape, Vec<Shape>)> = Vec::new();
 

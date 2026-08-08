@@ -378,7 +378,9 @@ impl<'a> BuilderFace<'a> {
         // aHoleFaceMap: hole index -> growth index (most specific / innermost).
         let fi = self.my_face_index.unwrap_or(0);
         let a_nb_h = a_hole_faces.len();
-        let mut a_hole_face_map: HashMap<usize, usize> = HashMap::new();
+        // OCCT L487/L540: aHoleFaceMap and aFaceHolesMap are IndexedDataMap —
+        // the back-map iteration (L544) follows insertion order.
+        let mut a_hole_face_map: IndexMap<usize, usize> = IndexMap::new();
         // OCCT L470-491: prepare the hole UV boxes (BOPTools_Box2dTree). rcad
         // scans linearly; the tree is a performance structure, the overlap
         // predicate is preserved.
