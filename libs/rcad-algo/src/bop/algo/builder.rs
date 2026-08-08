@@ -4150,7 +4150,7 @@ impl<'a> Builder<'a> {
                 // OCCT L834: aSI.Orientation(TopAbs_INTERNAL).
                 a_si.orientation = topods::Orientation::Internal;
                 // OCCT L836: ComputeStateByOnePoint(aSI, aSd, 1.e-11, ctx).
-                let a_state = Self::compute_state_by_one_point(&a_si, &a_sd, 1e-11);
+                let a_state = Self::compute_state_by_one_point(&a_si, &a_sd, 1e-11, &self.ds);
                 if a_state != 3 {
                     // myState 3 == IN (BRepClass3d_SClassifier: 0 unknown,
                     // 1 fault, 2 ON, 3 IN, 4 OUT); OCCT L838: aState != IN —
@@ -4186,9 +4186,14 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPTools_AlgoTools::ComputeStateByOnePoint (BOPTools_AlgoTools.cxx L623-656).
-    /// Classifies a shape (vertex/edge) relative to a solid by a single point.
-    fn compute_state_by_one_point(the_s: &Shape, the_ref: &Shape, the_tol: f64) -> u8 {
+    /// Classifies a shape (vertex/edge/face) relative to a solid by a single point.
+    fn compute_state_by_one_point(the_s: &Shape, the_ref: &Shape, the_tol: f64, ds: &DS) -> u8 {
         let a_type = the_s.shape_type();
+        // OCCT L636-644: the FACE branch runs ComputeState(Face) with the
+        // solid's edge bounds (the Context FClass2d path).
+        if a_type == topods::ShapeType::Face {
+            return compute_state_face(the_s, the_ref, the_tol, ds);
+        }
         let a_p3d: Option<DVec3> = match a_type {
             topods::ShapeType::Vertex => match &*the_s.data {
                 TShape::Vertex(vd) => Some(vd.point),
@@ -4225,7 +4230,7 @@ impl<'a> Builder<'a> {
                 // the returned state — aState stays TopAbs_UNKNOWN (0).
                 let subs = Self::shape_sub_shapes_static(the_s);
                 if let Some(sub) = subs.first() {
-                    let _ = Self::compute_state_by_one_point(sub, the_ref, the_tol);
+                    let _ = Self::compute_state_by_one_point(sub, the_ref, the_tol, ds);
                 }
                 None
             }
