@@ -2225,11 +2225,28 @@ impl<'a> Builder<'a> {
             }
             _ => return false,
         }
-        // Fallback: split-face images share the original face's closed
-        // surface; any CurveOnClosedSurface on the edge matches that surface.
-        ed.representations
-            .iter()
-            .any(|r| matches!(r, topods::CurveRepresentation::CurveOnClosedSurface { .. }))
+        // OCCT L825-840: any CurveOnClosedSurface on the edge whose surface
+        // matches the face's surface. rcad keys representations by the face's
+        // BRep index, so for split-face images (whose index does not preserve
+        // the original face's) the exact match above misses. OCCT compares
+        // surface handles (IsCurveOnSurface(S, l)); rcad approximates by
+        // checking the face surface is closed (a seam exists only on a closed
+        // surface) and the edge carries a CurveOnClosedSurface — the
+        // representation is always created on the same closed surface as the
+        // face being split (BOPAlgo_Builder_2.cxx L397).
+        let surf = a_f.as_face().and_then(|fd| fd.surface.clone());
+        let surface_closed = match &surf {
+            Some(rcad_kernel::geom::Surface3::Cylinder(_))
+            | Some(rcad_kernel::geom::Surface3::Sphere(_))
+            | Some(rcad_kernel::geom::Surface3::Cone(_))
+            | Some(rcad_kernel::geom::Surface3::Torus(_))
+            | Some(rcad_kernel::geom::Surface3::Revolution(_)) => true,
+            _ => false,
+        };
+        surface_closed
+            && ed.representations
+                .iter()
+                .any(|r| matches!(r, topods::CurveRepresentation::CurveOnClosedSurface { .. }))
     }
 
     /// OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace(aSplit, aF)
@@ -2299,13 +2316,35 @@ impl<'a> Builder<'a> {
         //
         // OCCT L150-153: C2D1 = CurveOnSurface(aSp, aF, a, b);
         // aT = IntermediatePoint(a, b); C2D1->D1(aT, aP2D, aVec2D).
+        // BRep_Tool::CurveOnSurface reads the pcurve from the edge TShape,
+        // which is shared — any reference (including the split edge passed
+        // here) sees it. rcad's Arc::make_mut clones a shared TShape on write,
+        // so the passed edge may miss pcurves that live on the DS canonical
+        // shape; fall back to the DS shape (same as wire_splitter::edge_pcurve).
         let face_brep = a_f.index;
-        let (c2d1, a, b) = match a_sp
-            .as_edge()
-            .and_then(|ed| ed.pcurves.get(&face_brep).cloned())
-        {
-            Some(v) => v,
-            None => return false,
+        let fi = self.ds.index(a_f) as usize;
+        let (c2d1, a, b) = {
+            let direct = a_sp
+                .as_edge()
+                .and_then(|ed| ed.pcurves.get(&face_brep).cloned())
+                .or_else(|| a_sp.as_edge().and_then(|ed| ed.pcurves.get(&fi).cloned()));
+            if let Some(v) = direct {
+                v
+            } else {
+                let Some(idx) = self.ds.map_shape_index.get(&(a_sp.ptr_id(), a_sp.location)) else {
+                    return false;
+                };
+                let Some(ed2) = self.ds.shape_info(*idx).shape.as_edge() else {
+                    return false;
+                };
+                if let Some(v) = ed2.pcurves.get(&face_brep) {
+                    v.clone()
+                } else if let Some(v) = ed2.pcurves.get(&fi) {
+                    v.clone()
+                } else {
+                    return false;
+                }
+            }
         };
         let a_t = intermediate_point(a, b);
         let a_p2d = c2d1.point_at(a_t);
@@ -2407,31 +2446,73 @@ impl<'a> Builder<'a> {
         }
         //
         // OCCT L250-257: aC2DSplit = CurveOnSurface(aESplit, aFace, aTS1, aTS2).
+        // BRep_Tool::CurveOnSurface reads the pcurve from the edge TShape,
+        // which is shared — fall back to the DS canonical shape like
+        // do_split_seam_on_face (Arc::make_mut clones on write).
         let mut a_e_split_f = a_e_split.clone();
         a_e_split_f.orientation = Orientation::Forward;
         let face_brep = a_face.index;
-        let (a_c2d_split, a_ts1, a_ts2) = match a_e_split_f
-            .as_edge()
-            .and_then(|ed| ed.pcurves.get(&face_brep).cloned())
-        {
-            Some(v) => v,
-            None => return false,
+        let fi = self.ds.index(a_face) as usize;
+        let (a_c2d_split, a_ts1, a_ts2) = {
+            let direct = a_e_split_f
+                .as_edge()
+                .and_then(|ed| ed.pcurves.get(&face_brep).cloned())
+                .or_else(|| a_e_split_f.as_edge().and_then(|ed| ed.pcurves.get(&fi).cloned()));
+            if let Some(v) = direct {
+                v
+            } else {
+                let Some(idx) = self.ds.map_shape_index.get(&(a_e_split_f.ptr_id(), a_e_split_f.location)) else {
+                    return false;
+                };
+                let Some(ed2) = self.ds.shape_info(*idx).shape.as_edge() else {
+                    return false;
+                };
+                if let Some(v) = ed2.pcurves.get(&face_brep) {
+                    v.clone()
+                } else if let Some(v) = ed2.pcurves.get(&fi) {
+                    v.clone()
+                } else {
+                    return false;
+                }
+            }
         };
         //
         // OCCT L263-267: the original seam's two pcurves (forward -> pcurve1,
-        // reversed -> pcurve2).
-        let (a_c2d1, a_c2d2, a_t1, a_t2) = match a_e_origin.as_edge().and_then(|ed| {
-            ed.representations.iter().find_map(|r| match r {
-                CurveRepresentation::CurveOnClosedSurface {
-                    face, pcurve1, pcurve2, range,
-                } if *face == face_brep => {
-                    Some((pcurve1.clone(), pcurve2.clone(), range[0], range[1]))
-                }
-                _ => None,
+        // reversed -> pcurve2). BRep_Tool::CurveOnSurface reads from the
+        // shared TShape — fall back to the DS canonical shape.
+        let find_closed_rep = |e: &Shape| -> Option<(Curve2d, Curve2d, f64, f64)> {
+            e.as_edge().and_then(|ed| {
+                ed.representations.iter().find_map(|r| match r {
+                    CurveRepresentation::CurveOnClosedSurface {
+                        face, pcurve1, pcurve2, range,
+                    } if *face == face_brep => {
+                        Some((pcurve1.clone(), pcurve2.clone(), range[0], range[1]))
+                    }
+                    _ => None,
+                })
             })
-        }) {
+        };
+        let (a_c2d1, a_c2d2, a_t1, a_t2) = match find_closed_rep(a_e_origin) {
             Some(v) => v,
-            None => return false,
+            None => {
+                let Some(idx) = self.ds.map_shape_index.get(&(a_e_origin.ptr_id(), a_e_origin.location)) else {
+                    return false;
+                };
+                let Some(ed2) = self.ds.shape_info(*idx).shape.as_edge() else {
+                    return false;
+                };
+                match ed2.representations.iter().find_map(|r| match r {
+                    CurveRepresentation::CurveOnClosedSurface {
+                        face, pcurve1, pcurve2, range,
+                    } if *face == face_brep => {
+                        Some((pcurve1.clone(), pcurve2.clone(), range[0], range[1]))
+                    }
+                    _ => None,
+                }) {
+                    Some(v) => v,
+                    None => return false,
+                }
+            }
         };
         //
         // OCCT L269-272: aT = IntermediatePoint(aTS1, aTS2); D1 -> aPMid, aVTgt.

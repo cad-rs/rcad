@@ -655,7 +655,11 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape) -> (bool, i32) {
 
 /// OCCT BOPTools_AlgoTools::IsSplitToReverse(edge) (BOPTools_AlgoTools.cxx
 /// L1456-1531) — true when the split edge a_sp has the opposite direction to
-/// the original edge a_e. rcad: straight/analytic edge translation.
+/// the original edge a_e. Samples up to 11 points on the split edge (after
+/// FindValidRange), projects each onto the original edge, and compares the
+/// tangent directions (EdgeTangent = curve derivative, reversed for a
+/// REVERSED edge); the first point where both tangents are computable
+/// decides. anErr mirrors the OCCT error codes (2/3/4).
 pub fn is_split_to_reverse_edge(a_sp: &Shape, a_e: &Shape) -> (bool, i32) {
     use rcad_kernel::topods::TShape;
     // OCCT L1461-1468: degenerated edges are not processed.
@@ -675,42 +679,114 @@ pub fn is_split_to_reverse_edge(a_sp: &Shape, a_e: &Shape) -> (bool, i32) {
             return (a_sp.orientation != a_e.orientation, 0);
         }
     }
-    // OCCT L1480-1531: compare the tangent vectors at a sample point.
-    let t_sp = edge_tangent_3d(a_sp);
-    let t_or = edge_tangent_3d(a_e);
-    match (t_sp, t_or) {
-        (Some(vs), Some(vo)) => (vs.dot(vo) < 0.0, 0),
-        _ => (false, 4),
+    // OCCT L1480-1486: FindValidRange(theESp, f, l) — shrink the split edge
+    // range so the sample point is inside both edges; fall back to the full
+    // range when shrinking fails.
+    let mut f = a_sp.as_edge().map(|ed| ed.range[0]).unwrap_or(0.0);
+    let mut l = a_sp.as_edge().map(|ed| ed.range[1]).unwrap_or(0.0);
+    if !find_valid_range_single_edge(a_sp, &mut f, &mut l) {
+        if let Some(ed) = a_sp.as_edge() {
+            f = ed.range[0];
+            l = ed.range[1];
+        }
     }
+    // OCCT L1490-1524: try up to 11 sample points.
+    let mut an_err = 0;
+    let a_nb_p = 11;
+    let a_dt = (l - f) / a_nb_p as f64;
+    for i in 1..a_nb_p {
+        let a_tm = f + i as f64 * a_dt;
+        // OCCT L1495-1501: EdgeTangent(theESp, aTm) — curve derivative.
+        let Some(v_sp_tgt) = edge_tangent_at_param(a_sp, a_tm) else {
+            an_err = 2;
+            continue;
+        };
+        // OCCT L1504-1511: ProjectPointOnEdge(aCSp->Value(aTm), theEOr, aTmOr).
+        let Some((a_tm_or, _)) = project_point_on_edge(&c_sp.as_ref().unwrap().point_at(a_tm), a_e) else {
+            an_err = 3;
+            continue;
+        };
+        // OCCT L1513-1519: EdgeTangent(theEOr, aTmOr).
+        let Some(v_or_tgt) = edge_tangent_at_param(a_e, a_tm_or) else {
+            an_err = 4;
+            continue;
+        };
+        // OCCT L1521-1522: aCos = aVSpTgt.Dot(aVOrTgt); return (aCos < 0.).
+        let a_cos = v_sp_tgt.dot(v_or_tgt);
+        return (a_cos < 0.0, 0);
+    }
+    (false, an_err)
 }
 
-/// Edge tangent at the parameterization direction (straight edges).
-/// OCCT BOPTools_AlgoTools2D::EdgeTangent — the curve derivative, reversed for
-/// a REVERSED edge.
-pub fn edge_tangent_3d(e: &Shape) -> Option<glam::DVec3> {
+/// OCCT BRepLib::FindValidRange(theEdge, theFirst, theLast) (BRepLib_1.cxx
+/// L262-299) — shrink the edge range away from both endpoint tolerance
+/// spheres using the multi-parameter FindValidRange (L173-258).
+fn find_valid_range_single_edge(a_e: &Shape, out_f: &mut f64, out_l: &mut f64) -> bool {
     use rcad_kernel::topods::TShape;
-    match &*e.data {
-        TShape::Edge(ed) => {
-            let p1 = match &*ed.first.data {
-                TShape::Vertex(vd) => vd.point,
-                _ => return None,
-            };
-            let p2 = match &*ed.last.data {
-                TShape::Vertex(vd) => vd.point,
-                _ => return None,
-            };
-            let d = p2 - p1;
-            if d.length_squared() < 1e-24 {
-                return None;
-            }
-            let mut t = d.normalize();
-            if e.orientation == rcad_kernel::topods::Orientation::Reversed {
-                t = -t;
-            }
-            Some(t)
-        }
-        _ => None,
+    let Some(ed) = a_e.as_edge() else { return false };
+    let Some(curve) = ed.curve.clone() else { return false };
+    let [a_par_v0, a_par_v1] = ed.range;
+    if a_par_v1 - a_par_v0 < rcad_kernel::PCONFUSION {
+        return false;
     }
+    // OCCT L270-271: TopExp::Vertices(theEdge, aV[0], aV[1]).
+    let verts = [&ed.first, &ed.last];
+    // OCCT L277-289: aTolV = Confusion() + Tolerance(aV); aPntV = Pnt(aV);
+    // null vertices take the curve point at the range end with aTolE.
+    let a_tol_e = ed.tolerance;
+    let mut a_tol_v = [rcad_kernel::CONFUSION; 2];
+    let mut a_pnt_v = [glam::DVec3::ZERO; 2];
+    for i in 0..2 {
+        match &*verts[i].data {
+            TShape::Vertex(vd) => {
+                a_tol_v[i] += vd.tolerance;
+                a_pnt_v[i] = vd.point;
+            }
+            _ => {
+                if !rcad_kernel::is_infinite_value(a_par_v0 + i as f64 * (a_par_v1 - a_par_v0)) {
+                    a_tol_v[i] += a_tol_e;
+                    a_pnt_v[i] = curve.point_at(if i == 0 { a_par_v0 } else { a_par_v1 });
+                }
+            }
+        }
+    }
+    crate::bop::algo::pave_filler::find_valid_range_params(
+        &curve, a_par_v0, a_par_v1, a_tol_e,
+        a_pnt_v[0], a_tol_v[0], a_pnt_v[1], a_tol_v[1],
+        out_f, out_l,
+    )
+}
+
+/// OCCT BOPTools_AlgoTools2D::EdgeTangent (BOPTools_AlgoTools2D.cxx L578-607)
+/// — the curve derivative D1 at aT, normalized, reversed for a REVERSED edge.
+fn edge_tangent_at_param(e: &Shape, a_t: f64) -> Option<glam::DVec3> {
+    let ed = e.as_edge()?;
+    if ed.degenerated {
+        return None;
+    }
+    let curve = ed.curve.as_ref()?;
+    let mut a_tau = curve.derivative_at(a_t);
+    let a_mod = a_tau.length();
+    // gp::Resolution() = RealSmall() = DBL_MIN = f64::MIN_POSITIVE.
+    if a_mod <= f64::MIN_POSITIVE {
+        return None;
+    }
+    a_tau /= a_mod;
+    if e.orientation == rcad_kernel::topods::Orientation::Reversed {
+        a_tau = -a_tau;
+    }
+    Some(a_tau)
+}
+
+/// OCCT IntTools_Context::ProjectPointOnEdge(aP, aE, aT) — project the 3D
+/// point onto the edge's curve within the edge range; returns (param, point).
+fn project_point_on_edge(a_p: &glam::DVec3, a_e: &Shape) -> Option<(f64, glam::DVec3)> {
+    let ed = a_e.as_edge()?;
+    let curve = ed.curve.as_ref()?;
+    let [t1, t2] = ed.range;
+    let proj =
+        rcad_kernel::base::geom_api::project::closest_point_on_curve_range(curve, *a_p, t1, t2, 64);
+    Some((proj.param, proj.point))
 }
 
 /// Geometric identity of two 3D curves (rcad equivalent of OCCT's Geom_Curve

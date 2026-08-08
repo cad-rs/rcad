@@ -206,7 +206,7 @@ impl ShrunkRange {
 /// parameter range (a_t1, a_t2) instead of a ShrunkRange's PB. Used by
 /// ShrunkRange::find_valid_range and by the section-edge micro check
 /// (BOPTools_AlgoTools::IsMicroEdge), where the PB has no edge reference.
-fn find_valid_range_params(
+pub(crate) fn find_valid_range_params(
     curve: &Curve3,
     a_t1: f64,
     a_t2: f64,
