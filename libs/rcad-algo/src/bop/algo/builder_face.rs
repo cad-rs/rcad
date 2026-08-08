@@ -28,7 +28,7 @@ pub struct BuilderFace<'a> {
     pub my_areas: Vec<Shape>,           // OCCT: myAreas (result faces)
     pub my_loops: Vec<Vec<Shape>>,      // OCCT: myLoops (result wires)
     pub my_loops_internal: Vec<Vec<Shape>>, // OCCT: myLoopsInternal (internal wires)
-    my_shapes_to_avoid: HashSet<u64>,   // OCCT: myShapesToAvoid
+    my_shapes_to_avoid: HashSet<(u64, u32, rcad_kernel::topods::Orientation)>, // OCCT: myShapesToAvoid (NCollection_Map — default hasher TShape+Location+Orientation)
     my_avoid_internal_shapes: bool,      // OCCT: myAvoidInternalShapes (BuilderArea)
     my_context: IntToolsContext,         // OCCT: myContext
 }
@@ -87,7 +87,7 @@ impl<'a> BuilderFace<'a> {
             // (L156-157) — insertion order, key identity TShape + Location.
             let mut a_mve: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
             for a_e in &self.my_edges {
-                if self.my_shapes_to_avoid.contains(&a_e.ptr_id()) { continue; }
+                if self.my_shapes_to_avoid.contains(&(a_e.ptr_id(), a_e.location, a_e.orientation)) { continue; }
                 for a_v in Self::edge_vertices(a_e) {
                     let entry = a_mve
                         .entry((a_v.ptr_id(), a_v.location))
@@ -109,7 +109,7 @@ impl<'a> BuilderFace<'a> {
                         continue;
                     }
                     b_found = true;
-                    self.my_shapes_to_avoid.insert(a_e1.ptr_id());
+                    self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location, a_e1.orientation));
                 } else if a_nb_e == 2 {
                     // OCCT L211-227: two edges at the vertex.
                     let a_e2 = &a_le[1];
@@ -125,8 +125,8 @@ impl<'a> BuilderFace<'a> {
                             continue;
                         }
                         b_found = true;
-                        self.my_shapes_to_avoid.insert(a_e1.ptr_id());
-                        self.my_shapes_to_avoid.insert(a_e2.ptr_id());
+                        self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location, a_e1.orientation));
+                        self.my_shapes_to_avoid.insert((a_e2.ptr_id(), a_e2.location, a_e2.orientation));
                     }
                 }
             }
@@ -177,7 +177,7 @@ impl<'a> BuilderFace<'a> {
         // OCCT L256: aWES.SetFace(myFace)
         // OCCT L258-266: add edges to wire edge set (excluding shapes to avoid)
         let edges: Vec<Shape> = self.my_edges.iter()
-            .filter(|e| !self.my_shapes_to_avoid.contains(&e.ptr_id()))
+            .filter(|e| !self.my_shapes_to_avoid.contains(&(e.ptr_id(), e.location, e.orientation)))
             .cloned()
             .collect();
 
@@ -198,13 +198,13 @@ impl<'a> BuilderFace<'a> {
             }
         }
         // b. collect all edges that are to avoid (OCCT L304-310).
-        for &eptr in &self.my_shapes_to_avoid {
+        for &(eptr, _el, _eo) in &self.my_shapes_to_avoid {
             a_mep.insert(eptr);
         }
         // c. add all edges that are not processed to myShapesToAvoid (OCCT L312-321).
         for e in &self.my_edges {
             if !a_mep.contains(&e.ptr_id()) {
-                self.my_shapes_to_avoid.insert(e.ptr_id());
+                self.my_shapes_to_avoid.insert((e.ptr_id(), e.location, e.orientation));
             }
         }
 
@@ -215,7 +215,7 @@ impl<'a> BuilderFace<'a> {
         // MapShapesAndAncestors(aEE, VERTEX, EDGE). aVEMap (L244-245) uses
         // TopTools_ShapeMapHasher — key identity TShape + Location.
         let avoid_edges: Vec<Shape> = self.my_edges.iter()
-            .filter(|e| self.my_shapes_to_avoid.contains(&e.ptr_id()))
+            .filter(|e| self.my_shapes_to_avoid.contains(&(e.ptr_id(), e.location, e.orientation)))
             .cloned()
             .collect();
         let mut a_ve_map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
