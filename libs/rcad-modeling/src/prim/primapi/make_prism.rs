@@ -58,13 +58,16 @@ pub fn make_prism_brep(
     ];
 
     // Wires.  Bottom/top follow BRepPrim_GWedge; the lateral wires follow the
-    // box (make_box.rs) lateral face topology.
+    // box (make_box.rs) lateral face topology.  The even-index wires (0,2,4)
+    // belong to REVERSED faces — OCCT BRepPrim_GWedge::Face() reverses them
+    // (i%2==0, ReverseFace) and TopoDS_Builder::Add then reverses the added
+    // wire into the face, so the wires are stored REVERSED (see make_box.rs).
     let wires = [
-        t.add_twire(vec![b_ed[0].clone(), b_ed[1].clone(), b_ed[2].clone(), b_ed[3].clone()]),
+        rev(t.add_twire(vec![b_ed[0].clone(), b_ed[1].clone(), b_ed[2].clone(), b_ed[3].clone()])),
         t.add_twire(vec![t_ed[0].clone(), rev(t_ed[3].clone()), rev(t_ed[2].clone()), rev(t_ed[1].clone())]),
-        t.add_twire(vec![b_ed[0].clone(), e_ver[1].clone(), rev(t_ed[0].clone()), rev(e_ver[0].clone())]),
+        rev(t.add_twire(vec![b_ed[0].clone(), e_ver[1].clone(), rev(t_ed[0].clone()), rev(e_ver[0].clone())])),
         t.add_twire(vec![rev(b_ed[2].clone()), e_ver[2].clone(), t_ed[2].clone(), rev(e_ver[3].clone())]),
-        t.add_twire(vec![rev(b_ed[3].clone()), e_ver[0].clone(), t_ed[3].clone(), rev(e_ver[3].clone())]),
+        rev(t.add_twire(vec![rev(b_ed[3].clone()), e_ver[0].clone(), t_ed[3].clone(), rev(e_ver[3].clone())])),
         t.add_twire(vec![b_ed[1].clone(), e_ver[2].clone(), rev(t_ed[1].clone()), rev(e_ver[1].clone())]),
     ];
 

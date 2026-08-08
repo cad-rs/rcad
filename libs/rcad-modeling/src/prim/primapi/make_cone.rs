@@ -99,8 +99,11 @@ impl MakeCone {
         // the lateral wire a connected closed loop and the FClass2d uv polygon
         // a simple rectangle (OCCT winding, CCW in uv).
         let lat_wire = t.add_twire(vec![rev(e_top.clone()), e_seam.clone(), e_bot.clone(), rev(e_seam.clone())]);
-        // OCCT BottomWire (L757-782): [rev(BottomEdge)]
-        let bot_wire = t.add_twire(vec![rev(e_bot.clone())]);
+        // OCCT BottomWire (L757-782): [rev(BottomEdge)] — the wire itself is
+        // REVERSED because BottomFace() reverses it via TopoDS_Builder::Add
+        // (BRepPrim_OneAxis.cxx L501-503: ReverseFace then AddFaceWire, see
+        // make_cylinder.rs for the full OCCT reference).
+        let bot_wire = rev(t.add_twire(vec![rev(e_bot.clone())]));
         // OCCT TopWire (L726-756): [TopEdge]
         let top_wire = t.add_twire(vec![e_top.clone()]);
         let f_lat = t.add_tface(Some(lat_surf), lat_wire, vec![], None, None, vec![], true);

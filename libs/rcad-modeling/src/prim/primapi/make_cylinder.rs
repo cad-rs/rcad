@@ -97,11 +97,18 @@ impl MakeCylinder {
         // oppositely in the two wires (required by the shell builders'
         // GetEdgeOff reverse-orientation match, BOPTools_AlgoTools.cxx
         // L1107-1135).
-        let bot_wire = t.add_twire(vec![rev(e_bot.clone())]);
+        let bot_wire = rev(t.add_twire(vec![rev(e_bot.clone())]));
         let top_wire = t.add_twire(vec![e_top.clone()]);
 
         let f_lat = t.add_tface(Some(lateral_surf), lat_wire, vec![], None, None, vec![], true);
-        // OCCT BRepPrim_OneAxis::BottomFace (L502): ReverseFace.
+        // OCCT BRepPrim_OneAxis::BottomFace (L488-494): MakeFace, then
+        // ReverseFace() (BRepPrim_Builder::ReverseFace = F.Reverse(), flag
+        // only), then AddFaceWire(myFaces[FBOTTOM], BottomWire()) — BRep_Builder
+        // inherits TopoDS_Builder::Add (TopoDS_Builder.cxx L57-59), which
+        // REVERSES the added child when the parent face is REVERSED. So the
+        // bottom wire enters the face REVERSED (flag flipped, edges unchanged);
+        // the face itself is REVERSED. rcad: rev() on the wire (flag only,
+        // matching aChild.Reverse()) plus rev() on the face.
         let f_bot_fwd = t.add_tface(Some(bot_plane), bot_wire, vec![], None, None, vec![], true);
         let f_bot = rev(f_bot_fwd);
         let f_top = t.add_tface(Some(top_plane), top_wire, vec![], None, None, vec![], true);
