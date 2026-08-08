@@ -786,6 +786,22 @@ impl FaceFace {
             s2
         };
         self.my_trsf = a_trsf;
+        // OCCT IntTools_FaceFace::Perform L351-362: SortTypes — the surfaces
+        // are reordered so the one with the larger type index (Plane=0 <
+        // Cylinder=1 < Cone=2 < Sphere=3 < Torus=4 < Bezier=5 < BSpline=6 <
+        // SurfaceOfRevolution=7 < Other=11, IndexType L2844-2890) becomes the
+        // first one. The intersection curve direction (IntAna_QuadQuadGeo)
+        // and the IntPatch transitions depend on this order; OCCT swaps
+        // myFace1/myFace2 here and exchanges the pcurves afterwards (L550-562).
+        let mut s1 = s1;
+        let mut s2 = s2;
+        let i_t1 = surface_type_index(&s1);
+        let i_t2 = surface_type_index(&s2);
+        if i_t1 < i_t2 {
+            std::mem::swap(&mut s1, &mut s2);
+            std::mem::swap(&mut self.uv1, &mut self.uv2);
+            std::mem::swap(&mut self.face1, &mut self.face2);
+        }
         let a_fuzz = self.fuzzy / 2.0;
         let tol_f1 = self.tol1 + a_fuzz;
         let tol_f2 = self.tol2 + a_fuzz;
@@ -978,4 +994,21 @@ fn trsf_to_point(
 /// Transform a surface by an affine transform (inverse of the OCCT Move).
 fn transform_surface_ref(s: &Surface3, trsf: &glam::DAffine3) -> Surface3 {
     rcad_kernel::geom::transform_surface(s, trsf)
+}
+
+/// OCCT IntTools_FaceFace::IndexType (IntTools_FaceFace.cxx L2844-2890) —
+/// the surface-type ordering used by SortTypes (L2826-2840). Plane=0 <
+/// Cylinder=1 < Cone=2 < Sphere=3 < Torus=4 < BezierSurface=5 <
+/// BSplineSurface=6 < SurfaceOfRevolution=7 < (default 11).
+fn surface_type_index(s: &Surface3) -> i32 {
+    match s {
+        Surface3::Plane(_) => 0,
+        Surface3::Cylinder(_) => 1,
+        Surface3::Cone(_) => 2,
+        Surface3::Sphere(_) => 3,
+        Surface3::Torus(_) => 4,
+        Surface3::Bezier(_) => 5,
+        Surface3::BSpline(_) => 6,
+        _ => 11,
+    }
 }
