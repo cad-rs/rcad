@@ -490,21 +490,26 @@ fn get_face_dir(
     let mut db = dn.cross(a_dtgt);
     // OCCT L2145-2157: refine the bi-normal by FindPointInFace (skipped for
     // small faces). The plane aProjPL is (aP, aDTgt). When FindPointInFace
-    // fails, OCCT falls back to GetApproxNormalToFaceOnEdge (hatcher) which
-    // recomputes aDN and redirects aDB from aP to the near point projected
-    // onto the aProjPL plane.
-    if !b_small_faces {
-        if !find_point_in_face(a_f, a_p, &mut db, a_dt, a_tol_e, a_dtgt, ds) {
-            // OCCT L2150-2156: GetApproxNormalToFaceOnEdge(aE, aF, aT, aDt, aPx, aDN, ctx);
-            // aProjPL.Perform(aPx); aPx = aProjPL.NearestPoint();
-            // aDB = Vec(aP, aPx).
-            if let Some((a_px, a_dnf)) = get_approx_normal_to_face_on_edge(a_e, a_f, a_t, a_dt, ds) {
-                dn = a_dnf;
-                let a_px_proj = a_px - a_dtgt * (a_px - a_p).dot(a_dtgt);
-                let v = a_px_proj - a_p;
-                if v.length_squared() >= 1e-24 {
-                    db = v.normalize();
-                }
+    // fails (or the face is small), OCCT falls back to
+    // GetApproxNormalToFaceOnEdge (hatcher) which recomputes aDN and
+    // redirects aDB from aP to the near point projected onto the aProjPL
+    // plane (L2147-2156: bFound = !theSmallFaces && FindPointInFace(...);
+    // if (!bFound) { ... }).
+    let b_found = if !b_small_faces {
+        find_point_in_face(a_f, a_p, &mut db, a_dt, a_tol_e, a_dtgt, ds)
+    } else {
+        false
+    };
+    if !b_found {
+        // OCCT L2149-2156: GetApproxNormalToFaceOnEdge(aE, aF, aT, aDt, aPx, aDN, ctx);
+        // aProjPL.Perform(aPx); aPx = aProjPL.NearestPoint();
+        // aDB = Vec(aP, aPx).
+        if let Some((a_px, a_dnf)) = get_approx_normal_to_face_on_edge(a_e, a_f, a_t, a_dt, ds) {
+            dn = a_dnf;
+            let a_px_proj = a_px - a_dtgt * (a_px - a_p).dot(a_dtgt);
+            let v = a_px_proj - a_p;
+            if v.length_squared() >= 1e-24 {
+                db = v.normalize();
             }
         }
     }
@@ -660,26 +665,55 @@ fn get_approx_normal_to_face_on_edge(
         (Some(p), 0) => p,
         _ => return None,
     };
-    // OCCT L676: if (!IsPointInOnFace(aF, aPx2DNear)) — PointInFace fallback.
-    // rcad: approximate the in-face check by the surface parameter domain.
-    let dom = surf.default_domain();
-    let u_in = dom[0].is_finite() && dom[1].is_finite() && a_px2d.x >= dom[0] && a_px2d.x <= dom[1];
-    let v_in = dom[2].is_finite() && dom[3].is_finite() && a_px2d.y >= dom[2] && a_px2d.y <= dom[3];
-    if !(u_in && v_in) {
+    // OCCT L676: if (!IsPointInOnFace(aF, aPx2DNear)) — PointInFace fallback
+    // (the hatcher inside point; when that fails too, iErr = 2 and
+    // GetApproxNormalToFaceOnEdge returns false, L657-663).
+    let fi = ds.map_shape_index.get(&(a_f.ptr_id(), a_f.location)).copied();
+    let in_face = match fi {
+        Some(fi) => {
+            let class2d = FClass2d::new(ds, fi, ds.face_tolerance(fi));
+            class2d.perform(ds, a_px2d, true) != State::Out
+        }
+        // Draft-solid synthetic face wrappers (index == usize::MAX) have no DS
+        // entry: approximate by the surface parameter domain (convex faces —
+        // planes, cylinders — keep the domain center inside).
+        None => {
+            let dom = surf.default_domain();
+            let u_in =
+                dom[0].is_finite() && dom[1].is_finite() && a_px2d.x >= dom[0] && a_px2d.x <= dom[1];
+            let v_in =
+                dom[2].is_finite() && dom[3].is_finite() && a_px2d.y >= dom[2] && a_px2d.y <= dom[3];
+            u_in && v_in
+        }
+    };
+    if !in_face {
         // OCCT L681: PointInFace(aF, aE, aT, theStep, aP, aP2d, ctx) — hatcher.
-        // rcad: surface-domain center (convex faces keep it inside).
-        let u = if dom[0].is_finite() && dom[1].is_finite() {
-            0.5 * (dom[0] + dom[1])
-        } else {
-            0.0
-        };
-        let v = if dom[2].is_finite() && dom[3].is_finite() {
-            0.5 * (dom[2] + dom[3])
-        } else {
-            0.0
-        };
-        a_px2d = DVec2::new(u, v);
-        a_px_near = surf.point_at(u, v);
+        match fi {
+            Some(fi) => {
+                let (err2, p2, p2d2) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+                if err2 != 0 {
+                    return None; // OCCT: iErr = 2 -> GetApproxNormalToFaceOnEdge false
+                }
+                a_px2d = p2d2;
+                a_px_near = p2;
+            }
+            None => {
+                // Synthetic face: surface-domain center (convex faces keep it inside).
+                let dom = surf.default_domain();
+                let u = if dom[0].is_finite() && dom[1].is_finite() {
+                    0.5 * (dom[0] + dom[1])
+                } else {
+                    0.0
+                };
+                let v = if dom[2].is_finite() && dom[3].is_finite() {
+                    0.5 * (dom[2] + dom[3])
+                } else {
+                    0.0
+                };
+                a_px2d = DVec2::new(u, v);
+                a_px_near = surf.point_at(u, v);
+            }
+        }
     }
     // OCCT L510-517: GetNormalToSurface(aS, aPx2DNear.X(), aPx2DNear.Y(), aDNF);
     // REVERSED faces reverse the normal.
@@ -699,6 +733,7 @@ fn min_step_3d(
     the_f1: &Shape,
     candidates: &[(Shape, Shape)],
     a_p: DVec3,
+    ds: &DS,
 ) -> (f64, bool) {
     let a_tol_e = edge_data(the_e1).map(|e| e.tolerance).unwrap_or(0.0);
     let mut a_dt_max: f64 = -1.0;
@@ -749,9 +784,19 @@ fn min_step_3d(
         let Some(surf) = a_f.as_face().and_then(|fd| fd.surface.clone()) else {
             continue;
         };
-        // OCCT theContext->UVBounds(aF) — rcad: the surface parameter domain.
-        let dom = surf.default_domain();
-        let a_du = dom[1] - dom[0];
+        // OCCT theContext->UVBounds(aF) — the face's actual UV bounds; rcad:
+        // the DS face's sampled UV rect (face_actual_uv_bounds), falling back
+        // to the surface domain for synthetic draft-solid face wrappers (no
+        // DS entry).
+        let [a_umin, a_umax, a_vmin, a_vmax] = match ds
+            .map_shape_index
+            .get(&(a_f.ptr_id(), a_f.location))
+            .copied()
+        {
+            Some(fi) => ds.face_actual_uv_bounds(fi),
+            None => surf.default_domain(),
+        };
+        let a_du = a_umax - a_umin;
         if a_du > 0.0 {
             let a_u_res = u_resolution_for_surface(&surf, a_dt_max);
             if 2.0 * a_u_res > a_du {
@@ -759,7 +804,7 @@ fn min_step_3d(
                 break;
             }
         }
-        let a_dv = dom[3] - dom[2];
+        let a_dv = a_vmax - a_vmin;
         if a_dv > 0.0 {
             let a_v_res = v_resolution_for_surface(&surf, a_dt_max);
             if 2.0 * a_v_res > a_dv {
@@ -846,7 +891,7 @@ pub(crate) fn get_face_off(
     let a_or = the_e1.orientation;
 
     // OCCT L1026-1028: MinStep3D(theE1, theF1, theLCSOff, aPx, ..., bSmallFaces).
-    let (a_dt3d, b_small_faces) = min_step_3d(the_e1, the_f1, candidates, a_px);
+    let (a_dt3d, b_small_faces) = min_step_3d(the_e1, the_f1, candidates, a_px, ds);
     // OCCT L1029-1037: GetFaceDir(theE1, theF1, ...) → (aDN1, aDBF).
     let (a_dn1, a_dbf1) = match get_face_dir(the_e1, the_f1, a_px, a_t, a_dtgt, ds, a_dt3d, b_small_faces) {
         Some(d) => d,
