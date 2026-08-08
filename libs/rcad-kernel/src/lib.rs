@@ -305,3 +305,11 @@ pub fn surface_bounding_box(
 ) -> Option<[DVec3; 2]> {
     base::bnd_lib::surface_bounding_box(surface, vertices)
 }
+
+/// Exact 2D bounding box of a curve sub-range [u1, u2] (already enlarged by
+/// `tol`), returned as [u_min, u_max, v_min, v_max].
+/// OCCT GeomBndLib_Curve2d::Box — used by BRepTools::AddUVBounds through
+/// BndLib_Add2dCurve::Add. Delegates to base::bnd_lib.
+pub fn curve2d_bounding_box(c: &geom::Curve2d, u1: f64, u2: f64, tol: f64) -> [f64; 4] {
+    base::bnd_lib::curve2d_bounding_box(c, u1, u2, tol)
+}

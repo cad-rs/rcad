@@ -20,9 +20,12 @@
 //!
 //! Each per-type Box applies `Enlarge(Tol)` internally, matching OCCT.
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use crate::core::precision::{PCONFUSION, parametric_default};
-use crate::geom::{BSplineCurve3, BezierCurve3, Curve3, CurveEval, Surface3};
+use crate::geom::{
+    BSplineCurve3, BezierCurve3, Circle2d, Curve2d, Curve2dEval, Curve3, CurveEval, Ellipse2d,
+    Line2d, Surface3,
+};
 
 // ---------------------------------------------------------------------------
 // OCCT-aligned helpers
@@ -778,5 +781,210 @@ pub fn surface_bounding_box(
             }
         }
         _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2D curve bounding box — OCCT GeomBndLib_Curve2d::Box (used by
+// BRepTools::AddUVBounds through BndLib_Add2dCurve::Add)
+// ---------------------------------------------------------------------------
+
+/// Add a 2D point into a [u_min, u_max, v_min, v_max] box.
+fn box2d_add_point(b: &mut [f64; 4], p: DVec2) {
+    b[0] = b[0].min(p.x);
+    b[1] = b[1].max(p.x);
+    b[2] = b[2].min(p.y);
+    b[3] = b[3].max(p.y);
+}
+
+/// OCCT GeomBndLib_Line2d::Box (GeomBndLib_Line2d.hxx L70-127) — segment
+/// endpoints. Infinite parameters open the corresponding side of the box
+/// (GeomBndLib_InfiniteHelpers OpenMin/OpenMax); rcad uses the fully open box
+/// as a conservative superset.
+fn line2d_box_uv(l: &Line2d, u1: f64, u2: f64, tol: f64) -> [f64; 4] {
+    let mut b = [f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY];
+    if !u1.is_infinite() {
+        box2d_add_point(&mut b, l.origin + l.direction * u1);
+    }
+    if !u2.is_infinite() {
+        box2d_add_point(&mut b, l.origin + l.direction * u2);
+    }
+    // OpenMin/OpenMax: the missing endpoint leaves the box open on that side.
+    b[0] -= tol;
+    b[1] += tol;
+    b[2] -= tol;
+    b[3] += tol;
+    b
+}
+
+/// OCCT GeomBndLib_Circle2d::Box (GeomBndLib_Circle2d.cxx L23-105) — exact
+/// bounds of a circular arc; a full circle uses the analytical extrema.
+fn circle2d_box_uv(c: &Circle2d, u1: f64, u2: f64, tol: f64) -> [f64; 4] {
+    let mut b = [f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY];
+    let r = c.radius;
+    let o = c.center;
+    let xd = c.x_dir;
+    let yd = c.y_dir;
+    let eval = |t: f64| o + r * t.cos() * xd + r * t.sin() * yd;
+    let two_pi = std::f64::consts::TAU;
+    if u2 - u1 >= two_pi - PCONFUSION {
+        // OCCT L23-44: full circle — analytical extrema per coordinate.
+        for k in 0..2 {
+            let a_xk = if k == 0 { xd.x } else { xd.y };
+            let a_yk = if k == 0 { yd.x } else { yd.y };
+            let a_amp = (r * r * a_xk * a_xk + r * r * a_yk * a_yk).sqrt();
+            if k == 0 {
+                b[0] = o.x - a_amp;
+                b[1] = o.x + a_amp;
+            } else {
+                b[2] = o.y - a_amp;
+                b[3] = o.y + a_amp;
+            }
+        }
+    } else {
+        // OCCT L48-100: arc endpoints + in-range extrema.
+        box2d_add_point(&mut b, eval(u1));
+        box2d_add_point(&mut b, eval(u2));
+        for k in 0..2 {
+            let a_xk = if k == 0 { xd.x } else { xd.y };
+            let a_yk = if k == 0 { yd.x } else { yd.y };
+            // OCCT: gp::Resolution() == 1e-15.
+            let a_t_extr_min = if a_xk.abs() > 1e-15 {
+                in_period((a_yk / a_xk).atan(), 0.0, two_pi)
+            } else {
+                std::f64::consts::FRAC_PI_2
+            };
+            let a_t_extr_max = if a_t_extr_min <= std::f64::consts::PI {
+                a_t_extr_min + std::f64::consts::PI
+            } else {
+                a_t_extr_min - std::f64::consts::PI
+            };
+            let a_tk = in_period(a_t_extr_min, u1, u1 + two_pi);
+            if a_tk >= u1 && a_tk <= u2 {
+                box2d_add_point(&mut b, eval(a_t_extr_min));
+            }
+            let a_tk = in_period(a_t_extr_max, u1, u1 + two_pi);
+            if a_tk >= u1 && a_tk <= u2 {
+                box2d_add_point(&mut b, eval(a_t_extr_max));
+            }
+        }
+    }
+    // OCCT: aBox.Enlarge(theTol).
+    b[0] -= tol;
+    b[1] += tol;
+    b[2] -= tol;
+    b[3] += tol;
+    b
+}
+
+/// OCCT GeomBndLib_Ellipse2d::Box (GeomBndLib_Ellipse2d.cxx L23-105) — exact
+/// bounds of an elliptical arc; a full ellipse uses the analytical extrema.
+fn ellipse2d_box_uv(c: &Ellipse2d, u1: f64, u2: f64, tol: f64) -> [f64; 4] {
+    let mut b = [f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY];
+    let a_maj_r = c.major_radius;
+    let a_min_r = c.minor_radius;
+    let o = c.center;
+    let xd = c.major_dir;
+    // OCCT gp_Elips2d: YAxis = Rot90(XAxis).
+    let yd = DVec2::new(-xd.y, xd.x);
+    let eval = |t: f64| o + a_maj_r * t.cos() * xd + a_min_r * t.sin() * yd;
+    let two_pi = std::f64::consts::TAU;
+    if u2 - u1 >= two_pi - PCONFUSION {
+        // OCCT L23-44: full ellipse — analytical extrema per coordinate.
+        for k in 0..2 {
+            let a_xk = if k == 0 { xd.x } else { xd.y };
+            let a_yk = if k == 0 { yd.x } else { yd.y };
+            let a_amp = (a_maj_r * a_maj_r * a_xk * a_xk + a_min_r * a_min_r * a_yk * a_yk).sqrt();
+            if k == 0 {
+                b[0] = o.x - a_amp;
+                b[1] = o.x + a_amp;
+            } else {
+                b[2] = o.y - a_amp;
+                b[3] = o.y + a_amp;
+            }
+        }
+    } else {
+        // OCCT L48-100: arc endpoints + in-range extrema.
+        box2d_add_point(&mut b, eval(u1));
+        box2d_add_point(&mut b, eval(u2));
+        for k in 0..2 {
+            let a_xk = if k == 0 { xd.x } else { xd.y };
+            let a_yk = if k == 0 { yd.x } else { yd.y };
+            let a_t_extr_min = if a_xk.abs() > 1e-15 {
+                in_period(((a_min_r * a_yk) / (a_maj_r * a_xk)).atan(), 0.0, two_pi)
+            } else {
+                std::f64::consts::FRAC_PI_2
+            };
+            let a_t_extr_max = if a_t_extr_min <= std::f64::consts::PI {
+                a_t_extr_min + std::f64::consts::PI
+            } else {
+                a_t_extr_min - std::f64::consts::PI
+            };
+            let a_tk = in_period(a_t_extr_min, u1, u1 + two_pi);
+            if a_tk >= u1 && a_tk <= u2 {
+                box2d_add_point(&mut b, eval(a_t_extr_min));
+            }
+            let a_tk = in_period(a_t_extr_max, u1, u1 + two_pi);
+            if a_tk >= u1 && a_tk <= u2 {
+                box2d_add_point(&mut b, eval(a_t_extr_max));
+            }
+        }
+    }
+    // OCCT: aBox.Enlarge(theTol).
+    b[0] -= tol;
+    b[1] += tol;
+    b[2] -= tol;
+    b[3] += tol;
+    b
+}
+
+/// OCCT GeomBndLib_OtherCurve2d::Box (GeomBndLib_OtherCurve2d.cxx L213-228) —
+/// 33-point sampling with deflection-based enlargement
+/// (Enlarge(1.5 * deflection), then Enlarge(theTol)).
+fn other_curve2d_box_uv(c: &Curve2d, u1: f64, u2: f64, tol: f64) -> [f64; 4] {
+    const N: usize = 33;
+    const WEAKNESS: f64 = 1.5;
+    let mut b = [f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY];
+    let p1 = c.point_at(u1);
+    box2d_add_point(&mut b, p1);
+    let mut max_tol: f64 = 0.0;
+    let diff = u2 - u1;
+    if diff.abs() > PCONFUSION {
+        let dp = diff / (2.0 * N as f64);
+        let mut p = u1;
+        let mut a_p1 = p1;
+        for _ in 1..=N {
+            p += dp;
+            let a_p2 = c.point_at(p);
+            box2d_add_point(&mut b, a_p2);
+            p += dp;
+            let a_p3 = c.point_at(p);
+            box2d_add_point(&mut b, a_p3);
+            let a_pc = (a_p1 + a_p3) * 0.5;
+            max_tol = max_tol.max(a_pc.distance(a_p2));
+            a_p1 = a_p3;
+        }
+    } else {
+        // OCCT degenerate branch: add the last point.
+        box2d_add_point(&mut b, c.point_at(u2));
+    }
+    let en = WEAKNESS * max_tol + tol;
+    b[0] -= en;
+    b[1] += en;
+    b[2] -= en;
+    b[3] += en;
+    b
+}
+
+/// OCCT GeomBndLib_Curve2d::Box (GeomBndLib_Curve2d.cxx L223-238) — exact 2D
+/// bounding box of a curve sub-range [u1, u2] (the box already enlarged by
+/// `tol`). Returns [u_min, u_max, v_min, v_max]. Used by
+/// BRepTools::AddUVBounds via BndLib_Add2dCurve::Add (BRepTools.cxx L185).
+pub fn curve2d_bounding_box(c: &Curve2d, u1: f64, u2: f64, tol: f64) -> [f64; 4] {
+    match c {
+        Curve2d::Line(l) => line2d_box_uv(l, u1, u2, tol),
+        Curve2d::Circle(cir) => circle2d_box_uv(cir, u1, u2, tol),
+        Curve2d::Ellipse(el) => ellipse2d_box_uv(el, u1, u2, tol),
+        _ => other_curve2d_box_uv(c, u1, u2, tol),
     }
 }

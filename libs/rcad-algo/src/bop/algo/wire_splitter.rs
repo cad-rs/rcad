@@ -18,7 +18,7 @@ use crate::geomalgo::int_res2d::Domain;
 use crate::topalgo::brep_class::g_inter::GInter;
 use glam::{DVec2, DVec3};
 use indexmap::IndexMap;
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, TShape};
 use std::collections::{HashMap, HashSet};
@@ -889,6 +889,10 @@ fn angle_2d(
         Some(t) => t,
         None => return 0.0,
     };
+    // OCCT L781-784: if (Precision::IsInfinite(aTV)) return 0.;
+    if rcad_kernel::core::precision::is_infinite_value(a_tv) {
+        return 0.0;
+    }
     let (a_c2d, a_first, a_last) = match edge_pcurve(an_edge, face_index, ds) {
         Some(v) => v,
         None => return 0.0,
@@ -1176,11 +1180,18 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
 
 fn has_curve_on_surface(e: &Shape, face_index: usize, ds: &DS) -> bool {
     match &*e.data {
-        // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face identity.
-        // rcad keys the edge pcurve map by the DS face index (make_pcurves uses
-        // FaceInfo::Index()), so the DS index — not the Shape's BRep `index` —
-        // is the matching key. Same DS-canonical fallback as edge_pcurve.
+        // OCCT BOPTools_AlgoTools2D::HasCurveOnSurface (BOPTools_AlgoTools2D.cxx
+        // L188-201): BRep_Tool::Range(aE, aFirst, aLast); an edge whose 3D range
+        // is shorter than PConfusion has no usable pcurve (returns false before
+        // the CurveOnSurface lookup).
         TShape::Edge(ed) => {
+            if (ed.range[1] - ed.range[0]) < rcad_kernel::core::precision::PCONFUSION {
+                return false;
+            }
+            // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face identity.
+            // rcad keys the edge pcurve map by the DS face index (make_pcurves uses
+            // FaceInfo::Index()), so the DS index — not the Shape's BRep `index` —
+            // is the matching key. Same DS-canonical fallback as edge_pcurve.
             let brep_face = if face_index < ds.nb_shapes() {
                 ds.shape(face_index).index
             } else {
@@ -1229,6 +1240,22 @@ fn is_closed_on_face(e: &Shape, face: &Shape) -> bool {
         Some(ed) => ed,
         None => return false,
     };
+    // OCCT BRep_Tool::IsClosed (BRep_Tool.cxx L814-841): the IsPlane(S) check
+    // comes FIRST — a planar face can never carry a seam representation, so it
+    // short-circuits before the representation scan (L819-822).
+    let surf = face.as_face().and_then(|fd| fd.surface.clone());
+    match &surf {
+        Some(rcad_kernel::geom::Surface3::Plane(_)) => return false,
+        None => return false,
+        _ => {}
+    }
+    // OCCT L825-840: the representation's surface matches the face's surface
+    // (cr->IsCurveOnSurface(S, l) && cr->IsCurveOnClosedSurface()). rcad keys
+    // it by the face's BRep index, so the exact index match covers original
+    // faces, and a closed-surface fallback covers BuilderFace images whose
+    // index does not preserve the original face's (the WireSplitter face is
+    // BuilderFace::myFace, normalized to FORWARD by SetFace; its surface is the
+    // same closed surface the seam representation was created on).
     if ed.representations.iter().any(|r| {
         matches!(
             r,
@@ -1238,16 +1265,6 @@ fn is_closed_on_face(e: &Shape, face: &Shape) -> bool {
     }) {
         return true;
     }
-    // OCCT L819-822: if (IsPlane(S)) return false.
-    let surf = face.as_face().and_then(|fd| fd.surface.clone());
-    match &surf {
-        Some(rcad_kernel::geom::Surface3::Plane(_)) => return false,
-        None => return false,
-        _ => {}
-    }
-    // OCCT L825-840: the representation's surface matches the face's surface.
-    // rcad: the face surface is closed and the edge carries a
-    // CurveOnClosedSurface (created on the same closed surface).
     ed.representations.iter().any(|r| {
         matches!(r, rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { .. })
     })
@@ -1303,7 +1320,25 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
                         TShape::Vertex(vd) => vd.point,
                         _ => return None,
                     };
-                    Some(crate::bop::closest_point_on_curve(curve, p).0)
+                    // OCCT L1601-1646: the vertex's PointRepresentation on the
+                    // 3D curve; rcad approximates it with the closest point.
+                    let mut res = crate::bop::closest_point_on_curve(curve, p).0;
+                    // OCCT L1618-1643: for a closed curve whose endpoints
+                    // coincide within the vertex tolerance, a vertex near the
+                    // seam resolves to the endpoint parameter f or l by its
+                    // orientation (BRep_Tool.cxx L1618-1643).
+                    let (f, l) = (ed.range[0], ed.range[1]);
+                    if !rcad_kernel::core::precision::is_negative_infinite_value(f)
+                        && !rcad_kernel::core::precision::is_positive_infinite_value(l)
+                    {
+                        let pf = curve.point_at(f);
+                        let pl = curve.point_at(l);
+                        let tol = vertex_tolerance(v);
+                        if pf.distance(pl) < tol && pf.distance(p) < tol {
+                            res = if v.orientation == Orientation::Forward { f } else { l };
+                        }
+                    }
+                    Some(res)
                 }
             }
         }

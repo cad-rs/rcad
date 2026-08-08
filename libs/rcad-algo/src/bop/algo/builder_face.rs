@@ -9,7 +9,7 @@ use crate::bop::int_tools::context::IntToolsContext;
 use crate::topalgo::brep_top_adaptor::class2d::{Class2d, Class2dResult};
 use glam::DVec2;
 use indexmap::IndexMap;
-use rcad_kernel::geom::{Curve2d, Curve2dEval};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, SurfaceEval};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{TShape, TWireData, tshape_flags};
 use std::collections::{HashMap, HashSet};
@@ -517,20 +517,12 @@ impl<'a> BuilderFace<'a> {
                     continue;
                 }
                 let box_e = match edge_pcurve_on_face(e, fi, self.ds) {
-                    Some((pc, t1, t2)) => {
-                        let mut b: [f64; 4] = [
-                            f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY,
-                        ];
-                        for k in 0..=3 {
-                            let t = t1 + (t2 - t1) * (k as f64) / 3.0;
-                            let p = Curve2dEval::point_at(&pc, t);
-                            b[0] = b[0].min(p.x);
-                            b[1] = b[1].max(p.x);
-                            b[2] = b[2].min(p.y);
-                            b[3] = b[3].max(p.y);
-                        }
-                        b
-                    }
+                    // OCCT L645-649: BRepTools::AddUVBounds(myFace, aE, aBoxE)
+                    // — exact UV bounds via GeomBndLib_Curve2d.
+                    Some((pc, t1, t2)) => match add_uv_bounds(self.ds, fi, &pc, t1, t2) {
+                        Some(b) => b,
+                        None => continue,
+                    },
                     None => continue,
                 };
                 edges_idx.insert((e.ptr_id(), e.location), edges_map.len());
@@ -690,6 +682,44 @@ fn edge_pcurve_on_face(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d
         }
         _ => None,
     }
+}
+
+/// OCCT BRepTools::AddUVBounds (BRepTools.cxx L172-362) — the exact UV bounds
+/// of the edge pcurve on the face: GeomBndLib_Curve2d::Box (via
+/// BndLib_Add2dCurve::Add with tolerance 0), then clamped to the face UV
+/// domain for non-periodic surfaces. Returns [u_min, u_max, v_min, v_max].
+fn add_uv_bounds(ds: &DS, face_index: usize, pc: &Curve2d, t1: f64, t2: f64) -> Option<[f64; 4]> {
+    let face = ds.shape(face_index);
+    let (uv_domain, surf) = match &*face.data {
+        TShape::Face(fd) => (fd.uv_domain, fd.surface.clone()?),
+        _ => return None,
+    };
+    // OCCT L185: BndLib_Add2dCurve::Add(aC2D, aT1, aT2, 0., aBoxC).
+    let mut b = rcad_kernel::curve2d_bounding_box(pc, t1, t2, 0.0);
+    if let Some(uvd) = uv_domain {
+        // OCCT L202-281 (U) / L283-361 (V): clamp to the face bounds when the
+        // surface is not periodic. The OCCT B-spline periodicity verification
+        // (L210-268) is approximated by the surface's declared periodicity.
+        if !surf.is_u_periodic() {
+            let (a_umin, a_umax) = (uvd[0], uvd[1]);
+            if b[0] < a_umin && a_umin < b[1] {
+                b[0] = a_umin;
+            }
+            if b[0] < a_umax && a_umax < b[1] {
+                b[1] = a_umax;
+            }
+        }
+        if !surf.is_v_periodic() {
+            let (a_vmin, a_vmax) = (uvd[2], uvd[3]);
+            if b[2] < a_vmin && a_vmin < b[3] {
+                b[2] = a_vmin;
+            }
+            if b[2] < a_vmax && a_vmax < b[3] {
+                b[3] = a_vmax;
+            }
+        }
+    }
+    Some(b)
 }
 
 /// The edges of a draft face's outer wire (OCCT TopoDS_Iterator(aF)).
