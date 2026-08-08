@@ -30,7 +30,7 @@ pub struct BuilderSolid<'a> {
     // BOPAlgo_BuilderSolid
     pub my_shapes: Vec<Shape>,          // OCCT: myShapes
     pub my_solids: Vec<Shape>,          // OCCT: myAreas (Areas())
-    my_shapes_to_avoid: HashSet<u64>,   // OCCT: myShapesToAvoid
+    my_shapes_to_avoid: HashSet<(u64, u32)>, // OCCT: myShapesToAvoid
     my_loops: Vec<Vec<Shape>>,          // OCCT: myLoops
     my_loops_internal: Vec<Vec<Shape>>, // OCCT: myLoopsInternal
 }
@@ -71,22 +71,6 @@ impl<'a> BuilderSolid<'a> {
     }
 
 
-    /// TEMP DEBUG (remove): count faces under a solid shape.
-    fn count_faces(s: &Shape) -> usize {
-        match &*s.data {
-            TShape::Solid(sd) => {
-                let mut n = 0;
-                for sh in &sd.my_shapes {
-                    n += Self::count_faces(sh);
-                }
-                n
-            }
-            TShape::Shell(sd) => sd.my_shapes.len(),
-            TShape::Face(_) => 1,
-            _ => 0,
-        }
-    }
-
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
 
     /// Access to the report (OCCT BOPAlgo_Algo::GetReport) for merging
@@ -103,25 +87,26 @@ impl<'a> BuilderSolid<'a> {
         loop {
             let mut b_found = false;
             // OCCT L151-160: edge -> [faces] for non-avoided faces.
-            // key: edge ptr_id; value: (faces using the edge, first edge shape).
-            let mut a_mef: HashMap<u64, (Vec<Shape>, Shape)> = HashMap::new();
+            // OCCT aMEF (L136) is IndexedDataMap with TopTools_ShapeMapHasher —
+            // key identity TShape + Location.
+            let mut a_mef: HashMap<(u64, u32), (Vec<Shape>, Shape)> = HashMap::new();
             for face in &self.my_shapes {
-                if self.my_shapes_to_avoid.contains(&face.ptr_id()) { continue; }
+                if self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location)) { continue; }
                 for e in face_edges(face) {
                     // OCCT L167-169: skip degenerated edges.
                     let degen = e.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
                     if degen { continue; }
-                    let eptr = e.ptr_id();
-                    let entry = a_mef.entry(eptr).or_insert_with(|| (Vec::new(), e.clone()));
+                    let ekey = (e.ptr_id(), e.location);
+                    let entry = a_mef.entry(ekey).or_insert_with(|| (Vec::new(), e.clone()));
                     entry.0.push(face.clone());
                 }
             }
             // OCCT L163-211: per-edge decisions (iterate in sorted order for
             // determinism; the hasher ignores orientation like TopTools_ShapeMapHasher).
-            let mut a_nb_e: Vec<u64> = a_mef.keys().copied().collect();
+            let mut a_nb_e: Vec<(u64, u32)> = a_mef.keys().copied().collect();
             a_nb_e.sort();
-            for eptr in a_nb_e {
-                let (a_lf, a_e) = &a_mef[&eptr];
+            for ekey in a_nb_e {
+                let (a_lf, a_e) = &a_mef[&ekey];
                 let a_nb_f = a_lf.len();
                 if a_nb_f == 0 { continue; }
                 // OCCT L179: aOrE = aE.Orientation().
@@ -131,7 +116,7 @@ impl<'a> BuilderSolid<'a> {
                     // OCCT L182-189: aNbF==1, skip INTERNAL edges.
                     if a_or_e == topods::Orientation::Internal { continue; }
                     b_found = true;
-                    self.my_shapes_to_avoid.insert(a_f1.ptr_id());
+                    self.my_shapes_to_avoid.insert((a_f1.ptr_id(), a_f1.location));
                 } else if a_nb_f == 2 {
                     // OCCT L191-209: aNbF==2, same face (IsSame) && !IsClosed
                     // && edge != INTERNAL -> avoid both copies.
@@ -142,8 +127,8 @@ impl<'a> BuilderSolid<'a> {
                         if edge_closed_on_face(a_e, a_f1) { continue; }
                         if a_or_e == topods::Orientation::Internal { continue; }
                         b_found = true;
-                        self.my_shapes_to_avoid.insert(a_f1.ptr_id());
-                        self.my_shapes_to_avoid.insert(a_f2.ptr_id());
+                        self.my_shapes_to_avoid.insert((a_f1.ptr_id(), a_f1.location));
+                        self.my_shapes_to_avoid.insert((a_f2.ptr_id(), a_f2.location));
                     }
                 }
             }
@@ -170,7 +155,7 @@ impl<'a> BuilderSolid<'a> {
                 continue;
             }
             // OCCT L253-256: if !myShapesToAvoid.Contains(aF).
-            if !self.my_shapes_to_avoid.contains(&face.ptr_id()) {
+            if !self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location)) {
                 a_start.push(face.clone());
             }
         }
@@ -182,19 +167,23 @@ impl<'a> BuilderSolid<'a> {
         }
         // OCCT L287-331: post-treatment — collect all faces of the loops and
         // of myShapesToAvoid; add the remaining faces to myShapesToAvoid.
-        let mut a_mp: HashSet<u64> = HashSet::new();
+        // OCCT aMP (L297) is NCollection_Map<TopoDS_Shape> — default hasher
+        // includes orientation; rcad keys by (ptr_id, location) which is
+        // equivalent for the set-membership checks below (the faces of the
+        // shells carry their stored orientation).
+        let mut a_mp: HashSet<(u64, u32)> = HashSet::new();
         for loop_faces in &self.my_loops {
             for f in loop_faces {
-                a_mp.insert(f.ptr_id());
+                a_mp.insert((f.ptr_id(), f.location));
             }
         }
-        for &fptr in &self.my_shapes_to_avoid {
-            a_mp.insert(fptr);
+        for &fkey in &self.my_shapes_to_avoid {
+            a_mp.insert(fkey);
         }
         for face in &self.my_shapes {
             if !Self::is_infinite_face(face) {
-                if !a_mp.contains(&face.ptr_id()) {
-                    self.my_shapes_to_avoid.insert(face.ptr_id());
+                if !a_mp.contains(&(face.ptr_id(), face.location)) {
+                    self.my_shapes_to_avoid.insert((face.ptr_id(), face.location));
                 }
             }
         }
@@ -202,26 +191,31 @@ impl<'a> BuilderSolid<'a> {
         // OCCT L339: myLoopsInternal.Clear().
         self.my_loops_internal.clear();
         // OCCT L344-349: edge -> [faces] map from the avoided faces.
-        let mut a_ef_map: HashMap<u64, Vec<Shape>> = HashMap::new();
+        // OCCT aEFMap (L300) is IndexedDataMap with TopTools_ShapeMapHasher —
+        // key identity TShape + Location.
+        let mut a_ef_map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
         for face in &self.my_shapes {
-            if !self.my_shapes_to_avoid.contains(&face.ptr_id()) { continue; }
+            if !self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location)) { continue; }
             for e in face_edges(face) {
-                a_ef_map.entry(e.ptr_id()).or_default().push(face.clone());
+                a_ef_map.entry((e.ptr_id(), e.location)).or_default().push(face.clone());
             }
         }
         // OCCT L351-391: grow a shell per avoided face via shared edges.
-        let mut a_added: HashSet<u64> = HashSet::new();
+        // OCCT AddedFacesMap (L296) — NCollection_Map<TopoDS_Shape>, default
+        // hasher (TShape + Location + Orientation); faces of myShapes carry
+        // consistent orientations, so (ptr_id, location) matches membership.
+        let mut a_added: HashSet<(u64, u32)> = HashSet::new();
         for a_ff in &self.my_shapes {
-            if !self.my_shapes_to_avoid.contains(&a_ff.ptr_id()) { continue; }
-            if !a_added.insert(a_ff.ptr_id()) { continue; }
+            if !self.my_shapes_to_avoid.contains(&(a_ff.ptr_id(), a_ff.location)) { continue; }
+            if !a_added.insert((a_ff.ptr_id(), a_ff.location)) { continue; }
             let mut a_shell: Vec<Shape> = vec![a_ff.clone()];
             let mut i = 0;
             while i < a_shell.len() {
                 let a_f = &a_shell[i];
                 for e in face_edges(a_f) {
-                    if let Some(a_lf) = a_ef_map.get(&e.ptr_id()) {
+                    if let Some(a_lf) = a_ef_map.get(&(e.ptr_id(), e.location)) {
                         for a_fl in a_lf {
-                            if a_added.insert(a_fl.ptr_id()) {
+                            if a_added.insert((a_fl.ptr_id(), a_fl.location)) {
                                 a_shell.push(a_fl.clone());
                             }
                         }
@@ -255,7 +249,7 @@ impl<'a> BuilderSolid<'a> {
         // OCCT L402-407: the new solids / hole shells / hole-face map.
         let mut new_solids: Vec<Shape> = Vec::new();
         let mut hole_shells: Vec<Vec<Shape>> = Vec::new();
-        let mut a_mhf: HashSet<u64> = HashSet::new();
+        let mut a_mhf: HashSet<(u64, u32)> = HashSet::new();
 
         // OCCT L413-442: classify each shell.
         for loop_faces in &self.my_loops {
@@ -271,8 +265,10 @@ impl<'a> BuilderSolid<'a> {
                 new_solids.push(solid);
             } else {
                 // OCCT L437-441: add to hole shells + MapShapes(aShell, FACE, aMHF).
+                // OCCT aMHF (L411) is IndexedMap with TopTools_ShapeMapHasher —
+                // key identity TShape + Location.
                 for f in loop_faces {
-                    a_mhf.insert(f.ptr_id());
+                    a_mhf.insert((f.ptr_id(), f.location));
                 }
                 hole_shells.push(loop_faces.clone());
             }
@@ -296,7 +292,7 @@ impl<'a> BuilderSolid<'a> {
             let shell_shape = self.build_shell_shape(hs);
             hole_boxes.push(crate::bop::algo::builder::shape_bbox(&shell_shape));
         }
-        let mut a_hole_solid: HashMap<Vec<u64>, usize> = HashMap::new();
+        let mut a_hole_solid: HashMap<Vec<(u64, u32)>, usize> = HashMap::new();
         for (si, solid) in new_solids.iter().enumerate() {
             let solid_box = crate::bop::algo::builder::shape_bbox(solid);
             for (hi, hs) in hole_shells.iter().enumerate() {
@@ -368,11 +364,11 @@ impl<'a> BuilderSolid<'a> {
 
     /// OCCT IsGrowthShell (BuilderSolid.cxx L864-879) — the shell contains a
     /// previously-marked hole face, so it bounds a hole from the outside.
-    fn is_growth_shell(faces: &[Shape], the_mhf: &HashSet<u64>) -> bool {
+    fn is_growth_shell(faces: &[Shape], the_mhf: &HashSet<(u64, u32)>) -> bool {
         if the_mhf.is_empty() {
             return false;
         }
-        faces.iter().any(|f| the_mhf.contains(&f.ptr_id()))
+        faces.iter().any(|f| the_mhf.contains(&(f.ptr_id(), f.location)))
     }
 
     /// OCCT IsHole (BuilderSolid.cxx L823-831) — the shell is a "hole in
@@ -515,8 +511,12 @@ impl<'a> BuilderSolid<'a> {
     }
 
     /// Canonical key of a shell face set (OCCT TopoDS_Shape map key equivalent).
-    fn hole_shell_key(faces: &[Shape]) -> Vec<u64> {
-        let mut v: Vec<u64> = faces.iter().map(|f| f.ptr_id()).collect();
+    /// Key for a hole shell — OCCT aHoleSolidMap (BuilderSolid.cxx L467) is
+    /// IndexedDataMap<TopoDS_Shape, Solid, TopTools_ShapeMapHasher>: the key
+    /// is the hole SHELL shape. rcad builds an equivalent sorted list of the
+    /// shell's faces by (TShape, Location) identity.
+    fn hole_shell_key(faces: &[Shape]) -> Vec<(u64, u32)> {
+        let mut v: Vec<(u64, u32)> = faces.iter().map(|f| (f.ptr_id(), f.location)).collect();
         v.sort();
         v
     }
@@ -788,11 +788,13 @@ impl<'a> BuilderSolid<'a> {
             return;
         }
         // OCCT L619-629: collect all faces of the internal shells into aMFs.
+        // OCCT aMFs (L616) is IndexedMap with TopTools_ShapeMapHasher —
+        // key identity TShape + Location.
         let mut a_mfs: Vec<Shape> = Vec::new();
-        let mut a_mfs_fence: HashSet<u64> = HashSet::new();
+        let mut a_mfs_fence: HashSet<(u64, u32)> = HashSet::new();
         for shell in &self.my_loops_internal {
             for f in shell {
-                if a_mfs_fence.insert(f.ptr_id()) {
+                if a_mfs_fence.insert((f.ptr_id(), f.location)) {
                     a_mfs.push(f.clone());
                 }
             }
@@ -833,13 +835,15 @@ impl<'a> BuilderSolid<'a> {
             }
         }
         // OCCT L685-722: update the solids by their internal faces.
-        let mut a_mf_done: HashSet<u64> = HashSet::new();
+        // OCCT aMFDone (L699) — NCollection_Map<TopoDS_Shape,
+        // TopTools_ShapeMapHasher>, key TShape + Location.
+        let mut a_mf_done: HashSet<(u64, u32)> = HashSet::new();
         for (si, a_lf) in a_mslf {
             if a_lf.is_empty() {
                 continue;
             }
             for a_f in &a_lf {
-                a_mf_done.insert(a_f.ptr_id());
+                a_mf_done.insert((a_f.ptr_id(), a_f.location));
             }
             let a_lsi = Self::make_internal_shells(&a_lf);
             let ts = Arc::make_mut(&mut self.my_solids[si].data);
@@ -850,7 +854,7 @@ impl<'a> BuilderSolid<'a> {
         // OCCT L724-758: warn about the unclassified faces.
         let mut a_mf_unused: Vec<Shape> = Vec::new();
         for a_f in &a_mfs {
-            if !a_mf_done.contains(&a_f.ptr_id()) {
+            if !a_mf_done.contains(&(a_f.ptr_id(), a_f.location)) {
                 a_mf_unused.push(a_f.clone());
             }
         }
@@ -865,18 +869,19 @@ impl<'a> BuilderSolid<'a> {
     /// OCCT MakeInternalShells (BuilderSolid.cxx L763-819) — build internal
     /// shells from a set of faces (each face set to INTERNAL orientation).
     fn make_internal_shells(a_mf: &[Shape]) -> Vec<Shape> {
-        // OCCT L773-778: edge -> [faces] map.
-        let mut a_mef: HashMap<u64, Vec<Shape>> = HashMap::new();
+        // OCCT L773-778: edge -> [faces] map. OCCT aMEF (L772) is
+        // IndexedDataMap with TopTools_ShapeMapHasher — key TShape + Location.
+        let mut a_mef: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
         for a_f in a_mf {
             for e in face_edges(a_f) {
-                a_mef.entry(e.ptr_id()).or_default().push(a_f.clone());
+                a_mef.entry((e.ptr_id(), e.location)).or_default().push(a_f.clone());
             }
         }
         // OCCT L780-818: grow a shell per face via shared edges.
-        let mut a_added: HashSet<u64> = HashSet::new();
+        let mut a_added: HashSet<(u64, u32)> = HashSet::new();
         let mut shells: Vec<Shape> = Vec::new();
         for a_ff in a_mf {
-            if !a_added.insert(a_ff.ptr_id()) {
+            if !a_added.insert((a_ff.ptr_id(), a_ff.location)) {
                 continue;
             }
             let mut a_shell: Vec<Shape> = Vec::new();
@@ -887,9 +892,9 @@ impl<'a> BuilderSolid<'a> {
             while i < a_shell.len() {
                 let a_f = &a_shell[i];
                 for e in face_edges(a_f) {
-                    if let Some(a_lf) = a_mef.get(&e.ptr_id()) {
+                    if let Some(a_lf) = a_mef.get(&(e.ptr_id(), e.location)) {
                         for a_fl in a_lf {
-                            if a_added.insert(a_fl.ptr_id()) {
+                            if a_added.insert((a_fl.ptr_id(), a_fl.location)) {
                                 let mut fl = a_fl.clone();
                                 fl.orientation = topods::Orientation::Internal;
                                 a_shell.push(fl);
