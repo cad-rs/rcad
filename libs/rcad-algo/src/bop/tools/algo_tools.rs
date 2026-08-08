@@ -537,6 +537,143 @@ fn hatch_line_intervals(f: usize, a_ux: f64, ds: &DS) -> Vec<(f64, f64)> {
     intervals
 }
 
+// ====================================================================
+// PointInFace (edge) — OCCT BOPTools_AlgoTools3D::PointInFace
+// (BOPTools_AlgoTools3D.cxx L942-990)
+// ====================================================================
+/// The edge's pcurve on the face, keyed by the DS face index with the
+/// surface-identity fallback (same semantics as builder.rs edge_pcurve_on_face).
+fn edge_pcurve_of_face<'a>(a_e: &'a Shape, f: usize, ds: &DS) -> Option<&'a rcad_kernel::geom::Curve2d> {
+    let ed = a_e.as_edge()?;
+    let face = ds.shape(f);
+    let surf = face.as_face().and_then(|fd| fd.surface.as_ref())?;
+    ed.pcurves
+        .get(&f)
+        .or_else(|| {
+            ed.pcurves.iter().find_map(|(k, v)| {
+                if let Some(fs) = ds.face_surface(*k) {
+                    if surface_same(surf, &fs) {
+                        return Some(v);
+                    }
+                }
+                None
+            })
+        })
+        .map(|(pc, _, _)| pc)
+}
+
+/// rcad equivalent of the Geom2dHatch_Hatcher domain computation for a HALF
+/// LINE L(s) = p0 + s*dir, s in [0, +inf) — the edge-normal hatcher line of
+/// OCCT BOPTools_AlgoTools3D::PointInFace(theF, theE, theT, theDt2D, ...)
+/// (BOPTools_AlgoTools3D.cxx L942-990). The line starts at the edge point p0;
+/// the inside intervals are the pairs of sorted crossing parameters, with the
+/// s = 0 side decided by the FClass2d state of p0. Returns the inside
+/// intervals [s1, s2] with s >= 0.
+fn hatch_line_intervals_dir(f: usize, p0: glam::DVec2, dir: glam::DVec2, ds: &DS) -> Vec<(f64, f64)> {
+    let fclass = FClass2d::new(ds, f, ds.face_tolerance(f).max(rcad_kernel::CONFUSION));
+    let mut ts: Vec<f64> = Vec::new();
+    for poly in fclass.uv_polygons() {
+        let n = poly.len();
+        for i in 0..n {
+            let a = poly[i];
+            let b = poly[(i + 1) % n];
+            let e = b - a;
+            // Intersection of the boundary segment a + u*e with p0 + t*dir.
+            let denom = e.x * dir.y - e.y * dir.x;
+            if denom.abs() < 1e-15 {
+                continue; // parallel to the line
+            }
+            let u = ((p0.x - a.x) * dir.y - (p0.y - a.y) * dir.x) / denom;
+            if u < 0.0 || u >= 1.0 {
+                continue; // half-open: each shared vertex counted once
+            }
+            let t = ((p0.x - a.x) * e.y - (p0.y - a.y) * e.x) / denom;
+            if t >= 0.0 {
+                ts.push(t);
+            }
+        }
+    }
+    ts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    const HATCH_CONFUSION: f64 = 1e-8; // OCCT aTolHatch2D (IntTools_Context.cxx L350)
+    // The line starts at p0: the s = 0 side state decides the first interval.
+    let start_in = fclass.perform(ds, p0, true) != State::Out;
+    let mut intervals: Vec<(f64, f64)> = Vec::new();
+    let mut k = 0usize;
+    if start_in {
+        if let Some(&t0) = ts.first() {
+            if t0 > HATCH_CONFUSION {
+                intervals.push((0.0, t0));
+            }
+            k = 1;
+        }
+    }
+    while k + 1 < ts.len() {
+        let (v1, v2) = (ts[k], ts[k + 1]);
+        if v2 - v1 > HATCH_CONFUSION {
+            intervals.push((v1, v2));
+        }
+        k += 2;
+    }
+    intervals
+}
+
+/// OCCT BOPTools_AlgoTools3D::PointInFace (BOPTools_AlgoTools3D.cxx L942-990) —
+/// finds a point inside the face on the 2D line through the edge's pcurve
+/// point at `a_t`, in the direction perpendicular to the edge tangent
+/// (reversed for REVERSED edge and face). The line is trimmed to [0, +inf)
+/// and hatched against the face boundary; the first inside domain yields the
+/// point at aV1 + theDt2D (when the domain is longer than theDt2D) or at the
+/// domain middle.
+pub(crate) fn point_in_face_edge(
+    f: usize,
+    a_e: &Shape,
+    a_t: f64,
+    d_t2d: f64,
+    ds: &DS,
+) -> (i32, glam::DVec3, glam::DVec2) {
+    // OCCT L946-950: aC2D = CurveOnSurface(theE, theF, f, l); null -> iErr = 5.
+    let pc = match edge_pcurve_of_face(a_e, f, ds) {
+        Some(pc) => pc,
+        None => return (5, glam::DVec3::ZERO, glam::DVec2::ZERO),
+    };
+    // OCCT L952-956: aC2D->D1(aT, aP2D, aV2D); aD2Dx = Dir(aV2D).
+    let a_p2d = pc.point_at(a_t);
+    let a_v2d = pc.derivative_at(a_t);
+    if a_v2d.length_squared() < 1e-24 {
+        // OCCT gp_Dir2d(aV2D) raises Standard_ConstructionError on a zero vector.
+        return (5, glam::DVec3::ZERO, glam::DVec2::ZERO);
+    }
+    // OCCT L958-961: aD2D = (-aD2Dx.Y(), aD2Dx.X()).
+    let mut a_d2d = glam::DVec2::new(-a_v2d.y, a_v2d.x).normalize();
+    // OCCT L963-969: REVERSED edge / face reverses the direction.
+    if a_e.orientation == Orientation::Reversed {
+        a_d2d = -a_d2d;
+    }
+    let a_f = ds.shape(f);
+    if a_f.orientation == Orientation::Reversed {
+        a_d2d = -a_d2d;
+    }
+    // OCCT L971-990: hatch the trimmed half-line; take the first inside domain.
+    let intervals = hatch_line_intervals_dir(f, a_p2d, a_d2d, ds);
+    let Some(&(a_v1, a_v2)) = intervals.first() else {
+        return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
+    };
+    // OCCT L1035: aVx = (theDt2D > 0 && (aV2 - aV1) > theDt2D) ? aV1 + theDt2D
+    //                    : IntTools_Tools::IntermediatePoint(aV1, aV2).
+    let a_vx = if d_t2d > 0.0 && (a_v2 - a_v1) > d_t2d {
+        a_v1 + d_t2d
+    } else {
+        intermediate_point(a_v1, a_v2)
+    };
+    // OCCT L1037-1038: theL2D->D0(aVx, theP2D); aS->D0(theP2D, theP).
+    let a_p2d_r = a_p2d + a_d2d * a_vx;
+    let Some(a_s) = ds.face_surface(f) else {
+        return (1, glam::DVec3::ZERO, a_p2d_r);
+    };
+    let a_p = a_s.point_at(a_p2d_r.x, a_p2d_r.y);
+    (0, a_p, a_p2d_r)
+}
+
 /// DS edge indices of the face's boundary (OCCT TopExp_Explorer(theF,
 /// TopAbs_EDGE) in AreFacesSameDomain L1187).
 fn face_edge_indices(ds: &DS, f: usize) -> Vec<usize> {

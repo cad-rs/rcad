@@ -612,10 +612,12 @@ pub(crate) fn point_near_edge(
     if a_f.orientation == topods::Orientation::Reversed {
         a_dp = -a_dp;
     }
-    // OCCT L564-575: tolerances; the BSpline special case (NPAL19220).
+    // OCCT L564-575: tolerances; the BSpline special case (NPAL19220) — OCCT
+    // checks GeomAdaptor_Surface::GetType() == GeomAbs_BSplineSurface only
+    // (Bezier surfaces do NOT take this branch).
     let mut a_etol = edge_data(a_e).map(|e| e.tolerance).unwrap_or(0.0);
     let mut a_ftol = a_f.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
-    if matches!(surf, Surface3::BSpline(_) | Surface3::Bezier(_)) && a_etol > 1e-5 {
+    if matches!(surf, Surface3::BSpline(_)) && a_etol > 1e-5 {
         a_ftol = a_etol;
     }
     let a_px2d_near: DVec2;
@@ -1153,20 +1155,27 @@ pub(crate) fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f
                 };
                 if in_face {
                     a_p3d = p3d;
-                } else if let Some(fi) = fi {
-                    // OCCT L634-640: PointInFace(aF, aE, aT, theStep, ...) —
-                    // hatcher inside point along the edge-normal 2D line;
-                    // rcad uses the U-line hatcher (point_in_face) — both
-                    // yield an inside point for the classification.
-                    let (err2, p2, _) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
-                    if err2 == 0 {
-                        a_p3d = p2;
-                        i_err = 0;
-                    } else {
-                        i_err = 2;
-                    }
                 } else {
-                    i_err = 2;
+                    // OCCT L634-640 (BOPTools_AlgoTools3D.cxx L629-640):
+                    // PointInFace(aF, aE, aT, theStep, aP, aP2d, theContext) —
+                    // hatcher inside point along the edge-normal 2D line
+                    // (BOPTools_AlgoTools3D.cxx L942-990).
+                    match fi {
+                        Some(fi) => {
+                            let (err2, p2, _) = crate::bop::tools::algo_tools::point_in_face_edge(
+                                fi, &a_se, a_t, d_t2d, ds,
+                            );
+                            if err2 == 0 {
+                                a_p3d = p2;
+                                i_err = 0;
+                            } else {
+                                i_err = 2;
+                            }
+                        }
+                        None => {
+                            i_err = 2;
+                        }
+                    }
                 }
             }
             if i_err == 0 {
