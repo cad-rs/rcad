@@ -3582,12 +3582,20 @@ impl<'a> Builder<'a> {
                 continue;
             }
             // OCCT L493-499: 1.1 shell faces set of the draft solid.
+            // aExp.Init(aSD, TopAbs_FACE) — TopExp_Explorer with cumulative
+            // orientation (TopoDS_Iterator cumOri, TopExp_Explorer.cxx L152):
+            // face.or = aSD.or * shell.or * face.or. Location composition is
+            // identity here (draft solid and shells carry location 0).
             let mut a_sfs: Vec<Shape> = Vec::new();
+            let sd_or = a_sd.orientation;
             for ss in self.shape_sub_shapes(&a_sd) {
                 if ss.shape_type() == topods::ShapeType::Shell {
+                    let ss_or = sd_or.compose(ss.orientation);
                     for f in self.shape_sub_shapes(&ss) {
                         if f.shape_type() == topods::ShapeType::Face {
-                            a_sfs.push(f);
+                            let mut ff = f;
+                            ff.orientation = ss_or.compose(ff.orientation);
+                            a_sfs.push(ff);
                         }
                     }
                 }
