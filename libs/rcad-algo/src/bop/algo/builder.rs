@@ -371,24 +371,18 @@ fn surface_same(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3
     }
 }
 
-/// GetNormalToFaceOnEdge (BOPTools_AlgoTools3D.cxx L351-376).
-/// Surface normal at the edge parameter aT on the face, computed via the
-/// edge's pcurve on the face and the surface first derivatives.
-fn get_normal_to_face_on_edge(edge: &Shape, face: &Shape, a_t: f64, ds: &DS) -> Option<DVec3> {
+/// The edge's pcurve on the face (OCCT BRep_Tool::CurveOnSurface(aE, aF)).
+/// The result faces (images) are synthetic wrappers with index == usize::MAX,
+/// so when the index-keyed lookup misses, match the pcurve by the face's
+/// surface (OCCT matches the face's surface handle).
+fn edge_pcurve_on_face<'a>(
+    edge: &'a Shape,
+    face: &Shape,
+    ds: &DS,
+) -> Option<&'a rcad_kernel::geom::Curve2d> {
     let ed = edge_data(edge)?;
-    let fd = if let TShape::Face(fd) = &*face.data {
-        fd
-    } else {
-        return None;
-    };
-    let surf = fd.surface.as_ref()?;
-    // OCCT L365: CurveOnSurface(aE, aF1, aC2D1, aTolPC) — the pcurve of the
-    // edge on the face (same parameterization as the 3D curve, SameParameter).
-    // The result faces (images) are synthetic wrappers with index == usize::MAX,
-    // so when the index-keyed lookup misses, match the pcurve by the face's
-    // surface (OCCT matches the face's surface handle).
-    let pc = ed
-        .pcurves
+    let surf = face.as_face().and_then(|fd| fd.surface.as_ref())?;
+    ed.pcurves
         .get(&face.index)
         .or_else(|| {
             ed.pcurves.iter().find_map(|(k, v)| {
@@ -400,7 +394,22 @@ fn get_normal_to_face_on_edge(edge: &Shape, face: &Shape, a_t: f64, ds: &DS) -> 
                 None
             })
         })
-        .map(|(pc, _, _)| pc);
+        .map(|(pc, _, _)| pc)
+}
+
+/// GetNormalToFaceOnEdge (BOPTools_AlgoTools3D.cxx L351-376).
+/// Surface normal at the edge parameter aT on the face, computed via the
+/// edge's pcurve on the face and the surface first derivatives.
+fn get_normal_to_face_on_edge(edge: &Shape, face: &Shape, a_t: f64, ds: &DS) -> Option<DVec3> {
+    let fd = if let TShape::Face(fd) = &*face.data {
+        fd
+    } else {
+        return None;
+    };
+    let surf = fd.surface.as_ref()?;
+    // OCCT L365: CurveOnSurface(aE, aF1, aC2D1, aTolPC) — the pcurve of the
+    // edge on the face (same parameterization as the 3D curve, SameParameter).
+    let pc = edge_pcurve_on_face(edge, face, ds);
     if let Some(pc) = pc {
         // OCCT L367-369: aC2D1->D0(aT, aP2D).
         let uv = pc.point_at(a_t);
@@ -479,10 +488,23 @@ fn get_face_dir(
     let a_tol_e = edge_data(a_e).map(|e| e.tolerance).unwrap_or(0.0);
     let mut db = dn.cross(a_dtgt);
     // OCCT L2145-2157: refine the bi-normal by FindPointInFace (skipped for
-    // small faces). The plane aProjPL is (aP, aDTgt).
+    // small faces). The plane aProjPL is (aP, aDTgt). When FindPointInFace
+    // fails, OCCT falls back to GetApproxNormalToFaceOnEdge (hatcher) which
+    // recomputes aDN and redirects aDB from aP to the near point projected
+    // onto the aProjPL plane.
     if !b_small_faces {
         if !find_point_in_face(a_f, a_p, &mut db, a_dt, a_tol_e, a_dtgt, ds) {
-            // fallback GetApproxNormalToFaceOnEdge not ported — keep aDB.
+            // OCCT L2150-2156: GetApproxNormalToFaceOnEdge(aE, aF, aT, aDt, aPx, aDN, ctx);
+            // aProjPL.Perform(aPx); aPx = aProjPL.NearestPoint();
+            // aDB = Vec(aP, aPx).
+            if let Some((a_px, a_dnf)) = get_approx_normal_to_face_on_edge(a_e, a_f, a_t, a_dt, ds) {
+                dn = a_dnf;
+                let a_px_proj = a_px - a_dtgt * (a_px - a_p).dot(a_dtgt);
+                let v = a_px_proj - a_p;
+                if v.length_squared() >= 1e-24 {
+                    db = v.normalize();
+                }
+            }
         }
     }
     Some((dn, db))
@@ -545,7 +567,129 @@ fn find_point_in_face(
     }
 }
 
-/// OCCT BOPTools_AlgoTools::MinStep3D (BOPTools_AlgoTools.cxx L2243-2354).
+/// OCCT BOPTools_AlgoTools3D::PointNearEdge (BOPTools_AlgoTools3D.cxx L525-612) —
+/// the 6-parameter overload without the context. Computes a 2D point near the
+/// edge at parameter aT: the edge's pcurve on the face is evaluated at aT, the
+/// point is translated in the perpendicular 2D direction aDP (reversed for
+/// REVERSED edge/face orientations) by (aDt2D + aTolE + aTolF), with the
+/// cylindrical-surface angular correction (L583-595, pkv/909/F8) and the
+/// spherical special case (L600-603).
+fn point_near_edge(
+    a_e: &Shape,
+    a_f: &Shape,
+    a_t: f64,
+    a_dt2d: f64,
+    ds: &DS,
+) -> (Option<(DVec2, DVec3)>, i32) {
+    // OCCT L537-542: aC2D = BRep_Tool::CurveOnSurface(aE, aF, aFirst, aLast);
+    // iErr = aC2D.IsNull() ? 1 : 0.
+    let pc = match edge_pcurve_on_face(a_e, a_f, ds) {
+        Some(p) => p,
+        None => return (None, 1),
+    };
+    let surf = match a_f.as_face().and_then(|fd| fd.surface.clone()) {
+        Some(s) => s,
+        None => return (None, 1),
+    };
+    // OCCT L546-549: aC2D->D1(aT, aPx2D, aVx2D); aDx2D = Dir(aVx2D).
+    let a_px2d = pc.point_at(a_t);
+    let a_vx2d = pc.derivative_at(a_t);
+    if a_vx2d.length_squared() < 1e-24 {
+        return (None, 1);
+    }
+    // OCCT L551-552: aDP = (-aDx2D.Y(), aDx2D.X()).
+    let mut a_dp = DVec2::new(-a_vx2d.y, a_vx2d.x).normalize();
+    // OCCT L554-562: reversals for REVERSED edge and face orientations.
+    if a_e.orientation == topods::Orientation::Reversed {
+        a_dp = -a_dp;
+    }
+    if a_f.orientation == topods::Orientation::Reversed {
+        a_dp = -a_dp;
+    }
+    // OCCT L564-575: tolerances; the BSpline special case (NPAL19220).
+    let mut a_etol = edge_data(a_e).map(|e| e.tolerance).unwrap_or(0.0);
+    let mut a_ftol = a_f.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
+    if matches!(surf, Surface3::BSpline(_) | Surface3::Bezier(_)) && a_etol > 1e-5 {
+        a_ftol = a_etol;
+    }
+    let a_px2d_near: DVec2;
+    // OCCT L576-608: tolerance-based translation.
+    if a_etol > 1e-5 || a_ftol > 1e-5 {
+        if !matches!(surf, Surface3::Sphere(_)) {
+            let mut trans_val = a_dt2d + a_etol + a_ftol;
+            if let Surface3::Cylinder(cyl) = &surf {
+                // OCCT L583-595 (pkv/909/F8): the 2D translation on a cylinder
+                // corresponds to an angle on the circular cross-section.
+                let a_r = cyl.radius;
+                let d_t = 1.0 - trans_val / a_r;
+                if d_t >= -1.0 && d_t <= 1.0 {
+                    trans_val = d_t.acos();
+                }
+            }
+            a_px2d_near = a_px2d + a_dp * trans_val;
+        } else {
+            // OCCT L600-603: sphere — plain aDt2D translation.
+            a_px2d_near = a_px2d + a_dp * a_dt2d;
+        }
+    } else {
+        // OCCT L605-608.
+        a_px2d_near = a_px2d + a_dp * a_dt2d;
+    }
+    // OCCT L610: aS->D0(aPx2DNear.X(), aPx2DNear.Y(), aPxNear).
+    let a_px_near = surf.point_at(a_px2d_near.x, a_px2d_near.y);
+    (Some((a_px2d_near, a_px_near)), 0)
+}
+
+/// OCCT BOPTools_AlgoTools3D::GetApproxNormalToFaceOnEdge (L496-521) via
+/// PointNearEdge(aE, aF, aT, theStep, ...) (L667-694): finds a point near the
+/// edge inside the face and returns the surface normal there (reversed for
+/// REVERSED faces). When the near point falls outside the face, OCCT falls back
+/// to PointInFace (hatcher); rcad approximates it with the surface-domain
+/// center (convex faces — planes, cylinders — keep the domain center inside).
+fn get_approx_normal_to_face_on_edge(
+    a_e: &Shape,
+    a_f: &Shape,
+    a_t: f64,
+    the_step: f64,
+    ds: &DS,
+) -> Option<(DVec3, DVec3)> {
+    let surf = a_f.as_face().and_then(|fd| fd.surface.clone())?;
+    // OCCT L675-694: PointNearEdge(aE, aF, aT, theStep, aPx2DNear, aPxNear, ctx).
+    let (mut a_px2d, mut a_px_near) = match point_near_edge(a_e, a_f, a_t, the_step, ds) {
+        (Some(p), 0) => p,
+        _ => return None,
+    };
+    // OCCT L676: if (!IsPointInOnFace(aF, aPx2DNear)) — PointInFace fallback.
+    // rcad: approximate the in-face check by the surface parameter domain.
+    let dom = surf.default_domain();
+    let u_in = dom[0].is_finite() && dom[1].is_finite() && a_px2d.x >= dom[0] && a_px2d.x <= dom[1];
+    let v_in = dom[2].is_finite() && dom[3].is_finite() && a_px2d.y >= dom[2] && a_px2d.y <= dom[3];
+    if !(u_in && v_in) {
+        // OCCT L681: PointInFace(aF, aE, aT, theStep, aP, aP2d, ctx) — hatcher.
+        // rcad: surface-domain center (convex faces keep it inside).
+        let u = if dom[0].is_finite() && dom[1].is_finite() {
+            0.5 * (dom[0] + dom[1])
+        } else {
+            0.0
+        };
+        let v = if dom[2].is_finite() && dom[3].is_finite() {
+            0.5 * (dom[2] + dom[3])
+        } else {
+            0.0
+        };
+        a_px2d = DVec2::new(u, v);
+        a_px_near = surf.point_at(u, v);
+    }
+    // OCCT L510-517: GetNormalToSurface(aS, aPx2DNear.X(), aPx2DNear.Y(), aDNF);
+    // REVERSED faces reverse the normal.
+    let mut a_dnf = surf.normal_at(a_px2d.x, a_px2d.y);
+    if a_f.orientation == topods::Orientation::Reversed {
+        a_dnf = -a_dnf;
+    }
+    Some((a_px_near, a_dnf))
+}
+
+
 /// The 3D step aDt for FindPointInFace: max(2*(tolE+tolF)) over the candidate
 /// faces, clamped to aDtMin which grows with the surface radius. rcad: the
 /// UResolution/VResolution small-face check is not ported (bSmallFaces=false).
