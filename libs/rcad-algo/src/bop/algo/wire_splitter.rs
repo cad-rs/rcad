@@ -112,16 +112,17 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
             a_mn_regular.insert((a_s.ptr_id(), a_s.location));
         }
     }
-    // Map vertices to incident edges (MapShapesAndAncestors).
+    // Map vertices to incident edges (MapShapesAndAncestors). OCCT appends
+    // every edge occurrence — a degenerated ring edge (both endpoints the
+    // same vertex) is counted TWICE for its vertex, which keeps the block
+    // regular (Extent()==2). No dedup here.
     let mut a_c_map: HashMap<(u64, u32), Vec<(u64, u32)>> = HashMap::new(); // vertex -> edges
     let mut a_edge_ptr_to_idx: HashMap<(u64, u32), usize> = HashMap::new(); // edge -> index in a_c_start
     for (ei, e) in a_c_start.iter().enumerate() {
         a_edge_ptr_to_idx.insert((e.ptr_id(), e.location), ei);
         for v in edge_vertices(e) {
             let l = a_c_map.entry((v.ptr_id(), v.location)).or_default();
-            if !l.contains(&(e.ptr_id(), e.location)) {
-                l.push((e.ptr_id(), e.location));
-            }
+            l.push((e.ptr_id(), e.location));
         }
     }
     // BFS blocks over edges via shared vertices.
