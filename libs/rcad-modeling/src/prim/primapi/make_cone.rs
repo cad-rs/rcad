@@ -110,7 +110,10 @@ impl MakeCone {
         let f_bot_fwd = t.add_tface(Some(bot_plane), bot_wire, vec![], None, None, vec![], true);
         // OCCT BRepPrim_OneAxis::BottomFace (L501-503): ReverseFace.
         let f_bot = rev(f_bot_fwd);
-        let mut shell_faces = vec![f_lat.clone(), f_bot.clone()];
+        // OCCT BRepPrim_OneAxis::Create (L344-356): AddShellFace order is
+        // Lateral, Top, Bottom — the top cap precedes the bottom cap in the
+        // shell, which drives the DS face numbering.
+        let mut shell_faces = vec![f_lat.clone()];
         // OCCT BRepPrim_OneAxis::HasTop() (BRepPrim_OneAxis.cxx L293-310):
         // the top face exists only when !VMaxInfinite && !MeridianClosed &&
         // !MeridianOnAxis(myVMax). For the cone the meridian at VMax is at
@@ -122,6 +125,7 @@ impl MakeCone {
             f_top = Some(f_top_f.clone());
             shell_faces.push(f_top_f);
         }
+        shell_faces.push(f_bot.clone());
         // OCCT BRepPrim_OneAxis::LateralFace (L399-438): parametric curves on
         // the lateral face. myVMin=0, myVMax=seam_len, myMeridianOffset=0. The
         // seam is a closed edge of a full revolution — two pcurves at u=2*PI and

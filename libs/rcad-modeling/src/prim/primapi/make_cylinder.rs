@@ -158,7 +158,7 @@ impl MakeCylinder {
             (Curve2d::Circle(Circle2d::new(DVec2::ZERO, r)), 0.0, std::f64::consts::TAU),
         );
 
-        let shell = t.add_tshell(vec![f_lat, f_bot, f_top]);
+        let shell = t.add_tshell(vec![f_lat, f_top, f_bot]);
         t.add_tsolid(vec![shell]);
         Ok(t)
     }

@@ -1021,6 +1021,20 @@ impl DS {
         None
     }
 
+    /// Resolve a PB pointer id (as stored in FaceInfo PaveBlocksOn/In/Sc) back
+    /// to the SharedPB.  OCCT stores handle<BOPDS_PaveBlock> directly; rcad
+    /// stores the Arc pointer id and looks it up here.
+    pub fn pb_from_ptr(&self, ptr: u64) -> Option<SharedPB> {
+        for pool in &self.pave_blocks_pool {
+            for spb in pool {
+                if std::sync::Arc::as_ptr(&spb.0) as u64 == ptr {
+                    return Some(spb.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// OCCT BOPDS_DS::AddCommonBlock.
     /// Creates a new CommonBlock containing `the_pbs` and associates all PBs with it.
     /// The specific PaveBlock handles are stored so `PaveBlock1()` returns the
@@ -1061,19 +1075,22 @@ impl DS {
             self.face_info_pool.push(FaceInfo::default());
             self.shapes[i].reference = pi as i64;
             // OCCT BOPDS_DS::InitFaceInfo (BOPDS_DS.cxx L738-747): InitFaceInfoIn +
-            // UpdateFaceInfoOn. Note: only the direct VERTEX sub-shapes go into
-            // VerticesIn here (OCCT InitFaceInfoIn L751-769); the boundary-edge
-            // PBs populate VerticesOn/PaveBlocksOn via FaceInfoOn.
+            // UpdateFaceInfoOn. Only the direct (free) VERTEX sub-shapes go into
+            // VerticesIn here — OCCT InitFaceInfoIn (L751-769) iterates
+            // TopoDS_Iterator over the face BRep, which yields wires and free
+            // vertices, never the boundary-edge endpoints.  rcad's TShape::Face
+            // stores those free vertices in internal_vertices; the DS face
+            // sub-shapes are flattened to edges + vertices (prepare_faces), so
+            // iterating them would wrongly include the boundary vertices.
             self.face_info_pool[pi].set_index(i);
-            let sub_shapes = self.shapes[i].sub_shapes.clone();
-            for sub in sub_shapes {
-                if sub >= self.nb_shapes() {
-                    continue;
-                }
-                if self.shapes[sub].shape_type == ShapeType::Vertex {
-                    let sd = self.get_same_domain_index(sub as isize);
-                    if sd >= 0 {
-                        self.face_info_pool[pi].vertices_in.insert(sd as usize);
+            if let Some(fd) = self.shapes[i].shape.as_face() {
+                for iv in &fd.internal_vertices {
+                    let pk = (iv.ptr_id(), iv.location);
+                    if let Some(&iv_idx) = self.map_shape_index.get(&pk) {
+                        let sd = self.get_same_domain_index(iv_idx as isize);
+                        if sd >= 0 {
+                            self.face_info_pool[pi].vertices_in.insert(sd as usize);
+                        }
                     }
                 }
             }
@@ -1092,7 +1109,7 @@ impl DS {
         if self.shapes[the_index].reference < 0 {
             return;
         }
-        let mut pb_marks: Vec<usize> = Vec::new();
+        let mut pb_marks: Vec<u64> = Vec::new();
         let mut vertex_marks: Vec<usize> = Vec::new();
         // FaceInfoIn step 1: pure internal (free) vertices on the face.  OCCT
         // uses TopoDS_Iterator on the face BRep (direct children = wires + free
@@ -1148,9 +1165,9 @@ impl DS {
                             if let Some(cb) = self.common_blocks.get(cb_idx) {
                                 if cb.faces().contains(&the_index) {
                                     if let Some(pb1) = cb.pave_block1() {
-                                        if let Some((pi, _)) = self.pb_pool_index(&pb1) {
-                                            pb_marks.push(pi);
-                                        }
+                                        // OCCT: thePaveBlocks.Add(CommonBlock->PaveBlock1())
+                                        // — keyed by PB handle, not pool index.
+                                        pb_marks.push(std::sync::Arc::as_ptr(&pb1.0) as u64);
                                     }
                                 }
                             }
@@ -1177,7 +1194,7 @@ impl DS {
             return;
         }
         let sub_shapes = self.shapes[the_index].sub_shapes.clone();
-        let mut pb_marks: Vec<usize> = Vec::new();
+        let mut pb_marks: Vec<u64> = Vec::new();
         let mut vertex_marks: Vec<usize> = Vec::new();
         for &si in &sub_shapes {
             if si >= self.nb_shapes() {
@@ -1194,12 +1211,10 @@ impl DS {
                         vertex_marks.push(n_v1);
                         vertex_marks.push(n_v2);
                         let pbr = self.real_pave_block(pb);
-                        let pptr = std::sync::Arc::as_ptr(&pbr.0) as u64;
-                        if let Some(pidx) = self.pave_blocks_pool.iter().position(|pool| {
-                            pool.iter().any(|spb| std::sync::Arc::as_ptr(&spb.0) as u64 == pptr)
-                        }) {
-                            pb_marks.push(pidx);
-                        }
+                        // OCCT: theMPB.Add(RealPaveBlock(aPaveBlock)) — the map is
+                        // keyed by the PB handle, so each distinct pave block of a
+                        // split edge is a separate entry (not deduped by pool index).
+                        pb_marks.push(std::sync::Arc::as_ptr(&pbr.0) as u64);
                     }
                 }
                 ShapeType::Vertex => {
@@ -1440,6 +1455,10 @@ impl DS {
     }
 
     pub fn release_pave_blocks(&mut self) {
+        // OCCT BOPDS_DS::ReleasePaveBlocks (BOPDS_DS.cxx L1500-1545): for each
+        // untouched single-PB edge (both vertices original, not a common
+        // block), drop the edge's reference and Clear the pool list so the
+        // edge is marked Deleted.
         for i in 0..self.pave_blocks_pool.len() {
             if self.pave_blocks_pool[i].len() != 1 { continue; }
             let pb = &self.pave_blocks_pool[i][0];
@@ -1451,12 +1470,10 @@ impl DS {
             if !self.is_new_shape(v1) && !self.is_new_shape(v2) {
                 let oe = pb.0.read().unwrap().original_edge;
                 if oe < self.nb_shapes() { self.shapes[oe].reference = -1; }
-                // OCCT BOPDS_DS::ReleasePaveBlocks (BOPDS_DS.cxx L1540) also
-                // clears the pool list, but rcad face-info sets (PaveBlocksOn/In/Sc)
-                // reference PBs by pool index and the builder reads Edge() from
-                // them (BOPAlgo_Builder_2.cxx L487). Keep the PB in the pool so
-                // the pool index stays resolvable; reference=-1 already marks the
-                // edge as released, so has_pave_blocks() still returns false.
+                // OCCT: aPaveBlockList.Clear() — the pool entry becomes empty,
+                // marking the edge as Deleted (RefineFaceInfoOn then drops the
+                // released PBs from the face sets).
+                self.pave_blocks_pool[i].clear();
             }
         }
     }

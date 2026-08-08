@@ -705,8 +705,10 @@ impl PaveFiller {
 
         // OCCT L62-63: NCollection_IndexedDataMap<int, NCollection_List<int>> aMILI(100, aAllocator);
         //             NCollection_List<NCollection_List<int>> aMBlocks(aAllocator);
-        let mut a_mili: std::collections::HashMap<usize, Vec<usize>> =
-            std::collections::HashMap::new();
+        // OCCT's IndexedDataMap preserves insertion order (keys iterated in
+        // insertion order by MakeBlocks); rcad mirrors it with an IndexMap.
+        let mut a_mili: indexmap::IndexMap<usize, Vec<usize>> =
+            indexmap::IndexMap::new();
         let mut a_mblocks: Vec<Vec<usize>> = Vec::new();
 
         // 1. Map V/LV (OCCT L69-98)
@@ -1617,12 +1619,23 @@ impl PaveFiller {
         }
         if a_lif.is_empty() { return; }
 
-        // OCCT L356-389: for each (face, EE-vertex) pair, if the vertex is not
-        // already ON the face, compute VF.
+        // OCCT L356-389: for each (face, EE-vertex) pair selected by the
+        // BOPDS_SubIterator (bounding-box overlap), ChangeFaceInfo(nF) is
+        // called UNCONDITIONALLY (the FaceInfo must exist even when the vertex
+        // is not on the face — OCCT PaveFiller_4.cxx L357-360).  Only when the
+        // vertex is not already ON the face, ComputeVF is run and the
+        // interference recorded.
         for &n_f in &a_lif {
             for &n_v in &a_liv {
+                // OCCT BOPDS_SubIterator: pairs with overlapping bounding boxes.
+                if !crate::bop::ds::iterator::boxes_overlap(
+                    &self.ds.shapes[n_f], &self.ds.shapes[n_v], self.my_fuzzy_value)
+                {
+                    continue;
+                }
+                // OCCT: BOPDS_FaceInfo& aFI = myDS->ChangeFaceInfo(nF);
                 let contains = {
-                    let a_fi = self.ds.face_info(n_f);
+                    let a_fi = self.ds.change_face_info(n_f);
                     a_fi.vertices_on.contains(&n_v)
                 };
                 if contains { continue; }
@@ -1699,8 +1712,10 @@ impl PaveFiller {
             if self.ds.shapes[n_e].has_flag() {
                 continue;
             }
-            // OCCT L237-241: FaceInfo
-            let a_fi = self.ds.face_info(n_f);
+            // OCCT L237: BOPDS_FaceInfo& aFI = myDS->ChangeFaceInfo(nF) — the
+            // FaceInfo is created for every surviving (E,F) pair, collecting
+            // the current boundary PBs into PaveBlocksOn.
+            let a_fi = self.ds.change_face_info(n_f);
             let a_mpbf = a_fi.pave_blocks_on.clone();
             let a_mv_in = a_fi.vertices_in.clone();
             let a_mv_on = a_fi.vertices_on.clone();
@@ -1716,11 +1731,9 @@ impl PaveFiller {
                 // OCCT L256-260: RealPaveBlock + skip if in face's PaveBlocksOn
                 let a_pbr = self.ds.real_pave_block(a_pb);
                 let pbr_ptr = std::sync::Arc::as_ptr(&a_pbr.0) as u64;
-                let is_on_face = a_mpbf.iter().any(|&pi| {
-                    self.ds.pave_blocks_pool.get(pi).map_or(false, |pool| {
-                        pool.iter().any(|spb| std::sync::Arc::as_ptr(&spb.0) as u64 == pbr_ptr)
-                    })
-                });
+                // OCCT: aMPBF.Contains(aPBR) — the set holds PB handles, so a
+                // direct pointer-id membership test matches exactly.
+                let is_on_face = a_mpbf.contains(&pbr_ptr);
                 if std::env::var("RCAD_EE_DEBUG").is_ok() {
                     eprintln!("[EF-DBG]   cand e={} f={} pb={} onFace={} mpbf_len={}", n_e, n_f, pbr_ptr, is_on_face, a_mpbf.len());
                 }
@@ -2562,7 +2575,7 @@ impl PaveFiller {
             let pb_on = self.ds.face_info(i).pave_blocks_on.clone();
             let pb_in = self.ds.face_info(i).pave_blocks_in.clone();
             if pb_in.is_empty() || pb_on.is_empty() { continue; }
-            let mut to_rem: Vec<usize> = Vec::new();
+            let mut to_rem: Vec<u64> = Vec::new();
             for &pb in &pb_in { if pb_on.contains(&pb) { to_rem.push(pb); } }
             let fi = self.ds.change_face_info(i);
             for &r in &to_rem { fi.pave_blocks_in.swap_remove(&r); }
@@ -2571,13 +2584,18 @@ impl PaveFiller {
 
     /// OCCT BOPDS_DS::RefineFaceInfoOn (BOPDS_DS.cxx L975-991).
     fn refine_face_info_on(&mut self) {
+        // OCCT BOPDS_DS::RefineFaceInfoOn (BOPDS_DS.cxx L975-991): rebuild each
+        // face's PaveBlocksOn from the current edge PBs (UpdateFaceInfoOn),
+        // then drop the released PBs (those whose edge was cleared by
+        // ReleasePaveBlocks and no longer carries an edge).
         for i in 0..self.ds.face_info_pool.len() {
             let idx = self.ds.face_info_pool[i].index();
+            // OCCT: UpdateFaceInfoOn(aFaceInfo.Index()) — re-collect.
+            self.ds.update_face_info_on(idx);
             let pb_on = self.ds.face_info(idx).pave_blocks_on.clone();
-            let mut to_rem: Vec<usize> = Vec::new();
+            let mut to_rem: Vec<u64> = Vec::new();
             for &pb in &pb_on {
-                if pb >= self.ds.pave_blocks_pool.len() { to_rem.push(pb); continue; }
-                let has = self.ds.pave_blocks_pool[pb].first()
+                let has = self.ds.pb_from_ptr(pb)
                     .map_or(false, |p| p.0.read().unwrap().edge != usize::MAX);
                 if !has { to_rem.push(pb); }
             }
@@ -2700,14 +2718,56 @@ impl PaveFiller {
                 let fi = bpc.face_idx();
                 let range = self.ds.shape(ei).as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
                 if let Some(pc) = bpc.pcurve().cloned() {
+                    // OCCT BRepLib::BuildPCurveForEdgeOnPlane: the pcurve runs
+                    // along the EDGE direction (first -> last), so
+                    // BRep_Tool::Range(edge, face) puts the first vertex at
+                    // pfbid.  rcad's prim edges parameterize the 3D curve
+                    // low->high with the first vertex at the high end (OCCT
+                    // AddEdgeVertex order), so the projected pcurve (which
+                    // follows the 3D curve) is reversed when the first vertex
+                    // sits at the curve's high end.
+                    let (first_p, last_p) = self.ds.shape(ei).as_edge()
+                        .map(|ed| {
+                            let fp = ed.vertex_params.get(&ed.first.index).copied().unwrap_or(range[0]);
+                            let lp = ed.vertex_params.get(&ed.last.index).copied().unwrap_or(range[1]);
+                            (fp, lp)
+                        })
+                        .unwrap_or((range[0], range[1]));
+                    let (pc, f, l) = if first_p > last_p {
+                        let len = range[1] - range[0];
+                        (Self::reverse_curve2d(pc, len), range[0], range[1])
+                    } else {
+                        (pc, range[0], range[1])
+                    };
                     self.ds.mutate_shape_data(ei, |ts| {
                         if let topods::TShape::Edge(ed) = ts {
-                            ed.pcurves.insert(fi, (pc, range[0], range[1]));
+                            ed.pcurves.insert(fi, (pc, f, l));
                         }
                     });
                     self.ds.remap_shape_idx(ei);
                 }
             }
+        }
+    }
+
+    /// OCCT Geom2d_Curve::Reversed() — same curve, parameter direction
+    /// reversed (ReversedParameter maps t to the original curve's endpoint
+    /// parameter).  Only the analytic cases (Line/Circle) produced by
+    /// project_on_surface are handled; other types keep the projected
+    /// direction.
+    fn reverse_curve2d(c: rcad_kernel::geom::Curve2d, len: f64) -> rcad_kernel::geom::Curve2d {
+        use rcad_kernel::geom::{Circle2d, Curve2d, Line2d};
+        match c {
+            // p'(t) = p(L - t) with p(t) = origin + dir*t, p(L) = origin + dir*L
+            Curve2d::Line(l) => Curve2d::Line(Line2d::new(l.origin + l.direction * len, -l.direction)),
+            // p'(t) = x_dir*cos(t) - y_dir*sin(t) = p(2*PI - t)
+            Curve2d::Circle(c2) => Curve2d::Circle(Circle2d {
+                center: c2.center,
+                x_dir: c2.x_dir,
+                y_dir: -c2.y_dir,
+                radius: c2.radius,
+            }),
+            other => other,
         }
     }
 
@@ -3910,31 +3970,25 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             for &v in &a_fi.vertices_sc { a_mvf.insert(v); }
 
             // Also add vertices from PBs on the face
-            for &pb_idx in &face_pb_on {
-                if pb_idx < self.ds.pave_blocks_pool.len() {
-                    for pb in &self.ds.pave_blocks_pool[pb_idx] {
-                        let pbr = pb.0.read().unwrap();
-                        a_mvf.insert(pbr.pave1.vertex_idx);
-                        a_mvf.insert(pbr.pave2.vertex_idx);
-                    }
+            for &pb_ptr in &face_pb_on {
+                if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
+                    let pbr = pb.0.read().unwrap();
+                    a_mvf.insert(pbr.pave1.vertex_idx);
+                    a_mvf.insert(pbr.pave2.vertex_idx);
                 }
             }
-            for &pb_idx in &face_pb_in {
-                if pb_idx < self.ds.pave_blocks_pool.len() {
-                    for pb in &self.ds.pave_blocks_pool[pb_idx] {
-                        let pbr = pb.0.read().unwrap();
-                        a_mvf.insert(pbr.pave1.vertex_idx);
-                        a_mvf.insert(pbr.pave2.vertex_idx);
-                    }
+            for &pb_ptr in &face_pb_in {
+                if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
+                    let pbr = pb.0.read().unwrap();
+                    a_mvf.insert(pbr.pave1.vertex_idx);
+                    a_mvf.insert(pbr.pave2.vertex_idx);
                 }
             }
-            for &pb_idx in &face_pb_sc {
-                if pb_idx < self.ds.pave_blocks_pool.len() {
-                    for pb in &self.ds.pave_blocks_pool[pb_idx] {
-                        let pbr = pb.0.read().unwrap();
-                        a_mvf.insert(pbr.pave1.vertex_idx);
-                        a_mvf.insert(pbr.pave2.vertex_idx);
-                    }
+            for &pb_ptr in &face_pb_sc {
+                if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
+                    let pbr = pb.0.read().unwrap();
+                    a_mvf.insert(pbr.pave1.vertex_idx);
+                    a_mvf.insert(pbr.pave2.vertex_idx);
                 }
             }
             // Drop a_fi to release immutable borrow on self.ds
@@ -3951,28 +4005,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     continue;
                 }
                 let a_pb = self.ds.edge_pave_blocks(n_e)[local_i].clone();
-                // Find pool index for this PB (rcad-specific — OCCT uses pointer identity)
-                let pb_key = {
-                    let ptr = std::sync::Arc::as_ptr(&a_pb.0);
-                    let mut found = None;
-                    for (pi, pool) in self.ds.pave_blocks_pool.iter().enumerate() {
-                        for (li, spb) in pool.iter().enumerate() {
-                            if std::sync::Arc::as_ptr(&spb.0) == ptr {
-                                found = Some((pi, li));
-                                break;
-                            }
-                        }
-                        if found.is_some() { break; }
-                    }
-                    found
-                };
-
-                // Check if already in face's sets
-                let already_on_face = if let Some((pi, _li)) = pb_key {
-                    face_pb_on.contains(&pi)
-                        || face_pb_in.contains(&pi)
-                        || face_pb_sc.contains(&pi)
-                } else { false };
+                // Check if already in face's sets (OCCT: Contains(aPB) on
+                // handle-keyed sets — compare by PB pointer id).
+                let a_pb_ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;
+                let already_on_face = face_pb_on.contains(&a_pb_ptr)
+                    || face_pb_in.contains(&a_pb_ptr)
+                    || face_pb_sc.contains(&a_pb_ptr);
                 if already_on_face {
                     continue;
                 }
@@ -4159,12 +4197,15 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
 
             // L1184-1186: myDS->ChangeFaceInfo(nF).ChangePaveBlocksIn().Add(aPB);
-            if pb_pool_idx < self.ds.pave_blocks_pool.len() {
-                self.ds.change_face_info(n_f).pave_blocks_in.insert(pb_pool_idx);
-                // Record PB→face mapping for CommonBlock creation
-                for pb in &self.ds.pave_blocks_pool[pb_pool_idx] {
-                    let ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
-                    a_mpbli.entry(ptr).or_default().push(n_f);
+            if let Some(pool) = self.ds.pave_blocks_pool.get(pb_pool_idx) {
+                let pb_ptrs: Vec<u64> = pool.iter()
+                    .map(|pb| std::sync::Arc::as_ptr(&pb.0) as u64).collect();
+                drop(pool);
+                for pb_ptr in pb_ptrs {
+                    // OCCT: Add(aPB) — keyed by PB handle.
+                    self.ds.change_face_info(n_f).pave_blocks_in.insert(pb_ptr);
+                    // Record PB→face mapping for CommonBlock creation
+                    a_mpbli.entry(pb_ptr).or_default().push(n_f);
                 }
             }
         }
@@ -4316,23 +4357,19 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     }
 
                     // L175-195: IN and Section PaveBlocks
-                    for &pb_idx in &a_fi.pave_blocks_in {
-                        if pb_idx < self.ds.pave_blocks_pool.len() {
-                            for pb in &self.ds.pave_blocks_pool[pb_idx] {
-                                let n_e = pb.0.read().unwrap().edge;
-                                if n_e != usize::MAX {
-                                    a_mcsi.entry(n_e).or_default().insert(j);
-                                }
+                    for &pb_ptr in &a_fi.pave_blocks_in {
+                        if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
+                            let n_e = pb.0.read().unwrap().edge;
+                            if n_e != usize::MAX {
+                                a_mcsi.entry(n_e).or_default().insert(j);
                             }
                         }
                     }
-                    for &pb_idx in &a_fi.pave_blocks_sc {
-                        if pb_idx < self.ds.pave_blocks_pool.len() {
-                            for pb in &self.ds.pave_blocks_pool[pb_idx] {
-                                let n_e = pb.0.read().unwrap().edge;
-                                if n_e != usize::MAX {
-                                    a_mcsi.entry(n_e).or_default().insert(j);
-                                }
+                    for &pb_ptr in &a_fi.pave_blocks_sc {
+                        if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
+                            let n_e = pb.0.read().unwrap().edge;
+                            if n_e != usize::MAX {
+                                a_mcsi.entry(n_e).or_default().insert(j);
                             }
                         }
                     }
@@ -4541,10 +4578,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             let Some(ref surf) = surf else { continue; };
 
             // OCCT L619-631: PaveBlocksIn — pcurve by projection.
-            for &pb_idx in fi.pave_blocks_in.iter() {
-                if pb_idx >= self.ds.pave_blocks_pool.len() { continue; }
-                let pbs = self.ds.pave_blocks_pool[pb_idx].clone();
-                for pb in &pbs {
+            for &pb_ptr in fi.pave_blocks_in.iter() {
+                if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
                     let n_e = pb.0.read().unwrap().edge;
                     if n_e >= self.ds.nb_shapes() { continue; }
                     self.build_pcurve_mpc(n_e, n_f1, surf, None);
@@ -4552,14 +4587,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
             // OCCT L634-699: PaveBlocksOn — skip if pcurve exists; a CommonBlock
             // provides the pcurve-copy source (paired edge with a pcurve).
-            for &pb_idx in fi.pave_blocks_on.iter() {
-                if pb_idx >= self.ds.pave_blocks_pool.len() { continue; }
-                let pbs = self.ds.pave_blocks_pool[pb_idx].clone();
-                for pb in &pbs {
+            for &pb_ptr in fi.pave_blocks_on.iter() {
+                if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
                     let n_e = pb.0.read().unwrap().edge;
                     if n_e >= self.ds.nb_shapes() { continue; }
                     if self.edge_has_pcurve(n_e, n_f1) { continue; }
-                    let src = self.cb_pcurve_source(pb, n_f1);
+                    let src = self.cb_pcurve_source(&pb, n_f1);
                     self.build_pcurve_mpc(n_e, n_f1, surf, src);
                 }
             }
@@ -4855,13 +4888,11 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     let a_fi = self.ds.face_info(n_f);
                     let mut found_pbs: Vec<SharedPB> = Vec::new();
                     for pb_set in [&a_fi.pave_blocks_in, &a_fi.pave_blocks_sc, &a_fi.pave_blocks_on] {
-                        for &pb_idx in pb_set {
-                            if pb_idx < self.ds.pave_blocks_pool.len() {
-                                for pb in &self.ds.pave_blocks_pool[pb_idx] {
-                                    let (v1, v2) = { let r = pb.0.read().unwrap(); r.indices() };
-                                    if v1 == n_vx || v2 == n_vx {
-                                        found_pbs.push(pb.clone());
-                                    }
+                        for &pb_ptr in pb_set {
+                            if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
+                                let (v1, v2) = { let r = pb.0.read().unwrap(); r.indices() };
+                                if v1 == n_vx || v2 == n_vx {
+                                    found_pbs.push(pb.clone());
                                 }
                             }
                         }

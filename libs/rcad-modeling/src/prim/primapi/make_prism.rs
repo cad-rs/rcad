@@ -62,13 +62,21 @@ pub fn make_prism_brep(
     // belong to REVERSED faces — OCCT BRepPrim_GWedge::Face() reverses them
     // (i%2==0, ReverseFace) and TopoDS_Builder::Add then reverses the added
     // wire into the face, so the wires are stored REVERSED (see make_box.rs).
+    // Faces in OCCT BRepPrimAPI_MakePrism order:
+    // [y0-side, x=w-side, y=d-side, x=0-side, bottom, top] — BRepSweep_Prism
+    // stores the lateral faces before the caps, so the DS index assignment
+    // (and thus FaceInfo keys) matches the OCCT reference (DSLIST P029:
+    // Shell subs=2,12,19,26,30,32).
+    // Each lateral wire stores [vertical edges..., base edge, top edge] all
+    // FORWARD, exactly as BRepSweep_Prism adds them (OCCT DSLIST: y0-side
+    // wire subs=4,7,10,11 = e_ver0, e_ver1, b_ed0, t_ed0).
     let wires = [
-        rev(t.add_twire(vec![b_ed[0].clone(), b_ed[1].clone(), b_ed[2].clone(), b_ed[3].clone()])),
-        t.add_twire(vec![t_ed[0].clone(), rev(t_ed[3].clone()), rev(t_ed[2].clone()), rev(t_ed[1].clone())]),
-        rev(t.add_twire(vec![b_ed[0].clone(), e_ver[1].clone(), rev(t_ed[0].clone()), rev(e_ver[0].clone())])),
-        t.add_twire(vec![rev(b_ed[2].clone()), e_ver[2].clone(), t_ed[2].clone(), rev(e_ver[3].clone())]),
-        rev(t.add_twire(vec![rev(b_ed[3].clone()), e_ver[0].clone(), t_ed[3].clone(), rev(e_ver[3].clone())])),
-        t.add_twire(vec![b_ed[1].clone(), e_ver[2].clone(), rev(t_ed[1].clone()), rev(e_ver[1].clone())]),
+        rev(t.add_twire(vec![e_ver[0].clone(), rev(e_ver[1].clone()), rev(b_ed[0].clone()), t_ed[0].clone()])),
+        t.add_twire(vec![rev(e_ver[1].clone()), e_ver[2].clone(), b_ed[1].clone(), rev(t_ed[1].clone())]),
+        t.add_twire(vec![rev(e_ver[2].clone()), e_ver[3].clone(), b_ed[2].clone(), rev(t_ed[2].clone())]),
+        rev(t.add_twire(vec![e_ver[3].clone(), rev(e_ver[0].clone()), rev(b_ed[3].clone()), t_ed[3].clone()])),
+        rev(t.add_twire(vec![rev(b_ed[0].clone()), rev(b_ed[1].clone()), rev(b_ed[2].clone()), rev(b_ed[3].clone())])),
+        t.add_twire(vec![t_ed[0].clone(), t_ed[1].clone(), t_ed[2].clone(), t_ed[3].clone()]),
     ];
 
     // Surfaces.  The two caps are planes; each lateral face is the planar image
@@ -97,12 +105,12 @@ pub fn make_prism_brep(
     // prism's FF domain classification (ClassifyLin2d rejects lines coincident
     // with the v=vmax boundary).
     let faces = [
-        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::Z, DVec3::X)), wires[0].clone(), vec![], None, Some(cap_uv), vec![], true)),
-        t.add_tface(Some(pln(DVec3::new(0.0, 0.0, h), DVec3::Z, DVec3::X)), wires[1].clone(), vec![], None, Some(cap_uv), vec![], true),
-        rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::Y, DVec3::X)), wires[2].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true)),
-        t.add_tface(Some(pln(DVec3::new(w, d, 0.0), DVec3::Y, DVec3::X)), wires[3].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true),
-        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::X, -DVec3::Y)), wires[4].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true)),
-        t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::X, -DVec3::Y)), wires[5].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true),
+        rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::Y, DVec3::X)), wires[0].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true)),
+        t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::X, -DVec3::Y)), wires[1].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true),
+        t.add_tface(Some(pln(DVec3::new(w, d, 0.0), DVec3::Y, DVec3::X)), wires[2].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true),
+        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::X, -DVec3::Y)), wires[3].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true)),
+        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::Z, DVec3::X)), wires[4].clone(), vec![], None, Some(cap_uv), vec![], true)),
+        t.add_tface(Some(pln(DVec3::new(0.0, 0.0, h), DVec3::Z, DVec3::X)), wires[5].clone(), vec![], None, Some(cap_uv), vec![], true),
     ];
     let shell = t.add_tshell(faces.to_vec());
     t.add_tsolid(vec![shell]);

@@ -2048,8 +2048,8 @@ impl<'a> Builder<'a> {
             }
 
             // OCCT L469-480: 1.2 In edges (forward + reversed).
-            for &pb_idx in &a_fi.pave_blocks_in {
-                if let Some(n_sp) = self.pb_edge(pb_idx) {
+            for &pb_key in &a_fi.pave_blocks_in {
+                if let Some(n_sp) = self.pb_edge_by_ptr(pb_key) {
                     let mut a_sp = self.brep_sr(n_sp);
                     a_sp.orientation = topods::Orientation::Forward;
                     a_le.push(a_sp.clone());
@@ -2060,8 +2060,8 @@ impl<'a> Builder<'a> {
             // OCCT L483-494: 1.3 Section edges (forward + reversed).
             // OCCT reads aPB->Edge() with no null-check — PostTreatFF always
             // sets the edge on section PBs, so a missing edge here is a bug.
-            for &pb_idx in &a_fi.pave_blocks_sc {
-                let n_sp = self.pb_edge(pb_idx)
+            for &pb_key in &a_fi.pave_blocks_sc {
+                let n_sp = self.pb_edge_by_ptr(pb_key)
                     .expect("section pave block must reference an edge (OCCT PostTreatFF sets it)");
                 let mut a_sp = self.brep_sr(n_sp);
                 a_sp.orientation = topods::Orientation::Forward;
@@ -2126,13 +2126,11 @@ impl<'a> Builder<'a> {
         let a_fi = self.ds.face_info(face_idx);
         let mut a_mi: HashSet<usize> = HashSet::new();
         for pb_set in [&a_fi.pave_blocks_in, &a_fi.pave_blocks_sc] {
-            for &pb_idx in pb_set {
-                if let Some(pool) = self.ds.pave_blocks_pool.get(pb_idx) {
-                    if let Some(pb) = pool.first() {
-                        let r = pb.0.read().unwrap();
-                        a_mi.insert(r.pave1.vertex_idx);
-                        a_mi.insert(r.pave2.vertex_idx);
-                    }
+            for &pb_key in pb_set {
+                if let Some(pb) = self.ds.pb_from_ptr(pb_key) {
+                    let r = pb.0.read().unwrap();
+                    a_mi.insert(r.pave1.vertex_idx);
+                    a_mi.insert(r.pave2.vertex_idx);
                 }
             }
         }
@@ -2149,6 +2147,18 @@ impl<'a> Builder<'a> {
     fn pb_edge(&self, pb_idx: usize) -> Option<usize> {
         let pool = self.ds.pave_blocks_pool.get(pb_idx)?;
         let pb = pool.first()?;
+        let e = pb.0.read().unwrap().edge;
+        if e < self.ds.nb_shapes() {
+            Some(e)
+        } else {
+            None
+        }
+    }
+
+    /// Edge of a PB identified by its pointer id (FaceInfo PaveBlocksOn/In/Sc
+    /// store pointer ids, OCCT stores handles).
+    fn pb_edge_by_ptr(&self, pb_ptr: u64) -> Option<usize> {
+        let pb = self.ds.pb_from_ptr(pb_ptr)?;
         let e = pb.0.read().unwrap().edge;
         if e < self.ds.nb_shapes() {
             Some(e)

@@ -591,16 +591,7 @@ impl PaveFiller {
     fn pb_in_face(&self, n_f: usize, pb: &SharedPB) -> bool {
         let key = pb_ptr(pb);
         let fi = self.ds.face_info(n_f);
-        for &pool_idx in fi.pave_blocks_on.iter().chain(fi.pave_blocks_in.iter()) {
-            if let Some(pool) = self.ds.pave_blocks_pool.get(pool_idx) {
-                for p in pool {
-                    if pb_ptr(p) == key {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+        fi.pave_blocks_on.contains(&key) || fi.pave_blocks_in.contains(&key)
     }
 
     // ====================================================================
@@ -670,18 +661,18 @@ impl PaveFiller {
         }
     }
 
-    /// PBs of a face from one of the On/In sets (pool indices -> SharedPB).
+    /// PBs of a face from one of the On/In sets (PB pointer ids -> SharedPB).
     fn face_pbs(&self, n_f: usize, on: bool) -> Vec<SharedPB> {
         let fi = self.ds.face_info(n_f);
-        let set: Vec<usize> = if on {
+        let set: Vec<u64> = if on {
             fi.pave_blocks_on.iter().copied().collect()
         } else {
             fi.pave_blocks_in.iter().copied().collect()
         };
         let mut out = Vec::new();
-        for &pool_idx in &set {
-            if let Some(pool) = self.ds.pave_blocks_pool.get(pool_idx) {
-                out.extend(pool.iter().cloned());
+        for &pb_ptr in &set {
+            if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
+                out.push(pb);
             }
         }
         out
@@ -2485,10 +2476,9 @@ impl PaveFiller {
                     }
                     // OCCT L1733-1734: add section PB to both faces.
                     let n_e = a_pb.0.read().unwrap().edge;
-                    if let Some((pool_idx, _)) = self.pb_pool_index(a_pb) {
-                        self.ds.change_face_info(n_f1).pave_blocks_sc.insert(pool_idx);
-                        self.ds.change_face_info(n_f2).pave_blocks_sc.insert(pool_idx);
-                    }
+                    // OCCT: ChangePaveBlocksSc().Add(aPB) — keyed by PB handle.
+                    self.ds.change_face_info(n_f1).pave_blocks_sc.insert(key);
+                    self.ds.change_face_info(n_f2).pave_blocks_sc.insert(key);
                     an_edge_lpb.entry(n_e).or_default().push(key);
                     new_pbs.push(a_pb.clone());
                 }
@@ -2595,20 +2585,17 @@ impl PaveFiller {
                     fi.pave_blocks_sc.clone(),
                 ];
                 drop(fi);
-                let mut new_sets: Vec<IndexSet<usize>> = Vec::new();
+                let mut new_sets: Vec<IndexSet<u64>> = Vec::new();
                 for copy in &sets_copy {
                     let mut a_mpb_fence: HashSet<u64> = HashSet::new();
-                    let mut new_set: IndexSet<usize> = IndexSet::new();
-                    for &pool_idx in copy {
-                        if pool_idx >= self.ds.pave_blocks_pool.len() { continue; }
-                        let pool = self.ds.pave_blocks_pool[pool_idx].clone();
-                        for a_pb in &pool {
-                            let rpb = self.ds.real_pave_block(a_pb);
+                    let mut new_set: IndexSet<u64> = IndexSet::new();
+                    for &pb_key in copy {
+                        if let Some(a_pb) = self.ds.pb_from_ptr(pb_key) {
+                            let rpb = self.ds.real_pave_block(&a_pb);
                             let rkey = pb_ptr(&rpb);
                             if a_mpb_fence.insert(rkey) {
-                                if let Some((pi, _)) = self.pb_pool_index(&rpb) {
-                                    new_set.insert(pi);
-                                }
+                                // OCCT: Add(RealPaveBlock(aPB)) — PB handle key.
+                                new_set.insert(rkey);
                             }
                         }
                     }
@@ -2776,8 +2763,9 @@ impl PaveFiller {
                             idx
                         };
                         self.ds.common_blocks[cb_idx].add_face(n_f);
-                        let pi = self.pb_pool_index(a_pb).map(|(pi, _)| pi).unwrap_or(usize::MAX);
-                        self.ds.change_face_info(n_f).pave_blocks_in.insert(pi);
+                        // OCCT: ChangePaveBlocksIn().Add(aPB) — PB handle key.
+                        self.ds.change_face_info(n_f).pave_blocks_in
+                            .insert(std::sync::Arc::as_ptr(&a_pb.0) as u64);
                     }
                 }
             }
@@ -2903,27 +2891,28 @@ impl PaveFiller {
         for i in 0..a_nb_src {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != ShapeType::Face || !a_si.has_reference() { continue; }
-            // Collect the pool indices whose pool entry became empty.
-            let to_remove: Vec<usize> = {
+            // Collect the PB ids whose pave block no longer resolves.
+            let to_remove: Vec<u64> = {
                 let fi = self.ds.face_info(i);
                 let mut tr = Vec::new();
-                for pool_idx in fi.pave_blocks_in.iter()
+                for pb_key in fi.pave_blocks_in.iter()
                     .chain(fi.pave_blocks_on.iter())
                     .chain(fi.pave_blocks_sc.iter())
                 {
-                    let pool_idx = *pool_idx;
-                    if pool_idx >= self.ds.pave_blocks_pool.len() { continue; }
-                    if self.ds.pave_blocks_pool[pool_idx].is_empty() {
-                        tr.push(pool_idx);
+                    let pb_key = *pb_key;
+                    // OCCT: PBs are handles — the pool entry cannot go empty
+                    // while the PB exists; drop ids that no longer resolve.
+                    if self.ds.pb_from_ptr(pb_key).is_none() {
+                        tr.push(pb_key);
                     }
                 }
                 tr
             };
             let fi = self.ds.change_face_info(i);
-            for pool_idx in to_remove {
-                fi.pave_blocks_in.remove(&pool_idx);
-                fi.pave_blocks_on.remove(&pool_idx);
-                fi.pave_blocks_sc.remove(&pool_idx);
+            for pb_key in to_remove {
+                fi.pave_blocks_in.remove(&pb_key);
+                fi.pave_blocks_on.remove(&pb_key);
+                fi.pave_blocks_sc.remove(&pb_key);
             }
         }
     }

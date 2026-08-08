@@ -29,7 +29,7 @@ fn type_to_integer(t1: ShapeType, t2: ShapeType) -> usize {
     }
 }
 
-fn boxes_overlap(si1: &crate::bop::ds::ShapeInfo, si2: &crate::bop::ds::ShapeInfo, gap: f64) -> bool {
+pub(crate) fn boxes_overlap(si1: &crate::bop::ds::ShapeInfo, si2: &crate::bop::ds::ShapeInfo, gap: f64) -> bool {
     if si1.bbox.is_void() || si2.bbox.is_void() { return true; }
     let mut b1 = si1.bbox.clone(); let mut b2 = si2.bbox.clone();
     b1.set_gap(b1.get_gap() + gap); b2.set_gap(b2.get_gap() + gap);

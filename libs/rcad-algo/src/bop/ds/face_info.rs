@@ -2,12 +2,18 @@
 use indexmap::IndexSet;
 
 /// BOPDS_FaceInfo ?per-face intersection state.
+///
+/// PaveBlocksOn/In/Sc store PB *pointer ids* (OCCT stores the
+/// handle<BOPDS_PaveBlock> itself in IndexedMap<handle>).  A pool index would
+/// be ambiguous when an edge is split into several pave blocks (they share one
+/// pool entry); the pointer id distinguishes them, matching OCCT's
+/// handle-based dedup.
 #[derive(Debug, Clone, Default)]
 pub struct FaceInfo {
     pub face_index: usize,
-    pub pave_blocks_in: IndexSet<usize>,
-    pub pave_blocks_on: IndexSet<usize>,
-    pub pave_blocks_sc: IndexSet<usize>,
+    pub pave_blocks_in: IndexSet<u64>,
+    pub pave_blocks_on: IndexSet<u64>,
+    pub pave_blocks_sc: IndexSet<u64>,
     pub curves_sc: IndexSet<usize>,
     pub vertices_in: IndexSet<usize>,
     pub vertices_on: IndexSet<usize>,
@@ -27,16 +33,16 @@ impl FaceInfo {
     }
     pub fn set_index(&mut self, i: usize) { self.face_index = i; }
     pub fn index(&self) -> usize { self.face_index }
-    pub fn pave_blocks_in(&self) -> &IndexSet<usize> { &self.pave_blocks_in }
-    pub fn change_pave_blocks_in(&mut self) -> &mut IndexSet<usize> { &mut self.pave_blocks_in }
+    pub fn pave_blocks_in(&self) -> &IndexSet<u64> { &self.pave_blocks_in }
+    pub fn change_pave_blocks_in(&mut self) -> &mut IndexSet<u64> { &mut self.pave_blocks_in }
     pub fn vertices_in(&self) -> &IndexSet<usize> { &self.vertices_in }
     pub fn change_vertices_in(&mut self) -> &mut IndexSet<usize> { &mut self.vertices_in }
-    pub fn pave_blocks_on(&self) -> &IndexSet<usize> { &self.pave_blocks_on }
-    pub fn change_pave_blocks_on(&mut self) -> &mut IndexSet<usize> { &mut self.pave_blocks_on }
+    pub fn pave_blocks_on(&self) -> &IndexSet<u64> { &self.pave_blocks_on }
+    pub fn change_pave_blocks_on(&mut self) -> &mut IndexSet<u64> { &mut self.pave_blocks_on }
     pub fn vertices_on(&self) -> &IndexSet<usize> { &self.vertices_on }
     pub fn change_vertices_on(&mut self) -> &mut IndexSet<usize> { &mut self.vertices_on }
-    pub fn pave_blocks_sc(&self) -> &IndexSet<usize> { &self.pave_blocks_sc }
-    pub fn change_pave_blocks_sc(&mut self) -> &mut IndexSet<usize> { &mut self.pave_blocks_sc }
+    pub fn pave_blocks_sc(&self) -> &IndexSet<u64> { &self.pave_blocks_sc }
+    pub fn change_pave_blocks_sc(&mut self) -> &mut IndexSet<u64> { &mut self.pave_blocks_sc }
     pub fn vertices_sc(&self) -> &IndexSet<usize> { &self.vertices_sc }
     pub fn change_vertices_sc(&mut self) -> &mut IndexSet<usize> { &mut self.vertices_sc }
     pub fn curves_sc_only(&self) -> Vec<usize> { self.curves_sc.iter().copied().collect() }

@@ -944,7 +944,9 @@ fn surface_same(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3
 // ====================================================================
 /// OCCT BOPAlgo_Tools::FillMap(int, int, IndexedDataMap<int, List<int>>).
 /// Adds bidirectional connection between two nodes in an adjacency map.
-pub fn fill_map(n1: usize, n2: usize, the_map: &mut std::collections::HashMap<usize, Vec<usize>>) {
+/// OCCT uses NCollection_IndexedDataMap (insertion-ordered keys); rcad uses
+/// IndexMap so MakeBlocks iterates keys in OCCT's insertion order.
+pub fn fill_map(n1: usize, n2: usize, the_map: &mut indexmap::IndexMap<usize, Vec<usize>>) {
     the_map.entry(n1).or_default().push(n2);
     the_map.entry(n2).or_default().push(n1);
 }
@@ -979,32 +981,36 @@ pub fn is_on_pave_1(t: f64, r_first: f64, r_last: f64, tol: f64) -> bool {
 // ====================================================================
 /// OCCT BOPAlgo_Tools::MakeBlocks(IndexedDataMap<int, List<int>>, List<List<int>>).
 /// Finds connected components in a vertex connection graph.
+/// OCCT BOPAlgo_Tools::MakeBlocks (BOPAlgo_Tools.hxx L46-86): iterate the
+/// IndexedDataMap keys in insertion order; for each unvisited key start a
+/// chain and BFS-append all connected unvisited nodes (the chain iterator
+/// grows as elements are appended).  rcad mirrors that with an IndexMap and
+/// an index-walked Vec chain.
 pub fn make_blocks(
-    the_map: &std::collections::HashMap<usize, Vec<usize>>,
+    the_map: &indexmap::IndexMap<usize, Vec<usize>>,
     the_blocks: &mut Vec<Vec<usize>>,
 ) {
-    let mut visited: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    for (&start, _) in the_map {
-        if visited.contains(&start) {
+    let mut a_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for (&n, _) in the_map {
+        // OCCT: if (!aMFence.Add(n)) continue;
+        if !a_fence.insert(n) {
             continue;
         }
-        let mut block: Vec<usize> = Vec::new();
-        let mut stack = vec![start];
-        while let Some(node) = stack.pop() {
-            if !visited.insert(node) {
-                continue;
-            }
-            block.push(node);
-            if let Some(neighbors) = the_map.get(&node) {
-                for &n in neighbors {
-                    if !visited.contains(&n) {
-                        stack.push(n);
+        // Start the chain (OCCT: theMBlocks.Append; aChain.Append(n)).
+        let mut a_chain: Vec<usize> = vec![n];
+        // Look for connected elements: iterate the chain, appending new ones.
+        let mut i = 0;
+        while i < a_chain.len() {
+            let n1 = a_chain[i];
+            if let Some(a_li) = the_map.get(&n1) {
+                for &n2 in a_li {
+                    if a_fence.insert(n2) {
+                        a_chain.push(n2);
                     }
                 }
             }
+            i += 1;
         }
-        if block.len() >= 2 {
-            the_blocks.push(block);
-        }
+        the_blocks.push(a_chain);
     }
 }
