@@ -31,7 +31,7 @@ pub struct BuilderSolid<'a> {
     // BOPAlgo_BuilderSolid
     pub my_shapes: Vec<Shape>,          // OCCT: myShapes
     pub my_solids: Vec<Shape>,          // OCCT: myAreas (Areas())
-    my_shapes_to_avoid: HashSet<(u64, u32)>, // OCCT: myShapesToAvoid
+    my_shapes_to_avoid: HashSet<(u64, u32, Orientation)>, // OCCT: NCollection_IndexedMap<TopoDS_Shape> myShapesToAvoid — default hasher, orientation-sensitive
     my_loops: Vec<Vec<Shape>>,          // OCCT: myLoops
     my_loops_internal: Vec<Vec<Shape>>, // OCCT: myLoopsInternal
 }
@@ -95,7 +95,7 @@ impl<'a> BuilderSolid<'a> {
             // TShape + Location, insertion order (IndexMap reproduces it).
             let mut a_mve: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
             for face in &self.my_shapes {
-                if self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location)) { continue; }
+                if self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location, face.orientation)) { continue; }
                 for a_e in face_edges(face) {
                     for a_v in edge_vertices(&a_e) {
                         let entry = a_mve
@@ -122,7 +122,7 @@ impl<'a> BuilderSolid<'a> {
                         continue;
                     }
                     b_found = true;
-                    self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location));
+                    self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location, a_e1.orientation));
                 } else if a_nb_e == 2 {
                     // OCCT L183-207: two edges at the vertex; avoid both copies
                     // when they are IsSame (same TShape + Location), unless the
@@ -136,8 +136,8 @@ impl<'a> BuilderSolid<'a> {
                             continue;
                         }
                         b_found = true;
-                        self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location));
-                        self.my_shapes_to_avoid.insert((a_e2.ptr_id(), a_e2.location));
+                        self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location, a_e1.orientation));
+                        self.my_shapes_to_avoid.insert((a_e2.ptr_id(), a_e2.location, a_e2.orientation));
                     }
                 }
             }
@@ -164,7 +164,7 @@ impl<'a> BuilderSolid<'a> {
                 continue;
             }
             // OCCT L253-256: if !myShapesToAvoid.Contains(aF).
-            if !self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location)) {
+            if !self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location, face.orientation)) {
                 a_start.push(face.clone());
             }
         }
@@ -190,14 +190,14 @@ impl<'a> BuilderSolid<'a> {
         }
         // OCCT L312-317: myShapesToAvoid faces carry their stored orientation.
         for face in &self.my_shapes {
-            if self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location)) {
+            if self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location, face.orientation)) {
                 a_mp.insert((face.ptr_id(), face.location, face.orientation));
             }
         }
         for face in &self.my_shapes {
             if !Self::is_infinite_face(face) {
                 if !a_mp.contains(&(face.ptr_id(), face.location, face.orientation)) {
-                    self.my_shapes_to_avoid.insert((face.ptr_id(), face.location));
+                    self.my_shapes_to_avoid.insert((face.ptr_id(), face.location, face.orientation));
                 }
             }
         }
@@ -209,7 +209,7 @@ impl<'a> BuilderSolid<'a> {
         // key identity TShape + Location.
         let mut a_ef_map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
         for face in &self.my_shapes {
-            if !self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location)) { continue; }
+            if !self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location, face.orientation)) { continue; }
             for e in face_edges(face) {
                 a_ef_map.entry((e.ptr_id(), e.location)).or_default().push(face.clone());
             }
@@ -220,7 +220,7 @@ impl<'a> BuilderSolid<'a> {
         // consistent orientations, so (ptr_id, location) matches membership.
         let mut a_added: HashSet<(u64, u32)> = HashSet::new();
         for a_ff in &self.my_shapes {
-            if !self.my_shapes_to_avoid.contains(&(a_ff.ptr_id(), a_ff.location)) { continue; }
+            if !self.my_shapes_to_avoid.contains(&(a_ff.ptr_id(), a_ff.location, a_ff.orientation)) { continue; }
             if !a_added.insert((a_ff.ptr_id(), a_ff.location)) { continue; }
             let mut a_shell: Vec<Shape> = vec![a_ff.clone()];
             let mut i = 0;
