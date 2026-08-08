@@ -10,6 +10,7 @@ use crate::bop::ds::DS;
 use crate::bop::ds::pave::SharedPB;
 use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools::face_make_curve::intermediate_point;
+use crate::topalgo::brep_top_adaptor::fclass2d::{FClass2d, State};
 use rcad_kernel::base::extrema::ExtPC2d;
 use rcad_kernel::geom::{
     translate_curve2d, BezierSurface, BSplineSurface, Curve2d, Curve2dEval, CurveEval, Plane,
@@ -1019,7 +1020,7 @@ fn is_internal_face(
         return i_ret;
     }
     // OCCT L882-891: ComputeState fallback.
-    if compute_state_face(the_face, the_solid, the_tol) == 3 {
+    if compute_state_face(the_face, the_solid, the_tol, ds) == 3 {
         1
     } else {
         0
@@ -1028,8 +1029,9 @@ fn is_internal_face(
 
 /// ComputeState (BOPTools_AlgoTools.cxx L660-715) — classify a face against a
 /// solid: try an edge of the face not on the solid (classify the edge
-/// midpoint), else classify a point inside the face.
-fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f64) -> u8 {
+/// midpoint), else classify a point inside the face (PointInFace hatcher,
+/// with the PointNearEdge fallback, L688-712).
+fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f64, ds: &DS) -> u8 {
     // OCCT aBounds (L887) is IndexedMap with TopTools_ShapeMapHasher —
     // TShape + Location.
     let solid_edges: HashSet<(u64, u32)> = collect_solid_faces(the_solid)
@@ -1052,26 +1054,112 @@ fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f64) -> u8 {
             return clsf.my_state;
         }
     }
-    // OCCT L688-712: all edges on the solid — classify a point inside the face.
-    let p = face_centroid(the_face);
-    let mut clsf = crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(
-        the_solid,
-    );
-    clsf.perform(p, the_tol);
-    clsf.my_state
+    // OCCT L688-712: all edges of the face are on the solid. Get a point
+    // inside the face — PointInFace (the U-line hatcher, L906-938) first,
+    // then the PointNearEdge fallback (the dT2D overload with the
+    // IsPointInOnFace check and the hatcher inside-point, L614-696).
+    let fi = ds.map_shape_index.get(&(the_face.ptr_id(), the_face.location)).copied();
+    let mut i_err = 1;
+    let mut a_p3d = DVec3::ZERO;
+    if let Some(fi) = fi {
+        let (err, p, _p2d) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+        i_err = err;
+        a_p3d = p;
+    }
+    if i_err != 0 {
+        for a_se in face_edges(the_face) {
+            if edge_data(&a_se).map_or(true, |ed| ed.degenerated) {
+                continue;
+            }
+            // OCCT L685-694: aT = IntermediatePoint(Range(aSE)).
+            let (a_t1, a_t2) = match edge_data(&a_se) {
+                Some(ed) => (ed.range[0], ed.range[1]),
+                None => (0.0, 0.0),
+            };
+            let a_t = intermediate_point(a_t1, a_t2);
+            // OCCT L619-641 (the dT2D overload): dT2D = 10 * MinStepIn2d
+            // (1e-4), x10 for cylinder/sphere surfaces, max(2*(tolE+tolF)).
+            // The face FORWARD-ization + OrientEdgeOnFace of the 5-arg
+            // overload (L685-694) is folded into point_near_edge's own
+            // REVERSED edge/face handling.
+            let mut d_t2d = 10.0 * 1e-5;
+            let surf = the_face.as_face().and_then(|fd| fd.surface.clone());
+            if matches!(surf, Some(Surface3::Cylinder(_)) | Some(Surface3::Sphere(_))) {
+                d_t2d = 10.0 * d_t2d;
+            }
+            let a_tol_e = edge_data(&a_se).map(|ed| ed.tolerance).unwrap_or(0.0);
+            let a_tol_f = the_face.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
+            let d_tx = 2.0 * (a_tol_e + a_tol_f);
+            if d_tx > d_t2d {
+                d_t2d = d_tx;
+            }
+            let (near, err6) = point_near_edge(&a_se, the_face, a_t, d_t2d, ds);
+            i_err = err6;
+            if i_err != 1 {
+                // OCCT L627-641: the point must be inside (or on) the face,
+                // otherwise the hatcher inside-point is taken (or iErr = 2).
+                let (p2d, p3d) = near.unwrap_or((DVec2::ZERO, DVec3::ZERO));
+                let in_face = match fi {
+                    Some(fi) => {
+                        let class2d = FClass2d::new(ds, fi, ds.face_tolerance(fi));
+                        class2d.perform(ds, p2d, true) != State::Out
+                    }
+                    None => false,
+                };
+                if in_face {
+                    a_p3d = p3d;
+                } else if let Some(fi) = fi {
+                    // OCCT L634-640: PointInFace(aF, aE, aT, theStep, ...) —
+                    // hatcher inside point along the edge-normal 2D line;
+                    // rcad uses the U-line hatcher (point_in_face) — both
+                    // yield an inside point for the classification.
+                    let (err2, p2, _) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+                    if err2 == 0 {
+                        a_p3d = p2;
+                        i_err = 0;
+                    } else {
+                        i_err = 2;
+                    }
+                } else {
+                    i_err = 2;
+                }
+            }
+            if i_err == 0 {
+                break;
+            }
+        }
+    }
+    if i_err == 0 {
+        // OCCT L705-709: classify the inside point.
+        let mut clsf = crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(
+            the_solid,
+        );
+        clsf.perform(a_p3d, the_tol);
+        return clsf.my_state;
+    }
+    // OCCT L711-714: aState stays TopAbs_UNKNOWN (0) when no point was found.
+    0
 }
 
-/// Middle point of an edge — OCCT ComputeState(edge) uses
-/// IntTools_Tools::IntermediatePoint (L778) for the parameter.
+/// Middle point of an edge — OCCT ComputeState(edge) (BOPTools_AlgoTools.cxx
+/// L733-778): for a degenerated edge (no 3D curve) the first vertex point is
+/// used; otherwise the parameter is the intermediate one, with the infinite
+/// range handled by the dT = 10. shifts (L748-771).
 fn edge_midpoint(edge: &Shape) -> DVec3 {
     match edge_data(edge) {
         Some(ed) => {
             if let Some(curve) = &ed.curve {
-                let t = crate::bop::int_tools::face_make_curve::intermediate_point(
-                    ed.range[0],
-                    ed.range[1],
-                );
-                curve.point_at(t)
+                let (a_t1, a_t2) = (ed.range[0], ed.range[1]);
+                let a_t = if a_t1.is_infinite() && !a_t2.is_infinite() {
+                    a_t2 - 10.0
+                } else if !a_t1.is_infinite() && a_t2.is_infinite() {
+                    a_t1 + 10.0
+                } else if a_t1.is_infinite() && a_t2.is_infinite() {
+                    0.0
+                } else {
+                    intermediate_point(a_t1, a_t2)
+                };
+                curve.point_at(a_t)
             } else if let TShape::Vertex(vd) = &*ed.first.data {
                 vd.point
             } else {
@@ -1079,32 +1167,6 @@ fn edge_midpoint(edge: &Shape) -> DVec3 {
             }
         }
         None => DVec3::ZERO,
-    }
-}
-
-/// Compute face centroid from its bounding vertices.
-fn face_centroid(face: &Shape) -> DVec3 {
-    match &*face.data {
-        TShape::Face(fd) => {
-            let mut pts: Vec<DVec3> = Vec::new();
-            if let TShape::Wire(wd) = &*fd.outer_wire.data {
-                for e in &wd.edges {
-                    if let TShape::Edge(ed) = &*e.data {
-                        if let TShape::Vertex(vd) = &*ed.first.data {
-                            pts.push(vd.point);
-                        }
-                        if let TShape::Vertex(vd) = &*ed.last.data {
-                            pts.push(vd.point);
-                        }
-                    }
-                }
-            }
-            if pts.is_empty() {
-                return DVec3::ZERO;
-            }
-            pts.iter().sum::<DVec3>() / pts.len() as f64
-        }
-        _ => DVec3::ZERO,
     }
 }
 

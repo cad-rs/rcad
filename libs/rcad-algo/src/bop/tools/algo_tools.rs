@@ -434,7 +434,7 @@ pub fn are_faces_same_domain(
 ///
 /// Returns `(iErr, theP, theP2D)`: `iErr == 0` on success, with `theP` the 3D
 /// point and `theP2D` its UV parameters on the face surface.
-fn point_in_face(f: usize, ds: &DS) -> (i32, glam::DVec3, glam::DVec2) {
+pub(crate) fn point_in_face(f: usize, ds: &DS) -> (i32, glam::DVec3, glam::DVec2) {
     // OCCT L918-919: theContext->UVBounds(theF, aUMin, aUMax, aVMin, aVMax).
     // rcad: BRepTools::UVBounds equivalent — the boundary-sampled rect.
     let [a_umin, a_umax, a_vmin, a_vmax] = ds.face_actual_uv_bounds(f);
