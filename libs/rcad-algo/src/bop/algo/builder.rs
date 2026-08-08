@@ -3552,22 +3552,24 @@ impl<'a> Builder<'a> {
         // key is (count, sorted unique face ids).
         let mut a_mst: HashMap<(usize, Vec<u64>), Shape> = HashMap::new();
         // OCCT L432-461: find same-domain solids for non-interfered solids.
+        // OCCT aMFence (L428) is Map<TopoDS_Shape, TopTools_ShapeMapHasher>.
         let a_nb_s = self.ds.nb_source_shapes();
-        let mut a_mfence: HashSet<u64> = HashSet::new();
+        let mut a_mfence: HashSet<(u64, u32)> = HashSet::new();
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != topods::ShapeType::Solid { continue; }
             let a_s = self.brep_sr(i);
-            if !a_mfence.insert(a_s.ptr_id()) { continue; }
+            if !a_mfence.insert((a_s.ptr_id(), a_s.location)) { continue; }
             // OCCT L451-454: if theDraftSolids.IsBound(aS) continue;
             if the_draft_solids.contains_key(&a_s.ptr_id()) { continue; }
             // OCCT L456-459: aST.Add(aS, TopAbs_FACE).
             let a_st = self.shape_face_set(&a_s);
             a_mst.entry(a_st).or_insert_with(|| a_s.clone());
         }
-        // OCCT L465-466: aSolidsIm — source solid -> result solids (IndexedDataMap).
+        // OCCT L465-466: aSolidsIm — source solid -> result solids (IndexedDataMap
+        // with TopTools_ShapeMapHasher).
         let mut a_solids_im: Vec<(Shape, Vec<Shape>)> = Vec::new();
-        let mut a_solids_im_idx: HashMap<u64, usize> = HashMap::new();
+        let mut a_solids_im_idx: HashMap<(u64, u32), usize> = HashMap::new();
         // OCCT L468-518: build split solids for interfered source solids.
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info(i);
@@ -3583,7 +3585,7 @@ impl<'a> Builder<'a> {
                 .cloned()
                 .unwrap_or_default();
             if p_lfin.is_empty() {
-                let idx = *a_solids_im_idx.entry(a_s.ptr_id()).or_insert_with(|| {
+                let idx = *a_solids_im_idx.entry((a_s.ptr_id(), a_s.location)).or_insert_with(|| {
                     a_solids_im.push((a_s.clone(), Vec::new()));
                     a_solids_im.len() - 1
                 });
@@ -3615,7 +3617,7 @@ impl<'a> Builder<'a> {
             bs.my_shapes = a_sfs;
             bs.perform();
             // OCCT L542: aSolidsIm.Add(aBS.Solid(), aBS.Areas()).
-            let idx = *a_solids_im_idx.entry(a_s.ptr_id()).or_insert_with(|| {
+            let idx = *a_solids_im_idx.entry((a_s.ptr_id(), a_s.location)).or_insert_with(|| {
                 a_solids_im.push((a_s.clone(), Vec::new()));
                 a_solids_im.len() - 1
             });
@@ -4746,6 +4748,9 @@ impl<'a> Builder<'a> {
     /// expanded entry count, the sorted ids are the deduplicated set — two
     /// sets with the same faces but different INTERNAL expansion points (e.g.
     /// {A_INTERNAL, B} vs {A, B_INTERNAL}) compare equal, as in OCCT.
+    /// OCCT BOPTools_Set of the solid's faces (BOPTools_Set::Add(theS, FACE)
+    /// uses TopTools_ShapeMapHasher — key identity TShape + Location). The
+    /// total count expands INTERNAL faces to two entries (L139-148).
     fn shape_face_set(&self, s: &Shape) -> (usize, Vec<u64>) {
         let mut count: usize = 0;
         let mut ids: Vec<u64> = Vec::new();
