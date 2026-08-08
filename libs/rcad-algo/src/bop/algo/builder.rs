@@ -276,20 +276,6 @@ fn face_edges(face: &Shape) -> Vec<Shape> {
     out
 }
 
-/// Endpoint points of an edge (RCAD_DEBUG_ALE).
-fn edge_endpoints(e: &Shape) -> (DVec3, DVec3) {
-    let pt = |s: &Shape| -> DVec3 {
-        match &*s.data {
-            TShape::Vertex(vd) => vd.point,
-            _ => DVec3::ZERO,
-        }
-    };
-    match e.as_edge() {
-        Some(ed) => (pt(&ed.first), pt(&ed.last)),
-        None => (DVec3::ZERO, DVec3::ZERO),
-    }
-}
-
 /// All (point, tolerance) pairs of the boundary vertices of a shape.
 fn shape_vertices(s: &Shape) -> Vec<(DVec3, f64)> {
     let mut out = Vec::new();
@@ -1827,27 +1813,6 @@ impl<'a> Builder<'a> {
             // OCCT L496-500: if (!NonDestructive()) BRepLib::BuildPCurveForEdgesOnPlane(aLE, aFF).
             if !self.my_non_destructive {
                 self.build_pcurve_for_edges_on_plane(&a_le, &a_ff);
-            }
-            if std::env::var("RCAD_DEBUG_ALE").is_ok() && i == 2 {
-                let desc: Vec<String> = a_le.iter().map(|e| {
-                    let (v1, v2) = edge_endpoints(e);
-                    let vp1 = match &*e.data {
-                        TShape::Edge(ed) => ed.first.ptr_id() % 10000,
-                        _ => 0,
-                    };
-                    let vp2 = match &*e.data {
-                        TShape::Edge(ed) => ed.last.ptr_id() % 10000,
-                        _ => 0,
-                    };
-                    let c = match e.as_edge().and_then(|ed| ed.curve.clone()) {
-                        Some(rcad_kernel::geom::Curve3::Line(_)) => "L".to_string(),
-                        Some(rcad_kernel::geom::Curve3::Circle(_)) => "C".to_string(),
-                        _ => "?".to_string(),
-                    };
-                    format!("e{}{}[v{}-v{}]({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})",
-                            e.ptr_id() % 10000, c, vp1, vp2, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z)
-                }).collect();
-                eprintln!("[ALE] face{} aLE[{}] = {}", i, a_le.len(), desc.join(" | "));
             }
             // OCCT L502-505: aBF.SetFace(aF); aBF.SetShapes(aLE); SetRunParallel.
             a_vbf.push((i, a_f, a_le));
