@@ -4091,10 +4091,11 @@ impl<'a> Builder<'a> {
                 _ => None,
             },
             _ => {
-                // OCCT L646-653: recurse into the first sub-shape.
+                // OCCT L646-653: recurse into the first sub-shape but IGNORE
+                // the returned state — aState stays TopAbs_UNKNOWN (0).
                 let subs = Self::shape_sub_shapes_static(the_s);
                 if let Some(sub) = subs.first() {
-                    return Self::compute_state_by_one_point(sub, the_ref, the_tol);
+                    let _ = Self::compute_state_by_one_point(sub, the_ref, the_tol);
                 }
                 None
             }
@@ -4110,7 +4111,9 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT aBB.MakeSolid(aSdx); copy all sub-shapes of aSd; aBB.Add(aSdx, aSI)
-    /// (BOPAlgo_Builder_3.cxx L849-858).
+    /// (BOPAlgo_Builder_3.cxx L849-858). The new solid is FORWARD — OCCT
+    /// MakeSolid creates a FORWARD solid and never copies the source
+    /// orientation (unlike BuildDraftSolid which does copy it at L280-281).
     ///
     /// Architecture note: OCCT aBB.Add(aSd, aSI) accepts any sub-shape,
     /// including a WIRE (OwnInternalShapes collects all non-SHELL direct
@@ -4141,7 +4144,7 @@ impl<'a> Builder<'a> {
                 internal_edges: internal_e,
             })),
             0,
-            a_sd.orientation,
+            topods::Orientation::Forward,
         )
     }
 
