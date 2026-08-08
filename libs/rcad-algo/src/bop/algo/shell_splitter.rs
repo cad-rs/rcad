@@ -486,7 +486,8 @@ fn get_edge_off(a_e1: &Shape, a_f2: &Shape) -> Option<Shape> {
     let a_or1 = a_e1.orientation;
     let a_or1c = reverse_orientation(a_or1);
     for e in face_edges(a_f2) {
-        if e.ptr_id() == a_e1.ptr_id() {
+        // OCCT L1123: aEF2.IsSame(theE1) — TShape + Location.
+        if e.ptr_id() == a_e1.ptr_id() && e.location == a_e1.location {
             if e.orientation == a_or1c {
                 return Some(e);
             }
