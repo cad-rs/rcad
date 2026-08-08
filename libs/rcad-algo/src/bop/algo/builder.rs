@@ -170,29 +170,30 @@ fn flip_orientation(o: topods::Orientation) -> topods::Orientation {
     }
 }
 
-/// OCCT BRep_Tool::IsClosed(aShell) — a shell is closed when every edge is
-/// shared by exactly two faces.
-/// BRep_Tool::IsClosed(SHELL) equivalent (BRep_Tool.cxx L1707-1733):
-/// parity pairing of boundary edges (each edge appearing an even number of
-/// times cancels out) plus at least one boundary edge present.
+/// OCCT BRep_Tool::IsClosed(aShell) (BRep_Tool.cxx L1707-1733) — a shell is
+/// closed when every non-degenerate, non-INTERNAL/EXTERNAL boundary edge is
+/// used an even number of times (parity pairing), and at least one boundary
+/// edge is present. Edges are taken with the cumulative orientation
+/// (TopExp_Explorer cumOri: face.or * wire.or * edge.or, shell is FORWARD-ized
+/// by theShape.Oriented(TopAbs_FORWARD)); the parity map is keyed by
+/// TopTools_ShapeMapHasher = TShape + Location, orientation ignored.
 pub(crate) fn shell_is_closed(faces: &[Shape]) -> bool {
-    let mut a_map: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut a_map: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
     let mut has_bound = false;
     for f in faces {
-        for w in shape_sub_shapes_free(f) {
-            for e in shape_sub_shapes_free(&w) {
-                // OCCT L1719-1723: skip degenerated and INTERNAL/EXTERNAL edges.
-                let is_degen = e.as_edge().map(|ed| ed.degenerated).unwrap_or(true);
-                if is_degen
-                    || e.orientation == topods::Orientation::Internal
-                    || e.orientation == topods::Orientation::External
-                {
-                    continue;
-                }
-                has_bound = true;
-                if !a_map.insert(e.ptr_id()) {
-                    a_map.remove(&e.ptr_id());
-                }
+        for e in face_edges(f) {
+            // OCCT L1719-1723: skip degenerated and INTERNAL/EXTERNAL edges.
+            let is_degen = e.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
+            if is_degen
+                || e.orientation == topods::Orientation::Internal
+                || e.orientation == topods::Orientation::External
+            {
+                continue;
+            }
+            has_bound = true;
+            let ekey = (e.ptr_id(), e.location);
+            if !a_map.insert(ekey) {
+                a_map.remove(&ekey);
             }
         }
     }
@@ -221,30 +222,6 @@ fn wire_is_closed(edges: &[Shape]) -> bool {
         }
     }
     has_bound && a_map.is_empty()
-}
-
-/// Walk the direct sub-shapes of a Shape (module-level helper; a Face yields
-/// its wires, a Wire yields its edges).
-fn shape_sub_shapes_free(s: &Shape) -> Vec<Shape> {
-    match &*s.data {
-        TShape::Face(fd) => {
-            let mut v = vec![Shape::new(
-                fd.outer_wire.data.clone(),
-                fd.outer_wire.location,
-                fd.outer_wire.orientation,
-            )];
-            v.extend(fd.inner_wires.iter().map(|w| {
-                Shape::new(w.data.clone(), w.location, w.orientation)
-            }));
-            v
-        }
-        TShape::Wire(wd) => wd
-            .edges
-            .iter()
-            .map(|e| Shape::new(e.data.clone(), e.location, e.orientation))
-            .collect(),
-        _ => Vec::new(),
-    }
 }
 
 // ============================================================================
@@ -3284,31 +3261,39 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::BuildDraftSolid (BOPAlgo_Builder_3.cxx L267-368).
     /// Builds the draft solid from the solid's shells, replacing each face by
     /// its images (keeping the SD faces and INTERNAL faces in theLIF).
+    /// rcad returns the built solid (OCCT theDraftSolid out-param); the
+    /// orientation set at OCCT L280-281 is applied when the solid is created
+    /// (L3364-3375 below).
     fn build_draft_solid(&self, the_solid: &Shape, the_lif: &mut Vec<Shape>) -> Shape {
-        // OCCT L283-367: iterate the solid's shells.
+        // OCCT L283-284: aIt1.Initialize(theSolid) — iterate direct sub-shapes;
+        // non-SHELL sub-shapes (internal edges, vertices) are skipped at L287-289.
         let mut a_shd_list: Vec<Shape> = Vec::new();
         for a_sh in self.shape_sub_shapes(the_solid) {
             if a_sh.shape_type() != topods::ShapeType::Shell {
                 continue;
             }
             let a_or_sh = a_sh.orientation;
-            // OCCT L293: MakeShell(aShD).
+            // OCCT L292-295: aOrSh; aBB.MakeShell(aShD); aShD.Orientation(aOrSh); iFlag=0.
             let mut a_shd_subs: Vec<Shape> = Vec::new();
             let mut i_flag = 0;
+            // OCCT L297-298: aIt2.Initialize(aSh) — iterate the shell's faces.
             for a_f in self.shape_sub_shapes(&a_sh) {
+                // OCCT L300-301: aF; aOrF.
                 let a_or_f = a_f.orientation;
                 // OCCT L303: if myImages.IsBound(aF) — replace by images.
                 if let Some(imgs) = self.my_images.get(&(a_f.ptr_id(), a_f.location)).cloned() {
                     for a_fx in &imgs {
-                        // OCCT L311: if myShapesSD.IsBound(aFx) — SD face.
+                        // OCCT L309: aFx; L311: if myShapesSD.IsBound(aFx) — SD face.
                         if self.my_shapes_sd.contains_key(&(a_fx.ptr_id(), a_fx.location)) {
+                            // OCCT L314-318: if (aOrF == INTERNAL) { aFx.Orientation(aOrF);
+                            // theLIF.Append(aFx); }
                             if a_or_f == topods::Orientation::Internal {
-                                // OCCT L313-317: aFx.Orientation(aOrF); theLIF.Append.
                                 let mut fx = a_fx.clone();
                                 fx.orientation = topods::Orientation::Internal;
                                 the_lif.push(fx);
                             } else {
-                                // OCCT L321-326: IsSplitToReverseWithWarn(aFx, aF, ctx, report).
+                                // OCCT L321-329: IsSplitToReverseWithWarn(aFx, aF, ctx, report);
+                                // if (bToReverse) aFx.Reverse(); iFlag=1; aBB.Add(aShD, aFx).
                                 // rcad: the warning alert is omitted (diagnostic only).
                                 let (b_to_reverse, _err) =
                                     crate::bop::tools::algo_tools::is_split_to_reverse_face(a_fx, &a_f);
@@ -3320,7 +3305,8 @@ impl<'a> Builder<'a> {
                                 a_shd_subs.push(fx);
                             }
                         } else {
-                            // OCCT L333-344: aFx.Orientation(aOrF).
+                            // OCCT L334-344: aFx.Orientation(aOrF); if (aOrF == INTERNAL)
+                            // theLIF.Append(aFx); else { iFlag=1; aBB.Add(aShD, aFx); }
                             let mut fx = a_fx.clone();
                             fx.orientation = a_or_f;
                             if a_or_f == topods::Orientation::Internal {
@@ -3332,7 +3318,8 @@ impl<'a> Builder<'a> {
                         }
                     }
                 } else {
-                    // OCCT L348-359: face has no images.
+                    // OCCT L348-359: if (aOrF == INTERNAL) theLIF.Append(aF);
+                    // else { iFlag=1; aBB.Add(aShD, aF); }
                     if a_or_f == topods::Orientation::Internal {
                         the_lif.push(a_f.clone());
                     } else {
@@ -3341,7 +3328,8 @@ impl<'a> Builder<'a> {
                     }
                 }
             }
-            // OCCT L362-366: if any face was added, close and add the shell.
+            // OCCT L362-365: if (iFlag) { aShD.Closed(BRep_Tool::IsClosed(aShD));
+            // aBB.Add(theDraftSolid, aShD); }
             if i_flag != 0 {
                 // OCCT L364: aShD.Closed(BRep_Tool::IsClosed(aShD)).
                 let mut flags = tshape_flags::DEFAULT;
@@ -3360,7 +3348,8 @@ impl<'a> Builder<'a> {
                 a_shd_list.push(a_shd);
             }
         }
-        // OCCT L188: MakeSolid(aSD); L280-281: orientation.
+        // OCCT L280-281: aOrSd = theSolid.Orientation(); theDraftSolid.Orientation(aOrSd)
+        // (the caller also did MakeSolid at Builder_3.cxx L188).
         Shape::new(
             std::sync::Arc::new(TShape::Solid(TSolidData {
                 my_shapes: vec![],
