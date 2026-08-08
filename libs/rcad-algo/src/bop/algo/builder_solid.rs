@@ -764,10 +764,13 @@ impl<'a> BuilderSolid<'a> {
     }
 
     /// Build a Shell TShape from a set of faces.
+    /// OCCT: the shells come from myLoops, which are already Closed(true)
+    /// (BOPAlgo_ShellSplitter::MakeShells L647/L675 — every produced shell,
+    /// regular or split, is marked closed).
     fn build_shell_shape(&self, faces: &[Shape]) -> Shape {
         let shell_tshape = TShape::Shell(TShellData {
             my_shapes: vec![],
-            flags: tshape_flags::DEFAULT,
+            flags: tshape_flags::DEFAULT | tshape_flags::CLOSED,
             faces: faces.to_vec(),
         });
         Shape::new(Arc::new(shell_tshape), 0, rcad_kernel::topods::Orientation::Forward)

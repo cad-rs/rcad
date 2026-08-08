@@ -302,22 +302,23 @@ fn shape_edges(s: &Shape) -> Vec<Shape> {
 }
 
 /// Edge -> faces connection map of a solid.
-/// OCCT TopExp::MapShapesAndAncestors(theSolid, EDGE, FACE, theMEF).
-fn build_edge_face_map(solid: &Shape) -> HashMap<u64, Vec<Shape>> {
-    let mut map: HashMap<u64, Vec<Shape>> = HashMap::new();
+/// OCCT TopExp::MapShapesAndAncestors(theSolid, EDGE, FACE, theMEF) —
+/// IndexedDataMap with TopTools_ShapeMapHasher (TShape + Location).
+fn build_edge_face_map(solid: &Shape) -> HashMap<(u64, u32), Vec<Shape>> {
+    let mut map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
     for f in collect_solid_faces(solid) {
         for e in face_edges(&f) {
-            map.entry(e.ptr_id()).or_default().push(f.clone());
+            map.entry((e.ptr_id(), e.location)).or_default().push(f.clone());
         }
     }
     map
 }
 
 /// Find the edge Shape in a face's wires with the given edge identity.
-/// OCCT BOPTools_AlgoTools::GetEdgeOnFace.
-fn find_edge_on_face(edge_ptr_id: u64, face: &Shape) -> Option<Shape> {
+/// OCCT BOPTools_AlgoTools::GetEdgeOnFace (IsSame = TShape + Location).
+fn find_edge_on_face(edge_ptr_id: u64, edge_loc: u32, face: &Shape) -> Option<Shape> {
     for e in face_edges(face) {
-        if e.ptr_id() == edge_ptr_id {
+        if e.ptr_id() == edge_ptr_id && e.location == edge_loc {
             return Some(e);
         }
     }
@@ -755,7 +756,7 @@ fn is_internal_face_core(
     // null on failure (orientation FORWARD by default); the angle method then
     // cannot be applied (L978-982: GetFaceOff returns false -> iRet = 2), so
     // a missing edge copy maps to 2, not 0.
-    let a_e1 = match find_edge_on_face(the_edge.ptr_id(), the_face1) {
+    let a_e1 = match find_edge_on_face(the_edge.ptr_id(), the_edge.location, the_face1) {
         Some(e) => e,
         None => return 2,
     };
@@ -774,7 +775,8 @@ fn is_internal_face_core(
         e2.orientation = topods::Orientation::Reversed;
         (e1, e2)
     } else {
-        let e2 = find_edge_on_face(the_edge.ptr_id(), the_face2).unwrap_or_else(|| a_e1.clone());
+        let e2 = find_edge_on_face(the_edge.ptr_id(), the_edge.location, the_face2)
+            .unwrap_or_else(|| a_e1.clone());
         (a_e1.clone(), e2)
     };
 
@@ -804,7 +806,7 @@ fn is_internal_face_core(
 fn is_internal_face(
     the_face: &Shape,
     the_solid: &Shape,
-    a_mef: &HashMap<u64, Vec<Shape>>,
+    a_mef: &HashMap<(u64, u32), Vec<Shape>>,
     the_tol: f64,
     ds: &DS,
 ) -> i32 {
@@ -812,7 +814,7 @@ fn is_internal_face(
     let mut found_edge = false;
     for a_e in face_edges(the_face) {
         // OCCT L832-846: edge on the solid, not INTERNAL, not degenerated.
-        let Some(a_lf) = a_mef.get(&a_e.ptr_id()) else {
+        let Some(a_lf) = a_mef.get(&(a_e.ptr_id(), a_e.location)) else {
             continue;
         };
         if a_e.orientation == topods::Orientation::Internal {
@@ -825,7 +827,7 @@ fn is_internal_face(
         if a_nb_f == 1 {
             // OCCT L851-861: single neighbor face — internal edge of a membrane.
             let a_f1 = &a_lf[0];
-            let e_on_f1 = find_edge_on_face(a_e.ptr_id(), a_f1);
+            let e_on_f1 = find_edge_on_face(a_e.ptr_id(), a_e.location, a_f1);
             if let Some(ef1) = e_on_f1 {
                 if ef1.orientation == topods::Orientation::Internal {
                     i_ret = is_internal_face_core(the_face, &a_e, a_f1, a_f1, ds);
@@ -860,16 +862,18 @@ fn is_internal_face(
 /// solid: try an edge of the face not on the solid (classify the edge
 /// midpoint), else classify a point inside the face.
 fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f64) -> u8 {
-    let solid_edges: HashSet<u64> = collect_solid_faces(the_solid)
+    // OCCT aBounds (L887) is IndexedMap with TopTools_ShapeMapHasher —
+    // TShape + Location.
+    let solid_edges: HashSet<(u64, u32)> = collect_solid_faces(the_solid)
         .iter()
         .flat_map(|f| face_edges(f))
-        .map(|e| e.ptr_id())
+        .map(|e| (e.ptr_id(), e.location))
         .collect();
     for e in face_edges(the_face) {
         if edge_data(&e).map_or(true, |ed| ed.degenerated) {
             continue;
         }
-        if !solid_edges.contains(&e.ptr_id()) {
+        if !solid_edges.contains(&(e.ptr_id(), e.location)) {
             // OCCT L683-685: classify the middle point of the edge.
             let p = edge_midpoint(&e);
             let mut clsf =
