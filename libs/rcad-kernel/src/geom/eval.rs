@@ -1071,7 +1071,29 @@ impl SurfaceEval for Surface3 {
             Surface3::Bezier(_) => false,
             Surface3::TriBezier(_) => false,
             Surface3::Offset(_) => false,
-            Surface3::Trimmed(_) => false,
+            // OCCT Geom_RectangularTrimmedSurface::IsUClosed
+            // (Geom_RectangularTrimmedSurface.cxx L559-573): an untrimmed U
+            // returns the basis IsUClosed; a trimmed U is closed when the
+            // basis is U-periodic and the trim length is a whole number of
+            // periods. rcad approximates "untrimmed" by the trim range
+            // covering the basis domain.
+            Surface3::Trimmed(t) => {
+                let basis = t.basis.as_ref();
+                let [u1, u2, _, _] = t.trim;
+                let [d_u1, d_u2, _, _] = basis.default_domain();
+                let full = (u1 - d_u1).abs() < crate::core::precision::PCONFUSION
+                    && (u2 - d_u2).abs() < crate::core::precision::PCONFUSION;
+                if full {
+                    basis.is_u_closed()
+                } else if basis.is_u_periodic() {
+                    let period = d_u2 - d_u1;
+                    let len = u2 - u1;
+                    len > crate::core::precision::PCONFUSION
+                        && (len % period).abs() <= crate::core::precision::PCONFUSION
+                } else {
+                    false
+                }
+            }
         }
     }
     fn is_v_closed(&self) -> bool {
@@ -1093,7 +1115,26 @@ impl SurfaceEval for Surface3 {
             Surface3::Bezier(_) => false,
             Surface3::TriBezier(_) => false,
             Surface3::Offset(_) => false,
-            Surface3::Trimmed(_) => false,
+            // OCCT Geom_RectangularTrimmedSurface::IsVClosed
+            // (Geom_RectangularTrimmedSurface.cxx L580-593): same rule as U,
+            // with the basis IsVClosed / V-periodicity.
+            Surface3::Trimmed(t) => {
+                let basis = t.basis.as_ref();
+                let [_, _, v1, v2] = t.trim;
+                let [_, _, d_v1, d_v2] = basis.default_domain();
+                let full = (v1 - d_v1).abs() < crate::core::precision::PCONFUSION
+                    && (v2 - d_v2).abs() < crate::core::precision::PCONFUSION;
+                if full {
+                    basis.is_v_closed()
+                } else if basis.is_v_periodic() {
+                    let period = d_v2 - d_v1;
+                    let len = v2 - v1;
+                    len > crate::core::precision::PCONFUSION
+                        && (len % period).abs() <= crate::core::precision::PCONFUSION
+                } else {
+                    false
+                }
+            }
         }
     }
     fn is_u_periodic(&self) -> bool {
