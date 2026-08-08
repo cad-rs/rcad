@@ -23,6 +23,7 @@ use rcad_kernel::topods::{
 };
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::PCONFUSION;
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use glam::DVec2;
@@ -1046,7 +1047,7 @@ fn shape_dimension(s: &Shape) -> i32 {
 fn fill_map_faces(
     n1: &Shape,
     n2: &Shape,
-    the_map: &mut HashMap<(u64, u32), (Shape, Vec<Shape>)>,
+    the_map: &mut IndexMap<(u64, u32), (Shape, Vec<Shape>)>,
 ) {
     let e1 = the_map
         .entry((n1.ptr_id(), n1.location))
@@ -1060,8 +1061,9 @@ fn fill_map_faces(
 
 /// OCCT BOPAlgo_Tools::MakeBlocks (BOPAlgo_Tools.hxx L46-80) — connected components
 /// of the SD back-and-forth map. The fence uses the map's hasher
-/// (TopTools_ShapeMapHasher = TShape + Location).
-fn make_blocks_faces(the_map: &HashMap<(u64, u32), (Shape, Vec<Shape>)>) -> Vec<Vec<Shape>> {
+/// (TopTools_ShapeMapHasher = TShape + Location). aDMSLS is an IndexedDataMap
+/// (Builder_2.cxx L747), so iteration follows the insertion order.
+fn make_blocks_faces(the_map: &IndexMap<(u64, u32), (Shape, Vec<Shape>)>) -> Vec<Vec<Shape>> {
     let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
     let mut a_m_blocks: Vec<Vec<Shape>> = Vec::new();
     for (k, (n, _)) in the_map {
@@ -2845,8 +2847,7 @@ impl<'a> Builder<'a> {
         // IsEqual (L81-99) compares the expanded count first, then the
         // deduplicated TShape+Location set. rcad: (count, sorted unique
         // (ptr_id, location)).
-        let mut an_e_set_faces: std::collections::HashMap<(usize, Vec<(u64, u32)>), Vec<Shape>> =
-            std::collections::HashMap::new();
+        let mut an_e_set_faces: IndexMap<(usize, Vec<(u64, u32)>), Vec<Shape>> = IndexMap::new();
         let mut a_mf_planar: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
 
         // OCCT L697-741: for each face, compute edge set.
@@ -2895,8 +2896,9 @@ impl<'a> Builder<'a> {
             }
         }
 
-        // OCCT L743-748: aDMSLS — back-and-forth SD map; aVPSB — pairs for analysis.
-        let mut a_dmsls: HashMap<(u64, u32), (Shape, Vec<Shape>)> = HashMap::new();
+        // OCCT L743-748: aDMSLS — back-and-forth SD map (IndexedDataMap,
+        // insertion order); aVPSB — pairs for analysis.
+        let mut a_dmsls: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
         let mut a_vpsb: Vec<(Shape, Shape)> = Vec::new();
 
         // OCCT L750-791: check pairs of faces with equal edge set.
@@ -4560,7 +4562,9 @@ impl<'a> Builder<'a> {
     fn build_solid(&mut self) {
         // OCCT L1121-1144: get solids from input arguments.
         let mut a_msa: HashSet<u64> = HashSet::new();
-        let mut a_mfs: HashMap<u64, (Shape, Vec<Shape>)> = HashMap::new();
+        // OCCT aMFS is NCollection_IndexedDataMap (BOP.cxx L1110-1111) —
+        // insertion order matters for the aSFS face order below (L1217-1227).
+        let mut a_mfs: IndexMap<u64, (Shape, Vec<Shape>)> = IndexMap::new();
         let mut a_lsc: Vec<Shape> = Vec::new();
         for i in 0..2 {
             let a_lsa: &[Shape] = if i == 0 { self.object_shapes() } else { &self.my_tools };
@@ -4954,7 +4958,7 @@ impl<'a> Builder<'a> {
     fn map_faces_to_build_solids(
         &self,
         the_sol: &Shape,
-        the_mfs: &mut HashMap<u64, (Shape, Vec<Shape>)>,
+        the_mfs: &mut IndexMap<u64, (Shape, Vec<Shape>)>,
     ) {
         for a_f in self.map_shapes_of_type(the_sol, topods::ShapeType::Face) {
             if a_f.orientation == topods::Orientation::Internal {
