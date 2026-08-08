@@ -447,6 +447,7 @@ fn path(
         a_coord_va.push(a_pa);
 
         let a_vb = get_next_vertex(&p_va, &a_e_outa);
+        let mut a_vb = a_vb;
         let a_pb = coord_2d(&a_vb, &a_e_outa, face_index, ds);
 
         // OCCT L427: mySmartMap.FindFromKey(aVb) — key TShape + Location.
@@ -516,6 +517,10 @@ fn path(
                         a_coord_va.clear();
                         return;
                     }
+                    // OCCT L503: aVb = *(TopoDS_Vertex*)(&aVertVa(i)) — the
+                    // loop-closing vertex (the i-th entry, 1-based) becomes the
+                    // current vertex for the next path step.
+                    a_vb = a_vert_va[i - 1].clone();
                     // Truncate sequences to the first aNbj entries.
                     a_ls.truncate(a_nbj);
                     a_vert_va.truncate(a_nbj);
