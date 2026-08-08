@@ -3792,10 +3792,11 @@ impl<'a> Builder<'a> {
         if a_ls_i.is_empty() { return; }
 
         // OCCT L820-877: settle internal vertices and edges into solids.
+        // OCCT iterates aLSd (aIt.Initialize(aLSd)) — a snapshot; the solid
+        // handle aSd is local to each iteration and never written back.
         let mut i_sd = 0;
         while i_sd < a_ls_d.len() {
             let mut a_sd = a_ls_d[i_sd].clone();
-            let mut b_modified = false;
             let mut i_si = 0;
             while i_si < a_ls_i.len() {
                 let mut a_si = a_ls_i[i_si].clone();
@@ -3804,7 +3805,9 @@ impl<'a> Builder<'a> {
                 // OCCT L836: ComputeStateByOnePoint(aSI, aSd, 1.e-11, ctx).
                 let a_state = Self::compute_state_by_one_point(&a_si, &a_sd, 1e-11);
                 if a_state != 3 {
-                    // TopAbs_IN — not inside; keep for the next solid.
+                    // myState 3 == IN (BRepClass3d_SClassifier: 0 unknown,
+                    // 1 fault, 2 ON, 3 IN, 4 OUT); OCCT L838: aState != IN —
+                    // not inside; keep for the next solid.
                     i_si += 1;
                     continue;
                 }
@@ -3827,13 +3830,9 @@ impl<'a> Builder<'a> {
                 } else {
                     // OCCT L871-873: aBB.Add(aSd, aSI).
                     Self::solid_add_shape(&mut a_sd, &a_si);
-                    b_modified = true;
                 }
                 // OCCT L875: aLSI.Remove(aIt1) — removal without advancing.
                 a_ls_i.remove(i_si);
-            }
-            if b_modified {
-                a_ls_d[i_sd] = a_sd;
             }
             i_sd += 1;
         }
@@ -3963,18 +3962,19 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Builder::OwnInternalShapes (BOPAlgo_Builder_3.cxx L891-905).
     /// Collects all non-SHELL direct sub-shapes of the solid (internal
-    /// vertices/edges/wires stored at the solid level).
+    /// vertices/edges/wires stored at the solid level). aMx is an IndexedMap
+    /// with TopTools_ShapeMapHasher — key identity TShape + Location.
     fn own_internal_shapes(&self, s: &Shape) -> Vec<Shape> {
         let mut result: Vec<Shape> = Vec::new();
-        let mut fence: HashSet<u64> = HashSet::new();
+        let mut fence: HashSet<(u64, u32)> = HashSet::new();
         if let TShape::Solid(sd) = &*s.data {
             for v in &sd.internal_vertices {
-                if fence.insert(v.ptr_id()) {
+                if fence.insert((v.ptr_id(), v.location)) {
                     result.push(v.clone());
                 }
             }
             for e in &sd.internal_edges {
-                if fence.insert(e.ptr_id()) {
+                if fence.insert((e.ptr_id(), e.location)) {
                     result.push(e.clone());
                 }
             }
@@ -3982,7 +3982,7 @@ impl<'a> Builder<'a> {
         // OCCT L896-904: direct sub-shapes that are not SHELL.
         for ss in self.shape_sub_shapes(s) {
             if ss.shape_type() != topods::ShapeType::Shell {
-                if fence.insert(ss.ptr_id()) {
+                if fence.insert((ss.ptr_id(), ss.location)) {
                     result.push(ss.clone());
                 }
             }
