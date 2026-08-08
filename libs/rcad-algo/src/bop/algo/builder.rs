@@ -698,14 +698,14 @@ fn min_step_3d(
     the_f1: &Shape,
     candidates: &[(Shape, Shape)],
     a_p: DVec3,
-) -> f64 {
+) -> (f64, bool) {
     let a_tol_e = edge_data(the_e1).map(|e| e.tolerance).unwrap_or(0.0);
     let mut a_dt_max: f64 = -1.0;
     let mut a_dt_min: f64 = 5e-6;
     // OCCT L2252-2258: theLCS + (theE1, theF1).
     let mut a_lcs: Vec<(&Shape, &Shape)> = candidates.iter().map(|(e, f)| (e, f)).collect();
     a_lcs.push((the_e1, the_f1));
-    for (_, a_f) in a_lcs {
+    for (_, a_f) in &a_lcs {
         let a_tol_f = a_f.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
         let a_dt = 2.0 * (a_tol_e + a_tol_f);
         if a_dt > a_dt_max {
@@ -741,7 +741,33 @@ fn min_step_3d(
     if a_dt_max < a_dt_min {
         a_dt_max = a_dt_min;
     }
-    a_dt_max
+    // OCCT L2318-2349: check if the 3D step is too big for any of the faces
+    // (UResolution/VResolution); theSmallFaces = aIt.More().
+    let mut b_small_faces = false;
+    for (_, a_f) in &a_lcs {
+        let Some(surf) = a_f.as_face().and_then(|fd| fd.surface.clone()) else {
+            continue;
+        };
+        // OCCT theContext->UVBounds(aF) — rcad: the surface parameter domain.
+        let dom = surf.default_domain();
+        let a_du = dom[1] - dom[0];
+        if a_du > 0.0 {
+            let a_u_res = u_resolution_for_surface(&surf, a_dt_max);
+            if 2.0 * a_u_res > a_du {
+                b_small_faces = true;
+                break;
+            }
+        }
+        let a_dv = dom[3] - dom[2];
+        if a_dv > 0.0 {
+            let a_v_res = v_resolution_for_surface(&surf, a_dt_max);
+            if 2.0 * a_v_res > a_dv {
+                b_small_faces = true;
+                break;
+            }
+        }
+    }
+    (a_dt_max, b_small_faces)
 }
 
 /// OCCT BRepLib::BuildPCurveForEdgeOnPlane -> BRep_Tool::CurveOnPlane
@@ -819,9 +845,7 @@ pub(crate) fn get_face_off(
     let a_or = the_e1.orientation;
 
     // OCCT L1026-1028: MinStep3D(theE1, theF1, theLCSOff, aPx, ..., bSmallFaces).
-    let a_dt3d = min_step_3d(the_e1, the_f1, candidates, a_px);
-    // rcad: the UResolution/VResolution small-face check is not ported.
-    let b_small_faces = false;
+    let (a_dt3d, b_small_faces) = min_step_3d(the_e1, the_f1, candidates, a_px);
     // OCCT L1029-1037: GetFaceDir(theE1, theF1, ...) → (aDN1, aDBF).
     let (a_dn1, a_dbf1) = match get_face_dir(the_e1, the_f1, a_px, a_t, a_dtgt, ds, a_dt3d, b_small_faces) {
         Some(d) => d,
