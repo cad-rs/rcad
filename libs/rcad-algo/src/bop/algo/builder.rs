@@ -2937,8 +2937,9 @@ impl<'a> Builder<'a> {
             // aPC->D1(0.5*(aFirst+aLast), aP, aT)
             let a_t = pc.derivative_at(0.5 * (a_first + a_last));
             let a_sq_magn = a_t.length_squared();
-            // gp::Resolution() = RealSmall() = DBL_MIN = f64::MIN_POSITIVE
-            if a_sq_magn <= f64::MIN_POSITIVE {
+            // OCCT L683-687: if (aSqMagn <= gp::Resolution()) return;
+            // (gp::Resolution() == 1e-15).
+            if a_sq_magn <= 1e-15 {
                 return (false, false);
             }
             let a_t = a_t / a_sq_magn.sqrt();
