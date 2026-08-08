@@ -4188,7 +4188,8 @@ impl<'a> Builder<'a> {
             topods::ShapeType::Edge => match &*the_s.data {
                 TShape::Edge(ed) => {
                     if let Some(curve) = &ed.curve {
-                        // OCCT L756-780: intermediate parameter of the curve range.
+                        // OCCT BOPTools_AlgoTools::ComputeState(Edge) (L752-788):
+                        // aT = IntermediatePoint(aT1, aT2) = 0.43213918-weighted.
                         let (a_t1, a_t2) = (ed.range[0], ed.range[1]);
                         let a_t = if a_t1.is_infinite() && !a_t2.is_infinite() {
                             a_t2 - 10.0
@@ -4197,7 +4198,7 @@ impl<'a> Builder<'a> {
                         } else if a_t1.is_infinite() && a_t2.is_infinite() {
                             0.0
                         } else {
-                            (a_t1 + a_t2) * 0.5
+                            intermediate_point(a_t1, a_t2)
                         };
                         Some(curve.point_at(a_t))
                     } else {
