@@ -580,7 +580,7 @@ fn find_point_in_face(
 /// REVERSED edge/face orientations) by (aDt2D + aTolE + aTolF), with the
 /// cylindrical-surface angular correction (L583-595, pkv/909/F8) and the
 /// spherical special case (L600-603).
-fn point_near_edge(
+pub(crate) fn point_near_edge(
     a_e: &Shape,
     a_f: &Shape,
     a_t: f64,
@@ -1746,7 +1746,7 @@ impl<'a> Builder<'a> {
                         if !a_ss_im.is_equal(ss) {
                             let b_to_rev = match the_type {
                                 topods::ShapeType::Wire => crate::bop::tools::algo_tools::is_split_to_reverse_edge(&a_ss_im, ss).0,
-                                topods::ShapeType::Shell => crate::bop::tools::algo_tools::is_split_to_reverse_face(&a_ss_im, ss).0,
+                                topods::ShapeType::Shell => crate::bop::tools::algo_tools::is_split_to_reverse_face(&a_ss_im, ss, &self.ds).0,
                                 _ => false,
                             };
                             if b_to_rev {
@@ -3616,7 +3616,7 @@ impl<'a> Builder<'a> {
                                 // if (bToReverse) aFx.Reverse(); iFlag=1; aBB.Add(aShD, aFx).
                                 // rcad: the warning alert is omitted (diagnostic only).
                                 let (b_to_reverse, _err) =
-                                    crate::bop::tools::algo_tools::is_split_to_reverse_face(a_fx, &a_f);
+                                    crate::bop::tools::algo_tools::is_split_to_reverse_face(a_fx, &a_f, &self.ds);
                                 let mut fx = a_fx.clone();
                                 if b_to_reverse {
                                     fx.orientation = flip_orientation(fx.orientation);

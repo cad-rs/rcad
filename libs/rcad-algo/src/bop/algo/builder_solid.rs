@@ -786,7 +786,7 @@ fn face_edges(face: &Shape) -> Vec<Shape> {
 /// match first (original faces), then fall back to the surface-level match for
 /// the BuilderSolid split-image faces whose index does not preserve the
 /// original face's (BOPAlgo_BuilderSolid.cxx L196).
-fn edge_closed_on_face(a_e: &Shape, a_f: &Shape) -> bool {
+pub(crate) fn edge_closed_on_face(a_e: &Shape, a_f: &Shape) -> bool {
     let f_index = a_f.index;
     let ed = match a_e.as_edge() {
         Some(ed) => ed,

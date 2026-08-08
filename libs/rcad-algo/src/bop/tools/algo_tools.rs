@@ -6,7 +6,7 @@
 use crate::bop::ds::DS;
 use crate::bop::int_tools::context::IntToolsContext;
 use crate::bop::int_tools::face_make_curve::intermediate_point;
-use crate::topalgo::brep_top_adaptor::fclass2d::FClass2d;
+use crate::topalgo::brep_top_adaptor::fclass2d::{FClass2d, State};
 use crate::topalgo::shape_source::ShapeSource;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
 use rcad_kernel::topods::{Orientation, ShapeType, TShape};
@@ -605,12 +605,12 @@ pub fn make_pcurve(
 ///
 /// Fast path (OCCT L1336-1341): when the two faces share the same surface
 /// handle, only their orientations are compared. Otherwise a point inside the
-/// split face is found, the surface normals at that point are computed on both
-/// surfaces, and the result is whether the normals point in opposite directions
-/// (OCCT L1383-1435). The point is the centroid of the face's outer-wire vertex
-/// endpoints projected onto the surface (rcad semantic equivalent of
-/// BOPTools_AlgoTools3D::PointInFace).
-pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape) -> (bool, i32) {
+/// split face is found by PointInFace (hatcher, L1347-1359), with the
+/// PointNearEdge fallback over the non-degenerated, non-closed-on-face edges
+/// (L1359-1373); the surface normals at that point are computed on both
+/// surfaces, and the result is whether the normals point in opposite
+/// directions (OCCT L1383-1435).
+pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i32) {
     // OCCT L1336-1341: same surface handle -> compare orientations only.
     // rcad: surfaces are value types, so "same surface" means geometric identity
     // of the analytic surface parameters.
@@ -621,15 +621,92 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape) -> (bool, i32) {
             return (f_sp.orientation != f_sr.orientation, 0);
         }
     }
-    // OCCT L1344-1380: find a point inside the split face.
-    let p3d = face_reference_point(f_sp);
-    let (uv_sp, _) = match surf_sp.as_ref() {
-        Some(s) => crate::bop::closest_point_on_surface(s, p3d),
-        None => return (false, 1),
-    };
+    // OCCT L1347-1359: PointInFace (hatcher) — the point inside the split face.
+    let mut p3d: Option<glam::DVec3> = None;
+    if let Some(fi) = ds.map_shape_index.get(&(f_sp.ptr_id(), f_sp.location)).copied() {
+        let (err, p, _p2d) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+        if err == 0 {
+            p3d = Some(p);
+        }
+    }
+    if p3d.is_none() {
+        // OCCT L1359-1373: try to get the point near some not closed and not
+        // degenerated edge on the split face. The 5-arg PointNearEdge
+        // (AlgoTools3D.cxx L685-694) computes aT = IntermediatePoint(Range)
+        // and forwards to the dT2D overload (L614-652), whose
+        // IsPointInOnFace + hatcher-inside-point logic is reproduced here.
+        let mut found = false;
+        for a_es in face_edges_shapes(f_sp) {
+            if a_es.as_edge().map(|ed| ed.degenerated).unwrap_or(true) {
+                continue;
+            }
+            if crate::bop::algo::builder_solid::edge_closed_on_face(&a_es, f_sp) {
+                continue; // OCCT L1363: !BRep_Tool::IsClosed(aESp, theFSp)
+            }
+            let (a_t1, a_t2) = match a_es.as_edge() {
+                Some(ed) => (ed.range[0], ed.range[1]),
+                None => (0.0, 0.0),
+            };
+            let a_t = intermediate_point(a_t1, a_t2);
+            // OCCT L619-641: dT2D = 10 * MinStepIn2d (1e-4), x10 for
+            // cylinder/sphere surfaces, max(2*(tolE+tolF)).
+            let mut d_t2d = 10.0 * 1e-5;
+            let surf = f_sp.as_face().and_then(|fd| fd.surface.clone());
+            if matches!(surf, Some(rcad_kernel::geom::Surface3::Cylinder(_))
+                | Some(rcad_kernel::geom::Surface3::Sphere(_)))
+            {
+                d_t2d = 10.0 * d_t2d;
+            }
+            let a_tol_e = a_es.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
+            let a_tol_f = f_sp.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
+            let d_tx = 2.0 * (a_tol_e + a_tol_f);
+            if d_tx > d_t2d {
+                d_t2d = d_tx;
+            }
+            let (near, err6) = crate::bop::algo::builder::point_near_edge(
+                &a_es, f_sp, a_t, d_t2d, ds,
+            );
+            if err6 == 1 {
+                continue;
+            }
+            let (p2d, p3d_near) = near.unwrap_or((glam::DVec2::ZERO, glam::DVec3::ZERO));
+            // OCCT L627-641: the point must be inside (or on) the face;
+            // otherwise the hatcher inside-point is taken (or iErr = 2).
+            let in_face = match ds.map_shape_index.get(&(f_sp.ptr_id(), f_sp.location)).copied() {
+                Some(fi) => {
+                    let class2d = FClass2d::new(ds, fi, ds.face_tolerance(fi));
+                    class2d.perform(ds, p2d, true) != State::Out
+                }
+                None => false,
+            };
+            if in_face {
+                p3d = Some(p3d_near);
+                found = true;
+            } else if let Some(fi) =
+                ds.map_shape_index.get(&(f_sp.ptr_id(), f_sp.location)).copied()
+            {
+                let (err2, p2, _) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+                if err2 == 0 {
+                    p3d = Some(p2);
+                    found = true;
+                }
+            }
+            if found {
+                break;
+            }
+        }
+        if p3d.is_none() {
+            // OCCT L1365-1371: the point has not been found (theError = 1).
+            return (false, 1);
+        }
+    }
+    let p3d = p3d.unwrap();
     // OCCT L1383-1392: normal direction of the split face at the point.
     let mut dn_sp = match surf_sp.as_ref() {
-        Some(s) => s.normal_at(uv_sp.x, uv_sp.y),
+        Some(s) => {
+            let (uv_sp, _) = crate::bop::closest_point_on_surface(s, p3d);
+            s.normal_at(uv_sp.x, uv_sp.y)
+        }
         None => return (false, 2),
     };
     if f_sp.orientation == Orientation::Reversed {
@@ -651,6 +728,19 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape) -> (bool, i32) {
     // OCCT L1434-1435: compare the normals.
     let a_cos = dn_sp.dot(dn_or);
     (a_cos < 0.0, 0)
+}
+
+/// All edge Shapes of a face (outer + inner wires).
+fn face_edges_shapes(face: &Shape) -> Vec<Shape> {
+    let mut out: Vec<Shape> = Vec::new();
+    if let TShape::Face(fd) = &*face.data {
+        for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+            if let TShape::Wire(wd) = &*w.data {
+                out.extend(wd.edges.iter().cloned());
+            }
+        }
+    }
+    out
 }
 
 /// OCCT BOPTools_AlgoTools::IsSplitToReverse(edge) (BOPTools_AlgoTools.cxx
@@ -846,33 +936,6 @@ fn surface_same(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3
                 && (t1.minor_radius - t2.minor_radius).abs() < TOL
         }
         _ => false,
-    }
-}
-
-/// Reference point of a face: centroid of the outer-wire edge endpoint vertices.
-fn face_reference_point(f: &Shape) -> glam::DVec3 {
-    match f.as_face() {
-        Some(fd) => {
-            let mut pts: Vec<glam::DVec3> = Vec::new();
-            if let TShape::Wire(wd) = &*fd.outer_wire.data {
-                for e in &wd.edges {
-                    if let TShape::Edge(ed) = &*e.data {
-                        if let TShape::Vertex(vd) = &*ed.first.data {
-                            pts.push(vd.point);
-                        }
-                        if let TShape::Vertex(vd) = &*ed.last.data {
-                            pts.push(vd.point);
-                        }
-                    }
-                }
-            }
-            if pts.is_empty() {
-                glam::DVec3::ZERO
-            } else {
-                pts.iter().sum::<glam::DVec3>() / pts.len() as f64
-            }
-        }
-        None => glam::DVec3::ZERO,
     }
 }
 
