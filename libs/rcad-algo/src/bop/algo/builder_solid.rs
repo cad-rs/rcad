@@ -15,7 +15,7 @@ use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{self, ShapeType, TShape, TSolidData, TShellData, TFaceData, TWireData, tshape_flags};
+use rcad_kernel::topods::{self, Orientation, ShapeType, TShape, TSolidData, TShellData, TFaceData, TWireData, tshape_flags};
 use std::collections::{HashSet, HashMap, VecDeque};
 use std::sync::Arc;
 use glam::DVec3;
@@ -168,21 +168,26 @@ impl<'a> BuilderSolid<'a> {
         // OCCT L287-331: post-treatment — collect all faces of the loops and
         // of myShapesToAvoid; add the remaining faces to myShapesToAvoid.
         // OCCT aMP (L297) is NCollection_Map<TopoDS_Shape> — default hasher
-        // includes orientation; rcad keys by (ptr_id, location) which is
-        // equivalent for the set-membership checks below (the faces of the
-        // shells carry their stored orientation).
-        let mut a_mp: HashSet<(u64, u32)> = HashSet::new();
+        // includes orientation. The faces of myLoops may have been flipped by
+        // orient_faces_on_shell (ShellSplitter), so aMP must be keyed by
+        // (ptr_id, location, orientation): a face whose orientation changed in
+        // the splitter output no longer matches its myShapes counterpart and
+        // is added to myShapesToAvoid (OCCT L326-329).
+        let mut a_mp: HashSet<(u64, u32, Orientation)> = HashSet::new();
         for loop_faces in &self.my_loops {
             for f in loop_faces {
-                a_mp.insert((f.ptr_id(), f.location));
+                a_mp.insert((f.ptr_id(), f.location, f.orientation));
             }
         }
-        for &fkey in &self.my_shapes_to_avoid {
-            a_mp.insert(fkey);
+        // OCCT L312-317: myShapesToAvoid faces carry their stored orientation.
+        for face in &self.my_shapes {
+            if self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location)) {
+                a_mp.insert((face.ptr_id(), face.location, face.orientation));
+            }
         }
         for face in &self.my_shapes {
             if !Self::is_infinite_face(face) {
-                if !a_mp.contains(&(face.ptr_id(), face.location)) {
+                if !a_mp.contains(&(face.ptr_id(), face.location, face.orientation)) {
                     self.my_shapes_to_avoid.insert((face.ptr_id(), face.location));
                 }
             }
