@@ -1978,17 +1978,25 @@ impl DS {
     /// rcad mirrors this in the copied pcurves and representations below.
     pub fn push_edge_inherit(&mut self, curve: rcad_kernel::geom::Curve3, range: [f64; 2],
         first: usize, last: usize, src: Option<usize>) -> usize {
-        // OCCT MakeSplitEdge (BOPTools_AlgoTools_2.cxx L172-179): the split
-        // edge's range is always stored ascending.
-        let range = if range[0] < range[1] { range } else { [range[1], range[0]] };
+        // OCCT MakeSplitEdge (BOPTools_AlgoTools_2.cxx L149-170): the split
+        // edge's first/last vertices follow the parameter order — when
+        // aP1 > aP2 the vertices are swapped (the smaller-parameter vertex
+        // becomes first, stored FORWARD; the larger-parameter vertex becomes
+        // last, stored REVERSED).
+        let (v_first_idx, v_last_idx, range) =
+            if range[0] < range[1] {
+                (first, last, range)
+            } else {
+                (last, first, [range[1], range[0]])
+            };
         let empty_vertex = Shape::new(
             Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
         );
-        let v_first = self.shapes.get(first)
+        let v_first = self.shapes.get(v_first_idx)
             .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Forward))
             .unwrap_or_else(|| empty_vertex.clone());
-        let v_last = self.shapes.get(last)
-            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Forward))
+        let v_last = self.shapes.get(v_last_idx)
+            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Reversed))
             .unwrap_or(empty_vertex);
         let (pcurves, representations) = match src {
             Some(src_e) if src_e < self.shapes.len() => match &*self.shapes[src_e].shape.data {

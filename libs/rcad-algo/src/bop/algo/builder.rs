@@ -1551,6 +1551,9 @@ impl<'a> Builder<'a> {
         // result construction. Runs between the s08 dump and PrepareHistory.
         self.build_shape();
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        // OCCT L583-587 (BOPAlgo_BOP.cxx): PrepareHistory.
+        self.prepare_history();
+        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(9, "after_PrepareHistory");
         self.post_treat();
         snap!(10, "after_PostTreat");
