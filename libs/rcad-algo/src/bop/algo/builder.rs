@@ -2715,10 +2715,15 @@ impl<'a> Builder<'a> {
                 }
             }
             // OCCT L1178-1180: MakeWire(aNewWire) + orientation + closed flag.
+            // OCCT L1179: aNewWire.Closed(BRep_Tool::IsClosed(aNewWire)).
+            let mut wire_flags = tshape_flags::DEFAULT;
+            if wire_is_closed(&new_edges) {
+                wire_flags |= tshape_flags::CLOSED;
+            }
             let new_wire = Shape::new(
                 std::sync::Arc::new(TShape::Wire(TWireData {
                     my_shapes: vec![],
-                    flags: tshape_flags::DEFAULT,
+                    flags: wire_flags,
                     edges: new_edges,
                 })),
                 0,
