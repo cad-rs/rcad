@@ -11,6 +11,7 @@ use crate::bop::int_tools::bean_face_intersector::{
     BeanFaceIntersector, BRepAdaptorCurve, BRepAdaptorSurface,
 };
 use crate::bop::int_tools::context::IntToolsContext;
+use crate::topalgo::brep_class3d::solid_classifier::SolidClassifier;
 use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
@@ -376,10 +377,19 @@ impl<'a> BuilderSolid<'a> {
         faces.iter().any(|f| the_mhf.contains(&(f.ptr_id(), f.location)))
     }
 
-    /// OCCT IsHole (BuilderSolid.cxx L823-831) — the shell is a "hole in
-    /// space": the point at infinity is IN the shell-solid (material outside).
+    /// OCCT IsHole (BuilderSolid.cxx L823-831): the shell is classified as a
+    /// solid via BRepClass3d_SolidClassifier::PerformInfinitePoint; the point
+    /// at infinity is IN => the shell is a hole in space.
     fn is_hole(faces: &[Shape]) -> bool {
-        Self::is_hole_in_space(faces)
+        let shell_tshape = TShape::Shell(TShellData {
+            my_shapes: vec![],
+            flags: tshape_flags::DEFAULT | tshape_flags::CLOSED,
+            faces: faces.to_vec(),
+        });
+        let shell = Shape::new(Arc::new(shell_tshape), 0, Orientation::Forward);
+        let mut clsf = SolidClassifier::from_shape(&shell);
+        clsf.perform_infinite_point(1e-7);
+        clsf.state() == 3 // TopAbs_IN
     }
 
     /// OCCT IsInside (BuilderSolid.cxx L835-860) — classify the first face of
@@ -526,225 +536,6 @@ impl<'a> BuilderSolid<'a> {
         v
     }
 
-    /// OCCT BOPAlgo_BuilderSolid::IsHole (BuilderSolid.cxx L823-831) via
-    /// BRepClass3d_SClassifier::PerformInfinitePoint (SClassifier.cxx L82-199).
-    ///
-    /// Casts a ray from a face's inner point along the reversed oriented normal
-    /// (OCCT L141: aLin(aPoint, -aDN)) and finds the closest intersection with
-    /// the shell's faces (OCCT L143-180). The ray starts on the probe face
-    /// itself at w=0; its transition is In (the ray is opposite to the face
-    /// normal). A closest-intersection transition of Out means the ray exits
-    /// the material at the closest face, so the point at infinity is IN → hole
-    /// (OCCT L184-189); a transition of In means the infinite point is OUT
-    /// (OCCT L192-195).
-    fn is_hole_in_space(faces: &[Shape]) -> bool {
-        if faces.is_empty() {
-            return false;
-        }
-        // OCCT L125-198: try each face as the probe (up to 10 random points per
-        // face; rcad uses the face centroid). The first definitive answer wins.
-        for f in faces {
-            let p = Self::face_centroid(f);
-            let n = match Self::face_outward_normal(f) {
-                Some(n) => n,
-                None => continue,
-            };
-            if n.length_squared() < 1e-12 {
-                continue;
-            }
-            // OCCT L141: the ray direction is the reversed normal.
-            let ray_dir = -n;
-            // Find the closest intersection of the ray with all the faces
-            // (OCCT L143-180, the minimal WParameter wins).
-            let mut parmin = f64::MAX;
-            let mut best = 0u8; // 0=no valid transition, 1=In, 2=Out
-            for g in faces {
-                let g_n = match Self::face_outward_normal(g) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                // Planar faces: analytic intersection; non-planar faces:
-                // OCCT L160-181 uses IntCurvesFace_Intersector (Line x Face).
-                let w = match Self::face_plane_origin(g) {
-                    Some(g_o) => {
-                        let denom = ray_dir.dot(g_n);
-                        if denom.abs() < 1e-12 {
-                            continue;
-                        }
-                        let w = (g_o - p).dot(g_n) / denom;
-                        // OCCT IntCurvesFace_Intersector.cxx L291: accept only
-                        // intersections whose UV lies inside the face domain
-                        // (Classify(Puv) == IN/ON).
-                        if let Some((u_min, u_max, v_min, v_max)) = Self::face_uv_domain(g) {
-                            let pint = p + ray_dir * w;
-                            let (u, vv) = match &*g.data {
-                                TShape::Face(fd) => match fd.surface.as_ref() {
-                                    Some(Surface3::Plane(pl)) => {
-                                        let rel = pint - pl.origin;
-                                        (rel.dot(pl.u_dir), rel.dot(pl.v_dir))
-                                    }
-                                    _ => continue,
-                                },
-                                _ => continue,
-                            };
-                            if u < u_min || u > u_max || vv < v_min || vv > v_max {
-                                continue;
-                            }
-                        }
-                        w
-                    }
-                    None => match Self::ray_surface_param(p, ray_dir, g) {
-                        Some(w) => w,
-                        None => continue,
-                    },
-                };
-                // OCCT L172-179: parmin is the minimal WParameter; the
-                // comparison is STRICT (<), so among equal parameters the
-                // first one (the probe face itself at w=0 with its In
-                // transition) wins and a second copy of the same face with the
-                // reversed orientation (also w=0, Out transition) does NOT
-                // overwrite it.
-                if w < parmin {
-                    parmin = w;
-                    // OCCT int_cs transition: cos_dir = nSurf · dirCurve; <0 -> In,
-                    // >0 -> Out (IntCurveSurface_InterUtils.pxx L856-895).
-                    best = if ray_dir.dot(g_n) > 0.0 { 2 } else { 1 };
-                }
-            }
-            if best == 2 {
-                // OCCT L184-189: transition Out -> the infinite point is IN.
-                return true;
-            } else if best == 1 {
-                // OCCT L192-195: transition In -> the infinite point is OUT.
-                return false;
-            }
-        }
-        false
-    }
-
-    /// Outward normal of a face: the surface normal at the face centroid,
-    /// flipped by the face orientation (OCCT BRepClass3d_SClassifier::FaceNormal
-    /// SClassifier.cxx L606-627 — supports arbitrary surfaces).
-    fn face_outward_normal(f: &Shape) -> Option<DVec3> {
-        match &*f.data {
-            TShape::Face(fd) => {
-                let surf = fd.surface.as_ref()?;
-                let p = Self::face_centroid(f);
-                let (u, _) = closest_point_on_surface(surf, p);
-                let n = surf.normal_at(u.x, u.y);
-                Some(if f.orientation == rcad_kernel::topods::Orientation::Reversed {
-                    -n
-                } else {
-                    n
-                })
-            }
-            _ => None,
-        }
-    }
-
-    /// Parameter of the closest intersection of the ray `p + t*dir` with a
-    /// non-planar face, if any (OCCT PerformInfinitePoint L160-181 uses
-    /// IntCurvesFace_Intersector; rcad: BeanFaceIntersector is its translation).
-    fn ray_surface_param(p: DVec3, dir: DVec3, face: &Shape) -> Option<f64> {
-        let surface = match &*face.data {
-            TShape::Face(fd) => fd.surface.as_ref()?.clone(),
-            _ => return None,
-        };
-        let line = Curve3::Line(rcad_kernel::geom::Line3 {
-            origin: p,
-            direction: dir,
-        });
-        let adapt_curve = BRepAdaptorCurve::new(line);
-        let adapt_surf = BRepAdaptorSurface::new(surface);
-        let mut bfi = BeanFaceIntersector::with_adaptors(
-            adapt_curve.clone(),
-            adapt_surf.clone(),
-            CONFUSION,
-            CONFUSION,
-        );
-        // OCCT L171: Intersector3d.Perform(aLin, -RealLast(), parmin).
-        bfi.set_bean_parameters(-f64::MAX, f64::MAX);
-        bfi.set_surface_parameters(
-            adapt_surf.first_u_parameter(),
-            adapt_surf.last_u_parameter(),
-            adapt_surf.first_v_parameter(),
-            adapt_surf.last_v_parameter(),
-        );
-        bfi.perform();
-        if !bfi.is_done() {
-            return None;
-        }
-        // OCCT L172-179: the minimal WParameter wins.
-        let mut parmin = f64::MAX;
-        for r in bfi.result() {
-            if r.first() < parmin {
-                parmin = r.first();
-            }
-        }
-        if parmin == f64::MAX {
-            None
-        } else {
-            Some(parmin)
-        }
-    }
-
-    /// Origin point of a planar face's surface.
-    fn face_plane_origin(f: &Shape) -> Option<DVec3> {
-        match &*f.data {
-            TShape::Face(fd) => match fd.surface.as_ref()? {
-                rcad_kernel::geom::Surface3::Plane(pl) => Some(pl.origin),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    /// UV bounding box of the face boundary vertices (OCCT
-    /// BRepTopAdaptor_TopolTool::Classify in IntCurvesFace_Intersector.cxx L257
-    /// accepts only intersections whose UV lies inside the face domain; the
-    /// boundary UV AABB is the equivalent conservative filter, L291).
-    fn face_uv_domain(f: &Shape) -> Option<(f64, f64, f64, f64)> {
-        match &*f.data {
-            TShape::Face(fd) => {
-                let surf = fd.surface.as_ref()?;
-                let mut u_min = f64::MAX;
-                let mut u_max = f64::MIN;
-                let mut v_min = f64::MAX;
-                let mut v_max = f64::MIN;
-                let mut any = false;
-                let mut push_wire = |wsr: &Shape| {
-                    if let TShape::Wire(wd) = &*wsr.data {
-                        for e in &wd.edges {
-                            if let TShape::Edge(ed) = &*e.data {
-                                for vsr in [&ed.first, &ed.last] {
-                                    if let TShape::Vertex(vd) = &*vsr.data {
-                                        let (uv, _) = closest_point_on_surface(surf, vd.point);
-                                        u_min = u_min.min(uv.x);
-                                        u_max = u_max.max(uv.x);
-                                        v_min = v_min.min(uv.y);
-                                        v_max = v_max.max(uv.y);
-                                        any = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                };
-                push_wire(&fd.outer_wire);
-                for iw in &fd.inner_wires {
-                    push_wire(iw);
-                }
-                if any {
-                    Some((u_min, u_max, v_min, v_max))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// Compute face centroid from its outer wire vertices.
     fn face_centroid(face: &Shape) -> DVec3 {
         match &*face.data {
             TShape::Face(fd) => {

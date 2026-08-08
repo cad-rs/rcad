@@ -19,10 +19,20 @@ use std::sync::Arc;
 /// OCCT IntCurvesFace_Intersector only counts intersections that fall inside
 /// the face's UV domain; without this check the ray-cast would treat the
 /// infinite supporting plane as the face.
-struct ExplorerFace {
-    surf: Surface3,
-    ori: Orientation,
-    uv_bounds: Option<[f64; 4]>, // [umin, umax, vmin, vmax]
+pub(crate) struct ExplorerFace {
+    pub(crate) surf: Surface3,
+    pub(crate) ori: Orientation,
+    pub(crate) uv_bounds: Option<[f64; 4]>, // [umin, umax, vmin, vmax]
+}
+
+impl Clone for ExplorerFace {
+    fn clone(&self) -> Self {
+        ExplorerFace {
+            surf: self.surf.clone(),
+            ori: self.ori,
+            uv_bounds: self.uv_bounds,
+        }
+    }
 }
 
 /// OCCT BRepClass3d_SolidExplorer — explores a solid's faces for point classification.
@@ -33,7 +43,7 @@ pub struct SolidExplorer {
     // Face geometry (surface + orientation) collected from the shape tree.
     // Used for classification without a DS reference (OCCT BRepClass3d
     // explores the TopoDS_Shape directly, never BOPDS).
-    face_surfaces: Vec<ExplorerFace>,
+    pub(crate) face_surfaces: Vec<ExplorerFace>,
     // OCCT aMapEV (BRepClass3d_SClassifier L213): vertices and edges of the
     // solid — a point within their tolerance is ON the boundary.
     vertices: Vec<DVec3>,
@@ -252,7 +262,7 @@ impl SolidExplorer {
     /// Parameter of the closest intersection of the ray `p + t*dir` with a
     /// curved face (OCCT BRepClass3d_SClassifier uses IntCurvesFace_Intersector
     /// for the Line x Face intersection; BeanFaceIntersector is its translation).
-    fn ray_face_param(p: DVec3, dir: DVec3, f: &ExplorerFace) -> Option<f64> {
+    pub(crate) fn ray_face_param(p: DVec3, dir: DVec3, f: &ExplorerFace) -> Option<f64> {
         let line = Curve3::Line(rcad_kernel::geom::Line3 {
             origin: p,
             direction: dir,
@@ -288,6 +298,43 @@ impl SolidExplorer {
         } else {
             Some(parmin)
         }
+    }
+
+    /// OCCT BRepClass3d_SolidExplorer::FindAPointInTheFace — a point inside the
+    /// face, sampled by the probing parameter aParam in [0.1, 0.9] (the random
+    /// inner point of the OCCT PerformInfinitePoint). Returns (point, u, v).
+    pub(crate) fn face_point(f: &ExplorerFace, param: f64) -> Option<(DVec3, f64, f64)> {
+        let (u, v) = match &f.surf {
+            Surface3::Plane(pl) => {
+                let [umin, umax, vmin, vmax] = f.uv_bounds?;
+                (umin + (umax - umin) * param, vmin + (vmax - vmin) * param)
+            }
+            other => {
+                let ad = BRepAdaptorSurface::new(other.clone());
+                let umin = ad.first_u_parameter();
+                let umax = ad.last_u_parameter();
+                let vmin = ad.first_v_parameter();
+                let vmax = ad.last_v_parameter();
+                if !umin.is_finite() || !umax.is_finite() || !vmin.is_finite() || !vmax.is_finite() {
+                    return None;
+                }
+                (umin + (umax - umin) * param, vmin + (vmax - vmin) * param)
+            }
+        };
+        Some((f.surf.point_at(u, v), u, v))
+    }
+
+    /// OCCT BRepClass3d_SClassifier::FaceNormal (SClassifier.cxx L606-627) —
+    /// the surface normal at (u, v), flipped for a REVERSED face.
+    pub(crate) fn face_outward_normal_at(f: &ExplorerFace, u: f64, v: f64) -> Option<DVec3> {
+        let mut n = f.surf.normal_at(u, v);
+        if n.length_squared() < 1e-24 {
+            return None;
+        }
+        if f.ori == Orientation::Reversed {
+            n = -n;
+        }
+        Some(n)
     }
 
     /// Set the shape-source reference for face index lookups.
