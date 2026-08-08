@@ -2057,9 +2057,31 @@ impl DS {
     }
 
     /// Push an edge into the DS (BRep_Builder equivalent).
+    /// OCCT BOPTools_AlgoTools::MakeSectEdge (BOPTools_AlgoTools_2.cxx
+    /// L100-121): the edge's first vertex is aV1 (stored FORWARD), last aV2
+    /// (stored REVERSED), and the range is kept AS IS — "Range must be as it
+    /// was" (BRep_Builder::Range(aE, aP1, aP2), NOT sorted).
     pub fn push_edge(&mut self, curve: rcad_kernel::geom::Curve3, range: [f64; 2],
         first: usize, last: usize) -> usize {
-        self.push_edge_inherit(curve, range, first, last, None)
+        let empty_vertex = Shape::new(
+            Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
+        );
+        let v_first = self.shapes.get(first)
+            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Forward))
+            .unwrap_or_else(|| empty_vertex.clone());
+        let v_last = self.shapes.get(last)
+            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Reversed))
+            .unwrap_or(empty_vertex);
+        let ed = rcad_kernel::topods::TEdgeData {
+            curve: Some(curve), range,
+            first: v_first, last: v_last,
+            tolerance: 0.0, same_parameter: true, same_range: true,
+            degenerated: false, pcurves: HashMap::new(),
+            representations: Vec::new(), vertex_params: HashMap::new(),
+            my_shapes: Vec::new(), flags: 0,
+        };
+        let s = Shape::new(Arc::new(TShape::Edge(ed)), 0, topods::Orientation::Forward);
+        self.append_shape(s)
     }
 
     /// OCCT BOPTools_AlgoTools::MakeSplitEdge (BOPTools_AlgoTools_2.cxx L138-183):
@@ -2072,25 +2094,26 @@ impl DS {
     /// rcad mirrors this in the copied pcurves and representations below.
     pub fn push_edge_inherit(&mut self, curve: rcad_kernel::geom::Curve3, range: [f64; 2],
         first: usize, last: usize, src: Option<usize>) -> usize {
-        // OCCT MakeSplitEdge (BOPTools_AlgoTools_2.cxx L149-170): the split
-        // edge's first/last vertices follow the parameter order — when
-        // aP1 > aP2 the vertices are swapped (the smaller-parameter vertex
-        // becomes first, stored FORWARD; the larger-parameter vertex becomes
-        // last, stored REVERSED).
-        let (v_first_idx, v_last_idx, range) =
-            if range[0] < range[1] {
-                (first, last, range)
-            } else {
-                (last, first, [range[1], range[0]])
-            };
+        // OCCT MakeSplitEdge (BOPTools_AlgoTools_2.cxx L149-183): the split
+        // edge's FIRST vertex is ALWAYS aV1 — the vertex passed first, i.e.
+        // the start of the segment along the source edge's direction. The
+        // vertices are never swapped; only the vertex ORIENTATIONS and the
+        // edge RANGE follow the parameter order: aV1 is FORWARD / aV2 REVERSED
+        // with range [aP1, aP2] when aP1 < aP2, and the reversed orientations
+        // with range [aP2, aP1] otherwise (BRep_Builder::Range always stores
+        // the range ascending).
+        let ascending = range[0] <= range[1];
+        let range = if ascending { range } else { [range[1], range[0]] };
+        let v_first_or = if ascending { Orientation::Forward } else { Orientation::Reversed };
+        let v_last_or = if ascending { Orientation::Reversed } else { Orientation::Forward };
         let empty_vertex = Shape::new(
             Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
         );
-        let v_first = self.shapes.get(v_first_idx)
-            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Forward))
+        let v_first = self.shapes.get(first)
+            .map(|s| Shape::new(s.shape.data.clone(), 0, v_first_or))
             .unwrap_or_else(|| empty_vertex.clone());
-        let v_last = self.shapes.get(v_last_idx)
-            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Reversed))
+        let v_last = self.shapes.get(last)
+            .map(|s| Shape::new(s.shape.data.clone(), 0, v_last_or))
             .unwrap_or(empty_vertex);
         let (pcurves, representations) = match src {
             Some(src_e) if src_e < self.shapes.len() => match &*self.shapes[src_e].shape.data {
