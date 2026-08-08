@@ -3355,6 +3355,10 @@ impl<'a> Builder<'a> {
         let a_nb_s = self.ds.nb_source_shapes();
         let mut a_lfaces: Vec<Shape> = Vec::new();
         let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
+        // OCCT aShapeBoxMap (L113-114): shape -> Bnd_Box for the box culling
+        // in ClassifyFaces. Both faces (L148) and solids (L193) are bound;
+        // the face box is the DS box (aSI.Box(), with gap).
+        let mut a_shape_box_map: HashMap<u64, (DVec3, DVec3)> = HashMap::new();
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != topods::ShapeType::Face {
@@ -3369,9 +3373,11 @@ impl<'a> Builder<'a> {
                     }
                 }
             } else {
-                // OCCT L147-148: aLFaces.Append(aS); box map bind (box culling
-                // is an optimization, omitted in classify_faces).
+                // OCCT L147-148: aLFaces.Append(aS); aShapeBoxMap.Bind(aS, aSI.Box()).
                 a_lfaces.push(a_s.clone());
+                if let (Some(bmin), Some(bmax)) = (a_si.bbox.corner_min(), a_si.bbox.corner_max()) {
+                    a_shape_box_map.insert(a_s.ptr_id(), (bmin, bmax));
+                }
             }
         }
         // OCCT L154-195: get all solids, build draft solids.
@@ -3397,7 +3403,6 @@ impl<'a> Builder<'a> {
         // OCCT L193: aShapeBoxMap.Bind(aSD, aBoxS) — the solid's box in the
         // classification is the SOURCE solid's box (L179-183, from the DS or
         // built by BuildBndBoxSolid), not the draft solid's own bbox.
-        let mut a_shape_box_map: HashMap<u64, (DVec3, DVec3)> = HashMap::new();
         for a_solid in &a_source_solids {
             if let Some(bb) = shape_bbox(a_solid) {
                 let a_sd = a_draft_solid.get(&(a_solid.ptr_id(), a_solid.location)).unwrap();
@@ -3595,6 +3600,8 @@ impl<'a> Builder<'a> {
             // equivalent here, BOPTools_BoxTreeSelector.)
             // OCCT L1694-1712: the solid's box comes from theShapeBoxMap (the
             // source solid's box, filled by the caller) or is built here.
+            // OCCT L1648-1657: the face's box comes from theShapeBoxMap (the
+            // DS box with gap, bound by FillIn3DParts L148) or is built here.
             let solid_bbox = a_shape_box_map
                 .get(&a_sd.ptr_id())
                 .copied()
@@ -3605,7 +3612,11 @@ impl<'a> Builder<'a> {
                     continue;
                 }
                 if let Some((smin, smax)) = solid_bbox {
-                    let Some((fmin, fmax)) = shape_bbox(a_f) else {
+                    let face_bbox = a_shape_box_map
+                        .get(&a_f.ptr_id())
+                        .copied()
+                        .or_else(|| shape_bbox(a_f));
+                    let Some((fmin, fmax)) = face_bbox else {
                         continue;
                     };
                     if fmax.x < smin.x
