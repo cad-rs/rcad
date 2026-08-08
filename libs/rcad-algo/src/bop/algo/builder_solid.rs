@@ -84,52 +84,60 @@ impl<'a> BuilderSolid<'a> {
     fn perform_shapes_to_avoid(&mut self) {
         // OCCT L138: myShapesToAvoid.Clear()
         self.my_shapes_to_avoid.clear();
-        // OCCT L142-218: iterative — mark faces with free edges, repeat.
+        // OCCT L142-218: iterative — mark edges with free boundary, repeat.
         loop {
             let mut b_found = false;
-            // OCCT L151-160: edge -> [faces] for non-avoided faces.
-            // OCCT aMEF (L136) is IndexedDataMap with TopTools_ShapeMapHasher —
-            // key identity TShape + Location.
-            let mut a_mef: HashMap<(u64, u32), (Vec<Shape>, Shape)> = HashMap::new();
+            // OCCT L151-160: aMVE — vertex -> [edges] built via
+            // TopExp::MapShapesAndAncestors(aE, TopAbs_VERTEX, TopAbs_EDGE,
+            // aMVE) over every non-avoided face: each face edge is appended to
+            // the list of both its endpoint vertices. OCCT aMVE is
+            // IndexedDataMap with TopTools_ShapeMapHasher — key identity
+            // TShape + Location, insertion order (IndexMap reproduces it).
+            let mut a_mve: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
             for face in &self.my_shapes {
                 if self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location)) { continue; }
-                for e in face_edges(face) {
-                    // OCCT L167-169: skip degenerated edges.
-                    let degen = e.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
-                    if degen { continue; }
-                    let ekey = (e.ptr_id(), e.location);
-                    let entry = a_mef.entry(ekey).or_insert_with(|| (Vec::new(), e.clone()));
-                    entry.0.push(face.clone());
+                for a_e in face_edges(face) {
+                    for a_v in edge_vertices(&a_e) {
+                        let entry = a_mve
+                            .entry((a_v.ptr_id(), a_v.location))
+                            .or_insert_with(|| (a_v.clone(), Vec::new()));
+                        entry.1.push(a_e.clone());
+                    }
                 }
             }
-            // OCCT L163-211: per-edge decisions (iterate in sorted order for
-            // determinism; the hasher ignores orientation like TopTools_ShapeMapHasher).
-            let mut a_nb_e: Vec<(u64, u32)> = a_mef.keys().copied().collect();
-            a_nb_e.sort();
-            for ekey in a_nb_e {
-                let (a_lf, a_e) = &a_mef[&ekey];
-                let a_nb_f = a_lf.len();
-                if a_nb_f == 0 { continue; }
-                // OCCT L179: aOrE = aE.Orientation().
-                let a_or_e = a_e.orientation;
-                let a_f1 = &a_lf[0];
-                if a_nb_f == 1 {
-                    // OCCT L182-189: aNbF==1, skip INTERNAL edges.
-                    if a_or_e == topods::Orientation::Internal { continue; }
+            // OCCT L163-211: per-vertex decisions. myShapesToAvoid stores EDGES
+            // here (a face is only added to it later, in PerformLoops L326-329).
+            let keys: Vec<(u64, u32)> = a_mve.keys().copied().collect();
+            for vkey in keys {
+                let (a_v, a_le) = &a_mve[&vkey];
+                let a_nb_e = a_le.len();
+                if a_nb_e == 0 { continue; }
+                let a_e1 = &a_le[0];
+                if a_nb_e == 1 {
+                    // OCCT L176-181: single edge at the vertex.
+                    if a_e1.as_edge().map_or(true, |ed| ed.degenerated) {
+                        continue;
+                    }
+                    if a_v.orientation == topods::Orientation::Internal {
+                        continue;
+                    }
                     b_found = true;
-                    self.my_shapes_to_avoid.insert((a_f1.ptr_id(), a_f1.location));
-                } else if a_nb_f == 2 {
-                    // OCCT L191-209: aNbF==2, same face (IsSame) && !IsClosed
-                    // && edge != INTERNAL -> avoid both copies.
-                    // OCCT L194: aF2.IsSame(aF1) — same TShape AND Location
-                    // (TopTools_ShapeMapHasher semantics, orientation ignored).
-                    let a_f2 = &a_lf[1];
-                    if a_f2.ptr_id() == a_f1.ptr_id() && a_f2.location == a_f1.location {
-                        if edge_closed_on_face(a_e, a_f1) { continue; }
-                        if a_or_e == topods::Orientation::Internal { continue; }
+                    self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location));
+                } else if a_nb_e == 2 {
+                    // OCCT L183-207: two edges at the vertex; avoid both copies
+                    // when they are IsSame (same TShape + Location), unless the
+                    // edge is a degenerated ring (both endpoints the same
+                    // vertex — TopExp::Vertices(aE1, aV1x, aV2x), L191-196).
+                    let a_e2 = &a_le[1];
+                    if a_e2.is_partner(a_e1) {
+                        let vv = edge_vertices(a_e1);
+                        if vv.len() >= 2 && vv[0].is_partner(&vv[1]) {
+                            // Degenerated ring — both ends are the same vertex.
+                            continue;
+                        }
                         b_found = true;
-                        self.my_shapes_to_avoid.insert((a_f1.ptr_id(), a_f1.location));
-                        self.my_shapes_to_avoid.insert((a_f2.ptr_id(), a_f2.location));
+                        self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location));
+                        self.my_shapes_to_avoid.insert((a_e2.ptr_id(), a_e2.location));
                     }
                 }
             }
@@ -656,11 +664,35 @@ pub(crate) fn face_edge_ptrs(face: &Shape) -> Vec<u64> {
     edges
 }
 
+/// Edge endpoint vertex Shapes with composed orientations.
+/// OCCT TopoDS_Iterator(aE) with cumOri=true (default) composes the edge
+/// orientation into the vertices: the stored TEdge nodes [V1(Fwd), V2(Rev)]
+/// become [V1(Rev), V2(Fwd)] for a REVERSED edge — same order, orientations
+/// composed (TopoDS_Iterator.cxx L35-37, L72-80).
+fn edge_vertices(e: &Shape) -> Vec<Shape> {
+    use rcad_kernel::topods::Orientation;
+    match &*e.data {
+        TShape::Edge(ed) => {
+            if e.orientation == Orientation::Reversed {
+                vec![
+                    Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Reversed),
+                    Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Forward),
+                ]
+            } else {
+                vec![
+                    Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Forward),
+                    Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Reversed),
+                ]
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Extract edge Shapes from a Face Shape (outer + inner wires), composing the
 /// face and wire orientations into each edge (OCCT TopExp_Explorer composes
 /// the parent orientation at every level: TopExp_Explorer.cxx L152, L110-170).
-fn face_edges(face: &Shape) -> Vec<Shape> {
-    let mut edges = Vec::new();
+fn face_edges(face: &Shape) -> Vec<Shape> {    let mut edges = Vec::new();
     match &*face.data {
         TShape::Face(fd) => {
             if let TShape::Wire(wd) = &*fd.outer_wire.data {
