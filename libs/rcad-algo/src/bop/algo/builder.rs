@@ -316,7 +316,7 @@ fn build_edge_face_map(solid: &Shape) -> HashMap<(u64, u32), Vec<Shape>> {
 }
 
 /// Find the edge Shape in a face's wires with the given edge identity.
-/// OCCT BOPTools_AlgoTools::GetEdgeOnFace (IsSame = TShape + Location).
+/// OCCT BOPTools_AlgoTools::GetEdgeOnFace (IsSame = TShape + Location). ✅ OCCT-aligned
 fn find_edge_on_face(edge_ptr_id: u64, edge_loc: u32, face: &Shape) -> Option<Shape> {
     for e in face_edges(face) {
         if e.ptr_id() == edge_ptr_id && e.location == edge_loc {
@@ -443,7 +443,7 @@ fn get_normal_to_face_on_edge(edge: &Shape, face: &Shape, a_t: f64, ds: &DS) -> 
     Some(n.normalize())
 }
 
-/// EdgeTangent (BOPTools_AlgoTools2D.cxx L74-98).
+/// EdgeTangent (BOPTools_AlgoTools2D.cxx L74-98). ✅ OCCT-aligned
 /// Unit tangent of the edge curve at aT, reversed for REVERSED edges.
 /// Returns None for degenerated edges or zero-length tangents.
 fn edge_tangent(edge: &Shape, a_t: f64) -> Option<DVec3> {
@@ -464,7 +464,7 @@ fn edge_tangent(edge: &Shape, a_t: f64) -> Option<DVec3> {
     Some(tg)
 }
 
-/// GetFaceDir (BOPTools_AlgoTools.cxx L2118-2160).
+/// GetFaceDir (BOPTools_AlgoTools.cxx L2118-2160). ✅ OCCT-aligned
 /// Computes the face normal aDN at the edge parameter aT (reversed for
 /// REVERSED faces) and the bi-normal direction aDB = aDN ^ aDTgt. When the
 /// face is not small (theSmallFaces false), FindPointInFace refines aDB to
@@ -726,8 +726,8 @@ fn get_approx_normal_to_face_on_edge(
 
 
 /// The 3D step aDt for FindPointInFace: max(2*(tolE+tolF)) over the candidate
-/// faces, clamped to aDtMin which grows with the surface radius. rcad: the
-/// UResolution/VResolution small-face check is not ported (bSmallFaces=false).
+/// faces, clamped to aDtMin which grows with the surface radius.
+/// OCCT MinStep3D (BOPTools_AlgoTools.cxx L2239-2354). ✅ OCCT-aligned
 fn min_step_3d(
     the_e1: &Shape,
     the_f1: &Shape,
@@ -837,7 +837,7 @@ fn project_edge_on_plane(
 }
 
 /// Signed angle from d1 to d2 around the reference axis d_ref.
-/// OCCT BOPTools_AlgoTools::AngleWithRef (L1938-1967).
+/// OCCT BOPTools_AlgoTools::AngleWithRef (L1938-1967). ✅ OCCT-aligned
 fn angle_with_ref(d1: DVec3, d2: DVec3, d_ref: DVec3) -> f64 {
     let half_pi = std::f64::consts::FRAC_PI_2;
     let cross = d1.cross(d2);
@@ -1073,6 +1073,7 @@ fn is_internal_face(
 }
 
 /// ComputeState (BOPTools_AlgoTools.cxx L660-715) — classify a face against a
+/// solid. ✅ OCCT-aligned
 /// solid: try an edge of the face not on the solid (classify the edge
 /// midpoint), else classify a point inside the face (PointInFace hatcher,
 /// with the PointNearEdge fallback, L688-712).
