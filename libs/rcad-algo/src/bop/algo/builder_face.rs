@@ -185,6 +185,12 @@ impl<'a> BuilderFace<'a> {
         let a_face = self.my_face.clone().unwrap_or_else(Shape::null);
         let a_face_index = self.my_face_index.unwrap_or(usize::MAX);
         let wires = crate::bop::algo::wire_splitter::split_into_wires(&a_face, a_face_index, &edges, &self.ds);
+        if std::env::var("RCAD_DEBUG_ALE").is_ok() && a_face_index == 2 {
+            for (wi, w) in wires.iter().enumerate() {
+                let es: Vec<String> = w.iter().map(|e| format!("e{}", e.ptr_id() % 10000)).collect();
+                eprintln!("[LOOP] face{} wire{} [{}] nE={}", a_face_index, wi, es.join(","), w.len());
+            }
+        }
 
         // OCCT L277-283: store result wires into myLoops
         self.my_loops = wires;

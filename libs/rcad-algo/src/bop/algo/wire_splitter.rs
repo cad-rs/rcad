@@ -1214,20 +1214,42 @@ fn is_degenerated(e: &Shape) -> bool {
     }
 }
 
-/// OCCT BRep_Tool::IsClosed(aE, aF) — the edge has a CurveOnClosedSurface
-/// representation for the face (seam edge).
+/// OCCT BRep_Tool::IsClosed(aE, aF) (BRep_Tool.cxx L795-841) — the edge has
+/// a CurveOnClosedSurface representation for the face (seam edge). OCCT
+/// matches the representation by the face's SURFACE handle (IsCurveOnSurface
+/// (S, l)); rcad keys it by the face's BRep index, so the exact index match
+/// covers original faces, and a closed-surface fallback covers BuilderFace
+/// images whose index does not preserve the original face's (the WireSplitter
+/// face is BuilderFace::myFace, normalized to FORWARD by SetFace; its surface
+/// is the same closed surface the seam representation was created on).
 fn is_closed_on_face(e: &Shape, face: &Shape) -> bool {
     let f_index = face.index;
-    match &*e.data {
-        TShape::Edge(ed) => ed.representations.iter().any(|r| {
-            matches!(
-                r,
-                rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. }
-                    if *face == f_index
-            )
-        }),
-        _ => false,
+    let ed = match e.as_edge() {
+        Some(ed) => ed,
+        None => return false,
+    };
+    if ed.representations.iter().any(|r| {
+        matches!(
+            r,
+            rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. }
+                if *face == f_index
+        )
+    }) {
+        return true;
     }
+    // OCCT L819-822: if (IsPlane(S)) return false.
+    let surf = face.as_face().and_then(|fd| fd.surface.clone());
+    match &surf {
+        Some(rcad_kernel::geom::Surface3::Plane(_)) => return false,
+        None => return false,
+        _ => {}
+    }
+    // OCCT L825-840: the representation's surface matches the face's surface.
+    // rcad: the face surface is closed and the edge carries a
+    // CurveOnClosedSurface (created on the same closed surface).
+    ed.representations.iter().any(|r| {
+        matches!(r, rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { .. })
+    })
 }
 
 /// OCCT BRep_Tool::Parameter(aV, aE, aF) — vertex parameter on the edge.
