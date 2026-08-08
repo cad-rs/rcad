@@ -541,7 +541,7 @@ impl PaveFiller {
     // Helper: append a vertex with a box, = BOPTools_AlgoTools::MakeNewVertex
     // followed by BOPDS_ShapeInfo::SetShape + BRepBndLib::Add + SetGap.
     // ====================================================================
-    fn append_vertex(&mut self, p: DVec3, tol: f64) -> usize {
+    pub(crate) fn append_vertex(&mut self, p: DVec3, tol: f64) -> usize {
         let idx = self.ds.push_vertex(p, tol);
         let mut a_box = BndBox::from_point(p);
         a_box.set_gap(rcad_kernel::CONFUSION);
@@ -1360,7 +1360,7 @@ impl PaveFiller {
         if n_v == usize::MAX { return; }
         // OCCT L3557-3569: check if the curve is closed.
         let a_v_pt = self.ds.vertex_point_by_idx(n_v);
-        let a_tol_v = self.ds.vertex_tolerance_by_idx(n_v);
+        let mut a_tol_v = self.ds.vertex_tolerance_by_idx(n_v);
         let a_tol_p = a_ic.tolerance.max(a_ic.tang_tolerance) + rcad_kernel::CONFUSION;
         let a_dist_vp = a_v_pt.distance(a_p_op);
         if a_dist_vp > a_tol_v + a_tol_p { return; }
@@ -1371,11 +1371,16 @@ impl PaveFiller {
         if !sr.find_valid_range(&a_ic.curve, a_ic.tolerance, a_p[0], a_new_tol_v, a_p[1], a_new_tol_v) {
             return;
         }
-        // OCCT L3589-3598: UpdateVertex — rcad updates the tolerance in place
-        // (OCCT may replace the vertex with a new one when it merges).
+        // OCCT L3589-3598: UpdateVertex — may replace the vertex with a new
+        // one (old vertex path, PaveFiller_10.cxx L121-150); the closing pave
+        // must reference the (possibly new) vertex so its index differs from
+        // the t=0 endpoint pave and passes the ext-pave fence.
         if a_new_tol_v > a_tol_v {
-            self.set_vertex_tolerance(n_v, a_new_tol_v);
-            let _ = a_tol_v;
+            let n_vn = self.update_vertex(n_v, a_new_tol_v);
+            if n_vn != n_v {
+                n_v = n_vn;
+            }
+            a_tol_v = self.ds.vertex_tolerance_by_idx(n_v);
         }
         // OCCT L3601-3604: add the closing pave.
         let a_new_pave = Pave::new(n_v, a_t_op);

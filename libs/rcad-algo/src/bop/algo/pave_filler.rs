@@ -3273,24 +3273,41 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         let mut n_vnew = n_v;
         self.ds.has_shape_sd(n_v, &mut n_vnew);
         // OCCT L112: if (IsNewShape(nVNew) || HasShapeSD(nV, nVNew) || !myNonDestructive)
-        // Path 1: update tolerance and box
-        let tol_old = self.ds.vertex_tolerance_by_idx(n_vnew);
-        if tol_new > tol_old {
-            // In-place (OCCT BRep_Builder UpdateVertex): keeps the vertex
-            // identity (DS entry + face-wire references) intact — see
-            // set_vertex_tolerance. Arc::make_mut would clone a shared vertex.
-            let pt = self.ds.vertex_point_by_idx(n_vnew);
-            self.ds.mutate_shape_data(n_vnew, |ts| {
-                if let rcad_kernel::topods::TShape::Vertex(vd) = ts {
-                    vd.tolerance = tol_new;
-                }
-            });
-            let si = self.ds.change_shape_info(n_vnew);
-            si.bbox = BndBox::from_point(pt);
-            si.bbox.set_gap(tol_new + rcad_kernel::CONFUSION);
-            self.ds.remap_shape_idx(n_vnew);
-            self.my_increased_ss.insert(n_v);
+        if self.ds.is_new_shape(n_vnew) || n_vnew != n_v || !self.my_non_destructive {
+            // Path 1: update tolerance and box
+            let tol_old = self.ds.vertex_tolerance_by_idx(n_vnew);
+            if tol_new > tol_old {
+                // In-place (OCCT BRep_Builder UpdateVertex): keeps the vertex
+                // identity (DS entry + face-wire references) intact — see
+                // set_vertex_tolerance. Arc::make_mut would clone a shared vertex.
+                let pt = self.ds.vertex_point_by_idx(n_vnew);
+                self.ds.mutate_shape_data(n_vnew, |ts| {
+                    if let rcad_kernel::topods::TShape::Vertex(vd) = ts {
+                        vd.tolerance = tol_new;
+                    }
+                });
+                let si = self.ds.change_shape_info(n_vnew);
+                si.bbox = BndBox::from_point(pt);
+                si.bbox.set_gap(tol_new + rcad_kernel::CONFUSION);
+                self.ds.remap_shape_idx(n_vnew);
+                self.my_increased_ss.insert(n_v);
+            }
+            return n_vnew;
         }
+        // OCCT L121-150: Path 2 — nV is an old (source) vertex: create a new
+        // vertex with the increased tolerance and register the SD relation.
+        let a_tol_v = self.ds.vertex_tolerance_by_idx(n_v);
+        let a_pv = self.ds.vertex_point_by_idx(n_v);
+        // OCCT L127-128: aBB.MakeVertex(aVNew, aPV, max(aTolV, aTolNew)).
+        let n_vnew = self.append_vertex(a_pv, a_tol_v.max(tol_new));
+        // OCCT L137-143: bounding box of the new vertex with gap.
+        let mut a_box = BndBox::from_point(a_pv);
+        a_box.set_gap(a_tol_v.max(tol_new) + rcad_kernel::CONFUSION);
+        self.ds.change_shape_info(n_vnew).bbox = a_box;
+        // OCCT L147: myDS->AddShapeSD(nV, nVNew).
+        self.ds.add_shape_sd(n_v, n_vnew);
+        // OCCT L149: myVertsToAvoidExtension.Add(nVNew).
+        self.my_verts_to_avoid_extension.insert(n_vnew);
         n_vnew
     }
 
