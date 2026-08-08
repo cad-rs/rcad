@@ -1073,11 +1073,10 @@ fn is_internal_face(
 }
 
 /// ComputeState (BOPTools_AlgoTools.cxx L660-715) — classify a face against a
-/// solid. ✅ OCCT-aligned
 /// solid: try an edge of the face not on the solid (classify the edge
 /// midpoint), else classify a point inside the face (PointInFace hatcher,
-/// with the PointNearEdge fallback, L688-712).
-fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f64, ds: &DS) -> u8 {
+/// with the PointNearEdge fallback, L688-712). ✅ OCCT-aligned
+pub(crate) fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f64, ds: &DS) -> u8 {
     // OCCT aBounds (L887) is IndexedMap with TopTools_ShapeMapHasher —
     // TShape + Location.
     let solid_edges: HashSet<(u64, u32)> = collect_solid_faces(the_solid)

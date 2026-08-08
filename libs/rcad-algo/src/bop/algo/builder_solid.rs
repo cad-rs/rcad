@@ -316,7 +316,7 @@ impl<'a> BuilderSolid<'a> {
                     }
                 }
                 // OCCT L511: if (!IsInside(aHole, aSolid)) continue;
-                if !Self::is_inside(hs, solid) { continue; }
+                if !Self::is_inside(hs, solid, self.ds) { continue; }
                 let hkey = Self::hole_shell_key(hs);
                 match a_hole_solid.get(&hkey) {
                     None => {
@@ -325,7 +325,7 @@ impl<'a> BuilderSolid<'a> {
                     }
                     Some(&prev) => {
                         // OCCT L520-523: if (IsInside(aSolid, *pSolidWas)) *pSolidWas = aSolid.
-                        if Self::is_inside_solid(&new_solids[si], &new_solids[prev]) {
+                        if Self::is_inside_solid(&new_solids[si], &new_solids[prev], self.ds) {
                             a_hole_solid.insert(hkey, si);
                         }
                     }
@@ -397,82 +397,28 @@ impl<'a> BuilderSolid<'a> {
     /// OCCT L844-850: when the shell has no faces, PerformInfinitePoint is
     /// used instead; rcad's hole shells always carry faces (they come from
     /// myLoops), so the empty-shell branch maps to false here.
-    fn is_inside(faces: &[Shape], solid: &Shape) -> bool {
+    fn is_inside(faces: &[Shape], solid: &Shape, ds: &DS) -> bool {
         let Some(a_f) = faces.first() else {
             return false;
         };
-        Self::compute_state_on_solid(a_f, solid) == 3 // TopAbs_IN
+        Self::compute_state_on_solid(a_f, solid, ds) == 3 // TopAbs_IN
     }
 
     /// IsInside(aSolid, bSolid) — classify the first face of solid a against b.
-    fn is_inside_solid(a: &Shape, b: &Shape) -> bool {
+    fn is_inside_solid(a: &Shape, b: &Shape, ds: &DS) -> bool {
         let Some(a_f) = Self::first_face(a) else {
             return false;
         };
-        Self::compute_state_on_solid(&a_f, b) == 3 // TopAbs_IN
-    }
-
-    /// Classify a point relative to a solid (OCCT BRepClass3d_SolidClassifier).
-    fn point_classify(solid: &Shape, p: DVec3) -> u8 {
-        let mut clsf =
-            crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(solid);
-        clsf.perform(p, 1e-7);
-        clsf.my_state
+        Self::compute_state_on_solid(&a_f, b, ds) == 3 // TopAbs_IN
     }
 
     /// OCCT BOPTools_AlgoTools::ComputeState(aF, aSolid, aTol, aBounds)
     /// (BOPTools_AlgoTools.cxx L660-715): try an edge of the face not on the
-    /// solid (classify the edge midpoint), else classify a point inside the face.
-    fn compute_state_on_solid(a_f: &Shape, solid: &Shape) -> u8 {
-        let solid_edges = Self::solid_edges(solid);
-        for e in face_edges(a_f) {
-            if e.as_edge().map_or(true, |ed| ed.degenerated) {
-                continue;
-            }
-            if !solid_edges.contains(&e.ptr_id()) {
-                let p = Self::edge_midpoint(&e);
-                return Self::point_classify(solid, p);
-            }
-        }
-        let p = Self::face_centroid(a_f);
-        Self::point_classify(solid, p)
-    }
-
-    /// All edge ptr_ids of a solid (OCCT TopExp::MapShapes(aSolid, TopAbs_EDGE)).
-    fn solid_edges(solid: &Shape) -> HashSet<u64> {
-        let mut set: HashSet<u64> = HashSet::new();
-        let mut stack: Vec<Shape> = vec![solid.clone()];
-        while let Some(sh) = stack.pop() {
-            match &*sh.data {
-                TShape::Solid(sd) => {
-                    for x in &sd.shells {
-                        stack.push(x.clone());
-                    }
-                }
-                TShape::CompSolid(cd) => {
-                    for x in cd {
-                        stack.push(x.clone());
-                    }
-                }
-                TShape::Compound(cd) => {
-                    for x in cd {
-                        stack.push(x.clone());
-                    }
-                }
-                TShape::Shell(sd) => {
-                    for x in &sd.faces {
-                        stack.push(x.clone());
-                    }
-                }
-                TShape::Face(_) => {
-                    for e in face_edges(&sh) {
-                        set.insert(e.ptr_id());
-                    }
-                }
-                _ => {}
-            }
-        }
-        set
+    /// solid (classify the edge midpoint), else classify a point inside the
+    /// face (PointInFace hatcher + PointNearEdge fallback). Delegates to the
+    /// shared builder::compute_state_face (the OCCT-aligned implementation).
+    fn compute_state_on_solid(a_f: &Shape, solid: &Shape, ds: &DS) -> u8 {
+        crate::bop::algo::builder::compute_state_face(a_f, solid, rcad_kernel::CONFUSION, ds)
     }
 
     /// The first face of a shape (OCCT TopExp_Explorer(shape, TopAbs_FACE)).
@@ -507,24 +453,6 @@ impl<'a> BuilderSolid<'a> {
         None
     }
 
-    /// Middle point of an edge (OCCT IntTools_Tools::IntermediatePoint on the
-    /// 3D curve).
-    fn edge_midpoint(edge: &Shape) -> DVec3 {
-        if let TShape::Edge(ed) = &*edge.data {
-            if let Some(curve) = &ed.curve {
-                let t = crate::bop::int_tools::face_make_curve::intermediate_point(
-                    ed.range[0],
-                    ed.range[1],
-                );
-                return curve.point_at(t);
-            }
-            if let TShape::Vertex(vd) = &*ed.first.data {
-                return vd.point;
-            }
-        }
-        DVec3::ZERO
-    }
-
     /// Canonical key of a shell face set (OCCT TopoDS_Shape map key equivalent).
     /// Key for a hole shell — OCCT aHoleSolidMap (BuilderSolid.cxx L467) is
     /// IndexedDataMap<TopoDS_Shape, Solid, TopTools_ShapeMapHasher>: the key
@@ -534,24 +462,6 @@ impl<'a> BuilderSolid<'a> {
         let mut v: Vec<(u64, u32)> = faces.iter().map(|f| (f.ptr_id(), f.location)).collect();
         v.sort();
         v
-    }
-
-    fn face_centroid(face: &Shape) -> DVec3 {
-        match &*face.data {
-            TShape::Face(fd) => {
-                let mut pts: Vec<DVec3> = Vec::new();
-                if let TShape::Wire(wd) = &*fd.outer_wire.data {
-                    for e in &wd.edges {
-                        if let TShape::Edge(ed) = &*e.data {
-                            if let TShape::Vertex(vd) = &*ed.first.data { pts.push(vd.point); }
-                            if let TShape::Vertex(vd) = &*ed.last.data { pts.push(vd.point); }
-                        }
-                    }
-                }
-                if pts.is_empty() { DVec3::ZERO } else { pts.iter().sum::<DVec3>() / pts.len() as f64 }
-            }
-            _ => DVec3::ZERO,
-        }
     }
 
     /// Build a Shell TShape from a set of faces.
