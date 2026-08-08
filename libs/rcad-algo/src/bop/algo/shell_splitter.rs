@@ -137,14 +137,16 @@ pub fn make_shells(blocks: &[ConnexityBlock], ds: &DS) -> Vec<Vec<Shape>> {
 /// orientation). Seam edges (BRep_Tool::IsClosed(aE, aF)) are not flipped.
 fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
     // OCCT L385-387: TopExp::MapShapesAndAncestors(aShell, EDGE, FACE, aEFMap).
-    // OCCT aEFMap is NCollection_IndexedDataMap — iteration is in insertion
-    // order; IndexMap reproduces that order (a HashMap would be random).
-    let mut a_ef_map: IndexMap<u64, Vec<usize>> = IndexMap::new();
-    let mut a_edge_map: IndexMap<u64, Shape> = IndexMap::new();
+    // OCCT aEFMap is NCollection_IndexedDataMap with TopTools_ShapeMapHasher —
+    // iteration is in insertion order; IndexMap reproduces that order (a
+    // HashMap would be random).
+    let mut a_ef_map: IndexMap<(u64, u32), Vec<usize>> = IndexMap::new();
+    let mut a_edge_map: IndexMap<(u64, u32), Shape> = IndexMap::new();
     for (fi, f) in faces.iter().enumerate() {
         for e in face_edges(f) {
-            a_ef_map.entry(e.ptr_id()).or_default().push(fi);
-            a_edge_map.entry(e.ptr_id()).or_insert_with(|| e.clone());
+            let ekey = (e.ptr_id(), e.location);
+            a_ef_map.entry(ekey).or_default().push(fi);
+            a_edge_map.entry(ekey).or_insert_with(|| e.clone());
         }
     }
     // OCCT L381-403: dedup equivalent faces per edge. A seam edge of a
@@ -153,27 +155,27 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
     // orientation-insensitive) keeps the first occurrence only.
     for a_lf in a_ef_map.values_mut() {
         if a_lf.len() > 1 {
-            let mut a_fm: HashSet<u64> = HashSet::new();
-            a_lf.retain(|&fi| a_fm.insert(faces[fi].ptr_id()));
+            let mut a_fm: HashSet<(u64, u32)> = HashSet::new();
+            a_lf.retain(|&fi| a_fm.insert((faces[fi].ptr_id(), faces[fi].location)));
         }
     }
     //
     // aProcessedFaces — IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>
     // (orientation-insensitive); stores the face as currently oriented.
-    let mut a_processed_keys: HashSet<u64> = HashSet::new();
+    let mut a_processed_keys: HashSet<(u64, u32)> = HashSet::new();
     // New shell contents (face indices, in the order faces get added).
     let mut a_shell_new: Vec<usize> = Vec::new();
     //
     // OCCT L410-459: process the edges with exactly 2 faces.
-    let keys: Vec<u64> = a_ef_map.keys().copied().collect();
-    for eptr in keys {
-        let a_e = a_edge_map[&eptr].clone();
+    let keys: Vec<(u64, u32)> = a_ef_map.keys().copied().collect();
+    for ekey in keys {
+        let a_e = a_edge_map[&ekey].clone();
         // OCCT L417: skip degenerated edges.
         let degen = a_e.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
         if degen {
             continue;
         }
-        let a_lf = &a_ef_map[&eptr];
+        let a_lf = &a_ef_map[&ekey];
         let a_nb_f = a_lf.len();
         if a_nb_f != 2 {
             continue;
@@ -181,20 +183,20 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
         let f1_idx = a_lf[0];
         let f2_idx = a_lf[1];
         //
-        let mut b_is_processed1 = a_processed_keys.contains(&faces[f1_idx].ptr_id());
-        let mut b_is_processed2 = a_processed_keys.contains(&faces[f2_idx].ptr_id());
+        let mut b_is_processed1 = a_processed_keys.contains(&(faces[f1_idx].ptr_id(), faces[f1_idx].location));
+        let mut b_is_processed2 = a_processed_keys.contains(&(faces[f2_idx].ptr_id(), faces[f2_idx].location));
         if b_is_processed1 && b_is_processed2 {
             continue;
         }
         //
         if !b_is_processed1 && !b_is_processed2 {
-            a_processed_keys.insert(faces[f1_idx].ptr_id());
+            a_processed_keys.insert((faces[f1_idx].ptr_id(), faces[f1_idx].location));
             a_shell_new.push(f1_idx);
             b_is_processed1 = true;
         }
         //
-        let an_or_e1 = edge_orientation_in_face(eptr, &faces[f1_idx]);
-        let an_or_e2 = edge_orientation_in_face(eptr, &faces[f2_idx]);
+        let an_or_e1 = edge_orientation_in_face(ekey, &faces[f1_idx]);
+        let an_or_e2 = edge_orientation_in_face(ekey, &faces[f2_idx]);
         //
         if b_is_processed1 && !b_is_processed2 {
             if an_or_e1 == an_or_e2 {
@@ -204,7 +206,7 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
                     faces[f2_idx].orientation = flip_orientation(faces[f2_idx].orientation);
                 }
             }
-            a_processed_keys.insert(faces[f2_idx].ptr_id());
+            a_processed_keys.insert((faces[f2_idx].ptr_id(), faces[f2_idx].location));
             a_shell_new.push(f2_idx);
         } else if !b_is_processed1 && b_is_processed2 {
             if an_or_e1 == an_or_e2 {
@@ -214,24 +216,24 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
                     faces[f1_idx].orientation = flip_orientation(faces[f1_idx].orientation);
                 }
             }
-            a_processed_keys.insert(faces[f1_idx].ptr_id());
+            a_processed_keys.insert((faces[f1_idx].ptr_id(), faces[f1_idx].location));
             a_shell_new.push(f1_idx);
         }
     }
     // OCCT L460-497: add the unprocessed faces of the other edges (free edges
     // and multi-connected edges) to the new shell.
-    for eptr in a_ef_map.keys() {
-        let a_e = a_edge_map[eptr].clone();
+    for ekey in a_ef_map.keys() {
+        let a_e = a_edge_map[ekey].clone();
         let degen = a_e.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
         if degen {
             continue;
         }
-        let a_lf = &a_ef_map[eptr];
+        let a_lf = &a_ef_map[ekey];
         let a_nb_f = a_lf.len();
         if a_nb_f != 2 {
             for &fi in a_lf {
-                if !a_processed_keys.contains(&faces[fi].ptr_id()) {
-                    a_processed_keys.insert(faces[fi].ptr_id());
+                if !a_processed_keys.contains(&(faces[fi].ptr_id(), faces[fi].location)) {
+                    a_processed_keys.insert((faces[fi].ptr_id(), faces[fi].location));
                     a_shell_new.push(fi);
                 }
             }
@@ -274,19 +276,19 @@ fn flip_orientation(o: Orientation) -> Orientation {
 /// (TopoDS_Shape.hxx L276-280). NCollection_Map with the default hasher
 /// (e.g. aMFaces, AddedFacesMap) is orientation-sensitive; maps using
 /// TopTools_ShapeMapHasher (aBoundaryFaces) ignore it.
-fn shape_map_key(s: &Shape) -> (u64, Orientation) {
-    (s.ptr_id(), s.orientation)
+fn shape_map_key(s: &Shape) -> (u64, u32, Orientation) {
+    (s.ptr_id(), s.location, s.orientation)
 }
 
 /// OCCT BOPAlgo_ShellSplitter::SplitBlock (BOPAlgo_ShellSplitter.cxx L153-421).
 fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
     // OCCT L176-182: aMFaces — all faces of the block (orientation-sensitive).
-    let mut a_mfaces: HashSet<(u64, Orientation)> =
+    let mut a_mfaces: HashSet<(u64, u32, Orientation)> =
         shapes.iter().map(|f| shape_map_key(f)).collect();
     // Edge -> (edge shape, [faces]) map for the faces still in aMFaces.
-    // OCCT aEFMap is NCollection_IndexedDataMap — insertion order; IndexMap
-    // reproduces it (a HashMap would iterate in random order).
-    let mut a_ef_map: IndexMap<u64, (Shape, Vec<Shape>)> = IndexMap::new();
+    // OCCT aEFMap is NCollection_IndexedDataMap with TopTools_ShapeMapHasher —
+    // insertion order; IndexMap reproduces it (a HashMap would iterate in random order).
+    let mut a_ef_map: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
     // OCCT L184-222: remove the faces with free edges, iteratively.
     loop {
         a_ef_map.clear();
@@ -295,13 +297,13 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
                 continue;
             }
             for e in face_edges(f) {
-                let eptr = e.ptr_id();
-                let entry = a_ef_map.entry(eptr).or_insert_with(|| (e.clone(), Vec::new()));
+                let ekey = (e.ptr_id(), e.location);
+                let entry = a_ef_map.entry(ekey).or_insert_with(|| (e.clone(), Vec::new()));
                 entry.1.push(f.clone());
             }
         }
         let a_nb_begin = a_mfaces.len();
-        for (eptr, (a_e, a_lf)) in &a_ef_map {
+        for (ekey, (a_e, a_lf)) in &a_ef_map {
             // OCCT L205: skip degenerated and INTERNAL edges.
             let degen = a_e.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
             if degen {
@@ -325,22 +327,23 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
     // OCCT L230-245: connected faces + boundary faces (used exactly once).
     // aBoundaryFaces uses TopTools_ShapeMapHasher (orientation-insensitive).
     let mut a_lf_connected: Vec<Shape> = Vec::new();
-    let mut a_boundary_faces: HashSet<u64> = HashSet::new();
-    let mut a_bf_seen: HashSet<u64> = HashSet::new();
+    let mut a_boundary_faces: HashSet<(u64, u32)> = HashSet::new();
+    let mut a_bf_seen: HashSet<(u64, u32)> = HashSet::new();
     for f in shapes {
         if !a_mfaces.contains(&shape_map_key(f)) {
             continue;
         }
         a_lf_connected.push(f.clone());
-        if !a_bf_seen.insert(f.ptr_id()) {
-            a_boundary_faces.remove(&f.ptr_id());
+        let fkey = (f.ptr_id(), f.location);
+        if !a_bf_seen.insert(fkey) {
+            a_boundary_faces.remove(&fkey);
         } else {
-            a_boundary_faces.insert(f.ptr_id());
+            a_boundary_faces.insert(fkey);
         }
     }
     let a_nb_shapes = a_lf_connected.len();
     let mut b_all_faces_taken = false;
-    let mut a_added: HashSet<(u64, Orientation)> = HashSet::new();
+    let mut a_added: HashSet<(u64, u32, Orientation)> = HashSet::new();
     let mut loops: Vec<Vec<Shape>> = Vec::new();
     for a_ff in &a_lf_connected {
         if b_all_faces_taken {
@@ -353,20 +356,21 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
         // OCCT L260-266: MakeShell; Add(aShell, aFF);
         // MapShapesAndAncestors(aShell, EDGE, FACE, aMEFP).
         let mut a_shell: Vec<Shape> = vec![a_ff.clone()];
-        // Edge -> [face indices in the shell] (OCCT aMEFP — IndexedDataMap).
-        let mut a_mefp: IndexMap<u64, Vec<usize>> = IndexMap::new();
+        // Edge -> [face indices in the shell] (OCCT aMEFP — IndexedDataMap
+        // with TopTools_ShapeMapHasher).
+        let mut a_mefp: IndexMap<(u64, u32), Vec<usize>> = IndexMap::new();
         for e in face_edges(a_ff) {
-            a_mefp.entry(e.ptr_id()).or_default().push(0);
+            a_mefp.entry((e.ptr_id(), e.location)).or_default().push(0);
         }
         let mut i = 0;
         while i < a_shell.len() {
             let a_f = a_shell[i].clone();
-            let is_boundary = a_boundary_faces.contains(&a_f.ptr_id());
+            let is_boundary = a_boundary_faces.contains(&(a_f.ptr_id(), a_f.location));
             // OCCT L277-368: expand the shell along the free edges of a_f.
             for e in face_edges(&a_f) {
-                let eptr = e.ptr_id();
+                let ekey = (e.ptr_id(), e.location);
                 // OCCT L283-291: proceed only free edges in this shell.
-                if let Some(users) = a_mefp.get(&eptr) {
+                if let Some(users) = a_mefp.get(&ekey) {
                     if users.len() > 1 {
                         continue;
                     }
@@ -381,7 +385,7 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
                     continue;
                 }
                 // OCCT L305-310: candidate faces using this edge.
-                let a_lf = match a_ef_map.get(&eptr) {
+                let a_lf = match a_ef_map.get(&ekey) {
                     Some((_, lf)) => lf.clone(),
                     None => continue,
                 };
@@ -396,7 +400,7 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
                 let mut a_sel_f: Option<Shape> = None;
                 for a_fl in &a_lf {
                     // OCCT L322: aF.IsSame(aFL) — same TShape, any orientation.
-                    if a_f.ptr_id() == a_fl.ptr_id() {
+                    if a_f.ptr_id() == a_fl.ptr_id() && a_f.location == a_fl.location {
                         continue;
                     }
                     // OCCT L322: AddedFacesMap.Contains(aFL) — orientation-sensitive.
@@ -408,7 +412,7 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
                         Some(el) => el,
                         None => continue,
                     };
-                    if is_boundary && !a_boundary_faces.contains(&a_fl.ptr_id()) {
+                    if is_boundary && !a_boundary_faces.contains(&(a_fl.ptr_id(), a_fl.location)) {
                         a_nb_ways_inside += 1;
                         a_sel_f = Some(a_fl.clone());
                     }
@@ -434,7 +438,7 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
                         a_shell.push(a_sel);
                         // OCCT L366: MapShapesAndAncestors(aSelF, EDGE, FACE, aMEFP).
                         for se in face_edges(&a_shell[new_idx]) {
-                            a_mefp.entry(se.ptr_id()).or_default().push(new_idx);
+                            a_mefp.entry((se.ptr_id(), se.location)).or_default().push(new_idx);
                         }
                     }
                 }
@@ -493,28 +497,28 @@ fn get_edge_off(a_e1: &Shape, a_f2: &Shape) -> Option<Shape> {
 
 /// OCCT BOPAlgo_ShellSplitter::RefineShell (BOPAlgo_ShellSplitter.cxx L443-617).
 /// Splits a shell on the edges shared by more than two faces (branch edges).
-fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<u64, Vec<usize>>) -> Vec<Vec<Shape>> {
+fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<(u64, u32), Vec<usize>>) -> Vec<Vec<Shape>> {
     if a_shell.is_empty() {
         return Vec::new();
     }
     // OCCT L455-512: find the branch edges (edges with >2 adjacent faces, or
     // with 2 faces traversing the edge with the same orientation, or internal
     // edges counted twice).
-    let mut a_me_stop: HashSet<u64> = HashSet::new();
-    for (eptr, a_lf) in a_mef {
+    let mut a_me_stop: HashSet<(u64, u32)> = HashSet::new();
+    for (ekey, a_lf) in a_mef {
         if a_lf.len() > 2 {
-            a_me_stop.insert(*eptr);
+            a_me_stop.insert(*ekey);
             continue;
         }
         if a_lf.len() == 2 {
             let f1 = &a_shell[a_lf[0]];
             let f2 = &a_shell[a_lf[1]];
             // OCCT L475-481: FindShape(aE, aF1/2) — same edge orientation check.
-            let e1_or = edge_orientation_in_face(*eptr, f1);
-            let e2_or = edge_orientation_in_face(*eptr, f2);
+            let e1_or = edge_orientation_in_face(*ekey, f1);
+            let e2_or = edge_orientation_in_face(*ekey, f2);
             if let (Some(o1), Some(o2)) = (e1_or, e2_or) {
                 if o1 == o2 {
-                    a_me_stop.insert(*eptr);
+                    a_me_stop.insert(*ekey);
                     continue;
                 }
             }
@@ -523,7 +527,7 @@ fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<u64, Vec<usize>>) -> Vec<Vec
         let mut a_nb_f = 0usize;
         for &fi in a_lf {
             a_nb_f += 1;
-            if edge_internal_in_face(*eptr, &a_shell[fi]) {
+            if edge_internal_in_face(*ekey, &a_shell[fi]) {
                 a_nb_f += 1;
             }
             if a_nb_f > 2 {
@@ -531,7 +535,7 @@ fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<u64, Vec<usize>>) -> Vec<Vec
             }
         }
         if a_nb_f > 2 {
-            a_me_stop.insert(*eptr);
+            a_me_stop.insert(*ekey);
         }
     }
     if a_me_stop.is_empty() {
@@ -542,7 +546,7 @@ fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<u64, Vec<usize>>) -> Vec<Vec
     // without crossing the branch edges. aMFProcessed is NCollection_Map
     // (orientation-sensitive), aMFB is an IndexedMap with
     // TopTools_ShapeMapHasher (orientation-insensitive).
-    let mut a_mf_processed: HashSet<(u64, Orientation)> = HashSet::new();
+    let mut a_mf_processed: HashSet<(u64, u32, Orientation)> = HashSet::new();
     let mut shells: Vec<Vec<Shape>> = Vec::new();
     for a_f1 in a_shell {
         if !a_mf_processed.insert(shape_map_key(a_f1)) {
@@ -555,8 +559,8 @@ fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<u64, Vec<usize>>) -> Vec<Vec
             let mut a_lfp1: Vec<Shape> = Vec::new();
             for a_fp in &a_lfp {
                 for e in face_edges(a_fp) {
-                    let eptr = e.ptr_id();
-                    if a_me_stop.contains(&eptr) {
+                    let ekey = (e.ptr_id(), e.location);
+                    if a_me_stop.contains(&ekey) {
                         continue;
                     }
                     if e.orientation == Orientation::Internal {
@@ -566,16 +570,16 @@ fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<u64, Vec<usize>>) -> Vec<Vec
                     if degen {
                         continue;
                     }
-                    let a_lf = match a_mef.get(&eptr) {
+                    let a_lf = match a_mef.get(&ekey) {
                         Some(lf) => lf.clone(),
                         None => continue,
                     };
                     for &fi in &a_lf {
                         let a_fp1 = &a_shell[fi];
-                        if a_fp1.ptr_id() == a_fp.ptr_id() {
+                        if a_fp1.ptr_id() == a_fp.ptr_id() && a_fp1.location == a_fp.location {
                             continue;
                         }
-                        if a_mfb.iter().any(|f| f.ptr_id() == a_fp1.ptr_id()) {
+                        if a_mfb.iter().any(|f| f.ptr_id() == a_fp1.ptr_id() && f.location == a_fp1.location) {
                             continue;
                         }
                         if a_mf_processed.insert(shape_map_key(a_fp1)) {
@@ -601,7 +605,9 @@ fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<u64, Vec<usize>>) -> Vec<Vec
 /// used by an even number of faces (OCCT BRep_Tool::IsClosed, BRep_Tool.cxx
 /// L1707-1728: toggle each edge in a map; closed iff hasBound && map empty).
 fn is_shell_closed(faces: &[Shape]) -> bool {
-    let mut a_map: HashSet<u64> = HashSet::new();
+    // OCCT BRep_Tool::IsClosed(Shell) (BRep_Tool.cxx L1707-1728) toggles each
+    // edge in an orientation-insensitive map; rcad keys by (TShape, Location).
+    let mut a_map: HashSet<(u64, u32)> = HashSet::new();
     let mut has_bound = false;
     for f in faces {
         for e in face_edges(f) {
@@ -613,8 +619,9 @@ fn is_shell_closed(faces: &[Shape]) -> bool {
                 continue;
             }
             has_bound = true;
-            if !a_map.insert(e.ptr_id()) {
-                a_map.remove(&e.ptr_id());
+            let ekey = (e.ptr_id(), e.location);
+            if !a_map.insert(ekey) {
+                a_map.remove(&ekey);
             }
         }
     }
@@ -622,9 +629,9 @@ fn is_shell_closed(faces: &[Shape]) -> bool {
 }
 
 /// Orientation of the edge shape in a face (OCCT FindShape).
-fn edge_orientation_in_face(eptr: u64, face: &Shape) -> Option<Orientation> {
+fn edge_orientation_in_face(ekey: (u64, u32), face: &Shape) -> Option<Orientation> {
     for e in face_edges(face) {
-        if e.ptr_id() == eptr {
+        if e.ptr_id() == ekey.0 && e.location == ekey.1 {
             return Some(e.orientation);
         }
     }
@@ -632,9 +639,9 @@ fn edge_orientation_in_face(eptr: u64, face: &Shape) -> Option<Orientation> {
 }
 
 /// True when the edge appears in the face with INTERNAL orientation.
-fn edge_internal_in_face(eptr: u64, face: &Shape) -> bool {
+fn edge_internal_in_face(ekey: (u64, u32), face: &Shape) -> bool {
     for e in face_edges(face) {
-        if e.ptr_id() == eptr {
+        if e.ptr_id() == ekey.0 && e.location == ekey.1 {
             return e.orientation == Orientation::Internal;
         }
     }
