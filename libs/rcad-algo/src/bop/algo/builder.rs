@@ -3357,8 +3357,12 @@ impl<'a> Builder<'a> {
         let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
         // OCCT aShapeBoxMap (L113-114): shape -> Bnd_Box for the box culling
         // in ClassifyFaces. Both faces (L148) and solids (L193) are bound;
-        // the face box is the DS box (aSI.Box(), with gap).
-        let mut a_shape_box_map: HashMap<u64, (DVec3, DVec3)> = HashMap::new();
+        // the face box is the DS box (aSI.Box(), with gap). Key identity is
+        // TShape + Location (TopTools_ShapeMapHasher); the box is stored as
+        // (corner_min, corner_max, gap) — the gap participates in the
+        // IsOut(Bnd_Box) checks of ClassifyFaces (BOPTools_AlgoTools.cxx
+        // L1498-1508), while the BVH culling uses only the corners.
+        let mut a_shape_box_map: HashMap<(u64, u32), (DVec3, DVec3, f64)> = HashMap::new();
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != topods::ShapeType::Face {
@@ -3376,7 +3380,10 @@ impl<'a> Builder<'a> {
                 // OCCT L147-148: aLFaces.Append(aS); aShapeBoxMap.Bind(aS, aSI.Box()).
                 a_lfaces.push(a_s.clone());
                 if let (Some(bmin), Some(bmax)) = (a_si.bbox.corner_min(), a_si.bbox.corner_max()) {
-                    a_shape_box_map.insert(a_s.ptr_id(), (bmin, bmax));
+                    a_shape_box_map.insert(
+                        (a_s.ptr_id(), a_s.location),
+                        (bmin, bmax, a_si.bbox.get_gap()),
+                    );
                 }
             }
         }
@@ -3391,24 +3398,36 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let a_solid = self.brep_sr(i);
+            // OCCT L181-185: Bnd_Box& aBoxS = aSI.ChangeBox();
+            // if (aBoxS.IsVoid()) { myDS->BuildBndBoxSolid(i, aBoxS, myCheckInverted); }
+            // rcad stores the box as (corner_min, corner_max, gap); the DS
+            // solid box is void for multi-argument BOPs (prepare_solids only
+            // pre-builds it for a single argument, BOPDS_DS.cxx L1789-1792),
+            // so BuildBndBoxSolid is invoked here exactly like OCCT.
+            let a_box_s: (DVec3, DVec3, f64) =
+                if let (Some(bmin), Some(bmax)) = (a_si.bbox.corner_min(), a_si.bbox.corner_max()) {
+                    (bmin, bmax, a_si.bbox.get_gap())
+                } else {
+                    let mut box3 = (
+                        DVec3::splat(f64::INFINITY),
+                        DVec3::splat(f64::NEG_INFINITY),
+                        0.0,
+                    );
+                    self.ds.build_bnd_box_solid(i, &mut box3, self.my_check_inverted);
+                    box3
+                };
             // OCCT L186-194: BuildDraftSolid(aSolid, aSD, aLIF).
             let mut a_lif: Vec<Shape> = Vec::new();
             let a_sd = self.build_draft_solid(&a_solid, &mut a_lif);
             a_lsolids.push(a_sd.clone());
             a_solids_if.insert(a_sd.ptr_id(), a_lif);
             a_draft_solid.insert((a_solid.ptr_id(), a_solid.location), a_sd.clone());
+            // OCCT L193: aShapeBoxMap.Bind(aSD, aBoxS) — the SOLID's box bound
+            // under the DRAFT solid's key (used by ClassifyFaces box culling).
+            a_shape_box_map.insert((a_sd.ptr_id(), a_sd.location), a_box_s);
             a_source_solids.push(a_solid);
         }
         // OCCT L197-208: classify the faces relative to the draft solids.
-        // OCCT L193: aShapeBoxMap.Bind(aSD, aBoxS) — the solid's box in the
-        // classification is the SOURCE solid's box (L179-183, from the DS or
-        // built by BuildBndBoxSolid), not the draft solid's own bbox.
-        for a_solid in &a_source_solids {
-            if let Some(bb) = shape_bbox(a_solid) {
-                let a_sd = a_draft_solid.get(&(a_solid.ptr_id(), a_solid.location)).unwrap();
-                a_shape_box_map.insert(a_sd.ptr_id(), bb);
-            }
-        }
         let an_in_parts =
             Self::classify_faces(&self.ds, &a_lfaces, &a_lsolids, &a_solids_if, &a_shape_box_map);
         // OCCT L210-262: analyze the results of classification.
@@ -3559,16 +3578,17 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Tools::ClassifyFaces (BOPAlgo_Tools.cxx L1622-1747) —
     /// classifies faces relative to solids using connexity blocks.
-    /// `a_shape_box_map`: draft-solid ptr_id -> bbox of the SOURCE solid
-    /// (OCCT theShapeBoxMap, filled at Builder_3.cxx L193; empty when the
-    /// caller has no cached boxes — then the draft solid's own bbox is used,
-    /// matching OCCT L1699-1711 where BRepBndLib::Add builds the box).
+    /// `a_shape_box_map`: shape (TShape+Location) -> Bnd_Box as
+    /// (corner_min, corner_max, gap), filled at Builder_3.cxx L148/L193 (faces
+    /// under their own key, solids under the DRAFT solid's key); empty when the
+    /// caller has no cached boxes — then the boxes are built on the fly
+    /// (matching OCCT L1665-1673/L1694-1711 where BRepBndLib::Add builds them).
     pub(crate) fn classify_faces(
         ds: &DS,
         faces: &[Shape],
         solids: &[Shape],
         a_solids_if: &HashMap<u64, Vec<Shape>>,
-        a_shape_box_map: &HashMap<u64, (DVec3, DVec3)>,
+        a_shape_box_map: &HashMap<(u64, u32), (DVec3, DVec3, f64)>,
     ) -> HashMap<u64, Vec<Shape>> {
         let mut in_parts: HashMap<u64, Vec<Shape>> = HashMap::new();
         for a_sd in solids {
@@ -3599,24 +3619,27 @@ impl<'a> Builder<'a> {
             // (OCCT builds a BVH tree of face boxes; the interference test is
             // equivalent here, BOPTools_BoxTreeSelector.)
             // OCCT L1694-1712: the solid's box comes from theShapeBoxMap (the
-            // source solid's box, filled by the caller) or is built here.
+            // source solid's box, bound under the draft solid's key by the
+            // caller) or is built here (BRepBndLib::Add; IsInvertedSolid -> whole).
             // OCCT L1648-1657: the face's box comes from theShapeBoxMap (the
             // DS box with gap, bound by FillIn3DParts L148) or is built here.
             let solid_bbox = a_shape_box_map
-                .get(&a_sd.ptr_id())
+                .get(&(a_sd.ptr_id(), a_sd.location))
                 .copied()
-                .or_else(|| shape_bbox(a_sd));
+                .or_else(|| shape_bbox(a_sd).map(|(a, b)| (a, b, 0.0)));
             let mut a_ivec: Vec<usize> = Vec::new();
             for (i, a_f) in faces.iter().enumerate() {
                 if a_msf.contains(&(a_f.ptr_id(), a_f.location)) {
                     continue;
                 }
-                if let Some((smin, smax)) = solid_bbox {
+                if let Some((smin, smax, _sgap)) = solid_bbox {
+                    // BVH box-selection (BOPTools_BoxTreeSelector) uses the
+                    // box corners only (Bnd_Tools::Bnd2BVH drops the gap).
                     let face_bbox = a_shape_box_map
-                        .get(&a_f.ptr_id())
+                        .get(&(a_f.ptr_id(), a_f.location))
                         .copied()
-                        .or_else(|| shape_bbox(a_f));
-                    let Some((fmin, fmax)) = face_bbox else {
+                        .or_else(|| shape_bbox(a_f).map(|(a, b)| (a, b, 0.0)));
+                    let Some((fmin, fmax, _fgap)) = face_bbox else {
                         continue;
                     };
                     if fmax.x < smin.x
@@ -3686,16 +3709,20 @@ impl<'a> Builder<'a> {
 
                 // OCCT L1467-1491: fast check that all block vertices interfere
                 // with the solid's bounding box; otherwise the block is out.
-                if let Some((smin, smax)) = solid_bbox {
+                // myBoxS.IsOut(aBBV) — Bnd_Box::IsOut(Bnd_Box) adds both boxes'
+                // gaps: vertex box gap = vertex tolerance, solid box gap = the
+                // DS box gap (BOPTools_AlgoTools.cxx L1503-1508).
+                if let Some((smin, smax, sgap)) = solid_bbox {
                     let mut b_out = false;
                     for &bfi in &a_lcb {
                         for (p, gap) in shape_vertices(&faces[bfi]) {
-                            if p.x - gap > smax.x
-                                || p.x + gap < smin.x
-                                || p.y - gap > smax.y
-                                || p.y + gap < smin.y
-                                || p.z - gap > smax.z
-                                || p.z + gap < smin.z
+                            let egap = gap + sgap;
+                            if p.x - egap > smax.x
+                                || p.x + egap < smin.x
+                                || p.y - egap > smax.y
+                                || p.y + egap < smin.y
+                                || p.z - egap > smax.z
+                                || p.z + egap < smin.z
                             {
                                 b_out = true;
                                 break;

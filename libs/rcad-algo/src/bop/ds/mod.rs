@@ -1497,7 +1497,7 @@ impl DS {
 
     // ================================================================    // BuildBndBoxSolid ?compute solid bounding box from sub-shapes
     // ================================================================
-    pub fn build_bnd_box_solid(&mut self, idx: usize, the_box: &mut (DVec3, DVec3, f64), _ci: bool) {
+    pub fn build_bnd_box_solid(&self, idx: usize, the_box: &mut (DVec3, DVec3, f64), _ci: bool) {
         let subs: Vec<usize> = self.shapes[idx].sub_shapes.clone();
         let mut faces: Vec<usize> = Vec::new();
         for &shi in &subs {
@@ -1507,7 +1507,17 @@ impl DS {
         }
         for &fi in &faces {
             if fi < self.nb_shapes() && self.shapes[fi].shape_type == ShapeType::Face {
-                if let Some(b) = self.build_bnd_box(fi) {
+                // OCCT L1415-1422: theBox.Add(aFaceBoundBox). Face boxes are
+                // built by prepare_faces (BOPDS_DS.cxx L1696-1779), so the
+                // cached box is read here directly (the &mut self version
+                // called build_bnd_box which only returned the cache for a
+                // non-void face box).
+                if !self.shapes[fi].bbox.is_void() {
+                    let b = (
+                        self.shapes[fi].bbox.raw_min(),
+                        self.shapes[fi].bbox.raw_max(),
+                        self.shapes[fi].bbox.get_gap(),
+                    );
                     if the_box.0.x.is_infinite() {
                         the_box.0 = b.0; the_box.1 = b.1; the_box.2 = b.2;
                     } else {
