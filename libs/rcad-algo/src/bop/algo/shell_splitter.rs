@@ -23,21 +23,24 @@ pub struct ConnexityBlock {
 /// non-regular.
 pub fn make_connexity_blocks(shapes: &[Shape]) -> Vec<ConnexityBlock> {
     // OCCT L197-211: aMFence/aMNRegular — faces appearing more than once.
-    let mut a_mfence: HashSet<u64> = HashSet::new();
-    let mut a_mn_regular: HashSet<u64> = HashSet::new();
+    // TopTools_ShapeMapHasher (TShape + Location).
+    let mut a_mfence: HashSet<(u64, u32)> = HashSet::new();
+    let mut a_mn_regular: HashSet<(u64, u32)> = HashSet::new();
     let mut a_start: Vec<Shape> = Vec::new();
     for s in shapes {
-        if !a_mfence.insert(s.ptr_id()) {
-            a_mn_regular.insert(s.ptr_id());
+        let key = (s.ptr_id(), s.location);
+        if !a_mfence.insert(key) {
+            a_mn_regular.insert(key);
         } else {
             a_start.push(s.clone());
         }
     }
-    // Edge -> [face indices] map (OCCT TopExp::MapShapesAndAncestors).
-    let mut a_cmap: HashMap<u64, Vec<usize>> = HashMap::new();
+    // Edge -> [face indices] map (OCCT TopExp::MapShapesAndAncestors,
+    // TopTools_ShapeMapHasher).
+    let mut a_cmap: HashMap<(u64, u32), Vec<usize>> = HashMap::new();
     for (i, s) in a_start.iter().enumerate() {
-        for eptr in face_edge_ptrs(s) {
-            a_cmap.entry(eptr).or_default().push(i);
+        for ekey in face_edge_keys(s) {
+            a_cmap.entry(ekey).or_default().push(i);
         }
     }
     // BFS grouping by shared edges (OCCT L213-216).
@@ -54,8 +57,8 @@ pub fn make_connexity_blocks(shapes: &[Shape]) -> Vec<ConnexityBlock> {
         visited[start] = true;
         while let Some(i) = queue.pop_front() {
             block.push(i);
-            for eptr in face_edge_ptrs(&a_start[i]) {
-                if let Some(nei) = a_cmap.get(&eptr) {
+            for ekey in face_edge_keys(&a_start[i]) {
+                if let Some(nei) = a_cmap.get(&ekey) {
                     for &ni in nei {
                         if !visited[ni] {
                             visited[ni] = true;
@@ -76,7 +79,7 @@ pub fn make_connexity_blocks(shapes: &[Shape]) -> Vec<ConnexityBlock> {
         let mut b_regular = true;
         for &idx in block {
             let mut a_s = a_start[idx].clone();
-            if a_mn_regular.contains(&a_s.ptr_id()) {
+            if a_mn_regular.contains(&(a_s.ptr_id(), a_s.location)) {
                 // OCCT L231-238: multi-connected shape — both orientations.
                 b_regular = false;
                 a_s.orientation = Orientation::Forward;
@@ -88,8 +91,8 @@ pub fn make_connexity_blocks(shapes: &[Shape]) -> Vec<ConnexityBlock> {
                 if b_regular {
                     // OCCT L243-247: no multi-connected shapes — check every
                     // connection edge is used by exactly 2 elements.
-                    for eptr in face_edge_ptrs(&a_start[idx]) {
-                        if a_cmap.get(&eptr).map_or(0, |v| v.len()) != 2 {
+                    for ekey in face_edge_keys(&a_start[idx]) {
+                        if a_cmap.get(&ekey).map_or(0, |v| v.len()) != 2 {
                             b_regular = false;
                             break;
                         }
@@ -647,9 +650,11 @@ fn reverse_orientation(o: Orientation) -> Orientation {
     }
 }
 
-/// Extract edge ptr_ids from a Face Shape (outer + inner wires).
-fn face_edge_ptrs(face: &Shape) -> Vec<u64> {
-    face_edges(face).iter().map(|e| e.ptr_id()).collect()
+/// Extract edge (ptr_id, location) pairs from a Face Shape (outer + inner wires).
+/// OCCT TopExp::MapShapesAndAncestors uses TopTools_ShapeMapHasher — key
+/// identity TShape + Location, orientation ignored.
+fn face_edge_keys(face: &Shape) -> Vec<(u64, u32)> {
+    face_edges(face).iter().map(|e| (e.ptr_id(), e.location)).collect()
 }
 
 /// Extract edge Shapes from a Face Shape (outer + inner wires), composing the

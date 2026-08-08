@@ -1119,13 +1119,13 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
     // DS face preserves that BRep index, so both keys are consulted.
     //
     // OCCT BRep_Tool.cxx L310-313: the face-based CurveOnSurface(aE, aF)
-    // reverses the local edge when the face is REVERSED, so the effective
-    // reversed flag is the XOR of the edge and face orientations. The face
-    // orientation is read from the DS face shape, which preserves the source
-    // face's orientation (BRep_Tool::Surface / BuilderFace SetFace).
+    // reverses the local edge when the face is REVERSED. The WireSplitter's
+    // face is the BuilderFace::myFace, which SetFace (BuilderFace.cxx L79-84)
+    // normalizes to FORWARD — so F.Orientation() is never REVERSED here and
+    // the effective reversed flag is exactly the edge's own orientation
+    // (BOPAlgo_BuilderFace::PerformLoops L256: aWES.SetFace(myFace)).
     let (brep_face, face_reversed) = if face_index < ds.nb_shapes() {
-        let fs = ds.shape(face_index);
-        (fs.index, fs.orientation == Orientation::Reversed)
+        (ds.shape(face_index).index, false)
     } else {
         (face_index, false)
     };

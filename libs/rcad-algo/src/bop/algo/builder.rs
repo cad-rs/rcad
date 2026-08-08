@@ -1005,8 +1005,8 @@ pub(crate) fn shape_bbox(s: &Shape) -> Option<(DVec3, DVec3)> {
 /// `a_face_to_classify` (the first such face) as the block representative.
 fn make_connexity_block(
     f_start: usize,
-    a_mse: &HashSet<u64>,
-    a_mefp: &HashMap<u64, Vec<usize>>,
+    a_mse: &HashSet<(u64, u32)>,
+    a_mefp: &HashMap<(u64, u32), Vec<usize>>,
     a_mf_done: &mut HashSet<usize>,
     a_lcb: &mut Vec<usize>,
     a_face_to_classify: &mut Option<usize>,
@@ -1024,7 +1024,8 @@ fn make_connexity_block(
         i += 1;
         for a_e in face_edges(&faces[a_f]) {
             // OCCT L1589-1596: border edge of the solid.
-            if a_mse.contains(&a_e.ptr_id())
+            // theMEAvoid/theEFMap use TopTools_ShapeMapHasher (TShape + Location).
+            if a_mse.contains(&(a_e.ptr_id(), a_e.location))
                 || edge_data(&a_e).map_or(false, |ed| ed.degenerated)
             {
                 if a_face_to_classify.is_none() {
@@ -1033,7 +1034,7 @@ fn make_connexity_block(
                 continue;
             }
             // OCCT L1598-1611: expand through faces sharing this edge.
-            if let Some(p_lf) = a_mefp.get(&a_e.ptr_id()) {
+            if let Some(p_lf) = a_mefp.get(&(a_e.ptr_id(), a_e.location)) {
                 for &a_f_to_add in p_lf {
                     if a_mf_done.insert(a_f_to_add) {
                         a_lcb.push(a_f_to_add);
@@ -1689,7 +1690,9 @@ impl<'a> Builder<'a> {
             }
 
             // OCCT L353: aMFence.Clear() — per-face fence for closed edges.
-            let mut a_mfence: HashSet<u64> = HashSet::new();
+            // OCCT aMFence is NCollection_Map<TopoDS_Shape, TopTools_ShapeMapHasher>
+            // (L252) — key identity TShape + Location, orientation ignored.
+            let mut a_mfence: HashSet<(u64, u32)> = HashSet::new();
             // OCCT L355-357: aFF = aF; aFF.Orientation(FORWARD).
             let a_ff = Shape::new(a_f.data.clone(), a_f.location, topods::Orientation::Forward);
             // OCCT L359: 1. Build the edges set aLE.
@@ -1751,7 +1754,7 @@ impl<'a> Builder<'a> {
                     }
                     // OCCT L429-455: closed seam edge -> dedupe via aMFence.
                     if b_is_closed {
-                        if a_mfence.insert(a_sp.ptr_id()) {
+                        if a_mfence.insert((a_sp.ptr_id(), a_sp.location)) {
                             if !self.edge_closed_on_face(&a_sp, &a_f) {
                                 // OCCT L435-446: DoSplitSEAMOnFace(aSp, aF) /
                                 // DoSplitSEAMOnFace(aE, aSp, aF).
@@ -1809,7 +1812,7 @@ impl<'a> Builder<'a> {
             }
             // OCCT L496-500: if (!NonDestructive()) BRepLib::BuildPCurveForEdgesOnPlane(aLE, aFF).
             if !self.my_non_destructive {
-                self.build_pcurve_for_edges_on_plane(&a_le, &a_f);
+                self.build_pcurve_for_edges_on_plane(&a_le, &a_ff);
             }
             // OCCT L502-505: aBF.SetFace(aF); aBF.SetShapes(aLE); SetRunParallel.
             a_vbf.push((i, a_f, a_le));
@@ -1818,7 +1821,17 @@ impl<'a> Builder<'a> {
         // OCCT L515-521: perform all BuilderFace tasks.
         for (fi, a_f, a_le) in &a_vbf {
             let mut a_bf = BuilderFace::new(&self.ds);
-            a_bf.my_face = Some(a_f.clone());
+            // OCCT L502-504: aBF.SetFace(aF) — BOPAlgo_BuilderFace::SetFace
+            // (BuilderFace.cxx L79-84) stores myOrientation = aF.Orientation()
+            // and normalizes myFace to FORWARD. Areas are built from the
+            // FORWARD face; the original orientation is re-applied below from
+            // the DS face (L534-552), mirroring OCCT.
+            let a_f_forward = Shape::new(
+                a_f.data.clone(),
+                a_f.location,
+                topods::Orientation::Forward,
+            );
+            a_bf.my_face = Some(a_f_forward);
             a_bf.my_face_index = Some(*fi);
             a_bf.my_edges = a_le.clone();
             a_bf.perform();
@@ -3297,12 +3310,14 @@ impl<'a> Builder<'a> {
         for a_sd in solids {
             // aMSF = own faces of the draft solid + its internal faces.
             // aMSE = edges of the draft solid (OCCT L1366-1368).
-            let mut a_msf: HashSet<u64> = HashSet::new();
-            let mut a_mse: HashSet<u64> = HashSet::new();
+            // OCCT aMSF/aMSE are IndexedMap with TopTools_ShapeMapHasher —
+            // key identity TShape + Location.
+            let mut a_msf: HashSet<(u64, u32)> = HashSet::new();
+            let mut a_mse: HashSet<(u64, u32)> = HashSet::new();
             for f in collect_solid_faces(a_sd) {
-                a_msf.insert(f.ptr_id());
+                a_msf.insert((f.ptr_id(), f.location));
                 for e in face_edges(&f) {
-                    a_mse.insert(e.ptr_id());
+                    a_mse.insert((e.ptr_id(), e.location));
                 }
             }
             // OCCT L1371: bIsEmpty is evaluated BEFORE the own INTERNAL faces
@@ -3311,7 +3326,7 @@ impl<'a> Builder<'a> {
             let b_is_empty = a_msf.is_empty();
             if let Some(lif) = a_solids_if.get(&a_sd.ptr_id()) {
                 for f in lif {
-                    a_msf.insert(f.ptr_id());
+                    a_msf.insert((f.ptr_id(), f.location));
                 }
             }
 
@@ -3327,7 +3342,7 @@ impl<'a> Builder<'a> {
                 .or_else(|| shape_bbox(a_sd));
             let mut a_ivec: Vec<usize> = Vec::new();
             for (i, a_f) in faces.iter().enumerate() {
-                if a_msf.contains(&a_f.ptr_id()) {
+                if a_msf.contains(&(a_f.ptr_id(), a_f.location)) {
                     continue;
                 }
                 if let Some((smin, smax)) = solid_bbox {
@@ -3360,11 +3375,12 @@ impl<'a> Builder<'a> {
             // OCCT L1419-1428: EF map of the faces to process. Built only when
             // more than one face is selected (L1422: if (aNbFP > 1)); with a
             // single face the connexity block is the face itself.
-            let mut a_mefp: HashMap<u64, Vec<usize>> = HashMap::new();
+            // OCCT aMEFP is IndexedDataMap with TopTools_ShapeMapHasher.
+            let mut a_mefp: HashMap<(u64, u32), Vec<usize>> = HashMap::new();
             if a_ivec.len() > 1 {
                 for &i in &a_ivec {
                     for e in face_edges(&faces[i]) {
-                        a_mefp.entry(e.ptr_id()).or_default().push(i);
+                        a_mefp.entry((e.ptr_id(), e.location)).or_default().push(i);
                     }
                 }
             }
