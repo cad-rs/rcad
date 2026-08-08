@@ -119,11 +119,19 @@ impl MakeBox {
         // match; the pipeline's face-edge iteration composes the wire
         // orientation (TopExp_Explorer cumOri semantics).
         let w = [
-            rev(t.add_twire(vec![rev(e_z[0].clone()), rev(e_y[1].clone()), e_z[1].clone(), e_y[0].clone()])),
+            // XMin: Wire(XMin) = [Edge(X,YMin)=e_z[0], Edge(X,ZMax)=e_y[1],
+            //                    Edge(X,YMax)=e_z[1], Edge(X,ZMin)=e_y[0]]
+            // stored [R, R, F, F] (AddWireEdge direct). The MIN wire is stored
+            // FORWARD — BRepPrim_Builder::ReverseFace only reverses the face
+            // (F.Reverse(), BRepPrim_Builder.cxx L136-139); the face's own
+            // REVERSED orientation then flips the wire in the composition.
+            t.add_twire(vec![rev(e_z[0].clone()), rev(e_y[1].clone()), e_z[1].clone(), e_y[0].clone()]),
+            // XMax: [Edge(X,YMin)=e_z[2], Edge(X,ZMax)=e_y[3],
+            //        Edge(X,YMax)=e_z[3], Edge(X,ZMin)=e_y[2]] [R,R,F,F].
             t.add_twire(vec![rev(e_z[2].clone()), rev(e_y[3].clone()), e_z[3].clone(), e_y[2].clone()]),
-            rev(t.add_twire(vec![rev(e_x[0].clone()), rev(e_z[2].clone()), e_x[1].clone(), e_z[0].clone()])),
+            t.add_twire(vec![rev(e_x[0].clone()), rev(e_z[2].clone()), e_x[1].clone(), e_z[0].clone()]),
             t.add_twire(vec![rev(e_x[2].clone()), rev(e_z[3].clone()), e_x[3].clone(), e_z[1].clone()]),
-            rev(t.add_twire(vec![rev(e_y[0].clone()), rev(e_x[2].clone()), e_y[2].clone(), e_x[0].clone()])),
+            t.add_twire(vec![rev(e_y[0].clone()), rev(e_x[2].clone()), e_y[2].clone(), e_x[0].clone()]),
             t.add_twire(vec![rev(e_y[1].clone()), rev(e_x[3].clone()), e_y[3].clone(), e_x[1].clone()]),
         ];
         // OCCT BRepPrim_GWedge: all 6 faces use the +axis plane normal; the
