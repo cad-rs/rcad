@@ -454,7 +454,9 @@ fn edge_tangent(edge: &Shape, a_t: f64) -> Option<DVec3> {
     let curve = ed.curve.as_ref()?;
     let mut tg = curve.tangent_at(a_t);
     let m = tg.length();
-    if m < 1e-12 {
+    // OCCT L88-96: if (mod > gp::Resolution()) aTau /= mod; else return false;
+    // (gp::Resolution() == 1e-15).
+    if m <= 1e-15 {
         return None;
     }
     tg /= m;
@@ -1091,8 +1093,12 @@ pub(crate) fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f
             continue;
         }
         if !solid_edges.contains(&(e.ptr_id(), e.location)) {
-            // OCCT L683-685: classify the middle point of the edge.
-            let p = edge_midpoint(&e);
+            // OCCT L683-685: classify the middle point of the edge. OCCT
+            // ComputeState(Edge) returns UNKNOWN when the degenerated edge has
+            // no first vertex (L748-754) — rcad returns UNKNOWN (0) too.
+            let Some(p) = edge_midpoint(&e) else {
+                return 0;
+            };
             let mut clsf =
                 crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(
                     the_solid,
@@ -1199,28 +1205,34 @@ pub(crate) fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f
 /// L733-778): for a degenerated edge (no 3D curve) the first vertex point is
 /// used; otherwise the parameter is the intermediate one, with the infinite
 /// range handled by the dT = 10. shifts (L748-771).
-fn edge_midpoint(edge: &Shape) -> DVec3 {
-    match edge_data(edge) {
-        Some(ed) => {
-            if let Some(curve) = &ed.curve {
-                let (a_t1, a_t2) = (ed.range[0], ed.range[1]);
-                let a_t = if a_t1.is_infinite() && !a_t2.is_infinite() {
-                    a_t2 - 10.0
-                } else if !a_t1.is_infinite() && a_t2.is_infinite() {
-                    a_t1 + 10.0
-                } else if a_t1.is_infinite() && a_t2.is_infinite() {
-                    0.0
-                } else {
-                    intermediate_point(a_t1, a_t2)
-                };
-                curve.point_at(a_t)
-            } else if let TShape::Vertex(vd) = &*ed.first.data {
-                vd.point
-            } else {
-                DVec3::ZERO
-            }
-        }
-        None => DVec3::ZERO,
+fn edge_midpoint(edge: &Shape) -> Option<DVec3> {
+    let ed = edge_data(edge)?;
+    if let Some(curve) = &ed.curve {
+        let (a_t1, a_t2) = (ed.range[0], ed.range[1]);
+        // OCCT L748-771: Precision::IsNegativeInfinite / IsPositiveInfinite
+        // (|x| >= 5e99); the dT = 10. shifts for infinite ranges.
+        let a_t = if rcad_kernel::is_negative_infinite_value(a_t1)
+            && !rcad_kernel::is_positive_infinite_value(a_t2)
+        {
+            a_t2 - 10.0
+        } else if !rcad_kernel::is_negative_infinite_value(a_t1)
+            && rcad_kernel::is_positive_infinite_value(a_t2)
+        {
+            a_t1 + 10.0
+        } else if rcad_kernel::is_negative_infinite_value(a_t1)
+            && rcad_kernel::is_positive_infinite_value(a_t2)
+        {
+            0.0
+        } else {
+            intermediate_point(a_t1, a_t2)
+        };
+        Some(curve.point_at(a_t))
+    } else if let TShape::Vertex(vd) = &*ed.first.data {
+        // OCCT L748-754: degenerated edge — the first vertex point; a null
+        // vertex returns UNKNOWN (rcad: None).
+        Some(vd.point)
+    } else {
+        None
     }
 }
 
@@ -4203,13 +4215,20 @@ impl<'a> Builder<'a> {
                 TShape::Edge(ed) => {
                     if let Some(curve) = &ed.curve {
                         // OCCT BOPTools_AlgoTools::ComputeState(Edge) (L752-788):
-                        // aT = IntermediatePoint(aT1, aT2) = 0.43213918-weighted.
+                        // aT = IntermediatePoint(aT1, aT2) = 0.43213918-weighted;
+                        // infinite ranges use the dT = 10. shifts (L748-771).
                         let (a_t1, a_t2) = (ed.range[0], ed.range[1]);
-                        let a_t = if a_t1.is_infinite() && !a_t2.is_infinite() {
+                        let a_t = if rcad_kernel::is_negative_infinite_value(a_t1)
+                            && !rcad_kernel::is_positive_infinite_value(a_t2)
+                        {
                             a_t2 - 10.0
-                        } else if !a_t1.is_infinite() && a_t2.is_infinite() {
+                        } else if !rcad_kernel::is_negative_infinite_value(a_t1)
+                            && rcad_kernel::is_positive_infinite_value(a_t2)
+                        {
                             a_t1 + 10.0
-                        } else if a_t1.is_infinite() && a_t2.is_infinite() {
+                        } else if rcad_kernel::is_negative_infinite_value(a_t1)
+                            && rcad_kernel::is_positive_infinite_value(a_t2)
+                        {
                             0.0
                         } else {
                             intermediate_point(a_t1, a_t2)

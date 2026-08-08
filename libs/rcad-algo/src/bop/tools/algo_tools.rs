@@ -994,8 +994,10 @@ fn edge_tangent_at_param(e: &Shape, a_t: f64) -> Option<glam::DVec3> {
     let curve = ed.curve.as_ref()?;
     let mut a_tau = curve.derivative_at(a_t);
     let a_mod = a_tau.length();
-    // gp::Resolution() = RealSmall() = DBL_MIN = f64::MIN_POSITIVE.
-    if a_mod <= f64::MIN_POSITIVE {
+    // OCCT BOPTools_AlgoTools2D::EdgeTangent (L88-96): if (mod >
+    // gp::Resolution()) aTau /= mod; else return false (gp::Resolution() ==
+    // 1e-15).
+    if a_mod <= 1e-15 {
         return None;
     }
     a_tau /= a_mod;
