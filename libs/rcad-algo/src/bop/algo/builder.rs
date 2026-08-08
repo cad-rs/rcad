@@ -691,10 +691,14 @@ fn get_approx_normal_to_face_on_edge(
         }
     };
     if !in_face {
-        // OCCT L681: PointInFace(aF, aE, aT, theStep, aP, aP2d, ctx) — hatcher.
+        // OCCT L681 (PointNearEdge 7-arg, BOPTools_AlgoTools3D.cxx L667-694):
+        // PointInFace(aF, aE, aT, theStep, aP, aP2d, ctx) — hatcher inside
+        // point along the EDGE-NORMAL 2D line (L942-990); when that fails too
+        // iErr = 2 and GetApproxNormalToFaceOnEdge returns false (L657-663).
         match fi {
             Some(fi) => {
-                let (err2, p2, p2d2) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+                let (err2, p2, p2d2) =
+                    crate::bop::tools::algo_tools::point_in_face_edge(fi, a_e, a_t, the_step, ds);
                 if err2 != 0 {
                     return None; // OCCT: iErr = 2 -> GetApproxNormalToFaceOnEdge false
                 }
