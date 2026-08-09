@@ -2503,7 +2503,11 @@ impl PaveFiller {
             a_mf.insert(n_f2);
         }
         // OCCT L1767-1858: create new common blocks from unified edge PBs.
-        let edges: Vec<usize> = an_edge_lpb.keys().copied().collect();
+        // OCCT anEdgeLPB iteration is deterministic (NCollection); sort the
+        // keys so the common-block creation order is fixed (a HashMap would
+        // randomize it and hence the face-info pave-block contents).
+        let mut edges: Vec<usize> = an_edge_lpb.keys().copied().collect();
+        edges.sort_unstable();
         for n_e in edges {
             let a_lpb_keys = an_edge_lpb[&n_e].clone();
             if a_lpb_keys.len() == 1 { continue; }
@@ -2563,7 +2567,8 @@ impl PaveFiller {
         if !b_verts && !b_edges {
             return;
         }
-        let mf_list: Vec<usize> = a_mf.iter().copied().collect();
+        let mut mf_list: Vec<usize> = a_mf.iter().copied().collect();
+        mf_list.sort_unstable();
         for n_f1 in mf_list {
             // 2.1. update vertices.
             if b_verts {

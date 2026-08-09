@@ -873,8 +873,8 @@ impl PaveFiller {
         }
 
         // OCCT L185: NCollection_IndexedDataMap<handle<PaveBlock>, NCollection_List<int>> aMVEPairs
-        let mut a_mve_pairs: std::collections::HashMap<u64, (SharedPB, Vec<usize>)> =
-            std::collections::HashMap::new();
+        let mut a_mve_pairs: indexmap::IndexMap<u64, (SharedPB, Vec<usize>)> =
+            indexmap::IndexMap::new();
 
         // OCCT L186-235: iterate pairs
         for &(a, b) in &pairs {
@@ -917,7 +917,7 @@ impl PaveFiller {
     /// OCCT BOPAlgo_PaveFiller::IntersectVE (PaveFiller_2.cxx L242-394).
     fn intersect_ve(
         &mut self,
-        the_ve_pairs: &std::collections::HashMap<u64, (SharedPB, Vec<usize>)>,
+        the_ve_pairs: &indexmap::IndexMap<u64, (SharedPB, Vec<usize>)>,
         the_add_interfs: bool,
     ) {
         let a_nb_ve = the_ve_pairs.len();
@@ -1687,8 +1687,8 @@ impl PaveFiller {
         // OCCT L194-217: locals
         let mut a_mi_efc: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut a_mvcpb: Vec<CoupleOfPBs> = Vec::new();
-        let mut a_mpbli: std::collections::HashMap<u64, (SharedPB, Vec<usize>)> =
-            std::collections::HashMap::new();
+        let mut a_mpbli: indexmap::IndexMap<u64, (SharedPB, Vec<usize>)> =
+            indexmap::IndexMap::new();
         let mut a_dmpb_box: std::collections::HashMap<u64, rcad_kernel::math::bnd::BndBox> =
             std::collections::HashMap::new();
         // OCCT: aVEdgeFace — collected (edge, face, pb, range, shrunk, express)
@@ -2000,7 +2000,11 @@ impl PaveFiller {
             }
         }
         // OCCT L585: Update FaceInfoIn for all faces having EF common parts
-        for &n_f in &a_mi_efc {
+        // OCCT: iterate aMIEFC (NCollection_Map — deterministic order); a
+        // HashSet would randomize the FaceInfoIn update order.
+        let mut efc_list: Vec<usize> = a_mi_efc.iter().copied().collect();
+        efc_list.sort_unstable();
+        for &n_f in &efc_list {
             self.ds.update_face_info_in(n_f);
         }
         if std::env::var("RCAD_EE_DEBUG").is_ok() {
@@ -2693,7 +2697,10 @@ impl PaveFiller {
         // OCCT L888-931: build pcurves for edges on planar faces via BOPAlgo_BPC
         // Phase 1 (L889-899): collect edge-face pairs into BPC vector
         let mut a_vbpc: Vec<BOPAlgo_BPC> = Vec::new();
-        for &fi in &a_mf {
+        // OCCT: iterate aMF (NCollection_Map — deterministic order).
+        let mut mf_list: Vec<usize> = a_mf.iter().copied().collect();
+        mf_list.sort_unstable();
+        for &fi in &mf_list {
             let edge_indices: Vec<usize> = self.ds.shape_info(fi).sub_shapes().iter()
                 .filter(|&&ei| self.ds.shape_info(ei).shape_type() == ShapeType::Edge)
                 .copied().collect();
@@ -2861,8 +2868,10 @@ impl PaveFiller {
             }
         }
 
-        // OCCT L655-685: build PB→[vertices] map aMPBLI
-        let mut a_mpbli: HashMap<u64, (SharedPB, Vec<usize>)> = HashMap::new();
+        // OCCT L655-685: build PB→[vertices] map aMPBLI (IndexedDataMap,
+        // insertion order preserved).
+        let mut a_mpbli: indexmap::IndexMap<u64, (SharedPB, Vec<usize>)> =
+            indexmap::IndexMap::new();
         for cpb in the_mvcpb {
             let n_v = match cpb_to_new_vertex.get(&cpb.index_interf) {
                 Some(v) => *v,
@@ -4402,7 +4411,16 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         let mut a_mcb: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let ms_debug = std::env::var("RCAD_MS_DEBUG").is_ok();
         let nb_src = self.ds.nb_source_shapes();
-        for a_lpb in self.ds.pave_blocks_pool.clone().into_values() {
+        // OCCT myPaveBlocksPool is a DynamicArray indexed by edge — iterate
+        // in ascending key order (a HashMap would randomize the split-edge
+        // creation order and hence the DS edge indices).
+        let mut pb_keys: Vec<usize> = self.ds.pave_blocks_pool.keys().copied().collect();
+        pb_keys.sort_unstable();
+        for k in pb_keys {
+            let a_lpb: Vec<SharedPB> = match self.ds.pave_blocks_pool.get(&k) {
+                Some(v) => v.clone(),
+                None => continue,
+            };
             for a_pb in &a_lpb {
                 // OCCT L410-414: skip degenerated edges
                 let pb = a_pb.0.read().unwrap();
