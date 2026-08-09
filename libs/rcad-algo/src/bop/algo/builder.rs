@@ -3261,12 +3261,19 @@ impl<'a> Builder<'a> {
             // (PointInFace + IsValidPointForFace).
             let n_f1 = self.ds.index(f1);
             let n_f2 = self.ds.index(f2);
+            // OCCT L825: BOPAlgo_PairOfShapeBoolean::Perform on the raw
+            // TopoDS_Face pair — split face images are NOT registered in the
+            // DS, so the Shape-based AreFacesSameDomain is used for them
+            // (OCCT BOPTools_AlgoTools::AreFacesSameDomain L1139-1205 works on
+            // the face geometry directly, with no DS access).
             let flag = if n_f1 >= 0 && n_f2 >= 0 {
                 crate::bop::tools::algo_tools::are_faces_same_domain(
                     n_f1 as usize, n_f2 as usize, &mut self.my_context, self.ds, self.my_fuzzy_value,
                 )
             } else {
-                false
+                crate::bop::tools::algo_tools::are_faces_same_domain_shapes(
+                    f1, f2, self.my_fuzzy_value,
+                )
             };
             if flag {
                 fill_map_faces(f1, f2, &mut a_dmsls);

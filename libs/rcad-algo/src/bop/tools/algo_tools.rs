@@ -427,6 +427,200 @@ pub fn are_faces_same_domain(
 }
 
 // ====================================================================
+// Shape-based AreFacesSameDomain — OCCT BOPTools_AlgoTools::AreFacesSameDomain
+// (BOPTools_AlgoTools.cxx L1139-1205) operates on TopoDS_Face directly, so it
+// also classifies split face images that are not registered in the DS.
+// rcad's DS-index version above cannot address such pieces; these functions
+// reproduce the same checks on the Shape geometry (face tolerance + max edge
+// tolerance, PointInFace hatcher point, projection + FClass2d on the piece).
+// ====================================================================
+
+/// UV boundary polygons of a face Shape (outer + inner wires), built by
+/// projecting the wire edge endpoint vertices onto the face surface — the
+/// piece-equivalent of the DS FClass2d UV polygons.
+fn shape_uv_polygons(face: &Shape) -> Option<Vec<Vec<glam::DVec2>>> {
+    let fd = face.as_face()?;
+    let surf = fd.surface.as_ref()?;
+    let mut polys: Vec<Vec<glam::DVec2>> = Vec::new();
+    let mut wire_poly = |w: &Shape, out: &mut Vec<glam::DVec2>| {
+        if let TShape::Wire(wd) = &*w.data {
+            for e in &wd.edges {
+                if let TShape::Edge(ed) = &*e.data {
+                    if let TShape::Vertex(vd) = &*ed.last.data {
+                        let (uv, _) = crate::bop::closest_point_on_surface(surf, vd.point);
+                        out.push(uv);
+                    }
+                }
+            }
+        }
+    };
+    let mut outer: Vec<glam::DVec2> = Vec::new();
+    wire_poly(&fd.outer_wire, &mut outer);
+    if outer.len() >= 3 {
+        polys.push(outer);
+    }
+    for iw in &fd.inner_wires {
+        let mut inner: Vec<glam::DVec2> = Vec::new();
+        wire_poly(iw, &mut inner);
+        if inner.len() >= 3 {
+            polys.push(inner);
+        }
+    }
+    Some(polys)
+}
+
+/// OCCT BOPTools_AlgoTools3D::PointInFace (BOPTools_AlgoTools3D.cxx
+/// L906-938/L942-990) for a split face image: the hatcher point inside the
+/// face, found on the vertical 2D line U = IntermediatePoint(UMin, UMax)
+/// crossing the face's UV polygons (parity from V = -inf, same as
+/// hatch_line_intervals). Returns (iErr, theP, theP2D) with iErr == 0 on
+/// success.
+fn point_in_face_shape(face: &Shape) -> (i32, glam::DVec3, glam::DVec2) {
+    let Some(surf) = face.as_face().and_then(|fd| fd.surface.clone()) else {
+        return (1, glam::DVec3::ZERO, glam::DVec2::ZERO);
+    };
+    let Some(polys) = shape_uv_polygons(face) else {
+        return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
+    };
+    // UV bounds over all polygons (OCCT UVBounds of the face).
+    let mut a_umin = f64::INFINITY;
+    let mut a_umax = f64::NEG_INFINITY;
+    let mut a_vmin = f64::INFINITY;
+    let mut a_vmax = f64::NEG_INFINITY;
+    for poly in &polys {
+        for p in poly {
+            a_umin = a_umin.min(p.x);
+            a_umax = a_umax.max(p.x);
+            a_vmin = a_vmin.min(p.y);
+            a_vmax = a_vmax.max(p.y);
+        }
+    }
+    if !(a_umin <= a_umax && a_vmin <= a_vmax) {
+        return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
+    }
+    let a_ux = intermediate_point(a_umin, a_umax);
+    // Vertical line crossings (parity rule: OUT at V = -inf).
+    let mut vs: Vec<f64> = Vec::new();
+    for poly in &polys {
+        let n = poly.len();
+        for i in 0..n {
+            let a = poly[i];
+            let b = poly[(i + 1) % n];
+            let (lo, hi) = if a.x <= b.x { (a, b) } else { (b, a) };
+            if lo.x <= a_ux && a_ux < hi.x {
+                let t = (a_ux - lo.x) / (hi.x - lo.x);
+                vs.push(lo.y + t * (hi.y - lo.y));
+            }
+        }
+    }
+    if vs.len() < 2 {
+        return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
+    }
+    vs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    const HATCH_CONFUSION: f64 = 1e-8; // OCCT aTolHatch2D
+    let mut interval: Option<(f64, f64)> = None;
+    let mut k = 0;
+    while k + 1 < vs.len() {
+        let (v1, v2) = (vs[k], vs[k + 1]);
+        if v2 - v1 > HATCH_CONFUSION {
+            interval = Some((v1, v2));
+            break;
+        }
+        k += 2;
+    }
+    let Some((v1, v2)) = interval else {
+        return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
+    };
+    let a_vx = intermediate_point(v1, v2);
+    let a_p2d = glam::DVec2::new(a_ux, a_vx);
+    let a_p = surf.point_at(a_p2d.x, a_p2d.y);
+    (0, a_p, a_p2d)
+}
+
+/// OCCT IntTools_Context::IsValidPointForFace (IntTools_Context.cxx L648-674)
+/// for a split face image: project the point on the piece's surface, check
+/// the distance against aTol, then classify the UV point with the piece's UV
+/// polygons (ON allowed — the point is valid when not strictly OUT).
+fn is_valid_point_for_face_shape(p: glam::DVec3, face: &Shape, a_tol: f64) -> bool {
+    let Some(surf) = face.as_face().and_then(|fd| fd.surface.clone()) else {
+        return false;
+    };
+    let (uv, proj) = crate::bop::closest_point_on_surface(&surf, p);
+    if (proj - p).length() > a_tol {
+        return false;
+    }
+    let Some(polys) = shape_uv_polygons(face) else {
+        return false;
+    };
+    // Strictly inside the outer polygon or on its boundary; not strictly
+    // inside any hole (hole boundaries count as ON, which is valid).
+    for (pi, poly) in polys.iter().enumerate() {
+        let n = poly.len();
+        if n < 3 {
+            continue;
+        }
+        let on_boundary = (0..n).any(|i| {
+            let a = poly[i];
+            let b = poly[(i + 1) % n];
+            let ab = b - a;
+            let len2 = ab.length_squared();
+            if len2 < 1e-30 {
+                return false;
+            }
+            let ap = uv - a;
+            let t = (ap.dot(ab) / len2).clamp(0.0, 1.0);
+            (ap - t * ab).length() <= a_tol
+        });
+        let inside = rcad_kernel::base::gprop::tri::point_in_polygon_2d(poly, uv);
+        if pi == 0 {
+            // outer wire: must be inside or on.
+            if !inside && !on_boundary {
+                return false;
+            }
+        } else {
+            // hole: must not be strictly inside.
+            if inside {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// OCCT BOPTools_AlgoTools::AreFacesSameDomain (BOPTools_AlgoTools.cxx
+/// L1139-1205) for split face images (Shapes not registered in the DS).
+pub fn are_faces_same_domain_shapes(f1: &Shape, f2: &Shape, fuzz: f64) -> bool {
+    // OCCT L1149-1155: find a point inside the first face.
+    let (i_err, a_p1, _a_p2d1) = point_in_face_shape(f1);
+    if i_err != 0 {
+        return false;
+    }
+    // OCCT L1162-1168: tolerances of the faces.
+    let mut a_tol_f1 = f1.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
+    let mut a_tol_f2 = f2.as_face().map(|fd| fd.tolerance).unwrap_or(0.0);
+    // OCCT L1170-1182: maximal tolerance of the edges of the first face.
+    let mut a_tol_e_max = -1.0;
+    for a_e in face_edges_shapes(f1) {
+        if !a_e.as_edge().map(|ed| ed.degenerated).unwrap_or(true) {
+            let a_tol_e = a_e.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
+            if a_tol_e > a_tol_e_max {
+                a_tol_e_max = a_tol_e;
+            }
+        }
+    }
+    if a_tol_e_max > a_tol_f1 {
+        a_tol_f1 = a_tol_e_max;
+    }
+    if a_tol_e_max > a_tol_f2 {
+        a_tol_f2 = a_tol_e_max;
+    }
+    // OCCT L1198-1199: checking criteria.
+    let a_tol = a_tol_f1 + a_tol_f2 + fuzz.max(rcad_kernel::CONFUSION);
+    // OCCT L1202: project and classify the point on the second face.
+    is_valid_point_for_face_shape(a_p1, f2, a_tol)
+}
+
+// ====================================================================
 // PointInFace — OCCT BOPTools_AlgoTools3D::PointInFace
 // (BOPTools_AlgoTools3D.cxx L906-938)
 // ====================================================================
