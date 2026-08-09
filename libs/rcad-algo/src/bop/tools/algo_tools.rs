@@ -475,7 +475,7 @@ fn shape_uv_polygons(face: &Shape) -> Option<Vec<Vec<glam::DVec2>>> {
 /// crossing the face's UV polygons (parity from V = -inf, same as
 /// hatch_line_intervals). Returns (iErr, theP, theP2D) with iErr == 0 on
 /// success.
-fn point_in_face_shape(face: &Shape) -> (i32, glam::DVec3, glam::DVec2) {
+pub(crate) fn point_in_face_shape(face: &Shape) -> (i32, glam::DVec3, glam::DVec2) {
     let Some(surf) = face.as_face().and_then(|fd| fd.surface.clone()) else {
         return (1, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
@@ -958,11 +958,22 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
     // re-projecting the 3D point.
     let mut p3d: Option<glam::DVec3> = None;
     let mut p2d_sp: Option<glam::DVec2> = None;
-    if let Some(fi) = ds.map_shape_index.get(&(f_sp.ptr_id(), f_sp.location)).copied() {
-        let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
-        if err == 0 {
-            p3d = Some(p);
-            p2d_sp = Some(p2d);
+    // OCCT L1351: PointInFace(theFSp, ...) works on any TopoDS_Face; a split
+    // face image not registered in the DS uses the Shape-based hatcher.
+    match ds.map_shape_index.get(&(f_sp.ptr_id(), f_sp.location)).copied() {
+        Some(fi) => {
+            let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+            if err == 0 {
+                p3d = Some(p);
+                p2d_sp = Some(p2d);
+            }
+        }
+        None => {
+            let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face_shape(f_sp);
+            if err == 0 {
+                p3d = Some(p);
+                p2d_sp = Some(p2d);
+            }
         }
     }
     if p3d.is_none() {

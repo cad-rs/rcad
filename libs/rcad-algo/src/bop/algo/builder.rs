@@ -1118,8 +1118,14 @@ pub(crate) fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f
     let fi = ds.map_shape_index.get(&(the_face.ptr_id(), the_face.location)).copied();
     let mut i_err = 1;
     let mut a_p3d = DVec3::ZERO;
+    // OCCT L692: PointInFace(theF, ...) works on any TopoDS_Face; a split
+    // face image not registered in the DS uses the Shape-based hatcher.
     if let Some(fi) = fi {
         let (err, p, _p2d) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+        i_err = err;
+        a_p3d = p;
+    } else {
+        let (err, p, _p2d) = crate::bop::tools::algo_tools::point_in_face_shape(the_face);
         i_err = err;
         a_p3d = p;
     }
