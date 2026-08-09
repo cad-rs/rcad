@@ -4182,8 +4182,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
         // L1141-1192: Analyze results — OCCT filters for TopAbs_EDGE type.
         // OCCT L1194-1197: BOPAlgo_Tools::PerformCommonBlocks(aMPBLI, anAlloc, myDS)
-        // rcad: map PB→face indices for CommonBlock creation
-        let mut a_mpbli: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+        // rcad: map PB→face indices for CommonBlock creation (IndexedDataMap —
+        // insertion order preserved; a HashMap would randomize it).
+        let mut a_mpbli: indexmap::IndexMap<u64, Vec<usize>> = indexmap::IndexMap::new();
 
         for &(n_e, n_f, pb_pool_idx) in &ef_pairs {
             if the_add_interf {
