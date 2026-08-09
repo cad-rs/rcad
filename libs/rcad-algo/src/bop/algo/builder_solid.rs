@@ -33,7 +33,7 @@ pub struct BuilderSolid<'a> {
     pub my_solids: Vec<Shape>,          // OCCT: myAreas (Areas())
     my_shapes_to_avoid: IndexMap<(u64, u32, Orientation), Shape>, // OCCT: NCollection_IndexedMap<TopoDS_Shape> myShapesToAvoid — default hasher, orientation-sensitive
     my_loops: Vec<Vec<Shape>>,          // OCCT: myLoops
-    my_loops_internal: Vec<Vec<Shape>>, // OCCT: myLoopsInternal
+    my_loops_internal: Vec<Shape>,      // OCCT: myLoopsInternal (shells with Closed flag)
 }
 
 impl<'a> BuilderSolid<'a> {
@@ -248,7 +248,21 @@ impl<'a> BuilderSolid<'a> {
                 }
                 i += 1;
             }
-            self.my_loops_internal.push(a_shell);
+            // OCCT L414: aShell.Closed(BRep_Tool::IsClosed(aShell)).
+            let mut flags = tshape_flags::DEFAULT;
+            if crate::bop::algo::builder::shell_is_closed(&a_shell) {
+                flags |= tshape_flags::CLOSED;
+            }
+            let a_shell_shape = Shape::new(
+                Arc::new(TShape::Shell(TShellData {
+                    my_shapes: vec![],
+                    flags,
+                    faces: a_shell,
+                })),
+                0,
+                Orientation::Forward,
+            );
+            self.my_loops_internal.push(a_shell_shape);
         }
     }
 
@@ -312,12 +326,22 @@ impl<'a> BuilderSolid<'a> {
         // OCCT L493-502: each solid's box; OCCT L499-509: the BoxTreeSelector
         // pre-filters the hole shells — only those whose box interferes with
         // the solid's box reach the IsInside test.
-        let mut hole_boxes: Vec<Option<(DVec3, DVec3)>> = Vec::new();
+        // OCCT L462-478: BVH tree of the hole-shell boxes (BRepBndLib::Add);
+        // OCCT L493-502: each solid's box; OCCT L499-509: the BoxTreeSelector
+        // pre-filters the hole shells — only those whose box interferes with
+        // the solid's box reach the IsInside test.
+        // OCCT aHoleShells holds the hole SHELL shapes; rcad builds each hole
+        // shell shape once and reuses it as the aHoleSolidMap key (OCCT L505:
+        // IndexedDataMap<TopoDS_Shape, Solid> keyed by the shell TShape).
+        let mut hole_shell_shapes: Vec<Shape> = Vec::new();
         for hs in &hole_shells {
-            let shell_shape = self.build_shell_shape(hs);
-            hole_boxes.push(crate::bop::algo::builder::shape_bbox(&shell_shape));
+            hole_shell_shapes.push(self.build_shell_shape(hs));
         }
-        let mut a_hole_solid: HashMap<Vec<(u64, u32)>, usize> = HashMap::new();
+        let mut hole_boxes: Vec<Option<(DVec3, DVec3)>> = Vec::new();
+        for shell_shape in &hole_shell_shapes {
+            hole_boxes.push(crate::bop::algo::builder::shape_bbox(shell_shape));
+        }
+        let mut a_hole_solid: HashMap<(u64, u32), usize> = HashMap::new();
         for (si, solid) in new_solids.iter().enumerate() {
             let solid_box = crate::bop::algo::builder::shape_bbox(solid);
             for (hi, hs) in hole_shells.iter().enumerate() {
@@ -336,7 +360,8 @@ impl<'a> BuilderSolid<'a> {
                 }
                 // OCCT L511: if (!IsInside(aHole, aSolid)) continue;
                 if !Self::is_inside(hs, solid, self.ds) { continue; }
-                let hkey = Self::hole_shell_key(hs);
+                // OCCT aHoleSolidMap key — the hole shell shape identity.
+                let hkey = (hole_shell_shapes[hi].ptr_id(), hole_shell_shapes[hi].location);
                 match a_hole_solid.get(&hkey) {
                     None => {
                         // OCCT L526-528: aHoleSolidMap.Add(aHole, aSolid).
@@ -354,8 +379,8 @@ impl<'a> BuilderSolid<'a> {
 
         // OCCT L532-548: back map solids -> holes.
         let mut a_solid_holes: HashMap<usize, Vec<usize>> = HashMap::new();
-        for (hi, hs) in hole_shells.iter().enumerate() {
-            let hkey = Self::hole_shell_key(hs);
+        for (hi, _hs) in hole_shells.iter().enumerate() {
+            let hkey = (hole_shell_shapes[hi].ptr_id(), hole_shell_shapes[hi].location);
             if let Some(&si) = a_hole_solid.get(&hkey) {
                 a_solid_holes.entry(si).or_default().push(hi);
             }
@@ -378,7 +403,7 @@ impl<'a> BuilderSolid<'a> {
 
         // OCCT L578-597: holes outside every solid become separate solids.
         for (hi, hs) in hole_shells.iter().enumerate() {
-            let hkey = Self::hole_shell_key(hs);
+            let hkey = (hole_shell_shapes[hi].ptr_id(), hole_shell_shapes[hi].location);
             if !a_hole_solid.contains_key(&hkey) {
                 let shell_shape = self.build_shell_shape(hs);
                 let solid = self.build_solid_shape(&shell_shape);
@@ -473,17 +498,6 @@ impl<'a> BuilderSolid<'a> {
         None
     }
 
-    /// Canonical key of a shell face set (OCCT TopoDS_Shape map key equivalent).
-    /// Key for a hole shell — OCCT aHoleSolidMap (BuilderSolid.cxx L467) is
-    /// IndexedDataMap<TopoDS_Shape, Solid, TopTools_ShapeMapHasher>: the key
-    /// is the hole SHELL shape. rcad builds an equivalent sorted list of the
-    /// shell's faces by (TShape, Location) identity.
-    fn hole_shell_key(faces: &[Shape]) -> Vec<(u64, u32)> {
-        let mut v: Vec<(u64, u32)> = faces.iter().map(|f| (f.ptr_id(), f.location)).collect();
-        v.sort();
-        v
-    }
-
     /// Build a Shell TShape from a set of faces.
     /// OCCT: the shells come from myLoops, which are already Closed(true)
     /// (BOPAlgo_ShellSplitter::MakeShells L647/L675 — every produced shell,
@@ -522,9 +536,13 @@ impl<'a> BuilderSolid<'a> {
         let mut a_mfs: Vec<Shape> = Vec::new();
         let mut a_mfs_fence: HashSet<(u64, u32)> = HashSet::new();
         for shell in &self.my_loops_internal {
-            for f in shell {
-                if a_mfs_fence.insert((f.ptr_id(), f.location)) {
-                    a_mfs.push(f.clone());
+            // OCCT L648-652: TopoDS_Iterator aIt(aShell) — direct sub-shapes
+            // (the faces of the shell).
+            if let TShape::Shell(sd) = &*shell.data {
+                for f in &sd.faces {
+                    if a_mfs_fence.insert((f.ptr_id(), f.location)) {
+                        a_mfs.push(f.clone());
+                    }
                 }
             }
         }

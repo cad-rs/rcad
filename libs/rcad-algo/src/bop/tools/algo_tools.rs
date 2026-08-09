@@ -759,11 +759,16 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
         }
     }
     // OCCT L1347-1359: PointInFace (hatcher) — the point inside the split face.
+    // OCCT keeps the 2D point aP2DFSp and passes it directly to
+    // GetNormalToSurface (L1384); rcad keeps the same p2d instead of
+    // re-projecting the 3D point.
     let mut p3d: Option<glam::DVec3> = None;
+    let mut p2d_sp: Option<glam::DVec2> = None;
     if let Some(fi) = ds.map_shape_index.get(&(f_sp.ptr_id(), f_sp.location)).copied() {
-        let (err, p, _p2d) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+        let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
         if err == 0 {
             p3d = Some(p);
+            p2d_sp = Some(p2d);
         }
     }
     if p3d.is_none() {
@@ -818,13 +823,15 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
             };
             if in_face {
                 p3d = Some(p3d_near);
+                p2d_sp = Some(p2d);
                 found = true;
             } else if let Some(fi) =
                 ds.map_shape_index.get(&(f_sp.ptr_id(), f_sp.location)).copied()
             {
-                let (err2, p2, _) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+                let (err2, p2, p2d2) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
                 if err2 == 0 {
                     p3d = Some(p2);
+                    p2d_sp = Some(p2d2);
                     found = true;
                 }
             }
@@ -838,13 +845,16 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
         }
     }
     let p3d = p3d.unwrap();
-    // OCCT L1383-1392: normal direction of the split face at the point.
-    let mut dn_sp = match surf_sp.as_ref() {
-        Some(s) => {
+    // OCCT L1383-1392: normal direction of the split face at the point —
+    // GetNormalToSurface(aSFSp, aP2DFSp.X(), aP2DFSp.Y()) uses the 2D point
+    // from PointInFace/PointNearEdge directly.
+    let mut dn_sp = match (&surf_sp, p2d_sp) {
+        (Some(s), Some(uv)) => s.normal_at(uv.x, uv.y),
+        (Some(s), None) => {
             let (uv_sp, _) = crate::bop::closest_point_on_surface(s, p3d);
             s.normal_at(uv_sp.x, uv_sp.y)
         }
-        None => return (false, 2),
+        _ => return (false, 2),
     };
     if f_sp.orientation == Orientation::Reversed {
         dn_sp = -dn_sp;

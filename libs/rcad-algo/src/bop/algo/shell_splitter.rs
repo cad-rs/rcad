@@ -554,6 +554,10 @@ fn refine_shell(a_shell: &[Shape], a_mef: &IndexMap<(u64, u32), Vec<usize>>) -> 
             continue;
         }
         // OCCT L536-601: BFS from aF1 avoiding the branch edges.
+        // OCCT aLFP1 (L529) is declared once; aLFP.Append(aLFP1) (L604-605)
+        // CLEARS aLFP1 (NCollection_List::Append(List&) moves the nodes), so
+        // aLFP takes exactly the faces discovered in the previous iteration —
+        // a layer-by-layer BFS, reproduced by a per-iteration a_lfp1.
         let mut a_mfb: Vec<Shape> = vec![a_f1.clone()];
         let mut a_lfp: Vec<Shape> = vec![a_f1.clone()];
         loop {
