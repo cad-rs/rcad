@@ -31,7 +31,7 @@ pub struct BuilderSolid<'a> {
     // BOPAlgo_BuilderSolid
     pub my_shapes: Vec<Shape>,          // OCCT: myShapes
     pub my_solids: Vec<Shape>,          // OCCT: myAreas (Areas())
-    my_shapes_to_avoid: HashSet<(u64, u32, Orientation)>, // OCCT: NCollection_IndexedMap<TopoDS_Shape> myShapesToAvoid — default hasher, orientation-sensitive
+    my_shapes_to_avoid: IndexMap<(u64, u32, Orientation), Shape>, // OCCT: NCollection_IndexedMap<TopoDS_Shape> myShapesToAvoid — default hasher, orientation-sensitive
     my_loops: Vec<Vec<Shape>>,          // OCCT: myLoops
     my_loops_internal: Vec<Vec<Shape>>, // OCCT: myLoopsInternal
 }
@@ -45,7 +45,7 @@ impl<'a> BuilderSolid<'a> {
             my_context: IntToolsContext::new(),
             my_shapes: Vec::new(),
             my_solids: Vec::new(),
-            my_shapes_to_avoid: HashSet::new(),
+            my_shapes_to_avoid: IndexMap::new(),
             my_loops: Vec::new(),
             my_loops_internal: Vec::new(),
         }
@@ -84,60 +84,68 @@ impl<'a> BuilderSolid<'a> {
     fn perform_shapes_to_avoid(&mut self) {
         // OCCT L138: myShapesToAvoid.Clear()
         self.my_shapes_to_avoid.clear();
-        // OCCT L142-218: iterative — mark edges with free boundary, repeat.
+        // OCCT L142-218: iterative — mark faces with free boundary edges,
+        // repeat until no new faces are marked.
         loop {
             let mut b_found = false;
-            // OCCT L151-160: aMVE — vertex -> [edges] built via
-            // TopExp::MapShapesAndAncestors(aE, TopAbs_VERTEX, TopAbs_EDGE,
-            // aMVE) over every non-avoided face: each face edge is appended to
-            // the list of both its endpoint vertices. OCCT aMVE is
+            // OCCT L151-160: aMEF — edge -> [faces] built via
+            // TopExp::MapShapesAndAncestors(aF, TopAbs_EDGE, TopAbs_FACE,
+            // aMEF) over every non-avoided face. OCCT aMEF is
             // IndexedDataMap with TopTools_ShapeMapHasher — key identity
             // TShape + Location, insertion order (IndexMap reproduces it).
-            let mut a_mve: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
+            let mut a_mef: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
             for face in &self.my_shapes {
-                if self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location, face.orientation)) { continue; }
+                if self.my_shapes_to_avoid.contains_key(&(face.ptr_id(), face.location, face.orientation)) { continue; }
                 for a_e in face_edges(face) {
-                    for a_v in edge_vertices(&a_e) {
-                        let entry = a_mve
-                            .entry((a_v.ptr_id(), a_v.location))
-                            .or_insert_with(|| (a_v.clone(), Vec::new()));
-                        entry.1.push(a_e.clone());
-                    }
+                    let ekey = (a_e.ptr_id(), a_e.location);
+                    let entry = a_mef.entry(ekey).or_insert_with(|| (a_e.clone(), Vec::new()));
+                    entry.1.push(face.clone());
                 }
             }
-            // OCCT L163-211: per-vertex decisions. myShapesToAvoid stores EDGES
+            // OCCT L164-211: per-edge decisions. myShapesToAvoid stores FACES
             // here (a face is only added to it later, in PerformLoops L326-329).
-            let keys: Vec<(u64, u32)> = a_mve.keys().copied().collect();
-            for vkey in keys {
-                let (a_v, a_le) = &a_mve[&vkey];
-                let a_nb_e = a_le.len();
-                if a_nb_e == 0 { continue; }
-                let a_e1 = &a_le[0];
-                if a_nb_e == 1 {
-                    // OCCT L176-181: single edge at the vertex.
-                    if a_e1.as_edge().map_or(true, |ed| ed.degenerated) {
-                        continue;
-                    }
-                    if a_v.orientation == topods::Orientation::Internal {
+            let keys: Vec<(u64, u32)> = a_mef.keys().copied().collect();
+            for ekey in keys {
+                let (a_e, a_lf) = &a_mef[&ekey];
+                // OCCT L167-170: skip degenerated edges.
+                if a_e.as_edge().map_or(false, |ed| ed.degenerated) {
+                    continue;
+                }
+                let a_nb_f = a_lf.len();
+                if a_nb_f == 0 { continue; }
+                // OCCT L179: aOrE = aE.Orientation().
+                let a_or_e = a_e.orientation;
+                let a_f1 = &a_lf[0];
+                if a_nb_f == 1 {
+                    // OCCT L182-190: single face on the edge; the edge is a
+                    // free boundary of the face.
+                    if a_or_e == topods::Orientation::Internal {
                         continue;
                     }
                     b_found = true;
-                    self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location, a_e1.orientation));
-                } else if a_nb_e == 2 {
-                    // OCCT L183-207: two edges at the vertex; avoid both copies
-                    // when they are IsSame (same TShape + Location), unless the
-                    // edge is a degenerated ring (both endpoints the same
-                    // vertex — TopExp::Vertices(aE1, aV1x, aV2x), L191-196).
-                    let a_e2 = &a_le[1];
-                    if a_e2.is_partner(a_e1) {
-                        let vv = edge_vertices(a_e1);
-                        if vv.len() >= 2 && vv[0].is_partner(&vv[1]) {
-                            // Degenerated ring — both ends are the same vertex.
+                    self.my_shapes_to_avoid
+                        .entry((a_f1.ptr_id(), a_f1.location, a_f1.orientation))
+                        .or_insert_with(|| a_f1.clone());
+                } else if a_nb_f == 2 {
+                    // OCCT L191-209: two faces on the edge; avoid both copies
+                    // when they are IsSame (same TShape + Location), unless
+                    // the edge is a seam of the face (BRep_Tool::IsClosed)
+                    // or the edge is INTERNAL.
+                    let a_f2 = &a_lf[1];
+                    if a_f2.is_partner(a_f1) {
+                        if edge_closed_on_face(a_e, a_f1) {
+                            continue;
+                        }
+                        if a_or_e == topods::Orientation::Internal {
                             continue;
                         }
                         b_found = true;
-                        self.my_shapes_to_avoid.insert((a_e1.ptr_id(), a_e1.location, a_e1.orientation));
-                        self.my_shapes_to_avoid.insert((a_e2.ptr_id(), a_e2.location, a_e2.orientation));
+                        self.my_shapes_to_avoid
+                            .entry((a_f1.ptr_id(), a_f1.location, a_f1.orientation))
+                            .or_insert_with(|| a_f1.clone());
+                        self.my_shapes_to_avoid
+                            .entry((a_f2.ptr_id(), a_f2.location, a_f2.orientation))
+                            .or_insert_with(|| a_f2.clone());
                     }
                 }
             }
@@ -164,7 +172,7 @@ impl<'a> BuilderSolid<'a> {
                 continue;
             }
             // OCCT L253-256: if !myShapesToAvoid.Contains(aF).
-            if !self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location, face.orientation)) {
+            if !self.my_shapes_to_avoid.contains_key(&(face.ptr_id(), face.location, face.orientation)) {
                 a_start.push(face.clone());
             }
         }
@@ -190,14 +198,16 @@ impl<'a> BuilderSolid<'a> {
         }
         // OCCT L312-317: myShapesToAvoid faces carry their stored orientation.
         for face in &self.my_shapes {
-            if self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location, face.orientation)) {
+            if self.my_shapes_to_avoid.contains_key(&(face.ptr_id(), face.location, face.orientation)) {
                 a_mp.insert((face.ptr_id(), face.location, face.orientation));
             }
         }
         for face in &self.my_shapes {
             if !Self::is_infinite_face(face) {
                 if !a_mp.contains(&(face.ptr_id(), face.location, face.orientation)) {
-                    self.my_shapes_to_avoid.insert((face.ptr_id(), face.location, face.orientation));
+                    self.my_shapes_to_avoid
+                        .entry((face.ptr_id(), face.location, face.orientation))
+                        .or_insert_with(|| face.clone());
                 }
             }
         }
@@ -208,20 +218,21 @@ impl<'a> BuilderSolid<'a> {
         // OCCT aEFMap (L300) is IndexedDataMap with TopTools_ShapeMapHasher —
         // key identity TShape + Location.
         let mut a_ef_map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
-        for face in &self.my_shapes {
-            if !self.my_shapes_to_avoid.contains(&(face.ptr_id(), face.location, face.orientation)) { continue; }
-            for e in face_edges(face) {
-                a_ef_map.entry((e.ptr_id(), e.location)).or_default().push(face.clone());
+        // OCCT L368-373: iterate myShapesToAvoid (L368: aNbSh =
+        // myShapesToAvoid.Extent(); L371: aFF = myShapesToAvoid(i)).
+        for (_, a_ff) in &self.my_shapes_to_avoid {
+            for e in face_edges(a_ff) {
+                a_ef_map.entry((e.ptr_id(), e.location)).or_default().push(a_ff.clone());
             }
         }
         // OCCT L351-391: grow a shell per avoided face via shared edges.
         // OCCT AddedFacesMap (L296) — NCollection_Map<TopoDS_Shape>, default
-        // hasher (TShape + Location + Orientation); faces of myShapes carry
-        // consistent orientations, so (ptr_id, location) matches membership.
-        let mut a_added: HashSet<(u64, u32)> = HashSet::new();
-        for a_ff in &self.my_shapes {
-            if !self.my_shapes_to_avoid.contains(&(a_ff.ptr_id(), a_ff.location, a_ff.orientation)) { continue; }
-            if !a_added.insert((a_ff.ptr_id(), a_ff.location)) { continue; }
+        // hasher (TShape + Location + Orientation).
+        let mut a_added: HashSet<(u64, u32, Orientation)> = HashSet::new();
+        // OCCT L375-416: iterate myShapesToAvoid (L375-381: aNbSh =
+        // myShapesToAvoid.Extent(); aFF = myShapesToAvoid(i)).
+        for (_, a_ff) in &self.my_shapes_to_avoid {
+            if !a_added.insert((a_ff.ptr_id(), a_ff.location, a_ff.orientation)) { continue; }
             let mut a_shell: Vec<Shape> = vec![a_ff.clone()];
             let mut i = 0;
             while i < a_shell.len() {
@@ -229,7 +240,7 @@ impl<'a> BuilderSolid<'a> {
                 for e in face_edges(a_f) {
                     if let Some(a_lf) = a_ef_map.get(&(e.ptr_id(), e.location)) {
                         for a_fl in a_lf {
-                            if a_added.insert((a_fl.ptr_id(), a_fl.location)) {
+                            if a_added.insert((a_fl.ptr_id(), a_fl.location, a_fl.orientation)) {
                                 a_shell.push(a_fl.clone());
                             }
                         }
@@ -396,18 +407,19 @@ impl<'a> BuilderSolid<'a> {
         });
         let shell = Shape::new(Arc::new(shell_tshape), 0, Orientation::Forward);
         let mut clsf = SolidClassifier::from_shape(&shell);
-        clsf.perform_infinite_point(1e-7);
+        clsf.perform_infinite_point(f64::MIN_POSITIVE); // OCCT ::RealSmall() = DBL_MIN
         clsf.state() == 3 // TopAbs_IN
     }
 
     /// OCCT IsInside (BuilderSolid.cxx L835-860) — classify the first face of
     /// the shell relative to the solid via BOPTools_AlgoTools::ComputeState.
-    /// OCCT L844-850: when the shell has no faces, PerformInfinitePoint is
-    /// used instead; rcad's hole shells always carry faces (they come from
-    /// myLoops), so the empty-shell branch maps to false here.
     fn is_inside(faces: &[Shape], solid: &Shape, ds: &DS) -> bool {
         let Some(a_f) = faces.first() else {
-            return false;
+            // OCCT L869-874: no faces in the shell — PerformInfinitePoint on
+            // the solid; State() == IN means the solid is a hole in space.
+            let mut clsf = SolidClassifier::from_shape(solid);
+            clsf.perform_infinite_point(f64::MIN_POSITIVE); // OCCT ::RealSmall()
+            return clsf.state() == 3; // TopAbs_IN
         };
         Self::compute_state_on_solid(a_f, solid, ds) == 3 // TopAbs_IN
     }
@@ -547,7 +559,7 @@ impl<'a> BuilderSolid<'a> {
         // reproduces it (a HashMap would iterate in random order).
         let mut a_mslf: IndexMap<usize, Vec<Shape>> = IndexMap::new();
         for (si, solid) in self.my_solids.iter().enumerate() {
-            if let Some(lf) = a_mslf_map.get(&solid.ptr_id()) {
+            if let Some(lf) = a_mslf_map.get(&(solid.ptr_id(), solid.location)) {
                 a_mslf.insert(si, lf.clone());
             }
         }

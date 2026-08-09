@@ -3538,7 +3538,7 @@ impl<'a> Builder<'a> {
         }
         // OCCT L154-195: get all solids, build draft solids.
         let mut a_lsolids: Vec<Shape> = Vec::new();
-        let mut a_solids_if: HashMap<u64, Vec<Shape>> = HashMap::new();
+        let mut a_solids_if: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
         let mut a_draft_solid: HashMap<(u64, u32), Shape> = HashMap::new();
         let mut a_source_solids: Vec<Shape> = Vec::new();
         for i in 0..a_nb_s {
@@ -3569,7 +3569,7 @@ impl<'a> Builder<'a> {
             let mut a_lif: Vec<Shape> = Vec::new();
             let a_sd = self.build_draft_solid(&a_solid, &mut a_lif);
             a_lsolids.push(a_sd.clone());
-            a_solids_if.insert(a_sd.ptr_id(), a_lif);
+            a_solids_if.insert((a_sd.ptr_id(), a_sd.location), a_lif);
             a_draft_solid.insert((a_solid.ptr_id(), a_solid.location), a_sd.clone());
             // OCCT L193: aShapeBoxMap.Bind(aSD, aBoxS) — the SOLID's box bound
             // under the DRAFT solid's key (used by ClassifyFaces box culling).
@@ -3585,8 +3585,14 @@ impl<'a> Builder<'a> {
                 Some(sd) => sd.clone(),
                 None => continue,
             };
-            let a_l_in_faces = an_in_parts.get(&a_sd.ptr_id()).cloned().unwrap_or_default();
-            let a_l_internal = a_solids_if.get(&a_sd.ptr_id()).cloned().unwrap_or_default();
+            let a_l_in_faces = an_in_parts
+                .get(&(a_sd.ptr_id(), a_sd.location))
+                .cloned()
+                .unwrap_or_default();
+            let a_l_internal = a_solids_if
+                .get(&(a_sd.ptr_id(), a_sd.location))
+                .cloned()
+                .unwrap_or_default();
             let a_nb_in = a_l_in_faces.len();
             if a_nb_in == 0 {
                 // OCCT L227-238: check if the shells of the solid have an image.
@@ -3736,10 +3742,10 @@ impl<'a> Builder<'a> {
         ds: &DS,
         faces: &[Shape],
         solids: &[Shape],
-        a_solids_if: &HashMap<u64, Vec<Shape>>,
+        a_solids_if: &HashMap<(u64, u32), Vec<Shape>>,
         a_shape_box_map: &HashMap<(u64, u32), (DVec3, DVec3, f64)>,
-    ) -> HashMap<u64, Vec<Shape>> {
-        let mut in_parts: HashMap<u64, Vec<Shape>> = HashMap::new();
+    ) -> HashMap<(u64, u32), Vec<Shape>> {
+        let mut in_parts: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
         for a_sd in solids {
             // aMSF = own faces of the draft solid + its internal faces.
             // aMSE = edges of the draft solid (OCCT L1366-1368).
@@ -3757,7 +3763,7 @@ impl<'a> Builder<'a> {
             // are added to aMSF (L1374-1378) — a solid made of INTERNAL faces
             // only is treated as empty by the classification below.
             let b_is_empty = a_msf.is_empty();
-            if let Some(lif) = a_solids_if.get(&a_sd.ptr_id()) {
+            if let Some(lif) = a_solids_if.get(&(a_sd.ptr_id(), a_sd.location)) {
                 for f in lif {
                     a_msf.insert((f.ptr_id(), f.location));
                 }
@@ -3809,7 +3815,10 @@ impl<'a> Builder<'a> {
             // OCCT L1405-1417: the solid has no faces -> all selected faces are IN.
             if b_is_empty {
                 for &i in &a_ivec {
-                    in_parts.entry(a_sd.ptr_id()).or_default().push(faces[i].clone());
+                    in_parts
+                        .entry((a_sd.ptr_id(), a_sd.location))
+                        .or_default()
+                        .push(faces[i].clone());
                 }
                 continue;
             }
@@ -3896,7 +3905,7 @@ impl<'a> Builder<'a> {
                     // OCCT L1510-1517: the whole connexity block is IN. Each
                     // face appears in exactly one block (aMFDone fence), so no
                     // duplicate check is needed — OCCT just Appends.
-                    let entry = in_parts.entry(a_sd.ptr_id()).or_default();
+                    let entry = in_parts.entry((a_sd.ptr_id(), a_sd.location)).or_default();
                     for &bfi in &a_lcb {
                         entry.push(faces[bfi].clone());
                     }
@@ -3915,7 +3924,7 @@ impl<'a> Builder<'a> {
         // entry count (INTERNAL faces expanded to FORWARD+REVERSED, L139-148)
         // first, then the deduplicated, orientation-insensitive set of faces —
         // key is (count, sorted unique face ids).
-        let mut a_mst: HashMap<(usize, Vec<u64>), Shape> = HashMap::new();
+        let mut a_mst: HashMap<(usize, Vec<(u64, u32)>), Shape> = HashMap::new();
         // OCCT L432-461: find same-domain solids for non-interfered solids.
         // OCCT aMFence (L428) is Map<TopoDS_Shape, TopTools_ShapeMapHasher>.
         let a_nb_s = self.ds.nb_source_shapes();
@@ -4786,8 +4795,8 @@ impl<'a> Builder<'a> {
         let mut a_m_args_im_fence: HashSet<u64> = HashSet::new();
         let mut a_m_tools_im: Vec<Shape> = Vec::new();
         let mut a_m_tools_im_fence: HashSet<u64> = HashSet::new();
-        let mut a_m_set_args: HashMap<(usize, Vec<u64>), Shape> = HashMap::new();
-        let mut a_m_set_tools: HashMap<(usize, Vec<u64>), Shape> = HashMap::new();
+        let mut a_m_set_args: HashMap<(usize, Vec<(u64, u32)>), Shape> = HashMap::new();
+        let mut a_m_set_tools: HashMap<(usize, Vec<(u64, u32)>), Shape> = HashMap::new();
         let mut b_check_edges = false;
         for i in 0..2 {
             let a_ms: &Vec<Shape> = if i == 0 { &a_m_args } else { &a_m_tools };
@@ -4991,7 +5000,7 @@ impl<'a> Builder<'a> {
         }
         // OCCT L1191-1220: process untouched solids.
         let mut a_dmsts: Vec<Shape> = Vec::new();
-        let mut a_dmsts_fence: HashSet<(usize, Vec<u64>)> = HashSet::new();
+        let mut a_dmsts_fence: HashSet<(usize, Vec<(u64, u32)>)> = HashSet::new();
         for a_sx in &a_mu_sols {
             let mut in_mfs = false;
             for a_f in self.map_shapes_of_type(a_sx, topods::ShapeType::Face) {
@@ -5134,20 +5143,19 @@ impl<'a> Builder<'a> {
     /// every INTERNAL face is expanded into FORWARD + REVERSED entries
     /// (L139-148), so the entry count (myNbShapes) differs between sets whose
     /// faces differ only by an INTERNAL orientation; IsEqual (L81-99) compares
-    /// the count first, then the orientation-insensitive set of TShapes.
-    /// The (count, sorted unique ids) pair reproduces both: the count is the
-    /// expanded entry count, the sorted ids are the deduplicated set — two
-    /// sets with the same faces but different INTERNAL expansion points (e.g.
-    /// {A_INTERNAL, B} vs {A, B_INTERNAL}) compare equal, as in OCCT.
-    /// OCCT BOPTools_Set of the solid's faces (BOPTools_Set::Add(theS, FACE)
-    /// uses TopTools_ShapeMapHasher — key identity TShape + Location). The
-    /// total count expands INTERNAL faces to two entries (L139-148).
-    fn shape_face_set(&self, s: &Shape) -> (usize, Vec<u64>) {
+    /// the count first, then the orientation-insensitive set of shapes keyed
+    /// by TopTools_ShapeMapHasher (TShape + Location).
+    /// The (count, sorted unique (TShape, Location) ids) pair reproduces both:
+    /// the count is the expanded entry count, the sorted ids are the
+    /// deduplicated set — two sets with the same faces but different INTERNAL
+    /// expansion points (e.g. {A_INTERNAL, B} vs {A, B_INTERNAL}) compare
+    /// equal, as in OCCT.
+    fn shape_face_set(&self, s: &Shape) -> (usize, Vec<(u64, u32)>) {
         let mut count: usize = 0;
-        let mut ids: Vec<u64> = Vec::new();
+        let mut ids: Vec<(u64, u32)> = Vec::new();
         for f in self.map_shapes_of_type(s, topods::ShapeType::Face) {
             count += 1;
-            ids.push(f.ptr_id());
+            ids.push((f.ptr_id(), f.location));
             if f.orientation == topods::Orientation::Internal {
                 count += 1;
             }
