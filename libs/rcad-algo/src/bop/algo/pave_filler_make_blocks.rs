@@ -439,18 +439,24 @@ impl PaveFiller {
                     // make_pcurves part 2 (projection) supplies it later.
                     let a_c2d1 = self.ds.intersection_curves[cid].pcurve1.clone();
                     if let Some(a_c2d) = a_c2d1 {
+                        let fk1 = self.ds.face_key(n_f1);
                         self.ds.mutate_shape_data(n_e, |ts| {
                             if let topods::TShape::Edge(ed) = ts {
-                                ed.pcurves.insert(n_f1, (a_c2d, a_t1, a_t2));
+                                if let Some(k) = fk1 {
+                                    ed.pcurves.insert(k, (a_c2d, a_t1, a_t2));
+                                }
                             }
                         });
                         self.ds.remap_shape_idx(n_e);
                     }
                     let a_c2d2 = self.ds.intersection_curves[cid].pcurve2.clone();
                     if let Some(a_c2d) = a_c2d2 {
+                        let fk2 = self.ds.face_key(n_f2);
                         self.ds.mutate_shape_data(n_e, |ts| {
                             if let topods::TShape::Edge(ed) = ts {
-                                ed.pcurves.insert(n_f2, (a_c2d, a_t1, a_t2));
+                                if let Some(k) = fk2 {
+                                    ed.pcurves.insert(k, (a_c2d, a_t1, a_t2));
+                                }
                             }
                         });
                         self.ds.remap_shape_idx(n_e);

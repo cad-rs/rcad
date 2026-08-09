@@ -1144,10 +1144,11 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
     // normalizes to FORWARD — so F.Orientation() is never REVERSED here and
     // the effective reversed flag is exactly the edge's own orientation
     // (BOPAlgo_BuilderFace::PerformLoops L256: aWES.SetFace(myFace)).
-    let (brep_face, face_reversed) = if face_index < ds.nb_shapes() {
-        (ds.shape(face_index).index, false)
-    } else {
-        (face_index, false)
+    // OCCT matches the pcurve map by the face's TShape identity
+    // (BRep_Tool::CurveOnSurface) — face_key is the (ptr_id, location) key.
+    let (face_key, face_reversed) = match ds.face_key(face_index) {
+        Some(k) => (k, false),
+        None => return None,
     };
     match &*e.data {
         TShape::Edge(ed) => {
@@ -1158,7 +1159,7 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
             if let Some(r) = ed.representations.iter().find_map(|r| match r {
                 rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
                     face, pcurve1, pcurve2, range,
-                } if *face == brep_face => Some((pcurve1.clone(), pcurve2.clone(), *range)),
+                } if *face == face_key => Some((pcurve1.clone(), pcurve2.clone(), *range)),
                 _ => None,
             }) {
                 let (pc1, pc2, range) = r;
@@ -1166,10 +1167,7 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
                 let pc = if e_reversed { pc2 } else { pc1 };
                 return Some((pc, range[0], range[1]));
             }
-            if let Some(v) = ed.pcurves.get(&face_index) {
-                return Some(v.clone());
-            }
-            if let Some(v) = ed.pcurves.get(&brep_face) {
+            if let Some(v) = ed.pcurves.get(&face_key) {
                 return Some(v.clone());
             }
             // make_pcurves inserts pcurves through Arc::make_mut, which clones
@@ -1179,10 +1177,7 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
             // back to the DS canonical shape.
             if let Some(idx) = ds.map_shape_index.get(&(e.ptr_id(), e.location)) {
                 if let Some(ed2) = ds.shape_info(*idx).shape.as_edge() {
-                    if let Some(v) = ed2.pcurves.get(&face_index) {
-                        return Some(v.clone());
-                    }
-                    if let Some(v) = ed2.pcurves.get(&brep_face) {
+                    if let Some(v) = ed2.pcurves.get(&face_key) {
                         return Some(v.clone());
                     }
                 }
@@ -1203,27 +1198,17 @@ fn has_curve_on_surface(e: &Shape, face_index: usize, ds: &DS) -> bool {
             if (ed.range[1] - ed.range[0]) < rcad_kernel::core::precision::PCONFUSION {
                 return false;
             }
-            // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face identity.
-            // rcad keys the edge pcurve map by the DS face index (make_pcurves uses
-            // FaceInfo::Index()), so the DS index — not the Shape's BRep `index` —
-            // is the matching key. Same DS-canonical fallback as edge_pcurve.
-            let brep_face = if face_index < ds.nb_shapes() {
-                ds.shape(face_index).index
-            } else {
-                face_index
-            };
-            if ed.pcurves.contains_key(&face_index) {
-                return true;
-            }
-            if ed.pcurves.contains_key(&brep_face) {
+            // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face's
+            // TShape identity (ptr_id, location). rcad keys the edge pcurve
+            // map by the same identity, so the DS index lookup resolves via
+            // face_key. Same DS-canonical fallback as edge_pcurve.
+            let Some(face_key) = ds.face_key(face_index) else { return false };
+            if ed.pcurves.contains_key(&face_key) {
                 return true;
             }
             if let Some(idx) = ds.map_shape_index.get(&(e.ptr_id(), e.location)) {
                 if let Some(ed2) = ds.shape_info(*idx).shape.as_edge() {
-                    if ed2.pcurves.contains_key(&face_index) {
-                        return true;
-                    }
-                    if ed2.pcurves.contains_key(&brep_face) {
+                    if ed2.pcurves.contains_key(&face_key) {
                         return true;
                     }
                 }
@@ -1250,7 +1235,7 @@ fn is_degenerated(e: &Shape) -> bool {
 /// face is BuilderFace::myFace, normalized to FORWARD by SetFace; its surface
 /// is the same closed surface the seam representation was created on).
 fn is_closed_on_face(e: &Shape, face: &Shape) -> bool {
-    let f_index = face.index;
+    let f_key = (face.ptr_id(), face.location);
     let ed = match e.as_edge() {
         Some(ed) => ed,
         None => return false,
@@ -1275,7 +1260,7 @@ fn is_closed_on_face(e: &Shape, face: &Shape) -> bool {
         matches!(
             r,
             rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. }
-                if *face == f_index
+                if *face == f_key
         )
     }) {
         return true;

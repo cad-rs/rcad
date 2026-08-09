@@ -205,13 +205,15 @@ pub fn get_pcurve(brep: &rcad_kernel::BRep, edge_idx: usize, face_idx: usize) ->
 
     match &*brep.tshapes[edge_idx] {
         rcad_kernel::topods::TShape::Edge(ed) => {
-            // Check pcurves map keyed by face tshape index
-            if let Some((pc, _r1, _r2)) = ed.pcurves.get(&face_ts_idx) {
+            // Check pcurves map keyed by the face's TShape identity
+            // (ptr_id, location) — OCCT BRep_Tool::CurveOnSurface(aE, aF).
+            let fkey = (std::sync::Arc::as_ptr(&brep.tshapes[face_ts_idx]) as u64, 0u32);
+            if let Some((pc, _r1, _r2)) = ed.pcurves.get(&fkey) {
                 return Ok((pc, face_ts_idx));
             }
             // Fallback: grab first pcurve if any
-            if let Some((si, (pc, _, _))) = ed.pcurves.iter().next() {
-                return Ok((pc, *si));
+            if let Some((_, (pc, _, _))) = ed.pcurves.iter().next() {
+                return Ok((pc, face_ts_idx));
             }
             Err(BRepToolsError::MissingGeometry {
                 kind: "pcurve",

@@ -91,7 +91,8 @@ pub fn compute_tolerance(ds: &DS, edge_idx: usize, face_idx: usize) -> Option<(f
     let range = ds.edge_range(edge_idx);
     let surf = ds.face_surface(face_idx)?;
     let shape = &ds.shapes[edge_idx].shape;
-    let pcurve_info = shape.as_edge()?.pcurves.get(&face_idx)?.clone();
+    let fkey = ds.face_key(face_idx)?;
+    let pcurve_info = shape.as_edge()?.pcurves.get(&fkey)?.clone();
     let (pcurve, _f, _l) = pcurve_info;
     let n = 23usize;
     let dt = (range[1] - range[0]) / n as f64;
@@ -739,15 +740,18 @@ fn hatch_line_intervals(f: usize, a_ux: f64, ds: &DS) -> Vec<(f64, f64)> {
 /// surface-identity fallback (same semantics as builder.rs edge_pcurve_on_face).
 fn edge_pcurve_of_face<'a>(a_e: &'a Shape, f: usize, ds: &DS) -> Option<&'a rcad_kernel::geom::Curve2d> {
     let ed = a_e.as_edge()?;
+    let fkey = ds.face_key(f)?;
     let face = ds.shape(f);
     let surf = face.as_face().and_then(|fd| fd.surface.as_ref())?;
     ed.pcurves
-        .get(&f)
+        .get(&fkey)
         .or_else(|| {
             ed.pcurves.iter().find_map(|(k, v)| {
-                if let Some(fs) = ds.face_surface(*k) {
-                    if surface_same(surf, &fs) {
-                        return Some(v);
+                if let Some(&fi) = ds.map_shape_index.get(k) {
+                    if let Some(fs) = ds.face_surface(fi) {
+                        if surface_same(surf, &fs) {
+                            return Some(v);
+                        }
                     }
                 }
                 None

@@ -122,31 +122,26 @@ impl MakeCylinder {
         // revolution (!HasSides) so it carries two pcurves — u=2*PI and u=0 —
         // stored as a CurveOnClosedSurface representation (L434-438). The top
         // and bottom circles are V-isolines v=VMax / v=VMin (L401-414).
-        let lat_i = f_lat.index;
+        let lat_key = (f_lat.ptr_id(), f_lat.location);
         // EBOTTOM: gp_Lin2d((0, myVMin), X)
         t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
-            lat_i,
+            lat_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
         );
         // ETOP: gp_Lin2d((0, myVMax), X)
         t.edge_mut_inplace(e_top.clone()).pcurves.insert(
-            lat_i,
+            lat_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, h), DVec2::X)), 0.0, std::f64::consts::TAU),
         );
         // ESTART seam closed edge: pcurve1 at u=myAngle, pcurve2 at u=0.
         t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
-            lat_i,
+            lat_key,
             (Curve2d::Line(Line2d::new(DVec2::new(std::f64::consts::TAU, 0.0), DVec2::Y)), 0.0, h),
-        );
-        let nb_faces = t.nb_faces();
-        t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
-            lat_i + nb_faces,
-            (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::Y)), 0.0, h),
         );
         t.edge_mut_inplace(e_seam.clone())
             .representations
             .push(CurveRepresentation::CurveOnClosedSurface {
-                face: lat_i,
+                face: lat_key,
                 pcurve1: Curve2d::Line(Line2d::new(DVec2::new(std::f64::consts::TAU, 0.0), DVec2::Y)),
                 pcurve2: Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::Y)),
                 range: [0.0, h],
@@ -154,11 +149,11 @@ impl MakeCylinder {
         // OCCT BRepPrim_OneAxis::TopFace/BottomFace (L465-468/L506-509): cap
         // circle pcurves — gp_Circ2d((0,0), MeridianValue(V).X()).
         t.edge_mut_inplace(e_top.clone()).pcurves.insert(
-            f_top.index,
+            (f_top.ptr_id(), f_top.location),
             (Curve2d::Circle(Circle2d::new(DVec2::ZERO, r)), 0.0, std::f64::consts::TAU),
         );
         t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
-            f_bot.index,
+            (f_bot.ptr_id(), f_bot.location),
             (Curve2d::Circle(Circle2d::new(DVec2::ZERO, r)), 0.0, std::f64::consts::TAU),
         );
 

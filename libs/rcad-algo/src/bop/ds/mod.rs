@@ -694,10 +694,89 @@ impl DS {
             return;
         }
         let mut cache: HashMap<u64, Arc<TShape>> = HashMap::new();
-        let cloned: Vec<Shape> = self.arguments
+        let mut cloned: Vec<Shape> = self.arguments
             .iter()
             .map(|s| clone_shape_graph(s, &mut cache))
             .collect();
+        // The deep copy rebuilds every Arc, so the face identity (ptr_id)
+        // stored in the edge pcurves/representations keys (OCCT
+        // TopoDS_Shape::IsSame semantics) is stale. Remap each key from the
+        // original TShape ptr_id to the cloned Arc's ptr_id; the location is
+        // preserved (rcad keeps input face locations at 0).
+        let mut remap: HashMap<u64, u64> = HashMap::new();
+        for (&old_ptr, new_arc) in &cache {
+            remap.insert(old_ptr, std::sync::Arc::as_ptr(new_arc) as u64);
+        }
+        let mut walk = |s: &mut Shape| {
+            let mut stack: Vec<&mut Shape> = vec![s];
+            while let Some(sh) = stack.pop() {
+                // The cloned arguments share TShapes through multiple Shape
+                // references (cache dedup), so Arc::get_mut would fail. The
+                // remap must update every shared reference consistently — the
+                // OCCT TShape is a shared handle, so the in-place mutation
+                // (single-threaded pipeline) is safe and matches that model.
+                let ptr = std::sync::Arc::as_ptr(&sh.data) as *mut TShape;
+                // SAFETY: single-threaded; no other &TShape for this Arc is
+                // alive inside the loop (sh owns the only &mut Shape path).
+                let ts = unsafe { &mut *ptr };
+                match ts {
+                    TShape::Edge(ed) => {
+                        ed.pcurves = ed
+                            .pcurves
+                            .iter()
+                            .map(|(&(p, l), v)| {
+                                let np = remap.get(&p).copied().unwrap_or(p);
+                                ((np, l), v.clone())
+                            })
+                            .collect();
+                        ed.representations = ed
+                            .representations
+                            .iter()
+                            .map(|r| match r {
+                                CurveRepresentation::CurveOnSurface {
+                                    face: (p, l),
+                                    pcurve,
+                                    range,
+                                } => CurveRepresentation::CurveOnSurface {
+                                    face: (remap.get(p).copied().unwrap_or(*p), *l),
+                                    pcurve: pcurve.clone(),
+                                    range: *range,
+                                },
+                                CurveRepresentation::CurveOnClosedSurface {
+                                    face: (p, l),
+                                    pcurve1,
+                                    pcurve2,
+                                    range,
+                                } => CurveRepresentation::CurveOnClosedSurface {
+                                    face: (remap.get(p).copied().unwrap_or(*p), *l),
+                                    pcurve1: pcurve1.clone(),
+                                    pcurve2: pcurve2.clone(),
+                                    range: *range,
+                                },
+                                other => other.clone(),
+                            })
+                            .collect();
+                    }
+                    TShape::Solid(sd) => {
+                        stack.extend(sd.shells.iter_mut());
+                        stack.extend(sd.internal_vertices.iter_mut());
+                        stack.extend(sd.internal_edges.iter_mut());
+                    }
+                    TShape::CompSolid(cd) => stack.extend(cd.iter_mut()),
+                    TShape::Compound(cd) => stack.extend(cd.iter_mut()),
+                    TShape::Shell(sd) => stack.extend(sd.faces.iter_mut()),
+                    TShape::Face(fd) => {
+                        stack.push(&mut fd.outer_wire);
+                        stack.extend(fd.inner_wires.iter_mut());
+                    }
+                    TShape::Wire(wd) => stack.extend(wd.edges.iter_mut()),
+                    _ => {}
+                }
+            }
+        };
+        for s in &mut cloned {
+            walk(s);
+        }
         self.arguments = cloned;
     }
 
@@ -854,7 +933,7 @@ impl DS {
     pub fn update_edge_closed_surface(
         &self,
         edge_idx: usize,
-        face_index: usize,
+        face_key: (u64, u32),
         pcurve1: Curve2d,
         pcurve2: Curve2d,
         a_first: f64,
@@ -864,18 +943,16 @@ impl DS {
         if edge_idx >= self.shapes.len() {
             return;
         }
-        let n_faces = self.face_count();
         let data = &self.shapes[edge_idx].shape.data;
         let ptr = Arc::as_ptr(data) as *mut TShape;
         // SAFETY: the pipeline is single-threaded and no other &TShape for this
         // Arc is alive inside the closure (the caller passes owned pcurves).
         unsafe {
             if let TShape::Edge(ed) = &mut *ptr {
-                ed.pcurves.insert(face_index, (pcurve1.clone(), a_first, a_last));
-                ed.pcurves.insert(face_index + n_faces, (pcurve2.clone(), a_first, a_last));
+                ed.pcurves.insert(face_key, (pcurve1.clone(), a_first, a_last));
                 ed.representations
                     .push(CurveRepresentation::CurveOnClosedSurface {
-                        face: face_index,
+                        face: face_key,
                         pcurve1,
                         pcurve2,
                         range: [a_first, a_last],
@@ -886,13 +963,14 @@ impl DS {
     }
 
     /// OCCT BRep_Builder::UpdateEdge(aE, aC2d, aF, theTol) — attach a single
-    /// pcurve of an edge on a face (BRep_CurveOnSurface). `face_index` is the
-    /// face's BRep index, matching the key the input-shape pcurves use. Works
-    /// with `&self` (single-threaded in-place TShape edit).
+    /// pcurve of an edge on a face (BRep_CurveOnSurface). `face_key` is the
+    /// face's TShape identity (ptr_id, location), matching the key the
+    /// input-shape pcurves use. Works with `&self` (single-threaded in-place
+    /// TShape edit).
     pub fn update_edge_pcurve_shared(
         &self,
         edge_idx: usize,
-        face_index: usize,
+        face_key: (u64, u32),
         pcurve: Curve2d,
         a_first: f64,
         a_last: f64,
@@ -907,10 +985,10 @@ impl DS {
         // &TShape borrow is alive inside the closure.
         unsafe {
             if let TShape::Edge(ed) = &mut *ptr {
-                ed.pcurves.insert(face_index, (pcurve.clone(), a_first, a_last));
+                ed.pcurves.insert(face_key, (pcurve.clone(), a_first, a_last));
                 ed.representations
                     .push(CurveRepresentation::CurveOnSurface {
-                        face: face_index,
+                        face: face_key,
                         pcurve,
                         range: [a_first, a_last],
                     });
@@ -2027,6 +2105,14 @@ impl DS {
     }
 
     /// Face surface by shape index.
+    /// Face TShape identity (ptr_id, location) for a DS face index — the
+    /// key used by the edge pcurve map (OCCT TopoDS_Shape::IsSame semantics).
+    /// Returns None for out-of-range or synthetic faces (no TShape identity).
+    pub fn face_key(&self, i: usize) -> Option<(u64, u32)> {
+        let sh = self.shapes.get(i)?;
+        Some((sh.shape.ptr_id(), sh.shape.location))
+    }
+
     pub fn face_surface(&self, i: usize) -> Option<rcad_kernel::geom::Surface3> {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Face { return None; }

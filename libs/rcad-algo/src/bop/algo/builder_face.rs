@@ -671,16 +671,18 @@ fn make_internal_wires(edges: &[Shape]) -> Vec<Vec<Shape>> {
 // ---- hole-classification helpers (OCCT BOPAlgo_BuilderFace.cxx L468-613) ----
 
 /// OCCT BRep_Tool::CurveOnSurface(aE, aF) — the edge's pcurve on the face,
-/// keyed by the DS face index (with the DS-canonical fallback).
+/// keyed by the face's TShape identity (ptr_id, location, with the
+/// DS-canonical fallback).
 fn edge_pcurve_on_face(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f64)> {
+    let fkey = ds.face_key(face_index)?;
     match &*e.data {
         TShape::Edge(ed) => {
-            if let Some(v) = ed.pcurves.get(&face_index) {
+            if let Some(v) = ed.pcurves.get(&fkey) {
                 return Some(v.clone());
             }
             if let Some(idx) = ds.map_shape_index.get(&(e.ptr_id(), e.location)) {
                 if let Some(ed2) = ds.shape_info(*idx).shape.as_edge() {
-                    if let Some(v) = ed2.pcurves.get(&face_index) {
+                    if let Some(v) = ed2.pcurves.get(&fkey) {
                         return Some(v.clone());
                     }
                 }

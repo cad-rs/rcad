@@ -766,7 +766,7 @@ fn face_edges(face: &Shape) -> Vec<Shape> {    let mut edges = Vec::new();
 /// the BuilderSolid split-image faces whose index does not preserve the
 /// original face's (BOPAlgo_BuilderSolid.cxx L196).
 pub(crate) fn edge_closed_on_face(a_e: &Shape, a_f: &Shape) -> bool {
-    let f_index = a_f.index;
+    let f_key = (a_f.ptr_id(), a_f.location);
     let ed = match a_e.as_edge() {
         Some(ed) => ed,
         None => return false,
@@ -776,7 +776,7 @@ pub(crate) fn edge_closed_on_face(a_e: &Shape, a_f: &Shape) -> bool {
     if ed.representations.iter().any(|r| {
         matches!(
             r,
-            topods::CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == f_index
+            topods::CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == f_key
         )
     }) {
         return true;

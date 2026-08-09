@@ -200,8 +200,8 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
         //
         if b_is_processed1 && !b_is_processed2 {
             if an_or_e1 == an_or_e2 {
-                if !edge_closed_on_face(&a_e, faces[f1_idx].index)
-                    && !edge_closed_on_face(&a_e, faces[f2_idx].index)
+                if !edge_closed_on_face(&a_e, &faces[f1_idx])
+                    && !edge_closed_on_face(&a_e, &faces[f2_idx])
                 {
                     faces[f2_idx].orientation = flip_orientation(faces[f2_idx].orientation);
                 }
@@ -210,8 +210,8 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
             a_shell_new.push(f2_idx);
         } else if !b_is_processed1 && b_is_processed2 {
             if an_or_e1 == an_or_e2 {
-                if !edge_closed_on_face(&a_e, faces[f1_idx].index)
-                    && !edge_closed_on_face(&a_e, faces[f2_idx].index)
+                if !edge_closed_on_face(&a_e, &faces[f1_idx])
+                    && !edge_closed_on_face(&a_e, &faces[f2_idx])
                 {
                     faces[f1_idx].orientation = flip_orientation(faces[f1_idx].orientation);
                 }
@@ -248,14 +248,15 @@ fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
 /// surface (seam edge). BOPAlgo_Builder_2.cxx L397. `f_index` is the face's
 /// BRep-slot index (`Shape::index`), matching the `face` field stored in the
 /// edge's CurveOnClosedSurface representation.
-fn edge_closed_on_face(a_e: &Shape, f_index: usize) -> bool {
+fn edge_closed_on_face(a_e: &Shape, a_f: &Shape) -> bool {
+    let f_key = (a_f.ptr_id(), a_f.location);
     a_e.as_edge()
         .map(|ed| {
             ed.representations.iter().any(|r| {
                 matches!(
                     r,
                     topods::CurveRepresentation::CurveOnClosedSurface { face, .. }
-                        if *face == f_index
+                        if *face == f_key
                 )
             })
         })

@@ -384,12 +384,14 @@ fn edge_pcurve_on_face<'a>(
     let ed = edge_data(edge)?;
     let surf = face.as_face().and_then(|fd| fd.surface.as_ref())?;
     ed.pcurves
-        .get(&face.index)
+        .get(&(face.ptr_id(), face.location))
         .or_else(|| {
             ed.pcurves.iter().find_map(|(k, v)| {
-                if let Some(fs) = ds.face_surface(*k) {
-                    if surface_same(surf, &fs) {
-                        return Some(v);
+                if let Some(&fi) = ds.map_shape_index.get(k) {
+                    if let Some(fs) = ds.face_surface(fi) {
+                        if surface_same(surf, &fs) {
+                            return Some(v);
+                        }
                     }
                 }
                 None
@@ -2504,9 +2506,9 @@ impl<'a> Builder<'a> {
     /// split-face images whose index does not preserve the original face's
     /// (BOPAlgo_Builder_2.cxx L397).
     fn edge_closed_on_face(&self, a_e: &Shape, a_f: &Shape) -> bool {
-        let f_index = a_f.index;
+        let f_key = (a_f.ptr_id(), a_f.location);
         // OCCT L825-840: any CurveOnClosedSurface on the edge whose surface
-        // matches the face's surface — exact index match for original faces.
+        // matches the face's surface — exact identity match for original faces.
         let ed = match a_e.as_edge() {
             Some(ed) => ed,
             None => return false,
@@ -2514,7 +2516,7 @@ impl<'a> Builder<'a> {
         if ed.representations.iter().any(|r| {
             matches!(
                 r,
-                topods::CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == f_index
+                topods::CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == f_key
             )
         }) {
             return true;
@@ -2624,13 +2626,12 @@ impl<'a> Builder<'a> {
         // here) sees it. rcad's Arc::make_mut clones a shared TShape on write,
         // so the passed edge may miss pcurves that live on the DS canonical
         // shape; fall back to the DS shape (same as wire_splitter::edge_pcurve).
-        let face_brep = a_f.index;
+        let face_key = (a_f.ptr_id(), a_f.location);
         let fi = self.ds.index(a_f) as usize;
         let (c2d1, a, b) = {
             let direct = a_sp
                 .as_edge()
-                .and_then(|ed| ed.pcurves.get(&face_brep).cloned())
-                .or_else(|| a_sp.as_edge().and_then(|ed| ed.pcurves.get(&fi).cloned()));
+                .and_then(|ed| ed.pcurves.get(&face_key).cloned());
             if let Some(v) = direct {
                 v
             } else {
@@ -2640,13 +2641,10 @@ impl<'a> Builder<'a> {
                 let Some(ed2) = self.ds.shape_info(*idx).shape.as_edge() else {
                     return false;
                 };
-                if let Some(v) = ed2.pcurves.get(&face_brep) {
-                    v.clone()
-                } else if let Some(v) = ed2.pcurves.get(&fi) {
-                    v.clone()
-                } else {
+                let Some(v) = ed2.pcurves.get(&face_key) else {
                     return false;
-                }
+                };
+                v.clone()
             }
         };
         let a_t = intermediate_point(a, b);
@@ -2718,14 +2716,14 @@ impl<'a> Builder<'a> {
         }
         if !b_is_left {
             if a_sc_pr < 0.0 {
-                self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c2, a_c1, a, b, a_tol);
+                self.ds.update_edge_closed_surface(sp_idx, face_key, a_c2, a_c1, a, b, a_tol);
             } else {
-                self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c1, a_c2, a, b, a_tol);
+                self.ds.update_edge_closed_surface(sp_idx, face_key, a_c1, a_c2, a, b, a_tol);
             }
         } else if a_sc_pr < 0.0 {
-            self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c1, a_c2, a, b, a_tol);
+            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c1, a_c2, a, b, a_tol);
         } else {
-            self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c2, a_c1, a, b, a_tol);
+            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c2, a_c1, a, b, a_tol);
         }
         true
     }
@@ -2754,13 +2752,12 @@ impl<'a> Builder<'a> {
         // do_split_seam_on_face (Arc::make_mut clones on write).
         let mut a_e_split_f = a_e_split.clone();
         a_e_split_f.orientation = Orientation::Forward;
-        let face_brep = a_face.index;
+        let face_key = (a_face.ptr_id(), a_face.location);
         let fi = self.ds.index(a_face) as usize;
         let (a_c2d_split, a_ts1, a_ts2) = {
             let direct = a_e_split_f
                 .as_edge()
-                .and_then(|ed| ed.pcurves.get(&face_brep).cloned())
-                .or_else(|| a_e_split_f.as_edge().and_then(|ed| ed.pcurves.get(&fi).cloned()));
+                .and_then(|ed| ed.pcurves.get(&face_key).cloned());
             if let Some(v) = direct {
                 v
             } else {
@@ -2770,13 +2767,10 @@ impl<'a> Builder<'a> {
                 let Some(ed2) = self.ds.shape_info(*idx).shape.as_edge() else {
                     return false;
                 };
-                if let Some(v) = ed2.pcurves.get(&face_brep) {
-                    v.clone()
-                } else if let Some(v) = ed2.pcurves.get(&fi) {
-                    v.clone()
-                } else {
+                let Some(v) = ed2.pcurves.get(&face_key) else {
                     return false;
-                }
+                };
+                v.clone()
             }
         };
         //
@@ -2788,7 +2782,7 @@ impl<'a> Builder<'a> {
                 ed.representations.iter().find_map(|r| match r {
                     CurveRepresentation::CurveOnClosedSurface {
                         face, pcurve1, pcurve2, range,
-                    } if *face == face_brep => {
+                    } if *face == face_key => {
                         Some((pcurve1.clone(), pcurve2.clone(), range[0], range[1]))
                     }
                     _ => None,
@@ -2807,7 +2801,7 @@ impl<'a> Builder<'a> {
                 match ed2.representations.iter().find_map(|r| match r {
                     CurveRepresentation::CurveOnClosedSurface {
                         face, pcurve1, pcurve2, range,
-                    } if *face == face_brep => {
+                    } if *face == face_key => {
                         Some((pcurve1.clone(), pcurve2.clone(), range[0], range[1]))
                     }
                     _ => None,
@@ -2887,9 +2881,9 @@ impl<'a> Builder<'a> {
             return false;
         }
         if (a_dist1 < a_dist2) == (a_dot > 0.0) {
-            self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c1, a_c2, a_ts1, a_ts2, a_tol);
+            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c1, a_c2, a_ts1, a_ts2, a_tol);
         } else {
-            self.ds.update_edge_closed_surface(sp_idx, face_brep, a_c2, a_c1, a_ts1, a_ts2, a_tol);
+            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c2, a_c1, a_ts1, a_ts2, a_tol);
         }
         true
     }
@@ -2899,7 +2893,7 @@ impl<'a> Builder<'a> {
     /// on the plane face, project the edge's 3D curve onto the plane and store
     /// the pcurve (BRep_Tool::CurveOnSurface's plane projection branch).
     fn build_pcurve_for_edges_on_plane(&self, a_le: &[Shape], a_f: &Shape) {
-        let face_brep = a_f.index;
+        let face_key = (a_f.ptr_id(), a_f.location);
         let surf = match a_f.as_face().and_then(|fd| fd.surface.clone()) {
             Some(s) => s,
             None => return,
@@ -2908,7 +2902,7 @@ impl<'a> Builder<'a> {
         for a_e in a_le {
             let is_stored = a_e
                 .as_edge()
-                .map(|ed| ed.pcurves.contains_key(&face_brep))
+                .map(|ed| ed.pcurves.contains_key(&face_key))
                 .unwrap_or(true);
             if is_stored {
                 continue;
@@ -2926,7 +2920,7 @@ impl<'a> Builder<'a> {
             }
             let a_tol = a_e.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
             self.ds
-                .update_edge_pcurve_shared(e_idx, face_brep, pc, range[0], range[1], a_tol);
+                .update_edge_pcurve_shared(e_idx, face_key, pc, range[0], range[1], a_tol);
         }
     }
 
@@ -2937,7 +2931,9 @@ impl<'a> Builder<'a> {
         let mut is_u_iso = false;
         let mut is_v_iso = false;
         let pcurve = a_e.as_edge().and_then(|ed| {
-            ed.pcurves.get(&a_f.index).map(|(pc, f, l)| (pc.clone(), *f, *l))
+            ed.pcurves
+                .get(&(a_f.ptr_id(), a_f.location))
+                .map(|(pc, f, l)| (pc.clone(), *f, *l))
         });
         if let Some((pc, a_first, a_last)) = pcurve {
             // aPC->D1(0.5*(aFirst+aLast), aP, aT)

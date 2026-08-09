@@ -12632,9 +12632,9 @@ fn seam_curve_on_closed_surface_reaches_ds() {
     filler.perform(&a_ps);
     let ds = filler.ds();
 
-    // Find the lateral face in the DS and its preserved BRep index.
+    // Find the lateral face in the DS and its TShape identity (ptr_id, location).
     let mut lat_ds = None;
-    let mut lat_brep = usize::MAX;
+    let mut lat_key = (0u64, 0u32);
     for i in 0..ds.nb_shapes() {
         if ds.shape_info(i).shape_type != rcad_kernel::topods::ShapeType::Face {
             continue;
@@ -12642,7 +12642,7 @@ fn seam_curve_on_closed_surface_reaches_ds() {
         if let Some(surf) = ds.shape(i).as_face().and_then(|fd| fd.surface.clone()) {
             if matches!(surf, rcad_kernel::geom::Surface3::Cylinder(_)) {
                 lat_ds = Some(i);
-                lat_brep = ds.shape(i).index;
+                lat_key = (ds.shape(i).ptr_id(), ds.shape(i).location);
                 break;
             }
         }
@@ -12658,7 +12658,7 @@ fn seam_curve_on_closed_surface_reaches_ds() {
         if let TShape::Edge(ed) = &*ds.shape(i).data {
             if ed.representations.iter().any(|r| {
                 matches!(r, CurveRepresentation::CurveOnClosedSurface { face, .. }
-                    if *face == lat_brep)
+                    if *face == lat_key)
             }) {
                 found = true;
                 break;
@@ -12666,6 +12666,6 @@ fn seam_curve_on_closed_surface_reaches_ds() {
         }
     }
     assert!(found,
-        "seam CurveOnClosedSurface representation (face BRep index {}) must be reachable in the DS (lateral DS index {})",
-        lat_brep, lat_ds);
+        "seam CurveOnClosedSurface representation (face key {:?}) must be reachable in the DS (lateral DS index {})",
+        lat_key, lat_ds);
 }

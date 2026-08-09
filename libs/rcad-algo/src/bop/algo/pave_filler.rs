@@ -2739,9 +2739,12 @@ impl PaveFiller {
                     } else {
                         (pc, range[0], range[1])
                     };
+                    let fkey = self.ds.face_key(fi);
                     self.ds.mutate_shape_data(ei, |ts| {
                         if let topods::TShape::Edge(ed) = ts {
-                            ed.pcurves.insert(fi, (pc, f, l));
+                            if let Some(k) = fkey {
+                                ed.pcurves.insert(k, (pc, f, l));
+                            }
                         }
                     });
                     self.ds.remap_shape_idx(ei);
@@ -4636,18 +4639,19 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     fn build_pcurve_mpc(&mut self, n_e: usize, n_f: usize, surf: &Surface3, src: Option<usize>) {
         // OCCT L233-236: if the edge already has a pcurve on the face, do not
         // rebuild it (only the periodic adjustment, which a line pcurve at the
-        // seam does not need). Input-shape pcurves are keyed by the face's BRep
-        // index, so edge_has_pcurve consults both the DS index and the BRep index.
+        // seam does not need). Input-shape pcurves are keyed by the face's
+        // TShape identity (ptr_id, location), same as here.
         if self.edge_has_pcurve(n_e, n_f) {
             return;
         }
+        let Some(fkey) = self.ds.face_key(n_f) else { return };
         // OCCT L239-249: attach the pcurve from the paired edge.
         if let Some(src_e) = src {
             if let Some(pc) = Self::copy_pcurve(&self.ds, src_e, n_e, n_f) {
                 let range = self.ds.edge_range(n_e);
                 self.ds.mutate_shape_data(n_e, |ts| {
                     if let rcad_kernel::topods::TShape::Edge(ed) = ts {
-                        ed.pcurves.insert(n_f, (pc, range[0], range[1]));
+                        ed.pcurves.insert(fkey, (pc, range[0], range[1]));
                     }
                 });
                 self.ds.remap_shape_idx(n_e);
@@ -4660,7 +4664,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             if let Some(pc) = Self::pcurve_2d(curve, surf, range) {
                 self.ds.mutate_shape_data(n_e, |ts| {
                     if let rcad_kernel::topods::TShape::Edge(ed) = ts {
-                        ed.pcurves.insert(n_f, (pc, range[0], range[1]));
+                        ed.pcurves.insert(fkey, (pc, range[0], range[1]));
                     }
                 });
                 self.ds.remap_shape_idx(n_e);
@@ -4669,20 +4673,15 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPTools_AlgoTools2D::HasCurveOnSurface — the edge already has a
-    /// pcurve on the face. OCCT matches the face's surface; rcad keys the edge
-    /// pcurve map by the DS face index, but input-shape pcurves (make_cylinder
-    /// etc.) are keyed by the face's preserved BRep index — both are consulted.
+    /// pcurve on the face. OCCT matches the face's TShape identity
+    /// (BRep_Tool::CurveOnSurface); rcad keys the edge pcurve map by the same
+    /// identity (ptr_id, location), so input-shape pcurves and DS-built ones
+    /// share the map.
     fn edge_has_pcurve(&self, n_e: usize, n_f: usize) -> bool {
         if n_e >= self.ds.nb_shapes() { return false; }
-        let brep_f = if n_f < self.ds.nb_shapes() {
-            self.ds.shape(n_f).index
-        } else {
-            n_f
-        };
+        let Some(fkey) = self.ds.face_key(n_f) else { return false };
         match &*self.ds.shape(n_e).data {
-            rcad_kernel::topods::TShape::Edge(ed) => {
-                ed.pcurves.contains_key(&n_f) || ed.pcurves.contains_key(&brep_f)
-            }
+            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.contains_key(&fkey),
             _ => false,
         }
     }
@@ -4805,8 +4804,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     /// BRep_Tool::CurveOnSurface — the edge's pcurve on the face, if any.
     fn edge_pcurve_of(ds: &DS, n_e: usize, n_f: usize) -> Option<(rcad_kernel::geom::Curve2d, f64, f64)> {
         if n_e >= ds.nb_shapes() { return None; }
+        let fkey = ds.face_key(n_f)?;
         match &*ds.shape(n_e).data {
-            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.get(&n_f).cloned(),
+            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.get(&fkey).cloned(),
             _ => None,
         }
     }
@@ -4873,8 +4873,11 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 // Get the degenerated edge's 2D pcurve on the face
                 let de_pcurve = {
                     let tshape = &self.ds.shapes[an_ei].shape.data;
+                    let fkey = self.ds.face_key(n_f);
                     match &**tshape {
-                        rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.get(&n_f).cloned(),
+                        rcad_kernel::topods::TShape::Edge(ed) => {
+                            fkey.and_then(|k| ed.pcurves.get(&k).cloned())
+                        }
                         _ => None,
                     }
                 };
@@ -4898,8 +4901,11 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         let n_e2 = { let r = pb.0.read().unwrap(); r.original_edge };
                         let passing_pcurve = {
                             let ts = &self.ds.shapes[n_e2].shape.data;
+                            let fkey = self.ds.face_key(n_f);
                             match &**ts {
-                                rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.get(&n_f).cloned(),
+                                rcad_kernel::topods::TShape::Edge(ed) => {
+                                    fkey.and_then(|k| ed.pcurves.get(&k).cloned())
+                                }
                                 _ => None,
                             }
                         };

@@ -72,33 +72,28 @@ impl MakeSphere {
         // full revolution — two pcurves at u=2*PI and u=0 (CurveOnClosedSurface,
         // L434-438), offset in V by -myMeridianOffset. The pole degenerate edges
         // are V-isolines v=PI/2 / v=-PI/2 (L401-414).
-        let face_i = face.index;
+        let face_key = (face.ptr_id(), face.location);
         // EBOTTOM (south pole): gp_Lin2d((0, myVMin), X)
         t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
-            face_i,
+            face_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, -pi / 2.0), DVec2::X)), 0.0, TAU),
         );
         // ETOP (north pole): gp_Lin2d((0, myVMax), X)
         t.edge_mut_inplace(e_top.clone()).pcurves.insert(
-            face_i,
+            face_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, pi / 2.0), DVec2::X)), 0.0, TAU),
         );
         // ESTART seam closed edge: pcurve1 at u=myAngle, pcurve2 at u=0.
         let t_lo = 3.0 * pi / 2.0;
         let t_hi = 5.0 * pi / 2.0;
         t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
-            face_i,
+            face_key,
             (Curve2d::Line(Line2d::new(DVec2::new(TAU, -TAU), DVec2::Y)), t_lo, t_hi),
-        );
-        let nb_faces = t.nb_faces();
-        t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
-            face_i + nb_faces,
-            (Curve2d::Line(Line2d::new(DVec2::new(0.0, -TAU), DVec2::Y)), t_lo, t_hi),
         );
         t.edge_mut_inplace(e_seam.clone())
             .representations
             .push(CurveRepresentation::CurveOnClosedSurface {
-                face: face_i,
+                face: face_key,
                 pcurve1: Curve2d::Line(Line2d::new(DVec2::new(TAU, -TAU), DVec2::Y)),
                 pcurve2: Curve2d::Line(Line2d::new(DVec2::new(0.0, -TAU), DVec2::Y)),
                 range: [t_lo, t_hi],

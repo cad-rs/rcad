@@ -159,13 +159,13 @@ pub enum CurveRepresentation {
     Curve3D { curve: usize, location: u32 },
     /// BRep_CurveOnSurface �?pcurve on a face.
     CurveOnSurface {
-        face: usize,
+        face: (u64, u32),
         pcurve: Curve2d,
         range: [f64; 2],
     },
     /// BRep_CurveOnClosedSurface �?two pcurves for periodic surfaces.
     CurveOnClosedSurface {
-        face: usize,
+        face: (u64, u32),
         pcurve1: Curve2d,
         pcurve2: Curve2d,
         range: [f64; 2],
@@ -183,7 +183,7 @@ pub struct TEdgeData {
     #[serde(default)]
     pub degenerated: bool,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub pcurves: HashMap<usize, (Curve2d, f64, f64)>,
+    pub pcurves: HashMap<(u64, u32), (Curve2d, f64, f64)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub representations: Vec<CurveRepresentation>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -1330,7 +1330,7 @@ pub trait BRepTool {
         &self,
         edge: &Shape,
         face: &Shape,
-    ) -> Option<&(Curve2d, f64, f64)> {
+    ) -> Option<(Curve2d, f64, f64)> {
         None
     }
 
@@ -1436,23 +1436,39 @@ impl BRepTool for BRep {
     }
 
     fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<&(Curve2d, f64, f64)> {
-        self.edge(edge.clone()).pcurves.get(&face.index)
+        self.edge(edge.clone()).pcurves.get(&(face.ptr_id(), face.location))
     }
 
     fn is_edge_closed_on_face(&self, edge: &Shape, face: &Shape) -> bool {
+        let fkey = (face.ptr_id(), face.location);
         let ed = self.edge(edge.clone());
-        ed.representations.iter().any(|r| matches!(r, CurveRepresentation::CurveOnClosedSurface { face: f, .. } if *f == face.index))
-            || ed.pcurves.contains_key(&face.index)
-                && ed.pcurves.contains_key(&(face.index + self.nb_faces()))
+        ed.representations.iter().any(|r| matches!(r, CurveRepresentation::CurveOnClosedSurface { face: f, .. } if *f == fkey))
     }
 
     fn curve_on_surface_second(
         &self,
         edge: &Shape,
         face: &Shape,
-    ) -> Option<&(Curve2d, f64, f64)> {
-        let shifted = face.index + self.nb_faces();
-        self.edge(edge.clone()).pcurves.get(&shifted)
+    ) -> Option<(Curve2d, f64, f64)> {
+        // OCCT BRep_Tool::CurveOnSurface(aE, aF) second curve of a
+        // BRep_CurveOnClosedSurface: no separate key, the second pcurve lives
+        // in the same representation as the first one.
+        let fkey = (face.ptr_id(), face.location);
+        let ed = self.edge(edge.clone());
+        for r in &ed.representations {
+            if let CurveRepresentation::CurveOnClosedSurface {
+                face: f,
+                pcurve2,
+                range,
+                ..
+            } = r
+            {
+                if *f == fkey {
+                    return Some((pcurve2.clone(), range[0], range[1]));
+                }
+            }
+        }
+        None
     }
 
     fn face_surface(&self, face: &Shape) -> Option<&Surface3> {
@@ -1992,7 +2008,8 @@ impl BRep {
                     continue;
                 };
                 // Compute pcurve if missing (planar surfaces only)
-                let has_pcurve = edge_data.pcurves.contains_key(&fi);
+                let face_key = (Arc::as_ptr(&self.tshapes[fi]) as u64, 0u32);
+                let has_pcurve = edge_data.pcurves.contains_key(&face_key);
                 if !has_pcurve {
                     if let Surface3::Plane(p) = surf {
                         let p0 = curve3.point_at(t_range[0]);
@@ -2017,7 +2034,7 @@ impl BRep {
                             });
                             // Insert pcurve into edge
                             if let TShape::Edge(ed) = Arc::make_mut(&mut self.tshapes[*ei]) {
-                                ed.pcurves.insert(fi, (pc.clone(), t_range[0], t_range[1]));
+                                ed.pcurves.insert(face_key, (pc.clone(), t_range[0], t_range[1]));
                             }
                             // Sample deviation
                             let n_samples = 7;
@@ -2192,7 +2209,7 @@ impl BRepBuilder {
         t1: f64,
         t2: f64,
     ) {
-        brep.edge_mut(edge).pcurves.insert(face.index, (pc, t1, t2));
+        brep.edge_mut(edge).pcurves.insert((face.ptr_id(), face.location), (pc, t1, t2));
     }
 
     /// OCCT BRep_Builder::UpdateEdge(aE, theTol) �?update edge tolerance.
@@ -2212,10 +2229,11 @@ impl BRepBuilder {
     ) {
         let ed = brep.edge_mut(edge);
         let (ta, tb) = pc_parameter_range(&pcurve);
-        ed.pcurves.insert(face.index, (pcurve.clone(), ta, tb));
+        ed.pcurves
+            .insert((face.ptr_id(), face.location), (pcurve.clone(), ta, tb));
         ed.representations
             .push(CurveRepresentation::CurveOnSurface {
-                face: face.index,
+                face: (face.ptr_id(), face.location),
                 pcurve,
                 range: [ta, tb],
             });
@@ -2229,8 +2247,8 @@ impl BRepBuilder {
     ///
     /// `aFirst`/`aLast` are the edge's first and last parameter (BRep_Tool::Range);
     /// both pcurves are evaluated over the same parameter interval as the edge
-    /// (same-parameter edge). The second pcurve is stored under the shifted key
-    /// `face.index + nb_faces` (rcad convention read by
+    /// (same-parameter edge). The second pcurve is not stored separately — the
+    /// BRep_CurveOnClosedSurface representation holds both (read by
     /// [`BRepTool::curve_on_surface_second`]).
     pub fn update_edge_pcurve_closed(
         &mut self,
@@ -2243,17 +2261,13 @@ impl BRepBuilder {
         a_last: f64,
         tol: f64,
     ) {
-        let nb_faces = brep.nb_faces();
+        let fkey = (face.ptr_id(), face.location);
         let ed = brep.edge_mut(edge);
         ed.pcurves
-            .insert(face.index, (pcurve1.clone(), a_first, a_last));
-        ed.pcurves.insert(
-            face.index + nb_faces,
-            (pcurve2.clone(), a_first, a_last),
-        );
+            .insert(fkey, (pcurve1.clone(), a_first, a_last));
         ed.representations
             .push(CurveRepresentation::CurveOnClosedSurface {
-                face: face.index,
+                face: fkey,
                 pcurve1,
                 pcurve2,
                 range: [a_first, a_last],
@@ -2362,13 +2376,13 @@ impl BRepBuilder {
             let (t1, t2) = pc_parameter_range(pc);
             brep.edge_mut(e.clone())
                 .pcurves
-                .insert(fa.index, (pc.clone(), t1, t2));
+                .insert((fa.ptr_id(), fa.location), (pc.clone(), t1, t2));
         }
         if let (Some(pc), Some(fb)) = (pc_b, face_b) {
             let (t1, t2) = pc_parameter_range(pc);
             brep.edge_mut(e.clone())
                 .pcurves
-                .insert(fb.index, (pc.clone(), t1, t2));
+                .insert((fb.ptr_id(), fb.location), (pc.clone(), t1, t2));
         }
         e
     }

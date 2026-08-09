@@ -30,11 +30,8 @@ pub fn edge_pcurve_on_face(
     face_idx: usize,
     ori: Orientation,
 ) -> Option<(Curve2d, f64, f64)> {
-    let brep_face = if face_idx < ds.nb_shapes() {
-        ds.shape_at(face_idx).index
-    } else {
-        face_idx
-    };
+    let f = ds.shape_at(face_idx);
+    let face_key = (f.ptr_id(), f.location);
     match &*ds.shape_at(edge_idx).data {
         TShape::Edge(ed) => {
             if let Some((pc1, pc2, range)) = ed.representations.iter().find_map(|r| match r {
@@ -43,16 +40,13 @@ pub fn edge_pcurve_on_face(
                     pcurve1,
                     pcurve2,
                     range,
-                } if *face == brep_face => Some((pcurve1.clone(), pcurve2.clone(), *range)),
+                } if *face == face_key => Some((pcurve1.clone(), pcurve2.clone(), *range)),
                 _ => None,
             }) {
                 let pc = if ori == Orientation::Reversed { pc2 } else { pc1 };
                 return Some((pc, range[0], range[1]));
             }
-            ed.pcurves
-                .get(&face_idx)
-                .cloned()
-                .or_else(|| ed.pcurves.get(&brep_face).cloned())
+            ed.pcurves.get(&face_key).cloned()
         }
         _ => None,
     }
