@@ -376,7 +376,7 @@ fn split_block(
                 .1
                 .1
                 .iter()
-                .find(|e| e.edge().is_same(&a_e_outa) && e.is_in() == a_ei_mut.is_in())
+                .find(|e| e.edge().is_equal(&a_e_outa) && e.is_in() == a_ei_mut.is_in())
                 .map(|e| e.passed())
                 .unwrap_or(true);
             let b_is_not_passed = !cur_passed;
@@ -603,7 +603,11 @@ fn path(
 }
 
 /// Mark the EdgeInfo for (vertex, edge, in-flag) as passed in mySmartMap.
-/// OCCT Path (L406) sets the flag on a reference into the map.
+/// OCCT Path (L406) sets the flag on a reference into the map — the edge
+/// identity is orientation-sensitive (each EdgeInfo holds its own oriented
+/// edge copy; a self-closed edge stores the FORWARD and REVERSED variants as
+/// separate entries). rcad reproduces it with an is_equal match (TShape +
+/// Location + Orientation).
 fn mark_edge_passed(
     my_smart_map: &mut IndexMap<(u64, u32), (Shape, Vec<EdgeInfo>)>,
     a_v: &Shape,
@@ -613,7 +617,7 @@ fn mark_edge_passed(
     if let Some((_, leinfo)) = my_smart_map.get_mut(&(a_v.ptr_id(), a_v.location)) {
         if let Some(ei) = leinfo
             .iter_mut()
-            .find(|ei| ei.edge().is_partner(a_e) && ei.is_in() == in_flag)
+            .find(|ei| ei.edge().is_equal(a_e) && ei.is_in() == in_flag)
         {
             ei.set_passed(true);
         }
