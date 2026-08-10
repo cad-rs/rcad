@@ -6,7 +6,6 @@
 use crate::bop::algo::Report;
 use crate::bop::ds::DS;
 use crate::bop::int_tools::context::IntToolsContext;
-use crate::topalgo::brep_top_adaptor::class2d::{Class2d, Class2dResult};
 use glam::DVec2;
 use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, SurfaceEval};
@@ -680,6 +679,30 @@ fn edge_pcurve_on_face(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d
     let fkey = ds.face_key(face_index)?;
     match &*e.data {
         TShape::Edge(ed) => {
+            // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-361): a closed
+            // surface seam edge (CurveOnClosedSurface) returns the second pcurve
+            // for a REVERSED edge and the first otherwise — the two wire
+            // instances of the seam map to u=2*PI and u=0.
+            if let Some(r) = ed.representations.iter().find_map(|r| match r {
+                rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                    face,
+                    pcurve1,
+                    pcurve2,
+                    range,
+                } if *face == fkey => Some((pcurve1.clone(), pcurve2.clone(), *range)),
+                _ => None,
+            }) {
+                let (pc1, pc2, range) = r;
+                // The BuilderFace face is normalized to FORWARD (SetFace),
+                // so the face_reversed term of wire_splitter::edge_pcurve is
+                // always false here.
+                let pc = if e.orientation == rcad_kernel::topods::Orientation::Reversed {
+                    pc2
+                } else {
+                    pc1
+                };
+                return Some((pc, range[0], range[1]));
+            }
             if let Some(v) = ed.pcurves.get(&fkey) {
                 return Some(v.clone());
             }
@@ -785,28 +808,22 @@ fn boxes_overlap(a: [f64; 4], b: [f64; 4]) -> bool {
     a[0] <= b[1] && b[0] <= a[1] && a[2] <= b[3] && b[2] <= a[3]
 }
 
-/// Classify a point against a closed 2D polygon (OCCT IntTools_FClass2d
-/// Perform — strictly IN).
-fn point_in_wire_polygon(poly: &[DVec2], ub: [f64; 4], p: DVec2) -> bool {
-    let c = Class2d::new(poly, 1e-7, 1e-7, ub[0], ub[2], ub[1], ub[3]);
-    c.si_dans(p) == Class2dResult::Inside
-}
-
 /// OCCT IsInside (BOPAlgo_BuilderFace.cxx L842-897) — the wire `the_wire` is
 /// inside the face `the_f` when the first non-degenerated edge of the wire, not
-/// shared with the face, has its pcurve midpoint classified IN the face.
+/// shared with the face, has its pcurve midpoint classified IN the face by the
+/// face classifier (IntTools_FClass2d::Perform, L890-891). rcad classifies the
+/// midpoint with FClass2d (brep_top_adaptor), not a sampled UV polygon.
 fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], face_edges: &[Shape]) -> bool {
-    let face_set: HashSet<u64> = face_edges.iter().map(|e| e.ptr_id()).collect();
-    let (poly, ub) = match wire_uv_polygon(ds, face_index, face_edges) {
-        Some(v) => v,
-        None => return false,
-    };
+    let face_set: HashSet<(u64, u32)> = face_edges
+        .iter()
+        .map(|e| (e.ptr_id(), e.location))
+        .collect();
     for e in wire_edges {
         let degen = e.as_edge().map(|ed| ed.degenerated).unwrap_or(true);
         if degen {
             continue;
         }
-        if face_set.contains(&e.ptr_id()) {
+        if face_set.contains(&(e.ptr_id(), e.location)) {
             return false;
         }
         let (pc, t1, t2) = match edge_pcurve_on_face(e, face_index, ds) {
@@ -814,7 +831,16 @@ fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], face_edges: 
             None => continue,
         };
         let p = Curve2dEval::point_at(&pc, 0.5 * (t1 + t2));
-        return point_in_wire_polygon(&poly, ub, p);
+        // OCCT L890-891: aState = aClassifier.Perform(aP2D); isInside = (aState == IN).
+        // OCCT IntTools_Context::FClass2d (IntTools_Context.cxx L225-242):
+        // aTolF = BRep_Tool::Tolerance(aFF).
+        let fclass2d = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new(
+            ds,
+            face_index,
+            ds.face_tolerance(face_index),
+        );
+        return fclass2d.perform(ds, p, true)
+            == crate::topalgo::brep_top_adaptor::fclass2d::State::In;
     }
     false
 }
