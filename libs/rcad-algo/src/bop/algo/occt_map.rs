@@ -56,6 +56,15 @@ impl OcctHashKey for u64 {
     }
 }
 
+/// Keys of the Builder maps: (TShape pointer id, Location) — OCCT hashes only
+/// the TShape pointer (TopTools_ShapeMapHasher / std::hash<TopoDS_Shape> =
+/// hash of the TShape handle), the Location participates only in equality.
+impl OcctHashKey for (u64, u32) {
+    fn hash_code(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// OCCT NCollection_Map::HashCode (NCollection_Map.hxx L593-596):
 /// myHasher(theKey) % theUpperBound + 1.
 #[inline]

@@ -76,7 +76,7 @@ pub struct Builder<'a> {
     // OCCT L499-502: myImages/myOrigins/myInParts are NCollection_DataMap
     // with TopTools_ShapeMapHasher — key identity is TShape + Location,
     // orientation is IGNORED. rcad keys by (ptr_id, location) to match.
-    pub(crate) my_images: HashMap<(u64, u32), Vec<Shape>>,      // L499: myImages
+    pub(crate) my_images: crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), Vec<Shape>>, // L499: myImages — NCollection_DataMap (bucket order)
     pub(crate) my_shapes_sd: HashMap<(u64, u32), Shape>,   // L500: myShapesSD (TopTools_ShapeMapHasher: TShape+Location, ignores orientation)
     pub(crate) my_origins: HashMap<(u64, u32), Vec<Shape>>,     // L501: myOrigins
     pub(crate) my_in_parts: HashMap<(u64, u32), Vec<Shape>>,    // L502: myInParts
@@ -1425,7 +1425,7 @@ impl<'a> Builder<'a> {
             my_arguments: Vec::new(),
             my_map_fence: HashSet::new(),
             my_entry_point: 0,
-            my_images: HashMap::new(),
+            my_images: crate::bop::algo::occt_map::OcctDataMapInt::new(),
             my_shapes_sd: HashMap::new(),
             my_origins: HashMap::new(),
             my_in_parts: HashMap::new(),
@@ -1656,7 +1656,7 @@ impl<'a> Builder<'a> {
             // OCCT L54: const TopoDS_Shape& aVSD = myDS->Shape(nVSD);
             let aVSD = self.brep_sr(nVSD);
             // OCCT L56: myImages.Bound(aV, ...)->Append(aVSD);
-            self.my_images.entry((aV.ptr_id(), aV.location)).or_default().push(aVSD.clone());
+            self.my_images.bound((aV.ptr_id(), aV.location)).push(aVSD.clone());
             // OCCT L58: myShapesSD.Bind(aV, aVSD);
             self.my_shapes_sd.insert((aV.ptr_id(), aV.location), aVSD.clone());
             // OCCT L60-65: myOrigins — find or create list, append
@@ -1686,7 +1686,7 @@ impl<'a> Builder<'a> {
             // edge) gets an empty image list and is thus avoided in the result
             // (OCCT comment L93-94: "The small edges, having no pave blocks,
             // will have the empty list of images").
-            self.my_images.entry((aE.ptr_id(), aE.location)).or_default();
+            self.my_images.bound((aE.ptr_id(), aE.location));
             // OCCT L96-120: iterate pave blocks
             for aPB in &aLPB {
                 // OCCT L100-102: aPBR = myDS->RealPaveBlock(aPB); nSpR = aPBR->Edge();
@@ -1695,7 +1695,7 @@ impl<'a> Builder<'a> {
                 // OCCT L103-104: aSpR = myDS->Shape(nSpR);
                 let aSpR = self.brep_sr(nSpR);
                 // OCCT L105: pLS->Append(aSpR);
-                self.my_images.get_mut(&(aE.ptr_id(), aE.location)).unwrap().push(aSpR.clone());
+                self.my_images.get_mut((aE.ptr_id(), aE.location)).unwrap().push(aSpR.clone());
                 // OCCT L107-112: pLOr = myOrigins.ChangeSeek(aSpR); append aE
                 self.my_origins.entry((aSpR.ptr_id(), aSpR.location)).or_default().push(aE.clone());
                 // OCCT L114-119: if (IsCommonBlockOnEdge(aPB)) → myShapesSD.Bind(aSp, aSpR)
@@ -1845,7 +1845,7 @@ impl<'a> Builder<'a> {
         );
 
         // OCCT L275: myImages.Bound(theS, ...)->Append(aCIm)
-        self.my_images.entry((the_s.ptr_id(), the_s.location)).or_default().push(container_shape);
+        self.my_images.bound((the_s.ptr_id(), the_s.location)).push(container_shape);
     }
 
     /// Extract immediate sub-shapes from a Shape (OCCT TopoDS_Iterator equivalent).
@@ -2142,7 +2142,7 @@ impl<'a> Builder<'a> {
         for (fi, a_lfr) in a_faces_im {
             let a_f = self.brep_sr(fi);
             let an_ori_f = a_f.orientation;
-            let p_lf_im = self.my_images.entry((a_f.ptr_id(), a_f.location)).or_default();
+            let p_lf_im = self.my_images.bound((a_f.ptr_id(), a_f.location));
             for mut a_fr in a_lfr {
                 if an_ori_f == topods::Orientation::Reversed {
                     a_fr.orientation = topods::Orientation::Reversed;
@@ -2214,13 +2214,13 @@ impl<'a> Builder<'a> {
         // index — init keeps the original (ptr→idx) mapping and remap_shape_idx
         // adds the clone's — so resolve the lookup by DS index.
         let key_idx = self.ds.map_shape_index.get(&(key.ptr_id(), key.location)).copied();
-        for (k, v) in &self.my_images {
+        for (k, v) in self.my_images.iter() {
             if k.0 == key.ptr_id() && k.1 == key.location {
                 return Some(v.clone());
             }
         }
         if let Some(ki) = key_idx {
-            for (k, v) in &self.my_images {
+            for (k, v) in self.my_images.iter() {
                 if self.ds.map_shape_index.get(&(k.0, k.1)).copied() == Some(ki) {
                     return Some(v.clone());
                 }
@@ -3138,8 +3138,12 @@ impl<'a> Builder<'a> {
             }
         }
         // OCCT L619-648: propagate the parent solid to the image faces.
-        let mut a_propagation: HashMap<(u64, u32), u64> = HashMap::new();
-        for (a_src, a_l_im) in &self.my_images {
+        // OCCT L636: aPropagation is NCollection_DataMap<TopoDS_Shape, TopoDS_Shape,
+        // TopTools_ShapeMapHasher> — bucket iteration order (L660-665).
+        let mut a_propagation: crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), u64> =
+            crate::bop::algo::occt_map::OcctDataMapInt::new();
+        // OCCT L640-655: iterate myImages — NCollection_DataMap bucket order.
+        for (a_src, a_l_im) in self.my_images.iter() {
             let p_parent = a_face_to_parent.get(&a_src).copied();
             if let Some(parent) = p_parent {
                 for a_piece in a_l_im {
@@ -3150,8 +3154,9 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        for (k, v) in a_propagation {
-            a_face_to_parent.entry(k).or_insert(v);
+        // OCCT L660-665: iterate aPropagation — bucket order.
+        for (k, v) in a_propagation.iter() {
+            a_face_to_parent.entry(k).or_insert(*v);
         }
 
         // OCCT L654-684: collect face indices from FF interferences.
@@ -3189,7 +3194,7 @@ impl<'a> Builder<'a> {
             } else { false };
 
             // OCCT L720-740: get face images (or face itself), add edge set.
-            let face_list: Vec<Shape> = if let Some(imgs) = self.my_images.get(&(a_f.ptr_id(), a_f.location)) {
+            let face_list: Vec<Shape> = if let Some(imgs) = self.my_images.get((a_f.ptr_id(), a_f.location)) {
                 imgs.clone()
             } else {
                 vec![a_f.clone()]
@@ -3295,7 +3300,7 @@ impl<'a> Builder<'a> {
                 let n_f = self.ds.index(a_f);
                 if n_f >= 0 {
                     // OCCT L858: original face — consider it split into itself.
-                    self.my_images.entry((a_f.ptr_id(), a_f.location)).or_default().push(a_f.clone());
+                    self.my_images.bound((a_f.ptr_id(), a_f.location)).push(a_f.clone());
                     if n_f < n_f_min {
                         n_f_min = n_f;
                         p_fsd = Some(a_f.clone());
@@ -3321,7 +3326,7 @@ impl<'a> Builder<'a> {
             let a_si = self.ds.shape_info(i);
             if a_si.shape_type != topods::ShapeType::Face { continue; }
             let a_f = self.brep_sr(i);
-            let Some(a_lf_im) = self.my_images.get_mut(&(a_f.ptr_id(), a_f.location)) else { continue };
+            let Some(a_lf_im) = self.my_images.get_mut((a_f.ptr_id(), a_f.location)) else { continue };
             for a_f_im in a_lf_im.iter_mut() {
                 // OCCT L906-910: replace the image with its SD face.
                 if let Some(a_fsd) = self.my_shapes_sd.get(&(a_f_im.ptr_id(), a_f_im.location)) {
@@ -3356,7 +3361,7 @@ impl<'a> Builder<'a> {
             // OCCT L951-956: aF = aSI.Shape(); pLFIm = myImages.Seek(aF);
             // if (!pLFIm) continue.
             let a_f = self.brep_sr(i);
-            let Some(p_lf_im) = self.my_images.get(&(a_f.ptr_id(), a_f.location)).cloned() else {
+            let Some(p_lf_im) = self.my_images.get((a_f.ptr_id(), a_f.location)).cloned() else {
                 continue;
             };
             // OCCT L959-960: myDS->AloneVertices(i, aLIAV).
@@ -3406,7 +3411,7 @@ impl<'a> Builder<'a> {
     /// classification, so the shared SD identity is preserved.
     fn add_internal_vertex_to_image(&mut self, i: usize, a_ptr: u64, a_v: Shape) {
         let a_f = self.brep_sr(i);
-        if let Some(imgs) = self.my_images.get_mut(&(a_f.ptr_id(), a_f.location)) {
+        if let Some(imgs) = self.my_images.get_mut((a_f.ptr_id(), a_f.location)) {
             for img in imgs.iter_mut() {
                 if img.ptr_id() != a_ptr {
                     continue;
@@ -3528,7 +3533,7 @@ impl<'a> Builder<'a> {
             }
             let a_s = self.brep_sr(i);
             // OCCT L131-148: add images, or the face itself with its box.
-            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)).cloned() {
+            if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)).cloned() {
                 for a_s_im in &imgs {
                     if a_m_fence.insert((a_s_im.ptr_id(), a_s_im.location)) {
                         a_lfaces.push(a_s_im.clone());
@@ -3614,7 +3619,7 @@ impl<'a> Builder<'a> {
                     subs.extend(sd.internal_edges.iter().cloned());
                 }
                 for sh in subs {
-                    if self.my_images.contains_key(&(sh.ptr_id(), sh.location)) {
+                    if self.my_images.contains((sh.ptr_id(), sh.location)) {
                         b_has_image = true;
                         break;
                     }
@@ -3658,7 +3663,7 @@ impl<'a> Builder<'a> {
                 // OCCT L300-301: aF; aOrF.
                 let a_or_f = a_f.orientation;
                 // OCCT L303: if myImages.IsBound(aF) — replace by images.
-                if let Some(imgs) = self.my_images.get(&(a_f.ptr_id(), a_f.location)).cloned() {
+                if let Some(imgs) = self.my_images.get((a_f.ptr_id(), a_f.location)).cloned() {
                     for a_fx in &imgs {
                         // OCCT L309: aFx; L311: if myShapesSD.IsBound(aFx) — SD face.
                         if self.my_shapes_sd.contains_key(&(a_fx.ptr_id(), a_fx.location)) {
@@ -4025,7 +4030,7 @@ impl<'a> Builder<'a> {
         // OCCT L580-617: add new solids to the images map (same-domain dedup).
         for (a_s, a_lsr) in &a_solids_im {
             // OCCT L586: if !myImages.IsBound(aS).
-            if self.my_images.contains_key(&(a_s.ptr_id(), a_s.location)) { continue; }
+            if self.my_images.contains((a_s.ptr_id(), a_s.location)) { continue; }
             // Compute the same-domain dedup results first (immutable borrows).
             let mut results: Vec<(Shape, Shape, bool)> = Vec::new();
             for a_sr in a_lsr {
@@ -4041,7 +4046,7 @@ impl<'a> Builder<'a> {
                     .clone();
                 results.push((a_sr.clone(), a_sx, b_flag_sd));
             }
-            let p_lsx = self.my_images.entry((a_s.ptr_id(), a_s.location)).or_default();
+            let p_lsx = self.my_images.bound((a_s.ptr_id(), a_s.location));
             for (a_sr, a_sx, b_flag_sd) in results {
                 p_lsx.push(a_sx.clone());
                 // OCCT L604-609: myOrigins[aSx].Append(aS).
@@ -4098,7 +4103,7 @@ impl<'a> Builder<'a> {
                 || a_type == topods::ShapeType::Wire
             {
                 if a_m_fence.insert((a_s.ptr_id(), a_s.location)) {
-                    if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
+                    if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)) {
                         for img in imgs {
                             if a_msi_fence.insert((img.ptr_id(), img.location)) {
                                 a_msi.push(img.clone());
@@ -4130,7 +4135,7 @@ impl<'a> Builder<'a> {
 
             // OCCT L741-758: add internal shapes to aMSI
             for a_si_internal in &a_mx {
-                if let Some(imgs) = self.my_images.get(&(a_si_internal.ptr_id(), a_si_internal.location)) {
+                if let Some(imgs) = self.my_images.get((a_si_internal.ptr_id(), a_si_internal.location)) {
                     for img in imgs {
                         if a_msi_fence.insert((img.ptr_id(), img.location)) {
                             a_msi.push(img.clone());
@@ -4144,7 +4149,7 @@ impl<'a> Builder<'a> {
             }
 
             // OCCT L760-787: build ancestor map from split solids
-            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
+            if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)) {
                 for a_sp in imgs {
                     if a_m_fence.insert((a_sp.ptr_id(), a_sp.location)) {
                         Self::map_shapes_and_ancestors(a_sp, &mut a_msx);
@@ -4201,8 +4206,7 @@ impl<'a> Builder<'a> {
                     let a_sdx = Self::solid_copy_add(&a_sd, &a_si);
                     // OCCT L860-861: myImages[aSd].Append(aSdx).
                     self.my_images
-                        .entry((a_sd.ptr_id(), a_sd.location))
-                        .or_default()
+                        .bound((a_sd.ptr_id(), a_sd.location))
                         .push(a_sdx.clone());
                     // OCCT L863-865: myOrigins[aSdx].Append(aSd).
                     self.my_origins
@@ -4530,7 +4534,7 @@ impl<'a> Builder<'a> {
                 self.fill_images_compound(ss, the_mfp);
             }
             // OCCT L295-297: if (myImages.IsBound(aSx)) bInterferred = true.
-            if self.my_images.contains_key(&(ss.ptr_id(), ss.location)) {
+            if self.my_images.contains((ss.ptr_id(), ss.location)) {
                 b_interferred = true;
             }
         }
@@ -4541,7 +4545,7 @@ impl<'a> Builder<'a> {
         let mut new_shapes: Vec<Shape> = Vec::new();
         for ss in &subs {
             let a_or_x = ss.orientation;
-            if let Some(ss_imgs) = self.my_images.get(&(ss.ptr_id(), ss.location)) {
+            if let Some(ss_imgs) = self.my_images.get((ss.ptr_id(), ss.location)) {
                 // OCCT L348-356: each image gets the sub-shape's orientation.
                 for a_sx_im0 in ss_imgs {
                     let mut a_sx_im = a_sx_im0.clone();
@@ -4589,7 +4593,7 @@ impl<'a> Builder<'a> {
 
             // OCCT L205: LocModified → check myImages
             let mut is_modified = false;
-            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
+            if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)) {
                 for a_sp in imgs {
                     // OCCT L214-217: check if result contains the split
                     // rcad: check via shape_remap (shape was added to result)
@@ -4603,7 +4607,7 @@ impl<'a> Builder<'a> {
 
             // OCCT L234-243: LocGenerated — check myImages for shapes generated
             // from this shape (e.g., edges generated from vertices)
-            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
+            if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)) {
                 for _a_g in imgs {
                     if self.shape_remap.contains_key(&_a_g.ptr_id()) {
                         // OCCT L241: myHistory->AddGenerated(aS, aG)
@@ -4678,7 +4682,7 @@ impl<'a> Builder<'a> {
             let mut a_rc: Vec<Shape> = Vec::new();
             // OCCT L968-990: add splits of sub-shapes contained in aMSRC.
             for a_s in self.shape_sub_shapes(a_sc) {
-                if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
+                if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)) {
                     for a_s_im in imgs {
                         if a_msrc.contains(&(a_s_im.ptr_id(), a_s_im.location)) {
                             a_rc.push(a_s_im.clone());
@@ -4732,7 +4736,7 @@ impl<'a> Builder<'a> {
         }
         // OCCT L1082-1104: put non-container shapes in the result.
         for a_s in &a_ls_non_cont {
-            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)) {
+            if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)) {
                 for a_s_im in imgs {
                     if a_msrc.contains(&(a_s_im.ptr_id(), a_s_im.location))
                         && a_ms_result.insert((a_s_im.ptr_id(), a_s_im.location))
@@ -4824,7 +4828,7 @@ impl<'a> Builder<'a> {
                         continue;
                     }
                 }
-                if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)).cloned() {
+                if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)).cloned() {
                     for a_s_im in &imgs {
                         if a_ms_im_fence.insert(a_s_im.ptr_id()) {
                             a_ms_im.push(a_s_im.clone());
@@ -5387,7 +5391,7 @@ impl<'a> Builder<'a> {
         for a_s in &a_arguments {
             if a_s.shape_type() != the_type { continue; }
             // OCCT L145-152: check for images
-            if let Some(imgs) = self.my_images.get(&(a_s.ptr_id(), a_s.location)).cloned() {
+            if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)).cloned() {
                 for a_s_im in &imgs {
                     if a_m_fence.insert((a_s_im.ptr_id(), a_s_im.location)) {
                         self.add_shape_to_result(a_s_im);
