@@ -860,6 +860,12 @@ impl FClass2d {
                     // The first wire in the face TShape list is the outer
                     // boundary (OCCT: outer_wire then inner_wires).
                     let is_outer = wire_idx == 0;
+                    // OCCT IntTools_FClass2d.cxx L556-563: myIsHole follows the
+                    // RAW signed area (aS>0 not-hole, aS<0 hole). rcad keeps
+                    // the role normalization below for TabOrien (the DS
+                    // classifier relies on the normalized value), but IsHole
+                    // must use the raw sign, so record it before normalizing.
+                    let a_s_raw_positive = a_s > 0.0;
                     if (is_outer && a_s < 0.0) || (!is_outer && a_s > 0.0) {
                         seq_pnt2d.reverse();
                         let (a_s2, _) = polygon_properties(&seq_pnt2d);
@@ -886,12 +892,19 @@ impl FClass2d {
                     if a_s.abs() < SQUARE_CONFUSION {
                         bad_wire = 1;
                         self.tab_orien.push(-1);
-                    } else if a_s > 0.0 {
-                        self.my_is_hole = false;
-                        self.tab_orien.push(1);
                     } else {
-                        self.my_is_hole = true;
-                        self.tab_orien.push(0);
+                        // OCCT: myIsHole from the raw sign (before the TabOrien
+                        // role normalization).
+                        if a_s_raw_positive {
+                            self.my_is_hole = false;
+                        } else {
+                            self.my_is_hole = true;
+                        }
+                        if a_s > 0.0 {
+                            self.tab_orien.push(1);
+                        } else {
+                            self.tab_orien.push(0);
+                        }
                     }
                 } else {
                     bad_wire = 1;

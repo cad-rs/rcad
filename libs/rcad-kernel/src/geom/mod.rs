@@ -568,6 +568,11 @@ impl ConicalSurface {
             let perp_n = perp / radial;
             perp_n.dot(y_ax).atan2(perp_n.dot(x_ax))
         };
+        // OCCT gp_Cone / ElSLib::ConeD0 parameterization: u in [0, 2*PI].
+        // atan2 returns (-PI, PI]; normalize so section-edge pcurves and the
+        // FClass2d boundary sampling share the [0, 2*PI] domain with the
+        // cone's natural pcurves (make_cone lateral/edge pcurves).
+        let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
 
         let cos_half = self.half_angle_rad.cos();
         let sin_half = self.half_angle_rad.sin();

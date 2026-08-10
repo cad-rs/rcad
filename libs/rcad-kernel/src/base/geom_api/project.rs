@@ -164,6 +164,10 @@ pub fn closest_point_on_surface(
             let point = cone.apex + axis * axial + r_hat * cone.radius_at_axial(axial);
             let slant = cone.slant_from_axial(axial);
             let theta = r_hat.dot(y_axis).atan2(r_hat.dot(x_axis));
+            // OCCT gp_Cone u in [0, 2*PI]; normalize the atan2 azimuth so the
+            // projected pcurves share the cone's natural UV domain (matches the
+            // Cylinder branch above).
+            let theta = if theta < 0.0 { theta + std::f64::consts::TAU } else { theta };
             SurfaceProjection {
                 point,
                 params: (theta, slant),
