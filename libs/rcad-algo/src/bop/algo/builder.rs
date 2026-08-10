@@ -4627,14 +4627,16 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::PostTreat (BOPAlgo_Builder.cxx L461-486).
     fn post_treat(&mut self) {
         // OCCT L466-480: in non-destructive mode, collect source V/E/F shapes
-        let mut a_ma: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        // OCCT L466-479: if (myPaveFiller->NonDestructive())
-        // rcad: non-destructive mode not fully implemented. The collection
-        // of shapes for CorrectTolerances — tolerance optimization.
-        let _ = a_ma;
-        // OCCT L483: BOPTools_AlgoTools::CorrectTolerances(myShape, aMA, 0.05, myRunParallel)
-        // OCCT L485: BOPTools_AlgoTools::CorrectShapeTolerances(myShape, aMA, myRunParallel)
-        // rcad: CorrectShapeTolerances — tolerance optimization.
+        // into aMA (aMapToAvoid — tolerance of these shapes is not corrected).
+        // rcad: non-destructive mode is not enabled for the boolean pipeline
+        // (my_non_destructive is false), so aMA stays empty, matching OCCT's
+        // default behaviour.
+        let a_ma: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
+        let Some(brep) = self.my_shape.as_mut() else { return };
+        // OCCT L483: CorrectTolerances(myShape, aMA, 0.05, myRunParallel).
+        crate::bop::tools::algo_tools::correct_tolerances(brep, &a_ma, 0.05);
+        // OCCT L485: CorrectShapeTolerances(myShape, aMA, myRunParallel).
+        crate::bop::tools::algo_tools::correct_shape_tolerances(brep, &a_ma);
     }
 
     // ====================================================================

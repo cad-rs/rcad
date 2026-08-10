@@ -9,7 +9,7 @@ use crate::bop::int_tools::face_make_curve::intermediate_point;
 use crate::topalgo::brep_top_adaptor::fclass2d::{FClass2d, State};
 use crate::topalgo::shape_source::ShapeSource;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
-use rcad_kernel::topods::{Orientation, ShapeType, TShape};
+use rcad_kernel::topods::{BRep, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 use std::sync::Arc;
 
@@ -1371,4 +1371,161 @@ pub fn make_blocks(
         }
         the_blocks.push(a_chain);
     }
+}
+// ====================================================================
+// CorrectTolerances — OCCT BOPTools_AlgoTools::CorrectTolerances
+// (BOPTools_AlgoTools_1.cxx L309-313) + CorrectShapeTolerances (L389-436)
+// ====================================================================
+
+/// In-place tolerance update of a vertex/edge TShape (single-threaded;
+/// preserves the Arc sharing exactly like OCCT mutates TShapes in place).
+fn update_shape_tolerance(v: &Shape, new_tol: f64, a_map_to_avoid: &std::collections::HashSet<(u64, u32)>) {
+    if a_map_to_avoid.contains(&(v.ptr_id(), v.location)) {
+        return;
+    }
+    // OCCT UpdateShape (BOPTools_AlgoTools_1.cxx L1066-1090): BRep_Builder
+    // UpdateVertex/UpdateEdge — set the tolerance on the shared TShape.
+    let raw = Arc::as_ptr(&v.data) as *mut TShape;
+    unsafe {
+        match &mut *raw {
+            TShape::Vertex(vd) => vd.tolerance = new_tol,
+            TShape::Edge(ed) => ed.tolerance = new_tol,
+            _ => {}
+        }
+    }
+}
+
+/// OCCT BOPTools_AlgoTools::CheckEdge (BOPTools_AlgoTools_1.cxx L455-520) —
+/// corrects the vertex tolerance from its distance to the edge 3D curve at
+/// the vertex parameter (endpoints use the curve range bounds).
+fn check_edge(brep: &BRep, e_idx: usize, a_max_tol: f64,
+              a_map_to_avoid: &std::collections::HashSet<(u64, u32)>) {
+    let (a_tol_e, a_c, a_range, a_v1, a_v2) = {
+        let t = &brep.tshapes[e_idx];
+        match &**t {
+            TShape::Edge(ed) => (ed.tolerance, ed.curve.clone(), ed.range, ed.first.clone(), ed.last.clone()),
+            _ => return,
+        }
+    };
+    let Some(a_c) = a_c else { return };
+    // OCCT L461: aE.Orientation(FORWARD); the stored first/last endpoints
+    // correspond to the curve range bounds (First/Last of the GCurve).
+    for (a_v, a_t) in [(&a_v1, a_range[0]), (&a_v2, a_range[1])] {
+        let (a_pv, a_tol_v) = match &*a_v.data {
+            TShape::Vertex(vd) => (vd.point, vd.tolerance),
+            _ => continue,
+        };
+        // OCCT L470-474: aTol = max(aTolV, aTolE); dd = 0.1*aTol; aTol = aTol^2.
+        let mut a_tol = a_tol_v.max(a_tol_e);
+        let dd = 0.1 * a_tol;
+        a_tol *= a_tol;
+        // OCCT L500-506: endpoint check — aPC = aC->Value(First/Last).
+        let a_pc = a_c.point_at(a_t);
+        let a_d2 = a_pv.distance_squared(a_pc);
+        if a_d2 > a_tol {
+            let a_new_tolerance = a_d2.sqrt() + dd;
+            if a_new_tolerance < a_max_tol {
+                update_shape_tolerance(a_v, a_new_tolerance, a_map_to_avoid);
+            }
+        }
+    }
+}
+
+/// OCCT BOPTools_AlgoTools::CorrectPointOnCurve (BOPTools_AlgoTools_1.cxx
+/// L316-335) — builds a BOPTools_CPC per edge and performs it.
+pub fn correct_point_on_curve(brep: &mut BRep,
+                              a_map_to_avoid: &std::collections::HashSet<(u64, u32)>,
+                              a_max_tol: f64) {
+    for i in 0..brep.tshapes.len() {
+        if matches!(&*brep.tshapes[i], TShape::Edge(_)) {
+            check_edge(brep, i, a_max_tol, a_map_to_avoid);
+        }
+    }
+}
+
+/// OCCT BOPTools_AlgoTools::CorrectCurveOnSurface (BOPTools_AlgoTools_1.cxx
+/// L337-386) — pcurve-based correction (BOPTools_CWT/CDT with
+/// IntersectCurves2d). Pending translation.
+pub fn correct_curve_on_surface(_brep: &mut BRep,
+                                _a_map_to_avoid: &std::collections::HashSet<(u64, u32)>,
+                                _a_max_tol: f64) {
+    // OCCT L351-456: BOPTools_CWT/CDT Perform — 2D pcurve intersection based
+    // tolerance correction. Pending (needs IntersectCurves2d translation).
+}
+
+/// OCCT BOPTools_AlgoTools::CorrectTolerances (BOPTools_AlgoTools_1.cxx
+/// L309-313).
+pub fn correct_tolerances(brep: &mut BRep,
+                          a_map_to_avoid: &std::collections::HashSet<(u64, u32)>,
+                          a_max_tol: f64) {
+    correct_point_on_curve(brep, a_map_to_avoid, a_max_tol);
+    correct_curve_on_surface(brep, a_map_to_avoid, a_max_tol);
+}
+
+/// OCCT BOPTools_AlgoTools::CorrectVertexTolerance (BOPTools_AlgoTools_1.cxx
+/// L1005-1017) — vertex tolerance raised to the edge tolerance.
+fn correct_vertex_tolerance(brep: &mut BRep,
+                            a_map_to_avoid: &std::collections::HashSet<(u64, u32)>) {
+    for i in 0..brep.tshapes.len() {
+        let (a_tol_e, a_v1, a_v2) = {
+            let t = &brep.tshapes[i];
+            match &**t {
+                TShape::Edge(ed) => (ed.tolerance, ed.first.clone(), ed.last.clone()),
+                _ => continue,
+            }
+        };
+        for a_v in [a_v1, a_v2] {
+            let a_tol_v = match &*a_v.data {
+                TShape::Vertex(vd) => vd.tolerance,
+                _ => continue,
+            };
+            // OCCT L1010-1016: if (aTolV < aTolE) UpdateShape(aV, aTolE).
+            if a_tol_v < a_tol_e {
+                update_shape_tolerance(&a_v, a_tol_e, a_map_to_avoid);
+            }
+        }
+    }
+}
+
+/// OCCT BOPTools_AlgoTools::CorrectEdgeTolerance (BOPTools_AlgoTools_1.cxx
+/// L1020-1036) — edge tolerance raised to the face tolerance.
+fn correct_edge_tolerance(brep: &mut BRep,
+                          a_map_to_avoid: &std::collections::HashSet<(u64, u32)>) {
+    for i in 0..brep.tshapes.len() {
+        let (a_tol_f, wires) = {
+            let t = &brep.tshapes[i];
+            match &**t {
+                TShape::Face(fd) => {
+                    let mut ws = vec![fd.outer_wire.clone()];
+                    ws.extend(fd.inner_wires.iter().cloned());
+                    (fd.tolerance, ws)
+                }
+                _ => continue,
+            }
+        };
+        for w in wires {
+            let edges: Vec<Shape> = match &*w.data {
+                TShape::Wire(wd) => wd.edges.clone(),
+                _ => continue,
+            };
+            for a_e in edges {
+                let a_tol_e = match &*a_e.data {
+                    TShape::Edge(ed) => ed.tolerance,
+                    _ => continue,
+                };
+                // OCCT L1032-1035: if (aTolE < aTolF) UpdateShape(aE, aTolF).
+                if a_tol_e < a_tol_f {
+                    update_shape_tolerance(&a_e, a_tol_f, a_map_to_avoid);
+                }
+            }
+        }
+    }
+}
+
+/// OCCT BOPTools_AlgoTools::CorrectShapeTolerances (BOPTools_AlgoTools_1.cxx
+/// L389-436).
+pub fn correct_shape_tolerances(brep: &mut BRep,
+                                a_map_to_avoid: &std::collections::HashSet<(u64, u32)>) {
+    correct_vertex_tolerance(brep, a_map_to_avoid);
+    correct_edge_tolerance(brep, a_map_to_avoid);
 }
