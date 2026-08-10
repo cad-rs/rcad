@@ -438,7 +438,9 @@ pub fn are_faces_same_domain(
 
 /// UV boundary polygons of a face Shape (outer + inner wires), built by
 /// projecting the wire edge endpoint vertices onto the face surface — the
-/// piece-equivalent of the DS FClass2d UV polygons.
+/// piece-equivalent of the DS FClass2d UV polygons. Both endpoints of every
+/// edge are projected (a corner held only as an edge FIRST vertex must not be
+/// lost); the polygon is returned in wire-edge traversal order.
 fn shape_uv_polygons(face: &Shape) -> Option<Vec<Vec<glam::DVec2>>> {
     let fd = face.as_face()?;
     let surf = fd.surface.as_ref()?;
@@ -447,9 +449,11 @@ fn shape_uv_polygons(face: &Shape) -> Option<Vec<Vec<glam::DVec2>>> {
         if let TShape::Wire(wd) = &*w.data {
             for e in &wd.edges {
                 if let TShape::Edge(ed) = &*e.data {
-                    if let TShape::Vertex(vd) = &*ed.last.data {
-                        let (uv, _) = crate::bop::closest_point_on_surface(surf, vd.point);
-                        out.push(uv);
+                    for v in [&ed.first, &ed.last] {
+                        if let TShape::Vertex(vd) = &*v.data {
+                            let (uv, _) = crate::bop::closest_point_on_surface(surf, vd.point);
+                            out.push(uv);
+                        }
                     }
                 }
             }
@@ -468,6 +472,44 @@ fn shape_uv_polygons(face: &Shape) -> Option<Vec<Vec<glam::DVec2>>> {
         }
     }
     Some(polys)
+}
+
+/// Periodic-ray classification of `uv` against a UV polygon on a U-periodic
+/// surface: every edge is normalized so its u-span stays within one period
+/// (seam-crossing edges are unwrapped), and the query u is brought into the
+/// edge's period before the standard even-odd ray test. Matches the
+/// BRepClass_FaceExplorer seam handling on periodic surfaces.
+fn point_in_periodic_polygon(uv: glam::DVec2, poly: &[glam::DVec2], period: f64) -> bool {
+    let n = poly.len();
+    if n < 3 {
+        return false;
+    }
+    let half = period * 0.5;
+    let mut inside = false;
+    for i in 0..n {
+        let mut a = poly[i];
+        let mut b = poly[(i + 1) % n];
+        while b.x - a.x > half {
+            b.x -= period;
+        }
+        while b.x - a.x < -half {
+            b.x += period;
+        }
+        let mut u = uv.x;
+        while u - a.x > half {
+            u -= period;
+        }
+        while u - a.x < -half {
+            u += period;
+        }
+        if (a.y > uv.y) != (b.y > uv.y) {
+            let x_int = a.x + (uv.y - a.y) * (b.x - a.x) / (b.y - a.y);
+            if u < x_int {
+                inside = !inside;
+            }
+        }
+    }
+    inside
 }
 
 /// OCCT BOPTools_AlgoTools3D::PointInFace (BOPTools_AlgoTools3D.cxx
@@ -541,7 +583,9 @@ pub(crate) fn point_in_face_shape(face: &Shape) -> (i32, glam::DVec3, glam::DVec
 /// OCCT IntTools_Context::IsValidPointForFace (IntTools_Context.cxx L648-674)
 /// for a split face image: project the point on the piece's surface, check
 /// the distance against aTol, then classify the UV point with the piece's UV
-/// polygons (ON allowed — the point is valid when not strictly OUT).
+/// polygons (ON allowed — the point is valid when not strictly OUT). On a
+/// U-periodic surface the classification uses the periodic ray test (the
+/// polygon may cross the seam, e.g. u near 2*PI equivalent to 0).
 fn is_valid_point_for_face_shape(p: glam::DVec3, face: &Shape, a_tol: f64) -> bool {
     let Some(surf) = face.as_face().and_then(|fd| fd.surface.clone()) else {
         return false;
@@ -553,6 +597,15 @@ fn is_valid_point_for_face_shape(p: glam::DVec3, face: &Shape, a_tol: f64) -> bo
     let Some(polys) = shape_uv_polygons(face) else {
         return false;
     };
+    let is_u_per = matches!(
+        &surf,
+        rcad_kernel::geom::Surface3::Sphere(_)
+            | rcad_kernel::geom::Surface3::Cylinder(_)
+            | rcad_kernel::geom::Surface3::Cone(_)
+            | rcad_kernel::geom::Surface3::Revolution(_)
+            | rcad_kernel::geom::Surface3::Torus(_)
+    );
+    let period = if is_u_per { std::f64::consts::TAU } else { 0.0 };
     // Strictly inside the outer polygon or on its boundary; not strictly
     // inside any hole (hole boundaries count as ON, which is valid).
     for (pi, poly) in polys.iter().enumerate() {
@@ -572,7 +625,11 @@ fn is_valid_point_for_face_shape(p: glam::DVec3, face: &Shape, a_tol: f64) -> bo
             let t = (ap.dot(ab) / len2).clamp(0.0, 1.0);
             (ap - t * ab).length() <= a_tol
         });
-        let inside = rcad_kernel::base::gprop::tri::point_in_polygon_2d(poly, uv);
+        let inside = if period > 0.0 {
+            point_in_periodic_polygon(uv, poly, period)
+        } else {
+            rcad_kernel::base::gprop::tri::point_in_polygon_2d(poly, uv)
+        };
         if pi == 0 {
             // outer wire: must be inside or on.
             if !inside && !on_boundary {
@@ -1249,6 +1306,8 @@ fn curves_same(a: &rcad_kernel::geom::Curve3, b: &rcad_kernel::geom::Curve3) -> 
         (Curve3::Circle(c1), Curve3::Circle(c2)) => {
             (c1.center - c2.center).length() < TOL
                 && c1.normal.dot(c2.normal) > 1.0 - TOL
+                && c1.x_dir.dot(c2.x_dir) > 1.0 - TOL
+                && c1.y_dir.dot(c2.y_dir) > 1.0 - TOL
                 && (c1.radius - c2.radius).abs() < TOL
         }
         (Curve3::Ellipse(e1), Curve3::Ellipse(e2)) => {
@@ -1256,6 +1315,7 @@ fn curves_same(a: &rcad_kernel::geom::Curve3, b: &rcad_kernel::geom::Curve3) -> 
                 && e1.normal.dot(e2.normal) > 1.0 - TOL
                 && (e1.major_radius - e2.major_radius).abs() < TOL
                 && (e1.minor_radius - e2.minor_radius).abs() < TOL
+                && e1.major_dir.dot(e2.major_dir) > 1.0 - TOL
         }
         _ => false,
     }

@@ -1450,6 +1450,20 @@ impl<'a> Builder<'a> {
     }
 
     /// Shape backed by shared Arc in ds.shapes — OCCT myDS->Shape(n).
+    fn remap_arg_key(&self, a_s: &Shape) -> (u64, u32) {
+        // OCCT: an argument shape and its DS counterpart share the TShape
+        // identity. rcad clones the inputs (clone_arguments_private) so the
+        // original ptr_id must be translated to the cloned one for myImages
+        // lookups (Builder stages key myImages by the DS shape).
+        let p = self
+            .ds
+            .argument_remap
+            .get(&a_s.ptr_id())
+            .copied()
+            .unwrap_or(a_s.ptr_id());
+        (p, a_s.location)
+    }
+
     fn brep_sr(&self, flat_idx: usize) -> Shape {
         self.ds.shape(flat_idx).clone()
     }
@@ -4965,7 +4979,11 @@ impl<'a> Builder<'a> {
                         continue;
                     }
                 }
-                if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)).cloned() {
+                if let Some(imgs) = self
+                    .my_images
+                    .get(self.remap_arg_key(a_s))
+                    .cloned()
+                {
                     for a_s_im in &imgs {
                         if a_ms_im_fence.insert(a_s_im.ptr_id()) {
                             a_ms_im.push(a_s_im.clone());

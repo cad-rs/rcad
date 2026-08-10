@@ -622,6 +622,13 @@ pub struct DS {
     /// the arguments by reference so `DS::index(aSx)` resolves the section
     /// edges back to the main DS, exactly as OCCT's `myDS->Index(aSx)` does.
     pub clone_arguments: bool,
+    /// Original argument TShape ptr_id -> cloned TShape ptr_id (filled by
+    /// `clone_arguments_private`). OCCT's DS holds the arguments by reference
+    /// (myImages and the arguments share TShape identity); rcad clones the
+    /// inputs for in-place mutation, so Builder stages that look up
+    /// `myImages` by an argument shape must translate the original ptr_id
+    /// through this map first.
+    pub argument_remap: HashMap<u64, u64>,
 }
 
 impl DS {
@@ -641,6 +648,7 @@ impl DS {
             common_blocks: Vec::new(),
             intersection_curves: Vec::new(),
             clone_arguments: true,
+            argument_remap: HashMap::new(),
         }
     }
 
@@ -707,6 +715,7 @@ impl DS {
         for (&old_ptr, new_arc) in &cache {
             remap.insert(old_ptr, std::sync::Arc::as_ptr(new_arc) as u64);
         }
+        self.argument_remap = remap.clone();
         let mut walk = |s: &mut Shape| {
             let mut stack: Vec<&mut Shape> = vec![s];
             while let Some(sh) = stack.pop() {
@@ -2256,7 +2265,15 @@ impl DS {
             representations, vertex_params: HashMap::new(),
             my_shapes: Vec::new(), flags: 0,
         };
-        let s = Shape::new(Arc::new(TShape::Edge(ed)), 0, topods::Orientation::Forward);
+        // OCCT MakeSplitEdge (BOPTools_AlgoTools_2.cxx L182):
+        //   aNewEdge.Orientation(aE.Orientation()) — the split edge inherits
+        //   the source edge's orientation (the FORWARD-normalized EmptyCopy
+        //   only shares the TShape).
+        let ori = match src {
+            Some(src_e) if src_e < self.shapes.len() => self.shapes[src_e].shape.orientation,
+            _ => topods::Orientation::Forward,
+        };
+        let s = Shape::new(Arc::new(TShape::Edge(ed)), 0, ori);
         self.append_shape(s)
     }
 
