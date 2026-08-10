@@ -1,6 +1,7 @@
 //! TKBO ?Boolean Operation algorithms (OCCT TKBO toolkit).
 
 pub mod algo;
+pub mod history;
 pub mod ds;
 pub mod tools;
 pub mod brep_algo_api;

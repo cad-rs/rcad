@@ -62,6 +62,7 @@ pub struct Builder<'a> {
     // ── BOPAlgo_BuilderShape (inherited) ───────────────────────
     pub(crate) my_shape: Option<topods::BRep>, // BOPAlgo_BuilderShape::myShape
     pub(crate) my_fill_history: bool,      // BOPAlgo_BuilderShape::myFillHistory
+    pub(crate) my_history: Option<crate::bop::history::BRepToolsHistory>, // BOPAlgo_Builder::myHistory
     // ── BOPAlgo_BOP (inherited) ────────────────────────────────
     pub(crate) my_operation: BooleanOpType, // BOPAlgo_BOP::myOperation
     pub(crate) my_tools: Vec<Shape>,        // BOPAlgo_BOP::myTools
@@ -1417,6 +1418,7 @@ impl<'a> Builder<'a> {
             my_fuzzy_value: fuzzy_value,
             my_shape: None,
             my_fill_history: false,
+            my_history: None,
             my_operation: op,
             my_tools: Vec::new(),
             my_rc: Vec::new(),
@@ -4573,55 +4575,152 @@ impl<'a> Builder<'a> {
         // OCCT L166-168: if (!HasHistory()) return;
         if !self.my_fill_history { return; }
 
-        // OCCT L172-176: init history tool, map result shapes
-        // rcad: OCCT BRepTools_History for Modified/Generated/Deleted tracking
-        // follows OCCT's Modified/Generated/Deleted detection.
+        // OCCT L172-176: init history tool, map result shapes.
+        // rcad: shape_remap (ptr_id -> new BRep index) identifies the shapes
+        // added to the result (equivalent to TopExp::MapShapes(myShape,
+        // myMapShape) membership).
+        let mut a_history = crate::bop::history::BRepToolsHistory::new();
+
         let a_nb_s = self.ds.nb_source_shapes();
         for i in 0..a_nb_s {
             let a_s = self.brep_sr(i);
-            // OCCT L192-195: skip unsupported types
-            let a_type = a_s.shape_type();
-            if a_type != topods::ShapeType::Vertex
-                && a_type != topods::ShapeType::Edge
-                && a_type != topods::ShapeType::Wire
-                && a_type != topods::ShapeType::Face
-                && a_type != topods::ShapeType::Shell
-                && a_type != topods::ShapeType::Solid
-                && a_type != topods::ShapeType::Compound
-            {
+            // OCCT L192-195: BRepTools_History::IsSupportedType.
+            if !crate::bop::history::is_supported_type(&a_s) {
                 continue;
             }
 
-            // OCCT L205: LocModified → check myImages
             let mut is_modified = false;
+
+            // OCCT L205-231: LocModified — the splits of the shape kept in the
+            // result become Modified, with the proper orientation.
             if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)) {
                 for a_sp in imgs {
-                    // OCCT L214-217: check if result contains the split
-                    // rcad: check via shape_remap (shape was added to result)
+                    // OCCT L214-217: check if the result contains the split.
                     if self.shape_remap.contains_key(&a_sp.ptr_id()) {
+                        let mut a_sp2 = a_sp.clone();
+                        // OCCT L218-226: VERTEX/SOLID keep the source
+                        // orientation; other types reverse when IsSplitToReverse.
+                        let a_type = a_sp2.shape_type();
+                        if a_type == topods::ShapeType::Vertex || a_type == topods::ShapeType::Solid {
+                            a_sp2.orientation = a_s.orientation;
+                        } else {
+                            let b_to_reverse = match a_type {
+                                topods::ShapeType::Edge | topods::ShapeType::Wire => {
+                                    crate::bop::tools::algo_tools::is_split_to_reverse_edge(&a_sp2, &a_s).0
+                                }
+                                topods::ShapeType::Face | topods::ShapeType::Shell => {
+                                    crate::bop::tools::algo_tools::is_split_to_reverse_face(&a_sp2, &a_s, &self.ds).0
+                                }
+                                _ => false,
+                            };
+                            if b_to_reverse {
+                                a_sp2.orientation = flip_orientation(a_sp2.orientation);
+                            }
+                        }
+                        a_history.add_modified(&a_s, &a_sp2);
                         is_modified = true;
-                        // OCCT L218-226: orientation adjustment
-                        // rcad: orientation handled by add_shape_to_result
                     }
                 }
             }
 
-            // OCCT L234-243: LocGenerated — check myImages for shapes generated
-            // from this shape (e.g., edges generated from vertices)
-            if let Some(imgs) = self.my_images.get((a_s.ptr_id(), a_s.location)) {
-                for _a_g in imgs {
-                    if self.shape_remap.contains_key(&_a_g.ptr_id()) {
-                        // OCCT L241: myHistory->AddGenerated(aS, aG)
-                    }
+            // OCCT L234-243: LocGenerated — generated elements kept in the
+            // result become Generated.
+            let a_gen_shapes = self.loc_generated(&a_s);
+            for a_g in &a_gen_shapes {
+                if self.shape_remap.contains_key(&a_g.ptr_id()) {
+                    a_history.add_generated(&a_s, a_g);
                 }
             }
 
-            // OCCT L247-250: if not modified and not in result → Deleted
-            let in_result = self.shape_remap.contains_key(&a_s.ptr_id());
-            if !is_modified && !in_result {
-                // OCCT L249: myHistory->Remove(aS)
+            // OCCT L247-250: not modified and not in the result -> Deleted.
+            if !is_modified && !self.shape_remap.contains_key(&a_s.ptr_id()) {
+                a_history.remove(&a_s);
             }
         }
+        self.my_history = Some(a_history);
+    }
+
+    /// OCCT BOPAlgo_Builder::LocGenerated (BOPAlgo_Builder_4.cxx L30-152) —
+    /// the shapes generated from the given EDGE/FACE: intersection vertices of
+    /// the EE/EF interferences and, for faces, the section edges/vertices.
+    fn loc_generated(&self, the_s: &Shape) -> Vec<Shape> {
+        let mut a_hist: Vec<Shape> = Vec::new();
+        // Only EDGES and FACES.
+        let a_type = the_s.shape_type();
+        if a_type != topods::ShapeType::Edge && a_type != topods::ShapeType::Face {
+            return a_hist;
+        }
+        // Check that DS contains the shape (it is from the arguments).
+        let n_s = self.ds.index(the_s);
+        if n_s < 0 {
+            return a_hist;
+        }
+        let n_s = n_s as usize;
+        // Check that the shape has participated in any intersections.
+        if !self.ds.shapes[n_s].has_reference() {
+            return a_hist;
+        }
+        let a_ees = self.ds.interf_ee.clone();
+        let a_efs = self.ds.interf_ef.clone();
+        // Fence to avoid duplicates.
+        let mut a_mfence: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let is_face = a_type == topods::ShapeType::Face;
+        // EE interferences (only for EDGE) and EF interferences.
+        let a_nb_ee = if is_face { 0 } else { a_ees.len() };
+        for k in 0..2 {
+            let a_nb_lines = if k == 0 { a_nb_ee } else { a_efs.len() };
+            for a_int in 0..a_nb_lines {
+                let (has_new, n_v_new, contains) = if k == 0 {
+                    let ee = &a_ees[a_int];
+                    (ee.new_vertex != usize::MAX, ee.new_vertex,
+                     ee.e1 == n_s || ee.e2 == n_s)
+                } else {
+                    let ef = &a_efs[a_int];
+                    (ef.new_vertex != usize::MAX, ef.new_vertex,
+                     ef.edge == n_s || ef.face == n_s)
+                };
+                if !has_new || !contains {
+                    continue;
+                }
+                // myDS->HasShapeSD(nVNew, nVNew)
+                let mut n_v_new2 = n_v_new;
+                self.ds.has_shape_sd(n_v_new, &mut n_v_new2);
+                if !a_mfence.insert(n_v_new2) {
+                    continue;
+                }
+                let a_v_new = self.brep_sr(n_v_new2);
+                // Check that the result shape contains the vertex.
+                if self.shape_remap.contains_key(&a_v_new.ptr_id()) {
+                    a_hist.push(a_v_new);
+                }
+            }
+        }
+        if !is_face {
+            return a_hist;
+        }
+        // FACE: section edges and vertices from FaceInfo.
+        let a_fi = self.ds.face_info(n_s);
+        // Section edges (PaveBlocksSc).
+        let a_mpb_sc: Vec<u64> = a_fi.pave_blocks_sc.iter().copied().collect();
+        for &pb_key in &a_mpb_sc {
+            if let Some(a_pb) = self.ds.pb_from_ptr(pb_key) {
+                let n_e = a_pb.0.read().unwrap().edge;
+                if n_e >= self.ds.nb_shapes() { continue; }
+                let a_e_new = self.brep_sr(n_e);
+                if self.shape_remap.contains_key(&a_e_new.ptr_id()) {
+                    a_hist.push(a_e_new);
+                }
+            }
+        }
+        // Section vertices (VerticesSc) — NCollection_Map bucket order.
+        let a_mv_sc: Vec<usize> = a_fi.vertices_sc.iter().copied().collect();
+        for n_v in a_mv_sc {
+            let a_v_new = self.brep_sr(n_v);
+            if self.shape_remap.contains_key(&a_v_new.ptr_id()) {
+                a_hist.push(a_v_new);
+            }
+        }
+        a_hist
     }
 
     /// OCCT BOPAlgo_Builder::PostTreat (BOPAlgo_Builder.cxx L461-486).
