@@ -135,7 +135,7 @@ pub fn make_shells(blocks: &[ConnexityBlock], ds: &DS) -> Vec<Vec<Shape>> {
 /// Reorients the faces of a closed shell so that every shared edge is used by
 /// the two adjacent faces with opposite orientations (consistent outward
 /// orientation). Seam edges (BRep_Tool::IsClosed(aE, aF)) are not flipped.
-fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
+pub(crate) fn orient_faces_on_shell(faces: &mut Vec<Shape>) {
     // OCCT L385-387: TopExp::MapShapesAndAncestors(aShell, EDGE, FACE, aEFMap).
     // OCCT aEFMap is NCollection_IndexedDataMap with TopTools_ShapeMapHasher —
     // iteration is in insertion order; IndexMap reproduces that order (a

@@ -49,6 +49,11 @@ impl Report {
     pub fn has_errors(&self) -> bool { self.has_errors }
     pub fn errors(&self) -> &[Alert] { &self.alerts }
     pub fn clear(&mut self) { self.alerts.clear(); self.has_errors = false; }
+    /// OCCT Message_Report::Merge — append the alerts of another report.
+    pub fn merge(&mut self, other: Report) {
+        self.has_errors |= other.has_errors;
+        self.alerts.extend(other.alerts);
+    }
 }
 
 /// OCCT BOPAlgo_GlueEnum — glue mode for coincident geometry.

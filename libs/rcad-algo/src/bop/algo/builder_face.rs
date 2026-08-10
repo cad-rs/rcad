@@ -73,6 +73,9 @@ impl<'a> BuilderFace<'a> {
 
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
 
+    /// OCCT BOPAlgo_BuilderFace::GetReport — the accumulated alerts.
+    pub fn report(&self) -> &Report { &self.my_report }
+
     /// OCCT BOPAlgo_BuilderFace::PerformShapesToAvoid (BuilderFace.cxx L152-235).
     /// Iteratively marks edges with a free boundary (a vertex used by at most
     /// one non-avoided edge, or by two IsSame copies of one edge) as "to avoid".

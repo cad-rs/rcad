@@ -2130,6 +2130,10 @@ impl<'a> Builder<'a> {
             a_bf.my_face_index = Some(*fi);
             a_bf.my_edges = a_le.clone();
             a_bf.perform();
+            // OCCT L551: myReport->Merge(aBF.GetReport()) — merge the
+            // BuilderFace warnings (e.g. failed area building) into the main
+            // report.
+            self.my_report.merge(a_bf.report().clone());
             // OCCT L527-531: aFacesIm.Add(myDS->Index(aBF.Face()), aBF.Areas()).
             // OCCT binds every split face to its areas, even an empty list —
             // a face whose areas could not be built contributes nothing to the
@@ -3123,18 +3127,15 @@ impl<'a> Builder<'a> {
             let a_si = self.ds.shape_info(i_src);
             if a_si.shape_type != topods::ShapeType::Solid { continue; }
             let a_solid = self.brep_sr(i_src);
-            // Iterate solid's sub-shape shells → faces.
-            for &shi in &a_si.sub_shapes {
-                if shi >= self.ds.nb_shapes() { continue; }
-                let sh_info = self.ds.shape_info(shi);
-                if sh_info.shape_type != topods::ShapeType::Shell { continue; }
-                for &fi in &sh_info.sub_shapes {
-                    if fi >= self.ds.nb_shapes() { continue; }
-                    let a_f = self.brep_sr(fi);
-                    a_face_to_parent
-                        .entry((a_f.ptr_id(), a_f.location))
-                        .or_insert(a_solid.ptr_id());
-                }
+            // OCCT L610-618: TopExp_Explorer(aSolid, TopAbs_FACE) — deep
+            // traversal of ALL nested faces (including faces directly held by
+            // the solid, without a shell); only the first binding is kept.
+            let mut a_sf: Vec<Shape> = Vec::new();
+            Self::collect_sub_shapes_of_type_static(&a_solid, topods::ShapeType::Face, &mut a_sf);
+            for a_f in a_sf {
+                a_face_to_parent
+                    .entry((a_f.ptr_id(), a_f.location))
+                    .or_insert(a_solid.ptr_id());
             }
         }
         // OCCT L619-648: propagate the parent solid to the image faces.
@@ -4713,6 +4714,9 @@ impl<'a> Builder<'a> {
                     topods::ShapeType::Shell => Self::orient_faces_on_shell(&mut a_rcb),
                     _ => {}
                 }
+                // OCCT L1041: aRCB.Orientation(aSC.Orientation()) — the result
+                // container inherits the source container's orientation.
+                a_rcb.orientation = a_sc.orientation;
                 a_lc_res.push(a_rcb);
             }
         }
@@ -5329,13 +5333,143 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// OCCT BOPTools_AlgoTools::OrientEdgesOnWire — reorient edges on a wire.
-    /// rcad: no-op (affects orientation, not entity counts).
-    fn orient_edges_on_wire(_w: &mut Shape) {}
+    /// OCCT BOPTools_AlgoTools::OrientEdgesOnWire (BOPTools_AlgoTools.cxx L262-362).
+    /// Reorients the edges of a wire so that they form a continuous chain:
+    /// each vertex is shared by exactly two edges with opposite orientations.
+    fn orient_edges_on_wire(w: &mut Shape) {
+        // aVEMap: vertex -> [edges] (NCollection_IndexedDataMap, insertion order,
+        // TopTools_ShapeMapHasher — key TShape + Location).
+        let orig_edges: Vec<Shape> = match &*w.data {
+            TShape::Wire(wd) => wd.edges.clone(),
+            _ => return,
+        };
+        let mut a_ve_map: IndexMap<(u64, u32), Vec<Shape>> = IndexMap::new();
+        for a_e in &orig_edges {
+            for a_v in Self::edge_vertices_of(a_e) {
+                let vkey = (a_v.ptr_id(), a_v.location);
+                let entry = a_ve_map.entry(vkey).or_default();
+                if !entry.iter().any(|x| x.is_partner(a_e)) {
+                    entry.push(a_e.clone());
+                }
+            }
+        }
+        if a_ve_map.is_empty() {
+            return;
+        }
+        // New wire edges (OCCT: aBB.MakeWire(aWire); aBB.Add(aWire, ...)).
+        let mut new_edges: Vec<Shape> = Vec::new();
+        // OCCT aMFence: NCollection_Map<TopoDS_Shape> — default hasher
+        // (TShape + Location + Orientation).
+        let mut a_mfence: HashSet<(u64, u32, topods::Orientation)> = HashSet::new();
+        for a_ec in &orig_edges {
+            if !a_mfence.insert((a_ec.ptr_id(), a_ec.location, a_ec.orientation)) {
+                continue;
+            }
+            new_edges.push(a_ec.clone());
+            let (a_v1, a_v2) = Self::edge_endpoints_of(a_ec);
+            if a_v1.is_partner(&a_v2) {
+                // closed edge, go to the next edge
+                continue;
+            }
+            // orient the adjacent edges
+            for i in 0..2 {
+                let mut a_vc = if i == 0 { a_v1.clone() } else { a_v2.clone() };
+                loop {
+                    let a_le: &[Shape] = match a_ve_map.get(&(a_vc.ptr_id(), a_vc.location)) {
+                        Some(l) => l.as_slice(),
+                        None => &[],
+                    };
+                    if a_le.len() != 2 {
+                        // free vertex or multi-connexity, go to the next edge
+                        break;
+                    }
+                    let mut b_stop = true;
+                    for a_en in a_le {
+                        if a_mfence.contains(&(a_en.ptr_id(), a_en.location, a_en.orientation)) {
+                            continue;
+                        }
+                        let (a_vn1, a_vn2) = Self::edge_endpoints_of(a_en);
+                        if a_vn1.is_partner(&a_vn2) {
+                            // closed edge, go to the next edge
+                            break;
+                        }
+                        // change orientation if necessary and go to the next edges
+                        if (i == 0 && a_vc.is_partner(&a_vn2)) || (i == 1 && a_vc.is_partner(&a_vn1)) {
+                            new_edges.push(a_en.clone());
+                        } else {
+                            let mut en_rev = a_en.clone();
+                            en_rev.orientation = flip_orientation(en_rev.orientation);
+                            new_edges.push(en_rev);
+                        }
+                        a_mfence.insert((a_en.ptr_id(), a_en.location, a_en.orientation));
+                        a_vc = if a_vc.is_partner(&a_vn1) { a_vn2.clone() } else { a_vn1.clone() };
+                        b_stop = false;
+                        break;
+                    }
+                    if b_stop {
+                        break;
+                    }
+                }
+            }
+        }
+        // theWire = aWire
+        if let TShape::Wire(wd) = Arc::make_mut(&mut w.data) {
+            wd.edges = new_edges;
+        }
+    }
 
-    /// OCCT BOPTools_AlgoTools::OrientFacesOnShell — reorient faces on a shell.
-    /// rcad: no-op (affects orientation, not entity counts).
-    fn orient_faces_on_shell(_sh: &mut Shape) {}
+    /// Edge endpoints (TopExp::Vertices(aE, aV1, aV2, true) — the stored first
+    /// and last vertices, independent of the edge orientation).
+    fn edge_endpoints_of(e: &Shape) -> (Shape, Shape) {
+        match &*e.data {
+            TShape::Edge(ed) => (ed.first.clone(), ed.last.clone()),
+            _ => (Shape::null(), Shape::null()),
+        }
+    }
+
+    /// The two endpoint vertices of an edge with their composed orientations
+    /// (TopoDS_Iterator semantics, as in BuilderFace::edge_vertices).
+    fn edge_vertices_of(e: &Shape) -> Vec<Shape> {
+        let flip_ori = |o: topods::Orientation| -> topods::Orientation {
+            match o {
+                topods::Orientation::Forward => topods::Orientation::Reversed,
+                topods::Orientation::Reversed => topods::Orientation::Forward,
+                other => other,
+            }
+        };
+        match &*e.data {
+            TShape::Edge(ed) => {
+                if e.orientation == topods::Orientation::Reversed {
+                    vec![
+                        Shape::new(ed.last.data.clone(), ed.last.location, flip_ori(ed.last.orientation)),
+                        Shape::new(ed.first.data.clone(), ed.first.location, flip_ori(ed.first.orientation)),
+                    ]
+                } else {
+                    vec![
+                        Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
+                        Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
+                    ]
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// OCCT BOPTools_AlgoTools::OrientFacesOnShell (BOPTools_AlgoTools.cxx L363-503).
+    /// Reorients the faces of a shell so that every shared edge is used by the
+    /// two adjacent faces with opposite orientations. Delegates to the full
+    /// ShellSplitter translation (shell_splitter.rs), operating on the shell's
+    /// face list.
+    fn orient_faces_on_shell(sh: &mut Shape) {
+        let mut faces: Vec<Shape> = match &*sh.data {
+            TShape::Shell(sd) => sd.faces.clone(),
+            _ => return,
+        };
+        crate::bop::algo::shell_splitter::orient_faces_on_shell(&mut faces);
+        if let TShape::Shell(sd) = Arc::make_mut(&mut sh.data) {
+            sd.faces = faces;
+        }
+    }
 
     /// OCCT BOPAlgo_BOP::RemoveDuplicates (BOPAlgo_BOP.cxx L1627-1698).
     /// Dedups containers with identical sub-shape contents.
