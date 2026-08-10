@@ -565,8 +565,12 @@ impl ConicalSurface {
         let u = if radial < 1e-15 {
             0.0
         } else {
-            let perp_n = perp / radial;
-            perp_n.dot(y_ax).atan2(perp_n.dot(x_ax))
+            // OCCT ElSLib::ConeParameters: atan2(P·YDirection, P·XDirection) on
+            // the raw offset vector — NOT on the normalized radial. Normalizing
+            // re-introduces rounding that flips the sign of a ~0 Y component
+            // (atan2(-1e-16, X) -> 2PI), projecting a u=0 generatrix vertex to
+            // u=2PI (same rationale as closest_point_on_surface Cone branch).
+            local.dot(y_ax).atan2(local.dot(x_ax))
         };
         // OCCT gp_Cone / ElSLib::ConeD0 parameterization: u in [0, 2*PI].
         // atan2 returns (-PI, PI]; normalize so section-edge pcurves and the
