@@ -1424,9 +1424,15 @@ impl PaveFiller {
         // OCCT BOPAlgo_Tools::FillMap(aPB1, aPB2, aMPBLPB) fills a bidirectional
         // adjacency map (key -> list of connected PBs), then MakeBlocks groups
         // connected PBs into one Common Block per connected component.
+        // OCCT aMPBLPB (BOPAlgo_PaveFiller_3.cxx L524-534) is NCollection_IndexedDataMap
+        // — the MakeBlocks iteration (BOPAlgo_Tools.hxx L49-53, FindKey(i)) and
+        // the chain start order are the insertion order of cb_pairs; a HashMap
+        // would randomize the CommonBlock pave-block order, which later feeds
+        // cb_pcurve_source's first-with-pcurve selection and hence the copied
+        // pcurve parameterization.
         if !cb_pairs.is_empty() {
-            let mut a_mpblpb: std::collections::HashMap<u64, (SharedPB, Vec<u64>)> =
-                std::collections::HashMap::new();
+            let mut a_mpblpb: indexmap::IndexMap<u64, (SharedPB, Vec<u64>)> =
+                indexmap::IndexMap::new();
             for (pb1, pb2) in &cb_pairs {
                 let k1 = std::sync::Arc::as_ptr(&pb1.0) as u64;
                 let k2 = std::sync::Arc::as_ptr(&pb2.0) as u64;
@@ -1434,14 +1440,17 @@ impl PaveFiller {
                 a_mpblpb.entry(k2).or_insert_with(|| (pb2.clone(), Vec::new())).1.push(k1);
             }
             // OCCT MakeBlocks (BOPAlgo_Tools.hxx L46-80): connected components
+            // grown in FIFO order (aChain list iterated from the start, appended
+            // elements visited later) — a stack would visit in a different order.
             let mut a_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
             for (&n, _) in &a_mpblpb {
                 if a_fence.contains(&n) {
                     continue;
                 }
                 let mut a_block: Vec<SharedPB> = Vec::new();
-                let mut a_stack: Vec<u64> = vec![n];
-                while let Some(n1) = a_stack.pop() {
+                let mut a_queue: std::collections::VecDeque<u64> = std::collections::VecDeque::new();
+                a_queue.push_back(n);
+                while let Some(n1) = a_queue.pop_front() {
                     if !a_fence.insert(n1) {
                         continue;
                     }
@@ -1449,7 +1458,7 @@ impl PaveFiller {
                         a_block.push(pb.clone());
                         for &n2 in a_linked {
                             if !a_fence.contains(&n2) {
-                                a_stack.push(n2);
+                                a_queue.push_back(n2);
                             }
                         }
                     }
