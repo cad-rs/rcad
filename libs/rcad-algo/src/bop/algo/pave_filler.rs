@@ -2748,27 +2748,11 @@ impl PaveFiller {
                 let fi = bpc.face_idx();
                 let range = self.ds.shape(ei).as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
                 if let Some(pc) = bpc.pcurve().cloned() {
-                    // OCCT BRepLib::BuildPCurveForEdgeOnPlane: the pcurve runs
-                    // along the EDGE direction (first -> last), so
-                    // BRep_Tool::Range(edge, face) puts the first vertex at
-                    // pfbid.  rcad's prim edges parameterize the 3D curve
-                    // low->high with the first vertex at the high end (OCCT
-                    // AddEdgeVertex order), so the projected pcurve (which
-                    // follows the 3D curve) is reversed when the first vertex
-                    // sits at the curve's high end.
-                    let (first_p, last_p) = self.ds.shape(ei).as_edge()
-                        .map(|ed| {
-                            let fp = ed.vertex_params.get(&ed.first.index).copied().unwrap_or(range[0]);
-                            let lp = ed.vertex_params.get(&ed.last.index).copied().unwrap_or(range[1]);
-                            (fp, lp)
-                        })
-                        .unwrap_or((range[0], range[1]));
-                    let (pc, f, l) = if first_p > last_p {
-                        let len = range[1] - range[0];
-                        (Self::reverse_curve2d(pc, len), range[0], range[1])
-                    } else {
-                        (pc, range[0], range[1])
-                    };
+                    // OCCT BOPAlgo_BPC / BRepLib::BuildPCurveForEdgeOnPlane: the
+                    // pcurve follows the edge's 3D curve parameter direction
+                    // (BRep_Tool::Curve + Range), independent of the stored
+                    // vertex order. No reversal.
+                    let (pc, f, l) = (pc, range[0], range[1]);
                     let fkey = self.ds.face_key(fi);
                     self.ds.mutate_shape_data(ei, |ts| {
                         if let topods::TShape::Edge(ed) = ts {

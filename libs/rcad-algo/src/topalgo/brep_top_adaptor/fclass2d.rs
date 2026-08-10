@@ -118,28 +118,41 @@ fn order_wire_edges(
     let mut by_start: HashMap<(u64, u32), Vec<usize>> = HashMap::new();
     let mut edge_v2: Vec<(u64, u32)> = Vec::with_capacity(n);
     for (i, &(ei, ori)) in edges.iter().enumerate() {
-        let verts = match ds.shape_at(ei) {
+        let (vf, vl) = match ds.shape_at(ei) {
             Shape { data, .. } => match &*data {
-                TShape::Edge(ed) => (
-                    ed.first.ptr_id(),
-                    ed.first.location,
-                    ed.last.ptr_id(),
-                    ed.last.location,
-                ),
+                TShape::Edge(ed) => (ed.first.clone(), ed.last.clone()),
                 _ => continue,
             },
         };
-        // OCCT TopExp::Vertices(E, V1, V2, true): for a REVERSED edge V1 is
-        // the last vertex (traversal is reversed).
-        let v1 = if ori == Orientation::Reversed {
-            (verts.2, verts.3)
-        } else {
-            (verts.0, verts.1)
+        // OCCT TopExp::Vertices(E, V1, V2, CumOri=true) (TopExp.cxx L214-252):
+        // iterate the edge's vertex sub-shapes with the edge orientation
+        // compounded (TopoDS_Iterator(E, CumOri)); V1 = the first vertex whose
+        // compound orientation is FORWARD, V2 = the first whose compound
+        // orientation is REVERSED. This is NOT the storage order: GWedge edges
+        // store [REV(high-param), FWD(low-param)], so a FORWARD edge has
+        // V1=low, V2=high and a REVERSED edge V1=high, V2=low.
+        let compound = |o: Orientation| match (o, ori) {
+            (Orientation::Forward, Orientation::Forward)
+            | (Orientation::Reversed, Orientation::Reversed) => Orientation::Forward,
+            _ => Orientation::Reversed,
         };
-        let v2 = if ori == Orientation::Reversed {
-            (verts.0, verts.1)
+        let o0 = compound(vf.orientation);
+        let o1 = compound(vl.orientation);
+        // V1 = first vertex with compound orientation FORWARD; V2 = first with
+        // compound orientation REVERSED (OCCT TopExp::Vertices L214-252).
+        let v1 = if o0 == Orientation::Forward {
+            (vf.ptr_id(), vf.location)
         } else {
-            (verts.2, verts.3)
+            (vl.ptr_id(), vl.location)
+        };
+        let v2 = if o1 == Orientation::Reversed {
+            (vl.ptr_id(), vl.location)
+        } else if o0 == Orientation::Reversed {
+            (vf.ptr_id(), vf.location)
+        } else {
+            // No REVERSED vertex (closed/degenerated edge, OCCT V2 null):
+            // keep V2 = V1 so the closed-loop preference below applies.
+            v1
         };
         edge_v2.push(v2);
         by_start.entry(v1).or_default().push(i);
