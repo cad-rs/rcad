@@ -139,8 +139,9 @@ pub fn closest_point_on_surface(
             };
             let u_axis = cyl.ref_dir.normalize();
             let v_axis = cyl.axis.cross(u_axis);
-            let r = (point - cyl.origin - cyl.axis * along).normalize_or_zero();
-            let theta = r.dot(v_axis).atan2(r.dot(u_axis));
+            // OCCT ElSLib::CylinderParameters: atan2(P·YDirection, P·XDirection)
+            // on the raw offset vector (same rationale as the Cone branch).
+            let theta = v.dot(v_axis).atan2(v.dot(u_axis));
             let theta = if theta < 0.0 { theta + std::f64::consts::TAU } else { theta };
             SurfaceProjection {
                 point,
@@ -151,7 +152,10 @@ pub fn closest_point_on_surface(
 
         Surface3::Cone(cone) => {
             let axis = cone.axis_dir();
-            let x_axis = any_perpendicular(axis);
+            // OCCT gp_Cone u=0 is the XDirection of its gp_Ax3 (the cone's
+            // reference direction), preserved through rotation. any_perpendicular
+            // here would break the UV mapping of rotated cones (P014).
+            let x_axis = cone.ref_dir.normalize_or_zero();
             let y_axis = axis.cross(x_axis).normalize_or_zero();
             let local = query - cone.apex;
             let along = local.dot(axis);
@@ -163,7 +167,13 @@ pub fn closest_point_on_surface(
             let r_hat = if radial_len < 1e-14 { x_axis } else { radial / radial_len };
             let point = cone.apex + axis * axial + r_hat * cone.radius_at_axial(axial);
             let slant = cone.slant_from_axial(axial);
-            let theta = r_hat.dot(y_axis).atan2(r_hat.dot(x_axis));
+            // OCCT ElSLib::ConeParameters (ElSLib.cxx L525-556): the azimuth is
+            // atan2(P·YDirection, P·XDirection) on the raw offset vector — NOT
+            // on the normalized radial. Normalizing first re-introduces rounding
+            // that flips the sign of a ~0 Y component (atan2(-1e-16, X) -> 2PI),
+            // which makes a vertex sitting exactly on u=0 project to u=2PI and
+            // breaks the WireSplitter's periodic UV comparison (P014).
+            let theta = local.dot(y_axis).atan2(local.dot(x_axis));
             // OCCT gp_Cone u in [0, 2*PI]; normalize the atan2 azimuth so the
             // projected pcurves share the cone's natural UV domain (matches the
             // Cylinder branch above).

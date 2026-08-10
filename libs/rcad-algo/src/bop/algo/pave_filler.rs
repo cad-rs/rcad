@@ -4894,6 +4894,42 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             uv.push(u);
         }
         if uv.len() < 2 { return None; }
+        // OCCT section-edge pcurves come from IntPatch: each arc keeps the u
+        // domain of the side of the seam it lies on (an arc on the u=0 side
+        // spans [0, u2], on the u=2PI side [u1, 2PI]). Projecting the 3D arc
+        // samples the azimuth in [0, 2PI), so an arc crossing the seam wraps
+        // (e.g. 2PI-eps ... 0.12). Unwrap the samples across the periodic
+        // boundary, shift the domain back into [0, 2PI], and snap a sub-eps
+        // endpoint to 0 — matching OCCT's per-arc domain. Without this the
+        // WireSplitter's periodic UV comparison sees u=2PI where OCCT sees
+        // u=0 and takes the wrong edge at a seam vertex (P014). Only periodic
+        // surfaces are unwrapped — a planar face's u is not periodic and a
+        // large span must not be folded back by 2PI.
+        let is_periodic_u = match surf {
+            rcad_kernel::geom::Surface3::Plane(_) => false,
+            _ => true,
+        };
+        if is_periodic_u {
+            let two_pi = std::f64::consts::TAU;
+            for i in 1..uv.len() {
+                let du = uv[i].x - uv[i - 1].x;
+                if du > std::f64::consts::PI {
+                    uv[i].x -= two_pi;
+                } else if du < -std::f64::consts::PI {
+                    uv[i].x += two_pi;
+                }
+            }
+            let min_u = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+            let max_u = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+            if max_u > two_pi {
+                for p in uv.iter_mut() { p.x -= two_pi; }
+            } else if min_u < 0.0 {
+                for p in uv.iter_mut() { p.x += two_pi; }
+            }
+            for p in uv.iter_mut() {
+                if p.x.abs() < 1e-12 { p.x = 0.0; }
+            }
+        }
         let mut c = rcad_kernel::geom::BSplineCurve2::approximate(&uv);
         // approximate() normalizes the parameterization to [0,1] (chord-length).
         // OCCT pcurves are parameterized by the edge's 3D range, and the
