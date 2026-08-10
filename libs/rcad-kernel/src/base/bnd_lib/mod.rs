@@ -718,8 +718,16 @@ pub fn surface_bounding_box(
             }
             let p_lo = cyl.origin + axis * min_axial;
             let p_hi = cyl.origin + axis * max_axial;
-            let rv = DVec3::splat(r);
-            Some([p_lo.min(p_hi) - rv, p_lo.max(p_hi) + rv])
+            // OCCT BndLib_AddSurface::Add(CylindricalSurface) samples the
+            // surface grid: the axial extent is bounded by the v-isoline
+            // circles (the face vertices), only the radial (perpendicular to
+            // the axis) extent grows by the radius.
+            let radial = DVec3::new(
+                r * (1.0 - axis.x * axis.x).max(0.0).sqrt(),
+                r * (1.0 - axis.y * axis.y).max(0.0).sqrt(),
+                r * (1.0 - axis.z * axis.z).max(0.0).sqrt(),
+            );
+            Some([p_lo.min(p_hi) - radial, p_lo.max(p_hi) + radial])
         }
         Surface3::Sphere(sph) => Some(
             [sph.center - DVec3::splat(sph.radius), sph.center + DVec3::splat(sph.radius)],
@@ -741,10 +749,18 @@ pub fn surface_bounding_box(
                 return None;
             }
             let max_r = cone.radius_at_axial(min_axial).max(cone.radius_at_axial(max_axial));
-            let rv = DVec3::splat(max_r.max(cone.radius));
+            let r_eff = max_r.max(cone.radius);
             let p_lo = apex + axis * min_axial;
             let p_hi = apex + axis * max_axial;
-            Some([p_lo.min(p_hi) - rv, p_lo.max(p_hi) + rv])
+            // OCCT BndLib_AddSurface::Add(Cone): the axial extent is bounded
+            // by the v-isoline circles at the face vertices, only the radial
+            // (perpendicular to the axis) extent grows by the local radius.
+            let radial = DVec3::new(
+                r_eff * (1.0 - axis.x * axis.x).max(0.0).sqrt(),
+                r_eff * (1.0 - axis.y * axis.y).max(0.0).sqrt(),
+                r_eff * (1.0 - axis.z * axis.z).max(0.0).sqrt(),
+            );
+            Some([p_lo.min(p_hi) - radial, p_lo.max(p_hi) + radial])
         }
         Surface3::Ellipsoid(e) => {
             let max_r = e.radius_x.max(e.radius_y).max(e.radius_z);

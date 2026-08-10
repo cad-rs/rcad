@@ -2375,6 +2375,11 @@ impl PaveFiller {
                 self.ds.intersection_curves.push(c);
                 curve_ids.push(cid);
             }
+            // OCCT L549-550: aFaceFace.Indices(nF1, nF2) — myIF1/myIF2, the
+            // ORIGINAL pair order (BOPAlgo_FaceFace does not swap the indices;
+            // only IntTools_FaceFace swaps its internal Face1/Face2 and the
+            // pcurves are exchanged back afterwards, IntTools_FaceFace.cxx
+            // L550-562, so pcurve1 always belongs to the original nF1).
             new_ff.push(InterferenceFF {
                 f1: i, f2: j,
                 curves: curve_ids,

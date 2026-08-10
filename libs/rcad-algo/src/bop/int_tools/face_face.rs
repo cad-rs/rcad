@@ -626,6 +626,10 @@ pub struct FaceFace {
     /// Face indices in the DS (used for FClass2d domain classification in MakeCurve).
     face1: usize,
     face2: usize,
+    /// OCCT IntTools_FaceFace::Perform bReverse (L351-362): the surfaces were
+    /// reordered by SortTypes; after MakeCurve the pcurves are exchanged back
+    /// (L550-562) so FirstCurve2d belongs to the ORIGINAL Face1.
+    b_reverse: bool,
     done: bool,
     tangent_faces: bool,
 }
@@ -663,6 +667,7 @@ impl FaceFace {
             lines: Vec::new(),
             face1: 0,
             face2: 0,
+            b_reverse: false,
             done: false,
             tangent_faces: false,
         }
@@ -715,6 +720,15 @@ impl FaceFace {
     pub fn set_face_indices(&mut self, f1: usize, f2: usize) {
         self.face1 = f1;
         self.face2 = f2;
+    }
+
+    /// OCCT BOPAlgo_FaceFace::Indices (BOPAlgo_PaveFiller_6.cxx L285-292) — the
+    /// face indices AFTER the SortTypes reordering (the surface with the larger
+    /// type index first). The intersection curves' pcurve1/pcurve2 belong to
+    /// Face1()/Face2() respectively, so downstream code (interf_ff, MakeBlocks
+    /// pcurve attachment) must use these indices, not the original pair order.
+    pub fn face_indices(&self) -> (usize, usize) {
+        (self.face1, self.face2)
     }
 
     pub fn is_done(&self) -> bool {
@@ -797,7 +811,10 @@ impl FaceFace {
         let mut s2 = s2;
         let i_t1 = surface_type_index(&s1);
         let i_t2 = surface_type_index(&s2);
-        if i_t1 < i_t2 {
+        // OCCT L351-355: bReverse = SortTypes(aType1, aType2) — true when the
+        // surfaces are reordered (larger type index first).
+        self.b_reverse = i_t1 < i_t2;
+        if self.b_reverse {
             std::mem::swap(&mut s1, &mut s2);
             std::mem::swap(&mut self.uv1, &mut self.uv2);
             std::mem::swap(&mut self.face1, &mut self.face2);
@@ -876,6 +893,15 @@ impl FaceFace {
                 // it is called from BOPAlgo_PaveFiller::PerformFF (L566) after
                 // Perform, so MakeCurve output is passed through unchanged here.
                 self.done = true;
+            }
+        }
+        // OCCT IntTools_FaceFace::Perform L550-562: after MakeCurve the pcurves
+        // are exchanged back when the surfaces were reordered by SortTypes —
+        // FirstCurve2d then belongs to the ORIGINAL Face1, matching the
+        // interf_ff (original) face order used by MakeBlocks' MakePCurve.
+        if self.b_reverse {
+            for c in self.curves.iter_mut() {
+                std::mem::swap(&mut c.pcurve1, &mut c.pcurve2);
             }
         }
     }
