@@ -3432,12 +3432,20 @@ impl<'a> Builder<'a> {
     /// to a face image (split piece) instead of a DS face. OCCT projects the
     /// vertex onto the face surface and classifies the UV point with the face's
     /// FClass2d (strictly inside → internal). rcad's FClass2d is DS-index based
-    /// and split pieces are not registered in the DS, so the piece's UV polygon
-    /// is rebuilt by projecting its wire vertices onto the piece's surface.
+    /// and split pieces are not registered in the DS, so the piece's UV
+    /// polygons are rebuilt by projecting its wire vertices onto the piece's
+    /// surface. The classification follows FClass2d's multi-loop semantics:
+    /// the point must be strictly inside the outer wire and outside every
+    /// inner wire (hole).
     fn point_in_face_image(&self, piece: &Shape, n_v: usize) -> bool {
         let a_p = self.ds.vertex_point_by_idx(n_v);
-        let (surf, outer_wire, a_tol_f) = match &*piece.data {
-            TShape::Face(fd) => (fd.surface.clone(), fd.outer_wire.clone(), fd.tolerance),
+        let (surf, outer_wire, inner_wires, a_tol_f) = match &*piece.data {
+            TShape::Face(fd) => (
+                fd.surface.clone(),
+                fd.outer_wire.clone(),
+                fd.inner_wires.clone(),
+                fd.tolerance,
+            ),
             _ => return false,
         };
         let Some(surf) = surf else { return false; };
@@ -3450,42 +3458,66 @@ impl<'a> Builder<'a> {
         if a_dist > a_tol_sum {
             return false;
         }
-        // 2. Build the UV boundary polygon from the piece's wire vertices.
+        // 2. Build the UV boundary polygons from the piece's wires.
         // OCCT IntTools_FClass2d::Init samples the boundary edges' pcurves;
         // rcad projects the wire vertices onto the piece's surface instead.
-        let mut a_poly: Vec<glam::DVec2> = Vec::new();
-        if let TShape::Wire(wd) = &*outer_wire.data {
-            for e in &wd.edges {
-                if let TShape::Edge(ed) = &*e.data {
-                    if let TShape::Vertex(vd) = &*ed.last.data {
-                        let (uv, _) = crate::bop::closest_point_on_surface(&surf, vd.point);
-                        a_poly.push(uv);
+        let build_poly = |w: &Shape, surf: &rcad_kernel::geom::Surface3| -> Vec<glam::DVec2> {
+            let mut a_poly: Vec<glam::DVec2> = Vec::new();
+            if let TShape::Wire(wd) = &*w.data {
+                for e in &wd.edges {
+                    if let TShape::Edge(ed) = &*e.data {
+                        if let TShape::Vertex(vd) = &*ed.last.data {
+                            let (uv, _) = crate::bop::closest_point_on_surface(surf, vd.point);
+                            a_poly.push(uv);
+                        }
                     }
                 }
             }
-        }
+            a_poly
+        };
+        let a_poly = build_poly(&outer_wire, &surf);
         if a_poly.len() < 3 {
             return false;
         }
         // 3. On-boundary check: the vertex's UV within tolerance of any
         //    boundary segment (OCCT FClass2d ON state — not internal).
         let a_tol_on = a_tol_f.max(rcad_kernel::CONFUSION);
-        for i in 0..a_poly.len() {
-            let a = a_poly[i];
-            let b = a_poly[(i + 1) % a_poly.len()];
-            let ab = b - a;
-            let len2 = ab.length_squared();
-            if len2 < 1e-30 {
+        let on_boundary = |poly: &[glam::DVec2], a_uv: glam::DVec2| -> bool {
+            for i in 0..poly.len() {
+                let a = poly[i];
+                let b = poly[(i + 1) % poly.len()];
+                let ab = b - a;
+                let len2 = ab.length_squared();
+                if len2 < 1e-30 {
+                    continue;
+                }
+                let ap = a_uv - a;
+                let t = (ap.dot(ab) / len2).clamp(0.0, 1.0);
+                let d = (ap - t * ab).length();
+                if d <= a_tol_on {
+                    return true;
+                }
+            }
+            false
+        };
+        if on_boundary(&a_poly, a_uv) {
+            return false;
+        }
+        // 4. Holes: a point inside any inner wire (hole) is NOT internal.
+        for w in &inner_wires {
+            let a_hole = build_poly(w, &surf);
+            if a_hole.len() < 3 {
                 continue;
             }
-            let ap = a_uv - a;
-            let t = (ap.dot(ab) / len2).clamp(0.0, 1.0);
-            let d = (ap - t * ab).length();
-            if d <= a_tol_on {
+            if on_boundary(&a_hole, a_uv) {
+                return false;
+            }
+            if rcad_kernel::base::gprop::tri::point_in_polygon_2d(&a_hole, a_uv) {
                 return false;
             }
         }
-        // 4. Strictly inside the UV polygon (OCCT IsPointInFace, ON excluded).
+        // 5. Strictly inside the outer UV polygon (OCCT IsPointInFace, ON
+        //    excluded).
         rcad_kernel::base::gprop::tri::point_in_polygon_2d(&a_poly, a_uv)
     }
 
