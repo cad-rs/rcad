@@ -929,7 +929,11 @@ impl PaveFiller {
 
         // OCCT L260-265: aVVE, aDMVSD declarations
         // OCCT L267-322: build solver objects
-        let mut a_m_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // OCCT aMEdges (L276) is NCollection_Map<int> — iteration order feeds
+        // SplitPaveBlocks (theMEdges), which creates SD vertices/edges in that
+        // order; model the OCCT map exactly.
+        let mut a_m_edges: crate::bop::algo::occt_map::OcctMapInt =
+            crate::bop::algo::occt_map::OcctMapInt::new();
 
         for (_pb_ptr, (a_pb, verts)) in the_ve_pairs {
             let n_e = a_pb.0.read().unwrap().original_edge;
@@ -944,8 +948,12 @@ impl PaveFiller {
             }
 
             // OCCT L288-321: for each vertex in the list
-            let mut a_dmvsd: std::collections::HashMap<(usize, usize), Vec<usize>> =
-                std::collections::HashMap::new();
+            // OCCT aDMVSD (PaveFiller_2.cxx L265) is NCollection_DataMap<BOPDS_Pair,
+            // List<int>>; the per-(nVSD, nE) solver sequence is aVVE, a vector
+            // iterated in insertion order (L330-410) — an IndexMap reproduces
+            // that order.
+            let mut a_dmvsd: indexmap::IndexMap<(usize, usize), Vec<usize>> =
+                indexmap::IndexMap::new();
 
             for &n_v in verts {
                 // OCCT L292-296: resolve SD
@@ -1018,7 +1026,7 @@ impl PaveFiller {
                     }
                 }
 
-                a_m_edges.insert(n_e);
+                a_m_edges.add(n_e);
             }
         }
 
@@ -1060,7 +1068,8 @@ impl PaveFiller {
         // rcad: local new_ee, extended later. idx_interf must be absolute DS index.
         let ee_base = self.ds.interf_ee.len();
         // OCCT L167: NCollection_Map<int> aMEdges;
-        let mut a_m_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_m_edges: crate::bop::algo::occt_map::OcctMapInt =
+            crate::bop::algo::occt_map::OcctMapInt::new();
 
         // OCCT L181-267: iterate pairs
         // rcad: copy pairs (borrow checker)
@@ -1482,8 +1491,8 @@ impl PaveFiller {
             for cpb in &mvcpb {
                 let (n_e1, n_e2) = (cpb.pb1.0.read().unwrap().original_edge,
                                     cpb.pb2.0.read().unwrap().original_edge);
-                a_m_edges.remove(&n_e1);
-                a_m_edges.remove(&n_e2);
+                a_m_edges.remove(n_e1);
+                a_m_edges.remove(n_e2);
             }
         }
         // OCCT L584: SplitPaveBlocks(aMEdges, false)
@@ -1541,9 +1550,12 @@ impl PaveFiller {
         }
 
         // OCCT L176-180: aMVFPairs — avoid repeated intersection of the same
-        // (SD vertex, face) pair; map value = original vertices in the group.
-        let mut a_mvf_pairs: std::collections::HashMap<(usize, usize), Vec<usize>> =
-            std::collections::HashMap::new();
+        // (SD vertex, face) pair; the value is NCollection_Map<int> (bucket
+        // order) of the original vertices in the group. OCCT iterates the
+        // collected solvers (aVVF vector, insertion order) at L249-298, so the
+        // pair map is an IndexMap keyed by (nVx, nF) in insertion order.
+        let mut a_mvf_pairs: indexmap::IndexMap<(usize, usize), crate::bop::algo::occt_map::OcctMapInt> =
+            indexmap::IndexMap::new();
         let pairs: Vec<(usize, usize)> = my_iterator.pairs(ShapeType::Vertex, ShapeType::Face).to_vec();
         for &(n0, n1) in &pairs {
             let (n_v, n_f) = if self.ds.shapes[n0].shape_type == ShapeType::Vertex { (n0, n1) } else { (n1, n0) };
@@ -1558,18 +1570,16 @@ impl PaveFiller {
             // OCCT L205-209: nVx = (HasShapeSD(nV, nVSD)) ? nVSD : nV
             let mut n_vx = n_v;
             self.ds.has_shape_sd(n_v, &mut n_vx);
-            // OCCT L211-220: dedup by (nVx, nF)
+            // OCCT L211-220: dedup by (nVx, nF) — aMVFPairs.ChangeSeek/Bound.
             let a_vf_pair = (n_vx, n_f);
-            if let Some(entry) = a_mvf_pairs.get_mut(&a_vf_pair) {
-                entry.push(n_v);
-                continue;
-            }
-            a_mvf_pairs.entry(a_vf_pair).or_default().push(n_v);
+            let entry = a_mvf_pairs.entry(a_vf_pair).or_insert_with(crate::bop::algo::occt_map::OcctMapInt::new);
+            entry.add(n_v);
         }
 
-        // OCCT L249-298: process each unique (nVx, nF) pair
-        let a_vf_pairs: Vec<((usize, usize), Vec<usize>)> = a_mvf_pairs.into_iter().collect();
-        for ((n_vx, n_f), verts) in &a_vf_pairs {
+        // OCCT L249-298: process each unique (nVx, nF) pair — the aVVF vector
+        // is iterated in insertion order (IndexMap order here); the original
+        // vertices aMV are NCollection_Map<int> iterated in bucket order.
+        for ((n_vx, n_f), verts) in &a_mvf_pairs {
             if the_range.user_break() { return; }
             // OCCT L257-266: BOPAlgo_VertexFace::Perform → myContext->ComputeVF
             let (i_flag, a_u, a_v, a_tol_v_new) =
@@ -1577,7 +1587,7 @@ impl PaveFiller {
             if i_flag != 0 { continue; }
 
             let mut n_vx_cur = *n_vx;
-            for &n_v in verts {
+            for n_v in verts.iter_keys() {
                 // 1
                 let mut a_vf = InterferenceVF { vertex: n_v, face: *n_f, u: a_u, v: a_v, index_new: None };
                 // 2
@@ -1694,7 +1704,8 @@ impl PaveFiller {
         }
 
         // OCCT L194-217: locals
-        let mut a_mi_efc: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_mi_efc: crate::bop::algo::occt_map::OcctMapInt =
+            crate::bop::algo::occt_map::OcctMapInt::new();
         let mut a_mvcpb: Vec<CoupleOfPBs> = Vec::new();
         let mut a_mpbli: indexmap::IndexMap<u64, (SharedPB, Vec<usize>)> =
             indexmap::IndexMap::new();
@@ -1838,7 +1849,7 @@ impl PaveFiller {
             for &(r1_first, r1_last, is_edge) in &common_parts {
                 if is_edge {
                     // OCCT L545-565: EDGE case
-                    a_mi_efc.insert(cand.n_f);
+                    a_mi_efc.add(cand.n_f);
                     let b_v0 = self.check_face_paves(n_v1, &a_mif_on, &a_mif_in);
                     let b_v1_ = self.check_face_paves(n_v2, &a_mif_on, &a_mif_in);
                     if std::env::var("RCAD_EE_DEBUG").is_ok() {
@@ -1887,7 +1898,7 @@ impl PaveFiller {
                                 point: a_pnew, edge_param: a_t, new_vertex: usize::MAX,
                             });
                             self.ds.add_interf(cand.n_e, cand.n_f);
-                            a_mi_efc.insert(cand.n_f);
+                            a_mi_efc.add(cand.n_f);
                             let ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;
                             a_mpbli.entry(ptr).or_insert_with(|| (a_pb.clone(), Vec::new())).1.push(cand.n_f);
                             break;
@@ -1962,7 +1973,7 @@ impl PaveFiller {
                         continue;
                     }
                     // OCCT L528-542: add InterfEF
-                    a_mi_efc.insert(cand.n_f);
+                    a_mi_efc.add(cand.n_f);
                     if std::env::var("RCAD_EE_DEBUG").is_ok() {
                         eprintln!("[EF-DBG] VERTEX-EF e={} f={} t={:.4}", cand.n_e, cand.n_f, a_t);
                     }
@@ -2008,12 +2019,10 @@ impl PaveFiller {
                 return;
             }
         }
-        // OCCT L585: Update FaceInfoIn for all faces having EF common parts
-        // OCCT: iterate aMIEFC (NCollection_Map — deterministic order); a
-        // HashSet would randomize the FaceInfoIn update order.
-        let mut efc_list: Vec<usize> = a_mi_efc.iter().copied().collect();
-        efc_list.sort_unstable();
-        for &n_f in &efc_list {
+        // OCCT L585: Update FaceInfoIn for all faces having EF common parts.
+        // OCCT L598: myDS->UpdateFaceInfoIn(aMIEFC) — NCollection_Map<int>
+        // bucket iteration order.
+        for n_f in a_mi_efc.iter_keys() {
             self.ds.update_face_info_in(n_f);
         }
         if std::env::var("RCAD_EE_DEBUG").is_ok() {
@@ -2679,8 +2688,10 @@ impl PaveFiller {
 
         // OCCT L857-879: iterate (V,F), (E,F), (F,F) pairs,
         // collect planar faces via IsBasedOnPlane
+        // OCCT aMF (L859) is NCollection_Map<int> — bucket iteration order.
         let a_types = [ShapeType::Vertex, ShapeType::Edge, ShapeType::Face];
-        let mut a_mf: HashSet<usize> = HashSet::new();
+        let mut a_mf: crate::bop::algo::occt_map::OcctMapInt =
+            crate::bop::algo::occt_map::OcctMapInt::new();
 
         if let Some(ref mut it) = self.my_iterator {
             for &a_type in &a_types {
@@ -2692,7 +2703,7 @@ impl PaveFiller {
                     { n1 } else { nf };
                     // OCCT: IsBasedOnPlane(aF)
                     if is_based_on_plane(self.ds.shape(fi)) {
-                        a_mf.insert(fi);
+                        a_mf.add(fi);
                     }
                     it.next();
                 }
@@ -2706,10 +2717,8 @@ impl PaveFiller {
         // OCCT L888-931: build pcurves for edges on planar faces via BOPAlgo_BPC
         // Phase 1 (L889-899): collect edge-face pairs into BPC vector
         let mut a_vbpc: Vec<BOPAlgo_BPC> = Vec::new();
-        // OCCT: iterate aMF (NCollection_Map — deterministic order).
-        let mut mf_list: Vec<usize> = a_mf.iter().copied().collect();
-        mf_list.sort_unstable();
-        for &fi in &mf_list {
+        // OCCT L918-931: iterate aMF (NCollection_Map — bucket order).
+        for fi in a_mf.iter_keys() {
             let edge_indices: Vec<usize> = self.ds.shape_info(fi).sub_shapes().iter()
                 .filter(|&&ei| self.ds.shape_info(ei).shape_type() == ShapeType::Edge)
                 .copied().collect();
@@ -3104,7 +3113,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         &mut self,
         n_v: usize,
         a_pb: &SharedPB,
-        the_m_edges: &mut std::collections::HashSet<usize>,
+        the_m_edges: &mut crate::bop::algo::occt_map::OcctMapInt,
     ) -> bool {
         // OCCT L832-833: int nE, nVx, nVSD, iFlag; double aT, aTolVNew;
         let n_e: usize;
@@ -3169,7 +3178,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         a_pb.0.write().unwrap().ext_paves.push(Pave { vertex_idx: n_vx_new, param: a_t });
 
         // OCCT L894: theMEdges.Add(nE);
-        the_m_edges.insert(n_e);
+        the_m_edges.add(n_e);
 
         // OCCT L896-906: self-interference warning
         let i_rv = self.ds.rank(n_v);
@@ -3181,20 +3190,20 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// OCCT BOPAlgo_PaveFiller::SplitPaveBlocks (PaveFiller_2.cxx L449-560).
     /// Splits PBs with ext paves into sub-PBs. Each ext pave becomes a split point.
-    fn split_pave_blocks(&mut self, the_medges: &std::collections::HashSet<usize>, the_add_interfs: bool) {
+    fn split_pave_blocks(&mut self, the_medges: &crate::bop::algo::occt_map::OcctMapInt, the_add_interfs: bool) {
         // OCCT L453: Fence map to avoid unification of the same vertices twice
         let mut a_mpairs: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-        // OCCT L455-457: Map to treat the Common Blocks
-        let mut a_mcb_new_pb: std::collections::HashMap<usize, Vec<SharedPB>> = std::collections::HashMap::new();
-        // OCCT L460: Map of vertices to init pave blocks for them
-        let mut a_m_vertices_to_init_pb: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        // OCCT L451: aItM.Initialize(theMEdges) — NCollection_Map iteration is
-        // deterministic; sort the edge set so the MakeSDVertices/SplitEdge
-        // vertex and edge creation order is fixed (a HashSet iteration would
-        // randomize the DS indices).
-        let mut medges_sorted: Vec<usize> = the_medges.iter().copied().collect();
-        medges_sorted.sort_unstable();
-        for &n_e in &medges_sorted {
+        // OCCT L455-457: Map to treat the Common Blocks — NCollection_IndexedDataMap,
+        // insertion order (PaveFiller_2.cxx L456-457).
+        let mut a_mcb_new_pb: indexmap::IndexMap<usize, Vec<SharedPB>> = indexmap::IndexMap::new();
+        // OCCT L460: Map of vertices to init pave blocks for them —
+        // NCollection_Map<int> aMVerticesToInitPB (PaveFiller_2.cxx L460).
+        let mut a_m_vertices_to_init_pb: crate::bop::algo::occt_map::OcctMapInt =
+            crate::bop::algo::occt_map::OcctMapInt::new();
+        // OCCT L451-453: aItM.Initialize(theMEdges) — NCollection_Map<int>
+        // iteration order (bucket order, not sorted); the order fixes the
+        // MakeSDVertices/SplitEdge vertex and edge creation sequence.
+        for n_e in the_medges.iter_keys() {
             if n_e >= self.ds.nb_shapes() { continue; }
             self.ds.init_pave_blocks(n_e);
             let old_pbs: Vec<SharedPB> = {
@@ -3250,8 +3259,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                             if a_mpairs.insert(a_pair) {
                                 let a_lv = vec![n_v1, n_v2];
                                 self.make_sd_vertices_vv(&a_lv, the_add_interfs);
-                                a_m_vertices_to_init_pb.insert(n_v1);
-                                a_m_vertices_to_init_pb.insert(n_v2);
+                                a_m_vertices_to_init_pb.add(n_v1);
+                                a_m_vertices_to_init_pb.add(n_v2);
                             }
                         }
                         continue;
@@ -3274,31 +3283,25 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
         }
         // OCCT L530-560: Make Common Blocks
-        // aMCBNewPB is NCollection_IndexedDataMap — iterate in insertion
-        // order (sorted CB keys fix the HashMap iteration order).
-        let mut cb_keys: Vec<usize> = a_mcb_new_pb.keys().copied().collect();
-        cb_keys.sort_unstable();
-        for cb_key in cb_keys {
-            let pbs = &a_mcb_new_pb[&cb_key];
+        // aMCBNewPB is NCollection_IndexedDataMap — iterate in insertion order.
+        for (_cb_key, pbs) in &a_mcb_new_pb {
             if pbs.len() < 2 { continue; }
-            let mut a_minds: std::collections::HashMap<(usize, usize), Vec<SharedPB>> = std::collections::HashMap::new();
+            // OCCT L566-571: aMInds is NCollection_IndexedDataMap<BOPDS_Pair,
+            // List<PB>> — insertion order of the aLPBN traversal.
+            let mut a_minds: indexmap::IndexMap<(usize, usize), Vec<SharedPB>> = indexmap::IndexMap::new();
             for pb in pbs {
                 let (v1, v2) = { let r = pb.0.read().unwrap(); r.indices() };
                 let key = if v1 < v2 { (v1, v2) } else { (v2, v1) };
                 a_minds.entry(key).or_default().push(pb.clone());
             }
-            // aMinds is a plain NCollection_Map in OCCT but each group creates
-            // a CommonBlock whose index order matters — sort the pair keys.
-            let mut pair_keys: Vec<(usize, usize)> = a_minds.keys().copied().collect();
-            pair_keys.sort_unstable();
-            for pair in pair_keys {
-                let group = &a_minds[&pair];
+            for (_pair, group) in &a_minds {
                 if group.len() < 2 { continue; }
                 self.ds.add_common_block(group);
             }
         }
-        // Init PBs for new SD vertices
-        for &v in &a_m_vertices_to_init_pb {
+        // Init PBs for new SD vertices — OCCT L560: aMVerticesToInitPB is a
+        // NCollection_Map<int>, iterated in bucket order (PaveFiller_2.cxx L560).
+        for v in a_m_vertices_to_init_pb.iter_keys() {
             self.ds.init_pave_blocks_for_vertex(v);
         }
     }
@@ -3836,11 +3839,11 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // rcad: collect all PBs, expanding from existing CommonBlocks, then
         // create a merged CommonBlock for each connected group.
         {
-            // OCCT: NCollection_IndexedDataMap<PB, List<PB>> aMPBLPB
-            // rcad: adjacency list for PB groups via pointer identity
+            // OCCT: NCollection_IndexedDataMap<PB, List<PB>> aMPBLPB — insertion
+            // order; the BOPAlgo_Tools::MakeBlocks traversal is FIFO.
             type PBKey = u64;
-            let mut adj: std::collections::HashMap<PBKey, std::collections::HashSet<PBKey>> =
-                std::collections::HashMap::new();
+            let mut adj: indexmap::IndexMap<PBKey, indexmap::IndexSet<PBKey>> =
+                indexmap::IndexMap::new();
 
             // Helper to get or create adjacency entry
             let mut add_edge = |a: PBKey, b: PBKey| {
@@ -3901,12 +3904,15 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
             }
 
-            // DFS to find connected groups
+            // FIFO connected-group traversal (OCCT BOPAlgo_Tools::MakeBlocks
+            // grows the chain list from the start; appended elements are
+            // visited later — a stack would visit in a different order).
             for &start in adj.keys() {
                 if visited.contains(&start) { continue; }
                 let mut group: Vec<SharedPB> = Vec::new();
-                let mut stack = vec![start];
-                while let Some(node) = stack.pop() {
+                let mut queue: std::collections::VecDeque<PBKey> = std::collections::VecDeque::new();
+                queue.push_back(start);
+                while let Some(node) = queue.pop_front() {
                     if !visited.insert(node) { continue; }
                     if let Some(pb) = ptr_to_pb.get(&node) {
                         group.push(pb.clone());
@@ -3914,7 +3920,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     if let Some(neighbors) = adj.get(&node) {
                         for &n in neighbors {
                             if !visited.contains(&n) {
-                                stack.push(n);
+                                queue.push_back(n);
                             }
                         }
                     }
@@ -4317,9 +4323,10 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             // L41: const BOPDS_IndexRange& aR = myDS->Range(i);
             let a_r = self.ds.range(a_rank);
 
-            // L44-47: NCollection_IndexedDataMap<TopoDS_Shape, IndexedMap<TopoDS_Shape>> aMCSI;
-            let mut a_mcsi: std::collections::HashMap<usize, indexmap::IndexSet<usize>> =
-                std::collections::HashMap::new();
+            // L44-47: NCollection_IndexedDataMap<TopoDS_Shape, IndexedMap<TopoDS_Shape>> aMCSI
+            // — insertion order; iterated at L222-226 by index.
+            let mut a_mcsi: indexmap::IndexMap<usize, indexmap::IndexSet<usize>> =
+                indexmap::IndexMap::new();
             // L48: NCollection_Map<CommonBlock> aMCBFence;
             let mut a_cb_fence: std::collections::HashSet<usize> =
                 std::collections::HashSet::new();
@@ -4585,9 +4592,19 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// OCCT BOPAlgo_PaveFiller::RemoveMicroEdges (_6.cxx L4388-4435).
     fn remove_micro_edges(&mut self) {
-        let mut a_micro_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // OCCT L4450: aMicroEdges is NCollection_Map<int> — bucket order.
+        let mut a_micro_edges: crate::bop::algo::occt_map::OcctMapInt =
+            crate::bop::algo::occt_map::OcctMapInt::new();
         let mut a_mpb_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        for pb_list in self.ds.pave_blocks_pool.clone().into_values() {
+        // OCCT L4392-4393: ChangePaveBlocksPool() is a DynamicArray — iterate
+        // the pool in ascending edge-key order.
+        let mut pb_keys: Vec<usize> = self.ds.pave_blocks_pool.keys().copied().collect();
+        pb_keys.sort_unstable();
+        for k in pb_keys {
+            let pb_list = match self.ds.pave_blocks_pool.get(&k) {
+                Some(v) => v.clone(),
+                None => continue,
+            };
             if pb_list.len() < 2 { continue; }
             // OCCT L4407-4410: skip degenerated edges
             if pb_list.is_empty() { continue; }
@@ -4605,16 +4622,16 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     if !has_shrunk {
                         let e = { let r = pb.0.read().unwrap(); r.edge };
                         if e != usize::MAX {
-                            a_micro_edges.insert(e);
+                            a_micro_edges.add(e);
                         }
                     }
                 }
             }
         }
-        // OCCT L4434: RemovePaveBlocks
-        for ei in &a_micro_edges {
+        // OCCT L4434: RemovePaveBlocks(aMicroEdges) — bucket iteration order.
+        for ei in a_micro_edges.iter_keys() {
             for pool in self.ds.pave_blocks_pool.values_mut() {
-                pool.retain(|pb| pb.0.read().unwrap().edge != *ei);
+                pool.retain(|pb| pb.0.read().unwrap().edge != ei);
             }
         }
     }

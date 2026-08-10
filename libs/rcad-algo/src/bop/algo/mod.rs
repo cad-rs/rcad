@@ -17,6 +17,7 @@
 
 pub mod pave_filler;
 pub mod pave_filler_make_blocks;
+pub mod occt_map;
 pub mod builder;
 pub mod builder_area;
 pub mod builder_face;

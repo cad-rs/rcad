@@ -167,8 +167,10 @@ impl PaveFiller {
         let mut a_mi: HashSet<usize> = HashSet::new();
         let mut a_mpb_on_in: Vec<SharedPB> = Vec::new(); // IndexedMap<PB>
         let mut a_mpb_common: HashSet<u64> = HashSet::new();
-        let mut a_dm_bv: HashMap<usize, Vec<usize>> = HashMap::new(); // j -> LBV
-        let mut a_mv_tol: HashMap<usize, f64> = HashMap::new();
+        let mut a_dm_bv: crate::bop::algo::occt_map::OcctDataMapInt<usize, Vec<usize>> =
+            crate::bop::algo::occt_map::OcctDataMapInt::new(); // j -> LBV (OCCT L705, DataMap bucket order)
+        let mut a_mv_tol: crate::bop::algo::occt_map::OcctDataMapInt<usize, f64> =
+            crate::bop::algo::occt_map::OcctDataMapInt::new(); // OCCT L707, DataMap bucket order
         // Cross-iteration collections.
         let mut a_mpb_add: HashSet<u64> = HashSet::new();
         let mut a_lpb: Vec<SharedPB> = Vec::new();
@@ -176,13 +178,18 @@ impl PaveFiller {
         let mut a_ms_cpb: Vec<(Shape, CoupleOfPBs)> = Vec::new();
         // aMVI: DataMap<TopoDS_Shape, int> — shape identity -> DS index.
         let mut a_mvi: HashMap<(u64, u32), usize> = HashMap::new();
-        let mut a_dm_ex_edges: HashMap<u64, Vec<u64>> = HashMap::new();
-        let mut a_dm_new_sd: HashMap<usize, usize> = HashMap::new();
-        let mut a_dm_vlv: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut a_dm_ex_edges: crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<u64>> =
+            crate::bop::algo::occt_map::OcctDataMapInt::new();
+        let mut a_dm_new_sd: crate::bop::algo::occt_map::OcctDataMapInt<usize, usize> =
+            crate::bop::algo::occt_map::OcctDataMapInt::new();
+        let mut a_dm_vlv: crate::bop::algo::occt_map::OcctDataMapInt<usize, Vec<usize>> =
+            crate::bop::algo::occt_map::OcctDataMapInt::new();
         let mut a_micro_pb: Vec<SharedPB> = Vec::new(); // IndexedMap<PB>
         let mut a_verts_on_rejected_pb: Vec<Shape> = Vec::new();
-        // aPBFacesMap: PB -> faces to add the PB to.
-        let mut a_pb_faces_map: HashMap<u64, Vec<usize>> = HashMap::new();
+        // OCCT L725: aPBFacesMap is BOPAlgo_DataMapOfPaveBlockListOfInteger —
+        // NCollection_DataMap, bucket iteration order.
+        let mut a_pb_faces_map: crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<usize>> =
+            crate::bop::algo::occt_map::OcctDataMapInt::new();
 
         // OCCT L720-724: aFFToRecheck — potentially problematic FF pairs to reprocess.
         let mut a_ff_to_recheck: Vec<usize> = Vec::new();
@@ -400,7 +407,7 @@ impl PaveFiller {
                             }
                             // OCCT L988-998: face without pave block.
                             let n_f = if b_in_f1 { n_f2 } else { n_f1 };
-                            let p_faces = a_pb_faces_map.entry(pb_out_key).or_default();
+                            let p_faces = a_pb_faces_map.bound(pb_out_key);
                             if !p_faces.contains(&n_f) {
                                 p_faces.push(n_f);
                             }
@@ -482,8 +489,8 @@ impl PaveFiller {
                     a_ms_cpb.push((e_shape, a_cpb));
                     a_mvi.insert((self.ds.shape(n_v1).ptr_id(), self.ds.shape(n_v1).location), n_v1);
                     a_mvi.insert((self.ds.shape(n_v2).ptr_id(), self.ds.shape(n_v2).location), n_v2);
-                    a_mv_tol.remove(&n_v1);
-                    a_mv_tol.remove(&n_v2);
+                    a_mv_tol.remove(n_v1);
+                    a_mv_tol.remove(n_v2);
                     // OCCT L1050-1062: ProcessExistingPaveBlocks.
                     self.process_existing_pave_blocks_1(
                         a_cur_ind, j, n_f1, n_f2, n_e, &a_mpb_on_in, &a_pb_candidates,
@@ -501,10 +508,9 @@ impl PaveFiller {
                 a_ff_to_recheck.push(a_cur_ind);
                 a_nb_ff += 1;
             }
-            // OCCT L1073-1095: restore tolerance of unused vertices.
-            let keys: Vec<usize> = a_mv_tol.keys().copied().collect();
-            for n_v1 in keys {
-                let a_tol = a_mv_tol[&n_v1];
+            // OCCT L1073-1095: restore tolerance of unused vertices — aMVTol is
+            // NCollection_DataMap iterated in bucket order (L1120 aItMV).
+            for (n_v1, &a_tol) in a_mv_tol.iter() {
                 self.set_vertex_tolerance(n_v1, a_tol);
                 // reset bounding box
                 let pt = self.ds.vertex_point_by_idx(n_v1);
@@ -512,8 +518,8 @@ impl PaveFiller {
                 let mut a_box = BndBox::from_point(pt);
                 a_box.set_gap(vt + rcad_kernel::CONFUSION);
                 self.ds.change_shape_info(n_v1).bbox = a_box;
-                if a_dm_vlv.contains_key(&n_v1) {
-                    a_dm_vlv.remove(&n_v1);
+                if a_dm_vlv.contains(n_v1) {
+                    a_dm_vlv.remove(n_v1);
                 }
             }
             // OCCT L1097-1106: ProcessExistingPaveBlocks (with bound vertices).
@@ -886,8 +892,8 @@ impl PaveFiller {
         cid: usize,
         the_mi: &HashSet<usize>,
         the_mv_ef: &HashSet<usize>,
-        the_mv_tol: &mut HashMap<usize, f64>,
-        the_dm_vlv: &mut HashMap<usize, Vec<usize>>,
+        the_mv_tol: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, f64>,
+        the_dm_vlv: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, Vec<usize>>,
     ) {
         if cid >= self.ds.intersection_curves.len() { return; }
         let a_box_c = self.curve_bbox(cid);
@@ -926,8 +932,8 @@ impl PaveFiller {
         a_tol_r3d: f64,
         cid: usize,
         a_mi: &HashSet<usize>,
-        a_mv_tol: &mut HashMap<usize, f64>,
-        a_dm_vlv: &mut HashMap<usize, Vec<usize>>,
+        a_mv_tol: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, f64>,
+        a_dm_vlv: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, Vec<usize>>,
         i_check_extend: i32,
     ) {
         if cid >= self.ds.intersection_curves.len() { return; }
@@ -936,7 +942,7 @@ impl PaveFiller {
         let Some(a_pb) = a_pb else { return; };
         let a_v_pt = self.ds.vertex_point_by_idx(n_v);
         let a_v_tol = self.ds.vertex_tolerance_by_idx(n_v);
-        let mut a_tol_v = a_mv_tol.get(&n_v).copied().unwrap_or(a_v_tol);
+        let mut a_tol_v = a_mv_tol.get(n_v).copied().unwrap_or(a_v_tol);
         // OCCT L2976: IsVertexOnLine
         let mut a_t = 0.0;
         let mut b_is_vertex_on_line = self.my_context.is_vertex_on_line(
@@ -963,10 +969,10 @@ impl PaveFiller {
             let b_exist = { a_pb.0.read().unwrap().contains_parameter(a_t, a_ptol, &mut n_v_used) };
             if b_exist {
                 // OCCT L3008-3032: use existing pave.
-                let list = a_dm_vlv.entry(n_v_used).or_default();
+                let list = a_dm_vlv.bound(n_v_used);
                 if list.is_empty() {
                     list.push(n_v_used);
-                    if !a_mv_tol.contains_key(&n_v_used) {
+                    if !a_mv_tol.contains(n_v_used) {
                         let a_tol_used = self.ds.vertex_tolerance_by_idx(n_v_used);
                         a_tol_v = a_tol_used;
                         a_mv_tol.insert(n_v_used, a_tol_v);
@@ -975,7 +981,7 @@ impl PaveFiller {
                 if !list.contains(&n_v) {
                     list.push(n_v);
                 }
-                if !a_mv_tol.contains_key(&n_v) {
+                if !a_mv_tol.contains(n_v) {
                     a_tol_v = self.ds.vertex_tolerance_by_idx(n_v);
                     a_mv_tol.insert(n_v, a_tol_v);
                 }
@@ -990,7 +996,7 @@ impl PaveFiller {
                 if a_tol_v < a_dist + a_dtol {
                     // OCCT L3054-3055: BRep_Builder().UpdateVertex(aV, aDist + aDTol)
                     self.set_vertex_tolerance(n_v, a_dist + a_dtol);
-                    if !a_mv_tol.contains_key(&n_v) {
+                    if !a_mv_tol.contains(n_v) {
                         a_mv_tol.insert(n_v, a_tol_v);
                     }
                     // OCCT L3061-3064: rebuild the vertex box.
@@ -1064,7 +1070,7 @@ impl PaveFiller {
     // FilterPavesOnCurves — OCCT BOPAlgo_PaveFiller::FilterPavesOnCurves
     // (PaveFiller_6.cxx L2437-2538)
     // ====================================================================
-    fn filter_paves_on_curves(&mut self, the_vnc: &[usize], the_mv_tol: &mut HashMap<usize, f64>) {
+    fn filter_paves_on_curves(&mut self, the_vnc: &[usize], the_mv_tol: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, f64>) {
         // OCCT L2427-2435: struct PaveBlockDist.
         struct PaveBlockDist {
             pb: SharedPB,
@@ -1137,7 +1143,7 @@ impl PaveFiller {
             }
             // OCCT L2527-2536.
             if is_removed && a_max_dist_kept > 0.0 {
-                if let Some(&p_tol) = the_mv_tol.get(&n_v) {
+                if let Some(&p_tol) = the_mv_tol.get(n_v) {
                     let a_real_tol = p_tol.max(a_max_dist_kept.sqrt() + rcad_kernel::CONFUSION);
                     self.set_vertex_tolerance(n_v, a_real_tol);
                 }
@@ -1158,8 +1164,8 @@ impl PaveFiller {
         a_mi: &HashSet<usize>,
         the_vc: &[usize],
         a_mv_stick: &HashSet<usize>,
-        a_mv_tol: &mut HashMap<usize, f64>,
-        a_dm_vlv: &mut HashMap<usize, Vec<usize>>,
+        a_mv_tol: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, f64>,
+        a_dm_vlv: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, Vec<usize>>,
     ) {
         if cid >= self.ds.intersection_curves.len() { return; }
         let a_bnd_nv = self.get_bound_paves(cid);
@@ -1216,8 +1222,8 @@ impl PaveFiller {
         the_index: usize,
         a_mi: &HashSet<usize>,
         a_mv_ef: &HashSet<usize>,
-        a_mv_tol: &mut HashMap<usize, f64>,
-        a_dm_vlv: &mut HashMap<usize, Vec<usize>>,
+        a_mv_tol: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, f64>,
+        a_dm_vlv: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, Vec<usize>>,
     ) {
         if a_mv_ef.is_empty() { return; }
         if the_index >= the_vc.len() { return; }
@@ -1432,10 +1438,10 @@ impl PaveFiller {
     // UpdateSavedTolerance — OCCT static UpdateSavedTolerance (PaveFiller_6.cxx L629-645)
     // ====================================================================
     fn update_saved_tolerance(&self, n_e: usize, the_tol_new: f64,
-                              the_mv_tol: &mut HashMap<usize, f64>) {
+                              the_mv_tol: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, f64>) {
         let sub_shapes: Vec<usize> = self.ds.shape_info(n_e).sub_shapes.clone();
         for n_v in sub_shapes {
-            if let Some(p_tol_saved) = the_mv_tol.get_mut(&n_v) {
+            if let Some(p_tol_saved) = the_mv_tol.get_mut(n_v) {
                 if *p_tol_saved < the_tol_new {
                     *p_tol_saved = the_tol_new;
                 }
@@ -1677,7 +1683,7 @@ impl PaveFiller {
         a_ms_cpb: &mut Vec<(Shape, CoupleOfPBs)>,
         a_mvi: &mut HashMap<(u64, u32), usize>,
         cid: usize,
-        a_pb_faces_map: &mut HashMap<u64, Vec<usize>>,
+        a_pb_faces_map: &mut crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<usize>>,
         a_mpb_add: &mut HashSet<u64>,
     ) {
         let a_box_es = self.edge_bbox(n_e_es);
@@ -1729,7 +1735,7 @@ impl PaveFiller {
                 if a_dist <= a_tol_sum {
                     a_mpb_add.insert(pb_ptr(a_pbf));
                     self.prepare_post_treat_ff(the_int, the_cur, a_pbf, a_ms_cpb, a_mvi, cid);
-                    let p_faces = a_pb_faces_map.entry(pb_ptr(a_pbf)).or_default();
+                    let p_faces = a_pb_faces_map.bound(pb_ptr(a_pbf));
                     if !p_faces.contains(&n_f) {
                         p_faces.push(n_f);
                     }
@@ -1750,10 +1756,10 @@ impl PaveFiller {
         n_f2: usize,
         a_mpb_on_in: &[SharedPB],
         pb_candidates: &[usize],
-        a_dm_bv: &HashMap<usize, Vec<usize>>,
+        a_dm_bv: &crate::bop::algo::occt_map::OcctDataMapInt<usize, Vec<usize>>,
         a_ms_cpb: &mut Vec<(Shape, CoupleOfPBs)>,
         a_mvi: &mut HashMap<(u64, u32), usize>,
-        a_pb_faces_map: &mut HashMap<u64, Vec<usize>>,
+        a_pb_faces_map: &mut crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<usize>>,
         a_mpb_add: &mut HashSet<u64>,
     ) {
         if a_dm_bv.is_empty() { return; }
@@ -1763,9 +1769,9 @@ impl PaveFiller {
         } else {
             return;
         };
-        let a_keys: Vec<usize> = a_dm_bv.keys().copied().collect();
+        let a_keys: Vec<usize> = a_dm_bv.iter_keys().collect();
         for i_c in a_keys {
-            let a_lbv = match a_dm_bv.get(&i_c) { Some(l) => l.clone(), None => continue };
+            let a_lbv = match a_dm_bv.get(i_c) { Some(l) => l.clone(), None => continue };
             if i_c >= a_vc.len() { continue; }
             let cid = a_vc[i_c];
             for n_v in &a_lbv {
@@ -1803,7 +1809,7 @@ impl PaveFiller {
                         let b_in_f2 = self.pb_in_face(n_f2, a_pb);
                         if !b_in_f1 || !b_in_f2 {
                             let n_f = if b_in_f1 { n_f2 } else { n_f1 };
-                            let p_faces = a_pb_faces_map.entry(pb_ptr(a_pb)).or_default();
+                            let p_faces = a_pb_faces_map.bound(pb_ptr(a_pb));
                             if !p_faces.contains(&n_f) {
                                 p_faces.push(n_f);
                             }
@@ -1983,11 +1989,11 @@ impl PaveFiller {
     // MakeSDVerticesFF — OCCT BOPAlgo_PaveFiller::MakeSDVerticesFF
     // (PaveFiller_6.cxx L1141-1161)
     // ====================================================================
-    fn make_sd_vertices_ff(&mut self, the_dm_vlv: &HashMap<usize, Vec<usize>>,
-                           the_dm_new_sd: &mut HashMap<usize, usize>) {
-        let keys: Vec<usize> = the_dm_vlv.keys().copied().collect();
-        for n_v in keys {
-            let a_list = &the_dm_vlv[&n_v];
+    fn make_sd_vertices_ff(&mut self, the_dm_vlv: &crate::bop::algo::occt_map::OcctDataMapInt<usize, Vec<usize>>,
+                           the_dm_new_sd: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, usize>) {
+        // OCCT L1190-1209: aItG(theDMVLV) — NCollection_DataMap<int, List<int>>
+        // iterated in bucket order; each group makes one SD vertex.
+        for (_n_v, a_list) in the_dm_vlv.iter() {
             // OCCT L1152: MakeSDVertices(aList, false).
             let n_sd = self.make_sd_vertices(a_list, false);
             for &n_vx in a_list {
@@ -2000,8 +2006,8 @@ impl PaveFiller {
     // PostTreatFF — OCCT BOPAlgo_PaveFiller::PostTreatFF (PaveFiller_6.cxx L1165-1669)
     // ====================================================================
     fn post_treat_ff(&mut self, the_ms_cpb: &mut Vec<(Shape, CoupleOfPBs)>,
-                     a_dm_ex_edges: &mut HashMap<u64, Vec<u64>>,
-                     a_dm_new_sd: &mut HashMap<usize, usize>,
+                     a_dm_ex_edges: &mut crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<u64>>,
+                     a_dm_new_sd: &mut crate::bop::algo::occt_map::OcctDataMapInt<usize, usize>,
                      the_micro_pb: &Vec<SharedPB>,
                      the_verts_on_rejected_pb: &[Shape]) {
         let a_nb_s = the_ms_cpb.len();
@@ -2085,7 +2091,7 @@ impl PaveFiller {
                     let i_ver = self.ds.index(a_ver);
                     if i_ver < 0 { continue; }
                     let i_ver = i_ver as usize;
-                    if let Some(&p_sd) = a_dm_new_sd.get(&i_ver) {
+                    if let Some(&p_sd) = a_dm_new_sd.get(i_ver) {
                         let a_vsd = self.ds.shape(p_sd).clone();
                         if an_added_sd.insert((a_vsd.ptr_id(), a_vsd.location)) {
                             a_ls.push(a_vsd);
@@ -2106,7 +2112,7 @@ impl PaveFiller {
             let verts = [n_v0, n_v1];
             let mut a_verts = [self.ds.shape(verts[0]).clone(), self.ds.shape(verts[1]).clone()];
             for i in 0..2 {
-                if let Some(&p_sd) = a_dm_new_sd.get(&verts[i]) {
+                if let Some(&p_sd) = a_dm_new_sd.get(verts[i]) {
                     a_verts[i] = self.ds.shape(p_sd).clone();
                 }
                 if an_added_sd.insert((a_verts[i].ptr_id(), a_verts[i].location)) {
@@ -2135,7 +2141,7 @@ impl PaveFiller {
                 let mut a_ver = a_ver.clone();
                 let i_ver = self.ds.index(&a_ver);
                 if i_ver >= 0 {
-                    if let Some(&p_sd) = a_dm_new_sd.get(&(i_ver as usize)) {
+                    if let Some(&p_sd) = a_dm_new_sd.get(i_ver as usize) {
                         a_ver = self.ds.shape(p_sd).clone();
                     }
                 }
@@ -2234,11 +2240,11 @@ impl PaveFiller {
                 let Some(a_pb1) = a_pb1 else { continue };
                 let b_old = a_pb1.0.read().unwrap().has_edge();
                 if b_old {
-                    a_dm_ex_edges.entry(pb_ptr(&a_pb1)).or_default();
+                    a_dm_ex_edges.bound(pb_ptr(&a_pb1));
                 }
                 if !b_has_pave_blocks {
                     if b_old {
-                        a_dm_ex_edges.get_mut(&pb_ptr(&a_pb1)).unwrap().push(pb_ptr(&a_pb1));
+                        a_dm_ex_edges.get_mut(pb_ptr(&a_pb1)).unwrap().push(pb_ptr(&a_pb1));
                     } else {
                         // rcad: the section edge was already appended to the DS by
                         // append_edge in MakeBlocks (a_sx is a clone of that entry),
@@ -2285,7 +2291,7 @@ impl PaveFiller {
                         continue;
                     }
                     if b_old && a_nb_lpbx == 0 {
-                        a_dm_ex_edges.get_mut(&pb_ptr(&a_pb1)).unwrap().push(pb_ptr(&a_pb1));
+                        a_dm_ex_edges.get_mut(pb_ptr(&a_pb1)).unwrap().push(pb_ptr(&a_pb1));
                         continue;
                     }
                     if !b_old {
@@ -2394,7 +2400,7 @@ impl PaveFiller {
                             if b_old {
                                 p_pbc.0.write().unwrap().set_original_edge(
                                     a_pb1.0.read().unwrap().original_edge);
-                                a_dm_ex_edges.get_mut(&pb_ptr(&a_pb1)).unwrap().push(pb_ptr(p_pbc));
+                                a_dm_ex_edges.get_mut(pb_ptr(&a_pb1)).unwrap().push(pb_ptr(p_pbc));
                             } else {
                                 let cid3 = if i_x < self.ds.interf_ff.len()
                                     && i_c < self.ds.interf_ff[i_x].curves.len()
@@ -2413,10 +2419,10 @@ impl PaveFiller {
             }
         }
         // OCCT L1658-1668: update SD for vertices that did not participate.
-        let keys: Vec<usize> = a_dm_new_sd.keys().copied().collect();
+        let keys: Vec<usize> = a_dm_new_sd.iter_keys().collect();
         for k in keys {
-            if let Some(&v) = a_dm_new_sd.get(&k) {
-                if let Some(&v2) = a_dm_new_sd.get(&v) {
+            if let Some(&v) = a_dm_new_sd.get(k) {
+                if let Some(&v2) = a_dm_new_sd.get(v) {
                     a_dm_new_sd.insert(k, v2);
                     self.ds.add_shape_sd(k, v2);
                 }
@@ -2448,14 +2454,19 @@ impl PaveFiller {
     // ====================================================================
     // UpdateFaceInfo — OCCT BOPAlgo_PaveFiller::UpdateFaceInfo (PaveFiller_6.cxx L1673-1946)
     // ====================================================================
-    fn update_face_info(&mut self, the_dm_e: &HashMap<u64, Vec<u64>>,
-                        the_dm_v: &HashMap<usize, usize>,
-                        the_pb_faces_map: &HashMap<u64, Vec<usize>>) {
-        // anEdgeLPB — edge -> PB keys to create common blocks from.
-        let mut an_edge_lpb: HashMap<usize, Vec<u64>> = HashMap::new();
+    fn update_face_info(&mut self, the_dm_e: &crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<u64>>,
+                        the_dm_v: &crate::bop::algo::occt_map::OcctDataMapInt<usize, usize>,
+                        the_pb_faces_map: &crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<usize>>) {
+        // OCCT L1729: anEdgeLPB is NCollection_DataMap<int, List<PB>> —
+        // bucket iteration order; key is the edge index.
+        let mut an_edge_lpb: crate::bop::algo::occt_map::OcctDataMapInt<usize, Vec<u64>> =
+            crate::bop::algo::occt_map::OcctDataMapInt::new();
         let a_ffs = self.ds.interf_ff.clone();
         let a_nb_ff = a_ffs.len();
-        let mut a_mf: HashSet<usize> = HashSet::new();
+        // OCCT L1726: aMF is NCollection_Map<int> — bucket iteration order
+        // (used at L1919 to update the face info of the affected faces).
+        let mut a_mf: crate::bop::algo::occt_map::OcctMapInt =
+            crate::bop::algo::occt_map::OcctMapInt::new();
         // 1. Sections (curves, points).
         for i in 0..a_nb_ff {
             let (n_f1, n_f2) = (a_ffs[i].f1, a_ffs[i].f2);
@@ -2468,7 +2479,7 @@ impl PaveFiller {
                 for a_pb in &old_pbs {
                     let key = pb_ptr(a_pb);
                     // OCCT L1712-1731: treat existing pave blocks.
-                    if let Some(a_lpb) = the_dm_e.get(&key) {
+                    if let Some(a_lpb) = the_dm_e.get(key) {
                         // OCCT: UpdateExistingPaveBlocks(aPB, aLPB, thePBFacesMap).
                         let a_lpb_pbs: Vec<SharedPB> = a_lpb.iter().filter_map(|k| {
                             self.find_pb_by_key(*k)
@@ -2476,7 +2487,7 @@ impl PaveFiller {
                         self.update_existing_pave_blocks(a_pb, &a_lpb_pbs, the_pb_faces_map);
                         for pbe in &a_lpb_pbs {
                             let n_e = pbe.0.read().unwrap().edge;
-                            an_edge_lpb.entry(n_e).or_default().push(pb_ptr(pbe));
+                            an_edge_lpb.bound(n_e).push(pb_ptr(pbe));
                         }
                         continue; // removed from aLPBC
                     }
@@ -2485,7 +2496,7 @@ impl PaveFiller {
                     // OCCT: ChangePaveBlocksSc().Add(aPB) — keyed by PB handle.
                     self.ds.change_face_info(n_f1).pave_blocks_sc.insert(key);
                     self.ds.change_face_info(n_f2).pave_blocks_sc.insert(key);
-                    an_edge_lpb.entry(n_e).or_default().push(key);
+                    an_edge_lpb.bound(n_e).push(key);
                     new_pbs.push(a_pb.clone());
                 }
                 self.ds.intersection_curves[*cid].pave_blocks = new_pbs;
@@ -2499,22 +2510,21 @@ impl PaveFiller {
                     self.ds.change_face_info(n_f2).vertices_sc.insert(n_v1);
                 }
             }
-            a_mf.insert(n_f1);
-            a_mf.insert(n_f2);
+            a_mf.add(n_f1);
+            a_mf.add(n_f2);
         }
         // OCCT L1767-1858: create new common blocks from unified edge PBs.
-        // OCCT anEdgeLPB iteration is deterministic (NCollection); sort the
-        // keys so the common-block creation order is fixed (a HashMap would
-        // randomize it and hence the face-info pave-block contents).
-        let mut edges: Vec<usize> = an_edge_lpb.keys().copied().collect();
-        edges.sort_unstable();
-        for n_e in edges {
-            let a_lpb_keys = an_edge_lpb[&n_e].clone();
+        // OCCT anEdgeLPB (L1729) is NCollection_DataMap<int, List<PB>> —
+        // iterated in bucket order (L1817 MakeCommonBlocks call).
+        for (n_e, a_lpb_keys) in an_edge_lpb.iter() {
             if a_lpb_keys.len() == 1 { continue; }
             let mut a_cb_idx: Option<usize> = None;
-            let mut a_m_faces: HashSet<usize> = HashSet::new();
+            // OCCT L1831: aMFaces is NCollection_Map<int> — bucket iteration
+            // order feeds SetFaces (L1896-1899).
+            let mut a_m_faces: crate::bop::algo::occt_map::OcctMapInt =
+                crate::bop::algo::occt_map::OcctMapInt::new();
             let mut a_mpave_blocks: Vec<SharedPB> = Vec::new();
-            for &key in &a_lpb_keys {
+            for &key in a_lpb_keys {
                 let Some(a_pb) = self.find_pb_by_key(key) else { continue };
                 if !a_mpave_blocks.iter().any(|p| pb_ptr(p) == key) {
                     a_mpave_blocks.push(a_pb.clone());
@@ -2528,7 +2538,7 @@ impl PaveFiller {
                         }
                     }
                     for &f in a_pbcb.faces() {
-                        a_m_faces.insert(f);
+                        a_m_faces.add(f);
                     }
                     if a_cb_idx.is_none() {
                         a_cb_idx = Some(pbcb_idx);
@@ -2551,14 +2561,7 @@ impl PaveFiller {
                 let a_lpb_new: Vec<(SharedPB, usize)> =
                     a_mpave_blocks.iter().map(|p| (p.clone(), 0)).collect();
                 self.ds.common_blocks[cb_idx].set_pave_blocks(a_lpb_new);
-                let a_l_faces: Vec<usize> = {
-                    let mut v: Vec<usize> = a_m_faces.iter().copied().collect();
-                    // OCCT L1896-1899: aMFaces is NCollection_Map — deterministic
-                    // iteration; sort so the common-block faces order is fixed
-                    // (a HashSet iteration would randomize it).
-                    v.sort_unstable();
-                    v
-                };
+                let a_l_faces: Vec<usize> = a_m_faces.iter_keys().collect();
                 self.ds.common_blocks[cb_idx].set_faces(a_l_faces);
             }
         }
@@ -2574,21 +2577,22 @@ impl PaveFiller {
         if !b_verts && !b_edges {
             return;
         }
-        let mut mf_list: Vec<usize> = a_mf.iter().copied().collect();
-        mf_list.sort_unstable();
-        for n_f1 in mf_list {
+        // OCCT L1919: aItMF.Initialize(aMF) — NCollection_Map bucket order.
+        for n_f1 in a_mf.iter_keys() {
             // 2.1. update vertices.
             if b_verts {
                 let mv_on = self.ds.change_face_info(n_f1).vertices_on.clone();
                 let mv_in = self.ds.change_face_info(n_f1).vertices_in.clone();
-                for (n_v1, n_v2) in the_dm_v.iter() {
-                    if mv_on.contains(n_v1) {
-                        self.ds.change_face_info(n_f1).vertices_on.remove(n_v1);
-                        self.ds.change_face_info(n_f1).vertices_on.insert(*n_v2);
+                // OCCT L1698-1705: aDMNewSD is NCollection_DataMap<int,int>
+                // — bucket iteration order.
+                for (n_v1, &n_v2) in the_dm_v.iter() {
+                    if mv_on.contains(&n_v1) {
+                        self.ds.change_face_info(n_f1).vertices_on.remove(&n_v1);
+                        self.ds.change_face_info(n_f1).vertices_on.insert(n_v2);
                     }
-                    if mv_in.contains(n_v1) {
-                        self.ds.change_face_info(n_f1).vertices_in.remove(n_v1);
-                        self.ds.change_face_info(n_f1).vertices_in.insert(*n_v2);
+                    if mv_in.contains(&n_v1) {
+                        self.ds.change_face_info(n_f1).vertices_in.remove(&n_v1);
+                        self.ds.change_face_info(n_f1).vertices_in.insert(n_v2);
                     }
                 }
             }
@@ -2644,7 +2648,7 @@ impl PaveFiller {
     // (PaveFiller_6.cxx L3278-3496)
     // ====================================================================
     fn update_existing_pave_blocks(&mut self, a_pbf: &SharedPB, a_lpb: &[SharedPB],
-                                   the_pb_faces_map: &HashMap<u64, Vec<usize>>) {
+                                   the_pb_faces_map: &crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<usize>>) {
         if a_lpb.is_empty() { return; }
         // OCCT L3295-3324: 1. remove old pave blocks.
         let a_cb1 = self.ds.common_block(a_pbf);
@@ -2756,7 +2760,7 @@ impl PaveFiller {
             }
         }
         // OCCT L3448-3496: project the edge on the faces.
-        if let Some(p_l_faces) = the_pb_faces_map.get(&pb_ptr(a_pbf)) {
+        if let Some(p_l_faces) = the_pb_faces_map.get(pb_ptr(a_pbf)) {
             for &n_f in p_l_faces {
                 for a_pb in a_lpb {
                     if self.pb_in_face(n_f, a_pb) {
@@ -2788,7 +2792,7 @@ impl PaveFiller {
     // ====================================================================
     // UpdatePaveBlocks — OCCT BOPAlgo_PaveFiller::UpdatePaveBlocks (PaveFiller_6.cxx L3679-3811)
     // ====================================================================
-    fn update_pave_blocks(&mut self, a_dm_new_sd: &HashMap<usize, usize>) {
+    fn update_pave_blocks(&mut self, a_dm_new_sd: &crate::bop::algo::occt_map::OcctDataMapInt<usize, usize>) {
         if a_dm_new_sd.is_empty() { return; }
         let mut a_mpb: HashSet<u64> = HashSet::new();
         let mut a_micro_edges: HashSet<usize> = HashSet::new();
@@ -2831,7 +2835,7 @@ impl PaveFiller {
             };
             let was_regular_edge = n_v[0] != n_v[1];
             for j in 0..2 {
-                if let Some(&sd) = a_dm_new_sd.get(&n_v[j]) {
+                if let Some(&sd) = a_dm_new_sd.get(n_v[j]) {
                     n_v[j] = sd;
                     b_rebuild = true;
                     let mut pbw = a_pb.0.write().unwrap();
