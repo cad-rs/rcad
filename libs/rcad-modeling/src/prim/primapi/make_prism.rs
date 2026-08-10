@@ -61,25 +61,25 @@ pub fn make_prism_brep(
         t.add_tedge(Some(ln(DVec3::new(0.0, d, h), DVec3::new(0.0, 0.0, h))), v[7].clone(), rev_v(&v[4]), [0.0, d]),
     ];
 
-    // Wires.  Bottom/top follow BRepPrim_GWedge; the lateral wires follow the
-    // box (make_box.rs) lateral face topology.  The even-index wires (0,2,4)
-    // belong to REVERSED faces — OCCT BRepPrim_GWedge::Face() reverses them
-    // (i%2==0, ReverseFace) and TopoDS_Builder::Add then reverses the added
-    // wire into the face, so the wires are stored REVERSED (see make_box.rs).
-    // Faces in OCCT BRepPrimAPI_MakePrism order:
-    // [y0-side, x=w-side, y=d-side, x=0-side, bottom, top] — BRepSweep_Prism
-    // stores the lateral faces before the caps, so the DS index assignment
-    // (and thus FaceInfo keys) matches the OCCT reference (DSLIST P029:
-    // Shell subs=2,12,19,26,30,32).
-    // Each lateral wire stores [vertical edges..., base edge, top edge] all
-    // FORWARD, exactly as BRepSweep_Prism adds them (OCCT DSLIST: y0-side
-    // wire subs=4,7,10,11 = e_ver0, e_ver1, b_ed0, t_ed0).
+    // Wires.  Each lateral wire stores [vertical edge, next vertical edge,
+    // base edge, top edge]; the caps store their 4 boundary edges.  Edge flags
+    // reproduce OCCT BRepPrimAPI_MakePrism exactly (verified against the
+    // OCCT DS face dumps, P029 prism 1x1x1 x cylinder):
+    //   y=0 face (Rev): [e_ver0, rev(e_ver1), rev(b_ed0), t_ed0] -> R,F,F,R
+    //   x=w face (Rev): [e_ver1, rev(e_ver2), rev(b_ed1), t_ed1] -> R,F,F,R
+    //   y=d face (Rev): [e_ver2, rev(e_ver3), rev(b_ed2), t_ed2] -> R,F,F,R
+    //   x=0 face (Rev): [e_ver3, rev(e_ver0), rev(b_ed3), t_ed3] -> R,F,F,R
+    //   z=0 face (Rev): [b_ed0, b_ed1, b_ed2, b_ed3]             -> R,R,R,R
+    //   z=h face (Fwd): [t_ed0, t_ed1, t_ed2, t_ed3]             -> F,F,F,F
+    // The composed orientation of every shared edge is opposite on the two
+    // adjacent faces, which is what the BuilderSolid ShellSplitter's
+    // GetEdgeOff relies on.
     let wires = [
-        rev(t.add_twire(vec![e_ver[0].clone(), rev(e_ver[1].clone()), rev(b_ed[0].clone()), t_ed[0].clone()])),
-        t.add_twire(vec![rev(e_ver[1].clone()), e_ver[2].clone(), b_ed[1].clone(), rev(t_ed[1].clone())]),
-        t.add_twire(vec![rev(e_ver[2].clone()), e_ver[3].clone(), b_ed[2].clone(), rev(t_ed[2].clone())]),
-        rev(t.add_twire(vec![e_ver[3].clone(), rev(e_ver[0].clone()), rev(b_ed[3].clone()), t_ed[3].clone()])),
-        rev(t.add_twire(vec![rev(b_ed[0].clone()), rev(b_ed[1].clone()), rev(b_ed[2].clone()), rev(b_ed[3].clone())])),
+        t.add_twire(vec![e_ver[0].clone(), rev(e_ver[1].clone()), rev(b_ed[0].clone()), t_ed[0].clone()]),
+        t.add_twire(vec![e_ver[1].clone(), rev(e_ver[2].clone()), rev(b_ed[1].clone()), t_ed[1].clone()]),
+        t.add_twire(vec![e_ver[2].clone(), rev(e_ver[3].clone()), rev(b_ed[2].clone()), t_ed[2].clone()]),
+        t.add_twire(vec![e_ver[3].clone(), rev(e_ver[0].clone()), rev(b_ed[3].clone()), t_ed[3].clone()]),
+        t.add_twire(vec![b_ed[0].clone(), b_ed[1].clone(), b_ed[2].clone(), b_ed[3].clone()]),
         t.add_twire(vec![t_ed[0].clone(), t_ed[1].clone(), t_ed[2].clone(), t_ed[3].clone()]),
     ];
 
@@ -109,11 +109,24 @@ pub fn make_prism_brep(
     // prism's FF domain classification (ClassifyLin2d rejects lines coincident
     // with the v=vmax boundary).
     let faces = [
+        // y=0 face (REVERSED, outward -Y). Surface per OCCT MakePrism:
+        // N(+Y), u=X, v=-Z (BRepSweep_Prism profile sweep).
         rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::Y, DVec3::X)), wires[0].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true)),
-        t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::X, -DVec3::Y)), wires[1].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true),
-        t.add_tface(Some(pln(DVec3::new(w, d, 0.0), DVec3::Y, DVec3::X)), wires[2].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true),
+        // x=w face (REVERSED, outward +X). Surface per OCCT MakePrism:
+        // N(-X), u=Y, v=-Z — the sweep of the +Y profile edge along +Z gives
+        // normal -X (X = profile dir × sweep dir), face REVERSED to flip out.
+        rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), -DVec3::X, DVec3::Y)), wires[1].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true)),
+        // y=d face (REVERSED, outward +Y). Surface per OCCT MakePrism:
+        // N(-Y), u=-X, v=-Z.
+        rev(t.add_tface(Some(pln(DVec3::new(w, d, 0.0), -DVec3::Y, -DVec3::X)), wires[2].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true)),
+        // x=0 face (REVERSED, outward -X). Surface per OCCT MakePrism:
+        // N(+X), u=-Y, v=-Z.
         rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::X, -DVec3::Y)), wires[3].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true)),
+        // z=0 face (REVERSED, outward -Z). Surface per OCCT MakePrism:
+        // N(+Z), u=X, v=Y.
         rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::Z, DVec3::X)), wires[4].clone(), vec![], None, Some(cap_uv), vec![], true)),
+        // z=h face (FORWARD, outward +Z). Surface per OCCT MakePrism:
+        // N(+Z), u=X, v=Y.
         t.add_tface(Some(pln(DVec3::new(0.0, 0.0, h), DVec3::Z, DVec3::X)), wires[5].clone(), vec![], None, Some(cap_uv), vec![], true),
     ];
     let shell = t.add_tshell(faces.to_vec());
