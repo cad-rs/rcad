@@ -4057,13 +4057,20 @@ impl<'a> Builder<'a> {
                 f_rev.orientation = topods::Orientation::Reversed;
                 a_sfs.push(f_rev);
             }
-            // OCCT L514-517: BOPAlgo_SplitSolid for THIS solid only.
+            // OCCT L514-517: BOPAlgo_SplitSolid& aBS = aVBS.Appended();
+            // aBS.SetSolid(aSolid); aBS.SetShapes(aSFS); aBS.SetRunParallel(myRunParallel).
             let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(&self.ds);
+            // OCCT L515: SetSolid(aSolid) — the SOURCE solid (not the draft
+            // solid); the split result is keyed by it in aSolidsIm (L542).
+            bs.my_solid = Some(a_s.clone());
+            // OCCT L516: SetShapes(aSFS).
             bs.my_shapes = a_sfs;
             bs.perform();
-            // OCCT L542: aSolidsIm.Add(aBS.Solid(), aBS.Areas()).
-            let idx = *a_solids_im_idx.entry((a_s.ptr_id(), a_s.location)).or_insert_with(|| {
-                a_solids_im.push((a_s.clone(), Vec::new()));
+            // OCCT L542: aSolidsIm.Add(aBS.Solid(), aBS.Areas()) — keyed by the
+            // split solid's mySolid (the source solid).
+            let a_solid = bs.my_solid.clone().expect("SetSolid before split");
+            let idx = *a_solids_im_idx.entry((a_solid.ptr_id(), a_solid.location)).or_insert_with(|| {
+                a_solids_im.push((a_solid.clone(), Vec::new()));
                 a_solids_im.len() - 1
             });
             a_solids_im[idx].1.extend(bs.my_solids.clone());

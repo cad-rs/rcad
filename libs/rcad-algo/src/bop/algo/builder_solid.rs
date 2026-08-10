@@ -31,6 +31,11 @@ pub struct BuilderSolid<'a> {
     // BOPAlgo_BuilderSolid
     pub my_shapes: Vec<Shape>,          // OCCT: myShapes
     pub my_solids: Vec<Shape>,          // OCCT: myAreas (Areas())
+    // OCCT BOPAlgo_SplitSolid::mySolid (Builder_3.cxx L404) — the solid to
+    // split. BOPAlgo_BuilderSolid::Perform does not use it; the SplitSolid
+    // subclass stores it for Solid() (used as the aSolidsIm key in
+    // BuildSplitSolids L542). rcad stores the source solid here as well.
+    pub my_solid: Option<Shape>,        // OCCT: BOPAlgo_SplitSolid::mySolid
     my_shapes_to_avoid: IndexMap<(u64, u32, Orientation), Shape>, // OCCT: NCollection_IndexedMap<TopoDS_Shape> myShapesToAvoid — default hasher, orientation-sensitive
     my_loops: Vec<Vec<Shape>>,          // OCCT: myLoops
     my_loops_internal: Vec<Shape>,      // OCCT: myLoopsInternal (shells with Closed flag)
@@ -45,6 +50,7 @@ impl<'a> BuilderSolid<'a> {
             my_context: IntToolsContext::new(),
             my_shapes: Vec::new(),
             my_solids: Vec::new(),
+            my_solid: None,
             my_shapes_to_avoid: IndexMap::new(),
             my_loops: Vec::new(),
             my_loops_internal: Vec::new(),
