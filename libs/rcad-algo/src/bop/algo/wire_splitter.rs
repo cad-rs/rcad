@@ -303,13 +303,15 @@ fn split_block(
     }
     // Second part of bNothingToDo: check edges on TShape coincidence.
     if b_nothing_to_do {
-        // OCCT aMapEE (L234-236) — TopTools_ShapeMapHasher, key TShape + Location.
-        let mut a_map_ee: HashMap<(u64, u32), Vec<u64>> = HashMap::new();
+        // OCCT L252-273: aMapEE is NCollection_IndexedDataMap with
+        // TopTools_ShapeMapHasher — key TShape + Location, value the list of
+        // full edge shapes (orientations preserved); insertion order matters.
+        let mut a_map_ee: IndexMap<(u64, u32), Vec<Shape>> = IndexMap::new();
         for a_e in &my_edges {
             a_map_ee
                 .entry((a_e.ptr_id(), a_e.location))
                 .or_default()
-                .push(a_e.ptr_id());
+                .push(a_e.clone());
         }
         let mut b_flag = true;
         for (_, a_l_ex) in &a_map_ee {
@@ -317,9 +319,11 @@ fn split_block(
             if a_nb_e == 1 {
                 continue;
             } else if a_nb_e == 2 {
-                // Both entries are the same edge identity -> not a single wire.
-                b_flag = false;
-                break;
+                // OCCT L285-293: aE1.IsSame(aE2) — same TShape AND Location.
+                if a_l_ex[0].is_partner(&a_l_ex[1]) {
+                    b_flag = false;
+                    break;
+                }
             } else {
                 b_flag = false;
                 break;

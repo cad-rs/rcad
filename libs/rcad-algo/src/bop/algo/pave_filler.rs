@@ -3179,7 +3179,13 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         let mut a_mcb_new_pb: std::collections::HashMap<usize, Vec<SharedPB>> = std::collections::HashMap::new();
         // OCCT L460: Map of vertices to init pave blocks for them
         let mut a_m_vertices_to_init_pb: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        for &n_e in the_medges {
+        // OCCT L451: aItM.Initialize(theMEdges) — NCollection_Map iteration is
+        // deterministic; sort the edge set so the MakeSDVertices/SplitEdge
+        // vertex and edge creation order is fixed (a HashSet iteration would
+        // randomize the DS indices).
+        let mut medges_sorted: Vec<usize> = the_medges.iter().copied().collect();
+        medges_sorted.sort_unstable();
+        for &n_e in &medges_sorted {
             if n_e >= self.ds.nb_shapes() { continue; }
             self.ds.init_pave_blocks(n_e);
             let old_pbs: Vec<SharedPB> = {
@@ -3259,7 +3265,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
         }
         // OCCT L530-560: Make Common Blocks
-        for (_cb_key, pbs) in &a_mcb_new_pb {
+        // aMCBNewPB is NCollection_IndexedDataMap — iterate in insertion
+        // order (sorted CB keys fix the HashMap iteration order).
+        let mut cb_keys: Vec<usize> = a_mcb_new_pb.keys().copied().collect();
+        cb_keys.sort_unstable();
+        for cb_key in cb_keys {
+            let pbs = &a_mcb_new_pb[&cb_key];
             if pbs.len() < 2 { continue; }
             let mut a_minds: std::collections::HashMap<(usize, usize), Vec<SharedPB>> = std::collections::HashMap::new();
             for pb in pbs {
@@ -3267,7 +3278,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 let key = if v1 < v2 { (v1, v2) } else { (v2, v1) };
                 a_minds.entry(key).or_default().push(pb.clone());
             }
-            for (_pair, group) in &a_minds {
+            // aMinds is a plain NCollection_Map in OCCT but each group creates
+            // a CommonBlock whose index order matters — sort the pair keys.
+            let mut pair_keys: Vec<(usize, usize)> = a_minds.keys().copied().collect();
+            pair_keys.sort_unstable();
+            for pair in pair_keys {
+                let group = &a_minds[&pair];
                 if group.len() < 2 { continue; }
                 self.ds.add_common_block(group);
             }
@@ -3392,7 +3408,17 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     // OCCT BOPAlgo_PaveFiller::UpdateVerticesOfCB (PaveFiller_3.cxx L959-993).
     fn update_vertices_of_cb(&mut self) {
         let mut a_mpb_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        for a_lpb in self.ds.pave_blocks_pool.clone().into_values() {
+        // OCCT L974-976: myDS->ChangePaveBlocksPool() is a DynamicArray —
+        // iterate the pool in ascending edge-key order (a HashMap values()
+        // order would randomize the UpdateVertex sequence and hence the
+        // indices of the newly created vertices).
+        let mut pb_keys: Vec<usize> = self.ds.pave_blocks_pool.keys().copied().collect();
+        pb_keys.sort_unstable();
+        for k in pb_keys {
+            let a_lpb = match self.ds.pave_blocks_pool.get(&k) {
+                Some(v) => v.clone(),
+                None => continue,
+            };
             for a_pb in &a_lpb {
                 let a_cb_idx = self.ds.common_block(a_pb);
                 let a_cb_idx = match a_cb_idx { Some(idx) => idx, None => continue, };
@@ -3512,9 +3538,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
         // L1024-1080: Fill the connection map from bounding vertices to PBs
         // L1026-1028: NCollection_IndexedDataMap<BOPDS_Pair, List<PaveBlock>> aPBMap
-        // rcad: HashMap keyed by (v_min, v_max), value = Vec<SharedPB>
-        let mut a_pb_map: std::collections::HashMap<(usize, usize), Vec<SharedPB>> =
-            std::collections::HashMap::new();
+        // rcad: IndexMap keyed by (v_min, v_max), value = Vec<SharedPB> — the
+        // insertion order (source-edge order) determines the EE-pair processing
+        // order below (a HashMap would randomize it and hence the resulting
+        // common blocks and split-edge indices).
+        let mut a_pb_map: indexmap::IndexMap<(usize, usize), Vec<SharedPB>> =
+            indexmap::IndexMap::new();
         // L1030: Fence map of pave blocks
         // rcad: HashSet of PB pointer
         let mut a_mpb_fence: std::collections::HashSet<u64> =
@@ -3907,8 +3936,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         }
 
         // L787-822: Collect all pave blocks into an IndexedMap
-        let mut a_mpb: std::collections::HashSet<(usize, usize)> =
-            std::collections::HashSet::new();
+        // OCCT: NCollection_IndexedMap<handle<BOPDS_PaveBlock>> aMPB — the
+        // insertion order determines the EF-pair processing order, hence the
+        // InterfEF array order and the FaceInfo PaveBlocksIn order (a HashSet
+        // would randomize it and with it the Builder aLE edge order).
+        let mut a_mpb: indexmap::IndexSet<(usize, usize)> =
+            indexmap::IndexSet::new();
         let a_nb_s = self.ds.nb_source_shapes();
         for n_e in 0..a_nb_s {
             // L791-795: only edges
@@ -3942,7 +3975,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     /// Worker function — processes collected pave blocks against all faces.
     pub(crate) fn force_interf_ef_work(
         &mut self,
-        the_mpb: &std::collections::HashSet<(usize, usize)>,
+        the_mpb: &indexmap::IndexSet<(usize, usize)>,
         the_add_interf: bool,
     ) {
         // L838-841: if (theMPB.IsEmpty()) return;

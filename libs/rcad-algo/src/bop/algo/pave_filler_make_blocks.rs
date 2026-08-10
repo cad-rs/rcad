@@ -2551,7 +2551,14 @@ impl PaveFiller {
                 let a_lpb_new: Vec<(SharedPB, usize)> =
                     a_mpave_blocks.iter().map(|p| (p.clone(), 0)).collect();
                 self.ds.common_blocks[cb_idx].set_pave_blocks(a_lpb_new);
-                let a_l_faces: Vec<usize> = a_m_faces.iter().copied().collect();
+                let a_l_faces: Vec<usize> = {
+                    let mut v: Vec<usize> = a_m_faces.iter().copied().collect();
+                    // OCCT L1896-1899: aMFaces is NCollection_Map — deterministic
+                    // iteration; sort so the common-block faces order is fixed
+                    // (a HashSet iteration would randomize it).
+                    v.sort_unstable();
+                    v
+                };
                 self.ds.common_blocks[cb_idx].set_faces(a_l_faces);
             }
         }
@@ -2794,8 +2801,18 @@ impl PaveFiller {
                 an_all_pbs.extend(self.ds.intersection_curves[cid].pave_blocks.clone());
             }
         }
-        for a_lpb in self.ds.pave_blocks_pool.values() {
-            an_all_pbs.extend(a_lpb.clone());
+        // OCCT L3764-3766: myDS->ChangePaveBlocksPool() is a DynamicArray —
+        // iterate the pool in ascending edge-key order (a HashMap values()
+        // order would randomize the an_all_pbs sequence and hence the
+        // split-edge indices created by SplitEdge below).
+        let mut pb_keys: Vec<usize> = self.ds.pave_blocks_pool.keys().copied().collect();
+        pb_keys.sort_unstable();
+        for k in pb_keys {
+            let a_lpb = match self.ds.pave_blocks_pool.get(&k) {
+                Some(v) => v.clone(),
+                None => continue,
+            };
+            an_all_pbs.extend(a_lpb);
         }
         for a_pb in &an_all_pbs {
             let mut a_pb = a_pb.clone();
@@ -3026,7 +3043,9 @@ impl PaveFiller {
     // (PaveFiller_6.cxx L4277-4304)
     // ====================================================================
     fn put_se_in_other_faces(&mut self) {
-        let mut a_mpb_sc_all: HashSet<(usize, usize)> = HashSet::new();
+        // OCCT L4338: NCollection_IndexedMap<handle<BOPDS_PaveBlock>> aMPBScAll
+        // — insertion order feeds ForceInterfEF → InterfEF array order.
+        let mut a_mpb_sc_all: indexmap::IndexSet<(usize, usize)> = indexmap::IndexSet::new();
         let a_ffs = self.ds.interf_ff.clone();
         for ff in &a_ffs {
             for &cid in &ff.curves {
