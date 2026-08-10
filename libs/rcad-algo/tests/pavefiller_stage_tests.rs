@@ -76,7 +76,7 @@ fn check_pf_stages(
         let nNewE = ds.shapes.iter().enumerate()
             .filter(|(i, si)| *i >= n_src && si.shape_type == ShapeType::Edge).count();
         let nPB = (0..ds.nb_shapes()).filter(|&i| ds.shapes[i].shape_type == ShapeType::Edge && ds.shapes[i].reference >= 0)
-            .map(|i| ds.pave_blocks_pool[ds.shapes[i].reference as usize].len()).sum::<usize>();
+            .map(|i| ds.pave_blocks_pool[&(ds.shapes[i].reference as usize)].len()).sum::<usize>();
         let nVV = ds.interf_vv.len();
         let nVE = ds.interf_ve.len();
         let nVF = ds.interf_vf.len();
@@ -151,7 +151,7 @@ fn check_pf_stages(
         let mut edge_pb: Vec<(usize, usize)> = Vec::new();
         for i in 0..ds.nb_source_shapes {
             if ds.shapes[i].shape_type != ShapeType::Edge { continue; }
-            let n = if ds.shapes[i].reference >= 0 { ds.pave_blocks_pool[ds.shapes[i].reference as usize].len() } else { 0 };
+            let n = if ds.shapes[i].reference >= 0 { ds.pave_blocks_pool[&(ds.shapes[i].reference as usize)].len() } else { 0 };
             edge_pb.push((i, n));
         }
         assert_eq!(edge_pb, s.edge_pb.to_vec(), "{} [{}] edge_pb", label, s.stage_name);
