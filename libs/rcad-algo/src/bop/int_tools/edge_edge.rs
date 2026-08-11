@@ -1124,7 +1124,11 @@ fn check_coincidence(
     // 2. Deep evaluation
     for i in 2..a_nb1 {
         let (a_t1a, a_t1b) = (a_ranges[i][0], a_ranges[i][1]);
-        i_err = find_dist_pc(a_t1a, a_t1b, the_c1, the_criteria, the_curve_res1, &mut the_proj_pc, &mut a_dmax, &mut a_t1max, &mut a_t2max, false);
+        // OCCT L1195: FindDistPC(aT1A, aT1B, ..., aDmax, aT1max, aT2max) — the
+        // trailing bMaxDist argument is omitted, so the declared default
+        // (IntTools_EdgeEdge.cxx L64-73: `const bool bMaxDist = true`) applies:
+        // iC=1 tracks the MAX distance (iErr==2 means "distance too big").
+        i_err = find_dist_pc(a_t1a, a_t1b, the_c1, the_criteria, the_curve_res1, &mut the_proj_pc, &mut a_dmax, &mut a_t1max, &mut a_t2max, true);
         if i_err != 0 { return i_err; }
     }
     i_err
