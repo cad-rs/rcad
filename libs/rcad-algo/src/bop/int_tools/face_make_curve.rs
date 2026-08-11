@@ -329,19 +329,25 @@ fn line_line2d_intersection(a: &Line2d, b: &Line2d) -> Option<f64> {
     Some(t)
 }
 
-/// OCCT GeomInt_IntSS::BuildPCurves (GeomInt_IntSS_1.cxx L1172-1304):
-/// projects the 3D curve onto the other surface.  For a restriction arc that is
-/// a 3D circle lying on a plane (a cylinder/cone base circle on a box face),
-/// the exact 2D image on the plane is a circle with the same parameterization
-/// (the plane's orthonormal UV frame preserves the circle frame).  Other cases
-/// fall back to the small-range branch (a line through the endpoint UVs).
-fn build_projected_pcurve(
-    other_surf: &Surface3,
-    curve3: &Curve3,
-    tf: f64,
-    tl: f64,
-    _n: usize,
-) -> Option<Curve2d> {
+/// OCCT GeomInt_IntSS::BuildPCurves (GeomInt_IntSS_1.cxx L1172-1304) via
+/// GeomProjLib::Curve2d -> ProjLib_ProjectedCurve: analytic projection of a 3D
+/// curve onto the other surface.  Two cases are solved exactly:
+/// - Circle on a plane (ProjLib_Plane::Project): the 2D image is a circle with
+///   the same parameterization (the plane's orthonormal UV frame preserves the
+///   circle frame);
+/// - Circle on a sphere (ProjLib_Sphere::Project(Circle), ProjLib_Sphere.cxx
+///   L97-180): a meridian (isIsoU) or latitude (isIsoV) circle.  The OCCT
+///   analytic line is only same-parameter near the frame origin — for a
+///   general arc it deviates and BRepLib::SameParameter (BRepLib.cxx L1237+,
+///   called by BOPTools_AlgoTools::MakePCurve L1723) re-fits it as a BSpline.
+///   rcad has no SameParameter, so the same-parameter line is built directly
+///   from the arc (below) and the midpoint deviation check returns None so the
+///   make_pcurves stage builds the sampled BSpline, matching the OCCT final
+///   pcurve type.
+/// Returns None when rcad has no analytic projection — the caller then falls
+/// back to the sampling/projection path, as OCCT's BOPAlgo_MPC does for null
+/// pcurves.
+fn build_analytic_pcurve(other_surf: &Surface3, curve3: &Curve3, tf: f64, tl: f64) -> Option<Curve2d> {
     if let (Curve3::Circle(c), Surface3::Plane(pl)) = (curve3, other_surf) {
         let d = c.center - pl.origin;
         let c2 = DVec2::new(d.dot(pl.u_dir), d.dot(pl.v_dir));
@@ -371,6 +377,109 @@ fn build_projected_pcurve(
                 radius: (lx + ly) * 0.5,
             }));
         }
+    }
+    if let (Curve3::Circle(c), Surface3::Sphere(sp)) = (curve3, other_surf) {
+        // OCCT ProjLib_Sphere::Project(gp_Circ) (L97-180).
+        let xs = sp.ref_dir.normalize();
+        let ys = sp.axis.cross(xs).normalize();
+        let zs = sp.axis.normalize();
+        // Xc/Yc/Zc: the circle's local frame; O: the sphere location.
+        let xc = c.x_dir;
+        let yc = c.y_dir;
+        let zc = xc.cross(yc);
+        // Precision::Confusion() is the tolerance of IsNormal / IsEqual.
+        let tol = CONFUSION;
+        // isIsoU = Zc.IsNormal(Zs, Tol) && O.IsEqual(C.Location(), Tol)
+        let is_iso_u = zc.dot(zs).abs() <= tol
+            && (sp.center.x - c.center.x).abs() <= tol
+            && (sp.center.y - c.center.y).abs() <= tol
+            && (sp.center.z - c.center.z).abs() <= tol;
+        let mut line: Option<Line2d> = None;
+        if is_iso_u {
+            // The circle is a meridian (the arc passes through both poles).
+            // OCCT's analytic line (ProjLib_Sphere.cxx L124-179, u=const
+            // through the frame points) is NOT same-parameter for a general
+            // arc — its V slope is -1 through the frame while the true V
+            // slope is +1 on the far side of a pole, and its U origin is the
+            // frame's, not the arc's.  BRepLib::SameParameter (BRepLib.cxx
+            // L1237+, called by BOPTools_AlgoTools::MakePCurve L1723) re-fits
+            // it; rcad has no SameParameter, so the same-parameter line is
+            // built directly from the arc's endpoint UVs (u = const through
+            // the arc midpoint, V linear in t).
+            let tm = 0.5 * (tf + tl);
+            let u_const = quadric_uv_params(other_surf, curve3.point_at(tm))?.x;
+            let uv0 = quadric_uv_params(other_surf, curve3.point_at(tf))?;
+            let uv1 = quadric_uv_params(other_surf, curve3.point_at(tl))?;
+            if !uv0.is_finite() || !uv1.is_finite() {
+                return None;
+            }
+            let d_v = (uv1.y - uv0.y) / (tl - tf);
+            if !d_v.is_finite() {
+                return None;
+            }
+            let p2d1 = DVec2::new(u_const, uv0.y - tf * d_v);
+            line = Some(Line2d::new(p2d1, DVec2::new(0.0, d_v)));
+        }
+        // isIsoV = Xc.IsNormal(Zs, Tol) && Yc.IsNormal(Zs, Tol)
+        let is_iso_v = xc.dot(zs).abs() <= tol && yc.dot(zs).abs() <= tol;
+        if is_iso_v {
+            // The circle is a latitude circle: the pcurve is a v=const line.
+            // U(t) = atan2(C(t).Ys, C(t).Xs) = U0 + (zc.zs)*t with
+            // U0 = atan2(Xc.Ys, Xc.Xs) — the azimuth of the t=0 point,
+            // which is exact (the latitude circle keeps the azimuth linear
+            // in the circle parameter).  OCCT writes the U0 via
+            // Xs.AngleWithRef(Xc, Xs^Ys) (a -delta convention) and relies on
+            // SameParameter to correct it; rcad has no SameParameter, so U0
+            // is written directly (same-parameter from the start).
+            let u = xc.dot(ys).atan2(xc.dot(xs));
+            let z = (c.center - sp.center).dot(zs);
+            let v = (z / sp.radius).clamp(-1.0, 1.0).asin();
+            let p2d1 = DVec2::new(u, v);
+            // D2d = ((Xc ^ Yc).Dot(Xs ^ Ys), 0) — +1 along U when the circle
+            // plane normal is parallel to the sphere axis.
+            let d2d = DVec2::new(zc.dot(zs), 0.0);
+            line = Some(Line2d::new(p2d1, d2d));
+        }
+        if let Some(l) = line {
+            // SameParameter net effect: keep the analytic line only when it is
+            // same-parameter with the 3D curve (BRepLib::SameParameter checks
+            // 22 control points, BRepLib.cxx L1355-1367).  A meridian arc
+            // crossing a pole folds V (the line's constant slope then points
+            // the wrong way); a latitude arc crossing the seam wraps U.
+            // Check the arc's midpoint against the line; a deviation beyond
+            // the confusion tolerance means OCCT would re-approximate it
+            // (BSpline) — return None so the make_pcurves stage samples.
+            let tm = 0.5 * (tf + tl);
+            let uv = quadric_uv_params(other_surf, curve3.point_at(tm))?;
+            let p_on_line = l.point_at(tm);
+            let du = (uv - p_on_line).x;
+            let two_pi = std::f64::consts::TAU;
+            let du = (du - two_pi * (du / two_pi).round()).abs();
+            let dv = (uv - p_on_line).y.abs();
+            if du > 1e-7 || dv > 1e-7 {
+                return None;
+            }
+            return Some(Curve2d::Line(l));
+        }
+    }
+    None
+}
+
+/// OCCT GeomInt_IntSS::BuildPCurves (GeomInt_IntSS_1.cxx L1172-1304):
+/// projects the 3D curve onto the other surface.  For a restriction arc that is
+/// a 3D circle lying on a plane (a cylinder/cone base circle on a box face),
+/// the exact 2D image on the plane is a circle with the same parameterization
+/// (the plane's orthonormal UV frame preserves the circle frame).  Other cases
+/// fall back to the small-range branch (a line through the endpoint UVs).
+fn build_projected_pcurve(
+    other_surf: &Surface3,
+    curve3: &Curve3,
+    tf: f64,
+    tl: f64,
+    _n: usize,
+) -> Option<Curve2d> {
+    if let Some(c) = build_analytic_pcurve(other_surf, curve3, tf, tl) {
+        return Some(c);
     }
     // OCCT BuildPCurves small-range branch: the pcurve is a line segment.
     let p0 = curve3.point_at(tf);
@@ -769,6 +878,12 @@ fn make_part_curve(
         IntPatchIType::Circle | IntPatchIType::Ellipse => {
             let a_period = std::f64::consts::TAU;
             let a_real_eps = f64::EPSILON;
+            // OCCT L1028-1061: the pcurves on both faces come from
+            // GeomInt_IntSS::BuildPCurves (analytic for Circle on a plane / a
+            // sphere meridian or latitude); rcad computes them analytically and
+            // leaves them null otherwise (the make_pcurves stage projects).
+            let pcurve1 = build_analytic_pcurve(surf1, curve, fprm, lprm);
+            let pcurve2 = build_analytic_pcurve(surf2, curve, fprm, lprm);
             let is_full_period = fprm.abs() <= a_real_eps && (lprm - a_period).abs() <= a_real_eps;
             if !is_full_period {
                 if lprm <= fprm + 1e-12 {
@@ -777,8 +892,8 @@ fn make_part_curve(
                 Some(IntersectionCurve {
                     curve: curve.clone(),
                     t_range: [fprm, lprm],
-                    pcurve1: None,
-                    pcurve2: None,
+                    pcurve1,
+                    pcurve2,
                     tolerance: tol,
                     tang_tolerance: line.tang_tolerance,
                     pave_blocks: Vec::new(),
@@ -789,8 +904,8 @@ fn make_part_curve(
                 Some(IntersectionCurve {
                     curve: curve.clone(),
                     t_range: [fprm, lprm],
-                    pcurve1: None,
-                    pcurve2: None,
+                    pcurve1,
+                    pcurve2,
                     tolerance: tol,
                     tang_tolerance: line.tang_tolerance,
                     pave_blocks: Vec::new(),
@@ -809,11 +924,13 @@ fn make_part_curve(
                         continue;
                     }
                     if classify_point(surf2, uv2, p3d, CONFUSION) {
+                        // OCCT L1117-1140: the 18-point branch also sets the
+                        // analytic pcurves (BuildPCurves with the UV bounds).
                         return Some(IntersectionCurve {
                             curve: curve.clone(),
                             t_range: [fprm, lprm],
-                            pcurve1: None,
-                            pcurve2: None,
+                            pcurve1: build_analytic_pcurve(surf1, curve, fprm, lprm),
+                            pcurve2: build_analytic_pcurve(surf2, curve, fprm, lprm),
                             tolerance: tol,
                             tang_tolerance: line.tang_tolerance,
                             pave_blocks: Vec::new(),

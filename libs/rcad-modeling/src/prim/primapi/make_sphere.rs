@@ -31,17 +31,35 @@ impl MakeSphere {
         let north = t.add_tvertex(self.local(0.0, 0.0, r));
         let south = t.add_tvertex(self.local(0.0, 0.0, -r));
         // OCCT BRepPrim_Sphere::SetMeridian (BRepPrim_Sphere.cxx L71-85):
-        // meridian circle axis = -YDirection, x_dir = XDirection. The seam edge
-        // is the arc [3*PI/2, 5*PI/2], i.e. from the south pole through +X to
-        // the north pole, lying in the XZ plane.
-        let seam = Circle3::new(c, -self.y_axis, r);
+        // gp_Ax2(Axes().Location(), -Axes().YDirection(), Axes().XDirection())
+        // — the meridian circle's frame is XDirection = X, YDirection =
+        // (-Y)^X = Z (NOT the Circle3::new default stable frame).  The seam
+        // edge is the arc [3*PI/2, 5*PI/2], from the south pole (C(3PI/2) =
+        // (0,0,-R)) through +X to the north pole (C(5PI/2) = (0,0,R)),
+        // lying in the XZ plane.  With the explicit frame the arc endpoints
+        // coincide with the pole vertices (vertex_params / edge splitting
+        // depend on it).
+        let seam = Circle3 {
+            center: c,
+            normal: -self.y_axis,
+            x_dir: self.x_axis,
+            y_dir: self.z_axis,
+            radius: r,
+        };
         let pi = std::f64::consts::PI;
         let rev_v = |v: &Shape| Shape { orientation: rcad_kernel::topods::Orientation::Reversed, ..v.clone() };
         // Pole degenerate edges are closed (both endpoints the same pole);
         // OCCT stores the coincident endpoint nodes with opposite
         // orientations, so the WireSplitter's in/out pairing at the pole
         // vertex works.
-        let e_top = t.add_tedge(None, north.clone(), rev_v(&north), [0.0, pi * r]);
+        // OCCT BRepPrim_OneAxis::TopEdge/BottomEdge (L1208-1226, L1260-1278):
+        // AddEdgeVertex(E, TopEndVertex(), 0., myAngle) with myAngle = 2*PI
+        // (SetMeridianOffset) — the pole edges span the FULL revolution
+        // [0, 2*PI] in the pcurve parameter (a u-line), NOT [0, PI*R].
+        // With a half-range the pole pcurve covers u in [0, PI] and the
+        // WireSplitter's loop-closing UV check fails against a seam edge at
+        // u=2*PI (bfuse_simple A1: sphere x box).
+        let e_top = t.add_tedge(None, north.clone(), rev_v(&north), [0.0, TAU]);
         // OCCT BRepPrim_OneAxis::EndEdge (BRepPrim_OneAxis.cxx L1035-1060):
         // AddEdgeVertex(E, TopEndVertex(), myVMax+off, false) then
         // AddEdgeVertex(E, BottomEndVertex(), myVMin+off, true) — so V1 =
@@ -55,7 +73,7 @@ impl MakeSphere {
             Some(Curve3::Circle(seam)),
             south.clone(), rev_v(&north),
             [3.0 * pi / 2.0, 5.0 * pi / 2.0]);
-        let e_bot = t.add_tedge(None, south.clone(), rev_v(&south), [0.0, pi * r]);
+        let e_bot = t.add_tedge(None, south.clone(), rev_v(&south), [0.0, TAU]);
         // OCCT BRepPrim_OneAxis::LateralWire (BRepPrim_OneAxis.cxx L660-684):
         // [rev(TopEdge), EndEdge, BottomEdge, rev(StartEdge)] — the pole
         // degenerate edges are reversed, the seam End instance (u=2*PI) is
