@@ -757,13 +757,26 @@ fn add_uv_bounds(ds: &DS, face_index: usize, pc: &Curve2d, t1: f64, t2: f64) -> 
     Some(b)
 }
 
-/// The edges of a draft face's outer wire (OCCT TopoDS_Iterator(aF)).
+/// The edges of a face's outer wire plus all inner wires.
+/// OCCT BOPAlgo_BuilderFace.cxx L850-851: `TopExp::MapShapes(theF, TopAbs_EDGE,
+/// aFaceEdgesMap)` — the whole face, including holes. The caller
+/// perform_internal_shapes runs after PerformAreas has attached holes, so
+/// only outer-wire edges would miss shared-edge detection and shrink the UV
+/// box (AddUVBounds(aF, aBoxF), L685-686).
 fn face_wire_edges(face: &Shape) -> Vec<Shape> {
     match &*face.data {
-        TShape::Face(fd) => match &*fd.outer_wire.data {
-            TShape::Wire(wd) => wd.edges.clone(),
-            _ => Vec::new(),
-        },
+        TShape::Face(fd) => {
+            let mut edges: Vec<Shape> = Vec::new();
+            if let TShape::Wire(wd) = &*fd.outer_wire.data {
+                edges.extend(wd.edges.iter().cloned());
+            }
+            for w in &fd.inner_wires {
+                if let TShape::Wire(wd) = &*w.data {
+                    edges.extend(wd.edges.iter().cloned());
+                }
+            }
+            edges
+        }
         _ => Vec::new(),
     }
 }
@@ -843,4 +856,62 @@ fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], face_edges: 
             == crate::topalgo::brep_top_adaptor::fclass2d::State::In;
     }
     false
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::topods::{TFaceData, Orientation};
+
+    fn wire(edges: Vec<Shape>) -> Shape {
+        Shape::new(
+            Arc::new(TShape::Wire(TWireData {
+                my_shapes: vec![],
+                flags: tshape_flags::DEFAULT,
+                edges,
+            })),
+            0,
+            Orientation::Forward,
+        )
+    }
+
+    /// Regression test for perform_internal_shapes (audit item #3).
+    ///
+    /// OCCT IsInside (BOPAlgo_BuilderFace.cxx L850-851) builds the face edge
+    /// set with `TopExp::MapShapes(theF, TopAbs_EDGE)` — the WHOLE face,
+    /// including the inner wires (holes) attached by PerformAreas; and the UV
+    /// box comes from `BRepTools::AddUVBounds(aF, aBoxF)` (L685-686), also
+    /// over all wires. rcad's face_wire_edges used to return only the outer
+    /// wire's edges, so a hole edge shared with an internal edge was not
+    /// detected (is_inside_wire returned the wrong classification) and the UV
+    /// box was too small. The fix returns outer + inner edges.
+    #[test]
+    fn face_wire_edges_includes_inner_wires() {
+        let e_outer = Shape::null();
+        let e_inner = Shape::null();
+        let face = Shape::new(
+            Arc::new(TShape::Face(TFaceData {
+                my_shapes: vec![],
+                flags: tshape_flags::DEFAULT,
+                surface: None,
+                surface_location: 0,
+                outer_wire: wire(vec![e_outer.clone()]),
+                inner_wires: vec![wire(vec![e_inner.clone()])],
+                sample_point: None,
+                uv_domain: None,
+                internal_vertices: vec![],
+                tolerance: 0.0,
+                natural_restriction: false,
+            })),
+            0,
+            Orientation::Forward,
+        );
+        let edges = face_wire_edges(&face);
+        assert_eq!(edges.len(), 2, "must include outer + inner wire edges");
+        assert_eq!(edges[0].ptr_id(), e_outer.ptr_id());
+        assert_eq!(edges[1].ptr_id(), e_inner.ptr_id());
+    }
 }
