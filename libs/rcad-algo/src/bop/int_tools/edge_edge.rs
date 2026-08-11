@@ -1267,3 +1267,64 @@ impl<'a> Projector<'a> {
         project_on_range(self.curve, point, self.t1, self.t2)
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::DVec3;
+    use rcad_kernel::geom::*;
+
+    /// Regression test for the CheckCoincidence deep evaluation fix.
+    ///
+    /// OCCT FindDistPC (IntTools_EdgeEdge.cxx L64-73) declares
+    /// `const bool bMaxDist = true` as the default for its last argument, and
+    /// CheckCoincidence's deep-evaluation call (L1195) omits it — so iC=1
+    /// tracks the MAX distance and iErr==2 means "distance too big".
+    ///
+    /// rcad previously passed `false` (iC=-1, MIN distance): with the two
+    /// curves closer than theCriteria, `-1*(d-criteria) > 0` made the deep
+    /// evaluation return 2 ("distance too small") and CheckCoincidence
+    /// wrongly reported "not coincident".
+    ///
+    /// The two near-parallel lines below (gap 1e-9 < criteria 1e-6) reach the
+    /// deep evaluation (range [0,10] splits into 10 segments, aNb1 >= aNb) and
+    /// must be detected as coincident (return 0). With the old bMaxDist=false
+    /// the deep loop returned 2 immediately, so this test fails on the old
+    /// code and passes on the fixed one.
+    #[test]
+    fn check_coincidence_deep_eval_nearly_coincident() {
+        let c1 = Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::X));
+        let c2 = Curve3::Line(Line3::new(DVec3::new(0.0, 1e-9, 0.0), DVec3::X));
+        let criteria = 1e-6;
+        let res1 = 1e-3;
+        let rc = check_coincidence(&c1, &c2, 0.0, 10.0, 0.0, 10.0, criteria, res1);
+        assert_eq!(rc, 0, "nearly-coincident lines must be detected as coincident");
+    }
+
+    /// Exactly coincident lines (gap 0) also go through the deep evaluation
+    /// and must return 0.
+    #[test]
+    fn check_coincidence_deep_eval_exactly_coincident() {
+        let c1 = Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::X));
+        let c2 = Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::X));
+        let criteria = 1e-6;
+        let res1 = 1e-3;
+        let rc = check_coincidence(&c1, &c2, 0.0, 10.0, 0.0, 10.0, criteria, res1);
+        assert_eq!(rc, 0, "exactly coincident lines must be detected as coincident");
+    }
+
+    /// Lines farther apart than the criteria are rejected in the express
+    /// evaluation (iC=1 already there) — returns 2 for both old and new code.
+    #[test]
+    fn check_coincidence_deep_eval_far_apart() {
+        let c1 = Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::X));
+        let c2 = Curve3::Line(Line3::new(DVec3::new(0.0, 0.1, 0.0), DVec3::X));
+        let criteria = 1e-6;
+        let res1 = 1e-3;
+        let rc = check_coincidence(&c1, &c2, 0.0, 10.0, 0.0, 10.0, criteria, res1);
+        assert_eq!(rc, 2, "far-apart lines must be rejected with iErr==2");
+    }
+}
