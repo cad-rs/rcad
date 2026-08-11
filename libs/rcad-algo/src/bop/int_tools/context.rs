@@ -45,9 +45,37 @@ impl ProjectOnSurface {
     /// OCCT: Perform(aP) — find closest point on surface.
     pub fn perform(&mut self, point: DVec3) {
         let (uv, proj) = crate::bop::closest_point_on_surface(&self.surf, point);
-        self.last_uv = Some(uv);
-        self.last_point = Some(proj);
-        self.last_distance = (proj - point).length();
+        // OCCT ProjPS (IntTools_Context.cxx L257-260): Init(aS, Umin, Usup,
+        // Vmin, Vsup) restricts the projection to the face's UV rectangle.
+        // For a periodic (closed) U direction the unconstrained solution is
+        // wrapped back into the principal range — u=2π+ε and u=ε are the SAME
+        // point, so clamping (instead of wrapping) would move the solution to
+        // a wrong 3D location. Non-periodic directions are clamped to the
+        // boundary (the constrained nearest point lies there).
+        use rcad_kernel::geom::SurfaceEval;
+        let mut u = uv.x;
+        let mut v = uv.y;
+        let u0 = self.uv_bounds[0];
+        let u1 = self.uv_bounds[1];
+        if rcad_kernel::geom::SurfaceEval::is_u_periodic(&self.surf) {
+            let period = u1 - u0;
+            if period > 0.0 && period.is_finite() {
+                u = u0 + (u - u0).rem_euclid(period);
+            }
+        } else {
+            u = u.clamp(u0, u1);
+        }
+        v = v.clamp(self.uv_bounds[2], self.uv_bounds[3]);
+        if u == uv.x && v == uv.y {
+            self.last_uv = Some(uv);
+            self.last_point = Some(proj);
+            self.last_distance = (proj - point).length();
+        } else {
+            let proj2 = rcad_kernel::geom::SurfaceEval::point_at(&self.surf, u, v);
+            self.last_uv = Some(DVec2::new(u, v));
+            self.last_point = Some(proj2);
+            self.last_distance = (proj2 - point).length();
+        }
     }
 
     /// OCCT: NbPoints() — number of solutions found.
@@ -1113,5 +1141,60 @@ fn curve_res_ef(curve: &Curve3, tol: f64) -> f64 {
             if dt <= 1.0 { 2.0 * dt.asin() } else { std::f64::consts::TAU }
         }
         _ => tol,
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::geom::{Plane, Surface3};
+
+    /// Regression test for audit item #7 — ProjPS restricts the projection to
+    /// the face's UV rectangle (OCCT IntTools_Context.cxx L257-260). The
+    /// unconstrained nearest point (2,3) on an unbounded plane is clamped to
+    /// the [0,1]x[0,1] boundary. The old code returned the out-of-bounds UV
+    /// and its 3D point, so this test fails before the fix.
+    #[test]
+    fn project_on_surface_clamps_to_bounds() {
+        let surf = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let mut proj = ProjectOnSurface {
+            surf: surf.clone(),
+            uv_bounds: [0.0, 1.0, 0.0, 1.0],
+            tolerance: 1e-12,
+            last_point: None,
+            last_uv: None,
+            last_distance: f64::MAX,
+        };
+        proj.perform(DVec3::new(2.0, 3.0, 5.0));
+        let (u, v) = proj.lower_distance_parameters();
+        assert_eq!(u, 1.0, "U must be clamped to the boundary");
+        assert_eq!(v, 1.0, "V must be clamped to the boundary");
+        let p = proj.nearest_point();
+        assert!(
+            (p - DVec3::new(1.0, 1.0, 0.0)).length() < 1e-12,
+            "3D point must lie on the clamped UV, got {:?}",
+            p
+        );
+    }
+
+    /// A point whose projection already lies inside the bounds is unchanged.
+    #[test]
+    fn project_on_surface_inside_bounds_unchanged() {
+        let surf = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let mut proj = ProjectOnSurface {
+            surf,
+            uv_bounds: [0.0, 1.0, 0.0, 1.0],
+            tolerance: 1e-12,
+            last_point: None,
+            last_uv: None,
+            last_distance: f64::MAX,
+        };
+        proj.perform(DVec3::new(0.5, 0.5, 5.0));
+        let (u, v) = proj.lower_distance_parameters();
+        assert!((u - 0.5).abs() < 1e-12);
+        assert!((v - 0.5).abs() < 1e-12);
     }
 }
