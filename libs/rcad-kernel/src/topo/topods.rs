@@ -187,7 +187,7 @@ pub struct TEdgeData {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub representations: Vec<CurveRepresentation>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub vertex_params: HashMap<usize, f64>,
+    pub vertex_params: HashMap<u64, f64>,
     #[serde(default)]
     pub tolerance: f64,
     #[serde(default)]
@@ -352,6 +352,9 @@ impl BRep {
         let index = self.tshapes.len();
         // OCCT: BRep_Tool::Parameter stores vertex→param mapping on edge creation.
         // Compute by matching vertex positions to curve range endpoints.
+        // Keyed by the vertex TShape pointer (TopoDS_Shape handle semantics) —
+        // index fields differ between BRep slots and DS indices, the pointer is
+        // stable within a cloned argument graph.
         let vertex_params = {
             let mut vp = HashMap::new();
             if let Some(ref c) = curve {
@@ -361,12 +364,12 @@ impl BRep {
                 if let Some(vd) = first.as_vertex() {
                     let d0 = (p0 - vd.point).length_squared();
                     let d1 = (p1 - vd.point).length_squared();
-                    vp.insert(first.index, if d0 <= d1 { range[0] } else { range[1] });
+                    vp.insert(first.ptr_id(), if d0 <= d1 { range[0] } else { range[1] });
                 }
                 if let Some(vd) = last.as_vertex() {
                     let d0 = (p0 - vd.point).length_squared();
                     let d1 = (p1 - vd.point).length_squared();
-                    vp.insert(last.index, if d0 <= d1 { range[0] } else { range[1] });
+                    vp.insert(last.ptr_id(), if d0 <= d1 { range[0] } else { range[1] });
                 }
             }
             vp
@@ -1008,6 +1011,32 @@ impl BRep {
         Shape::from_parts(self.tshapes[idx].clone(), idx, location, orientation)
     }
 
+    /// Find the flat tshape index whose `Arc` pointer equals `ptr_id`
+    /// (the first component of pcurve keys `(ptr_id, location)`).
+    pub fn index_by_ptr(&self, ptr_id: u64) -> Option<usize> {
+        self.tshapes
+            .iter()
+            .position(|ts| std::sync::Arc::as_ptr(ts) as u64 == ptr_id)
+    }
+
+    /// Build the pcurve lookup key `(ptr_id, location)` for a flat face index.
+    pub fn pcurve_key(&self, face_idx: usize) -> (u64, u32) {
+        let s = self.shape_at(face_idx);
+        (s.ptr_id(), s.location)
+    }
+
+    /// First/last vertex indices of the edge at `edge_idx` (tshape index), or
+    /// `None` when `edge_idx` is not an edge.
+    pub fn edge_vertex_indices(&self, edge_idx: usize) -> Option<(usize, usize)> {
+        self.tshapes.get(edge_idx).and_then(|ts| {
+            if let TShape::Edge(ed) = ts.as_ref() {
+                Some((ed.first.index, ed.last.index))
+            } else {
+                None
+            }
+        })
+    }
+
     /// Count face TShapes in this BRep (for shifted-key pcurve lookup).
 pub fn nb_faces(&self) -> usize {
         self.tshapes
@@ -1433,7 +1462,7 @@ impl BRepTool for BRep {
     }
 
     fn parameter_on_edge(&self, vertex: &Shape, edge: &Shape, _face: &Shape) -> Option<f64> {
-        self.edge(edge.clone()).vertex_params.get(&vertex.index).copied()
+        self.edge(edge.clone()).vertex_params.get(&vertex.ptr_id()).copied()
     }
 
     fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<&(Curve2d, f64, f64)> {
@@ -2299,7 +2328,7 @@ impl BRepBuilder {
     ) {
         brep.edge_mut(edge)
             .vertex_params
-            .insert(vertex.index, param);
+            .insert(vertex.ptr_id(), param);
     }
 
     /// Set degenerated flag on an edge.
@@ -2511,12 +2540,12 @@ impl BRepBuilder {
         let param = brep
             .edge(edge_in)
             .vertex_params
-            .get(&vertex_in.index)
+            .get(&vertex_in.ptr_id())
             .copied();
         if let Some(param) = param {
             brep.edge_mut(edge_out)
                 .vertex_params
-                .insert(vertex_out.index, param);
+                .insert(vertex_out.ptr_id(), param);
         }
     }
 

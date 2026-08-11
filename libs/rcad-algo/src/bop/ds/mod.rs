@@ -738,6 +738,19 @@ impl DS {
                                 ((np, l), v.clone())
                             })
                             .collect();
+                        // vertex_params is keyed by the vertex TShape pointer
+                        // (see BRep::add_edge); the deep clone changes the
+                        // pointers, so remap each key like the pcurve face keys.
+                        if !ed.vertex_params.is_empty() {
+                            ed.vertex_params = ed
+                                .vertex_params
+                                .iter()
+                                .map(|(&k, &v)| {
+                                    let nk = remap.get(&k).copied().unwrap_or(k);
+                                    (nk, v)
+                                })
+                                .collect();
+                        }
                         ed.representations = ed
                             .representations
                             .iter()
@@ -830,6 +843,18 @@ impl DS {
             }
         }
         self.nb_source_shapes = self.nb_shapes();
+        // Remap TShape-internal references to DS indices (architecture A-class:
+        // OCCT lookups go through the TShape-handle map; rcad's Shape.index is
+        // the query key, so internal references must carry DS indices).
+        // Architecture-difference experiment switch (default OFF):
+        // remapping TShape-internal reference indices BRep -> DS fixes the
+        // mixed-index query failures but splits Arc identity (face-wire
+        // references vs DS top-level entries), breaking images_of lookups in
+        // BuildSplitFaces. The correct fix is TopoDS handle semantics (ptr),
+        // which removes the need for remap — see wire_splitter vertex_params.
+        if self.clone_arguments && std::env::var("RCAD_REMAP").is_ok() {
+            self.remap_internal_shape_indices();
+        }
         // OCCT L312: max(theFuzz, Precision::Confusion()) * 0.5
         let tol = fuzz.max(1e-7) * 0.5;
         // OCCT L313-316: prepare
@@ -842,6 +867,74 @@ impl DS {
         // OCCT L322-323: prepare pools
         self.pave_blocks_pool.reserve(an_edge_count);
         self.face_info_pool.reserve(a_face_count);
+    }
+
+    /// Remap every TShape-internal shape reference (edge first/last, wire
+    /// edges, face outer/inner wires, shell faces, solid shells, compound
+    /// children) from the source BRep pool index to the DS index.
+    ///
+    /// OCCT has no index field on TopoDS_Shape — lookups always go through
+    /// the TShape-handle map, so a reference is never stale. rcad's
+    /// `Shape.index` is the query key (`ds.shapes[]` position), so after the
+    /// DS is built every internal reference must carry the DS index of the
+    /// referenced shape. Safe only after the arguments were deep-cloned
+    /// (`clone_arguments`), which is the primary PaveFiller path.
+    pub fn remap_internal_shape_indices(&mut self) {
+        let map = self.map_shape_index.clone();
+        // Pass 1: build a uniform old-ptr -> new-Arc cache. The cloned
+        // argument TShapes are shared by many references (a vertex TShape is
+        // referenced by every edge that touches it), so per-shape
+        // Arc::make_mut would split one logical shape into several Arcs and
+        // break ptr-based lookup. Internal reference indices are remapped to
+        // DS indices here.
+        let mut cache: HashMap<u64, Arc<TShape>> = HashMap::new();
+        for i in 0..self.shapes.len() {
+            let old_ptr = self.shapes[i].shape.ptr_id();
+            if cache.contains_key(&old_ptr) {
+                continue;
+            }
+            let new_ts = remap_tshape_cached(&self.shapes[i].shape.data, &map, &mut cache);
+            cache.insert(old_ptr, Arc::new(new_ts));
+        }
+        // Replace every top-level shape data and refresh the ptr->index map.
+        let mut new_map: HashMap<(u64, u32), usize> = HashMap::new();
+        for i in 0..self.shapes.len() {
+            let (old_ptr, loc) = {
+                let s = &self.shapes[i].shape;
+                (s.ptr_id(), s.location)
+            };
+            if let Some(arc) = cache.get(&old_ptr) {
+                self.shapes[i].shape.data = arc.clone();
+            }
+            let np = self.shapes[i].shape.ptr_id();
+            new_map.insert((np, loc), i);
+        }
+        self.map_shape_index = new_map;
+        // The Builder / result construction reads the argument shapes (and
+        // looks their images up by ptr_id), so the arguments must carry the
+        // remapped Arcs and DS indices too.
+        for arg in self.arguments.iter_mut() {
+            let (aptr, aloc) = (arg.ptr_id(), arg.location);
+            if let Some(arc) = cache.get(&aptr) {
+                arg.data = arc.clone();
+            }
+            if let Some(&idx) = map.get(&(aptr, aloc)) {
+                arg.index = idx;
+            }
+        }
+        // `argument_remap` maps the caller's original BRep ptr -> cloned DS
+        // ptr (used by Builder::remap_arg_key for myImages lookups). The
+        // data-Arc swap above changes the cloned ptr once more, so extend the
+        // chain: BRep ptr -> remapped ptr.
+        let mut new_arg_remap: HashMap<u64, u64> = HashMap::new();
+        for (&orig, &mid) in &self.argument_remap {
+            let final_ptr = cache
+                .get(&mid)
+                .map(|a| std::sync::Arc::as_ptr(a) as u64)
+                .unwrap_or(mid);
+            new_arg_remap.insert(orig, final_ptr);
+        }
+        self.argument_remap = new_arg_remap;
     }
 
     /// OCCT BOPDS_DS::InitShape — add sub-shapes recursively.
@@ -1057,16 +1150,18 @@ impl DS {
     }
 
     /// Get vertex parameters on an edge (OCCT: BRep_Tool::Parameter).
+    /// Keyed by the vertex TShape pointer (TopoDS_Shape handle semantics) —
+    /// see BRep::add_edge. Independent of any BRep/DS index fields.
     fn edge_vertex_params(&self, edge_idx: usize, v1_ds_idx: usize, v2_ds_idx: usize) -> (f64, f64) {
         let ed = match self.shapes[edge_idx].shape.as_edge() {
             Some(e) => e,
             None => return (0.0, 0.0),
         };
-        let v1_brep_idx = self.shapes[v1_ds_idx].shape.index;
-        let v2_brep_idx = self.shapes[v2_ds_idx].shape.index;
+        let v1_ptr = self.shapes[v1_ds_idx].shape.ptr_id();
+        let v2_ptr = self.shapes[v2_ds_idx].shape.ptr_id();
         // OCCT: BRep_Tool::Parameter reads stored param (set during edge construction).
-        (ed.vertex_params.get(&v1_brep_idx).copied().unwrap_or(0.0),
-         ed.vertex_params.get(&v2_brep_idx).copied().unwrap_or(0.0))
+        (ed.vertex_params.get(&v1_ptr).copied().unwrap_or(0.0),
+         ed.vertex_params.get(&v2_ptr).copied().unwrap_or(0.0))
     }
 
     // ================================================================    // Common block map
@@ -2177,11 +2272,14 @@ impl DS {
         let empty_vertex = Shape::new(
             Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
         );
+        // OCCT BRep_Builder::MakeEdge: the edge references the actual DS
+        // vertices — the Shape index must be the DS vertex index so pcurve /
+        // vertex lookups (WireSplitter, BRep_Tool::Parameter) resolve.
         let v_first = self.shapes.get(first)
-            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Forward))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), first, 0, Orientation::Forward))
             .unwrap_or_else(|| empty_vertex.clone());
         let v_last = self.shapes.get(last)
-            .map(|s| Shape::new(s.shape.data.clone(), 0, Orientation::Reversed))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), last, 0, Orientation::Reversed))
             .unwrap_or(empty_vertex);
         let ed = rcad_kernel::topods::TEdgeData {
             curve: Some(curve), range,
@@ -2192,7 +2290,9 @@ impl DS {
             my_shapes: Vec::new(), flags: 0,
         };
         let s = Shape::new(Arc::new(TShape::Edge(ed)), 0, topods::Orientation::Forward);
-        self.append_shape(s)
+        let idx = self.append_shape(s);
+        self.shapes[idx].shape.index = idx;
+        idx
     }
 
     /// OCCT BOPTools_AlgoTools::MakeSplitEdge (BOPTools_AlgoTools_2.cxx L138-183):
@@ -2221,10 +2321,10 @@ impl DS {
             Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
         );
         let v_first = self.shapes.get(first)
-            .map(|s| Shape::new(s.shape.data.clone(), 0, v_first_or))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), first, 0, v_first_or))
             .unwrap_or_else(|| empty_vertex.clone());
         let v_last = self.shapes.get(last)
-            .map(|s| Shape::new(s.shape.data.clone(), 0, v_last_or))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), last, 0, v_last_or))
             .unwrap_or(empty_vertex);
         let (pcurves, representations) = match src {
             Some(src_e) if src_e < self.shapes.len() => match &*self.shapes[src_e].shape.data {
@@ -2274,7 +2374,9 @@ impl DS {
             _ => topods::Orientation::Forward,
         };
         let s = Shape::new(Arc::new(TShape::Edge(ed)), 0, ori);
-        self.append_shape(s)
+        let idx = self.append_shape(s);
+        self.shapes[idx].shape.index = idx;
+        idx
     }
 
     /// Push a wire into the DS (BRep_Builder equivalent).
@@ -2614,6 +2716,115 @@ impl DS {
 // so vertex_params lookups by BRep vertex index still match, and preserves
 // location/orientation.
 // ===
+/// Remap the shape references embedded in a TShape from source indices to DS
+/// indices, recursing through shared TShape Arcs via a uniform cache (see
+/// [`DS::remap_internal_shape_indices`]).
+fn remap_tshape_cached(ts: &TShape, map: &HashMap<(u64, u32), usize>, cache: &mut HashMap<u64, Arc<TShape>>) -> TShape {
+    use topods::{TEdgeData, TFaceData, TShellData, TSolidData, TWireData};
+    // Resolve a reference: swap its data Arc to the cached remapped Arc and
+    // its index to the DS index.
+    let r = |s: &Shape, cache: &mut HashMap<u64, Arc<TShape>>| -> Shape {
+        let mut s2 = s.clone();
+        let sptr = s2.ptr_id();
+        // Look up the DS index by the ORIGINAL ptr (the map is keyed by the
+        // pre-remap pointers); swap the data Arc afterwards.
+        let mapped_idx = map.get(&(sptr, s2.location)).copied();
+        // Data-Arc swap disabled: swapping the referenced Arc here splits the
+        // face-wire references (old Arc) from the DS top-level entries (new
+        // Arc), breaking myImages ptr lookups in BuildSplitFaces. The index
+        // remap alone is enough for index-keyed queries; TopoDS handle
+        // semantics (ptr lookups) require no Arc swap at all.
+        if false {
+            if let Some(arc) = cache.get(&sptr) {
+                s2.data = arc.clone();
+            } else {
+                let new_inner = remap_tshape_cached(&s2.data, map, cache);
+                cache.insert(sptr, Arc::new(new_inner));
+                s2.data = cache[&sptr].clone();
+            }
+        }
+        if let Some(idx) = mapped_idx {
+            s2.index = idx;
+        }
+        s2
+    };
+    match ts {
+        TShape::Vertex(v) => TShape::Vertex(v.clone()),
+        TShape::Edge(e) => {
+            let mut e2 = e.clone();
+            e2.first = r(&e.first, cache);
+            e2.last = r(&e.last, cache);
+            // The data-Arc swap changes the TShape pointers, which invalidates
+            // the pcurve / representation face keys (ptr_id-based). Remap the
+            // keys through the current cache (old ptr -> new Arc ptr). Depth-
+            // first processing guarantees referenced faces are already cached
+            // when an edge is handled (face -> wire -> edge).
+            let ptr_map: HashMap<u64, u64> = cache
+                .iter()
+                .map(|(&op, a)| (op, std::sync::Arc::as_ptr(a) as u64))
+                .collect();
+            let np = |p: u64| ptr_map.get(&p).copied().unwrap_or(p);
+            e2.pcurves = e
+                .pcurves
+                .iter()
+                .map(|(&(p, l), v)| ((np(p), l), v.clone()))
+                .collect();
+            // vertex_params is keyed by the vertex TShape pointer; the Arc
+            // swap above changes the pointers, so remap the keys too.
+            e2.vertex_params = e
+                .vertex_params
+                .iter()
+                .map(|(&k, &v)| (np(k), v))
+                .collect();
+            e2.representations = e
+                .representations
+                .iter()
+                .map(|r| match r {
+                    rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } => {
+                        rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                            face: (np(face.0), face.1),
+                            pcurve: pcurve.clone(),
+                            range: *range,
+                        }
+                    }
+                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, range } => {
+                        rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                            face: (np(face.0), face.1),
+                            pcurve1: pcurve1.clone(),
+                            pcurve2: pcurve2.clone(),
+                            range: *range,
+                        }
+                    }
+                    other => other.clone(),
+                })
+                .collect();
+            TShape::Edge(e2)
+        }
+        TShape::Wire(w) => TShape::Wire(TWireData {
+            edges: w.edges.iter().map(|s| r(s, cache)).collect(),
+            ..w.clone()
+        }),
+        TShape::Face(f) => TShape::Face(TFaceData {
+            outer_wire: r(&f.outer_wire, cache),
+            inner_wires: f.inner_wires.iter().map(|s| r(s, cache)).collect(),
+            internal_vertices: f.internal_vertices.iter().map(|s| r(s, cache)).collect(),
+            ..f.clone()
+        }),
+        TShape::Shell(sh) => TShape::Shell(TShellData {
+            faces: sh.faces.iter().map(|s| r(s, cache)).collect(),
+            ..sh.clone()
+        }),
+        TShape::Solid(sd) => TShape::Solid(TSolidData {
+            shells: sd.shells.iter().map(|s| r(s, cache)).collect(),
+            internal_vertices: sd.internal_vertices.iter().map(|s| r(s, cache)).collect(),
+            internal_edges: sd.internal_edges.iter().map(|s| r(s, cache)).collect(),
+            ..sd.clone()
+        }),
+        TShape::CompSolid(cs) => TShape::CompSolid(cs.iter().map(|s| r(s, cache)).collect()),
+        TShape::Compound(c) => TShape::Compound(c.iter().map(|s| r(s, cache)).collect()),
+    }
+}
+
 fn clone_shape_graph(s: &Shape, cache: &mut HashMap<u64, Arc<TShape>>) -> Shape {
     let ptr = s.ptr_id();
     if let Some(arc) = cache.get(&ptr) {

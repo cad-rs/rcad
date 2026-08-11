@@ -5045,7 +5045,11 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     drop(a_fi);
                     // For each found PB, intersect its 2D curve with the degenerated edge's curve
                     for pb in &found_pbs {
-                        let n_e2 = { let r = pb.0.read().unwrap(); r.original_edge };
+                        // OCCT FillPaves L265-270: nE = aPB->Edge(); if (nE < 0) continue;
+                        let n_e2 = { let r = pb.0.read().unwrap(); r.edge };
+                        if n_e2 == usize::MAX {
+                            continue;
+                        }
                         let passing_pcurve = {
                             let ts = &self.ds.shapes[n_e2].shape.data;
                             let fkey = self.ds.face_key(n_f);

@@ -960,6 +960,8 @@ impl PaveFiller {
             }
         }
         if b_is_vertex_on_line {
+            if [0, 43, 25, 19].contains(&n_v) {
+            }
             // OCCT L2994-3003: aDTol + aPTol = Resolution(max(aTolR3D, aTolV)).
             let a_dtol = crate::bop::tools::algo_tools::d_tolerance();
             let a_ptol = crate::bop::algo::pave_filler::shrunk_range_resolution(
@@ -1994,6 +1996,7 @@ impl PaveFiller {
         // OCCT L1190-1209: aItG(theDMVLV) — NCollection_DataMap<int, List<int>>
         // iterated in bucket order; each group makes one SD vertex.
         for (_n_v, a_list) in the_dm_vlv.iter() {
+            let pts: Vec<(usize, DVec3)> = a_list.iter().map(|&i| (i, self.ds.vertex_point_by_idx(i))).collect();
             // OCCT L1152: MakeSDVertices(aList, false).
             let n_sd = self.make_sd_vertices(a_list, false);
             for &n_vx in a_list {

@@ -83,7 +83,7 @@ impl<'a> PrimBuilder<'a> {
     pub fn add_edge_vertex(&mut self, e: &Shape, v: &Shape, p: f64, direct: bool) {
         let ts = &mut self.brep.tshapes[e.index];
         if let TShape::Edge(ref mut ed) = *Arc::make_mut(ts) {
-            ed.vertex_params.insert(v.index, p);
+            ed.vertex_params.insert(v.ptr_id(), p);
             ed.my_shapes.push(v.clone());
             // OCCT BRep_Builder::Add(Edge, Vertex) — add vertex to edge's sub-shapes.
             // The first vertex added becomes the "first" vertex, the last becomes "last".

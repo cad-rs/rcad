@@ -1179,6 +1179,8 @@ fn edge_vertices(e: &Shape) -> [Shape; 2] {
         // orientation into the vertices (TopoDS_Iterator.cxx L35-37, L72-80):
         // each stored vertex keeps its stored orientation composed with the
         // edge's own orientation; a REVERSED edge iterates [last, first].
+        // The vertex Shape carries no index — identity is the TShape pointer
+        // (TopoDS_Shape handle semantics); index fields mix BRep and DS slots.
         TShape::Edge(ed) => {
             if e.orientation == Orientation::Reversed {
                 [Shape::new(ed.last.data.clone(), ed.last.location, flip_ori(ed.last.orientation)),
@@ -1400,7 +1402,7 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
                 // 3D curve. rcad approximates the point-rep search with the
                 // stored vertex param, then the closest point on the 3D curve.
                 _ => {
-                    if let Some(t) = ed.vertex_params.get(&v.index) {
+                    if let Some(t) = ed.vertex_params.get(&v.ptr_id()) {
                         return Some(*t);
                     }
                     let curve = ed.curve.as_ref()?;
