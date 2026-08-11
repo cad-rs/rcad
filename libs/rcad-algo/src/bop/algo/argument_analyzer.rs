@@ -8,6 +8,17 @@ use crate::bop::ds::DS;
 use rcad_kernel::topods::{self, Orientation, TShape, ShapeType};
 use rcad_kernel::topo_shape::Shape;
 
+// OCCT BOPAlgo_Operation (BOPAlgo_Operation.hxx L18-26):
+//   BOPAlgo_COMMON=0, BOPAlgo_FUSE=1, BOPAlgo_CUT=2, BOPAlgo_CUT21=3,
+//   BOPAlgo_SECTION=4, BOPAlgo_UNKNOWN=5.
+// my_operation stores these OCCT numeric values; 5 (UNKNOWN) means "not set".
+const OP_COMMON: i32 = 0;
+const OP_FUSE: i32 = 1;
+const OP_CUT: i32 = 2;
+const OP_CUT21: i32 = 3;
+const OP_SECTION: i32 = 4;
+const OP_UNKNOWN: i32 = 5;
+
 /// OCCT BOPAlgo_ArgumentAnalyzer — checks shape validity for Boolean Ops.
 pub struct ArgumentAnalyzer {
     my_shape1: usize,
@@ -103,13 +114,16 @@ impl ArgumentAnalyzer {
         if is_s1 && is_s2 { self.push(CheckStatus::BadType); return; }
         if (is_s1 && !is_s2) || (!is_s1 && is_s2) {
             let empty = if is_s1 { self.my_empty2 } else { self.my_empty1 };
-            if empty || self.my_operation == 0 { self.push(CheckStatus::BadType); }
+            // OCCT L295-296: `bIsEmpty || myOperation != BOPAlgo_UNKNOWN` — a
+            // single shape with an operation already set (not UNKNOWN) is a
+            // BadType. rcad previously tested `my_operation == 0` (inverted).
+            if empty || self.my_operation != OP_UNKNOWN { self.push(CheckStatus::BadType); }
             return;
         }
         if self.my_empty1 || self.my_empty2 { self.push(CheckStatus::BadType); return; }
         // OCCT L330-350: operation-specific dimension checks
         // BOPTools_AlgoTools::Dimensions(minDim, maxDim) — rcad: use DS shape exploration
-        if self.my_operation != 0 && self.my_operation != 1 { // not UNKNOWN or COMMON
+        if self.my_operation != OP_UNKNOWN && self.my_operation != OP_COMMON { // not UNKNOWN or COMMON
             // rcad: dimension checks not yet implemented
         }
     }
@@ -158,7 +172,7 @@ impl ArgumentAnalyzer {
                 }
                 // OCCT L481-537: for SECTION, check if edge vertices lie on other shape
                 let mut keep = true;
-                if self.my_operation == 5 && self.my_shape2 != usize::MAX {
+                if self.my_operation == OP_SECTION && self.my_shape2 != usize::MAX {
                     let other = if i == 0 { self.my_shape2 } else { self.my_shape1 };
                     let mut ds2 = DS::new();
                     ds2.set_arguments(vec![Shape::synthetic(other, Orientation::Forward)]);
@@ -197,7 +211,8 @@ impl ArgumentAnalyzer {
 
     // ── TestRebuildFace L571-672 ────────────────────────────────────
     fn test_rebuild_face(&mut self) {
-        if self.my_operation == 5 || self.my_operation == 0 { return; }
+        // OCCT L571-573: SECTION and UNKNOWN are skipped.
+        if self.my_operation == OP_SECTION || self.my_operation == OP_UNKNOWN { return; }
         for i in 0..2 {
             let shape_i = if i == 0 { self.my_shape1 } else { self.my_shape2 };
             if shape_i == usize::MAX { continue; }
@@ -381,4 +396,55 @@ impl ArgumentAnalyzer {
 
 impl Default for ArgumentAnalyzer {
     fn default() -> Self { Self::new() }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn analyzer_with_single_shape(op: i32) -> ArgumentAnalyzer {
+        let mut a = ArgumentAnalyzer::new();
+        a.set_shape2(0); // shape1 stays usize::MAX → single-shape check
+        a.my_operation = op;
+        a.my_argument_type_mode = true;
+        a
+    }
+
+    /// Regression test for the TestTypes single-shape condition fix.
+    ///
+    /// OCCT TestTypes (BOPAlgo_ArgumentAnalyzer.cxx L295-296): a single shape
+    /// is a BadType when `bIsEmpty || myOperation != BOPAlgo_UNKNOWN` — i.e.
+    /// an operation ALREADY SET (anything but UNKNOWN=5) is rejected.
+    /// rcad previously tested `my_operation == 0` (inverted), so a single
+    /// shape with FUSE set was wrongly accepted. With the fix it must fail.
+    #[test]
+    fn test_types_single_shape_operation_set_is_bad_type() {
+        let mut a = analyzer_with_single_shape(OP_FUSE);
+        a.perform();
+        assert!(a.has_faulty(), "single shape with FUSE set must be BadType");
+        assert_eq!(a.get_check_result()[0].check_status, CheckStatus::BadType);
+    }
+
+    /// Single shape with no operation (UNKNOWN) is valid — no BadType.
+    #[test]
+    fn test_types_single_shape_unknown_is_ok() {
+        let mut a = analyzer_with_single_shape(OP_UNKNOWN);
+        a.perform();
+        assert!(!a.has_faulty(), "single shape with UNKNOWN operation must pass");
+    }
+
+    /// Two non-empty shapes with an operation set pass the type check.
+    #[test]
+    fn test_types_two_shapes_normal_is_ok() {
+        let mut a = ArgumentAnalyzer::new();
+        a.set_shape1(0);
+        a.set_shape2(1);
+        a.my_operation = OP_FUSE;
+        a.my_argument_type_mode = true;
+        a.perform();
+        assert!(!a.has_faulty(), "two non-empty shapes with FUSE must pass");
+    }
 }
