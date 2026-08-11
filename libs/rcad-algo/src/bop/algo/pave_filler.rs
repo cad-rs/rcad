@@ -21,6 +21,8 @@ use crate::bop::ds::{
 };
 use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::int_tools::context::IntToolsContext;
+use crate::bop::int_tools::edge_face::EdgeFace;
+use crate::bop::int_tools::common_prt::CommonPrtType;
 use crate::bop::int_tools::pnt_on_2_faces::PntOn2S;
 use crate::bop::int_tools;
 use rcad_kernel::base::proj_lib::project_on_surface;
@@ -3995,7 +3997,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
         // L882-1107: For each face, find overlapping PBs and check
         let a_nb_s = self.ds.nb_source_shapes();
-        let mut ef_pairs: Vec<(usize, usize, usize)> = Vec::new();
+        // (n_e, n_f, pb_pool_idx, a_tol_add, PB pave range)
+        let mut ef_pairs: Vec<(usize, usize, usize, f64, (f64, f64))> = Vec::new();
 
         for n_f in 0..a_nb_s {
             if self.ds.shapes[n_f].shape_type != ShapeType::Face {
@@ -4188,7 +4191,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     continue;
                 }
 
-                // L1094-1106: add pair with pool index
+                // L1094-1106: prepare the pair for intersection
                 let pb_pool_idx = {
                     let ptr = std::sync::Arc::as_ptr(&a_pb.0);
                     let mut found = usize::MAX;
@@ -4203,7 +4206,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     }
                     found
                 };
-                ef_pairs.push((n_e_actual, n_f, pb_pool_idx));
+                // (n_e, n_f, pb_pool_idx, a_tol_add, PB pave range)
+                ef_pairs.push((n_e_actual, n_f, pb_pool_idx, a_tol_add_ef, a_range));
             }
         }
 
@@ -4212,27 +4216,62 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             return;
         }
 
-        // L1122-1129: Perform intersection (OCCT: BOPTools_Parallel::Perform)
-        // rcad: serial processing of collected pairs.
-        // The rcad EdgeFace intersection step is omitted; pairs passing the
-        // distance check are accepted directly.
+        // L1106-1107/L1122-1129: BOPAlgo_EdgeFace pairs — OCCT performs them
+        // in parallel (BOPTools_Parallel); rcad runs them serially.
+        let mut a_efs: Vec<(EdgeFace, usize)> = Vec::new(); // (edge_face, pb_pool_idx)
+        for &(n_e, n_f, pb_pool_idx, a_tol_add, a_range) in &ef_pairs {
+            let mut ef = match EdgeFace::new(&self.ds, n_e, n_f) {
+                Some(ef) => ef,
+                None => continue,
+            };
+            ef.set_range(a_range.0, a_range.1);
+            ef.set_fuzzy_value(self.my_fuzzy_value + a_tol_add);
+            ef.use_quick_coincidence_check(true);
+            a_efs.push((ef, pb_pool_idx));
+        }
+        if a_efs.is_empty() {
+            return;
+        }
+        for (ef, _) in &mut a_efs {
+            ef.perform();
+        }
 
-        // L1141-1192: Analyze results — OCCT filters for TopAbs_EDGE type.
-        // OCCT L1194-1197: BOPAlgo_Tools::PerformCommonBlocks(aMPBLI, anAlloc, myDS)
-        // rcad: map PB→face indices for CommonBlock creation (IndexedDataMap —
-        // insertion order preserved; a HashMap would randomize it).
+        // L1141-1192: analyze the results — accept only a single
+        // TopAbs_EDGE common part (OCCT L1177-1188).
         let mut a_mpbli: indexmap::IndexMap<u64, Vec<usize>> = indexmap::IndexMap::new();
+        let mut a_warnings: Vec<(usize, usize)> = Vec::new();
+        let mut a_ef_results: Vec<(usize, usize, usize, f64, DVec3)> = Vec::new();
+        for (ef, pb_pool_idx) in &a_efs {
+            let n_e = ef.edge_index();
+            let n_f = ef.face_index();
+            if !ef.is_done() || ef.error_status() != 0 {
+                // OCCT L1171-1175: AddIntersectionFailedWarning(Edge(), Face()).
+                a_warnings.push((n_e, n_f));
+                continue;
+            }
+            let a_cparts = ef.common_parts();
+            if a_cparts.len() != 1 {
+                continue;
+            }
+            let a_cp = &a_cparts[0];
+            if a_cp.get_type() != CommonPrtType::Edge {
+                continue;
+            }
+            // OCCT L1180-1181: aEF.SetCommonPart(aCP) — the EDGE range; the
+            // vertex is created from the range middle in MakeSDVerticesFF.
+            let mid_t = (a_cp.range1[0] + a_cp.range1[1]) * 0.5;
+            let mid_pt = ef.edge_value(mid_t);
+            a_ef_results.push((n_e, n_f, *pb_pool_idx, mid_t, mid_pt));
+        }
+        drop(a_efs);
 
-        for &(n_e, n_f, pb_pool_idx) in &ef_pairs {
+        for (n_e, n_f) in a_warnings {
+            self.my_report.add_warning(Alert::IntersectionFailed(n_e, n_f));
+        }
+
+        for &(n_e, n_f, pb_pool_idx, mid_t, mid_pt) in &a_ef_results {
             if the_add_interf {
                 // L1175-1181: BOPDS_InterfEF aEF = aEFs.Appended();
-                let curve = match self.ds.edge_curve(n_e) {
-                    Some(c) => c.clone(),
-                    None => continue,
-                };
-                let range = self.ds.edge_range(n_e);
-                let mid_t = (range[0] + range[1]) * 0.5;
-                let mid_pt = curve.point_at(mid_t);
                 let new_ef = InterferenceEF {
                     edge: n_e,
                     face: n_f,

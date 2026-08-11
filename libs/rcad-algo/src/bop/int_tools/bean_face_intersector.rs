@@ -723,6 +723,13 @@ impl BRepAdaptorSurface {
         }
     }
 
+    pub fn torus(&self) -> rcad_kernel::geom::ToroidalSurface {
+        match &self.surface {
+            Surface3::Torus(t) => *t,
+            _ => panic!("not a torus"),
+        }
+    }
+
     pub fn is_u_periodic(&self) -> bool {
         surface_is_u_periodic(&self.surface)
     }

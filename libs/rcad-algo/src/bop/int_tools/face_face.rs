@@ -101,7 +101,7 @@ pub struct IntersectionCurve {
 /// OCCT IntTools_Tools::IsDirsCoinside (IntTools_Tools.cxx L164-173): two unit
 /// direction vectors are coinside when the spherical distance of their points
 /// is below 2e-4 (parallel or anti-parallel).
-fn is_dirs_coinside(d1: DVec3, d2: DVec3) -> bool {
+pub(crate) fn is_dirs_coinside(d1: DVec3, d2: DVec3) -> bool {
     let p1 = d1;
     let p2 = d2;
     let d_lim = 0.0002f64;
