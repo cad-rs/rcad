@@ -4920,11 +4920,29 @@ impl<'a> Builder<'a> {
             let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
             let a_type = type_to_explore(self.my_dims[0]);
             let my_shape = self.my_shape.clone().unwrap_or_default();
-            // OCCT: TopExp_Explorer aExp(myShape, aType).
+            // OCCT: TopExp_Explorer aExp(myShape, aType) — each collected shape
+            // keeps the orientation it is referenced with. rcad's myShape is a
+            // flat tshapes array (no compound root, no orientations), so look
+            // the orientation up from the argument tree; all stage-test solids
+            // are FORWARD, so this is a no-op for them but preserves REVERSED
+            // arguments per OCCT.
+            let mut a_arg_oris: HashMap<u64, topods::Orientation> = HashMap::new();
+            for a_arg in self.object_shapes() {
+                for s in self.map_shapes_of_type(a_arg, a_type) {
+                    a_arg_oris.entry(s.ptr_id()).or_insert(s.orientation);
+                }
+            }
             for ts in &my_shape.tshapes {
                 let sh = Shape::new(ts.clone(), 0, topods::Orientation::Forward);
-                if sh.shape_type() == a_type && a_m_fence.insert((sh.ptr_id(), sh.location)) {
-                    a_c.push(sh);
+                if sh.shape_type() == a_type {
+                    let ori = a_arg_oris
+                        .get(&sh.ptr_id())
+                        .copied()
+                        .unwrap_or(topods::Orientation::Forward);
+                    let sh = Shape::new(ts.clone(), 0, ori);
+                    if a_m_fence.insert((sh.ptr_id(), sh.location)) {
+                        a_c.push(sh);
+                    }
                 }
             }
             self.my_rc = a_c;
