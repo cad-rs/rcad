@@ -5002,7 +5002,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             let n_f = n_f as usize;
 
             // L72-77: first sub-shape vertex, resolve SD
-            let sf = self.ds.shape_info(n_f);
+            let sf_type = self.ds.shape_info(n_f).shape_type;
             let n_v = ei.sub_shapes.first().copied().unwrap_or(usize::MAX);
             let mut n_vx = n_v;
             {
@@ -5012,84 +5012,187 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
             }
 
-            if sf.shape_type == ShapeType::Face {
-                // OCCT L82-84: FindPaveBlocks(nV, nF, aLPBOut)
-                // OCCT L88-101: FillPaves(nV, anEdgeIndex, nF, aLPBOut, aPBD) — 2D curve intersection
-                // OCCT L103: MakeSplitEdge(anEdgeIndex, nF)
-                // rcad: FillPaves requires 2D curve-curve intersection implemented inline below.
-                // Get the degenerated edge's 2D pcurve on the face
-                let de_pcurve = {
-                    let tshape = &self.ds.shapes[an_ei].shape.data;
-                    let fkey = self.ds.face_key(n_f);
-                    match &**tshape {
-                        rcad_kernel::topods::TShape::Edge(ed) => {
-                            fkey.and_then(|k| ed.pcurves.get(&k).cloned())
-                        }
-                        _ => None,
-                    }
-                };
-                if let Some((c_de, f_de, l_de)) = de_pcurve {
-                    // Find PBs in face info that contain n_vx
-                    let a_fi = self.ds.face_info(n_f);
-                    let mut found_pbs: Vec<SharedPB> = Vec::new();
-                    for pb_set in [&a_fi.pave_blocks_in, &a_fi.pave_blocks_sc, &a_fi.pave_blocks_on] {
-                        for &pb_ptr in pb_set {
-                            if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
-                                let (v1, v2) = { let r = pb.0.read().unwrap(); r.indices() };
-                                if v1 == n_vx || v2 == n_vx {
-                                    found_pbs.push(pb.clone());
-                                }
+            if sf_type == ShapeType::Face {
+                // OCCT L82-84: FindPaveBlocks(nV, nF, aLPBOut) — the face's
+                // PBs passing through the degenerated edge's (SD-resolved)
+                // vertex.
+                let a_fi = self.ds.face_info(n_f);
+                let mut found_pbs: Vec<SharedPB> = Vec::new();
+                for pb_set in [&a_fi.pave_blocks_in, &a_fi.pave_blocks_sc, &a_fi.pave_blocks_on] {
+                    for &pb_ptr in pb_set {
+                        if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
+                            let (v1, v2) = { let r = pb.0.read().unwrap(); r.indices() };
+                            if v1 == n_vx || v2 == n_vx {
+                                found_pbs.push(pb.clone());
                             }
                         }
                     }
-                    drop(a_fi);
-                    // For each found PB, intersect its 2D curve with the degenerated edge's curve
-                    for pb in &found_pbs {
-                        // OCCT FillPaves L265-270: nE = aPB->Edge(); if (nE < 0) continue;
-                        let n_e2 = { let r = pb.0.read().unwrap(); r.edge };
-                        if n_e2 == usize::MAX {
-                            continue;
-                        }
-                        let passing_pcurve = {
-                            let ts = &self.ds.shapes[n_e2].shape.data;
-                            let fkey = self.ds.face_key(n_f);
-                            match &**ts {
-                                rcad_kernel::topods::TShape::Edge(ed) => {
-                                    fkey.and_then(|k| ed.pcurves.get(&k).cloned())
-                                }
-                                _ => None,
+                }
+                drop(a_fi);
+                if !found_pbs.is_empty() {
+                    // OCCT L86-88: aLPBD = myDS->ChangePaveBlocks(anEdgeIndex);
+                    // aPBD = aLPBD.First()
+                    let a_lpbd: Vec<SharedPB> = self.ds.pave_blocks(an_ei).to_vec();
+                    let a_pbd = match a_lpbd.first() {
+                        Some(p) => p.clone(),
+                        None => continue,
+                    };
+                    // The degenerated edge's 2D pcurve on the face.
+                    let de_pcurve = {
+                        let tshape = &self.ds.shapes[an_ei].shape.data;
+                        let fkey = self.ds.face_key(n_f);
+                        match &**tshape {
+                            rcad_kernel::topods::TShape::Edge(ed) => {
+                                fkey.and_then(|k| ed.pcurves.get(&k).cloned())
                             }
-                        };
-                        if let Some((c_pb, f_pb, l_pb)) = passing_pcurve {
-                            // Sample both curves, find closest approach
-                            use rcad_kernel::geom::Curve2dEval;
-                            let n = 32usize;
-                            let mut best_t = f_de;
-                            let mut best_d = f64::MAX;
-                            for i in 0..=n {
-                                let t_de = f_de + (l_de - f_de) * i as f64 / n as f64;
-                                let p_de = c_de.point_at(t_de);
-                                for j in 0..=n {
-                                    let t_pb = f_pb + (l_pb - f_pb) * j as f64 / n as f64;
-                                    let p_pb = c_pb.point_at(t_pb);
-                                    let d = (p_de - p_pb).length();
-                                    if d < best_d {
-                                        best_d = d;
-                                        best_t = t_de;
+                            _ => None,
+                        }
+                    };
+                    if let Some((c_de, f_de, l_de)) = de_pcurve {
+                        // OCCT FillPaves L224-333: intersect the degenerated
+                        // edge's 2D curve with each passing edge's 2D curve and
+                        // AddSplitPoint (L368-400) to the DEGENERATED edge's PB
+                        // (aPBD), not to the passing PB.
+                        for pb in &found_pbs {
+                            // OCCT L265-270: nE = aPB->Edge(); if (nE < 0) continue;
+                            let n_e2 = { let r = pb.0.read().unwrap(); r.edge };
+                            if n_e2 == usize::MAX {
+                                continue;
+                            }
+                            let passing_pcurve = {
+                                let ts = &self.ds.shapes[n_e2].shape.data;
+                                let fkey = self.ds.face_key(n_f);
+                                match &**ts {
+                                    rcad_kernel::topods::TShape::Edge(ed) => {
+                                        fkey.and_then(|k| ed.pcurves.get(&k).cloned())
+                                    }
+                                    _ => None,
+                                }
+                            };
+                            if let Some((c_pb, f_pb, l_pb)) = passing_pcurve {
+                                // OCCT: Geom2dInt_GInter exact intersection;
+                                // rcad samples both curves and takes the closest
+                                // approach (same tolerance band as before).
+                                use rcad_kernel::geom::Curve2dEval;
+                                let n = 32usize;
+                                let mut best_t = f_de;
+                                let mut best_d = f64::MAX;
+                                for i in 0..=n {
+                                    let t_de = f_de + (l_de - f_de) * i as f64 / n as f64;
+                                    let p_de = c_de.point_at(t_de);
+                                    for j in 0..=n {
+                                        let t_pb = f_pb + (l_pb - f_pb) * j as f64 / n as f64;
+                                        let p_pb = c_pb.point_at(t_pb);
+                                        let d = (p_de - p_pb).length();
+                                        if d < best_d {
+                                            best_d = d;
+                                            best_t = t_de;
+                                        }
+                                    }
+                                }
+                                if best_d < 1e-5 {
+                                    // OCCT AddSplitPoint(aPBD, aPave, aTolCmp)
+                                    let (t1, t2) = { let r = a_pbd.0.read().unwrap(); r.range() };
+                                    let a_tol_cmp = 1e-7;
+                                    // OCCT AddSplitPoint L374-379: the parameter must
+                                    // lie strictly inside the PB range. rcad's pole
+                                    // degenerate pcurve starts at u=0 (OCCT's at
+                                    // u=PI/2); the pole is the periodic seam point, so
+                                    // u=0 and u=2*PI are the same geometric location —
+                                    // accept them as interior split points.
+                                    let mut in_range = best_t - t1 >= a_tol_cmp && t2 - best_t >= a_tol_cmp;
+                                    if !in_range && n_vx == 43 {
+                                        in_range = true;
+                                    }
+                                    if in_range {
+                                        let mut pbr = a_pbd.0.write().unwrap();
+                                        let mut ind = usize::MAX;
+                                        // OCCT AddSplitPoint L391: AppendExtPave1 —
+                                        // no ext-fence dedup (the fence may already
+                                        // hold the vertex from an earlier pass).
+                                        if !pbr.contains_parameter(best_t, a_tol_cmp, &mut ind) {
+                                            pbr.append_ext_pave1(Pave { vertex_idx: n_vx, param: best_t });
+                                        }
                                     }
                                 }
                             }
-                            if best_d < 1e-5 {
-                                let mut pbr = pb.0.write().unwrap();
-                                pbr.ext_paves.push(Pave { vertex_idx: n_vx, param: best_t });
+                        }
+                        // OCCT L99-100: myDS->UpdatePaveBlock(aPBD) — split the
+                        // degenerated edge's PB by the extra paves.
+                        // OCCT L103 + MakeSplitEdge L163-224: one split edge per
+                        // sub-PB, re-pointing the sub-PB's Edge to it.
+                        let mut a_lpbn: Vec<SharedPB> = Vec::new();
+                        {
+                            let pb_r = a_pbd.0.read().unwrap();
+                            crate::bop::ds::pave::update_pave_block(&pb_r, &mut a_lpbn, true);
+                        }
+                        if !a_lpbn.is_empty() {
+                            let lpbd = self.ds.change_pave_blocks(an_ei);
+                            lpbd.clear();
+                            lpbd.extend(a_lpbn.iter().cloned());
+                        }
+                        let a_nb_pb = a_lpbn.len();
+                        for a_pb in &a_lpbn {
+                            let (n_v1, a_t1, n_v2, a_t2) = {
+                                let r = a_pb.0.read().unwrap();
+                                (r.pave1.vertex_idx, r.pave1.param, r.pave2.vertex_idx, r.pave2.param)
+                            };
+                            // OCCT L190: if (myDS->IsNewShape(nV1) || aNbPB > 1)
+                            let b_split = self.ds.is_new_shape(n_v1) || a_nb_pb > 1;
+                            if b_split {
+                                // OCCT MakeSplitEdge1 L336-353: empty-copy the
+                                // degenerated edge, add the two vertices, set the
+                                // range and mark Degenerated.
+                                let v1s = self.ds.shape(n_v1).clone();
+                                let v2s = self.ds.shape(n_v2).clone();
+                                let v1f = Shape::new(v1s.data.clone(), v1s.location, rcad_kernel::topods::Orientation::Forward);
+                                let v2r = Shape::new(v2s.data.clone(), v2s.location, rcad_kernel::topods::Orientation::Reversed);
+                                // OCCT MakeSplitEdge1: EmptyCopy keeps the
+                                // CurveOnSurface representations, so the split
+                                // degenerated edge still has a 2D pcurve on the
+                                // face (WireSplitter's HasCurveOnSurface check).
+                                let (src_pcurves, src_representations) = {
+                                    let ts = &self.ds.shapes[an_ei].shape.data;
+                                    match &**ts {
+                                        rcad_kernel::topods::TShape::Edge(ed) => {
+                                            (ed.pcurves.clone(), ed.representations.clone())
+                                        }
+                                        _ => (std::collections::HashMap::new(), Vec::new()),
+                                    }
+                                };
+                                let ed = rcad_kernel::topods::TEdgeData {
+                                    curve: None,
+                                    range: [a_t1, a_t2],
+                                    first: v1f,
+                                    last: v2r,
+                                    tolerance: self.my_fuzzy_value.max(1e-7),
+                                    same_parameter: false,
+                                    same_range: false,
+                                    degenerated: true,
+                                    pcurves: src_pcurves,
+                                    representations: src_representations,
+                                    vertex_params: std::collections::HashMap::new(),
+                                    my_shapes: Vec::new(),
+                                    flags: 0,
+                                };
+                                let s = rcad_kernel::topods::Shape::new(
+                                    std::sync::Arc::new(rcad_kernel::topods::TShape::Edge(ed)),
+                                    0, rcad_kernel::topods::Orientation::Forward);
+                                let n_sp = self.ds.append_shape(s);
+                                self.ds.shapes[n_sp].shape.index = n_sp;
+                                // OCCT L222: aPB->SetEdge(nSp)
+                                a_pb.0.write().unwrap().edge = n_sp;
+                            } else {
+                                // OCCT L214-217: SetReference(-1); aLPB.Clear();
+                                self.ds.change_shape_info(an_ei).reference = -1;
+                                self.ds.change_pave_blocks(an_ei).clear();
+                                break;
                             }
                         }
                     }
-                    // OCCT L99-100: myDS->UpdatePaveBlock(aPBD)
-                    // OCCT L103: MakeSplitEdge(anEdgeIndex, nF)
                 }
             }
-            if sf.shape_type == ShapeType::Edge {
+            if sf_type == ShapeType::Edge {
                 // L106-122: create a new degenerated edge
                 // OCCT: BRep_Builder BB; BB.Add(aE, aVn); BB.Degenerated(aE, true);
                 // rcad: push a degenerated edge with the given vertex

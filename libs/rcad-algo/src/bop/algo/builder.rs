@@ -246,7 +246,7 @@ fn face_edges(face: &Shape) -> Vec<Shape> {
             if let TShape::Wire(wd) = &*w.data {
                 let w_or = w.orientation;
                 for e in &wd.edges {
-                    let mut e2 = Shape::new(e.data.clone(), e.location, e.orientation);
+                    let mut e2 = Shape::from_parts(e.data.clone(), e.index, e.location, e.orientation);
                     e2.orientation = f_or.compose(w_or).compose(e.orientation);
                     out.push(e2);
                 }
@@ -1581,6 +1581,17 @@ impl<'a> Builder<'a> {
         self.build_result(topods::ShapeType::Solid);
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(6, "after_FillImagesSolids");
+        if let Some(brep) = &self.my_shape {
+            let mut nf = 0;
+            for ts in &brep.tshapes {
+                if let TShape::Face(fd) = ts.as_ref() {
+                    nf += 1;
+                    let nw = fd.outer_wire.as_wire().map(|w| w.edges.len()).unwrap_or(0);
+                    if nw < 4 {
+                    }
+                }
+            }
+        }
 
         // OCCT L530-539: FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
         self.fill_images_containers(topods::ShapeType::CompSolid);
@@ -1947,6 +1958,16 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let a_f = self.brep_sr(i);
+            if a_f.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, rcad_kernel::geom::Surface3::Sphere(_))) {
+                if let rcad_kernel::topods::TShape::Face(fd) = &*a_f.data {
+                    if let rcad_kernel::topods::TShape::Wire(wd) = &*fd.outer_wire.data {
+                        for (k, esr) in wd.edges.iter().enumerate() {
+                            let (vi, vj) = esr.as_edge().map(|ed| (ed.first.index, ed.last.index)).unwrap_or((usize::MAX, usize::MAX));
+                            let (pi, pj) = (self.ds.vertex_point_by_idx(vi), self.ds.vertex_point_by_idx(vj));
+                        }
+                    }
+                }
+            }
             let a_fi = self.ds.face_info(i).clone();
             // OCCT L286-287: AloneVertices(i, aLIAV).
             let a_liav = self.alone_vertices(i);
@@ -2013,6 +2034,7 @@ impl<'a> Builder<'a> {
             let mut is_checked = false;
             let mut is_u_closed = false;
             let mut is_v_closed = false;
+            let a_ff_sphere = a_ff.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, rcad_kernel::geom::Surface3::Sphere(_)));
             for a_e in self.face_edges(&a_ff) {
                 let an_ori_e = a_e.orientation;
                 // OCCT L369: if !myImages.IsBound(aE).
@@ -2264,7 +2286,7 @@ impl<'a> Builder<'a> {
             }
             if let TShape::Wire(wd) = &*a_w.data {
                 result.extend(wd.edges.iter().map(|sr| {
-                    let mut e = Shape::new(sr.data.clone(), sr.location, sr.orientation);
+                    let mut e = Shape::from_parts(sr.data.clone(), sr.index, sr.location, sr.orientation);
                     e.orientation = topods::Orientation::compose(a_w.orientation, e.orientation);
                     e
                 }));
@@ -4846,6 +4868,8 @@ impl<'a> Builder<'a> {
                 } else if a_msrc.contains(&(a_s.ptr_id(), a_s.location)) {
                     a_rc.push(a_s.clone());
                 }
+            }
+            if self.my_operation != BooleanOpType::Union {
             }
             // OCCT L992-1009: connexity element types.
             let a_type = a_sc.shape_type();

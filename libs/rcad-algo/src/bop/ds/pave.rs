@@ -126,8 +126,7 @@ impl PaveBlock {
         if self.ext_fence.insert(p.vertex_idx) {
             self.ext_paves.push(p);
         }
-    }
-    pub fn append_ext_pave1(&mut self, p: Pave) { self.ext_paves.push(p); }
+    }    pub fn append_ext_pave1(&mut self, p: Pave) { self.ext_paves.push(p); }
     pub fn remove_ext_pave(&mut self, vert_num: usize) {
         self.ext_paves.retain(|p| p.vertex_idx != vert_num);
     }
