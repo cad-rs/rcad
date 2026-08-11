@@ -838,7 +838,7 @@ fn min_step_3d(
 /// a clockwise orientation that rcad's 2D conics cannot represent.
 ///
 /// OCCT-aligned: rcad-kernel/src/base/geom_proj_lib/project_on_plane.rs
-fn project_edge_on_plane(
+pub(crate) fn project_edge_on_plane(
     curve: &rcad_kernel::geom::Curve3,
     pl: &Plane,
     range: [f64; 2],

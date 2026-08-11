@@ -235,9 +235,10 @@ impl<'a> BuilderFace<'a> {
                 let l = a_ve_map
                     .entry((a_v.ptr_id(), a_v.location))
                     .or_default();
-                if !l.iter().any(|e| e.ptr_id() == a_ee.ptr_id()) {
-                    l.push(a_ee.clone());
-                }
+                // OCCT TopExp::MapShapesAndAncestors (TopExp.cxx L80-107) appends
+                // EVERY ancestor edge occurrence — the FORWARD and REVERSED
+                // copies of the same TShape are distinct ancestors, both kept.
+                l.push(a_ee.clone());
             }
         }
         // OCCT L337-382: per-start wire growth with the aMAdded fence; the

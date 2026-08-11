@@ -1270,6 +1270,23 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
                     }
                 }
             }
+            // OCCT BRep_Tool.cxx L366-368: the representation was not found —
+            // fall back to CurveOnPlane, which projects the edge's 3D curve
+            // onto a planar face (BRep_Tool.cxx L373-440). rcad's plane edges
+            // normally carry a stored pcurve (BuildPCurveForEdgesOnPlane), so
+            // this only fires for planar faces whose edge has a 3D curve but no
+            // stored pcurve.
+            if let Some(surf) = ds.face_surface(face_index) {
+                if let rcad_kernel::geom::Surface3::Plane(pl) = surf {
+                    if let Some(curve) = ed.curve.clone() {
+                        if let Some(pc) =
+                            crate::bop::algo::builder::project_edge_on_plane(&curve, &pl, ed.range)
+                        {
+                            return Some((pc, ed.range[0], ed.range[1]));
+                        }
+                    }
+                }
+            }
             None
         }
         _ => None,
@@ -1301,7 +1318,11 @@ fn has_curve_on_surface(e: &Shape, face_index: usize, ds: &DS) -> bool {
                     }
                 }
             }
-            false
+            // OCCT HasCurveOnSurface returns !CurveOnSurface(aE, aF).IsNull() —
+            // CurveOnSurface itself falls back to CurveOnPlane on a planar face
+            // (BRep_Tool.cxx L366-368), so a planar edge with a 3D curve and no
+            // stored pcurve still counts as having a curve on surface.
+            edge_pcurve(e, face_index, ds).is_some()
         }
         _ => false,
     }
