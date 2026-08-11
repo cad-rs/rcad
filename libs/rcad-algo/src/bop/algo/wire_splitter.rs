@@ -1042,42 +1042,119 @@ impl SurfaceAdaptor {
         }
     }
     fn u_resolution(&self, tol: f64) -> f64 {
+        // OCCT GeomAdaptor_Surface::UResolution (GeomAdaptor_Surface.cxx L1818-1898).
         match &self.surf {
             Surface3::Plane(_) => tol,
-            Surface3::Cylinder(_) | Surface3::Sphere(_) => tol / self.radius.max(1e-12),
-            Surface3::Cone(_) => tol / self.radius.max(1e-12),
+            // OCCT: Res = R3d/(2R); return Res <= 1 ? 2*asin(Res) : 2π
+            Surface3::Cylinder(c) => {
+                let r = c.radius;
+                if r > rcad_kernel::CONFUSION {
+                    let res = tol / (2.0 * r);
+                    if res <= 1.0 { 2.0 * res.asin() } else { 2.0 * std::f64::consts::PI }
+                } else {
+                    0.0
+                }
+            }
+            Surface3::Sphere(s) => {
+                let r = s.radius;
+                if r > rcad_kernel::CONFUSION {
+                    let res = tol / (2.0 * r);
+                    if res <= 1.0 { 2.0 * res.asin() } else { 2.0 * std::f64::consts::PI }
+                } else {
+                    0.0
+                }
+            }
+            Surface3::Cone(c) => {
+                // OCCT L1848-1864: unbounded V domain → Precision::Parametric(R3d);
+                // otherwise R = max(radius of VIso(myVLast), radius of VIso(myVFirst)),
+                // return R3d / R (no asin).
+                match self.uv_domain {
+                    Some(d) if (d[3] - d[2]).abs() > 1e10 => tol * 0.01,
+                    _ => {
+                        let r1 = cone_iso_radius(&self.surf, c, self.uv_domain.map_or(0.0, |d| d[2]));
+                        let r2 = cone_iso_radius(&self.surf, c, self.uv_domain.map_or(0.0, |d| d[3]));
+                        let r = r1.max(r2);
+                        if r > rcad_kernel::CONFUSION { tol / r } else { 0.0 }
+                    }
+                }
+            }
+            Surface3::Torus(t) => {
+                // OCCT L1824-1835: R = MajorRadius + MinorRadius; 2*asin(R3d/(2R)).
+                let r = t.major_radius + t.minor_radius;
+                if r > rcad_kernel::CONFUSION {
+                    let res = tol / (2.0 * r);
+                    if res <= 1.0 { 2.0 * res.asin() } else { 2.0 * std::f64::consts::PI }
+                } else {
+                    0.0
+                }
+            }
             _ => {
-                // fallback: tol / uv extent (i_walking.rs convention)
+                // OCCT Bezier/BSpline: exact Resolution; Offset: basis adaptor.
+                // rcad fallback: parametric resolution of the UV extent.
                 match self.uv_domain {
                     Some(d) if (d[1] - d[0]).abs() > 1e-12 => tol / (d[1] - d[0]).abs(),
-                    _ => tol,
+                    _ => tol * 0.01, // OCCT default: Precision::Parametric(R3d)
                 }
             }
         }
     }
     fn v_resolution(&self, tol: f64) -> f64 {
+        // OCCT GeomAdaptor_Surface::VResolution (GeomAdaptor_Surface.cxx L1900-1958).
         match &self.surf {
-            Surface3::Plane(_) => tol,
-            Surface3::Cylinder(_) => tol,
-            Surface3::Sphere(_) => tol / self.radius.max(1e-12),
-            Surface3::Cone(_) => tol / self.radius.max(1e-12),
-            _ => {
-                match self.uv_domain {
-                    Some(d) if (d[3] - d[2]).abs() > 1e-12 => tol / (d[3] - d[2]).abs(),
-                    _ => tol,
+            Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_) => tol,
+            Surface3::Sphere(s) => {
+                let r = s.radius;
+                if r > rcad_kernel::CONFUSION {
+                    let res = tol / (2.0 * r);
+                    if res <= 1.0 { 2.0 * res.asin() } else { 2.0 * std::f64::consts::PI }
+                } else {
+                    0.0
                 }
             }
+            Surface3::Torus(t) => {
+                // OCCT L1909-1920: R = MinorRadius; 2*asin(R3d/(2R)).
+                let r = t.minor_radius;
+                if r > rcad_kernel::CONFUSION {
+                    let res = tol / (2.0 * r);
+                    if res <= 1.0 { 2.0 * res.asin() } else { 2.0 * std::f64::consts::PI }
+                } else {
+                    0.0
+                }
+            }
+            _ => match self.uv_domain {
+                Some(d) if (d[3] - d[2]).abs() > 1e-12 => tol / (d[3] - d[2]).abs(),
+                _ => tol * 0.01,
+            },
         }
     }
 }
 
+/// Radius of a cone's v-isoparametric circle at parameter v (the distance of
+/// the surface point at u=0 to the cone axis).
+fn cone_iso_radius(surf: &Surface3, c: &rcad_kernel::geom::ConicalSurface, v: f64) -> f64 {
+    let _ = surf;
+    let p = rcad_kernel::geom::SurfaceEval::point_at(
+        &Surface3::Cone(*c), 0.0, v,
+    );
+    (p - c.apex).cross(c.axis).length()
+}
+
 /// OCCT Geom2dAdaptor_Curve::Resolution(tol) — approximate parameter step for
-/// a given 2D tolerance.
+/// a given 2D tolerance (Geom2dAdaptor_Curve.cxx L1186-1219).
 fn curve2d_resolution(c: &Curve2d, tol: f64) -> f64 {
     match c {
         Curve2d::Line(_) => tol,
-        Curve2d::Circle(cir) => tol / cir.radius.max(1e-12),
-        Curve2d::Ellipse(el) => tol / el.minor_radius.max(1e-12),
+        // OCCT L1197-1204: Circle — R > Ruv/2 ? 2*asin(Ruv/(2R)) : 2π
+        Curve2d::Circle(cir) => {
+            let r = cir.radius;
+            if r > tol / 2.0 {
+                2.0 * (tol / (2.0 * r)).asin()
+            } else {
+                2.0 * std::f64::consts::PI
+            }
+        }
+        // OCCT L1205-1207: Ellipse — Ruv / MajorRadius.
+        Curve2d::Ellipse(el) => tol / el.major_radius.max(1e-12),
         Curve2d::BSpline(b) => {
             let extent = match (b.knots.first(), b.knots.last()) {
                 (Some(f), Some(l)) => (l - f).abs(),
@@ -1089,7 +1166,8 @@ fn curve2d_resolution(c: &Curve2d, tol: f64) -> f64 {
                 tol
             }
         }
-        _ => tol,
+        // OCCT L1214-1217: default — Precision::Parametric(Ruv) = 0.01 * Ruv.
+        _ => tol * 0.01,
     }
 }
 
@@ -1437,5 +1515,87 @@ mod tests {
             "reversed seam UV.u must be 0, got {}", p_r.x);
         assert!((p_f.x - p_r.x).abs() > 1.0,
             "the two seam instances must differ by ~2*PI in u (loop-close check)");
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    use super::*;
+    use rcad_kernel::geom::{
+        Circle2d, Curve2d, CylindricalSurface, Ellipse2d, Line2d, Parabola2d, Surface3, ToroidalSurface,
+    };
+
+    /// Regression tests for audit item #8 — curve2d_resolution must match
+    /// OCCT Geom2dAdaptor_Curve::Resolution (L1186-1219).
+    #[test]
+    fn curve2d_resolution_matches_occt() {
+        let tol = 1e-6;
+        // Line → Ruv
+        let line = Curve2d::Line(Line2d::new(DVec2::ZERO, DVec2::X));
+        assert!((curve2d_resolution(&line, tol) - tol).abs() < 1e-15);
+        // Circle R=1 → 2*asin(Ruv/(2R)); R=1e-8 (<= Ruv/2) → 2π
+        let big = Curve2d::Circle(Circle2d::new(DVec2::ZERO, 1.0));
+        assert!((curve2d_resolution(&big, tol) - 2.0 * (tol / 2.0).asin()).abs() < 1e-12);
+        let tiny = Curve2d::Circle(Circle2d::new(DVec2::ZERO, 1e-8));
+        assert!((curve2d_resolution(&tiny, tol) - 2.0 * std::f64::consts::PI).abs() < 1e-12);
+        // Ellipse → Ruv / MajorRadius (NOT minor)
+        let ell = Curve2d::Ellipse(Ellipse2d {
+            center: DVec2::ZERO,
+            major_dir: DVec2::X,
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+        assert!((curve2d_resolution(&ell, tol) - tol / 2.0).abs() < 1e-15);
+        // default → Precision::Parametric(Ruv) = 0.01 * Ruv
+        let par = Curve2d::Parabola(Parabola2d {
+            origin: DVec2::ZERO,
+            axis_dir: DVec2::X,
+            focal_param: 1.0,
+        });
+        assert!((curve2d_resolution(&par, tol) - 0.01 * tol).abs() < 1e-18);
+    }
+
+    /// Regression tests for audit item #8 — SurfaceAdaptor resolutions must
+    /// match OCCT GeomAdaptor_Surface::U/VResolution (L1818-1958).
+    #[test]
+    fn surface_adaptor_resolutions_match_occt() {
+        let tol = 1e-6;
+        // Cylinder U: 2*asin(R3d/(2R)); V: R3d.
+        let cyl = Surface3::Cylinder(CylindricalSurface::new(DVec3::ZERO, DVec3::Z, 1.0));
+        let sa = SurfaceAdaptor {
+            surf: cyl.clone(),
+            radius: 1.0,
+            uv_domain: Some([0.0, 6.283185307179586, -1.0, 1.0]),
+        };
+        assert!((sa.u_resolution(tol) - 2.0 * (tol / 2.0).asin()).abs() < 1e-12);
+        assert!((sa.v_resolution(tol) - tol).abs() < 1e-15);
+        // Cone V: R3d (the pre-fix code returned tol/radius — inverted).
+        let cone = Surface3::Cone(rcad_kernel::geom::ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: 0.5,
+            ref_dir: DVec3::X,
+        });
+        let sa_cone = SurfaceAdaptor {
+            surf: cone,
+            radius: 1.0,
+            uv_domain: Some([0.0, 6.283185307179586, 0.0, 1.0]),
+        };
+        assert!((sa_cone.v_resolution(tol) - tol).abs() < 1e-15, "cone VResolution must be R3d");
+        // Torus U: R = MajorRadius + MinorRadius → 2*asin(R3d/(2R)).
+        let torus = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+        let sa_torus = SurfaceAdaptor {
+            surf: torus,
+            radius: 1.0,
+            uv_domain: Some([0.0, 6.283185307179586, 0.0, 6.283185307179586]),
+        };
+        let r = 2.0 + 0.5;
+        assert!((sa_torus.u_resolution(tol) - 2.0 * (tol / (2.0 * r)).asin()).abs() < 1e-12);
     }
 }
