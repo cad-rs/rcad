@@ -2892,7 +2892,7 @@ impl PaveFiller {
     // ====================================================================
     // RemovePaveBlocks — OCCT BOPAlgo_PaveFiller::RemovePaveBlocks (PaveFiller_6.cxx L3815-3915)
     // ====================================================================
-    fn remove_pave_blocks(&mut self, the_edges: &HashSet<usize>) {
+    pub(crate) fn remove_pave_blocks(&mut self, the_edges: &HashSet<usize>) {
         // 1. from the Pave Blocks Pool.
         for pool in self.ds.pave_blocks_pool.values_mut() {
             pool.retain(|pb| !the_edges.contains(&pb.0.read().unwrap().edge));

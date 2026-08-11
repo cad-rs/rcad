@@ -4656,12 +4656,17 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
             }
         }
-        // OCCT L4434: RemovePaveBlocks(aMicroEdges) — bucket iteration order.
+        // OCCT L4434: RemovePaveBlocks(aMicroEdges) — three steps:
+        //   1. from the Pave Blocks Pool
+        //   2. from section curves (BOPDS_Curve::PaveBlocks)
+        //   3. from Face Info (PaveBlocksIn/On/Sc)
+        // rcad previously only did step 1, leaving dangling PB references in
+        // intersection_curves[cid].pave_blocks and the FaceInfo sets.
+        let mut a_micro_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for ei in a_micro_edges.iter_keys() {
-            for pool in self.ds.pave_blocks_pool.values_mut() {
-                pool.retain(|pb| pb.0.read().unwrap().edge != ei);
-            }
+            a_micro_set.insert(ei);
         }
+        self.remove_pave_blocks(&a_micro_set);
     }
 
     /// OCCT BOPAlgo_PaveFiller::MakePCurves (_7.cxx L589-850).
