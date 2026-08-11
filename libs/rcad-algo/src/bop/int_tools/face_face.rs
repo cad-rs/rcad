@@ -889,6 +889,10 @@ impl FaceFace {
                     tol,
                     &self.lines,
                 );
+                // OCCT IntTools_FaceFace::Perform L548: ComputeTolReached3d —
+                // recompute the curve tolerance from the 3D-2D deviation and
+                // set the tangential tolerance floor.
+                self.compute_tol_reached_3d(&s1, &s2, tol_f1, tol_f2);
                 // OCCT: PrepareLines3D(bSplitCurve) is NOT part of Perform —
                 // it is called from BOPAlgo_PaveFiller::PerformFF (L566) after
                 // Perform, so MakeCurve output is passed through unchanged here.
@@ -902,6 +906,74 @@ impl FaceFace {
         if self.b_reverse {
             for c in self.curves.iter_mut() {
                 std::mem::swap(&mut c.pcurve1, &mut c.pcurve2);
+            }
+        }
+    }
+
+    /// OCCT IntTools_FaceFace::ComputeTolReached3d (L613-691).
+    ///
+    /// Recompute each intersection curve's tolerance from the maximal
+    /// deviation between the 3D curve and its 2D pcurve pulled back to the
+    /// surface (IntTools_Tools::ComputeTolerance), or between the 3D curve
+    /// and the surface when the pcurve is absent (FindMaxDistance); then set
+    /// the tangential tolerance to at least the maximal face tolerance.
+    fn compute_tol_reached_3d(&mut self, s1: &Surface3, s2: &Surface3, tol_f1: f64, tol_f2: f64) {
+        let a_nb_lin = self.curves.len();
+        if a_nb_lin == 0 {
+            return;
+        }
+        // Minimal tangential tolerance for the curve (OCCT L616-617).
+        let a_tol_f_max = tol_f1.max(tol_f2);
+        let n = 23usize;
+        for ic in self.curves.iter_mut() {
+            let a_c3d = ic.curve.clone();
+            let a_first = ic.t_range[0];
+            let a_last = ic.t_range[1];
+            let mut a_tol_c = ic.tolerance;
+            // j = 0 → pcurve1 on s1, j = 1 → pcurve2 on s2.
+            for (pcurve_opt, s) in [(&ic.pcurve1, s1), (&ic.pcurve2, s2)] {
+                if let Some(a_c2d) = pcurve_opt {
+                    // OCCT IntTools_Tools::ComputeTolerance — maximal deviation
+                    // between the 3D curve and the 2D curve on the surface.
+                    let dt = (a_last - a_first) / n as f64;
+                    let mut a_d = 0.0f64;
+                    for i in 0..=n {
+                        let t = a_first + i as f64 * dt;
+                        let p3d = a_c3d.point_at(t);
+                        let uv = Curve2dEval::point_at(a_c2d, t);
+                        let p_surf = SurfaceEval::point_at(s, uv.x, uv.y);
+                        let d = (p3d - p_surf).length();
+                        if d > a_d {
+                            a_d = d;
+                        }
+                    }
+                    if a_d > a_tol_c {
+                        a_tol_c = a_d;
+                    }
+                } else {
+                    // OCCT FindMaxDistance(aC3D, aFirst, aLast, aF, myContext) —
+                    // maximal distance from the 3D curve to the surface.
+                    let dt = (a_last - a_first) / n as f64;
+                    let mut a_d = 0.0f64;
+                    for i in 0..=n {
+                        let t = a_first + i as f64 * dt;
+                        let p3d = a_c3d.point_at(t);
+                        let (_uv, proj) = crate::bop::closest_point_on_surface(s, p3d);
+                        let d = (proj - p3d).length();
+                        if d > a_d {
+                            a_d = d;
+                        }
+                    }
+                    if a_d > a_tol_c {
+                        a_tol_c = a_d;
+                    }
+                }
+            }
+            // Set the valid tolerance for the curve (OCCT L677-678).
+            ic.tolerance = a_tol_c;
+            // Set the tangential tolerance floor (OCCT L683-687).
+            if ic.tang_tolerance < a_tol_f_max {
+                ic.tang_tolerance = a_tol_f_max;
             }
         }
     }
@@ -1036,5 +1108,74 @@ fn surface_type_index(s: &Surface3) -> i32 {
         Surface3::Bezier(_) => 5,
         Surface3::BSpline(_) => 6,
         _ => 11,
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::geom::{Curve2d, Line2d, Line3};
+
+    /// Regression test for audit item #5: FaceFace must recompute the curve
+    /// tolerance from the 3D-2D deviation (ComputeTolReached3d) and lift the
+    /// tangential tolerance to at least the maximal face tolerance.
+    #[test]
+    fn compute_tol_reached_3d_updates_curve_tolerance() {
+        let s1 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let s2 = s1.clone();
+        let mut ff = FaceFace::new();
+        // 3D curve: segment along X at z=0; pcurve1 exact, pcurve2 offset by
+        // 0.1 in V → the 3D-2D deviation must raise the curve tolerance.
+        let ic = IntersectionCurve {
+            curve: Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X)),
+            t_range: [0.0, 1.0],
+            pcurve1: Some(Curve2d::Line(Line2d::new(DVec2::ZERO, DVec2::X))),
+            pcurve2: Some(Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.1), DVec2::X))),
+            tolerance: 1e-7,
+            tang_tolerance: 0.0,
+            pave_blocks: vec![],
+            bbox: None,
+        };
+        ff.curves = vec![ic];
+        ff.compute_tol_reached_3d(&s1, &s2, 1e-7, 1e-7);
+        assert!(
+            ff.curves[0].tolerance >= 0.1 - 1e-9,
+            "tolerance must grow to the 3D-2D deviation, got {}",
+            ff.curves[0].tolerance
+        );
+        assert!(
+            (ff.curves[0].tang_tolerance - 1e-7).abs() < 1e-12,
+            "tangential tolerance must reach the face-tolerance floor"
+        );
+    }
+
+    /// Missing pcurves fall back to the maximal 3D curve-to-surface distance
+    /// (OCCT FindMaxDistance path).
+    #[test]
+    fn compute_tol_reached_3d_find_max_distance_without_pcurve() {
+        let s1 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let s2 = s1.clone();
+        let mut ff = FaceFace::new();
+        // 3D curve at z=1, 1 unit above the z=0 plane, no pcurves.
+        let ic = IntersectionCurve {
+            curve: Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, 1.0), DVec3::X)),
+            t_range: [0.0, 1.0],
+            pcurve1: None,
+            pcurve2: None,
+            tolerance: 1e-7,
+            tang_tolerance: 0.0,
+            pave_blocks: vec![],
+            bbox: None,
+        };
+        ff.curves = vec![ic];
+        ff.compute_tol_reached_3d(&s1, &s2, 1e-7, 1e-7);
+        assert!(
+            ff.curves[0].tolerance >= 1.0 - 1e-9,
+            "tolerance must grow to the 3D-surface distance, got {}",
+            ff.curves[0].tolerance
+        );
     }
 }
