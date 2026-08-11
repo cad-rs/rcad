@@ -1293,7 +1293,9 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
             let mut rev = false;
             let mut vf: Option<Shape> = None;
             for vcur in verts.iter() {
-                if v.is_same(vcur) {
+                // OCCT L1545: V.IsSame(itv.Value()) — TShape + Location
+                // (IsSame), not IsPartner.
+                if v.is_partner(vcur) {
                     if vf.is_none() {
                         vf = Some(vcur.clone());
                     } else {

@@ -95,39 +95,34 @@ pub fn make_prism_brep(
         v_dir: n.cross(u).normalize_or_zero(),
     });
     // y=0 face: profile -X -> normal +Y; reversed -> outward -Y.
-    // x=w face: profile +Y -> normal +X; forward  -> outward +X.
-    // y=d face: profile -X -> normal +Y; forward  -> outward +Y.
+    // x=w face: profile +Y -> normal -X (profile dir × sweep dir); reversed
+    //           -> outward +X.
+    // y=d face: profile -X -> normal -Y; reversed -> outward +Y.
     // x=0 face: profile +Y -> normal +X; reversed -> outward -X.
-    // UV domains: the caps are [0,w]x[0,d]; each lateral face is the profile
-    // parameter (the edge length) x the extrusion height.  OCCT prism faces
-    // carry finite UV domains (BRepPrim_Build::MakeFace).
-    let cap_uv = [0.0, w, 0.0, d];
-    // OCCT BRepPrimAPI_MakePrism lateral faces carry the v-parameter running
-    // from -1 (top) to 0 (bottom): the base-z=0 edge lies at v=0 (the uv bounds
-    // are (0,1,-1,0)).  To reproduce that, the lateral v-dir is reversed here
-    // (v=-z), so the z=0 boundary is at vmax=0.  This matches the reference
-    // prism's FF domain classification (ClassifyLin2d rejects lines coincident
-    // with the v=vmax boundary).
+    // OCCT BRepPrimAPI_MakePrism lateral faces are Geom_Plane with infinite
+    // UV bounds (Geom_Plane::Bounds = RealLast); uv_domain is None to match
+    // (make_box.rs uses None too).  The v-parameter runs with the sweep: the
+    // base-z=0 edge lies at v=0 (v=-z, so the top edge is at v=-h).
     let faces = [
         // y=0 face (REVERSED, outward -Y). Surface per OCCT MakePrism:
-        // N(+Y), u=X, v=-Z (BRepSweep_Prism profile sweep).
-        rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), DVec3::Y, DVec3::X)), wires[0].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true)),
+        // N(+Y), u=X, v=-Z; origin (0,0,0); infinite UV bounds (Geom_Plane).
+        rev(t.add_tface(Some(pln(DVec3::new(0.0, 0.0, 0.0), DVec3::Y, DVec3::X)), wires[0].clone(), vec![], None, None, vec![], true)),
         // x=w face (REVERSED, outward +X). Surface per OCCT MakePrism:
         // N(-X), u=Y, v=-Z — the sweep of the +Y profile edge along +Z gives
         // normal -X (X = profile dir × sweep dir), face REVERSED to flip out.
-        rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), -DVec3::X, DVec3::Y)), wires[1].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true)),
+        rev(t.add_tface(Some(pln(DVec3::new(w, 0.0, 0.0), -DVec3::X, DVec3::Y)), wires[1].clone(), vec![], None, None, vec![], true)),
         // y=d face (REVERSED, outward +Y). Surface per OCCT MakePrism:
-        // N(-Y), u=-X, v=-Z.
-        rev(t.add_tface(Some(pln(DVec3::new(w, d, 0.0), -DVec3::Y, -DVec3::X)), wires[2].clone(), vec![], None, Some([0.0, w, -h, 0.0]), vec![], true)),
+        // N(-Y), u=-X, v=-Z; origin (w,d,0).
+        rev(t.add_tface(Some(pln(DVec3::new(w, d, 0.0), -DVec3::Y, -DVec3::X)), wires[2].clone(), vec![], None, None, vec![], true)),
         // x=0 face (REVERSED, outward -X). Surface per OCCT MakePrism:
-        // N(+X), u=-Y, v=-Z.
-        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::X, -DVec3::Y)), wires[3].clone(), vec![], None, Some([0.0, d, -h, 0.0]), vec![], true)),
+        // N(+X), u=-Y, v=-Z; origin (0,d,0).
+        rev(t.add_tface(Some(pln(DVec3::new(0.0, d, 0.0), DVec3::X, -DVec3::Y)), wires[3].clone(), vec![], None, None, vec![], true)),
         // z=0 face (REVERSED, outward -Z). Surface per OCCT MakePrism:
-        // N(+Z), u=X, v=Y.
-        rev(t.add_tface(Some(pln(DVec3::ZERO, DVec3::Z, DVec3::X)), wires[4].clone(), vec![], None, Some(cap_uv), vec![], true)),
+        // N(+Z), u=X, v=Y; origin (w/2,d/2,0) — the cap centre.
+        rev(t.add_tface(Some(pln(DVec3::new(0.5 * w, 0.5 * d, 0.0), DVec3::Z, DVec3::X)), wires[4].clone(), vec![], None, None, vec![], true)),
         // z=h face (FORWARD, outward +Z). Surface per OCCT MakePrism:
-        // N(+Z), u=X, v=Y.
-        t.add_tface(Some(pln(DVec3::new(0.0, 0.0, h), DVec3::Z, DVec3::X)), wires[5].clone(), vec![], None, Some(cap_uv), vec![], true),
+        // N(+Z), u=X, v=Y; origin (w/2,d/2,h) — the cap centre.
+        t.add_tface(Some(pln(DVec3::new(0.5 * w, 0.5 * d, h), DVec3::Z, DVec3::X)), wires[5].clone(), vec![], None, None, vec![], true),
     ];
     let shell = t.add_tshell(faces.to_vec());
     t.add_tsolid(vec![shell]);
