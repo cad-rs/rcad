@@ -841,7 +841,8 @@ impl CurveRangeSample {
     }
 
     pub fn get_range_index_deeper(&self, nb_sample: i32) -> i32 {
-        (self.range_index - 1) * nb_sample + 1
+        // OCCT IntTools_CurveRangeSample.hxx L55: myIndex * theNbSample (0-based).
+        self.range_index * nb_sample
     }
 
     pub fn get_range(&self, first_param: f64, last_param: f64, nb_sample: i32) -> IntRange {
@@ -850,7 +851,8 @@ impl CurveRangeSample {
         }
         let total = nb_sample.pow(self.depth as u32) as f64;
         let step = (last_param - first_param) / total;
-        let f = first_param + (self.range_index as f64 - 1.0) * step;
+        // OCCT IntTools_CurveRangeSample.cxx L40-44: theFirst + myIndex * localdiffC.
+        let f = first_param + self.range_index as f64 * step;
         let l = f + step;
         IntRange::new(f, l)
     }
@@ -911,11 +913,12 @@ impl SurfaceRangeSample {
     }
 
     pub fn get_range_index_u_deeper(&self, nb_sample_u: i32) -> i32 {
-        (self.index_u - 1) * nb_sample_u + 1
+        // OCCT IntTools_SurfaceRangeSample.hxx: myIndexU * theNbSampleU (0-based).
+        self.index_u * nb_sample_u
     }
 
     pub fn get_range_index_v_deeper(&self, nb_sample_v: i32) -> i32 {
-        (self.index_v - 1) * nb_sample_v + 1
+        self.index_v * nb_sample_v
     }
 
     pub fn get_range_u(&self, u_min: f64, u_max: f64, nb_sample_u: i32) -> IntRange {
@@ -924,7 +927,8 @@ impl SurfaceRangeSample {
         }
         let total = nb_sample_u.pow(self.depth_u as u32) as f64;
         let step = (u_max - u_min) / total;
-        let f = u_min + (self.index_u as f64 - 1.0) * step;
+        // OCCT: uMin + myIndexU * localdiffU (0-based).
+        let f = u_min + self.index_u as f64 * step;
         let l = f + step;
         IntRange::new(f, l)
     }
@@ -935,7 +939,7 @@ impl SurfaceRangeSample {
         }
         let total = nb_sample_v.pow(self.depth_v as u32) as f64;
         let step = (v_max - v_min) / total;
-        let f = v_min + (self.index_v as f64 - 1.0) * step;
+        let f = v_min + self.index_v as f64 * step;
         let l = f + step;
         IntRange::new(f, l)
     }
@@ -5017,25 +5021,37 @@ mod tests {
     // ── CurveRangeSample: depth range computation ───────────────────────────
     #[test]
     fn test_curve_range_sample_depth() {
-        let mut crs = CurveRangeSample::new(2);
+        // OCCT GetRange uses the 0-based myIndex: with depth=1, nbSample=3,
+        // range [0,10]: index 1 → [0 + 1*10/3, 0 + 2*10/3] = [3.333, 6.667].
+        let mut crs = CurveRangeSample::new(1);
         crs.set_depth(1);
-        // With depth=1, nbSample=3, range [0,10]: total ranges = 3^1 = 3
-        // Range 2: [0 + (2-1)*10/3, 0 + 2*10/3] = [3.333, 6.667]
         let range = crs.get_range(0.0, 10.0, 3);
         assert!((range.first() - 3.3333333333).abs() < 1e-9);
         assert!((range.last() - 6.6666666667).abs() < 1e-9);
+        // Index 0 is the first sub-range, not -nb+1 (the pre-fix bug produced
+        // a negative index for the root sample).
+        let mut crs0 = CurveRangeSample::new(0);
+        crs0.set_depth(1);
+        let range0 = crs0.get_range(0.0, 10.0, 3);
+        assert!((range0.first() - 0.0).abs() < 1e-9);
+        assert!((range0.last() - 3.3333333333).abs() < 1e-9);
+        // GetRangeIndexDeeper: myIndex * theNbSample (0-based).
+        assert_eq!(crs0.get_range_index_deeper(3), 0);
+        assert_eq!(crs.get_range_index_deeper(3), 3);
     }
 
     // ── SurfaceRangeSample: depth UV range computation ──────────────────────
     #[test]
     fn test_surface_range_sample_depth() {
-        let mut srs = SurfaceRangeSample::new(2, 3, 1, 1);
+        let mut srs = SurfaceRangeSample::new(1, 2, 1, 1);
+        // depth_u=1, nbSampleU=3 → index 1: [-1 + 1*2/3, -1 + 2*2/3] = [-0.333, 0.333]
         let ru = srs.get_range_u(-1.0, 1.0, 3);
-        // With depth_u=1, nbSampleU=3 → range 2: [-1 + (2-1)*2/3, -1 + 2*2/3] = [-0.333, 0.333]
         assert!((ru.first() - (-1.0 + 2.0 / 3.0)).abs() < 1e-9);
+        // depth_v=1, nbSampleV=3 → index 2: [-1 + 2*2/3, -1 + 3*2/3] = [0.333, 1.0]
         let rv = srs.get_range_v(-1.0, 1.0, 3);
-        // With depth_v=1, nbSampleV=3 → range 3: [-1 + (3-1)*2/3, -1 + 3*2/3] = [0.333, 1.0]
         assert!((rv.last() - 1.0).abs() < 1e-9);
+        assert_eq!(srs.get_range_index_u_deeper(3), 3);
+        assert_eq!(srs.get_range_index_v_deeper(3), 6);
     }
 
     // ── ExtremaExtCS: basic ─────────────────────────────────────────────────
