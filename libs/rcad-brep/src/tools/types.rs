@@ -10,13 +10,19 @@
 //! # Example
 //!
 //! ```
-//! use rcad_algorithms::brep_tools::*;
+//! use rcad_brep::tools::*;
 //! use rcad_kernel::BRep;
 //!
 //! // Write BRep to string
-//! let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-//!     width: 1.0, height: 1.0, depth: 1.0
-//! });
+//! let mut brep = BRep::new();
+//! let v0 = brep.add_tvertex(glam::DVec3::ZERO);
+//! let v1 = brep.add_tvertex(glam::DVec3::new(1.0, 0.0, 0.0));
+//! brep.add_tedge(
+//!     Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+//!         glam::DVec3::ZERO, glam::DVec3::X,
+//!     ))),
+//!     v0, v1, [0.0, 1.0],
+//! );
 //! let json = write_brep_to_string(&brep).unwrap();
 //!
 //! // Read it back

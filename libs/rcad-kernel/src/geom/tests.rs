@@ -199,8 +199,9 @@ mod eval_tests {
             radius: 3.0,
             ref_dir: any_perpendicular(DVec3::Y),
         };
-        // v=0 is north pole regardless of u
-        let p = s.point_at(0.0, 0.0);
+        // OCCT ElSLib::SphereValue: V = latitude [-pi/2, pi/2], V = +pi/2 is
+        // the pole in the axis direction (v=0 is the equator).
+        let p = s.point_at(0.0, std::f64::consts::FRAC_PI_2);
         // Should be at (0, 3, 0)
         assert!((p - DVec3::new(0.0, 3.0, 0.0)).length() < 1e-10);
     }
@@ -1265,8 +1266,9 @@ mod eval_tests {
     #[test]
     fn parabola3_eval_and_derivative() {
         use std::f64::consts::PI;
-        // Parabola: dir_perp = axis_dir.cross(normal) = X.cross(Z) = -Y
-        // P(t) = (t²/(2p)) * X + t * (-Y) = (t²/8, -t, 0)
+        // OCCT gp_Parab (gp_Ax2 N, X): the cross-axis is Y = N × X (right-handed
+        // frame), so dir_perp = normal.cross(axis_dir) = Z×X = +Y.
+        // P(t) = (t²/(2p)) * X + t * Y = (t²/8, t, 0)
         let p = Parabola3 {
             vertex: DVec3::ZERO,
             normal: DVec3::Z,
@@ -1275,13 +1277,13 @@ mod eval_tests {
         };
         // P(0) = (0,0,0)
         assert!((p.point_at(0.0) - DVec3::ZERO).length() < 1e-10);
-        // P(4) = (16/8, -4, 0) = (2, -4, 0)
-        assert!((p.point_at(4.0) - DVec3::new(2.0, -4.0, 0.0)).length() < 1e-10);
-        // derivative = (t/4, -1, 0): at t=0 → (0, -1, 0), at t=4 → (1, -1, 0)
+        // P(4) = (16/8, 4, 0) = (2, 4, 0)
+        assert!((p.point_at(4.0) - DVec3::new(2.0, 4.0, 0.0)).length() < 1e-10);
+        // derivative = (t/4, 1, 0): at t=0 → (0, 1, 0), at t=4 → (1, 1, 0)
         let d0 = p.derivative_at(0.0);
-        assert!((d0 - DVec3::new(0.0, -1.0, 0.0)).length() < 1e-10);
+        assert!((d0 - DVec3::new(0.0, 1.0, 0.0)).length() < 1e-10);
         let d4 = p.derivative_at(4.0);
-        assert!((d4 - DVec3::new(1.0, -1.0, 0.0)).length() < 1e-10);
+        assert!((d4 - DVec3::new(1.0, 1.0, 0.0)).length() < 1e-10);
     }
 
     // ── Hyperbola ──────────────────────────────────────────────────────
@@ -1460,17 +1462,19 @@ mod eval_tests {
             radius: 5.0,
             ref_dir: DVec3::X,
         };
-        // At equator (v=PI/2), u=0: point = (5, 0, 0)
+        // OCCT ElSLib::SphereValue/SphereD1: V is latitude, V=0 is the
+        // equator (u=0 → +X), V=+pi/2 the axis pole. At the equator (v=0):
+        // point = (5, 0, 0), dP/dv = R*axis = +Z (toward the north pole).
         use std::f64::consts::PI;
-        let (p, dpu, dpv) = s.derivatives(0.0, PI / 2.0);
+        let (p, dpu, dpv) = s.derivatives(0.0, 0.0);
         // Point radius should be 5
         assert!((p.length() - 5.0).abs() < 1e-10);
         // dP/du should be perpendicular to point
         assert!(dpu.dot(p.normalize_or_zero()).abs() < 1e-10);
-        // dP/dv at equator should point toward -Z
-        assert!((dpv - DVec3::new(0.0, 0.0, -5.0)).length() < 1e-10);
+        // dP/dv at the equator should point toward +Z (north pole)
+        assert!((dpv - DVec3::new(0.0, 0.0, 5.0)).length() < 1e-10);
         // Normal should point radially outward
-        let n = s.normal_at(0.0, PI / 2.0);
+        let n = s.normal_at(0.0, 0.0);
         assert!((n - DVec3::X).length() < 1e-10);
     }
 
@@ -1482,11 +1486,11 @@ mod eval_tests {
             radius: 5.0,
             ref_dir: DVec3::X,
         };
-        // North pole v=0: point=(0,0,5), normal should be +Z
-        let n_north = s.normal_at(0.0, 0.0);
+        // OCCT SphereParameters: V = atan(z/l) — north pole V=+pi/2:
+        // point=(0,0,5), normal +Z; south pole V=-pi/2: normal -Z.
+        let n_north = s.normal_at(0.0, std::f64::consts::FRAC_PI_2);
         assert!((n_north - DVec3::Z).length() < 1e-10);
-        // South pole v=PI: point=(0,0,-5), normal should be -Z
-        let n_south = s.normal_at(0.0, std::f64::consts::PI);
+        let n_south = s.normal_at(0.0, -std::f64::consts::FRAC_PI_2);
         assert!((n_south + DVec3::Z).length() < 1e-10);
     }
 
@@ -1590,10 +1594,10 @@ mod eval_tests {
             radius: 3.0,
             ref_dir: DVec3::X,
         });
-        // Verify D1/dPdu through Surface3 dispatch
-        let (p, _dpu, _dpv) = s.derivatives(0.0, 0.0);
+        // OCCT ElSLib::SphereValue: V=+pi/2 is the axis pole (north).
+        let (p, _dpu, _dpv) = s.derivatives(0.0, std::f64::consts::FRAC_PI_2);
         assert!((p - DVec3::new(0.0, 0.0, 3.0)).length() < 1e-9);
-        let n = s.normal_at(0.0, 0.0);
+        let n = s.normal_at(0.0, std::f64::consts::FRAC_PI_2);
         assert!((n - DVec3::Z).length() < 1e-9);
     }
 

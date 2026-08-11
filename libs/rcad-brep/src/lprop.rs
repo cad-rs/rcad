@@ -187,20 +187,35 @@ pub fn face_normal_uv(surface: &Surface3, u: f64, v: f64) -> Option<DVec3> { let
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::geom::PrimitiveSolid;
+    use rcad_kernel::geom::{Curve3, Line3};
     use rcad_kernel::BRep;
+
+    /// A BRep with a single straight edge of length 2 along +X.
+    /// Layout: tshapes[0]=V0, [1]=V1, [2]=the edge.
+    fn straight_edge_brep() -> BRep {
+        let mut b = BRep::new();
+        let v0 = b.add_tvertex(DVec3::ZERO);
+        let v1 = b.add_tvertex(DVec3::new(2.0, 0.0, 0.0));
+        b.add_tedge(
+            Some(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))),
+            v0,
+            v1,
+            [0.0, 2.0],
+        );
+        b
+    }
 
     #[test]
     fn test_edge_curvature_straight() {
-        let b = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-        let a = EdgeAdaptor::new(&b, 0);
+        let b = straight_edge_brep();
+        let a = EdgeAdaptor::new(&b, 2);
         assert!(edge_curvature_at(&a, 0.5) < 1e-10);
     }
 
     #[test]
     fn test_edge_tangent() {
-        let b = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-        let a = EdgeAdaptor::new(&b, 0);
+        let b = straight_edge_brep();
+        let a = EdgeAdaptor::new(&b, 2);
         let t = edge_tangent_at(&a, 0.5);
         assert!(t.is_some());
         assert!((t.unwrap().length() - 1.0).abs() < 1e-10);
@@ -208,11 +223,11 @@ mod tests {
 
     #[test]
     fn test_edge_domain() {
-        let b = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-        let a = EdgeAdaptor::new(&b, 0);
+        let b = straight_edge_brep();
+        let a = EdgeAdaptor::new(&b, 2);
         let mut p = BRepEdgeLProps::from_adaptor(&a, 2);
         p.set_parameter(0.0); let p0 = p.value();
-        p.set_parameter(1.0); let p1 = p.value();
+        p.set_parameter(2.0); let p1 = p.value();
         assert!(((p1 - p0).length() - 2.0).abs() < 0.01);
     }
 

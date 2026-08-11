@@ -1408,7 +1408,7 @@ impl BRepGraphHistory {
 ///
 /// # Example
 /// ```
-/// use rcad_algorithms::brep_graph::{ScopedId, NamingScope};
+/// use rcad_brep::graph::{ScopedId, NamingScope};
 /// use rcad_kernel::PersistentId;
 ///
 /// // A face with ID 42 in part "housing", assembly "machine", operation "fillet"

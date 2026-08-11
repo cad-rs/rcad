@@ -9,7 +9,7 @@
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_tools::{get_shape_type, ShapeType};
+/// use rcad_brep::tools::{get_shape_type, ShapeType};
 /// use rcad_kernel::BRep;
 ///
 /// let brep = BRep::new(); // topods

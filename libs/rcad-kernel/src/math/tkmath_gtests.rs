@@ -503,22 +503,22 @@ mod sphere_tests {
 
     #[test]
     fn point_at_north_pole() {
-        // v=0 (north pole): P = center + r*axis = (0,0,5)
-        let p = make_sphere().point_at(0.0, 0.0);
+        // OCCT SphereParameters: V = +pi/2 is the north pole: P = center + r*axis = (0,0,5)
+        let p = make_sphere().point_at(0.0, std::f64::consts::FRAC_PI_2);
         assert!((p - DVec3::new(0.0, 0.0, 5.0)).length() < TOL_EVAL);
     }
 
     #[test]
     fn point_at_equator() {
-        // v=π/2 (equator), u=0: P = r*ref_dir = r*X = (5,0,0)
-        let p = make_sphere().point_at(0.0, std::f64::consts::FRAC_PI_2);
+        // V = 0 (equator), u=0: P = r*ref_dir = r*X = (5,0,0)
+        let p = make_sphere().point_at(0.0, 0.0);
         assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < TOL_EVAL);
     }
 
     #[test]
     fn point_at_90_degrees_along_equator() {
-        // v=π/2 (equator), u=π/2: P = r*axis×ref_dir = 5*Z×X = (0,5,0)
-        let p = make_sphere().point_at(std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2);
+        // V = 0 (equator), u=pi/2: P = r*axis×ref_dir = 5*Z×X = (0,5,0)
+        let p = make_sphere().point_at(std::f64::consts::FRAC_PI_2, 0.0);
         assert!((p - DVec3::new(0.0, 5.0, 0.0)).length() < TOL_EVAL);
     }
 }

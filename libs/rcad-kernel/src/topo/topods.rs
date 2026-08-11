@@ -452,9 +452,10 @@ impl BRep {
             sample_point,
             uv_domain,
             internal_vertices,
-            // OCCT BRep_Tool::Tolerance(face) — a standard BRep face carries the
-            // Precision::Confusion() tolerance (1e-7), not zero.
-            tolerance: CONFUSION,
+            // OCCT BRep_TFace::BRep_TFace() (BRep_TFace.cxx L28-29): myTolerance
+            // defaults to RealEpsilon() ≈ 2.2e-16 — a fresh face carries a
+            // negligible tolerance until BRep_Builder::UpdateFace sets it.
+            tolerance: f64::EPSILON,
             natural_restriction,
         }));
 

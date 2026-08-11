@@ -9,19 +9,28 @@
 /// # Example
 ///
 /// ```
-/// # use rcad_algorithms::tolerance::*;
-/// use rcad_algorithms::brep_tools::transform_shape;
-/// use rcad_algorithms::tolerance::TOLERANCE_COORD_SUB;
+/// use rcad_brep::tools::transform_shape;
 /// use rcad_kernel::BRep;
+/// use rcad_kernel::topods::TShape;
 /// use glam::{DAffine3, DVec3};
 ///
-/// let mut brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
+/// let mut brep = BRep::new();
+/// let v0 = brep.add_tvertex(DVec3::ZERO);
+/// let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
+/// brep.add_tedge(
+///     Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+///         DVec3::ZERO, DVec3::X,
+///     ))),
+///     v0, v1, [0.0, 1.0],
+/// );
 /// let translation = DAffine3::from_translation(DVec3::new(5.0, 0.0, 0.0));
 /// transform_shape(&mut brep, translation);
-/// // The box is now centered at (5.5, 0.5, 0.5)
-/// assert!((brep.vertices[0].point.x - 5.0).abs() < TOLERANCE_COORD_SUB);
+/// // The far vertex is now at (6, 0, 0)
+/// let p1 = match &*brep.tshapes[1] {
+///     TShape::Vertex(vd) => vd.point,
+///     _ => unreachable!(),
+/// };
+/// assert!((p1.x - 6.0).abs() < 1e-9);
 /// ```
 pub fn transform_shape(brep: &mut rcad_kernel::BRep, transform: DAffine3) {
     brep.apply_transform(transform);
@@ -38,16 +47,21 @@ pub fn transform_shape(brep: &mut rcad_kernel::BRep, transform: DAffine3) {
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_tools::mirror_shape;
+/// use rcad_brep::tools::mirror_shape;
 /// use rcad_kernel::BRep;
 /// use glam::DVec3;
 ///
-/// let mut brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
+/// let mut brep = BRep::new();
+/// let v0 = brep.add_tvertex(DVec3::ZERO);
+/// let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
+/// brep.add_tedge(
+///     Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+///         DVec3::ZERO, DVec3::X,
+///     ))),
+///     v0, v1, [0.0, 1.0],
+/// );
 /// // Mirror across the YZ plane (x = 0)
 /// mirror_shape(&mut brep, DVec3::ZERO, DVec3::X);
-/// // The box is now in the negative X half-space
 /// ```
 pub fn mirror_shape(brep: &mut rcad_kernel::BRep, plane_origin: DVec3, plane_normal: DVec3) {
     let normal = plane_normal.normalize_or(DVec3::X);
@@ -88,16 +102,21 @@ pub fn mirror_shape(brep: &mut rcad_kernel::BRep, plane_origin: DVec3, plane_nor
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_tools::scale_shape;
+/// use rcad_brep::tools::scale_shape;
 /// use rcad_kernel::BRep;
 /// use glam::DVec3;
 ///
-/// let mut brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
+/// let mut brep = BRep::new();
+/// let v0 = brep.add_tvertex(DVec3::ZERO);
+/// let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
+/// brep.add_tedge(
+///     Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+///         DVec3::ZERO, DVec3::X,
+///     ))),
+///     v0, v1, [0.0, 1.0],
+/// );
 /// // Scale by 2x about the origin
 /// scale_shape(&mut brep, 2.0, DVec3::ZERO);
-/// // The box is now 2x2x2
 /// ```
 pub fn scale_shape(brep: &mut rcad_kernel::BRep, factor: f64, center: DVec3) {
     let _transform = DAffine3::from_scale(glam::DVec3::splat(factor))
@@ -125,14 +144,20 @@ pub fn scale_shape(brep: &mut rcad_kernel::BRep, factor: f64, center: DVec3) {
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_tools::rotate_shape;
+/// use rcad_brep::tools::rotate_shape;
 /// use rcad_kernel::BRep;
 /// use glam::DVec3;
 /// use std::f64::consts::PI;
 ///
-/// let mut brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
+/// let mut brep = BRep::new();
+/// let v0 = brep.add_tvertex(DVec3::ZERO);
+/// let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
+/// brep.add_tedge(
+///     Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+///         DVec3::ZERO, DVec3::X,
+///     ))),
+///     v0, v1, [0.0, 1.0],
+/// );
 /// // Rotate 90 degrees about the Z axis
 /// rotate_shape(&mut brep, DVec3::ZERO, DVec3::Z, PI / 2.0);
 /// ```

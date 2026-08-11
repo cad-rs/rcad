@@ -35,12 +35,16 @@ use std::f64::consts::PI;
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_adaptor::EdgeAdaptor;
+/// use rcad_brep::adaptor::EdgeAdaptor;
 /// use rcad_kernel::BRep;
-/// use rcad_kernel::geom::PrimitiveSolid;
+/// use rcad_kernel::geom::{Curve3, Line3};
+/// use glam::DVec3;
 ///
-/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-/// let adaptor = EdgeAdaptor::new(&brep, 0);
+/// let mut brep = BRep::new();
+/// let v0 = brep.add_tvertex(DVec3::ZERO);
+/// let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
+/// brep.add_tedge(Some(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))), v0, v1, [0.0, 1.0]);
+/// let adaptor = EdgeAdaptor::new(&brep, 2);
 /// let domain = adaptor.domain();
 /// let midpoint = adaptor.point_at((domain[0] + domain[1]) / 2.0);
 /// ```
@@ -301,12 +305,18 @@ impl<'a> EdgeAdaptor<'a> {
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_adaptor::FaceAdaptor;
+/// use rcad_brep::adaptor::FaceAdaptor;
 /// use rcad_kernel::BRep;
-/// use rcad_kernel::geom::PrimitiveSolid;
+/// use rcad_kernel::geom::{Plane, Surface3};
+/// use glam::DVec3;
 ///
-/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
-/// let adaptor = FaceAdaptor::new(&brep, 0);
+/// let mut brep = BRep::new();
+/// let w = brep.add_twire(vec![]);
+/// let f = brep.add_tface(
+///     Some(Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z))),
+///     w, vec![], None, None, vec![], true,
+/// );
+/// let adaptor = FaceAdaptor::new(&brep, f.index);
 /// let domain = adaptor.domain();
 /// let center = adaptor.point_at(
 ///     (domain[0] + domain[1]) / 2.0,
@@ -746,14 +756,24 @@ struct WireSegment {
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_adaptor::WireAdaptor;
+/// use rcad_brep::adaptor::WireAdaptor;
 /// use rcad_kernel::BRep;
-/// use rcad_kernel::geom::PrimitiveSolid;
+/// use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
+/// use glam::DVec3;
 ///
-/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-/// // Get the outer wire of face 0.
-/// let wire = brep.solids[0].shells[0].faces[0].outer_wire.clone();
-/// let adaptor = WireAdaptor::new(&brep, &wire, 0);
+/// let mut brep = BRep::new();
+/// let v0 = brep.add_tvertex(DVec3::ZERO);
+/// let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
+/// let e = brep.add_tedge(Some(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))), v0, v1, [0.0, 1.0]);
+/// let w = brep.add_twire(vec![e]);
+/// let f = brep.add_tface(
+///     Some(Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z))),
+///     w.clone(), vec![], None, None, vec![], true,
+/// );
+/// let wire = rcad_kernel::Wire {
+///     edges: vec![rcad_kernel::WireEdge::fwd(f.index)],
+/// };
+/// let adaptor = WireAdaptor::new(&brep, &wire, f.index);
 /// let midpoint = adaptor.point_at(0.5);
 /// let edge_at_mid = adaptor.edge_at(0.5);
 /// ```
@@ -1014,13 +1034,17 @@ impl<'a> WireAdaptor<'a> {
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_adaptor::{EdgeAdaptor, CurveAdaptorArray};
+/// use rcad_brep::adaptor::{EdgeAdaptor, CurveAdaptorArray};
 /// use rcad_kernel::BRep;
-/// use rcad_kernel::geom::PrimitiveSolid;
+/// use rcad_kernel::geom::{Curve3, Line3};
+/// use glam::DVec3;
 ///
-/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let mut brep = BRep::new();
+/// let v0 = brep.add_tvertex(DVec3::ZERO);
+/// let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
+/// brep.add_tedge(Some(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))), v0, v1, [0.0, 1.0]);
 /// let mut array = CurveAdaptorArray::new();
-/// for i in 0..brep.edges.len() {
+/// for i in 0..brep.tshapes.len() {
 ///     array.push(EdgeAdaptor::new(&brep, i));
 /// }
 ///

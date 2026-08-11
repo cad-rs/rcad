@@ -7,14 +7,20 @@
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_tools::write_brep_to_string;
+/// use rcad_brep::tools::write_brep_to_string;
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
+/// let mut brep = BRep::new();
+/// let v0 = brep.add_tvertex(glam::DVec3::ZERO);
+/// let v1 = brep.add_tvertex(glam::DVec3::new(1.0, 0.0, 0.0));
+/// brep.add_tedge(
+///     Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+///         glam::DVec3::ZERO, glam::DVec3::X,
+///     ))),
+///     v0, v1, [0.0, 1.0],
+/// );
 /// let json = write_brep_to_string(&brep).unwrap();
-/// assert!(json.contains("vertices"));
+/// assert!(json.contains("tshapes"));
 /// ```
 pub fn write_brep_to_string(brep: &rcad_kernel::BRep) -> Result<String, BRepToolsError> {
     serde_json::to_string_pretty(brep)
@@ -26,15 +32,21 @@ pub fn write_brep_to_string(brep: &rcad_kernel::BRep) -> Result<String, BRepTool
 /// # Example
 ///
 /// ```
-/// use rcad_algorithms::brep_tools::{write_brep_to_string, read_brep_from_string};
+/// use rcad_brep::tools::{write_brep_to_string, read_brep_from_string};
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
+/// let mut brep = BRep::new();
+/// let v0 = brep.add_tvertex(glam::DVec3::ZERO);
+/// let v1 = brep.add_tvertex(glam::DVec3::new(1.0, 0.0, 0.0));
+/// brep.add_tedge(
+///     Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+///         glam::DVec3::ZERO, glam::DVec3::X,
+///     ))),
+///     v0, v1, [0.0, 1.0],
+/// );
 /// let json = write_brep_to_string(&brep).unwrap();
 /// let restored = read_brep_from_string(&json).unwrap();
-/// assert_eq!(brep.vertices.len(), restored.vertices.len());
+/// assert_eq!(brep.tshapes.len(), restored.tshapes.len());
 /// ```
 pub fn read_brep_from_string(s: &str) -> Result<rcad_kernel::BRep, BRepToolsError> {
     serde_json::from_str(s)
@@ -46,7 +58,7 @@ pub fn read_brep_from_string(s: &str) -> Result<rcad_kernel::BRep, BRepToolsErro
 /// # Example
 ///
 /// ```ignore
-/// use rcad_algorithms::brep_tools::write_brep_to_file;
+/// use rcad_brep::tools::write_brep_to_file;
 /// use rcad_kernel::BRep;
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -67,7 +79,7 @@ pub fn write_brep_to_file<P: AsRef<Path>>(brep: &rcad_kernel::BRep, path: P) -> 
 /// # Example
 ///
 /// ```ignore
-/// use rcad_algorithms::brep_tools::read_brep_from_file;
+/// use rcad_brep::tools::read_brep_from_file;
 ///
 /// let brep = read_brep_from_file("box.brep").unwrap();
 /// ```
