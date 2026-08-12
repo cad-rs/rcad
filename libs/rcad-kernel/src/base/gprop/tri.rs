@@ -79,6 +79,21 @@ pub fn ordered_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usiz
             if let Some(v) = brep.vertex_point(v1) {
                 if pts.is_empty() || (v - pts[0]).length() > 1e-12 { pts.push(v); }
             }
+        } else if pts.len() >= 2 {
+            // Align the samples with v0 -> v1.  OCCT edges satisfy
+            // BRep_Tool::Range/Parameter: the first vertex sits at the range
+            // start.  Split/image edges may keep the source curve direction,
+            // so the range can start at the last vertex — reverse the
+            // samples then, otherwise the chaining flip logic emits a
+            // reversed segment and the polyline self-intersects (shoelace
+            // area of a rotated/merged box face comes out half, A9).
+            let p0 = brep.vertex_point(v0);
+            let p1 = brep.vertex_point(v1);
+            if let (Some(p0), Some(p1)) = (p0, p1) {
+                if pts[0].distance(p1) < pts[0].distance(p0) {
+                    pts.reverse();
+                }
+            }
         }
         if pts.is_empty() { continue; }
         segs.push(Seg { v0, v1, pts });

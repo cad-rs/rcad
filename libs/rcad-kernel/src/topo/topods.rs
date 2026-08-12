@@ -853,8 +853,16 @@ impl BRep {
         fn xf_surface(s: &mut Surface3, mat: DAffine3) {
             match s {
                 Surface3::Plane(p) => {
+                    // OCCT gp_Ax3::Transform (gp_Ax3.cxx): all three frame
+                    // axes (XDirection, YDirection, Direction) are
+                    // transformed, not just the normal.  Leaving u_dir/v_dir
+                    // untransformed breaks the plane UV parameterization after
+                    // a rotation, so curve clipping on the plane (MakeCurve)
+                    // rejects the intersection (bfuse_simple A4 rotated box).
                     p.origin = mat.transform_point3(p.origin);
                     p.normal = mat.transform_vector3(p.normal).normalize_or_zero();
+                    p.u_dir = mat.transform_vector3(p.u_dir).normalize_or_zero();
+                    p.v_dir = p.normal.cross(p.u_dir).normalize();
                 }
                 Surface3::Cylinder(c) => {
                     c.origin = mat.transform_point3(c.origin);
