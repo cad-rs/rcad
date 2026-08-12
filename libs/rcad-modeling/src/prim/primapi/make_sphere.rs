@@ -84,7 +84,14 @@ impl MakeSphere {
         // (the north pole at +Z, PMIN=0/PMAX=PI/2 colatitude).  The meridian seam
         // edge (above) lies in the XZ plane (normal -Y), but the surface axis is Z.
         let surf = Surface3::Sphere(SphericalSurface::new(c, self.z_axis, r));
-        let face = t.add_tface(Some(surf), wire, vec![], Some(c + DVec3::Z * r), None, vec![], true);
+        // OCCT BRepPrim_Sphere.cxx L65: Builder().MakeFace(F, S,
+        // Precision::Confusion()) — the primitive face carries the 1e-7
+        // tolerance at creation time (used by IntTools_Context::FClass2d as
+        // Toluv). Set via add_tface_tol so every TShape reference observes it
+        // (face_mut/Arc::make_mut would only update the pool Arc).
+        let face = t.add_tface_tol(
+            Some(surf), wire, vec![], Some(c + DVec3::Z * r), None, vec![], true,
+            rcad_kernel::precision::CONFUSION);
         // OCCT BRepPrim_OneAxis::LateralFace (L399-438): myVMin=-PI/2,
         // myVMax=PI/2, myMeridianOffset=2*PI. The seam is a closed edge of a
         // full revolution — two pcurves at u=2*PI and u=0 (CurveOnClosedSurface,

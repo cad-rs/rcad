@@ -432,6 +432,29 @@ impl BRep {
         internal_vertices: Vec<Shape>,
         natural_restriction: bool,
     ) -> Shape {
+        self.add_tface_tol(
+            surface, outer_wire, inner_wires, sample_point, uv_domain,
+            internal_vertices, natural_restriction, f64::EPSILON)
+    }
+
+    /// add_tface with an explicit face tolerance. OCCT primitives create
+    /// faces via BRepPrim_Builder::MakeFace(F, S, Precision::Confusion())
+    /// (BRepPrim_Builder.cxx L59-62, BRepPrim_Sphere.cxx L65) — the tolerance
+    /// is fixed at creation time, so every TShape reference (the pool, the
+    /// face_by_key cache and the enclosing shell/solid) observes it. Setting it
+    /// later via `face_mut` (Arc::make_mut) would copy-on-write only the pool
+    /// Arc while the shell/solid keep the stale shared Arc.
+    pub fn add_tface_tol(
+        &mut self,
+        surface: Option<Surface3>,
+        outer_wire: Shape,
+        inner_wires: Vec<Shape>,
+        sample_point: Option<DVec3>,
+        uv_domain: Option<[f64; 4]>,
+        internal_vertices: Vec<Shape>,
+        natural_restriction: bool,
+        tolerance: f64,
+    ) -> Shape {
         // OCCT-aligned: identity-based sharing �?same wire structure �?same TShape::Face.
         let mut inners: Vec<usize> = inner_wires.iter().map(|w| w.ptr_id() as usize).collect();
         inners.sort_unstable();
@@ -458,7 +481,7 @@ impl BRep {
             // OCCT BRep_TFace::BRep_TFace() (BRep_TFace.cxx L28-29): myTolerance
             // defaults to RealEpsilon() ≈ 2.2e-16 — a fresh face carries a
             // negligible tolerance until BRep_Builder::UpdateFace sets it.
-            tolerance: f64::EPSILON,
+            tolerance,
             natural_restriction,
         }));
 

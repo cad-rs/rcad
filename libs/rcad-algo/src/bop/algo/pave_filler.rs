@@ -5160,6 +5160,32 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                         _ => (std::collections::HashMap::new(), Vec::new()),
                                     }
                                 };
+                                // OCCT MakeSplitEdge1 (BOPAlgo_PaveFiller_8.cxx
+                                // L336-353): EmptyCopy keeps the CurveOnSurface
+                                // representations, then `BB.Range(E, aF, aP1, aP2)`
+                                // re-trims the pcurve range to the sub-block's
+                                // parameter range [aT1, aT2]. rcad must mirror the
+                                // Range call — otherwise the split degenerated
+                                // edge keeps the source pcurve range (e.g. the
+                                // full [0, 2*PI] of the pole edge) and
+                                // BRep_Tool::Parameter (vertex_param_on_edge)
+                                // returns the wrong endpoint parameter.
+                                let mut src_pcurves = src_pcurves;
+                                for v in src_pcurves.values_mut() {
+                                    v.1 = a_t1;
+                                    v.2 = a_t2;
+                                }
+                                let mut src_representations = src_representations;
+                                for r in src_representations.iter_mut() {
+                                    match r {
+                                        rcad_kernel::topods::CurveRepresentation::CurveOnSurface { range, .. }
+                                        | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { range, .. } => {
+                                            range[0] = a_t1;
+                                            range[1] = a_t2;
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 let ed = rcad_kernel::topods::TEdgeData {
                                     curve: None,
                                     range: [a_t1, a_t2],
