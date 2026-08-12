@@ -1975,6 +1975,7 @@ impl BRep {
                                                 edges.push(crate::topo::topology::WireEdge {
                                                     idx: esr.index,
                                                     forward: true,
+                                                    location: esr.location,
                                                 });
                                             }
                                         }
@@ -1992,6 +1993,7 @@ impl BRep {
                                                     edges.push(crate::topo::topology::WireEdge {
                                                         idx: esr.index,
                                                         forward: true,
+                                                        location: esr.location,
                                                     });
                                                 }
                                             }

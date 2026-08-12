@@ -569,6 +569,7 @@ impl PaveFiller {
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
     pub fn report(&self) -> &Report { &self.my_report }
     pub fn ds(&self) -> &DS { &self.ds }
+    pub fn ds_mut(&mut self) -> &mut DS { &mut self.ds }
 
     /// If stop_after matches stage, return true (caller should return).
     fn check_stop(&self, stage: &'static str) -> bool {
@@ -1079,7 +1080,7 @@ impl PaveFiller {
         let ee_debug = std::env::var("RCAD_EE_DEBUG").is_ok();
         for &(n_e1, n_e2) in &ee_pairs {
             if ee_debug {
-                let tn = |c: Option<&rcad_kernel::geom::Curve3>| -> &'static str {
+                let tn = |c: Option<rcad_kernel::geom::Curve3>| -> &'static str {
                     match c { Some(rcad_kernel::geom::Curve3::Line(_)) => "Line",
                         Some(rcad_kernel::geom::Curve3::Circle(_)) => "Circle",
                         Some(rcad_kernel::geom::Curve3::Ellipse(_)) => "Ellipse",
@@ -1314,8 +1315,8 @@ impl PaveFiller {
                                 // OCCT L454-466: analytical tolerance boost for Line/Circle
                                 let mut a_tol_vnew = vnew_tol;
                                 {
-                                    let c1 = self.ds.edge_curve(n_e1).cloned();
-                                    let c2 = self.ds.edge_curve(n_e2).cloned();
+                                    let c1 = self.ds.edge_curve(n_e1);
+                                    let c2 = self.ds.edge_curve(n_e2);
                                     let b_analytical = match (&c1, &c2) {
                                         (Some(rcad_kernel::geom::Curve3::Line(_)), Some(rcad_kernel::geom::Curve3::Circle(_)))
                                         | (Some(rcad_kernel::geom::Curve3::Circle(_)), Some(rcad_kernel::geom::Curve3::Line(_))) => true,
@@ -3651,7 +3652,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 };
                 // OCCT L1131-1139: BRepAdaptor_Curve aBAC1(aE1); aBAC1.D1(midpoint, aPm, aVTgt1);
                 //   if (aVTgt1.SquareMagnitude() < gp::Resolution()) continue;
-                let c1 = self.ds.edge_curve(n_e1).cloned();
+                let c1 = self.ds.edge_curve(n_e1);
                 let v_tgt1 = c1.as_ref().map(|c| {
                     let mid_t = (a_t11 + a_t12) * 0.5;
                     let dt = 1e-7;
@@ -3706,7 +3707,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         pbr.range()
                     };
                     let b_use_add_tol = {
-                        let c2 = self.ds.edge_curve(n_e2).cloned();
+                        let c2 = self.ds.edge_curve(n_e2);
                         let mut use_tol = true;
                         if let Some(c) = c2 {
                             let mid_t2 = (a_t21 + a_t22) * 0.5;
@@ -3764,8 +3765,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             let pb1 = pair.a_pb1.clone();
             let pb2 = pair.a_pb2.clone();
 
-            let c1 = self.ds.edge_curve(pair.n_e1).cloned();
-            let c2 = self.ds.edge_curve(pair.n_e2).cloned();
+            let c1 = self.ds.edge_curve(pair.n_e1);
+            let c2 = self.ds.edge_curve(pair.n_e2);
             let (c1, c2) = match (c1, c2) {
                 (Some(c1), Some(c2)) => (c1, c2),
                 _ => continue,
@@ -4772,7 +4773,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT L248: BuildPCurveForEdgeOnFace — projection.
         if let Some(curve) = self.ds.edge_curve(n_e) {
             let range = self.ds.edge_range(n_e);
-            if let Some(pc) = Self::pcurve_2d(curve, surf, range) {
+            if let Some(pc) = Self::pcurve_2d(&curve, surf, range) {
                 self.ds.mutate_shape_data(n_e, |ts| {
                     if let rcad_kernel::topods::TShape::Edge(ed) = ts {
                         ed.pcurves.insert(fkey, (pc, range[0], range[1]));
@@ -4895,7 +4896,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         for i in 0..=n {
             let t = dst_range[0] + i as f64 * (dst_range[1] - dst_range[0]) / n as f64;
             let p = dst_curve.point_at(t);
-            let sp = closest_point_on_curve_range(src_curve, p, src_first, src_last, 64);
+            let sp = closest_point_on_curve_range(&src_curve, p, src_first, src_last, 64);
             // OCCT L68-79: the copied pcurve is reversed when IsSplitToReverse.
             let s = if to_reverse {
                 src_first + src_last - sp.param
@@ -5357,3 +5358,4 @@ fn translate_surface(s: &Surface3, vec: DVec3) -> Surface3 {
     let loc = DAffine3::from_translation(vec);
     rcad_kernel::geom::transform_surface(s, &loc)
 }
+

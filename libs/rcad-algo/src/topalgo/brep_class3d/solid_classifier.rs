@@ -50,6 +50,20 @@ impl SolidClassifier {
         clsf
     }
 
+    /// Constructor from a Shape with the merged TopLoc_Location table —
+    /// located sub-shapes are transformed when collecting the explorer
+    /// geometry (used by BuildSolid's shell classification for inputs built
+    /// with OCCT MakePrism-style Location folding).
+    pub fn from_shape_with_locations(s: &Shape, locations: &[glam::DAffine3]) -> Self {
+        let clsf = SolidClassifier {
+            my_state: 0,
+            a_solid_loaded: true,
+            explorer: SolidExplorer::from_shape_with_locations(s, locations),
+            is_a_hole_in_space: false,
+        };
+        clsf
+    }
+
     /// Constructor to classify the point P with tolerance Tol on the solid S.
     pub fn from_shape_point(s: &Shape, p: DVec3, tol: f64) -> Self {
         let mut clsf = SolidClassifier {

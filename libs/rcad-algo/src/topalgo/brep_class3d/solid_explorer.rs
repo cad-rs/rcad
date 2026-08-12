@@ -61,6 +61,9 @@ pub struct SolidExplorer {
     // solid — a point within their tolerance is ON the boundary.
     vertices: Vec<DVec3>,
     edges: Vec<Option<Curve3>>,
+    /// Merged TopLoc_Location table (index 0 = identity); empty when the
+    /// explorer was built without location support.
+    locations: Vec<glam::DAffine3>,
 }
 
 impl SolidExplorer {
@@ -72,6 +75,7 @@ impl SolidExplorer {
             face_surfaces: Vec::new(),
             vertices: Vec::new(),
             edges: Vec::new(),
+            locations: vec![glam::DAffine3::IDENTITY],
         }
     }
 
@@ -122,19 +126,41 @@ impl SolidExplorer {
                     }
                 }
                 TShape::Vertex(vd) => {
-                    self.vertices.push(vd.point);
+                    let loc = self
+                        .locations
+                        .get(sh.location as usize)
+                        .copied()
+                        .unwrap_or(glam::DAffine3::IDENTITY);
+                    self.vertices.push(loc.transform_point3(vd.point));
                 }
                 TShape::Edge(ed) => {
-                    self.edges.push(ed.curve.clone());
+                    let loc = self
+                        .locations
+                        .get(sh.location as usize)
+                        .copied()
+                        .unwrap_or(glam::DAffine3::IDENTITY);
+                    self.edges.push(ed.curve.as_ref().map(|c| rcad_kernel::geom::transform_curve(c, &loc)));
                 }
                 TShape::Face(fd) => {
-                    let uv_bounds = fd.surface.as_ref().and_then(|surf| match surf {
-                        Surface3::Plane(pl) => compute_plane_uv_bounds(&sh, pl),
+                    let loc = self
+                        .locations
+                        .get(sh.location as usize)
+                        .copied()
+                        .unwrap_or(glam::DAffine3::IDENTITY);
+                    let surface = fd.surface.as_ref().map(|s| {
+                        if loc == glam::DAffine3::IDENTITY {
+                            s.clone()
+                        } else {
+                            rcad_kernel::geom::transform_surface(s, &loc)
+                        }
+                    });
+                    let uv_bounds = surface.as_ref().and_then(|surf| match surf {
+                        Surface3::Plane(pl) => compute_plane_uv_bounds(&sh, pl, &self.locations),
                         _ => None,
                     });
-                    let uv_polys = fd.surface.as_ref().map(|surf| build_uv_polys(&sh, surf));
+                    let uv_polys = surface.as_ref().map(|surf| build_uv_polys(&sh, surf, &self.locations));
                     let boundary = collect_boundary_pcurves(&sh);
-                    if let Some(surf) = fd.surface.clone() {
+                    if let Some(surf) = surface {
                         self.face_surfaces.push(ExplorerFace {
                             surf,
                             ori: sh.orientation,
@@ -158,6 +184,28 @@ impl SolidExplorer {
             face_surfaces: Vec::new(),
             vertices: Vec::new(),
             edges: Vec::new(),
+            locations: vec![glam::DAffine3::IDENTITY],
+        };
+        exp.init_shape(s);
+        exp
+    }
+
+    /// Constructor from Shape with the merged TopLoc_Location table — the
+    /// located sub-shapes (e.g. OCCT MakePrism folded TShape + Location) are
+    /// transformed when collecting vertices/edges/surfaces.
+    pub fn from_shape_with_locations(s: &Shape, locations: &[glam::DAffine3]) -> Self {
+        let mut exp = SolidExplorer {
+            ds: None,
+            shape: Some(s.clone()),
+            face_indices: Vec::new(),
+            face_surfaces: Vec::new(),
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            locations: if locations.is_empty() {
+                vec![glam::DAffine3::IDENTITY]
+            } else {
+                locations.to_vec()
+            },
         };
         exp.init_shape(s);
         exp
@@ -434,7 +482,7 @@ impl SolidExplorer {
 /// OCCT BRepTopAdaptor_TopolTool classifies the intersection UV against the
 /// face's 2D domain; rcad rebuilds it from the wire vertices (same approach as
 /// builder::point_in_face_image, IntTools_FClass2d::Init samples the pcurves).
-fn build_uv_polys(face: &Shape, surf: &Surface3) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {    let build_poly = |w: &Shape| -> Vec<DVec2> {
+fn build_uv_polys(face: &Shape, surf: &Surface3, locations: &[glam::DAffine3]) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {    let build_poly = |w: &Shape| -> Vec<DVec2> {
         let mut poly: Vec<DVec2> = Vec::new();
         if let TShape::Wire(wd) = &*w.data {
             for e in &wd.edges {
@@ -553,7 +601,7 @@ fn uv_in_face_domain(f: &ExplorerFace, uv: DVec2) -> bool {
 
 /// Compute the UV bounding box of a planar face from its wire vertices.
 /// OCCT: the face's UV domain (natural restriction or trimmed by wires).
-fn compute_plane_uv_bounds(face: &Shape, pl: &PlaneGeom) -> Option<[f64; 4]> {
+fn compute_plane_uv_bounds(face: &Shape, pl: &PlaneGeom, locations: &[glam::DAffine3]) -> Option<[f64; 4]> {
     let mut umin = f64::MAX;
     let mut umax = f64::MIN;
     let mut vmin = f64::MAX;

@@ -168,6 +168,7 @@ pub fn sew_shells(breps: &[topods::BRep], tolerance: f64) -> SewingResult {
                                 .map(|we| WireEdge {
                                     idx: ts_to_flat_e[we.index],
                                     forward: we.orientation == Orientation::Forward,
+                                    location: we.location,
                                 })
                                 .collect(),
                         }

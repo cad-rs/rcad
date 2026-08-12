@@ -24,21 +24,36 @@ pub struct WireEdge {
     pub idx: usize,
     /// Traversal direction: `true` = forward (start nd), `false` = reversed.
     pub forward: bool,
+    /// TopLoc_Location index (into `BRep.locations`; 0 = identity). Two edges
+    /// sharing the same TShape (`idx`) but different locations are distinct
+    /// topological edges — OCCT BRepSweep_Trsf folds the extruded copy of a
+    /// profile edge into the source TShape + a Location translation.
+    #[serde(default)]
+    pub location: u32,
 }
 
 impl WireEdge {
     pub const fn new(idx: usize, forward: bool) -> Self {
-        Self { idx, forward }
+        Self {
+            idx,
+            forward,
+            location: 0,
+        }
     }
     /// Shorthand: forward reference.
     pub const fn fwd(idx: usize) -> Self {
-        Self { idx, forward: true }
+        Self {
+            idx,
+            forward: true,
+            location: 0,
+        }
     }
     /// Shorthand: reversed reference.
     pub const fn rev(idx: usize) -> Self {
         Self {
             idx,
             forward: false,
+            location: 0,
         }
     }
 }

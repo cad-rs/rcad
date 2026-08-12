@@ -213,13 +213,13 @@ mod tests {
         assert!(
             reps.iter().any(|r| matches!(
                 r,
-                CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == lat.index
+                CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == (lat.ptr_id(), lat.location)
             )),
             "seam must carry a CurveOnClosedSurface representation on the lateral face"
         );
-        let pc1 = ed.pcurves.get(&lat.index).expect("pcurve1 at lateral face key");
+        let pc1 = ed.pcurves.get(&(lat.ptr_id(), lat.location)).expect("pcurve1 at lateral face key");
         let pc2 = ed.pcurves
-            .get(&(lat.index + t.nb_faces()))
+            .get(&(lat.ptr_id(), lat.location))
             .expect("pcurve2 at shifted key");
         let (Curve2d::Line(l1), Curve2d::Line(l2)) = (&pc1.0, &pc2.0) else {
             panic!("seam pcurves must be 2D lines");

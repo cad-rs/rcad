@@ -309,7 +309,7 @@ impl<'a> BuilderSolid<'a> {
             // OCCT L422-427: IsGrowthShell then IsHole.
             let mut b_is_growth = Self::is_growth_shell(loop_faces, &a_mhf);
             if !b_is_growth {
-                b_is_growth = !Self::is_hole(loop_faces);
+                b_is_growth = !Self::is_hole(loop_faces, &self.ds.locations);
             }
             if b_is_growth {
                 // OCCT L430-435: MakeSolid + Add(aSolid, aShell).
@@ -438,14 +438,14 @@ impl<'a> BuilderSolid<'a> {
     /// OCCT IsHole (BuilderSolid.cxx L823-831): the shell is classified as a
     /// solid via BRepClass3d_SolidClassifier::PerformInfinitePoint; the point
     /// at infinity is IN => the shell is a hole in space.
-    fn is_hole(faces: &[Shape]) -> bool {
+    fn is_hole(faces: &[Shape], locations: &[glam::DAffine3]) -> bool {
         let shell_tshape = TShape::Shell(TShellData {
             my_shapes: vec![],
             flags: tshape_flags::DEFAULT | tshape_flags::CLOSED,
             faces: faces.to_vec(),
         });
         let shell = Shape::new(Arc::new(shell_tshape), 0, Orientation::Forward);
-        let mut clsf = SolidClassifier::from_shape(&shell);
+        let mut clsf = SolidClassifier::from_shape_with_locations(&shell, locations);
         clsf.perform_infinite_point(f64::MIN_POSITIVE); // OCCT ::RealSmall() = DBL_MIN
         clsf.state() == 3 // TopAbs_IN
     }
@@ -814,3 +814,4 @@ pub(crate) fn edge_closed_on_face(a_e: &Shape, a_f: &Shape) -> bool {
         .iter()
         .any(|r| matches!(r, topods::CurveRepresentation::CurveOnClosedSurface { .. }))
 }
+

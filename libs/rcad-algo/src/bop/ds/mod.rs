@@ -47,6 +47,7 @@ use rcad_kernel::{is_negative_infinite_value, is_positive_infinite_value};
 use crate::bop::ds::face_info::FaceInfo;
 use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::ds::common_block::CommonBlock;
+use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 
 /// Identifies which input shape a sub-shape came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -629,6 +630,11 @@ pub struct DS {
     /// `myImages` by an argument shape must translate the original ptr_id
     /// through this map first.
     pub argument_remap: HashMap<u64, u64>,
+    /// Merged TopLoc_Location table (index 0 = identity). Input shapes carry a
+    /// `location` index into their own BRep's table; the entry points
+    /// (`brep_top_shapes_with_locations`) merge all input tables here and
+    /// remap every shape's location index to this merged table.
+    pub locations: Vec<glam::DAffine3>,
 }
 
 impl DS {
@@ -649,7 +655,22 @@ impl DS {
             intersection_curves: Vec::new(),
             clone_arguments: true,
             argument_remap: HashMap::new(),
+            locations: vec![glam::DAffine3::IDENTITY],
         }
+    }
+
+    /// Location transform by index (0 = identity).
+    pub fn get_location(&self, idx: u32) -> glam::DAffine3 {
+        self.locations
+            .get(idx as usize)
+            .copied()
+            .unwrap_or(glam::DAffine3::IDENTITY)
+    }
+
+    /// Set the merged location table (entry points merge all input BRep
+    /// tables here and remap every input shape's location index to it).
+    pub fn set_locations(&mut self, locs: Vec<glam::DAffine3>) {
+        self.locations = locs;
     }
 
     pub fn clear(&mut self) {
@@ -1159,9 +1180,39 @@ impl DS {
         };
         let v1_ptr = self.shapes[v1_ds_idx].shape.ptr_id();
         let v2_ptr = self.shapes[v2_ds_idx].shape.ptr_id();
-        // OCCT: BRep_Tool::Parameter reads stored param (set during edge construction).
-        (ed.vertex_params.get(&v1_ptr).copied().unwrap_or(0.0),
-         ed.vertex_params.get(&v2_ptr).copied().unwrap_or(0.0))
+        // OCCT: BRep_Tool::Parameter reads stored param (set during edge
+        // construction). rcad's add_tedge stores vertex_params keyed by the
+        // vertex TShape pointer only — a located edge whose first/last share
+        // one TShape (OCCT MakePrism folds the swept endpoint into the source
+        // TShape + Location) ends up with a single entry whose value is
+        // ambiguous. Fall back to the geometric position when the two stored
+        // lookups collide (same TShape) or miss (SD-replaced vertex).
+        // OCCT: BRep_Tool::Parameter reads stored param (set during edge
+        // construction). rcad's add_tedge stores vertex_params keyed by the
+        // vertex TShape pointer only — a located edge whose first/last share
+        // one TShape (OCCT MakePrism folds the swept endpoint into the source
+        // TShape + Location) ends up with a single entry whose value is
+        // ambiguous. Fall back to the geometric position when the two stored
+        // lookups collide (same TShape) or miss (SD-replaced vertex).
+        let p1 = ed.vertex_params.get(&v1_ptr).copied();
+        let p2 = ed.vertex_params.get(&v2_ptr).copied();
+        let need_fallback = v1_ptr == v2_ptr || p1.is_none() || p2.is_none();
+        if !need_fallback {
+            return (p1.unwrap(), p2.unwrap());
+        }
+        // Fallback: projection of the vertex's (located) position onto the
+        // edge curve (OCCT BRep_Tool::Parameter on a located vertex).
+        if let Some(c) = self.edge_curve(edge_idx) {
+            let r = ed.range;
+            let t_of = |pt: DVec3| -> f64 {
+                closest_point_on_curve_range(&c, pt, r[0], r[1], 64).param
+            };
+            return (
+                t_of(self.vertex_point_by_idx(v1_ds_idx)),
+                t_of(self.vertex_point_by_idx(v2_ds_idx)),
+            );
+        }
+        (p1.unwrap_or(0.0), p2.unwrap_or(0.0))
     }
 
     // ================================================================    // Common block map
@@ -1952,6 +2003,19 @@ impl DS {
                     (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY))
                 };
 
+            // rcad: apply the edge's TopLoc_Location to the curve box — OCCT's
+            // BRepBndLib::Add(aE) transforms the curve by the edge Location
+            // before bounding (BRep_Tool::Curve returns the located curve).
+            if an_edge_bx_min.x.is_finite() {
+                let edge_loc = self.get_location(self.shapes[an_edge_index].shape.location);
+                if edge_loc != glam::DAffine3::IDENTITY {
+                    let p1 = edge_loc.transform_point3(an_edge_bx_min);
+                    let p2 = edge_loc.transform_point3(an_edge_bx_max);
+                    an_edge_bx_min = p1.min(p2);
+                    an_edge_bx_max = p1.max(p2);
+                }
+            }
+
             // OCCT L1681-1686: anEdgeBoundBox.Add(aVertexInfo.Box())
             // OCCT Add(Box) adds the full box INCLUDING the vertex tolerance gap.
             let sub_shapes = self.shapes[an_edge_index].sub_shapes.clone();
@@ -1995,8 +2059,10 @@ impl DS {
 
             // OCCT L1715-1717: BRepBndLib::Add(aFace, aFaceBoundBox)
             let face_tolerance = shape.as_face().map_or(0.0, |fd| fd.tolerance);
+            let face_loc = self.get_location(shape.location);
             let (mut mn, mut mx) =
                 if let Some(surface) = shape.as_face().and_then(|fd| fd.surface.as_ref()) {
+                    let surface = rcad_kernel::geom::transform_surface(surface, &face_loc);
                     let mut verts: Vec<topology::Vertex> = Vec::new();
                     for &wi in &self.shapes[a_face_index].sub_shapes {
                         if wi >= self.nb_shapes() { continue; }
@@ -2013,7 +2079,7 @@ impl DS {
                             }
                         }
                     }
-                    if let Some([cmn, cmx]) = surface_bounding_box(surface, &verts) {
+                    if let Some([cmn, cmx]) = surface_bounding_box(&surface, &verts) {
                         (cmn - DVec3::splat(face_tolerance),
                          cmx + DVec3::splat(face_tolerance))
                     } else {
@@ -2174,16 +2240,23 @@ impl DS {
         s.as_vertex().map_or(0.0, |vd| vd.tolerance)
     }
     pub fn vertex_point_on_shape(&self, s: &Shape) -> Option<DVec3> {
-        s.as_vertex().map(|vd| vd.point)
+        let loc = self.get_location(s.location);
+        s.as_vertex().map(|vd| loc.transform_point3(vd.point))
     }
 
     // ================================================================    // BRep_Tool-style query helpers
     // ================================================================
     /// Edge curve by shape index.
-    pub fn edge_curve(&self, i: usize) -> Option<&rcad_kernel::geom::Curve3> {
+    pub fn edge_curve(&self, i: usize) -> Option<rcad_kernel::geom::Curve3> {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Edge { return None; }
-            si.shape.as_edge().and_then(|e| e.curve.as_ref())
+            let loc = self.get_location(si.shape.location);
+            let c = si.shape.as_edge().and_then(|e| e.curve.clone())?;
+            if loc == glam::DAffine3::IDENTITY {
+                Some(c)
+            } else {
+                Some(rcad_kernel::geom::transform_curve(&c, &loc))
+            }
         })
     }
 
@@ -2220,7 +2293,13 @@ impl DS {
     pub fn face_surface(&self, i: usize) -> Option<rcad_kernel::geom::Surface3> {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Face { return None; }
-            si.shape.as_face().and_then(|f| f.surface.clone())
+            let loc = self.get_location(si.shape.location);
+            let s = si.shape.as_face().and_then(|f| f.surface.clone())?;
+            if loc == glam::DAffine3::IDENTITY {
+                Some(s)
+            } else {
+                Some(rcad_kernel::geom::transform_surface(&s, &loc))
+            }
         })
     }
 
@@ -2944,6 +3023,7 @@ impl crate::topalgo::shape_source::ShapeSource for DS {
 }
 
 impl Default for DS { fn default() -> Self { Self::new() } }
+
 
 
 

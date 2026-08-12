@@ -3,6 +3,9 @@ use crate::bop::algo::builder::{Builder, BooleanError, BooleanOpType};
 use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::DS;
 use rcad_kernel::core::message::{NoopProgress, ProgressScope};
+use rcad_kernel::topods::{TEdgeData, TFaceData, TShape, TShellData, TSolidData, TWireData};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 // ── BRepAlgoAPI_Algo ─────────────────────────────────────────────────────
 // OCCT: IsDone(), Error(), Warn() — pure interface
@@ -30,6 +33,8 @@ impl Algo for BuilderShape {
 pub struct BuilderAlgo {
     pub bs: BuilderShape,
     pub arguments: Vec<Shape>,
+    /// Merged TopLoc_Location table (index 0 = identity) for `arguments`.
+    pub locations: Vec<glam::DAffine3>,
     pub run_parallel: bool,
     pub fuzzy_value: f64,
     pub non_destructive: bool,
@@ -42,6 +47,7 @@ impl BuilderAlgo {
         Self {
             bs: BuilderShape { result: None, err: None },
             arguments: Vec::new(),
+            locations: vec![glam::DAffine3::IDENTITY],
             run_parallel: false, fuzzy_value: 0.0,
             non_destructive: false, glue: 0, check_inverted: true, use_bvh: false,
         }
@@ -226,6 +232,177 @@ fn brep_top_shapes(brep: &rcad_kernel::BRep) -> Vec<Shape> {
         .collect()
 }
 
+/// Recursively remap every `Shape.location` index through `map` (index 0,
+/// identity, is preserved). Shared TShapes are rebuilt once per TShape pointer
+/// via the cache, mirroring `clone_arguments_private`.
+fn remap_location_tree(
+    sr: &Shape,
+    map: &HashMap<u32, u32>,
+    cache: &mut HashMap<u64, Arc<TShape>>,
+) -> Shape {
+    let new_loc = if sr.location != 0 {
+        map.get(&sr.location).copied().unwrap_or(sr.location)
+    } else {
+        0
+    };
+    let ptr = sr.ptr_id();
+    if let Some(ts) = cache.get(&ptr) {
+        return Shape {
+            data: ts.clone(),
+            index: sr.index,
+            location: new_loc,
+            orientation: sr.orientation,
+        };
+    }
+    let new_ts = match &*sr.data {
+        TShape::Vertex(vd) => TShape::Vertex(vd.clone()),
+        TShape::Edge(ed) => {
+            let first = remap_location_tree(&ed.first, map, cache);
+            let last = remap_location_tree(&ed.last, map, cache);
+            let remap_ptr = |k: u64| -> u64 {
+                cache.get(&k).map(|a| std::sync::Arc::as_ptr(a) as u64).unwrap_or(k)
+            };
+            let pcurves = ed
+                .pcurves
+                .iter()
+                .map(|(&(fptr, floc), v)| ((remap_ptr(fptr), floc), v.clone()))
+                .collect();
+            let representations = ed
+                .representations
+                .iter()
+                .map(|r| match r {
+                    rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } => {
+                        rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                            face: (remap_ptr(face.0), face.1),
+                            pcurve: pcurve.clone(),
+                            range: *range,
+                        }
+                    }
+                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                        face,
+                        pcurve1,
+                        pcurve2,
+                        range,
+                    } => rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                        face: (remap_ptr(face.0), face.1),
+                        pcurve1: pcurve1.clone(),
+                        pcurve2: pcurve2.clone(),
+                        range: *range,
+                    },
+                    other => other.clone(),
+                })
+                .collect();
+            let vertex_params = ed
+                .vertex_params
+                .iter()
+                .map(|(&k, &v)| (remap_ptr(k), v))
+                .collect();
+            TShape::Edge(TEdgeData {
+                first,
+                last,
+                pcurves,
+                representations,
+                vertex_params,
+                ..ed.clone()
+            })
+        }
+        TShape::Wire(wd) => TShape::Wire(TWireData {
+            edges: wd
+                .edges
+                .iter()
+                .map(|e| remap_location_tree(e, map, cache))
+                .collect(),
+            ..wd.clone()
+        }),
+        TShape::Face(fd) => TShape::Face(TFaceData {
+            outer_wire: remap_location_tree(&fd.outer_wire, map, cache),
+            inner_wires: fd
+                .inner_wires
+                .iter()
+                .map(|w| remap_location_tree(w, map, cache))
+                .collect(),
+            internal_vertices: fd
+                .internal_vertices
+                .iter()
+                .map(|v| remap_location_tree(v, map, cache))
+                .collect(),
+            ..fd.clone()
+        }),
+        TShape::Shell(sd) => TShape::Shell(TShellData {
+            faces: sd
+                .faces
+                .iter()
+                .map(|f| remap_location_tree(f, map, cache))
+                .collect(),
+            ..sd.clone()
+        }),
+        TShape::Solid(sd) => TShape::Solid(TSolidData {
+            shells: sd
+                .shells
+                .iter()
+                .map(|s| remap_location_tree(s, map, cache))
+                .collect(),
+            internal_vertices: sd
+                .internal_vertices
+                .iter()
+                .map(|v| remap_location_tree(v, map, cache))
+                .collect(),
+            internal_edges: sd
+                .internal_edges
+                .iter()
+                .map(|e| remap_location_tree(e, map, cache))
+                .collect(),
+            ..sd.clone()
+        }),
+        TShape::CompSolid(cd) => TShape::CompSolid(
+            cd.iter()
+                .map(|s| remap_location_tree(s, map, cache))
+                .collect(),
+        ),
+        TShape::Compound(cd) => TShape::Compound(
+            cd.iter()
+                .map(|s| remap_location_tree(s, map, cache))
+                .collect(),
+        ),
+    };
+    let new_ts = Arc::new(new_ts);
+    cache.insert(ptr, new_ts.clone());
+    Shape {
+        data: new_ts,
+        index: sr.index,
+        location: new_loc,
+        orientation: sr.orientation,
+    }
+}
+
+/// `brep_top_shapes` + merge this BRep's location table into `global_locs`
+/// (appending each entry and recording old-index → new-index) and remap every
+/// returned shape's `location` to the merged table. Index 0 (identity) is
+/// shared; BRep location tables start at index 1.
+fn brep_top_shapes_with_locations(
+    brep: &rcad_kernel::BRep,
+    global_locs: &mut Vec<glam::DAffine3>,
+) -> Vec<Shape> {
+    let mut map: HashMap<u32, u32> = HashMap::new();
+    for (i, loc) in brep.locations.iter().enumerate() {
+        let old = (i + 1) as u32; // BRep table index (0 = identity)
+        let new = global_locs.len() as u32;
+        global_locs.push(*loc);
+        map.insert(old, new);
+    }
+    if map.is_empty() {
+        // No located sub-shapes: keep the original TShape graph untouched
+        // (deep-copying would remap every TShape pointer and break the
+        // vertex_params/pcurve identity keys for no benefit).
+        return brep_top_shapes(brep);
+    }
+    let mut cache: HashMap<u64, Arc<TShape>> = HashMap::new();
+    brep_top_shapes(brep)
+        .into_iter()
+        .map(|s| remap_location_tree(&s, &map, &mut cache))
+        .collect()
+}
+
 /// BRep-form build: run the full PaveFiller + Builder pipeline and return the
 /// whole result `BRep` pool (not just the root shape).
 fn run_build_brep(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<rcad_kernel::BRep, BooleanError> {
@@ -234,6 +411,7 @@ fn run_build_brep(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<rcad_ker
     }
     let mut filler = PaveFiller::new();
     filler.set_arguments(algo.arguments.clone());
+    filler.ds_mut().set_locations(algo.locations.clone());
     filler.set_fuzzy_value(algo.fuzzy_value);
     let a_prog = NoopProgress;
     let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
@@ -248,21 +426,33 @@ fn run_build_brep(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<rcad_ker
 /// OCCT shortcut: `BRepAlgoAPI_Fuse(a, b).Shape()`.
 pub fn fuse(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
-    op.set_arguments([brep_top_shapes(a), brep_top_shapes(b)].concat());
+    let mut global_locs = vec![glam::DAffine3::IDENTITY];
+    let mut shapes = brep_top_shapes_with_locations(a, &mut global_locs);
+    shapes.extend(brep_top_shapes_with_locations(b, &mut global_locs));
+    op.arguments = shapes;
+    op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Union)
 }
 
 /// OCCT shortcut: `BRepAlgoAPI_Common(a, b).Shape()`.
 pub fn common(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
-    op.set_arguments([brep_top_shapes(a), brep_top_shapes(b)].concat());
+    let mut global_locs = vec![glam::DAffine3::IDENTITY];
+    let mut shapes = brep_top_shapes_with_locations(a, &mut global_locs);
+    shapes.extend(brep_top_shapes_with_locations(b, &mut global_locs));
+    op.arguments = shapes;
+    op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Intersection)
 }
 
 /// OCCT shortcut: `BRepAlgoAPI_Cut(a, b).Shape()`.
 pub fn cut(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
-    op.set_arguments([brep_top_shapes(a), brep_top_shapes(b)].concat());
+    let mut global_locs = vec![glam::DAffine3::IDENTITY];
+    let mut shapes = brep_top_shapes_with_locations(a, &mut global_locs);
+    shapes.extend(brep_top_shapes_with_locations(b, &mut global_locs));
+    op.arguments = shapes;
+    op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Cut)
 }
 
