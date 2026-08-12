@@ -80,12 +80,21 @@ impl Default for GlueEnum {
 // Includes: COMMON, FUSE, CUT, CUT21, SECTION, UNKNOWN.
 
 /// OCCT BOPAlgo_Operation — type of boolean operation.
+/// OCCT BOPAlgo_Operation.hxx: COMMON, FUSE, CUT, CUT21, SECTION, UNKNOWN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanOpType {
+    /// Boolean union (OCCT BOPAlgo_FUSE).
     Union,
+    /// Boolean intersection (OCCT BOPAlgo_COMMON).
     Intersection,
+    /// Boolean subtraction a - b (OCCT BOPAlgo_CUT).
     Cut,
+    /// Boolean subtraction b - a (OCCT BOPAlgo_CUT21).
+    Cut21,
+    /// Boolean section / intersection curves (OCCT BOPAlgo_SECTION).
     Section,
+    /// Undefined operation (OCCT BOPAlgo_UNKNOWN).
+    Unknown,
 }
 
 // OCCT BOPAlgo_Alerts — diagnostic alert types for Boolean Operations.
