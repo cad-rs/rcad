@@ -932,7 +932,19 @@ impl BRep {
         }
 
         for ts in &mut self.tshapes {
-            match &mut *Arc::make_mut(ts) {
+            // Shared-handle semantics: every Shape referencing this TShape
+            // (edge first/last, wire edges, face wires) must observe the
+            // transform.  Arc::make_mut would clone the Arc when shared,
+            // leaving the other references on the untransformed geometry —
+            // rotating the sphere prim lost the pole-vertex transform because
+            // the edge TShapes still pointed at the old Arc (bfuse_simple A2).
+            // OCCT TopoDS_TShape is a shared handle, so mutate in place like
+            // clone_arguments_private does.
+            // SAFETY: single-threaded; no other &TShape for this Arc is
+            // alive inside the loop.
+            let ptr = Arc::as_ptr(ts) as *mut TShape;
+            let ts = unsafe { &mut *ptr };
+            match ts {
                 TShape::Vertex(vd) => {
                     vd.point = mat.transform_point3(vd.point);
                 }
@@ -949,6 +961,8 @@ impl BRep {
                 _ => {}
             }
         }
+        // Vertex positions changed; the position-keyed identity cache is stale.
+        self.vert_by_pos.clear();
     }
 
     /// OCCT TopoDS_TShape::EmptyCopy �?create a new TShape of the same type

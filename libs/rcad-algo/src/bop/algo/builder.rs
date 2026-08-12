@@ -1958,16 +1958,6 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let a_f = self.brep_sr(i);
-            if a_f.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, rcad_kernel::geom::Surface3::Sphere(_))) {
-                if let rcad_kernel::topods::TShape::Face(fd) = &*a_f.data {
-                    if let rcad_kernel::topods::TShape::Wire(wd) = &*fd.outer_wire.data {
-                        for (k, esr) in wd.edges.iter().enumerate() {
-                            let (vi, vj) = esr.as_edge().map(|ed| (ed.first.index, ed.last.index)).unwrap_or((usize::MAX, usize::MAX));
-                            let (pi, pj) = (self.ds.vertex_point_by_idx(vi), self.ds.vertex_point_by_idx(vj));
-                        }
-                    }
-                }
-            }
             let a_fi = self.ds.face_info(i).clone();
             // OCCT L286-287: AloneVertices(i, aLIAV).
             let a_liav = self.alone_vertices(i);
