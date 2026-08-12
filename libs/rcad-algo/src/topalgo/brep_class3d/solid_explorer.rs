@@ -7,11 +7,12 @@ use crate::bop::int_tools::bean_face_intersector::{
     BeanFaceIntersector, BRepAdaptorCurve, BRepAdaptorSurface,
 };
 use crate::topalgo::shape_source::ShapeSource;
-use rcad_kernel::geom::{Curve3, Plane as PlaneGeom, Surface3, SurfaceEval};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Plane as PlaneGeom, Surface3, SurfaceEval};
 use rcad_kernel::precision::CONFUSION;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, TShape};
-use glam::DVec3;
+use glam::{DVec2, DVec3};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 /// A face of the explored solid, with its surface, orientation, and — for
@@ -23,6 +24,16 @@ pub(crate) struct ExplorerFace {
     pub(crate) surf: Surface3,
     pub(crate) ori: Orientation,
     pub(crate) uv_bounds: Option<[f64; 4]>, // [umin, umax, vmin, vmax]
+    // 2D domain of the face for the ray-cast UV check (outer polygon +
+    // holes), built by projecting the wire vertices onto the surface
+    // (OCCT BRepTopAdaptor_TopolTool::Classify — IntCurvesFace_Intersector
+    // L256-286 accepts only intersections whose UV is IN/ON the face).
+    pub(crate) uv_polys: Option<(Vec<DVec2>, Vec<Vec<DVec2>>)>,
+    // Boundary edge pcurves (2D curve, parameter range, edge orientation in
+    // the FORWARD-ized face) for the FindAPointInTheFace probing
+    // (BRepClass3d_SolidExplorer.cxx L74-167): the probe moves from a
+    // boundary-edge point into the face interior along the edge normal.
+    pub(crate) boundary: Vec<(Curve2d, [f64; 2], Orientation)>,
 }
 
 impl Clone for ExplorerFace {
@@ -31,6 +42,8 @@ impl Clone for ExplorerFace {
             surf: self.surf.clone(),
             ori: self.ori,
             uv_bounds: self.uv_bounds,
+            uv_polys: self.uv_polys.clone(),
+            boundary: self.boundary.clone(),
         }
     }
 }
@@ -73,33 +86,39 @@ impl SolidExplorer {
     /// OCCT: InitShape(S) — initialize the explorer with a solid shape.
     /// Traverses the shape tree and collects the surfaces + orientations of
     /// all faces, so the point classification does not depend on the DS.
+    /// The face order follows the shape tree order (shell faces in storage
+    /// order) — OCCT TopExp_Explorer iterates depth-first in positive order
+    /// and BRepClass3d_SClassifier::PerformInfinitePoint probes the faces in
+    /// this same order (aFaces collection, SClassifier.cxx L148-154); the
+    /// first probe decides the state, so the order is semantic.
     pub fn init_shape(&mut self, s: &Shape) {
         self.shape = Some(s.clone());
         self.face_indices.clear();
         self.face_surfaces.clear();
         self.vertices.clear();
         self.edges.clear();
-        let mut stack: Vec<Shape> = vec![s.clone()];
-        while let Some(sh) = stack.pop() {
+        let mut queue: VecDeque<Shape> = VecDeque::new();
+        queue.push_back(s.clone());
+        while let Some(sh) = queue.pop_front() {
             match &*sh.data {
                 TShape::Solid(sd) => {
                     for x in &sd.shells {
-                        stack.push(x.clone());
+                        queue.push_back(x.clone());
                     }
                 }
                 TShape::CompSolid(cd) => {
                     for x in cd {
-                        stack.push(x.clone());
+                        queue.push_back(x.clone());
                     }
                 }
                 TShape::Compound(cd) => {
                     for x in cd {
-                        stack.push(x.clone());
+                        queue.push_back(x.clone());
                     }
                 }
                 TShape::Shell(sd) => {
                     for x in &sd.faces {
-                        stack.push(x.clone());
+                        queue.push_back(x.clone());
                     }
                 }
                 TShape::Vertex(vd) => {
@@ -113,11 +132,15 @@ impl SolidExplorer {
                         Surface3::Plane(pl) => compute_plane_uv_bounds(&sh, pl),
                         _ => None,
                     });
+                    let uv_polys = fd.surface.as_ref().map(|surf| build_uv_polys(&sh, surf));
+                    let boundary = collect_boundary_pcurves(&sh);
                     if let Some(surf) = fd.surface.clone() {
                         self.face_surfaces.push(ExplorerFace {
                             surf,
                             ori: sh.orientation,
                             uv_bounds,
+                            uv_polys,
+                            boundary,
                         });
                     }
                 }
@@ -247,6 +270,8 @@ impl SolidExplorer {
                         surf: surf.clone(),
                         ori: face_ori,
                         uv_bounds: None,
+                        uv_polys: None,
+                        boundary: vec![],
                     };
                     if let Some(t) = Self::ray_face_param(p, ray_dir, &ef) {
                         if t > 1e-7 {
@@ -262,11 +287,14 @@ impl SolidExplorer {
     /// Parameter of the closest intersection of the ray `p + t*dir` with a
     /// curved face (OCCT BRepClass3d_SClassifier uses IntCurvesFace_Intersector
     /// for the Line x Face intersection; BeanFaceIntersector is its translation).
+    /// Only intersections whose UV lies inside the face's 2D domain are counted
+    /// (OCCT IntCurvesFace_Intersector.cxx L256-286: Classify(Puv) == IN/ON).
     pub(crate) fn ray_face_param(p: DVec3, dir: DVec3, f: &ExplorerFace) -> Option<f64> {
         let line = Curve3::Line(rcad_kernel::geom::Line3 {
             origin: p,
             direction: dir,
         });
+        let line_for_points = line.clone();
         let adapt_curve = BRepAdaptorCurve::new(line);
         let adapt_surf = BRepAdaptorSurface::new(f.surf.clone());
         let mut bfi = BeanFaceIntersector::with_adaptors(
@@ -287,10 +315,18 @@ impl SolidExplorer {
             return None;
         }
         // OCCT BRepClass3d_SClassifier: the intersection closest to the point.
+        // A candidate is accepted only when its UV is IN the face's 2D domain
+        // (IntCurvesFace_Intersector's currentstate IN/ON filter).
         let mut parmin = f64::MAX;
         for r in bfi.result() {
-            if r.first() < parmin {
-                parmin = r.first();
+            let t = r.first();
+            let q = line_for_points.point_at(t);
+            let (uv, _q2) = crate::bop::closest_point_on_surface(&f.surf, q);
+            if !uv_in_face_domain(f, uv) {
+                continue;
+            }
+            if t < parmin {
+                parmin = t;
             }
         }
         if parmin == f64::MAX {
@@ -303,25 +339,75 @@ impl SolidExplorer {
     /// OCCT BRepClass3d_SolidExplorer::FindAPointInTheFace — a point inside the
     /// face, sampled by the probing parameter aParam in [0.1, 0.9] (the random
     /// inner point of the OCCT PerformInfinitePoint). Returns (point, u, v).
+    /// OCCT (SolidExplorer.cxx L74-167): take a point on a boundary edge at the
+    /// probe parameter, move into the face interior along the edge normal, and
+    /// verify the result with the face classifier (FClass2d == IN). rcad
+    /// replicates the same walk using the boundary pcurves and the UV-domain
+    /// check (uv_in_face_domain).
     pub(crate) fn face_point(f: &ExplorerFace, param: f64) -> Option<(DVec3, f64, f64)> {
-        let (u, v) = match &f.surf {
-            Surface3::Plane(pl) => {
-                let [umin, umax, vmin, vmax] = f.uv_bounds?;
-                (umin + (umax - umin) * param, vmin + (vmax - vmin) * param)
+        if let Surface3::Plane(pl) = &f.surf {
+            // Planar faces: the UV-box interpolation point is inside the face
+            // when the box is the face's bounding box (the vertex projection
+            // box; the probe parameter samples [0.1, 0.9] of it). Verify with
+            // the domain check and fall back to the edge-walk otherwise.
+            if let Some([umin, umax, vmin, vmax]) = f.uv_bounds {
+                let uv = DVec2::new(umin + (umax - umin) * param, vmin + (vmax - vmin) * param);
+                if uv_in_face_domain(f, uv) {
+                    return Some((f.surf.point_at(uv.x, uv.y), uv.x, uv.y));
+                }
             }
-            other => {
-                let ad = BRepAdaptorSurface::new(other.clone());
-                let umin = ad.first_u_parameter();
-                let umax = ad.last_u_parameter();
-                let vmin = ad.first_v_parameter();
-                let vmax = ad.last_v_parameter();
-                if !umin.is_finite() || !umax.is_finite() || !vmin.is_finite() || !vmax.is_finite() {
+        }
+        // OCCT L93-167: edge walk — a point on a boundary edge moved into the
+        // face interior along the rotated edge tangent.
+        for (pc, range, ori) in &f.boundary {
+            if !range[0].is_finite() || !range[1].is_finite() {
+                continue;
+            }
+            let t = range[0] + (range[1] - range[0]) * param;
+            let p2 = pc.point_at(t);
+            let tan = pc.tangent_at(t);
+            if tan.length_squared() < 1e-24 {
+                continue;
+            }
+            // OCCT L108-112: FORWARD edge -> T=(-y,x); REVERSED edge -> T=(y,-x)
+            // (the direction pointing into the face interior).
+            let tan = if *ori == Orientation::Forward {
+                DVec2::new(-tan.y, tan.x)
+            } else {
+                DVec2::new(tan.y, -tan.x)
+            };
+            // OCCT L113-121: move TolInit (0.00001) into the interior and find
+            // the nearest boundary intersection of the ray P + s*T.
+            let p_start = p2 + 1e-5 * tan;
+            let Some(mut param_init) = ray_boundary_hit(f, p_start, tan) else {
+                continue;
+            };
+            // OCCT L122-158: walk inward (x0.41234 each step) until the point
+            // is classified IN by the face classifier.
+            let mut guard = 0;
+            loop {
+                param_init *= 0.41234;
+                if param_init < 1e-7 {
+                    // OCCT L157: ParamInit < Precision::PConfusion() -> false
                     return None;
                 }
-                (umin + (umax - umin) * param, vmin + (vmax - vmin) * param)
+                let uv = p_start + param_init * tan;
+                // OCCT L130-135: the point must be strictly IN the face.
+                if !uv_in_face_domain(f, uv) {
+                    return None;
+                }
+                // OCCT L138-148: non-degenerate surface point.
+                let n = f.surf.normal_at(uv.x, uv.y);
+                if n.length_squared() > 1e-24 {
+                    return Some((f.surf.point_at(uv.x, uv.y), uv.x, uv.y));
+                }
+                guard += 1;
+                if guard > 64 {
+                    return None;
+                }
             }
-        };
-        Some((f.surf.point_at(u, v), u, v))
+        }
+        None
     }
 
     /// OCCT BRepClass3d_SClassifier::FaceNormal (SClassifier.cxx L606-627) —
@@ -341,6 +427,128 @@ impl SolidExplorer {
     pub fn set_ds<S: ShapeSource + 'static>(&mut self, ds: &Arc<S>) {
         self.ds = Some(ds.clone() as Arc<dyn ShapeSource>);
     }
+}
+
+/// Build the 2D domain of a face — the outer polygon (and holes) of the UV
+/// points obtained by projecting the wire vertices onto the surface.
+/// OCCT BRepTopAdaptor_TopolTool classifies the intersection UV against the
+/// face's 2D domain; rcad rebuilds it from the wire vertices (same approach as
+/// builder::point_in_face_image, IntTools_FClass2d::Init samples the pcurves).
+fn build_uv_polys(face: &Shape, surf: &Surface3) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {    let build_poly = |w: &Shape| -> Vec<DVec2> {
+        let mut poly: Vec<DVec2> = Vec::new();
+        if let TShape::Wire(wd) = &*w.data {
+            for e in &wd.edges {
+                if let TShape::Edge(ed) = &*e.data {
+                    if let TShape::Vertex(vd) = &*ed.last.data {
+                        let (uv, _) = closest_point_on_surface(surf, vd.point);
+                        poly.push(uv);
+                    }
+                }
+            }
+        }
+        poly
+    };
+    let mut holes: Vec<Vec<DVec2>> = Vec::new();
+    match &*face.data {
+        TShape::Face(fd) => {
+            for w in &fd.inner_wires {
+                let h = build_poly(w);
+                if h.len() >= 3 {
+                    holes.push(h);
+                }
+            }
+            let outer = build_poly(&fd.outer_wire);
+            (outer, holes)
+        }
+        _ => (Vec::new(), holes),
+    }
+}
+
+/// Boundary pcurves of a face: for each wire edge, the 2D curve of the edge
+/// on this face, its parameter range, and the edge orientation composed with
+/// the wire orientation (OCCT FindAPointInTheFace uses BRepAdaptor_Curve2d on
+/// the FORWARD-ized face, so the edge orientation is the stored one composed
+/// with the wire's — TopExp_Explorer cumOri).
+fn collect_boundary_pcurves(face: &Shape) -> Vec<(Curve2d, [f64; 2], Orientation)> {
+    let fkey = (face.ptr_id(), face.location);
+    let mut out: Vec<(Curve2d, [f64; 2], Orientation)> = Vec::new();
+    match &*face.data {
+        TShape::Face(fd) => {
+            let mut wire = |w: &Shape| {
+                if let TShape::Wire(wd) = &*w.data {
+                    let w_or = w.orientation;
+                    for e in &wd.edges {
+                        if let TShape::Edge(ed) = &*e.data {
+                            if let Some((pc, t1, t2)) = ed.pcurves.get(&fkey) {
+                                let e_or = Orientation::Forward
+                                    .compose(w_or)
+                                    .compose(e.orientation);
+                                out.push((pc.clone(), [*t1, *t2], e_or));
+                            }
+                        }
+                    }
+                }
+            };
+            wire(&fd.outer_wire);
+            for w in &fd.inner_wires {
+                wire(w);
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Nearest intersection parameter s > 0 of the ray `p + s*t` with the face's
+/// 2D boundary polygons (OCCT BRepClass_FacePassiveClassifier on the rays of
+/// FindAPointInTheFace, SolidExplorer.cxx L113-121).
+fn ray_boundary_hit(f: &ExplorerFace, p: DVec2, t: DVec2) -> Option<f64> {
+    let (outer, holes) = f.uv_polys.as_ref()?;
+    let mut best: Option<f64> = None;
+    let mut consider = |poly: &Vec<DVec2>| {
+        for i in 0..poly.len() {
+            let a = poly[i];
+            let b = poly[(i + 1) % poly.len()];
+            let ab = b - a;
+            let denom = t.x * ab.y - t.y * ab.x;
+            if denom.abs() < 1e-30 {
+                continue;
+            }
+            let ap = p - a;
+            let s = (ap.x * ab.y - ap.y * ab.x) / denom;
+            let u = (ap.x * t.y - ap.y * t.x) / denom;
+            if s >= -1e-9 && u >= -1e-9 && u <= 1.0 + 1e-9 {
+                if s > 1e-9 && best.map_or(true, |bs| s < bs) {
+                    best = Some(s);
+                }
+            }
+        }
+    };
+    consider(outer);
+    for h in holes {
+        consider(h);
+    }
+    best
+}
+
+/// True when the UV point lies inside the face's 2D domain: strictly inside
+/// the outer polygon and outside every hole (OCCT TopolTool::Classify == IN).
+fn uv_in_face_domain(f: &ExplorerFace, uv: DVec2) -> bool {
+    let Some((outer, holes)) = &f.uv_polys else {
+        return true; // no domain info — accept (planar faces use uv_bounds)
+    };
+    if outer.len() < 3 {
+        return true;
+    }
+    if !rcad_kernel::base::gprop::tri::point_in_polygon_2d(outer, uv) {
+        return false;
+    }
+    for h in holes {
+        if rcad_kernel::base::gprop::tri::point_in_polygon_2d(h, uv) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Compute the UV bounding box of a planar face from its wire vertices.

@@ -30,37 +30,91 @@ pub fn sample_wire_polyline_3d(brep: &topods::BRep, wire: &Wire) -> Vec<DVec3> {
 
 /// Like sample_wire_polyline_3d with configurable samples per edge.
 pub fn sample_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usize) -> Vec<DVec3> {
-    let mut pts = Vec::new();
+    ordered_wire_polyline_3d_with_n(brep, wire, n).unwrap_or_default()
+}
+
+/// Sample the outer wire as an ordered polyline, chaining each edge's sampled
+/// segment by shared vertex indices.
+///
+/// The wire's stored edge order is the connexity-block BFS order (OCCT
+/// BOPAlgo_WireSplitter::MakeWire appends the block shapes as-is,
+/// WireSplitter.lxx L78-94) — it is NOT guaranteed to be topologically
+/// ordered. The shoelace polygon area depends on the sampling order, so the
+/// segments are re-chained by their endpoint vertices here.
+pub fn ordered_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usize) -> Option<Vec<DVec3>> {
+    struct Seg {
+        v0: usize,
+        v1: usize,
+        pts: Vec<DVec3>,
+    }
+    let mut segs: Vec<Seg> = Vec::new();
     for we in &wire.edges {
-        let flat_edges = brep.flat_edges();
-        let edge = match flat_edges.get(we.idx) {
-            Some(e) => e,
-            None => continue,
-        };
+        let (v0, v1) = brep.edge_vertex_indices(we.idx)?;
+        // Sample from v0 to v1 regardless of we.forward — the chaining step
+        // decides the per-segment direction.
         let curve_opt = brep.tshapes.get(we.idx).and_then(|ts| {
             if let topods::TShape::Edge(ed) = &**ts {
                 ed.curve.as_ref()
             } else { None }
         });
-        if let Some(curve) = curve_opt {
+        let pts: Vec<DVec3> = if let Some(curve) = curve_opt {
             let range = brep.tshapes.get(we.idx).and_then(|ts| {
                 if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None }
             }).unwrap_or_else(|| curve.default_domain());
-            let [t0, t1] = if we.forward { range } else { [range[1], range[0]] };
+            let [t0, t1] = range;
+            let mut p = Vec::with_capacity(n + 1);
             if (t1 - t0).abs() > 1e-12 && t0.is_finite() && t1.is_finite() {
-                let full_circle = (t1 - t0).abs() >= 2.0 * PI - 1e-9;
-                let samples = if full_circle { n } else { n + 1 };
-                for k in 0..samples {
+                for k in 0..=n {
                     let frac = k as f64 / n as f64;
-                    pts.push(curve.point_at(t0 + (t1 - t0) * frac));
+                    p.push(curve.point_at(t0 + (t1 - t0) * frac));
                 }
-                continue;
+            }
+            p
+        } else {
+            Vec::new()
+        };
+        let mut pts = pts;
+        if pts.is_empty() {
+            if let Some(v) = brep.vertex_point(v0) { pts.push(v); }
+            if let Some(v) = brep.vertex_point(v1) {
+                if pts.is_empty() || (v - pts[0]).length() > 1e-12 { pts.push(v); }
             }
         }
-        let vidx = if we.forward { edge.0 } else { edge.1 };
-        if let Some(v) = brep.vertex_point(vidx) { pts.push(v); }
+        if pts.is_empty() { continue; }
+        segs.push(Seg { v0, v1, pts });
     }
-    pts
+    if segs.is_empty() { return None; }
+    // Greedy chaining by endpoint vertex indices.
+    let mut used = vec![false; segs.len()];
+    let mut order: Vec<usize> = Vec::new();
+    let mut flip: Vec<bool> = Vec::new();
+    order.push(0);
+    flip.push(false);
+    used[0] = true;
+    let mut cur_last_v = segs[0].v1;
+    while order.len() < segs.len() {
+        let mut found: Option<(usize, bool)> = None;
+        for (i, seg) in segs.iter().enumerate() {
+            if used[i] { continue; }
+            if seg.v0 == cur_last_v { found = Some((i, false)); break; }
+            if seg.v1 == cur_last_v { found = Some((i, true)); break; }
+        }
+        let (i, f) = found?; // not connected — fall back
+        used[i] = true;
+        order.push(i);
+        flip.push(f);
+        cur_last_v = if f { segs[i].v0 } else { segs[i].v1 };
+    }
+    let mut out: Vec<DVec3> = Vec::new();
+    for (idx, &i) in order.iter().enumerate() {
+        let f = flip[idx];
+        if f {
+            out.extend(segs[i].pts.iter().rev().copied());
+        } else {
+            out.extend(segs[i].pts.iter().copied());
+        }
+    }
+    Some(out)
 }
 
 pub fn trim_almost_closed_polyline(pts: &mut Vec<DVec3>, tol: f64) {
@@ -532,7 +586,7 @@ pub fn try_boundary_convex_hull_area(
     brep: &BRep, wire: &Wire, pivot: DVec3, ux: DVec3, uy: DVec3,
 ) -> Option<f64> {
     let mut vert_indices = Vec::new();
-    for we in &wire.edges { let edge = brep.flat_edges().get(we.idx).copied()?;
+    for we in &wire.edges { let edge = brep.edge_vertex_indices(we.idx)?;
         vert_indices.push(edge.0); vert_indices.push(edge.1); }
     vert_indices.sort(); vert_indices.dedup();
     if vert_indices.len() < 3 { return None; }

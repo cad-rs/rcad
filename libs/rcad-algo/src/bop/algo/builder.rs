@@ -5248,10 +5248,13 @@ impl<'a> Builder<'a> {
             }
         }
         // OCCT L1243-1271: build solids from the set of faces.
+        // OCCT L1257-1260: aBS.SetAvoidInternalShapes(true) — the faces of the
+        // result solids must not create internal shells.
         let mut a_rc: Vec<Shape> = Vec::new();
         if !a_sfs.is_empty() {
             let mut a_bs = crate::bop::algo::builder_solid::BuilderSolid::new(&self.ds);
             a_bs.my_shapes = a_sfs;
+            a_bs.set_avoid_internal_shapes(true);
             a_bs.perform();
             if a_bs.has_errors() {
                 // OCCT L1255: AddError(new BOPAlgo_AlertSolidBuilderFailed).
@@ -5691,21 +5694,40 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_BOP::MapFacesToBuildSolids (BOPAlgo_BOP.cxx L1768-1798).
+    /// OCCT uses TopExp_Explorer(theSol, TopAbs_FACE) — every face instance of
+    /// the solid is visited, including the FORWARD/REVERSED copies of the same
+    /// TShape (no dedup; TopExp_Explorer.cxx L110-170), with the cumulative
+    /// orientation composed along the path (solid × shell × face). The
+    /// deduplication of the solid list happens on the orientation of the
+    /// FIRST-inserted face (theMFS key keeps TShape + Location via
+    /// TopTools_ShapeMapHasher, L1781-1796).
     fn map_faces_to_build_solids(
         &self,
         the_sol: &Shape,
         the_mfs: &mut IndexMap<u64, (Shape, Vec<Shape>)>,
     ) {
-        for a_f in self.map_shapes_of_type(the_sol, topods::ShapeType::Face) {
-            if a_f.orientation == topods::Orientation::Internal {
+        // TopExp_Explorer semantics: depth-first, accumulate orientation, do
+        // NOT dedup face copies (a FACE may appear twice with different
+        // orientations, e.g. as both sides of an internal face).
+        let mut stack: Vec<Shape> = vec![the_sol.clone()];
+        while let Some(cur) = stack.pop() {
+            if cur.shape_type() == topods::ShapeType::Face {
+                if cur.orientation == topods::Orientation::Internal {
+                    continue;
+                }
+                let e = the_mfs
+                    .entry(cur.ptr_id())
+                    .or_insert_with(|| (cur.clone(), Vec::new()));
+                // OCCT L1789-1796: append the solid only if orientations differ.
+                if e.1.is_empty() || e.0.orientation != cur.orientation {
+                    e.1.push(the_sol.clone());
+                }
                 continue;
             }
-            let e = the_mfs
-                .entry(a_f.ptr_id())
-                .or_insert_with(|| (a_f.clone(), Vec::new()));
-            // OCCT L1789-1796: append the solid only if orientations differ.
-            if e.1.is_empty() || e.0.orientation != a_f.orientation {
-                e.1.push(the_sol.clone());
+            for sub in self.shape_sub_shapes(&cur) {
+                let mut sub2 = sub.clone();
+                sub2.orientation = cur.orientation.compose(sub.orientation);
+                stack.push(sub2);
             }
         }
     }
@@ -5783,6 +5805,8 @@ impl<'a> Builder<'a> {
                 let my_shapes = self.remap_shapes(&ed.my_shapes);
                 let first = self.remap_shape(&ed.first);
                 let last = self.remap_shape(&ed.last);
+                if shape.index >= 30 {
+                }
                 TShape::Edge(TEdgeData {
                     my_shapes, first, last, ..ed.clone()
                 })

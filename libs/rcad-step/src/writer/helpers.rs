@@ -167,26 +167,38 @@ pub(super) fn shell_is_closed_topods(tbrep: &topods::BRep, shell_tshape_idx: usi
         if ha < hb { (ha, hb) } else { (hb, ha) }
     }
     let mut counts: HashMap<(u64, u64), usize> = HashMap::new();
+    // OCCT BRep_Tool::IsClosed (BRep_Tool.cxx L1707-1728): degenerated and
+    // INTERNAL/EXTERNAL edges are skipped; the shell is closed when every
+    // remaining edge is used by an even number of faces.
+    let mut count_wire = |tbrep: &topods::BRep, w_sr: &topods::Shape, counts: &mut HashMap<(u64, u64), usize>| {
+        if let topods::TShape::Wire(wd) = &*tbrep.tshapes[w_sr.index] {
+            for sr in &wd.edges {
+                if sr.orientation == topods::Orientation::Internal
+                    || sr.orientation == topods::Orientation::External
+                {
+                    continue;
+                }
+                if let topods::TShape::Edge(ed) = &*tbrep.tshapes[sr.index] {
+                    if ed.degenerated {
+                        continue;
+                    }
+                }
+                *counts.entry(edge_key(tbrep, sr.index)).or_insert(0) += 1;
+            }
+        }
+    };
     for face_sr in &shd.faces {
         let topods::TShape::Face(fd) = &*tbrep.tshapes[face_sr.index] else {
             continue;
         };
         // outer wire
-        if let topods::TShape::Wire(wd) = &*tbrep.tshapes[fd.outer_wire.index] {
-            for sr in &wd.edges {
-                *counts.entry(edge_key(tbrep, sr.index)).or_insert(0) += 1;
-            }
-        }
+        count_wire(tbrep, &fd.outer_wire, &mut counts);
         // inner wires
         for w_sr in &fd.inner_wires {
-            if let topods::TShape::Wire(wd) = &*tbrep.tshapes[w_sr.index] {
-                for sr in &wd.edges {
-                    *counts.entry(edge_key(tbrep, sr.index)).or_insert(0) += 1;
-                }
-            }
+            count_wire(tbrep, w_sr, &mut counts);
         }
     }
-    if !counts.is_empty() && counts.values().all(|&count| count == 2) {
+    if !counts.is_empty() && counts.values().all(|&count| count % 2 == 0) {
         return true;
     }
     false

@@ -36,6 +36,7 @@ pub struct BuilderSolid<'a> {
     // subclass stores it for Solid() (used as the aSolidsIm key in
     // BuildSplitSolids L542). rcad stores the source solid here as well.
     pub my_solid: Option<Shape>,        // OCCT: BOPAlgo_SplitSolid::mySolid
+    my_avoid_internal_shapes: bool,     // OCCT: BOPAlgo_BuilderSolid::myAvoidInternalShapes
     my_shapes_to_avoid: IndexMap<(u64, u32, Orientation), Shape>, // OCCT: NCollection_IndexedMap<TopoDS_Shape> myShapesToAvoid — default hasher, orientation-sensitive
     my_loops: Vec<Vec<Shape>>,          // OCCT: myLoops
     my_loops_internal: Vec<Shape>,      // OCCT: myLoopsInternal (shells with Closed flag)
@@ -51,6 +52,7 @@ impl<'a> BuilderSolid<'a> {
             my_shapes: Vec::new(),
             my_solids: Vec::new(),
             my_solid: None,
+            my_avoid_internal_shapes: false,
             my_shapes_to_avoid: IndexMap::new(),
             my_loops: Vec::new(),
             my_loops_internal: Vec::new(),
@@ -77,6 +79,12 @@ impl<'a> BuilderSolid<'a> {
         self.perform_internal_shapes();
     }
 
+
+    /// OCCT BOPAlgo_BuilderSolid::SetAvoidInternalShapes (BuilderSolid.hxx
+    /// L50-55): avoid creating internal shells in the resulting solids.
+    pub fn set_avoid_internal_shapes(&mut self, the_flag: bool) {
+        self.my_avoid_internal_shapes = the_flag;
+    }
 
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
 
@@ -531,7 +539,10 @@ impl<'a> BuilderSolid<'a> {
 
     /// OCCT BOPAlgo_BuilderSolid::PerformInternalShapes (BuilderSolid.cxx L602-759).
     fn perform_internal_shapes(&mut self) {
-        // OCCT L604-608: myAvoidInternalShapes — rcad has no such option.
+        // OCCT L604-608: user-defined option to avoid internal parts.
+        if self.my_avoid_internal_shapes {
+            return;
+        }
         // OCCT L610-614: no internal parts -> return.
         if self.my_loops_internal.is_empty() {
             return;
@@ -677,9 +688,10 @@ impl<'a> BuilderSolid<'a> {
     }
 }
 
+/// Debug description of a face: surface type + edge count.
+
 /// Extract edge ptr_ids from a Face Shape.
-pub(crate) fn face_edge_ptrs(face: &Shape) -> Vec<u64> {
-    let mut edges = Vec::new();
+pub(crate) fn face_edge_ptrs(face: &Shape) -> Vec<u64> {    let mut edges = Vec::new();
     match &*face.data {
         TShape::Face(fd) => {
             if let TShape::Wire(wd) = &*fd.outer_wire.data {
