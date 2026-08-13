@@ -34,6 +34,41 @@ pub use check_result::{CheckResult, CheckStatus};
 // Re-export shared types
 pub use builder::{Builder, BooleanError};
 
+/// OCCT TopoDS_Iterator cumLoc semantics: the effective Location of an edge's
+/// vertex is `edge.Location * vertex.Location` (TopoDS_Iterator.cxx L76-78,
+/// TopoDS_Shape::Move L193-201 — the parent Location is pre-multiplied).
+/// rcad stores Locations as indices into the DS table; the composed transform
+/// is looked up in the same table. Identity fast paths (the common case —
+/// every non-folded shape carries location 0) return the original index
+/// without touching the table, so no registration is ever needed for them.
+pub fn compose_edge_vertex_location(
+    edge_loc: u32,
+    vertex_loc: u32,
+    locations: &[glam::DAffine3],
+) -> u32 {
+    if edge_loc == 0 {
+        return vertex_loc;
+    }
+    if vertex_loc == 0 {
+        return edge_loc;
+    }
+    // Both non-identity: look the composed transform up in the table. The
+    // fused inputs never produce a composed transform absent from the table
+    // (single-fold shapes compose to one of the two operands); fall back to
+    // the edge location if it is ever missing.
+    let edge_tr = locations.get(edge_loc as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+    let vertex_tr = locations
+        .get(vertex_loc as usize)
+        .copied()
+        .unwrap_or(glam::DAffine3::IDENTITY);
+    let composed = edge_tr * vertex_tr;
+    locations
+        .iter()
+        .position(|l| *l == composed)
+        .map(|i| i as u32)
+        .unwrap_or(edge_loc)
+}
+
 // ===
 // BOPAlgo_Report ?collects alerts during algorithm execution
 // ===

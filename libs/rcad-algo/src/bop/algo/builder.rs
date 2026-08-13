@@ -1879,10 +1879,17 @@ impl<'a> Builder<'a> {
     fn shape_sub_shapes(&self, s: &Shape) -> Vec<Shape> {
         match &*s.data {
             TShape::Vertex(_) => vec![],
-            TShape::Edge(ed) => vec![
-                Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-                Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
-            ],
+            TShape::Edge(ed) => {
+                // OCCT TopoDS_Iterator(aE, cumLoc) composes the edge Location
+                // into the vertices (TopoDS_Iterator.cxx L76-78).
+                let loc = s.location;
+                let vl = |v: &Shape| Shape::new(
+                    v.data.clone(),
+                    crate::bop::algo::compose_edge_vertex_location(loc, v.location, &self.ds.locations),
+                    v.orientation,
+                );
+                vec![vl(&ed.first), vl(&ed.last)]
+            }
             TShape::Wire(wd) => {
                 wd.edges.iter().map(|sr| {
                     Shape::new(sr.data.clone(), sr.location, sr.orientation)
@@ -3117,10 +3124,17 @@ impl<'a> Builder<'a> {
         the_map: &mut HashMap<(u64, u32), Vec<Shape>>,
     ) -> bool {
         let verts: Vec<Shape> = match &*the_edge.data {
-            TShape::Edge(ed) => vec![
-                Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-                Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
-            ],
+            TShape::Edge(ed) => {
+                // OCCT TopoDS_Iterator(aE, cumLoc) — compose the edge Location
+                // into the vertices.
+                let loc = the_edge.location;
+                let vf_loc = if loc == 0 { ed.first.location } else { loc };
+                let vl_loc = if loc == 0 { ed.last.location } else { loc };
+                vec![
+                    Shape::new(ed.first.data.clone(), vf_loc, ed.first.orientation),
+                    Shape::new(ed.last.data.clone(), vl_loc, ed.last.orientation),
+                ]
+            }
             _ => Vec::new(),
         };
         for v in verts {
@@ -4520,10 +4534,18 @@ impl<'a> Builder<'a> {
     fn shape_sub_shapes_static(s: &Shape) -> Vec<Shape> {
         match &*s.data {
             TShape::Vertex(_) => vec![],
-            TShape::Edge(ed) => vec![
-                Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-                Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
-            ],
+            TShape::Edge(ed) => {
+                // OCCT TopoDS_Iterator(aE, cumLoc) — the edge Location is
+                // composed into the vertices. Identity fast paths keep the
+                // exact index; a nested fold falls back to the edge location
+                // (no Location table access in the static helper).
+                let loc = s.location;
+                let vl = |v: &Shape| {
+                    let vloc = if loc == 0 { v.location } else { loc };
+                    Shape::new(v.data.clone(), vloc, v.orientation)
+                };
+                vec![vl(&ed.first), vl(&ed.last)]
+            }
             TShape::Wire(wd) => {
                 wd.edges.iter().map(|sr| {
                     Shape::new(sr.data.clone(), sr.location, sr.orientation)
@@ -5612,16 +5634,25 @@ impl<'a> Builder<'a> {
     }
 
     /// Edge endpoints (TopExp::Vertices(aE, aV1, aV2, true) — the stored first
-    /// and last vertices, independent of the edge orientation).
+    /// and last vertices, independent of the edge orientation). The edge
+    /// Location is composed into the vertices (TopoDS_Iterator cumLoc).
     fn edge_endpoints_of(e: &Shape) -> (Shape, Shape) {
         match &*e.data {
-            TShape::Edge(ed) => (ed.first.clone(), ed.last.clone()),
+            TShape::Edge(ed) => {
+                let loc = e.location;
+                let vl = |v: &Shape| {
+                    let vloc = if loc == 0 { v.location } else { loc };
+                    Shape::new(v.data.clone(), vloc, v.orientation)
+                };
+                (vl(&ed.first), vl(&ed.last))
+            }
             _ => (Shape::null(), Shape::null()),
         }
     }
 
     /// The two endpoint vertices of an edge with their composed orientations
-    /// (TopoDS_Iterator semantics, as in BuilderFace::edge_vertices).
+    /// (TopoDS_Iterator semantics, as in BuilderFace::edge_vertices). The edge
+    /// Location is composed into the vertices (cumLoc).
     fn edge_vertices_of(e: &Shape) -> Vec<Shape> {
         let flip_ori = |o: topods::Orientation| -> topods::Orientation {
             match o {
@@ -5632,15 +5663,18 @@ impl<'a> Builder<'a> {
         };
         match &*e.data {
             TShape::Edge(ed) => {
+                let loc = e.location;
+                let vf_loc = if loc == 0 { ed.first.location } else { loc };
+                let vl_loc = if loc == 0 { ed.last.location } else { loc };
                 if e.orientation == topods::Orientation::Reversed {
                     vec![
-                        Shape::new(ed.last.data.clone(), ed.last.location, flip_ori(ed.last.orientation)),
-                        Shape::new(ed.first.data.clone(), ed.first.location, flip_ori(ed.first.orientation)),
+                        Shape::new(ed.last.data.clone(), vl_loc, flip_ori(ed.last.orientation)),
+                        Shape::new(ed.first.data.clone(), vf_loc, flip_ori(ed.first.orientation)),
                     ]
                 } else {
                     vec![
-                        Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-                        Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
+                        Shape::new(ed.first.data.clone(), vf_loc, ed.first.orientation),
+                        Shape::new(ed.last.data.clone(), vl_loc, ed.last.orientation),
                     ]
                 }
             }

@@ -98,7 +98,7 @@ impl ConnexityBlock {
 /// L187-256) — groups edges into connected blocks by shared vertices and
 /// marks a block irregular when any edge is repeated or any vertex has more
 /// than two incident edges.
-pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
+pub(crate) fn make_connexity_blocks(edges: &[Shape], locations: &[glam::DAffine3]) -> Vec<ConnexityBlock> {
     // aMFence: dedup start elements; aMNRegular: repeated (multi-connexity)
     // edges. OCCT aMFence/aMNRegular (AlgoTools.cxx L194-195) use
     // TopTools_ShapeMapHasher — key identity TShape + Location.
@@ -120,7 +120,7 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
     let mut a_edge_ptr_to_idx: HashMap<(u64, u32), usize> = HashMap::new(); // edge -> index in a_c_start
     for (ei, e) in a_c_start.iter().enumerate() {
         a_edge_ptr_to_idx.insert((e.ptr_id(), e.location), ei);
-        for v in edge_vertices(e) {
+        for v in edge_vertices(e, locations) {
             let l = a_c_map.entry((v.ptr_id(), v.location)).or_default();
             l.push((e.ptr_id(), e.location));
         }
@@ -137,7 +137,7 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
         let mut i = 0;
         while i < a_l_block.len() {
             let ei = a_l_block[i];
-            for v in edge_vertices(&a_c_start[ei]) {
+            for v in edge_vertices(&a_c_start[ei], locations) {
                 if let Some(l) = a_c_map.get(&(v.ptr_id(), v.location)) {
                     for &ep in l {
                         if let Some(&eidx) = a_edge_ptr_to_idx.get(&ep) {
@@ -171,7 +171,7 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape]) -> Vec<ConnexityBlock> {
                 a_cb.shapes.push(a_s.clone());
                 if b_regular {
                     // Check no multi-connected vertices on this edge.
-                    for v in edge_vertices(&a_s) {
+                    for v in edge_vertices(&a_s, locations) {
                         let cnt = a_c_map
                             .get(&(v.ptr_id(), v.location))
                             .map_or(0, |l| l.len());
@@ -200,7 +200,7 @@ pub(crate) fn split_into_wires(
     if edges.is_empty() {
         return Vec::new();
     }
-    let mut my_lcb = make_connexity_blocks(edges);
+    let mut my_lcb = make_connexity_blocks(edges, &ds.locations);
     let mut a_vcb: Vec<ConnexityBlock> = Vec::new();
     let mut result: Vec<Vec<Shape>> = Vec::new();
     for cb in my_lcb.iter_mut() {
@@ -256,7 +256,7 @@ fn split_block(
         if !a_ms.insert((a_e.ptr_id(), a_e.location)) && !b_is_closed {
             a_ms.remove(&(a_e.ptr_id(), a_e.location));
         }
-        let verts = edge_vertices(a_e);
+        let verts = edge_vertices(a_e, &ds.locations);
         for (i, a_v) in verts.iter().enumerate() {
             let vkey = (a_v.ptr_id(), a_v.location);
             let entry = my_smart_map.entry(vkey).or_insert_with(|| (a_v.clone(), Vec::new()));
@@ -450,7 +450,7 @@ fn path(
         let a_pa = coord_2d(&p_va, &a_e_outa, face_index, ds);
         a_coord_va.push(a_pa);
 
-        let a_vb = get_next_vertex(&p_va, &a_e_outa);
+        let a_vb = get_next_vertex(&p_va, &a_e_outa, &ds.locations);
         let mut a_vb = a_vb;
         let a_pb = coord_2d(&a_vb, &a_e_outa, face_index, ds);
 
@@ -840,7 +840,7 @@ fn coord_2d(a_v1: &Shape, a_e1: &Shape, face_index: usize, ds: &DS) -> DVec2 {
 /// OCCT Coord2dVf (L688-707) — 2D coord of the FORWARD endpoint of an edge.
 fn coord_2d_vf(a_e: &Shape, face_index: usize, ds: &DS) -> DVec2 {
     let a_coord = 99.0;
-    for v in edge_vertices(a_e) {
+    for v in edge_vertices(a_e, &ds.locations) {
         if v.orientation == Orientation::Forward {
             return coord_2d(&v, a_e, face_index, ds);
         }
@@ -877,8 +877,8 @@ fn angle_in(a_e_in: &Shape, a_lei_info: &[EdgeInfo]) -> f64 {
 }
 
 /// OCCT GetNextVertex (L759-774).
-fn get_next_vertex(a_v: &Shape, a_e: &Shape) -> Shape {
-    for v in edge_vertices(a_e) {
+fn get_next_vertex(a_v: &Shape, a_e: &Shape, locations: &[glam::DAffine3]) -> Shape {
+    for v in edge_vertices(a_e, locations) {
         if !v.is_equal(a_v) {
             return v;
         }
@@ -1173,21 +1173,27 @@ fn curve2d_resolution(c: &Curve2d, tol: f64) -> f64 {
 
 // ---- data access helpers ----
 
-fn edge_vertices(e: &Shape) -> [Shape; 2] {
+fn edge_vertices(e: &Shape, locations: &[glam::DAffine3]) -> [Shape; 2] {
     match &*e.data {
         // OCCT TopoDS_Iterator(aE) with cumOri=true (default) composes the edge
         // orientation into the vertices (TopoDS_Iterator.cxx L35-37, L72-80):
         // each stored vertex keeps its stored orientation composed with the
-        // edge's own orientation; a REVERSED edge iterates [last, first].
+        // edge's own orientation; a REVERSED edge iterates [last, first]. The
+        // edge Location is composed into the vertices as well (cumLoc,
+        // TopoDS_Iterator.cxx L76-78).
         // The vertex Shape carries no index — identity is the TShape pointer
         // (TopoDS_Shape handle semantics); index fields mix BRep and DS slots.
         TShape::Edge(ed) => {
+            let vf_loc =
+                crate::bop::algo::compose_edge_vertex_location(e.location, ed.first.location, locations);
+            let vl_loc =
+                crate::bop::algo::compose_edge_vertex_location(e.location, ed.last.location, locations);
             if e.orientation == Orientation::Reversed {
-                [Shape::new(ed.last.data.clone(), ed.last.location, flip_ori(ed.last.orientation)),
-                 Shape::new(ed.first.data.clone(), ed.first.location, flip_ori(ed.first.orientation))]
+                [Shape::new(ed.last.data.clone(), vl_loc, flip_ori(ed.last.orientation)),
+                 Shape::new(ed.first.data.clone(), vf_loc, flip_ori(ed.first.orientation))]
             } else {
-                [Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-                 Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation)]
+                [Shape::new(ed.first.data.clone(), vf_loc, ed.first.orientation),
+                 Shape::new(ed.last.data.clone(), vl_loc, ed.last.orientation)]
             }
         }
         _ => [Shape::null(), Shape::null()],

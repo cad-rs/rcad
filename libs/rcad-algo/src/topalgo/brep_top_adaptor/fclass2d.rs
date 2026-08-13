@@ -124,6 +124,14 @@ fn order_wire_edges(
                 _ => continue,
             },
         };
+        // OCCT TopoDS_Iterator(E, cumLoc) composes the edge Location into the
+        // vertices (TopoDS_Iterator.cxx L76-78): vertex eff location =
+        // edge.Location * vertex.Location. Identity fast path in
+        // compose_edge_vertex_location keeps ordinary edges untouched.
+        let edge_loc = ds.shape_at(ei).location;
+        let locs = ds.locations();
+        let vf_loc = crate::bop::algo::compose_edge_vertex_location(edge_loc, vf.location, locs);
+        let vl_loc = crate::bop::algo::compose_edge_vertex_location(edge_loc, vl.location, locs);
         // OCCT TopExp::Vertices(E, V1, V2, CumOri=true) (TopExp.cxx L214-252):
         // iterate the edge's vertex sub-shapes with the edge orientation
         // compounded (TopoDS_Iterator(E, CumOri)); V1 = the first vertex whose
@@ -141,14 +149,14 @@ fn order_wire_edges(
         // V1 = first vertex with compound orientation FORWARD; V2 = first with
         // compound orientation REVERSED (OCCT TopExp::Vertices L214-252).
         let v1 = if o0 == Orientation::Forward {
-            (vf.ptr_id(), vf.location)
+            (vf.ptr_id(), vf_loc)
         } else {
-            (vl.ptr_id(), vl.location)
+            (vl.ptr_id(), vl_loc)
         };
         let v2 = if o1 == Orientation::Reversed {
-            (vl.ptr_id(), vl.location)
+            (vl.ptr_id(), vl_loc)
         } else if o0 == Orientation::Reversed {
-            (vf.ptr_id(), vf.location)
+            (vf.ptr_id(), vf_loc)
         } else {
             // No REVERSED vertex (closed/degenerated edge, OCCT V2 null):
             // keep V2 = V1 so the closed-loop preference below applies.

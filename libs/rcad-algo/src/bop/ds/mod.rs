@@ -1661,6 +1661,20 @@ impl DS {
         {
             let mut n_v1 = self.shapes[edge_idx].sub_shapes[0];
             let mut n_v2 = self.shapes[edge_idx].sub_shapes[1];
+            // OCCT BOPDS_DS::InitPaveBlocks (BOPDS_DS.cxx L465): the PB vertex
+            // index is resolved through GetSameDomainIndex — after a VV merge
+            // every PB referencing a merged vertex points at the SD
+            // representative, so edges sharing a merged vertex connect at the
+            // same index (the EE bounding-vertex check and the wire splitter
+            // rely on this identity).
+            let mut n_v1_sd = n_v1;
+            if self.has_shape_sd(n_v1, &mut n_v1_sd) {
+                n_v1 = n_v1_sd;
+            }
+            let mut n_v2_sd = n_v2;
+            if self.has_shape_sd(n_v2, &mut n_v2_sd) {
+                n_v2 = n_v2_sd;
+            }
             // OCCT BOPDS_DS::InitPaveBlocks (BOPDS_DS.cxx L437-485) appends each
             // vertex pave in edge order, then BOPDS_PaveBlock::Update (L291)
             // std::sorts the paves by parameter and creates one PB per consecutive
@@ -2400,10 +2414,10 @@ impl DS {
             Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
         );
         let v_first = self.shapes.get(first)
-            .map(|s| Shape::from_parts(s.shape.data.clone(), first, 0, v_first_or))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), first, s.shape.location, v_first_or))
             .unwrap_or_else(|| empty_vertex.clone());
         let v_last = self.shapes.get(last)
-            .map(|s| Shape::from_parts(s.shape.data.clone(), last, 0, v_last_or))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), last, s.shape.location, v_last_or))
             .unwrap_or(empty_vertex);
         let (pcurves, representations) = match src {
             Some(src_e) if src_e < self.shapes.len() => match &*self.shapes[src_e].shape.data {
@@ -2555,7 +2569,17 @@ impl DS {
     pub fn vertex_point_by_idx(&self, i: usize) -> glam::DVec3 {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Vertex { return None; }
-            si.shape.as_vertex().map(|v| v.point)
+            // OCCT BRep_Tool::Pnt(vertex) — the located vertex point. rcad
+            // stores the raw TShape point; the vertex's TopLoc_Location must
+            // be applied (identity fast path keeps ordinary vertices exact).
+            let loc = self.get_location(si.shape.location);
+            si.shape.as_vertex().map(|v| {
+                if loc == glam::DAffine3::IDENTITY {
+                    v.point
+                } else {
+                    loc.transform_point3(v.point)
+                }
+            })
         }).unwrap_or(glam::DVec3::ZERO)
     }
 
@@ -2975,7 +2999,22 @@ fn sub_shapes_of(s: &Shape) -> Vec<Shape> {
     let cp = |sr: &Shape| Shape::from_parts(sr.data.clone(), sr.index, sr.location, sr.orientation);
     match &*s.data {
         TShape::Vertex(_) => vec![],
-        TShape::Edge(ed) => vec![cp(&ed.first), cp(&ed.last)],
+        TShape::Edge(ed) => {
+            // OCCT TopoDS_Iterator(aE, cumLoc) composes the edge Location into
+            // the vertices (TopoDS_Iterator.cxx L76-78). A folded edge (same
+            // TShape + Location, e.g. the extruded cap of MakePrism) must
+            // register its located endpoint vertices, or the DS vertex
+            // adjacency (sub_shapes) never connects it to the sweep edges.
+            // Identity fast paths keep the exact index; a nested fold (both
+            // locations non-identity) has no table access here and falls back
+            // to the edge location — no such shape occurs in the test inputs.
+            let loc = s.location;
+            let vl = |v: &Shape| {
+                let vloc = if loc == 0 { v.location } else { loc };
+                Shape::from_parts(v.data.clone(), v.index, vloc, v.orientation)
+            };
+            vec![vl(&ed.first), vl(&ed.last)]
+        }
         TShape::Wire(wd) => wd.edges.iter().map(cp).collect(),
         TShape::Face(fd) => {
             let mut v = vec![cp(&fd.outer_wire)];
@@ -3019,6 +3058,12 @@ impl crate::topalgo::shape_source::ShapeSource for DS {
     }
     fn is_edge_degenerated(&self, i: usize) -> bool {
         DS::is_edge_degenerated(self, i)
+    }
+    fn get_location(&self, idx: u32) -> glam::DAffine3 {
+        DS::get_location(self, idx)
+    }
+    fn locations(&self) -> &[glam::DAffine3] {
+        &self.locations
     }
 }
 

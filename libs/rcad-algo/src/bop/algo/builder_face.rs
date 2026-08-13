@@ -90,7 +90,7 @@ impl<'a> BuilderFace<'a> {
             let mut a_mve: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
             for a_e in &self.my_edges {
                 if self.my_shapes_to_avoid.contains(&(a_e.ptr_id(), a_e.location, a_e.orientation)) { continue; }
-                for a_v in Self::edge_vertices(a_e) {
+                for a_v in Self::edge_vertices(a_e, &self.ds.locations) {
                     let entry = a_mve
                         .entry((a_v.ptr_id(), a_v.location))
                         .or_insert_with(|| (a_v.clone(), Vec::new()));
@@ -121,7 +121,7 @@ impl<'a> BuilderFace<'a> {
                         // OCCT L216-221: TopExp::Vertices(aE1, aV1x, aV2x) —
                         // if both endpoints are the same vertex (degenerated
                         // ring), skip.
-                        let vv = Self::edge_vertices(a_e1);
+                        let vv = Self::edge_vertices(a_e1, &self.ds.locations);
                         if vv.len() >= 2 && vv[0].is_partner(&vv[1]) {
                             // Degenerated ring — both ends are the same vertex.
                             continue;
@@ -152,8 +152,10 @@ impl<'a> BuilderFace<'a> {
     /// OCCT TopoDS_Iterator(aE) with cumOri=true (default) composes the edge
     /// orientation into the vertices (TopoDS_Iterator.cxx L35-37, L72-80): each
     /// stored vertex keeps its stored orientation composed with the edge's own
-    /// orientation; a REVERSED edge iterates [last, first].
-    fn edge_vertices(e: &Shape) -> Vec<Shape> {
+    /// orientation; a REVERSED edge iterates [last, first]. The edge Location
+    /// is composed into the vertices as well (cumLoc, TopoDS_Iterator.cxx
+    /// L76-78) — `locations` is the DS TopLoc_Location table.
+    fn edge_vertices(e: &Shape, locations: &[glam::DAffine3]) -> Vec<Shape> {
         use rcad_kernel::topods::Orientation;
         let flip_ori = |o: Orientation| -> Orientation {
             match o {
@@ -164,15 +166,19 @@ impl<'a> BuilderFace<'a> {
         };
         match &*e.data {
             TShape::Edge(ed) => {
+                let vf_loc =
+                    crate::bop::algo::compose_edge_vertex_location(e.location, ed.first.location, locations);
+                let vl_loc =
+                    crate::bop::algo::compose_edge_vertex_location(e.location, ed.last.location, locations);
                 if e.orientation == Orientation::Reversed {
                     vec![
-                        Shape::new(ed.last.data.clone(), ed.last.location, flip_ori(ed.last.orientation)),
-                        Shape::new(ed.first.data.clone(), ed.first.location, flip_ori(ed.first.orientation)),
+                        Shape::new(ed.last.data.clone(), vl_loc, flip_ori(ed.last.orientation)),
+                        Shape::new(ed.first.data.clone(), vf_loc, flip_ori(ed.first.orientation)),
                     ]
                 } else {
                     vec![
-                        Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-                        Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
+                        Shape::new(ed.first.data.clone(), vf_loc, ed.first.orientation),
+                        Shape::new(ed.last.data.clone(), vl_loc, ed.last.orientation),
                     ]
                 }
             }
@@ -231,7 +237,7 @@ impl<'a> BuilderFace<'a> {
             .collect();
         let mut a_ve_map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
         for a_ee in &avoid_edges {
-            for a_v in Self::edge_vertices(a_ee) {
+            for a_v in Self::edge_vertices(a_ee, &self.ds.locations) {
                 let l = a_ve_map
                     .entry((a_v.ptr_id(), a_v.location))
                     .or_default();
@@ -258,7 +264,7 @@ impl<'a> BuilderFace<'a> {
             let mut i = 0;
             while i < a_w.len() && b_flag {
                 let a_e = &a_w[i];
-                for a_v in Self::edge_vertices(a_e) {
+                for a_v in Self::edge_vertices(a_e, &self.ds.locations) {
                     if let Some(a_le) = a_ve_map.get(&(a_v.ptr_id(), a_v.location)) {
                         for a_ex in a_le {
                             if a_m_added.insert((a_ex.ptr_id(), a_ex.location, a_ex.orientation)) {
@@ -573,7 +579,7 @@ impl<'a> BuilderFace<'a> {
                 continue;
             }
             // OCCT L712: MakeInternalWires(anEdgesInside, aLSI).
-            let a_lsi = make_internal_wires(&edges_inside);
+            let a_lsi = make_internal_wires(&edges_inside, &self.ds.locations);
             a_face_holes.entry(ai).or_default().extend(a_lsi);
             // OCCT L730-736: early exit when all edges are classified.
             if a_medone.len() == edges_map.len() {
@@ -624,12 +630,12 @@ impl<'a> BuilderFace<'a> {
 /// connected internal edges into wires (edges set with INTERNAL orientation).
 /// aMVE (L788-789) and aAddedMap (L786-787) use TopTools_ShapeMapHasher —
 /// key identity TShape + Location, orientation ignored.
-fn make_internal_wires(edges: &[Shape]) -> Vec<Vec<Shape>> {
+fn make_internal_wires(edges: &[Shape], locations: &[glam::DAffine3]) -> Vec<Vec<Shape>> {
     use rcad_kernel::topods::Orientation;
     // aMVE: vertex -> edges.
     let mut a_mve: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
     for e in edges {
-        for v in BuilderFace::edge_vertices(e) {
+        for v in BuilderFace::edge_vertices(e, locations) {
             a_mve
                 .entry((v.ptr_id(), v.location))
                 .or_default()
@@ -653,7 +659,7 @@ fn make_internal_wires(edges: &[Shape]) -> Vec<Vec<Shape>> {
         let mut i = 0;
         while i < a_w.len() {
             let cur = &a_w[i];
-            for v in BuilderFace::edge_vertices(cur) {
+            for v in BuilderFace::edge_vertices(cur, locations) {
                 if let Some(le) = a_mve.get(&(v.ptr_id(), v.location)) {
                     for ex in le {
                         if a_added.insert((ex.ptr_id(), ex.location)) {

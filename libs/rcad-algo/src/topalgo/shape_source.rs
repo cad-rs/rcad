@@ -73,4 +73,11 @@ pub trait ShapeSource: Send + Sync {
     /// BRep_Tool::Degenerated(edge) — true when the edge at a flat DS index is
     /// degenerated (no 3D curve, coincident vertices).
     fn is_edge_degenerated(&self, i: usize) -> bool;
+    /// TopLoc_Location by index (0 = identity). Used by the edge-vertex
+    /// traversal to compose the edge Location into its vertices
+    /// (TopoDS_Iterator cumLoc semantics).
+    fn get_location(&self, idx: u32) -> glam::DAffine3;
+    /// The full TopLoc_Location table (index 0 = identity), for composing
+    /// edge+vertex Locations (TopoDS_Iterator cumLoc semantics).
+    fn locations(&self) -> &[glam::DAffine3];
 }
