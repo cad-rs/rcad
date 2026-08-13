@@ -1128,7 +1128,7 @@ pub(crate) fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f
         i_err = err;
         a_p3d = p;
     } else {
-        let (err, p, _p2d) = crate::bop::tools::algo_tools::point_in_face_shape(the_face);
+        let (err, p, _p2d) = crate::bop::tools::algo_tools::point_in_face_shape(the_face, &ds.locations);
         i_err = err;
         a_p3d = p;
     }
@@ -1581,17 +1581,7 @@ impl<'a> Builder<'a> {
         self.build_result(topods::ShapeType::Solid);
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(6, "after_FillImagesSolids");
-        if let Some(brep) = &self.my_shape {
-            let mut nf = 0;
-            for ts in &brep.tshapes {
-                if let TShape::Face(fd) = ts.as_ref() {
-                    nf += 1;
-                    let nw = fd.outer_wire.as_wire().map(|w| w.edges.len()).unwrap_or(0);
-                    if nw < 4 {
-                    }
-                }
-            }
-        }
+        
 
         // OCCT L530-539: FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
         self.fill_images_containers(topods::ShapeType::CompSolid);
@@ -1949,6 +1939,7 @@ impl<'a> Builder<'a> {
     /// or alone vertices take the BuildDraftFace fast path.
     fn build_split_faces(&mut self) {
         let a_nb_s = self.ds.nb_source_shapes();
+        
         // aFacesIm: DS face index -> area shapes (OCCT IndexedDataMap<int,
         // List<Shape>>, Builder_2.cxx L256 — insertion order, iterated at L535).
         let mut a_faces_im: IndexMap<usize, Vec<Shape>> = IndexMap::new();
@@ -1966,6 +1957,7 @@ impl<'a> Builder<'a> {
             }
             let a_f = self.brep_sr(i);
             let a_fi = self.ds.face_info(i).clone();
+            
             // OCCT L286-287: AloneVertices(i, aLIAV).
             let a_liav = self.alone_vertices(i);
             let a_nb_pb_in = a_fi.pave_blocks_in.len();
@@ -2145,6 +2137,7 @@ impl<'a> Builder<'a> {
                 self.build_pcurve_for_edges_on_plane(&a_le, &a_ff);
             }
             // OCCT L502-505: aBF.SetFace(aF); aBF.SetShapes(aLE); SetRunParallel.
+            
             a_vbf.push((i, a_f, a_le));
         }
 
@@ -3034,6 +3027,7 @@ impl<'a> Builder<'a> {
                 let b_is_closed = self.edge_closed_on_face(a_e, the_face);
                 // OCCT L1118: theImages.Seek(aE).
                 let p_le_im = self.images_of(a_e);
+                
                 if p_le_im.is_none() {
                     // OCCT L1121-1131: multi-connected / unified edge -> BuilderFace.
                     if !b_is_degenerated && self.has_multi_connected(a_e, &mut a_vertices_counter) {
@@ -3213,6 +3207,7 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        
         // OCCT L687: sort indices.
         a_fi_vec.sort();
 
@@ -3266,10 +3261,12 @@ impl<'a> Builder<'a> {
                 }
                 edge_set.sort_unstable();
 
-                an_e_set_faces.entry((count, edge_set)).or_default().push(f_piece.clone());
+                // OCCT L729: if (bCheckPlanar) aMFPlanar.Add(aItLF.Value()) —
+                // the planar fence feeds the L780-785 fast SD check.
                 if b_check_planar {
                     a_mf_planar.insert((f_piece.ptr_id(), f_piece.location));
                 }
+                an_e_set_faces.entry((count, edge_set)).or_default().push(f_piece.clone());
             }
         }
 
@@ -3277,6 +3274,8 @@ impl<'a> Builder<'a> {
         // insertion order); aVPSB — pairs for analysis.
         let mut a_dmsls: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
         let mut a_vpsb: Vec<(Shape, Shape)> = Vec::new();
+
+        
 
         // OCCT L750-791: check pairs of faces with equal edge set.
         for (_edge_set, faces) in &an_e_set_faces {
@@ -3322,13 +3321,15 @@ impl<'a> Builder<'a> {
                 )
             } else {
                 crate::bop::tools::algo_tools::are_faces_same_domain_shapes(
-                    f1, f2, self.my_fuzzy_value,
+                    f1, f2, self.my_fuzzy_value, &self.ds.locations,
                 )
             };
             if flag {
                 fill_map_faces(f1, f2, &mut a_dmsls);
             }
+            
         }
+        
 
         // OCCT L826: MakeBlocks(aDMSLS, aMBlocks).
         let a_m_blocks = make_blocks_faces(&a_dmsls);
@@ -3754,6 +3755,7 @@ impl<'a> Builder<'a> {
                                 // rcad: the warning alert is omitted (diagnostic only).
                                 let (b_to_reverse, _err) =
                                     crate::bop::tools::algo_tools::is_split_to_reverse_face(a_fx, &a_f, &self.ds);
+                                
                                 let mut fx = a_fx.clone();
                                 if b_to_reverse {
                                     fx.orientation = flip_orientation(fx.orientation);
@@ -4092,6 +4094,7 @@ impl<'a> Builder<'a> {
             // OCCT L516: SetShapes(aSFS).
             bs.my_shapes = a_sfs;
             bs.perform();
+            
             // OCCT L542: aSolidsIm.Add(aBS.Solid(), aBS.Areas()) — keyed by the
             // split solid's mySolid (the source solid).
             let a_solid = bs.my_solid.clone().expect("SetSolid before split");
@@ -5259,6 +5262,7 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        
         // OCCT L1243-1271: build solids from the set of faces.
         // OCCT L1257-1260: aBS.SetAvoidInternalShapes(true) — the faces of the
         // result solids must not create internal shells.
@@ -5273,6 +5277,7 @@ impl<'a> Builder<'a> {
                 self.my_report.add_error(crate::bop::algo::Alert::SolidBuilderFailed);
                 return;
             }
+            
             for a_sr in &a_bs.my_solids {
                 a_rc.push(a_sr.clone());
             }
@@ -5829,8 +5834,6 @@ impl<'a> Builder<'a> {
                 let my_shapes = self.remap_shapes(&ed.my_shapes);
                 let first = self.remap_shape(&ed.first);
                 let last = self.remap_shape(&ed.last);
-                if shape.index >= 30 {
-                }
                 TShape::Edge(TEdgeData {
                     my_shapes, first, last, ..ed.clone()
                 })
@@ -5839,6 +5842,7 @@ impl<'a> Builder<'a> {
                 for e in &wd.edges { let _ = self.push_shape_recursive(e); }
                 let my_shapes = self.remap_shapes(&wd.my_shapes);
                 let edges = self.remap_shapes(&wd.edges);
+                
                 TShape::Wire(TWireData {
                     my_shapes, edges, ..wd.clone()
                 })
@@ -5851,6 +5855,7 @@ impl<'a> Builder<'a> {
                 let outer_wire = self.remap_shape(&fd.outer_wire);
                 let inner_wires = self.remap_shapes(&fd.inner_wires);
                 let internal_vertices = self.remap_shapes(&fd.internal_vertices);
+                
                 TShape::Face(TFaceData {
                     my_shapes, outer_wire, inner_wires,
                     internal_vertices, ..fd.clone()
@@ -5899,6 +5904,7 @@ impl<'a> Builder<'a> {
                 orientation: shape.orientation,
             }
         } else {
+            
             shape.clone()
         }
     }

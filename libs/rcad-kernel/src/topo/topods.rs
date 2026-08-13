@@ -1974,7 +1974,7 @@ impl BRep {
                                             for esr in &wd.edges {
                                                 edges.push(crate::topo::topology::WireEdge {
                                                     idx: esr.index,
-                                                    forward: true,
+                                                    forward: esr.orientation == Orientation::Forward,
                                                     location: esr.location,
                                                 });
                                             }
@@ -1992,7 +1992,7 @@ impl BRep {
                                                 for esr in &wd.edges {
                                                     edges.push(crate::topo::topology::WireEdge {
                                                         idx: esr.index,
-                                                        forward: true,
+                                                        forward: esr.orientation == Orientation::Forward,
                                                         location: esr.location,
                                                     });
                                                 }

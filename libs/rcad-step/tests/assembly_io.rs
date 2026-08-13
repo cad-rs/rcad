@@ -1,7 +1,7 @@
 //! Integration tests for rcad-step assembly read/write.
 
 use glam::{DAffine3, DVec3};
-use rcad_algorithms::{HealingMode, HealingOptions};
+use rcad_algo::{HealingMode, HealingOptions};
 use rcad_kernel::topods;
 use rcad_modeling::make_box_brep;
 use rcad_step::{

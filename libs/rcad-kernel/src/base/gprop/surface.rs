@@ -302,7 +302,7 @@ fn try_axis_aligned_world_rect_plane_area(brep: &BRep, face: &Face, face_normal:
 }
 
 fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
-    let edge = brep.flat_edges().get(we.idx).copied()?;
+    let edge = brep.edge_vertex_indices(we.idx)?;
     if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| {
         if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None }
     }) {
@@ -338,8 +338,17 @@ fn trim_almost_closed_uv_chain(uvs: &mut Vec<(f64, f64)>, pos_tol: f64) {
 fn outer_wire_unique_vertex_uvs(brep: &BRep, wire: &Wire, i: usize, j: usize, pos_tol: f64) -> Vec<(f64, f64)> {
     let mut out: Vec<(f64, f64)> = Vec::new();
     for we in &wire.edges {
-        let flat_edges = brep.flat_edges();
-        let Some(edge) = flat_edges.get(we.idx) else { continue; };
+        // we.idx is the edge tshape index; resolve first/last vertex indices
+        // from the tshape pool (the compact flat_edges() list is not indexed
+        // by tshape index).
+        let edge: Option<(usize, usize)> = brep.tshapes.get(we.idx).and_then(|ts| {
+            if let topods::TShape::Edge(ed) = &**ts {
+                Some((ed.first.index, ed.last.index))
+            } else {
+                None
+            }
+        });
+        let Some(edge) = edge else { continue };
         let pts: [DVec3; 2] = if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| {
             if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None }
         }) {
@@ -409,13 +418,13 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
 
     let mut edges = Vec::with_capacity(n_edges);
     let first_we = &face.outer_wire.edges[0];
-    let first_e = brep.flat_edges().get(first_we.idx).copied()?;
+    let first_e = brep.edge_vertex_indices(first_we.idx)?;
     let first_vi = if first_we.forward { first_e.0 } else { first_e.1 };
     let pivot = brep.vertex_point(first_vi).unwrap_or(DVec3::ZERO);
 
     for we in &face.outer_wire.edges {
         let ei = we.idx;
-        let edge = brep.flat_edges().get(ei).copied()?;
+        let edge = brep.edge_vertex_indices(ei)?;
         let curve_idx = brep.tshapes.get(ei).and_then(|ts| {
             if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None }
         })?;
@@ -463,7 +472,7 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
         for w in &face.inner_wires {
             if w.edges.len() < 3 { continue; }
             let hole_pts: Vec<DVec3> = w.edges.iter().filter_map(|we| {
-                let e = brep.flat_edges().get(we.idx).copied()?;
+                let e = brep.edge_vertex_indices(we.idx)?;
                 let vi = if we.forward { e.0 } else { e.1 };
                 brep.vertex_point(vi)
             }).collect();
@@ -683,7 +692,7 @@ fn try_cylinder_trimmed_face_area(cyl: &CylindricalSurface, brep: &BRep, face: &
                     }) {
                         for we in &face.outer_wire.edges {
                             if we.idx == ci {
-                                if let Some(edge) = brep.flat_edges().get(we.idx) {
+                                if let Some(edge) = brep.edge_vertex_indices(we.idx) {
                                     let vi = if we.forward { edge.0 } else { edge.1 };
                                     if let Some(v) = brep.vertex_point(vi) {
                                         let d = v - cyl.origin;
@@ -790,7 +799,7 @@ fn try_spherical_polygon_great_circle_area(s: &SphericalSurface, brep: &BRep, fa
     let mut verts: Vec<DVec3> = Vec::with_capacity(n_edges + 1);
     for we in &face.outer_wire.edges {
         let ei = we.idx;
-        let edge = brep.flat_edges().get(ei).copied()?;
+        let edge = brep.edge_vertex_indices(ei)?;
         let curve_idx = brep.tshapes.get(ei).and_then(|ts| {
             if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None }
         })?;

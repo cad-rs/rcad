@@ -7,7 +7,7 @@
 // (Same tree as --occt-root at generation time.)
 
 use glam::DVec3;
-use rcad_algorithms::{BooleanOpType, boolean_op, total_surface_area, total_volume};
+use rcad_algo::{BooleanOpType, boolean_op, total_surface_area, total_volume};
 use rcad_modeling::make_box_brep;
 
 #[test]

@@ -314,6 +314,7 @@ fn parse_curve3(c: &mut Cursor<'_>) -> Result<Curve3, OcctBrepError> {
                 knots: expand_knots(&mk),
                 control_points: pts,
                 weights: wts,
+                is_periodic: false,
             }))
         }
         "8" => Err(OcctBrepError::Unsupported(

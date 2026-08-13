@@ -1,4 +1,4 @@
-use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal, analyze_wire_issues};
+use rcad_algo::{HealingOptions, HealingReport, analyze_and_heal, analyze_wire_issues};
 use rcad_kernel::appearance::{Color, StepColor};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
@@ -5762,8 +5762,9 @@ fn build_topods_with_face_map(
                 continue;
             };
             let default_range = [0.0_f64, 1.0];
+            let fkey = (face_ref.ptr_id(), face_ref.location);
             t.edge_mut(edge_ref.clone()).pcurves.insert(
-                face_ref.index,
+                fkey,
                 (curve2d, default_range[0], default_range[1]),
             );
         }
@@ -6838,6 +6839,7 @@ fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
                 knots,
                 control_points,
                 weights,
+                is_periodic: false,
             }));
         }
     }
@@ -7775,7 +7777,7 @@ pub fn validate_export_readiness(brep: &BRep) -> ExportReadinessReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_algorithms::HealingMode;
+    use rcad_algo::HealingMode;
     use std::io::Cursor;
 
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");

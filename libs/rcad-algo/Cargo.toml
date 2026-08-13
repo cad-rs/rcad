@@ -8,11 +8,11 @@ repository = "https://github.com/cad-rs/rcad"
 [dependencies]
 rcad-kernel = { path = "../rcad-kernel" }
 rcad-brep = { path = "../rcad-brep" }
+rcad-modeling = { path = "../rcad-modeling" }
 glam.workspace = true
 indexmap.workspace = true
 rayon = "1"
 tracing = "0.1"
 
 [dev-dependencies]
-rcad-modeling = { path = "../rcad-modeling" }
 rcad-brep = { path = "../rcad-brep" }

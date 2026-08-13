@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use glam::{DAffine3, DVec3};
-use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal};
+use rcad_algo::{HealingOptions, HealingReport, analyze_and_heal};
 use rcad_kernel::appearance::StepColor;
 use rcad_kernel::topods;
 use serde::Serialize;

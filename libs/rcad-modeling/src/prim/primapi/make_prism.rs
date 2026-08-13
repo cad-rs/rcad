@@ -143,7 +143,9 @@ pub fn prism_brep(width: f64, depth: f64, height: f64) -> Result<BRep, crate::Bu
 /// the source TShape. The lateral faces are new planar faces whose wires are
 /// [sweep_i, rev(sweep_{i+1}), rev(base_i), top_i] with the same orientations
 /// as OCCT BRepPrimAPI_MakePrism (verified against DRAW `prism` f1: all faces
-/// FORWARD, lateral normal = extr_dir × edge_dir).
+/// FORWARD). Lateral normals point outward from the profile centroid and the
+/// cap normals point against the extrusion direction (OCCT BRepSweep orients
+/// every face outward, independent of the profile winding).
 pub fn make_prism_from_face_brep(
     origin: DVec3,
     x_dir: DVec3,
@@ -209,10 +211,13 @@ pub fn make_prism_from_face_brep(
         t.add_twire(vec![e_ver[2].clone(), rev(e_ver[3].clone()), rev(b_ed[2].clone()), t_ed[2].clone()]),
         t.add_twire(vec![e_ver[3].clone(), rev(e_ver[0].clone()), rev(b_ed[3].clone()), t_ed[3].clone()]),
         t.add_twire(vec![b_ed[0].clone(), b_ed[1].clone(), b_ed[2].clone(), b_ed[3].clone()]),
-        t.add_twire(vec![t_ed[0].clone(), t_ed[1].clone(), t_ed[2].clone(), t_ed[3].clone()]),
+        // Extruded cap: OCCT reuses the source face TShape REVERSED + Location
+        // (DRAW dump: shell `+3 -3(L1)`), so the wire edges are the top edges
+        // REVERSED (dump: `-20 -15 -10 -7`).
+        t.add_twire(vec![rev(t_ed[0].clone()), rev(t_ed[1].clone()), rev(t_ed[2].clone()), rev(t_ed[3].clone())]),
     ];
     // Surfaces. Profile cap: normal = x_dir × y_dir. Lateral face i: the
-    // image of base edge i swept along extr — normal = extr_dir × edge_dir
+    // image of base edge i swept along extr — outward normal from centroid
     // (OCCT BRepPrimAPI_MakePrism, verified on DRAW `prism f1`).
     let pln = |pt: DVec3, n: DVec3, u: DVec3| Surface3::Plane(Plane {
         origin: pt,
@@ -220,8 +225,8 @@ pub fn make_prism_from_face_brep(
         u_dir: u,
         v_dir: n.cross(u).normalize_or_zero(),
     });
-    let cap_n = xd.cross(yd).normalize_or_zero();
     let extr_dir = extr.normalize_or_zero();
+    let cap_n = -extr_dir;
     let e_dir = [
         xd,
         yd,
@@ -235,15 +240,23 @@ pub fn make_prism_from_face_brep(
         vpt(&v[0]),
     ];
     let mut faces: Vec<Shape> = Vec::new();
+    // Outward lateral normal: from the profile centroid toward the side face
+    // (independent of the profile winding, unlike extr_dir x edge_dir which
+    // only matches a counter-clockwise profile). OCCT BRepSweep orients every
+    // lateral face outward, so the surface normal must point away from the
+    // prism interior.
+    let centroid = (vpt(&v[0]) + vpt(&v[1]) + vpt(&v[2]) + vpt(&v[3])) * 0.25;
     for i in 0..4 {
-        let n = extr_dir.cross(e_dir[i]).normalize_or_zero();
+        let mid = (vpt(&v[i]) + vpt(&v[(i + 1) % 4])) * 0.5;
+        let n = (mid - centroid).normalize_or_zero();
         let surf = pln(e_pt[i], n, e_dir[i]);
         faces.push(t.add_tface(Some(surf), wires[i].clone(), vec![], None, None, vec![], false));
     }
-    // Source cap (FORWARD, outward +cap_n) and extruded cap (FORWARD; the
-    // face itself is a new TShape whose wire reuses the located top edges).
+    // Source cap (FORWARD, outward +cap_n). Extruded cap: REVERSED + Location
+    // in OCCT (DRAW shell `+3 -3(L1)`), so outward is -cap_n and the wire
+    // stores the top edges REVERSED.
     faces.push(t.add_tface(Some(pln(origin, cap_n, xd)), wires[4].clone(), vec![], None, None, vec![], false));
-    faces.push(t.add_tface(Some(pln(origin + extr, cap_n, xd)), wires[5].clone(), vec![], None, None, vec![], false));
+    faces.push(rev(t.add_tface(Some(pln(origin + extr, cap_n, xd)), wires[5].clone(), vec![], None, None, vec![], false)));
     let shell = t.add_tshell(faces);
     t.add_tsolid(vec![shell]);
     Ok(t)
@@ -263,20 +276,22 @@ mod shell_test {
             1.0, 1.0,
             DVec3::new(-1.0, 0.0, 0.0),
         ).unwrap();
-        let mut edge_usage: std::collections::HashMap<usize, Vec<(usize, bool)>> = std::collections::HashMap::new();
-        for (fi, s) in b.solids().iter().enumerate() {
+        let mut edge_usage: std::collections::HashMap<(usize, u32), Vec<bool>> = std::collections::HashMap::new();
+        for (_fi, s) in b.solids().iter().enumerate() {
             for sh in &s.shells {
                 for f in &sh.faces {
                     for we in &f.outer_wire.edges {
-                        edge_usage.entry(we.idx).or_default().push((fi, we.forward));
+                        // Folded edges (top cap reuses the source TShape + Location)
+                        // are distinct topological edges, so group by (idx, location).
+                        edge_usage.entry((we.idx, we.location)).or_default().push(we.forward);
                     }
                 }
             }
         }
         let mut bad = 0;
-        for (e, uses) in &edge_usage {
-            if uses.len() != 2 { println!("edge {} used {} times", e, uses.len()); bad += 1; }
-            else if uses[0].1 == uses[1].1 { println!("edge {} same dir on both faces", e); bad += 1; }
+        for ((e, l), uses) in &edge_usage {
+            if uses.len() != 2 { println!("edge {} loc {} used {} times", e, l, uses.len()); bad += 1; }
+            else if uses[0] == uses[1] { println!("edge {} loc {} same dir on both faces", e, l); bad += 1; }
         }
         println!("bad edges: {}", bad);
         assert_eq!(bad, 0, "shell must be closed with opposite edge orientations");

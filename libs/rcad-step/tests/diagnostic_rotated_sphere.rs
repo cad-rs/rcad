@@ -12,7 +12,7 @@
 //!   checkprops result -s 13.3517
 
 use glam::{DAffine3, DVec3};
-use rcad_algorithms::{BooleanOpType, boolean_op, total_surface_area};
+use rcad_algo::{BooleanOpType, boolean_op, total_surface_area};
 use rcad_modeling::{make_box_brep, make_sphere_brep};
 use std::time::Instant;
 

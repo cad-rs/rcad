@@ -1061,7 +1061,6 @@ impl PaveFiller {
         if i_size == 0 {
             return;
         }
-
         // OCCT L178-179: aEEs.SetIncrement(iSize) — Rust Vec auto-grows
 
         let mut new_ee: Vec<InterferenceEE> = Vec::new();
@@ -1758,7 +1757,27 @@ impl PaveFiller {
                 // direct pointer-id membership test matches exactly.
                 let is_on_face = a_mpbf.contains(&pbr_ptr);
                 if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                    eprintln!("[EF-DBG]   cand e={} f={} pb={} onFace={} mpbf_len={}", n_e, n_f, pbr_ptr, is_on_face, a_mpbf.len());
+                    if n_e == 55 || n_e == 62 || n_f == 22 {
+                        let mut on_edges: Vec<String> = Vec::new();
+                        for &pp in &a_mpbf {
+                            // find the edge that owns this PB pointer
+                            let mut found: Option<usize> = None;
+                            for (ei, pbs) in &self.ds.pave_blocks_pool {
+                                for pb in pbs {
+                                    let rp = self.ds.real_pave_block(pb);
+                                    if std::sync::Arc::as_ptr(&rp.0) as u64 == pp {
+                                        let r = rp.0.read().unwrap();
+                                        found = Some(*ei);
+                                        on_edges.push(format!("e{}:[{:.2},{:.2}]", ei, r.pave1().parameter(), r.pave2().parameter()));
+                                        break;
+                                    }
+                                }
+                                if found.is_some() { break; }
+                            }
+                            if found.is_none() { on_edges.push("?".to_string()); }
+                        }
+                        eprintln!("[EF-DBG]   cand e={} f={} onFace={} pbon_edges={:?}", n_e, n_f, is_on_face, on_edges);
+                    }
                 }
                 if is_on_face {
                     continue;
@@ -1811,7 +1830,12 @@ impl PaveFiller {
                 cand.n_e, cand.n_f, cand.range.0, cand.range.1, cand.express, &self.ds, self.my_fuzzy_value);
             a_nb_cprts = common_parts.len();
             if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                eprintln!("[EF-DBG] cand e={}(r{}) f={}(r{}) range=[{:.4},{:.4}] ncp={} min={:.3e}", cand.n_e, self.ds.rank(cand.n_e), cand.n_f, self.ds.rank(cand.n_f), cand.range.0, cand.range.1, a_nb_cprts, min_dist);
+                let epts = self.ds.edge_curve(cand.n_e).map(|c| {
+                    let p0 = c.point_at(cand.raw_range.0);
+                    let p1 = c.point_at(cand.raw_range.1);
+                    format!("({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})", p0.x, p0.y, p0.z, p1.x, p1.y, p1.z)
+                }).unwrap_or_default();
+                eprintln!("[EF-DBG] cand e={}(r{}) f={}(r{}) range=[{:.4},{:.4}] ncp={} min={:.3e} epts={}", cand.n_e, self.ds.rank(cand.n_e), cand.n_f, self.ds.rank(cand.n_f), cand.range.0, cand.range.1, a_nb_cprts, min_dist, epts);
             }
             if i_flag != 0 {
                 continue;

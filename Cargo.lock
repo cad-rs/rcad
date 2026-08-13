@@ -1010,6 +1010,7 @@ dependencies = [
  "bitflags",
  "glam",
  "rcad-kernel",
+ "rcad-modeling",
  "serde",
  "serde_json",
 ]
@@ -1066,7 +1067,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "glam",
- "rcad-algorithms",
+ "rcad-algo",
  "rcad-kernel",
  "rcad-modeling",
  "rcad-scene",

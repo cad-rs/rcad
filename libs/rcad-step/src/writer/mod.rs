@@ -1460,13 +1460,13 @@ impl Part21Writer {
             match rep {
                 topods::CurveRepresentation::CurveOnSurface { face, pcurve, .. } => {
                     pcurve_entries.push(PCurveEntry {
-                        face_tshape_idx: *face,
+                        face_tshape_idx: self.tbrep().index_by_ptr(face.0).unwrap_or(usize::MAX),
                         curve2d: pcurve.clone(),
                     });
                 }
                 topods::CurveRepresentation::CurveOnClosedSurface { face, pcurve1, .. } => {
                     pcurve_entries.push(PCurveEntry {
-                        face_tshape_idx: *face,
+                        face_tshape_idx: self.tbrep().index_by_ptr(face.0).unwrap_or(usize::MAX),
                         curve2d: pcurve1.clone(),
                     });
                 }
@@ -2155,7 +2155,7 @@ impl Part21Writer {
                         let ci = rep_curve2ds.len();
                         rep_curve2ds.push(pcurve.clone());
                         pcurves.push(flat::PCurve {
-                            surface_idx: *face,
+                            surface_idx: self.tbrep().index_by_ptr(face.0).unwrap_or(usize::MAX),
                             curve2d_idx: ci,
                         });
                     }
@@ -2168,13 +2168,13 @@ impl Part21Writer {
                         let ci1 = rep_curve2ds.len();
                         rep_curve2ds.push(pcurve1.clone());
                         pcurves.push(flat::PCurve {
-                            surface_idx: *face,
+                            surface_idx: self.tbrep().index_by_ptr(face.0).unwrap_or(usize::MAX),
                             curve2d_idx: ci1,
                         });
                         let ci2 = rep_curve2ds.len();
                         rep_curve2ds.push(pcurve2.clone());
                         pcurves.push(flat::PCurve {
-                            surface_idx: *face,
+                            surface_idx: self.tbrep().index_by_ptr(face.0).unwrap_or(usize::MAX),
                             curve2d_idx: ci2,
                         });
                     }

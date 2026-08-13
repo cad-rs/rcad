@@ -441,7 +441,7 @@ pub fn are_faces_same_domain(
 /// piece-equivalent of the DS FClass2d UV polygons. Both endpoints of every
 /// edge are projected (a corner held only as an edge FIRST vertex must not be
 /// lost); the polygon is returned in wire-edge traversal order.
-fn shape_uv_polygons(face: &Shape) -> Option<Vec<Vec<glam::DVec2>>> {
+fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<Vec<glam::DVec2>>> {
     let fd = face.as_face()?;
     let surf = fd.surface.as_ref()?;
     let mut polys: Vec<Vec<glam::DVec2>> = Vec::new();
@@ -451,7 +451,23 @@ fn shape_uv_polygons(face: &Shape) -> Option<Vec<Vec<glam::DVec2>>> {
                 if let TShape::Edge(ed) = &*e.data {
                     for v in [&ed.first, &ed.last] {
                         if let TShape::Vertex(vd) = &*v.data {
-                            let (uv, _) = crate::bop::closest_point_on_surface(surf, vd.point);
+                            // OCCT TopoDS_Iterator cumLoc: the edge Location is
+                            // composed into its vertices (a folded top edge =
+                            // source TShape + Location must be transformed).
+                            let loc = if e.location != 0 { e.location } else { v.location };
+                            let p = if loc == 0 {
+                                vd.point
+                            } else {
+                                // DS location table: index 0 is the identity
+                                // sentinel, so the transform for location N is
+                                // at locations[N] (BOPDS_DS::GetLocation).
+                                locations
+                                    .get(loc as usize)
+                                    .copied()
+                                    .unwrap_or(glam::DAffine3::IDENTITY)
+                                    .transform_point3(vd.point)
+                            };
+                            let (uv, _) = crate::bop::closest_point_on_surface(surf, p);
                             out.push(uv);
                         }
                     }
@@ -518,11 +534,14 @@ fn point_in_periodic_polygon(uv: glam::DVec2, poly: &[glam::DVec2], period: f64)
 /// crossing the face's UV polygons (parity from V = -inf, same as
 /// hatch_line_intervals). Returns (iErr, theP, theP2D) with iErr == 0 on
 /// success.
-pub(crate) fn point_in_face_shape(face: &Shape) -> (i32, glam::DVec3, glam::DVec2) {
+pub(crate) fn point_in_face_shape(
+    face: &Shape,
+    locations: &[glam::DAffine3],
+) -> (i32, glam::DVec3, glam::DVec2) {
     let Some(surf) = face.as_face().and_then(|fd| fd.surface.clone()) else {
         return (1, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
-    let Some(polys) = shape_uv_polygons(face) else {
+    let Some(polys) = shape_uv_polygons(face, locations) else {
         return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
     // UV bounds over all polygons (OCCT UVBounds of the face).
@@ -586,7 +605,12 @@ pub(crate) fn point_in_face_shape(face: &Shape) -> (i32, glam::DVec3, glam::DVec
 /// polygons (ON allowed — the point is valid when not strictly OUT). On a
 /// U-periodic surface the classification uses the periodic ray test (the
 /// polygon may cross the seam, e.g. u near 2*PI equivalent to 0).
-fn is_valid_point_for_face_shape(p: glam::DVec3, face: &Shape, a_tol: f64) -> bool {
+fn is_valid_point_for_face_shape(
+    p: glam::DVec3,
+    face: &Shape,
+    a_tol: f64,
+    locations: &[glam::DAffine3],
+) -> bool {
     let Some(surf) = face.as_face().and_then(|fd| fd.surface.clone()) else {
         return false;
     };
@@ -594,7 +618,7 @@ fn is_valid_point_for_face_shape(p: glam::DVec3, face: &Shape, a_tol: f64) -> bo
     if (proj - p).length() > a_tol {
         return false;
     }
-    let Some(polys) = shape_uv_polygons(face) else {
+    let Some(polys) = shape_uv_polygons(face, locations) else {
         return false;
     };
     let is_u_per = matches!(
@@ -647,9 +671,14 @@ fn is_valid_point_for_face_shape(p: glam::DVec3, face: &Shape, a_tol: f64) -> bo
 
 /// OCCT BOPTools_AlgoTools::AreFacesSameDomain (BOPTools_AlgoTools.cxx
 /// L1139-1205) for split face images (Shapes not registered in the DS).
-pub fn are_faces_same_domain_shapes(f1: &Shape, f2: &Shape, fuzz: f64) -> bool {
+pub fn are_faces_same_domain_shapes(
+    f1: &Shape,
+    f2: &Shape,
+    fuzz: f64,
+    locations: &[glam::DAffine3],
+) -> bool {
     // OCCT L1149-1155: find a point inside the first face.
-    let (i_err, a_p1, _a_p2d1) = point_in_face_shape(f1);
+    let (i_err, a_p1, _a_p2d1) = point_in_face_shape(f1, locations);
     if i_err != 0 {
         return false;
     }
@@ -675,7 +704,7 @@ pub fn are_faces_same_domain_shapes(f1: &Shape, f2: &Shape, fuzz: f64) -> bool {
     // OCCT L1198-1199: checking criteria.
     let a_tol = a_tol_f1 + a_tol_f2 + fuzz.max(rcad_kernel::CONFUSION);
     // OCCT L1202: project and classify the point on the second face.
-    is_valid_point_for_face_shape(a_p1, f2, a_tol)
+    is_valid_point_for_face_shape(a_p1, f2, a_tol, locations)
 }
 
 // ====================================================================
@@ -1030,7 +1059,7 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
             }
         }
         None => {
-            let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face_shape(f_sp);
+            let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face_shape(f_sp, &ds.locations);
             if err == 0 {
                 p3d = Some(p);
                 p2d_sp = Some(p2d);
@@ -1085,7 +1114,16 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
                     let class2d = FClass2d::new(ds, fi, ds.face_tolerance(fi));
                     class2d.perform(ds, p2d, true) != State::Out
                 }
-                None => false,
+                // OCCT L619-641: IsPointInOnFace(aP, aF, aTol) works on any
+                // TopoDS_Face via the face's UV polygons — the split-face
+                // image is not registered in the DS, so classify it from its
+                // own geometry (rcad: is_valid_point_for_face_shape).
+                None => is_valid_point_for_face_shape(
+                    p3d_near,
+                    f_sp,
+                    2.0 * (a_tol_e + a_tol_f),
+                    &ds.locations,
+                ),
             };
             if in_face {
                 p3d = Some(p3d_near);

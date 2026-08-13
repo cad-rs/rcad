@@ -12,7 +12,7 @@
 //! being tracked separately. FEA-oriented primitive checks live in `fea_roundtrip.rs`.
 
 use glam::{DAffine3, DVec3};
-use rcad_algorithms::{BooleanOpType, boolean_op};
+use rcad_algo::{BooleanOpType, boolean_op};
 use rcad_kernel::appearance::Color;
 use rcad_kernel::topods;
 use rcad_modeling::{
