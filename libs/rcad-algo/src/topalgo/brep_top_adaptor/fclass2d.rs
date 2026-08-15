@@ -176,13 +176,17 @@ fn order_wire_edges(
     used[cur] = true;
     let mut cur_v2 = edge_v2[cur];
     while result.len() < n {
-        // Among the unused edges starting at the current vertex, prefer a
-        // closed-loop edge (V2 == current vertex) — OCCT BRepTools_WireExplorer
-        // traverses a loop (cylinder/cone lateral TopEdge/BottomEdge circle)
-        // in place before leaving the vertex. Without this, the cylinder wire
-        // [TopR, EndF, BottomF, StartR] walks [TopR, StartR, EndF] and skips
-        // the bottom circle, producing a self-crossing UV polygon. Fall back
-        // to the first unused edge otherwise.
+        // OCCT BRepTools_WireExplorer (BRepTools_WireExplorer.cxx L78-172):
+        // at the current vertex pick the unused edge that connects there,
+        // preferring the one that forms a closed loop (V2 == current vertex —
+        // cylinder/cone lateral TopEdge/BottomEdge circle), and traverse it in
+        // the direction that continues the walk (flipping its orientation when
+        // it connects via its END vertex). The rcad walk previously only
+        // followed edges whose compound-FORWARD vertex (V1) matched, so a wire
+        // whose edges connect at a V2 (e.g. the revolve partial annulus
+        // [arc, prof@L1, arc REV, prof]) stopped mid-way and fell back to the
+        // stored order, producing a self-crossing UV polygon and a wrong
+        // IsHole/point-in-face classification.
         let next_opt = by_start.get(&cur_v2).and_then(|list| {
             list.iter()
                 .copied()
@@ -195,7 +199,33 @@ fn order_wire_edges(
                 used[i] = true;
                 cur_v2 = edge_v2[i];
             }
-            None => break,
+            None => {
+                // No unused edge starts at the current vertex — look for one
+                // that ENDS here and traverse it reversed (the wire walks
+                // through the vertex from the edge's V2 to its V1).
+                let rev_opt = (0..n)
+                    .filter(|&i| !used[i] && edge_v2[i] == cur_v2)
+                    .min_by_key(|&i| {
+                        let (vf, vl) = edge_endpoints(ds, i);
+                        if vf == cur_v2 { 0 } else { 1 }
+                    });
+                match rev_opt {
+                    Some(i) => {
+                        let (ei, ori) = edges[i];
+                        let flipped = match ori {
+                            Orientation::Forward => Orientation::Reversed,
+                            Orientation::Reversed => Orientation::Forward,
+                            other => other,
+                        };
+                        result.push((ei, flipped));
+                        used[i] = true;
+                        // The reversed edge starts (in traversal) at its V2 and
+                        // ends at its stored-orientation V1.
+                        cur_v2 = edge_start_of(ds, i, ori);
+                    }
+                    None => break,
+                }
+            }
         }
     }
     // If the walk did not visit every edge (e.g. a wire containing a closed
@@ -206,6 +236,51 @@ fn order_wire_edges(
         return edges.to_vec();
     }
     result
+}
+
+/// The compound-FORWARD (V1) endpoint of edge `i`, computed like the
+/// order_wire_edges walk (TopExp::Vertices with cumOri).
+fn edge_start_of(ds: &dyn ShapeSource, i: usize, ori: Orientation) -> (u64, u32) {
+    let (vf, vl) = edge_vertex_keys(ds, i);
+    let compound = |o: Orientation| match (o, ori) {
+        (Orientation::Forward, Orientation::Forward)
+        | (Orientation::Reversed, Orientation::Reversed) => Orientation::Forward,
+        _ => Orientation::Reversed,
+    };
+    if compound(vf.1) == Orientation::Forward {
+        (vf.0 .0, vf.0 .1)
+    } else {
+        (vl.0 .0, vl.0 .1)
+    }
+}
+
+/// The two vertex (key, orientation) pairs of edge `i` with the edge location
+/// composed (TopoDS_Iterator cumLoc).
+fn edge_vertex_keys(
+    ds: &dyn ShapeSource,
+    i: usize,
+) -> (((u64, u32), Orientation), ((u64, u32), Orientation)) {
+    let (vf, vl) = match ds.shape_at(i) {
+        Shape { data, .. } => match &*data {
+            TShape::Edge(ed) => (ed.first.clone(), ed.last.clone()),
+            _ => return (((0, 0), Orientation::Forward), ((0, 0), Orientation::Forward)),
+        },
+    };
+    let edge_loc = ds.shape_at(i).location;
+    let locs = ds.locations();
+    let vf_loc = crate::bop::algo::compose_edge_vertex_location(edge_loc, vf.location, locs);
+    let vl_loc = crate::bop::algo::compose_edge_vertex_location(edge_loc, vl.location, locs);
+    (
+        ((vf.ptr_id(), vf_loc), vf.orientation),
+        ((vl.ptr_id(), vl_loc), vl.orientation),
+    )
+}
+
+/// The two vertex keys of edge `i` with the edge location composed
+/// (TopoDS_Iterator cumLoc).
+fn edge_endpoints(ds: &dyn ShapeSource, i: usize) -> ((u64, u32), (u64, u32)) {
+    let (a, b) = edge_vertex_keys(ds, i);
+    (a.0, b.0)
 }
 
 /// OCCT ElCLib::Parameter / ElCLib::Value on a gp_Lin2d(origin, dir) with
@@ -268,8 +343,16 @@ impl EdgeEval {
                 let is_seam = matches!(c3d, Curve3::Line(_))
                     || (matches!(c3d, Curve3::Circle(_)) && matches!(surf, Surface3::Sphere(_)));
                 let mut u_out = uv.x;
+                // OCCT: only the face's own seam isoline (u=0, the periodic
+                // image u=2*PI) carries the 2D Location; a generic boundary
+                // LINE on a U-periodic surface (e.g. the vertical side edge at
+                // the end of an arc profile) is NOT the seam and must not be
+                // shifted.  Check the projected u of the line against 0.
                 if is_u_per && is_seam && *ori == Orientation::Forward {
-                    u_out += std::f64::consts::TAU;
+                    let u_mod = uv.x - std::f64::consts::TAU * (uv.x / std::f64::consts::TAU).round();
+                    if u_mod.abs() < 1e-6 {
+                        u_out += std::f64::consts::TAU;
+                    }
                 }
                 (DVec2::new(u_out, uv.y), Some(p3d))
             }
@@ -543,7 +626,16 @@ impl FClass2d {
                 // Seam (CurveOnClosedSurface) pcurves are selected by the edge
                 // orientation (FORWARD → u=2*PI, REVERSED → u=0).
                 let pcurve = edge_pcurve_on_face(ds, ei, a_face, ori);
-                let edge_curve = edge_data.curve.clone();
+                // OCCT BRep_Tool::Curve(aE) (BRep_Tool.cxx L211-227): the
+                // edge's 3D curve with its Location applied.
+                let edge_curve = edge_data.curve.clone().map(|c| {
+                    let loc = ds.get_location(eshape.location);
+                    if loc == glam::DAffine3::IDENTITY {
+                        c
+                    } else {
+                        rcad_kernel::geom::transform_curve(&c, &loc)
+                    }
+                });
 
                 // OCCT L166-190: degenerated edge checks.
                 let mut degenerated = ds.is_edge_degenerated(ei);
@@ -650,9 +742,30 @@ impl FClass2d {
                 // OCCT L277-365: sample loop.
                 let avant = seq_pnt2d.len();
                 let mut prev_u = a_prms[1];
+                // rcad: the Projected fallback wraps the periodic u into
+                // [0, 2*PI] independently per sample (ElSLib::CylinderParameters
+                // normalizeAngle), so a boundary arc crossing u=0 yields a
+                // spurious wrap gap (samples 0.02, 2*PI-0.02, ...).  OCCT's
+                // FClass2d samples the continuous edge pcurves instead, whose
+                // parameterization never wraps.  Restore the continuity by
+                // shifting consecutive samples by whole periods.
+                let is_u_per_proj = {
+                    let is_u_per = surf.as_ref().map(surface_periodic).unwrap_or((false, false)).0;
+                    is_u_per && matches!(eval, EdgeEval::Projected { .. })
+                };
                 for i_x in firstpoint..=a_nbs1 as usize {
                     u = a_prms[i_x];
-                    let (p2d, p3d_opt) = eval.point(u);
+                    let (mut p2d, p3d_opt) = eval.point(u);
+                    if is_u_per_proj {
+                        if let Some(prev_x) = seq_pnt2d.last().map(|q| q.x) {
+                            while p2d.x - prev_x > std::f64::consts::PI {
+                                p2d.x -= std::f64::consts::TAU;
+                            }
+                            while prev_x - p2d.x > std::f64::consts::PI {
+                                p2d.x += std::f64::consts::TAU;
+                            }
+                        }
+                    }
                     if p2d.x < self.u_min {
                         self.u_min = p2d.x;
                     }

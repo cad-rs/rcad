@@ -13,6 +13,7 @@ pub mod healing;
 pub mod shape_custom;
 pub mod features;
 pub mod revolve;
+pub mod extrude_profile;
 pub mod geom_populate;
 pub mod fillet;
 
@@ -27,6 +28,7 @@ pub use healing::{
 };
 pub use shape_custom::restrict_to_bspline;
 pub use features::{extrude_polygon_solid, revolve_polygon_solid};
+pub use extrude_profile::{extrude_profile_solid, ProfileSegment};
 pub use fillet::make_fillet_edge;
 
 // Re-export BSpline edit helpers at the module top level.

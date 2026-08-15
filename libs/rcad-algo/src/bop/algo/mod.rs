@@ -69,6 +69,44 @@ pub fn compose_edge_vertex_location(
         .unwrap_or(edge_loc)
 }
 
+/// OCCT BRep_Builder::UpdateEdge / BRep_Tool::CurveOnSurface
+/// (BRep_Builder.cxx L692, BRep_Tool.cxx L345): the pcurve of an edge on a
+/// face is keyed by `(face TShape, aLoc)` with
+/// `aLoc = L.Predivided(E.Location())` — the face location divided by the
+/// edge's location. A located edge (e.g. the top edge of a prism, sharing its
+/// TShape with the base edge) therefore has its OWN pcurve key, distinct from
+/// the base edge's.
+///
+/// rcad stores Locations as indices into the DS table. The composed transform
+/// face_loc * edge_loc^-1 may not be present in the table (only the forward
+/// folds are registered); fall back to the edge location index when the face
+/// has no location, and to the face location otherwise — the key still
+/// separates located edges from their base copies, which is the OCCT
+/// semantics that matters for the shared-TShape case.
+pub fn compose_face_edge_pcurve_location(
+    face_loc: u32,
+    edge_loc: u32,
+    locations: &[glam::DAffine3],
+) -> u32 {
+    if edge_loc == 0 {
+        return face_loc;
+    }
+    let face_tr = locations
+        .get(face_loc as usize)
+        .copied()
+        .unwrap_or(glam::DAffine3::IDENTITY);
+    let edge_tr = locations
+        .get(edge_loc as usize)
+        .copied()
+        .unwrap_or(glam::DAffine3::IDENTITY);
+    let composed = face_tr * edge_tr.inverse();
+    locations
+        .iter()
+        .position(|l| *l == composed)
+        .map(|i| i as u32)
+        .unwrap_or(if face_loc == 0 { edge_loc } else { face_loc })
+}
+
 // ===
 // BOPAlgo_Report ?collects alerts during algorithm execution
 // ===

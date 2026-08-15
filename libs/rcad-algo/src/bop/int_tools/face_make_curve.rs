@@ -27,6 +27,7 @@ use rcad_kernel::geom::{
     Line3, Parabola3, Plane, Surface3, SurfaceEval,
 };
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
+use rcad_kernel::topods::{ShapeType, TShape};
 
 /// OCCT IntTools_FaceFace::MakeCurve (L695-1846): clip each IntPatch line to
 /// the two faces' domains and build one IntersectionCurve per valid
@@ -106,6 +107,16 @@ pub fn make_curves(
         }
         // OCCT MakeCurve L776-1846: one curve per part.
         for &[fprm, lprm] in &a_parts {
+            // rcad note: the box-based classify_point clip cannot represent a
+            // face hole (an inner wire); OCCT's TopolTool classifier rejects
+            // points inside holes at this stage.  Drop parts whose midpoint
+            // lies in a hole of either face (OCCT GeomInt_LineConstructor
+            // midpoint classification, L164-179).
+            if part_in_face_hole(ds, f1, surf1, &line, fprm, lprm)
+                || part_in_face_hole(ds, f2, surf2, &line, fprm, lprm)
+            {
+                continue;
+            }
             let ic = make_part_curve(
                 surf1, uv1, surf2, uv2, tol, &line, fprm, lprm, a_parts.len(),
             );
@@ -115,6 +126,87 @@ pub fn make_curves(
         }
     }
     out
+}
+
+/// True when the midpoint of the curve part `[fprm, lprm]` lies inside one of
+/// the face's inner (hole) loops.
+///
+/// OCCT IntTools_FaceFace::MakeCurve clips intersection curves with the face
+/// TopolTool, whose BRepClass_FaceClassifier rejects points inside the holes;
+/// the rcad box-based `classify_point` clip cannot represent a hole, so this
+/// restores the hole rejection at MakeCurve time (GeomInt_LineConstructor
+/// classifies each part's midpoint, OCCT L164-179).
+fn part_in_face_hole(
+    ds: &DS,
+    fi: usize,
+    surf: &Surface3,
+    line: &IntPatchLine,
+    fprm: f64,
+    lprm: f64,
+) -> bool {
+    let inner_wires = match &*ds.shapes[fi].shape.data {
+        TShape::Face(fd) => fd.inner_wires.clone(),
+        _ => return false,
+    };
+    if inner_wires.is_empty() {
+        return false;
+    }
+    let p3d = line.curve.point_at(0.5 * (fprm + lprm));
+    let (uv, _) = crate::bop::closest_point_on_surface(surf, p3d);
+    for ws in &inner_wires {
+        let wi = ds.index(ws);
+        if wi < 0 || wi as usize >= ds.nb_shapes() {
+            continue;
+        }
+        let wi = wi as usize;
+        if ds.shapes[wi].shape_type != ShapeType::Wire {
+            continue;
+        }
+        let wire_edges = match &*ds.shapes[wi].shape.data {
+            TShape::Wire(w) => w.edges.clone(),
+            _ => Vec::new(),
+        };
+        let mut poly: Vec<DVec2> = Vec::new();
+        for eshape in &wire_edges {
+            let ei = ds.index(eshape);
+            if ei < 0 || ei as usize >= ds.nb_shapes() {
+                continue;
+            }
+            let edge_data = match &*ds.shapes[ei as usize].shape.data {
+                TShape::Edge(ed) => ed,
+                _ => continue,
+            };
+            let Some(c3d) = edge_data.curve.clone() else { continue };
+            let (t0, t1) = (edge_data.range[0], edge_data.range[1]);
+            const NS: usize = 8;
+            for k in 0..=NS {
+                let t = t0 + (t1 - t0) * (k as f64 / NS as f64);
+                let p = c3d.point_at(t);
+                let (uvp, _) = crate::bop::closest_point_on_surface(surf, p);
+                poly.push(uvp);
+            }
+        }
+        if poly.len() >= 3 && point_in_uv_poly(uv, &poly) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Even-odd ray-cast point-in-polygon test on the face UV plane.
+fn point_in_uv_poly(p: DVec2, poly: &[DVec2]) -> bool {
+    let mut inside = false;
+    let mut j = poly.len() - 1;
+    for i in 0..poly.len() {
+        let (pi, pj) = (poly[i], poly[j]);
+        if (pi.y > p.y) != (pj.y > p.y)
+            && p.x < (pj.x - pi.x) * (p.y - pi.y) / (pj.y - pi.y) + pi.x
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
 }
 
 /// OCCT IntTools_FaceFace::MakeCurve case IntPatch_Restriction (L1742-1842)

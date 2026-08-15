@@ -1239,9 +1239,17 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
     // the effective reversed flag is exactly the edge's own orientation
     // (BOPAlgo_BuilderFace::PerformLoops L256: aWES.SetFace(myFace)).
     // OCCT matches the pcurve map by the face's TShape identity
-    // (BRep_Tool::CurveOnSurface) — face_key is the (ptr_id, location) key.
+    // (BRep_Tool::CurveOnSurface) — face_key is the (ptr_id, location) key,
+    // with the location composed as L.Predivided(E.Location())
+    // (BRep_Tool.cxx L345).
     let (face_key, face_reversed) = match ds.face_key(face_index) {
-        Some(k) => (k, false),
+        Some((fid, floc)) => (
+            (
+                fid,
+                crate::bop::algo::compose_face_edge_pcurve_location(floc, e.location, &ds.locations),
+            ),
+            false,
+        ),
         None => return None,
     };
     match &*e.data {
@@ -1310,10 +1318,16 @@ fn has_curve_on_surface(e: &Shape, face_index: usize, ds: &DS) -> bool {
                 return false;
             }
             // OCCT BRep_Tool::CurveOnSurface(aE, aF) — keyed by the face's
-            // TShape identity (ptr_id, location). rcad keys the edge pcurve
-            // map by the same identity, so the DS index lookup resolves via
-            // face_key. Same DS-canonical fallback as edge_pcurve.
-            let Some(face_key) = ds.face_key(face_index) else { return false };
+            // TShape identity (ptr_id, location), composed with the edge's
+            // location (L.Predivided(E.Location()), BRep_Tool.cxx L345). rcad
+            // keys the edge pcurve map by the same identity, so the DS index
+            // lookup resolves via face_key. Same DS-canonical fallback as
+            // edge_pcurve.
+            let Some((fid, floc)) = ds.face_key(face_index) else { return false };
+            let face_key = (
+                fid,
+                crate::bop::algo::compose_face_edge_pcurve_location(floc, e.location, &ds.locations),
+            );
             if ed.pcurves.contains_key(&face_key) {
                 return true;
             }

@@ -1,4 +1,4 @@
-use rcad_kernel::topo_shape::Shape;
+﻿use rcad_kernel::topo_shape::Shape;
 use crate::bop::algo::builder::{Builder, BooleanError, BooleanOpType};
 use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::DS;
@@ -7,14 +7,14 @@ use rcad_kernel::topods::{TEdgeData, TFaceData, TShape, TShellData, TSolidData, 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ── BRepAlgoAPI_Algo ─────────────────────────────────────────────────────
-// OCCT: IsDone(), Error(), Warn() — pure interface
+// 閳光偓閳光偓 BRepAlgoAPI_Algo 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// OCCT: IsDone(), Error(), Warn() 閳?pure interface
 pub trait Algo {
     fn is_done(&self) -> bool;
     fn error(&self) -> Option<&BooleanError>;
 }
 
-// ── BRepAlgoAPI_BuilderShape ─────────────────────────────────────────────
+// 閳光偓閳光偓 BRepAlgoAPI_BuilderShape 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 // OCCT: concrete class with Shape(), result storage
 pub struct BuilderShape {
     pub result: Option<Shape>,
@@ -28,7 +28,7 @@ impl Algo for BuilderShape {
     fn error(&self) -> Option<&BooleanError> { self.err.as_ref() }
 }
 
-// ── BRepAlgoAPI_BuilderAlgo ─────────────────────────────────────────────
+// 閳光偓閳光偓 BRepAlgoAPI_BuilderAlgo 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 // OCCT: SetArguments, SetGlue, SetNonDestructive, SetFuzzyValue, Build, Shape
 pub struct BuilderAlgo {
     pub bs: BuilderShape,
@@ -70,7 +70,7 @@ impl Algo for BuilderAlgo {
     fn error(&self) -> Option<&BooleanError> { self.bs.error() }
 }
 
-// ── BooleanOperation — base for Fuse/Common/Cut/Section ────────────────
+// 閳光偓閳光偓 BooleanOperation 閳?base for Fuse/Common/Cut/Section 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 fn run_build(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<Shape, BooleanError> {
     if algo.arguments.len() < 2 { return Err(BooleanError::TooFewArguments); }
     let mut filler = PaveFiller::new();
@@ -136,7 +136,7 @@ def_bool_op!(CommonOp, Intersection);
 def_bool_op!(CutOp, Cut);
 def_bool_op!(SectionOp, Section);
 
-// ── BRepAlgoAPI_Defeaturing ─────────────────────────────────────────────
+// 閳光偓閳光偓 BRepAlgoAPI_Defeaturing 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 pub struct DefeaturingOp {
     pub algo: BuilderAlgo,
     pub faces_to_remove: Vec<Shape>,
@@ -152,7 +152,7 @@ impl Algo for DefeaturingOp {
     fn error(&self) -> Option<&BooleanError> { self.algo.bs.error() }
 }
 
-// ── BRepAlgoAPI_Splitter ────────────────────────────────────────────────
+// 閳光偓閳光偓 BRepAlgoAPI_Splitter 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 pub struct SplitterOp { pub algo: BuilderAlgo }
 impl SplitterOp {
     pub fn new() -> Self { Self { algo: BuilderAlgo::new() } }
@@ -166,7 +166,7 @@ impl Algo for SplitterOp {
     fn error(&self) -> Option<&BooleanError> { self.algo.bs.error() }
 }
 
-// ── Convenience free functions (BRep form) ──────────────────────────────
+// 閳光偓閳光偓 Convenience free functions (BRep form) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
 /// Collect the top-level shapes of a BRep pool (shapes not referenced by any
 /// other TShape).  Analogous to OCCT `TopExp::MapShapes(theShape, TopAbs_SHAPE)`
@@ -376,7 +376,7 @@ fn remap_location_tree(
 }
 
 /// `brep_top_shapes` + merge this BRep's location table into `global_locs`
-/// (appending each entry and recording old-index → new-index) and remap every
+/// (appending each entry and recording old-index 閳?new-index) and remap every
 /// returned shape's `location` to the merged table. Index 0 (identity) is
 /// shared; BRep location tables start at index 1.
 fn brep_top_shapes_with_locations(
@@ -456,13 +456,13 @@ pub fn cut(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::
     run_build_brep(&op, BooleanOpType::Cut)
 }
 
-/// OCCT shortcut: `BRepAlgoAPI_Cut21(a, b).Shape()` — `b` minus `a`.
+/// OCCT shortcut: `BRepAlgoAPI_Cut21(a, b).Shape()` 閳?`b` minus `a`.
 pub fn cut21(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
-    cut(b, a) // swap args → b - a
+    cut(b, a) // swap args 閳?b - a
 }
 
 /// Dispatch a boolean operation by [`BooleanOpType`] (legacy convenience API).
-/// OCCT: BRepAlgoAPI_BOP::SetOperation(BOPAlgo_Operation) — COMMON/FUSE/CUT/
+/// OCCT: BRepAlgoAPI_BOP::SetOperation(BOPAlgo_Operation) 閳?COMMON/FUSE/CUT/
 /// CUT21/SECTION.
 pub fn boolean_op(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     match op {
@@ -475,7 +475,7 @@ pub fn boolean_op(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRe
     }
 }
 
-/// Legacy `boolean_op_with_retry` — the current pipeline already includes the
+/// Legacy `boolean_op_with_retry` 閳?the current pipeline already includes the
 /// OCCT-style retry ladder, so this is a plain dispatch.
 pub fn boolean_op_with_retry(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     boolean_op(op, a, b)

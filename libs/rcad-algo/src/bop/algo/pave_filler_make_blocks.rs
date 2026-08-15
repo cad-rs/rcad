@@ -1387,9 +1387,13 @@ impl PaveFiller {
             }
             a_tol_v = self.ds.vertex_tolerance_by_idx(n_v);
         }
-        // OCCT L3601-3604: add the closing pave.
+        // OCCT L3601-3604: add the closing pave.  OCCT appends it directly
+        // (aLP.Append(aNewPave)) — NOT through AppendExtPave, so the
+        // vertex-index fence (myMFence) does not reject a closing pave that
+        // reuses the bound vertex index (closed curve: same vertex at both
+        // ends).  rcad append_ext_pave1 is the fence-less equivalent.
         let a_new_pave = Pave::new(n_v, a_t_op);
-        a_pb.0.write().unwrap().append_ext_pave(a_new_pave);
+        a_pb.0.write().unwrap().append_ext_pave1(a_new_pave);
     }
 
     // ====================================================================
@@ -1401,14 +1405,17 @@ impl PaveFiller {
         if self.my_non_destructive && !self.ds.is_new_shape(n_e) {
             return;
         }
-        // OCCT L88-92: update edge + rebuild its box.
-        let si = self.ds.change_shape_info(n_e);
-        let ts = Arc::make_mut(&mut si.shape.data);
-        if let topods::TShape::Edge(ref mut ed) = *ts {
-            if the_tol > ed.tolerance {
-                ed.tolerance = the_tol;
+        // OCCT L88-92: update edge + rebuild its box. In-place edit of the
+        // shared TShape (OCCT BRep_Builder::UpdateEdge semantics) — an edge
+        // referenced with different Locations (prism sweep copies) must keep
+        // its TShape identity, or the result gains duplicate edges.
+        self.ds.mutate_shape_data(n_e, |ts| {
+            if let topods::TShape::Edge(ref mut ed) = *ts {
+                if the_tol > ed.tolerance {
+                    ed.tolerance = the_tol;
+                }
             }
-        }
+        });
         self.ds.remap_shape_idx(n_e);
         self.rebuild_edge_box(n_e);
         // OCCT L94-100: update sub-vertices.
@@ -2970,11 +2977,15 @@ impl PaveFiller {
                     if a_tol_c < a_tol_tang {
                         let a_tol_e = self.ds.edge_tolerance(n_e);
                         if a_tol_c < a_tol_e {
-                            let si = self.ds.change_shape_info(n_e);
-                            let ts = Arc::make_mut(&mut si.shape.data);
-                            if let topods::TShape::Edge(ref mut ed) = *ts {
-                                ed.tolerance = a_tol_c;
-                            }
+                            // In-place edit of the shared TShape (OCCT
+                            // BRep_Builder::UpdateEdge) — same rationale as
+                            // update_edge_tolerance: do not split an edge's
+                            // TShape identity across its Location copies.
+                            self.ds.mutate_shape_data(n_e, |ts| {
+                                if let topods::TShape::Edge(ref mut ed) = *ts {
+                                    ed.tolerance = a_tol_c;
+                                }
+                            });
                             self.ds.remap_shape_idx(n_e);
                             b_is_reduced = true;
                         }

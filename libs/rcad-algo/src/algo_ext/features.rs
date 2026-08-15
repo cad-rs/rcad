@@ -138,7 +138,14 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<(topods::BRep, usi
         } else {
             None
         };
-        edge_refs.push(brep.add_tedge(curve, verts[i].clone(), verts[j].clone(), [0.0, len]));
+        // OCCT BRepLib_MakeEdge forces V1=FWD, V2=REV (BRepLib_MakeEdge.cxx
+        // L772-774) — the WireSplitter smart map keys the in/out flags by the
+        // composed vertex orientation, so the last vertex must carry REVERSED.
+        let end_sr = topods::Shape {
+            orientation: topods::Orientation::Reversed,
+            ..verts[j].clone()
+        };
+        edge_refs.push(brep.add_tedge(curve, verts[i].clone(), end_sr, [0.0, len]));
     }
 
     // Wire from all edges
@@ -178,9 +185,22 @@ fn build_prism_from_sections(
 
     let mut brep = topods::BRep::new();
 
-    // Add vertices: bot[0..n] then top[0..n]
+    // OCCT BRepPrimAPI_MakePrism: the swept top is a located copy of the
+    // source face — same TShapes + a Location (BRepSweep_Trsf::Process). The
+    // prism therefore contributes n vertex TShapes, not 2n. Separate top
+    // TShapes inflate the nbshapes VERTEX/EDGE counts of OCCT boolean tests
+    // (bfuse_simple/D9: 18V/30E vs reference 12V/28E).
+    let trans = top[0] - bot[0];
+    let loc = brep.add_location(glam::DAffine3::from_translation(trans));
+    // Add vertices: bot[0..n]; the top reuses the same TShapes + Location.
     let bot_sr: Vec<topods::Shape> = bot.iter().map(|&p| brep.add_tvertex(p)).collect();
-    let top_sr: Vec<topods::Shape> = top.iter().map(|&p| brep.add_tvertex(p)).collect();
+    let top_sr: Vec<topods::Shape> = bot_sr
+        .iter()
+        .map(|s| topods::Shape {
+            location: loc,
+            ..s.clone()
+        })
+        .collect();
 
     /// Add a line edge from start to end and return its Shape.
     fn add_line_edge(
@@ -193,6 +213,13 @@ fn build_prism_from_sections(
         let d = p1 - p0;
         let len = d.length();
         let dir = if len > EPS { d / len } else { DVec3::X };
+        // OCCT BRepLib_MakeEdge forces V1=FWD, V2=REV (BRepLib_MakeEdge.cxx
+        // L772-774) — the WireSplitter smart map keys the in/out flags by the
+        // composed vertex orientation, so the last vertex must carry REVERSED.
+        let end_sr = topods::Shape {
+            orientation: topods::Orientation::Reversed,
+            ..end_sr
+        };
         brep.add_tedge(
             Some(Curve3::Line(Line3 {
                 origin: p0,
@@ -211,31 +238,52 @@ fn build_prism_from_sections(
             add_line_edge(&mut brep, bot[i].clone(), bot[j].clone(), bot_sr[i].clone(), bot_sr[j].clone())
         })
         .collect();
-    // Top-cap edges: top[i] -> top[(i+1)%n]
-    let top_edges: Vec<topods::Shape> = (0..n)
-        .map(|i| {
-            let j = (i + 1) % n;
-            add_line_edge(&mut brep, top[i].clone(), top[j].clone(), top_sr[i].clone(), top_sr[j].clone())
+    // Top-cap edges: located copies of the bottom edges.
+    let top_edges: Vec<topods::Shape> = bot_edges
+        .iter()
+        .map(|e| topods::Shape {
+            location: loc,
+            ..e.clone()
         })
         .collect();
-    // Vertical edges: bot[i] -> top[i]
+    // Vertical edges: bot[i] -> top[i] (the top vertex is the located copy).
     let vert_edges: Vec<topods::Shape> = (0..n)
         .map(|i| add_line_edge(&mut brep, bot[i].clone(), top[i].clone(), bot_sr[i].clone(), top_sr[i].clone()))
         .collect();
 
-    // Bottom cap (outward normal = -dir): reverse traversal of bot edges
-    let bot_wire: Vec<topods::Shape> = (0..n)
-        .map(|i| {
-            let ei = bot_edges[n - 1 - i].clone();
-            // Reversed orientation
-            topods::Shape {
-                data: ei.data.clone(),
-                index: ei.index,
-                orientation: topods::Orientation::Reversed,
-                location: 0,
-            }
-        })
-        .collect();
+    // Bottom cap (outward normal = -dir). The source face's natural wire keeps
+    // its stored order when the corrected normal (-dir) agrees with the
+    // profile winding normal, and is reversed otherwise. OCCT
+    // BRepPrimAPI_MakePrism keeps the source face wire as-is; the FClass2d
+    // loop orientation of the cap after a boolean split depends on it
+    // (bfuse_simple/E1: p2's top cap at z=0 must keep its natural CCW wire so
+    // its ring loop classifies as growth, not hole).
+    let mut n_src = DVec3::ZERO;
+    for i in 0..n {
+        let d0 = bot[(i + 1) % n] - bot[i];
+        let d1 = bot[(i + 2) % n] - bot[(i + 1) % n];
+        let c = d0.cross(d1);
+        if c.length_squared() > TOLERANCE_VEC_SQ_MIN {
+            n_src = c.normalize();
+            break;
+        }
+    }
+    let bot_wire: Vec<topods::Shape> = if n_src.length_squared() > 0.5 && (-dir).dot(n_src) < 0.0 {
+        // Corrected normal opposes the profile winding: reverse the wire.
+        (0..n)
+            .map(|i| {
+                let ei = bot_edges[n - 1 - i].clone();
+                topods::Shape {
+                    data: ei.data.clone(),
+                    index: ei.index,
+                    orientation: topods::Orientation::Reversed,
+                    location: 0,
+                }
+            })
+            .collect()
+    } else {
+        bot_edges.clone()
+    };
     let bot_wire_sr = brep.add_twire(bot_wire);
     brep.add_tface(
         Some(Surface3::Plane(rcad_kernel::geom::Plane::new(bot[0], -dir))),
@@ -284,7 +332,7 @@ fn build_prism_from_sections(
                 data: top_edges[i].data.clone(),
                 index: top_edges[i].index,
                 orientation: topods::Orientation::Reversed,
-                location: 0,
+                location: top_edges[i].location,
             },
             topods::Shape {
                 data: vert_edges[i].data.clone(),

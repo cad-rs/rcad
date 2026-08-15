@@ -685,7 +685,13 @@ fn make_internal_wires(edges: &[Shape], locations: &[glam::DAffine3]) -> Vec<Vec
 /// keyed by the face's TShape identity (ptr_id, location, with the
 /// DS-canonical fallback).
 fn edge_pcurve_on_face(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f64)> {
-    let fkey = ds.face_key(face_index)?;
+    // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve key
+    // location is L.Predivided(E.Location()).
+    let (fid, floc) = ds.face_key(face_index)?;
+    let fkey = (
+        fid,
+        crate::bop::algo::compose_face_edge_pcurve_location(floc, e.location, &ds.locations),
+    );
     match &*e.data {
         TShape::Edge(ed) => {
             // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-361): a closed
@@ -854,8 +860,11 @@ fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], face_edges: 
         };
         let p = Curve2dEval::point_at(&pc, 0.5 * (t1 + t2));
         // OCCT L890-891: aState = aClassifier.Perform(aP2D); isInside = (aState == IN).
-        // OCCT IntTools_Context::FClass2d (IntTools_Context.cxx L225-242):
-        // aTolF = BRep_Tool::Tolerance(aFF).
+        // OCCT IsInside (BOPAlgo_BuilderFace.cxx L863-915) classifies the hole's
+        // midpoint against the GROWTH face theF (the temporary face built from
+        // the growth loop wire, L437-445) — IntTools_Context::FClass2d(aFace)
+        // (IntTools_Context.cxx L225-242). The classifier must therefore be
+        // built from the growth loop's edges, not from the original DS face.
         let fclass2d = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new(
             ds,
             face_index,

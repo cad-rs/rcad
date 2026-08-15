@@ -31,8 +31,15 @@ pub fn edge_pcurve_on_face(
     ori: Orientation,
 ) -> Option<(Curve2d, f64, f64)> {
     let f = ds.shape_at(face_idx);
-    let face_key = (f.ptr_id(), f.location);
-    match &*ds.shape_at(edge_idx).data {
+    // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve key
+    // location is L.Predivided(E.Location()) — the face location divided by
+    // the edge's location. A located edge (prism top edge) shares its TShape
+    // with the base edge but has its own pcurve key.
+    let e = ds.shape_at(edge_idx);
+    let key_loc = crate::bop::algo::compose_face_edge_pcurve_location(
+        f.location, e.location, ds.locations());
+    let face_key = (f.ptr_id(), key_loc);
+    match &*e.data {
         TShape::Edge(ed) => {
             if let Some((pc1, pc2, range)) = ed.representations.iter().find_map(|r| match r {
                 CurveRepresentation::CurveOnClosedSurface {

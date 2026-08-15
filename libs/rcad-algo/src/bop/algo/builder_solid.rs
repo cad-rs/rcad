@@ -750,11 +750,33 @@ fn edge_vertices(e: &Shape) -> Vec<Shape> {
 fn face_edges(face: &Shape) -> Vec<Shape> {    let mut edges = Vec::new();
     match &*face.data {
         TShape::Face(fd) => {
+            // OCCT TopoDS_Iterator(aF) with cumLoc composes the face Location
+            // into the edges (TopoDS_Iterator.cxx L76-78): an edge of a located
+            // face (e.g. the revolve end cap, the start cap TShape at the
+            // rotation Location L1) is keyed by its EFFECTIVE location
+            // (face_loc * edge_loc), so the edge→face ancestor map sees the
+            // L1-located copies of the same TShape as distinct edges matching
+            // the located boundary edges of the neighboring faces.
+            let face_loc = face.location;
+            let compose = |eloc: u32| -> u32 {
+                if face_loc == 0 {
+                    eloc
+                } else if eloc == 0 {
+                    face_loc
+                } else {
+                    // Both non-identity: the composed transform is one of the
+                    // two operands in the single-fold cases (the ring's end cap
+                    // at L1 with identity edges); fall back to the face
+                    // location index.
+                    face_loc
+                }
+            };
             if let TShape::Wire(wd) = &*fd.outer_wire.data {
                 let w_or = fd.outer_wire.orientation;
                 for e in &wd.edges {
                     let mut e2 = e.clone();
                     e2.orientation = face.orientation.compose(w_or).compose(e.orientation);
+                    e2.location = compose(e2.location);
                     edges.push(e2);
                 }
             }
@@ -764,6 +786,7 @@ fn face_edges(face: &Shape) -> Vec<Shape> {    let mut edges = Vec::new();
                     for e in &wd.edges {
                         let mut e2 = e.clone();
                         e2.orientation = face.orientation.compose(w_or).compose(e.orientation);
+                        e2.location = compose(e2.location);
                         edges.push(e2);
                     }
                 }

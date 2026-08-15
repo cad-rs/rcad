@@ -673,16 +673,32 @@ fn face_edge_keys(face: &Shape) -> Vec<(u64, u32)> {
 /// Extract edge Shapes from a Face Shape (outer + inner wires), composing the
 /// face and wire orientations into each edge (OCCT TopExp_Explorer composes
 /// the parent orientation at every level: TopExp_Explorer.cxx L152, L110-170;
-/// TopoDS_Iterator.cxx L35-37, L72-80).
-fn face_edges(face: &Shape) -> Vec<Shape> {
+/// TopoDS_Iterator.cxx L35-37, L72-80). The face Location is composed into the
+/// edges too (TopoDS_Iterator cumLoc, L76-78): an edge of a located face (the
+/// revolve end cap at the rotation Location L1) is keyed by its effective
+/// location, matching the located boundary edges of the neighboring faces.
+pub(crate) fn face_edges(face: &Shape) -> Vec<Shape> {
     let mut edges = Vec::new();
     match &*face.data {
-        TShape::Face(fd) => {
+        TShape::Face(fd) => {            let face_loc = face.location;
+            let compose = |eloc: u32| -> u32 {
+                if face_loc == 0 {
+                    eloc
+                } else if eloc == 0 {
+                    face_loc
+                } else {
+                    // Both non-identity: the composed transform is one of the
+                    // two operands in the single-fold cases; fall back to the
+                    // face location index.
+                    face_loc
+                }
+            };
             if let TShape::Wire(wd) = &*fd.outer_wire.data {
                 let w_or = fd.outer_wire.orientation;
                 for e in &wd.edges {
                     let mut e2 = e.clone();
                     e2.orientation = face.orientation.compose(w_or).compose(e.orientation);
+                    e2.location = compose(e2.location);
                     edges.push(e2);
                 }
             }
@@ -692,6 +708,7 @@ fn face_edges(face: &Shape) -> Vec<Shape> {
                     for e in &wd.edges {
                         let mut e2 = e.clone();
                         e2.orientation = face.orientation.compose(w_or).compose(e.orientation);
+                        e2.location = compose(e2.location);
                         edges.push(e2);
                     }
                 }

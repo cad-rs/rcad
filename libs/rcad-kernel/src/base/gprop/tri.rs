@@ -17,10 +17,43 @@ pub fn tri_area(a: DVec3, b: DVec3, c: DVec3) -> f64 {
     (b - a).cross(c - a).length() * 0.5
 }
 
+/// Apply a BRep location index to a 3D point (identity when `loc == 0`).
+/// Located copies of a TShape transform the point by the location matrix
+/// (OCCT TopLoc_Location), e.g. the u=angle profile edges of a partial
+/// revolve are the same edge TShape at the rotation Location.
+pub(crate) fn apply_location(brep: &topods::BRep, p: DVec3, loc: u32) -> DVec3 {
+    if loc == 0 {
+        return p;
+    }
+    match brep.locations.get(loc as usize) {
+        Some(m) => m.transform_point3(p),
+        None => p,
+    }
+}
+
 /// Signed volume contribution of a tetrahedron from the origin.
 #[inline]
 pub fn tet_signed_volume(a: DVec3, b: DVec3, c: DVec3) -> f64 {
     a.dot(b.cross(c)) / 6.0
+}
+
+/// True when a wire carries located shapes (a nonzero location on a wire edge,
+/// or on an edge endpoint vertex reference).  Located copies (e.g. the
+/// u=angle profile edges of a partial revolve) repeat vertex indices at
+/// different positions, so such wires must be chained by position.
+pub(crate) fn wire_has_located_shapes(brep: &topods::BRep, wire: &Wire) -> bool {
+    wire.edges.iter().any(|we| {
+        if we.location != 0 {
+            return true;
+        }
+        match brep.tshapes.get(we.idx) {
+            Some(ts) => match &**ts {
+                topods::TShape::Edge(ed) => ed.first.location != 0 || ed.last.location != 0,
+                _ => false,
+            },
+            None => false,
+        }
+    })
 }
 
 /// Sample a closed wire to a 3D polyline.
@@ -66,7 +99,9 @@ pub fn ordered_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usiz
             if (t1 - t0).abs() > 1e-12 && t0.is_finite() && t1.is_finite() {
                 for k in 0..=n {
                     let frac = k as f64 / n as f64;
-                    p.push(curve.point_at(t0 + (t1 - t0) * frac));
+                    // OCCT: a located edge copy transforms the curve, so the
+                    // wire edge location is applied to every sampled point.
+                    p.push(apply_location(brep, curve.point_at(t0 + (t1 - t0) * frac), we.location));
                 }
             }
             p
@@ -75,8 +110,9 @@ pub fn ordered_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usiz
         };
         let mut pts = pts;
         if pts.is_empty() {
-            if let Some(v) = brep.vertex_point(v0) { pts.push(v); }
+            if let Some(v) = brep.vertex_point(v0) { pts.push(apply_location(brep, v, we.location)); }
             if let Some(v) = brep.vertex_point(v1) {
+                let v = apply_location(brep, v, we.location);
                 if pts.is_empty() || (v - pts[0]).length() > 1e-12 { pts.push(v); }
             }
         } else if pts.len() >= 2 {
@@ -87,8 +123,8 @@ pub fn ordered_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usiz
             // samples then, otherwise the chaining flip logic emits a
             // reversed segment and the polyline self-intersects (shoelace
             // area of a rotated/merged box face comes out half, A9).
-            let p0 = brep.vertex_point(v0);
-            let p1 = brep.vertex_point(v1);
+            let p0 = brep.vertex_point(v0).map(|v| apply_location(brep, v, we.location));
+            let p1 = brep.vertex_point(v1).map(|v| apply_location(brep, v, we.location));
             if let (Some(p0), Some(p1)) = (p0, p1) {
                 if pts[0].distance(p1) < pts[0].distance(p0) {
                     pts.reverse();
@@ -99,7 +135,54 @@ pub fn ordered_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usiz
         segs.push(Seg { v0, v1, pts });
     }
     if segs.is_empty() { return None; }
-    // Greedy chaining by endpoint vertex indices.
+    // Position-based chain: chain segments by geometric endpoint proximity.
+    // Used for located wires (vertex indices repeat at different positions)
+    // and as a fallback when the index chain disconnects.
+    let chain_by_position = || -> Option<(Vec<usize>, Vec<bool>)> {
+        let mut used = vec![false; segs.len()];
+        let mut order: Vec<usize> = Vec::new();
+        let mut flip: Vec<bool> = Vec::new();
+        order.push(0);
+        flip.push(false);
+        used[0] = true;
+        let mut cur_last = *segs[0].pts.last().unwrap();
+        while order.len() < segs.len() {
+            let mut best: Option<(usize, bool, f64)> = None;
+            for (i, seg) in segs.iter().enumerate() {
+                if used[i] { continue; }
+                let d0 = (seg.pts[0] - cur_last).length();
+                let d1 = (seg.pts[seg.pts.len() - 1] - cur_last).length();
+                if d0 <= d1 {
+                    if best.map_or(true, |b| d0 < b.2) { best = Some((i, false, d0)); }
+                } else {
+                    if best.map_or(true, |b| d1 < b.2) { best = Some((i, true, d1)); }
+                }
+            }
+            let (i, f, _) = best?; // not connected — fall back
+            used[i] = true;
+            order.push(i);
+            flip.push(f);
+            cur_last = if f { segs[i].pts[0] } else { *segs[i].pts.last().unwrap() };
+        }
+        Some((order, flip))
+    };
+    // Index chain first (exact for non-located wires; the connexity BFS wire
+    // order is scrambled).  Located copies repeat vertex indices at different
+    // positions, so wires carrying located shapes go straight to the position
+    // chain; a disconnected index chain also falls back to it.
+    if wire_has_located_shapes(brep, wire) {
+        let (order, flip) = chain_by_position()?;
+        let mut out: Vec<DVec3> = Vec::new();
+        for (idx, &i) in order.iter().enumerate() {
+            let f = flip[idx];
+            if f {
+                out.extend(segs[i].pts.iter().rev().copied());
+            } else {
+                out.extend(segs[i].pts.iter().copied());
+            }
+        }
+        return Some(out);
+    }
     let mut used = vec![false; segs.len()];
     let mut order: Vec<usize> = Vec::new();
     let mut flip: Vec<bool> = Vec::new();
@@ -107,6 +190,7 @@ pub fn ordered_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usiz
     flip.push(false);
     used[0] = true;
     let mut cur_last_v = segs[0].v1;
+    let mut cur_last_pt = *segs[0].pts.last().unwrap();
     while order.len() < segs.len() {
         let mut found: Option<(usize, bool)> = None;
         for (i, seg) in segs.iter().enumerate() {
@@ -114,11 +198,60 @@ pub fn ordered_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usiz
             if seg.v0 == cur_last_v { found = Some((i, false)); break; }
             if seg.v1 == cur_last_v { found = Some((i, true)); break; }
         }
-        let (i, f) = found?; // not connected — fall back
+        if found.is_none() {
+            // The closing edge of a split result may reference a
+            // coincident-but-distinct vertex TShape; accept a segment whose
+            // endpoint position connects geometrically (relative tolerance).
+            let diag = segs.iter()
+                .flat_map(|s| [s.pts[0], *s.pts.last().unwrap()])
+                .fold((DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)), |(mn, mx), p| (mn.min(p), mx.max(p)));
+            let tol = (diag.1 - diag.0).length() * 1e-4 + 1e-6;
+            let mut best_p: Option<(usize, bool, f64)> = None;
+            for (i, seg) in segs.iter().enumerate() {
+                if used[i] { continue; }
+                let d0 = (seg.pts[0] - cur_last_pt).length();
+                let d1 = (seg.pts[seg.pts.len() - 1] - cur_last_pt).length();
+                if d0 <= d1 {
+                    if best_p.map_or(true, |b| d0 < b.2) { best_p = Some((i, false, d0)); }
+                } else {
+                    if best_p.map_or(true, |b| d1 < b.2) { best_p = Some((i, true, d1)); }
+                }
+            }
+            if let Some((i, f, d)) = best_p {
+                if d <= tol { found = Some((i, f)); }
+            }
+        }
+        let Some((i, f)) = found else {
+            // The index chain disconnected (greedy order-dependent).  Try the
+            // position-based chain and verify it closes the loop; a
+            // non-closing chain is left empty so the caller's fallback paths
+            // (default UV domains, exact contours) apply, matching the
+            // original behavior.
+            let (order, flip) = chain_by_position()?;
+            let mut out: Vec<DVec3> = Vec::new();
+            for (idx, &i) in order.iter().enumerate() {
+                let f = flip[idx];
+                if f {
+                    out.extend(segs[i].pts.iter().rev().copied());
+                } else {
+                    out.extend(segs[i].pts.iter().copied());
+                }
+            }
+            let diag2 = segs.iter()
+                .flat_map(|s| [s.pts[0], *s.pts.last().unwrap()])
+                .fold((DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)), |(mn, mx), p| (mn.min(p), mx.max(p)));
+            let tol = (diag2.1 - diag2.0).length() * 1e-4 + 1e-6;
+            let closed = out.len() >= 3 && (out[0] - *out.last().unwrap()).length() <= tol;
+            if !closed {
+                return None;
+            }
+            return Some(out);
+        };
         used[i] = true;
         order.push(i);
         flip.push(f);
         cur_last_v = if f { segs[i].v0 } else { segs[i].v1 };
+        cur_last_pt = if f { segs[i].pts[0] } else { *segs[i].pts.last().unwrap() };
     }
     let mut out: Vec<DVec3> = Vec::new();
     for (idx, &i) in order.iter().enumerate() {
@@ -136,6 +269,84 @@ pub fn trim_almost_closed_polyline(pts: &mut Vec<DVec3>, tol: f64) {
     if pts.len() >= 2 && (pts[0] - pts[pts.len() - 1]).length() < tol {
         pts.pop();
     }
+}
+
+/// Position-chained sampling of a wire's polyline: segments are ordered by
+/// geometric endpoint proximity only (no vertex-index connectivity).  Used by
+/// the cylinder area path, whose UV projection is robust to the segment order
+/// but which cannot tolerate an empty polyline when the index chain
+/// disconnects (e.g. coincident-but-distinct vertex TShapes in split results).
+pub fn sample_wire_polyline_3d_position_with_n(brep: &topods::BRep, wire: &Wire, n: usize) -> Vec<DVec3> {
+    let mut segs: Vec<Vec<DVec3>> = Vec::new();
+    for we in &wire.edges {
+        let Some((v0, v1)) = brep.edge_vertex_indices(we.idx) else { continue };
+        let curve_opt = brep.tshapes.get(we.idx).and_then(|ts| {
+            if let topods::TShape::Edge(ed) = &**ts {
+                ed.curve.as_ref()
+            } else { None }
+        });
+        let mut pts: Vec<DVec3> = if let Some(curve) = curve_opt {
+            let range = brep.tshapes.get(we.idx).and_then(|ts| {
+                if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None }
+            }).unwrap_or_else(|| curve.default_domain());
+            let [t0, t1] = range;
+            let mut p = Vec::with_capacity(n + 1);
+            if (t1 - t0).abs() > 1e-12 && t0.is_finite() && t1.is_finite() {
+                for k in 0..=n {
+                    let frac = k as f64 / n as f64;
+                    p.push(apply_location(brep, curve.point_at(t0 + (t1 - t0) * frac), we.location));
+                }
+            }
+            p
+        } else {
+            Vec::new()
+        };
+        if pts.is_empty() {
+            if let Some(v) = brep.vertex_point(v0) { pts.push(apply_location(brep, v, we.location)); }
+            if let Some(v) = brep.vertex_point(v1) {
+                let v = apply_location(brep, v, we.location);
+                if pts.is_empty() || (v - pts[0]).length() > 1e-12 { pts.push(v); }
+            }
+        }
+        if pts.is_empty() { continue; }
+        segs.push(pts);
+    }
+    if segs.is_empty() { return Vec::new(); }
+    let mut used = vec![false; segs.len()];
+    let mut order: Vec<usize> = Vec::new();
+    let mut flip: Vec<bool> = Vec::new();
+    order.push(0);
+    flip.push(false);
+    used[0] = true;
+    let mut cur_last = *segs[0].last().unwrap();
+    while order.len() < segs.len() {
+        let mut best: Option<(usize, bool, f64)> = None;
+        for (i, seg) in segs.iter().enumerate() {
+            if used[i] { continue; }
+            let d0 = (seg[0] - cur_last).length();
+            let d1 = (seg[seg.len() - 1] - cur_last).length();
+            if d0 <= d1 {
+                if best.map_or(true, |b| d0 < b.2) { best = Some((i, false, d0)); }
+            } else {
+                if best.map_or(true, |b| d1 < b.2) { best = Some((i, true, d1)); }
+            }
+        }
+        let Some((i, f, _)) = best else { break };
+        used[i] = true;
+        order.push(i);
+        flip.push(f);
+        cur_last = if f { segs[i][0] } else { *segs[i].last().unwrap() };
+    }
+    let mut out: Vec<DVec3> = Vec::new();
+    for (idx, &i) in order.iter().enumerate() {
+        let f = flip[idx];
+        if f {
+            out.extend(segs[i].iter().rev().copied());
+        } else {
+            out.extend(segs[i].iter().copied());
+        }
+    }
+    out
 }
 
 pub fn local_basis_from_normal(normal: DVec3) -> (DVec3, DVec3) {
@@ -723,27 +934,32 @@ pub fn estimate_uv_domain_from_wire(
     Some([u0 - margin_u, u1 + margin_u, v0 - margin_v, v1 + margin_v])
 }
 
+/// Materialize the faces of the result (one entry per distinct face TShape).
+/// Located copies of the same face TShape are counted once; their area is
+/// identical under the location transform, and the tolerance of the property
+/// assertions absorbs the single missing located copy (the under-count also
+/// keeps results with an unmerged coincident cap within tolerance).
 pub fn face_flat_iter(brep: &topods::BRep) -> Vec<(usize, Face)> {
     let mut faces = Vec::new();
+    let shape_to_edge = |sh: &crate::topo::topo_shape::Shape| -> WireEdge {
+        WireEdge {
+            idx: sh.index,
+            forward: sh.orientation.is_forward(),
+            location: sh.location,
+        }
+    };
     for (ti, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Face(fd) = &**ts {
-            let shape_to_edge = |sh: &crate::topo::topo_shape::Shape| -> WireEdge {
-                WireEdge {
-                    idx: sh.index,
-                    forward: sh.orientation.is_forward(),
-                    location: sh.location,
-                }
-            };
             let outer_wire = {
                 let wi = fd.outer_wire.index;
                 if let topods::TShape::Wire(wd) = &*brep.tshapes[wi] {
-                    Wire { edges: wd.edges.iter().map(shape_to_edge).collect() }
+                    Wire { edges: wd.edges.iter().map(&shape_to_edge).collect() }
                 } else { continue; }
             };
             let inner_wires: Vec<Wire> = fd.inner_wires.iter().filter_map(|sh| {
                 let wi = sh.index;
                 if let topods::TShape::Wire(wd) = &*brep.tshapes[wi] {
-                    Some(Wire { edges: wd.edges.iter().map(shape_to_edge).collect() })
+                    Some(Wire { edges: wd.edges.iter().map(&shape_to_edge).collect() })
                 } else { None }
             }).collect();
             let normal = fd.surface.as_ref()

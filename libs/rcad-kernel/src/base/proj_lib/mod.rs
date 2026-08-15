@@ -208,10 +208,21 @@ impl Projector {
             }
             CurveType::Circle => {
                 let c = &self.circ;
-                Curve2d::Circle(crate::geom::Circle2d::new(
-                    DVec2::new(c.center.x, c.center.y),
-                    c.radius,
-                ))
+                // OCCT ProjLib_Plane/Cylinder::Project(gp_Circ): the projected
+                // circle keeps its local frame (gp_Ax22d) — the x/y directions
+                // of the 3D circle mapped onto the surface. Dropping the frame
+                // (Circle2d::new defaults to the identity axes) parameterizes
+                // the pcurve from the surface's u axis instead, so an edge
+                // whose arc is not centered on that axis traces the COMPLEMENT
+                // half of its circle (bfuse_simple/E1: p1's bottom-cap arc
+                // pcurves became the opposite semicircles, misclassifying the
+                // EF midpoint and dropping the top-piece common part).
+                Curve2d::Circle(crate::geom::Circle2d {
+                    center: DVec2::new(c.center.x, c.center.y),
+                    x_dir: DVec2::new(c.x_dir.x, c.x_dir.y),
+                    y_dir: DVec2::new(c.y_dir.x, c.y_dir.y),
+                    radius: c.radius,
+                })
             }
             CurveType::Ellipse => {
                 let e = &self.elips;

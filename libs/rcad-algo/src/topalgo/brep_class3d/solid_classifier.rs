@@ -79,16 +79,21 @@ impl SolidClassifier {
     /// OCCT: Perform(P, Tol) — classify point P relative to loaded solid.
     pub fn perform(&mut self, p: DVec3, tol: f64) {
         if !self.a_solid_loaded { return; }
+        if std::env::var("RCAD_EE_DEBUG").is_ok() {
+            eprintln!("[SC] perform p=({:.3},{:.3},{:.3}) tol={:.2e} nfaces={}", p.x, p.y, p.z, tol, self.explorer.face_surfaces.len());
+        }
         // OCCT L171-191: check bounding box first (fast rejection)
         if !self.is_a_hole_in_space {
             if self.explorer.reject(p) {
                 self.my_state = 4; // OUT
+                if std::env::var("RCAD_EE_DEBUG").is_ok() { eprintln!("[SC]   -> rejected (bbox)"); }
                 return;
             }
             // OCCT BRepClass3d_SClassifier::Perform — a point within the
             // tolerance of a face of the solid is ON the boundary.
             if self.explorer.point_on_face(p, tol) {
                 self.my_state = 2; // ON
+                if std::env::var("RCAD_EE_DEBUG").is_ok() { eprintln!("[SC]   -> ON (point_on_face)"); }
                 return;
             }
             // OCCT L190: BRepClass3d_SClassifier::Perform(explorer, P, Tol)

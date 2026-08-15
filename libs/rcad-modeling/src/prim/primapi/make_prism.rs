@@ -217,13 +217,15 @@ pub fn make_prism_from_face_brep(
         t.add_twire(vec![rev(t_ed[0].clone()), rev(t_ed[1].clone()), rev(t_ed[2].clone()), rev(t_ed[3].clone())]),
     ];
     // Surfaces. Profile cap: normal = x_dir × y_dir. Lateral face i: the
-    // image of base edge i swept along extr — outward normal from centroid
-    // (OCCT BRepPrimAPI_MakePrism, verified on DRAW `prism f1`).
-    let pln = |pt: DVec3, n: DVec3, u: DVec3| Surface3::Plane(Plane {
+    // image of base edge i swept along extr — outward normal from centroid,
+    // v-parameter along -extr (OCCT BRepPrimAPI_MakePrism lateral faces:
+    // verified on DRAW `prism f1`: the base-z=0 edge lies at v=0 and the
+    // extruded copy at v=-|extr|, i.e. v runs against the sweep direction).
+    let pln = |pt: DVec3, n: DVec3, u: DVec3, v: DVec3| Surface3::Plane(Plane {
         origin: pt,
         normal: n,
         u_dir: u,
-        v_dir: n.cross(u).normalize_or_zero(),
+        v_dir: v,
     });
     let extr_dir = extr.normalize_or_zero();
     let cap_n = -extr_dir;
@@ -235,28 +237,29 @@ pub fn make_prism_from_face_brep(
     ];
     let e_pt = [
         vpt(&v[0]),
-        vpt(&v[0]),
-        vpt(&v[0]),
-        vpt(&v[0]),
+        vpt(&v[1]),
+        vpt(&v[2]),
+        vpt(&v[3]),
     ];
     let mut faces: Vec<Shape> = Vec::new();
     // Outward lateral normal: from the profile centroid toward the side face
     // (independent of the profile winding, unlike extr_dir x edge_dir which
     // only matches a counter-clockwise profile). OCCT BRepSweep orients every
     // lateral face outward, so the surface normal must point away from the
-    // prism interior.
+    // prism interior. For u = edge direction and v = -extr the outward normal
+    // equals v x u on every lateral face (checked per face).
     let centroid = (vpt(&v[0]) + vpt(&v[1]) + vpt(&v[2]) + vpt(&v[3])) * 0.25;
     for i in 0..4 {
         let mid = (vpt(&v[i]) + vpt(&v[(i + 1) % 4])) * 0.5;
         let n = (mid - centroid).normalize_or_zero();
-        let surf = pln(e_pt[i], n, e_dir[i]);
+        let surf = pln(e_pt[i], n, e_dir[i], -extr_dir);
         faces.push(t.add_tface(Some(surf), wires[i].clone(), vec![], None, None, vec![], false));
     }
     // Source cap (FORWARD, outward +cap_n). Extruded cap: REVERSED + Location
     // in OCCT (DRAW shell `+3 -3(L1)`), so outward is -cap_n and the wire
     // stores the top edges REVERSED.
-    faces.push(t.add_tface(Some(pln(origin, cap_n, xd)), wires[4].clone(), vec![], None, None, vec![], false));
-    faces.push(rev(t.add_tface(Some(pln(origin + extr, cap_n, xd)), wires[5].clone(), vec![], None, None, vec![], false)));
+    faces.push(t.add_tface(Some(pln(origin, cap_n, xd, cap_n.cross(xd).normalize_or_zero())), wires[4].clone(), vec![], None, None, vec![], false));
+    faces.push(rev(t.add_tface(Some(pln(origin + extr, cap_n, xd, cap_n.cross(xd).normalize_or_zero())), wires[5].clone(), vec![], None, None, vec![], false)));
     let shell = t.add_tshell(faces);
     t.add_tsolid(vec![shell]);
     Ok(t)

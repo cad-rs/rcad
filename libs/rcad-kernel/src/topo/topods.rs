@@ -14,17 +14,17 @@ use std::sync::Arc;
 /// Quantized vertex position for identity-based sharing.
 /// Two geometrically coincident points at TOLERANCE_ABS scale produce the same key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct VertexKey(u64);
+pub struct VertexKey((i64, i64, i64));
 
 impl VertexKey {
     fn from(p: DVec3) -> Self {
         const S: f64 = 1.0 / 1e-7;
         let q = |c: f64| (c * S).round() as i64;
-        VertexKey(
-            (q(p.x) as u64).wrapping_mul(0xbf58476d1ce4e5b9)
-                ^ (q(p.y) as u64).wrapping_mul(0x94d049bb133111eb)
-                ^ (q(p.z) as u64).wrapping_mul(0x9e3779b97f4a7c15),
-        )
+        // Key by the quantized coordinate triple directly. A pre-folded u64
+        // hash collided for sign-flipped pairs ((100,100,0) vs (-100,-100,0)),
+        // wrongly sharing distinct vertex TShapes and breaking the constructed
+        // topology. The tuple key is equality-correct in the HashMap.
+        VertexKey((q(p.x), q(p.y), q(p.z)))
     }
 }
 

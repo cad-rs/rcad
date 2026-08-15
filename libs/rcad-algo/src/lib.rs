@@ -23,6 +23,7 @@ pub use crate::algo_ext::{
     total_surface_area,
     total_volume,
 };
+pub use crate::algo_ext::extrude_profile::{extrude_profile_solid, ProfileSegment};
 
 // Re-export healing chain (STEP export needs it; legacy rcad-algorithms surface).
 pub use crate::algo_ext::healing::{HealingMode, HealingOptions, HealingReport, analyze_and_heal};

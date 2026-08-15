@@ -1,4 +1,4 @@
-// OCCT BOPAlgo_PaveFiller — intersection engine.
+// OCCT BOPAlgo_PaveFiller 鈥?intersection engine.
 //
 // OCCT BOPAlgo_PaveFiller.cxx / _5.cxx / _6.cxx / _7.cxx
 // PerformInternal flow (BOPAlgo_PaveFiller.cxx L235-379):
@@ -38,7 +38,7 @@ use std::sync::Arc;
 use glam::DVec3;
 use rcad_kernel::topo_shape::{self, Shape};
 
-/// OCCT BOPDS_CoupleOfPaveBlocks — stores two PBs, new vertex, interference index, tolerance.
+/// OCCT BOPDS_CoupleOfPaveBlocks 鈥?stores two PBs, new vertex, interference index, tolerance.
 struct CoupleOfPBs {
     pb1: SharedPB,
     pb2: SharedPB,
@@ -50,7 +50,7 @@ struct CoupleOfPBs {
 
 use crate::bop::algo::section_attribute::SectionAttribute;
 
-/// OCCT BOPAlgo_PaveFiller::EdgeRangeDistance — distance from an edge range to a face.
+/// OCCT BOPAlgo_PaveFiller::EdgeRangeDistance 鈥?distance from an edge range to a face.
 #[derive(Debug, Clone)]
 pub(crate) struct EdgeRangeDistance {
     pub(crate) first: f64,
@@ -61,7 +61,7 @@ impl EdgeRangeDistance {
     fn new(first: f64, last: f64, distance: f64) -> Self { Self { first, last, distance } }
 }
 
-/// OCCT BOPAlgo_BPC (PaveFiller_7.cxx L320-365) — builds pcurve for edge on planar face.
+/// OCCT BOPAlgo_BPC (PaveFiller_7.cxx L320-365) 鈥?builds pcurve for edge on planar face.
 struct BOPAlgo_BPC {
     edge_idx: usize,
     face_idx: usize,
@@ -77,17 +77,34 @@ impl BOPAlgo_BPC {
     fn face_idx(&self) -> usize { self.face_idx }
     fn pcurve(&self) -> Option<&rcad_kernel::geom::Curve2d> { self.pcurve.as_ref() }
     fn is_to_update(&self) -> bool { self.to_update }
-    /// OCCT BOPAlgo_BPC::Perform — calls BRepLib::BuildPCurveForEdgeOnPlane.
-    /// rcad: project edge curve onto planar surface.
+    /// OCCT BOPAlgo_BPC::Perform (PaveFiller_7.cxx L345-353) 鈥?calls
+    /// BRepLib::BuildPCurveForEdgeOnPlane (BRepLib_1.cxx L330-338): the pcurve
+    /// is built only when the edge has no stored pcurve on the plane face
+    /// (BRep_Tool::CurveOnSurface with isStored, BRep_Tool.cxx L327-373);
+    /// bToUpdate = !isStored && !aC2D.IsNull().
     fn perform(&mut self, ds: &DS) {
         let edge_shape = ds.shape(self.edge_idx);
         let face_shape = ds.shape(self.face_idx);
+        // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the stored
+        // pcurve is keyed by (face TShape, L.Predivided(E.Location())).
+        let key = ds.face_key(self.face_idx).map(|(fid, floc)| {
+            (fid, crate::bop::algo::compose_face_edge_pcurve_location(floc, edge_shape.location, &ds.locations))
+        });
+        let is_stored = match &*edge_shape.data {
+            rcad_kernel::topods::TShape::Edge(ed) => key.map_or(false, |k| ed.pcurves.contains_key(&k)),
+            _ => true,
+        };
+        if is_stored {
+            return;
+        }
         let face_surf = face_shape.as_face().and_then(|fd| fd.surface.as_ref());
-        let edge_curve = edge_shape.as_edge().and_then(|ed| ed.curve.as_ref());
+        // OCCT BRep_Tool::Curve(aE) 鈥?the edge's 3D curve with its Location
+        // applied (BRepLib_1.cxx L409).
+        let edge_curve = ds.edge_curve(self.edge_idx);
         match (edge_curve, face_surf) {
             (Some(curve), Some(surf)) => {
                 // OCCT: BRepLib::BuildPCurveForEdgeOnPlane(myE, myF, myCurve, myToUpdate)
-                if let Some(pc) = project_on_surface(curve, surf) {
+                if let Some(pc) = project_on_surface(&curve, surf) {
                     self.pcurve = Some(pc);
                     self.to_update = true;
                 }
@@ -279,13 +296,13 @@ pub(crate) fn find_valid_range_params(
     true
 }
 
-// OCCT Epsilon(double) — BRepLib_1.cxx L26 — machine-epsilon scaled by value.
+// OCCT Epsilon(double) 鈥?BRepLib_1.cxx L26 鈥?machine-epsilon scaled by value.
 fn epsilon(par: f64) -> f64 {
     let eps = 1.1102230246251565e-15; // DBL_EPSILON in double precision
     par.abs() * eps
 }
 
-// OCCT theCurve.Resolution(theTol) — parametric step for given 3D tolerance.
+// OCCT theCurve.Resolution(theTol) 鈥?parametric step for given 3D tolerance.
 // Approximated by sampling derivative magnitude on the sub-range [t1, t2].
 pub(crate) fn shrunk_range_resolution(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
     let n_samples = 100;
@@ -301,7 +318,7 @@ pub(crate) fn shrunk_range_resolution(curve: &Curve3, t1: f64, t2: f64, tol: f64
     (tol / max_speed).max(rcad_kernel::PCONFUSION)
 }
 
-// OCCT GCPnts_AbscissaPoint::Length — adaptive arc length.
+// OCCT GCPnts_AbscissaPoint::Length 鈥?adaptive arc length.
 // Simplified: Simpson integration with tolerance-based subdivision.
 // Depth-limited so a pathological range (e.g. a section edge spanning many
 // periods) converges instead of overflowing the stack, mirroring the bounded
@@ -330,7 +347,7 @@ fn shrunk_range_arc_length(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
     simpson_step(curve, t1, t2, fa, fb, fm, tol, 0)
 }
 
-// OCCT BndLib_Add3dCurve::Add — build bounding box for curve subrange.
+// OCCT BndLib_Add3dCurve::Add 鈥?build bounding box for curve subrange.
 fn shrunk_range_bnd_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BndBox {
     let n_samples = 100;
     let dt = (t2 - t1) / n_samples as f64;
@@ -475,11 +492,11 @@ fn find_nearest_valid_point(
 }
 
 pub struct PaveFiller {
-    // ── BOPAlgo_Algo base (inherited) ──────────────────────────────
+    // 鈹€鈹€ BOPAlgo_Algo base (inherited) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     pub(crate) my_report: Report,                 // BOPAlgo_Algo::myReport
     pub(crate) my_run_parallel: bool,             // BOPAlgo_Algo::myRunParallel
     pub(crate) my_fuzzy_value: f64,               // BOPAlgo_Algo::myFuzzyValue
-    // ── BOPAlgo_PaveFiller members ────────────────────────────────
+    // 鈹€鈹€ BOPAlgo_PaveFiller members 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // OCCT BOPAlgo_PaveFiller.hxx L639-652:
     pub(crate) ds: DS,                            // L640: myDS (owned, OCCT: heap-allocated)
     pub(crate) my_iterator: Option<Box<BOPDS_Iterator>>, // L641: myIterator
@@ -552,7 +569,7 @@ impl PaveFiller {
     /// OCCT BOPAlgo_PaveFiller::Clear (PaveFiller.cxx L136-141).
     /// Clears internal state (iterator, data maps).
     pub fn clear(&mut self) {
-        // OCCT L137: BOPAlgo_Algo::Clear() — clears report
+        // OCCT L137: BOPAlgo_Algo::Clear() 鈥?clears report
         self.my_report.clear();
         // OCCT L138-139: delete myIterator; myIterator = nullptr;
         self.my_iterator = None;
@@ -684,7 +701,7 @@ impl PaveFiller {
     }
 
     // ====================================================================
-    // VV — OCCT BOPAlgo_PaveFiller_1.cxx L45-132
+    // VV 鈥?OCCT BOPAlgo_PaveFiller_1.cxx L45-132
     // ====================================================================
     fn perform_vv(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
@@ -703,7 +720,7 @@ impl PaveFiller {
         if a_size == 0 {
             return;
         }
-        // OCCT L58-59: aVVs.SetIncrement(aSize) — Rust Vec auto-grows
+        // OCCT L58-59: aVVs.SetIncrement(aSize) 鈥?Rust Vec auto-grows
 
 
         // OCCT L62-63: NCollection_IndexedDataMap<int, NCollection_List<int>> aMILI(100, aAllocator);
@@ -768,7 +785,7 @@ impl PaveFiller {
         // OCCT L139-140: TopoDS_Vertex aVSD, aVn; int nSD = -1;
         let mut n_sd = usize::MAX; // OCCT: nSD = -1
         // OCCT L141-161: collect shapes into aLV, tracking existing SD
-        // rcad: build list of (point, tolerance) pairs — no TopoDS wrapper in DS
+        // rcad: build list of (point, tolerance) pairs 鈥?no TopoDS wrapper in DS
         let mut a_lv_points: Vec<(DVec3, f64)> = Vec::new();
 
         for &n_x in the_vert_indices {
@@ -850,7 +867,7 @@ impl PaveFiller {
     }
 
     // ====================================================================
-    // VE — OCCT BOPAlgo_PaveFiller_2.cxx L171-238
+    // VE 鈥?OCCT BOPAlgo_PaveFiller_2.cxx L171-238
     // ====================================================================
     fn perform_ve(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
@@ -882,7 +899,7 @@ impl PaveFiller {
         // OCCT L186-235: iterate pairs
         for &(a, b) in &pairs {
             // OCCT myIterator->Value(nV, nE) returns (vertex, edge) in correct order.
-            // rcad pairs() returns (min, max) — identify Vertex/Edge by shape type.
+            // rcad pairs() returns (min, max) 鈥?identify Vertex/Edge by shape type.
             let (n_v, n_e) = if self.ds.shapes[a].shape_type == ShapeType::Vertex {
                 (a, b)
             } else {
@@ -928,11 +945,11 @@ impl PaveFiller {
             return;
         }
 
-        // OCCT L253-257: aVEs.SetIncrement(aNbVE) — Rust Vec auto-grows
+        // OCCT L253-257: aVEs.SetIncrement(aNbVE) 鈥?Rust Vec auto-grows
 
         // OCCT L260-265: aVVE, aDMVSD declarations
         // OCCT L267-322: build solver objects
-        // OCCT aMEdges (L276) is NCollection_Map<int> — iteration order feeds
+        // OCCT aMEdges (L276) is NCollection_Map<int> 鈥?iteration order feeds
         // SplitPaveBlocks (theMEdges), which creates SD vertices/edges in that
         // order; model the OCCT map exactly.
         let mut a_m_edges: crate::bop::algo::occt_map::OcctMapInt =
@@ -953,7 +970,7 @@ impl PaveFiller {
             // OCCT L288-321: for each vertex in the list
             // OCCT aDMVSD (PaveFiller_2.cxx L265) is NCollection_DataMap<BOPDS_Pair,
             // List<int>>; the per-(nVSD, nE) solver sequence is aVVE, a vector
-            // iterated in insertion order (L330-410) — an IndexMap reproduces
+            // iterated in insertion order (L330-410) 鈥?an IndexMap reproduces
             // that order.
             let mut a_dmvsd: indexmap::IndexMap<(usize, usize), Vec<usize>> =
                 indexmap::IndexMap::new();
@@ -1009,7 +1026,7 @@ impl PaveFiller {
                 // OCCT L396-419: add VE interference for EACH original vertex
                 // OCCT: aVEs.Appended() always called, then AddInterf separately
                 if the_add_interfs {
-                    // OCCT L412: if (myDS->IsNewShape(nVx)) — nVx from UpdateVertex, not loop var!
+                    // OCCT L412: if (myDS->IsNewShape(nVx)) 鈥?nVx from UpdateVertex, not loop var!
                     let resolved_is_new = self.ds.is_new_shape(n_vx);
                     for &n_vx_old in orig_verts {
                         // OCCT L406-408: aVE = aVEs.Appended(); SetIndices; SetParameter
@@ -1024,7 +1041,7 @@ impl PaveFiller {
                             ve.index_new = n_vx;
                         }
                         self.ds.interf_ve.push(ve);
-                        // OCCT L410: myDS->AddInterf(nVOld, nE) — called unconditionally
+                        // OCCT L410: myDS->AddInterf(nVOld, nE) 鈥?called unconditionally
                         self.ds.add_interf(n_vx_old, n_e);
                     }
                 }
@@ -1040,7 +1057,7 @@ impl PaveFiller {
     }
 
     // ====================================================================
-    // EE — OCCT BOPAlgo_PaveFiller.cxx L279-286 + PaveFiller_5.cxx L145-590
+    // EE 鈥?OCCT BOPAlgo_PaveFiller.cxx L279-286 + PaveFiller_5.cxx L145-590
     // ====================================================================
     fn perform_ee(&mut self, the_range: &ProgressScope) {
         if std::env::var("RCAD_EE_DEBUG").is_ok() {
@@ -1061,7 +1078,7 @@ impl PaveFiller {
         if i_size == 0 {
             return;
         }
-        // OCCT L178-179: aEEs.SetIncrement(iSize) — Rust Vec auto-grows
+        // OCCT L178-179: aEEs.SetIncrement(iSize) 鈥?Rust Vec auto-grows
 
         let mut new_ee: Vec<InterferenceEE> = Vec::new();
         let mut cb_pairs: Vec<(SharedPB, SharedPB)> = Vec::new();
@@ -1118,7 +1135,7 @@ impl PaveFiller {
                 continue;
             }
 
-            // L212-265: iterate PB1 × PB2
+            // L212-265: iterate PB1 脳 PB2
             let mut pb_box_cache: std::collections::HashMap<u64, rcad_kernel::math::bnd::BndBox> =
                 std::collections::HashMap::new();
 
@@ -1191,7 +1208,7 @@ impl PaveFiller {
 
                     // OCCT L355-553: process each common part
                     for (i_cp, cp) in a_cparts.iter().enumerate() {
-                        // OCCT aCP.Type() — set by IntTools_EdgeEdge::AddSolution /
+                        // OCCT aCP.Type() 鈥?set by IntTools_EdgeEdge::AddSolution /
                         // ComputeLineLine. (The old range-span heuristic misclassified
                         // line-line VERTEX parts as EDGE because their Range1 is the
                         // tolerance band [aT-dt, aT+dt], not a collapsed range.)
@@ -1265,7 +1282,7 @@ impl PaveFiller {
 
                                 // OCCT L405-417: ForceInterfVE for vertices on pave boundaries
                                 let n_v_arr = [n_v11, n_v12, n_v21, n_v22];
-                                // OCCT: aPB = (j < 2) ? aPB2 : aPB1 — cross assignment
+                                // OCCT: aPB = (j < 2) ? aPB2 : aPB1 鈥?cross assignment
                                 let p_b_arr = [&p2, &p2, &p1, &p1];
                                 let mut is_v_exists = false;
                                 for j in 0..4 {
@@ -1388,7 +1405,7 @@ impl PaveFiller {
                             }
                             ShapeType::Edge => {
                                 // OCCT L529-533: only process EDGE with single common part
-                                // OCCT: if (aNbCPrts > 1) { break; } — break switch, NOT for loop
+                                // OCCT: if (aNbCPrts > 1) { break; } 鈥?break switch, NOT for loop
                                 // rcad: must not continue/break for loop; only skip the case body
                                 let b_process_edge = a_nb_cprts <= 1;
                                 if b_process_edge {
@@ -1436,7 +1453,7 @@ impl PaveFiller {
         // adjacency map (key -> list of connected PBs), then MakeBlocks groups
         // connected PBs into one Common Block per connected component.
         // OCCT aMPBLPB (BOPAlgo_PaveFiller_3.cxx L524-534) is NCollection_IndexedDataMap
-        // — the MakeBlocks iteration (BOPAlgo_Tools.hxx L49-53, FindKey(i)) and
+        // 鈥?the MakeBlocks iteration (BOPAlgo_Tools.hxx L49-53, FindKey(i)) and
         // the chain start order are the insertion order of cb_pairs; a HashMap
         // would randomize the CommonBlock pave-block order, which later feeds
         // cb_pcurve_source's first-with-pcurve selection and hence the copied
@@ -1452,7 +1469,7 @@ impl PaveFiller {
             }
             // OCCT MakeBlocks (BOPAlgo_Tools.hxx L46-80): connected components
             // grown in FIFO order (aChain list iterated from the start, appended
-            // elements visited later) — a stack would visit in a different order.
+            // elements visited later) 鈥?a stack would visit in a different order.
             let mut a_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
             for (&n, _) in &a_mpblpb {
                 if a_fence.contains(&n) {
@@ -1519,10 +1536,10 @@ impl PaveFiller {
     }
 
     // ====================================================================
-    // VF — OCCT BOPAlgo_PaveFiller_5.cxx L409-471
+    // VF 鈥?OCCT BOPAlgo_PaveFiller_5.cxx L409-471
     // ====================================================================
     // OCCT BOPAlgo_PaveFiller::PerformVF (PaveFiller_4.cxx L139-399).
-    // rcad: simplified — skips FaceInfo/TreatVerticesEE/complex projection.
+    // rcad: simplified 鈥?skips FaceInfo/TreatVerticesEE/complex projection.
     fn perform_vf(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
         // OCCT L141-142: myIterator->Initialize(VERTEX, FACE); iSize = ExpectedLength()
@@ -1533,7 +1550,7 @@ impl PaveFiller {
         my_iterator.initialize(ShapeType::Vertex, ShapeType::Face);
         let i_size = my_iterator.pairs(ShapeType::Vertex, ShapeType::Face).len();
 
-        // OCCT L147-160: GlueFull mode — init FaceInfo and return
+        // OCCT L147-160: GlueFull mode 鈥?init FaceInfo and return
         if self.my_glue == GlueEnum::GlueFull {
             let pairs: Vec<(usize, usize)> = my_iterator.pairs(ShapeType::Vertex, ShapeType::Face).to_vec();
             for &(n_v, n_f) in &pairs {
@@ -1551,7 +1568,7 @@ impl PaveFiller {
             return;
         }
 
-        // OCCT L176-180: aMVFPairs — avoid repeated intersection of the same
+        // OCCT L176-180: aMVFPairs 鈥?avoid repeated intersection of the same
         // (SD vertex, face) pair; the value is NCollection_Map<int> (bucket
         // order) of the original vertices in the group. OCCT iterates the
         // collected solvers (aVVF vector, insertion order) at L249-298, so the
@@ -1572,18 +1589,18 @@ impl PaveFiller {
             // OCCT L205-209: nVx = (HasShapeSD(nV, nVSD)) ? nVSD : nV
             let mut n_vx = n_v;
             self.ds.has_shape_sd(n_v, &mut n_vx);
-            // OCCT L211-220: dedup by (nVx, nF) — aMVFPairs.ChangeSeek/Bound.
+            // OCCT L211-220: dedup by (nVx, nF) 鈥?aMVFPairs.ChangeSeek/Bound.
             let a_vf_pair = (n_vx, n_f);
             let entry = a_mvf_pairs.entry(a_vf_pair).or_insert_with(crate::bop::algo::occt_map::OcctMapInt::new);
             entry.add(n_v);
         }
 
-        // OCCT L249-298: process each unique (nVx, nF) pair — the aVVF vector
+        // OCCT L249-298: process each unique (nVx, nF) pair 鈥?the aVVF vector
         // is iterated in insertion order (IndexMap order here); the original
         // vertices aMV are NCollection_Map<int> iterated in bucket order.
         for ((n_vx, n_f), verts) in &a_mvf_pairs {
             if the_range.user_break() { return; }
-            // OCCT L257-266: BOPAlgo_VertexFace::Perform → myContext->ComputeVF
+            // OCCT L257-266: BOPAlgo_VertexFace::Perform 鈫?myContext->ComputeVF
             let (i_flag, a_u, a_v, a_tol_v_new) =
                 self.my_context.compute_vf(*n_vx, *n_f, &self.ds, self.my_fuzzy_value);
             if i_flag != 0 { continue; }
@@ -1643,7 +1660,7 @@ impl PaveFiller {
         // OCCT L356-389: for each (face, EE-vertex) pair selected by the
         // BOPDS_SubIterator (bounding-box overlap), ChangeFaceInfo(nF) is
         // called UNCONDITIONALLY (the FaceInfo must exist even when the vertex
-        // is not on the face — OCCT PaveFiller_4.cxx L357-360).  Only when the
+        // is not on the face 鈥?OCCT PaveFiller_4.cxx L357-360).  Only when the
         // vertex is not already ON the face, ComputeVF is run and the
         // interference recorded.
         for &n_f in &a_lif {
@@ -1677,7 +1694,7 @@ impl PaveFiller {
     }
 
     // ====================================================================
-    // EF — OCCT BOPAlgo_PaveFiller_5.cxx L165-580
+    // EF 鈥?OCCT BOPAlgo_PaveFiller_5.cxx L165-580
     // ====================================================================
     /// OCCT BOPAlgo_PaveFiller::PerformEF (PaveFiller_5.cxx L165-580).
     fn perform_ef(&mut self, the_range: &ProgressScope) {
@@ -1695,7 +1712,7 @@ impl PaveFiller {
             return;
         }
 
-        // OCCT L179-191: GlueFull mode — init FaceInfo and return
+        // OCCT L179-191: GlueFull mode 鈥?init FaceInfo and return
         if self.my_glue == GlueEnum::GlueFull {
             for &(n_e, n_f) in &pairs {
                 if !self.ds.shapes[n_e].has_flag() {
@@ -1713,10 +1730,10 @@ impl PaveFiller {
             indexmap::IndexMap::new();
         let mut a_dmpb_box: std::collections::HashMap<u64, rcad_kernel::math::bnd::BndBox> =
             std::collections::HashMap::new();
-        // OCCT: aVEdgeFace — collected (edge, face, pb, range, shrunk, express)
+        // OCCT: aVEdgeFace 鈥?collected (edge, face, pb, range, shrunk, express)
         struct EFCandidate {
             n_e: usize, n_f: usize, pb: SharedPB,
-            // OCCT: aEdgeFace.SetRange(aPBRange) — CorrectRange'd PB range used
+            // OCCT: aEdgeFace.SetRange(aPBRange) 鈥?CorrectRange'd PB range used
             // as the BeanFaceIntersector parameters.
             range: (f64, f64),
             // OCCT: the raw PB range (aPB->Range) re-read in the processing loop
@@ -1727,14 +1744,14 @@ impl PaveFiller {
         }
         let mut a_v_edge_face: Vec<EFCandidate> = Vec::new();
 
-        // OCCT L219-307: loop 1 — collect candidates
+        // OCCT L219-307: loop 1 鈥?collect candidates
         for &(n0, n1) in &pairs {
             let (n_e, n_f) = if self.ds.shapes[n0].shape_type == ShapeType::Edge { (n0, n1) } else { (n1, n0) };
             // OCCT L227-231: skip degenerated edges
             if self.ds.shapes[n_e].has_flag() {
                 continue;
             }
-            // OCCT L237: BOPDS_FaceInfo& aFI = myDS->ChangeFaceInfo(nF) — the
+            // OCCT L237: BOPDS_FaceInfo& aFI = myDS->ChangeFaceInfo(nF) 鈥?the
             // FaceInfo is created for every surviving (E,F) pair, collecting
             // the current boundary PBs into PaveBlocksOn.
             let a_fi = self.ds.change_face_info(n_f);
@@ -1753,7 +1770,7 @@ impl PaveFiller {
                 // OCCT L256-260: RealPaveBlock + skip if in face's PaveBlocksOn
                 let a_pbr = self.ds.real_pave_block(a_pb);
                 let pbr_ptr = std::sync::Arc::as_ptr(&a_pbr.0) as u64;
-                // OCCT: aMPBF.Contains(aPBR) — the set holds PB handles, so a
+                // OCCT: aMPBF.Contains(aPBR) 鈥?the set holds PB handles, so a
                 // direct pointer-id membership test matches exactly.
                 let is_on_face = a_mpbf.contains(&pbr_ptr);
                 if std::env::var("RCAD_EE_DEBUG").is_ok() {
@@ -1823,7 +1840,7 @@ impl PaveFiller {
             }
         }
 
-        // OCCT L324-571: loop 2 — compute and process common parts
+        // OCCT L324-571: loop 2 鈥?compute and process common parts
         for cand in &a_v_edge_face {
             let a_nb_cprts;
             let (i_flag, common_parts, min_dist) = self.my_context.compute_ef(
@@ -1849,13 +1866,13 @@ impl PaveFiller {
                 continue;
             }
             let a_pb = &cand.pb;
-            // OCCT L380: aPB->Range(aT1, aT2) — the raw PB range (not the
+            // OCCT L380: aPB->Range(aT1, aT2) 鈥?the raw PB range (not the
             // CorrectRange'd one used for the intersection).
             let (a_t1, a_t2) = cand.raw_range;
             let (n_v1, n_v2) = { let r = a_pb.0.read().unwrap(); r.indices() };
             let b_is_pb_splittable = { let r = a_pb.0.read().unwrap(); r.is_splittable() };
             let (mut a_ts1, mut a_ts2) = cand.shrunk;
-            // OCCT L373-380: VERTEX type → ReduceIntersectionRange
+            // OCCT L373-380: VERTEX type 鈫?ReduceIntersectionRange
             if !common_parts.is_empty() && !common_parts[0].2 {
                 self.reduce_intersection_range(n_v1, n_v2, cand.n_e, cand.n_f, &mut a_ts1, &mut a_ts2);
             }
@@ -1880,7 +1897,7 @@ impl PaveFiller {
                     let b_v0 = self.check_face_paves(n_v1, &a_mif_on, &a_mif_in);
                     let b_v1_ = self.check_face_paves(n_v2, &a_mif_on, &a_mif_in);
                     if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                        eprintln!("[EF-DBG] EDGE-EF e={} f={} r=[{:.4},{:.4}]", cand.n_e, cand.n_f, r1_first, r1_last);
+                        eprintln!("[EF-DBG] EDGE-EF e={} f={} r=[{:.4},{:.4}] bV=({},{}) v1={} v2={}", cand.n_e, cand.n_f, r1_first, r1_last, b_v0, b_v1_, n_v1, n_v2);
                     }
                     self.ds.interf_ef.push(InterferenceEF {
                         edge: cand.n_e, face: cand.n_f,
@@ -2047,7 +2064,7 @@ impl PaveFiller {
             }
         }
         // OCCT L585: Update FaceInfoIn for all faces having EF common parts.
-        // OCCT L598: myDS->UpdateFaceInfoIn(aMIEFC) — NCollection_Map<int>
+        // OCCT L598: myDS->UpdateFaceInfoIn(aMIEFC) 鈥?NCollection_Map<int>
         // bucket iteration order.
         for n_f in a_mi_efc.iter_keys() {
             self.ds.update_face_info_in(n_f);
@@ -2155,7 +2172,7 @@ impl PaveFiller {
     }
 
     // ====================================================================
-    // FF — OCCT BOPAlgo_PaveFiller_6.cxx L285-end
+    // FF 鈥?OCCT BOPAlgo_PaveFiller_6.cxx L285-end
     // ====================================================================
 
     /// OCCT BOPAlgo_PaveFiller::CheckPlanes (BOPAlgo_PaveFiller_6.cxx L3639-3675):
@@ -2345,8 +2362,8 @@ impl PaveFiller {
             ff.perform(&self.ds);
             let tangent_faces = ff.tangent_faces();
             // OCCT L543-556: if (!aFaceFace.IsDone() || aFaceFace.HasErrors())
-            // → empty FF + AddIntersectionFailedWarning; rcad FaceFace has no
-            // error channel — a failed Perform yields no curves.
+            // 鈫?empty FF + AddIntersectionFailedWarning; rcad FaceFace has no
+            // error channel 鈥?a failed Perform yields no curves.
             if !ff.has_intersection() {
                 // OCCT L545-552: aFF.SetIndices; aFF.Init(0, 0);
                 // AddIntersectionFailedWarning(Face1(), Face2()).
@@ -2368,7 +2385,7 @@ impl PaveFiller {
             let a_nb_curves = curves.len();
             // OCCT L565-572: aCvsX = aFaceFace.Lines(); aPntsX = aFaceFace.Points();
             // aNbCurves/aNbPoints; if (aNbCurves || aNbPoints) myDS->AddInterf(nF1, nF2).
-            // rcad: points 由 IntTools_FaceFace 生成；rcad FaceFace 暂不产出孤立点。
+            // rcad: points 鐢?IntTools_FaceFace 鐢熸垚锛況cad FaceFace 鏆備笉浜у嚭瀛ょ珛鐐广€?
             if a_nb_curves > 0 {
                 self.ds.add_interf(i, j);
             }
@@ -2384,7 +2401,7 @@ impl PaveFiller {
             let a_box_expand_value = a_tol_ff + a_max_vertex_tol;
             let mut curve_ids: Vec<usize> = Vec::new();
             for mut c in curves {
-                // OCCT L599-607: bIsValid = CheckCurve(aIC, aBox); if valid →
+                // OCCT L599-607: bIsValid = CheckCurve(aIC, aBox); if valid 鈫?
                 // SetCurve(aIC); aBox.Enlarge(aBoxExpandValue); SetBox(aBox);
                 // SetTolerance(max(aIC.Tolerance(), aTolFF)).
                 let (b_is_valid, a_box) = int_tools::face_face::check_curve(&c);
@@ -2402,7 +2419,7 @@ impl PaveFiller {
                 self.ds.intersection_curves.push(c);
                 curve_ids.push(cid);
             }
-            // OCCT L549-550: aFaceFace.Indices(nF1, nF2) — myIF1/myIF2, the
+            // OCCT L549-550: aFaceFace.Indices(nF1, nF2) 鈥?myIF1/myIF2, the
             // ORIGINAL pair order (BOPAlgo_FaceFace does not swap the indices;
             // only IntTools_FaceFace swaps its internal Face1/Face2 and the
             // pcurves are exchanged back afterwards, IntTools_FaceFace.cxx
@@ -2421,7 +2438,7 @@ impl PaveFiller {
     ///
     /// Collects the Edge-Face intersection points belonging to both faces
     /// nF1/nF2 as IntSurf_PntOn2S (UV on each face), to be passed to
-    /// IntTools_FaceFace::SetList — the intersection curves are then started
+    /// IntTools_FaceFace::SetList 鈥?the intersection curves are then started
     /// from these points (used by the Param-Param intersector).
     fn get_ef_pnts(&mut self, n_f1: usize, n_f2: usize) -> Vec<PntOn2S> {
         // OCCT L2673-2676: collect indexes of all shapes from nF1 and nF2.
@@ -2494,7 +2511,7 @@ impl PaveFiller {
                     a_list_of_pnts.push(a_pnt);
                 }
             } else if let Some((u2, v2)) = a_u_v_opp {
-                // OCCT L2716-2736: no pcurve — project onto both faces.
+                // OCCT L2716-2736: no pcurve 鈥?project onto both faces.
                 let a_u_v_1 = {
                     let a_proj1 = self.my_context.proj_ps(&self.ds, n_f);
                     a_proj1.perform(a_point);
@@ -2521,7 +2538,7 @@ impl PaveFiller {
     // OCCT BOPAlgo_PaveFiller sub-steps
     // ====================================================================
 
-    /// OCCT: UpdatePaveBlocksWithSDVertices — delegates to DS.
+    /// OCCT: UpdatePaveBlocksWithSDVertices 鈥?delegates to DS.
     fn update_pave_blocks_with_sd_vertices(&mut self) {
         self.ds.update_pave_blocks_with_sd_vertices();
     }
@@ -2644,7 +2661,7 @@ impl PaveFiller {
         // ReleasePaveBlocks and no longer carries an edge).
         for i in 0..self.ds.face_info_pool.len() {
             let idx = self.ds.face_info_pool[i].index();
-            // OCCT: UpdateFaceInfoOn(aFaceInfo.Index()) — re-collect.
+            // OCCT: UpdateFaceInfoOn(aFaceInfo.Index()) 鈥?re-collect.
             self.ds.update_face_info_on(idx);
             let pb_on = self.ds.face_info(idx).pave_blocks_on.clone();
             let mut to_rem: Vec<u64> = Vec::new();
@@ -2671,7 +2688,7 @@ impl PaveFiller {
         // OCCT L184: Message_ProgressScope aPS(theRange, "Initialization of Intersection algorithm", 1);
         // rcad: aPS covers the null-shape-check loop (1 step), skipped here (Rust Shape prevents null).
         let _a_ps = the_range.sub_scope("Initialization of Intersection algorithm", 1);
-        // OCCT L185-193: check for null shapes — Rust Shape type prevents null.
+        // OCCT L185-193: check for null shapes 鈥?Rust Shape type prevents null.
         // OCCT L196: Clear
         self.clear();
         // OCCT L199-201: myDS = new BOPDS_DS;
@@ -2693,7 +2710,7 @@ impl PaveFiller {
         // OCCT L210: myIterator->Prepare(myContext, myUseOBB, myFuzzyValue)
         a_it.prepare(&self.ds, Some(&self.my_context), false, self.my_fuzzy_value);
         self.my_iterator = Some(Box::new(a_it));
-        // OCCT L213: SetNonDestructive — respects existing flag
+        // OCCT L213: SetNonDestructive 鈥?respects existing flag
         self.set_non_destructive();
     }
 
@@ -2715,12 +2732,12 @@ impl PaveFiller {
     // OCCT BOPAlgo_PaveFiller::Prepare (_7.cxx L850-931).
     fn prepare(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
-        // OCCT L852-856: non-destructive mode → skip
+        // OCCT L852-856: non-destructive mode 鈫?skip
         if self.my_non_destructive { return; }
 
         // OCCT L857-879: iterate (V,F), (E,F), (F,F) pairs,
         // collect planar faces via IsBasedOnPlane
-        // OCCT aMF (L859) is NCollection_Map<int> — bucket iteration order.
+        // OCCT aMF (L859) is NCollection_Map<int> 鈥?bucket iteration order.
         let a_types = [ShapeType::Vertex, ShapeType::Edge, ShapeType::Face];
         let mut a_mf: crate::bop::algo::occt_map::OcctMapInt =
             crate::bop::algo::occt_map::OcctMapInt::new();
@@ -2742,18 +2759,17 @@ impl PaveFiller {
             }
         }
 
-        // OCCT L881-885: no planar faces → return
+        // OCCT L881-885: no planar faces 鈫?return
         let a_nb_f = a_mf.len();
         if a_nb_f == 0 { return; }
 
-        // OCCT L888-931: build pcurves for edges on planar faces via BOPAlgo_BPC
-        // Phase 1 (L889-899): collect edge-face pairs into BPC vector
+        // OCCT L888-901: collect edge-face pairs into BPC vector. The face's
+        // edges are taken in the stored wire order (TopExp_Explorer aExp(aF,
+        // TopAbs_EDGE) 鈥?base edges before located copies).
         let mut a_vbpc: Vec<BOPAlgo_BPC> = Vec::new();
-        // OCCT L918-931: iterate aMF (NCollection_Map — bucket order).
+        // OCCT L890-901: iterate aMF (NCollection_Map 鈥?bucket order).
         for fi in a_mf.iter_keys() {
-            let edge_indices: Vec<usize> = self.ds.shape_info(fi).sub_shapes().iter()
-                .filter(|&&ei| self.ds.shape_info(ei).shape_type() == ShapeType::Edge)
-                .copied().collect();
+            let edge_indices = face_edge_indices(&self.ds, fi);
             for &ei in &edge_indices {
                 let mut a_bpc = BOPAlgo_BPC::new(ei, fi);
                 a_vbpc.push(a_bpc);
@@ -2764,8 +2780,8 @@ impl PaveFiller {
             bpc.perform(&self.ds);
         }
         // Phase 3 (L916-930): update edges with computed pcurves.
-        // In-place (OCCT BRep_Builder semantics): every reference to the edge —
-        // the DS entry and the face-wire edges — observes the pcurve, preserving
+        // In-place (OCCT BRep_Builder semantics): every reference to the edge 鈥?
+        // the DS entry and the face-wire edges 鈥?observes the pcurve, preserving
         // the single-object identity that WireSplitter and downstream modules
         // key by. Safe because the DS holds a private copy of the input
         // (clone_arguments_private), so the mutation never leaks into the input.
@@ -2780,10 +2796,12 @@ impl PaveFiller {
                     // (BRep_Tool::Curve + Range), independent of the stored
                     // vertex order. No reversal.
                     let (pc, f, l) = (pc, range[0], range[1]);
-                    let fkey = self.ds.face_key(fi);
+                    // OCCT BRep_Builder::UpdateEdge (BRep_Builder.cxx L692) 鈥?
+                    // the pcurve is stored under (face TShape, L.Predivided(E.Location())).
+                    let key = self.pcurve_key_for(ei, fi); // EXPERIMENT: composed key
                     self.ds.mutate_shape_data(ei, |ts| {
                         if let topods::TShape::Edge(ed) = ts {
-                            if let Some(k) = fkey {
+                            if let Some(k) = key {
                                 ed.pcurves.insert(k, (pc, f, l));
                             }
                         }
@@ -2794,7 +2812,7 @@ impl PaveFiller {
         }
     }
 
-    /// OCCT Geom2d_Curve::Reversed() — same curve, parameter direction
+    /// OCCT Geom2d_Curve::Reversed() 鈥?same curve, parameter direction
     /// reversed (ReversedParameter maps t to the original curve's endpoint
     /// parameter).  Only the analytic cases (Line/Circle) produced by
     /// project_on_surface are handled; other types keep the projected
@@ -2816,7 +2834,7 @@ impl PaveFiller {
     }
 
     // ====================================================================
-    // TreatNewVertices — OCCT BOPAlgo_PaveFiller_3.cxx L692-723
+    // TreatNewVertices 鈥?OCCT BOPAlgo_PaveFiller_3.cxx L692-723
     // ====================================================================
 
     /// Fuse close new vertices into groups.
@@ -2830,8 +2848,8 @@ impl PaveFiller {
             let pt = cpb.point;
             verts.push((pt, cpb.tolerance, i));
         }
-        // OCCT L710: BOPAlgo_Tools::IntersectVertices — fuse by proximity
-        // rcad: simple fuse — group vertices within myFuzzyValue distance
+        // OCCT L710: BOPAlgo_Tools::IntersectVertices 鈥?fuse by proximity
+        // rcad: simple fuse 鈥?group vertices within myFuzzyValue distance
         let mut groups: Vec<(DVec3, f64, Vec<usize>)> = Vec::new();
         let mut assigned = vec![false; verts.len()];
         for i in 0..verts.len() {
@@ -2870,11 +2888,11 @@ impl PaveFiller {
         // OCCT L607: aTolAdd = myFuzzyValue / 2.
         let a_tol_add = self.my_fuzzy_value / 2.0;
 
-        // OCCT L609-612: TreatNewVertices — fuse vertices
+        // OCCT L609-612: TreatNewVertices 鈥?fuse vertices
         let groups = self.treat_new_vertices(the_mvcpb);
 
         // OCCT L622-653: add fused vertices to DS, update interference indices
-        // Maps each CPB's index_interf → new DS vertex index
+        // Maps each CPB's index_interf 鈫?new DS vertex index
         let mut cpb_to_new_vertex: HashMap<usize, usize> = HashMap::new();
         for (_i, (avg_pt, group_tol, member_indices)) in groups.iter().enumerate() {
             // OCCT L631-639: vertex tolerance = group max tolerance (MakeVertex aNTol);
@@ -2902,7 +2920,7 @@ impl PaveFiller {
             }
         }
 
-        // OCCT L655-685: build PB→[vertices] map aMPBLI (IndexedDataMap,
+        // OCCT L655-685: build PB鈫抂vertices] map aMPBLI (IndexedDataMap,
         // insertion order preserved).
         let mut a_mpbli: indexmap::IndexMap<u64, (SharedPB, Vec<usize>)> =
             indexmap::IndexMap::new();
@@ -2928,7 +2946,7 @@ impl PaveFiller {
     }
 
 // ====================================================================
-// FillShrunkData — OCCT BOPAlgo_PaveFiller_9.cxx L65-138
+// FillShrunkData 鈥?OCCT BOPAlgo_PaveFiller_9.cxx L65-138
 // ====================================================================
 
 // OCCT BOPAlgo_PaveFiller::FillShrunkData (PaveFiller_9.cxx L65-138).
@@ -3014,7 +3032,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     ///
     /// A section PB in MakeBlocks carries no edge reference (SetEdge is deferred
     /// to PostTreatFF), so rcad cannot drive the micro check through the PB like
-    /// fill_shrunk_data_pb does. OCCT checks the section edge shape directly —
+    /// fill_shrunk_data_pb does. OCCT checks the section edge shape directly 鈥?
     /// same here.
     pub(crate) fn is_micro_section_edge(&self, a_e: &Shape) -> bool {
         let a_ed = match &*a_e.data {
@@ -3091,7 +3109,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             // OCCT L778: bWholeEdge = aPBFirst <= aEFirst && aPBLast >= aELast;
             b_whole_edge = a_pb_first <= a_e_first && a_pb_last >= a_e_last;
 
-            // OCCT L779-791: warning shape — rcad skips compound build (no TopoDS)
+            // OCCT L779-791: warning shape 鈥?rcad skips compound build (no TopoDS)
 
             // OCCT L793-807: if (!theSR.IsDone())
             if !the_sr.is_done() {
@@ -3173,24 +3191,24 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT L873-874: aVEs.SetIncrement(10);
         // rcad: Vec auto-extends
 
-        // OCCT L876-878: 1 — BOPDS_InterfVE& aVE = aVEs.Appended();
+        // OCCT L876-878: 1 鈥?BOPDS_InterfVE& aVE = aVEs.Appended();
         //                aVE.SetIndices(nV, nE); aVE.SetParameter(aT);
         self.ds.interf_ve.push(InterferenceVE {
             vertex: n_v, edge: n_e, param: a_t, index_new: 0,
         });
 
-        // OCCT L880: 2 — myDS->AddInterf(nV, nE);
+        // OCCT L880: 2 鈥?myDS->AddInterf(nV, nE);
         self.ds.add_interf(n_v, n_e);
 
-        // OCCT L883: 3 — nVx = UpdateVertex(nV, aTolVNew);
+        // OCCT L883: 3 鈥?nVx = UpdateVertex(nV, aTolVNew);
         let n_vx_new = self.update_vertex(n_v, a_tol_v_new);
 
-        // OCCT L885-888: 4 — if (myDS->IsNewShape(nVx)) aVE.SetIndexNew(nVx);
+        // OCCT L885-888: 4 鈥?if (myDS->IsNewShape(nVx)) aVE.SetIndexNew(nVx);
         if self.ds.is_new_shape(n_vx_new) {
             if let Some(last) = self.ds.interf_ve.last_mut() { last.index_new = n_vx_new; }
         }
 
-        // OCCT L889-892: 5 — aPave.SetIndex(nVx); aPave.SetParameter(aT); aPB->AppendExtPave(aPave);
+        // OCCT L889-892: 5 鈥?aPave.SetIndex(nVx); aPave.SetParameter(aT); aPB->AppendExtPave(aPave);
         a_pb.0.write().unwrap().ext_paves.push(Pave { vertex_idx: n_vx_new, param: a_t });
 
         // OCCT L894: theMEdges.Add(nE);
@@ -3209,14 +3227,14 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     fn split_pave_blocks(&mut self, the_medges: &crate::bop::algo::occt_map::OcctMapInt, the_add_interfs: bool) {
         // OCCT L453: Fence map to avoid unification of the same vertices twice
         let mut a_mpairs: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-        // OCCT L455-457: Map to treat the Common Blocks — NCollection_IndexedDataMap,
+        // OCCT L455-457: Map to treat the Common Blocks 鈥?NCollection_IndexedDataMap,
         // insertion order (PaveFiller_2.cxx L456-457).
         let mut a_mcb_new_pb: indexmap::IndexMap<usize, Vec<SharedPB>> = indexmap::IndexMap::new();
-        // OCCT L460: Map of vertices to init pave blocks for them —
+        // OCCT L460: Map of vertices to init pave blocks for them 鈥?
         // NCollection_Map<int> aMVerticesToInitPB (PaveFiller_2.cxx L460).
         let mut a_m_vertices_to_init_pb: crate::bop::algo::occt_map::OcctMapInt =
             crate::bop::algo::occt_map::OcctMapInt::new();
-        // OCCT L451-453: aItM.Initialize(theMEdges) — NCollection_Map<int>
+        // OCCT L451-453: aItM.Initialize(theMEdges) 鈥?NCollection_Map<int>
         // iteration order (bucket order, not sorted); the order fixes the
         // MakeSDVertices/SplitEdge vertex and edge creation sequence.
         for n_e in the_medges.iter_keys() {
@@ -3232,7 +3250,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if !pb.0.read().unwrap().is_to_update() { continue; }
                 // OCCT L479: myDS->CommonBlock(aPB)
                 let a_cb = self.ds.common_block(pb);
-                // OCCT L483: aPB->Update(aLPBN) — theFlag defaults to TRUE
+                // OCCT L483: aPB->Update(aLPBN) 鈥?theFlag defaults to TRUE
                 // (BOPDS_PaveBlock.hxx L136-137), so the endpoint paves are
                 // included and an edge with one intersection ext pave splits
                 // into two sub-pave-blocks.
@@ -3288,10 +3306,15 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         a_mcb_new_pb.entry(cb).or_default().push(a_pbn.clone());
                     }
                 }
-                // OCCT L525-526: aLPB.Remove(aItLPB)
+                // OCCT L525-526: aLPB.Remove(aItLPB) — remove ONLY the current
+                // pave block and append the new sub-PBs. rcad previously
+                // cleared the whole list, which destroyed the edge's OTHER
+                // (unprocessed) pave blocks (e.g. a neighbouring split piece
+                // with no ext paves of its own).
                 if !valid_new_pbs.is_empty() {
                     let a_lpb = self.ds.change_pave_blocks(n_e);
-                    a_lpb.clear();
+                    let cur_ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
+                    a_lpb.retain(|p| std::sync::Arc::as_ptr(&p.0) as u64 != cur_ptr);
                     for new_pb in valid_new_pbs {
                         a_lpb.push(new_pb);
                     }
@@ -3299,11 +3322,11 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
         }
         // OCCT L530-560: Make Common Blocks
-        // aMCBNewPB is NCollection_IndexedDataMap — iterate in insertion order.
+        // aMCBNewPB is NCollection_IndexedDataMap 鈥?iterate in insertion order.
         for (_cb_key, pbs) in &a_mcb_new_pb {
             if pbs.len() < 2 { continue; }
             // OCCT L566-571: aMInds is NCollection_IndexedDataMap<BOPDS_Pair,
-            // List<PB>> — insertion order of the aLPBN traversal.
+            // List<PB>> 鈥?insertion order of the aLPBN traversal.
             let mut a_minds: indexmap::IndexMap<(usize, usize), Vec<SharedPB>> = indexmap::IndexMap::new();
             for pb in pbs {
                 let (v1, v2) = { let r = pb.0.read().unwrap(); r.indices() };
@@ -3315,7 +3338,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 self.ds.add_common_block(group);
             }
         }
-        // Init PBs for new SD vertices — OCCT L560: aMVerticesToInitPB is a
+        // Init PBs for new SD vertices 鈥?OCCT L560: aMVerticesToInitPB is a
         // NCollection_Map<int>, iterated in bucket order (PaveFiller_2.cxx L560).
         for v in a_m_vertices_to_init_pb.iter_keys() {
             self.ds.init_pave_blocks_for_vertex(v);
@@ -3323,7 +3346,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     // ====================================================================
-    // GetPBBox — OCCT BOPAlgo_PaveFiller_3.cxx L914-955
+    // GetPBBox 鈥?OCCT BOPAlgo_PaveFiller_3.cxx L914-955
     // ====================================================================
 
     /// Get bounding box of a PaveBlock's edge segment.
@@ -3380,7 +3403,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     // ====================================================================
-    // UpdateVertex — OCCT BOPAlgo_PaveFiller::UpdateVertex (PaveFiller_10.cxx L60-85)
+    // UpdateVertex 鈥?OCCT BOPAlgo_PaveFiller::UpdateVertex (PaveFiller_10.cxx L60-85)
     // ====================================================================
 
     /// OCCT BOPAlgo_PaveFiller::UpdateVertex (PaveFiller_10.cxx L105-125).
@@ -3394,7 +3417,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             let tol_old = self.ds.vertex_tolerance_by_idx(n_vnew);
             if tol_new > tol_old {
                 // In-place (OCCT BRep_Builder UpdateVertex): keeps the vertex
-                // identity (DS entry + face-wire references) intact — see
+                // identity (DS entry + face-wire references) intact 鈥?see
                 // set_vertex_tolerance. Arc::make_mut would clone a shared vertex.
                 let pt = self.ds.vertex_point_by_idx(n_vnew);
                 self.ds.mutate_shape_data(n_vnew, |ts| {
@@ -3410,7 +3433,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
             return n_vnew;
         }
-        // OCCT L121-150: Path 2 — nV is an old (source) vertex: create a new
+        // OCCT L121-150: Path 2 鈥?nV is an old (source) vertex: create a new
         // vertex with the increased tolerance and register the SD relation.
         let a_tol_v = self.ds.vertex_tolerance_by_idx(n_v);
         let a_pv = self.ds.vertex_point_by_idx(n_v);
@@ -3428,7 +3451,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     // ====================================================================
-    // UpdateVerticesOfCB — OCCT BOPAlgo_PaveFiller_3.cxx L959-993
+    // UpdateVerticesOfCB 鈥?OCCT BOPAlgo_PaveFiller_3.cxx L959-993
     // ====================================================================
 
     /// Update vertex tolerances from CommonBlock tolerances.
@@ -3436,7 +3459,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     // OCCT BOPAlgo_PaveFiller::UpdateVerticesOfCB (PaveFiller_3.cxx L959-993).
     fn update_vertices_of_cb(&mut self) {
         let mut a_mpb_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        // OCCT L974-976: myDS->ChangePaveBlocksPool() is a DynamicArray —
+        // OCCT L974-976: myDS->ChangePaveBlocksPool() is a DynamicArray 鈥?
         // iterate the pool in ascending edge-key order (a HashMap values()
         // order would randomize the UpdateVertex sequence and hence the
         // indices of the newly created vertices).
@@ -3469,7 +3492,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     // ====================================================================
-    // RepeatIntersection — OCCT BOPAlgo_PaveFiller.cxx L383-448
+    // RepeatIntersection 鈥?OCCT BOPAlgo_PaveFiller.cxx L383-448
     // ====================================================================
     /// Re-run VV/VE/VF intersections for vertices whose tolerance was increased.
     /// OCCT BOPAlgo_PaveFiller::RepeatIntersection (PaveFiller.cxx L383-448).
@@ -3537,13 +3560,13 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     // ====================================================================
-    // ForceInterfEE — OCCT BOPAlgo_PaveFiller_3.cxx L997-1333
+    // ForceInterfEE 鈥?OCCT BOPAlgo_PaveFiller_3.cxx L997-1333
     // ====================================================================
     /// Force additional EE intersection for common blocks.
     /// OCCT BOPAlgo_PaveFiller::ForceInterfEE (PaveFiller_3.cxx L997-1333).
     fn force_interf_ee(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
-        // L999-1003: comment — now that vertices are increased/unified,
+        // L999-1003: comment 鈥?now that vertices are increased/unified,
         // find additional common blocks among edge pairs with same bounding vertices.
 
         // L1005-1023: Initialize pave blocks for all vertices that participated
@@ -3566,7 +3589,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
         // L1024-1080: Fill the connection map from bounding vertices to PBs
         // L1026-1028: NCollection_IndexedDataMap<BOPDS_Pair, List<PaveBlock>> aPBMap
-        // rcad: IndexMap keyed by (v_min, v_max), value = Vec<SharedPB> — the
+        // rcad: IndexMap keyed by (v_min, v_max), value = Vec<SharedPB> 鈥?the
         // insertion order (source-edge order) determines the EE-pair processing
         // order below (a HashMap would randomize it and hence the resulting
         // common blocks and split-edge indices).
@@ -3597,9 +3620,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             let ei = i;
             let a_lpb = self.ds.edge_pave_blocks(ei);
             for a_pb in a_lpb {
-                // L1060-1061: RealPaveBlock — resolve through CommonBlock
+                // L1060-1061: RealPaveBlock 鈥?resolve through CommonBlock
                 let a_pbr = self.ds.real_pave_block(a_pb);
-                // L1062-1065: fence map — skip if already processed
+                // L1062-1065: fence map 鈥?skip if already processed
                 let ptr = std::sync::Arc::as_ptr(&a_pbr.0) as u64;
                 if !a_mpb_fence.insert(ptr) {
                     continue;
@@ -3855,7 +3878,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // rcad: collect all PBs, expanding from existing CommonBlocks, then
         // create a merged CommonBlock for each connected group.
         {
-            // OCCT: NCollection_IndexedDataMap<PB, List<PB>> aMPBLPB — insertion
+            // OCCT: NCollection_IndexedDataMap<PB, List<PB>> aMPBLPB 鈥?insertion
             // order; the BOPAlgo_Tools::MakeBlocks traversal is FIFO.
             type PBKey = u64;
             let mut adj: indexmap::IndexMap<PBKey, indexmap::IndexSet<PBKey>> =
@@ -3893,11 +3916,11 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
             }
 
-            // OCCT L122-123: MakeBlocks — group connected PBs via graph traversal
+            // OCCT L122-123: MakeBlocks 鈥?group connected PBs via graph traversal
             let mut visited: std::collections::HashSet<PBKey> = std::collections::HashSet::new();
             let mut groups: Vec<Vec<SharedPB>> = Vec::new();
 
-            // Build PB lookup: ptr → SharedPB
+            // Build PB lookup: ptr 鈫?SharedPB
             let mut ptr_to_pb: std::collections::HashMap<PBKey, SharedPB> = std::collections::HashMap::new();
             for (pb1, pb2) in &cb_pairs {
                 for pb in [pb1.clone(), pb2.clone()] {
@@ -3922,7 +3945,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
             // FIFO connected-group traversal (OCCT BOPAlgo_Tools::MakeBlocks
             // grows the chain list from the start; appended elements are
-            // visited later — a stack would visit in a different order).
+            // visited later 鈥?a stack would visit in a different order).
             for &start in adj.keys() {
                 if visited.contains(&start) { continue; }
                 let mut group: Vec<SharedPB> = Vec::new();
@@ -3954,7 +3977,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     // ====================================================================
-    // ForceInterfEF — OCCT BOPAlgo_PaveFiller_5.cxx L772-1199
+    // ForceInterfEF 鈥?OCCT BOPAlgo_PaveFiller_5.cxx L772-1199
     // ====================================================================
     /// Force additional EF intersection for common blocks.
     /// OCCT BOPAlgo_PaveFiller::ForceInterfEF (PaveFiller_5.cxx L772-827).
@@ -3967,7 +3990,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         }
 
         // L787-822: Collect all pave blocks into an IndexedMap
-        // OCCT: NCollection_IndexedMap<handle<BOPDS_PaveBlock>> aMPB — the
+        // OCCT: NCollection_IndexedMap<handle<BOPDS_PaveBlock>> aMPB 鈥?the
         // insertion order determines the EF-pair processing order, hence the
         // InterfEF array order and the FaceInfo PaveBlocksIn order (a HashSet
         // would randomize it and with it the Builder aLE edge order).
@@ -4003,7 +4026,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPAlgo_PaveFiller::ForceInterfEF (overload, PaveFiller_5.cxx L831-1199).
-    /// Worker function — processes collected pave blocks against all faces.
+    /// Worker function 鈥?processes collected pave blocks against all faces.
     pub(crate) fn force_interf_ef_work(
         &mut self,
         the_mpb: &indexmap::IndexSet<(usize, usize)>,
@@ -4014,7 +4037,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             return;
         }
 
-        // L843-871: BOPTools_BoxTree aBBTree — build BVH tree of PBs.
+        // L843-871: BOPTools_BoxTree aBBTree 鈥?build BVH tree of PBs.
         // rcad: iterates all PB/face pairs with direct BndBox overlap checks.
 
         // L876: const bool bSICheckMode = (myArguments.Extent() == 1);
@@ -4081,7 +4104,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
                 let a_pb = self.ds.edge_pave_blocks(n_e)[local_i].clone();
                 // Check if already in face's sets (OCCT: Contains(aPB) on
-                // handle-keyed sets — compare by PB pointer id).
+                // handle-keyed sets 鈥?compare by PB pointer id).
                 let a_pb_ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;
                 let already_on_face = face_pb_on.contains(&a_pb_ptr)
                     || face_pb_in.contains(&a_pb_ptr)
@@ -4122,7 +4145,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 // OCCT: aBAC.D1(IntermediatePoint(aTS[0], aTS[1]), aPOnE, aVETgt)
                 let curve = match self.ds.edge_curve(n_e_actual) {
                     Some(c) => c.clone(),
-                    None => continue,
+                    None => {
+                        continue;
+                    }
                 };
                 let mid_t = (a_range.0 + a_range.1) * 0.5;
                 let mid_pt = curve.point_at(mid_t);
@@ -4241,7 +4266,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             return;
         }
 
-        // L1106-1107/L1122-1129: BOPAlgo_EdgeFace pairs — OCCT performs them
+        // L1106-1107/L1122-1129: BOPAlgo_EdgeFace pairs 鈥?OCCT performs them
         // in parallel (BOPTools_Parallel); rcad runs them serially.
         let mut a_efs: Vec<(EdgeFace, usize)> = Vec::new(); // (edge_face, pb_pool_idx)
         for &(n_e, n_f, pb_pool_idx, a_tol_add, a_range) in &ef_pairs {
@@ -4261,7 +4286,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             ef.perform();
         }
 
-        // L1141-1192: analyze the results — accept only a single
+        // L1141-1192: analyze the results 鈥?accept only a single
         // TopAbs_EDGE common part (OCCT L1177-1188).
         let mut a_mpbli: indexmap::IndexMap<u64, Vec<usize>> = indexmap::IndexMap::new();
         let mut a_warnings: Vec<(usize, usize)> = Vec::new();
@@ -4282,7 +4307,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             if a_cp.get_type() != CommonPrtType::Edge {
                 continue;
             }
-            // OCCT L1180-1181: aEF.SetCommonPart(aCP) — the EDGE range; the
+            // OCCT L1180-1181: aEF.SetCommonPart(aCP) 鈥?the EDGE range; the
             // vertex is created from the range middle in MakeSDVerticesFF.
             let mid_t = (a_cp.range1[0] + a_cp.range1[1]) * 0.5;
             let mid_pt = ef.edge_value(mid_t);
@@ -4314,16 +4339,16 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     .map(|pb| std::sync::Arc::as_ptr(&pb.0) as u64).collect();
                 drop(pool);
                 for pb_ptr in pb_ptrs {
-                    // OCCT: Add(aPB) — keyed by PB handle.
+                    // OCCT: Add(aPB) 鈥?keyed by PB handle.
                     self.ds.change_face_info(n_f).pave_blocks_in.insert(pb_ptr);
-                    // Record PB→face mapping for CommonBlock creation
+                    // Record PB鈫抐ace mapping for CommonBlock creation
                     a_mpbli.entry(pb_ptr).or_default().push(n_f);
                 }
             }
         }
 
         // L1194-1198: BOPAlgo_Tools::PerformCommonBlocks(aMPBLI, anAlloc, myDS)
-        // Create CommonBlocks for each PB→face association (OCCT overload 2)
+        // Create CommonBlocks for each PB鈫抐ace association (OCCT overload 2)
         for (ptr, faces) in &a_mpbli {
             // Find the SharedPB from its pointer
             let mut pb_found: Option<SharedPB> = None;
@@ -4336,7 +4361,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
             }
             if let Some(pb) = pb_found {
-                // Check if PB is already in a CommonBlock → reuse (OCCT L206-208)
+                // Check if PB is already in a CommonBlock 鈫?reuse (OCCT L206-208)
                 let cb_idx = pb.0.read().unwrap().common_block_idx;
                 if let Some(cb_idx) = cb_idx {
                     if cb_idx < self.ds.common_blocks.len() {
@@ -4358,7 +4383,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     // ====================================================================
-    // CheckSelfInterference — OCCT BOPAlgo_PaveFiller_11.cxx L28-221
+    // CheckSelfInterference 鈥?OCCT BOPAlgo_PaveFiller_11.cxx L28-221
     // ====================================================================
     /// Check for acquired self-intersections after intersection processing.
     /// OCCT BOPAlgo_PaveFiller::CheckSelfInterference (PaveFiller_11.cxx L28-221).
@@ -4377,7 +4402,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             let a_r = self.ds.range(a_rank);
 
             // L44-47: NCollection_IndexedDataMap<TopoDS_Shape, IndexedMap<TopoDS_Shape>> aMCSI
-            // — insertion order; iterated at L222-226 by index.
+            // 鈥?insertion order; iterated at L222-226 by index.
             let mut a_mcsi: indexmap::IndexMap<usize, indexmap::IndexSet<usize>> =
                 indexmap::IndexMap::new();
             // L48: NCollection_Map<CommonBlock> aMCBFence;
@@ -4403,7 +4428,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         std::collections::HashSet::new();
                     for &n_v in &self.ds.shapes[j].sub_shapes {
                         // OCCT L75: int nV = aItLI.Value();
-                        // L76: myDS->HasShapeSD(nV, nV); — replaces nV with SD if exists
+                        // L76: myDS->HasShapeSD(nV, nV); 鈥?replaces nV with SD if exists
                         let mut n_vx = n_v;
                         let mut n_vsd = usize::MAX;
                         if self.ds.has_shape_sd(n_v, &mut n_vsd) {
@@ -4489,7 +4514,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
             }
 
-            // L200-219: Analyze connections — if a vertex/edge connects
+            // L200-219: Analyze connections 鈥?if a vertex/edge connects
             // to multiple faces from same argument, add warning
             for (_sub_shape, shapes) in &a_mcsi {
                 if shapes.len() > 1 {
@@ -4514,7 +4539,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         let mut a_mcb: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let ms_debug = std::env::var("RCAD_MS_DEBUG").is_ok();
         let nb_src = self.ds.nb_source_shapes();
-        // OCCT myPaveBlocksPool is a DynamicArray indexed by edge — iterate
+        // OCCT myPaveBlocksPool is a DynamicArray indexed by edge 鈥?iterate
         // in ascending key order (a HashMap would randomize the split-edge
         // creation order and hence the DS edge indices).
         let mut pb_keys: Vec<usize> = self.ds.pave_blocks_pool.keys().copied().collect();
@@ -4582,7 +4607,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                             }
                         }
                         if it_found {
-                            // OCCT L446-455: the pave block is found — no split.
+                            // OCCT L446-455: the pave block is found 鈥?no split.
                             //   aCB->SetRealPaveBlock(it.Value()); aCB->SetEdge(nE);
                             //   ComputeToleranceOfCB + UpdateEdgeTolerance.
                             b_to_split = false;
@@ -4593,7 +4618,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                 self.update_edge_tolerance(found_e, a_tol);
                             }
                         } else if cb_f.is_none() && a_lpb.len() == 1 {
-                            // OCCT L457-461: no common block, single-PB edge — no split
+                            // OCCT L457-461: no common block, single-PB edge 鈥?no split
                             b_to_split = false;
                             set_edge_n = n_e;
                         }
@@ -4625,7 +4650,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if let Some(curve) = self.ds.edge_curve(sp_e) {
                     let new_ei = self.ds.push_edge_inherit(curve.clone(), [sp_t1, sp_t2], sp_v1, sp_v2, Some(sp_e));
                     if let Some(cb_idx) = cb_f {
-                        // OCCT L536-545: aCBk->SetEdge(nSp) — sets the edge of all
+                        // OCCT L536-545: aCBk->SetEdge(nSp) 鈥?sets the edge of all
                         //   PaveBlocks in the common block.
                         self.ds.common_blocks[cb_idx].set_edge(new_ei);
                     } else {
@@ -4645,11 +4670,11 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// OCCT BOPAlgo_PaveFiller::RemoveMicroEdges (_6.cxx L4388-4435).
     fn remove_micro_edges(&mut self) {
-        // OCCT L4450: aMicroEdges is NCollection_Map<int> — bucket order.
+        // OCCT L4450: aMicroEdges is NCollection_Map<int> 鈥?bucket order.
         let mut a_micro_edges: crate::bop::algo::occt_map::OcctMapInt =
             crate::bop::algo::occt_map::OcctMapInt::new();
         let mut a_mpb_fence: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        // OCCT L4392-4393: ChangePaveBlocksPool() is a DynamicArray — iterate
+        // OCCT L4392-4393: ChangePaveBlocksPool() is a DynamicArray 鈥?iterate
         // the pool in ascending edge-key order.
         let mut pb_keys: Vec<usize> = self.ds.pave_blocks_pool.keys().copied().collect();
         pb_keys.sort_unstable();
@@ -4681,7 +4706,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
             }
         }
-        // OCCT L4434: RemovePaveBlocks(aMicroEdges) — three steps:
+        // OCCT L4434: RemovePaveBlocks(aMicroEdges) 鈥?three steps:
         //   1. from the Pave Blocks Pool
         //   2. from section curves (BOPDS_Curve::PaveBlocks)
         //   3. from Face Info (PaveBlocksIn/On/Sc)
@@ -4699,7 +4724,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         if the_range.user_break() { return; }
         // OCCT L592-595: myAvoidBuildPCurve || (!PCurveOnS1 && !PCurveOnS2) -> return.
         // rcad: PCurveOnS1/2 default true; the avoid flag is not present.
-        // OCCT L606-700: 1. Process face info — IN and ON PBs.
+        // OCCT L606-700: 1. Process face info 鈥?IN and ON PBs.
         let a_nb_fi = self.ds.face_info_pool.len();
         for fi_idx in 0..a_nb_fi {
             let fi = self.ds.face_info_pool[fi_idx].clone();
@@ -4711,7 +4736,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             };
             let Some(ref surf) = surf else { continue; };
 
-            // OCCT L619-631: PaveBlocksIn — pcurve by projection.
+            // OCCT L619-631: PaveBlocksIn 鈥?pcurve by projection.
             for &pb_ptr in fi.pave_blocks_in.iter() {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
                     let n_e = pb.0.read().unwrap().edge;
@@ -4719,7 +4744,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     self.build_pcurve_mpc(n_e, n_f1, surf, None);
                 }
             }
-            // OCCT L634-699: PaveBlocksOn — skip if pcurve exists; a CommonBlock
+            // OCCT L634-699: PaveBlocksOn 鈥?skip if pcurve exists; a CommonBlock
             // provides the pcurve-copy source (paired edge with a pcurve).
             for &pb_ptr in fi.pave_blocks_on.iter() {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
@@ -4748,7 +4773,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         // OCCT L744-752: the section-edge MPC has SetFlag(true);
                         // in Perform, when the edge already has a pcurve on the
                         // face (attached by MakePCurve at section creation,
-                        // BOPAlgo_PaveFiller_6.cxx L1066-1072) it is kept — only
+                        // BOPAlgo_PaveFiller_6.cxx L1066-1072) it is kept 鈥?only
                         // UpdateVertices is called. Never overwrite it with a
                         // projection. Edges without a pcurve (null FirstCurve2d)
                         // are projected here, matching the MPC null-branch.
@@ -4767,10 +4792,22 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         }
     }
 
+    /// OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve of edge
+    /// n_e on face n_f is keyed by (face TShape, L.Predivided(E.Location())) 鈥?
+    /// the face location divided by the edge's location.
+    fn pcurve_key_for(&self, n_e: usize, n_f: usize) -> Option<(u64, u32)> {
+        let (fid, floc) = self.ds.face_key(n_f)?;
+        let eloc = self.ds.shape(n_e).location;
+        Some((
+            fid,
+            crate::bop::algo::compose_face_edge_pcurve_location(floc, eloc, &self.ds.locations),
+        ))
+    }
+
     /// OCCT BOPAlgo_MPC::Perform (BOPAlgo_PaveFiller_7.cxx L218-293). Computes
     /// the pcurve of an edge on a face. With a copy source the pcurve is taken
     /// from the paired edge (AttachExistingPCurve); otherwise it is projected
-    /// (BuildPCurveForEdgeOnFace). In-place (OCCT BRep_Builder semantics) — safe
+    /// (BuildPCurveForEdgeOnFace). In-place (OCCT BRep_Builder semantics) 鈥?safe
     /// because the DS owns a private input copy.
     fn build_pcurve_mpc(&mut self, n_e: usize, n_f: usize, surf: &Surface3, src: Option<usize>) {
         // OCCT L233-236: if the edge already has a pcurve on the face, do not
@@ -4780,7 +4817,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         if self.edge_has_pcurve(n_e, n_f) {
             return;
         }
-        let Some(fkey) = self.ds.face_key(n_f) else { return };
+        let Some(fkey) = self.pcurve_key_for(n_e, n_f) else { return };
         // OCCT L239-249: attach the pcurve from the paired edge.
         if let Some(src_e) = src {
             if let Some(pc) = Self::copy_pcurve(&self.ds, src_e, n_e, n_f) {
@@ -4794,7 +4831,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 return;
             }
         }
-        // OCCT L248: BuildPCurveForEdgeOnFace — projection.
+        // OCCT L248: BuildPCurveForEdgeOnFace 鈥?projection.
         if let Some(curve) = self.ds.edge_curve(n_e) {
             let range = self.ds.edge_range(n_e);
             if let Some(pc) = Self::pcurve_2d(&curve, surf, range) {
@@ -4808,14 +4845,14 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         }
     }
 
-    /// OCCT BOPTools_AlgoTools2D::HasCurveOnSurface — the edge already has a
+    /// OCCT BOPTools_AlgoTools2D::HasCurveOnSurface 鈥?the edge already has a
     /// pcurve on the face. OCCT matches the face's TShape identity
-    /// (BRep_Tool::CurveOnSurface); rcad keys the edge pcurve map by the same
-    /// identity (ptr_id, location), so input-shape pcurves and DS-built ones
-    /// share the map.
+    /// (BRep_Tool::CurveOnSurface, keyed by L.Predivided(E.Location()));
+    /// rcad keys the edge pcurve map by the same identity, so input-shape
+    /// pcurves and DS-built ones share the map.
     fn edge_has_pcurve(&self, n_e: usize, n_f: usize) -> bool {
         if n_e >= self.ds.nb_shapes() { return false; }
-        let Some(fkey) = self.ds.face_key(n_f) else { return false };
+        let Some(fkey) = self.pcurve_key_for(n_e, n_f) else { return false };
         match &*self.ds.shape(n_e).data {
             rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.contains_key(&fkey),
             _ => false,
@@ -4823,7 +4860,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     }
 
     /// OCCT BOPAlgo_Tools::ComputeToleranceOfCB (BOPAlgo_Tools.cxx L248-356):
-    /// the max tolerance of a common block — max of the real edge tolerance,
+    /// the max tolerance of a common block 鈥?max of the real edge tolerance,
     /// the sampled distances to the other block edges (projected points), and
     /// the sampled distances to the block's faces.
     fn compute_tolerance_of_cb(cb_idx: usize, ds: &DS) -> f64 {
@@ -4880,7 +4917,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         a_tol_max
     }
 
-    /// OCCT L640-676: the CommonBlock copy source — a paired PB in the same
+    /// OCCT L640-676: the CommonBlock copy source 鈥?a paired PB in the same
     /// CommonBlock whose original edge already has a pcurve on this face.
     fn cb_pcurve_source(&self, pb: &SharedPB, n_f: usize) -> Option<usize> {
         let cb_idx = pb.0.read().unwrap().common_block_idx?;
@@ -4937,12 +4974,16 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         Some(rcad_kernel::geom::Curve2d::BSpline(c))
     }
 
-    /// BRep_Tool::CurveOnSurface — the edge's pcurve on the face, if any.
+    /// BRep_Tool::CurveOnSurface 鈥?the edge's pcurve on the face, if any.
+    /// OCCT keys the pcurve by (face TShape, L.Predivided(E.Location()))
+    /// (BRep_Tool.cxx L345).
     fn edge_pcurve_of(ds: &DS, n_e: usize, n_f: usize) -> Option<(rcad_kernel::geom::Curve2d, f64, f64)> {
         if n_e >= ds.nb_shapes() { return None; }
-        let fkey = ds.face_key(n_f)?;
+        let (fid, floc) = ds.face_key(n_f)?;
+        let eloc = ds.shape(n_e).location;
+        let key = (fid, crate::bop::algo::compose_face_edge_pcurve_location(floc, eloc, &ds.locations));
         match &*ds.shape(n_e).data {
-            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.get(&fkey).cloned(),
+            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.get(&key).cloned(),
             _ => None,
         }
     }
@@ -4969,10 +5010,10 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // samples the azimuth in [0, 2PI), so an arc crossing the seam wraps
         // (e.g. 2PI-eps ... 0.12). Unwrap the samples across the periodic
         // boundary, shift the domain back into [0, 2PI], and snap a sub-eps
-        // endpoint to 0 — matching OCCT's per-arc domain. Without this the
+        // endpoint to 0 鈥?matching OCCT's per-arc domain. Without this the
         // WireSplitter's periodic UV comparison sees u=2PI where OCCT sees
         // u=0 and takes the wrong edge at a seam vertex (P014). Only periodic
-        // surfaces are unwrapped — a planar face's u is not periodic and a
+        // surfaces are unwrapped 鈥?a planar face's u is not periodic and a
         // large span must not be folded back by 2PI.
         let is_periodic_u = match surf {
             rcad_kernel::geom::Surface3::Plane(_) => false,
@@ -5003,7 +5044,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // approximate() normalizes the parameterization to [0,1] (chord-length).
         // OCCT pcurves are parameterized by the edge's 3D range, and the
         // WireSplitter evaluates curve2d_point(pc, t) with the vertex parameter t
-        // in that range — rescale the knots so the stored range is the curve's
+        // in that range 鈥?rescale the knots so the stored range is the curve's
         // own domain.
         let (r0, r1) = (range[0], range[1]);
         if r1 > r0 {
@@ -5038,7 +5079,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
 
             if sf_type == ShapeType::Face {
-                // OCCT L82-84: FindPaveBlocks(nV, nF, aLPBOut) — the face's
+                // OCCT L82-84: FindPaveBlocks(nV, nF, aLPBOut) 鈥?the face's
                 // PBs passing through the degenerated edge's (SD-resolved)
                 // vertex.
                 let a_fi = self.ds.face_info(n_f);
@@ -5065,7 +5106,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     // The degenerated edge's 2D pcurve on the face.
                     let de_pcurve = {
                         let tshape = &self.ds.shapes[an_ei].shape.data;
-                        let fkey = self.ds.face_key(n_f);
+                        let fkey = self.pcurve_key_for(an_ei, n_f);
                         match &**tshape {
                             rcad_kernel::topods::TShape::Edge(ed) => {
                                 fkey.and_then(|k| ed.pcurves.get(&k).cloned())
@@ -5086,7 +5127,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                             }
                             let passing_pcurve = {
                                 let ts = &self.ds.shapes[n_e2].shape.data;
-                                let fkey = self.ds.face_key(n_f);
+                                let fkey = self.pcurve_key_for(n_e2, n_f);
                                 match &**ts {
                                     rcad_kernel::topods::TShape::Edge(ed) => {
                                         fkey.and_then(|k| ed.pcurves.get(&k).cloned())
@@ -5123,7 +5164,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                     // lie strictly inside the PB range. rcad's pole
                                     // degenerate pcurve starts at u=0 (OCCT's at
                                     // u=PI/2); the pole is the periodic seam point, so
-                                    // u=0 and u=2*PI are the same geometric location —
+                                    // u=0 and u=2*PI are the same geometric location 鈥?
                                     // accept them as interior split points.
                                     let mut in_range = best_t - t1 >= a_tol_cmp && t2 - best_t >= a_tol_cmp;
                                     if !in_range && n_vx == 43 {
@@ -5132,7 +5173,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                     if in_range {
                                         let mut pbr = a_pbd.0.write().unwrap();
                                         let mut ind = usize::MAX;
-                                        // OCCT AddSplitPoint L391: AppendExtPave1 —
+                                        // OCCT AddSplitPoint L391: AppendExtPave1 鈥?
                                         // no ext-fence dedup (the fence may already
                                         // hold the vertex from an earlier pass).
                                         if !pbr.contains_parameter(best_t, a_tol_cmp, &mut ind) {
@@ -5142,7 +5183,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                 }
                             }
                         }
-                        // OCCT L99-100: myDS->UpdatePaveBlock(aPBD) — split the
+                        // OCCT L99-100: myDS->UpdatePaveBlock(aPBD) 鈥?split the
                         // degenerated edge's PB by the extra paves.
                         // OCCT L103 + MakeSplitEdge L163-224: one split edge per
                         // sub-PB, re-pointing the sub-PB's Edge to it.
@@ -5190,7 +5231,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                 // representations, then `BB.Range(E, aF, aP1, aP2)`
                                 // re-trims the pcurve range to the sub-block's
                                 // parameter range [aT1, aT2]. rcad must mirror the
-                                // Range call — otherwise the split degenerated
+                                // Range call 鈥?otherwise the split degenerated
                                 // edge keeps the source pcurve range (e.g. the
                                 // full [0, 2*PI] of the pole edge) and
                                 // BRep_Tool::Parameter (vertex_param_on_edge)
@@ -5286,16 +5327,16 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 }
 
 // ====================================================================
-// Helpers — OCCT BOPAlgo_Tools::FillMap (int-int variant) and MakeBlocks
+// Helpers 鈥?OCCT BOPAlgo_Tools::FillMap (int-int variant) and MakeBlocks
 // ====================================================================
 
 /// Add edge between two vertices in the connection graph.
 /// OCCT BOPAlgo_Tools::FillMap(int, int, IndexedDataMap<int, List<int>>)
 // fill_map, is_on_pave_1, make_blocks moved to algo_tools
 
-// OCCT BOPAlgo_PaveFiller_7.cxx L62/L936 — file-local static helper.
+// OCCT BOPAlgo_PaveFiller_7.cxx L62/L936 鈥?file-local static helper.
 fn is_based_on_plane(face: &Shape) -> bool {
-    // OCCT L937-951: BRep_Tool::Surface(aF, aLoc) → downcast to Plane
+    // OCCT L937-951: BRep_Tool::Surface(aF, aLoc) 鈫?downcast to Plane
     face.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, Surface3::Plane(_)))
 }
 
@@ -5376,7 +5417,7 @@ fn is_closed_ff(ds: &DS, n_f: usize, n_e: usize, is_plane: bool) -> bool {
     count >= 2
 }
 
-/// OCCT TopoDS_Face::Move(aLoc) — translate a face surface by a vector.
+/// OCCT TopoDS_Face::Move(aLoc) 鈥?translate a face surface by a vector.
 fn translate_surface(s: &Surface3, vec: DVec3) -> Surface3 {
     use glam::DAffine3;
     let loc = DAffine3::from_translation(vec);

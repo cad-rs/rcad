@@ -91,7 +91,13 @@ pub fn compute_tolerance(ds: &DS, edge_idx: usize, face_idx: usize) -> Option<(f
     let range = ds.edge_range(edge_idx);
     let surf = ds.face_surface(face_idx)?;
     let shape = &ds.shapes[edge_idx].shape;
-    let fkey = ds.face_key(face_idx)?;
+    // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve key
+    // location is L.Predivided(E.Location()).
+    let (fid, floc) = ds.face_key(face_idx)?;
+    let fkey = (
+        fid,
+        crate::bop::algo::compose_face_edge_pcurve_location(floc, shape.location, &ds.locations),
+    );
     let pcurve_info = shape.as_edge()?.pcurves.get(&fkey)?.clone();
     let (pcurve, _f, _l) = pcurve_info;
     let n = 23usize;
@@ -826,7 +832,13 @@ fn hatch_line_intervals(f: usize, a_ux: f64, ds: &DS) -> Vec<(f64, f64)> {
 /// surface-identity fallback (same semantics as builder.rs edge_pcurve_on_face).
 fn edge_pcurve_of_face<'a>(a_e: &'a Shape, f: usize, ds: &DS) -> Option<&'a rcad_kernel::geom::Curve2d> {
     let ed = a_e.as_edge()?;
-    let fkey = ds.face_key(f)?;
+    // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve key
+    // location is L.Predivided(E.Location()).
+    let (fid, floc) = ds.face_key(f)?;
+    let fkey = (
+        fid,
+        crate::bop::algo::compose_face_edge_pcurve_location(floc, a_e.location, &ds.locations),
+    );
     let face = ds.shape(f);
     let surf = face.as_face().and_then(|fd| fd.surface.as_ref())?;
     ed.pcurves

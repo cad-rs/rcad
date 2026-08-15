@@ -39,6 +39,17 @@ pub fn try_analytic_face_surface_area_pub(brep: &BRep, face: &Face, face_flat_id
     try_analytic_face_surface_area(brep, face, face_flat_idx)
 }
 
+/// True when any wire of the face carries located shapes (a nonzero location
+/// on a wire edge, or on an edge endpoint vertex reference).  Located wires
+/// arise from located copies (e.g. the u=angle profile edges of a partial
+/// revolve); the direct-read analytic paths cannot see the applied transforms,
+/// so such faces fall back to the location-aware triangulation path.
+pub(crate) fn face_wires_located(brep: &BRep, face: &Face) -> bool {
+    use crate::base::gprop::tri::wire_has_located_shapes;
+    wire_has_located_shapes(brep, &face.outer_wire)
+        || face.inner_wires.iter().any(|w| wire_has_located_shapes(brep, w))
+}
+
 fn try_analytic_face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize) -> Option<f64> {
     let surf_idx = brep.tshapes.get(face_flat_idx).and_then(|ts| {
         if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None }
@@ -46,18 +57,28 @@ fn try_analytic_face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize
     let surf = &surf_idx;
 
     match surf {
-        Surface3::Plane(_) => try_planar_face_area_shoelace(brep, face, face.normal)
-            .or_else(|| try_planar_face_exact_contour_area(brep, face, face.normal)),
+        Surface3::Plane(_) => {
+            if face_wires_located(brep, face) { None } else {
+                try_planar_face_area_shoelace(brep, face, face.normal)
+                    .or_else(|| try_planar_face_exact_contour_area(brep, face, face.normal))
+            }
+        }
 
         Surface3::Cylinder(cyl) =>
             try_cylinder_trimmed_face_area(cyl, brep, face, face_flat_idx),
 
-        Surface3::Cone(cone) =>
-            try_cone_trimmed_face_area(cone, brep, face),
+        Surface3::Cone(cone) => {
+            if face_wires_located(brep, face) { None } else {
+                try_cone_trimmed_face_area(cone, brep, face)
+            }
+        }
 
-        Surface3::Sphere(s) =>
-            try_spherical_polygon_great_circle_area(s, brep, face)
-            .or_else(|| face_surface_area_gauss(brep, face, face_flat_idx)),
+        Surface3::Sphere(s) => {
+            if face_wires_located(brep, face) { None } else {
+                try_spherical_polygon_great_circle_area(s, brep, face)
+                    .or_else(|| face_surface_area_gauss(brep, face, face_flat_idx))
+            }
+        }
 
         Surface3::Torus(_) | Surface3::BSpline(_) | Surface3::Ellipsoid(_) =>
             face_surface_area_gauss(brep, face, face_flat_idx)
@@ -525,6 +546,17 @@ fn try_planar_face_area_shoelace(brep: &BRep, face: &Face, face_normal: DVec3) -
     let pivot = outer.first().copied()?;
     let mut a = polygon_area_2d_projected(&outer, pivot, ux, uy).abs();
 
+    // Subtract inner wire (hole) areas — the sampled polyline includes arc
+    // segments, matching the exact-contour path's hole handling.
+    for w in &face.inner_wires {
+        let mut hole = sample_wire_polyline_3d(brep, w);
+        trim_almost_closed_polyline(&mut hole, 1e-5);
+        if hole.len() >= 3 {
+            let a_hole = polygon_area_2d_projected(&hole, hole[0], ux, uy).abs();
+            a = (a - a_hole).max(0.0);
+        }
+    }
+
     // Convex hull cross-check for scrambled wire ordering
     if a * 1e-7 < outer.len() as f64 {
         if let Some(hull_a) = try_boundary_convex_hull_area(brep, &face.outer_wire, pivot, ux, uy) {
@@ -553,6 +585,20 @@ fn cylinder_uv_area_gl(uvs: &[DVec2]) -> Option<f64> {
     let mut poly = Vec::with_capacity(n);
     poly.push(uvs[0]);
     for i in 1..n { let du = short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x); poly.push(DVec2::new(poly[i - 1].x + du, uvs[i].y)); }
+    // The unwrap can carry a second seam-crossing trip past 2*PI (a wire that
+    // crosses the seam twice, e.g. a cylinder lateral whose outer wire has two
+    // full rim circles).  Fold each u back into a 2*PI window so the
+    // vertical-range scan below sees every edge at every sample u.
+    let u_min0 = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let u_max0 = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    if u_max0 - u_min0 > 2.0 * PI + 1e-9 {
+        let fold_base = u_min0 + 2.0 * PI;
+        for p in &mut poly {
+            while p.x > fold_base + 1e-9 {
+                p.x -= 2.0 * PI;
+            }
+        }
+    }
     let v_range_at = |u: f64| -> (f64, f64) {
         let mut v_lo = f64::INFINITY; let mut v_hi = f64::NEG_INFINITY;
         for i in 0..n {
@@ -632,6 +678,12 @@ fn cylinder_gl_uv_area(uvs: &[DVec2]) -> Option<f64> {
 
 fn cylinder_outer_wire_uv_shoelace_area(brep: &BRep, cyl: &CylindricalSurface, face: &Face) -> Option<f64> {
     let mut pts_3d = sample_wire_polyline_3d_with_n(brep, &face.outer_wire, 512);
+    if pts_3d.len() < 3 {
+        // The index chain can disconnect on split results whose edges carry
+        // coincident-but-distinct vertex TShapes; the UV projection below is
+        // robust to the segment order, so fall back to a position chain.
+        pts_3d = crate::base::gprop::tri::sample_wire_polyline_3d_position_with_n(brep, &face.outer_wire, 512);
+    }
     trim_almost_closed_polyline(&mut pts_3d, 1e-5);
     if pts_3d.len() < 3 { return None; }
     let n = pts_3d.len();
@@ -653,8 +705,10 @@ fn cylinder_outer_wire_uv_shoelace_area(brep: &BRep, cyl: &CylindricalSurface, f
 }
 
 fn try_cylinder_trimmed_face_area(cyl: &CylindricalSurface, brep: &BRep, face: &Face, face_flat_idx: usize) -> Option<f64> {
-    // Fast path: rectangular UV patch via 2 Lines + 2 Circles
-    if face.inner_wires.is_empty() && face.outer_wire.edges.len() == 4 {
+    // Fast path: rectangular UV patch via 2 Lines + 2 Circles.  Skipped for
+    // located wires — the fast path reads unlocated vertex positions, so the
+    // general UV-projection path below handles them.
+    if !face_wires_located(brep, face) && face.inner_wires.is_empty() && face.outer_wire.edges.len() == 4 {
         let mut n_lines = 0u32; let mut n_circles = 0u32;
         let mut circle_centers = Vec::new();
         let mut edge_curve_indices = Vec::new();
