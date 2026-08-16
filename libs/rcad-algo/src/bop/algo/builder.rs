@@ -139,30 +139,32 @@ fn collect_solid_faces(s: &Shape) -> Vec<Shape> {
     // the BRep's stored order (TopoDS_Iterator order). A stack-based DFS would
     // reverse the face order, which changes the edge -> faces map insertion
     // order — the IsInternalFace angle method reads aMEF.First()/Last() and
-    // the classification depends on which face comes first. Use an explicit
-    // worklist that preserves the sub-shape order.
+    // the classification depends on which face comes first. Use a FIFO
+    // worklist that preserves the sub-shape order (OCCT BRep_Builder stores
+    // the faces of a shell in the order they were added).
     let mut result: Vec<Shape> = Vec::new();
-    let mut stack: Vec<Shape> = vec![s.clone()];
-    while let Some(sh) = stack.pop() {
+    let mut queue: std::collections::VecDeque<Shape> = std::collections::VecDeque::new();
+    queue.push_back(s.clone());
+    while let Some(sh) = queue.pop_front() {
         match &*sh.data {
             TShape::Solid(sd) => {
                 for x in &sd.shells {
-                    stack.push(x.clone());
+                    queue.push_back(x.clone());
                 }
             }
             TShape::CompSolid(cd) => {
                 for x in cd {
-                    stack.push(x.clone());
+                    queue.push_back(x.clone());
                 }
             }
             TShape::Compound(cd) => {
                 for x in cd {
-                    stack.push(x.clone());
+                    queue.push_back(x.clone());
                 }
             }
             TShape::Shell(sd) => {
                 for x in &sd.faces {
-                    stack.push(x.clone());
+                    queue.push_back(x.clone());
                 }
             }
             TShape::Face(_) => result.push(sh),

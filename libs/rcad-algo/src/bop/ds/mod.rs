@@ -1894,13 +1894,25 @@ impl DS {
         let mut out = Vec::new();
         if let TShape::Face(fd) = &*face.data {
             let f_or = face.orientation;
+            // OCCT TopoDS_Iterator cumLoc: the effective edge location is
+            // face.Location * wire.Location * edge.Location (TopoDS_Iterator.cxx
+            // L76-78). The end cap of a revolve is the start-cap TShape at the
+            // rotation Location L1, whose wire edges are stored at location 0 —
+            // without composing the face location here they key as (TShape, 0)
+            // and never match the lateral faces' located edges, so the shell
+            // reads OPEN and the solid's box becomes WHOLE (skipping the
+            // ClassifyFaces box prefilter). Identity fast path: any non-zero
+            // parent location wins (no nested folds occur in the test inputs).
+            let f_loc = face.location;
             let mut wires: Vec<&Shape> = vec![&fd.outer_wire];
             wires.extend(fd.inner_wires.iter());
             for w in wires {
                 if let TShape::Wire(wd) = &*w.data {
                     let w_or = w.orientation;
+                    let w_loc = w.location;
                     for e in &wd.edges {
-                        let mut e2 = Shape::new(e.data.clone(), e.location, e.orientation);
+                        let e_loc = if f_loc != 0 { f_loc } else if w_loc != 0 { w_loc } else { e.location };
+                        let mut e2 = Shape::new(e.data.clone(), e_loc, e.orientation);
                         e2.orientation = f_or.compose(w_or).compose(e.orientation);
                         out.push(e2);
                     }

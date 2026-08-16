@@ -221,8 +221,12 @@ impl SolidExplorer {
 
     /// OCCT BRepClass3d_SClassifier::Perform (L212-228) — a point within the
     /// tolerance of a VERTEX or EDGE of the solid is ON the boundary
-    /// (aMapEV tree selection); the distance to a face interior is NOT an ON
-    /// test. rcad: vertices by point distance, edges by curve distance.
+    /// (aMapEV tree selection); plus (L405-449) a point within the tolerance
+    /// of a face's SURFACE whose closest UV is IN/ON the face's 2D domain is
+    /// ON (the parallel-line branch checks the point-vs-surface distance via
+    /// Extrema_ExtPS and the UV via ClassifyUVPoint). rcad: vertices by point
+    /// distance, edges by curve distance, faces by surface distance + UV
+    /// domain.
     pub fn point_on_face(&self, p: DVec3, tol: f64) -> bool {
         for v in &self.vertices {
             if (p - *v).length() <= tol {
@@ -232,6 +236,44 @@ impl SolidExplorer {
         for e in &self.edges {
             if let Some(curve) = e {
                 if curve_point_distance(curve, p) <= tol {
+                    return true;
+                }
+            }
+        }
+        for f in &self.face_surfaces {
+            if let Surface3::Plane(pl) = &f.surf {
+                // Planar faces: the projection is a single dot product — the
+                // full closest_point_on_surface dispatch would be wasted here.
+                let d = (p - pl.origin).dot(pl.normal).abs();
+                if d <= tol {
+                    let rel = p - pl.origin - pl.normal * (p - pl.origin).dot(pl.normal);
+                    let uv = DVec2::new(rel.dot(pl.u_dir), rel.dot(pl.v_dir));
+                    if uv_in_face_domain(f, uv) {
+                        return true;
+                    }
+                }
+            } else {
+                let (uv, q) = crate::bop::closest_point_on_surface(&f.surf, p);
+                if (p - q).length() <= tol && uv_in_face_domain(f, uv) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// True when the ray `p + s*dir` (s > 0) is degenerate: it lies in the
+    /// supporting plane of a planar face of the solid (OCCT
+    /// BRepClass3d_SClassifier::Perform L405-449 detects the parallel-line
+    /// case per face; the faulty-line loop L264-285 retries with a different
+    /// direction). The K1 disk point at z=100 with the +X ray: the ray lies
+    /// in the annulus plane and only grazes the cylinder-wall rims, which the
+    /// UV domain check rejects — the crossing count comes out zero even for
+    /// an interior point, so the direction must be retried.
+    pub fn ray_is_degenerate(&self, p: DVec3, dir: DVec3, tol: f64) -> bool {
+        for f in &self.face_surfaces {
+            if let Surface3::Plane(pl) = &f.surf {
+                if dir.dot(pl.normal).abs() < 1e-12 && (p - pl.origin).dot(pl.normal).abs() <= tol {
                     return true;
                 }
             }
@@ -262,18 +304,58 @@ impl SolidExplorer {
     /// faces use the analytic intersection, curved faces use BeanFaceIntersector
     /// (the IntCurvesFace_Intersector translation).
     ///
-    /// The single fixed ray direction is degenerate when it lies in a face's
-    /// plane (e.g. a point on the plane of a planar face, whose ray grazes the
+    /// A fixed ray direction is degenerate when it lies in a face's plane
+    /// (e.g. a point on the plane of a planar face, whose ray grazes the
     /// neighboring curved faces' rims): the rim hits are rejected by the UV
     /// domain check and the count comes out ZERO even for an inside point.
     /// OCCT retries with a different line direction (BRepClass3d_SClassifier.cxx
     /// L264-285 — the faulty-line loop over SolidExplorer::Segment/
-    /// OtherSegment). The multi-direction retry (K1 workstream) is not enabled
-    /// yet — it needs the ON-state face-distance check first (the e1 infinite
-    /// point lies ON a lateral face; see the session handover). The plain +X
-    /// ray keeps the non-degenerate cases as before.
+    /// OtherSegment). rcad: first the ON-state check (a point within the
+    /// tolerance of a face's surface with the UV domain check is ON — OCCT
+    /// L405-449), then the +X ray, then the remaining axes; a degenerate
+    /// direction (0 crossings, ray in a face's plane) is skipped, the first
+    /// non-degenerate crossing count decides IN/OUT.
     pub fn classify_point(&self, p: DVec3) -> u8 {
-        let ray_dir = DVec3::X;
+        self.classify_point_with_tol(p, CONFUSION)
+    }
+
+    /// classify_point with an explicit tolerance for the degenerate-ray check.
+    pub(crate) fn classify_point_with_tol(&self, p: DVec3, tol: f64) -> u8 {
+        // The ON-state face-surface check is done by the caller
+        // (SolidClassifier::perform → point_on_face, OCCT aSelectorPoint
+        // L232-237 + the parallel-line face distance L405-449) before this
+        // method runs; classify_point itself only ray-casts.
+        // The +X ray first (the plain single-direction behavior for the
+        // non-degenerate cases), then the remaining axes of the retry.
+        let dirs = [
+            DVec3::X,
+            DVec3::Y,
+            DVec3::Z,
+            -DVec3::X,
+            -DVec3::Y,
+            -DVec3::Z,
+        ];
+        let mut retried = 0usize;
+        for ray_dir in dirs {
+            let intersections = self.count_ray_crossings(p, ray_dir);
+            if intersections > 0 {
+                return if intersections % 2 == 1 { 3 } else { 4 }; // IN=3, OUT=4
+            }
+            // 0 crossings: the direction is unreliable when the ray lies in a
+            // face's plane (the K1 disk point's +X ray in the z=100 annulus
+            // plane grazes the cylinder rims); otherwise a genuinely outside
+            // point is OUT.
+            if !self.ray_is_degenerate(p, ray_dir, tol) {
+                return 4;
+            }
+            retried += 1;
+        }
+        4 // all directions degenerate — OUT (safe default)
+    }
+
+    /// Number of ray crossings of the solid boundary along `p + s*dir`,
+    /// counting only intersections inside the face's UV domain.
+    fn count_ray_crossings(&self, p: DVec3, ray_dir: DVec3) -> usize {
         let mut intersections = 0usize;
         if !self.face_surfaces.is_empty() {
             for f in &self.face_surfaces {
@@ -340,7 +422,7 @@ impl SolidExplorer {
                 }
             }
         }
-        if intersections % 2 == 1 { 3 } else { 4 } // IN=3, OUT=4
+        intersections
     }
 
     /// Parameter of the closest intersection of the ray `p + t*dir` with a
