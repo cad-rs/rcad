@@ -4827,7 +4827,34 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         ed.pcurves.insert(fkey, (pc, range[0], range[1]));
                     }
                 });
-                self.ds.remap_shape_idx(n_e);
+                // OCCT AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx L43-161):
+                // when the source edge is a seam on this face (IsClosed(aE2, aF)),
+                // UpdateClosedPCurve (L163-299) builds the second pcurve by
+                // translating the first by the seam translation vector and stores
+                // both in a CurveOnClosedSurface representation. Without it, a
+                // shared seam edge (coincident cylinders) keeps the CS rep only
+                // for the first face, and the WireSplitter's orientation-dependent
+                // u=2*PI/u=0 selection is lost on the second face.
+                if let Some((pc1, pc2)) = Self::closed_surface_pcurves(&self.ds, src_e, n_e, n_f) {
+                    self.ds.mutate_shape_data(n_e, |ts| {
+                        if let rcad_kernel::topods::TShape::Edge(ed) = ts {
+                            if !ed.representations.iter().any(|r| matches!(
+                                r,
+                                rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == fkey
+                            )) {
+                                ed.representations.push(
+                                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                                        face: fkey,
+                                        pcurve1: pc1,
+                                        pcurve2: pc2,
+                                        range,
+                                    },
+                                );
+                            }
+                        }
+                    });
+                    self.ds.remap_shape_idx(n_e);
+                }
                 return;
             }
         }
@@ -4972,6 +4999,63 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             c.knots = c.knots.iter().map(|k| dst_range[0] + (dst_range[1] - dst_range[0]) * k).collect();
         }
         Some(rcad_kernel::geom::Curve2d::BSpline(c))
+    }
+
+    /// OCCT UpdateClosedPCurve (BOPTools_AlgoTools2D_1.cxx L163-299): when the
+    /// source edge is a seam on the face (IsClosed(aE2, aF)), the attached
+    /// single pcurve is the u=2*PI instance; the second pcurve (u=0) is the
+    /// first translated by the seam translation vector (the vector between the
+    /// source edge's two closed-surface pcurves at an intermediate point).
+    /// The pair is stored in a CurveOnClosedSurface representation so the
+    /// WireSplitter can select u=0 for a REVERSED edge (BRep_Tool.cxx L354-361).
+    fn closed_surface_pcurves(
+        ds: &DS,
+        src_e: usize,
+        dst_e: usize,
+        n_f: usize,
+    ) -> Option<(rcad_kernel::geom::Curve2d, rcad_kernel::geom::Curve2d)> {
+        use rcad_kernel::geom::Curve2dEval;
+        // The source edge's CS rep on this face gives the two seam pcurves.
+        let (fid, floc) = ds.face_key(n_f)?;
+        let eloc = ds.shape(src_e).location;
+        let fkey = (
+            fid,
+            crate::bop::algo::compose_face_edge_pcurve_location(floc, eloc, &ds.locations),
+        );
+        let (pc1s, pc2s) = match &*ds.shape(src_e).data {
+            rcad_kernel::topods::TShape::Edge(ed) => ed.representations.iter().find_map(|r| match r {
+                rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                    face, pcurve1, pcurve2, ..
+                } if *face == fkey => Some((pcurve1.clone(), pcurve2.clone())),
+                _ => None,
+            })?,
+            _ => return None,
+        };
+        // Translation vector between the two source pcurves at mid-range.
+        let src_range = ds.edge_range(src_e);
+        let a_ts = (src_range[0] + src_range[1]) * 0.5;
+        let a_p1 = Curve2dEval::point_at(&pc1s, a_ts);
+        let a_p2 = Curve2dEval::point_at(&pc2s, a_ts);
+        let a_v = a_p2 - a_p1;
+        if a_v.length_squared() < rcad_kernel::core::precision::PCONFUSION {
+            return None;
+        }
+        // The destination's attached pcurve is the u=2*PI instance; translate
+        // it by the seam vector to get the u=0 twin.
+        let (dst_pc, _, _) = Self::edge_pcurve_of(ds, dst_e, n_f)?;
+        let dst_pc2 = rcad_kernel::geom::translate_curve2d(&dst_pc, a_v);
+        // OCCT L275-291: order the two pcurves by the tangent direction —
+        // aV2D * aV2DS1 < 0 swaps (bRevOrder). The destination pcurve follows
+        // the source's first pcurve direction.
+        let dst_range = ds.edge_range(dst_e);
+        let a_t = (dst_range[0] + dst_range[1]) * 0.5;
+        let a_v2d = Curve2dEval::derivative_at(&dst_pc, a_t);
+        let a_v2ds1 = Curve2dEval::derivative_at(&pc1s, a_ts);
+        if a_v2d.dot(a_v2ds1) < 0.0 {
+            Some((dst_pc2, dst_pc))
+        } else {
+            Some((dst_pc, dst_pc2))
+        }
     }
 
     /// BRep_Tool::CurveOnSurface 鈥?the edge's pcurve on the face, if any.
