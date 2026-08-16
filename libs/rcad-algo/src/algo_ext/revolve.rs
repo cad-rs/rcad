@@ -219,9 +219,16 @@ pub fn revolve_polygon_full_turn(
             } else {
                 dir.cross(u_dir).normalize()
             };
+            // OCCT gp_Pln is always right-handed (v = normal × u). For the
+            // outward edge the frame above gives u × v = -dir, so the stored
+            // normal must be u × v, not dir — otherwise the plane is
+            // left-handed and the face's effective normal is flipped relative
+            // to OCCT (K1: the annulus SD face then fails the
+            // IsSplitToReverse check against the box top and the box's
+            // SplitSolid shell cannot close).
             let plane = Surface3::Plane(Plane {
                 origin: centers[i],
-                normal: dir,
+                normal: u_dir.cross(v_dir).normalize(),
                 u_dir,
                 v_dir,
             });
@@ -551,7 +558,9 @@ pub fn revolve_polygon_partial(
         ]);
 
         let surface = if hits_axis && d_perp > 1.0 - 1e-9 {
-            // Radial edge: partial planar sector.
+            // Radial edge: partial planar sector. Right-handed normal (v =
+            // normal × u); the outward edge's frame gives u × v = -dir, so the
+            // stored normal must be u × v (see revolve_polygon_full_turn).
             let u_dir = (profile_verts[i] - profile_verts[j]).normalize_or_zero();
             let outward = rj > ri;
             let v_dir = if outward {
@@ -561,7 +570,7 @@ pub fn revolve_polygon_partial(
             };
             Surface3::Plane(Plane {
                 origin: centers[i],
-                normal: dir,
+                normal: u_dir.cross(v_dir).normalize(),
                 u_dir,
                 v_dir,
             })
