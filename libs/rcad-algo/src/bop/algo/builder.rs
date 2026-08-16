@@ -5790,8 +5790,13 @@ impl<'a> Builder<'a> {
         // with a single solid, and both stay in the aSFS. Keying by ptr_id
         // only collapsed them into one entry whose orientation-differing
         // second visit appended the solid twice (nsols=2) and dropped the cap.
-        let mut stack: Vec<Shape> = vec![the_sol.clone()];
-        while let Some(cur) = stack.pop() {
+        // TopExp_Explorer walks the STORED sub-shape order (first sub-shape
+        // explored first); a LIFO stack reverses that order, which changes the
+        // aSFS face order and therefore which shell the final ShellSplitter
+        // walk builds first.
+        let mut queue: std::collections::VecDeque<Shape> = std::collections::VecDeque::new();
+        queue.push_back(the_sol.clone());
+        while let Some(cur) = queue.pop_front() {
             if cur.shape_type() == topods::ShapeType::Face {
                 if cur.orientation == topods::Orientation::Internal {
                     continue;
@@ -5808,7 +5813,7 @@ impl<'a> Builder<'a> {
             for sub in self.shape_sub_shapes(&cur) {
                 let mut sub2 = sub.clone();
                 sub2.orientation = cur.orientation.compose(sub.orientation);
-                stack.push(sub2);
+                queue.push_back(sub2);
             }
         }
     }
