@@ -238,16 +238,17 @@ pub fn revolve_polygon_full_turn(
                 };
                 faces.push(brep.add_tface(Some(plane), wire, vec![], None, None, vec![], false));
             } else {
-                // Annulus: outer wire = outer circle, inner wire = inner circle.
-                // OCCT BRepSweep_Revol annulus (e.g. K1 step face at z=100, or
-                // E3 cyla step at z=3): the outer wire is FORWARD (CCW seen
-                // from the axis direction) and the inner wire REVERSED, for
-                // both outward (r20→r25) and inward (r9→r6.25) profile edges.
-                // The disk branch below keeps its own orientation rule (the
-                // bottom/top caps) — only the two-circle face is unconditional.
-                let inner_edge = circ[inner].clone().unwrap();
-                let outer_wire = brep.add_twire(vec![outer_edge]);
-                let inner_wire = brep.add_twire(vec![rev(&inner_edge)]);
+                // Annulus: the swept face of a radial profile edge. OCCT
+                // BRepSweep_Revol (K1 runner dump: outer=[r20 F], inner=[r25 R]
+                // for the outward edge (50,80,100)->(50,75,100)) stores the
+                // START-vertex circle as the outer wire FORWARD and the
+                // END-vertex circle as the inner wire REVERSED — the wire roles
+                // follow the profile-edge vertex order, not the radius. This
+                // opposes the shared circles to the adjacent lateral walls
+                // (r20cyl top rim R vs annulus outer F; annulus inner R vs
+                // r25cyl bottom rim F) so the shell is traversable.
+                let outer_wire = brep.add_twire(vec![circ[i].clone().unwrap()]);
+                let inner_wire = brep.add_twire(vec![rev(&circ[j].clone().unwrap())]);
                 faces.push(brep.add_tface(
                     Some(plane),
                     outer_wire,

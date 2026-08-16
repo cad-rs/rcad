@@ -261,6 +261,17 @@ impl SolidExplorer {
     /// (Line x Face) for every face — including curved ones; rcad: planar
     /// faces use the analytic intersection, curved faces use BeanFaceIntersector
     /// (the IntCurvesFace_Intersector translation).
+    ///
+    /// The single fixed ray direction is degenerate when it lies in a face's
+    /// plane (e.g. a point on the plane of a planar face, whose ray grazes the
+    /// neighboring curved faces' rims): the rim hits are rejected by the UV
+    /// domain check and the count comes out ZERO even for an inside point.
+    /// OCCT retries with a different line direction (BRepClass3d_SClassifier.cxx
+    /// L264-285 — the faulty-line loop over SolidExplorer::Segment/
+    /// OtherSegment). The multi-direction retry (K1 workstream) is not enabled
+    /// yet — it needs the ON-state face-distance check first (the e1 infinite
+    /// point lies ON a lateral face; see the session handover). The plain +X
+    /// ray keeps the non-degenerate cases as before.
     pub fn classify_point(&self, p: DVec3) -> u8 {
         let ray_dir = DVec3::X;
         let mut intersections = 0usize;
@@ -601,6 +612,8 @@ fn uv_in_face_domain(f: &ExplorerFace, uv: DVec2) -> bool {
 
 /// Compute the UV bounding box of a planar face from its wire vertices.
 /// OCCT: the face's UV domain (natural restriction or trimmed by wires).
+/// Closed circle edges (first == last vertex, e.g. a disk boundary) make the
+/// vertex-only sampling degenerate — the edge 3D curves are sampled instead.
 fn compute_plane_uv_bounds(face: &Shape, pl: &PlaneGeom, locations: &[glam::DAffine3]) -> Option<[f64; 4]> {
     let mut umin = f64::MAX;
     let mut umax = f64::MIN;
@@ -617,6 +630,16 @@ fn compute_plane_uv_bounds(face: &Shape, pl: &PlaneGeom, locations: &[glam::DAff
         }
         _ => return None,
     }
+    let mut add_point = |p: &DVec3, found: &mut bool| {
+        let d = *p - pl.origin;
+        let u = d.dot(pl.u_dir);
+        let v = d.dot(pl.v_dir);
+        umin = umin.min(u);
+        umax = umax.max(u);
+        vmin = vmin.min(v);
+        vmax = vmax.max(v);
+        *found = true;
+    };
     while let Some(sh) = stack.pop() {
         match &*sh.data {
             TShape::Wire(wd) => {
@@ -625,16 +648,33 @@ fn compute_plane_uv_bounds(face: &Shape, pl: &PlaneGeom, locations: &[glam::DAff
                 }
             }
             TShape::Edge(ed) => {
-                for v in [&ed.first, &ed.last] {
-                    if let TShape::Vertex(vd) = &*v.data {
-                        let d = vd.point - pl.origin;
-                        let u = d.dot(pl.u_dir);
-                        let v = d.dot(pl.v_dir);
-                        umin = umin.min(u);
-                        umax = umax.max(u);
-                        vmin = vmin.min(v);
-                        vmax = vmax.max(v);
-                        found = true;
+                // Sample the 3D curve (with the edge Location) — a closed
+                // circle edge stores first == last, so the vertex endpoints
+                // alone cannot bound the domain.
+                let loc = ed.first.location;
+                if let Some(curve) = &ed.curve {
+                    let (t1, t2) = (ed.range[0], ed.range[1]);
+                    for i in 0..=16 {
+                        let t = t1 + (t2 - t1) * (i as f64) / 16.0;
+                        let mut p = curve.point_at(t);
+                        if loc != 0 {
+                            if let Some(tr) = locations.get(loc as usize) {
+                                p = tr.transform_point3(p);
+                            }
+                        }
+                        add_point(&p, &mut found);
+                    }
+                } else {
+                    for v in [&ed.first, &ed.last] {
+                        if let TShape::Vertex(vd) = &*v.data {
+                            let mut p = vd.point;
+                            if v.location != 0 {
+                                if let Some(tr) = locations.get(v.location as usize) {
+                                    p = tr.transform_point3(p);
+                                }
+                            }
+                            add_point(&p, &mut found);
+                        }
                     }
                 }
             }
@@ -668,3 +708,4 @@ fn curve_point_distance(curve: &Curve3, p: DVec3) -> f64 {
     let proj = rcad_kernel::base::extrema::closest_point_on_curve(curve, p, 64);
     proj.distance
 }
+

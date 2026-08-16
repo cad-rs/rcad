@@ -483,17 +483,71 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
     };
     let mut outer: Vec<glam::DVec2> = Vec::new();
     wire_poly(&fd.outer_wire, &mut outer);
+    // A closed edge (circle) stores first == last, so the vertex sampling
+    // yields a degenerate polygon. Sample the edge curves instead (the
+    // equivalent of OCCT BRepTools::UVBounds on the pcurves).
+    if outer.len() < 3 {
+        outer = sample_wire_uv_curve(&fd.outer_wire, surf, locations);
+    }
     if outer.len() >= 3 {
         polys.push(outer);
     }
     for iw in &fd.inner_wires {
         let mut inner: Vec<glam::DVec2> = Vec::new();
         wire_poly(iw, &mut inner);
+        if inner.len() < 3 {
+            inner = sample_wire_uv_curve(iw, surf, locations);
+        }
         if inner.len() >= 3 {
             polys.push(inner);
         }
     }
     Some(polys)
+}
+
+/// Sample the wire's edge 3D curves (with the composed orientation and the
+/// edge Location applied) projected onto the face's surface — the fallback UV
+/// polygon for wires whose vertex sampling is degenerate (closed edges with
+/// first == last, e.g. a circular boundary).
+fn sample_wire_uv_curve(
+    w: &Shape,
+    surf: &rcad_kernel::geom::Surface3,
+    locations: &[glam::DAffine3],
+) -> Vec<glam::DVec2> {
+    let mut out: Vec<glam::DVec2> = Vec::new();
+    const N: usize = 16;
+    let (w_or, edges) = match &*w.data {
+        TShape::Wire(wd) => (w.orientation, wd.edges.clone()),
+        _ => return out,
+    };
+    for e in &edges {
+        let ed = match &*e.data {
+            TShape::Edge(ed) => ed,
+            _ => continue,
+        };
+        let Some(curve) = &ed.curve else { continue };
+        let (t1, t2) = (ed.range[0], ed.range[1]);
+        // OCCT TopoDS_Iterator cumOri: the wire orientation composes into the
+        // edge; the traversal runs first->last (FWD) or last->first (REV).
+        let eff = Orientation::compose(w_or, e.orientation);
+        let (ta, tb) = match eff {
+            Orientation::Reversed => (t2, t1),
+            _ => (t1, t2),
+        };
+        let loc = e.location;
+        for i in 0..=N {
+            let t = ta + (tb - ta) * (i as f64) / (N as f64);
+            let mut p = curve.point_at(t);
+            if loc != 0 {
+                if let Some(tr) = locations.get(loc as usize) {
+                    p = tr.transform_point3(p);
+                }
+            }
+            let (uv, _) = crate::bop::closest_point_on_surface(surf, p);
+            out.push(uv);
+        }
+    }
+    out
 }
 
 /// Periodic-ray classification of `uv` against a UV polygon on a U-periodic

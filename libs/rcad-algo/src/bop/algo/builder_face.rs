@@ -841,8 +841,16 @@ fn boxes_overlap(a: [f64; 4], b: [f64; 4]) -> bool {
 /// shared with the face, has its pcurve midpoint classified IN the face by the
 /// face classifier (IntTools_FClass2d::Perform, L890-891). rcad classifies the
 /// midpoint with FClass2d (brep_top_adaptor), not a sampled UV polygon.
-fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], face_edges: &[Shape]) -> bool {
-    let face_set: HashSet<(u64, u32)> = face_edges
+///
+/// OCCT theF is the temporary face built from the GROWTH loop wire
+/// (BOPAlgo_BuilderFace.cxx L437-445), and IntTools_Context::FClass2d(aF)
+/// (IntTools_Context.cxx L225-242) builds the classifier from that face's
+/// (single) loop — so `against_edges` (the growth loop's edges) must feed the
+/// classifier, not the original DS face. For the innermost-hole check (L548)
+/// theF is the previously-assigned growth face, so the same `against_edges`
+/// semantic applies.
+fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], against_edges: &[Shape]) -> bool {
+    let face_set: HashSet<(u64, u32)> = against_edges
         .iter()
         .map(|e| (e.ptr_id(), e.location))
         .collect();
@@ -860,15 +868,15 @@ fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], face_edges: 
         };
         let p = Curve2dEval::point_at(&pc, 0.5 * (t1 + t2));
         // OCCT L890-891: aState = aClassifier.Perform(aP2D); isInside = (aState == IN).
-        // OCCT IsInside (BOPAlgo_BuilderFace.cxx L863-915) classifies the hole's
-        // midpoint against the GROWTH face theF (the temporary face built from
-        // the growth loop wire, L437-445) — IntTools_Context::FClass2d(aFace)
-        // (IntTools_Context.cxx L225-242). The classifier must therefore be
-        // built from the growth loop's edges, not from the original DS face.
-        let fclass2d = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new(
+        // OCCT IntTools_Context::FClass2d(aFace) (IntTools_Context.cxx L225-242)
+        // builds the classifier from the face theF — the temporary face whose
+        // only wire is the growth loop — so the loop edges must be passed here
+        // (BOPAlgo_BuilderFace.cxx L437-445).
+        let fclass2d = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new_for_loop(
             ds,
             face_index,
             ds.face_tolerance(face_index),
+            against_edges,
         );
         return fclass2d.perform(ds, p, true)
             == crate::topalgo::brep_top_adaptor::fclass2d::State::In;
