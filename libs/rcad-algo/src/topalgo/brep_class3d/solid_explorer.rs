@@ -860,6 +860,66 @@ impl SolidExplorer {
         max_w: f64,
     ) -> Option<(bool, Vec<(f64, u8, u8, f64, f64)>)> {
         let f = self.face_surfaces.get(fi)?;
+        // OCCT IntCurvesFace_Intersector: the Plane/Cylinder/Cone/Sphere/Torus
+        // surfaces use the ANALYTIC IntCurveSurface_Intersector
+        // (IntAna_IntConicQuad) — the exact line-quadric quadratic roots —
+        // while other surfaces use the polyhedron sampling.  rcad's sampling
+        // IntCS misses roots when the line's inside-span is far smaller than
+        // the sampling step (e.g. a chord through a cylinder), so the analytic
+        // path is used for the quadric surfaces.
+        let quad = crate::geomalgo::int_surf::quadric::Quadric::from_surface3(&f.surf);
+        if let Some(quad) = quad {
+            if quad.type_quadric() != crate::geomalgo::int_surf::quadric::QuadricType::Other {
+                let line = rcad_kernel::geom::Line3 {
+                    origin: l_origin,
+                    direction: l_dir,
+                };
+                let (in_quadric, pts) = match crate::geomalgo::int_patch::int_cs::intersect_line_quadric(
+                    &line, &quad,
+                ) {
+                    None => return None,
+                    Some(r) => r,
+                };
+                if in_quadric {
+                    // The line lies in the surface — parallel (the
+                    // Extrema_ExtPS branch in the SClassifier applies).
+                    return Some((true, Vec::new()));
+                }
+                let mut out = Vec::new();
+                for (p3d, w) in pts {
+                    if w < min_w || w > max_w {
+                        continue;
+                    }
+                    let (uv, _) = crate::bop::closest_point_on_surface(&f.surf, p3d);
+                    let state = self.classify_uv_point(f, uv);
+                    if state == 3 {
+                        continue; // OUT — not an intersection of the face.
+                    }
+                    let (_pnt, d1u, d1v) = f.surf.derivatives(uv.x, uv.y);
+                    let n = d1u.cross(d1v);
+                    let norm = n.length();
+                    let d1 = l_dir;
+                    let d1_mag = d1.length();
+                    let mut tran = if norm > 1e-12 && d1_mag > 1e-12 {
+                        let cos_dir = n.dot(d1) / (norm * d1_mag);
+                        if -cos_dir > 1e-12 {
+                            1 // In
+                        } else if cos_dir > 1e-12 {
+                            2 // Out
+                        } else {
+                            0 // Tangent
+                        }
+                    } else {
+                        0 // Tangent
+                    };
+                    if tran != 0 && f.ori == Orientation::Reversed {
+                        tran = if tran == 1 { 2 } else { 1 };
+                    }
+                    out.push((w, state, tran, uv.x, uv.y));
+                }
+                return Some((false, out));
+            }
+        }
         let line = Curve3::Line(rcad_kernel::geom::Line3 {
             origin: l_origin,
             direction: l_dir,
@@ -1333,6 +1393,71 @@ impl SolidExplorer {
 /// face's 2D domain; rcad rebuilds it from the wire vertices (same approach as
 /// builder::point_in_face_image, IntTools_FClass2d::Init samples the pcurves).
 fn build_uv_polys(face: &Shape, surf: &Surface3, locations: &[glam::DAffine3]) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {
+    // A wire whose edges are all closed (circle first == last) projects all
+    // its vertices onto the same seam point (u = 0 for a full-revolution
+    // cylindrical face) — the polygon degenerates and the ray-cast domain
+    // check would reject every interior point.  Sample the edge 3D curves
+    // instead and fall back to the u/v bounds rectangle (the band's natural
+    // UV domain, OCCT BRepTopAdaptor_TopolTool::Classify on the pcurves).
+    let poly_usable = |poly: &Vec<DVec2>| -> bool {
+        if poly.len() < 3 {
+            return false;
+        }
+        let u0 = poly[0].x;
+        !poly.iter().all(|p| (p.x - u0).abs() < 1e-9)
+    };
+    let sample_bounds = |w: &Shape| -> Vec<DVec2> {
+        let mut umin = f64::INFINITY;
+        let mut umax = f64::NEG_INFINITY;
+        let mut vmin = f64::INFINITY;
+        let mut vmax = f64::NEG_INFINITY;
+        let mut found = false;
+        if let TShape::Wire(wd) = &*w.data {
+            let w_or = w.orientation;
+            for e in &wd.edges {
+                if let TShape::Edge(ed) = &*e.data {
+                    let Some(curve) = &ed.curve else { continue };
+                    let eff = w_or.compose(e.orientation);
+                    let (t1, t2) = (ed.range[0], ed.range[1]);
+                    let (ta, tb) = match eff {
+                        Orientation::Reversed => (t2, t1),
+                        _ => (t1, t2),
+                    };
+                    const N: usize = 16;
+                    for i in 0..=N {
+                        let t = ta + (tb - ta) * (i as f64) / (N as f64);
+                        let mut p = curve.point_at(t);
+                        if e.location != 0 {
+                            if let Some(tr) = locations.get(e.location as usize) {
+                                p = tr.transform_point3(p);
+                            }
+                        }
+                        let (uv, _) = closest_point_on_surface(surf, p);
+                        umin = umin.min(uv.x);
+                        umax = umax.max(uv.x);
+                        vmin = vmin.min(uv.y);
+                        vmax = vmax.max(uv.y);
+                        found = true;
+                    }
+                }
+            }
+        }
+        if !found || !(umin < umax && vmin < vmax) {
+            return Vec::new();
+        }
+        // Bring u into one period (the caps wrap).
+        let tau = std::f64::consts::TAU;
+        if umax - umin > tau * 0.9 {
+            umin = 0.0;
+            umax = tau;
+        }
+        vec![
+            glam::DVec2::new(umin, vmin),
+            glam::DVec2::new(umax, vmin),
+            glam::DVec2::new(umax, vmax),
+            glam::DVec2::new(umin, vmax),
+        ]
+    };
     let build_poly = |w: &Shape| -> Vec<DVec2> {
         let mut poly: Vec<DVec2> = Vec::new();
         if let TShape::Wire(wd) = &*w.data {
@@ -1357,6 +1482,9 @@ fn build_uv_polys(face: &Shape, surf: &Surface3, locations: &[glam::DAffine3]) -
                     }
                 }
             }
+        }
+        if !poly_usable(&poly) {
+            poly = sample_bounds(w);
         }
         poly
     };

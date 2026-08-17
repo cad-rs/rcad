@@ -343,7 +343,7 @@ fn surface_period(surface: &Surface3, is_u: bool) -> f64 {
 /// absolute-frame quadric coefficients, giving a quadratic in t solved by
 /// math_DirectPolynomialRoots.  Returns None when not done, otherwise
 /// (in_quadric, (point, W) pairs) where W is the line parameter.
-fn intersect_line_quadric(
+pub(crate) fn intersect_line_quadric(
     line: &rcad_kernel::geom::Line3,
     quad: &crate::geomalgo::int_surf::quadric::Quadric,
 ) -> Option<(bool, Vec<(DVec3, f64)>)> {
