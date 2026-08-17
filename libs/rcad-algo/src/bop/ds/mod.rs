@@ -2380,11 +2380,16 @@ impl DS {
         // OCCT BRep_Builder::MakeEdge: the edge references the actual DS
         // vertices — the Shape index must be the DS vertex index so pcurve /
         // vertex lookups (WireSplitter, BRep_Tool::Parameter) resolve.
+        // The vertex's LOCATION is kept (TopoDS_Vertex carries it): a source
+        // vertex with a non-identity Location (e.g. the extruded top cap of a
+        // folded prism) must keep that Location on the section edge, otherwise
+        // BRep_Tool::Pnt reads the raw (unlocated) point and micro-edge /
+        // shrunk-range checks misclassify the edge (bcommon_simple h5).
         let v_first = self.shapes.get(first)
-            .map(|s| Shape::from_parts(s.shape.data.clone(), first, 0, Orientation::Forward))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), first, s.shape.location, Orientation::Forward))
             .unwrap_or_else(|| empty_vertex.clone());
         let v_last = self.shapes.get(last)
-            .map(|s| Shape::from_parts(s.shape.data.clone(), last, 0, Orientation::Reversed))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), last, s.shape.location, Orientation::Reversed))
             .unwrap_or(empty_vertex);
         let ed = rcad_kernel::topods::TEdgeData {
             curve: Some(curve), range,

@@ -1,4 +1,4 @@
-﻿use rcad_kernel::topo_shape::Shape;
+use rcad_kernel::topo_shape::Shape;
 use crate::bop::algo::builder::{Builder, BooleanError, BooleanOpType};
 use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::DS;
@@ -29,10 +29,14 @@ impl Algo for BuilderShape {
 }
 
 // 閳光偓閳光偓 BRepAlgoAPI_BuilderAlgo 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-// OCCT: SetArguments, SetGlue, SetNonDestructive, SetFuzzyValue, Build, Shape
+// OCCT: SetArguments, SetTools, SetGlue, SetNonDestructive, SetFuzzyValue, Build, Shape
 pub struct BuilderAlgo {
     pub bs: BuilderShape,
     pub arguments: Vec<Shape>,
+    /// Tools of the operation (BOPAlgo_BOP::myTools). OCCT
+    /// BRepAlgoAPI_BooleanOperation stores theS1 in myArguments and theS2 in
+    /// myTools; BOPAlgo_BOP::CheckData requires both lists non-empty.
+    pub tools: Vec<Shape>,
     /// Merged TopLoc_Location table (index 0 = identity) for `arguments`.
     pub locations: Vec<glam::DAffine3>,
     pub run_parallel: bool,
@@ -47,6 +51,7 @@ impl BuilderAlgo {
         Self {
             bs: BuilderShape { result: None, err: None },
             arguments: Vec::new(),
+            tools: Vec::new(),
             locations: vec![glam::DAffine3::IDENTITY],
             run_parallel: false, fuzzy_value: 0.0,
             non_destructive: false, glue: 0, check_inverted: true, use_bvh: false,
@@ -58,6 +63,8 @@ impl BuilderAlgo {
     pub fn get_fuzzy_value(&self) -> f64 { self.fuzzy_value }
     pub fn set_arguments(&mut self, args: Vec<Shape>) { self.arguments = args; }
     pub fn get_arguments(&self) -> &[Shape] { &self.arguments }
+    pub fn set_tools(&mut self, tools: Vec<Shape>) { self.tools = tools; }
+    pub fn get_tools(&self) -> &[Shape] { &self.tools }
     pub fn set_non_destructive(&mut self, b: bool) { self.non_destructive = b; }
     pub fn get_non_destructive(&self) -> bool { self.non_destructive }
     pub fn set_glue(&mut self, g: i32) { self.glue = g; }
@@ -71,10 +78,17 @@ impl Algo for BuilderAlgo {
 }
 
 // 閳光偓閳光偓 BooleanOperation 閳?base for Fuse/Common/Cut/Section 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+/// OCCT BRepAlgoAPI_BooleanOperation::Build: aLArgs = myArguments + myTools
+/// combined for the intersection; the builder receives myArguments (objects)
+/// and myTools separately (BOPAlgo_BOP::SetArguments/SetTools).
 fn run_build(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<Shape, BooleanError> {
-    if algo.arguments.len() < 2 { return Err(BooleanError::TooFewArguments); }
+    if algo.arguments.len() < 1 || algo.tools.len() < 1 {
+        return Err(BooleanError::TooFewArguments);
+    }
+    let mut all_args = algo.arguments.clone();
+    all_args.extend(algo.tools.iter().cloned());
     let mut filler = PaveFiller::new();
-    filler.set_arguments(algo.arguments.clone());
+    filler.set_arguments(all_args);
     filler.set_fuzzy_value(algo.fuzzy_value);
     let a_prog = NoopProgress;
     let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
@@ -82,7 +96,17 @@ fn run_build(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<Shape, Boolea
     let fuzz = filler.fuzzy_value();
     // builder borrows the DS from filler; both live in the same scope
     let mut builder = Builder::new(filler.ds(), op_type, fuzz);
+    // OCCT BOPAlgo_BOP holds the tools by the same TShape identity as the DS
+    // (SetTools appends them to myArguments, which the DS references). rcad's
+    // DS deep-clones the inputs, so the builder's tool list must carry the
+    // DS-cloned shapes (the tail of ds.arguments) — the original BRep shapes
+    // have different TShape identities and would never match the split
+    // results in BuildRC (bcommon_simple G9: common of box and contained
+    // prism).
     builder.my_arguments = filler.ds().arguments.clone();
+    let n_tools = algo.tools.len();
+    let n_objs = builder.my_arguments.len().saturating_sub(n_tools);
+    builder.my_tools = builder.my_arguments[n_objs..].to_vec();
     match builder.build() {
         Ok(brep) => {
             let root = brep.tshapes.iter().enumerate().rev()
@@ -100,7 +124,12 @@ macro_rules! def_bool_op {
         impl $name {
             pub fn new() -> Self { Self { algo: BuilderAlgo::new() } }
             pub fn from_shapes(s1: Shape, s2: Shape) -> Self {
-                let mut s = Self::new(); s.algo.arguments = vec![s1, s2]; s
+                // OCCT BRepAlgoAPI_BooleanOperation(S1, S2, op):
+                // myArguments.Append(theS1); myTools.Append(theS2);
+                let mut s = Self::new();
+                s.algo.arguments = vec![s1];
+                s.algo.tools = vec![s2];
+                s
             }
             pub fn set_arguments(&mut self, args: Vec<Shape>) { self.algo.set_arguments(args); }
             pub fn get_arguments(&self) -> &[Shape] { self.algo.get_arguments() }
@@ -405,12 +434,17 @@ fn brep_top_shapes_with_locations(
 
 /// BRep-form build: run the full PaveFiller + Builder pipeline and return the
 /// whole result `BRep` pool (not just the root shape).
+/// OCCT BRepAlgoAPI_BooleanOperation::Build: aLArgs = myArguments + myTools
+/// combined for the intersection; the builder receives myArguments (objects)
+/// and myTools separately (BOPAlgo_BOP::SetArguments/SetTools).
 fn run_build_brep(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<rcad_kernel::BRep, BooleanError> {
-    if algo.arguments.len() < 2 {
+    if algo.arguments.len() < 1 || algo.tools.len() < 1 {
         return Err(BooleanError::TooFewArguments);
     }
+    let mut all_args = algo.arguments.clone();
+    all_args.extend(algo.tools.iter().cloned());
     let mut filler = PaveFiller::new();
-    filler.set_arguments(algo.arguments.clone());
+    filler.set_arguments(all_args);
     filler.ds_mut().set_locations(algo.locations.clone());
     filler.set_fuzzy_value(algo.fuzzy_value);
     let a_prog = NoopProgress;
@@ -419,7 +453,17 @@ fn run_build_brep(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<rcad_ker
     let fuzz = filler.fuzzy_value();
     // builder borrows the DS from filler; both live in the same scope
     let mut builder = Builder::new(filler.ds(), op_type, fuzz);
+    // OCCT BOPAlgo_BOP holds the tools by the same TShape identity as the DS
+    // (SetTools appends them to myArguments, which the DS references). rcad's
+    // DS deep-clones the inputs, so the builder's tool list must carry the
+    // DS-cloned shapes (the tail of ds.arguments) — the original BRep shapes
+    // have different TShape identities and would never match the split
+    // results in BuildRC (bcommon_simple G9: common of box and contained
+    // prism).
     builder.my_arguments = filler.ds().arguments.clone();
+    let n_tools = algo.tools.len();
+    let n_objs = builder.my_arguments.len().saturating_sub(n_tools);
+    builder.my_tools = builder.my_arguments[n_objs..].to_vec();
     builder.build().map_err(|_| BooleanError::InvalidResult("builder failed"))
 }
 
@@ -427,9 +471,8 @@ fn run_build_brep(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<rcad_ker
 pub fn fuse(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
     let mut global_locs = vec![glam::DAffine3::IDENTITY];
-    let mut shapes = brep_top_shapes_with_locations(a, &mut global_locs);
-    shapes.extend(brep_top_shapes_with_locations(b, &mut global_locs));
-    op.arguments = shapes;
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs);
     op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Union)
 }
@@ -438,9 +481,8 @@ pub fn fuse(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel:
 pub fn common(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
     let mut global_locs = vec![glam::DAffine3::IDENTITY];
-    let mut shapes = brep_top_shapes_with_locations(a, &mut global_locs);
-    shapes.extend(brep_top_shapes_with_locations(b, &mut global_locs));
-    op.arguments = shapes;
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs);
     op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Intersection)
 }
@@ -449,9 +491,8 @@ pub fn common(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kerne
 pub fn cut(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
     let mut global_locs = vec![glam::DAffine3::IDENTITY];
-    let mut shapes = brep_top_shapes_with_locations(a, &mut global_locs);
-    shapes.extend(brep_top_shapes_with_locations(b, &mut global_locs));
-    op.arguments = shapes;
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs);
     op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Cut)
 }

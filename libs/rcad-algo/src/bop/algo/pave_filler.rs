@@ -1708,6 +1708,12 @@ impl PaveFiller {
         } else {
             return;
         };
+        if std::env::var("RCAD_EF_DEBUG").is_ok() {
+            eprintln!("[EF-DBG] n_ef_pairs={}", pairs.len());
+            for (i, (a, b)) in pairs.iter().enumerate() {
+                eprintln!("[EF-DBG]   pair[{}] = ({}, {})", i, a, b);
+            }
+        }
         if pairs.is_empty() {
             return;
         }
@@ -1773,28 +1779,9 @@ impl PaveFiller {
                 // OCCT: aMPBF.Contains(aPBR) 鈥?the set holds PB handles, so a
                 // direct pointer-id membership test matches exactly.
                 let is_on_face = a_mpbf.contains(&pbr_ptr);
-                if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                    if n_e == 55 || n_e == 62 || n_f == 22 {
-                        let mut on_edges: Vec<String> = Vec::new();
-                        for &pp in &a_mpbf {
-                            // find the edge that owns this PB pointer
-                            let mut found: Option<usize> = None;
-                            for (ei, pbs) in &self.ds.pave_blocks_pool {
-                                for pb in pbs {
-                                    let rp = self.ds.real_pave_block(pb);
-                                    if std::sync::Arc::as_ptr(&rp.0) as u64 == pp {
-                                        let r = rp.0.read().unwrap();
-                                        found = Some(*ei);
-                                        on_edges.push(format!("e{}:[{:.2},{:.2}]", ei, r.pave1().parameter(), r.pave2().parameter()));
-                                        break;
-                                    }
-                                }
-                                if found.is_some() { break; }
-                            }
-                            if found.is_none() { on_edges.push("?".to_string()); }
-                        }
-                        eprintln!("[EF-DBG]   cand e={} f={} onFace={} pbon_edges={:?}", n_e, n_f, is_on_face, on_edges);
-                    }
+                if std::env::var("RCAD_EF_DEBUG").is_ok() {
+                    eprintln!("[EF-DBG] cand e={} f={} onFace={} n_pb={}",
+                        n_e, n_f, is_on_face, a_lpb.len());
                 }
                 if is_on_face {
                     continue;
@@ -1846,13 +1833,14 @@ impl PaveFiller {
             let (i_flag, common_parts, min_dist) = self.my_context.compute_ef(
                 cand.n_e, cand.n_f, cand.range.0, cand.range.1, cand.express, &self.ds, self.my_fuzzy_value);
             a_nb_cprts = common_parts.len();
-            if std::env::var("RCAD_EE_DEBUG").is_ok() {
+            if std::env::var("RCAD_EF_DEBUG").is_ok() {
                 let epts = self.ds.edge_curve(cand.n_e).map(|c| {
                     let p0 = c.point_at(cand.raw_range.0);
                     let p1 = c.point_at(cand.raw_range.1);
                     format!("({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})", p0.x, p0.y, p0.z, p1.x, p1.y, p1.z)
                 }).unwrap_or_default();
-                eprintln!("[EF-DBG] cand e={}(r{}) f={}(r{}) range=[{:.4},{:.4}] ncp={} min={:.3e} epts={}", cand.n_e, self.ds.rank(cand.n_e), cand.n_f, self.ds.rank(cand.n_f), cand.range.0, cand.range.1, a_nb_cprts, min_dist, epts);
+                eprintln!("[EF-RES] e={} f={} flag={} ncp={} min={:.3e} epts={}",
+                    cand.n_e, cand.n_f, i_flag, a_nb_cprts, min_dist, epts);
             }
             if i_flag != 0 {
                 continue;
@@ -2043,6 +2031,13 @@ impl PaveFiller {
         // OCCT BOPAlgo_Tools::PerformCommonBlocks (2nd overload, L191-244):
         //   one CommonBlock per section PaveBlock, reusing the existing CB if the
         //   PB already belongs to one; append the PB's face list.
+        if std::env::var("RCAD_EF_DEBUG").is_ok() {
+            eprintln!("[EF-DBG] end perform_ef: n_interf_ef={} n_mvcpb={}",
+                self.ds.interf_ef.len(), a_mvcpb.len());
+            for (k, iv) in self.ds.interf_ef.iter().enumerate() {
+                eprintln!("[EF-DBG]   ef[{}] e={} f={} nv={}", k, iv.edge, iv.face, iv.new_vertex);
+            }
+        }
         if !a_mpbli.is_empty() {
             let pending: Vec<(SharedPB, Vec<usize>)> = a_mpbli.values().cloned().collect();
             for (pb, faces) in &pending {
@@ -2058,7 +2053,15 @@ impl PaveFiller {
         }
         self.update_vertices_of_cb();
         if !a_mvcpb.is_empty() {
+            if std::env::var("RCAD_EF_DEBUG").is_ok() {
+                eprintln!("[EF-DBG] perform_new_vertices n_cpb={}", a_mvcpb.len());
+            }
             self.perform_new_vertices(&a_mvcpb, false);
+            if std::env::var("RCAD_EF_DEBUG").is_ok() {
+                for (k, iv) in self.ds.interf_ef.iter().enumerate() {
+                    eprintln!("[EF-DBG]   post-nv ef[{}] e={} f={} nv={}", k, iv.edge, iv.face, iv.new_vertex);
+                }
+            }
             if self.has_errors() {
                 return;
             }
@@ -2200,6 +2203,35 @@ impl PaveFiller {
                 }
             }
         }
+        if std::env::var("RCAD_CP_DEBUG").is_ok() {
+            let pos = |v: &usize| -> String {
+                self.ds.shapes.get(*v).and_then(|si| self.ds.vertex_point_on_shape(&si.shape))
+                    .map(|p| format!("({:.6},{:.6},{:.6})", p.x, p.y, p.z))
+                    .unwrap_or_else(|| "?".into())
+            };
+            let fmt = |s: &indexmap::IndexSet<usize>| -> String {
+                s.iter().map(|v| format!("{}:{}", v, pos(v))).collect::<Vec<_>>().join(" ")
+            };
+            let edge_info = |f: usize| -> String {
+                let mut out = String::new();
+                if let Some(si) = self.ds.shapes.get(f) {
+                    for &es in &si.sub_shapes {
+                        if let Some(e) = self.ds.shapes.get(es).and_then(|x| x.shape.as_edge()) {
+                            let c = e.curve.clone().map(|c| match c {
+                                rcad_kernel::geom::Curve3::Line(l) => format!("L({:.4},{:.4},{:.4})->({:.4},{:.4},{:.4})", l.origin.x, l.origin.y, l.origin.z, l.origin.x + l.direction.x, l.origin.y + l.direction.y, l.origin.z + l.direction.z),
+                                _ => "O".into(),
+                            }).unwrap_or_else(|| "?".into());
+                            out.push_str(&format!(" e{}:{}", es, c));
+                        }
+                    }
+                }
+                out
+            };
+            eprintln!("[CP] nF1={} nF2={} vOn1=[{}] vIn1={:?} vOn2=[{}] vIn2={:?} iCnt={} bToIntersect={} | f1:{} | f2:{}",
+                n_f1, n_f2, fmt(&a_fi1.vertices_on), a_fi1.vertices_in,
+                fmt(&a_fi2.vertices_on), a_fi2.vertices_in, i_cnt, b_to_intersect,
+                edge_info(n_f1), edge_info(n_f2));
+        }
         b_to_intersect
     }
 
@@ -2268,11 +2300,19 @@ impl PaveFiller {
             }
             let Some(s1) = self.ds.face_surface(i) else { continue; };
             let Some(s2) = self.ds.face_surface(j) else { continue; };
+            if std::env::var("RCAD_FF_DEBUG").is_ok() {
+                let st1 = match &s1 { Surface3::Plane(_) => "Plane", Surface3::Cylinder(_) => "Cyl", Surface3::Sphere(_) => "Sphere", _ => "Other" };
+                let st2 = match &s2 { Surface3::Plane(_) => "Plane", Surface3::Cylinder(_) => "Cyl", Surface3::Sphere(_) => "Sphere", _ => "Other" };
+                eprintln!("[FF-DBG] pair f1={} f2={} s1={} s2={}", i, j, st1, st2);
+            }
 
             // OCCT L373-391: check if the planes are really interfering (share
             // more than one boundary vertex); otherwise skip the pair.
             if matches!((&s1, &s2), (Surface3::Plane(_), Surface3::Plane(_))) {
                 if !self.check_planes(i, j) {
+                    if std::env::var("RCAD_FF_DEBUG").is_ok() {
+                        eprintln!("[FF-DBG]   check_planes false -> skip");
+                    }
                     new_ff.push(InterferenceFF {
                         f1: i, f2: j,
                         curves: Vec::new(),
@@ -2280,6 +2320,9 @@ impl PaveFiller {
                         tangent_faces: false,
                     });
                     continue;
+                }
+                if std::env::var("RCAD_FF_DEBUG").is_ok() {
+                    eprintln!("[FF-DBG]   check_planes true -> intersect");
                 }
             }
 
@@ -2361,6 +2404,10 @@ impl PaveFiller {
             ff.set_fuzzy_value(self.my_fuzzy_value);
             ff.perform(&self.ds);
             let tangent_faces = ff.tangent_faces();
+            if std::env::var("RCAD_FF_DEBUG").is_ok() {
+                eprintln!("[FF-DBG]   ff done={} has_intersection={}",
+                    ff.is_done(), ff.has_intersection());
+            }
             // OCCT L543-556: if (!aFaceFace.IsDone() || aFaceFace.HasErrors())
             // 鈫?empty FF + AddIntersectionFailedWarning; rcad FaceFace has no
             // error channel 鈥?a failed Perform yields no curves.
@@ -2778,6 +2825,14 @@ impl PaveFiller {
         // Phase 2 (L903-909): perform all BPCs (OCCT: BOPTools_Parallel::Perform)
         for bpc in &mut a_vbpc {
             bpc.perform(&self.ds);
+            if std::env::var("RCAD_BPC_DEBUG").is_ok() && (bpc.face_idx() == 30 || bpc.face_idx() == 32) {
+                let t = bpc.pcurve().map(|pc| match pc {
+                    rcad_kernel::geom::Curve2d::Line(_) => "Line",
+                    rcad_kernel::geom::Curve2d::BSpline(_) => "BSpline",
+                    _ => "Other",
+                }).unwrap_or("none");
+                eprintln!("[BPC] e={} f={} update={} type={}", bpc.edge_idx(), bpc.face_idx(), bpc.is_to_update(), t);
+            }
         }
         // Phase 3 (L916-930): update edges with computed pcurves.
         // In-place (OCCT BRep_Builder semantics): every reference to the edge 鈥?
@@ -2799,6 +2854,13 @@ impl PaveFiller {
                     // OCCT BRep_Builder::UpdateEdge (BRep_Builder.cxx L692) 鈥?
                     // the pcurve is stored under (face TShape, L.Predivided(E.Location())).
                     let key = self.pcurve_key_for(ei, fi); // EXPERIMENT: composed key
+                    if std::env::var("RCAD_PCTRACE").is_ok() {
+                        let pd = match &pc {
+                            rcad_kernel::geom::Curve2d::Line(l) => format!("L o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
+                            _ => "O".into(),
+                        };
+                        eprintln!("[PC] BPC e={} f={} key={:?} {} t=({:.3},{:.3})", ei, fi, key, pd, f, l);
+                    }
                     self.ds.mutate_shape_data(ei, |ts| {
                         if let topods::TShape::Edge(ed) = ts {
                             if let Some(k) = key {
@@ -3045,19 +3107,52 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         }
         let curve = a_ed.curve.clone().unwrap();
         // OCCT L2090-2099: curve range and vertex parameters on the edge.
+        // OCCT BRep_Tool::Pnt(aV) applies the vertex's TopLoc_Location to the
+        // raw TShape point (BRep_Tool.cxx L167-175). A section edge built from
+        // a source vertex with a non-identity Location (e.g. the extruded top
+        // cap of a folded prism) must use the LOCATED point — the raw point
+        // would fail the shrunk-range / micro-edge check (bcommon_simple h5).
         let (a_t1, a_t2) = (a_ed.range[0], a_ed.range[1]);
+        let loc_first = self.ds.get_location(a_ed.first.location);
+        let loc_last = self.ds.get_location(a_ed.last.location);
         let (a_p1, mut a_tol_v1) = match &*a_ed.first.data {
-            topods::TShape::Vertex(vd) => (vd.point, vd.tolerance),
+            topods::TShape::Vertex(vd) => {
+                let p = if loc_first == glam::DAffine3::IDENTITY {
+                    vd.point
+                } else {
+                    loc_first.transform_point3(vd.point)
+                };
+                (p, vd.tolerance)
+            }
             _ => return true,
         };
         let (a_p2, mut a_tol_v2) = match &*a_ed.last.data {
-            topods::TShape::Vertex(vd) => (vd.point, vd.tolerance),
+            topods::TShape::Vertex(vd) => {
+                let p = if loc_last == glam::DAffine3::IDENTITY {
+                    vd.point
+                } else {
+                    loc_last.transform_point3(vd.point)
+                };
+                (p, vd.tolerance)
+            }
             _ => return true,
         };
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let c = a_ed.curve.clone().map(|c| match c {
+                rcad_kernel::geom::Curve3::Line(l) => format!("L o=({:.3},{:.3},{:.3}) d=({:.3},{:.3},{:.3})", l.origin.x, l.origin.y, l.origin.z, l.direction.x, l.direction.y, l.direction.z),
+                _ => "O".into(),
+            }).unwrap_or_else(|| "?".into());
+            eprintln!("[MICRO-EDGE] curve={} first=({:.3},{:.3},{:.3}) last=({:.3},{:.3},{:.3}) first_idx={} last_idx={}",
+                c, a_p1.x, a_p1.y, a_p1.z, a_p2.x, a_p2.y, a_p2.z, a_ed.first.index, a_ed.last.index);
+        }
         let a_tol_e = a_ed.tolerance;
         // OCCT IntTools_ShrunkRange::Perform (IntTools_ShrunkRange.cxx L107-191).
         let a_dtol = rcad_kernel::CONFUSION;
         let a_pdtol = rcad_kernel::PCONFUSION;
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            eprintln!("[MICRO-CHK] rng={:?} tolE={:.3e} tolV1={:.3e} tolV2={:.3e} p1=({:.3},{:.3},{:.3}) p2=({:.3},{:.3},{:.3})",
+                a_ed.range, a_tol_e, a_tol_v1, a_tol_v2, a_p1.x, a_p1.y, a_p1.z, a_p2.x, a_p2.y, a_p2.z);
+        }
         if a_t2 - a_t1 < a_pdtol {
             return true;
         }
@@ -4741,6 +4836,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
                     let n_e = pb.0.read().unwrap().edge;
                     if n_e >= self.ds.nb_shapes() { continue; }
+                    if std::env::var("RCAD_MPC_DEBUG").is_ok() {
+                        eprintln!("[MPC] IN pb e={} f={} has_pc={}", n_e, n_f1, self.edge_has_pcurve(n_e, n_f1));
+                    }
                     self.build_pcurve_mpc(n_e, n_f1, surf, None);
                 }
             }
@@ -4750,6 +4848,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
                     let n_e = pb.0.read().unwrap().edge;
                     if n_e >= self.ds.nb_shapes() { continue; }
+                    if std::env::var("RCAD_MPC_DEBUG").is_ok() {
+                        eprintln!("[MPC] ON pb e={} f={} has_pc={}", n_e, n_f1, self.edge_has_pcurve(n_e, n_f1));
+                    }
                     if self.edge_has_pcurve(n_e, n_f1) { continue; }
                     let src = self.cb_pcurve_source(&pb, n_f1);
                     self.build_pcurve_mpc(n_e, n_f1, surf, src);
@@ -4822,6 +4923,13 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         if let Some(src_e) = src {
             if let Some(pc) = Self::copy_pcurve(&self.ds, src_e, n_e, n_f) {
                 let range = self.ds.edge_range(n_e);
+                if std::env::var("RCAD_PCTRACE").is_ok() {
+                    let pd = match &pc {
+                        rcad_kernel::geom::Curve2d::Line(l) => format!("L o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
+                        _ => "O".into(),
+                    };
+                    eprintln!("[PC] MPC-copy e={} f={} src={} key={:?} {}", n_e, n_f, src_e, fkey, pd);
+                }
                 self.ds.mutate_shape_data(n_e, |ts| {
                     if let rcad_kernel::topods::TShape::Edge(ed) = ts {
                         ed.pcurves.insert(fkey, (pc, range[0], range[1]));
@@ -4862,6 +4970,13 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         if let Some(curve) = self.ds.edge_curve(n_e) {
             let range = self.ds.edge_range(n_e);
             if let Some(pc) = Self::pcurve_2d(&curve, surf, range) {
+                if std::env::var("RCAD_PCTRACE").is_ok() {
+                    let pd = match &pc {
+                        rcad_kernel::geom::Curve2d::Line(l) => format!("L o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
+                        _ => "O".into(),
+                    };
+                    eprintln!("[PC] MPC-proj e={} f={} key={:?} {}", n_e, n_f, fkey, pd);
+                }
                 self.ds.mutate_shape_data(n_e, |ts| {
                     if let rcad_kernel::topods::TShape::Edge(ed) = ts {
                         ed.pcurves.insert(fkey, (pc, range[0], range[1]));
