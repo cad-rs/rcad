@@ -306,6 +306,16 @@ impl<'a> BuilderSolid<'a> {
 
         // OCCT L413-442: classify each shell.
         for loop_faces in &self.my_loops {
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                eprintln!("[BS-SHELL-CAND] n_faces={} faces={:?}", loop_faces.len(),
+                    loop_faces.iter().map(|f| {
+                        let n = f.as_face().and_then(|fd| fd.surface.clone()).map(|s| match s {
+                            rcad_kernel::geom::Surface3::Plane(p) => format!("Plane n=({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
+                            _ => "O".into(),
+                        }).unwrap_or_else(|| "?".into());
+                        format!("{}:{}", f.ptr_id(), n)
+                    }).collect::<Vec<_>>());
+            }
             // OCCT L422-427: IsGrowthShell then IsHole.
             let mut b_is_growth = Self::is_growth_shell(loop_faces, &a_mhf);
             if !b_is_growth {

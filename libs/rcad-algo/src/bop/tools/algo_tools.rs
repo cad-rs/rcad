@@ -453,30 +453,105 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
     let mut polys: Vec<Vec<glam::DVec2>> = Vec::new();
     let mut wire_poly = |w: &Shape, out: &mut Vec<glam::DVec2>| {
         if let TShape::Wire(wd) = &*w.data {
-            for e in &wd.edges {
-                if let TShape::Edge(ed) = &*e.data {
-                    for v in [&ed.first, &ed.last] {
-                        if let TShape::Vertex(vd) = &*v.data {
-                            // OCCT TopoDS_Iterator cumLoc: the edge Location is
-                            // composed into its vertices (a folded top edge =
-                            // source TShape + Location must be transformed).
-                            let loc = if e.location != 0 { e.location } else { v.location };
-                            let p = if loc == 0 {
+            // OCCT Geom2dHatch_Hatcher intersects each edge pcurve once, in the
+            // wire's traversal order — the polygon sampled from the edge
+            // endpoints must follow the same chain. The WireSplitter loops are
+            // valid cycles, but their stored edge order starts at an arbitrary
+            // joint (G1 A-B-P loop: [P->A, B->P, A->B]), so the raw
+            // first+last sampling walks P->A->B->P->A->B and duplicates every
+            // crossing in the parity hatch (no interval found). Reorder the
+            // edges into the vertex chain first (traversal endpoints from the
+            // composed wire x edge orientation).
+            let w_or = w.orientation;
+            let edges = wd.edges.clone();
+            let trav = |e: &Shape| -> Option<((u64, u32), (u64, u32))> {
+                let ed = e.as_edge()?;
+                let eff = Orientation::compose(w_or, e.orientation);
+                let (vf, vl) = ((ed.first.ptr_id(), ed.first.location), (ed.last.ptr_id(), ed.last.location));
+                Some(match eff {
+                    Orientation::Reversed => (vl, vf),
+                    _ => (vf, vl),
+                })
+            };
+            let mut order: Vec<Shape> = Vec::with_capacity(edges.len());
+            {
+                let mut used = vec![false; edges.len()];
+                let mut cur: Option<(u64, u32)> = None;
+                while order.len() < edges.len() {
+                    let mut progressed = false;
+                    for (i, e) in edges.iter().enumerate() {
+                        if used[i] {
+                            continue;
+                        }
+                        let Some((s, t)) = trav(e) else { continue };
+                        if cur.is_none() || Some(s) == cur {
+                            order.push(e.clone());
+                            used[i] = true;
+                            cur = Some(t);
+                            progressed = true;
+                            break;
+                        }
+                    }
+                    if !progressed {
+                        break;
+                    }
+                }
+                if order.len() < edges.len() {
+                    order = edges;
+                }
+            }
+            for e in &order {
+                let (_va, _vb) = match trav(e) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                // Sample the two traversal endpoints (start, end) in order:
+                // FORWARD -> [first, last], REVERSED -> [last, first]
+                // (TopoDS_Iterator cumOri semantics).
+                let (p0, p1) = match &*e.data {
+                    TShape::Edge(ed) => {
+                        let loc0 = if e.location != 0 { e.location } else { ed.first.location };
+                        let loc1 = if e.location != 0 { e.location } else { ed.last.location };
+                        let pt = |vd: &rcad_kernel::topods::TVertexData, loc: u32| -> glam::DVec3 {
+                            if loc == 0 {
                                 vd.point
                             } else {
-                                // DS location table: index 0 is the identity
-                                // sentinel, so the transform for location N is
-                                // at locations[N] (BOPDS_DS::GetLocation).
                                 locations
                                     .get(loc as usize)
                                     .copied()
                                     .unwrap_or(glam::DAffine3::IDENTITY)
                                     .transform_point3(vd.point)
-                            };
-                            let (uv, _) = crate::bop::closest_point_on_surface(surf, p);
-                            out.push(uv);
+                            }
+                        };
+                        let a = match &*ed.first.data {
+                            TShape::Vertex(vd) => pt(vd, loc0),
+                            _ => glam::DVec3::ZERO,
+                        };
+                        let b = match &*ed.last.data {
+                            TShape::Vertex(vd) => pt(vd, loc1),
+                            _ => glam::DVec3::ZERO,
+                        };
+                        match Orientation::compose(w_or, e.orientation) {
+                            Orientation::Reversed => (b, a),
+                            _ => (a, b),
                         }
                     }
+                    _ => (glam::DVec3::ZERO, glam::DVec3::ZERO),
+                };
+                for p in [p0, p1] {
+                    let (uv, _) = crate::bop::closest_point_on_surface(surf, p);
+                    // The wire's consecutive edges share their joint vertex, so
+                    // the raw first+last sampling repeats it (a triangle
+                    // becomes [P,A,A,B,B,P]). The duplicated point yields
+                    // coincident parity crossings in the hatch
+                    // (PointInFaceShape) and must be dropped — the boundary
+                    // polygon is the set of distinct joint points (OCCT
+                    // Geom2dHatch intersects each pcurve once, so no crossing
+                    // is ever duplicated).
+                    if out.last().map(|q| (*q - uv).length() < 1e-9).unwrap_or(false) {
+                        continue;
+                    }
+                    out.push(uv);
                 }
             }
         }
@@ -602,8 +677,17 @@ pub(crate) fn point_in_face_shape(
         return (1, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
     let Some(polys) = shape_uv_polygons(face, locations) else {
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[PIF-SHAPE] no polys");
+        }
         return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
+    if std::env::var("RCAD_BS_DEBUG").is_ok() {
+        for (pi, poly) in polys.iter().enumerate() {
+            let pts: Vec<String> = poly.iter().map(|p| format!("({:.6},{:.6})", p.x, p.y)).collect();
+            eprintln!("[PIF-SHAPE] face={} poly{} n={} pts=[{}]", face.ptr_id() % 100000, pi, poly.len(), pts.join(" "));
+        }
+    }
     // UV bounds over all polygons (OCCT UVBounds of the face).
     let mut a_umin = f64::INFINITY;
     let mut a_umax = f64::NEG_INFINITY;
@@ -1103,6 +1187,15 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
     // of the analytic surface parameters.
     let surf_sp = f_sp.as_face().and_then(|fd| fd.surface.clone());
     let surf_or = f_sr.as_face().and_then(|fd| fd.surface.clone());
+    if std::env::var("RCAD_BS_DEBUG").is_ok() {
+        let pd = |s: &Option<rcad_kernel::geom::Surface3>| -> String {
+            match s {
+                Some(rcad_kernel::geom::Surface3::Plane(p)) => format!("o=({:.6},{:.6},{:.6}) n=({:.6},{:.6},{:.6})", p.origin.x, p.origin.y, p.origin.z, p.normal.x, p.normal.y, p.normal.z),
+                _ => "O".into(),
+            }
+        };
+        eprintln!("[STRF-R] fSp.or={:?} fSr.or={:?} same={} surfSp=[{}] surfSr=[{}]", f_sp.orientation, f_sr.orientation, surface_same_match(&surf_sp, &surf_or), pd(&surf_sp), pd(&surf_or));
+    }
     if let (Some(s1), Some(s2)) = (&surf_sp, &surf_or) {
         if surface_same(s1, s2) {
             return (f_sp.orientation != f_sr.orientation, 0);
@@ -1119,6 +1212,9 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
     match ds.map_shape_index.get(&(f_sp.ptr_id(), f_sp.location)).copied() {
         Some(fi) => {
             let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                eprintln!("[PIF] fSp={} inDS err={}", f_sp.ptr_id() % 100000, err);
+            }
             if err == 0 {
                 p3d = Some(p);
                 p2d_sp = Some(p2d);
@@ -1126,6 +1222,15 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
         }
         None => {
             let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face_shape(f_sp, &ds.locations);
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                let nw = f_sp.as_face().map(|fd| {
+                    let mut n = 0usize;
+                    if let TShape::Wire(wd) = &*fd.outer_wire.data { n += wd.edges.len(); }
+                    for iw in &fd.inner_wires { if let TShape::Wire(wd) = &*iw.data { n += wd.edges.len(); } }
+                    n
+                }).unwrap_or(0);
+                eprintln!("[PIF] fSp={} shape err={} wire_edges={}", f_sp.ptr_id() % 100000, err, nw);
+            }
             if err == 0 {
                 p3d = Some(p);
                 p2d_sp = Some(p2d);
@@ -1429,6 +1534,14 @@ fn curves_same(a: &rcad_kernel::geom::Curve3, b: &rcad_kernel::geom::Curve3) -> 
 /// Geom_Surface handle equality in IsSplitToReverse L1338). Same direction for
 /// the axis/normal; the reference directions (u_dir/v_dir) are not compared —
 /// the parameterization orientation is irrelevant for the orientation decision.
+/// Same-surface comparison helper for the debug trace.
+fn surface_same_match(a: &Option<rcad_kernel::geom::Surface3>, b: &Option<rcad_kernel::geom::Surface3>) -> bool {
+    match (a, b) {
+        (Some(x), Some(y)) => surface_same(x, y),
+        _ => false,
+    }
+}
+
 fn surface_same(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3) -> bool {
     use rcad_kernel::geom::Surface3;
     const TOL: f64 = 1e-9;

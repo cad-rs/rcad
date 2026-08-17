@@ -77,34 +77,16 @@ impl SolidClassifier {
     }
 
     /// OCCT: Perform(P, Tol) — classify point P relative to loaded solid.
+    /// OCCT BRepClass3d_SolidClassifier::Perform (SolidClassifier.cxx
+    /// L171-213): with MARCHEPASSIUNESEULEFACE undefined it directly calls
+    /// BRepClass3d_SClassifier::Perform(explorer, P, Tol) — no bbox fast-path,
+    /// no separate point-on-face pre-check (both are inside SClassifier).
     pub fn perform(&mut self, p: DVec3, tol: f64) {
         if !self.a_solid_loaded { return; }
-        if std::env::var("RCAD_EE_DEBUG").is_ok() {
-            eprintln!("[SC] perform p=({:.3},{:.3},{:.3}) tol={:.2e} nfaces={}", p.x, p.y, p.z, tol, self.explorer.face_surfaces.len());
-        }
-        // OCCT L171-191: check bounding box first (fast rejection)
-        if !self.is_a_hole_in_space {
-            if self.explorer.reject(p) {
-                self.my_state = 4; // OUT
-                if std::env::var("RCAD_EE_DEBUG").is_ok() { eprintln!("[SC]   -> rejected (bbox)"); }
-                return;
-            }
-            // OCCT BRepClass3d_SClassifier::Perform — a point within the
-            // tolerance of a face of the solid is ON the boundary.
-            if self.explorer.point_on_face(p, tol) {
-                self.my_state = 2; // ON
-                if std::env::var("RCAD_EE_DEBUG").is_ok() { eprintln!("[SC]   -> ON (point_on_face)"); }
-                return;
-            }
-            // OCCT L190: BRepClass3d_SClassifier::Perform(explorer, P, Tol)
-            self.perform_classify(p, tol);
-        } else {
-            if self.explorer.reject(p) {
-                self.my_state = 3; // IN
-                return;
-            }
-            self.perform_classify(p, tol);
-        }
+        // OCCT L200-204: BRepClass3d_SClassifier::Perform(explorer, P, Tol).
+        let mut sc = crate::topalgo::brep_class3d::s_classifier::SClassifier::new();
+        sc.perform(&mut self.explorer, p, tol);
+        self.my_state = sc.my_state;
     }
 
     /// OCCT: PerformInfinitePoint(Tol) — classify point at infinity.
@@ -182,9 +164,6 @@ impl SolidClassifier {
                                 continue;
                             }
                             let w = (pl.origin - a_point).dot(normal) / denom;
-                            if w < 0.0 {
-                                continue;
-                            }
                             // OCCT IntCurvesFace_Intersector.cxx L291: accept
                             // only intersections whose UV lies inside the face
                             // domain (Classify(Puv) == IN/ON).
@@ -225,16 +204,4 @@ impl SolidClassifier {
 
     /// OCCT: State() — returns my_state (inherited from SClassifier).
     pub fn state(&self) -> u8 { self.my_state }
-
-    /// Internal: perform classification using ray casting.
-    /// OCCT BRepClass3d_SClassifier::Perform (L203+). Delegates the actual
-    /// ray/face intersection to the explorer (BRepClass3d_SolidExplorer),
-    /// which resolves face geometry from the shape tree directly.
-    fn perform_classify(&mut self, p: DVec3, _tol: f64) {
-        if !self.explorer.has_faces() {
-            self.my_state = 3; // IN (void solid — whole space)
-            return;
-        }
-        self.my_state = self.explorer.classify_point(p);
-    }
 }

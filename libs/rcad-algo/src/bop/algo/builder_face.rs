@@ -199,7 +199,59 @@ impl<'a> BuilderFace<'a> {
         // OCCT L268-271: BOPAlgo_WireSplitter(aWSp) with the wire edge set.
         let a_face = self.my_face.clone().unwrap_or_else(Shape::null);
         let a_face_index = self.my_face_index.unwrap_or(usize::MAX);
+        if std::env::var("RCAD_WS_DEBUG").is_ok() {
+            for e in &edges {
+                let hc = crate::bop::algo::wire_splitter::edge_has_pcurve(e, a_face_index, &self.ds);
+                let pc = edge_pcurve_on_face(e, a_face_index, &self.ds);
+                let pd = pc.as_ref().map(|(c, _, _)| {
+                    let name = match c {
+                        Curve2d::Line(_) => "Line", Curve2d::Circle(_) => "Circle", Curve2d::Ellipse(_) => "Ellipse",
+                        Curve2d::Parabola(_) => "Parabola", Curve2d::Hyperbola(_) => "Hyperbola",
+                        Curve2d::CircleInvolute(_) => "CircleInvolute", Curve2d::ArchimedeanSpiral(_) => "ArchimedeanSpiral",
+                        Curve2d::LogarithmicSpiral(_) => "LogSpiral", Curve2d::SineWave(_) => "SineWave",
+                        Curve2d::BSpline(_) => "BSpline", Curve2d::Bezier(_) => "Bezier", Curve2d::Trimmed(_) => "Trimmed",
+                        _ => "Other",
+                    };
+                    match c {
+                        Curve2d::Line(l) => format!("L2D o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
+                        Curve2d::Trimmed(t) => match &*t.curve {
+                            Curve2d::Line(l) => format!("TL2D o=({:.3},{:.3}) d=({:.3},{:.3}) t=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y, t.t_min, t.t_max),
+                            _ => format!("TO2D({})", name),
+                        },
+                        _ => format!("O2D({})", name),
+                    }
+                }).unwrap_or_else(|| "no-pc".into());
+                eprintln!("[WS-IN] face={} edge_ptr={} pcurve={} {}", a_face_index, e.ptr_id(), hc, pd);
+            }
+        }
         let wires = crate::bop::algo::wire_splitter::split_into_wires(&a_face, a_face_index, &edges, &self.ds);
+        if std::env::var("RCAD_WS_DEBUG").is_ok() {
+            eprintln!("[WS-OUT] face={} n_wires={} wire_edge_counts={:?}",
+                a_face_index, wires.len(), wires.iter().map(|w| w.len()).collect::<Vec<_>>());
+            for (wi, w) in wires.iter().enumerate() {
+                let mut desc: Vec<String> = Vec::new();
+                for e in w {
+                    let pc = edge_pcurve_on_face(e, a_face_index, &self.ds);
+                    let pd = pc.as_ref().map(|(c, _, _)| match c {
+                        Curve2d::Line(l) => format!("L({:.3},{:.3})", l.direction.x, l.direction.y),
+                        rcad_kernel::geom::Curve2d::BSpline(b) => {
+                            if b.control_points.len() >= 2 {
+                                let d = b.control_points[1] - b.control_points[0];
+                                format!("BS({:.3},{:.3})", d.x, d.y)
+                            } else { "BS?".into() }
+                        }
+                        _ => "O".into(),
+                    }).unwrap_or_else(|| "no-pc".into());
+                    let verts = Self::edge_vertices(e, &self.ds.locations);
+                    let vs = verts.iter().map(|v| {
+                        let p = v.as_vertex().map(|vd| format!("({:.1},{:.1},{:.1})", vd.point.x, vd.point.y, vd.point.z)).unwrap_or_default();
+                        format!("{}:{}", p, v.location)
+                    }).collect::<Vec<_>>().join(",");
+                    desc.push(format!("{}:{}{}[{}]", e.ptr_id(), pd, if e.orientation == rcad_kernel::topods::Orientation::Reversed { "R" } else { "F" }, vs));
+                }
+                eprintln!("[WS-LOOP] face={} wire={} edges=[{}]", a_face_index, wi, desc.join(" "));
+            }
+        }
 
         
 
@@ -375,6 +427,9 @@ impl<'a> BuilderFace<'a> {
                     // temporary face built from the analyzed loop wire.
                     let fi = self.my_face_index.unwrap_or(0);
                     let is_hole = self.my_context.fclass2d_is_hole(self.ds, fi, loop_edges);
+                    if std::env::var("RCAD_AREA_DEBUG").is_ok() {
+                        eprintln!("[AREA] face={} loop n_edges={} is_hole={}", fi, loop_edges.len(), is_hole);
+                    }
                     !is_hole
                 }
             };

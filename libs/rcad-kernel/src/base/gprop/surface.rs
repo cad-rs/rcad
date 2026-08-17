@@ -39,6 +39,26 @@ pub fn try_analytic_face_surface_area_pub(brep: &BRep, face: &Face, face_flat_id
     try_analytic_face_surface_area(brep, face, face_flat_idx)
 }
 
+/// Debug probe: great-circle spherical polygon area (same as internal path).
+pub fn try_spherical_polygon_great_circle_area_pub(
+    brep: &BRep, face: &Face,
+) -> Option<f64> {
+    let surf_idx = brep.tshapes.iter().find_map(|ts| match &**ts {
+        topods::TShape::Face(fd) => fd.surface.clone(),
+        _ => None,
+    })?;
+    let surf = &surf_idx;
+    match surf {
+        Surface3::Sphere(s) => try_spherical_polygon_great_circle_area(s, brep, face),
+        _ => None,
+    }
+}
+
+/// Debug probe: Gauss integration fallback (same as internal path).
+pub fn face_surface_area_gauss_pub(brep: &BRep, face: &Face, fi: usize) -> Option<f64> {
+    face_surface_area_gauss(brep, face, fi)
+}
+
 /// True when any wire of the face carries located shapes (a nonzero location
 /// on a wire edge, or on an edge endpoint vertex reference).  Located wires
 /// arise from located copies (e.g. the u=angle profile edges of a partial
@@ -856,10 +876,18 @@ fn try_spherical_polygon_great_circle_area(s: &SphericalSurface, brep: &BRep, fa
         let edge = brep.edge_vertex_indices(ei)?;
         let curve_idx = brep.tshapes.get(ei).and_then(|ts| {
             if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None }
-        })?;
+        });
         match curve_idx {
-            Curve3::Circle(c) => { if (c.center - s.center).length() > tol { return None; } }
-            _ => return None,
+            // A degenerate edge (no 3D curve) means the analytic method cannot
+            // apply; fall back to the general integrator. (The pole-degenerate
+            // skip of the earlier revision was reverted: it broke the fused
+            // sphere face of bfuse_simple A1, whose great-circle polygon then
+            // under-counted the outer region.)
+            None => return None,
+            Some(Curve3::Circle(c)) => {
+                if (c.center - s.center).length() > tol { return None; }
+            }
+            Some(_) => return None,
         }
         let vi = if we.forward { edge.0 } else { edge.1 };
         let pt = brep.vertex_point(vi).unwrap_or(DVec3::ZERO);

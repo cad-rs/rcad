@@ -163,6 +163,9 @@ pub fn ordered_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usiz
             order.push(i);
             flip.push(f);
             cur_last = if f { segs[i].pts[0] } else { *segs[i].pts.last().unwrap() };
+            if std::env::var("RCAD_CHAIN_DEBUG").is_ok() {
+                eprintln!("[CHAIN] pick seg{i} flip={f} cur_last={:?}", cur_last);
+            }
         }
         Some((order, flip))
     };

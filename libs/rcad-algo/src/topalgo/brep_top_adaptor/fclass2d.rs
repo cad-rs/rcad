@@ -608,6 +608,10 @@ impl FClass2d {
                 }
                 order_wire_edges(ds, &pairs)
             };
+            if std::env::var("RCAD_F2D_DEBUG").is_ok() && (a_face == 30 || a_face == 32 || a_face == 60) {
+                eprintln!("[F2D] face={} reordered_edges={:?}", a_face,
+                    wire_edges_ordered.iter().map(|(ei, o)| format!("e{}:{}", ei, if *o == Orientation::Reversed { "R" } else { "F" })).collect::<Vec<_>>());
+            }
 
             for (_k, &(ei, ori)) in wire_edges_ordered.iter().enumerate() {
                 nb_edges -= 1;
@@ -626,6 +630,32 @@ impl FClass2d {
                 // Seam (CurveOnClosedSurface) pcurves are selected by the edge
                 // orientation (FORWARD → u=2*PI, REVERSED → u=0).
                 let pcurve = edge_pcurve_on_face(ds, ei, a_face, ori);
+                if std::env::var("RCAD_F2D_DEBUG").is_ok() && a_face == 60 {
+                    let pd = pcurve.as_ref().map(|(c, f, l)| match c {
+                        rcad_kernel::geom::Curve2d::Line(li) => format!(
+                            "L2D o=({:.3},{:.3}) d=({:.3},{:.3}) t=({:.3},{:.3})",
+                            li.origin.x, li.origin.y, li.direction.x, li.direction.y, f, l
+                        ),
+                        _ => format!("O2D t=({:.3},{:.3})", f, l),
+                    }).unwrap_or_else(|| "no-pc".into());
+                    let ev = edge_pcurve_on_face(ds, ei, 30, ori);
+                    let pd2 = ev.as_ref().map(|(c, f, l)| match c {
+                        rcad_kernel::geom::Curve2d::Line(li) => format!(
+                            "face30 L2D o=({:.3},{:.3}) d=({:.3},{:.3}) t=({:.3},{:.3})",
+                            li.origin.x, li.origin.y, li.direction.x, li.direction.y, f, l
+                        ),
+                        _ => format!("face30 O2D t=({:.3},{:.3})", f, l),
+                    }).unwrap_or_else(|| "face30 no-pc".into());
+                    let vf = edge_data.first.as_vertex().map(|vd| format!("({:.3},{:.3},{:.3})", vd.point.x, vd.point.y, vd.point.z)).unwrap_or_default();
+                    let vl = edge_data.last.as_vertex().map(|vd| format!("({:.3},{:.3},{:.3})", vd.point.x, vd.point.y, vd.point.z)).unwrap_or_default();
+                    let pc_keys: Vec<String> = edge_data.pcurves.keys()
+                        .map(|(pid, loc)| format!("({},L{})", pid, loc)).collect();
+                    let c3d = edge_data.curve.as_ref().map(|c| match c {
+                        rcad_kernel::geom::Curve3::Line(l) => format!("L3D o=({:.3},{:.3},{:.3}) d=({:.3},{:.3},{:.3})", l.origin.x, l.origin.y, l.origin.z, l.direction.x, l.direction.y, l.direction.z),
+                        _ => "O3D".into(),
+                    }).unwrap_or_else(|| "no-c3d".into());
+                    eprintln!("[F2D-PC] face={} e{}:{} ptr={} loc={} vf={} vl={} c3d=[{}] keys=[{}] {} | {}", a_face, ei, if ori == Orientation::Reversed { "R" } else { "F" }, eshape.ptr_id(), eshape.location, vf, vl, c3d, pc_keys.join(","), pd, pd2);
+                }
                 // OCCT BRep_Tool::Curve(aE) (BRep_Tool.cxx L211-227): the
                 // edge's 3D curve with its Location applied.
                 let edge_curve = edge_data.curve.clone().map(|c| {
@@ -878,6 +908,10 @@ impl FClass2d {
             } else if wire_is_not_empty {
                 if seq_pnt2d.len() > 3 {
                     let (a_s, a_per) = polygon_properties(&seq_pnt2d);
+                    if std::env::var("RCAD_F2D_DEBUG").is_ok() && (a_face == 30 || a_face == 32 || a_face == 60) {
+                        let pts: Vec<String> = seq_pnt2d.iter().map(|p| format!("({:.2},{:.2})", p.x, p.y)).collect();
+                        eprintln!("[F2D] face={} wire0 area={:.6} npts={} pts=[{}]", a_face, a_s, seq_pnt2d.len(), pts.join(" "));
+                    }
                     let mut an_exp_thick = (2.0 * a_s.abs() / a_per).max(1e-7);
                     let mut a_defl = fleche_u.max(fleche_v);
                     let mut a_discr_defl = (a_defl * 0.1).min(an_exp_thick * 10.0);

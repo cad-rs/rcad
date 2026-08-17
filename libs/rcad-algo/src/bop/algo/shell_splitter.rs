@@ -114,6 +114,16 @@ pub fn make_connexity_blocks(shapes: &[Shape]) -> Vec<ConnexityBlock> {
 pub fn make_shells(blocks: &[ConnexityBlock], ds: &DS) -> Vec<Vec<Shape>> {
     let mut shells: Vec<Vec<Shape>> = Vec::new();
     for cb in blocks {
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let desc: Vec<String> = cb.shapes.iter().map(|f| {
+                let n = f.as_face().and_then(|fd| fd.surface.clone()).map(|s| match s {
+                    rcad_kernel::geom::Surface3::Plane(p) => format!("({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
+                    _ => "O".into(),
+                }).unwrap_or_else(|| "?".into());
+                format!("{}:{}:{}", f.ptr_id(), n, if f.orientation == Orientation::Reversed { "R" } else { "F" })
+            }).collect();
+            eprintln!("[BS-BLOCK] regular={} n={} faces=[{}]", cb.regular, cb.shapes.len(), desc.join(" "));
+        }
         if cb.regular {
             // OCCT L643-648: MakeShell(aLF, aShell) — adds the faces and
             // calls BOPTools_AlgoTools::OrientFacesOnShell; Closed(true).
@@ -420,6 +430,20 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
                     a_lcs_off.push((a_el, a_fl.clone()));
                 }
                 let a_nb_off = a_lcs_off.len();
+                if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                    let cur = format!("{}", a_f.ptr_id() % 100000);
+                    let cands: Vec<String> = a_lcs_off.iter().map(|(el, fl)| format!("{}:{}", fl.ptr_id() % 100000, if el.orientation == Orientation::Reversed { "R" } else { "F" })).collect();
+                    eprintln!("[BS-GROW-EDGE] shell_start={} edge={} or={} is_boundary={} n_off={} n_inside={} sel={} cands=[{}]", cur, ekey.0 % 100000, if e.orientation == Orientation::Reversed { "R" } else { "F" }, is_boundary, a_nb_off, a_nb_ways_inside, a_sel_f.as_ref().map(|s| format!("{}", s.ptr_id() % 100000)).unwrap_or_else(|| "-".into()), cands.join(" "));
+                    if a_nb_off == 0 {
+                        let why: Vec<String> = a_lf.iter().map(|fl| {
+                            let same = a_f.ptr_id() == fl.ptr_id() && a_f.location == fl.location;
+                            let added = a_added.contains(&shape_map_key(fl));
+                            let off = get_edge_off(&e, fl).map(|el| format!("{}", if el.orientation == Orientation::Reversed { "R" } else { "F" })).unwrap_or_else(|| "no-off".into());
+                            format!("{}:same={}:added={}:off={}", fl.ptr_id() % 100000, same, added, off)
+                        }).collect();
+                        eprintln!("[BS-GROW-NONE] edge={} raw=[{}]", ekey.0 % 100000, why.join(" "));
+                    }
+                }
                 if a_nb_off == 0 {
                     continue;
                 }
@@ -449,6 +473,16 @@ fn split_block(shapes: &[Shape], ds: &DS) -> Vec<Vec<Shape>> {
         // OCCT L371-392: RefineShell on multi-connected edges; collect the
         // closed sub-shells into the result, the not-closed ones for later
         // re-use of their faces.
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let desc: Vec<String> = a_shell.iter().map(|f| {
+                let n = f.as_face().and_then(|fd| fd.surface.clone()).map(|s| match s {
+                    rcad_kernel::geom::Surface3::Plane(p) => format!("({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
+                    _ => "O".into(),
+                }).unwrap_or_else(|| "?".into());
+                format!("{}:{}", f.ptr_id(), n)
+            }).collect();
+            eprintln!("[BS-GROW] start={} grown={} faces=[{}]", a_ff.ptr_id(), a_shell.len(), desc.join(" "));
+        }
         let a_lsh_sp = refine_shell(&a_shell, &a_mefp);
         let mut a_lsh_nc: Vec<Vec<Shape>> = Vec::new();
         for sh_sp in &a_lsh_sp {

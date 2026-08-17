@@ -3152,6 +3152,14 @@ impl BeanFaceIntersector {
         let tol_ang = 1e-9;
         let p = self.my_surface.plane();
         let l = self.my_curve.line();
+        if std::env::var("RCAD_LP_DEBUG").is_ok() {
+            eprintln!("[LP] line orig={:?} dir={:?} first={} last={} plane o={:?} n={:?} uv=[{:.4},{:.4},{:.4},{:.4}] crit={}",
+                l.origin, l.direction, self.my_first_parameter, self.my_last_parameter,
+                p.origin, p.normal,
+                self.my_u_min_parameter, self.my_u_max_parameter,
+                self.my_v_min_parameter, self.my_v_max_parameter,
+                self.my_criteria);
+        }
 
         self.my_is_done = true;
 
@@ -3199,16 +3207,25 @@ impl BeanFaceIntersector {
 
         let t = -dis / direc;
         if t < self.my_first_parameter || t > self.my_last_parameter {
+            if std::env::var("RCAD_LP_DEBUG").is_ok() {
+                eprintln!("[LP] t={} outside [{},{}]", t, self.my_first_parameter, self.my_last_parameter);
+            }
             return;
         }
 
         let pint = DVec3::new(orig.x + t * al, orig.y + t * bl, orig.z + t * cl);
         let (u, v) = plane_parameters(p, pint);
+        if std::env::var("RCAD_LP_DEBUG").is_ok() {
+            eprintln!("[LP] t={} pint={:?} uv=({:.4},{:.4})", t, pint, u, v);
+        }
         if self.my_u_min_parameter > u
             || u > self.my_u_max_parameter
             || self.my_v_min_parameter > v
             || v > self.my_v_max_parameter
         {
+            if std::env::var("RCAD_LP_DEBUG").is_ok() {
+                eprintln!("[LP] uv outside face domain");
+            }
             return;
         }
 

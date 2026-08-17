@@ -971,6 +971,21 @@ impl BRep {
         }
         // Vertex positions changed; the position-keyed identity cache is stale.
         self.vert_by_pos.clear();
+        // Sub-shape references may carry a Location (e.g. the extruded copies
+        // of a prism reference the source TShapes). The TShape geometry above
+        // was transformed by `mat`, so a located reference must use the
+        // conjugated frame loc' = mat . loc . mat^-1 to yield
+        // loc'.(mat.p) = mat.(loc.p) — otherwise rotating a shape whose top
+        // copies share the bottom TShapes leaves those vertices at the
+        // unrotated positions (bcommon_simple G1 rotated prism).
+        // BRep location table is 1-based: vec[i] is location index i+1 (0 =
+        // identity is implicit), so every stored entry is a real location.
+        for l in self.locations.iter_mut() {
+            *l = mat * *l * mat.inverse();
+        }
+        if std::env::var("RCAD_XF_DEBUG").is_ok() {
+            eprintln!("[XF] locations={:?}", self.locations);
+        }
     }
 
     /// OCCT TopoDS_TShape::EmptyCopy �?create a new TShape of the same type

@@ -548,11 +548,18 @@ fn perform_planes(
 
     // classify line2d1 relatively first plane
     let (crossed1, p11, p12) = classify_lin2d(uv1, &lin2d1, tol_tang);
+    // classify line2d2 relatively second plane
+    let (crossed2, p21, p22) = classify_lin2d(uv2, &lin2d2, tol_tang);
+    if std::env::var("RCAD_FF_DEBUG").is_ok() {
+        eprintln!("[FF-CLS] uv1={uv1:?} uv2={uv2:?} tol_tang={tol_tang} lin2d1={:?} lin2d2={:?}",
+            lin2d1, lin2d2);
+        eprintln!("[FF-CLS] pln1 pos={:?} xdir={:?} ydir={:?} pln2 pos={:?} xdir={:?} ydir={:?}",
+            p1.origin, p1.u_dir, p1.v_dir, p2.origin, p2.u_dir, p2.v_dir);
+        eprintln!("[FF-CLS] crossed1={crossed1} p1=({p11},{p12}) crossed2={crossed2} p2=({p21},{p22})");
+    }
     if !crossed1 {
         return (true, false, Vec::new());
     }
-    // classify line2d2 relatively second plane
-    let (crossed2, p21, p22) = classify_lin2d(uv2, &lin2d2, tol_tang);
     if !crossed2 {
         return (true, false, Vec::new());
     }

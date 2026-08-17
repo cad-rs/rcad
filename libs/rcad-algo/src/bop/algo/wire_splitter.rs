@@ -361,6 +361,33 @@ fn split_block(
     // OCCT L324: RefineAngles(myFace, mySmartMap, theContext).
     refine_angles(face, face_index, &mut my_smart_map, ds);
 
+    if std::env::var("RCAD_WS_DEBUG").is_ok() {
+        eprintln!("[WS-SM] aNb={}", a_nb);
+        for (ii, (vkey, (a_v_sh, leinfo))) in my_smart_map.iter().enumerate() {
+            let _ = vkey;
+            let pos = debug_located_vertex_point(a_v_sh, ds);
+            let mut s = format!(
+                "[WS-SM] v{} p=({:.6},{:.6},{:.6})",
+                ii + 1,
+                pos.x,
+                pos.y,
+                pos.z
+            );
+            for a_ei in leinfo {
+                let a_e = a_ei.edge();
+                s.push_str(&format!(
+                    " e={}o={}in={}ins={}a={:.6}",
+                    a_e.ptr_id(),
+                    if a_e.orientation == Orientation::Reversed { 1 } else { 0 },
+                    a_ei.is_in() as u8,
+                    a_ei.is_inside() as u8,
+                    a_ei.angle(),
+                ));
+            }
+            eprintln!("{}", s);
+        }
+    }
+
     // 4. Path building.
     for i in 0..a_nb {
         let (a_va_sh, leinfo) = my_smart_map.get_index(i).unwrap().1.clone();
@@ -435,6 +462,19 @@ fn path(
             if a_ls[a_nb - 1].is_partner(&a_e_outa) {
                 return;
             }
+        }
+        if std::env::var("RCAD_WS_DEBUG").is_ok() {
+            let pos = debug_located_vertex_point(&a_va, ds);
+            eprintln!(
+                "[WS-PATH] step aVa=({:.6},{:.6},{:.6}) aEOuta={}o={} in={} ins={}",
+                pos.x,
+                pos.y,
+                pos.z,
+                a_e_outa.ptr_id(),
+                if a_e_outa.orientation == Orientation::Reversed { 1 } else { 0 },
+                an_edge_info.is_in() as u8,
+                an_edge_info.is_inside() as u8,
+            );
         }
         an_edge_info.set_passed(true);
         // OCCT L406: anEdgeInfo->SetPassed(true) — the edge info is a reference
@@ -514,6 +554,17 @@ fn path(
                         let a_w = make_wire(&a_buf);
                         cb.loops.push(a_w);
                     }
+                    if std::env::var("RCAD_WS_DEBUG").is_ok() {
+                        let mut s = format!("[WS-PATH] LOOP n={}", a_buf.len());
+                        for a_e in &a_buf {
+                            s.push_str(&format!(
+                                " e={}o={}",
+                                a_e.ptr_id(),
+                                if a_e.orientation == Orientation::Reversed { 1 } else { 0 },
+                            ));
+                        }
+                        eprintln!("{} nbj={}", s, i - 1);
+                    }
                     let a_nbj = i - 1;
                     if a_nbj < 1 {
                         a_ls.clear();
@@ -584,6 +635,20 @@ fn path(
                 if an_angle < a_min_angle - eps {
                     a_min_angle = an_angle;
                     p_edge_info = Some(an_ei_mut.clone());
+                }
+                if std::env::var("RCAD_WS_DEBUG").is_ok() {
+                    eprintln!(
+                        "[WS-PATH]   cand e={}o={} out={} np={} ang={:.6} min={:.6} chosen={}",
+                        a_e.ptr_id(),
+                        if a_e.orientation == Orientation::Reversed { 1 } else { 0 },
+                        an_is_out as u8,
+                        an_is_not_passed as u8,
+                        an_angle,
+                        a_min_angle,
+                        if let Some(pe) = &p_edge_info {
+                            pe.edge().ptr_id() == a_e.ptr_id() && pe.is_in() == an_ei_mut.is_in()
+                        } else { false } as u8,
+                    );
                 }
             }
         }
@@ -1305,6 +1370,23 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
         }
         _ => None,
     }
+}
+
+/// Debug helper: the 3D point of a vertex with its location applied.
+fn debug_located_vertex_point(v: &Shape, ds: &DS) -> DVec3 {
+    let p = match &*v.data {
+        TShape::Vertex(vd) => vd.point,
+        _ => return DVec3::ZERO,
+    };
+    match ds.locations.get(v.location as usize) {
+        Some(tr) => tr.transform_point3(p),
+        None => p,
+    }
+}
+
+/// Debug helper: does the edge carry a pcurve on the face?
+pub(crate) fn edge_has_pcurve(e: &Shape, face_index: usize, ds: &DS) -> bool {
+    has_curve_on_surface(e, face_index, ds)
 }
 
 fn has_curve_on_surface(e: &Shape, face_index: usize, ds: &DS) -> bool {

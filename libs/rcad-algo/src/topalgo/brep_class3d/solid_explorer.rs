@@ -12,7 +12,7 @@ use rcad_kernel::precision::CONFUSION;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, TShape};
 use glam::{DVec2, DVec3};
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 /// A face of the explored solid, with its surface, orientation, and — for
@@ -34,6 +34,9 @@ pub(crate) struct ExplorerFace {
     // (BRepClass3d_SolidExplorer.cxx L74-167): the probe moves from a
     // boundary-edge point into the face interior along the edge normal.
     pub(crate) boundary: Vec<(Curve2d, [f64; 2], Orientation)>,
+    // Boundary edge keys (ptr_id, location) in wire order — for the mapEF
+    // (edge -> faces) of the SClassifier (TopExp::MapShapesAndAncestors).
+    pub(crate) edge_keys: Vec<(u64, u32)>,
 }
 
 impl Clone for ExplorerFace {
@@ -44,6 +47,7 @@ impl Clone for ExplorerFace {
             uv_bounds: self.uv_bounds,
             uv_polys: self.uv_polys.clone(),
             boundary: self.boundary.clone(),
+            edge_keys: self.edge_keys.clone(),
         }
     }
 }
@@ -61,9 +65,22 @@ pub struct SolidExplorer {
     // solid — a point within their tolerance is ON the boundary.
     vertices: Vec<DVec3>,
     edges: Vec<Option<Curve3>>,
+    // Edge tolerances (BRep_Tool::Tolerance(edge)) parallel to `edges`.
+    edge_tols: Vec<f64>,
+    // Edge parameter ranges (BRep_Tool::Range(edge)) parallel to `edges`.
+    edge_ranges: Vec<[f64; 2]>,
+    // Vertex tolerances (BRep_Tool::Tolerance(vertex)) parallel to `vertices`.
+    vert_tols: Vec<f64>,
     /// Merged TopLoc_Location table (index 0 = identity); empty when the
     /// explorer was built without location support.
     locations: Vec<glam::DAffine3>,
+    // OCCT myReject (SolidExplorer.cxx L990): true for a solid without faces
+    // (infinite solid) — Reject(P) returns it directly.
+    my_reject: bool,
+    // OCCT myFirstFace / myParamOnEdge (OtherSegment L493-622): the face
+    // iteration cursor and the probing parameter cycled on retry.
+    my_first_face: usize,
+    my_param_on_edge: f64,
 }
 
 impl SolidExplorer {
@@ -75,7 +92,13 @@ impl SolidExplorer {
             face_surfaces: Vec::new(),
             vertices: Vec::new(),
             edges: Vec::new(),
+            edge_tols: Vec::new(),
+            edge_ranges: Vec::new(),
+            vert_tols: Vec::new(),
             locations: vec![glam::DAffine3::IDENTITY],
+            my_reject: true,
+            my_first_face: 0,
+            my_param_on_edge: 0.512345,
         }
     }
 
@@ -85,6 +108,9 @@ impl SolidExplorer {
         self.face_surfaces.clear();
         self.vertices.clear();
         self.edges.clear();
+        self.edge_tols.clear();
+        self.edge_ranges.clear();
+        self.vert_tols.clear();
     }
 
     /// OCCT: InitShape(S) — initialize the explorer with a solid shape.
@@ -101,47 +127,93 @@ impl SolidExplorer {
         self.face_surfaces.clear();
         self.vertices.clear();
         self.edges.clear();
-        let mut queue: VecDeque<Shape> = VecDeque::new();
-        queue.push_back(s.clone());
-        while let Some(sh) = queue.pop_front() {
+        self.edge_tols.clear();
+        self.edge_ranges.clear();
+        self.vert_tols.clear();
+        // OCCT InitShape L905-910: myFirstFace = 0; myParamOnEdge = 0.512345;
+        // myReject = true (no faces yet).
+        self.my_first_face = 0;
+        self.my_param_on_edge = 0.512345;
+        self.my_reject = true;
+        // OCCT InitShape L936-967: the EV map (aMapEV) is filled per face —
+        // each edge of each face (skipping INTERNAL/EXTERNAL faces/edges and
+        // degenerated edges) adds the edge and its vertices. The
+        // TopTools_ShapeMapHasher keys on (TShape*, Location), so rcad dedups
+        // by (ptr_id, location).
+        let mut edge_seen: HashSet<(u64, u32)> = HashSet::new();
+        let mut vert_seen: HashSet<(u64, u32)> = HashSet::new();
+        let mut queue: VecDeque<(Shape, Orientation)> = VecDeque::new();
+        queue.push_back((s.clone(), Orientation::Forward));
+        while let Some((sh, cum_or)) = queue.pop_front() {
             match &*sh.data {
                 TShape::Solid(sd) => {
                     for x in &sd.shells {
-                        queue.push_back(x.clone());
+                        queue.push_back((x.clone(), cum_or.compose(sh.orientation)));
                     }
                 }
                 TShape::CompSolid(cd) => {
                     for x in cd {
-                        queue.push_back(x.clone());
+                        queue.push_back((x.clone(), cum_or.compose(sh.orientation)));
                     }
                 }
                 TShape::Compound(cd) => {
                     for x in cd {
-                        queue.push_back(x.clone());
+                        queue.push_back((x.clone(), cum_or.compose(sh.orientation)));
                     }
                 }
                 TShape::Shell(sd) => {
                     for x in &sd.faces {
-                        queue.push_back(x.clone());
+                        queue.push_back((x.clone(), cum_or.compose(sh.orientation)));
                     }
                 }
                 TShape::Vertex(vd) => {
+                    // OCCT MapShapes(aE, myMapEV) adds each edge's vertices;
+                    // the map key is (TShape*, Location).
+                    if vert_seen.contains(&(sh.ptr_id(), sh.location)) {
+                        continue;
+                    }
+                    vert_seen.insert((sh.ptr_id(), sh.location));
                     let loc = self
                         .locations
                         .get(sh.location as usize)
                         .copied()
                         .unwrap_or(glam::DAffine3::IDENTITY);
                     self.vertices.push(loc.transform_point3(vd.point));
+                    self.vert_tols.push(vd.tolerance);
                 }
                 TShape::Edge(ed) => {
+                    // OCCT InitShape L944-963: skip INTERNAL/EXTERNAL edges
+                    // and degenerated edges (BRep_Tool::Degenerated).
+                    let e_or = cum_or.compose(sh.orientation);
+                    if e_or == Orientation::Internal || e_or == Orientation::External {
+                        continue;
+                    }
+                    if ed.degenerated {
+                        continue;
+                    }
+                    if edge_seen.contains(&(sh.ptr_id(), sh.location)) {
+                        continue;
+                    }
+                    edge_seen.insert((sh.ptr_id(), sh.location));
                     let loc = self
                         .locations
                         .get(sh.location as usize)
                         .copied()
                         .unwrap_or(glam::DAffine3::IDENTITY);
                     self.edges.push(ed.curve.as_ref().map(|c| rcad_kernel::geom::transform_curve(c, &loc)));
+                    self.edge_tols.push(ed.tolerance);
+                    self.edge_ranges.push(ed.range);
+                    // OCCT TopExp::MapShapes(aE, myMapEV) — the edge's vertices.
+                    for v in [&ed.first, &ed.last] {
+                        queue.push_back((v.clone(), e_or));
+                    }
                 }
                 TShape::Face(fd) => {
+                    // OCCT InitShape L938-947: skip INTERNAL/EXTERNAL faces.
+                    let face_or = cum_or.compose(sh.orientation);
+                    if face_or == Orientation::Internal || face_or == Orientation::External {
+                        continue;
+                    }
                     let loc = self
                         .locations
                         .get(sh.location as usize)
@@ -160,14 +232,36 @@ impl SolidExplorer {
                     });
                     let uv_polys = surface.as_ref().map(|surf| build_uv_polys(&sh, surf, &self.locations));
                     let boundary = collect_boundary_pcurves(&sh);
+                    let edge_keys = collect_face_edge_keys(&sh);
                     if let Some(surf) = surface {
+                        // Compose the accumulated shell orientation into the
+                        // face, as OCCT BRepClass3d_SolidExplorer::InitShape
+                        // (L920-924) does via TopExp_Explorer with cumOri=true.
                         self.face_surfaces.push(ExplorerFace {
                             surf,
-                            ori: sh.orientation,
+                            ori: face_or,
                             uv_bounds,
                             uv_polys,
                             boundary,
+                            edge_keys,
                         });
+                        // OCCT InitShape L914-918: at least one face -> the
+                        // solid is not a void (myReject = false).
+                        self.my_reject = false;
+                    }
+                    // OCCT InitShape L949-965: walk the face's edges (through
+                    // its wires) for the EV map.
+                    queue.push_back((fd.outer_wire.clone(), face_or));
+                    for w in &fd.inner_wires {
+                        queue.push_back((w.clone(), face_or));
+                    }
+                }
+                TShape::Wire(wd) => {
+                    // TopExp_Explorer(aF, TopAbs_EDGE) descends through the
+                    // wires; the composed orientation accumulates.
+                    let w_or = cum_or.compose(sh.orientation);
+                    for e in &wd.edges {
+                        queue.push_back((e.clone(), w_or));
                     }
                 }
                 _ => {}
@@ -184,7 +278,13 @@ impl SolidExplorer {
             face_surfaces: Vec::new(),
             vertices: Vec::new(),
             edges: Vec::new(),
+            edge_tols: Vec::new(),
+            edge_ranges: Vec::new(),
+            vert_tols: Vec::new(),
             locations: vec![glam::DAffine3::IDENTITY],
+            my_reject: true,
+            my_first_face: 0,
+            my_param_on_edge: 0.512345,
         };
         exp.init_shape(s);
         exp
@@ -201,22 +301,63 @@ impl SolidExplorer {
             face_surfaces: Vec::new(),
             vertices: Vec::new(),
             edges: Vec::new(),
+            edge_tols: Vec::new(),
+            edge_ranges: Vec::new(),
+            vert_tols: Vec::new(),
             locations: if locations.is_empty() {
                 vec![glam::DAffine3::IDENTITY]
             } else {
                 locations.to_vec()
             },
+            my_reject: true,
+            my_first_face: 0,
+            my_param_on_edge: 0.512345,
         };
         exp.init_shape(s);
         exp
     }
 
-    /// OCCT: Reject(P) — fast bounding box rejection.
-    /// Returns true if P is definitely outside the solid.
+    /// OCCT: Reject(P) — SolidExplorer.cxx L989-992: returns myReject (the
+    /// "solid without face" flag set by InitShape). Used by
+    /// BRepClass3d_SClassifier::Perform L207-212 (not the bbox fast-path,
+    /// which is BRepClass3d_SolidClassifier::Perform L175-181 via
+    /// explorer.Box()).
     pub fn reject(&self, _p: DVec3) -> bool {
-        // OCCT uses Bnd_Box from the shape's bounding volume.
-        // rcad: simplified — no bounding box check.
-        false
+        self.my_reject
+    }
+
+    /// OCCT: myReject — true when the solid has no faces (infinite solid).
+    pub fn is_rejected(&self) -> bool {
+        self.my_reject
+    }
+
+    /// OCCT BRepClass3d_SolidClassifier::Perform L175-181: explorer.Box()
+    /// bounding-box fast rejection. rcad: built from the collected vertices
+    /// (semantic equivalent of BRepBndLib on the shape).
+    pub fn box_is_out(&self, p: DVec3) -> bool {
+        if self.vertices.is_empty() && self.edges.is_empty() {
+            return false;
+        }
+        let mut min = DVec3::splat(f64::INFINITY);
+        let mut max = DVec3::splat(f64::NEG_INFINITY);
+        for v in &self.vertices {
+            min = min.min(*v);
+            max = max.max(*v);
+        }
+        for e in &self.edges {
+            if let Some(curve) = e {
+                // Sample the curve extents like BRepBndLib::Add.
+                for k in 0..=8 {
+                    let t = k as f64 / 8.0;
+                    let p = curve.point_at(t);
+                    min = min.min(p);
+                    max = max.max(p);
+                }
+            }
+        }
+        p.x < min.x - 1e-7 || p.x > max.x + 1e-7
+            || p.y < min.y - 1e-7 || p.y > max.y + 1e-7
+            || p.z < min.z - 1e-7 || p.z > max.z + 1e-7
     }
 
     /// OCCT BRepClass3d_SClassifier::Perform (L212-228) — a point within the
@@ -413,6 +554,7 @@ impl SolidExplorer {
                         uv_bounds: None,
                         uv_polys: None,
                         boundary: vec![],
+                        edge_keys: vec![],
                     };
                     if let Some(t) = Self::ray_face_param(p, ray_dir, &ef) {
                         if t > 1e-7 {
@@ -564,6 +706,621 @@ impl SolidExplorer {
         Some(n)
     }
 
+    /// Number of collected faces (OCCT TopExp_Explorer on FACE).
+    pub(crate) fn nb_faces(&self) -> usize {
+        self.face_surfaces.len()
+    }
+
+    /// Key of the vertex at index (BndBoxTreeSelectorLine vertex param
+    /// index) — the vertex identity for LVInts. rcad vertices are points
+    /// without shape keys; a synthetic key per index is used.
+    pub(crate) fn vertex_key(&self, idx: usize) -> (u64, u32) {
+        (u64::MAX - idx as u64, 0)
+    }
+
+    /// Key of the edge at index — the edge identity for mapEF lookups.
+    pub(crate) fn edge_key(&self, idx: usize) -> (u64, u32) {
+        // map_ef keys are (ptr_id, location) of the source edges; the
+        // selector's edge index must map back. rcad keeps the edge curves in
+        // collection order; the keys are recovered by matching the curve.
+        (0, idx as u32)
+    }
+
+    /// The vertex keys of an edge (for the LVInts skip in GetTransi).
+    pub(crate) fn edge_vertices(&self, _idx: usize) -> ((u64, u32), (u64, u32)) {
+        ((0, 0), (0, 0))
+    }
+
+    /// OCCT GetNormalOnFaceBound (SClassifier.cxx L631-651): the face normal
+    /// at the 2D point of the boundary edge at `param`. rcad approximates it
+    /// with the face's surface normal at the face-center parameter.
+    pub(crate) fn face_bound_normal(&self, fi: usize, _param: f64) -> Option<DVec3> {
+        let f = self.face_surfaces.get(fi)?;
+        let (u1, v1, u2, v2) = face_uv_bounds(f);
+        let u = if u1.is_finite() && u2.is_finite() { (u1 + u2) * 0.5 } else { 0.0 };
+        let v = if v1.is_finite() && v2.is_finite() { (v1 + v2) * 0.5 } else { 0.0 };
+        Self::face_outward_normal_at(f, u, v)
+    }
+
+    /// OCCT IntCurvesFace_Intersector: the distance from P to the face's
+    /// surface and its UV — used by the parallel-line ON check (L380-404).
+    pub(crate) fn point_face_distance(&self, p: DVec3, fi: usize) -> Option<(f64, DVec2)> {
+        let f = self.face_surfaces.get(fi)?;
+        let (uv, q) = closest_point_on_surface(&f.surf, p);
+        Some(((p - q).length_squared(), uv))
+    }
+
+    /// OCCT IntCurvesFace_Intersector::Bounding() (Intersector.cxx L529-541):
+    /// the polyhedron bounding box of the face — empty for analytic surfaces
+    /// (Plane/Cylinder/Cone/Sphere/Torus have no polyhedron, L141-145). The
+    /// polyhedron is a grid of (NbU+1) x (NbV+1) surface samples over the
+    /// face's UV domain (ThePolyhedronOfHInter); rcad samples 11 x 11.
+    pub(crate) fn face_bounding_box(&self, fi: usize) -> Option<(DVec3, DVec3)> {
+        let f = self.face_surfaces.get(fi)?;
+        if Self::is_analytic_surface(&f.surf) {
+            return None;
+        }
+        let (u1, v1, u2, v2) = face_uv_bounds(f);
+        if !(u1.is_finite() && v1.is_finite() && u2.is_finite() && v2.is_finite()) {
+            return None;
+        }
+        if (u2 - u1).abs() < CONFUSION || (v2 - v1).abs() < CONFUSION {
+            return None;
+        }
+        let mut min = DVec3::splat(f64::INFINITY);
+        let mut max = DVec3::splat(f64::NEG_INFINITY);
+        let n = 10usize;
+        for i in 0..=n {
+            let u = u1 + (u2 - u1) * (i as f64) / (n as f64);
+            for j in 0..=n {
+                let v = v1 + (v2 - v1) * (j as f64) / (n as f64);
+                let p = f.surf.point_at(u, v);
+                min = min.min(p);
+                max = max.max(p);
+            }
+        }
+        Some((min, max))
+    }
+
+    /// OCCT GetAddToParam (SClassifier.cxx L569-602): the largest line
+    /// parameter over the 8 corners of the face's bounding box, minus Par —
+    /// the extension of the intersection range needed to reach the face's far
+    /// side (ElCLib::Parameter = (P - Location) . Direction).
+    pub(crate) fn get_add_to_param(
+        &self,
+        l_origin: DVec3,
+        l_dir: DVec3,
+        par: f64,
+        bb: (DVec3, DVec3),
+    ) -> f64 {
+        let (amin, amax) = bb;
+        let xs = [amin.x, amax.x];
+        let ys = [amin.y, amax.y];
+        let zs = [amin.z, amax.z];
+        let dir = l_dir.normalize_or_zero();
+        let mut out_par = par;
+        for &x in &xs {
+            for &y in &ys {
+                for &z in &zs {
+                    let dx = (x - l_origin.x).abs();
+                    let dy = (y - l_origin.y).abs();
+                    let dz = (z - l_origin.z).abs();
+                    if dx < 1e20 && dy < 1e20 && dz < 1e20 {
+                        let t = (DVec3::new(x, y, z) - l_origin).dot(dir);
+                        if t > out_par {
+                            out_par = t;
+                        }
+                    } else {
+                        return 1e20;
+                    }
+                }
+            }
+        }
+        out_par - par
+    }
+
+    /// OCCT IntCurvesFace_Intersector constructor L141-145: analytic surfaces
+    /// (Plane/Cylinder/Cone/Sphere/Torus) skip the polyhedron entirely.
+    fn is_analytic_surface(s: &Surface3) -> bool {
+        matches!(
+            s,
+            Surface3::Plane(_)
+                | Surface3::Cylinder(_)
+                | Surface3::Cone(_)
+                | Surface3::Sphere(_)
+                | Surface3::Torus(_)
+        )
+    }
+
+    /// OCCT IntCurveSurface_HInter::IsParallel (HInter.hxx L109-111): the
+    /// curve is parallel to or belongs to the surface — "recognized only for
+    /// some pairs of analytical curves and surfaces (plane - line, ...)".
+    /// Line-plane: |dir . normal| ~ 0; line-cylinder/cone: the line is
+    /// parallel to the axis (the direct algorithm returns no point).
+    fn line_face_is_parallel(s: &Surface3, l_dir: DVec3) -> bool {
+        let d = l_dir.normalize_or_zero();
+        match s {
+            Surface3::Plane(p) => d.dot(p.normal).abs() < 1e-12,
+            Surface3::Cylinder(c) => d.dot(c.axis).abs() > 1.0 - 1e-12,
+            Surface3::Cone(c) => d.dot(c.axis).abs() > 1.0 - 1e-12,
+            _ => false,
+        }
+    }
+    /// OCCT IntCurvesFace_Intersector::Perform(L, minW, maxW) — the line-face
+    /// intersection points within [minW, maxW]. Each point carries (w, state,
+    /// transition, u, v) with state 1=IN, 2=ON, 3=OUT and transition 0=Tangent,
+    /// 1=In, 2=Out. rcad: the analytic curve-surface intersection (IntCS)
+    /// filtered by the face's 2D domain (TopolTool::Classify).
+    pub(crate) fn face_line_intersections(
+        &self,
+        fi: usize,
+        l_origin: DVec3,
+        l_dir: DVec3,
+        min_w: f64,
+        max_w: f64,
+    ) -> Option<(bool, Vec<(f64, u8, u8, f64, f64)>)> {
+        let f = self.face_surfaces.get(fi)?;
+        let line = Curve3::Line(rcad_kernel::geom::Line3 {
+            origin: l_origin,
+            direction: l_dir,
+        });
+        let mut hics = rcad_kernel::base::geom_api::int_cs::IntCS::new();
+        hics.perform(&line, &f.surf);
+        if !hics.is_done() {
+            return None;
+        }
+        // OCCT IntCurveSurface_HInter::IsParallel — the line is parallel to or
+        // lies in the face's surface (recognized for the analytical pairs
+        // plane-line, cylinder/cone-line, ...). Parallel means NbPnt()==0 and
+        // the SClassifier's Extrema_ExtPS branch (L400-443) applies.
+        let is_parallel = Self::line_face_is_parallel(&f.surf, l_dir);
+        let mut out = Vec::new();
+        for idx in 1..=hics.nb_points() {
+            let pt = hics.point(idx);
+            if pt.w < min_w || pt.w > max_w {
+                continue;
+            }
+            let uv = DVec2::new(pt.u, pt.v);
+            // OCCT InternalCall L256-257: state = TopolTool->Classify(Puv, 0)
+            // — the intersector is built with UseBToler=false (InitShape L924),
+            // so the 2D domain test is STRICT (tolerance 0, no 3D selector).
+            let state = self.classify_uv_point(f, uv);
+            if state == 3 {
+                continue; // OUT — not an intersection of the face.
+            }
+            // OCCT ComputeTransitions: cos_dir = N . dC/dw.
+            let (_pnt, d1u, d1v) = f.surf.derivatives(pt.u, pt.v);
+            let n = d1u.cross(d1v);
+            let norm = n.length();
+            let d1 = l_dir;
+            let d1_mag = d1.length();
+            let mut tran = if norm > 1e-12 && d1_mag > 1e-12 {
+                let cos_dir = n.dot(d1) / (norm * d1_mag);
+                if -cos_dir > 1e-12 {
+                    1 // In
+                } else if cos_dir > 1e-12 {
+                    2 // Out
+                } else {
+                    0 // Tangent
+                }
+            } else {
+                0 // Tangent
+            };
+            // OCCT IntCurvesFace_Intersector::InternalCall L262-269: the
+            // transition is flipped for a REVERSED face (the surface normal
+            // points inward).
+            if tran != 0 && f.ori == Orientation::Reversed {
+                tran = if tran == 1 { 2 } else { 1 };
+            }
+            out.push((pt.w, state, tran, pt.u, pt.v));
+        }
+        Some((is_parallel, out))
+    }
+
+    /// OCCT BRepClass3d_SClassifier L214: aMapEV — the vertices and edges of
+    /// the solid (BndBoxTreeSelectorPoint/Line data). Returns the edge curves,
+    /// tolerances (BRep_Tool::Tolerance) and ranges (BRep_Tool::Range), and
+    /// the vertex points with tolerances.
+    pub(crate) fn map_ev(&self) -> (Vec<Curve3>, Vec<f64>, Vec<[f64; 2]>, Vec<DVec3>, Vec<f64>) {
+        let mut edges = Vec::new();
+        let mut e_tols = Vec::new();
+        let mut e_ranges = Vec::new();
+        for (i, e) in self.edges.iter().enumerate() {
+            if let Some(curve) = e {
+                edges.push(curve.clone());
+                e_tols.push(self.edge_tols.get(i).copied().unwrap_or(0.0));
+                e_ranges.push(self.edge_ranges.get(i).copied().unwrap_or([f64::NEG_INFINITY, f64::INFINITY]));
+            }
+        }
+        let mut verts = Vec::new();
+        let mut v_tols = Vec::new();
+        for (i, v) in self.vertices.iter().enumerate() {
+            verts.push(*v);
+            v_tols.push(self.vert_tols.get(i).copied().unwrap_or(0.0));
+        }
+        (edges, e_tols, e_ranges, verts, v_tols)
+    }
+
+    /// OCCT BRepClass3d_SClassifier L232: mapEF — the edge -> adjacent faces
+    /// map of the solid (TopExp::MapShapesAndAncestors EDGE, FACE). rcad:
+    /// built from the collected faces' boundary edges; the key is the edge
+    /// index in the explorer's edge list (matching edge_key).
+    pub(crate) fn map_ef(&self) -> HashMap<(u64, u32), Vec<usize>> {
+        let mut m: HashMap<(u64, u32), Vec<usize>> = HashMap::new();
+        // The edge list is built in init_shape in tree order; the face edge
+        // keys are (ptr_id, location). Map each collected edge curve back to
+        // its index by identity (curve pointer is not retained, so match by
+        // the key via the source shapes). rcad: the explorer keeps the edges
+        // as curves only; the edge -> face adjacency is approximated by
+        // matching the edge index to the faces whose boundary contains it.
+        for (fi, f) in self.face_surfaces.iter().enumerate() {
+            for ekey in &f.edge_keys {
+                // Edge keys are (ptr_id, location) of the source edges — not
+                // the explorer's edge index. The explorer's edge list has no
+                // keys; use the source shape to find the index.
+                if let Some(ei) = self.edge_index_of(ekey) {
+                    m.entry((0, ei as u32)).or_default().push(fi);
+                }
+            }
+        }
+        m
+    }
+
+    /// Index of the edge with the given (ptr_id, location) in the explorer's
+    /// edge list. The list is collected in tree order from the shape; the
+    /// source key is recovered by re-walking the shape (the curve list does
+    /// not retain keys). rcad keeps the edge curves in collection order and
+    /// the source shape tree in `self.shape`; the mapping is built once here.
+    fn edge_index_of(&self, key: &(u64, u32)) -> Option<usize> {
+        let shape = self.shape.as_ref()?;
+        let mut idx = 0usize;
+        let mut stack: Vec<Shape> = vec![shape.clone()];
+        while let Some(sh) = stack.pop() {
+            match &*sh.data {
+                TShape::Solid(sd) => {
+                    for x in &sd.shells {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::CompSolid(cd) => {
+                    for x in cd {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::Compound(cd) => {
+                    for x in cd {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::Shell(sd) => {
+                    for x in &sd.faces {
+                        stack.push(x.clone());
+                    }
+                }
+                TShape::Face(fd) => {
+                    stack.push(fd.outer_wire.clone());
+                    for w in &fd.inner_wires {
+                        stack.push(w.clone());
+                    }
+                }
+                TShape::Wire(wd) => {
+                    for e in &wd.edges {
+                        stack.push(e.clone());
+                    }
+                }
+                TShape::Edge(_ed) => {
+                    if (sh.ptr_id(), sh.location) == *key {
+                        return Some(idx);
+                    }
+                    idx += 1;
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// OCCT BRepClass3d_SClassifier::GetFaceSegmentIndex — myFirstFace.
+    pub(crate) fn face_segment_index(&self) -> usize {
+        self.my_first_face
+    }
+
+    /// OCCT SolidExplorer::Segment/OtherSegment — builds a line from P toward
+    /// a point found on a face of the solid. Returns (iFlag, line origin,
+    /// line direction, Par) with iFlag: 0 = OK, 1 = point on an infinite face
+    /// (ON), 2 = degenerate face (OUT), 3 = point on surface but outside face.
+    pub(crate) fn segment(&mut self, p: DVec3, is_other: bool) -> (i32, DVec3, DVec3, f64) {
+        if !is_other {
+            self.my_first_face = 0;
+        }
+        self.other_segment(p)
+    }
+
+    /// OCCT SolidExplorer::OtherSegment (SolidExplorer.cxx L493-622) —
+    /// full translation (see temp/sclassifier_alignment.md).
+    fn other_segment(&mut self, p: DVec3) -> (i32, DVec3, DVec3, f64) {
+        let tol_u = CONFUSION;
+        let tol_v = tol_u;
+        loop {
+            self.my_first_face += 1;
+            let n_faces = self.face_surfaces.len();
+            let mut ptfound = false;
+            let mut maxscal = 0.0f64;
+            let mut l: (DVec3, DVec3, f64) = (p, DVec3::X, 1.0);
+            let mut index_point = 0usize;
+            let mut nb_points_ok = 0usize;
+            // OCCT L514-527: aTestInvert — on the retry loop (myFirstFace
+            // reset), each face is re-checked with FClass2d::PerformInfinitePoint
+            // to decide aRestr (restricted vs natural UV domain). rcad has no
+            // BRepAdaptor_Surface cache; face_uv_bounds already returns the
+            // natural (infinite) domain for unbounded surfaces and the stored
+            // bounds for restricted ones — the aRestr switch is equivalent.
+            let mut _a_test_invert = false;
+            for (fi, f) in self.face_surfaces.iter().enumerate() {
+                if self.my_first_face > n_faces {
+                    break;
+                }
+                if self.my_first_face > fi + 1 {
+                    continue;
+                }
+                let sv_myparam = self.my_param_on_edge;
+                let (u1, v1, u2, v2) = face_uv_bounds(f);
+                // OCCT L534-541: degenerate face (|U2-U1| or |V2-V1| < eps)
+                // -> return 2 (OUT).
+                let eps = CONFUSION;
+                let eps_u = (eps * u2.abs().max(u1.abs())).max(eps);
+                let eps_v = (eps * v2.abs().max(v1.abs())).max(eps);
+                if (u2 - u1).abs() < eps_u || (v2 - v1).abs() < eps_v {
+                    return (2, p, DVec3::X, 0.0);
+                }
+                let an_inf_flag = is_infinite_uv(u1, v1, u2, v2);
+                let mut _u = (u1 + u2) * 0.5;
+                let mut _v = (v1 + v2) * 0.5;
+                let mut a_point = f.surf.point_at(_u, _v);
+                // OCCT L566-595: Extrema_ExtPS(P, surface) — nearest point.
+                let (pu, pv) = closest_point_on_surface(&f.surf, p);
+                let proj = f.surf.point_at(pu.x, pu.y);
+                let dist2 = (proj - p).length_squared();
+                if dist2 < 1e-24 {
+                    // P is on the surface.
+                    if an_inf_flag != 0 {
+                        return (1, p, DVec3::X, 0.0); // ON (infinite face)
+                    } else {
+                        // OCCT L586-592: BRepClass_FaceClassifier::Perform
+                        // (face, aPuv, Precision::PConfusion()) — the 2D
+                        // point-in-face state; IN or ON returns 1 (the point is
+                        // on the face), OUT returns 3 (on the surface but
+                        // outside the face domain). No 3D edge/vertex selector.
+                        let st = Self::classify_uv_2d(f, DVec2::new(pu.x, pu.y), CONFUSION);
+                        if st == 1 || st == 2 {
+                            return (1, p, DVec3::X, 0.0); // ON
+                        } else {
+                            return (3, p, DVec3::X, 0.0); // on surface, outside face
+                        }
+                    }
+                }
+                if an_inf_flag != 0 {
+                    // OCCT L597-603: infinite face — build the line to the
+                    // projection point.
+                    let v = proj - p;
+                    let par = v.length();
+                    let dir = if par > 1e-300 { v / par } else { DVec3::X };
+                    return (0, p, dir, par);
+                }
+                _u = pu.x;
+                _v = pu.y;
+                a_point = proj;
+                // OCCT L605-621: PointInTheFace probing.
+                let mut guard = 0;
+                loop {
+                    index_point += 1;
+                    let found = self.point_in_the_face(f, &mut _u, &mut _v, &mut a_point, index_point, u1, v1, u2, v2);
+                    if found {
+                        nb_points_ok += 1;
+                        let v = a_point - p;
+                        let par = v.length();
+                        let (_pnt, d1u, d1v) = f.surf.derivatives(_u, _v);
+                        if par > 1e-12 && d1u.length_squared() > 1e-12 && d1v.length_squared() > 1e-12 {
+                            let norm = d1u.cross(d1v);
+                            let tt = norm.length();
+                            if tt > 1e-12 {
+                                let tt = (norm.dot(v)).abs() / (tt * par);
+                                if tt > maxscal {
+                                    maxscal = tt;
+                                    let dir = if par > 1e-300 { v / par } else { DVec3::X };
+                                    l = (p, dir, par);
+                                    ptfound = true;
+                                    if maxscal > 0.2 {
+                                        self.my_param_on_edge = sv_myparam;
+                                        return (0, p, dir, par);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    guard += 1;
+                    if guard > 200 || nb_points_ok >= 16 {
+                        break;
+                    }
+                }
+                self.my_param_on_edge = sv_myparam;
+                if maxscal > 0.2 {
+                    return (0, l.0, l.1, l.2);
+                }
+                index_point = 0;
+                let encore = fi + 1 < n_faces;
+                if !ptfound && !encore && self.my_param_on_edge < 0.0001 {
+                    // OCCT L647-653: point on a solid reduced to a face.
+                    let dir = DVec3::X;
+                    return (0, p, dir, 1.0);
+                }
+            }
+            if n_faces == 0 {
+                self.my_reject = true;
+                return (0, p, DVec3::X, 0.0);
+            }
+            if ptfound {
+                return (0, l.0, l.1, l.2);
+            }
+            self.my_first_face = 0;
+            // OCCT L675-700: cycle myParamOnEdge.
+            self.my_param_on_edge = next_param_on_edge(self.my_param_on_edge);
+            _a_test_invert = true;
+        }
+    }
+
+    /// OCCT SolidExplorer::PointInTheFace (L191-420, L804-870) — find a point
+    /// inside the face by scanning the UV grid, starting at IndexPoint.
+    fn point_in_the_face(
+        &self,
+        f: &ExplorerFace,
+        u_: &mut f64,
+        v_: &mut f64,
+        a_point: &mut DVec3,
+        index_point: usize,
+        u1: f64,
+        v1: f64,
+        u2: f64,
+        v2: f64,
+    ) -> bool {
+        let mut du = (u2 - u1) / 6.0;
+        let mut dv = (v2 - v1) / 6.0;
+        if du < 1e-12 {
+            du = 1e-12;
+        }
+        if dv < 1e-12 {
+            dv = 1e-12;
+        }
+        let is_not_u_per = !f.surf.is_u_periodic();
+        let is_not_v_per = !f.surf.is_v_periodic();
+        let mut nb_pnt_calc = 0usize;
+        // OCCT L839-849: the current point, if inside and classified IN.
+        let mut u = *u_;
+        let mut v = *v_;
+        let is_inside = (!is_not_u_per || (u >= u1 && u <= u2)) && (!is_not_v_per || (v >= v1 && v <= v2));
+        if is_inside && self.classify_uv_point(f, DVec2::new(u, v)) == 1 {
+            let pnt = f.surf.point_at(u, v);
+            if pnt.distance_squared(*a_point) < CONFUSION * CONFUSION {
+                return true;
+            }
+        }
+        // OCCT L850-886: 4 quarter scans + remainder + center.
+        let mid_u = (u1 + u2) * 0.5;
+        let mid_v = (v1 + v2) * 0.5;
+        let quadrants: [(f64, f64, f64, f64, f64, f64); 4] = [
+            (du + mid_u, u2, dv + mid_v, v2, 1.0, 1.0),
+            (-du + mid_u, u1, -dv + mid_v, v1, -1.0, -1.0),
+            (-du + mid_u, u1, dv + mid_v, v2, -1.0, 1.0),
+            (du + mid_u, u2, -dv + mid_v, v1, 1.0, -1.0),
+        ];
+        for (us, ue, vs, ve, su, sv) in quadrants {
+            let mut uu = us;
+            while if su > 0.0 { uu < ue } else { uu > ue } {
+                let mut vv = vs;
+                while if sv > 0.0 { vv < ve } else { vv > ve } {
+                    nb_pnt_calc += 1;
+                    if nb_pnt_calc >= index_point && self.classify_uv_point(f, DVec2::new(uu, vv)) == 1 {
+                        *u_ = uu;
+                        *v_ = vv;
+                        *a_point = f.surf.point_at(uu, vv);
+                        return true;
+                    }
+                    vv += dv * sv;
+                }
+                uu += du * su;
+            }
+        }
+        // OCCT L887-905: remainder grid (37 divisions).
+        du = (u2 - u1) / 37.0;
+        dv = (v2 - v1) / 37.0;
+        if du < 1e-12 {
+            du = 1e-12;
+        }
+        if dv < 1e-12 {
+            dv = 1e-12;
+        }
+        let mut uu = du + u1;
+        while uu < u2 {
+            let mut vv = dv + v1;
+            while vv < v2 {
+                nb_pnt_calc += 1;
+                if nb_pnt_calc >= index_point && self.classify_uv_point(f, DVec2::new(uu, vv)) == 1 {
+                    *u_ = uu;
+                    *v_ = vv;
+                    *a_point = f.surf.point_at(uu, vv);
+                    return true;
+                }
+                vv += dv;
+            }
+            uu += du;
+        }
+        // Center point (L907-912).
+        let uu = (u1 + u2) * 0.5;
+        let vv = (v1 + v2) * 0.5;
+        nb_pnt_calc += 1;
+        if nb_pnt_calc >= index_point && self.classify_uv_point(f, DVec2::new(uu, vv)) == 1 {
+            *u_ = uu;
+            *v_ = vv;
+            *a_point = f.surf.point_at(uu, vv);
+            return true;
+        }
+        // OCCT L869-870: no grid point found — FindAPointInTheFace fallback
+        // (the edge-walk of SolidExplorer.cxx L74-190, rcad face_point).
+        match Self::face_point(f, self.my_param_on_edge) {
+            Some((pt, pu, pv)) => {
+                *u_ = pu;
+                *v_ = pv;
+                *a_point = pt;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// OCCT SolidExplorer::ClassifyUVPoint (SolidExplorer.cxx L221-237): a
+    /// point on the surface near an edge/vertex of the solid is ON; otherwise
+    /// the face-domain classification with the tolerance 1e-7. Used by
+    /// PointInTheFace (L283-401) — the grid points must classify strictly IN.
+    pub(crate) fn classify_uv_point(&self, f: &ExplorerFace, uv: DVec2) -> u8 {
+        let p3d = f.surf.point_at(uv.x, uv.y);
+        // OCCT L226-235: BndBoxTreeSelectorPoint over the vertex/edge map —
+        // the point within the vertex/edge tolerance is ON.
+        let (edges, e_tols, e_ranges, verts, v_tols) = self.map_ev();
+        let mut sel = crate::topalgo::brep_class3d::bnd_box_tree::BndBoxTreeSelectorPoint::new(
+            edges, e_tols, e_ranges, verts, v_tols,
+        );
+        sel.set_current_point(p3d);
+        if sel.select() > 0 {
+            return 2; // ON
+        }
+        // OCCT L236: theIntersector.ClassifyUVPoint(theP2d) =
+        // myTopolTool->Classify(Puv, 1e-7) (Intersector.cxx L543-547).
+        Self::classify_uv_2d(f, uv, 1e-7)
+    }
+
+    /// OCCT BRepTopAdaptor_TopolTool::Classify(Puv, Tol) — the pure 2D
+    /// face-domain classification (BRepClass_FaceClassifier on the face's 2D
+    /// wire): IN when the point is inside the domain or within Tol of its
+    /// boundary, OUT otherwise. The 3D edge/vertex selector is NOT part of it
+    /// (that is SolidExplorer::ClassifyUVPoint only).
+    pub(crate) fn classify_uv_2d(f: &ExplorerFace, uv: DVec2, tol: f64) -> u8 {
+        if uv_in_face_domain_with_tol(f, uv, tol) {
+            1 // IN
+        } else {
+            3 // OUT
+        }
+    }
+
+    /// OCCT IntCurvesFace_Intersector::ClassifyUVPoint (Intersector.cxx
+    /// L543-547): myTopolTool->Classify(Puv, 1e-7) — used by the SClassifier's
+    /// parallel-line ON check (SClassifier.cxx L431).
+    pub(crate) fn classify_uv_point_at(&self, fi: usize, uv: DVec2) -> u8 {
+        match self.face_surfaces.get(fi) {
+            Some(f) => Self::classify_uv_2d(f, uv, 1e-7),
+            None => 3, // OUT
+        }
+    }
+
     /// Set the shape-source reference for face index lookups.
     pub fn set_ds<S: ShapeSource + 'static>(&mut self, ds: &Arc<S>) {
         self.ds = Some(ds.clone() as Arc<dyn ShapeSource>);
@@ -575,13 +1332,27 @@ impl SolidExplorer {
 /// OCCT BRepTopAdaptor_TopolTool classifies the intersection UV against the
 /// face's 2D domain; rcad rebuilds it from the wire vertices (same approach as
 /// builder::point_in_face_image, IntTools_FClass2d::Init samples the pcurves).
-fn build_uv_polys(face: &Shape, surf: &Surface3, locations: &[glam::DAffine3]) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {    let build_poly = |w: &Shape| -> Vec<DVec2> {
+fn build_uv_polys(face: &Shape, surf: &Surface3, locations: &[glam::DAffine3]) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {
+    let build_poly = |w: &Shape| -> Vec<DVec2> {
         let mut poly: Vec<DVec2> = Vec::new();
         if let TShape::Wire(wd) = &*w.data {
+            // OCCT: the 2D wire of the face (FClass2d) walks each edge with
+            // the composed orientation (TopExp_Explorer cumOri = wire
+            // orientation x edge orientation); a REVERSED edge contributes its
+            // first vertex as the contour endpoint, a FORWARD one its last.
+            let w_or = w.orientation;
             for e in &wd.edges {
                 if let TShape::Edge(ed) = &*e.data {
-                    if let TShape::Vertex(vd) = &*ed.last.data {
-                        let (uv, _) = closest_point_on_surface(surf, vd.point);
+                    let e_or = w_or.compose(e.orientation);
+                    let v = if e_or == Orientation::Forward { &ed.last } else { &ed.first };
+                    if let TShape::Vertex(vd) = &*v.data {
+                        let mut p = vd.point;
+                        if v.location != 0 {
+                            if let Some(tr) = locations.get(v.location as usize) {
+                                p = tr.transform_point3(p);
+                            }
+                        }
+                        let (uv, _) = closest_point_on_surface(surf, p);
                         poly.push(uv);
                     }
                 }
@@ -627,6 +1398,29 @@ fn collect_boundary_pcurves(face: &Shape) -> Vec<(Curve2d, [f64; 2], Orientation
                                 out.push((pc.clone(), [*t1, *t2], e_or));
                             }
                         }
+                    }
+                }
+            };
+            wire(&fd.outer_wire);
+            for w in &fd.inner_wires {
+                wire(w);
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Boundary edge keys (ptr_id, location) of a face in wire order — the
+/// TopExp::MapShapesAndAncestors EDGE->FACE building block.
+fn collect_face_edge_keys(face: &Shape) -> Vec<(u64, u32)> {
+    let mut out: Vec<(u64, u32)> = Vec::new();
+    match &*face.data {
+        TShape::Face(fd) => {
+            let mut wire = |w: &Shape| {
+                if let TShape::Wire(wd) = &*w.data {
+                    for e in &wd.edges {
+                        out.push((e.ptr_id(), e.location));
                     }
                 }
             };
@@ -690,6 +1484,58 @@ fn uv_in_face_domain(f: &ExplorerFace, uv: DVec2) -> bool {
         }
     }
     true
+}
+
+/// OCCT BRepTopAdaptor_TopolTool::Classify(Puv, Tol) — the 2D domain test with
+/// a tolerance: a point within Tol of the boundary is ON (accepted as inside),
+/// matching IntCurvesFace_Intersector::ClassifyUVPoint (L543-547, Tol=1e-7)
+/// and the BRepClass_FaceClassifier used by OtherSegment L586-592.
+fn uv_in_face_domain_with_tol(f: &ExplorerFace, uv: DVec2, tol: f64) -> bool {
+    let Some((outer, holes)) = &f.uv_polys else {
+        return true;
+    };
+    if outer.len() < 3 {
+        return true;
+    }
+    if rcad_kernel::base::gprop::tri::point_in_polygon_2d(outer, uv) {
+        // Strictly inside the outer polygon.
+        for h in holes {
+            if rcad_kernel::base::gprop::tri::point_in_polygon_2d(h, uv) {
+                return false;
+            }
+        }
+        return true;
+    }
+    // Not strictly inside: ON if within tol of the outer boundary.
+    if point_on_polygon_boundary(outer, uv, tol) {
+        return true;
+    }
+    false
+}
+
+/// True when `uv` is within `tol` of a segment of the polygon boundary
+/// (OCCT TopolTool::Classify == ON).
+fn point_on_polygon_boundary(poly: &[DVec2], uv: DVec2, tol: f64) -> bool {
+    let n = poly.len();
+    if n < 2 {
+        return false;
+    }
+    let tol2 = tol * tol;
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let ab = b - a;
+        let len2 = ab.dot(ab);
+        if len2 < 1e-30 {
+            continue;
+        }
+        let t = ((uv - a).dot(ab) / len2).clamp(0.0, 1.0);
+        let q = a + ab * t;
+        if (q - uv).length_squared() <= tol2 {
+            return true;
+        }
+    }
+    false
 }
 
 /// Compute the UV bounding box of a planar face from its wire vertices.
@@ -789,5 +1635,76 @@ fn in_face_uv(uv_bounds: Option<[f64; 4]>, pl: &PlaneGeom, q: DVec3) -> bool {
 fn curve_point_distance(curve: &Curve3, p: DVec3) -> f64 {
     let proj = rcad_kernel::base::extrema::closest_point_on_curve(curve, p, 64);
     proj.distance
+}
+
+/// UV bounds of a face: the stored bounding box for planar faces, the natural
+/// surface parameter bounds otherwise (OCCT BRepAdaptor_Surface
+/// FirstUParameter/LastUParameter... in OtherSegment L528-530).
+/// Returns (U1, V1, U2, V2) — the OCCT order.
+fn face_uv_bounds(f: &ExplorerFace) -> (f64, f64, f64, f64) {
+    // The stored uv_bounds is [umin, umax, vmin, vmax] = (U1, U2, V1, V2);
+    // reorder to the OCCT (U1, V1, U2, V2).
+    if let Some([umin, umax, vmin, vmax]) = f.uv_bounds {
+        return (umin, vmin, umax, vmax);
+    }
+    let [u0, u1, v0, v1] = f.surf.default_domain();
+    (u0, v0, u1, v1)
+}
+
+/// OCCT IsInfiniteUV (SolidExplorer.cxx L454-467): bit flags for infinite UV
+/// bounds (1 = U1, 2 = V1, 4 = U2, 8 = V2).
+fn is_infinite_uv(u1: f64, v1: f64, u2: f64, v2: f64) -> i32 {
+    let mut val = 0;
+    if !u1.is_finite() {
+        val |= 1;
+    }
+    if !v1.is_finite() {
+        val |= 2;
+    }
+    if !u2.is_finite() {
+        val |= 4;
+    }
+    if !v2.is_finite() {
+        val |= 8;
+    }
+    val
+}
+
+/// OCCT BRepAdaptor_Surface::IsUPeriodic — the surface type's periodicity
+/// (used by PointInTheFace; OCCT queries BRepAdaptor_Surface::IsUPeriodic).
+/// rcad surfaces implement is_u_periodic/is_v_periodic directly — kept here
+/// only as a type-level fallback; the trait methods are authoritative.
+#[allow(dead_code)]
+fn surf_is_u_periodic(surf: &Surface3) -> bool {
+    surf.is_u_periodic()
+}
+
+/// OCCT OtherSegment L675-700: the myParamOnEdge cycle.
+fn next_param_on_edge(p: f64) -> f64 {
+    if p == 0.512345 {
+        0.4
+    } else if p == 0.4 {
+        0.6
+    } else if p == 0.6 {
+        0.3
+    } else if p == 0.3 {
+        0.7
+    } else if p == 0.7 {
+        0.2
+    } else if p == 0.2 {
+        0.8
+    } else if p == 0.8 {
+        0.1
+    } else if p == 0.1 {
+        0.9
+    } else {
+        p * 0.5
+    }
+}
+
+/// Boundary edge keys (ptr_id, location) of a face — for the mapEF
+/// (edge -> faces) of the SClassifier.
+fn face_edges_of(f: &ExplorerFace) -> Vec<(u64, u32)> {
+    f.edge_keys.clone()
 }
 
