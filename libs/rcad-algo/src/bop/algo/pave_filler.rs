@@ -347,31 +347,134 @@ fn shrunk_range_arc_length(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
     simpson_step(curve, t1, t2, fa, fb, fm, tol, 0)
 }
 
-// OCCT BndLib_Add3dCurve::Add 鈥?build bounding box for curve subrange.
+// OCCT BndLib_Add3dCurve::Add (BndLib_Add3dCurve.cxx L29-36) -> GeomBndLib_Curve
+// (GeomBndLib_Curve.cxx L298-301) -> GeomBndLib_Line/Circle Box: build the
+// bounding box of a curve subrange.  Lines take the segment endpoints;
+// circular arcs add the endpoints plus the per-coordinate extremal points
+// (GeomBndLib_Circle.cxx L48-113).  Other curve types fall back to sampling.
 fn shrunk_range_bnd_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BndBox {
-    let n_samples = 100;
-    let dt = (t2 - t1) / n_samples as f64;
-    if dt <= 0.0 {
-        let p = curve.point_at(t1);
-        let mut b = BndBox::from_point(p);
-        b.set_gap(tol);
-        return b;
-    }
     let mut b = BndBox::new();
-    let mut first = true;
-    for i in 0..=n_samples {
-        let t = t1 + dt * i as f64;
-        let p = curve.point_at(t);
-        if first {
-            // BndBox from_point has no void flag and uses the point
+    let mut add = |p: DVec3| {
+        if b.is_void() {
             b = BndBox::from_point(p);
-            first = false;
         } else {
             b.add_point(p);
+        }
+    };
+    match curve {
+        // OCCT GeomBndLib_Line::Box (GeomBndLib_Line.hxx L66-71): endpoints.
+        rcad_kernel::geom::Curve3::Line(_) => {
+            add(curve.point_at(t1));
+            add(curve.point_at(t2));
+        }
+        // OCCT GeomBndLib_Circle::Box (GeomBndLib_Circle.cxx L48-113).
+        rcad_kernel::geom::Curve3::Circle(c) => {
+            let period = std::f64::consts::TAU;
+            if t2 - t1 >= period - rcad_kernel::PCONFUSION {
+                // Full circle: analytical extrema per coordinate.
+                for k in 0..3 {
+                    let xk = c.x_dir[k];
+                    let yk = c.y_dir[k];
+                    let amp = (c.radius * c.radius * xk * xk
+                        + c.radius * c.radius * yk * yk)
+                        .sqrt();
+                    let p = if k == 0 {
+                        DVec3::new(c.center.x + amp, c.center.y, c.center.z)
+                    } else if k == 1 {
+                        DVec3::new(c.center.x, c.center.y + amp, c.center.z)
+                    } else {
+                        DVec3::new(c.center.x, c.center.y, c.center.z + amp)
+                    };
+                    let q = if k == 0 {
+                        DVec3::new(c.center.x - amp, c.center.y, c.center.z)
+                    } else if k == 1 {
+                        DVec3::new(c.center.x, c.center.y - amp, c.center.z)
+                    } else {
+                        DVec3::new(c.center.x, c.center.y, c.center.z - amp)
+                    };
+                    add(p);
+                    add(q);
+                }
+            } else {
+                let mut a_u1 = t1;
+                let mut a_u2 = t2;
+                // OCCT L63-65: ElCLib::AdjustPeriodic(0, 2PI, Epsilon(1), U1, U2).
+                let a_tol = 1e-15;
+                if a_u2 - a_u1 > period * 0.5 {
+                    let a_mid = a_u1 + (a_u2 - a_u1) * 0.5;
+                    let a_shift = (a_mid / period).round() * period;
+                    a_u1 -= a_shift;
+                    a_u2 -= a_shift;
+                }
+                if a_u1 < -a_tol {
+                    a_u1 += period;
+                    a_u2 += period;
+                }
+                if a_u2 > period + a_tol {
+                    a_u2 -= period;
+                }
+                // Arc endpoints.
+                add(circle_point_at(c, a_u1));
+                add(circle_point_at(c, a_u2));
+                // Per-coordinate extremal parameters within the arc.
+                for k in 0..3 {
+                    let xk = c.x_dir[k];
+                    let yk = c.y_dir[k];
+                    // OCCT L78-88: tan(t) = Yk/Xk; Xk ~ 0 -> PI/2.
+                    let mut a_t_extr_min = if xk.abs() > 1e-12 {
+                        yk.atan2(xk)
+                    } else {
+                        std::f64::consts::FRAC_PI_2
+                    };
+                    // OCCT ElCLib::InPeriod(t, 0, 2PI).
+                    a_t_extr_min = a_t_extr_min.rem_euclid(period);
+                    let mut a_t_extr_max = if a_t_extr_min <= std::f64::consts::PI {
+                        a_t_extr_min + std::f64::consts::PI
+                    } else {
+                        a_t_extr_min - std::f64::consts::PI
+                    };
+                    let a_val_min = c.radius * a_t_extr_min.cos() * xk
+                        + c.radius * a_t_extr_min.sin() * yk
+                        + c.center[k];
+                    let a_val_max = c.radius * a_t_extr_max.cos() * xk
+                        + c.radius * a_t_extr_max.sin() * yk
+                        + c.center[k];
+                    if a_val_min > a_val_max {
+                        std::mem::swap(&mut a_t_extr_min, &mut a_t_extr_max);
+                    }
+                    // OCCT L99-108: InPeriod(t, U1, U1+2PI) then U1 <= t <= U2.
+                    let mut a_tk = (a_t_extr_min - a_u1).rem_euclid(period) + a_u1;
+                    if a_tk >= a_u1 && a_tk <= a_u2 {
+                        add(circle_point_at(c, a_t_extr_min));
+                    }
+                    a_tk = (a_t_extr_max - a_u1).rem_euclid(period) + a_u1;
+                    if a_tk >= a_u1 && a_tk <= a_u2 {
+                        add(circle_point_at(c, a_t_extr_max));
+                    }
+                }
+            }
+        }
+        _ => {
+            // Fallback: sampling (spline/other curves; the analytic extrema
+            // of the sampled 100-point box is within the curve tolerance).
+            let n_samples = 100;
+            let dt = (t2 - t1) / n_samples as f64;
+            if dt <= 0.0 {
+                add(curve.point_at(t1));
+            } else {
+                for i in 0..=n_samples {
+                    add(curve.point_at(t1 + dt * i as f64));
+                }
+            }
         }
     }
     b.set_gap(tol);
     b
+}
+
+/// OCCT ElCLib::CircleValue — point of a circle arc at parameter `t`.
+fn circle_point_at(c: &rcad_kernel::geom::Circle3, t: f64) -> DVec3 {
+    c.center + c.radius * (t.cos() * c.x_dir + t.sin() * c.y_dir)
 }
 
 // OCCT BRepLib::findNearestValidPoint (BRepLib_1.cxx L31-168).
@@ -1166,8 +1269,7 @@ impl PaveFiller {
                     if bb1.is_out_box(&bb2) {
                         if ee_debug {
                             eprintln!("[EE-DBG] pair ({},{}) box-out t1=[{:.3},{:.3}] ts=[{:.3},{:.3}] bb1={:?} bb2={:?}",
-                                n_e1, n_e2, t11, t12, ts11, ts12, bb1.raw_min(), bb2.raw_min());
-                        }
+                                n_e1, n_e2, t11, t12, ts11, ts12, bb1.raw_min(), bb2.raw_min());                        }
                         continue;
                     }
 
@@ -2352,9 +2454,18 @@ impl PaveFiller {
                         for &a_vertex_index in a_vertex_indices {
                             let Some(a_vertex) = self.ds.shape(a_vertex_index).as_vertex() else { continue; };
                             let a_vertex_point = a_vertex.point;
-                            let Some(a_c1) = an_edge1.curve.clone() else { continue; };
-                            let Some(a_c2) = an_edge2.curve.clone() else { continue; };
                             // OCCT L457-460: compute points exactly on the edges.
+                            // The context ProjPC uses BRep_Tool::Curve(aE) — the
+                            // edge's local curve — but a located edge (e.g. the
+                            // translated cap edge of a prism) must project in the
+                            // WORLD frame: the vertex point is world, so the
+                            // projection must use the located curve. rcad
+                            // edge_curve applies the DS location table, matching
+                            // BRep_Tool::Pnt(aE, t) semantics used by the EE
+                            // vertex creation (BOPTools_AlgoTools_2.cxx L254-271).
+                            let a_c1 = self.ds.edge_curve(n_e1);
+                            let a_c2 = self.ds.edge_curve(n_e2);
+                            let (Some(a_c1), Some(a_c2)) = (a_c1, a_c2) else { continue; };
                             let a_proj1 = closest_point_on_curve_range(
                                 &a_c1, a_vertex_point, an_edge1.range[0], an_edge1.range[1], 64);
                             let a_proj2 = closest_point_on_curve_range(

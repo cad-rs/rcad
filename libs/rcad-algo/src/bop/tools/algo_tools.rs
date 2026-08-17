@@ -559,21 +559,84 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
     let mut outer: Vec<glam::DVec2> = Vec::new();
     wire_poly(&fd.outer_wire, &mut outer);
     // A closed edge (circle) stores first == last, so the vertex sampling
-    // yields a degenerate polygon. Sample the edge curves instead (the
-    // equivalent of OCCT BRepTools::UVBounds on the pcurves).
-    if outer.len() < 3 {
-        outer = sample_wire_uv_curve(&fd.outer_wire, surf, locations);
+    // yields a degenerate polygon (all joint points collapse onto the seam
+    // parameter u=0 for a full-revolution cylindrical face). Sample the edge
+    // curves instead (the equivalent of OCCT BRepTools::UVBounds on the
+    // pcurves). The check must also catch the zero-area case: a polygon whose
+    // points all share the same u (or are otherwise collinear) hatches
+    // nothing and would make PointInFaceShape fail on a valid cylindrical
+    // piece (bcommon_simple J1: coaxial cylinder common).
+    let poly_usable = |poly: &Vec<glam::DVec2>| -> bool {
+        if poly.len() < 3 {
+            return false;
+        }
+        let u0 = poly[0].x;
+        !poly.iter().all(|p| (p.x - u0).abs() < 1e-9)
+    };
+    // Sample the edge curves of a u-periodic band face (cylinder/cone side)
+    // into a single-axis rectangle: the wire walks [cap circle, seam, cap
+    // circle, seam], whose projected polygon is a self-intersecting figure-8
+    // that the periodic ray test cannot classify points between the caps as
+    // inside. A band's UV domain is the rectangle [umin,umax] x [vmin,vmax];
+    // OCCT's BRepClass_FaceExplorer reaches the same domain through the
+    // natural boundaries + pcurves (IntTools_Context::IsValidPointForFace).
+    let band_rect = |w: &Shape| -> Vec<glam::DVec2> {
+        let pts = sample_wire_uv_curve(w, surf, locations);
+        if pts.len() < 2 {
+            return pts;
+        }
+        let mut umin = f64::INFINITY;
+        let mut umax = f64::NEG_INFINITY;
+        let mut vmin = f64::INFINITY;
+        let mut vmax = f64::NEG_INFINITY;
+        for p in &pts {
+            umin = umin.min(p.x);
+            umax = umax.max(p.x);
+            vmin = vmin.min(p.y);
+            vmax = vmax.max(p.y);
+        }
+        if !(umin < umax && vmin < vmax) {
+            return pts;
+        }
+        // Bring u into one period: the caps wrap, so umin/umax span a full
+        // revolution; normalize to [0, 2*PI).
+        let tau = std::f64::consts::TAU;
+        if umax - umin > tau * 0.9 {
+            umin = 0.0;
+            umax = tau;
+        }
+        vec![
+            glam::DVec2::new(umin, vmin),
+            glam::DVec2::new(umax, vmin),
+            glam::DVec2::new(umax, vmax),
+            glam::DVec2::new(umin, vmax),
+        ]
+    };
+    let is_band = matches!(
+        surf,
+        rcad_kernel::geom::Surface3::Cylinder(_) | rcad_kernel::geom::Surface3::Cone(_)
+    );
+    if !poly_usable(&outer) {
+        if is_band {
+            outer = band_rect(&fd.outer_wire);
+        } else {
+            outer = sample_wire_uv_curve(&fd.outer_wire, surf, locations);
+        }
     }
-    if outer.len() >= 3 {
+    if poly_usable(&outer) {
         polys.push(outer);
     }
     for iw in &fd.inner_wires {
         let mut inner: Vec<glam::DVec2> = Vec::new();
         wire_poly(iw, &mut inner);
-        if inner.len() < 3 {
-            inner = sample_wire_uv_curve(iw, surf, locations);
+        if !poly_usable(&inner) {
+            if is_band {
+                inner = band_rect(iw);
+            } else {
+                inner = sample_wire_uv_curve(iw, surf, locations);
+            }
         }
-        if inner.len() >= 3 {
+        if poly_usable(&inner) {
             polys.push(inner);
         }
     }
@@ -640,19 +703,15 @@ fn point_in_periodic_polygon(uv: glam::DVec2, poly: &[glam::DVec2], period: f64)
     for i in 0..n {
         let mut a = poly[i];
         let mut b = poly[(i + 1) % n];
+        // Unwrap the edge so its u-span stays within one period anchored at
+        // a.x (seam-crossing edges are normalized).
         while b.x - a.x > half {
             b.x -= period;
         }
         while b.x - a.x < -half {
             b.x += period;
         }
-        let mut u = uv.x;
-        while u - a.x > half {
-            u -= period;
-        }
-        while u - a.x < -half {
-            u += period;
-        }
+        let u = uv.x;
         if (a.y > uv.y) != (b.y > uv.y) {
             let x_int = a.x + (uv.y - a.y) * (b.x - a.x) / (b.y - a.y);
             if u < x_int {
@@ -677,17 +736,8 @@ pub(crate) fn point_in_face_shape(
         return (1, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
     let Some(polys) = shape_uv_polygons(face, locations) else {
-        if std::env::var("RCAD_BS_DEBUG").is_ok() {
-            eprintln!("[PIF-SHAPE] no polys");
-        }
         return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
-    if std::env::var("RCAD_BS_DEBUG").is_ok() {
-        for (pi, poly) in polys.iter().enumerate() {
-            let pts: Vec<String> = poly.iter().map(|p| format!("({:.6},{:.6})", p.x, p.y)).collect();
-            eprintln!("[PIF-SHAPE] face={} poly{} n={} pts=[{}]", face.ptr_id() % 100000, pi, poly.len(), pts.join(" "));
-        }
-    }
     // UV bounds over all polygons (OCCT UVBounds of the face).
     let mut a_umin = f64::INFINITY;
     let mut a_umax = f64::NEG_INFINITY;
@@ -1187,15 +1237,6 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
     // of the analytic surface parameters.
     let surf_sp = f_sp.as_face().and_then(|fd| fd.surface.clone());
     let surf_or = f_sr.as_face().and_then(|fd| fd.surface.clone());
-    if std::env::var("RCAD_BS_DEBUG").is_ok() {
-        let pd = |s: &Option<rcad_kernel::geom::Surface3>| -> String {
-            match s {
-                Some(rcad_kernel::geom::Surface3::Plane(p)) => format!("o=({:.6},{:.6},{:.6}) n=({:.6},{:.6},{:.6})", p.origin.x, p.origin.y, p.origin.z, p.normal.x, p.normal.y, p.normal.z),
-                _ => "O".into(),
-            }
-        };
-        eprintln!("[STRF-R] fSp.or={:?} fSr.or={:?} same={} surfSp=[{}] surfSr=[{}]", f_sp.orientation, f_sr.orientation, surface_same_match(&surf_sp, &surf_or), pd(&surf_sp), pd(&surf_or));
-    }
     if let (Some(s1), Some(s2)) = (&surf_sp, &surf_or) {
         if surface_same(s1, s2) {
             return (f_sp.orientation != f_sr.orientation, 0);
@@ -1212,9 +1253,6 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
     match ds.map_shape_index.get(&(f_sp.ptr_id(), f_sp.location)).copied() {
         Some(fi) => {
             let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face(fi, ds);
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[PIF] fSp={} inDS err={}", f_sp.ptr_id() % 100000, err);
-            }
             if err == 0 {
                 p3d = Some(p);
                 p2d_sp = Some(p2d);
@@ -1222,15 +1260,6 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
         }
         None => {
             let (err, p, p2d) = crate::bop::tools::algo_tools::point_in_face_shape(f_sp, &ds.locations);
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                let nw = f_sp.as_face().map(|fd| {
-                    let mut n = 0usize;
-                    if let TShape::Wire(wd) = &*fd.outer_wire.data { n += wd.edges.len(); }
-                    for iw in &fd.inner_wires { if let TShape::Wire(wd) = &*iw.data { n += wd.edges.len(); } }
-                    n
-                }).unwrap_or(0);
-                eprintln!("[PIF] fSp={} shape err={} wire_edges={}", f_sp.ptr_id() % 100000, err, nw);
-            }
             if err == 0 {
                 p3d = Some(p);
                 p2d_sp = Some(p2d);

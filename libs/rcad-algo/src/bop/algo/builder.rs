@@ -3387,10 +3387,6 @@ impl<'a> Builder<'a> {
         // OCCT L750-791: check pairs of faces with equal edge set.
         for (_edge_set, faces) in &an_e_set_faces {
             if faces.len() < 2 { continue; }
-            if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                let desc: Vec<String> = faces.iter().map(|f| format!("#{}", f.ptr_id() % 100000)).collect();
-                eprintln!("[SD-ES] edge_set group [{}] nsd_cand={}", desc.join(" "), faces.len());
-            }
             for i1 in 0..faces.len() {
                 let f1 = &faces[i1];
                 let parent1 = a_face_to_parent.get(&(f1.ptr_id(), f1.location)).copied();
@@ -3438,9 +3434,7 @@ impl<'a> Builder<'a> {
             if flag {
                 fill_map_faces(f1, f2, &mut a_dmsls);
             }
-            
         }
-        
 
         // OCCT L826: MakeBlocks(aDMSLS, aMBlocks).
         let a_m_blocks = make_blocks_faces(&a_dmsls);
