@@ -5,75 +5,110 @@
 use rcad_kernel::topods;
 
 /// Remove stale vertices/edges from a topods::BRep, rebuild with only
-/// topology-referenced data.
+/// topology-referenced data. Face/shell orientations of the source solids are
+/// preserved (OCCT TopExp explode semantics: sub-shapes keep their
+/// orientation); a BRep without solids falls back to one FORWARD shell over
+/// all face TShapes.
 pub fn compact_brep_topods(brep: &topods::BRep) -> topods::BRep {
-    // Collect all face tshape indices
-    let face_indices: Vec<usize> = brep.tshapes.iter().enumerate()
-        .filter(|(_, ts)| matches!(&***ts, topods::TShape::Face(_)))
-        .map(|(i, _)| i)
-        .collect();
-    compact_brep_face_subset(brep, &face_indices)
+    let mut shells = Vec::new();
+    for ts in &brep.tshapes {
+        if let topods::TShape::Solid(sd) = &**ts {
+            for sr in &sd.shells {
+                if let topods::TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+                    if !shd.faces.is_empty() {
+                        shells.push((sr.orientation, shd.faces.clone()));
+                    }
+                }
+            }
+        }
+    }
+    if shells.is_empty() {
+        let faces: Vec<topods::Shape> = brep.tshapes.iter().enumerate()
+            .filter(|(_, ts)| matches!(&***ts, topods::TShape::Face(_)))
+            .map(|(i, ts)| topods::Shape {
+                data: ts.clone(),
+                index: i,
+                orientation: topods::Orientation::Forward,
+                location: 0,
+            })
+            .collect();
+        if faces.is_empty() {
+            return topods::BRep::new();
+        }
+        shells.push((topods::Orientation::Forward, faces));
+    }
+    compact_brep_face_subset(brep, &shells)
 }
 
 /// Extract each solid from a topods::BRep as a separate self-contained BRep.
+/// OCCT `explode ... SOLID`: the returned solid keeps its shells and the face
+/// orientations referenced by them.
 pub fn extract_solids_topods(brep: &topods::BRep) -> Vec<topods::BRep> {
-    let mut groups = Vec::new();
+    let mut groups: Vec<Vec<(topods::Orientation, Vec<topods::Shape>)>> = Vec::new();
     for ts in &brep.tshapes {
         if let topods::TShape::Solid(sd) = &**ts {
-            let mut faces = Vec::new();
+            let mut shells = Vec::new();
             for sr in &sd.shells {
                 if let topods::TShape::Shell(shd) = &*brep.tshapes[sr.index] {
-                    for fsr in &shd.faces { faces.push(fsr.index); }
+                    if !shd.faces.is_empty() {
+                        shells.push((sr.orientation, shd.faces.clone()));
+                    }
                 }
             }
-            if !faces.is_empty() { groups.push(faces); }
+            if !shells.is_empty() { groups.push(shells); }
         }
     }
-    groups.into_iter().map(|f| compact_brep_face_subset(brep, &f)).collect()
+    groups.into_iter().map(|sh| compact_brep_face_subset(brep, &sh)).collect()
 }
 
 /// Extract each shell from a topods::BRep as a separate self-contained BRep.
 pub fn extract_shells_topods(brep: &topods::BRep) -> Vec<topods::BRep> {
-    let mut groups = Vec::new();
+    let mut groups: Vec<Vec<(topods::Orientation, Vec<topods::Shape>)>> = Vec::new();
     for ts in &brep.tshapes {
-        let faces = match &**ts {
+        match &**ts {
             topods::TShape::Solid(sd) => {
-                let mut all = Vec::new();
                 for sr in &sd.shells {
                     if let topods::TShape::Shell(shd) = &*brep.tshapes[sr.index] {
-                        let f: Vec<usize> = shd.faces.iter().map(|fsr| fsr.index).collect();
-                        if !f.is_empty() { all.push(f); }
+                        if !shd.faces.is_empty() {
+                            groups.push(vec![(sr.orientation, shd.faces.clone())]);
+                        }
                     }
                 }
-                all
             }
             topods::TShape::Shell(shd) => {
-                let f: Vec<usize> = shd.faces.iter().map(|fsr| fsr.index).collect();
-                if !f.is_empty() { vec![f] } else { vec![] }
+                if !shd.faces.is_empty() {
+                    groups.push(vec![(topods::Orientation::Forward, shd.faces.clone())]);
+                }
             }
-            _ => vec![],
-        };
-        groups.extend(faces);
+            _ => {}
+        }
     }
-    groups.into_iter().map(|f| compact_brep_face_subset(brep, &f)).collect()
+    groups.into_iter().map(|sh| compact_brep_face_subset(brep, &sh)).collect()
 }
 
-/// Build a self-contained topods::BRep containing only the specified face
-/// tshape indices. Copies only referenced edges/vertices/geometry.
-fn compact_brep_face_subset(brep: &topods::BRep, face_indices: &[usize]) -> topods::BRep {
+/// Build a self-contained topods::BRep containing only the specified shells.
+/// Each shell carries its face references (with orientations) and the shell
+/// orientation; the copies preserve the orientations of the referenced
+/// vertices, edges and wires too.
+fn compact_brep_face_subset(
+    brep: &topods::BRep,
+    shells: &[(topods::Orientation, Vec<topods::Shape>)],
+) -> topods::BRep {
     use std::collections::{HashMap, HashSet};
-    if face_indices.is_empty() { return topods::BRep::new(); }
+    if shells.is_empty() { return topods::BRep::new(); }
 
     // Collect unique edge tshape indices from face wires
     let mut edge_set: HashSet<usize> = HashSet::new();
-    for &fi in face_indices {
-        if let topods::TShape::Face(fd) = &*brep.tshapes[fi] {
-            if let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
-                for sr in &wd.edges { edge_set.insert(sr.index); }
-            }
-            for isr in &fd.inner_wires {
-                if let topods::TShape::Wire(wd) = &*brep.tshapes[isr.index] {
+    for (_, faces) in shells {
+        for fsr in faces {
+            if let topods::TShape::Face(fd) = &*brep.tshapes[fsr.index] {
+                if let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
                     for sr in &wd.edges { edge_set.insert(sr.index); }
+                }
+                for isr in &fd.inner_wires {
+                    if let topods::TShape::Wire(wd) = &*brep.tshapes[isr.index] {
+                        for sr in &wd.edges { edge_set.insert(sr.index); }
+                    }
                 }
             }
         }
@@ -110,8 +145,12 @@ fn compact_brep_face_subset(brep: &topods::BRep, face_indices: &[usize]) -> topo
     // Add edges with remapped vertex refs
     for &old in &sorted_e {
         if let topods::TShape::Edge(ed) = &*brep.tshapes[old] {
-            let first = v_map[&ed.first.index].clone();
-            let last = v_map[&ed.last.index].clone();
+            let mut first = v_map[&ed.first.index].clone();
+            first.orientation = ed.first.orientation;
+            first.location = ed.first.location;
+            let mut last = v_map[&ed.last.index].clone();
+            last.orientation = ed.last.orientation;
+            last.location = ed.last.location;
             let sr = r.add_tedge(ed.curve.clone(), first, last, ed.range);
             let em = r.edge_mut(sr.clone());
             em.tolerance = ed.tolerance;
@@ -128,35 +167,57 @@ fn compact_brep_face_subset(brep: &topods::BRep, face_indices: &[usize]) -> topo
     // Build wire refs helper
     let wire_ref = |brep: &topods::BRep, r: &mut topods::BRep, old_wire_sr: &topods::Shape| -> topods::Shape {
         if let topods::TShape::Wire(wd) = &*brep.tshapes[old_wire_sr.index] {
-            let edges: Vec<topods::Shape> = wd.edges.iter().map(|sr| e_map[&sr.index].clone()).collect();
-            r.add_twire(edges)
+            let edges: Vec<topods::Shape> = wd.edges.iter().map(|sr| {
+                let mut e = e_map[&sr.index].clone();
+                e.orientation = sr.orientation;
+                e.location = sr.location;
+                e
+            }).collect();
+            let mut w = r.add_twire(edges);
+            w.orientation = old_wire_sr.orientation;
+            w.location = old_wire_sr.location;
+            w
         } else {
             old_wire_sr.clone()
         }
     };
 
-    // Add faces
-    let mut face_srs = Vec::new();
-    for &fi in face_indices {
-        if let topods::TShape::Face(fd) = &*brep.tshapes[fi] {
-            let ow = wire_ref(brep, &mut r, &fd.outer_wire);
-            let iw: Vec<topods::Shape> = fd.inner_wires.iter().map(|sr| wire_ref(brep, &mut r, sr)).collect();
+    // Add shells with remapped face refs
+    let mut shell_srs = Vec::new();
+    for (sh_or, faces) in shells {
+        let mut face_srs = Vec::new();
+        for fsr in faces {
+            if let topods::TShape::Face(fd) = &*brep.tshapes[fsr.index] {
+                let ow = wire_ref(brep, &mut r, &fd.outer_wire);
+                let iw: Vec<topods::Shape> = fd.inner_wires.iter().map(|sr| wire_ref(brep, &mut r, sr)).collect();
 
-            // Build internal_vertices: map old vertex tshape indices to new ShapeRefs
-            let iv: Vec<topods::Shape> = fd.internal_vertices.iter()
-                .filter_map(|iv_sr| v_map.get(&iv_sr.index).cloned())
-                .collect();
+                // Build internal_vertices: map old vertex tshape indices to new ShapeRefs
+                let iv: Vec<topods::Shape> = fd.internal_vertices.iter()
+                    .filter_map(|iv_sr| {
+                        let mut s = v_map.get(&iv_sr.index)?.clone();
+                        s.orientation = iv_sr.orientation;
+                        s.location = iv_sr.location;
+                        Some(s)
+                    })
+                    .collect();
 
-            let sr = r.add_tface(fd.surface.clone(), ow, iw, fd.sample_point, fd.uv_domain, iv, fd.natural_restriction);
-            r.face_mut(sr.clone()).tolerance = fd.tolerance;
-            face_srs.push(sr);
+                let mut sr = r.add_tface(fd.surface.clone(), ow, iw, fd.sample_point, fd.uv_domain, iv, fd.natural_restriction);
+                sr.orientation = fsr.orientation;
+                sr.location = fsr.location;
+                r.face_mut(sr.clone()).tolerance = fd.tolerance;
+                face_srs.push(sr);
+            }
+        }
+        if !face_srs.is_empty() {
+            let mut sh = r.add_tshell(face_srs);
+            sh.orientation = *sh_or;
+            shell_srs.push(sh);
         }
     }
 
     // Wrap in Shell -> Solid
-    if !face_srs.is_empty() {
-        let shell = r.add_tshell(face_srs);
-        r.add_tsolid(vec![shell]);
+    if !shell_srs.is_empty() {
+        r.add_tsolid(shell_srs);
     }
 
     r
