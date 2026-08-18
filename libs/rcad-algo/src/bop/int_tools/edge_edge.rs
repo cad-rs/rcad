@@ -246,7 +246,8 @@ impl EdgeEdgeIntersector {
         if b_is_closed2 {
             let a_b1 = bnd_build_box(&self.curve1, a_t11, a_t12, self.my_tol1);
             let a_p = self.curve2.point_at(a_t21);
-            b_is_closed2 = !point_in_box(&a_b1, a_p);
+            // OCCT L309: bIsClosed2 = !aB1.IsOut(aP).
+            b_is_closed2 = point_in_box(&a_b1, a_p);
         }
         if !b_is_closed2 {
             let a_b1 = bnd_build_box(&self.curve1, a_t11, a_t12, self.my_tol1);

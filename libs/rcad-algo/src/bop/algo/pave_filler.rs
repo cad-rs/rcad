@@ -347,6 +347,42 @@ fn shrunk_range_arc_length(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
     simpson_step(curve, t1, t2, fa, fb, fm, tol, 0)
 }
 
+/// OCCT Standard_Real::Epsilon(x): the gap to the next representable double.
+fn standard_epsilon(the_value: f64) -> f64 {
+    if the_value == 0.0 {
+        f64::from_bits(1)
+    } else if the_value.is_infinite() {
+        0.0
+    } else {
+        let next = f64::from_bits(the_value.to_bits() + 1);
+        next - the_value
+    }
+}
+
+/// OCCT ElCLib::AdjustPeriodic (ElCLib.cxx L115-149): sets U1 into
+/// [UFirst, ULast] and U2 into [U1, U1+period] by adding/subtracting the period.
+fn el_clib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u2: &mut f64) {
+    if !u_first.is_finite() || !u_last.is_finite() {
+        *u1 = u_first;
+        *u2 = u_last;
+        return;
+    }
+    let a_period = u_last - u_first;
+    if a_period < standard_epsilon(a_period) {
+        *u1 = u_first;
+        *u2 = u_last;
+        return;
+    }
+    *u1 -= ((*u1 - u_first) / a_period).floor() * a_period;
+    if u_last - *u1 < preci {
+        *u1 -= a_period;
+    }
+    *u2 -= ((*u2 - *u1) / a_period).floor() * a_period;
+    if *u2 - *u1 < preci {
+        *u2 += a_period;
+    }
+}
+
 // OCCT BndLib_Add3dCurve::Add (BndLib_Add3dCurve.cxx L29-36) -> GeomBndLib_Curve
 // (GeomBndLib_Curve.cxx L298-301) -> GeomBndLib_Line/Circle Box: build the
 // bounding box of a curve subrange.  Lines take the segment endpoints;
@@ -399,20 +435,7 @@ fn shrunk_range_bnd_box(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> BndBox {
                 let mut a_u1 = t1;
                 let mut a_u2 = t2;
                 // OCCT L63-65: ElCLib::AdjustPeriodic(0, 2PI, Epsilon(1), U1, U2).
-                let a_tol = 1e-15;
-                if a_u2 - a_u1 > period * 0.5 {
-                    let a_mid = a_u1 + (a_u2 - a_u1) * 0.5;
-                    let a_shift = (a_mid / period).round() * period;
-                    a_u1 -= a_shift;
-                    a_u2 -= a_shift;
-                }
-                if a_u1 < -a_tol {
-                    a_u1 += period;
-                    a_u2 += period;
-                }
-                if a_u2 > period + a_tol {
-                    a_u2 -= period;
-                }
+                el_clib_adjust_periodic(0.0, period, f64::EPSILON, &mut a_u1, &mut a_u2);
                 // Arc endpoints.
                 add(circle_point_at(c, a_u1));
                 add(circle_point_at(c, a_u2));
