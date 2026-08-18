@@ -104,154 +104,490 @@ fn polygon_properties(pts: &[DVec2]) -> (f64, f64) {
     (the_area, the_perimeter)
 }
 
-/// OCCT BRepTools_WireExplorer (BRepTools_WireExplorer.cxx L121-390) —
-/// reorder a wire's edges into a continuous loop following the effective
-/// edge orientations (V1 -> V2). For a closed wire the explorer starts at the
-/// first stored edge's V1 and walks the vertex-adjacency chain. Returns the
-/// edges in traversal order (only FORWARD/REVERSED edges).
+/// OCCT BRepTools_WireExplorer (BRepTools_WireExplorer.cxx L121-705) — 1:1
+/// translation: reorder a wire's edges into a continuous loop.
+///
+/// Init (L121-381):
+///   - myMap: vertex -> edges (the compound-FORWARD vertex V1 of each edge,
+///     INTERNAL/EXTERNAL edges skipped); vmap: vertex degree-parity map for
+///     the open-wire start vertex; myDoubles: edges appearing twice in the
+///     wire.
+///   - Start vertex: open wire -> the FORWARD-parity vertex (L316-323);
+///     closed wire -> the first non-INTERNAL edge's V1 (L351-366).
+///   - myEdge = myMap(V1).First() (L378-381).
+///
+/// Next (L393-705): from the current edge's last vertex, take the single
+/// candidate in myMap when there is exactly one (with the closed-edge 2D
+/// continuity check L428-476), otherwise select the candidate whose pcurve
+/// direction at the vertex has the smallest angle with the current edge's
+/// tangent (two passes: degenerated/closed edges first, then the rest; the
+/// nearest 2D point breaks ties, L522-703).
 fn order_wire_edges(
     ds: &dyn ShapeSource,
+    face_idx: usize,
     edges: &[(usize, Orientation)],
 ) -> Vec<(usize, Orientation)> {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     let n = edges.len();
-    let mut by_start: HashMap<(u64, u32), Vec<usize>> = HashMap::new();
-    let mut edge_v2: Vec<(u64, u32)> = Vec::with_capacity(n);
-    for (i, &(ei, ori)) in edges.iter().enumerate() {
-        let (vf, vl) = match ds.shape_at(ei) {
-            Shape { data, .. } => match &*data {
-                TShape::Edge(ed) => (ed.first.clone(), ed.last.clone()),
-                _ => continue,
-            },
-        };
-        // OCCT TopoDS_Iterator(E, cumLoc) composes the edge Location into the
-        // vertices (TopoDS_Iterator.cxx L76-78): vertex eff location =
-        // edge.Location * vertex.Location. Identity fast path in
-        // compose_edge_vertex_location keeps ordinary edges untouched.
-        let edge_loc = ds.shape_at(ei).location;
-        let locs = ds.locations();
-        let vf_loc = crate::bop::algo::compose_edge_vertex_location(edge_loc, vf.location, locs);
-        let vl_loc = crate::bop::algo::compose_edge_vertex_location(edge_loc, vl.location, locs);
-        // OCCT TopExp::Vertices(E, V1, V2, CumOri=true) (TopExp.cxx L214-252):
-        // iterate the edge's vertex sub-shapes with the edge orientation
-        // compounded (TopoDS_Iterator(E, CumOri)); V1 = the first vertex whose
-        // compound orientation is FORWARD, V2 = the first whose compound
-        // orientation is REVERSED. This is NOT the storage order: GWedge edges
-        // store [REV(high-param), FWD(low-param)], so a FORWARD edge has
-        // V1=low, V2=high and a REVERSED edge V1=high, V2=low.
-        let compound = |o: Orientation| match (o, ori) {
-            (Orientation::Forward, Orientation::Forward)
-            | (Orientation::Reversed, Orientation::Reversed) => Orientation::Forward,
-            _ => Orientation::Reversed,
-        };
-        let o0 = compound(vf.orientation);
-        let o1 = compound(vl.orientation);
-        // V1 = first vertex with compound orientation FORWARD; V2 = first with
-        // compound orientation REVERSED (OCCT TopExp::Vertices L214-252).
-        let v1 = if o0 == Orientation::Forward {
-            (vf.ptr_id(), vf_loc)
-        } else {
-            (vl.ptr_id(), vl_loc)
-        };
-        let v2 = if o1 == Orientation::Reversed {
-            (vl.ptr_id(), vl_loc)
-        } else if o0 == Orientation::Reversed {
-            (vf.ptr_id(), vf_loc)
-        } else {
-            // No REVERSED vertex (closed/degenerated edge, OCCT V2 null):
-            // keep V2 = V1 so the closed-loop preference below applies.
-            v1
-        };
-        edge_v2.push(v2);
-        by_start.entry(v1).or_default().push(i);
-    }
     if n == 0 {
         return Vec::new();
     }
-    let mut used = vec![false; n];
-    let mut result = Vec::with_capacity(n);
-    // Closed wire: start from the first stored edge (V1 of that edge).
-    let mut cur = 0usize;
-    result.push(edges[cur]);
-    used[cur] = true;
+
+    // OCCT WireExplorer::Init L232-292: myMap (V1 only), vmap (degree
+    // parity), the per-edge traversal endpoints, and the infinite edges.
+    let mut my_map: HashMap<(u64, u32), Vec<usize>> = HashMap::new();
+    let mut vmap: HashMap<(u64, u32), Orientation> = HashMap::new();
+    let mut edge_v1: Vec<(u64, u32)> = Vec::with_capacity(n);
+    let mut edge_v2: Vec<(u64, u32)> = Vec::with_capacity(n);
+    let mut kept: Vec<usize> = Vec::with_capacity(n);
+    let mut an_inf_emap: Vec<usize> = Vec::new();
+    for (i, &(ei, ori)) in edges.iter().enumerate() {
+        if ori == Orientation::Internal || ori == Orientation::External {
+            continue;
+        }
+        let (v1, v2) = edge_vertices_of(ds, ei, ori);
+        let key = kept.len();
+        kept.push(i);
+        edge_v1.push(v1);
+        edge_v2.push(v2);
+        // OCCT L244-259: myMap(V1).Append(E); vmap toggle V1 FORWARD.
+        my_map.entry(v1).or_default().push(key);
+        if vmap.insert(v1, Orientation::Forward).is_some() {
+            vmap.remove(&v1);
+        }
+        // OCCT L261-269: vmap toggle V2 REVERSED.
+        if vmap.insert(v2, Orientation::Reversed).is_some() {
+            vmap.remove(&v2);
+        }
+        // OCCT L271-290: infinite edge (V1 or V2 null).
+        if v1.0 == 0 || v2.0 == 0 {
+            an_inf_emap.push(key);
+        }
+    }
+    let nk = kept.len();
+    if nk == 0 {
+        return Vec::new();
+    }
+
+    // OCCT L294-304: myDoubles — edges appearing twice in the wire.
+    let mut emap: HashSet<usize> = HashSet::new();
+    let mut my_doubles: HashSet<usize> = HashSet::new();
+    for &key in &kept {
+        if !emap.insert(edges[key].0) {
+            my_doubles.insert(key);
+        }
+    }
+
+    // OCCT L306-366: the start vertex.
+    let mut start_v: Option<(u64, u32)> = None;
+    if !vmap.is_empty() {
+        // Open wire: the FORWARD-parity vertex (L316-323).
+        for (v, o) in &vmap {
+            if *o == Orientation::Forward {
+                start_v = Some(*v);
+                break;
+            }
+        }
+    } else if !an_inf_emap.is_empty() {
+        // OCCT L328-348: an infinite edge becomes the whole walk.
+        return vec![edges[kept[an_inf_emap[0]]]];
+    } else {
+        // Closed wire: the first non-INTERNAL edge's V1 (L351-366).
+        start_v = Some(edge_v1[0]);
+    }
+    let Some(start_v) = start_v else {
+        return Vec::new();
+    };
+    let Some(l) = my_map.get(&start_v) else {
+        return Vec::new();
+    };
+    let Some(&first) = l.first() else {
+        return Vec::new();
+    };
+
+    // OCCT L378-381: myEdge = l.First(); l.RemoveFirst(); myVertex = V1.
+    let mut cur = first;
     let mut cur_v2 = edge_v2[cur];
-    while result.len() < n {
-        // OCCT BRepTools_WireExplorer (BRepTools_WireExplorer.cxx L78-172):
-        // at the current vertex pick the unused edge that connects there,
-        // preferring the one that forms a closed loop (V2 == current vertex —
-        // cylinder/cone lateral TopEdge/BottomEdge circle), and traverse it in
-        // the direction that continues the walk (flipping its orientation when
-        // it connects via its END vertex). The rcad walk previously only
-        // followed edges whose compound-FORWARD vertex (V1) matched, so a wire
-        // whose edges connect at a V2 (e.g. the revolve partial annulus
-        // [arc, prof@L1, arc REV, prof]) stopped mid-way and fell back to the
-        // stored order, producing a self-crossing UV polygon and a wrong
-        // IsHole/point-in-face classification.
-        let next_opt = by_start.get(&cur_v2).and_then(|list| {
-            list.iter()
-                .copied()
-                .filter(|&i| !used[i])
-                .min_by_key(|&i| if edge_v2[i] == cur_v2 { 0 } else { 1 })
-        });
-        match next_opt {
-            Some(i) => {
-                result.push(edges[i]);
-                used[i] = true;
-                cur_v2 = edge_v2[i];
+    let mut result = vec![edges[kept[cur]]];
+    if let Some(ll) = my_map.get_mut(&start_v) {
+        ll.retain(|&k| k != cur);
+    }
+
+    // OCCT L144-168: dfVertToler (max vertex/edge tolerance, floored at
+    // Confusion) and the UV tolerances myTolU/myTolV.
+    let (my_tol_u, my_tol_v): (f64, f64);
+    {
+        let mut df_vert_toler: f64 = 0.0;
+        for &key in &kept {
+            let (ei, _ori) = edges[key];
+            if let TShape::Edge(ed) = &*ds.shape_at(ei).data {
+                if let TShape::Vertex(vd) = &*ed.first.data {
+                    df_vert_toler = df_vert_toler.max(vd.tolerance);
+                }
+                if let TShape::Vertex(vd) = &*ed.last.data {
+                    df_vert_toler = df_vert_toler.max(vd.tolerance);
+                }
+                df_vert_toler = df_vert_toler.max(ed.tolerance);
+            }
+        }
+        if df_vert_toler < CONFUSION {
+            df_vert_toler = CONFUSION;
+        }
+        match ds.face_surface(face_idx) {
+            Some(s) => {
+                my_tol_u = 2.0 * surface_u_resolution(&s, df_vert_toler);
+                my_tol_v = 2.0 * surface_v_resolution(&s, df_vert_toler);
             }
             None => {
-                // No unused edge starts at the current vertex — look for one
-                // that ENDS here and traverse it reversed (the wire walks
-                // through the vertex from the edge's V2 to its V1).
-                let rev_opt = (0..n)
-                    .filter(|&i| !used[i] && edge_v2[i] == cur_v2)
-                    .min_by_key(|&i| {
-                        let (vf, vl) = edge_endpoints(ds, i);
-                        if vf == cur_v2 { 0 } else { 1 }
-                    });
-                match rev_opt {
-                    Some(i) => {
-                        let (ei, ori) = edges[i];
-                        let flipped = match ori {
-                            Orientation::Forward => Orientation::Reversed,
-                            Orientation::Reversed => Orientation::Forward,
-                            other => other,
-                        };
-                        result.push((ei, flipped));
-                        used[i] = true;
-                        // The reversed edge starts (in traversal) at its V2 and
-                        // ends at its stored-orientation V1.
-                        cur_v2 = edge_start_of(ds, i, ori);
-                    }
-                    None => break,
-                }
+                // OCCT default: Precision::Parametric(R3d) == R3d * 0.01.
+                my_tol_u = 2.0 * df_vert_toler * 0.01;
+                my_tol_v = my_tol_u;
             }
         }
     }
-    // If the walk did not visit every edge (e.g. a wire containing a closed
-    // edge — cylinder/cone lateral seam — where the first stored edge is the
-    // closed circle), the stored order already samples the boundary correctly.
-    // Fall back to the stored order rather than dropping edges.
-    if result.len() < n {
-        return edges.to_vec();
+
+    // OCCT WireExplorer::Next loop (L393-705).
+    loop {
+        let candidates: Vec<usize> = my_map.get(&cur_v2).cloned().unwrap_or_default();
+        if candidates.is_empty() {
+            break;
+        }
+        let old_v = cur_v2;
+        if candidates.len() == 1 {
+            // OCCT L414-480: single candidate.
+            let i = candidates[0];
+            let (a_v1, a_v2) = edge_vertices_of(ds, edges[kept[i]].0, edges[kept[i]].1);
+            if a_v1 != cur_v2 {
+                break;
+            }
+            // OCCT L428-476: closed-edge 2D continuity check.
+            if a_v1 == a_v2 {
+                let Some((pc_prev, a_par11, a_par12)) =
+                    edge_pcurve_on_face(ds, edges[kept[cur]].0, face_idx, edges[kept[cur]].1)
+                else {
+                    break;
+                };
+                let Some((pc_next, a_par21, a_par22)) =
+                    edge_pcurve_on_face(ds, edges[kept[i]].0, face_idx, edges[kept[i]].1)
+                else {
+                    break;
+                };
+                let a_prev_par = if edges[kept[cur]].1 == Orientation::Forward {
+                    a_par12
+                } else {
+                    a_par11
+                };
+                let (a_next_f_par, a_next_l_par) = if edges[kept[i]].1 == Orientation::Forward {
+                    (a_par21, a_par22)
+                } else {
+                    (a_par22, a_par21)
+                };
+                let a_p_prev = pc_prev.point_at(a_prev_par);
+                let a_p_next_f = pc_next.point_at(a_next_f_par);
+                let a_p_next_l = pc_next.point_at(a_next_l_par);
+                if a_p_prev.distance_squared(a_p_next_f) > a_p_prev.distance_squared(a_p_next_l) {
+                    break;
+                }
+            }
+            cur = i;
+            cur_v2 = edge_v2[i];
+            result.push(edges[kept[cur]]);
+            // OCCT L479: l.Clear().
+            if let Some(ll) = my_map.get_mut(&old_v) {
+                ll.clear();
+            }
+        } else {
+            // OCCT L481-703: the 2D angle selection.  PRef is the current
+            // edge's pcurve point at the current vertex; anERefDir is the
+            // direction of the next point on it (L526-562).
+            let Some((pc_cur, f_cur, l_cur)) =
+                edge_pcurve_on_face(ds, edges[kept[cur]].0, face_idx, edges[kept[cur]].1)
+            else {
+                break;
+            };
+            let p_ref = if edges[kept[cur]].1 == Orientation::Reversed {
+                pc_cur.point_at(f_cur)
+            } else {
+                pc_cur.point_at(l_cur)
+            };
+            let is_rev_cur = edges[kept[cur]].1 == Orientation::Reversed;
+            let d_par =
+                get_next_param_on_pc(&pc_cur, p_ref, f_cur, l_cur, is_rev_cur, my_tol_u, my_tol_v);
+            let p_refm = pc_cur.point_at(d_par);
+            let e_ref_dir = p_refm - p_ref;
+            if e_ref_dir.length_squared() < 1e-30 {
+                break;
+            }
+
+            // OCCT L568-681: two passes — degenerated/closed edges first,
+            // then the rest; smallest angle wins, nearest point breaks ties.
+            let mut k_min: usize = 0;
+            let mut d_min = f64::MAX;
+            let mut df_min_angle = 3.0 * std::f64::consts::PI;
+            let mut df_cur_angle = 3.0 * std::f64::consts::PI;
+            let mut is_degenerated = true;
+            for _i_done in 0..2 {
+                let mut k = 1;
+                for &i in &candidates {
+                    if i == cur {
+                        k += 1;
+                        continue;
+                    }
+                    let (a_v1, a_v2) = edge_vertices_of(ds, edges[kept[i]].0, edges[kept[i]].1);
+                    if a_v1.0 == 0 || a_v2.0 == 0 {
+                        k += 1;
+                        continue;
+                    }
+                    let Some((pc_e, f_e, l_e)) =
+                        edge_pcurve_on_face(ds, edges[kept[i]].0, face_idx, edges[kept[i]].1)
+                    else {
+                        k += 1;
+                        continue;
+                    };
+                    if (a_v1 == a_v2) == is_degenerated {
+                        let a_peb = if edges[kept[i]].1 == Orientation::Reversed {
+                            pc_e.point_at(l_e)
+                        } else {
+                            pc_e.point_at(f_e)
+                        };
+                        if (l_e - f_e).abs() > CONFUSION {
+                            let is_rev_e = edges[kept[i]].1 == Orientation::Reversed;
+                            let epm = get_next_param_on_pc(
+                                &pc_e, a_peb, f_e, l_e, !is_rev_e, my_tol_u, my_tol_v,
+                            );
+                            let mut a_pee = pc_e.point_at(epm);
+                            if a_peb.distance_squared(a_pee) <= 1e-30 {
+                                // OCCT L626-644: very short curve — use D1.
+                                let a_d = pc_e.derivative_at(epm);
+                                a_pee = if edges[kept[i]].1 == Orientation::Reversed {
+                                    a_peb - a_d
+                                } else {
+                                    a_peb + a_d
+                                };
+                                if a_peb.distance_squared(a_pee) <= 1e-30 {
+                                    k += 1;
+                                    continue;
+                                }
+                            }
+                            let e_dir = a_pee - a_peb;
+                            df_cur_angle = e_dir.angle_between(e_ref_dir).abs();
+                        }
+                        if df_cur_angle <= df_min_angle {
+                            let mut d = p_ref.distance_squared(a_peb);
+                            if d <= SQUARE_CONFUSION {
+                                d = 0.0;
+                            }
+                            if (a_peb.x - p_ref.x).abs() < my_tol_u
+                                && (a_peb.y - p_ref.y).abs() < my_tol_v
+                            {
+                                if d <= d_min {
+                                    df_min_angle = df_cur_angle;
+                                    k_min = k;
+                                    d_min = d;
+                                }
+                            }
+                        }
+                    }
+                    k += 1;
+                }
+                if k_min == 0 {
+                    is_degenerated = false;
+                    d_min = f64::MAX;
+                } else {
+                    break;
+                }
+            }
+            if k_min == 0 {
+                break;
+            }
+            // Select the k_min-th candidate (1-based over the list, skipping
+            // the current edge); OCCT L691-703.
+            let mut sel: Option<usize> = None;
+            {
+                let mut k = 1;
+                for &i in &candidates {
+                    if i == cur {
+                        k += 1;
+                        continue;
+                    }
+                    if k == k_min {
+                        sel = Some(i);
+                        break;
+                    }
+                    k += 1;
+                }
+            }
+            let Some(i) = sel else { break };
+            cur = i;
+            cur_v2 = edge_v2[i];
+            result.push(edges[kept[cur]]);
+            // OCCT L698: l.Remove(it).
+            if let Some(ll) = my_map.get_mut(&old_v) {
+                ll.retain(|&x| x != i);
+            }
+        }
+    }
+
+    // OCCT returns the edges visited by the walk; when the walk could not
+    // visit every edge the wire is not a single closed loop (a closed edge —
+    // cylinder/cone lateral seam — starts and ends the loop).  rcad falls
+    // back to the stored order so every edge is sampled.
+    if result.len() < nk {
+        return kept.iter().map(|&i| edges[i]).collect();
     }
     result
 }
 
-/// The compound-FORWARD (V1) endpoint of edge `i`, computed like the
-/// order_wire_edges walk (TopExp::Vertices with cumOri).
-fn edge_start_of(ds: &dyn ShapeSource, i: usize, ori: Orientation) -> (u64, u32) {
+/// OCCT GeomAdaptor_Surface::UResolution (GeomAdaptor_Surface.cxx L1818-1896):
+/// the parameter increment in U producing a 3D displacement R3d.
+fn surface_u_resolution(surf: &Surface3, r3d: f64) -> f64 {
+    let res: f64 = match surf {
+        Surface3::Cylinder(c) => {
+            if c.radius > CONFUSION {
+                r3d / (2.0 * c.radius)
+            } else {
+                0.0
+            }
+        }
+        Surface3::Sphere(s) => {
+            if s.radius > CONFUSION {
+                r3d / (2.0 * s.radius)
+            } else {
+                0.0
+            }
+        }
+        Surface3::Torus(t) => {
+            let r = t.major_radius + t.minor_radius;
+            if r > CONFUSION {
+                r3d / (2.0 * r)
+            } else {
+                0.0
+            }
+        }
+        Surface3::Plane(_) => r3d,
+        // OCCT: Cone uses the V-end circle radius (bounded); the other
+        // surface types use Precision::Parametric(R3d) == R3d * 0.01.
+        _ => r3d * 0.01,
+    };
+    if res <= 1.0 {
+        2.0 * res.asin()
+    } else {
+        2.0 * std::f64::consts::PI
+    }
+}
+
+/// OCCT GeomAdaptor_Surface::VResolution (GeomAdaptor_Surface.cxx L1900-1958).
+fn surface_v_resolution(surf: &Surface3, r3d: f64) -> f64 {
+    let res: f64 = match surf {
+        Surface3::Cylinder(_) | Surface3::Plane(_) | Surface3::Cone(_) => r3d,
+        Surface3::Sphere(s) => {
+            if s.radius > CONFUSION {
+                r3d / (2.0 * s.radius)
+            } else {
+                0.0
+            }
+        }
+        Surface3::Torus(t) => {
+            let r = t.minor_radius;
+            if r > CONFUSION {
+                r3d / (2.0 * r)
+            } else {
+                0.0
+            }
+        }
+        _ => r3d * 0.01,
+    };
+    if res <= 1.0 {
+        2.0 * res.asin()
+    } else {
+        2.0 * std::f64::consts::PI
+    }
+}
+
+/// OCCT GetNextParamOnPC (BRepTools_WireExplorer.cxx L799-873): the parameter
+/// of the next pcurve point beyond `a_p_ref`, stepping from the reference end
+/// by dP = |lP - fP| / 1000 until the point leaves the reference tolerance.
+fn get_next_param_on_pc(
+    pc: &Curve2d,
+    a_p_ref: DVec2,
+    f_p: f64,
+    l_p: f64,
+    reverse: bool,
+    tol_u: f64,
+    tol_v: f64,
+) -> f64 {
+    let mut result = if reverse { f_p } else { l_p };
+    let d_p = (l_p - f_p).abs() / 1000.0;
+    if reverse {
+        let mut start_par = f_p;
+        let mut next_pnt_on_edge = false;
+        while !next_pnt_on_edge && start_par < l_p {
+            start_par += d_p;
+            let pnt = pc.point_at(start_par);
+            if (a_p_ref.x - pnt.x).abs() < tol_u && (a_p_ref.y - pnt.y).abs() < tol_v {
+                continue;
+            } else {
+                result = start_par;
+                next_pnt_on_edge = true;
+                break;
+            }
+        }
+        if !next_pnt_on_edge {
+            result = l_p;
+        }
+        if result > l_p {
+            result = l_p;
+        }
+    } else {
+        let mut start_par = l_p;
+        let mut next_pnt_on_edge = false;
+        while !next_pnt_on_edge && start_par > f_p {
+            start_par -= d_p;
+            let pnt = pc.point_at(start_par);
+            if (a_p_ref.x - pnt.x).abs() < tol_u && (a_p_ref.y - pnt.y).abs() < tol_v {
+                continue;
+            } else {
+                result = start_par;
+                next_pnt_on_edge = true;
+                break;
+            }
+        }
+        if !next_pnt_on_edge {
+            result = f_p;
+        }
+        if result < f_p {
+            result = f_p;
+        }
+    }
+    result
+}
+
+/// The (V1, V2) traversal endpoints of edge `i` with the edge orientation
+/// compounded (TopExp::Vertices with cumOri, TopExp.cxx L214-252).
+fn edge_vertices_of(
+    ds: &dyn ShapeSource,
+    i: usize,
+    ori: Orientation,
+) -> ((u64, u32), (u64, u32)) {
     let (vf, vl) = edge_vertex_keys(ds, i);
     let compound = |o: Orientation| match (o, ori) {
         (Orientation::Forward, Orientation::Forward)
         | (Orientation::Reversed, Orientation::Reversed) => Orientation::Forward,
         _ => Orientation::Reversed,
     };
-    if compound(vf.1) == Orientation::Forward {
-        (vf.0 .0, vf.0 .1)
+    let o0 = compound(vf.1);
+    let o1 = compound(vl.1);
+    let v1 = if o0 == Orientation::Forward { vf.0 } else { vl.0 };
+    let v2 = if o1 == Orientation::Reversed {
+        vl.0
+    } else if o0 == Orientation::Reversed {
+        vf.0
     } else {
-        (vl.0 .0, vl.0 .1)
-    }
+        // No REVERSED vertex (closed/degenerated edge, OCCT V2 null): keep
+        // V2 = V1 so the closed-loop preference applies.
+        v1
+    };
+    (v1, v2)
 }
 
 /// The two vertex (key, orientation) pairs of edge `i` with the edge location
@@ -606,7 +942,7 @@ impl FClass2d {
                     }
                     pairs.push((ei, ori));
                 }
-                order_wire_edges(ds, &pairs)
+                order_wire_edges(ds, a_face, &pairs)
             };
             if std::env::var("RCAD_F2D_DEBUG").is_ok() && (a_face == 30 || a_face == 32 || a_face == 60) {
                 eprintln!("[F2D] face={} reordered_edges={:?}", a_face,
@@ -630,32 +966,6 @@ impl FClass2d {
                 // Seam (CurveOnClosedSurface) pcurves are selected by the edge
                 // orientation (FORWARD → u=2*PI, REVERSED → u=0).
                 let pcurve = edge_pcurve_on_face(ds, ei, a_face, ori);
-                if std::env::var("RCAD_F2D_DEBUG").is_ok() && a_face == 60 {
-                    let pd = pcurve.as_ref().map(|(c, f, l)| match c {
-                        rcad_kernel::geom::Curve2d::Line(li) => format!(
-                            "L2D o=({:.3},{:.3}) d=({:.3},{:.3}) t=({:.3},{:.3})",
-                            li.origin.x, li.origin.y, li.direction.x, li.direction.y, f, l
-                        ),
-                        _ => format!("O2D t=({:.3},{:.3})", f, l),
-                    }).unwrap_or_else(|| "no-pc".into());
-                    let ev = edge_pcurve_on_face(ds, ei, 30, ori);
-                    let pd2 = ev.as_ref().map(|(c, f, l)| match c {
-                        rcad_kernel::geom::Curve2d::Line(li) => format!(
-                            "face30 L2D o=({:.3},{:.3}) d=({:.3},{:.3}) t=({:.3},{:.3})",
-                            li.origin.x, li.origin.y, li.direction.x, li.direction.y, f, l
-                        ),
-                        _ => format!("face30 O2D t=({:.3},{:.3})", f, l),
-                    }).unwrap_or_else(|| "face30 no-pc".into());
-                    let vf = edge_data.first.as_vertex().map(|vd| format!("({:.3},{:.3},{:.3})", vd.point.x, vd.point.y, vd.point.z)).unwrap_or_default();
-                    let vl = edge_data.last.as_vertex().map(|vd| format!("({:.3},{:.3},{:.3})", vd.point.x, vd.point.y, vd.point.z)).unwrap_or_default();
-                    let pc_keys: Vec<String> = edge_data.pcurves.keys()
-                        .map(|(pid, loc)| format!("({},L{})", pid, loc)).collect();
-                    let c3d = edge_data.curve.as_ref().map(|c| match c {
-                        rcad_kernel::geom::Curve3::Line(l) => format!("L3D o=({:.3},{:.3},{:.3}) d=({:.3},{:.3},{:.3})", l.origin.x, l.origin.y, l.origin.z, l.direction.x, l.direction.y, l.direction.z),
-                        _ => "O3D".into(),
-                    }).unwrap_or_else(|| "no-c3d".into());
-                    eprintln!("[F2D-PC] face={} e{}:{} ptr={} loc={} vf={} vl={} c3d=[{}] keys=[{}] {} | {}", a_face, ei, if ori == Orientation::Reversed { "R" } else { "F" }, eshape.ptr_id(), eshape.location, vf, vl, c3d, pc_keys.join(","), pd, pd2);
-                }
                 // OCCT BRep_Tool::Curve(aE) (BRep_Tool.cxx L211-227): the
                 // edge's 3D curve with its Location applied.
                 let edge_curve = edge_data.curve.clone().map(|c| {

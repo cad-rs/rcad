@@ -470,6 +470,37 @@ fn build_analytic_pcurve(other_surf: &Surface3, curve3: &Curve3, tf: f64, tl: f6
             }));
         }
     }
+    if let (Curve3::Circle(c), Surface3::Cylinder(cyl)) = (curve3, other_surf) {
+        // OCCT GeomInt_IntSS::BuildPCurves -> ProjLib_Cylinder::Project: a
+        // circle lying on the cylinder (center on the axis, plane normal
+        // parallel to the axis, radius equal) is an iso-parameter line
+        // v=const; its pcurve is the line u(t) = u0 +/- t.
+        let x_ax = cyl.ref_dir.normalize_or_zero();
+        let y_ax = cyl.axis.cross(x_ax).normalize_or_zero();
+        if x_ax.length_squared() < 0.5 || y_ax.length_squared() < 0.5 {
+            return None;
+        }
+        let zc = c.x_dir.cross(c.y_dir);
+        let r0 = c.center - cyl.origin;
+        let tol = 1e-7;
+        let on_axis = r0.dot(x_ax).abs() <= tol && r0.dot(y_ax).abs() <= tol;
+        let parallel = zc.dot(cyl.axis).abs() > 1.0 - 1e-9;
+        if on_axis && parallel && (c.radius - cyl.radius).abs() <= tol {
+            let v = r0.dot(cyl.axis);
+            // u0: the azimuth of the circle's t=0 point; u(t) = u0 + t for a
+            // positively-oriented circle (normal parallel to the axis),
+            // u(t) = u0 - t otherwise.
+            let mut u0 = c.x_dir.dot(y_ax).atan2(c.x_dir.dot(x_ax));
+            if u0 < 0.0 {
+                u0 += std::f64::consts::TAU;
+            }
+            let d = if zc.dot(cyl.axis) > 0.0 { 1.0 } else { -1.0 };
+            return Some(Curve2d::Line(Line2d::new(
+                DVec2::new(u0, v),
+                DVec2::new(d, 0.0),
+            )));
+        }
+    }
     if let (Curve3::Circle(c), Surface3::Sphere(sp)) = (curve3, other_surf) {
         // OCCT ProjLib_Sphere::Project(gp_Circ) (L97-180).
         let xs = sp.ref_dir.normalize();

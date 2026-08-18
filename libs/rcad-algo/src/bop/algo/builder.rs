@@ -3411,26 +3411,14 @@ impl<'a> Builder<'a> {
 
         // OCCT L799-822: perform the pair analysis.
         for (f1, f2) in &a_vpsb {
-            // OCCT BOPAlgo_PairOfShapeBoolean::Perform (L94-105) 鈫?
-            // BOPTools_AlgoTools::AreFacesSameDomain (BOPTools_AlgoTools.cxx L1139-1205).
-            // rcad: are_faces_same_domain on DS indices with the shared context
-            // (PointInFace + IsValidPointForFace).
-            let n_f1 = self.ds.index(f1);
-            let n_f2 = self.ds.index(f2);
-            // OCCT L825: BOPAlgo_PairOfShapeBoolean::Perform on the raw
-            // TopoDS_Face pair 鈥?split face images are NOT registered in the
-            // DS, so the Shape-based AreFacesSameDomain is used for them
-            // (OCCT BOPTools_AlgoTools::AreFacesSameDomain L1139-1205 works on
-            // the face geometry directly, with no DS access).
-            let flag = if n_f1 >= 0 && n_f2 >= 0 {
-                crate::bop::tools::algo_tools::are_faces_same_domain(
-                    n_f1 as usize, n_f2 as usize, &mut self.my_context, self.ds, self.my_fuzzy_value,
-                )
-            } else {
-                crate::bop::tools::algo_tools::are_faces_same_domain_shapes(
-                    f1, f2, self.my_fuzzy_value, &self.ds.locations,
-                )
-            };
+            // OCCT BOPAlgo_PairOfShapeBoolean::Perform (Builder_2.cxx L94-105)
+            // always calls BOPTools_AlgoTools::AreFacesSameDomain on the raw
+            // TopoDS_Face pair (BOPTools_AlgoTools.cxx L1139-1205), which works
+            // on the face geometry directly with no DS access. rcad mirrors
+            // this with the Shape-based check for every pair.
+            let flag = crate::bop::tools::algo_tools::are_faces_same_domain_shapes(
+                f1, f2, self.my_fuzzy_value, &self.ds.locations,
+            );
             if flag {
                 fill_map_faces(f1, f2, &mut a_dmsls);
             }
