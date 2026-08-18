@@ -5,7 +5,7 @@
 use glam::DVec2;
 use rcad_kernel::base::extrema::ExtPC2d;
 use rcad_kernel::base::geom_lprop::ClProps2d;
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Line2d};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, CurveEval, Line2d};
 use rcad_kernel::topo::topods::{u_resolution_for_surface, v_resolution_for_surface};
 use rcad_kernel::topods::{Orientation, TShape};
 use rcad_kernel::PCONFUSION;
@@ -196,9 +196,51 @@ impl Intersector {
         self.segments.clear();
         self.done = false;
 
-        let Some((a_c2d, deb, fin)) = edge_pcurve_on_face(ds, edge.edge(), edge.face(), ori) else {
-            self.done = false;
-            return;
+        let (a_c2d, deb, fin) = match edge_pcurve_on_face(ds, edge.edge(), edge.face(), ori) {
+            Some(v) => v,
+            None => {
+                // OCCT input BReps always carry face pcurves; rcad's split
+                // edges do not (MakePCurves runs after FF). Project the edge's
+                // 3D curve onto the face so the classifier can still intersect
+                // it.
+                let ed_shape = ds.shape_at(edge.edge());
+                let ed = match &*ed_shape.data {
+                    TShape::Edge(ed) => ed,
+                    _ => {
+                        self.done = false;
+                        return;
+                    }
+                };
+                let Some(curve) = ed.curve.clone() else {
+                    self.done = false;
+                    return;
+                };
+                let Some(surf) = ds.face_surface(edge.face()) else {
+                    self.done = false;
+                    return;
+                };
+                let range = ed.range;
+                let n = 23usize;
+                let dt = (range[1] - range[0]) / n as f64;
+                let mut uv: Vec<DVec2> = Vec::with_capacity(n + 1);
+                let mut ok = true;
+                for i in 0..=n {
+                    let t = range[0] + i as f64 * dt;
+                    let p3d = curve.point_at(t);
+                    let (u, _) = crate::bop::closest_point_on_surface(&surf, p3d);
+                    if !u.is_finite() {
+                        ok = false;
+                        break;
+                    }
+                    uv.push(u);
+                }
+                if !ok || uv.len() < 2 {
+                    self.done = false;
+                    return;
+                }
+                let bs = rcad_kernel::geom::BSplineCurve2::approximate(&uv);
+                (Curve2d::BSpline(bs), range[0], range[1])
+            }
         };
 
         let mut a_tol_z = tol;

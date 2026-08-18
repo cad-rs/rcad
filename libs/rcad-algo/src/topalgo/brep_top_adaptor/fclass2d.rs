@@ -1104,6 +1104,16 @@ impl FClass2d {
                             while prev_x - p2d.x > std::f64::consts::PI {
                                 p2d.x += std::f64::consts::TAU;
                             }
+                        } else {
+                            // First sample of the wire: a seam edge projected
+                            // onto a periodic surface can land at u=2*PI (the
+                            // atan2 azimuth of a point on the seam, wrapped by
+                            // floating-point noise). Normalize it into [0,2PI]
+                            // so the whole polygon does not shift by one period
+                            // (OCCT input pcurves never carry this noise).
+                            if p2d.x > std::f64::consts::PI {
+                                p2d.x -= std::f64::consts::TAU;
+                            }
                         }
                     }
                     if p2d.x < self.u_min {
