@@ -731,6 +731,7 @@ fn try_cylinder_trimmed_face_area(cyl: &CylindricalSurface, brep: &BRep, face: &
     if !face_wires_located(brep, face) && face.inner_wires.is_empty() && face.outer_wire.edges.len() == 4 {
         let mut n_lines = 0u32; let mut n_circles = 0u32;
         let mut circle_centers = Vec::new();
+        let mut circle_edge_indices = Vec::new();
         let mut edge_curve_indices = Vec::new();
         let mut valid = true;
         for we in &face.outer_wire.edges {
@@ -739,7 +740,7 @@ fn try_cylinder_trimmed_face_area(cyl: &CylindricalSurface, brep: &BRep, face: &
             }) {
                 match ci {
                     Curve3::Line(_) => { n_lines += 1; edge_curve_indices.push(we.idx); }
-                    Curve3::Circle(c) => { n_circles += 1; if circle_centers.len() < 2 { circle_centers.push(c.center); } }
+                    Curve3::Circle(c) => { n_circles += 1; circle_edge_indices.push(we.idx); if circle_centers.len() < 2 { circle_centers.push(c.center); } }
                     _ => { valid = false; break; }
                 }
             } else { valid = false; break; }
@@ -756,32 +757,21 @@ fn try_cylinder_trimmed_face_area(cyl: &CylindricalSurface, brep: &BRep, face: &
                     let du_r = (range[1] - range[0]).abs(); let dv_r = (range[3] - range[2]).abs();
                     if du_r > 1e-14 && dv_r > 1e-14 { break 'du du_r; }
                 }
-                if edge_curve_indices.len() == 2 && edge_curve_indices[0] == edge_curve_indices[1] { break 'du (2.0 * PI); }
-                let x_ax = crate::geom::any_perpendicular(axis);
-                let y_ax = axis.cross(x_ax).normalize();
-                let mut u_vals = Vec::new();
-                for &ci in &edge_curve_indices {
-                    if let Some(Curve3::Line(_)) = brep.tshapes.get(ci).and_then(|ts| {
-                        if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None }
-                    }) {
-                        for we in &face.outer_wire.edges {
-                            if we.idx == ci {
-                                if let Some(edge) = brep.edge_vertex_indices(we.idx) {
-                                    let vi = if we.forward { edge.0 } else { edge.1 };
-                                    if let Some(v) = brep.vertex_point(vi) {
-                                        let d = v - cyl.origin;
-                                        u_vals.push(d.dot(y_ax).atan2(d.dot(x_ax)));
-                                    }
-                                }
-                                break;
-                            }
+                if circle_edge_indices.len() == 2 {
+                    let mut spans = Vec::new();
+                    for &cei in &circle_edge_indices {
+                        if let Some(ed) = brep.tshapes.get(cei).and_then(|ts| {
+                            if let topods::TShape::Edge(ed) = &**ts { Some(ed) } else { None }
+                        }) {
+                            spans.push((ed.range[1] - ed.range[0]).abs());
                         }
                     }
+                    if spans.len() == 2 && (spans[0] - spans[1]).abs() < 1e-6 {
+                        let du_c = 0.5 * (spans[0] + spans[1]);
+                        if du_c > 1e-14 && du_c <= 2.0 * PI + 1e-9 { break 'du du_c; }
+                    }
                 }
-                if u_vals.len() == 2 {
-                    let du_norm = (u_vals[1] - u_vals[0]).rem_euclid(2.0 * PI);
-                    if du_norm > 1e-14 { break 'du du_norm; }
-                }
+                if edge_curve_indices.len() == 2 && edge_curve_indices[0] == edge_curve_indices[1] { break 'du (2.0 * PI); }
                 2.0 * PI
             };
             let r0 = (circle_centers[0] - cyl.origin).cross(axis).length();

@@ -4167,10 +4167,6 @@ impl<'a> Builder<'a> {
                         }
                     }
                     if b_out {
-                        if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                            eprintln!("[F3D-BBOX] solid_ptr={} block={:?} OUT vs solid bbox={:?}",
-                                a_sd.ptr_id(), a_lcb, solid_bbox);
-                        }
                         continue;
                     }
                 }
@@ -4179,25 +4175,15 @@ impl<'a> Builder<'a> {
                 let a_fc = a_face_to_classify.unwrap_or(k);
                 let a_fc_shape = &faces[a_fc];
 
-                // OCCT L1493-1496: representative face for the classification.
-                let a_fc = a_face_to_classify.unwrap_or(k);
-                let a_fc_shape = &faces[a_fc];
 
                 // OCCT L1505-1509: IsInternalFace on the representative face.
                 let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol, ds) == 1;
-                if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                    eprintln!("[F3D-CLS] solid_ptr={} block_faces={:?} rep_fc={} is_in={}",
-                        a_sd.ptr_id(), a_lcb, a_fc, is_in);
-                }
                 if is_in {
                     // OCCT L1510-1517: the whole connexity block is IN. Each
                     // face appears in exactly one block (aMFDone fence), so no
                     // duplicate check is needed 鈥?OCCT just Appends.
                     let entry = in_parts.entry((a_sd.ptr_id(), a_sd.location)).or_default();
                     for &bfi in &a_lcb {
-                        let src = ds.index(&faces[bfi]);
-                        eprintln!("[F3D-IN] face_idx={} ds_index={} ptr={} or={:?}",
-                            bfi, src, faces[bfi].ptr_id(), faces[bfi].orientation);
                         entry.push(faces[bfi].clone());
                     }
                 }
