@@ -25,7 +25,7 @@ fn type_to_integer_single(t: ShapeType) -> isize {
 fn type_to_integer(t1: ShapeType, t2: ShapeType) -> usize {
     let i_t1 = type_to_integer_single(t1); let i_t2 = type_to_integer_single(t2);
     match i_t2 * 10 + i_t1 {
-        77 => 0, 76 | 67 => 1, 66 => 2, 74 | 47 => 3, 64 | 46 => 4, 44 => 5, _ => 0,
+        77 => 0, 76 | 67 => 1, 66 => 2, 74 | 47 => 3, 64 | 46 => 4, 44 => 5, _ => 6,
     }
 }
 

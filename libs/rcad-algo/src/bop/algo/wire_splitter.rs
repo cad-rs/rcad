@@ -1284,8 +1284,16 @@ fn flip_ori(o: Orientation) -> Orientation {
 fn edge_vertices_forward(e: &Shape) -> [Shape; 2] {
     match &*e.data {
         TShape::Edge(ed) => [
-            Shape::new(ed.first.data.clone(), ed.first.location, Orientation::Forward),
-            Shape::new(ed.last.data.clone(), ed.last.location, Orientation::Reversed),
+            // OCCT BRep_Tool::Parameter (BRep_Tool.cxx L1541-1561) iterates
+            // E.Oriented(TopAbs_FORWARD): the yielded sub-shapes keep their
+            // STORED orientations (the FORWARD composition is the identity).
+            // rcad previously hardcoded [F, R], which flips the stored
+            // orientations of OCCT BRepPrim_GWedge edges (created as
+            // [rev(high), low] = [R, F], make_box.rs L76-84) and produces a
+            // wrong BRep_Tool::Parameter -> wrong Angle2D at the edge's
+            // endpoints (the bopcommon f6 cap wires).
+            Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
+            Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
         ],
         _ => [Shape::null(), Shape::null()],
     }
