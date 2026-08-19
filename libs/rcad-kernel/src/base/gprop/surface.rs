@@ -78,10 +78,12 @@ fn try_analytic_face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize
 
     match surf {
         Surface3::Plane(_) => {
-            if face_wires_located(brep, face) { None } else {
-                try_planar_face_area_shoelace(brep, face, face.normal)
-                    .or_else(|| try_planar_face_exact_contour_area(brep, face, face.normal))
-            }
+            // The planar paths (shoelace + axis-aligned rect + convex hull)
+            // evaluate edge endpoints under the edge Location (BRep_Tool::Pnt
+            // semantics), so located faces are handled by the analytic path
+            // (bcommon_simple F9/G2/G5/H3).
+            try_planar_face_area_shoelace(brep, face, face.normal)
+                .or_else(|| try_planar_face_exact_contour_area(brep, face, face.normal))
         }
 
         Surface3::Cylinder(cyl) =>
@@ -344,6 +346,13 @@ fn try_axis_aligned_world_rect_plane_area(brep: &BRep, face: &Face, face_normal:
 
 fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
     let edge = brep.edge_vertex_indices(we.idx)?;
+    // OCCT BRep_Tool::Pnt applies the cumulative Location of the edge to its
+    // endpoints (TopoDS_Iterator cumLoc).  A located edge (e.g. the top rim of
+    // a swept prism) references the same bottom vertex TShape with a
+    // translation Location; the endpoint must evaluate at vertex + Location.
+    // The WireEdge carries the edge's location index (0 = identity).
+    let loc_mat = brep.get_location(we.location);
+    let apply = |p: DVec3| loc_mat.transform_point3(p);
     if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| {
         if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None }
     }) {
@@ -351,10 +360,10 @@ fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
             if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None }
         }).unwrap_or_else(|| curve.default_domain());
         let t = if we.forward { range[0] } else { range[1] };
-        return Some(curve.point_at(t));
+        return Some(apply(curve.point_at(t)));
     }
     let vidx = if we.forward { edge.0 } else { edge.1 };
-    Some(brep.vertex_point(vidx)?)
+    Some(apply(brep.vertex_point(vidx)?))
 }
 
 fn outer_wire_ordered_vertex_uvs(brep: &BRep, wire: &Wire, i: usize, j: usize, pos_tol: f64) -> Vec<(f64, f64)> {
@@ -390,17 +399,22 @@ fn outer_wire_unique_vertex_uvs(brep: &BRep, wire: &Wire, i: usize, j: usize, po
             }
         });
         let Some(edge) = edge else { continue };
+        // OCCT BRep_Tool::Pnt: the edge's cumulative Location transforms its
+        // endpoints (TopoDS_Iterator cumLoc).  Located edges (swept prism top
+        // rim) share the bottom vertex TShape; evaluate at vertex + Location.
+        let loc_mat = brep.get_location(we.location);
+        let apply = |p: DVec3| loc_mat.transform_point3(p);
         let pts: [DVec3; 2] = if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| {
             if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None }
         }) {
             let range = brep.tshapes.get(we.idx).and_then(|ts| {
                 if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None }
             }).unwrap_or_else(|| curve.default_domain());
-            [curve.point_at(range[0]), curve.point_at(range[1])]
+            [apply(curve.point_at(range[0])), apply(curve.point_at(range[1]))]
         } else {
             let p0 = brep.vertex_point(edge.0).unwrap_or(DVec3::ZERO);
             let p1 = brep.vertex_point(edge.1).unwrap_or(DVec3::ZERO);
-            [p0, p1]
+            [apply(p0), apply(p1)]
         };
         for &p in &pts {
             let uv = (p[i], p[j]);
@@ -536,6 +550,8 @@ struct EdgeArcInfo {
 }
 
 fn try_planar_face_area_shoelace(brep: &BRep, face: &Face, face_normal: DVec3) -> Option<f64> {
+    let dbg = std::env::var("RCAD_SA_DEBUG").is_ok();
+    if dbg { eprintln!("[SA] shoelace n_edges={} n_inner={}", face.outer_wire.edges.len(), face.inner_wires.len()); }
     if face.inner_wires.is_empty() {
         if let Some(a_rect) = try_axis_aligned_world_rect_plane_area(brep, face, face_normal) {
             let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
@@ -544,6 +560,7 @@ fn try_planar_face_area_shoelace(brep: &BRep, face: &Face, face_normal: DVec3) -
                 let (ux, uy) = local_basis_from_normal(face_normal);
                 if let Some(pivot) = outer.first().copied() {
                     let a_shoe = polygon_area_2d_projected(&outer, pivot, ux, uy).abs();
+                    if dbg { eprintln!("[SA] rect={} shoe={} npts={} n_edges={}", a_rect, a_shoe, outer.len(), face.outer_wire.edges.len()); }
                     const REL: f64 = 1e-5;
                     let scale = a_rect.max(a_shoe).max(1.0);
                     let abs_eps = 1e-9 * scale;
@@ -873,7 +890,22 @@ fn try_spherical_polygon_great_circle_area(s: &SphericalSurface, brep: &BRep, fa
             // skip of the earlier revision was reverted: it broke the fused
             // sphere face of bfuse_simple A1, whose great-circle polygon then
             // under-counted the outer region.)
-            None => return None,
+            //
+            // A degenerate edge with coincident endpoints (a point edge) adds
+            // no polygon vertex: skip it so a great-circle face whose closing
+            // edge is a point (e.g. a spherical octant face trimmed by three
+            // planes) still takes the analytic path.  A degenerate edge with
+            // distinct endpoints (a pole crack) is not skip-able and falls
+            // back, preserving bfuse_simple A1.
+            None => {
+                let (va, vb) = edge;
+                let pa = brep.vertex_point(va);
+                let pb = brep.vertex_point(vb);
+                match (pa, pb) {
+                    (Some(pa), Some(pb)) if (pa - pb).length() <= tol => continue,
+                    _ => return None,
+                }
+            }
             Some(Curve3::Circle(c)) => {
                 if (c.center - s.center).length() > tol { return None; }
             }
@@ -886,6 +918,21 @@ fn try_spherical_polygon_great_circle_area(s: &SphericalSurface, brep: &BRep, fa
     if (verts.first()? - verts.last()?).length() > tol { verts.push(*verts.first()?); }
     let n = verts.len() - 1;
     if n < 3 { return None; }
+    // The great-circle formula applies to a simple spherical polygon: the
+    // boundary visits each vertex once.  A repeated vertex (beyond the closing
+    // copy) means the wire re-enters the same point, e.g. a fused sphere face
+    // trimmed to more than a hemisphere whose boundary passes through a pole
+    // twice; summing angles would double-count the sector.  Fall back to the
+    // UV integrator (bfuse_simple A1).
+    let mut vert_set: Vec<DVec3> = Vec::new();
+    for i in 0..n {
+        let p = verts[i];
+        let dup = vert_set.iter().any(|q| (q - p).length() <= tol);
+        if dup {
+            return None;
+        }
+        vert_set.push(p);
+    }
     let mut sum_angles = 0.0;
     for i in 0..n {
         let v_prev = if i > 0 { verts[i - 1] } else { verts[n - 1] };

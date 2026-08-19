@@ -85,7 +85,11 @@ pub struct Builder<'a> {
     pub(crate) my_glue: GlueEnum,          // L504: myGlue
     pub(crate) my_check_inverted: bool,    // L505: myCheckInverted
     pub(crate) my_nb_shapes_arr: [usize; 8], // L367: myNbShapesArr
-    // rcad-specific: BRep index tracking (ptr_id -> tshapes index)
+    // rcad-specific: BRep index tracking (ptr_id -> tshapes index).  The
+    // result keeps OCCT's TopoDS sharing semantics: a located copy (same
+    // TShape, different Location) maps to the same result shape, mirroring
+    // `nbshapes` without -t (same sub-shape with different location counts
+    // once).  The evaluated positions are carried by the Location references.
     pub(crate) shape_remap: HashMap<u64, usize>,
     // rcad-specific: DS location index -> result BRep location index.  The
     // result BRep's locations pool is built lazily while cloning shapes, so a
@@ -6126,6 +6130,15 @@ impl<'a> Builder<'a> {
     /// Recursively push a Shape and all sub-shapes into my_shape.
     /// Uses self.shape_remap for persistent index tracking across pipeline stages.
     /// Returns the shape's index in the result BRep's tshapes.
+    ///
+    /// The dedup key is the TShape identity (ptr_id) only — Location does not
+    /// participate, mirroring `nbshapes` without -t: a located copy (same
+    /// TShape, different Location, e.g. the top cap of a swept prism sharing
+    /// the bottom cap's TShape with a translation Location) maps to the same
+    /// result shape.  The evaluated positions are carried by the Location
+    /// references on the shape and its edge-endpoint vertex references, so the
+    /// geometry stays correct while the topological vertex count matches OCCT
+    /// (bcommon_simple F9/G2/G5/H3, bfuse_simple E1).
     fn push_shape_recursive(&mut self, shape: &Shape) -> usize {
         let ptr = shape.ptr_id();
         if let Some(&idx) = self.shape_remap.get(&ptr) {
@@ -6250,16 +6263,19 @@ impl<'a> Builder<'a> {
             return 0;
         };
         let brep = self.my_shape.as_mut().expect("prepare() must set my_shape");
-        if brep.locations.is_empty() {
-            // Location index 0 is reserved for identity (TopLoc_Location
-            // convention); the pool starts empty so seed it explicitly.
-            brep.locations.push(glam::DAffine3::IDENTITY);
-        }
+        // The result BRep uses the rcad-kernel location convention: the
+        // `locations` pool stores the real transforms only (index 0 = the
+        // first non-identity matrix) and the logical index returned to shapes
+        // is `pool index + 1` (0 = identity, 1 = first matrix).  This mirrors
+        // BRep::add_location/get_location (topods.rs L286-308).  The DS pool
+        // (merged global_locs) instead stores identity at index 0 and indexes
+        // directly (DS::get_location reads locations[idx]), so the matrix is
+        // looked up from the DS pool and copied into the result pool here.
         let new_idx = if let Some(pos) = brep.locations.iter().position(|x| *x == mat) {
-            pos as u32
+            (pos + 1) as u32
         } else {
             brep.locations.push(mat);
-            (brep.locations.len() - 1) as u32
+            brep.locations.len() as u32
         };
         self.loc_remap.insert(loc, new_idx);
         new_idx

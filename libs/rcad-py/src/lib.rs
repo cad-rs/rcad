@@ -24,7 +24,7 @@ use rcad_kernel::properties::{centroid, inertia_tensor, signed_volume, surface_a
 use rcad_kernel::topods;
 use rcad_modeling::{
     chamfer_edge, cone_brep, cylinder_brep, extrude, fillet_edge, fillet_edges, loft,
-    make_box_brep, make_conical_frustum_brep, project_wire_onto_surface, revolve, sphere_brep,
+    make_box_brep, make_cone_brep, project_wire_onto_surface, revolve, sphere_brep,
     sweep_pipe, torus_brep,
 };
 use rcad_step::{ExportSelection, IgesReader, IgesWriter, StepReader, StepWriter};
@@ -628,7 +628,7 @@ impl PyBRep {
         r_top: f64,
         height: f64,
     ) -> PyResult<Self> {
-        let brep = make_conical_frustum_brep(
+        let brep = make_cone_brep(
             vec3_tuple(center),
             vec3_tuple(axis),
             vec3_tuple(ref_dir),

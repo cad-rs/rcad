@@ -25,9 +25,18 @@ pub(crate) fn apply_location(brep: &topods::BRep, p: DVec3, loc: u32) -> DVec3 {
     if loc == 0 {
         return p;
     }
+    // The BRep `locations` pool follows the rcad-kernel convention (index 0 =
+    // the first real transform, logical index = pool index + 1).  Some legacy
+    // result pools stored identity at index 0 with direct indexing; support
+    // both by falling back to the raw pool slot when the logical lookup
+    // misses.
+    let m = brep.get_location(loc);
+    if m != glam::DAffine3::IDENTITY {
+        return m.transform_point3(p);
+    }
     match brep.locations.get(loc as usize) {
-        Some(m) => m.transform_point3(p),
-        None => p,
+        Some(m2) if *m2 != glam::DAffine3::IDENTITY => m2.transform_point3(p),
+        _ => p,
     }
 }
 
@@ -814,14 +823,23 @@ pub fn polygon_area_2d_projected(pts: &[DVec3], pivot: DVec3, ux: DVec3, uy: DVe
 pub fn try_boundary_convex_hull_area(
     brep: &BRep, wire: &Wire, pivot: DVec3, ux: DVec3, uy: DVec3,
 ) -> Option<f64> {
-    let mut vert_indices = Vec::new();
-    for we in &wire.edges { let edge = brep.edge_vertex_indices(we.idx)?;
-        vert_indices.push(edge.0); vert_indices.push(edge.1); }
-    vert_indices.sort(); vert_indices.dedup();
-    if vert_indices.len() < 3 { return None; }
-    let pts_2d: Vec<DVec2> = vert_indices.iter()
-        .filter_map(|&vi| brep.vertex_point(vi))
-        .map(|v| DVec2::new((v - pivot).dot(ux), (v - pivot).dot(uy))).collect();
+    let mut pts_2d: Vec<DVec2> = Vec::new();
+    for we in &wire.edges {
+        let edge = brep.edge_vertex_indices(we.idx)?;
+        // OCCT BRep_Tool::Pnt: located edges evaluate endpoints at
+        // vertex + edge Location (TopoDS_Iterator cumLoc); a located edge
+        // shares the base vertex TShape, so the location must be applied
+        // per-edge here (the plain vertex pool holds the base position).
+        let m = brep.get_location(we.location);
+        for &vi in &[edge.0, edge.1] {
+            if let Some(v) = brep.vertex_point(vi) {
+                let p = m.transform_point3(v);
+                pts_2d.push(DVec2::new((p - pivot).dot(ux), (p - pivot).dot(uy)));
+            }
+        }
+    }
+    pts_2d.sort_by(|a, b| a.x.total_cmp(&b.x).then_with(|| a.y.total_cmp(&b.y)));
+    pts_2d.dedup_by(|a, b| (a.x - b.x).abs() <= 1e-12 && (a.y - b.y).abs() <= 1e-12);
     if pts_2d.len() < 3 { return None; }
 
     let mut sorted: Vec<usize> = (0..pts_2d.len()).collect();

@@ -4,7 +4,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::topods;
 use rcad_kernel::topods::TShape;
 use rcad_modeling::{
-    extrude, loft, make_box_brep, make_cone_brep, make_conical_frustum_brep, make_cylinder_brep,
+    extrude, loft, make_box_brep, make_cone_brep, make_cylinder_brep,
     make_sphere_brep, make_torus_brep, revolve, sweep_pipe,
 };
 
@@ -61,7 +61,7 @@ fn conical_frustum_builds_solid() {
     let h = 4.0;
     let rb = 3.0;
     let rt = 2.0;
-    let brep = rcad_modeling::make_conical_frustum_brep_topods(
+    let brep = rcad_modeling::make_cone_brep(
         DVec3::new(0.0, 0.0, h * 0.5),
         DVec3::Z,
         DVec3::X,

@@ -43,7 +43,7 @@ fn make_cone(base_radius: f64, height: f64) -> topods::BRep {
 }
 
 fn make_cone_truncated(base_radius: f64, top_radius: f64, height: f64) -> topods::BRep {
-    rcad_modeling::make_conical_frustum_brep(DVec3::ZERO, DVec3::Z, DVec3::X, base_radius, top_radius, height)
+    rcad_modeling::make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, base_radius, top_radius, height)
         .expect("Truncated cone creation failed")
 }
 
