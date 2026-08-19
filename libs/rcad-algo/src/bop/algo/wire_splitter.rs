@@ -1276,11 +1276,12 @@ fn flip_ori(o: Orientation) -> Orientation {
 }
 
 /// OCCT E.Oriented(TopAbs_FORWARD) — the edge normalized to FORWARD orientation.
-/// The stored TEdge nodes [V1(Fwd), V2(Rev)] are returned as [V1(Fwd), V2(Rev)]
-/// ALWAYS, independent of the edge's stored orientation (the parent composition
-/// uses the FORWARD orientation of the normalized copy). Used by
-/// BRep_Tool::Parameter (BRep_Tool.cxx L1532-1597); do NOT use for
-/// GetNextVertex / smart-map EdgeInfo which iterate the edge as stored.
+/// The stored TEdge nodes keep their STORED orientations when iterated this way
+/// (composing the FORWARD orientation of the normalized copy is the identity),
+/// so [V1, V2] are returned with their stored orientations — for standard edges
+/// [F, R], for OCCT BRepPrim_GWedge edges [R, F]. Used by BRep_Tool::Parameter
+/// (BRep_Tool.cxx L1532-1597); do NOT use for GetNextVertex / smart-map
+/// EdgeInfo which iterate the edge as stored (composed with its orientation).
 fn edge_vertices_forward(e: &Shape) -> [Shape; 2] {
     match &*e.data {
         TShape::Edge(ed) => [
@@ -1497,9 +1498,9 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
     match &*e.data {
         TShape::Edge(ed) => {
             // OCCT L1541-1561: iterate E.Oriented(TopAbs_FORWARD). The stored
-            // TEdge nodes are [V1, V2]; composed with the FORWARD orientation of
-            // the normalized copy they are [V1(Fwd), V2(Rev)]. A self-loop edge
-            // has V1 and V2 the same TShape, so V matches twice.
+            // TEdge nodes [V1, V2] keep their STORED orientations (the FORWARD
+            // composition of the normalized copy is the identity). A self-loop
+            // edge has V1 and V2 the same TShape, so V matches twice.
             let verts = edge_vertices_forward(e);
             let mut rev = false;
             let mut vf: Option<Shape> = None;

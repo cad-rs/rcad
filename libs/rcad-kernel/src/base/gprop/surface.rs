@@ -9,9 +9,12 @@ use std::f64::consts::PI;
 
 use crate::BRep;
 use crate::geom::{
-    ConicalSurface, Curve3, CurveEval, CylindricalSurface, SphericalSurface, Surface3, SurfaceEval,
+    ConicalSurface, Curve2d, Curve2dEval, Curve3, CurveEval, CylindricalSurface, SphericalSurface,
+    Surface3, SurfaceEval,
 };
 use crate::topo::topods;
+use crate::topo::topods::BRepTool;
+use crate::topo::topo_shape::Shape;
 use crate::topo::topology::{Face, Wire, WireEdge};
 use crate::base::gprop::tri::*;
 use crate::base::geom_api::project::closest_point_on_surface;
@@ -96,8 +99,24 @@ fn try_analytic_face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize
         }
 
         Surface3::Sphere(s) => {
-            if face_wires_located(brep, face) { None } else {
-                try_spherical_polygon_great_circle_area(s, brep, face)
+            if face_wires_located(brep, face) { 
+                None 
+            } else {
+                // OCCT BRepGProp::SurfaceProperties (BRepGProp.cxx L225-253):
+                // a face with wires (non-natural restriction) integrates over
+                // its edge-pcurve domain via BRepGProp_Gauss::Compute(Face,
+                // Domain) — the Green theorem line integral.  Prefer that
+                // exact path; the analytic great-circle polygon is a fallback
+                // for faces whose boundary is a simple spherical polygon.
+                let domain = face_surface_area_gauss_domain(brep, face, face_flat_idx);
+                let gc = try_spherical_polygon_great_circle_area(s, brep, face);
+                domain
+                    .or_else(|| gc)
+                    .or_else(|| {
+                        let tris = face_triangles_pub(brep, face_flat_idx);
+                        let a = tris.iter().map(|[a, b, c]| tri_area(*a, *b, *c)).sum();
+                        if a > 0.0 { Some(a) } else { None }
+                    })
                     .or_else(|| face_surface_area_gauss(brep, face, face_flat_idx))
             }
         }
@@ -191,6 +210,151 @@ fn gl_v_knots(surf: &Surface3, v0: f64, v1: f64) -> Vec<f64> {
 fn surface_normal_jacobian(surf: &Surface3, u: f64, v: f64) -> f64 {
     let (_p, du, dv) = surf.derivatives(u, v);
     du.cross(dv).length()
+}
+
+// ── OCCT BRepGProp_Gauss::Compute(Face, Domain) — Green theorem line integral ──
+//
+// OCCT BRepGProp_Gauss.cxx L1126-1211 (Sinert).  For a face whose boundary is
+// not the natural restriction (i.e. the face carries wires), BRepGProp::Surface
+// Properties integrates along every boundary edge pcurve instead of over the
+// full UV rectangle:
+//
+//   Mass = sum over edges of
+//     lr * sum_i { ur * sum_j ( |N(u_j, v_i)| * (dv/dl)_i * w_i * w_j ) }
+//   with u_j = um + ur*x_j, v_i the edge's V at Gauss point l_i,
+//   um = (u2+u1)/2, ur = (u2-u1)/2, and u2 = the edge's U at l_i.
+//
+// This is the Green theorem form of the surface area integral and reproduces
+// OCCT's values bit-for-bit for trimmed curved faces (e.g. bfuse_simple A1).
+
+// OCCT math::GaussPoints/GaussWeights tables (math.cxx): packed positive-half
+// nodes/weights for orders 1..61 plus the GaussPoints expansion.
+include!("gauss_tables.rs");
+
+/// OCCT BRepGProp_Face::IntegrationOrder (BRepGProp_Face.cxx L111-150):
+/// Gauss order for the boundary edge pcurve (GeomAbs type -> N, max(4, 2N)).
+fn curve_integration_order(c: &Curve2d) -> usize {
+    let n = match c {
+        Curve2d::Line(_) => 2,
+        Curve2d::Circle(_) | Curve2d::Ellipse(_) | Curve2d::Hyperbola(_) | Curve2d::Parabola(_) => 9,
+        Curve2d::BSpline(b) => (b.degree + 1) * (b.knots.len().saturating_sub(1)),
+        // Bezier degree = control point count - 1
+        Curve2d::Bezier(b) => b.control_points.len(),
+        _ => 9,
+    };
+    (2 * n).max(4)
+}
+
+/// OCCT BRepGProp_Face::UIntegrationOrder/VIntegrationOrder (L39-107):
+/// Gauss order for the face surface (GeomAbs type -> Nu/Nv, max(8, 2N)).
+fn surface_u_v_integration_order(surf: &Surface3) -> (usize, usize) {
+    let (nu, nv): (usize, usize) = match surf {
+        Surface3::Plane(_) => (4, 4),
+        Surface3::Bezier(b) => {
+            let du = b.control_points.len().saturating_sub(1) + 1;
+            let dv = b.control_points.first().map_or(1, |r| r.len().saturating_sub(1)) + 1;
+            (du, dv)
+        }
+        Surface3::BSpline(b) => {
+            (b.degree_u + 1, b.degree_v + 1)
+        }
+        _ => (9, 9),
+    };
+    ((2 * nu).max(8), (2 * nv).max(8))
+}
+
+/// OCCT BRepGProp_Gauss::Compute(Face, Domain) L1126-1211 (Sinert, area only).
+/// Integrates |Su x Sv| over the face domain bounded by its edge pcurves via
+/// the Green theorem line integral.  Returns None when a pcurve is missing or
+/// an edge carries a located reference (pcurve evaluation is location-blind).
+pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> Option<f64> {
+    let surf_idx = brep.tshapes.get(fi).and_then(|ts| {
+        if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None }
+    })?;
+    let surf = &surf_idx;
+    // theSurface.Bounds (L1135-1136): surface parameter domain [u1,u2]x[v1,v2]
+    let [u1, _u2, _v1, _v2] = surf.default_domain();
+    // UIntegrationOrder / VIntegrationOrder (L1139-1143), GaussPointsMax = 61
+    let (nb_u, nb_v) = surface_u_v_integration_order(surf);
+    let nb_gauss = nb_u.min(61).max(nb_v.min(61));
+    let (spv, swv) = occt_gauss(nb_gauss)?;
+
+    let face_shape = Shape::from_parts(brep.tshapes[fi].clone(), fi, 0, topods::Orientation::Forward);
+
+    let mut an_inertia = 0.0;
+    // Domain: every edge of the face (outer + inner wires), skip INTERNAL/EXTERNAL
+    let mut edges: Vec<WireEdge> = face.outer_wire.edges.clone();
+    for w in &face.inner_wires {
+        edges.extend(w.edges.iter().copied());
+    }
+    for we in &edges {
+        let edge_shape = Shape::from_parts(
+            brep.tshapes[we.idx].clone(),
+            we.idx,
+            we.location,
+            if we.forward { topods::Orientation::Forward } else { topods::Orientation::Reversed },
+        );
+        let pc = brep.curve_on_surface(&edge_shape, &face_shape);
+        // BRep_Tool::CurveOnSurface (BRep_Tool.cxx L327-373): the edge's
+        // pcurve on the face.  A REVERSED edge on a closed surface (seam)
+        // uses PCurve2 (the u=0 image); other edges use PCurve.
+        let (c, a0, b0) = if !we.forward {
+            match brep.curve_on_surface_second(&edge_shape, &face_shape) {
+                Some(v) => v,
+                None => pc?.clone(),
+            }
+        } else {
+            pc?.clone()
+        };
+        // BRepGProp_Face::Load (BRepGProp_Face.cxx L164-185): REVERSED edge
+        // reverses the pcurve and its parameter range.
+        let reversed = !we.forward;
+        let (a, b) = if reversed {
+            let x = a0;
+            (c.reversed_parameter(b0), c.reversed_parameter(x))
+        } else {
+            (a0, b0)
+        };
+        // IntegrationOrder (L1159-1161)
+        let nb_c = curve_integration_order(&c).min(61).max(nb_gauss);
+        let (cp, cw) = occt_gauss(nb_c)?;
+        let l1 = a;
+        let l2 = b;
+        let lm = 0.5 * (l2 + l1);
+        let lr = 0.5 * (l2 - l1);
+
+        let mut a_c_inertia = 0.0;
+        for i in 0..nb_c {
+            let l = lm + lr * cp[i];
+            // D12d (L1177-1179): point and first derivative of the 2D curve
+            let (puv, vuv) = if reversed {
+                let rp = c.reversed_parameter(l);
+                (c.point_at(rp), -c.derivative_at(rp))
+            } else {
+                (c.point_at(l), c.derivative_at(l))
+            };
+            let v = puv.y;
+            let u2 = puv.x;
+            // Dul = dv/dl * w_i (L1182-1185)
+            let dul = vuv.y * cw[i];
+            let um = 0.5 * (u2 + u1);
+            let ur = 0.5 * (u2 - u1);
+            if ur.abs() < 1e-30 { continue; }
+            let mut a_local = 0.0;
+            for j in 0..nb_gauss {
+                let u = um + ur * spv[j];
+                let a_weight = dul * swv[j];
+                // BRepGProp_Face::Normal (L201-210): D1U x D1V
+                let (_p, du, dv) = surf.derivatives(u, v);
+                let n = du.cross(dv);
+                a_local += n.length() * a_weight;
+            }
+            a_c_inertia += a_local * ur;
+        }
+        let edge_contrib = a_c_inertia * lr;
+        an_inertia += edge_contrib;
+    }
+    if an_inertia > 0.0 { Some(an_inertia) } else { None }
 }
 
 fn face_surface_area_gauss(brep: &BRep, face: &Face, fi: usize) -> Option<f64> {

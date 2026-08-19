@@ -1644,7 +1644,7 @@ impl<'a> Builder<'a> {
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(8, "after_FillImagesCompounds");
 
-        // OCCT L575-580 (BOPAlgo_BOP.cxx): BuildShape 鈥?apply the boolean operation
+        // OCCT L575-580 (BOPAlgo_BOP.cxx): BuildShape - apply the boolean operation
         // result construction. Runs between the s08 dump and PrepareHistory.
         self.build_shape();
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
@@ -1654,9 +1654,138 @@ impl<'a> Builder<'a> {
         snap!(9, "after_PrepareHistory");
         self.post_treat();
         snap!(10, "after_PostTreat");
+        self.remap_result_pcurve_keys();
 
         let result = self.my_shape.clone().unwrap_or_default();
         Ok((result, snapshots))
+    }
+
+    /// OCCT shares the face TShape handle between the DS and the result, so
+    /// edge pcurves keyed by (face ptr_id, location) keep matching the result
+    /// faces.  rcad's `push_shape_recursive` clones every TShape into the
+    /// result BRep (new Arc pointers), which would orphan the pcurve keys;
+    /// remap each result face's wire-edge pcurves from the source face key
+    /// (the DS/input face the result face was cloned from) to the result
+    /// face key so BRep_Tool::CurveOnSurface lookups on the result work
+    /// (GProp area).
+    fn remap_result_pcurve_keys(&mut self) {
+        let Some(brep) = self.my_shape.as_mut() else { return };
+        // For each result face, the source (DS/input) face key its pcurves
+        // were written under.  Unsplit faces keep the input face ptr (covered
+        // by ptr_map); split faces (my_images) carry the source key.
+        let mut src_of_result: HashMap<usize, (u64, u32)> = HashMap::new();
+        for (src_key, imgs) in self.my_images.iter() {
+            for img in imgs {
+                if let Some(&idx) = self.shape_remap.get(&img.ptr_id()) {
+                    if idx < brep.tshapes.len() {
+                        if matches!(&*brep.tshapes[idx], topods::TShape::Face(_)) {
+                            src_of_result.insert(idx, src_key);
+                        }
+                    }
+                }
+            }
+        }
+        // Old face ptr -> new face Arc ptr map (unsplit faces).
+        let mut ptr_map: HashMap<u64, u64> = HashMap::new();
+        for (old_ptr, &new_idx) in &self.shape_remap {
+            if new_idx < brep.tshapes.len() {
+                if let topods::TShape::Face(_) = &*brep.tshapes[new_idx] {
+                    ptr_map.insert(
+                        *old_ptr,
+                        std::sync::Arc::as_ptr(&brep.tshapes[new_idx]) as u64,
+                    );
+                }
+            }
+        }
+        if ptr_map.is_empty() && src_of_result.is_empty() {
+            return;
+        }
+        // Pass 1: unsplit faces — remap pcurve keys through ptr_map.
+        for ts in &mut brep.tshapes {
+            if let topods::TShape::Edge(ed) = std::sync::Arc::make_mut(ts) {
+                if !ed.pcurves.is_empty() {
+                    ed.pcurves = ed
+                        .pcurves
+                        .iter()
+                        .map(|(&(p, l), v)| {
+                            let np = ptr_map.get(&p).copied().unwrap_or(p);
+                            ((np, l), v.clone())
+                        })
+                        .collect();
+                }
+                if !ed.representations.is_empty() {
+                    for r in ed.representations.iter_mut() {
+                        match r {
+                            topods::CurveRepresentation::CurveOnSurface { face, .. }
+                            | topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                if let Some(np) = ptr_map.get(&face.0) {
+                                    face.0 = *np;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        // Pass 2: split faces — re-key the source face entries of each
+        // result face's wire edges to the result face key.
+        let face_indices: Vec<usize> = brep
+            .tshapes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, ts)| matches!(&**ts, topods::TShape::Face(_)).then_some(i))
+            .collect();
+        for fi in face_indices {
+            let Some(src_key) = src_of_result.get(&fi).copied() else { continue };
+            let result_key = (
+                std::sync::Arc::as_ptr(&brep.tshapes[fi]) as u64,
+                src_key.1,
+            );
+            let wire_idxs: Vec<usize> = {
+                let fd = match &*brep.tshapes[fi] {
+                    topods::TShape::Face(fd) => fd,
+                    _ => continue,
+                };
+                let mut ws = vec![fd.outer_wire.index];
+                for w in &fd.inner_wires {
+                    ws.push(w.index);
+                }
+                ws
+            };
+            for wi in wire_idxs {
+                if wi >= brep.tshapes.len() {
+                    continue;
+                }
+                let edge_idxs: Vec<usize> = match &*brep.tshapes[wi] {
+                    topods::TShape::Wire(wd) => wd.edges.iter().map(|e| e.index).collect(),
+                    _ => continue,
+                };
+                for ei in edge_idxs {
+                    if ei >= brep.tshapes.len() {
+                        continue;
+                    }
+                    let ed = match std::sync::Arc::make_mut(&mut brep.tshapes[ei]) {
+                        topods::TShape::Edge(ed) => ed,
+                        _ => continue,
+                    };
+                    if let Some(v) = ed.pcurves.remove(&src_key) {
+                        ed.pcurves.insert(result_key, v);
+                    }
+                    for r in ed.representations.iter_mut() {
+                        match r {
+                            topods::CurveRepresentation::CurveOnSurface { face, .. }
+                            | topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                if *face == src_key {
+                                    *face = result_key;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// OCCT BOPAlgo_Builder::Build 鈥?full pipeline with history.

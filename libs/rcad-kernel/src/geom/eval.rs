@@ -2469,6 +2469,22 @@ impl Curve2dEval for Curve2d {
             Curve2d::TBezier(c) => [0.0, std::f64::consts::PI / c.alpha],
         }
     }
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        // OCCT Geom2d_Curve::ReversedParameter:
+        // Line/Parabola/Hyperbola/Bezier/BSpline: -U
+        // Circle/Ellipse (periodic): Period - U
+        match self {
+            Curve2d::Line(c) => c.reversed_parameter(t),
+            Curve2d::Circle(c) => c.reversed_parameter(t),
+            Curve2d::Ellipse(c) => c.reversed_parameter(t),
+            Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => -t,
+            // OCCT Geom2d_BSplineCurve::ReversedParameter = -U (non-periodic)
+            Curve2d::BSpline(_) => -t,
+            Curve2d::Bezier(_) => -t,
+            Curve2d::Offset(c) => c.basis.reversed_parameter(t),
+            _ => -t,
+        }
+    }
 }
 
 impl Curve2dEval for TrimmedCurve2 {

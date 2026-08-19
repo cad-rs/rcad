@@ -5373,12 +5373,21 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if p.x.abs() < 1e-12 { p.x = 0.0; }
             }
         }
-        let mut c = rcad_kernel::geom::BSplineCurve2::approximate(&uv);
-        // approximate() normalizes the parameterization to [0,1] (chord-length).
-        // OCCT pcurves are parameterized by the edge's 3D range, and the
-        // WireSplitter evaluates curve2d_point(pc, t) with the vertex parameter t
-        // in that range 鈥?rescale the knots so the stored range is the curve's
-        // own domain.
+        // OCCT MakePCurveOnFace uses ProjLib for the exact analytic projection
+        // and GeomAPI_Interpolate for the pcurve (BOPTools_AlgoTools2D.cxx
+        // L432-479).  Interpolate the sampled UV points exactly (through the
+        // samples) instead of the approximate control-point fit
+        // (BSplineCurve2::approximate), matching the OCCT pcurve so
+        // BRepGProp's Green-theorem integral reproduces the reference values.
+        let mut c = match rcad_kernel::base::geom_api::interpolate_points_2d(&uv) {
+            Ok(c) => c,
+            Err(_) => return None,
+        };
+        // interpolate_points_2d normalizes the parameterization to [0,1]
+        // (chord-length).  OCCT pcurves are parameterized by the edge's 3D
+        // range, and the WireSplitter evaluates curve2d_point(pc, t) with the
+        // vertex parameter t in that range - rescale the knots so the stored
+        // range is the curve's own domain.
         let (r0, r1) = (range[0], range[1]);
         if r1 > r0 {
             c.knots = c.knots.iter().map(|k| r0 + (r1 - r0) * k).collect();
