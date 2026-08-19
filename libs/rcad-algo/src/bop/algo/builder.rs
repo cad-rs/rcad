@@ -91,10 +91,14 @@ pub struct Builder<'a> {
     // `nbshapes` without -t (same sub-shape with different location counts
     // once).  The evaluated positions are carried by the Location references.
     pub(crate) shape_remap: HashMap<u64, usize>,
-    // rcad-specific: DS location index -> result BRep location index.  The
-    // result BRep's locations pool is built lazily while cloning shapes, so a
-    // located copy keeps its transform in the result (OCCT TopLoc_Location).
-    pub(crate) loc_remap: HashMap<u32, u32>,
+    // rcad-specific: source face ptr -> result-pool face Arc ptr.  OCCT
+    // shares the TShape handle: myImages[srcKey]'s split face IS the result
+    // face, so an edge pcurve keyed by that face matches the result directly.
+    // rcad clones the TShape (new Arc per push), so the mapping from the
+    // source face ptr to the cloned pool Arc is recorded here when the face is
+    // pushed (push_shape_recursive) and resolved against the final
+    // shape_remap after BuildShape rebuilt the result (GProp area).
+    pub(crate) face_src_key_of_pool: HashMap<u64, u64>,
 }
 
 /// Stage snapshot: DS + result BRep counts at a Builder pipeline boundary.
@@ -1472,7 +1476,7 @@ impl<'a> Builder<'a> {
             my_check_inverted: false,
             my_nb_shapes_arr: [0; 8],
             shape_remap: HashMap::new(),
-            loc_remap: HashMap::new(),
+            face_src_key_of_pool: HashMap::new(),
         }
     }
 
@@ -1674,12 +1678,20 @@ impl<'a> Builder<'a> {
         // were written under.  Unsplit faces keep the input face ptr (covered
         // by ptr_map); split faces (my_images) carry the source key.
         let mut src_of_result: HashMap<usize, (u64, u32)> = HashMap::new();
+        // OCCT shares the TShape handle: myImages[srcKey]'s split face IS the
+        // result face, so an edge pcurve keyed by that face matches the result
+        // directly.  rcad clones the TShape (source Arc -> pool Arc recorded
+        // in face_src_key_of_pool when pushed) and BuildShape rebuilt the
+        // result (set_shape_from_shapes cleared shape_remap), so resolve the
+        // final result index through shape_remap[poolArc].
         for (src_key, imgs) in self.my_images.iter() {
             for img in imgs {
-                if let Some(&idx) = self.shape_remap.get(&img.ptr_id()) {
-                    if idx < brep.tshapes.len() {
-                        if matches!(&*brep.tshapes[idx], topods::TShape::Face(_)) {
-                            src_of_result.insert(idx, src_key);
+                if let Some(&pool_arc) = self.face_src_key_of_pool.get(&img.ptr_id()) {
+                    if let Some(&idx) = self.shape_remap.get(&pool_arc) {
+                        if idx < brep.tshapes.len() {
+                            if matches!(&*brep.tshapes[idx], topods::TShape::Face(_)) {
+                                src_of_result.insert(idx, src_key);
+                            }
                         }
                     }
                 }
@@ -5770,9 +5782,6 @@ impl<'a> Builder<'a> {
     fn set_shape_from_shapes(&mut self, shapes: Vec<Shape>) {
         self.my_shape = Some(topods::BRep::new());
         self.shape_remap.clear();
-        // The fresh my_shape has an empty locations pool; drop the old
-        // DS -> result location mapping so remap_location re-seeds it.
-        self.loc_remap.clear();
         for s in shapes {
             self.add_shape_to_result(&s);
         }
@@ -6357,17 +6366,42 @@ impl<'a> Builder<'a> {
         // Replace placeholder with the remapped TShape
         let brep = self.my_shape.as_mut().unwrap();
         brep.tshapes[new_idx] = Arc::new(new_tshape);
+        // OCCT BRep_Builder::Add shares the TShape handle: the pool Arc IS the
+        // result's TShape.  `remap_shape` hands that Arc to parent references;
+        // a later push of the same pool Arc (e.g. set_shape_from_shapes
+        // rebuilding the result from a_rc, whose shapes reference the pool
+        // Arc) must reuse this entry instead of cloning again — otherwise the
+        // remap_location call is repeated and the location index drifts.
+        self.shape_remap.insert(Arc::as_ptr(&brep.tshapes[new_idx]) as u64, new_idx);
+        // OCCT BRep_Builder::Add shares the TShape handle: a split face of
+        // myImages IS the result face, so an edge pcurve keyed by that face
+        // matches the result directly.  rcad clones the TShape (new Arc per
+        // push); record the source face ptr -> pool Arc mapping so
+        // remap_result_pcurve_keys can re-key pcurves to the final pool face
+        // after BuildShape rebuilt the result.
+        if matches!(&*shape.data, topods::TShape::Face(_)) {
+            self.face_src_key_of_pool.insert(ptr, Arc::as_ptr(&brep.tshapes[new_idx]) as u64);
+        }
         new_idx
     }
 
     /// Remap a single Shape's index via self.shape_remap (and its location via
-    /// self.loc_remap, copying the matrix from the DS pool into my_shape).
+    /// remap_location, keeping the matrix from the DS pool in my_shape).
     fn remap_shape(&mut self, shape: &Shape) -> Shape {
+        // OCCT BRep_Builder::Add shares the TShape handle: the result BRep's
+        // parent reference and the pool entry are the same object.
+        // `push_shape_recursive` clones each TShape into a new Arc at new_idx;
+        // the remapped reference must point at that pool Arc (not the source
+        // Arc) so traversal via Shape.data (BRep_Tool, brep_top_shapes) sees
+        // the result structure.  Locations map 1:1 (remap_location returns the
+        // DS index), so a location written once stays valid across
+        // set_shape_from_shapes rebuilds.
         let location = self.remap_location(shape.location);
         if let Some(&new_idx) = self.shape_remap.get(&shape.ptr_id()) {
+            let data = self.my_shape.as_ref().unwrap().tshapes[new_idx].clone();
             Shape {
                 index: new_idx,
-                data: shape.data.clone(),
+                data,
                 location,
                 orientation: shape.orientation,
             }
@@ -6378,36 +6412,31 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Remap a DS location index into the result BRep's locations pool,
-    /// copying the matrix when it is referenced for the first time.
+    /// Remap a DS location index into the result BRep's locations pool.
+    /// OCCT: TopLoc_Location is a property of the TopoDS_Shape; a shape keeps
+    /// its own Location everywhere it is referenced, and rebuilding the result
+    /// (myShape = aResult) never re-maps it.  rcad mirrors this by keeping the
+    /// result-pool index equal to the DS index (1:1, filled in DS order), so a
+    /// location index written once stays valid across set_shape_from_shapes
+    /// rebuilds.  A dedup/push-on-first-touch scheme would re-number indices by
+    /// traversal order and drift after a rebuild (g8 planar area 19 -> 24).
     fn remap_location(&mut self, loc: u32) -> u32 {
         if loc == 0 {
             return 0;
-        }
-        if let Some(&r) = self.loc_remap.get(&loc) {
-            return r;
         }
         let Some(mat) = self.ds.locations.get(loc as usize).cloned() else {
             // Dangling reference: treat as identity.
             return 0;
         };
         let brep = self.my_shape.as_mut().expect("prepare() must set my_shape");
-        // The result BRep uses the rcad-kernel location convention: the
-        // `locations` pool stores the real transforms only (index 0 = the
-        // first non-identity matrix) and the logical index returned to shapes
-        // is `pool index + 1` (0 = identity, 1 = first matrix).  This mirrors
-        // BRep::add_location/get_location (topods.rs L286-308).  The DS pool
-        // (merged global_locs) instead stores identity at index 0 and indexes
-        // directly (DS::get_location reads locations[idx]), so the matrix is
-        // looked up from the DS pool and copied into the result pool here.
-        let new_idx = if let Some(pos) = brep.locations.iter().position(|x| *x == mat) {
-            (pos + 1) as u32
-        } else {
-            brep.locations.push(mat);
-            brep.locations.len() as u32
-        };
-        self.loc_remap.insert(loc, new_idx);
-        new_idx
+        // Fill the pool up to index loc-1 in DS order (pool[i] = DS[i+1]).
+        while brep.locations.len() < loc as usize {
+            let i = brep.locations.len() as u32 + 1;
+            let m = self.ds.locations.get(i as usize).cloned().unwrap_or(glam::DAffine3::IDENTITY);
+            brep.locations.push(m);
+        }
+        brep.locations[(loc - 1) as usize] = mat;
+        loc
     }
 
     /// Remap a slice of Shapes.
