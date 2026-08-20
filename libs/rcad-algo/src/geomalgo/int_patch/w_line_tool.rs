@@ -70,7 +70,7 @@ fn range_is_intersected(r1: f64, r2: f64, p: f64, period: f64) -> bool {
 ///
 /// Joins consecutive Walking-lines that share an endpoint (for two cylindrical
 /// surfaces) into a single line.
-pub fn join_w_lines(slin: &mut Vec<IntPatchLine>, s1: &Surface3, s2: &Surface3, _tol_3d: f64) {
+pub fn join_w_lines(slin: &mut Vec<IntPatchLine>, s1: &Surface3, s2: &Surface3, tol_3d: f64) {
     if slin.is_empty() {
         return;
     }
@@ -182,13 +182,18 @@ pub fn join_w_lines(slin: &mut Vec<IntPatchLine>, s1: &Surface3, s2: &Surface3, 
                 continue;
             }
             // First-First or First-Last connection: prepend wl2's points.
+            // OCCT L1773-1790: for the First-First connection (isFM) the points
+            // are inserted before position 1 in the order wl2[1..N], which
+            // yields wl2 REVERSED at the front (the shared wl2.first point ends
+            // up next to wl1.first); for the First-Last connection (not isFM)
+            // they are inserted in the order wl2[N..1], which yields wl2 AS-IS.
             let mut joined: Vec<WLinePnt> = Vec::new();
             if is_fm {
-                for pt in wl2.wline_pnts.iter() {
+                for pt in wl2.wline_pnts.iter().rev() {
                     joined.push(*pt);
                 }
             } else {
-                for pt in wl2.wline_pnts.iter().rev() {
+                for pt in wl2.wline_pnts.iter() {
                     joined.push(*pt);
                 }
             }
@@ -225,6 +230,9 @@ pub fn join_w_lines(slin: &mut Vec<IntPatchLine>, s1: &Surface3, s2: &Surface3, 
         }
 
         slin[a_n1].vertices.clear();
+        // OCCT L1834: aWLine1->ComputeVertexParameters(theTol3D) — the joined
+        // line's vertex list must be rebuilt after the points were merged.
+        slin[a_n1].compute_vertex_parameters_wline(tol_3d, an_arr_periods);
         slin.remove(an_index_wl2);
     }
 }

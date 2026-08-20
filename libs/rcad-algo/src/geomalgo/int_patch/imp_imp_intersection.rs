@@ -196,13 +196,21 @@ impl ImpImpIntersection {
             }
             // OCCT L2626-2677: case 22 Cylinder/Cylinder (aBox1,aBox2,a2DTol)
             22 => {
+                // OCCT L2629-2649: the UV bounds are collected into Bnd_Box2d
+                // boxes aBox1/aBox2 — aBox.Add(Pnt2d(Uf, Vf)); aBox.Add(Pnt2d(Ul, Vl)).
+                // Bnd_Box2d::Get(XMin, YMin, XMax, YMax) then yields the
+                // [Uf, Vf, Ul, Vl] layout expected by IntCyCy. rcad's FF uv
+                // arrays are [Uf, Ul, Vf, Vl], so the boxes are built by
+                // swapping indices 1 and 2 here.
+                let a_box1 = [uv1[0], uv1[2], uv1[1], uv1[3]];
+                let a_box2 = [uv2[0], uv2[2], uv2[1], uv2[3]];
                 // OCCT L2649-2652: a2DTol = min(1e-4, min(S1->UResolution(TolTang),
                 // S2->UResolution(TolTang))).
                 let a_2d_tol = 1.0e-4_f64
                     .min(rcad_kernel::topo::topods::u_resolution_for_surface(s1, tol_tang))
                     .min(rcad_kernel::topo::topods::u_resolution_for_surface(s2, tol_tang));
                 // OCCT L2657-2658: myDone = IntCyCy(...); if Fail return.
-                self.int_cycy(&q1, &q2, tol_tang, uv1, uv2, a_2d_tol, &mut multpoint);
+                self.int_cycy(&q1, &q2, tol_tang, a_box1, a_box2, a_2d_tol, &mut multpoint);
                 if self.my_done == IntStatus::Fail {
                     return;
                 }

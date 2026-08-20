@@ -249,11 +249,6 @@ fn pnt2s_is_same(a: &IntPatchPoint, b: &IntPatchPoint, tol_3d: f64) -> bool {
     is_same(&pa, &pb, tol_3d, -1.0)
 }
 
-/// OCCT IntPatch_WLine::ComputeVertexParameters — the rcad pipeline computes the
-/// WLine vertices downstream (IntPatch_WLineTool path), so this step is not
-/// needed here.
-fn compute_vertex_parameters(_line: &mut WLine, _rtol: f64) {}
-
 /// OCCT CyCyNoGeometric (L6573-7880) — the walking-line generator for the
 /// general (non-analytic) cylinder-cylinder intersection.
 ///
@@ -1133,9 +1128,17 @@ pub fn cy_cy_no_geometric(
                             a_period,
                             is_reversed,
                         );
-                        compute_vertex_parameters(&mut a_w_line[i], a_tol_3d);
-                        let pts = std::mem::take(&mut a_w_line[i]).into_points();
-                        slin.push(IntPatchLine::walking(pts, WLineType::ImpImp));
+                        // OCCT L7622: aWLine[i]->ComputeVertexParameters(aTol3D).
+                        // The IntCyCy WLines are created without SetPeriod, so
+                        // the period array is all zeros (IntPatch_WLine.cxx
+                        // L44-61); the vertex list (start/end + seam copies) is
+                        // what GeomInt_LineConstructor's WLine path iterates.
+                        let mut a_wl = IntPatchLine::walking(
+                            std::mem::take(&mut a_w_line[i]).into_points(),
+                            WLineType::ImpImp,
+                        );
+                        a_wl.compute_vertex_parameters_wline(a_tol_3d, [0.0, 0.0, 0.0, 0.0]);
+                        slin.push(a_wl);
                     }
                 } else {
                     is_added_into_wl[i] = false;
@@ -1364,8 +1367,11 @@ pub fn cy_cy_no_geometric(
                 a_period,
                 is_reversed,
             );
-            compute_vertex_parameters(&mut a_w_line, a_tol_3d);
-            slin.push(IntPatchLine::walking(a_w_line.into_points(), WLineType::ImpImp));
+            // OCCT L7868: aWLine->ComputeVertexParameters(aTol3D) — see the
+            // comment at the other flush point for the zero period array.
+            let mut a_wl = IntPatchLine::walking(a_w_line.into_points(), WLineType::ImpImp);
+            a_wl.compute_vertex_parameters_wline(a_tol_3d, [0.0, 0.0, 0.0, 0.0]);
+            slin.push(a_wl);
             spnt.remove(a_nb_pnt);
             a_nb_pnt = a_nb_pnt.wrapping_sub(1);
         }
