@@ -19,10 +19,7 @@ pub use tri::{
     sample_wire_polyline_3d, sample_wire_polyline_3d_with_n,
     trim_almost_closed_polyline,
 };
-pub use surface::{
-    face_surface_area, surface_area, try_analytic_face_surface_area_pub,
-    try_spherical_uv_masked_raster,
-};
+pub use surface::{face_surface_area, surface_area};
 pub use volume::{centroid, signed_volume, volume};
 pub use inertia::{InertiaTensor, inertia_tensor};
 pub use plate::*;

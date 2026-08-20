@@ -136,8 +136,7 @@ pub use math::projection::{
 
 pub use math::properties::{
     InertiaTensor, centroid, face_surface_area, face_triangles_pub, inertia_tensor,
-    point_in_spherical_polygon_3d_pub, signed_volume, surface_area,
-    try_analytic_face_surface_area_pub, volume,
+    point_in_spherical_polygon_3d_pub, signed_volume, surface_area, volume,
 };
 pub use math::properties::face_flat_iter;
 
