@@ -117,6 +117,39 @@ fn common_nested_box_surface_area() {
     assert!((got - 2.5).abs() < 1e-6, "nested box common surface_area = {got}, expected 2.5");
 }
 
+/// OCCT bopfuse_simple A4: box 1 1 1 + box 1 1 1 at (1,1,0) — the two boxes
+/// share the edge x=1,y=1,z in [0,1].  nbshapes reference: VERTEX=14.
+#[test]
+fn fuse_shared_edge_box_vertex_count() {
+    let b1 = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+    let b2 = rcad_modeling::make_box_brep(DVec3::new(1.0, 1.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+    let result = rcad_algo::fuse(&b1, &b2).unwrap();
+    // nbshapes-style count: distinct vertex indices reachable from face edges.
+    let mut used = std::collections::BTreeSet::new();
+    for s in result.solids() {
+        for sh in &s.shells {
+            for f in &sh.faces {
+                for w in std::iter::once(&f.outer_wire).chain(f.inner_wires.iter()) {
+                    for we in &w.edges {
+                        if let Some((va, vb)) = result.tshapes.get(we.idx).and_then(|ts| match ts.as_ref() {
+                            rcad_kernel::topods::TShape::Edge(ed) => Some((ed.first.index, ed.last.index)),
+                            _ => None,
+                        }) {
+                            used.insert(va);
+                            used.insert(vb);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("[DBG] A4 n_solids={} vertex_count={}", result.solids().len(), used.len());
+    // OCCT nbshapes reference (bopfuse_simple A4): VERTEX=14 — the two
+    // shared-edge endpoint pairs are merged into the SD vertices.
+    assert_eq!(used.len(), 14, "A4 VERTEX count");
+    assert_eq!(result.solids().len(), 2, "A4 SOLID count");
+}
+
 /// OCCT `psphere 1`: a full sphere is a natural-restriction face (no wires),
 /// so BRepGProp::SurfaceProperties integrates the whole surface by
 /// Gauss-Legendre (G.Perform(BF)); the surface area is exactly 4*PI*R^2.
