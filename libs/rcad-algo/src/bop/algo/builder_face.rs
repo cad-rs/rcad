@@ -68,6 +68,41 @@ impl<'a> BuilderFace<'a> {
         if self.has_errors() { return; }
         // OCCT L147: PerformInternalShapes
         self.perform_internal_shapes();
+        // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L327-373) matches the
+        // edge pcurve by the SURFACE geometry, so the split faces (areas) —
+        // which share the source surface — resolve their edge pcurves written
+        // under the source face key.  rcad's CurveOnSurface matches by face
+        // TShape pointer, so each area face needs its own pcurve entry: copy
+        // the source face key's pcurve to the area face key (the shared
+        // surface makes the pcurve identical).
+        if let Some(src) = self.my_face.as_ref() {
+            let src_key = (src.ptr_id(), src.location);
+            for area in &self.my_areas {
+                let area_key = (area.ptr_id(), area.location);
+                let mut es: Vec<Shape> = Vec::new();
+                if let TShape::Face(fd) = &*area.data {
+                    if let TShape::Wire(wd) = &*fd.outer_wire.data {
+                        es.extend(wd.edges.iter().cloned());
+                    }
+                    for w in &fd.inner_wires {
+                        if let TShape::Wire(wd) = &*w.data {
+                            es.extend(wd.edges.iter().cloned());
+                        }
+                    }
+                }
+                for e in es {
+                    let raw = Arc::as_ptr(&e.data) as *mut TShape;
+                    unsafe {
+                        if let TShape::Edge(ed) = &mut *raw {
+                            let v = ed.pcurves.get(&src_key).cloned();
+                            if let Some(v) = v {
+                                ed.pcurves.entry(area_key).or_insert(v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }

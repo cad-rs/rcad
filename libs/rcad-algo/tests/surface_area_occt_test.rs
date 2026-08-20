@@ -84,15 +84,12 @@ fn common_cylinder_box_vertex_count() {
         }
     }
     eprintln!("[DBG] v5 VERTEX count = {}, n_faces = {}, tshapes.len = {}", used.len(), face_flat_iter(&result).len(), result.tshapes.len());
-    for v in &used {
-        let t = match result.tshapes.get(*v) {
-            Some(ts) => match &**ts { topods::TShape::Vertex(_) => "V".to_string(), other => format!("{:?}", std::mem::discriminant(other)) },
-            None => "OOB".to_string(),
+    for (ti, f) in &face_flat_iter(&result) {
+        let st = match &*result.tshapes[*ti] {
+            topods::TShape::Face(fd) => format!("{:?}", fd.surface),
+            _ => String::new(),
         };
-        eprintln!("[DBG]   vertex idx={} type={}", v, t);
-    }
-    for (ep, vp, va, vb) in &chains {
-        eprintln!("[DBG]   edge ptr={} v({})->v({}) va_ptr={}", ep % 100000, va, vb, vp % 100000);
+        eprintln!("[DBG]   face {ti} {st} edges={}", f.outer_wire.edges.len());
     }
 }
 
@@ -107,6 +104,17 @@ fn common_box_box_surface_area_matches_occt() {
     let result = rcad_algo::common(&b1, &b2).unwrap();
     let got = surface_area(&result);
     assert!((got - 6.0).abs() < 1e-6, "common box surface_area = {got}, expected 6");
+}
+
+/// OCCT bopcommon_simple a5: box 1 1 1 + box 0.5 1 0.5 (contained) common =
+/// the inner box; surface area 2.5.
+#[test]
+fn common_nested_box_surface_area() {
+    let b1 = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+    let b2 = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 0.5, 1.0, 0.5).unwrap();
+    let result = rcad_algo::common(&b1, &b2).unwrap();
+    let got = surface_area(&result);
+    assert!((got - 2.5).abs() < 1e-6, "nested box common surface_area = {got}, expected 2.5");
 }
 
 /// OCCT `psphere 1`: a full sphere is a natural-restriction face (no wires),

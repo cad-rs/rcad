@@ -5505,7 +5505,9 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_BOP::BuildSolid (BOPAlgo_BOP.cxx L1111-1392).
     fn build_solid(&mut self) {
         // OCCT L1121-1144: get solids from input arguments.
-        let mut a_msa: HashSet<u64> = HashSet::new();
+        // OCCT aMSA (BOP.cxx L1107) is NCollection_Map with
+        // TopTools_ShapeMapHasher 鈥?key identity TShape + Location.
+        let mut a_msa: HashSet<(u64, u32)> = HashSet::new();
         // OCCT aMFS is NCollection_IndexedDataMap (BOP.cxx L1110-1111) 鈥?
         // insertion order matters for the aSFS face order below (L1217-1227).
         let mut a_mfs: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
@@ -5515,7 +5517,7 @@ impl<'a> Builder<'a> {
             for a_sa in a_lsa {
                 // OCCT L1133-1139: explore solids, map face鈫抯olid ancestors.
                 for sol in self.map_shapes_of_type(a_sa, topods::ShapeType::Solid) {
-                    a_msa.insert(sol.ptr_id());
+                    a_msa.insert((sol.ptr_id(), sol.location));
                     for a_f in self.map_shapes_of_type(&sol, topods::ShapeType::Face) {
                         a_mfs.entry((a_f.ptr_id(), a_f.location))
                             .or_insert_with(|| (a_f.clone(), Vec::new()))
@@ -5528,22 +5530,22 @@ impl<'a> Builder<'a> {
             }
         }
         // OCCT L1151-1165: find solids sharing faces.
-        let mut a_mt_sols: HashSet<u64> = HashSet::new();
+        let mut a_mt_sols: HashSet<(u64, u32)> = HashSet::new();
         for (_f, (_fs, sols)) in &a_mfs {
             if sols.len() > 1 {
                 for sol in sols {
-                    a_mt_sols.insert(sol.ptr_id());
+                    a_mt_sols.insert((sol.ptr_id(), sol.location));
                 }
             }
         }
         // OCCT L1167-1220: possibly untouched solids.
         let mut a_mu_sols: Vec<Shape> = Vec::new();
-        let mut a_mu_fence: HashSet<u64> = HashSet::new();
+        let mut a_mu_fence: HashSet<(u64, u32)> = HashSet::new();
         a_mfs.clear();
         for a_sx in &self.my_rc {
-            if a_msa.contains(&a_sx.ptr_id()) {
-                if !a_mt_sols.contains(&a_sx.ptr_id()) {
-                    if a_mu_fence.insert(a_sx.ptr_id()) {
+            if a_msa.contains(&(a_sx.ptr_id(), a_sx.location)) {
+                if !a_mt_sols.contains(&(a_sx.ptr_id(), a_sx.location)) {
+                    if a_mu_fence.insert((a_sx.ptr_id(), a_sx.location)) {
                         a_mu_sols.push(a_sx.clone());
                     }
                     continue;
@@ -5573,14 +5575,16 @@ impl<'a> Builder<'a> {
             }
         }
         // OCCT L1227-1241: faces belonging to a single solid.
-        let mut a_mef: HashMap<u64, Vec<u64>> = HashMap::new();
+        let mut a_mef: HashMap<(u64, u32), Vec<(u64, u32)>> = HashMap::new();
         let mut a_sfs: Vec<Shape> = Vec::new();
         for (_f, (fs, sols)) in &a_mfs {
             if sols.len() == 1 {
                 a_sfs.push(fs.clone());
                 // OCCT L1238: TopExp::MapShapesAndAncestors(aFx, EDGE, FACE, aMEF).
                 for a_e in self.map_shapes_of_type(fs, topods::ShapeType::Edge) {
-                    a_mef.entry(a_e.ptr_id()).or_default().push(fs.ptr_id());
+                    a_mef.entry((a_e.ptr_id(), a_e.location))
+                        .or_default()
+                        .push((fs.ptr_id(), fs.location));
                 }
             }
         }
@@ -6062,24 +6066,21 @@ impl<'a> Builder<'a> {
         the_sol: &Shape,
         the_mfs: &mut IndexMap<(u64, u32), (Shape, Vec<Shape>)>,
     ) {
-        // TopExp_Explorer semantics: depth-first, accumulate orientation, do
-        // NOT dedup face copies (a FACE may appear twice with different
-        // orientations, e.g. as both sides of an internal face).
+        // TopExp_Explorer semantics: depth-first in the STORED sub-shape
+        // order, accumulate orientation, do NOT dedup face copies (a FACE may
+        // appear twice with different orientations, e.g. as both sides of an
+        // internal face).  A LIFO stack must push children in reverse to keep
+        // the depth-first visit order (first child's whole subtree first).
         // OCCT aMFS is IndexedDataMap with TopTools_ShapeMapHasher: the hash
         // (std::hash<TopoDS_Shape>, TopoDS_Shape.hxx L332-340) combines the
         // TShape pointer with the LOCATION, so located copies of the same
         // TShape (e.g. the revolve end cap at the rotation Location L1) are
         // SEPARATE map keys — the cap@0 and cap@L1 each get their own entry
-        // with a single solid, and both stay in the aSFS. Keying by ptr_id
+        // with a single solid, and both stay in the aSFS.  Keying by ptr_id
         // only collapsed them into one entry whose orientation-differing
         // second visit appended the solid twice (nsols=2) and dropped the cap.
-        // TopExp_Explorer walks the STORED sub-shape order (first sub-shape
-        // explored first); a LIFO stack reverses that order, which changes the
-        // aSFS face order and therefore which shell the final ShellSplitter
-        // walk builds first.
-        let mut queue: std::collections::VecDeque<Shape> = std::collections::VecDeque::new();
-        queue.push_back(the_sol.clone());
-        while let Some(cur) = queue.pop_front() {
+        let mut stack: Vec<Shape> = vec![the_sol.clone()];
+        while let Some(cur) = stack.pop() {
             if cur.shape_type() == topods::ShapeType::Face {
                 if cur.orientation == topods::Orientation::Internal {
                     continue;
@@ -6093,10 +6094,17 @@ impl<'a> Builder<'a> {
                 }
                 continue;
             }
-            for sub in self.shape_sub_shapes(&cur) {
-                let mut sub2 = sub.clone();
-                sub2.orientation = cur.orientation.compose(sub.orientation);
-                queue.push_back(sub2);
+            let mut subs: Vec<Shape> = self
+                .shape_sub_shapes(&cur)
+                .into_iter()
+                .map(|sub| {
+                    let mut sub2 = sub.clone();
+                    sub2.orientation = cur.orientation.compose(sub.orientation);
+                    sub2
+                })
+                .collect();
+            for sub in subs.iter_mut().rev() {
+                stack.push(sub.clone());
             }
         }
     }
