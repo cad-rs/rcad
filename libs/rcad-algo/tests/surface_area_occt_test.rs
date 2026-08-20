@@ -15,7 +15,99 @@
 //! exactly 4*PI*R^2.
 
 use glam::DVec3;
-use rcad_kernel::base::gprop::surface::surface_area;
+use rcad_algo::common;
+use rcad_kernel::base::gprop::surface::{face_surface_area_gauss_domain, surface_area};
+use rcad_kernel::base::gprop::tri::face_flat_iter;
+use rcad_kernel::topods;
+
+/// OCCT `box 2 3 4` (BRepPrimAPI_MakeBox): the GWedge faces carry planar 2D
+/// curves (SetPCurve), so every planar face integrates via Compute(Face,
+/// Domain) with the face UV bounds (BRepTools::UVBounds) as the U offset;
+/// total surface area = 52.
+#[test]
+fn box_surface_area_matches_occt() {
+    let b = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).unwrap();
+    let got = surface_area(&b);
+    assert!((got - 52.0).abs() < 1e-6, "box surface_area = {got}, expected 52");
+}
+
+/// OCCT `pcylinder 1 2` (BRepPrimAPI_MakeCylinder): lateral 2*PI*1*2 + two
+/// disks 2*PI*1^2 = 6*PI.  The bottom face is REVERSED; BRepGProp_Domain
+/// explores F.Oriented(FORWARD) so the disk boundary keeps the wire x edge
+/// orientation (cumOri) and the Green integral is positive.
+#[test]
+fn cylinder_surface_area_matches_occt() {
+    let cyl = rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+    let expected = 6.0 * std::f64::consts::PI;
+    let got = surface_area(&cyl);
+    assert!(
+        (got - expected).abs() < 1e-6,
+        "cylinder surface_area = {got}, expected {expected}"
+    );
+}
+
+/// OCCT `pcylinder 1 2` + `box -1 -1 0 2 2 1` bopcommon (bopcommon_simple
+/// v5): the box cuts the cylinder at z=1; result vertex count is 8.
+#[test]
+fn common_cylinder_box_vertex_count() {
+    let b1 = rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+    let b2 = rcad_modeling::make_box_brep(DVec3::new(-1.0, -1.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 1.0).unwrap();
+    let result = rcad_algo::common(&b1, &b2).unwrap();
+    let mut used = std::collections::BTreeSet::new();
+    let mut chains: Vec<(u64, u64, usize, usize)> = Vec::new();
+    for s in result.solids() {
+        for sh in &s.shells {
+            for f in &sh.faces {
+                for we in &f.outer_wire.edges {
+                    if let Some((va, vb)) = result.tshapes.get(we.idx).and_then(|ts| match ts.as_ref() {
+                        rcad_kernel::topods::TShape::Edge(ed) => Some((ed.first.index, ed.last.index)),
+                        _ => None,
+                    }) {
+                        chains.push((std::sync::Arc::as_ptr(&result.tshapes[we.idx]) as u64, std::sync::Arc::as_ptr(&result.tshapes[va]) as u64, va, vb));
+                        used.insert(va);
+                        used.insert(vb);
+                    }
+                }
+                for w in &f.inner_wires {
+                    for we in &w.edges {
+                        if let Some((va, vb)) = result.tshapes.get(we.idx).and_then(|ts| match ts.as_ref() {
+                            rcad_kernel::topods::TShape::Edge(ed) => Some((ed.first.index, ed.last.index)),
+                            _ => None,
+                        }) {
+                            chains.push((std::sync::Arc::as_ptr(&result.tshapes[we.idx]) as u64, std::sync::Arc::as_ptr(&result.tshapes[va]) as u64, va, vb));
+                            used.insert(va);
+                            used.insert(vb);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("[DBG] v5 VERTEX count = {}, n_faces = {}, tshapes.len = {}", used.len(), face_flat_iter(&result).len(), result.tshapes.len());
+    for v in &used {
+        let t = match result.tshapes.get(*v) {
+            Some(ts) => match &**ts { topods::TShape::Vertex(_) => "V".to_string(), other => format!("{:?}", std::mem::discriminant(other)) },
+            None => "OOB".to_string(),
+        };
+        eprintln!("[DBG]   vertex idx={} type={}", v, t);
+    }
+    for (ep, vp, va, vb) in &chains {
+        eprintln!("[DBG]   edge ptr={} v({})->v({}) va_ptr={}", ep % 100000, va, vb, vp % 100000);
+    }
+}
+
+/// OCCT `box 1 1 1; box 1 1 1; bopcommon result; checkprops result -s 6`
+/// (bopcommon_simple A1): the result is the input box TShape shared into the
+/// result BRep (BRep_Builder::Add), so the GWedge face pcurves remain
+/// attached and the surface area is exactly 6.
+#[test]
+fn common_box_box_surface_area_matches_occt() {
+    let b1 = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+    let b2 = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+    let result = rcad_algo::common(&b1, &b2).unwrap();
+    let got = surface_area(&result);
+    assert!((got - 6.0).abs() < 1e-6, "common box surface_area = {got}, expected 6");
+}
 
 /// OCCT `psphere 1`: a full sphere is a natural-restriction face (no wires),
 /// so BRepGProp::SurfaceProperties integrates the whole surface by
@@ -30,3 +122,4 @@ fn sphere_surface_area_matches_occt() {
         "sphere surface_area = {got}, expected {expected}"
     );
 }
+

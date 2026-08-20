@@ -1,9 +1,9 @@
-﻿// OCCT BRepPrimAPI_MakeBox 1:1 translation.
+// OCCT BRepPrimAPI_MakeBox 1:1 translation.
 // Constructs a box with 8 vertices, 12 edges, 6 faces.
 // Supports local coordinate system (gp_Ax2) for rotated boxes.
 
-use glam::DVec3;
-use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
+use glam::{DVec2, DVec3};
+use rcad_kernel::geom::{Curve2d, Curve3, Line2d, Line3, Plane, Surface3};
 use rcad_kernel::topods::{self, Orientation, Shape};
 use rcad_kernel::BRep;
 
@@ -157,6 +157,50 @@ impl MakeBox {
             rev(t.add_tface(Some(pln(self.local(0.0,0.0,0.0), self.z_axis, self.x_axis)), w[4].clone(), vec![], None, None, vec![], true)),
             t.add_tface(Some(pln(self.local(0.0,0.0,self.dz), self.z_axis, self.x_axis)), w[5].clone(), vec![], None, None, vec![], true),
         ];
+        // OCCT BRepPrim_GWedge::Face (BRepPrim_GWedge.cxx L534-612): after
+        // building the face and its wire, attach the planar 2D curves to the
+        // edges (myBuilder.SetPCurve).  For each face edge the 3D line is
+        // projected into the face plane parameter frame (ElSLib::Parameters:
+        // the line origin's (U,V) plus the direction's (DU,DV) components,
+        // normalized like gp_Dir2d), with the pcurve range equal to the edge's
+        // 3D parameter range (BRep_Builder::UpdateEdge semantics).
+        for (fi, fref) in f.iter().enumerate() {
+            let Some(surf) = (match &*fref.data {
+                topods::TShape::Face(fd) => fd.surface.clone(),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let Surface3::Plane(plane) = surf else { continue };
+            let face_key = (fref.ptr_id(), fref.location);
+            let wire_edges = match &*w[fi].data {
+                topods::TShape::Wire(wd) => wd.edges.clone(),
+                _ => continue,
+            };
+            for e in wire_edges {
+                let (origin, dir, range) = match &*e.data {
+                    topods::TShape::Edge(ed) => match &ed.curve {
+                        Some(Curve3::Line(l)) => (l.origin, l.direction, ed.range),
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                // ElSLib::Parameters: project the line origin into the frame.
+                let p0 = DVec2::new(
+                    (origin - plane.origin).dot(plane.u_dir),
+                    (origin - plane.origin).dot(plane.v_dir),
+                );
+                // Project the 3D direction onto the frame axes; gp_Dir2d
+                // normalizes the 2D direction.
+                let d = DVec2::new(dir.dot(plane.u_dir), dir.dot(plane.v_dir));
+                let dl = d.length();
+                let dir2 = if dl > 1e-15 { d / dl } else { DVec2::X };
+                t.edge_mut_inplace(e.clone()).pcurves.insert(
+                    face_key,
+                    (Curve2d::Line(Line2d::new(p0, dir2)), range[0], range[1]),
+                );
+            }
+        }
         let shell = t.add_tshell(f.to_vec());
         t.add_tsolid(vec![shell]);
         Ok(t)

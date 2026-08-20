@@ -962,25 +962,34 @@ pub fn estimate_uv_domain_from_wire(
 /// keeps results with an unmerged coincident cap within tolerance).
 pub fn face_flat_iter(brep: &topods::BRep) -> Vec<(usize, Face)> {
     let mut faces = Vec::new();
-    let shape_to_edge = |sh: &crate::topo::topo_shape::Shape| -> WireEdge {
-        WireEdge {
-            idx: sh.index,
-            forward: sh.orientation.is_forward(),
-            location: sh.location,
+    // OCCT BRepGProp_Domain::Init (BRepGProp_Domain.lxx L39-42) explores
+    // F.Oriented(TopAbs_FORWARD): the boundary edge cumOri is
+    // wire.orientation x edge.orientation (the face orientation is forced
+    // FORWARD).  Compose the wire orientation into the edge direction
+    // (TopAbs::Compose semantics).
+    let shape_to_edge = |wire_ori: crate::topo::topods::Orientation| {
+        move |sh: &crate::topo::topo_shape::Shape| -> WireEdge {
+            WireEdge {
+                idx: sh.index,
+                forward: wire_ori.compose(sh.orientation).is_forward(),
+                location: sh.location,
+            }
         }
     };
     for (ti, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Face(fd) = &**ts {
             let outer_wire = {
                 let wi = fd.outer_wire.index;
+                let wire_ori = fd.outer_wire.orientation;
                 if let topods::TShape::Wire(wd) = &*brep.tshapes[wi] {
-                    Wire { edges: wd.edges.iter().map(&shape_to_edge).collect() }
+                    Wire { edges: wd.edges.iter().map(&shape_to_edge(wire_ori)).collect() }
                 } else { continue; }
             };
             let inner_wires: Vec<Wire> = fd.inner_wires.iter().filter_map(|sh| {
                 let wi = sh.index;
+                let wire_ori = sh.orientation;
                 if let topods::TShape::Wire(wd) = &*brep.tshapes[wi] {
-                    Some(Wire { edges: wd.edges.iter().map(&shape_to_edge).collect() })
+                    Some(Wire { edges: wd.edges.iter().map(&shape_to_edge(wire_ori)).collect() })
                 } else { None }
             }).collect();
             let normal = fd.surface.as_ref()
