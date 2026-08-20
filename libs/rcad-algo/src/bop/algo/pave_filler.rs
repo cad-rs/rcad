@@ -3703,18 +3703,17 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 let a_cb_idx = self.ds.common_block(a_pb);
                 let a_cb_idx = match a_cb_idx { Some(idx) => idx, None => continue, };
                 let a_cb = &self.ds.common_blocks[a_cb_idx];
-                // OCCT L979-980: const handle<PaveBlock>& aPBR = aCB->PaveBlock1();
-                // rcad: use a_pb's pointer for fence (same semantic: each CB processed once)
-                let a_pb_key = Arc::as_ptr(&a_pb.0) as u64;
-                if !a_mpb_fence.insert(a_pb_key) { continue; }
+                // OCCT L979-980: aPBR = aCB->PaveBlock1(); the fence is keyed
+                // by PaveBlock1, so each Common Block is processed once.
+                let Some(a_pbr) = a_cb.pave_block1() else { continue };
+                let a_pbr_key = Arc::as_ptr(&a_pbr.0) as u64;
+                if !a_mpb_fence.insert(a_pbr_key) { continue; }
                 // OCCT L985-990: aTolCB = aCB->Tolerance(); UpdateVertex(Pave1, Tol); UpdateVertex(Pave2, Tol);
                 let a_tol_cb = a_cb.tolerance();
                 if a_tol_cb > 0. {
-                    if let Some(pb1) = a_cb.pave_block1() {
-                        let (nv1, nv2) = pb1.0.read().unwrap().indices();
-                        self.update_vertex(nv1, a_tol_cb);
-                        self.update_vertex(nv2, a_tol_cb);
-                    }
+                    let (nv1, nv2) = a_pbr.0.read().unwrap().indices();
+                    self.update_vertex(nv1, a_tol_cb);
+                    self.update_vertex(nv2, a_tol_cb);
                 }
             }
         }
