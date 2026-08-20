@@ -1240,7 +1240,17 @@ impl DS {
         }
         pb.clone()
     }
-    pub fn is_common_block_on_edge(&self, pb: &SharedPB) -> bool { self.common_block(pb).is_some() }
+    pub fn is_common_block_on_edge(&self, pb: &SharedPB) -> bool {
+        // OCCT BOPDS_DS::IsCommonBlockOnEdge (BOPDS_DS.cxx L667-671):
+        // aCommonBlock && aCommonBlock->PaveBlocks().Length() > 1.
+        match self.common_block(pb) {
+            Some(cb_idx) => self
+                .common_blocks
+                .get(cb_idx)
+                .map_or(false, |cb| cb.pave_blocks().len() > 1),
+            None => false,
+        }
+    }
 
     /// Pool key of a SharedPB (OCCT: PaveBlock handle → pool position).
     /// Returns `(pool_key, position_within_pool)`.
