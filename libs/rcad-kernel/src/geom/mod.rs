@@ -1836,6 +1836,203 @@ pub fn translate_curve2d(curve: &Curve2d, offset: DVec2) -> Curve2d {
     }
 }
 
+/// OCCT-aligned: Geom2d_Curve::Reverse — the curve traversed in the opposite
+/// direction (ReversedParameter semantics).  Used by
+/// BOPTools_AlgoTools2D::AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx L80):
+/// aC2DoldC->Reverse() when IsSplitToReverse.
+pub fn reverse_curve2d(curve: &Curve2d) -> Curve2d {
+    match curve {
+        Curve2d::Line(l) => Curve2d::Line(l.with_direction(-l.direction)),
+        // Geom2d_Circle::Reverse: P'(t) = P(-t) — the x frame axis is kept,
+        // the y axis is negated (sin(-t) = -sin t).
+        Curve2d::Circle(c) => Curve2d::Circle(Circle2d {
+            y_dir: -c.y_dir,
+            ..*c
+        }),
+        // Geom2d_Ellipse::Reverse: minor axis (implied by major_dir rotation
+        // sense) negated through the major axis flip.
+        Curve2d::Ellipse(e) => Curve2d::Ellipse(Ellipse2d {
+            major_dir: -e.major_dir,
+            ..*e
+        }),
+        Curve2d::Parabola(p) => Curve2d::Parabola(Parabola2d {
+            axis_dir: -p.axis_dir,
+            ..*p
+        }),
+        Curve2d::Hyperbola(h) => Curve2d::Hyperbola(Hyperbola2d {
+            major_dir: -h.major_dir,
+            ..*h
+        }),
+        // Geom2d_TrimmedCurve::Reverse: reverse the basis and swap the trimmed
+        // bounds through ReversedParameter.
+        Curve2d::Trimmed(t) => {
+            let b = reverse_curve2d(&t.curve);
+            let new_min = b.reversed_parameter(t.t_max);
+            let new_max = b.reversed_parameter(t.t_min);
+            Curve2d::Trimmed(TrimmedCurve2 {
+                curve: Box::new(b),
+                t_min: new_min,
+                t_max: new_max,
+            })
+        }
+        // Geom2d_BSplineCurve::Reverse: poles reversed, knots mirrored.
+        Curve2d::BSpline(b) => {
+            let mut knots: Vec<f64> = b.knots.iter().map(|k| -k).collect();
+            knots.reverse();
+            let k0 = knots.first().copied().unwrap_or(0.0);
+            for k in knots.iter_mut() {
+                *k -= k0;
+            }
+            Curve2d::BSpline(BSplineCurve2 {
+                degree: b.degree,
+                knots,
+                control_points: b.control_points.iter().rev().cloned().collect(),
+                weights: b.weights.iter().rev().cloned().collect(),
+            })
+        }
+        Curve2d::Bezier(b) => Curve2d::Bezier(BezierCurve2 {
+            control_points: b.control_points.iter().rev().cloned().collect(),
+            weights: b.weights.iter().rev().cloned().collect(),
+        }),
+        Curve2d::Offset(o) => Curve2d::Offset(OffsetCurve2d {
+            basis: Box::new(reverse_curve2d(&o.basis)),
+            offset_distance: -o.offset_distance,
+        }),
+        other => other.clone(),
+    }
+}
+
+/// OCCT-aligned: GeomLib::SameRange (GeomLib.cxx L842-970) for 2D curves —
+/// re-parameterize `theCurve` (defined on [X1,X2]) onto [Y1,Y2] keeping the
+/// geometry.  Line: translation by dU*D (L864-871); Circle: rotation (L872-889);
+/// TrimmedCurve: recurse into the basis and re-trim (L890-901); other types:
+/// CurveToBSplineCurve + BSplCLib::Reparametrize (L908-922, L924-969).
+pub fn same_range_2d(c: Curve2d, x1: f64, x2: f64, y1: f64, y2: f64) -> Option<Curve2d> {
+    use crate::geom::Curve2dEval;
+    let tol = 1e-7;
+    // L854-859: ranges already equal -> the curve itself.
+    if (x2 - y2).abs() <= tol && (x1 - y1).abs() <= tol {
+        return Some(c);
+    }
+    // L862: the parameterization length must be preserved.
+    let len_eq = (x2 - x1 - y2 + y1).abs() <= tol;
+    if len_eq {
+        match c {
+            // L864-871: Line->Translate((FirstOnCurve - RequestedFirst) * D).
+            Curve2d::Line(l) => {
+                let d_u = x1 - y1;
+                Some(Curve2d::Line(l.translate(l.direction * d_u)))
+            }
+            // L872-889: Circle rotation by dU (sign by IsDirect).
+            Curve2d::Circle(mut cir) => {
+                let is_direct =
+                    (cir.x_dir.x * cir.y_dir.y - cir.x_dir.y * cir.y_dir.x) > 0.0;
+                let d_u = if is_direct { x1 - y1 } else { y1 - x1 };
+                cir.rotate_center(d_u);
+                Some(Curve2d::Circle(cir))
+            }
+            // L890-901: recurse into the basis, re-trim to [Y1,Y2].
+            Curve2d::Trimmed(tc) => {
+                let b = same_range_2d(*tc.curve, x1, x2, y1, y2)?;
+                Some(Curve2d::Trimmed(TrimmedCurve2 {
+                    curve: Box::new(b),
+                    t_min: y1,
+                    t_max: y2,
+                }))
+            }
+            // L908-922: TrimmedCurve(X1,X2) -> BSpline -> Reparametrize knots.
+            other => {
+                let tc = Curve2d::Trimmed(TrimmedCurve2 {
+                    curve: Box::new(other),
+                    t_min: x1,
+                    t_max: x2,
+                });
+                let mut bs = curve_to_bspline_2d(&tc)?;
+                let k0 = bs.knots.first().copied().unwrap_or(0.0);
+                let k1 = bs.knots.last().copied().unwrap_or(1.0);
+                if (k1 - k0).abs() > 1e-30 {
+                    bs.knots = bs
+                        .knots
+                        .iter()
+                        .map(|k| y1 + (y2 - y1) * (k - k0) / (k1 - k0))
+                        .collect();
+                }
+                Some(Curve2d::BSpline(bs))
+            }
+        }
+    } else {
+        // L924-969: segment the curve, then BSpline + Reparametrize.
+        let tc = {
+            let [f0, f1] = c.default_domain();
+            let u_deb = f0.max(x1);
+            let u_fin = f1.min(x2);
+            if (u_fin - u_deb).abs() > tol {
+                Curve2d::Trimmed(TrimmedCurve2 {
+                    curve: Box::new(c),
+                    t_min: u_deb,
+                    t_max: u_fin,
+                })
+            } else {
+                Curve2d::Trimmed(TrimmedCurve2 {
+                    curve: Box::new(c),
+                    t_min: f0,
+                    t_max: f1,
+                })
+            }
+        };
+        let mut bs = curve_to_bspline_2d(&tc)?;
+        let k0 = bs.knots.first().copied().unwrap_or(0.0);
+        let k1 = bs.knots.last().copied().unwrap_or(1.0);
+        if (k1 - k0).abs() > 1e-30 {
+            bs.knots = bs
+                .knots
+                .iter()
+                .map(|k| y1 + (y2 - y1) * (k - k0) / (k1 - k0))
+                .collect();
+        }
+        Some(Curve2d::BSpline(bs))
+    }
+}
+
+/// OCCT-aligned: Geom2dConvert::CurveToBSplineCurve — an exact degree-1
+/// BSpline for a line, an interpolated BSpline otherwise (boolean section
+/// pcurves are analytic or already BSplines; the interpolant passes through
+/// the sampled points like the stored curve).
+fn curve_to_bspline_2d(c: &Curve2d) -> Option<BSplineCurve2> {
+    use crate::geom::Curve2dEval;
+    match c {
+        Curve2d::Line(l) => {
+            let (t0, t1) = match c {
+                Curve2d::Trimmed(tc) => (tc.t_min, tc.t_max),
+                _ => (0.0, 1.0),
+            };
+            let p0 = l.point_at(t0);
+            let p1 = l.point_at(t1);
+            Some(BSplineCurve2 {
+                degree: 1,
+                knots: vec![t0, t0, t1, t1],
+                control_points: vec![p0, p1],
+                weights: vec![1.0, 1.0],
+            })
+        }
+        _ => {
+            let [t0, t1] = match c {
+                Curve2d::Trimmed(tc) => [tc.t_min, tc.t_max],
+                _ => c.default_domain(),
+            };
+            if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < 1e-30 {
+                return None;
+            }
+            let n = 23usize;
+            let mut pts: Vec<glam::DVec2> = Vec::with_capacity(n + 1);
+            for i in 0..=n {
+                pts.push(c.point_at(t0 + (t1 - t0) * i as f64 / n as f64));
+            }
+            crate::base::geom_api::interpolate_points_2d(&pts).ok()
+        }
+    }
+}
+
 /// OCCT-aligned: apply TopLoc_Location transform to a Surface3.
 pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
     match surface {

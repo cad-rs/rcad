@@ -2490,33 +2490,14 @@ impl Curve2dEval for Curve2d {
 impl Curve2dEval for TrimmedCurve2 {
     fn point_at(&self, t: f64) -> DVec2 {
         let t_clamped = t.clamp(self.t_min, self.t_max);
-        match self.curve.as_ref() {
-            Curve2d::BSpline(_) | Curve2d::Bezier(_) => {
-                let span = self.t_max - self.t_min;
-                if span > 0.0 {
-                    let t_norm = (t_clamped - self.t_min) / span;
-                    self.curve.point_at(t_norm)
-                } else {
-                    self.curve.point_at(0.0)
-                }
-            }
-            _ => self.curve.point_at(t_clamped),
-        }
+        // OCCT Geom2d_TrimmedCurve::Value (Geom2d_TrimmedCurve.cxx): clamp the
+        // parameter to [FirstParameter, LastParameter] and delegate to the
+        // basis curve — no re-normalization.
+        self.curve.point_at(t_clamped)
     }
     fn tangent_at(&self, t: f64) -> DVec2 {
         let t_clamped = t.clamp(self.t_min, self.t_max);
-        match self.curve.as_ref() {
-            Curve2d::BSpline(_) | Curve2d::Bezier(_) => {
-                let span = self.t_max - self.t_min;
-                if span > 0.0 {
-                    let t_norm = (t_clamped - self.t_min) / span;
-                    self.curve.tangent_at(t_norm)
-                } else {
-                    self.curve.tangent_at(0.0)
-                }
-            }
-            _ => self.curve.tangent_at(t_clamped),
-        }
+        self.curve.tangent_at(t_clamped)
     }
     fn derivative_at(&self, t: f64) -> DVec2 {
         let t_clamped = t.clamp(self.t_min, self.t_max);

@@ -39,11 +39,16 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
         // OCCT L226: IsNatRestr = (F.NbChildren() == 0) — the face carries no
         // wires (no outer wire edges and no inner wires).
         let is_nat_restr = face.outer_wire.edges.is_empty() && face.inner_wires.is_empty();
-        if is_nat_restr {
-            mass += face_surface_area_gauss_natural(brep, *fi);
+        let a = if is_nat_restr {
+            face_surface_area_gauss_natural(brep, *fi)
         } else {
-            mass += face_surface_area_gauss_domain(brep, face, *fi);
+            face_surface_area_gauss_domain(brep, face, *fi)
+        };
+        if std::env::var("RCAD_SA_DEBUG").is_ok() {
+            eprintln!("[SA] fi={} nat={} area={} nedges={}", *fi, is_nat_restr, a,
+                face.outer_wire.edges.len() + face.inner_wires.iter().map(|w| w.edges.len()).sum::<usize>());
         }
+        mass += a;
     }
     mass
 }
@@ -86,6 +91,9 @@ fn curve_integration_order(c: &Curve2d) -> usize {
         Curve2d::BSpline(b) => (b.degree + 1) * (b.knots.len().saturating_sub(1)),
         // Bezier degree = control point count - 1
         Curve2d::Bezier(b) => b.control_points.len(),
+        // OCCT GeomAdaptor_Curve::GetType unwraps a Geom2d_TrimmedCurve to the
+        // basis curve type (myCurve.GetType() in IntegrationOrder L115).
+        Curve2d::Trimmed(tc) => curve_integration_order(&tc.curve),
         _ => 9,
     };
     (2 * n).max(4)

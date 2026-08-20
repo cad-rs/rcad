@@ -4956,7 +4956,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     /// from the paired edge (AttachExistingPCurve); otherwise it is projected
     /// (BuildPCurveForEdgeOnFace). In-place (OCCT BRep_Builder semantics) 鈥?safe
     /// because the DS owns a private input copy.
-    fn build_pcurve_mpc(&mut self, n_e: usize, n_f: usize, surf: &Surface3, src: Option<usize>) {
+    fn build_pcurve_mpc(&mut self, n_e: usize, n_f: usize, surf: &Surface3, src: Option<(usize, f64, f64)>) {
         // OCCT L233-236: if the edge already has a pcurve on the face, do not
         // rebuild it (only the periodic adjustment, which a line pcurve at the
         // seam does not need). Input-shape pcurves are keyed by the face's
@@ -4966,8 +4966,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         }
         let Some(fkey) = self.pcurve_key_for(n_e, n_f) else { return };
         // OCCT L239-249: attach the pcurve from the paired edge.
-        if let Some(src_e) = src {
-            if let Some(pc) = Self::copy_pcurve(&self.ds, src_e, n_e, n_f) {
+        if let Some((src_e, src_t1, src_t2)) = src {
+            if let Some(pc) = Self::copy_pcurve(&self.ds, src_e, src_t1, src_t2, n_e, n_f) {
                 let range = self.ds.edge_range(n_e);
                 if std::env::var("RCAD_PCTRACE").is_ok() {
                     let pd = match &pc {
@@ -5107,7 +5107,10 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
 
     /// OCCT L640-676: the CommonBlock copy source 鈥?a paired PB in the same
     /// CommonBlock whose original edge already has a pcurve on this face.
-    fn cb_pcurve_source(&self, pb: &SharedPB, n_f: usize) -> Option<usize> {
+    /// Returns the source edge index plus the PB's parameter range — the
+    /// range the split source edge spans (OCCT MakeSplitEdge, MPC L243, uses
+    /// the paired PB's Indices/Range L681-682 before AttachExistingPCurve).
+    fn cb_pcurve_source(&self, pb: &SharedPB, n_f: usize) -> Option<(usize, f64, f64)> {
         let cb_idx = pb.0.read().unwrap().common_block_idx?;
         let pbs: Vec<SharedPB> = {
             let cb = &self.ds.common_blocks[cb_idx];
@@ -5117,49 +5120,89 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         let pb_ptr = std::sync::Arc::as_ptr(&pb.0) as u64;
         for pbx in &pbs {
             if std::sync::Arc::as_ptr(&pbx.0) as u64 == pb_ptr { continue; }
-            let n_ex = pbx.0.read().unwrap().original_edge;
+            let (n_ex, a_t1x, a_t2x) = {
+                let r = pbx.0.read().unwrap();
+                (r.original_edge, r.pave1.param, r.pave2.param)
+            };
             if n_ex >= self.ds.nb_shapes() { continue; }
             if self.edge_has_pcurve(n_ex, n_f) {
-                return Some(n_ex);
+                return Some((n_ex, a_t1x, a_t2x));
             }
         }
         None
     }
 
     /// OCCT BOPTools_AlgoTools2D::AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx
-    /// L44-130): copy the paired edge's pcurve onto the section edge, reversing
+    /// L44-160): copy the paired edge's pcurve onto the section edge, reversing
     /// the direction when the section edge is split to reverse (IsSplitToReverse).
-    /// The pcurve is re-sampled over the section edge's range (GeomLib::SameRange)
-    /// by mapping 3D positions.
-    fn copy_pcurve(ds: &DS, src_e: usize, dst_e: usize, n_f: usize) -> Option<rcad_kernel::geom::Curve2d> {
-        use rcad_kernel::geom::Curve2dEval;
-        let (src_pc, src_first, src_last) = Self::edge_pcurve_of(ds, src_e, n_f)?;
-        let src_curve = ds.edge_curve(src_e)?;
-        let dst_curve = ds.edge_curve(dst_e)?;
-        let dst_range = ds.edge_range(dst_e);
-        let dst_shape = ds.shape(dst_e).clone();
-        let src_shape = ds.shape(src_e).clone();
-        let (to_reverse, _) = algo_tools::is_split_to_reverse_edge(&dst_shape, &src_shape);
-        let n = 23usize;
-        let mut uv: Vec<glam::DVec2> = Vec::with_capacity(n + 1);
-        for i in 0..=n {
-            let t = dst_range[0] + i as f64 * (dst_range[1] - dst_range[0]) / n as f64;
-            let p = dst_curve.point_at(t);
-            let sp = closest_point_on_curve_range(&src_curve, p, src_first, src_last, 64);
-            // OCCT L68-79: the copied pcurve is reversed when IsSplitToReverse.
-            let s = if to_reverse {
-                src_first + src_last - sp.param
-            } else {
-                sp.param
+    /// The source is the split version of the paired original edge (OCCT
+    /// MakeSplitEdge L243) — its pcurve spans the paired PB range
+    /// (src_t1, src_t2) — which is trimmed (Geom2d_TrimmedCurve, L88) and
+    /// re-parameterized onto the destination edge's 3D range
+    /// (GeomLib::SameRange, L94): the curve type is preserved (a Line stays a
+    /// Line; equal ranges keep the trimmed curve as-is).
+    fn copy_pcurve(
+        ds: &DS,
+        src_e: usize,
+        src_t1: f64,
+        src_t2: f64,
+        dst_e: usize,
+        n_f: usize,
+    ) -> Option<rcad_kernel::geom::Curve2d> {
+        // L66: aC2Dold = CurveOnSurface(aE2, aF, aT21, aT22) — aE2 is the
+        // split source edge, so its pcurve range is the paired PB range
+        // (MakeSplitEdge carries it from aPBx->Range, L682).
+        let (a_c2_dold, _, _) = Self::edge_pcurve_of(ds, src_e, n_f)?;
+        // L73: aC2DoldC = aC2Dold->Copy()
+        let mut a_c2_dold_c = a_c2_dold;
+        let mut a_t21 = src_t1;
+        let mut a_t22 = src_t2;
+        // L59-64: aF = theF.Oriented(FORWARD); aE1/aE2 = theE1/theE2
+        // .Oriented(FORWARD) — the orientation of the edge references is
+        // discarded before IsSplitToReverse (L75).
+        let mut dst_shape = ds.shape(dst_e).clone();
+        dst_shape.orientation = rcad_kernel::topods::Orientation::Forward;
+        let mut src_shape = ds.shape(src_e).clone();
+        src_shape.orientation = rcad_kernel::topods::Orientation::Forward;
+        // L75: bIsToReverse = IsSplitToReverse(aE1, aE2, aCtx)
+        let (b_is_to_reverse, _) = algo_tools::is_split_to_reverse_edge(&dst_shape, &src_shape);
+        // L76-86: if (bIsToReverse) { aC2DoldC->Reverse(); swap the bounds }
+        if b_is_to_reverse {
+            use rcad_kernel::geom::Curve2dEval;
+            a_c2_dold_c = rcad_kernel::geom::reverse_curve2d(&a_c2_dold_c);
+            let a_t21r = a_c2_dold_c.reversed_parameter(a_t21);
+            let a_t22r = a_c2_dold_c.reversed_parameter(a_t22);
+            a_t21 = a_t22r;
+            a_t22 = a_t21r;
+        }
+        // L88: aC2DT = new Geom2d_TrimmedCurve(aC2DoldC, aT21, aT22)
+        let src_kind = match &a_c2_dold_c {
+            rcad_kernel::geom::Curve2d::Line(_) => "L",
+            rcad_kernel::geom::Curve2d::BSpline(_) => "BS",
+            rcad_kernel::geom::Curve2d::Trimmed(_) => "TRIM",
+            _ => "O",
+        };
+        let a_c2dt = rcad_kernel::geom::Curve2d::Trimmed(rcad_kernel::geom::TrimmedCurve2 {
+            curve: Box::new(a_c2_dold_c),
+            t_min: a_t21,
+            t_max: a_t22,
+        });
+        // L92: aCE1 = Curve(aE1, aT11, aT12)
+        let [a_t11, a_t12] = ds.edge_range(dst_e);
+        // L94: GeomLib::SameRange(aTolPPC, aC2DT, aT21, aT22, aT11, aT12, aC2DT)
+        let out = rcad_kernel::geom::same_range_2d(a_c2dt, a_t21, a_t22, a_t11, a_t12);
+        if std::env::var("RCAD_PCTRACE").is_ok() {
+            let kind = |c: &rcad_kernel::geom::Curve2d| match c {
+                rcad_kernel::geom::Curve2d::Line(_) => "L",
+                rcad_kernel::geom::Curve2d::BSpline(_) => "BS",
+                rcad_kernel::geom::Curve2d::Trimmed(_) => "TRIM",
+                _ => "O",
             };
-            uv.push(Curve2dEval::point_at(&src_pc, s));
+            eprintln!("[PC-ATTACH] dst={} src={} f={} rev={} srcT=[{:.4},{:.4}] dstT=[{:.4},{:.4}] src={} out={}",
+                dst_e, src_e, n_f, b_is_to_reverse, a_t21, a_t22, a_t11, a_t12,
+                src_kind, out.as_ref().map_or("NONE", |c| kind(c)));
         }
-        if uv.len() < 2 { return None; }
-        let mut c = rcad_kernel::geom::BSplineCurve2::approximate(&uv);
-        if dst_range[1] > dst_range[0] {
-            c.knots = c.knots.iter().map(|k| dst_range[0] + (dst_range[1] - dst_range[0]) * k).collect();
-        }
-        Some(rcad_kernel::geom::Curve2d::BSpline(c))
+        out
     }
 
     /// OCCT UpdateClosedPCurve (BOPTools_AlgoTools2D_1.cxx L163-299): when the
@@ -5238,7 +5281,39 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     fn pcurve_2d(curve: &rcad_kernel::geom::Curve3,
                  surf: &rcad_kernel::geom::Surface3,
                  range: [f64; 2]) -> Option<rcad_kernel::geom::Curve2d> {
-        use rcad_kernel::geom::SurfaceEval;
+        use rcad_kernel::geom::CurveEval;
+        // OCCT ProjLib::MakePCurveOfType (BOPTools_AlgoTools2D.cxx L592): for
+        // an analytic plane surface the projected pcurve is the exact 2D line
+        // (ProjLib_Plane), not an approximation.  A unit-speed 3D line (all
+        // boolean section inputs are unit-speed lines) projects to a unit-speed
+        // 2D line, so the 3D range doubles as the 2D parameter range; the line
+        // is translated so point_at(range[0]) = projected origin
+        // (GeomLib::SameRange translation, GeomLib.cxx L864-871).
+        if let rcad_kernel::geom::Surface3::Plane(plane) = surf {
+            if let rcad_kernel::geom::Curve3::Line(l) = curve {
+                let proj = |t: f64| {
+                    let p = l.point_at(t);
+                    glam::DVec2::new(
+                        (p - plane.origin).dot(plane.u_dir),
+                        (p - plane.origin).dot(plane.v_dir),
+                    )
+                };
+                let p0 = proj(range[0]);
+                let p1 = proj(range[1]);
+                let d = p1 - p0;
+                let dl = d.length();
+                let alen = (range[1] - range[0]).abs();
+                if (dl - alen).abs() <= 1e-7 * alen.max(1.0) {
+                    let dir2 = if dl > 1e-15 { d / dl } else { glam::DVec2::X };
+                    // Line2d is arc-length parameterized (origin + dir * t):
+                    // shift the origin so point_at(range[0]) == p0.
+                    let origin = p0 - dir2 * range[0];
+                    return Some(rcad_kernel::geom::Curve2d::Line(
+                        rcad_kernel::geom::Line2d::new(origin, dir2),
+                    ));
+                }
+            }
+        }
         let n = 23usize;
         let dt = (range[1] - range[0]) / n as f64;
         let mut uv: Vec<glam::DVec2> = Vec::with_capacity(n + 1);
