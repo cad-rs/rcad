@@ -1999,8 +1999,7 @@ impl PaveFiller {
     // ====================================================================
     // MakeSDVertices — OCCT BOPAlgo_PaveFiller::MakeSDVertices (PaveFiller_1.cxx L136-233)
     // ====================================================================
-    fn make_sd_vertices(&mut self, the_vert_indices: &[usize], the_add_interfs: bool) -> usize {
-        // OCCT L143-161: collect vertices (resolving SD).
+    pub(crate) fn make_sd_vertices(&mut self, the_vert_indices: &[usize], the_add_interfs: bool) -> usize {        // OCCT L143-161: collect vertices (resolving SD).
         let mut n_sd = usize::MAX;
         let mut a_vsd = None;
         let mut a_lv: Vec<Shape> = Vec::new();

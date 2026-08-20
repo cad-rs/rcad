@@ -894,7 +894,7 @@ impl PaveFiller {
         // OCCT L104-113: MakeSDVertices for each block
         for a_li in &a_mblocks {
             if the_range.user_break() { return; }
-            self.make_sd_vertices_vv(a_li, true);
+            self.make_sd_vertices(a_li, true);
         }
 
         // OCCT L115-127: InitPaveBlocksForVertex for each SD key
@@ -903,93 +903,6 @@ impl PaveFiller {
             if the_range.user_break() { return; }
             self.ds.init_pave_blocks_for_vertex(n1);
         }
-    }
-
-    /// OCCT BOPAlgo_PaveFiller::MakeSDVertices (PaveFiller_1.cxx L136-233).
-    /// Returns the new/updated SD vertex index.
-    fn make_sd_vertices_vv(&mut self, the_vert_indices: &[usize], the_add_interfs: bool) -> usize {
-        // OCCT L139-140: TopoDS_Vertex aVSD, aVn; int nSD = -1;
-        let mut n_sd = usize::MAX; // OCCT: nSD = -1
-        // OCCT L141-161: collect shapes into aLV, tracking existing SD
-        // rcad: build list of (point, tolerance) pairs 鈥?no TopoDS wrapper in DS
-        let mut a_lv_points: Vec<(DVec3, f64)> = Vec::new();
-
-        for &n_x in the_vert_indices {
-            // OCCT L146: if (myDS->HasShapeSD(nX, nSD1))
-            let mut n_sd1 = usize::MAX;
-            if self.ds.has_shape_sd(n_x, &mut n_sd1) {
-                // OCCT L149-152: if (nSD == -1) { aVSD = aVSD1; nSD = nSD1; }
-                if n_sd == usize::MAX {
-                    n_sd = n_sd1;
-                }
-            }
-            // OCCT L159-160: const TopoDS_Shape& aV = myDS->Shape(nX); aLV.Append(aV);
-            let p = self.ds.vertex_point_by_idx(n_x);
-            let t = self.ds.vertex_tolerance_by_idx(n_x);
-            a_lv_points.push((p, t));
-        }
-
-        // OCCT L162: BOPTools_AlgoTools::MakeVertex(aLV, aVn);
-        let (centroid, max_tol) = crate::bop::tools::algo_tools::make_vertex(&a_lv_points);
-
-        // OCCT L163-180: if (nSD != -1) update existing SD else create new
-        let n_v;
-        if n_sd != usize::MAX {
-            // OCCT L167-169: update existing SD vertex's point and tolerance.
-            // In-place (OCCT UpdateVertex) to keep the vertex identity.
-            self.ds.mutate_shape_data(n_sd, |ts| {
-                if let rcad_kernel::topods::TShape::Vertex(vd) = ts {
-                    vd.point = centroid;
-                    vd.tolerance = max_tol;
-                }
-            });
-            self.ds.remap_shape_idx(n_sd);
-            n_v = n_sd;
-        } else {
-            // OCCT L175-180: Append new vertex to DS
-            n_v = self.ds.push_vertex(centroid, max_tol);
-        }
-
-        // OCCT L181-184: update bounding box for the SD vertex
-        // OCCT: aBox.Add(BRep_Tool::Pnt(aVn)); aBox.SetGap(Tolerance(aVn) + Precision::Confusion());
-        {
-            let vt = max_tol + rcad_kernel::CONFUSION;
-            let si = self.ds.change_shape_info(n_v);
-            si.bbox = BndBox::from_point(centroid);
-            si.bbox.set_gap(vt);
-        }
-
-        // OCCT L186-191: get InterfVV array, pre-allocate if theAddInterfs
-        // rcad: Vec auto-extends; no pre-alloc needed.
-
-        // OCCT L193-231: AddShapeSD + self-interference warning + VV interferences
-        for i in 0..the_vert_indices.len() {
-            let n1 = the_vert_indices[i];
-            // OCCT L197: myDS->AddShapeSD(n1, nV);
-            self.ds.add_shape_sd(n1, n_v);
-            // OCCT L199: int iR1 = myDS->Rank(n1);
-            let i_r1 = self.ds.rank(n1);
-
-            // OCCT L202-203: List::Iterator aItLI2 = aItLI; aItLI2.Next();
-            for j in (i + 1)..the_vert_indices.len() {
-                let n2 = the_vert_indices[j];
-                // OCCT L208-218: self-interference warning for same-rank vertices
-                // OCCT creates TopoDS_Compound for the warning; rcad stores indices.
-                if i_r1 >= 0 && i_r1 == self.ds.rank(n2) {
-                    self.my_report.add_warning(
-                        Alert::SelfInterferingShape(vec![n1, n2]));
-                }
-                // OCCT L221-229: add VV interference
-                if the_add_interfs {
-                    if self.ds.add_interf(n1, n2) {
-                        self.ds.interf_vv.push(InterferenceVV {
-                            v1: n1, v2: n2, merged_vertex: n_v,
-                        });
-                    }
-                }
-            }
-        }
-        n_v
     }
 
     // ====================================================================
@@ -3521,7 +3434,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                             let a_pair = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
                             if a_mpairs.insert(a_pair) {
                                 let a_lv = vec![n_v1, n_v2];
-                                self.make_sd_vertices_vv(&a_lv, the_add_interfs);
+                                self.make_sd_vertices(&a_lv, the_add_interfs);
                                 a_m_vertices_to_init_pb.add(n_v1);
                                 a_m_vertices_to_init_pb.add(n_v2);
                             }
