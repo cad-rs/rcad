@@ -98,6 +98,34 @@ impl<'a> BuilderFace<'a> {
                             if let Some(v) = v {
                                 ed.pcurves.entry(area_key).or_insert(v);
                             }
+                            // OCCT BRep_Tool::CurveOnSurface matches by the
+                            // surface geometry (BRep_Tool.cxx L350), so the
+                            // seam edge's CurveOnClosedSurface representation
+                            // resolves on the area faces too (they share the
+                            // source surface).  rcad keys by (face TShape,
+                            // location), so the representation is copied to
+                            // the area face key as well.
+                            let reps = ed.representations.clone();
+                            for r in reps {
+                                let r2 = match r {
+                                    rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } if face == src_key =>
+                                        Some(rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face: area_key, pcurve, range }),
+                                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, range } if face == src_key =>
+                                        Some(rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face: area_key, pcurve1, pcurve2, range }),
+                                    _ => None,
+                                };
+                                if let Some(r2) = r2 {
+                                    use rcad_kernel::topods::CurveRepresentation;
+                                    let dup = ed.representations.iter().any(|rr| match (&rr, &r2) {
+                                        (CurveRepresentation::CurveOnClosedSurface { face: f1, .. }, CurveRepresentation::CurveOnClosedSurface { face: f2, .. }) => f1 == f2,
+                                        (CurveRepresentation::CurveOnSurface { face: f1, .. }, CurveRepresentation::CurveOnSurface { face: f2, .. }) => f1 == f2,
+                                        _ => false,
+                                    });
+                                    if !dup {
+                                        ed.representations.push(r2);
+                                    }
+                                }
+                            }
                         }
                     }
                 }

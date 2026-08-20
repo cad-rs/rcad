@@ -3233,6 +3233,34 @@ impl<'a> Builder<'a> {
                     if let Some(v) = v {
                         ed.pcurves.entry(draft_key).or_insert(v);
                     }
+                    // OCCT BRep_Tool::CurveOnSurface matches by the surface
+                    // geometry (BRep_Tool.cxx L350), so a seam edge's
+                    // CurveOnClosedSurface representation resolves on the
+                    // draft face too (it shares the source surface).  rcad
+                    // keys by (face TShape, location), so the representation
+                    // is copied to the draft face key as well — otherwise
+                    // curve_on_surface_second finds no CS rep for a REVERSED
+                    // seam and BRepGProp falls back to the u=2*PI pcurve.
+                    let reps = ed.representations.clone();
+                    for r in reps {
+                        let r2 = match r {
+                            CurveRepresentation::CurveOnSurface { face, pcurve, range } if face == src_key =>
+                                Some(CurveRepresentation::CurveOnSurface { face: draft_key, pcurve, range }),
+                            CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, range } if face == src_key =>
+                                Some(CurveRepresentation::CurveOnClosedSurface { face: draft_key, pcurve1, pcurve2, range }),
+                            _ => None,
+                        };
+                        if let Some(r2) = r2 {
+                            let dup = ed.representations.iter().any(|rr| match (&rr, &r2) {
+                                (CurveRepresentation::CurveOnClosedSurface { face: f1, .. }, CurveRepresentation::CurveOnClosedSurface { face: f2, .. }) => f1 == f2,
+                                (CurveRepresentation::CurveOnSurface { face: f1, .. }, CurveRepresentation::CurveOnSurface { face: f2, .. }) => f1 == f2,
+                                _ => false,
+                            });
+                            if !dup {
+                                ed.representations.push(r2);
+                            }
+                        }
+                    }
                 }
             }
         }
