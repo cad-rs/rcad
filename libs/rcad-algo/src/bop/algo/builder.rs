@@ -5236,19 +5236,28 @@ impl<'a> Builder<'a> {
         if self.my_operation == BooleanOpType::Union {
             let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
             let a_type = type_to_explore(self.my_dims[0]);
-            // OCCT L611-619: TopExp_Explorer aExp(myShape, aType) — myShape is
-            // the compound of the arguments, unchanged by the FillImages*
-            // stages (they only fill the myImages map), so the FUSE result
-            // collects the ORIGINAL argument shapes (with their TShape
-            // identity and orientation), not their split images.
+            // OCCT L611-619: TopExp_Explorer aExp(myShape, aType) — myShape
+            // is the compound filled by BuildResult(SOLID) (BOPAlgo_Builder_1
+            // .cxx L130-168): for each SOLID argument its images (built by
+            // FillImagesSolids) or the argument itself are added. The FUSE
+            // result therefore collects the RESULT solids (the split/draft
+            // solid images), not the original argument shapes.
             // rcad: my_arguments carries the DS-cloned arguments (run_build),
-            // i.e. the same TShape identity the DS and myImages use.
+            // i.e. the same TShape identity the DS and myImages use; per
+            // argument solid we collect its images (or the solid itself),
+            // mirroring BuildResult(SOLID).
             let mut a_ls: Vec<Shape> = self.object_shapes().to_vec();
             a_ls.extend(self.my_tools.iter().cloned());
             for a_arg in &a_ls {
                 for sh in self.map_shapes_of_type(a_arg, a_type) {
-                    if a_m_fence.insert((sh.ptr_id(), sh.location)) {
-                        a_c.push(sh);
+                    if let Some(imgs) = self.my_images.get((sh.ptr_id(), sh.location)).cloned() {
+                        for a_s_im in &imgs {
+                            if a_m_fence.insert((a_s_im.ptr_id(), a_s_im.location)) {
+                                a_c.push(a_s_im.clone());
+                            }
+                        }
+                    } else if a_m_fence.insert((sh.ptr_id(), sh.location)) {
+                        a_c.push(sh.clone());
                     }
                 }
             }
