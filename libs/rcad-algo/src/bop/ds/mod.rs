@@ -2729,17 +2729,16 @@ impl DS {
 
     /// UV boundary of a face.
     pub fn face_uv_boundary(&self, fi: usize) -> [f64; 4] {
-        // OCCT BRepAdaptor_Surface(aF) — the face surface's natural UV bounds
-        // (Geom_Surface::FirstUParameter/LastUParameter/FirstVParameter/
-        // LastVParameter). A Geom_Plane is unbounded, a Geom_Sphere is
-        // [0,2*PI]x[-PI/2,PI/2], a Geom_Cylinder is [0,2*PI]x(-INF,+INF).
-        use rcad_kernel::geom::SurfaceEval;
-        if let Some(surf) = self.face_surface(fi) {
-            let d = surf.default_domain();
-            [d[0], d[1], d[2], d[3]]
-        } else {
-            [0.0, 1.0, 0.0, 1.0]
-        }
+        // OCCT IntTools_Context::UVBounds (IntTools_Context.cxx L1034-1038)
+        // delegates to BRepAdaptor_Surface(theFace, Restriction=true)
+        // (SurfaceAdaptor L334), whose parameter domain is BRepTools::UVBounds
+        // — the face's actual boundary-sampled UV rect — NOT the surface
+        // natural domain (a Geom_Plane is unbounded).  ProjPS clamps
+        // projections to this rect (IntTools_Context.cxx L259); a natural
+        // domain leaves the UV unclamped, so an edge crossing a face at
+        // u=-0.09 keeps the out-of-domain parameter and IsValidPointForFace
+        // classifies the on-surface point OUT, dropping the EF intersection.
+        self.face_actual_uv_bounds(fi)
     }
 
     /// OCCT BRep_Tool::UVBounds — the face's actual UV bounds computed by
