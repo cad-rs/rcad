@@ -473,7 +473,7 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                     _ => (vf, vl),
                 })
             };
-            let mut order: Vec<Shape> = Vec::with_capacity(edges.len());
+            let mut order: Vec<(usize, bool)> = Vec::with_capacity(edges.len()); // (edge index, reversed)
             {
                 let mut used = vec![false; edges.len()];
                 let mut cur: Option<(u64, u32)> = None;
@@ -484,10 +484,26 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                             continue;
                         }
                         let Some((s, t)) = trav(e) else { continue };
-                        if cur.is_none() || Some(s) == cur {
-                            order.push(e.clone());
+                        if cur.is_none() {
+                            order.push((i, false));
                             used[i] = true;
                             cur = Some(t);
+                            progressed = true;
+                            break;
+                        }
+                        if Some(s) == cur {
+                            order.push((i, false));
+                            used[i] = true;
+                            cur = Some(t);
+                            progressed = true;
+                            break;
+                        }
+                        if Some(t) == cur {
+                            // The edge's traversal start is its END — the edge
+                            // participates in the loop reversed.
+                            order.push((i, true));
+                            used[i] = true;
+                            cur = Some(s);
                             progressed = true;
                             break;
                         }
@@ -497,10 +513,11 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                     }
                 }
                 if order.len() < edges.len() {
-                    order = edges;
+                    order = edges.iter().enumerate().map(|(i, _)| (i, false)).collect();
                 }
             }
-            for e in &order {
+            for &(ei, rev) in &order {
+                let e = &edges[ei];
                 let (_va, _vb) = match trav(e) {
                     Some(v) => v,
                     None => continue,
@@ -538,6 +555,9 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                     }
                     _ => (glam::DVec3::ZERO, glam::DVec3::ZERO),
                 };
+                // A loop-reversed edge (its traversal end joins the current
+                // vertex) participates in the chain in the opposite direction.
+                let (p0, p1) = if rev { (p1, p0) } else { (p0, p1) };
                 for p in [p0, p1] {
                     let (uv, _) = crate::bop::closest_point_on_surface(surf, p);
                     // The wire's consecutive edges share their joint vertex, so
@@ -736,8 +756,17 @@ pub(crate) fn point_in_face_shape(
         return (1, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
     let Some(polys) = shape_uv_polygons(face, locations) else {
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[PIFS] face={} polys=None", face.ptr_id() % 100000);
+        }
         return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
+    if std::env::var("RCAD_BS_DEBUG").is_ok() {
+        eprintln!("[PIFS] face={} polys={:?}", face.ptr_id() % 100000,
+            polys.iter().map(|p| p.len()).collect::<Vec<_>>());
+        let pv: Vec<String> = polys.iter().flat_map(|p| p.iter()).map(|p| format!("({:.3},{:.3})", p.x, p.y)).collect();
+        eprintln!("[PIFS]   pts=[{}]", pv.join(" "));
+    }
     // UV bounds over all polygons (OCCT UVBounds of the face).
     let mut a_umin = f64::INFINITY;
     let mut a_umax = f64::NEG_INFINITY;
@@ -923,6 +952,12 @@ pub(crate) fn point_in_face(f: usize, ds: &DS) -> (i32, glam::DVec3, glam::DVec2
     for _ in 0..2 {
         let (err, p, p2d) = point_in_face_line(f, a_ux, ds);
         i_err = err;
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let fclass = FClass2d::new(ds, f, ds.face_tolerance(f).max(rcad_kernel::CONFUSION));
+            let npolys: Vec<usize> = fclass.uv_polygons().iter().map(|p| p.len()).collect();
+            let nvs = hatch_line_intervals(f, a_ux, ds).len();
+            eprintln!("[PIF] f={} ux={:.4} uv=[{:.4},{:.4}] polys={:?} nvs={} err={}", f, a_ux, a_umin, a_umax, npolys, nvs, err);
+        }
         if i_err == 0 {
             a_p = p;
             a_p2d = p2d;
@@ -1238,7 +1273,15 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
     let surf_sp = f_sp.as_face().and_then(|fd| fd.surface.clone());
     let surf_or = f_sr.as_face().and_then(|fd| fd.surface.clone());
     if let (Some(s1), Some(s2)) = (&surf_sp, &surf_or) {
-        if surface_same(s1, s2) {
+        let same = surface_same(s1, s2);
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let desc = |s: &rcad_kernel::geom::Surface3| match s {
+                rcad_kernel::geom::Surface3::Plane(p) => format!("Plane o=({:.4},{:.4},{:.4}) n=({:.4},{:.4},{:.4}) u=({:.4},{:.4},{:.4})", p.origin.x, p.origin.y, p.origin.z, p.normal.x, p.normal.y, p.normal.z, p.u_dir.x, p.u_dir.y, p.u_dir.z),
+                _ => "O".into(),
+            };
+            eprintln!("[ISTR] same_surf={} or_sp={:?} or_sr={:?} sp={} sr={}", same, f_sp.orientation, f_sr.orientation, desc(s1), desc(s2));
+        }
+        if same {
             return (f_sp.orientation != f_sr.orientation, 0);
         }
     }

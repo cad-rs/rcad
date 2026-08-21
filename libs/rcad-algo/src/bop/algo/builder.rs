@@ -5614,6 +5614,18 @@ impl<'a> Builder<'a> {
         // OCCT L1227-1241: faces belonging to a single solid.
         let mut a_mef: HashMap<(u64, u32), Vec<(u64, u32)>> = HashMap::new();
         let mut a_sfs: Vec<Shape> = Vec::new();
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[BS-SFS] a_mfs={} my_rc={} exts=[{}]", a_mfs.len(), self.my_rc.len(),
+                a_mfs.values().map(|(_, s)| format!("{}", s.len())).collect::<Vec<_>>().join(","));
+            for (si, s) in self.my_rc.iter().enumerate() {
+                let desc: Vec<String> = self.map_shapes_of_type(s, topods::ShapeType::Face).iter().map(|f| {
+                    format!("{}:{}:{}e", f.ptr_id() % 100000,
+                        if f.orientation == topods::Orientation::Reversed { "R" } else { "F" },
+                        self.map_shapes_of_type(f, topods::ShapeType::Edge).len())
+                }).collect();
+                eprintln!("[BS-RC] solid[{}] faces=[{}]", si, desc.join(" "));
+            }
+        }
         for (_f, (fs, sols)) in &a_mfs {
             if sols.len() == 1 {
                 a_sfs.push(fs.clone());
@@ -5624,6 +5636,9 @@ impl<'a> Builder<'a> {
                         .push((fs.ptr_id(), fs.location));
                 }
             }
+        }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[BS-SFS] a_sfs={}", a_sfs.len());
         }
         
         // OCCT L1243-1271: build solids from the set of faces.
