@@ -1918,24 +1918,34 @@ impl PaveFiller {
 
             for &(r1_first, r1_last, is_edge) in &common_parts {
                 if is_edge {
-                    // OCCT L545-565: EDGE case
+                    // OCCT L545-552: aMIEFC.Add(nF); aEF = aEFs.Appended();
+                    // aEF.SetIndices(nE, nF) — the aEF entry is appended
+                    // UNCONDITIONALLY, but its CommonPart is set only when the
+                    // PB vertex ends are on the face (L553-564).
                     a_mi_efc.add(cand.n_f);
+                    let idx_interf = self.ds.interf_ef.len();
+                    self.ds.interf_ef.push(InterferenceEF {
+                        edge: cand.n_e, face: cand.n_f,
+                        point: glam::DVec3::ZERO, edge_param: 0.0,
+                        new_vertex: usize::MAX,
+                    });
+                    // OCCT L553-555: CheckFacePaves(nV[0]/nV[1], aMIFOn, aMIFIn)
                     let b_v0 = self.check_face_paves(n_v1, &a_mif_on, &a_mif_in);
                     let b_v1_ = self.check_face_paves(n_v2, &a_mif_on, &a_mif_in);
                     if std::env::var("RCAD_EE_DEBUG").is_ok() {
                         eprintln!("[EF-DBG] EDGE-EF e={} f={} r=[{:.4},{:.4}] bV=({},{}) v1={} v2={}", cand.n_e, cand.n_f, r1_first, r1_last, b_v0, b_v1_, n_v1, n_v2);
                     }
-                    self.ds.interf_ef.push(InterferenceEF {
-                        edge: cand.n_e, face: cand.n_f,
-                        point: self.ds.edge_curve(cand.n_e)
-                            .map(|c| c.point_at((r1_first + r1_last) * 0.5)).unwrap_or(glam::DVec3::ZERO),
-                        edge_param: (r1_first + r1_last) * 0.5,
-                        new_vertex: usize::MAX,
-                    });
                     if !b_v0 || !b_v1_ {
+                        // OCCT L556-558: myDS->AddInterf(nE, nF); break — the
+                        // appended aEF keeps NO CommonPart.
                         self.ds.add_interf(cand.n_e, cand.n_f);
                         break;
                     }
+                    // OCCT L560-562: aEF.SetCommonPart(aCPart); AddInterf.
+                    let a_t_mid = (r1_first + r1_last) * 0.5;
+                    self.ds.interf_ef[idx_interf].point = self.ds.edge_curve(cand.n_e)
+                        .map(|c| c.point_at(a_t_mid)).unwrap_or(glam::DVec3::ZERO);
+                    self.ds.interf_ef[idx_interf].edge_param = a_t_mid;
                     self.ds.add_interf(cand.n_e, cand.n_f);
                     // OCCT L564: BOPAlgo_Tools::FillMap(aPB, nF, aMPBLI)
                     let ptr = std::sync::Arc::as_ptr(&a_pb.0) as u64;

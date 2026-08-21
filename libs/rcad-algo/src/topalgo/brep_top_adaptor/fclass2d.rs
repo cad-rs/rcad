@@ -428,13 +428,10 @@ fn order_wire_edges(
         }
     }
 
-    // OCCT returns the edges visited by the walk; when the walk could not
-    // visit every edge the wire is not a single closed loop (a closed edge —
-    // cylinder/cone lateral seam — starts and ends the loop).  rcad falls
-    // back to the stored order so every edge is sampled.
-    if result.len() < nk {
-        return kept.iter().map(|&i| edges[i]).collect();
-    }
+    // OCCT WireExplorer::Next (BRepTools_WireExplorer.cxx L393-705): the walk
+    // stops when no edge is found at the current vertex — the caller (e.g.
+    // IntTools_FClass2d::Init) then samples only the visited edges.  No
+    // fallback to the stored order exists in OCCT.
     result
 }
 
