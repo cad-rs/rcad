@@ -5292,6 +5292,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                  surf: &rcad_kernel::geom::Surface3,
                  range: [f64; 2]) -> Option<rcad_kernel::geom::Curve2d> {
         use rcad_kernel::geom::CurveEval;
+        use rcad_kernel::geom::SurfaceEval;
         // OCCT ProjLib::MakePCurveOfType (BOPTools_AlgoTools2D.cxx L592): for
         // an analytic plane surface the projected pcurve is the exact 2D line
         // (ProjLib_Plane), not an approximation.  A unit-speed 3D line (all
@@ -5318,6 +5319,37 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     // Line2d is arc-length parameterized (origin + dir * t):
                     // shift the origin so point_at(range[0]) == p0.
                     let origin = p0 - dir2 * range[0];
+                    return Some(rcad_kernel::geom::Curve2d::Line(
+                        rcad_kernel::geom::Line2d::new(origin, dir2),
+                    ));
+                }
+            }
+        }
+        // OCCT ProjLib_Cylinder::Project(gp_Lin): a line parallel to the axis
+        // (a v-isoline, u = const) projects to a 2D line with the same
+        // parameterization, not a BSpline approximation.  The boolean section
+        // inputs are unit-speed 3D lines, so the projected V span equals the
+        // parameter range; the line is translated so point_at(range[0]) = uv0.
+        if let rcad_kernel::geom::Curve3::Line(l) = curve {
+            let proj = |t: f64| {
+                let p = l.point_at(t);
+                crate::bop::closest_point_on_surface(surf, p)
+            };
+            let (uv0, _) = proj(range[0]);
+            let (uv1, _) = proj(range[1]);
+            if uv0.is_finite() && uv1.is_finite() {
+                let du = uv1.x - uv0.x;
+                let dv = uv1.y - uv0.y;
+                let alen = (range[1] - range[0]).abs();
+                let du_norm = if surf.is_u_periodic() {
+                    let t = du.rem_euclid(std::f64::consts::TAU);
+                    t.min(std::f64::consts::TAU - t)
+                } else {
+                    du.abs()
+                };
+                if du_norm < 1e-9 && (dv.abs() - alen).abs() <= 1e-7 * alen.max(1.0) {
+                    let dir2 = glam::DVec2::new(0.0, dv.signum());
+                    let origin = uv0 - dir2 * range[0];
                     return Some(rcad_kernel::geom::Curve2d::Line(
                         rcad_kernel::geom::Line2d::new(origin, dir2),
                     ));
