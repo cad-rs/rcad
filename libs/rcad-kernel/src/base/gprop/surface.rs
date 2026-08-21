@@ -299,6 +299,12 @@ pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f6
         edges.extend(w.edges.iter().copied());
     }
     for we in &edges {
+        // OCCT BRepGProp_Domain::Next (BRepGProp_Domain.cxx L27-38) skips
+        // INTERNAL and EXTERNAL edges — they are not face boundary edges and
+        // contribute nothing to the boundary (Green) integral.
+        if we.internal {
+            continue;
+        }
         let edge_shape = Shape::from_parts(
             brep.tshapes[we.idx].clone(),
             we.idx,

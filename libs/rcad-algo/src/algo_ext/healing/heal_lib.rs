@@ -181,7 +181,7 @@ pub fn fix_wire(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep,
  // Check outer wire
  if let TShape::Wire(owd) = &*current.tshapes[fd.outer_wire.index] {
  let outer_wire = rcad_kernel::topology::Wire {
- edges: owd.edges.iter().map(|e| rcad_kernel::topology::WireEdge { idx: e.index, forward: e.orientation == rcad_kernel::topods::Orientation::Forward, location: e.location }).collect(),
+ edges: owd.edges.iter().map(|e| rcad_kernel::topology::WireEdge { idx: e.index, forward: e.orientation == rcad_kernel::topods::Orientation::Forward, location: e.location, internal: e.orientation == rcad_kernel::topods::Orientation::Internal }).collect(),
  };
  let outer_issues = analyze_wire_issues(&current, &outer_wire, tolerance);
  if outer_issues.open_gaps > 0 || outer_issues.topological_self_intersections > 0 || outer_issues.geometric_self_intersections > 0 {
@@ -199,7 +199,7 @@ pub fn fix_wire(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep,
  for (wi, iw_sr) in fd.inner_wires.iter().enumerate() {
  if let TShape::Wire(iwd) = &*current.tshapes[iw_sr.index] {
  let inner_wire = rcad_kernel::topology::Wire {
- edges: iwd.edges.iter().map(|e| rcad_kernel::topology::WireEdge { idx: e.index, forward: e.orientation == rcad_kernel::topods::Orientation::Forward, location: e.location }).collect(),
+ edges: iwd.edges.iter().map(|e| rcad_kernel::topology::WireEdge { idx: e.index, forward: e.orientation == rcad_kernel::topods::Orientation::Forward, location: e.location, internal: e.orientation == rcad_kernel::topods::Orientation::Internal }).collect(),
  };
  let inner_issues = analyze_wire_issues(&current, &inner_wire, tolerance);
  if inner_issues.open_gaps > 0 || inner_issues.topological_self_intersections > 0 || inner_issues.geometric_self_intersections > 0 {

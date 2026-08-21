@@ -40,6 +40,20 @@ pub fn try_analytic_face_surface_area_pub(brep: &BRep, face: &Face, face_flat_id
 }
 
 fn try_analytic_face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize) -> Option<f64> {
+    // OCCT BRepGProp_Domain::Next (BRepGProp_Domain.cxx L27-38) skips
+    // INTERNAL/EXTERNAL edges in the boundary integral.  The analytic paths
+    // below integrate whole wires (shoelace over sampled wire polylines) and
+    // cannot represent a skipped single edge, so a face carrying internal
+    // edges falls back to the per-edge Green integral
+    // (base::gprop::surface::face_surface_area = OCCT BRepGProp_Gauss::Compute,
+    // which skips internal edges).
+    let has_internal = face.outer_wire.edges.iter().any(|we| we.internal)
+        || face.inner_wires.iter().any(|w| w.edges.iter().any(|we| we.internal));
+    if has_internal {
+        return Some(crate::base::gprop::surface::face_surface_area(
+            brep, face, face_flat_idx,
+        ));
+    }
     let surf_idx = brep.tshapes.get(face_flat_idx).and_then(|ts| {
         if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None }
     })?;

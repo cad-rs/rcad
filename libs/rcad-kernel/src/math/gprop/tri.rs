@@ -659,7 +659,11 @@ pub fn face_flat_iter(brep: &topods::BRep) -> Vec<(usize, Face)> {
     for (ti, ts) in brep.tshapes.iter().enumerate() {
         if let topods::TShape::Face(fd) = &**ts {
             let shape_to_edge = |sh: &crate::topo::topo_shape::Shape| -> WireEdge {
-                WireEdge { idx: sh.index, forward: sh.orientation.is_forward() }
+                WireEdge {
+                    idx: sh.index,
+                    forward: sh.orientation.is_forward(),
+                    internal: sh.orientation == crate::topo::topods::Orientation::Internal,
+                }
             };
             let outer_wire = {
                 let wi = fd.outer_wire.index;

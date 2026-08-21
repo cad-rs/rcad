@@ -30,6 +30,12 @@ pub struct WireEdge {
     /// profile edge into the source TShape + a Location translation.
     #[serde(default)]
     pub location: u32,
+    /// OCCT TopAbs_INTERNAL edge — a face-internal feature edge that is not a
+    /// boundary.  OCCT BRepGProp_Domain::Next (BRepGProp_Domain.cxx L27-38)
+    /// skips INTERNAL (and EXTERNAL) edges, so they contribute nothing to the
+    /// surface integral.
+    #[serde(default)]
+    pub internal: bool,
 }
 
 impl WireEdge {
@@ -38,6 +44,7 @@ impl WireEdge {
             idx,
             forward,
             location: 0,
+            internal: false,
         }
     }
     /// Shorthand: forward reference.
@@ -46,6 +53,7 @@ impl WireEdge {
             idx,
             forward: true,
             location: 0,
+            internal: false,
         }
     }
     /// Shorthand: reversed reference.
@@ -54,6 +62,7 @@ impl WireEdge {
             idx,
             forward: false,
             location: 0,
+            internal: false,
         }
     }
 }

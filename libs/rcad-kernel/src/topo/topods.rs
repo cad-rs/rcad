@@ -42,6 +42,12 @@ impl Orientation {
         matches!(self, Orientation::Forward)
     }
 
+    /// OCCT TopAbs::Reverse (TopAbs.hxx L80-91): FORWARD<->REVERSED,
+    /// INTERNAL/EXTERNAL unchanged.
+    pub const fn is_reversed(self) -> bool {
+        matches!(self, Orientation::Reversed)
+    }
+
     /// OCCT TopAbs::Compose (TopAbs.hxx L69-78) — the cumulated orientation of
     /// a sub-shape with orientation `other` inside a parent with orientation
     /// `self`. External dominates, then Internal, then Forward/Reversed xor.
@@ -1991,6 +1997,7 @@ impl BRep {
                                                     idx: esr.index,
                                                     forward: esr.orientation == Orientation::Forward,
                                                     location: esr.location,
+                                                    internal: esr.orientation == Orientation::Internal,
                                                 });
                                             }
                                         }
@@ -2009,6 +2016,7 @@ impl BRep {
                                                         idx: esr.index,
                                                         forward: esr.orientation == Orientation::Forward,
                                                         location: esr.location,
+                                                        internal: esr.orientation == Orientation::Internal,
                                                     });
                                                 }
                                             }

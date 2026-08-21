@@ -969,10 +969,14 @@ pub fn face_flat_iter(brep: &topods::BRep) -> Vec<(usize, Face)> {
     // (TopAbs::Compose semantics).
     let shape_to_edge = |wire_ori: crate::topo::topods::Orientation| {
         move |sh: &crate::topo::topo_shape::Shape| -> WireEdge {
+            let cum = wire_ori.compose(sh.orientation);
             WireEdge {
                 idx: sh.index,
-                forward: wire_ori.compose(sh.orientation).is_forward(),
+                forward: cum.is_forward(),
                 location: sh.location,
+                // OCCT TopAbs_INTERNAL/EXTERNAL edge directions are skipped by
+                // BRepGProp_Domain::Next (BRepGProp_Domain.cxx L27-38).
+                internal: !cum.is_forward() && !cum.is_reversed(),
             }
         }
     };
