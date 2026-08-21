@@ -158,12 +158,19 @@ fn elclib_line_value(line: &rcad_kernel::geom::Line3, t: f64) -> DVec3 {
     line.point_at(t)
 }
 
-/// OCCT ElCLib::Parameter(gp_Circ, gp_Pnt) — angle parameter of a point on a circle.
+/// OCCT ElCLib::Parameter(gp_Circ, gp_Pnt) — angle parameter of a point on a
+/// circle.  OCCT CircleParameter (ElCLib.cxx L1199-1222) computes
+/// Teta = XDirection.AngleWithRef(aVProj, dir), which returns the angle in
+/// [0, 2*PI) (normalizeAngle), so a negative atan2 angle is shifted by 2*PI.
 fn elclib_circle_parameter(circ: &rcad_kernel::geom::Circle3, p: DVec3) -> f64 {
     let d = p - circ.center;
     let x = d.dot(circ.x_dir.normalize_or_zero());
     let y = d.dot(circ.y_dir.normalize_or_zero());
-    y.atan2(x)
+    let mut t = y.atan2(x);
+    if t < 0.0 {
+        t += std::f64::consts::TAU;
+    }
+    t
 }
 
 /// OCCT ElCLib::Value(para, gp_Circ).
