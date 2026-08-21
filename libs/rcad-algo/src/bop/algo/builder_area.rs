@@ -53,7 +53,8 @@ impl BuilderArea {
             my_avoid_internal_shapes: false,
             my_report: Report::new(),
             my_run_parallel: false,
-            my_fuzzy_value: 0.0,
+            // OCCT BOPAlgo_Algo base: myFuzzyValue(Precision::Confusion()).
+            my_fuzzy_value: rcad_kernel::precision::CONFUSION,
         }
     }
 

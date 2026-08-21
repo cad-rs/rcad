@@ -96,7 +96,10 @@ fn bounding_vertex(a_lv: &[Shape]) -> (DVec3, f64) {
     }
     if a_lv.len() == 1 {
         let pt = a_lv[0].as_vertex().map(|v| v.point).unwrap_or(DVec3::ZERO);
-        let tol = a_lv[0].as_vertex().map(|v| v.tolerance).unwrap_or(0.0);
+        // OCCT BRepLib::BoundingVertex uses BRep_Tool::Tolerance (clamped to
+        // Precision::Confusion minimum, BRep_Tool.cxx L1314-1333).
+        let tol = a_lv[0].as_vertex().map(|v| v.tolerance).unwrap_or(0.0)
+            .max(rcad_kernel::precision::CONFUSION);
         return (pt, tol);
     }
     let mut acc = DVec3::ZERO;
@@ -106,7 +109,7 @@ fn bounding_vertex(a_lv: &[Shape]) -> (DVec3, f64) {
         if let Some(v) = s.as_vertex() {
             acc += v.point;
             n += 1;
-            max_tol = max_tol.max(v.tolerance);
+            max_tol = max_tol.max(v.tolerance.max(rcad_kernel::precision::CONFUSION));
         }
     }
     if n == 0 {
@@ -232,16 +235,6 @@ impl PaveFiller {
             self.sub_shapes_on_in(n_f1, n_f2, &mut a_mv_on_in, &mut a_mv_common,
                                   &mut a_mpb_on_in, &mut a_mpb_common);
             self.shared_edges(n_f1, n_f2, &mut a_lse);
-            if std::env::var("RCAD_MB_DEBUG").is_ok() && (n_f1 == 32 || n_f2 == 32) {
-                let mut vs: Vec<String> = Vec::new();
-                for &v in a_mv_on_in.iter() {
-                    if v >= self.ds.nb_shapes() { continue; }
-                    let p = self.ds.vertex_point_by_idx(v);
-                    vs.push(format!("{}:({:.3},{:.3},{:.3}){}", v, p.x, p.y, p.z,
-                        if self.ds.is_new_shape(v) { "N" } else { "S" }));
-                }
-                eprintln!("[MB] f1={} f2={} mvOnIn=[{}]", n_f1, n_f2, vs.join(" "));
-            }
 
             // 1. Treat Points (OCCT L773-791)
             for (j, np) in a_vp.iter().enumerate() {
@@ -1027,8 +1020,6 @@ impl PaveFiller {
             }
         }
         if b_is_vertex_on_line {
-            if [0, 43, 25, 19].contains(&n_v) {
-            }
             // OCCT L2994-3003: aDTol + aPTol = Resolution(max(aTolR3D, aTolV)).
             let a_dtol = crate::bop::tools::algo_tools::d_tolerance();
             let a_ptol = crate::bop::algo::pave_filler::shrunk_range_resolution(
@@ -1905,7 +1896,10 @@ impl PaveFiller {
         match s.shape_type() {
             ShapeType::Vertex => {
                 let pt = s.as_vertex().map(|v| v.point).unwrap_or(DVec3::ZERO);
-                let tol = s.as_vertex().map(|v| v.tolerance).unwrap_or(0.0);
+                // OCCT BRepBndLib::Add(vertex) uses BRep_Tool::Tolerance
+                // (clamped to Precision::Confusion minimum).
+                let tol = s.as_vertex().map(|v| v.tolerance).unwrap_or(0.0)
+                    .max(rcad_kernel::precision::CONFUSION);
                 let mut b = BndBox::from_point(pt);
                 b.set_gap(tol + rcad_kernel::CONFUSION);
                 self.ds.change_shape_info(idx).bbox = b;
@@ -2030,7 +2024,9 @@ impl PaveFiller {
         };
         // OCCT L181-184: vertex box.
         let pt = a_vn.as_vertex().map(|v| v.point).unwrap_or(DVec3::ZERO);
-        let tol = a_vn.as_vertex().map(|v| v.tolerance).unwrap_or(0.0);
+        // OCCT BRepBndLib::Add(vertex) uses BRep_Tool::Tolerance (clamped).
+        let tol = a_vn.as_vertex().map(|v| v.tolerance).unwrap_or(0.0)
+            .max(rcad_kernel::precision::CONFUSION);
         let mut b = BndBox::from_point(pt);
         b.set_gap(tol + rcad_kernel::CONFUSION);
         self.ds.change_shape_info(n_v).bbox = b;
@@ -2208,8 +2204,12 @@ impl PaveFiller {
             }
             let a_p1 = a_verts[0].as_vertex().map(|v| v.point).unwrap_or(DVec3::ZERO);
             let a_p2 = a_verts[1].as_vertex().map(|v| v.point).unwrap_or(DVec3::ZERO);
-            let a_tol_v1 = a_verts[0].as_vertex().map(|v| v.tolerance).unwrap_or(0.0);
-            let a_tol_v2 = a_verts[1].as_vertex().map(|v| v.tolerance).unwrap_or(0.0);
+            // OCCT L1344-1347: BRep_Tool::Tolerance(aV1/2) — clamped to
+            // Precision::Confusion minimum.
+            let a_tol_v1 = a_verts[0].as_vertex().map(|v| v.tolerance).unwrap_or(0.0)
+                .max(rcad_kernel::precision::CONFUSION);
+            let a_tol_v2 = a_verts[1].as_vertex().map(|v| v.tolerance).unwrap_or(0.0)
+                .max(rcad_kernel::precision::CONFUSION);
             let mut a_dist = a_p1.distance(a_p2);
             a_dist -= (a_tol_v1 + a_tol_v2);
             if a_dist > 0.0 {

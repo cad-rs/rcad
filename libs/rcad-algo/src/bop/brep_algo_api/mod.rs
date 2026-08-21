@@ -53,13 +53,20 @@ impl BuilderAlgo {
             arguments: Vec::new(),
             tools: Vec::new(),
             locations: vec![glam::DAffine3::IDENTITY],
-            run_parallel: false, fuzzy_value: 0.0,
+            run_parallel: false,
+            // OCCT BRepAlgoAPI_BuilderAlgorithm (BOPAlgo_Algo base):
+            // myFuzzyValue(Precision::Confusion()) — 1e-7 default.
+            fuzzy_value: rcad_kernel::precision::CONFUSION,
             non_destructive: false, glue: 0, check_inverted: true, use_bvh: false,
         }
     }
     pub fn set_run_parallel(&mut self, b: bool) { self.run_parallel = b; }
     pub fn get_run_parallel(&self) -> bool { self.run_parallel }
-    pub fn set_fuzzy_value(&mut self, v: f64) { self.fuzzy_value = v; }
+    /// OCCT BOPAlgo_Options::SetFuzzyValue (BOPAlgo_Options.cxx L107):
+    /// myFuzzyValue = max(theFuzz, Precision::Confusion()).
+    pub fn set_fuzzy_value(&mut self, v: f64) {
+        self.fuzzy_value = v.max(rcad_kernel::precision::CONFUSION);
+    }
     pub fn get_fuzzy_value(&self) -> f64 { self.fuzzy_value }
     pub fn set_arguments(&mut self, args: Vec<Shape>) { self.arguments = args; }
     pub fn get_arguments(&self) -> &[Shape] { &self.arguments }

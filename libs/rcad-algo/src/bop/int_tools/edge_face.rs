@@ -200,8 +200,10 @@ impl<'a> EdgeFace<'a> {
     pub fn set_range(&mut self, a_first: f64, a_last: f64) {
         self.my_range = [a_first, a_last];
     }
+    /// OCCT IntTools_EdgeFace::SetFuzzyValue (IntTools_EdgeFace.hxx L85-88):
+    /// myFuzzyValue = max(theFuzz, Precision::Confusion()).
     pub fn set_fuzzy_value(&mut self, the_fuzz: f64) {
-        self.my_fuzzy_value = the_fuzz;
+        self.my_fuzzy_value = the_fuzz.max(CONFUSION);
     }
     pub fn use_quick_coincidence_check(&mut self, the_flag: bool) {
         self.my_quick_coincidence_check = the_flag;

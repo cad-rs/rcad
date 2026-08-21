@@ -648,7 +648,8 @@ impl PaveFiller {
             ds: DS::new(),
             my_report: Report::new(),
             my_run_parallel: false,
-            my_fuzzy_value: 0.0,
+            // OCCT BOPAlgo_Options: myFuzzyValue(Precision::Confusion())
+            my_fuzzy_value: rcad_kernel::precision::CONFUSION,
             my_iterator: None,
             my_context: IntToolsContext::new(),
             my_glue: GlueEnum::GlueOff,
@@ -671,7 +672,8 @@ impl PaveFiller {
             ds,
             my_report: Report::new(),
             my_run_parallel: false,
-            my_fuzzy_value: 0.0,
+            // OCCT BOPAlgo_Options: myFuzzyValue(Precision::Confusion())
+            my_fuzzy_value: rcad_kernel::precision::CONFUSION,
             my_iterator: None,
             my_context: IntToolsContext::new(),
             my_glue: GlueEnum::GlueOff,
@@ -708,7 +710,11 @@ impl PaveFiller {
         self.my_fuzzy_value = tolerance;
     }
     pub fn fuzzy_value(&self) -> f64 { self.my_fuzzy_value }
-    pub fn set_fuzzy_value(&mut self, v: f64) { self.my_fuzzy_value = v; }
+    /// OCCT BOPAlgo_Options::SetFuzzyValue (BOPAlgo_Options.cxx L107):
+    /// myFuzzyValue = max(theFuzz, Precision::Confusion()).
+    pub fn set_fuzzy_value(&mut self, v: f64) {
+        self.my_fuzzy_value = v.max(rcad_kernel::precision::CONFUSION);
+    }
     pub fn has_errors(&self) -> bool { self.my_report.has_errors() }
     pub fn report(&self) -> &Report { &self.my_report }
     pub fn ds(&self) -> &DS { &self.ds }

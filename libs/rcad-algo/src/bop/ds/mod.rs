@@ -2272,8 +2272,10 @@ impl DS {
         }
     }
 
+    /// OCCT BRep_Tool::Tolerance(vertex) — returns max(stored, Precision::Confusion())
+    /// (BRep_Tool.cxx L1314-1333).
     pub fn vertex_tolerance(&self, s: &Shape) -> f64 {
-        s.as_vertex().map_or(0.0, |vd| vd.tolerance)
+        s.as_vertex().map_or(0.0, |vd| vd.tolerance).max(rcad_kernel::precision::CONFUSION)
     }
     pub fn vertex_point_on_shape(&self, s: &Shape) -> Option<DVec3> {
         let loc = self.get_location(s.location);
@@ -2296,18 +2298,20 @@ impl DS {
         })
     }
 
-    /// Face tolerance by shape index.
+    /// OCCT BRep_Tool::Tolerance(face) — returns max(stored, Precision::Confusion())
+    /// (BRep_Tool.cxx L137-150).
     pub fn face_tolerance(&self, i: usize) -> f64 {
         self.shapes.get(i).and_then(|si| {
             si.shape.as_face().map(|f| f.tolerance)
-        }).unwrap_or(0.0)
+        }).unwrap_or(0.0).max(rcad_kernel::precision::CONFUSION)
     }
 
-    /// Edge tolerance by shape index.
+    /// OCCT BRep_Tool::Tolerance(edge) — returns max(stored, Precision::Confusion())
+    /// (BRep_Tool.cxx L881-894).
     pub fn edge_tolerance(&self, i: usize) -> f64 {
         self.shapes.get(i).and_then(|si| {
             si.shape.as_edge().map(|e| e.tolerance)
-        }).unwrap_or(0.0)
+        }).unwrap_or(0.0).max(rcad_kernel::precision::CONFUSION)
     }
 
     /// Edge parameter range by shape index.
@@ -2558,12 +2562,13 @@ impl DS {
         if i < self.nb_source_shapes { i } else { 0 }
     }
 
-    /// Vertex tolerance by shape index.
+    /// Vertex tolerance by shape index.  OCCT BRep_Tool::Tolerance(vertex)
+    /// clamps to Precision::Confusion() minimum (BRep_Tool.cxx L1314-1333).
     pub fn vertex_tolerance_by_idx(&self, i: usize) -> f64 {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Vertex { return None; }
             si.shape.as_vertex().map(|v| v.tolerance)
-        }).unwrap_or(0.0)
+        }).unwrap_or(0.0).max(rcad_kernel::precision::CONFUSION)
     }
 
     /// OCCT BRep_Tool::MaxTolerance(face, TopAbs_VERTEX) — the maximum vertex
