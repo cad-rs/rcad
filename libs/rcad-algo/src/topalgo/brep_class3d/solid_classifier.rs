@@ -124,7 +124,7 @@ impl SolidClassifier {
             };
             for f in &faces {
                 // OCCT L158-159: FindAPointInTheFace(aF, aPoint, aU, aV, aParam).
-                let Some((a_point, a_u, a_v)) = SolidExplorer::face_point(f, param) else {
+                let Some((a_point, a_u, a_v)) = self.explorer.face_point(f, param) else {
                     continue;
                 };
                 // OCCT L160-162: FaceNormal(aF, aU, aV, aDN).
@@ -147,7 +147,7 @@ impl SolidClassifier {
                     // intersection state/transition from IntCurvesFace; rcad
                     // derives the transition from the surface normal at the
                     // probing point of g (constant on planar faces).
-                    let g_n = match SolidExplorer::face_point(g, param) {
+                    let g_n = match self.explorer.face_point(g, param) {
                         Some((_, gu, gv)) => SolidExplorer::face_outward_normal_at(g, gu, gv),
                         None => None,
                     };
@@ -178,7 +178,7 @@ impl SolidClassifier {
                             }
                             Some(w)
                         }
-                        _ => SolidExplorer::ray_face_param(a_point, ray_dir, g),
+                        _ => self.explorer.ray_face_param(a_point, ray_dir, g),
                     };
                     let Some(w) = w else { continue };
                     if w < parmin {

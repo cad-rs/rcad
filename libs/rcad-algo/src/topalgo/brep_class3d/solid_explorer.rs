@@ -21,6 +21,12 @@ use std::sync::Arc;
 /// the face's UV domain; without this check the ray-cast would treat the
 /// infinite supporting plane as the face.
 pub(crate) struct ExplorerFace {
+    // face TShape identity (ptr_id, location) — the DS registration key.
+    pub(crate) key: (u64, u32),
+    // The source face shape (for the IntTools_FClass2d translation when the
+    // face has no DS registration — OCCT IntTools_FClass2d::Init takes a
+    // TopoDS_Face).
+    pub(crate) src: Option<Shape>,
     pub(crate) surf: Surface3,
     pub(crate) ori: Orientation,
     pub(crate) uv_bounds: Option<[f64; 4]>, // [umin, umax, vmin, vmax]
@@ -42,6 +48,8 @@ pub(crate) struct ExplorerFace {
 impl Clone for ExplorerFace {
     fn clone(&self) -> Self {
         ExplorerFace {
+            key: self.key,
+            src: self.src.clone(),
             surf: self.surf.clone(),
             ori: self.ori,
             uv_bounds: self.uv_bounds,
@@ -238,6 +246,8 @@ impl SolidExplorer {
                         // face, as OCCT BRepClass3d_SolidExplorer::InitShape
                         // (L920-924) does via TopExp_Explorer with cumOri=true.
                         self.face_surfaces.push(ExplorerFace {
+                            key: (sh.ptr_id(), sh.location),
+                            src: Some(sh.clone()),
                             surf,
                             ori: face_or,
                             uv_bounds,
@@ -389,13 +399,13 @@ impl SolidExplorer {
                 if d <= tol {
                     let rel = p - pl.origin - pl.normal * (p - pl.origin).dot(pl.normal);
                     let uv = DVec2::new(rel.dot(pl.u_dir), rel.dot(pl.v_dir));
-                    if uv_in_face_domain(f, uv) {
+                    if self.uv_in_domain(f, uv) {
                         return true;
                     }
                 }
             } else {
                 let (uv, q) = crate::bop::closest_point_on_surface(&f.surf, p);
-                if (p - q).length() <= tol && uv_in_face_domain(f, uv) {
+                if (p - q).length() <= tol && self.uv_in_domain(f, uv) {
                     return true;
                 }
             }
@@ -518,7 +528,7 @@ impl SolidExplorer {
                             None
                         }
                     }
-                    _ => Self::ray_face_param(p, ray_dir, f),
+                    _ => self.ray_face_param(p, ray_dir, f),
                 };
                 if let Some(t) = t {
                     if t > 1e-7 {
@@ -549,6 +559,8 @@ impl SolidExplorer {
                     }
                 } else {
                     let ef = ExplorerFace {
+                        key: (0, 0),
+                        src: None,
                         surf: surf.clone(),
                         ori: face_ori,
                         uv_bounds: None,
@@ -556,7 +568,7 @@ impl SolidExplorer {
                         boundary: vec![],
                         edge_keys: vec![],
                     };
-                    if let Some(t) = Self::ray_face_param(p, ray_dir, &ef) {
+                    if let Some(t) = self.ray_face_param(p, ray_dir, &ef) {
                         if t > 1e-7 {
                             intersections += 1;
                         }
@@ -572,7 +584,7 @@ impl SolidExplorer {
     /// for the Line x Face intersection; BeanFaceIntersector is its translation).
     /// Only intersections whose UV lies inside the face's 2D domain are counted
     /// (OCCT IntCurvesFace_Intersector.cxx L256-286: Classify(Puv) == IN/ON).
-    pub(crate) fn ray_face_param(p: DVec3, dir: DVec3, f: &ExplorerFace) -> Option<f64> {
+    pub(crate) fn ray_face_param(&self, p: DVec3, dir: DVec3, f: &ExplorerFace) -> Option<f64> {
         let line = Curve3::Line(rcad_kernel::geom::Line3 {
             origin: p,
             direction: dir,
@@ -599,13 +611,14 @@ impl SolidExplorer {
         }
         // OCCT BRepClass3d_SClassifier: the intersection closest to the point.
         // A candidate is accepted only when its UV is IN the face's 2D domain
-        // (IntCurvesFace_Intersector's currentstate IN/ON filter).
+        // (IntCurvesFace_Intersector's currentstate IN/ON filter —
+        // TopolTool->Classify).
         let mut parmin = f64::MAX;
         for r in bfi.result() {
             let t = r.first();
             let q = line_for_points.point_at(t);
             let (uv, _q2) = crate::bop::closest_point_on_surface(&f.surf, q);
-            if !uv_in_face_domain(f, uv) {
+            if !self.uv_in_domain(f, uv) {
                 continue;
             }
             if t < parmin {
@@ -627,7 +640,7 @@ impl SolidExplorer {
     /// verify the result with the face classifier (FClass2d == IN). rcad
     /// replicates the same walk using the boundary pcurves and the UV-domain
     /// check (uv_in_face_domain).
-    pub(crate) fn face_point(f: &ExplorerFace, param: f64) -> Option<(DVec3, f64, f64)> {
+    pub(crate) fn face_point(&self, f: &ExplorerFace, param: f64) -> Option<(DVec3, f64, f64)> {
         if let Surface3::Plane(pl) = &f.surf {
             // Planar faces: the UV-box interpolation point is inside the face
             // when the box is the face's bounding box (the vertex projection
@@ -635,7 +648,7 @@ impl SolidExplorer {
             // the domain check and fall back to the edge-walk otherwise.
             if let Some([umin, umax, vmin, vmax]) = f.uv_bounds {
                 let uv = DVec2::new(umin + (umax - umin) * param, vmin + (vmax - vmin) * param);
-                if uv_in_face_domain(f, uv) {
+                if self.uv_in_domain(f, uv) {
                     return Some((f.surf.point_at(uv.x, uv.y), uv.x, uv.y));
                 }
             }
@@ -676,7 +689,7 @@ impl SolidExplorer {
                 }
                 let uv = p_start + param_init * tan;
                 // OCCT L130-135: the point must be strictly IN the face.
-                if !uv_in_face_domain(f, uv) {
+                if !self.uv_in_domain(f, uv) {
                     return None;
                 }
                 // OCCT L138-148: non-degenerate surface point.
@@ -1151,7 +1164,7 @@ impl SolidExplorer {
                         // point-in-face state; IN or ON returns 1 (the point is
                         // on the face), OUT returns 3 (on the surface but
                         // outside the face domain). No 3D edge/vertex selector.
-                        let st = Self::classify_uv_2d(f, DVec2::new(pu.x, pu.y), CONFUSION);
+                        let st = self.classify_uv_2d(f, DVec2::new(pu.x, pu.y), CONFUSION);
                         if st == 1 || st == 2 {
                             return (1, p, DVec3::X, 0.0); // ON
                         } else {
@@ -1326,7 +1339,7 @@ impl SolidExplorer {
         }
         // OCCT L869-870: no grid point found — FindAPointInTheFace fallback
         // (the edge-walk of SolidExplorer.cxx L74-190, rcad face_point).
-        match Self::face_point(f, self.my_param_on_edge) {
+        match self.face_point(f, self.my_param_on_edge) {
             Some((pt, pu, pv)) => {
                 *u_ = pu;
                 *v_ = pv;
@@ -1355,7 +1368,7 @@ impl SolidExplorer {
         }
         // OCCT L236: theIntersector.ClassifyUVPoint(theP2d) =
         // myTopolTool->Classify(Puv, 1e-7) (Intersector.cxx L543-547).
-        Self::classify_uv_2d(f, uv, 1e-7)
+        self.classify_uv_2d(f, uv, 1e-7)
     }
 
     /// OCCT BRepTopAdaptor_TopolTool::Classify(Puv, Tol) — the pure 2D
@@ -1363,11 +1376,51 @@ impl SolidExplorer {
     /// wire): IN when the point is inside the domain or within Tol of its
     /// boundary, OUT otherwise. The 3D edge/vertex selector is NOT part of it
     /// (that is SolidExplorer::ClassifyUVPoint only).
-    pub(crate) fn classify_uv_2d(f: &ExplorerFace, uv: DVec2, tol: f64) -> u8 {
+    ///
+    /// rcad runs the IntTools_FClass2d translation (the OCCT pcurve-sampled
+    /// 2D classifier): for a face registered in the DS under its own index,
+    /// via the DS; for a synthetic draft-solid face (no DS registration) via
+    /// the single-face ShapeSource adapter (OCCT IntTools_FClass2d::Init takes
+    /// a TopoDS_Face — the adapter restores that contract). The sampled
+    /// uv_polys domain remains the fallback for faces without pcurves.
+    pub(crate) fn classify_uv_2d(&self, f: &ExplorerFace, uv: DVec2, tol: f64) -> u8 {
+        if let Some(ds) = &self.ds {
+            if let Some(fidx) = ds.map_shape_index(f.key.0, f.key.1) {
+                let f2 = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new(
+                    ds.as_ref(),
+                    fidx,
+                    tol,
+                );
+                return match f2.perform(ds.as_ref(), uv, true) {
+                    crate::topalgo::brep_top_adaptor::fclass2d::State::In => 1,  // IN
+                    crate::topalgo::brep_top_adaptor::fclass2d::State::On => 2,  // ON
+                    _ => 3, // OUT / UNKNOWN
+                };
+            }
+        }
+        if let Some(src) = &f.src {
+            let adapter =
+                crate::topalgo::shape_source::FaceShapeSource::new(src, f.surf.clone(), &self.locations);
+            let f2 = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new(&adapter, 0, tol);
+            return match f2.perform(&adapter, uv, true) {
+                crate::topalgo::brep_top_adaptor::fclass2d::State::In => 1,  // IN
+                crate::topalgo::brep_top_adaptor::fclass2d::State::On => 2,  // ON
+                _ => 3, // OUT / UNKNOWN
+            };
+        }
         if uv_in_face_domain_with_tol(f, uv, tol) {
             1 // IN
         } else {
             3 // OUT
+        }
+    }
+
+    /// TopolTool::Classify == IN/ON (OCCT BRepClass_FaceClassifier semantics;
+    /// rcad: the IntTools_FClass2d translation, see classify_uv_2d).
+    pub(crate) fn uv_in_domain(&self, f: &ExplorerFace, uv: DVec2) -> bool {
+        match self.classify_uv_2d(f, uv, 1e-7) {
+            1 | 2 => true,
+            _ => false,
         }
     }
 
@@ -1376,7 +1429,7 @@ impl SolidExplorer {
     /// parallel-line ON check (SClassifier.cxx L431).
     pub(crate) fn classify_uv_point_at(&self, fi: usize, uv: DVec2) -> u8 {
         match self.face_surfaces.get(fi) {
-            Some(f) => Self::classify_uv_2d(f, uv, 1e-7),
+            Some(f) => self.classify_uv_2d(f, uv, 1e-7),
             None => 3, // OUT
         }
     }

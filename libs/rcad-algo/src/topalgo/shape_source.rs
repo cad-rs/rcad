@@ -15,6 +15,7 @@
 use rcad_kernel::geom::{Curve2d, Surface3};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{CurveRepresentation, Orientation, ShapeType, TShape};
+use std::collections::HashMap;
 
 /// OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-360) — the edge's pcurve
 /// on the face, with the seam (CurveOnClosedSurface) pcurve selected by the
@@ -87,4 +88,102 @@ pub trait ShapeSource: Send + Sync {
     /// The full TopLoc_Location table (index 0 = identity), for composing
     /// edge+vertex Locations (TopoDS_Iterator cumLoc semantics).
     fn locations(&self) -> &[glam::DAffine3];
+}
+
+/// A ShapeSource adapter exposing a single face and its wire edges under the
+/// flat DS indexing (index 0 = the face, 1..N = the wire edges in order).
+/// The synthetic draft-solid faces have no DS registration, but
+/// IntTools_FClass2d::Init (OCCT IntTools_FClass2d.cxx L77-621) builds its
+/// classifier from the face and the edge pcurves alone — OCCT receives a
+/// TopoDS_Face, not a BOPDS DS. This adapter makes the rcad FClass2d
+/// translation usable for such faces.
+pub struct FaceShapeSource<'a> {
+    face: &'a Shape,
+    surf: Option<Surface3>,
+    edges: Vec<Shape>,
+    edge_index: HashMap<(u64, u32), usize>,
+    locations: &'a [glam::DAffine3],
+}
+
+impl<'a> FaceShapeSource<'a> {
+    /// Build the adapter: index 0 is the face, the wire edges (outer + inner,
+    /// in traversal order) follow. `surf` is the face surface (already
+    /// location-transformed by the caller, matching the DS convention).
+    pub fn new(face: &'a Shape, surf: Surface3, locations: &'a [glam::DAffine3]) -> Self {
+        let mut edges: Vec<Shape> = Vec::new();
+        if let TShape::Face(fd) = &*face.data {
+            for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                if let TShape::Wire(wd) = &*w.data {
+                    for e in &wd.edges {
+                        edges.push(e.clone());
+                    }
+                }
+            }
+        }
+        let mut edge_index: HashMap<(u64, u32), usize> = HashMap::new();
+        for (i, e) in edges.iter().enumerate() {
+            edge_index.insert((e.ptr_id(), e.location), i + 1);
+        }
+        FaceShapeSource {
+            face,
+            surf: Some(surf),
+            edges,
+            edge_index,
+            locations,
+        }
+    }
+}
+
+impl ShapeSource for FaceShapeSource<'_> {
+    fn nb_shapes(&self) -> usize {
+        1 + self.edges.len()
+    }
+    fn shape_at(&self, i: usize) -> Shape {
+        if i == 0 {
+            self.face.clone()
+        } else {
+            self.edges.get(i - 1).cloned().unwrap_or_else(Shape::null)
+        }
+    }
+    fn shape_type(&self, i: usize) -> ShapeType {
+        self.shape_at(i).shape_type()
+    }
+    fn sub_shapes(&self, _i: usize) -> &[usize] {
+        &[]
+    }
+    fn map_shape_index(&self, ptr_id: u64, location: u32) -> Option<usize> {
+        if self.face.ptr_id() == ptr_id && self.face.location == location {
+            Some(0)
+        } else {
+            self.edge_index.get(&(ptr_id, location)).copied()
+        }
+    }
+    fn map_ve(&self, _vertex: usize) -> Option<&Vec<usize>> {
+        None
+    }
+    fn face_surface(&self, i: usize) -> Option<Surface3> {
+        if i == 0 {
+            self.surf.clone()
+        } else {
+            None
+        }
+    }
+    fn vertex_tolerance(&self, _i: usize) -> f64 {
+        0.0
+    }
+    fn is_edge_degenerated(&self, i: usize) -> bool {
+        match &*self.shape_at(i).data {
+            TShape::Edge(ed) => ed.degenerated,
+            _ => true,
+        }
+    }
+    fn get_location(&self, idx: u32) -> glam::DAffine3 {
+        self.locations
+            .get(idx as usize)
+            .copied()
+            .unwrap_or(glam::DAffine3::IDENTITY)
+    }
+    fn locations(&self) -> &[glam::DAffine3] {
+        self.locations
+    }
 }
