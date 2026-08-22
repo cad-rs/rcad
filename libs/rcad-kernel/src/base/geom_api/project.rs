@@ -119,7 +119,17 @@ pub fn closest_point_on_surface(
             // OCCT ElSLib::SphereD0: the axis component is R*sin(v), so
             // v = asin(w.axis) (0 = equator, +pi/2 = axis pole).
             let theta = w.dot(sph.axis).clamp(-1.0, 1.0).asin();
-            let phi = w.dot(v_axis).atan2(w.dot(u_axis));
+            let mut phi = w.dot(v_axis).atan2(w.dot(u_axis));
+            // OCCT ElSLib::SphereParameters (ElSLib.cxx L1643): U is
+            // normalized into [0, 2*PI) (normalizeAngle).  Without it a point
+            // on the -Y side projects to u = -PI/2 and the pcurve_2d periodic
+            // shift folds the arc into [2*PI, ...], so the WireSplitter's
+            // closed-vertex 2D distance check compares u=2*PI (seam pcurve2)
+            // against u=0 and filters the candidate (bopfuse_simple ZH6:
+            // sphere equator section pcurves).
+            if phi < 0.0 {
+                phi += std::f64::consts::TAU;
+            }
             SurfaceProjection {
                 point,
                 params: (phi, theta),

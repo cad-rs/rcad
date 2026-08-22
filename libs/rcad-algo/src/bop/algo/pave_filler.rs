@@ -5404,9 +5404,15 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
             let min_u = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
             let max_u = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-            if max_u > two_pi {
+            // Shift the unwrapped domain back into [0, 2*PI].  The comparison
+            // uses a 1e-9 tolerance: the unwrap adds exactly 2*PI to the arc
+            // end near the seam, which can exceed 2*PI by one ulp (e.g. the
+            // latitude arc end at u=0 unwrapped to 2*PI+1e-16); a strict >
+            // then folds the whole arc back by 2*PI and the pcurve ends at
+            // u=-PI instead of PI (bopfuse_simple ZH7, sphere rotated 180 deg).
+            if max_u > two_pi + 1e-9 {
                 for p in uv.iter_mut() { p.x -= two_pi; }
-            } else if min_u < 0.0 {
+            } else if min_u < -1e-9 {
                 for p in uv.iter_mut() { p.x += two_pi; }
             }
             for p in uv.iter_mut() {

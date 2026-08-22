@@ -570,7 +570,17 @@ fn build_analytic_pcurve(other_surf: &Surface3, curve3: &Curve3, tf: f64, tl: f6
             // Xs.AngleWithRef(Xc, Xs^Ys) (a -delta convention) and relies on
             // SameParameter to correct it; rcad has no SameParameter, so U0
             // is written directly (same-parameter from the start).
-            let u = xc.dot(ys).atan2(xc.dot(xs));
+            let mut u = xc.dot(ys).atan2(xc.dot(xs));
+            // OCCT ElSLib::SphereParameters normalizes U into [0, 2*PI)
+            // (normalizeAngle, ElSLib.cxx L1643); the azimuth of the t=0 point
+            // must land in the same domain as the seam pcurves.  Without the
+            // wrap a latitude arc whose x_dir is exactly antiparallel to the
+            // sphere's xs yields atan2(-0.0, -1.0) = -PI, and the WireSplitter's
+            // closed-vertex 2D distance check sees u=-PI vs the seam's u=PI
+            // (bopfuse_simple ZH7: sphere rotated by 180 deg).
+            if u < 0.0 {
+                u += std::f64::consts::TAU;
+            }
             let z = (c.center - sp.center).dot(zs);
             let v = (z / sp.radius).clamp(-1.0, 1.0).asin();
             let p2d1 = DVec2::new(u, v);
