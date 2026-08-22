@@ -13,8 +13,12 @@ pub fn line_parameter(line: &Line3, p: DVec3) -> f64 {
 }
 
 /// OCCT ElCLib::Value(para, gp_Lin).
+/// gp_Lin::Direction() is a unit vector, so the value at `t` (an arc-length
+/// parameter produced by ElCLib::Parameter) is Loc + t * Dir with the SAME
+/// normalized direction.  A raw Line3 may carry a non-unit direction; using
+/// point_at(t) there would misplace the point (the rcad fix mirroring OCCT).
 pub fn line_value(line: &Line3, t: f64) -> DVec3 {
-    line.point_at(t)
+    line.origin + line.direction.normalize_or_zero() * t
 }
 
 /// OCCT ElCLib::D1(para, gp_Lin, P, V).

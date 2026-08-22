@@ -237,9 +237,6 @@ pub(crate) fn find_valid_range_params(
     out_ts1: &mut f64,
     out_ts2: &mut f64,
 ) -> bool {
-    if std::env::var("RCAD_MB_DEBUG").is_ok() {
-        eprintln!("[TRACE] find_valid_range_params t=[{:.6},{:.6}]", a_t1, a_t2);
-    }
     // OCCT L184: if (theParV2 - theParV1 < Precision::PConfusion()) return false;
     if a_t2 - a_t1 < rcad_kernel::PCONFUSION {
         return false;
@@ -3200,22 +3197,10 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
             _ => return true,
         };
-        if std::env::var("RCAD_MB_DEBUG").is_ok() {
-            let c = a_ed.curve.clone().map(|c| match c {
-                rcad_kernel::geom::Curve3::Line(l) => format!("L o=({:.3},{:.3},{:.3}) d=({:.3},{:.3},{:.3})", l.origin.x, l.origin.y, l.origin.z, l.direction.x, l.direction.y, l.direction.z),
-                _ => "O".into(),
-            }).unwrap_or_else(|| "?".into());
-            eprintln!("[MICRO-EDGE] curve={} first=({:.3},{:.3},{:.3}) last=({:.3},{:.3},{:.3}) first_idx={} last_idx={}",
-                c, a_p1.x, a_p1.y, a_p1.z, a_p2.x, a_p2.y, a_p2.z, a_ed.first.index, a_ed.last.index);
-        }
         let a_tol_e = a_ed.tolerance;
         // OCCT IntTools_ShrunkRange::Perform (IntTools_ShrunkRange.cxx L107-191).
         let a_dtol = rcad_kernel::CONFUSION;
         let a_pdtol = rcad_kernel::PCONFUSION;
-        if std::env::var("RCAD_MB_DEBUG").is_ok() {
-            eprintln!("[MICRO-CHK] rng={:?} tolE={:.3e} tolV1={:.3e} tolV2={:.3e} p1=({:.3},{:.3},{:.3}) p2=({:.3},{:.3},{:.3})",
-                a_ed.range, a_tol_e, a_tol_v1, a_tol_v2, a_p1.x, a_p1.y, a_p1.z, a_p2.x, a_p2.y, a_p2.z);
-        }
         if a_t2 - a_t1 < a_pdtol {
             return true;
         }

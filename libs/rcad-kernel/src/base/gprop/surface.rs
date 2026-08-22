@@ -44,10 +44,6 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
         } else {
             face_surface_area_gauss_domain(brep, face, *fi)
         };
-        if std::env::var("RCAD_SA_DEBUG").is_ok() {
-            eprintln!("[SA] fi={} nat={} area={} nedges={}", *fi, is_nat_restr, a,
-                face.outer_wire.edges.len() + face.inner_wires.iter().map(|w| w.edges.len()).sum::<usize>());
-        }
         mass += a;
     }
     mass
@@ -451,6 +447,9 @@ pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f6
         }
         // L1206-1207: aC *= lr; anInertia += aC
         an_inertia += a_c_inertia * lr;
+            if std::env::var("RCAD_SA_DEBUG").is_ok() {
+                eprintln!("[SA-EDGE] f={} edge={} fwd={} span=[{:.4},{:.4}] nb_c={} contrib={:.6}", fi, we.idx, we.forward, l1, l2, nb_c, a_c_inertia * lr);
+            }
         }
     }
     // convert (L1210, L467-490): |Mass| >= EPS_DIM(1e-30) → mass else 0

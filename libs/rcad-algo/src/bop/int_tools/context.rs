@@ -793,7 +793,8 @@ impl IntToolsContext {
             return false;
         }
         // OCCT L669-671: IsPointInOnFace(aF, aP2D(U, V)).
-        self.is_point_in_on_face(ds, n_f, DVec2::new(uv.0, uv.1))
+        let r = self.is_point_in_on_face(ds, n_f, DVec2::new(uv.0, uv.1));
+        r
     }
 
     /// OCCT IntTools_Context::IsValidPointForFaces (IntTools_Context.cxx L678-692).

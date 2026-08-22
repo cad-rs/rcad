@@ -145,18 +145,23 @@ impl QuadQuadGeo {
     }
 
     pub fn line(&self, num: i32) -> Line3 {
+        // OCCT IntAna_QuadQuadGeo::Line(Index) returns gp_Lin(ptN, dirN) —
+        // gp_Lin stores its direction as a unit gp_Dir, so the rcad Line3
+        // carries the SAME normalized direction (ElCLib::Parameter/Value and
+        // the PointOn2S parameters all assume the arc-length parameterization).
+        let norm = |d: DVec3| d.normalize_or_zero();
         match num {
             1 => Line3 {
                 origin: self.pt1,
-                direction: self.dir1,
+                direction: norm(self.dir1),
             },
             2 => Line3 {
                 origin: self.pt2,
-                direction: self.dir2,
+                direction: norm(self.dir2),
             },
             _ => Line3 {
                 origin: self.pt3,
-                direction: self.dir3,
+                direction: norm(self.dir3),
             },
         }
     }

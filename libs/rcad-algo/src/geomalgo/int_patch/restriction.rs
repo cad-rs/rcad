@@ -248,7 +248,14 @@ fn find_line(
                 if let Curve3::Line(l) = &lin.curve {
                     para = elclib_line_parameter(l, psurf);
                     if para <= upper && para >= lower {
-                        pt = elclib_line_value(l, para);
+                        // OCCT: gp_Lin::Direction() is a unit vector, so
+                        // ElCLib::Value(para, Lin) = Loc + para * Dir with the
+                        // SAME normalized direction ElCLib::Parameter used.  A
+                        // raw Line3 may carry a non-unit direction, so the point
+                        // must be rebuilt with the normalized direction, not
+                        // line.point_at(t) (which uses the raw direction).
+                        let dir_n = l.direction.normalize_or_zero();
+                        pt = l.origin + dir_n * para;
                         a_sq_dist = psurf.distance_squared(pt);
                         if (a_sq_dist < a_sq_tol) && (a_sq_dist < a_sq_dist_min) {
                             a_sq_dist_min = a_sq_dist;
@@ -662,7 +669,10 @@ fn single_line(
         IntPatchIType::Line => {
             if let Curve3::Line(l) = &lin.curve {
                 parproj = elclib_line_parameter(l, psurf);
-                ptproj = elclib_line_value(l, parproj);
+                // OCCT gp_Lin::Direction() is a unit vector — the projected
+                // point uses the same normalized direction as the parameter
+                // (see find_line Line branch).
+                ptproj = l.origin + l.direction.normalize_or_zero() * parproj;
                 tgint = l.direction;
             }
         }

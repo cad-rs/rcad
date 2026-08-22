@@ -252,17 +252,6 @@ impl PaveFiller {
 
             // 2. Treat Curves (OCCT L793-851)
             self.get_stick_vertices(n_f1, n_f2, &mut a_mv_stick, &mut a_mv_ef, &mut a_mi);
-            if std::env::var("RCAD_MB_DEBUG").is_ok() && (n_f1 == 32 || n_f2 == 32) {
-                let cids: Vec<usize> = a_vc_indices.iter().copied().collect();
-                let mut pbs_per_cid: Vec<String> = Vec::new();
-                for &cid2 in &cids {
-                    if cid2 < self.ds.intersection_curves.len() {
-                        let eids: Vec<usize> = self.ds.intersection_curves[cid2].pave_blocks.iter().map(|p| p.0.read().unwrap().edge).collect();
-                        pbs_per_cid.push(format!("cid{}:[{}]", cid2, eids.iter().map(|e| if *e == usize::MAX { "U".to_string() } else { e.to_string() }).collect::<Vec<_>>().join(",")));
-                    }
-                }
-                eprintln!("[MB-START] i={} cur={} f1={} f2={} curves={} pbs={}", i, a_cur_ind, n_f1, n_f2, cids.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(","), pbs_per_cid.join(" "));
-            }
 
             for &cid in &a_vc_indices {
                 if cid >= self.ds.intersection_curves.len() { continue; }
@@ -447,18 +436,6 @@ impl PaveFiller {
                     }
                     // OCCT L1023-1024: Make Edge
                     let ic_curve = self.ds.intersection_curves[cid].curve.clone();
-                    if std::env::var("RCAD_MB_DEBUG").is_ok() && (n_f1 == 32 || n_f2 == 32) {
-                        let p1 = self.ds.vertex_point_by_idx(n_v1);
-                        let p2 = self.ds.vertex_point_by_idx(n_v2);
-                        let t1v = self.ds.vertex_tolerance_by_idx(n_v1);
-                        let t2v = self.ds.vertex_tolerance_by_idx(n_v2);
-                        let l1 = self.ds.shape(n_v1).location;
-                        let l2 = self.ds.shape(n_v2).location;
-                        let raw1 = self.ds.shape(n_v1).as_vertex().map(|v| v.point).unwrap_or(DVec3::ZERO);
-                        let raw2 = self.ds.shape(n_v2).as_vertex().map(|v| v.point).unwrap_or(DVec3::ZERO);
-                        eprintln!("[MB-APPEND] cid={} n_v1={} p1=({:.4},{:.4},{:.4}) raw1=({:.4},{:.4},{:.4}) loc1={} n_v2={} p2=({:.4},{:.4},{:.4}) raw2=({:.4},{:.4},{:.4}) loc2={}",
-                            cid, n_v1, p1.x, p1.y, p1.z, raw1.x, raw1.y, raw1.z, l1, n_v2, p2.x, p2.y, p2.z, raw2.x, raw2.y, raw2.z, l2);
-                    }
                     let n_e = {
                         self.append_edge(&ic_curve, a_t1, a_t2, n_v1, n_v2, a_tol_r3d)
                     };
@@ -471,14 +448,6 @@ impl PaveFiller {
                     // rcad leaves the edge without a pcurve in that case and
                     // make_pcurves part 2 (projection) supplies it later.
                     let a_c2d1 = self.ds.intersection_curves[cid].pcurve1.clone();
-                    if std::env::var("RCAD_MB_DEBUG").is_ok() && (n_f1 == 32 || n_f2 == 32) {
-                        let d1 = a_c2d1.as_ref().map(|c| match c {
-                            rcad_kernel::geom::Curve2d::Line(l) => format!("L o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
-                            rcad_kernel::geom::Curve2d::BSpline(b) => format!("BS n={}", b.control_points.len()),
-                            _ => "O".into(),
-                        }).unwrap_or_else(|| "none".into());
-                        eprintln!("[MB] f1={} f2={} newE={} pc1={} t=({:.4},{:.4}) curve_pbs_after_push={}", n_f1, n_f2, n_e, d1, a_t1, a_t2, self.ds.intersection_curves[cid].pave_blocks.len());
-                    }
                     if let Some(a_c2d) = a_c2d1 {
                         let fk1 = self.ds.face_key(n_f1);
                         self.ds.mutate_shape_data(n_e, |ts| {
@@ -532,10 +501,6 @@ impl PaveFiller {
                 }
                 // OCCT L1065: aLPBC.RemoveFirst() — remove the initial (split) PB.
                 if let Some(pbs) = self.ds.intersection_curves.get_mut(cid) {
-                    if std::env::var("RCAD_MB_DEBUG").is_ok() && (n_f1 == 32 || n_f2 == 32) {
-                        let ids: Vec<usize> = pbs.pave_blocks.iter().map(|p| p.0.read().unwrap().edge).collect();
-                        eprintln!("[MB-REM] cid={} f1={} f2={} n_pbs={} edges={:?}", cid, n_f1, n_f2, pbs.pave_blocks.len(), ids);
-                    }
                     if !pbs.pave_blocks.is_empty() {
                         pbs.pave_blocks.remove(0);
                     }
@@ -580,16 +545,6 @@ impl PaveFiller {
         // OCCT L1126: CorrectToleranceOfSE
         self.correct_tolerance_of_se();
         // OCCT L1129: UpdateFaceInfo
-        if std::env::var("RCAD_MB_DEBUG").is_ok() {
-            for ff in &self.ds.interf_ff {
-                for &cid in &ff.curves {
-                    if cid < self.ds.intersection_curves.len() {
-                        let eids: Vec<usize> = self.ds.intersection_curves[cid].pave_blocks.iter().map(|p| p.0.read().unwrap().edge).collect();
-                        eprintln!("[MB-PRE-UFI] ff=({},{}) cid={} n_pbs={} edges={:?}", ff.f1, ff.f2, cid, eids.len(), eids);
-                    }
-                }
-            }
-        }
         self.update_face_info(&a_dm_ex_edges, &a_dm_new_sd, &a_pb_faces_map);
         // OCCT L1131: UpdatePaveBlocks
         self.update_pave_blocks(&a_dm_new_sd);
@@ -919,12 +874,20 @@ impl PaveFiller {
     }
 
     /// The curve's bounding box (OCCT BOPDS_Curve::Box()).
+    /// OCCT PaveFiller_6.cxx L599-606: CheckCurve computes aBox, then
+    /// aBox.Enlarge(aBoxExpandValue) and SetBox(aBox) — PutPavesOnCurve reads
+    /// this ENLARGED box (L2383: aBoxC = theNC.Box()), not a freshly computed
+    /// one.  rcad stores the enlarged box in IntersectionCurve::bbox.
     fn curve_bbox(&self, cid: usize) -> BndBox {
         let ic = &self.ds.intersection_curves[cid];
-        let tol = ic.tolerance.max(ic.tang_tolerance);
-        match rcad_kernel::curve_bounding_box_range(&ic.curve, ic.t_range[0], ic.t_range[1], tol) {
-            Some([mn, mx]) => BndBox::from_corners(mn.x, mn.y, mn.z, mx.x, mx.y, mx.z),
-            None => BndBox::new(),
+        if let Some((mn, mx)) = ic.bbox {
+            BndBox::from_corners(mn.x, mn.y, mn.z, mx.x, mx.y, mx.z)
+        } else {
+            let tol = ic.tolerance.max(ic.tang_tolerance);
+            match rcad_kernel::curve_bounding_box_range(&ic.curve, ic.t_range[0], ic.t_range[1], tol) {
+                Some([mn, mx]) => BndBox::from_corners(mn.x, mn.y, mn.z, mx.x, mx.y, mx.z),
+                None => BndBox::new(),
+            }
         }
     }
 
@@ -1928,13 +1891,6 @@ impl PaveFiller {
             // edge reference yet (SetEdge is deferred to PostTreatFF).
             let n_e = { let r = a_pb.0.read().unwrap(); r.original_edge };
             let is_micro = self.is_micro_section_edge(a_si);
-            if std::env::var("RCAD_MB_DEBUG").is_ok() && !the_ms_cpb.iter().any(|(s, _)| {
-                s.as_edge().map(|e| e.range).unwrap_or([0.0, 0.0]) == [0.0, 0.0]
-            }) {
-                // print once per micro check for section edges
-                let rng = a_si.as_edge().map(|e| e.range).unwrap_or([0.0, 0.0]);
-                eprintln!("[MB-MICRO] edge={} is_micro={} range={:?}", a_si.ptr_id() % 100000, is_micro, rng);
-            }
             if !is_micro {
                 continue;
             }
@@ -2543,17 +2499,9 @@ impl PaveFiller {
             let (n_f1, n_f2) = (a_ffs[i].f1, a_ffs[i].f2);
             // 1.1. Section edges.
             let a_vnc = a_ffs[i].curves.clone();
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[UFI-FF] i={} f1={} f2={} n_curves={} n_points={}",
-                    i, n_f1, n_f2, a_vnc.len(), a_ffs[i].points.len());
-            }
             for cid in &a_vnc {
                 if *cid >= self.ds.intersection_curves.len() { continue; }
                 let old_pbs = self.ds.intersection_curves[*cid].pave_blocks.clone();
-                if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                    let eids: Vec<usize> = old_pbs.iter().map(|p| p.0.read().unwrap().edge).collect();
-                    eprintln!("[UFI-CURVE] cid={} n_pbs={} edges={:?}", cid, old_pbs.len(), eids);
-                }
                 let mut new_pbs: Vec<SharedPB> = Vec::new();
                 for a_pb in &old_pbs {
                     let key = pb_ptr(a_pb);
