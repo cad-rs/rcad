@@ -881,8 +881,18 @@ impl BRep {
                     s.ref_dir = mat.transform_vector3(s.ref_dir).normalize_or_zero();
                 }
                 Surface3::Cone(c) => {
+                    // OCCT gp_Cone::Transform (gp_Cone.hxx L289-300) →
+                    // gp_Ax3::Transform (gp_Ax3.hxx L306-315): the full frame
+                    // (axis, XDirection, YDirection) is transformed.  Leaving
+                    // ref_dir (XDirection, u=0) untransformed breaks the cone
+                    // UV parameterization after an axial rotation: boundary
+                    // sampling then yields a shifted u range (e.g. [pi/6, 2pi-pi/12]
+                    // for a 30 deg rotation), and the periodic wrap in
+                    // ProjectOnSurface::perform uses the wrong period, rejecting
+                    // valid FF blocks (bopfuse_simple ZH3 cone+box).
                     c.apex = mat.transform_point3(c.apex);
                     c.axis = mat.transform_vector3(c.axis).normalize_or_zero();
+                    c.ref_dir = mat.transform_vector3(c.ref_dir).normalize_or_zero();
                 }
                 Surface3::Torus(t) => {
                     t.center = mat.transform_point3(t.center);

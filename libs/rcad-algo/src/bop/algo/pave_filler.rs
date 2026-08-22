@@ -2351,19 +2351,11 @@ impl PaveFiller {
             }
             let Some(s1) = self.ds.face_surface(i) else { continue; };
             let Some(s2) = self.ds.face_surface(j) else { continue; };
-            if std::env::var("RCAD_FF_DEBUG").is_ok() {
-                let st1 = match &s1 { Surface3::Plane(_) => "Plane", Surface3::Cylinder(_) => "Cyl", Surface3::Sphere(_) => "Sphere", _ => "Other" };
-                let st2 = match &s2 { Surface3::Plane(_) => "Plane", Surface3::Cylinder(_) => "Cyl", Surface3::Sphere(_) => "Sphere", _ => "Other" };
-                eprintln!("[FF-DBG] pair f1={} f2={} s1={} s2={}", i, j, st1, st2);
-            }
 
             // OCCT L373-391: check if the planes are really interfering (share
             // more than one boundary vertex); otherwise skip the pair.
             if matches!((&s1, &s2), (Surface3::Plane(_), Surface3::Plane(_))) {
                 if !self.check_planes(i, j) {
-                    if std::env::var("RCAD_FF_DEBUG").is_ok() {
-                        eprintln!("[FF-DBG]   check_planes false -> skip");
-                    }
                     new_ff.push(InterferenceFF {
                         f1: i, f2: j,
                         curves: Vec::new(),
@@ -2371,9 +2363,6 @@ impl PaveFiller {
                         tangent_faces: false,
                     });
                     continue;
-                }
-                if std::env::var("RCAD_FF_DEBUG").is_ok() {
-                    eprintln!("[FF-DBG]   check_planes true -> intersect");
                 }
             }
 
@@ -2464,10 +2453,6 @@ impl PaveFiller {
             ff.set_fuzzy_value(self.my_fuzzy_value);
             ff.perform(&self.ds);
             let tangent_faces = ff.tangent_faces();
-            if std::env::var("RCAD_FF_DEBUG").is_ok() {
-                eprintln!("[FF-DBG]   ff done={} has_intersection={}",
-                    ff.is_done(), ff.has_intersection());
-            }
             // OCCT L543-556: if (!aFaceFace.IsDone() || aFaceFace.HasErrors())
             // 鈫?empty FF + AddIntersectionFailedWarning; rcad FaceFace has no
             // error channel 鈥?a failed Perform yields no curves.
