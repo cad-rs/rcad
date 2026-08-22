@@ -22,12 +22,17 @@ pub fn line_d1(line: &Line3, t: f64) -> (DVec3, DVec3) {
     (line.point_at(t), line.direction)
 }
 
-/// OCCT ElCLib::Parameter(gp_Circ, gp_Pnt) — angle parameter of a point on a circle.
+/// OCCT ElCLib::CircleParameter (ElCLib.cxx L1199-1222) — angle parameter of
+/// a point on a circle, normalized to [0, 2*PI) (normalizeAngle).
 pub fn circle_parameter(circ: &Circle3, p: DVec3) -> f64 {
     let d = p - circ.center;
     let x = d.dot(circ.x_dir.normalize_or_zero());
     let y = d.dot(circ.y_dir.normalize_or_zero());
-    y.atan2(x)
+    let mut t = y.atan2(x);
+    if t < 0.0 {
+        t += std::f64::consts::TAU;
+    }
+    t
 }
 
 /// OCCT ElCLib::Value(para, gp_Circ).
@@ -51,12 +56,20 @@ pub fn circle_dn(circ: &Circle3, t: f64) -> DVec3 {
     circ.radius * (-t.sin() * x + t.cos() * y)
 }
 
-/// OCCT ElCLib::Parameter(gp_Elips, gp_Pnt) — angle parameter of a point on an ellipse.
+/// OCCT ElCLib::EllipseParameter (ElCLib.cxx L1226-1249): the eccentric
+/// anomaly.  The vector Om = NX*X + NY*(MajorRadius/MinorRadius)*Y is built
+/// by scaling the Y component by the radius ratio, then Teta =
+/// AngleWithRef(X, Om, Direction) = atan2(NY*(Major/Minor), NX), normalized
+/// to [0, 2*PI) (OCCT normalizeAngle, ElCLib.cxx L56-68).
 pub fn ellipse_parameter(e: &Ellipse3, p: DVec3) -> f64 {
     let d = p - e.center;
     let x = d.dot(e.major_dir.normalize_or_zero());
     let y = d.dot(e.normal.cross(e.major_dir).normalize_or_zero());
-    y.atan2(x)
+    let mut t = (y * e.major_radius / e.minor_radius).atan2(x);
+    if t < 0.0 {
+        t += std::f64::consts::TAU;
+    }
+    t
 }
 
 /// OCCT ElCLib::Value(para, gp_Elips).

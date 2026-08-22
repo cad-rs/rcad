@@ -452,11 +452,24 @@ fn find_line(
 }
 
 /// OCCT ElCLib::Parameter(gp_Elips, gp_Pnt) — approximate angle parameter.
+/// OCCT ElCLib::EllipseParameter (ElCLib.cxx L1226-1249): the eccentric
+/// anomaly.  The vector Om = NX*X + NY*(MajorRadius/MinorRadius)*Y is built
+/// by scaling the Y component by the radius ratio, then Teta =
+/// AngleWithRef(X, Om, Direction) = atan2(NY*(Major/Minor), NX).  The radius
+/// ratio scaling is essential — without it the parameter of a point on the
+/// ellipse is wrong (only valid for a circle).  The angle is normalized to
+/// [0, 2*PI) (OCCT normalizeAngle, ElCLib.cxx L56-68) exactly like the
+/// circle parameter, so the SOnBounds vertex parameters stay in the curve
+/// domain [0, 2*PI].
 fn elclib_ellipse_parameter(e: &rcad_kernel::geom::Ellipse3, p: DVec3) -> f64 {
     let d = p - e.center;
     let x = d.dot(e.major_dir.normalize_or_zero());
     let y = d.dot(e.normal.cross(e.major_dir).normalize_or_zero());
-    y.atan2(x)
+    let mut t = (y * e.major_radius / e.minor_radius).atan2(x);
+    if t < 0.0 {
+        t += std::f64::consts::TAU;
+    }
+    t
 }
 
 /// OCCT ElCLib::ParabolaParameter (ElCLib.cxx L1269-1272):
