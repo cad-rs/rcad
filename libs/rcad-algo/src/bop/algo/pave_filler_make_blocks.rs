@@ -462,18 +462,6 @@ impl PaveFiller {
                     let n_e = {
                         self.append_edge(&ic_curve, a_t1, a_t2, n_v1, n_v2, a_tol_r3d)
                     };
-                    if std::env::var("RCAD_MB_DEBUG").is_ok() && (n_f1 == 32 || n_f2 == 32) {
-                        let d3 = match &ic_curve {
-                            rcad_kernel::geom::Curve3::Line(l) => format!("L3D o=({:.3},{:.3},{:.3}) d=({:.3},{:.3},{:.3})", l.origin.x, l.origin.y, l.origin.z, l.direction.x, l.direction.y, l.direction.z),
-                            _ => "O3D".into(),
-                        };
-                        let p1 = self.ds.intersection_curves[cid].pcurve1.clone();
-                        let p1d = p1.as_ref().map(|c| match c {
-                            rcad_kernel::geom::Curve2d::Line(l) => format!("d=({:.3},{:.3})", l.direction.x, l.direction.y),
-                            _ => "O".into(),
-                        }).unwrap_or_else(|| "none".into());
-                        eprintln!("[MB-EDGE] cid={} f1={} f2={} {} pc1={} v1={} v2={}", cid, n_f1, n_f2, d3, p1d, n_v1, n_v2);
-                    }
                     // OCCT L1026-1032: BOPTools_AlgoTools::MakePCurve(aES, aF1,
                     // aF2, aIC, PCurveOnS1(), PCurveOnS2(), ctx) — attach the exact
                     // FF 2D intersection curves (aIC.FirstCurve2d/SecondCurve2d)

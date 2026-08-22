@@ -3120,14 +3120,14 @@ mod tests {
         let v1 = brep.add_tvertex(DVec3::X);
         let e = bld.add_edge(&mut brep, None, v0.clone(), v1.clone(), [0.0, 1.0]);
         bld.set_vertex_param(&mut brep, e.clone(), v0.clone(), 0.5);
-        assert_eq!(brep.edge(e.clone()).vertex_params.get(&v0.index), Some(&0.5));
+        assert_eq!(brep.edge(e.clone()).vertex_params.get(&(v0.index as u64)), Some(&0.5));
 
         // Transfer from v0 on e to v_new on a new edge
         let v_new = brep.add_tvertex(DVec3::new(2.0, 0.0, 0.0));
         let e_new = bld.add_edge(&mut brep, None, v_new.clone(), v1.clone(), [0.0, 1.0]);
-        assert!(brep.edge(e_new.clone()).vertex_params.get(&v_new.index).is_none());
+        assert!(brep.edge(e_new.clone()).vertex_params.get(&(v_new.index as u64)).is_none());
         bld.transfert_vertex_param(&mut brep, e.clone(), v0.clone(), e_new.clone(), v_new.clone());
-        assert_eq!(brep.edge(e_new.clone()).vertex_params.get(&v_new.index), Some(&0.5));
+        assert_eq!(brep.edge(e_new.clone()).vertex_params.get(&(v_new.index as u64)), Some(&0.5));
     }
 
     #[test]

@@ -846,3 +846,228 @@ impl BrentMinimum {
         self.iter
     }
 }
+
+// =============================================================================
+// math_BracketMinimum — 1:1 of math_BracketMinimum::Perform
+// (math_BracketMinimum.cxx L62-211).
+// =============================================================================
+
+fn sign_macro(a: f64, b: f64) -> f64 {
+    if b > 0.0 {
+        a.abs()
+    } else {
+        -a.abs()
+    }
+}
+
+/// OCCT math_BracketMinimum::Perform (math_BracketMinimum.cxx L62-211).
+/// Bracket a minimum of `f` starting from [a0, b0] with known fa/fb when
+/// provided.  Returns Some((ax, bx, cx, fax, fbx, fcx)) on success.
+pub fn bracket_minimum(
+    f: &mut dyn FnMut(f64) -> Option<f64>,
+    a0: f64,
+    b0: f64,
+    fa0: Option<f64>,
+    fb0: Option<f64>,
+) -> Option<(f64, f64, f64, f64, f64, f64)> {
+    let gold = 1.618034;
+    let glimit = 100.0;
+    let tiny = 1.0e-20;
+    let mut ax = a0;
+    let mut bx = b0;
+    let mut fax = 0.0;
+    let mut fbx = 0.0;
+    if let Some(fa) = fa0 {
+        fax = fa;
+    } else {
+        fax = f(ax)?;
+    }
+    if let Some(fb) = fb0 {
+        fbx = fb;
+    } else {
+        fbx = f(bx)?;
+    }
+    if fbx > fax {
+        std::mem::swap(&mut ax, &mut bx);
+        std::mem::swap(&mut fax, &mut fbx);
+    }
+    let lambda = gold;
+    let mut cx = bx + lambda * (bx - ax);
+    let mut fcx = f(cx)?;
+    while fbx > fcx {
+        let r = (bx - ax) * (fbx - fcx);
+        let q = (bx - cx) * (fbx - fax);
+        let mut u = bx - ((bx - cx) * q - (bx - ax) * r)
+            / (2.0 * sign_macro((q - r).abs().max(tiny), q - r));
+        let ulim = bx + glimit * (cx - bx);
+        let mut fu;
+        if (bx - u) * (u - cx) > 0.0 {
+            fu = f(u)?;
+            if fu < fcx {
+                ax = bx;
+                bx = u;
+                fax = fbx;
+                fbx = fu;
+                return Some((ax, bx, cx, fax, fbx, fcx));
+            } else if fu > fbx {
+                cx = u;
+                fcx = fu;
+                return Some((ax, bx, cx, fax, fbx, fcx));
+            }
+            // Get the next probe after (B, C).
+            u = cx + lambda * (cx - bx);
+            fu = f(u)?;
+        } else if (cx - u) * (u - ulim) > 0.0 {
+            fu = f(u)?;
+        } else if (u - ulim) * (ulim - cx) >= 0.0 {
+            u = ulim;
+            fu = f(u)?;
+        } else {
+            u = cx + gold * (cx - bx);
+            fu = f(u)?;
+        }
+        ax = bx;
+        bx = cx;
+        cx = u;
+        fax = fbx;
+        fbx = fcx;
+        fcx = fu;
+    }
+    Some((ax, bx, cx, fax, fbx, fcx))
+}
+
+// =============================================================================
+// math_BFGS — 1:1 of math_BFGS::Perform (math_BFGS.cxx L110-454) with the
+// DirFunction 1D line search (MinimizeDirection L203-321: ComputeInitScale +
+// BracketMinimum + BrentMinimum).
+// =============================================================================
+
+/// OCCT math_BFGS::ComputeInitScale (math_BFGS.cxx L115-135).
+fn bfgs_compute_init_scale(f0: f64, dir: &[f64], gr: &[f64], scale: &mut f64) -> bool {
+    let dy1: f64 = gr.iter().zip(dir.iter()).map(|(g, d)| g * d).sum();
+    if dy1.abs() < 1.0e-12 {
+        return false;
+    }
+    let a_hnr1: f64 = dir.iter().map(|x| x * x).sum();
+    let alfa = 0.7 * (-f0) / dy1;
+    *scale = 0.015 / a_hnr1.sqrt();
+    if *scale > alfa {
+        *scale = alfa;
+    }
+    true
+}
+
+/// Adapter from a closure to the OCCT math_Function (FunctionValue) trait.
+struct FnValueAdapter<'a>(&'a mut dyn FnMut(f64) -> Option<f64>);
+
+impl<'a> crate::math::root::FunctionValue for FnValueAdapter<'a> {
+    fn value(&mut self, x: f64) -> Option<f64> {
+        (self.0)(x)
+    }
+}
+
+/// OCCT math_BFGS::Perform (math_BFGS.cxx L327-443).  `f_val` is the
+/// n-variable function returning (F, gradient).  The solution vector is
+/// returned.
+pub fn bfgs_minimize_occt(
+    n: usize,
+    starting: &[f64],
+    tolerance: f64,
+    itermax: i32,
+    zeps: f64,
+    f_val: &mut dyn FnMut(&[f64]) -> Option<(f64, Vec<f64>)>,
+) -> Option<Vec<f64>> {
+    let mut location = starting.to_vec();
+    let (mut prev_min, mut grad) = f_val(&location)?;
+    let x_tol = tolerance;
+    let epsz = zeps;
+    let mut hessin = vec![vec![0.0f64; n]; n];
+    for i in 0..n {
+        hessin[i][i] = 1.0;
+    }
+    let mut xi = vec![0.0f64; n];
+    for i in 0..n {
+        xi[i] = -grad[i];
+    }
+    for _ in 0..itermax {
+        let the_min0 = prev_min;
+        // MinimizeDirection (L203-321).
+        let mut scale = 0.0;
+        if !bfgs_compute_init_scale(the_min0, &xi, &grad, &mut scale) {
+            return None;
+        }
+        // DirFunction f1d(alpha) = F(P0 + alpha*Dir).
+        let p0 = location.clone();
+        let dir = xi.clone();
+        let mut dir_fn = |alpha: f64| -> Option<f64> {
+            let mut p = vec![0.0f64; n];
+            for i in 0..n {
+                p[i] = p0[i] + alpha * dir[i];
+            }
+            f_val(&p).map(|(f, _g)| f)
+        };
+        // math_BracketMinimum Bracket(0.0, lambda) with FA = F0 (L264-270).
+        let (ax, xx, bx2, _fax, fxx, _fbx) =
+            bracket_minimum(&mut dir_fn, 0.0, scale, Some(the_min0), None)?;
+        // math_BrentMinimum Sol(tol, Fxx, niter, 1.e-08) (L281-282).
+        let mut brent_f = dir_fn;
+        let mut brent = BrentMinimum::new_with_fbx(1.0e-3, fxx, 100, 1.0e-8);
+        let mut brent_fn = FnValueAdapter(&mut brent_f);
+        brent.perform(&mut brent_fn, ax, xx, bx2);
+        if !brent.is_done() {
+            return None;
+        }
+        let loc_scale = brent.location();
+        let min_val = brent.minimum();
+        // P += Dir * Scale (L287-288).
+        for i in 0..n {
+            location[i] += xi[i] * loc_scale;
+        }
+        // OCCT IsSolutionReached (L449-454).
+        if 2.0 * (min_val - prev_min).abs()
+            <= x_tol * (min_val.abs() + prev_min.abs() + epsz)
+        {
+            return Some(location);
+        }
+        prev_min = min_val;
+        // dg = grad_new - grad_old (L386-399).
+        let (_f_new, grad_new) = f_val(&location)?;
+        let mut dg = vec![0.0f64; n];
+        for i in 0..n {
+            dg[i] = grad_new[i] - grad[i];
+        }
+        let mut hdg = vec![0.0f64; n];
+        for i in 0..n {
+            for j in 0..n {
+                hdg[i] += hessin[i][j] * dg[j];
+            }
+        }
+        let mut fac = 0.0;
+        let mut fae = 0.0;
+        for i in 0..n {
+            fac += dg[i] * xi[i];
+            fae += dg[i] * hdg[i];
+        }
+        if fac.abs() < 1.0e-300 || fae.abs() < 1.0e-300 {
+            return Some(location);
+        }
+        fac = 1.0 / fac;
+        let fad = 1.0 / fae;
+        for i in 0..n {
+            dg[i] = fac * xi[i] - fad * hdg[i];
+        }
+        for i in 0..n {
+            for j in 0..n {
+                hessin[i][j] += fac * xi[i] * xi[j] - fad * hdg[i] * hdg[j] + fae * dg[i] * dg[j];
+            }
+        }
+        for i in 0..n {
+            xi[i] = 0.0;
+            for j in 0..n {
+                xi[i] -= hessin[i][j] * grad_new[j];
+            }
+        }
+        grad = grad_new;
+    }
+    Some(location)
+}

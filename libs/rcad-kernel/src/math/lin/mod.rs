@@ -3,9 +3,214 @@
 //! Corresponds to OCCT `math_SVD`, `math_Gauss`, `math_Crout`,
 //! `math_Householder`, `math_Matrix`, `math_LeastSquare`.
 
+use crate::math::{IntVec, MatD, VecD};
 use glam::{DMat2, DMat3, DVec3};
 
 const TOL_FLOAT_DEDUP: f64 = 1e-15;
+
+// =============================================================================
+// math_Householder — 1:1 of math_Householder::Perform (math_Householder.cxx
+// L85-179): QR least squares of a rectangular A (rows >= cols) with multiple
+// right-hand sides.
+// =============================================================================
+
+/// OCCT math_Householder::Perform (math_Householder.cxx L85-179).  A is
+/// n_rows x n_cols (n_rows >= n_cols), B is n_rows x n_rhs.  Returns the
+/// solution matrix (n_cols x n_rhs) or None when singular.
+pub fn householder_ls(a: &MatD, b: &MatD, eps: f64) -> Option<MatD> {
+    let l = a.n_rows();
+    let n = a.n_cols();
+    let m = b.n_cols();
+    let mut q = MatD::new(l, n);
+    let mut b2 = MatD::new(l, m);
+    for i in 1..=l {
+        for j in 1..=n {
+            q.set(i, j, a.get(i, j));
+        }
+        for j in 1..=m {
+            b2.set(i, j, b.get(i, j));
+        }
+    }
+    if l != b.n_rows() || n > l {
+        return None;
+    }
+    // Process each column of A.
+    for i in 1..=n {
+        let mut h = 0.0;
+        for k in i..=l {
+            let qki = q.get(k, i);
+            h += qki * qki;
+        }
+        let f = q.get(i, i);
+        let g = if f < 1.0e-15 { h.sqrt() } else { -h.sqrt() };
+        if g.abs() <= eps {
+            return None;
+        }
+        h -= f * g;
+        let alfaii = g - f;
+        for j in i + 1..=n {
+            let mut scale = 0.0;
+            for k in i..=l {
+                scale += q.get(k, i) * q.get(k, j);
+            }
+            let cj = (g * q.get(i, j) - scale) / h;
+            q.set(i, j, q.get(i, j) - alfaii * cj);
+            for k in i + 1..=l {
+                q.set(k, j, q.get(k, j) + cj * q.get(k, i));
+            }
+        }
+        // Modification of B.
+        for j in 1..=m {
+            let mut scale = q.get(i, i) * b2.get(i, j);
+            for k in i + 1..=l {
+                scale += q.get(k, i) * b2.get(k, j);
+            }
+            let cj = (g * b2.get(i, j) - scale) / h;
+            b2.set(i, j, b2.get(i, j) - cj * alfaii);
+            for k in i + 1..=l {
+                b2.set(k, j, b2.get(k, j) + cj * q.get(k, i));
+            }
+        }
+        q.set(i, i, g);
+    }
+    // Back substitution.
+    let mut sol = MatD::new(n, m);
+    for j in 1..=m {
+        sol.set(n, j, b2.get(n, j) / q.get(n, n));
+        for i in (1..n).rev() {
+            let mut scale = 0.0;
+            for k in i + 1..=n {
+                scale += q.get(i, k) * sol.get(k, j);
+            }
+            sol.set(i, j, (b2.get(i, j) - scale) / q.get(i, i));
+        }
+    }
+    Some(sol)
+}
+
+// =============================================================================
+// DACTCL — 1:1 of DACTCL_Decompose/Solve (math_Recipes.cxx L750-901):
+// symmetric banded LDLT on the compact vector storage.
+// =============================================================================
+
+/// OCCT DACTCL_Decompose (math_Recipes.cxx L750-830).  Returns 0 on success,
+/// 1 on singular.
+pub fn dactcl_decompose(a: &mut VecD, indx: &[i32], min_pivot: f64) -> i32 {
+    let neq = indx.len();
+    let mut jr = 0usize;
+    for j in 1..=neq {
+        let mut diag = false;
+        let jd = indx[j - 1] as usize;
+        let jh = jd - jr;
+        // OCCT L765: is = j - jh + 2 (signed).
+        let is = j as i64 - jh as i64 + 2;
+        if jh == 2 {
+            diag = true;
+        }
+        if jh > 2 {
+            let ie = j - 1;
+            let mut k = jr + 2;
+            // OCCT L774: id = indx(is - 1) — 1-based, hence 0-based is - 2.
+            let mut id = indx[is as usize - 2] as usize;
+            // Reduction of the non-diagonal coefficients (OCCT L777-799).
+            for i in is as usize..=ie {
+                let ir = id;
+                id = indx[i - 1] as usize;
+                let mut ih = id as i64 - ir as i64 - 1;
+                let mh = i as i64 - is as i64 + 1;
+                if ih > mh {
+                    ih = mh;
+                }
+                if ih > 0 {
+                    let mut dot = 0.0;
+                    let idot1 = k as i64 - ih - 1;
+                    let idot2 = id as i64 - ih - 1;
+                    for idot in 1..=ih {
+                        dot += a.get((idot1 + idot) as usize) * a.get((idot2 + idot) as usize);
+                    }
+                    a.set(k, a.get(k) - dot);
+                }
+                k += 1;
+            }
+            diag = true;
+        }
+        if diag {
+            // Reduction of the diagonal coefficients (OCCT L803-826).
+            let ir = jr + 1;
+            let ie = jd - 1;
+            let k = j as i64 - jd as i64; // OCCT: k = j - jd (signed).
+            for i in ir..=ie {
+                let id = indx[(k + i as i64) as usize - 1] as usize;
+                let mut aa = a.get(id);
+                if aa < 0.0 {
+                    aa = -aa;
+                }
+                if aa <= min_pivot {
+                    return 1;
+                }
+                let d = a.get(i);
+                a.set(i, d / a.get(id));
+                a.set(jd, a.get(jd) - d * a.get(i));
+            }
+        }
+        jr = jd;
+    }
+    0
+}
+
+/// OCCT DACTCL_Solve (math_Recipes.cxx L832-901).
+pub fn dactcl_solve(a: &VecD, b: &mut VecD, indx: &[i32], min_pivot: f64) -> i32 {
+    let neq = indx.len();
+    let mut jr = 0usize;
+    for j in 1..=neq {
+        let jd = indx[j - 1] as usize;
+        let jh = jd - jr;
+        // OCCT L848: is = j - jh + 2 (signed).
+        let is = j as i64 - jh as i64 + 2;
+        // Reduction of the right-hand side (OCCT L852-860).
+        let mut dot = 0.0;
+        let idot1 = jr;
+        let idot2 = is - 2;
+        let jh1 = jh - 1;
+        for idot in 1..=jh1 {
+            dot += a.get(idot1 + idot) * b.get((idot2 + idot as i64) as usize);
+        }
+        b.set(j, b.get(j) - dot);
+        jr = jd;
+    }
+    // Division by the diagonal pivots (OCCT L867-880).
+    for i in 1..=neq {
+        let id = indx[i - 1] as usize;
+        let mut aa = a.get(id);
+        if aa < 0.0 {
+            aa = -aa;
+        }
+        if aa <= min_pivot {
+            return 1;
+        }
+        b.set(i, b.get(i) / a.get(id));
+    }
+    // Back substitution (OCCT L884-899): j runs from Neq-1 down to 1.
+    let mut jd = indx[neq - 1] as usize;
+    let mut j = neq - 1;
+    while j >= 1 {
+        let d = b.get(j + 1);
+        let jr = indx[j - 1] as usize;
+        if jd - jr > 1 {
+            let is = j as i64 - jd as i64 + jr as i64 + 2;
+            let k = jr as i64 - is + 1;
+            for i in is as usize..=j {
+                b.set(i, b.get(i) - a.get(i + k as usize) * d);
+            }
+        }
+        jd = jr;
+        if j == 1 {
+            break;
+        }
+        j -= 1;
+    }
+    0
+}
 
 // =============================================================================
 // math_Matrix — matrix operations
@@ -303,4 +508,46 @@ pub fn least_squares_linear(x: &[f64], y: &[f64]) -> Option<(f64, f64)> {
     let b = ((n as f64) * sxy - sx * sy) / denom;
     let a = (sy - b * sx) / (n as f64);
     Some((a, b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dactcl_solves_banded() {
+        // Bezier layout (resinit = 2, two free poles 2..3):
+        // row 2: (2,2)=4 -> a(1); row 3: (3,2)=1,(3,3)=4 -> a(2),a(3).
+        // indx (diagonal positions): Index(1)=1, Index(2)=1+2=3.
+        let mut a = VecD::new(3);
+        a.set(1, 4.0);
+        a.set(2, 1.0);
+        a.set(3, 4.0);
+        let indx = [1i32, 3];
+        let mut b = VecD::new(2);
+        b.set(1, 1.0);
+        b.set(2, 2.0);
+        assert_eq!(dactcl_decompose(&mut a, &indx, 1.0e-20), 0);
+        assert_eq!(dactcl_solve(&a, &mut b, &indx, 1.0e-20), 0);
+        // x = [[4,1],[1,4]]^-1 [1,2] = [2/15, 7/15].
+        assert!((b.get(1) - 2.0 / 15.0).abs() < 1e-12);
+        assert!((b.get(2) - 7.0 / 15.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn householder_ls_rect() {
+        // Overdetermined: A = [[1,0],[0,1],[1,1]], b = [1,2,4].
+        // Least squares: A^T A x = A^T b -> [[2,1],[1,2]] x = [5,6] -> [4/3, 7/3].
+        let mut a = MatD::new(3, 2);
+        a.set(1, 1, 1.0); a.set(1, 2, 0.0);
+        a.set(2, 1, 0.0); a.set(2, 2, 1.0);
+        a.set(3, 1, 1.0); a.set(3, 2, 1.0);
+        let mut b = MatD::new(3, 1);
+        b.set(1, 1, 1.0);
+        b.set(2, 1, 2.0);
+        b.set(3, 1, 4.0);
+        let sol = householder_ls(&a, &b, 1.0e-20).unwrap();
+        assert!((sol.get(1, 1) - 4.0 / 3.0).abs() < 1e-12);
+        assert!((sol.get(2, 1) - 7.0 / 3.0).abs() < 1e-12);
+    }
 }

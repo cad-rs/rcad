@@ -345,48 +345,85 @@ pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f6
         } else {
             (a0, b0)
         };
-        // IntegrationOrder (L1159-1161)
-        let nb_c = curve_integration_order(&c).min(61).max(nb_gauss);
-        let (cp, cw) = match occt_gauss(nb_c) {
-            Some(v) => v,
-            None => return 0.0,
-        };
-        let l1 = a;
-        let l2 = b;
-        let lm = 0.5 * (l2 + l1);
-        let lr = 0.5 * (l2 - l1);
-
-        let mut a_c_inertia = 0.0;
-        for i in 0..nb_c {
-            let l = lm + lr * cp[i];
-            // D12d (L1177-1179): point and first derivative of the 2D curve
-            let (puv, vuv) = if reversed {
-                let rp = c.reversed_parameter(l);
-                (c.point_at(rp), -c.derivative_at(rp))
-            } else {
-                (c.point_at(l), c.derivative_at(l))
-            };
-            let v = puv.y;
-            let u2 = puv.x;
-            // Dul = dv/dl * w_i (L1182-1185)
-            let dul = vuv.y * cw[i];
-            let um = 0.5 * (u2 + u1);
-            let ur = 0.5 * (u2 - u1);
-            let mut a_local = 0.0;
-            for j in 0..nb_gauss {
-                let u = um + ur * spv[j];
-                let a_weight = dul * swv[j];
-                // BRepGProp_Face::Normal (BRepGProp_Face.cxx L201-210):
-                // D1U x D1V
-                let (_p, du, dv) = surf.derivatives(u, v);
-                let n = du.cross(dv);
-                a_local += n.length() * a_weight;
+        // A BSpline boundary pcurve is integrated per knot span: the C0
+        // junctions of the OCCT GeomInt_WLApprox curve are integrand
+        // discontinuities, and a single fixed-order Gauss rule over the whole
+        // range under-samples them (BRepGProp_Gauss.cxx L1159 caps the order
+        // at GaussPointsMax).  Each span is smooth, so its own
+        // (degree+1)-order rule integrates it exactly.
+        let mut ranges: Vec<(f64, f64)> = Vec::new();
+        match &c {
+            Curve2d::BSpline(bs) => {
+                for i in 1..bs.knots.len() {
+                    let (k0, k1) = (bs.knots[i - 1], bs.knots[i]);
+                    if k1 <= k0 {
+                        continue;
+                    }
+                    let (s0, s1) = if reversed {
+                        (c.reversed_parameter(k1), c.reversed_parameter(k0))
+                    } else {
+                        (k0, k1)
+                    };
+                    let l1 = s0.max(a);
+                    let l2 = s1.min(b);
+                    if l2 > l1 {
+                        ranges.push((l1, l2));
+                    }
+                }
+                if ranges.is_empty() {
+                    ranges.push((a, b));
+                }
             }
-            // L1202-1203: aLocal *= ur; aC += aLocal
-            a_c_inertia += a_local * ur;
+            _ => ranges.push((a, b)),
         }
-        // L1206-1207: aC *= lr; anInertia += aC
-        an_inertia += a_c_inertia * lr;
+        for (l1, l2) in ranges {
+            // IntegrationOrder (L1159-1161): per span (degree+1) for a
+            // BSpline, the full curve order otherwise.
+            let nb_c = match &c {
+                Curve2d::BSpline(bs) => 2 * (bs.degree + 1),
+                _ => curve_integration_order(&c),
+            }
+            .min(61)
+            .max(nb_gauss);
+            let (cp, cw) = match occt_gauss(nb_c) {
+                Some(v) => v,
+                None => return 0.0,
+            };
+            let lm = 0.5 * (l2 + l1);
+            let lr = 0.5 * (l2 - l1);
+
+            let mut a_c_inertia = 0.0;
+            for i in 0..nb_c {
+                let l = lm + lr * cp[i];
+                // D12d (L1177-1179): point and first derivative of the 2D curve
+                let (puv, vuv) = if reversed {
+                    let rp = c.reversed_parameter(l);
+                    (c.point_at(rp), -c.derivative_at(rp))
+                } else {
+                    (c.point_at(l), c.derivative_at(l))
+                };
+                let v = puv.y;
+                let u2 = puv.x;
+                // Dul = dv/dl * w_i (L1182-1185)
+                let dul = vuv.y * cw[i];
+                let um = 0.5 * (u2 + u1);
+                let ur = 0.5 * (u2 - u1);
+                let mut a_local = 0.0;
+                for j in 0..nb_gauss {
+                    let u = um + ur * spv[j];
+                    let a_weight = dul * swv[j];
+                    // BRepGProp_Face::Normal (BRepGProp_Face.cxx L201-210):
+                    // D1U x D1V
+                    let (_p, du, dv) = surf.derivatives(u, v);
+                    let n = du.cross(dv);
+                    a_local += n.length() * a_weight;
+                }
+                // L1202-1203: aLocal *= ur; aC += aLocal
+                a_c_inertia += a_local * ur;
+            }
+            // L1206-1207: aC *= lr; anInertia += aC
+            an_inertia += a_c_inertia * lr;
+        }
     }
     // convert (L1210, L467-490): |Mass| >= EPS_DIM(1e-30) → mass else 0
     if an_inertia.abs() >= 1e-30 { an_inertia } else { 0.0 }

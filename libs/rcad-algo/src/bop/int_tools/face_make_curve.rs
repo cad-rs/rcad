@@ -46,6 +46,10 @@ pub fn make_curves(
     surf2: &Surface3,
     uv2: [f64; 4],
     tol: f64,
+    approx: bool,
+    approx1: bool,
+    approx2: bool,
+    tol_approx: f64,
     lines: &[IntPatchLine],
 ) -> Vec<IntersectionCurve> {
     let mut out = Vec::new();
@@ -118,7 +122,19 @@ pub fn make_curves(
                 continue;
             }
             let ic = make_part_curve(
-                surf1, uv1, surf2, uv2, tol, &line, fprm, lprm, a_parts.len(),
+                surf1,
+                uv1,
+                surf2,
+                uv2,
+                tol,
+                approx,
+                approx1,
+                approx2,
+                tol_approx,
+                &line,
+                fprm,
+                lprm,
+                a_parts.len(),
             );
             if let Some(ic) = ic {
                 out.push(ic);
@@ -938,6 +954,10 @@ fn make_part_curve(
     surf2: &Surface3,
     uv2: [f64; 4],
     tol: f64,
+    approx: bool,
+    approx1: bool,
+    approx2: bool,
+    tol_approx: f64,
     line: &IntPatchLine,
     fprm: f64,
     lprm: f64,
@@ -1065,15 +1085,119 @@ fn make_part_curve(
             }
         }
         IntPatchIType::Walking => {
-            // OCCT MakeCurve L1175-1222 (IntPatch_Walking): each LineConstructor
-            // part becomes one curve built from the WLine polyline points
-            // (GeomInt_IntSS::MakeBSpline, MakeBSpline2d for the 2D pcurves).
-            // rcad builds degree-1 BSplines (the polylines) over the part range;
-            // the 2D pcurves let IsValidBlockForFaces classify the block with
-            // the 2D point (OCCT uses the pcurves whenever they are present).
+            // OCCT MakeCurve L1175-1391 (IntPatch_Walking): when myApprox is
+            // true the part becomes the smooth GeomInt_WLApprox BSpline
+            // (ApproxInt_Approx + ApproxInt_KnotTools + AppParCurves,
+            // ported in geomalgo::approx_int); otherwise a degree-1 BSpline
+            // through the polyline points (MakeBSpline L1911).
             if lprm <= fprm + 1e-12 {
                 return None;
             }
+            let wline = &line.wline_pnts;
+            let n = wline.len();
+            let ifprm = (fprm as usize).max(1).min(n);
+            let ilprm = (lprm as usize).max(1).min(n);
+            if ilprm <= ifprm {
+                return None;
+            }
+            // OCCT L1316-1326: a Plane surface disables the 3D approximation
+            // (the 3D curve is rebuilt from the 2D pcurve).
+            let typs1 = matches!(surf1, Surface3::Plane(_));
+            let typs2 = matches!(surf2, Surface3::Plane(_));
+            let mut an_approx = approx; // myApprox (ToApproxC3d)
+            let mut an_approx1 = approx1;
+            let mut an_approx2 = approx2;
+            if typs1 {
+                an_approx = false;
+                an_approx1 = true;
+            } else if typs2 {
+                an_approx = false;
+                an_approx2 = true;
+            }
+            if an_approx {
+                // OCCT L1343-1347: ApproxParameters + SetParameters + Perform.
+                let (i_deg_min, i_deg_max, i_nb_iter) =
+                    approx_parameters_for(surf1, surf2);
+                let a_par_type = crate::geomalgo::approx_int::define_par_type(
+                    &crate::geomalgo::approx_int::WLineAccess {
+                        line,
+                        indicemin: ifprm,
+                        indicemax: ilprm,
+                        nbp3d: 1,
+                        nbp2d: 2,
+                        approx_u1v1: an_approx1,
+                        approx_u2v2: an_approx2,
+                        p2d_on_first: true,
+                        xo: 0.0,
+                        yo: 0.0,
+                        zo: 0.0,
+                        u1o: 0.0,
+                        v1o: 0.0,
+                        u2o: 0.0,
+                        v2o: 0.0,
+                    },
+                    ifprm,
+                    ilprm,
+                    an_approx,
+                    an_approx1,
+                    an_approx2,
+                );
+                let mut app = crate::geomalgo::approx_int::WLineApprox::new();
+                app.set_parameters(
+                    tol_approx,
+                    tol_approx,
+                    i_deg_min,
+                    i_deg_max,
+                    i_nb_iter,
+                    30,
+                    true,
+                    a_par_type,
+                );
+                app.perform(
+                    &crate::geomalgo::approx_int::WLineAccess {
+                        line,
+                        indicemin: ifprm,
+                        indicemax: ilprm,
+                        nbp3d: 1,
+                        nbp2d: 2,
+                        approx_u1v1: an_approx1,
+                        approx_u2v2: an_approx2,
+                        p2d_on_first: true,
+                        xo: 0.0,
+                        yo: 0.0,
+                        zo: 0.0,
+                        u1o: 0.0,
+                        v1o: 0.0,
+                        u2o: 0.0,
+                        v2o: 0.0,
+                    },
+                    an_approx,
+                    an_approx1,
+                    an_approx2,
+                    ifprm,
+                    ilprm,
+                );
+                if app.is_done() {
+                    let mbspc = app.value();
+                    // OCCT L1642-1733 (typs != Plane): curve 1 -> 3D BSpline,
+                    // curves 2/3 -> the 2D pcurves (myApprox1/2 gates).
+                    if let Some((curve, pcurve1, pcurve2)) =
+                        multibsp_to_curves(&mbspc, fprm, lprm, an_approx1, an_approx2)
+                    {
+                        return Some(IntersectionCurve {
+                            curve,
+                            t_range: [fprm, lprm],
+                            pcurve1,
+                            pcurve2,
+                            tolerance: tol,
+                            tang_tolerance: line.tang_tolerance,
+                            pave_blocks: Vec::new(),
+                            bbox: None,
+                        });
+                    }
+                }
+            }
+            // OCCT !myApprox / !IsDone fallback: MakeBSpline / MakeBSpline2d.
             let curve = wline_part_bspline(line, fprm, lprm).unwrap_or_else(|| curve.clone());
             let pcurve1 = wline_part_bspline2d(line, fprm, lprm, true);
             let pcurve2 = wline_part_bspline2d(line, fprm, lprm, false);
@@ -1090,6 +1214,102 @@ fn make_part_curve(
         }
         _ => None,
     }
+}
+
+/// OCCT IntTools_FaceFace::ApproxParameters (IntTools_FaceFace.cxx
+/// L2736-2783): degree and iteration parameters of the WLine approximation.
+fn approx_parameters_for(surf1: &Surface3, surf2: &Surface3) -> (usize, usize, i32) {
+    let mut i_nb_iter = 0i32;
+    let mut i_deg_min = 4usize;
+    let mut i_deg_max = 8usize;
+    // Cylinder/Torus.
+    let cyl_rad = match (surf1, surf2) {
+        (Surface3::Cylinder(c), Surface3::Torus(t)) => Some((c.radius, t.minor_radius)),
+        (Surface3::Torus(t), Surface3::Cylinder(c)) => Some((c.radius, t.minor_radius)),
+        _ => None,
+    };
+    if let Some((a_rc, a_rt)) = cyl_rad {
+        let d_r = (a_rc - a_rt).abs();
+        if d_r < 1.0e-7 {
+            i_deg_max = 6;
+        }
+    }
+    // Cylinder + Cylinder.
+    if matches!(surf1, Surface3::Cylinder(_)) && matches!(surf2, Surface3::Cylinder(_)) {
+        i_nb_iter = 1;
+    }
+    (i_deg_min, i_deg_max, i_nb_iter)
+}
+
+/// Convert the OCCT MultiBSpCurve (shared degree/knots/multiplicities and
+/// per-curve poles) into the rcad 3D curve and the 2D pcurves, mapping the
+/// knot vector from [0,1] onto the part range [fprm, lprm] (point-index
+/// space, which the IntersectionCurve and the downstream paving evaluate
+/// on).
+fn multibsp_to_curves(
+    mbspc: &crate::geomalgo::approx_int::MultiBSpCurve,
+    fprm: f64,
+    lprm: f64,
+    with_pc1: bool,
+    with_pc2: bool,
+) -> Option<(Curve3, Option<Curve2d>, Option<Curve2d>)> {
+    if mbspc.poles.is_empty() {
+        return None;
+    }
+    let mut p3 = Vec::new();
+    mbspc.curve(1, &mut p3);
+    if p3.len() < 2 {
+        return None;
+    }
+    let knots = expand_knots(&mbspc.knots, &mbspc.mults, fprm, lprm);
+    let nb3d = mbspc.poles[0].nb_points();
+    let nb2d = mbspc.poles[0].nb_points2d();
+    let c3 = Curve3::BSpline(BSplineCurve3 {
+        degree: mbspc.degree,
+        knots: knots.clone(),
+        control_points: p3,
+        weights: vec![],
+        is_periodic: false,
+    });
+    let pc1 = if with_pc1 && nb2d >= 1 {
+        let mut p2 = Vec::new();
+        mbspc.curve2d(nb3d + 1, &mut p2);
+        Some(Curve2d::BSpline(BSplineCurve2 {
+            degree: mbspc.degree,
+            knots: knots.clone(),
+            control_points: p2,
+            weights: vec![],
+        }))
+    } else {
+        None
+    };
+    let pc2 = if with_pc2 && nb2d >= 2 {
+        let mut p2 = Vec::new();
+        mbspc.curve2d(nb3d + 2, &mut p2);
+        Some(Curve2d::BSpline(BSplineCurve2 {
+            degree: mbspc.degree,
+            knots,
+            control_points: p2,
+            weights: vec![],
+        }))
+    } else {
+        None
+    };
+    Some((c3, pc1, pc2))
+}
+
+/// Expand the compressed (knots, multiplicities) representation into the
+/// full knot vector and map [0,1] onto [fprm, lprm].
+fn expand_knots(knots: &[f64], mults: &[usize], fprm: f64, lprm: f64) -> Vec<f64> {
+    let r = lprm - fprm;
+    let mut out = Vec::new();
+    for (i, &k) in knots.iter().enumerate() {
+        let m = if i < mults.len() { mults[i] } else { 1 };
+        for _ in 0..m {
+            out.push(fprm + r * k);
+        }
+    }
+    out
 }
 
 /// OCCT GeomInt_IntSS::MakeBSpline (GeomInt_IntSS.cxx L1452-1469) — build the

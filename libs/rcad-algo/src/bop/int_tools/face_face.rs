@@ -894,6 +894,10 @@ impl FaceFace {
                     &s2,
                     uv2,
                     tol,
+                    self.approx,
+                    self.approx1,
+                    self.approx2,
+                    self.tol_approx,
                     &self.lines,
                 );
                 // OCCT IntTools_FaceFace::Perform L548: ComputeTolReached3d —
