@@ -2003,28 +2003,6 @@ impl<'a> Builder<'a> {
             let a_nb_pb_on = a_fi.pave_blocks_on.len();
             let a_nb_pb_sc = a_fi.pave_blocks_sc.len();
             let a_nb_av = a_liav.len();
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                let edesc = |pb_key: &u64| -> String {
-                    match self.ds.pb_from_ptr(*pb_key) {
-                        Some(pb) => {
-                            let r = pb.0.read().unwrap();
-                            let e = r.original_edge;
-                            let ef = r.edge;
-                            let c = self.ds.edge_curve(e).map(|c| match c {
-                                rcad_kernel::geom::Curve3::Line(l) => format!("L({:.3},{:.3},{:.3})->({:.3},{:.3},{:.3})", l.origin.x, l.origin.y, l.origin.z, l.origin.x + l.direction.x, l.origin.y + l.direction.y, l.origin.z + l.direction.z),
-                                _ => "O".into(),
-                            }).unwrap_or_else(|| "?".into());
-                            format!("e{}:{} (edge={})", e, c, ef)
-                        }
-                        None => "?".into(),
-                    }
-                };
-                let fin = a_fi.pave_blocks_in.iter().map(|k| edesc(k)).collect::<Vec<_>>();
-                let fon = a_fi.pave_blocks_on.iter().map(|k| edesc(k)).collect::<Vec<_>>();
-                let fsc = a_fi.pave_blocks_sc.iter().map(|k| edesc(k)).collect::<Vec<_>>();
-                eprintln!("[BSF] face={} pbIn={:?} pbOn={:?} pbSc={:?} av={}",
-                    i, fin, fon, fsc, a_nb_av);
-            }
             // OCCT L293-296: not complete -> skip.
             if a_nb_pb_in == 0 && a_nb_pb_on == 0 && a_nb_pb_sc == 0 && a_nb_av == 0 {
                 continue;
@@ -2243,16 +2221,6 @@ impl<'a> Builder<'a> {
                     a_fr.orientation = topods::Orientation::Reversed;
                 }
                 p_lf_im.push(a_fr);
-            }
-            if std::env::var("RCAD_BS_DEBUG").is_ok() && (fi == 60 || fi == 46) {
-                let ims: Vec<String> = self.my_images.get((a_f.ptr_id(), a_f.location)).cloned().unwrap_or_default().iter().map(|im| {
-                    let n = im.as_face().and_then(|fd| fd.surface.clone()).map(|s| match s {
-                        rcad_kernel::geom::Surface3::Plane(p) => format!("({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
-                        _ => "O".into(),
-                    }).unwrap_or_else(|| "?".into());
-                    format!("{}:{}", if im.orientation == topods::Orientation::Reversed { "R" } else { "F" }, n)
-                }).collect();
-                eprintln!("[IMG] face={} src_or={:?} images=[{}]", fi, an_ori_f, ims.join(" "));
             }
         }
     }
@@ -3435,7 +3403,7 @@ impl<'a> Builder<'a> {
         let mut a_vpsb: Vec<(Shape, Shape)> = Vec::new();
 
         // OCCT L750-791: check pairs of faces with equal edge set.
-        for (_edge_set, faces) in &an_e_set_faces {
+        for (es_key, faces) in &an_e_set_faces {
             if faces.len() < 2 { continue; }
             for i1 in 0..faces.len() {
                 let f1 = &faces[i1];
@@ -4281,23 +4249,6 @@ impl<'a> Builder<'a> {
             // OCCT L478-481: if !theDraftSolids.IsBound(aS) continue;
             if !the_draft_solids.contains_key(&(a_s.ptr_id(), a_s.location)) { continue; }
             let a_sd = the_draft_solids.get(&(a_s.ptr_id(), a_s.location)).unwrap().clone();
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[DRAFT] src={} sd_or={:?}", a_s.ptr_id() % 100000, a_sd.orientation);
-                for ss in self.shape_sub_shapes(&a_sd) {
-                    if ss.shape_type() == topods::ShapeType::Shell {
-                        eprintln!("[DRAFT]   shell or={:?}", ss.orientation);
-                        for f in self.shape_sub_shapes(&ss) {
-                            if f.shape_type() == topods::ShapeType::Face {
-                                let n = f.as_face().and_then(|fd| fd.surface.clone()).map(|s| match s {
-                                    rcad_kernel::geom::Surface3::Plane(p) => format!("({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
-                                    _ => "O".into(),
-                                }).unwrap_or_else(|| "?".into());
-                                eprintln!("[DRAFT]     face or={:?} {}", f.orientation, n);
-                            }
-                        }
-                    }
-                }
-            }
             // OCCT L484-489: if no IN faces -> the draft solid itself, no split.
             let p_lfin: Vec<Shape> = self
                 .my_in_parts
@@ -4318,27 +4269,6 @@ impl<'a> Builder<'a> {
             // face.or = aSD.or * shell.or * face.or. Location composition is
             // identity here (draft solid and shells carry location 0).
             let mut a_sfs: Vec<Shape> = Vec::new();
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[BS-IN] src={} n_in={}", a_s.ptr_id(), p_lfin.len());
-                for f in &p_lfin {
-                    let n = f.as_face().and_then(|fd| fd.surface.clone()).map(|s| match s {
-                        rcad_kernel::geom::Surface3::Plane(p) => format!("Plane n=({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
-                        _ => "O".into(),
-                    }).unwrap_or_else(|| "?".into());
-                    eprintln!("[BS-IN]   face={} or={:?} {}", f.ptr_id(), f.orientation, n);
-                }
-                for t in &self.my_tools {
-                    for f in self.map_shapes_of_type(t, topods::ShapeType::Face) {
-                        let n = f.as_face().and_then(|fd| fd.surface.clone()).map(|s| match s {
-                            rcad_kernel::geom::Surface3::Plane(p) => format!("Plane n=({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
-                            _ => "O".into(),
-                        }).unwrap_or_else(|| "?".into());
-                        eprintln!("[BS-IN]   TOOLFACE={} or={:?} {}", f.ptr_id(), f.orientation, n);
-                        let imgs = self.my_images.get((f.ptr_id(), f.location)).map(|v| v.len());
-                        eprintln!("[BS-IN]   TOOLFACE imgcount={:?}", imgs);
-                    }
-                }
-            }
             let sd_or = a_sd.orientation;
             for ss in self.shape_sub_shapes(&a_sd) {
                 if ss.shape_type() == topods::ShapeType::Shell {
@@ -4361,33 +4291,6 @@ impl<'a> Builder<'a> {
                 f_rev.orientation = topods::Orientation::Reversed;
                 a_sfs.push(f_rev);
             }
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[BS-SHAPES] src={} n={}", a_s.ptr_id(), a_sfs.len());
-                for f in &a_sfs {
-                    let n = f.as_face().and_then(|fd| fd.surface.clone()).map(|s| match s {
-                        rcad_kernel::geom::Surface3::Plane(p) => format!("Plane n=({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
-                        _ => "O".into(),
-                    }).unwrap_or_else(|| "?".into());
-                    let eds: Vec<String> = face_edges(f).iter().map(|e| {
-                        let (p0, p1) = match &*e.data {
-                            rcad_kernel::topods::TShape::Edge(ed) => {
-                                let c = ed.curve.clone();
-                                match c {
-                                    Some(rcad_kernel::geom::Curve3::Line(l)) => {
-                                        let a = l.origin;
-                                        let b = l.origin + l.direction;
-                                        (format!("({:.1},{:.1},{:.1})", a.x, a.y, a.z), format!("({:.1},{:.1},{:.1})", b.x, b.y, b.z))
-                                    }
-                                    _ => ("?".into(), "?".into()),
-                                }
-                            }
-                            _ => ("?".into(), "?".into()),
-                        };
-                        format!("e{}:{}-{}{}", e.ptr_id() % 100000, p0, p1, if e.orientation == rcad_kernel::topods::Orientation::Reversed { "R" } else { "F" })
-                    }).collect();
-                    eprintln!("[BS-SHAPES]   {}:{} or={:?} edges=[{}]", f.ptr_id() % 100000, n, f.orientation, eds.join(" "));
-                }
-            }
             // OCCT L514-517: BOPAlgo_SplitSolid& aBS = aVBS.Appended();
             // aBS.SetSolid(aSolid); aBS.SetShapes(aSFS); aBS.SetRunParallel(myRunParallel).
             let mut bs = crate::bop::algo::builder_solid::BuilderSolid::new(&self.ds);
@@ -4397,9 +4300,6 @@ impl<'a> Builder<'a> {
             // OCCT L516: SetShapes(aSFS).
             bs.my_shapes = a_sfs;
             bs.perform();
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[SPLITSOLID] src={} n_solids={}", a_s.ptr_id(), bs.my_solids.len());
-            }
 
             // OCCT L542: aSolidsIm.Add(aBS.Solid(), aBS.Areas()) 鈥?keyed by the
             // split solid's mySolid (the source solid).
@@ -5614,18 +5514,6 @@ impl<'a> Builder<'a> {
         // OCCT L1227-1241: faces belonging to a single solid.
         let mut a_mef: HashMap<(u64, u32), Vec<(u64, u32)>> = HashMap::new();
         let mut a_sfs: Vec<Shape> = Vec::new();
-        if std::env::var("RCAD_BS_DEBUG").is_ok() {
-            eprintln!("[BS-SFS] a_mfs={} my_rc={} exts=[{}]", a_mfs.len(), self.my_rc.len(),
-                a_mfs.values().map(|(_, s)| format!("{}", s.len())).collect::<Vec<_>>().join(","));
-            for (si, s) in self.my_rc.iter().enumerate() {
-                let desc: Vec<String> = self.map_shapes_of_type(s, topods::ShapeType::Face).iter().map(|f| {
-                    format!("{}:{}:{}e", f.ptr_id() % 100000,
-                        if f.orientation == topods::Orientation::Reversed { "R" } else { "F" },
-                        self.map_shapes_of_type(f, topods::ShapeType::Edge).len())
-                }).collect();
-                eprintln!("[BS-RC] solid[{}] faces=[{}]", si, desc.join(" "));
-            }
-        }
         for (_f, (fs, sols)) in &a_mfs {
             if sols.len() == 1 {
                 a_sfs.push(fs.clone());
@@ -5637,10 +5525,6 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        if std::env::var("RCAD_BS_DEBUG").is_ok() {
-            eprintln!("[BS-SFS] a_sfs={}", a_sfs.len());
-        }
-        
         // OCCT L1243-1271: build solids from the set of faces.
         // OCCT L1257-1260: aBS.SetAvoidInternalShapes(true) 鈥?the faces of the
         // result solids must not create internal shells.
@@ -5655,7 +5539,6 @@ impl<'a> Builder<'a> {
                 self.my_report.add_error(crate::bop::algo::Alert::SolidBuilderFailed);
                 return;
             }
-            
             for a_sr in &a_bs.my_solids {
                 a_rc.push(a_sr.clone());
             }

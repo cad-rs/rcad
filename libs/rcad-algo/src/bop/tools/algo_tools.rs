@@ -590,6 +590,22 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
         if poly.len() < 3 {
             return false;
         }
+        // At least 3 distinct corner points. A wire bounded by curved edges
+        // (e.g. a disk made of two arcs) sampled at its vertices only
+        // collapses onto a line (the first and last corners coincide), and
+        // the hatch below finds no interval — such wires must fall back to
+        // the curve sampling below. OCCT hatches the edge pcurves, whose
+        // curved edges contribute real crossings, so a vertex-only polygon
+        // is never used there.
+        let mut n_distinct = 0usize;
+        for p in poly {
+            if !poly[..n_distinct].iter().any(|q| (*q - *p).length() < 1e-9) {
+                n_distinct += 1;
+            }
+        }
+        if n_distinct < 3 {
+            return false;
+        }
         let u0 = poly[0].x;
         !poly.iter().all(|p| (p.x - u0).abs() < 1e-9)
     };
@@ -756,17 +772,8 @@ pub(crate) fn point_in_face_shape(
         return (1, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
     let Some(polys) = shape_uv_polygons(face, locations) else {
-        if std::env::var("RCAD_BS_DEBUG").is_ok() {
-            eprintln!("[PIFS] face={} polys=None", face.ptr_id() % 100000);
-        }
         return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
     };
-    if std::env::var("RCAD_BS_DEBUG").is_ok() {
-        eprintln!("[PIFS] face={} polys={:?}", face.ptr_id() % 100000,
-            polys.iter().map(|p| p.len()).collect::<Vec<_>>());
-        let pv: Vec<String> = polys.iter().flat_map(|p| p.iter()).map(|p| format!("({:.3},{:.3})", p.x, p.y)).collect();
-        eprintln!("[PIFS]   pts=[{}]", pv.join(" "));
-    }
     // UV bounds over all polygons (OCCT UVBounds of the face).
     let mut a_umin = f64::INFINITY;
     let mut a_umax = f64::NEG_INFINITY;
@@ -783,40 +790,51 @@ pub(crate) fn point_in_face_shape(
     if !(a_umin <= a_umax && a_vmin <= a_vmax) {
         return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
     }
-    let a_ux = intermediate_point(a_umin, a_umax);
-    // Vertical line crossings (parity rule: OUT at V = -inf).
-    let mut vs: Vec<f64> = Vec::new();
-    for poly in &polys {
-        let n = poly.len();
-        for i in 0..n {
-            let a = poly[i];
-            let b = poly[(i + 1) % n];
-            let (lo, hi) = if a.x <= b.x { (a, b) } else { (b, a) };
-            if lo.x <= a_ux && a_ux < hi.x {
-                let t = (a_ux - lo.x) / (hi.x - lo.x);
-                vs.push(lo.y + t * (hi.y - lo.y));
+    let a_ux0 = intermediate_point(a_umin, a_umax);
+    // OCCT L919-935: two attempts; the second uses a translated (mirrored)
+    // line aUx = aUMax - (aUx - aUMin) in case the 2d box is wrong.
+    let mut a_ux = a_ux0;
+    let mut i_err = 2;
+    let mut a_vx = 0.0;
+    for _ in 0..2 {
+        // Vertical line crossings (parity rule: OUT at V = -inf).
+        let mut vs: Vec<f64> = Vec::new();
+        for poly in &polys {
+            let n = poly.len();
+            for i in 0..n {
+                let a = poly[i];
+                let b = poly[(i + 1) % n];
+                let (lo, hi) = if a.x <= b.x { (a, b) } else { (b, a) };
+                if lo.x <= a_ux && a_ux < hi.x {
+                    let t = (a_ux - lo.x) / (hi.x - lo.x);
+                    vs.push(lo.y + t * (hi.y - lo.y));
+                }
             }
         }
-    }
-    if vs.len() < 2 {
-        return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
-    }
-    vs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    const HATCH_CONFUSION: f64 = 1e-8; // OCCT aTolHatch2D
-    let mut interval: Option<(f64, f64)> = None;
-    let mut k = 0;
-    while k + 1 < vs.len() {
-        let (v1, v2) = (vs[k], vs[k + 1]);
-        if v2 - v1 > HATCH_CONFUSION {
-            interval = Some((v1, v2));
-            break;
+        if vs.len() >= 2 {
+            vs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            const HATCH_CONFUSION: f64 = 1e-8; // OCCT aTolHatch2D
+            let mut k = 0;
+            while k + 1 < vs.len() {
+                let (v1, v2) = (vs[k], vs[k + 1]);
+                if v2 - v1 > HATCH_CONFUSION {
+                    a_vx = intermediate_point(v1, v2);
+                    i_err = 0;
+                    break;
+                }
+                k += 2;
+            }
+            if i_err == 0 {
+                break;
+            }
         }
-        k += 2;
+        // OCCT L931-934: possible reason — incorrect computation of the 2d
+        // box of the face; try again with the translated line.
+        a_ux = a_umax - (a_ux - a_umin);
     }
-    let Some((v1, v2)) = interval else {
-        return (2, glam::DVec3::ZERO, glam::DVec2::ZERO);
-    };
-    let a_vx = intermediate_point(v1, v2);
+    if i_err != 0 {
+        return (i_err, glam::DVec3::ZERO, glam::DVec2::ZERO);
+    }
     let a_p2d = glam::DVec2::new(a_ux, a_vx);
     let a_p = surf.point_at(a_p2d.x, a_p2d.y);
     (0, a_p, a_p2d)
@@ -952,12 +970,6 @@ pub(crate) fn point_in_face(f: usize, ds: &DS) -> (i32, glam::DVec3, glam::DVec2
     for _ in 0..2 {
         let (err, p, p2d) = point_in_face_line(f, a_ux, ds);
         i_err = err;
-        if std::env::var("RCAD_BS_DEBUG").is_ok() {
-            let fclass = FClass2d::new(ds, f, ds.face_tolerance(f).max(rcad_kernel::CONFUSION));
-            let npolys: Vec<usize> = fclass.uv_polygons().iter().map(|p| p.len()).collect();
-            let nvs = hatch_line_intervals(f, a_ux, ds).len();
-            eprintln!("[PIF] f={} ux={:.4} uv=[{:.4},{:.4}] polys={:?} nvs={} err={}", f, a_ux, a_umin, a_umax, npolys, nvs, err);
-        }
         if i_err == 0 {
             a_p = p;
             a_p2d = p2d;
@@ -1274,13 +1286,6 @@ pub fn is_split_to_reverse_face(f_sp: &Shape, f_sr: &Shape, ds: &DS) -> (bool, i
     let surf_or = f_sr.as_face().and_then(|fd| fd.surface.clone());
     if let (Some(s1), Some(s2)) = (&surf_sp, &surf_or) {
         let same = surface_same(s1, s2);
-        if std::env::var("RCAD_BS_DEBUG").is_ok() {
-            let desc = |s: &rcad_kernel::geom::Surface3| match s {
-                rcad_kernel::geom::Surface3::Plane(p) => format!("Plane o=({:.4},{:.4},{:.4}) n=({:.4},{:.4},{:.4}) u=({:.4},{:.4},{:.4})", p.origin.x, p.origin.y, p.origin.z, p.normal.x, p.normal.y, p.normal.z, p.u_dir.x, p.u_dir.y, p.u_dir.z),
-                _ => "O".into(),
-            };
-            eprintln!("[ISTR] same_surf={} or_sp={:?} or_sr={:?} sp={} sr={}", same, f_sp.orientation, f_sr.orientation, desc(s1), desc(s2));
-        }
         if same {
             return (f_sp.orientation != f_sr.orientation, 0);
         }

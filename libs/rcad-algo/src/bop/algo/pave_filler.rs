@@ -5332,6 +5332,41 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 }
             }
         }
+        // OCCT ProjLib_Plane::Project(gp_Circ) (ProjLib_Plane.cxx L110-125):
+        // a circle on (or projected onto) a plane becomes an exact Geom2d_Circle
+        // — never a BSpline.  The WireSplitter's Angle2D reads the pcurve
+        // tangent at split vertices; an interpolated BSpline tangent can deviate
+        // enough to flip a ClockWiseAngle comparison at a tangent contact and
+        // change the loop winding (bopfuse_simple ZG8: box top + cone base disk
+        // coplanar at z=4).
+        if let (rcad_kernel::geom::Surface3::Plane(plane), rcad_kernel::geom::Curve3::Circle(c)) = (surf, curve) {
+            let d = c.center - plane.origin;
+            let c2 = glam::DVec2::new(d.dot(plane.u_dir), d.dot(plane.v_dir));
+            let vx = glam::DVec2::new(
+                c.radius * c.x_dir.dot(plane.u_dir),
+                c.radius * c.x_dir.dot(plane.v_dir),
+            );
+            let vy = glam::DVec2::new(
+                c.radius * c.y_dir.dot(plane.u_dir),
+                c.radius * c.y_dir.dot(plane.v_dir),
+            );
+            let lx = vx.length();
+            let ly = vy.length();
+            if lx > 1e-12
+                && ly > 1e-12
+                && vx.dot(vy).abs() < 1e-12 * lx * ly
+                && (lx - ly).abs() < 1e-9 * lx.max(1.0)
+            {
+                return Some(rcad_kernel::geom::Curve2d::Circle(
+                    rcad_kernel::geom::Circle2d {
+                        center: c2,
+                        x_dir: vx / lx,
+                        y_dir: vy / ly,
+                        radius: (lx + ly) * 0.5,
+                    },
+                ));
+            }
+        }
         let n = 23usize;
         let dt = (range[1] - range[0]) / n as f64;
         let mut uv: Vec<glam::DVec2> = Vec::with_capacity(n + 1);
