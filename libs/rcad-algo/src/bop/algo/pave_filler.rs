@@ -4868,9 +4868,6 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
                     let n_e = pb.0.read().unwrap().edge;
                     if n_e >= self.ds.nb_shapes() { continue; }
-                    if std::env::var("RCAD_MPC_DEBUG").is_ok() {
-                        eprintln!("[MPC] IN pb e={} f={} has_pc={}", n_e, n_f1, self.edge_has_pcurve(n_e, n_f1));
-                    }
                     self.build_pcurve_mpc(n_e, n_f1, surf, None);
                 }
             }
@@ -4880,9 +4877,6 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
                     let n_e = pb.0.read().unwrap().edge;
                     if n_e >= self.ds.nb_shapes() { continue; }
-                    if std::env::var("RCAD_MPC_DEBUG").is_ok() {
-                        eprintln!("[MPC] ON pb e={} f={} has_pc={}", n_e, n_f1, self.edge_has_pcurve(n_e, n_f1));
-                    }
                     if self.edge_has_pcurve(n_e, n_f1) { continue; }
                     let src = self.cb_pcurve_source(&pb, n_f1);
                     self.build_pcurve_mpc(n_e, n_f1, surf, src);
@@ -5028,7 +5022,26 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         if n_e >= self.ds.nb_shapes() { return false; }
         let Some(fkey) = self.pcurve_key_for(n_e, n_f) else { return false };
         match &*self.ds.shape(n_e).data {
-            rcad_kernel::topods::TShape::Edge(ed) => ed.pcurves.contains_key(&fkey),
+            rcad_kernel::topods::TShape::Edge(ed) => {
+                // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345-368): the
+                // edge's pcurve may live in a CurveOnClosedSurface representation
+                // (a seam edge of a closed surface) as well as in the plain
+                // pcurve map.  A seam edge inherits the CurveOnClosedSurface
+                // from its source edge (MakeSplitEdge EmptyCopy keeps the
+                // representations), so HasCurveOnSurface must see it, otherwise
+                // the pcurve is rebuilt by projection (BSpline) instead of being
+                // reused (BOPAlgo_MPC::Perform L233-236 keeps an existing
+                // pcurve).
+                if ed.pcurves.contains_key(&fkey) {
+                    return true;
+                }
+                ed.representations.iter().any(|r| match r {
+                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                        face, pcurve1: _, pcurve2: _, range: _,
+                    } => *face == fkey,
+                    _ => false,
+                })
+            }
             _ => false,
         }
     }
@@ -5269,6 +5282,156 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                  range: [f64; 2]) -> Option<rcad_kernel::geom::Curve2d> {
         use rcad_kernel::geom::CurveEval;
         use rcad_kernel::geom::SurfaceEval;
+        // OCCT ProjLib::MakePCurveOfType (ProjLib.cxx L183-213) + the analytic
+        // projector (ProjLib_Sphere::Project for a sphere).  The projected
+        // curve keeps its analytic type (Line/Circle) instead of becoming a
+        // BSpline; a sphere meridian section edge must project to the exact
+        // u=const line or the ProcessDE 2D intersection misses u=PI.
+        // GeomInt_IntSS::BuildPCurves (GeomInt_IntSS_1.cxx L1172-1304) — the
+        // analytic sphere projection used by the boolean pipeline — is
+        // translated in face_make_curve::build_analytic_pcurve and yields the
+        // same-parameter meridian line (u=const) for a circle on the sphere.
+        if let Some(pc) = crate::bop::int_tools::face_make_curve::build_analytic_pcurve(surf, curve, range[0], range[1]) {
+            return Some(pc);
+        }
+        if let (rcad_kernel::geom::Curve3::Circle(c), rcad_kernel::geom::Surface3::Sphere(sp)) = (curve, surf) {
+            // OCCT ProjLib_Sphere::Project(gp_Circ) (ProjLib_Sphere.cxx L97-180).
+            // O Location of Sp; Xc/Yc/Zc directions of C; Xs/Ys/Zs of Sp.
+            let o = sp.center;
+            let xc = c.x_dir;
+            let yc = c.y_dir;
+            let zc = xc.cross(yc);
+            let xs = sp.ref_dir.normalize_or_zero();
+            let ys = sp.axis.cross(xs).normalize_or_zero();
+            let zs = sp.axis.normalize_or_zero();
+            // isIsoU = Zc.IsNormal(Zs, Tol) && O.IsEqual(C.Location(), Tol)
+            // isIsoV = Xc.IsNormal(Zs, Tol) && Yc.IsNormal(Zs, Tol)
+            let tol = rcad_kernel::CONFUSION;
+            let is_iso_u = zc.dot(zs).abs() <= tol
+                && (o.x - c.center.x).abs() <= tol
+                && (o.y - c.center.y).abs() <= tol
+                && (o.z - c.center.z).abs() <= tol;
+            let is_iso_v = xc.dot(zs).abs() <= tol && yc.dot(zs).abs() <= tol;
+            // static gp_Pnt2d EvalPnt2d (L65-93): sphere params of a vector end.
+            let eval_pnt2d = |p: glam::DVec3| -> glam::DVec2 {
+                let x = p.dot(xs);
+                let y = p.dot(ys);
+                let z = p.dot(zs);
+                let u = if x.abs() > rcad_kernel::PCONFUSION || y.abs() > rcad_kernel::PCONFUSION {
+                    let uu = y.atan2(x);
+                    // ElCLib::InPeriod(UU, 0., 2*PI)
+                    let uu = uu % std::f64::consts::TAU;
+                    if uu < 0.0 { uu + std::f64::consts::TAU } else { uu }
+                } else {
+                    0.0
+                };
+                let z = z.clamp(-1.0, 1.0);
+                glam::DVec2::new(u, z.asin())
+            };
+            let mut p2d1 = eval_pnt2d(xc);
+            let mut p2d2 = eval_pnt2d(yc);
+            let mut is_done = false;
+            if is_iso_u {
+                // myType = GeomAbs_Line
+                if (p2d1.y - std::f64::consts::FRAC_PI_2).abs() < rcad_kernel::PCONFUSION
+                    || (p2d1.y + std::f64::consts::FRAC_PI_2).abs() < rcad_kernel::PCONFUSION
+                {
+                    // P1 is on the apex of the sphere and U is undefined;
+                    // the value of U is given by P2d2.Y().
+                    p2d1.x = p2d2.x;
+                } else if (((p2d1.x - p2d2.x).abs() - std::f64::consts::PI).abs()
+                    < rcad_kernel::PCONFUSION)
+                {
+                    // U2 = U1 + PI; assume U1 = U2, so V2 = PI - V2.
+                    p2d2.x = p2d1.x;
+                    if p2d2.y < 0.0 {
+                        p2d2.y = -std::f64::consts::PI - p2d2.y;
+                    } else {
+                        p2d2.y = std::f64::consts::PI - p2d2.y;
+                    }
+                } else {
+                    p2d2.x = p2d1.x;
+                }
+                is_done = true;
+            } else if is_iso_v {
+                // myType = GeomAbs_Line; U = Xs.AngleWithRef(Xc, Xs ^ Ys)
+                let mut u = {
+                    // AngleWithRef(Xc, Xs^Ys): signed angle of Xc from Xs about Xs^Ys.
+                    let ref_dir = xs.cross(ys);
+                    let s = xc.dot(ref_dir);
+                    let c = xc.dot(xs);
+                    s.atan2(c)
+                };
+                if u < 0.0 {
+                    u += std::f64::consts::TAU;
+                }
+                let z = (c.center - o).dot(zs);
+                let v = (z / sp.radius).clamp(-1.0, 1.0).asin();
+                p2d1 = glam::DVec2::new(u, v);
+                // D2d = gp_Dir2d((Xc ^ Yc).Dot(Xs ^ Ys), 0.)
+                p2d2 = p2d1 + glam::DVec2::new(zc.dot(xs.cross(ys)), 0.0);
+                is_done = true;
+            }
+            if is_done {
+                // myLin = gp_Lin2d(P2d1, D2d) — a unit direction line in OCCT,
+                // which then re-parameterizes it with BRepLib::SameParameter /
+                // GeomLib::SameRange.  rcad has no SameParameter, so the
+                // same-parameter line is built directly: the slope is the UV
+                // increment per 3D parameter unit, point_at(t) = P2d1 + d*(t-t1).
+                let dt = range[1] - range[0];
+                if !dt.is_finite() || dt.abs() < 1e-30 {
+                    return None;
+                }
+                let mut dir = (p2d2 - p2d1) / dt;
+                let mut origin = p2d1 - dir * range[0];
+                // OCCT ProjLib_Sphere::SetInBounds (ProjLib_Sphere.cxx L203-248),
+                // called from ProjLib_ProjectedCurve::Perform (L419) for the
+                // sphere: shift V into [-PI, PI], then mirror the line about the
+                // V=+-PI/2 axis (shifting U by PI) when the sampled point is
+                // beyond the pole, and finally place U into [0, 2*PI].
+                let u = range[0];
+                // ElCLib::InPeriod(Y, -M_PI, M_PI): wrap Y into [-PI, PI].
+                let y = origin.y + dir.y * u;
+                let new_y = crate::geomalgo::int_patch::cycy_common::in_period(y, -std::f64::consts::PI, std::f64::consts::PI);
+                origin.y += new_y - y;
+                let p = glam::DVec2::new(origin.x + dir.x * u, origin.y + dir.y * u);
+                let tol = 1.0e-7;
+                let dir2 = dir.normalize_or_zero();
+                // gp::DY2d() = (0, 1)
+                let dy2d = glam::DVec2::new(0.0, 1.0);
+                let (is_dy2d, is_opp_dy2d) = {
+                    let c1 = (dir2.x - dy2d.x).abs() <= tol && (dir2.y - dy2d.y).abs() <= tol;
+                    let c2 = (dir2.x + dy2d.x).abs() <= tol && (dir2.y + dy2d.y).abs() <= tol;
+                    (c1, c2)
+                };
+                let mut mirrored = false;
+                if (p.y - std::f64::consts::FRAC_PI_2 > tol)
+                    || ((p.y - std::f64::consts::FRAC_PI_2).abs() < tol && is_dy2d)
+                {
+                    // Axis = gp_Ax2d((0, PI/2), DX2d) — mirror about V = PI/2.
+                    origin.y = 2.0 * std::f64::consts::FRAC_PI_2 - origin.y;
+                    dir.y = -dir.y;
+                    mirrored = true;
+                } else if (p.y + std::f64::consts::FRAC_PI_2 < -tol)
+                    || ((p.y + std::f64::consts::FRAC_PI_2).abs() < tol && is_opp_dy2d)
+                {
+                    // Axis = gp_Ax2d((0, -PI/2), DX2d) — mirror about V = -PI/2.
+                    origin.y = -std::f64::consts::PI - origin.y;
+                    dir.y = -dir.y;
+                    mirrored = true;
+                }
+                if mirrored {
+                    origin.x += std::f64::consts::PI;
+                }
+                // Adjust U into [0, 2*PI] (SetInBounds tail, L245-247).
+                let x = origin.x + dir.x * u;
+                let new_x = crate::geomalgo::int_patch::cycy_common::in_period(x, 0.0, std::f64::consts::TAU);
+                origin.x += new_x - x;
+                return Some(rcad_kernel::geom::Curve2d::Line(
+                    rcad_kernel::geom::Line2d::new(origin, dir),
+                ));
+            }
+        }
         // OCCT ProjLib::MakePCurveOfType (BOPTools_AlgoTools2D.cxx L592): for
         // an analytic plane surface the projected pcurve is the exact 2D line
         // (ProjLib_Plane), not an approximation.  A unit-speed 3D line (all
@@ -5485,10 +5648,16 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 drop(a_fi);
                 if !found_pbs.is_empty() {
                     // OCCT L86-88: aLPBD = myDS->ChangePaveBlocks(anEdgeIndex);
-                    // aPBD = aLPBD.First()
-                    let a_lpbd: Vec<SharedPB> = self.ds.pave_blocks(an_ei).to_vec();
-                    let a_pbd = match a_lpbd.first() {
-                        Some(p) => p.clone(),
+                    // aPBD = aLPBD.First().  ChangePaveBlocks lazily
+                    // (re)initializes the edge's pave blocks when the edge has
+                    // no reference (BOPDS_DS.cxx L425-433): a degenerated edge
+                    // whose single PB was released by ReleasePaveBlocks gets a
+                    // fresh PB here, and the FillPaves split points below turn
+                    // it into several sub-blocks.
+                    self.ds.init_pave_blocks(an_ei);
+                    let a_lpbd = self.ds.change_pave_blocks(an_ei);
+                    let a_pbd = match a_lpbd.first().cloned() {
+                        Some(p) => p,
                         None => continue,
                     };
                     // The degenerated edge's 2D pcurve on the face.

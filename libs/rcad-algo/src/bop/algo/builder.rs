@@ -1996,6 +1996,12 @@ impl<'a> Builder<'a> {
             }
             let a_f = self.brep_sr(i);
             let a_fi = self.ds.face_info(i).clone();
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                eprintln!("[BSF-FI] face={} pb_in={} pb_on={} pb_sc={} v_in={} v_on={} v_sc={}",
+                    i, a_fi.pave_blocks_in.len(), a_fi.pave_blocks_on.len(),
+                    a_fi.pave_blocks_sc.len(), a_fi.vertices_in.len(),
+                    a_fi.vertices_on.len(), a_fi.vertices_sc.len());
+            }
 
             // OCCT L286-287: AloneVertices(i, aLIAV).
             let a_liav = self.alone_vertices(i);
@@ -2176,6 +2182,16 @@ impl<'a> Builder<'a> {
                 self.build_pcurve_for_edges_on_plane(&a_le, &a_ff);
             }
             // OCCT L502-505: aBF.SetFace(aF); aBF.SetShapes(aLE); SetRunParallel.
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                let desc: Vec<String> = a_le.iter().map(|e| {
+                    let pts = e.as_edge().map(|ed| {
+                        let c = ed.curve.as_ref().map(|c| format!("c={:?}", std::mem::discriminant(c))).unwrap_or_default();
+                        format!("ori={:?} {} eidx={}", e.orientation, c, self.ds.index(e))
+                    }).unwrap_or_default();
+                    pts
+                }).collect();
+                eprintln!("[BSF-LE] face={} n_le={} {}", i, a_le.len(), desc.join(" | "));
+            }
             a_vbf.push((i, a_f, a_le));
         }
 
@@ -5057,6 +5073,26 @@ impl<'a> Builder<'a> {
         // OCCT L916-920: FUSE of 3D 鈫?BuildSolid.
         if self.my_operation == BooleanOpType::Union && self.my_dims[0] == 3 {
             self.build_solid();
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                if let Some(brep) = self.my_shape.as_ref() {
+                    let (n_v, n_e, n_f, n_sh, n_so) = count_brep_entities(brep);
+                    eprintln!("[FINAL] V={} E={} F={} Shell={} Solid={}", n_v, n_e, n_f, n_sh, n_so);
+                    for ts in &brep.tshapes {
+                        if let topods::TShape::Face(fd) = &**ts {
+                            let surf = fd.surface.as_ref().map(|s| format!("{:?}", std::mem::discriminant(s))).unwrap_or_else(|| "None".into());
+                            let n_w = match &*brep.tshapes[fd.outer_wire.index] {
+                                topods::TShape::Wire(wd) => wd.edges.len(),
+                                _ => 0,
+                            };
+                            let n_iw: usize = fd.inner_wires.iter().map(|w| match &*brep.tshapes[w.index] {
+                                topods::TShape::Wire(wd) => wd.edges.len(),
+                                _ => 0,
+                            }).sum();
+                            eprintln!("[FACE] surf={} outerE={} innerE={}", surf, n_w, n_iw);
+                        }
+                    }
+                }
+            }
             return;
         }
         // OCCT L923-1107: CUT/COMMON container logic.

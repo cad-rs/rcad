@@ -44,7 +44,14 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
         } else {
             face_surface_area_gauss_domain(brep, face, *fi)
         };
-        mass += a;
+        // OCCT BRepGProp_Gauss::Compute (BRepGProp_Gauss.cxx L1306-1390)
+        // integrates the surface patch mass = |dS| (positive), regardless of
+        // the face orientation.  The Green theorem boundary integral used by
+        // rcad is signed — it follows the wire direction, so a face whose
+        // wires run the opposite way (e.g. the upper hemisphere after a
+        // boolean) yields a negative value.  Take the absolute value to match
+        // OCCT's positive per-face area.
+        mass += a.abs();
     }
     mass
 }

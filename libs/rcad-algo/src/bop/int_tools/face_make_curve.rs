@@ -455,7 +455,7 @@ fn line_line2d_intersection(a: &Line2d, b: &Line2d) -> Option<f64> {
 /// Returns None when rcad has no analytic projection — the caller then falls
 /// back to the sampling/projection path, as OCCT's BOPAlgo_MPC does for null
 /// pcurves.
-fn build_analytic_pcurve(other_surf: &Surface3, curve3: &Curve3, tf: f64, tl: f64) -> Option<Curve2d> {
+pub(crate) fn build_analytic_pcurve(other_surf: &Surface3, curve3: &Curve3, tf: f64, tl: f64) -> Option<Curve2d> {
     if let (Curve3::Circle(c), Surface3::Plane(pl)) = (curve3, other_surf) {
         let d = c.center - pl.origin;
         let c2 = DVec2::new(d.dot(pl.u_dir), d.dot(pl.v_dir));
