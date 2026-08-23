@@ -1153,9 +1153,13 @@ impl WLineApprox {
                 indice2d2 -= 1;
             }
             let n = self.my_compute_line_bezier.nb_multi_curves();
+            // OCCT ApproxInt_Approx.gxx L683-687/L699-706/L717-724: the
+            // Translate/Transform pass runs in REVERSE order and modifies the
+            // stored multi-curves IN PLACE (ChangeValue(...).Transform(...));
+            // the Append pass (L735-738) then runs in FORWARD order on the
+            // transformed curves.
             for idx in (0..n).rev() {
-                let mc = self.my_compute_line_bezier.value(idx + 1).clone();
-                let mut mc = mc;
+                let mc = self.my_compute_line_bezier.value_mut(idx + 1);
                 if self.approx_xyz {
                     for mp in mc.poles.iter_mut() {
                         let p = &mut mp.p3d[indice3d - 1];
@@ -1179,6 +1183,11 @@ impl WLineApprox {
                         }
                     }
                 }
+            }
+            // OCCT ApproxInt_Approx.gxx L735-738: the Append pass runs in
+            // FORWARD order (1..NbMultiCurves).
+            for idx in 1..=n {
+                let mc = self.my_compute_line_bezier.value(idx).clone();
                 self.my_bez_to_bspl.append(mc);
             }
             kind += 1;
@@ -1334,6 +1343,9 @@ impl ComputeLine {
     }
     pub fn value(&self, index: usize) -> &MultiCurve {
         &self.mymulti_curves[index - 1]
+    }
+    pub fn value_mut(&mut self, index: usize) -> &mut MultiCurve {
+        &mut self.mymulti_curves[index - 1]
     }
 
     /// OCCT Approx_ComputeLine::Parameters (L1249-1322) — chord-length /

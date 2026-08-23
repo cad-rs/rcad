@@ -44,8 +44,9 @@ use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::common_block::CommonBlock;
 use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::int_tools::face_face::IntersectionCurve;
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use indexmap::{IndexMap, IndexSet};
+use rcad_kernel::geom::{Curve2d, Surface3};
 use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use rcad_kernel::core::message::{NoopProgress, ProgressScope};
@@ -59,6 +60,99 @@ use std::sync::Arc;
 /// PB handle (OCCT NCollection handle) = Arc pointer for identity.
 fn pb_ptr(pb: &SharedPB) -> u64 {
     Arc::as_ptr(&pb.0) as u64
+}
+
+/// OCCT BOPTools_AlgoTools2D::AdjustPCurveOnFace / AdjustPCurveOnSurf
+/// (BOPTools_AlgoTools2D.cxx L209-400): translate the 2D pcurve so that
+/// the point at the trimmed-mid parameter lies inside the face UV domain
+/// (periodic surfaces).  Called from BOPTools_AlgoTools::MakePCurve
+/// (BOPTools_AlgoTools.cxx L1712-1719) after the FF pcurve is attached to
+/// a section edge.  The classifier branch (L346-387) fires only when the
+/// face domain exceeds one period, which quadric faces never do, so it is
+/// skipped here.
+fn adjust_pcurve_on_face(
+    pcurve: &Curve2d,
+    t1: f64,
+    t2: f64,
+    surf: &Surface3,
+    uv: [f64; 4],
+    face_index: usize,
+    ds: &crate::bop::ds::DS,
+) -> Curve2d {
+    let (umin, umax) = (uv[0], uv[1]);
+    let (vmin, vmax) = (uv[2], uv[3]);
+    let a_delta = rcad_kernel::precision::PCONFUSION;
+    let a_t = 0.5 * (t1 + t2);
+    let p2d = Curve2dEval::point_at(pcurve, a_t);
+    let mut u2 = p2d.x;
+    let mut v2 = p2d.y;
+    // du
+    let mut du = 0.0;
+    if surf.is_u_periodic() {
+        let a_u_period = std::f64::consts::TAU;
+        // OCCT L281-288: clarify u2 with the precision.
+        if (u2 - umin).abs() < a_delta {
+            u2 = umin;
+        } else if (u2 - umin - a_u_period).abs() < a_delta {
+            u2 = umin + a_u_period;
+        }
+        // GeomInt::AdjustPeriodic (GeomInt.cxx L21-47): shift u2 into
+        // [UMin, UMax] by a whole number of periods.
+        let b_min = umin - u2 > 0.0;
+        let b_max = u2 - umax > 0.0;
+        if b_min || b_max {
+            let dp = if b_min { umax - u2 } else { umin - u2 };
+            let nb_per = (dp / a_u_period).trunc();
+            du = nb_per * a_u_period;
+            u2 += du;
+        }
+        // OCCT L292-313: Cylinder-only check when du == 0.
+        if du == 0.0 {
+            if let Surface3::Cylinder(c) = surf {
+                let a_r = c.radius;
+                // MaxToleranceEdge(aF) (BOPTools_AlgoTools2D.cxx L648-665):
+                // the maximal tolerance of the face's edges.
+                let mut a_tol = 0.0f64;
+                for &n_e in &ds.shape_info(face_index).sub_shapes {
+                    if ds.shape_info(n_e).shape_type == ShapeType::Edge {
+                        a_tol = a_tol.max(ds.edge_tolerance(n_e));
+                    }
+                }
+                let mut d_fi = a_tol / a_r;
+                if d_fi < a_delta {
+                    d_fi = a_delta;
+                }
+                let mincond = umin - u2 > d_fi;
+                let maxcond = u2 - umax > d_fi;
+                if mincond || maxcond {
+                    du = if mincond { a_u_period } else { -a_u_period };
+                }
+            }
+        }
+    }
+    // dv
+    let mut dv = 0.0;
+    if surf.is_v_periodic() {
+        let a_v_period = std::f64::consts::TAU;
+        let mincond = vmin - v2 > a_delta;
+        let maxcond = v2 - vmax > a_delta;
+        if mincond || maxcond {
+            dv = if mincond { a_v_period } else { -a_v_period };
+        }
+        if (vmax - vmin < a_v_period) && dv != 0.0 {
+            let a_vm = v2;
+            let a_vr = v2 + dv;
+            let a_vmid = 0.5 * (vmin + vmax);
+            if (a_vm - a_vmid).abs() < (a_vr - a_vmid).abs() {
+                dv = 0.0;
+            }
+        }
+    }
+    // Translation (OCCT L388-399).
+    if du != 0.0 || dv != 0.0 {
+        return rcad_kernel::geom::translate_curve2d(pcurve, DVec2::new(du, dv));
+    }
+    pcurve.clone()
 }
 
 /// BOPTools_AlgoTools::PointOnEdge(aE, aT, aP) — point on the edge's curve.
@@ -449,7 +543,20 @@ impl PaveFiller {
                     // make_pcurves part 2 (projection) supplies it later.
                     let a_c2d1 = self.ds.intersection_curves[cid].pcurve1.clone();
                     if let Some(a_c2d) = a_c2d1 {
+                        // OCCT BOPTools_AlgoTools::MakePCurve (BOPTools_AlgoTools.cxx
+                        // L1657-1725): after trimming, AdjustPCurveOnFace translates
+                        // the pcurve so its midpoint lies inside the face UV domain
+                        // (BOPTools_AlgoTools2D.cxx L209-400).  Missing this step
+                        // leaves a closed section edge's pcurve on the far side of
+                        // the seam (u in [-2PI, 0] instead of [0, 2PI]), breaking
+                        // the WireSplitter 2D distance filter.
                         let fk1 = self.ds.face_key(n_f1);
+                        let a_c2d = if let Some(surf) = self.ds.face_surface(n_f1) {
+                            let uv = self.ds.face_actual_uv_bounds(n_f1);
+                            adjust_pcurve_on_face(&a_c2d, a_t1, a_t2, &surf, uv, n_f1, &self.ds)
+                        } else {
+                            a_c2d
+                        };
                         self.ds.mutate_shape_data(n_e, |ts| {
                             if let topods::TShape::Edge(ed) = ts {
                                 if let Some(k) = fk1 {
@@ -462,6 +569,12 @@ impl PaveFiller {
                     let a_c2d2 = self.ds.intersection_curves[cid].pcurve2.clone();
                     if let Some(a_c2d) = a_c2d2 {
                         let fk2 = self.ds.face_key(n_f2);
+                        let a_c2d = if let Some(surf) = self.ds.face_surface(n_f2) {
+                            let uv = self.ds.face_actual_uv_bounds(n_f2);
+                            adjust_pcurve_on_face(&a_c2d, a_t1, a_t2, &surf, uv, n_f2, &self.ds)
+                        } else {
+                            a_c2d
+                        };
                         self.ds.mutate_shape_data(n_e, |ts| {
                             if let topods::TShape::Edge(ed) = ts {
                                 if let Some(k) = fk2 {

@@ -593,8 +593,7 @@ fn path(
 
         // Select the next edge.
         let an_angle_in = angle_in(&a_e_outa, &a_lei);
-        let mut a_min_angle = 100.0;
-        let i_cnt = nb_ways_out(&a_lei);
+        let mut a_min_angle = 100.0;        let i_cnt = nb_ways_out(&a_lei);
         let is_boundary = !an_edge_info.is_inside();
         let mut a_nb_ways_inside = 0;
         let mut p_only_way_in: Option<EdgeInfo> = None;
@@ -635,20 +634,6 @@ fn path(
                 if an_angle < a_min_angle - eps {
                     a_min_angle = an_angle;
                     p_edge_info = Some(an_ei_mut.clone());
-                }
-                if std::env::var("RCAD_WS_DEBUG").is_ok() {
-                    eprintln!(
-                        "[WS-PATH]   cand e={}o={} out={} np={} ang={:.6} min={:.6} chosen={}",
-                        a_e.ptr_id(),
-                        if a_e.orientation == Orientation::Reversed { 1 } else { 0 },
-                        an_is_out as u8,
-                        an_is_not_passed as u8,
-                        an_angle,
-                        a_min_angle,
-                        if let Some(pe) = &p_edge_info {
-                            pe.edge().ptr_id() == a_e.ptr_id() && pe.is_in() == an_ei_mut.is_in()
-                        } else { false } as u8,
-                    );
                 }
             }
         }
