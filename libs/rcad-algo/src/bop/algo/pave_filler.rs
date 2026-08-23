@@ -5003,6 +5003,18 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     };
                     eprintln!("[PC] MPC-proj e={} f={} key={:?} {}", n_e, n_f, fkey, pd);
                 }
+                // OCCT BOPTools_AlgoTools2D::MakePCurveOnFace
+                // (BOPTools_AlgoTools2D.cxx L611-614): after the projection,
+                // AdjustPCurveOnSurf translates the pcurve so that its point at
+                // the edge's mid parameter (0.5*(aT1+aT2)) lies inside the face
+                // UV domain.  Without it, several arcs of the same latitude
+                // circle share one U0 line and the WireSplitter cannot tell the
+                // arcs apart (bopfuse_simple zh6: cylinder | sphere rot90z).
+                let pc = {
+                    let uv = self.ds.face_actual_uv_bounds(n_f);
+                    crate::bop::algo::pave_filler_make_blocks::adjust_pcurve_on_face(
+                        &pc, range[0], range[1], surf, uv, n_f, &self.ds)
+                };
                 self.ds.mutate_shape_data(n_e, |ts| {
                     if let rcad_kernel::topods::TShape::Edge(ed) = ts {
                         ed.pcurves.insert(fkey, (pc, range[0], range[1]));
@@ -5355,12 +5367,24 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 is_done = true;
             } else if is_iso_v {
                 // myType = GeomAbs_Line; U = Xs.AngleWithRef(Xc, Xs ^ Ys)
+                // gp_Dir::AngleWithRef (gp_Dir.cxx L55-84): this=Xs, Other=Xc,
+                // Vref=Xs^Ys.  XYZ = this^Other; Cosinus = this|Other;
+                // Sinus = |XYZ|; Ang = acos(Cosinus) for |Cosinus| < 0.7071,
+                // else PI-asin(Sinus) / asin(Sinus) by the Cosinus sign; the
+                // result is +Ang when (this^Other)|Vref >= 0 else -Ang.
                 let mut u = {
-                    // AngleWithRef(Xc, Xs^Ys): signed angle of Xc from Xs about Xs^Ys.
                     let ref_dir = xs.cross(ys);
-                    let s = xc.dot(ref_dir);
-                    let c = xc.dot(xs);
-                    s.atan2(c)
+                    let xyz = xs.cross(xc);
+                    let cosinus = xs.dot(xc);
+                    let sinus = xyz.length();
+                    let ang = if cosinus > -0.70710678118655 && cosinus < 0.70710678118655 {
+                        cosinus.acos()
+                    } else if cosinus < 0.0 {
+                        std::f64::consts::PI - sinus.asin()
+                    } else {
+                        sinus.asin()
+                    };
+                    if xyz.dot(ref_dir) >= 0.0 { ang } else { -ang }
                 };
                 if u < 0.0 {
                     u += std::f64::consts::TAU;

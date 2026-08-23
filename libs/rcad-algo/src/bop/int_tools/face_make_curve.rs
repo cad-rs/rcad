@@ -564,13 +564,30 @@ pub(crate) fn build_analytic_pcurve(other_surf: &Surface3, curve3: &Curve3, tf: 
         if is_iso_v {
             // The circle is a latitude circle: the pcurve is a v=const line.
             // U(t) = atan2(C(t).Ys, C(t).Xs) = U0 + (zc.zs)*t with
-            // U0 = atan2(Xc.Ys, Xc.Xs) — the azimuth of the t=0 point,
-            // which is exact (the latitude circle keeps the azimuth linear
-            // in the circle parameter).  OCCT writes the U0 via
-            // Xs.AngleWithRef(Xc, Xs^Ys) (a -delta convention) and relies on
-            // SameParameter to correct it; rcad has no SameParameter, so U0
-            // is written directly (same-parameter from the start).
-            let mut u = xc.dot(ys).atan2(xc.dot(xs));
+            // U0 = Xs.AngleWithRef(Xc, Xs^Ys) — the azimuth of the t=0 point
+            // (ProjLib_Sphere.cxx L167).  gp_Dir::AngleWithRef
+            // (gp_Dir.cxx L55-84): this=Xs, Other=Xc, Vref=Xs^Ys.  XYZ =
+            // this^Other; Cosinus = this|Other; Sinus = |XYZ|; Ang =
+            // acos(Cosinus) for |Cosinus| < 0.7071, else PI-asin(Sinus) /
+            // asin(Sinus) by the Cosinus sign; the result is +Ang when
+            // (this^Other)|Vref >= 0 else -Ang.  The acos/asin form is kept
+            // (not atan2) because the last-bit difference decides whether the
+            // SetInBounds tail wraps u=2*PI back to 0 (ProjLib_Sphere.cxx
+            // L244-247), splitting the 4 rim arcs of a latitude circle.
+            let mut u = {
+                let ref_dir = xs.cross(ys);
+                let xyz = xs.cross(xc);
+                let cosinus = xs.dot(xc);
+                let sinus = xyz.length();
+                let ang = if cosinus > -0.70710678118655 && cosinus < 0.70710678118655 {
+                    cosinus.acos()
+                } else if cosinus < 0.0 {
+                    std::f64::consts::PI - sinus.asin()
+                } else {
+                    sinus.asin()
+                };
+                if xyz.dot(ref_dir) >= 0.0 { ang } else { -ang }
+            };
             // OCCT ElSLib::SphereParameters normalizes U into [0, 2*PI)
             // (normalizeAngle, ElSLib.cxx L1643); the azimuth of the t=0 point
             // must land in the same domain as the seam pcurves.  Without the
@@ -587,7 +604,21 @@ pub(crate) fn build_analytic_pcurve(other_surf: &Surface3, curve3: &Curve3, tf: 
             // D2d = ((Xc ^ Yc).Dot(Xs ^ Ys), 0) — +1 along U when the circle
             // plane normal is parallel to the sphere axis.
             let d2d = DVec2::new(zc.dot(zs), 0.0);
-            line = Some(Line2d::new(p2d1, d2d));
+            let mut l = Line2d::new(p2d1, d2d);
+            // OCCT ProjLib_Sphere::SetInBounds (ProjLib_Sphere.cxx L203-248),
+            // called from ProjLib_ProjectedCurve::Perform (L419) with
+            // U = myCurve->FirstParameter(): place the U of the
+            // first-parameter point into [0, 2*PI].  A latitude circle's V is
+            // constant inside [-PI/2, PI/2], so the Y-wrap (L207-211) and the
+            // pole mirror (L213-242) never trigger; only the tail X-wrap
+            // (L244-247) applies.  Without it every arc of the same 3D circle
+            // projects to the same U0 line and the WireSplitter cannot tell
+            // the arcs apart.
+            let u_first = l.point_at(tf).x;
+            let new_x = crate::geomalgo::int_patch::cycy_common::in_period(
+                u_first, 0.0, std::f64::consts::TAU);
+            l.origin.x += new_x - u_first;
+            line = Some(l);
         }
         if let Some(l) = line {
             // SameParameter net effect: keep the analytic line only when it is

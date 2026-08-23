@@ -50,17 +50,27 @@ pub fn precision_is_infinite(r: f64) -> bool {
     is_infinite_value(r)
 }
 
-/// OCCT ElCLib::InPeriod(Par, Ufirst, Ulast) — bring Par into [Ufirst, Ulast].
+/// OCCT ElCLib::InPeriod(Par, Ufirst, Ulast) (ElCLib.cxx L95-111) — bring Par
+/// into [Ufirst, Ulast]; the value Ulast itself is never returned
+/// (L77: "Value theULast is never returned").  rcad's earlier while-loop
+/// version returned Ulast when Par == Ulast, leaving a pcurve endpoint on
+/// the seam (u = 2*PI) instead of folding it back to u = 0.
 pub fn in_period(par: f64, u_first: f64, u_last: f64) -> f64 {
-    let period = u_last - u_first;
-    let mut x = par;
-    while x < u_first {
-        x += period;
+    if !par.is_finite() || !u_first.is_finite() || !u_last.is_finite() {
+        return par;
     }
-    while x > u_last {
-        x -= period;
+    let a_period = u_last - u_first;
+    // Standard_Real::Epsilon(x) = ulp(x) (Standard_Real.hxx L242-246).
+    let eps = if u_last >= 0.0 {
+        f64::from_bits(u_last.to_bits() + 1) - u_last
+    } else {
+        u_last - f64::from_bits(u_last.to_bits() - 1)
+    };
+    if a_period < eps {
+        return par;
     }
-    x
+    // std::max(theUFirst, theU + aPeriod * ceil((theUFirst - theU) / aPeriod))
+    u_first.max(par + a_period * ((u_first - par) / a_period).ceil())
 }
 
 // ============================================================================

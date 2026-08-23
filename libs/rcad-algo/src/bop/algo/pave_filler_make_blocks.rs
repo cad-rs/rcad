@@ -67,10 +67,11 @@ fn pb_ptr(pb: &SharedPB) -> u64 {
 /// the point at the trimmed-mid parameter lies inside the face UV domain
 /// (periodic surfaces).  Called from BOPTools_AlgoTools::MakePCurve
 /// (BOPTools_AlgoTools.cxx L1712-1719) after the FF pcurve is attached to
-/// a section edge.  The classifier branch (L346-387) fires only when the
-/// face domain exceeds one period, which quadric faces never do, so it is
-/// skipped here.
-fn adjust_pcurve_on_face(
+/// a section edge, and from BOPTools_AlgoTools2D::MakePCurveOnFace
+/// (BOPTools_AlgoTools2D.cxx L611-614) after the EF projection.  The
+/// classifier branch (L346-387) fires only when the face domain exceeds
+/// one period, which quadric faces never do, so it is skipped here.
+pub(crate) fn adjust_pcurve_on_face(
     pcurve: &Curve2d,
     t1: f64,
     t2: f64,
