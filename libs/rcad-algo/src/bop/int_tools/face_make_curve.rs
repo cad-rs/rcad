@@ -1011,17 +1011,22 @@ fn make_part_curve(
             // bLPIt = Precision::IsPositiveInfinite(lprm).
             let b_fn = rcad_kernel::precision::is_negative_infinite_value(fprm);
             let b_lp = rcad_kernel::precision::is_positive_infinite_value(lprm);
-            // OCCT L829: if (!bFNIt || !bLPIt) — test reference point when range is NOT infinite.
-            if !b_fn || !b_lp {
-                // OCCT L850-898: test a reference point on both face domains.
+            // OCCT L809: if (!bFNIt && !bLPIt) — both bounds finite: build the
+            // trimmed curve without any reference-point test (L810-848).
+            if !b_fn && !b_lp {
+                // (the IntersectionCurve below carries the clipped t_range)
+            } else {
+                // OCCT L850-897: at least one bound is infinite — test a
+                // reference point on both face domains before keeping the
+                // curve (untrimmed).
                 let d_t = 100.0;
                 let test_t = if b_fn && !b_lp {
                     lprm - d_t
                 } else if !b_fn && b_lp {
                     fprm + d_t
                 } else {
-                    // both finite: OCCT IntTools_Tools::IntermediatePoint(fprm, lprm).
-                    intermediate_point(fprm, lprm)
+                    // OCCT L868: IntTools_Tools::IntermediatePoint(-dT, dT).
+                    intermediate_point(-d_t, d_t)
                 };
                 let p3d = curve.point_at(test_t);
                 if !p3d.is_finite() {
