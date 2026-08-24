@@ -442,11 +442,12 @@ pub fn are_faces_same_domain(
 // tolerance, PointInFace hatcher point, projection + FClass2d on the piece).
 // ====================================================================
 
-/// UV boundary polygons of a face Shape (outer + inner wires), built by
-/// projecting the wire edge endpoint vertices onto the face surface — the
-/// piece-equivalent of the DS FClass2d UV polygons. Both endpoints of every
-/// edge are projected (a corner held only as an edge FIRST vertex must not be
-/// lost); the polygon is returned in wire-edge traversal order.
+/// UV boundary polygons of a face Shape (outer + inner wires), built from the
+/// wire edge pcurves keyed by the face (the OCCT Geom2dHatch_Hatcher boundary),
+/// falling back to projecting the wire edge endpoint vertices onto the face
+/// surface when a pcurve is missing — the piece-equivalent of the DS FClass2d
+/// UV polygons. The polygon is returned in wire-edge traversal order.
+const PCURVE_SAMPLES: usize = 16;
 fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<Vec<glam::DVec2>>> {
     let fd = face.as_face()?;
     let surf = fd.surface.as_ref()?;
@@ -516,15 +517,66 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                     order = edges.iter().enumerate().map(|(i, _)| (i, false)).collect();
                 }
             }
+            // OCCT Geom2dHatch_Hatcher hatches the edge PCURVES of the face
+            // (BOPTools_AlgoTools3D.cxx L992-1066), never 3D vertex projections.
+            // When every edge of the wire carries a pcurve keyed by this face,
+            // the polygon is sampled from those pcurves in the traversal chain
+            // order; otherwise the 3D vertex projections below are used.  A
+            // u-periodic band (cylinder/cone side) keeps the band_rect fallback
+            // instead: its wire walks [cap circle, seam, cap circle, seam] and
+            // the seam junction points (u=0 and u=2*PI of the same vertex) are
+            // never deduped, so the pcurve polygon retraces and the parity
+            // hatch finds no interval (bcut_simple l8: coaxial cylinders).
+            let is_u_band = matches!(
+                surf,
+                rcad_kernel::geom::Surface3::Cylinder(_) | rcad_kernel::geom::Surface3::Cone(_)
+            );
+            let mykey = (face.ptr_id(), face.location);
+            let mut ppts: Vec<glam::DVec2> = Vec::new();
+            let mut pcurve_ok = !is_u_band;
+            for &(ei, rev) in &order {
+                let e = &edges[ei];
+                let ed = match &*e.data {
+                    TShape::Edge(ed) => ed,
+                    _ => {
+                        pcurve_ok = false;
+                        break;
+                    }
+                };
+                let Some((pc, t1, t2)) = ed.pcurves.get(&mykey) else {
+                    pcurve_ok = false;
+                    break;
+                };
+                // Traversal direction: FORWARD -> [t1, t2], REVERSED -> [t2, t1]
+                // (TopoDS_Iterator cumOri), then flipped for a loop-reversed
+                // edge (its traversal end joins the current vertex).
+                let (ta, tb) = match Orientation::compose(w_or, e.orientation) {
+                    Orientation::Reversed => (t2, t1),
+                    _ => (t1, t2),
+                };
+                let (ta, tb) = if rev { (tb, ta) } else { (ta, tb) };
+                for i in 0..=PCURVE_SAMPLES {
+                    let t = ta + (tb - ta) * (i as f64) / (PCURVE_SAMPLES as f64);
+                    let uv = rcad_kernel::geom::Curve2dEval::point_at(pc, t);
+                    if ppts.last().map(|q| (*q - uv).length() < 1e-9).unwrap_or(false) {
+                        continue;
+                    }
+                    ppts.push(uv);
+                }
+            }
+            if pcurve_ok && !ppts.is_empty() {
+                *out = ppts;
+                return;
+            }
+            // Fall back: sample the two traversal endpoints (start, end) in
+            // order: FORWARD -> [first, last], REVERSED -> [last, first]
+            // (TopoDS_Iterator cumOri semantics).
             for &(ei, rev) in &order {
                 let e = &edges[ei];
                 let (_va, _vb) = match trav(e) {
                     Some(v) => v,
                     None => continue,
                 };
-                // Sample the two traversal endpoints (start, end) in order:
-                // FORWARD -> [first, last], REVERSED -> [last, first]
-                // (TopoDS_Iterator cumOri semantics).
                 let (p0, p1) = match &*e.data {
                     TShape::Edge(ed) => {
                         let loc0 = if e.location != 0 { e.location } else { ed.first.location };
