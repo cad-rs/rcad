@@ -2444,11 +2444,53 @@ impl DS {
         let empty_vertex = Shape::new(
             Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
         );
+        // OCCT BOPTools_AlgoTools::MakeSplitEdge stores the DS pave vertices
+        // on the split edge (BOPAlgo_PaveFiller_7.cxx L529-535). The pave at a
+        // source range END resolves through the edge-location composition to
+        // the located corner key. An INTERIOR pave vertex (a new vertex on the
+        // located edge) is stored with the location L.Predivided(E.Location())
+        // (BRep_Tool.cxx L345) — face_loc * edge_loc^-1, identity face here —
+        // so the edge-location composition (TopoDS_Iterator cumLoc) maps it to
+        // the WORLD key, matching the same vertex referenced by the unlocated
+        // edges (the section arcs).
+        let (src_range, src_loc) = match src {
+            Some(src_e) if src_e < self.shapes.len() => (
+                self.shapes[src_e].shape.as_edge().map(|ed| ed.range),
+                self.shapes[src_e].shape.location,
+            ),
+            _ => (None, 0u32),
+        };
+        let predivided_loc: u32 = if src_loc != 0 {
+            if let Some(tr) = self.locations.get(src_loc as usize) {
+                let inv = tr.inverse();
+                match self.locations.iter().position(|l| *l == inv) {
+                    Some(i) => i as u32,
+                    None => {
+                        self.locations.push(inv);
+                        (self.locations.len() - 1) as u32
+                    }
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let v_loc = |param: f64, src_end: Option<f64>| -> u32 {
+            // The pave at the source's own range end is the source's endpoint
+            // vertex; any other pave is an interior (new) vertex.
+            match src_end {
+                Some(e) if (param - e).abs() < 1e-12 => 0, // keep the stored location
+                _ => predivided_loc,
+            }
+        };
+        let v_first_src = src_range.map(|r| r[0]);
+        let v_last_src = src_range.map(|r| r[1]);
         let v_first = self.shapes.get(first)
-            .map(|s| Shape::from_parts(s.shape.data.clone(), first, s.shape.location, v_first_or))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), first, v_loc(range[0], v_first_src), v_first_or))
             .unwrap_or_else(|| empty_vertex.clone());
         let v_last = self.shapes.get(last)
-            .map(|s| Shape::from_parts(s.shape.data.clone(), last, s.shape.location, v_last_or))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), last, v_loc(range[1], v_last_src), v_last_or))
             .unwrap_or(empty_vertex);
         let (pcurves, representations) = match src {
             Some(src_e) if src_e < self.shapes.len() => match &*self.shapes[src_e].shape.data {
@@ -2481,8 +2523,37 @@ impl DS {
             },
             _ => (HashMap::new(), Vec::new()),
         };
+        // OCCT BOPTools_AlgoTools::MakeSplitEdge (BOPTools_AlgoTools_2.cxx
+        // L145-146): E = aE.Oriented(TopAbs_FORWARD); E.EmptyCopy(); — the
+        // split edge inherits the source edge's LOCATION
+        // (TopoDS_Shape::EmptyCopy keeps the Location) and the source's
+        // geometry (the curve and the pcurves); only the sub-shapes are
+        // replaced. rcad keys the edge pcurves by the composed location
+        // (BRep_Tool::CurveOnSurface, BRep_Tool.cxx L345), so the inherited
+        // location is what resolves the located edge's own pcurves (e.g. a
+        // prism's top edges share the base TShape at a translation location).
+        let (ori, loc) = match src {
+            Some(src_e) if src_e < self.shapes.len() => (
+                self.shapes[src_e].shape.orientation,
+                self.shapes[src_e].shape.location,
+            ),
+            _ => (topods::Orientation::Forward, 0),
+        };
+        // The caller passes the LOCATED source curve (ds.edge_curve applies
+        // the location); the stored TShape curve is the UN-located one — the
+        // edge Location applies the transform (BRep_Tool::Curve semantics),
+        // so the location is un-applied here.
+        let curve = if loc != 0 {
+            if let Some(tr) = self.locations.get(loc as usize) {
+                rcad_kernel::geom::transform_curve(&curve, &tr.inverse())
+            } else {
+                curve
+            }
+        } else {
+            curve
+        };
         let ed = rcad_kernel::topods::TEdgeData {
-            curve: Some(curve.clone()), range,
+            curve: Some(curve), range,
             first: v_first, last: v_last,
             tolerance: 0.0, same_parameter: true, same_range: true,
             degenerated: false, pcurves,
@@ -2493,11 +2564,7 @@ impl DS {
         //   aNewEdge.Orientation(aE.Orientation()) — the split edge inherits
         //   the source edge's orientation (the FORWARD-normalized EmptyCopy
         //   only shares the TShape).
-        let ori = match src {
-            Some(src_e) if src_e < self.shapes.len() => self.shapes[src_e].shape.orientation,
-            _ => topods::Orientation::Forward,
-        };
-        let s = Shape::new(Arc::new(TShape::Edge(ed)), 0, ori);
+        let s = Shape::new(Arc::new(TShape::Edge(ed)), loc, ori);
         let idx = self.append_shape(s);
         self.shapes[idx].shape.index = idx;
         idx
