@@ -1011,7 +1011,8 @@ fn make_part_curve(
             // bLPIt = Precision::IsPositiveInfinite(lprm).
             let b_fn = rcad_kernel::precision::is_negative_infinite_value(fprm);
             let b_lp = rcad_kernel::precision::is_positive_infinite_value(lprm);
-            if !(!b_fn && !b_lp) {
+            // OCCT L829: if (!bFNIt || !bLPIt) — test reference point when range is NOT infinite.
+            if !b_fn || !b_lp {
                 // OCCT L850-898: test a reference point on both face domains.
                 let d_t = 100.0;
                 let test_t = if b_fn && !b_lp {
@@ -1019,8 +1020,8 @@ fn make_part_curve(
                 } else if !b_fn && b_lp {
                     fprm + d_t
                 } else {
-                    // both infinite: OCCT IntTools_Tools::IntermediatePoint(-dT, dT).
-                    intermediate_point(-d_t, d_t)
+                    // both finite: OCCT IntTools_Tools::IntermediatePoint(fprm, lprm).
+                    intermediate_point(fprm, lprm)
                 };
                 let p3d = curve.point_at(test_t);
                 if !p3d.is_finite() {
@@ -1221,13 +1222,15 @@ fn make_part_curve(
                 if app.is_done() {
                     let mbspc = app.value();
                     // OCCT L1642-1733 (typs != Plane): curve 1 -> 3D BSpline,
-                    // curves 2/3 -> the 2D pcurves (myApprox1/2 gates).
+                    // curves 2/3 -> the 2D pcurves (myApprox1/2 gates).  The
+                    // resulting curves keep the approximation parameter domain
+                    // [0, 1] (OCCT creates the BSpline from mbspc.Knots()).
                     if let Some((curve, pcurve1, pcurve2)) =
-                        multibsp_to_curves(&mbspc, fprm, lprm, an_approx1, an_approx2)
+                        multibsp_to_curves(&mbspc, an_approx1, an_approx2)
                     {
                         return Some(IntersectionCurve {
                             curve,
-                            t_range: [fprm, lprm],
+                            t_range: [0.0, 1.0],
                             pcurve1,
                             pcurve2,
                             tolerance: tol,
@@ -1283,14 +1286,13 @@ fn approx_parameters_for(surf1: &Surface3, surf2: &Surface3) -> (usize, usize, i
 }
 
 /// Convert the OCCT MultiBSpCurve (shared degree/knots/multiplicities and
-/// per-curve poles) into the rcad 3D curve and the 2D pcurves, mapping the
-/// knot vector from [0,1] onto the part range [fprm, lprm] (point-index
-/// space, which the IntersectionCurve and the downstream paving evaluate
-/// on).
+/// per-curve poles) into the rcad 3D curve and the 2D pcurves.  The knot
+/// vector keeps the approximation domain (typically [0, 1]) — OCCT
+/// IntTools_FaceFace creates the Geom_BSplineCurve directly from
+/// mbspc.Knots()/Multiplicities() (IntTools_FaceFace.cxx L1646-1649), and
+/// Approx_MCurvesToBSpCurve normalizes the knots to [0, 1].
 fn multibsp_to_curves(
     mbspc: &crate::geomalgo::approx_int::MultiBSpCurve,
-    fprm: f64,
-    lprm: f64,
     with_pc1: bool,
     with_pc2: bool,
 ) -> Option<(Curve3, Option<Curve2d>, Option<Curve2d>)> {
@@ -1302,7 +1304,13 @@ fn multibsp_to_curves(
     if p3.len() < 2 {
         return None;
     }
-    let knots = expand_knots(&mbspc.knots, &mbspc.mults, fprm, lprm);
+    // OCCT IntTools_FaceFace.cxx L1646-1649: the BSpline is created directly
+    // from the MultiBSpCurve knots/multiplicities — the parameter domain is
+    // the approximation's [0, 1] (Approx_MCurvesToBSpCurve normalizes the
+    // knots to [0, 1]); it is NOT remapped to the WLine point-index range
+    // [fprm, lprm] (those indices only select the points fed to the
+    // approximation).
+    let knots = expand_knots(&mbspc.knots, &mbspc.mults);
     let nb3d = mbspc.poles[0].nb_points();
     let nb2d = mbspc.poles[0].nb_points2d();
     let c3 = Curve3::BSpline(BSplineCurve3 {
@@ -1339,15 +1347,14 @@ fn multibsp_to_curves(
     Some((c3, pc1, pc2))
 }
 
-/// Expand the compressed (knots, multiplicities) representation into the
-/// full knot vector and map [0,1] onto [fprm, lprm].
-fn expand_knots(knots: &[f64], mults: &[usize], fprm: f64, lprm: f64) -> Vec<f64> {
-    let r = lprm - fprm;
+/// Expand the compressed (knots, multiplicities) representation into the full
+/// knot vector, keeping the approximation parameter domain (typically [0, 1]).
+fn expand_knots(knots: &[f64], mults: &[usize]) -> Vec<f64> {
     let mut out = Vec::new();
     for (i, &k) in knots.iter().enumerate() {
         let m = if i < mults.len() { mults[i] } else { 1 };
         for _ in 0..m {
-            out.push(fprm + r * k);
+            out.push(k);
         }
     }
     out

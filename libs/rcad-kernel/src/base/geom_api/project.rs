@@ -14,6 +14,7 @@ use crate::geom::{Curve2d, Curve3, CurveEval, Surface3, SurfaceEval};
 pub use crate::base::extrema::{
     CurveProjection, SurfaceProjection,
     closest_point_on_curve,
+    closest_point_on_curve_with_range,
     closest_point_on_surface_near,
 };
 // numeric_surface_projection is crate-internal (used by closest_point_on_surface)
@@ -25,9 +26,11 @@ use crate::base::extrema::numeric_surface_projection;
 
 /// OCCT-aligned: closest_point_on_curve with range restriction [t0, t1].
 ///
-/// Calls [`closest_point_on_curve`] then clamps parameter to [t0, t1] and
-/// re-evaluates at the endpoint if the original projection fell outside range.
-/// Matches OCCT GeomAPI_ProjectPointOnCurve::Init(curve, f, l).
+/// OCCT `GeomAPI_ProjectPointOnCurve::Init(P, Curve, Umin, Usup)` loads the
+/// trimmed curve adaptor and passes [Umin, Usup] into Extrema_ExtPC, so the
+/// analytic elementary-curve solvers (Extrema_ExtPElC) filter their solutions
+/// by the range at the source.  The periodic wrap (u +/- k*Tau) and the
+/// endpoint clamp remain as a fallback for the periodic branches.
 pub fn closest_point_on_curve_range(
     curve: &Curve3,
     query: DVec3,
@@ -35,7 +38,7 @@ pub fn closest_point_on_curve_range(
     t1: f64,
     n_samples: usize,
 ) -> CurveProjection {
-    let mut result = closest_point_on_curve(curve, query, n_samples);
+    let mut result = closest_point_on_curve_with_range(curve, query, n_samples, t0, t1);
     if result.param < t0 || result.param > t1 {
         // OCCT GeomAPI_ProjectPointOnCurve::Init(curve, f, l) projects onto the
         // trimmed periodic curve: the parameter is wrapped by the period to stay

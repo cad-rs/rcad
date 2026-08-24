@@ -77,6 +77,62 @@ pub struct POnSurface {
 }
 
 // ============================================================================
+// Extrema_LocateExtPC — local Point-to-Curve extremum from a seed parameter
+// ============================================================================
+
+/// OCCT-aligned: local extremum search starting from a seed parameter.
+///
+/// OCCT: `Extrema_LocateExtPC(Point, Adaptor3d_Curve, Seed, Tol)`.
+/// Performs Newton refinement starting from `seed` to find a local minimum
+/// of the distance function. Returns None if the search fails to converge
+/// or the distance increases.
+pub fn extrema_locate_ext_pc(
+    point: DVec3,
+    curve: &Curve3,
+    seed: f64,
+    uinf: f64,
+    usup: f64,
+    tol: f64,
+) -> Option<POnCurve> {
+    let clamp = |t: f64| t.clamp(uinf, usup);
+    let dt = 1e-7;
+    let max_iter = 50;
+    let mut t = clamp(seed);
+    let mut best_t = t;
+    let mut best_d = (curve.point_at(t) - point).length();
+    for _ in 0..max_iter {
+        let p = curve.point_at(t);
+        let diff = p - point;
+        let deriv = curve.derivative_at(t);
+        let deriv_sq = deriv.dot(deriv);
+        if deriv_sq < 1e-20 {
+            break;
+        }
+        let curv = (curve.point_at(t + 2.0 * dt) - 2.0 * p + curve.point_at(t - 2.0 * dt))
+            / (dt * dt);
+        let denom = deriv_sq + diff.dot(curv);
+        let delta = diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
+        let new_t = clamp(t - delta);
+        let new_d = (curve.point_at(new_t) - point).length();
+        if new_d < best_d {
+            best_d = new_d;
+            best_t = new_t;
+            t = new_t;
+        } else {
+            break;
+        }
+        if delta.abs() < tol {
+            break;
+        }
+    }
+    let best_p = curve.point_at(best_t);
+    Some(POnCurve {
+        param: best_t,
+        point: best_p,
+    })
+}
+
+// ============================================================================
 // Extrema_ExtPC — Point-to-Curve extremum (OCCT-aligned class)
 // ============================================================================
 
@@ -826,12 +882,39 @@ fn newton_refine_pc(
 /// OCCT-aligned: dispatches per-type matching Extrema_ExtPC:
 ///   - Line/Circle: analytic via Extrema_ExtPElC equivalent
 ///   - Ellipse: analytic init + Newton refinement
+///   - Hyperbola/Parabola: analytic via Extrema_ExtPElC (solutions filtered
+///     by [uinf, usup], OCCT Extrema_ExtPElC.cxx L365/L457)
 ///   - BSpline: C2 interval splitting (Extrema_GGExtPC)
 ///   - Bezier/Other: uniform sampling + Newton
 ///
 /// `n_samples` is the uniform sampling count (used for Bezier and fallback;
 /// for BSpline it is overridden by `degree + 1` per C2 interval).
 pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) -> CurveProjection {
+    let [uinf, usup] = curve.default_domain();
+    closest_point_on_curve_impl(curve, query, n_samples, uinf, usup)
+}
+
+/// Range-restricted projection — OCCT `GeomAPI_ProjectPointOnCurve::Init(P, Curve, Umin, Usup)`:
+/// the parameter bounds [uinf, usup] are applied inside the analytic
+/// elementary-curve solvers (Extrema_ExtPElC Uinf/Usup), not by clamping the
+/// projection afterwards.
+pub fn closest_point_on_curve_with_range(
+    curve: &Curve3,
+    query: DVec3,
+    n_samples: usize,
+    uinf: f64,
+    usup: f64,
+) -> CurveProjection {
+    closest_point_on_curve_impl(curve, query, n_samples, uinf, usup)
+}
+
+fn closest_point_on_curve_impl(
+    curve: &Curve3,
+    query: DVec3,
+    n_samples: usize,
+    uinf: f64,
+    usup: f64,
+) -> CurveProjection {
     match curve {
         Curve3::Line(l) => {
             let dir_sq = l.direction.dot(l.direction);
@@ -976,7 +1059,9 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             let c1 = (r * r + r2 * r2) / 4.0;
             let sol = DirectPolynomialRoots::new_quartic(
                 c1, -(x * r + y * r2) / 2.0, 0.0, (x * r - y * r2) / 2.0, -c1);
-            let [t0, t1] = curve.default_domain();
+            // OCCT L365: the solution is kept when Uinf <= Us <= Usup (the
+            // bounds passed by GeomAPI_ProjectPointOnCurve::Init(curve, f, l)).
+            let [t0, t1] = [uinf, usup];
             let mut u_best = t0;
             let mut d_best = f64::INFINITY;
             if sol.is_done() {
@@ -1015,7 +1100,8 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             // OCCT L443: Sol(1/(4*F), 0., 2*F - X, -2*F*Y)
             let sol = DirectPolynomialRoots::new_cubic(
                 1.0 / (4.0 * f), 0.0, 2.0 * f - x, -2.0 * f * y);
-            let [t0, t1] = curve.default_domain();
+            // OCCT L457: the solution is kept when Uinf <= Us <= Usup.
+            let [t0, t1] = [uinf, usup];
             let mut u_best = t0;
             let mut d_best = f64::INFINITY;
             if sol.is_done() {

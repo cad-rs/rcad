@@ -1089,6 +1089,51 @@ impl<'a> super::PaveFiller<'a> {
         Some((best_t, best_p, best_d))
     }
 
+    /// OCCT Extrema_LocateExtPC: local extremum search starting from a given parameter.
+    /// Returns None if no convergence or distance increases.
+    fn extrema_locate_ext_pc_from(
+        point: DVec3,
+        curve: &Curve3,
+        start_t: f64,
+        t0: f64,
+        t1: f64,
+        tol: f64,
+    ) -> Option<(f64, DVec3, f64)> {
+        let clamp = |t: f64| t.clamp(t0, t1);
+        let dt = 1e-7;
+        let max_iter = 50;
+        let mut t = clamp(start_t);
+        let mut best_t = t;
+        let mut best_d = (curve.point_at(t) - point).length();
+        for _ in 0..max_iter {
+            let p = curve.point_at(t);
+            let diff = p - point;
+            let deriv = curve.derivative_at(t);
+            let deriv_sq = deriv.dot(deriv);
+            if deriv_sq < 1e-20 {
+                break;
+            }
+            let curv = (curve.point_at(t + 2.0 * dt) - 2.0 * p + curve.point_at(t - 2.0 * dt))
+                / (dt * dt);
+            let denom = deriv_sq + diff.dot(curv);
+            let delta = diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
+            let new_t = clamp(t - delta);
+            let new_d = (curve.point_at(new_t) - point).length();
+            if new_d < best_d {
+                best_d = new_d;
+                best_t = new_t;
+                t = new_t;
+            } else {
+                break;
+            }
+            if delta.abs() < tol {
+                break;
+            }
+        }
+        let best_p = curve.point_at(best_t);
+        Some((best_t, best_p, best_d))
+    }
+
     /// IntTools_Context::IsVertexOnLine (L786-992).
     /// Form-identical logic:
     ///   1. aTolSum = curve-type-adjusted (aTolV + aTolC)
@@ -1139,54 +1184,27 @@ impl<'a> super::PaveFiller<'a> {
                 bFirstValid = true;
                 *aT = aFirst;
                 if aFirstDist > aTolV {
-                    // L840: local projection from aFirst (Newton refinement)
-                    let mut t_local = aFirst;
-                    let mut dist_local = aFirstDist;
-                    let clamp = |t: f64| t.clamp(aFirst, aLast);
-                    let dt = 1e-7;
-                    let max_iter = 20;
-                    let mut converged = false;
-                    for _ in 0..max_iter {
-                        let p = ic.curve.point_at(t_local);
-                        let diff = p - vp;
-                        let deriv = ic.curve.derivative_at(t_local);
-                        let deriv_sq = deriv.dot(deriv);
-                        if deriv_sq < 1e-20 {
-                            break;
-                        }
-                        let curv = (ic.curve.point_at(t_local + 2.0 * dt) - 2.0 * p
-                            + ic.curve.point_at(t_local - 2.0 * dt))
-                            / (dt * dt);
-                        let denom = deriv_sq + diff.dot(curv);
-                        let delta =
-                            diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
-                        let new_t = clamp(t_local - delta);
-                        let new_dist = (ic.curve.point_at(new_t) - vp).length();
-                        if new_dist < dist_local {
-                            dist_local = new_dist;
-                            t_local = new_t;
-                        } else {
-                            break;
-                        }
-                        if delta.abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
-                            converged = true;
-                            break;
-                        }
-                    }
-                    // L842-851: validate local projection result
-                    if converged || dist_local < aFirstDist {
+                    // OCCT L829: Extrema_LocateExtPC(aPv, aGAC, aFirst, 1.e-10)
+                    if let Some((t_loc, p_loc, d_loc)) =
+                        Self::extrema_locate_ext_pc_from(
+                            vp,
+                            &ic.curve,
+                            aFirst,
+                            aFirst,
+                            aLast,
+                            TOLERANCE_LINEAR_ULTRA_STRICT,
+                        )
+                    {
+                        // OCCT L836-840: validate local result
                         let mid = (aLast + aFirst) * 0.5;
-                        let p_proj = ic.curve.point_at(t_local);
-                        if (t_local > mid)
-                            || (dist_local > aTolSum)
-                            || (p_first.distance(p_proj) < TOLERANCE_ABS)
+                        if (t_loc > mid) || (d_loc > aTolSum) || (p_first.distance(p_loc) < TOLERANCE_ABS)
                         {
                             *aT = aFirst;
                         } else {
-                            *aT = t_local;
+                            *aT = t_loc;
                         }
                     } else {
-                        // L856-880: local projection failed -> global fallback (Extrema_ExtPC)
+                        // OCCT L842-870: Extrema_LocateExtPC failed -> global fallback (Extrema_ExtPC)
                         let mid = (aLast + aFirst) * 0.5;
                         if let Some((t_glob, p_glob, d_glob)) =
                             Self::extrema_ext_pc_min(vp, &ic.curve, TOLERANCE_LINEAR_ULTRA_STRICT)
@@ -1218,54 +1236,27 @@ impl<'a> super::PaveFiller<'a> {
             if d_last < aTolSum {
                 *aT = aLast;
                 if d_last > aTolV {
-                    // L901: local projection from aLast (Newton refinement)
-                    let mut t_local = aLast;
-                    let mut dist_local = d_last;
-                    let clamp = |t: f64| t.clamp(aFirst, aLast);
-                    let dt = 1e-7;
-                    let max_iter = 20;
-                    let mut converged = false;
-                    for _ in 0..max_iter {
-                        let p = ic.curve.point_at(t_local);
-                        let diff = p - vp;
-                        let deriv = ic.curve.derivative_at(t_local);
-                        let deriv_sq = deriv.dot(deriv);
-                        if deriv_sq < 1e-20 {
-                            break;
-                        }
-                        let curv = (ic.curve.point_at(t_local + 2.0 * dt) - 2.0 * p
-                            + ic.curve.point_at(t_local - 2.0 * dt))
-                            / (dt * dt);
-                        let denom = deriv_sq + diff.dot(curv);
-                        let delta =
-                            diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
-                        let new_t = clamp(t_local - delta);
-                        let new_dist = (ic.curve.point_at(new_t) - vp).length();
-                        if new_dist < dist_local {
-                            dist_local = new_dist;
-                            t_local = new_t;
-                        } else {
-                            break;
-                        }
-                        if delta.abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
-                            converged = true;
-                            break;
-                        }
-                    }
-                    // L905-911: validate local projection result
-                    if converged || dist_local < d_last {
+                    // OCCT L890: Extrema_LocateExtPC(aPv, aGAC, aLast, 1.e-10)
+                    if let Some((t_loc, p_loc, d_loc)) =
+                        Self::extrema_locate_ext_pc_from(
+                            vp,
+                            &ic.curve,
+                            aLast,
+                            aFirst,
+                            aLast,
+                            TOLERANCE_LINEAR_ULTRA_STRICT,
+                        )
+                    {
+                        // OCCT L897-901: validate local result
                         let mid = (aLast + aFirst) * 0.5;
-                        let p_proj = ic.curve.point_at(t_local);
-                        if (t_local < mid)
-                            || (dist_local > aTolSum)
-                            || (p_last.distance(p_proj) < TOLERANCE_ABS)
+                        if (t_loc < mid) || (d_loc > aTolSum) || (p_last.distance(p_loc) < TOLERANCE_ABS)
                         {
                             *aT = aLast;
                         } else {
-                            *aT = t_local;
+                            *aT = t_loc;
                         }
                     } else {
-                        // L916-940: local projection failed -> global fallback (Extrema_ExtPC)
+                        // OCCT L905-931: Extrema_LocateExtPC failed -> global fallback (Extrema_ExtPC)
                         let mid = (aLast + aFirst) * 0.5;
                         if let Some((t_glob, p_glob, d_glob)) =
                             Self::extrema_ext_pc_min(vp, &ic.curve, TOLERANCE_LINEAR_ULTRA_STRICT)

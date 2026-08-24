@@ -701,8 +701,6 @@ impl IntToolsContext {
     /// OCCT IntTools_Context::IsVertexOnLine (IntTools_Context.cxx L776-983).
     /// Returns true when the vertex (point aPV, tolerance aTolV) lies on the
     /// section curve aCurve within aTolC; the parameter is returned in aT.
-    /// The Extrema_LocateExtPC / Extrema_ExtPC projections are mapped to
-    /// rcad's closest_point_on_curve_range.
     pub fn is_vertex_on_line(
         &mut self,
         a_pv: DVec3,
@@ -713,8 +711,6 @@ impl IntToolsContext {
         a_domain: [f64; 2],
     ) -> bool {
         // OCCT L788-809: tolerance sum depending on the curve type.
-        // OCCT L811-812: aFirst = aC3D->FirstParameter(); aLast = aC3D->LastParameter();
-        // — the bounded (trimmed) curve domain, NOT the natural curve domain.
         let [a_first, a_last] = a_domain;
         let mut a_tol_sum = a_tol_v + a_tol_c;
         let is_spline = matches!(a_curve, Curve3::BSpline(_) | Curve3::Bezier(_));
@@ -733,17 +729,48 @@ impl IntToolsContext {
                 b_first_valid = true;
                 *a_t = a_first;
                 if a_first_dist > a_tol_v {
-                    // Extrema_LocateExtPC — local extremum near aFirst.
-                    let proj = closest_point_on_curve_range(a_curve, a_pv, a_first, a_last, 64);
-                    let a_t_proj = proj.param;
-                    let a_p_on_curve = proj.point;
-                    if (a_t_proj > (a_last + a_first) * 0.5)
-                        || (a_pv.distance(a_p_on_curve) > a_tol_sum)
-                        || (a_pc_first.distance(a_p_on_curve) < rcad_kernel::CONFUSION)
-                    {
-                        *a_t = a_first;
+                    // OCCT L829: Extrema_LocateExtPC(aPv, aGAC, aFirst, 1.e-10)
+                    if let Some(poc) = rcad_kernel::base::extrema::extrema_locate_ext_pc(
+                        a_pv, a_curve, a_first, a_first, a_last, 1e-10,
+                    ) {
+                        // OCCT L836-840: validate local result
+                        let mid = (a_last + a_first) * 0.5;
+                        if (poc.param > mid)
+                            || (a_pv.distance(poc.point) > a_tol_sum)
+                            || (a_pc_first.distance(poc.point) < rcad_kernel::CONFUSION)
+                        {
+                            *a_t = a_first;
+                        } else {
+                            *a_t = poc.param;
+                        }
                     } else {
-                        *a_t = a_t_proj;
+                        // OCCT L842-870: Extrema_LocateExtPC failed -> global fallback (Extrema_ExtPC)
+                        let ext = rcad_kernel::base::extrema::ExtPC::new(
+                            a_pv, a_curve, 1e-10, a_first, a_last,
+                        );
+                        if ext.is_done() {
+                            let mut a_min_dist = f64::INFINITY;
+                            let mut a_min_idx = None;
+                            for i in 1..=ext.nb_ext() {
+                                let sq_d = ext.square_distance(i);
+                                if sq_d < a_min_dist {
+                                    a_min_dist = sq_d;
+                                    a_min_idx = Some(i);
+                                }
+                            }
+                            if let Some(idx) = a_min_idx {
+                                let poc = ext.point(idx);
+                                let mid = (a_last + a_first) * 0.5;
+                                if (poc.param > mid)
+                                    || (a_pv.distance(poc.point) > a_tol_sum)
+                                    || (a_pc_first.distance(poc.point) < rcad_kernel::CONFUSION)
+                                {
+                                    *a_t = a_first;
+                                } else {
+                                    *a_t = poc.param;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -758,16 +785,48 @@ impl IntToolsContext {
             if a_dist < a_tol_sum {
                 *a_t = a_last;
                 if a_dist > a_tol_v {
-                    let proj = closest_point_on_curve_range(a_curve, a_pv, a_first, a_last, 64);
-                    let a_t_proj = proj.param;
-                    let a_p_on_curve = proj.point;
-                    if (a_t_proj < (a_last + a_first) * 0.5)
-                        || (a_pv.distance(a_p_on_curve) > a_tol_sum)
-                        || (a_pc_last.distance(a_p_on_curve) < rcad_kernel::CONFUSION)
-                    {
-                        *a_t = a_last;
+                    // OCCT L890: Extrema_LocateExtPC(aPv, aGAC, aLast, 1.e-10)
+                    if let Some(poc) = rcad_kernel::base::extrema::extrema_locate_ext_pc(
+                        a_pv, a_curve, a_last, a_first, a_last, 1e-10,
+                    ) {
+                        // OCCT L897-901: validate local result
+                        let mid = (a_last + a_first) * 0.5;
+                        if (poc.param < mid)
+                            || (a_pv.distance(poc.point) > a_tol_sum)
+                            || (a_pc_last.distance(poc.point) < rcad_kernel::CONFUSION)
+                        {
+                            *a_t = a_last;
+                        } else {
+                            *a_t = poc.param;
+                        }
                     } else {
-                        *a_t = a_t_proj;
+                        // OCCT L905-931: Extrema_LocateExtPC failed -> global fallback (Extrema_ExtPC)
+                        let ext = rcad_kernel::base::extrema::ExtPC::new(
+                            a_pv, a_curve, 1e-10, a_first, a_last,
+                        );
+                        if ext.is_done() {
+                            let mut a_min_dist = f64::INFINITY;
+                            let mut a_min_idx = None;
+                            for i in 1..=ext.nb_ext() {
+                                let sq_d = ext.square_distance(i);
+                                if sq_d < a_min_dist {
+                                    a_min_dist = sq_d;
+                                    a_min_idx = Some(i);
+                                }
+                            }
+                            if let Some(idx) = a_min_idx {
+                                let poc = ext.point(idx);
+                                let mid = (a_last + a_first) * 0.5;
+                                if (poc.param < mid)
+                                    || (a_pv.distance(poc.point) > a_tol_sum)
+                                    || (a_pc_last.distance(poc.point) < rcad_kernel::CONFUSION)
+                                {
+                                    *a_t = a_last;
+                                } else {
+                                    *a_t = poc.param;
+                                }
+                            }
+                        }
                     }
                 }
                 return true;
@@ -862,27 +921,14 @@ impl IntToolsContext {
         ds: &DS,
         the_tol: f64,
     ) -> bool {
-        let a_pc1 = the_c.pcurve1.clone();
-        let a_pc2 = the_c.pcurve2.clone();
-        let a_c3d = &the_c.curve;
         let a_mid_par = crate::bop::int_tools::face_make_curve::intermediate_point(the_t1, the_t2);
-        let a_p = a_c3d.point_at(a_mid_par);
+        let a_p = the_c.curve.point_at(a_mid_par);
         // OCCT L739-753: check both faces.
-        let mut b_flag = true;
-        for i in 0..2 {
-            let a_pc = if i == 0 { &a_pc1 } else { &a_pc2 };
-            let a_f = if i == 0 { the_f1 } else { the_f2 };
-            if let Some(pc) = a_pc {
-                let a_pnt_2d = pc.point_at(a_mid_par);
-                b_flag = self.is_point_in_on_face(ds, a_f, a_pnt_2d);
-            } else {
-                b_flag = self.is_valid_point_for_face(a_p, a_f, ds, the_tol);
-            }
-            if !b_flag {
-                break;
-            }
+        let b_flag1 = self.is_valid_point_for_face(a_p, the_f1, ds, the_tol);
+        if !b_flag1 {
+            return false;
         }
-        b_flag
+        self.is_valid_point_for_face(a_p, the_f2, ds, the_tol)
     }
 
     /// OCCT IntTools_Context::ProjPS (IntTools_Context.cxx L247-265).

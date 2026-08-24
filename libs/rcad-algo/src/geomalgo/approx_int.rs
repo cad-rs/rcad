@@ -1744,7 +1744,39 @@ impl ComputeLine {
                 ok = true;
                 // Approx_PointsAdded branch is not reachable: the quadric
                 // WLine has no SvSurfaces, so WhatStatus is NoPointsAdded.
-                let _ = my_status;
+                if my_status == ApproxStatus::NoPointsAdded && !begin {
+                    // OCCT L1118-1147: NoPointsAdded with a small part — keep
+                    // the best approximation obtained so far.  This runs
+                    // BEFORE the Compute of this interval; GoUp then skips it
+                    // (so currenttol3d still holds the previous interval's
+                    // best effort — a finite value, never the Compute's
+                    // freshly-reset RealLast/inf).
+                    go_up = true;
+                    self.tolreached = false;
+                    if self.the_multi_curve.nb_curves() == 0 {
+                        self.mymulti_curves.clear();
+                        return;
+                    }
+                    self.mymulti_curves.push(self.the_multi_curve.clone());
+                    self.tolers3d.push(self.currenttol3d);
+                    self.tolers2d.push(self.currenttol2d);
+                    let mylen = oldlastpt - myfirstpt + 1;
+                    let my_par_len = self.myparameters.len();
+                    let a_len = my_par_len.max(mylen);
+                    let mut the_par = VecD::new(a_len);
+                    for i in 0..a_len {
+                        the_par.set(i + 1, if i < self.myparameters.len() { self.myparameters.get(i + 1) } else { 0.0 });
+                    }
+                    self.mypar.push(the_par);
+                    myfirstpt = oldlastpt;
+                    mylastpt = the_lastpt;
+                } else if my_status == ApproxStatus::NoApproximation {
+                    // OCCT L1149-1157: no approximation is done between
+                    // myfirstpt and mylastpt.
+                    go_up = true;
+                    myfirstpt = mylastpt;
+                    mylastpt = the_lastpt;
+                }
             }
             if myfirstpt == the_lastpt {
                 finish = true;
@@ -1790,29 +1822,6 @@ impl ComputeLine {
                     finish = true;
                     self.alldone = true;
                     return;
-                }
-                // OCCT L1118-1147: NoPointsAdded with a small part — keep the
-                // best approximation obtained so far.
-                if my_status == ApproxStatus::NoPointsAdded && nbp <= self.mydegremax + 5 {
-                    go_up = true;
-                    self.tolreached = false;
-                    if self.the_multi_curve.nb_curves() == 0 {
-                        self.mymulti_curves.clear();
-                        return;
-                    }
-                    self.mymulti_curves.push(self.the_multi_curve.clone());
-                    self.tolers3d.push(self.currenttol3d);
-                    self.tolers2d.push(self.currenttol2d);
-                    let mylen = oldlastpt - myfirstpt + 1;
-                    let my_par_len = self.myparameters.len();
-                    let a_len = my_par_len.max(mylen);
-                    let mut the_par = VecD::new(a_len);
-                    for i in 0..a_len {
-                        the_par.set(i + 1, if i < self.myparameters.len() { self.myparameters.get(i + 1) } else { 0.0 });
-                    }
-                    self.mypar.push(the_par);
-                    myfirstpt = oldlastpt;
-                    mylastpt = the_lastpt;
                 }
             }
         }
