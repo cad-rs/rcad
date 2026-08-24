@@ -45,6 +45,11 @@ impl ProjectOnSurface {
     /// OCCT: Perform(aP) — find closest point on surface.
     pub fn perform(&mut self, point: DVec3) {
         let (uv, proj) = crate::bop::closest_point_on_surface(&self.surf, point);
+        if std::env::var("RCAD_PROJ_DEBUG").is_ok() {
+            eprintln!("[PROJ] surf={:?} point=({:.3},{:.3},{:.3}) -> uv=({:.4},{:.4}) proj=({:.3},{:.3},{:.3}) dist={:.4}",
+                std::mem::discriminant(&self.surf), point.x, point.y, point.z,
+                uv.x, uv.y, proj.x, proj.y, proj.z, (proj - point).length());
+        }
         // OCCT ProjPS (IntTools_Context.cxx L257-260): Init(aS, Umin, Usup,
         // Vmin, Vsup) restricts the projection to the face's UV rectangle.
         // For a periodic (closed) U direction the unconstrained solution is
@@ -65,7 +70,19 @@ impl ProjectOnSurface {
         } else {
             u = u.clamp(u0, u1);
         }
-        v = v.clamp(self.uv_bounds[2], self.uv_bounds[3]);
+        let v0 = self.uv_bounds[2];
+        let v1 = self.uv_bounds[3];
+        if rcad_kernel::geom::SurfaceEval::is_v_periodic(&self.surf) {
+            // OCCT ProjPS wraps periodic directions (same argument as U): a
+            // torus v = -PI/2 and v = 3*PI/2 are the SAME point, clamping would
+            // move the solution to a wrong 3D location.
+            let period = v1 - v0;
+            if period > 0.0 && period.is_finite() {
+                v = v0 + (v - v0).rem_euclid(period);
+            }
+        } else {
+            v = v.clamp(v0, v1);
+        }
         if u == uv.x && v == uv.y {
             self.last_uv = Some(uv);
             self.last_point = Some(proj);

@@ -264,6 +264,11 @@ impl FClassifier {
     /// OCCT BRepClass_FClassifier::Perform(F, P, Tol) — classify a 2D point
     /// against the face using a BRepClass_FaceExplorer.
     pub fn perform(&mut self, ds: &dyn ShapeSource, face: usize, p: DVec2, tol: f64) {
+        if std::env::var("RCAD_FC_DEBUG").is_ok() {
+            let surf = ds.face_surface(face);
+            eprintln!("[FC] face={} p=({:.4},{:.4}) tol={:.3e} surf={:?}", face, p.x, p.y, tol,
+                surf.as_ref().map(|s| std::mem::discriminant(s)));
+        }
         let mut fexp = FaceExplorer::new(ds, face);
         fexp.set_max_tolerance(0.1);
         fexp.set_use_bnd_box(false);
@@ -307,6 +312,10 @@ impl FClassifier {
                     {
                         if let Some(an_edge) = fexp.current_edge(ds) {
                             self.classifier.compare(&an_edge, an_edge_ori, ds);
+                            if std::env::var("RCAD_FC_DEBUG").is_ok() {
+                                eprintln!("[FC]   edge ori={:?} state={:?} n_pts={}", an_edge_ori,
+                                    self.classifier.state(), self.classifier.intersector().nb_points());
+                            }
                             let a_closest_ind = self.classifier.closest_intersection();
                             if a_closest_ind != 0 {
                                 let an_intersector = self.classifier.intersector();

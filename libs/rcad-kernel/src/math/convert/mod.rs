@@ -1158,6 +1158,7 @@ fn try_sphere_torus(
     Some(Surface3::Torus(crate::geom::ToroidalSurface {
         center,
         axis: torus_circle.normal,
+        ref_dir: torus_circle.x_dir,
         major_radius: major_r,
         minor_radius: r,
     }))

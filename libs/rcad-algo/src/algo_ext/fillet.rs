@@ -779,6 +779,7 @@ fn compute_cylinder_plane_fillet(
         Ok(Surface3::Torus(ToroidalSurface {
             center,
             axis: cylinder_axis,
+            ref_dir: cylinder.ref_dir,
             major_radius,
             minor_radius,
         }))
@@ -819,6 +820,7 @@ fn compute_general_fillet_surface(
     Ok(Surface3::Torus(ToroidalSurface {
         center,
         axis,
+        ref_dir: DVec3::X,
         major_radius,
         minor_radius,
     }))
@@ -843,6 +845,7 @@ fn compute_toroidal_fillet_surface(
     Ok(Surface3::Torus(ToroidalSurface {
         center,
         axis,
+        ref_dir: DVec3::X,
         major_radius,
         minor_radius,
     }))

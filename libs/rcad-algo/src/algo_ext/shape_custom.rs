@@ -1799,6 +1799,7 @@ fn try_detect_torus(surface: &BSplineSurface, tolerance: f64) -> Option<Toroidal
     Some(ToroidalSurface {
         center: centroid,
         axis,
+        ref_dir: DVec3::X,
         major_radius,
         minor_radius,
     })

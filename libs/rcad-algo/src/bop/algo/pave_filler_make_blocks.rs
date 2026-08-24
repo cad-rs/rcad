@@ -303,6 +303,12 @@ impl PaveFiller {
                 let ff = &a_ffs[a_cur_ind];
                 (ff.f1, ff.f2, ff.points.clone(), ff.curves.clone())
             };
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                eprintln!("[MB] i={} ff=({},{}) n_p={} n_c={} curves={:?}", i, n_f1, n_f2,
+                    a_vp.len(), a_vc_indices.len(),
+                    a_vc_indices.iter().map(|&cid| format!("{}:{:?}", cid,
+                        self.ds.intersection_curves.get(cid).map(|ic| std::mem::discriminant(&ic.curve)))).collect::<Vec<_>>());
+            }
             let a_nb_p = a_vp.len();
             let a_nb_c = a_vc_indices.len();
             if a_nb_p == 0 && a_nb_c == 0 {
@@ -347,6 +353,19 @@ impl PaveFiller {
 
             // 2. Treat Curves (OCCT L793-851)
             self.get_stick_vertices(n_f1, n_f2, &mut a_mv_stick, &mut a_mv_ef, &mut a_mi);
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                let mv: Vec<String> = a_mv_on_in.iter().map(|&v| {
+                    let p = self.ds.vertex_point_by_idx(v);
+                    format!("v{}:({:.2},{:.2},{:.2})", v, p.x, p.y, p.z)
+                }).collect();
+                let ef: Vec<String> = a_mv_ef.iter().map(|&v| {
+                    let p = self.ds.vertex_point_by_idx(v);
+                    format!("v{}:({:.2},{:.2},{:.2})", v, p.x, p.y, p.z)
+                }).collect();
+                eprintln!("[MB] after get_stick: mv_on_in={} [{}] mv_common={} mv_stick={} mv_ef={} [{}] mi={}",
+                    a_mv_on_in.len(), mv.join(" "), a_mv_common.len(), a_mv_stick.len(),
+                    a_mv_ef.len(), ef.join(" "), a_mi.len());
+            }
 
             for &cid in &a_vc_indices {
                 if cid >= self.ds.intersection_curves.len() { continue; }
@@ -1085,6 +1104,9 @@ impl PaveFiller {
             }
         }
         if b_is_vertex_on_line {
+            if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                eprintln!("[MB] put_pave v={} cid={} t={:.6} on_line=true", n_v, cid, a_t);
+            }
             // OCCT L2994-3003: aDTol + aPTol = Resolution(max(aTolR3D, aTolV)).
             let a_dtol = crate::bop::tools::algo_tools::d_tolerance();
             let a_ptol = crate::bop::algo::pave_filler::shrunk_range_resolution(

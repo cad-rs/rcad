@@ -939,9 +939,16 @@ pub fn int_cyto(
     slin: &mut Vec<IntPatchLine>,
 ) -> bool {
     let (a_cyl, a_torus) = if b_reversed { (quad2, quad1) } else { (quad1, quad2) };
-    let _ = (a_cyl, a_torus);
     let mut inter = QuadQuadGeo::new();
-    inter.perform_cylinder_torus(quad1, quad2, tol_tang);
+    // OCCT IntCyTo (IntPatch_ImpImpIntersection.cxx L9571-9574): the analytic
+    // solver receives the cylinder and the torus in the corrected order
+    // (bReversed swaps them), matching IntAna_QuadQuadGeo(gp_Cylinder, gp_Torus).
+    inter.perform_cylinder_torus(&a_cyl, &a_torus, tol_tang);
+    if std::env::var("RCAD_CYTO_DEBUG").is_ok() {
+        eprintln!("[CYTO] done={} type={:?} nbint={} r_cyl={:.4} rmaj={:.4} rmin={:.4} rev={}",
+            inter.is_done(), inter.type_inter(), inter.nb_solutions(),
+            a_cyl.radius(), a_torus.major_radius(), a_torus.minor_radius(), b_reversed);
+    }
     treat_result_torus(quad1, quad2, &inter, b_empty, slin)
 }
 
@@ -955,9 +962,11 @@ pub fn int_coto(
     b_empty: &mut bool,
     slin: &mut Vec<IntPatchLine>,
 ) -> bool {
-    let _ = (b_reversed, quad1, quad2);
+    // OCCT IntCoTo (IntPatch_ImpImpIntersection.cxx L9589-9590): the cone and
+    // the torus are passed to the analytic solver in the corrected order.
+    let (a_cone, a_torus) = if b_reversed { (quad2, quad1) } else { (quad1, quad2) };
     let mut inter = QuadQuadGeo::new();
-    inter.perform_cone_torus(quad1, quad2, tol_tang);
+    inter.perform_cone_torus(&a_cone, &a_torus, tol_tang);
     treat_result_torus(quad1, quad2, &inter, b_empty, slin)
 }
 
@@ -971,9 +980,11 @@ pub fn int_spto(
     b_empty: &mut bool,
     slin: &mut Vec<IntPatchLine>,
 ) -> bool {
-    let _ = (b_reversed, quad1, quad2);
+    // OCCT IntSpTo (IntPatch_ImpImpIntersection.cxx L9607-9608): the sphere and
+    // the torus are passed to the analytic solver in the corrected order.
+    let (a_sph, a_torus) = if b_reversed { (quad2, quad1) } else { (quad1, quad2) };
     let mut inter = QuadQuadGeo::new();
-    inter.perform_sphere_torus(quad1, quad2, tol_tang);
+    inter.perform_sphere_torus(&a_sph, &a_torus, tol_tang);
     treat_result_torus(quad1, quad2, &inter, b_empty, slin)
 }
 

@@ -1791,6 +1791,23 @@ impl IntCurveSurfaceHInter {
                 );
                 hits.iter().map(&mkpt).collect::<Vec<_>>()
             }
+            // OCCT IntCurveSurface_InterUtils::ProcessLinTorus
+            // (IntCurveSurface_InterUtils.pxx L1283-1315): the line is intersected
+            // with the torus analytically (IntAna_IntLinTorus), unlike the other
+            // conic×quadric pairs which use IntAna_IntConicQuad.  The quartic
+            // roots are validated by re-evaluating the surface at the solution.
+            (GeomAbsCurveType::Line, GeomAbsSurfaceType::Torus) => {
+                let line3 = curve.line();
+                let tor3 = surface.torus();
+                let hits =
+                    crate::geomalgo::int_patch::curve_surface::intersect_line_torus_with_tol(
+                        line3,
+                        [first, last],
+                        &tor3,
+                        precision_confusion(),
+                    );
+                hits.iter().map(&mkpt).collect::<Vec<_>>()
+            }
             (GeomAbsCurveType::Circle, GeomAbsSurfaceType::Plane) => {
                 let circ3 = curve.circle();
                 let plane3 = surface.plane();

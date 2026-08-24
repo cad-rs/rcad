@@ -350,10 +350,18 @@ impl BRep {
         last: Shape,
         range: [f64; 2],
     ) -> Shape {
-        // OCCT-aligned: edge identity by (first, last) �?curve carried on TShape directly.
+        // OCCT: BRepBuilderAPI_MakeEdge always creates a NEW edge TShape. The
+        // dedup cache below is only valid for curve-less (degenerate) edges
+        // keyed by their vertex pair; curved edges must stay distinct even
+        // when they share the same vertex pair (e.g. the torus meridian and
+        // tube circles all share the single seam vertex — deduping them by
+        // (first,last) collapses the lateral wire to one edge).
         let ekey = (first.ptr_id(), last.ptr_id(), false);
-        if let Some(sr) = self.edge_by_key.get(&ekey) {
-            return sr.clone();
+        let curve_is_none = curve.is_none();
+        if curve_is_none {
+            if let Some(sr) = self.edge_by_key.get(&ekey) {
+                return sr.clone();
+            }
         }
         let index = self.tshapes.len();
         // OCCT: BRep_Tool::Parameter stores vertex→param mapping on edge creation.
@@ -407,7 +415,9 @@ impl BRep {
             orientation: Orientation::Forward,
             location: 0,
         };
-        self.edge_by_key.insert(ekey, sr.clone());
+        if curve_is_none {
+            self.edge_by_key.insert(ekey, sr.clone());
+        }
         sr
     }
 
@@ -895,8 +905,12 @@ impl BRep {
                     c.ref_dir = mat.transform_vector3(c.ref_dir).normalize_or_zero();
                 }
                 Surface3::Torus(t) => {
+                    // OCCT gp_Torus::Transform → gp_Ax3::Transform: the full
+                    // frame (axis, XDirection=ref_dir, YDirection) transforms,
+                    // so a rotated torus keeps its seam position in UV.
                     t.center = mat.transform_point3(t.center);
                     t.axis = mat.transform_vector3(t.axis).normalize_or_zero();
+                    t.ref_dir = mat.transform_vector3(t.ref_dir).normalize_or_zero();
                 }
                 Surface3::Ellipsoid(e) => {
                     e.center = mat.transform_point3(e.center);

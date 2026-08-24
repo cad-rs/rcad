@@ -590,8 +590,14 @@ impl ConicalSurface {
 pub struct ToroidalSurface {
     pub center: Point3,
     pub axis: Vec3,
+    #[serde(default = "torus_ref_dir_default")]
+    pub ref_dir: Vec3,
     pub major_radius: f64,
     pub minor_radius: f64,
+}
+
+fn torus_ref_dir_default() -> Vec3 {
+    DVec3::X
 }
 
 /// An ellipsoidal surface aligned to a local orthonormal frame.
@@ -2062,6 +2068,7 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
         Surface3::Torus(t) => Surface3::Torus(ToroidalSurface {
             center: loc.transform_point3(t.center),
             axis: loc.transform_vector3(t.axis).normalize_or_zero(),
+            ref_dir: loc.transform_vector3(t.ref_dir).normalize_or_zero(),
             major_radius: t.major_radius * loc.transform_vector3(t.axis).length().max(1e-12),
             minor_radius: t.minor_radius,
         }),

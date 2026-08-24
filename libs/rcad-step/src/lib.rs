@@ -6926,6 +6926,7 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
         return Some(Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
             center,
             axis,
+            ref_dir: rcad_kernel::geom::any_perpendicular(axis),
             major_radius: *major_radius,
             minor_radius: *minor_radius,
         }));

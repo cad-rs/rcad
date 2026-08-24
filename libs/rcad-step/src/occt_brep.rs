@@ -457,11 +457,12 @@ fn parse_surface(c: &mut Cursor<'_>) -> Result<Surface3, OcctBrepError> {
         "5" => {
             let p = c.parse_point3()?;
             let dz = c.parse_dir3()?;
-            let _dx = c.parse_dir3()?;
+            let dx = c.parse_dir3()?;
             let _dy = c.parse_dir3()?;
             Ok(Surface3::Torus(ToroidalSurface {
                 center: p,
                 axis: dz,
+                ref_dir: dx,
                 major_radius: c.parse_f64()?,
                 minor_radius: c.parse_f64()?,
             }))

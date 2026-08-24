@@ -1103,7 +1103,7 @@ impl PaveFiller {
     // ====================================================================
     fn perform_ee(&mut self, the_range: &ProgressScope) {
         if std::env::var("RCAD_EE_DEBUG").is_ok() {
-            eprintln!("[EE-DBG] === perform_ee START stop_after={:?}", self.stop_after);
+            eprintln!("[EE-DBG] === perform_ee START stop_after={:?} primary={}", self.stop_after, self.my_is_primary);
         }
         if the_range.user_break() { return; }
         // OCCT L147: FillShrunkData(TopAbs_EDGE, TopAbs_EDGE)
@@ -2294,6 +2294,14 @@ impl PaveFiller {
         } else {
             return;
         };
+        if std::env::var("RCAD_FF_DEBUG").is_ok() {
+            eprintln!("[FF] n_pairs={}", pairs.len());
+            for (i, j) in &pairs {
+                eprintln!("[FF] pair ({},{}) s1={:?} s2={:?}", i, j,
+                    self.ds.face_surface(*i).map(|s| std::mem::discriminant(&s)),
+                    self.ds.face_surface(*j).map(|s| std::mem::discriminant(&s)));
+            }
+        }
 
         // OCCT L294-313: collect faces from the intersection pairs and the rest
         // of the touched faces, then refresh the FaceInfo for all of them.
@@ -2510,6 +2518,12 @@ impl PaveFiller {
                 let cid = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(c);
                 curve_ids.push(cid);
+                if std::env::var("RCAD_FF_DEBUG").is_ok() {
+                    let ic = &self.ds.intersection_curves[cid];
+                    eprintln!("[FF] curve cid={} f=({},{}) type={:?} t=[{:.4},{:.4}] n_pb={}",
+                        cid, i, j, std::mem::discriminant(&ic.curve), ic.t_range[0], ic.t_range[1],
+                        ic.pave_blocks.len());
+                }
             }
             // OCCT L549-550: aFaceFace.Indices(nF1, nF2) 鈥?myIF1/myIF2, the
             // ORIGINAL pair order (BOPAlgo_FaceFace does not swap the indices;
@@ -2524,6 +2538,11 @@ impl PaveFiller {
             });
         }
         self.ds.interf_ff.extend(new_ff);
+        if std::env::var("RCAD_FF_DEBUG").is_ok() {
+            eprintln!("[FF] total_interf_ff={} total_curves={}",
+                self.ds.interf_ff.len(),
+                self.ds.intersection_curves.len());
+        }
     }
 
     /// OCCT BOPAlgo_PaveFiller::GetEFPnts (BOPAlgo_PaveFiller_6.cxx L2665-2740).

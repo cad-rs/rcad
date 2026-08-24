@@ -196,14 +196,20 @@ pub fn closest_point_on_surface(
         }
 
         Surface3::Torus(torus) => {
+            if std::env::var("RCAD_TORUS_PROJ_DEBUG").is_ok() {
+                eprintln!("[TPROJ] center=({:.3},{:.3},{:.3}) axis=({:.3},{:.3},{:.3}) R={:.3} r={:.3} query=({:.3},{:.3},{:.3})",
+                    torus.center.x, torus.center.y, torus.center.z,
+                    torus.axis.x, torus.axis.y, torus.axis.z,
+                    torus.major_radius, torus.minor_radius, query.x, query.y, query.z);
+            }
             let v = query - torus.center;
             let along = v.dot(torus.axis);
             let radial = v - torus.axis * along;
             let radial_len = radial.length();
-            let torus_ref_dir = {
-                let ref_dir = if torus.axis.x.abs() > 1.0 - 1e-12 { DVec3::Z } else { DVec3::X };
-                (ref_dir - torus.axis * ref_dir.dot(torus.axis)).normalize_or_zero()
-            };
+            // OCCT ElSLib::TorusParameters uses the torus's gp_Ax3 XDirection
+            // (the stored ref_dir, preserved through rotation) as the u=0
+            // reference — mirroring the Cylinder/Cone branches above.
+            let torus_ref_dir = torus.ref_dir.normalize_or_zero();
             let major_dir = if radial_len < 1e-14 { torus_ref_dir } else { radial / radial_len };
             let tube_center = torus.center + major_dir * torus.major_radius;
             let w = query - tube_center;
@@ -213,9 +219,21 @@ pub fn closest_point_on_surface(
             } else {
                 tube_center + w / w_len * torus.minor_radius
             };
-            let u = major_dir.dot(torus_ref_dir).atan2(major_dir.dot(torus.axis.cross(torus_ref_dir)));
+            // OCCT ElSLib::TorusParameters (ElSLib.cxx L1669): U = atan2(y, x)
+            // with x = P·Xref (equatorial reference), y = P·(axis × Xref).
+            let u = major_dir
+                .dot(torus.axis.cross(torus_ref_dir))
+                .atan2(major_dir.dot(torus_ref_dir));
             let w_dir = (point - tube_center).normalize_or_zero();
+            // OCCT: V = atan2(z, w·major_dir) — w along the axis is sin(V),
+            // w along the major direction is cos(V).
             let v_param = w_dir.dot(torus.axis).atan2(w_dir.dot(major_dir));
+            if std::env::var("RCAD_TORUS_PROJ_DEBUG").is_ok() {
+                eprintln!("[TPROJ] major_dir=({:.3},{:.3},{:.3}) ref=({:.3},{:.3},{:.3}) u={:.4} w_dir=({:.3},{:.3},{:.3}) v={:.4}",
+                    major_dir.x, major_dir.y, major_dir.z,
+                    torus_ref_dir.x, torus_ref_dir.y, torus_ref_dir.z, u,
+                    w_dir.x, w_dir.y, w_dir.z, v_param);
+            }
             SurfaceProjection {
                 point,
                 params: (u, v_param),

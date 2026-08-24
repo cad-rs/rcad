@@ -802,15 +802,17 @@ impl SurfaceEval for ConicalSurface {
 
 impl SurfaceEval for ToroidalSurface {
     /// u = major angle [0, 2π], v = minor angle [0, 2π].
+    /// OCCT-aligned: uses the stored ref_dir (gp_Ax3 XDirection) for u=0, so
+    /// a rotated torus keeps its seam position in the UV mapping.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = self.axis.cross(x_ax).normalize();
         let tube_center = self.center + self.major_radius * (u.cos() * x_ax + u.sin() * y_ax);
         let radial = (u.cos() * x_ax + u.sin() * y_ax).normalize();
         tube_center + self.minor_radius * (v.cos() * radial + v.sin() * self.axis)
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = self.axis.cross(x_ax).normalize();
         let radial = (u.cos() * x_ax + u.sin() * y_ax).normalize();
         (v.cos() * radial + v.sin() * self.axis).normalize()
@@ -819,7 +821,7 @@ impl SurfaceEval for ToroidalSurface {
         [0.0, 2.0 * PI, 0.0, 2.0 * PI]
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
-        let x_ax = any_perpendicular(self.axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = self.axis.cross(x_ax).normalize();
         let (su, cu) = u.sin_cos();
         let (sv, cv) = v.sin_cos();
@@ -863,7 +865,9 @@ impl ToroidalSurface {
     pub fn world_to_uv(self, p: DVec3) -> DVec2 {
         use std::f64::consts::TAU;
         let axis = self.axis.normalize_or_zero();
-        let x_ax = any_perpendicular(axis);
+        // OCCT ElSLib::TorusParameters uses the torus's gp_Ax3 XDirection
+        // (the stored ref_dir, preserved through rotation) as the u=0 ref.
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = axis.cross(x_ax).normalize();
         let local = p - self.center;
         let axial = local.dot(axis);

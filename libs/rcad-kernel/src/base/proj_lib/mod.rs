@@ -729,6 +729,7 @@ impl TorusProjector {
             torus: ToroidalSurface {
                 center: DVec3::ZERO,
                 axis: DVec3::Z,
+                ref_dir: DVec3::X,
                 major_radius: 3.0,
                 minor_radius: 1.0,
             },

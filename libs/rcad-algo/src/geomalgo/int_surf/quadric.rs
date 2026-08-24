@@ -321,6 +321,7 @@ impl Quadric {
         ToroidalSurface {
             center: self.loc,
             axis: self.z_dir,
+            ref_dir: self.x_dir,
             major_radius: self.prm1,
             minor_radius: self.prm2,
         }
