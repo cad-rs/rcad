@@ -76,7 +76,6 @@ impl<'a> BuilderFace<'a> {
         // the source face key's pcurve to the area face key (the shared
         // surface makes the pcurve identical).
         if let Some(src) = self.my_face.as_ref() {
-            let src_key = (src.ptr_id(), src.location);
             for area in &self.my_areas {
                 let area_key = (area.ptr_id(), area.location);
                 let mut es: Vec<Shape> = Vec::new();
@@ -91,6 +90,18 @@ impl<'a> BuilderFace<'a> {
                     }
                 }
                 for e in es {
+                    // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the
+                    // pcurve key location is L.Predivided(E.Location()) — the
+                    // face location divided by the edge's location. A LOCATED
+                    // split edge (e.g. the x=1 cap edges of a prism at the
+                    // translation location) stores its pcurve under the
+                    // composed key; the raw face key would miss it and the
+                    // area face's boundary (Green) integral would fall back to
+                    // a zero area.
+                    let src_key = (
+                        src.ptr_id(),
+                        crate::bop::algo::compose_face_edge_pcurve_location(src.location, e.location, &self.ds.locations),
+                    );
                     let raw = Arc::as_ptr(&e.data) as *mut TShape;
                     unsafe {
                         if let TShape::Edge(ed) = &mut *raw {
