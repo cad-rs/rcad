@@ -119,6 +119,10 @@ impl DirectPolynomialRoots {
         // OCCT L580-587: Ferrari's resolvent cubic.
         let mut a_success = false;
         let y0 = solve_ferrari_resolvent(scaled.a, scaled.b, scaled.c, scaled.d, &mut a_success);
+        if std::env::var("RCAD_DPR_DEBUG").is_ok() {
+            eprintln!("[DPR] quartic a={} b={} c={} d={} e={} scaled=({},{},{},{}) y0={} success={}",
+                a, b, c, d, e, scaled.a, scaled.b, scaled.c, scaled.d, y0, a_success);
+        }
         if !a_success {
             self.done = false;
             return;
@@ -129,6 +133,9 @@ impl DirectPolynomialRoots {
 
         // OCCT L593-599: solve first quadratic.
         let mut q1 = DirectPolynomialRoots::new_quadratic(1.0, factors.p1, factors.q1);
+        if std::env::var("RCAD_DPR_DEBUG").is_ok() {
+            eprintln!("[DPR] ferrari factors p1={} q1={} p2={} q2={} | q1 done={}", factors.p1, factors.q1, factors.p2, factors.q2, q1.is_done());
+        }
         if !q1.is_done() {
             self.done = false;
             return;

@@ -698,6 +698,7 @@ fn int_quad_quad_fallback(
 ) -> bool {
     let other_surf = quadric_to_surface3(other);
     let Some(other_quad) = super::int_quad_quad::IntAnaQuadric::from_surface3(&other_surf) else {
+        if std::env::var("RCAD_COCO_DEBUG").is_ok() { eprintln!("[COCO] fallback from_surface3 failed"); }
         return false;
     };
     let mut anaint = super::int_quad_quad::IntQuadQuad::new();
@@ -709,6 +710,9 @@ fn int_quad_quad_fallback(
             anaint.perform_cone(c, &other_quad);
         }
         _ => return false,
+    }
+    if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+        eprintln!("[COCO] fallback anaint done={} n_curves={} n_points={}", anaint.is_done(), anaint.nb_curves(), anaint.nb_points());
     }
     if !anaint.is_done() {
         return false;
@@ -807,6 +811,10 @@ fn int_quad_quad_fallback(
                 kept = true;
             }
             if kept {
+                if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+                    eprintln!("[COCO] fallback curve i={} domain={:?} first_open={} last_open={} ptf={:?} ptl={:?} first={} last={}",
+                        i, d, firstp, lastp, ptf, ptl, first, last);
+                }
                 let mut alig = aline(curvsol.clone(), false, trans1, trans2);
                 let mut n_firstp = !firstp;
                 let mut n_lastp = !lastp;
@@ -825,6 +833,10 @@ fn int_quad_quad_fallback(
                         multpoint,
                         tol,
                     );
+                }
+                if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+                    eprintln!("[COCO] fallback curve i={} after-bounds n_vtx={} n_firstp={} n_lastp={}",
+                        i, alig.a_curve.as_ref().map(|c| c.vertices.len()).unwrap_or(0), n_firstp, n_lastp);
                 }
                 slin.push(alig);
             }
@@ -1264,6 +1276,11 @@ pub fn int_coco(
 
     let mut inter = QuadQuadGeo::new();
     inter.perform_cone_cone(quad1, quad2, tol);
+    if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+        eprintln!("[COCO] apex1={:?} apex2={:?} axis1={:?} axis2={:?} r1={} r2={} done={} type={:?} nbsol={} empty_before={}",
+            apex1, apex2, co1.axis_dir(), co2.axis_dir(), co1.radius, co2.radius,
+            inter.is_done(), inter.type_inter(), inter.nb_solutions(), *empty);
+    }
     if !inter.is_done() {
         return false;
     }
@@ -1462,6 +1479,8 @@ pub fn int_coco(
             slin.push(glig);
         }
         AnaResultType::NoGeometricSolution => {
+            let slin_before = slin.len();
+            let spnt_before = spnt.len();
             let ok = int_quad_quad_fallback(
                 quad1,
                 quad2,
@@ -1476,6 +1495,10 @@ pub fn int_coco(
                 1.0e-9,
                 true,
             );
+            if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+                eprintln!("[COCO] fallback ok={} slin {} -> {} spnt {} -> {} empty={}",
+                    ok, slin_before, slin.len(), spnt_before, spnt.len(), *empty);
+            }
             if !ok {
                 return false;
             }

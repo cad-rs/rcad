@@ -1,4 +1,4 @@
-﻿// Created on: 1993-01-21
+// Created on: 1993-01-21
 // Created by: Jacques GOUSSARD
 // Copyright (c) 1993-1999 Matra Datavision
 // Copyright (c) 1999-2014 OPEN CASCADE SAS
@@ -521,6 +521,9 @@ impl IntPatchIntersection {
             if imp_imp.line(i).line_type == super::IntPatchIType::Analytic
                 && imp_imp.line(i).a_curve.is_some()
             {
+                if std::env::var("RCAD_FF_DEBUG").is_ok() {
+                    eprintln!("[FF] geom_geom: ALine->WLine i={} n_vtx={}", i, imp_imp.line(i).nb_vertex());
+                }
                 is_wl_exist = true;
                 a_to_w.make_wline(imp_imp.line_mut(i), &mut self.slin);
             } else {

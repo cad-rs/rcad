@@ -992,6 +992,10 @@ impl QuadQuadGeo {
         } else {
             f64::INFINITY
         };
+        if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+            eprintln!("[COCO] qqg tg1={} tg2={} |tg1-tg2|={} eps_ang={} parallel={} eps_axes={} dist_between={}",
+                tg1, tg2, (tg1 - tg2).abs(), self.my_epsilon_angle_cone, parallel, self.my_epsilon_axes_para, dist_between);
+        }
         let is_same_axis = parallel && dist_between <= 1e-14;
         if is_same_axis {
             // OCCT L1478-1521: same axis
@@ -1031,8 +1035,12 @@ impl QuadQuadGeo {
             // intersect that plane with cone 1.
             let dist_a1a2 = dist_between;
             let da1 = a1;
-            let geom_apex1 = c1.axis_loc() - da1 * (c1.radius() / tg1.abs().max(1e-300));
-            let geom_apex2 = c2.axis_loc() - da1 * (c2.radius() / tg2.abs().max(1e-300));
+            // OCCT L1529/L1543: O1O2(Con1.Apex(), Con2.Apex()) and
+            // P1 = Con1.Apex() + ... — the TRUE apexes (gp_Cone::Apex), not a
+            // reference-point backtrack.  apex_point() derives the true apex
+            // from the reference point, radius and signed half-angle.
+            let geom_apex1 = c1.cone().apex_point();
+            let geom_apex2 = c2.cone().apex_point();
             let o1o2 = geom_apex2 - geom_apex1;
             let o1o2n = o1o2.normalize_or_zero();
             let o1o2_da1 = da1.dot(o1o2n);
@@ -1055,6 +1063,11 @@ impl QuadQuadGeo {
             };
             let mut inter_quad_pln = QuadQuadGeo::new();
             inter_quad_pln.perform_plane_cone(&Quadric::from_plane(&pln), c1, tol, tol);
+            if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+                eprintln!("[COCO] branch2 geom_apex1={:?} geom_apex2={:?} o1o2={:?} db1={:?} y={} x1={} x2={} p1={:?} ortho={:?} pln.done={} pln.type={:?} nbsol={}",
+                    geom_apex1, geom_apex2, o1o2, db1, y_o1o2, x1, x2, p1, ortho_pln,
+                    inter_quad_pln.is_done(), inter_quad_pln.type_inter(), inter_quad_pln.nb_solutions());
+            }
             if inter_quad_pln.is_done() {
                 match inter_quad_pln.type_inter() {
                     AnaResultType::Ellipse => {

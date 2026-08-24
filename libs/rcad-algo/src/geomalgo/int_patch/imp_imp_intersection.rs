@@ -437,6 +437,9 @@ impl ImpImpIntersection {
 
         if !nosolon_s1 || !nosolon_s2 {
             self.empt = false;
+            if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+                eprintln!("[COCO] sonbounds pnt1={} edg1={} pnt2={} edg2={}", pnt1.len(), edg1.len(), pnt2.len(), edg2.len());
+            }
             // OCCT L2910: PutPointsOnLine(S1, S2, pnt1, slin, true, D1, quad1, quad2, multpoint, TolArc);
             super::restriction::put_points_on_line(
                 s1, s2, &pnt1, &mut self.slin, true, &d1, &q1, &q2, multpoint,

@@ -533,19 +533,31 @@ impl MathTrigFunctionRoots {
             let x = teta - my_borne_inf;
             if x >= -delta_eps(delta) && x <= delta + delta_eps(delta) {
                 let mut t = teta;
-                // Newton refinement of the trig equation.
+                // OCCT math_TrigonometricFunctionRoots L460-478: Newton via
+                // math_NewtonFunctionRoot, which keeps the BEST estimate — the
+                // X with the smallest |F| (math_NewtonFunctionRoot.cxx L89,
+                // L116-120, L151: BestX/BestFx, X = BestX at the end).  Near a
+                // double root DFx->0 makes the step explode from |F| noise, so
+                // returning the last iterate drifts away; returning BestX
+                // keeps the (near-exact) initial guess.
+                let mut best_t = teta;
+                let mut best_f = f64::MAX;
                 let mut nit = 0;
                 while nit < 10 {
                     let (f, df) = trig_value_deriv(a, b, c, d, e, t);
+                    if f.abs() < best_f {
+                        best_f = f.abs();
+                        best_t = t;
+                    }
                     if df.abs() < 1e-15 { break; }
                     let dt = f / df;
                     t -= dt;
                     if dt.abs() < tol1 { break; }
                     nit += 1;
                 }
-                let delta_newton = t - teta;
+                let delta_newton = best_t - teta;
                 if delta_newton <= sup_minus_inf_100 && delta_newton >= -sup_minus_inf_100 {
-                    teta = t;
+                    teta = best_t;
                 }
                 // insert teta in increasing order
                 let mut flag4 = false;
@@ -636,6 +648,11 @@ impl TrigRoots {
         let pippi = TWO_PI;
         let mut tr = TrigRoots { roots: [0.0; 4], done: false, nb_roots: 0, infinite_roots: false };
         let mtfr = MathTrigFunctionRoots::new(cc, sc, c, s, cte, binf, bsup);
+        if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+            eprintln!("[COCO] trigroots cc={} sc={} c={} s={} cte={} mtfr done={} inf={} n={} roots={:?}",
+                cc, sc, c, s, cte, mtfr.is_done(), mtfr.infinite_roots(), mtfr.nb_solutions(),
+                (0..mtfr.nb_solutions().min(4)).map(|i| mtfr.value(i)).collect::<Vec<_>>());
+        }
         if !mtfr.is_done() {
             return tr;
         }
@@ -809,8 +826,13 @@ impl IntAnaCurve {
         let r = con.radius;
         let apex = con.apex;
         let axis = con.axis.normalize_or_zero();
-        let x = any_perpendicular_axis(axis);
+        // OCCT IntAna_Curve::SetConeQuadValues L113: Ax3 = Cone.Position() —
+        // the gp_Cone's Ax3 (XDirection = ref_dir).
+        let x = con.ref_dir.normalize_or_zero();
         let y = axis.cross(x).normalize_or_zero();
+        // OCCT L116-117: Angle = Cone.SemiAngle(); UnSurTgAngle =
+        // 1./tan(SemiAngle()) — gp_Cone's SemiAngle keeps the taper sign
+        // (negative when the radius shrinks along the axis).
         let angle = con.half_angle_rad;
         let un_sur_tg_angle = 1.0 / angle.tan();
         IntAnaCurve {
@@ -1790,15 +1812,28 @@ impl IntQuadQuad {
         let qx = quad.cx; let qy = quad.cy; let qz = quad.cz; let q1 = quad.ccte;
 
         // Transform the quadric into the cone's APEX frame.
+        // OCCT L868-870: gp_Ax3 tAx3(Cone.Position()); tAx3.SetLocation(Cone.Apex());
+        // Quad.NewCoefficients(..., tAx3) — the frame is the gp_Cone's Ax3,
+        // whose XDirection is the cone's ref_dir (u=0 generatrix), NOT an
+        // arbitrary perpendicular.
         let apex = con.apex_point();
         let axis = con.axis.normalize_or_zero();
-        let x_dir = any_perpendicular_axis(axis);
+        let x_dir = con.ref_dir.normalize_or_zero();
         let y_dir = axis.cross(x_dir).normalize_or_zero();
         let q = quad.new_coefficients(x_dir, y_dir, axis, apex);
         let qxx = q.cxx; let qyy = q.cyy; let qzz = q.czz;
         let qxy = q.cxy; let qxz = q.cxz; let qyz = q.cyz;
         let qx = q.cx; let qy = q.cy; let qz = q.cz; let q1 = q.ccte;
+        if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+            eprintln!("[COCO] iqq Q: Qxx={} Qyy={} Qzz={} Qxy={} Qxz={} Qyz={} Qx={} Qy={} Qz={} Q1={} apex={:?} xdir={:?} ydir={:?} axis={:?} half={}",
+                qxx, qyy, qzz, qxy, qxz, qyz, qx, qy, qz, q1, apex, x_dir, y_dir, axis, con.half_angle_rad);
+        }
 
+        // OCCT L872: TgAngle = 1. / std::tan(Cone.SemiAngle()) — gp_Cone's
+        // SemiAngle() keeps the taper sign ((r2-r1).atan2(h), negative when the
+        // radius shrinks along the axis; OCCT's BRepPrimAPI_MakeCone builds the
+        // same signed semi-angle).  The cone frame origin is the TRUE apex
+        // (apex_point), matching gp_Cone::Apex.
         let tg_angle = 1.0 / con.half_angle_rad.tan();
 
         // A(t) for the quadratic in the "radius" parameter (the cone
@@ -1810,6 +1845,9 @@ impl IntQuadQuad {
         let z2_c = tg_angle * qxz;
         let z2_s = tg_angle * qyz;
         let pol_z2 = TrigRoots::new(z2_cc - z2_ss, z2_sc, z2_c + z2_c, z2_s + z2_s, z2_cte + z2_ss, 0.0, TWO_PI);
+        if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+            eprintln!("[COCO] iqq apex={:?} axis={:?} tg_angle={} pol_z2 done={} inf={} n={}", apex, axis, tg_angle, pol_z2.is_done(), pol_z2.infinite_roots(), pol_z2.nb_solutions());
+        }
         if !pol_z2.is_done() {
             self.done = false;
             return;
@@ -1820,6 +1858,9 @@ impl IntQuadQuad {
         let z1_s = qy;
         let z1_c = qx;
         let pol_z1 = TrigRoots::new(0.0, 0.0, z1_c + z1_c, z1_s + z1_s, z1_cte, 0.0, TWO_PI);
+        if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+            eprintln!("[COCO] iqq z1c={} z1s={} z1cte={} pol_z1 done={} inf={} n={}", z1_c, z1_s, z1_cte, pol_z1.is_done(), pol_z1.infinite_roots(), pol_z1.nb_solutions());
+        }
         if !pol_z1.is_done() {
             self.done = false;
             return;
@@ -1855,6 +1896,9 @@ impl IntQuadQuad {
         let c_c = tg_angle * (qx * qz - qxz * q1);
         let c_sc = qx * qy - qxy * q1;
         let pol = TrigRoots::new(c_cc - c_ss, c_sc, c_c + c_c, c_s + c_s, c_1 + c_ss, 0.0, TWO_PI);
+        if std::env::var("RCAD_COCO_DEBUG").is_ok() {
+            eprintln!("[COCO] iqq discr c_cc={} c_ss={} c_sc={} c_c={} c_s={} c_1={} pol done={} inf={} n={}", c_cc, c_ss, c_sc, c_c, c_s, c_1, pol.is_done(), pol.infinite_roots(), pol.nb_solutions());
+        }
         if !pol.is_done() {
             self.done = false;
             return;
