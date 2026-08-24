@@ -915,7 +915,12 @@ impl QuadQuadGeo {
         }
         let dist = cyl.radius() / con.semi_angle().tan();
         let dir = cyl_axis.normalize_or_zero();
-        let apex = con.axis_loc();
+        // OCCT L1324-1344: Pt = Con.Apex() — the GEOMETRIC apex (gp_Cone.cxx
+        // L66-74: pos + (0,0,-radius/tan(semiAngle))), NOT the reference
+        // point (the circle of the stored radius at the axis location). The
+        // rcad ConicalSurface stores the reference point in `apex`; the
+        // geometric apex lies radius/tan(semiAngle) behind it.
+        let apex = con.axis_loc() - dir * (con.radius() / con.semi_angle().tan());
         self.pt1 = apex + dist * dir;
         self.pt2 = apex - dist * dir;
         self.dir1 = dir;

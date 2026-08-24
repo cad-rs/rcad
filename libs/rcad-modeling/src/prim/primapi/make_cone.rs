@@ -63,7 +63,19 @@ impl MakeCone {
         // Closed circular edges: OCCT stores the two coincident endpoint nodes
         // with opposite orientations ([V:FWD, V:REV], AddEdgeVertex direct).
         let e_bot = t.add_tedge(Some(Curve3::Circle(bot_circle)), bot_v.clone(), rev_v(&bot_v), [0.0, std::f64::consts::TAU]);
-        let e_top = t.add_tedge(Some(Curve3::Circle(top_circle)), top_v.clone(), rev_v(&top_v), [0.0, std::f64::consts::TAU]);
+        // OCCT BRepPrim_OneAxis::TopEdge (BRepPrim_OneAxis.cxx L1185-1229):
+        // when the top meridian is on the axis (R2 == 0, the apex), the top
+        // edge is built by MakeDegeneratedEdge (L1212) — a CURVE-LESS edge
+        // flagged degenerated (BRepPrim_Builder.cxx L73-77: MakeEdge +
+        // Degenerated(E, true)).  A radius-0 circle would NOT be flagged
+        // degenerated, and the boolean BuilderSolid's PerformShapesToAvoid
+        // would treat the apex edge of a split cone cap as a free boundary
+        // (nbF=1) and drop the cap (bopfuse_simple ZP4).
+        let e_top = if self.r2 <= 1e-12 {
+            t.add_tedge(None, top_v.clone(), rev_v(&top_v), [0.0, std::f64::consts::TAU])
+        } else {
+            t.add_tedge(Some(Curve3::Circle(top_circle)), top_v.clone(), rev_v(&top_v), [0.0, std::f64::consts::TAU])
+        };
         let e_seam = t.add_tedge(Some(Curve3::Line(seam)), bot_v.clone(), rev_v(&top_v), [0.0, seam_len]);
         // OCCT BRepPrim_Cone::LateralFace builds the lateral gp_Cone from the
         // full Ax3 (Axes().XDirection defines u=0), so the ref_dir is threaded
