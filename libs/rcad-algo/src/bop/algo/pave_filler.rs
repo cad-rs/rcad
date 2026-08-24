@@ -1874,15 +1874,6 @@ impl PaveFiller {
             let (i_flag, common_parts, min_dist) = self.my_context.compute_ef(
                 cand.n_e, cand.n_f, cand.range.0, cand.range.1, cand.express, &self.ds, self.my_fuzzy_value);
             a_nb_cprts = common_parts.len();
-            if std::env::var("RCAD_EF_DEBUG").is_ok() {
-                let epts = self.ds.edge_curve(cand.n_e).map(|c| {
-                    let p0 = c.point_at(cand.raw_range.0);
-                    let p1 = c.point_at(cand.raw_range.1);
-                    format!("({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})", p0.x, p0.y, p0.z, p1.x, p1.y, p1.z)
-                }).unwrap_or_default();
-                eprintln!("[EF-RES] e={} f={} flag={} ncp={} min={:.3e} epts={}",
-                    cand.n_e, cand.n_f, i_flag, a_nb_cprts, min_dist, epts);
-            }
             if i_flag != 0 {
                 continue;
             }

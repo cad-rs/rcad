@@ -2182,16 +2182,6 @@ impl<'a> Builder<'a> {
                 self.build_pcurve_for_edges_on_plane(&a_le, &a_ff);
             }
             // OCCT L502-505: aBF.SetFace(aF); aBF.SetShapes(aLE); SetRunParallel.
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                let desc: Vec<String> = a_le.iter().map(|e| {
-                    let pts = e.as_edge().map(|ed| {
-                        let c = ed.curve.as_ref().map(|c| format!("c={:?}", std::mem::discriminant(c))).unwrap_or_default();
-                        format!("ori={:?} {} eidx={}", e.orientation, c, self.ds.index(e))
-                    }).unwrap_or_default();
-                    pts
-                }).collect();
-                eprintln!("[BSF-LE] face={} n_le={} {}", i, a_le.len(), desc.join(" | "));
-            }
             a_vbf.push((i, a_f, a_le));
         }
 

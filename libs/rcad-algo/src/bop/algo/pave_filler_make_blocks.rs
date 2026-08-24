@@ -2929,12 +2929,19 @@ impl PaveFiller {
                     if self.pb_in_face(n_f, a_pb) {
                         continue;
                     }
-                    // OCCT: IntTools_EdgeFace coincidence check → CommonBlock.
-                    // rcad: approximate with the EF intersection.
-                    let n_e = a_pb.0.read().unwrap().edge;
-                    let (i_flag, _t, _tol) = self.my_context.compute_ef(
-                        n_e, n_f, 0.0, 0.0, false, &self.ds, self.my_fuzzy_value);
-                    if i_flag == 0 {
+                    // OCCT L3454-3472: IntTools_EdgeFace with the PB's parameter
+                    // range; bCoincide = exactly one common part of EDGE type.
+                    // A vertex-type part (the edge merely touches the face, e.g.
+                    // a seam edge tangent to a crossing cylinder) must NOT add
+                    // the PB to the face's IN list (bopcommon_simple ze9).
+                    let (n_e, p1, p2) = {
+                        let r = a_pb.0.read().unwrap();
+                        (r.edge, r.pave1.param, r.pave2.param)
+                    };
+                    let (i_flag, common_parts, _tol) = self.my_context.compute_ef(
+                        n_e, n_f, p1, p2, false, &self.ds, self.my_fuzzy_value);
+                    let b_coincide = i_flag == 0 && common_parts.len() == 1 && common_parts[0].2;
+                    if b_coincide {
                         let cb_idx = if let Some(cb) = self.ds.common_block(a_pb) {
                             cb
                         } else {
