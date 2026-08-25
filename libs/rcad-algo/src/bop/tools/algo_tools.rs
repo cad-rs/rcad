@@ -533,7 +533,7 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
             );
             let mykey = (face.ptr_id(), face.location);
             let mut ppts: Vec<glam::DVec2> = Vec::new();
-            let mut pcurve_ok = !is_u_band;
+            let mut pcurve_ok = true;
             for &(ei, rev) in &order {
                 let e = &edges[ei];
                 let ed = match &*e.data {
@@ -543,7 +543,28 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                         break;
                     }
                 };
-                let Some((pc, t1, t2)) = ed.pcurves.get(&mykey) else {
+                // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-361): a
+                // closed surface seam edge (CurveOnClosedSurface) returns the
+                // second pcurve for a REVERSED edge and the first otherwise —
+                // the two wire instances of the seam map to u=2*PI and u=0.
+                let (pc, t1, t2) = if let Some((pc1, pc2, range)) = ed.representations.iter().find_map(|r| match r {
+                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                        face: f,
+                        pcurve1,
+                        pcurve2,
+                        range,
+                    } if *f == mykey => Some((pcurve1.clone(), pcurve2.clone(), *range)),
+                    _ => None,
+                }) {
+                    let pc = if e.orientation == rcad_kernel::topods::Orientation::Reversed {
+                        pc2
+                    } else {
+                        pc1
+                    };
+                    (pc, range[0], range[1])
+                } else if let Some(v) = ed.pcurves.get(&mykey) {
+                    v.clone()
+                } else {
                     pcurve_ok = false;
                     break;
                 };
@@ -557,7 +578,7 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                 let (ta, tb) = if rev { (tb, ta) } else { (ta, tb) };
                 for i in 0..=PCURVE_SAMPLES {
                     let t = ta + (tb - ta) * (i as f64) / (PCURVE_SAMPLES as f64);
-                    let uv = rcad_kernel::geom::Curve2dEval::point_at(pc, t);
+                    let uv = rcad_kernel::geom::Curve2dEval::point_at(&pc, t);
                     if ppts.last().map(|q| (*q - uv).length() < 1e-9).unwrap_or(false) {
                         continue;
                     }
