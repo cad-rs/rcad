@@ -1742,7 +1742,8 @@ impl IntCurveSurfaceHInter {
         // OCCT L119-137: Line/Circle/Ellipse/Parabola/Hyperbola use IntAna_IntConicQuad
         let mkpt = |h: &crate::geomalgo::int_patch::curve_surface::CurveSurfaceHit| {
             // Surface (u, v) at the hit point, via projection (ElSLib::Parameters).
-            IntCurveSurfaceIntersectionPoint::new(h.curve_param, 0.0, 0.0)
+            let proj = closest_point_on_surface(surf, h.point, 16);
+            IntCurveSurfaceIntersectionPoint::new(h.curve_param, proj.params.0, proj.params.1)
         };
         let analytic_hits = match (crv_type, srf_type) {
             (GeomAbsCurveType::Line, GeomAbsSurfaceType::Plane) => {
