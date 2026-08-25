@@ -201,8 +201,10 @@ impl PaveBlock {
     }
 
     pub fn contains_parameter(&self, prm: f64, tol: f64, ind: &mut usize) -> bool {
+        // OCCT BOPDS_PaveBlock::ContainsParameter (BOPDS_PaveBlock.cxx L227-244):
+        // bRet = (abs(aPave.Parameter() - theT) < theTol).
         for pv in &self.ext_paves {
-            if (pv.param - prm).abs() <= tol {
+            if (pv.param - prm).abs() < tol {
                 *ind = pv.vertex_idx;
                 return true;
             }

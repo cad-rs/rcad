@@ -1477,8 +1477,32 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_BOP::SetTools.
+    ///
+    /// OCCT stores the tool shapes as-is; the DS references the same TShape
+    /// handles, so myTools identity == the DS/myImages keys. rcad's DS
+    /// deep-clones the arguments (SetNonDestructive, clone_arguments_private),
+    /// so the tools must be remapped to the DS clones before any myImages
+    /// lookup (BuildRC/BuildShape key by TShape + Location) — the original
+    /// BRep shapes carry different TShape identities and never match the
+    /// split results.
     pub fn set_tools(&mut self, tools: Vec<Shape>) {
-        self.my_tools = tools;
+        self.my_tools = tools
+            .into_iter()
+            .map(|t| {
+                let orig = t.ptr_id();
+                match self.ds.argument_remap.get(&orig) {
+                    Some(&new_ptr) if new_ptr != orig => match self
+                        .ds
+                        .map_shape_index
+                        .get(&(new_ptr, t.location))
+                    {
+                        Some(&idx) => self.ds.shape(idx).clone(),
+                        None => t,
+                    },
+                    _ => t,
+                }
+            })
+            .collect();
     }
 
     /// Shape backed by shared Arc in ds.shapes 鈥?OCCT myDS->Shape(n).

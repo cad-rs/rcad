@@ -923,12 +923,28 @@ impl IntToolsContext {
     ) -> bool {
         let a_mid_par = crate::bop::int_tools::face_make_curve::intermediate_point(the_t1, the_t2);
         let a_p = the_c.curve.point_at(a_mid_par);
-        // OCCT L739-753: check both faces.
-        let b_flag1 = self.is_valid_point_for_face(a_p, the_f1, ds, the_tol);
-        if !b_flag1 {
-            return false;
+        // OCCT IntTools_Context::IsValidBlockForFaces (IntTools_Context.cxx
+        // L717-754): for each face use the curve's 2D pcurve for the mid-point
+        // classification when available (IsPointInOnFace — ON counts as valid),
+        // otherwise project the 3D point (IsValidPointForFace). The 2D path is
+        // decisive for section blocks lying outside the face's UV domain.
+        let mut b_flag = true;
+        for (a_pc, a_f) in [
+            (the_c.pcurve1.as_ref(), the_f1),
+            (the_c.pcurve2.as_ref(), the_f2),
+        ] {
+            if !b_flag {
+                break;
+            }
+            b_flag = match a_pc {
+                Some(pc) => {
+                    let a_pnt2d = rcad_kernel::geom::Curve2dEval::point_at(pc, a_mid_par);
+                    self.is_point_in_on_face(ds, a_f, a_pnt2d)
+                }
+                None => self.is_valid_point_for_face(a_p, a_f, ds, the_tol),
+            };
         }
-        self.is_valid_point_for_face(a_p, the_f2, ds, the_tol)
+        b_flag
     }
 
     /// OCCT IntTools_Context::ProjPS (IntTools_Context.cxx L247-265).

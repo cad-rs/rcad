@@ -299,20 +299,51 @@ fn epsilon(par: f64) -> f64 {
     par.abs() * eps
 }
 
-// OCCT theCurve.Resolution(theTol) 鈥?parametric step for given 3D tolerance.
-// Approximated by sampling derivative magnitude on the sub-range [t1, t2].
+/// OCCT GeomAdaptor_Curve::Resolution(R3D) (GeomAdaptor_Curve.cxx L1116-1149)
+/// — the parameter step for the 3D tolerance R3D, per curve type. The adaptor
+/// unwraps trimmed curves to their base type; Offset and the remaining types
+/// take the default Precision::Parametric(R3D).
 pub(crate) fn shrunk_range_resolution(curve: &Curve3, t1: f64, t2: f64, tol: f64) -> f64 {
-    let n_samples = 100;
-    let dt = (t2 - t1) / n_samples as f64;
-    if dt <= 0.0 { return 1e-3; }
-    let mut max_speed = 1e-12;
-    for i in 0..=n_samples {
-        let t = t1 + dt * i as f64;
-        let d = curve.derivative_at(t);
-        let speed = d.length();
-        if speed > max_speed { max_speed = speed; }
+    match curve {
+        // OCCT L1120-1121: GeomAbs_Line -> R3D.
+        Curve3::Line(_) => tol,
+        // OCCT L1122-1132: GeomAbs_Circle -> R > R3D/2 ? 2*asin(R3D/(2R)) : 2*PI.
+        Curve3::Circle(c) => {
+            let r = c.radius;
+            if r > tol / 2.0 {
+                2.0 * (tol / (2.0 * r)).asin()
+            } else {
+                2.0 * std::f64::consts::PI
+            }
+        }
+        // OCCT L1133-1135: GeomAbs_Ellipse -> R3D / MajorRadius.
+        Curve3::Ellipse(e) => tol / e.major_radius,
+        // GeomAdaptor_Curve unwraps a trimmed curve to its base curve.
+        Curve3::Trimmed(t) => shrunk_range_resolution(&t.curve, t1, t2, tol),
+        // OCCT Geom_BezierCurve/Geom_BSplineCurve::Resolution =
+        // R3D * myMaxDerivInv, with myMaxDerivInv the inverse of the max
+        // derivative bound from BSplCLib::Resolution. rcad approximates it by
+        // sampling the derivative magnitude over the range [t1, t2].
+        Curve3::Bezier(_) | Curve3::BSpline(_) => {
+            let n_samples = 100;
+            let dt = (t2 - t1) / n_samples as f64;
+            if dt <= 0.0 {
+                return 1e-3;
+            }
+            let mut max_speed = 1e-12;
+            for i in 0..=n_samples {
+                let t = t1 + dt * i as f64;
+                let d = curve.derivative_at(t);
+                let speed = d.length();
+                if speed > max_speed {
+                    max_speed = speed;
+                }
+            }
+            (tol / max_speed).max(rcad_kernel::PCONFUSION)
+        }
+        // OCCT default (L1146-1148): Precision::Parametric(R3D).
+        _ => 0.01 * tol,
     }
-    (tol / max_speed).max(rcad_kernel::PCONFUSION)
 }
 
 // OCCT GCPnts_AbscissaPoint::Length 鈥?adaptive arc length.

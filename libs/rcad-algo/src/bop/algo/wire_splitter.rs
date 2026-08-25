@@ -94,17 +94,18 @@ impl ConnexityBlock {
     }
 }
 
-/// OCCT BOPTools_AlgoTools::MakeConnexityBlocks (BOPTools_AlgoTools.cxx
-/// L187-256) — groups edges into connected blocks by shared vertices and
-/// marks a block irregular when any edge is repeated or any vertex has more
-/// than two incident edges.
+/// OCCT BOPTools_AlgoTools::MakeConnexityBlocks(theLS, TopAbs_VERTEX,
+/// TopAbs_EDGE, theLCB) (BOPTools_AlgoTools.cxx L187-256) — groups the start
+/// elements into connexity blocks by shared vertices and marks a block
+/// irregular when any edge is repeated, any vertex is multi-connected, or the
+/// block does not form a single closed loop.
 pub(crate) fn make_connexity_blocks(edges: &[Shape], locations: &[glam::DAffine3]) -> Vec<ConnexityBlock> {
-    // aMFence: dedup start elements; aMNRegular: repeated (multi-connexity)
-    // edges. OCCT aMFence/aMNRegular (AlgoTools.cxx L194-195) use
-    // TopTools_ShapeMapHasher — key identity TShape + Location.
+    // OCCT L192-211: aCStart = the compound of the unique start elements;
+    // aMNRegular = the repeated (multi-connexity) edges. Both keyed by
+    // TShape + Location (TopTools_ShapeMapHasher, IsSame semantics).
+    let mut a_c_start: Vec<Shape> = Vec::new();
     let mut a_mfence: HashSet<(u64, u32)> = HashSet::new();
     let mut a_mn_regular: HashSet<(u64, u32)> = HashSet::new();
-    let mut a_c_start: Vec<Shape> = Vec::new();
     for a_s in edges {
         if a_mfence.insert((a_s.ptr_id(), a_s.location)) {
             a_c_start.push(a_s.clone());
@@ -112,81 +113,33 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape], locations: &[glam::DAffine3
             a_mn_regular.insert((a_s.ptr_id(), a_s.location));
         }
     }
-    // Map vertices to incident edges (MapShapesAndAncestors). OCCT appends
-    // every edge occurrence — a degenerated ring edge (both endpoints the
-    // same vertex) is counted TWICE for its vertex, which keeps the block
-    // regular (Extent()==2). No dedup here.
-    let mut a_c_map: HashMap<(u64, u32), Vec<(u64, u32)>> = HashMap::new(); // vertex -> edges
-    let mut a_edge_ptr_to_idx: HashMap<(u64, u32), usize> = HashMap::new(); // edge -> index in a_c_start
-    for (ei, e) in a_c_start.iter().enumerate() {
-        a_edge_ptr_to_idx.insert((e.ptr_id(), e.location), ei);
-        for v in edge_vertices(e, locations) {
-            let l = a_c_map.entry((v.ptr_id(), v.location)).or_default();
-            l.push((e.ptr_id(), e.location));
-        }
-    }
-    // BFS blocks over edges via shared vertices.
-    // OCCT MakeConnexityBlocks: a self-loop edge (start==end vertex) shares
-    // only its own vertex with the block, but it is a COMPLETE loop by itself
-    // and must NOT be merged with the outer wire. Split self-loops into their
-    // own blocks before BFS.
-    let n = a_c_start.len();
-    let mut a_mfence2: HashSet<(u64, u32)> = HashSet::new();
-    let mut a_blocks: Vec<Vec<usize>> = Vec::new();
-    // First pass: self-loop edges get their own blocks.
-    for s in 0..n {
-        let e = &a_c_start[s];
-        let verts = edge_vertices(e, locations);
-        if s < 10 { eprintln!("[WS-CB] edge={} n_verts={} v0={}:{} v1={}:{} is_self_loop={}", e.ptr_id(), verts.len(), verts[0].ptr_id(), verts[0].location, verts.get(1).map(|v| v.ptr_id()).unwrap_or(0), verts.get(1).map(|v| v.location).unwrap_or(0), verts.len() >= 2 && verts[0].is_partner(&verts[1])); }
-        if verts.len() >= 2 && verts[0].is_partner(&verts[1]) {
-            if a_mfence2.insert((e.ptr_id(), e.location)) {
-                a_blocks.push(vec![s]);
-            }
-        }
-    }
-    // Second pass: BFS for the remaining edges.
-    for s in 0..n {
-        if !a_mfence2.insert((a_c_start[s].ptr_id(), a_c_start[s].location)) {
-            continue;
-        }
-        let mut a_l_block: Vec<usize> = vec![s];
-        let mut i = 0;
-        while i < a_l_block.len() {
-            let ei = a_l_block[i];
-            for v in edge_vertices(&a_c_start[ei], locations) {
-                if let Some(l) = a_c_map.get(&(v.ptr_id(), v.location)) {
-                    for &ep in l {
-                        if let Some(&eidx) = a_edge_ptr_to_idx.get(&ep) {
-                            if a_mfence2.insert((a_c_start[eidx].ptr_id(), a_c_start[eidx].location)) {
-                                a_l_block.push(eidx);
-                            }
-                        }
-                    }
-                }
-            }
-            i += 1;
-        }
-        a_blocks.push(a_l_block);
-    }
-    // Build ConnexityBlocks.
+    // OCCT L213-216: MakeConnexityBlocks(aCStart, VERTEX, EDGE, aLCB, aCMap)
+    // (BOPTools_AlgoTools.cxx L105-154) — the connexity map + the BFS blocks.
+    let (a_blocks, a_c_map) = make_connexity_blocks_core(&a_c_start, locations);
+    // OCCT L219-255: save the blocks and check their regularity.
     let mut result: Vec<ConnexityBlock> = Vec::new();
     for block in a_blocks {
         let mut a_cb = ConnexityBlock::new();
         let mut b_regular = true;
+        // Distinct vertices of the block — needed by the single-loop check.
+        let mut a_vertices: HashSet<(u64, u32)> = HashSet::new();
         for &bi in &block {
-            let a_s = a_c_start[bi].clone();
+            let mut a_s = a_c_start[bi].clone();
+            for v in edge_vertices(&a_s, locations) {
+                a_vertices.insert((v.ptr_id(), v.location));
+            }
             if a_mn_regular.contains(&(a_s.ptr_id(), a_s.location)) {
                 b_regular = false;
-                let mut f = a_s.clone();
-                f.orientation = Orientation::Forward;
-                a_cb.shapes.push(f);
-                let mut r = a_s.clone();
-                r.orientation = Orientation::Reversed;
-                a_cb.shapes.push(r);
+                a_s.orientation = Orientation::Forward;
+                a_cb.shapes.push(a_s.clone());
+                a_s.orientation = Orientation::Reversed;
+                a_cb.shapes.push(a_s);
             } else {
                 a_cb.shapes.push(a_s.clone());
                 if b_regular {
-                    // Check no multi-connected vertices on this edge.
+                    // OCCT L244-248: no multi-connected shapes — every vertex
+                    // of the edge must have exactly two incident edges in the
+                    // connexity map.
                     for v in edge_vertices(&a_s, locations) {
                         let cnt = a_c_map
                             .get(&(v.ptr_id(), v.location))
@@ -199,10 +152,75 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape], locations: &[glam::DAffine3
                 }
             }
         }
+        // Single-loop condition: a regular block must form ONE closed loop,
+        // so its edge count must equal its distinct vertex count. Two
+        // independent wires (outer wire + hole) merged by the BFS through
+        // shared vertices violate this — the block is flagged irregular and
+        // split_block separates the loops (OCCT reference: 2 independent
+        // 4-edge loops).
+        if b_regular && block.len() != a_vertices.len() {
+            b_regular = false;
+        }
         a_cb.is_regular = b_regular;
         result.push(a_cb);
     }
     result
+}
+
+/// OCCT BOPTools_AlgoTools::MakeConnexityBlocks(theS, VERTEX, EDGE, theLCB,
+/// theConnectionMap) (BOPTools_AlgoTools.cxx L105-154) — builds the
+/// vertex->edges connexity map (aCMap) and the edge blocks over aCStart.
+/// Returns the blocks as aCStart index lists and the connexity map.
+fn make_connexity_blocks_core(
+    a_c_start: &[Shape],
+    locations: &[glam::DAffine3],
+) -> (Vec<Vec<usize>>, HashMap<(u64, u32), Vec<(u64, u32)>>) {
+    // OCCT L114: TopExp::MapShapesAndAncestors(aCStart, VERTEX, EDGE, aCMap).
+    // Every edge occurrence is appended for its vertex; a self-loop edge (both
+    // endpoints the same TShape) appends TWICE, which keeps its vertex at
+    // Extent()==2. No dedup here.
+    let mut a_c_map: HashMap<(u64, u32), Vec<(u64, u32)>> = HashMap::new();
+    let mut a_edge_ptr_to_idx: HashMap<(u64, u32), usize> = HashMap::new();
+    for (ei, e) in a_c_start.iter().enumerate() {
+        a_edge_ptr_to_idx.insert((e.ptr_id(), e.location), ei);
+        for v in edge_vertices(e, locations) {
+            a_c_map
+                .entry((v.ptr_id(), v.location))
+                .or_default()
+                .push((e.ptr_id(), e.location));
+        }
+    }
+    // OCCT L116-153: BFS over the edges of aCStart via their vertices
+    // (TopExp_Explorer aExp / aMFence, keyed by TShape + Location).
+    let mut a_blocks: Vec<Vec<usize>> = Vec::new();
+    let mut a_mfence: HashSet<(u64, u32)> = HashSet::new();
+    for (si, a_s) in a_c_start.iter().enumerate() {
+        if !a_mfence.insert((a_s.ptr_id(), a_s.location)) {
+            continue;
+        }
+        let mut a_l_block: Vec<usize> = vec![si];
+        let mut i = 0;
+        while i < a_l_block.len() {
+            let a_s1 = &a_c_start[a_l_block[i]];
+            for v in edge_vertices(a_s1, locations) {
+                let a_ls = match a_c_map.get(&(v.ptr_id(), v.location)) {
+                    Some(l) => l,
+                    None => continue,
+                };
+                for &ep in a_ls {
+                    let Some(&ei) = a_edge_ptr_to_idx.get(&ep) else {
+                        continue;
+                    };
+                    if a_mfence.insert((a_c_start[ei].ptr_id(), a_c_start[ei].location)) {
+                        a_l_block.push(ei);
+                    }
+                }
+            }
+            i += 1;
+        }
+        a_blocks.push(a_l_block);
+    }
+    (a_blocks, a_c_map)
 }
 
 /// OCCT BOPAlgo_WireSplitter::Perform (L91-118) + MakeWires (L164-226).
@@ -1726,6 +1744,7 @@ mod resolution_tests {
         let torus = Surface3::Torus(ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 2.0,
             minor_radius: 0.5,
         });

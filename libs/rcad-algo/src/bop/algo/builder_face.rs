@@ -979,34 +979,43 @@ fn boxes_overlap(a: [f64; 4], b: [f64; 4]) -> bool {
 /// theF is the previously-assigned growth face, so the same `against_edges`
 /// semantic applies.
 fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], against_edges: &[Shape]) -> bool {
-    // OCCT BOPAlgo_BuilderFace::IsInside (BuilderFace.cxx L850-895):
-    // for each edge of the hole wire (theWire1), sample the pcurve midpoint
-    // and check if it is IN the growth face (theWire2). Returns true as soon
-    // as any edge's midpoint is inside. OCCT does NOT short-circuit on shared
-    // edges — a shared edge's midpoint lies on the boundary (State::On), not
-    // In, so it naturally continues to the next edge.
+    // OCCT BOPAlgo_BuilderFace::IsInside (BuilderFace.cxx L842-894).
+    // OCCT L850-851: aFaceEdgesMap = TopExp::MapShapes(theF, EDGE) with the
+    // identity hasher (TShape + Location, orientation ignored).
+    let a_face_edges: std::collections::HashSet<(u64, u32)> = against_edges
+        .iter()
+        .map(|e| (e.ptr_id(), e.location))
+        .collect();
+    // OCCT L860-893: iterate the wire edges; the first edge that is not
+    // degenerated, is not contained in the face and has a pcurve decides.
     for e in wire_edges {
+        // OCCT L864-868: skip degenerated edges.
         let degen = e.as_edge().map(|ed| ed.degenerated).unwrap_or(true);
         if degen {
             continue;
         }
+        // OCCT L870-875: the face contains the edge from the wire, thus the
+        // wire cannot be inside that face.
+        if a_face_edges.contains(&(e.ptr_id(), e.location)) {
+            return false;
+        }
+        // OCCT L877-883: get the 2D curve of the edge on the face; skip if
+        // the curve is null.
         let (pc, t1, t2) = match edge_pcurve_on_face(e, face_index, ds) {
             Some(v) => v,
             None => continue,
         };
+        // OCCT L885-891: classify the middle point; the first classification
+        // decides the result.
         let p = Curve2dEval::point_at(&pc, 0.5 * (t1 + t2));
-        // OCCT L890-891: aState = aClassifier.Perform(aP2D); isInside = (aState == IN).
         let fclass2d = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new_for_loop(
             ds,
             face_index,
             ds.face_tolerance(face_index),
             against_edges,
         );
-        if fclass2d.perform(ds, p, true)
-            == crate::topalgo::brep_top_adaptor::fclass2d::State::In
-        {
-            return true;
-        }
+        return fclass2d.perform(ds, p, true)
+            == crate::topalgo::brep_top_adaptor::fclass2d::State::In;
     }
     false
 }
