@@ -1250,14 +1250,8 @@ impl Part21Writer {
             face_orientation_for_surface_topods(tbrep, &loop_points, face_tshape_idx)
         };
 
-        // Separate degenerate edges (self-loop) from normal edges
-        let mut degen_verts: Vec<usize> = Vec::new();
         let mut edge_entries: Vec<(usize, usize, usize, u64, bool)> = Vec::new();
         for edge in &oriented_edges {
-            if edge.start == edge.end {
-                degen_verts.push(edge.start);
-                continue;
-            }
             let edge_curve = if seam_edge_indices.contains(&edge.edge_idx) {
                 self.write_seam_edge_curve_topods(edge.edge_idx, face_surface.clone())
             } else {
@@ -1350,12 +1344,6 @@ impl Part21Writer {
 
         let edge_loop = self.edge_loop("outer_loop", &oriented_ids);
         let mut bounds = vec![self.face_bound("outer_bound", edge_loop, true)];
-
-        for &dvi in &degen_verts {
-            let vp = self.vertex_point_by_tshape_idx(dvi);
-            let vl = self.vertex_loop("degen_loop", vp);
-            bounds.push(self.face_bound("degen_bound", vl, true));
-        }
 
         // SplitCommonVertex: collect outer wire vertices
         let outer_verts: HashSet<usize> = oriented_edges
