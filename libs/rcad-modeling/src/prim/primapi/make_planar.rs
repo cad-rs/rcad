@@ -75,10 +75,17 @@ pub fn make_planar_polygon_brep(
     let (outer_wire, outer_edges) = make_polygon_wire(&mut brep, outer)?;
     let mut inner_wires = Vec::new();
     let mut inner_edges = Vec::new();
+    let mut hole_polys: Vec<Vec<DVec3>> = Vec::new();
     for poly in holes {
-        let (w, edges) = make_polygon_wire(&mut brep, poly)?;
+        // A valid planar face orients the hole wires opposite to the outer
+        // wire (the hole interior stays OUT of the bounded face — OCCT
+        // BRepGProp_Gauss boundary integral subtracts a CW hole).  Reverse the
+        // point chain so the hole boundary runs clockwise.
+        let reversed: Vec<DVec3> = poly.iter().rev().copied().collect();
+        let (w, edges) = make_polygon_wire(&mut brep, &reversed)?;
         inner_wires.push(w);
         inner_edges.push(edges);
+        hole_polys.push(reversed);
     }
     let face = brep.add_tface(
         Some(Surface3::Plane(plane)),
@@ -94,7 +101,7 @@ pub fn make_planar_polygon_brep(
         DVec2::new((p - origin).dot(plane.u_dir), (p - origin).dot(plane.v_dir))
     };
     // OCCT BRepLib::SameParameter: attach the planar 2D curves to the edges.
-    let polygons = std::iter::once(outer).chain(holes.iter().map(|v| v.as_slice()));
+    let polygons = std::iter::once(outer).chain(hole_polys.iter().map(|v| v.as_slice()));
     let mut edge_groups = vec![outer_edges];
     edge_groups.extend(inner_edges);
     for (poly, edges) in polygons.zip(edge_groups) {

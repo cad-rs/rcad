@@ -979,17 +979,16 @@ fn boxes_overlap(a: [f64; 4], b: [f64; 4]) -> bool {
 /// theF is the previously-assigned growth face, so the same `against_edges`
 /// semantic applies.
 fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], against_edges: &[Shape]) -> bool {
-    let face_set: HashSet<(u64, u32)> = against_edges
-        .iter()
-        .map(|e| (e.ptr_id(), e.location))
-        .collect();
+    // OCCT BOPAlgo_BuilderFace::IsInside (BuilderFace.cxx L850-895):
+    // for each edge of the hole wire (theWire1), sample the pcurve midpoint
+    // and check if it is IN the growth face (theWire2). Returns true as soon
+    // as any edge's midpoint is inside. OCCT does NOT short-circuit on shared
+    // edges — a shared edge's midpoint lies on the boundary (State::On), not
+    // In, so it naturally continues to the next edge.
     for e in wire_edges {
         let degen = e.as_edge().map(|ed| ed.degenerated).unwrap_or(true);
         if degen {
             continue;
-        }
-        if face_set.contains(&(e.ptr_id(), e.location)) {
-            return false;
         }
         let (pc, t1, t2) = match edge_pcurve_on_face(e, face_index, ds) {
             Some(v) => v,
@@ -997,18 +996,17 @@ fn is_inside_wire(ds: &DS, face_index: usize, wire_edges: &[Shape], against_edge
         };
         let p = Curve2dEval::point_at(&pc, 0.5 * (t1 + t2));
         // OCCT L890-891: aState = aClassifier.Perform(aP2D); isInside = (aState == IN).
-        // OCCT IntTools_Context::FClass2d(aFace) (IntTools_Context.cxx L225-242)
-        // builds the classifier from the face theF — the temporary face whose
-        // only wire is the growth loop — so the loop edges must be passed here
-        // (BOPAlgo_BuilderFace.cxx L437-445).
         let fclass2d = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new_for_loop(
             ds,
             face_index,
             ds.face_tolerance(face_index),
             against_edges,
         );
-        return fclass2d.perform(ds, p, true)
-            == crate::topalgo::brep_top_adaptor::fclass2d::State::In;
+        if fclass2d.perform(ds, p, true)
+            == crate::topalgo::brep_top_adaptor::fclass2d::State::In
+        {
+            return true;
+        }
     }
     false
 }

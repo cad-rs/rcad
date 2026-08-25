@@ -2213,6 +2213,32 @@ impl<'a> Builder<'a> {
             // the original face, which OCCT does not do.
             if std::env::var("RCAD_BS_DEBUG").is_ok() {
                 eprintln!("[BSF-AREA] face={} n_areas={}", fi, a_bf.my_areas.len());
+                for ar in &a_bf.my_areas {
+                    let mut wins: Vec<String> = Vec::new();
+                    if let TShape::Face(fd) = &*ar.data {
+                        for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                            if let TShape::Wire(wd) = &*w.data {
+                                wins.push(format!("[{}]", wd.edges.iter().map(|e| format!("{}", e.ptr_id() % 100000)).collect::<Vec<_>>().join(",")));
+                            }
+                        }
+                    }
+                    eprintln!("[BSF-AREA]   area {} {}", ar.ptr_id() % 100000, wins.join(" "));
+                    if let TShape::Face(fd2) = &*ar.data {
+                        for w in std::iter::once(&fd2.outer_wire).chain(fd2.inner_wires.iter()) {
+                            if let TShape::Wire(wd) = &*w.data {
+                                for e in &wd.edges {
+                                    let ed = match &*e.data { TShape::Edge(ed) => ed, _ => continue };
+                                    let (pa, pb) = match (&*ed.first.data, &*ed.last.data) {
+                                        (TShape::Vertex(va), TShape::Vertex(vb)) => (va.point, vb.point),
+                                        _ => (DVec3::ZERO, DVec3::ZERO),
+                                    };
+                                    eprintln!("[BSF-AREA]     edge {} p=({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})",
+                                        e.ptr_id() % 100000, pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
+                                }
+                            }
+                        }
+                    }
+                }
             }
             a_faces_im.entry(*fi).or_default().extend(a_bf.my_areas);
         }
@@ -4204,6 +4230,12 @@ impl<'a> Builder<'a> {
 
                 // OCCT L1505-1509: IsInternalFace on the representative face.
                 let is_in = is_internal_face(a_fc_shape, a_sd, &a_mef, the_tol, ds) == 1;
+                if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                    eprintln!("[F3D-CLS] solid_ptr={} block=[{}] repr={} is_in={}",
+                        a_sd.ptr_id() % 100000,
+                        a_lcb.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(","),
+                        a_fc_shape.ptr_id() % 100000, is_in);
+                }
                 if is_in {
                     // OCCT L1510-1517: the whole connexity block is IN. Each
                     // face appears in exactly one block (aMFDone fence), so no
@@ -4306,6 +4338,24 @@ impl<'a> Builder<'a> {
             // OCCT L516: SetShapes(aSFS).
             bs.my_shapes = a_sfs;
             bs.perform();
+            if std::env::var("RCAD_SPLIT_DEBUG").is_ok() {
+                eprintln!("[SPLIT] solid ptr={} nAreas={}", a_s.ptr_id(), bs.my_solids.len());
+                for ar in &bs.my_solids {
+                    let mut fds: Vec<String> = Vec::new();
+                    for f in collect_solid_faces(ar) {
+                        let mut wins: Vec<String> = Vec::new();
+                        if let TShape::Face(fd) = &*f.data {
+                            for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                                if let TShape::Wire(wd) = &*w.data {
+                                    wins.push(format!("[{}]", wd.edges.iter().map(|e| format!("{}", e.ptr_id() % 100000)).collect::<Vec<_>>().join(",")));
+                                }
+                            }
+                        }
+                        fds.push(format!("{}:{}", f.ptr_id() % 100000, wins.join(" ")));
+                    }
+                    eprintln!("[SPLIT]   area {} faces=[{}]", ar.ptr_id() % 100000, fds.join(" | "));
+                }
+            }
 
             // OCCT L542: aSolidsIm.Add(aBS.Solid(), aBS.Areas()) 鈥?keyed by the
             // split solid's mySolid (the source solid).
@@ -5181,6 +5231,30 @@ impl<'a> Builder<'a> {
         }
         // OCCT L1106: myShape = aResult.
         self.set_shape_from_shapes(a_result);
+        if std::env::var("RCAD_SPLIT_DEBUG").is_ok() {
+            if let Some(brep) = self.my_shape.as_ref() {
+                eprintln!("[FINAL-CUT] n_shapes={}", brep.tshapes.len());
+                for (i, ts) in brep.tshapes.iter().enumerate() {
+                    match &**ts {
+                        topods::TShape::Face(fd) => {
+                            let mut wins: Vec<String> = Vec::new();
+                            for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                                if let topods::TShape::Wire(wd) = &*brep.tshapes[w.index] {
+                                    wins.push(format!("[{}]", wd.edges.iter().map(|we| format!("{}", we.index)).collect::<Vec<_>>().join(",")));
+                                }                            }
+                            eprintln!("[FINAL-CUT]   [{}] face idx={} {}", i, i, wins.join(" "));
+                        }
+                        topods::TShape::Solid(sd) => {
+                            eprintln!("[FINAL-CUT]   [{}] solid n_shells={}", i, sd.shells.len());
+                        }
+                        topods::TShape::Shell(sh) => {
+                            eprintln!("[FINAL-CUT]   [{}] shell n_faces={}", i, sh.faces.len());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     /// OCCT BOPAlgo_BOP::BuildRC (BOPAlgo_BOP.cxx L597-881).
@@ -5556,6 +5630,19 @@ impl<'a> Builder<'a> {
         // result solids must not create internal shells.
         let mut a_rc: Vec<Shape> = Vec::new();
         if !a_sfs.is_empty() {
+            if std::env::var("RCAD_SPLIT_DEBUG").is_ok() {
+                for f in &a_sfs {
+                    let mut wins: Vec<String> = Vec::new();
+                    if let TShape::Face(fd) = &*f.data {
+                        for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                            if let TShape::Wire(wd) = &*w.data {
+                                wins.push(format!("[{}]", wd.edges.iter().map(|e| format!("{}", e.ptr_id() % 100000)).collect::<Vec<_>>().join(",")));
+                            }
+                        }
+                    }
+                    eprintln!("[BS-FACES] face={} {}", f.ptr_id() % 100000, wins.join(" "));
+                }
+            }
             let mut a_bs = crate::bop::algo::builder_solid::BuilderSolid::new(&self.ds);
             a_bs.my_shapes = a_sfs;
             a_bs.set_avoid_internal_shapes(true);
@@ -5567,6 +5654,21 @@ impl<'a> Builder<'a> {
             }
             for a_sr in &a_bs.my_solids {
                 a_rc.push(a_sr.clone());
+                if std::env::var("RCAD_SPLIT_DEBUG").is_ok() {
+                    let mut fds: Vec<String> = Vec::new();
+                    for f in collect_solid_faces(a_sr) {
+                        let mut wins: Vec<String> = Vec::new();
+                        if let TShape::Face(fd) = &*f.data {
+                            for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                                if let TShape::Wire(wd) = &*w.data {
+                                    wins.push(format!("[{}]", wd.edges.iter().map(|e| format!("{}", e.ptr_id() % 100000)).collect::<Vec<_>>().join(",")));
+                                }
+                            }
+                        }
+                        fds.push(format!("{}:{}", f.ptr_id() % 100000, wins.join(" ")));
+                    }
+                    eprintln!("[BS-RES] solid {} faces=[{}]", a_sr.ptr_id() % 100000, fds.join(" | "));
+                }
             }
         }
         // OCCT L1273-1279: add untouched solids.

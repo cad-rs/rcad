@@ -60,8 +60,17 @@ fn try_analytic_face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize
     let surf = &surf_idx;
 
     match surf {
-        Surface3::Plane(_) => try_planar_face_area_shoelace(brep, face, face.normal)
-            .or_else(|| try_planar_face_exact_contour_area(brep, face, face.normal)),
+        Surface3::Plane(_) => {
+            let r = try_planar_face_area_shoelace(brep, face, face.normal)
+                .or_else(|| try_planar_face_exact_contour_area(brep, face, face.normal));
+            if std::env::var("RCAD_AREA_DEBUG").is_ok() {
+                eprintln!("[AREA] plane face n_wires={} outer_edges={} inner={} shoelace_or_exact={:?}",
+                    face.inner_wires.len() + 1, face.outer_wire.edges.len(),
+                    face.inner_wires.iter().map(|w| w.edges.len()).collect::<Vec<_>>(),
+                    r);
+            }
+            r
+        }
 
         Surface3::Cylinder(cyl) =>
             try_cylinder_trimmed_face_area(cyl, brep, face, face_flat_idx),
