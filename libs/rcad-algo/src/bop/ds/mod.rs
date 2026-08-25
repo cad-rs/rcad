@@ -2887,6 +2887,20 @@ impl DS {
         if !any {
             return [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY];
         }
+        // OCCT BRepTools::AddUVBounds (BRepTools.cxx L202-281) keeps the
+        // boundary pcurve box as-is for a U-periodic surface — the edge
+        // pcurves span the full period, so the U domain of a periodic face
+        // (cylinder/cone side, sphere, torus) is always the whole period.
+        // Sampling the 3D boundary instead wraps seam-side points across 2*PI
+        // (atan2 of a ~-0 Y component returns 2*PI) and shrinks the U domain
+        // to a sub-period, which makes ProjPS wrap valid projections onto the
+        // wrong side of the seam (box x cylinder rotated: EF intersection at
+        // the seam-side cap circle was projected to the far side and dropped).
+        use rcad_kernel::geom::SurfaceEval;
+        if rcad_kernel::geom::SurfaceEval::is_u_periodic(&surf) {
+            umin = 0.0;
+            umax = std::f64::consts::TAU;
+        }
         [umin, umax, vmin, vmax]
     }
 
