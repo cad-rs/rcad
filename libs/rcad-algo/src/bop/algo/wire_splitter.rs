@@ -126,9 +126,25 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape], locations: &[glam::DAffine3
         }
     }
     // BFS blocks over edges via shared vertices.
+    // OCCT MakeConnexityBlocks: a self-loop edge (start==end vertex) shares
+    // only its own vertex with the block, but it is a COMPLETE loop by itself
+    // and must NOT be merged with the outer wire. Split self-loops into their
+    // own blocks before BFS.
     let n = a_c_start.len();
     let mut a_mfence2: HashSet<(u64, u32)> = HashSet::new();
     let mut a_blocks: Vec<Vec<usize>> = Vec::new();
+    // First pass: self-loop edges get their own blocks.
+    for s in 0..n {
+        let e = &a_c_start[s];
+        let verts = edge_vertices(e, locations);
+        if s < 10 { eprintln!("[WS-CB] edge={} n_verts={} v0={}:{} v1={}:{} is_self_loop={}", e.ptr_id(), verts.len(), verts[0].ptr_id(), verts[0].location, verts.get(1).map(|v| v.ptr_id()).unwrap_or(0), verts.get(1).map(|v| v.location).unwrap_or(0), verts.len() >= 2 && verts[0].is_partner(&verts[1])); }
+        if verts.len() >= 2 && verts[0].is_partner(&verts[1]) {
+            if a_mfence2.insert((e.ptr_id(), e.location)) {
+                a_blocks.push(vec![s]);
+            }
+        }
+    }
+    // Second pass: BFS for the remaining edges.
     for s in 0..n {
         if !a_mfence2.insert((a_c_start[s].ptr_id(), a_c_start[s].location)) {
             continue;
@@ -664,12 +680,16 @@ fn mark_edge_passed(
     a_e: &Shape,
     in_flag: bool,
 ) {
+    // OCCT Path (L406) sets the flag on a reference into the map — the edge
+    // identity is orientation-sensitive (each EdgeInfo holds its own oriented
+    // view). For a self-loop edge (start==end vertex), the same edge appears
+    // twice in the vertex's EdgeInfo list with the same in-flag; OCCT marks
+    // both via the shared pointer, rcad must mark all matching entries.
     if let Some((_, leinfo)) = my_smart_map.get_mut(&(a_v.ptr_id(), a_v.location)) {
-        if let Some(ei) = leinfo
-            .iter_mut()
-            .find(|ei| ei.edge().is_equal(a_e) && ei.is_in() == in_flag)
-        {
-            ei.set_passed(true);
+        for ei in leinfo.iter_mut() {
+            if ei.edge().is_equal(a_e) && ei.is_in() == in_flag {
+                ei.set_passed(true);
+            }
         }
     }
 }
