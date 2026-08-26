@@ -1,7 +1,14 @@
 //! OCCT BRepGProp::SurfaceProperties (BRepGProp.cxx L167-266): surface area.
 //!
-//! 1:1 translation of the `checkprops -s` path
-//! (BRepTest_GPropCommands.cxx L123-125 → BRepGProp.cxx L268-278 → L167-266).
+//! 1:1 translation of the `checkprops -s` path.  The DRAW `checkprops` Tcl
+//! command (resources/DrawResources/CheckCommands.tcl) evaluates
+//! `sprops shape 1.0e-4` — i.e. the EPSILON overload
+//! `BRepGProp::SurfaceProperties(S, Props, Eps, SkipShared)`
+//! (BRepGProp.cxx L280-291).  With Eps = 1.0e-4 < 1.0 the per-face branch
+//! (L231-242) runs the ADAPTIVE `BRepGProp_Sinert::Perform(BF, BD, Eps)`
+//! (BRepGProp_Sinert.cxx L104-110 → BRepGProp_Gauss.cxx L533-1099) instead of
+//! the fixed-order Gauss path (L243-253).
+//!
 //! There is no analytic per-surface-type dispatch in OCCT: every face is
 //! integrated by Gauss-Legendre (whole surface for natural-restriction faces,
 //! Green-theorem line integral over the edge pcurves otherwise).
@@ -13,24 +20,23 @@ use crate::topo::topo_shape::Shape;
 use crate::topo::topods::{self, BRepTool};
 use crate::topo::topology::{Face, WireEdge};
 use crate::BRep;
+use std::f64::consts::PI;
 
 // OCCT math::GaussPoints/GaussWeights tables (math.cxx): packed positive-half
 // nodes/weights for orders 1..61 plus the GaussPoints expansion.
 include!("gauss_tables.rs");
 
-/// OCCT BRepGProp::SurfaceProperties (BRepGProp.cxx L268-278) with the
-/// `checkprops -s` arguments (BRepTest_GPropCommands.cxx L123-125):
-/// SkipShared=false, UseTriangulation=false, so surfaceProperties is called
-/// with Eps=1.0 (L277) and UseTriangulation=false.
+/// OCCT BRepGProp::SurfaceProperties with Eps = 1.0e-4 — the `checkprops -s`
+/// path (CheckCommands.tcl → BRepGProp.cxx L280-291 → surfaceProperties
+/// L231-242 → BRepGProp_Sinert.cxx L104-110).
 ///
 /// Per-face loop (L190-259):
 ///   - NoSurf/NoTri check (L198-214): rcad faces always carry a surface
 ///     (NoSurf=false) and UseTriangulation=false, so the triangulation branch
 ///     (L216-222) is never taken.
 ///   - BF.Load(F) (L225); IsNatRestr = (F.NbChildren() == 0) (L226).
-///   - Eps = 1.0 → else branch (L243-253):
-///       IsNatRestr → G.Perform(BF)     (BRepGProp_Gauss.cxx L1306-1393)
-///       else       → G.Perform(BF, BD) (BRepGProp_Gauss.cxx L1126-1211)
+///   - Eps = 1.0e-4 < 1.0 → adaptive branch (L231-242):
+///       G.Perform(BF, BD, Eps)  (BRepGProp_Gauss.cxx L533-1099)
 ///   - Props.Add(G) (L254): the face area accumulates into the total mass.
 pub fn surface_area(brep: &topods::BRep) -> f64 {
     let mut mass = 0.0;
@@ -39,16 +45,11 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
         // OCCT L226: IsNatRestr = (F.NbChildren() == 0) — the face carries no
         // wires (no outer wire edges and no inner wires).
         let is_nat_restr = face.outer_wire.edges.is_empty() && face.inner_wires.is_empty();
-        let a = if is_nat_restr {
-            face_surface_area_gauss_natural(brep, *fi)
-        } else {
-            face_surface_area_gauss_domain(brep, face, *fi)
-        };
-        // OCCT BRepGProp_Gauss::Compute (BRepGProp_Gauss.cxx L1306-1390)
-        // integrates the surface patch mass = |dS| (positive), regardless of
-        // the face orientation.  The Green theorem boundary integral used by
-        // rcad is signed — it follows the wire direction, so a face whose
-        // wires run the opposite way (e.g. the upper hemisphere after a
+        let a = face_surface_area_checkprops(brep, face, *fi, 1.0e-4, is_nat_restr);
+        // OCCT BRepGProp_Gauss::Compute (BRepGProp_Gauss.cxx L533-1099)
+        // integrates the surface patch mass = |dS| via the Green theorem
+        // boundary integral; the result follows the wire direction, so a face
+        // whose wires run the opposite way (e.g. the upper hemisphere after a
         // boolean) yields a negative value.  Take the absolute value to match
         // OCCT's positive per-face area.
         mass += a.abs();
@@ -461,4 +462,734 @@ pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f6
     }
     // convert (L1210, L467-490): |Mass| >= EPS_DIM(1e-30) → mass else 0
     if an_inertia.abs() >= 1e-30 { an_inertia } else { 0.0 }
+}
+
+// ============================================================================
+// OCCT `checkprops` adaptive surface integration
+// (CheckCommands.tcl → BRepGProp.cxx L280-291 → L231-242 →
+//  BRepGProp_Sinert.cxx L104-110 → BRepGProp_Gauss.cxx L533-1099).
+// ============================================================================
+
+// BRepGProp_Gauss.cxx L25-33.
+const EPS_PARAM: f64 = 1.0e-12;
+const EPS_DIM: f64 = 1.0e-30;
+const ERROR_ALGEBR_RATIO: f64 = 2.0 / 3.0;
+const GPM: usize = 61; // math::GaussPointsMax() (math.cxx L25-28)
+const SUBS_POWER: i64 = 32;
+const SM: usize = SUBS_POWER as usize * GPM + 1;
+// BRepGProp_Face.cxx L35: Epsilon(1.)
+const EPSILON1: f64 = 2.220446049250313e-16;
+
+// BRepGProp_Face.cxx L215-225 (OCC104 integration-order coefficients).
+const SC_AS: f64 = -0.15;
+const SC_AL: f64 = -0.50;
+const SC_B: f64 = 1.0;
+const SC_C: f64 = 0.75;
+const SC_D: f64 = 0.25;
+
+// BRepGProp_Face.cxx L217-225.
+fn s_coeff(eps: f64) -> f64 {
+    if eps < 0.1 { SC_AS * (SC_B + eps.log10()) + SC_C } else { SC_C }
+}
+
+fn l_coeff(eps: f64) -> f64 {
+    if eps < 0.1 { SC_AL * (SC_B + eps.log10()) + SC_D } else { SC_D }
+}
+
+// Standard::RealToInt — truncation toward zero.
+fn real_to_int(v: f64) -> i64 {
+    v.trunc() as i64
+}
+
+// math_VectorBase::Max (math_VectorBase.lxx L162-176): INDEX of the max
+// element, scanning the whole allocated vector (1-based).
+
+// BRepGProp_Gauss::MaxSubs (L192-195, theCoeff defaults to 32).
+fn max_subs(n: i64, coeff: i64) -> i64 {
+    if i64::MAX / coeff < n { i64::MAX } else { n * coeff + 1 }
+}
+
+// BRepGProp_Gauss::Init (L199-215): set v[first..=last] to theValue; the
+// (last - first == 0) case fills the whole array.
+fn vec_init(v: &mut [f64], first: usize, last: usize, value: f64) {
+    if last - first == 0 {
+        v.fill(value);
+    } else {
+        for x in v.iter_mut().take(last + 1).skip(first) {
+            *x = value;
+        }
+    }
+}
+
+// OCCT NCollection_Array1/math_Vector with the reallocation semantics of
+// BRepGProp_Gauss::FillIntervalBounds (L256-269): growing zero-fills the
+// whole array (new math_Vector(1, aSize, 0.0)); the allocated size only
+// grows, so entries beyond the current used range keep earlier values.
+struct Ovec {
+    data: Vec<f64>,
+    upper: usize,
+}
+
+impl Ovec {
+    fn new() -> Self {
+        Ovec { data: vec![0.0; 1], upper: 0 }
+    }
+    fn grow(&mut self, size: usize) {
+        if size > self.upper {
+            self.data.iter_mut().for_each(|x| *x = 0.0);
+            self.data.resize(size + 1, 0.0);
+            self.upper = size;
+        }
+    }
+    fn max_index(&self) -> usize {
+        let mut i = 0usize;
+        let mut x = f64::MIN;
+        for idx in 1..=self.upper {
+            if self.data[idx] > x {
+                x = self.data[idx];
+                i = idx;
+            }
+        }
+        i
+    }
+}
+
+// OCCT AddInf / MultInf (BRepGProp_Gauss.cxx L41-155): infinite-aware
+// arithmetic switched in by checkBounds (L418-429).
+fn add_inf(a: f64, b: f64) -> f64 {
+    if a == f64::INFINITY {
+        return if b == f64::NEG_INFINITY { 0.0 } else { f64::INFINITY };
+    }
+    if b == f64::INFINITY {
+        return if a == f64::NEG_INFINITY { 0.0 } else { f64::INFINITY };
+    }
+    if a == f64::NEG_INFINITY {
+        return if b == f64::INFINITY { 0.0 } else { f64::NEG_INFINITY };
+    }
+    if b == f64::NEG_INFINITY {
+        return if a == f64::INFINITY { 0.0 } else { f64::NEG_INFINITY };
+    }
+    a + b
+}
+
+fn mult_inf(a: f64, b: f64) -> f64 {
+    if a == 0.0 || b == 0.0 {
+        return 0.0;
+    }
+    if a == f64::INFINITY {
+        return if b < 0.0 { f64::NEG_INFINITY } else { f64::INFINITY };
+    }
+    if b == f64::INFINITY {
+        return if a < 0.0 { f64::NEG_INFINITY } else { f64::INFINITY };
+    }
+    if a == f64::NEG_INFINITY {
+        return if b < 0.0 { f64::INFINITY } else { f64::NEG_INFINITY };
+    }
+    if b == f64::NEG_INFINITY {
+        return if a < 0.0 { f64::INFINITY } else { f64::NEG_INFINITY };
+    }
+    a * b
+}
+
+// BRepGProp_Face::SIntOrder (BRepGProp_Face.cxx L229-269).
+fn surf_s_int_order(surf: &Surface3, eps: f64) -> usize {
+    let (nu, nv): (i64, i64) = match surf {
+        Surface3::Plane(_) => (1, 1),
+        Surface3::Cylinder(_) | Surface3::Cone(_) => (2, 1),
+        Surface3::Sphere(_) | Surface3::Torus(_) => (2, 2),
+        Surface3::Bezier(b) => (
+            b.control_points.len().saturating_sub(1) as i64,
+            b.control_points.first().map_or(0, |r| r.len().saturating_sub(1)) as i64,
+        ),
+        Surface3::BSpline(b) => (b.degree_u as i64, b.degree_v as i64),
+        _ => (2, 2),
+    };
+    let n = real_to_int((s_coeff(eps) * (nu.max(nv) + 1) as f64).ceil());
+    (n as usize).min(GPM)
+}
+
+// BRepGProp_Face::SVIntSubs (L308-339).
+fn surf_sv_int_subs(surf: &Surface3) -> i64 {
+    let n: i64 = match surf {
+        Surface3::Plane(_) => 2,
+        Surface3::Cylinder(_) | Surface3::Cone(_) => 2,
+        Surface3::Sphere(_) => 3,
+        Surface3::Torus(_) => 4,
+        Surface3::Bezier(_) => 2,
+        Surface3::BSpline(b) => compressed_knot_count(&b.knots_v) as i64,
+        _ => 2,
+    };
+    n - 1
+}
+
+// Geom_BSplineSurface::UKnots / Geom2d_BSplineCurve::Knots — the COMPRESSED
+// knot vector (rcad stores knots with multiplicities expanded).
+fn compressed_knots(knots: &[f64]) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::new();
+    for &k in knots {
+        if out.is_empty() || (k - out[out.len() - 1]).abs() > 1e-15 {
+            out.push(k);
+        }
+    }
+    if out.is_empty() {
+        out.push(0.0);
+    }
+    out
+}
+
+// BRepGProp_Face::UKnots (L343-374).
+fn surf_u_knots(surf: &Surface3, u1: f64, u2: f64) -> Vec<f64> {
+    match surf {
+        Surface3::Plane(_) => vec![u1, u2],
+        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) | Surface3::Torus(_) => {
+            vec![0.0, 2.0 * PI / 3.0, 4.0 * PI / 3.0, 2.0 * PI]
+        }
+        Surface3::BSpline(b) => compressed_knots(&b.knots_u),
+        _ => vec![u1, u2],
+    }
+}
+
+// BRepGProp_Face::VKnots (L378-413).
+fn surf_v_knots(surf: &Surface3, v1: f64, v2: f64) -> Vec<f64> {
+    match surf {
+        Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_) => vec![v1, v2],
+        Surface3::Sphere(_) => vec![-PI / 2.0, 0.0, PI / 2.0],
+        Surface3::Torus(_) => vec![0.0, 2.0 * PI / 3.0, 4.0 * PI / 3.0, 2.0 * PI],
+        Surface3::BSpline(b) => compressed_knots(&b.knots_v),
+        _ => vec![v1, v2],
+    }
+}
+
+// BRepGProp_Face::LIntSubs (L472-496).
+fn curve_l_int_subs(c: &Curve2d) -> i64 {
+    let n: i64 = match c {
+        Curve2d::Line(_) => 2,
+        Curve2d::Circle(_) | Curve2d::Ellipse(_) => 4,
+        Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => 2,
+        Curve2d::BSpline(b) => compressed_knot_count(&b.knots) as i64,
+        _ => 2,
+    };
+    n - 1
+}
+
+// BRepGProp_Face::LKnots (L500-534).  For a reversed edge the Load (L176-182)
+// reverses the pcurve; Geom2d_BSplineCurve::Reversed negates the knot vector
+// (ReversedParameter = -U), so the reversed curve's knots are -knots.
+fn curve_l_knots(c: &Curve2d, a: f64, b: f64, reversed: bool) -> Vec<f64> {
+    match c {
+        Curve2d::Line(_) => vec![a, b],
+        Curve2d::Circle(_) | Curve2d::Ellipse(_) => {
+            vec![0.0, 2.0 * PI / 3.0, 4.0 * PI / 3.0, 2.0 * PI]
+        }
+        Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => vec![a, b],
+        Curve2d::BSpline(bs) => {
+            let knots = compressed_knots(&bs.knots);
+            if reversed {
+                let mut negated: Vec<f64> = knots.iter().map(|&k| -k).collect();
+                negated.sort_by(|x, y| x.partial_cmp(y).unwrap());
+                negated
+            } else {
+                knots
+            }
+        }
+        _ => vec![a, b],
+    }
+}
+
+// BRepGProp_Face::LIntOrder (L417-468): adaptive boundary Gauss order.
+// `reversed` marks a reversed edge whose Load (L176-182) reversed the pcurve:
+// the 2D box is evaluated on the reversed curve (original curve over -[a, b]).
+fn curve_l_int_order(c: &Curve2d, a: f64, b: f64, surf: &Surface3, v1: f64, v2: f64, eps: f64, reversed: bool) -> usize {
+    // BndLib_Add2dCurve::Add(myCurve, 1.e-7, aBox) (L421) — myCurve is the
+    // loaded (possibly reversed) pcurve over [a, b]; the reversed curve is the
+    // original evaluated at -t, so the box range is [-b, -a].
+    let (box_a, box_b) = if reversed { (-b, -a) } else { (a, b) };
+    let a_box = curve2d_bounding_box(c, box_a, box_b, 1.0e-7);
+    let a_y_min = a_box[2];
+    let a_y_max = a_box[3];
+    let dv = v2 - v1;
+    let an_r = if dv > EPSILON1 { ((a_y_max - a_y_min) / dv).min(1.0) } else { 1.0 };
+    let an_r_int = real_to_int((surf_sv_int_subs(surf) as f64 * an_r).ceil());
+    let a_l_subs = curve_l_int_subs(c);
+    // L434: NS = max(SIntOrder(1.) * anRInt / aLSubs, 1) — integer arithmetic
+    let ns = ((surf_s_int_order(surf, 1.0) as i64 * an_r_int) / a_l_subs).max(1);
+    let nl0: i64 = match c {
+        Curve2d::Line(_) => 1,
+        Curve2d::Circle(_) | Curve2d::Ellipse(_) => 6,
+        Curve2d::Parabola(_) => 6,
+        Curve2d::Hyperbola(_) => 9,
+        Curve2d::Bezier(be) => be.control_points.len().saturating_sub(1) as i64,
+        Curve2d::BSpline(bs) => bs.degree as i64,
+        _ => 9,
+    };
+    let nl = nl0.max(ns);
+    let nn = if a_l_subs <= 4 {
+        real_to_int((l_coeff(eps) * (nl + 1) as f64).ceil())
+    } else {
+        nl + 1
+    };
+    (nn as usize).min(GPM)
+}
+
+// BRepGProp_Gauss::FillIntervalBounds (L246-294): split [a, b] at the knots
+// strictly inside it; returns the number of subintervals.
+#[allow(clippy::too_many_arguments)]
+fn fill_interval_bounds(
+    a: f64,
+    b: f64,
+    knots: &[f64],
+    num_subs: i64,
+    inerts: &mut Ovec,
+    param1: &mut Ovec,
+    param2: &mut Ovec,
+    err: &mut Ovec,
+    common_err: Option<&mut Ovec>,
+) -> usize {
+    let a_size = knots.len().max(max_subs(knots.len() as i64 - 1, num_subs) as usize);
+    if a_size - 1 > param1.upper {
+        inerts.grow(a_size);
+        param1.grow(a_size);
+        param2.grow(a_size);
+        err.grow(a_size);
+        if let Some(ce) = common_err {
+            ce.grow(a_size);
+        }
+    }
+    let mut j = 1usize;
+    let mut k = 1usize;
+    param1.data[j] = a;
+    j += 1;
+    for &kn in knots {
+        if a < kn {
+            if kn < b {
+                param1.data[j] = kn;
+                j += 1;
+                param2.data[k] = kn;
+                k += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    param2.data[k] = b;
+    k
+}
+
+/// OCCT BRepGProp_Sinert::Perform(BF, BD, Eps) — the `checkprops -s`
+/// per-face adaptive integration (BRepGProp_Sinert.cxx L104-110 →
+/// BRepGProp_Gauss.cxx L533-1099).  Sinert mass only: the gravity center and
+/// inertia moments do not feed the mass or the Sinert error estimates, so
+/// they are omitted.
+fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f64, is_nat_restr: bool) -> f64 {
+    let surf_idx = match brep.tshapes.get(fi).and_then(|ts| {
+        if let topods::TShape::Face(fd) = &**ts {
+            fd.surface.clone()
+        } else {
+            None
+        }
+    }) {
+        Some(s) => s,
+        None => return 0.0,
+    };
+    let surf = &surf_idx;
+
+    // BRepGProp_Face::Bounds (BRepGProp_Face.cxx L154-160) = BRepAdaptor_Surface
+    // (Restriction=true) UV domain = BRepTools::UVBounds.
+    let [bu1, bu2, bv1, bv2] = face_uv_bounds(brep, face, fi, surf);
+    // checkBounds (L418-429): infinite bounds switch add/mult to inf-aware.
+    let inf_bounds = !bu1.is_finite() || !bu2.is_finite() || !bv1.is_finite() || !bv2.is_finite();
+    let add = |a: f64, b: f64| if inf_bounds { add_inf(a, b) } else { a + b };
+    let mult = |a: f64, b: f64| if inf_bounds { mult_inf(a, b) } else { a * b };
+
+    // L543-546
+    let is_error_calculation = 0.0 > the_eps || the_eps < 0.001;
+    let is_verify_computation = 0.0 < the_eps && the_eps < 0.001;
+    let an_epsilon = the_eps.abs();
+    // L607
+    let i_gl_end: usize = if is_error_calculation { 2 } else { 1 };
+
+    // L609-615: the U Gauss orders depend only on the surface + epsilon
+    let nb_u_gauss_0 = surf_s_int_order(surf, an_epsilon);
+    let nb_u_gauss_1 = real_to_int(ERROR_ALGEBR_RATIO * nb_u_gauss_0 as f64) as usize;
+    let (u_gauss_p0, u_gauss_w0) = match occt_gauss(nb_u_gauss_0) {
+        Some(v) => v,
+        None => return 0.0,
+    };
+    let (u_gauss_p1, u_gauss_w1) = match occt_gauss(nb_u_gauss_1) {
+        Some(v) => v,
+        None => return 0.0,
+    };
+
+    // L617-619
+    let u_knots = surf_u_knots(surf, bu1, bu2);
+
+    // L595: u1 is the fixed lower bound of the U integration
+    let u1 = bu1;
+
+    // L602-606: persistent loop state
+    let mut error_l_max: f64 = 0.0;
+    let mut eps: f64 = 0.0; // Eps
+    let mut eps_l: f64 = 0.0; // EpsL
+    let mut eps_u: f64 = 0.0; // EpsU
+
+    // L548-577: 1-based arrays, grown by FillIntervalBounds
+    let mut an_inertia_l = Ovec::new();
+    let mut an_inertia_u = Ovec::new();
+    let mut l1_v = Ovec::new();
+    let mut l2_v = Ovec::new();
+    let mut u1_v = Ovec::new();
+    let mut u2_v = Ovec::new();
+    let mut err_l = Ovec::new();
+    let mut err_u = Ovec::new();
+    let mut err_ul = Ovec::new();
+
+    let mut an_inertia: f64 = 0.0;
+
+    let face_shape = Shape::from_parts(brep.tshapes[fi].clone(), fi, 0, topods::Orientation::Forward);
+    let mut edges: Vec<WireEdge> = face.outer_wire.edges.clone();
+    for w in &face.inner_wires {
+        edges.extend(w.edges.iter().copied());
+    }
+
+    // while (isNaturalRestriction || theDomain.More()) — L621
+    let mut edge_idx: usize = 0;
+    loop {
+        if is_nat_restr {
+            if edge_idx > 0 {
+                break;
+            }
+        } else {
+            while edge_idx < edges.len() && edges[edge_idx].internal {
+                edge_idx += 1;
+            }
+            if edge_idx >= edges.len() {
+                break;
+            }
+        }
+
+        // ---- per-boundary setup (L621-661) ----
+        // BRepGProp_Face::Load (L164-185): pcurve of the domain edge, with the
+        // REVERSED reversal of the curve and its parameter range.
+        let mut pcurve: Option<(Curve2d, bool)> = None; // (curve, reversed)
+        let (l1, l2): (f64, f64);
+        let nb_l_gauss_0: usize;
+        if is_nat_restr {
+            // L625: NbLGaussP[0] = min(2 * NbUGaussP[0], GaussPointsMax())
+            nb_l_gauss_0 = (2 * nb_u_gauss_0).min(GPM);
+            l1 = bv1;
+            l2 = bv2;
+        } else {
+            let we = &edges[edge_idx];
+            let edge_shape = Shape::from_parts(
+                brep.tshapes[we.idx].clone(),
+                we.idx,
+                we.location,
+                if we.forward {
+                    topods::Orientation::Forward
+                } else {
+                    topods::Orientation::Reversed
+                },
+            );
+            let pc = brep.curve_on_surface(&edge_shape, &face_shape);
+            let (c, a0, b0) = if !we.forward {
+                match brep.curve_on_surface_second(&edge_shape, &face_shape) {
+                    Some(v) => v,
+                    None => match pc {
+                        Some(v) => v.clone(),
+                        None => return 0.0,
+                    },
+                }
+            } else {
+                match pc {
+                    Some(v) => v.clone(),
+                    None => return 0.0,
+                }
+            };
+            let reversed = !we.forward;
+            let (a, b) = if reversed {
+                let x = a0;
+                (c.reversed_parameter(b0), c.reversed_parameter(x))
+            } else {
+                (a0, b0)
+            };
+            // L633: NbLGaussP[0] = LIntOrder(anEpsilon)
+            nb_l_gauss_0 = curve_l_int_order(&c, a, b, surf, bv1, bv2, an_epsilon, reversed);
+            l1 = a;
+            l2 = b;
+            pcurve = Some((c, reversed));
+        }
+        // L636
+        let nb_l_gauss_1 = real_to_int(ERROR_ALGEBR_RATIO * nb_l_gauss_0 as f64) as usize;
+        // L638-641
+        let (l_gauss_p0, l_gauss_w0) = match occt_gauss(nb_l_gauss_0) {
+            Some(v) => v,
+            None => return 0.0,
+        };
+        let (l_gauss_p1, l_gauss_w1) = match occt_gauss(nb_l_gauss_1) {
+            Some(v) => v,
+            None => return 0.0,
+        };
+        // L643: aNbLSubs / LKnots
+        let l_knots: Vec<f64> = match &pcurve {
+            Some((c, reversed)) => curve_l_knots(c, l1, l2, *reversed),
+            None => surf_v_knots(surf, bv1, bv2),
+        };
+
+        // L658-661
+        let mut error_l: f64 = 0.0;
+        let mut k_l_end = 1usize;
+        let mut j_l = 0usize;
+
+        if (l2 - l1).abs() > EPS_PARAM {
+            // L664-665
+            let i_l_sub_end = fill_interval_bounds(
+                l1, l2, &l_knots, SUBS_POWER,
+                &mut an_inertia_l, &mut l1_v, &mut l2_v, &mut err_l, Some(&mut err_ul),
+            );
+            // L666-670
+            let mut l_max_subs = max_subs(i_l_sub_end as i64, SUBS_POWER) as usize;
+            if l_max_subs > SM {
+                l_max_subs = SM;
+            }
+            vec_init(&mut an_inertia_l.data, 1, l_max_subs, 0.0);
+            vec_init(&mut err_l.data, 1, l_max_subs, 0.0);
+            vec_init(&mut err_ul.data, 1, l_max_subs, 0.0);
+
+            let mut l_range = [0usize; 2];
+            // do { ... } while L — L676-1047
+            loop {
+                // L678-690
+                j_l += 1;
+                if j_l > i_l_sub_end {
+                    let il = err_l.max_index();
+                    l_range[0] = il;
+                    l_range[1] = j_l;
+                    l1_v.data[j_l] = (l1_v.data[il] + l2_v.data[il]) * 0.5;
+                    l2_v.data[j_l] = l2_v.data[il];
+                    l2_v.data[il] = l1_v.data[j_l];
+                } else {
+                    l_range[0] = j_l;
+                }
+
+                // L691-705
+                if j_l == l_max_subs || (l2_v.data[j_l] - l1_v.data[j_l]).abs() < EPS_PARAM {
+                    if k_l_end == 1 {
+                        an_inertia_l.data[j_l] = 0.0;
+                        err_l.data[j_l] = 0.0;
+                    } else {
+                        j_l -= 1;
+                        eps_l = error_l;
+                        eps = eps_l / 0.9;
+                        break;
+                    }
+                } else {
+                    // L706-1001: for kL
+                    for k_l in 0..k_l_end {
+                        let i_ls = l_range[k_l];
+                        let lm = 0.5 * (l2_v.data[i_ls] + l1_v.data[i_ls]);
+                        let lr = 0.5 * (l2_v.data[i_ls] - l1_v.data[i_ls]);
+                        let mut c_dim = [0.0f64; 2];
+                        // L716-961: for iGL
+                        for i_gl in 0..i_gl_end {
+                            let (l_gp, l_gw, nb_l_gauss) = if i_gl == 0 {
+                                (l_gauss_p0, l_gauss_w0, nb_l_gauss_0)
+                            } else {
+                                (l_gauss_p1, l_gauss_w1, nb_l_gauss_1)
+                            };
+                            // L720-760: for iL
+                            for i_l in 0..nb_l_gauss {
+                                let l = lm + lr * l_gp[i_l];
+                                let (v, u2, dul): (f64, f64, f64) = if is_nat_restr {
+                                    // L723-728
+                                    (l, bu2, l_gw[i_l])
+                                } else {
+                                    // L731-759: D12d (myCurve.D1, reversed
+                                    // emulated like the fixed path)
+                                    let (c, reversed) = pcurve.as_ref().unwrap();
+                                    let (puv, vuv) = if *reversed {
+                                        let rp = c.reversed_parameter(l);
+                                        (c.point_at(rp), -c.derivative_at(rp))
+                                    } else {
+                                        (c.point_at(l), c.derivative_at(l))
+                                    };
+                                    let dul = vuv.y * l_gw[i_l];
+                                    // L734-737
+                                    if dul.abs() < EPS_PARAM {
+                                        continue;
+                                    }
+                                    // L739-759: clamp to the surface bounds
+                                    let mut v = puv.y;
+                                    let mut u2 = puv.x;
+                                    if v < bv1 {
+                                        v = bv1;
+                                    } else if v > bv2 {
+                                        v = bv2;
+                                    }
+                                    if u2 < bu1 {
+                                        u2 = bu1;
+                                    } else if u2 > bu2 {
+                                        u2 = bu2;
+                                    }
+                                    (v, u2, dul)
+                                };
+                                // L762-769
+                                err_ul.data[i_ls] = 0.0;
+                                let mut k_u_end = 1usize;
+                                let mut j_u = 0usize;
+                                if (u2 - u1).abs() < EPS_PARAM {
+                                    continue;
+                                }
+                                // L772-774
+                                let i_u_sub_end = fill_interval_bounds(
+                                    u1, u2, &u_knots, SUBS_POWER,
+                                    &mut an_inertia_u, &mut u1_v, &mut u2_v, &mut err_u, None,
+                                );
+                                // L775-779
+                                let mut u_max_subs = max_subs(i_u_sub_end as i64, SUBS_POWER) as usize;
+                                if u_max_subs > SM {
+                                    u_max_subs = SM;
+                                }
+                                vec_init(&mut an_inertia_u.data, 1, u_max_subs, 0.0);
+                                vec_init(&mut err_u.data, 1, u_max_subs, 0.0);
+                                // L783
+                                let mut error_u: f64 = 0.0;
+                                let mut u_range = [0usize; 2];
+                                // do { ... } while U — L785-929
+                                loop {
+                                    // L787-799
+                                    j_u += 1;
+                                    if j_u > i_u_sub_end {
+                                        let iu = err_u.max_index();
+                                        u_range[0] = iu;
+                                        u_range[1] = j_u;
+                                        u1_v.data[j_u] = (u1_v.data[iu] + u2_v.data[iu]) * 0.5;
+                                        u2_v.data[j_u] = u2_v.data[iu];
+                                        u2_v.data[iu] = u1_v.data[j_u];
+                                    } else {
+                                        u_range[0] = j_u;
+                                    }
+                                    // L801-816
+                                    if j_u == u_max_subs || (u2_v.data[j_u] - u1_v.data[j_u]).abs() < EPS_PARAM {
+                                        if k_u_end == 1 {
+                                            err_u.data[j_u] = 0.0;
+                                            an_inertia_u.data[j_u] = 0.0;
+                                        } else {
+                                            j_u -= 1;
+                                            eps_u = error_u;
+                                            eps = 10.0 * eps_u * ((u2 - u1) * dul).abs();
+                                            eps_l = 0.9 * eps;
+                                            break;
+                                        }
+                                    } else {
+                                        // L817-921: for kU
+                                        for k_u in 0..k_u_end {
+                                            let i_us = u_range[k_u];
+                                            let a_length = i_gl_end - i_gl;
+                                            let um = 0.5 * (u2_v.data[i_us] + u1_v.data[i_us]);
+                                            let ur = 0.5 * (u2_v.data[i_us] - u1_v.data[i_us]);
+                                            // L824: aLocal[2] masses
+                                            let mut a_local = [0.0f64; 2];
+                                            // L832-867: for iGU
+                                            for i_gu in 0..a_length {
+                                                let (u_gp, u_gw, nb_u_gauss) = if i_gu == 0 {
+                                                    (u_gauss_p0, u_gauss_w0, nb_u_gauss_0)
+                                                } else {
+                                                    (u_gauss_p1, u_gauss_w1, nb_u_gauss_1)
+                                                };
+                                                for i_u in 0..nb_u_gauss {
+                                                    let w = u_gw[i_u];
+                                                    let u = um + ur * u_gp[i_u];
+                                                    // BRepGProp_Face::Normal (L201-210):
+                                                    // D1U x D1V; mass = |N| * w
+                                                    let (_p, du, dv) = surf.derivatives(u, v);
+                                                    let n = du.cross(dv);
+                                                    a_local[i_gu] += mult(w, n.length());
+                                                }
+                                            }
+                                            // L869-920
+                                            an_inertia_u.data[i_us] = mult(a_local[0], ur);
+                                            if i_gl > 0 {
+                                                continue;
+                                            }
+                                            // L885
+                                            let a_d_mass = (a_local[1] - a_local[0]).abs();
+                                            // L919
+                                            err_u.data[i_us] = mult(a_d_mass, ur);
+                                        }
+                                    }
+                                    // L924-928
+                                    if j_u == i_u_sub_end {
+                                        k_u_end = 2;
+                                        error_u = err_u.data[err_u.max_index()];
+                                    }
+                                    // L929: while ((ErrorU - EpsU > 0 && EpsU != 0) || kUEnd == 1)
+                                    if (error_u - eps_u > 0.0 && eps_u != 0.0) || k_u_end == 1 {
+                                        continue;
+                                    }
+                                    break;
+                                }
+                                // L931-939
+                                for i in 1..=j_u {
+                                    c_dim[i_gl] = add(c_dim[i_gl], mult(an_inertia_u.data[i], dul));
+                                }
+                                // L941-944
+                                if i_gl > 0 {
+                                    continue;
+                                }
+                                // L946
+                                err_ul.data[i_ls] = mult(error_u, ((u2 - u1) * dul).abs());
+                            }
+                            // L963-992
+                            an_inertia_l.data[i_ls] = mult(c_dim[0], lr);
+                            if i_gl_end == 2 {
+                                let a_sub_dim = (c_dim[1] - c_dim[0]).abs();
+                                // L990 (Sinert): ErrL = |aSubDim| * lr + ErrUL
+                                err_l.data[i_ls] = add(mult(a_sub_dim, lr), err_ul.data[i_ls]);
+                            }
+                        }
+                    }
+                }
+                // L1006-1042
+                if j_l == i_l_sub_end {
+                    k_l_end = 2;
+                    let mut d_dim = 0.0;
+                    for i in 1..=j_l {
+                        d_dim += an_inertia_l.data[i];
+                    }
+                    d_dim = (d_dim * an_epsilon).abs();
+                    if d_dim > eps {
+                        eps = d_dim;
+                        eps_l = 0.9 * eps;
+                    }
+                }
+                // L1043-1046
+                if k_l_end == 2 {
+                    error_l = err_l.data[err_l.max_index()];
+                }
+                // L1047: while ((ErrorL - EpsL > 0 && isVerifyComputation) || kLEnd == 1)
+                if (error_l - eps_l > 0.0 && is_verify_computation) || k_l_end == 1 {
+                    continue;
+                }
+                break;
+            }
+            // L1049-1052
+            for i in 1..=j_l {
+                an_inertia = add(an_inertia, an_inertia_l.data[i]);
+            }
+            // L1054
+            error_l_max = error_l_max.max(error_l);
+        }
+
+        if is_nat_restr {
+            break;
+        }
+        edge_idx += 1;
+    }
+
+    // convert (L1071, L467-490): |Mass| >= EPS_DIM → mass else 0
+    if an_inertia.abs() >= EPS_DIM {
+        an_inertia
+    } else {
+        0.0
+    }
 }
