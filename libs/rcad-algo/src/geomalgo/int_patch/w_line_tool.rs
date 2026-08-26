@@ -335,6 +335,11 @@ pub fn extend_two_w_lines(
             continue;
         }
         let a_nb_pnts_wl1 = wl1.wline_pnts.len();
+        if std::env::var("RCAD_EXT_DEBUG").is_ok() {
+            let f = wl1.wline_pnts[0];
+            let l = wl1.wline_pnts[a_nb_pnts_wl1 - 1];
+            eprintln!("[EXT] wl1 n={} f=({:.6},{:.6},{:.6}) l=({:.6},{:.6},{:.6})", a_nb_pnts_wl1, f.p3d.x, f.p3d.y, f.p3d.z, l.p3d.x, l.p3d.y, l.p3d.z);
+        }
 
         // OCCT L1910-1918: the first vertex must be at parameter 1 and the last
         // vertex at NbPnts.
@@ -505,6 +510,9 @@ pub fn extend_two_w_lines(
             }
 
             if has_been_joined {
+                if std::env::var("RCAD_EXT_DEBUG").is_ok() {
+                    eprintln!("[EXT] JOINED wl1={} wl2={}", a_num_of_line1, wl2_idx);
+                }
                 has_been_joined_counter += 1;
                 slin.remove(wl2_idx);
                 // OCCT L2148-2149: aNumOfLine2-- — stay on the same index so the

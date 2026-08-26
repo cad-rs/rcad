@@ -1057,6 +1057,10 @@ pub fn put_points_on_line(
                     let mut a_l_params: Vec<f64> = Vec::new();
                     let mut a_vert_tol = tolarc;
                     let mut param_on_arc = currentparameter;
+                    if std::env::var("RCAD_PP_DEBUG").is_ok() {
+                        let arc_2d = currentarc.point_at(currentparameter);
+                        eprintln!("[PP] i={} on_first={} pnt={:?} tol={:.3e} arc_param={:.12} is_new={} arc2d={:?}", i, on_first, psurf, tolerance, currentparameter, currentpointonrst.is_new(), arc_2d);
+                    }
                     linefound = find_line(
                         &mut psurf,
                         slin,
@@ -1073,6 +1077,9 @@ pub fn put_points_on_line(
                         &mut a_vert_tol,
                     );
                     let linenumber = linenumber; // &mut -> value for indexing below
+                    if std::env::var("RCAD_PP_DEBUG").is_ok() {
+                        eprintln!("[PP-R] i={} on_first={} linefound={} line={} a_l_params={:?} a_vert_tol={:.3e} param_on_arc={:.12}", i, on_first, linefound, linenumber, a_l_params, a_vert_tol, param_on_arc);
+                    }
                     if linefound {
                         let normale = quad_surf.normale(psurf);
                         let currentarc = currentpointonrst.arc().clone();

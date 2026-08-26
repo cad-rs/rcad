@@ -29,6 +29,8 @@
 
 use crate::geomalgo::int_patch::{IntPatchLine, WLinePnt};
 use glam::{DVec2, DVec3};
+use rcad_kernel::geom::{Surface3, SurfaceEval};
+use rcad_kernel::math::plib::eval_polynomial_d1;
 use rcad_kernel::math::VecD;
 
 /// OCCT Approx_ParametrizationType.
@@ -43,10 +45,9 @@ pub enum ApproxParamType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum AppParConstraint {
     NoConstraint = 0,
-    TangencyFirstPoint = 1,
-    TangencyLastPoint = 2,
-    TangencyPoint = 3,
-    PassPoint = 4,
+    PassPoint = 1,
+    TangencyPoint = 2,
+    CurvaturePoint = 3,
 }
 
 /// OCCT Approx_Status.
@@ -298,6 +299,73 @@ fn binom(n: usize, k: usize) -> f64 {
     r
 }
 
+/// OCCT BSplCLib::PolesCoefficients (BSplCLib_BzSyntaxes.cxx L62-85) for a
+/// non-rational Bezier curve: converts the Bezier poles to the coefficients
+/// of the power (Taylor) basis, CachePoles[ii] = D^{ii-1} P(0) / (ii-1)!.
+/// The conversion is BSplCLib_BuildCache (BSplCLib_CurveComputation.pxx
+/// L1527-1600) with U=0, SpanDomain=1, Periodic=false and the flat Bezier
+/// knots (BSplCLib.cxx L4966-4977).  PrepareEval_T (L777-830) yields
+/// Index = Degree+1 so BuildKnots (L1555+) gives the window
+/// [0 x Degree, 1 x Degree], and BuildEval (L720-762) copies the poles in
+/// order.  BSplCLib::Bohm (BSplCLib.cxx L1197-1400) then computes the
+/// derivatives at U=0 and the final loop divides by the factorials.
+fn bezier_poles_to_coeffs(poles: &[DVec3]) -> Vec<DVec3> {
+    let deg = poles.len() - 1;
+    let mut psav: Vec<DVec3> = poles.to_vec();
+    // Flat Bezier knot window [0 x Degree, 1 x Degree] (BuildKnots with
+    // Mults == nullptr, Index = Degree + 1).
+    let mut knot = vec![0.0f64; 2 * deg];
+    for k in deg..2 * deg {
+        knot[k] = 1.0;
+    }
+    // OCCT Bohm first phase (L1332-1360): divided differences.  With the
+    // Bezier window every (knot[jDmi] - knot[j]) is 1.0, but the branch is
+    // kept verbatim so the arithmetic matches OCCT exactly.
+    let mut ddmi = 2 * deg + 1;
+    for i in 0..deg {
+        ddmi -= 1;
+        let mut jdmi = ddmi;
+        for j in (i..deg).rev() {
+            jdmi -= 1;
+            let coef = if knot[jdmi] == knot[j] {
+                0.0
+            } else {
+                1.0 / (knot[jdmi] - knot[j])
+            };
+            psav[j + 1] = (psav[j + 1] - psav[j]) * coef;
+        }
+    }
+    // OCCT Bohm second phase (L1361-1383): accumulation in U.  For
+    // PolesCoefficients U == 0 and knot[i] == 0 so coef = 0.0 and every
+    // term is an exact no-op (0.0 * finite == 0.0); the result is
+    // therefore identical to the OCCT loop.
+    // OCCT Bohm multiply-by-degrees (L1384-1399): psav[i] *= Degree!/(Degree-i)!.
+    let mut coef = deg as f64;
+    let mut dmi = deg;
+    for i in 1..=deg {
+        psav[i] *= coef;
+        dmi -= 1;
+        coef *= dmi as f64;
+    }
+    // OCCT BuildCache non-rational branch (L1581-1589): scale by
+    // LocalValue accumulated as LocalValue *= SpanDomain/ii (= 1/ii),
+    // giving CachePoles[ii] = psav[ii-1] / (ii-1)!.
+    let mut lv = 1.0f64;
+    let mut out = Vec::with_capacity(deg + 1);
+    for ii in 0..=deg {
+        out.push(psav[ii] * lv);
+        lv *= 1.0 / (ii as f64 + 1.0);
+    }
+    out
+}
+
+/// 2D variant of bezier_poles_to_coeffs (BSplCLib_BzSyntaxes.cxx L75-85).
+fn bezier_poles_to_coeffs_2d(poles: &[DVec2]) -> Vec<DVec2> {
+    let p3: Vec<DVec3> = poles.iter().map(|p| DVec3::new(p.x, p.y, 0.0)).collect();
+    let c3 = bezier_poles_to_coeffs(&p3);
+    c3.iter().map(|c| DVec2::new(c.x, c.y)).collect()
+}
+
 /// OCCT BSplCLib::IncreaseDegree for a Bezier pole sequence: raise the
 /// degree of a Bezier curve by inserting the pole combination formula.
 pub fn bezier_increase_degree(poles: &[DVec3], new_deg: usize) -> Vec<DVec3> {
@@ -352,6 +420,14 @@ pub struct WLineAccess<'a> {
     pub v1o: f64,
     pub u2o: f64,
     pub v2o: f64,
+    // The two surfaces of the face pair — used by the SvSurfaces tangency
+    // (OCCT GeomInt_WLApprox with the quadric implicit surface).
+    pub s1: &'a Surface3,
+    pub s2: &'a Surface3,
+    // The UV domains of the two surfaces (the PSurf domain used by
+    // FillInitialVectorOfSolution, ApproxInt_ImpPrmSvSurfaces.gxx L865-1039).
+    pub uv1: [f64; 4],
+    pub uv2: [f64; 4],
 }
 
 impl<'a> WLineAccess<'a> {
@@ -367,10 +443,12 @@ impl<'a> WLineAccess<'a> {
     pub fn nb_p2d(&self) -> usize {
         self.nbp2d
     }
-    /// OCCT ApproxInt_MultiLine::WhatStatus: a NULL SvSurfaces pointer means
-    /// no extra points can be added (the analytic/quadric case).
+    /// OCCT ApproxInt_MultiLine::WhatStatus (ApproxInt_MultiLine.gxx
+    /// L154-160): a non-NULL SvSurfaces pointer means extra points can be
+    /// added.  ApproxInt_Approx::buildCurve always passes the SvSurfaces
+    /// pointer (ApproxInt_Approx.gxx L638-654), so the status is PointsAdded.
     pub fn what_status(&self) -> ApproxStatus {
-        ApproxStatus::NoPointsAdded
+        ApproxStatus::PointsAdded
     }
     fn wp(&self, index: usize) -> &WLinePnt {
         &self.line.wline_pnts[index - 1]
@@ -398,9 +476,136 @@ impl<'a> WLineAccess<'a> {
         }
         out
     }
-    /// OCCT MultiLine::Tangency — no SvSurfaces -> no tangency available.
-    pub fn tangency(&self, _index: usize) -> Option<(Vec<DVec3>, Vec<DVec2>)> {
-        None
+    /// OCCT GeomInt_TheMultiLineOfWLApprox::Tangency (ApproxInt_MultiLine.gxx
+    /// L224-298) with the SvSurfaces.  For the quadric case
+    /// (ApproxInt_ImpPrmSvSurfaces::Compute, gxx L437-765): the implicit
+    /// quadric is the first quadric surface (Perform L246-306: typeS1 quadric
+    /// -> Quad = S1, PSurf = S2), the intersection tangent is
+    /// Tg = N_imp x N_prm (L693) normalized (L706), and the 2D tangents come
+    /// from NonSingularProcessing (L287-321).  The singular cases return None
+    /// so the constraint degrades to PassPoint (rcad LeastSquare::affect).
+    pub fn tangency(&self, index: usize) -> Option<(Vec<DVec3>, Vec<DVec2>)> {
+        let p = self.wp(index);
+        let is_s1_quad = matches!(
+            self.s1,
+            Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Cone(_)
+        );
+        let is_s2_quad = matches!(
+            self.s2,
+            Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Cone(_)
+        );
+        if !is_s1_quad && !is_s2_quad {
+            // No quadric — the parametric-parametric SvSurfaces path is not
+            // ported (the tangency is unavailable).
+            return None;
+        }
+        let (imp_surf, imp_u, imp_v) = if is_s1_quad {
+            (self.s1, p.u1, p.v1)
+        } else {
+            (self.s2, p.u2, p.v2)
+        };
+        let (prm_surf, prm_u, prm_v) = if is_s1_quad {
+            (self.s2, p.u2, p.v2)
+        } else {
+            (self.s1, p.u1, p.v1)
+        };
+        // OCCT ApproxInt_ImpPrmSvSurfaces::FillInitialVectorOfSolution
+        // (L865-1039): the PSurf parameters must lie inside the PSurf domain
+        // (with the 1e-10 slack); an out-of-domain non-periodic axis rejects the
+        // point so the tangency constraint degrades to PassPoint.  The PSurf is
+        // the parametric surface (the second one when the quadric is first).
+        let prm_uv = if is_s1_quad { self.uv2 } else { self.uv1 };
+        let (prm_binfu, prm_bsupu, prm_binfv, prm_bsupv) =
+            (prm_uv[0], prm_uv[1], prm_uv[2], prm_uv[3]);
+        let prm_u_per = if prm_surf.is_u_periodic() {
+            Some(2.0 * std::f64::consts::PI)
+        } else {
+            None
+        };
+        let prm_v_per = if prm_surf.is_v_periodic() {
+            Some(2.0 * std::f64::consts::PI)
+        } else {
+            None
+        };
+        // OCCT L886-937: u out of [binfu-1e-10, bsupu+1e-10] wraps only when
+        // periodic, otherwise the initial solution is rejected.
+        let mut trans_u = 0.0;
+        if prm_u < prm_binfu - 0.0000000001 {
+            match prm_u_per {
+                Some(d) => {
+                    while prm_u + trans_u < prm_binfu {
+                        trans_u += d;
+                    }
+                }
+                None => return None,
+            }
+        } else if prm_u > prm_bsupu + 0.0000000001 {
+            match prm_u_per {
+                Some(d) => {
+                    while prm_u + trans_u > prm_bsupu {
+                        trans_u -= d;
+                    }
+                }
+                None => return None,
+            }
+        }
+        let mut trans_v = 0.0;
+        if prm_v < prm_binfv - 0.0000000001 {
+            match prm_v_per {
+                Some(d) => {
+                    while prm_v + trans_v < prm_binfv {
+                        trans_v += d;
+                    }
+                }
+                None => return None,
+            }
+        } else if prm_v > prm_bsupv + 0.0000000001 {
+            match prm_v_per {
+                Some(d) => {
+                    while prm_v + trans_v > prm_bsupv {
+                        trans_v -= d;
+                    }
+                }
+                None => return None,
+            }
+        }
+        // OCCT L938-939/L1015-1016: X = params + Translation.
+        let prm_ux = prm_u + trans_u;
+        let prm_vx = prm_v + trans_v;
+        // The implicit quadric's normal at the point (aQSurf.Normale(MyPnt),
+        // ImpPrmSvSurfaces.gxx L625) and the parametric surface's normal
+        // (ThePSurfaceTool::D1 L591).
+        let n_imp = imp_surf.normal_at(imp_u, imp_v).normalize_or_zero();
+        let (_, du_prm, dv_prm) = prm_surf.derivatives(prm_ux, prm_vx);
+        let n_prm = du_prm.cross(dv_prm).normalize_or_zero();
+        if n_imp.length_squared() < 1.0e-14 || n_prm.length_squared() < 1.0e-14 {
+            return None;
+        }
+        // Tg = N_imp x N_prm (L693), normalized (L706).
+        let tg = n_imp.cross(n_prm).normalize_or_zero();
+        if tg.length_squared() < 1.0e-14 {
+            return None;
+        }
+        // The 2D tangents on both surfaces (NonSingularProcessing L287-321;
+        // the singular case degrades to PassPoint).
+        let (_, du_imp, dv_imp) = imp_surf.derivatives(imp_u, imp_v);
+        let normal_imp = du_imp.cross(dv_imp);
+        if normal_imp.length_squared() < 1.0e-14 {
+            return None;
+        }
+        let normal_prm = du_prm.cross(dv_prm);
+        if normal_prm.length_squared() < 1.0e-14 {
+            return None;
+        }
+        let (ts_imp, ts_prm) = (
+            nonsingular_tangent_2d(du_imp, dv_imp, normal_imp, tg),
+            nonsingular_tangent_2d(du_prm, dv_prm, normal_prm, tg),
+        );
+        let (ts1, ts2) = if is_s1_quad { (ts_imp, ts_prm) } else { (ts_prm, ts_imp) };
+        if std::env::var("RCAD_TG_DEBUG").is_ok() {
+            eprintln!("[TG] idx={} p=({:.9},{:.9},{:.9}) tg=({:.9},{:.9},{:.9}) ts1=({:.6},{:.6}) ts2=({:.6},{:.6}) s1={:?} s2={:?} u1={:.6} v1={:.6} u2={:.6} v2={:.6} is_s1_quad={}", index, p.p3d.x, p.p3d.y, p.p3d.z, tg.x, tg.y, tg.z, ts1.x, ts1.y, ts2.x, ts2.y, surface_kind(self.s1), surface_kind(self.s2), p.u1, p.v1, p.u2, p.v2, is_s1_quad);
+        }
+        Some((vec![tg], vec![ts1, ts2]))
     }
     /// OCCT LineTool::MakeMLBetween / MakeMLOneMorePoint — no SvSurfaces ->
     /// no point insertion possible.
@@ -414,6 +619,37 @@ impl<'a> WLineAccess<'a> {
     }
     pub fn make_ml_between(&self, _low: usize, _high: usize, _n: usize) -> Option<WLineAccess<'a>> {
         None
+    }
+}
+
+/// OCCT NonSingularProcessing (ApproxInt_ImpPrmSvSurfaces.gxx L287-321): the
+/// 2D tangent (theTg2D) on a surface with the derivative basis (DU, DV) such
+/// that Tg3D = DU*Tg2D.X() + DV*Tg2D.Y() holds.  aNormal = DU x DV must be
+/// non-zero (checked by the caller).
+fn nonsingular_tangent_2d(du: DVec3, dv: DVec3, normal: DVec3, tg3d: DVec3) -> DVec2 {
+    // If T = A*U + B*V then
+    //   A x T = (A x B)*V
+    //   B x T = (B x A)*U
+    let tgu = tg3d.cross(du);
+    let tgv = tg3d.cross(dv);
+    let sq_magn = normal.length_squared();
+    let delta_u = tgv.length_squared() / sq_magn;
+    let delta_v = tgu.length_squared() / sq_magn;
+    DVec2::new(
+        delta_u.sqrt().copysign(tgv.dot(normal)),
+        -delta_v.sqrt().copysign(tgu.dot(normal)),
+    )
+}
+
+/// Debug helper: a short tag for the surface kind.
+fn surface_kind(s: &Surface3) -> &'static str {
+    match s {
+        Surface3::Plane(_) => "Plane",
+        Surface3::Cylinder(_) => "Cylinder",
+        Surface3::Sphere(_) => "Sphere",
+        Surface3::Cone(_) => "Cone",
+        Surface3::Torus(_) => "Torus",
+        _ => "Other",
     }
 }
 
@@ -1008,17 +1244,19 @@ impl WLineApprox {
     }
 
     /// OCCT ApproxInt_Approx::fillData (L501-517) — ComputeTrsf3d/2d.
+    /// The translation minima are taken over the WHOLE WLine (ComputeTrsf3d
+    /// L35-53 and ComputeTrsf2d L57-85 iterate theLine->NbPnts()).
     fn fill_data(&mut self, ml: &WLineAccess) {
+        let all_pnts: Vec<WLinePnt> = ml.line.wline_pnts.clone();
         // ComputeTrsf3d.
         if self.approx_xyz {
             let mut xmin = f64::INFINITY;
             let mut ymin = f64::INFINITY;
             let mut zmin = f64::INFINITY;
-            for i in self.indicemin..=self.indicemax {
-                let p = ml.value_p3d(i);
-                xmin = xmin.min(p.x);
-                ymin = ymin.min(p.y);
-                zmin = zmin.min(p.z);
+            for p in &all_pnts {
+                xmin = xmin.min(p.p3d.x);
+                ymin = ymin.min(p.p3d.y);
+                zmin = zmin.min(p.p3d.z);
             }
             self.xo = -xmin;
             self.yo = -ymin;
@@ -1032,10 +1270,9 @@ impl WLineApprox {
         if self.approx_u1v1 {
             let mut umin = f64::INFINITY;
             let mut vmin = f64::INFINITY;
-            for i in self.indicemin..=self.indicemax {
-                let p = ml.value_p2d(i)[0];
-                umin = umin.min(p.x);
-                vmin = vmin.min(p.y);
+            for p in &all_pnts {
+                umin = umin.min(p.u1);
+                vmin = vmin.min(p.v1);
             }
             self.u1o = -umin;
             self.v1o = -vmin;
@@ -1047,11 +1284,9 @@ impl WLineApprox {
         if self.approx_u2v2 {
             let mut umin = f64::INFINITY;
             let mut vmin = f64::INFINITY;
-            for i in self.indicemin..=self.indicemax {
-                let p = ml.value_p2d(i);
-                let p2 = if p.len() >= 2 { p[1] } else { p[0] };
-                umin = umin.min(p2.x);
-                vmin = vmin.min(p2.y);
+            for p in &all_pnts {
+                umin = umin.min(p.u2);
+                vmin = vmin.min(p.v2);
             }
             self.u2o = -umin;
             self.v2o = -vmin;
@@ -1107,6 +1342,9 @@ impl WLineApprox {
         if knots.len() < 2 {
             knots = vec![self.indicemin, self.indicemax];
         }
+        if std::env::var("RCAD_APX_DEBUG").is_ok() {
+            eprintln!("  [KNOTS] indicemin={} indicemax={} knots={:?}", self.indicemin, self.indicemax, knots);
+        }
         self.my_knots = knots;
     }
 
@@ -1133,6 +1371,10 @@ impl WLineApprox {
                 v1o: self.v1o,
                 u2o: self.u2o,
                 v2o: self.v2o,
+                s1: ml.s1,
+                s2: ml.s2,
+                uv1: ml.uv1,
+                uv2: ml.uv2,
             };
             self.my_compute_line_bezier.perform(&sub);
             if self.my_compute_line_bezier.nb_multi_curves() == 0 {
@@ -1557,6 +1799,9 @@ impl ComputeLine {
             }
             *the_tol3d = grad.max_error3d();
             *the_tol2d = grad.max_error2d();
+            if std::env::var("RCAD_APX_DEBUG").is_ok() {
+                eprintln!("  [APX] deg={} nbp={} mydone={} tol3d={:.3e} tol2d={:.3e} mytol3d={:.3e} mytol2d={:.3e} itermax={}", deg, nbp, mydone, *the_tol3d, *the_tol2d, self.mytol3d, self.mytol2d, self.myitermax);
+            }
             // restau: restore parameters if not strictly increasing.
             let mut restau = false;
             let mut uu1 = para.get(1);
@@ -1708,7 +1953,7 @@ impl ComputeLine {
         self.myconstraints[0] = ConstraintCouple { index: myfirstpt as i32, constraint: self.myfirstc };
         self.myconstraints[1] = ConstraintCouple { index: mylastpt as i32, constraint: self.mylastc };
         while !finish {
-            let oldlastpt = mylastpt;
+            let mut oldlastpt = mylastpt;
             if !begin {
                 if !go_up {
                     if ok {
@@ -1742,15 +1987,184 @@ impl ComputeLine {
             if nbp <= self.mydegremax + 5 {
                 go_up = false;
                 ok = true;
-                // Approx_PointsAdded branch is not reachable: the quadric
-                // WLine has no SvSurfaces, so WhatStatus is NoPointsAdded.
+                if my_status == ApproxStatus::PointsAdded {
+                    // OCCT L974-1115: MakeMLBetween; on failure the
+                    // parameterization switches to IsoParametric (L996) and the
+                    // part is re-fitted (L997-1103).
+                    go_up = true;
+                    let an_other_line1 = ml.make_ml_between(myfirstpt, mylastpt, nbp - 1);
+                    let nbpdsotherligne: i64 = match &an_other_line1 {
+                        Some(l) => l.first_point() as i64 - l.last_point() as i64,
+                        None => 0,
+                    };
+                    if nbpdsotherligne == 0 || self.my_multi_line_nb >= 3 {
+                        // OCCT L985-1103: MakeML failed — fit with
+                        // IsoParametric parameters.
+                        if myfirstpt == mylastpt {
+                            break;
+                        }
+                        self.myconstraints[0] = ConstraintCouple {
+                            index: myfirstpt as i32,
+                            constraint: self.myfirstc,
+                        };
+                        self.myconstraints[1] = ConstraintCouple {
+                            index: mylastpt as i32,
+                            constraint: self.mylastc,
+                        };
+                        let mut param = VecD::new(mylastpt - myfirstpt + 1);
+                        let save_par = self.par;
+                        self.par = ApproxParamType::IsoParametric;
+                        let p = self.parameters(ml, myfirstpt, mylastpt);
+                        for i in 1..=p.len() {
+                            param.set(i, p.get(i));
+                        }
+                        self.the_multi_curve = MultiCurve::new(2, ml.nb_p3d(), ml.nb_p2d());
+                        let mut an_other_line2: Option<WLineAccess> = None;
+                        let mut is_other_line2_made = false;
+                        let mut indbad = 0usize;
+                        ok = self.compute(
+                            ml,
+                            myfirstpt,
+                            mylastpt,
+                            &mut param,
+                            &mut the_tol3d,
+                            &mut the_tol2d,
+                            &mut indbad,
+                        );
+                        if indbad != 0 {
+                            an_other_line2 = ml.make_ml_one_more_point(myfirstpt, mylastpt, indbad);
+                            is_other_line2_made = an_other_line2.is_some();
+                        }
+                        if is_other_line2_made {
+                            self.my_is_clear = true;
+                            self.par = save_par;
+                            if let Some(line2) = an_other_line2 {
+                                self.perform(&line2);
+                            }
+                            ok = true;
+                        }
+                        if !ok {
+                            // OCCT L1017-1051: ChordLength retry.
+                            let tt3d = self.currenttol3d;
+                            let tt2d = self.currenttol2d;
+                            let save_parameters = self.myparameters.clone();
+                            let save_multi_curve = self.the_multi_curve.clone();
+                            if save_par != ApproxParamType::IsoParametric {
+                                self.par = save_par;
+                            } else {
+                                self.par = ApproxParamType::ChordLength;
+                            }
+                            let p = self.parameters(ml, myfirstpt, mylastpt);
+                            for i in 1..=p.len() {
+                                param.set(i, p.get(i));
+                            }
+                            an_other_line2 = None;
+                            is_other_line2_made = false;
+                            indbad = 0;
+                            ok = self.compute(
+                                ml,
+                                myfirstpt,
+                                mylastpt,
+                                &mut param,
+                                &mut the_tol3d,
+                                &mut the_tol2d,
+                                &mut indbad,
+                            );
+                            if indbad != 0 {
+                                an_other_line2 =
+                                    ml.make_ml_one_more_point(myfirstpt, mylastpt, indbad);
+                                is_other_line2_made = an_other_line2.is_some();
+                            }
+                            if is_other_line2_made {
+                                self.my_is_clear = true;
+                                if let Some(line2) = an_other_line2 {
+                                    self.perform(&line2);
+                                }
+                                ok = true;
+                            }
+                            if !ok && tt3d <= self.currenttol3d && tt2d <= self.currenttol2d {
+                                self.currenttol3d = tt3d;
+                                self.currenttol2d = tt2d;
+                                self.myparameters = save_parameters;
+                                self.the_multi_curve = save_multi_curve;
+                            }
+                        }
+                        self.par = save_par;
+                        if myfirstpt == the_lastpt {
+                            finish = true;
+                            self.alldone = true;
+                            return;
+                        }
+                        oldlastpt = mylastpt;
+                        if !ok {
+                            // OCCT L1062-1103: CheckMultiCurve + MakeMLOneMorePoint.
+                            self.tolreached = false;
+                            if self.the_multi_curve.nb_curves() == 0 {
+                                self.mymulti_curves.clear();
+                                return;
+                            }
+                            let mut an_other_line3: Option<WLineAccess> = None;
+                            let mut indbad2 = 0usize;
+                            if !check_multicurve(
+                                &self.the_multi_curve,
+                                ml,
+                                myfirstpt,
+                                mylastpt,
+                                &mut indbad2,
+                            ) {
+                                an_other_line3 =
+                                    ml.make_ml_one_more_point(myfirstpt, mylastpt, indbad2);
+                            }
+                            if let Some(line3) = an_other_line3 {
+                                self.my_is_clear = true;
+                                self.perform(&line3);
+                                myfirstpt = mylastpt;
+                                mylastpt = the_lastpt;
+                            } else {
+                                self.mymulti_curves.push(self.the_multi_curve.clone());
+                                self.tolers3d.push(self.currenttol3d);
+                                self.tolers2d.push(self.currenttol2d);
+                                let mylen = oldlastpt - myfirstpt + 1;
+                                let my_par_len = self.myparameters.len();
+                                let a_len = my_par_len.max(mylen);
+                                let mut the_par = VecD::new(a_len);
+                                for i in 0..a_len {
+                                    the_par.set(
+                                        i + 1,
+                                        if i < self.myparameters.len() {
+                                            self.myparameters.get(i + 1)
+                                        } else {
+                                            0.0
+                                        },
+                                    );
+                                }
+                                self.mypar.push(the_par);
+                                myfirstpt = oldlastpt;
+                                mylastpt = the_lastpt;
+                            }
+                        }
+                        // OCCT L1119-1120: advance to the next part.
+                        myfirstpt = oldlastpt;
+                        mylastpt = the_lastpt;
+                    } else {
+                        // OCCT L1108-1115: MakeML succeeded — recurse on the
+                        // densified line.
+                        self.my_is_clear = true;
+                        self.my_multi_line_nb += 1;
+                        if let Some(line1) = an_other_line1 {
+                            self.perform(&line1);
+                        }
+                        myfirstpt = mylastpt;
+                        mylastpt = the_lastpt;
+                    }
+                }
+                // OCCT L1118-1147: NoPointsAdded with a small part — keep
+                // the best approximation obtained so far.  This runs
+                // BEFORE the Compute of this interval; GoUp then skips it
+                // (so currenttol3d still holds the previous interval's
+                // best effort — a finite value, never the Compute's
+                // freshly-reset RealLast/inf).
                 if my_status == ApproxStatus::NoPointsAdded && !begin {
-                    // OCCT L1118-1147: NoPointsAdded with a small part — keep
-                    // the best approximation obtained so far.  This runs
-                    // BEFORE the Compute of this interval; GoUp then skips it
-                    // (so currenttol3d still holds the previous interval's
-                    // best effort — a finite value, never the Compute's
-                    // freshly-reset RealLast/inf).
                     go_up = true;
                     self.tolreached = false;
                     if self.the_multi_curve.nb_curves() == 0 {
@@ -2022,7 +2436,32 @@ impl LeastSquare {
             } else {
                 &mut self.vec2t
             };
-            if let Some((v3, v2d)) = ml.tangency(index) {
+            if let Some((mut v3, mut v2d)) = ml.tangency(index) {
+                // OCCT CheckTangents (AppParCurves_LeastSquare.gxx L64-106):
+                // the tangent direction must agree with the direction between
+                // the adjacent points; otherwise reverse ALL tangents.
+                let (pt1, pt2) = if index < ml.last_point() {
+                    (ml.value_p3d(index), ml.value_p3d(index + 1))
+                } else {
+                    (ml.value_p3d(index - 1), ml.value_p3d(index))
+                };
+                let mut is_to_change_dir = false;
+                for i in 0..self.nb_p {
+                    let a_v1 = pt2 - pt1;
+                    let a_v2 = v3[i];
+                    if a_v1.dot(a_v2) < 0.0 {
+                        is_to_change_dir = true;
+                        break;
+                    }
+                }
+                if is_to_change_dir {
+                    for v in v3.iter_mut() {
+                        *v = -*v;
+                    }
+                    for v in v2d.iter_mut() {
+                        *v = -*v;
+                    }
+                }
                 let mut i2 = 0;
                 for i in 0..self.nb_p {
                     vt[i2] = v3[i].x;
@@ -2157,10 +2596,351 @@ impl LeastSquare {
             }
             self.done = true;
         } else {
-            // OCCT L622-734 (tangency constraints): not reachable for the
-            // quadric WLine — the tangency poles are fixed and the interior
-            // poles are solved by the reduced DACTCL system.
-            self.perform_tangency();
+            // OCCT L622-734 (tangency constraints): the lambda parameters are
+            // part of the DACTCL system (lambda1/lambda2 from the solved
+            // myTAB) and the tangency poles are mypoints +- lambda*Vt.
+            self.perform_tangency_full();
+        }
+    }
+
+    /// OCCT Perform(Parameters) tangency branch (AppParCurves_LeastSquare.gxx
+    /// L622-734): the tangency lambdas are unknowns of the DACTCL system
+    /// (lambda1/lambda2 from the solved myTAB, L669-677) and the tangency
+    /// poles are mypoints +- lambda*Vt (L695-706, L721-730).
+    fn perform_tangency_full(&mut self) {
+        let n_bcols = self.n_bcols;
+        let nbpoles = self.nbpoles;
+        let nincx = if self.resfin >= self.resinit {
+            self.resfin - self.resinit + 1
+        } else {
+            0
+        };
+        let nincx2 = 2 * nincx;
+        let ninc1 = if self.first_constraint >= AppParConstraint::TangencyPoint
+            && self.last_constraint >= AppParConstraint::TangencyPoint
+        {
+            self.ninc - 1
+        } else {
+            self.ninc
+        };
+        let mut internal_index = rcad_kernel::math::IntVec::new(nincx);
+        self.search_index(&mut internal_index);
+        // The pivot index (L629-656).
+        let mut index = rcad_kernel::math::IntVec::new(self.ninc);
+        let mut l = 1usize;
+        if self.resinit <= self.resfin {
+            for j in 0..self.na {
+                let deport = j * internal_index.get(nincx) as usize;
+                for i in 1..=nincx {
+                    index.set(l, internal_index.get(i) + deport as i32);
+                    l += 1;
+                }
+            }
+        }
+        if self.resinit > self.resfin {
+            index.set(1, 1);
+        }
+        if ninc1 > 1 {
+            if self.first_constraint >= AppParConstraint::TangencyPoint
+                && self.last_constraint >= AppParConstraint::TangencyPoint
+            {
+                index.set(ninc1, index.get(ninc1 - 1) + ninc1 as i32);
+            }
+        }
+        if self.first_constraint >= AppParConstraint::TangencyPoint
+            || self.last_constraint >= AppParConstraint::TangencyPoint
+        {
+            index.set(self.ninc, index.get(self.ninc - 1) + self.ninc as i32);
+        }
+        let mut the_a = rcad_kernel::math::VecD::new(index.get(self.ninc) as usize);
+        let mut my_tab = rcad_kernel::math::VecD::new(self.ninc);
+        self.make_taa_tangency(&mut the_a, &mut my_tab);
+        let dec_err = rcad_kernel::math::lin::dactcl_decompose(&mut the_a, &index.v, 1.0e-20);
+        if std::env::var("RCAD_TG_DEBUG").is_ok() {
+            eprintln!("[TGD] dec_err={} index={:?} the_a={:?} my_tab={:?}", dec_err, index.v, &the_a.v[0..the_a.v.len().min(30)], &my_tab.v[0..my_tab.v.len().min(30)]);
+        }
+        if dec_err != 0 {
+            self.done = false;
+            return;
+        }
+        if rcad_kernel::math::lin::dactcl_solve(&the_a, &mut my_tab, &index.v, 1.0e-20) != 0 {
+            self.done = false;
+            return;
+        }
+        if std::env::var("RCAD_TG_DEBUG").is_ok() {
+            eprintln!("[TGDS] solved={:?}", &my_tab.v[0..my_tab.v.len().min(30)]);
+        }
+        self.done = true;
+        // lambda1/lambda2 (L669-677).
+        if self.first_constraint >= AppParConstraint::TangencyPoint
+            && self.last_constraint >= AppParConstraint::TangencyPoint
+        {
+            self.lambda1 = my_tab.get(ninc1);
+            self.lambda2 = my_tab.get(self.ninc);
+        } else if self.first_constraint >= AppParConstraint::TangencyPoint {
+            self.lambda1 = my_tab.get(self.ninc);
+        } else if self.last_constraint >= AppParConstraint::TangencyPoint {
+            self.lambda2 = my_tab.get(self.ninc);
+        }
+        if std::env::var("RCAD_TG_DEBUG").is_ok() {
+            eprintln!("[TGS] ninc={} nincx={} ninc1={} l1={:.6e} l2={:.6e} v1t={:?} v2t={:?}", self.ninc, nincx, ninc1, self.lambda1, self.lambda2, &self.vec1t[0..3.min(self.vec1t.len())], &self.vec2t[0..3.min(self.vec2t.len())]);
+        }
+        // The mypoles fill (L681-733).
+        let last_rel = self.mylastp - self.myfirstp;
+        let mut k = 0usize;
+        let mut i2 = 1usize;
+        for _ci in 0..self.nb_p {
+            for j in self.resinit..=self.resfin {
+                let p = j - 1;
+                self.mypoles[p][k] = my_tab.get(i2);
+                self.mypoles[p][k + 1] = my_tab.get(i2 + nincx);
+                self.mypoles[p][k + 2] = my_tab.get(i2 + nincx2);
+                i2 += 1;
+            }
+            if self.first_constraint >= AppParConstraint::TangencyPoint {
+                self.mypoles[1][k] = self.mypoints[0][k] + self.lambda1 * self.vec1t[k];
+                self.mypoles[1][k + 1] = self.mypoints[0][k + 1] + self.lambda1 * self.vec1t[k + 1];
+                self.mypoles[1][k + 2] = self.mypoints[0][k + 2] + self.lambda1 * self.vec1t[k + 2];
+            }
+            if self.last_constraint >= AppParConstraint::TangencyPoint {
+                self.mypoles[nbpoles - 2][k] =
+                    self.mypoints[last_rel][k] - self.lambda2 * self.vec2t[k];
+                self.mypoles[nbpoles - 2][k + 1] =
+                    self.mypoints[last_rel][k + 1] - self.lambda2 * self.vec2t[k + 1];
+                self.mypoles[nbpoles - 2][k + 2] =
+                    self.mypoints[last_rel][k + 2] - self.lambda2 * self.vec2t[k + 2];
+            }
+            k += 3;
+            i2 += nincx2;
+        }
+        for _ci in 0..self.nb_p2d {
+            for j in self.resinit..=self.resfin {
+                let p = j - 1;
+                self.mypoles[p][k] = my_tab.get(i2);
+                self.mypoles[p][k + 1] = my_tab.get(i2 + nincx);
+                i2 += 1;
+            }
+            if self.first_constraint >= AppParConstraint::TangencyPoint {
+                self.mypoles[1][k] = self.mypoints[0][k] + self.lambda1 * self.vec1t[k];
+                self.mypoles[1][k + 1] = self.mypoints[0][k + 1] + self.lambda1 * self.vec1t[k + 1];
+            }
+            if self.last_constraint >= AppParConstraint::TangencyPoint {
+                self.mypoles[nbpoles - 2][k] =
+                    self.mypoints[last_rel][k] - self.lambda2 * self.vec2t[k];
+                self.mypoles[nbpoles - 2][k + 1] =
+                    self.mypoints[last_rel][k + 1] - self.lambda2 * self.vec2t[k + 1];
+            }
+            k += 2;
+            i2 += nincx;
+        }
+        if std::env::var("RCAD_TG_DEBUG").is_ok() {
+            let p0 = &self.mypoles[0];
+            let p1 = &self.mypoles[1];
+            let pm = &self.mypoles[nbpoles / 2];
+            let pn2 = &self.mypoles[nbpoles - 2];
+            let pn = &self.mypoles[nbpoles - 1];
+            eprintln!("[TGSP] P0=({:.6},{:.6},{:.6}) P1=({:.6},{:.6},{:.6}) Pm=({:.6},{:.6},{:.6}) Pn2=({:.6},{:.6},{:.6}) Pn=({:.6},{:.6},{:.6})", p0[0], p0[1], p0[2], p1[0], p1[1], p1[2], pm[0], pm[1], pm[2], pn2[0], pn2[1], pn2[2], pn[0], pn[1], pn[2]);
+        }
+    }
+
+    /// OCCT LeastSquare::MakeTAA(TheA, myTAB) (AppParCurves_LeastSquare.gxx
+    /// L1510-1703): the full normal equations including the tangency (lambda)
+    /// rows.  The interior block is the per-coordinate copy of the reduced
+    /// triangle (MakeTAA(AA) L1763-1813) and the tangency rows are appended.
+    fn make_taa_tangency(&self, the_a: &mut rcad_kernel::math::VecD, my_tab: &mut rcad_kernel::math::VecD) {
+        let nincx = if self.resfin >= self.resinit {
+            self.resfin - self.resinit + 1
+        } else {
+            0
+        };
+        let neq = self.last_p - self.first_p + 1;
+        let ninc1 = if self.first_constraint >= AppParConstraint::TangencyPoint
+            && self.last_constraint >= AppParConstraint::TangencyPoint
+        {
+            self.ninc - 1
+        } else {
+            self.ninc
+        };
+        let na1 = self.na - 1;
+        let nlignes = self.nlignes;
+        let mut my_b = vec![0.0f64; nlignes];
+        let mut my_v1 = vec![0.0f64; nlignes];
+        let mut my_v2 = vec![0.0f64; nlignes];
+        let mut the_v1 = vec![0.0f64; self.ninc];
+        let mut the_v2 = vec![0.0f64; self.ninc];
+        let mut taf1 = 0.0;
+        let mut taf2 = 0.0;
+        let mut taf3 = 0.0;
+        let mut tab1 = 0.0;
+        let mut tab2 = 0.0;
+        let last_rel = self.mylastp - self.myfirstp;
+        if std::env::var("RCAD_TG_DEBUG").is_ok() {
+            let di0 = self.first_p - self.myfirstp;
+            eprintln!("[B] myfirstp={} mylastp={} first_p={} last_p={} di0={} last_rel={} mypoints0={:?} mypointsN={:?}", self.myfirstp, self.mylastp, self.first_p, self.last_p, di0, last_rel, &self.mypoints[di0][0..5], &self.mypoints[last_rel][0..5]);
+            eprintln!("[B] a0={:?} aN={:?} vec1t={:?} vec2t={:?}", &self.a[di0][0..3], &self.a[last_rel][0..3], &self.vec1t[0..3], &self.vec2t[0..3]);
+        }
+        // myB/myV1/myV2 (L1540-1600).
+        for i in self.first_p..=self.last_p {
+            let di = i - self.myfirstp;
+            let ai2 = self.a[di][1];
+            let aid = self.a[di][self.nbpoles - 2];
+            if std::env::var("RCAD_TG_DEBUG").is_ok() && i == self.first_p {
+                let xx0 = if self.first_constraint >= AppParConstraint::PassPoint { self.a[di][0] } else { 0.0 };
+                let yy0 = if self.last_constraint >= AppParConstraint::PassPoint { self.a[di][self.nbpoles - 1] } else { 0.0 };
+                eprintln!("[BB] i={} xx={:.6} yy={:.6} bxyz=({:.6},{:.6},{:.6}) mypoints=({:.6},{:.6},{:.6}) Pn=({:.6},{:.6},{:.6})", i, xx0 + ai2, yy0 + aid, self.mypoints[di][0] - (xx0 + ai2) * self.mypoints[0][0] - (yy0 + aid) * self.mypoints[last_rel][0], self.mypoints[di][1] - (xx0 + ai2) * self.mypoints[0][1] - (yy0 + aid) * self.mypoints[last_rel][1], self.mypoints[di][2] - (xx0 + ai2) * self.mypoints[0][2] - (yy0 + aid) * self.mypoints[last_rel][2], self.mypoints[di][0], self.mypoints[di][1], self.mypoints[di][2], self.mypoints[last_rel][0], self.mypoints[last_rel][1], self.mypoints[last_rel][2]);
+            }
+            let mut xx = 0.0;
+            let mut yy = 0.0;
+            if self.first_constraint >= AppParConstraint::PassPoint {
+                xx = self.a[di][0];
+            }
+            if self.first_constraint >= AppParConstraint::TangencyPoint {
+                xx += ai2;
+            }
+            if self.last_constraint >= AppParConstraint::PassPoint {
+                yy = self.a[di][self.nbpoles - 1];
+            }
+            if self.last_constraint >= AppParConstraint::TangencyPoint {
+                yy += aid;
+            }
+            let mut i2 = 0usize;
+            let mut nrow = 0usize;
+            let ix0 = i - self.first_p;
+            for _ci in 0..self.nb_p {
+                let ix = ix0 + nrow;
+                let iy = ix + neq;
+                let iz = iy + neq;
+                if self.first_constraint >= AppParConstraint::TangencyPoint {
+                    my_v1[ix] = ai2 * self.vec1t[i2];
+                    my_v1[iy] = ai2 * self.vec1t[i2 + 1];
+                    my_v1[iz] = ai2 * self.vec1t[i2 + 2];
+                }
+                if self.last_constraint >= AppParConstraint::TangencyPoint {
+                    my_v2[ix] = -aid * self.vec2t[i2];
+                    my_v2[iy] = -aid * self.vec2t[i2 + 1];
+                    my_v2[iz] = -aid * self.vec2t[i2 + 2];
+                }
+                my_b[ix] = self.mypoints[di][i2] - xx * self.mypoints[0][i2]
+                    - yy * self.mypoints[last_rel][i2];
+                my_b[iy] = self.mypoints[di][i2 + 1] - xx * self.mypoints[0][i2 + 1]
+                    - yy * self.mypoints[last_rel][i2 + 1];
+                my_b[iz] = self.mypoints[di][i2 + 2] - xx * self.mypoints[0][i2 + 2]
+                    - yy * self.mypoints[last_rel][i2 + 2];
+                i2 += 3;
+                nrow += 3 * neq;
+            }
+            for _ci in 0..self.nb_p2d {
+                let ix = ix0 + nrow;
+                let iy = ix + neq;
+                if self.first_constraint >= AppParConstraint::TangencyPoint {
+                    my_v1[ix] = ai2 * self.vec1t[i2];
+                    my_v1[iy] = ai2 * self.vec1t[i2 + 1];
+                }
+                if self.last_constraint >= AppParConstraint::TangencyPoint {
+                    my_v2[ix] = -aid * self.vec2t[i2];
+                    my_v2[iy] = -aid * self.vec2t[i2 + 1];
+                }
+                my_b[ix] = self.mypoints[di][i2] - xx * self.mypoints[0][i2]
+                    - yy * self.mypoints[last_rel][i2];
+                my_b[iy] = self.mypoints[di][i2 + 1] - xx * self.mypoints[0][i2 + 1]
+                    - yy * self.mypoints[last_rel][i2 + 1];
+                nrow += 2 * neq;
+                i2 += 2;
+            }
+        }
+        // The normal equations (L1605-1647).
+        for k in self.first_p..=self.last_p {
+            let dk = k - self.myfirstp;
+            let jinit = self.resinit;
+            let jfin = self.resfin.min(self.nbpoles);
+            let k1 = k - self.first_p;
+            for i in 0..=na1 {
+                let nb = i * neq + k1;
+                let mut v1 = 0.0;
+                let mut v2 = 0.0;
+                if self.first_constraint >= AppParConstraint::TangencyPoint {
+                    v1 = my_v1[nb];
+                }
+                if self.last_constraint >= AppParConstraint::TangencyPoint {
+                    v2 = my_v2[nb];
+                }
+                let b = my_b[nb];
+                let inc = i as i64 * nincx as i64 + 1 - self.resinit as i64;
+                for j in jinit..=jfin {
+                    let akj = self.a[dk][j - 1];
+                    let u = (j as i64 + inc - 1) as usize;
+                    if self.first_constraint >= AppParConstraint::TangencyPoint {
+                        the_v1[u] += akj * v1;
+                    }
+                    if self.last_constraint >= AppParConstraint::TangencyPoint {
+                        the_v2[u] += akj * v2;
+                    }
+                    my_tab.v[u] += akj * b;
+                }
+                if self.first_constraint >= AppParConstraint::TangencyPoint {
+                    taf1 += v1 * v1;
+                    tab1 += v1 * b;
+                }
+                if self.last_constraint >= AppParConstraint::TangencyPoint {
+                    taf2 += v2 * v2;
+                    tab2 += v2 * b;
+                }
+                if self.first_constraint >= AppParConstraint::TangencyPoint
+                    && self.last_constraint >= AppParConstraint::TangencyPoint
+                {
+                    taf3 += v1 * v2;
+                }
+            }
+        }
+        // The lambda diagonal (L1649-1662).
+        if self.first_constraint >= AppParConstraint::TangencyPoint {
+            the_v1[ninc1 - 1] = taf1;
+            my_tab.set(ninc1, tab1);
+        }
+        if self.last_constraint >= AppParConstraint::TangencyPoint {
+            the_v2[self.ninc - 1] = taf2;
+            my_tab.set(self.ninc, tab2);
+        }
+        if self.first_constraint >= AppParConstraint::TangencyPoint
+            && self.last_constraint >= AppParConstraint::TangencyPoint
+        {
+            the_v2[ninc1 - 1] = taf3;
+        }
+        // The interior block (L1664-1680): the per-coordinate copies of the
+        // reduced triangle.
+        if self.resinit <= self.resfin {
+            let mut index = rcad_kernel::math::IntVec::new(nincx);
+            self.search_index(&mut index);
+            let mut aa = rcad_kernel::math::VecD::new(index.get(nincx) as usize);
+            let mut my_tab2 = rcad_kernel::math::MatD::new(nincx, self.n_bcols);
+            self.make_taa(&mut aa, &mut my_tab2);
+            let mut kk = 0usize;
+            for _k in 0..self.na {
+                for i in 0..aa.len() {
+                    the_a.set(kk + 1, aa.v[i]);
+                    kk += 1;
+                }
+            }
+        }
+        // The tangency rows (L1684-1702).
+        let length = the_a.len();
+        if self.first_constraint >= AppParConstraint::TangencyPoint
+            && self.last_constraint >= AppParConstraint::TangencyPoint
+        {
+            for j in 1..=ninc1 {
+                the_a.set(length - 2 * self.ninc + j + 1, the_v1[j - 1]);
+            }
+            for j in 1..=self.ninc {
+                the_a.set(length - self.ninc + j, the_v2[j - 1]);
+            }
+        } else if self.first_constraint >= AppParConstraint::TangencyPoint {
+            for j in 1..=self.ninc {
+                the_a.set(length - self.ninc + j, the_v1[j - 1]);
+            }
+        } else if self.last_constraint >= AppParConstraint::TangencyPoint {
+            for j in 1..=self.ninc {
+                the_a.set(length - self.ninc + j, the_v2[j - 1]);
+            }
         }
     }
 
@@ -2550,6 +3330,10 @@ impl<'a> ParFunction<'a> {
         for i in 1..=n {
             my_parameters.set(i, parameters.get(i));
         }
+        if std::env::var("RCAD_TG_DEBUG").is_ok() {
+            let pv: Vec<f64> = (1..=n.min(12)).map(|i| parameters.get(i)).collect();
+            eprintln!("  [PAR] deg={} nbpoles={} first={} last={} pars={:?}", deg, deg + 1, first_point, last_point, pv);
+        }
         ParFunction {
             ml,
             my_parameters,
@@ -2770,28 +3554,72 @@ impl Gradient {
         }
         fval = myf.f_val;
         grad.scu = myf.curve_value();
-        // Rogers & Fog projection iteration (OCCT L131-175): adjust each
-        // interior parameter by projecting the point onto the curve tangent.
+        // OCCT AppParCurves_Gradient.gxx L99-125: storage of curve poles for
+        // projection, converted to power-basis coefficients via
+        // BSplCLib::PolesCoefficients (TheCoef / TheCoef2d).
+        let mut the_coef: Vec<DVec3> = Vec::with_capacity((deg + 1) * nb_p3d);
+        let mut tab_pole = Vec::with_capacity(deg + 1);
+        for k in 0..nb_p3d {
+            grad.scu.curve(k + 1, &mut tab_pole);
+            let tab_coef = bezier_poles_to_coeffs(&tab_pole);
+            the_coef.extend_from_slice(&tab_coef);
+        }
+        let mut the_coef2d: Vec<DVec2> = Vec::with_capacity((deg + 1) * nb_p2d);
+        let mut tab_pole2d = Vec::with_capacity(deg + 1);
+        for k in 0..nb_p2d {
+            grad.scu.curve2d(nb_p3d + k + 1, &mut tab_pole2d);
+            let tab_coef2d = bezier_poles_to_coeffs_2d(&tab_pole2d);
+            the_coef2d.extend_from_slice(&tab_coef2d);
+        }
+        // OCCT L131-175: Rogers & Fog projection iteration (no D2 needed).
         for j in first_point + 1..last_point {
             let uf = parameters.get(j - first_point + 1);
             let p3 = ml.value_p3d(j);
             let p2 = ml.value_p2d(j);
             let mut fu = 0.0;
             let mut dfu = 0.0;
+            let mut i2 = 0usize;
             for k in 0..nb_p3d {
-                let (pt, v1) = grad.scu.d1(k + 1, uf);
-                let myv = pt - p3;
+                // OCCT L148-151: TabCoef(l) = TheCoef(l + i2);
+                // BSplCLib::CoefsD1(UF, TabCoef, NoWeights, Pt, V1) =
+                // CacheD1 (BSplCLib_CurveComputation.pxx L1307-1346) with
+                // SpanLenght = 1: a Horner power-basis evaluation.
+                let tab_coef = &the_coef[i2..i2 + deg + 1];
+                i2 += deg + 1;
+                let mut pt = DVec3::ZERO;
+                let mut v1 = DVec3::ZERO;
+                for d in 0..3 {
+                    let cx: Vec<f64> = tab_coef.iter().map(|c| c[d]).collect();
+                    let (v, dv) = eval_polynomial_d1(&cx, uf);
+                    pt[d] = v;
+                    v1[d] = dv;
+                }
+                // OCCT L152-154: MyV = gp_Vec(Pt, TabP(k)); FU += MyV * V1;
+                // DFU += V1.SquareMagnitude();
+                let myv = p3 - pt;
                 fu += myv.dot(v1);
                 dfu += v1.length_squared();
             }
+            let mut i2 = 0usize;
             for k in 0..nb_p2d {
-                let (pt, v1) = grad.scu.d1(nb_p3d + k + 1, uf);
-                let p2v = DVec2::new(pt.x, pt.y);
-                let myv = p2v - p2[k];
-                fu += myv.dot(DVec2::new(v1.x, v1.y));
-                dfu += v1.length_squared();
+                let tab_coef = &the_coef2d[i2..i2 + deg + 1];
+                i2 += deg + 1;
+                let mut pt2 = DVec2::ZERO;
+                let mut v12 = DVec2::ZERO;
+                for d in 0..2 {
+                    let cx: Vec<f64> = tab_coef.iter().map(|c| c[d]).collect();
+                    let (v, dv) = eval_polynomial_d1(&cx, uf);
+                    pt2[d] = v;
+                    v12[d] = dv;
+                }
+                // OCCT L163-165: MyV2d = gp_Vec2d(Pt2d, TabP2d(k));
+                // FU += MyV2d * V12d; DFU += V12d.SquareMagnitude();
+                let myv2 = p2[k] - pt2;
+                fu += myv2.dot(v12);
+                dfu += v12.length_squared();
             }
-            if dfu >= 1.0e-12 {
+            // OCCT L168-174: DFU >= RealEpsilon(); DU clamped to +/-5e-02.
+            if dfu >= 2.220446049250313e-16 {
                 let mut du = fu / dfu;
                 du = du.abs().min(5.0e-02).copysign(du);
                 let uf2 = uf + du;
@@ -2806,6 +3634,10 @@ impl Gradient {
         fval = myf.f_val;
         grad.m_error3d = myf.max_error3d();
         grad.m_error2d = myf.max_error2d();
+        if std::env::var("RCAD_TG_DEBUG").is_ok() {
+            let pv: Vec<f64> = (1..=parameters.len().min(12)).map(|i| parameters.get(i)).collect();
+            eprintln!("  [GRAD] deg={} first={} last={} err3d={:.3e} err2d={:.3e} after_proj pars={:?}", deg, first_point, last_point, grad.m_error3d, grad.m_error2d, pv);
+        }
         if grad.m_error3d <= tol3d && grad.m_error2d <= tol2d {
             grad.done = true;
             grad.scu = myf.curve_value();
@@ -2899,58 +3731,24 @@ fn eval_curv(dim: usize, v1: &[f64], v2: &[f64]) -> f64 {
     for i in 0..dim {
         q += v1[i] * v1[i];
     }
-    if q < 1.0 / f64::INFINITY {
+    if q < 1.0 / 2.0e100 {
         // Singularity: imitate a curvature jump (OCCT L62-75).
-        return f64::INFINITY;
+        return 2.0e100;
     }
-    let q = q.min(f64::INFINITY);
+    let q = q.min(2.0e100);
     let q = q * q * q;
     (mp / q).sqrt()
 }
 
-/// PLib::EvalLagrange(Par[1], 2, 2, dim, Val, Par, Res) — quadratic Lagrange
-/// interpolation through three points evaluated at the middle parameter:
-/// Res = [value (dim), first derivative (dim), second derivative (dim)].
-fn eval_lagrange_mid(val: &[f64], dim: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    // Points t0 < t1 < t2 with values val[0..dim), val[dim..2dim),
-    // val[2dim..3dim); evaluated at t1.
-    let (t0, t1, t2) = (0.0f64, 1.0f64, 2.0f64);
-    let mut res0 = vec![0.0; dim];
-    let mut res1 = vec![0.0; dim];
-    let mut res2 = vec![0.0; dim];
-    // Lagrange basis at t = t1:
-    // L0 = (t-t1)(t-t2)/((t0-t1)(t0-t2)), L1 = (t-t0)(t-t2)/((t1-t0)(t1-t2)),
-    // L2 = (t-t0)(t-t1)/((t2-t0)(t2-t1)).
-    // At t = t1: L0 = (t1-t2)/(t0-t2) = 2/2 = ... compute directly below.
-    let l0 = (t1 - t2) / ((t0 - t1) * (t0 - t2)); // (1-2)/((0-1)(0-2)) = -1/2
-    let l1 = (t1 - t0) * (t1 - t2) / ((t1 - t0) * (t1 - t2)); // 1
-    let l2 = (t1 - t0) / ((t2 - t0) * (t2 - t1)); // 1/(2*1) = 1/2
-    // Derivatives of the basis at t = t1:
-    // L0' = (2t - t1 - t2)/((t0-t1)(t0-t2)) -> at t1: (t1 - t2)/((t0-t1)(t0-t2)) = -1/2
-    let dl0 = (2.0 * t1 - t1 - t2) / ((t0 - t1) * (t0 - t2));
-    let dl1 = (2.0 * t1 - t0 - t2) / ((t1 - t0) * (t1 - t2));
-    let dl2 = (2.0 * t1 - t0 - t1) / ((t2 - t0) * (t2 - t1));
-    // Second derivatives: constant
-    let d2l0 = 2.0 / ((t0 - t1) * (t0 - t2));
-    let d2l1 = 2.0 / ((t1 - t0) * (t1 - t2));
-    let d2l2 = 2.0 / ((t2 - t0) * (t2 - t1));
-    for m in 0..dim {
-        res0[m] = l0 * val[m] + l1 * val[dim + m] + l2 * val[2 * dim + m];
-        res1[m] = dl0 * val[m] + dl1 * val[dim + m] + dl2 * val[2 * dim + m];
-        res2[m] = d2l0 * val[m] + d2l1 * val[dim + m] + d2l2 * val[2 * dim + m];
-    }
-    (res0, res1, res2)
-}
-
 /// OCCT ApproxInt_KnotTools::BuildCurvature (L88-167): discrete curvature of
 /// the n-dim curve `theCoords` (per-point dim coordinates) at each parameter.
-fn build_curvature(coords: &[f64], dim: usize, n: usize) -> (Vec<f64>, f64) {
+fn build_curvature(coords: &[f64], dim: usize, n: usize, pars: &[f64]) -> (Vec<f64>, f64) {
     let mut curv = vec![0.0; n];
     let mut max_curv = 0.0;
     if n < 3 {
         return (curv, max_curv);
     }
-    // First point: Lagrange through points 0,1,2 at 0.
+    // First point: Lagrange through points 0,1,2 evaluated at par[0].
     {
         let mut val = vec![0.0; 3 * dim];
         for m in 0..dim {
@@ -2958,11 +3756,11 @@ fn build_curvature(coords: &[f64], dim: usize, n: usize) -> (Vec<f64>, f64) {
             val[dim + m] = coords[dim + m];
             val[2 * dim + m] = coords[2 * dim + m];
         }
-        let (_, d1, d2) = eval_lagrange_mid_eval0(&val, dim);
+        let (_, d1, d2) = eval_lagrange(&val, dim, pars[0], pars[1], pars[2], pars[0]);
         curv[0] = eval_curv(dim, &d1, &d2);
         max_curv = max_curv.max(curv[0]);
     }
-    // Interior points: Lagrange through i-1, i, i+1 at i.
+    // Interior points: Lagrange through i-1, i, i+1 evaluated at par[i].
     for i in 1..n - 1 {
         let mut val = vec![0.0; 3 * dim];
         for m in 0..dim {
@@ -2970,11 +3768,11 @@ fn build_curvature(coords: &[f64], dim: usize, n: usize) -> (Vec<f64>, f64) {
             val[dim + m] = coords[i * dim + m];
             val[2 * dim + m] = coords[(i + 1) * dim + m];
         }
-        let (_, d1, d2) = eval_lagrange_mid(&val, dim);
+        let (_, d1, d2) = eval_lagrange(&val, dim, pars[i - 1], pars[i], pars[i + 1], pars[i]);
         curv[i] = eval_curv(dim, &d1, &d2);
         max_curv = max_curv.max(curv[i]);
     }
-    // Last point: Lagrange through n-3, n-2, n-1 at n-1.
+    // Last point: Lagrange through n-3, n-2, n-1 evaluated at par[n-1].
     {
         let mut val = vec![0.0; 3 * dim];
         for m in 0..dim {
@@ -2982,58 +3780,84 @@ fn build_curvature(coords: &[f64], dim: usize, n: usize) -> (Vec<f64>, f64) {
             val[dim + m] = coords[(n - 2) * dim + m];
             val[2 * dim + m] = coords[(n - 1) * dim + m];
         }
-        let (_, d1, d2) = eval_lagrange_mid_eval2(&val, dim);
+        let (_, d1, d2) = eval_lagrange(
+            &val,
+            dim,
+            pars[n - 3],
+            pars[n - 2],
+            pars[n - 1],
+            pars[n - 1],
+        );
         curv[n - 1] = eval_curv(dim, &d1, &d2);
         max_curv = max_curv.max(curv[n - 1]);
     }
     (curv, max_curv)
 }
 
-/// Lagrange evaluation at the FIRST parameter (points 0,1,2 at t=0).
-fn eval_lagrange_mid_eval0(val: &[f64], dim: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    let (t0, t1, t2) = (0.0f64, 1.0f64, 2.0f64);
-    let t = t0;
-    let mut res0 = vec![0.0; dim];
-    let mut res1 = vec![0.0; dim];
-    let mut res2 = vec![0.0; dim];
-    let l0 = (t - t1) * (t - t2) / ((t0 - t1) * (t0 - t2));
-    let l1 = (t - t0) * (t - t2) / ((t1 - t0) * (t1 - t2));
-    let l2 = (t - t0) * (t - t1) / ((t2 - t0) * (t2 - t1));
-    let dl0 = (2.0 * t - t1 - t2) / ((t0 - t1) * (t0 - t2));
-    let dl1 = (2.0 * t - t0 - t2) / ((t1 - t0) * (t1 - t2));
-    let dl2 = (2.0 * t - t0 - t1) / ((t2 - t0) * (t2 - t1));
-    let d2l0 = 2.0 / ((t0 - t1) * (t0 - t2));
-    let d2l1 = 2.0 / ((t1 - t0) * (t1 - t2));
-    let d2l2 = 2.0 / ((t2 - t0) * (t2 - t1));
-    for m in 0..dim {
-        res0[m] = l0 * val[m] + l1 * val[dim + m] + l2 * val[2 * dim + m];
-        res1[m] = dl0 * val[m] + dl1 * val[dim + m] + dl2 * val[2 * dim + m];
-        res2[m] = d2l0 * val[m] + d2l1 * val[dim + m] + d2l2 * val[2 * dim + m];
+/// OCCT PLib::EvalLagrange(Parameter, DerivativeRequest=2, Degree=2, Dim,
+/// Values, Parameters, Results) (PLib.cxx L1122-1249): Newton divided-difference
+/// evaluation of the degree-2 Lagrange interpolant through the three nodes
+/// (t0, t1, t2) with the values `val`, evaluated at the parameter t.  Returns
+/// (value, first derivative, second derivative), each of length `dim`.
+fn eval_lagrange(val: &[f64], dim: usize, t0: f64, t1: f64, t2: f64, t: f64) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let degree = 2usize;
+    let local_request = 2usize; // min(DerivativeRequest, Degree)
+    let par = [t0, t1, t2];
+    // Build the divided differences array.
+    let mut dd = vec![0.0; (degree + 1) * dim];
+    for i in 0..(degree + 1) * dim {
+        dd[i] = val[i];
     }
-    (res0, res1, res2)
-}
-
-/// Lagrange evaluation at the LAST parameter (points n-3, n-2, n-1 at t=2).
-fn eval_lagrange_mid_eval2(val: &[f64], dim: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    let (t0, t1, t2) = (0.0f64, 1.0f64, 2.0f64);
-    let t = t2;
-    let mut res0 = vec![0.0; dim];
-    let mut res1 = vec![0.0; dim];
-    let mut res2 = vec![0.0; dim];
-    let l0 = (t - t1) * (t - t2) / ((t0 - t1) * (t0 - t2));
-    let l1 = (t - t0) * (t - t2) / ((t1 - t0) * (t1 - t2));
-    let l2 = (t - t0) * (t - t1) / ((t2 - t0) * (t2 - t1));
-    let dl0 = (2.0 * t - t1 - t2) / ((t0 - t1) * (t0 - t2));
-    let dl1 = (2.0 * t - t0 - t2) / ((t1 - t0) * (t1 - t2));
-    let dl2 = (2.0 * t - t0 - t1) / ((t2 - t0) * (t2 - t1));
-    let d2l0 = 2.0 / ((t0 - t1) * (t0 - t2));
-    let d2l1 = 2.0 / ((t1 - t0) * (t1 - t2));
-    let d2l2 = 2.0 / ((t2 - t0) * (t2 - t1));
-    for m in 0..dim {
-        res0[m] = l0 * val[m] + l1 * val[dim + m] + l2 * val[2 * dim + m];
-        res1[m] = dl0 * val[m] + dl1 * val[dim + m] + dl2 * val[2 * dim + m];
-        res2[m] = d2l0 * val[m] + d2l1 * val[dim + m] + d2l2 * val[2 * dim + m];
+    let mut ok = true;
+    'outer: for ii in (0..=degree).rev() {
+        for jj in ((degree - ii + 1)..=degree).rev() {
+            let index = jj * dim;
+            let index1 = index - dim;
+            for kk in 0..dim {
+                dd[index + kk] -= dd[index1 + kk];
+            }
+            let difference = par[jj] - par[jj + ii - degree - 1];
+            if difference.abs() < 2.2250738585072014e-308 {
+                // OCCT: |difference| < RealSmall() -> ReturnCode = 1; goto FINISH.
+                ok = false;
+                break 'outer;
+            }
+            let difference = 1.0 / difference;
+            for kk in 0..dim {
+                dd[index + kk] *= difference;
+            }
+        }
     }
+    // Evaluate the divided-difference polynomial (Newton form).
+    let mut res = vec![0.0; (local_request + 1) * dim];
+    if ok {
+        let index = degree * dim;
+        for kk in 0..dim {
+            res[kk] = dd[index + kk];
+        }
+        for i in dim..(local_request + 1) * dim {
+            res[i] = 0.0;
+        }
+        for ii in (1..=degree).rev() {
+            let difference = t - par[ii - 1];
+            for jj in (1..=local_request).rev() {
+                let index = jj * dim;
+                let index1 = index - dim;
+                for kk in 0..dim {
+                    res[index + kk] *= difference;
+                    res[index + kk] += res[index1 + kk] * jj as f64;
+                }
+            }
+            let index = (ii - 1) * dim;
+            for kk in 0..dim {
+                res[kk] *= difference;
+                res[kk] += dd[index + kk];
+            }
+        }
+    }
+    let res0 = res[0..dim].to_vec();
+    let res1 = res[dim..2 * dim].to_vec();
+    let res2 = res[2 * dim..3 * dim].to_vec();
     (res0, res1, res2)
 }
 
@@ -3056,6 +3880,8 @@ fn ins_knot_bef_i(
     }
     let a_limit_curvature_change = 3.0;
     let a_sin_coeff2 = 0.09549150281252627; // (3 - sqrt(5)) / 8
+    // OCCT L466-467: curv = 0.5 * (theCurv(anInd) + theCurv(anInd1)).
+    let curv_half = 0.5 * (curv[an_ind] + curv[an_ind1]);
     let mut mid = 0usize;
     let mut j = an_ind + 1;
     while j < an_ind1 {
@@ -3073,8 +3899,8 @@ fn ins_knot_bef_i(
         // II: angular criteria.
         let ac = curv[j - 1];
         let ac1 = curv[j];
-        if (curv[j] >= ac && curv[j] <= ac1) || (curv[j] >= ac1 && curv[j] <= ac) {
-            if (curv[j] - ac).abs() < (curv[j] - ac1).abs() {
+        if (curv_half >= ac && curv_half <= ac1) || (curv_half >= ac1 && curv_half <= ac) {
+            if (curv_half - ac).abs() < (curv_half - ac1).abs() {
                 mid = j - 1;
             } else {
                 mid = j;
@@ -3127,9 +3953,9 @@ fn inds_insert(inds: &mut Vec<usize>, pos: usize, val: usize) {
 }
 
 /// OCCT ApproxInt_KnotTools::ComputeKnotInds (L171-327).
-fn compute_knot_inds(coords: &[f64], dim: usize, n: usize) -> (Vec<usize>, Vec<usize>) {
+fn compute_knot_inds(coords: &[f64], dim: usize, n: usize, pars: &[f64]) -> (Vec<usize>, Vec<usize>) {
     // I: create the discrete curvature.
-    let (a_curv, a_max_curv) = build_curvature(coords, dim, n);
+    let (a_curv, a_max_curv) = build_curvature(coords, dim, n, pars);
     let mut inds: Vec<usize> = Vec::new();
     let mut feature_inds: Vec<usize> = Vec::new();
     inds.push(0);
@@ -3161,26 +3987,30 @@ fn compute_knot_inds(coords: &[f64], dim: usize, n: usize) -> (Vec<usize>, Vec<u
     if n - 1 != *inds.last().unwrap() {
         inds.push(n - 1);
     }
-    // III: put knots in monotone intervals of curvature.
+    // III: put knots in monotone intervals of curvature (OCCT L241-252).
+    // OCCT: i = 1; do { i++; Ok = InsKnotBefI(i, ...); if (Ok) i--; } while (i < theInds.Length());
+    // Here `i` is the 1-based sequence position theI; ins_knot_bef_i takes the 0-based the_i = theI - 1.
     let mut i = 1usize;
     loop {
         i += 1;
-        let len = inds.len();
-        if i >= len {
-            break;
-        }
-        if let Some(mid) = ins_knot_bef_i(i, &a_curv, coords, dim, &inds, true) {
-            inds.insert(i, mid);
+        if let Some(mid) = ins_knot_bef_i(i - 1, &a_curv, coords, dim, &inds, true) {
+            inds.insert(i - 1, mid);
             i -= 1;
         }
+        if i >= inds.len() {
+            break; // while (i < theInds.Length())
+        }
     }
-    // IV: checking feature points.
-    let mut j = 2usize;
+    // IV: checking feature points (OCCT L254-325).
+    // OCCT: j = 2; for (; j <= theInds.Length() - 1;) — j is a 1-based sequence
+    // position.  rcad `j` is the 0-based position, so it starts at 1 and runs
+    // while j < inds.len() - 1.
+    let mut j = 1usize;
     let mut fi = 0usize;
     while fi < feature_inds.len() {
         let an_ind = feature_inds[fi];
         let mut inserted = false;
-        while j <= inds.len() - 1 {
+        while j < inds.len() - 1 {
             if inds[j] == an_ind {
                 let an_ind_prev = inds[j - 1];
                 let an_ind_next = inds[j + 1];
@@ -3341,7 +4171,7 @@ pub fn build_knots(
     if dim == 0 || n < 2 {
         return Vec::new();
     }
-    let (mut draft, _feat) = compute_knot_inds(coords, dim, n);
+    let (mut draft, _feat) = compute_knot_inds(coords, dim, n, pars);
     filter_knots(&mut draft, min_nb_pnts)
 }
 
@@ -3350,7 +4180,8 @@ fn max_param_ratio(pars: &[f64]) -> f64 {
     let mut a_max_ratio: f64 = 0.0;
     for i in 1..pars.len() - 1 {
         let a_denom = pars[i] - pars[i - 1];
-        if a_denom.abs() < 1.0e-10 {
+        if a_denom.abs() < 2.220446049250313e-16 {
+            // OCCT L652: std::abs(aDenom) < Precision::Computational() (RealEpsilon()).
             continue;
         }
         let mut a_rat = (pars[i + 1] - pars[i]) / a_denom;
@@ -3469,8 +4300,9 @@ pub fn define_par_type(
     let a_crit_par_rat = 100.0;
     let a_pars = approx_parameters(ml, the_fpar, the_lpar, ApproxParamType::ChordLength);
     let mut a_par_type = ApproxParamType::ChordLength;
-    let (a_curv, a_max_curv) = build_curvature(&a_coords, a_dim, a_length);
-    if a_max_curv < 1.0e-10 || a_max_curv.is_infinite() {
+    let (a_curv, a_max_curv) = build_curvature(&a_coords, a_dim, a_length, &a_pars.v);
+    if a_max_curv < 1.0e-9 || a_max_curv >= 1.0e100 {
+        // OCCT L800: aMaxCurv < Precision::PConfusion() || Precision::IsPositiveInfinite(aMaxCurv).
         return a_par_type;
     }
     let mut a_mid_curv = 0.0;

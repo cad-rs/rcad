@@ -816,6 +816,9 @@ fn int_quad_quad_fallback(
                         i, d, firstp, lastp, ptf, ptl, first, last);
                 }
                 let mut alig = aline(curvsol.clone(), false, trans1, trans2);
+                if std::env::var("RCAD_VP_DEBUG").is_ok() {
+                    eprintln!("[FB-ALINE] n_vtx={} vtx={:?}", alig.a_curve.as_ref().map(|c| c.vertices.len()).unwrap_or(0), alig.a_curve.as_ref().map(|c| c.vertices.iter().map(|v| format!("{:.12}", v.param_on_line)).collect::<Vec<_>>()).unwrap_or_default());
+                }
                 let mut n_firstp = !firstp;
                 let mut n_lastp = !lastp;
                 if let Some(ac) = alig.a_curve.as_mut() {

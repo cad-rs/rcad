@@ -907,6 +907,10 @@ impl IntAnaCurve {
     ///   - The ALine first/last point indices (svtx indf/indl) are not stored on
     ///     IntAnaCurve; the index bookkeeping is a no-op.
     pub fn compute_vertex_parameters_aline(&mut self, tol: f64) {
+        if std::env::var("RCAD_VP_DEBUG").is_ok() {
+            eprintln!("[VP-IN] dom=[{:.12},{:.12}] open=[{},{}] n_vtx={} vtx={:?} flags={:?}", self.my_first_parameter, self.my_last_parameter, self.is_first_open(), self.is_last_open(), self.vertices.len(), self.vertices.iter().map(|v| format!("{:.12}", v.param_on_line)).collect::<Vec<_>>(), self.vertices.iter().map(|v| (v.on_dom_s1, v.on_dom_s2)).collect::<Vec<_>>());
+            eprintln!("[VP-PT] pts={:?} uv1={:?} uv2={:?}", self.vertices.iter().map(|v| format!("({:.12},{:.12},{:.12})", v.pnt.p.x, v.pnt.p.y, v.pnt.p.z)).collect::<Vec<_>>(), self.vertices.iter().map(|v| (v.pnt.u1, v.pnt.v1)).collect::<Vec<_>>(), self.vertices.iter().map(|v| (v.pnt.u2, v.pnt.v2)).collect::<Vec<_>>());
+        }
         // OCCT IntPatch_ALine.cxx L70: #define PCONFUSION 0.00001 (file-local).
         let pconfusion = 0.00001;
         let pi_pi = std::f64::consts::TAU;
@@ -1336,7 +1340,12 @@ impl IntAnaCurve {
     fn internal_uv_value(&self, mut theta: f64) -> Option<(f64, f64, f64, f64, f64, f64)> {
         let rel_tolp = 1.0 + f64::EPSILON;
         let rel_tolm = 1.0 - f64::EPSILON;
-        let a_dt = 100.0 * f64::EPSILON * (self.domain_sup + self.domain_sup - self.domain_inf).abs();
+        // OCCT IntAna_Curve.cxx L292: aDT = 100.0 * Epsilon(DomainSup +
+        // DomainSup - DomainInf) — the OCCT Epsilon is the distance to the next
+        // representable double (Standard_Real.hxx L242-245), NOT EPSILON*X.
+        let a_dt = 100.0 * super::a_line_to_w_line::occt_epsilon(
+            self.domain_sup + self.domain_sup - self.domain_inf,
+        );
 
         let mut second_solution = false;
         if (theta < self.domain_inf * rel_tolm)

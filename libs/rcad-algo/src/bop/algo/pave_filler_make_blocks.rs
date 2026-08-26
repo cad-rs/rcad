@@ -449,6 +449,10 @@ impl PaveFiller {
                     let a_pb = a_lpb[k].clone();
                     let (n_v1, n_v2) = { let r = a_pb.0.read().unwrap(); r.indices() };
                     let (a_t1, a_t2) = { let r = a_pb.0.read().unwrap(); r.range() };
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        let ic = &self.ds.intersection_curves[cid];
+                        eprintln!("[MB] block cid={} v1={} v2={} t1={:.6} t2={:.6} tolR3D={:.3e} curvTol={:.3e} tangTol={:.3e}", cid, n_v1, n_v2, a_t1, a_t2, a_tol_r3d, ic.tolerance, ic.tang_tolerance);
+                    }
                     // OCCT L906-909: skip degenerate (zero-range) blocks.
                     if (a_t1 - a_t2).abs() < rcad_kernel::PCONFUSION {
                         continue;
@@ -1106,8 +1110,11 @@ impl PaveFiller {
         if b_is_vertex_on_line {
             if std::env::var("RCAD_MB_DEBUG").is_ok() {
                 eprintln!("[MB] put_pave v={} cid={} t={:.6} on_line=true", n_v, cid, a_t);
-            }
-            // OCCT L2994-3003: aDTol + aPTol = Resolution(max(aTolR3D, aTolV)).
+                let p0 = a_ic.curve.point_at(a_ic.t_range[0]);
+                let p1 = a_ic.curve.point_at(a_ic.t_range[1]);
+                let pm = a_ic.curve.point_at(0.5 * (a_ic.t_range[0] + a_ic.t_range[1]));
+                eprintln!("[MB]   curve t0=({:.9},{:.9},{:.9}) tm=({:.9},{:.9},{:.9}) t1=({:.9},{:.9},{:.9}) vpt=({:.9},{:.9},{:.9}) d0={:.3e} d1={:.3e}", p0.x, p0.y, p0.z, pm.x, pm.y, pm.z, p1.x, p1.y, p1.z, a_v_pt.x, a_v_pt.y, a_v_pt.z, a_v_pt.distance(p0), a_v_pt.distance(p1));
+            }            // OCCT L2994-3003: aDTol + aPTol = Resolution(max(aTolR3D, aTolV)).
             let a_dtol = crate::bop::tools::algo_tools::d_tolerance();
             let a_ptol = crate::bop::algo::pave_filler::shrunk_range_resolution(
                 &a_ic.curve, a_ic.t_range[0], a_ic.t_range[1], a_tol_r3d.max(a_tol_v));

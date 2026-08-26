@@ -22,7 +22,7 @@ use rcad_kernel::precision::CONFUSION;
 
 /// OCCT `Epsilon(theValue)` (Standard_Real.hxx L242-245): the distance from
 /// theValue to the next representable double in the direction of ±∞.
-fn occt_epsilon(the_value: f64) -> f64 {
+pub(crate) fn occt_epsilon(the_value: f64) -> f64 {
     if the_value >= 0.0 {
         the_value.next_up() - the_value
     } else {
@@ -156,6 +156,9 @@ impl ALineToWLine {
 
         let a_vert_params = a_line.vertex_params();
         let a_vert_count = a_vert_params.len();
+        if std::env::var("RCAD_WL_DEBUG").is_ok() {
+            eprintln!("[WL-DOM] dom=[{:.15},{:.15}] f_par={:.15} l_par={:.15} vtx={:?}", f_par, l_par, f_par, l_par, a_vert_params.iter().map(|p| format!("{:.15}", p)).collect::<Vec<_>>());
+        }
         let mut has_vertex_been_checked = vec![false; a_vert_count];
 
         let mut arr_periods = [0.0f64; 4];
@@ -237,10 +240,16 @@ impl ALineToWLine {
                 let mut a_tg_magn = 0.0f64;
                 let a_pnt3d;
                 let a_tg;
+                if std::env::var("RCAD_WL_DEBUG").is_ok() && (l_par - a_parameter) < 1.0e-9 {
+                    eprintln!("  [WL-WALK] a_parameter={:.15} a_step={:.3e} is_last={}", a_parameter, a_step, is_last);
+                }
                 match a_line.d1u(a_parameter) {
                     Some((p, tg)) => {
                         a_pnt3d = p;
                         a_tg = tg;
+                        if std::env::var("RCAD_WL_DEBUG").is_ok() && (l_par - a_parameter) < 1.0e-9 {
+                            eprintln!("  [WL-WV] z={:.15}", p.z);
+                        }
                     }
                     None => {
                         a_pnt3d = a_line.value(a_parameter).unwrap_or(DVec3::ZERO);
@@ -581,6 +590,12 @@ impl ALineToWLine {
                     v2: p.v2,
                 })
                 .collect();
+            if std::env::var("RCAD_WL_DEBUG").is_ok() && a_lin_on2s.len() <= 20 {
+                eprintln!("[WL-RAW] n={}", a_lin_on2s.len());
+                for (k, wp) in a_lin_on2s.iter().enumerate() {
+                    eprintln!("  [WL-RP] {} ({:.15},{:.15},{:.15}) s2=({:.15},{:.15})", k, wp.p.x, wp.p.y, wp.p.z, wp.u2, wp.v2);
+                }
+            }
 
             // OCCT L939-947: add the vertices (aSeqVertex) to the WLine; a
             // vertex with parameter -1 (closed curve) is set to the last point.
@@ -711,6 +726,14 @@ impl ALineToWLine {
                     origin: wpts[0].p3d,
                     direction: (wpts[1].p3d - wpts[0].p3d).normalize_or_zero(),
                 });
+                if std::env::var("RCAD_WL_DEBUG").is_ok() {
+                    eprintln!("[WL-SEG] n={} f={:?} l={:?} dist={:.3e}", wpts.len(), wpts[0].p3d, wpts[wpts.len()-1].p3d, wpts[0].p3d.distance(wpts[wpts.len()-1].p3d));
+                    if wpts.len() <= 12 {
+                        for (k, wp) in wpts.iter().enumerate() {
+                            eprintln!("  [WL-PT] {} ({:.15},{:.15},{:.15}) s2=({:.15},{:.15})", k, wp.p3d.x, wp.p3d.y, wp.p3d.z, wp.u2, wp.v2);
+                        }
+                    }
+                }
                 the_lines.push(line);
             }
         } // while(aParameter < theLPar)

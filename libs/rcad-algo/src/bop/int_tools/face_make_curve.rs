@@ -1147,6 +1147,12 @@ fn make_part_curve(
             if ilprm <= ifprm {
                 return None;
             }
+            if std::env::var("RCAD_PCTRACE").is_ok() && ilprm - ifprm <= 30 {
+                eprintln!("[PMC] WLine tail ifprm={} ilprm={} n={}", ifprm, ilprm, n);
+                for (k, wp) in wline.iter().enumerate() {
+                    eprintln!("  [PMC-PT] {} ({:.15},{:.15},{:.15})", k, wp.p3d.x, wp.p3d.y, wp.p3d.z);
+                }
+            }
             // OCCT L1316-1326: a Plane surface disables the 3D approximation
             // (the 3D curve is rebuilt from the 2D pcurve).
             let typs1 = matches!(surf1, Surface3::Plane(_));
@@ -1182,6 +1188,10 @@ fn make_part_curve(
                         v1o: 0.0,
                         u2o: 0.0,
                         v2o: 0.0,
+                        s1: surf1,
+                        s2: surf2,
+                        uv1,
+                        uv2,
                     },
                     ifprm,
                     ilprm,
@@ -1217,6 +1227,10 @@ fn make_part_curve(
                         v1o: 0.0,
                         u2o: 0.0,
                         v2o: 0.0,
+                        s1: surf1,
+                        s2: surf2,
+                        uv1,
+                        uv2,
                     },
                     an_approx,
                     an_approx1,
@@ -1226,6 +1240,12 @@ fn make_part_curve(
                 );
                 if app.is_done() {
                     let mbspc = app.value();
+                    if std::env::var("RCAD_PCTRACE").is_ok() && ilprm - ifprm <= 30 {
+                        let mut p3 = Vec::new();
+                        mbspc.curve(1, &mut p3);
+                        let mid = if p3.len() > 2 { p3[p3.len() / 2] } else { DVec3::ZERO };
+                        eprintln!("[PMC] approx done deg={} np={} knots={:?} P0={:?} Pn={:?} midpole={:?}", mbspc.degree, p3.len(), mbspc.knots, p3.first(), p3.last(), mid);
+                    }
                     // OCCT L1642-1733 (typs != Plane): curve 1 -> 3D BSpline,
                     // curves 2/3 -> the 2D pcurves (myApprox1/2 gates).  The
                     // resulting curves keep the approximation parameter domain

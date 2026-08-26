@@ -865,6 +865,9 @@ impl FaceFace {
                 correct_surface_boundaries(&s2, self.uv2, tol * 2.0),
             )
         };
+        if std::env::var("RCAD_FF_UV").is_ok() {
+            eprintln!("[FF-UV] s1={} s2={} uv1={:?} uv2={:?}", surface_kind(&s1), surface_kind(&s2), uv1, uv2);
+        }
 
         match (&s1, &s2) {
             (Surface3::Plane(p1), Surface3::Plane(p2)) => {
@@ -1119,6 +1122,18 @@ fn surface_type_index(s: &Surface3) -> i32 {
         Surface3::Bezier(_) => 5,
         Surface3::BSpline(_) => 6,
         _ => 11,
+    }
+}
+
+/// Debug helper: a short tag for the surface kind.
+fn surface_kind(s: &Surface3) -> &'static str {
+    match s {
+        Surface3::Plane(_) => "Plane",
+        Surface3::Cylinder(_) => "Cylinder",
+        Surface3::Sphere(_) => "Sphere",
+        Surface3::Cone(_) => "Cone",
+        Surface3::Torus(_) => "Torus",
+        _ => "Other",
     }
 }
 

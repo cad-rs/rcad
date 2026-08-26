@@ -293,10 +293,12 @@ pub(crate) fn find_valid_range_params(
     true
 }
 
-// OCCT Epsilon(double) 鈥?BRepLib_1.cxx L26 鈥?machine-epsilon scaled by value.
+// OCCT Epsilon(double) (Standard_Real.hxx L242-245): the distance from the
+// value to the next representable double (nextafter), used by BRepLib_1.cxx
+// L201 (FindValidRange anEps).
 fn epsilon(par: f64) -> f64 {
-    let eps = 1.1102230246251565e-15; // DBL_EPSILON in double precision
-    par.abs() * eps
+    let eps = crate::geomalgo::int_patch::a_line_to_w_line::occt_epsilon(par);
+    eps
 }
 
 /// OCCT GeomAdaptor_Curve::Resolution(R3D) (GeomAdaptor_Curve.cxx L1116-1149)
@@ -5807,8 +5809,6 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         }
                         // OCCT L99-100: myDS->UpdatePaveBlock(aPBD) 鈥?split the
                         // degenerated edge's PB by the extra paves.
-                        // OCCT L103 + MakeSplitEdge L163-224: one split edge per
-                        // sub-PB, re-pointing the sub-PB's Edge to it.
                         let mut a_lpbn: Vec<SharedPB> = Vec::new();
                         {
                             let pb_r = a_pbd.0.read().unwrap();
@@ -5819,90 +5819,101 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                             lpbd.clear();
                             lpbd.extend(a_lpbn.iter().cloned());
                         }
-                        let a_nb_pb = a_lpbn.len();
-                        for a_pb in &a_lpbn {
-                            let (n_v1, a_t1, n_v2, a_t2) = {
-                                let r = a_pb.0.read().unwrap();
-                                (r.pave1.vertex_idx, r.pave1.param, r.pave2.vertex_idx, r.pave2.param)
-                            };
-                            // OCCT L190: if (myDS->IsNewShape(nV1) || aNbPB > 1)
-                            let b_split = self.ds.is_new_shape(n_v1) || a_nb_pb > 1;
-                            if b_split {
-                                // OCCT MakeSplitEdge1 L336-353: empty-copy the
-                                // degenerated edge, add the two vertices, set the
-                                // range and mark Degenerated.
-                                let v1s = self.ds.shape(n_v1).clone();
-                                let v2s = self.ds.shape(n_v2).clone();
-                                let v1f = Shape::new(v1s.data.clone(), v1s.location, rcad_kernel::topods::Orientation::Forward);
-                                let v2r = Shape::new(v2s.data.clone(), v2s.location, rcad_kernel::topods::Orientation::Reversed);
-                                // OCCT MakeSplitEdge1: EmptyCopy keeps the
-                                // CurveOnSurface representations, so the split
-                                // degenerated edge still has a 2D pcurve on the
-                                // face (WireSplitter's HasCurveOnSurface check).
-                                let (src_pcurves, src_representations) = {
-                                    let ts = &self.ds.shapes[an_ei].shape.data;
-                                    match &**ts {
-                                        rcad_kernel::topods::TShape::Edge(ed) => {
-                                            (ed.pcurves.clone(), ed.representations.clone())
-                                        }
-                                        _ => (std::collections::HashMap::new(), Vec::new()),
-                                    }
-                                };
-                                // OCCT MakeSplitEdge1 (BOPAlgo_PaveFiller_8.cxx
-                                // L336-353): EmptyCopy keeps the CurveOnSurface
-                                // representations, then `BB.Range(E, aF, aP1, aP2)`
-                                // re-trims the pcurve range to the sub-block's
-                                // parameter range [aT1, aT2]. rcad must mirror the
-                                // Range call 鈥?otherwise the split degenerated
-                                // edge keeps the source pcurve range (e.g. the
-                                // full [0, 2*PI] of the pole edge) and
-                                // BRep_Tool::Parameter (vertex_param_on_edge)
-                                // returns the wrong endpoint parameter.
-                                let mut src_pcurves = src_pcurves;
-                                for v in src_pcurves.values_mut() {
-                                    v.1 = a_t1;
-                                    v.2 = a_t2;
+                    }
+                }
+                // OCCT L103 + MakeSplitEdge (BOPAlgo_PaveFiller_8.cxx
+                // L163-214): unconditional — one split edge per sub-PB,
+                // re-pointing the sub-PB's Edge to it; a single-PB edge with
+                // both original vertices is released (L209-210).
+                if !self.ds.has_pave_blocks(an_ei) {
+                    // OCCT ChangePaveBlocks (BOPDS_DS.cxx L425-433): lazily
+                    // (re)initializes the edge's pave blocks when the edge has
+                    // no reference.
+                    self.ds.init_pave_blocks(an_ei);
+                }
+                let a_lpbd = self.ds.change_pave_blocks(an_ei).clone();
+                let a_nb_pb = a_lpbd.len();
+                for a_pb in &a_lpbd {
+                    let (n_v1, a_t1, n_v2, a_t2) = {
+                        let r = a_pb.0.read().unwrap();
+                        (r.pave1.vertex_idx, r.pave1.param, r.pave2.vertex_idx, r.pave2.param)
+                    };
+                    // OCCT L193: if (myDS->IsNewShape(nV1) || aNbPB > 1)
+                    let b_split = self.ds.is_new_shape(n_v1) || a_nb_pb > 1;
+                    if b_split {
+                        // OCCT MakeSplitEdge1 L336-353: empty-copy the
+                        // degenerated edge, add the two vertices, set the
+                        // range and mark Degenerated.
+                        let v1s = self.ds.shape(n_v1).clone();
+                        let v2s = self.ds.shape(n_v2).clone();
+                        let v1f = Shape::new(v1s.data.clone(), v1s.location, rcad_kernel::topods::Orientation::Forward);
+                        let v2r = Shape::new(v2s.data.clone(), v2s.location, rcad_kernel::topods::Orientation::Reversed);
+                        // OCCT MakeSplitEdge1: EmptyCopy keeps the
+                        // CurveOnSurface representations, so the split
+                        // degenerated edge still has a 2D pcurve on the
+                        // face (WireSplitter's HasCurveOnSurface check).
+                        let (src_pcurves, src_representations) = {
+                            let ts = &self.ds.shapes[an_ei].shape.data;
+                            match &**ts {
+                                rcad_kernel::topods::TShape::Edge(ed) => {
+                                    (ed.pcurves.clone(), ed.representations.clone())
                                 }
-                                let mut src_representations = src_representations;
-                                for r in src_representations.iter_mut() {
-                                    match r {
-                                        rcad_kernel::topods::CurveRepresentation::CurveOnSurface { range, .. }
-                                        | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { range, .. } => {
-                                            range[0] = a_t1;
-                                            range[1] = a_t2;
-                                        }
-                                        _ => {}
-                                    }
+                                _ => (std::collections::HashMap::new(), Vec::new()),
+                            }
+                        };
+                        // OCCT MakeSplitEdge1 (BOPAlgo_PaveFiller_8.cxx
+                        // L336-353): EmptyCopy keeps the CurveOnSurface
+                        // representations, then `BB.Range(E, aF, aP1, aP2)`
+                        // re-trims the pcurve range to the sub-block's
+                        // parameter range [aT1, aT2]. rcad must mirror the
+                        // Range call — otherwise the split degenerated
+                        // edge keeps the source pcurve range (e.g. the
+                        // full [0, 2*PI] of the pole edge) and
+                        // BRep_Tool::Parameter (vertex_param_on_edge)
+                        // returns the wrong endpoint parameter.
+                        let mut src_pcurves = src_pcurves;
+                        for v in src_pcurves.values_mut() {
+                            v.1 = a_t1;
+                            v.2 = a_t2;
+                        }
+                        let mut src_representations = src_representations;
+                        for r in src_representations.iter_mut() {
+                            match r {
+                                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { range, .. }
+                                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { range, .. } => {
+                                    range[0] = a_t1;
+                                    range[1] = a_t2;
                                 }
-                                let ed = rcad_kernel::topods::TEdgeData {
-                                    curve: None,
-                                    range: [a_t1, a_t2],
-                                    first: v1f,
-                                    last: v2r,
-                                    tolerance: self.my_fuzzy_value.max(1e-7),
-                                    same_parameter: false,
-                                    same_range: false,
-                                    degenerated: true,
-                                    pcurves: src_pcurves,
-                                    representations: src_representations,
-                                    vertex_params: std::collections::HashMap::new(),
-                                    my_shapes: Vec::new(),
-                                    flags: 0,
-                                };
-                                let s = rcad_kernel::topods::Shape::new(
-                                    std::sync::Arc::new(rcad_kernel::topods::TShape::Edge(ed)),
-                                    0, rcad_kernel::topods::Orientation::Forward);
-                                let n_sp = self.ds.append_shape(s);
-                                self.ds.shapes[n_sp].shape.index = n_sp;
-                                // OCCT L222: aPB->SetEdge(nSp)
-                                a_pb.0.write().unwrap().edge = n_sp;
-                            } else {
-                                // OCCT L214-217: SetReference(-1); aLPB.Clear();
-                                self.ds.change_shape_info(an_ei).reference = -1;
-                                self.ds.change_pave_blocks(an_ei).clear();
-                                break;
+                                _ => {}
                             }
                         }
+                        let ed = rcad_kernel::topods::TEdgeData {
+                            curve: None,
+                            range: [a_t1, a_t2],
+                            first: v1f,
+                            last: v2r,
+                            tolerance: self.my_fuzzy_value.max(1e-7),
+                            same_parameter: false,
+                            same_range: false,
+                            degenerated: true,
+                            pcurves: src_pcurves,
+                            representations: src_representations,
+                            vertex_params: std::collections::HashMap::new(),
+                            my_shapes: Vec::new(),
+                            flags: 0,
+                        };
+                        let s = rcad_kernel::topods::Shape::new(
+                            std::sync::Arc::new(rcad_kernel::topods::TShape::Edge(ed)),
+                            0, rcad_kernel::topods::Orientation::Forward);
+                        let n_sp = self.ds.append_shape(s);
+                        self.ds.shapes[n_sp].shape.index = n_sp;
+                        // OCCT L222: aPB->SetEdge(nSp)
+                        a_pb.0.write().unwrap().edge = n_sp;
+                    } else {
+                        // OCCT L214-217: SetReference(-1); aLPB.Clear();
+                        self.ds.change_shape_info(an_ei).reference = -1;
+                        self.ds.change_pave_blocks(an_ei).clear();
+                        break;
                     }
                 }
             }
