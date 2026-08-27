@@ -3265,9 +3265,35 @@ impl<'a> Builder<'a> {
             let raw = Arc::as_ptr(&e.data) as *mut TShape;
             unsafe {
                 if let TShape::Edge(ed) = &mut *raw {
-                    let v = ed.pcurves.get(&src_key).cloned();
+                    // OCCT BRep_Tool.cxx L330-370: the key's location is
+                    // L.Predivided(E.Location()) for the INSTANCE being
+                    // queried, so per-edge-instance components (not a single
+                    // constant) are used on both the lookup and the insertion
+                    // sides.
+                    let src_key_i = (
+                        src_key.0,
+                        crate::bop::algo::compose_face_edge_pcurve_location(
+                            the_face.location,
+                            e.location,
+                            &self.ds.locations,
+                        ),
+                    );
+                    let draft_key_i = (
+                        draft_key.0,
+                        crate::bop::algo::compose_face_edge_pcurve_location(
+                            draft_face.location,
+                            e.location,
+                            &self.ds.locations,
+                        ),
+                    );
+                    let v = ed
+                        .pcurves
+                        .get(&src_key)
+                        .or_else(|| ed.pcurves.get(&src_key_i))
+                        .cloned();
                     if let Some(v) = v {
-                        ed.pcurves.entry(draft_key).or_insert(v);
+                        ed.pcurves.entry(draft_key).or_insert(v.clone());
+                        ed.pcurves.entry(draft_key_i).or_insert(v);
                     }
                     // OCCT BRep_Tool::CurveOnSurface matches by the surface
                     // geometry (BRep_Tool.cxx L350), so a seam edge's

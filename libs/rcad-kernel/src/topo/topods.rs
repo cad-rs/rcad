@@ -8,7 +8,7 @@ use std::f64::consts::PI;
 pub use crate::topo::topo_shape::Shape;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Quantized vertex position for identity-based sharing.
@@ -328,6 +328,42 @@ impl BRep {
         compose_pcurve_location(face_loc, edge_loc, &self.locations)
     }
 
+
+    /// Location VALUES (table numbers plus identity=0) used by every known
+    /// wrapper of an edge TShape.  OCCT stores curve representations per
+    /// TopoDS_Edge instance via L.Predivided(E.Location()) (BRep_Builder.cxx
+    /// L660-700), so a TShape shared between unlocated and located wrappers
+    /// needs one representation per wrapper location.
+    pub fn edge_wrapper_locations(&self, r: &Shape) -> Vec<u32> {
+        let mut out = vec![r.location];
+        let mut seen_ptrs: HashSet<u64> = HashSet::new();
+        seen_ptrs.insert(r.ptr_id());
+        let mut stack: Vec<Shape> = Vec::new();
+        for ts in &self.tshapes {
+            match ts.as_ref() {
+                TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+                TShape::Face(fd) => {
+                    stack.push(fd.outer_wire.clone());
+                    stack.extend(fd.inner_wires.iter().cloned());
+                }
+                TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
+                TShape::Solid(sd) => {
+                    stack.extend(sd.shells.iter().cloned());
+                    stack.extend(sd.internal_edges.iter().cloned());
+                }
+                _ => {}
+            }
+        }
+        while let Some(s) = stack.pop() {
+            if !seen_ptrs.insert(s.ptr_id()) {
+                continue;
+            }
+            if !out.contains(&s.location) {
+                out.push(s.location);
+            }
+        }
+        out
+    }
     pub fn add_tvertex(&mut self, point: DVec3) -> Shape {
         // OCCT-aligned: identity-based sharing �?same position �?same TShape::Vertex.
         let key = VertexKey::from(point);

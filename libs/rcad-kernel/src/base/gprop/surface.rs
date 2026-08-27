@@ -810,6 +810,12 @@ fn project_curve_on_plane(brep: &BRep, edge: &Shape, face: &Shape) -> Option<(Cu
     Some((c, 0.0, len))
 }
 
+// NOT OCCT-aligned (methodology debt item #1, HANDOFF 附录 G):
+// BRep_Tool::CurveOnPlane returns null for non-planar surfaces — OCCT has no
+// cylinder projection fallback.  This exists only to mask missing located-
+// instance pcurve variants; REMOVE once all UpdateEdge callers write the
+// per-instance L.Predivided(E.Location()) variants and six-grid areas hold.
+//
 // Semantic counterpart of BRep_Tool::CurveOnPlane for CYLINDRICAL faces:
 // when an edge has no stored pcurve for the face, radially project the
 // edge's 3D curve onto the cylinder (u = azimuth from ref_dir about the
@@ -857,26 +863,9 @@ fn project_curve_on_cylinder(brep: &BRep, edge: &Shape, face: &Shape) -> Option<
     }
     let dv = uv1.y - uv0.y;
     let len = (du * du + dv * dv).sqrt();
-    if len < 1e-30 {
-        if std::env::var("RCAD_CYLFALLBACK").is_ok() {
-            eprintln!("[CYFB] ZERO len ep={} eloc={}", edge.ptr_id() % 100000, edge.location);
-        }
-        return None;
-    }
-    if std::env::var("RCAD_CYLFALLBACK").is_ok() {
-        eprintln!(
-            "[CYFB] ok ep={} eloc={} len={:.6} du={:.6} dv={:.6}",
-            edge.ptr_id() % 100000,
-            edge.location,
-            len,
-            du,
-            dv
-        );
-    }
     let c = Curve2d::Line(crate::geom::Line2d::new(uv0, glam::DVec2::new(du / len, dv / len)));
     Some((c, 0.0, len))
 }
-
 /// OCCT BRepGProp_Sinert::Perform(BF, BD, Eps) — the `checkprops -s`
 /// per-face adaptive integration (BRepGProp_Sinert.cxx L104-110 →
 /// BRepGProp_Gauss.cxx L533-1099).  Sinert mass only: the gravity center and
