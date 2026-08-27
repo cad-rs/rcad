@@ -2174,18 +2174,33 @@ impl BRep {
             Curve2d, Curve2dEval, CurveEval, Line2d, Surface3, SurfaceEval, any_perpendicular,
         };
         use glam::DVec2;
-        // Build edge -> faces map
-        let mut edge_faces: std::collections::HashMap<usize, Vec<usize>> =
+        // Build edge -> faces map.  OCCT BRepLib::SameParameter walks the
+        // LOCATED shape instances, so each (edge, face) pair carries the pair
+        // of location VALUES needed for the pcurve key
+        // L.Predivided(E.Location()) (BRep_Tool.cxx L345); the key component
+        // is computed from the transform values (identity -> 0).
+        let mut edge_faces: std::collections::HashMap<usize, Vec<(usize, u64, u32)>> =
             std::collections::HashMap::new();
         for (ti, ts) in self.tshapes.iter().enumerate() {
             if let TShape::Face(fd) = &**ts {
                 let process_wire =
-                    |sr: &Shape, map: &mut std::collections::HashMap<usize, Vec<usize>>| {
+                    |sr: &Shape,
+                     map: &mut std::collections::HashMap<usize, Vec<(usize, u64, u32)>>| {
                         if sr.index < self.tshapes.len() {
+                            let face_tr = self.get_location(sr.location);
                             if let TShape::Wire(wd) = &*self.tshapes[sr.index] {
                                 for esr in &wd.edges {
                                     if esr.index < self.tshapes.len() {
-                                        map.entry(esr.index).or_default().push(ti);
+                                        let edge_tr = self.get_location(esr.location);
+                                        let kid = pcurve_location_id(
+                                            &(face_tr * edge_tr.inverse()),
+                                        );
+                                        let entry =
+                                            (ti, Arc::as_ptr(&self.tshapes[ti]) as u64, kid);
+                                        let v = map.entry(esr.index).or_default();
+                                        if !v.contains(&entry) {
+                                            v.push(entry);
+                                        }
                                     }
                                 }
                             }
@@ -2211,7 +2226,7 @@ impl BRep {
             };
             let t_range = edge_data.range;
             let mut max_dev = 0.0f64;
-            for &fi in face_indices {
+            for &(fi, fptr, kid) in face_indices {
                 let face_data = match &*self.tshapes[fi] {
                     TShape::Face(fd) => fd.clone(),
                     _ => continue,
@@ -2219,8 +2234,9 @@ impl BRep {
                 let Some(ref surf) = face_data.surface else {
                     continue;
                 };
-                // Compute pcurve if missing (planar surfaces only)
-                let face_key = (Arc::as_ptr(&self.tshapes[fi]) as u64, 0u32);
+                // Compute pcurve if missing (planar surfaces only).  The key
+                // is the composed location VALUE id of this located pair.
+                let face_key = (fptr, kid);
                 let has_pcurve = edge_data.pcurves.contains_key(&face_key);
                 if !has_pcurve {
                     if let Surface3::Plane(p) = surf {
