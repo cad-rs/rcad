@@ -1707,7 +1707,82 @@ impl<'a> Builder<'a> {
         if brep.locations.first() == Some(&glam::DAffine3::IDENTITY) {
             brep.locations.remove(0);
         }
+        self.materialize_surface_shared_pcurves(&mut brep);
         Ok((brep, ()))
+    }
+
+    /// OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345-368) matches an
+    /// edge's representations by (surface handle, L.Predivided(E.Location())
+    /// BY VALUE) — the owning face TShape is NOT part of the match.  rcad
+    /// keys pcurve rows by the owning face pointer, so rows whose owner
+    /// stayed in the DS pool (original faces replaced by boolean images)
+    /// are unreachable from the result.  Mirror the OCCT outcome the same
+    /// way bridge_pcurves_for_built_faces does (surface value comparison
+    /// stands in for handle identity): make every row addressable under
+    /// each result-pool face sharing the owner's surface, location value
+    /// preserved.
+    fn materialize_surface_shared_pcurves(&self, brep: &mut topods::BRep) {
+        // Face surfaces by TShape pointer: result-pool faces plus DS faces
+        // (the row owners).
+        let mut face_surf: HashMap<u64, rcad_kernel::geom::Surface3> = HashMap::new();
+        for i in 0..self.ds.nb_shapes() {
+            if self.ds.shape_info(i).shape_type != topods::ShapeType::Face {
+                continue;
+            }
+            if let Some((fid, _)) = self.ds.face_key(i) {
+                if let Some(s) = self.ds.face_surface(i) {
+                    face_surf.insert(fid, s);
+                }
+            }
+        }
+        for ts in &brep.tshapes {
+            if let topods::TShape::Face(fd) = ts.as_ref() {
+                if let Some(s) = fd.surface.as_ref() {
+                    face_surf.insert(Arc::as_ptr(ts) as u64, s.clone());
+                }
+            }
+        }
+        // Pass A: rows to add per edge TShape (immutable snapshot).
+        let mut additions: Vec<(u64, Vec<((u64, u32), (rcad_kernel::geom::Curve2d, f64, f64))>)> =
+            Vec::new();
+        for ts in &brep.tshapes {
+            let topods::TShape::Edge(ed) = ts.as_ref() else { continue };
+            let mut add: Vec<((u64, u32), (rcad_kernel::geom::Curve2d, f64, f64))> = Vec::new();
+            for ((optr, lhash), v) in &ed.pcurves {
+                let Some(osurf) = face_surf.get(optr) else { continue };
+                for (fptr, fsurf) in &face_surf {
+                    if fptr == optr || !rcad_kernel::topo::topods::surface_same(fsurf, osurf) {
+                        continue;
+                    }
+                    let k = (*fptr, *lhash);
+                    if !ed.pcurves.contains_key(&k) {
+                        add.push((k, v.clone()));
+                    }
+                }
+            }
+            if !add.is_empty() {
+                additions.push((Arc::as_ptr(ts) as u64, add));
+            }
+        }
+        if additions.is_empty() {
+            return;
+        }
+        // Pass B: apply in place (single-threaded pipeline; the DS mutates
+        // shapes identically in mutate_shape_data).
+        for ts in &brep.tshapes {
+            let ep = Arc::as_ptr(ts) as u64;
+            let Some((_, add)) = additions.iter().find(|(p, _)| *p == ep) else { continue };
+            let raw = Arc::as_ptr(ts) as *mut topods::TShape;
+            // SAFETY: single-threaded build; no other borrow of this TShape
+            // is alive here (snapshot taken in pass A).
+            unsafe {
+                if let topods::TShape::Edge(ed) = &mut *raw {
+                    for (k, v) in add {
+                        ed.pcurves.entry(*k).or_insert_with(|| v.clone());
+                    }
+                }
+            }
+        }
     }
 
     // --- Pipeline stage stubs ---

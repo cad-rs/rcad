@@ -1619,8 +1619,11 @@ impl BRepTool for BRep {
         // (the translated top cap of a prism) therefore has its own pcurve
         // key, distinct from the base edge's.
         let key = (face.ptr_id(), compose_pcurve_location(face.location, edge.location, &self.locations));
-        let hit = self.edge(edge.clone()).pcurves.get(&key);
-        if hit.is_none() && std::env::var("RCAD_KEYMISS").is_ok() {
+        let ed = self.edge(edge.clone());
+        if let Some(hit) = ed.pcurves.get(&key) {
+            return Some(hit);
+        }
+        if std::env::var("RCAD_KEYMISS").is_ok() {
             let st = match &face.data.as_ref() {
                 TShape::Face(fd) => match fd.surface.as_ref() {
                     Some(Surface3::Plane(_)) => "PL",
@@ -1636,15 +1639,45 @@ impl BRepTool for BRep {
                 key.1,
                 edge.ptr_id() % 100000,
                 edge.location,
-                self.edge(edge.clone())
-                    .pcurves
+                ed.pcurves
                     .iter()
                     .map(|((p, l), _)| format!("({},{})", p % 100000, l))
                     .collect::<Vec<_>>()
                     .join(",")
             );
         }
-        hit
+        // OCCT BRep_Tool.cxx L345-368: the edge's representations are matched
+        // by (surface handle, L.Predivided(E.Location()) BY VALUE) — not by
+        // the owning face TShape pointer.  A face rebuilt over the same
+        // surface (boolean images/areas) therefore resolves the
+        // representations stored under the original face's pointer.  rcad
+        // mirrors this by comparing the surface VALUE (surface_same stands in
+        // for Geom_Surface handle identity) and the location-value hash
+        // component.
+        let fsurf = match face.data.as_ref() {
+            TShape::Face(fd) => fd.surface.clone(),
+            _ => None,
+        };
+        let Some(fsurf) = fsurf else { return None };
+        for ((fptr, lhash), v) in ed.pcurves.iter() {
+            if *lhash != key.1 {
+                continue;
+            }
+            if let Some(ts) = self
+                .tshapes
+                .iter()
+                .find(|ts| Arc::as_ptr(ts) as u64 == *fptr)
+            {
+                if let TShape::Face(fd) = ts.as_ref() {
+                    if let Some(s) = fd.surface.as_ref() {
+                        if surface_same(s, &fsurf) {
+                            return Some(v);
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn is_edge_closed_on_face(&self, edge: &Shape, face: &Shape) -> bool {
@@ -2781,12 +2814,47 @@ impl BRepBuilder {
     }
 }
 
-/// Get the parameter range for a Curve2d (Trimmed �?stored range, Circle �?[0, 2蟺]).
+/// Get the parameter range for a Curve2d (Trimmed -> stored range, Circle -> [0, 2pi]).
 fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
     match curve {
         Curve2d::Trimmed(tc) => (tc.t_min, tc.t_max),
         Curve2d::Circle(_) => (0.0, std::f64::consts::TAU),
         _ => (0.0, 1.0),
+    }
+}
+
+/// Value equality of surfaces at handle-comparison tolerance — the rcad
+/// stand-in for OCCT's Geom_Surface handle identity match
+/// (BRep_Tool.cxx L349: cr->Surface() == S).
+pub fn surface_same(a: &Surface3, b: &Surface3) -> bool {
+    const T: f64 = 1e-9;
+    let v = |x: glam::DVec3, y: glam::DVec3| (x - y).length() < T;
+    match (a, b) {
+        (Surface3::Plane(a), Surface3::Plane(b)) => {
+            v(a.origin, b.origin)
+                && v(a.normal, b.normal)
+                && v(a.u_dir, b.u_dir)
+                && v(a.v_dir, b.v_dir)
+        }
+        (Surface3::Cylinder(a), Surface3::Cylinder(b)) => {
+            v(a.origin, b.origin) && v(a.axis, b.axis) && (a.radius - b.radius).abs() < T
+        }
+        (Surface3::Sphere(a), Surface3::Sphere(b)) => {
+            v(a.center, b.center) && v(a.axis, b.axis) && (a.radius - b.radius).abs() < T
+        }
+        (Surface3::Cone(a), Surface3::Cone(b)) => {
+            v(a.apex, b.apex)
+                && v(a.axis, b.axis)
+                && (a.radius - b.radius).abs() < T
+                && (a.half_angle_rad - b.half_angle_rad).abs() < T
+        }
+        (Surface3::Torus(a), Surface3::Torus(b)) => {
+            v(a.center, b.center)
+                && v(a.axis, b.axis)
+                && (a.major_radius - b.major_radius).abs() < T
+                && (a.minor_radius - b.minor_radius).abs() < T
+        }
+        _ => false,
     }
 }
 
