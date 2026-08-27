@@ -2337,14 +2337,13 @@ impl DS {
     /// composer inputs.
     pub fn pcurve_face_key(&self, i: usize) -> Option<(u64, u32)> {
         let sh = self.shapes.get(i)?;
-        let tr = if sh.shape.location == 0 {
-            glam::DAffine3::IDENTITY
-        } else {
-            self.locations
-                .get((sh.shape.location - 1) as usize)
-                .copied()
-                .unwrap_or(glam::DAffine3::IDENTITY)
-        };
+        // DS location table: slot 0 stores identity, real transforms start at
+        // index 1 (DS::new / brep_top_shapes_with_locations).
+        let tr = self
+            .locations
+            .get(sh.shape.location as usize)
+            .copied()
+            .unwrap_or(glam::DAffine3::IDENTITY);
         Some((
             sh.shape.ptr_id(),
             rcad_kernel::topo::topods::pcurve_location_id(&tr),

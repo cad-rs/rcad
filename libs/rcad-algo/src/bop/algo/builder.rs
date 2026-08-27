@@ -369,14 +369,13 @@ fn edge_data(edge: &Shape) -> Option<&TEdgeData> {
 /// DS location table (`pcurve_location_id` of the transform value; identity
 /// -> 0).
 fn pcurve_loc_component(ds: &DS, loc: u32) -> u32 {
-    let tr = if loc == 0 {
-        glam::DAffine3::IDENTITY
-    } else {
-        ds.locations
-            .get((loc - 1) as usize)
-            .copied()
-            .unwrap_or(glam::DAffine3::IDENTITY)
-    };
+    // DS location table: slot 0 stores identity, real transforms start at
+    // index 1 (DS::new / brep_top_shapes_with_locations).
+    let tr = ds
+        .locations
+        .get(loc as usize)
+        .copied()
+        .unwrap_or(glam::DAffine3::IDENTITY);
     rcad_kernel::topo::topods::pcurve_location_id(&tr)
 }
 

@@ -89,14 +89,12 @@ pub fn compose_face_edge_pcurve_location(
     locations: &[glam::DAffine3],
 ) -> u32 {
     let tr = |idx: u32| -> glam::DAffine3 {
-        if idx == 0 {
-            glam::DAffine3::IDENTITY
-        } else {
-            locations
-                .get((idx - 1) as usize)
-                .copied()
-                .unwrap_or(glam::DAffine3::IDENTITY)
-        }
+        // DS location table: slot 0 stores identity, real transforms start
+        // at index 1 (DS::new / brep_top_shapes_with_locations).
+        locations
+            .get(idx as usize)
+            .copied()
+            .unwrap_or(glam::DAffine3::IDENTITY)
     };
     let composed = tr(face_loc) * tr(edge_loc).inverse();
     rcad_kernel::topo::topods::pcurve_location_id(&composed)

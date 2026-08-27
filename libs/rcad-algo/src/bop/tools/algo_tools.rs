@@ -533,15 +533,12 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
             );
             // OCCT BRep_Tool.cxx L345: pcurve-key location is the composed
             // transform VALUE; rcad stores the stable value hash of the
-            // face's own transform here.
-            let tr_f = if face.location == 0 {
-                glam::DAffine3::IDENTITY
-            } else {
-                locations
-                    .get((face.location - 1) as usize)
-                    .copied()
-                    .unwrap_or(glam::DAffine3::IDENTITY)
-            };
+            // face's own transform here.  DS location table: slot 0 stores
+            // identity, real transforms start at index 1.
+            let tr_f = locations
+                .get(face.location as usize)
+                .copied()
+                .unwrap_or(glam::DAffine3::IDENTITY);
             let mykey = (
                 face.ptr_id(),
                 rcad_kernel::topo::topods::pcurve_location_id(&tr_f),
