@@ -2569,24 +2569,26 @@ impl PaveFiller {
                             } else {
                                 i_e as usize
                             };
-                            // update the curve tolerance from the common block if any.
+                            // update the real edge tolerance according to
+                            // distances in common block if any. OCCT L1615-1624:
+                            // aTol is RECOMPUTED per CB (memoized in aMCBTol)
+                            // via ComputeToleranceOfCB, then applied with the
+                            // keep-the-larger semantics onto the curve.
                             if a_pf.ds().is_common_block(&a_pbrx) {
                                 if let Some(cb_idx) = a_pf.ds().common_block(&a_pbrx) {
-                                    let a_cb = a_pf.ds().common_blocks[cb_idx].clone();
-                                    let a_tol = a_cb.tolerance();
-                                    if a_tol > 0.0 {
-                                        let cid2 = if i_x < self.ds.interf_ff.len()
-                                            && i_c < self.ds.interf_ff[i_x].curves.len()
-                                        {
-                                            self.ds.interf_ff[i_x].curves[i_c]
-                                        } else {
-                                            usize::MAX
-                                        };
-                                        if cid2 != usize::MAX && cid2 < self.ds.intersection_curves.len() {
-                                            let a_nc = &mut self.ds.intersection_curves[cid2];
-                                            if a_nc.tolerance < a_tol {
-                                                a_nc.tolerance = a_tol;
-                                            }
+                                    let a_tol =
+                                        Self::compute_tolerance_of_cb(cb_idx, &self.ds);
+                                    let cid2 = if i_x < self.ds.interf_ff.len()
+                                        && i_c < self.ds.interf_ff[i_x].curves.len()
+                                    {
+                                        self.ds.interf_ff[i_x].curves[i_c]
+                                    } else {
+                                        usize::MAX
+                                    };
+                                    if cid2 != usize::MAX && cid2 < self.ds.intersection_curves.len() {
+                                        let a_nc = &mut self.ds.intersection_curves[cid2];
+                                        if a_nc.tolerance < a_tol {
+                                            a_nc.tolerance = a_tol;
                                         }
                                     }
                                 }

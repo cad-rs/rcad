@@ -5110,7 +5110,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     /// the max tolerance of a common block 鈥?max of the real edge tolerance,
     /// the sampled distances to the other block edges (projected points), and
     /// the sampled distances to the block's faces.
-    fn compute_tolerance_of_cb(cb_idx: usize, ds: &DS) -> f64 {
+    pub(crate) fn compute_tolerance_of_cb(cb_idx: usize, ds: &DS) -> f64 {
         let cb = &ds.common_blocks[cb_idx];
         let mut a_tol_max = 0.0;
         let Some(a_pbr) = cb.pave_block1() else { return a_tol_max; };
