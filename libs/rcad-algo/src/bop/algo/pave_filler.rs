@@ -2124,6 +2124,11 @@ impl PaveFiller {
                 };
                 // OCCT L216-238: append new faces (dedup inside append_faces)
                 self.ds.common_blocks[cb_idx].append_faces(faces);
+                // OCCT L242: pDS->SetCommonBlock(aPB, aCB)
+                self.ds.set_common_block(pb, cb_idx);
+                // OCCT L245-246: ComputeToleranceOfCB + aCB->SetTolerance
+                let a_tol_cb = Self::compute_tolerance_of_cb(cb_idx, &self.ds);
+                self.ds.common_blocks[cb_idx].set_tolerance(a_tol_cb);
             }
         }
         self.update_vertices_of_cb();
