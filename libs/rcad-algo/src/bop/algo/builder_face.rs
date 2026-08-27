@@ -189,14 +189,14 @@ impl<'a> BuilderFace<'a> {
                 } else if a_nb_e == 2 {
                     // OCCT L211-227: two edges at the vertex.
                     let a_e2 = &a_le[1];
-                    // OCCT L214: aE2.IsSame(aE1) — same TShape AND Location
-                    // (TopTools_ShapeMapHasher semantics, orientation ignored).
-                    if a_e2.is_partner(a_e1) {
+                    // OCCT L214: aE2.IsSame(aE1) — same TShape only
+                    // (IsSame semantics, Location and Orientation ignored).
+                    if a_e2.is_same(a_e1) {
                         // OCCT L216-221: TopExp::Vertices(aE1, aV1x, aV2x) —
                         // if both endpoints are the same vertex (degenerated
                         // ring), skip.
                         let vv = Self::edge_vertices(a_e1, &self.ds.locations);
-                        if vv.len() >= 2 && vv[0].is_partner(&vv[1]) {
+                        if vv.len() >= 2 && vv[0].is_same(&vv[1]) {
                             // Degenerated ring — both ends are the same vertex.
                             continue;
                         }

@@ -185,40 +185,78 @@ fn shape_sub_shapes(s: &Shape) -> Vec<Shape> {
 
 /// BOPTools_AlgoTools::MakeVertex / BRepLib::BoundingVertex — the bounding
 /// vertex of a list of vertex shapes (average point, max distance tolerance).
-fn bounding_vertex(a_lv: &[Shape]) -> (DVec3, f64) {
+/// OCCT BRepLib::BoundingVertex (BRepLib.cxx L3013-3120), used by
+/// BOPTools_AlgoTools::MakeVertex (BOPTools_AlgoTools.cxx L1798-1813) for the
+/// SD vertices: centroid and tolerance of a vertex list.  BRep_Tool::Pnt
+/// (BRep_Tool.cxx L167-175) composes the vertex's TopLoc_Location into the raw
+/// TShape point, so a located vertex (e.g. the extruded top cap of a prism)
+/// contributes its WORLD position — the raw point would mix frames and the
+/// centroid/tolerance would be wrong (bfuse_simple i1: the (3,3,4) and (3,4,4)
+/// cap vertices averaged as (3,3.5,2)).
+fn bounding_vertex(a_lv: &[Shape], locations: &[glam::DAffine3]) -> (DVec3, f64) {
+    // BRep_Tool::Pnt(aV) = aV.Location() * TShape point; Tolerance clamped to
+    // Precision::Confusion minimum (BRep_Tool.cxx L1314-1333).
+    let pnt_tol = |s: &Shape| -> Option<(DVec3, f64)> {
+        let v = s.as_vertex()?;
+        let loc = locations.get(s.location as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+        let p = loc.transform_point3(v.point);
+        let t = v.tolerance.max(rcad_kernel::precision::CONFUSION);
+        Some((p, t))
+    };
     if a_lv.is_empty() {
         return (DVec3::ZERO, 0.0);
     }
     if a_lv.len() == 1 {
-        let pt = a_lv[0].as_vertex().map(|v| v.point).unwrap_or(DVec3::ZERO);
-        // OCCT BRepLib::BoundingVertex uses BRep_Tool::Tolerance (clamped to
-        // Precision::Confusion minimum, BRep_Tool.cxx L1314-1333).
-        let tol = a_lv[0].as_vertex().map(|v| v.tolerance).unwrap_or(0.0)
-            .max(rcad_kernel::precision::CONFUSION);
-        return (pt, tol);
+        // OCCT L3013-3024: aNb < 2 returns without touching the outputs — the
+        // caller (MakeVertex) has already handled the single-vertex case by
+        // copying the vertex itself.  rcad's MakeSDVertices always calls with
+        // the collected list; a single element keeps its own point.
+        return pnt_tol(&a_lv[0]).unwrap_or((DVec3::ZERO, 0.0));
     }
+    if a_lv.len() == 2 {
+        // OCCT L3026-3070: the two-vertex case — the new vertex is shifted
+        // toward the larger-tolerance vertex and its tolerance covers both.
+        let (a_p0, a_r0) = pnt_tol(&a_lv[0]).unwrap_or((DVec3::ZERO, 0.0));
+        let (a_p1, a_r1) = pnt_tol(&a_lv[1]).unwrap_or((DVec3::ZERO, 0.0));
+        let a_p = [a_p0, a_p1];
+        let a_r = [a_r0, a_r1];
+        // m = index of max R, n = index of min R.
+        let (m, n) = if a_r[0] < a_r[1] { (1usize, 0usize) } else { (0usize, 1usize) };
+        let d_r = a_r[m] - a_r[n]; // >= 0
+        let a_vd = a_p[n] - a_p[m]; // gp_Vec(aP[m], aP[n])
+        let a_d = a_vd.length();
+        if a_d <= d_r || a_d < f64::EPSILON {
+            // The smaller vertex is inside the larger one — keep the larger.
+            return (a_p[m], a_r[m]);
+        }
+        let a_rr = 0.5 * (a_r[m] + a_r[n] + a_d);
+        let a_xyzr = 0.5 * (a_p[m] + a_p[n] - a_vd * (d_r / a_d));
+        return (a_xyzr, a_rr);
+    }
+    // OCCT L3072-3116: aNb > 2 — centroid of the world points (sorted for a
+    // stable sum), tolerance = max over vertices of (distance + tolerance).
     let mut acc = DVec3::ZERO;
     let mut n = 0usize;
-    let mut max_tol = 0.0f64;
     for s in a_lv {
-        if let Some(v) = s.as_vertex() {
-            acc += v.point;
+        if let Some((p, _)) = pnt_tol(s) {
+            acc += p;
             n += 1;
-            max_tol = max_tol.max(v.tolerance.max(rcad_kernel::precision::CONFUSION));
         }
     }
     if n == 0 {
         return (DVec3::ZERO, 0.0);
     }
     let center = acc / n as f64;
-    let mut a_max = 0.0f64;
+    let mut a_dmax = -1.0f64;
     for s in a_lv {
-        if let Some(v) = s.as_vertex() {
-            let d = center.distance(v.point);
-            if d > a_max { a_max = d; }
+        if let Some((p, t)) = pnt_tol(s) {
+            let a_di = center.distance(p) + t;
+            if a_di > a_dmax {
+                a_dmax = a_di;
+            }
         }
     }
-    (center, a_max.max(max_tol))
+    (center, a_dmax.max(0.0))
 }
 
 /// OCCT BOPDS_CoupleOfPaveBlocks (PaveFiller_6.cxx L705-706): per section
@@ -2098,7 +2136,7 @@ impl PaveFiller {
             a_lv.push(self.ds.shape(n_x).clone());
         }
         // BOPTools_AlgoTools::MakeVertex — bounding vertex of the list.
-        let (a_vn, a_vn_tol) = bounding_vertex(&a_lv);
+        let (a_vn, a_vn_tol) = bounding_vertex(&a_lv, &self.ds.locations);
         let (n_v, a_vn) = if n_sd != usize::MAX {
             // update old SD vertex with the new value.
             let a_vsd = a_vsd.unwrap();

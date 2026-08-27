@@ -142,11 +142,11 @@ impl<'a> BuilderSolid<'a> {
                         .or_insert_with(|| a_f1.clone());
                 } else if a_nb_f == 2 {
                     // OCCT L191-209: two faces on the edge; avoid both copies
-                    // when they are IsSame (same TShape + Location), unless
-                    // the edge is a seam of the face (BRep_Tool::IsClosed)
+                    // when they are IsSame (same TShape, L192: aF2.IsSame(aF1)),
+                    // unless the edge is a seam of the face (BRep_Tool::IsClosed)
                     // or the edge is INTERNAL.
                     let a_f2 = &a_lf[1];
-                    if a_f2.is_partner(a_f1) {
+                    if a_f2.is_same(a_f1) {
                         if edge_closed_on_face(a_e, a_f1) {
                             continue;
                         }
