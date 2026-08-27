@@ -1638,6 +1638,12 @@ impl<'a> Builder<'a> {
         self.build_result(topods::ShapeType::Face);
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(4, "after_FillImagesFaces");
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let (v, e, f, sh, so) =
+                count_brep_entities(self.my_shape.as_ref().unwrap());
+            eprintln!("[RES] after_faces brep V={v} E={e} F={f} Sh={sh} So={so} images={} shapes_sd={}",
+                self.my_images.len(), self.my_shapes_sd.len());
+        }
 
         // OCCT L507-516: FillImagesContainers(SHELL) + BuildResult(SHELL)
         self.fill_images_containers(topods::ShapeType::Shell);
@@ -1645,6 +1651,11 @@ impl<'a> Builder<'a> {
         self.build_result(topods::ShapeType::Shell);
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(5, "after_BuildResultShell");
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let (v, e, f, sh, so) =
+                count_brep_entities(self.my_shape.as_ref().unwrap());
+            eprintln!("[RES] after_shell V={v} E={e} F={f} Sh={sh} So={so}");
+        }
 
         // OCCT L518-528: FillImagesSolids + BuildResult(SOLID)
         self.fill_images_solids();
@@ -1652,6 +1663,11 @@ impl<'a> Builder<'a> {
         self.build_result(topods::ShapeType::Solid);
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(6, "after_FillImagesSolids");
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let (v, e, f, sh, so) =
+                count_brep_entities(self.my_shape.as_ref().unwrap());
+            eprintln!("[RES] after_solids V={v} E={e} F={f} Sh={sh} So={so}");
+        }
         
 
         // OCCT L530-539: FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
@@ -1672,6 +1688,11 @@ impl<'a> Builder<'a> {
         // result construction. Runs between the s08 dump and PrepareHistory.
         self.build_shape();
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let (v, e, f, sh, so) =
+                count_brep_entities(self.my_shape.as_ref().unwrap());
+            eprintln!("[RES] after_build_shape V={v} E={e} F={f} Sh={sh} So={so}");
+        }
         // OCCT L583-587 (BOPAlgo_BOP.cxx): PrepareHistory.
         self.prepare_history();
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
