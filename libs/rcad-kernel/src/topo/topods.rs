@@ -328,6 +328,11 @@ impl BRep {
         compose_pcurve_location(face_loc, edge_loc, &self.locations)
     }
 
+    /// Second pcurve-key component derived from a shape's OWN location value
+    /// (`pcurve_location_id` of the resolved transform; identity -> 0).
+    pub fn pcurve_loc_component(&self, r: Shape) -> u32 {
+        pcurve_location_id(&self.get_location(r.location))
+    }
     pub fn add_tvertex(&mut self, point: DVec3) -> Shape {
         // OCCT-aligned: identity-based sharing �?same position �?same TShape::Vertex.
         let key = VertexKey::from(point);
@@ -1577,11 +1582,36 @@ impl BRepTool for BRep {
         // (the translated top cap of a prism) therefore has its own pcurve
         // key, distinct from the base edge's.
         let key = (face.ptr_id(), compose_pcurve_location(face.location, edge.location, &self.locations));
-        self.edge(edge.clone()).pcurves.get(&key)
+        let hit = self.edge(edge.clone()).pcurves.get(&key);
+        if hit.is_none() && std::env::var("RCAD_KEYMISS").is_ok() {
+            let st = match &face.data.as_ref() {
+                TShape::Face(fd) => match fd.surface.as_ref() {
+                    Some(Surface3::Plane(_)) => "PL",
+                    Some(Surface3::Cylinder(_)) => "CY",
+                    _ => "?",
+                },
+                _ => "?",
+            };
+            eprintln!(
+                "[KM] {} q=({},{}) ep={} eloc={} have={:?}",
+                st,
+                key.0 % 100000,
+                key.1,
+                edge.ptr_id() % 100000,
+                edge.location,
+                self.edge(edge.clone())
+                    .pcurves
+                    .iter()
+                    .map(|((p, l), _)| format!("({},{})", p % 100000, l))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+        }
+        hit
     }
 
     fn is_edge_closed_on_face(&self, edge: &Shape, face: &Shape) -> bool {
-        let fkey = (face.ptr_id(), face.location);
+        let fkey = (face.ptr_id(), self.pcurve_loc_component(face.clone()));
         let ed = self.edge(edge.clone());
         ed.representations.iter().any(|r| matches!(r, CurveRepresentation::CurveOnClosedSurface { face: f, .. } if *f == fkey))
     }
@@ -1594,7 +1624,7 @@ impl BRepTool for BRep {
         // OCCT BRep_Tool::CurveOnSurface(aE, aF) second curve of a
         // BRep_CurveOnClosedSurface: no separate key, the second pcurve lives
         // in the same representation as the first one.
-        let fkey = (face.ptr_id(), face.location);
+        let fkey = (face.ptr_id(), self.pcurve_loc_component(face.clone()));
         let ed = self.edge(edge.clone());
         for r in &ed.representations {
             if let CurveRepresentation::CurveOnClosedSurface {
@@ -2107,18 +2137,33 @@ impl BRep {
             Curve2d, Curve2dEval, CurveEval, Line2d, Surface3, SurfaceEval, any_perpendicular,
         };
         use glam::DVec2;
-        // Build edge �?faces map
-        let mut edge_faces: std::collections::HashMap<usize, Vec<usize>> =
+        // Build edge -> faces map.  OCCT BRepLib::SameParameter walks the
+        // LOCATED shape instances, so each (edge, face) pair carries the pair
+        // of location VALUES needed for the pcurve key
+        // L.Predivided(E.Location()) (BRep_Tool.cxx L345); the key component
+        // is computed from the transform values (identity -> 0).
+        let mut edge_faces: std::collections::HashMap<usize, Vec<(usize, u64, u32)>> =
             std::collections::HashMap::new();
         for (ti, ts) in self.tshapes.iter().enumerate() {
             if let TShape::Face(fd) = &**ts {
                 let process_wire =
-                    |sr: &Shape, map: &mut std::collections::HashMap<usize, Vec<usize>>| {
+                    |sr: &Shape,
+                     map: &mut std::collections::HashMap<usize, Vec<(usize, u64, u32)>>| {
                         if sr.index < self.tshapes.len() {
+                            let face_tr = self.get_location(sr.location);
                             if let TShape::Wire(wd) = &*self.tshapes[sr.index] {
                                 for esr in &wd.edges {
                                     if esr.index < self.tshapes.len() {
-                                        map.entry(esr.index).or_default().push(ti);
+                                        let edge_tr = self.get_location(esr.location);
+                                        let kid = pcurve_location_id(
+                                            &(face_tr * edge_tr.inverse()),
+                                        );
+                                        let entry =
+                                            (ti, Arc::as_ptr(&self.tshapes[ti]) as u64, kid);
+                                        let v = map.entry(esr.index).or_default();
+                                        if !v.contains(&entry) {
+                                            v.push(entry);
+                                        }
                                     }
                                 }
                             }
@@ -2144,7 +2189,7 @@ impl BRep {
             };
             let t_range = edge_data.range;
             let mut max_dev = 0.0f64;
-            for &fi in face_indices {
+            for &(fi, fptr, kid) in face_indices {
                 let face_data = match &*self.tshapes[fi] {
                     TShape::Face(fd) => fd.clone(),
                     _ => continue,
@@ -2152,8 +2197,9 @@ impl BRep {
                 let Some(ref surf) = face_data.surface else {
                     continue;
                 };
-                // Compute pcurve if missing (planar surfaces only)
-                let face_key = (Arc::as_ptr(&self.tshapes[fi]) as u64, 0u32);
+                // Compute pcurve if missing (planar surfaces only).  The key
+                // is the composed location VALUE id of this located pair.
+                let face_key = (fptr, kid);
                 let has_pcurve = edge_data.pcurves.contains_key(&face_key);
                 if !has_pcurve {
                     if let Surface3::Plane(p) = surf {
@@ -2375,20 +2421,19 @@ impl BRepBuilder {
         face: Shape,
         tol: f64,
     ) {
+        let fkey = (face.ptr_id(), brep.pcurve_loc_component(face.clone()));
         let ed = brep.edge_mut(edge);
         let (ta, tb) = pc_parameter_range(&pcurve);
         ed.pcurves
-            .insert((face.ptr_id(), face.location), (pcurve.clone(), ta, tb));
+            .insert(fkey, (pcurve.clone(), ta, tb));
         ed.representations
             .push(CurveRepresentation::CurveOnSurface {
-                face: (face.ptr_id(), face.location),
+                face: fkey,
                 pcurve,
                 range: [ta, tb],
             });
         ed.tolerance = ed.tolerance.max(tol);
     }
-
-    /// OCCT BRep_Builder::UpdateEdge(aE, aC1, aC2, aF, theTol) — set two
     /// pcurves of an edge on the same face. The edge lies on the closing curve
     /// (seam) of a closed surface and carries a BRep_CurveOnClosedSurface
     /// representation (BRepPrim_OneAxis::LateralFace L434-438).
@@ -2409,7 +2454,7 @@ impl BRepBuilder {
         a_last: f64,
         tol: f64,
     ) {
-        let fkey = (face.ptr_id(), face.location);
+        let fkey = (face.ptr_id(), brep.pcurve_loc_component(face.clone()));
         let ed = brep.edge_mut(edge);
         ed.pcurves
             .insert(fkey, (pcurve1.clone(), a_first, a_last));
@@ -2701,24 +2746,28 @@ fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
 /// edge location index is used — the key still separates located edges from
 /// their base copies, which is the OCCT semantics that matters for the
 /// shared-TShape case.
-pub fn compose_pcurve_location(face_loc: u32, edge_loc: u32, locations: &[glam::DAffine3]) -> u32 {
-    if edge_loc == 0 {
-        return face_loc;
+/// OCCT compares the composed location BY VALUE (BRep_Tool.cxx L345).
+/// rcad stores the key second component as a stable hash of the composed
+/// transform VALUE (identity -> 0).
+pub fn pcurve_location_id(m: &glam::DAffine3) -> u32 {
+    if *m == glam::DAffine3::IDENTITY { return 0; }
+    let mut h: u64 = 0xcbf29ce484222325;
+    for axis in [m.x_axis, m.y_axis, m.z_axis] {
+        for f in axis.to_array() {
+            for b in f.to_bits().to_be_bytes() {
+                h ^= b as u64; h = h.wrapping_mul(0x100000001b3);
+            }
+        }
     }
-    let face_tr = locations
-        .get(face_loc as usize)
-        .copied()
-        .unwrap_or(glam::DAffine3::IDENTITY);
-    let edge_tr = locations
-        .get(edge_loc as usize)
-        .copied()
-        .unwrap_or(glam::DAffine3::IDENTITY);
-    let composed = face_tr * edge_tr.inverse();
-    locations
-        .iter()
-        .position(|l| *l == composed)
-        .map(|i| i as u32)
-        .unwrap_or(if face_loc == 0 { edge_loc } else { face_loc })
+    (h ^ (h >> 32)) as u32
+}
+pub fn compose_pcurve_location(face_loc: u32, edge_loc: u32, locations: &[glam::DAffine3]) -> u32 {
+    let tr = |idx: u32| -> glam::DAffine3 {
+        if idx == 0 { glam::DAffine3::IDENTITY }
+        else { locations.get((idx - 1) as usize).copied().unwrap_or(glam::DAffine3::IDENTITY) }
+    };
+    let composed = tr(face_loc) * tr(edge_loc).inverse();
+    pcurve_location_id(&composed)
 }
 
 // ---------------------------------------------------------------------------
