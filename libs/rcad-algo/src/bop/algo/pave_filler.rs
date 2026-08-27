@@ -5043,7 +5043,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // OCCT L248: BuildPCurveForEdgeOnFace 鈥?projection.
         if let Some(curve) = self.ds.edge_curve(n_e) {
             let range = self.ds.edge_range(n_e);
-            if let Some(pc) = Self::pcurve_2d(&curve, surf, range) {
+            let uv = self.ds.face_actual_uv_bounds(n_f);
+            if let Some(pc) = Self::pcurve_2d(&curve, surf, range, uv) {
                 if std::env::var("RCAD_PCTRACE").is_ok() {
                     let pd = match &pc {
                         rcad_kernel::geom::Curve2d::Line(l) => format!("L o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
@@ -5339,7 +5340,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     /// Compute a 2D pcurve by projecting a 3D curve onto a surface.
     fn pcurve_2d(curve: &rcad_kernel::geom::Curve3,
                  surf: &rcad_kernel::geom::Surface3,
-                 range: [f64; 2]) -> Option<rcad_kernel::geom::Curve2d> {
+                 range: [f64; 2],
+                 uv_bounds: [f64; 4]) -> Option<rcad_kernel::geom::Curve2d> {
         use rcad_kernel::geom::CurveEval;
         use rcad_kernel::geom::SurfaceEval;
         // OCCT ProjLib::MakePCurveOfType (ProjLib.cxx L183-213) + the analytic
@@ -5351,7 +5353,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // analytic sphere projection used by the boolean pipeline — is
         // translated in face_make_curve::build_analytic_pcurve and yields the
         // same-parameter meridian line (u=const) for a circle on the sphere.
-        if let Some(pc) = crate::bop::int_tools::face_make_curve::build_analytic_pcurve(surf, curve, range[0], range[1]) {
+        if let Some(pc) = crate::bop::int_tools::face_make_curve::build_analytic_pcurve(surf, curve, range[0], range[1], uv_bounds, None) {
             return Some(pc);
         }
         if let (rcad_kernel::geom::Curve3::Circle(c), rcad_kernel::geom::Surface3::Sphere(sp)) = (curve, surf) {

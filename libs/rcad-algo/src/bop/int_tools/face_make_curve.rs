@@ -27,7 +27,7 @@ use rcad_kernel::geom::{
     Line3, Parabola3, Plane, Surface3, SurfaceEval,
 };
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
-use rcad_kernel::topods::{ShapeType, TShape};
+use rcad_kernel::topods::{ShapeType, Shape, TShape};
 
 /// OCCT IntTools_FaceFace::MakeCurve (L695-1846): clip each IntPatch line to
 /// the two faces' domains and build one IntersectionCurve per valid
@@ -110,6 +110,24 @@ pub fn make_curves(
             }
         }
         // OCCT MakeCurve L776-1846: one curve per part.
+        // For an analytic Circle line, anchor each face's pcurve to the frame
+        // of the face's existing boundary pcurves: OCCT builds every pcurve of
+        // a face in the face's own (BRepAdaptor) parameter frame, so the
+        // section pcurve and the boundary pcurves agree.  rcad's raw analytic
+        // frame (parameter origin of the circle) may differ by a phase from
+        // the stored boundary pcurves, inverting UV classifications.
+        let (anchor1, anchor2) = if line.line_type == IntPatchIType::Circle {
+            if let Curve3::Circle(c) = &line.curve {
+                (
+                    circle_pcurve_frame_anchor(ds, f1, c),
+                    circle_pcurve_frame_anchor(ds, f2, c),
+                )
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
         for &[fprm, lprm] in &a_parts {
             // rcad note: the box-based classify_point clip cannot represent a
             // face hole (an inner wire); OCCT's TopolTool classifier rejects
@@ -132,6 +150,8 @@ pub fn make_curves(
                 approx2,
                 tol_approx,
                 &line,
+                anchor1,
+                anchor2,
                 fprm,
                 lprm,
                 a_parts.len(),
@@ -142,6 +162,78 @@ pub fn make_curves(
         }
     }
     out
+}
+
+/// Parameter frame (u0, d) of the face's stored boundary pcurve for an
+/// analytic circle identical to `c` — the anchor that re-frames a section
+/// curve's pcurve into the face's existing parameter frame.
+///
+/// OCCT keeps every pcurve of a face in the face's own BRepAdaptor parameter
+/// frame: the section pcurve of a frame (IntTools_FaceFace::MakeCurve /
+/// Recadre) and the face's boundary pcurves (ProjLib) are expressed in the
+/// same frame, so UV classifications of the section agree with the boundary.
+/// rcad's raw analytic frame may be phase-shifted from the stored boundary
+/// pcurves' frame; the anchor is recovered by locating the face's boundary
+/// edge whose 3D circle coincides with `c` and reading its stored pcurve.
+fn circle_pcurve_frame_anchor(
+    ds: &DS,
+    fi: usize,
+    c: &rcad_kernel::geom::Circle3,
+) -> Option<(f64, f64)> {
+    let face = &*ds.shapes.get(fi)?.shape.data;
+    let face = match face {
+        TShape::Face(fd) => fd,
+        _ => return None,
+    };
+    let face_ptr = ds.shapes[fi].shape.ptr_id();
+    let mut wires: Vec<Shape> = vec![face.outer_wire.clone()];
+    wires.extend(face.inner_wires.iter().cloned());
+    for w in &wires {
+        let TShape::Wire(wd) = &*w.data else { continue };
+        for we in &wd.edges {
+            // DS index via the (ptr, loc) map — Shape.index is the ORIGINAL
+            // BRep index, not a DS index.
+            let Some(&ei) = ds.map_shape_index.get(&(we.ptr_id(), we.location)) else {
+                continue;
+            };
+            let Some(si) = ds.shapes.get(ei) else { continue };
+            let Some(ed) = si.shape.as_edge() else { continue };
+            // The edge's 3D curve must be the same circle (center, radius,
+            // axis within tolerance).
+            let Some(Curve3::Circle(ec)) = &ed.curve else { continue };
+            let same_circle = (ec.center - c.center).length() <= 1e-7
+                && (ec.radius - c.radius).abs() <= 1e-7
+                && ec.normal.dot(c.normal).abs() >= 1.0 - 1e-9;
+            if !same_circle {
+                continue;
+            }
+            // The stored pcurve on this face: keyed by (face ptr, loc id).
+            for (k, (pc, _, _)) in &ed.pcurves {
+                if k.0 != face_ptr {
+                    continue;
+                }
+                let Curve2d::Line(l) = pc else { continue };
+                // The pcurve maps the edge's own parameter t_e to
+                // u = u0e + de * t_e.  Relate the section parameter t to
+                // t_e: both circles share center/radius/axis; the phase is
+                // the azimuth of the section's x_dir in the edge's frame.
+                let zc_e = ec.x_dir.cross(ec.y_dir);
+                let same_handed = zc_e.dot(c.normal) > 0.0;
+                // delta = azimuth of c.x_dir measured in (ec.x_dir, ec.y_dir).
+                let delta = c.x_dir.dot(ec.y_dir).atan2(c.x_dir.dot(ec.x_dir));
+                // u(t) for the section:
+                //   same handed:  t_e = t + delta -> u = u0e + de*(t + delta)
+                //   opposite:     t_e = delta - t -> u = u0e + de*(delta - t)
+                let (u0a, da) = if same_handed {
+                    (l.origin.x + l.direction.x * delta, l.direction.x)
+                } else {
+                    (l.origin.x + l.direction.x * delta, -l.direction.x)
+                };
+                return Some((u0a, da));
+            }
+        }
+    }
+    None
 }
 
 /// True when the midpoint of the curve part `[fprm, lprm]` lies inside one of
@@ -286,7 +378,7 @@ fn make_restriction_curves(
     // OCCT TreatRLine L1157-1166: pcurve on the other surface via
     // GeomInt_IntSS::BuildPCurves.  rcad: build the other pcurve by sampling
     // the 3D curve and inverting it on the other quadric.
-    let other_pcurve = build_projected_pcurve(other_surf, &curve3, tf, tl, 64);
+    let other_pcurve = build_projected_pcurve(other_surf, &curve3, tf, tl, 64, other_uv);
     let Some(other_pcurve) = other_pcurve else { return out };
 
     // OCCT TrimILineOnSurfBoundaries: intersect the pcurves with the two UV
@@ -455,7 +547,14 @@ fn line_line2d_intersection(a: &Line2d, b: &Line2d) -> Option<f64> {
 /// Returns None when rcad has no analytic projection — the caller then falls
 /// back to the sampling/projection path, as OCCT's BOPAlgo_MPC does for null
 /// pcurves.
-pub(crate) fn build_analytic_pcurve(other_surf: &Surface3, curve3: &Curve3, tf: f64, tl: f64) -> Option<Curve2d> {
+pub(crate) fn build_analytic_pcurve(
+    other_surf: &Surface3,
+    curve3: &Curve3,
+    tf: f64,
+    tl: f64,
+    uv_bounds: [f64; 4],
+    pcurve_anchor: Option<(f64, f64)>,
+) -> Option<Curve2d> {
     if let (Curve3::Circle(c), Surface3::Plane(pl)) = (curve3, other_surf) {
         let d = c.center - pl.origin;
         let c2 = DVec2::new(d.dot(pl.u_dir), d.dot(pl.v_dir));
@@ -511,6 +610,15 @@ pub(crate) fn build_analytic_pcurve(other_surf: &Surface3, curve3: &Curve3, tf: 
                 u0 += std::f64::consts::TAU;
             }
             let d = if zc.dot(cyl.axis) > 0.0 { 1.0 } else { -1.0 };
+            // With a frame anchor from the face's existing boundary pcurves,
+            // the whole pcurve is expressed in that frame: u(t) = u0a + da*t.
+            if let Some((u0a, da)) = pcurve_anchor {
+                return Some(Curve2d::Line(Line2d::new(
+                    DVec2::new(u0a, v),
+                    DVec2::new(da, 0.0),
+                )));
+            }
+            let _ = uv_bounds;
             return Some(Curve2d::Line(Line2d::new(
                 DVec2::new(u0, v),
                 DVec2::new(d, 0.0),
@@ -657,8 +765,9 @@ fn build_projected_pcurve(
     tf: f64,
     tl: f64,
     _n: usize,
+    uv_bounds: [f64; 4],
 ) -> Option<Curve2d> {
-    if let Some(c) = build_analytic_pcurve(other_surf, curve3, tf, tl) {
+    if let Some(c) = build_analytic_pcurve(other_surf, curve3, tf, tl, uv_bounds, None) {
         return Some(c);
     }
     // OCCT BuildPCurves small-range branch: the pcurve is a line segment.
@@ -1000,6 +1109,8 @@ fn make_part_curve(
     approx2: bool,
     tol_approx: f64,
     line: &IntPatchLine,
+    pcurve_anchor1: Option<(f64, f64)>,
+    pcurve_anchor2: Option<(f64, f64)>,
     fprm: f64,
     lprm: f64,
     a_nb_parts: usize,
@@ -1072,8 +1183,8 @@ fn make_part_curve(
             // GeomInt_IntSS::BuildPCurves (analytic for Circle on a plane / a
             // sphere meridian or latitude); rcad computes them analytically and
             // leaves them null otherwise (the make_pcurves stage projects).
-            let pcurve1 = build_analytic_pcurve(surf1, curve, fprm, lprm);
-            let pcurve2 = build_analytic_pcurve(surf2, curve, fprm, lprm);
+            let pcurve1 = build_analytic_pcurve(surf1, curve, fprm, lprm, uv1, pcurve_anchor1);
+            let pcurve2 = build_analytic_pcurve(surf2, curve, fprm, lprm, uv2, pcurve_anchor2);
             let is_full_period = fprm.abs() <= a_real_eps && (lprm - a_period).abs() <= a_real_eps;
             if !is_full_period {
                 if lprm <= fprm + 1e-12 {
@@ -1119,8 +1230,8 @@ fn make_part_curve(
                         return Some(IntersectionCurve {
                             curve: curve.clone(),
                             t_range: [fprm, lprm],
-                            pcurve1: build_analytic_pcurve(surf1, curve, fprm, lprm),
-                            pcurve2: build_analytic_pcurve(surf2, curve, fprm, lprm),
+                            pcurve1: build_analytic_pcurve(surf1, curve, fprm, lprm, uv1, pcurve_anchor1),
+                            pcurve2: build_analytic_pcurve(surf2, curve, fprm, lprm, uv2, pcurve_anchor2),
                             tolerance: tol,
                             tang_tolerance: line.tang_tolerance,
                             pave_blocks: Vec::new(),
