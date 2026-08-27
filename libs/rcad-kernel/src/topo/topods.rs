@@ -8,7 +8,7 @@ use std::f64::consts::PI;
 pub use crate::topo::topo_shape::Shape;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Quantized vertex position for identity-based sharing.
@@ -332,6 +332,43 @@ impl BRep {
     /// (`pcurve_location_id` of the resolved transform; identity -> 0).
     pub fn pcurve_loc_component(&self, r: Shape) -> u32 {
         pcurve_location_id(&self.get_location(r.location))
+    }
+
+
+    /// Location VALUES (as table numbers plus identity=0) used by every known
+    /// wrapper of an edge TShape.  OCCT stores curve representations per
+    /// TopoDS_Edge instance via L.Predivided(E.Location()) (BRep_Builder.cxx
+    /// L660-700), so a TShape shared between unlocated and located wrappers
+    /// needs one representation per wrapper location.
+    pub fn edge_wrapper_locations(&self, r: &Shape) -> Vec<u32> {
+        let mut out = vec![r.location];
+        let mut seen_ptrs: HashSet<u64> = HashSet::new();
+        seen_ptrs.insert(r.ptr_id());
+        let mut stack: Vec<Shape> = Vec::new();
+        for ts in &self.tshapes {
+            match ts.as_ref() {
+                TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+                TShape::Face(fd) => {
+                    stack.push(fd.outer_wire.clone());
+                    stack.extend(fd.inner_wires.iter().cloned());
+                }
+                TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
+                TShape::Solid(sd) => {
+                    stack.extend(sd.shells.iter().cloned());
+                    stack.extend(sd.internal_edges.iter().cloned());
+                }
+                _ => {}
+            }
+        }
+        while let Some(s) = stack.pop() {
+            if !seen_ptrs.insert(s.ptr_id()) {
+                continue;
+            }
+            if !out.contains(&s.location) {
+                out.push(s.location);
+            }
+        }
+        out
     }
     pub fn add_tvertex(&mut self, point: DVec3) -> Shape {
         // OCCT-aligned: identity-based sharing �?same position �?same TShape::Vertex.
@@ -2421,17 +2458,28 @@ impl BRepBuilder {
         face: Shape,
         tol: f64,
     ) {
-        let fkey = (face.ptr_id(), brep.pcurve_loc_component(face.clone()));
-        let ed = brep.edge_mut(edge);
+        // OCCT L660-700 + L330-370: one representation per wrapper location of
+        // the edge TShape, keyed by L.Predivided(E.Location()) BY VALUE.
+        let locs = brep.edge_wrapper_locations(&edge);
+        let mut fkeys: Vec<(u64, u32)> = Vec::with_capacity(locs.len());
+        for &el in &locs {
+            fkeys.push((
+                face.ptr_id(),
+                compose_pcurve_location(face.location, el, &brep.locations),
+            ));
+        }
         let (ta, tb) = pc_parameter_range(&pcurve);
-        ed.pcurves
-            .insert(fkey, (pcurve.clone(), ta, tb));
-        ed.representations
-            .push(CurveRepresentation::CurveOnSurface {
-                face: fkey,
-                pcurve,
-                range: [ta, tb],
-            });
+        let ed = brep.edge_mut(edge);
+        for k in &fkeys {
+            ed.pcurves
+                .insert(*k, (pcurve.clone(), ta, tb));
+            ed.representations
+                .push(CurveRepresentation::CurveOnSurface {
+                    face: *k,
+                    pcurve: pcurve.clone(),
+                    range: [ta, tb],
+                });
+        }
         ed.tolerance = ed.tolerance.max(tol);
     }
     /// pcurves of an edge on the same face. The edge lies on the closing curve
@@ -2454,17 +2502,27 @@ impl BRepBuilder {
         a_last: f64,
         tol: f64,
     ) {
-        let fkey = (face.ptr_id(), brep.pcurve_loc_component(face.clone()));
+        // Same per-wrapper-location variants as update_edge_pcurve.
+        let locs = brep.edge_wrapper_locations(&edge);
+        let mut fkeys: Vec<(u64, u32)> = Vec::with_capacity(locs.len());
+        for &el in &locs {
+            fkeys.push((
+                face.ptr_id(),
+                compose_pcurve_location(face.location, el, &brep.locations),
+            ));
+        }
         let ed = brep.edge_mut(edge);
-        ed.pcurves
-            .insert(fkey, (pcurve1.clone(), a_first, a_last));
-        ed.representations
-            .push(CurveRepresentation::CurveOnClosedSurface {
-                face: fkey,
-                pcurve1,
-                pcurve2,
-                range: [a_first, a_last],
-            });
+        for k in &fkeys {
+            ed.pcurves
+                .insert(*k, (pcurve1.clone(), a_first, a_last));
+            ed.representations
+                .push(CurveRepresentation::CurveOnClosedSurface {
+                    face: *k,
+                    pcurve1: pcurve1.clone(),
+                    pcurve2: pcurve2.clone(),
+                    range: [a_first, a_last],
+                });
+        }
         ed.tolerance = ed.tolerance.max(tol);
     }
 

@@ -531,7 +531,21 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                 surf,
                 rcad_kernel::geom::Surface3::Cylinder(_) | rcad_kernel::geom::Surface3::Cone(_)
             );
-            let mykey = (face.ptr_id(), face.location);
+            // OCCT BRep_Tool.cxx L345: pcurve-key location is the composed
+            // transform VALUE; rcad stores the stable value hash of the
+            // face's own transform here.
+            let tr_f = if face.location == 0 {
+                glam::DAffine3::IDENTITY
+            } else {
+                locations
+                    .get((face.location - 1) as usize)
+                    .copied()
+                    .unwrap_or(glam::DAffine3::IDENTITY)
+            };
+            let mykey = (
+                face.ptr_id(),
+                rcad_kernel::topo::topods::pcurve_location_id(&tr_f),
+            );
             let mut ppts: Vec<glam::DVec2> = Vec::new();
             let mut pcurve_ok = true;
             for &(ei, rev) in &order {
