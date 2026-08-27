@@ -1427,6 +1427,14 @@ impl FClass2d {
                 self.v2 = 0.0;
             }
         }
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let ors: Vec<String> = self.tab_orien.iter().map(|&o| o.to_string()).collect();
+            eprintln!(
+                "[VB-INIT] f={} uvbox=({:.6},{:.6},{:.6},{:.6}) uw=({:.6},{:.6}) nwires={} orient=[{}]",
+                self.face, self.u_min, self.v_min, self.u_max, self.v_max,
+                self.u1, self.u2, nbtabclass, ors.join(",")
+            );
+        }
     }
 
     /// OCCT IntTools_FClass2d::Perform (IntTools_FClass2d.cxx L637-804).

@@ -939,9 +939,19 @@ impl IntToolsContext {
             b_flag = match a_pc {
                 Some(pc) => {
                     let a_pnt2d = rcad_kernel::geom::Curve2dEval::point_at(pc, a_mid_par);
-                    self.is_point_in_on_face(ds, a_f, a_pnt2d)
+                    let r = self.is_point_in_on_face(ds, a_f, a_pnt2d);
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        eprintln!("[VB] f={} mid={:.6} uv=({:.6},{:.6}) on={}", a_f, a_mid_par, a_pnt2d.x, a_pnt2d.y, r);
+                    }
+                    r
                 }
-                None => self.is_valid_point_for_face(a_p, a_f, ds, the_tol),
+                None => {
+                    let r = self.is_valid_point_for_face(a_p, a_f, ds, the_tol);
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        eprintln!("[VB] f={} mid={:.6} p=({:.6},{:.6},{:.6}) proj_valid={}", a_f, a_mid_par, a_p.x, a_p.y, a_p.z, r);
+                    }
+                    r
+                }
             };
         }
         b_flag

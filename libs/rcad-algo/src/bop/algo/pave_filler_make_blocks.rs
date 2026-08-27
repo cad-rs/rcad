@@ -509,6 +509,9 @@ impl PaveFiller {
                     let mut a_tol_new = -1.0;
                     let b_exist = self.is_existing_pave_block_lse(
                         &a_pb, cid, &a_lse, &mut n_e_out, &mut a_tol_new);
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        eprintln!("[MB] lse_check cid={} v=({},{}) b_exist={} n_e_out={}", cid, n_v1, n_v2, b_exist, n_e_out);
+                    }
                     if b_exist {
                         // OCCT L925-929: update edge + saved tolerances.
                         self.update_edge_tolerance(n_e_out, a_tol_new);
@@ -547,6 +550,16 @@ impl PaveFiller {
                     let b_exist2 = self.is_existing_pave_block(
                         &a_pb, cid, a_tol_r3d, &a_mpb_on_in, &a_pb_candidates,
                         &a_mpb_common, &mut a_pb_out, &mut a_tol_new2);
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        let onin: Vec<String> = a_mpb_on_in.iter().map(|pb| {
+                            let r = pb.read();
+                            format!("e{}/v({},{})", r.edge, r.pave1.vertex_idx, r.pave2.vertex_idx)
+                        }).collect();
+                        eprintln!("[MB] onin_check cid={} v=({},{}) b_exist2={} out={} onin=[{}]",
+                            cid, n_v1, n_v2, b_exist2,
+                            a_pb_out.as_ref().map(|pb| { let r = pb.read(); format!("e{}", r.edge) }).unwrap_or_default(),
+                            onin.join(","));
+                    }
                     if b_exist2 {
                         let a_pb_out = a_pb_out.unwrap();
                         let pb_out_key = pb_ptr(&a_pb_out);
