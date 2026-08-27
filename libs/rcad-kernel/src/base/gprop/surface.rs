@@ -241,7 +241,7 @@ fn face_uv_bounds(brep: &BRep, face: &Face, fi: usize, surf: &Surface3) -> [f64;
         // diverges.
         let (c, a_t1, a_t2) = match brep.curve_on_surface(&edge_shape, &face_shape) {
             Some(v) => v.clone(),
-            None => match project_curve_on_plane(brep, &edge_shape, &face_shape) {
+            None => match project_curve_on_plane(brep, &edge_shape, &face_shape).or_else(|| project_curve_on_cylinder(brep, &edge_shape, &face_shape)) {
                 Some(v) => v,
                 None => continue,
             },
@@ -810,6 +810,73 @@ fn project_curve_on_plane(brep: &BRep, edge: &Shape, face: &Shape) -> Option<(Cu
     Some((c, 0.0, len))
 }
 
+// Semantic counterpart of BRep_Tool::CurveOnPlane for CYLINDRICAL faces:
+// when an edge has no stored pcurve for the face, radially project the
+// edge's 3D curve onto the cylinder (u = azimuth from ref_dir about the
+// axis, v = height along the axis).  For co-axial circles (the common case:
+// rim/section arcs perpendicular to the axis) the projection keeps
+// v constant, so the uv line reproduces the true boundary exactly; the
+// Green boundary integral is invariant to reparameterization.
+fn project_curve_on_cylinder(brep: &BRep, edge: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)> {
+    use crate::geom::CurveEval;
+    let surf = brep.face_surface_world(face)?;
+    let (c3, r3) = brep.edge_curve_world(edge)?;
+    let Surface3::Cylinder(cy) = surf else { return None };
+    let p0 = c3.point_at(r3[0]);
+    let p1 = c3.point_at(r3[1]);
+    let uv0 = cy.world_to_uv(p0);
+    let uv1 = cy.world_to_uv(p1);
+    // Disambiguate the azimuth branch through the arc MIDPOINT: an
+    // antipodal-ends half arc has |du| = pi and would otherwise collapse to a
+    // zero-length uv line; the midpoint tells which way the boundary sweeps.
+    let tau = std::f64::consts::TAU;
+    let tm = 0.5 * (r3[0] + r3[1]);
+    let mut d_mid = cy.world_to_uv(c3.point_at(tm)).x - uv0.x;
+    while d_mid > std::f64::consts::PI {
+        d_mid -= tau;
+    }
+    while d_mid < -std::f64::consts::PI {
+        d_mid += tau;
+    }
+    let mut du = uv1.x - uv0.x;
+    if du > std::f64::consts::PI {
+        du -= tau;
+    }
+    if du < -std::f64::consts::PI {
+        du += tau;
+    }
+    if d_mid.abs() < 1e-12 {
+        // Midpoint ON u=uv0.x (u=0 seam): keep the nonzero sweep direction.
+        if du <= 0.0 {
+            du += tau;
+        }
+    } else if d_mid > 0.0 && du < 0.0 {
+        du += tau;
+    } else if d_mid < 0.0 && du > 0.0 {
+        du -= tau;
+    }
+    let dv = uv1.y - uv0.y;
+    let len = (du * du + dv * dv).sqrt();
+    if len < 1e-30 {
+        if std::env::var("RCAD_CYLFALLBACK").is_ok() {
+            eprintln!("[CYFB] ZERO len ep={} eloc={}", edge.ptr_id() % 100000, edge.location);
+        }
+        return None;
+    }
+    if std::env::var("RCAD_CYLFALLBACK").is_ok() {
+        eprintln!(
+            "[CYFB] ok ep={} eloc={} len={:.6} du={:.6} dv={:.6}",
+            edge.ptr_id() % 100000,
+            edge.location,
+            len,
+            du,
+            dv
+        );
+    }
+    let c = Curve2d::Line(crate::geom::Line2d::new(uv0, glam::DVec2::new(du / len, dv / len)));
+    Some((c, 0.0, len))
+}
+
 /// OCCT BRepGProp_Sinert::Perform(BF, BD, Eps) — the `checkprops -s`
 /// per-face adaptive integration (BRepGProp_Sinert.cxx L104-110 →
 /// BRepGProp_Gauss.cxx L533-1099).  Sinert mass only: the gravity center and
@@ -931,7 +998,7 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
                     Some(v) => v,
                     None => match pc {
                         Some(v) => v.clone(),
-                        None => match project_curve_on_plane(brep, &edge_shape, &face_shape) {
+                        None => match project_curve_on_plane(brep, &edge_shape, &face_shape).or_else(|| project_curve_on_cylinder(brep, &edge_shape, &face_shape)) {
                             Some(v) => v,
                             None => return 0.0,
                         },
@@ -940,7 +1007,7 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
             } else {
                 match pc {
                     Some(v) => v.clone(),
-                    None => match project_curve_on_plane(brep, &edge_shape, &face_shape) {
+                    None => match project_curve_on_plane(brep, &edge_shape, &face_shape).or_else(|| project_curve_on_cylinder(brep, &edge_shape, &face_shape)) {
                         Some(v) => v,
                         None => return 0.0,
                     },
