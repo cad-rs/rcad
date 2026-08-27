@@ -88,23 +88,18 @@ pub fn compose_face_edge_pcurve_location(
     edge_loc: u32,
     locations: &[glam::DAffine3],
 ) -> u32 {
-    if edge_loc == 0 {
-        return face_loc;
-    }
-    let face_tr = locations
-        .get(face_loc as usize)
-        .copied()
-        .unwrap_or(glam::DAffine3::IDENTITY);
-    let edge_tr = locations
-        .get(edge_loc as usize)
-        .copied()
-        .unwrap_or(glam::DAffine3::IDENTITY);
-    let composed = face_tr * edge_tr.inverse();
-    locations
-        .iter()
-        .position(|l| *l == composed)
-        .map(|i| i as u32)
-        .unwrap_or(if face_loc == 0 { edge_loc } else { face_loc })
+    let tr = |idx: u32| -> glam::DAffine3 {
+        if idx == 0 {
+            glam::DAffine3::IDENTITY
+        } else {
+            locations
+                .get((idx - 1) as usize)
+                .copied()
+                .unwrap_or(glam::DAffine3::IDENTITY)
+        }
+    };
+    let composed = tr(face_loc) * tr(edge_loc).inverse();
+    rcad_kernel::topo::topods::pcurve_location_id(&composed)
 }
 
 // ===

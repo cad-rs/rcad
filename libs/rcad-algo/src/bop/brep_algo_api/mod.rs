@@ -4,7 +4,7 @@ use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::DS;
 use rcad_kernel::core::message::{NoopProgress, ProgressScope};
 use rcad_kernel::topods::{TEdgeData, TFaceData, TShape, TShellData, TSolidData, TWireData};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 // 閳光偓閳光偓 BRepAlgoAPI_Algo 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
@@ -295,50 +295,13 @@ fn remap_location_tree(
         TShape::Edge(ed) => {
             let first = remap_location_tree(&ed.first, map, cache);
             let last = remap_location_tree(&ed.last, map, cache);
-            let remap_ptr = |k: u64| -> u64 {
-                cache.get(&k).map(|a| std::sync::Arc::as_ptr(a) as u64).unwrap_or(k)
-            };
-            let pcurves = ed
-                .pcurves
-                .iter()
-                .map(|(&(fptr, floc), v)| ((remap_ptr(fptr), floc), v.clone()))
-                .collect();
-            let representations = ed
-                .representations
-                .iter()
-                .map(|r| match r {
-                    rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } => {
-                        rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
-                            face: (remap_ptr(face.0), face.1),
-                            pcurve: pcurve.clone(),
-                            range: *range,
-                        }
-                    }
-                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
-                        face,
-                        pcurve1,
-                        pcurve2,
-                        range,
-                    } => rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
-                        face: (remap_ptr(face.0), face.1),
-                        pcurve1: pcurve1.clone(),
-                        pcurve2: pcurve2.clone(),
-                        range: *range,
-                    },
-                    other => other.clone(),
-                })
-                .collect();
-            let vertex_params = ed
-                .vertex_params
-                .iter()
-                .map(|(&k, &v)| (remap_ptr(k), v))
-                .collect();
+            // Phase 1 only: clone identity-keyed maps verbatim. An edge's
+            // owning face is its ANCESTOR in this walk, so it is never in the
+            // cache yet at this point; keys are rewritten in a second pass
+            // (rewrite_identity_keys) once every pointer is final.
             TShape::Edge(TEdgeData {
                 first,
                 last,
-                pcurves,
-                representations,
-                vertex_params,
                 ..ed.clone()
             })
         }
@@ -433,10 +396,99 @@ fn brep_top_shapes_with_locations(
         return brep_top_shapes(brep);
     }
     let mut cache: HashMap<u64, Arc<TShape>> = HashMap::new();
-    brep_top_shapes(brep)
+    let tops: Vec<Shape> = brep_top_shapes(brep)
         .into_iter()
         .map(|s| remap_location_tree(&s, &map, &mut cache))
-        .collect()
+        .collect();
+    // Second pass: all pointers are final now; rewrite every edge's identity
+    // keys against the complete cache (old ptr -> new Arc ptr).
+    rewrite_identity_keys(&tops, &cache);
+    tops
+}
+
+/// Rewrite the face-pointer identity keys of every edge reachable from the
+/// rebuilt top shapes using the completed clone cache.  In-place on the shared
+/// Arcs; unknown owners keep their pointer.
+fn rewrite_identity_keys(tops: &[Shape], cache: &HashMap<u64, Arc<TShape>>) {
+    let mut visited: HashSet<u64> = HashSet::new();
+    let mut stack: Vec<Shape> = tops.to_vec();
+    while let Some(sh) = stack.pop() {
+        if !visited.insert(sh.ptr_id()) {
+            continue;
+        }
+        match &*sh.data {
+            TShape::Edge(ed) => {
+                let raw = Arc::as_ptr(&sh.data) as *mut TShape;
+                // SAFETY: single-threaded build; no other &TShape borrow is
+                // alive at this point.
+                unsafe {
+                    if let TShape::Edge(edm) = &mut *raw {
+                        edm.pcurves = ed
+                            .pcurves
+                            .iter()
+                            .map(|(&(p, l), v)| {
+                                let np =
+                                    cache.get(&p).map(|a| Arc::as_ptr(a) as u64).unwrap_or(p);
+                                ((np, l), v.clone())
+                            })
+                            .collect();
+                        edm.representations = ed
+                            .representations
+                            .iter()
+                            .map(|r| match r {
+                                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } => {
+                                    rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                                        face: (
+                                            cache.get(&face.0).map(|a| Arc::as_ptr(a) as u64).unwrap_or(face.0),
+                                            face.1,
+                                        ),
+                                        pcurve: pcurve.clone(),
+                                        range: *range,
+                                    }
+                                }
+                                rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, range } => {
+                                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                                        face: (
+                                            cache.get(&face.0).map(|a| Arc::as_ptr(a) as u64).unwrap_or(face.0),
+                                            face.1,
+                                        ),
+                                        pcurve1: pcurve1.clone(),
+                                        pcurve2: pcurve2.clone(),
+                                        range: *range,
+                                    }
+                                }
+                                other => other.clone(),
+                            })
+                            .collect();
+                        edm.vertex_params = ed
+                            .vertex_params
+                            .iter()
+                            .map(|(&k, &v)| {
+                                let nk =
+                                    cache.get(&k).map(|a| Arc::as_ptr(a) as u64).unwrap_or(k);
+                                (nk, v)
+                            })
+                            .collect();
+                    }
+                }
+            }
+            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+            TShape::Face(fd) => {
+                stack.push(fd.outer_wire.clone());
+                stack.extend(fd.inner_wires.iter().cloned());
+                stack.extend(fd.internal_vertices.iter().cloned());
+            }
+            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
+            TShape::Solid(sd) => {
+                stack.extend(sd.shells.iter().cloned());
+                stack.extend(sd.internal_vertices.iter().cloned());
+                stack.extend(sd.internal_edges.iter().cloned());
+            }
+            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Compound(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Vertex(_) => {}
+        }
+    }
 }
 
 /// BRep-form build: run the full PaveFiller + Builder pipeline and return the

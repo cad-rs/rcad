@@ -2330,6 +2330,27 @@ impl DS {
         Some((sh.shape.ptr_id(), sh.shape.location))
     }
 
+    /// Face identity for PCURVE-KEY construction: the location component is
+    /// the value-hash (`pcurve_location_id`) of the face's transform, matching
+    /// what compose_face_edge_pcurve_location produces for unlocated edges.
+    /// Plain `face_key` keeps the raw location number for identity maps and
+    /// composer inputs.
+    pub fn pcurve_face_key(&self, i: usize) -> Option<(u64, u32)> {
+        let sh = self.shapes.get(i)?;
+        let tr = if sh.shape.location == 0 {
+            glam::DAffine3::IDENTITY
+        } else {
+            self.locations
+                .get((sh.shape.location - 1) as usize)
+                .copied()
+                .unwrap_or(glam::DAffine3::IDENTITY)
+        };
+        Some((
+            sh.shape.ptr_id(),
+            rcad_kernel::topo::topods::pcurve_location_id(&tr),
+        ))
+    }
+
     pub fn face_surface(&self, i: usize) -> Option<rcad_kernel::geom::Surface3> {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Face { return None; }

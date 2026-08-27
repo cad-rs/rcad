@@ -612,7 +612,7 @@ impl PaveFiller {
                         // leaves a closed section edge's pcurve on the far side of
                         // the seam (u in [-2PI, 0] instead of [0, 2PI]), breaking
                         // the WireSplitter 2D distance filter.
-                        let fk1 = self.ds.face_key(n_f1);
+                        let fk1 = self.ds.pcurve_face_key(n_f1);
                         let a_c2d = if let Some(surf) = self.ds.face_surface(n_f1) {
                             let uv = self.ds.face_actual_uv_bounds(n_f1);
                             adjust_pcurve_on_face(&a_c2d, a_t1, a_t2, &surf, uv, n_f1, &self.ds)
@@ -630,7 +630,7 @@ impl PaveFiller {
                     }
                     let a_c2d2 = self.ds.intersection_curves[cid].pcurve2.clone();
                     if let Some(a_c2d) = a_c2d2 {
-                        let fk2 = self.ds.face_key(n_f2);
+                        let fk2 = self.ds.pcurve_face_key(n_f2);
                         let a_c2d = if let Some(surf) = self.ds.face_surface(n_f2) {
                             let uv = self.ds.face_actual_uv_bounds(n_f2);
                             adjust_pcurve_on_face(&a_c2d, a_t1, a_t2, &surf, uv, n_f2, &self.ds)

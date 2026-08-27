@@ -91,6 +91,10 @@ pub struct Builder<'a> {
     // `nbshapes` without -t (same sub-shape with different location counts
     // once).  The evaluated positions are carried by the Location references.
     pub(crate) shape_remap: HashMap<u64, usize>,
+    // rcad-specific: surfaces of face TShapes built during this Builder run
+    // (draft faces, split areas). These are not DS-pool shapes, so pcurve-row
+    // owner resolution needs them alongside the DS face table.
+    pub(crate) my_built_face_surfaces: HashMap<u64, rcad_kernel::geom::Surface3>,
 }
 
 /// Stage snapshot: DS + result BRep counts at a Builder pipeline boundary.
@@ -361,6 +365,21 @@ fn edge_data(edge: &Shape) -> Option<&TEdgeData> {
 /// face index can be located by matching the surface (OCCT BRep_Tool::IsClosed
 /// and BRep_Tool::CurveOnSurface match the face's surface handle; rcad stores
 /// pcurves keyed by the DS face index).
+/// Second pcurve-key component for a raw location number resolved against the
+/// DS location table (`pcurve_location_id` of the transform value; identity
+/// -> 0).
+fn pcurve_loc_component(ds: &DS, loc: u32) -> u32 {
+    let tr = if loc == 0 {
+        glam::DAffine3::IDENTITY
+    } else {
+        ds.locations
+            .get((loc - 1) as usize)
+            .copied()
+            .unwrap_or(glam::DAffine3::IDENTITY)
+    };
+    rcad_kernel::topo::topods::pcurve_location_id(&tr)
+}
+
 fn surface_same(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3) -> bool {
     use rcad_kernel::geom::Surface3;
     const T: f64 = 1e-9;
@@ -406,7 +425,7 @@ fn edge_pcurve_on_face<'a>(
     let ed = edge_data(edge)?;
     let surf = face.as_face().and_then(|fd| fd.surface.as_ref())?;
     ed.pcurves
-        .get(&(face.ptr_id(), face.location))
+        .get(&(face.ptr_id(), pcurve_loc_component(ds, face.location)))
         .or_else(|| {
             ed.pcurves.iter().find_map(|(k, v)| {
                 if let Some(&fi) = ds.map_shape_index.get(k) {
@@ -1468,6 +1487,7 @@ impl<'a> Builder<'a> {
             my_check_inverted: false,
             my_nb_shapes_arr: [0; 8],
             shape_remap: HashMap::new(),
+            my_built_face_surfaces: HashMap::new(),
         }
     }
 
@@ -2279,6 +2299,14 @@ impl<'a> Builder<'a> {
             a_faces_im.entry(*fi).or_default().extend(a_bf.my_areas);
         }
 
+        // Mirror OCCT BRep_Tool::CurveOnSurface surface-handle matching for
+        // faces rebuilt over the SAME surface as their source (BuilderFace
+        // areas and BuildDraftFace images): rows stored under the ORIGINAL
+        // face's pointer become addressable under each built area's pointer
+        // whenever the owning face shares the area's surface.  OCCT gets this
+        // for free because its representations compare Geom_Surface handles;
+        // rcad keys them by the face TShape pointer.
+        self.bridge_pcurves_for_built_faces(&a_faces_im);
         // OCCT L534-552: apply orientation and append areas to myImages.
         for (fi, a_lfr) in a_faces_im {
             let a_f = self.brep_sr(fi);
@@ -2293,6 +2321,71 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Bridge pcurve keys for newly built faces (draft images and split
+    /// areas).  OCCT BRep_Tool::CurveOnSurface(aE, aF) (BRep_Tool.cxx
+    /// L327-450) matches an edge's BRep_CurveOnSurface representation by
+    /// comparing its stored Geom_Surface handle with the face's surface, so a
+    /// face rebuilt over the same surface resolves the pre-existing pcurves of
+    /// its boundary edges without extra bookkeeping.  rcad addresses
+    /// representations by the owning face TShape pointer; mirror the OCCT
+    /// outcome by making every row whose owning face shares the built face's
+    /// surface addressable under the built face's key as well (the row's own
+    /// location component is copied verbatim).
+    fn bridge_pcurves_for_built_faces(&mut self, a_faces_im: &IndexMap<usize, Vec<Shape>>) {
+        for areas in a_faces_im.values() {
+            for a_ar in areas {
+                if let Some(s) = a_ar.as_face().and_then(|fd| fd.surface.clone()) {
+                    self.my_built_face_surfaces.insert(a_ar.ptr_id(), s);
+                }
+            }
+        }
+        let mut owner_surface: HashMap<u64, rcad_kernel::geom::Surface3> = HashMap::new();
+        for i in 0..self.ds.nb_shapes() {
+            if self.ds.shape_info(i).shape_type != topods::ShapeType::Face {
+                continue;
+            }
+            let Some((fid, _)) = self.ds.face_key(i) else { continue };
+            if let Some(s) = self.ds.face_surface(i) {
+                owner_surface.insert(fid, s);
+            }
+        }
+        for (fid, s) in &self.my_built_face_surfaces {
+            owner_surface.insert(*fid, s.clone());
+        }
+        for areas in a_faces_im.values() {
+            for a_ar in areas {
+                let Some(a_surf) = a_ar.as_face().and_then(|fd| fd.surface.clone()) else {
+                    continue;
+                };
+                let ar_key = (a_ar.ptr_id(), a_ar.location);
+                let TShape::Face(fd) = &*a_ar.data else { continue };
+                let mut dfe: Vec<Shape> = Vec::new();
+                for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                    let TShape::Wire(wd) = &*w.data else { continue };
+                    dfe.extend(wd.edges.iter().cloned());
+                }
+                for e in dfe {
+                    let raw = Arc::as_ptr(&e.data) as *mut TShape;
+                    unsafe {
+                        if let TShape::Edge(ed) = &mut *raw {
+                            let row = ed
+                                .pcurves
+                                .iter()
+                                .find(|((p, _), _)| {
+                                    owner_surface
+                                        .get(p)
+                                        .map_or(false, |s| surface_same(&a_surf, s))
+                                })
+                                .map(|(_, v)| v.clone());
+                            if let Some(v) = row {
+                                ed.pcurves.entry(ar_key).or_insert(v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     /// OCCT BOPDS_DS::AloneVertices (BOPDS_DS.cxx L1028-1062).
     /// Vertices of the face not belonging to any boundary edge: endpoints of
     /// PaveBlocksIn/PaveBlocksSc plus VerticesIn/VerticesSc not already seen.
@@ -3248,8 +3341,8 @@ impl<'a> Builder<'a> {
         // source surface, so each wire edge's pcurve written under the source
         // face key is copied to the draft face key (the shared-surface pcurve
         // is identical); an edge without a source pcurve keeps none.
-        let draft_key = (draft_face.ptr_id(), draft_face.location);
-        let src_key = (the_face.ptr_id(), the_face.location);
+        let draft_key = (draft_face.ptr_id(), pcurve_loc_component(&self.ds, draft_face.location));
+        let src_key = (the_face.ptr_id(), pcurve_loc_component(&self.ds, the_face.location));
         let mut dfe: Vec<Shape> = Vec::new();
         if let TShape::Face(fd) = &*draft_face.data {
             if let TShape::Wire(wd) = &*fd.outer_wire.data {
