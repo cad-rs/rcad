@@ -3636,6 +3636,18 @@ impl<'a> Builder<'a> {
         // OCCT L743-748: aDMSLS 鈥?back-and-forth SD map (IndexedDataMap,
         // insertion order); aVPSB 鈥?pairs for analysis.
         if std::env::var("RCAD_SD_DEBUG").is_ok() {
+            for (cid, ic) in self.ds.intersection_curves.iter().enumerate() {
+                for pb in &ic.pave_blocks {
+                    let r = pb.read();
+                    let ep = if r.has_edge() {
+                        format!("EDGE{}:ptr{}", r.edge, self.ds.shape(r.edge).ptr_id() % 100000)
+                    } else {
+                        "noedge".into()
+                    };
+                    eprintln!("[SD-CURVE] cid={} pv=({},{}) oe={} cb={:?} {}",
+                        cid, r.pave1.index(), r.pave2.index(), r.original_edge(), r.common_block_idx, ep);
+                }
+            }
             for &n_f in &a_fi_vec {
                 if !self.ds.has_face_info(n_f) { continue; }
                 let fi = self.ds.face_info_pool.get(n_f);
