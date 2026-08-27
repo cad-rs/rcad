@@ -3646,6 +3646,15 @@ impl<'a> Builder<'a> {
                     };
                     eprintln!("[SD-CURVE] cid={} pv=({},{}) oe={} cb={:?} {}",
                         cid, r.pave1.index(), r.pave2.index(), r.original_edge(), r.common_block_idx, ep);
+                    for pv in [r.pave1.index(), r.pave2.index()] {
+                        let vs = self.ds.shape(pv);
+                        let (p, t) = match vs.as_vertex() {
+                            Some(v) => (v.point, v.tolerance),
+                            None => continue,
+                        };
+                        eprintln!("[SD-CURVE-V] v={} p=({:.6},{:.6},{:.6}) tol={:.3e} ptr{}",
+                            pv, p.x, p.y, p.z, t, vs.ptr_id() % 100000);
+                    }
                 }
             }
             for &n_f in &a_fi_vec {
