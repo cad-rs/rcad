@@ -2419,6 +2419,24 @@ impl DS {
         idx
     }
 
+    /// Location index of `loc`'s inverse transform (OCCT TopLoc_Location
+    /// Predivided, BRep_Tool.cxx L345), registered in the merged table on
+    /// demand.  Only ever called with a non-identity `loc`.
+    fn predivided_loc_of(loc: u32, locations: &mut Vec<glam::DAffine3>) -> u32 {
+        if let Some(tr) = locations.get(loc as usize) {
+            let inv = tr.inverse();
+            match locations.iter().position(|l| *l == inv) {
+                Some(i) => i as u32,
+                None => {
+                    locations.push(inv);
+                    (locations.len() - 1) as u32
+                }
+            }
+        } else {
+            0
+        }
+    }
+
     /// OCCT BOPTools_AlgoTools::MakeSplitEdge (BOPTools_AlgoTools_2.cxx L138-183):
     /// a split edge is an EmptyCopy of the source edge — it shares the source's
     /// TShape, so it inherits the source's curve representations (CurveOnSurface
@@ -2445,52 +2463,56 @@ impl DS {
             Arc::new(TShape::Vertex(empty_vertex_data())), 0, Orientation::Forward,
         );
         // OCCT BOPTools_AlgoTools::MakeSplitEdge stores the DS pave vertices
-        // on the split edge (BOPAlgo_PaveFiller_7.cxx L529-535). The pave at a
-        // source range END resolves through the edge-location composition to
-        // the located corner key. An INTERIOR pave vertex (a new vertex on the
-        // located edge) is stored with the location L.Predivided(E.Location())
-        // (BRep_Tool.cxx L345) — face_loc * edge_loc^-1, identity face here —
-        // so the edge-location composition (TopoDS_Iterator cumLoc) maps it to
-        // the WORLD key, matching the same vertex referenced by the unlocated
-        // edges (the section arcs).
-        let (src_range, src_loc) = match src {
-            Some(src_e) if src_e < self.shapes.len() => (
-                self.shapes[src_e].shape.as_edge().map(|ed| ed.range),
-                self.shapes[src_e].shape.location,
-            ),
-            _ => (None, 0u32),
+        // on the split edge (BOPAlgo_PaveFiller_7.cxx L529-535).  The split
+        // edge inherits the source edge's LOCATION (TopoDS_Shape::EmptyCopy
+        // keeps it, BOPTools_AlgoTools_2.cxx L145-146), and the WireSplitter /
+        // TopoDS_Iterator (cumLoc, TopoDS_Iterator.cxx L76-78) COMPOSES the
+        // edge location into each endpoint vertex.  For the composed vertex to
+        // evaluate at the vertex's true world position the stored reference
+        // location must be L.Predivided(E.Location()) (BRep_Tool.cxx L345) —
+        // edge_loc^-1 composed with the vertex's OWN location:
+        //
+        //   composed(edge_loc, v_ref_loc) = edge_loc * (edge_loc^-1 * v_own)
+        //                                 = v_own
+        //
+        // so the vertex evaluates through the located edge exactly as through
+        // an unlocated one (the section arcs), which is what makes the
+        // SmartMap vertex keys coincide.  For an unlocated source edge
+        // (edge_loc = 0) this keeps the vertex's own location (a located
+        // corner vertex, e.g. the extruded top-cap vertex of a prism, stays
+        // located on the split edge); for a located source edge with an
+        // unlocated interior (new section) vertex it is the predivided
+        // location, mapping the composed key to identity.
+        let src_loc = match src {
+            Some(src_e) if src_e < self.shapes.len() => self.shapes[src_e].shape.location,
+            _ => 0u32,
         };
-        let predivided_loc: u32 = if src_loc != 0 {
-            if let Some(tr) = self.locations.get(src_loc as usize) {
-                let inv = tr.inverse();
-                match self.locations.iter().position(|l| *l == inv) {
-                    Some(i) => i as u32,
-                    None => {
-                        self.locations.push(inv);
-                        (self.locations.len() - 1) as u32
-                    }
+        // edge_loc^-1 composed with the vertex's own location (looked up in
+        // the merged location table; registered on demand like the legacy
+        // predivided-location handling).
+        let mut predivided_ref_loc = |own: u32| -> u32 {
+            if src_loc == 0 {
+                return own;
+            }
+            if own == 0 {
+                return Self::predivided_loc_of(src_loc, &mut self.locations);
+            }
+            let edge_tr = self.locations.get(src_loc as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+            let own_tr = self.locations.get(own as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+            let composed = edge_tr.inverse() * own_tr;
+            match self.locations.iter().position(|l| *l == composed) {
+                Some(i) => i as u32,
+                None => {
+                    self.locations.push(composed);
+                    (self.locations.len() - 1) as u32
                 }
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-        let v_loc = |param: f64, src_end: Option<f64>| -> u32 {
-            // The pave at the source's own range end is the source's endpoint
-            // vertex; any other pave is an interior (new) vertex.
-            match src_end {
-                Some(e) if (param - e).abs() < 1e-12 => 0, // keep the stored location
-                _ => predivided_loc,
             }
         };
-        let v_first_src = src_range.map(|r| r[0]);
-        let v_last_src = src_range.map(|r| r[1]);
         let v_first = self.shapes.get(first)
-            .map(|s| Shape::from_parts(s.shape.data.clone(), first, v_loc(range[0], v_first_src), v_first_or))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), first, predivided_ref_loc(s.shape.location), v_first_or))
             .unwrap_or_else(|| empty_vertex.clone());
         let v_last = self.shapes.get(last)
-            .map(|s| Shape::from_parts(s.shape.data.clone(), last, v_loc(range[1], v_last_src), v_last_or))
+            .map(|s| Shape::from_parts(s.shape.data.clone(), last, predivided_ref_loc(s.shape.location), v_last_or))
             .unwrap_or(empty_vertex);
         let (pcurves, representations) = match src {
             Some(src_e) if src_e < self.shapes.len() => match &*self.shapes[src_e].shape.data {

@@ -232,10 +232,19 @@ fn face_uv_bounds(brep: &BRep, face: &Face, fi: usize, surf: &Surface3) -> [f64;
             },
         );
         // BRep_Tool::CurveOnSurface (L179): a null pcurve means this edge
-        // contributes nothing to the box (L180-183).
+        // contributes nothing to the box (L180-183) — but OCCT's
+        // BRep_Tool::CurveOnSurface itself has the CurveOnPlane fallback
+        // (BRep_Tool.cxx L327-450: planar face + 3D edge -> projected pcurve),
+        // so a pcurve-less planar edge still bounds the UV domain.  Mirror the
+        // fallback here; without it a prism side face (no stored pcurve) falls
+        // back to the infinite natural plane domain and the Green integral
+        // diverges.
         let (c, a_t1, a_t2) = match brep.curve_on_surface(&edge_shape, &face_shape) {
             Some(v) => v.clone(),
-            None => continue,
+            None => match project_curve_on_plane(brep, &edge_shape, &face_shape) {
+                Some(v) => v,
+                None => continue,
+            },
         };
         // BndLib_Add2dCurve::Add (L185): 2D bounding box [xmin,ymin,xmax,ymax]
         let a_box_c = curve2d_bounding_box(&c, a_t1, a_t2, 0.0);
@@ -775,6 +784,32 @@ fn fill_interval_bounds(
     k
 }
 
+// OCCT BRep_Tool::CurveOnPlane (BRep_Tool.cxx L379-450): when an edge has no
+// stored pcurve on a planar face, project the edge's 3D curve onto the plane
+// along the plane normal.  For a line the projection is the linear map
+//   (u, v) = ((p - O).U, (p - O).V)
+// on the plane frame; the 2D parameterization is the arc length of the
+// projection (the Green boundary integral is invariant to reparameterization).
+fn project_curve_on_plane(brep: &BRep, edge: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)> {
+    use crate::geom::CurveEval;
+    let surf = brep.face_surface_world(face)?;
+    let (c3, r3) = brep.edge_curve_world(edge)?;
+    let Surface3::Plane(pl) = surf else { return None };
+    let o = pl.origin;
+    let p0 = c3.point_at(r3[0]);
+    let p1 = c3.point_at(r3[1]);
+    let (u0, v0) = ((p0 - o).dot(pl.u_dir), (p0 - o).dot(pl.v_dir));
+    let (u1, v1) = ((p1 - o).dot(pl.u_dir), (p1 - o).dot(pl.v_dir));
+    let du = u1 - u0;
+    let dv = v1 - v0;
+    let len = (du * du + dv * dv).sqrt();
+    if len < 1e-30 {
+        return None;
+    }
+    let c = Curve2d::Line(crate::geom::Line2d::new(glam::DVec2::new(u0, v0), glam::DVec2::new(du / len, dv / len)));
+    Some((c, 0.0, len))
+}
+
 /// OCCT BRepGProp_Sinert::Perform(BF, BD, Eps) — the `checkprops -s`
 /// per-face adaptive integration (BRepGProp_Sinert.cxx L104-110 →
 /// BRepGProp_Gauss.cxx L533-1099).  Sinert mass only: the gravity center and
@@ -896,13 +931,19 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
                     Some(v) => v,
                     None => match pc {
                         Some(v) => v.clone(),
-                        None => return 0.0,
+                        None => match project_curve_on_plane(brep, &edge_shape, &face_shape) {
+                            Some(v) => v,
+                            None => return 0.0,
+                        },
                     },
                 }
             } else {
                 match pc {
                     Some(v) => v.clone(),
-                    None => return 0.0,
+                    None => match project_curve_on_plane(brep, &edge_shape, &face_shape) {
+                        Some(v) => v,
+                        None => return 0.0,
+                    },
                 }
             };
             let reversed = !we.forward;

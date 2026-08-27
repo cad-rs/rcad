@@ -1672,9 +1672,21 @@ impl<'a> Builder<'a> {
     pub fn build_with_history_topods(
         &mut self,
     ) -> Result<(topods::BRep, ()), BooleanError> {
-        let (brep, snaps) = self.build_with_history_stage_by_stage()?;
+        let (mut brep, snaps) = self.build_with_history_stage_by_stage()?;
         if snaps.len() != 10 {
             return Err(BooleanError::DegenerateResult);
+        }
+        // Normalize the result locations pool to the BRep convention before it
+        // leaves the builder.  The DS table is DS-style: index 0 = identity and
+        // shape location indices read directly (DS::get_location(idx) ->
+        // locations[idx]).  The BRep table is BRep-style: index 0 is implicit
+        // identity and shape location indices read shifted
+        // (BRep::get_location(idx) -> locations[idx-1]).  The merged location
+        // indices coincide (the first real location is index 1 in both
+        // conventions), so converting the pool is just dropping the leading
+        // identity entry (BRep::add_location never stores identity).
+        if brep.locations.first() == Some(&glam::DAffine3::IDENTITY) {
+            brep.locations.remove(0);
         }
         Ok((brep, ()))
     }
