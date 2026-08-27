@@ -313,6 +313,21 @@ impl BRep {
         }
     }
 
+    /// OCCT BRep_Builder::UpdateEdge / BRep_Tool::CurveOnSurface
+    /// (BRep_Builder.cxx L692, BRep_Tool.cxx L345): the pcurve of an edge on a
+    /// face is keyed by `(face TShape, aLoc)` with
+    /// `aLoc = L.Predivided(E.Location())` — the face location divided by the
+    /// edge's location.  A located edge (e.g. the top edge of a prism, sharing
+    /// its TShape with the base edge) therefore has its own pcurve key,
+    /// distinct from the base edge's.  rcad keys by the BRep location table
+    /// index of the composed transform (0 = identity); the composed transform
+    /// may be absent from the table (only the forward folds are registered),
+    /// in which case the edge location index is used — the key still separates
+    /// located edges from their base copies.
+    pub fn compose_pcurve_location(&self, face_loc: u32, edge_loc: u32) -> u32 {
+        compose_pcurve_location(face_loc, edge_loc, &self.locations)
+    }
+
     pub fn add_tvertex(&mut self, point: DVec3) -> Shape {
         // OCCT-aligned: identity-based sharing �?same position �?same TShape::Vertex.
         let key = VertexKey::from(point);
@@ -1556,7 +1571,13 @@ impl BRepTool for BRep {
     }
 
     fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<&(Curve2d, f64, f64)> {
-        self.edge(edge.clone()).pcurves.get(&(face.ptr_id(), face.location))
+        // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve of
+        // an edge on a face is keyed by `aLoc = L.Predivided(E.Location())` —
+        // the face location divided by the edge's location.  A located edge
+        // (the translated top cap of a prism) therefore has its own pcurve
+        // key, distinct from the base edge's.
+        let key = (face.ptr_id(), compose_pcurve_location(face.location, edge.location, &self.locations));
+        self.edge(edge.clone()).pcurves.get(&key)
     }
 
     fn is_edge_closed_on_face(&self, edge: &Shape, face: &Shape) -> bool {
@@ -2333,7 +2354,10 @@ impl BRepBuilder {
         t1: f64,
         t2: f64,
     ) {
-        brep.edge_mut(edge).pcurves.insert((face.ptr_id(), face.location), (pc, t1, t2));
+        // OCCT BRep_Builder::UpdateEdge (BRep_Builder.cxx L692): the pcurve is
+        // stored under `L.Predivided(E.Location())` — see curve_on_surface.
+        let key = (face.ptr_id(), compose_pcurve_location(face.location, edge.location, &brep.locations));
+        brep.edge_mut(edge).pcurves.insert(key, (pc, t1, t2));
     }
 
     /// OCCT BRep_Builder::UpdateEdge(aE, theTol) �?update edge tolerance.
@@ -2661,6 +2685,40 @@ fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
         Curve2d::Circle(_) => (0.0, std::f64::consts::TAU),
         _ => (0.0, 1.0),
     }
+}
+
+/// OCCT BRep_Builder::UpdateEdge / BRep_Tool::CurveOnSurface
+/// (BRep_Builder.cxx L692, BRep_Tool.cxx L345): the pcurve of an edge on a
+/// face is keyed by `(face TShape, aLoc)` with
+/// `aLoc = L.Predivided(E.Location())` — the face location divided by the
+/// edge's location.  A located edge (e.g. the top edge of a prism, sharing its
+/// TShape with the base edge) therefore has its own pcurve key, distinct from
+/// the base edge's.
+///
+/// rcad stores the location table indices (DS/BRep table, index 0 =
+/// identity).  The composed transform face_loc * edge_loc^-1 may be absent
+/// from the table (only the forward folds are registered), in which case the
+/// edge location index is used — the key still separates located edges from
+/// their base copies, which is the OCCT semantics that matters for the
+/// shared-TShape case.
+pub fn compose_pcurve_location(face_loc: u32, edge_loc: u32, locations: &[glam::DAffine3]) -> u32 {
+    if edge_loc == 0 {
+        return face_loc;
+    }
+    let face_tr = locations
+        .get(face_loc as usize)
+        .copied()
+        .unwrap_or(glam::DAffine3::IDENTITY);
+    let edge_tr = locations
+        .get(edge_loc as usize)
+        .copied()
+        .unwrap_or(glam::DAffine3::IDENTITY);
+    let composed = face_tr * edge_tr.inverse();
+    locations
+        .iter()
+        .position(|l| *l == composed)
+        .map(|i| i as u32)
+        .unwrap_or(if face_loc == 0 { edge_loc } else { face_loc })
 }
 
 // ---------------------------------------------------------------------------

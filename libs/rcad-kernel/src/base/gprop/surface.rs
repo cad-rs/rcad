@@ -1228,9 +1228,10 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
     }
 
     // convert (L1071, L467-490): |Mass| >= EPS_DIM → mass else 0
-    if an_inertia.abs() >= EPS_DIM {
+    let mass = if an_inertia.abs() >= EPS_DIM {
         an_inertia
     } else {
         0.0
-    }
+    };
+    mass
 }
