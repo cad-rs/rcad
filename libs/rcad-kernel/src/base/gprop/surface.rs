@@ -46,6 +46,21 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
         // wires (no outer wire edges and no inner wires).
         let is_nat_restr = face.outer_wire.edges.is_empty() && face.inner_wires.is_empty();
         let a = face_surface_area_checkprops(brep, face, *fi, 1.0e-4, is_nat_restr);
+        if std::env::var("RCAD_SA_DEBUG").is_ok() {
+            let st = match brep.tshapes.get(*fi).map(|ts| ts.as_ref()) {
+                Some(topods::TShape::Face(fd)) => match fd.surface.as_ref() {
+                    Some(Surface3::Plane(_)) => "PLANE",
+                    Some(Surface3::Cylinder(_)) => "CYL",
+                    Some(Surface3::Cone(_)) => "CONE",
+                    Some(Surface3::BSpline(_)) => "BSP",
+                    Some(Surface3::Bezier(_)) => "BEZ",
+                    Some(_) => "OTHER",
+                    None => "NONE",
+                },
+                _ => "?",
+            };
+            eprintln!("[SA-FACE] fi={} {} area={:.6}", fi, st, a);
+        }
         // OCCT BRepGProp_Gauss::Compute (BRepGProp_Gauss.cxx L533-1099)
         // integrates the surface patch mass = |dS| via the Green theorem
         // boundary integral; the result follows the wire direction, so a face
