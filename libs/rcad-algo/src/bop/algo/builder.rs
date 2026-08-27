@@ -3580,7 +3580,8 @@ impl<'a> Builder<'a> {
         // IsEqual (L81-99) compares the expanded count first, then the
         // deduplicated TShape+Location set. rcad: (count, sorted unique
         // (ptr_id, location)).
-        let mut an_e_set_faces: IndexMap<(usize, Vec<(u64, u32)>), Vec<Shape>> = IndexMap::new();
+        // OCCT L690-694: map edge-sets -> list of faces, planar face fence.
+        let mut an_e_set_faces: IndexMap<(usize, Vec<(u64, u32)>), Vec<(usize, Shape)>> = IndexMap::new();
         let mut a_mf_planar: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
 
         // OCCT L697-741: for each face, compute edge set.
@@ -3628,12 +3629,44 @@ impl<'a> Builder<'a> {
                 if b_check_planar {
                     a_mf_planar.insert((f_piece.ptr_id(), f_piece.location));
                 }
-                an_e_set_faces.entry((count, edge_set)).or_default().push(f_piece.clone());
+                an_e_set_faces.entry((count, edge_set)).or_default().push((n_f, f_piece.clone()));
             }
         }
 
         // OCCT L743-748: aDMSLS 鈥?back-and-forth SD map (IndexedDataMap,
         // insertion order); aVPSB 鈥?pairs for analysis.
+        if std::env::var("RCAD_SD_DEBUG").is_ok() {
+            for &n_f in &a_fi_vec {
+                if !self.ds.has_face_info(n_f) { continue; }
+                let fi = self.ds.face_info_pool.get(n_f);
+                let Some(fi) = fi else { continue };
+                let on: Vec<String> = fi.pave_blocks_on.iter().map(|&pm| {
+                    match self.ds.pb_from_ptr(pm) {
+                        Some(pb) => {
+                            let r = pb.0.read().unwrap();
+                            let ep = self.ds.shape(r.edge).ptr_id() % 100000;
+                            format!("e{}:{}", r.edge, ep)
+                        }
+                        None => format!("?{}", pm % 100000),
+                    }
+                }).collect();
+                eprintln!("[SD-FI] f={} pb_on=[{}]", n_f, on.join(","));
+            }
+            for ef in &self.ds.interf_ef {
+                eprintln!("[SD-EF] e={} f={}", ef.edge, ef.face);
+            }
+            for ff in a_ffs {
+                let nc = if ff.curves.is_empty() { 0 } else { ff.curves.len() };
+                eprintln!("[SD-FF] f1={} f2={} ncurves={} tangent={}", ff.f1, ff.f2, nc, ff.tangent_faces as u8);
+            }
+            for (es_key, faces) in &an_e_set_faces {
+                let ids: Vec<String> = faces.iter().map(|(nf, f)| {
+                    format!("{}:{}", nf, f.ptr_id() % 100000)
+                }).collect();
+                let es: Vec<String> = es_key.1.iter().map(|(p, l)| format!("{}:{}", p % 100000, l)).collect();
+                eprintln!("[SD-SET] cnt={} nedges={} nf={} faces=[{}] edges=[{}]", es_key.0, es_key.1.len(), faces.len(), ids.join(","), es.join(","));
+            }
+        }
         let mut a_dmsls: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
         let mut a_vpsb: Vec<(Shape, Shape)> = Vec::new();
 
@@ -3641,11 +3674,11 @@ impl<'a> Builder<'a> {
         for (es_key, faces) in &an_e_set_faces {
             if faces.len() < 2 { continue; }
             for i1 in 0..faces.len() {
-                let f1 = &faces[i1];
+                let (n1, f1) = &faces[i1];
                 let parent1 = a_face_to_parent.get(&(f1.ptr_id(), f1.location)).copied();
                 let b_check_planar = a_mf_planar.contains(&(f1.ptr_id(), f1.location));
                 for i2 in (i1 + 1)..faces.len() {
-                    let f2 = &faces[i2];
+                    let (n2, f2) = &faces[i2];
                     let parent2 = a_face_to_parent.get(&(f2.ptr_id(), f2.location)).copied();
                     // OCCT L776-779: two faces of one solid cannot be SD.
                     if let (Some(p1), Some(p2)) = (parent1, parent2) {
