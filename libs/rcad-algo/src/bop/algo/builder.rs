@@ -1120,8 +1120,12 @@ fn is_internal_face(
             let a_f1 = &a_lf[0];
             let a_f2 = &a_lf[1];
             if std::env::var("RCAD_GFO_DEBUG").is_ok() {
-                eprintln!("[ISF] the_face_or={:?} e_ori={:?} f1_or={:?} f2_or={:?}",
-                    the_face.orientation, a_e.orientation, a_f1.orientation, a_f2.orientation);
+                let fb = shape_bbox(the_face);
+                let eb = shape_bbox(&a_e);
+                eprintln!(
+                    "[ISF] the_face_box={:?} edge_box={:?} the_face_or={:?} e_ori={:?} f1_or={:?} f2_or={:?}",
+                    fb, eb, the_face.orientation, a_e.orientation, a_f1.orientation, a_f2.orientation
+                );
             }
             i_ret = is_internal_face_core(the_face, &a_e, a_f1, a_f2, ds);
             if i_ret != 2 {
@@ -1169,6 +1173,17 @@ pub(crate) fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f
                     the_solid,
                 );
             clsf.perform(p, the_tol);
+            if std::env::var("RCAD_GFO_DEBUG").is_ok() {
+                let sb = shape_bbox(the_solid);
+                eprintln!(
+                    "[CSF] P=({:.3},{:.3},{:.3}) solid_bbox={:?} state={} (1=IN 2=ON 3=IN 4=OUT)",
+                    p.x,
+                    p.y,
+                    p.z,
+                    sb,
+                    clsf.my_state
+                );
+            }
             return clsf.my_state;
         }
     }
@@ -2148,13 +2163,48 @@ impl<'a> Builder<'a> {
             for (i, si) in self.ds.shapes.iter().enumerate() {
                 if let topods::TShape::Vertex(vd) = &*si.shape.data {
                     eprintln!(
-                        "[WS-DSSHAPE] v idx={} ptr={:x} loc={} p=({:.3},{:.3},{:.3})",
+                        "[WS-DSSHAPE] v idx={} ptr={:x} loc={} p=({:.3},{:.3},{:.3}) bbox=({:.3},{:.3},{:.3})-({:.3},{:.3},{:.3})",
                         i,
                         si.shape.ptr_id(),
                         si.shape.location,
                         vd.point.x,
                         vd.point.y,
-                        vd.point.z
+                        vd.point.z,
+                        si.bbox.raw_min().x,
+                        si.bbox.raw_min().y,
+                        si.bbox.raw_min().z,
+                        si.bbox.raw_max().x,
+                        si.bbox.raw_max().y,
+                        si.bbox.raw_max().z
+                    );
+                }
+            }
+            // d9 face bbox forensics: the source solid's top face and its wires.
+            for (i, si) in self.ds.shapes.iter().enumerate() {
+                if si.shape_type == topods::ShapeType::Face {
+                    let n = if let topods::TShape::Face(fd) = &*si.shape.data {
+                        fd.surface.as_ref().map(|sf| match sf {
+                            rcad_kernel::geom::Surface3::Plane(p) => format!(
+                                "({:.2},{:.2},{:.2})o=({:.2},{:.2},{:.2})",
+                                p.normal.x, p.normal.y, p.normal.z,
+                                p.origin.x, p.origin.y, p.origin.z
+                            ),
+                            _ => "O".into(),
+                        })
+                    } else {
+                        None
+                    };
+                    eprintln!(
+                        "[WS-DSFACE] f idx={} loc={} n={} bbox=({:.3},{:.3},{:.3})-({:.3},{:.3},{:.3})",
+                        i,
+                        si.shape.location,
+                        n.unwrap_or_default(),
+                        si.bbox.raw_min().x,
+                        si.bbox.raw_min().y,
+                        si.bbox.raw_min().z,
+                        si.bbox.raw_max().x,
+                        si.bbox.raw_max().y,
+                        si.bbox.raw_max().z
                     );
                 }
             }
