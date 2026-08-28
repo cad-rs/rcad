@@ -2222,6 +2222,14 @@ impl<'a> Builder<'a> {
             let a_ff_sphere = a_ff.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, rcad_kernel::geom::Surface3::Sphere(_)));
             for a_e in self.face_edges(&a_ff) {
                 let an_ori_e = a_e.orientation;
+                if i == 53 && std::env::var("RCAD_BS_DEBUG").is_ok() {
+                    let imgs = self.images_of(&a_e);
+                    let img_desc: Vec<String> = imgs.map(|v| v.iter().map(|s| {
+                        format!("{:+x}@loc{}", s.ptr_id() & 0xffff, s.location)
+                    }).collect()).unwrap_or_default();
+                    eprintln!("[BND53] e={:+x}@loc{} ori={:?} imgs=[{}]",
+                        a_e.ptr_id() & 0xffff, a_e.location, an_ori_e, img_desc.join(","));
+                }
                 // OCCT L369: if !myImages.IsBound(aE).
                 if self.images_of(&a_e).is_none() {
                     if an_ori_e == topods::Orientation::Internal {

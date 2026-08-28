@@ -287,7 +287,7 @@ impl<'a> BuilderFace<'a> {
                         _ => "Other",
                     };
                     match c {
-                        Curve2d::Line(l) => format!("L2D o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
+                        Curve2d::Line(l) => format!("L2D o=({:.3},{:.3}) d=({:.3},{:.3}) t=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y, pc.as_ref().map(|p| p.1).unwrap_or(0.0), pc.as_ref().map(|p| p.2).unwrap_or(0.0)),
                         Curve2d::Trimmed(t) => match &*t.curve {
                             Curve2d::Line(l) => format!("TL2D o=({:.3},{:.3}) d=({:.3},{:.3}) t=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y, t.t_min, t.t_max),
                             _ => format!("TO2D({})", name),
