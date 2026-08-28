@@ -975,10 +975,17 @@ pub(crate) fn get_face_off(
         // OCCT L1063: aAngle = AngleWithRef(aDBF, aDBF2, aDTF).
         let mut a_angle = angle_with_ref(a_dbf1, a_dbf2, a_dtf);
         if std::env::var("RCAD_GFO_DEBUG").is_ok() {
-            let e_or = a_e2.orientation;
-            eprintln!("[GFO]{} e1_ori={:?} f1_ori={:?} a_e2_ori={:?} a_f2_ori={:?} aDTgt=({:.4},{:.4},{:.4}) aDTgt2=({:.4},{:.4},{:.4}) aAngle={:.6}",
+            let face_desc = |f: &Shape| {
+                let n = f.as_face().and_then(|fd| fd.surface.clone()).map(|sf| match sf {
+                    rcad_kernel::geom::Surface3::Plane(p) => format!("({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
+                    _ => "O".into(),
+                }).unwrap_or_else(|| "?".into());
+                format!("{}{}n={}", f.ptr_id() % 100000, if f.orientation == topods::Orientation::Reversed { "R" } else { "F" }, n)
+            };
+            eprintln!("[GFO]{} f1={} cand_f2={} f1_ori={:?} a_e2_ori={:?} a_f2_ori={:?} aDTgt=({:.4},{:.4},{:.4}) aDTgt2=({:.4},{:.4},{:.4}) aAngle={:.6}",
                 std::env::var("RCAD_GFO_SITE").unwrap_or_default(),
-                a_or, the_f1.orientation, e_or, a_f2.orientation,
+                face_desc(the_f1), face_desc(a_f2),
+                the_f1.orientation, a_e2.orientation, a_f2.orientation,
                 a_dtgt.x, a_dtgt.y, a_dtgt.z, a_dtgt2.x, a_dtgt2.y, a_dtgt2.z, a_angle);
         }
         // OCCT L1065-1082: near-zero angle handling.
