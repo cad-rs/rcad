@@ -426,11 +426,13 @@ fn split_block(
                     .as_edge()
                     .map(|ed| {
                         format!(
-                            " rawF=({:x},{}) rawL=({:x},{}) eLoc={}",
+                            " rawF=({:x},{},{}) rawL=({:x},{},{}) eLoc={}",
                             Arc::as_ptr(&ed.first.data) as usize,
                             ed.first.location,
+                            if ed.first.orientation == Orientation::Reversed { 1 } else { 0 },
                             Arc::as_ptr(&ed.last.data) as usize,
                             ed.last.location,
+                            if ed.last.orientation == Orientation::Reversed { 1 } else { 0 },
                             a_e.location
                         )
                     })
@@ -1064,7 +1066,26 @@ fn angle_2d(
     // toward the interior (departure).
     let a_v2d = if b_is_in { a_pv - a_pv1 } else { a_pv1 - a_pv };
     let a_dir2d = a_v2d.normalize_or_zero();
-    angle_from_dir(a_dir2d)
+    let a_res = angle_from_dir(a_dir2d);
+    if std::env::var("RCAD_WS_DEBUG").is_ok() {
+        eprintln!(
+            "[WS-ANG] e={}o={} vin={} a_tv={:.6} f={:.6} l={:.6} dt={:.9} a_tv1={:.6} pv=({:.6},{:.6}) pv1=({:.6},{:.6}) ang={:.6}",
+            an_edge.ptr_id() % 100000,
+            if an_edge.orientation == Orientation::Reversed { 1 } else { 0 },
+            b_is_in as u8,
+            a_tv,
+            a_first,
+            a_last,
+            dt,
+            a_tv1,
+            a_pv.x,
+            a_pv.y,
+            a_pv1.x,
+            a_pv1.y,
+            a_res
+        );
+    }
+    a_res
 }
 
 /// OCCT Angle (L869-880) — angle of a 2D direction against +X, in [0, 2π).
@@ -1543,6 +1564,23 @@ fn is_closed_on_face(e: &Shape, face: &Shape) -> bool {
 
 /// OCCT BRep_Tool::Parameter(aV, aE, aF) — vertex parameter on the edge.
 fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Option<f64> {
+    let dbg = std::env::var("RCAD_WS_DEBUG").is_ok();
+    let dbg_res = |orient: u8, rev: bool, res: Option<f64>| {
+        if dbg {
+            eprintln!(
+                "[WS-PARAM] v=({:x},{}) e={:x} eo={} orient={} rev={} param={:?} fi={}",
+                v.ptr_id() % 100000,
+                v.location,
+                e.ptr_id() % 100000,
+                if e.orientation == Orientation::Reversed { 1 } else { 0 },
+                orient,
+                rev as u8,
+                res,
+                face_index
+            );
+        }
+        res
+    };
     // OCCT BRep_Tool::Parameter(V, E, F) -- BRep_Tool.cxx L1519-1523,
     // Parameter(V, E, S, L) L1532-1597. Used by Coord2d (BOPAlgo_WireSplitter_1.cxx
     // L700-712), Coord2dVf (L715-728), Angle2D (L817), RefineAngle (L1112).
@@ -1577,7 +1615,7 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
             // range of E on the face surface (edge_pcurve selects the second
             // pcurve for a REVERSED seam edge, matching CurveOnSurface).
             let (_, f, l) = edge_pcurve(e, face_index, ds)?;
-            match orient {
+            let res = match orient {
                 Orientation::Forward => Some(if rev { l } else { f }),
                 Orientation::Reversed => Some(if rev { f } else { l }),
                 // OCCT L1583-1597 (INTERNAL or VF null): search the vertex's
@@ -1586,12 +1624,12 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
                 // stored vertex param, then the closest point on the 3D curve.
                 _ => {
                     if let Some(t) = ed.vertex_params.get(&v.ptr_id()) {
-                        return Some(*t);
+                        return dbg_res(3, rev, Some(*t));
                     }
                     let curve = ed.curve.as_ref()?;
                     let p = match &*v.data {
                         TShape::Vertex(vd) => vd.point,
-                        _ => return None,
+                        _ => return dbg_res(3, rev, None),
                     };
                     // OCCT L1601-1646: the vertex's PointRepresentation on the
                     // 3D curve; rcad approximates it with the closest point.
@@ -1611,9 +1649,17 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
                             res = if v.orientation == Orientation::Forward { f } else { l };
                         }
                     }
-                    Some(res)
+                    dbg_res(3, rev, Some(res))
                 }
-            }
+            };
+            let oc = if orient == Orientation::Forward {
+                0
+            } else if orient == Orientation::Reversed {
+                1
+            } else {
+                3
+            };
+            return dbg_res(oc, rev, res);
         }
         _ => None,
     }
