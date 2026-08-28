@@ -1301,6 +1301,13 @@ impl DS {
             a_cb.add_pave_block(pb.clone(), 0); // face_idx = 0 placeholder
             pb.0.write().unwrap().common_block_idx = Some(self.common_blocks.len());
         }
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let d: Vec<String> = a_cb.pave_blocks().iter().map(|(pb, _)| {
+                let r = pb.read();
+                format!("e{}oe{}", r.edge, r.original_edge)
+            }).collect();
+            eprintln!("[CB-TRACE] add_common_block n={} after_sort=[{}]", the_pbs.len(), d.join(","));
+        }
         let cb_idx = self.common_blocks.len();
         self.common_blocks.push(a_cb);
         for pb in the_pbs {
@@ -1308,6 +1315,19 @@ impl DS {
             self.map_pb_cb.insert(ptr, cb_idx);
         }
         cb_idx
+    }
+
+    /// TEMP probe: dump common block 0 members.
+    pub fn dump_cb0(&self, stage: &str) {
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            if let Some(cb) = self.common_blocks.get(0) {
+                let d: Vec<String> = cb.pave_blocks().iter().map(|(pb, _)| {
+                    let r = pb.read();
+                    format!("e{}oe{}v{}/{}", r.edge, r.original_edge, r.pave1.vertex_idx, r.pave2.vertex_idx)
+                }).collect();
+                eprintln!("[CB0] {} members=[{}]", stage, d.join(","));
+            }
+        }
     }
 
     // ================================================================    // Face info pool
@@ -2090,7 +2110,12 @@ impl DS {
             if self.shapes[a_face_index].shape_type != ShapeType::Face { continue; }
             a_face_count += 1;
 
-            let mut a_new_sub_shape_indices = HashSet::new();
+            // OCCT L1711: NCollection_Map<int> — iteration follows the
+            // deterministic bucket order (OcctMapInt), which fixes the order of
+            // the flattened sub-shape list below (RandomState HashSet made it
+            // per-process random and order-sensitive downstream).
+            let mut a_new_sub_shape_indices =
+                crate::bop::algo::occt_map::OcctMapInt::new_with_buckets(100);
             let shape = self.shapes[a_face_index].shape.clone();
 
             // OCCT L1715-1717: BRepBndLib::Add(aFace, aFaceBoundBox)
@@ -2146,10 +2171,10 @@ impl DS {
                     }
 
                     // OCCT L1735 + L1748-1752: Add edge + vertices to map
-                    a_new_sub_shape_indices.insert(ei);
+                    a_new_sub_shape_indices.add(ei);
                     for &vi in &self.shapes[ei].sub_shapes {
                         if vi < self.nb_shapes() {
-                            a_new_sub_shape_indices.insert(vi);
+                            a_new_sub_shape_indices.add(vi);
                         }
                     }
                 }
@@ -2160,13 +2185,14 @@ impl DS {
                 for iv in &fd.internal_vertices {
                     let pk = (iv.ptr_id(), iv.location);
                     if let Some(&i) = self.map_shape_index.get(&pk) {
-                        a_new_sub_shape_indices.insert(i);
+                        a_new_sub_shape_indices.add(i);
                     }
                 }
             }
 
             // OCCT L1767-1773: Replace wire indices with edge+vertex indices
-            self.shapes[a_face_index].sub_shapes = a_new_sub_shape_indices.into_iter().collect();
+            // (NCollection_Map bucket order — deterministic).
+            self.shapes[a_face_index].sub_shapes = a_new_sub_shape_indices.iter_keys().collect();
 
             if mn.x.is_finite() {
                 self.shapes[a_face_index].bbox = BndBox::from_corners(
@@ -2198,8 +2224,10 @@ impl DS {
                     a_solid_bound_box.1.x, a_solid_bound_box.1.y, a_solid_bound_box.1.z);
             }
 
-            // OCCT L1803-1804: map of sub-shape indices
-            let mut a_new_sub_shape_indices = HashSet::new();
+            // OCCT L1803-1804: map of sub-shape indices — NCollection_Map<int>
+            // (deterministic bucket order, OcctMapInt).
+            let mut a_new_sub_shape_indices =
+                crate::bop::algo::occt_map::OcctMapInt::new_with_buckets(100);
 
             // OCCT L1814-1839: iterate shells → faces → edges
             for &a_shell_index in &self.shapes[a_solid_index].sub_shapes.clone() {
@@ -2208,15 +2236,15 @@ impl DS {
                 for &a_face_index in &self.shapes[a_shell_index].sub_shapes {
                     if a_face_index >= self.nb_shapes() { continue; }
                     if self.shapes[a_face_index].shape_type != ShapeType::Face { continue; }
-                    a_new_sub_shape_indices.insert(a_face_index);
+                    a_new_sub_shape_indices.add(a_face_index);
                     for &an_edge_index in &self.shapes[a_face_index].sub_shapes {
-                        a_new_sub_shape_indices.insert(an_edge_index);
+                        a_new_sub_shape_indices.add(an_edge_index);
                     }
                 }
             }
 
             // OCCT L1841-1848: replace shell indices with face+edge indices
-            self.shapes[a_solid_index].sub_shapes = a_new_sub_shape_indices.into_iter().collect();
+            self.shapes[a_solid_index].sub_shapes = a_new_sub_shape_indices.iter_keys().collect();
         }
         a_solid_count
     }

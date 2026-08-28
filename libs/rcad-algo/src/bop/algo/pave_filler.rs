@@ -820,6 +820,7 @@ impl PaveFiller {
 
         // OCCT: PerformEE(aPS.Next(...))
         self.perform_ee(&a_ps.sub_scope("Perform EE", 10));
+        self.ds.dump_cb0("after_perform_ee");
         if self.has_errors() { return; }
         if self.check_stop("after_PerformEE") { return; }
 
@@ -849,6 +850,7 @@ impl PaveFiller {
 
         // OCCT: ForceInterfEE(aPS.Next(...))
         self.force_interf_ee(&a_ps.sub_scope("Force EE", 3));
+        self.ds.dump_cb0("after_force_interf_ee");
         if self.has_errors() { return; }
         if self.check_stop("after_ForceInterfEE") { return; }
 
@@ -868,6 +870,7 @@ impl PaveFiller {
 
         // OCCT: MakeSplitEdges(aPS.Next(...))
         self.make_split_edges(&a_ps.sub_scope("Make split edges", 6));
+        self.ds.dump_cb0("after_make_split_edges");
         if self.has_errors() { return; }
         if self.check_stop("after_MakeSplitEdges") { return; }
 
@@ -2826,7 +2829,9 @@ impl PaveFiller {
             let mut to_rem: Vec<u64> = Vec::new();
             for &pb in &pb_in { if pb_on.contains(&pb) { to_rem.push(pb); } }
             let fi = self.ds.change_face_info(i);
-            for &r in &to_rem { fi.pave_blocks_in.swap_remove(&r); }
+            // OCCT RemoveFromIndex keeps the order of the remaining members —
+            // use shift_remove (order-preserving), not swap_remove.
+            for &r in &to_rem { fi.pave_blocks_in.shift_remove(&r); }
         }
     }
 
@@ -2849,7 +2854,9 @@ impl PaveFiller {
             }
             if !to_rem.is_empty() {
                 let fi = self.ds.change_face_info(idx);
-                for &r in &to_rem { fi.pave_blocks_on.swap_remove(&r); }
+                // OCCT RemoveFromIndex keeps the order of the remaining members —
+                // use shift_remove (order-preserving), not swap_remove.
+                for &r in &to_rem { fi.pave_blocks_on.shift_remove(&r); }
             }
         }
     }
@@ -3535,11 +3542,15 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
         }
         // OCCT L530-560: Make Common Blocks
-        // aMCBNewPB is NCollection_IndexedDataMap 鈥?iterate in insertion order.
+        // aMCBNewPB is NCollection_IndexedDataMap — iterate in insertion order.
+        // OCCT UpdateCommonBlock (BOPDS_DS.cxx L611-653) creates a new common
+        // block for EVERY (n1,n2) pair group of the split blocks — there is no
+        // minimum-member-count gate; a single-member group still gets a fresh
+        // CommonBlock (SetPaveBlocks + SetCommonBlock), replacing the old one
+        // for those members.
         for (_cb_key, pbs) in &a_mcb_new_pb {
-            if pbs.len() < 2 { continue; }
             // OCCT L566-571: aMInds is NCollection_IndexedDataMap<BOPDS_Pair,
-            // List<PB>> 鈥?insertion order of the aLPBN traversal.
+            // List<PB>> — insertion order of the aLPBN traversal.
             let mut a_minds: indexmap::IndexMap<(usize, usize), Vec<SharedPB>> = indexmap::IndexMap::new();
             for pb in pbs {
                 let (v1, v2) = { let r = pb.0.read().unwrap(); r.indices() };
@@ -3547,7 +3558,6 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 a_minds.entry(key).or_default().push(pb.clone());
             }
             for (_pair, group) in &a_minds {
-                if group.len() < 2 { continue; }
                 self.ds.add_common_block(group);
             }
         }
@@ -4802,6 +4812,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     if !self.my_non_destructive || cb_f.is_none() {
                         let mut it_found = false;
                         let mut found_e = usize::MAX;
+                        let mut found_pb: Option<SharedPB> = None;
                         if let Some(cb_idx) = cb_f {
                             // OCCT L436-445: find the edge with these vertices in the
                             //   common block whose PaveBlocks extent == 1
@@ -4814,16 +4825,22 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                 if self.ds.pave_blocks(e).len() == 1 {
                                     it_found = true;
                                     found_e = e;
+                                    found_pb = Some(pbx.clone());
                                     break;
                                 }
                             }
                         }
                         if it_found {
-                            // OCCT L446-455: the pave block is found 鈥?no split.
+                            // OCCT L446-455: the pave block is found — no split.
                             //   aCB->SetRealPaveBlock(it.Value()); aCB->SetEdge(nE);
                             //   ComputeToleranceOfCB + UpdateEdgeTolerance.
                             b_to_split = false;
                             if let Some(cb_idx) = cb_f {
+                                // OCCT L450: the found member becomes the CB's
+                                // real pave block (moved to the list front).
+                                if let Some(found) = found_pb {
+                                    self.ds.common_blocks[cb_idx].set_real_pave_block(&found);
+                                }
                                 self.ds.common_blocks[cb_idx].set_edge(found_e);
                                 let a_tol =
                                     Self::compute_tolerance_of_cb(cb_idx, &self.ds);

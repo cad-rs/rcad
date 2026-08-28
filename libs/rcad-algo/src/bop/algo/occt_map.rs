@@ -97,6 +97,17 @@ impl<K: OcctHashKey, V: Default + Clone> OcctDataMapInt<K, V> {
         }
     }
 
+    /// OCCT NCollection_Map(theNbBuckets, ...) — the explicit-bucket-count
+    /// constructor (e.g. prepareFaces/prepareSolids use NCollection_Map<int>
+    /// (100, ...)); the iteration (bucket) order depends on the starting
+    /// bucket count, so it must match OCCT exactly.
+    pub fn new_with_buckets(nb_buckets: usize) -> Self {
+        let mut s = Self::new();
+        s.my_nb_buckets = nb_buckets;
+        s.my_data = vec![Vec::new(); nb_buckets + 1];
+        s
+    }
+
     /// OCCT NCollection_BaseMap::Resizable (NCollection_BaseMap.hxx L217):
     /// IsEmpty() || (mySize > myNbBuckets).
     fn resizable(&self) -> bool {
