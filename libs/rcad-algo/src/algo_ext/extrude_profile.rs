@@ -387,7 +387,10 @@ pub fn extrude_profile_solid(
                 Some((c, 0.0, len))
             };
             // Generating edges: the base profile edge (v = 0) and the located
-            // top copy (v = -depth).
+            // top copy.  OCCT BRepSweep_Translation::SetGeneratingPCurve
+            // (BRepSweep_Translation.cxx L367-373): the top edge's pcurve sits
+            // at v = -myVec.Magnitude() (aDirV.Index() == 2), not at the
+            // bottom edge's v = 0 — the two lines are distinct.
             if let Some((gp, t0p, t1p)) = pc_of(a, b) {
                 let k0 = rcad_kernel::topo::topods::compose_pcurve_location(0, 0, &brep.locations);
                 brep.edge_mut_inplace(b_ed[i].clone())
@@ -395,9 +398,15 @@ pub fn extrude_profile_solid(
                     .insert((fp, k0), (gp.clone(), t0p, t1p));
                 let k1 =
                     rcad_kernel::topo::topods::compose_pcurve_location(0, loc, &brep.locations);
-                brep.edge_mut_inplace(t_ed[i].clone())
-                    .pcurves
-                    .insert((fp, k1), (gp.clone(), t0p, t1p));
+                if let Some((gp_top, t0t, t1t)) = pc_of(a + dir * depth, b + dir * depth) {
+                    brep.edge_mut_inplace(t_ed[i].clone())
+                        .pcurves
+                        .insert((fp, k1), (gp_top, t0t, t1t));
+                } else {
+                    brep.edge_mut_inplace(t_ed[i].clone())
+                        .pcurves
+                        .insert((fp, k1), (gp.clone(), t0p, t1p));
+                }
             }
             // Directing edges: the vertical sweep edges at the segment's
             // endpoint azimuths.
