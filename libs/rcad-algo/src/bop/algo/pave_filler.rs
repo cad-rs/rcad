@@ -761,6 +761,35 @@ impl PaveFiller {
     }
 
     /// OCCT BOPAlgo_PaveFiller::PerformInternal (PaveFiller.cxx L235-379).
+
+    /// TEMP probe: TShape-level tolerance timeline for the hotspot vertices
+    /// (i6: 39=(4,3,0), 42=(4,3,2), 68=(3,3,1), 75=(5,3,1)) and every
+    /// edge/face whose tolerance exceeds 0.01.
+    pub(crate) fn dump_tol_timeline(&self, stage: &str) {
+        if std::env::var("RCAD_TOL_DEBUG").is_err() { return; }
+        const KEY: [usize; 4] = [39, 42, 68, 75];
+        let mut vt: Vec<String> = Vec::new();
+        for &k in &KEY {
+            if let Some(si) = self.ds.shapes.get(k) {
+                if let Some(v) = si.shape.as_vertex() {
+                    vt.push(format!("v{}={:.6}", k, v.tolerance));
+                }
+            }
+        }
+        let mut hot: Vec<String> = Vec::new();
+        for (i, si) in self.ds.shapes.iter().enumerate() {
+            let t = match &*si.shape.data {
+                rcad_kernel::topods::TShape::Edge(e) => e.tolerance,
+                rcad_kernel::topods::TShape::Face(f) => f.tolerance,
+                _ => continue,
+            };
+            if t > 0.01 {
+                hot.push(format!("{}:{}={:.6}", si.shape_type as i32, i, t));
+            }
+        }
+        eprintln!("[TOLT] {} vt=[{}] hot=[{}]", stage, vt.join(","), hot.join(","));
+    }
+
     pub(crate) fn perform_internal(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
         // OCCT L239-244: Message_ProgressScope aPS(theRange, "Performing intersection of shapes", 100)
@@ -778,6 +807,7 @@ impl PaveFiller {
 
         // OCCT: PerformVV(aPS.Next(...))
         self.perform_vv(&a_ps.sub_scope("Perform VV", 8));
+        self.dump_tol_timeline("after_Perform VV");
         if self.has_errors() { return; }
         if self.check_stop("after_PerformVV") { return; }
 
@@ -804,6 +834,7 @@ impl PaveFiller {
 
         // OCCT: PerformEF(aPS.Next(...))
         self.perform_ef(&a_ps.sub_scope("Perform EF", 10));
+        self.dump_tol_timeline("after_Perform EF");
         if self.has_errors() { return; }
         if self.check_stop("after_PerformEF") { return; }
 
@@ -812,6 +843,7 @@ impl PaveFiller {
 
         // OCCT: RepeatIntersection(aPS.Next(...))
         self.repeat_intersection(&a_ps.sub_scope("Repeat intersection", 5));
+        self.dump_tol_timeline("after_Repeat intersection");
         if self.has_errors() { return; }
         if self.check_stop("after_RepeatIntersection") { return; }
 
@@ -827,6 +859,7 @@ impl PaveFiller {
 
         // OCCT: PerformFF(aPS.Next(...))
         self.perform_ff(&a_ps.sub_scope("Perform FF", 12));
+        self.dump_tol_timeline("after_Perform FF");
         if self.has_errors() { return; }
         if self.check_stop("after_PerformFF") { return; }
 

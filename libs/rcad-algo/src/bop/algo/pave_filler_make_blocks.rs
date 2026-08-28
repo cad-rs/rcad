@@ -280,6 +280,7 @@ impl CoupleOfPBs {
 impl PaveFiller {
     /// OCCT BOPAlgo_PaveFiller::MakeBlocks (_6.cxx L649-1137).
     pub(crate) fn make_blocks(&mut self, the_range: &ProgressScope) {
+        self.dump_tol_timeline("after_MakeBlocks_start");
         if the_range.user_break() { return; }
         // OCCT L652-655: glue off check
         if self.my_glue != crate::bop::algo::GlueEnum::GlueOff { return; }
