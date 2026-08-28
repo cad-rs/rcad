@@ -734,7 +734,7 @@ impl PaveFiller {
         // OCCT L1126: CorrectToleranceOfSE
         self.correct_tolerance_of_se();
         // OCCT L1129: UpdateFaceInfo
-        self.update_face_info(&a_dm_ex_edges, &a_dm_new_sd, &a_pb_faces_map);
+        self.update_face_info(&mut a_dm_ex_edges, &a_dm_new_sd, &a_pb_faces_map);
         // OCCT L1131: UpdatePaveBlocks
         self.update_pave_blocks(&a_dm_new_sd);
         // OCCT L1136: PutSEInOtherFaces
@@ -1874,7 +1874,15 @@ impl PaveFiller {
         let e_shape = self.ds.shape(n_e).clone();
         let mut a_cpb = CoupleOfPBs::new(a_int, a_cur);
         a_cpb.set_pb(a_pb.clone());
-        a_ms_cpb.push((e_shape, a_cpb));
+        // OCCT L3632: aMSCPB.Add(aE, aCPB) — IndexedDataMap keyed by shape
+        // identity; the Add is a no-op when the same edge shape is already
+        // registered (an existing edge reused by several pave blocks keeps
+        // its first CoupleOfPaveBlocks entry).
+        if !a_ms_cpb.iter().any(|(s, _)| {
+            s.ptr_id() == e_shape.ptr_id() && s.location == e_shape.location
+        }) {
+            a_ms_cpb.push((e_shape, a_cpb));
+        }
         a_mvi.insert((self.ds.shape(n_v1).ptr_id(), self.ds.shape(n_v1).location), n_v1);
         a_mvi.insert((self.ds.shape(n_v2).ptr_id(), self.ds.shape(n_v2).location), n_v2);
     }
@@ -2678,7 +2686,7 @@ impl PaveFiller {
     // ====================================================================
     // UpdateFaceInfo — OCCT BOPAlgo_PaveFiller::UpdateFaceInfo (PaveFiller_6.cxx L1673-1946)
     // ====================================================================
-    fn update_face_info(&mut self, the_dm_e: &crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<u64>>,
+    fn update_face_info(&mut self, the_dm_e: &mut crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<u64>>,
                         the_dm_v: &crate::bop::algo::occt_map::OcctDataMapInt<usize, usize>,
                         the_pb_faces_map: &crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<usize>>) {
         // OCCT L1729: anEdgeLPB is NCollection_DataMap<int, List<PB>> —
@@ -2703,12 +2711,14 @@ impl PaveFiller {
                 for a_pb in &old_pbs {
                     let key = pb_ptr(a_pb);
                     // OCCT L1712-1731: treat existing pave blocks.
-                    if let Some(a_lpb) = the_dm_e.get(key) {
-                        // OCCT: UpdateExistingPaveBlocks(aPB, aLPB, thePBFacesMap).
-                        let a_lpb_pbs: Vec<SharedPB> = a_lpb.iter().filter_map(|k| {
-                            self.find_pb_by_key(*k)
-                        }).collect();
-                        self.update_existing_pave_blocks(a_pb, &a_lpb_pbs, the_pb_faces_map);
+                    if the_dm_e.contains(key) {
+                        // OCCT: UpdateExistingPaveBlocks(aPB, aLPB, thePBFacesMap)
+                        // — the call may REPLACE the theDME entry contents
+                        // (aLPB = aLPBNew, OCCT L3434).
+                        let mut a_lpb_pbs: Vec<SharedPB> = the_dm_e.get(key).unwrap().iter()
+                            .filter_map(|k| self.find_pb_by_key(*k)).collect();
+                        self.update_existing_pave_blocks(a_pb, &mut a_lpb_pbs, the_pb_faces_map);
+                        the_dm_e.insert(key, a_lpb_pbs.iter().map(|p| pb_ptr(p)).collect());
                         for pbe in &a_lpb_pbs {
                             let n_e = pbe.0.read().unwrap().edge;
                             an_edge_lpb.bound(n_e).push(pb_ptr(pbe));
@@ -2740,8 +2750,12 @@ impl PaveFiller {
         // OCCT L1767-1858: create new common blocks from unified edge PBs.
         // OCCT anEdgeLPB (L1729) is NCollection_DataMap<int, List<PB>> —
         // iterated in bucket order (L1817 MakeCommonBlocks call).
+        // OCCT L1761: bNewCB is set when a group with more than one pave block
+        // gets a (new) common block in this call (feeds bEdges at L1861).
+        let mut b_new_cb = false;
         for (n_e, a_lpb_keys) in an_edge_lpb.iter() {
             if a_lpb_keys.len() == 1 { continue; }
+            b_new_cb = true;
             let mut a_cb_idx: Option<usize> = None;
             // OCCT L1831: aMFaces is NCollection_Map<int> — bucket iteration
             // order feeds SetFaces (L1896-1899).
@@ -2789,15 +2803,9 @@ impl PaveFiller {
                 self.ds.common_blocks[cb_idx].set_faces(a_l_faces);
             }
         }
-        // OCCT L1860-1945: update face info with new vertices and PBs.
+        // OCCT L1860-1861: bVerts / bEdges gates.
         let b_verts = !the_dm_v.is_empty();
-        let b_edges = !the_dm_e.is_empty() || {
-            let mut any = false;
-            for cb in &self.ds.common_blocks {
-                if cb.pave_blocks().len() > 1 { any = true; break; }
-            }
-            any
-        };
+        let b_edges = !the_dm_e.is_empty() || b_new_cb;
         if !b_verts && !b_edges {
             return;
         }
@@ -2822,8 +2830,17 @@ impl PaveFiller {
             }
             // 2.2. update pave blocks.
             if b_edges {
-                // OCCT L1906-1944: rebuild each PB set replacing PBs with their
-                // RealPaveBlock (dedup via aMPBFence).
+                // OCCT L1906-1944: rebuild each PB set, replacing PBs with their
+                // post-treatment images from theDME (falling back to
+                // RealPaveBlock for blocks not in theDME).
+                // NOTE: OCCT L1908 declares aMPBFence OUTSIDE the three-set loop,
+                // so the fence is shared across PaveBlocksOn/In/Sc. rcad keeps a
+                // per-set fence until the upstream SD/common-block creation
+                // (EE coincidence handling) is aligned: with the shared fence the
+                // stale split-block entries still present in the face sets after
+                // PerformFF (seed-dependent, bfuse i6) collapse across sets and
+                // the failure rate rises. Revisit once the upstream chain emits
+                // the same PB sets as OCCT.
                 let fi = self.ds.face_info(n_f1);
                 let sets_copy = [
                     fi.pave_blocks_on.clone(),
@@ -2836,7 +2853,23 @@ impl PaveFiller {
                     let mut a_mpb_fence: HashSet<u64> = HashSet::new();
                     let mut new_set: IndexSet<u64> = IndexSet::new();
                     for &pb_key in copy {
-                        if let Some(a_pb) = self.ds.pb_from_ptr(pb_key) {
+                        let a_pb = match self.ds.pb_from_ptr(pb_key) {
+                            Some(p) => p,
+                            None => continue,
+                        };
+                        let a_lpb = the_dm_e.get(pb_key).filter(|l| !l.is_empty());
+                        if let Some(a_lpb) = a_lpb {
+                            for &key1 in a_lpb {
+                                if let Some(a_pb1) = self.ds.pb_from_ptr(key1) {
+                                    let rpb = self.ds.real_pave_block(&a_pb1);
+                                    let rkey = pb_ptr(&rpb);
+                                    if a_mpb_fence.insert(rkey) {
+                                        // OCCT: Add(RealPaveBlock(aPB1)).
+                                        new_set.insert(rkey);
+                                    }
+                                }
+                            }
+                        } else {
                             let rpb = self.ds.real_pave_block(&a_pb);
                             let rkey = pb_ptr(&rpb);
                             if a_mpb_fence.insert(rkey) {
@@ -2871,7 +2904,7 @@ impl PaveFiller {
     // UpdateExistingPaveBlocks — OCCT BOPAlgo_PaveFiller::UpdateExistingPaveBlocks
     // (PaveFiller_6.cxx L3278-3496)
     // ====================================================================
-    fn update_existing_pave_blocks(&mut self, a_pbf: &SharedPB, a_lpb: &[SharedPB],
+    fn update_existing_pave_blocks(&mut self, a_pbf: &SharedPB, a_lpb: &mut Vec<SharedPB>,
                                    the_pb_faces_map: &crate::bop::algo::occt_map::OcctDataMapInt<u64, Vec<usize>>) {
         if a_lpb.is_empty() { return; }
         // OCCT L3295-3324: 1. remove old pave blocks.
@@ -2895,14 +2928,17 @@ impl PaveFiller {
                 }
             }
         }
-        // OCCT L3327-3446: 2. update pave blocks (create new common blocks).
+        // OCCT L3327-3435: 2. update pave blocks (create new common blocks).
         if b_cb {
             let cb1_idx = a_cb1.unwrap();
             let a_faces: Vec<usize> = self.ds.common_blocks[cb1_idx].faces().to_vec();
             let mut a_lpb_new: Vec<SharedPB> = Vec::new();
-            for a_pb_value in a_lpb {
+            for a_pb_value in a_lpb.iter() {
                 let (vp0, vp1) = { let r = a_pb_value.0.read().unwrap(); (r.pave1.clone(), r.pave2.clone()) };
                 let a_pb_value_paves = [vp0, vp1];
+                // OCCT L3338: one new common block per image pave block,
+                // holding one new pave block per old member original edge.
+                let mut a_new_cb_members: Vec<SharedPB> = Vec::new();
                 for a_pb2 in &a_lpb1 {
                     let n_e = a_pb2.0.read().unwrap().original_edge;
                     let mut a_pb2n = PaveBlock::new(usize::MAX,
@@ -2959,34 +2995,34 @@ impl PaveFiller {
                     }
                     a_pb2n.edge = a_pb_value.0.read().unwrap().edge;
                     a_pb2n.original_edge = n_e;
-                    let spb = SharedPB::new(a_pb2n);
-                    let cb_idx = self.ds.add_common_block(&[spb.clone()]);
-                    self.ds.set_common_block(&spb, cb_idx);
-                    self.ds.common_blocks[cb_idx].set_faces(a_faces.clone());
                     // myDS->ChangePaveBlocks(nE).Append(aPB2n) — IndexedDataMap
                     // grows on demand; the key may be usize::MAX ("no original edge").
+                    let spb = SharedPB::new(a_pb2n);
+                    a_new_cb_members.push(spb.clone());
                     self.ds.pave_blocks_pool.entry(n_e).or_default().push(spb.clone());
                 }
-                // aLPBNew.Append(aCB->PaveBlock1())
-                let first = a_lpb1.first().cloned();
-                if let Some(f) = first {
-                    let key = pb_ptr(&f);
-                    if let Some(found) = self.find_pb_by_key(key) {
-                        a_lpb_new.push(found);
-                    }
+                // OCCT L3344-3346: SetCommonBlock + aCB->SetFaces(aFaces) — the
+                // new common block associates all new member pave blocks and
+                // keeps the faces of the old one.
+                let cb_idx = self.ds.add_common_block(&a_new_cb_members);
+                self.ds.common_blocks[cb_idx].set_faces(a_faces.clone());
+                // OCCT L3430-3431: aLPBNew.Append(aCB->PaveBlocks().First()).
+                if let Some(a_pb_new) = a_new_cb_members.first() {
+                    a_lpb_new.push(a_pb_new.clone());
                 }
             }
-            let _ = a_lpb_new;
+            // OCCT L3434: aLPB = aLPBNew — replace the caller's list.
+            *a_lpb = a_lpb_new;
         } else {
             let n_e = a_pbf.0.read().unwrap().original_edge;
-            for a_pb in a_lpb {
+            for a_pb in a_lpb.iter() {
                 self.ds.pave_blocks_pool.entry(n_e).or_default().push(a_pb.clone());
             }
         }
-        // OCCT L3448-3496: project the edge on the faces.
+        // OCCT L3448-3496: project the edge on the faces (the replaced aLPB).
         if let Some(p_l_faces) = the_pb_faces_map.get(pb_ptr(a_pbf)) {
             for &n_f in p_l_faces {
-                for a_pb in a_lpb {
+                for a_pb in a_lpb.iter() {
                     if self.pb_in_face(n_f, a_pb) {
                         continue;
                     }
