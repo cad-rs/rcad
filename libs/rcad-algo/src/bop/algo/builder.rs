@@ -5894,6 +5894,27 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let multi = a_mfs.values().filter(|s| s.1.len() > 1).count();
+            let mut desc: Vec<String> = Vec::new();
+            for (k, (f, sols)) in &a_mfs {
+                let st = f.as_face().and_then(|fd| fd.surface.as_ref()).map(|sf| match sf {
+                    rcad_kernel::geom::Surface3::Plane(_) => "P",
+                    rcad_kernel::geom::Surface3::Cylinder(_) => "C",
+                    _ => "O",
+                }).unwrap_or("?");
+                let n_e = match &*f.data {
+                    rcad_kernel::topods::TShape::Face(fd) => match &*fd.outer_wire.data {
+                        rcad_kernel::topods::TShape::Wire(wd) => wd.edges.len(),
+                        _ => 0,
+                    },
+                    _ => 0,
+                };
+                desc.push(format!("{}{}x{}@{}", st, n_e, sols.len(), k.1));
+            }
+            desc.sort();
+            eprintln!("[BS-MAP] a_mfs={} multi={} mu={} [{}]", a_mfs.len(), multi, a_mu_sols.len(), desc.join(" "));
+        }
         // OCCT L1227-1241: faces belonging to a single solid.
         let mut a_mef: HashMap<(u64, u32), Vec<(u64, u32)>> = HashMap::new();
         let mut a_sfs: Vec<Shape> = Vec::new();
