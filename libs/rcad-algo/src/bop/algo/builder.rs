@@ -2125,6 +2125,19 @@ impl<'a> Builder<'a> {
     fn build_split_faces(&mut self) {
         let a_nb_s = self.ds.nb_source_shapes();
         if std::env::var("RCAD_WS_DEBUG").is_ok() {
+            for (i, l) in self.ds.locations.iter().enumerate() {
+                let t = *l;
+                eprintln!(
+                    "[WS-LOCS] {} T=[{:?};{:?};{:?}] t=({:.3},{:.3},{:.3})",
+                    i,
+                    t.x_axis,
+                    t.y_axis,
+                    t.z_axis,
+                    t.translation.x,
+                    t.translation.y,
+                    t.translation.z
+                );
+            }
             for (i, si) in self.ds.shapes.iter().enumerate() {
                 if let topods::TShape::Vertex(vd) = &*si.shape.data {
                     eprintln!(

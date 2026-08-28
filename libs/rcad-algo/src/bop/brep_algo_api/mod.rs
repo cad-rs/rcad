@@ -385,8 +385,18 @@ fn brep_top_shapes_with_locations(
     let mut map: HashMap<u32, u32> = HashMap::new();
     for (i, loc) in brep.locations.iter().enumerate() {
         let old = (i + 1) as u32; // BRep table index (0 = identity)
-        let new = global_locs.len() as u32;
-        global_locs.push(*loc);
+        // OCCT TopLoc_Location items are deduplicated by transformation:
+        // identical Trsf matrices share one TopLoc_Datum3D item
+        // (TopLoc_Location::Location() hash/IsEqual), so two shapes built
+        // with the same translation resolve to the same table index. Merge
+        // only when the transform is absent from the global table.
+        let new = match global_locs.iter().position(|l| *l == *loc) {
+            Some(existing) => existing as u32,
+            None => {
+                global_locs.push(*loc);
+                (global_locs.len() - 1) as u32
+            }
+        };
         map.insert(old, new);
     }
     if map.is_empty() {
