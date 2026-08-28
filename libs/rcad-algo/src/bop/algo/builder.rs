@@ -5388,6 +5388,11 @@ impl<'a> Builder<'a> {
         }
         // OCCT L913-914: BuildRC.
         self.build_rc();
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[RES] after_build_rc rc_len={} my_shape_faces={}",
+                self.my_rc.len(),
+                self.my_shape.as_ref().map(|b| b.tshapes.iter().filter(|t| matches!(t.as_ref(), topods::TShape::Face(_))).count()).unwrap_or(0));
+        }
         // OCCT L916-920: FUSE of 3D 鈫?BuildSolid.
         if self.my_operation == BooleanOpType::Union && self.my_dims[0] == 3 {
             self.build_solid();
@@ -5952,6 +5957,9 @@ impl<'a> Builder<'a> {
         // OCCT L1273-1279: add untouched solids.
         for a_sx in &a_dmsts {
             a_rc.push(a_sx.clone());
+        }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[BS-TAIL] a_rc={} a_dmsts={} a_lsc={}", a_rc.len(), a_dmsts.len(), a_lsc.len());
         }
         // OCCT L1281-1286: no compsolids in arguments 鈫?done.
         if a_lsc.is_empty() {
