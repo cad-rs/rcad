@@ -4475,18 +4475,18 @@ impl<'a> Builder<'a> {
                             i, ds.index(&faces[i]), smin.x, smin.y, smin.z, smax.x, smax.y, smax.z,
                             fb.map(|b| b.0), fb.map(|b| b.1));
                     }
-                    let Some((fmin, fmax, _fgap)) = face_bbox else {
-                        continue;
-                    };
-                    if fmax.x < smin.x
-                        || fmin.x > smax.x
-                        || fmax.y < smin.y
-                        || fmin.y > smax.y
-                        || fmax.z < smin.z
-                        || fmin.z > smax.z
-                    {
-                        continue;
-                    }
+                let Some((fmin, fmax, _fgap)) = face_bbox else {
+                    continue;
+                };
+                if fmax.x < smin.x
+                    || fmin.x > smax.x
+                    || fmax.y < smin.y
+                    || fmin.y > smax.y
+                    || fmax.z < smin.z
+                    || fmin.z > smax.z
+                {
+                    continue;
+                }
                 }
                 a_ivec.push(i);
             }
@@ -4577,27 +4577,55 @@ impl<'a> Builder<'a> {
 
                 // OCCT L1467-1491: fast check that all block vertices interfere
                 // with the solid's bounding box; otherwise the block is out.
-                // myBoxS.IsOut(aBBV) 鈥?Bnd_Box::IsOut(Bnd_Box) adds both boxes'
+                // myBoxS.IsOut(aBBV) — Bnd_Box::IsOut(Bnd_Box) adds both boxes'
                 // gaps: vertex box gap = vertex tolerance, solid box gap = the
-                // DS box gap (BOPTools_AlgoTools.cxx L1503-1508).
+                // DS box gap (BOPTools_AlgoTools.cxx L1503-1508). OCCT's
+                // TopExp_Explorer composes the full location chain into the
+                // vertex (world point), so the world-space vertex is used here.
                 if let Some((smin, smax, sgap)) = solid_bbox {
                     let mut b_out = false;
-                    for &bfi in &a_lcb {
-                        for (p, gap) in shape_vertices(&faces[bfi]) {
-                            let egap = gap + sgap;
-                            if p.x - egap > smax.x
-                                || p.x + egap < smin.x
-                                || p.y - egap > smax.y
-                                || p.y + egap < smin.y
-                                || p.z - egap > smax.z
-                                || p.z + egap < smin.z
-                            {
-                                b_out = true;
-                                break;
+                    'blocks: for &bfi in &a_lcb {
+                        for e in face_edges(&faces[bfi]) {
+                            if let TShape::Edge(ed) = &*e.data {
+                                for vv in [&ed.first, &ed.last] {
+                                    let comp = crate::bop::algo::compose_edge_vertex_location(
+                                        e.location,
+                                        vv.location,
+                                        &ds.locations,
+                                    );
+                                    let m = ds.locations.get(comp as usize).copied().unwrap_or(
+                                        glam::DAffine3::IDENTITY,
+                                    );
+                                    let (vp, vtol) = match &*vv.data {
+                                        TShape::Vertex(vd) => (vd.point, vd.tolerance),
+                                        _ => continue,
+                                    };
+                                    let p = m.transform_point3(vp);
+                                    let egap = vtol + sgap;
+                                    if std::env::var("RCAD_GFO_DEBUG").is_ok() {
+                                        eprintln!(
+                                            "[F3D-WV] solid={:x} bfi={} vloc={} world=({:.3},{:.3},{:.3}) egap={:.9}",
+                                            a_sd.ptr_id() % 100000,
+                                            bfi,
+                                            vv.location,
+                                            p.x,
+                                            p.y,
+                                            p.z,
+                                            egap
+                                        );
+                                    }
+                                    if p.x - egap > smax.x
+                                        || p.x + egap < smin.x
+                                        || p.y - egap > smax.y
+                                        || p.y + egap < smin.y
+                                        || p.z - egap > smax.z
+                                        || p.z + egap < smin.z
+                                    {
+                                        b_out = true;
+                                        break 'blocks;
+                                    }
+                                }
                             }
-                        }
-                        if b_out {
-                            break;
                         }
                     }
                     if b_out {
