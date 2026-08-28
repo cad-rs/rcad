@@ -43,6 +43,11 @@ pub(crate) struct ExplorerFace {
     // Boundary edge keys (ptr_id, location) in wire order — for the mapEF
     // (edge -> faces) of the SClassifier (TopExp::MapShapesAndAncestors).
     pub(crate) edge_keys: Vec<(u64, u32)>,
+    // Per-face FClass2d cache — OCCT IntTools_Context::myFClass2dMap
+    // (IntTools_Context.hxx): the classifier is built once per (face,
+    // tolerance) and reused across the UV probe loop.  Key = (face index,
+    // tolerance bits); the synthetic faces use face index 0.
+    pub(crate) fclass_cache: std::cell::RefCell<HashMap<(usize, u64), std::rc::Rc<crate::topalgo::brep_top_adaptor::fclass2d::FClass2d>>>,
 }
 
 impl Clone for ExplorerFace {
@@ -56,6 +61,7 @@ impl Clone for ExplorerFace {
             uv_polys: self.uv_polys.clone(),
             boundary: self.boundary.clone(),
             edge_keys: self.edge_keys.clone(),
+            fclass_cache: std::cell::RefCell::new(HashMap::new()),
         }
     }
 }
@@ -254,6 +260,7 @@ impl SolidExplorer {
                             uv_polys,
                             boundary,
                             edge_keys,
+                            fclass_cache: std::cell::RefCell::new(HashMap::new()),
                         });
                         // OCCT InitShape L914-918: at least one face -> the
                         // solid is not a void (myReject = false).
@@ -567,6 +574,7 @@ impl SolidExplorer {
                         uv_polys: None,
                         boundary: vec![],
                         edge_keys: vec![],
+                        fclass_cache: std::cell::RefCell::new(HashMap::new()),
                     };
                     if let Some(t) = self.ray_face_param(p, ray_dir, &ef) {
                         if t > 1e-7 {
@@ -1384,29 +1392,51 @@ impl SolidExplorer {
     /// a TopoDS_Face — the adapter restores that contract). The sampled
     /// uv_polys domain remains the fallback for faces without pcurves.
     pub(crate) fn classify_uv_2d(&self, f: &ExplorerFace, uv: DVec2, tol: f64) -> u8 {
+        use crate::topalgo::brep_top_adaptor::fclass2d::{FClass2d, State};
         if let Some(ds) = &self.ds {
             if let Some(fidx) = ds.map_shape_index(f.key.0, f.key.1) {
-                let f2 = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new(
-                    ds.as_ref(),
-                    fidx,
-                    tol,
-                );
-                return match f2.perform(ds.as_ref(), uv, true) {
-                    crate::topalgo::brep_top_adaptor::fclass2d::State::In => 1,  // IN
-                    crate::topalgo::brep_top_adaptor::fclass2d::State::On => 2,  // ON
+                // OCCT IntTools_Context::FClass2dMap — build the classifier
+                // once per (face, tolerance) and reuse it across the probe
+                // loop (IntTools_Context.hxx).
+                let key = (fidx, tol.to_bits());
+                if let Some(fc) = f.fclass_cache.borrow().get(&key) {
+                    return match fc.perform(ds.as_ref(), uv, true) {
+                        State::In => 1,  // IN
+                        State::On => 2,  // ON
+                        _ => 3, // OUT / UNKNOWN
+                    };
+                }
+                let f2 = std::rc::Rc::new(FClass2d::new(ds.as_ref(), fidx, tol));
+                let res = match f2.perform(ds.as_ref(), uv, true) {
+                    State::In => 1,  // IN
+                    State::On => 2,  // ON
                     _ => 3, // OUT / UNKNOWN
                 };
+                f.fclass_cache.borrow_mut().insert(key, f2);
+                return res;
             }
         }
         if let Some(src) = &f.src {
             let adapter =
                 crate::topalgo::shape_source::FaceShapeSource::new(src, f.surf.clone(), &self.locations);
-            let f2 = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new(&adapter, 0, tol);
-            return match f2.perform(&adapter, uv, true) {
-                crate::topalgo::brep_top_adaptor::fclass2d::State::In => 1,  // IN
-                crate::topalgo::brep_top_adaptor::fclass2d::State::On => 2,  // ON
+            // Synthetic face with no DS registration: fixed face index 0 in
+            // the cache key, one classifier per tolerance.
+            let key = (0, tol.to_bits());
+            if let Some(fc) = f.fclass_cache.borrow().get(&key) {
+                return match fc.perform(&adapter, uv, true) {
+                    State::In => 1,  // IN
+                    State::On => 2,  // ON
+                    _ => 3, // OUT / UNKNOWN
+                };
+            }
+            let f2 = std::rc::Rc::new(FClass2d::new(&adapter, 0, tol));
+            let res = match f2.perform(&adapter, uv, true) {
+                State::In => 1,  // IN
+                State::On => 2,  // ON
                 _ => 3, // OUT / UNKNOWN
             };
+            f.fclass_cache.borrow_mut().insert(key, f2);
+            return res;
         }
         if uv_in_face_domain_with_tol(f, uv, tol) {
             1 // IN
