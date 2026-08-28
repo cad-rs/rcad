@@ -2229,6 +2229,17 @@ impl<'a> Builder<'a> {
                     }).collect()).unwrap_or_default();
                     eprintln!("[BND53] e={:+x}@loc{} ori={:?} imgs=[{}]",
                         a_e.ptr_id() & 0xffff, a_e.location, an_ori_e, img_desc.join(","));
+                    if let TShape::Edge(ed) = &*a_e.data {
+                        for (k, (pc, t1, t2)) in &ed.pcurves {
+                            let d = match pc {
+                                rcad_kernel::geom::Curve2d::Line(l) => format!(
+                                    "L o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
+                                _ => "O".into(),
+                            };
+                            eprintln!("[BND53]   pcurve key=({:+x},loc{}) {} t=({:.3},{:.3})",
+                                k.0 & 0xffff, k.1, d, t1, t2);
+                        }
+                    }
                 }
                 // OCCT L369: if !myImages.IsBound(aE).
                 if self.images_of(&a_e).is_none() {
