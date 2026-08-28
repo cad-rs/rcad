@@ -2124,6 +2124,21 @@ impl<'a> Builder<'a> {
     /// or alone vertices take the BuildDraftFace fast path.
     fn build_split_faces(&mut self) {
         let a_nb_s = self.ds.nb_source_shapes();
+        if std::env::var("RCAD_WS_DEBUG").is_ok() {
+            for (i, si) in self.ds.shapes.iter().enumerate() {
+                if let topods::TShape::Vertex(vd) = &*si.shape.data {
+                    eprintln!(
+                        "[WS-DSSHAPE] v idx={} ptr={:x} loc={} p=({:.3},{:.3},{:.3})",
+                        i,
+                        si.shape.ptr_id(),
+                        si.shape.location,
+                        vd.point.x,
+                        vd.point.y,
+                        vd.point.z
+                    );
+                }
+            }
+        }
         if std::env::var("RCAD_BS_DEBUG").is_ok() {
             for ff in &self.ds.interf_ff {
                 eprintln!("[FF] f1={} f2={} n_curves={} tangent={}",

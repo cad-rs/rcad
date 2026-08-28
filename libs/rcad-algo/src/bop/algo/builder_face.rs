@@ -229,7 +229,7 @@ impl<'a> BuilderFace<'a> {
     /// orientation; a REVERSED edge iterates [last, first]. The edge Location
     /// is composed into the vertices as well (cumLoc, TopoDS_Iterator.cxx
     /// L76-78) — `locations` is the DS TopLoc_Location table.
-    fn edge_vertices(e: &Shape, locations: &[glam::DAffine3]) -> Vec<Shape> {
+    pub(crate) fn edge_vertices(e: &Shape, locations: &[glam::DAffine3]) -> Vec<Shape> {
         use rcad_kernel::topods::Orientation;
         let flip_ori = |o: Orientation| -> Orientation {
             match o {

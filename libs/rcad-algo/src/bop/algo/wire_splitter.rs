@@ -22,6 +22,7 @@ use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, TShape};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// OCCT BOPAlgo_EdgeInfo (BOPAlgo_WireSplitter.lxx) — per (vertex, edge) record.
 #[derive(Clone)]
@@ -398,24 +399,51 @@ fn split_block(
     if std::env::var("RCAD_WS_DEBUG").is_ok() {
         eprintln!("[WS-SM] aNb={}", a_nb);
         for (ii, (vkey, (a_v_sh, leinfo))) in my_smart_map.iter().enumerate() {
-            let _ = vkey;
             let pos = debug_located_vertex_point(a_v_sh, ds);
             let mut s = format!(
-                "[WS-SM] v{} p=({:.6},{:.6},{:.6})",
+                "[WS-SM] v{} key=({:x},{}) p=({:.6},{:.6},{:.6})",
                 ii + 1,
+                vkey.0,
+                vkey.1,
                 pos.x,
                 pos.y,
                 pos.z
             );
             for a_ei in leinfo {
                 let a_e = a_ei.edge();
+                let ev = super::builder_face::BuilderFace::edge_vertices(a_e, &ds.locations);
+                let evd: Vec<String> = ev
+                    .iter()
+                    .map(|v| {
+                        format!(
+                            "{:x}/{}",
+                            v.ptr_id(),
+                            v.location
+                        )
+                    })
+                    .collect();
+                let vd = a_e
+                    .as_edge()
+                    .map(|ed| {
+                        format!(
+                            " rawF=({:x},{}) rawL=({:x},{}) eLoc={}",
+                            Arc::as_ptr(&ed.first.data) as usize,
+                            ed.first.location,
+                            Arc::as_ptr(&ed.last.data) as usize,
+                            ed.last.location,
+                            a_e.location
+                        )
+                    })
+                    .unwrap_or_default();
                 s.push_str(&format!(
-                    " e={}o={}in={}ins={}a={:.6}",
+                    " e={}o={}in={}ins={}a={:.6} comp=[{}]{}",
                     a_e.ptr_id(),
                     if a_e.orientation == Orientation::Reversed { 1 } else { 0 },
                     a_ei.is_in() as u8,
                     a_ei.is_inside() as u8,
                     a_ei.angle(),
+                    evd.join(","),
+                    vd,
                 ));
             }
             eprintln!("{}", s);
