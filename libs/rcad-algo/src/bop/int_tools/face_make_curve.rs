@@ -117,8 +117,8 @@ pub fn make_curves(
         // frame (parameter origin of the circle) may differ by a phase from
         // the stored boundary pcurves, inverting UV classifications.
         if std::env::var("RCAD_MB_DEBUG").is_ok() {
-            let t1 = ds.face_tolerance(f1);
-            let t2 = ds.face_tolerance(f2);
+            let t1 = ds.shape(f1).as_face().map(|f| f.tolerance).unwrap_or(0.0);
+            let t2 = ds.shape(f2).as_face().map(|f| f.tolerance).unwrap_or(0.0);
             let e1max = (0..ds.nb_shapes()).filter(|&i| ds.shape_info(i).shape_type == ShapeType::Edge)
                 .map(|i| ds.shape(i).as_edge().map(|e| e.tolerance).unwrap_or(0.0))
                 .fold(0.0f64, f64::max);
@@ -237,6 +237,10 @@ fn circle_pcurve_frame_anchor(
                 } else {
                     (l.origin.x + l.direction.x * delta, -l.direction.x)
                 };
+                if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                    eprintln!("[ANC-IN] fi={} u0e={:.6} de={:.0} delta={:.6} same={:.0} edge_range=({:.6},{:.6})",
+                        fi, l.origin.x, l.direction.x, delta, same_handed as i32, ed.range[0], ed.range[1]);
+                }
                 return Some((u0a, da));
             }
         }
@@ -621,6 +625,20 @@ pub(crate) fn build_analytic_pcurve(
             // With a frame anchor from the face's existing boundary pcurves,
             // the whole pcurve is expressed in that frame: u(t) = u0a + da*t.
             if let Some((u0a, da)) = pcurve_anchor {
+                if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                    let mut mx = 0.0f64;
+                    for i in 0..=23 {
+                        let t = tf + (tl - tf) * i as f64 / 23.0;
+                        let p3d = c.center
+                            + c.x_dir * (c.radius * t.cos())
+                            + c.y_dir * (c.radius * t.sin());
+                        let u = u0a + da * t;
+                        let ps = cyl.point_at(u, v);
+                        mx = mx.max((p3d - ps).length());
+                    }
+                    eprintln!("[ANCHOR] u0a={:.6} da={:.0} tf={:.6} tl={:.6} maxdev={:.6}",
+                        u0a, da, tf, tl, mx);
+                }
                 return Some(Curve2d::Line(Line2d::new(
                     DVec2::new(u0a, v),
                     DVec2::new(da, 0.0),

@@ -2490,6 +2490,10 @@ impl PaveFiller {
                                     a_f_shifted2 = translate_surface(&a_f_shifted2, a_p1 - a_p2);
                                 }
                                 a_shift_value = a_shift_dist;
+                                if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                                    eprintln!("[SHIFT] e1={} closed1={} e2={} closed2={} vtx={} pt=({:.3},{:.3},{:.3}) shift={:.6}",
+                                        n_e1, an_is_closed1, n_e2, an_is_closed2, a_vertex_index, a_vertex_point.x, a_vertex_point.y, a_vertex_point.z, a_shift_dist);
+                                }
                                 break 'outer;
                             }
                         }
