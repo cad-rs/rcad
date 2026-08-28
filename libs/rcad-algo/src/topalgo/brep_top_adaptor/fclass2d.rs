@@ -941,7 +941,7 @@ impl FClass2d {
                 }
                 order_wire_edges(ds, a_face, &pairs)
             };
-            if std::env::var("RCAD_F2D_DEBUG").is_ok() && (a_face == 30 || a_face == 32 || a_face == 60 || a_face == 74 || a_face == 77) {
+            if std::env::var("RCAD_F2D_DEBUG").is_ok() {
                 eprintln!("[F2D] face={} reordered_edges={:?}", a_face,
                     wire_edges_ordered.iter().map(|(ei, o)| format!("e{}:{}", ei, if *o == Orientation::Reversed { "R" } else { "F" })).collect::<Vec<_>>());
             }
@@ -1225,7 +1225,7 @@ impl FClass2d {
             } else if wire_is_not_empty {
                 if seq_pnt2d.len() > 3 {
                     let (a_s, a_per) = polygon_properties(&seq_pnt2d);
-                    if std::env::var("RCAD_F2D_DEBUG").is_ok() && (a_face == 30 || a_face == 32 || a_face == 60 || a_face == 74 || a_face == 77) {
+                    if std::env::var("RCAD_F2D_DEBUG").is_ok() {
                         let pts: Vec<String> = seq_pnt2d.iter().map(|p| format!("({:.2},{:.2})", p.x, p.y)).collect();
                         eprintln!("[F2D] face={} wire0 area={:.6} npts={} pts=[{}]", a_face, a_s, seq_pnt2d.len(), pts.join(" "));
                     }

@@ -69,12 +69,30 @@ impl<'a> BuilderSolid<'a> {
         // OCCT L106: PerformShapesToAvoid
         self.perform_shapes_to_avoid();
         if self.has_errors() { return; }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!(
+                "[DBG-BSA] nInput={} nAvoid={}",
+                self.my_shapes.len(),
+                self.my_shapes_to_avoid.len()
+            );
+        }
         // OCCT L112: PerformLoops — group faces into shells
         self.perform_loops();
         if self.has_errors() { return; }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let counts: Vec<usize> = self
+                .my_loops
+                .iter()
+                .map(|l| l.len())
+                .collect();
+            eprintln!("[DBG-BSL] nLoops={} counts={:?}", self.my_loops.len(), counts);
+        }
         // OCCT L118: PerformAreas — classify shells, build solids
         self.perform_areas();
         if self.has_errors() { return; }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[DBG-BSAR] nAreas={}", self.my_solids.len());
+        }
         // OCCT L124: PerformInternalShapes
         self.perform_internal_shapes();
     }
