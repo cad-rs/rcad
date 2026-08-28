@@ -1354,20 +1354,30 @@ fn flip_ori(o: Orientation) -> Orientation {
 /// [F, R], for OCCT BRepPrim_GWedge edges [R, F]. Used by BRep_Tool::Parameter
 /// (BRep_Tool.cxx L1532-1597); do NOT use for GetNextVertex / smart-map
 /// EdgeInfo which iterate the edge as stored (composed with its orientation).
-fn edge_vertices_forward(e: &Shape) -> [Shape; 2] {
+fn edge_vertices_forward(e: &Shape, locations: &[glam::DAffine3]) -> [Shape; 2] {
     match &*e.data {
-        TShape::Edge(ed) => [
+        TShape::Edge(ed) => {
             // OCCT BRep_Tool::Parameter (BRep_Tool.cxx L1541-1561) iterates
-            // E.Oriented(TopAbs_FORWARD): the yielded sub-shapes keep their
-            // STORED orientations (the FORWARD composition is the identity).
-            // rcad previously hardcoded [F, R], which flips the stored
-            // orientations of OCCT BRepPrim_GWedge edges (created as
-            // [rev(high), low] = [R, F], make_box.rs L76-84) and produces a
-            // wrong BRep_Tool::Parameter -> wrong Angle2D at the edge's
-            // endpoints (the bopcommon f6 cap wires).
-            Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-            Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
-        ],
+            // E.Oriented(TopAbs_FORWARD) through the TopoDS_Iterator, whose
+            // cumLoc composition yields each vertex with the EDGE's location
+            // composed over the stored one (TopoDS_Iterator.cxx L76-78). The
+            // stored orientations are unchanged (the FORWARD composition is
+            // the identity). rcad previously yielded the raw stored locations,
+            // so a located edge (the prism's translated cap edges share the
+            // source TShape) never matched the composed smart-map vertices and
+            // BRep_Tool::Parameter fell into the INTERNAL fallback branch —
+            // wrong parameter -> wrong Angle2D -> wrong WireSplitter walk
+            // (bcut_simple J1: the wall's bottom-piece loop crossed into the
+            // top strip and its image was dropped).
+            let vf_loc =
+                crate::bop::algo::compose_edge_vertex_location(e.location, ed.first.location, locations);
+            let vl_loc =
+                crate::bop::algo::compose_edge_vertex_location(e.location, ed.last.location, locations);
+            [
+                Shape::new(ed.first.data.clone(), vf_loc, ed.first.orientation),
+                Shape::new(ed.last.data.clone(), vl_loc, ed.last.orientation),
+            ]
+        }
         _ => [Shape::null(), Shape::null()],
     }
 }
@@ -1432,13 +1442,22 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
             }
             // OCCT BRep_Tool.cxx L366-368: the representation was not found —
             // fall back to CurveOnPlane, which projects the edge's 3D curve
-            // onto a planar face (BRep_Tool.cxx L373-440). rcad's plane edges
-            // normally carry a stored pcurve (BuildPCurveForEdgesOnPlane), so
-            // this only fires for planar faces whose edge has a 3D curve but no
-            // stored pcurve.
+            // onto a planar face (BRep_Tool.cxx L373-440). OCCT projects the
+            // curve WITH the edge's location applied (BRep_Tool::Curve(E,...)
+            // returns C3D->Transformed(L.Transformation())) — a located edge
+            // (the prism's translated cap edge sharing the source TShape)
+            // otherwise projects at the SOURCE position instead of its own
+            // (bcut_simple J1: the wall's bottom-piece loop sampled the top
+            // strip's UV row and its image was dropped).
             if let Some(surf) = ds.face_surface(face_index) {
                 if let rcad_kernel::geom::Surface3::Plane(pl) = surf {
                     if let Some(curve) = ed.curve.clone() {
+                        let loc = ds.get_location(e.location);
+                        let curve = if loc == glam::DAffine3::IDENTITY {
+                            curve
+                        } else {
+                            rcad_kernel::geom::transform_curve(&curve, &loc)
+                        };
                         if let Some(pc) =
                             crate::bop::algo::builder::project_edge_on_plane(&curve, &pl, ed.range)
                         {
@@ -1590,7 +1609,7 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
             // TEdge nodes [V1, V2] keep their STORED orientations (the FORWARD
             // composition of the normalized copy is the identity). A self-loop
             // edge has V1 and V2 the same TShape, so V matches twice.
-            let verts = edge_vertices_forward(e);
+            let verts = edge_vertices_forward(e, &ds.locations);
             let mut rev = false;
             let mut vf: Option<Shape> = None;
             for vcur in verts.iter() {
