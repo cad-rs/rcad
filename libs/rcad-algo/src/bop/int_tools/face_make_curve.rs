@@ -116,6 +116,14 @@ pub fn make_curves(
         // section pcurve and the boundary pcurves agree.  rcad's raw analytic
         // frame (parameter origin of the circle) may differ by a phase from
         // the stored boundary pcurves, inverting UV classifications.
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let t1 = ds.face_tolerance(f1);
+            let t2 = ds.face_tolerance(f2);
+            let e1max = (0..ds.nb_shapes()).filter(|&i| ds.shape_info(i).shape_type == ShapeType::Edge)
+                .map(|i| ds.shape(i).as_edge().map(|e| e.tolerance).unwrap_or(0.0))
+                .fold(0.0f64, f64::max);
+            eprintln!("[TOL] ff=({},{}) ftol=({:.6},{:.6}) max_edge_tol={:.6}", f1, f2, t1, t2, e1max);
+        }
         let (anchor1, anchor2) = if line.line_type == IntPatchIType::Circle {
             if let Curve3::Circle(c) = &line.curve {
                 (
