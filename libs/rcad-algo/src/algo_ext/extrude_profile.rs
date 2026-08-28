@@ -362,8 +362,22 @@ pub fn extrude_profile_solid(
             let fp = face.ptr_id();
             let to_uv = |p: DVec3| cyl.world_to_uv(p);
             let pc_of = |p0: DVec3, p1: DVec3| -> Option<(Curve2d, f64, f64)> {
-                let uv0 = to_uv(p0);
-                let uv1 = to_uv(p1);
+                let mut uv0 = to_uv(p0);
+                let mut uv1 = to_uv(p1);
+                // OCCT ProjLib_Cylinder::Project keeps the pcurve's U in the
+                // surface's natural [0, 2pi] domain; world_to_uv's atan2
+                // returns (-pi, pi], so an arc on the negative-u half is
+                // shifted by a whole period.  Without the shift the stored
+                // pcurve's U polygon is the complement of the face's real UV
+                // region and every UV classification of the face inverts.
+                let a_period = std::f64::consts::TAU;
+                if uv0.x < 0.0 {
+                    uv0.x += a_period;
+                    uv1.x += a_period;
+                }
+                if uv1.x < 0.0 {
+                    uv1.x += a_period;
+                }
                 let d = uv1 - uv0;
                 let len = d.length();
                 if len < 1e-15 {
