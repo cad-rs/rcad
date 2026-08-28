@@ -381,11 +381,11 @@ impl<'a> BuilderSolid<'a> {
         }
         let mut hole_boxes: Vec<Option<(DVec3, DVec3)>> = Vec::new();
         for shell_shape in &hole_shell_shapes {
-            hole_boxes.push(crate::bop::algo::builder::shape_bbox(shell_shape));
+            hole_boxes.push(crate::bop::algo::builder::shape_bbox(shell_shape, &self.ds.locations));
         }
         let mut a_hole_solid: HashMap<(u64, u32), usize> = HashMap::new();
         for (si, solid) in new_solids.iter().enumerate() {
-            let solid_box = crate::bop::algo::builder::shape_bbox(solid);
+            let solid_box = crate::bop::algo::builder::shape_bbox(solid, &self.ds.locations);
             for (hi, hs) in hole_shells.iter().enumerate() {
                 // OCCT L506-509: BVH pre-filter — skip holes whose box does
                 // not interfere with the solid's box (IsInside would be OUT).

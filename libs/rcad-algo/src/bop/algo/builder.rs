@@ -283,45 +283,59 @@ fn face_edges(face: &Shape) -> Vec<Shape> {
 }
 
 /// All (point, tolerance) pairs of the boundary vertices of a shape.
-fn shape_vertices(s: &Shape) -> Vec<(DVec3, f64)> {    let mut out = Vec::new();
-    let mut stack: Vec<Shape> = vec![s.clone()];
-    while let Some(sh) = stack.pop() {
+pub(crate) fn shape_vertices(s: &Shape, locations: &[glam::DAffine3]) -> Vec<(DVec3, f64)> {
+    // OCCT TopExp_Explorer composes each parent TopLoc_Location into the
+    // sub-shape (TopoDS_Iterator.cxx L76-78, cumLoc); BRep_Tool::Pnt of the
+    // composed vertex returns the WORLD point. rcad carries the cumulative
+    // DS-location transform down the traversal and applies it to the stored
+    // point. The stored orientations are unused for geometry.
+    let resolve =
+        |idx: u32| locations.get(idx as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+    let mut out: Vec<(DVec3, f64)> = Vec::new();
+    let mut stack: Vec<(Shape, glam::DAffine3)> = vec![(s.clone(), glam::DAffine3::IDENTITY)];
+    while let Some((sh, parent_loc)) = stack.pop() {
+        let cum = parent_loc * resolve(sh.location);
         match &*sh.data {
-            TShape::Vertex(vd) => out.push((vd.point, vd.tolerance)),
+            TShape::Vertex(vd) => out.push((cum.transform_point3(vd.point), vd.tolerance)),
             TShape::Edge(ed) => {
-                stack.push(ed.first.clone());
-                stack.push(ed.last.clone());
+                stack.push((ed.first.clone(), cum));
+                stack.push((ed.last.clone(), cum));
             }
-            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned().map(|e| (e, cum))),
             TShape::Face(fd) => {
-                stack.push(fd.outer_wire.clone());
-                stack.extend(fd.inner_wires.iter().cloned());
+                stack.push((fd.outer_wire.clone(), cum));
+                stack.extend(fd.inner_wires.iter().cloned().map(|w| (w, cum)));
             }
-            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
-            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned()),
-            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned()),
-            TShape::Compound(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned().map(|f| (f, cum))),
+            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned().map(|f| (f, cum))),
+            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned().map(|f| (f, cum))),
+            TShape::Compound(cd) => stack.extend(cd.iter().cloned().map(|f| (f, cum))),
         }
     }
     out
 }
 
-/// All edge Shapes of a shape (faces -> wires -> edges).
-fn shape_edges(s: &Shape) -> Vec<Shape> {
-    let mut out = Vec::new();
-    let mut stack: Vec<Shape> = vec![s.clone()];
-    while let Some(sh) = stack.pop() {
+/// All edge Shapes of a shape (faces -> wires -> edges), each with the
+/// cumulative location transform from the traversal root (see
+/// [`shape_vertices`]).
+fn shape_edges(s: &Shape, locations: &[glam::DAffine3]) -> Vec<(Shape, glam::DAffine3)> {
+    let resolve =
+        |idx: u32| locations.get(idx as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+    let mut out: Vec<(Shape, glam::DAffine3)> = Vec::new();
+    let mut stack: Vec<(Shape, glam::DAffine3)> = vec![(s.clone(), glam::DAffine3::IDENTITY)];
+    while let Some((sh, parent_loc)) = stack.pop() {
+        let cum = parent_loc * resolve(sh.location);
         match &*sh.data {
-            TShape::Edge(_) => out.push(sh),
-            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+            TShape::Edge(_) => out.push((sh, cum)),
+            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned().map(|e| (e, cum))),
             TShape::Face(fd) => {
-                stack.push(fd.outer_wire.clone());
-                stack.extend(fd.inner_wires.iter().cloned());
+                stack.push((fd.outer_wire.clone(), cum));
+                stack.extend(fd.inner_wires.iter().cloned().map(|w| (w, cum)));
             }
-            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
-            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned()),
-            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned()),
-            TShape::Compound(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned().map(|f| (f, cum))),
+            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned().map(|f| (f, cum))),
+            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned().map(|f| (f, cum))),
+            TShape::Compound(cd) => stack.extend(cd.iter().cloned().map(|f| (f, cum))),
             TShape::Vertex(_) => {}
         }
     }
@@ -1120,8 +1134,8 @@ fn is_internal_face(
             let a_f1 = &a_lf[0];
             let a_f2 = &a_lf[1];
             if std::env::var("RCAD_GFO_DEBUG").is_ok() {
-                let fb = shape_bbox(the_face);
-                let eb = shape_bbox(&a_e);
+                let fb = shape_bbox(the_face, &ds.locations);
+                let eb = shape_bbox(&a_e, &ds.locations);
                 eprintln!(
                     "[ISF] the_face_box={:?} edge_box={:?} the_face_or={:?} e_ori={:?} f1_or={:?} f2_or={:?}",
                     fb, eb, the_face.orientation, a_e.orientation, a_f1.orientation, a_f2.orientation
@@ -1174,7 +1188,7 @@ pub(crate) fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f
                 );
             clsf.perform(p, the_tol);
             if std::env::var("RCAD_GFO_DEBUG").is_ok() {
-                let sb = shape_bbox(the_solid);
+                let sb = shape_bbox(the_solid, &ds.locations);
                 eprintln!(
                     "[CSF] P=({:.3},{:.3},{:.3}) solid_bbox={:?} state={} (1=IN 2=ON 3=IN 4=OUT)",
                     p.x,
@@ -1324,11 +1338,14 @@ fn edge_midpoint(edge: &Shape) -> Option<DVec3> {
 /// Bounding box of a shape 鈥?vertices plus sampled edge-curve points
 /// (semantic equivalent of OCCT BRepBndLib::Add, which also covers curve
 /// extents beyond the boundary vertices).
-pub(crate) fn shape_bbox(s: &Shape) -> Option<(DVec3, DVec3)> {
+pub(crate) fn shape_bbox(s: &Shape, locations: &[glam::DAffine3]) -> Option<(DVec3, DVec3)> {
+    // OCCT BRepBndLib::Add computes the bounding box of the shape in WORLD
+    // coordinates (all locations of the location chain composed); the stored
+    // geometry of a located shape is transformed by the cumulative location.
     let mut min = DVec3::splat(f64::INFINITY);
     let mut max = DVec3::splat(f64::NEG_INFINITY);
     let mut any = false;
-    for (p, _tol) in shape_vertices(s) {
+    for (p, _tol) in shape_vertices(s, locations) {
         if !p.is_finite() {
             continue;
         }
@@ -1336,13 +1353,13 @@ pub(crate) fn shape_bbox(s: &Shape) -> Option<(DVec3, DVec3)> {
         max = max.max(p);
         any = true;
     }
-    for e in shape_edges(s) {
+    for (e, cum) in shape_edges(s, locations) {
         if let Some(ed) = edge_data(&e) {
             if let Some(curve) = &ed.curve {
                 let [t1, t2] = ed.range;
                 for k in 0..=8 {
                     let t = t1 + (t2 - t1) * (k as f64) / 8.0;
-                    let p = curve.point_at(t);
+                    let p = cum.transform_point3(curve.point_at(t));
                     if !p.is_finite() {
                         continue;
                     }
@@ -4494,7 +4511,12 @@ impl<'a> Builder<'a> {
             let solid_bbox = a_shape_box_map
                 .get(&(a_sd.ptr_id(), a_sd.location))
                 .copied()
-                .or_else(|| shape_bbox(a_sd).map(|(a, b)| (a, b, 0.0)));
+                .or_else(|| shape_bbox(a_sd, &ds.locations).map(|(a, b)| (a, b, 0.0)));
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                let own: Vec<String> = faces.iter().enumerate().filter(|(_, f)| a_msf.contains(&(f.ptr_id(), f.location))).map(|(i, f)| format!("idx={} ptr={} loc={}", i, f.ptr_id() % 100000, f.location)).collect();
+                eprintln!("[F3D-OWN] solid_ptr={} n_own_faces={} own_in_faces_array=[{}]",
+                    a_sd.ptr_id() % 100000, a_msf.len(), own.join(","));
+            }
             let mut a_ivec: Vec<usize> = Vec::new();
             for (i, a_f) in faces.iter().enumerate() {
                 if a_msf.contains(&(a_f.ptr_id(), a_f.location)) {
@@ -4510,7 +4532,7 @@ impl<'a> Builder<'a> {
                     let face_bbox = a_shape_box_map
                         .get(&(a_f.ptr_id(), a_f.location))
                         .copied()
-                        .or_else(|| shape_bbox(a_f).map(|(a, b)| (a, b, 0.0)));
+                        .or_else(|| shape_bbox(a_f, &ds.locations).map(|(a, b)| (a, b, 0.0)));
                     if std::env::var("RCAD_BS_DEBUG").is_ok() && a_sd.shape_type() == topods::ShapeType::Solid {
                         let fb = face_bbox;
                         eprintln!("[F3D-BB] face_idx={} ds={} smin=({:.2},{:.2},{:.2}) smax=({:.2},{:.2},{:.2}) fmin={:?} fmax={:?}",
@@ -5566,6 +5588,74 @@ impl<'a> Builder<'a> {
             eprintln!("[RES] after_build_rc rc_len={} my_shape_faces={}",
                 self.my_rc.len(),
                 self.my_shape.as_ref().map(|b| b.tshapes.iter().filter(|t| matches!(t.as_ref(), topods::TShape::Face(_))).count()).unwrap_or(0));
+            if let Some(brep) = self.my_shape.as_ref() {
+                for (rc_i, rc) in self.my_rc.iter().enumerate() {
+                    eprintln!("[RES-SOLID] rc[{}] type={:?} ptr={:+x} loc={}", rc_i, rc.shape_type(), rc.ptr_id() & 0xffff, rc.location);
+                    if let topods::TShape::Solid(sd) = &*rc.data {
+                        for (sh_i, sh) in sd.shells.iter().enumerate() {
+                            let (sh_type, mut faces): (String, Vec<topods::Shape>) = match &*sh.data {
+                                topods::TShape::Shell(w) => ("Shell".into(), w.faces.clone()),
+                                _ => ("?".into(), Vec::new()),
+                            };
+                            eprintln!("[RES-SOLID]   shell[{}] {} n_faces={} sh_loc={}", sh_i, sh_type, faces.len(), sh.location);
+                            for f in &faces {
+                                let (n_desc, wires_desc, bbox): (String, String, [f64; 6]) = match &*f.data {
+                                    topods::TShape::Face(fd) => {
+                                        let n = fd.surface.as_ref().map(|s| match s {
+                                            rcad_kernel::geom::Surface3::Plane(p) => format!("P({:.0},{:.0},{:.0})", p.normal.x, p.normal.y, p.normal.z),
+                                            _ => "C".into(),
+                                        }).unwrap_or_default();
+                                        let mut wires_desc = String::new();
+                                        let mut bb = [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+                                        let loc = self.ds.get_location(f.location);
+                                        let mut add_pt = |p: glam::DVec3, bb: &mut [f64; 6]| {
+                                            let w = loc.transform_point3(p);
+                                            bb[0] = bb[0].min(w.x); bb[1] = bb[1].min(w.y); bb[2] = bb[2].min(w.z);
+                                            bb[3] = bb[3].max(w.x); bb[4] = bb[4].max(w.y); bb[5] = bb[5].max(w.z);
+                                        };
+                                        let mut emit = |name: &str, w_sr: &topods::Shape, wires_desc: &mut String, bb: &mut [f64; 6]| {
+                                            if let topods::TShape::Wire(wd) = &*w_sr.data {
+                                                wires_desc.push_str(&format!(" {}{}[", name, wd.edges.len()));
+                                                for e in &wd.edges {
+                                                    if let topods::TShape::Edge(ed) = &*e.data {
+                                                        let eloc = loc
+                                                            * self.ds.get_location(e.location);
+                                                        for v in [&ed.first, &ed.last] {
+                                                            if let topods::TShape::Vertex(vd) = &*v.data {
+                                                                let vloc = eloc * self.ds.get_location(v.location);
+                                                                let p = vloc.transform_point3(vd.point);
+                                                                wires_desc.push_str(&format!("({:.0},{:.0},{:.0})", p.x, p.y, p.z));
+                                                            }
+                                                        }
+                                                        for v in [&ed.first, &ed.last] {
+                                                            if let topods::TShape::Vertex(vd) = &*v.data {
+                                                                let vloc = eloc * self.ds.get_location(v.location);
+                                                                add_pt(vloc.transform_point3(vd.point), bb);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                wires_desc.push_str("]");
+                                            }
+                                        };
+                                        emit("o", &fd.outer_wire, &mut wires_desc, &mut bb);
+                                        for w in &fd.inner_wires {
+                                            emit("i", w, &mut wires_desc, &mut bb);
+                                        }
+                                        (n, wires_desc, bb)
+                                    }
+                                    _ => ("?".into(), String::new(), [0.0; 6]),
+                                };
+                                eprintln!(
+                                    "[RES-SOLID]     face={:+x}@{} ori={:?} n={} bbox=({:.0},{:.0},{:.0})-({:.0},{:.0},{:.0}){}",
+                                    f.ptr_id() & 0xffff, f.location, f.orientation, n_desc,
+                                    bbox[0], bbox[1], bbox[2], bbox[3], bbox[4], bbox[5], wires_desc
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
         // OCCT L916-920: FUSE of 3D 鈫?BuildSolid.
         if self.my_operation == BooleanOpType::Union && self.my_dims[0] == 3 {
@@ -6048,7 +6138,7 @@ impl<'a> Builder<'a> {
                     eprintln!(
                         "[BS-RC]   face={} bbox={:?}",
                         f.ptr_id() % 100000,
-                        shape_bbox(&f)
+                        shape_bbox(&f, &self.ds.locations)
                     );
                     if let TShape::Face(fd) = &*f.data {
                         let sk = match &fd.surface {
@@ -6177,7 +6267,7 @@ impl<'a> Builder<'a> {
                     eprintln!(
                         "[BS-FACES] face={} bbox={:?} {}",
                         f.ptr_id() % 100000,
-                        shape_bbox(f),
+                        shape_bbox(f, &self.ds.locations),
                         wins.join(" ")
                     );
                 }
