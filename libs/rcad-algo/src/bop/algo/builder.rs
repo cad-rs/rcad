@@ -5994,6 +5994,62 @@ impl<'a> Builder<'a> {
         let mut a_mu_sols: Vec<Shape> = Vec::new();
         let mut a_mu_fence: HashSet<(u64, u32)> = HashSet::new();
         a_mfs.clear();
+        if std::env::var("RCAD_SPLIT_DEBUG").is_ok() {
+            for (si, a_sx) in self.my_rc.iter().enumerate() {
+                eprintln!(
+                    "[BS-RC] rc[{}] type={:?} ptr={}",
+                    si,
+                    a_sx.shape_type(),
+                    a_sx.ptr_id() % 100000
+                );
+                for f in self.map_shapes_of_type(a_sx, topods::ShapeType::Face) {
+                    eprintln!(
+                        "[BS-RC]   face={} bbox={:?}",
+                        f.ptr_id() % 100000,
+                        shape_bbox(&f)
+                    );
+                    if let TShape::Face(fd) = &*f.data {
+                        let sk = match &fd.surface {
+                            Some(rcad_kernel::geom::Surface3::Plane(p)) => format!(
+                                "plane n=({:.3},{:.3},{:.3})",
+                                p.normal.x, p.normal.y, p.normal.z
+                            ),
+                            Some(_) => "other".to_string(),
+                            None => "none".to_string(),
+                        };
+                        eprintln!(
+                            "[BS-RC]     surf={} n_inner={}",
+                            sk,
+                            fd.inner_wires.len()
+                        );
+                        for (wi, w) in
+                            std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()).enumerate()
+                        {
+                            if let TShape::Wire(wd) = &*w.data {
+                                for e in &wd.edges {
+                                    if let TShape::Edge(ed) = &*e.data {
+                                        for v in [&ed.first, &ed.last] {
+                                            if let TShape::Vertex(vd) = &*v.data {
+                                                eprintln!(
+                                                    "[BS-RC]       w{} e={} v=({:.2},{:.2},{:.2}) vloc={} eloc={}",
+                                                    wi,
+                                                    e.ptr_id() % 100000,
+                                                    vd.point.x,
+                                                    vd.point.y,
+                                                    vd.point.z,
+                                                    v.location,
+                                                    e.location
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for a_sx in &self.my_rc {
             if a_msa.contains(&(a_sx.ptr_id(), a_sx.location)) {
                 if !a_mt_sols.contains(&(a_sx.ptr_id(), a_sx.location)) {
@@ -6076,7 +6132,12 @@ impl<'a> Builder<'a> {
                             }
                         }
                     }
-                    eprintln!("[BS-FACES] face={} {}", f.ptr_id() % 100000, wins.join(" "));
+                    eprintln!(
+                        "[BS-FACES] face={} bbox={:?} {}",
+                        f.ptr_id() % 100000,
+                        shape_bbox(f),
+                        wins.join(" ")
+                    );
                 }
             }
             let mut a_bs = crate::bop::algo::builder_solid::BuilderSolid::new(&self.ds);

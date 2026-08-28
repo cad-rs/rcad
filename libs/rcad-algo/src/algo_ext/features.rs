@@ -313,40 +313,43 @@ fn build_prism_from_sections(
         let j = (i + 1) % n;
         let a = bot[i];
         let b = bot[j];
-        let c = top[j];
-        let face_normal = {
-            let ab = b - a;
-            let ac = c - a;
-            let nv = ac.cross(ab);
-            if nv.length_squared() > TOLERANCE_VEC_SQ_MIN {
-                nv.normalize()
-            } else {
-                dir.cross(ab).normalize()
-            }
-        };
-        // wire: bot[i]->bot[j] (fwd), bot[j]->top[j] (fwd), top[j]->top[i] (rev), top[i]->bot[i] (rev)
+        // OCCT BRepSweep_Translation::MakeEmptyFace plane (via
+        // GeomAdaptor_SurfaceOfLinearExtrusion::Plane): u = the profile edge
+        // direction, v = -sweep direction (the base edge at v=0, the extruded
+        // copy at v=-depth), origin at the profile edge start. Runner
+        // [DBG-WIRE] bfuse_simple D9: p2 f1 o=(-100,0,100) u=(0,1,0)
+        // v=(0,0,-1).
+        let u_dir = (b - a).normalize_or_zero();
+        let v_dir = -dir;
+        let n_nat = u_dir.cross(v_dir).normalize_or_zero();
+        // OCCT BRepSweep_NumLinearRegularSweep lateral wire (the intermediate
+        // newWire of BuildShell): [sweep@V1 F, sweep@V2 R, profile R, top F].
+        // The traversal is CCW in the natural frame (runner [DBG-WIRE] p2 f1 /
+        // p1 f0). The previous [bot F, vertV2 F, top R, vertV1 R] winding was
+        // the bitwise inverse, so the FClass2d loop verdict of every split
+        // lateral face inverted to is_hole and BuilderFace dropped the face
+        // image (bfuse_simple D9: p2's x=-100 / y=100 sides vanished from the
+        // draft solid, a_sfs 14 -> 12, empty result).
         let wire_edges = vec![
-            bot_edges[i].clone(),
-            vert_edges[j].clone(),
+            vert_edges[i].clone(),
             topods::Shape {
-                data: top_edges[i].data.clone(),
-                index: top_edges[i].index,
                 orientation: topods::Orientation::Reversed,
-                location: top_edges[i].location,
+                ..vert_edges[j].clone()
             },
             topods::Shape {
-                data: vert_edges[i].data.clone(),
-                index: vert_edges[i].index,
                 orientation: topods::Orientation::Reversed,
-                location: 0,
+                ..bot_edges[i].clone()
             },
+            top_edges[i].clone(),
         ];
         let wire_sr = brep.add_twire(wire_edges);
         brep.add_tface(
-            Some(Surface3::Plane(rcad_kernel::geom::Plane::new(
-                a,
-                face_normal,
-            ))),
+            Some(Surface3::Plane(rcad_kernel::geom::Plane {
+                origin: a,
+                normal: n_nat,
+                u_dir,
+                v_dir,
+            })),
             wire_sr,
             vec![],
             None,

@@ -760,6 +760,115 @@ impl PaveFiller {
         self.perform_internal(the_range);
     }
 
+    /// TEMP probe: dump every face's surface frame and its edges' pcurves with
+    /// world endpoints (RCAD_SPLIT_DEBUG).
+    pub(crate) fn dump_face_pcurves(&self) {
+        if std::env::var("RCAD_SPLIT_DEBUG").is_ok() {
+            use crate::topalgo::shape_source::ShapeSource as _;
+            for fi in 0..self.ds.nb_shapes() {
+                if self.ds.shape_type(fi) != topods::ShapeType::Face {
+                    continue;
+                }
+                let f_shape = self.ds.shape_at(fi);
+                let (surf_desc, f_loc) = match &*f_shape.data {
+                    topods::TShape::Face(fd) => (
+                        match &fd.surface {
+                            Some(rcad_kernel::geom::Surface3::Plane(p)) => format!(
+                                "plane o=({:.2},{:.2},{:.2}) u=({:.2},{:.2},{:.2}) v=({:.2},{:.2},{:.2})",
+                                p.origin.x, p.origin.y, p.origin.z,
+                                p.u_dir.x, p.u_dir.y, p.u_dir.z,
+                                p.v_dir.x, p.v_dir.y, p.v_dir.z
+                            ),
+                            Some(_) => "other".into(),
+                            None => "none".into(),
+                        },
+                        f_shape.location,
+                    ),
+                    _ => continue,
+                };
+                eprintln!("[PC-F] f{} {} floc={}", fi, surf_desc, f_loc);
+                if let topods::TShape::Face(fd) = &*f_shape.data {
+                    for (wi, w) in std::iter::once(&fd.outer_wire)
+                        .chain(fd.inner_wires.iter())
+                        .enumerate()
+                    {
+                        let wori = if w.orientation == topods::Orientation::Reversed { "R" } else { "F" };
+                        let eds: Vec<String> = match &*w.data {
+                            topods::TShape::Wire(wd) => wd
+                                .edges
+                                .iter()
+                                .map(|e| {
+                                    format!(
+                                        "e{}:{}",
+                                        self.ds
+                                            .map_shape_index(e.ptr_id(), e.location)
+                                            .map(|x| x.to_string())
+                                            .unwrap_or_else(|| format!("{:x}", e.ptr_id() % 100000)),
+                                        if e.orientation == topods::Orientation::Reversed { "R" } else { "F" }
+                                    )
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+                        eprintln!("[PC-F]   wire{} ori={} edges=[{}]", wi, wori, eds.join(","));
+                    }
+                }
+                for ssi in self.ds.sub_shapes(fi) {
+                    if self.ds.shape_type(*ssi) != topods::ShapeType::Edge {
+                        continue;
+                    }
+                    let e_shape = self.ds.shape_at(*ssi);
+                    let pc = crate::topalgo::shape_source::edge_pcurve_on_face(
+                        &self.ds,
+                        *ssi,
+                        fi,
+                        topods::Orientation::Forward,
+                    );
+                    let pc_desc = match &pc {
+                        Some((rcad_kernel::geom::Curve2d::Line(l), t1, t2)) => format!(
+                            "L o=({:.2},{:.2}) d=({:.2},{:.2}) t=[{:.2},{:.2}]",
+                            l.origin.x, l.origin.y, l.direction.x, l.direction.y, t1, t2
+                        ),
+                        Some((rcad_kernel::geom::Curve2d::Trimmed(t), t1, t2)) => {
+                            match &*t.curve {
+                                rcad_kernel::geom::Curve2d::Line(l) => format!(
+                                    "TL o=({:.2},{:.2}) d=({:.2},{:.2}) t=[{:.2},{:.2}]",
+                                    l.origin.x, l.origin.y, l.direction.x, l.direction.y, t1, t2
+                                ),
+                                _ => format!("TO t=[{:.2},{:.2}]", t1, t2),
+                            }
+                        }
+                        Some(_) => format!(
+                            "O t=[{:.2},{:.2}]",
+                            pc.as_ref().map(|p| p.1).unwrap_or(0.0),
+                            pc.as_ref().map(|p| p.2).unwrap_or(0.0)
+                        ),
+                        None => "none".into(),
+                    };
+                    let mut world_pts: Vec<String> = Vec::new();
+                    if let topods::TShape::Edge(ed) = &*e_shape.data {
+                        for v in [&ed.first, &ed.last] {
+                            if let topods::TShape::Vertex(vd) = &*v.data {
+                                let mut wp = vd.point;
+                                let loc = self.ds.get_location(v.location);
+                                if loc != glam::DAffine3::IDENTITY {
+                                    wp = loc.transform_point3(wp);
+                                }
+                                world_pts.push(format!("({:.2},{:.2},{:.2})", wp.x, wp.y, wp.z));
+                            }
+                        }
+                    }
+                    eprintln!(
+                        "[PC-F]   e{} pcurve={} vworld=[{}]",
+                        ssi,
+                        pc_desc,
+                        world_pts.join(",")
+                    );
+                }
+            }
+        }
+    }
+
     /// OCCT BOPAlgo_PaveFiller::PerformInternal (PaveFiller.cxx L235-379).
 
     /// TEMP probe: TShape-level tolerance timeline for the hotspot vertices
@@ -804,6 +913,7 @@ impl PaveFiller {
         self.prepare(&a_ps.sub_scope("Prepare", 10));
         if self.has_errors() { return; }
         if self.check_stop("after_Prepare") { return; }
+        self.dump_face_pcurves();
 
         // OCCT: PerformVV(aPS.Next(...))
         self.perform_vv(&a_ps.sub_scope("Perform VV", 8));
