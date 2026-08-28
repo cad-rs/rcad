@@ -2307,13 +2307,18 @@ impl<'a> Builder<'a> {
             let a_ff_sphere = a_ff.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, rcad_kernel::geom::Surface3::Sphere(_)));
             for a_e in self.face_edges(&a_ff) {
                 let an_ori_e = a_e.orientation;
-                if i == 53 && std::env::var("RCAD_BS_DEBUG").is_ok() {
+                if (i == 53 || i == 58) && std::env::var("RCAD_BS_DEBUG").is_ok() {
                     let imgs = self.images_of(&a_e);
-                    let img_desc: Vec<String> = imgs.map(|v| v.iter().map(|s| {
-                        format!("{:+x}@loc{}", s.ptr_id() & 0xffff, s.location)
-                    }).collect()).unwrap_or_default();
-                    eprintln!("[BND53] e={:+x}@loc{} ori={:?} imgs=[{}]",
-                        a_e.ptr_id() & 0xffff, a_e.location, an_ori_e, img_desc.join(","));
+                    let bound = imgs.is_some();
+                    let img_desc: Vec<String> = imgs
+                        .iter()
+                        .flatten()
+                        .map(|s| format!("{:+x}@loc{}", s.ptr_id() & 0xffff, s.location))
+                        .collect();
+                    let ds_ei = self.ds.map_shape_index.get(&(a_e.ptr_id(), a_e.location)).copied();
+                    let has_ref = ds_ei.map(|e| self.ds.has_pave_blocks(e)).unwrap_or(false);
+                    eprintln!("[BND53] f={} e={:+x}@loc{} ori={:?} ds_ei={:?} bound={} hasPB={} imgs=[{}]",
+                        i, a_e.ptr_id() & 0xffff, a_e.location, an_ori_e, ds_ei, bound, has_ref, img_desc.join(","));
                     if let TShape::Edge(ed) = &*a_e.data {
                         for (k, (pc, t1, t2)) in &ed.pcurves {
                             let d = match pc {
@@ -2435,6 +2440,31 @@ impl<'a> Builder<'a> {
             // OCCT L496-500: if (!NonDestructive()) BRepLib::BuildPCurveForEdgesOnPlane(aLE, aFF).
             if !self.my_non_destructive {
                 self.build_pcurve_for_edges_on_plane(&a_le, &a_ff);
+            }
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                for (lei, le) in a_le.iter().enumerate() {
+                    let vs = crate::bop::algo::builder_face::BuilderFace::edge_vertices(
+                        le,
+                        &self.ds.locations,
+                    );
+                    let vp: Vec<String> = vs
+                        .iter()
+                        .map(|v| {
+                            v.as_vertex()
+                                .map(|vd| format!("({:.1},{:.1},{:.1})@{}", vd.point.x, vd.point.y, vd.point.z, v.location))
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    eprintln!(
+                        "[BSF-LE] face={} le[{}]=e{:+x}@loc{} ori={:?} v=[{}]",
+                        i,
+                        lei,
+                        le.ptr_id() & 0xffff,
+                        le.location,
+                        le.orientation,
+                        vp.join(",")
+                    );
+                }
             }
             // OCCT L502-505: aBF.SetFace(aF); aBF.SetShapes(aLE); SetRunParallel.
             a_vbf.push((i, a_f, a_le));
@@ -3359,8 +3389,20 @@ impl<'a> Builder<'a> {
             if is_stored {
                 continue;
             }
+            // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L337): the
+            // CurveOnPlane fallback projects the edge's 3D curve WITH the
+            // edge's location applied (BRep_Tool::Curve returns
+            // C3D->Transformed(L.Transformation())). A located edge (the
+            // prism's translated cap edge sharing the source TShape) otherwise
+            // projects at the SOURCE position instead of its own.
             let Some(curve) = a_e.as_edge().and_then(|ed| ed.curve.clone()) else {
                 continue;
+            };
+            let a_loc = self.ds.get_location(a_e.location);
+            let curve = if a_loc == glam::DAffine3::IDENTITY {
+                curve
+            } else {
+                rcad_kernel::geom::transform_curve(&curve, &a_loc)
             };
             let range = a_e.as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
             let Some(pc) = project_edge_on_plane(&curve, &pl, range) else {

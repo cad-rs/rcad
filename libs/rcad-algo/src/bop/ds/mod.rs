@@ -1686,6 +1686,15 @@ impl DS {
     /// Must be called before ChangePaveBlocks (OCCT: Init → Change sequence).
     pub fn init_pave_blocks(&mut self, edge_idx: usize) {
         if self.has_pave_blocks(edge_idx) { return; }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let vp: Vec<String> = if self.shapes[edge_idx].shape_type == ShapeType::Edge {
+                self.shapes[edge_idx].sub_shapes.iter().filter_map(|&vi| {
+                    self.shapes.get(vi).and_then(|si| si.shape.as_vertex())
+                        .map(|vd| format!("({:.1},{:.1},{:.1})", vd.point.x, vd.point.y, vd.point.z))
+                }).collect()
+            } else { Vec::new() };
+            eprintln!("[IPB] edge_idx={} v=[{}]", edge_idx, vp.join(","));
+        }
         let spb = if self.shapes[edge_idx].shape_type == ShapeType::Edge
             && self.shapes[edge_idx].sub_shapes.len() >= 2
         {
