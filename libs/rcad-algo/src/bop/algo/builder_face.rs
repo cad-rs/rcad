@@ -25,8 +25,8 @@ pub struct BuilderFace<'a> {
     pub my_face_index: Option<usize>,   // rcad: DS index for my_face
     pub my_edges: Vec<Shape>,           // OCCT: myShapes (section edges)
     pub my_areas: Vec<Shape>,           // OCCT: myAreas (result faces)
-    pub my_loops: Vec<Vec<Shape>>,      // OCCT: myLoops (result wires)
-    pub my_loops_internal: Vec<Vec<Shape>>, // OCCT: myLoopsInternal (internal wires)
+    pub my_loops: Vec<Shape>,           // OCCT: myLoops (result wires)
+    pub my_loops_internal: Vec<Shape>,  // OCCT: myLoopsInternal (internal wires)
     my_shapes_to_avoid: HashSet<(u64, u32, rcad_kernel::topods::Orientation)>, // OCCT: myShapesToAvoid (NCollection_Map — default hasher TShape+Location+Orientation)
     my_avoid_internal_shapes: bool,      // OCCT: myAvoidInternalShapes (BuilderArea)
     my_context: IntToolsContext,         // OCCT: myContext
@@ -201,14 +201,14 @@ impl<'a> BuilderFace<'a> {
                 } else if a_nb_e == 2 {
                     // OCCT L211-227: two edges at the vertex.
                     let a_e2 = &a_le[1];
-                    // OCCT L214: aE2.IsSame(aE1) — same TShape only
-                    // (IsSame semantics, Location and Orientation ignored).
-                    if a_e2.is_same(a_e1) {
+                    // OCCT L214: aE2.IsSame(aE1) — same TShape AND Location
+                    // (IsSame semantics; Orientation ignored).
+                    if a_e2.is_partner(a_e1) {
                         // OCCT L216-221: TopExp::Vertices(aE1, aV1x, aV2x) —
                         // if both endpoints are the same vertex (degenerated
                         // ring), skip.
                         let vv = Self::edge_vertices(a_e1, &self.ds.locations);
-                        if vv.len() >= 2 && vv[0].is_same(&vv[1]) {
+                        if vv.len() >= 2 && vv[0].is_partner(&vv[1]) {
                             // Degenerated ring — both ends are the same vertex.
                             continue;
                         }
@@ -235,12 +235,11 @@ impl<'a> BuilderFace<'a> {
     }
 
     /// Get edge endpoint vertex Shapes.
-    /// OCCT TopoDS_Iterator(aE) with cumOri=true (default) composes the edge
-    /// orientation into the vertices (TopoDS_Iterator.cxx L35-37, L72-80): each
-    /// stored vertex keeps its stored orientation composed with the edge's own
-    /// orientation; a REVERSED edge iterates [last, first]. The edge Location
-    /// is composed into the vertices as well (cumLoc, TopoDS_Iterator.cxx
-    /// L76-78) — `locations` is the DS TopLoc_Location table.
+    /// OCCT TopoDS_Iterator(aE) iterates the edge's stored vertices IN STORAGE
+    /// ORDER [first, last] (TopoDS_Iterator.cxx L57-70), composing the edge's
+    /// orientation into each child (updateCurrentShape L72-78) and the edge's
+    /// location (cumLoc, L80). The order is NOT reversed for a REVERSED edge —
+    /// only the child orientations flip.
     pub(crate) fn edge_vertices(e: &Shape, locations: &[glam::DAffine3]) -> Vec<Shape> {
         use rcad_kernel::topods::Orientation;
         let flip_ori = |o: Orientation| -> Orientation {
@@ -258,8 +257,8 @@ impl<'a> BuilderFace<'a> {
                     crate::bop::algo::compose_edge_vertex_location(e.location, ed.last.location, locations);
                 if e.orientation == Orientation::Reversed {
                     vec![
-                        Shape::new(ed.last.data.clone(), vl_loc, flip_ori(ed.last.orientation)),
                         Shape::new(ed.first.data.clone(), vf_loc, flip_ori(ed.first.orientation)),
+                        Shape::new(ed.last.data.clone(), vl_loc, flip_ori(ed.last.orientation)),
                     ]
                 } else {
                     vec![
@@ -274,8 +273,7 @@ impl<'a> BuilderFace<'a> {
 
     /// OCCT BOPAlgo_BuilderFace::PerformLoops (BOPAlgo_BuilderFace.cxx L239-383).
     /// Builds closed wires from section edges by connecting edges at shared vertices.
-    fn perform_loops(&mut self) {
-        // OCCT L256: aWES.SetFace(myFace)
+    fn perform_loops(&mut self) {        // OCCT L256: aWES.SetFace(myFace)
         // OCCT L258-266: add edges to wire edge set (excluding shapes to avoid)
         let edges: Vec<Shape> = self.my_edges.iter()
             .filter(|e| !self.my_shapes_to_avoid.contains(&(e.ptr_id(), e.location, e.orientation)))
@@ -313,11 +311,11 @@ impl<'a> BuilderFace<'a> {
         let wires = crate::bop::algo::wire_splitter::split_into_wires(&a_face, a_face_index, &edges, &self.ds);
         if std::env::var("RCAD_WS_DEBUG").is_ok() {
             eprintln!("[WS-OUT] face={} n_wires={} wire_edge_counts={:?}",
-                a_face_index, wires.len(), wires.iter().map(|w| w.len()).collect::<Vec<_>>());
+                a_face_index, wires.len(), wires.iter().map(|w| wire_edges(w).len()).collect::<Vec<_>>());
             for (wi, w) in wires.iter().enumerate() {
                 let mut desc: Vec<String> = Vec::new();
-                for e in w {
-                    let pc = edge_pcurve_on_face(e, a_face_index, &self.ds);
+                for e in wire_edges(w) {
+                    let pc = edge_pcurve_on_face(&e, a_face_index, &self.ds);
                     let pd = pc.as_ref().map(|(c, _, _)| match c {
                         Curve2d::Line(l) => format!("L({:.3},{:.3})", l.direction.x, l.direction.y),
                         rcad_kernel::geom::Curve2d::BSpline(b) => {
@@ -328,7 +326,7 @@ impl<'a> BuilderFace<'a> {
                         }
                         _ => "O".into(),
                     }).unwrap_or_else(|| "no-pc".into());
-                    let verts = Self::edge_vertices(e, &self.ds.locations);
+                    let verts = Self::edge_vertices(&e, &self.ds.locations);
                     let vs = verts.iter().map(|v| {
                         let p = v.as_vertex().map(|vd| format!("({:.1},{:.1},{:.1})", vd.point.x, vd.point.y, vd.point.z)).unwrap_or_default();
                         format!("{}:{}", p, v.location)
@@ -349,8 +347,8 @@ impl<'a> BuilderFace<'a> {
         // OCCT aMEP (L285) is NCollection_Map<TopoDS_Shape> — default hasher
         // TShape + Location + Orientation.
         let mut a_mep: HashSet<(u64, u32, rcad_kernel::topods::Orientation)> = HashSet::new();
-        for loop_edges in &self.my_loops {
-            for e in loop_edges {
+        for a_w in &self.my_loops {
+            for e in wire_edges(a_w) {
                 a_mep.insert((e.ptr_id(), e.location, e.orientation));
             }
         }
@@ -418,8 +416,11 @@ impl<'a> BuilderFace<'a> {
                 }
                 i += 1;
             }
-            // OCCT L380-381: aW.Closed(IsClosed(aW)); myLoopsInternal.Append(aW).
-            self.my_loops_internal.push(a_w);
+            // OCCT L380-381: aW.Closed(BRep_Tool::IsClosed(aW));
+            // myLoopsInternal.Append(aW) — the wire shape carries the CLOSED
+            // flag (BOPAlgo_WireSplitter::MakeWire semantics).
+            self.my_loops_internal
+                .push(crate::bop::algo::wire_splitter::make_wire(&a_w, &self.ds.locations));
         }
     }
 
@@ -476,20 +477,14 @@ impl<'a> BuilderFace<'a> {
         let mut a_mhe: HashSet<(u64, u32)> = HashSet::new();
 
         // OCCT L427-458: classify each loop
-        for loop_edges in &self.my_loops {
-            // OCCT L437-439: create face from wire
-            let wire_tshape = TShape::Wire(TWireData {
-                my_shapes: vec![], flags: tshape_flags::DEFAULT,
-                edges: loop_edges.clone(),
-            });
-            let wire_shape = Shape::new(
-                std::sync::Arc::new(wire_tshape),
-                0, rcad_kernel::topods::Orientation::Forward,
-            );
+        for a_wire in &self.my_loops {
+            let loop_edges = wire_edges(a_wire);
+            // OCCT L437-439: aBB.MakeFace(aFace, aS, aLoc, aTol);
+            // aBB.Add(aFace, aWire) — the loop wire shape is added as-is.
             let face_tshape = TShape::Face(rcad_kernel::topods::TFaceData {
                 my_shapes: vec![], flags: tshape_flags::DEFAULT,
                 surface: Some(a_surf.clone()), surface_location: 0,
-                outer_wire: wire_shape, inner_wires: vec![],
+                outer_wire: a_wire.clone(), inner_wires: vec![],
                 sample_point: None, uv_domain: None,
                 internal_vertices: vec![], tolerance: a_tol,
                 natural_restriction: false,
@@ -512,7 +507,7 @@ impl<'a> BuilderFace<'a> {
                     // OCCT L445-446: FClass2d(aFace).IsHole() — aFace is the
                     // temporary face built from the analyzed loop wire.
                     let fi = self.my_face_index.unwrap_or(0);
-                    let is_hole = self.my_context.fclass2d_is_hole(self.ds, fi, loop_edges);
+                    let is_hole = self.my_context.fclass2d_is_hole(self.ds, fi, &loop_edges);
                     if std::env::var("RCAD_AREA_DEBUG").is_ok() {
                         eprintln!("[AREA] face={} loop n_edges={} is_hole={}", fi, loop_edges.len(), is_hole);
                     }
@@ -671,11 +666,11 @@ impl<'a> BuilderFace<'a> {
         let mut edges_idx: HashMap<(u64, u32), usize> = HashMap::new();
         let mut edge_boxes: Vec<[f64; 4]> = Vec::new();
         for wire in &self.my_loops_internal {
-            for e in wire {
+            for e in wire_edges(wire) {
                 if edges_idx.contains_key(&(e.ptr_id(), e.location)) {
                     continue;
                 }
-                let box_e = match edge_pcurve_on_face(e, fi, self.ds) {
+                let box_e = match edge_pcurve_on_face(&e, fi, self.ds) {
                     // OCCT L645-649: BRepTools::AddUVBounds(myFace, aE, aBoxE)
                     // — exact UV bounds via GeomBndLib_Curve2d.
                     Some((pc, t1, t2)) => match add_uv_bounds(self.ds, fi, &pc, t1, t2) {
@@ -695,7 +690,7 @@ impl<'a> BuilderFace<'a> {
         // OCCT L673-740: classify the edges relatively the area faces.
         let a_medone: HashSet<usize> = HashSet::new();
         let mut a_medone = a_medone;
-        let mut a_face_holes: HashMap<usize, Vec<Vec<Shape>>> = HashMap::new();
+        let mut a_face_holes: HashMap<usize, Vec<Shape>> = HashMap::new();
         for (ai, face) in self.my_areas.iter().enumerate() {
             let f_edges = face_wire_edges(face);
             let f_box = match wire_uv_bounds(self.ds, fi, &f_edges) {
@@ -739,13 +734,7 @@ impl<'a> BuilderFace<'a> {
                     inner_wires = fd.inner_wires.clone();
                 }
                 for w in wires {
-                    inner_wires.push(Shape::new(
-                        std::sync::Arc::new(TShape::Wire(TWireData {
-                            my_shapes: vec![], flags: tshape_flags::DEFAULT,
-                            edges: w.clone(),
-                        })),
-                        0, rcad_kernel::topods::Orientation::Forward,
-                    ));
+                    inner_wires.push(w.clone());
                 }
                 if let TShape::Face(fd) = &*a_face.data {
                     a_face = Shape::new(
@@ -769,11 +758,40 @@ impl<'a> BuilderFace<'a> {
     }
 }
 
+/// OCCT TopoDS_Iterator(theW) — the wire's edges with the wire's orientation
+/// composed (cumOri). The wires built by this pipeline are FORWARD, so the
+/// stored edge orientations are returned unchanged.
+pub(crate) fn wire_edges(w: &Shape) -> Vec<Shape> {
+    use rcad_kernel::topods::Orientation;
+    match &*w.data {
+        TShape::Wire(wd) => {
+            if w.orientation == Orientation::Reversed {
+                wd.edges
+                    .iter()
+                    .map(|e| {
+                        let mut c = e.clone();
+                        c.orientation = match c.orientation {
+                            Orientation::Forward => Orientation::Reversed,
+                            Orientation::Reversed => Orientation::Forward,
+                            other => other,
+                        };
+                        c
+                    })
+                    .collect()
+            } else {
+                wd.edges.clone()
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// OCCT MakeInternalWires (BOPAlgo_BuilderFace.cxx L782-838) — groups the
-/// connected internal edges into wires (edges set with INTERNAL orientation).
+/// connected internal edges into wires (edges set with INTERNAL orientation);
+/// each wire gets aW.Closed(BRep_Tool::IsClosed(aW)) (L835).
 /// aMVE (L788-789) and aAddedMap (L786-787) use TopTools_ShapeMapHasher —
 /// key identity TShape + Location, orientation ignored.
-fn make_internal_wires(edges: &[Shape], locations: &[glam::DAffine3]) -> Vec<Vec<Shape>> {
+fn make_internal_wires(edges: &[Shape], locations: &[glam::DAffine3]) -> Vec<Shape> {
     use rcad_kernel::topods::Orientation;
     // aMVE: vertex -> edges.
     let mut a_mve: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
@@ -786,7 +804,7 @@ fn make_internal_wires(edges: &[Shape], locations: &[glam::DAffine3]) -> Vec<Vec
         }
     }
     let mut a_added: HashSet<(u64, u32)> = HashSet::new();
-    let mut wires: Vec<Vec<Shape>> = Vec::new();
+    let mut wires: Vec<Shape> = Vec::new();
     for e in edges {
         if !a_added.insert((e.ptr_id(), e.location)) {
             continue;
@@ -815,7 +833,8 @@ fn make_internal_wires(edges: &[Shape], locations: &[glam::DAffine3]) -> Vec<Vec
             }
             i += 1;
         }
-        wires.push(a_w);
+        // OCCT L835: aW.Closed(BRep_Tool::IsClosed(aW)).
+        wires.push(crate::bop::algo::wire_splitter::make_wire(&a_w, locations));
     }
     wires
 }

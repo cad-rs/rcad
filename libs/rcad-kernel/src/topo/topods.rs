@@ -479,10 +479,57 @@ impl BRep {
     }
 
     pub fn add_twire(&mut self, edges: Vec<Shape>) -> Shape {
+        // OCCT finalizes every constructed wire with
+        // W.Closed(BRep_Tool::IsClosed(W)) (BRepPrim_Builder::CompleteWire
+        // L217-221, BRepSweep_NumLinearRegularSweep L370,
+        // BOPAlgo_WireSplitter::MakeWire lxx L88). IsClosed for TopAbs_WIRE
+        // (BRep_Tool.cxx L1730-1749): visit the edges' vertices (cumOri),
+        // skip INTERNAL/EXTERNAL vertices, remove each vertex from the map on
+        // the second visit; closed = hasBound && the map is empty.
+        let mut closed_map: std::collections::HashSet<(u64, u32)> =
+            std::collections::HashSet::new();
+        let mut has_bound = false;
+        for e in &edges {
+            let ed = match &*e.data {
+                TShape::Edge(ed) => ed,
+                _ => continue,
+            };
+            let rev = e.orientation == Orientation::Reversed;
+            for sv in [&ed.first, &ed.last] {
+                let vori = if rev {
+                    match sv.orientation {
+                        Orientation::Forward => Orientation::Reversed,
+                        Orientation::Reversed => Orientation::Forward,
+                        other => other,
+                    }
+                } else {
+                    sv.orientation
+                };
+                if matches!(vori, Orientation::Internal | Orientation::External) {
+                    continue;
+                }
+                has_bound = true;
+                // The composed (cumLoc) vertex location; writer wires keep the
+                // stored vertex locations at 0, so the edge location usually
+                // wins.
+                let vloc = if e.location == 0 {
+                    sv.location
+                } else {
+                    self.composed_location(e.location, sv.location)
+                };
+                if !closed_map.insert((sv.ptr_id(), vloc)) {
+                    closed_map.remove(&(sv.ptr_id(), vloc));
+                }
+            }
+        }
+        let mut flags = tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE;
+        if has_bound && closed_map.is_empty() {
+            flags |= tshape_flags::CLOSED;
+        }
         let index = self.tshapes.len();
         let tshape = Arc::new(TShape::Wire(TWireData {
             my_shapes: edges.clone(),
-            flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
+            flags,
             edges,
         }));
 
@@ -493,6 +540,26 @@ impl BRep {
             orientation: Orientation::Forward,
             location: 0,
         }
+    }
+
+    /// The location index of `a` composed with `b` (TopLoc_Location::Multiplied),
+    /// registered in the locations table when absent.
+    fn composed_location(&mut self, a: u32, b: u32) -> u32 {
+        if a == 0 {
+            return b;
+        }
+        if b == 0 {
+            return a;
+        }
+        let ta = self.get_location(a);
+        let tb = self.get_location(b);
+        let composed = ta * tb;
+        for (i, t) in self.locations.iter().enumerate() {
+            if *t == composed {
+                return (i + 1) as u32;
+            }
+        }
+        self.add_location(composed)
     }
 
     pub fn add_tface(

@@ -20,7 +20,7 @@ use glam::{DVec2, DVec3};
 use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{Orientation, TShape};
+use rcad_kernel::topods::{tshape_flags, Orientation, TShape, TWireData};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -81,7 +81,7 @@ impl EdgeInfo {
 #[derive(Clone)]
 pub(crate) struct ConnexityBlock {
     pub shapes: Vec<Shape>,
-    pub loops: Vec<Vec<Shape>>,
+    pub loops: Vec<Shape>,
     pub is_regular: bool,
 }
 
@@ -122,13 +122,8 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape], locations: &[glam::DAffine3
     for block in a_blocks {
         let mut a_cb = ConnexityBlock::new();
         let mut b_regular = true;
-        // Distinct vertices of the block — needed by the single-loop check.
-        let mut a_vertices: HashSet<(u64, u32)> = HashSet::new();
         for &bi in &block {
             let mut a_s = a_c_start[bi].clone();
-            for v in edge_vertices(&a_s, locations) {
-                a_vertices.insert((v.ptr_id(), v.location));
-            }
             if a_mn_regular.contains(&(a_s.ptr_id(), a_s.location)) {
                 b_regular = false;
                 a_s.orientation = Orientation::Forward;
@@ -152,15 +147,6 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape], locations: &[glam::DAffine3
                     }
                 }
             }
-        }
-        // Single-loop condition: a regular block must form ONE closed loop,
-        // so its edge count must equal its distinct vertex count. Two
-        // independent wires (outer wire + hole) merged by the BFS through
-        // shared vertices violate this — the block is flagged irregular and
-        // split_block separates the loops (OCCT reference: 2 independent
-        // 4-edge loops).
-        if b_regular && block.len() != a_vertices.len() {
-            b_regular = false;
         }
         a_cb.is_regular = b_regular;
         result.push(a_cb);
@@ -225,22 +211,22 @@ fn make_connexity_blocks_core(
 }
 
 /// OCCT BOPAlgo_WireSplitter::Perform (L91-118) + MakeWires (L164-226).
-/// Returns the loops as edge sequences.
+/// Returns the loops as wire shapes.
 pub(crate) fn split_into_wires(
     face: &Shape,
     face_index: usize,
     edges: &[Shape],
     ds: &DS,
-) -> Vec<Vec<Shape>> {
+) -> Vec<Shape> {
     if edges.is_empty() {
         return Vec::new();
     }
     let mut my_lcb = make_connexity_blocks(edges, &ds.locations);
     let mut a_vcb: Vec<ConnexityBlock> = Vec::new();
-    let mut result: Vec<Vec<Shape>> = Vec::new();
+    let mut result: Vec<Shape> = Vec::new();
     for cb in my_lcb.iter_mut() {
         if cb.is_regular {
-            let a_w = make_wire(&cb.shapes);
+            let a_w = make_wire(&cb.shapes, &ds.locations);
             result.push(a_w);
         } else {
             a_vcb.push(cb.clone());
@@ -256,10 +242,55 @@ pub(crate) fn split_into_wires(
     result
 }
 
-/// OCCT BOPAlgo_WireSplitter::MakeWire (BOPAlgo_WireSplitter.lxx) — the wire
-/// is the list of edges in order.
-fn make_wire(a_le: &[Shape]) -> Vec<Shape> {
-    a_le.to_vec()
+/// OCCT BOPAlgo_WireSplitter::MakeWire (BOPAlgo_WireSplitter.lxx L78-89) —
+/// aBB.MakeWire(aWire); for each edge aBB.Add(aWire, aIt.Value());
+/// aWire.Closed(BRep_Tool::IsClosed(aWire)).
+/// The wire keeps the edge order; the CLOSED flag is set per
+/// BRep_Tool::IsClosed(theShape) for TopAbs_WIRE (BRep_Tool.cxx L1730-1749).
+pub(crate) fn make_wire(a_le: &[Shape], locations: &[glam::DAffine3]) -> Shape {
+    let mut flags = tshape_flags::DEFAULT;
+    if brep_tool_is_closed_wire(a_le, locations) {
+        flags |= tshape_flags::CLOSED;
+    }
+    Shape::new(
+        std::sync::Arc::new(TShape::Wire(TWireData {
+            my_shapes: vec![],
+            flags,
+            edges: a_le.to_vec(),
+        })),
+        0,
+        Orientation::Forward,
+    )
+}
+
+/// OCCT BRep_Tool::IsClosed(theShape) for TopAbs_WIRE (BRep_Tool.cxx
+/// L1730-1749) — explore the FORWARD-oriented wire's vertices (cumOri/cumLoc),
+/// skip INTERNAL/EXTERNAL vertices, and remove each visited vertex from the
+/// map on the second visit (TopTools_ShapeMapHasher — TShape + Location);
+/// closed = hasBound && the map is empty.
+fn brep_tool_is_closed_wire(edges: &[Shape], locations: &[glam::DAffine3]) -> bool {
+    let mut a_map: HashSet<(u64, u32)> = HashSet::new();
+    let mut has_bound = false;
+    for a_e in edges {
+        let mut a_e_f = a_e.clone();
+        // OCCT: theShape.Oriented(TopAbs_FORWARD) — the wire normalized to
+        // FORWARD; the edges keep their stored orientations.
+        a_e_f.orientation = Orientation::Forward;
+        for a_v in edge_vertices(&a_e_f, locations) {
+            if matches!(
+                a_v.orientation,
+                Orientation::Internal | Orientation::External
+            ) {
+                continue;
+            }
+            has_bound = true;
+            // OCCT L1743-1746: if (!aMap.Add(V)) aMap.Remove(V);
+            if !a_map.insert((a_v.ptr_id(), a_v.location)) {
+                a_map.remove(&(a_v.ptr_id(), a_v.location));
+            }
+        }
+    }
+    has_bound && a_map.is_empty()
 }
 
 /// OCCT BOPAlgo_WireSplitter::SplitBlock (BOPAlgo_WireSplitter_1.cxx L113-355).
@@ -367,7 +398,7 @@ fn split_block(
         b_nothing_to_do = b_nothing_to_do && b_flag;
     }
     if b_nothing_to_do {
-        let a_w = make_wire(&cb.shapes);
+        let a_w = make_wire(&cb.shapes, &ds.locations);
         cb.loops.push(a_w);
         return;
     }
@@ -615,7 +646,7 @@ fn path(
                         }
                     }
                     if i_priz != 0 {
-                        let a_w = make_wire(&a_buf);
+                        let a_w = make_wire(&a_buf, &ds.locations);
                         cb.loops.push(a_w);
                     }
                     if std::env::var("RCAD_WS_DEBUG").is_ok() {
@@ -1312,22 +1343,20 @@ fn curve2d_resolution(c: &Curve2d, tol: f64) -> f64 {
 
 fn edge_vertices(e: &Shape, locations: &[glam::DAffine3]) -> [Shape; 2] {
     match &*e.data {
-        // OCCT TopoDS_Iterator(aE) with cumOri=true (default) composes the edge
-        // orientation into the vertices (TopoDS_Iterator.cxx L35-37, L72-80):
-        // each stored vertex keeps its stored orientation composed with the
-        // edge's own orientation; a REVERSED edge iterates [last, first]. The
-        // edge Location is composed into the vertices as well (cumLoc,
-        // TopoDS_Iterator.cxx L76-78).
-        // The vertex Shape carries no index — identity is the TShape pointer
-        // (TopoDS_Shape handle semantics); index fields mix BRep and DS slots.
+        // OCCT TopoDS_Iterator(aE) iterates the edge's stored vertices IN
+        // STORAGE ORDER [first, last] (TopoDS_Iterator.cxx L57-70: the plain
+        // list iterator over TShape()->myShapes), composing the edge's
+        // orientation into each child (updateCurrentShape L72-78:
+        // TopAbs::Compose) and the edge's location (cumLoc). The order is NOT
+        // reversed for a REVERSED edge — only the child orientations flip.
         TShape::Edge(ed) => {
             let vf_loc =
                 crate::bop::algo::compose_edge_vertex_location(e.location, ed.first.location, locations);
             let vl_loc =
                 crate::bop::algo::compose_edge_vertex_location(e.location, ed.last.location, locations);
             if e.orientation == Orientation::Reversed {
-                [Shape::new(ed.last.data.clone(), vl_loc, flip_ori(ed.last.orientation)),
-                 Shape::new(ed.first.data.clone(), vf_loc, flip_ori(ed.first.orientation))]
+                [Shape::new(ed.first.data.clone(), vf_loc, flip_ori(ed.first.orientation)),
+                 Shape::new(ed.last.data.clone(), vl_loc, flip_ori(ed.last.orientation))]
             } else {
                 [Shape::new(ed.first.data.clone(), vf_loc, ed.first.orientation),
                  Shape::new(ed.last.data.clone(), vl_loc, ed.last.orientation)]
