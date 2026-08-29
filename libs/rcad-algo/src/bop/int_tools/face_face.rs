@@ -961,6 +961,12 @@ impl FaceFace {
                             a_d = d;
                         }
                     }
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        let p0 = a_c3d.point_at(a_first);
+                        eprintln!(
+                            "[TOL3D] curve start=({:.2},{:.2},{:.2}) branch=2d dev={:.6} tol_c_in={:.3e}",
+                            p0.x, p0.y, p0.z, a_d, a_tol_c);
+                    }
                     if a_d > a_tol_c {
                         a_tol_c = a_d;
                     }
@@ -977,6 +983,12 @@ impl FaceFace {
                         if d > a_d {
                             a_d = d;
                         }
+                    }
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        let p0 = a_c3d.point_at(a_first);
+                        eprintln!(
+                            "[TOL3D] curve start=({:.2},{:.2},{:.2}) branch=maxdist dev={:.6} tol_c_in={:.3e}",
+                            p0.x, p0.y, p0.z, a_d, a_tol_c);
                     }
                     if a_d > a_tol_c {
                         a_tol_c = a_d;
