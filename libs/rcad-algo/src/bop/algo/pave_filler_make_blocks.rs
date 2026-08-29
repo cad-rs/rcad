@@ -1908,6 +1908,11 @@ impl PaveFiller {
             }
             if i_flag1 != 0 && i_flag2 != 0 {
                 if a_dist_to_sp < *the_tol_new {
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        eprintln!(
+                            "[IEPB] cid={} cand_e={} dist={:.6} tol_new={:.6} tol_r3d={:.6} flags=({},{})",
+                            cid, n_e_sp, a_dist_to_sp, a_coeff * a_dist_to_sp, the_tol_r3d, i_flag1, i_flag2);
+                    }
                     *a_pb_out = Some(a_pb.clone());
                     *the_tol_new = a_coeff * a_dist_to_sp;
                     b_found = true;
