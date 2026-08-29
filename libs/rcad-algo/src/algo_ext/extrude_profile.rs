@@ -434,20 +434,32 @@ pub fn extrude_profile_solid(
             // closed edge).
             let a_b_len = (b - a).length();
             let closed_gen = a_b_len <= 1e-7 * a.length().max(1.0);
+            // The closed generating edge keeps the arc's own parameter range
+            // [t0, t1]; its pcurve must satisfy u(t) = az(t) over THAT range,
+            // so the line origin absorbs the offset between the arc's
+            // parameter origin and the cylinder's azimuth (u = az0 - t0 + t).
+            let (t_seg0, t_seg1) = match &profile[i] {
+                ProfileSegment::Arc { t0, t1, .. } => (*t0, *t1),
+                ProfileSegment::Line { .. } => (0.0, a_b_len),
+            };
             let gen_pc = |p: DVec3, q: DVec3| -> Option<(Curve2d, f64, f64)> {
                 pc_of(p, q).or_else(|| {
                     if !closed_gen {
                         return None;
                     }
                     let uv = to_uv(p);
-                    let u0 = if uv.x < 0.0 { uv.x + std::f64::consts::TAU } else { uv.x };
+                    let az0 = if uv.x < 0.0 {
+                        uv.x + std::f64::consts::TAU
+                    } else {
+                        uv.x
+                    };
                     Some((
                         Curve2d::Line(Line2d::new(
-                            DVec2::new(u0, uv.y),
+                            DVec2::new(az0 - t_seg0, uv.y),
                             DVec2::new(1.0, 0.0),
                         )),
-                        0.0,
-                        std::f64::consts::TAU,
+                        t_seg0,
+                        t_seg1,
                     ))
                 })
             };
