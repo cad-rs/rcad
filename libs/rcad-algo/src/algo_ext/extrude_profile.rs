@@ -427,15 +427,38 @@ pub fn extrude_profile_solid(
             // top copy.  OCCT BRepSweep_Translation::SetGeneratingPCurve
             // (BRepSweep_Translation.cxx L367-373): the top edge's pcurve sits
             // at v = -myVec.Magnitude() (aDirV.Index() == 2), not at the
-            // bottom edge's v = 0 — the two lines are distinct.
-            if let Some((gp, t0p, t1p)) = pc_of(a, b) {
+            // bottom edge's v = 0 — the two lines are distinct.  A CLOSED
+            // generating edge (a full-circle `profile c 60 360`) has a
+            // degenerate chord: its pcurve is the full-period line in u at
+            // constant v (BRepSweep writes the periodic trace of the swept
+            // closed edge).
+            let a_b_len = (b - a).length();
+            let closed_gen = a_b_len <= 1e-7 * a.length().max(1.0);
+            let gen_pc = |p: DVec3, q: DVec3| -> Option<(Curve2d, f64, f64)> {
+                pc_of(p, q).or_else(|| {
+                    if !closed_gen {
+                        return None;
+                    }
+                    let uv = to_uv(p);
+                    let u0 = if uv.x < 0.0 { uv.x + std::f64::consts::TAU } else { uv.x };
+                    Some((
+                        Curve2d::Line(Line2d::new(
+                            DVec2::new(u0, uv.y),
+                            DVec2::new(1.0, 0.0),
+                        )),
+                        0.0,
+                        std::f64::consts::TAU,
+                    ))
+                })
+            };
+            if let Some((gp, t0p, t1p)) = gen_pc(a, b) {
                 let k0 = rcad_kernel::topo::topods::compose_pcurve_location(0, 0, &brep.locations);
                 brep.edge_mut_inplace(b_ed[i].clone())
                     .pcurves
                     .insert((fp, k0), (gp.clone(), t0p, t1p));
                 let k1 =
                     rcad_kernel::topo::topods::compose_pcurve_location(0, loc, &brep.locations);
-                if let Some((gp_top, t0t, t1t)) = pc_of(a + dir * depth, b + dir * depth) {
+                if let Some((gp_top, t0t, t1t)) = gen_pc(a + dir * depth, b + dir * depth) {
                     brep.edge_mut_inplace(t_ed[i].clone())
                         .pcurves
                         .insert((fp, k1), (gp_top, t0t, t1t));
