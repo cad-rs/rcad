@@ -124,7 +124,13 @@ pub fn extrude_profile_solid(
     depth: f64,
 ) -> Result<topods::BRep, super::features::FeatureError> {
     let n = profile.len();
-    if n < 3 {
+    // OCCT BRepBuilderAPI_MakeWire accepts a single CLOSED circular edge (a
+    // full-circle `profile f c 60 360`) and BRepLib_MakeFace builds the disk;
+    // a straight-line-only profile needs the usual closed polygon.
+    let closed_arc_profile = n == 1
+        && matches!(profile[0], ProfileSegment::Arc { .. })
+        && (profile[0].p1() - profile[0].p0()).length() <= 1e-7 * profile[0].p0().length().max(1.0);
+    if n < 3 && !closed_arc_profile {
         return Err(super::features::FeatureError::InvalidInput("profile needs >= 3 segments"));
     }
     let dir = direction.normalize_or_zero();
@@ -134,6 +140,28 @@ pub fn extrude_profile_solid(
     if !depth.is_finite() || depth <= 0.0 {
         return Err(super::features::FeatureError::NonPositiveInput("depth"));
     }
+    // OCCT stores curve parameter ranges increasing; the traversal direction
+    // of a "clockwise" arc (`profile c -30 360`) is carried by the circle's
+    // axis sense, not by a decreasing range. Mirror y_dir and negate the
+    // parameters: point'(t) = center + r(cos t * x - sin t * y) visits the
+    // same points in the same order with the range increasing.
+    let profile_owned: Vec<ProfileSegment> = profile
+        .iter()
+        .map(|seg| match seg {
+            ProfileSegment::Arc { t0, t1, .. } if t1 < t0 => {
+                let mut seg = seg.clone();
+                if let ProfileSegment::Arc { y_dir, t0, t1, .. } = &mut seg {
+                    *y_dir = -*y_dir;
+                    *t0 = -*t0;
+                    *t1 = -*t1;
+                }
+                seg
+            }
+            _ => seg.clone(),
+        })
+        .collect();
+    let profile: &[ProfileSegment] = &profile_owned;
+    let n = profile.len();
     // Cap frame from OCCT BRepLib_FindSurface (BRepLib_FindSurface.cxx
     // L248-578), as used by BRepLib_MakeFace/BRepPrimAPI_MakePrism: origin =
     // weighted barycenter of the sampled profile points, normal = profile
@@ -169,6 +197,15 @@ pub fn extrude_profile_solid(
         if n_raw.length_squared() > 0.5 {
             break;
         }
+    }
+    if n_raw.length_squared() < 0.5 {
+        // A closed circular arc has a degenerate chord; its profile plane is
+        // the arc's own normal (BRepLib_FindSurface's least-squares plane of
+        // the sampled points coincides with the circle axis).
+        n_raw = match (&profile[0], closed_arc_profile) {
+            (ProfileSegment::Arc { normal, .. }, true) => *normal,
+            _ => DVec3::ZERO,
+        };
     }
     if n_raw.length_squared() < 0.5 {
         return Err(super::features::FeatureError::InvalidInput("profile segments are collinear"));
