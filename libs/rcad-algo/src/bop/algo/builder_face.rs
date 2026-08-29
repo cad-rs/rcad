@@ -165,6 +165,18 @@ impl<'a> BuilderFace<'a> {
             for a_e in &self.my_edges {
                 if self.my_shapes_to_avoid.contains(&(a_e.ptr_id(), a_e.location, a_e.orientation)) { continue; }
                 for a_v in Self::edge_vertices(a_e, &self.ds.locations) {
+                    if std::env::var("RCAD_AVOID_DEBUG").is_ok() {
+                        let p = a_v.as_vertex().map(|vd| {
+                            let m = self.ds.locations.get(
+                                crate::bop::algo::compose_edge_vertex_location(a_e.location, a_v.location, &self.ds.locations) as usize,
+                            ).copied().unwrap_or(glam::DAffine3::IDENTITY);
+                            let w = m.transform_point3(vd.point);
+                            format!("({:.2},{:.2},{:.2})", w.x, w.y, w.z)
+                        }).unwrap_or_default();
+                        eprintln!(
+                            "[AVOID] face={:?} e={:+x}@{} v={:+x}@{} wpt={} -> mve",
+                            self.my_face_index.map(|i| i), a_e.ptr_id() & 0xffff, a_e.location, a_v.ptr_id() & 0xffff, a_v.location, p);
+                    }
                     let entry = a_mve
                         .entry((a_v.ptr_id(), a_v.location))
                         .or_insert_with(|| (a_v.clone(), Vec::new()));
