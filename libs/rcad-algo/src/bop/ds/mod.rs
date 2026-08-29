@@ -962,7 +962,7 @@ impl DS {
     fn init_shape(&mut self, idx: usize, s: &Shape) {
         self.shapes[idx].shape_type = s.shape_type();
         // OCCT: no dedup — closed edges need duplicate vertex entries.
-        let children = sub_shapes_of(s);
+        let children = sub_shapes_of(s, &mut self.locations);
         for child in children {
             let pk = (child.ptr_id(), child.location);
             let ci = match self.map_shape_index.get(&pk) {
@@ -3185,26 +3185,40 @@ fn clone_tshape(ts: &TShape, cache: &mut HashMap<u64, Arc<TShape>>) -> TShape {
     }
 }
 
-fn sub_shapes_of(s: &Shape) -> Vec<Shape> {
+fn sub_shapes_of(s: &Shape, locations: &mut Vec<glam::DAffine3>) -> Vec<Shape> {
+    // OCCT TopLoc_Location composition (TopoDS_Iterator::Value, cumLoc=true,
+    // TopoDS_Iterator.cxx L76-78): the effective Location of a sub-shape is
+    // parent.Location * subshape.Location. The composed datum is created on
+    // demand (TopLoc_Location::Multiplied), registered in the table.
+    fn composed_loc(a: u32, b: u32, locations: &mut Vec<glam::DAffine3>) -> u32 {
+        if a == 0 { return b; }
+        if b == 0 { return a; }
+        let ta = locations.get(a as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+        let tb = locations.get(b as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+        let composed = ta * tb;
+        match locations.iter().position(|l| *l == composed) {
+            Some(i) => i as u32,
+            None => { locations.push(composed); (locations.len() - 1) as u32 }
+        }
+    }
     // Preserve original BRep index so edge_vertex_params can look up vertex_params.
     let cp = |sr: &Shape| Shape::from_parts(sr.data.clone(), sr.index, sr.location, sr.orientation);
     match &*s.data {
         TShape::Vertex(_) => vec![],
         TShape::Edge(ed) => {
-            // OCCT TopoDS_Iterator(aE, cumLoc) composes the edge Location into
-            // the vertices (TopoDS_Iterator.cxx L76-78). A folded edge (same
-            // TShape + Location, e.g. the extruded cap of MakePrism) must
-            // register its located endpoint vertices, or the DS vertex
-            // adjacency (sub_shapes) never connects it to the sweep edges.
-            // Identity fast paths keep the exact index; a nested fold (both
-            // locations non-identity) has no table access here and falls back
-            // to the edge location — no such shape occurs in the test inputs.
-            let loc = s.location;
-            let vl = |v: &Shape| {
-                let vloc = if loc == 0 { v.location } else { loc };
-                Shape::from_parts(v.data.clone(), v.index, vloc, v.orientation)
-            };
-            vec![vl(&ed.first), vl(&ed.last)]
+            // OCCT TopoDS_Iterator(aE, cumLoc=true) composes the edge Location
+            // with the vertex's STORED Location: parent * child. Stored
+            // references are relative — TopoDS_Builder::Add pre-divides the
+            // child by the parent Location (TopoDS_Builder.cxx L88-92,
+            // aChild.Move(aLoc.Inverted())), so the composition restores the
+            // vertex's own Location. Using the edge location alone would
+            // double-apply it for pre-divided references (pave vertices built
+            // on located source edges by MakeSplitEdge/PushEdgeInherit).
+            let eloc = s.location;
+            let vlf = composed_loc(eloc, ed.first.location, locations);
+            let vll = composed_loc(eloc, ed.last.location, locations);
+            vec![Shape::from_parts(ed.first.data.clone(), ed.first.index, vlf, ed.first.orientation),
+                 Shape::from_parts(ed.last.data.clone(), ed.last.index, vll, ed.last.orientation)]
         }
         TShape::Wire(wd) => wd.edges.iter().map(cp).collect(),
         TShape::Face(fd) => {
