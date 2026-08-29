@@ -1616,32 +1616,27 @@ fn wline_part_bspline2d(line: &IntPatchLine, fprm: f64, lprm: f64, on_first: boo
 
 /// OCCT GeomInt_LineConstructor::Parameters (L820-862) + AdjustPeriodic
 /// (L737-816) + Classify.  Analytic UV inversion of a 3D point on a quadric
-/// surface, shifted into the face UV rectangle before the domain test.  The
-/// restriction form (non-empty arcs) classifies against the face's boundary
-/// pcurve polygon (BRepTopAdaptor_TopolTool::Classify), the rectangle form
-/// against the UV box.
+/// surface, shifted into the face UV rectangle before the domain test.
+///
+/// The domain test is PURE RECTANGLE inclusion with a tolerance band:
+/// IntTools_FaceFace's LineConstructor domains are `IntTools_TopolTool(myHS)`
+/// instances (IntTools_FaceFace.cxx L476-477) and IntTools_TopolTool does not
+/// override Adaptor3d_TopolTool::Classify (IntTools_TopolTool.cxx overrides
+/// only Initialize/SamplePnts), so the base rectangle check applies
+/// (Adaptor3d_TopolTool.cxx L280-459, nbRestr==4 branch): OUT beyond the box
+/// by more than Tol, ON within Tol, IN inside.  The face's boundary pcurve
+/// polygons never participate in the LineConstructor classification.
 fn classify_point(
     surf: &Surface3,
     rect: [f64; 4],
     p3d: DVec3,
     tol: f64,
-    arcs: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
+    _arcs: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
 ) -> bool {
     match quadric_uv_params(surf, p3d) {
         Some(uv) => {
             let adj = adjust_periodic_uv(surf, uv, rect);
-            if arcs.is_empty() {
-                in_uv_rect(adj, rect, tol)
-            } else {
-                let (u_per, v_per) = match surf {
-                    Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) => (true, false),
-                    Surface3::Torus(_) => (true, true),
-                    _ => (false, false),
-                };
-                crate::geomalgo::int_patch::so_on_bounds::classify_in_restriction(
-                    adj.x, adj.y, rect, arcs, tol, u_per, v_per,
-                ) != rcad_kernel::topods::State::Out
-            }
+            in_uv_rect(adj, rect, tol)
         }
         None => false,
     }
