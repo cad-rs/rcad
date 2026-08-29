@@ -2324,7 +2324,7 @@ impl<'a> Builder<'a> {
             let a_ff_sphere = a_ff.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, rcad_kernel::geom::Surface3::Sphere(_)));
             for a_e in self.face_edges(&a_ff) {
                 let an_ori_e = a_e.orientation;
-                if (i == 53 || i == 58) && std::env::var("RCAD_BS_DEBUG").is_ok() {
+                if (i == 53 || i == 58 || i == 2) && std::env::var("RCAD_BS_DEBUG").is_ok() {
                     let imgs = self.images_of(&a_e);
                     let bound = imgs.is_some();
                     let img_desc: Vec<String> = imgs
