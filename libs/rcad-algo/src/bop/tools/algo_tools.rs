@@ -465,13 +465,29 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
             // composed wire x edge orientation).
             let w_or = w.orientation;
             let edges = wd.edges.clone();
+            // OCCT TopExp::Vertices(E, Vfirst, Vlast, CumOri) (TopExp.cxx
+            // L144-180): the traversal start is the FORWARD-oriented vertex
+            // child of the edge, the end the REVERSED one — never the field
+            // order.  The GWedge box edges store the OCCT add-order
+            // (BRepPrim_GWedge::Edge: first = rev(high-end vertex, added with
+            // AddEdgeVertex direct=false), last = fwd(low-end vertex)), so
+            // their `first` field is the traversal END; the pave-split edges
+            // store (first = fwd(start), last = rev(end)).  Both are resolved
+            // by orientation, and a REVERSED edge occurrence swaps them
+            // (TopoDS_Iterator CumOri composition).
             let trav = |e: &Shape| -> Option<((u64, u32), (u64, u32))> {
                 let ed = e.as_edge()?;
+                let (vf, vl) = if ed.first.orientation == Orientation::Reversed {
+                    (&ed.last, &ed.first)
+                } else {
+                    (&ed.first, &ed.last)
+                };
+                let vf_k = (vf.ptr_id(), vf.location);
+                let vl_k = (vl.ptr_id(), vl.location);
                 let eff = Orientation::compose(w_or, e.orientation);
-                let (vf, vl) = ((ed.first.ptr_id(), ed.first.location), (ed.last.ptr_id(), ed.last.location));
                 Some(match eff {
-                    Orientation::Reversed => (vl, vf),
-                    _ => (vf, vl),
+                    Orientation::Reversed => (vl_k, vf_k),
+                    _ => (vf_k, vl_k),
                 })
             };
             let mut order: Vec<(usize, bool)> = Vec::with_capacity(edges.len()); // (edge index, reversed)
@@ -579,12 +595,37 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                     pcurve_ok = false;
                     break;
                 };
-                // Traversal direction: FORWARD -> [t1, t2], REVERSED -> [t2, t1]
-                // (TopoDS_Iterator cumOri), then flipped for a loop-reversed
-                // edge (its traversal end joins the current vertex).
-                let (ta, tb) = match Orientation::compose(w_or, e.orientation) {
-                    Orientation::Reversed => (t2, t1),
-                    _ => (t1, t2),
+                // Traversal direction: OCCT samples the pcurve from the
+                // traversal start vertex parameter to the end vertex parameter
+                // (BRep_Tool::Parameter(V, E) — the edge's vertex_params,
+                // BRep_TEdge vertex-parameter table).  For edges whose pcurve
+                // parametrization runs opposite to the (first, last) field
+                // order (the GWedge box edges: curve +axis, first = rev(high))
+                // the vertex parameters give the correct direction; the
+                // field/range guess below is the fallback for edges without
+                // vertex parameters (the pave-split edges have none, and their
+                // fields follow the curve parametrization).
+                let (vf, vl) = if ed.first.orientation == Orientation::Reversed {
+                    (&ed.last, &ed.first)
+                } else {
+                    (&ed.first, &ed.last)
+                };
+                let (ta, tb) = if vf.ptr_id() != vl.ptr_id() {
+                    match (
+                        ed.vertex_params.get(&vf.ptr_id()).copied(),
+                        ed.vertex_params.get(&vl.ptr_id()).copied(),
+                    ) {
+                        (Some(a), Some(b)) => (a, b),
+                        _ => match Orientation::compose(w_or, e.orientation) {
+                            Orientation::Reversed => (t2, t1),
+                            _ => (t1, t2),
+                        },
+                    }
+                } else {
+                    match Orientation::compose(w_or, e.orientation) {
+                        Orientation::Reversed => (t2, t1),
+                        _ => (t1, t2),
+                    }
                 };
                 let (ta, tb) = if rev { (tb, ta) } else { (ta, tb) };
                 for i in 0..=PCURVE_SAMPLES {
@@ -601,7 +642,8 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                 return;
             }
             // Fall back: sample the two traversal endpoints (start, end) in
-            // order: FORWARD -> [first, last], REVERSED -> [last, first]
+            // order resolved by vertex orientation (TopExp::Vertices semantics,
+            // see trav above) and swapped for a REVERSED occurrence
             // (TopoDS_Iterator cumOri semantics).
             for &(ei, rev) in &order {
                 let e = &edges[ei];
@@ -611,8 +653,13 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                 };
                 let (p0, p1) = match &*e.data {
                     TShape::Edge(ed) => {
-                        let loc0 = if e.location != 0 { e.location } else { ed.first.location };
-                        let loc1 = if e.location != 0 { e.location } else { ed.last.location };
+                        let (vf, vl) = if ed.first.orientation == Orientation::Reversed {
+                            (&ed.last, &ed.first)
+                        } else {
+                            (&ed.first, &ed.last)
+                        };
+                        let loc0 = if e.location != 0 { e.location } else { vf.location };
+                        let loc1 = if e.location != 0 { e.location } else { vl.location };
                         let pt = |vd: &rcad_kernel::topods::TVertexData, loc: u32| -> glam::DVec3 {
                             if loc == 0 {
                                 vd.point
@@ -624,11 +671,11 @@ fn shape_uv_polygons(face: &Shape, locations: &[glam::DAffine3]) -> Option<Vec<V
                                     .transform_point3(vd.point)
                             }
                         };
-                        let a = match &*ed.first.data {
+                        let a = match &*vf.data {
                             TShape::Vertex(vd) => pt(vd, loc0),
                             _ => glam::DVec3::ZERO,
                         };
-                        let b = match &*ed.last.data {
+                        let b = match &*vl.data {
                             TShape::Vertex(vd) => pt(vd, loc1),
                             _ => glam::DVec3::ZERO,
                         };
