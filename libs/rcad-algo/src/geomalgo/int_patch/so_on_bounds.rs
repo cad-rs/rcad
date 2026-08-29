@@ -98,7 +98,8 @@ impl PathPoint {
     }
     /// OCCT Vertex().
     pub fn vertex(&self) -> DomainVertex {
-        self.vtx.unwrap_or(DomainVertex { u: 0.0, v: 0.0 })
+        self.vtx
+            .unwrap_or(DomainVertex { u: 0.0, v: 0.0, param: 0.0 })
     }
     /// OCCT Arc().
     pub fn arc(&self) -> &Curve2d {
@@ -346,19 +347,52 @@ fn nb_samples_on_arc(a: &Curve2d) -> i32 {
 // =====================================================================
 
 /// A corner of the UV domain rectangle (Adaptor3d_HVertex equivalent).
+///
+/// `param` is the vertex parameter on the current boundary arc (OCCT
+/// BRepTopAdaptor_HVertex::Parameter = BRep_Tool::Parameter(V, E, F)); it is
+/// only consumed by the restriction-arc form of the domain (the rectangle
+/// form derives the parameter from the u/v corner coordinates as before).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DomainVertex {
     pub u: f64,
     pub v: f64,
+    pub param: f64,
 }
 
-/// The domain of restriction of a surface: the corrected FF UV rectangle.
-/// Its boundary arcs are the four edges of the rectangle.
+/// One boundary arc of the face-restriction domain — the stored pcurve of one
+/// edge occurrence in a face wire (OCCT BRepAdaptor_Curve2d), with the edge's
+/// parameter range (IntPatch_HInterTool::Bounds = FirstParameter/LastParameter)
+/// and the BRep-vertex parameters on the pcurve (the TopolTool domain vertices
+/// enumerated by InitVertexIterator, BRep_Tool::Parameter(V, E, F)).
+#[derive(Debug, Clone)]
+pub struct BoundaryArc {
+    pub arc: Curve2d,
+    pub first: f64,
+    pub last: f64,
+    pub vtx_params: Vec<f64>,
+}
+
+/// The domain of restriction of a surface.
+///
+/// Rectangle form (`segs` empty): the corrected FF UV rectangle whose boundary
+/// arcs are the four edges of the rectangle.
+///
+/// Restriction form (`segs` non-empty): the face boundary pcurves sampled from
+/// the face wires (OCCT Adaptor3d_TopolTool Restriction mode,
+/// BRepTopAdaptor_TopolTool::Initialize — one BRepAdaptor_Curve2d arc per
+/// TopExp_Explorer edge occurrence); the UV box is kept for the coarse band
+/// test in Classify and the periodic re-framing.
 pub struct Domain {
     u_min: f64,
     u_max: f64,
     v_min: f64,
     v_max: f64,
+    /// The face boundary arcs (restriction form; empty = rectangle form).
+    segs: Vec<BoundaryArc>,
+    /// Surface periodicity (OCCT BRepAdaptor_Surface::IsUPeriodic/IsVPeriodic),
+    /// consumed by the restriction-form Classify re-framing.
+    u_periodic: bool,
+    v_periodic: bool,
     // Current arc index for Init/More/Value/Next.
     arc_idx: usize,
     // Current vertex iterator state for the current arc.
@@ -374,6 +408,35 @@ impl Domain {
             u_max,
             v_min,
             v_max,
+            segs: Vec::new(),
+            u_periodic: false,
+            v_periodic: false,
+            arc_idx: 0,
+            vtx_idx: 0,
+            vtx_arc: 0,
+        }
+    }
+
+    /// Restriction-form domain: the face boundary arcs over the (still
+    /// corrected) UV rectangle, with the surface periodicity for the
+    /// Classify re-framing.
+    pub fn new_with_arcs(
+        u_min: f64,
+        u_max: f64,
+        v_min: f64,
+        v_max: f64,
+        segs: Vec<BoundaryArc>,
+        u_periodic: bool,
+        v_periodic: bool,
+    ) -> Self {
+        Domain {
+            u_min,
+            u_max,
+            v_min,
+            v_max,
+            segs,
+            u_periodic,
+            v_periodic,
             arc_idx: 0,
             vtx_idx: 0,
             vtx_arc: 0,
@@ -394,6 +457,17 @@ impl Domain {
     /// is not represented here.
     pub fn classify(&self, u: f64, v: f64, tol: f64) -> rcad_kernel::topods::State {
         use rcad_kernel::topods::State;
+        if !self.segs.is_empty() {
+            return classify_in_restriction(
+                u,
+                v,
+                [self.u_min, self.u_max, self.v_min, self.v_max],
+                &self.segs,
+                tol,
+                self.u_periodic,
+                self.v_periodic,
+            );
+        }
         if u > self.u_min + tol
             && u < self.u_max - tol
             && v > self.v_min + tol
@@ -417,10 +491,16 @@ impl Domain {
     }
     /// OCCT TopolTool::More().
     pub fn more(&self) -> bool {
+        if !self.segs.is_empty() {
+            return self.arc_idx < self.segs.len();
+        }
         self.arc_idx < 4
     }
     /// OCCT TopolTool::Value() — the current boundary arc (2D curve in UV).
     pub fn value(&self) -> Curve2d {
+        if !self.segs.is_empty() {
+            return self.segs[self.arc_idx].arc.clone();
+        }
         let (o, d) = match self.arc_idx {
             0 => (DVec2::new(0.0, self.v_min), DVec2::new(1.0, 0.0)),
             1 => (DVec2::new(0.0, self.v_max), DVec2::new(1.0, 0.0)),
@@ -434,8 +514,12 @@ impl Domain {
         self.arc_idx += 1;
     }
 
-    /// OCCT IntPatch_HInterTool::Bounds(A, Ufirst, Ulast).
+    /// OCCT IntPatch_HInterTool::Bounds(A, Ufirst, Ulast) — the arc's own
+    /// parameter range (A->FirstParameter()/LastParameter()).
     pub fn bounds(&self, a: &Curve2d) -> (f64, f64) {
+        if let Some(i) = self.index_of_arc(a) {
+            return (self.segs[i].first, self.segs[i].last);
+        }
         // Arc 0/1: V=const, U in [u_min,u_max]; Arc 2/3: U=const, V in [v_min,v_max].
         if matches!(a, Curve2d::Line(l) if l.direction.y.abs() > 0.5) {
             (self.v_min, self.v_max)
@@ -444,48 +528,73 @@ impl Domain {
         }
     }
 
+    /// The index of the restriction arc matching `a` (OCCT handle identity
+    /// Arc() == A recovered by structural match).
+    fn index_of_arc(&self, a: &Curve2d) -> Option<usize> {
+        if self.segs.is_empty() {
+            return None;
+        }
+        self.segs.iter().position(|s| curves_same(&s.arc, a))
+    }
+
     /// OCCT TopolTool::Initialize(A) — attach the vertex iterator to an arc.
     pub fn initialize(&mut self, a: &Curve2d) {
-        self.vtx_arc = self.arc_of(a);
+        self.vtx_arc = self.index_of_arc(a).unwrap_or_else(|| {
+            if self.segs.is_empty() {
+                self.arc_of(a)
+            } else {
+                self.arc_idx.min(self.segs.len().saturating_sub(1))
+            }
+        });
         self.vtx_idx = 0;
     }
     /// OCCT TopolTool::InitVertexIterator().
     pub fn init_vertex_iterator(&mut self) {
         self.vtx_idx = 0;
     }
-    /// OCCT TopolTool::MoreVertex() — each arc has two endpoint corners.
+    /// OCCT TopolTool::MoreVertex() — each arc has two endpoint corners
+    /// (rectangle form) or the edge's BRep vertices (restriction form).
     pub fn more_vertex(&self) -> bool {
+        if !self.segs.is_empty() {
+            return self.vtx_idx < self.segs[self.vtx_arc].vtx_params.len();
+        }
         self.vtx_idx < 2
     }
     /// OCCT TopolTool::Vertex().
     pub fn vertex(&self) -> DomainVertex {
+        if !self.segs.is_empty() {
+            let seg = &self.segs[self.vtx_arc];
+            let param = seg.vtx_params[self.vtx_idx];
+            let p2d = seg.arc.point_at(param);
+            return DomainVertex { u: p2d.x, v: p2d.y, param };
+        }
         match self.vtx_arc {
             0 => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_min, v: self.v_min }
+                    DomainVertex { u: self.u_min, v: self.v_min, param: 0.0 }
                 } else {
-                    DomainVertex { u: self.u_max, v: self.v_min }
+                    DomainVertex { u: self.u_max, v: self.v_min, param: 0.0 }
                 }
             }
             1 => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_min, v: self.v_max }
+                    DomainVertex { u: self.u_min, v: self.v_max, param: 0.0 }
                 } else {
-                    DomainVertex { u: self.u_max, v: self.v_max }
+                    DomainVertex { u: self.u_max, v: self.v_max, param: 0.0 }
                 }
             }
             2 => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_min, v: self.v_min }
+                    DomainVertex { u: self.u_min, v: self.v_min, param: 0.0 }
                 } else {
-                    DomainVertex { u: self.u_min, v: self.v_max }
+                    DomainVertex { u: self.u_min, v: self.v_max, param: 0.0 }
                 }
             }
             _ => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_max, v: self.v_min }
+                    DomainVertex { u: self.u_max, v: self.v_min, param: 0.0 }
                 } else {
-                    DomainVertex { u: self.u_max, v: self.v_max }
+                    DomainVertex { u: self.u_max, v: self.v_max, param: 0.0 }
                 }
             }
         }
@@ -526,6 +635,10 @@ impl Domain {
 
     /// OCCT IntPatch_HInterTool::Parameter(V, A).
     pub fn parameter(&self, v: DomainVertex, a: &Curve2d) -> f64 {
+        if !self.segs.is_empty() {
+            // BRepTopAdaptor_HVertex::Parameter = BRep_Tool::Parameter(V, E, F).
+            return v.param;
+        }
         if matches!(a, Curve2d::Line(l) if l.direction.y.abs() > 0.5) {
             v.v
         } else {
@@ -564,6 +677,187 @@ impl Domain {
     /// OCCT TopolTool::Edge() — the BRep edge; rcad's domain has no BRep edge.
     pub fn edge(&self) -> Option<()> {
         None
+    }
+}
+
+/// OCCT BRepTopAdaptor_TopolTool::Classify (BRepTopAdaptor_FClass2d::Perform
+/// → IntTools_FClass2d::Perform → CSLib_Class2d::SiDans) against the
+/// face-restriction polygon: coarse UV-box band rejection, then the
+/// internalSiDansOuOn ray-cast over each closed wire polyline with the ON
+/// detection at a vertex / on an edge within the tolerance, then IN/OUT by
+/// the crossing parity (even-odd handles inner-wire holes).  The periodic
+/// directions fold the point by the 2*pi period into the polygon's box before
+/// the tests (RecadreOnPeriodic, BRepTopAdaptor_FClass2d::Perform L550-588) —
+/// the FF UV rectangle (clamped to the surface natural domain in the periodic
+/// directions) can sit a whole period away from the stored pcurves' frame.
+///
+/// Pure function over the boundary arcs — no DS lookups (the shared form used
+/// by Domain::classify and the face_make_curve classification).
+pub fn classify_in_restriction(
+    u: f64,
+    v: f64,
+    uv: [f64; 4],
+    segs: &[BoundaryArc],
+    tol: f64,
+    u_periodic: bool,
+    v_periodic: bool,
+) -> rcad_kernel::topods::State {
+    use rcad_kernel::topods::State;
+    // Quick rejection test for points clearly outside the bounding box
+    // (CSLib_Class2d::SiDans, CSLib_Class2d.cxx L160-167).
+    if u < uv[0] - tol || u > uv[1] + tol || v < uv[2] - tol || v > uv[3] + tol {
+        return State::Out;
+    }
+    const NS: usize = 32;
+    // Sample each boundary arc into a polyline chain (IntTools_FClass2d::Init
+    // accumulates one SeqPnt2d per TopExp_Explorer wire).
+    let mut chains: Vec<Vec<DVec2>> = Vec::with_capacity(segs.len());
+    for seg in segs {
+        let mut pts = Vec::with_capacity(NS + 1);
+        for k in 0..=NS {
+            let t = seg.first + (seg.last - seg.first) * (k as f64) / (NS as f64);
+            pts.push(seg.arc.point_at(t));
+        }
+        chains.push(pts);
+    }
+    // Group the chains into wires: chains sharing an endpoint belong to the
+    // same wire loop, and the loop polyline is CLOSED (the CSLib_Class2d
+    // parity runs over the closing segment as well).
+    let mut wires: Vec<Vec<DVec2>> = Vec::new();
+    let mut used = vec![false; chains.len()];
+    for i in 0..chains.len() {
+        if used[i] {
+            continue;
+        }
+        used[i] = true;
+        let mut wire = chains[i].clone();
+        loop {
+            let last = *wire.last().unwrap();
+            let mut found: Option<(usize, bool)> = None;
+            for j in 0..chains.len() {
+                if used[j] {
+                    continue;
+                }
+                let c = &chains[j];
+                if (c[0] - last).length() <= rcad_kernel::precision::CONFUSION {
+                    found = Some((j, false));
+                    break;
+                }
+                if (c[c.len() - 1] - last).length() <= rcad_kernel::precision::CONFUSION {
+                    found = Some((j, true));
+                    break;
+                }
+            }
+            match found {
+                Some((j, rev)) => {
+                    used[j] = true;
+                    let mut c = chains[j].clone();
+                    if rev {
+                        c.reverse();
+                    }
+                    c.remove(0);
+                    wire.extend(c);
+                }
+                None => break,
+            }
+        }
+        wires.push(wire);
+    }
+    let a_period = std::f64::consts::TAU;
+    let (mut u, mut v) = (u, v);
+    if u_periodic || v_periodic {
+        // RecadreOnPeriodic (BRepTopAdaptor_FClass2d::Perform L550-588): fold
+        // the point by the period into the polygon's box — the FF UV rectangle
+        // (clamped to the surface natural domain in the periodic directions)
+        // can sit a whole period away from the stored pcurves' frame.
+        let (mut u_lo, mut u_hi, mut v_lo, mut v_hi) = (
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        );
+        for wire in &wires {
+            for q in wire {
+                u_lo = u_lo.min(q.x);
+                u_hi = u_hi.max(q.x);
+                v_lo = v_lo.min(q.y);
+                v_hi = v_hi.max(q.y);
+            }
+        }
+        if u_periodic && u_lo.is_finite() {
+            if u < u_lo - tol {
+                while u < u_lo - tol {
+                    u += a_period;
+                }
+            } else if u > u_hi + tol {
+                while u > u_hi + tol {
+                    u -= a_period;
+                }
+            }
+        }
+        if v_periodic && v_lo.is_finite() {
+            if v < v_lo - tol {
+                while v < v_lo - tol {
+                    v += a_period;
+                }
+            } else if v > v_hi + tol {
+                while v > v_hi + tol {
+                    v -= a_period;
+                }
+            }
+        }
+    }
+    // internalSiDansOuOn (CSLib_Class2d.cxx L275-330) over each closed wire
+    // polygon: relative deltas to the query point, ON at a vertex within the
+    // tolerance, ON on an edge by the Y interpolation at the query X, and the
+    // ray-cast crossing count with the (dy < 0.0) sign convention.  The
+    // crossings of all wires are combined (even-odd handles inner wires).
+    let mut crossings = 0usize;
+    for wire in &wires {
+        let n = wire.len();
+        if n < 3 {
+            continue;
+        }
+        let mut prev = wire[n - 1];
+        for curr in wire.iter() {
+            let dpx = prev.x - u;
+            let dpy = prev.y - v;
+            let dcx = curr.x - u;
+            let dcy = curr.y - v;
+            // ON at the current vertex within the tolerance
+            // (OCCT: |aCurrDx| < myTolU && |aCurrDy| < myTolV).
+            if dcx.abs() <= tol && dcy.abs() <= tol {
+                return State::On;
+            }
+            // ON on an edge: the edge straddles the query X and the
+            // interpolated Y at the query X is within the tolerance.
+            let edge_dx = curr.x - prev.x;
+            if (prev.x - u) * dcx < 0.0 && edge_dx.abs() > rcad_kernel::precision::PCONFUSION {
+                let interp_y = curr.y - (curr.y - prev.y) / edge_dx * dcx;
+                let delta_y = interp_y - v;
+                if (-tol..=tol).contains(&delta_y) {
+                    return State::On;
+                }
+            }
+            let prev_neg = dpy < 0.0;
+            let curr_neg = dcy < 0.0;
+            if prev_neg != curr_neg {
+                if dpx > 0.0 && dcx > 0.0 {
+                    crossings += 1;
+                } else if dpx > 0.0 || dcx > 0.0 {
+                    let x_intersect = dpx - dpy * (dcx - dpx) / (dcy - dpy);
+                    if x_intersect > 0.0 {
+                        crossings += 1;
+                    }
+                }
+            }
+            prev = *curr;
+        }
+    }
+    if crossings % 2 == 1 {
+        State::In
+    } else {
+        State::Out
     }
 }
 
@@ -1377,55 +1671,86 @@ fn is_degenerated_quadric(quadric: &Quadric) -> bool {
     false
 }
 
+/// OCCT Precision::Angular() — tolerance of the 2D iso-direction tests in
+/// Adaptor3d_CurveOnSurface::EvalKPart.
+const EVAL_KPART_ANGULAR: f64 = 1.0e-12;
+
 /// Build the 3D curve (parameterized by the 2D arc parameter) of a boundary
-/// arc on a surface.  The boundary arcs of the FF domain are lines in UV
-/// space; on an analytic quadric their 3D image is a Line or a Circle.
+/// arc on a surface — OCCT Adaptor3d_CurveOnSurface::EvalKPart: the KPart
+/// canonic 3D curve whose Value(U) equals S->Value(A->Value(U)) (parameter
+/// U is the 2D arc's own parameter).  Arcs without a KPart return None and
+/// take the numeric FunctionAllRoots path (GeomAbs_OtherCurve in OCCT).
 pub fn curve_on_surface(
     a: &Curve2d,
     surf: &Surface3,
 ) -> Option<(rcad_kernel::geom::Curve3, CurveType3d)> {
-    let arc_along_u = matches!(a, Curve2d::Line(l) if l.direction.y.abs() <= 0.5);
-    match surf {
-        Surface3::Plane(p) => {
-            // P(t) = p.origin + u(t)*p.u_dir + v(t)*p.v_dir.
-            let (u0, v0) = a.point_at(0.0).into();
-            let o = p.origin + u0 * p.u_dir + v0 * p.v_dir;
-            let dir = if arc_along_u { p.u_dir } else { p.v_dir };
+    match (a, surf) {
+        // Plane: myType = the 2D curve type; Circle -> to3d, Line -> D1 form.
+        (Curve2d::Line(l), Surface3::Plane(p)) => {
+            let (o2x, o2y) = a.point_at(0.0).into();
+            let o = p.origin + o2x * p.u_dir + o2y * p.v_dir;
+            // OCCT: V.SetLinearForm(Duv.X(), D1U, Duv.Y(), D1V).
+            let dir = l.direction.x * p.u_dir + l.direction.y * p.v_dir;
             Some((
                 rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: dir }),
                 CurveType3d::Line,
             ))
         }
-        Surface3::Cylinder(c) => {
+        (Curve2d::Circle(c), Surface3::Plane(p)) => {
+            // OCCT EvalKPart: myCirc = to3d(mySurface->Plane(), myCurve->Circle())
+            // — the 2D circle mapped into the plane frame, parameter preserved.
+            let (cx, cy) = c.center.into();
+            let center = p.origin + cx * p.u_dir + cy * p.v_dir;
+            let x_dir = c.x_dir.x * p.u_dir + c.x_dir.y * p.v_dir;
+            let y_dir = c.y_dir.x * p.u_dir + c.y_dir.y * p.v_dir;
+            Some((
+                rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
+                    center,
+                    normal: p.normal,
+                    x_dir,
+                    y_dir,
+                    radius: c.radius,
+                }),
+                CurveType3d::Circle,
+            ))
+        }
+        (Curve2d::Line(l), Surface3::Cylinder(c)) => {
             let z = c.axis.normalize_or_zero();
             let x = c.ref_dir.normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
-            if arc_along_u {
-                // V = const -> circle at height V.
+            if l.direction.y.abs() <= EVAL_KPART_ANGULAR {
+                // Iso V: ElSLib::CylinderVIso(V) rotated to U = P.X() by the
+                // pcurve origin; opposite direction reverses the parameter.
                 let (u0, v0) = a.point_at(0.0).into();
                 let center = c.origin + v0 * z;
-                let radius = c.radius;
+                let ux = u0.cos() * x + u0.sin() * y;
+                let uy = -u0.sin() * x + u0.cos() * y;
+                let opposite = l.direction.x < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z,
-                        x_dir: x,
-                        y_dir: y,
-                        radius,
+                        normal: if opposite { -z } else { z },
+                        x_dir: ux,
+                        y_dir: if opposite { -uy } else { uy },
+                        radius: c.radius,
                     }),
                     CurveType3d::Circle,
                 ))
-            } else {
-                // U = const -> generatrix line.
+            } else if l.direction.x.abs() <= EVAL_KPART_ANGULAR {
+                // Iso U: ElSLib::CylinderUIso(U) translated by P.Y(); opposite
+                // direction reverses the line.
                 let (u0, v0) = a.point_at(0.0).into();
                 let o = c.origin + c.radius * (u0.cos() * x + u0.sin() * y) + v0 * z;
+                let dir = if l.direction.y < 0.0 { -z } else { z };
                 Some((
-                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: z }),
+                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: dir }),
                     CurveType3d::Line,
                 ))
+            } else {
+                None
             }
         }
-        Surface3::Cone(c) => {
+        (Curve2d::Line(l), Surface3::Cone(c)) => {
             let z = c.axis.normalize_or_zero();
             let x = c.ref_dir.normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
@@ -1436,52 +1761,62 @@ pub fn curve_on_surface(
             let apex = c.apex;
             let semi = c.half_angle_rad;
             let _ = y;
-            if arc_along_u {
-                // V = const -> circle at height V.
+            if l.direction.y.abs() <= EVAL_KPART_ANGULAR {
+                // Iso V: ElSLib::ConeVIso(V) rotated to U = P.X().
                 let (u0, v0) = a.point_at(0.0).into();
                 let r = c.radius + v0 * semi.sin();
                 let center = apex + v0 * semi.cos() * z;
+                let ux = u0.cos() * x + u0.sin() * y;
+                let uy = -u0.sin() * x + u0.cos() * y;
+                let opposite = l.direction.x < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z,
-                        x_dir: x,
-                        y_dir: y,
+                        normal: if opposite { -z } else { z },
+                        x_dir: ux,
+                        y_dir: if opposite { -uy } else { uy },
                         radius: r,
                     }),
                     CurveType3d::Circle,
                 ))
-            } else {
-                // U = const -> generatrix line.
+            } else if l.direction.x.abs() <= EVAL_KPART_ANGULAR {
+                // Iso U: ElSLib::ConeUIso(U) translated by P.Y().
                 let (u0, v0) = a.point_at(0.0).into();
-                let o = apex + (c.radius + v0 * semi.sin()) * (u0.cos() * x + u0.sin() * y)
-                    + v0 * semi.cos() * z;
-                let dir = semi.sin() * (u0.cos() * x + u0.sin() * y) + semi.cos() * z;
+                let radial = u0.cos() * x + u0.sin() * y;
+                let o = apex + (c.radius + v0 * semi.sin()) * radial + v0 * semi.cos() * z;
+                let gen_dir = semi.sin() * radial + semi.cos() * z;
+                let dir = if l.direction.y < 0.0 { -gen_dir } else { gen_dir };
                 Some((
                     rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: dir }),
                     CurveType3d::Line,
                 ))
+            } else {
+                None
             }
         }
-        Surface3::Sphere(s) => {
+        (Curve2d::Line(l), Surface3::Sphere(s)) => {
+            // OCCT EvalKPart SphereVIso/SphereUIso branches.  The rcad frame
+            // keeps the historical rectangle-domain form (see the u-iso note
+            // below); rectangle-domain arcs carry a zero origin offset, so the
+            // ElSLib rotation by the pcurve origin is the identity there.
             let z = s.axis.normalize_or_zero();
             let x = s.ref_dir.normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
             let r = s.radius;
             let (u0, v0) = a.point_at(0.0).into();
-            if arc_along_u {
-                // V = const -> parallel circle.  The sphere parameterization
-                // P(u,v) = center + r*(sin(v)*radial + cos(v)*axis), so the
-                // V=v0 circle is centered at center + r*cos(v0)*axis with
-                // radius r*sin(v0).
+            if l.direction.y.abs() <= EVAL_KPART_ANGULAR {
+                // V = const -> parallel circle.
                 let center = s.center + r * v0.cos() * z;
                 let radius = (r * v0.sin()).abs();
+                let ux = u0.cos() * x + u0.sin() * y;
+                let uy = -u0.sin() * x + u0.cos() * y;
+                let opposite = l.direction.x < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z,
-                        x_dir: x,
-                        y_dir: y,
+                        normal: if opposite { -z } else { z },
+                        x_dir: ux,
+                        y_dir: if opposite { -uy } else { uy },
                         radius,
                     }),
                     CurveType3d::Circle,
@@ -1490,6 +1825,7 @@ pub fn curve_on_surface(
                 // U = const -> meridian circle through the poles: plane spanned
                 // by {axis, ux}, i.e. normal = z x ux, x_dir = z, y_dir = ux.
                 let ux = u0.cos() * x + u0.sin() * y;
+                let _ = y;
                 // OCCT Adaptor3d_CurveOnSurface::EvalKPart (Adaptor3d_CurveOnSurface.cxx
                 // L1657-1676) + ElSLib::SphereUIso (ElSLib.cxx L1738-1749): for a
                 // sphere Iso-U arc the 3D curve is the meridian circle with
@@ -1511,42 +1847,55 @@ pub fn curve_on_surface(
                 ))
             }
         }
-        Surface3::Torus(t) => {
+        (Curve2d::Line(l), Surface3::Torus(t)) => {
             let z = t.axis.normalize_or_zero();
             let x = rcad_kernel::geom::any_perpendicular(z).normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
-            let (u0, v0) = a.point_at(0.0).into();
-            if arc_along_u {
-                // V = const -> circle of radius R + r*cos(v).
+            if l.direction.y.abs() <= EVAL_KPART_ANGULAR {
+                // V = const: ElSLib::TorusVIso(V) rotated to U = P.X().
+                let (u0, v0) = a.point_at(0.0).into();
                 let center = t.center + (t.minor_radius * v0.sin()) * z;
                 let radius = t.major_radius + t.minor_radius * v0.cos();
+                let ux = u0.cos() * x + u0.sin() * y;
+                let uy = -u0.sin() * x + u0.cos() * y;
+                let opposite = l.direction.x < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z,
-                        x_dir: x,
-                        y_dir: y,
+                        normal: if opposite { -z } else { z },
+                        x_dir: ux,
+                        y_dir: if opposite { -uy } else { uy },
                         radius,
                     }),
                     CurveType3d::Circle,
                 ))
-            } else {
-                // U = const -> circle of radius r in the plane spanned by
-                // {axis, ux}, centered at center + R*ux (normal = z x ux).
+            } else if l.direction.x.abs() <= EVAL_KPART_ANGULAR {
+                // U = const: ElSLib::TorusUIso(U) rotated around its own axis by
+                // P.Y() (the v offset of the pcurve origin).
+                let (u0, v0) = a.point_at(0.0).into();
                 let ux = u0.cos() * x + u0.sin() * y;
                 let center = t.center + t.major_radius * ux;
+                // Base frame (x_dir = z, y_dir = ux) has circle parameter = V;
+                // rotate the frame by v0 so parameter 0 starts at the origin.
+                let xz = v0.cos() * z + v0.sin() * ux;
+                let yx = -v0.sin() * z + v0.cos() * ux;
+                let opposite = l.direction.y < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z.cross(ux).normalize_or_zero(),
-                        x_dir: z,
-                        y_dir: ux,
+                        normal: if opposite { ux.cross(z).normalize_or_zero() } else { z.cross(ux).normalize_or_zero() },
+                        x_dir: xz,
+                        y_dir: if opposite { -yx } else { yx },
                         radius: t.minor_radius,
                     }),
                     CurveType3d::Circle,
                 ))
+            } else {
+                None
             }
         }
+        // Non-iso 2D lines and non-planar 2D circles have no KPart
+        // (myType = GeomAbs_OtherCurve) -> the numeric path.
         _ => None,
     }
 }
@@ -1572,6 +1921,14 @@ pub fn curves_same(a: &Curve2d, b: &Curve2d) -> bool {
             && (l1.origin.y - l2.origin.y).abs() < rcad_kernel::precision::CONFUSION
             && (l1.direction.x - l2.direction.x).abs() < rcad_kernel::precision::CONFUSION
             && (l1.direction.y - l2.direction.y).abs() < rcad_kernel::precision::CONFUSION
+    } else if let (Curve2d::Circle(c1), Curve2d::Circle(c2)) = (a, b) {
+        (c1.center.x - c2.center.x).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.center.y - c2.center.y).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.radius - c2.radius).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.x_dir.x - c2.x_dir.x).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.x_dir.y - c2.x_dir.y).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.y_dir.x - c2.y_dir.x).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.y_dir.y - c2.y_dir.y).abs() < rcad_kernel::precision::CONFUSION
     } else {
         false
     }

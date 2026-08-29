@@ -52,6 +52,11 @@ pub fn make_curves(
     tol_approx: f64,
     lines: &[IntPatchLine],
 ) -> Vec<IntersectionCurve> {
+    // OCCT MakeCurve classifies through the faces' TopolTools
+    // (BRepTopAdaptor_TopolTool, Restriction mode); the boundary pcurve arcs
+    // give the same restriction polygon (empty list = UV-rectangle form).
+    let arcs1 = super::face_face::face_boundary_arcs(ds, f1);
+    let arcs2 = super::face_face::face_boundary_arcs(ds, f2);
     let mut out = Vec::new();
     for line in lines {
         let mut line = line.clone();
@@ -64,7 +69,7 @@ pub fn make_curves(
         // by IntPatch_ImpImpIntersection::Perform / the walking process) are used
         // as-is; no additional UV-crossing placement is done for a WLine.
         // OCCT GeomInt_LineConstructor::Perform -> valid parameter intervals.
-        let parts = line_constructor_parts(surf1, uv1, surf2, uv2, tol, &line);
+        let parts = line_constructor_parts(surf1, uv1, surf2, uv2, tol, &line, &arcs1, &arcs2);
         // OCCT MakeCurve L926-1000: a Circle/Ellipse interval crossing 0 is
         // divided on two intervals [fprm, 2*PI] and [0, lprm].
         let a_nul = 0.0;
@@ -158,6 +163,8 @@ pub fn make_curves(
                 approx2,
                 tol_approx,
                 &line,
+                &arcs1,
+                &arcs2,
                 anchor1,
                 anchor2,
                 fprm,
@@ -828,9 +835,11 @@ fn line_constructor_parts(
     uv2: [f64; 4],
     _tol: f64,
     line: &IntPatchLine,
+    arcs1: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
+    arcs2: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
 ) -> Vec<[f64; 2]> {
     if line.line_type == IntPatchIType::Circle || line.line_type == IntPatchIType::Ellipse {
-        return treat_circle_parts(surf1, uv1, surf2, uv2, _tol, line);
+        return treat_circle_parts(surf1, uv1, surf2, uv2, _tol, line, arcs1, arcs2);
     }
     // OCCT L152-328: the WLine has its own path (vertices carry integer point
     // indices).
@@ -854,9 +863,9 @@ fn line_constructor_parts(
                 continue;
             }
             // OCCT L361-372: Parameters + AdjustPeriodic + Classify both domains.
-            let in1 = classify_point(surf1, uv1, p3d, a_tol);
+            let in1 = classify_point(surf1, uv1, p3d, a_tol, arcs1);
             if in1 {
-                let in2 = classify_point(surf2, uv2, p3d, a_tol);
+                let in2 = classify_point(surf2, uv2, p3d, a_tol, arcs2);
                 if in2 {
                     result.push([firstp, lastp]);
                 }
@@ -1005,6 +1014,8 @@ fn treat_circle_parts(
     uv2: [f64; 4],
     _tol: f64,
     line: &IntPatchLine,
+    arcs1: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
+    arcs2: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
 ) -> Vec<[f64; 2]> {
     let two_pi = std::f64::consts::TAU;
     let curve = &line.curve;
@@ -1079,11 +1090,11 @@ fn treat_circle_parts(
         if !p3d.is_finite() {
             continue;
         }
-        let in1 = classify_point(surf1, uv1, p3d, a_tol);
+        let in1 = classify_point(surf1, uv1, p3d, a_tol, arcs1);
         if !in1 {
             continue;
         }
-        let in2 = classify_point(surf2, uv2, p3d, a_tol);
+        let in2 = classify_point(surf2, uv2, p3d, a_tol, arcs2);
         if in2 {
             result.push([t1, t2]);
         }
@@ -1135,6 +1146,8 @@ fn make_part_curve(
     approx2: bool,
     tol_approx: f64,
     line: &IntPatchLine,
+    arcs1: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
+    arcs2: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
     pcurve_anchor1: Option<(f64, f64)>,
     pcurve_anchor2: Option<(f64, f64)>,
     fprm: f64,
@@ -1169,10 +1182,10 @@ fn make_part_curve(
                 if !p3d.is_finite() {
                     return None;
                 }
-                if !classify_point(surf1, uv1, p3d, CONFUSION) {
+                if !classify_point(surf1, uv1, p3d, CONFUSION, arcs1) {
                     return None;
                 }
-                if !classify_point(surf2, uv2, p3d, CONFUSION) {
+                if !classify_point(surf2, uv2, p3d, CONFUSION, arcs2) {
                     return None;
                 }
             }
@@ -1247,10 +1260,10 @@ fn make_part_curve(
                     if !p3d.is_finite() {
                         continue;
                     }
-                    if !classify_point(surf1, uv1, p3d, CONFUSION) {
+                    if !classify_point(surf1, uv1, p3d, CONFUSION, arcs1) {
                         continue;
                     }
-                    if classify_point(surf2, uv2, p3d, CONFUSION) {
+                    if classify_point(surf2, uv2, p3d, CONFUSION, arcs2) {
                         // OCCT L1117-1140: the 18-point branch also sets the
                         // analytic pcurves (BuildPCurves with the UV bounds).
                         return Some(IntersectionCurve {
@@ -1601,15 +1614,34 @@ fn wline_part_bspline2d(line: &IntPatchLine, fprm: f64, lprm: f64, on_first: boo
     }))
 }
 
-/// OCCT GeomInt_LineConstructor::Parameters (L820-862) + Classify.  Analytic UV
 /// OCCT GeomInt_LineConstructor::Parameters (L820-862) + AdjustPeriodic
 /// (L737-816) + Classify.  Analytic UV inversion of a 3D point on a quadric
-/// surface, shifted into the face UV rectangle before the in-rectangle test.
-fn classify_point(surf: &Surface3, rect: [f64; 4], p3d: DVec3, tol: f64) -> bool {
+/// surface, shifted into the face UV rectangle before the domain test.  The
+/// restriction form (non-empty arcs) classifies against the face's boundary
+/// pcurve polygon (BRepTopAdaptor_TopolTool::Classify), the rectangle form
+/// against the UV box.
+fn classify_point(
+    surf: &Surface3,
+    rect: [f64; 4],
+    p3d: DVec3,
+    tol: f64,
+    arcs: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
+) -> bool {
     match quadric_uv_params(surf, p3d) {
         Some(uv) => {
             let adj = adjust_periodic_uv(surf, uv, rect);
-            in_uv_rect(adj, rect, tol)
+            if arcs.is_empty() {
+                in_uv_rect(adj, rect, tol)
+            } else {
+                let (u_per, v_per) = match surf {
+                    Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) => (true, false),
+                    Surface3::Torus(_) => (true, true),
+                    _ => (false, false),
+                };
+                crate::geomalgo::int_patch::so_on_bounds::classify_in_restriction(
+                    adj.x, adj.y, rect, arcs, tol, u_per, v_per,
+                ) != rcad_kernel::topods::State::Out
+            }
         }
         None => false,
     }

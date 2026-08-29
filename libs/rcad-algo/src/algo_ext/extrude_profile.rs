@@ -490,6 +490,30 @@ pub fn extrude_profile_solid(
                         .pcurves
                         .insert((fp, 0), (dp.clone(), t0p, t1p));
                 }
+                // A closed profile sweeps the directing edge twice in the
+                // lateral wire (the same TShape, FORWARD and REVERSED): the
+                // closed seam edge carries two pcurves one period apart —
+                // OCCT BRepPrim_OneAxis::LateralFace (L434-438) / make_cylinder
+                // form — pcurve1 at u=az (the FORWARD instance, the west side
+                // of the UV region), pcurve2 at u=az+2*pi (the REVERSED
+                // instance, the east side), as a CurveOnClosedSurface
+                // representation keyed by the lateral face.
+                if e_ver[i].ptr_id() == e_ver[j].ptr_id() {
+                    let dp2 = match &dp {
+                        Curve2d::Line(l) => Curve2d::Line(rcad_kernel::geom::Line2d {
+                            origin: glam::DVec2::new(l.origin.x + std::f64::consts::TAU, l.origin.y),
+                            direction: l.direction,
+                        }),
+                        other => other.clone(),
+                    };
+                    let e_seam = brep.edge_mut_inplace(e_ver[i].clone());
+                    e_seam.representations.push(rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                        face: (fp, 0),
+                        pcurve1: dp.clone(),
+                        pcurve2: dp2,
+                        range: [t0p, t1p],
+                    });
+                }
             }
         }
         // Lateral faces are stored natural (FORWARD); the shell carries the

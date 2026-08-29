@@ -90,7 +90,10 @@ impl ImpImpIntersection {
     // =====================================================================
     // OCCT L73-79: Perform(S1, D1, S2, D2, TolArc, TolTang, theIsReqToKeepRLine)
     // rcad: Surface3 instead of Adaptor3d_Surface; the UV domains D1/D2 (the
-    // corrected FF UV rectangles) replace the TopolTool.
+    // corrected FF UV rectangles) replace the TopolTool.  bnd1/bnd2 are the
+    // faces' boundary pcurve arcs (OCCT Adaptor3d_TopolTool Restriction mode —
+    // BRepTopAdaptor_TopolTool::Initialize over the face wires); an empty list
+    // keeps the UV-rectangle domain form.
     // =====================================================================
     pub fn perform(
         &mut self,
@@ -98,6 +101,8 @@ impl ImpImpIntersection {
         s2: &Surface3,
         uv1: [f64; 4],
         uv2: [f64; 4],
+        bnd1: &[super::so_on_bounds::BoundaryArc],
+        bnd2: &[super::so_on_bounds::BoundaryArc],
         tol_arc: f64,
         tol_tang: f64,
     ) {
@@ -317,11 +322,38 @@ impl ImpImpIntersection {
 
         // OCCT D1/D2 (Adaptor3d_TopolTool) — the corrected FF UV rectangles.
         // OCCT passes the topol tools as function parameters (always valid);
-        // rcad creates the UV-rectangle domains up front.  They are used by
-        // PutPointsOnLine below and by the spnt classification after the
-        // isPostProcessingRequired block.
-        let mut d1 = super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3]);
-        let mut d2 = super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3]);
+        // rcad creates the UV-rectangle domains up front, or the restriction
+        // domains when the caller supplied the faces' boundary pcurve arcs.
+        // They are used by PutPointsOnLine below and by the spnt
+        // classification after the isPostProcessingRequired block.
+        let mut d1 = if bnd1.is_empty() {
+            super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3])
+        } else {
+            let (u_per, v_per) = surface_periodicity(s1);
+            super::so_on_bounds::Domain::new_with_arcs(
+                uv1[0],
+                uv1[1],
+                uv1[2],
+                uv1[3],
+                bnd1.to_vec(),
+                u_per,
+                v_per,
+            )
+        };
+        let mut d2 = if bnd2.is_empty() {
+            super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3])
+        } else {
+            let (u_per, v_per) = surface_periodicity(s2);
+            super::so_on_bounds::Domain::new_with_arcs(
+                uv2[0],
+                uv2[1],
+                uv2[2],
+                uv2[3],
+                bnd2.to_vec(),
+                u_per,
+                v_per,
+            )
+        };
 
         // OCCT L2782-2934: isPostProcessingRequired block
         if is_post_processing_required {
@@ -930,6 +962,16 @@ fn quad_type_index(q: &Quadric) -> i32 {
         GeomAbsSurfaceType::Sphere => 4,
         GeomAbsSurfaceType::Torus => 5,
         _ => 0,
+    }
+}
+
+/// OCCT BRepAdaptor_Surface::IsUPeriodic/IsVPeriodic for the analytic quadrics
+/// (the classifier's RecadreOnPeriodic directions).
+fn surface_periodicity(s: &Surface3) -> (bool, bool) {
+    match s {
+        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) => (true, false),
+        Surface3::Torus(_) => (true, true),
+        _ => (false, false),
     }
 }
 
