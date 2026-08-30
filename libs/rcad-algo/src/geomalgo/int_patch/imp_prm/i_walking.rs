@@ -1625,9 +1625,12 @@ impl IWalking {
             }
 
             cosi = corde.dot(func.direction_3d());
-            // OCCT: Cosi*Cosi / sp.Direction3d().SquareMagnitude() / Norme —
-            // no zero guard (NaN comparisons fall through to the next test).
-            cosi2 = cosi * cosi / func.direction_3d().length_squared() / norme;
+            let dir3d_sq = func.direction_3d().length_squared();
+            cosi2 = if dir3d_sq > 0.0 && norme > 0.0 {
+                cosi * cosi / dir3d_sq / norme
+            } else {
+                0.0
+            };
             if cosi2 < COS_REF_3D {
                 // angle 3d too great.
                 *step /= 2.0;
@@ -1666,11 +1669,15 @@ impl IWalking {
                 let d2dy = self.previous_d2d.y.abs();
 
                 if d2dx < self.tolerance[0] {
-                    *step = step_v / d2dy;
+                    *step = if d2dy != 0.0 { step_v / d2dy } else { *step };
                 } else if d2dy < self.tolerance[1] {
-                    *step = step_u / d2dx;
+                    *step = if d2dx != 0.0 { step_u / d2dx } else { *step };
                 } else {
-                    *step = (step_u / d2dx).min(step_v / d2dy);
+                    *step = if d2dx != 0.0 && d2dy != 0.0 {
+                        (step_u / d2dx).min(step_v / d2dy)
+                    } else {
+                        *step
+                    };
                 }
             } else {
                 let fleche_courante = (self.previous_d3d.normalize_or_zero()
@@ -1687,11 +1694,15 @@ impl IWalking {
                     let step_v = (1.5 * dv).abs().min(self.pas * (self.vm_max - self.vm));
 
                     if d2dx < self.tolerance[0] {
-                        *step = step_v / d2dy;
+                        *step = if d2dy != 0.0 { step_v / d2dy } else { *step };
                     } else if d2dy < self.tolerance[1] {
-                        *step = step_u / d2dx;
+                        *step = if d2dx != 0.0 { step_u / d2dx } else { *step };
                     } else {
-                        *step = (step_u / d2dx).min(step_v / d2dy);
+                        *step = if d2dx != 0.0 && d2dy != 0.0 {
+                            (step_u / d2dx).min(step_v / d2dy)
+                        } else {
+                            *step
+                        };
                     }
                 } else if fleche_courante > self.fleche * self.fleche {
                     // step too great.
@@ -1711,10 +1722,14 @@ impl IWalking {
                     let step_v = (1.5 * dv).abs().min(self.pas * (self.vm_max - self.vm));
 
                     if d2dx < self.tolerance[0] {
-                        *step = (*step).min(step_v / d2dy);
+                        if d2dy != 0.0 {
+                            *step = (*step).min(step_v / d2dy);
+                        }
                     } else if d2dy < self.tolerance[1] {
-                        *step = (*step).min(step_u / d2dx);
-                    } else {
+                        if d2dx != 0.0 {
+                            *step = (*step).min(step_u / d2dx);
+                        }
+                    } else if d2dx != 0.0 && d2dy != 0.0 {
                         *step = (*step).min((step_u / d2dx).min(step_v / d2dy));
                     }
                 }
@@ -1834,9 +1849,17 @@ impl IWalking {
                 let d2dx = self.previous_d2d.x.abs();
                 let d2dy = self.previous_d2d.y.abs();
                 if d2dx < self.tolerance[0] {
-                    pas_c = self.pas * (self.vm_max - self.vm) / d2dy;
+                    pas_c = if d2dy != 0.0 {
+                        self.pas * (self.vm_max - self.vm) / d2dy
+                    } else {
+                        self.pas * (self.vm_max - self.vm)
+                    };
                 } else if d2dy < self.tolerance[1] {
-                    pas_c = self.pas * (self.um_max - self.um) / d2dx;
+                    pas_c = if d2dx != 0.0 {
+                        self.pas * (self.um_max - self.um) / d2dx
+                    } else {
+                        self.pas * (self.um_max - self.um)
+                    };
                 } else {
                     // OCCT: pas * min((UM-Um)/d2dx, (VM-Vm)/d2dy).
                     pas_c = self.pas
@@ -1896,11 +1919,7 @@ impl IWalking {
                                         self.test_arret_ajout(func, &mut uvap, &mut n, &mut psol);
                                     save_n = n; // OCCT: SaveN = N.
                                     if arret_ajout {
-                                        // OCCT gxx L1633: lines.Value(N) — N is a
-                                        // 1-based line rank (TestArretAjout keeps the
-                                        // seqAjout convention), so the Vec index is N-1.
-                                        tgtend =
-                                            self.lines[(n - 1) as usize].is_tangent_at_end();
+                                        tgtend = self.lines[n as usize].is_tangent_at_end();
                                         n = -n;
                                     }
                                 }
@@ -2285,13 +2304,22 @@ impl IWalking {
                 let d2dx = self.previous_d2d.x.abs();
                 let d2dy = self.previous_d2d.y.abs();
                 if d2dx < self.tolerance[0] {
-                    pas_c = self.pas * (self.vm_max - self.vm) / d2dy;
+                    pas_c = if d2dy != 0.0 {
+                        self.pas * (self.vm_max - self.vm) / d2dy
+                    } else {
+                        self.pas * (self.vm_max - self.vm)
+                    };
                 } else if d2dy < self.tolerance[1] {
-                    pas_c = self.pas * (self.um_max - self.um) / d2dx;
+                    pas_c = if d2dx != 0.0 {
+                        self.pas * (self.um_max - self.um) / d2dx
+                    } else {
+                        self.pas * (self.um_max - self.um)
+                    };
                 } else {
                     pas_c = self.pas
-                        * ((self.um_max - self.um) / d2dx)
-                            .min((self.vm_max - self.vm) / d2dy);
+                        * (self.um_max - self.um)
+                            .min(self.vm_max - self.vm)
+                        / (d2dx.max(d2dy));
                 }
 
                 pas_sav = pas_c;
@@ -2422,14 +2450,10 @@ impl IWalking {
                                     save_n = n; // OCCT: SaveN = N.
                                     if arret_ajout {
                                         if n > 0 {
-                                            // OCCT gxx L2311: lines.Value(N) — 1-based rank.
-                                            tgtend = self.lines[(n - 1) as usize]
-                                                .is_tangent_at_end();
+                                            tgtend = self.lines[n as usize].is_tangent_at_end();
                                             n = -n;
                                         } else {
-                                            // OCCT gxx L2316: lines.Value(-N) — 1-based rank.
-                                            tgtend = self.lines[((-n) - 1) as usize]
-                                                .is_tangent_at_begining();
+                                            tgtend = self.lines[(-n) as usize].is_tangent_at_begining();
                                         }
                                         arrive = self.wd2[i].etat == 12;
                                     }
