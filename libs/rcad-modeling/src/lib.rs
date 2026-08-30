@@ -7,7 +7,7 @@ pub use prim::primapi::MakeCone;
 pub use prim::primapi::MakeSphere;
 pub use prim::primapi::MakeTorus;
 pub use prim::primapi::{
-    box_brep, cone_brep, cylinder_brep, make_box_brep, make_cone_brep, make_cylinder_brep,
+    box_brep, cone_brep, cylinder_brep, make_box_brep, make_cone_brep, make_cylinder_brep, prism_face_solid_brep,
     make_half_space_brep, make_planar_polygon_brep, make_planar_rect_brep, make_prism_brep,
     make_prism_from_face_brep, make_sphere_brep,
     make_torus_brep, prism_brep, sphere_brep, torus_brep,

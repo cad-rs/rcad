@@ -16,7 +16,7 @@ pub mod make_planar;
 pub mod make_half_space;
 
 pub use make_box::{MakeBox, box_brep, make_box_brep};
-pub use make_cylinder::{MakeCylinder, cylinder_brep, make_cylinder_brep};
+pub use make_cylinder::{MakeCylinder, cylinder_brep, make_cylinder_brep, prism_face_solid_brep};
 pub use make_cone::{MakeCone, cone_brep, make_cone_brep};
 pub use make_sphere::{MakeSphere, sphere_brep, make_sphere_brep};
 pub use make_torus::{MakeTorus, torus_brep, make_torus_brep};

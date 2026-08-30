@@ -4,7 +4,7 @@
 // 2 vertices (seam endpoints), 3 edges (bottom circle, top circle, seam),
 // 3 faces (lateral, bottom, top).
 
-use glam::{DVec2, DVec3};
+use glam::{DVec2, DVec3, DAffine3};
 use rcad_kernel::geom::{
     Circle2d, Circle3, Curve2d, Curve3, CylindricalSurface, Line2d, Line3, Plane, Surface3,
 };
@@ -236,4 +236,186 @@ pub fn make_cylinder_brep(
     radius: f64, height: f64,
 ) -> Result<BRep, crate::BuildError> {
     cylinder_brep(center, axis, ref_dir, radius, height)
+}
+
+/// OCCT BRepPrimAPI_MakePrism of a solid's planar disk face
+/// (BRepSweep_Trsf::Process): the sweep SHARES the source face's circle-edge
+/// and vertex TShapes (Arc identity across BReps, as OCCT shares TopoDS
+/// TShapes between the profile face and the swept solid), and the top cap is
+/// the bottom structure under Location(theExtr) — verified on DRAW
+/// `pcone pc 10 0 20 / explode pc f / prism pcy pc_2 0 0 10`: the result's
+/// top circle dumps as the bottom-circle TShape with a z+H location, giving
+/// nbshapes EDGE=4 / VERTEX=2 (boptuc_simple ZP3).
+///
+/// `face_index_1based` follows the OCCT `explode <solid> f` order (the
+/// shell's stored face order: 1 = lateral, 2 = base disk for `pcone R 0 H`).
+pub fn prism_face_solid_brep(
+    base: &BRep,
+    face_index_1based: usize,
+    extr: DVec3,
+) -> Result<BRep, crate::BuildError> {
+    let ext_len = extr.length();
+    if ext_len < 1e-12 {
+        return Err(crate::BuildError::DegenerateGeometry("prism zero extrusion"));
+    }
+    // Source face subtree (solid -> shell -> face, stored order).
+    let solid_shape = base
+        .tshapes
+        .iter()
+        .find(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_)))
+        .ok_or(crate::BuildError::DegenerateGeometry("prism source has no solid"))?
+        .clone();
+    let shell_shape = match solid_shape.as_ref() {
+        topods::TShape::Solid(sd) => sd
+            .shells
+            .first()
+            .ok_or(crate::BuildError::DegenerateGeometry("prism source has no shell"))?
+            .clone(),
+        _ => return Err(crate::BuildError::DegenerateGeometry("prism source not a solid")),
+    };
+    let face_shape = match shell_shape.data.as_ref() {
+        topods::TShape::Shell(shd) => shd
+            .faces
+            .get(face_index_1based - 1)
+            .ok_or(crate::BuildError::DegenerateGeometry("prism face index out of range"))?
+            .clone(),
+        _ => return Err(crate::BuildError::DegenerateGeometry("prism source not a shell")),
+    };
+    let fd = match face_shape.data.as_ref() {
+        topods::TShape::Face(fd) => fd,
+        _ => return Err(crate::BuildError::DegenerateGeometry("prism source not a face")),
+    };
+    let wd = match fd.outer_wire.data.as_ref() {
+        topods::TShape::Wire(wd) => wd,
+        _ => return Err(crate::BuildError::DegenerateGeometry("prism source wire")),
+    };
+    // The disk profile: a single closed circular edge.  General polygon
+    // profiles go through extrude_profile_solid.
+    let circ_shape = wd
+        .edges
+        .first()
+        .ok_or(crate::BuildError::DegenerateGeometry("prism source wire empty"))?;
+    let ed_c = match circ_shape.data.as_ref() {
+        topods::TShape::Edge(ed) => ed,
+        _ => return Err(crate::BuildError::DegenerateGeometry("prism source edge")),
+    };
+    let Some(Curve3::Circle(circle)) = &ed_c.curve else {
+        return Err(crate::BuildError::DegenerateGeometry("prism source edge not a circle"));
+    };
+    let v_shape = ed_c.first.clone();
+
+    let mut t = BRep::new();
+    // Register the shared TShapes first: index 0 = circle edge, 1 = vertex.
+    // Identity flows by Arc pointer (the DS keys shapes by
+    // (TShape pointer, Location)), the indices keep this BRep's own walks
+    // self-consistent.
+    let ie_circ = t.tshapes.len();
+    t.tshapes.push(circ_shape.data.clone());
+    let iv_vtx = t.tshapes.len();
+    t.tshapes.push(v_shape.data.clone());
+    let loc = t.add_location(glam::DAffine3::from_translation(extr));
+
+    let e_circ_bottom = Shape {
+        data: circ_shape.data.clone(),
+        index: ie_circ,
+        location: 0,
+        orientation: Orientation::Forward,
+    };
+    let e_circ_top = Shape {
+        data: circ_shape.data.clone(),
+        index: ie_circ,
+        location: loc,
+        orientation: Orientation::Forward,
+    };
+    let v_bottom = Shape {
+        data: v_shape.data.clone(),
+        index: iv_vtx,
+        location: 0,
+        orientation: Orientation::Forward,
+    };
+    let v_top = Shape {
+        data: v_shape.data.clone(),
+        index: iv_vtx,
+        location: loc,
+        orientation: Orientation::Reversed,
+    };
+    let rev = |sr: Shape| Shape { orientation: Orientation::Reversed, ..sr };
+
+    // Seam edge: the profile vertex swept along theExtr (new TShape).
+    let seam_start = circle.center + circle.x_dir * circle.radius;
+    let e_seam = t.add_tedge(
+        Some(Curve3::Line(Line3::new(seam_start, extr))),
+        v_bottom,
+        v_top,
+        [0.0, ext_len],
+    );
+
+    let lateral_surf = Surface3::Cylinder(CylindricalSurface {
+        origin: circle.center,
+        axis: circle.normal,
+        radius: circle.radius,
+        ref_dir: circle.x_dir,
+    });
+    let bot_plane = Surface3::Plane(Plane {
+        origin: circle.center,
+        normal: circle.normal,
+        u_dir: circle.x_dir,
+        v_dir: circle.normal.cross(circle.x_dir).normalize_or_zero(),
+    });
+    let top_plane = Surface3::Plane(Plane {
+        origin: circle.center + extr,
+        normal: circle.normal,
+        u_dir: circle.x_dir,
+        v_dir: circle.normal.cross(circle.x_dir).normalize_or_zero(),
+    });
+
+    // Lateral wire, BRepPrim_OneAxis::LateralWire order
+    // [rev(TopEdge), seam, BottomEdge, rev(seam)] with the top edge located.
+    let lat_wire = t.add_twire(vec![
+        rev(e_circ_top.clone()),
+        e_seam.clone(),
+        e_circ_bottom.clone(),
+        rev(e_seam.clone()),
+    ]);
+    let bot_wire = rev(t.add_twire(vec![rev(e_circ_bottom.clone())]));
+    let top_wire = t.add_twire(vec![e_circ_top.clone()]);
+
+    let f_lat = t.add_tface(Some(lateral_surf), lat_wire, vec![], None, None, vec![], true);
+    let f_bot_fwd = t.add_tface(Some(bot_plane), bot_wire, vec![], None, None, vec![], true);
+    let f_bot = rev(f_bot_fwd);
+    let f_top = t.add_tface(Some(top_plane), top_wire, vec![], None, None, vec![], true);
+
+    // Lateral-face pcurves (bottom instance; the located top instance reads
+    // the same TShape representation, as in OCCT).
+    let lat_key = (f_lat.ptr_id(), f_lat.location);
+    t.edge_mut_inplace(e_circ_bottom.clone()).pcurves.insert(
+        lat_key,
+        (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
+    );
+    t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
+        lat_key,
+        (Curve2d::Line(Line2d::new(DVec2::new(std::f64::consts::TAU, 0.0), DVec2::Y)), 0.0, ext_len),
+    );
+    t.edge_mut_inplace(e_seam.clone())
+        .representations
+        .push(CurveRepresentation::CurveOnClosedSurface {
+            face: lat_key,
+            pcurve1: Curve2d::Line(Line2d::new(DVec2::new(std::f64::consts::TAU, 0.0), DVec2::Y)),
+            pcurve2: Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::Y)),
+            range: [0.0, ext_len],
+        });
+    // Cap circle pcurves (planes self-heal via BuildPCurveForEdgesOnPlane;
+    // inserted for parity with make_cylinder).
+    t.edge_mut_inplace(e_circ_top.clone()).pcurves.insert(
+        (f_top.ptr_id(), f_top.location),
+        (Curve2d::Circle(Circle2d::new(DVec2::ZERO, circle.radius)), 0.0, std::f64::consts::TAU),
+    );
+    t.edge_mut_inplace(e_circ_bottom.clone()).pcurves.insert(
+        (f_bot.ptr_id(), f_bot.location),
+        (Curve2d::Circle(Circle2d::new(DVec2::ZERO, circle.radius)), 0.0, std::f64::consts::TAU),
+    );
+
+    let shell = t.add_tshell(vec![f_lat, f_top, f_bot]);
+    t.add_tsolid(vec![shell]);
+    Ok(t)
 }
