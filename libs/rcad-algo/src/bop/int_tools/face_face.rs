@@ -83,137 +83,6 @@ pub fn correct_surface_boundaries(surf: &Surface3, uv: [f64; 4], tol: f64) -> [f
     out
 }
 
-/// OCCT BRepTopAdaptor_TopolTool::Initialize(S) — the domain arcs are the
-/// stored pcurves of every edge occurrence in the face wires
-/// (TopExp_Explorer(myFace, TopAbs_EDGE): seam edges are listed once per wire
-/// occurrence, one BRepAdaptor_Curve2d per occurrence), with the edge's
-/// parameter range and the BRep-vertex parameters on the pcurve.  An edge
-/// occurrence without a resolvable Line/Circle pcurve leaves the boundary
-/// incomplete — the empty result keeps the UV-rectangle domain form.
-///
-/// A seam edge of a periodic surface (the same TShape twice in the wire) is a
-/// closed edge: OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L354-361) gives
-/// the FORWARD instance the first pcurve and the REVERSED instance the second,
-/// one U period apart.  Writers that store a single plain pcurve for both
-/// instances (extrude_profile_solid) resolve to the same arc twice; the second
-/// occurrence's copy is then shifted by the U period to the side that closes
-/// the domain (the two seam lines bracket the other arcs' U range), matching
-/// the stored CurveOnClosedSurface pairs (pcurve1 at u_max, pcurve2 at u_min).
-pub(crate) fn face_boundary_arcs(
-    ds: &crate::bop::ds::DS,
-    fi: usize,
-) -> Vec<crate::geomalgo::int_patch::so_on_bounds::BoundaryArc> {
-    use rcad_kernel::geom::Curve2dEval;
-    use rcad_kernel::topods::{Shape, ShapeType, TShape};
-    if fi >= ds.nb_shapes() || ds.shape_info(fi).shape_type != ShapeType::Face {
-        return Vec::new();
-    }
-    let mut edge_shapes: Vec<Shape> = Vec::new();
-    if let TShape::Face(fd) = &*ds.shapes[fi].shape.data {
-        if let TShape::Wire(wd) = &*fd.outer_wire.data {
-            edge_shapes.extend(wd.edges.iter().cloned());
-        }
-        for w in &fd.inner_wires {
-            if let TShape::Wire(wd) = &*w.data {
-                edge_shapes.extend(wd.edges.iter().cloned());
-            }
-        }
-    }
-    let mut arcs: Vec<Option<crate::geomalgo::int_patch::so_on_bounds::BoundaryArc>> =
-        Vec::with_capacity(edge_shapes.len());
-    for eshape in &edge_shapes {
-        let arc = (|| {
-            let ei = ds.index(eshape);
-            if ei < 0 || ei as usize >= ds.nb_shapes() {
-                return None;
-            }
-            let ei = ei as usize;
-            let (pc, t1, t2) = crate::topalgo::shape_source::edge_pcurve_on_face(
-                ds,
-                ei,
-                fi,
-                eshape.orientation,
-            )?;
-            match pc {
-                Curve2d::Line(_) | Curve2d::Circle(_) => {}
-                _ => return None,
-            }
-            // BRep_Tool::Parameter(V, E, F) of the edge's vertices on this
-            // pcurve (the TopolTool domain vertices), in parameter order.
-            let mut vtx_params: Vec<f64> = match &*ds.shapes[ei].shape.data {
-                TShape::Edge(ed) => ed.vertex_params.values().copied().collect(),
-                _ => return None,
-            };
-            vtx_params.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            Some(crate::geomalgo::int_patch::so_on_bounds::BoundaryArc {
-                arc: pc,
-                first: t1,
-                last: t2,
-                vtx_params,
-            })
-        })();
-        arcs.push(arc);
-    }
-    if arcs.iter().any(|a| a.is_none()) {
-        return Vec::new();
-    }
-    let mut arcs: Vec<crate::geomalgo::int_patch::so_on_bounds::BoundaryArc> =
-        arcs.into_iter().map(|a| a.unwrap()).collect();
-    // Seam completion: two occurrences of the same TShape resolving to the
-    // same arc — shift the second copy by the U period to the side that
-    // closes the domain (see the function comment).
-    let a_period = std::f64::consts::TAU;
-    for i in 0..arcs.len() {
-        for j in (i + 1)..arcs.len() {
-            if edge_shapes[i].ptr_id() != edge_shapes[j].ptr_id()
-                || edge_shapes[i].location != edge_shapes[j].location
-            {
-                continue;
-            }
-            if !crate::geomalgo::int_patch::so_on_bounds::curves_same(&arcs[i].arc, &arcs[j].arc)
-            {
-                continue;
-            }
-            // U range of the other arcs (8 samples per arc).
-            let (mut u_lo, mut u_hi) = (f64::INFINITY, f64::NEG_INFINITY);
-            for (k, a) in arcs.iter().enumerate() {
-                if k == i || k == j {
-                    continue;
-                }
-                for s in 0..=8 {
-                    let t = a.first + (a.last - a.first) * (s as f64) / 8.0;
-                    let p = a.arc.point_at(t);
-                    u_lo = u_lo.min(p.x);
-                    u_hi = u_hi.max(p.x);
-                }
-            }
-            if !u_lo.is_finite() {
-                continue;
-            }
-            let p0 = arcs[j].arc.point_at(arcs[j].first);
-            let shift = if (p0.x - u_lo).abs() <= (p0.x - u_hi).abs() {
-                a_period
-            } else {
-                -a_period
-            };
-            arcs[j].arc = match &arcs[j].arc {
-                Curve2d::Line(l) => Curve2d::Line(rcad_kernel::geom::Line2d {
-                    origin: DVec2::new(l.origin.x + shift, l.origin.y),
-                    direction: l.direction,
-                }),
-                Curve2d::Circle(c) => Curve2d::Circle(rcad_kernel::geom::Circle2d {
-                    center: DVec2::new(c.center.x + shift, c.center.y),
-                    x_dir: c.x_dir,
-                    y_dir: c.y_dir,
-                    radius: c.radius,
-                }),
-                _ => continue,
-            };
-        }
-    }
-    arcs
-}
-
 #[derive(Debug, Clone)]
 pub struct IntersectionCurve {
     pub curve: Curve3,
@@ -1016,13 +885,12 @@ impl FaceFace {
                 // OCCT IntTools_FaceFace::Perform L441-474: for the remaining
                 // analytic pairs route through IntPatch_Intersection
                 // (-> IntPatch_ImpImpIntersection -> IntAna_QuadQuadGeo).
-                // The intersector receives the faces' TopolTools
-                // (BRepTopAdaptor_TopolTool, Restriction mode) — build the
-                // boundary pcurve arcs from the DS face wires; an empty list
-                // keeps the UV-rectangle domain form.
-                let bnd1 = face_boundary_arcs(ds, self.face1);
-                let bnd2 = face_boundary_arcs(ds, self.face2);
-                self.intersect_int_patch(&s1, &s2, uv1, uv2, &bnd1, &bnd2, tol);
+                // The intersector receives the faces' TopolTools created as
+                // IntTools_TopolTool (IntTools_FaceFace.cxx L475-476) — the
+                // UV-rectangle domain of the loaded adaptors, NOT the face
+                // wires.  The rectangle domains are the corrected FF UV
+                // rectangles; an empty arc list keeps that form.
+                self.intersect_int_patch(&s1, &s2, uv1, uv2, tol);
                 // OCCT IntTools_FaceFace::MakeCurve (L695-1846): clip the raw
                 // analytic lines to the two faces' domains.
                 self.curves = face_make_curve::make_curves(
@@ -1154,13 +1022,11 @@ impl FaceFace {
         s2: &Surface3,
         uv1: [f64; 4],
         uv2: [f64; 4],
-        bnd1: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
-        bnd2: &[crate::geomalgo::int_patch::so_on_bounds::BoundaryArc],
         tol: f64,
     ) {
         let mut inter =
             crate::geomalgo::int_patch::IntPatchIntersection::new();
-        inter.perform(s1, s2, uv1, uv2, bnd1, bnd2, tol, tol);
+        inter.perform(s1, s2, uv1, uv2, tol, tol);
         if inter.tangent_faces() {
             self.tangent_faces = true;
             self.curves.clear();

@@ -343,15 +343,15 @@ fn nb_samples_on_arc(a: &Curve2d) -> i32 {
 }
 
 // =====================================================================
-// Domain (Adaptor3d_TopolTool equivalent for the FF UV rectangle)
+// Domain (Adaptor3d_TopolTool equivalent — the FF UV rectangle)
 // =====================================================================
 
 /// A corner of the UV domain rectangle (Adaptor3d_HVertex equivalent).
 ///
 /// `param` is the vertex parameter on the current boundary arc (OCCT
-/// BRepTopAdaptor_HVertex::Parameter = BRep_Tool::Parameter(V, E, F)); it is
-/// only consumed by the restriction-arc form of the domain (the rectangle
-/// form derives the parameter from the u/v corner coordinates as before).
+/// Adaptor3d_TopolTool::Initialize(C) L235-254: the arc's first/last
+/// parameters become the two HVertexes; BRepTopAdaptor_HVertex::Parameter
+/// would be BRep_Tool::Parameter(V, E, F)).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DomainVertex {
     pub u: f64,
@@ -359,40 +359,19 @@ pub struct DomainVertex {
     pub param: f64,
 }
 
-/// One boundary arc of the face-restriction domain — the stored pcurve of one
-/// edge occurrence in a face wire (OCCT BRepAdaptor_Curve2d), with the edge's
-/// parameter range (IntPatch_HInterTool::Bounds = FirstParameter/LastParameter)
-/// and the BRep-vertex parameters on the pcurve (the TopolTool domain vertices
-/// enumerated by InitVertexIterator, BRep_Tool::Parameter(V, E, F)).
-#[derive(Debug, Clone)]
-pub struct BoundaryArc {
-    pub arc: Curve2d,
-    pub first: f64,
-    pub last: f64,
-    pub vtx_params: Vec<f64>,
-}
-
-/// The domain of restriction of a surface.
-///
-/// Rectangle form (`segs` empty): the corrected FF UV rectangle whose boundary
-/// arcs are the four edges of the rectangle.
-///
-/// Restriction form (`segs` non-empty): the face boundary pcurves sampled from
-/// the face wires (OCCT Adaptor3d_TopolTool Restriction mode,
-/// BRepTopAdaptor_TopolTool::Initialize — one BRepAdaptor_Curve2d arc per
-/// TopExp_Explorer edge occurrence); the UV box is kept for the coarse band
-/// test in Classify and the periodic re-framing.
+/// The UV-rectangle domain of a surface — OCCT IntTools_TopolTool, i.e. the
+/// default Adaptor3d_TopolTool::Initialize(S) (Adaptor3d_TopolTool.cxx
+/// L57-209): the boundary arcs are the four edges of the rectangle, in the
+/// same order and with the same parameterization as OCCT's myRestr array:
+///   0: (0, Vinf) + X,  param u in [Uinf, Usup]
+///   1: (Usup, 0) + Y,  param v in [Vinf, Vsup]
+///   2: (0, Vsup) - X,  param t in [-Usup, -Uinf]  (reversed U)
+///   3: (Uinf, 0) - Y,  param t in [-Vsup, -Vinf]  (reversed V)
 pub struct Domain {
     u_min: f64,
     u_max: f64,
     v_min: f64,
     v_max: f64,
-    /// The face boundary arcs (restriction form; empty = rectangle form).
-    segs: Vec<BoundaryArc>,
-    /// Surface periodicity (OCCT BRepAdaptor_Surface::IsUPeriodic/IsVPeriodic),
-    /// consumed by the restriction-form Classify re-framing.
-    u_periodic: bool,
-    v_periodic: bool,
     // Current arc index for Init/More/Value/Next.
     arc_idx: usize,
     // Current vertex iterator state for the current arc.
@@ -408,66 +387,17 @@ impl Domain {
             u_max,
             v_min,
             v_max,
-            segs: Vec::new(),
-            u_periodic: false,
-            v_periodic: false,
             arc_idx: 0,
             vtx_idx: 0,
             vtx_arc: 0,
         }
     }
 
-    /// Restriction-form domain: the face boundary arcs over the (still
-    /// corrected) UV rectangle, with the surface periodicity for the
-    /// Classify re-framing.
-    pub fn new_with_arcs(
-        u_min: f64,
-        u_max: f64,
-        v_min: f64,
-        v_max: f64,
-        segs: Vec<BoundaryArc>,
-        u_periodic: bool,
-        v_periodic: bool,
-    ) -> Self {
-        Domain {
-            u_min,
-            u_max,
-            v_min,
-            v_max,
-            segs,
-            u_periodic,
-            v_periodic,
-            arc_idx: 0,
-            vtx_idx: 0,
-            vtx_arc: 0,
-        }
-    }
-
-    /// OCCT TopolTool::Classify(P, Tol) (BRepTopAdaptor_TopolTool.cxx
-    /// L174-187) via BRepTopAdaptor_FClass2d::Perform (L525-684): classify a
-    /// 2D point against the face domain, returning IN/ON/OUT.  For the rcad
-    /// UV-rectangle domain this is rectangle inclusion with a tolerance band
-    /// around the boundary (IN strictly inside by more than Tol, OUT beyond
-    /// Tol, ON within Tol).
-    ///
-    /// OCCT additionally re-frames the point periodically before classifying
-    /// (RecadreOnPeriodic=true, L550-588); the rcad Domain is a plain UV
-    /// rectangle without surface periodicity, and FF special-point parameters
-    /// are already in the surface's natural range, so the periodic re-framing
-    /// is not represented here.
+    /// OCCT TopolTool::Classify(P, Tol) (Adaptor3d_TopolTool.cxx L280-298):
+    /// rectangle inclusion with a tolerance band around the boundary
+    /// (IN strictly inside by more than Tol, OUT beyond Tol, ON within Tol).
     pub fn classify(&self, u: f64, v: f64, tol: f64) -> rcad_kernel::topods::State {
         use rcad_kernel::topods::State;
-        if !self.segs.is_empty() {
-            return classify_in_restriction(
-                u,
-                v,
-                [self.u_min, self.u_max, self.v_min, self.v_max],
-                &self.segs,
-                tol,
-                self.u_periodic,
-                self.v_periodic,
-            );
-        }
         if u > self.u_min + tol
             && u < self.u_max - tol
             && v > self.v_min + tol
@@ -489,23 +419,17 @@ impl Domain {
     pub fn init(&mut self) {
         self.arc_idx = 0;
     }
-    /// OCCT TopolTool::More().
+    /// OCCT TopolTool::More() — the four boundary arcs.
     pub fn more(&self) -> bool {
-        if !self.segs.is_empty() {
-            return self.arc_idx < self.segs.len();
-        }
         self.arc_idx < 4
     }
     /// OCCT TopolTool::Value() — the current boundary arc (2D curve in UV).
     pub fn value(&self) -> Curve2d {
-        if !self.segs.is_empty() {
-            return self.segs[self.arc_idx].arc.clone();
-        }
         let (o, d) = match self.arc_idx {
             0 => (DVec2::new(0.0, self.v_min), DVec2::new(1.0, 0.0)),
-            1 => (DVec2::new(0.0, self.v_max), DVec2::new(1.0, 0.0)),
-            2 => (DVec2::new(self.u_min, 0.0), DVec2::new(0.0, 1.0)),
-            _ => (DVec2::new(self.u_max, 0.0), DVec2::new(0.0, 1.0)),
+            1 => (DVec2::new(self.u_max, 0.0), DVec2::new(0.0, 1.0)),
+            2 => (DVec2::new(0.0, self.v_max), DVec2::new(-1.0, 0.0)),
+            _ => (DVec2::new(self.u_min, 0.0), DVec2::new(0.0, -1.0)),
         };
         Curve2d::Line(rcad_kernel::geom::Line2d { origin: o, direction: d })
     }
@@ -515,37 +439,20 @@ impl Domain {
     }
 
     /// OCCT IntPatch_HInterTool::Bounds(A, Ufirst, Ulast) — the arc's own
-    /// parameter range (A->FirstParameter()/LastParameter()).
+    /// parameter range (Adaptor2d_Line2d FirstParameter/LastParameter,
+    /// Adaptor3d_TopolTool.cxx L75-170: pinf/psup per restriction).
     pub fn bounds(&self, a: &Curve2d) -> (f64, f64) {
-        if let Some(i) = self.index_of_arc(a) {
-            return (self.segs[i].first, self.segs[i].last);
+        match self.arc_of(a) {
+            0 => (self.u_min, self.u_max),
+            1 => (self.v_min, self.v_max),
+            2 => (-self.u_max, -self.u_min),
+            _ => (-self.v_max, -self.v_min),
         }
-        // Arc 0/1: V=const, U in [u_min,u_max]; Arc 2/3: U=const, V in [v_min,v_max].
-        if matches!(a, Curve2d::Line(l) if l.direction.y.abs() > 0.5) {
-            (self.v_min, self.v_max)
-        } else {
-            (self.u_min, self.u_max)
-        }
-    }
-
-    /// The index of the restriction arc matching `a` (OCCT handle identity
-    /// Arc() == A recovered by structural match).
-    fn index_of_arc(&self, a: &Curve2d) -> Option<usize> {
-        if self.segs.is_empty() {
-            return None;
-        }
-        self.segs.iter().position(|s| curves_same(&s.arc, a))
     }
 
     /// OCCT TopolTool::Initialize(A) — attach the vertex iterator to an arc.
     pub fn initialize(&mut self, a: &Curve2d) {
-        self.vtx_arc = self.index_of_arc(a).unwrap_or_else(|| {
-            if self.segs.is_empty() {
-                self.arc_of(a)
-            } else {
-                self.arc_idx.min(self.segs.len().saturating_sub(1))
-            }
-        });
+        self.vtx_arc = self.arc_of(a);
         self.vtx_idx = 0;
     }
     /// OCCT TopolTool::InitVertexIterator().
@@ -553,48 +460,41 @@ impl Domain {
         self.vtx_idx = 0;
     }
     /// OCCT TopolTool::MoreVertex() — each arc has two endpoint corners
-    /// (rectangle form) or the edge's BRep vertices (restriction form).
+    /// (Adaptor3d_TopolTool::Initialize(C) L235-254: the arc's first/last
+    /// parameters become the two HVertexes).
     pub fn more_vertex(&self) -> bool {
-        if !self.segs.is_empty() {
-            return self.vtx_idx < self.segs[self.vtx_arc].vtx_params.len();
-        }
         self.vtx_idx < 2
     }
-    /// OCCT TopolTool::Vertex().
+    /// OCCT TopolTool::Vertex() — the corner at the arc's first/last
+    /// parameter (Adaptor3d_TopolTool.cxx L245-253).
     pub fn vertex(&self) -> DomainVertex {
-        if !self.segs.is_empty() {
-            let seg = &self.segs[self.vtx_arc];
-            let param = seg.vtx_params[self.vtx_idx];
-            let p2d = seg.arc.point_at(param);
-            return DomainVertex { u: p2d.x, v: p2d.y, param };
-        }
         match self.vtx_arc {
             0 => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_min, v: self.v_min, param: 0.0 }
+                    DomainVertex { u: self.u_min, v: self.v_min, param: self.u_min }
                 } else {
-                    DomainVertex { u: self.u_max, v: self.v_min, param: 0.0 }
+                    DomainVertex { u: self.u_max, v: self.v_min, param: self.u_max }
                 }
             }
             1 => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_min, v: self.v_max, param: 0.0 }
+                    DomainVertex { u: self.u_max, v: self.v_min, param: self.v_min }
                 } else {
-                    DomainVertex { u: self.u_max, v: self.v_max, param: 0.0 }
+                    DomainVertex { u: self.u_max, v: self.v_max, param: self.v_max }
                 }
             }
             2 => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_min, v: self.v_min, param: 0.0 }
+                    DomainVertex { u: self.u_max, v: self.v_max, param: -self.u_max }
                 } else {
-                    DomainVertex { u: self.u_min, v: self.v_max, param: 0.0 }
+                    DomainVertex { u: self.u_min, v: self.v_max, param: -self.u_min }
                 }
             }
             _ => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_max, v: self.v_min, param: 0.0 }
+                    DomainVertex { u: self.u_min, v: self.v_max, param: -self.v_max }
                 } else {
-                    DomainVertex { u: self.u_max, v: self.v_max, param: 0.0 }
+                    DomainVertex { u: self.u_min, v: self.v_min, param: -self.v_min }
                 }
             }
         }
@@ -608,66 +508,67 @@ impl Domain {
         (v1.u - v2.u).abs() <= rcad_kernel::precision::CONFUSION
             && (v1.v - v2.v).abs() <= rcad_kernel::precision::CONFUSION
     }
-    /// OCCT TopolTool::Orientation(A) — orientation of a boundary arc in the
-    /// face.  rcad's domain is a rectangular UV patch; the boundary walk is
-    /// counter-clockwise (bottom, right, top, left).
-    pub fn orientation_arc(&self, a: &Curve2d) -> rcad_kernel::topods::Orientation {
+    /// OCCT TopolTool::Orientation(A) — Adaptor3d_TopolTool.cxx L606-609: the
+    /// base TopolTool reports every boundary arc FORWARD.
+    pub fn orientation_arc(&self, _a: &Curve2d) -> rcad_kernel::topods::Orientation {
         use rcad_kernel::topods::Orientation;
-        match self.arc_of(a) {
-            0 => Orientation::Forward,  // bottom: +U
-            1 => Orientation::Reversed, // top: -U in the CCW walk
-            2 => Orientation::Reversed, // left: -V in the CCW walk
-            _ => Orientation::Forward,  // right: +V
-        }
+        Orientation::Forward
     }
 
-    /// OCCT TopolTool::Orientation(V) — orientation of a boundary vertex.
+    /// OCCT TopolTool::Orientation(V) — Adaptor3d_TopolTool.cxx L611-614:
+    /// the vertex orientation stored in the HVertex (Adaptor3d_TopolTool.cxx
+    /// L245-253: FORWARD at the arc's first parameter, REVERSED at the last).
     pub fn orientation_vertex(&self, v: DomainVertex) -> rcad_kernel::topods::Orientation {
         use rcad_kernel::topods::Orientation;
-        let u_max = (v.u - self.u_max).abs() <= rcad_kernel::precision::CONFUSION;
-        let v_max = (v.v - self.v_max).abs() <= rcad_kernel::precision::CONFUSION;
-        if u_max && v_max || !u_max && !v_max {
+        // The corner at the arc's first parameter was created FORWARD
+        // (Adaptor3d_TopolTool.cxx L245-246), the other corner REVERSED.
+        let i = self.vtx_arc;
+        let first = match i {
+            0 => v.u == self.u_min,
+            1 => v.v == self.v_min,
+            2 => v.u == self.u_max,
+            _ => v.v == self.v_max,
+        };
+        if first {
             Orientation::Forward
         } else {
             Orientation::Reversed
         }
     }
 
-    /// OCCT IntPatch_HInterTool::Parameter(V, A).
+    /// OCCT IntPatch_HInterTool::Parameter(V, A) — the vertex parameter on the
+    /// arc (the arc parameter of the 2D corner point: u / v / -u / -v).
     pub fn parameter(&self, v: DomainVertex, a: &Curve2d) -> f64 {
-        if !self.segs.is_empty() {
-            // BRepTopAdaptor_HVertex::Parameter = BRep_Tool::Parameter(V, E, F).
-            return v.param;
-        }
-        if matches!(a, Curve2d::Line(l) if l.direction.y.abs() > 0.5) {
-            v.v
-        } else {
-            v.u
+        match self.arc_of(a) {
+            0 => v.u,
+            1 => v.v,
+            2 => -v.u,
+            _ => -v.v,
         }
     }
     /// OCCT IntPatch_HInterTool::Tolerance(V, A) — vertex resolution on the arc.
     ///
-    /// In the FF path the domain is a BRepTopAdaptor_TopolTool, so
-    /// V->Resolution(C) is BRepTopAdaptor_HVertex::Resolution (BRepTopAdaptor_
-    /// HVertex.cxx L47-...): a parametric resolution built from the BRep vertex
-    /// tolerance (~ Precision::Confusion).  The rcad UV-rectangle model has no
-    /// BRep vertex, so the point-confusion tolerance is used as its resolution.
+    /// In the FF path the domain is an IntTools_TopolTool (UV rectangle)
+    /// without BRep vertices, so the point-confusion tolerance is used as its
+    /// resolution.
     pub fn vertex_tolerance(&self, _v: DomainVertex, _a: &Curve2d) -> f64 {
         rcad_kernel::precision::CONFUSION
     }
-    /// The index of the arc matching `a`.
+    /// The index of the arc matching `a` (OCCT handle identity Arc() == A
+    /// recovered by structural match).
     fn arc_of(&self, a: &Curve2d) -> usize {
         if let Curve2d::Line(l) = a {
             if l.direction.y.abs() > 0.5 {
-                if (l.origin.y - self.v_min).abs() < (l.origin.y - self.v_max).abs() {
-                    2
+                // U=const arcs (1: right +V at Usup, 3: left -V at Uinf).
+                if (l.origin.x - self.u_max).abs() < (l.origin.x - self.u_min).abs() {
+                    1
                 } else {
                     3
                 }
-            } else if (l.origin.y - self.v_min).abs() < (l.origin.y - self.v_max).abs() {
+            } else if l.direction.x > 0.0 {
                 0
             } else {
-                1
+                2
             }
         } else {
             0
@@ -677,187 +578,6 @@ impl Domain {
     /// OCCT TopolTool::Edge() — the BRep edge; rcad's domain has no BRep edge.
     pub fn edge(&self) -> Option<()> {
         None
-    }
-}
-
-/// OCCT BRepTopAdaptor_TopolTool::Classify (BRepTopAdaptor_FClass2d::Perform
-/// → IntTools_FClass2d::Perform → CSLib_Class2d::SiDans) against the
-/// face-restriction polygon: coarse UV-box band rejection, then the
-/// internalSiDansOuOn ray-cast over each closed wire polyline with the ON
-/// detection at a vertex / on an edge within the tolerance, then IN/OUT by
-/// the crossing parity (even-odd handles inner-wire holes).  The periodic
-/// directions fold the point by the 2*pi period into the polygon's box before
-/// the tests (RecadreOnPeriodic, BRepTopAdaptor_FClass2d::Perform L550-588) —
-/// the FF UV rectangle (clamped to the surface natural domain in the periodic
-/// directions) can sit a whole period away from the stored pcurves' frame.
-///
-/// Pure function over the boundary arcs — no DS lookups (the shared form used
-/// by Domain::classify and the face_make_curve classification).
-pub fn classify_in_restriction(
-    u: f64,
-    v: f64,
-    uv: [f64; 4],
-    segs: &[BoundaryArc],
-    tol: f64,
-    u_periodic: bool,
-    v_periodic: bool,
-) -> rcad_kernel::topods::State {
-    use rcad_kernel::topods::State;
-    // Quick rejection test for points clearly outside the bounding box
-    // (CSLib_Class2d::SiDans, CSLib_Class2d.cxx L160-167).
-    if u < uv[0] - tol || u > uv[1] + tol || v < uv[2] - tol || v > uv[3] + tol {
-        return State::Out;
-    }
-    const NS: usize = 32;
-    // Sample each boundary arc into a polyline chain (IntTools_FClass2d::Init
-    // accumulates one SeqPnt2d per TopExp_Explorer wire).
-    let mut chains: Vec<Vec<DVec2>> = Vec::with_capacity(segs.len());
-    for seg in segs {
-        let mut pts = Vec::with_capacity(NS + 1);
-        for k in 0..=NS {
-            let t = seg.first + (seg.last - seg.first) * (k as f64) / (NS as f64);
-            pts.push(seg.arc.point_at(t));
-        }
-        chains.push(pts);
-    }
-    // Group the chains into wires: chains sharing an endpoint belong to the
-    // same wire loop, and the loop polyline is CLOSED (the CSLib_Class2d
-    // parity runs over the closing segment as well).
-    let mut wires: Vec<Vec<DVec2>> = Vec::new();
-    let mut used = vec![false; chains.len()];
-    for i in 0..chains.len() {
-        if used[i] {
-            continue;
-        }
-        used[i] = true;
-        let mut wire = chains[i].clone();
-        loop {
-            let last = *wire.last().unwrap();
-            let mut found: Option<(usize, bool)> = None;
-            for j in 0..chains.len() {
-                if used[j] {
-                    continue;
-                }
-                let c = &chains[j];
-                if (c[0] - last).length() <= rcad_kernel::precision::CONFUSION {
-                    found = Some((j, false));
-                    break;
-                }
-                if (c[c.len() - 1] - last).length() <= rcad_kernel::precision::CONFUSION {
-                    found = Some((j, true));
-                    break;
-                }
-            }
-            match found {
-                Some((j, rev)) => {
-                    used[j] = true;
-                    let mut c = chains[j].clone();
-                    if rev {
-                        c.reverse();
-                    }
-                    c.remove(0);
-                    wire.extend(c);
-                }
-                None => break,
-            }
-        }
-        wires.push(wire);
-    }
-    let a_period = std::f64::consts::TAU;
-    let (mut u, mut v) = (u, v);
-    if u_periodic || v_periodic {
-        // RecadreOnPeriodic (BRepTopAdaptor_FClass2d::Perform L550-588): fold
-        // the point by the period into the polygon's box — the FF UV rectangle
-        // (clamped to the surface natural domain in the periodic directions)
-        // can sit a whole period away from the stored pcurves' frame.
-        let (mut u_lo, mut u_hi, mut v_lo, mut v_hi) = (
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-        );
-        for wire in &wires {
-            for q in wire {
-                u_lo = u_lo.min(q.x);
-                u_hi = u_hi.max(q.x);
-                v_lo = v_lo.min(q.y);
-                v_hi = v_hi.max(q.y);
-            }
-        }
-        if u_periodic && u_lo.is_finite() {
-            if u < u_lo - tol {
-                while u < u_lo - tol {
-                    u += a_period;
-                }
-            } else if u > u_hi + tol {
-                while u > u_hi + tol {
-                    u -= a_period;
-                }
-            }
-        }
-        if v_periodic && v_lo.is_finite() {
-            if v < v_lo - tol {
-                while v < v_lo - tol {
-                    v += a_period;
-                }
-            } else if v > v_hi + tol {
-                while v > v_hi + tol {
-                    v -= a_period;
-                }
-            }
-        }
-    }
-    // internalSiDansOuOn (CSLib_Class2d.cxx L275-330) over each closed wire
-    // polygon: relative deltas to the query point, ON at a vertex within the
-    // tolerance, ON on an edge by the Y interpolation at the query X, and the
-    // ray-cast crossing count with the (dy < 0.0) sign convention.  The
-    // crossings of all wires are combined (even-odd handles inner wires).
-    let mut crossings = 0usize;
-    for wire in &wires {
-        let n = wire.len();
-        if n < 3 {
-            continue;
-        }
-        let mut prev = wire[n - 1];
-        for curr in wire.iter() {
-            let dpx = prev.x - u;
-            let dpy = prev.y - v;
-            let dcx = curr.x - u;
-            let dcy = curr.y - v;
-            // ON at the current vertex within the tolerance
-            // (OCCT: |aCurrDx| < myTolU && |aCurrDy| < myTolV).
-            if dcx.abs() <= tol && dcy.abs() <= tol {
-                return State::On;
-            }
-            // ON on an edge: the edge straddles the query X and the
-            // interpolated Y at the query X is within the tolerance.
-            let edge_dx = curr.x - prev.x;
-            if (prev.x - u) * dcx < 0.0 && edge_dx.abs() > rcad_kernel::precision::PCONFUSION {
-                let interp_y = curr.y - (curr.y - prev.y) / edge_dx * dcx;
-                let delta_y = interp_y - v;
-                if (-tol..=tol).contains(&delta_y) {
-                    return State::On;
-                }
-            }
-            let prev_neg = dpy < 0.0;
-            let curr_neg = dcy < 0.0;
-            if prev_neg != curr_neg {
-                if dpx > 0.0 && dcx > 0.0 {
-                    crossings += 1;
-                } else if dpx > 0.0 || dcx > 0.0 {
-                    let x_intersect = dpx - dpy * (dcx - dpx) / (dcy - dpy);
-                    if x_intersect > 0.0 {
-                        crossings += 1;
-                    }
-                }
-            }
-            prev = *curr;
-        }
-    }
-    if crossings % 2 == 1 {
-        State::In
-    } else {
-        State::Out
     }
 }
 

@@ -90,10 +90,9 @@ impl ImpImpIntersection {
     // =====================================================================
     // OCCT L73-79: Perform(S1, D1, S2, D2, TolArc, TolTang, theIsReqToKeepRLine)
     // rcad: Surface3 instead of Adaptor3d_Surface; the UV domains D1/D2 (the
-    // corrected FF UV rectangles) replace the TopolTool.  bnd1/bnd2 are the
-    // faces' boundary pcurve arcs (OCCT Adaptor3d_TopolTool Restriction mode —
-    // BRepTopAdaptor_TopolTool::Initialize over the face wires); an empty list
-    // keeps the UV-rectangle domain form.
+    // corrected FF UV rectangles) replace the TopolTool — OCCT IntTools_FaceFace
+    // creates IntTools_TopolTool (IntTools_FaceFace.cxx L475-476), the
+    // UV-rectangle domains, never the face-wire restriction form.
     // =====================================================================
     pub fn perform(
         &mut self,
@@ -101,8 +100,6 @@ impl ImpImpIntersection {
         s2: &Surface3,
         uv1: [f64; 4],
         uv2: [f64; 4],
-        bnd1: &[super::so_on_bounds::BoundaryArc],
-        bnd2: &[super::so_on_bounds::BoundaryArc],
         tol_arc: f64,
         tol_tang: f64,
     ) {
@@ -320,40 +317,11 @@ impl ImpImpIntersection {
             return;
         }
 
-        // OCCT D1/D2 (Adaptor3d_TopolTool) — the corrected FF UV rectangles.
-        // OCCT passes the topol tools as function parameters (always valid);
-        // rcad creates the UV-rectangle domains up front, or the restriction
-        // domains when the caller supplied the faces' boundary pcurve arcs.
-        // They are used by PutPointsOnLine below and by the spnt
-        // classification after the isPostProcessingRequired block.
-        let mut d1 = if bnd1.is_empty() {
-            super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3])
-        } else {
-            let (u_per, v_per) = surface_periodicity(s1);
-            super::so_on_bounds::Domain::new_with_arcs(
-                uv1[0],
-                uv1[1],
-                uv1[2],
-                uv1[3],
-                bnd1.to_vec(),
-                u_per,
-                v_per,
-            )
-        };
-        let mut d2 = if bnd2.is_empty() {
-            super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3])
-        } else {
-            let (u_per, v_per) = surface_periodicity(s2);
-            super::so_on_bounds::Domain::new_with_arcs(
-                uv2[0],
-                uv2[1],
-                uv2[2],
-                uv2[3],
-                bnd2.to_vec(),
-                u_per,
-                v_per,
-            )
-        };
+        // OCCT D1/D2 (Adaptor3d_TopolTool) — the corrected FF UV rectangles
+        // (IntTools_TopolTool).  They are used by PutPointsOnLine below and by
+        // the spnt classification after the isPostProcessingRequired block.
+        let mut d1 = super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3]);
+        let mut d2 = super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3]);
 
         // OCCT L2782-2934: isPostProcessingRequired block
         if is_post_processing_required {
@@ -965,16 +933,6 @@ fn quad_type_index(q: &Quadric) -> i32 {
     }
 }
 
-/// OCCT BRepAdaptor_Surface::IsUPeriodic/IsVPeriodic for the analytic quadrics
-/// (the classifier's RecadreOnPeriodic directions).
-fn surface_periodicity(s: &Surface3) -> (bool, bool) {
-    match s {
-        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) => (true, false),
-        Surface3::Torus(_) => (true, true),
-        _ => (false, false),
-    }
-}
-
 /// Virtual tolerance angle used in Place/Cylinder dispatch
 /// OCCT ProcessBounds (IntPatch_ImpImpIntersection.cxx L4683-4838).
 ///
@@ -1073,7 +1031,11 @@ pub(crate) fn process_bounds(
         }
     };
 
+    let dbg = std::env::var("RCAD_II_DEBUG").is_ok();
     let mut ptsol = make_vertex(ptf, 0.0, tol);
+    if dbg {
+        eprintln!("[II-VTX] glinelim procf={} procl={} first={:?} last={:?}", procf, procl, first, last);
+    }
     if !*procf && !*procl {
         if ptf.distance(ptl) <= tol {
             ptsol.multiple = true;

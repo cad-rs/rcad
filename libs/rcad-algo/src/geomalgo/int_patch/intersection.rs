@@ -120,18 +120,16 @@ impl IntPatchIntersection {
     /// OCCT L1066-1372: Perform
     ///
     /// rcad adaptation:
-    ///   - Adaptor3d_Surface 鈫?&Surface3 (one parameter instead of surface+tool)
-    ///   - Adaptor3d_TopolTool 鈫?the corrected FF UV rectangles uv1/uv2 plus
-    ///     the faces' boundary pcurve arcs (Restriction mode) when available
-    ///   - isGeomInt, theIsReqToKeepRLine, theIsReqToPostWLProc 鈫?default params
+    ///   - Adaptor3d_Surface → &Surface3 (one parameter instead of surface+tool)
+    ///   - Adaptor3d_TopolTool → the corrected FF UV rectangles uv1/uv2 (the
+    ///     IntTools_TopolTool rectangle domains, IntTools_FaceFace.cxx L475-476)
+    ///   - isGeomInt, theIsReqToKeepRLine, theIsReqToPostWLProc → default params
     pub fn perform(
         &mut self,
         s1: &Surface3,
         s2: &Surface3,
         uv1: [f64; 4],
         uv2: [f64; 4],
-        bnd1: &[super::so_on_bounds::BoundaryArc],
-        bnd2: &[super::so_on_bounds::BoundaryArc],
         tol_arc: f64,
         tol_tang: f64,
     ) {
@@ -384,7 +382,7 @@ impl IntPatchIntersection {
         // ===== OCCT L1298-1339: dispatch
         // OCCT L1302-1324: Geom-Geom (ts1 == ts2 == 1)
         if ts1 == ts2 && ts1 == 1 {
-            self.geom_geom_perform(s1, s2, uv1, uv2, bnd1, bnd2, typs1, typs2);
+            self.geom_geom_perform(s1, s2, uv1, uv2, typs1, typs2);
         }
         // OCCT L1326-1330: Geom-Param (ts1 != ts2)
         if ts1 != ts2 {
@@ -480,15 +478,13 @@ impl IntPatchIntersection {
         s2: &Surface3,
         uv1: [f64; 4],
         uv2: [f64; 4],
-        bnd1: &[super::so_on_bounds::BoundaryArc],
-        bnd2: &[super::so_on_bounds::BoundaryArc],
         typs1: GeomAbsSurfaceType,
         typs2: GeomAbsSurfaceType,
     ) {
         // OCCT L1789-1797: IntPatch_ImpImpIntersection interii(...); if
         // (!interii.IsDone()) { done = false; ParamParamPerfom(...); return; }
         let mut imp_imp = ImpImpIntersection::new();
-        imp_imp.perform(s1, s2, uv1, uv2, bnd1, bnd2, self.my_tol_arc, self.my_tol_tang);
+        imp_imp.perform(s1, s2, uv1, uv2, self.my_tol_arc, self.my_tol_tang);
         if !imp_imp.is_done() {
             self.done = false;
             // OCCT L1795: ParamParamPerfom(...) — rcad: parametric-parametric
