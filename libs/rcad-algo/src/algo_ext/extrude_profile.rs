@@ -398,29 +398,27 @@ pub fn extrude_profile_solid(
         if let Surface3::Cylinder(cyl) = &surf {
             let fp = face.ptr_id();
             let to_uv = |p: DVec3| cyl.world_to_uv(p);
-            let pc_of = |p0: DVec3, p1: DVec3| -> Option<(Curve2d, f64, f64)> {
-                let mut uv0 = to_uv(p0);
-                let mut uv1 = to_uv(p1);
-                // OCCT ProjLib_Cylinder::Project keeps the pcurve's U in the
-                // surface's natural [0, 2pi] domain; world_to_uv's atan2
-                // returns (-pi, pi], so an arc on the negative-u half is
-                // shifted by a whole period.  Without the shift the stored
-                // pcurve's U polygon is the complement of the face's real UV
-                // region and every UV classification of the face inverts.
-                let a_period = std::f64::consts::TAU;
-                if uv0.x < 0.0 {
-                    uv0.x += a_period;
-                    uv1.x += a_period;
-                }
-                if uv1.x < 0.0 {
-                    uv1.x += a_period;
-                }
-                let d = uv1 - uv0;
+            let to_v = |p: DVec3| cyl.world_to_uv(p).y;
+            // pcurve through the surface-UV images of the two 3D endpoints.
+            // The U coordinates come from the SEGMENT PARAMETER FRAME —
+            // OCCT BRepSweep builds the lateral cylinder from the generating
+            // circle's own Ax2 (BRepSweep_Rotation/Translation: u = the circle
+            // parameter t; SetGeneratingPCurve L367-373 gives the line
+            // (0, v) + t*(1, 0); SetDirectingPCurve L395-420 gives
+            // u = BRep_Tool::Parameter(aGenV, aGenE)) — so a half-circle
+            // ending at t1 = 3*pi/2 keeps u = 3*pi/2 and does NOT wrap to
+            // -pi/2: atan2's (-pi, pi] branch would split the boundary
+            // polygon off the face's real UV region and flip the Green
+            // boundary-integral direction.
+            let pc_of = |u0: f64, u1: f64, p0: DVec3, p1: DVec3| -> Option<(Curve2d, f64, f64)> {
+                let v0 = to_v(p0);
+                let v1 = to_v(p1);
+                let d = DVec2::new(u1 - u0, v1 - v0);
                 let len = d.length();
                 if len < 1e-15 {
                     return None;
                 }
-                let c = Curve2d::Line(Line2d::new(uv0, d / len));
+                let c = Curve2d::Line(Line2d::new(DVec2::new(u0, v0), d / len));
                 Some((c, 0.0, len))
             };
             // Generating edges: the base profile edge (v = 0) and the located
@@ -443,7 +441,7 @@ pub fn extrude_profile_solid(
                 ProfileSegment::Line { .. } => (0.0, a_b_len),
             };
             let gen_pc = |p: DVec3, q: DVec3| -> Option<(Curve2d, f64, f64)> {
-                pc_of(p, q).or_else(|| {
+                pc_of(t_seg0, t_seg1, p, q).or_else(|| {
                     if !closed_gen {
                         return None;
                     }
@@ -481,24 +479,37 @@ pub fn extrude_profile_solid(
                 }
             }
             // Directing edges: the vertical sweep edges at the segment's
-            // endpoint azimuths.
+            // endpoint azimuths.  OCCT BRepSweep_Translation::SetDirectingPCurve
+            // (BRepSweep_Translation.cxx L321-420) runs per directing edge with
+            // u = BRep_Tool::Parameter(aGenV, aGenE) — each edge's OWN vertex
+            // azimuth — so the two vertical edges of one arc segment get
+            // DISTINCT pcurves (u0 and u1); a shared pcurve leaves the second
+            // edge's UV image on the wrong azimuth.
             let v0 = profile[i].p0();
             let v1 = v0 + dir * depth;
-            if let Some((dp, t0p, t1p)) = pc_of(v0, v1) {
-                for e in [e_ver[i].clone(), e_ver[j].clone()] {
-                    brep.edge_mut_inplace(e)
-                        .pcurves
-                        .insert((fp, 0), (dp.clone(), t0p, t1p));
-                }
-                // A closed profile sweeps the directing edge twice in the
-                // lateral wire (the same TShape, FORWARD and REVERSED): the
-                // closed seam edge carries two pcurves one period apart —
-                // OCCT BRepPrim_OneAxis::LateralFace (L434-438) / make_cylinder
-                // form — pcurve1 at u=az (the FORWARD instance, the west side
-                // of the UV region), pcurve2 at u=az+2*pi (the REVERSED
-                // instance, the east side), as a CurveOnClosedSurface
-                // representation keyed by the lateral face.
-                if e_ver[i].ptr_id() == e_ver[j].ptr_id() {
+            if let Some((dp, t0p, t1p)) = pc_of(t_seg0, t_seg0, v0, v1) {
+                brep.edge_mut_inplace(e_ver[i].clone())
+                    .pcurves
+                    .insert((fp, 0), (dp.clone(), t0p, t1p));
+                let w0 = profile[i].p1();
+                let w1 = w0 + dir * depth;
+                let dp_end = pc_of(t_seg1, t_seg1, w0, w1);
+                if e_ver[i].ptr_id() != e_ver[j].ptr_id() {
+                    if let Some((dp1, t0p1, t1p1)) = dp_end {
+                        brep.edge_mut_inplace(e_ver[j].clone())
+                            .pcurves
+                            .insert((fp, 0), (dp1, t0p1, t1p1));
+                    }
+                } else {
+                    // A closed profile sweeps the directing edge twice in the
+                    // lateral wire (the same TShape, FORWARD and REVERSED): the
+                    // closed seam edge carries two pcurves one period apart —
+                    // OCCT BRepPrim_OneAxis::LateralFace (L434-438) /
+                    // make_cylinder form — pcurve1 at u=az (the FORWARD
+                    // instance, the west side of the UV region), pcurve2 at
+                    // u=az+2*pi (the REVERSED instance, the east side), as a
+                    // CurveOnClosedSurface representation keyed by the lateral
+                    // face.
                     let dp2 = match &dp {
                         Curve2d::Line(l) => Curve2d::Line(rcad_kernel::geom::Line2d {
                             origin: glam::DVec2::new(l.origin.x + std::f64::consts::TAU, l.origin.y),

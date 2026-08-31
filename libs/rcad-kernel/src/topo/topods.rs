@@ -1546,7 +1546,7 @@ pub trait BRepTool {
     /// BRep_Tool::Parameter(aV, aE, aF) �?vertex parameter on edge's pcurve.
     fn parameter_on_edge(&self, vertex: &Shape, edge: &Shape, face: &Shape) -> Option<f64>;
     /// BRep_Tool::CurveOnSurface(aE, aF) �?pcurve of edge on face.
-    fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<&(Curve2d, f64, f64)>;
+    fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)>;
     /// BRep_Tool::Surface(aF) �?face surface (local coordinates, no Location applied).
     fn face_surface(&self, face: &Shape) -> Option<&Surface3>;
     /// BRep_Tool::Surface(aF) with Location applied �?returns world-coordinate surface.
@@ -1679,7 +1679,7 @@ impl BRepTool for BRep {
         self.edge(edge.clone()).vertex_params.get(&vertex.ptr_id()).copied()
     }
 
-    fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<&(Curve2d, f64, f64)> {
+    fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)> {
         // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve of
         // an edge on a face is keyed by `aLoc = L.Predivided(E.Location())` —
         // the face location divided by the edge's location.  A located edge
@@ -1688,7 +1688,7 @@ impl BRepTool for BRep {
         let key = (face.ptr_id(), compose_pcurve_location(face.location, edge.location, &self.locations));
         let ed = self.edge(edge.clone());
         if let Some(hit) = ed.pcurves.get(&key) {
-            return Some(hit);
+            return Some(hit.clone());
         }
         if std::env::var("RCAD_KEYMISS").is_ok() {
             let st = match &face.data.as_ref() {
@@ -1726,21 +1726,57 @@ impl BRepTool for BRep {
             _ => None,
         };
         let Some(fsurf) = fsurf else { return None };
+        // Face-surface lookup by TShape pointer (handle identity stand-in).
+        let face_surface_by_ptr = |ptr: u64| -> Option<crate::geom::Surface3> {
+            let ts = self
+                .tshapes
+                .iter()
+                .find(|ts| Arc::as_ptr(ts) as u64 == ptr)?;
+            match ts.as_ref() {
+                TShape::Face(fd) => fd.surface.clone(),
+                _ => None,
+            }
+        };
+        // OCCT iterates the edge's curve representations directly
+        // (BRep_Tool.cxx L350-367): cr->IsCurveOnSurface(S, loc) matches the
+        // SURFACE VALUE, and the matched BRep_GCurve supplies PCurve() (the
+        // first pcurve; a seam's CurveOnClosedSurface carries both).  The
+        // pcurves map above is rcad's fast index for the same data; this
+        // fallback walks the representations so an edge whose rows are keyed
+        // under another face TShape (boolean areas rebuilt over the same
+        // surface) still resolve.
+        for r in &ed.representations {
+            match r {
+                CurveRepresentation::CurveOnSurface { face: (fptr, lhash), pcurve, range } => {
+                    if *lhash != key.1 {
+                        continue;
+                    }
+                    if let Some(s) = face_surface_by_ptr(*fptr) {
+                        if surface_same(&s, &fsurf) {
+                            return Some((pcurve.clone(), range[0], range[1]));
+                        }
+                    }
+                }
+                CurveRepresentation::CurveOnClosedSurface { face: (fptr, lhash), pcurve1, range, .. } => {
+                    if *lhash != key.1 {
+                        continue;
+                    }
+                    if let Some(s) = face_surface_by_ptr(*fptr) {
+                        if surface_same(&s, &fsurf) {
+                            return Some((pcurve1.clone(), range[0], range[1]));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         for ((fptr, lhash), v) in ed.pcurves.iter() {
             if *lhash != key.1 {
                 continue;
             }
-            if let Some(ts) = self
-                .tshapes
-                .iter()
-                .find(|ts| Arc::as_ptr(ts) as u64 == *fptr)
-            {
-                if let TShape::Face(fd) = ts.as_ref() {
-                    if let Some(s) = fd.surface.as_ref() {
-                        if surface_same(s, &fsurf) {
-                            return Some(v);
-                        }
-                    }
+            if let Some(s) = face_surface_by_ptr(*fptr) {
+                if surface_same(&s, &fsurf) {
+                    return Some(v.clone());
                 }
             }
         }
@@ -1773,6 +1809,41 @@ impl BRepTool for BRep {
             {
                 if *f == fkey {
                     return Some((pcurve2.clone(), range[0], range[1]));
+                }
+            }
+        }
+        // OCCT matches the representation by SURFACE VALUE
+        // (BRep_Tool.cxx L350-367: IsCurveOnClosedSurface() &&
+        // E.IsReversed() -> GC->PCurve2()); a face rebuilt over the same
+        // surface (boolean areas) resolves the representation stored under
+        // the original face's pointer.
+        let fsurf = match face.data.as_ref() {
+            TShape::Face(fd) => fd.surface.clone(),
+            _ => None,
+        };
+        let Some(fsurf) = fsurf else { return None };
+        for r in &ed.representations {
+            if let CurveRepresentation::CurveOnClosedSurface {
+                face: (fptr, lhash),
+                pcurve2,
+                range,
+                ..
+            } = r
+            {
+                if *lhash != fkey.1 {
+                    continue;
+                }
+                let ts = self
+                    .tshapes
+                    .iter()
+                    .find(|ts| Arc::as_ptr(ts) as u64 == *fptr);
+                let Some(ts) = ts else { continue };
+                if let TShape::Face(fd) = ts.as_ref() {
+                    if let Some(s) = fd.surface.as_ref() {
+                        if surface_same(s, &fsurf) {
+                            return Some((pcurve2.clone(), range[0], range[1]));
+                        }
+                    }
                 }
             }
         }

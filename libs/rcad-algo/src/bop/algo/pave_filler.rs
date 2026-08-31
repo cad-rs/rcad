@@ -5075,7 +5075,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             };
             let Some(ref surf) = surf else { continue; };
 
-            // OCCT L619-631: PaveBlocksIn 鈥?pcurve by projection.
+            // OCCT L619-631: PaveBlocksIn — pcurve by projection.
             for &pb_ptr in fi.pave_blocks_in.iter() {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
                     let n_e = pb.0.read().unwrap().edge;
@@ -5083,7 +5083,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     self.build_pcurve_mpc(n_e, n_f1, surf, None);
                 }
             }
-            // OCCT L634-699: PaveBlocksOn 鈥?skip if pcurve exists; a CommonBlock
+            // OCCT L634-699: PaveBlocksOn — skip if pcurve exists; a CommonBlock
             // provides the pcurve-copy source (paired edge with a pcurve).
             for &pb_ptr in fi.pave_blocks_on.iter() {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
@@ -5112,7 +5112,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         // OCCT L744-752: the section-edge MPC has SetFlag(true);
                         // in Perform, when the edge already has a pcurve on the
                         // face (attached by MakePCurve at section creation,
-                        // BOPAlgo_PaveFiller_6.cxx L1066-1072) it is kept 鈥?only
+                        // BOPAlgo_PaveFiller_6.cxx L1066-1072) it is kept — only
                         // UpdateVertices is called. Never overwrite it with a
                         // projection. Edges without a pcurve (null FirstCurve2d)
                         // are projected here, matching the MPC null-branch.
@@ -5204,7 +5204,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 return;
             }
         }
-        // OCCT L248: BuildPCurveForEdgeOnFace 鈥?projection.
+        // OCCT L248: BuildPCurveForEdgeOnFace — projection.
         if let Some(curve) = self.ds.edge_curve(n_e) {
             let range = self.ds.edge_range(n_e);
             let uv = self.ds.face_actual_uv_bounds(n_f);

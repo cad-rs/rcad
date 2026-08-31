@@ -987,23 +987,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rcad-algorithms"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "earcut",
- "glam",
- "indexmap",
- "rayon",
- "rcad-brep",
- "rcad-kernel",
- "rcad-modeling",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "rcad-brep"
 version = "0.1.0"
 dependencies = [
@@ -1042,7 +1025,6 @@ dependencies = [
  "bytemuck",
  "glam",
  "image",
- "rcad-algorithms",
  "rcad-kernel",
  "rcad-modeling",
  "serde",
