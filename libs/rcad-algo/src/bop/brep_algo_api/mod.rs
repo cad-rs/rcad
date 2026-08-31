@@ -378,9 +378,19 @@ fn remap_location_tree(
 /// (appending each entry and recording old-index 閳?new-index) and remap every
 /// returned shape's `location` to the merged table. Index 0 (identity) is
 /// shared; BRep location tables start at index 1.
+///
+/// `cache` is SHARED across every argument/tools call of one boolean
+/// operation: OCCT's BRepAlgoAPI_BooleanOperation::SetArguments/SetTools hold
+/// TopoDS_Shape handles, so a TShape shared between an argument and a tool
+/// (the BRepSweep prism of a face taken from the other argument) keeps ONE
+/// identity in the DS.  Remapping each BRep with a per-call cache would
+/// duplicate the shared TShape and break the vertex-count semantics
+/// (boptuc_simple ZP3: the prism's located vertices must stay identical to
+/// the cone's).
 fn brep_top_shapes_with_locations(
     brep: &rcad_kernel::BRep,
     global_locs: &mut Vec<glam::DAffine3>,
+    cache: &mut HashMap<u64, Arc<TShape>>,
 ) -> Vec<Shape> {
     let mut map: HashMap<u32, u32> = HashMap::new();
     for (i, loc) in brep.locations.iter().enumerate() {
@@ -399,20 +409,17 @@ fn brep_top_shapes_with_locations(
         };
         map.insert(old, new);
     }
-    if map.is_empty() {
-        // No located sub-shapes: keep the original TShape graph untouched
-        // (deep-copying would remap every TShape pointer and break the
-        // vertex_params/pcurve identity keys for no benefit).
-        return brep_top_shapes(brep);
-    }
-    let mut cache: HashMap<u64, Arc<TShape>> = HashMap::new();
+    // Both BReps go through the same cache even when one has no located
+    // sub-shapes (an empty map remaps locations identically): the cache hit
+    // on a TShape shared with the other BRep returns the SAME remapped Arc,
+    // preserving the cross-argument TShape identity.
     let tops: Vec<Shape> = brep_top_shapes(brep)
         .into_iter()
-        .map(|s| remap_location_tree(&s, &map, &mut cache))
+        .map(|s| remap_location_tree(&s, &map, cache))
         .collect();
     // Second pass: all pointers are final now; rewrite every edge's identity
     // keys against the complete cache (old ptr -> new Arc ptr).
-    rewrite_identity_keys(&tops, &cache);
+    rewrite_identity_keys(&tops, cache);
     tops
 }
 
@@ -540,8 +547,11 @@ fn run_build_brep(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<rcad_ker
 pub fn fuse(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
     let mut global_locs = vec![glam::DAffine3::IDENTITY];
-    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs);
-    op.tools = brep_top_shapes_with_locations(b, &mut global_locs);
+    // One shared clone cache across arguments+tools: OCCT keeps cross-argument
+    // TShape identity (boptuc_simple ZP3).
+    let mut cache = std::collections::HashMap::new();
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs, &mut cache);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs, &mut cache);
     op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Union)
 }
@@ -550,8 +560,9 @@ pub fn fuse(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel:
 pub fn common(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
     let mut global_locs = vec![glam::DAffine3::IDENTITY];
-    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs);
-    op.tools = brep_top_shapes_with_locations(b, &mut global_locs);
+    let mut cache = std::collections::HashMap::new();
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs, &mut cache);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs, &mut cache);
     op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Intersection)
 }
@@ -560,8 +571,9 @@ pub fn common(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kerne
 pub fn cut(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
     let mut global_locs = vec![glam::DAffine3::IDENTITY];
-    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs);
-    op.tools = brep_top_shapes_with_locations(b, &mut global_locs);
+    let mut cache = std::collections::HashMap::new();
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs, &mut cache);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs, &mut cache);
     op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Cut)
 }

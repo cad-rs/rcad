@@ -392,6 +392,21 @@ pub fn prism_face_solid_brep(
         lat_key,
         (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
     );
+    // The located top circle instance (same TShape, Location = theExtr) has
+    // its own pcurve key (L.Predivided(E.Location()), BRep_Builder.cxx
+    // L660-700): one representation per wrapper location on the shared
+    // TShape, as in OCCT (DRAW dump of `prism pcy pc_2 0 0 10`, TShape #7:
+    // "PCurve: 5 on surface 1" + "PCurve: 6 on surface 1 location 2").
+    // Without it the located top rim's pcurve lookup on the lateral face
+    // misses and the Green integral of the whole band is zero.
+    let top_lat_key = (
+        f_lat.ptr_id(),
+        t.compose_pcurve_location(f_lat.location, e_circ_top.location),
+    );
+    t.edge_mut_inplace(e_circ_top.clone()).pcurves.insert(
+        top_lat_key,
+        (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
+    );
     t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
         lat_key,
         (Curve2d::Line(Line2d::new(DVec2::new(std::f64::consts::TAU, 0.0), DVec2::Y)), 0.0, ext_len),
