@@ -37,7 +37,7 @@ fn edge_has_curve_3d(brep: &topods::BRep, edge_idx: usize) -> bool {
 fn edge_vertices(brep: &topods::BRep, edge_idx: usize) -> (Option<topods::Shape>, Option<topods::Shape>) {
     if let Some(ts) = brep.tshapes.get(edge_idx) {
         if let topods::TShape::Edge(ed) = &**ts {
-            return (Some(ed.first), Some(ed.last));
+            return (Some(ed.first.clone()), Some(ed.last.clone()));
         }
     }
     (None, None)
@@ -47,7 +47,7 @@ fn edge_vertices(brep: &topods::BRep, edge_idx: usize) -> (Option<topods::Shape>
 fn edge_is_closed_3d(brep: &topods::BRep, edge_idx: usize) -> bool {
     let (first, last) = edge_vertices(brep, edge_idx);
     match (first, last) {
-        (Some(f), Some(l)) => brep.shape_idx(&f) == brep.shape_idx(&l),
+        (Some(f), Some(l)) => f.index == l.index,
         _ => false,
     }
 }
@@ -68,7 +68,8 @@ mod shape_analysis_edge_tests {
         let v2 = b.add_tvertex(DVec3::new(10.0, 0.0, 0.0));
         let crv = rcad_kernel::geom::Curve3::Line(
             rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let edge = b.add_tedge(Some(crv), v1, v2, [0.0, 10.0]);`n        let ei = b.shape_idx(&edge);
+        let edge = b.add_tedge(Some(crv), v1, v2, [0.0, 10.0]);
+        let ei = edge.index;
         assert!(edge_has_curve_3d(&b, ei), "Edge should have a 3D curve");
     }
 
@@ -79,7 +80,8 @@ mod shape_analysis_edge_tests {
         let v2 = b.add_tvertex(DVec3::new(10.0, 0.0, 0.0));
         let crv = rcad_kernel::geom::Curve3::Line(
             rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let edge = b.add_tedge(Some(crv), v1, v2, [0.0, 10.0]);`n        let ei = b.shape_idx(&edge);
+        let edge = b.add_tedge(Some(crv), v1, v2, [0.0, 10.0]);
+        let ei = edge.index;
         let (fv, lv) = edge_vertices(&b, ei);
         assert!(fv.is_some(), "Edge should have a first vertex");
         assert!(lv.is_some(), "Edge should have a last vertex");
@@ -92,7 +94,8 @@ mod shape_analysis_edge_tests {
         let v2 = b.add_tvertex(DVec3::new(10.0, 0.0, 0.0));
         let crv = rcad_kernel::geom::Curve3::Line(
             rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let edge = b.add_tedge(Some(crv), v1, v2, [0.0, 10.0]);`n        let ei = b.shape_idx(&edge);
+        let edge = b.add_tedge(Some(crv), v1, v2, [0.0, 10.0]);
+        let ei = edge.index;
         assert!(!edge_is_closed_3d(&b, ei), "Open edge should not be closed");
     }
 
@@ -102,7 +105,7 @@ mod shape_analysis_edge_tests {
         let seam = b.add_tvertex(DVec3::new(5.0, 0.0, 0.0));
         let crv = rcad_kernel::geom::Curve3::Circle(
             rcad_kernel::geom::Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
-        let ei = b.add_tedge(Some(crv), seam, seam, [0.0, std::f64::consts::TAU]).index;
+        let ei = b.add_tedge(Some(crv), seam.clone(), seam, [0.0, std::f64::consts::TAU]).index;
         assert!(edge_is_closed_3d(&b, ei), "Circle edge should be closed (same vertex)");
     }
 

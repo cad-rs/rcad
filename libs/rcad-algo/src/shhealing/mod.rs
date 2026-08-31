@@ -9,6 +9,7 @@
 
 pub mod healing;
 pub mod shape_analysis;
+pub mod shape_build;
 pub mod shape_custom;
 pub mod shape_extend;
 

@@ -1142,8 +1142,16 @@ impl BRep {
         }
     }
 
-    /// OCCT TopoDS_TShape::EmptyCopy �?create a new TShape of the same type
+    /// OCCT TopoDS_TShape::EmptyCopy - create a new TShape of the same type
     /// with no sub-shapes. Preserves flags. Returns the new TShape index.
+    ///
+    /// Per-type data copied mirrors the OCCT BRep_Txx::EmptyCopy overrides:
+    /// - TVertex (BRep_TVertex.cxx L44-49): Pnt + Tolerance only.
+    /// - TEdge (BRep_TEdge.cxx L48-73): Tolerance + curve representations
+    ///   (pcurves keep their ranges) + Degenerated/SameParameter/SameRange;
+    ///   vertices and vertex parameters are dropped.
+    /// - TFace (BRep_TFace.cxx L44-52): Surface + Location + Tolerance only
+    ///   (NaturalRestriction stays false, no sample-point caches).
     pub fn empty_copy(&mut self, r: Shape) -> Shape {
         let ts = &self.tshapes[r.index];
         let new = match &**ts {
@@ -1162,8 +1170,11 @@ impl BRep {
                 last: Shape::null(),
                 range: ed.range,
                 degenerated: ed.degenerated,
-                pcurves: HashMap::new(),
-                representations: Vec::new(),
+                // OCCT BRep_TEdge::EmptyCopy copies the curve representations
+                // (GCurve + CurveOn2Surfaces kinds, polygons dropped); rcad's
+                // pcurve map + representations vec is that same data.
+                pcurves: ed.pcurves.clone(),
+                representations: ed.representations.clone(),
                 vertex_params: HashMap::new(),
                 tolerance: ed.tolerance,
                 same_parameter: ed.same_parameter,
@@ -1181,11 +1192,13 @@ impl BRep {
                 surface_location: fd.surface_location,
                 outer_wire: Shape::null(),
                 inner_wires: Vec::new(),
-                sample_point: fd.sample_point,
-                uv_domain: fd.uv_domain,
+                sample_point: None,
+                uv_domain: None,
                 internal_vertices: Vec::new(),
                 tolerance: fd.tolerance,
-                natural_restriction: fd.natural_restriction,
+                // OCCT BRep_TFace::EmptyCopy copies Surface/Location/Tolerance
+                // only; NaturalRestriction stays at its default (false).
+                natural_restriction: false,
             })),
             TShape::Shell(sd) => Arc::new(TShape::Shell(TShellData {
                 my_shapes: Vec::new(),
@@ -1211,6 +1224,15 @@ impl BRep {
             orientation: Orientation::Forward,
             location: 0,
         }
+    }
+
+    /// OCCT TopoDS_Shape::EmptyCopied (TopoDS_Shape.hxx L168-172): a new TShape
+    /// via TShape::EmptyCopy(), carrying the ORIGINAL Location and Orientation.
+    pub fn empty_copied(&mut self, r: &Shape) -> Shape {
+        let mut c = self.empty_copy(r.clone());
+        c.orientation = r.orientation;
+        c.location = r.location;
+        c
     }
 
     /// Count face TShapes in this BRep (for shifted-key pcurve lookup).
