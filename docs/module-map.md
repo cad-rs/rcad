@@ -121,3 +121,34 @@
   - `cargo test -p rcad-algo --lib` 70/0
 - bcut 全量跑法：`cargo test -p occt-generated-tests --test generated_occt_boolean_bopcut_simple`（g6 已可直接跑，无需 --skip）。
 - 参考 STEP/拓扑 JSON：`tests/occt/step_output/ref/`、`tests/occt/step_reference/`；重新生成单个用例的 JSON 可复用 `tools/gen-occt-ref/gen_ref_topology.py` 的 `get_ref_topology(grid, case)`。
+
+## 6. 新占位模块的 OCCT 测试环境（GTests + DRAW 网格）
+
+OCCT 的验收测试有两套：(a) 各 toolkit 的 **GTests**（C++ 单测，源码树
+`<TK>/GTests/*_Test.cxx`，经 `ctest` 跑，rcad 不直接复用，但可作为移植时的
+行为参照）；(b) **DRAW 测试网格**（`$OCCT_SRC/tests/<grid>/`，rcad 的
+occt-test-gen 就是从这类脚本翻译生成测试的，是 rcad 侧的主验收源）。
+
+| rcad 目录 | OCCT GTests | DRAW 网格（`$OCCT_SRC/tests/`） | 规模 | 主要 DRAW 命令族 |
+|---|---|---|---|---|
+| `feat/` | 无（GTests 目录为空） | `feat/`（featdprism/featlf/featprism/featrevol/featrf）、关联 `draft/`、`pipe/`、`prism/`、`thrusection/`、`evolved/`、`mkface/` | feat≈304、thrusection≈416、pipe≈332、draft≈113、mkface≈165 | `featdprism/featprism/featrevol/featrf`、`LocOpe_Pipe`（pipe/draft/thrusection） |
+| `fillet/` | 2 个（BRepFilletAPI_MakeFillet/MakeChamfer_Test） | `blend/`（simple/tolblend_simple/bfuseblend/encoderegularity/buildevol 等）、`chamfer/`≈9、`fillet2d/`≈10 | blend 网格用例多为数据驱动（restore .rle） | `blend`、`chamf`、`fillet2d` |
+| `helix/` | 6 个（GTests 最全：HelixBRep_BuilderHelix ×2、HelixGeom ×4） | `helix/standard` | ≈56 | `HelixBRep_BuilderHelix` / HelixGeom 构造 |
+| `hlr/` | 无 | `hlr/exact_hlr` + `hlr/poly_hlr` | ≈170 | `COMPUTE_HLR`（HLRBRep_Algo/AlgoPoly）、`setviewname`/`setlength` 断言 |
+| `offset/` | 4 个（MakeOffset/MakeThickSolid/MakePipeShell/Sewing_Test——注意 Sewing 的 GTest 挂在 TKOffset） | `offset/`（shape/compshape/faces_type_a/faces_type_i/bugs…）、`nproject/`≈10、关联 `sewing/`≈700 | offset≈2000+（含 bugs 子网格，多数依赖 restore 数据文件） | `offsetshape`、`thickshell`、`mkoffset`、`pipeShell`、`sewing`、`nproject` |
+| `shhealing/` | 7 个（最多：ShapeAnalysis_CanonicalRecognition/Edge、ShapeBuild_ReShape、ShapeConstruct_ProjectCurveOnSurface、ShapeFix_Shape、ShapeUpgrade_FaceDivide/UnifySameDomain） | `heal/`（checkshape/direct_faces/drop_small_edges/drop_small_solids/fix_face_size/fix_gaps/fix_shape/reshape/same_parameter/elementary_to_revolution…） | ≈486 | `checkshape`、`fixshape`/`fixface`/`fixedge` 族、`sameparameter`、`unifysamedom` |
+| `xmesh/` | 无 | 无独立网格（`tests/mesh/` 的 `incmesh` 走 TKMesh/BRepMesh 旧管线；XBRepMesh 为新并行管线，未见独立 DRAW 网格） | mesh 网格 ≈6 组（standard/advanced × incmesh/shading/parallel） | `incmesh`（TKMesh 域） |
+
+### rcad 侧接入现状与路径
+
+1. `occt-test-gen` 目前只有 `--group boolean` 的翻译表（`bop`/几何构造命令）。
+   上表网格要生成 rcad 等价测试，需先在生成器的 DRAW 命令翻译表中扩展对应
+   命令族，并在 rcad 侧补齐该 toolkit 的实现（先有算法再有测试）。
+2. 各网格大量用例 `restore [locate_data_file *.rle/.brep]` 外部数据；生成器
+   已有 `OcctBrepReader`/`locate_occt_data_file` 支持分支（boolean 网格的
+   external 用例即此路径），不是硬障碍。
+3. 建议切入顺序（GTests 覆盖 × 网格规模权衡）：
+   `helix`（GTests 6 个 + 网格小，自洽闭环）→ `fillet`（GTests 2 + blend）
+   → `shhealing`（GTests 7 个可逐类移植）→ `offset` → `feat` → `hlr`
+   （GTests 为 0、断言依赖 HLR 投影长度，验收成本最高）→ `xmesh`
+   （无独立测试源，需与 TKMesh 的 incmesh 网格对照）。
