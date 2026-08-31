@@ -6893,6 +6893,7 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
             axis,
             radius: *radius,
             ref_dir: any_perpendicular(axis),
+            y_dir: None,
         }));
     }
 

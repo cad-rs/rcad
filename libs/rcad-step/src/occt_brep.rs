@@ -425,6 +425,7 @@ fn parse_surface(c: &mut Cursor<'_>) -> Result<Surface3, OcctBrepError> {
                 axis: dv,
                 radius: c.parse_f64()?,
                 ref_dir: dx,
+                y_dir: None,
             }))
         }
         "3" => {

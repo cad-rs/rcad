@@ -63,7 +63,7 @@ impl MakeCylinder {
         let e_seam = t.add_tedge(Some(Curve3::Line(seam_line)), bot_v.clone(), rev_v(&top_v), [0.0, h]);
 
         let lateral_surf = Surface3::Cylinder(CylindricalSurface {
-            origin: o, axis: self.z_axis, radius: r, ref_dir: self.x_axis,
+            origin: o, axis: self.z_axis, radius: r, ref_dir: self.x_axis, y_dir: Some(self.y_axis),
         });
         // OCCT BRepPrim_OneAxis::BottomFace (BRepPrim_OneAxis.cxx L488-505):
         // MakeFace with gp_Pln(axes) where axes = myAxes.Translated(V) — the
@@ -355,6 +355,7 @@ pub fn prism_face_solid_brep(
         axis: circle.normal,
         radius: circle.radius,
         ref_dir: circle.x_dir,
+        y_dir: None,
     });
     let bot_plane = Surface3::Plane(Plane {
         origin: circle.center,

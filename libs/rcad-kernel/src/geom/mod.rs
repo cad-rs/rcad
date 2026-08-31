@@ -420,6 +420,18 @@ pub struct CylindricalSurface {
     /// Reference direction for u=0 (perpendicular to axis).
     /// Preserved through rotation so UV mapping stays consistent.
     pub ref_dir: Vec3,
+    /// Optional explicit Y direction of the surface frame
+    /// (P(u,v) = O + R*(cos u*X + sin u*Y) + v*axis, u = atan2(P·Y, P·X)).
+    /// OCCT gp_Ax3 keeps the X/Y directions explicitly, and a swept lateral
+    /// face (BRepSweep_Translation::MakeEmptyFace + GeomAdaptor::
+    /// SurfaceOfLinearExtrusion::Cylinder with gp_Ax3::ZReverse — which
+    /// reverses ONLY the axis, gp_Ax3.hxx L131) carries the generating
+    /// circle's Y even when the axis is reversed — a left-handed frame whose
+    /// u equals the circle's parameter keeps the sweep pcurves consistent.
+    /// When None the right-handed Y = axis × ref_dir is used (the default for
+    /// all other constructions).
+    #[serde(default)]
+    pub y_dir: Option<Vec3>,
 }
 
 impl CylindricalSurface {
@@ -430,6 +442,7 @@ impl CylindricalSurface {
             axis: axis.normalize_or_zero(),
             radius: radius.abs(),
             ref_dir: any_perpendicular(axis),
+            y_dir: None,
         }
     }
 
@@ -440,7 +453,16 @@ impl CylindricalSurface {
             axis: axis.normalize_or_zero(),
             radius: radius.abs(),
             ref_dir: ref_dir.normalize_or_zero(),
+            y_dir: None,
         }
+    }
+
+    /// Effective Y direction of the surface frame: the explicit `y_dir` when
+    /// set (the left-handed swept-lateral frame), else axis × ref_dir.
+    pub fn y_axis(&self) -> Vec3 {
+        self.y_dir
+            .unwrap_or_else(|| self.axis.cross(self.ref_dir))
+            .normalize_or_zero()
     }
 }
 
@@ -2051,6 +2073,7 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
             axis: loc.transform_vector3(c.axis).normalize_or_zero(),
             radius: c.radius * loc.transform_vector3(c.axis).length().max(1e-12),
             ref_dir: loc.transform_vector3(c.ref_dir).normalize_or_zero(),
+            y_dir: c.y_dir.map(|y| loc.transform_vector3(y).normalize_or_zero()),
         }),
         Surface3::Sphere(s) => Surface3::Sphere(SphericalSurface {
             center: loc.transform_point3(s.center),

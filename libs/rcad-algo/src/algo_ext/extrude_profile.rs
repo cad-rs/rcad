@@ -159,6 +159,35 @@ pub fn extrude_profile_solid(
             }
             _ => seg.clone(),
         })
+        // Shift the parameter origin of every arc to its start point: the
+        // OCCT DRAW `circle` command form (the arc starts at parameter 0 and
+        // the circle's x_dir points from the center to the start point, e.g.
+        // `profile f1 c 60 360` starts at (0,0,0) with x_dir (0,-1,0)).  The
+        // sweep (BRepSweep_Translation / GeomAdaptor) and the boolean pipeline
+        // express every lateral-face parameter (seam pcurves, generating
+        // pcurves, AdjustToSeam section circles) in this parameterization, so
+        // an arc whose origin sits at the profile start keeps the UV spaces
+        // identical to OCCT's (seam at u = 0, section circles adjusted to the
+        // seam also start at u = 0).  Rotating the frame by t0 gives
+        // point'(t') = center + r(cos t' * x' + sin t' * y'), t' in
+        // [0, t1 - t0], with x' = cos(t0)*x + sin(t0)*y (the direction from
+        // the center to p0) and y' = -sin(t0)*x + cos(t0)*y.
+        .map(|seg| match seg {
+            ProfileSegment::Arc { t0, t1, .. } if t1 > t0 => {
+                let mut seg = seg.clone();
+                if let ProfileSegment::Arc { x_dir, y_dir, t0, t1, .. } = &mut seg {
+                    let x = x_dir.normalize_or_zero();
+                    let y = y_dir.normalize_or_zero();
+                    let (s0, c0) = t0.sin_cos();
+                    *x_dir = c0 * x + s0 * y;
+                    *y_dir = -s0 * x + c0 * y;
+                    *t1 = *t1 - *t0;
+                    *t0 = 0.0;
+                }
+                seg
+            }
+            _ => seg.clone(),
+        })
         .collect();
     let profile: &[ProfileSegment] = &profile_owned;
     let n = profile.len();
@@ -356,24 +385,36 @@ pub fn extrude_profile_solid(
             }
             ProfileSegment::Arc {
                 center,
-                normal,
                 x_dir,
+                y_dir,
                 radius,
                 ..
             } => {
-                // Swept arc: cylinder through the arc center. OCCT
-                // GeomAdaptor_SurfaceOfLinearExtrusion::Cylinder() uses
-                // D = -sweep as the axis (the circle axis is parallel to the
-                // sweep, so ZReverse keeps the axis along D) and ZReverse
-                // (which flips X) applies iff D . Z < 0, i.e. dir . normal > 0.
-                let xd = x_dir.normalize_or_zero();
-                let zrev = dir.dot(normal.normalize_or_zero()) > 0.0;
-                let ref_dir = if zrev { -xd } else { xd };
+                // OCCT GeomAdaptor_SurfaceOfLinearExtrusion::Cylinder()
+                // (GeomAdaptor_SurfaceOfLinearExtrusion.cxx L375-387), called
+                // from BRepSweep_Translation::MakeEmptyFace
+                // (BRepSweep_Translation.cxx L238-252) with the adaptor
+                // direction D = -sweep (L238-239):
+                //   gp_Ax3 Ax3(C.Position());
+                //   if (myDirection.Dot(C.Axis().Direction()) < 0.) Ax3.ZReverse();
+                //   return gp_Cylinder(Ax3, C.Radius());
+                // gp_Ax3::ZReverse() reverses ONLY the Z axis (gp_Ax3.hxx
+                // L131); the X and Y directions are preserved.  The lateral
+                // cylinder therefore keeps the generating circle's own frame
+                // (x_dir, y_dir) — LEFT-handed when the axis is reversed —
+                // and its axis is the sweep direction reversed (the circle
+                // axis is parallel to the sweep for a planar profile).  The
+                // surface u then equals the circle parameter, which is what
+                // the sweep pcurves (SetGeneratingPCurve u = t,
+                // SetDirectingPCurve u = Parameter(V, E)) are written in
+                // (the profile arcs are reparameterized so the origin is the
+                // start point, the seam).
                 Surface3::Cylinder(CylindricalSurface {
                     origin: *center,
                     axis: -dir,
                     radius: *radius,
-                    ref_dir,
+                    ref_dir: x_dir.normalize_or_zero(),
+                    y_dir: Some(y_dir.normalize_or_zero()),
                 })
             }
         };

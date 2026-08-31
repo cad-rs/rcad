@@ -1524,6 +1524,7 @@ fn try_detect_cylinder(surface: &BSplineSurface, tolerance: f64) -> Option<Cylin
         axis,
         radius: avg_radius,
         ref_dir: any_perpendicular(axis),
+        y_dir: None,
     })
 }
 

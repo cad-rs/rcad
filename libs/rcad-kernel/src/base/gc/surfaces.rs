@@ -124,6 +124,7 @@ pub fn make_cylindrical_surface(
         axis,
         radius,
         ref_dir,
+        y_dir: None,
     })
 }
 
@@ -147,6 +148,7 @@ pub fn make_cylindrical_surface_point(
         axis: cyl.axis,
         radius,
         ref_dir: cyl.ref_dir,
+        y_dir: cyl.y_dir,
     })
 }
 

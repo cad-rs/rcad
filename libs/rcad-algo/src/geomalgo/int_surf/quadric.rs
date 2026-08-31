@@ -302,6 +302,7 @@ impl Quadric {
             axis: self.z_dir,
             radius: self.prm1,
             ref_dir: self.x_dir,
+            y_dir: None,
         }
     }
 

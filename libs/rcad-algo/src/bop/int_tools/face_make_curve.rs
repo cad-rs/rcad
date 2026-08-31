@@ -661,7 +661,7 @@ pub(crate) fn build_analytic_pcurve(
         // parallel to the axis, radius equal) is an iso-parameter line
         // v=const; its pcurve is the line u(t) = u0 +/- t.
         let x_ax = cyl.ref_dir.normalize_or_zero();
-        let y_ax = cyl.axis.cross(x_ax).normalize_or_zero();
+        let y_ax = cyl.y_axis();
         if x_ax.length_squared() < 0.5 || y_ax.length_squared() < 0.5 {
             return None;
         }
@@ -673,13 +673,17 @@ pub(crate) fn build_analytic_pcurve(
         if on_axis && parallel && (c.radius - cyl.radius).abs() <= tol {
             let v = r0.dot(cyl.axis);
             // u0: the azimuth of the circle's t=0 point; u(t) = u0 + t for a
-            // positively-oriented circle (normal parallel to the axis),
-            // u(t) = u0 - t otherwise.
+            // positively-oriented circle (normal parallel to ZCyl = X x Y),
+            // u(t) = u0 - t otherwise (ProjLib_Cylinder::Project L136-152:
+            // ZCyl = XDirection x YDirection — the STORED frame, which a
+            // left-handed swept lateral keeps equal to the generating
+            // circle's X x Y even when the axis was reversed).
             let mut u0 = c.x_dir.dot(y_ax).atan2(c.x_dir.dot(x_ax));
             if u0 < 0.0 {
                 u0 += std::f64::consts::TAU;
             }
-            let d = if zc.dot(cyl.axis) > 0.0 { 1.0 } else { -1.0 };
+            let zcyl = x_ax.cross(y_ax);
+            let d = if zc.dot(zcyl) > 0.0 { 1.0 } else { -1.0 };
             // With a frame anchor from the face's existing boundary pcurves,
             // the whole pcurve is expressed in that frame: u(t) = u0a + da*t.
             if let Some((u0a, da)) = pcurve_anchor {

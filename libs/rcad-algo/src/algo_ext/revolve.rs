@@ -280,6 +280,7 @@ pub fn revolve_polygon_full_turn(
                 axis: dir,
                 radius: radii[lo],
                 ref_dir: x_dir,
+                y_dir: None,
             });
             let seam_lo = seam[i].clone().unwrap();
             let wire = brep.add_twire(vec![
@@ -581,6 +582,7 @@ pub fn revolve_polygon_partial(
                 axis: dir,
                 radius: ri,
                 ref_dir: (profile_verts[i] - centers[i]) / ri,
+                y_dir: None,
             })
         } else if hits_axis && ri > EPS && rj > EPS {
             // Diagonal through the axis: partial cone.

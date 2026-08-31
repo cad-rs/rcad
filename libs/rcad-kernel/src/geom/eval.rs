@@ -588,12 +588,12 @@ impl SurfaceEval for CylindricalSurface {
     /// OCCT-aligned: uses stored ref_dir for deterministic UV mapping.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let x_ax = self.ref_dir.normalize_or_zero();
-        let y_ax = self.axis.cross(x_ax).normalize();
+        let y_ax = self.y_axis();
         self.origin + self.radius * (u.cos() * x_ax + u.sin() * y_ax) + v * self.axis
     }
     fn normal_at(&self, u: f64, _v: f64) -> DVec3 {
         let x_ax = self.ref_dir.normalize_or_zero();
-        let y_ax = self.axis.cross(x_ax).normalize();
+        let y_ax = self.y_axis();
         (u.cos() * x_ax + u.sin() * y_ax).normalize()
     }
     fn default_domain(&self) -> [f64; 4] {
@@ -601,7 +601,7 @@ impl SurfaceEval for CylindricalSurface {
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
         let x_ax = self.ref_dir.normalize_or_zero();
-        let y_ax = self.axis.cross(x_ax).normalize();
+        let y_ax = self.y_axis();
         let (su, cu) = u.sin_cos();
         let p = self.origin + self.radius * (cu * x_ax + su * y_ax) + v * self.axis;
         let dpu = self.radius * (-su * x_ax + cu * y_ax);
@@ -627,7 +627,7 @@ impl CylindricalSurface {
     pub fn world_to_uv(self, p: DVec3) -> DVec2 {
         let axis = self.axis.normalize_or_zero();
         let x_ax = self.ref_dir.normalize_or_zero();
-        let y_ax = axis.cross(x_ax).normalize();
+        let y_ax = self.y_axis();
         let d = p - self.origin;
         let v = d.dot(axis);
         let radial = d - axis * v;
@@ -1268,7 +1268,7 @@ impl ElementarySurfaceEval for CylindricalSurface {
     fn position(&self) -> DVec3 { self.origin }
     fn axis_dir(&self) -> DVec3 { self.axis }
     fn x_axis(&self) -> DVec3 { self.ref_dir.normalize_or_zero() }
-    fn y_axis(&self) -> DVec3 { self.axis.cross(self.ref_dir).normalize_or_zero() }
+    fn y_axis(&self) -> DVec3 { self.y_axis() }
 }
 
 impl ElementarySurfaceEval for SphericalSurface {

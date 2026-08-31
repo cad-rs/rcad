@@ -748,6 +748,7 @@ fn compute_plane_plane_fillet(
         axis: axis_dir,
         radius,
         ref_dir: any_perpendicular(axis_dir),
+        y_dir: None,
     }))
 }
 
@@ -770,6 +771,7 @@ fn compute_cylinder_plane_fillet(
             axis: cylinder.axis,
             radius: cylinder.radius + radius,
             ref_dir: cylinder.ref_dir,
+            y_dir: cylinder.y_dir,
         }))
     } else {
         let center = cylinder.origin;
@@ -1432,6 +1434,7 @@ fn apply_cylinder_fillet(
         axis: edge_dir,
         radius: r,
         ref_dir: any_perpendicular(edge_dir),
+        y_dir: None,
     });
 
     let fillet_face_sr = brep.add_tface(

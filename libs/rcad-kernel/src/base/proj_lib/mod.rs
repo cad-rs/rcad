@@ -444,6 +444,7 @@ impl CylinderProjector {
                 axis: DVec3::Z,
                 radius: 1.0,
                 ref_dir: DVec3::X,
+                y_dir: None,
             },
         }
     }
