@@ -1924,7 +1924,7 @@ impl DS {
         let mut a_sc =
             crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(a_solid);
         a_sc.perform_infinite_point(1e-7);
-        a_sc.state() == 3 // TopAbs_IN
+        a_sc.state() == 0 // TopAbs_IN
     }
 
     /// All edge Shapes of a face (outer + inner wires) with composed

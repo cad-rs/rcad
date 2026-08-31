@@ -28,9 +28,11 @@ mod solid_classifier_tests {
         cls.state()
     }
 
-    const INSIDE: u8 = 1;  // Classification::In
-    const OUTSIDE: u8 = 2; // Classification::Out
-    const ON: u8 = 3;      // Classification::On
+    // TopAbs_State discriminant values (TopAbs_State.hxx L25-31):
+    // TopAbs_IN=0, TopAbs_OUT=1, TopAbs_ON=2, TopAbs_UNKNOWN=3.
+    const INSIDE: u8 = 0;  // TopAbs_IN
+    const OUTSIDE: u8 = 1; // TopAbs_OUT
+    const ON: u8 = 2;      // TopAbs_ON
 
     #[test] fn center_inside() { assert_eq!(point_state(0.5, 0.5, 0.5, 1e-6), INSIDE); }
     #[test] fn point_outside() { assert_eq!(point_state(10.0, 10.0, 10.0, 1e-6), OUTSIDE); }

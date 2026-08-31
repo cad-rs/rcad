@@ -475,7 +475,7 @@ impl<'a> BuilderSolid<'a> {
         let shell = Shape::new(Arc::new(shell_tshape), 0, Orientation::Forward);
         let mut clsf = SolidClassifier::from_shape_with_locations(&shell, locations);
         clsf.perform_infinite_point(f64::MIN_POSITIVE); // OCCT ::RealSmall() = DBL_MIN
-        clsf.state() == 3 // TopAbs_IN
+        clsf.state() == 0 // TopAbs_IN
     }
 
     /// OCCT IsInside (BuilderSolid.cxx L835-860) — classify the first face of
@@ -486,7 +486,7 @@ impl<'a> BuilderSolid<'a> {
             // the solid; State() == IN means the solid is a hole in space.
             let mut clsf = SolidClassifier::from_shape(solid);
             clsf.perform_infinite_point(f64::MIN_POSITIVE); // OCCT ::RealSmall()
-            return clsf.state() == 3; // TopAbs_IN
+            return clsf.state() == 0; // TopAbs_IN
         };
         Self::compute_state_on_solid(a_f, solid, ds) == 3 // TopAbs_IN
     }

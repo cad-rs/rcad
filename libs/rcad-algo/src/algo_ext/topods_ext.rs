@@ -1,4 +1,4 @@
-// =============================================================================
+﻿// =============================================================================
 // Topods-native Shell / Solid Extraction + Partition (migration)
 // =============================================================================
 
@@ -90,123 +90,153 @@ pub fn extract_shells_topods(brep: &topods::BRep) -> Vec<topods::BRep> {
 /// Each shell carries its face references (with orientations) and the shell
 /// orientation; the copies preserve the orientations of the referenced
 /// vertices, edges and wires too.
+///
+/// The TShape Arcs are SHARED with the source BRep (OCCT TopoDS reference
+/// semantics 閳?extracting sub-shapes never clones the TShapes), only the
+/// Shape.index fields are re-pointed from the source array positions to the
+/// result array positions, in place on the shared TShapes.  Sharing keeps the
+/// edge pcurves (keyed by the owning face TShape pointer) addressable from
+/// the extracted BRep: a rebuild (new TShapes) would orphan every pcurve row
+/// whose owner face stayed in the source BRep, breaking BRepGProp face
+/// integration and later boolean steps on the extracted solid.
 fn compact_brep_face_subset(
     brep: &topods::BRep,
     shells: &[(topods::Orientation, Vec<topods::Shape>)],
 ) -> topods::BRep {
-    use std::collections::{HashMap, HashSet};
     if shells.is_empty() { return topods::BRep::new(); }
 
-    // Collect unique edge tshape indices from face wires
-    let mut edge_set: HashSet<usize> = HashSet::new();
-    for (_, faces) in shells {
-        for fsr in faces {
-            if let topods::TShape::Face(fd) = &*brep.tshapes[fsr.index] {
-                if let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
-                    for sr in &wd.edges { edge_set.insert(sr.index); }
-                }
-                for isr in &fd.inner_wires {
-                    if let topods::TShape::Wire(wd) = &*brep.tshapes[isr.index] {
-                        for sr in &wd.edges { edge_set.insert(sr.index); }
+    use std::collections::HashMap;
+    let mut r = topods::BRep::new();
+    r.locations = brep.locations.clone();
+    // Source tshape index -> result tshapes index (Arc shared, index re-pointed).
+    let mut remap: HashMap<usize, usize> = HashMap::new();
+
+    // Push a source Shape (by its tshapes index) into the result, sharing the
+    // TShape Arc; sub-shapes are pushed first so their result indices exist.
+    // The returned Shape carries the caller's orientation/location.
+    fn push(
+        brep: &topods::BRep,
+        r: &mut topods::BRep,
+        remap: &mut HashMap<usize, usize>,
+        src: usize,
+    ) -> Option<topods::Shape> {
+        use topods::Orientation;
+        if src >= brep.tshapes.len() { return None; }
+        if let Some(&i) = remap.get(&src) {
+            return Some(topods::Shape::from_parts(
+                r.tshapes[i].clone(),
+                i,
+                0,
+                Orientation::Forward,
+            ));
+        }
+        let idx = r.tshapes.len();
+        r.tshapes.push(brep.tshapes[src].clone());
+        remap.insert(src, idx);
+        let base = topods::Shape::from_parts(
+            r.tshapes[idx].clone(),
+            idx,
+            0,
+            Orientation::Forward,
+        );
+        // Recurse into the sub-shapes (same reachability as
+        // builder::push_shape_recursive).
+        match &*brep.tshapes[src] {
+            topods::TShape::Edge(ed) => {
+                push(brep, r, remap, ed.first.index);
+                push(brep, r, remap, ed.last.index);
+            }
+            topods::TShape::Wire(wd) => {
+                for e in &wd.edges { push(brep, r, remap, e.index); }
+            }
+            topods::TShape::Face(fd) => {
+                push(brep, r, remap, fd.outer_wire.index);
+                for w in &fd.inner_wires { push(brep, r, remap, w.index); }
+                for v in &fd.internal_vertices { push(brep, r, remap, v.index); }
+            }
+            topods::TShape::Shell(sd) => {
+                for f in &sd.faces { push(brep, r, remap, f.index); }
+            }
+            topods::TShape::Solid(sd) => {
+                for s in &sd.shells { push(brep, r, remap, s.index); }
+                for v in &sd.internal_vertices { push(brep, r, remap, v.index); }
+                for e in &sd.internal_edges { push(brep, r, remap, e.index); }
+            }
+            _ => {}
+        }
+        // Re-point the shared TShape's internal reference indices from the
+        // source array positions to the result array positions (single
+        // ownership: the extracted BReps are not read while another extraction
+        // mutates the same Arc).
+        let raw = std::sync::Arc::as_ptr(&brep.tshapes[src]) as *mut topods::TShape;
+        unsafe {
+            match &mut *raw {
+                topods::TShape::Vertex(vd) => {
+                    for s in vd.my_shapes.iter_mut() {
+                        if let Some(&i) = remap.get(&s.index) { s.index = i; }
                     }
                 }
+                topods::TShape::Edge(ed) => {
+                    for s in ed.my_shapes.iter_mut() {
+                        if let Some(&i) = remap.get(&s.index) { s.index = i; }
+                    }
+                    if let Some(&i) = remap.get(&ed.first.index) { ed.first.index = i; }
+                    if let Some(&i) = remap.get(&ed.last.index) { ed.last.index = i; }
+                }
+                topods::TShape::Wire(wd) => {
+                    for s in wd.my_shapes.iter_mut() {
+                        if let Some(&i) = remap.get(&s.index) { s.index = i; }
+                    }
+                    for e in wd.edges.iter_mut() {
+                        if let Some(&i) = remap.get(&e.index) { e.index = i; }
+                    }
+                }
+                topods::TShape::Face(fd) => {
+                    for s in fd.my_shapes.iter_mut() {
+                        if let Some(&i) = remap.get(&s.index) { s.index = i; }
+                    }
+                    if let Some(&i) = remap.get(&fd.outer_wire.index) { fd.outer_wire.index = i; }
+                    for w in fd.inner_wires.iter_mut() {
+                        if let Some(&i) = remap.get(&w.index) { w.index = i; }
+                    }
+                    for v in fd.internal_vertices.iter_mut() {
+                        if let Some(&i) = remap.get(&v.index) { v.index = i; }
+                    }
+                }
+                topods::TShape::Shell(sd) => {
+                    for s in sd.my_shapes.iter_mut() {
+                        if let Some(&i) = remap.get(&s.index) { s.index = i; }
+                    }
+                    for f in sd.faces.iter_mut() {
+                        if let Some(&i) = remap.get(&f.index) { f.index = i; }
+                    }
+                }
+                topods::TShape::Solid(sd) => {
+                    for s in sd.my_shapes.iter_mut() {
+                        if let Some(&i) = remap.get(&s.index) { s.index = i; }
+                    }
+                    for s in sd.shells.iter_mut() {
+                        if let Some(&i) = remap.get(&s.index) { s.index = i; }
+                    }
+                }
+                _ => {}
             }
         }
+        Some(base)
     }
 
-    // Collect vertex tshape indices from edges
-    let mut vertex_set: HashSet<usize> = HashSet::new();
-    for &ei in &edge_set {
-        if let topods::TShape::Edge(ed) = &*brep.tshapes[ei] {
-            vertex_set.insert(ed.first.index);
-            vertex_set.insert(ed.last.index);
-        }
-    }
-
-    // Sort for deterministic output
-    let mut sorted_v: Vec<usize> = vertex_set.iter().copied().collect(); sorted_v.sort();
-    let mut sorted_e: Vec<usize> = edge_set.iter().copied().collect(); sorted_e.sort();
-
-    // Old tshape index -> new Shape
-    let mut v_map: HashMap<usize, topods::Shape> = HashMap::new();
-    let mut e_map: HashMap<usize, topods::Shape> = HashMap::new();
-
-    let mut r = topods::BRep::new();
-
-    // Add vertices
-    for &old in &sorted_v {
-        if let topods::TShape::Vertex(vd) = &*brep.tshapes[old] {
-            let sr = r.add_tvertex(vd.point);
-            r.vertex_mut(sr.clone()).tolerance = vd.tolerance;
-            v_map.insert(old, sr);
-        }
-    }
-
-    // Add edges with remapped vertex refs
-    for &old in &sorted_e {
-        if let topods::TShape::Edge(ed) = &*brep.tshapes[old] {
-            let mut first = v_map[&ed.first.index].clone();
-            first.orientation = ed.first.orientation;
-            first.location = ed.first.location;
-            let mut last = v_map[&ed.last.index].clone();
-            last.orientation = ed.last.orientation;
-            last.location = ed.last.location;
-            let sr = r.add_tedge(ed.curve.clone(), first, last, ed.range);
-            let em = r.edge_mut(sr.clone());
-            em.tolerance = ed.tolerance;
-            em.representations = ed.representations.clone();
-            em.pcurves = ed.pcurves.clone();
-            em.degenerated = ed.degenerated;
-            em.same_parameter = ed.same_parameter;
-            em.same_range = ed.same_range;
-            em.vertex_params = ed.vertex_params.clone();
-            e_map.insert(old, sr);
-        }
-    }
-
-    // Build wire refs helper
-    let wire_ref = |brep: &topods::BRep, r: &mut topods::BRep, old_wire_sr: &topods::Shape| -> topods::Shape {
-        if let topods::TShape::Wire(wd) = &*brep.tshapes[old_wire_sr.index] {
-            let edges: Vec<topods::Shape> = wd.edges.iter().map(|sr| {
-                let mut e = e_map[&sr.index].clone();
-                e.orientation = sr.orientation;
-                e.location = sr.location;
-                e
-            }).collect();
-            let mut w = r.add_twire(edges);
-            w.orientation = old_wire_sr.orientation;
-            w.location = old_wire_sr.location;
-            w
-        } else {
-            old_wire_sr.clone()
-        }
-    };
-
-    // Add shells with remapped face refs
+    // Rebuild each shell over the shared faces; the shell/solid containers are
+    // new (the source shell/solid references were decomposed into the
+    // (orientation, faces) groups by the caller).
     let mut shell_srs = Vec::new();
     for (sh_or, faces) in shells {
         let mut face_srs = Vec::new();
         for fsr in faces {
-            if let topods::TShape::Face(fd) = &*brep.tshapes[fsr.index] {
-                let ow = wire_ref(brep, &mut r, &fd.outer_wire);
-                let iw: Vec<topods::Shape> = fd.inner_wires.iter().map(|sr| wire_ref(brep, &mut r, sr)).collect();
-
-                // Build internal_vertices: map old vertex tshape indices to new ShapeRefs
-                let iv: Vec<topods::Shape> = fd.internal_vertices.iter()
-                    .filter_map(|iv_sr| {
-                        let mut s = v_map.get(&iv_sr.index)?.clone();
-                        s.orientation = iv_sr.orientation;
-                        s.location = iv_sr.location;
-                        Some(s)
-                    })
-                    .collect();
-
-                let mut sr = r.add_tface(fd.surface.clone(), ow, iw, fd.sample_point, fd.uv_domain, iv, fd.natural_restriction);
-                sr.orientation = fsr.orientation;
-                sr.location = fsr.location;
-                r.face_mut(sr.clone()).tolerance = fd.tolerance;
-                face_srs.push(sr);
-            }
+            let Some(base) = push(brep, &mut r, &mut remap, fsr.index) else { continue };
+            let mut f = base;
+            f.orientation = fsr.orientation;
+            f.location = fsr.location;
+            face_srs.push(f);
         }
         if !face_srs.is_empty() {
             let mut sh = r.add_tshell(face_srs);
@@ -215,7 +245,7 @@ fn compact_brep_face_subset(
         }
     }
 
-    // Wrap in Shell -> Solid
+    // Wrap in Shell -> Solid.
     if !shell_srs.is_empty() {
         r.add_tsolid(shell_srs);
     }
