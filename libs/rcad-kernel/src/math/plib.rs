@@ -127,6 +127,261 @@ pub fn power_to_bezier(coeffs: &[f64]) -> Vec<f64> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// OCCT PLib.cxx multi-dimensional polynomial evaluation and Hermite
+// interpolation (used by AdvApprox / Convert_CompPolynomialToPoles / the
+// helix pipeline).
+// ══════════════════════════════════════════════════════════════════════════
+
+/// OCCT `PLib::EvalPolynomial(Par, DerivativeRequest, Degree, Dimension,
+/// PolynomialCoeff, Results)` (PLib.cxx L945-1029).
+///
+/// Coefficients are stored degree-major: `[c0(dim), c1(dim), ...,
+/// cDegree(dim)]`.  On return `results` holds `(1 + derivative_request) *
+/// dimension` values laid out `[value(dim), d1(dim), ..., dN(dim)]`.
+/// The fused Horner recursion matches the OCCT optimized `eval_poly1/2`
+/// templates operation-for-operation.
+pub fn eval_polynomial_flat(
+    par: f64,
+    derivative_request: i32,
+    degree: i32,
+    dimension: i32,
+    polynomial_coeff: &[f64],
+    results: &mut [f64],
+) {
+    let dim = dimension as usize;
+    match derivative_request {
+        1 => {
+            let mut local0 = vec![0.0f64; dim];
+            let mut local1 = vec![0.0f64; dim];
+            local0.copy_from_slice(&polynomial_coeff[..dim]);
+            let mut coeffs = 0usize;
+            for _a_deg in 0..degree {
+                coeffs += dim;
+                for i in 0..dim {
+                    let val = local0[i];
+                    local1[i] = local1[i] * par + val;
+                    local0[i] = val * par + polynomial_coeff[coeffs + i];
+                }
+            }
+            results[..dim].copy_from_slice(&local0);
+            results[dim..2 * dim].copy_from_slice(&local1);
+        }
+        2 => {
+            let mut local0 = vec![0.0f64; dim];
+            let mut local1 = vec![0.0f64; dim];
+            let mut local2 = vec![0.0f64; dim];
+            local0.copy_from_slice(&polynomial_coeff[..dim]);
+            let mut coeffs = 0usize;
+            for _a_deg in 0..degree {
+                coeffs += dim;
+                for i in 0..dim {
+                    let d1 = local1[i];
+                    let val = local0[i];
+                    local2[i] = local2[i] * par + d1 * 2.0;
+                    local1[i] = d1 * par + val;
+                    local0[i] = val * par + polynomial_coeff[coeffs + i];
+                }
+            }
+            results[..dim].copy_from_slice(&local0);
+            results[dim..2 * dim].copy_from_slice(&local1);
+            results[2 * dim..3 * dim].copy_from_slice(&local2);
+        }
+        _ => {
+            // General case for DerivativeRequest > 2 (and 0).
+            let res_size = (1 + derivative_request) as usize * dim;
+            for v in results[..res_size].iter_mut() {
+                *v = 0.0;
+            }
+            let mut a_coeffs = degree as usize * dim;
+            for _a_deg in 0..=degree {
+                // aPtr walks from the highest derivative slot down to slot 0.
+                let mut a_ptr = res_size - dim;
+                for a_deriv in (1..=derivative_request).rev() {
+                    let an_original = a_ptr - dim;
+                    for ind in 0..dim {
+                        results[a_ptr + ind] =
+                            results[a_ptr + ind] * par + results[an_original + ind] * a_deriv as f64;
+                    }
+                    a_ptr = an_original;
+                }
+                for ind in 0..dim {
+                    results[a_ptr + ind] = results[a_ptr + ind] * par + polynomial_coeff[a_coeffs + ind];
+                }
+                if a_coeffs >= dim {
+                    a_coeffs -= dim;
+                }
+            }
+        }
+    }
+}
+
+/// OCCT `PLib::NoDerivativeEvalPolynomial` (value only).  `degree_dimension`
+/// is the offset of the HIGHEST-degree coefficient (`Deg * Dimension`); the
+/// Horner walk descends with stride `dimension` (OCCT eval_poly0).
+pub fn no_derivative_eval_polynomial_flat(
+    par: f64,
+    degree: i32,
+    dimension: i32,
+    degree_dimension: i32,
+    polynomial_coeff: &[f64],
+    results: &mut [f64],
+) {
+    let dim = dimension as usize;
+    let mut coeffs = degree_dimension as usize;
+    let mut local = vec![0.0f64; dim];
+    local.copy_from_slice(&polynomial_coeff[coeffs..coeffs + dim]);
+    for _a_deg in 0..degree {
+        coeffs -= dim;
+        for i in 0..dim {
+            local[i] = local[i] * par + polynomial_coeff[coeffs + i];
+        }
+    }
+    results[..dim].copy_from_slice(&local);
+}
+
+/// OCCT `PLib::HermiteInterpolate(Dimension, FirstParameter, LastParameter,
+/// FirstOrder, LastOrder, FirstConstr, LastConstr, Coefficients)`
+/// (PLib.cxx L1931-2027) — constrained Hermite interpolation on [-1, 1]
+/// (here on the caller-supplied parameters), solved via `math_Gauss`.
+/// `first_constr` / `last_constr` are (dimension x (order+1)) row-major
+/// matrices addressed as (idim, order) 1-based.  Returns false when the
+/// system is singular.
+#[allow(clippy::too_many_arguments)]
+pub fn hermite_interpolate(
+    dimension: usize,
+    first_parameter: f64,
+    last_parameter: f64,
+    first_order: usize,
+    last_order: usize,
+    first_constr: &crate::math::MatD,
+    last_constr: &crate::math::MatD,
+    coefficients: &mut [f64],
+) -> bool {
+    let pattern: [[f64; 6]; 3] = [
+        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        [0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+        [0.0, 0.0, 2.0, 6.0, 12.0, 20.0],
+    ];
+
+    let n = first_order + last_order + 1; // matrix order (0-based extent)
+    let mut a = crate::math::MatD::new(n + 1, n + 1);
+
+    for irow in 0..=first_order {
+        let mut first_val = 1.0f64;
+        for icol in 0..=n {
+            a.set(irow + 1, icol + 1, pattern[irow][icol] * first_val);
+            if irow <= icol {
+                first_val *= first_parameter;
+            }
+        }
+    }
+    for irow in 0..=last_order {
+        let mut last_val = 1.0f64;
+        for icol in 0..=n {
+            a.set(irow + first_order + 2, icol + 1, pattern[irow][icol] * last_val);
+            if irow <= icol {
+                last_val *= last_parameter;
+            }
+        }
+    }
+
+    let equations = crate::math::math_gauss::MathGauss::new(&a);
+
+    for idim in 1..=dimension {
+        let mut b = crate::math::VecD::new(n + 1);
+        for icol in 0..=first_order {
+            b.set(icol + 1, first_constr.get(idim, icol + 1));
+        }
+        for icol in 0..=last_order {
+            b.set(first_order + 2 + icol, last_constr.get(idim, icol + 1));
+        }
+
+        if !equations.is_done() {
+            return false;
+        }
+        equations.solve(&mut b);
+
+        for icol in 0..=n {
+            coefficients[dimension * icol + idim - 1] = b.get(icol + 1);
+        }
+    }
+    true
+}
+
+/// OCCT `PLib::JacobiParameters(ConstraintOrder, MaxDegree, Code,
+/// NbGaussPoints, WorkDegree)` (PLib.cxx L2049-2192).
+pub fn jacobi_parameters(
+    constraint_order: crate::math::GeomAbsShape,
+    max_degree: usize,
+    code: i32,
+    nb_gauss_points: &mut usize,
+    work_degree: &mut usize,
+) {
+    const NDEG8: usize = 8;
+    const NDEG10: usize = 10;
+    const NDEG15: usize = 15;
+    const NDEG20: usize = 20;
+    const NDEG25: usize = 25;
+    const NDEG30: usize = 30;
+    const NDEG40: usize = 40;
+    const NDEG50: usize = 50;
+    const NDEG61: usize = 61;
+
+    let niv_constr = crate::math::p_lib_jacobi::niv_constr(constraint_order);
+    assert!(
+        max_degree >= 2 * niv_constr + 1,
+        "Invalid MaxDegree"
+    );
+
+    if code >= 1 {
+        *work_degree = max_degree + 9;
+    } else {
+        *work_degree = max_degree + 6;
+    }
+
+    // Nbre mini de points nécessaires.
+    let mut ipmin = 0usize;
+    let wd = *work_degree;
+    if wd < NDEG8 {
+        ipmin = NDEG8;
+    } else if wd < NDEG10 {
+        ipmin = NDEG10;
+    } else if wd < NDEG15 {
+        ipmin = NDEG15;
+    } else if wd < NDEG20 {
+        ipmin = NDEG20;
+    } else if wd < NDEG25 {
+        ipmin = NDEG25;
+    } else if wd < NDEG30 {
+        ipmin = NDEG30;
+    } else if wd < NDEG40 {
+        ipmin = NDEG40;
+    } else if wd < NDEG50 {
+        ipmin = NDEG50;
+    } else if wd < NDEG61 {
+        ipmin = NDEG61;
+    } else {
+        panic!("Invalid MaxDegree");
+    }
+
+    // Nbre de points voulus.
+    let iwant = match code {
+        -5 => NDEG8,
+        -4 => NDEG10,
+        -3 => NDEG15,
+        -2 => NDEG20,
+        -1 => NDEG25,
+        1 => NDEG30,
+        2 => NDEG40,
+        3 => NDEG50,
+        4 => NDEG61,
+        _ => panic!("Invalid Code"),
+    };
+
+    *nb_gauss_points = ipmin.max(iwant);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════
 

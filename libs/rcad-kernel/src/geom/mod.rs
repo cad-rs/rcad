@@ -2088,6 +2088,7 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
     }
 }
 
+pub mod bspline_ops;
 pub mod eval;
 #[cfg(test)]
 pub mod tests;

@@ -6,21 +6,22 @@
 
 pub mod bspline_edit;
 pub mod tolerance;
-pub mod brep_check;
-pub mod shape_analysis;
 pub mod brep_repair;
-pub mod healing;
-pub mod shape_custom;
 pub mod features;
 pub mod revolve;
 pub mod extrude_profile;
 pub mod geom_populate;
-pub mod fillet;
 
 mod topods_ext;
 pub mod bool_ops_ext;
 pub mod brep_algo;
 pub mod brep_tools;
+
+// Legacy-path re-exports of the modules migrated to their OCCT toolkit homes
+// (TKShHealing / TKFillet / TKTopAlgo); the `algo_ext::` paths keep working.
+pub use crate::shhealing::{healing, shape_analysis, shape_custom};
+pub use crate::topalgo::brep_check;
+pub use crate::fillet::fillet;
 
 // Re-export the healing chain (used by rcad-step STEP export).
 pub use healing::{

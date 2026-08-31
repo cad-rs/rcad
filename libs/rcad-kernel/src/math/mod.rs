@@ -1,11 +1,20 @@
 // OCCT Math* packages
+pub mod adv_approx;
 pub mod bnd;
 pub mod bspl;
+pub mod bspl_lib;
 pub mod bvh;
+pub mod convert_comp_polynomial_to_poles;
 pub mod direct_polynomial_roots;
 pub mod el;
+pub mod gauss_points;
+pub mod gauss_tables;
+pub mod gp;
+pub mod math_gauss;
 pub mod math_poly;
 pub mod newton_function_root;
+pub mod p_lib_jacobi;
+pub mod p_lib_jacobi_data;
 pub mod plib;
 pub mod root;
 pub mod poly;
@@ -108,6 +117,18 @@ impl IntVec {
     pub fn len(&self) -> usize {
         self.v.len()
     }
+}
+
+/// OCCT GeomAbs_Shape (TKG3d GeomAbs package) — continuity order.  Placed
+/// here because the TKMath approximation stack (PLib / AdvApprox) consumes
+/// it; re-exported for the algorithm crates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeomAbsShape {
+    C0,
+    C1,
+    C2,
+    C3,
+    CN,
 }
 
 #[cfg(test)]

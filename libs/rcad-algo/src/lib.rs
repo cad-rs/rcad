@@ -7,6 +7,9 @@ pub mod bop;
 pub mod geomalgo;
 pub mod topalgo;
 pub mod algo_ext;
+pub mod helix;
+pub mod fillet;
+pub mod shhealing;
 
 // Re-export boolean operation API at top level
 pub use crate::bop::brep_algo_api::{boolean_op, boolean_op_with_retry, common, cut, fuse};

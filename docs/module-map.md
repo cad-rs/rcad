@@ -76,24 +76,28 @@
 
 ### 2.4 `algo_ext/`（混合层：OCCT 对应 + 自有扩展）
 
+与 OCCT toolkit 有明确对应关系的模块已迁入各自模块目录
+（`healing`/`shape_analysis`/`shape_custom` → `shhealing`、`fillet` → `fillet`、
+`brep_check` → `topalgo`），`algo_ext::` 旧路径经再导出保持可用：
+
 | rcad | OCCT 对应 | 状态 |
 |---|---|---|
-| `algo_ext/brep_check/` | `BRepCheck`（TKTopAlgo） | ◐ |
-| `algo_ext/healing/`、`algo_ext/shape_analysis/` | `ShapeAnalysis`/`ShapeFix`（TKShHealing）早期子集 | ◐ |
-| `algo_ext/shape_custom.rs` | `ShapeCustom`（TKShHealing） | ◐ |
+| `shhealing/healing/`、`shhealing/shape_analysis/`、`shhealing/shape_custom.rs` | `ShapeAnalysis`/`ShapeFix`/`ShapeCustom`（TKShHealing）早期子集 | ◐ |
+| `topalgo/brep_check/` | `BRepCheck`（TKTopAlgo） | ◐ |
+| `fillet/fillet.rs` | 自有单边 blend 兼容层（TKFillet 主体未移植） | — |
 | `algo_ext/brep_repair/` | 自有修复链（无 1:1 OCCT 对应；融合了 ShapeFix 思路） | — |
-| `algo_ext/bool_ops_ext.rs`、`brep_algo.rs`、`brep_tools.rs`、`topods_ext.rs`、`tolerance.rs`、`geom_populate.rs`、`bspline_edit.rs`、`features.rs`、`revolve.rs`、`fillet.rs`、`extrude_profile.rs` | 自有扩展/遗留 API（生成测试的兼容层） | — |
+| `algo_ext/bool_ops_ext.rs`、`brep_algo.rs`、`brep_tools.rs`、`topods_ext.rs`、`tolerance.rs`、`geom_populate.rs`、`bspline_edit.rs`、`features.rs`、`revolve.rs`、`extrude_profile.rs` | 自有扩展/遗留 API（生成测试的兼容层） | — |
 
 ## 3. 新增空占位目录 ↔ OCCT（待开工，即本次新增）
 
 | rcad 目录 | OCCT toolkit | OCCT packages（源码路径 `$OCCT_SRC/src/ModelingAlgorithms/<TK>/<Package>/`） | 状态 |
 |---|---|---|---|
 | `feat/` | TKFeat | `BRepFeat`、`LocOpe` | ⬜ 空占位 |
-| `fillet/` | TKFillet | `BRepFilletAPI`、`ChFi2d`、`ChFi3d`、`ChFiDS`、`ChFiKPart`、`BRepBlend`、`Blend`、`BlendFunc`、`FilletSurf` | ⬜ 空占位 |
-| `helix/` | TKHelix | `HelixBRep`、`HelixGeom` | ⬜ 空占位 |
+| `fillet/` | TKFillet | `BRepFilletAPI`、`ChFi2d`、`ChFi3d`、`ChFiDS`、`ChFiKPart`、`BRepBlend`、`Blend`、`BlendFunc`、`FilletSurf` | ◐ `fillet/fillet.rs`（原 algo_ext 兼容层）已迁入；ChFi3d/BRepFilletAPI 主体未移植 |
+| `helix/` | TKHelix | `HelixBRep`、`HelixGeom` | ✅ `helix_geom/`（HelixCurve/Tools/BuilderApproxCurve/BuilderHelixGen/BuilderHelixCoil/BuilderHelix）、`helix_brep/`（BuilderHelix）、`commands.rs`（BRepTest_HelixCommands DRAW 命令层）；验证基线 = `helix/standard` 全网格 56/56（含 WIRE 计数参考 JSON）+ 4 个 OCCT 实测拓扑单测 |
 | `hlr/` | TKHLR | `HLRBRep`、`HLRAlgo`、`HLRAppli`、`HLRTopoBRep`、`Contap`、`Intrv`、`TopBas`、`TopCnx` | ⬜ 空占位 |
 | `offset/` | TKOffset | `BRepOffset`、`BRepOffsetAPI`、`BiTgte`、`Draft` | ⬜ 空占位 |
-| `shhealing/` | TKShHealing | `ShapeFix`、`ShapeAnalysis`、`ShapeBuild`、`ShapeExtend`、`ShapeConstruct`、`ShapeCustom`、`ShapeUpgrade`、`ShapeProcess`、`ShapeProcessAPI`、`ShapeAlgo`、`SHMessage` | ⬜ 空占位 |
+| `shhealing/` | TKShHealing | `ShapeFix`、`ShapeAnalysis`、`ShapeBuild`、`ShapeExtend`、`ShapeConstruct`、`ShapeCustom`、`ShapeUpgrade`、`ShapeProcess`、`ShapeProcessAPI`、`ShapeAlgo`、`SHMessage` | ◐ `healing/`、`shape_analysis/`、`shape_custom.rs`（原 algo_ext 兼容层）已迁入；其余子包未移植 |
 | `xmesh/` | TKXMesh | `XBRepMesh` | ⬜ 空占位 |
 
 尚未建目录的 OCCT toolkit（需要时再建，勿混入上述目录）：
@@ -118,7 +122,13 @@
   `cargo run -p occt-test-gen -- --batch-boolean --merge-groups --batch-grid <grid>`
 - 四网格当前基线（全部通过，作为补码的回归门槛）：
   - bopfuse 748/0、bopcommon 755/0、boptuc 745/0、bcut 729/0（含 g6）
-  - `cargo test -p rcad-algo --lib` 70/0
+  - `cargo test -p rcad-algo --lib` 75/0
+- helix 网格基线（TKHelix 移植验收）：
+  - 参考生成：`uv run python tools/gen-occt-ref/gen_helix_ref_topology.py`
+    （过滤 CheckSweep buildsweep 尾巴，参考 JSON 含 WIRE 字段）
+  - 测试生成：`cargo run -p occt-test-gen -- --batch-boolean --batch-grid helix_standard`
+  - 跑法：`cargo test -p occt-generated-tests --test generated_occt_boolean_helix_standard`
+  - 当前基线：56/56
 - bcut 全量跑法：`cargo test -p occt-generated-tests --test generated_occt_boolean_bopcut_simple`（g6 已可直接跑，无需 --skip）。
 - 参考 STEP/拓扑 JSON：`tests/occt/step_output/ref/`、`tests/occt/step_reference/`；重新生成单个用例的 JSON 可复用 `tools/gen-occt-ref/gen_ref_topology.py` 的 `get_ref_topology(grid, case)`。
 
