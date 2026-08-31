@@ -280,6 +280,7 @@ mod eval_tests {
         let t = ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: DVec3::X,
             major_radius: 5.0,
             minor_radius: 1.0,
         };
@@ -778,6 +779,7 @@ mod eval_tests {
         let t = ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 5.0,
             minor_radius: 1.0,
         };
@@ -1524,6 +1526,7 @@ mod eval_tests {
         let t = ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 5.0,
             minor_radius: 1.0,
         };
@@ -1545,6 +1548,7 @@ mod eval_tests {
         let t = ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 5.0,
             minor_radius: 1.0,
         };

@@ -252,6 +252,7 @@ mod tests {
         let s = Surface3::Torus(ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: DVec3::X,
             major_radius: big_r,
             minor_radius: r,
         });
@@ -355,6 +356,7 @@ mod tests {
         let s = Surface3::Torus(ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: DVec3::X,
             major_radius: big_r,
             minor_radius: r,
         });

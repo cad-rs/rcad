@@ -597,6 +597,7 @@ mod tkg3d_geom_bspline_curve_tests {
             weights: vec![1.0, 1.0, 1.0, 1.0],
             knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
             degree: 3,
+        is_periodic: false,
         })
     }
 
@@ -650,6 +651,7 @@ mod tkg3d_geom_bspline_curve_tests {
             weights: vec![1.0, 2.0, 1.0],
             knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             degree: 2,
+        is_periodic: false,
         });
         let m = c.point_at(0.5);
         assert!(m.is_finite());
@@ -920,6 +922,7 @@ mod tkg3d_curve_eval_tests {
             weights: vec![1.0; 5],
             knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
             degree: 3,
+        is_periodic: false,
         });
         let [u0, u1] = c.default_domain();
         let mid = (u0 + u1) / 2.0;
@@ -992,6 +995,7 @@ mod tkg3d_surface_eval_tests {
         let s = Surface3::Torus(ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 10.0,
             minor_radius: 3.0,
         });
@@ -1154,10 +1158,12 @@ mod tkg3d_surface_properties_tests {
             ref_dir: DVec3::X,
         };
         let [u0, u1, v0, v1] = s.default_domain();
+        // OCCT Geom_SphericalSurface::Bounds: u longitude [0, 2pi], v latitude
+        // [-pi/2, pi/2] (GeomGridEval_Sphere_Test.cxx uses the same ranges).
         assert!((u0 - 0.0).abs() < TOL);
         assert!((u1 - TAU).abs() < TOL);
-        assert!((v0 - 0.0).abs() < TOL);
-        assert!((v1 - PI).abs() < TOL);
+        assert!((v0 - -PI / 2.0).abs() < TOL);
+        assert!((v1 - PI / 2.0).abs() < TOL);
     }
 
     #[test]
@@ -1173,6 +1179,7 @@ mod tkg3d_surface_properties_tests {
         let s = Surface3::Torus(ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 10.0,
             minor_radius: 3.0,
         });
@@ -1381,6 +1388,7 @@ mod tkg3d_grid_eval_surface_tests {
         let s = Surface3::Torus(ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 10.0,
             minor_radius: 3.0,
         });

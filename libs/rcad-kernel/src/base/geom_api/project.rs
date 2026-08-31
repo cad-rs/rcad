@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn project_onto_torus() {
         let torus = Surface3::Torus(ToroidalSurface {
-            center: DVec3::ZERO, axis: DVec3::Y, major_radius: 3.0, minor_radius: 1.0,
+            center: DVec3::ZERO, axis: DVec3::Y, ref_dir: DVec3::X, major_radius: 3.0, minor_radius: 1.0,
         });
         let q = DVec3::new(10.0, 0.0, 0.0);
         let r = closest_point_on_surface(&torus, q, 16);
@@ -432,7 +432,7 @@ mod tests {
     #[test]
     fn project_onto_torus_surface() {
         let torus = Surface3::Torus(ToroidalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, major_radius: 3.0, minor_radius: 1.0,
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, major_radius: 3.0, minor_radius: 1.0,
         });
         let q = DVec3::new(0.0, 0.0, 0.0);
         let r = closest_point_on_surface(&torus, q, 16);

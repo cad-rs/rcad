@@ -63,7 +63,7 @@ mod bnd_box2d_tests {
 // =============================================================================
 mod bvh_box_tests {
     use super::*;
-    use rcad_algo::bop::tools::bvh::Aabb;
+    use rcad_kernel::math::bvh::Aabb;
     #[test] fn bvh_aabb_empty() { let a = Aabb::empty(); assert!(a.surface_area() == 0.0); }
     #[test] fn bvh_aabb_single_point() { let a = Aabb::from_points(&[DVec3::new(1.0, 2.0, 3.0)]); assert!((a.min - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-10); }
     #[test] fn bvh_aabb_two_points() { let a = Aabb::from_points(&[DVec3::ZERO, DVec3::new(10.0, 20.0, 30.0)]); assert!((a.center() - DVec3::new(5.0, 10.0, 15.0)).length() < 1e-10); }

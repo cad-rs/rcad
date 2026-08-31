@@ -71,9 +71,9 @@ fn gwedge_box_counts() {
     assert_eq!(nf, 6, "expected 6 faces, got {}", nf);
 
     // Check shell face count
-    let last_sh = t.tshapes.iter().enumerate().rev().find(|(_,ts)| matches!(&**ts, TShape::Shell(_)));
+    let last_sh = t.tshapes.iter().enumerate().rev().find(|(_,ts)| matches!(ts.as_ref(), TShape::Shell(_)));
     if let Some((si, _)) = last_sh {
-        if let TShape::Shell(ref sd) = &*t.tshapes[si] {
+        if let TShape::Shell(sd) = &*t.tshapes[si] {
             eprintln!("  shell[{}] faces={}", si, sd.faces.len());
             for (fi, f) in sd.faces.iter().enumerate() {
                 eprintln!("    face {}: outer_wire idx={}", fi, f.index);
