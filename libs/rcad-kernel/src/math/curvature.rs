@@ -201,6 +201,7 @@ mod tests {
             axis: DVec3::Y,
             radius: r,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
         assert!(
@@ -324,6 +325,7 @@ mod tests {
             axis: DVec3::Z,
             radius: r,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
         // One should be 1/r, the other should be 0

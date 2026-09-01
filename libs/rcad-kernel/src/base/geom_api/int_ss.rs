@@ -328,6 +328,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let intss = IntSS::with_surfaces(&plane, &cyl, 1e-7);
         assert!(intss.is_done());

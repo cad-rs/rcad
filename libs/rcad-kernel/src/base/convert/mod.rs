@@ -1424,6 +1424,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 1.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let bs = cylinder_to_bspline(&cyl);
         // Sample several u values; all should be on the cylinder surface

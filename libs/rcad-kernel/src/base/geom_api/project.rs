@@ -361,7 +361,7 @@ mod tests {
     #[test]
     fn project_onto_cylinder() {
         let cyl = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Y, radius: 1.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO, axis: DVec3::Y, radius: 1.0, ref_dir: DVec3::X, y_dir: None,
         });
         let q = DVec3::new(3.0, 2.0, 0.0);
         let r = closest_point_on_surface(&cyl, q, 16);
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn project_onto_cylinder_interior() {
         let cyl = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X, y_dir: None,
         });
         let q = DVec3::new(0.0, 0.0, 1.0);
         let r = closest_point_on_surface(&cyl, q, 16);

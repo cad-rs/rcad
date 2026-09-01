@@ -1302,6 +1302,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 1.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let pts = intersect_line_cylinder(&line, &cyl);
         assert_eq!(pts.len(), 2);
@@ -1354,6 +1355,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 2.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         match intersect_plane_cylinder_intana(&plane, &cyl) {
             PlnCylResult::Circle(c) => {

@@ -859,6 +859,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let line = Line3::new(DVec3::new(5.0, 0.0, 0.0), DVec3::Z);
         let mut proj = CylinderProjector::with_cylinder(&cyl);

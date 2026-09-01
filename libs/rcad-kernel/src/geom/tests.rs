@@ -233,6 +233,7 @@ mod eval_tests {
             axis: DVec3::Y,
             radius: 3.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         for u in [0.0, 1.0, PI, 2.0 * PI - 0.1] {
             let p = c.point_at(u, 0.0);
@@ -738,6 +739,7 @@ mod eval_tests {
             axis: DVec3::Z,
             radius: 3.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let p0 = cyl.point_at(0.0, 0.0);
         assert!((p0 - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
@@ -1426,6 +1428,7 @@ mod eval_tests {
             axis: DVec3::Z,
             radius: 3.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let (p, dpu, dpv) = cyl.derivatives(0.0, 5.0);
         // dP/dv should be axis (Z)
@@ -1446,6 +1449,7 @@ mod eval_tests {
             axis: DVec3::Z,
             radius: 3.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         // Cylinder with axis Z, ref_dir=X:
         // x_ax = X, y_ax = Z×X = Y
@@ -1612,6 +1616,7 @@ mod eval_tests {
             axis: DVec3::Z,
             radius: 2.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         // Cylinder with axis Z, ref_dir=X: dP/du at u=0 = R*y_ax = 2*Y = (0,2,0)
         let (_p, dpu, dpv) = s.derivatives(0.0, 0.0);
