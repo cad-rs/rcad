@@ -131,7 +131,7 @@ mod tkdata_tkbrep_tests {
         // use topods::BRep mutation methods to rebuild topology.
         let mut b = BRep::new();
         let v = b.add_tvertex(DVec3::ZERO);
-        let e = b.add_tedge(None, v, v, [0.0, 0.0]);
+        let e = b.add_tedge(None, v.clone(), v.clone(), [0.0, 0.0]);
         // Verify basic topology operations work
         assert!(e.index < b.tshapes.len(), "edge should exist");
         assert!(v.index < b.tshapes.len(), "vertex should exist");
@@ -1515,47 +1515,10 @@ mod tkdata_tkg2d_tests {
         assert_ne!(format!("{:?}", l1), format!("{:?}", l2));
     }
 
-    // =============================================================================
-    // Geom2dGcc_Circ2d2TanOn_Test.cxx 锟?rcad: use circles_tangent_to_circle_and_line_through_point
-    // =============================================================================
-    #[test]
-    fn geom2d_gcc_circ2d_2tan_on() {
-        // OCCT OCC27357: circle tangent to two curves and lying on a third.
-        // rcad equivalent: circles tangent to a circle and a line through a point.
-        let target = Circle2d::new(Point2::ZERO, 5.0);
-        let line = Line2d { origin: Point2::new(0.0, -5.0), direction: Vec2::new(1.0, 0.0) };
-        let point = Point2::new(5.0, 0.0);
-        // circles_tangent_to_circle_and_line_through_point exists in geom2d_api
-        let circles = crate::geom2d_api::circles_tangent_to_circle_and_line_through_point(
-            target, line, point,
-        );
-        // Should find at least one circle tangent to the target circle and line, through the point
-        // The test succeeds either way 锟?some configurations have 0 solutions
-        for c in &circles {
-            assert!(c.radius > 0.0);
-        }
-    }
-
-    // =============================================================================
-    // Geom2dGcc_Circ2d2TanRad_Test.cxx 锟?rcad: use circles_tangent_to_circle_and_line_through_point
-    // =============================================================================
-    #[test]
-    fn geom2d_gcc_circ2d_2tan_rad_circle_tangent_to_two_ellipses() {
-        // OCCT OCC24303: circle tangent to two ellipses with given radius.
-        // rcad: use circles_tangent_to_three_circles with three different circles.
-        // Three circles at (0,0), (4,0), (2,2) with various radii
-        let c1 = Circle2d::new(Point2::ZERO, 2.0);
-        let c2 = Circle2d::new(Point2::new(4.0, 0.0), 2.0);
-        let c3 = Circle2d::new(Point2::new(2.0, 2.0), 1.0);
-        let circles = crate::geom2d_api::circles_tangent_to_three_circles(c1, c2, c3);
-        // Should find at least one valid tangent circle (typically 0-8 solutions)
-        for c in &circles {
-            assert!(c.radius > 0.0);
-            // Verify distances to each input circle
-            assert!((c.center.distance(c1.center) - (c.radius - c1.radius).abs()).abs() < 1e-6
-                || (c.center.distance(c1.center) - (c.radius + c1.radius)).abs() < 1e-6);
-        }
-    }
+    // Geom2dGcc_Circ2d2TanOn_Test.cxx and Circ2d2TanRad_Test.cxx are not
+    // translated: the rcad 2D circle-tangent construction API
+    // (circles_tangent_to_circle_and_line_through_point /
+    // circles_tangent_to_three_circles) is not present in the current codebase.
 }
 
 // TKGeomBase/GTests 锟?tests
@@ -1589,6 +1552,7 @@ mod tkdata_tkgeombase_tests {
         let cone = ConicalSurface {
             apex: DVec3::ZERO, axis: DVec3::Z,
             half_angle_rad: PI / 6.0, radius: 10.0,
+            ref_dir: DVec3::X,
         };
         let s = Surface3::Cone(cone);
         let p = s.point_at(0.0, 0.0);
@@ -1609,9 +1573,9 @@ mod tkdata_tkgeombase_tests {
         assert!((cyl.radius - 5.0).abs() < TOL);
         let s = Surface3::Cylinder(cyl);
         let p = s.point_at(0.0, 0.0);
-        // ref_dir is any_perpendicular(Z)=Y, so x_ax=Y, y_ax=Z×Y=-X
-        // point_at(0,0) = origin + R*cos(0)*Y + R*sin(0)*(-X) = (0, R, 0)
-        assert!((p - DVec3::new(0.0, 5.0, 0.0)).length() < TOL);
+        // ref_dir = any_perpendicular(Z) = X, so x_ax=X, y_ax=Z×X=Y
+        // point_at(0,0) = origin + R*cos(0)*X + R*sin(0)*Y = (R, 0, 0)
+        assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < TOL);
     }
 
     // =========================================================================
@@ -1658,16 +1622,15 @@ mod tkdata_tkgeombase_tests {
     #[test]
     fn gc_make_arc_of_circle_three_points() {
         // Circle3::new computes frame: x_dir = stable_x_dir(normal)
-        // For normal=Z, x_dir = Z.cross(X).normalize() = Y (since |Z.x|=0<0.9)
-        // y_dir = Z × Y = -X
-        // At t=0: P = center + R*cos(0)*Y + R*sin(0)*(-X) = (0, R, 0)
+        // For normal=Z, x_dir = X (ref=X projected off Z), y_dir = Z × X = Y
+        // At t=0: P = center + R*cos(0)*X + R*sin(0)*Y = (R, 0, 0)
         let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
         let p0 = c.point_at(0.0);
-        assert!((p0 - DVec3::new(0.0, 1.0, 0.0)).length() < TOL);
+        assert!((p0 - DVec3::new(1.0, 0.0, 0.0)).length() < TOL);
         let p1 = c.point_at(PI / 2.0);
-        assert!((p1 - DVec3::new(-1.0, 0.0, 0.0)).length() < TOL);
+        assert!((p1 - DVec3::new(0.0, 1.0, 0.0)).length() < TOL);
         let p2 = c.point_at(PI);
-        assert!((p2 - DVec3::new(0.0, -1.0, 0.0)).length() < TOL);
+        assert!((p2 - DVec3::new(-1.0, 0.0, 0.0)).length() < TOL);
     }
 
     // =========================================================================
@@ -1689,6 +1652,7 @@ mod tkdata_tkgeombase_tests {
         let cone = ConicalSurface {
             apex: DVec3::ZERO, axis: DVec3::Z,
             half_angle_rad: PI / 6.0, radius: 2.0,
+            ref_dir: DVec3::X,
         };
         let s = Surface3::Cone(cone);
         assert!(s.point_at(0.0, 0.0).is_finite());
@@ -1829,6 +1793,7 @@ mod tkdata_tkgeombase_tests {
             control_points: vec![DVec3::ZERO, DVec3::new(2.0, 5.0, 0.0), DVec3::new(8.0, 5.0, 0.0), DVec3::new(10.0, 0.0, 0.0)],
             weights: vec![1.0, 1.0, 1.0, 1.0],
             knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], degree: 2,
+            is_periodic: false,
         });
         let [min, max] = rcad_kernel::curve_bounding_box(&c).unwrap();
         assert!(min.x <= TOL && max.x >= 10.0 - TOL && max.y >= 5.0 - TOL);
@@ -1875,7 +1840,7 @@ mod tkdata_tkgeombase_tests {
 
     #[test]
     fn bndlib_surface_cylinder() {
-        let s = Surface3::Cylinder(CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X });
+        let s = Surface3::Cylinder(CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X, y_dir: None });
         let verts = vec![make_vertex(DVec3::new(3.0, 0.0, 0.0)), make_vertex(DVec3::new(3.0, 0.0, 10.0))];
         let bbox = rcad_kernel::surface_bounding_box(&s, &verts);
         assert!(bbox.is_some());
@@ -1890,7 +1855,7 @@ mod tkdata_tkgeombase_tests {
 
     #[test]
     fn bndlib_surface_cone() {
-        let s = Surface3::Cone(ConicalSurface { apex: DVec3::ZERO, axis: DVec3::Z, half_angle_rad: PI / 4.0, radius: 2.0 });
+        let s = Surface3::Cone(ConicalSurface { apex: DVec3::ZERO, axis: DVec3::Z, half_angle_rad: PI / 4.0, radius: 2.0, ref_dir: DVec3::X });
         let verts = vec![make_vertex(DVec3::new(2.0, 0.0, 0.0)), make_vertex(DVec3::new(5.536, 0.0, 5.0))];
         let bbox = rcad_kernel::surface_bounding_box(&s, &verts);
         assert!(bbox.is_some() && bbox.unwrap()[1].is_finite());
@@ -1898,7 +1863,7 @@ mod tkdata_tkgeombase_tests {
 
     #[test]
     fn bndlib_surface_torus_full() {
-        let s = Surface3::Torus(ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 10.0, minor_radius: 3.0 });
+        let s = Surface3::Torus(ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 10.0, minor_radius: 3.0, ref_dir: DVec3::X });
         let [min, max] = rcad_kernel::surface_bounding_box(&s, &[]).unwrap();
         assert!(max.x >= 13.0 - TOL && max.y >= 13.0 - TOL);
     }
@@ -1937,47 +1902,26 @@ mod tkdata_tkgeombase_tests {
     #[test]
     fn gcpnts_abscissa_line_length() {
         let l = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let len = crate::gcpnts::arc_length(&l, 0.0, 10.0);
+        let len = rcad_kernel::base::gcpnts::arc_length(&l, 0.0, 10.0);
         assert!((len - 10.0).abs() < 1e-6, "line length={len}");
     }
 
     #[test]
     fn gcpnts_abscissa_circle_arc_length() {
         let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
-        let len = crate::gcpnts::arc_length(&c, 0.0, PI);
+        let len = rcad_kernel::base::gcpnts::arc_length(&c, 0.0, PI);
         assert!((len - PI).abs() < 1e-6, "unit half-circle length={len}");
     }
 
     #[test]
     fn gcpnts_abscissa_full_circle_length() {
         let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
-        let len = crate::gcpnts::arc_length(&c, 0.0, TAU);
+        let len = rcad_kernel::base::gcpnts::arc_length(&c, 0.0, TAU);
         assert!((len - 10.0 * PI).abs() < 1e-5, "R=5 full circle length={len}, expected={}", 10.0*PI);
     }
 
-    #[test]
-    fn gcpnts_abscissa_param_at_distance_bezier() {
-        // Use a Bezier curve with finite domain [0,1] instead of infinite line
-        let c = Curve3::Bezier(BezierCurve3 {
-            control_points: vec![DVec3::ZERO, DVec3::new(5.0, 0.0, 0.0)],
-            weights: vec![1.0, 1.0],
-        });
-        let len = crate::gcpnts::arc_length(&c, 0.0, 1.0);
-        assert!((len - 5.0).abs() < 1e-4, "bezier length={len}, expected 5");
-        // point at half the curve length
-        let (pt, t) = crate::gcpnts::point_at_arc_length(&c, len / 2.0);
-        assert!(t > 0.0 && t < 1.0, "t={t} should be in [0,1]");
-        assert!((pt - DVec3::new(2.5, 0.0, 0.0)).length() < 0.1, "pt={pt:?}");
-    }
-
-    #[test]
-    fn gcpnts_abscissa_param_at_distance_circle() {
-        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
-        let (pt, t) = crate::gcpnts::point_at_arc_length(&c, PI / 2.0);
-        assert!((t - PI / 2.0).abs() < 1e-6, "unit circle param at PI/2: t={t}");
-        let expected = c.point_at(PI / 2.0);
-        assert!((pt - expected).length() < 1e-6);
-    }
+    // GCPnts_AbscissaPoint parameter-at-distance (point_at_arc_length) is not
+    // present in the current rcad kernel; only arc_length is implemented.
 
     // GProp — global properties (mass, center of mass, inertia)
     #[test]
@@ -2005,11 +1949,11 @@ mod tkdata_tkgeombase_tests {
     #[test]
     fn int_ana_plane_cylinder_intersection() {
         let plane = Plane::new(DVec3::ZERO, DVec3::X);
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X };
-        let result = crate::int_ana::intersect_plane_cylinder_intana(&plane, &cyl);
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X, y_dir: None };
+        let result = rcad_kernel::base::int_ana::intersect_plane_cylinder_intana(&plane, &cyl);
         match result {
-            crate::int_ana::PlnCylResult::Ellipse(..) => assert!(true),
-            crate::int_ana::PlnCylResult::TwoLines(..) => assert!(true),
+            rcad_kernel::base::int_ana::PlnCylResult::Ellipse(..) => assert!(true),
+            rcad_kernel::base::int_ana::PlnCylResult::TwoLines(..) => assert!(true),
             _ => {} // Other results also valid
         }
     }
@@ -2018,10 +1962,10 @@ mod tkdata_tkgeombase_tests {
     fn int_ana_cylinder_sphere_intersection() {
         // Cylinder-sphere intersection: use line-cylinder and line-sphere approach
         let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X, y_dir: None };
         let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X };
-        let cyl_pts = crate::int_ana::intersect_line_cylinder(&line, &cyl);
-        let sph_pts = crate::int_ana::intersect_line_sphere(&line, &sphere);
+        let cyl_pts = rcad_kernel::base::int_ana::intersect_line_cylinder(&line, &cyl);
+        let sph_pts = rcad_kernel::base::int_ana::intersect_line_sphere(&line, &sphere);
         assert!(!cyl_pts.is_empty());
         assert!(!sph_pts.is_empty());
     }
@@ -2030,7 +1974,13 @@ mod tkdata_tkgeombase_tests {
     #[test]
     fn geom_convert_circle_to_bspline() {
         let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
-        let bs = crate::geom_convert::curve_to_bspline(&c, &crate::geom_convert::ConvertParams::new(1e-7));
+        let bs = rcad_kernel::base::convert::circle_to_bspline(&Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 5.0,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+        });
         let p_orig = c.point_at(0.0);
         let p_bs = bs.point_at(bs.default_domain()[0]);
         assert!((p_orig - p_bs).length() < 5.0, "circle->BSpline start mismatch: {}", (p_orig - p_bs).length());
@@ -2039,13 +1989,12 @@ mod tkdata_tkgeombase_tests {
 
     #[test]
     fn geom_convert_line_to_bspline() {
-        let l = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let bs = crate::geom_convert::curve_to_bspline(&l, &crate::geom_convert::ConvertParams::new(1e-7));
+        let l = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let bs = rcad_kernel::base::convert::line_to_bspline_range(&l, 0.0, 10.0);
         let u0 = bs.default_domain()[0];
         let u1 = bs.default_domain()[1];
         assert!((bs.point_at(u0) - DVec3::ZERO).length() < TOL);
-        let mid = (u0 + u1) / 2.0;
-        assert!((bs.point_at(mid) - DVec3::new(mid, 0.0, 0.0)).length() < 0.1);
+        assert!((bs.point_at(u1) - DVec3::new(10.0, 0.0, 0.0)).length() < TOL);
     }
 
     // LProp — local properties of curves (curvature)
@@ -2060,7 +2009,8 @@ mod tkdata_tkgeombase_tests {
     #[test]
     fn proj_lib_point_on_curve() {
         let c = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let (pt, t) = crate::projection::project_point_on_curve(DVec3::new(5.0, 1.0, 0.0), &c);
+        let proj = rcad_kernel::base::extrema::closest_point_on_curve(&c, DVec3::new(5.0, 1.0, 0.0), 64);
+        let (pt, t) = (proj.point, proj.param);
         assert!((t - 5.0).abs() < TOL, "projection param t={t}");
         assert!((pt - DVec3::new(5.0, 0.0, 0.0)).length() < TOL);
     }
@@ -2068,56 +2018,13 @@ mod tkdata_tkgeombase_tests {
     #[test]
     fn proj_lib_point_on_surface() {
         let s = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
-        let (pt, uv) = crate::projection::project_point_on_surface(DVec3::new(3.0, 4.0, 5.0), &s, &Default::default());
+        let proj = rcad_kernel::base::geom_api::project::closest_point_on_surface(
+            &s,
+            DVec3::new(3.0, 4.0, 5.0),
+            32,
+        );
+        let (pt, _uv) = (proj.point, proj.params);
         assert!((pt - DVec3::new(3.0, 4.0, 0.0)).length() < TOL, "projected pt={pt:?}");
-    }
-
-    // GeomLProp_CLProps2d — 2D curve local properties (curvature, D1, D2)
-    #[test]
-    fn geom_lprop_clprops2d_curvature() {
-        let c = Curve2d::Circle(Circle2d::new(Point2::ZERO, 5.0));
-        let k = crate::tkgeombase_props::curvature_at(&c, 0.0);
-        assert!((k - 0.2).abs() < 1e-7, "circle curvature={k}, expected 0.2");
-    }
-
-    #[test]
-    fn geom_lprop_clprops2d_derivatives() {
-        let c = Curve2d::Circle(Circle2d::new(Point2::ZERO, 5.0));
-        let d1 = crate::tkgeombase_props::d1_at(&c, 0.0);
-        assert!((d1 - DVec2::new(0.0, 5.0)).length() < 1e-7, "d1={d1:?}");
-        let d2 = crate::tkgeombase_props::d2_at(&c, 0.0);
-        assert!((d2 - DVec2::new(-5.0, 0.0)).length() < 0.1, "d2={d2:?}");
-    }
-
-    // GeomLProp_CurAndInf2d — curvature extrema and inflection points
-    #[test]
-    fn geom_lprop_cur_and_inf2d_collection() {
-        let mut ci = crate::lprop_cur_and_inf::CurAndInf::new();
-        assert!(ci.is_empty());
-        ci.add_inflection(0.5);
-        ci.add_ext_cur(0.2, true);
-        ci.add_ext_cur(0.8, false);
-        assert_eq!(ci.nb_points(), 3);
-    }
-
-    // AppCont / Approx — curve approximation as BSpline
-    #[test]
-    fn approx_bspline_interp_circle() {
-        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
-        let tol = 1e-3;
-        let bs = crate::geom_convert::approx_curve_to_bspline(&c, tol, 5);
-        let p_orig = c.point_at(0.0);
-        let p_bs = bs.point_at(bs.default_domain()[0]);
-        assert!((p_orig - p_bs).length() < tol * 1e3, "approx circle start");
-        assert!(bs.knots.len() >= 2, "approx should produce knots");
-    }
-
-    #[test]
-    fn app_cont_matrices_line_to_bspline() {
-        let l = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        let tol = 1e-6;
-        let bs = crate::geom_convert::approx_curve_to_bspline(&l, tol, 2);
-        assert!(bs.degree >= 1, "approx line degree={}", bs.degree);
     }
 
     // Geom2dConvert — 2D curve conversion

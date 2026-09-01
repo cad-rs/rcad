@@ -837,6 +837,7 @@ mod tkg3d_geom_offset_surface_tests {
             axis: DVec3::Z,
             radius: 10.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let off = Surface3::Offset(OffsetSurface {
             basis: Box::new(base),
@@ -853,6 +854,7 @@ mod tkg3d_geom_offset_surface_tests {
             axis: DVec3::Z,
             radius: 10.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let off = Surface3::Offset(OffsetSurface {
             basis: Box::new(base),
@@ -976,6 +978,7 @@ mod tkg3d_surface_eval_tests {
             axis: DVec3::Z,
             radius: 4.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let p = s.point_at(PI / 4.0, 3.0);
         let xy = (p.x * p.x + p.y * p.y).sqrt();
@@ -1101,6 +1104,7 @@ mod tkg3d_adaptor_tests {
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let xform = glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 3.0));
         let ts = transform_surface(&s, &xform);
@@ -1141,6 +1145,7 @@ mod tkg3d_surface_properties_tests {
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let [u0, u1, v0, v1] = s.default_domain();
         assert!((u0 - 0.0).abs() < TOL);
@@ -1338,6 +1343,7 @@ mod tkg3d_grid_eval_surface_tests {
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let nu = 4;
         let nv = 3;
@@ -1428,6 +1434,7 @@ mod tkg3d_grid_eval_surface_tests {
             axis: DVec3::Z,
             radius: 10.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let s = Surface3::Offset(OffsetSurface {
             basis: Box::new(base),
@@ -1793,12 +1800,14 @@ mod tkg3d_hash_tests {
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let b = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         assert_eq!(format!("{:?}", a), format!("{:?}", b));
     }
@@ -1810,12 +1819,14 @@ mod tkg3d_hash_tests {
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         let b = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 10.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         assert_ne!(format!("{:?}", a), format!("{:?}", b));
     }

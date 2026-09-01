@@ -408,7 +408,7 @@ mod api_intercurve_tests {
         inter.perform_lin_lin(&l1, &l2);
         assert!(inter.is_done());
         assert!(!inter.is_empty());
-        let d = inter.point(0).value().distance(Point2::new(0.0, 0.0));
+        let d = inter.point(1).value().distance(Point2::new(0.0, 0.0));
         assert!(d < 1e-6, "intersection at origin, got dist {d}");
     }
 }

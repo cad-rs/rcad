@@ -18,7 +18,7 @@ impl BoundingBox {
     fn add_box(&mut self, other: &Self) { self.min = self.min.min(other.min); self.max = self.max.max(other.max); }
     fn is_out_point(&self, p: DVec3) -> bool { p.x < self.min.x || p.x > self.max.x || p.y < self.min.y || p.y > self.max.y || p.z < self.min.z || p.z > self.max.z }
     fn is_out_box(&self, other: &Self) -> bool { self.max.x < other.min.x || self.min.x > other.max.x || self.max.y < other.min.y || self.min.y > other.max.y || self.max.z < other.min.z || self.min.z > other.max.z }
-    fn set_gap(&mut self, _g: f64) {}
+    fn set_gap(&mut self, g: f64) { self.min -= DVec3::splat(g); self.max += DVec3::splat(g); }
     fn contains(&self, p: DVec3) -> bool { !self.is_out_point(p) }
 }
 
@@ -91,6 +91,6 @@ mod geom_lib_tests {
     use rcad_kernel::nurbs_convert::{plane_to_bspline, cylinder_to_bspline, sphere_to_bspline};
     use rcad_kernel::geom::{Plane, CylindricalSurface, SphericalSurface};
     #[test] fn plane_to_bspline_surface() { let p = Plane::new(DVec3::ZERO, DVec3::Z); let bs = plane_to_bspline(&p); assert!(bs.control_points.len() > 0); }
-    #[test] fn cylinder_to_bspline_surface() { let c = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X }; let bs = cylinder_to_bspline(&c); assert!(bs.control_points.len() > 0); }
+    #[test] fn cylinder_to_bspline_surface() { let c = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X, y_dir: None }; let bs = cylinder_to_bspline(&c); assert!(bs.control_points.len() > 0); }
     #[test] fn sphere_to_bspline_surface() { let s = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X }; let bs = sphere_to_bspline(&s); assert!(bs.control_points.len() > 0); }
 }

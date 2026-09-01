@@ -2,17 +2,28 @@
 //!
 //! OCCT source: src/ModelingData/TKGeomBase/GTests/
 //!
-//! Tests for: ExtremaPC, GeomConvert, IntAna,
-//! Hermit, CompCurveToBSplineCurve, ProjLib_Cone.
-
-use rcad_algo::extrema::*;
-use rcad_kernel::nurbs_convert::*;
-use rcad_kernel::base::int_ana::*;
+//! Tests for: ExtremaPC (point-curve extrema), GeomConvert (curve ->
+//! BSpline), IntAna (plane-plane), Hermit (Hermite BSpline construction).
+//!
+//! Rebuilt for the current rcad API (rcad_kernel::base::extrema /
+//! base::convert / base::hermit, rcad_algo::geomalgo::int_patch).
+//!
+//! Not translated (feature no longer present in rcad):
+//!   - GeomConvert_CompCurveToBSplineCurve_Test.cxx (concat_bsplines)
+//!   - ProjLib_Cone_Test.cxx (project_circle_onto_cone)
+//!   - ExtremaPC_SearchMode_Test.cxx (Extrema_ExtPC Min/Max search modes)
 
 use glam::DVec3;
 use rcad_kernel::geom::*;
 
 const TOL: f64 = 1e-7;
+
+/// Point-curve distance helper (OCCT Extrema_ExtPC).
+/// Returns (distance, curve parameter at the nearest point).
+fn distance_point_curve(pt: DVec3, curve: &Curve3) -> (f64, f64) {
+    let proj = rcad_kernel::base::extrema::closest_point_on_curve(curve, pt, 64);
+    (proj.distance, proj.param)
+}
 
 // =============================================================================
 // ExtremaPC_Line_Test.cxx — point-line distance
@@ -125,6 +136,7 @@ mod extremapc_bspline_tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0)],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         });
         let (d, _t) = distance_point_curve(DVec3::ZERO, &bs);
         assert!(d < TOL, "point at start should have distance 0, got {d}");
@@ -132,7 +144,7 @@ mod extremapc_bspline_tests {
 }
 
 // =============================================================================
-// GeomConvert_Test.cxx
+// GeomConvert_Test.cxx — curve -> BSpline conversion
 // =============================================================================
 
 #[cfg(test)]
@@ -145,7 +157,8 @@ mod geom_convert_tests {
             origin: DVec3::ZERO,
             direction: DVec3::X,
         };
-        let bs = line_to_bspline(&line, 1);
+        // Parameterize over [0, 5] so the BSpline covers the 5-unit segment.
+        let bs = rcad_kernel::base::convert::line_to_bspline_range(&line, 0.0, 5.0);
         let p0 = bs.point_at(0.0);
         let p5 = bs.point_at(5.0);
         assert!((p0 - DVec3::ZERO).length() < TOL);
@@ -155,7 +168,7 @@ mod geom_convert_tests {
     #[test]
     fn circle_to_bspline_works() {
         let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0);
-        let bs = circle_to_bspline(&circle, 3);
+        let bs = rcad_kernel::base::convert::circle_to_bspline(&circle);
         // Just check the curve has valid control points
         assert!(!bs.control_points.is_empty(), "should have control points");
         assert!(bs.degree > 0, "should have positive degree");
@@ -163,206 +176,100 @@ mod geom_convert_tests {
 }
 
 // =============================================================================
-// IntAna_IntQuadQuad_Test.cxx
+// IntAna_IntQuadQuad_Test.cxx — plane-plane intersection
 // =============================================================================
 
 #[cfg(test)]
 mod int_ana_plane_plane_tests {
     use super::*;
+    use rcad_algo::geomalgo::int_patch::quad_quad_geo::{AnaResultType, QuadQuadGeo};
+    use rcad_algo::geomalgo::int_surf::quadric::Quadric;
 
     #[test]
     fn perpendicular_planes_intersect() {
-        let p1 = Plane::new(DVec3::ZERO, DVec3::Z);
-        let p2 = Plane::new(DVec3::ZERO, DVec3::X);
-        let result = intersect_plane_plane_intana(&p1, &p2);
-        match result {
-            PlnPlnResult::Line(_) => {}
-            _ => panic!(
-                "perpendicular planes should intersect in a line, got {:?}",
-                result
-            ),
-        }
+        let p1 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let p2 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::X));
+        let q1 = Quadric::from_surface3(&p1).expect("plane 1 quadric");
+        let q2 = Quadric::from_surface3(&p2).expect("plane 2 quadric");
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_plane_plane(&q1, &q2, 1e-10, 1e-10);
+        assert_eq!(
+            qq.type_inter(),
+            AnaResultType::Line,
+            "perpendicular planes should intersect in a line"
+        );
     }
 
     #[test]
     fn parallel_offset_planes_no_intersection() {
-        let p1 = Plane::new(DVec3::ZERO, DVec3::Z);
-        let p2 = Plane::new(DVec3::new(0.0, 0.0, 10.0), DVec3::Z);
-        let result = intersect_plane_plane_intana(&p1, &p2);
-        assert!(matches!(result, PlnPlnResult::Parallel));
+        let p1 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let p2 = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 10.0), DVec3::Z));
+        let q1 = Quadric::from_surface3(&p1).expect("plane 1 quadric");
+        let q2 = Quadric::from_surface3(&p2).expect("plane 2 quadric");
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_plane_plane(&q1, &q2, 1e-10, 1e-10);
+        assert_eq!(
+            qq.type_inter(),
+            AnaResultType::Empty,
+            "parallel offset planes should not intersect"
+        );
     }
 
     #[test]
     fn identical_planes_coincident() {
-        let p1 = Plane::new(DVec3::ZERO, DVec3::Z);
-        let p2 = Plane::new(DVec3::ZERO, DVec3::Z);
-        let result = intersect_plane_plane_intana(&p1, &p2);
-        assert!(matches!(result, PlnPlnResult::Coincident));
+        let p1 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let p2 = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let q1 = Quadric::from_surface3(&p1).expect("plane 1 quadric");
+        let q2 = Quadric::from_surface3(&p2).expect("plane 2 quadric");
+
+        let mut qq = QuadQuadGeo::new();
+        qq.perform_plane_plane(&q1, &q2, 1e-10, 1e-10);
+        assert_eq!(
+            qq.type_inter(),
+            AnaResultType::Same,
+            "identical planes should be coincident"
+        );
     }
 }
 
 // =============================================================================
-// Hermit_Test.cxx — BSpline Hermite evaluation
+// Hermit_Test.cxx — Hermite BSpline construction (rcad base/hermit)
 // =============================================================================
 
 #[cfg(test)]
 mod hermit_tests {
     use super::*;
 
-    fn make_bspline() -> BSplineCurve3 {
-        BSplineCurve3 {
-            degree: 1,
-            knots: vec![0.0, 0.0, 1.0, 1.0],
-            control_points: vec![DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0)],
-            weights: vec![1.0, 1.0],
+    #[test]
+    fn hermit_curve_interpolates_endpoints() {
+        let p0 = DVec3::ZERO;
+        let v0 = DVec3::X;
+        let p1 = DVec3::new(10.0, 0.0, 0.0);
+        let v1 = DVec3::X;
+        let bs = rcad_kernel::base::hermit::hermit_curve(p0, v0, p1, v1);
+        let at0 = bs.point_at(0.0);
+        let at1 = bs.point_at(1.0);
+        assert!((at0 - p0).length() < TOL, "curve must start at p0");
+        assert!((at1 - p1).length() < TOL, "curve must end at p1");
+    }
+
+    #[test]
+    fn hermit_eval_matches_curve() {
+        let p0 = DVec3::ZERO;
+        let v0 = DVec3::Y;
+        let p1 = DVec3::new(1.0, 0.0, 0.0);
+        let v1 = -DVec3::Y;
+        let bs = rcad_kernel::base::hermit::hermit_curve(p0, v0, p1, v1);
+        for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let from_curve = bs.point_at(t);
+            let from_eval = rcad_kernel::base::hermit::hermit_eval(p0, v0, p1, v1, t);
+            assert!(
+                (from_curve - from_eval).length() < TOL,
+                "hermit_eval must match curve at t={t}"
+            );
         }
-    }
-
-    #[test]
-    fn hermit_returns_2d_curve() {
-        let bs = make_bspline();
-        let result = hermit_solution(&bs);
-        let p = result.point_at(0.0);
-        assert!(p.y.is_finite());
-    }
-
-    #[test]
-    fn hermit_solutionbis_returns_finite() {
-        let bs = make_bspline();
-        let (a, b) = hermit_solutionbis(&bs);
-        assert!(a.is_finite());
-        assert!(b.is_finite());
-    }
-}
-
-// =============================================================================
-// GeomConvert_CompCurveToBSplineCurve_Test.cxx
-// =============================================================================
-
-#[cfg(test)]
-mod concat_bspline_tests {
-    use super::*;
-
-    fn make_bspline_seg(start: DVec3, end: DVec3) -> BSplineCurve3 {
-        BSplineCurve3 {
-            degree: 1,
-            knots: vec![0.0, 0.0, 1.0, 1.0],
-            control_points: vec![start, end],
-            weights: vec![1.0, 1.0],
-        }
-    }
-
-    #[test]
-    fn concat_two_linear_bsplines() {
-        let c1 = make_bspline_seg(DVec3::ZERO, DVec3::new(5.0, 0.0, 0.0));
-        let c2 = make_bspline_seg(DVec3::new(5.0, 0.0, 0.0), DVec3::new(10.0, 0.0, 0.0));
-        let result = concat_bsplines(&c1, &c2, 1e-7);
-        assert!(result.is_some(), "should concatenate continuous curves");
-    }
-}
-
-// =============================================================================
-// ProjLib_Cone_Test.cxx — project circle onto cone
-// =============================================================================
-
-#[cfg(test)]
-mod projlib_cone_tests {
-    use super::*;
-
-    #[test]
-    fn project_circle_onto_cone_yields_2d_curve() {
-        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0);
-        let cone = ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 0.0,
-            half_angle_rad: std::f64::consts::FRAC_PI_4,
-        };
-        let result = project_circle_onto_cone(&circle, &cone);
-        assert!(result.is_some(), "circle on cone should project");
-    }
-}
-
-// =============================================================================
-// ExtremaPC_SearchMode_Test.cxx
-// =============================================================================
-
-#[cfg(test)]
-mod extremapc_searchmode_tests {
-    use super::*;
-
-    fn make_line() -> Curve3 {
-        Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        })
-    }
-
-    fn make_circle() -> Curve3 {
-        Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0))
-    }
-
-    #[test]
-    fn line_min_mode() {
-        let line = make_line();
-        let pt = DVec3::new(25.0, 10.0, 0.0);
-        let r = find_extrema_curve(&line, pt, 1e-6, SearchMode::Min);
-        assert!(r.is_done());
-        assert_eq!(r.nb_ext(), 1);
-        assert!((r.min_square_distance().sqrt() - 10.0).abs() < TOL);
-    }
-
-    #[test]
-    fn line_max_mode() {
-        let pt = DVec3::new(0.0, 10.0, 0.0);
-        let bounded = Curve3::Line(Line3 {
-            origin: DVec3::new(-50.0, 0.0, 0.0),
-            direction: DVec3::X,
-        });
-        let r = find_extrema_curve(&bounded, pt, 1e-6, SearchMode::Max);
-        assert!(r.is_done());
-        assert!(r.nb_ext() >= 1);
-    }
-
-    #[test]
-    fn circle_min_mode_point_outside() {
-        let circle = make_circle();
-        let pt = DVec3::new(20.0, 0.0, 0.0);
-        let r = find_extrema_curve(&circle, pt, 1e-6, SearchMode::Min);
-        assert!(r.is_done());
-        assert_eq!(r.nb_ext(), 1);
-        assert!((r.min_square_distance().sqrt() - 10.0).abs() < TOL);
-    }
-
-    #[test]
-    fn circle_max_mode_point_outside() {
-        let circle = make_circle();
-        let pt = DVec3::new(20.0, 0.0, 0.0);
-        let r = find_extrema_curve(&circle, pt, 1e-6, SearchMode::Max);
-        assert!(r.is_done());
-        assert_eq!(r.nb_ext(), 1);
-        assert!((r.max_square_distance().sqrt() - 30.0).abs() < TOL);
-    }
-
-    #[test]
-    fn circle_min_mode_point_inside() {
-        let circle = make_circle();
-        let pt = DVec3::new(3.0, 0.0, 0.0);
-        let r = find_extrema_curve(&circle, pt, 1e-6, SearchMode::Min);
-        assert!(r.is_done());
-        assert_eq!(r.nb_ext(), 1);
-        assert!((r.min_square_distance().sqrt() - 7.0).abs() < TOL);
-    }
-
-    #[test]
-    fn circle_minmax_mode_different_min_max() {
-        let circle = make_circle();
-        let pt = DVec3::new(15.0, 0.0, 0.0);
-        let r = find_extrema_curve(&circle, pt, 1e-6, SearchMode::MinMax);
-        assert!(r.is_done());
-        assert!(r.nb_ext() >= 2);
-        assert!((r.min_square_distance().sqrt() - 5.0).abs() < TOL);
-        assert!((r.max_square_distance().sqrt() - 25.0).abs() < 2.0);
     }
 }
 
@@ -515,7 +422,7 @@ mod extremapc_parabola_tests {
             focal_param: 10.0,
         });
         let (dist, _) = distance_point_curve(DVec3::ZERO, &p);
-        assert!(dist < 0.1, "point at vertex, dist={}", dist);
+        assert!(dist < 0.1, "point at vertex, dist={dist}");
     }
 
     #[test]
@@ -549,7 +456,7 @@ mod extremapc_hyperbola_tests {
             semi_minor: 3.0,
         });
         let (dist, _) = distance_point_curve(DVec3::new(4.0, 0.0, 0.0), &h);
-        assert!(dist < TOL, "point at vertex, dist={}", dist);
+        assert!(dist < TOL, "point at vertex, dist={dist}");
     }
 
     #[test]
@@ -597,14 +504,14 @@ mod extremapc_bezier_tests {
     fn bezier_point_on_start() {
         let b = make_cubic_bezier();
         let (dist, _) = distance_point_curve(DVec3::ZERO, &b);
-        assert!(dist < TOL, "point at start, dist={}", dist);
+        assert!(dist < TOL, "point at start, dist={dist}");
     }
 
     #[test]
     fn bezier_point_on_end() {
         let b = make_cubic_bezier();
         let (dist, _) = distance_point_curve(DVec3::new(4.0, 0.0, 0.0), &b);
-        assert!(dist < TOL, "point at end, dist={}", dist);
+        assert!(dist < TOL, "point at end, dist={dist}");
     }
 
     #[test]
@@ -613,8 +520,7 @@ mod extremapc_bezier_tests {
         let (dist, _) = distance_point_curve(DVec3::new(5.0, 3.0, 0.0), &b);
         assert!(
             (dist - 3.0).abs() < TOL,
-            "point projected onto linear Bezier, dist={}",
-            dist
+            "point projected onto linear Bezier, dist={dist}"
         );
     }
 
@@ -624,8 +530,7 @@ mod extremapc_bezier_tests {
         let (dist, _) = distance_point_curve(DVec3::new(-5.0, 0.0, 0.0), &b);
         assert!(
             (dist - 5.0).abs() < TOL,
-            "point before start, dist={}",
-            dist
+            "point before start, dist={dist}"
         );
     }
 }
@@ -649,8 +554,7 @@ mod extrema_extpc_tests {
         let (dist, _param) = distance_point_curve(pt, &c);
         assert!(
             dist < 1.0,
-            "bug24945: projected distance should be small, got {}",
-            dist
+            "bug24945: projected distance should be small, got {dist}"
         );
     }
 }
