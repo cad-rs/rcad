@@ -15,7 +15,7 @@ pub use prim::primapi::{
     make_edge_brep, make_edge_line_brep, make_edge_circle_brep, make_edge_circle_range_brep,
     make_edge_line_range_brep, edge_count_brep,
     make_face_cylinder_bounds_brep, make_face_from_wire_brep, make_face_plane_brep,
-    make_face_plane_bounds_brep,
+    make_face_plane_bounds_brep, transform_brep,
 };
 pub use sewing::{SewingResult, sew_shells};
 

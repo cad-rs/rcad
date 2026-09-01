@@ -643,7 +643,9 @@ pub fn brep_check_analyze(brep: &rcad_kernel::BRep) -> CheckResult {
         }
     }
     for (eidx, &count) in edge_face_count.iter().enumerate() {
-        if count != 2 {
+        // Only real edges take part in the manifold check; the flat pool
+        // indices of vertices/wires/faces/shells/solids are not edges.
+        if count != 2 && matches!(&*brep.tshapes[eidx], TShape::Edge(_)) {
             issues.push(CheckIssue::NonManifoldEdge {
                 edge_idx: eidx,
                 face_count: count,

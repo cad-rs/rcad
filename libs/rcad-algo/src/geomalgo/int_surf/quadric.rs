@@ -941,6 +941,7 @@ mod tests {
             axis: DVec3::new(0.0, 0.0, 1.0),
             radius: 2.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let q = Quadric::from_cylinder(&c);
         for u in [0.0, 1.0, 2.5] {
@@ -999,6 +1000,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 1.5,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let q = Quadric::from_cylinder(&c);
         let on = c.point_at(0.7, 2.0);

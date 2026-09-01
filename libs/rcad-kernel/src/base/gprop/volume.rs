@@ -28,6 +28,10 @@ use crate::base::gprop::tri::{face_flat_iter, face_triangles_pub, tet_signed_vol
 /// OCCT BRepGProp_Gauss::Compute (BRepGProp_Gauss.cxx L1215-1302, Vinert) for
 /// one face with wires: line integral over the boundary edge pcurves.
 ///
+/// Returns (mass, first moments) — the Vinert integrator accumulates
+/// Mass += dv/3 and Ix/Iy/Iz += 0.25*r*dv per elementary part
+/// (computeVInertiaOfElementaryPart isByPoint, BRepGProp_Gauss.cxx L306-339).
+///
 ///   Mass = sum over edges of
 ///     lr * sum_i { ur * sum_j ( (1/3) r(u_j, v_i) . N(u_j, v_i) * (dv/dl)_i * w_i * w_j ) }
 ///
@@ -35,7 +39,7 @@ use crate::base::gprop::tri::{face_flat_iter, face_triangles_pub, tet_signed_vol
 /// N = D1U x D1V (BRepGProp_Face::Normal L201-210, mySReverse=false: rcad
 /// faces are explored FORWARD, see face_flat_iter), and the v coordinate
 /// clamped to the face UV bounds (OCC104, L1266-1267).
-pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f64 {
+pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> (f64, DVec3) {
     let surf_idx = match brep.tshapes.get(fi).and_then(|ts| {
         if let topods::TShape::Face(fd) = &**ts {
             fd.surface.clone()
@@ -44,7 +48,7 @@ pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f64 {
         }
     }) {
         Some(s) => s,
-        None => return 0.0,
+        None => return (0.0, DVec3::ZERO),
     };
     let surf = &surf_idx;
     // L1226-1228: theSurface.Bounds — face UV bounds; u1 feeds the inner
@@ -62,6 +66,7 @@ pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f64 {
     );
 
     let mut an_inertia = 0.0f64;
+    let mut an_moment = DVec3::ZERO;
     // Domain: every edge of the face (outer + inner wires).
     let mut edges = face.outer_wire.edges.clone();
     for w in &face.inner_wires {
@@ -93,13 +98,13 @@ pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f64 {
                 Some(v) => v,
                 None => match pc {
                     Some(v) => v.clone(),
-                    None => return 0.0,
+                    None => return (0.0, DVec3::ZERO),
                 },
             }
         } else {
             match pc {
                 Some(v) => v.clone(),
-                None => return 0.0,
+                None => return (0.0, DVec3::ZERO),
             }
         };
         // Load (L176-182): REVERSED edge reverses the pcurve and its range.
@@ -114,7 +119,7 @@ pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f64 {
         let nb_gauss = curve_integration_order(&c).max(nv).min(61);
         let (cp, cw) = match occt_gauss(nb_gauss) {
             Some(v) => v,
-            None => return 0.0,
+            None => return (0.0, DVec3::ZERO),
         };
         // L1250-1253: l1/l2 = the loaded pcurve First/LastParameter.
         let (l1, l2) = (a, b);
@@ -122,6 +127,7 @@ pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f64 {
         let lr = 0.5 * (l2 - l1);
 
         let mut a_c_inertia = 0.0;
+        let mut a_c_moment = DVec3::ZERO;
         for i in 0..nb_gauss {
             let l = lm + lr * cp[i];
             // D12d (L1260-1263): point and first derivative of the 2D curve.
@@ -141,6 +147,7 @@ pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f64 {
             let ur = 0.5 * (u2 - u1);
             // L1273-1291: aLocal = sum_j ( (1/3) r(u_j, v) . N(u_j, v) * Dul * wV_j )
             let mut a_local = 0.0;
+            let mut m_local = DVec3::ZERO;
             for j in 0..nb_gauss {
                 let u = um + ur * cp[j];
                 let a_weight = dul * cw[j];
@@ -153,18 +160,23 @@ pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f64 {
                 // in world coordinates, so r = P.
                 let dv = (p.x * n.x + p.y * n.y + p.z * n.z) * a_weight;
                 a_local += dv / 3.0;
+                // L314-316: first moments Ix/Iy/Iz += 0.25 * r * dv (the
+                // gravity-center accumulators of the Vinert integrator).
+                m_local += 0.25 * DVec3::new(p.x, p.y, p.z) * dv;
             }
             // L1293: aLocal *= ur
             a_c_inertia += a_local * ur;
+            a_c_moment += m_local * ur;
         }
         // L1297-1298: aC *= lr; anInertia += aC
         an_inertia += a_c_inertia * lr;
+        an_moment += a_c_moment * lr;
     }
     // convert (L467-490): |Mass| >= EPS_DIM(1e-30) → mass else 0
     if an_inertia.abs() >= EPS_DIM {
-        an_inertia
+        (an_inertia, an_moment)
     } else {
-        0.0
+        (0.0, DVec3::ZERO)
     }
 }
 
@@ -172,8 +184,9 @@ pub fn face_volume_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f64 {
 /// a natural-restriction face (no wires): Gauss-Legendre over the surface
 /// natural parameter bounds.
 ///
+/// Returns (mass, first moments) — see face_volume_gauss_domain.
 ///   Mass = vr * ur * sum_j ( wV_j * sum_i ( (1/3) r(u_i, v_j) . N(u_i, v_j) * wU_i ) )
-pub fn face_volume_gauss_natural(brep: &BRep, fi: usize) -> f64 {
+pub fn face_volume_gauss_natural(brep: &BRep, fi: usize) -> (f64, DVec3) {
     let surf_idx = match brep.tshapes.get(fi).and_then(|ts| {
         if let topods::TShape::Face(fd) = &**ts {
             fd.surface.clone()
@@ -182,7 +195,7 @@ pub fn face_volume_gauss_natural(brep: &BRep, fi: usize) -> f64 {
         }
     }) {
         Some(s) => s,
-        None => return 0.0,
+        None => return (0.0, DVec3::ZERO),
     };
     let surf = &surf_idx;
     // L1314-1316: theSurface.Bounds — surface natural parameter domain.
@@ -191,7 +204,7 @@ pub fn face_volume_gauss_natural(brep: &BRep, fi: usize) -> f64 {
     // guard, |Mass| >= EPS_DIM is false for NaN).
     if !lower_u.is_finite() || !upper_u.is_finite() || !lower_v.is_finite() || !upper_v.is_finite()
     {
-        return 0.0;
+        return (0.0, DVec3::ZERO);
     }
     // L1318-1319: UIntegrationOrder / VIntegrationOrder, min GaussPointsMax(61)
     let (uo0, vo0) = surface_u_v_integration_order(surf);
@@ -199,11 +212,11 @@ pub fn face_volume_gauss_natural(brep: &BRep, fi: usize) -> f64 {
     let vo = vo0.min(61);
     let (gpu, gwu) = match occt_gauss(uo) {
         Some(v) => v,
-        None => return 0.0,
+        None => return (0.0, DVec3::ZERO),
     };
     let (gpv, gwv) = match occt_gauss(vo) {
         Some(v) => v,
-        None => return 0.0,
+        None => return (0.0, DVec3::ZERO),
     };
     // L1332-1335
     let um = 0.5 * (upper_u + lower_u);
@@ -212,9 +225,11 @@ pub fn face_volume_gauss_natural(brep: &BRep, fi: usize) -> f64 {
     let vr = 0.5 * (upper_v - lower_v);
     // L1341-1374: anInertia = sum_j ( wV_j * sum_i ( (1/3) r . N * wU_i ) )
     let mut an_inertia = 0.0;
+    let mut an_moment = DVec3::ZERO;
     for j in 0..vo {
         let v = vm + vr * gpv[j];
         let mut an_inertia_of_elementary_part = 0.0;
+        let mut an_moment_of_elementary_part = DVec3::ZERO;
         for i in 0..uo {
             let u = um + ur * gpu[i];
             let a_weight = gwu[i];
@@ -222,8 +237,11 @@ pub fn face_volume_gauss_natural(brep: &BRep, fi: usize) -> f64 {
             let n = du.cross(dv);
             let dv_ = (p.x * n.x + p.y * n.y + p.z * n.z) * a_weight;
             an_inertia_of_elementary_part += dv_ / 3.0;
+            // L314-316: first moments Ix/Iy/Iz += 0.25 * r * dv.
+            an_moment_of_elementary_part += 0.25 * DVec3::new(p.x, p.y, p.z) * dv_;
         }
         an_inertia += an_inertia_of_elementary_part * gwv[j];
+        an_moment += an_moment_of_elementary_part * gwv[j];
     }
     // L1375: vr = vr * ur; L1392: mass *= vr (after the convert guard).
     let vr = vr * ur;
@@ -232,7 +250,12 @@ pub fn face_volume_gauss_natural(brep: &BRep, fi: usize) -> f64 {
     } else {
         0.0
     };
-    mass * vr
+    let moment = if an_inertia.abs() >= EPS_DIM {
+        an_moment
+    } else {
+        DVec3::ZERO
+    };
+    (mass * vr, moment * vr)
 }
 
 /// Signed volume of a BRep solid — OCCT BRepGProp::VolumeProperties
@@ -258,9 +281,9 @@ pub fn signed_volume(brep: &topods::BRep) -> f64 {
     let integrate = |fi: usize, face: &Face| -> f64 {
         let is_nat_restr = face.outer_wire.edges.is_empty() && face.inner_wires.is_empty();
         if is_nat_restr {
-            face_volume_gauss_natural(brep, fi)
+            face_volume_gauss_natural(brep, fi).0
         } else {
-            face_volume_gauss_domain(brep, face, fi)
+            face_volume_gauss_domain(brep, face, fi).0
         }
     };
     // 1. Faces inside solids: per occurrence with cumulative orientation.
@@ -325,17 +348,79 @@ pub fn volume(brep: &topods::BRep) -> f64 {
     signed_volume(brep).abs()
 }
 
-/// Centroid of a BRep solid.
+/// Centroid of a BRep solid — OCCT BRepGProp::VolumeProperties
+/// (BRepGProp.cxx L298-409): the first moments Ix/Iy/Iz from the same Vinert
+/// line/domain integrals as the volume (computeVInertiaOfElementaryPart
+/// isByPoint, BRepGProp_Gauss.cxx L314-316), divided by the mass.  Per-face
+/// cumulative orientation (REVERSED faces flip both mass and moment signs,
+/// so the ratio stays consistent).
 pub fn centroid(brep: &topods::BRep) -> DVec3 {
     let mut total_vol = 0.0;
     let mut center = DVec3::ZERO;
     let faces = face_flat_iter(brep);
+    let face_by_idx: std::collections::HashMap<usize, &Face> =
+        faces.iter().map(|(i, f)| (*i, f)).collect();
+    let integrate = |fi: usize, face: &Face| -> (f64, DVec3) {
+        let is_nat_restr = face.outer_wire.edges.is_empty() && face.inner_wires.is_empty();
+        if is_nat_restr {
+            face_volume_gauss_natural(brep, fi)
+        } else {
+            face_volume_gauss_domain(brep, face, fi)
+        }
+    };
+    // Same occurrence walk as signed_volume: solid->shell->face with the
+    // cumulative orientation, then free shells, then standalone faces.
+    let mut referenced: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for ts in &brep.tshapes {
+        if let topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    for face_sr in &shd.faces {
+                        let fi = face_sr.index;
+                        referenced.insert(fi);
+                        let ori = shell_sr.orientation.compose(face_sr.orientation);
+                        if let Some(face) = face_by_idx.get(&fi) {
+                            let (v, m) = integrate(fi, face);
+                            let sign = if ori.is_reversed() { -1.0 } else { 1.0 };
+                            total_vol += sign * v;
+                            center += sign * m;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut shell_refs: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for ts in &brep.tshapes {
+        if let topods::TShape::Solid(sd) = &**ts {
+            for sr in &sd.shells {
+                shell_refs.insert(sr.index);
+            }
+        }
+    }
+    for (ti, ts) in brep.tshapes.iter().enumerate() {
+        if let topods::TShape::Shell(shd) = &**ts {
+            if shell_refs.contains(&ti) {
+                continue;
+            }
+            for face_sr in &shd.faces {
+                let fi = face_sr.index;
+                referenced.insert(fi);
+                let ori = face_sr.orientation;
+                if let Some(face) = face_by_idx.get(&fi) {
+                    let (v, m) = integrate(fi, face);
+                    let sign = if ori.is_reversed() { -1.0 } else { 1.0 };
+                    total_vol += sign * v;
+                    center += sign * m;
+                }
+            }
+        }
+    }
     for (fi, face) in &faces {
-        let tris = face_triangles_pub(brep, *fi);
-        for [a, b, c] in &tris {
-            let tv = tet_signed_volume(*a, *b, *c);
-            total_vol += tv;
-            center += (*a + *b + *c) * tv * 0.25;
+        if !referenced.contains(fi) {
+            let (v, m) = integrate(*fi, face);
+            total_vol += v;
+            center += m;
         }
     }
     if total_vol.abs() > 1e-15 { center / total_vol } else { DVec3::ZERO }

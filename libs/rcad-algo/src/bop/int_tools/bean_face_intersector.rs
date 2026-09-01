@@ -4828,6 +4828,7 @@ mod tests {
             axis: DVec3::Z,
             ref_dir: DVec3::X,
             radius: 5.0,
+            y_dir: None,
         });
 
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
@@ -5206,6 +5207,7 @@ mod tests {
             axis: DVec3::Z,
             ref_dir: DVec3::X,
             radius: 10.0,
+            y_dir: None,
         });
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
         bfi.set_bean_parameters(0.0, std::f64::consts::TAU);
@@ -5309,6 +5311,7 @@ mod tests {
             axis: DVec3::Z,
             ref_dir: DVec3::X,
             radius: 5.0,
+            y_dir: None,
         });
         let bas = BRepAdaptorSurface::new(surface);
         assert!(bas.is_u_periodic());

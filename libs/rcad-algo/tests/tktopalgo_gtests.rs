@@ -483,3 +483,125 @@ mod make_face_tests {
         );
     }
 }
+
+// =============================================================================
+// BRepBuilderAPI_Transform_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod transform_tests {
+    use super::*;
+    use rcad_kernel::math::gp::Trsf;
+    use rcad_modeling::{make_box_brep, transform_brep};
+
+    /// 10x10x10 box from the origin (BRepPrimAPI_MakeBox(10,10,10)).
+    fn unit_box() -> rcad_kernel::topods::BRep {
+        make_box_brep(
+            glam::DVec3::ZERO,
+            glam::DVec3::X,
+            glam::DVec3::Y,
+            10.0,
+            10.0,
+            10.0,
+        )
+        .expect("box failed")
+    }
+
+    #[test]
+    fn translate() {
+        // gp_Trsf::SetTranslation(gp_Vec(100,0,0)): identity matrix, loc (100,0,0).
+        let trsf = Trsf {
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            loc: glam::DVec3::new(100.0, 0.0, 0.0),
+        };
+        let mut shape = unit_box();
+        transform_brep(&mut shape, &trsf);
+        let com = centroid(&shape);
+        assert!(
+            (com.x - 105.0).abs() < TOL,
+            "COM.x should be shifted by 100, got {}",
+            com.x
+        );
+        assert!((com.y - 5.0).abs() < TOL, "COM.y = {}", com.y);
+        assert!((com.z - 5.0).abs() < TOL, "COM.z = {}", com.z);
+    }
+
+    #[test]
+    fn rotate() {
+        // gp_Trsf::SetRotation(Z axis, PI/2): 90 deg CCW about Z.
+        let trsf = Trsf {
+            matrix: [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            loc: glam::DVec3::ZERO,
+        };
+        let mut shape = unit_box();
+        transform_brep(&mut shape, &trsf);
+        let com = centroid(&shape);
+        assert!(
+            (com.x - -5.0).abs() < TOL,
+            "COM.x should be ~-5 after 90deg rotation, got {}",
+            com.x
+        );
+        assert!(
+            (com.y - 5.0).abs() < TOL,
+            "COM.y should be ~5 after 90deg rotation, got {}",
+            com.y
+        );
+    }
+
+    #[test]
+    fn scale() {
+        // gp_Trsf::SetScale(origin, 2.0): 2x scaling about the origin.
+        let trsf = Trsf {
+            matrix: [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]],
+            loc: glam::DVec3::ZERO,
+        };
+        let mut shape = unit_box();
+        transform_brep(&mut shape, &trsf);
+        let vol = volume(&shape);
+        assert!(
+            (vol - 8000.0).abs() < TOL,
+            "Volume should be 8x original (2^3 * 1000), got {vol}"
+        );
+    }
+
+    #[test]
+    fn mirror() {
+        // gp_Trsf::SetMirror(YZ plane through origin): x -> -x.
+        // Box from (10,0,0) 10x10x10 -> mirrored to (-20..-10, 0..10, 0..10).
+        let mut shape = make_box_brep(
+            glam::DVec3::new(10.0, 0.0, 0.0),
+            glam::DVec3::X,
+            glam::DVec3::Y,
+            10.0,
+            10.0,
+            10.0,
+        )
+        .expect("box failed");
+        let trsf = Trsf {
+            matrix: [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            loc: glam::DVec3::ZERO,
+        };
+        transform_brep(&mut shape, &trsf);
+        let com = centroid(&shape);
+        assert!(
+            com.x < 0.0,
+            "COM.x should be negative after mirroring through the YZ plane, got {}",
+            com.x
+        );
+    }
+
+    #[test]
+    fn shape_validity() {
+        // BRepCheck_Analyzer: the transformed shape stays valid.
+        let trsf = Trsf {
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            loc: glam::DVec3::new(50.0, 50.0, 50.0),
+        };
+        let mut shape = unit_box();
+        transform_brep(&mut shape, &trsf);
+        assert!(
+            rcad_algo::topalgo::brep_check::brep_check_analyze(&shape).is_valid(),
+            "Transformed shape should be valid"
+        );
+    }
+}

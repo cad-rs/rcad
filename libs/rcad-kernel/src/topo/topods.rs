@@ -1124,6 +1124,77 @@ impl BRep {
                 _ => {}
             }
         }
+        // OCCT BRepTools_TrsfModification (BRepTools_TrsfModification.cxx) for
+        // a non-unit scale: NewParameter re-parameterizes every vertex
+        // (C->TransformedParameter(P, T) — Geom_Line scales P by the scale
+        // factor), and the NewCurve2d + CurveOnPlane fallback re-projects the
+        // planar pcurves over the scaled 3D range.  The rcad equivalent scales
+        // the stored 3D edge range, the vertex parameters and the pcurve
+        // ranges by |scale|; the pcurve 2D curves themselves keep their
+        // parametric form (a straight planar pcurve from a to a + l*dir with
+        // l scaled covers the scaled physical span — identical to the OCCT
+        // projection result).
+        let scale = mat.transform_vector3(DVec3::X).length();
+        if (scale - 1.0).abs() > 1e-12 {
+            // OCCT ParametricTransformation for a uniform scaling: the 2D
+            // coordinates (relative to the surface origin) scale by |s|; the
+            // unit directions stay.  Mirrors the OCCT GeomLib::GTransform of
+            // the pcurve (NewCurve2d) and the CurveOnPlane projection result.
+            fn scale_curve2d(c: &mut Curve2d, s: f64) {
+                match c {
+                    Curve2d::Line(l) => l.origin *= s,
+                    Curve2d::Circle(cr) => {
+                        cr.center *= s;
+                        cr.radius *= s;
+                    }
+                    Curve2d::Ellipse(e) => {
+                        e.center *= s;
+                        e.major_radius *= s;
+                        e.minor_radius *= s;
+                    }
+                    Curve2d::BSpline(b) => {
+                        for p in b.control_points.iter_mut() {
+                            *p *= s;
+                        }
+                    }
+                    Curve2d::Bezier(b) => {
+                        for p in b.control_points.iter_mut() {
+                            *p *= s;
+                        }
+                    }
+                    Curve2d::Trimmed(t) => scale_curve2d(&mut t.curve, s),
+                    _ => {}
+                }
+            }
+            for ts in &self.tshapes {
+                let ptr = Arc::as_ptr(ts) as *mut TShape;
+                let ts = unsafe { &mut *ptr };
+                match ts {
+                    TShape::Edge(ed) => {
+                        ed.range[0] *= scale;
+                        ed.range[1] *= scale;
+                        for vp in ed.vertex_params.values_mut() {
+                            *vp *= scale;
+                        }
+                        for (_key, (c, f, l)) in ed.pcurves.iter_mut() {
+                            scale_curve2d(c, scale);
+                            *f *= scale;
+                            *l *= scale;
+                        }
+                    }
+                    TShape::Face(fd) => {
+                        // The uv_domain cache is a parameter-space box; it
+                        // scales with the surface parameterization.
+                        if let Some(d) = fd.uv_domain.as_mut() {
+                            for v in d.iter_mut() {
+                                *v *= scale;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         // Vertex positions changed; the position-keyed identity cache is stale.
         self.vert_by_pos.clear();
         // Sub-shape references may carry a Location (e.g. the extruded copies
