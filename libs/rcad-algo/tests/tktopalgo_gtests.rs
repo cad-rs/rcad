@@ -21,8 +21,10 @@
 //!     null-3D-curve robustness.
 //!   BRepBuilderAPI_Copy_Test.cxx — deep/shallow copy via
 //!     rcad_algo::topalgo::brep_copy.
-//!   BRepOffsetAPI_ThruSections_Test.cxx — 3 tests #[ignore]d (BRepFill loft
-//!     not implemented; API skeleton only).
+//!   BRepOffsetAPI_ThruSections_Test.cxx — OCC10006 loft+fuse, OCC895
+//!     no-twist arc loft (area 18.1614) and the different-pole-count B-spline
+//!     profiles — ported via the rcad topalgo::thru_sections ruled loft
+//!     (BRepFill_Generator + GeomFill_Generator + MakeSolid).
 //!   BRepClass3d_SolidClassifier_Test.cxx — in tkbrep_algo_gtests.rs (5/5).
 //!
 //! Overlap / excluded (duplicates the OCCT boolean DRAW grids — the generated
@@ -834,17 +836,6 @@ mod thru_sections_tests {
         mp.close(brep).expect("polygon failed")
     }
 
-    /// First edge TShape of the BRep as a Shape.
-    fn first_edge(brep: &rcad_kernel::topods::BRep) -> Option<Shape> {
-        brep.tshapes.iter().enumerate().find_map(|(i, ts)| {
-            if let topods::TShape::Edge(_) = &**ts {
-                Some(Shape::from_parts(ts.clone(), i, 0, topods::Orientation::Forward))
-            } else {
-                None
-            }
-        })
-    }
-
     /// OCCT gp_Ax2::Rotate — rotate the circle's full frame (center, normal,
     /// x_dir, y_dir) around an axis through `center`.
     fn rotate_circle(c: &Circle3, axis_point: glam::DVec3, axis_dir: glam::DVec3, angle: f64) -> Circle3 {
@@ -866,7 +857,6 @@ mod thru_sections_tests {
     }
 
     #[test]
-    #[ignore = "requires BRepFill loft (ThruSections::build) — later work item"]
     fn occ10006_loft_and_fusion() {
         // Bottom/top polygons for two lofts, fused afterwards.
         let bottom1 = [(10.0, -10.0, 0.0), (100.0, -10.0, 0.0), (100.0, -100.0, 0.0), (10.0, -100.0, 0.0)];
@@ -905,7 +895,6 @@ mod thru_sections_tests {
     }
 
     #[test]
-    #[ignore = "requires BRepFill loft (ThruSections::build) — later work item"]
     fn occ895_two_circular_arc_wires_no_twist() {
         // OCC895: two quarter-circle arc wires (order 0: wire2 first, then
         // wire1).  The reference surface area is 18.1614.
@@ -921,9 +910,24 @@ mod thru_sections_tests {
         let circle1 = rotate_circle(&base1, glam::DVec3::new(0.0, 10.0, 0.0), glam::DVec3::Z, angle);
 
         let mut brep = BRep::new();
-        let e1 = make_edge_circle_range_brep(&circle1, 0.0, std::f64::consts::PI / 2.0)
-            .expect("arc edge");
-        let e1_shape = first_edge(&e1).expect("edge shape");
+        // BRepLib_MakeEdge vertex contract: first endpoint FORWARD, second
+        // REVERSED (see make_polygon).
+        let rev = |sr: Shape| Shape {
+            orientation: topods::Orientation::Reversed,
+            ..sr
+        };
+        use rcad_kernel::geom::CurveEval;
+        let arc_edge = |brep: &mut BRep, circle: &Circle3, t1: f64, t2: f64| -> Shape {
+            let v1 = brep.add_tvertex(circle.point_at(t1));
+            let v2 = brep.add_tvertex(circle.point_at(t2));
+            brep.add_tedge(
+                Some(rcad_kernel::geom::Curve3::Circle(*circle)),
+                v1,
+                rev(v2),
+                [t1, t2],
+            )
+        };
+        let e1_shape = arc_edge(&mut brep, &circle1, 0.0, std::f64::consts::PI / 2.0);
         let mut w1 = rcad_modeling::MakeWire::new();
         w1.add(e1_shape);
         let wire1 = w1.wire(&mut brep);
@@ -935,9 +939,7 @@ mod thru_sections_tests {
             1.0,
             glam::DVec3::Z,
         );
-        let e2 = make_edge_circle_range_brep(&circle2, 0.0, std::f64::consts::PI / 2.0)
-            .expect("arc edge");
-        let e2_shape = first_edge(&e2).expect("edge shape");
+        let e2_shape = arc_edge(&mut brep, &circle2, 0.0, std::f64::consts::PI / 2.0);
         let mut w2 = rcad_modeling::MakeWire::new();
         w2.add(e2_shape);
         let wire2 = w2.wire(&mut brep);
@@ -958,10 +960,79 @@ mod thru_sections_tests {
         );
     }
 
-    /// Placeholder: materialize a loft shape into its own BRep (BRepFill
-    /// pending; the ported test only exercises the API surface).
-    fn brep_from_shape(_s: &Shape) -> BRep {
-        BRep::new()
+    /// Materialize a loft shape into its own standalone BRep pool: every
+    /// TShape reachable from `s` is copied to its original flat index, so the
+    /// resulting pool is directly usable by the boolean API
+    /// (brep_top_shapes_with_locations).
+    fn brep_from_shape(s: &Shape) -> BRep {        let mut out = BRep::new();
+        let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        fn place(brep: &mut BRep, sr: &Shape, visited: &mut std::collections::HashSet<u64>) {
+            if !visited.insert(sr.ptr_id()) {
+                return;
+            }
+            if brep.tshapes.len() <= sr.index {
+                let dummy = std::sync::Arc::new(topods::TShape::Vertex(topods::TVertexData {
+                    my_shapes: Vec::new(),
+                    flags: 0,
+                    point: glam::DVec3::ZERO,
+                    tolerance: 0.0,
+                    points: Vec::new(),
+                }));
+                while brep.tshapes.len() <= sr.index {
+                    brep.tshapes.push(dummy.clone());
+                }
+            }
+            brep.tshapes[sr.index] = sr.data.clone();
+            match &*sr.data {
+                topods::TShape::Solid(sd) => {
+                    for sh in &sd.shells {
+                        place(brep, sh, visited);
+                    }
+                    for v in &sd.internal_vertices {
+                        place(brep, v, visited);
+                    }
+                    for e in &sd.internal_edges {
+                        place(brep, e, visited);
+                    }
+                }
+                topods::TShape::Shell(sd) => {
+                    for f in &sd.faces {
+                        place(brep, f, visited);
+                    }
+                }
+                topods::TShape::Face(fd) => {
+                    place(brep, &fd.outer_wire, visited);
+                    for w in &fd.inner_wires {
+                        place(brep, w, visited);
+                    }
+                    for v in &fd.internal_vertices {
+                        place(brep, v, visited);
+                    }
+                }
+                topods::TShape::Wire(wd) => {
+                    for e in &wd.edges {
+                        place(brep, e, visited);
+                    }
+                }
+                topods::TShape::Edge(ed) => {
+                    place(brep, &ed.first, visited);
+                    place(brep, &ed.last, visited);
+                }
+                topods::TShape::CompSolid(cs) => {
+                    for s in cs {
+                        place(brep, s, visited);
+                    }
+                }
+                topods::TShape::Compound(cd) => {
+                    for s in cd {
+                        place(brep, s, visited);
+                    }
+                }
+                _ => {}
+            }
+        }
+        place(&mut out, s, &mut visited);
+        out
     }
 
     /// OCCT createBSplineCurve (BRepOffsetAPI_ThruSections_Test.cxx L103-129):
@@ -1007,7 +1078,6 @@ mod thru_sections_tests {
     }
 
     #[test]
-    #[ignore = "requires BRepFill loft (ThruSections::build) — later work item"]
     fn bspline_profiles_with_different_pole_count() {
         // OCC regression: ThruSections must not throw "profiles are
         // inconsistent" for closed B-spline profiles with different pole
