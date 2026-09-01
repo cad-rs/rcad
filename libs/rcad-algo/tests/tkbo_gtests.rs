@@ -13,8 +13,23 @@
 //!   IntTools_FaceFace helpers         — CorrectPlaneBoundaries / CorrectSurfaceBoundaries
 //!
 //! Rebuilt for the current rcad API (boolean_op / geomalgo::int_patch / geomalgo::int_surf).
-//! Overlap note: the Fuse/Cut DRAW series (bfuse_simple / bcut_simple grids) are covered
-//! by the generated DRAW tests; the tests here exercise the same public API directly.
+//!
+//! EXCLUDED — migrated from the boolean DRAW grids, the generated
+//! occt_boolean_* tests are authoritative (see docs/occt-tests.md §2.1.2):
+//!   - BRepAlgoAPI_Fuse/Cut/Common_Test.cxx: "migrating from
+//!     /tests/boolean/bfuse_simple|bcut_simple/" — the rcad modules
+//!     bop_algo_direct_tests / two_step / complex / thin_tool /
+//!     bop_common_simple_tests below duplicate the bfuse_simple /
+//!     bcut_simple / bcommon_simple grids.
+//!   - BOPAlgo_BOP_Test.cxx: "equivalent to bcut, bfuse, bcommon, btuc
+//!     commands" — same duplication.
+//!   These modules are kept here ONLY as direct-API regression tests, NOT as
+//!   grid coverage; do not count them in the GTests coverage statistics.
+//!
+//! Kept (not DRAW-migrated): builder_algo (non-copyability traits),
+//! pave_filler (degenerated-edge regressions, independent test file),
+//! IntAna_QuadQuadGeo / IntSurf_Quadric / IntTools_FaceFace helpers
+//! (pure analytic geometry, no boolean grid counterpart).
 //!
 //! Not yet translatable (see the corresponding DRAW coverage / missing rcad features):
 //!   - HalfCylinder* IntTools_FaceFace tests: need boundary-aware FF clipping
