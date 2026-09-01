@@ -1,7 +1,7 @@
 /// OCCT math::GaussPoints/GaussWeights (math.cxx L1960-1999).  The Point and
 /// Weight arrays store the positive half of each order's nodes/weights
 /// consecutively; GaussPoints(Index) expands them into +/- pairs.
-fn occt_gauss(index: usize) -> Option<(&'static [f64], &'static [f64])> {
+pub(crate) fn occt_gauss(index: usize) -> Option<(&'static [f64], &'static [f64])> {
     if index < 1 || index > 61 {
         return None;
     }

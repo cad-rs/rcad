@@ -92,7 +92,7 @@ pub fn face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize) -> f64 
 /// OCCT BRepGProp_Face::UIntegrationOrder/VIntegrationOrder (BRepGProp_Face.cxx
 /// L39-107): Gauss order for the face surface (GeomAbs type -> Nu/Nv,
 /// max(8, 2N)).
-fn surface_u_v_integration_order(surf: &Surface3) -> (usize, usize) {
+pub(crate) fn surface_u_v_integration_order(surf: &Surface3) -> (usize, usize) {
     let (nu, nv): (usize, usize) = match surf {
         Surface3::Plane(_) => (4, 4),
         Surface3::Bezier(b) => {
@@ -130,7 +130,7 @@ fn compressed_knot_count(knots: &[f64]) -> usize {
 
 /// OCCT BRepGProp_Face::IntegrationOrder (BRepGProp_Face.cxx L111-150):
 /// Gauss order for the boundary edge pcurve (GeomAbs type -> N, max(4, 2N)).
-fn curve_integration_order(c: &Curve2d) -> usize {
+pub(crate) fn curve_integration_order(c: &Curve2d) -> usize {
     let n = match c {
         Curve2d::Line(_) => 2,
         Curve2d::Circle(_) | Curve2d::Ellipse(_) | Curve2d::Hyperbola(_) | Curve2d::Parabola(_) => 9,
@@ -231,7 +231,7 @@ fn face_surface_area_gauss_natural(brep: &BRep, fi: usize) -> f64 {
 /// BRepGProp_Face::Bounds (BRepGProp_Face.cxx L154-160); BRepGProp_Gauss
 /// uses its UMin as the integration offset u1 (BRepGProp_Gauss.cxx L1135-1136,
 /// L1186-1187).
-fn face_uv_bounds(brep: &BRep, face: &Face, fi: usize, surf: &Surface3) -> [f64; 4] {
+pub(crate) fn face_uv_bounds(brep: &BRep, face: &Face, fi: usize, surf: &Surface3) -> [f64; 4] {
     // aS->Bounds (L191-192): surface natural parameter domain
     let [a_u_min, a_u_max, a_v_min, a_v_max] = surf.default_domain();
     // Bnd_Box2d aBox (L133) / aBoxS (L176): [u_min, u_max, v_min, v_max]
@@ -463,7 +463,7 @@ pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f6
 
 // BRepGProp_Gauss.cxx L25-33.
 const EPS_PARAM: f64 = 1.0e-12;
-const EPS_DIM: f64 = 1.0e-30;
+pub(crate) const EPS_DIM: f64 = 1.0e-30;
 const ERROR_ALGEBR_RATIO: f64 = 2.0 / 3.0;
 const GPM: usize = 61; // math::GaussPointsMax() (math.cxx L25-28)
 const SUBS_POWER: i64 = 32;
