@@ -190,6 +190,12 @@ impl BuilderHelix {
             .set_curve_parameters(a_t1, a_t2, a_pitch, a_r_start, a_taper_angle, a_is_cw);
     }
 
+    /// OCCT BuilderHelixGen::CurveParameters (forwarded).
+    #[allow(clippy::type_complexity)]
+    pub fn curve_parameters(&self) -> (f64, f64, f64, f64, f64, bool) {
+        self.hgen.curve_parameters()
+    }
+
     /// OCCT BuilderApproxCurve::ErrorStatus (forwarded).
     pub fn error_status(&self) -> i32 {
         self.hgen.base.error_status()
