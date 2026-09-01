@@ -11,9 +11,11 @@ pub mod extrema;
 pub mod int_cs;
 pub mod int_ss;
 pub mod geom2d_interpolate;
+pub mod project_on_surf;
 
 pub use geom2d_interpolate::Geom2dInterpolate;
 pub use interpolate::{approximate_points, interpolate_points, interpolate_points_2d};
+pub use project_on_surf::ProjectPointOnSurf;
 pub use project::{
     closest_point_on_curve, closest_point_on_curve_range, closest_point_on_surface,
     closest_point_on_surface_near, make_pcurve_on_surface, CurveProjection, SurfaceProjection,

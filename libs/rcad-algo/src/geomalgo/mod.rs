@@ -16,6 +16,7 @@ pub mod top_trans;   // TopTrans (CurveTransition, SurfaceTransition)
 pub mod int_polyh;   // IntPolyh (triangle-triangle intersection support types)
 pub mod intf;        // Intf (Intf_PIType, Intf_SectionPoint, Intf_Tool, InterUtils helpers)
 pub mod int_curv_surf; // IntCurveSurface polygon/polyhedron sampling + IntPatch_Polyhedron
+pub mod hatch;       // Geom2dHatch (Elements container + Intersector local geometry)
 pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain
 
 pub use int_polyh::IntPolyhPoint;

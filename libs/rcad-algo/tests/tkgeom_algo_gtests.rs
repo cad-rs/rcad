@@ -45,8 +45,8 @@ use rcad_kernel::core::precision::{
     ANGULAR, COMPUTATIONAL, CONFUSION, INFINITE_VALUE, SQUARE_CONFUSION,
 };
 use rcad_kernel::geom::{
-    ConicalSurface, Curve2dEval, Hyperbola2d, Hyperbola3, Line3, Parabola2d, Parabola3, Plane,
-    SphericalSurface, Surface3,
+    ConicalSurface, Curve2d, Curve2dEval, Hyperbola2d, Hyperbola3, Line3, Parabola2d, Parabola3,
+    Plane, SphericalSurface, Surface3,
 };
 use rcad_kernel::math::bnd::{BndBox, BndBox2d};
 use rcad_kernel::topods::{Orientation, State};
@@ -953,5 +953,199 @@ mod geom2d_api_interpolate_tests {
             assert!((a_pt.x - a_pt_on_curve2.x).abs() < a_tol, " at point index {an_index}");
             assert!((a_pt.y - a_pt_on_curve2.y).abs() < a_tol, " at point index {an_index}");
         }
+    }
+}
+
+// =============================================================================
+// GeomAPI_ProjectPointOnSurf_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod geom_api_project_point_on_surf_tests {
+    use super::*;
+    use rcad_kernel::base::geom_api::project_on_surf::ProjectPointOnSurf;
+    use rcad_kernel::geom::{CylindricalSurface, TrimmedSurface};
+
+    // TEST(GeomAPI_ProjectPointOnSurfTest, Bug867_InitWithTightBoundsNoException)
+    // Bug OCC867: calling Init() with explicit UV bounds then Perform() must
+    // not throw.  The bounds are tighter (U:[0,3]) than the trimmed surface
+    // (U:[0,4]) to reproduce the original bug scenario.
+    #[test]
+    fn bug867_init_with_tight_bounds_no_exception() {
+        // Geom_CylindricalSurface(gp::XOY(), 10.0).
+        let a_cyl = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 10.0,
+            ref_dir: DVec3::X,
+            y_dir: None,
+        });
+        // Geom_RectangularTrimmedSurface(aCyl, 0.0, 4.0, 0.0, 2.0).
+        let a_trim_surf = Surface3::Trimmed(TrimmedSurface::new(a_cyl, 0.0, 4.0, 0.0, 2.0));
+
+        let a_point = DVec3::new(30.0, 30.0, 30.0);
+
+        let mut a_projector = ProjectPointOnSurf::new();
+        // EXPECT_NO_THROW — the original bug (OCC867) was that Init()+Perform()
+        // threw an exception.
+        a_projector.init_surface(&a_trim_surf, 0.0, 3.0, 0.0, 2.0);
+        a_projector.perform(a_point);
+        // Whether a projection exists within the given UV bounds is not the
+        // concern here.
+    }
+}
+
+// =============================================================================
+// Geom2dHatch_Elements_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod geom2d_hatch_elements_tests {
+    use super::*;
+    use rcad_algo::geomalgo::hatch::{HatchElement, HatchElements};
+    use rcad_kernel::geom::Circle2d;
+
+    /// OCCT makeCircleElement — gp_Ax2d(Pnt2d(0,0), Dir2d(1,0)) circle r=1,
+    /// element with TopAbs_FORWARD.
+    fn make_circle_element() -> HatchElement {
+        let a_circle = Circle2d {
+            center: DVec2::ZERO,
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+            radius: 1.0,
+        };
+        HatchElement::new(Curve2d::Circle(a_circle), Orientation::Forward)
+    }
+
+    // TEST(Geom2dHatch_Elements, CurrentEdge_ReturnsValidData)
+    // Bug #38: CurrentEdge in const context must work; edge traversal returns
+    // valid curve and orientation after Bind + InitWires/InitEdges.
+    #[test]
+    fn current_edge_returns_valid_data() {
+        let mut an_elements = HatchElements::new();
+        an_elements.bind(1, make_circle_element());
+
+        an_elements.init_wires();
+        assert!(an_elements.more_wires());
+
+        an_elements.init_edges();
+        assert!(an_elements.more_edges());
+
+        let (a_edge, an_or) = an_elements.current_edge();
+
+        assert_eq!(an_or, Orientation::Forward);
+        // Circle has parameter range [0, 2*PI].
+        let dom = a_edge.default_domain();
+        assert!((dom[0] - 0.0).abs() < 1e-10);
+        assert!(dom[1] > 6.0);
+    }
+
+    // TEST(Geom2dHatch_Elements, BindAndFind)
+    #[test]
+    fn bind_and_find() {
+        let mut an_elements = HatchElements::new();
+        assert!(!an_elements.is_bound(1));
+
+        an_elements.bind(1, make_circle_element());
+        assert!(an_elements.is_bound(1));
+
+        let an_elem = an_elements.find(1);
+        assert_eq!(an_elem.orientation(), Orientation::Forward);
+    }
+
+    // TEST(Geom2dHatch_Elements, Clear_RemovesAll)
+    #[test]
+    fn clear_removes_all() {
+        let mut an_elements = HatchElements::new();
+        an_elements.bind(1, make_circle_element());
+        an_elements.bind(2, make_circle_element());
+        assert!(an_elements.is_bound(1));
+
+        an_elements.clear();
+        assert!(!an_elements.is_bound(1));
+        assert!(!an_elements.is_bound(2));
+    }
+}
+
+// =============================================================================
+// Geom2dHatch_Intersector_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod geom2d_hatch_intersector_tests {
+    use super::*;
+    use rcad_algo::geomalgo::hatch::HatchIntersector;
+    use rcad_kernel::geom::{BSplineCurve2, Circle2d, Line2d};
+
+    // TEST(Geom2dHatch_Intersector, LocalGeometry_Circle_ValidOutputs)
+    #[test]
+    fn local_geometry_circle_valid_outputs() {
+        // gp_Ax2d(Pnt2d(0,0), Dir2d(1,0)) circle radius 1.
+        let a_circle = Circle2d {
+            center: DVec2::ZERO,
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+            radius: 1.0,
+        };
+        let a_curve_adaptor = Curve2d::Circle(a_circle);
+
+        let an_intersector = HatchIntersector::with_tolerances(1.0e-7, 1.0e-7);
+
+        let (a_tang, _a_norm, a_curv) = an_intersector.local_geometry(&a_curve_adaptor, 0.0);
+
+        // Circle tangent at param=0 is (0,1), curvature is 1.0.
+        assert!((a_tang.x - 0.0).abs() < 1.0e-10);
+        assert!((a_tang.y - 1.0).abs() < 1.0e-10);
+        assert!((a_curv - 1.0).abs() < 1.0e-10);
+    }
+
+    // TEST(Geom2dHatch_Intersector, LocalGeometry_Line_ZeroCurvature)
+    #[test]
+    fn local_geometry_line_zero_curvature() {
+        // gp_Ax2d(Pnt2d(0,0), Dir2d(1,0)) line.
+        let a_line = Line2d {
+            origin: DVec2::ZERO,
+            direction: DVec2::X,
+        };
+        let a_curve_adaptor = Curve2d::Line(a_line);
+
+        let an_intersector = HatchIntersector::with_tolerances(1.0e-7, 1.0e-7);
+
+        let (a_tang, a_norm, a_curv) = an_intersector.local_geometry(&a_curve_adaptor, 0.5);
+
+        assert!((a_tang.x - 1.0).abs() < 1.0e-10);
+        assert!((a_tang.y - 0.0).abs() < 1.0e-10);
+        assert!((a_curv - 0.0).abs() < 1.0e-10);
+        // Normal should be perpendicular to tangent.
+        assert!((a_norm.x - 0.0).abs() < 1.0e-10);
+        assert!(a_norm.y.abs() - 1.0 < 1.0e-10);
+    }
+
+    // TEST(Geom2dHatch_Intersector, LocalGeometry_DegenerateCurve_InitializedOutputs)
+    // Bug #24: LocalGeometry with undefined tangent must still produce
+    // initialized (deterministic) output values.
+    #[test]
+    fn local_geometry_degenerate_curve_initialized_outputs() {
+        // A degenerate BSpline where all control points coincide.
+        let a_degenerate_curve = BSplineCurve2 {
+            degree: 3,
+            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            control_points: vec![DVec2::ONE; 4],
+            weights: vec![1.0; 4],
+        };
+        let a_curve_adaptor = Curve2d::BSpline(a_degenerate_curve);
+
+        let an_intersector = HatchIntersector::with_tolerances(1.0e-7, 1.0e-7);
+
+        // Must not crash and must produce initialized outputs.
+        let (a_tang, a_norm, a_curv) = an_intersector.local_geometry(&a_curve_adaptor, 0.5);
+
+        // Curvature should be initialized to 0 for degenerate case.
+        assert!((a_curv - 0.0).abs() < 1.0e-10);
+        // Tang and Norm should be valid unit directions (magnitude == 1).
+        let a_tang_mag = (a_tang.x * a_tang.x + a_tang.y * a_tang.y).sqrt();
+        assert!((a_tang_mag - 1.0).abs() < 1.0e-10);
+        let a_norm_mag = (a_norm.x * a_norm.x + a_norm.y * a_norm.y).sqrt();
+        assert!((a_norm_mag - 1.0).abs() < 1.0e-10);
     }
 }

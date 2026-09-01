@@ -2228,6 +2228,10 @@ impl Curve2dEval for Line2d {
     fn derivative_at(&self, _t: f64) -> DVec2 {
         self.direction
     }
+    /// OCCT-aligned: D2(t) = 0 for a line.
+    fn derivative2_at(&self, _t: f64) -> DVec2 {
+        DVec2::ZERO
+    }
     fn reversed_parameter(&self, t: f64) -> f64 {
         -t
     }
@@ -2243,6 +2247,10 @@ impl Curve2dEval for Circle2d {
     }
     fn derivative_at(&self, t: f64) -> DVec2 {
         self.radius * (-t.sin() * self.x_dir + t.cos() * self.y_dir)
+    }
+    /// OCCT-aligned: D2(t) = -R * (cos(t)*X_Dir + sin(t)*Y_Dir).
+    fn derivative2_at(&self, t: f64) -> DVec2 {
+        self.radius * (-(t.cos()) * self.x_dir - t.sin() * self.y_dir)
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
@@ -2273,6 +2281,11 @@ impl Curve2dEval for Ellipse2d {
     fn derivative_at(&self, t: f64) -> DVec2 {
         let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
         -self.major_radius * t.sin() * self.major_dir + self.minor_radius * t.cos() * minor
+    }
+    /// OCCT-aligned: D2(t) = -a·cos(t)·X_Dir - b·sin(t)·Y_Dir.
+    fn derivative2_at(&self, t: f64) -> DVec2 {
+        let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
+        -self.major_radius * t.cos() * self.major_dir - self.minor_radius * t.sin() * minor
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
@@ -2445,6 +2458,25 @@ impl Curve2dEval for Curve2d {
             Curve2d::Offset(c) => c.derivative_at(t),
             Curve2d::AHTBezier(c) => c.derivative_at(t),
             Curve2d::TBezier(c) => c.derivative_at(t),
+        }
+    }
+    fn derivative2_at(&self, t: f64) -> DVec2 {
+        match self {
+            Curve2d::Trimmed(tc) => tc.derivative2_at(t),
+            Curve2d::Line(c) => c.derivative2_at(t),
+            Curve2d::Circle(c) => c.derivative2_at(t),
+            Curve2d::Ellipse(c) => c.derivative2_at(t),
+            Curve2d::CircleInvolute(c) => c.derivative2_at(t),
+            Curve2d::Parabola(c) => c.derivative2_at(t),
+            Curve2d::Hyperbola(c) => c.derivative2_at(t),
+            Curve2d::ArchimedeanSpiral(c) => c.derivative2_at(t),
+            Curve2d::LogarithmicSpiral(c) => c.derivative2_at(t),
+            Curve2d::SineWave(c) => c.derivative2_at(t),
+            Curve2d::BSpline(c) => c.derivative2_at(t),
+            Curve2d::Bezier(c) => c.derivative2_at(t),
+            Curve2d::Offset(c) => c.derivative2_at(t),
+            Curve2d::AHTBezier(c) => c.derivative2_at(t),
+            Curve2d::TBezier(c) => c.derivative2_at(t),
         }
     }
     fn default_domain(&self) -> [f64; 2] {
