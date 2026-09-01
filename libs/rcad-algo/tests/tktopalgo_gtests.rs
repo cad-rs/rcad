@@ -2,7 +2,7 @@
 //!
 //! OCCT source: src/ModelingAlgorithms/TKTopAlgo/GTests/
 //!
-//! Files translated so far:
+//! Files translated (all 10 TKTopAlgo GTests files):
 //!   BRepGProp_Test.cxx — LinearProperties (edge length), SurfaceProperties
 //!     (area), VolumeProperties (volume, center of mass), GProp_PrincipalProps
 //!     (symmetry axis) — ported via the rcad base/gprop module
@@ -11,10 +11,28 @@
 //!   BRepBuilderAPI_MakeEdge_Test.cxx — two-point / circle / line edge
 //!     builders, vertex extraction and tolerance — ported via
 //!     rcad_modeling make_edge_* and rcad_kernel topods::BRepTool.
+//!   BRepBuilderAPI_MakeWire_Test.cxx + BRepLib_MakeWire_Test.cxx —
+//!     OCC27552 edge-order wire, OCC30708 null-wire init.
+//!   BRepBuilderAPI_MakeFace_Test.cxx — plane / bounded plane / bounded
+//!     cylinder / from-wire faces (SameParameter pcurves).
+//!   BRepBuilderAPI_Transform_Test.cxx — translate/rotate/scale/mirror/
+//!     validity via rcad_modeling::transform_brep.
+//!   BRepExtrema_DistShapeShape_Test.cxx — BUC60870 edge-to-vertex distance,
+//!     null-3D-curve robustness.
+//!   BRepBuilderAPI_Copy_Test.cxx — deep/shallow copy via
+//!     rcad_algo::topalgo::brep_copy.
+//!   BRepOffsetAPI_ThruSections_Test.cxx — 3 tests #[ignore]d (BRepFill loft
+//!     not implemented; API skeleton only).
+//!   BRepClass3d_SolidClassifier_Test.cxx — in tkbrep_algo_gtests.rs (5/5).
 //!
-//! Not yet translated: BRepBuilderAPI_Copy / MakeFace / MakeWire /
-//! Transform, BRepClass3d_SolidClassifier, BRepExtrema_DistShapeShape,
-//! BRepLib_MakeWire, BRepOffsetAPI_ThruSections.
+//! Overlap / excluded (duplicates the OCCT boolean DRAW grids — the generated
+//! occt_boolean_* tests already cover these, do NOT re-port or count them):
+//!   - BRepGProp properties (linear/surface/volume) duplicate the checkprops
+//!     -s/-v verification embedded in every boolean grid case.
+//!   - BRepBuilderAPI_Transform duplicates the DRAW tscale / trotate /
+//!     ttranslate / tmirror commands used to build boolean-grid inputs.
+//!   Kept here only as direct-API regression tests; see docs/occt-tests.md
+//!   §2.1.2 for the full exclusion list.
 
 use rcad_kernel::base::gprop::{centroid, linear_properties, principal_properties};
 use rcad_kernel::core::precision::CONFUSION;

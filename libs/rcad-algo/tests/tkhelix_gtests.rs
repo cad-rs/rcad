@@ -18,6 +18,10 @@
 //! tolerance / set_tolerance / set_approx_parameters) was added to match the
 //! OCCT accessors consumed by these tests.
 //!
+//! Overlap / excluded: the HelixGeom functionality duplicates the generated
+//! `helix_standard` boolean grid (see docs/occt-tests.md §2.1.2) — kept here
+//! only as direct-API regression tests, not counted as grid coverage.
+//!
 //! Not yet translated: HelixBRep_BuilderHelix_Test.cxx and
 //! HelixBRep_BuilderHelix_Integration_Test.cxx (helix_brep module — see
 //! `helix/helix_brep`).
