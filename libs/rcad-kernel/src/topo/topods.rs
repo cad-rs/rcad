@@ -1522,17 +1522,216 @@ pub fn nb_faces(&self) -> usize {
     }
 
     /// Build a compound from multiple topods::BRep shapes.
+    ///
+    /// Each input BRep's top-level solids (falling back to shells/faces for
+    /// face-like inputs) are merged into the result with their FULL topology:
+    /// the TShape Arcs are SHARED (OCCT BRep_Builder::Add references the
+    /// source TShape, it never clones it — TopoDS_Builder.cxx L57-59) and
+    /// every internal Shape.index is re-pointed from the source array
+    /// position to the merged array position, in place on the shared TShape.
+    /// A compound of EMPTY solids (the previous implementation) lost all
+    /// sub-topology and made every later traversal (topology counts,
+    /// BRepGProp, further booleans) see zero faces/edges/vertices.
+    ///
+    /// The input BReps are assumed disjoint (each TShape Arc appears in one
+    /// input only, as with `n_ary_partition` cells); the per-input remap
+    /// re-points indices under that assumption (same single-ownership model
+    /// as compact_brep_face_subset).
     pub fn compound_from_shapes(shapes: &[BRep]) -> BRep {
         let mut t = BRep::new();
-        let mut refs = Vec::new();
-        for s in shapes {
-            let mut solid_refs = Vec::new();
-            for (ti, ts) in s.tshapes.iter().enumerate() {
-                if matches!(ts.as_ref(), TShape::Solid(_)) {
-                    solid_refs.push(t.add_tsolid(Vec::new()));
+        let mut refs: Vec<Shape> = Vec::new();
+        // Push a source TShape (by its array index) into `t`, sharing the Arc
+        // and recursing into sub-shapes first so their merged indices exist.
+        fn push(
+            brep: &BRep,
+            t: &mut BRep,
+            remap: &mut HashMap<usize, usize>,
+            src: usize,
+        ) -> Option<Shape> {
+            if src >= brep.tshapes.len() {
+                return None;
+            }
+            if let Some(&i) = remap.get(&src) {
+                return Some(Shape::from_parts(
+                    t.tshapes[i].clone(),
+                    i,
+                    0,
+                    Orientation::Forward,
+                ));
+            }
+            let idx = t.tshapes.len();
+            t.tshapes.push(brep.tshapes[src].clone());
+            remap.insert(src, idx);
+            let base = Shape::from_parts(
+                t.tshapes[idx].clone(),
+                idx,
+                0,
+                Orientation::Forward,
+            );
+            match &*brep.tshapes[src] {
+                TShape::Edge(ed) => {
+                    push(brep, t, remap, ed.first.index);
+                    push(brep, t, remap, ed.last.index);
+                }
+                TShape::Wire(wd) => {
+                    for e in &wd.edges {
+                        push(brep, t, remap, e.index);
+                    }
+                }
+                TShape::Face(fd) => {
+                    push(brep, t, remap, fd.outer_wire.index);
+                    for w in &fd.inner_wires {
+                        push(brep, t, remap, w.index);
+                    }
+                    for v in &fd.internal_vertices {
+                        push(brep, t, remap, v.index);
+                    }
+                }
+                TShape::Shell(sd) => {
+                    for f in &sd.faces {
+                        push(brep, t, remap, f.index);
+                    }
+                }
+                TShape::Solid(sd) => {
+                    for s in &sd.shells {
+                        push(brep, t, remap, s.index);
+                    }
+                    for v in &sd.internal_vertices {
+                        push(brep, t, remap, v.index);
+                    }
+                    for e in &sd.internal_edges {
+                        push(brep, t, remap, e.index);
+                    }
+                }
+                TShape::CompSolid(cs) => {
+                    for s in cs {
+                        push(brep, t, remap, s.index);
+                    }
+                }
+                TShape::Compound(c) => {
+                    for s in c {
+                        push(brep, t, remap, s.index);
+                    }
+                }
+                TShape::Vertex(_) => {}
+            }
+            // Re-point the shared TShape's internal reference indices from
+            // the source array positions to the merged array positions
+            // (single ownership: the input BReps are not read after the
+            // merge).
+            let raw = Arc::as_ptr(&brep.tshapes[src]) as *mut TShape;
+            unsafe {
+                match &mut *raw {
+                    TShape::Vertex(vd) => {
+                        for s in vd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                    }
+                    TShape::Edge(ed) => {
+                        for s in ed.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        if let Some(&i) = remap.get(&ed.first.index) {
+                            ed.first.index = i;
+                        }
+                        if let Some(&i) = remap.get(&ed.last.index) {
+                            ed.last.index = i;
+                        }
+                    }
+                    TShape::Wire(wd) => {
+                        for s in wd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        for e in wd.edges.iter_mut() {
+                            if let Some(&i) = remap.get(&e.index) {
+                                e.index = i;
+                            }
+                        }
+                    }
+                    TShape::Face(fd) => {
+                        for s in fd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        if let Some(&i) = remap.get(&fd.outer_wire.index) {
+                            fd.outer_wire.index = i;
+                        }
+                        for w in fd.inner_wires.iter_mut() {
+                            if let Some(&i) = remap.get(&w.index) {
+                                w.index = i;
+                            }
+                        }
+                        for v in fd.internal_vertices.iter_mut() {
+                            if let Some(&i) = remap.get(&v.index) {
+                                v.index = i;
+                            }
+                        }
+                    }
+                    TShape::Shell(sd) => {
+                        for s in sd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        for f in sd.faces.iter_mut() {
+                            if let Some(&i) = remap.get(&f.index) {
+                                f.index = i;
+                            }
+                        }
+                    }
+                    TShape::Solid(sd) => {
+                        for s in sd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        for s in sd.shells.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
-            refs.extend(solid_refs);
+            Some(base)
+        }
+        for s in shapes {
+            // Top-level solids first; fall back to top-level containers for
+            // face-like inputs (a compound of planar faces, e.g. partition
+            // of a face object).
+            let mut tops: Vec<usize> = Vec::new();
+            for (ti, ts) in s.tshapes.iter().enumerate() {
+                if matches!(&**ts, TShape::Solid(_)) {
+                    tops.push(ti);
+                }
+            }
+            if tops.is_empty() {
+                for (ti, ts) in s.tshapes.iter().enumerate() {
+                    if matches!(
+                        &**ts,
+                        TShape::Shell(_)
+                            | TShape::Face(_)
+                            | TShape::CompSolid(_)
+                            | TShape::Compound(_)
+                    ) {
+                        tops.push(ti);
+                    }
+                }
+            }
+            let mut remap: HashMap<usize, usize> = HashMap::new();
+            for ti in tops {
+                if let Some(sh) = push(s, &mut t, &mut remap, ti) {
+                    refs.push(sh);
+                }
+            }
         }
         if !refs.is_empty() {
             t.add_tcompound(refs);
