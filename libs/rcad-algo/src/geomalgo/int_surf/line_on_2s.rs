@@ -200,14 +200,23 @@ impl LineOn2S {
         ns
     }
 
-    /// OCCT Value(Index, P) — replace point at index.
+    /// OCCT Value(Index, P) — replace point at index (IntSurf_LineOn2S.lxx
+    /// L33-39): the replacement invalidates all three cached boxes
+    /// (SetWhole).
     pub fn set_value(&mut self, index: usize, p: &PntOn2S) {
         self.seq[index] = p.clone();
+        self.buv1.set_whole();
+        self.buv2.set_whole();
+        self.bxyz.set_whole();
     }
 
-    /// OCCT SetPoint(Index, thePnt).
+    /// OCCT SetPoint(Index, thePnt) (IntSurf_LineOn2S.lxx L41-47): the
+    /// replacement invalidates all three cached boxes (SetWhole).
     pub fn set_point(&mut self, index: usize, pt: DVec3) {
         self.seq[index].set_value_pt(pt);
+        self.buv1.set_whole();
+        self.buv2.set_whole();
+        self.bxyz.set_whole();
     }
 
     /// OCCT SetUV(Index, OnFirst, U, V).

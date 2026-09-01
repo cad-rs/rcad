@@ -57,6 +57,24 @@ impl PntOn2S {
         self.pt = pt;
     }
 
+    /// OCCT SetValue(Pt, U1, V1, U2, V2) — set the 3D point and both
+    /// surfaces' UV parameters.
+    pub fn set_value_all(&mut self, pt: DVec3, u1: f64, v1: f64, u2: f64, v2: f64) {
+        self.pt = pt;
+        self.u1 = u1;
+        self.v1 = v1;
+        self.u2 = u2;
+        self.v2 = v2;
+    }
+
+    /// OCCT SetValue(U1, V1, U2, V2) — set both surfaces' UV parameters.
+    pub fn set_value_uv_all(&mut self, u1: f64, v1: f64, u2: f64, v2: f64) {
+        self.u1 = u1;
+        self.v1 = v1;
+        self.u2 = u2;
+        self.v2 = v2;
+    }
+
     /// OCCT Value() — the 3D point.
     pub fn value(&self) -> DVec3 {
         self.pt

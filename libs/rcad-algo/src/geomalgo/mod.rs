@@ -12,5 +12,9 @@
 pub mod int_patch;   // IntPatch + IntAna + IntCurveSurface intersection chain
 pub mod int_res2d;   // IntRes2d (2D intersection data types)
 pub mod int_surf;    // IntSurf (Quadric, LineOn2S, PntOn2S)
-pub mod top_trans;   // TopTrans (CurveTransition)
+pub mod top_trans;   // TopTrans (CurveTransition, SurfaceTransition)
+pub mod int_polyh;   // IntPolyh (triangle-triangle intersection support types)
 pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain
+
+pub use int_polyh::IntPolyhPoint;
+pub use top_trans::surface_transition::SurfaceTransition;
