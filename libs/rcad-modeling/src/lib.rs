@@ -7,6 +7,7 @@ pub use prim::primapi::MakeCone;
 pub use prim::primapi::MakeSphere;
 pub use prim::primapi::MakeTorus;
 pub use prim::primapi::MakeWire;
+pub use prim::primapi::MakePolygon;
 pub use prim::primapi::{
     box_brep, cone_brep, cylinder_brep, make_box_brep, make_cone_brep, make_cylinder_brep, prism_face_solid_brep,
     make_half_space_brep, make_planar_polygon_brep, make_planar_rect_brep, make_prism_brep,

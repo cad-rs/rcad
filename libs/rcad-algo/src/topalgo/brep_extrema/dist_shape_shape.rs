@@ -12,6 +12,7 @@
 // rcad: the boolean DS represents an edge as Curve3 + parameter range, so the
 // edge-edge distance is a function of two curve segments.
 
+use glam::DVec3;
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use rcad_kernel::base::extrema::{ext_cc_line_conic, line_line_extrema};
 use rcad_kernel::geom::{Curve3, CurveEval};
@@ -80,4 +81,11 @@ pub fn min_distance_edge_segments(
     }
 
     best
+}
+
+/// OCCT BRepExtrema_DistShapeShape(edge, vertex).Value() — the minimum 3D
+/// distance from the curve segment [t1, t2] to the point (ExtP / ExtPC
+/// clipped to the range, BRepExtrema_DistShapeShape.cxx Perform(Edge, Vertex)).
+pub fn min_distance_edge_vertex(c: &Curve3, t1: f64, t2: f64, p: DVec3) -> f64 {
+    closest_point_on_curve_range(c, p, t1, t2, 64).distance
 }

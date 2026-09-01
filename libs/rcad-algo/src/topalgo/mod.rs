@@ -13,3 +13,5 @@ pub mod brep_lib;           // BRepLib
 pub mod brep_top_adaptor;   // BRepTopAdaptor (FClass2d, TopolTool)
 pub mod brep_check;         // BRepCheck (migrated from algo_ext)
 pub mod gcpnts;             // GCPnts (QuasiUniformDeflection)
+pub mod brep_copy;          // BRepBuilderAPI_Copy
+pub mod thru_sections;      // BRepOffsetAPI_ThruSections (loft — BRepFill port pending)

@@ -3131,7 +3131,7 @@ fn remap_tshape_cached(ts: &TShape, map: &HashMap<(u64, u32), usize>, cache: &mu
     }
 }
 
-fn clone_shape_graph(s: &Shape, cache: &mut HashMap<u64, Arc<TShape>>) -> Shape {
+pub(crate) fn clone_shape_graph(s: &Shape, cache: &mut HashMap<u64, Arc<TShape>>) -> Shape {
     let ptr = s.ptr_id();
     if let Some(arc) = cache.get(&ptr) {
         return Shape {
@@ -3152,11 +3152,11 @@ fn clone_shape_graph(s: &Shape, cache: &mut HashMap<u64, Arc<TShape>>) -> Shape 
     }
 }
 
-fn clone_shapes(list: &[Shape], cache: &mut HashMap<u64, Arc<TShape>>) -> Vec<Shape> {
+pub(crate) fn clone_shapes(list: &[Shape], cache: &mut HashMap<u64, Arc<TShape>>) -> Vec<Shape> {
     list.iter().map(|s| clone_shape_graph(s, cache)).collect()
 }
 
-fn clone_tshape(ts: &TShape, cache: &mut HashMap<u64, Arc<TShape>>) -> TShape {
+pub(crate) fn clone_tshape(ts: &TShape, cache: &mut HashMap<u64, Arc<TShape>>) -> TShape {
     match ts {
         TShape::Vertex(vd) => TShape::Vertex(topods::TVertexData {
             my_shapes: clone_shapes(&vd.my_shapes, cache),

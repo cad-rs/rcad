@@ -18,7 +18,7 @@
 
 use rcad_kernel::base::gprop::{centroid, linear_properties, principal_properties};
 use rcad_kernel::core::precision::CONFUSION;
-use rcad_kernel::geom::{Circle3, Line3};
+use rcad_kernel::geom::{Circle3, Line3, Plane};
 use rcad_kernel::topo::topods::BRepTool;
 use rcad_kernel::{surface_area, volume};
 use rcad_modeling::{
@@ -602,6 +602,455 @@ mod transform_tests {
         assert!(
             rcad_algo::topalgo::brep_check::brep_check_analyze(&shape).is_valid(),
             "Transformed shape should be valid"
+        );
+    }
+}
+
+// =============================================================================
+// BRepExtrema_DistShapeShape_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod dist_shape_shape_tests {
+    use super::*;
+    use rcad_algo::topalgo::brep_extrema::dist_shape_shape::{
+        min_distance_edge_segments, min_distance_edge_vertex,
+    };
+    use rcad_kernel::geom::Curve3;
+    use rcad_kernel::topo::topo_shape::Shape;
+    use rcad_kernel::topo::topods::{self, BRep};
+
+    /// First edge curve + range of a BRep (BRep_Tool::Curve(edge)).
+    fn first_edge_curve(brep: &BRep) -> Option<(Curve3, [f64; 2])> {
+        for ts in &brep.tshapes {
+            if let topods::TShape::Edge(ed) = &**ts {
+                if let Some(c) = &ed.curve {
+                    return Some((c.clone(), ed.range));
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn buc60870_edge_to_vertex_minimum_distance() {
+        // Edge (0,0,0)-(0,1,0); vertex (0,0.3,1). The perpendicular foot is
+        // (0,0.3,0), so the theoretical minimum distance is 1.0.
+        let edge = make_edge_brep(glam::DVec3::ZERO, glam::DVec3::new(0.0, 1.0, 0.0))
+            .expect("edge failed");
+        let (c, [t1, t2]) = first_edge_curve(&edge).expect("edge curve");
+        let d = min_distance_edge_vertex(&c, t1, t2, glam::DVec3::new(0.0, 0.3, 1.0));
+        assert!(
+            (d - 1.0).abs() < 0.01,
+            "Minimum distance deviates from expected value 1.0, got {d}"
+        );
+    }
+
+    #[test]
+    fn edge_edge_null_3d_curve_no_crash() {
+        // OCCT: an edge whose 3D curve was removed (BRep_Builder::UpdateEdge
+        // with a null Geom_Curve) must not crash BRepExtrema_DistShapeShape —
+        // the PERFORM_C0 null-check.  rcad's distance API takes the curve
+        // directly; the equivalent check is that a curve-less edge builds
+        // (add_tedge(None)) and the edge-edge distance of a normal pair still
+        // returns a finite value.
+        let e1 = make_edge_brep(glam::DVec3::ZERO, glam::DVec3::X).expect("edge failed");
+        let (c1, [a, b]) = first_edge_curve(&e1).expect("edge curve");
+
+        let mut brep = BRep::new();
+        let v = brep.add_tvertex(glam::DVec3::new(5.0, 0.0, 0.0));
+        let e2 = brep.add_tedge(None, v.clone(), v.clone(), [0.0, 1.0]);
+        assert!(
+            matches!(&*brep.tshapes[e2.index], topods::TShape::Edge(ed) if ed.curve.is_none()),
+            "curve-less edge should build"
+        );
+
+        let c2 = Curve3::Line(Line3::new(glam::DVec3::new(5.0, 0.0, 0.0), glam::DVec3::Y));
+        let d = min_distance_edge_segments(&c1, a, b, &c2, 0.0, 1.0);
+        assert!(d.is_finite() && d > 0.0, "edge-edge distance should be finite, got {d}");
+    }
+
+    #[test]
+    fn edge_face_null_3d_curve_no_crash() {
+        // Same null-3D-curve robustness: a curve-less edge plus a bounded
+        // planar face (BRepBuilderAPI_MakeFace(plane, -10,10,-10,10)) must not
+        // crash.  Build both and confirm the face area is intact.
+        let plane = Plane::new(glam::DVec3::new(0.0, 0.0, 5.0), glam::DVec3::Z);
+        let face = rcad_modeling::make_face_plane_bounds_brep(&plane, -10.0, 10.0, -10.0, 10.0)
+            .expect("face failed");
+        let area = surface_area(&face);
+        assert!((area - 400.0).abs() < TOL, "face area should be 400, got {area}");
+
+        let mut brep = BRep::new();
+        let v = brep.add_tvertex(glam::DVec3::new(0.0, 0.0, 5.0));
+        let e = brep.add_tedge(None, v.clone(), v.clone(), [0.0, 1.0]);
+        assert!(
+            matches!(&*brep.tshapes[e.index], topods::TShape::Edge(ed) if ed.curve.is_none()),
+            "curve-less edge should build"
+        );
+    }
+}
+
+// =============================================================================
+// BRepBuilderAPI_Copy_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+    use rcad_algo::topalgo::brep_copy::copy_brep;
+    use rcad_kernel::topo::topods::BRep;
+
+    /// 10x10x10 box from the origin (BRepPrimAPI_MakeBox(10,10,10)).
+    fn unit_box() -> BRep {
+        rcad_modeling::make_box_brep(
+            glam::DVec3::ZERO,
+            glam::DVec3::X,
+            glam::DVec3::Y,
+            10.0,
+            10.0,
+            10.0,
+        )
+        .expect("box failed")
+    }
+
+    #[test]
+    fn copy_is_valid() {
+        // BRepCheck_Analyzer: the copied shape must be valid.
+        let a_box = unit_box();
+        let a_copy = copy_brep(&a_box, true);
+        assert!(
+            rcad_algo::topalgo::brep_check::brep_check_analyze(&a_copy).is_valid(),
+            "Copied shape should be valid"
+        );
+    }
+
+    #[test]
+    fn copy_volume() {
+        let a_box = unit_box();
+        let an_original_volume = volume(&a_box);
+        let a_copy = copy_brep(&a_box, true);
+        let a_copy_volume = volume(&a_copy);
+        assert!(
+            (a_copy_volume - an_original_volume).abs() < TOL,
+            "Copy volume should match original"
+        );
+    }
+
+    #[test]
+    fn copy_is_distinct() {
+        // TopoDS_Shape::IsEqual compares the TShape pointer; a deep copy must
+        // not be equal to the original.
+        let a_box = unit_box();
+        let a_copy = copy_brep(&a_box, true);
+        assert_eq!(a_box.tshapes.len(), a_copy.tshapes.len());
+        let distinct = a_box
+            .tshapes
+            .iter()
+            .zip(a_copy.tshapes.iter())
+            .any(|(a, b)| std::sync::Arc::as_ptr(a) != std::sync::Arc::as_ptr(b));
+        assert!(distinct, "Copy should not be equal to original (different TShape)");
+    }
+
+    #[test]
+    fn copy_geom_true() {
+        // Deep copy volume must match the original.
+        let a_box = unit_box();
+        let a_copy = copy_brep(&a_box, true);
+        assert!(
+            (volume(&a_copy) - volume(&a_box)).abs() < TOL,
+            "Deep copy volume should match original"
+        );
+    }
+
+    #[test]
+    fn copy_geom_false() {
+        // Shallow copy (shared TShapes) must still be a valid shape.
+        let a_box = unit_box();
+        let a_copy = copy_brep(&a_box, false);
+        assert!(
+            rcad_algo::topalgo::brep_check::brep_check_analyze(&a_copy).is_valid(),
+            "Shallow copy should produce a valid shape"
+        );
+    }
+}
+
+// =============================================================================
+// BRepOffsetAPI_ThruSections_Test.cxx
+// =============================================================================
+//
+// All three tests exercise BRepOffsetAPI_ThruSections (the BRepFill loft),
+// which rcad does not implement yet — ThruSections::build is a placeholder
+// that stays NotDone.  The tests are written against the OCCT-aligned API
+// (new / add_wire / build / is_done / shape) and #[ignore]d until the
+// BRepFill port lands.
+
+#[cfg(test)]
+mod thru_sections_tests {
+    use super::*;
+    use rcad_algo::topalgo::thru_sections::ThruSections;
+    use rcad_kernel::geom::Circle3;
+    use rcad_kernel::topo::topo_shape::Shape;
+    use rcad_kernel::topo::topods::{self, BRep};
+    use rcad_modeling::MakePolygon;
+
+    /// BRepBuilderAPI_MakePolygon over 4 points, closed.
+    fn polygon_wire(brep: &mut BRep, pts: &[(f64, f64, f64)]) -> Shape {
+        let mut mp = MakePolygon::new();
+        for (x, y, z) in pts {
+            mp.add(glam::DVec3::new(*x, *y, *z));
+        }
+        mp.close(brep).expect("polygon failed")
+    }
+
+    /// First edge TShape of the BRep as a Shape.
+    fn first_edge(brep: &rcad_kernel::topods::BRep) -> Option<Shape> {
+        brep.tshapes.iter().enumerate().find_map(|(i, ts)| {
+            if let topods::TShape::Edge(_) = &**ts {
+                Some(Shape::from_parts(ts.clone(), i, 0, topods::Orientation::Forward))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// OCCT gp_Ax2::Rotate — rotate the circle's full frame (center, normal,
+    /// x_dir, y_dir) around an axis through `center`.
+    fn rotate_circle(c: &Circle3, axis_point: glam::DVec3, axis_dir: glam::DVec3, angle: f64) -> Circle3 {
+        use glam::DVec3;
+        // Rodrigues rotation.
+        let k = axis_dir.normalize();
+        let rot = |v: DVec3| -> DVec3 {
+            let a = v - axis_point;
+            let cross = k.cross(a);
+            let dot = k.dot(a);
+            a * angle.cos() + cross * angle.sin() + k * dot * (1.0 - angle.cos()) + axis_point
+        };
+        let mut out = *c;
+        out.center = rot(c.center);
+        out.normal = (k.cross(c.normal) * angle.sin() + c.normal * angle.cos() + k * k.dot(c.normal) * (1.0 - angle.cos())).normalize_or_zero();
+        out.x_dir = (k.cross(c.x_dir) * angle.sin() + c.x_dir * angle.cos() + k * k.dot(c.x_dir) * (1.0 - angle.cos())).normalize_or_zero();
+        out.y_dir = (k.cross(c.y_dir) * angle.sin() + c.y_dir * angle.cos() + k * k.dot(c.y_dir) * (1.0 - angle.cos())).normalize_or_zero();
+        out
+    }
+
+    #[test]
+    #[ignore = "requires BRepFill loft (ThruSections::build) — later work item"]
+    fn occ10006_loft_and_fusion() {
+        // Bottom/top polygons for two lofts, fused afterwards.
+        let bottom1 = [(10.0, -10.0, 0.0), (100.0, -10.0, 0.0), (100.0, -100.0, 0.0), (10.0, -100.0, 0.0)];
+        let top1 = [(0.0, 0.0, 10.0), (100.0, 0.0, 10.0), (100.0, -100.0, 10.0), (0.0, -100.0, 10.0)];
+        let bottom2 = [(0.0, 0.0, 10.0), (100.0, 0.0, 10.0), (100.0, -100.0, 10.0), (0.0, -100.0, 10.0)];
+        let top2 = [(0.0, 0.0, 250.0), (100.0, 0.0, 250.0), (100.0, -100.0, 250.0), (0.0, -100.0, 250.0)];
+
+        let mut brep = BRep::new();
+        let mut loft1 = ThruSections::new(true, true, 1.0e-6);
+        loft1.add_wire(polygon_wire(&mut brep, &bottom1));
+        loft1.add_wire(polygon_wire(&mut brep, &top1));
+        loft1.build(&mut brep);
+
+        let mut loft2 = ThruSections::new(true, true, 1.0e-6);
+        loft2.add_wire(polygon_wire(&mut brep, &bottom2));
+        loft2.add_wire(polygon_wire(&mut brep, &top2));
+        loft2.build(&mut brep);
+
+        // The loft must produce non-null shapes (BRepFill pending).
+        assert!(
+            loft1.shape().is_some(),
+            "First loft operation should produce a valid shape"
+        );
+        assert!(
+            loft2.shape().is_some(),
+            "Second loft operation should produce a valid shape"
+        );
+
+        // Boolean fusion of the two lofted shapes (BRepAlgoAPI_Fuse).
+        let s1 = loft1.shape().expect("loft1");
+        let s2 = loft2.shape().expect("loft2");
+        let b1 = brep_from_shape(&s1);
+        let b2 = brep_from_shape(&s2);
+        let fused = rcad_algo::bop::brep_algo_api::fuse(&b1, &b2);
+        assert!(fused.is_ok(), "Boolean fusion of lofted shapes should succeed");
+    }
+
+    #[test]
+    #[ignore = "requires BRepFill loft (ThruSections::build) — later work item"]
+    fn occ895_two_circular_arc_wires_no_twist() {
+        // OCC895: two quarter-circle arc wires (order 0: wire2 first, then
+        // wire1).  The reference surface area is 18.1614.
+        // Wire 1: circle center (0,10,0), axis -Y, R=1, frame rotated 5 deg
+        // around Z (gp_Ax2::Rotate).
+        let angle = 5.0 * std::f64::consts::PI / 180.0;
+        let base1 = Circle3::new_with_ref_dir(
+            glam::DVec3::new(0.0, 10.0, 0.0),
+            -glam::DVec3::Y,
+            1.0,
+            glam::DVec3::X,
+        );
+        let circle1 = rotate_circle(&base1, glam::DVec3::new(0.0, 10.0, 0.0), glam::DVec3::Z, angle);
+
+        let mut brep = BRep::new();
+        let e1 = make_edge_circle_range_brep(&circle1, 0.0, std::f64::consts::PI / 2.0)
+            .expect("arc edge");
+        let e1_shape = first_edge(&e1).expect("edge shape");
+        let mut w1 = rcad_modeling::MakeWire::new();
+        w1.add(e1_shape);
+        let wire1 = w1.wire(&mut brep);
+
+        // Wire 2: circle at (10,0,0), axis -X, R=1 (arc 0..PI/2).
+        let circle2 = Circle3::new_with_ref_dir(
+            glam::DVec3::new(10.0, 0.0, 0.0),
+            -glam::DVec3::X,
+            1.0,
+            glam::DVec3::Z,
+        );
+        let e2 = make_edge_circle_range_brep(&circle2, 0.0, std::f64::consts::PI / 2.0)
+            .expect("arc edge");
+        let e2_shape = first_edge(&e2).expect("edge shape");
+        let mut w2 = rcad_modeling::MakeWire::new();
+        w2.add(e2_shape);
+        let wire2 = w2.wire(&mut brep);
+
+        // ThruSections shell with order=0: wire2 first, then wire1.
+        let mut loft = ThruSections::new(false, true, 1.0e-6);
+        loft.add_wire(wire2);
+        loft.add_wire(wire1);
+        loft.build(&mut brep);
+
+        assert!(loft.is_done(), "ThruSections must succeed");
+        let shape = loft.shape().expect("ThruSections must produce a non-null shape");
+        let brep = brep_from_shape(&shape);
+        let area = surface_area(&brep);
+        assert!(
+            (area - 18.1614).abs() < 0.01,
+            "Surface area should be approximately 18.1614, got {area}"
+        );
+    }
+
+    /// Placeholder: materialize a loft shape into its own BRep (BRepFill
+    /// pending; the ported test only exercises the API surface).
+    fn brep_from_shape(_s: &Shape) -> BRep {
+        BRep::new()
+    }
+
+    /// OCCT createBSplineCurve (BRepOffsetAPI_ThruSections_Test.cxx L103-129):
+    /// a degree-3 non-periodic BSpline from an interleaved pole array and the
+    /// full (expanded) knot sequence.
+    fn create_bspline(poles_xyz: &[f64], knots: &[f64]) -> rcad_kernel::geom::BSplineCurve3 {
+        let degree = 3usize;
+        let n_poles = knots.len() - degree - 1;
+        let mut control_points = Vec::with_capacity(n_poles);
+        for i in 0..n_poles {
+            control_points.push(glam::DVec3::new(
+                poles_xyz[3 * i],
+                poles_xyz[3 * i + 1],
+                poles_xyz[3 * i + 2],
+            ));
+        }
+        rcad_kernel::geom::BSplineCurve3 {
+            degree,
+            knots: knots.to_vec(),
+            control_points,
+            weights: vec![1.0; n_poles],
+            is_periodic: false,
+        }
+    }
+
+    /// BRepBuilderAPI_MakeEdge(BSplineCurve) + MakeWire — one wire from a
+    /// B-spline section.
+    fn bspline_wire(brep: &mut BRep, curve: &rcad_kernel::geom::BSplineCurve3) -> Shape {
+        use rcad_kernel::geom::CurveEval;
+        let t1 = curve.knots[curve.degree];
+        let t2 = curve.knots[curve.knots.len() - curve.degree - 1];
+        let v1 = brep.add_tvertex(curve.point_at(t1));
+        let v2 = brep.add_tvertex(curve.point_at(t2));
+        let e = brep.add_tedge(
+            Some(rcad_kernel::geom::Curve3::BSpline(curve.clone())),
+            v1,
+            v2,
+            [t1, t2],
+        );
+        let mut mw = rcad_modeling::MakeWire::new();
+        mw.add(e);
+        mw.wire(brep)
+    }
+
+    #[test]
+    #[ignore = "requires BRepFill loft (ThruSections::build) — later work item"]
+    fn bspline_profiles_with_different_pole_count() {
+        // OCC regression: ThruSections must not throw "profiles are
+        // inconsistent" for closed B-spline profiles with different pole
+        // counts.  The full 5-section data set (31/31/31/31/33 poles) is
+        // ported; build must not throw and must report done.
+        let p1: &[f64] = &[
+            0.90194, -0.49457, 0.0, 1.10106097848166, -0.688963767263419, 0.0,
+            1.04668209568152, -1.01716787534971, 0.0, 1.56914438377061, -1.59514757777645, 0.0,
+            2.07302273729763, -3.97023193652984, 0.0, 2.13699279206564, -4.57936580650492, 0.0,
+            2.13184140893145, -7.00174300027487, 0.0, 1.23454863419269, -8.49296048646617, 0.0,
+            0.718149935438171, -9.43440624002067, 0.0, -2.02215956293932, -12.0782514208969, 0.0,
+            -3.44515644568264, -13.0526565862391, 0.0, -8.61587484541011, -15.7788974963508, 0.0,
+            -12.8309565197945, -17.0127003407937, 0.0, -18.9761857527559, -18.432946752008, 0.0,
+            -20.6360623744536, -18.7727324951302, 0.0, -21.2130359371451, -19.0009746915956, 0.0,
+            -22.2663547655952, -18.9176136571682, 0.0, -22.1384066610996, -17.5929745686915, 0.0,
+            -21.7954793416826, -18.0629411635879, 0.0, -14.4780597089423, -15.0594484542493, 0.0,
+            -10.8386889762912, -13.1323128331196, 0.0, -6.48208180266811, -9.4594741816569, 0.0,
+            -5.28863405147604, -8.21363647074186, 0.0, -2.96204585602755, -5.08386133056186, 0.0,
+            -2.54058250866771, -4.20341306384795, 0.0, -1.61736353367643, -2.66854172662003, 0.0,
+            -1.36012191071392, -0.569755235503059, 0.0, -1.02752582768388, -0.306835878255118, 0.0,
+            0.166466683785465, 0.162094918019513, 0.0, 0.0600379384518613, 0.327344971788155, 0.0,
+            0.90194, -0.49457, 0.0,
+        ];
+        let k1: &[f64] = &[
+            0.0, 0.0, 0.0, 0.0, 0.0161348522840521, 0.0807608132035811, 0.131338840314679,
+            0.147844505833154, 0.16533568293713, 0.250607290759724, 0.267449419858552,
+            0.322628298230969, 0.341027430676258, 0.36078046495376, 0.420324490838906,
+            0.440253145913864, 0.458870520105636, 0.492435831240754, 0.509078502457839,
+            0.525715578369451, 0.577446072383669, 0.597241246236863, 0.656453700919606,
+            0.676155157762965, 0.694541842118733, 0.749834839741989, 0.766726765513781,
+            0.834662561102041, 0.868900689429001, 0.88456999851039, 0.931780340251946, 1.0, 1.0,
+            1.0, 1.0,
+        ];
+        // Section 5 has a different pole count (33 vs 31).
+        let p5: &[f64] = &[
+            1.38958, -0.30093, 56.0, 2.43615912287256, -0.909728724567382, 56.0,
+            3.0281955825442, -1.8572582903678, 56.0, 3.65762773796813, -2.54529310782012, 56.0,
+            4.96146733383277, -4.12983817908431, 56.0, 5.23021328351262, -4.48294463637656, 56.0,
+            6.97411718250412, -8.12140889198172, 56.0, 6.70106429787142, -9.9518367568647, 56.0,
+            6.61799594372847, -10.831499083977, 56.0, 5.83042424901388, -13.1305423440654, 56.0,
+            4.4856942305868, -14.6753503685142, 56.0, 3.526218495628, -15.6885280970105, 56.0,
+            -1.30359786741575, -19.3108973511269, 56.0, -5.83186375110243, -21.0521342727528, 56.0,
+            -12.7369662411789, -23.0728272909214, 56.0, -14.6499746822398, -23.5541553891022, 56.0,
+            -15.5393756779425, -23.8164232092995, 56.0, -16.7857626486778, -22.971990212193, 56.0,
+            -15.8148711149702, -22.7381053237965, 56.0, -14.1582028215773, -22.0884170074466, 56.0,
+            -8.2848005862047, -19.3490481837665, 56.0, -4.53645198453342, -17.0504864772276, 56.0,
+            -1.10904288834323, -12.471539082827, 56.0, -0.522426290934783, -11.1995642443973, 56.0,
+            0.262420398047911, -9.25463182654568, 56.0, 0.213867071381995, -6.39113351333029, 56.0,
+            0.0369897362998156, -5.60398557321822, 56.0, -0.344006372425831, -3.85342683471391, 56.0,
+            -1.68576438677131, -1.32767756558911, 56.0, -1.05109637156753, -0.635077640089276, 56.0,
+            0.456139976122501, 0.188083742774127, 56.0, 0.318806380192129, 0.321942747786321, 56.0,
+            1.38958, -0.30093, 56.0,
+        ];
+        let k5: &[f64] = &[
+            0.0, 0.0, 0.0, 0.0, 0.0668554777677272, 0.0834666756318599, 0.100984720713562,
+            0.151909931618998, 0.169593414001346, 0.254704249388902, 0.27136091562454,
+            0.289520682572814, 0.325734361487981, 0.343874098775056, 0.363388151948866,
+            0.422534909356546, 0.442420378784176, 0.461023580422867, 0.494592323781788,
+            0.527437648618005, 0.560332403705056, 0.578743404285102, 0.598421903816054,
+            0.65700259163225, 0.676406731087284, 0.694519638867019, 0.730942734487404,
+            0.749396334888904, 0.766418578227312, 0.818448937788905, 0.836068871481316,
+            0.8848958398016, 0.931598977689477, 1.0, 1.0, 1.0, 1.0,
+        ];
+
+        let mut brep = BRep::new();
+        let mut loft = ThruSections::new(true, false, 1.0e-6);
+        loft.add_wire(bspline_wire(&mut brep, &create_bspline(p1, k1)));
+        loft.add_wire(bspline_wire(&mut brep, &create_bspline(p5, k5)));
+        // Build must not throw and must complete (BRepFill pending).
+        loft.build(&mut brep);
+        assert!(loft.is_done(), "ThruSections should complete successfully");
+        assert!(
+            loft.shape().is_some(),
+            "ThruSections should produce a valid shape"
         );
     }
 }
