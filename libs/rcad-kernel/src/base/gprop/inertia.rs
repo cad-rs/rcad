@@ -54,3 +54,70 @@ pub fn inertia_tensor(brep: &topods::BRep) -> InertiaTensor {
 
     InertiaTensor { ixx, iyy, izz, ixy, ixz, iyz }
 }
+
+/// OCCT GProp_PrincipalProps — principal moments of inertia and symmetry.
+#[derive(Debug, Clone)]
+pub struct PrincipalProps {
+    /// OCCT GProp_PrincipalProps::HasSymmetryAxis — two principal moments
+    /// are (nearly) equal, i.e. the solid has an axis of symmetry.
+    pub has_symmetry_axis: bool,
+    /// Principal moments of inertia, sorted ascending.
+    pub moments: [f64; 3],
+}
+
+/// Determinant of a 3x3 matrix (row-major).
+fn det3(
+    a: f64, b: f64, c: f64,
+    d: f64, e: f64, f: f64,
+    g: f64, h: f64, i: f64,
+) -> f64 {
+    a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+}
+
+/// Eigenvalues of a 3x3 symmetric matrix (closed-form trigonometric method).
+/// Matrix (row-major): [[a, d, e], [d, b, f], [e, f, c]].
+fn symmetric_eigenvalues(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) -> [f64; 3] {
+    let p1 = d * d + e * e + f * f;
+    if p1 < 1e-30 {
+        // Diagonal matrix.
+        let mut v = [a, b, c];
+        v.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        return v;
+    }
+    let q = (a + b + c) / 3.0;
+    let p2 = (a - q).powi(2) + (b - q).powi(2) + (c - q).powi(2) + 2.0 * p1;
+    let p = (p2 / 6.0).sqrt();
+    // B = (A - q*I) / p — trace-free part.
+    let b11 = (a - q) / p;
+    let b22 = (b - q) / p;
+    let b33 = (c - q) / p;
+    let b12 = d / p;
+    let b13 = e / p;
+    let b23 = f / p;
+    let r = det3(b11, b12, b13, b12, b22, b23, b13, b23, b33) / 2.0;
+    let r = r.clamp(-1.0, 1.0);
+    let phi = r.acos() / 3.0;
+    let pi_3 = std::f64::consts::PI / 3.0;
+    let mut eig = [
+        q + 2.0 * p * phi.cos(),
+        q + 2.0 * p * (phi + 2.0 * pi_3).cos(),
+        q + 2.0 * p * (phi + 4.0 * pi_3).cos(),
+    ];
+    eig.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    eig
+}
+
+/// OCCT GProp_GProps::PrincipalProperties — principal moments from the
+/// inertia tensor.  `HasSymmetryAxis` is true when two principal moments
+/// are equal within a relative tolerance.
+pub fn principal_properties(brep: &topods::BRep) -> PrincipalProps {
+    let t = inertia_tensor(brep);
+    let moments = symmetric_eigenvalues(t.ixx, t.iyy, t.izz, t.ixy, t.ixz, t.iyz);
+    let scale = moments[2].abs().max(1e-12);
+    let has_symmetry_axis = (moments[0] - moments[1]).abs() <= 1e-6 * scale
+        || (moments[1] - moments[2]).abs() <= 1e-6 * scale;
+    PrincipalProps {
+        has_symmetry_axis,
+        moments,
+    }
+}

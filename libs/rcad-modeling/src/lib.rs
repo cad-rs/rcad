@@ -11,6 +11,7 @@ pub use prim::primapi::{
     make_half_space_brep, make_planar_polygon_brep, make_planar_rect_brep, make_prism_brep,
     make_prism_from_face_brep, make_sphere_brep,
     make_torus_brep, prism_brep, sphere_brep, torus_brep,
+    make_edge_brep, make_edge_line_brep, edge_count_brep,
 };
 pub use sewing::{SewingResult, sew_shells};
 

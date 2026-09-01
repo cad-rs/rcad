@@ -11,6 +11,7 @@ pub mod tri;
 pub mod surface;
 pub mod volume;
 pub mod inertia;
+pub mod linear;
 pub mod plate;
 
 // Re-export public API
@@ -21,5 +22,6 @@ pub use tri::{
 };
 pub use surface::{face_surface_area, surface_area};
 pub use volume::{centroid, signed_volume, volume};
-pub use inertia::{InertiaTensor, inertia_tensor};
+pub use inertia::{InertiaTensor, PrincipalProps, inertia_tensor, principal_properties};
+pub use linear::linear_properties;
 pub use plate::*;
