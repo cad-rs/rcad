@@ -443,3 +443,95 @@ mod tests {
         assert!((bez[1] - 3.0).abs() < 1e-12);
     }
 }
+
+/// OCCT `PLib::EvalLagrange(Parameter, DerivativeRequest, Degree, Dimension,
+/// Values, Parameters, Results)` (PLib.cxx L1122-1249) — evaluates the
+/// Lagrange interpolation polynomial through `Degree + 1` points (each of
+/// `Dimension` coordinates, stored interleaved in `values`, with the point
+/// parameters in `parameters`) and its derivatives up to `DerivativeRequest`
+/// at `parameter`.  `results` receives the value row followed by the
+/// derivative rows (`(DerivativeRequest + 1) * Dimension` entries).  Returns
+/// 1 when two parameters coincide (division by zero, results undefined).
+pub fn eval_lagrange(
+    parameter: f64,
+    derivative_request: usize,
+    degree: usize,
+    dimension: usize,
+    values: &[f64],
+    parameters: &[f64],
+    results: &mut [f64],
+) -> i32 {
+    let mut local_request = derivative_request;
+    if local_request >= degree {
+        local_request = degree;
+    }
+
+    // Build the divided differences array (copied from the point values).
+    let mut divided_differences: Vec<f64> = vec![0.0; (degree + 1) * dimension];
+    for (i, v) in values.iter().enumerate().take((degree + 1) * dimension) {
+        divided_differences[i] = *v;
+    }
+
+    let mut return_code = 0;
+    let mut ii = degree as i64;
+    while ii >= 0 {
+        let mut jj = degree as i64;
+        while jj > degree as i64 - ii {
+            let index = jj * dimension as i64;
+            let index1 = index - dimension as i64;
+            for kk in 0..dimension {
+                divided_differences[(index + kk as i64) as usize] -=
+                    divided_differences[(index1 + kk as i64) as usize];
+            }
+            let mut difference =
+                parameters[jj as usize] - parameters[(jj - degree as i64 - 1 + ii) as usize];
+            if difference.abs() < f64::MIN_POSITIVE {
+                return_code = 1;
+                ii = -1;
+                break;
+            }
+            difference = 1.0e0 / difference;
+            for kk in 0..dimension {
+                divided_differences[(index + kk as i64) as usize] *= difference;
+            }
+            jj -= 1;
+        }
+        ii -= 1;
+    }
+    if return_code != 0 {
+        return return_code;
+    }
+
+    // Evaluate the Newton form: P(t) = [t1]P + (t-t1)[t1,t2]P + ...
+    let index = degree * dimension;
+    for kk in 0..dimension {
+        results[kk] = divided_differences[index + kk];
+    }
+    for (i, r) in results.iter_mut().enumerate().take((local_request + 1) * dimension) {
+        if i >= dimension {
+            *r = 0.0e0;
+        }
+    }
+
+    let mut ii = degree as i64;
+    while ii >= 1 {
+        let difference = parameter - parameters[(ii - 1) as usize];
+        let mut jj = local_request as i64;
+        while jj > 0 {
+            let index = (jj * dimension as i64) as usize;
+            let index1 = index - dimension;
+            for kk in 0..dimension {
+                results[index + kk] *= difference;
+                results[index + kk] += results[index1 + kk] * jj as f64;
+            }
+            jj -= 1;
+        }
+        let index = ((ii - 1) * dimension as i64) as usize;
+        for kk in 0..dimension {
+            results[kk] *= difference;
+            results[kk] += divided_differences[index + kk];
+        }
+        ii -= 1;
+    }
+    return_code
+}

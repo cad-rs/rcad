@@ -45,8 +45,8 @@ use rcad_kernel::core::precision::{
     ANGULAR, COMPUTATIONAL, CONFUSION, INFINITE_VALUE, SQUARE_CONFUSION,
 };
 use rcad_kernel::geom::{
-    ConicalSurface, Hyperbola2d, Hyperbola3, Line3, Parabola2d, Parabola3, Plane, SphericalSurface,
-    Surface3,
+    ConicalSurface, Curve2dEval, Hyperbola2d, Hyperbola3, Line3, Parabola2d, Parabola3, Plane,
+    SphericalSurface, Surface3,
 };
 use rcad_kernel::math::bnd::{BndBox, BndBox2d};
 use rcad_kernel::topods::{Orientation, State};
@@ -878,5 +878,80 @@ mod intf_tool_tests {
         a_tool.hypr_2d_box(&a_hypr, &a_domain, &mut a_result);
 
         assert_eq!(a_tool.nb_segments(), 0);
+    }
+}
+
+// =============================================================================
+// Geom2dAPI_Interpolate_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod geom2d_api_interpolate_tests {
+    use super::*;
+    use rcad_kernel::base::geom_api::geom2d_interpolate::Geom2dInterpolate;
+    use rcad_kernel::geom::BSplineCurve2;
+
+    /// Distinct values of the expanded knot vector (OCCT BSplineCurve::Knot(i)).
+    fn distinct_knots(curve: &BSplineCurve2) -> Vec<f64> {
+        let mut out: Vec<f64> = Vec::new();
+        for &k in &curve.knots {
+            match out.last() {
+                Some(&last) if (k - last).abs() < 1e-15 => {}
+                _ => out.push(k),
+            }
+        }
+        out
+    }
+
+    // TEST(Geom2dAPI_InterpolateTest, OCC28594_InterpolateWithAndWithoutTangentScale)
+    #[test]
+    fn occ28594_interpolate_with_and_without_tangent_scale() {
+        let a_points = vec![
+            DVec2::new(-30.4, 8.0),
+            DVec2::new(-16.689912, 17.498217),
+            DVec2::new(-23.803064, 24.748543),
+            DVec2::new(-16.907466, 32.919615),
+            DVec2::new(-8.543829, 26.549421),
+            DVec2::new(0.0, 39.200000),
+        ];
+        let a_tangents = vec![
+            DVec2::new(0.3, 0.4),
+            DVec2::ZERO,
+            DVec2::ZERO,
+            DVec2::ZERO,
+            DVec2::ZERO,
+            DVec2::new(1.0, 0.0),
+        ];
+        let a_tangent_flags = vec![true, false, false, false, false, true];
+
+        // Interpolation with tangent scale.
+        let mut an_interp_with_scale = Geom2dInterpolate::new(a_points.clone(), false, CONFUSION);
+        an_interp_with_scale.load(&a_tangents, &a_tangent_flags, true);
+        an_interp_with_scale.perform();
+        assert!(an_interp_with_scale.is_done());
+        let a_curve_with_scale = an_interp_with_scale.curve();
+
+        // Interpolation without tangent scale.
+        let mut an_interp_without_scale = Geom2dInterpolate::new(a_points.clone(), false, CONFUSION);
+        an_interp_without_scale.load(&a_tangents, &a_tangent_flags, false);
+        an_interp_without_scale.perform();
+        assert!(an_interp_without_scale.is_done());
+        let a_curve_without_scale = an_interp_without_scale.curve();
+
+        // Both curves must pass through all given points (the distinct knots
+        // are the chord-length parameters).
+        let a_tol = CONFUSION * 10.0;
+        let a_knots = distinct_knots(&a_curve_with_scale);
+        assert_eq!(a_knots.len(), a_points.len());
+        for an_index in 0..a_points.len() {
+            let a_pt_on_curve = a_curve_with_scale.point_at(a_knots[an_index]);
+            let a_pt = a_points[an_index];
+            assert!((a_pt.x - a_pt_on_curve.x).abs() < a_tol, " at point index {an_index}");
+            assert!((a_pt.y - a_pt_on_curve.y).abs() < a_tol, " at point index {an_index}");
+            // The without-scale curve passes through the same points.
+            let a_pt_on_curve2 = a_curve_without_scale.point_at(a_knots[an_index]);
+            assert!((a_pt.x - a_pt_on_curve2.x).abs() < a_tol, " at point index {an_index}");
+            assert!((a_pt.y - a_pt_on_curve2.y).abs() < a_tol, " at point index {an_index}");
+        }
     }
 }
