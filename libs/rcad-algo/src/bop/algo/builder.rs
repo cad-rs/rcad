@@ -95,6 +95,11 @@ pub struct Builder<'a> {
     // (draft faces, split areas). These are not DS-pool shapes, so pcurve-row
     // owner resolution needs them alongside the DS face table.
     pub(crate) my_built_face_surfaces: HashMap<u64, rcad_kernel::geom::Surface3>,
+    // OCCT BOPAlgo_Splitter (BOPAlgo_Splitter.cxx): the Splitter runs the GF
+    // pipeline (BOPAlgo_Builder::PerformInternal1) with myArguments = objects
+    // only (tools live in myTools and are excluded from the result), and it
+    // skips the BOP-specific BuildShape step (BuildRC/BuildSolid).
+    pub(crate) my_is_splitter: bool,
 }
 
 /// Stage snapshot: DS + result BRep counts at a Builder pipeline boundary.
@@ -1533,6 +1538,7 @@ impl<'a> Builder<'a> {
             my_nb_shapes_arr: [0; 8],
             shape_remap: HashMap::new(),
             my_built_face_surfaces: HashMap::new(),
+            my_is_splitter: false,
         }
     }
 
@@ -1732,8 +1738,14 @@ impl<'a> Builder<'a> {
 
         // OCCT L575-580 (BOPAlgo_BOP.cxx): BuildShape - apply the boolean operation
         // result construction. Runs between the s08 dump and PrepareHistory.
-        self.build_shape();
-        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        // OCCT BOPAlgo_Splitter::PerformInternal1 (BOPAlgo_Splitter.cxx L92,
+        // BOPAlgo_Builder::PerformInternal1) has NO BuildShape step: the
+        // splitter result is the compound of object images accumulated by the
+        // BuildResult calls above.
+        if !self.my_is_splitter {
+            self.build_shape();
+            if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        }
         if std::env::var("RCAD_MB_DEBUG").is_ok() {
             let (v, e, f, sh, so) =
                 count_brep_entities(self.my_shape.as_ref().unwrap());
@@ -1929,6 +1941,18 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Builder::CheckData (BOPAlgo_Builder.cxx L130-140).
     fn check_data(&self) -> Result<(), BooleanError> {
+        if self.my_is_splitter {
+            // OCCT BOPAlgo_Splitter::CheckData (BOPAlgo_Splitter.cxx L40-50):
+            // if (myArguments.IsEmpty() || (myArguments.Extent() + myTools.Extent()) < 2)
+            if self.my_arguments.is_empty()
+                || self.my_arguments.len() + self.my_tools.len() < 2
+            {
+                return Err(BooleanError::TooFewArguments);
+            }
+            // OCCT L49: CheckFiller();
+            self.check_filler();
+            return Ok(());
+        }
         // OCCT L132-137: if (myArguments.Extent() < 2) 鈫?AddError(TooFewArguments)
         if self.my_arguments.len() < 2 {
             return Err(BooleanError::TooFewArguments);
@@ -2412,6 +2436,7 @@ impl<'a> Builder<'a> {
             }
 
             // OCCT L469-480: 1.2 In edges (forward + reversed).
+            let mut a_n_in_edges = 0usize;
             for &pb_key in &a_fi.pave_blocks_in {
                 if let Some(n_sp) = self.pb_edge_by_ptr(pb_key) {
                     let mut a_sp = self.brep_sr(n_sp);
@@ -2419,7 +2444,19 @@ impl<'a> Builder<'a> {
                     a_le.push(a_sp.clone());
                     a_sp.orientation = topods::Orientation::Reversed;
                     a_le.push(a_sp);
+                    a_n_in_edges += 1;
                 }
+            }
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                let n_on = a_fi.pave_blocks_on.len();
+                let n_sc = a_fi.pave_blocks_sc.len();
+                let n_pb_in = a_fi.pave_blocks_in.len();
+                let face_n = a_f.as_face().and_then(|fd| fd.surface.clone()).map(|sf| match sf {
+                    rcad_kernel::geom::Surface3::Plane(p) => format!("({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
+                    _ => "O".into(),
+                }).unwrap_or_else(|| "?".into());
+                eprintln!("[BS-FACE] ds={} n={} pb_in={} pb_on={} pb_sc={} n_in_edges={} aLE={}",
+                    i, face_n, n_pb_in, n_on, n_sc, a_n_in_edges, a_le.len());
             }
             // OCCT L483-494: 1.3 Section edges (forward + reversed).
             // OCCT reads aPB->Edge() with no null-check 鈥?PostTreatFF always

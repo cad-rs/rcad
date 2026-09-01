@@ -240,16 +240,82 @@ pub fn face_volume_gauss_natural(brep: &BRep, fi: usize) -> f64 {
 /// (Eps = 1.0, fixed-order Gauss), IsNatRestr faces via the whole-surface
 /// integral, the others via the boundary line integral.
 pub fn signed_volume(brep: &topods::BRep) -> f64 {
+    // OCCT volumePropertiesFaces (BRepGProp.cxx L322-403): the faces are
+    // explored with TopExp_Explorer(S, TopAbs_FACE), i.e. PER OCCURRENCE with
+    // the cumulative orientation (solid * shell * face).  A face shared by two
+    // adjacent solids (the splitter's internal cell faces) appears TWICE —
+    // FORWARD in one cell, REVERSED in the neighbor — and its two
+    // contributions cancel.  The flat BRep pool stores each face TShape once;
+    // walk the solid->shell->face structure to reproduce the occurrence
+    // semantics, flipping the sign for REVERSED cumulative orientation
+    // (BRepGProp_Face::Load L196: mySReverse flips the normal, BRepGProp_Face.cxx
+    // L206-208).
     let mut vol = 0.0;
+    // Face data by flat pool index (explored FORWARD, BRepGProp_Domain L39-42).
     let faces = face_flat_iter(brep);
-    for (fi, face) in &faces {
+    let face_by_idx: std::collections::HashMap<usize, &Face> =
+        faces.iter().map(|(i, f)| (*i, f)).collect();
+    let integrate = |fi: usize, face: &Face| -> f64 {
         let is_nat_restr = face.outer_wire.edges.is_empty() && face.inner_wires.is_empty();
-        let v = if is_nat_restr {
-            face_volume_gauss_natural(brep, *fi)
+        if is_nat_restr {
+            face_volume_gauss_natural(brep, fi)
         } else {
-            face_volume_gauss_domain(brep, face, *fi)
-        };
-        vol += v;
+            face_volume_gauss_domain(brep, face, fi)
+        }
+    };
+    // 1. Faces inside solids: per occurrence with cumulative orientation.
+    let mut referenced: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for ts in &brep.tshapes {
+        if let topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    for face_sr in &shd.faces {
+                        let fi = face_sr.index;
+                        referenced.insert(fi);
+                        // OCCT TopExp_Explorer cumulative orientation:
+                        // solid(Forward) * shell * face.
+                        let ori = shell_sr.orientation.compose(face_sr.orientation);
+                        if let Some(face) = face_by_idx.get(&fi) {
+                            let v = integrate(fi, face);
+                            vol += if ori.is_reversed() { -v } else { v };
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 2. Free shells (not inside any solid): per face occurrence, orientation
+    // composed from the shell (BRepGProp.cxx L528-549 free-face compound).
+    let mut shell_refs: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for ts in &brep.tshapes {
+        if let topods::TShape::Solid(sd) = &**ts {
+            for sr in &sd.shells {
+                shell_refs.insert(sr.index);
+            }
+        }
+    }
+    for (ti, ts) in brep.tshapes.iter().enumerate() {
+        if let topods::TShape::Shell(shd) = &**ts {
+            if shell_refs.contains(&ti) {
+                continue;
+            }
+            for face_sr in &shd.faces {
+                let fi = face_sr.index;
+                referenced.insert(fi);
+                let ori = face_sr.orientation;
+                if let Some(face) = face_by_idx.get(&fi) {
+                    let v = integrate(fi, face);
+                    vol += if ori.is_reversed() { -v } else { v };
+                }
+            }
+        }
+    }
+    // 3. Standalone faces not referenced by any shell: counted once FORWARD
+    // (the flat pool has no orientation context for them).
+    for (fi, face) in &faces {
+        if !referenced.contains(fi) {
+            vol += integrate(*fi, face);
+        }
     }
     vol
 }

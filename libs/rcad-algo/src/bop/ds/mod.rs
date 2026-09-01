@@ -1436,7 +1436,15 @@ impl DS {
                     }
                 } else {
                     for pb in self.edge_pave_blocks(ef.edge) {
-                        if let Some(cb_idx) = self.common_block(pb) {
+                        let cb_idx = self.common_block(pb);
+                        if std::env::var("RCAD_BS_DEBUG").is_ok() && the_index < 100 {
+                            let cb_faces = cb_idx.map(|ci| {
+                                self.common_blocks.get(ci).map(|cb| format!("{:?}", cb.faces())).unwrap_or_default()
+                            }).unwrap_or_default();
+                            eprintln!("[FII-EF] face={} ef.edge={} pb={} cb={:?} cbfaces={}",
+                                the_index, ef.edge, std::sync::Arc::as_ptr(&pb.0) as u64, cb_idx, cb_faces);
+                        }
+                        if let Some(cb_idx) = cb_idx {
                             if let Some(cb) = self.common_blocks.get(cb_idx) {
                                 if cb.faces().contains(&the_index) {
                                     if let Some(pb1) = cb.pave_block1() {
@@ -1450,6 +1458,10 @@ impl DS {
                     }
                 }
             }
+        }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() && the_index < 100 {
+            eprintln!("[FII] face={} pb_in_marks={} v_in_marks={}",
+                the_index, pb_marks.len(), vertex_marks.len());
         }
         let pfi = self.change_face_info(the_index);
         pfi.pave_blocks_in.clear();

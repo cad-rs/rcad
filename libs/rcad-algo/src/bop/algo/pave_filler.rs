@@ -2095,6 +2095,21 @@ impl PaveFiller {
                     // OCCT L553-555: CheckFacePaves(nV[0]/nV[1], aMIFOn, aMIFIn)
                     let b_v0 = self.check_face_paves(n_v1, &a_mif_on, &a_mif_in);
                     let b_v1_ = self.check_face_paves(n_v2, &a_mif_on, &a_mif_in);
+                    if std::env::var("RCAD_EF_DEBUG").is_ok() {
+                        let e_pts = self.ds.edge_curve(cand.n_e).map(|c| {
+                            let p0 = c.point_at(r1_first);
+                            let p1 = c.point_at(r1_last);
+                            format!("({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})", p0.x, p0.y, p0.z, p1.x, p1.y, p1.z)
+                        }).unwrap_or_else(|| "?".into());
+                        let b = &self.ds.shapes[cand.n_f].bbox;
+                        let (mn, mx) = (b.corner_min().unwrap_or_default(), b.corner_max().unwrap_or_default());
+                        let f_bb = format!("({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})", mn.x, mn.y, mn.z, mx.x, mx.y, mx.z);
+                        eprintln!(
+                            "[EF-EDGE] e={} f={} r=({:.4},{:.4}) n_v1={} n_v2={} b_v0={} b_v1={} on={} in={} epts={} fbb={}",
+                            cand.n_e, cand.n_f, r1_first, r1_last, n_v1, n_v2, b_v0, b_v1_,
+                            a_mif_on.len(), a_mif_in.len(), e_pts, f_bb
+                        );
+                    }
                     if !b_v0 || !b_v1_ {
                         // OCCT L556-558: myDS->AddInterf(nE, nF); break — the
                         // appended aEF keeps NO CommonPart.
@@ -2250,6 +2265,14 @@ impl PaveFiller {
                 // OCCT L245-246: ComputeToleranceOfCB + aCB->SetTolerance
                 let a_tol_cb = Self::compute_tolerance_of_cb(cb_idx, &self.ds);
                 self.ds.common_blocks[cb_idx].set_tolerance(a_tol_cb);
+                if std::env::var("RCAD_EF_DEBUG").is_ok() {
+                    let pb1 = self.ds.common_blocks[cb_idx].pave_block1()
+                        .map(|p| std::sync::Arc::as_ptr(&p.0) as u64).unwrap_or(0);
+                    eprintln!("[EF-CB] pb={} faces=[{}] cb={} reused={} pb1={}",
+                        std::sync::Arc::as_ptr(&pb.0) as u64,
+                        faces.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(","),
+                        cb_idx, existing.is_some(), pb1);
+                }
             }
         }
         self.update_vertices_of_cb();
@@ -3611,7 +3634,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // minimum-member-count gate; a single-member group still gets a fresh
         // CommonBlock (SetPaveBlocks + SetCommonBlock), replacing the old one
         // for those members.
-        for (_cb_key, pbs) in &a_mcb_new_pb {
+        for (cb_key, pbs) in &a_mcb_new_pb {
+            // OCCT L643-645: aCommonBlock->SetPaveBlocks(aLPBxN);
+            // aCommonBlock->SetFaces(theCommonBlock->Faces()) — the new
+            // common block keeps the faces of the old one.
+            let old_faces: Vec<usize> = self.ds.common_blocks.get(*cb_key)
+                .map(|cb| cb.faces().to_vec()).unwrap_or_default();
             // OCCT L566-571: aMInds is NCollection_IndexedDataMap<BOPDS_Pair,
             // List<PB>> — insertion order of the aLPBN traversal.
             let mut a_minds: indexmap::IndexMap<(usize, usize), Vec<SharedPB>> = indexmap::IndexMap::new();
@@ -3621,7 +3649,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 a_minds.entry(key).or_default().push(pb.clone());
             }
             for (_pair, group) in &a_minds {
-                self.ds.add_common_block(group);
+                let new_cb = self.ds.add_common_block(group);
+                self.ds.common_blocks[new_cb].set_faces(old_faces.clone());
             }
         }
         // Init PBs for new SD vertices 鈥?OCCT L560: aMVerticesToInitPB is a

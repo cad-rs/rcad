@@ -192,9 +192,29 @@ impl Algo for DefeaturingOp {
 pub struct SplitterOp { pub algo: BuilderAlgo }
 impl SplitterOp {
     pub fn new() -> Self { Self { algo: BuilderAlgo::new() } }
+    // OCCT BRepAlgoAPI_Splitter::SetArguments (objects) — myArguments.
     pub fn add_object(&mut self, s: Shape) { self.algo.arguments.push(s); }
-    pub fn add_tool(&mut self, s: Shape) { self.algo.arguments.push(s); }
-    pub fn build(&mut self) { self.algo.bs.result = self.algo.arguments.first().cloned(); }
+    // OCCT BRepAlgoAPI_Splitter::AddTool (tools) — myTools.
+    pub fn add_tool(&mut self, s: Shape) { self.algo.tools.push(s); }
+    // OCCT BRepAlgoAPI_Splitter::Build (BRepAlgoAPI_Splitter.cxx L35-76):
+    // aLArgs = myArguments + myTools for the intersection; the builder
+    // receives myArguments (objects) and myTools separately
+    // (BOPAlgo_Splitter::SetArguments/SetTools).
+    pub fn build(&mut self) {
+        self.algo.bs.result = None; self.algo.bs.err = None;
+        match run_build_splitter_brep(&self.algo) {
+            Ok(brep) => {
+                let root = brep.tshapes.iter().enumerate().rev()
+                    .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_) | rcad_kernel::topods::TShape::Shell(_)))
+                    .map(|(i, ts)| Shape::from_parts(ts.clone(), i, 0, rcad_kernel::topods::Orientation::Forward));
+                self.algo.bs.result = root;
+                if self.algo.bs.result.is_none() {
+                    self.algo.bs.err = Some(BooleanError::InvalidResult("no root shape"));
+                }
+            }
+            Err(e) => self.algo.bs.err = Some(e),
+        }
+    }
     pub fn shape(&self) -> &Shape { self.algo.bs.shape() }
 }
 impl Algo for SplitterOp {
@@ -541,6 +561,61 @@ fn run_build_brep(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<rcad_ker
     let n_objs = builder.my_arguments.len().saturating_sub(n_tools);
     builder.my_tools = builder.my_arguments[n_objs..].to_vec();
     builder.build().map_err(|_| BooleanError::InvalidResult("builder failed"))
+}
+
+/// BRep-form splitter build.
+/// OCCT BOPAlgo_Splitter::Perform (BOPAlgo_Splitter.cxx L54-93): aLS =
+/// myArguments (objects) + myTools (tools) combined into ONE PaveFiller, then
+/// PerformInternal -> BOPAlgo_Builder::PerformInternal1 (GF pipeline, no
+/// BuildShape).  BOPAlgo_Builder::BuildResult (BOPAlgo_Builder_1.cxx L130-168)
+/// iterates myArguments (objects only), so only the split parts of the
+/// OBJECTS enter the result; tool split parts are excluded.
+fn run_build_splitter_brep(algo: &BuilderAlgo) -> Result<rcad_kernel::BRep, BooleanError> {
+    // OCCT BRepAlgoAPI_Splitter::Build (BRepAlgoAPI_Splitter.cxx L42-46).
+    if algo.arguments.is_empty() || (algo.arguments.len() + algo.tools.len()) < 2 {
+        return Err(BooleanError::TooFewArguments);
+    }
+    // OCCT BOPAlgo_Splitter::Perform L64-77: aLS = myArguments + myTools.
+    let mut all_args = algo.arguments.clone();
+    all_args.extend(algo.tools.iter().cloned());
+    let mut filler = PaveFiller::new();
+    filler.set_arguments(all_args);
+    filler.ds_mut().set_locations(algo.locations.clone());
+    filler.set_fuzzy_value(algo.fuzzy_value);
+    let a_prog = NoopProgress;
+    let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+    filler.perform(&a_ps);
+    let fuzz = filler.fuzzy_value();
+    // builder borrows the DS from filler; both live in the same scope
+    let mut builder = Builder::new(filler.ds(), BooleanOpType::Union, fuzz);
+    // OCCT BRepAlgoAPI_Splitter::Build L71-72: myBuilder->SetArguments
+    // (objects); SetTools(tools).  rcad's DS deep-clones the inputs, so the
+    // builder's argument list must carry the DS-cloned shapes: the first
+    // n_objs entries of ds.arguments (objects), the rest are tools.
+    let n_objs = algo.arguments.len();
+    builder.my_arguments = filler.ds().arguments[..n_objs].to_vec();
+    builder.my_tools = filler.ds().arguments[n_objs..].to_vec();
+    builder.my_is_splitter = true;
+    builder.build().map_err(|_| BooleanError::InvalidResult("splitter failed"))
+}
+
+/// OCCT shortcut: `BRepAlgoAPI_Splitter(objects, tools).Shape()`.
+/// BRep form: returns the compound of the split parts of the OBJECTS.
+pub fn splitter(
+    objects: &[rcad_kernel::BRep],
+    tools: &[rcad_kernel::BRep],
+) -> Result<rcad_kernel::BRep, BooleanError> {
+    let mut op = BuilderAlgo::new();
+    let mut global_locs = vec![glam::DAffine3::IDENTITY];
+    let mut cache = std::collections::HashMap::new();
+    for o in objects {
+        op.arguments.extend(brep_top_shapes_with_locations(o, &mut global_locs, &mut cache));
+    }
+    for t in tools {
+        op.tools.extend(brep_top_shapes_with_locations(t, &mut global_locs, &mut cache));
+    }
+    op.locations = global_locs;
+    run_build_splitter_brep(&op)
 }
 
 /// OCCT shortcut: `BRepAlgoAPI_Fuse(a, b).Shape()`.
