@@ -32,7 +32,55 @@ pub struct IntersectionPoint {
     pub tr_curv: TransitionOnCurve,
 }
 
+impl Default for IntersectionPoint {
+    /// OCCT IntCurveSurface_IntersectionPoint() (IntCurveSurface_IntersectionPoint.cxx
+    /// L21-28): zero parameters and the Transition initialized to Tangent.
+    fn default() -> Self {
+        IntersectionPoint {
+            p: DVec3::ZERO,
+            u_surf: 0.0,
+            v_surf: 0.0,
+            w_curve: 0.0,
+            tr_curv: TransitionOnCurve::Tangent,
+        }
+    }
+}
+
 impl IntersectionPoint {
+    /// OCCT IntCurveSurface_IntersectionPoint(P, USurf, VSurf, UCurv,
+    /// TrOnCurv) (L30-42).
+    pub fn new(
+        p: DVec3,
+        u_surf: f64,
+        v_surf: f64,
+        w_curve: f64,
+        tr_curv: TransitionOnCurve,
+    ) -> Self {
+        IntersectionPoint {
+            p,
+            u_surf,
+            v_surf,
+            w_curve,
+            tr_curv,
+        }
+    }
+
+    /// OCCT IntCurveSurface_IntersectionPoint::SetValues (L44-55).
+    pub fn set_values(
+        &mut self,
+        p: DVec3,
+        u_surf: f64,
+        v_surf: f64,
+        w_curve: f64,
+        tr_curv: TransitionOnCurve,
+    ) {
+        self.p = p;
+        self.u_surf = u_surf;
+        self.v_surf = v_surf;
+        self.w_curve = w_curve;
+        self.tr_curv = tr_curv;
+    }
+
     pub fn pnt(&self) -> DVec3 {
         self.p
     }

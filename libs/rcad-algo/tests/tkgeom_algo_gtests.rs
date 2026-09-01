@@ -12,12 +12,20 @@
 //!     the Compare tolerance (TopTrans_SurfaceTransition).
 //!   IntPolyh_Point_Test.cxx — the IntPolyh_Point arithmetic (Add/Sub/Divide/
 //!     SquareModulus/SquareDistance/Dot).
+//!   IntCurveSurface_IntersectionPoint_Test.cxx — the default/value
+//!     constructors and SetValues of IntCurveSurface_IntersectionPoint.
+//!   IntCurveSurface_InterUtils_Test.cxx — SectionPointToParameters with the
+//!     degenerate-face fallback to the longest edge.
 //!
 //! 1:1 translations of the OCCT tests against the rcad OCCT-aligned APIs.
 
 use rcad_algo::geomalgo::int_polyh::IntPolyhPoint;
+use rcad_algo::geomalgo::int_patch::int_cs::{IntersectionPoint, TransitionOnCurve};
 use rcad_algo::geomalgo::int_surf::{LineOn2S, PntOn2S, Quadric};
 use rcad_algo::geomalgo::top_trans::surface_transition::SurfaceTransition;
+use rcad_algo::geomalgo::intf::{
+    section_point_to_parameters, IntfPIType, IntfSectionPoint, PolyhedronLike, PolygonLike,
+};
 use rcad_kernel::core::precision::{ANGULAR, COMPUTATIONAL, CONFUSION, SQUARE_CONFUSION};
 use rcad_kernel::geom::ConicalSurface;
 use rcad_kernel::topods::{Orientation, State};
@@ -239,6 +247,135 @@ mod top_trans_surface_transition_tests {
 
         assert_ne!(transition.state_before(), State::Unknown);
         assert_ne!(transition.state_after(), State::Unknown);
+    }
+}
+
+// =============================================================================
+// IntCurveSurface_IntersectionPoint_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod int_curve_surface_intersection_point_tests {
+    use super::*;
+
+    // TEST(IntCurveSurface_IntersectionPoint, DefaultConstructor_TransitionInitialized)
+    #[test]
+    fn default_constructor_transition_initialized() {
+        let pt = IntersectionPoint::default();
+        // Transition must be deterministic (initialized to Tangent).
+        assert_eq!(pt.transition(), TransitionOnCurve::Tangent);
+        // Scalar fields must be zero-initialized.
+        assert_eq!(pt.u(), 0.0);
+        assert_eq!(pt.v(), 0.0);
+        assert_eq!(pt.w(), 0.0);
+    }
+
+    // TEST(IntCurveSurface_IntersectionPoint, ValueConstructor_AllFieldsSet)
+    #[test]
+    fn value_constructor_all_fields_set() {
+        let a_p = glam::DVec3::new(1.0, 2.0, 3.0);
+        let pt = IntersectionPoint::new(a_p, 0.5, 0.6, 0.7, TransitionOnCurve::In);
+
+        assert!((pt.pnt().x - 1.0).abs() < 1e-15);
+        assert!((pt.pnt().y - 2.0).abs() < 1e-15);
+        assert!((pt.pnt().z - 3.0).abs() < 1e-15);
+        assert_eq!(pt.u(), 0.5);
+        assert_eq!(pt.v(), 0.6);
+        assert_eq!(pt.w(), 0.7);
+        assert_eq!(pt.transition(), TransitionOnCurve::In);
+    }
+
+    // TEST(IntCurveSurface_IntersectionPoint, SetValues_OverwritesTransition)
+    #[test]
+    fn set_values_overwrites_transition() {
+        let mut pt = IntersectionPoint::default();
+        assert_eq!(pt.transition(), TransitionOnCurve::Tangent);
+
+        let a_p = glam::DVec3::new(5.0, 6.0, 7.0);
+        pt.set_values(a_p, 1.0, 2.0, 3.0, TransitionOnCurve::Out);
+        assert_eq!(pt.transition(), TransitionOnCurve::Out);
+    }
+}
+
+// =============================================================================
+// IntCurveSurface_InterUtils_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod int_curve_surface_inter_utils_tests {
+    use super::*;
+
+    /// OCCT TestPolyhedron — 3 points, 1 triangle (1-based indices).
+    struct TestPolyhedron {
+        points: [glam::DVec3; 3],
+        u: [f64; 3],
+        v: [f64; 3],
+    }
+
+    impl TestPolyhedron {
+        fn new() -> Self {
+            TestPolyhedron {
+                points: [
+                    glam::DVec3::new(0.0, 0.0, 0.0),
+                    glam::DVec3::new(2.0, 0.0, 0.0),
+                    glam::DVec3::new(2.0, 0.0, 0.0),
+                ],
+                u: [0.0, 1.0, 2.0],
+                v: [0.0, 0.0, 0.0],
+            }
+        }
+    }
+
+    impl PolyhedronLike for TestPolyhedron {
+        // Triangle(int, P1, P2, P3) { P1=1; P2=2; P3=3; } (1-based).
+        fn triangle(&self, _t: usize) -> (usize, usize, usize) {
+            (1, 2, 3)
+        }
+        // Point(theIndex) { return myPoints[theIndex - 1]; }
+        fn point(&self, index: usize) -> glam::DVec3 {
+            self.points[index - 1]
+        }
+        // Parameters(theIndex, U, V) { ... myU[theIndex - 1] ... }
+        fn parameters(&self, index: usize) -> (f64, f64) {
+            (self.u[index - 1], self.v[index - 1])
+        }
+    }
+
+    /// OCCT TestPolygon.
+    struct TestPolygon;
+
+    impl PolygonLike for TestPolygon {
+        // ApproxParamOnCurve(Index, ParamOnLine) = 10 * Index + ParamOnLine.
+        fn approx_param_on_curve(&self, index: usize, param_on_line: f64) -> f64 {
+            10.0 * index as f64 + param_on_line
+        }
+    }
+
+    // TEST(IntCurveSurface_InterUtils, SectionPointToParameters_DegenerateFaceFallsBackToLongestEdge)
+    #[test]
+    fn section_point_to_parameters_degenerate_face_falls_back_to_longest_edge() {
+        let polyhedron = TestPolyhedron::new();
+        let polygon = TestPolygon;
+
+        // Intf_SectionPoint(gp_Pnt(0.5,0,0), Intf_EDGE, 0, 2, 0.4, Intf_FACE, 1, 0, 0.0, 0.0)
+        let section_point = IntfSectionPoint::new(
+            glam::DVec3::new(0.5, 0.0, 0.0),
+            IntfPIType::Edge,
+            0,
+            2,
+            0.4,
+            IntfPIType::Face,
+            1,
+            0,
+            0.0,
+            0.0,
+        );
+
+        let (a_u, a_v, a_w) = section_point_to_parameters(&section_point, &polyhedron, &polygon);
+
+        assert!((a_u - 0.25).abs() < 1.0e-12);
+        assert!((a_v - 0.0).abs() < 1.0e-12);
+        assert!((a_w - 20.4).abs() < 1.0e-12);
     }
 }
 
