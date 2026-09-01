@@ -156,16 +156,13 @@ mod brep_gprop_tests {
         );
     }
 
-    // OCC49: principal moments require the exact BRepGProp_Vinert second-moment
-    // integration (BRepGProp_Vinert.cxx computeInertiaOfElementaryPart).  The
-    // rcad inertia_tensor is a triangle-sampling approximation
-    // (base/gprop/inertia.rs): for the cylinder Ix != Iy by ~0.5% (OCCT uses
-    // exact Gauss integration with a 1e-9 relative tolerance), and for the cut
-    // shape the sampled UV domain goes NaN via
-    // closest_point_on_surface (base/gprop/tri.rs estimate_uv_domain_from_wire).
-    // Re-enable once the exact Vinert second moments are ported.
+    // OCC49: the principal moments come from the exact BRepGProp_Vinert
+    // second-moment integration (BRepGProp_Gauss::computeVInertiaOfElementaryPart
+    // isByPoint, BRepGProp_Gauss.cxx L306-339) — the same fixed-order Gauss
+    // line/domain integrals as volume/centroid (base/gprop/volume), shifted to
+    // the center of mass by the Huygens theorem (GProp_GProps::MatrixOfInertia,
+    // GProp_GProps.cxx L110-115), then Jacobi-diagonalized.
     #[test]
-    #[ignore = "requires exact BRepGProp_Vinert second-moment integration (inertia_tensor is a triangle approximation)"]
     fn occ49_cylinder_has_symmetry_axis() {
         let cylinder = rcad_modeling::make_cylinder_brep(
             glam::DVec3::ZERO,
@@ -181,10 +178,26 @@ mod brep_gprop_tests {
             "Cylinder should have a symmetry axis (moments: {:?})",
             props.moments
         );
+        // Exact Vinert second moments (GProp_PrincipalProps, checkprops -v):
+        //   m = pi R^2 H = 2000*pi
+        //   Izz = m R^2 / 2 = 100000*pi
+        //   Ixx = Iyy = m (3 R^2 + H^2) / 12 = 2000*pi*700/12
+        // The principal moments must match the analytic values to ~1e-4
+        // relative (fixed-order Gauss on the analytic surfaces).
+        let m = 2000.0 * std::f64::consts::PI;
+        let izz = m * 100.0 / 2.0;
+        let ixx = m * (3.0 * 100.0 + 400.0) / 12.0;
+        let mut expected = [izz, ixx, ixx];
+        expected.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        for (got, exp) in props.moments.iter().zip(expected.iter()) {
+            assert!(
+                (got - exp).abs() < 1e-4 * exp.abs(),
+                "Principal moment {got} should be {exp}"
+            );
+        }
     }
 
     #[test]
-    #[ignore = "requires exact BRepGProp_Vinert second-moment integration (inertia_tensor is a triangle approximation)"]
     fn occ49_cut_shape_has_no_symmetry_axis() {
         let cylinder = rcad_modeling::make_cylinder_brep(
             glam::DVec3::ZERO,

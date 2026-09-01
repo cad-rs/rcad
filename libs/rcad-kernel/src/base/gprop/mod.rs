@@ -21,7 +21,11 @@ pub use tri::{
     trim_almost_closed_polyline,
 };
 pub use surface::{face_surface_area, surface_area};
-pub use volume::{centroid, signed_volume, volume};
+pub use volume::{
+    centroid, face_volume_gauss_domain, face_volume_gauss_domain_full,
+    face_volume_gauss_natural, face_volume_gauss_natural_full, shape_vinert, signed_volume,
+    VinertFace, volume,
+};
 pub use inertia::{InertiaTensor, PrincipalProps, inertia_tensor, principal_properties};
 pub use linear::linear_properties;
 pub use plate::*;

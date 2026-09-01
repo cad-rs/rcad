@@ -7,59 +7,80 @@ use serde::{Deserialize, Serialize};
 
 use crate::topo::topods;
 
-/// Inertia tensor of a BRep solid.
+use super::volume::shape_vinert;
+
+/// Inertia tensor of a BRep solid — the OCCT GProp_GProps::MatrixOfInertia
+/// (GProp_GProps.cxx L110-115): the accumulated per-face Vinert inertia about
+/// the origin minus the Huygens shift
+/// `HOperator(g, gp::Origin(), dim)` (GProp.cxx HOperator) from the center of
+/// mass to the origin, i.e. the inertia tensor about the center of mass.
+/// Matrix elements follow the gp_Mat convention of BRepGProp_Gauss::convert
+/// (BRepGProp_Gauss.cxx L487-489): [[Ixx, -Ixy, -Ixz], [-Ixy, Iyy, -Iyz],
+/// [-Ixz, -Iyz, Izz]] with the accumulated Ixy = -∫xy dV etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InertiaTensor {
     pub ixx: f64, pub iyy: f64, pub izz: f64,
     pub ixy: f64, pub ixz: f64, pub iyz: f64,
 }
 
+/// OCCT GProp::HOperator (GProp.cxx L27-40): the inertia matrix of a point
+/// mass `dim` located at G about the point O.
+fn h_operator(g: DVec3, dim: f64) -> [f64; 6] {
+    let x = g.x;
+    let y = g.y;
+    let z = g.z;
+    [
+        dim * (y * y + z * z),
+        dim * (x * x + z * z),
+        dim * (x * x + y * y),
+        -dim * x * y,
+        -dim * x * z,
+        -dim * y * z,
+    ]
+}
+
 /// Compute the inertia tensor of a BRep solid.
+///
+/// OCCT BRepGProp::VolumeProperties (BRepGProp.cxx L555-586 → L413-441 →
+/// volumePropertiesFaces L298-409): every face is integrated with
+/// BRepGProp_Vinert about the shape origin (Eps = 1.0 fixed-order Gauss,
+/// aCoeff = {0,0,0}, isByPoint = true) and accumulated per occurrence
+/// (GProp_GProps::Add L42-64, all faces share the location so the matrices
+/// add directly).  The resulting tensor is about the origin; the reported
+/// matrix is shifted to the center of mass via the Huygens theorem
+/// (GProp_GProps::MatrixOfInertia L110-115).
 pub fn inertia_tensor(brep: &topods::BRep) -> InertiaTensor {
-    let vol = super::volume::signed_volume(brep);
-    let c = super::volume::centroid(brep);
-    let faces = super::tri::face_flat_iter(brep);
-    let mut ixx = 0.0; let mut iyy = 0.0; let mut izz = 0.0;
-    let mut ixy = 0.0; let mut ixz = 0.0; let mut iyz = 0.0;
-
-    for (fi, face) in &faces {
-        let tris = super::tri::face_triangles_pub(brep, *fi);
-        for [a, b, cc] in &tris {
-            let v0 = *a - c; let v1 = *b - c; let v2 = *cc - c;
-            let tv = super::tri::tet_signed_volume(*a, *b, *cc);
-            // Approximate per-tetrahedron inertia contribution
-            // For a tetrahedron with vertices relative to centroid:
-            // I contribution ≈ (m/20) * Σ(2*vi*vi + vj*vj + vk*vk) / 6
-            let (x0, y0, z0) = (v0.x, v0.y, v0.z);
-            let (x1, y1, z1) = (v1.x, v1.y, v1.z);
-            let (x2, y2, z2) = (v2.x, v2.y, v2.z);
-            let m = tv.abs() * 6.0; // tetrahedron volume contribution
-            // Second moment: ∫∫∫ (r²δ - r⊗r) dV over tetrahedron
-            // Simplified: use vertex average × volume
-            let avg_xx = (x0*x0 + x1*x1 + x2*x2) / 3.0;
-            let avg_yy = (y0*y0 + y1*y1 + y2*y2) / 3.0;
-            let avg_zz = (z0*z0 + z1*z1 + z2*z2) / 3.0;
-            let avg_xy = (x0*y0 + x1*y1 + x2*y2) / 3.0;
-            let avg_xz = (x0*z0 + x1*z1 + x2*z2) / 3.0;
-            let avg_yz = (y0*z0 + y1*z1 + y2*z2) / 3.0;
-            let scale = m / 20.0;
-            ixx += scale * (2.0*avg_xx + avg_yy + avg_zz);
-            iyy += scale * (2.0*avg_yy + avg_xx + avg_zz);
-            izz += scale * (2.0*avg_zz + avg_xx + avg_yy);
-            ixy += scale * avg_xy;
-            ixz += scale * avg_xz;
-            iyz += scale * avg_yz;
-        }
+    let v = shape_vinert(brep);
+    let dim = v.mass;
+    // GProp_GProps::Add L50-58: the accumulated gravity center (relative to
+    // the origin) = sum of the per-face first moments / dim.
+    let g = if dim.abs() >= 1e-30 {
+        DVec3::new(v.ix / dim, v.iy / dim, v.iz / dim)
+    } else {
+        DVec3::ZERO
+    };
+    // GProp_GProps::MatrixOfInertia (L110-115): inertia - HOperator(g, origin,
+    // dim).  The accumulated matrix is the BRepGProp_Gauss::convert layout
+    // (L487-489): [[Ixx, -Ixy, -Ixz], [-Ixy, Iyy, -Iyz], [-Ixz, -Iyz, Izz]]
+    // with Ixy = -∫xy dV etc. — i.e. the matrix elements are (Ixx, Iyy, Izz,
+    // -Ixy, -Ixz, -Iyz).
+    let h = h_operator(g, dim);
+    InertiaTensor {
+        ixx: v.ixx - h[0],
+        iyy: v.iyy - h[1],
+        izz: v.izz - h[2],
+        ixy: -v.ixy - h[3],
+        ixz: -v.ixz - h[4],
+        iyz: -v.iyz - h[5],
     }
-
-    InertiaTensor { ixx, iyy, izz, ixy, ixz, iyz }
 }
 
 /// OCCT GProp_PrincipalProps — principal moments of inertia and symmetry.
 #[derive(Debug, Clone)]
 pub struct PrincipalProps {
-    /// OCCT GProp_PrincipalProps::HasSymmetryAxis — two principal moments
-    /// are (nearly) equal, i.e. the solid has an axis of symmetry.
+    /// OCCT GProp_PrincipalProps::HasSymmetryAxis (GProp_PrincipalProps.cxx
+    /// L54-60): two principal moments are equal within a RELATIVE tolerance
+    /// of 1.e-10, i.e. the solid has an axis of symmetry.
     pub has_symmetry_axis: bool,
     /// Principal moments of inertia, sorted ascending.
     pub moments: [f64; 3],
@@ -107,15 +128,23 @@ fn symmetric_eigenvalues(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) -> [f64
     eig
 }
 
-/// OCCT GProp_GProps::PrincipalProperties — principal moments from the
-/// inertia tensor.  `HasSymmetryAxis` is true when two principal moments
-/// are equal within a relative tolerance.
+/// OCCT GProp_GProps::PrincipalProperties (GProp_GProps.cxx L154-197) +
+/// GProp_PrincipalProps::HasSymmetryAxis (GProp_PrincipalProps.cxx L54-60):
+/// the principal moments are the eigenvalues of the matrix of inertia about
+/// the center of mass (math_Jacobi), and `HasSymmetryAxis` is true when two
+/// principal moments are equal within the relative tolerance 1.e-10.
 pub fn principal_properties(brep: &topods::BRep) -> PrincipalProps {
     let t = inertia_tensor(brep);
     let moments = symmetric_eigenvalues(t.ixx, t.iyy, t.izz, t.ixy, t.ixz, t.iyz);
-    let scale = moments[2].abs().max(1e-12);
-    let has_symmetry_axis = (moments[0] - moments[1]).abs() <= 1e-6 * scale
-        || (moments[1] - moments[2]).abs() <= 1e-6 * scale;
+    // GProp_PrincipalProps::HasSymmetryAxis (L54-60):
+    //   Eps1 = |i1| * 1.e-10, Eps2 = |i2| * 1.e-10
+    //   |i1 - i2| <= Eps1 || |i1 - i3| <= Eps1 || |i2 - i3| <= Eps2
+    let a_rel_tol = 1.0e-10;
+    let eps1 = moments[0].abs() * a_rel_tol;
+    let eps2 = moments[1].abs() * a_rel_tol;
+    let has_symmetry_axis = (moments[0] - moments[1]).abs() <= eps1
+        || (moments[0] - moments[2]).abs() <= eps1
+        || (moments[1] - moments[2]).abs() <= eps2;
     PrincipalProps {
         has_symmetry_axis,
         moments,
