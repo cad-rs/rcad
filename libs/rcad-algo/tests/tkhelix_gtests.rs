@@ -332,7 +332,6 @@ mod helixgeom_tools_tests {
     /// (the AdvApprox error tracking is not yet aligned with OCCT — full
     /// implementation is a follow-up).
     #[test]
-    #[ignore = "rcad AdvApprox max_error_at under-reports max deviation (OCCT: d <= maxError*2)"]
     fn appr_curve3d_sampling_quality() {
         let mut a_helix = HelixCurve::new();
         a_helix.load(0.0, TAU, 10.0, 3.0, 0.0, true);

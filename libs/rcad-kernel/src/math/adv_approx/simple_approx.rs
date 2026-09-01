@@ -169,7 +169,10 @@ impl SimpleApprox {
         let blin = (last + first) / 2.0;
 
         let dim_i = dimension as i32;
-        let mut i_idim = 1i32;
+        // OCCT L176: i_idim = myTotalDimension — the paired-point slots start
+        // at TotalDimension (slots 0..TotalDimension-1 are reserved for the
+        // odd-NbGaussPoints case, L228-230).
+        let mut i_idim = self.total_dimension as i32;
         for i in 1..=self.nb_gauss_points / 2 {
             let ti = self.tab_points[i];
             let tip = alin * ti + blin;
@@ -186,7 +189,7 @@ impl SimpleApprox {
                 i_idim += 1;
             }
         }
-        let mut i_idim = 1i32;
+        let mut i_idim = self.total_dimension as i32;
         for i in 1..=self.nb_gauss_points / 2 {
             let ti = self.tab_points[i];
             let tin = -alin * ti + blin;
