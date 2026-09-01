@@ -1928,12 +1928,6 @@ impl PaveFiller {
         } else {
             return;
         };
-        if std::env::var("RCAD_EF_DEBUG").is_ok() {
-            eprintln!("[EF-DBG] n_ef_pairs={}", pairs.len());
-            for (i, (a, b)) in pairs.iter().enumerate() {
-                eprintln!("[EF-DBG]   pair[{}] = ({}, {})", i, a, b);
-            }
-        }
         if pairs.is_empty() {
             return;
         }
@@ -1999,10 +1993,6 @@ impl PaveFiller {
                 // OCCT: aMPBF.Contains(aPBR) 鈥?the set holds PB handles, so a
                 // direct pointer-id membership test matches exactly.
                 let is_on_face = a_mpbf.contains(&pbr_ptr);
-                if std::env::var("RCAD_EF_DEBUG").is_ok() {
-                    eprintln!("[EF-DBG] cand e={} f={} onFace={} n_pb={}",
-                        n_e, n_f, is_on_face, a_lpb.len());
-                }
                 if is_on_face {
                     continue;
                 }
@@ -2105,9 +2095,6 @@ impl PaveFiller {
                     // OCCT L553-555: CheckFacePaves(nV[0]/nV[1], aMIFOn, aMIFIn)
                     let b_v0 = self.check_face_paves(n_v1, &a_mif_on, &a_mif_in);
                     let b_v1_ = self.check_face_paves(n_v2, &a_mif_on, &a_mif_in);
-                    if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                        eprintln!("[EF-DBG] EDGE-EF e={} f={} r=[{:.4},{:.4}] bV=({},{}) v1={} v2={}", cand.n_e, cand.n_f, r1_first, r1_last, b_v0, b_v1_, n_v1, n_v2);
-                    }
                     if !b_v0 || !b_v1_ {
                         // OCCT L556-558: myDS->AddInterf(nE, nF); break — the
                         // appended aEF keeps NO CommonPart.
@@ -2216,20 +2203,15 @@ impl PaveFiller {
                     proj.perform(a_pnew);
                     let a_dist = proj.lower_distance();
                     let (a_u, a_v) = proj.lower_distance_parameters();
-                    let in_face = proj.nb_points() > 0
+                    let nbp = proj.nb_points();
+                    let in_face = nbp > 0
                         && a_dist < a_tol_vnew
                         && self.my_context.is_point_in_face(&self.ds, cand.n_f, glam::DVec2::new(a_u, a_v));
-                    if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                        eprintln!("[EF-DBG] VERTEX case e={} f={} t={:.4} uv=({:.4},{:.4}) dist={:.3e} inFace={} splittable={}", cand.n_e, cand.n_f, a_t, a_u, a_v, a_dist, in_face, b_is_pb_splittable);
-                    }
                     if !in_face {
                         continue;
                     }
                     // OCCT L528-542: add InterfEF
                     a_mi_efc.add(cand.n_f);
-                    if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                        eprintln!("[EF-DBG] VERTEX-EF e={} f={} t={:.4}", cand.n_e, cand.n_f, a_t);
-                    }
                     let idx_interf = self.ds.interf_ef.len();
                     self.ds.interf_ef.push(InterferenceEF {
                         edge: cand.n_e, face: cand.n_f,
@@ -2252,13 +2234,6 @@ impl PaveFiller {
         // OCCT BOPAlgo_Tools::PerformCommonBlocks (2nd overload, L191-244):
         //   one CommonBlock per section PaveBlock, reusing the existing CB if the
         //   PB already belongs to one; append the PB's face list.
-        if std::env::var("RCAD_EF_DEBUG").is_ok() {
-            eprintln!("[EF-DBG] end perform_ef: n_interf_ef={} n_mvcpb={}",
-                self.ds.interf_ef.len(), a_mvcpb.len());
-            for (k, iv) in self.ds.interf_ef.iter().enumerate() {
-                eprintln!("[EF-DBG]   ef[{}] e={} f={} nv={}", k, iv.edge, iv.face, iv.new_vertex);
-            }
-        }
         if !a_mpbli.is_empty() {
             let pending: Vec<(SharedPB, Vec<usize>)> = a_mpbli.values().cloned().collect();
             for (pb, faces) in &pending {
@@ -2279,15 +2254,7 @@ impl PaveFiller {
         }
         self.update_vertices_of_cb();
         if !a_mvcpb.is_empty() {
-            if std::env::var("RCAD_EF_DEBUG").is_ok() {
-                eprintln!("[EF-DBG] perform_new_vertices n_cpb={}", a_mvcpb.len());
-            }
             self.perform_new_vertices(&a_mvcpb, false);
-            if std::env::var("RCAD_EF_DEBUG").is_ok() {
-                for (k, iv) in self.ds.interf_ef.iter().enumerate() {
-                    eprintln!("[EF-DBG]   post-nv ef[{}] e={} f={} nv={}", k, iv.edge, iv.face, iv.new_vertex);
-                }
-            }
             if self.has_errors() {
                 return;
             }
@@ -2297,20 +2264,6 @@ impl PaveFiller {
         // bucket iteration order.
         for n_f in a_mi_efc.iter_keys() {
             self.ds.update_face_info_in(n_f);
-        }
-        if std::env::var("RCAD_EE_DEBUG").is_ok() {
-            for (i, si) in self.ds.shapes.iter().enumerate() {
-                if si.shape_type == ShapeType::Edge {
-                    let pbs = self.ds.edge_pave_blocks(i);
-                    if !pbs.is_empty() {
-                        let desc: Vec<String> = pbs.iter().map(|pb| {
-                            let r = pb.0.read().unwrap();
-                            format!("[{:.3},{:.3}]", r.range().0, r.range().1)
-                        }).collect();
-                        eprintln!("[EF-DBG] edge {} deg={} flag={} pbs={} {}", i, self.ds.is_edge_degenerated(i), self.ds.shapes[i].has_flag(), pbs.len(), desc.join(" "));
-                    }
-                }
-            }
         }
     }
 
@@ -5168,11 +5121,13 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     };
                     eprintln!("[PC] MPC-copy e={} f={} src={} key={:?} {}", n_e, n_f, src_e, fkey, pd);
                 }
-                self.ds.mutate_shape_data(n_e, |ts| {
-                    if let rcad_kernel::topods::TShape::Edge(ed) = ts {
-                        ed.pcurves.insert(fkey, (pc, range[0], range[1]));
-                    }
-                });
+                // OCCT BOPAlgo_MPC::Perform (PaveFiller_7.cxx L239-249):
+                // AttachExistingPCurve — the pcurve is attached with
+                // BRep_Builder::UpdateEdge semantics (the edge's representation
+                // list gains the CurveOnSurface row, mirroring the
+                // update_edge_pcurve_shared method).
+                self.ds
+                    .update_edge_pcurve_shared(n_e, fkey, pc, range[0], range[1], 0.0);
                 // OCCT AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx L43-161):
                 // when the source edge is a seam on this face (IsClosed(aE2, aF)),
                 // UpdateClosedPCurve (L163-299) builds the second pcurve by
@@ -5245,11 +5200,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     crate::bop::algo::pave_filler_make_blocks::adjust_pcurve_on_face(
                         &pc, range[0], range[1], surf, uv, n_f, &self.ds)
                 };
-                self.ds.mutate_shape_data(n_e, |ts| {
-                    if let rcad_kernel::topods::TShape::Edge(ed) = ts {
-                        ed.pcurves.insert(fkey, (pc, range[0], range[1]));
-                    }
-                });
+                // OCCT BOPAlgo_MPC::Perform (PaveFiller_7.cxx L248): the
+                // projected pcurve is attached with BRep_Builder::UpdateEdge
+                // semantics — the edge's CurveRepresentation list gains the
+                // CurveOnSurface row (update_edge_pcurve_shared).
+                self.ds
+                    .update_edge_pcurve_shared(n_e, fkey, pc, range[0], range[1], 0.0);
                 self.ds.remap_shape_idx(n_e);
             }
         }
@@ -6030,7 +5986,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                 rcad_kernel::topods::TShape::Edge(ed) => {
                                     (ed.pcurves.clone(), ed.representations.clone())
                                 }
-                                _ => (std::collections::HashMap::new(), Vec::new()),
+                                _ => (indexmap::IndexMap::new(), Vec::new()),
                             }
                         };
                         // OCCT MakeSplitEdge1 (BOPAlgo_PaveFiller_8.cxx
@@ -6109,7 +6065,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     same_parameter: false,
                     same_range: false,
                     degenerated: true,
-                    pcurves: std::collections::HashMap::new(),
+                    pcurves: indexmap::IndexMap::new(),
                     representations: Vec::new(),
                     vertex_params: std::collections::HashMap::new(),
                     my_shapes: Vec::new(),

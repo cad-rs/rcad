@@ -34,6 +34,11 @@
 //! - OCCT `ChFi3d_FilBuilder`
 //! - OCCT `ChFi3d_ChBuilder`
 
+// Rust 1.85+ private_interfaces lint: the public entry points return
+// crate-private helper types (EdgeInfo / FilletCurve) by design; the helpers
+// are not part of the public API surface.
+#![allow(private_interfaces)]
+
 use glam::DVec3;
 use rcad_kernel::{
     CurveEval,

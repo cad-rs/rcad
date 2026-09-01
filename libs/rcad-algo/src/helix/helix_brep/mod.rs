@@ -732,7 +732,7 @@ fn arc_tshape_edge(
         last: v2.clone(),
         range,
         degenerated: false,
-        pcurves: std::collections::HashMap::new(),
+        pcurves: indexmap::IndexMap::new(),
         representations: Vec::new(),
         vertex_params,
         tolerance,

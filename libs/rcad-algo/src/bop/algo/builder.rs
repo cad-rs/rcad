@@ -440,16 +440,23 @@ fn edge_pcurve_on_face<'a>(
     ed.pcurves
         .get(&(face.ptr_id(), pcurve_loc_component(ds, face.location)))
         .or_else(|| {
-            ed.pcurves.iter().find_map(|(k, v)| {
+            // OCCT BRep_Tool::CurveOnSurface walks the representation list;
+            // the pcurves map is an IndexMap whose insertion order is
+            // historical, so select the deterministic minimum key among the
+            // same-surface rows.
+            let mut best: Option<(&(u64, u32), &(rcad_kernel::geom::Curve2d, f64, f64))> = None;
+            for (k, v) in ed.pcurves.iter() {
                 if let Some(&fi) = ds.map_shape_index.get(k) {
                     if let Some(fs) = ds.face_surface(fi) {
                         if surface_same(surf, &fs) {
-                            return Some(v);
+                            if best.as_ref().map_or(true, |(bk, _)| k < *bk) {
+                                best = Some((k, v));
+                            }
                         }
                     }
                 }
-                None
-            })
+            }
+            best.map(|(_, v)| v)
         })
         .map(|(pc, _, _)| pc)
 }
@@ -1803,18 +1810,51 @@ impl<'a> Builder<'a> {
             }
         }
         // Pass A: rows to add per edge TShape (immutable snapshot).
+        // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L340-365) walks the
+        // edge's CurveRepresentation LIST (insertion order) and picks the FIRST
+        // representation whose surface matches the target face.  The source
+        // rows here are the pcurves of the edge keyed by their owner face;
+        // iterating face_surf (a HashMap) would pick an arbitrary source row
+        // when several owners share the target face's surface (split images of
+        // one cylinder), randomizing the materialized pcurve.  The
+        // representations list has the OCCT insertion order, so the source
+        // rows are taken from it (falling back to the pcurves map in their
+        // insertion order for edges whose representations are not maintained).
         let mut additions: Vec<(u64, Vec<((u64, u32), (rcad_kernel::geom::Curve2d, f64, f64))>)> =
             Vec::new();
         for ts in &brep.tshapes {
             let topods::TShape::Edge(ed) = ts.as_ref() else { continue };
             let mut add: Vec<((u64, u32), (rcad_kernel::geom::Curve2d, f64, f64))> = Vec::new();
-            for ((optr, lhash), v) in &ed.pcurves {
-                let Some(osurf) = face_surf.get(optr) else { continue };
+            // Source rows in representation-list order, then pcurves order.
+            let mut src_rows: Vec<((u64, u32), (rcad_kernel::geom::Curve2d, f64, f64))> = Vec::new();
+            for r in &ed.representations {
+                if let rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                    face,
+                    pcurve,
+                    range,
+                } = r
+                {
+                    src_rows.push((*face, (pcurve.clone(), range[0], range[1])));
+                }
+            }
+            for row in &ed.pcurves {
+                if !src_rows.iter().any(|(k, _)| k == row.0) {
+                    src_rows.push((*row.0, row.1.clone()));
+                }
+            }
+            // The pcurves map is an IndexMap — its insertion order reflects the
+            // historical insertion sequence and is not a stable selection
+            // order.  Sort the supplemental rows by key so that a target key
+            // reachable from several same-surface source rows always receives
+            // the same (deterministic) pcurve.
+            src_rows.sort_by_key(|(k, _)| *k);
+            for ((optr, lhash), v) in src_rows {
+                let Some(osurf) = face_surf.get(&optr) else { continue };
                 for (fptr, fsurf) in &face_surf {
-                    if fptr == optr || !rcad_kernel::topo::topods::surface_same(fsurf, osurf) {
+                    if *fptr == optr || !rcad_kernel::topo::topods::surface_same(fsurf, osurf) {
                         continue;
                     }
-                    let k = (*fptr, *lhash);
+                    let k = (*fptr, lhash);
                     if !ed.pcurves.contains_key(&k) {
                         add.push((k, v.clone()));
                     }
@@ -2163,75 +2203,6 @@ impl<'a> Builder<'a> {
     /// or alone vertices take the BuildDraftFace fast path.
     fn build_split_faces(&mut self) {
         let a_nb_s = self.ds.nb_source_shapes();
-        if std::env::var("RCAD_WS_DEBUG").is_ok() {
-            for (i, l) in self.ds.locations.iter().enumerate() {
-                let t = *l;
-                eprintln!(
-                    "[WS-LOCS] {} T=[{:?};{:?};{:?}] t=({:.3},{:.3},{:.3})",
-                    i,
-                    t.x_axis,
-                    t.y_axis,
-                    t.z_axis,
-                    t.translation.x,
-                    t.translation.y,
-                    t.translation.z
-                );
-            }
-            for (i, si) in self.ds.shapes.iter().enumerate() {
-                if let topods::TShape::Vertex(vd) = &*si.shape.data {
-                    eprintln!(
-                        "[WS-DSSHAPE] v idx={} ptr={:x} loc={} p=({:.3},{:.3},{:.3}) bbox=({:.3},{:.3},{:.3})-({:.3},{:.3},{:.3})",
-                        i,
-                        si.shape.ptr_id(),
-                        si.shape.location,
-                        vd.point.x,
-                        vd.point.y,
-                        vd.point.z,
-                        si.bbox.raw_min().x,
-                        si.bbox.raw_min().y,
-                        si.bbox.raw_min().z,
-                        si.bbox.raw_max().x,
-                        si.bbox.raw_max().y,
-                        si.bbox.raw_max().z
-                    );
-                }
-            }
-            // d9 face bbox forensics: the source solid's top face and its wires.
-            for (i, si) in self.ds.shapes.iter().enumerate() {
-                if si.shape_type == topods::ShapeType::Face {
-                    let n = if let topods::TShape::Face(fd) = &*si.shape.data {
-                        fd.surface.as_ref().map(|sf| match sf {
-                            rcad_kernel::geom::Surface3::Plane(p) => format!(
-                                "({:.2},{:.2},{:.2})o=({:.2},{:.2},{:.2})",
-                                p.normal.x, p.normal.y, p.normal.z,
-                                p.origin.x, p.origin.y, p.origin.z
-                            ),
-                            _ => "O".into(),
-                        })
-                    } else {
-                        None
-                    };
-                    eprintln!(
-                        "[WS-DSFACE] f idx={} loc={} n={} bbox=({:.3},{:.3},{:.3})-({:.3},{:.3},{:.3})",
-                        i,
-                        si.shape.location,
-                        n.unwrap_or_default(),
-                        si.bbox.raw_min().x,
-                        si.bbox.raw_min().y,
-                        si.bbox.raw_min().z,
-                        si.bbox.raw_max().x,
-                        si.bbox.raw_max().y,
-                        si.bbox.raw_max().z
-                    );
-                }
-            }
-        }
-        if std::env::var("RCAD_BS_DEBUG").is_ok() {
-            for ff in &self.ds.interf_ff {
-                eprintln!("[FF] f1={} f2={} n_curves={} tangent={}",
-                    ff.f1, ff.f2, ff.curves.len(), ff.tangent_faces);
-            }
-        }
         // aFacesIm: DS face index -> area shapes (OCCT IndexedDataMap<int,
         // List<Shape>>, Builder_2.cxx L256 鈥?insertion order, iterated at L535).
         let mut a_faces_im: IndexMap<usize, Vec<Shape>> = IndexMap::new();
@@ -2249,12 +2220,6 @@ impl<'a> Builder<'a> {
             }
             let a_f = self.brep_sr(i);
             let a_fi = self.ds.face_info(i).clone();
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[BSF-FI] face={} pb_in={} pb_on={} pb_sc={} v_in={} v_on={} v_sc={}",
-                    i, a_fi.pave_blocks_in.len(), a_fi.pave_blocks_on.len(),
-                    a_fi.pave_blocks_sc.len(), a_fi.vertices_in.len(),
-                    a_fi.vertices_on.len(), a_fi.vertices_sc.len());
-            }
 
             // OCCT L286-287: AloneVertices(i, aLIAV).
             let a_liav = self.alone_vertices(i);
@@ -2324,30 +2289,6 @@ impl<'a> Builder<'a> {
             let a_ff_sphere = a_ff.as_face().and_then(|fd| fd.surface.as_ref()).map_or(false, |s| matches!(s, rcad_kernel::geom::Surface3::Sphere(_)));
             for a_e in self.face_edges(&a_ff) {
                 let an_ori_e = a_e.orientation;
-                if (i == 53 || i == 58 || i == 2) && std::env::var("RCAD_BS_DEBUG").is_ok() {
-                    let imgs = self.images_of(&a_e);
-                    let bound = imgs.is_some();
-                    let img_desc: Vec<String> = imgs
-                        .iter()
-                        .flatten()
-                        .map(|s| format!("{:+x}@loc{}", s.ptr_id() & 0xffff, s.location))
-                        .collect();
-                    let ds_ei = self.ds.map_shape_index.get(&(a_e.ptr_id(), a_e.location)).copied();
-                    let has_ref = ds_ei.map(|e| self.ds.has_pave_blocks(e)).unwrap_or(false);
-                    eprintln!("[BND53] f={} e={:+x}@loc{} ori={:?} ds_ei={:?} bound={} hasPB={} imgs=[{}]",
-                        i, a_e.ptr_id() & 0xffff, a_e.location, an_ori_e, ds_ei, bound, has_ref, img_desc.join(","));
-                    if let TShape::Edge(ed) = &*a_e.data {
-                        for (k, (pc, t1, t2)) in &ed.pcurves {
-                            let d = match pc {
-                                rcad_kernel::geom::Curve2d::Line(l) => format!(
-                                    "L o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
-                                _ => "O".into(),
-                            };
-                            eprintln!("[BND53]   pcurve key=({:+x},loc{}) {} t=({:.3},{:.3})",
-                                k.0 & 0xffff, k.1, d, t1, t2);
-                        }
-                    }
-                }
                 // OCCT L369: if !myImages.IsBound(aE).
                 if self.images_of(&a_e).is_none() {
                     if an_ori_e == topods::Orientation::Internal {
@@ -2458,31 +2399,6 @@ impl<'a> Builder<'a> {
             if !self.my_non_destructive {
                 self.build_pcurve_for_edges_on_plane(&a_le, &a_ff);
             }
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                for (lei, le) in a_le.iter().enumerate() {
-                    let vs = crate::bop::algo::builder_face::BuilderFace::edge_vertices(
-                        le,
-                        &self.ds.locations,
-                    );
-                    let vp: Vec<String> = vs
-                        .iter()
-                        .map(|v| {
-                            v.as_vertex()
-                                .map(|vd| format!("({:.1},{:.1},{:.1})@{}", vd.point.x, vd.point.y, vd.point.z, v.location))
-                                .unwrap_or_default()
-                        })
-                        .collect();
-                    eprintln!(
-                        "[BSF-LE] face={} le[{}]=e{:+x}@loc{} ori={:?} v=[{}]",
-                        i,
-                        lei,
-                        le.ptr_id() & 0xffff,
-                        le.location,
-                        le.orientation,
-                        vp.join(",")
-                    );
-                }
-            }
             // OCCT L502-505: aBF.SetFace(aF); aBF.SetShapes(aLE); SetRunParallel.
             a_vbf.push((i, a_f, a_le));
         }
@@ -2513,35 +2429,6 @@ impl<'a> Builder<'a> {
             // a face whose areas could not be built contributes nothing to the
             // result (build_draft_solid drops it). Skipping the bind would keep
             // the original face, which OCCT does not do.
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[BSF-AREA] face={} n_areas={}", fi, a_bf.my_areas.len());
-                for ar in &a_bf.my_areas {
-                    let mut wins: Vec<String> = Vec::new();
-                    if let TShape::Face(fd) = &*ar.data {
-                        for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
-                            if let TShape::Wire(wd) = &*w.data {
-                                wins.push(format!("[{}]", wd.edges.iter().map(|e| format!("{}", e.ptr_id() % 100000)).collect::<Vec<_>>().join(",")));
-                            }
-                        }
-                    }
-                    eprintln!("[BSF-AREA]   area {} {}", ar.ptr_id() % 100000, wins.join(" "));
-                    if let TShape::Face(fd2) = &*ar.data {
-                        for w in std::iter::once(&fd2.outer_wire).chain(fd2.inner_wires.iter()) {
-                            if let TShape::Wire(wd) = &*w.data {
-                                for e in &wd.edges {
-                                    let ed = match &*e.data { TShape::Edge(ed) => ed, _ => continue };
-                                    let (pa, pb) = match (&*ed.first.data, &*ed.last.data) {
-                                        (TShape::Vertex(va), TShape::Vertex(vb)) => (va.point, vb.point),
-                                        _ => (DVec3::ZERO, DVec3::ZERO),
-                                    };
-                                    eprintln!("[BSF-AREA]     edge {} p=({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})",
-                                        e.ptr_id() % 100000, pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             a_faces_im.entry(*fi).or_default().extend(a_bf.my_areas);
         }
 
@@ -2614,15 +2501,54 @@ impl<'a> Builder<'a> {
                     let raw = Arc::as_ptr(&e.data) as *mut TShape;
                     unsafe {
                         if let TShape::Edge(ed) = &mut *raw {
+                            // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx
+                            // L340-365) iterates the edge's CurveRepresentation
+                            // LIST (insertion order) and returns the FIRST
+                            // representation whose surface matches — never a
+                            // hash map.  ed.pcurves is a HashMap: iterating it
+                            // picks an arbitrary row per process when several
+                            // pcurves share the same surface (split faces of one
+                            // cylinder), randomizing the bridged pcurve and
+                            // with it the split face's UV boundary.  Walk the
+                            // representations list (the same list OCCT walks)
+                            // instead.
                             let row = ed
-                                .pcurves
+                                .representations
                                 .iter()
-                                .find(|((p, _), _)| {
-                                    owner_surface
-                                        .get(p)
-                                        .map_or(false, |s| surface_same(&a_surf, s))
+                                .find_map(|r| match r {
+                                    rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                                        face,
+                                        pcurve,
+                                        range,
+                                    } if owner_surface
+                                        .get(&face.0)
+                                        .map_or(false, |s| surface_same(&a_surf, s)) =>
+                                    {
+                                        Some((pcurve.clone(), range[0], range[1]))
+                                    }
+                                    _ => None,
                                 })
-                                .map(|(_, v)| v.clone());
+                                .or_else(|| {
+                                    // Deterministic minimum-key selection among
+                                    // same-surface rows (the pcurves map is an
+                                    // IndexMap; its insertion order is
+                                    // historical, not a stable selection order).
+                                    let mut best_key: Option<(u64, u32)> = None;
+                                    let mut best: Option<&(rcad_kernel::geom::Curve2d, f64, f64)> = None;
+                                    for ((p, l), v) in ed.pcurves.iter() {
+                                        if owner_surface
+                                            .get(p)
+                                            .map_or(false, |s| surface_same(&a_surf, s))
+                                        {
+                                            let k = (*p, *l);
+                                            if best_key.map_or(true, |bk| k < bk) {
+                                                best_key = Some(k);
+                                                best = Some(v);
+                                            }
+                                        }
+                                    }
+                                    best.cloned()
+                                });
                             if let Some(v) = row {
                                 ed.pcurves.entry(ar_key).or_insert(v);
                             }
@@ -3701,8 +3627,9 @@ impl<'a> Builder<'a> {
 
         // OCCT L597-649: build face-to-parent solid map (with image propagation).
         // OCCT aFaceToParent (L593-594) is DataMap<Shape, Shape,
-        // TopTools_ShapeMapHasher> 鈥?key identity TShape + Location.
-        let mut a_face_to_parent: HashMap<(u64, u32), u64> = HashMap::new(); // face 鈫?solid
+        // TopTools_ShapeMapHasher> 鈥?keys AND values are TShape + Location
+        // identity (parent compare at L776 is IsSame = TShape + Location).
+        let mut a_face_to_parent: HashMap<(u64, u32), (u64, u32)> = HashMap::new(); // face 鈫?solid
         let a_nb_src = self.ds.nb_source_shapes();
         for i_src in 0..a_nb_src {
             let a_si = self.ds.shape_info(i_src);
@@ -3716,13 +3643,13 @@ impl<'a> Builder<'a> {
             for a_f in a_sf {
                 a_face_to_parent
                     .entry((a_f.ptr_id(), a_f.location))
-                    .or_insert(a_solid.ptr_id());
+                    .or_insert((a_solid.ptr_id(), a_solid.location));
             }
         }
         // OCCT L619-648: propagate the parent solid to the image faces.
         // OCCT L636: aPropagation is NCollection_DataMap<TopoDS_Shape, TopoDS_Shape,
         // TopTools_ShapeMapHasher> 鈥?bucket iteration order (L660-665).
-        let mut a_propagation: crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), u64> =
+        let mut a_propagation: crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), (u64, u32)> =
             crate::bop::algo::occt_map::OcctDataMapInt::new();
         // OCCT L640-655: iterate myImages 鈥?NCollection_DataMap bucket order.
         for (a_src, a_l_im) in self.my_images.iter() {
@@ -3819,59 +3746,6 @@ impl<'a> Builder<'a> {
 
         // OCCT L743-748: aDMSLS 鈥?back-and-forth SD map (IndexedDataMap,
         // insertion order); aVPSB 鈥?pairs for analysis.
-        if std::env::var("RCAD_SD_DEBUG").is_ok() {
-            for (cid, ic) in self.ds.intersection_curves.iter().enumerate() {
-                for pb in &ic.pave_blocks {
-                    let r = pb.read();
-                    let ep = if r.has_edge() {
-                        format!("EDGE{}:ptr{}", r.edge, self.ds.shape(r.edge).ptr_id() % 100000)
-                    } else {
-                        "noedge".into()
-                    };
-                    eprintln!("[SD-CURVE] cid={} pv=({},{}) oe={} cb={:?} {}",
-                        cid, r.pave1.index(), r.pave2.index(), r.original_edge(), r.common_block_idx, ep);
-                    for pv in [r.pave1.index(), r.pave2.index()] {
-                        let vs = self.ds.shape(pv);
-                        let (p, t) = match vs.as_vertex() {
-                            Some(v) => (v.point, v.tolerance),
-                            None => continue,
-                        };
-                        eprintln!("[SD-CURVE-V] v={} p=({:.6},{:.6},{:.6}) tol={:.3e} ptr{}",
-                            pv, p.x, p.y, p.z, t, vs.ptr_id() % 100000);
-                    }
-                }
-            }
-            for &n_f in &a_fi_vec {
-                if !self.ds.has_face_info(n_f) { continue; }
-                let fi = self.ds.face_info_pool.get(n_f);
-                let Some(fi) = fi else { continue };
-                let on: Vec<String> = fi.pave_blocks_on.iter().map(|&pm| {
-                    match self.ds.pb_from_ptr(pm) {
-                        Some(pb) => {
-                            let r = pb.0.read().unwrap();
-                            let ep = self.ds.shape(r.edge).ptr_id() % 100000;
-                            format!("e{}:{}", r.edge, ep)
-                        }
-                        None => format!("?{}", pm % 100000),
-                    }
-                }).collect();
-                eprintln!("[SD-FI] f={} pb_on=[{}]", n_f, on.join(","));
-            }
-            for ef in &self.ds.interf_ef {
-                eprintln!("[SD-EF] e={} f={}", ef.edge, ef.face);
-            }
-            for ff in a_ffs {
-                let nc = if ff.curves.is_empty() { 0 } else { ff.curves.len() };
-                eprintln!("[SD-FF] f1={} f2={} ncurves={} tangent={}", ff.f1, ff.f2, nc, ff.tangent_faces as u8);
-            }
-            for (es_key, faces) in &an_e_set_faces {
-                let ids: Vec<String> = faces.iter().map(|(nf, f)| {
-                    format!("{}:{}", nf, f.ptr_id() % 100000)
-                }).collect();
-                let es: Vec<String> = es_key.1.iter().map(|(p, l)| format!("{}:{}", p % 100000, l)).collect();
-                eprintln!("[SD-SET] cnt={} nedges={} nf={} faces=[{}] edges=[{}]", es_key.0, es_key.1.len(), faces.len(), ids.join(","), es.join(","));
-            }
-        }
         let mut a_dmsls: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
         let mut a_vpsb: Vec<(Shape, Shape)> = Vec::new();
 

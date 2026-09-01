@@ -151,7 +151,14 @@ pub fn closest_point_on_surface(
                 cyl.origin + cyl.axis * along + radial / radial_len * cyl.radius
             };
             let u_axis = cyl.ref_dir.normalize();
-            let v_axis = cyl.axis.cross(u_axis);
+            // OCCT ElSLib::CylinderParameters (ElSLib.cxx L1781-1789):
+            // atan2(P·YDirection, P·XDirection) — the gp_Ax3 YDirection of the
+            // cylinder's position, which for a ZReverse (left-handed) frame is
+            // the explicit Y (rcad `y_dir`), NOT axis × ref_dir. Using the
+            // default right-handed Y mirrors u for left-handed frames and
+            // mis-projects v-isoline pcurves (the mirrored u breaks the face
+            // polygon of the FClass2d classifier).
+            let v_axis = cyl.y_axis();
             // OCCT ElSLib::CylinderParameters: atan2(P·YDirection, P·XDirection)
             // on the raw offset vector (same rationale as the Cone branch).
             let theta = v.dot(v_axis).atan2(v.dot(u_axis));

@@ -9,6 +9,10 @@ pub(super) struct OrientedEdgeExport {
     #[allow(dead_code)]
     pub(super) end: usize,
     pub(super) forward: bool,
+    /// Location index of the edge Shape in the BRep (BRep_Tool::Curve applies
+    /// it to the raw TShape curve — TopoDSToStep_MakeStepEdge transforms the
+    /// curve by CA.Trsf(), MakeStepEdge.cxx L199-200).
+    pub(super) location: u32,
 }
 
 // ── Topods-native variants (migration) ──
@@ -40,6 +44,7 @@ pub(super) fn oriented_face_edges_topods(
                 start,
                 end,
                 forward: sr.orientation.is_forward(),
+                location: sr.location,
             })
         })
         .collect()

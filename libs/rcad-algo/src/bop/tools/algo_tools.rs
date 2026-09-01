@@ -1210,16 +1210,23 @@ fn edge_pcurve_of_face<'a>(a_e: &'a Shape, f: usize, ds: &DS) -> Option<&'a rcad
     ed.pcurves
         .get(&fkey)
         .or_else(|| {
-            ed.pcurves.iter().find_map(|(k, v)| {
+            // OCCT BRep_Tool::CurveOnSurface walks the representation list;
+            // the pcurves map is an IndexMap whose insertion order is
+            // historical, so select the deterministic minimum key among the
+            // same-surface rows.
+            let mut best: Option<(&(u64, u32), &(rcad_kernel::geom::Curve2d, f64, f64))> = None;
+            for (k, v) in ed.pcurves.iter() {
                 if let Some(&fi) = ds.map_shape_index.get(k) {
                     if let Some(fs) = ds.face_surface(fi) {
                         if surface_same(surf, &fs) {
-                            return Some(v);
+                            if best.as_ref().map_or(true, |(bk, _)| k < *bk) {
+                                best = Some((k, v));
+                            }
                         }
                     }
                 }
-                None
-            })
+            }
+            best.map(|(_, v)| v)
         })
         .map(|(pc, _, _)| pc)
 }

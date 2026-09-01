@@ -188,8 +188,8 @@ pub struct TEdgeData {
     pub range: [f64; 2],
     #[serde(default)]
     pub degenerated: bool,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub pcurves: HashMap<(u64, u32), (Curve2d, f64, f64)>,
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub pcurves: indexmap::IndexMap<(u64, u32), (Curve2d, f64, f64)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub representations: Vec<CurveRepresentation>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -457,7 +457,7 @@ impl BRep {
             last,
             range,
             degenerated: is_degenerated,
-            pcurves: HashMap::new(),
+            pcurves: indexmap::IndexMap::new(),
             representations: Vec::new(),
             vertex_params,
             tolerance: CONFUSION,
@@ -716,7 +716,7 @@ impl BRep {
             last,
             range,
             degenerated: false,
-            pcurves: HashMap::new(),
+            pcurves: indexmap::IndexMap::new(),
             representations: Vec::new(),
             vertex_params: HashMap::new(),
             tolerance: 0.0,
@@ -1713,29 +1713,6 @@ impl BRepTool for BRep {
         if let Some(hit) = ed.pcurves.get(&key) {
             return Some(hit.clone());
         }
-        if std::env::var("RCAD_KEYMISS").is_ok() {
-            let st = match &face.data.as_ref() {
-                TShape::Face(fd) => match fd.surface.as_ref() {
-                    Some(Surface3::Plane(_)) => "PL",
-                    Some(Surface3::Cylinder(_)) => "CY",
-                    _ => "?",
-                },
-                _ => "?",
-            };
-            eprintln!(
-                "[KM] {} q=({},{}) ep={} eloc={} have={:?}",
-                st,
-                key.0 % 100000,
-                key.1,
-                edge.ptr_id() % 100000,
-                edge.location,
-                ed.pcurves
-                    .iter()
-                    .map(|((p, l), _)| format!("({},{})", p % 100000, l))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
-        }
         // OCCT BRep_Tool.cxx L345-368: the edge's representations are matched
         // by (surface handle, L.Predivided(E.Location()) BY VALUE) — not by
         // the owning face TShape pointer.  A face rebuilt over the same
@@ -1793,17 +1770,26 @@ impl BRepTool for BRep {
                 _ => {}
             }
         }
+        // OCCT never walks a hash map here: BRep_Tool::CurveOnSurface iterates
+        // the edge's representation LIST (insertion order).  ed.pcurves is an
+        // IndexMap whose insertion order reflects the historical insertion
+        // sequence (not stable across equivalent builds), so pick the
+        // deterministic minimum key among the matching rows.
+        let mut best: Option<((u64, u32), (Curve2d, f64, f64))> = None;
         for ((fptr, lhash), v) in ed.pcurves.iter() {
             if *lhash != key.1 {
                 continue;
             }
             if let Some(s) = face_surface_by_ptr(*fptr) {
                 if surface_same(&s, &fsurf) {
-                    return Some(v.clone());
+                    let k = (*fptr, *lhash);
+                    if best.as_ref().map_or(true, |(bk, _)| k < *bk) {
+                        best = Some((k, v.clone()));
+                    }
                 }
             }
         }
-        None
+        best.map(|(_, v)| v)
     }
 
     fn is_edge_closed_on_face(&self, edge: &Shape, face: &Shape) -> bool {

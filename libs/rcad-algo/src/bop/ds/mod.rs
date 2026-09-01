@@ -2466,7 +2466,7 @@ impl DS {
             curve: Some(curve), range,
             first: v_first, last: v_last,
             tolerance: 0.0, same_parameter: true, same_range: true,
-            degenerated: false, pcurves: HashMap::new(),
+            degenerated: false, pcurves: indexmap::IndexMap::new(),
             representations: Vec::new(), vertex_params: HashMap::new(),
             my_shapes: Vec::new(), flags: 0,
         };
@@ -2598,9 +2598,9 @@ impl DS {
                     }).collect();
                     (pcurves, representations)
                 }
-                _ => (HashMap::new(), Vec::new()),
+                _ => (indexmap::IndexMap::new(), Vec::new()),
             },
-            _ => (HashMap::new(), Vec::new()),
+            _ => (indexmap::IndexMap::new(), Vec::new()),
         };
         // OCCT BOPTools_AlgoTools::MakeSplitEdge (BOPTools_AlgoTools_2.cxx
         // L145-146): E = aE.Oriented(TopAbs_FORWARD); E.EmptyCopy(); — the
