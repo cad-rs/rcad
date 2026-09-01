@@ -293,6 +293,31 @@ impl Conic2d {
 
         (aa, bb, cc, dd, ee, ff)
     }
+
+    /// OCCT IntAna2d_Conic::NewCoefficients (IntAna2d_Conic.cxx L55-91) —
+    /// 1:1 coefficients of the conic in the local frame defined by the axis
+    /// `Dir1` (origin `theLoc`, X direction `theDir`, Y = Rot90(X)).
+    /// The "2·D·x" convention of the stored coefficients is preserved.
+    pub fn new_coefficients_2d(&self, the_loc: DVec2, the_dir: DVec2) -> Conic2d {
+        // x = t11 X + t12 Y + t13,  y = t21 X + t22 Y + t23.
+        let t11 = the_dir.x;
+        let t21 = the_dir.y;
+        let t13 = the_loc.x;
+        let t23 = the_loc.y;
+        let t22 = t11;
+        let t12 = -t21;
+
+        let (a, b, c, d, e, f) = (self.a, self.b, self.c, self.d, self.e, self.f);
+
+        let a1 = t11 * (a * t11 + 2.0 * c * t21) + b * t21 * t21;
+        let b1 = t12 * (a * t12 + 2.0 * c * t22) + b * t22 * t22;
+        let c1 = t12 * (a * t11 + c * t21) + t22 * (c * t11 + b * t21);
+        let d1 = t11 * (d + a * t13) + t21 * (e + c * t13) + t23 * (c * t11 + b * t21);
+        let e1 = t12 * (d + a * t13) + t22 * (e + c * t13) + t23 * (c * t12 + b * t22);
+        let f1 = f + t13 * (2.0 * d + a * t13) + t23 * (2.0 * e + 2.0 * c * t13 + b * t23);
+
+        Conic2d { a: a1, b: b1, c: c1, d: d1, e: e1, f: f1 }
+    }
 }
 
 // ============================================================================
@@ -668,22 +693,121 @@ impl AnaIntersection2d {
 
     /// Intersect a parabola with a conic.
     ///
-    /// OCCT: `Perform(gp_Parab2d, IntAna2d_Conic)`.
+    /// OCCT: `Perform(gp_Parab2d, IntAna2d_Conic)` (IntAna2d_AnaIntersection_7.cxx
+    /// L26-82) — the conic is re-expressed in the parabola's local frame
+    /// (X = symmetry axis, Y = Rot90(X)), the parametrization
+    /// x = S²/(2p), y = S is substituted, and the quartic in S is solved by
+    /// MyDirectPolynomialRoots.  The parameter on the parabola is S.
     pub fn perform_parabola_conic(&mut self, parabola: &Parabola2d, conic: &Conic2d) {
+        // OCCT PIsDirect = P.IsDirect() — the parabola frame Y = Rot90(X) is
+        // always right-handed in rcad (direct), so the sign flip never fires.
+        let un_sur_2p = 0.5 / parabola.focal_param;
+        let axe_rep = (parabola.origin, parabola.axis_dir);
+
+        self.done = false;
+        self.nbp = 0;
+        self.para = false;
+        self.empt = false;
+        self.iden = false;
+
+        let nc = conic.new_coefficients_2d(axe_rep.0, axe_rep.1);
+        let (a, b, c, d, e, f) = (nc.a, nc.b, nc.c, nc.d, nc.e, nc.f);
+
+        // Parameter y with y=y, x=y^2/(2p)
+        let px0 = f;
+        let px1 = e + e;
+        let px2 = b + un_sur_2p * (d + d);
+        let px3 = (c + c) * un_sur_2p;
+        let px4 = a * (un_sur_2p * un_sur_2p);
+
+        let sol = MyDirectPolynomialRoots::new(px4, px3, px2, px1, px0);
+
+        if !sol.is_done() {
+            self.done = false;
+        } else {
+            if sol.infinite_roots() {
+                self.iden = true;
+                self.done = true;
+            }
+            self.nbp = sol.nb_solutions();
+            for i in 1..=self.nbp {
+                let s = sol.value(i);
+                let mut tx = un_sur_2p * s * s;
+                let mut ty = s;
+                coord_ancien_repere(&mut tx, &mut ty, axe_rep.0, axe_rep.1);
+                self.lpnt[i - 1] = IntPoint2d::new_implicit(tx, ty, s);
+            }
+            traitement_points_confondus(&mut self.nbp, &mut self.lpnt);
+        }
         self.done = true;
-        // Parabola: P(t) = origin + axis_dir * (t²/(2p)) + perp_dir * t
-        // Substitute into conic → quartic in t
-        self.intersect_parabola_conic(parabola, conic);
     }
 
     /// Intersect a hyperbola with a conic.
     ///
-    /// OCCT: `Perform(gp_Hypr2d, IntAna2d_Conic)`.
+    /// OCCT: `Perform(gp_Hypr2d, IntAna2d_Conic)` (IntAna2d_AnaIntersection_8.cxx
+    /// L41-123) — the conic is re-expressed in the hyperbola's local frame
+    /// (X = major axis), the parametrization x = a·cosh(t), y = b·sinh(t) is
+    /// rewritten in S = exp(t) as a quartic, solved by MyDirectPolynomialRoots.
+    /// Valid solutions have S > RealEpsilon(); the parameter on the hyperbola
+    /// is t = ln(S).
     pub fn perform_hyperbola_conic(&mut self, hyperbola: &Hyperbola2d, conic: &Conic2d) {
+        let minor = DVec2::new(-hyperbola.major_dir.y, hyperbola.major_dir.x);
+        let h_is_direct = hyperbola.major_dir.x * minor.y - hyperbola.major_dir.y * minor.x >= 0.0;
+        let (a_major, b_minor) = (hyperbola.semi_major, hyperbola.semi_minor);
+        let axe_rep = (hyperbola.center, hyperbola.major_dir);
+
+        self.done = false;
+        self.nbp = 0;
+        self.para = false;
+        self.iden = false;
+        self.empt = false;
+
+        let nc = conic.new_coefficients_2d(axe_rep.0, axe_rep.1);
+        let (a, b, c, d, e, f) = (nc.a, nc.b, nc.c, nc.d, nc.e, nc.f);
+
+        let a_major_p2 = a * a_major * a_major;
+        let b_minor_p2 = b * b_minor * b_minor;
+        let c_2_major_minor = c * 2.0 * a_major * b_minor;
+
+        // Parameter: t with x=MajorRadius*Ch(t), y=minorRadius*Sh(t).
+        // Polynomial rewritten in Exp(t): coefficients of P multiplied by
+        // 4*Exp(t)^2.
+        let px0 = a_major_p2 - c_2_major_minor + b_minor_p2;
+        let px1 = 4.0 * (d * a_major - e * b_minor);
+        let px2 = 2.0 * (a_major_p2 + 2.0 * f - b_minor_p2);
+        let px3 = 4.0 * (d * a_major + e * b_minor);
+        let px4 = a_major_p2 + c_2_major_minor + b_minor_p2;
+
+        let sol = MyDirectPolynomialRoots::new(px4, px3, px2, px1, px0);
+
+        if !sol.is_done() {
+            self.done = false;
+            return;
+        } else if sol.infinite_roots() {
+            self.iden = true;
+            self.done = true;
+            return;
+        }
+        // Resolution in S = Exp(t).
+        let nbp = sol.nb_solutions();
+        let mut nb_sol_valides = 0;
+        for i in 1..=nbp {
+            let s = sol.value(i);
+            if s > f64::EPSILON {
+                let mut tx = 0.5 * a_major * (s + 1.0 / s);
+                let mut ty = 0.5 * b_minor * (s - 1.0 / s);
+                nb_sol_valides += 1;
+                coord_ancien_repere(&mut tx, &mut ty, axe_rep.0, axe_rep.1);
+                let mut param = s.ln();
+                if !h_is_direct {
+                    param = -param;
+                }
+                self.lpnt[nb_sol_valides - 1] = IntPoint2d::new_implicit(tx, ty, param);
+            }
+        }
+        self.nbp = nb_sol_valides;
+        traitement_points_confondus(&mut self.nbp, &mut self.lpnt);
         self.done = true;
-        // Hyperbola: P(t) = center + major_dir * a*cosh(t) + minor_dir * b*sinh(t)
-        // Or use rational parameterization: x = a*(1+t²)/(1-t²), y = 2*b*t/(1-t²)
-        self.intersect_hyperbola_conic(hyperbola, conic);
     }
 
     // ========================================================================
@@ -885,89 +1009,6 @@ impl AnaIntersection2d {
         self.solve_conic_param_quartic(conic, x0, x1, x2, y0, y1, y2);
     }
 
-    fn intersect_parabola_conic(&mut self, parabola: &Parabola2d, conic: &Conic2d) {
-        // Parabola in local frame: P(t) = origin + axis_dir*(t²/(2p)) + perp_dir*t
-        // In global coords:
-        // x(t) = ox + cos_a*(t²/(2p)) - sin_a*t
-        // y(t) = oy + sin_a*(t²/(2p)) + cos_a*t
-        //
-        // This is a quadratic in t: x = x0 + x1*t + x2*t², y = y0 + y1*t + y2*t²
-        // Substituting into conic → quartic in t
-
-        let p = parabola.focal_param;
-        let ox = parabola.origin.x;
-        let oy = parabola.origin.y;
-        let cos_a = parabola.axis_dir.x;
-        let sin_a = parabola.axis_dir.y;
-
-        let inv_2p = 1.0 / (2.0 * p);
-        let x0 = ox;
-        let x1 = -sin_a;
-        let x2 = cos_a * inv_2p;
-        let y0 = oy;
-        let y1 = cos_a;
-        let y2 = sin_a * inv_2p;
-
-        self.solve_conic_param_quartic(conic, x0, x1, x2, y0, y1, y2);
-    }
-
-    fn intersect_hyperbola_conic(&mut self, hyperbola: &Hyperbola2d, conic: &Conic2d) {
-        // Hyperbola rational parameterization:
-        // u = tanh(t/2): x = cx + a*(1+u²)/(1-u²), y = cy + b*2u/(1-u²)
-        // Using t-param: x = cx + a*cosh(t), y = cy + b*sinh(t)
-        // For the rational form using u = tan(θ/2) substitution:
-        // Use: x = a*(1+t²)/(1-t²), y = 2*b*t/(1-t²) centered at origin
-        //
-        // Actually, let's use the simple approach: parameterize the hyperbola in t.
-        // x = cx + semi_major * cosh(t)
-        // y = cy + semi_minor * sinh(t)
-        // This is not rational, but we can use the transformation:
-        // cosh(t) = (e^t + e^-t)/2, sinh(t) = (e^t - e^-t)/2
-        //
-        // For the general conic intersection, we use rational params:
-        // x = cx + a*(1+t²)/(2t), y = cy + b*(1-t²)/(2t)
-        // OR using the standard rational form:
-        // x = a*(1+u²)/(1-u²), y = 2*b*u/(1-u²) (rectangle hyperbola)
-        //
-        // For real hyperbola: x²/a² - y²/b² = 1
-        // Parametric: x = a*(1+t²)/(1-t²), y = 2*b*t/(1-t²)
-        // where t = tanh(θ/2) ∈ (-1, 1)
-
-        let cx = hyperbola.center.x;
-        let cy = hyperbola.center.y;
-        let a_r = hyperbola.semi_major;
-        let b_r = hyperbola.semi_minor;
-        let cos0 = hyperbola.major_dir.x;
-        let sin0 = hyperbola.major_dir.y;
-
-        // In local frame: u = a_r*(1+t²)/(1-t²), v = 2*b_r*t/(1-t²)
-        // Then transform back: P = center + u*major_dir + v*minor_dir
-        // minor_dir = (-sin0, cos0)
-
-        // x(t) = cx + cos0*a_r*(1+t²)/(1-t²) - sin0*2*b_r*t/(1-t²)
-        // y(t) = cy + sin0*a_r*(1+t²)/(1-t²) + cos0*2*b_r*t/(1-t²)
-        //
-        // Multiply numerator and denominator:
-        // Let denom = 1-t²
-        // X_num = cx*(1-t²) + a_r*cos0*(1+t²) - 2*b_r*sin0*t
-        //       = (cx + a_r*cos0) + (-2*b_r*sin0)*t + (-cx + a_r*cos0)*t²
-        // Y_num = cy*(1-t²) + a_r*sin0*(1+t²) + 2*b_r*cos0*t
-        //       = (cy + a_r*sin0) + (2*b_r*cos0)*t + (-cy + a_r*sin0)*t²
-        //
-        // So x = X_num/(1-t²), y = Y_num/(1-t²)
-        // F(X/denom, Y/denom) = 0 → F(X_num, Y_num) = 0 (multiply by denom²)
-        // This gives a quartic in t.
-
-        let x0 = cx + a_r * cos0;
-        let x1 = -2.0 * b_r * sin0;
-        let x2 = -cx + a_r * cos0;
-        let y0 = cy + a_r * sin0;
-        let y1 = 2.0 * b_r * cos0;
-        let y2 = -cy + a_r * sin0;
-
-        self.solve_conic_param_quartic(conic, x0, x1, x2, y0, y1, y2);
-    }
-
     /// Generic solver for conic intersection where the first curve is
     /// parameterized as a quadratic rational: x(t) = (x0 + x1*t + x2*t²) / (1 + t²)
     /// or more generally as a polynomial: x(t) = x0 + x1*t + x2*t², y(t) = y0 + y1*t + y2*t²
@@ -1127,6 +1168,238 @@ impl Default for AnaIntersection2d {
 // ============================================================================
 // Outils — polynomial root solvers and utility functions
 // ============================================================================
+
+/// OCCT IntAna2d_Outils MyDirectPolynomialRoots (IntAna2d_Outils.cxx L21-248)
+/// — wrapper around math_DirectPolynomialRoots with the degree-reduction
+/// fallbacks and the |value|-ordered selection of the valid roots.
+struct MyDirectPolynomialRoots {
+    /// Number of solutions; -1 when the complete solver is not done.
+    nbsol: i32,
+    /// True when the polynomial is identically zero (infinite roots).
+    same: bool,
+    sol: [f64; 16],
+    val: [f64; 16],
+}
+
+impl MyDirectPolynomialRoots {
+    /// OCCT MyDirectPolynomialRoots(A4, A3, A2, A1, A0) (L26-215).
+    fn new(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Self {
+        use crate::math::direct_polynomial_roots::{epsilon, DirectPolynomialRoots};
+
+        let mut r = MyDirectPolynomialRoots {
+            nbsol: 0,
+            same: false,
+            sol: [f64::MAX; 16],
+            val: [f64::MAX; 16],
+        };
+
+        let an_aa = [a0.abs(), a1.abs(), a2.abs(), a3.abs(), a4.abs()];
+        if an_aa[0] + an_aa[1] + an_aa[2] + an_aa[3] + an_aa[4] < epsilon(10000.0) {
+            r.same = true;
+            return r;
+        }
+
+        let mut nbsol_poly_complet = 0usize;
+        let mut pb_possible = false;
+        let tol = epsilon(100.0);
+
+        let math = DirectPolynomialRoots::new_quartic(a4, a3, a2, a1, a0);
+        if math.is_done() {
+            let nbp = math.nb_solutions();
+            nbsol_poly_complet = nbp;
+            for i in 1..=nbp {
+                let x = math.value(i);
+                r.val[r.nbsol as usize] = a0 + x * (a1 + x * (a2 + x * (a3 + x * a4)));
+                r.sol[r.nbsol as usize] = x;
+                if r.val[r.nbsol as usize] > tol || r.val[r.nbsol as usize] < -tol {
+                    pb_possible = true;
+                }
+                r.nbsol += 1;
+            }
+            if (nbp & 1) != 0 {
+                pb_possible = true;
+            }
+        } else {
+            pb_possible = true;
+        }
+
+        // OCCT L82-205: when the complete polynomial is suspect, solve the
+        // reduced polynomials (dropping the constant, then the leading term,
+        // then A3) and merge the new roots.
+        if pb_possible {
+            let mut an_amin: f64 = f64::MAX;
+            let mut an_amax: f64 = -1.0;
+            let mut an_eps = f64::EPSILON;
+            for i in 0..5 {
+                an_amin = an_amin.min(an_aa[i].max(an_eps));
+                an_amax = an_amax.max(an_aa[i].max(an_eps));
+            }
+            an_eps = 1.0e-4_f64.min(epsilon(1000.0 * an_amax / an_amin));
+
+            let m4321 = DirectPolynomialRoots::new_cubic(a4, a3, a2, a1);
+            if m4321.is_done() {
+                let nbp = m4321.nb_solutions();
+                for i in 1..=nbp {
+                    let x = m4321.value(i);
+                    let mut add = true;
+                    for j in 0..r.nbsol as usize {
+                        if (r.sol[j] - x).abs() < an_eps {
+                            add = false;
+                        }
+                    }
+                    if add {
+                        r.val[r.nbsol as usize] = a0 + x * (a1 + x * (a2 + x * (a3 + x * a4)));
+                        r.sol[r.nbsol as usize] = x;
+                        r.nbsol += 1;
+                    }
+                }
+            }
+            let m3210 = DirectPolynomialRoots::new_cubic(a3, a2, a1, a0);
+            if m3210.is_done() {
+                let nbp = m3210.nb_solutions();
+                for i in 1..=nbp {
+                    let x = m3210.value(i);
+                    let mut add = true;
+                    for j in 0..r.nbsol as usize {
+                        if (r.sol[j] - x).abs() < an_eps {
+                            add = false;
+                        }
+                    }
+                    if add {
+                        r.val[r.nbsol as usize] = a0 + x * (a1 + x * (a2 + x * (a3 + x * a4)));
+                        r.sol[r.nbsol as usize] = x;
+                        r.nbsol += 1;
+                    }
+                }
+            }
+            let m210 = DirectPolynomialRoots::new_quadratic(a3, a2, a1);
+            if m210.is_done() {
+                let nbp = m210.nb_solutions();
+                for i in 1..=nbp {
+                    let x = m210.value(i);
+                    let mut add = true;
+                    for j in 0..r.nbsol as usize {
+                        if (r.sol[j] - x).abs() < an_eps {
+                            add = false;
+                        }
+                    }
+                    if add {
+                        r.val[r.nbsol as usize] = a0 + x * (a1 + x * (a2 + x * (a3 + x * a4)));
+                        r.sol[r.nbsol as usize] = x;
+                        r.nbsol += 1;
+                    }
+                }
+            }
+
+            // Sort values by decreasing order of |val|... the bubble sort
+            // orders the pairs by |val| ascending (OCCT L177-195).
+            let mut tri_ok = false;
+            while !tri_ok {
+                tri_ok = true;
+                for i in 1..r.nbsol as usize {
+                    if r.val[i].abs() < r.val[i - 1].abs() {
+                        r.val.swap(i, i - 1);
+                        r.sol.swap(i, i - 1);
+                        tri_ok = false;
+                    }
+                }
+            }
+
+            // Keep the first values — at least as many as the complete
+            // polynomial (OCCT L200-203).  The sentinel entries are f64::MAX,
+            // so the |val| < Epsilon branch stops at the real roots.
+            let mut nbsol = 0usize;
+            while nbsol < nbsol_poly_complet
+                || (nbsol < r.val.len() && r.val[nbsol].abs() < epsilon(10000.0))
+            {
+                nbsol += 1;
+            }
+            r.nbsol = nbsol as i32;
+        }
+
+        if r.nbsol == 0 {
+            r.nbsol = -1;
+        }
+        if r.nbsol > 4 {
+            r.same = true;
+            r.nbsol = 0;
+        }
+        r
+    }
+
+    /// OCCT IsDone() — nbsol > -1.
+    fn is_done(&self) -> bool {
+        self.nbsol > -1
+    }
+
+    /// OCCT InfiniteRoots().
+    fn infinite_roots(&self) -> bool {
+        self.same
+    }
+
+    /// OCCT NbSolutions().
+    fn nb_solutions(&self) -> usize {
+        self.nbsol.max(0) as usize
+    }
+
+    /// OCCT Value(i) — 1-based.
+    fn value(&self, i: usize) -> f64 {
+        self.sol[i - 1]
+    }
+}
+
+/// OCCT IntAna2d_Outils Coord_Ancien_Repere (IntAna2d_Outils.cxx L301-320) —
+/// transform local frame coordinates back to the absolute frame.  The frame
+/// is (origin `the_loc`, X = `the_dir`, Y = Rot90(X)).
+fn coord_ancien_repere(x1: &mut f64, y1: &mut f64, the_loc: DVec2, the_dir: DVec2) {
+    let t11 = the_dir.x;
+    let t21 = the_dir.y;
+    let t13 = the_loc.x;
+    let t23 = the_loc.y;
+    let t22 = t11;
+    let t12 = -t21;
+    let x0 = t11 * *x1 + t12 * *y1 + t13;
+    let y0 = t21 * *x1 + t22 * *y1 + t23;
+    *x1 = x0;
+    *y1 = y0;
+}
+
+/// OCCT IntAna2d_Outils Points_Confondus (IntAna2d_Outils.cxx L250-260).
+fn points_confondus(x1: f64, y1: f64, x2: f64, y2: f64) -> bool {
+    use crate::math::direct_polynomial_roots::epsilon;
+    (x1 - x2).abs() < epsilon(x1) && (y1 - y2).abs() < epsilon(y1)
+}
+
+/// OCCT IntAna2d_Outils Traitement_Points_Confondus (IntAna2d_Outils.cxx
+/// L266-297) — remove coincident points, updating the count in place.
+fn traitement_points_confondus(nb_pts: &mut usize, pts: &mut [IntPoint2d; 4]) {
+    let mut i = *nb_pts;
+    while i > 1 {
+        let mut non_egalite = true;
+        let mut j = i - 1;
+        while j > 0 && non_egalite {
+            if points_confondus(
+                pts[i - 1].value().x,
+                pts[i - 1].value().y,
+                pts[j - 1].value().x,
+                pts[j - 1].value().y,
+            ) {
+                non_egalite = false;
+                for k in i..*nb_pts {
+                    let (xk, yk, uk) = (
+                        pts[k].value().x,
+                        pts[k].value().y,
+                        pts[k].param_on_first(),
+                    );
+                    pts[k - 1].set_value_implicit(xk, yk, uk);
+                }
+                *nb_pts -= 1;
+            }
+            j -= 1;
+        }
+        i -= 1;
+    }
+}
 
 /// Compute the product (p0 + p1*t + p2*t²) * (q0 + q1*t + q2*t²) as coefficients
 /// of a quartic: result[0] + result[1]*t + result[2]*t² + result[3]*t³ + result[4]*t⁴

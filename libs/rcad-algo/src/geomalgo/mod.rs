@@ -14,9 +14,14 @@ pub mod int_res2d;   // IntRes2d (2D intersection data types)
 pub mod int_surf;    // IntSurf (Quadric, LineOn2S, PntOn2S)
 pub mod top_trans;   // TopTrans (CurveTransition, SurfaceTransition)
 pub mod int_polyh;   // IntPolyh (triangle-triangle intersection support types)
-pub mod intf;        // Intf (Intf_PIType, Intf_SectionPoint, InterUtils helpers)
+pub mod intf;        // Intf (Intf_PIType, Intf_SectionPoint, Intf_Tool, InterUtils helpers)
+pub mod int_curv_surf; // IntCurveSurface polygon/polyhedron sampling + IntPatch_Polyhedron
 pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain
 
 pub use int_polyh::IntPolyhPoint;
 pub use top_trans::surface_transition::SurfaceTransition;
-pub use intf::{IntfPIType, IntfSectionPoint, PolyhedronLike, PolygonLike, section_point_to_parameters};
+pub use intf::{
+    section_point_to_parameters, IntfPIType, IntfSectionPoint, IntfTool, PolyhedronLike,
+    PolygonLike,
+};
+pub use int_curv_surf::{IntPatchPolyhedron, ThePolygonOfHInter, ThePolyhedronOfHInter};

@@ -16,18 +16,39 @@
 //!     constructors and SetValues of IntCurveSurface_IntersectionPoint.
 //!   IntCurveSurface_InterUtils_Test.cxx — SectionPointToParameters with the
 //!     degenerate-face fallback to the longest edge.
+//!   IntCurveSurface_ThePolygonOfHInter_Test.cxx — the Closed flag of the
+//!     curve-sampling polygon.
+//!   IntCurveSurface_ThePolyhedronOfHInter_Test.cxx — singularity flags, the
+//!     size/triangles/points of the surface-sampling polyhedron, the
+//!     parameter-array constructor (min-size acceptance, single-value
+//!     rejection) and PlaneEquation finiteness.
+//!   IntPatch_Polyhedron_Test.cxx — the auto-computed subdivision, the
+//!     zero-subdivision clamp and the TriConnex no-crash guarantees.
+//!   Intf_Tool_Test.cxx — Hypr2dBox/Parab2dBox/ParabBox/HyprBox valid
+//!     segments plus the no-intersection zero-segments case.
 //!
 //! 1:1 translations of the OCCT tests against the rcad OCCT-aligned APIs.
 
+use glam::{DVec2, DVec3};
 use rcad_algo::geomalgo::int_polyh::IntPolyhPoint;
 use rcad_algo::geomalgo::int_patch::int_cs::{IntersectionPoint, TransitionOnCurve};
 use rcad_algo::geomalgo::int_surf::{LineOn2S, PntOn2S, Quadric};
 use rcad_algo::geomalgo::top_trans::surface_transition::SurfaceTransition;
 use rcad_algo::geomalgo::intf::{
-    section_point_to_parameters, IntfPIType, IntfSectionPoint, PolyhedronLike, PolygonLike,
+    section_point_to_parameters, IntfPIType, IntfSectionPoint, IntfTool, PolyhedronLike,
+    PolygonLike,
 };
-use rcad_kernel::core::precision::{ANGULAR, COMPUTATIONAL, CONFUSION, SQUARE_CONFUSION};
-use rcad_kernel::geom::ConicalSurface;
+use rcad_algo::geomalgo::{
+    IntPatchPolyhedron, ThePolygonOfHInter, ThePolyhedronOfHInter,
+};
+use rcad_kernel::core::precision::{
+    ANGULAR, COMPUTATIONAL, CONFUSION, INFINITE_VALUE, SQUARE_CONFUSION,
+};
+use rcad_kernel::geom::{
+    ConicalSurface, Hyperbola2d, Hyperbola3, Line3, Parabola2d, Parabola3, Plane, SphericalSurface,
+    Surface3,
+};
+use rcad_kernel::math::bnd::{BndBox, BndBox2d};
 use rcad_kernel::topods::{Orientation, State};
 
 // =============================================================================
@@ -486,5 +507,376 @@ mod int_polyh_point_tests {
         let p1 = IntPolyhPoint::new_uv(1.0, 0.0, 0.0, 0.0, 0.0);
         let p2 = IntPolyhPoint::new_uv(0.0, 1.0, 0.0, 0.0, 0.0);
         assert_eq!(p1.dot(&p2), 0.0);
+    }
+}
+
+// =============================================================================
+// IntCurveSurface_ThePolygonOfHInter_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod int_curve_surface_the_polygon_of_hinter_tests {
+    use super::*;
+
+    // TEST(IntCurveSurface_ThePolygonOfHInter_Test, ClosedFlagReflectsStoredState)
+    #[test]
+    fn closed_flag_reflects_stored_state() {
+        // Geom_Line(gp_Ax1(gp_Pnt(0,0,0), gp_Dir(1,0,0))).
+        let line = Line3::new(DVec3::ZERO, DVec3::X);
+        let mut polygon = ThePolygonOfHInter::new(&line, 6);
+
+        assert!(!polygon.closed());
+        polygon.set_closed(true);
+        assert!(polygon.closed());
+    }
+}
+
+// =============================================================================
+// IntCurveSurface_ThePolyhedronOfHInter_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod int_curve_surface_the_polyhedron_of_hinter_tests {
+    use super::*;
+
+    /// OCCT makeTestPlane — gp_Ax3(Pnt(0,0,0), Dir(0,0,1)) adapted with the
+    /// UV domain [-1, 1]².
+    fn make_test_plane() -> Plane {
+        Plane::new(DVec3::ZERO, DVec3::Z)
+    }
+
+    // TEST(IntCurveSurface_ThePolyhedronOfHInter, SingularityFlags_InitializedFalse)
+    #[test]
+    fn singularity_flags_initialized_false() {
+        let surf = make_test_plane();
+        let poly = ThePolyhedronOfHInter::new(&surf, 3, 3, -1.0, -1.0, 1.0, 1.0);
+
+        assert!(!poly.has_u_min_singularity());
+        assert!(!poly.has_u_max_singularity());
+        assert!(!poly.has_v_min_singularity());
+        assert!(!poly.has_v_max_singularity());
+    }
+
+    // TEST(IntCurveSurface_ThePolyhedronOfHInter, SingularitySetters_UpdateFlags)
+    #[test]
+    fn singularity_setters_update_flags() {
+        let surf = make_test_plane();
+        let mut poly = ThePolyhedronOfHInter::new(&surf, 3, 3, -1.0, -1.0, 1.0, 1.0);
+
+        poly.set_u_min_singularity(true);
+        assert!(poly.has_u_min_singularity());
+        assert!(!poly.has_u_max_singularity());
+
+        poly.set_v_max_singularity(true);
+        assert!(poly.has_v_max_singularity());
+        assert!(!poly.has_v_min_singularity());
+    }
+
+    // TEST(IntCurveSurface_ThePolyhedronOfHInter, BasicConstruction_ValidMesh)
+    #[test]
+    fn basic_construction_valid_mesh() {
+        let surf = make_test_plane();
+        let poly = ThePolyhedronOfHInter::new(&surf, 4, 4, -1.0, -1.0, 1.0, 1.0);
+
+        let (nb_u, nb_v) = poly.size();
+        assert_eq!(nb_u, 4);
+        assert_eq!(nb_v, 4);
+        assert_eq!(poly.nb_triangles(), 4 * 4 * 2);
+        assert_eq!(poly.nb_points(), (4 + 1) * (4 + 1));
+    }
+
+    // TEST(IntCurveSurface_ThePolyhedronOfHInter, ParamArrayConstructor_MinimumSize)
+    // Length-2 arrays give nbdelta = 1 — no division by zero.
+    #[test]
+    fn param_array_constructor_minimum_size() {
+        let surf = make_test_plane();
+
+        let u_pars = [-1.0, 1.0];
+        let v_pars = [-1.0, 1.0];
+
+        let poly = ThePolyhedronOfHInter::new_params(&surf, &u_pars, &v_pars);
+
+        let (nb_u, nb_v) = poly.size();
+        assert!(nb_u >= 1);
+        assert!(nb_v >= 1);
+        assert!(poly.nb_triangles() > 0);
+    }
+
+    // TEST(IntCurveSurface_ThePolyhedronOfHInter, ParamArrayConstructor_RejectsSingleValueArrays)
+    // Constructor validation: a single-value array raises Standard_OutOfRange.
+    #[test]
+    fn param_array_constructor_rejects_single_value_arrays() {
+        let surf = make_test_plane();
+
+        // A single-value U array raises.
+        assert!(std::panic::catch_unwind(|| {
+            ThePolyhedronOfHInter::new_params(&surf, &[0.0], &[-1.0, 1.0]);
+        })
+        .is_err());
+
+        // A single-value V array raises.
+        assert!(std::panic::catch_unwind(|| {
+            ThePolyhedronOfHInter::new_params(&surf, &[-1.0, 1.0], &[0.0]);
+        })
+        .is_err());
+    }
+
+    // TEST(IntCurveSurface_ThePolyhedronOfHInter, PlaneEquation_FiniteResults)
+    #[test]
+    fn plane_equation_finite_results() {
+        let surf = make_test_plane();
+        let poly = ThePolyhedronOfHInter::new(&surf, 3, 3, -1.0, -1.0, 1.0, 1.0);
+
+        let (a_normal, a_polar_dist) = poly.plane_equation(1);
+        assert!(a_normal.x.is_finite());
+        assert!(a_normal.y.is_finite());
+        assert!(a_normal.z.is_finite());
+        assert!(a_polar_dist.is_finite());
+    }
+}
+
+// =============================================================================
+// IntPatch_Polyhedron_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod int_patch_polyhedron_tests {
+    use super::*;
+
+    /// OCCT makePlane — gp_Ax3(Pnt(0,0,0), Dir(0,0,1)) adapted with [-1,1]².
+    fn make_plane() -> Surface3 {
+        Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z))
+    }
+
+    /// OCCT makeSphere — gp_SphericalSurface(gp_Ax3(Pnt(0,0,0), Dir(0,0,1)), 1.0).
+    fn make_sphere() -> Surface3 {
+        Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            ref_dir: DVec3::X,
+        })
+    }
+
+    // TEST(IntPatch_Polyhedron, DefaultConstructor_ProducesValidMesh)
+    #[test]
+    fn default_constructor_produces_valid_mesh() {
+        let a_surf = make_sphere();
+        let a_poly = IntPatchPolyhedron::new(&a_surf);
+
+        let (nb_u, nb_v) = a_poly.size();
+        assert!(nb_u > 0);
+        assert!(nb_v > 0);
+        assert!(a_poly.nb_triangles() > 0);
+        assert!(a_poly.nb_points() > 0);
+    }
+
+    // TEST(IntPatch_Polyhedron, ZeroSubdivision_ClampedToMinimum)
+    // Zero nbu/nbv must not cause division-by-zero — clamped to minimum 1.
+    #[test]
+    fn zero_subdivision_clamped_to_minimum() {
+        let a_surf = make_plane();
+
+        let a_poly = IntPatchPolyhedron::new_sub(&a_surf, 0, 0);
+        let (nb_u, nb_v) = a_poly.size();
+        assert!(nb_u >= 1);
+        assert!(nb_v >= 1);
+        assert!(a_poly.nb_triangles() > 0);
+    }
+
+    // TEST(IntPatch_Polyhedron, SmallSubdivision_ProducesValidMesh)
+    #[test]
+    fn small_subdivision_produces_valid_mesh() {
+        let a_surf = make_plane();
+        let a_poly = IntPatchPolyhedron::new_sub(&a_surf, 2, 2);
+
+        let (nb_u, nb_v) = a_poly.size();
+        assert_eq!(nb_u, 2);
+        assert_eq!(nb_v, 2);
+        assert_eq!(a_poly.nb_triangles(), 2 * 2 * 2);
+    }
+
+    // TEST(IntPatch_Polyhedron, TriConnex_PedgeZero_NoCrash)
+    // TriConnex must not crash when Pedge == 0.
+    #[test]
+    fn tri_connex_pedge_zero_no_crash() {
+        let a_surf = make_sphere();
+        let a_poly = IntPatchPolyhedron::new_sub(&a_surf, 4, 4);
+
+        let (a_p1, _a_p2, _a_p3) = a_poly.triangle(1);
+
+        // Call TriConnex with Pedge = 0 (unknown edge mode).
+        let (a_result, _a_tri_con, _an_other_p) = (a_poly.tri_connex(1, a_p1, 0).0, 0, 0);
+        // Must not crash; result is a valid triangle index or 0.
+        assert!(a_result >= 0);
+    }
+
+    // TEST(IntPatch_Polyhedron, TriConnex_AllVertices_NoCrash)
+    #[test]
+    fn tri_connex_all_vertices_no_crash() {
+        let a_surf = make_sphere();
+        let a_poly = IntPatchPolyhedron::new_sub(&a_surf, 3, 3);
+
+        let (a_p1, a_p2, a_p3) = a_poly.triangle(1);
+
+        // Call TriConnex with each vertex as Pedge and with Pedge=0.
+        let _ = a_poly.tri_connex(1, a_p1, 0);
+        let _ = a_poly.tri_connex(1, a_p1, a_p2);
+        let _ = a_poly.tri_connex(1, a_p1, a_p3);
+        let _ = a_poly.tri_connex(1, a_p2, a_p3);
+        // All calls must complete without crash.
+    }
+}
+
+// =============================================================================
+// Intf_Tool_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod intf_tool_tests {
+    use super::*;
+
+    // TEST(Intf_Tool, Hypr2dBox_ProducesValidSegments)
+    #[test]
+    fn hypr2d_box_produces_valid_segments() {
+        // gp_Hypr2d(gp_Ax2d(gp_Pnt2d(0,0), gp_Dir2d(1,0)), 2.0, 1.0).
+        let a_hypr = Hyperbola2d {
+            center: DVec2::ZERO,
+            major_dir: DVec2::X,
+            semi_major: 2.0,
+            semi_minor: 1.0,
+        };
+        let mut a_domain = BndBox2d::new();
+        a_domain.update(-5.0, -5.0, 5.0, 5.0);
+
+        let mut a_result = BndBox2d::new();
+        let mut a_tool = IntfTool::new();
+        a_tool.hypr_2d_box(&a_hypr, &a_domain, &mut a_result);
+
+        let a_nb_seg = a_tool.nb_segments();
+        assert!(a_nb_seg >= 0);
+        assert!(a_nb_seg <= 6);
+
+        for i in 1..=a_nb_seg {
+            let a_begin = a_tool.begin_param(i);
+            let a_end = a_tool.end_param(i);
+            assert!(
+                a_begin.is_finite() || a_begin == -INFINITE_VALUE,
+                "Segment {i} begin={a_begin}"
+            );
+            assert!(
+                a_end.is_finite() || a_end == INFINITE_VALUE,
+                "Segment {i} end={a_end}"
+            );
+            assert!(a_begin <= a_end, "Segment {i} begin > end");
+        }
+    }
+
+    // TEST(Intf_Tool, Parab2dBox_ProducesValidSegments)
+    #[test]
+    fn parab2d_box_produces_valid_segments() {
+        // gp_Parab2d(gp_Ax2d(gp_Pnt2d(0,0), gp_Dir2d(1,0)), 1.0) — focal
+        // length 1.0, so the rcad focal parameter p = 2.0.
+        let a_parab = Parabola2d {
+            origin: DVec2::ZERO,
+            axis_dir: DVec2::X,
+            focal_param: 2.0,
+        };
+        let mut a_domain = BndBox2d::new();
+        a_domain.update(-5.0, -5.0, 5.0, 5.0);
+
+        let mut a_result = BndBox2d::new();
+        let mut a_tool = IntfTool::new();
+        a_tool.parab_2d_box(&a_parab, &a_domain, &mut a_result);
+
+        let a_nb_seg = a_tool.nb_segments();
+        assert!(a_nb_seg >= 0);
+        assert!(a_nb_seg <= 6);
+
+        for i in 1..=a_nb_seg {
+            let a_begin = a_tool.begin_param(i);
+            let a_end = a_tool.end_param(i);
+            assert!(
+                a_begin.is_finite() || a_begin == -INFINITE_VALUE,
+                "Segment {i} begin={a_begin}"
+            );
+            assert!(
+                a_end.is_finite() || a_end == INFINITE_VALUE,
+                "Segment {i} end={a_end}"
+            );
+            assert!(a_begin <= a_end, "Segment {i} begin > end");
+        }
+    }
+
+    // TEST(Intf_Tool, ParabBox_ProducesValidSegments)
+    #[test]
+    fn parab_box_produces_valid_segments() {
+        // gp_Parab(gp_Ax2(gp_Pnt(0,0,0), gp_Dir(0,0,1)), 1.0) — focal length
+        // 1.0, rcad focal parameter p = 2.0, axis = X in the XY plane.
+        let a_parab = Parabola3 {
+            vertex: DVec3::ZERO,
+            normal: DVec3::Z,
+            axis_dir: DVec3::X,
+            focal_param: 2.0,
+        };
+        let mut a_domain = BndBox::new();
+        a_domain.update(-5.0, -5.0, -5.0, 5.0, 5.0, 5.0);
+
+        let mut a_result = BndBox::new();
+        let mut a_tool = IntfTool::new();
+        a_tool.parab_box(&a_parab, &a_domain, &mut a_result);
+
+        let a_nb_seg = a_tool.nb_segments();
+        assert!(a_nb_seg >= 0);
+        assert!(a_nb_seg <= 6);
+
+        for i in 1..=a_nb_seg {
+            let a_begin = a_tool.begin_param(i);
+            let a_end = a_tool.end_param(i);
+            assert!(a_begin <= a_end, "Segment {i} begin > end");
+        }
+    }
+
+    // TEST(Intf_Tool, HyprBox_ProducesValidSegments)
+    #[test]
+    fn hypr_box_produces_valid_segments() {
+        // gp_Hypr(gp_Ax2(gp_Pnt(0,0,0), gp_Dir(0,0,1)), 2.0, 1.0).
+        let a_hypr = Hyperbola3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            semi_major: 2.0,
+            semi_minor: 1.0,
+        };
+        let mut a_domain = BndBox::new();
+        a_domain.update(-5.0, -5.0, -5.0, 5.0, 5.0, 5.0);
+
+        let mut a_result = BndBox::new();
+        let mut a_tool = IntfTool::new();
+        a_tool.hypr_box(&a_hypr, &a_domain, &mut a_result);
+
+        let a_nb_seg = a_tool.nb_segments();
+        assert!(a_nb_seg >= 0);
+        assert!(a_nb_seg <= 6);
+    }
+
+    // TEST(Intf_Tool, Hypr2dBox_NoIntersection_ZeroSegments)
+    #[test]
+    fn hypr2d_box_no_intersection_zero_segments() {
+        // A small hyperbola far away from the small domain.
+        let a_hypr = Hyperbola2d {
+            center: DVec2::new(100.0, 100.0),
+            major_dir: DVec2::X,
+            semi_major: 0.1,
+            semi_minor: 0.05,
+        };
+        let mut a_domain = BndBox2d::new();
+        a_domain.update(-1.0, -1.0, 1.0, 1.0);
+
+        let mut a_result = BndBox2d::new();
+        let mut a_tool = IntfTool::new();
+        a_tool.hypr_2d_box(&a_hypr, &a_domain, &mut a_result);
+
+        assert_eq!(a_tool.nb_segments(), 0);
     }
 }

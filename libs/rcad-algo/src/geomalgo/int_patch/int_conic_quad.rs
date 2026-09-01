@@ -13,7 +13,8 @@
 //! solved analytically by reducing to a polynomial in u = tan(t/2).
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Circle3, Plane};
+use rcad_kernel::geom::{Circle3, CurveEval, Hyperbola3, Parabola3, Plane};
+use rcad_kernel::math::direct_polynomial_roots::{epsilon, DirectPolynomialRoots};
 
 use super::quad_quad_geo::{AnaResultType, QuadQuadGeo};
 
@@ -684,4 +685,97 @@ pub fn intersect_circle_plane(
         }
         _ => (false, false, Vec::new()),
     }
+}
+
+/// OCCT IntAna_IntConicQuad::Perform(const gp_Parab&, const IntAna_Quadric&)
+/// (IntAna_IntConicQuad.cxx L273-325) — the conic-quadric intersection for a
+/// parabola.  In the parabola's frame x = y²/(2p), y = y, z = 0, so the
+/// substituted quadric becomes a quartic in y.  Used by Intf_Tool::Inters3d
+/// with the plane quadric.  Returns None when the solver is not done,
+/// Some((in_quadric, (point, param) list)) otherwise.
+pub fn intersect_parabola_quadric(
+    parabola: &Parabola3,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    let co = quadric_frame_coefs(quad)?;
+    // The parabola's frame: X = axis (symmetry, toward focus), Y = N × X,
+    // Z = N (gp_Parab::Position() — gp_Ax2 whose Z is the normal).
+    let y_dir = parabola.normal.cross(parabola.axis_dir).normalize_or_zero();
+    let nco = new_coefficients(&co, parabola.vertex, parabola.axis_dir, y_dir, parabola.normal);
+
+    // OCCT f = P.Focal() (the focal LENGTH); Un_Sur_2p = 0.25 / f.
+    let f = parabola.focal_param * 0.5;
+    let un_sur_2p = 0.25 / f;
+
+    let a4 = nco.xx * un_sur_2p * un_sur_2p;
+    let a3 = (nco.xy + nco.xy) * un_sur_2p;
+    let a2 = nco.yy + (nco.x + nco.x) * un_sur_2p;
+    let a1 = nco.y + nco.y;
+    let a0 = nco.cte;
+
+    let roots = DirectPolynomialRoots::new_quartic(a4, a3, a2, a1, a0);
+    if !roots.is_done() {
+        return None;
+    }
+    if roots.infinite_roots() {
+        return Some((true, Vec::new()));
+    }
+    let pts: Vec<(DVec3, f64)> = (1..=roots.nb_solutions())
+        .map(|i| {
+            let t = roots.value(i);
+            (parabola.point_at(t), t)
+        })
+        .collect();
+    Some((false, pts))
+}
+
+/// OCCT IntAna_IntConicQuad::Perform(const gp_Hypr&, const IntAna_Quadric&)
+/// (IntAna_IntConicQuad.cxx L335-397) — the conic-quadric intersection for a
+/// hyperbola.  In the hyperbola's frame x = R·Ch(t), y = r·Sh(t), z = 0,
+/// rewritten as a quartic in S = Exp(t); valid solutions have S >= RealEpsilon
+/// and the conic parameter is t = Ln(S).  Returns None when the solver is not
+/// done, Some((in_quadric, (point, param) list)) otherwise.
+pub fn intersect_hyperbola_quadric(
+    hyperbola: &Hyperbola3,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    let co = quadric_frame_coefs(quad)?;
+    // The hyperbola's frame: X = major, Y = N × X (minor), Z = N.
+    let y_dir = hyperbola.normal.cross(hyperbola.major_dir).normalize_or_zero();
+    let nco = new_coefficients(
+        &co,
+        hyperbola.center,
+        hyperbola.major_dir,
+        y_dir,
+        hyperbola.normal,
+    );
+
+    let r_big = hyperbola.semi_major;
+    let r_small = hyperbola.semi_minor;
+    let rr_p2 = r_big * r_big;
+    let rr_small_p2 = r_small * r_small;
+    let rr_prod = r_big * r_small;
+
+    let a4 = rr_p2 * nco.xx + rr_prod * (nco.xy + nco.xy) + rr_small_p2 * nco.yy;
+    let a3 = 4.0 * (r_big * nco.x + r_small * nco.y);
+    let a2 = 2.0 * ((nco.cte + nco.cte) + nco.xx * rr_p2 - nco.yy * rr_small_p2);
+    let a1 = 4.0 * (r_big * nco.x - r_small * nco.y);
+    let a0 = nco.xx * rr_p2 - rr_prod * (nco.xy + nco.xy) + nco.yy * rr_small_p2;
+
+    let roots = DirectPolynomialRoots::new_quartic(a4, a3, a2, a1, a0);
+    if !roots.is_done() {
+        return None;
+    }
+    if roots.infinite_roots() {
+        return Some((true, Vec::new()));
+    }
+    let mut pts = Vec::new();
+    for i in 1..=roots.nb_solutions() {
+        let t = roots.value(i);
+        if t >= f64::EPSILON {
+            let param = t.ln();
+            pts.push((hyperbola.point_at(param), param));
+        }
+    }
+    Some((false, pts))
 }

@@ -81,6 +81,43 @@ impl BndBox {
         }
     }
 
+    /// OCCT Bnd_Box::Update(xmin, ymin, zmin, xmax, ymax, zmax) — the box
+    /// becomes the finite axis-aligned box (open flags cleared).
+    pub fn update(&mut self, x_min: f64, y_min: f64, z_min: f64, x_max: f64, y_max: f64, z_max: f64) {
+        self.x_min = x_min;
+        self.y_min = y_min;
+        self.z_min = z_min;
+        self.x_max = x_max;
+        self.y_max = y_max;
+        self.z_max = z_max;
+        self.flags &= !(VOID_MASK | XMIN_OPEN | XMAX_OPEN | YMIN_OPEN | YMAX_OPEN | ZMIN_OPEN | ZMAX_OPEN);
+    }
+
+    /// OCCT Bnd_Box::SetVoid() — the box becomes void.
+    pub fn set_void(&mut self) {
+        self.flags = VOID_MASK;
+    }
+
+    /// OCCT Bnd_Box::SetWhole() — the whole space (all directions open).
+    pub fn set_whole(&mut self) {
+        self.flags = XMIN_OPEN | XMAX_OPEN | YMIN_OPEN | YMAX_OPEN | ZMIN_OPEN | ZMAX_OPEN;
+    }
+
+    /// OCCT Bnd_Box::IsWhole() — all six directions open.
+    pub fn is_whole(&self) -> bool {
+        self.flags
+            & (XMIN_OPEN | XMAX_OPEN | YMIN_OPEN | YMAX_OPEN | ZMIN_OPEN | ZMAX_OPEN)
+            == (XMIN_OPEN | XMAX_OPEN | YMIN_OPEN | YMAX_OPEN | ZMIN_OPEN | ZMAX_OPEN)
+    }
+
+    /// OCCT Bnd_Box::IsOpenXmin/Xmax/.../Zmax().
+    pub fn is_open_xmin(&self) -> bool { self.flags & XMIN_OPEN != 0 }
+    pub fn is_open_xmax(&self) -> bool { self.flags & XMAX_OPEN != 0 }
+    pub fn is_open_ymin(&self) -> bool { self.flags & YMIN_OPEN != 0 }
+    pub fn is_open_ymax(&self) -> bool { self.flags & YMAX_OPEN != 0 }
+    pub fn is_open_zmin(&self) -> bool { self.flags & ZMIN_OPEN != 0 }
+    pub fn is_open_zmax(&self) -> bool { self.flags & ZMAX_OPEN != 0 }
+
     // ── State queries ───────────────────────────────────────────────────
 
     /// True if the box is void (uninitialised).  OCCT: IsVoid().
@@ -352,6 +389,168 @@ impl BndBox {
 impl Default for BndBox {
     fn default() -> Self { Self::new() }
 }
+
+// ── OCCT Bnd_Box2d (Bnd_Box2d.cxx) — the 2D axis-aligned box ──────────────
+
+/// OCCT Bnd_Box2d — axis-aligned bounding box in 2D with a gap (tolerance).
+///
+/// State flags mirror Bnd_Box2d.hxx: VoidMask + the four open directions.
+#[derive(Debug, Clone)]
+pub struct BndBox2d {
+    x_min: f64,
+    y_min: f64,
+    x_max: f64,
+    y_max: f64,
+    gap: f64,
+    flags: u8,
+}
+
+// OCCT Bnd_Box2d.hxx flags
+const VOID2D_MASK: u8 = 1;
+const XMIN2D_OPEN: u8 = 2;
+const XMAX2D_OPEN: u8 = 4;
+const YMIN2D_OPEN: u8 = 8;
+const YMAX2D_OPEN: u8 = 16;
+
+impl BndBox2d {
+    /// Default constructor — a void (uninitialised) box.
+    /// OCCT: Bnd_Box2d() → myFlags = VoidMask.
+    pub fn new() -> Self {
+        BndBox2d {
+            x_min: 0.0,
+            y_min: 0.0,
+            x_max: 0.0,
+            y_max: 0.0,
+            gap: 0.0,
+            flags: VOID2D_MASK,
+        }
+    }
+
+    /// OCCT Bnd_Box2d::Update(xmin, ymin, xmax, ymax) — the box becomes the
+    /// finite axis-aligned rectangle (open flags cleared).
+    pub fn update(&mut self, x_min: f64, y_min: f64, x_max: f64, y_max: f64) {
+        self.x_min = x_min;
+        self.y_min = y_min;
+        self.x_max = x_max;
+        self.y_max = y_max;
+        self.flags &= !(VOID2D_MASK | XMIN2D_OPEN | XMAX2D_OPEN | YMIN2D_OPEN | YMAX2D_OPEN);
+    }
+
+    /// OCCT Bnd_Box2d::SetVoid() — the box becomes void.
+    pub fn set_void(&mut self) {
+        self.flags = VOID2D_MASK;
+    }
+
+    /// OCCT Bnd_Box2d::SetWhole() — the whole plane (all directions open).
+    pub fn set_whole(&mut self) {
+        self.flags = XMIN2D_OPEN | XMAX2D_OPEN | YMIN2D_OPEN | YMAX2D_OPEN;
+    }
+
+    /// OCCT Bnd_Box2d::IsVoid().
+    pub fn is_void(&self) -> bool {
+        self.flags & VOID2D_MASK != 0
+    }
+
+    /// OCCT Bnd_Box2d::IsWhole() — all four directions open.
+    pub fn is_whole(&self) -> bool {
+        self.flags & (XMIN2D_OPEN | XMAX2D_OPEN | YMIN2D_OPEN | YMAX2D_OPEN)
+            == (XMIN2D_OPEN | XMAX2D_OPEN | YMIN2D_OPEN | YMAX2D_OPEN)
+    }
+
+    /// OCCT Bnd_Box2d::IsOpenXmin/Xmax/Ymin/Ymax().
+    pub fn is_open_xmin(&self) -> bool {
+        self.flags & XMIN2D_OPEN != 0
+    }
+    pub fn is_open_xmax(&self) -> bool {
+        self.flags & XMAX2D_OPEN != 0
+    }
+    pub fn is_open_ymin(&self) -> bool {
+        self.flags & YMIN2D_OPEN != 0
+    }
+    pub fn is_open_ymax(&self) -> bool {
+        self.flags & YMAX2D_OPEN != 0
+    }
+
+    /// Current gap (tolerance).  OCCT: GetGap().
+    pub fn get_gap(&self) -> f64 {
+        self.gap
+    }
+
+    /// Set the gap.  OCCT: SetGap(Tol).
+    pub fn set_gap(&mut self, tol: f64) {
+        self.gap = tol.abs();
+    }
+
+    /// OCCT Bnd_Box2d::Enlarge(Tol) — grow on all four sides (void unchanged).
+    pub fn enlarge(&mut self, tol: f64) {
+        if self.is_void() || !tol.is_finite() {
+            return;
+        }
+        self.x_min -= tol;
+        self.x_max += tol;
+        self.y_min -= tol;
+        self.y_max += tol;
+    }
+
+    /// OCCT Bnd_Box2d::Get(xmin, ymin, xmax, ymax) — the finite corners
+    /// including the gap.  None for a void box.
+    pub fn get(&self) -> Option<(f64, f64, f64, f64)> {
+        if self.is_void() {
+            return None;
+        }
+        let g = self.gap;
+        Some((
+            self.x_min - g,
+            self.y_min - g,
+            self.x_max + g,
+            self.y_max + g,
+        ))
+    }
+
+    /// OCCT Bnd_Box2d::Add(Pnt2d) — extend to include a point.
+    pub fn add_point(&mut self, p: glam::DVec2) {
+        if self.is_void() {
+            self.x_min = p.x;
+            self.x_max = p.x;
+            self.y_min = p.y;
+            self.y_max = p.y;
+            self.flags &= !VOID2D_MASK;
+        } else {
+            if p.x < self.x_min {
+                self.x_min = p.x;
+            }
+            if p.x > self.x_max {
+                self.x_max = p.x;
+            }
+            if p.y < self.y_min {
+                self.y_min = p.y;
+            }
+            if p.y > self.y_max {
+                self.y_max = p.y;
+            }
+        }
+    }
+
+    /// OCCT Bnd_Box2d::IsOut(Pnt2d) — point outside the box (with gap).
+    /// A void box is out for every point; a whole box for none.
+    pub fn is_out_point(&self, p: glam::DVec2) -> bool {
+        if self.is_void() {
+            return true;
+        }
+        if self.is_whole() {
+            return false;
+        }
+        let g = self.gap;
+        p.x < self.x_min - g || p.x > self.x_max + g || p.y < self.y_min - g || p.y > self.y_max + g
+    }
+}
+
+impl Default for BndBox2d {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 
 
 // ══════════════════════════════════════════════════════════════════════════
