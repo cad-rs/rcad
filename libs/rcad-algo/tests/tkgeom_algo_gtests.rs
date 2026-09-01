@@ -1149,3 +1149,81 @@ mod geom2d_hatch_intersector_tests {
         assert!((a_norm_mag - 1.0).abs() < 1.0e-10);
     }
 }
+
+// =============================================================================
+// Geom2dGcc_Lin2d2Tan_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod geom2d_gcc_lin2d2tan_tests {
+    use super::*;
+    use rcad_algo::geomalgo::geom2d_gcc::{GccEntPosition, Lin2d2Tan, QualifiedCurve};
+    use rcad_kernel::geom::{Circle2d, Ellipse2d};
+
+    /// OCCT GeomAPI::To2d — project a point onto the plane's 2D frame.
+    fn to2d_point(origin: DVec3, x_dir: DVec3, y_dir: DVec3, p: DVec3) -> DVec2 {
+        DVec2::new((p - origin).dot(x_dir), (p - origin).dot(y_dir))
+    }
+
+    // TEST(Geom2dGcc_Lin2d2TanTest, OCC813_EllipseAndPoint)
+    // Tangent line from a 2D point to a projected 2D ellipse.
+    #[test]
+    fn occ813_ellipse_and_point() {
+        // gp_Ax2(Pnt(1262.224429, 425.040878, 363.609716),
+        //        Dir(0.173648, 0.984808, 0), Dir(-0.932169, 0.164367, -0.322560)).
+        let an_ax2_loc = DVec3::new(1262.224429, 425.040878, 363.609716);
+        let an_ax2_z = DVec3::new(0.173648, 0.984808, 0.0);
+        let an_ax2_x = DVec3::new(-0.932169, 0.164367, -0.322560);
+        let an_ax2_y = an_ax2_z.cross(an_ax2_x);
+
+        // GeomAPI::To2d(ellipse, plane): the ellipse lies in the plane, so the
+        // 2D ellipse is centered at the origin with radii 150/100.
+        let a_curve2d = Curve2d::Ellipse(Ellipse2d {
+            center: DVec2::ZERO,
+            major_dir: DVec2::X,
+            major_radius: 150.0,
+            minor_radius: 100.0,
+        });
+        let a_q_curve = QualifiedCurve::new(a_curve2d, GccEntPosition::Outside);
+
+        // Query tangent line from the 2D point to the projected ellipse.
+        let a_pnt2d = DVec2::new(200.0, 200.0);
+        let a_lin_tan = Lin2d2Tan::curve_point(&a_q_curve, a_pnt2d, 0.1);
+
+        assert!(a_lin_tan.nb_solutions() > 0, "Expected at least one tangent line solution");
+    }
+
+    // TEST(Geom2dGcc_Lin2d2TanTest, OCC814_CircleAndEllipse)
+    // Tangent line between a 2D circle and a 2D ellipse.
+    #[test]
+    fn occ814_circle_and_ellipse() {
+        let an_ax2_loc = DVec3::new(1262.224429, 425.040878, 363.609716);
+        let an_ax2_z = DVec3::new(0.173648, 0.984808, 0.0);
+        let an_ax2_x = DVec3::new(-0.932169, 0.164367, -0.322560);
+        let an_ax2_y = an_ax2_z.cross(an_ax2_x);
+
+        // Projected 2D ellipse (origin, radii 150/100).
+        let a_curve2d = Curve2d::Ellipse(Ellipse2d {
+            center: DVec2::ZERO,
+            major_dir: DVec2::X,
+            major_radius: 150.0,
+            minor_radius: 100.0,
+        });
+        let a_q_ell = QualifiedCurve::new(a_curve2d, GccEntPosition::Outside);
+
+        // gp_Circle(gp_Ax2(Pnt(823.687192, 502.366825, 478.960440), same axes), 50)
+        // projected onto the plane.
+        let a_circ_center3d = DVec3::new(823.687192, 502.366825, 478.960440);
+        let a_from_curve2d = Curve2d::Circle(Circle2d {
+            center: to2d_point(an_ax2_loc, an_ax2_x, an_ax2_y, a_circ_center3d),
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+            radius: 50.0,
+        });
+        let a_q_cir = QualifiedCurve::new(a_from_curve2d, GccEntPosition::Outside);
+
+        let a_lin_tan = Lin2d2Tan::curve_curve(&a_q_ell, &a_q_cir, 0.1);
+
+        assert!(a_lin_tan.nb_solutions() > 0, "Expected at least one tangent line solution");
+    }
+}

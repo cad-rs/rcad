@@ -13,6 +13,7 @@ pub mod gp;
 pub mod math_gauss;
 pub mod math_poly;
 pub mod newton_function_root;
+pub mod function_set_root;
 pub mod p_lib_jacobi;
 pub mod p_lib_jacobi_data;
 pub mod plib;
