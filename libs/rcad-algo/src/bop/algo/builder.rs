@@ -1883,6 +1883,44 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        // Pass C: drop rows keyed to faces outside the result pool.  OCCT
+        // keeps them (BRep_CurveOnSurface stores handle<Geom_Surface>, so the
+        // referenced surface stays alive; IsCurveOnSurface matches by surface
+        // handle identity (BRep_CurveOnSurface.cxx L65-67) — a stale row can
+        // never match a different face).  rcad keys rows by the raw face
+        // pointer: a row whose owner face is not part of the result would
+        // dangle when the DS is dropped and could alias a later allocation
+        // (L3 SA=18843 — cap circle edge resolved a dead lateral-face key to
+        // the result cap face).  Dropping them mirrors the OCCT observable
+        // behavior: the rows are unreachable from the result either way.
+        let face_ptrs: std::collections::HashSet<u64> = brep
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_)))
+            .map(|ts| Arc::as_ptr(ts) as u64)
+            .collect();
+        for ts in &brep.tshapes {
+            if !matches!(ts.as_ref(), topods::TShape::Edge(_)) {
+                continue;
+            }
+            let raw = Arc::as_ptr(ts) as *mut topods::TShape;
+            // SAFETY: single-threaded build; no other borrow of this TShape
+            // is alive here.
+            unsafe {
+                if let topods::TShape::Edge(ed) = &mut *raw {
+                    ed.pcurves.retain(|&(p, _), _| face_ptrs.contains(&p));
+                    ed.representations.retain(|r| match r {
+                        topods::CurveRepresentation::CurveOnSurface {
+                            face: (p, _), ..
+                        }
+                        | topods::CurveRepresentation::CurveOnClosedSurface {
+                            face: (p, _), ..
+                        } => face_ptrs.contains(p),
+                        _ => true,
+                    });
+                }
+            }
+        }
     }
 
     // --- Pipeline stage stubs ---
