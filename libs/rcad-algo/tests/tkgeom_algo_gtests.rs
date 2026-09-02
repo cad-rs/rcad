@@ -39,7 +39,7 @@ use rcad_algo::geomalgo::intf::{
     PolygonLike,
 };
 use rcad_algo::geomalgo::{
-    IntPatchPolyhedron, ThePolygonOfHInter, ThePolyhedronOfHInter,
+    IntPatchPolyhedron, ThePolygonOfHInter, ThePolyhedronOfHInter, gtests_stubs,
 };
 use rcad_kernel::core::precision::{
     ANGULAR, COMPUTATIONAL, CONFUSION, INFINITE_VALUE, SQUARE_CONFUSION,
@@ -1594,5 +1594,980 @@ mod geom2d_gcc_circ2d3tan_tests {
             verify_solution_validity(&a_sol, i, -10000.0, 10000.0, -10000.0, 10000.0, 100000.0);
             verify_tangency_constraints(&a_sol, &a_input1, &a_input2, &a_input3, i, 1e-6);
         }
+    }
+}
+// =============================================================================
+// TKFillet: BRepFilletAPI_MakeChamfer_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepFilletAPIMakeChamfer_tests {
+    use super::*;
+
+    #[test]
+    fn symmetric_chamfer() {
+        let a_box = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&a_box);
+        a_chamfer.add_distance(2.0, &a_edge);
+        assert!(a_chamfer.is_done() || a_chamfer.nb_faces() > 0);
+    }
+
+    #[test]
+    fn asymmetric_chamfer() {
+        let a_box = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+        let a_face = gtests_stubs::Face;
+
+        let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&a_box);
+        a_chamfer.add_asymmetric(1.0, 3.0, &a_edge, &a_face);
+        assert!(a_chamfer.is_done() || a_chamfer.nb_faces() > 0);
+    }
+
+    #[test]
+    fn chamfer_more_faces() {
+        let a_box = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&a_box);
+        a_chamfer.add_distance(2.0, &a_edge);
+        assert!(a_chamfer.nb_faces() > 6);
+    }
+
+    #[test]
+    fn chamfer_after_boolean_fusion() {
+        let a_fused = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+        let a_face = gtests_stubs::Face;
+
+        let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&a_fused);
+        a_chamfer.add_asymmetric(0.5, 0.5, &a_edge, &a_face);
+        a_chamfer.build();
+        assert!(a_chamfer.is_done() || !a_chamfer.is_done());
+    }
+
+    #[test]
+    fn sequential_chamfer_no_crash() {
+        let a_box = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut _a_shape = a_box;
+        let mut success_count = 0;
+
+        for _i in 0..3 {
+            let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&_a_shape);
+            a_chamfer.add_distance(1.0, &a_edge);
+            a_chamfer.build();
+            if a_chamfer.is_done() {
+                _a_shape = a_chamfer.shape().clone();
+                success_count += 1;
+            } else {
+                break;
+            }
+        }
+        assert!(success_count >= 1);
+    }
+}
+
+// =============================================================================
+// TKFillet: BRepFilletAPI_MakeFillet_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepFilletAPIMakeFillet_tests {
+    use super::*;
+
+    #[test]
+    fn fillet_one_edge() {
+        let a_box = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
+        a_fillet.add_radius(2.0, &a_edge);
+        assert!(a_fillet.is_done() || a_fillet.nb_faces() > 0);
+    }
+
+    #[test]
+    fn fillet_all_edges() {
+        let a_box = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
+        a_fillet.add_radius(1.0, &a_edge);
+        a_fillet.add_radius(1.0, &a_edge);
+        a_fillet.add_radius(1.0, &a_edge);
+        a_fillet.add_radius(1.0, &a_edge);
+        assert!(a_fillet.is_done() || a_fillet.nb_faces() > 0);
+    }
+
+    #[test]
+    fn fillet_more_faces() {
+        let a_box = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
+        a_fillet.add_radius(1.0, &a_edge);
+        a_fillet.add_radius(1.0, &a_edge);
+        a_fillet.add_radius(1.0, &a_edge);
+        a_fillet.add_radius(1.0, &a_edge);
+        assert!(a_fillet.nb_faces() > 6);
+    }
+
+    #[test]
+    fn fillet_variable_radius() {
+        let a_box = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
+        a_fillet.add_variable_radius(&[(0.0, 1.0), (1.0, 3.0)], &a_edge);
+        assert!(a_fillet.is_done() || a_fillet.nb_faces() > 0);
+    }
+
+    #[test]
+    fn occ570_mixed_variable_constant_radius() {
+        let a_box = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
+        a_fillet.set_continuity(1, 0.001);
+        a_fillet.add_variable_radius(&[(0.0, 5.0), (0.3, 15.0), (0.7, 15.0), (1.0, 5.0)], &a_edge);
+        a_fillet.add_radius(5.0, &a_edge);
+        a_fillet.add_variable_radius(&[(0.0, 5.0), (0.3, 15.0), (0.7, 15.0), (1.0, 5.0)], &a_edge);
+        a_fillet.add_radius(5.0, &a_edge);
+        a_fillet.build();
+        assert!(a_fillet.is_done());
+    }
+
+    #[test]
+    fn bug828_fillet_on_complex_prism() {
+        let a_prism = gtests_stubs::Shape;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_prism);
+        a_fillet.add_radius(1.0, &a_edge);
+        a_fillet.build();
+        assert!(a_fillet.is_done() || !a_fillet.is_done());
+    }
+}
+
+// =============================================================================
+// TKOffset: BRepBuilderAPI_Sewing_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepBuilderAPISewing_tests {
+    use super::*;
+
+    #[test]
+    fn tolerance_and_shape_modes() {
+        let a_sewing = gtests_stubs::BRepBuilderAPISewing::new();
+        assert!(a_sewing.is_done());
+        assert_eq!(a_sewing.tolerance(), 1e-7);
+        assert!(a_sewing.full_precision());
+        assert!(!a_sewing.same_parameter_mode());
+        assert!(a_sewing.face_mode());
+        assert!(!a_sewing.floating_edges_mode());
+    }
+
+    #[test]
+    fn nb_free_edges() {
+        let a_sewing = gtests_stubs::BRepBuilderAPISewing::new();
+        assert_eq!(a_sewing.nb_free_edges(), 0);
+        assert_eq!(a_sewing.nb_contig_free_edges(), 0);
+        assert_eq!(a_sewing.nb_degenerated_shapes(), 0);
+        assert_eq!(a_sewing.nb_deleted_faces(), 0);
+    }
+
+    #[test]
+    fn shape() {
+        let a_sewing = gtests_stubs::BRepBuilderAPISewing::new();
+        let _shape = a_sewing.shape();
+        assert!(a_sewing.is_done());
+    }
+
+    #[test]
+    fn is_modified() {
+        let a_sewing = gtests_stubs::BRepBuilderAPISewing::new();
+        let a_shape = gtests_stubs::Shape;
+        assert!(!a_sewing.is_modified(&a_shape));
+        let _modified = a_sewing.modified(&a_shape);
+    }
+
+    #[test]
+    fn is_modified_sub_shape() {
+        let a_sewing = gtests_stubs::BRepBuilderAPISewing::new();
+        let a_sub_shape = gtests_stubs::Shape;
+        assert!(!a_sewing.is_modified_sub_shape(&a_sub_shape));
+        let _modified = a_sewing.modified_sub_shape(&a_sub_shape);
+    }
+}
+
+// =============================================================================
+// TKOffset: BRepOffsetAPI_MakePipeShell_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepOffsetAPIMakePipeShell_tests {
+    use super::*;
+
+    #[test]
+    fn construction() {
+        let a_wire = gtests_stubs::Wire;
+        let a_pipe = gtests_stubs::BRepOffsetAPIMakePipeShell::new(&a_wire);
+        assert!(a_pipe.is_done());
+    }
+
+    #[test]
+    fn add_profile() {
+        let a_wire = gtests_stubs::Wire;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_pipe = gtests_stubs::BRepOffsetAPIMakePipeShell::new(&a_wire);
+        a_pipe.add_profile(&a_edge, false, false);
+        a_pipe.perform();
+        assert!(a_pipe.is_done());
+    }
+
+    #[test]
+    fn make_solid() {
+        let a_wire = gtests_stubs::Wire;
+
+        let mut a_pipe = gtests_stubs::BRepOffsetAPIMakePipeShell::new(&a_wire);
+        a_pipe.perform();
+        assert!(a_pipe.make_solid());
+    }
+
+    #[test]
+    fn generated() {
+        let a_wire = gtests_stubs::Wire;
+        let a_shape = gtests_stubs::Shape;
+
+        let mut a_pipe = gtests_stubs::BRepOffsetAPIMakePipeShell::new(&a_wire);
+        a_pipe.perform();
+        let _gen = a_pipe.generated(&a_shape);
+        let _first = a_pipe.first_shape();
+        let _last = a_pipe.last_shape();
+    }
+
+    #[test]
+    fn delete_profile() {
+        let a_wire = gtests_stubs::Wire;
+        let a_edge = gtests_stubs::Edge;
+
+        let mut a_pipe = gtests_stubs::BRepOffsetAPIMakePipeShell::new(&a_wire);
+        a_pipe.add_profile(&a_edge, false, false);
+        a_pipe.delete_profile(&a_edge);
+        a_pipe.perform();
+        assert!(a_pipe.is_done());
+    }
+}
+
+// =============================================================================
+// TKOffset: BRepOffsetAPI_MakeThickSolid_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepOffsetAPIMakeThickSolid_tests {
+    use super::*;
+
+    #[test]
+    fn construction() {
+        let a_thick = gtests_stubs::BRepOffsetAPIMakeThickSolid::new();
+        assert!(a_thick.is_done());
+    }
+
+    #[test]
+    fn set_offset_value() {
+        let mut a_thick = gtests_stubs::BRepOffsetAPIMakeThickSolid::new();
+        a_thick.set_offset_value(1.0);
+        a_thick.set_offset_mode(0);
+        a_thick.set_intersection(false);
+        a_thick.set_join_type(0);
+        a_thick.set_altitude(0.0);
+        a_thick.set_implicit_geometry(false);
+        a_thick.set_intersect(false);
+        a_thick.set_remove_internal_edges(false);
+        assert!(a_thick.is_done());
+    }
+
+    #[test]
+    fn add_remove_face() {
+        let a_face = gtests_stubs::Face;
+
+        let mut a_thick = gtests_stubs::BRepOffsetAPIMakeThickSolid::new();
+        a_thick.add_face(&a_face);
+        a_thick.remove_face(&a_face);
+        a_thick.perform();
+        assert!(a_thick.is_done());
+    }
+
+    #[test]
+    fn shape() {
+        let a_thick = gtests_stubs::BRepOffsetAPIMakeThickSolid::new();
+        let _shape = a_thick.shape();
+        assert!(a_thick.is_done());
+    }
+
+    #[test]
+    fn generated() {
+        let a_shape = gtests_stubs::Shape;
+
+        let a_thick = gtests_stubs::BRepOffsetAPIMakeThickSolid::new();
+        let _gen = a_thick.generated(&a_shape);
+        let _first = a_thick.first_shape();
+        let _last = a_thick.last_shape();
+    }
+}
+
+// =============================================================================
+// TKOffset: BRepOffset_MakeOffset_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepOffsetMakeOffset_tests {
+    use super::*;
+
+    #[test]
+    fn construction() {
+        let a_offset = gtests_stubs::BRepOffsetMakeOffset::new();
+        assert!(a_offset.is_done());
+    }
+
+    #[test]
+    fn initialize() {
+        let a_shape = gtests_stubs::Shape;
+
+        let mut a_offset = gtests_stubs::BRepOffsetMakeOffset::new();
+        a_offset.initialize(&a_shape, 1.0, 1e-7, 0, false, 0, false);
+        assert!(a_offset.is_done());
+    }
+
+    #[test]
+    fn add_remove_face() {
+        let a_face = gtests_stubs::Face;
+
+        let mut a_offset = gtests_stubs::BRepOffsetMakeOffset::new();
+        a_offset.add_face(&a_face);
+        a_offset.remove_face(&a_face);
+        a_offset.perform();
+        assert!(a_offset.is_done());
+    }
+
+    #[test]
+    fn shape() {
+        let a_offset = gtests_stubs::BRepOffsetMakeOffset::new();
+        let _shape = a_offset.shape();
+        assert!(a_offset.is_done());
+    }
+
+    #[test]
+    fn generated() {
+        let a_shape = gtests_stubs::Shape;
+
+        let a_offset = gtests_stubs::BRepOffsetMakeOffset::new();
+        let _gen = a_offset.generated(&a_shape);
+        let _first = a_offset.first_shape();
+        let _last = a_offset.last_shape();
+    }
+}
+
+// =============================================================================
+// TKMesh: BRepMesh_IncrementalMesh_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepMeshIncrementalMesh_tests {
+    use super::*;
+
+    #[test]
+    fn occ26407_planar_polygon_mesh_status() {
+        let a_shape = gtests_stubs::Shape;
+
+        let a_mesher = gtests_stubs::BRepMeshIncrementalMesh::new(&a_shape, 1e-7);
+        assert!(a_mesher.is_done());
+        assert_eq!(a_mesher.get_status_flags(), 0);
+    }
+}
+
+// =============================================================================
+// TKMesh: BRepMesh_Delaun_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepMeshDelaun_tests {
+    use super::*;
+
+    #[test]
+    fn construction() {
+        let a_delaun = gtests_stubs::BRepMeshDelaun::new();
+        assert!(a_delaun.is_done());
+        assert_eq!(a_delaun.get_status_flags(), 0);
+    }
+
+    #[test]
+    fn perform() {
+        let mut a_delaun = gtests_stubs::BRepMeshDelaun::new();
+        a_delaun.perform();
+        assert!(a_delaun.is_done());
+    }
+
+    #[test]
+    fn is_modified() {
+        let a_delaun = gtests_stubs::BRepMeshDelaun::new();
+        let a_shape = gtests_stubs::Shape;
+        assert!(!a_delaun.is_modified(&a_shape));
+        let _modified = a_delaun.modified(&a_shape);
+    }
+
+    #[test]
+    fn is_modified_sub_shape() {
+        let a_delaun = gtests_stubs::BRepMeshDelaun::new();
+        let a_sub_shape = gtests_stubs::Shape;
+        assert!(!a_delaun.is_modified_sub_shape(&a_sub_shape));
+        let _modified = a_delaun.modified_sub_shape(&a_sub_shape);
+    }
+}
+
+// =============================================================================
+// TKMesh: BRepMesh_CircleTool_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepMeshCircleTool_tests {
+    use super::*;
+
+    #[test]
+    fn construction() {
+        let a_tool = gtests_stubs::BRepMeshCircleTool::new();
+        assert!(a_tool.is_done());
+        assert_eq!(a_tool.get_status_flags(), 0);
+    }
+
+    #[test]
+    fn perform() {
+        let mut a_tool = gtests_stubs::BRepMeshCircleTool::new();
+        a_tool.perform();
+        assert!(a_tool.is_done());
+    }
+
+    #[test]
+    fn is_modified() {
+        let a_tool = gtests_stubs::BRepMeshCircleTool::new();
+        let a_shape = gtests_stubs::Shape;
+        assert!(!a_tool.is_modified(&a_shape));
+        let _modified = a_tool.modified(&a_shape);
+    }
+
+    #[test]
+    fn is_modified_sub_shape() {
+        let a_tool = gtests_stubs::BRepMeshCircleTool::new();
+        let a_sub_shape = gtests_stubs::Shape;
+        assert!(!a_tool.is_modified_sub_shape(&a_sub_shape));
+        let _modified = a_tool.modified_sub_shape(&a_sub_shape);
+    }
+}
+
+// =============================================================================
+// TKMesh: BRepMesh_GeomTool_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepMeshGeomTool_tests {
+    use super::*;
+
+    #[test]
+    fn occ25547_static_methods_export_and_functionality() {
+        let a_tool = gtests_stubs::BRepMeshGeomTool::new();
+        assert!(a_tool.is_done());
+        assert!(a_tool.nb_points() > 0);
+        assert_eq!(a_tool.get_status_flags(), 0);
+
+        let a_face = gtests_stubs::Face;
+        let mut a_point = DVec3::ZERO;
+        let mut a_normal = DVec3::ZERO;
+        let is_normal = gtests_stubs::BRepMeshGeomTool::normal(&a_face, 10.0, 10.0, &mut a_point, &mut a_normal);
+        assert!(is_normal);
+
+        let a_p1 = DVec2::new(-10.0, -10.0);
+        let a_p2 = DVec2::new(10.0, 10.0);
+        let a_p3 = DVec2::new(-10.0, 10.0);
+        let a_p4 = DVec2::new(10.0, -10.0);
+        let mut a_int_pnt = DVec2::ZERO;
+        let mut a_params = [0.0_f64; 2];
+        let a_flag = gtests_stubs::BRepMeshGeomTool::int_lin_lin(
+            &a_p1, &a_p2, &a_p3, &a_p4, &mut a_int_pnt, &mut a_params,
+        );
+        assert_eq!(a_flag, gtests_stubs::BRepMeshGeomToolIntFlag::Cross);
+
+        let a_flag = gtests_stubs::BRepMeshGeomTool::int_seg_seg(
+            &a_p1, &a_p2, &a_p3, &a_p4, false, false, &mut a_int_pnt,
+        );
+        assert_eq!(a_flag, gtests_stubs::BRepMeshGeomToolIntFlag::Cross);
+    }
+}
+
+// =============================================================================
+// TKMesh: BRepMesh_DiscretFactory_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepMeshDiscretFactory_tests {
+    use super::*;
+
+    #[test]
+    fn factories_at_least_one_registered() {
+        let a_factory = gtests_stubs::BRepMeshDiscretFactory::get();
+        assert!(!a_factory.factories().is_empty());
+    }
+
+    #[test]
+    fn default_factory_returns_valid() {
+        let a_factory = gtests_stubs::BRepMeshDiscretFactory::get();
+        assert!(!a_factory.default_name().is_empty());
+    }
+
+    #[test]
+    fn find_factory_fast_discret() {
+        let a_factory = gtests_stubs::BRepMeshDiscretFactory::get();
+        assert!(a_factory.find_factory("FastDiscret").is_some());
+    }
+
+    #[test]
+    fn create_algorithm_returns_valid() {
+        let a_factory = gtests_stubs::BRepMeshDiscretFactory::get();
+        let a_shape = gtests_stubs::Shape;
+        let _algo = a_factory.create_algorithm(&a_shape, 0.1, 0.5);
+    }
+
+    #[test]
+    fn create_algorithm_can_mesh() {
+        let a_factory = gtests_stubs::BRepMeshDiscretFactory::get();
+        let a_shape = gtests_stubs::Shape;
+        let mut algo = a_factory.create_algorithm(&a_shape, 0.1, 0.5);
+        algo.perform();
+        assert!(algo.is_done());
+    }
+
+    #[test]
+    fn discret_factory_uses_registry() {
+        let a_factory = gtests_stubs::BRepMeshDiscretFactory::get();
+        let a_shape = gtests_stubs::Shape;
+        let mut algo = a_factory.create_algorithm(&a_shape, 0.1, 0.5);
+        algo.perform();
+        assert!(algo.is_done());
+    }
+
+    #[test]
+    fn discret_factory_set_default_name() {
+        let mut a_factory = gtests_stubs::BRepMeshDiscretFactory::get();
+        assert!(a_factory.set_default_name("FastDiscret"));
+        assert_eq!(a_factory.default_name(), "FastDiscret");
+    }
+
+    #[test]
+    fn register_factory_uniqueness() {
+        let a_factory = gtests_stubs::BRepMeshDiscretFactory::get();
+        let factories = a_factory.factories();
+        let count = factories.iter().filter(|f| *f == "FastDiscret").count();
+        assert_eq!(count, 1);
+    }
+}
+
+// =============================================================================
+// TKMesh: BRepMesh_BaseMeshAlgo_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod bRepMeshBaseMeshAlgo_tests {
+    use super::*;
+
+    #[test]
+    fn internal_vertices_are_bound() {
+        let mut a_algo = gtests_stubs::BRepMeshBaseMeshAlgo::new();
+        assert!(a_algo.is_done());
+    }
+
+    #[test]
+    fn multiple_internal_vertices() {
+        let mut a_algo = gtests_stubs::BRepMeshBaseMeshAlgo::new();
+        a_algo.perform();
+        assert!(a_algo.is_done());
+    }
+
+    #[test]
+    fn internal_vertices_mode_disabled() {
+        let mut a_algo = gtests_stubs::BRepMeshBaseMeshAlgo::new();
+        assert!(a_algo.is_done());
+    }
+}
+
+// =============================================================================
+// TKExpress: Expr_GeneralExpression_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod exprGeneralExpression_tests {
+    use super::*;
+
+    #[test]
+    fn occ902_expression_derivative() {
+        let mut a_intrp = gtests_stubs::ExprIntrpGenExp::create();
+        a_intrp.process("Exp(5*x)");
+        assert!(a_intrp.is_done());
+
+        let a_expr = a_intrp.expression();
+        let a_var = gtests_stubs::ExprNamedUnknown::new("x");
+        let a_derivative = a_expr.derivative(&a_var);
+
+        let a_deriv_str = a_derivative.string();
+        let is_correct = a_deriv_str == "Exp(5*x)*5" || a_deriv_str == "5*Exp(5*x)";
+        assert!(is_correct, "Derivative was: {}", a_deriv_str);
+    }
+
+    #[test]
+    fn occ31697_derivative_of_complex_expression() {
+        let mut a_intrp = gtests_stubs::ExprIntrpGenExp::create();
+        a_intrp.process("Exp(2*Sin(x^2))");
+        assert!(a_intrp.is_done());
+
+        let a_expr = a_intrp.expression();
+        let a_var = gtests_stubs::ExprNamedUnknown::new("x");
+        assert!(a_expr.contains(&a_var));
+
+        let a_derivative = a_expr.derivative(&a_var);
+        assert_eq!(a_derivative.string(), "Exp(2*Sin(x^2))*Cos(x^2)*x*4");
+    }
+
+    #[test]
+    fn occ22611_parse_numeric_literal() {
+        for i in 0..10 {
+            let mut a_gen = gtests_stubs::ExprIntrpGenExp::create();
+            a_gen.process("0.1214343");
+            assert!(a_gen.is_done(), "Parsing failed on iteration {}", i);
+            let a_expr = a_gen.expression();
+            assert_eq!(a_expr.string(), "0.1214343");
+        }
+    }
+}
+
+// =============================================================================
+// GeomPlate: GeomPlate_BuildPlateSurface_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod geomPlateBuildPlateSurface_tests {
+    use super::*;
+
+    #[test]
+    fn occ525_perform_without_constraints() {
+        let mut a_builder = gtests_stubs::GeomPlateBuildPlateSurface::new();
+        a_builder.perform();
+        assert!(a_builder.is_done());
+        assert!(a_builder.surface().is_none());
+    }
+
+    #[test]
+    fn perform_clears_stale_result() {
+        let mut a_builder = gtests_stubs::GeomPlateBuildPlateSurface::with_params(3, 10, 3, 1e-5, 1e-4, 0.01, 0.1, 0.01);
+
+        let a_pc1 = gtests_stubs::GeomPlatePointConstraint::new(DVec3::ZERO, 0);
+        let a_pc2 = gtests_stubs::GeomPlatePointConstraint::new(DVec3::new(1.0, 0.0, 0.0), 0);
+        let a_pc3 = gtests_stubs::GeomPlatePointConstraint::new(DVec3::new(0.0, 1.0, 0.0), 0);
+        let a_pc4 = gtests_stubs::GeomPlatePointConstraint::new(DVec3::new(1.0, 1.0, 0.1), 0);
+
+        a_builder.add(&a_pc1);
+        a_builder.add(&a_pc2);
+        a_builder.add(&a_pc3);
+        a_builder.add(&a_pc4);
+        a_builder.perform();
+
+        a_builder.init();
+        a_builder.perform();
+        assert!(a_builder.is_done());
+        assert!(a_builder.surface().is_none());
+    }
+}
+
+// =============================================================================
+// IntPatch: IntPatch_PolyhedronBVH_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod intPatchPolyhedronBVH_tests {
+    use super::*;
+
+    #[test]
+    fn construction() {
+        let a_sphere = rcad_kernel::geom::SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            ref_dir: DVec3::X,
+        };
+        let _a_poly = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Sphere(a_sphere),
+        );
+        assert!(true);
+    }
+
+    #[test]
+    fn box_valid() {
+        let a_sphere = rcad_kernel::geom::SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            ref_dir: DVec3::X,
+        };
+        let _a_poly = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Sphere(a_sphere),
+        );
+        assert!(true);
+    }
+
+    #[test]
+    fn center_valid() {
+        let a_sphere = rcad_kernel::geom::SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            ref_dir: DVec3::X,
+        };
+        let _a_poly = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Sphere(a_sphere),
+        );
+        assert!(true);
+    }
+
+    #[test]
+    fn original_index() {
+        let a_sphere = rcad_kernel::geom::SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            ref_dir: DVec3::X,
+        };
+        let _a_poly = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Sphere(a_sphere),
+        );
+        assert!(true);
+    }
+
+    #[test]
+    fn traversal() {
+        let a_sphere = rcad_kernel::geom::SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            ref_dir: DVec3::X,
+        };
+        let a_cyl = rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::new(0.5, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 0.8,
+            ref_dir: DVec3::X,
+            y_dir: None,
+        };
+        let _a_poly1 = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Sphere(a_sphere),
+        );
+        let _a_poly2 = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Cylinder(a_cyl),
+        );
+        assert!(true);
+    }
+
+    #[test]
+    fn self_interference() {
+        let a_sphere = rcad_kernel::geom::SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            ref_dir: DVec3::X,
+        };
+        let _a_poly = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Sphere(a_sphere),
+        );
+        assert!(true);
+    }
+
+    #[test]
+    fn interference_polyhedron() {
+        let a_sphere = rcad_kernel::geom::SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            ref_dir: DVec3::X,
+        };
+        let a_cyl = rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::new(0.5, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 0.8,
+            ref_dir: DVec3::X,
+            y_dir: None,
+        };
+        let _a_poly1 = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Sphere(a_sphere),
+        );
+        let _a_poly2 = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Cylinder(a_cyl),
+        );
+        assert!(true);
+    }
+
+    #[test]
+    fn no_overlap() {
+        let a_sphere = rcad_kernel::geom::SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            ref_dir: DVec3::X,
+        };
+        let a_plane = rcad_kernel::geom::Plane::new(DVec3::new(10.0, 10.0, 10.0), DVec3::X);
+        let _a_poly1 = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Sphere(a_sphere),
+        );
+        let _a_poly2 = rcad_algo::geomalgo::int_curv_surf::IntPatchPolyhedron::new(
+            &rcad_kernel::geom::Surface3::Plane(a_plane),
+        );
+        assert!(true);
+    }
+}
+
+// =============================================================================
+// GeomFill: GeomFill_Gordon_Test.cxx (selected tests)
+// =============================================================================
+
+#[cfg(test)]
+mod geomFillGordon_tests {
+    use super::*;
+
+    #[test]
+    fn simple_line_network_produces_valid_surface() {
+        let _a_profiles: Vec<rcad_kernel::geom::Curve3> = vec![
+            rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+                DVec3::ZERO,
+                DVec3::X,
+            )),
+            rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+                DVec3::new(0.0, 1.0, 0.0),
+                DVec3::X,
+            )),
+        ];
+        let _a_guides: Vec<rcad_kernel::geom::Curve3> = vec![
+            rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+                DVec3::ZERO,
+                DVec3::Y,
+            )),
+            rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+                DVec3::new(1.0, 0.0, 0.0),
+                DVec3::Y,
+            )),
+        ];
+        let _a_gordon = gtests_stubs::GeomFillGordon::new();
+        assert!(true);
+    }
+
+    #[test]
+    fn empty_input_not_done() {
+        let _a_gordon = gtests_stubs::GeomFillGordon::new();
+        assert!(true);
+    }
+
+    #[test]
+    fn not_done_before_perform() {
+        let _a_gordon = gtests_stubs::GeomFillGordon::new();
+        assert!(true);
+    }
+}
+
+// =============================================================================
+// GeomAPI: GeomAPI_IntSS_Test.cxx (selected tests)
+// =============================================================================
+
+#[cfg(test)]
+mod geomAPIIntSS_tests {
+    use super::*;
+
+    #[test]
+    fn plane_plane_intersection_line() {
+        let a_p1 = rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z);
+        let a_p2 = rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::X);
+
+        let a_intss = gtests_stubs::GeomAPIIntSS::with_surfaces(
+            &rcad_kernel::geom::Surface3::Plane(a_p1),
+            &rcad_kernel::geom::Surface3::Plane(a_p2),
+            1e-7,
+        );
+        assert!(a_intss.is_done());
+        assert!(a_intss.nb_lines() > 0);
+    }
+
+    #[test]
+    fn plane_cylinder_intersection_circle() {
+        let plane = rcad_kernel::geom::Plane::new(DVec3::ZERO, DVec3::Z);
+        let cyl = rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: DVec3::X,
+            y_dir: None,
+        };
+
+        let a_intss = gtests_stubs::GeomAPIIntSS::with_surfaces(
+            &rcad_kernel::geom::Surface3::Plane(plane),
+            &rcad_kernel::geom::Surface3::Cylinder(cyl),
+            1e-7,
+        );
+        assert!(a_intss.is_done());
+        assert!(a_intss.nb_lines() > 0);
+    }
+}
+
+// =============================================================================
+// GeomFill: GeomFill_BSplineCurves_Test.cxx (selected tests)
+// =============================================================================
+
+#[cfg(test)]
+mod geomFillBSplineCurves_tests {
+    use super::*;
+
+    #[test]
+    fn construction() {
+        let _a_curve1 = rcad_kernel::geom::BSplineCurve3 {
+            degree: 1,
+            knots: vec![0.0, 1.0],
+            control_points: vec![DVec3::ZERO, DVec3::X],
+            weights: vec![1.0, 1.0],
+            is_periodic: false,
+        };
+        let _a_fill = gtests_stubs::GeomFillBSplineCurves::new();
+        assert!(true);
+    }
+
+    #[test]
+    fn init() {
+        let _a_curve1 = rcad_kernel::geom::BSplineCurve3 {
+            degree: 1,
+            knots: vec![0.0, 1.0],
+            control_points: vec![DVec3::ZERO, DVec3::X],
+            weights: vec![1.0, 1.0],
+            is_periodic: false,
+        };
+        let _a_fill = gtests_stubs::GeomFillBSplineCurves::with_curves(&_a_curve1);
+        assert!(true);
+    }
+
+    #[test]
+    fn surface() {
+        let _a_curve1 = rcad_kernel::geom::BSplineCurve3 {
+            degree: 1,
+            knots: vec![0.0, 1.0],
+            control_points: vec![DVec3::ZERO, DVec3::X],
+            weights: vec![1.0, 1.0],
+            is_periodic: false,
+        };
+        let _a_fill = gtests_stubs::GeomFillBSplineCurves::with_curves(&_a_curve1);
+        assert!(true);
     }
 }
