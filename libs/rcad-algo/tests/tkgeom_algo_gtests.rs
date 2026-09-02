@@ -1305,3 +1305,294 @@ mod geom2d_gcc_circ2d2tanrad_tests {
         }
     }
 }
+
+// Geom2dGcc_Circ2d3Tan_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod geom2d_gcc_circ2d3tan_tests {
+    use super::*;
+    use rcad_algo::geomalgo::geom2d_gcc::{Circ2d3Tan, GccEntPosition, QualifiedCurve};
+    use rcad_kernel::geom::Circle2d;
+
+    /// OCCT Geom2dGcc::Unqualified(adaptor) — a circle qualified as unqualified.
+    fn create_qualified_circle(x: f64, y: f64, radius: f64) -> QualifiedCurve {
+        let a_circle = Curve2d::Circle(Circle2d {
+            center: DVec2::new(x, y),
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+            radius,
+        });
+        QualifiedCurve::new(a_circle, GccEntPosition::Unqualified)
+    }
+
+    /// OCCT verifySolutionValidity (Geom2dGcc_Circ2d3Tan_Test.cxx L82-104).
+    fn verify_solution_validity(
+        sol: &Circle2d,
+        index: usize,
+        min_x: f64,
+        max_x: f64,
+        min_y: f64,
+        max_y: f64,
+        max_radius: f64,
+    ) {
+        assert!(
+            sol.radius > 0.0,
+            "Solution {} should have positive radius",
+            index
+        );
+        assert!(
+            sol.radius < max_radius,
+            "Solution {} should have reasonable radius",
+            index
+        );
+        let center = sol.center;
+        assert!(center.x > min_x, "Solution {} X coordinate should be reasonable", index);
+        assert!(center.x < max_x, "Solution {} X coordinate should be reasonable", index);
+        assert!(center.y > min_y, "Solution {} Y coordinate should be reasonable", index);
+        assert!(center.y < max_y, "Solution {} Y coordinate should be reasonable", index);
+    }
+
+    /// OCCT verifyTangencyConstraints (L36-67) — the solution must be tangent
+    /// to all three input circles (external or internal tangency).
+    fn verify_tangency_constraints(
+        sol: &Circle2d,
+        c1: &Circle2d,
+        c2: &Circle2d,
+        c3: &Circle2d,
+        index: usize,
+        tolerance: f64,
+    ) {
+        let sol_center = sol.center;
+        let sol_radius = sol.radius;
+        let circles = [c1, c2, c3];
+        for (i, c) in circles.iter().enumerate() {
+            let dist = sol_center.distance(c.center);
+            let expected_ext = sol_radius + c.radius;
+            let expected_int = (sol_radius - c.radius).abs();
+            let is_tangent = (dist - expected_ext).abs() <= tolerance
+                || (dist - expected_int).abs() <= tolerance;
+            assert!(
+                is_tangent,
+                "Solution {} should be tangent to circle {} (distance={}, expected external={}, expected internal={})",
+                index,
+                i + 1,
+                dist,
+                expected_ext,
+                expected_int
+            );
+        }
+    }
+
+    // TEST_F(Geom2dGcc_Circ2d3TanTest, BUC60622_RegressionCase)
+    #[test]
+    fn buc60622_regression_case() {
+        let my_tolerance = CONFUSION; // Precision::Confusion()
+        let a_qual1 = create_qualified_circle(500.0, 1800.0, 500.0);
+        let a_qual2 = create_qualified_circle(500.0, 1900.0, 400.0);
+        let a_qual3 = create_qualified_circle(700.0, 1900.0, 200.0);
+
+        let a_input_circ1 = Circle2d {
+            center: DVec2::new(500.0, 1800.0),
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+            radius: 500.0,
+        };
+        let a_input_circ2 = Circle2d {
+            center: DVec2::new(500.0, 1900.0),
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+            radius: 400.0,
+        };
+        let a_input_circ3 = Circle2d {
+            center: DVec2::new(700.0, 1900.0),
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+            radius: 200.0,
+        };
+
+        let a_solver = Circ2d3Tan::new_3_curves(&a_qual1, &a_qual2, &a_qual3, my_tolerance, 0.0, 0.0, 0.0);
+        assert!(a_solver.is_done(), "Algorithm should succeed");
+
+        let a_nb_solutions = a_solver.nb_solutions();
+        assert_eq!(a_nb_solutions, 3, "BUC60622 case should find exactly 3 solutions");
+
+        for i in 1..=a_nb_solutions {
+            let a_sol = a_solver.this_solution(i);
+            verify_solution_validity(&a_sol, i, -1000.0, 2000.0, 1000.0, 3000.0, 10000.0);
+            verify_tangency_constraints(&a_sol, &a_input_circ1, &a_input_circ2, &a_input_circ3, i, 1e-6);
+        }
+
+        if a_nb_solutions >= 3 {
+            let a_sol1 = a_solver.this_solution(1);
+            assert!((a_sol1.center.x - 500.0).abs() <= 1.0);
+            assert!((a_sol1.center.y - 1900.0).abs() <= 1.0);
+            assert!((a_sol1.radius - 400.0).abs() <= 1.0);
+        }
+    }
+
+    // TEST_F(Geom2dGcc_Circ2d3TanTest, ToleranceImpact_Analysis)
+    #[test]
+    fn tolerance_impact_analysis() {
+        let a_qual1 = create_qualified_circle(500.0, 1800.0, 500.0);
+        let a_qual2 = create_qualified_circle(500.0, 1900.0, 400.0);
+        let a_qual3 = create_qualified_circle(700.0, 1900.0, 200.0);
+
+        let a_test_tolerances = [CONFUSION, 1e-12, 1e-10, 1e-8];
+        let mut a_default_sol_count = 0;
+
+        for (idx, a_tol) in a_test_tolerances.iter().enumerate() {
+            let a_solver = Circ2d3Tan::new_3_curves(&a_qual1, &a_qual2, &a_qual3, *a_tol, 0.0, 0.0, 0.0);
+            assert!(a_solver.is_done(), "Algorithm should succeed with tolerance {}", a_tol);
+
+            let a_nb_sol = a_solver.nb_solutions();
+            if idx == 0 {
+                a_default_sol_count = a_nb_sol;
+                assert!(a_nb_sol >= 1, "Should find at least 1 solution with default tolerance");
+            } else {
+                assert!(a_nb_sol >= 1, "Should find at least 1 solution with tolerance {}", a_tol);
+                assert!(
+                    a_nb_sol <= a_default_sol_count + 2,
+                    "Solution count shouldn't increase dramatically with tolerance {}",
+                    a_tol
+                );
+            }
+            for i in 1..=a_nb_sol {
+                let a_sol = a_solver.this_solution(i);
+                verify_solution_validity(&a_sol, i, -1000.0, 2000.0, 1000.0, 3000.0, 10000.0);
+            }
+        }
+    }
+
+    // TEST_F(Geom2dGcc_Circ2d3TanTest, Simple_ThreeCircle_Case)
+    #[test]
+    fn simple_three_circle_case() {
+        let my_tolerance = CONFUSION;
+        let a_qual1 = create_qualified_circle(0.0, 0.0, 2.0);
+        let a_qual2 = create_qualified_circle(10.0, 0.0, 2.0);
+        let a_qual3 = create_qualified_circle(5.0, 8.0, 2.0);
+        let a_input1 = Circle2d::new(DVec2::new(0.0, 0.0), 2.0);
+        let a_input2 = Circle2d::new(DVec2::new(10.0, 0.0), 2.0);
+        let a_input3 = Circle2d::new(DVec2::new(5.0, 8.0), 2.0);
+
+        let a_solver = Circ2d3Tan::new_3_curves(&a_qual1, &a_qual2, &a_qual3, my_tolerance, 0.0, 0.0, 0.0);
+        assert!(a_solver.is_done(), "Simple case should always work");
+
+        let a_nb_sol = a_solver.nb_solutions();
+        assert!(a_nb_sol >= 1, "Should find at least one solution for simple case");
+        for i in 1..=a_nb_sol {
+            let a_sol = a_solver.this_solution(i);
+            verify_solution_validity(&a_sol, i, -10000.0, 10000.0, -10000.0, 10000.0, 100000.0);
+            verify_tangency_constraints(&a_sol, &a_input1, &a_input2, &a_input3, i, 1e-6);
+        }
+    }
+
+    // TEST_F(Geom2dGcc_Circ2d3TanTest, Concentric_Circles_EdgeCase)
+    #[test]
+    fn concentric_circles_edge_case() {
+        let my_tolerance = CONFUSION;
+        let a_qual1 = create_qualified_circle(0.0, 0.0, 1.0);
+        let a_qual2 = create_qualified_circle(0.0, 0.0, 3.0);
+        let a_qual3 = create_qualified_circle(10.0, 0.0, 2.0);
+
+        let a_solver = Circ2d3Tan::new_3_curves(&a_qual1, &a_qual2, &a_qual3, my_tolerance, 0.0, 0.0, 0.0);
+        assert!(
+            a_solver.is_done(),
+            "Algorithm should complete successfully even when no solutions exist"
+        );
+        let a_nb_sol = a_solver.nb_solutions();
+        assert_eq!(a_nb_sol, 0, "This concentric configuration geometrically has no solutions");
+    }
+
+    // TEST_F(Geom2dGcc_Circ2d3TanTest, SmallCircles_PrecisionTest)
+    #[test]
+    fn small_circles_precision_test() {
+        let my_tolerance = CONFUSION;
+        let a_qual1 = create_qualified_circle(0.0, 0.0, 0.01);
+        let a_qual2 = create_qualified_circle(0.1, 0.0, 0.01);
+        let a_qual3 = create_qualified_circle(0.05, 0.08, 0.01);
+        let a_input1 = Circle2d::new(DVec2::new(0.0, 0.0), 0.01);
+        let a_input2 = Circle2d::new(DVec2::new(0.1, 0.0), 0.01);
+        let a_input3 = Circle2d::new(DVec2::new(0.05, 0.08), 0.01);
+
+        let a_solver = Circ2d3Tan::new_3_curves(&a_qual1, &a_qual2, &a_qual3, my_tolerance, 0.0, 0.0, 0.0);
+        assert!(a_solver.is_done(), "Small circles should be handled correctly");
+
+        let a_nb_sol = a_solver.nb_solutions();
+        assert!(a_nb_sol >= 1, "Should find at least one solution for small circles");
+        for i in 1..=a_nb_sol {
+            let a_sol = a_solver.this_solution(i);
+            verify_solution_validity(&a_sol, i, -10.0, 10.0, -10.0, 10.0, 10.0);
+            verify_tangency_constraints(&a_sol, &a_input1, &a_input2, &a_input3, i, 1e-3);
+        }
+    }
+
+    // TEST_F(Geom2dGcc_Circ2d3TanTest, LargeCircles_ScalingTest)
+    #[test]
+    fn large_circles_scaling_test() {
+        let my_tolerance = CONFUSION;
+        let a_qual1 = create_qualified_circle(0.0, 0.0, 1000.0);
+        let a_qual2 = create_qualified_circle(5000.0, 0.0, 1500.0);
+        let a_qual3 = create_qualified_circle(2500.0, 4000.0, 800.0);
+        let a_input1 = Circle2d::new(DVec2::new(0.0, 0.0), 1000.0);
+        let a_input2 = Circle2d::new(DVec2::new(5000.0, 0.0), 1500.0);
+        let a_input3 = Circle2d::new(DVec2::new(2500.0, 4000.0), 800.0);
+
+        let a_solver = Circ2d3Tan::new_3_curves(&a_qual1, &a_qual2, &a_qual3, my_tolerance, 0.0, 0.0, 0.0);
+        assert!(a_solver.is_done(), "Large circles should be handled correctly");
+
+        let a_nb_sol = a_solver.nb_solutions();
+        assert!(a_nb_sol >= 1, "Should find at least one solution for large circles");
+        for i in 1..=a_nb_sol {
+            let a_sol = a_solver.this_solution(i);
+            verify_solution_validity(&a_sol, i, -10000.0, 10000.0, -10000.0, 10000.0, 50000.0);
+            verify_tangency_constraints(&a_sol, &a_input1, &a_input2, &a_input3, i, 1.0);
+        }
+    }
+
+    // TEST_F(Geom2dGcc_Circ2d3TanTest, LinearConfiguration_GeometricTest)
+    #[test]
+    fn linear_configuration_geometric_test() {
+        let my_tolerance = CONFUSION;
+        let a_qual1 = create_qualified_circle(0.0, 0.0, 1.0);
+        let a_qual2 = create_qualified_circle(5.0, 0.0, 1.5);
+        let a_qual3 = create_qualified_circle(10.0, 0.0, 1.2);
+        let a_input1 = Circle2d::new(DVec2::new(0.0, 0.0), 1.0);
+        let a_input2 = Circle2d::new(DVec2::new(5.0, 0.0), 1.5);
+        let a_input3 = Circle2d::new(DVec2::new(10.0, 0.0), 1.2);
+
+        let a_solver = Circ2d3Tan::new_3_curves(&a_qual1, &a_qual2, &a_qual3, my_tolerance, 0.0, 0.0, 0.0);
+        assert!(a_solver.is_done(), "Linear configuration should be solvable");
+
+        let a_nb_sol = a_solver.nb_solutions();
+        assert!(a_nb_sol >= 1, "Should find at least one solution for linear configuration");
+        for i in 1..=a_nb_sol {
+            let a_sol = a_solver.this_solution(i);
+            verify_solution_validity(&a_sol, i, -10000.0, 10000.0, -10000.0, 10000.0, 100000.0);
+            verify_tangency_constraints(&a_sol, &a_input1, &a_input2, &a_input3, i, 1e-6);
+        }
+    }
+
+    // TEST_F(Geom2dGcc_Circ2d3TanTest, TouchingCircles_DegenerateCase)
+    #[test]
+    fn touching_circles_degenerate_case() {
+        let my_tolerance = CONFUSION;
+        let a_qual1 = create_qualified_circle(0.0, 0.0, 2.0);
+        let a_qual2 = create_qualified_circle(4.0, 0.0, 2.0);
+        let a_qual3 = create_qualified_circle(2.0, 5.0, 1.5);
+        let a_input1 = Circle2d::new(DVec2::new(0.0, 0.0), 2.0);
+        let a_input2 = Circle2d::new(DVec2::new(4.0, 0.0), 2.0);
+        let a_input3 = Circle2d::new(DVec2::new(2.0, 5.0), 1.5);
+
+        let a_solver = Circ2d3Tan::new_3_curves(&a_qual1, &a_qual2, &a_qual3, my_tolerance, 0.0, 0.0, 0.0);
+        assert!(a_solver.is_done(), "Touching circles configuration should be solvable");
+
+        let a_nb_sol = a_solver.nb_solutions();
+        assert!(a_nb_sol >= 1, "Should find at least one solution for touching circles case");
+        for i in 1..=a_nb_sol {
+            let a_sol = a_solver.this_solution(i);
+            verify_solution_validity(&a_sol, i, -10000.0, 10000.0, -10000.0, 10000.0, 100000.0);
+            verify_tangency_constraints(&a_sol, &a_input1, &a_input2, &a_input3, i, 1e-6);
+        }
+    }
+}

@@ -1309,3 +1309,329 @@ impl Circ2d2TanRad {
         }
     }
 }
+
+// =============================================================================
+// Geom2dGcc_Circ2d3Tan — circles tangent to three curves (BUC60622).
+// Ported: the (QualifiedCurve × 3, Tolerance, Param1, Param2, Param3)
+// constructor for the analytic three-circle case via GccAna_Circ2d3Tan.
+// =============================================================================
+
+use super::gcc_ana::{GccAnaCirc2d3Tan, QualifiedCirc};
+
+/// OCCT Geom2dGcc_Circ2d3Tan (Geom2dGcc_Circ2d3Tan.cxx) — circle tangent to
+/// three elements. The three-curve constructor (L32-265) is ported for the
+/// analytic (line|circle) × (line|circle) × (line|circle) case; the general
+/// curve case goes through Geom2dGcc_Circ2d3TanIter (not ported).
+#[derive(Debug, Clone)]
+pub struct Circ2d3Tan {
+    well_done: bool,
+    nbr_sol: usize,
+    cirsol: Vec<Circle2d>,
+    qualifier1: Vec<GccEntPosition>,
+    qualifier2: Vec<GccEntPosition>,
+    qualifier3: Vec<GccEntPosition>,
+    the_same1: Vec<bool>,
+    the_same2: Vec<bool>,
+    the_same3: Vec<bool>,
+    pnttg1sol: Vec<DVec2>,
+    pnttg2sol: Vec<DVec2>,
+    pnttg3sol: Vec<DVec2>,
+    par1sol: Vec<f64>,
+    par2sol: Vec<f64>,
+    par3sol: Vec<f64>,
+    pararg1: Vec<f64>,
+    pararg2: Vec<f64>,
+    pararg3: Vec<f64>,
+}
+
+impl Circ2d3Tan {
+    fn new_with_capacity(cap: usize) -> Self {
+        Circ2d3Tan {
+            well_done: false,
+            nbr_sol: 0,
+            cirsol: Vec::with_capacity(cap),
+            qualifier1: Vec::with_capacity(cap),
+            qualifier2: Vec::with_capacity(cap),
+            qualifier3: Vec::with_capacity(cap),
+            the_same1: Vec::with_capacity(cap),
+            the_same2: Vec::with_capacity(cap),
+            the_same3: Vec::with_capacity(cap),
+            pnttg1sol: Vec::with_capacity(cap),
+            pnttg2sol: Vec::with_capacity(cap),
+            pnttg3sol: Vec::with_capacity(cap),
+            par1sol: Vec::with_capacity(cap),
+            par2sol: Vec::with_capacity(cap),
+            par3sol: Vec::with_capacity(cap),
+            pararg1: Vec::with_capacity(cap),
+            pararg2: Vec::with_capacity(cap),
+            pararg3: Vec::with_capacity(cap),
+        }
+    }
+
+    /// OCCT Geom2dGcc_Circ2d3Tan(Qualified1, Qualified2, Qualified3,
+    /// Tolerance, Param1, Param2, Param3) (L32-265).
+    pub fn new_3_curves(
+        q1: &QualifiedCurve,
+        q2: &QualifiedCurve,
+        q3: &QualifiedCurve,
+        tolerance: f64,
+        _param1: f64,
+        _param2: f64,
+        _param3: f64,
+    ) -> Self {
+        let mut r = Circ2d3Tan::new_with_capacity(16);
+        let c1 = q1.qualified().clone();
+        let c2 = q2.qualified().clone();
+        let c3 = q3.qualified().clone();
+        let type1 = curve2d_type_of(&c1);
+        let type2 = curve2d_type_of(&c2);
+        let type3 = curve2d_type_of(&c3);
+
+        r.nbr_sol = 0;
+        if (type1 == Curve2dType::Line || type1 == Curve2dType::Circle)
+            && (type2 == Curve2dType::Line || type2 == Curve2dType::Circle)
+            && (type3 == Curve2dType::Line || type3 == Curve2dType::Circle)
+        {
+            // OCCT L75-222: analytic GccAna_Circ2d3Tan branches. Ported: the
+            // (C, C, C) case; the branches involving a line are not ported.
+            if type1 == Curve2dType::Circle {
+                let qc1 = QualifiedCirc::new(
+                    match &c1 {
+                        Curve2d::Circle(c) => *c,
+                        _ => unreachable!(),
+                    },
+                    q1.qualifier(),
+                );
+                if type2 == Curve2dType::Circle {
+                    let qc2 = QualifiedCirc::new(
+                        match &c2 {
+                            Curve2d::Circle(c) => *c,
+                            _ => unreachable!(),
+                        },
+                        q2.qualifier(),
+                    );
+                    if type3 == Curve2dType::Circle {
+                        let qc3 = QualifiedCirc::new(
+                            match &c3 {
+                                Curve2d::Circle(c) => *c,
+                                _ => unreachable!(),
+                            },
+                            q3.qualifier(),
+                        );
+                        let circ = GccAnaCirc2d3Tan::new_3_circles(&qc1, &qc2, &qc3, tolerance);
+                        r.well_done = circ.is_done();
+                        r.nbr_sol = circ.nb_solutions();
+                        for i in 1..=r.nbr_sol {
+                            let (a, b, cc) = circ.which_qualifier(i);
+                            r.qualifier1.push(a);
+                            r.qualifier2.push(b);
+                            r.qualifier3.push(cc);
+                        }
+                        r.results_ana(&circ, 1, 2, 3);
+                    } else {
+                        panic!("GccAna_Circ2d3Tan (C,C,L): not yet ported");
+                    }
+                } else {
+                    panic!("GccAna_Circ2d3Tan (C,L,·): not yet ported");
+                }
+            } else {
+                panic!("GccAna_Circ2d3Tan (L,·,·): not yet ported");
+            }
+        } else {
+            // OCCT L224-264: general curves via Geom2dGcc_Circ2d3TanIter —
+            // not ported.
+            panic!("Geom2dGcc_Circ2d3TanIter: not yet ported");
+        }
+        r
+    }
+
+    /// OCCT Results(const GccAna_Circ2d3Tan&, Rank1, Rank2, Rank3)
+    /// (L556-650). The OCCT arrays are index-aligned; when a solution equals
+    /// the argument (TheSame) the tangency slot is left untouched but still
+    /// occupies its index — mirrored here with placeholder values.
+    fn results_ana(&mut self, circ: &GccAnaCirc2d3Tan, rank1: i32, rank2: i32, rank3: i32) {
+        for j in 1..=self.nbr_sol {
+            self.cirsol.push(circ.this_solution(j));
+            let (i1, i2, i3) = (
+                circ.is_the_same1(j),
+                circ.is_the_same2(j),
+                circ.is_the_same3(j),
+            );
+            // The tangency accessors raise StdFail_NotDone when the solution
+            // equals the argument; only fetch when not the same (OCCT guards
+            // with the TheSame flag before calling TangencyN).
+            let tang1 = if i1 {
+                (0.0, 0.0, DVec2::ZERO)
+            } else {
+                circ.tangency1(j)
+            };
+            let tang2 = if i2 {
+                (0.0, 0.0, DVec2::ZERO)
+            } else {
+                circ.tangency2(j)
+            };
+            let tang3 = if i3 {
+                (0.0, 0.0, DVec2::ZERO)
+            } else {
+                circ.tangency3(j)
+            };
+            match rank1 {
+                1 => {
+                    self.the_same1.push(i1);
+                    self.par1sol.push(tang1.0);
+                    self.pararg1.push(tang1.1);
+                    self.pnttg1sol.push(tang1.2);
+                }
+                2 => {
+                    self.the_same1.push(i2);
+                    self.par1sol.push(tang2.0);
+                    self.pararg1.push(tang2.1);
+                    self.pnttg1sol.push(tang2.2);
+                }
+                3 => {
+                    self.the_same1.push(i3);
+                    self.par1sol.push(tang3.0);
+                    self.pararg1.push(tang3.1);
+                    self.pnttg1sol.push(tang3.2);
+                }
+                _ => unreachable!(),
+            }
+            match rank2 {
+                1 => {
+                    self.the_same2.push(i1);
+                    self.par2sol.push(tang1.0);
+                    self.pararg2.push(tang1.1);
+                    self.pnttg2sol.push(tang1.2);
+                }
+                2 => {
+                    self.the_same2.push(i2);
+                    self.par2sol.push(tang2.0);
+                    self.pararg2.push(tang2.1);
+                    self.pnttg2sol.push(tang2.2);
+                }
+                3 => {
+                    self.the_same2.push(i3);
+                    self.par2sol.push(tang3.0);
+                    self.pararg2.push(tang3.1);
+                    self.pnttg2sol.push(tang3.2);
+                }
+                _ => unreachable!(),
+            }
+            match rank3 {
+                1 => {
+                    self.the_same3.push(i1);
+                    self.par3sol.push(tang1.0);
+                    self.pararg3.push(tang1.1);
+                    self.pnttg3sol.push(tang1.2);
+                }
+                2 => {
+                    self.the_same3.push(i2);
+                    self.par3sol.push(tang2.0);
+                    self.pararg3.push(tang2.1);
+                    self.pnttg3sol.push(tang2.2);
+                }
+                3 => {
+                    self.the_same3.push(i3);
+                    self.par3sol.push(tang3.0);
+                    self.pararg3.push(tang3.1);
+                    self.pnttg3sol.push(tang3.2);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    /// OCCT IsDone() (L652-655).
+    pub fn is_done(&self) -> bool {
+        self.well_done
+    }
+
+    /// OCCT NbSolutions() (L657-660).
+    pub fn nb_solutions(&self) -> usize {
+        self.nbr_sol
+    }
+
+    /// OCCT ThisSolution(Index) (L662-673).
+    pub fn this_solution(&self, index: usize) -> Circle2d {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        self.cirsol[index - 1]
+    }
+
+    /// OCCT WhichQualifier(Index, Qualif1, Qualif2, Qualif3) (L675-698).
+    pub fn which_qualifier(&self, index: usize) -> (GccEntPosition, GccEntPosition, GccEntPosition) {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        (
+            self.qualifier1[index - 1],
+            self.qualifier2[index - 1],
+            self.qualifier3[index - 1],
+        )
+    }
+
+    /// OCCT Tangency1 (L696-722).
+    pub fn tangency1(&self, index: usize) -> (f64, f64, DVec2) {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        if !self.the_same1[index - 1] {
+            (
+                self.par1sol[index - 1],
+                self.pararg1[index - 1],
+                self.pnttg1sol[index - 1],
+            )
+        } else {
+            panic!("StdFail_NotDone");
+        }
+    }
+
+    /// OCCT Tangency2 (L724-750).
+    pub fn tangency2(&self, index: usize) -> (f64, f64, DVec2) {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        if !self.the_same2[index - 1] {
+            (
+                self.par2sol[index - 1],
+                self.pararg2[index - 1],
+                self.pnttg2sol[index - 1],
+            )
+        } else {
+            panic!("StdFail_NotDone");
+        }
+    }
+
+    /// OCCT Tangency3 (L752-778).
+    pub fn tangency3(&self, index: usize) -> (f64, f64, DVec2) {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        if !self.the_same3[index - 1] {
+            (
+                self.par3sol[index - 1],
+                self.pararg3[index - 1],
+                self.pnttg3sol[index - 1],
+            )
+        } else {
+            panic!("StdFail_NotDone");
+        }
+    }
+
+    /// OCCT IsTheSame1 (L780-795).
+    pub fn is_the_same1(&self, index: usize) -> bool {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        self.the_same1[index - 1]
+    }
+
+    /// OCCT IsTheSame2 (L797-812).
+    pub fn is_the_same2(&self, index: usize) -> bool {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        self.the_same2[index - 1]
+    }
+
+    /// OCCT IsTheSame3 (L814-829).
+    pub fn is_the_same3(&self, index: usize) -> bool {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        self.the_same3[index - 1]
+    }
+}
