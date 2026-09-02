@@ -88,6 +88,31 @@ impl Transition {
         }
     }
 
+    /// OCCT IntRes2d_Transition::SetValue(Tangent, Pos, Type) — sets an IN or
+    /// OUT transition (IntRes2d_Transition.lxx L58-66).
+    pub fn set_value_in_out(&mut self, tangent: bool, pos: Position, typetra: TypeTrans) {
+        self.tangent = tangent;
+        self.posit = pos;
+        self.typetra = typetra;
+    }
+
+    /// OCCT IntRes2d_Transition::SetValue(Tangent, Pos, Situ, Oppos) — sets a
+    /// TOUCH transition (IntRes2d_Transition.lxx L68-79).
+    pub fn set_value_touch(&mut self, tangent: bool, pos: Position, situat: Situation, oppos: bool) {
+        self.tangent = tangent;
+        self.posit = pos;
+        self.typetra = TypeTrans::Touch;
+        self.situat = situat;
+        self.oppos = oppos;
+    }
+
+    /// OCCT IntRes2d_Transition::SetValue(Pos) — sets an UNDECIDED transition
+    /// (IntRes2d_Transition.lxx L81-86).
+    pub fn set_value_undecided(&mut self, pos: Position) {
+        self.posit = pos;
+        self.typetra = TypeTrans::Undecided;
+    }
+
     pub fn set_position(&mut self, pos: Position) {
         self.posit = pos;
     }
@@ -480,5 +505,184 @@ impl IntersectionSegment {
 
     pub fn last_point(&self) -> &IntersectionPoint {
         &self.ptlast
+    }
+}
+
+// OCCT IntRes2d_Intersection.cxx L24: PARAMEQUAL
+const PARAMEQUAL_TOL: f64 = 1e-8;
+
+fn paramequal(a: f64, b: f64) -> bool {
+    (a - b).abs() < PARAMEQUAL_TOL
+}
+
+/// OCCT IntRes2d_Transition::TransitionEqual (IntRes2d_Intersection.cxx
+/// L38-65) — equality of two transitions.
+fn transition_equal(t1: &Transition, t2: &Transition) -> bool {
+    if t1.position_on_curve() == t2.position_on_curve() {
+        if t1.transition_type() == t2.transition_type() {
+            if t1.transition_type() == TypeTrans::Touch {
+                if t1.is_tangent() == t2.is_tangent() {
+                    if t1.situation() == t2.situation() {
+                        if t1.is_opposite() == t2.is_opposite() {
+                            return true;
+                        }
+                    }
+                }
+            } else {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// OCCT IntRes2d_Intersection — root class of all the intersections between
+/// two 2D curves (IntRes2d_Intersection.hxx/.lxx/.cxx). Holds the resulting
+/// intersection points and segments plus the done/reverse flags.
+#[derive(Debug, Clone)]
+pub struct IntersectionBase {
+    pub(crate) lpnt: Vec<IntersectionPoint>,
+    pub(crate) lseg: Vec<IntersectionSegment>,
+    pub(crate) done: bool,
+    pub(crate) reverse: bool,
+}
+
+impl IntersectionBase {
+    /// OCCT IntRes2d_Intersection() — empty constructor (done = reverse = false).
+    pub fn new() -> Self {
+        IntersectionBase {
+            lpnt: Vec::new(),
+            lseg: Vec::new(),
+            done: false,
+            reverse: false,
+        }
+    }
+
+    /// OCCT IsDone().
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// OCCT IsEmpty().
+    pub fn is_empty(&self) -> bool {
+        assert!(self.done, "StdFail_NotDone");
+        self.lpnt.is_empty() && self.lseg.is_empty()
+    }
+
+    /// OCCT NbPoints().
+    pub fn nb_points(&self) -> usize {
+        assert!(self.done, "StdFail_NotDone");
+        self.lpnt.len()
+    }
+
+    /// OCCT Point(N) — 1-based index.
+    pub fn point(&self, n: usize) -> &IntersectionPoint {
+        assert!(self.done, "StdFail_NotDone");
+        &self.lpnt[n - 1]
+    }
+
+    /// OCCT NbSegments().
+    pub fn nb_segments(&self) -> usize {
+        assert!(self.done, "StdFail_NotDone");
+        self.lseg.len()
+    }
+
+    /// OCCT Segment(N) — 1-based index.
+    pub fn segment(&self, n: usize) -> &IntersectionSegment {
+        assert!(self.done, "StdFail_NotDone");
+        &self.lseg[n - 1]
+    }
+
+    /// OCCT SetReversedParameters(flag).
+    pub fn set_reversed_parameters(&mut self, flag: bool) {
+        self.reverse = flag;
+    }
+
+    /// OCCT ReversedParameters().
+    pub fn reversed_parameters(&self) -> bool {
+        self.reverse
+    }
+
+    /// OCCT ResetFields() — clears the results and resets done.
+    pub fn reset_fields(&mut self) {
+        if self.done {
+            self.lseg.clear();
+            self.lpnt.clear();
+            self.done = false;
+        }
+    }
+
+    /// OCCT Insert(Pnt) (IntRes2d_Intersection.cxx L67-113) — inserts the point
+    /// sorted by ParamOnFirst, skipping an exact duplicate (parameter + both
+    /// transitions equal).
+    pub fn insert(&mut self, pnt: &IntersectionPoint) {
+        let n = self.lpnt.len();
+        if n == 0 {
+            self.lpnt.push(pnt.clone());
+            return;
+        }
+        let u = pnt.param_on_first();
+        let mut i = 0usize;
+        let mut b = n + 1;
+        while i < n {
+            let ui = self.lpnt[i].param_on_first();
+            if ui >= u {
+                b = i + 1;
+                i = n;
+            }
+            if paramequal(ui, u) {
+                if paramequal(pnt.param_on_second(), self.lpnt[i].param_on_second()) {
+                    if transition_equal(pnt.transition_of_first(), self.lpnt[i].transition_of_first())
+                        && transition_equal(
+                            pnt.transition_of_second(),
+                            self.lpnt[i].transition_of_second(),
+                        )
+                    {
+                        b = 0;
+                        i = n;
+                    }
+                }
+            }
+            i += 1;
+        }
+        if b > n {
+            self.lpnt.push(pnt.clone());
+        } else if b > 0 {
+            self.lpnt.insert(b - 1, pnt.clone());
+        }
+    }
+
+    /// OCCT Append(Pnt) — appends a point.
+    pub fn append_point(&mut self, pnt: &IntersectionPoint) {
+        self.lpnt.push(pnt.clone());
+    }
+
+    /// OCCT Append(Seg) — appends a segment.
+    pub fn append_segment(&mut self, seg: &IntersectionSegment) {
+        self.lseg.push(seg.clone());
+    }
+
+    /// OCCT SetValues(Other) (IntRes2d_Intersection.cxx L115-142) — copies the
+    /// results of another intersection.
+    pub fn set_values(&mut self, other: &IntersectionBase) {
+        if other.done {
+            self.lseg.clear();
+            self.lpnt.clear();
+            for p in other.lpnt.iter() {
+                self.lpnt.push(p.clone());
+            }
+            for s in other.lseg.iter() {
+                self.lseg.push(s.clone());
+            }
+            self.done = true;
+        } else {
+            self.done = false;
+        }
+    }
+}
+
+impl Default for IntersectionBase {
+    fn default() -> Self {
+        IntersectionBase::new()
     }
 }

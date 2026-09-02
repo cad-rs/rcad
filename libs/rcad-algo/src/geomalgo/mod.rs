@@ -18,6 +18,7 @@ pub mod intf;        // Intf (Intf_PIType, Intf_SectionPoint, Intf_Tool, InterUt
 pub mod int_curv_surf; // IntCurveSurface polygon/polyhedron sampling + IntPatch_Polyhedron
 pub mod hatch;       // Geom2dHatch (Elements container + Intersector local geometry)
 pub mod geom2d_gcc;   // Geom2dGcc (tangent-line constraint: Lin2d2Tan + iter solver)
+pub mod geom2d_int;   // Geom2dInt (imp-par chain: IntConicCurveOfGInter + Intersector)
 pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain
 
 pub use int_polyh::IntPolyhPoint;

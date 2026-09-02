@@ -45,8 +45,8 @@ use rcad_kernel::core::precision::{
     ANGULAR, COMPUTATIONAL, CONFUSION, INFINITE_VALUE, SQUARE_CONFUSION,
 };
 use rcad_kernel::geom::{
-    ConicalSurface, Curve2d, Curve2dEval, Hyperbola2d, Hyperbola3, Line3, Parabola2d, Parabola3,
-    Plane, SphericalSurface, Surface3,
+    ConicalSurface, Curve2d, Curve2dEval, Hyperbola2d, Hyperbola3, Line2d, Line3, Parabola2d,
+    Parabola3, Plane, SphericalSurface, Surface3,
 };
 use rcad_kernel::math::bnd::{BndBox, BndBox2d};
 use rcad_kernel::topods::{Orientation, State};
@@ -1225,5 +1225,83 @@ mod geom2d_gcc_lin2d2tan_tests {
         let a_lin_tan = Lin2d2Tan::curve_curve(&a_q_ell, &a_q_cir, 0.1);
 
         assert!(a_lin_tan.nb_solutions() > 0, "Expected at least one tangent line solution");
+    }
+}
+
+// Geom2dGcc_Circ2d2TanRad_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod geom2d_gcc_circ2d2tanrad_tests {
+    use super::*;
+    use rcad_algo::geomalgo::geom2d_gcc::{Circ2d2TanRad, GccEntPosition, QualifiedCurve};
+    use rcad_kernel::geom::BezierCurve2;
+
+    // TEST(Geom2dGcc_Circ2d2TanRadTest, BUC60897_TangentToLineAndBezier)
+    // Circles of radius 10 tangent to a line and a Bezier curve; each tangency
+    // point must lie at the circle radius from the circle center (within 1%).
+    #[test]
+    fn buc60897_tangent_to_line_and_bezier() {
+        // Geom2d_Line(gp_Pnt2d(100, 0), gp_Dir2d(NX)).
+        let a_line = Curve2d::Line(Line2d::new(DVec2::new(100.0, 0.0), DVec2::new(-1.0, 0.0)));
+
+        // Geom2d_BezierCurve with three control points (non-rational, so the
+        // homogeneous weights are 1.0 per the rcad BezierCurve2 convention).
+        let a_curve = Curve2d::Bezier(BezierCurve2 {
+            control_points: vec![
+                DVec2::new(0.0, 0.0),
+                DVec2::new(50.0, 50.0),
+                DVec2::new(0.0, 100.0),
+            ],
+            weights: vec![1.0, 1.0, 1.0],
+        });
+
+        // Qualified curves with outside tangency.
+        let a_qualif_curve1 = QualifiedCurve::new(a_line, GccEntPosition::Outside);
+        let a_qualif_curve2 = QualifiedCurve::new(a_curve, GccEntPosition::Outside);
+
+        // Find circles of radius 10 tangent to both curves.
+        let a_radius = 10.0;
+        let a_tolerance = 1e-7;
+        let a_gcc_circ2d = Circ2d2TanRad::new_curve_curve(
+            &a_qualif_curve1,
+            &a_qualif_curve2,
+            a_radius,
+            a_tolerance,
+        );
+
+        assert!(a_gcc_circ2d.is_done(), "Geom2dGcc_Circ2d2TanRad failed to compute");
+        assert!(
+            a_gcc_circ2d.nb_solutions() > 0,
+            "No tangent circles found"
+        );
+
+        let a_max_delta_percent = 1.0;
+        for i in 1..=a_gcc_circ2d.nb_solutions() {
+            let a_circ2d = a_gcc_circ2d.this_solution(i);
+            let a_center = a_circ2d.center;
+            let a_r = a_circ2d.radius;
+
+            let (_a_par_sol1, _a_par_arg1, a_pnt_sol1) = a_gcc_circ2d.tangency1(i);
+            let (_a_par_sol2, _a_par_arg2, a_pnt_sol2) = a_gcc_circ2d.tangency2(i);
+
+            let a_d1 = a_pnt_sol1.distance(a_center);
+            let a_delta1 = (a_d1 - a_r).abs() / a_r * 100.0;
+            assert!(
+                a_delta1 <= a_max_delta_percent,
+                "Solution {}: tangency1 distance error {}% exceeds 1%",
+                i,
+                a_delta1
+            );
+
+            let a_d2 = a_pnt_sol2.distance(a_center);
+            let a_delta2 = (a_d2 - a_r).abs() / a_r * 100.0;
+            assert!(
+                a_delta2 <= a_max_delta_percent,
+                "Solution {}: tangency2 distance error {}% exceeds 1%",
+                i,
+                a_delta2
+            );
+        }
     }
 }

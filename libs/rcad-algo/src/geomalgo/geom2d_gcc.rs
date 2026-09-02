@@ -18,8 +18,10 @@
 
 use glam::DVec2;
 use rcad_kernel::core::precision::parametric_default;
-use rcad_kernel::geom::{Curve2d, Curve2dEval};
+use rcad_kernel::geom::{Circle2d, Curve2d, Curve2dEval, Line2d};
 use rcad_kernel::math::function_set_root::{FunctionSetRoot, FunctionSetWithDerivatives};
+
+use super::int_res2d::Domain as IntRes2dDomain;
 
 /// OCCT GccEnt_Position (GccEnt_Position.hxx).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -790,5 +792,520 @@ impl Lin2d2Tan {
     /// OCCT NbSolutions().
     pub fn nb_solutions(&self) -> usize {
         self.nbr_sol
+    }
+}
+
+// =============================================================================
+// Geom2dGcc_Circ2d2TanRad — circle of given radius tangent to a line and a
+// general curve (BUC60897). Uses the Geom2dInt imp-par intersection chain.
+// =============================================================================
+
+use super::geom2d_int::{
+    curve2d_type_of, elclib2d, AdaptorOffsetCurve, Curve2dAdaptor, Curve2dType,
+    TheIntConicCurveOfGInter,
+};
+
+// OCCT Geom2dGcc_Circ2d2TanRadGeo.cxx L35: aNbSolMAX.
+const A_NB_SOL_MAX: usize = 16;
+
+/// OCCT Geom2dGcc_Circ2d2TanRadGeo (Geom2dGcc_Circ2d2TanRadGeo.cxx) — circles
+/// of a given radius tangent to a line and a general curve. Ported: the
+/// (QualifiedLin, QCurve) constructor (L51-249).
+#[derive(Debug, Clone)]
+pub struct Circ2d2TanRadGeo {
+    well_done: bool,
+    nbr_sol: usize,
+    cirsol: Vec<Circle2d>,
+    qualifier1: Vec<GccEntPosition>,
+    qualifier2: Vec<GccEntPosition>,
+    the_same1: Vec<bool>,
+    the_same2: Vec<bool>,
+    pnttg1sol: Vec<DVec2>,
+    pnttg2sol: Vec<DVec2>,
+    par1sol: Vec<f64>,
+    par2sol: Vec<f64>,
+    pararg1: Vec<f64>,
+    pararg2: Vec<f64>,
+}
+
+impl Circ2d2TanRadGeo {
+    fn new_empty() -> Self {
+        Circ2d2TanRadGeo {
+            well_done: false,
+            nbr_sol: 0,
+            cirsol: Vec::with_capacity(A_NB_SOL_MAX),
+            qualifier1: Vec::with_capacity(A_NB_SOL_MAX),
+            qualifier2: Vec::with_capacity(A_NB_SOL_MAX),
+            the_same1: Vec::with_capacity(A_NB_SOL_MAX),
+            the_same2: Vec::with_capacity(A_NB_SOL_MAX),
+            pnttg1sol: Vec::with_capacity(A_NB_SOL_MAX),
+            pnttg2sol: Vec::with_capacity(A_NB_SOL_MAX),
+            par1sol: Vec::with_capacity(A_NB_SOL_MAX),
+            par2sol: Vec::with_capacity(A_NB_SOL_MAX),
+            pararg1: Vec::with_capacity(A_NB_SOL_MAX),
+            pararg2: Vec::with_capacity(A_NB_SOL_MAX),
+        }
+    }
+
+    /// OCCT Geom2dGcc_Circ2d2TanRadGeo(QualifiedLin, QCurve, Radius,
+    /// Tolerance) (L51-249). `q1` must qualify a line; `q2` a general curve.
+    pub fn new_line_curve(
+        q1: &QualifiedCurve,
+        q2: &QCurve,
+        radius: f64,
+        tolerance: f64,
+    ) -> Self {
+        let mut r = Circ2d2TanRadGeo::new_empty();
+        let tol = tolerance.abs();
+        let thefirst = -100000.0;
+        let thelast = 100000.0;
+        let dirx = DVec2::X;
+        let mut cote1 = [0.0; 2];
+        let mut cote2 = [0.0; 2];
+        let mut nbrcote1 = 0;
+        let mut nbrcote2 = 0;
+        r.well_done = false;
+        r.nbr_sol = 0;
+        if !(q1.is_enclosed() || q1.is_outside() || q1.is_unqualified())
+            || !(q2.is_enclosed() || q2.is_enclosing() || q2.is_outside() || q2.is_unqualified())
+        {
+            panic!("GccEnt_BadQualifier");
+        }
+        let l1 = match q1.qualified() {
+            Curve2d::Line(l) => *l,
+            _ => panic!("GccEnt_BadQualifier"),
+        };
+        let x1dir = l1.direction.x;
+        let y1dir = l1.direction.y;
+        let lxloc = l1.origin.x;
+        let lyloc = l1.origin.y;
+        let origin1 = DVec2::new(lxloc, lyloc);
+        let norml1 = DVec2::new(-y1dir, x1dir);
+        let cu2 = q2.qualified().clone();
+        if radius < 0.0 {
+            panic!("Standard_NegativeValue");
+        } else {
+            // OCCT L112-189: the cote1/cote2 choice per qualifier pair.
+            if q1.is_enclosed() && q2.is_enclosed() {
+                nbrcote1 = 1;
+                nbrcote2 = 1;
+                cote1[0] = radius;
+                cote2[0] = radius;
+            } else if q1.is_enclosed() && q2.is_outside() {
+                nbrcote1 = 1;
+                nbrcote2 = 1;
+                cote1[0] = radius;
+                cote2[0] = -radius;
+            } else if q1.is_outside() && q2.is_enclosed() {
+                nbrcote1 = 1;
+                nbrcote2 = 1;
+                cote1[0] = -radius;
+                cote2[0] = radius;
+            } else if q1.is_outside() && q2.is_outside() {
+                nbrcote1 = 1;
+                nbrcote2 = 1;
+                cote1[0] = -radius;
+                cote2[0] = -radius;
+            }
+            if q1.is_enclosed() && q2.is_unqualified() {
+                nbrcote1 = 1;
+                nbrcote2 = 2;
+                cote1[0] = radius;
+                cote2[0] = radius;
+                cote2[1] = -radius;
+            }
+            if q1.is_unqualified() && q2.is_enclosed() {
+                nbrcote1 = 2;
+                nbrcote2 = 1;
+                cote1[0] = radius;
+                cote1[1] = -radius;
+                cote2[0] = radius;
+            } else if q1.is_outside() && q2.is_unqualified() {
+                nbrcote1 = 1;
+                nbrcote2 = 2;
+                cote1[0] = -radius;
+                cote2[0] = radius;
+                cote2[1] = -radius;
+            }
+            if q1.is_unqualified() && q2.is_outside() {
+                nbrcote1 = 2;
+                nbrcote2 = 1;
+                cote1[0] = radius;
+                cote1[1] = -radius;
+                cote2[0] = -radius;
+            } else if q1.is_unqualified() && q2.is_unqualified() {
+                nbrcote1 = 2;
+                nbrcote2 = 2;
+                cote1[0] = radius;
+                cote1[1] = -radius;
+                cote2[0] = radius;
+                cote2[1] = -radius;
+            }
+            let dir = DVec2::new(-y1dir, x1dir);
+            for jcote1 in 1..=nbrcote1 {
+                // Line with the offset: location + cote1 * Dir (L193).
+                let point = l1.origin + cote1[jcote1 - 1] * dir;
+                let line = Line2d::new(point, l1.direction);
+                // OCCT L195: IntRes2d_Domain D1 — infinite domain of the line.
+                let d1 = IntRes2dDomain::infinite();
+                for jcote2 in 1..=nbrcote2 {
+                    if r.nbr_sol >= A_NB_SOL_MAX {
+                        break;
+                    }
+                    // OCCT L198-200: Adaptor2d_OffsetCurve C2(HCu2, -cote2).
+                    let c2 = AdaptorOffsetCurve::new(cu2.clone(), -cote2[jcote2 - 1]);
+                    // OCCT L201-208: domain clamped to ±100000.
+                    let firstparam = c2.first_parameter().max(thefirst);
+                    let lastparam = c2.last_parameter().min(thelast);
+                    let d2 = IntRes2dDomain::bounded(
+                        c2.value(firstparam),
+                        firstparam,
+                        tol,
+                        c2.value(lastparam),
+                        lastparam,
+                        tol,
+                    );
+                    // OCCT L209: Geom2dInt_TheIntConicCurveOfGInter Intp.
+                    let intp = TheIntConicCurveOfGInter::new_line(&line, &d1, &c2, &d2, tol, tol);
+                    if intp.base.is_done() {
+                        if !intp.base.is_empty() {
+                            for i in 1..=intp.base.nb_points() {
+                                if r.nbr_sol >= A_NB_SOL_MAX {
+                                    break;
+                                }
+                                r.nbr_sol += 1;
+                                let center = intp.base.point(i).value();
+                                // OCCT L218: gp_Circ2d(gp_Ax2d(Center, dirx), Radius).
+                                let circle = Circle2d {
+                                    center,
+                                    x_dir: dirx,
+                                    y_dir: DVec2::Y,
+                                    radius,
+                                };
+                                // OCCT L220-233: qualifiers.
+                                let dc1 = origin1 - center;
+                                r.qualifier2.push(q2.qualifier());
+                                if !q1.is_unqualified() {
+                                    r.qualifier1.push(q1.qualifier());
+                                } else if dc1.dot(norml1) > 0.0 {
+                                    r.qualifier1.push(GccEntPosition::Outside);
+                                } else {
+                                    r.qualifier1.push(GccEntPosition::Enclosed);
+                                }
+                                r.the_same1.push(false);
+                                r.the_same2.push(false);
+                                // OCCT L236-241: parameters and tangency points.
+                                let pararg1 = intp.base.point(i).param_on_first();
+                                let pararg2 = intp.base.point(i).param_on_second();
+                                r.pararg1.push(pararg1);
+                                r.pararg2.push(pararg2);
+                                // ElCLib::Value(pararg1, L1).
+                                let pnttg1 = elclib2d::line_value(l1.origin, l1.direction, pararg1);
+                                // Geom2dGcc_CurveTool::Value(Cu2, pararg2).
+                                let pnttg2 = curve_tool::value(&cu2, pararg2);
+                                r.pnttg1sol.push(pnttg1);
+                                r.pnttg2sol.push(pnttg2);
+                                // ElCLib::Parameter(cirsol, pnt).
+                                r.par1sol
+                                    .push(elclib2d::circle_parameter(circle.center, circle.x_dir, circle.y_dir, pnttg1));
+                                r.par2sol
+                                    .push(elclib2d::circle_parameter(circle.center, circle.x_dir, circle.y_dir, pnttg2));
+                                r.cirsol.push(circle);
+                            }
+                        }
+                        r.well_done = true;
+                    }
+                }
+            }
+        }
+        r
+    }
+
+    /// OCCT IsDone().
+    pub fn is_done(&self) -> bool {
+        self.well_done
+    }
+
+    /// OCCT NbSolutions().
+    pub fn nb_solutions(&self) -> usize {
+        self.nbr_sol
+    }
+
+    /// OCCT ThisSolution(Index) (L570-580 area).
+    pub fn this_solution(&self, index: usize) -> Circle2d {
+        assert!(self.well_done, "StdFail_NotDone");
+        self.cirsol[index - 1]
+    }
+
+    /// OCCT WhichQualifier(Index, Qualif1, Qualif2).
+    pub fn which_qualifier(&self, index: usize) -> (GccEntPosition, GccEntPosition) {
+        assert!(self.well_done, "StdFail_NotDone");
+        (self.qualifier1[index - 1], self.qualifier2[index - 1])
+    }
+
+    /// OCCT IsTheSame1(Index).
+    pub fn is_the_same1(&self, index: usize) -> bool {
+        assert!(self.well_done, "StdFail_NotDone");
+        self.the_same1[index - 1]
+    }
+
+    /// OCCT IsTheSame2(Index).
+    pub fn is_the_same2(&self, index: usize) -> bool {
+        assert!(self.well_done, "StdFail_NotDone");
+        self.the_same2[index - 1]
+    }
+
+    /// OCCT Tangency1(Index, ParSol, ParArg, PntSol).
+    pub fn tangency1(&self, index: usize) -> (f64, f64, DVec2) {
+        assert!(self.well_done, "StdFail_NotDone");
+        (
+            self.par1sol[index - 1],
+            self.pararg1[index - 1],
+            self.pnttg1sol[index - 1],
+        )
+    }
+
+    /// OCCT Tangency2(Index, ParSol, ParArg, PntSol).
+    pub fn tangency2(&self, index: usize) -> (f64, f64, DVec2) {
+        assert!(self.well_done, "StdFail_NotDone");
+        (
+            self.par2sol[index - 1],
+            self.pararg2[index - 1],
+            self.pnttg2sol[index - 1],
+        )
+    }
+}
+
+/// OCCT Geom2dGcc_Circ2d2TanRad (Geom2dGcc_Circ2d2TanRad.cxx) — circle of a
+/// given radius tangent to two curves. Ported: the (QualifiedCurve,
+/// QualifiedCurve) constructor general-curve branches (line × general curve
+/// via Circ2d2TanRadGeo) plus the result accessors. The analytic
+/// GccAna_Circ2d2TanRad branches (line/circle × line/circle) and the
+/// circle × general-curve branches are not yet ported.
+#[derive(Debug, Clone)]
+pub struct Circ2d2TanRad {
+    well_done: bool,
+    invert: bool,
+    nbr_sol: usize,
+    cirsol: Vec<Circle2d>,
+    qualifier1: Vec<GccEntPosition>,
+    qualifier2: Vec<GccEntPosition>,
+    the_same1: Vec<bool>,
+    the_same2: Vec<bool>,
+    pnttg1sol: Vec<DVec2>,
+    pnttg2sol: Vec<DVec2>,
+    par1sol: Vec<f64>,
+    par2sol: Vec<f64>,
+    pararg1: Vec<f64>,
+    pararg2: Vec<f64>,
+}
+
+impl Circ2d2TanRad {
+    fn new_with_capacity(cap: usize) -> Self {
+        Circ2d2TanRad {
+            well_done: false,
+            invert: false,
+            nbr_sol: 0,
+            cirsol: Vec::with_capacity(cap),
+            qualifier1: Vec::with_capacity(cap),
+            qualifier2: Vec::with_capacity(cap),
+            the_same1: Vec::with_capacity(cap),
+            the_same2: Vec::with_capacity(cap),
+            pnttg1sol: Vec::with_capacity(cap),
+            pnttg2sol: Vec::with_capacity(cap),
+            par1sol: Vec::with_capacity(cap),
+            par2sol: Vec::with_capacity(cap),
+            pararg1: Vec::with_capacity(cap),
+            pararg2: Vec::with_capacity(cap),
+        }
+    }
+
+    /// OCCT Geom2dGcc_Circ2d2TanRad(Qualified1, Qualified2, Radius, Tolerance)
+    /// (L51-289).
+    pub fn new_curve_curve(
+        q1: &QualifiedCurve,
+        q2: &QualifiedCurve,
+        radius: f64,
+        tolerance: f64,
+    ) -> Self {
+        let mut r = Circ2d2TanRad::new_with_capacity(A_NB_SOL_MAX);
+        if radius < 0.0 {
+            panic!("Standard_NegativeValue");
+        }
+        let c1 = q1.qualified().clone();
+        let c2 = q2.qualified().clone();
+        let type1 = super::geom2d_int::curve2d_type_of(&c1);
+        let type2 = super::geom2d_int::curve2d_type_of(&c2);
+
+        // OCCT L84-190: analytic GccAna_Circ2d2TanRad for (line|circle) ×
+        // (line|circle) — not ported in this batch.
+        if (type1 == Curve2dType::Line || type1 == Curve2dType::Circle)
+            && (type2 == Curve2dType::Line || type2 == Curve2dType::Circle)
+        {
+            panic!("GccAna_Circ2d2TanRad: not yet ported");
+        } else {
+            // OCCT L194-287: GccGeo branches.
+            if type1 == Curve2dType::Line {
+                if q1.is_enclosing() {
+                    r.well_done = false;
+                    panic!("GccEnt_BadQualifier");
+                }
+                // OCCT L207-216: CircGeo(Ql1, Qc2).
+                let ql1 = QualifiedCurve::new(c1, q1.qualifier());
+                let qc2 = QCurve::new(c2, q2.qualifier());
+                let circ_geo = Circ2d2TanRadGeo::new_line_curve(&ql1, &qc2, radius, tolerance);
+                r.well_done = circ_geo.is_done();
+                r.nbr_sol = circ_geo.nb_solutions();
+                for i in 1..=r.nbr_sol {
+                    let (a, b) = circ_geo.which_qualifier(i);
+                    r.qualifier1.push(a);
+                    r.qualifier2.push(b);
+                }
+                r.results_geo(&circ_geo);
+            } else if type1 == Curve2dType::Circle {
+                panic!("Geom2dGcc_Circ2d2TanRadGeo (circle, curve): not yet ported");
+            } else if type2 == Curve2dType::Line {
+                // OCCT L234-256: Invert + CircGeo(Ql2, Qc1).
+                r.invert = true;
+                if q2.is_enclosing() {
+                    r.well_done = false;
+                    panic!("GccEnt_BadQualifier");
+                }
+                let ql2 = QualifiedCurve::new(c2, q2.qualifier());
+                let qc1 = QCurve::new(c1, q1.qualifier());
+                let circ_geo = Circ2d2TanRadGeo::new_line_curve(&ql2, &qc1, radius, tolerance);
+                r.well_done = circ_geo.is_done();
+                r.nbr_sol = circ_geo.nb_solutions();
+                for i in 1..=r.nbr_sol {
+                    let (a, b) = circ_geo.which_qualifier(i);
+                    r.qualifier1.push(a);
+                    r.qualifier2.push(b);
+                }
+                r.results_geo(&circ_geo);
+            } else if type2 == Curve2dType::Circle {
+                r.invert = true;
+                panic!("Geom2dGcc_Circ2d2TanRadGeo (circle, curve): not yet ported");
+            } else {
+                panic!("Geom2dGcc_Circ2d2TanRadGeo (curve, curve): not yet ported");
+            }
+        }
+        r
+    }
+
+    /// OCCT Results(const Geom2dGcc_Circ2d2TanRadGeo&) (L438-462).
+    fn results_geo(&mut self, circ: &Circ2d2TanRadGeo) {
+        for j in 1..=self.nbr_sol {
+            self.cirsol.push(circ.this_solution(j));
+            self.the_same1.push(circ.is_the_same1(j));
+            self.the_same2.push(circ.is_the_same2(j));
+            let (ps, pa, pnt) = circ.tangency1(j);
+            self.par1sol.push(ps);
+            self.pararg1.push(pa);
+            self.pnttg1sol.push(pnt);
+            let (ps, pa, pnt) = circ.tangency2(j);
+            self.par2sol.push(ps);
+            self.pararg2.push(pa);
+            self.pnttg2sol.push(pnt);
+        }
+    }
+
+    /// OCCT IsDone() (L464-467).
+    pub fn is_done(&self) -> bool {
+        self.well_done
+    }
+
+    /// OCCT NbSolutions() (L469-472).
+    pub fn nb_solutions(&self) -> usize {
+        self.nbr_sol
+    }
+
+    /// OCCT ThisSolution(Index) (L474-485).
+    pub fn this_solution(&self, index: usize) -> Circle2d {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        self.cirsol[index - 1]
+    }
+
+    /// OCCT WhichQualifier(Index, Qualif1, Qualif2) (L487-512).
+    pub fn which_qualifier(&self, index: usize) -> (GccEntPosition, GccEntPosition) {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        if self.invert {
+            (self.qualifier2[index - 1], self.qualifier1[index - 1])
+        } else {
+            (self.qualifier1[index - 1], self.qualifier2[index - 1])
+        }
+    }
+
+    /// OCCT Tangency1(Index, ParSol, ParArg, PntSol) (L514-556).
+    pub fn tangency1(&self, index: usize) -> (f64, f64, DVec2) {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        if self.invert {
+            if !self.the_same2[index - 1] {
+                (
+                    self.par2sol[index - 1],
+                    self.pararg2[index - 1],
+                    self.pnttg2sol[index - 1],
+                )
+            } else {
+                panic!("StdFail_NotDone");
+            }
+        } else if !self.the_same1[index - 1] {
+            (
+                self.par1sol[index - 1],
+                self.pararg1[index - 1],
+                self.pnttg1sol[index - 1],
+            )
+        } else {
+            panic!("StdFail_NotDone");
+        }
+    }
+
+    /// OCCT Tangency2(Index, ParSol, ParArg, PntSol) (L558-600).
+    pub fn tangency2(&self, index: usize) -> (f64, f64, DVec2) {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        if !self.invert {
+            if !self.the_same2[index - 1] {
+                (
+                    self.par2sol[index - 1],
+                    self.pararg2[index - 1],
+                    self.pnttg2sol[index - 1],
+                )
+            } else {
+                panic!("StdFail_NotDone");
+            }
+        } else if !self.the_same1[index - 1] {
+            (
+                self.par1sol[index - 1],
+                self.pararg1[index - 1],
+                self.pnttg1sol[index - 1],
+            )
+        } else {
+            panic!("StdFail_NotDone");
+        }
+    }
+
+    /// OCCT IsTheSame1(Index) (L602-620).
+    pub fn is_the_same1(&self, index: usize) -> bool {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        if self.invert {
+            self.the_same2[index - 1]
+        } else {
+            self.the_same1[index - 1]
+        }
+    }
+
+    /// OCCT IsTheSame2(Index) (L622-640).
+    pub fn is_the_same2(&self, index: usize) -> bool {
+        assert!(self.well_done, "StdFail_NotDone");
+        assert!(index >= 1 && index <= self.nbr_sol, "Standard_OutOfRange");
+        if !self.invert {
+            self.the_same2[index - 1]
+        } else {
+            self.the_same1[index - 1]
+        }
     }
 }
