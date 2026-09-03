@@ -11,8 +11,10 @@ pub mod coons;
 pub mod curved;
 pub mod filling;
 pub mod stretch;
+pub mod trihedron_law;
 
 pub use bspline_curves::{BSplineCurves, FillingStyle};
+pub use trihedron_law::{PipeError, TrihedronLaw, TrihedronLawBase};
 pub use coons::Coons;
 pub use curved::Curved;
 pub use filling::FillingBase;
