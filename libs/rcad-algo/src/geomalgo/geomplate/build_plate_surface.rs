@@ -85,11 +85,13 @@ fn trier_tab(tab: &mut Vec<i32>) {
 }
 
 /// OCCT GeomAdaptor_Surface::UResolution/VResolution — for a plane the
-/// resolution equals the 3d tolerance.  Only the plane is in the point-path
-/// anchor scope.
+/// resolution equals the 3d tolerance.  OCCT load() recurses through
+/// Geom_RectangularTrimmedSurface to the basis surface (GeomAdaptor_Surface.cxx
+/// L423-431); only planes are in the point-path anchor scope.
 fn surface_resolution(surf: &Surface3, tol3d: f64) -> f64 {
     match surf {
         Surface3::Plane(_) => tol3d,
+        Surface3::Trimmed(trimmed) => surface_resolution(&trimmed.basis, tol3d),
         _ => unimplemented!(
             "GeomAdaptor_Surface UResolution/VResolution is only ported for planes"
         ),
