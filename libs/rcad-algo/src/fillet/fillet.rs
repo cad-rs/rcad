@@ -40,14 +40,16 @@
 #![allow(private_interfaces)]
 
 use glam::DVec3;
+use glam::DVec2;
 use rcad_kernel::{
     CurveEval,
     geom::{
-        Circle3, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3,
-        ToroidalSurface, any_perpendicular,
+        Circle3, Curve2d, Curve3, CylindricalSurface, Line2d, Line3, Plane, SphericalSurface,
+        Surface3, ToroidalSurface, any_perpendicular,
     },
     topods::{BRep, Orientation, Shape, TShape},
 };
+use rcad_kernel::topo::topods::compose_pcurve_location;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -371,13 +373,15 @@ pub fn make_fillet_edge_with_params(
         });
     }
 
-    // Validate edge indices
-    let edge_count = brep.edge_count();
-    for &idx in edge_indices {
-        if idx >= edge_count {
-            return Err(FilletError::EdgeNotFound { edge_index: idx });
-        }
-    }
+    // Validate edge indices and map edge-number → tshape index.
+    // edge_indices are 0-based among edges (matching OCCT `explode` numbering).
+    let tshape_indices = edge_indices
+        .iter()
+        .map(|&edge_num| {
+            brep.edge_tshape_index(edge_num)
+                .ok_or(FilletError::EdgeNotFound { edge_index: edge_num })
+        })
+        .collect::<Result<Vec<usize>, FilletError>>()?;
 
     // Clone and ensure edges have 3D curves (needed for correct SA computation
     // on trimmed faces).
@@ -385,7 +389,7 @@ pub fn make_fillet_edge_with_params(
     crate::algo_ext::geom_populate::recompute_plane_surfaces(&mut brep);
 
     // Build edge information
-    let edge_infos = collect_edge_infos(&brep, edge_indices)?;
+    let edge_infos = collect_edge_infos(&brep, &tshape_indices)?;
 
     // Compute fillet surfaces for each edge
     let mut fillet_surfaces = Vec::new();
@@ -470,14 +474,15 @@ fn make_variable_fillet_with_params(
         });
     }
 
-    let edge_count = brep.edge_count();
-    for &idx in edge_indices {
-        if idx >= edge_count {
-            return Err(FilletError::EdgeNotFound { edge_index: idx });
-        }
-    }
+    let tshape_indices = edge_indices
+        .iter()
+        .map(|&edge_num| {
+            brep.edge_tshape_index(edge_num)
+                .ok_or(FilletError::EdgeNotFound { edge_index: edge_num })
+        })
+        .collect::<Result<Vec<usize>, FilletError>>()?;
 
-    let edge_infos = collect_edge_infos(brep, edge_indices)?;
+    let edge_infos = collect_edge_infos(brep, &tshape_indices)?;
 
     let mut fillet_surfaces = Vec::new();
     let mut warnings = Vec::new();
@@ -1367,6 +1372,10 @@ fn apply_cylinder_fillet(
 
     let mut t_start = t1;
     let mut t_end = t2;
+    // Which contact line (face 1 or face 2) sits at the arc parameter-end
+    // angle t_end: t_end tracks face 2 initially; the swap below exchanges
+    // the roles of t_start and t_end and therefore flips this flag.
+    let mut param_end_is_f1 = false;
     let mut dt = t_end - t_start;
     if dt > PI {
         t_end -= 2.0 * PI;
@@ -1377,6 +1386,7 @@ fn apply_cylinder_fillet(
     dt = t_end - t_start;
     if dt < 0.0 {
         std::mem::swap(&mut t_start, &mut t_end);
+        param_end_is_f1 = !param_end_is_f1;
     }
 
     let arc_v1 = push_arc_edge(brep, v1_f1, v1_f2, arc_c_v1, edge_dir, r, t_start, t_end);
@@ -1426,11 +1436,21 @@ fn apply_cylinder_fillet(
     }
 
     // Fillet face
+    // The wire is oriented counterclockwise in the cylinder UV domain so the
+    // FORWARD face boundary (Green) integral is positive: bottom arc forward
+    // (u: t_start -> t_end), the contact line at the arc parameter-end angle
+    // forward (v: 0 -> edge_len), top arc reversed, contact line at t_start
+    // reversed.
+    let (contact_at_param_end, contact_at_param_start) = if param_end_is_f1 {
+        (contact_f1, contact_f2)
+    } else {
+        (contact_f2, contact_f1)
+    };
     let fillet_edges = vec![
-        edge_shape_ref(brep, contact_f1, Orientation::Forward),
-        edge_shape_ref(brep, arc_v2, Orientation::Forward),
-        edge_shape_ref(brep, contact_f2, Orientation::Reversed),
-        edge_shape_ref(brep, arc_v1, Orientation::Reversed),
+        edge_shape_ref(brep, arc_v1, Orientation::Forward),
+        edge_shape_ref(brep, contact_at_param_end, Orientation::Forward),
+        edge_shape_ref(brep, arc_v2, Orientation::Reversed),
+        edge_shape_ref(brep, contact_at_param_start, Orientation::Reversed),
     ];
     let fillet_wire_sr = brep.add_twire(fillet_edges);
 
@@ -1443,14 +1463,60 @@ fn apply_cylinder_fillet(
     });
 
     let fillet_face_sr = brep.add_tface(
-        Some(fillet_surf),
+        Some(fillet_surf.clone()),
         fillet_wire_sr,
         Vec::new(),
         None,
-        Some([0.0, PI * 0.5, 0.0, edge_len]),
+        Some([t_start, t_end, 0.0, edge_len]),
         Vec::new(),
         false,
     );
+
+    // Add pcurves to the fillet face's wire edges so that face_uv_bounds
+    // computes the correct UV domain (instead of falling back to the infinite
+    // natural cylinder domain, which gives area = full cylinder = pi*r*L).
+    // Cylinder UV: u = angle about the axis in the cylinder's (ref_dir,
+    // axis x ref_dir) frame — the arc edges' own parameter; v in
+    // [0, edge_len] along the axis.  The contact lines sit at the arc
+    // parameter-end / parameter-start angles; the arcs sweep u over the
+    // stored parameter range [t_start, t_end].
+    let contact_pcurve = |u0: f64| {
+        Curve2d::Line(Line2d {
+            origin: DVec2::new(u0, 0.0),
+            direction: DVec2::new(0.0, 1.0),
+        })
+    };
+    let arc_pcurve = |v0: f64| {
+        Curve2d::Line(Line2d {
+            origin: DVec2::new(0.0, v0),
+            direction: DVec2::new(1.0, 0.0),
+        })
+    };
+
+    let fillet_face_shape = fillet_face_sr.clone();
+    let edge_loc_key = |edge_index: usize| -> (u64, u32) {
+        let esr = edge_shape_ref(brep, edge_index, Orientation::Forward);
+        (
+            fillet_face_shape.ptr_id(),
+            compose_pcurve_location(fillet_face_shape.location, esr.location, &brep.locations),
+        )
+    };
+    let key_end = edge_loc_key(contact_at_param_end);
+    let key_start = edge_loc_key(contact_at_param_start);
+    let key_v1 = edge_loc_key(arc_v1);
+    let key_v2 = edge_loc_key(arc_v2);
+    brep.edge_mut(edge_shape_ref(brep, contact_at_param_end, Orientation::Forward))
+        .pcurves
+        .insert(key_end, (contact_pcurve(t_end), 0.0, edge_len));
+    brep.edge_mut(edge_shape_ref(brep, contact_at_param_start, Orientation::Reversed))
+        .pcurves
+        .insert(key_start, (contact_pcurve(t_start), 0.0, edge_len));
+    brep.edge_mut(edge_shape_ref(brep, arc_v1, Orientation::Forward))
+        .pcurves
+        .insert(key_v1, (arc_pcurve(0.0), t_start, t_end));
+    brep.edge_mut(edge_shape_ref(brep, arc_v2, Orientation::Reversed))
+        .pcurves
+        .insert(key_v2, (arc_pcurve(edge_len), t_start, t_end));
 
     // Add fillet face to the shell
     if let TShape::Shell(shd) = Arc::make_mut(&mut brep.tshapes[shell_idx]) {
@@ -1648,4 +1714,56 @@ fn interpolate_radius(r1: f64, r2: f64, t: f64, tension: f64) -> f64 {
     let h1_tension = h1 + smooth * (t3 - 2.0 * t2 + t);
     let h2_tension = h2 + smooth * (-t3 + t2);
     r1 * h1_tension + r2 * h2_tension
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::base::gprop::tri::face_flat_iter;
+    use rcad_kernel::geom::Surface3;
+
+    /// Regression: the fillet face's wire edges must carry pcurves so that
+    /// face_uv_bounds returns the quarter-cylinder UV domain (u in [0, pi/2])
+    /// instead of falling back to the infinite natural cylinder domain
+    /// (whose area would be pi*r*L instead of (pi/2)*r*L).
+    #[test]
+    fn fillet_face_area_is_quarter_cylinder() {
+        let r = 0.2;
+        let base = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 1.5, 1.0)
+            .unwrap();
+
+        // Length of edge 0 (arc-length parameterized line).
+        let e0_idx = base.edge_tshape_index(0).expect("edge 0 exists");
+        let edge_len = match &*base.tshapes[e0_idx] {
+            TShape::Edge(ed) => {
+                assert!(matches!(ed.curve, Some(rcad_kernel::geom::Curve3::Line(_))));
+                ed.range[1] - ed.range[0]
+            }
+            _ => panic!("edge 0 tshape is not an edge"),
+        };
+
+        let result = make_fillet_edge(&base, &[0], r).unwrap();
+        let brep = &result.brep;
+
+        let mut cyl_face_areas = Vec::new();
+        for (fi, face) in face_flat_iter(brep) {
+            let surf = match &*brep.tshapes[fi] {
+                TShape::Face(fd) => fd.surface.clone(),
+                _ => continue,
+            };
+            if matches!(surf, Some(Surface3::Cylinder(_))) {
+                cyl_face_areas.push(rcad_kernel::face_surface_area(brep, &face, fi));
+            }
+        }
+
+        assert_eq!(cyl_face_areas.len(), 1, "expected exactly one fillet face");
+        let quarter = 0.5 * std::f64::consts::PI * r * edge_len;
+        assert!(
+            (cyl_face_areas[0] - quarter).abs() < 1e-9,
+            "fillet face area = {} (expected quarter cylinder {}; full cylinder would be {})",
+            cyl_face_areas[0],
+            quarter,
+            2.0 * quarter
+        );
+    }
 }

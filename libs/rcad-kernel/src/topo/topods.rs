@@ -2423,6 +2423,16 @@ impl BRep {
             .count()
     }
 
+    /// Get the tshape index of the edge at the given edge number (0-based).
+    pub fn edge_tshape_index(&self, edge_num: usize) -> Option<usize> {
+        self.tshapes
+            .iter()
+            .enumerate()
+            .filter(|(_, ts)| matches!((&**ts).as_ref(), TShape::Edge(_)))
+            .nth(edge_num)
+            .map(|(idx, _)| idx)
+    }
+
     /// Count face TShapes.
     pub fn face_count(&self) -> usize {
         self.tshapes
