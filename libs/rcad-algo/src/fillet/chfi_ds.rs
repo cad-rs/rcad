@@ -462,6 +462,31 @@ impl ChFiDSSpine {
         self.first_state = s;
     }
 
+    /// OCCT ChFiDS_Spine.lxx — SetTypeOfConcavity.
+    pub fn set_type_of_concavity(&mut self, the_type: ChFiDS_TypeOfConcavity) {
+        self.my_type_of_concavity = the_type;
+    }
+
+    /// OCCT ChFiDS_Spine.lxx — GetTypeOfConcavity.
+    pub fn type_of_concavity(&self) -> ChFiDS_TypeOfConcavity {
+        self.my_type_of_concavity
+    }
+
+    /// OCCT ChFiDS_Spine.lxx L131-134.
+    pub fn set_offset_edges(&mut self, e: Shape) {
+        self.offsetspine.push(e);
+    }
+
+    /// OCCT ChFiDS_Spine.lxx L138-142 — spine.InsertBefore(1, E).
+    pub fn put_in_first(&mut self, e: Shape) {
+        self.spine.insert(0, e);
+    }
+
+    /// OCCT ChFiDS_Spine.lxx L145-148 — offsetspine.InsertBefore(1, E).
+    pub fn put_in_first_offset(&mut self, e: Shape) {
+        self.offsetspine.insert(0, e);
+    }
+
     /// OCCT ChFiDS_Spine.lxx — SetLastStatus.
     pub fn set_last_status(&mut self, s: ChFiDS_State) {
         self.last_state = s;
@@ -492,6 +517,24 @@ impl ChFiDSSpine {
             self.first_state
         } else {
             self.last_state
+        }
+    }
+
+    /// OCCT ChFiDS_Spine.lxx — SetTangencyExtremity(IsTangency, IsFirst).
+    pub fn set_tangency_extremity(&mut self, is_tangency: bool, is_first: bool) {
+        if is_first {
+            self.firstistgt = is_tangency;
+        } else {
+            self.lastistgt = is_tangency;
+        }
+    }
+
+    /// OCCT ChFiDS_Spine.lxx — IsTangencyExtremity(IsFirst).
+    pub fn is_tangency_extremity(&self, is_first: bool) -> bool {
+        if is_first {
+            self.firstistgt
+        } else {
+            self.lastistgt
         }
     }
 
@@ -1149,7 +1192,7 @@ impl ChFiDSMap {
                 };
             match ts.as_ref() {
                 TShape::Shell(sd) => {
-                    if tos == topods::ShapeType::Face && tor == topods::ShapeType::Edge {
+                    if tos == topods::ShapeType::Shell && tor == topods::ShapeType::Edge {
                         for fs in &sd.faces {
                             if let Some(fts) = brep.tshapes.get(fs.index) {
                                 if let TShape::Face(fd) = fts.as_ref() {
@@ -1168,7 +1211,7 @@ impl ChFiDSMap {
                     }
                 }
                 TShape::Solid(sd) => {
-                    if tos == topods::ShapeType::Shell && tor == topods::ShapeType::Edge {
+                    if tos == topods::ShapeType::Solid && tor == topods::ShapeType::Edge {
                         for shs in &sd.shells {
                             if let Some(shts) = brep.tshapes.get(shs.index) {
                                 if let TShape::Shell(shd) = shts.as_ref() {
