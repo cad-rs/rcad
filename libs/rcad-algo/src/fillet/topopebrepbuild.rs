@@ -499,3 +499,166 @@ impl TopOpeBRepBuildBuilder {
         // Builder1.cxx SplitEdge — pending unit.
     }
 }
+
+impl TopOpeBRepBuildBuilder {
+    // =========================================================================
+    // OCCT Builder.hxx map accessors used by the split/merge flow:
+    //   MarkSplit(S, ToBuild) / ChangeSplit(S, ToBuild) /
+    //   ChangeMerged(S, ToBuild).
+    // =========================================================================
+    fn split_map_mut(&mut self, tobuild: TopAbsState) -> &mut HashMap<u64, ListOfShapeOn1State> {
+        match tobuild {
+            TopAbsState::In => &mut self.my_split_in,
+            TopAbsState::On => &mut self.my_split_on,
+            _ => &mut self.my_split_out,
+        }
+    }
+
+    fn merged_map_mut(&mut self, tobuild: TopAbsState) -> &mut HashMap<u64, ListOfShapeOn1State> {
+        match tobuild {
+            TopAbsState::In => &mut self.my_merged_in,
+            TopAbsState::On => &mut self.my_merged_on,
+            _ => &mut self.my_merged_out,
+        }
+    }
+
+    /// OCCT Builder.hxx MarkSplit(S, ToBuild).
+    fn mark_split(&mut self, s: &Shape, tobuild: TopAbsState) {
+        self.split_map_mut(tobuild)
+            .entry(s.ptr_id())
+            .or_default()
+            .set_shape(tobuild);
+    }
+
+    /// OCCT Builder.hxx ChangeSplit(S, ToBuild).
+    fn change_split(&mut self, s: &Shape, tobuild: TopAbsState) -> &mut Vec<Shape> {
+        &mut self
+            .split_map_mut(tobuild)
+            .entry(s.ptr_id())
+            .or_default()
+            .list
+    }
+
+    /// OCCT Builder.hxx ChangeMerged(S, ToBuild).
+    fn change_merged(&mut self, s: &Shape, tobuild: TopAbsState) -> &mut Vec<Shape> {
+        &mut self
+            .merged_map_mut(tobuild)
+            .entry(s.ptr_id())
+            .or_default()
+            .list
+    }
+
+    // =========================================================================
+    // OCCT TopOpeBRepBuild_Builder.cxx L1155-1167 — SplitFace (the
+    // SplitFace2 context flag is a debug-only variant: SplitFace1 runs).
+    // =========================================================================
+    pub fn split_face_public(&mut self, foriented: &Shape, tobuild1: TopAbsState, tobuild2: TopAbsState) {
+        self.split_face1(foriented, tobuild1, tobuild2);
+    }
+
+    // =========================================================================
+    // OCCT TopOpeBRepBuild_Builder.cxx L1171-1300 — SplitFace1.
+    // =========================================================================
+    pub fn split_face1(&mut self, foriented: &Shape, tobuild1: TopAbsState, tobuild2: TopAbsState) {
+        // operation tobuild1 tobuild2  process face F  connect to 1  connect to 2
+        // common    IN       IN        yes             yes           yes
+        // fuse      OUT      OUT       yes             yes           yes
+        // cut 1-2   OUT      IN        yes             yes           no
+        // cut 2-1   IN       OUT       yes             yes           no
+        let tosplit = self.to_split(foriented, tobuild1);
+        if !tosplit {
+            return;
+        }
+
+        let mut rev_ori1 = Self::reverse_states(tobuild1, tobuild2);
+        let rev_ori2 = Self::reverse_states(tobuild2, tobuild1);
+        let connect_to1 = true;
+        let connect_to2 = false;
+
+        // work on a FORWARD face <Fforward>.
+        let mut fforward = foriented.clone();
+        fforward.orientation = Orientation::Forward;
+
+        // build the list of faces to split : LF1, LF2.
+        let mut lf1: Vec<Shape> = vec![fforward.clone()];
+        let mut lf2: Vec<Shape> = Vec::new();
+        self.find_same_domain(&mut lf1, &mut lf2);
+        let n1 = lf1.len();
+        let n2 = lf2.len();
+
+        if n2 == 0 {
+            rev_ori1 = false;
+        }
+        if n1 == 0 {
+            // OCCT sets RevOri2 = false here.
+        }
+
+        // Create an edge set <WES> connected by vertices
+        // (TopOpeBRepBuild_WireEdgeSet — pending unit).
+        let mut wes_start_elements: Vec<Shape> = Vec::new();
+
+        for fcur in &lf1 {
+            // FillFace(Fcur, ToBuild1, LF2, ToBuild2, WES, RevOri1)
+            // (Builder1.cxx — pending unit).
+            let _ = fcur;
+        }
+        for fcur in &lf2 {
+            // FillFace(Fcur, ToBuild2, LF1, ToBuild1, WES, RevOri2)
+            // (Builder1.cxx — pending unit).
+            let _ = fcur;
+        }
+
+        // Add the intersection edges to edge set WES
+        // (AddIntersectionEdges, Builder.cxx L143-171 — pending unit).
+        let _ = (rev_ori1, &mut wes_start_elements);
+
+        // Create a Face Builder FBU; FBU.InitFaceBuilder(WES, Fforward,
+        // false) (TopOpeBRepBuild_FaceBuilder.cxx — pending unit).
+        //
+        // Build the new faces: MakeFaces(Fforward, FBU, FaceList)
+        // (Builder.cxx L431+ — pending unit).
+        let face_list: Vec<Shape> = Vec::new();
+        self.change_merged(&fforward, tobuild1).extend(face_list.iter().cloned());
+
+        // connect new faces as faces built <ToBuild1> on LF1 faces.
+        for fcur in &lf1 {
+            self.mark_split(fcur, tobuild1);
+            if connect_to1 {
+                let fl = self.change_split(fcur, tobuild1);
+                *fl = face_list.clone();
+            }
+        }
+
+        // connect new faces as faces built <ToBuild2> on LF2 faces.
+        for fcur in &lf2 {
+            self.mark_split(fcur, tobuild2);
+            if connect_to2 {
+                let fl = self.change_split(fcur, tobuild2);
+                *fl = face_list.clone();
+            }
+        }
+    }
+
+    // =========================================================================
+    // OCCT Builder.cxx ToSplit(S, ToBuild): a shape is to-split when the DS
+    // holds split shapes for it (Builder.hxx inline: mySplitS has the shape
+    // in the ToBuild map).  The DS-query core is translated with the
+    // FillFace unit.
+    // =========================================================================
+    fn to_split(&self, _s: &Shape, _tobuild: TopAbsState) -> bool {
+        // OCCT: return ToSplit(S, ToBuild) checks the DS split info;
+        // pending the FillFace/DS-split unit.
+        false
+    }
+
+    // =========================================================================
+    // OCCT Builder.cxx FindSameDomain(L1, L2) (L650-764): complete L1/L2
+    // with the DS same-domain shapes.  The rcad DS carries no same-domain
+    // table yet (TopOpeBRepDS_AddShapeSameDomain — pending unit), so the
+    // completion finds nothing, which matches a DS without same-domain
+    // records.
+    // =========================================================================
+    fn find_same_domain(&self, _l1: &mut Vec<Shape>, _l2: &mut Vec<Shape>) {
+        // OCCT L650-764 — pending the DS same-domain table unit.
+    }
+}
