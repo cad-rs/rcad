@@ -6,9 +6,13 @@
 //! and follows the ThruSections precedent: API skeleton, backfill later.
 
 pub mod build_average_plane;
+pub mod build_plate_surface;
+pub mod curve_constraint;
 pub mod point_constraint;
 pub mod surface;
 
 pub use build_average_plane::{Aij, BuildAveragePlane};
+pub use build_plate_surface::BuildPlateSurface;
+pub use curve_constraint::CurveConstraint;
 pub use point_constraint::PointConstraint;
 pub use surface::GeomPlateSurface;
