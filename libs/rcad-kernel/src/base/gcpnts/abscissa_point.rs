@@ -216,3 +216,50 @@ mod tests {
         assert!(approx_eq(l, 5.0, 1e-3), "bspline line segment length {l}");
     }
 }
+
+// ── Parameter at abscissa (OCCT GCPnts_AbscissaPoint constructor) ─────────────
+
+/// Parameter of the point at signed arc length `l` from `first`, with the
+/// initial guess `uapp` — the OCCT `GCPnts_AbscissaPoint(C, L, First, ULast)`
+/// constructor followed by `.Parameter()`.
+///
+/// - `Line3`: analytic `first + l` (unit-speed parameterization).
+/// - `Circle3`: analytic `first + l / radius`.
+/// - Other curves: Newton iteration on `arc_length(curve, first, t) == l`
+///   seeded at `uapp` (the OCCT CPnts_AbscissaPoint advance on the same
+///   integral).
+pub fn abscissa_point_parameter(curve: &Curve3, first: f64, last: f64, l: f64, uapp: f64) -> f64 {
+    match curve {
+        Curve3::Line(_) => first + l,
+        Curve3::Circle(c) => {
+            if c.radius.abs() <= 0.0 {
+                return uapp;
+            }
+            first + l / c.radius
+        }
+        _ => {
+            // Newton on F(t) = arc_length(curve, first, t) - l, derivative
+            // = |dP/dt|(t).  Fall back to the initial guess when it does
+            // not converge.
+            let mut t = uapp;
+            for _ in 0..30 {
+                let f = arc_length(curve, first, t) - l;
+                if f.abs() <= 1.0e-12 * (1.0 + l.abs()) {
+                    return t;
+                }
+                let h = 1.0e-7 * (1.0 + (t - first).abs());
+                let dp = (curve.point_at(t + h) - curve.point_at(t - h)) / (2.0 * h);
+                let speed = dp.length();
+                if speed <= 0.0 {
+                    break;
+                }
+                let dt = f / speed;
+                t -= dt;
+                if t < first.min(last) - 1.0 || t > first.max(last) + 1.0 {
+                    t = uapp;
+                }
+            }
+            t
+        }
+    }
+}

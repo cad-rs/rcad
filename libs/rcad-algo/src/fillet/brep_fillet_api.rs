@@ -548,11 +548,12 @@ impl BRepFilletAPIMakeChamfer {
         chamf_meth == ChFiDS_ChamfMethod::DistAngle
     }
 
-    fn is_chamfer_method(&self, ic: usize) -> ChFiDS_ChamfMethod {
+    fn is_chamfer_method(&self, ic: usize) -> super::chfi_ds::ChFiDS_ChamfMethod {
         if ic <= self.my_builder.base.nb_elements() {
             let sp = self.my_builder.base.value(ic);
             if let Some(csp) = sp.down_cast_chamf() {
-                return csp.is_chamfer();
+                let m: super::chfi_ds::ChFiDS_ChamfMethod = csp.is_chamfer();
+                return m;
             }
         }
         ChFiDS_ChamfMethod::Sym

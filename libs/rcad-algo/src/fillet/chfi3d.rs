@@ -29,7 +29,7 @@ use rcad_kernel::topods::{self, Shape};
 use super::chfi_ds::{
     ChFi3dFilletShape, ChFiDSSpineHandle, ChFiDS_State, ChFiDS_ChamfMethod, ChFiDS_ChamfMode,
     ChFiDS_ErrorStatus,
-    ChFiDSStripeMap, ChFiDSChamfSpine, ChFiDSFilSpine, ChFiDSStripe, ChFiDSMap, LawFunction,
+    ChFiDSStripeMap, ChFiDSChamfSpine, ChFiDSFilSpine, ChFiDSStripe, ChFiDSMap, LawFunction, ChFiDSSurfData,
     SharedStripe,
 };
 
@@ -39,8 +39,47 @@ use super::chfi_ds::{
 // opaque handles until translated.
 // =========================================================================
 
+/// OCCT TopOpeBRepDS_DataStructure — the surfaces / curves / shapes tables
+/// used by the builder (AddSurface / AddCurve / AddShape return 1-based
+/// indices).  The interference and tolerance bookkeeping of the full
+/// TopOpeBRepDS is pending.
 #[derive(Debug, Clone, Default)]
-pub struct TopOpeBRepDSHDataStructure;
+pub struct TopOpeBRepDSHDataStructure {
+    /// OCCT: surfaces table (TopOpeBRepDS_Surface), 1-based indices.
+    pub surfaces: Vec<rcad_kernel::geom::Surface3>,
+    /// OCCT: curves table (TopOpeBRepDS_Curve), 1-based indices.
+    pub curves: Vec<rcad_kernel::geom::Curve3>,
+    /// OCCT: shapes table (arbitrary TopoDS_Shape), 1-based indices.
+    pub shapes: Vec<Shape>,
+    /// OCCT: shape -> index lookup by TShape pointer identity.
+    pub shape_index: std::collections::HashMap<u64, i32>,
+}
+
+impl TopOpeBRepDSHDataStructure {
+    /// OCCT TopOpeBRepDS_DataStructure::AddSurface(S) - 1-based index.
+    pub fn add_surface(&mut self, s: rcad_kernel::geom::Surface3) -> i32 {
+        self.surfaces.push(s);
+        self.surfaces.len() as i32
+    }
+
+    /// OCCT TopOpeBRepDS_DataStructure::AddCurve(C) - 1-based index.
+    pub fn add_curve(&mut self, c: rcad_kernel::geom::Curve3) -> i32 {
+        self.curves.push(c);
+        self.curves.len() as i32
+    }
+
+    /// OCCT TopOpeBRepDS_DataStructure::AddShape(S) - an already-present
+    /// shape keeps its index.
+    pub fn add_shape(&mut self, s: &Shape) -> i32 {
+        if let Some(i) = self.shape_index.get(&s.ptr_id()) {
+            return *i;
+        }
+        self.shapes.push(s.clone());
+        let i = self.shapes.len() as i32;
+        self.shape_index.insert(s.ptr_id(), i);
+        i
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct TopOpeBRepBuildHBuilder;
@@ -136,7 +175,7 @@ impl ChFi3dBuilder {
             my_shape_result: None,
             bad_shape: None,
         };
-        b.my_ds = Some(TopOpeBRepDSHDataStructure);
+        b.my_ds = Some(TopOpeBRepDSHDataStructure::default());
         b.my_coup = Some(TopOpeBRepBuildHBuilder);
         // myEFMap.Fill(S, TopAbs_EDGE, TopAbs_FACE);  (L354)
         b.my_ef_map.fill(&brep, topods::ShapeType::Edge, topods::ShapeType::Face);
@@ -427,7 +466,7 @@ impl ChFi3dBuilder {
 
         // L230-234
         self.reset();
-        self.my_ds = Some(TopOpeBRepDSHDataStructure);
+        self.my_ds = Some(TopOpeBRepDSHDataStructure::default());
         self.done = true;
         self.hasresult = false;
 
@@ -461,20 +500,20 @@ impl ChFi3dBuilder {
                     sp.base_mut().set_error_status(ChFiDS_ErrorStatus::Ok);
                 }
             }
-            // L273: PerformSetOfSurf(itel.ChangeValue()) — pending numerical
-            // core (ChFi3d_Builder_2/6, BRepBlend_Walking).  OCCT wraps the
-            // call in try/catch: the pending core raises, so the catch path
-            // below is the 1:1 behavior.
-            self.perform_set_of_surf_pending();
-            // L281-282: badstripes.Append(itel.Value()); done = true;
-            self.badstripes.push(itel.clone());
-            self.done = true;
-            // L283-286: if spine error is Ok, set it to ChFiDS_Error.
-            {
-                let mut st = itel.write().expect("stripe lock");
-                if let Some(sp) = st.my_spine.as_mut() {
-                    if sp.base().error_status() == ChFiDS_ErrorStatus::Ok {
-                        sp.base_mut().set_error_status(ChFiDS_ErrorStatus::Error);
+            // L273: PerformSetOfSurf(itel.ChangeValue()) — the OCCT try/catch
+            // maps to the success flag; the catch path records a bad stripe.
+            let surf_ok = self.perform_set_of_surf(&itel, false);
+            if !surf_ok {
+                // L281-282: badstripes.Append(itel.Value()); done = true;
+                self.badstripes.push(itel.clone());
+                self.done = true;
+                // L283-286: if spine error is Ok, set it to ChFiDS_Error.
+                {
+                    let mut st = itel.write().expect("stripe lock");
+                    if let Some(sp) = st.my_spine.as_mut() {
+                        if sp.base().error_status() == ChFiDS_ErrorStatus::Ok {
+                            sp.base_mut().set_error_status(ChFiDS_ErrorStatus::Error);
+                        }
                     }
                 }
             }
@@ -575,11 +614,6 @@ impl ChFi3dBuilder {
     fn extent_analyse(&mut self) {
         // OCCT ChFi3d_Builder.cxx L144-174 — depends on
         // ChFi3d_NumberOfSharpEdges and ExtentOne/Two/ThreeCorner (pending).
-    }
-
-    fn perform_set_of_surf_pending(&mut self) {
-        // OCCT ChFi3d_Builder_2.cxx PerformSetOfSurf — pending numerical
-        // core; translated callers surface the OCCT exception path.
     }
 
     fn perform_fillet_on_vertex_pending(&mut self) {
@@ -1160,6 +1194,7 @@ fn search_common_faces(efmap: &ChFiDSMap, e: &Shape) -> (Shape, Shape) {
 
 use super::chfi_ds::ChFiDS_TypeOfConcavity;
 use crate::geomalgo::gtests_stubs::GeomAbsShape;
+use super::chfi_kpart;
 use super::chfi3d_builder_0::{
     brep_tools_ori_edge_in_face, intermediate_point, topopebreptool_nt,
 };
@@ -2559,6 +2594,700 @@ mod tests {
                 ChFiDS_State::AllSame | ChFiDS_State::OnSame | ChFiDS_State::OnDiff | ChFiDS_State::BreakPoint
             ),
             "box vertex edge state = {st:?}"
+        );
+    }
+}
+
+// =========================================================================
+// OCCT ChFi3d.cxx L525-612 — ChFi3d::NextSide (both overloads) and
+// TopAbs::Compose helper.
+// =========================================================================
+
+/// OCCT TopAbs::Compose(a, b): FORWARD keeps b, REVERSED reverses b.
+pub fn topabs_compose(a: Orientation, b: Orientation) -> Orientation {
+    if a == Orientation::Reversed {
+        if b == Orientation::Reversed {
+            Orientation::Forward
+        } else {
+            Orientation::Reversed
+        }
+    } else {
+        b
+    }
+}
+
+/// OCCT TopAbs::Reverse(o).
+pub fn topabs_reverse(o: Orientation) -> Orientation {
+    if o == Orientation::Reversed {
+        Orientation::Forward
+    } else {
+        Orientation::Reversed
+    }
+}
+
+/// OCCT ChFi3d.cxx L525-612 — ChFi3d::NextSide(Or1, Or2, OrSave1, OrSave2,
+/// ChoixSave).
+pub fn next_side(
+    or1: &mut Orientation,
+    or2: &mut Orientation,
+    or_save1: Orientation,
+    or_save2: Orientation,
+    choix_save: i32,
+) -> i32 {
+    *or1 = if *or1 == Orientation::Forward {
+        or_save1
+    } else {
+        topabs_reverse(or_save1)
+    };
+    *or2 = if *or2 == Orientation::Forward {
+        or_save2
+    } else {
+        topabs_reverse(or_save2)
+    };
+
+    let mut choix_conge;
+    if *or1 == Orientation::Forward {
+        if *or2 == Orientation::Forward {
+            choix_conge = 1;
+        } else if choix_save < 0 {
+            choix_conge = 3;
+        } else {
+            choix_conge = 7;
+        }
+    } else if *or2 == Orientation::Forward {
+        if choix_save < 0 {
+            choix_conge = 7;
+        } else {
+            choix_conge = 3;
+        }
+    } else {
+        choix_conge = 5;
+    }
+    if choix_save.abs() % 2 == 0 {
+        choix_conge += 1;
+    }
+    choix_conge
+}
+
+impl super::chfi_ds::ChFiDSElSpine {
+    /// OCCT ChFiDS_ElSpine default construction.
+    pub fn new() -> Self {
+        super::chfi_ds::ChFiDSElSpine {
+            firstparam: 0.0,
+            lastparam: 0.0,
+            firstpnt: DVec3::ZERO,
+            firsttgt: DVec3::ZERO,
+            lastpnt: DVec3::ZERO,
+            lasttgt: DVec3::ZERO,
+            periodic: false,
+            next: None,
+            previous: None,
+        }
+    }
+
+    /// OCCT ChFiDS_ElSpine.hxx — SetFirstPointAndTgt(P, T).
+    pub fn set_first_point_and_tgt(&mut self, p: DVec3, t: DVec3) {
+        self.firstpnt = p;
+        self.firsttgt = t;
+    }
+
+    /// OCCT ChFiDS_ElSpine.hxx — SetLastPointAndTgt(P, T).
+    pub fn set_last_point_and_tgt(&mut self, p: DVec3, t: DVec3) {
+        self.lastpnt = p;
+        self.lasttgt = t;
+    }
+}
+
+impl ChFi3dBuilder {
+    /// OCCT ChFi3d_Builder_2.cxx L859-889 — ConexFaces: the two support
+    /// faces of the iedge-th elementary spine, reordered against the first
+    /// face.  rcad returns the face Shapes (OCCT wraps them into
+    /// BRepAdaptor_Surface handles).
+    pub fn conex_faces(&self, spine: &ChFiDSSpineHandle, iedge: usize) -> (Shape, Shape) {
+        let mut ff1;
+        let mut ff2;
+        let an_edge = spine.base().edges(iedge).clone();
+        let (c1, c2) = chfi3d_conexfaces(&an_edge, &self.my_ef_map);
+        ff1 = c1;
+        ff2 = c2;
+
+        let first_face = self
+            .my_edge_first_face
+            .get(&an_edge.ptr_id())
+            .cloned()
+            .unwrap_or_else(Shape::null);
+        if ff2.is_same(&first_face) {
+            let tmp = ff1;
+            ff1 = ff2;
+            ff2 = tmp;
+        }
+        (ff1, ff2)
+    }
+
+    /// OCCT ChFi3d_Builder_2.cxx L826-855 — StripeOrientations.
+    pub fn stripe_orientations(
+        &self,
+        spine: &ChFiDSSpineHandle,
+    ) -> (Orientation, Orientation, i32) {
+        let an_edge = spine.base().edges(1).clone();
+        let first_face = self
+            .my_edge_first_face
+            .get(&an_edge.ptr_id())
+            .cloned()
+            .unwrap_or_else(Shape::null);
+        let (mut ff1, mut ff2) = chfi3d_conexfaces(&an_edge, &self.my_ef_map);
+        if ff2.is_same(&first_face) {
+            let tmp = ff1;
+            ff1 = ff2;
+            ff2 = tmp;
+        }
+        let of1 = ff1.orientation;
+        let mut f1f = ff1.clone();
+        f1f.orientation = Orientation::Forward;
+        let of2 = ff2.orientation;
+        let mut f2f = ff2.clone();
+        f2f.orientation = Orientation::Forward;
+
+        let (mut or1, mut or2) = (Orientation::Forward, Orientation::Forward);
+        let choix_conge =
+            concave_side(&self.my_brep, &f1f, &f2f, spine.base().edges(1), &mut or1, &mut or2);
+        or1 = topabs_compose(or1, of1);
+        or2 = topabs_compose(or2, of2);
+        (or1, or2, choix_conge)
+    }
+
+    /// OCCT ChFi3d_Builder_0.cxx L604-678 — ChFi3d_KParticular.
+    pub fn chfi3d_k_particular(
+        &self,
+        spine: &ChFiDSSpineHandle,
+        ie: usize,
+        s1: &Shape,
+        s2: &Shape,
+    ) -> bool {
+        use rcad_kernel::geom::Surface3;
+
+        // OCCT: down_cast<FilSpine> — a variable radius disqualifies.
+        if let Some(fs) = spine.down_cast_fil() {
+            if !fs.is_constant_on(ie) {
+                return false;
+            }
+        }
+
+        let surf_kind = |s: &Shape| -> Option<&'static str> {
+            let fd = s.as_face()?;
+            let surf = fd.surface.as_ref()?;
+            Some(match surf {
+                Surface3::Plane(_) => "Plane",
+                Surface3::Cylinder(_) => "Cylinder",
+                Surface3::Cone(_) => "Cone",
+                _ => "Other",
+            })
+        };
+        let st1 = surf_kind(s1).unwrap_or("Other");
+        let st2 = surf_kind(s2).unwrap_or("Other");
+        let is_plane1 = st1 == "Plane";
+        let is_plane2 = st2 == "Plane";
+        if !(is_plane1 || is_plane2) {
+            return false;
+        }
+        let (a_s1, a_s2, a_st1, a_st2) = if is_plane1 {
+            (s1, s2, st1, st2)
+        } else {
+            (s2, s1, st2, st1)
+        };
+
+        if a_st2 != "Plane" && a_st2 != "Cylinder" && a_st2 != "Cone" {
+            return false;
+        }
+
+        // OCCT: Spine->CurrentElementarySpine(IE).GetType() ∈ {Line, Circle}.
+        let e = spine.base().edges(ie).clone();
+        let ctyp = e
+            .as_edge()
+            .and_then(|ed| ed.curve.as_ref())
+            .map(|c| match c {
+                rcad_kernel::geom::Curve3::Line(_) => "Line",
+                rcad_kernel::geom::Curve3::Circle(_) => "Circle",
+                _ => "Other",
+            })
+            .unwrap_or("Other");
+        if ctyp != "Line" && ctyp != "Circle" {
+            return false;
+        }
+
+        let pa = rcad_kernel::core::precision::ANGULAR;
+
+        let plane_axis = |s: &Shape| -> Option<DVec3> {
+            match s.as_face()?.surface.as_ref()? {
+                Surface3::Plane(p) => Some(p.normal.normalize()),
+                _ => None,
+            }
+        };
+        let cyl_axis = |s: &Shape| -> Option<DVec3> {
+            match s.as_face()?.surface.as_ref()? {
+                Surface3::Cylinder(c) => Some(c.axis.normalize()),
+                _ => None,
+            }
+        };
+        let cone_axis = |s: &Shape| -> Option<DVec3> {
+            match s.as_face()?.surface.as_ref()? {
+                Surface3::Cone(c) => Some(c.axis.normalize()),
+                _ => None,
+            }
+        };
+
+        if a_st2 == "Plane" {
+            if ctyp == "Line" {
+                return true;
+            }
+        } else if a_st2 == "Cylinder" {
+            let d1 = plane_axis(a_s1).unwrap_or(DVec3::ZERO);
+            let d2 = cyl_axis(a_s2).unwrap_or(DVec3::ZERO);
+            let dot = d1.dot(d2).abs();
+            if ctyp == "Line" && (1.0 - dot) <= pa {
+                // IsNormal
+                return true;
+            } else if ctyp == "Circle" && dot >= 1.0 - pa {
+                // IsParallel
+                return true;
+            }
+        } else if a_st2 == "Cone" {
+            let d1 = plane_axis(a_s1).unwrap_or(DVec3::ZERO);
+            let d2 = cone_axis(a_s2).unwrap_or(DVec3::ZERO);
+            let dot = d1.dot(d2).abs();
+            if ctyp == "Circle" && dot >= 1.0 - pa {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// OCCT ChFi3d_Builder_2.cxx L373-389 — static TgtKP.
+    fn tgt_kp(
+        cd: &ChFiDSSurfData,
+        spine: &mut ChFiDSSpineHandle,
+        iedge: usize,
+        isfirst: bool,
+    ) -> (DVec3, DVec3) {
+        use rcad_kernel::geom::CurveEval as _;
+        let wtg = cd.interference_on_s1().parameter(isfirst);
+        let e = spine.base().edges(iedge).clone();
+        let ed = e.as_edge().expect("not an edge");
+        let curve = ed.curve.as_ref().expect("edge curve").clone();
+        let (cf, cl) = (ed.range[0], ed.range[1]);
+        let (ped, mut ded) = if e.orientation == Orientation::Forward {
+            let u = wtg + cf;
+            (curve.point_at(u), curve.derivative_at(u))
+        } else {
+            let u = -wtg + cl;
+            (curve.point_at(u), -curve.derivative_at(u))
+        };
+        (ped, ded.normalize())
+    }
+
+    /// OCCT ChFi3d_Builder_SpKP.cxx L749-... — SplitKPart.
+    ///
+    /// The Geom2dHatch hatcher (2D trimming of the tangency lines against
+    /// the face restrictions) is a pending TKGeomAlgo translation; the
+    /// pending state follows the OCCT single-domain outcome (the SurfData
+    /// is appended unsplit), exact when the tangency line crosses no face
+    /// boundary.
+    #[allow(clippy::too_many_arguments)]
+    fn split_k_part(
+        &self,
+        data: &ChFiDSSurfData,
+        set_data: &mut Vec<ChFiDSSurfData>,
+        _spine: &mut ChFiDSSpineHandle,
+        _iedge: usize,
+        _intf: bool,
+        _intl: bool,
+    ) -> bool {
+        // OCCT L762-855: Geom2dHatch_Hatcher trim of InterferenceOnS1/S2
+        // pcurves — pending; the multi-domain redistribution below it is
+        // unreachable in the pending state.  The pending state follows the
+        // OCCT single-domain outcome (NbDomains == 1 on both faces): the
+        // SurfData is appended unsplit.
+        set_data.push(data.clone());
+        true
+    }
+
+    /// OCCT ChFi3d_Builder_2.cxx L3004-3280 — PerformSetOfKPart.
+    pub fn perform_set_of_k_part(&mut self, stripe: &SharedStripe, simul: bool) {
+        // L3013-3017: initialization of the stripe.
+        let mut st = stripe.write().expect("stripe lock");
+        st.reset();
+        st.my_hdata = Vec::new();
+        let mut spine_opt = st.my_spine.take();
+        let Some(mut spine) = spine_opt.take() else {
+            return;
+        };
+
+        // L3019-3022
+        let (ref_or1, ref_or2, ref_choix) = self.stripe_orientations(&spine);
+        st.my_or1 = ref_or1;
+        st.my_or2 = ref_or2;
+        st.my_choix = ref_choix;
+
+        // L3027-3046: ElSpine bookkeeping initialization.
+        let mut intf = false;
+        let mut intl = false;
+        let mut current_he = super::chfi_ds::ChFiDSElSpine::new();
+        let mut current_offset_he = super::chfi_ds::ChFiDSElSpine::new();
+        let first_parameter = spine.base().first_parameter();
+        let (pfirst, tfirst) = spine.base_mut().d1(first_parameter);
+        current_he.firstparam = first_parameter;
+        current_he.set_first_point_and_tgt(pfirst, tfirst);
+        current_offset_he.firstparam = first_parameter;
+        current_offset_he.set_first_point_and_tgt(pfirst, tfirst);
+
+        let mut ya_k_part = false;
+        let mut iedgelastkpart = 0usize;
+
+        let mut w_start_periodic = 0.0f64;
+        let nb_edges = spine.base().nb_edges();
+        let mut w_end_periodic = spine.base().last_parameter_of(nb_edges);
+        let (p_end_periodic, t_end_periodic) = spine.base_mut().d1(w_end_periodic);
+        let mut wlast_book = 0.0f64;
+
+        // L3050-3220: Construction of particular cases.
+        for iedge in 1..=spine.base().nb_edges() {
+            let (hs1, hs2) = self.conex_faces(&spine, iedge);
+
+            if self.chfi3d_k_particular(&spine, iedge, &hs1, &hs2) {
+                intf = iedge == 1 && !spine.base().is_periodic();
+                intl = iedge == spine.base().nb_edges() && !spine.base().is_periodic();
+                let or1_0 = hs1.orientation;
+                let or2_0 = hs2.orientation;
+                let (mut or1, mut or2) = (or1_0, or2_0);
+                next_side(&mut or1, &mut or2, ref_or1, ref_or2, ref_choix);
+
+                let mut sd = ChFiDSSurfData::default();
+                let mut lsd: Vec<ChFiDSSurfData> = Vec::new();
+
+                let compute_ok = chfi_kpart::compute_data_compute(
+                    &self.my_brep,
+                    self.my_ds.as_mut().expect("DS"),
+                    &mut sd,
+                    &hs1,
+                    &hs2,
+                    or1,
+                    or2,
+                    &spine,
+                    iedge,
+                );
+                if !compute_ok {
+                    // OCCT L3071-3072: empty else — the SD is dropped.
+                } else if !self.split_k_part(&sd, &mut lsd, &mut spine, iedge, intf, intl) {
+                    lsd.clear();
+                } else {
+                    iedgelastkpart = iedge;
+                }
+
+                // OCCT L3081-3120: periodic SD resorting — unreachable for
+                // non-periodic spines; translated with the OCCT order.
+                if spine.base().is_periodic() {
+                    let nbsd = lsd.len();
+                    let period = {
+                        let n = spine.base().nb_edges();
+                        spine.base().last_parameter_of(n) - spine.base().first_parameter()
+                    };
+                    let mut wfp = w_start_periodic;
+                    let mut wlp = w_end_periodic;
+                    if !ya_k_part && nbsd > 0 {
+                        let first_sd = &lsd[0];
+                        let mut wwf = first_sd.first_spine_param();
+                        let mut wwl = first_sd.last_spine_param();
+                        wwf = chfi_kpart::chfi_kpart_in_period(wwf, wfp, wlp, self.tolesp);
+                        wwl = chfi_kpart::chfi_kpart_in_period(wwl, wfp, wlp, self.tolesp);
+                        if wwl <= wwf + self.tolesp {
+                            wwl += period;
+                        }
+                        wfp = wwf;
+                        wlp = wfp + period;
+                    }
+                    let mut j = 0usize;
+                    while j + 1 < nbsd {
+                        let jwf = {
+                            let jwf = lsd[j].first_spine_param();
+                            chfi_kpart::chfi_kpart_in_period(jwf, wfp, wlp, self.tolesp)
+                        };
+                        for k in j + 1..nbsd {
+                            let kwf = {
+                                let kwf = lsd[k].first_spine_param();
+                                chfi_kpart::chfi_kpart_in_period(kwf, wfp, wlp, self.tolesp)
+                            };
+                            if kwf < jwf {
+                                lsd.swap(j, k);
+                            }
+                        }
+                        j += 1;
+                    }
+                }
+
+                // L3121-3214
+                let mut li: Vec<i32> = Vec::new();
+                for lsd_j in 0..lsd.len() {
+                    let wfirst;
+                    let wlast;
+                    {
+                        let cur_sd = &mut lsd[lsd_j];
+                        if simul {
+                            // OCCT: SimulKPart(curSD) — pending ChFiDS_CircSection.
+                        }
+                        wfirst = cur_sd.first_spine_param();
+                        wlast = cur_sd.last_spine_param();
+                    }
+                    let cur_sd = lsd[lsd_j].clone();
+                    // OCCT: SeqSurf.Append(curSD)
+                    st.my_hdata.push(std::sync::Arc::new(cur_sd.clone()));
+                    if !simul {
+                        li.push(cur_sd.surf());
+                    }
+                    let (mut wfirst_j, mut wlast_j) = (wfirst, wlast);
+                    if spine.base().is_periodic() {
+                        wfirst_j = chfi_kpart::chfi_kpart_in_period(
+                            wfirst_j,
+                            w_start_periodic,
+                            w_end_periodic,
+                            self.tolesp,
+                        );
+                        wlast_j = chfi_kpart::chfi_kpart_in_period(
+                            wlast_j,
+                            w_start_periodic,
+                            w_end_periodic,
+                            self.tolesp,
+                        );
+                        if wlast_j <= wfirst_j + self.tolesp {
+                            wlast_j += spine.base().first_parameter(); // Period() below
+                        }
+                    }
+                    let (pfirst_j, tfirst_j) =
+                        Self::tgt_kp(&lsd[lsd_j], &mut spine, iedge, true);
+                    let (plast_j, tlast_j) =
+                        Self::tgt_kp(&lsd[lsd_j], &mut spine, iedge, false);
+
+                    // L3149-3213: Determine the sections to approximate.
+                    if !ya_k_part {
+                        if spine.base().is_periodic() {
+                            w_start_periodic = wfirst_j;
+                            w_end_periodic = w_start_periodic + spine.base().period();
+                            wlast_j = elclib_in_period_static(
+                                wlast_j,
+                                w_start_periodic,
+                                w_end_periodic,
+                            );
+                            if wlast_j <= wfirst_j + self.tolesp {
+                                wlast_j += spine.base().period();
+                            }
+                            spine.base_mut().set_first_parameter(w_start_periodic);
+                            spine.base_mut().set_last_parameter(w_end_periodic);
+                        } else if !intf || iedge > 1 {
+                            spine.base_mut().set_first_tgt(0.0f64.min(wfirst_j));
+                            current_he.lastparam = wfirst_j;
+                            current_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
+                            spine.base_mut().elspines.push(current_he.clone());
+                            current_he.next = Some(std::sync::Arc::new(cur_sd.clone()));
+                            current_he = super::chfi_ds::ChFiDSElSpine::new();
+
+                            current_offset_he.lastparam = wfirst_j;
+                            current_offset_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
+                            spine.base_mut().offset_elspines.push(current_offset_he.clone());
+                            current_offset_he.next = Some(std::sync::Arc::new(cur_sd.clone()));
+                            current_offset_he = super::chfi_ds::ChFiDSElSpine::new();
+                        }
+                        current_he.firstparam = wlast_j;
+                        current_he.set_first_point_and_tgt(plast_j, tlast_j);
+                        current_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_offset_he.firstparam = wlast_j;
+                        current_offset_he.set_first_point_and_tgt(plast_j, tlast_j);
+                        current_offset_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        ya_k_part = true;
+                    } else if wfirst_j - current_he.firstparam > self.tolesp {
+                        // section between two KPart
+                        current_he.lastparam = wfirst_j;
+                        current_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
+                        spine.base_mut().elspines.push(current_he.clone());
+                        current_he.next = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_he = super::chfi_ds::ChFiDSElSpine::new();
+
+                        current_offset_he.lastparam = wfirst_j;
+                        current_offset_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
+                        spine.base_mut().offset_elspines.push(current_offset_he.clone());
+                        current_offset_he.next = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_offset_he = super::chfi_ds::ChFiDSElSpine::new();
+
+                        current_he.firstparam = wlast_j;
+                        current_he.set_first_point_and_tgt(plast_j, tlast_j);
+                        current_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_offset_he.firstparam = wlast_j;
+                        current_offset_he.set_first_point_and_tgt(plast_j, tlast_j);
+                        current_offset_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                    } else {
+                        current_he.firstparam = wlast_j;
+                        current_he.set_first_point_and_tgt(plast_j, tlast_j);
+                        current_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_offset_he.firstparam = wlast_j;
+                        current_offset_he.set_first_point_and_tgt(plast_j, tlast_j);
+                        current_offset_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                    }
+                    wlast_book = wlast_j;
+                }
+                if !li.is_empty() {
+                    // OCCT L3217: myEVIMap.Bind(Spine->Edges(iedge), li)
+                    self.my_evi_map
+                        .insert(spine.base().edges(iedge).ptr_id(), li);
+                }
+            }
+        }
+
+        // L3222-3263: last section -> end of the spine.
+        if !intl || iedgelastkpart < spine.base().nb_edges() {
+            if spine.base().is_periodic() {
+                if w_end_periodic - wlast_book > self.tolesp {
+                    current_he.lastparam = w_end_periodic;
+                    current_he.set_last_point_and_tgt(p_end_periodic, t_end_periodic);
+                    if !ya_k_part {
+                        current_he.periodic = true;
+                    }
+                    spine.base_mut().elspines.push(current_he.clone());
+
+                    current_offset_he.lastparam = w_end_periodic;
+                    current_offset_he.set_last_point_and_tgt(p_end_periodic, t_end_periodic);
+                    if !ya_k_part {
+                        current_offset_he.periodic = true;
+                    }
+                    spine.base_mut().offset_elspines.push(current_offset_he);
+                }
+            } else {
+                let last_param = spine.base().last_parameter();
+                let (plast, tlast) = spine.base_mut().d1(last_param);
+                let n = spine.base().nb_edges();
+                let w = spine.base().last_parameter_of(n).max(wlast_book);
+                spine.base_mut().set_last_tgt(w);
+                if spine.base().last_parameter() - wlast_book > self.tolesp {
+                    current_he.lastparam = spine.base().last_parameter();
+                    current_he.set_last_point_and_tgt(plast, tlast);
+                    spine.base_mut().elspines.push(current_he.clone());
+
+                    current_offset_he.lastparam = spine.base().last_parameter();
+                    current_offset_he.set_last_point_and_tgt(plast, tlast);
+                    spine.base_mut().offset_elspines.push(current_offset_he);
+                }
+            }
+        }
+
+        // L3265-3278: ChFi3d_PerformElSpine over the sections — pending
+        // (Builder_0.cxx ChFi3d_PerformElSpine, needs the composite
+        // curve approximation machinery).
+        // L3279
+        spine.base_mut().set_split_done(true);
+        st.my_spine = Some(spine);
+    }
+
+    /// OCCT ChFi3d_Builder_2.cxx L3882-3900 — PerformSetOfSurf.
+    pub fn perform_set_of_surf(&mut self, stripe: &SharedStripe, simul: bool) -> bool {
+        // L3887-3888
+        let si = {
+            let st = stripe.read().expect("stripe lock");
+            chfi3d_solid_index(&st, &mut self.my_ds.as_mut().expect("DS"), &self.my_eso_map, &self.my_esh_map)
+        };
+        {
+            let mut st = stripe.write().expect("stripe lock");
+            st.index_of_solid = si;
+        }
+        let split_done = {
+            let st = stripe.read().expect("stripe lock");
+            st.spine().map(|s| s.base().split_done()).unwrap_or(false)
+        };
+        if !split_done {
+            self.perform_set_of_k_part(stripe, simul);
+        }
+
+        // L3894: PerformSetOfKGen — the numerical walking core
+        // (Builder_2.cxx L3298-3882, BRepBlend/Extrema based) is a pending
+        // translation; with a fully-KPart spine it processes no section.
+        let _ = simul;
+
+        // L3896-3899: ChFi3d_MakeExtremities — pending (Builder_6.cxx).
+        true
+    }
+}
+
+/// OCCT ChFi3d_Builder_0.cxx L2300-2328 — ChFi3d_SolidIndex.
+fn chfi3d_solid_index(
+    stripe: &ChFiDSStripe,
+    dstr: &mut TopOpeBRepDSHDataStructure,
+    map_eso: &ChFiDSMap,
+    map_esh: &ChFiDSMap,
+) -> i32 {
+    let Some(sp) = stripe.spine() else {
+        panic!("Standard_Failure: SolidIndex : Spine incomplete");
+    };
+    if sp.base().nb_edges() == 0 {
+        panic!("Standard_Failure: SolidIndex : Spine incomplete");
+    }
+    let edref = sp.base().edges(1).clone();
+    let eso_has = map_eso.contains(&edref) && !map_eso.find(&edref).is_empty();
+    let shell_ou_solid = if eso_has {
+        map_eso.find(&edref)[0].clone()
+    } else if map_esh.contains(&edref) && !map_esh.find(&edref).is_empty() {
+        map_esh.find(&edref)[0].clone()
+    } else {
+        panic!("Standard_Failure: SolidIndex : Spine incomplete");
+    };
+    dstr.add_shape(&shell_ou_solid)
+}
+
+/// OCCT ElCLib::InPeriod static stand-in (see chfi_ds::elclib_in_period).
+fn elclib_in_period_static(u: f64, ufirst: f64, ulast: f64) -> f64 {
+    super::chfi_ds::elclib_in_period(u, ufirst, ulast)
+}
+
+
+
+#[cfg(test)]
+mod kpart_tests {
+    use super::*;
+    use super::super::brep_fillet_api::{explore_edges, explore_solids};
+    use super::super::chfi_ds::ChFi3dFilletShape;
+
+    /// OCCT BRepFilletAPI_MakeFillet::Build on a box: PerformSetOfSurf
+    /// detects the plane-plane KPart, ChFiKPart_MakeFillet computes the
+    /// cylinder SurfData analytically, and the corner machinery is the
+    /// only pending stage.
+    #[test]
+    fn compute_box_edge_produces_kpart_surfdata() {
+        let brep = rcad_modeling::make_box_brep(
+            glam::DVec3::ZERO,
+            glam::DVec3::X,
+            glam::DVec3::Y,
+            20.0,
+            20.0,
+            20.0,
+        )
+        .unwrap();
+        let solid = explore_solids(&brep).into_iter().next().unwrap();
+        let mut fillet =
+            ChFi3dFilBuilder::new(&brep, solid, ChFi3dFilletShape::Rational, 1.0e-2);
+        let edges = explore_edges(&brep);
+        let e0 = edges[0].clone();
+
+        fillet.add_radius(2.0, &e0);
+        assert_eq!(fillet.base.nb_elements(), 1);
+
+        fillet.base.compute();
+
+        // The stripe must carry one KPart SurfData with a cylindrical
+        // fillet surface of radius 2.
+        let stripe = fillet.base.value_stripe(1);
+        let st = stripe.read().expect("stripe lock");
+        assert_eq!(st.my_hdata.len(), 1, "one KPart SurfData expected");
+        let sd = &st.my_hdata[0];
+        assert!(sd.surf_index >= 1, "surface registered in the DS");
+        let surf = &fillet.base.my_ds.as_ref().unwrap().surfaces[sd.surf_index as usize - 1];
+        assert!(
+            matches!(surf, rcad_kernel::geom::Surface3::Cylinder(c) if (c.radius - 2.0).abs() < 1e-9),
+            "KPart surface is the radius-2 cylinder, got {surf:?}"
         );
     }
 }

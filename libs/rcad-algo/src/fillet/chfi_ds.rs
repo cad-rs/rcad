@@ -113,16 +113,283 @@ pub struct LawFunction;
 // =========================================================================
 
 #[derive(Debug, Clone)]
-pub struct ChFiDSElSpine;
+pub struct ChFiDSElSpine {
+    /// OCCT ChFiDS_ElSpine.hxx: double firstparam / lastparam
+    pub firstparam: f64,
+    pub lastparam: f64,
+    /// OCCT: gp_Pnt firstPnt / lastPnt, gp_Vec firstTgt / lastTgt
+    pub firstpnt: DVec3,
+    pub firsttgt: DVec3,
+    pub lastpnt: DVec3,
+    pub lasttgt: DVec3,
+    /// OCCT: bool periodic
+    pub periodic: bool,
+    /// OCCT: ChangeNext() / ChangePrevious() — SurfData links
+    pub next: Option<SharedSurfData>,
+    pub previous: Option<SharedSurfData>,
+}
 
 // =========================================================================
-// OCCT ChFiDS_SurfData + NCollection_HSequence — pending ChFiDS_SurfData
-// translation.  The Stripe holds the sequence; the skeleton keeps it empty
-// until PerformSetOfSurf (the numerical core) is translated.
+// OCCT ChFiDS_FaceInterference.hxx L72-77 — fields; bodies from
+// ChFiDS_FaceInterference.cxx / .lxx.
 // =========================================================================
 
+/// OCCT ChFiDS_FaceInterference — the interference data of the fillet
+/// surface with one support face (3D tangency line + the two pcurves).
 #[derive(Debug, Clone)]
-pub struct ChFiDSSurfData;
+pub struct ChFiDS_FaceInterference {
+    /// OCCT: double firstParam
+    pub first_param: f64,
+    /// OCCT: double lastParam
+    pub last_param: f64,
+    /// OCCT: occ::handle<Geom2d_Curve> pCurveOnFace
+    pub pcurve_on_face: Option<rcad_kernel::geom::Curve2d>,
+    /// OCCT: occ::handle<Geom2d_Curve> pCurveOnSurf
+    pub pcurve_on_surf: Option<rcad_kernel::geom::Curve2d>,
+    /// OCCT: int lineindex (DS index of the 3D tangency line)
+    pub lineindex: i32,
+    /// OCCT: TopAbs_Orientation LineTransition
+    pub line_transition: Orientation,
+}
+
+impl Default for ChFiDS_FaceInterference {
+    fn default() -> Self {
+        ChFiDS_FaceInterference {
+            first_param: 0.0,
+            last_param: 0.0,
+            pcurve_on_face: None,
+            pcurve_on_surf: None,
+            lineindex: 0,
+            line_transition: Orientation::Forward,
+        }
+    }
+}
+
+impl ChFiDS_FaceInterference {
+    /// OCCT ChFiDS_FaceInterference.cxx SetInterference(Index, Or, PC1, PC2).
+    pub fn set_interference(
+        &mut self,
+        index: i32,
+        or: Orientation,
+        pcurve_on_face: Option<rcad_kernel::geom::Curve2d>,
+        pcurve_on_surf: Option<rcad_kernel::geom::Curve2d>,
+    ) {
+        self.lineindex = index;
+        self.line_transition = or;
+        self.pcurve_on_face = pcurve_on_face;
+        self.pcurve_on_surf = pcurve_on_surf;
+    }
+
+    /// OCCT ChFiDS_FaceInterference.cxx Parameter(IsFirst).
+    pub fn parameter(&self, is_first: bool) -> f64 {
+        if is_first {
+            self.first_param
+        } else {
+            self.last_param
+        }
+    }
+
+    /// OCCT .lxx — PCurveOnFace().
+    pub fn pcurve_on_face(&self) -> Option<&rcad_kernel::geom::Curve2d> {
+        self.pcurve_on_face.as_ref()
+    }
+
+    /// OCCT .lxx — PCurveOnSurf().
+    pub fn pcurve_on_surf(&self) -> Option<&rcad_kernel::geom::Curve2d> {
+        self.pcurve_on_surf.as_ref()
+    }
+
+    /// OCCT .lxx — first/last parameter setter.
+    pub fn set_parameter(&mut self, is_first: bool, par: f64) {
+        if is_first {
+            self.first_param = par;
+        } else {
+            self.last_param = par;
+        }
+    }
+}
+
+// =========================================================================
+// OCCT ChFiDS_SurfData.hxx L154-179 — fields; accessors from
+// ChFiDS_SurfData.cxx / .lxx.  The Simul handle (simul) is pending the
+// ChFiDS_CircSection translation.
+// =========================================================================
+
+/// OCCT ChFiDS_SurfData — all the data of one fillet surface patch along
+/// the spine.
+#[derive(Debug, Clone)]
+pub struct ChFiDSSurfData {
+    /// OCCT: ChFiDS_CommonPoint pfirstOnS1
+    pub pfirst_on_s1: ChFiDS_CommonPoint,
+    /// OCCT: ChFiDS_CommonPoint plastOnS1
+    pub plast_on_s1: ChFiDS_CommonPoint,
+    /// OCCT: ChFiDS_CommonPoint pfirstOnS2
+    pub pfirst_on_s2: ChFiDS_CommonPoint,
+    /// OCCT: ChFiDS_CommonPoint plastOnS2
+    pub plast_on_s2: ChFiDS_CommonPoint,
+    /// OCCT: ChFiDS_FaceInterference intf1
+    pub intf1: ChFiDS_FaceInterference,
+    /// OCCT: ChFiDS_FaceInterference intf2
+    pub intf2: ChFiDS_FaceInterference,
+    /// OCCT: gp_Pnt2d p2df1
+    pub p2df1: DVec2,
+    /// OCCT: gp_Pnt2d p2dl1
+    pub p2dl1: DVec2,
+    /// OCCT: gp_Pnt2d p2df2
+    pub p2df2: DVec2,
+    /// OCCT: gp_Pnt2d p2dl2
+    pub p2dl2: DVec2,
+    /// OCCT: double ufspine
+    pub ufspine: f64,
+    /// OCCT: double ulspine
+    pub ulspine: f64,
+    /// OCCT: double myfirstextend
+    pub myfirstextend: f64,
+    /// OCCT: double mylastextend
+    pub mylastextend: f64,
+    /// OCCT: int indexOfS1
+    pub index_of_s1: i32,
+    /// OCCT: int indexOfC1
+    pub index_of_c1: i32,
+    /// OCCT: int indexOfS2
+    pub index_of_s2: i32,
+    /// OCCT: int indexOfC2
+    pub index_of_c2: i32,
+    /// OCCT: int indexOfConge
+    pub index_of_conge: i32,
+    /// OCCT: bool isoncurv1
+    pub isoncurv1: bool,
+    /// OCCT: bool isoncurv2
+    pub isoncurv2: bool,
+    /// OCCT: bool twistons1
+    pub twistons1: bool,
+    /// OCCT: bool twistons2
+    pub twistons2: bool,
+    /// OCCT: TopAbs_Orientation orientation
+    pub orientation: Orientation,
+    /// rcad extension: the fillet surface's DS index (OCCT stores the
+    /// surface in the TopOpeBRepDS; the DS placeholder mirrors it).
+    pub surf_index: i32,
+}
+
+impl Default for ChFiDSSurfData {
+    fn default() -> Self {
+        ChFiDSSurfData {
+            pfirst_on_s1: ChFiDS_CommonPoint::default(),
+            plast_on_s1: ChFiDS_CommonPoint::default(),
+            pfirst_on_s2: ChFiDS_CommonPoint::default(),
+            plast_on_s2: ChFiDS_CommonPoint::default(),
+            intf1: ChFiDS_FaceInterference::default(),
+            intf2: ChFiDS_FaceInterference::default(),
+            p2df1: DVec2::ZERO,
+            p2dl1: DVec2::ZERO,
+            p2df2: DVec2::ZERO,
+            p2dl2: DVec2::ZERO,
+            ufspine: 0.0,
+            ulspine: 0.0,
+            myfirstextend: 0.0,
+            mylastextend: 0.0,
+            index_of_s1: 0,
+            index_of_c1: 0,
+            index_of_s2: 0,
+            index_of_c2: 0,
+            index_of_conge: 0,
+            isoncurv1: false,
+            isoncurv2: false,
+            twistons1: false,
+            twistons2: false,
+            orientation: Orientation::Forward,
+            surf_index: 0,
+        }
+    }
+}
+
+impl ChFiDSSurfData {
+    /// OCCT ChFiDS_SurfData.cxx ChangeSurf(Index).
+    pub fn change_surf(&mut self, index: i32) {
+        self.surf_index = index;
+    }
+
+    /// OCCT .lxx — Surf().
+    pub fn surf(&self) -> i32 {
+        self.surf_index
+    }
+
+    /// OCCT .lxx — ChangeOrientation().
+    pub fn change_orientation(&mut self) -> &mut Orientation {
+        &mut self.orientation
+    }
+
+    /// OCCT .lxx — InterferenceOnS1().
+    pub fn interference_on_s1(&self) -> &ChFiDS_FaceInterference {
+        &self.intf1
+    }
+
+    /// OCCT .lxx — ChangeInterferenceOnS1().
+    pub fn change_interference_on_s1(&mut self) -> &mut ChFiDS_FaceInterference {
+        &mut self.intf1
+    }
+
+    /// OCCT .lxx — InterferenceOnS2().
+    pub fn interference_on_s2(&self) -> &ChFiDS_FaceInterference {
+        &self.intf2
+    }
+
+    /// OCCT .lxx — ChangeInterferenceOnS2().
+    pub fn change_interference_on_s2(&mut self) -> &mut ChFiDS_FaceInterference {
+        &mut self.intf2
+    }
+
+    /// OCCT .cxx FirstSpineParam() (ufspine).
+    pub fn first_spine_param(&self) -> f64 {
+        self.ufspine
+    }
+
+    /// OCCT .cxx LastSpineParam() (ulspine).
+    pub fn last_spine_param(&self) -> f64 {
+        self.ulspine
+    }
+
+    /// OCCT .cxx FirstSpineParam(Par).
+    pub fn set_first_spine_param(&mut self, par: f64) {
+        self.ufspine = par;
+    }
+
+    /// OCCT .cxx LastSpineParam(Par).
+    pub fn set_last_spine_param(&mut self, par: f64) {
+        self.ulspine = par;
+    }
+
+    /// OCCT .cxx Vertex(First, OnS).
+    pub fn vertex(&self, first: bool, on_s: i32) -> &ChFiDS_CommonPoint {
+        match (first, on_s) {
+            (true, 1) => &self.pfirst_on_s1,
+            (true, _) => &self.pfirst_on_s2,
+            (false, 1) => &self.plast_on_s1,
+            (false, _) => &self.plast_on_s2,
+        }
+    }
+
+    /// OCCT .cxx ChangeVertex(First, OnS).
+    pub fn change_vertex(&mut self, first: bool, on_s: i32) -> &mut ChFiDS_CommonPoint {
+        match (first, on_s) {
+            (true, 1) => &mut self.pfirst_on_s1,
+            (true, _) => &mut self.pfirst_on_s2,
+            (false, 1) => &mut self.plast_on_s1,
+            (false, _) => &mut self.plast_on_s2,
+        }
+    }
+
+    /// OCCT .cxx Index(OfS).
+    pub fn index_of(&self, of_s: i32) -> i32 {
+        if of_s == 1 {
+            self.index_of_s1
+        } else {
+            self.index_of_s2
+        }
+    }
+}
+// =========================================================================
 
 /// OCCT NCollection_HArray1<ChFiDS_CircSection> — pending ChFiDS_CircSection
 /// translation; ChFi3d_FilBuilder::Sect returns this opaquely.
@@ -1303,5 +1570,282 @@ impl ChFiDSMap {
     /// OCCT ChFiDS_Map::operator()(key) — ancestor list of key.
     pub fn find(&self, key: &Shape) -> &Vec<Shape> {
         self.my_map.get(&key.ptr_id()).expect("ChFiDSMap: key not bound")
+    }
+}
+
+
+impl ChFiDSSpine {
+    /// OCCT ChFiDS_Spine.cxx L352-373 — SetFirstTgt(W).
+    pub fn set_first_tgt(&mut self, w: f64) {
+        if self.is_periodic() {
+            panic!("Standard_Failure: No extension by tangent on periodic contours");
+        }
+        // The flag is suspended if already positioned to avoid stopping d1.
+        self.hasfirsttgt = false;
+        let (p, t) = self.d1(w);
+        self.firstori = p;
+        self.firsttgt = t;
+        // and it is reset.
+        self.hasfirsttgt = true;
+        self.firsttgtpar = w;
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L375-395 — SetLastTgt(W).
+    pub fn set_last_tgt(&mut self, w: f64) {
+        if self.is_periodic() {
+            panic!("Standard_Failure: No extension by tangent periodic contours");
+        }
+        self.haslasttgt = false;
+        let (p, t) = self.d1(w);
+        self.lastori = p;
+        self.lasttgt = t;
+        self.haslasttgt = true;
+        self.lasttgtpar = w;
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L410-424 — SetReference(W).
+    pub fn set_reference(&mut self, w: f64) {
+        self.hasref = true;
+        let lll = self.abscissa.as_ref().map_or(0.0, |a| a[a.len() - 1]);
+        if self.is_periodic() {
+            self.valref = elclib_in_period(w, 0.0, lll);
+        } else {
+            self.valref = w;
+        }
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L426-439 — SetReference(I).
+    pub fn set_reference_index(&mut self, i: usize) {
+        self.hasref = true;
+        let a = self.abscissa.as_ref();
+        if i == 1 {
+            self.valref = a.map_or(0.0, |a| a[0]) * 0.5;
+        } else {
+            self.valref = a.map_or(0.0, |a| (a[i - 1] + a[i - 2]) * 0.5);
+        }
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L441-480 — Index(W, Forward).
+    pub fn index_of_param(&self, w: f64, forward: bool) -> usize {
+        let t = self.tolesp.max(CONFUSION);
+        let last = self.abscissa.as_ref().map_or(0.0, |a| a[a.len() - 1]);
+        let len = self.abscissa.as_ref().map_or(0, |a| a.len());
+        let mut par = w;
+        if self.is_periodic() && par.abs() >= t && (par - last).abs() >= t {
+            par = elclib_in_period(par, 0.0, last);
+        }
+        let mut f = 0.0;
+        let mut l = 0.0;
+        let mut ind = 1usize;
+        while ind <= len {
+            f = l;
+            l = self.abscissa.as_ref().map_or(0.0, |a| a[ind - 1]);
+            if par < l || ind == len {
+                break;
+            }
+            ind += 1;
+        }
+        if forward && ind < len && (par - l).abs() < t {
+            ind += 1;
+        } else if !forward && ind > 1 && (par - f).abs() < t {
+            ind -= 1;
+        } else if forward && self.is_periodic() && ind == len && (par - l).abs() < t {
+            ind = 1;
+        } else if !forward && self.is_periodic() && ind == 1 && (par - f).abs() < t {
+            ind = len;
+        }
+        ind
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L619-698 — Prepare(L, Ind): resolves the
+    /// elementary-spine index for the abscissa L, adjusting L for periodic
+    /// contours and tangent extensions.  Returns the index; -1 encodes the
+    /// first tangent extension, len+1 the last one (OCCT conventions).
+    fn prepare(&self, l: &mut f64) -> i32 {
+        let tol = self.tolesp.max(CONFUSION);
+        let last = self.abscissa.as_ref().map_or(0.0, |a| a[a.len() - 1]);
+        let len = self.abscissa.as_ref().map_or(0, |a| a.len()) as i32;
+        let mut lval = *l;
+        if self.is_periodic() && lval.abs() >= tol && (lval - last).abs() >= tol {
+            lval = elclib_in_period(lval, 0.0, last);
+        }
+
+        let ind: i32;
+        if self.hasfirsttgt && lval <= self.firsttgtpar {
+            if self.hasref && self.valref >= lval && (lval - self.firsttgtpar).abs() <= tol {
+                ind = self.index_of_param(lval, true) as i32;
+            } else {
+                ind = -1;
+                lval -= self.firsttgtpar;
+            }
+        } else if lval <= 0.0 {
+            ind = 1;
+        } else if self.haslasttgt && lval >= self.lasttgtpar {
+            if self.hasref && self.valref <= lval && (lval - self.lasttgtpar).abs() <= tol {
+                ind = self.index_of_param(lval, true) as i32;
+            } else {
+                ind = len + 1;
+                lval -= self.lasttgtpar;
+            }
+        } else if lval >= last {
+            ind = len;
+        } else {
+            ind = self.index_of_param(lval, true) as i32;
+        }
+        *l = lval;
+        ind
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L537-560 — Absc(U, I): abscissa of the
+    /// parameter U on the elementary spine I.
+    pub fn absc_of_param(&mut self, u: f64, i: usize) -> f64 {
+        self.indexofcurve = i as i32;
+        let e = &self.spine[i - 1];
+        let ed = e.as_edge().expect("not an edge");
+        let curve = ed.curve.as_ref().expect("edge curve");
+        let l0 = self.first_parameter_of(i);
+        if e.orientation == Orientation::Reversed {
+            l0
+                + rcad_kernel::base::gcpnts::abscissa_point::arc_length(curve, u, ed.range[1])
+        } else {
+            l0
+                + rcad_kernel::base::gcpnts::abscissa_point::arc_length(curve, ed.range[0], u)
+        }
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L562-601 — Parameter(AbsC, U, Oriented).
+    pub fn parameter_at(&mut self, absc: f64, oriented: bool) -> f64 {
+        let len = self.abscissa.as_ref().map_or(0, |a| a.len());
+        let mut index = 1usize;
+        while index < len {
+            if absc < self.abscissa.as_ref().unwrap()[index - 1] {
+                break;
+            }
+            index += 1;
+        }
+        self.parameter_on(absc, index, oriented)
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L603-617 — Parameter(Index, AbsC, U, Oriented).
+    pub fn parameter_on(&mut self, absc: f64, index: usize, oriented: bool) -> f64 {
+        self.indexofcurve = index as i32;
+        let e = &self.spine[index - 1];
+        let ed = e.as_edge().expect("not an edge");
+        let curve = ed.curve.as_ref().expect("edge curve").clone();
+        let or = e.orientation;
+        let l;
+        if or == Orientation::Reversed {
+            l = self.abscissa.as_ref().unwrap()[index - 1] - absc;
+        } else if index == 1 {
+            l = absc;
+        } else {
+            l = absc - self.abscissa.as_ref().unwrap()[index - 2];
+        }
+        let t = l / self.length_of(index);
+        let (cf, cl) = (ed.range[0], ed.range[1]);
+        let uapp = (1.0 - t) * cf + t * cl;
+        let mut u = rcad_kernel::base::gcpnts::abscissa_point::abscissa_point_parameter(
+            &curve, cf, cl, l, uapp,
+        );
+        if or == Orientation::Reversed && oriented {
+            u = (cl + cf) - u;
+        }
+        u
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L703-748 — Value(AbsC).
+    pub fn value_at(&mut self, absc: f64) -> DVec3 {
+        use rcad_kernel::geom::CurveEval as _;
+        let mut l = absc;
+        let index = self.prepare(&mut l);
+
+        if index == -1 {
+            let vp = self.firsttgt * l;
+            return self.firstori + vp;
+        } else if index as i32 == self.abscissa.as_ref().map_or(0, |a| a.len()) as i32 + 1 {
+            let vp = self.lasttgt * l;
+            return self.lastori + vp;
+        }
+        let index = index as usize;
+        self.indexofcurve = index as i32;
+        let e = &self.spine[index - 1];
+        let ed = e.as_edge().expect("not an edge");
+        let curve = ed.curve.as_ref().expect("edge curve").clone();
+        let t = l / self.length_of(index);
+        let (cf, cl) = (ed.range[0], ed.range[1]);
+        let uapp = (1.0 - t) * cf + t * cl;
+        let u = rcad_kernel::base::gcpnts::abscissa_point::abscissa_point_parameter(
+            &curve, cf, cl, l, uapp,
+        );
+        curve.point_at(u)
+    }
+
+    /// OCCT ChFiDS_Spine.cxx L750-798 — D1(AbsC, P, V1): point and tangent
+    /// (normalized, orientation-adjusted) on the composite spine.
+    pub fn d1(&mut self, absc: f64) -> (DVec3, DVec3) {
+        use rcad_kernel::geom::CurveEval as _;
+        let mut l = absc;
+        let index = self.prepare(&mut l);
+
+        if index == -1 {
+            let p = self.firstori + self.firsttgt * l;
+            return (p, self.firsttgt);
+        } else if index as i32 == self.abscissa.as_ref().map_or(0, |a| a.len()) as i32 + 1 {
+            let p = self.lastori + self.lasttgt * l;
+            return (p, self.lasttgt);
+        }
+        let index = index as usize;
+        self.indexofcurve = index as i32;
+        let e = &self.spine[index - 1];
+        let ed = e.as_edge().expect("not an edge");
+        let curve = ed.curve.as_ref().expect("edge curve").clone();
+        let t = l / self.length_of(index);
+        let (cf, cl) = (ed.range[0], ed.range[1]);
+        let uapp = (1.0 - t) * cf + t * cl;
+        let u = rcad_kernel::base::gcpnts::abscissa_point::abscissa_point_parameter(
+            &curve, cf, cl, l, uapp,
+        );
+        let p = curve.point_at(u);
+        let mut v1 = curve.derivative_at(u);
+        let d1scale = 1.0 / v1.length();
+        if e.orientation == Orientation::Reversed {
+            v1 = -(v1 * d1scale);
+        } else {
+            v1 = v1 * d1scale;
+        }
+        (p, v1)
+    }
+
+    /// OCCT ChFiDS_Spine.hxx — SplitDone(B).
+    pub fn set_split_done(&mut self, b: bool) {
+        self.splitdone = b;
+    }
+
+    /// OCCT ChFiDS_Spine.hxx — SplitDone().
+    pub fn split_done(&self) -> bool {
+        self.splitdone
+    }
+}
+
+/// OCCT ElCLib::InPeriod(U, UFirst, ULast).
+pub fn elclib_in_period(u: f64, ufirst: f64, ulast: f64) -> f64 {
+    let period = ulast - ufirst;
+    if period <= 0.0 {
+        return u;
+    }
+    let mut r = u - ((u - ufirst) / period).floor() * period;
+    if r < ufirst {
+        r += period;
+    }
+    if r >= ulast {
+        r -= period;
+    }
+    r
+}
+
+impl ChFiDSSpine {
+    /// OCCT ChFiDS_Spine.cxx Period() — the spine period (last abscissa).
+    pub fn period(&self) -> f64 {
+        self.abscissa.as_ref().map_or(0.0, |a| a[a.len() - 1])
     }
 }
