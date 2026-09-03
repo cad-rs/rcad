@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use rcad_kernel::geom::{CurveEval as _, SurfaceEval as _};
 use rcad_kernel::topo::topods::{BRepTool as _, Orientation, Shape};
 
-use super::topopebrepds::TopOpeBRepDSHDataStructure;
+use super::topopebrepds::{TopOpeBRepDSHDataStructure, TopOpeBRepDSInterference};
 
 // =========================================================================
 // OCCT TopAbs_State (TopAbs_State.hxx).
@@ -374,7 +374,7 @@ impl TopOpeBRepBuildBuilder {
                     self.split_face(a_shape, tobuild1, tobuild2);
                 }
                 rcad_kernel::topods::ShapeType::Edge => {
-                    self.split_edge(a_shape, tobuild1, tobuild2);
+                    self.split_edge_public(a_shape, tobuild1, tobuild2);
                 }
                 _ => {
                     continue;
@@ -495,9 +495,8 @@ impl TopOpeBRepBuildBuilder {
         // Builder1.cxx SplitFace — pending unit.
     }
 
-    fn split_edge(&mut self, _s: &Shape, _tobuild1: TopAbsState, _tobuild2: TopAbsState) {
-        // Builder1.cxx SplitEdge — pending unit.
-    }
+    // SplitEdge / SplitEdge1 are translated in the impl block at the end of
+    // this file (Builder.cxx L925-1079).
 }
 
 impl TopOpeBRepBuildBuilder {
@@ -660,5 +659,95 @@ impl TopOpeBRepBuildBuilder {
     // =========================================================================
     fn find_same_domain(&self, _l1: &mut Vec<Shape>, _l2: &mut Vec<Shape>) {
         // OCCT L650-764 — pending the DS same-domain table unit.
+    }
+}
+
+impl TopOpeBRepBuildBuilder {
+    // =========================================================================
+    // OCCT TopOpeBRepBuild_Builder.cxx L925-937 — SplitEdge (the
+    // SplitEdge2 context flag is a debug-only variant: SplitEdge1 runs).
+    // =========================================================================
+    pub fn split_edge_public(&mut self, e: &Shape, tobuild1: TopAbsState, tobuild2: TopAbsState) {
+        self.split_edge1(e, tobuild1, tobuild2);
+    }
+
+    // =========================================================================
+    // OCCT TopOpeBRepBuild_Builder.cxx L941-1079 — SplitEdge1.
+    // =========================================================================
+    pub fn split_edge1(&mut self, eoriented: &Shape, tobuild1: TopAbsState, tobuild2: TopAbsState) {
+        // work on a FORWARD edge <Eforward>.
+        let mut eforward = eoriented.clone();
+        eforward.orientation = Orientation::Forward;
+
+        let tosplit = self.to_split(eoriented, tobuild1);
+        if !tosplit {
+            return;
+        }
+
+        Self::reverse_states(tobuild1, tobuild2);
+        Self::reverse_states(tobuild2, tobuild1);
+        let connect_to1 = true;
+        let connect_to2 = false;
+
+        // build the list of edges to split : LE1, LE2.
+        let mut le1: Vec<Shape> = vec![eforward.clone()];
+        let mut le2: Vec<Shape> = Vec::new();
+        self.find_same_domain(&mut le1, &mut le2);
+
+        // Make a PaveSet <PVS> on edge <Eforward>
+        // (TopOpeBRepBuild_PaveSet.cxx — pending unit).
+        //
+        // Add the points/vertices found on edge <Eforward> in <PVS>:
+        // TopOpeBRepDS_PointIterator EPIT(myDataStructure->EdgePoints(...));
+        // FillVertexSet(EPIT, ToBuild1, PVS) (Builder.cxx L~850 — pending
+        // unit).  The DS edge-points list (point interferences on the DS
+        // shape of the edge) is scanned to know whether any loop entry
+        // exists.
+        let ds = self.my_data_structure.as_ref().expect("DS");
+        let edge_index = ds.shape_index.get(&eforward.ptr_id()).copied();
+        let has_edge_points = match edge_index {
+            Some(i) => ds.shape_interferences(i).iter().any(
+                |it| matches!(it, TopOpeBRepDSInterference::CurvePoint(_)),
+            ),
+            None => false,
+        };
+
+        // TopOpeBRepBuild_PaveClassifier VCL(Eforward);
+        // bool equalpar = PVS.HasEqualParameters();
+        // if (equalpar) VCL.SetFirstParameter(PVS.EqualParameters());
+        // (PaveSet/PaveClassifier — pending units.)
+
+        // before return if PVS has no vertices, mark <Eforward> as split
+        // <ToBuild1>.
+        self.mark_split(&eforward, tobuild1);
+
+        // PVS.InitLoop(); if (!PVS.MoreLoop()) return;  — the no-vertex
+        // outcome leaves the edge marked split with an empty split list
+        // (filled by the LE1 connection below).
+        let _pvs_more_loop = has_edge_points;
+
+        // build the new edges:
+        //   TopOpeBRepBuild_EdgeBuilder EBU(PVS, VCL);
+        //   MakeEdges(Eforward, EBU, EdgeList);
+        // (EdgeBuilder.cxx / BuildEdges.cxx — pending units.)
+        let edge_list: Vec<Shape> = self.merged(&eforward, tobuild1).to_vec();
+
+        // connect new edges as edges built <ToBuild1> on LE1 edge.
+        for ecur in &le1 {
+            self.mark_split(ecur, tobuild1);
+            if connect_to1 {
+                let el = self.change_split(ecur, tobuild1);
+                *el = edge_list.clone();
+            }
+        }
+
+        // connect new edges as edges built <ToBuild2> on LE2 edges.
+        for ecur in &le2 {
+            self.mark_split(ecur, tobuild2);
+            if connect_to2 {
+                let el = self.change_split(ecur, tobuild2);
+                *el = edge_list.clone();
+            }
+        }
     }
 }
