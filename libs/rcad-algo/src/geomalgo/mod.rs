@@ -22,6 +22,7 @@ pub mod geom2d_int;   // Geom2dInt (imp-par chain: IntConicCurveOfGInter + Inter
 pub mod gcc_ana;      // GccAna (analytic 2D constraint solvers: Circ2d3Tan Apollonius)
 pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain
 pub mod gtests_stubs; // Stubs for OCCT GTest translations (minimal impls to compile+pass)
+pub mod plate;       // Plate (variational spline plate: constraints + Plate_Plate solver)
 
 pub use int_polyh::IntPolyhPoint;
 pub use top_trans::surface_transition::SurfaceTransition;
