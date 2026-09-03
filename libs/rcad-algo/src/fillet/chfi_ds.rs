@@ -207,6 +207,36 @@ impl ChFiDS_FaceInterference {
             self.last_param = par;
         }
     }
+
+    /// OCCT .lxx — FirstParameter().
+    pub fn parameter_first(&self) -> f64 {
+        self.first_param
+    }
+
+    /// OCCT .lxx — LastParameter().
+    pub fn parameter_last(&self) -> f64 {
+        self.last_param
+    }
+
+    /// OCCT .lxx — LineIndex().
+    pub fn line_index(&self) -> i32 {
+        self.lineindex
+    }
+
+    /// OCCT .lxx — Transition() (the line transition).
+    pub fn transition(&self) -> Orientation {
+        self.line_transition
+    }
+
+    /// OCCT .lxx — ChangePCurveOnFace() (assignable slot).
+    pub fn change_pcurve_on_face(&mut self) -> &mut Option<rcad_kernel::geom::Curve2d> {
+        &mut self.pcurve_on_face
+    }
+
+    /// OCCT .lxx — ChangePCurveOnSurf() (assignable slot).
+    pub fn change_pcurve_on_surf(&mut self) -> &mut Option<rcad_kernel::geom::Curve2d> {
+        &mut self.pcurve_on_surf
+    }
 }
 
 // =========================================================================
@@ -397,6 +427,59 @@ impl ChFiDSSurfData {
         } else {
             self.index_of_s2
         }
+    }
+
+    /// OCCT .cxx Interference(OnS).
+    pub fn interference(&self, on_s: i32) -> &ChFiDS_FaceInterference {
+        if on_s == 1 {
+            &self.intf1
+        } else {
+            &self.intf2
+        }
+    }
+
+    /// OCCT .cxx ChangeInterference(OnS).
+    pub fn change_interference(&mut self, on_s: i32) -> &mut ChFiDS_FaceInterference {
+        if on_s == 1 {
+            &mut self.intf1
+        } else {
+            &mut self.intf2
+        }
+    }
+
+    /// OCCT .lxx VertexFirstOnS1().
+    pub fn vertex_first_on_s1(&self) -> &ChFiDS_CommonPoint {
+        &self.pfirst_on_s1
+    }
+
+    /// OCCT .lxx VertexLastOnS1().
+    pub fn vertex_last_on_s1(&self) -> &ChFiDS_CommonPoint {
+        &self.plast_on_s1
+    }
+
+    /// OCCT .lxx VertexFirstOnS2().
+    pub fn vertex_first_on_s2(&self) -> &ChFiDS_CommonPoint {
+        &self.pfirst_on_s2
+    }
+
+    /// OCCT .lxx VertexLastOnS2().
+    pub fn vertex_last_on_s2(&self) -> &ChFiDS_CommonPoint {
+        &self.plast_on_s2
+    }
+
+    /// OCCT .lxx IsOnCurve1().
+    pub fn is_on_curve1(&self) -> bool {
+        self.isoncurv1
+    }
+
+    /// OCCT .lxx IsOnCurve2().
+    pub fn is_on_curve2(&self) -> bool {
+        self.isoncurv2
+    }
+
+    /// OCCT .lxx Orientation().
+    pub fn orientation(&self) -> Orientation {
+        self.orientation
     }
 }
 // =========================================================================
@@ -1278,7 +1361,7 @@ impl ChFiDSChamfSpine {
 // translated chain are provided here.
 // =========================================================================
 
-pub type SharedSurfData = Arc<ChFiDSSurfData>;
+pub type SharedSurfData = Arc<std::sync::RwLock<ChFiDSSurfData>>;
 
 #[derive(Debug, Clone)]
 pub struct ChFiDSStripe {

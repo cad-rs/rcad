@@ -80,7 +80,7 @@ pub struct ChFi3dBuilder {
     // OCCT: ChFiDS_StripeMap myVDataMap
     pub my_vdata_map: ChFiDSStripeMap,
     // OCCT: NCollection_List<ChFiDS_Regul> myRegul
-    pub my_regul: Vec<()>, // ChFiDS_Regul pending
+    pub my_regul: Vec<super::chfi_ds::ChFiDSRegul>,
     // OCCT: NCollection_List<occ::handle<ChFiDS_Stripe>> badstripes
     pub badstripes: Vec<SharedStripe>,
     // OCCT: NCollection_List<TopoDS_Shape> badvertices
@@ -3020,7 +3020,7 @@ impl ChFi3dBuilder {
                     }
                     let cur_sd = lsd[lsd_j].clone();
                     // OCCT: SeqSurf.Append(curSD)
-                    st.my_hdata.push(std::sync::Arc::new(cur_sd.clone()));
+                    st.my_hdata.push(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                     if !simul {
                         li.push(cur_sd.surf());
                     }
@@ -3067,49 +3067,49 @@ impl ChFi3dBuilder {
                             current_he.lastparam = wfirst_j;
                             current_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
                             spine.base_mut().elspines.push(current_he.clone());
-                            current_he.next = Some(std::sync::Arc::new(cur_sd.clone()));
+                            current_he.next = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                             current_he = super::chfi_ds::ChFiDSElSpine::new();
 
                             current_offset_he.lastparam = wfirst_j;
                             current_offset_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
                             spine.base_mut().offset_elspines.push(current_offset_he.clone());
-                            current_offset_he.next = Some(std::sync::Arc::new(cur_sd.clone()));
+                            current_offset_he.next = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                             current_offset_he = super::chfi_ds::ChFiDSElSpine::new();
                         }
                         current_he.firstparam = wlast_j;
                         current_he.set_first_point_and_tgt(plast_j, tlast_j);
-                        current_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_he.previous = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                         current_offset_he.firstparam = wlast_j;
                         current_offset_he.set_first_point_and_tgt(plast_j, tlast_j);
-                        current_offset_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_offset_he.previous = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                         ya_k_part = true;
                     } else if wfirst_j - current_he.firstparam > self.tolesp {
                         // section between two KPart
                         current_he.lastparam = wfirst_j;
                         current_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
                         spine.base_mut().elspines.push(current_he.clone());
-                        current_he.next = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_he.next = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                         current_he = super::chfi_ds::ChFiDSElSpine::new();
 
                         current_offset_he.lastparam = wfirst_j;
                         current_offset_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
                         spine.base_mut().offset_elspines.push(current_offset_he.clone());
-                        current_offset_he.next = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_offset_he.next = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                         current_offset_he = super::chfi_ds::ChFiDSElSpine::new();
 
                         current_he.firstparam = wlast_j;
                         current_he.set_first_point_and_tgt(plast_j, tlast_j);
-                        current_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_he.previous = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                         current_offset_he.firstparam = wlast_j;
                         current_offset_he.set_first_point_and_tgt(plast_j, tlast_j);
-                        current_offset_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_offset_he.previous = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                     } else {
                         current_he.firstparam = wlast_j;
                         current_he.set_first_point_and_tgt(plast_j, tlast_j);
-                        current_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_he.previous = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                         current_offset_he.firstparam = wlast_j;
                         current_offset_he.set_first_point_and_tgt(plast_j, tlast_j);
-                        current_offset_he.previous = Some(std::sync::Arc::new(cur_sd.clone()));
+                        current_offset_he.previous = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                     }
                     wlast_book = wlast_j;
                 }
@@ -3263,7 +3263,7 @@ mod kpart_tests {
         let stripe = fillet.base.value_stripe(1);
         let st = stripe.read().expect("stripe lock");
         assert_eq!(st.my_hdata.len(), 1, "one KPart SurfData expected");
-        let sd = &st.my_hdata[0];
+        let sd = st.my_hdata[0].read().expect("surfdata lock");
         assert!(sd.surf_index >= 1, "surface registered in the DS");
         assert!(
             sd.index_of_s1 >= 1 && sd.index_of_s2 >= 1,
@@ -3324,6 +3324,7 @@ impl ChFi3dBuilder {
                 let Some(fd) = guard.my_hdata.get((num - 1) as usize) else {
                     continue;
                 };
+                let fd = fd.read().expect("surfdata lock");
                 (
                     fd.vertex(isfirst, 1).clone(),
                     fd.vertex(isfirst, 2).clone(),
@@ -3341,10 +3342,11 @@ impl ChFi3dBuilder {
 
             // OCCT: VOnS1/VOnS2 = PCurveOnSurf()->Value(First/LastParameter).
             let (von_s1, von_s2) = {
-                let (fi1, fi2) = (
-                    stripe.read().expect("stripe lock").my_hdata[(num - 1) as usize].intf1.clone(),
-                    stripe.read().expect("stripe lock").my_hdata[(num - 1) as usize].intf2.clone(),
-                );
+                let guard = stripe.read().expect("stripe lock");
+                let fd = &guard.my_hdata[(num - 1) as usize];
+                let fd = fd.read().expect("surfdata lock");
+                let (fi1, fi2) = (fd.intf1.clone(), fd.intf2.clone());
+                drop(fd);
                 if isfirst {
                     (
                         fi1.pcurve_on_surf().map(|pc| pc.point_at(fi1.parameter(true))),
@@ -3364,7 +3366,10 @@ impl ChFi3dBuilder {
             // OCCT: ChFi3d_ComputeArete(CV1, VOnS1, CV2, VOnS2,
             // DStr.Surface(Fd->Surf()).Surface(), C3d, PCurv, Pardeb,
             // Parfin, tolapp3d, tolapp2d, tolreached, 0);
-            let surf_index = stripe.read().expect("stripe lock").my_hdata[(num - 1) as usize].surf_index;
+            let surf_index = {
+                let guard = stripe.read().expect("stripe lock");
+                guard.my_hdata[(num - 1) as usize].read().expect("surfdata lock").surf_index
+            };
             let surf = self.my_ds.as_ref().expect("DS").surfaces[surf_index as usize - 1]
                 .surface
                 .clone();
@@ -3419,12 +3424,18 @@ impl ChFi3dBuilder {
             let mut sens = 0i32;
             let num = chfi3d_index_of_surf_data(&vtx, &st, &mut sens);
             let isfirst = sens == 1;
-            let Some(fd) = st.my_hdata.get((num as usize).saturating_sub(1)) else {
-                i += 1;
-                continue;
-            };
-            let cv1 = fd.vertex(isfirst, 1);
-            let cv2 = fd.vertex(isfirst, 2);
+            let cv1;
+            let cv2;
+            {
+                let guard = stripe.read().expect("stripe lock");
+                let Some(fd) = guard.my_hdata.get((num as usize).saturating_sub(1)) else {
+                    i += 1;
+                    continue;
+                };
+                let fd = fd.read().expect("surfdata lock");
+                cv1 = fd.vertex(isfirst, 1).clone();
+                cv2 = fd.vertex(isfirst, 2).clone();
+            }
             // Is it always degenerated?
             if cv1.point().distance(cv2.point()) <= 0.0 {
                 nondegenere = false;
