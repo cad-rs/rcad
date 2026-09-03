@@ -1600,7 +1600,7 @@ mod geom2d_gcc_circ2d3tan_tests {
 // TKFillet: BRepFilletAPI_MakeChamfer_Test.cxx (1:1 translation)
 //
 // The tests run against the OCCT-aligned translation in
-// rcad_algo::fillet::occt (ChFiDS / ChFi3d / BRepFilletAPI).  The ChFi3d
+// rcad_algo::geomalgo::gtests_stubs (ChFiDS / ChFi3d / BRepFilletAPI).  The ChFi3d
 // numerical core (PerformElement / PerformSetOfSurf walking, BRepBlend,
 // corner machinery, TopOpeBRepBuild reconstruction) is pending translation,
 // so Compute() follows the OCCT failure path and every test that needs the
@@ -1611,7 +1611,7 @@ mod geom2d_gcc_circ2d3tan_tests {
 #[cfg(test)]
 mod bRepFilletAPIMakeChamfer_tests {
     use super::*;
-    use rcad_algo::fillet::occt::{
+    use rcad_algo::geomalgo::gtests_stubs::{
         explore_edges, explore_solids, BRepFilletAPIMakeChamfer,
     };
     use rcad_kernel::topods::Shape;
@@ -1663,7 +1663,7 @@ mod bRepFilletAPIMakeChamfer_tests {
         let an_edges = explore_edges(&a_box);
         assert!(!an_edges.is_empty());
         let an_edge = &an_edges[0];
-        let an_edge_face_map = rcad_algo::fillet::occt::ChFiDSMap::new();
+        let an_edge_face_map = rcad_algo::geomalgo::gtests_stubs::ChFiDSMap::new();
         let mut edge_face_map = an_edge_face_map;
         edge_face_map.fill(
             &a_box,
@@ -1693,7 +1693,7 @@ mod bRepFilletAPIMakeChamfer_tests {
 
         // EXPECT_GT(face count of result, 6)
         let a_face_count =
-            rcad_algo::fillet::occt::explore_faces(&a_chamfer.my_builder.base.my_brep).len();
+            rcad_algo::geomalgo::gtests_stubs::explore_faces(&a_chamfer.my_builder.base.my_brep).len();
         assert!(a_face_count > 6);
     }
 
@@ -1785,11 +1785,11 @@ mod bRepFilletAPIMakeChamfer_tests {
 #[cfg(test)]
 mod bRepFilletAPIMakeFillet_tests {
     use super::*;
-    use rcad_algo::fillet::occt::{
+    use rcad_algo::geomalgo::gtests_stubs::{
         edges_of_wire, explore_edges, explore_solids, explore_wires,
         BRepFilletAPIMakeFillet,
     };
-    use rcad_algo::fillet::occt::ChFi3dFilletShape;
+    use rcad_algo::geomalgo::gtests_stubs::ChFi3dFilletShape;
     use rcad_algo::geomalgo::gtests_stubs::GeomAbsShape;
 
     /// BRepPrimAPI_MakeBox(size) helper.
@@ -1842,7 +1842,7 @@ mod bRepFilletAPIMakeFillet_tests {
         assert!(a_fillet.is_done());
 
         let a_face_count =
-            rcad_algo::fillet::occt::explore_faces(&a_fillet.my_builder.base.my_brep).len();
+            rcad_algo::geomalgo::gtests_stubs::explore_faces(&a_fillet.my_builder.base.my_brep).len();
         assert!(a_face_count > 6);
     }
 
