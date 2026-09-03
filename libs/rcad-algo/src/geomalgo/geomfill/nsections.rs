@@ -231,42 +231,34 @@ impl NSections {
     pub fn compute_surface(&mut self) {
         let bs: Option<BSplineSurface>;
         if self.my_ref_surf.is_none() {
-            let my_pres3d = 1.0e-06f64;
-            let jdeb = 1usize;
             let jfin = self.my_sections.len();
-            if jfin <= jdeb {
+            if jfin <= 1 {
                 // We will not be able to create surface from single curve.
-                self.my_surface = None;
-                return;
+                // (mySurface stays null; D0/D1/D2 report false — the
+                // OCC27875 anchor exercises exactly this path.)
+                bs = None;
+            } else {
+                let my_pres3d = 1.0e-06f64;
+                let _ = my_pres3d;
+                // OCCT: SectionGenerator + AppSurf approximation to build BS.
+                unimplemented!(
+                    "GeomFill_NSections multi-curve ComputeSurface needs the                      GeomFill_AppSurf/SectionGenerator approximation machinery (not ported)"
+                );
             }
-            let _ = my_pres3d;
-            // OCCT: SectionGenerator + AppSurf approximation to build BS.
-            unimplemented!(
-                "GeomFill_NSections multi-curve ComputeSurface needs the \
-                 GeomFill_AppSurf/SectionGenerator approximation machinery (not ported)"
-            );
         } else {
             // segmentation de myRefSurf
             let ref_surf = self.my_ref_surf.as_ref().unwrap().clone();
-            let mut ui1 = self.u_first;
-            let mut ui2 = self.u_last;
-            let u_knots_u = flat_knots_u(&ref_surf);
-            let (uk, um) = knots_mults_of(&u_knots_u);
-            let deg_u = ref_surf.degree_u;
-            let _ = (&uk, &um);
-            // OCCT LocateU on the reference surface (V direction unused).
-            // rcad BSplineSurface has no LocateU; the knot-snap logic runs
-            // on the distinct U knots.
-            ui1 = snap_to_knot(ui1, &uk, P_CONFUSION);
-            ui2 = snap_to_knot(ui2, &uk, P_CONFUSION);
+            let uk = flat_knots_u(&ref_surf);
+            let (uk_distinct, _um) = knots_mults_of(&uk);
+            let mut ui1 = snap_to_knot(self.u_first, &uk_distinct, P_CONFUSION);
+            let mut ui2 = snap_to_knot(self.u_last, &uk_distinct, P_CONFUSION);
             let v0 = ref_surf.knots_v[ref_surf.degree_v];
             let v1 = ref_surf.knots_v[ref_surf.knots_v.len() - ref_surf.degree_v - 1];
-            let _ = (ui1, ui2, v0, v1);
-            // OCCT: BS = copy; BS->CheckAndSegment(Ui1, Ui2, V0, V1) — the
-            // surface segmentation kernel is not ported yet.
+            let _ = (&mut ui1, &mut ui2, v0, v1);
+            // OCCT: BS = myRefSurf->Copy(); BS->CheckAndSegment(Ui1, Ui2, V0, V1)
+            // — the surface segmentation kernel is not ported yet.
             unimplemented!(
-                "GeomFill_NSections reference-surface segmentation \
-                 (Geom_BSplineSurface::CheckAndSegment) is not ported"
+                "GeomFill_NSections reference-surface segmentation                  (Geom_BSplineSurface::CheckAndSegment) is not ported"
             );
         }
         self.my_surface = bs;
