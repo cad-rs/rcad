@@ -5,37 +5,13 @@
 //! Parallel to GeomConvert but for 2D parameter-space curves (Geom2d_*).
 //! Provides BSpline↔Bezier conversion and curve composition.
 
-use crate::geom::{BSplineCurve2, BezierCurve2, Curve2d};
+use crate::geom::{BSplineCurve2, Curve2d};
 
 pub mod bspline_curve;
-pub use bspline_curve::Geom2dBSplineCurve;
+pub mod bspline_curve_to_bezier_curve;
 
-/// Split a 2D BSpline curve into Bezier segments.
-///
-/// OCCT: `Geom2dConvert::BSplineCurveToBezierCurve`.
-pub fn bspline_curve_to_bezier_curves(bspline: &BSplineCurve2) -> Vec<BezierCurve2> {
-    let d = bspline.degree;
-    let ctrl = &bspline.control_points;
-    if ctrl.is_empty() {
-        return vec![];
-    }
-    let n_ctrl = ctrl.len();
-    let n_spans = n_ctrl - d;
-    let mut beziers = Vec::with_capacity(n_spans.max(0));
-    for span in 0..n_spans - 1 {
-        let seg_ctrl = ctrl[span..=span + d].to_vec();
-        let seg_w = if bspline.weights.len() == n_ctrl {
-            bspline.weights[span..=span + d].to_vec()
-        } else {
-            vec![1.0; d + 1]
-        };
-        beziers.push(BezierCurve2 {
-            control_points: seg_ctrl,
-            weights: seg_w,
-        });
-    }
-    beziers
-}
+pub use bspline_curve::Geom2dBSplineCurve;
+pub use bspline_curve_to_bezier_curve::BSplineCurveToBezierCurve;
 
 /// Compose multiple 2D curves into a single BSpline.
 ///
