@@ -59,6 +59,8 @@
 | `geomalgo/int_res2d/` | `IntRes2d` | ◐ |
 | `geomalgo/top_trans/` | `TopTrans`（CurveTransition） | ✅ |
 | `geomalgo/approx_int.rs` | `ApproxInt`（ApproxInt_Approx、ApproxInt_KnotTools、MultiBSpCurve）+ `AppParCurves`(TKGeomBase) | ✅（WLine 近似路径覆盖） |
+| `geomalgo/geomplate/`（point_constraint, surface, build_average_plane, build_plate_surface, curve_constraint 骨架） | `GeomPlate` + `GeomLib::Inertia/AxeOfInertia` + `Plate` | ✅ 点路径（GTest 锚：GeomPlate_BuildPlateSurface_Test）；曲线路径骨架待补 |
+| `geomalgo/geomfill/`（filling, stretch, coons, curved, bspline_curves） | `GeomFill_Filling/Stretch/Coons/Curved/BSplineCurves`（内核：BSplCLib::Reparametrize、PLib::CoefficientsPoles、Geom_BSplineCurve Reverse/SetKnots） | ✅（GTest 锚：GeomFill_BSplineCurves_Test OCC28131 边界配置）；CorrectedFrenet/Frenet/TrihedronLaw/Law 包未移植 |
 
 ### 2.3 `topalgo/` ↔ TKTopAlgo（拓扑算法层）
 
