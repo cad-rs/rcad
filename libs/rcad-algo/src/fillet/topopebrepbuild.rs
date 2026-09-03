@@ -811,6 +811,9 @@ pub struct TopOpeBRepBuildPaveSet {
     pub has_equal_parameters: bool,
     pub equal_parameters: f64,
     loop_index: usize,
+    /// OCCT: bool myPrepareDone / bool myRemovePV (true by default).
+    prepare_done: bool,
+    remove_pv: bool,
 }
 
 impl TopOpeBRepBuildPaveSet {
@@ -822,6 +825,8 @@ impl TopOpeBRepBuildPaveSet {
             has_equal_parameters: false,
             equal_parameters: 0.0,
             loop_index: 0,
+            prepare_done: false,
+            remove_pv: true,
         }
     }
 
@@ -830,9 +835,11 @@ impl TopOpeBRepBuildPaveSet {
         self.vertices.push(pv);
     }
 
-    /// OCCT PaveSet.cxx InitLoop — the Prepare() sort/clean pass is the
-    /// pending unit; iteration keeps the insertion order.
-    pub fn init_loop(&mut self) {
+    /// OCCT PaveSet.cxx InitLoop: Prepare() then iterate.
+    pub fn init_loop(&mut self, brep: &rcad_kernel::topods::BRep) {
+        if !self.prepare_done {
+            self.prepare(brep);
+        }
         self.loop_index = 0;
     }
 
@@ -936,5 +943,171 @@ impl TopOpeBRepBuildBuilder {
             let pv = TopOpeBRepBuildPave::new(v, par, false);
             pvs.append(pv);
         }
+    }
+}
+
+// OCCT PaveSet.cxx L131-141 — FUN_islook.
+fn fun_islook(brep: &rcad_kernel::topods::BRep, e: &Shape) -> bool {
+    let ed = e.as_edge().expect("not an edge");
+    let p1 = brep.vertex_position(&ed.first);
+    let p2 = brep.vertex_position(&ed.last);
+    let dp1p2 = p1.distance(p2);
+    dp1p2.abs() > 1.0e-8
+}
+
+impl TopOpeBRepBuildPaveSet {
+    /// OCCT PaveSet.cxx L64-129 — SortPave(List, SortedList): the n^2
+    /// selection sort on Parameter(), then the FORWARD head move
+    /// (tete = FORWARD).
+    pub fn sort_pave(list: &[TopOpeBRepBuildPave]) -> Vec<TopOpeBRepBuildPave> {
+        let n_pv = list.len();
+        let mut taken = vec![false; n_pv];
+        let mut sorted: Vec<TopOpeBRepBuildPave> = Vec::new();
+
+        for _ in 0..n_pv {
+            let mut parmin = f64::MAX;
+            let mut chosen: Option<usize> = None;
+            for (itest, pv) in list.iter().enumerate() {
+                if !taken[itest] {
+                    let par = pv.parameter();
+                    if par < parmin {
+                        parmin = par;
+                        chosen = Some(itest);
+                    }
+                }
+            }
+            if let Some(i) = chosen {
+                sorted.push(list[i].clone());
+                taken[i] = true;
+            }
+        }
+
+        // tete = FORWARD.
+        let mut found = false;
+        let mut l1: Vec<TopOpeBRepBuildPave> = Vec::new();
+        let mut l2: Vec<TopOpeBRepBuildPave> = Vec::new();
+        for pv in &sorted {
+            if !found {
+                if pv.vertex.orientation == Orientation::Forward {
+                    found = true;
+                    l1.push(pv.clone());
+                } else {
+                    l2.push(pv.clone());
+                }
+            } else {
+                l1.push(pv.clone());
+            }
+        }
+        l1.extend(l2);
+        l1
+    }
+
+    /// OCCT PaveSet.cxx L142-297 — Prepare(): add the edge vertices to the
+    /// list of paves; an edge vertex already present as an interference
+    /// vertex is merged (INTERNAL keeps/adopts the edge orientation,
+    /// EXTERNAL or opposite-orientation entries are removed); then the
+    /// list is sorted on Parameter().
+    pub fn prepare(&mut self, brep: &rcad_kernel::topods::BRep) {
+        if self.prepare_done {
+            return;
+        }
+
+        let is_ed = brep.is_edge_degenerated(&self.edge);
+        let mut edge_vertex_count = 0usize;
+
+        // myRemovePV is true by default (jyl + 980217).
+        {
+            // OCCT TopExp_Explorer(myEdge, VERTEX): first vertex FORWARD,
+            // last REVERSED.
+            let ed = self.edge.as_edge().expect("not an edge");
+            let explorer = [
+                (ed.first.clone(), Orientation::Forward),
+                (ed.last.clone(), Orientation::Reversed),
+            ];
+            for (ve, veori) in explorer {
+                let vebound = veori == Orientation::Forward || veori == Orientation::Reversed;
+
+                let mut edge_vertex_index = 0usize;
+                let mut add_ve = true;
+                let mut add = false; // ofv
+                let mut remove_idx: Option<usize> = None;
+                let mut set_ori_idx: Option<(usize, Orientation)> = None;
+
+                for (idx, pv) in self.vertices.iter().enumerate() {
+                    edge_vertex_index += 1; // skip edge vertices inserted at the head
+                    if edge_vertex_index <= edge_vertex_count {
+                        continue;
+                    }
+
+                    // PV = Parametrized vertex, VI = interference vertex.
+                    let vi = pv.vertex();
+                    let has_vsd = pv.has_same_domain;
+                    let vi_ori = vi.orientation;
+                    let visameve = vi.is_same(&ve);
+                    let mut vsdsameve = false;
+                    if has_vsd {
+                        if let Some(vsd) = &pv.same_domain {
+                            vsdsameve = vsd.is_same(&ve);
+                        }
+                    }
+                    let samevertexprocessing = (visameve || vsdsameve) && !is_ed;
+
+                    if samevertexprocessing && (vebound || vsdsameve) {
+                        match vi_ori {
+                            Orientation::External => {
+                                remove_idx = Some(idx);
+                            }
+                            Orientation::Internal => {
+                                // OCCT: VI orientation adopts the edge
+                                // vertex orientation.
+                                set_ori_idx = Some((idx, veori));
+                            }
+                            _ => {
+                                if vi_ori != veori {
+                                    remove_idx = Some(idx);
+                                    let islook = fun_islook(brep, &self.edge);
+                                    if (vebound && (vsdsameve || visameve)) && islook {
+                                        add = true; // ofv
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // ofv: addVE = add; break.
+                    add_ve = add;
+                    break;
+                }
+
+                if let Some(idx) = remove_idx {
+                    self.vertices.remove(idx);
+                }
+                if let Some((idx, o)) = set_ori_idx {
+                    self.vertices[idx].change_vertex().orientation = o;
+                }
+                // if VE not found in the list, add it.
+                if add_ve {
+                    let par_ve = {
+                        let b = brep;
+                        super::chfi3d_builder_0::brep_tool_parameter(b, &ve, &self.edge)
+                    };
+                    let new_pv = TopOpeBRepBuildPave::new(ve, par_ve, true);
+                    self.vertices.insert(0, new_pv);
+                    edge_vertex_count += 1;
+                }
+            }
+        } // myRemovePV
+
+        let ll = self.vertices.len();
+
+        // if no more interference vertices, clear the list.
+        if ll == edge_vertex_count {
+            self.vertices.clear();
+        } else if ll >= 2 {
+            // sort the parametrized vertices on Parameter() value.
+            let list = self.vertices.clone();
+            self.vertices = Self::sort_pave(&list);
+        }
+
+        self.prepare_done = true;
     }
 }
