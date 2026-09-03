@@ -11,6 +11,7 @@ pub mod gauss_points;
 pub mod gauss_tables;
 pub mod gp;
 pub mod math_gauss;
+pub mod math_jacobi;
 pub mod math_poly;
 pub mod newton_function_root;
 pub mod function_set_root;
