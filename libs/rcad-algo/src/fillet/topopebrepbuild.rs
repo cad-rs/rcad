@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use rcad_kernel::geom::{CurveEval as _, SurfaceEval as _};
 use rcad_kernel::topo::topods::{BRepTool as _, Orientation, Shape};
 
+use super::chfi3d_builder_0::brep_tool_parameter;
 use super::topopebrepds::{TopOpeBRepDSHDataStructure, TopOpeBRepDSInterference};
 
 // =========================================================================
@@ -1150,9 +1151,11 @@ impl TopOpeBRepBuildPaveClassifier {
         };
 
         if !brep.is_edge_degenerated(&pc.my_edge) {
-            let Some((c, f, l)) = brep.edge_curve_world(&pc.my_edge) else {
+            let r: Option<(rcad_kernel::geom::Curve3, [f64; 2])> = brep.edge_curve_world(&pc.my_edge);
+            let Some((c, fl)) = r else {
                 return pc;
             };
+            let (f, l) = (fl[0], fl[1]);
             if c.is_periodic() {
                 let ed = pc.my_edge.as_edge().expect("not an edge");
                 let v1 = ed.first.clone();
