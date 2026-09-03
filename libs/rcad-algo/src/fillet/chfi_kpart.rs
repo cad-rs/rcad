@@ -18,6 +18,7 @@ use rcad_kernel::topods;
 
 use super::chfi3d::TopOpeBRepDSHDataStructure;
 use super::chfi_ds::{ChFiDSSpineHandle, ChFiDSSurfData};
+use super::topopebrepds::{TopOpeBRepDSCurve, TopOpeBRepDSSurface};
 
 // =========================================================================
 // OCCT ChFiKPart_ComputeData_Fcts.cxx L27-45 — ChFiKPart_InPeriod.
@@ -42,11 +43,13 @@ pub fn chfi_kpart_in_period(u: f64, ufirst: f64, ulast: f64, eps: f64) -> f64 {
 // IndexSurfaceInDS (DStr.AddCurve / DStr.AddSurface).
 // =========================================================================
 pub fn chfi_kpart_index_curve_in_ds(c: Curve3, dstr: &mut TopOpeBRepDSHDataStructure) -> i32 {
-    dstr.add_curve(c)
+    // OCCT Fcts.cxx L142-145: DStr.AddCurve(TopOpeBRepDS_Curve(C, 0.)).
+    dstr.add_curve(TopOpeBRepDSCurve::new(Some(c), 0.0))
 }
 
 pub fn chfi_kpart_index_surface_in_ds(s: Surface3, dstr: &mut TopOpeBRepDSHDataStructure) -> i32 {
-    dstr.add_surface(s)
+    // OCCT Fcts.cxx L152-155: DStr.AddSurface(TopOpeBRepDS_Surface(S, 0.)).
+    dstr.add_surface(TopOpeBRepDSSurface::new(s, 0.0))
 }
 
 // =========================================================================

@@ -447,6 +447,63 @@ impl Default for ChFiDS_CommonPoint {
 }
 
 impl ChFiDS_CommonPoint {
+    /// OCCT ChFiDS_CommonPoint.cxx L29-36 — Reset().
+    pub fn reset(&mut self) {
+        self.tol = 0.0;
+        self.isvtx = false;
+        self.isonarc = false;
+        self.hasvector = false;
+    }
+
+    /// OCCT ChFiDS_CommonPoint.hxx — SetVertex(theVertex).
+    pub fn set_vertex(&mut self, v: Shape) {
+        self.vtx = v;
+        self.isvtx = true;
+    }
+
+    /// OCCT ChFiDS_CommonPoint.cxx L52-64 — SetArc(Tol, A, Param, TArc);
+    /// the tolerance is not crushed (only grown).
+    pub fn set_arc(&mut self, tol: f64, arc: Shape, param: f64, tarc: Orientation) {
+        self.isonarc = true;
+        if tol > self.tol {
+            self.tol = tol;
+        }
+        self.arc = arc;
+        self.prmarc = param;
+        self.traarc = tarc;
+    }
+
+    /// OCCT ChFiDS_CommonPoint.cxx L69-72 — SetParameter(Param) (the
+    /// parameter in the tangency line).
+    pub fn set_parameter(&mut self, param: f64) {
+        self.prmtg = param;
+    }
+
+    /// OCCT ChFiDS_CommonPoint.hxx — SetPoint(thePoint).
+    pub fn set_point(&mut self, p: DVec3) {
+        self.point = p;
+    }
+
+    /// OCCT ChFiDS_CommonPoint.hxx — SetTolerance(Tol) (fuzziness, only
+    /// grows).
+    pub fn set_tolerance(&mut self, tol: f64) {
+        if tol > self.tol {
+            self.tol = tol;
+        }
+    }
+
+    /// OCCT ChFiDS_CommonPoint.hxx — SetVector(theVector).
+    pub fn set_vector(&mut self, v: DVec3) {
+        self.hasvector = true;
+        self.vector = v;
+    }
+
+    /// OCCT ChFiDS_CommonPoint.cxx L101-104 — Parameter() (in the
+    /// tangency line).
+    pub fn parameter(&self) -> f64 {
+        self.prmtg
+    }
+
     /// OCCT ChFiDS_CommonPoint::Point() — the 3D point of the common point.
     pub fn point(&self) -> DVec3 {
         self.point
@@ -1317,6 +1374,187 @@ impl ChFiDSStripe {
         if let Some(sp) = &mut self.my_spine {
             sp.base_mut().reset(false);
         }
+    }
+
+    /// OCCT ChFiDS_Stripe.cxx L268-282 — InDS(First, Nb).
+    pub fn in_ds(&mut self, first: bool, nb: i32) {
+        if first {
+            self.begfilled = nb;
+        } else {
+            self.endfilled = nb;
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.cxx L285-292 — IsInDS(First).
+    pub fn is_in_ds(&self, first: bool) -> i32 {
+        if first {
+            self.begfilled
+        } else {
+            self.endfilled
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — FirstParameters(Pdeb, Pfin).
+    pub fn first_parameters(&self) -> (f64, f64) {
+        (self.pardeb1, self.parfin1)
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — LastParameters(Pdeb, Pfin).
+    pub fn last_parameters(&self) -> (f64, f64) {
+        (self.pardeb2, self.parfin2)
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — FirstCurve().
+    pub fn first_curve(&self) -> i32 {
+        self.index_ofcurve1
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — LastCurve().
+    pub fn last_curve(&self) -> i32 {
+        self.index_ofcurve2
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — FirstPCurve().
+    pub fn first_pcurve(&self) -> Option<&rcad_kernel::geom::Curve2d> {
+        self.pcrv1.as_ref()
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — LastPCurve().
+    pub fn last_pcurve(&self) -> Option<&rcad_kernel::geom::Curve2d> {
+        self.pcrv2.as_ref()
+    }
+
+    /// OCCT ChFiDS_Stripe.cxx — IndexPoint(First, OnS).
+    pub fn index_point(&self, first: bool, on_s: i32) -> i32 {
+        if first {
+            if on_s == 1 {
+                self.indexfirst_pon_s1
+            } else {
+                self.indexfirst_pon_s2
+            }
+        } else if on_s == 1 {
+            self.indexlast_pon_s1
+        } else {
+            self.indexlast_pon_s2
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.cxx — Orientation(OnS) (the face-side
+    /// orientations myOr1/myOr2 set by StripeOrientations).
+    pub fn orientation_on_s(&self, on_s: i32) -> Orientation {
+        if on_s == 1 {
+            self.my_or1
+        } else {
+            self.my_or2
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.cxx — SetOrientation(Or, OnS).
+    pub fn set_orientation_on_s(&mut self, or: Orientation, on_s: i32) {
+        if on_s == 1 {
+            self.my_or1 = or;
+        } else {
+            self.my_or2 = or;
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.cxx — Orientation(First) (the pcurve
+    /// orientation of the end curve, orcurv1/orcurv2).
+    pub fn orientation(&self, first: bool) -> Orientation {
+        if first {
+            self.orcurv1
+        } else {
+            self.orcurv2
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.cxx — SetOrientation(Or, First).
+    pub fn set_orientation(&mut self, or: Orientation, first: bool) {
+        if first {
+            self.orcurv1 = or;
+        } else {
+            self.orcurv2 = or;
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — FirstPCurveOrientation().
+    pub fn first_pcurve_orientation(&self) -> Orientation {
+        self.orcurv1
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — LastPCurveOrientation().
+    pub fn last_pcurve_orientation(&self) -> Orientation {
+        self.orcurv2
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — SolidIndex().
+    pub fn solid_index(&self) -> i32 {
+        self.index_of_solid
+    }
+}
+
+// =========================================================================
+// OCCT ChFiDS_Regul (ChFiDS_Regul.hxx + .cxx) — storage of a curve and its
+// 2 faces or surfaces of support.  A negative S index encodes a surface
+// (IsSurfaceN).
+// =========================================================================
+#[derive(Debug, Clone, Copy)]
+pub struct ChFiDSRegul {
+    icurv: i32,
+    is1: i32,
+    is2: i32,
+}
+
+impl Default for ChFiDSRegul {
+    fn default() -> Self {
+        ChFiDSRegul::new()
+    }
+}
+
+impl ChFiDSRegul {
+    /// OCCT ChFiDS_Regul.cxx L21-27.
+    pub fn new() -> Self {
+        ChFiDSRegul { icurv: 0, is1: 0, is2: 0 }
+    }
+
+    /// OCCT ChFiDS_Regul.cxx L30-33 (icurv = |IC|).
+    pub fn set_curve(&mut self, ic: i32) {
+        self.icurv = ic.abs();
+    }
+
+    /// OCCT ChFiDS_Regul.cxx L36-45 (face keeps the sign, surface negates).
+    pub fn set_s1(&mut self, is1: i32, is_face: bool) {
+        self.is1 = if is_face { is1.abs() } else { -is1.abs() };
+    }
+
+    /// OCCT ChFiDS_Regul.cxx L48-57.
+    pub fn set_s2(&mut self, is2: i32, is_face: bool) {
+        self.is2 = if is_face { is2.abs() } else { -is2.abs() };
+    }
+
+    /// OCCT ChFiDS_Regul.cxx L60-63.
+    pub fn is_surface1(&self) -> bool {
+        self.is1 < 0
+    }
+
+    /// OCCT ChFiDS_Regul.cxx L66-69.
+    pub fn is_surface2(&self) -> bool {
+        self.is2 < 0
+    }
+
+    /// OCCT ChFiDS_Regul.cxx L72-75.
+    pub fn curve(&self) -> i32 {
+        self.icurv
+    }
+
+    /// OCCT ChFiDS_Regul.cxx L78-81.
+    pub fn s1(&self) -> i32 {
+        self.is1.abs()
+    }
+
+    /// OCCT ChFiDS_Regul.cxx L84-87.
+    pub fn s2(&self) -> i32 {
+        self.is2.abs()
     }
 }
 

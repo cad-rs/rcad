@@ -34,60 +34,18 @@ use super::chfi_ds::{
 };
 
 // =========================================================================
-// OCCT TopOpeBRepDS_HDataStructure / TopOpeBRepBuild_HBuilder — pending
-// TKTopAlgo/TKBool reconstruction subsystems.  Referenced by the builder as
-// opaque handles until translated.
+// OCCT TopOpeBRepDS_HDataStructure / TopOpeBRepBuild_HBuilder — the DS
+// types live in the topopebrepds module (1:1 translation of the
+// TKBool/TopOpeBRepDS subset the builder uses).  The TopOpeBRepBuild
+// reconstruction subsystem is pending; referenced by the builder as an
+// opaque handle until translated.
 // =========================================================================
 
-/// OCCT TopOpeBRepDS_DataStructure — the surfaces / curves / shapes tables
-/// used by the builder (AddSurface / AddCurve / AddShape return 1-based
-/// indices).  The interference and tolerance bookkeeping of the full
-/// TopOpeBRepDS is pending.
-#[derive(Debug, Clone, Default)]
-pub struct TopOpeBRepDSHDataStructure {
-    /// OCCT: surfaces table (TopOpeBRepDS_Surface), 1-based indices.
-    pub surfaces: Vec<rcad_kernel::geom::Surface3>,
-    /// OCCT: curves table (TopOpeBRepDS_Curve), 1-based indices.
-    pub curves: Vec<rcad_kernel::geom::Curve3>,
-    /// OCCT: points table (TopOpeBRepDS_Point), 1-based indices.
-    pub points: Vec<(DVec3, f64)>,
-    /// OCCT: shapes table (arbitrary TopoDS_Shape), 1-based indices.
-    pub shapes: Vec<Shape>,
-    /// OCCT: shape -> index lookup by TShape pointer identity.
-    pub shape_index: std::collections::HashMap<u64, i32>,
-}
-
-impl TopOpeBRepDSHDataStructure {
-    /// OCCT TopOpeBRepDS_DataStructure::AddSurface(S) - 1-based index.
-    pub fn add_surface(&mut self, s: rcad_kernel::geom::Surface3) -> i32 {
-        self.surfaces.push(s);
-        self.surfaces.len() as i32
-    }
-
-    /// OCCT TopOpeBRepDS_DataStructure::AddCurve(C) - 1-based index.
-    pub fn add_curve(&mut self, c: rcad_kernel::geom::Curve3) -> i32 {
-        self.curves.push(c);
-        self.curves.len() as i32
-    }
-
-    /// OCCT TopOpeBRepDS_DataStructure::AddPoint(P) - 1-based index.
-    pub fn add_point(&mut self, p: DVec3, tol: f64) -> i32 {
-        self.points.push((p, tol));
-        self.points.len() as i32
-    }
-
-    /// OCCT TopOpeBRepDS_DataStructure::AddShape(S) - an already-present
-    /// shape keeps its index.
-    pub fn add_shape(&mut self, s: &Shape) -> i32 {
-        if let Some(i) = self.shape_index.get(&s.ptr_id()) {
-            return *i;
-        }
-        self.shapes.push(s.clone());
-        let i = self.shapes.len() as i32;
-        self.shape_index.insert(s.ptr_id(), i);
-        i
-    }
-}
+pub use super::topopebrepds::{
+    InterferenceRef, TopOpeBRepDSCurvePointInterference, TopOpeBRepDSCurve, TopOpeBRepDSHDataStructure,
+    TopOpeBRepDSInterference, TopOpeBRepDSKind, TopOpeBRepDSPoint, TopOpeBRepDSSolidSurfaceInterference,
+    TopOpeBRepDSSurface, TopOpeBRepDSSurfaceCurveInterference, TopOpeBRepDSTransition,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct TopOpeBRepBuildHBuilder;
@@ -3311,7 +3269,7 @@ mod kpart_tests {
             sd.index_of_s1 >= 1 && sd.index_of_s2 >= 1,
             "support faces registered in the DS (SpKP L870-871)"
         );
-        let surf = &fillet.base.my_ds.as_ref().unwrap().surfaces[sd.surf_index as usize - 1];
+        let surf = &fillet.base.my_ds.as_ref().unwrap().surfaces[sd.surf_index as usize - 1].surface;
         assert!(
             matches!(surf, rcad_kernel::geom::Surface3::Cylinder(c) if (c.radius - 2.0).abs() < 1e-9),
             "KPart surface is the radius-2 cylinder, got {surf:?}"
@@ -3331,7 +3289,10 @@ mod kpart_tests {
             st.index_ofcurve2
         );
         for ic in [st.index_ofcurve1, st.index_ofcurve2] {
-            let curve = &fillet.base.my_ds.as_ref().unwrap().curves[ic as usize - 1];
+            let curve = &fillet.base.my_ds.as_ref().unwrap().curves[ic as usize - 1].curve;
+            let Some(curve) = curve else {
+                panic!("singular end arc curve is null");
+            };
             assert!(
                 matches!(curve, rcad_kernel::geom::Curve3::Circle(c) if (c.radius - 2.0).abs() < 1e-9),
                 "singular end arc is a radius-2 circle"
@@ -3404,8 +3365,10 @@ impl ChFi3dBuilder {
             // DStr.Surface(Fd->Surf()).Surface(), C3d, PCurv, Pardeb,
             // Parfin, tolapp3d, tolapp2d, tolreached, 0);
             let surf_index = stripe.read().expect("stripe lock").my_hdata[(num - 1) as usize].surf_index;
-            let surf = self.my_ds.as_ref().expect("DS").surfaces[surf_index as usize - 1].clone();
-            let (c3d, pcurv, pardeb, parfin, _tolreached) = super::chfi3d_builder_0::chfi3d_compute_arete(
+            let surf = self.my_ds.as_ref().expect("DS").surfaces[surf_index as usize - 1]
+                .surface
+                .clone();
+            let (c3d, pcurv, pardeb, parfin, tolreached) = super::chfi3d_builder_0::chfi3d_compute_arete(
                 &self.my_brep,
                 &cv1,
                 von_s1,
@@ -3422,7 +3385,11 @@ impl ChFi3dBuilder {
             let Some(c3d) = c3d else {
                 continue;
             };
-            let icurv = self.my_ds.as_mut().expect("DS").add_curve(c3d);
+            let icurv = self
+                .my_ds
+                .as_mut()
+                .expect("DS")
+                .add_curve(super::topopebrepds::TopOpeBRepDSCurve::new(Some(c3d), tolreached));
 
             let mut stw = stripe.write().expect("stripe lock");
             stw.set_curve(icurv, isfirst);
@@ -3610,6 +3577,6 @@ pub fn chfi3d_index_point_in_ds(
         let v = p1.vertex().clone();
         dstr.add_shape(&v)
     } else {
-        dstr.add_point(p1.point(), p1.tolerance())
+        dstr.add_point(super::topopebrepds::TopOpeBRepDSPoint::new(p1.point(), p1.tolerance()))
     }
 }
