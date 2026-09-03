@@ -16,3 +16,5 @@ pub use constraints::{
 pub use d123::{PlateD1, PlateD2, PlateD3};
 pub use pinpoint_constraint::PinpointConstraint;
 
+
+pub use plate::Plate;

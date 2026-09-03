@@ -2988,3 +2988,58 @@ mod geom2d_convert_bspline_curve_to_bezier_curve_tests {
         );
     }
 }
+
+// Plate_Plate_Test.cxx
+mod plate_plate_tests {
+    use super::*;
+    use rcad_algo::geomalgo::plate::{PinpointConstraint, Plate};
+
+    // TEST(Plate_Plate, Init_ClearsState)
+    // Plate_Plate::Init clears constraints and resets state.
+    #[test]
+    fn init_clears_state() {
+        let mut a_plate = Plate::new();
+
+        // Add a constraint and solve.
+        a_plate.load_pinpoint(PinpointConstraint::new(
+            DVec2::new(0.0, 0.0),
+            DVec3::new(0.0, 0.0, 1.0),
+            0,
+            0,
+        ));
+        a_plate.load_pinpoint(PinpointConstraint::new(
+            DVec2::new(1.0, 0.0),
+            DVec3::ZERO,
+            0,
+            0,
+        ));
+        a_plate.load_pinpoint(PinpointConstraint::new(
+            DVec2::new(0.0, 1.0),
+            DVec3::ZERO,
+            0,
+            0,
+        ));
+        a_plate.solve_ti(2, 1.0);
+
+        // After Init(), constraints and solution are cleared.
+        a_plate.init();
+        // OCCT comment: IsDone() returns true after Init() which is
+        // semantically wrong (empty plate is not "done"). Setting OK=false in
+        // Init() caused regressions in blend/filling DRAW tests. Needs
+        // investigation before fixing (finding #30).
+        assert!(a_plate.is_done());
+    }
+
+    // TEST(Plate_Plate, Init_EvaluateReturnsZero)
+    // After Init(), Evaluate must return zero vector (no solution).
+    #[test]
+    fn init_evaluate_returns_zero() {
+        let mut a_plate = Plate::new();
+        a_plate.init();
+
+        let a_result = a_plate.evaluate(DVec2::new(0.5, 0.5));
+        assert_eq!(a_result.x, 0.0);
+        assert_eq!(a_result.y, 0.0);
+        assert_eq!(a_result.z, 0.0);
+    }
+}
