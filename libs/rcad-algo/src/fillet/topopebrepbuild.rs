@@ -751,3 +751,190 @@ impl TopOpeBRepBuildBuilder {
         }
     }
 }
+
+// =========================================================================
+// OCCT TopOpeBRepBuild_Pave (Pave.hxx L30-60 + Pave.cxx) — a vertex and
+// its parameter on the edge, with the bound flag (old/new vertex).
+// =========================================================================
+#[derive(Debug, Clone)]
+pub struct TopOpeBRepBuildPave {
+    vertex: Shape,
+    parameter: f64,
+    bound: bool,
+    has_same_domain: bool,
+    same_domain: Option<Shape>,
+}
+
+impl TopOpeBRepBuildPave {
+    /// OCCT Pave.cxx L20-30 — Pave(V, P, bound).
+    pub fn new(v: Shape, p: f64, bound: bool) -> Self {
+        TopOpeBRepBuildPave {
+            vertex: v,
+            parameter: p,
+            bound,
+            has_same_domain: false,
+            same_domain: None,
+        }
+    }
+
+    pub fn vertex(&self) -> &Shape {
+        &self.vertex
+    }
+
+    pub fn change_vertex(&mut self) -> &mut Shape {
+        &mut self.vertex
+    }
+
+    pub fn parameter(&self) -> f64 {
+        self.parameter
+    }
+
+    pub fn set_parameter(&mut self, par: f64) {
+        self.parameter = par;
+    }
+
+    pub fn is_bound(&self) -> bool {
+        self.bound
+    }
+}
+
+// =========================================================================
+// OCCT TopOpeBRepBuild_PaveSet (PaveSet.hxx L40-80 + PaveSet.cxx L35-490)
+// — the ordered set of paves on one edge; the Loop iteration runs over the
+// paves after Prepare() (the sort/clean pass — PaveSet.cxx L~200-490,
+// pending unit; until then the insertion order is kept).
+// =========================================================================
+#[derive(Debug, Clone)]
+pub struct TopOpeBRepBuildPaveSet {
+    pub edge: Shape,
+    pub vertices: Vec<TopOpeBRepBuildPave>,
+    pub has_equal_parameters: bool,
+    pub equal_parameters: f64,
+    loop_index: usize,
+}
+
+impl TopOpeBRepBuildPaveSet {
+    /// OCCT PaveSet.cxx L35-45 — PaveSet(E).
+    pub fn new(e: &Shape) -> Self {
+        TopOpeBRepBuildPaveSet {
+            edge: e.clone(),
+            vertices: Vec::new(),
+            has_equal_parameters: false,
+            equal_parameters: 0.0,
+            loop_index: 0,
+        }
+    }
+
+    /// OCCT PaveSet.cxx L47-52 — Append(PV).
+    pub fn append(&mut self, pv: TopOpeBRepBuildPave) {
+        self.vertices.push(pv);
+    }
+
+    /// OCCT PaveSet.cxx InitLoop — the Prepare() sort/clean pass is the
+    /// pending unit; iteration keeps the insertion order.
+    pub fn init_loop(&mut self) {
+        self.loop_index = 0;
+    }
+
+    pub fn more_loop(&self) -> bool {
+        self.loop_index < self.vertices.len()
+    }
+
+    pub fn loop_pave(&self) -> &TopOpeBRepBuildPave {
+        &self.vertices[self.loop_index]
+    }
+
+    pub fn next_loop(&mut self) {
+        self.loop_index += 1;
+    }
+
+    /// OCCT PaveSet.cxx HasEqualParameters: two distinct vertices with
+    /// parameters closer than Precision::PConfusion().
+    pub fn has_equal_parameters(&mut self) -> bool {
+        self.has_equal_parameters = false;
+        for i in 0..self.vertices.len() {
+            let p1 = self.vertices[i].parameter();
+            for j in 0..self.vertices.len() {
+                if j == i {
+                    continue;
+                }
+                if self.vertices[j].vertex.is_same(&self.vertices[i].vertex) {
+                    continue;
+                }
+                let p2 = self.vertices[j].parameter();
+                if (p1 - p2).abs() < 1.0e-9 /* OCCT Precision::PConfusion() = Confusion()*0.01 */ {
+                    self.has_equal_parameters = true;
+                    self.equal_parameters = p1;
+                }
+            }
+        }
+        self.has_equal_parameters
+    }
+
+    pub fn equal_parameters(&self) -> f64 {
+        self.equal_parameters
+    }
+}
+
+impl TopOpeBRepBuildBuilder {
+    // =========================================================================
+    // OCCT TopOpeBRepBuild_Builder.cxx L1991-1999 — FillVertexSet.
+    // =========================================================================
+    pub fn fill_vertex_set(
+        &self,
+        points: &[(&TopOpeBRepDSInterference, i32)],
+        is_point_flags: &[bool],
+        tobuild: TopAbsState,
+        pvs: &mut TopOpeBRepBuildPaveSet,
+    ) {
+        for (i, (it, _ind)) in points.iter().enumerate() {
+            self.fill_vertex_set_on_value(it, is_point_flags[i], tobuild, pvs);
+        }
+    }
+
+    // =========================================================================
+    // OCCT TopOpeBRepBuild_Builder.cxx L2003-2055 — FillVertexSetOnValue.
+    // =========================================================================
+    fn fill_vertex_set_on_value(
+        &self,
+        it: &TopOpeBRepDSInterference,
+        ispoint: bool,
+        tobuild: TopAbsState,
+        pvs: &mut TopOpeBRepBuildPaveSet,
+    ) {
+        let TopOpeBRepDSInterference::CurvePoint(cpi) = it else {
+            return;
+        };
+        // ind = index of new point or existing vertex.
+        let ind = cpi.index_g;
+        let v = if ispoint && ind <= self.my_data_structure.as_ref().map(|d| d.points.len() as i32).unwrap_or(0) {
+            // OCCT: V = NewVertex(ind) — the vertex built by BuildVertices
+            // (pending unit); the DS shape table carries the same entry.
+            self.my_data_structure
+                .as_ref()
+                .expect("DS")
+                .shape(ind)
+                .clone()
+        } else {
+            self.my_data_structure
+                .as_ref()
+                .expect("DS")
+                .shape(ind)
+                .clone()
+        };
+        let par = cpi.parameter;
+        // OCCT: IT.Orientation(ToBuild) — the TopOpeBRepDS_PointIterator
+        // orientation for the state (pending PointIterator unit; the
+        // interference transition orientation is the payload).
+        let ori = it.transition().orientation_in();
+        let _ = tobuild;
+
+        let keep = true;
+        if keep {
+            let mut v = v;
+            v.orientation = ori;
+            let pv = TopOpeBRepBuildPave::new(v, par, false);
+            pvs.append(pv);
+        }
+    }
+}
