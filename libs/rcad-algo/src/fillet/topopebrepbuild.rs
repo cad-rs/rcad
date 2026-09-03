@@ -1354,3 +1354,394 @@ impl TopOpeBRepBuildPaveClassifier {
         }
     }
 }
+
+// =========================================================================
+// OCCT TopOpeBRepBuild_Loop / LoopSet / LoopClassifier abstract interfaces
+// (TopOpeBRepBuild_Loop.hxx / _LoopSet.hxx / _LoopClassifier.hxx) —
+// rcad: traits; TopOpeBRepBuild_Pave implements Loop (IsShape() = the
+// bound flag: an old edge vertex is a boundary loop, a new interference
+// vertex is a block loop), PaveSet implements LoopSet, PaveClassifier
+// implements LoopClassifier.
+// =========================================================================
+pub trait AreaLoop {
+    /// OCCT TopOpeBRepBuild_Loop::IsShape().
+    fn is_shape(&self) -> bool;
+}
+
+pub trait AreaLoopSet {
+    /// OCCT TopOpeBRepBuild_LoopSet::InitLoop/MoreLoop/NextLoop/Loop.
+    fn loops(&self) -> &[TopOpeBRepBuildPave];
+}
+
+pub trait AreaLoopClassifier {
+    /// OCCT TopOpeBRepBuild_LoopClassifier::Compare(L1, L2) -> TopAbs_State.
+    fn compare(&mut self, l1: &TopOpeBRepBuildPave, l2: &TopOpeBRepBuildPave) -> TopAbsState;
+}
+
+impl AreaLoop for TopOpeBRepBuildPave {
+    /// OCCT Pave.hxx IsShape() — the bound flag (old vertex = shape).
+    fn is_shape(&self) -> bool {
+        self.is_bound()
+    }
+}
+
+impl AreaLoopSet for TopOpeBRepBuildPaveSet {
+    fn loops(&self) -> &[TopOpeBRepBuildPave] {
+        &self.vertices
+    }
+}
+
+impl AreaLoopClassifier for TopOpeBRepBuildPaveClassifier {
+    fn compare(&mut self, l1: &TopOpeBRepBuildPave, l2: &TopOpeBRepBuildPave) -> TopAbsState {
+        self.compare(l1, l2)
+    }
+}
+
+/// OCCT TopOpeBRepBuild_LoopEnum (TopOpeBRepBuild_AreaBuilder.hxx).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopEnum {
+    AnyLoop,
+    Boundary,
+    Block,
+}
+
+// =========================================================================
+// OCCT TopOpeBRepBuild_AreaBuilder (AreaBuilder.hxx + .cxx L30-429).
+// =========================================================================
+#[derive(Debug, Clone)]
+pub struct AreaBuilder {
+    /// OCCT: bool myUNKNOWNRaise — false by default.
+    my_unknown_raise: bool,
+    /// OCCT: TopOpeBRepBuild_ListOfListOfLoop myArea.
+    my_area: Vec<Vec<usize>>,
+    area_index: usize,
+    loop_index: usize,
+}
+
+impl Default for AreaBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AreaBuilder {
+    /// OCCT AreaBuilder.cxx L30-42.
+    pub fn new() -> Self {
+        AreaBuilder {
+            my_unknown_raise: false, // no raise if UNKNOWN state found
+            my_area: Vec::new(),
+            area_index: 0,
+            loop_index: 0,
+        }
+    }
+
+    /// OCCT AreaBuilder.cxx L56-103 — CompareLoopWithListOfLoop: compare
+    /// the position of Loop <L> with the Area <LOL> using the classifier;
+    /// according to <what>, loops of <LOL> are selected or not.
+    ///   TopAbs_OUT if <LOL> is empty; UNKNOWN if undefined;
+    ///   IN if <L> is inside all the selected Loops;
+    ///   OUT if <L> is outside one of the selected Loops.
+    fn compare_loop_with_list_of_loop<C: AreaLoopClassifier>(
+        &self,
+        lc: &mut C,
+        l: usize,
+        lol: &[usize],
+        loops: &[TopOpeBRepBuildPave],
+        what: LoopEnum,
+    ) -> TopAbsState {
+        let mut state = TopAbsState::Unknown;
+        if lol.is_empty() {
+            return TopAbsState::Out;
+        }
+
+        for &cur_l in lol {
+            let totest = match what {
+                LoopEnum::AnyLoop => true,
+                LoopEnum::Boundary => loops[cur_l].is_shape(),
+                LoopEnum::Block => !loops[cur_l].is_shape(),
+            };
+            if totest {
+                state = lc.compare(&loops[l], &loops[cur_l]);
+                if state == TopAbsState::Out {
+                    // <L> is out of at least one Loop of <LOL>: stop.
+                    break;
+                }
+            }
+        }
+        state
+    }
+
+    /// OCCT AreaBuilder.cxx L111-122 — Atomize.
+    fn atomize(&self, state: &mut TopAbsState, newstate: TopAbsState) {
+        if self.my_unknown_raise {
+            if *state == TopAbsState::Unknown {
+                panic!("Standard_DomainError: AreaBuilder : Position Unknown");
+            }
+        } else {
+            *state = newstate;
+        }
+    }
+
+    /// OCCT AreaBuilder.cxx L125-330 — InitAreaBuilder(LS, LC, ForceClass):
+    /// the area construction over the loop set (block loops open areas,
+    /// boundary loops are absorbed into the areas containing them).
+    /// `loops` is the flat loop list; areas reference loops by index.
+    pub fn init_area_builder<C: AreaLoopClassifier>(
+        &mut self,
+        loops: &[TopOpeBRepBuildPave],
+        lc: &mut C,
+        force_class: bool,
+    ) {
+        // boundaryloops : list of boundary loops out of the areas.
+        let mut my_area: Vec<Vec<usize>> = Vec::new();
+        let mut boundaryloops: Vec<usize> = Vec::new();
+
+        for l in 0..loops.len() {
+            // process a new loop : L is the new current Loop.
+            let boundary_l = loops[l].is_shape();
+
+            // L = Shape et ForceClass : on traite L comme un block
+            // L = Shape et !ForceClass : on traite L comme un pur Shape
+            // L = !Shape : on traite L comme un block
+            let traitercommeblock = (!boundary_l) || force_class;
+            if !traitercommeblock {
+                // the loop L is a boundary loop: try to insert it in an
+                // existing area such as L is inside all the block loops.
+                let mut loopinside = false;
+                let mut area_hit = 0usize;
+                for (ai, a_area) in my_area.iter().enumerate() {
+                    if a_area.is_empty() {
+                        continue;
+                    }
+                    let mut state =
+                        self.compare_loop_with_list_of_loop(lc, l, a_area, loops, LoopEnum::Block);
+                    if state == TopAbsState::Unknown {
+                        self.atomize(&mut state, TopAbsState::In);
+                    }
+                    loopinside = state == TopAbsState::In;
+                    if loopinside {
+                        area_hit = ai;
+                        break;
+                    }
+                } // end of Area scan
+
+                if loopinside {
+                    // OCCT: ADD_Loop_TO_LISTOFLoop(L, aArea) — aArea is the
+                    // area the scan stopped on.
+                    my_area[area_hit].push(l);
+                } else {
+                    boundaryloops.push(l);
+                }
+            } else {
+                // the loop L is a block loop.
+                let mut loopinside = false;
+                let mut area_hit = 0usize;
+                for (ai, a_area) in my_area.iter().enumerate() {
+                    if a_area.is_empty() {
+                        continue;
+                    }
+                    let mut state =
+                        self.compare_loop_with_list_of_loop(lc, l, a_area, loops, LoopEnum::AnyLoop);
+                    if state == TopAbsState::Unknown {
+                        self.atomize(&mut state, TopAbsState::In);
+                    }
+                    loopinside = state == TopAbsState::In;
+                    if loopinside {
+                        area_hit = ai;
+                        break;
+                    }
+                } // end of Area scan
+
+                if loopinside {
+                    let a_area = &mut my_area[area_hit];
+                    let mut all_shape = true;
+                    let mut removed_loops: Vec<usize> = Vec::new();
+                    let mut li = 0usize;
+                    while li < a_area.len() {
+                        let mut state = lc.compare(&loops[a_area[li]], &loops[l]);
+                        if state == TopAbsState::Unknown {
+                            self.atomize(&mut state, TopAbsState::In); // not OUT
+                        }
+                        let loopoutside = state == TopAbsState::Out;
+                        if loopoutside {
+                            let cur_l = a_area[li];
+                            removed_loops.push(cur_l);
+                            all_shape = all_shape && loops[cur_l].is_shape();
+                            a_area.remove(li);
+                        } else {
+                            li += 1;
+                        }
+                    }
+                    // insert the loop in the area.
+                    a_area.push(l);
+                    if !removed_loops.is_empty() {
+                        if all_shape {
+                            boundaryloops.extend(removed_loops);
+                        } else {
+                            // make a new area with the removed loops.
+                            my_area.push(removed_loops);
+                        }
+                    }
+                } else {
+                    // create a new area with L; insert boundary loops that
+                    // are IN the new area (and remove them from
+                    // 'boundaryloops').
+                    let mut new_area0: Vec<usize> = vec![l];
+                    let mut bi = 0usize;
+                    while bi < boundaryloops.len() {
+                        let cur_l = boundaryloops[bi];
+                        let mut state = lc.compare(&loops[cur_l], &loops[l]);
+                        if state == TopAbsState::Unknown {
+                            self.atomize(&mut state, TopAbsState::In);
+                        }
+                        let ashapeinside = state == TopAbsState::In && loops[cur_l].is_shape();
+                        let mut ablockinside = false;
+                        if ashapeinside {
+                            let mut state2 = lc.compare(&loops[l], &loops[cur_l]);
+                            if state2 == TopAbsState::Unknown {
+                                self.atomize(&mut state2, TopAbsState::In);
+                            }
+                            ablockinside = state2 == TopAbsState::In;
+                        }
+                        if ashapeinside && ablockinside {
+                            new_area0.push(cur_l);
+                            boundaryloops.remove(bi);
+                        } else {
+                            bi += 1;
+                        }
+                    } // end of boundaryloops scan
+                    my_area.push(new_area0);
+                } // Loopinside == False
+            } // end of block loop
+        } // end of LoopSet LS scan
+
+        self.my_area = my_area;
+        self.init_area();
+    }
+
+    /// OCCT AreaBuilder.cxx L334-341 — InitArea.
+    pub fn init_area(&mut self) -> usize {
+        self.area_index = 0;
+        self.init_loop();
+        self.my_area.len()
+    }
+
+    /// OCCT AreaBuilder.cxx L344-349 — MoreArea.
+    pub fn more_area(&self) -> bool {
+        self.area_index < self.my_area.len()
+    }
+
+    /// OCCT AreaBuilder.cxx L352-357 — NextArea.
+    pub fn next_area(&mut self) {
+        self.area_index += 1;
+        self.init_loop();
+    }
+
+    /// OCCT AreaBuilder.cxx L360-374 — InitLoop.
+    pub fn init_loop(&mut self) -> usize {
+        if self.area_index < self.my_area.len() {
+            self.my_area[self.area_index].len()
+        } else {
+            self.loop_index = 0;
+            0
+        }
+    }
+
+    /// OCCT AreaBuilder.cxx L378-383 — MoreLoop.
+    pub fn more_loop(&self) -> bool {
+        self.loop_index < self.my_area[self.area_index.min(self.my_area.len() - 1)].len()
+    }
+
+    /// OCCT AreaBuilder.cxx L386-390 — NextLoop.
+    pub fn next_loop(&mut self) {
+        self.loop_index += 1;
+    }
+
+    /// OCCT AreaBuilder.cxx L393-398 — Loop().
+    pub fn loop_pave_index(&self) -> usize {
+        self.my_area[self.area_index][self.loop_index]
+    }
+}
+
+// =========================================================================
+// OCCT TopOpeBRepBuild_EdgeBuilder (EdgeBuilder.hxx + EdgeBuilder.cxx
+// L25-105) — a thin delegate over AreaBuilder for the edge case: the areas
+// are built over the PaveSet (loops) with the PaveClassifier.
+// =========================================================================
+#[derive(Debug, Clone)]
+pub struct TopOpeBRepBuildEdgeBuilder {
+    pub area: AreaBuilder,
+    /// OCCT: the PaveSet (LoopSet) and Pave loops.
+    pub loops: Vec<TopOpeBRepBuildPave>,
+    pub pave_set_edge: Shape,
+}
+
+impl Default for TopOpeBRepBuildEdgeBuilder {
+    fn default() -> Self {
+        TopOpeBRepBuildEdgeBuilder {
+            area: AreaBuilder::new(),
+            loops: Vec::new(),
+            pave_set_edge: Shape::null(),
+        }
+    }
+}
+
+impl TopOpeBRepBuildEdgeBuilder {
+    /// OCCT EdgeBuilder.cxx L34-45 — ctor + InitEdgeBuilder(LS, LC,
+    /// ForceClass) -> InitAreaBuilder.
+    pub fn init_edge_builder(
+        &mut self,
+        pvs: &TopOpeBRepBuildPaveSet,
+        lc: &mut TopOpeBRepBuildPaveClassifier,
+        force_class: bool,
+        brep: &rcad_kernel::topods::BRep,
+    ) {
+        self.loops = pvs.vertices.clone();
+        self.pave_set_edge = pvs.edge.clone();
+        let _ = brep;
+        self.area.init_area_builder(&self.loops, lc, force_class);
+    }
+
+    /// OCCT EdgeBuilder.cxx L47-50 — InitEdge() -> InitArea().
+    pub fn init_edge(&mut self) {
+        self.area.init_area();
+    }
+
+    /// OCCT EdgeBuilder.cxx L52-55 — MoreEdge() -> MoreArea().
+    pub fn more_edge(&self) -> bool {
+        self.area.more_area()
+    }
+
+    /// OCCT EdgeBuilder.cxx L57-60 — NextEdge() -> NextArea().
+    pub fn next_edge(&mut self) {
+        self.area.next_area();
+    }
+
+    /// OCCT EdgeBuilder.cxx L62-65 — InitVertex() -> InitLoop().
+    pub fn init_vertex(&mut self) {
+        self.area.init_loop();
+    }
+
+    /// OCCT EdgeBuilder.cxx L67-70 — MoreVertex() -> MoreLoop().
+    pub fn more_vertex(&self) -> bool {
+        self.area.more_loop()
+    }
+
+    /// OCCT EdgeBuilder.cxx L72-75 — NextVertex() -> NextLoop().
+    pub fn next_vertex(&mut self) {
+        self.area.next_loop();
+    }
+
+    /// OCCT EdgeBuilder.cxx L77-84 — Vertex(): the pave vertex of the
+    /// current loop.
+    pub fn vertex(&self) -> &Shape {
+        let idx = self.area.loop_pave_index();
+        self.loops[idx].vertex()
+    }
+
+    /// OCCT EdgeBuilder.cxx L86-93 — Parameter().
+    pub fn parameter(&self) -> f64 {
+        let idx = self.area.loop_pave_index();
+        self.loops[idx].parameter()
+    }
+}
