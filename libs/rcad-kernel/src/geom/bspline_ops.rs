@@ -10,8 +10,9 @@
 
 use super::BSplineCurve3;
 use crate::math::bspl_lib::{
-    increase_degree_count_knots, move_point_and_tangent as bspl_move_point_and_tangent,
-    increase_degree as bspl_increase_degree,
+    eval_homogeneous, increase_degree_count_knots,
+    move_point_and_tangent as bspl_move_point_and_tangent,
+    increase_degree as bspl_increase_degree, rational_derivatives_inplace,
 };
 use crate::math::gp::Trsf;
 use glam::DVec3;
@@ -252,5 +253,41 @@ impl BSplineCurve3 {
             }
         }
         self.knots = flat;
+    }
+}
+
+impl BSplineCurve3 {
+    /// OCCT Geom_BSplineCurve::DN — the N-th derivative through the
+    /// homogeneous evaluation (BSplCLib::Eval) and PLib::RationalDerivatives
+    /// (in-place form).
+    pub fn dn(&self, u: f64, n: usize) -> DVec3 {
+        let dim = 3usize;
+        let mut poles_flat = Vec::with_capacity(self.control_points.len() * dim);
+        for p in &self.control_points {
+            poles_flat.extend([p.x, p.y, p.z]);
+        }
+        let count = n + 1;
+        let mut poles_res = vec![0.0f64; count * dim];
+        let mut weights_res = vec![0.0f64; count];
+        let mut extrap = [0i32; 2];
+        // Clamp to the parameter range (the DN callers evaluate in range).
+        let u_clamped = u
+            .clamp(self.first_parameter(), self.last_parameter());
+        eval_homogeneous(
+            u_clamped,
+            self.is_periodic,
+            n as i32,
+            &mut extrap,
+            self.degree,
+            &self.knots,
+            dim,
+            &poles_flat,
+            &self.weights,
+            &mut poles_res,
+            &mut weights_res,
+        );
+        rational_derivatives_inplace(n as i32, dim, &mut poles_res, &mut weights_res);
+        let off = n * dim;
+        DVec3::new(poles_res[off], poles_res[off + 1], poles_res[off + 2])
     }
 }

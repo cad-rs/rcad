@@ -728,3 +728,52 @@ mod tests {
         assert!(check.max_distance() < 1e-10);
     }
 }
+
+/// OCCT GeomLib::FuseIntervals (GeomLib.cxx L392-456) — merges two ordered
+/// interval-bound tables into one sequence, eliminating near-duplicates.
+pub fn fuse_intervals(
+    i1: &[f64],
+    i2: &[f64],
+    seq: &mut Vec<f64>,
+    epspar: f64,
+    is_adjust_to_first_interval: bool,
+) {
+    let mut ind1 = 1usize;
+    let mut ind2 = 1usize;
+    // Fill Seq by traversing I1 and I2 simultaneously, eliminating multiple
+    // occurrences.
+    while ind1 <= i1.len() && ind2 <= i2.len() {
+        let v1 = i1[ind1 - 1];
+        let v2 = i2[ind2 - 1];
+        if (v1 - v2).abs() <= epspar {
+            // Here the elements of I1 and I2 match.
+            if is_adjust_to_first_interval {
+                seq.push(v1);
+            } else {
+                seq.push((v1 + v2) / 2.0);
+            }
+            ind1 += 1;
+            ind2 += 1;
+        } else if v1 < v2 {
+            seq.push(v1);
+            ind1 += 1;
+        } else {
+            seq.push(v2);
+            ind2 += 1;
+        }
+    }
+    if ind1 > i1.len() {
+        // I1 exhausted: complete with the end of I2.
+        while ind2 <= i2.len() {
+            seq.push(i2[ind2 - 1]);
+            ind2 += 1;
+        }
+    }
+    if ind2 > i2.len() {
+        // I2 exhausted: complete with the end of I1.
+        while ind1 <= i1.len() {
+            seq.push(i1[ind1 - 1]);
+            ind1 += 1;
+        }
+    }
+}

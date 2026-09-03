@@ -2132,3 +2132,106 @@ mod tests {
         assert!((d - 1.0).abs() < 1e-6, "expected 1.0, got {d}");
     }
 }
+
+impl ExtPC {
+    /// OCCT `Extrema_ExtPC(Point, Adaptor3d_Curve, TolC, Uinf, Usup)` with
+    /// an arbitrary point-evaluation adaptor (e.g. GeomFill_SnglrFunc used
+    /// as a curve): same grid + Newton search against `eval(u) -> point`.
+    /// The Newton derivative uses a central difference of `eval`, matching
+    /// the finite-difference default of `CurveEval::derivative_at`.
+    pub fn perform_fn(
+        &mut self,
+        point: DVec3,
+        eval: &dyn Fn(f64) -> DVec3,
+        uinf: f64,
+        usup: f64,
+    ) {
+        self.points.clear();
+        self.sq_dists.clear();
+
+        let (t_min, t_max) = (uinf, usup);
+        if (t_max - t_min).abs() < self.tol {
+            self.done = true;
+            return;
+        }
+
+        const N_GRID: usize = 51;
+        let mut candidates: Vec<(f64, f64)> = Vec::new();
+
+        for i in 0..=N_GRID {
+            let t = t_min + (t_max - t_min) * (i as f64) / (N_GRID as f64);
+            let p = eval(t);
+            let d2 = (p - point).length_squared();
+            if (i == 0 || d2 <= candidates.last().map(|&(_, ld)| ld).unwrap_or(f64::INFINITY))
+                && (i == N_GRID || {
+                    let next_t = t_min + (t_max - t_min) * ((i + 1) as f64) / (N_GRID as f64);
+                    let next_d2 = (eval(next_t) - point).length_squared();
+                    d2 <= next_d2
+                })
+            {
+                candidates.push((t, d2));
+            }
+        }
+
+        candidates.dedup_by(|a, b| (a.0 - b.0).abs() < (t_max - t_min) / (N_GRID as f64) * 0.5);
+
+        for &(t0, _) in &candidates {
+            // Newton on g(u) = (F(u) - P).F'(u) with a central difference.
+            let mut t = t0.clamp(t_min, t_max);
+            let h = 1e-7;
+            for _ in 0..20 {
+                let p = eval(t);
+                let dp = (eval(t + h) - eval(t - h)) / (2.0 * h);
+                let d = p - point;
+                let f = d.dot(dp);
+                let speed_sq = dp.length_squared();
+                if speed_sq < 1e-30 || f.abs() < self.tol {
+                    break;
+                }
+                let dpp = (eval(t + h) - 2.0 * eval(t) + eval(t - h)) / (h * h);
+                let denom = speed_sq + d.dot(dpp);
+                if denom.abs() < 1e-30 {
+                    break;
+                }
+                t = (t - f / denom).clamp(t_min, t_max);
+            }
+            let p = eval(t);
+            let d2 = (p - point).length_squared();
+            let is_dup = self.points.iter().any(|existing| {
+                let dt = (existing.param - t).abs();
+                let dp = (existing.point - p).length();
+                dt < self.tol && dp < self.tol * 10.0
+            });
+            if !is_dup {
+                self.points.push(POnCurve { param: t, point: p });
+                self.sq_dists.push(d2);
+            }
+        }
+
+        let mut indices: Vec<usize> = (0..self.points.len()).collect();
+        indices.sort_by(|&a, &b| self.sq_dists[a].partial_cmp(&self.sq_dists[b]).unwrap());
+        self.points = indices.iter().map(|&i| self.points[i].clone()).collect();
+        self.sq_dists = indices.iter().map(|&i| self.sq_dists[i]).collect();
+
+        self.done = true;
+    }
+
+    /// Constructor form of [`ExtPC::perform_fn`]
+    /// (OCCT: `Initialize(Func, U1, U2, Tol)` + `Perform(Origin)`).
+    pub fn new_fn(
+        point: DVec3,
+        tol: f64,
+        uinf: f64,
+        usup: f64,
+        eval: &dyn Fn(f64) -> DVec3,
+    ) -> Self {
+        let mut ext = ExtPC {
+            done: false,
+            points: Vec::new(),
+            sq_dists: Vec::new(),
+            tol: tol.max(1e-12),
+        };
+        ext.perform_fn(point, eval, uinf, usup);
+        ext
+    }
+}
