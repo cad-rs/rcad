@@ -2874,3 +2874,117 @@ mod geomFillBSplineCurves_tests {
         assert!(true);
     }
 }
+
+// Geom2dConvert_BSplineCurveToBezierCurve_Test.cxx
+mod geom2d_convert_bspline_curve_to_bezier_curve_tests {
+    use super::*;
+    use rcad_kernel::base::geom2d_convert::{BSplineCurveToBezierCurve, Geom2dBSplineCurve};
+    use rcad_kernel::base::geom_api::geom2d_interpolate::Geom2dInterpolate;
+    use rcad_kernel::geom::{Curve2d, Curve2dEval};
+
+    /// 16-point Gauss-Legendre composite quadrature of |dP/dt| over
+    /// [t1, t2] — test stand-in for `GCPnts_AbscissaPoint::Length(adaptor)`
+    /// (the arc under test is a degree-8 Bezier, so several spans are used).
+    /// The speed is finite-differenced on `point_at` (de Casteljau), mirroring
+    /// `CPnts_AbscissaPoint`'s evaluation style.
+    fn bezier2_arc_length(curve: &Curve2d, t1: f64, t2: f64, spans: usize) -> f64 {
+        const GL16_NODES: [f64; 16] = [
+            -0.095_012_509_837_637_44,
+            0.095_012_509_837_637_44,
+            -0.281_603_550_779_258_9,
+            0.281_603_550_779_258_9,
+            -0.458_016_777_657_227_37,
+            0.458_016_777_657_227_37,
+            -0.617_876_244_402_643_7,
+            0.617_876_244_402_643_7,
+            -0.755_404_408_355_003,
+            0.755_404_408_355_003,
+            -0.865_631_202_387_831_7,
+            0.865_631_202_387_831_7,
+            -0.944_575_023_073_232_6,
+            0.944_575_023_073_232_6,
+            -0.989_400_934_991_649_9,
+            0.989_400_934_991_649_9,
+        ];
+        const GL16_WEIGHTS: [f64; 16] = [
+            0.189_450_610_455_068_64,
+            0.189_450_610_455_068_64,
+            0.182_603_415_044_923_64,
+            0.182_603_415_044_923_64,
+            0.169_156_519_395_002_65,
+            0.169_156_519_395_002_65,
+            0.149_595_988_816_576_71,
+            0.149_595_988_816_576_71,
+            0.124_628_971_255_534_07,
+            0.124_628_971_255_534_07,
+            0.095_158_511_682_492_61,
+            0.095_158_511_682_492_61,
+            0.062_253_523_938_647_46,
+            0.062_253_523_938_647_46,
+            0.027_152_459_411_754_18,
+            0.027_152_459_411_754_18,
+        ];
+
+        let mut total = 0.0f64;
+        let h = (t2 - t1) / spans as f64;
+        let fd_eps = 1e-7;
+        for s in 0..spans {
+            let a = t1 + h * s as f64;
+            let b = a + h;
+            let half = (b - a) * 0.5;
+            let mid = (b + a) * 0.5;
+            for (&xi, &wi) in GL16_NODES.iter().zip(GL16_WEIGHTS.iter()) {
+                let t = mid + half * xi;
+                let dp = (curve.point_at(t + fd_eps) - curve.point_at(t - fd_eps)) / (2.0 * fd_eps);
+                total += half * wi * dp.length();
+            }
+        }
+        total
+    }
+
+    // TEST(Geom2dConvert_BSplineCurveToBezierCurveTest,
+    //      OCC7372_PeriodicBSplineToBeziersAfterIncreaseDegree)
+    // OCC7372: Invalid conversion of 2D periodic BSpline curve to Bezier
+    // segments after IncreaseDegree.  Tests that a periodic BSpline curve
+    // (5 points, degree increased to 8) converts to exactly 5 Bezier arcs,
+    // and the 5th arc has the expected length ~73.3203.
+    #[test]
+    fn occ7372_periodic_bspline_to_beziers_after_increase_degree() {
+        let a_points = vec![
+            DVec2::new(100.0, 0.0),
+            DVec2::new(100.0, 100.0),
+            DVec2::new(0.0, 100.0),
+            DVec2::new(0.0, 0.0),
+            DVec2::new(50.0, -50.0),
+        ];
+
+        let mut an_interp = Geom2dInterpolate::new(a_points, true, 1e-6);
+        an_interp.perform();
+        assert!(an_interp.is_done());
+
+        // OCCT: handle<Geom2d_BSplineCurve> aBSpline = anInterp.Curve();
+        // (periodic).  The legacy BSplineCurve2 carries flat knots and drops
+        // the periodic flag, so it is rebuilt with periodic = true.
+        let a_bspline = an_interp.curve();
+        let mut a_curve = Geom2dBSplineCurve::from_bspline2(&a_bspline, true);
+
+        a_curve.increase_degree(8);
+
+        let a_converter = BSplineCurveToBezierCurve::new(&a_curve);
+        let a_nb_arcs = a_converter.nb_arcs();
+        assert_eq!(a_nb_arcs, 5);
+
+        let an_arc5 = a_converter.arc(5);
+
+        // Geom2dAdaptor_Curve anAdaptor(anArc5);
+        // double aLen = GCPnts_AbscissaPoint::Length(anAdaptor);
+        let an_arc_curve = Curve2d::Bezier(an_arc5);
+        let domain = an_arc_curve.default_domain();
+        let a_len = bezier2_arc_length(&an_arc_curve, domain[0], domain[1], 64);
+        assert!(
+            (a_len - 73.3203).abs() <= 0.01,
+            "arc 5 length {} != 73.3203 +- 0.01",
+            a_len
+        );
+    }
+}

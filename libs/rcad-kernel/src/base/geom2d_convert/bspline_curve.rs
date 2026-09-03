@@ -985,3 +985,4 @@ fn unflatten_poles(flat: &[f64], dim: usize) -> (Vec<DVec2>, Vec<f64>) {
         (poles, Vec::new())
     }
 }
+

@@ -1382,7 +1382,9 @@ fn build_knots_local(
 /// OCCT BSplCLib::BuildBoor.
 fn build_boor(index: i32, length: i32, dimension: usize, poles: &[f64], lp: &mut [f64]) {
     let dimension = dimension as i32;
-    let mut ip = index * dimension;
+    // OCCT: ip = Poles.Lower() + Index * Dimension (Lower == 1); Poles(ip)
+    // reads 1-based, so the 0-based slot is ip - 1.
+    let mut ip = 1 + index * dimension;
     let poles_len = poles.len() as i32;
     let mut ptr = 0usize;
     for _i in 0..=length {
@@ -1423,9 +1425,9 @@ fn get_pole(
     for k in 0..dimension {
         set_at(pole, *position, lp[(base + k) as usize]);
         *position += 1;
-        if *position > pole.len() as i32 {
-            *position = 1;
-        }
+    }
+    if *position > pole.len() as i32 {
+        *position = 1;
     }
 }
 
@@ -1451,8 +1453,12 @@ fn boor_scheme(
         let mut pole = firstpole;
         for i in _step..length {
             pole += 2 * dim;
-            let x = (at(knots, i + degree as i32 - _step) - u)
-                / (at(knots, i + degree as i32 - _step) - at(knots, i));
+            // OCCT BoorScheme receives `knots` as a raw 0-based pointer (the
+            // local C array `knots[2*MaxDegree]` filled by BuildKnots):
+            // Knots[i + Degree - step] / Knots[i] index from zero.
+            let upper_knot = knots[(i + degree as i32 - _step) as usize];
+            let lower_knot = knots[i as usize];
+            let x = (upper_knot - u) / (upper_knot - lower_knot);
             let y = 1.0 - x;
             for k in 0..dim {
                 let prev = poles[(pole + k - dim) as usize];
@@ -1635,16 +1641,19 @@ pub fn insert_knots(
         let mut p = curp;
         let mut np = curnp;
         copy_poles(need, &mut p, poles, &mut np, new_poles);
-        curp = p;
-        curnp = np;
+        // OCCT advances arithmetically (L2259-2260) and DISCARDS the wrapped
+        // p/np returned by Copy: `curp += need; curnp += need;`
+        curp += need;
+        curnp += need;
 
         // slice the poles to the current number of poles in case of periodic.
         // npoles view: NewPoles[1..=curnp-1].
+        let slice_len = (curnp - 1).max(0) as usize;
         build_boor(
             index,
             length,
             dimension,
-            &new_poles[..(curnp - 1).max(0) as usize],
+            &new_poles[..slice_len],
             &mut poles_local,
         );
         boor_scheme(u, degree, &knots_local, dimension, &mut poles_local, depth, length);
@@ -1938,6 +1947,8 @@ pub fn increase_degree(
                 let mut n_knots = vec![0.0f64; nbwknots];
                 // OCCT passes wmults as BOTH input mults and output NewMults
                 // (in-place update); clone the input to satisfy borrows.
+                // AddMults == NoMults() (addflat) and Add defaults to true
+                // (BSplCLib.hxx L566).
                 let wmults_in = wmults.clone();
                 insert_knots(
                     cur_deg + 1,
@@ -1952,7 +1963,7 @@ pub fn increase_degree(
                     &mut n_knots,
                     &mut wmults,
                     0.0,
-                    false,
+                    true,
                 );
                 for i in 0..nbwp * dimension {
                     nwpoles[i] += ncurve[i];
@@ -1972,7 +1983,8 @@ pub fn increase_degree(
 
     // copy the results.
     let firstknot = if periodic {
-        (mults.len() as i32 - l) as usize
+        // OCCT: firstknot = Mults.Upper() - l + 1.
+        (mults.len() as i32 - l + 1) as usize
     } else {
         f as usize
     };
