@@ -20,7 +20,7 @@
 use super::plib::eval_polynomial_flat;
 
 /// OCCT BSplCLib::FirstUKnotIndex(Degree, Mults) over (knots, mults) arrays.
-fn first_uknot_index_mults(degree: usize, mults: &[i32]) -> i32 {
+pub fn first_uknot_index_mults(degree: usize, mults: &[i32]) -> i32 {
     let mut index = 1i32;
     let mut sigma = ati(mults, index);
     while sigma <= degree as i32 {
@@ -31,7 +31,7 @@ fn first_uknot_index_mults(degree: usize, mults: &[i32]) -> i32 {
 }
 
 /// OCCT BSplCLib::LastUKnotIndex(Degree, Mults) over (knots, mults) arrays.
-fn last_uknot_index_mults(degree: usize, mults: &[i32]) -> i32 {
+pub fn last_uknot_index_mults(degree: usize, mults: &[i32]) -> i32 {
     let mut index = mults.len() as i32;
     let mut sigma = ati(mults, index);
     while sigma <= degree as i32 {
@@ -1991,4 +1991,432 @@ pub fn increase_degree(
         new_poles[i] = wpoles[pf_idx - 1];
     }
     let _ = dim;
+}
+
+// ---------------------------------------------------------------------------
+// Kernels for Segment / SetNotPeriodic / knot distribution analysis
+// (BSplCLib.cxx), consumed by Geom2d_BSplineCurve operations.
+// ---------------------------------------------------------------------------
+
+/// OCCT BSplCLib::LocateParameter(Degree, Knots, Mults, U, IsPeriodic, FromK1,
+/// ToK2, KnotIndex, NewU) (BSplCLib.cxx L168-185).  Degree and Mults are
+/// unused by OCCT itself (kept for signature parity).
+pub fn locate_parameter_knots_mults(
+    _degree: usize,
+    knots: &[f64],
+    _mults: &[i32],
+    u: f64,
+    is_periodic: bool,
+    from_k1: i32,
+    to_k2: i32,
+    knot_index: &mut i32,
+    new_u: &mut f64,
+) {
+    let (uf, ul) = if is_periodic {
+        (at(knots, 1), at(knots, knots.len() as i32))
+    } else {
+        (0.0f64, 1.0f64)
+    };
+    locate_parameter_main(knots, u, is_periodic, from_k1, to_k2, knot_index, new_u, uf, ul);
+}
+
+/// OCCT BSplCLib::PoleIndex (BSplCLib.cxx L1758-1779).
+pub fn pole_index(degree: usize, index: i32, periodic: bool, mults: &[i32]) -> i32 {
+    let mut pindex = 0i32;
+    for i in 1..=index {
+        pindex += ati(mults, i);
+    }
+    if periodic {
+        pindex -= ati(mults, 1);
+    } else {
+        pindex -= degree as i32 + 1;
+    }
+    pindex
+}
+
+/// OCCT BSplCLib::PrepareInsertKnots (BSplCLib.cxx L1849-2024).  `add_mults
+/// == None` means `addflat` (insert each added knot once).  On success
+/// `nb_poles` / `nb_knots` hold the new curve sizes.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_insert_knots(
+    degree: usize,
+    periodic: bool,
+    knots: &[f64],
+    mults: &[i32],
+    add_knots: &[f64],
+    add_mults: Option<&[i32]>,
+    nb_poles: &mut i32,
+    nb_knots: &mut i32,
+    tolerance: f64,
+    add: bool,
+) -> bool {
+    let addflat = add_mults.is_none();
+    let degree_i = degree as i32;
+    let knots_upper = knots.len() as i32;
+    let add_upper = add_knots.len() as i32;
+
+    let (first, last) = if periodic {
+        (1i32, knots_upper)
+    } else {
+        (
+            first_uknot_index_mults(degree, mults),
+            last_uknot_index_mults(degree, mults),
+        )
+    };
+    let adelta_k1 = at(knots, first) - at(add_knots, 1);
+    let adelta_k2 = at(add_knots, add_upper) - at(knots, last);
+    if adelta_k1 > tolerance {
+        return false;
+    }
+    if adelta_k2 > tolerance {
+        return false;
+    }
+
+    let mut sigma = 0i32;
+    let mut amult;
+    *nb_knots = 0;
+    let mut k = 0i32; // Knots.Lower() - 1
+    let mut ak = 1i32; // AddKnots.Lower()
+
+    if periodic && add_upper > 1 {
+        // gka for case when segments was produced on full period only one knot
+        // was added in the end of curve
+        if adelta_k1.abs() <= GP_RESOLUTION && adelta_k2.abs() <= GP_RESOLUTION {
+            ak += 1;
+        }
+    }
+
+    let mut a_last_knot_mult = ati(mults, knots_upper);
+    let mut au;
+    let mut oldau = at(add_knots, ak);
+    let mut eps;
+
+    while ak <= add_upper {
+        au = at(add_knots, ak);
+        if au < oldau {
+            return false;
+        }
+        oldau = au;
+
+        eps = tolerance.max(epsilon() * au.abs());
+
+        while k < knots_upper && at(knots, k + 1) - au <= eps {
+            k += 1;
+            *nb_knots += 1;
+            sigma += ati(mults, k);
+        }
+
+        if addflat {
+            amult = 1;
+        } else {
+            amult = ati(add_mults.unwrap(), ak).max(0);
+        }
+
+        while ak < add_upper && (au - at(add_knots, ak + 1)).abs() <= eps {
+            ak += 1;
+            if add {
+                if addflat {
+                    amult += 1;
+                } else {
+                    amult += ati(add_mults.unwrap(), ak).max(0);
+                }
+            }
+        }
+
+        if (au - at(knots, k)).abs() <= eps {
+            // identic to existing knot
+            let mult = ati(mults, k);
+            if add {
+                if mult + amult > degree_i {
+                    amult = (degree_i - mult).max(0);
+                }
+                sigma += amult;
+            } else if amult > mult {
+                if amult > degree_i {
+                    amult = degree_i;
+                }
+                if k == knots_upper && periodic {
+                    a_last_knot_mult = amult.max(mult);
+                    sigma += 2 * (a_last_knot_mult - mult);
+                } else {
+                    sigma += amult - mult;
+                }
+            }
+        } else {
+            // not identic to existing knot
+            if amult > 0 {
+                if amult > degree_i {
+                    amult = degree_i;
+                }
+                *nb_knots += 1;
+                sigma += amult;
+            }
+        }
+
+        ak += 1;
+    }
+
+    // count the last knots
+    while k < knots_upper {
+        k += 1;
+        *nb_knots += 1;
+        sigma += ati(mults, k);
+    }
+
+    if periodic {
+        // for periodic B-Spline the requirement is that multiplicities of the
+        // first and last knots must be equal.
+        *nb_poles = sigma - a_last_knot_mult;
+    } else {
+        *nb_poles = sigma - degree_i - 1;
+    }
+
+    true
+}
+
+/// OCCT BSplCLib::PrepareUnperiodize (BSplCLib.cxx L2967-3020).
+pub fn prepare_unperiodize(degree: usize, mults: &[i32], nb_knots: &mut i32, nb_poles: &mut i32) {
+    let degree_i = degree as i32;
+    let l = mults.len() as i32;
+    // initialize NbKnots and NbPoles
+    *nb_knots = l;
+    *nb_poles = -degree_i - 1;
+    for i in 1..=l {
+        *nb_poles += ati(mults, i);
+    }
+
+    let mut sigma;
+    let mut k;
+    // Add knots at the beginning of the curve to raise multiplicities
+    // to Degree + 1.
+    sigma = ati(mults, 1);
+    k = l - 1;
+    while sigma < degree_i + 1 {
+        sigma += ati(mults, k);
+        *nb_poles += ati(mults, k);
+        k -= 1;
+        *nb_knots += 1;
+    }
+    // We must add exactly until Degree + 1 -> suppress the excedent.
+    if sigma > degree_i + 1 {
+        *nb_poles -= sigma - degree_i - 1;
+    }
+
+    // Add knots at the end of the curve to raise multiplicities
+    // to Degree + 1.
+    sigma = ati(mults, l);
+    k = 2;
+    while sigma < degree_i + 1 {
+        sigma += ati(mults, k);
+        *nb_poles += ati(mults, k);
+        k += 1;
+        *nb_knots += 1;
+    }
+    if sigma > degree_i + 1 {
+        *nb_poles -= sigma - degree_i - 1;
+    }
+}
+
+/// OCCT BSplCLib::Unperiodize (BSplCLib.cxx L3024-3080).  The Dimension
+/// parameter is ignored by OCCT (plain pole copy); `poles` / `new_poles` are
+/// flat dimension-strided arrays sized by [`prepare_unperiodize`].
+pub fn unperiodize(
+    degree: usize,
+    mults: &[i32],
+    knots: &[f64],
+    poles: &[f64],
+    new_mults: &mut [i32],
+    new_knots: &mut [f64],
+    new_poles: &mut [f64],
+) {
+    let degree_i = degree as i32;
+    let l = mults.len() as i32;
+    let poles_len = poles.len() as i32;
+    let mut index = 0i32;
+    // evaluation of index : number of knots to insert before knot(1) to
+    // raise sum of multiplicities to <Degree + 1>
+    let mut sigma = ati(mults, 1);
+    let mut k = l - 1;
+    while sigma < degree_i + 1 {
+        sigma += ati(mults, k);
+        k -= 1;
+        index += 1;
+    }
+
+    let period = at(knots, l) - at(knots, 1);
+
+    // set the 'interior' knots;
+    for k in 1..=l {
+        set_at(new_knots, k + index, at(knots, k));
+        set_ati(new_mults, k + index, ati(mults, k));
+    }
+
+    // set the 'starting' knots;
+    for k in 1..=index {
+        set_at(new_knots, k, at(new_knots, k + l - 1) - period);
+        set_ati(new_mults, k, ati(new_mults, k + l - 1));
+    }
+    set_ati(new_mults, 1, ati(new_mults, 1) - (sigma - degree_i - 1));
+
+    // set the 'ending' knots;
+    sigma = ati(new_mults, index + l);
+    let new_upper = new_knots.len() as i32;
+    for k in (l + index + 1)..=new_upper {
+        set_at(new_knots, k, at(new_knots, k - l + 1) + period);
+        set_ati(new_mults, k, ati(new_mults, k - l + 1));
+        sigma += ati(new_mults, k - l + 1);
+    }
+    let nm_upper = new_mults.len() as i32;
+    set_ati(new_mults, nm_upper, ati(new_mults, nm_upper) - (sigma - degree_i - 1));
+
+    for k in 1..=(new_poles.len() as i32) {
+        set_at(new_poles, k, at(poles, (k - 1) % poles_len + 1));
+    }
+}
+
+/// OCCT GeomAbs_BSplKnotDistribution.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GeomAbsKnotDistribution {
+    NonUniform,
+    Uniform,
+    QuasiUniform,
+    PiecewiseBezier,
+    PiecewiseBezierAndPeriodic,
+}
+
+/// OCCT BSplCLib_KnotDistribution (internal KnotForm result).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KnotFormDist {
+    Uniform,
+    NonUniform,
+}
+
+/// OCCT BSplCLib_MultDistribution (internal MultForm result).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MultFormDist {
+    Constant,
+    NonConstant,
+    QuasiConstant,
+}
+
+/// OCCT BSplCLib::KnotForm (BSplCLib.cxx L602-632).
+fn knot_form(knots: &[f64], from_k1: i32, to_k2: i32) -> KnotFormDist {
+    if from_k1 + 1 > knots.len() as i32 {
+        return KnotFormDist::Uniform;
+    }
+
+    let mut a_ui = at(knots, from_k1).abs();
+    let mut a_uj = at(knots, from_k1 + 1).abs();
+    let mut a_du0 = (a_uj - a_ui).abs();
+    let mut an_eps = epsilon() * a_ui + epsilon() * a_uj + epsilon() * a_du0;
+
+    for i in (from_k1 + 1)..to_k2 {
+        a_ui = at(knots, i).abs();
+        a_uj = at(knots, i + 1).abs();
+        let a_du1 = (a_uj - a_ui).abs();
+
+        if (a_du1 - a_du0).abs() > an_eps {
+            return KnotFormDist::NonUniform;
+        }
+
+        a_du0 = a_du1;
+        an_eps = epsilon() * a_ui + epsilon() * a_uj + epsilon() * a_du0;
+    }
+
+    KnotFormDist::Uniform
+}
+
+/// OCCT BSplCLib::MultForm (BSplCLib.cxx L636-685).
+fn mult_form(mults: &[i32], from_k1: i32, to_k2: i32) -> MultFormDist {
+    let a_first = from_k1.min(to_k2);
+    let a_last = from_k1.max(to_k2);
+
+    if a_first + 1 > mults.len() as i32 {
+        return MultFormDist::Constant;
+    }
+
+    let a_first_mult = ati(mults, a_first);
+    let mut a_form = MultFormDist::Constant;
+    let mut a_mult = ati(mults, a_first + 1);
+
+    let mut i = a_first + 1;
+    while i <= a_last && a_form != MultFormDist::NonConstant {
+        if i == a_first + 1 {
+            if a_mult != a_first_mult {
+                a_form = MultFormDist::QuasiConstant;
+            }
+        } else if i == a_last {
+            if matches!(a_form, MultFormDist::QuasiConstant) {
+                if a_first_mult != ati(mults, i) {
+                    a_form = MultFormDist::NonConstant;
+                }
+            } else if a_mult != ati(mults, i) {
+                a_form = MultFormDist::NonConstant;
+            }
+        } else {
+            if a_mult != ati(mults, i) {
+                a_form = MultFormDist::NonConstant;
+            }
+            a_mult = ati(mults, i);
+        }
+        i += 1;
+    }
+
+    a_form
+}
+
+/// OCCT BSplCLib::KnotAnalysis (BSplCLib.cxx L692-755).
+pub fn knot_analysis(
+    degree: usize,
+    periodic: bool,
+    knots: &[f64],
+    mults: &[i32],
+    knot_form_out: &mut GeomAbsKnotDistribution,
+    max_knot_mult: &mut i32,
+) {
+    let degree_i = degree as i32;
+    *knot_form_out = GeomAbsKnotDistribution::NonUniform;
+
+    let k_set = knot_form(knots, 1, knots.len() as i32);
+
+    if matches!(k_set, KnotFormDist::Uniform) {
+        match mult_form(mults, 1, mults.len() as i32) {
+            MultFormDist::NonConstant => {}
+            MultFormDist::Constant => {
+                if knots.len() == 2 {
+                    *knot_form_out = GeomAbsKnotDistribution::PiecewiseBezier;
+                } else if ati(mults, 1) == 1 {
+                    *knot_form_out = GeomAbsKnotDistribution::Uniform;
+                }
+            }
+            MultFormDist::QuasiConstant => {
+                if ati(mults, 1) == degree_i + 1 {
+                    let m = ati(mults, 2);
+                    if m == degree_i {
+                        *knot_form_out = GeomAbsKnotDistribution::PiecewiseBezier;
+                    } else if m == 1 {
+                        *knot_form_out = GeomAbsKnotDistribution::QuasiUniform;
+                    }
+                }
+            }
+        }
+    }
+
+    let first_km = if periodic {
+        1i32
+    } else {
+        first_uknot_index_mults(degree, mults)
+    };
+    let last_km = if periodic {
+        knots.len() as i32
+    } else {
+        last_uknot_index_mults(degree, mults)
+    };
+    *max_knot_mult = 0;
+    if last_km - first_km != 1 {
+        for i in (first_km + 1)..last_km {
+            let multi = ati(mults, i);
+            *max_knot_mult = (*max_knot_mult).max(multi);
+        }
+    }
 }
