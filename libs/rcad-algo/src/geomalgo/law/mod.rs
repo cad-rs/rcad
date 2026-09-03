@@ -5,10 +5,12 @@
 //! Law_BSpline (Law_BSpline.cxx L26-1768), Law_BSpFunc, Law_BSplineKnotSplitting,
 //! Law_Interpolate (plus the standalone Law_Linear / Law_S).
 
+pub mod law_bspline;
 pub mod law_composite;
 pub mod law_constant;
 pub mod law_function;
 
+pub use law_bspline::LawBSpline;
 pub use law_composite::LawComposite;
 pub use law_constant::LawConstant;
 pub use law_function::{LawFunction, LawFunctionHandle};

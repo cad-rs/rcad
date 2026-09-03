@@ -2495,3 +2495,325 @@ pub fn reparametrize(u1: f64, u2: f64, knots: &mut [f64]) {
         }
     }
 }
+
+
+/// OCCT BSplCLib::AntiBoorScheme (BSplCLib.cxx L1075-1160) — the Boor scheme
+/// reverted, used by knot removal.
+fn anti_boor_scheme(
+    u: f64,
+    degree: usize,
+    knots: &[f64],
+    dimension: usize,
+    poles: &mut [f64],
+    depth: i32,
+    length: i32,
+    tolerance: f64,
+) -> bool {
+    let degree_i = degree as i32;
+    let mut z;
+    // firstpole = &Poles + (Depth - 1) * Dimension.
+    let mut firstpole = ((depth - 1) * dimension as i32) as usize;
+    // Test the special case length = 1: only verification of the central
+    // point.
+    if length == 1 {
+        let x = (knots[degree as usize] - u) / (knots[degree as usize] - knots[0]);
+        let y = 1.0 - x;
+        for k in 0..dimension {
+            z = x * poles[firstpole + k] + y * poles[firstpole + k + 2 * dimension];
+            if (z - poles[firstpole + k + dimension]).abs() > tolerance {
+                return false;
+            }
+        }
+        return true;
+    }
+    // General case: the steps of recursion.
+    let mut step = depth - 1;
+    while step >= 0 {
+        firstpole = (firstpole as i32 - dimension as i32) as usize;
+        let mut pole = firstpole as i32;
+        // first step from left to right
+        let mut i = step;
+        while i < length - 1 {
+            pole += 2 * dimension as i32;
+            let pu = pole as usize;
+            let x = (knots[(i + degree_i - step) as usize] - u)
+                / (knots[(i + degree_i - step) as usize] - knots[i as usize]);
+            let y = 1.0 - x;
+            for k in 0..dimension {
+                poles[pu + k + dimension] =
+                    (poles[pu + k] - x * poles[(pu as i32 - dimension as i32) as usize + k]) / y;
+            }
+            i += 1;
+        }
+        // second step from right to left
+        pole += 4 * dimension as i32;
+        let half_length = (length - 1 + step) / 2;
+        // only do half of the way from right to left, otherwise it starts
+        // degenerating because of overflows.
+        let mut i = length - 1;
+        while i > half_length {
+            pole -= 2 * dimension as i32;
+            let pu = pole as usize;
+            // coefficient
+            let x = (knots[(i + degree_i - step) as usize] - u)
+                / (knots[(i + degree_i - step) as usize] - knots[i as usize]);
+            let y = 1.0 - x;
+            for k in 0..dimension {
+                z = (poles[pu + k] - y * poles[pu + k + dimension]) / x;
+                if (z - poles[(pu as i32 - dimension as i32) as usize + k]).abs() > tolerance {
+                    return false;
+                }
+                let below = (pu as i32 - dimension as i32) as usize;
+                poles[below + k] += z;
+                poles[below + k] /= 2.0;
+            }
+            i -= 1;
+        }
+        step -= 1;
+    }
+    true
+}
+
+/// OCCT BSplCLib::RemoveKnot (BSplCLib.cxx L2355-2495) — knot removal
+/// through the anti Boor scheme.  `poles` use the flat representation with
+/// the given `dimension`.
+#[allow(clippy::too_many_arguments)]
+pub fn remove_knot(
+    index: usize,
+    mult: i32,
+    degree: usize,
+    periodic: bool,
+    dimension: usize,
+    poles: &[f64],
+    knots: &[f64],
+    mults: &[i32],
+    new_poles: &mut [f64],
+    new_knots: &mut [f64],
+    new_mults: &mut [i32],
+    tolerance: f64,
+) -> bool {
+    let degree_i = degree as i32;
+    let mut the_index = index as i32;
+    // protection
+    let (first, last) = if periodic {
+        (1i32, knots.len() as i32)
+    } else {
+        (
+            first_uknot_index_mults(degree, mults) + 1,
+            last_uknot_index_mults(degree, mults) - 1,
+        )
+    };
+    if the_index < first {
+        return false;
+    }
+    if the_index > last {
+        return false;
+    }
+    if periodic && the_index == first {
+        the_index = last;
+    }
+    let depth = ati(mults, the_index) - mult;
+    let length = degree_i - mult;
+
+    // ------------------------------------
+    // build the knots for anti Boor Scheme
+    // ------------------------------------
+    let mut knots_local = vec![0.0f64; (4 * degree) as usize];
+    build_knots_local(degree, the_index - 1, periodic, knots, Some(mults), &mut knots_local);
+    let mut index_pole = pole_index(degree, the_index - 1, periodic, mults);
+    build_knots_local(
+        degree,
+        the_index,
+        periodic,
+        knots,
+        Some(mults),
+        &mut knots_local[(2 * degree) as usize..],
+    );
+    index_pole += mult;
+    for i in 0..(degree_i - mult) {
+        knots_local[i as usize] = knots_local[(i + mult) as usize];
+    }
+    for i in (degree_i - mult)..(2 * degree_i) {
+        knots_local[i as usize] = knots_local[(2 * degree_i + i) as usize];
+    }
+
+    // ------------------------------------
+    // build the poles for anti Boor Scheme
+    // ------------------------------------
+    let mut p = index_pole * dimension as i32;
+    let mut poles_local = vec![0.0f64; ((2 * degree_i + 1) * dimension as i32) as usize];
+    for i in 0..=(length + depth) {
+        let j = boor_index(i, length, depth) * dimension as i32;
+        for k in 0..dimension {
+            poles_local[(j + k as i32) as usize] = at(poles, p + k as i32);
+        }
+        p += dimension as i32;
+        if p > poles.len() as i32 {
+            p = 1;
+        }
+    }
+
+    // ----------------
+    // Anti Boor Scheme
+    // ----------------
+    let result = anti_boor_scheme(
+        at(knots, the_index),
+        degree,
+        &knots_local,
+        dimension,
+        &mut poles_local,
+        depth,
+        length,
+        tolerance,
+    );
+
+    // ----------------
+    // copy the results
+    // ----------------
+    if result {
+        let mut p = 1i32;
+        let mut np = 1i32;
+        // unmodified poles before
+        let count = (index_pole + 1) * dimension as i32;
+        for _ in 0..count {
+            new_poles[(np - 1) as usize] = at(poles, p);
+            p += 1;
+            np += 1;
+        }
+        // modified
+        for i in 1..=length {
+            let base = (boor_index(i, length, 0) * dimension as i32) as usize;
+            for k in 0..dimension {
+                new_poles[(np - 1) as usize] = poles_local[base + k];
+                np += 1;
+            }
+            if np > new_poles.len() as i32 {
+                np = 1;
+            }
+        }
+        p += (length + depth) * dimension as i32;
+        // unmodified poles after
+        if p != 1 {
+            let i = poles.len() as i32 - p + 1;
+            for _ in 0..i {
+                new_poles[(np - 1) as usize] = at(poles, p);
+                p += 1;
+                np += 1;
+            }
+        }
+        // knots and mults
+        if mult > 0 {
+            new_knots.copy_from_slice(knots);
+            new_mults.copy_from_slice(mults);
+            new_mults[(the_index - 1) as usize] = mult;
+            if periodic {
+                if the_index == first {
+                    new_mults[(last - 1) as usize] = mult;
+                }
+                if the_index == last {
+                    new_mults[(first - 1) as usize] = mult;
+                }
+            }
+        } else if !periodic || (the_index != first && the_index != last) {
+            for i in 1..the_index {
+                new_knots[(i - 1) as usize] = at(knots, i);
+                new_mults[(i - 1) as usize] = ati(mults, i);
+            }
+            for i in (the_index + 1)..=(knots.len() as i32) {
+                new_knots[(i - 2) as usize] = at(knots, i);
+                new_mults[(i - 2) as usize] = ati(mults, i);
+            }
+        } else {
+            // The interesting case of a Periodic curve where the first and
+            // last knot is removed.
+            for i in first..(last - 1) {
+                new_knots[(i - 1) as usize] = at(knots, i + 1);
+                new_mults[(i - 1) as usize] = ati(mults, i + 1);
+            }
+            new_knots[(last - 2) as usize] =
+                at(new_knots, first) + at(knots, last) - at(knots, first);
+            new_mults[(last - 2) as usize] = new_mults[(first - 1) as usize];
+        }
+    }
+    result
+}
+
+/// OCCT BSplCLib::Resolution (BSplCLib.cxx L4316-4825) — the parametric
+/// tolerance corresponding to `tolerance3d`.  Only the `default` switch
+/// branch (ArrayDimension = 1, used by Law_BSpline) is exercised; the
+/// specialized 2/3/4-dimensional branches are anchor-out-of-scope.
+pub fn resolution(
+    array_dimension: usize,
+    poles: &[f64],
+    weights: Option<&[f64]>,
+    flat_knots: &[f64],
+    degree: usize,
+    tolerance3d: f64,
+) -> f64 {
+    assert!(
+        array_dimension == 1,
+        "BSplCLib::Resolution: only ArrayDimension 1 is ported"
+    );
+    let deg1 = degree as i32 + 1;
+    let num_poles = (flat_knots.len() as i32 - deg1) as usize;
+    let mut max_derivative = 0.0f64;
+    match weights {
+        Some(wg) => {
+            let mut min_weights = wg[0];
+            for ii in 1..num_poles {
+                let w = wg[ii];
+                if w < min_weights {
+                    min_weights = w;
+                }
+            }
+            for ii in 1..num_poles {
+                let ii_index = ii % num_poles;
+                let ii_minus = (ii - 1) % num_poles;
+                let inverse = 1.0
+                    / (at(flat_knots, ii as i32 + degree as i32) - at(flat_knots, ii as i32));
+                for jj in 0..num_poles {
+                    let jj_index = jj % num_poles;
+                    let mut value = 0.0f64;
+                    let factor = ((poles[jj_index] - poles[ii_index]) * wg[ii_index])
+                        - ((poles[jj_index] - poles[ii_minus]) * wg[ii_minus]);
+                    value += factor.abs();
+                    value *= inverse;
+                    if max_derivative < value {
+                        max_derivative = value;
+                    }
+                }
+            }
+            max_derivative /= min_weights;
+        }
+        None => {
+            for ii in 1..num_poles {
+                let ii_index = ii % num_poles;
+                let ii_minus = (ii - 1) % num_poles;
+                let inverse = 1.0
+                    / (at(flat_knots, ii as i32 + degree as i32) - at(flat_knots, ii as i32));
+                let factor = poles[ii_index] - poles[ii_minus];
+                let mut value = factor.abs();
+                value *= inverse;
+                if max_derivative < value {
+                    max_derivative = value;
+                }
+            }
+        }
+    }
+    max_derivative *= degree as f64;
+    if max_derivative > real_small() {
+        tolerance3d / max_derivative
+    } else {
+        tolerance3d / real_small()
+    }
+}
+
+
+/// OCCT BSplCLib::MaxKnotMult — the maximum multiplicity in [K1, K2].
+pub fn max_knot_mult(mults: &[i32], k1: i32, k2: i32) -> i32 {
+    let mut max_mult = 0i32;
+    for i in k1..=k2 {
+        max_mult = max_mult.max(ati(mults, i));
+    }
+    max_mult
+}
