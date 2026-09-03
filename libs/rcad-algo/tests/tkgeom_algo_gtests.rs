@@ -28,6 +28,11 @@
 //!     segments plus the no-intersection zero-segments case.
 //!   GeomPlate_BuildPlateSurface_Test.cxx — the empty-Perform OCC525 state
 //!     and the stale-result clearing after Init() + empty Perform().
+//!   GeomFill_BSplineCurves_Test.cxx — the OCC28131 boundary setup at the
+//!     GeomFill level: chained-boundary fill, non-joined rejection, the
+//!     CoonsStyle pole-count guard and the two-curve ruled fill.  The OCCT
+//!     BRep-level assertions (BRepCheck / BRepOffset / ShapeFix) await those
+//!     toolkits.
 //!
 //! 1:1 translations of the OCCT tests against the rcad OCCT-aligned APIs.
 
@@ -3108,5 +3113,155 @@ mod geom_plate_build_plate_surface_tests {
             a_builder.surface().is_none(),
             "Surface must be null after Init() + empty Perform()"
         );
+    }
+}
+
+// GeomFill_BSplineCurves_Test.cxx — OCC28131 boundary setup at the GeomFill
+// level.  The OCCT test drives BRepBuilderAPI_MakeFace / BRepCheck_Analyzer /
+// BRepOffset (PerformBySimple and Skin+ShapeFix); those toolkits are not
+// ported yet, so the ported assertions cover the GeomFill_BSplineCurves
+// contract: a chained 3-boundary fill succeeds, non-joined boundaries are
+// rejected, CoonsStyle requires at least 4 poles per direction and the
+// two-curve CurvedStyle fill produces the translated pole grid.
+mod geom_fill_bspline_curves_tests {
+    use super::*;
+    use rcad_algo::geomalgo::geomfill::{BSplineCurves, FillingStyle};
+    use rcad_kernel::geom::{BSplineCurve3, BSplineSurface};
+
+    fn bezier_curve(poles: Vec<DVec3>) -> BSplineCurve3 {
+        // OCCT: Geom_BezierCurve(poles) == BSpline degree n, knots {0,1},
+        // mults {n+1, n+1} (GeomConvert::CurveToBSplineCurve form).
+        let n = poles.len() as i32 - 1;
+        BSplineCurve3::from_knots_mults(n as usize, vec![0.0, 1.0], vec![n + 1, n + 1], poles)
+    }
+
+    // createOCC28131Face boundary data: the cubic Bezier outline
+    // aV0=(-17.6,0,0) -> aV1=(0,32.8,0), and two side curves meeting at
+    // (0, 0, -(8.5+8.5/2)) (the OCCT interpolated sides, rebuilt as explicit
+    // BSplines because Geom2dAPI_Interpolate / GeomAPI::To3d are not ported).
+    fn occ28131_curves() -> (BSplineCurve3, BSplineCurve3, BSplineCurve3) {
+        let a_height = 8.5;
+        let a_v0 = DVec3::new(-17.6, 0.0, 0.0);
+        let a_v1 = DVec3::new(0.0, 32.8, 0.0);
+        let a_top = DVec3::new(0.0, 0.0, -(a_height + a_height / 2.0));
+
+        // Outline Bezier (exact OCC28131 poles).
+        let outline = bezier_curve(vec![
+            a_v0,
+            DVec3::new(a_v0.x, (5.4 / 13.2) * a_v1.y, 0.0),
+            DVec3::new((6.0 / 6.8) * a_v0.x, a_v1.y, 0.0),
+            a_v1,
+        ]);
+
+        // Side 1: aV1 -> aTop, cubic Hermite-like poles (the OCCT side is a
+        // 2-point tangent-constrained interpolation, i.e. a cubic Bezier).
+        let side1 = bezier_curve(vec![
+            a_v1,
+            a_v1 + DVec3::new(0.0, 0.0, 4.0),
+            a_top + DVec3::new(0.0, 6.0, 0.0),
+            a_top,
+        ]);
+
+        // Side 2: aTop -> aV0, quadratic through 3 points (the OCCT side is
+        // a 3-point interpolation).
+        let side2 = BSplineCurve3::from_knots_mults(
+            2,
+            vec![0.0, 1.0],
+            vec![3, 3],
+            vec![a_top, DVec3::new(-14.0, 0.0, -7.0), a_v0],
+        );
+
+        (outline, side1, side2)
+    }
+
+    // TEST(GeomFill_BSplineCurvesTest,
+    //      OCC28131_FillSurfaceFromBezierAndInterpolatedCurves) — GeomFill
+    // level: the chained fill succeeds and the pole grid keeps the boundary
+    // poles exactly (the property BRepCheck validates downstream in OCCT).
+    #[test]
+    fn occ28131_boundary_fill_coons_style() {
+        let (c1, c2, c3) = occ28131_curves();
+        let mut a_fill = BSplineCurves::default();
+        a_fill.init3(&c1, &c2, &c3, FillingStyle::CoonsStyle);
+
+        let surface = a_fill.surface().expect("fill surface must be built");
+        let grid = &surface.control_points;
+
+        // Coons receives (P1, P4, P3, P2): column v=0 keeps CC1 (= outline),
+        // column v=last keeps CC3 (= reversed side2), row u=0 keeps CC4
+        // (the degenerate curve collapsed at aV0), row u=last keeps CC2
+        // (= side1).
+        let v0_column: Vec<DVec3> = grid.iter().map(|row| row[0]).collect();
+        assert_eq!(v0_column, c1.control_points, "v=0 boundary must be the outline");
+        // Init raises side2 to the outline degree before harmonizing knots
+        // (OCCT L289-307), so the boundary poles are the elevated ones (the
+        // curve geometry is unchanged by the elevation).
+        let mut expected_side2 = c3.reversed();
+        expected_side2.increase_degree(3);
+        let vlast_column: Vec<DVec3> = grid
+            .iter()
+            .map(|row| row[row.len() - 1])
+            .collect();
+        assert_eq!(
+            vlast_column,
+            expected_side2.control_points,
+            "v=last boundary must be the degree-elevated reversed side2"
+        );
+        for pole in &grid[0] {
+            assert_eq!(*pole, DVec3::new(-17.6, 0.0, 0.0), "u=0 row is the degenerate aV0 curve");
+        }
+        assert_eq!(grid[grid.len() - 1], c2.control_points, "u=last row must be side1");
+    }
+
+    // OCCT: Standard_ConstructionError "Courbes non jointives" via Arrange.
+    #[test]
+    #[should_panic(expected = "Courbes non jointives")]
+    fn occ28131_nonjoined_curves_rejected() {
+        let (c1, c2, _c3) = occ28131_curves();
+        // A far-away fourth curve breaks the contour chaining.
+        let stray = BSplineCurve3::from_knots_mults(
+            1,
+            vec![0.0, 1.0],
+            vec![2, 2],
+            vec![DVec3::new(100.0, 100.0, 100.0), DVec3::new(110.0, 100.0, 100.0)],
+        );
+        BSplineCurves::new(&c1, &c2, &stray, &stray, FillingStyle::CoonsStyle);
+    }
+
+    // OCCT: ConstructionError "invalid filling style" when CoonsStyle gets
+    // fewer than 4 poles per direction.
+    #[test]
+    #[should_panic(expected = "invalid filling style")]
+    fn coons_style_requires_four_poles() {
+        let line = |a: DVec3, b: DVec3| {
+            BSplineCurve3::from_knots_mults(1, vec![0.0, 1.0], vec![2, 2], vec![a, b])
+        };
+        let c1 = line(DVec3::new(0.0, 0.0, 0.0), DVec3::new(4.0, 0.0, 0.0));
+        let c2 = line(DVec3::new(4.0, 0.0, 0.0), DVec3::new(4.0, 3.0, 0.0));
+        let c3 = line(DVec3::new(4.0, 3.0, 0.0), DVec3::new(0.0, 3.0, 0.0));
+        let c4 = line(DVec3::new(0.0, 3.0, 0.0), DVec3::new(0.0, 0.0, 0.0));
+        BSplineCurves::new(&c1, &c2, &c3, &c4, FillingStyle::CoonsStyle);
+    }
+
+    // OCCT two-curve Init with CurvedStyle: the fill is the translation of
+    // C1 along the C2 pole differences (GeomFill_Curved::Init(P1, P2)).
+    #[test]
+    fn two_curve_curved_style_translated_surface() {
+        let line = |a: DVec3, b: DVec3| {
+            BSplineCurve3::from_knots_mults(1, vec![0.0, 1.0], vec![2, 2], vec![a, b])
+        };
+        let c1 = line(DVec3::new(0.0, 0.0, 0.0), DVec3::new(4.0, 0.0, 0.0));
+        let c2 = line(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 3.0, 2.0));
+        let a_fill = BSplineCurves::new2(&c1, &c2, FillingStyle::CurvedStyle);
+
+        let surface = a_fill.surface().expect("fill surface must be built");
+        assert_eq!(surface.degree_u, 1);
+        assert_eq!(surface.degree_v, 1);
+        for (i, row) in surface.control_points.iter().enumerate() {
+            for (j, pole) in row.iter().enumerate() {
+                let expected = c1.control_points[i] + (c2.control_points[j] - c2.control_points[0]);
+                assert_eq!(*pole, expected, "translated pole ({i},{j})");
+            }
+        }
     }
 }
