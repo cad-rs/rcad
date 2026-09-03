@@ -26,6 +26,8 @@
 //!     zero-subdivision clamp and the TriConnex no-crash guarantees.
 //!   Intf_Tool_Test.cxx — Hypr2dBox/Parab2dBox/ParabBox/HyprBox valid
 //!     segments plus the no-intersection zero-segments case.
+//!   GeomPlate_BuildPlateSurface_Test.cxx — the empty-Perform OCC525 state
+//!     and the stale-result clearing after Init() + empty Perform().
 //!
 //! 1:1 translations of the OCCT tests against the rcad OCCT-aligned APIs.
 
@@ -3041,5 +3043,70 @@ mod plate_plate_tests {
         assert_eq!(a_result.x, 0.0);
         assert_eq!(a_result.y, 0.0);
         assert_eq!(a_result.z, 0.0);
+    }
+}
+
+// GeomPlate_BuildPlateSurface_Test.cxx
+mod geom_plate_build_plate_surface_tests {
+    use super::*;
+    use rcad_algo::geomalgo::geomplate::{BuildPlateSurface, PointConstraint};
+
+    // TEST(GeomPlate_BuildPlateSurface, OCC525_PerformWithoutConstraints)
+    #[test]
+    fn occ525_perform_without_constraints() {
+        let mut a_builder = BuildPlateSurface::default();
+        a_builder.perform();
+
+        // TODO: IsDone() returns true due to Plate_Plate::Init() setting
+        // OK=true, which is semantically wrong. Fixing this (finding #30)
+        // caused regressions in blend/filling DRAW tests. Needs investigation.
+        assert!(a_builder.is_done());
+        assert!(
+            a_builder.surface().is_none(),
+            "Surface should be null when Perform() is called without constraints"
+        );
+    }
+
+    // TEST(GeomPlate_BuildPlateSurface, Perform_ClearsStaleResult)
+    // Regression test for bug #19: Surface() must be null after failed
+    // recomputation. After Init() + empty Perform(), stale surface must not
+    // be observable.
+    #[test]
+    fn perform_clears_stale_result() {
+        let mut a_builder = BuildPlateSurface::new(3, 10, 3, 1.0e-5, 1.0e-4, 0.01, 0.1, false);
+
+        // Add point constraints and solve.
+        // OCCT two-argument PointConstraint ctor: default TolDist = 0.0001.
+        a_builder.add_point_constraint(PointConstraint::new(
+            DVec3::new(0.0, 0.0, 0.0),
+            0,
+            0.0001,
+        ));
+        a_builder.add_point_constraint(PointConstraint::new(
+            DVec3::new(1.0, 0.0, 0.0),
+            0,
+            0.0001,
+        ));
+        a_builder.add_point_constraint(PointConstraint::new(
+            DVec3::new(0.0, 1.0, 0.0),
+            0,
+            0.0001,
+        ));
+        a_builder.add_point_constraint(PointConstraint::new(
+            DVec3::new(1.0, 1.0, 0.1),
+            0,
+            0.0001,
+        ));
+        a_builder.perform();
+
+        // Init clears constraints, then Perform with no constraints must
+        // produce null surface (not stale result from the previous solve).
+        a_builder.init();
+        a_builder.perform();
+        assert!(a_builder.is_done());
+        assert!(
+            a_builder.surface().is_none(),
+            "Surface must be null after Init() + empty Perform()"
+        );
     }
 }
