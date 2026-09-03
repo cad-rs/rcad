@@ -380,6 +380,16 @@ impl ChFiDSSurfData {
         }
     }
 
+    /// OCCT .cxx ChangeIndexOfS1(Index).
+    pub fn change_index_of_s1(&mut self, index: i32) {
+        self.index_of_s1 = index;
+    }
+
+    /// OCCT .cxx ChangeIndexOfS2(Index).
+    pub fn change_index_of_s2(&mut self, index: i32) {
+        self.index_of_s2 = index;
+    }
+
     /// OCCT .cxx Index(OfS).
     pub fn index_of(&self, of_s: i32) -> i32 {
         if of_s == 1 {

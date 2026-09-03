@@ -2885,7 +2885,7 @@ impl ChFi3dBuilder {
         (ped, ded.normalize())
     }
 
-    /// OCCT ChFi3d_Builder_SpKP.cxx L749-... — SplitKPart.
+    /// OCCT ChFi3d_Builder_SpKP.cxx L749-... - SplitKPart.
     ///
     /// The Geom2dHatch hatcher (2D trimming of the tangency lines against
     /// the face restrictions) is a pending TKGeomAlgo translation; the
@@ -2894,14 +2894,23 @@ impl ChFi3dBuilder {
     /// boundary.
     #[allow(clippy::too_many_arguments)]
     fn split_k_part(
-        &self,
-        data: &ChFiDSSurfData,
+        &mut self,
+        data: &mut ChFiDSSurfData,
         set_data: &mut Vec<ChFiDSSurfData>,
+        s1: &Shape,
+        s2: &Shape,
         _spine: &mut ChFiDSSpineHandle,
         _iedge: usize,
         _intf: bool,
         _intl: bool,
     ) -> bool {
+        // OCCT SpKP.cxx L856-871: F1/F2 from the adaptor handles are
+        // registered in the DS and stored on the SurfData.
+        let f1 = s1.clone();
+        let f2 = s2.clone();
+        let dstr = self.my_ds.as_mut().expect("DS");
+        data.change_index_of_s1(dstr.add_shape(&f1));
+        data.change_index_of_s2(dstr.add_shape(&f2));
         // OCCT L762-855: Geom2dHatch_Hatcher trim of InterferenceOnS1/S2
         // pcurves — pending; the multi-domain redistribution below it is
         // unreachable in the pending state.  The pending state follows the
@@ -2977,7 +2986,7 @@ impl ChFi3dBuilder {
                 );
                 if !compute_ok {
                     // OCCT L3071-3072: empty else — the SD is dropped.
-                } else if !self.split_k_part(&sd, &mut lsd, &mut spine, iedge, intf, intl) {
+                } else if !self.split_k_part(&mut sd, &mut lsd, &hs1, &hs2, &mut spine, iedge, intf, intl) {
                     lsd.clear();
                 } else {
                     iedgelastkpart = iedge;
@@ -3284,6 +3293,10 @@ mod kpart_tests {
         assert_eq!(st.my_hdata.len(), 1, "one KPart SurfData expected");
         let sd = &st.my_hdata[0];
         assert!(sd.surf_index >= 1, "surface registered in the DS");
+        assert!(
+            sd.index_of_s1 >= 1 && sd.index_of_s2 >= 1,
+            "support faces registered in the DS (SpKP L870-871)"
+        );
         let surf = &fillet.base.my_ds.as_ref().unwrap().surfaces[sd.surf_index as usize - 1];
         assert!(
             matches!(surf, rcad_kernel::geom::Surface3::Cylinder(c) if (c.radius - 2.0).abs() < 1e-9),
