@@ -1111,3 +1111,243 @@ impl TopOpeBRepBuildPaveSet {
         self.prepare_done = true;
     }
 }
+
+// =========================================================================
+// OCCT TopOpeBRepBuild_PaveClassifier (PaveClassifier.hxx + .cxx L35-392).
+// =========================================================================
+#[derive(Debug, Clone)]
+pub struct TopOpeBRepBuildPaveClassifier {
+    my_edge: Shape,
+    my_edge_periodic: bool,
+    my_same_parameters: bool,
+    my_closed_vertices: bool,
+    my_first: f64,
+    my_period: f64,
+    my_o1: Orientation,
+    my_o2: Orientation,
+    my_p1: f64,
+    my_p2: f64,
+    my_cas1: i32,
+    my_cas2: i32,
+}
+
+impl TopOpeBRepBuildPaveClassifier {
+    /// OCCT PaveClassifier.cxx L35-98 — PaveClassifier(E).
+    pub fn new(brep: &rcad_kernel::topods::BRep, e: &Shape) -> Self {
+        let mut pc = TopOpeBRepBuildPaveClassifier {
+            my_edge: e.clone(),
+            my_edge_periodic: false,
+            my_same_parameters: false,
+            my_closed_vertices: false,
+            my_first: 0.0,
+            my_period: 0.0,
+            my_o1: Orientation::Forward,
+            my_o2: Orientation::Forward,
+            my_p1: 0.0,
+            my_p2: 0.0,
+            my_cas1: 0,
+            my_cas2: 0,
+        };
+
+        if !brep.is_edge_degenerated(&pc.my_edge) {
+            let Some((c, f, l)) = brep.edge_curve_world(&pc.my_edge) else {
+                return pc;
+            };
+            if c.is_periodic() {
+                let ed = pc.my_edge.as_edge().expect("not an edge");
+                let v1 = ed.first.clone();
+                let v2 = ed.last.clone(); // v1 FORWARD, v2 REVERSED
+                if !v1.is_null() && !v2.is_null() {
+                    // --- the edge has vertices.
+                    pc.my_first = f;
+                    let domain = c.default_domain();
+                    let f_c = domain[0];
+                    let l_c = domain[1];
+                    pc.my_period = l_c - f_c;
+                    pc.my_edge_periodic = v1.is_same(&v2);
+                    pc.my_same_parameters = v1.is_same(&v2);
+                    if pc.my_same_parameters {
+                        pc.my_first = brep_tool_parameter(brep, &v1, &pc.my_edge);
+                    }
+                } else {
+                    // --- the edge has no vertices.
+                    pc.my_first = f;
+                    pc.my_period = l - f;
+                    pc.my_edge_periodic = true;
+                    pc.my_same_parameters = false;
+                }
+            }
+        } // ! degenerated
+        pc
+    }
+
+    /// OCCT PaveClassifier.cxx L102-177 — CompareOnNonPeriodic.
+    pub fn compare_on_non_periodic(&self) -> TopAbsState {
+        let mut state = TopAbsState::Unknown;
+        let lower;
+        match self.my_o2 {
+            Orientation::Forward => lower = false,
+            Orientation::Reversed => lower = true,
+            Orientation::Internal => {
+                state = TopAbsState::In;
+                lower = false;
+            }
+            Orientation::External => {
+                state = TopAbsState::Out;
+                lower = false;
+            }
+        }
+
+        if state == TopAbsState::Unknown {
+            if self.my_p1 == self.my_p2 {
+                if self.my_o1 == self.my_o2 {
+                    state = TopAbsState::In;
+                } else {
+                    state = TopAbsState::Out;
+                }
+            } else if self.my_p1 < self.my_p2 {
+                state = if lower {
+                    TopAbsState::In
+                } else {
+                    TopAbsState::Out
+                };
+            } else {
+                state = if lower {
+                    TopAbsState::Out
+                } else {
+                    TopAbsState::In
+                };
+            }
+        }
+
+        state
+    }
+
+    /// OCCT PaveClassifier.cxx L181-217 — AdjustCase.
+    #[allow(clippy::too_many_arguments)]
+    pub fn adjust_case(p1: f64, o: Orientation, first: f64, period: f64, tol: f64, cas: &mut i32) -> f64 {
+        let p2;
+        if (p1 - first).abs() < tol {
+            // p1 is first.
+            if o == Orientation::Reversed {
+                p2 = p1 + period;
+                *cas = 1;
+            } else {
+                p2 = p1;
+                *cas = 2;
+            }
+        } else {
+            // p1 is not on first.
+            let last = first + period;
+            if (p1 - last).abs() < tol {
+                // p1 is on last.
+                p2 = p1;
+                *cas = 3;
+            } else {
+                // p1 is not on last.
+                p2 = super::chfi_ds::elclib_in_period(p1, first, last);
+                *cas = 4;
+            }
+        }
+        p2
+    }
+
+    /// OCCT PaveClassifier.cxx L266-270 — ToAdjustOnPeriodic.
+    pub fn to_adjust_on_periodic(&self) -> bool {
+        self.my_same_parameters || (self.my_o1 != self.my_o2)
+    }
+
+    /// OCCT PaveClassifier.cxx L221-262 — AdjustOnPeriodic.
+    pub fn adjust_on_periodic(&mut self) {
+        if !self.to_adjust_on_periodic() {
+            return;
+        }
+
+        let tol = 1.0e-9; // OCCT Precision::PConfusion()
+
+        if self.my_same_parameters {
+            let mut p1 = self.my_p1;
+            let mut p2 = self.my_p2;
+            p1 = Self::adjust_case(p1, self.my_o1, self.my_first, self.my_period, tol, &mut self.my_cas1);
+            p2 = Self::adjust_case(p2, self.my_o2, self.my_first, self.my_period, tol, &mut self.my_cas2);
+            self.my_p1 = p1;
+            self.my_p2 = p2;
+        } else if self.my_o1 != self.my_o2 {
+            if self.my_o1 == Orientation::Forward {
+                self.my_p2 = Self::adjust_case(
+                    self.my_p2,
+                    self.my_o2,
+                    self.my_p1,
+                    self.my_period,
+                    tol,
+                    &mut self.my_cas2,
+                );
+            }
+            if self.my_o2 == Orientation::Forward {
+                self.my_p1 = Self::adjust_case(
+                    self.my_p1,
+                    self.my_o1,
+                    self.my_p2,
+                    self.my_period,
+                    tol,
+                    &mut self.my_cas1,
+                );
+            }
+        }
+    }
+
+    /// OCCT PaveClassifier.cxx L274-309 — CompareOnPeriodic.
+    pub fn compare_on_periodic(&mut self) -> TopAbsState {
+        let state;
+        if self.to_adjust_on_periodic() {
+            state = self.compare_on_non_periodic();
+        } else if self.my_o1 == Orientation::Forward {
+            state = TopAbsState::Out;
+            self.my_cas1 = 5;
+            self.my_cas2 = 5;
+        } else if self.my_o1 == Orientation::Reversed {
+            state = TopAbsState::Out;
+            self.my_cas1 = 6;
+            self.my_cas2 = 6;
+        } else {
+            state = TopAbsState::Out;
+            self.my_cas1 = 7;
+            self.my_cas2 = 7;
+        }
+        state
+    }
+
+    /// OCCT PaveClassifier.cxx L313-362 — Compare(L1, L2).
+    pub fn compare(&mut self, pv1: &TopOpeBRepBuildPave, pv2: &TopOpeBRepBuildPave) -> TopAbsState {
+        self.my_cas1 = 0; // debug
+        self.my_cas2 = 0; // debug
+        self.my_o1 = pv1.vertex().orientation;
+        self.my_o2 = pv2.vertex().orientation;
+        self.my_p1 = pv1.parameter();
+        self.my_p2 = pv2.parameter();
+
+        if self.my_edge_periodic && self.to_adjust_on_periodic() {
+            self.adjust_on_periodic();
+        }
+
+        if self.my_edge_periodic {
+            self.compare_on_periodic()
+        } else {
+            self.compare_on_non_periodic()
+        }
+    }
+
+    /// OCCT PaveClassifier.cxx L366-375 — SetFirstParameter(P).
+    pub fn set_first_parameter(&mut self, p: f64) {
+        self.my_first = p;
+        self.my_same_parameters = true;
+    }
+
+    /// OCCT PaveClassifier.cxx L379-392 — ClosedVertices(Closed).
+    pub fn set_closed_vertices(&mut self, closed: bool) {
+        self.my_closed_vertices = closed;
+        if closed {
+            self.my_edge_periodic = true;
+        }
+    }
+}
