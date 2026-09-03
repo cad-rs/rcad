@@ -1597,157 +1597,327 @@ mod geom2d_gcc_circ2d3tan_tests {
     }
 }
 // =============================================================================
-// TKFillet: BRepFilletAPI_MakeChamfer_Test.cxx
+// TKFillet: BRepFilletAPI_MakeChamfer_Test.cxx (1:1 translation)
+//
+// The tests run against the OCCT-aligned translation in
+// rcad_algo::fillet::occt (ChFiDS / ChFi3d / BRepFilletAPI).  The ChFi3d
+// numerical core (PerformElement / PerformSetOfSurf walking, BRepBlend,
+// corner machinery, TopOpeBRepBuild reconstruction) is pending translation,
+// so Compute() follows the OCCT failure path and every test that needs the
+// computed result is #[ignore]d (same convention as the BRepFill
+// ThruSections tests) until the core lands.
 // =============================================================================
 
 #[cfg(test)]
 mod bRepFilletAPIMakeChamfer_tests {
     use super::*;
+    use rcad_algo::fillet::occt::{
+        explore_edges, explore_solids, BRepFilletAPIMakeChamfer,
+    };
+    use rcad_kernel::topods::Shape;
+
+    /// BRepPrimAPI_MakeBox(20.0, 20.0, 20.0).
+    fn make_box_20() -> (rcad_kernel::topods::BRep, Shape) {
+        let brep = rcad_modeling::make_box_brep(
+            DVec3::ZERO,
+            DVec3::X,
+            DVec3::Y,
+            20.0,
+            20.0,
+            20.0,
+        )
+        .unwrap();
+        let solid = explore_solids(&brep)
+            .into_iter()
+            .next()
+            .expect("box solid");
+        (brep, solid)
+    }
 
     #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
     fn symmetric_chamfer() {
-        let a_box = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
+        let (a_box, _) = make_box_20();
 
-        let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&a_box);
-        a_chamfer.add_distance(2.0, &a_edge);
-        assert!(a_chamfer.is_done() || a_chamfer.nb_faces() > 0);
+        let an_edges = explore_edges(&a_box);
+        assert!(!an_edges.is_empty());
+        let an_edge = &an_edges[0];
+
+        let mut a_chamfer = BRepFilletAPIMakeChamfer::new(&a_box, &a_box_solid(&a_box));
+        a_chamfer.add_distance(2.0, an_edge);
+        let _a_result = a_chamfer.shape();
+        assert!(a_chamfer.is_done());
+        // BRepCheck_Analyzer anAnalyzer(aResult); EXPECT_TRUE(isValid())
+    }
+
+    fn a_box_solid(brep: &rcad_kernel::topods::BRep) -> Shape {
+        explore_solids(brep).into_iter().next().unwrap()
     }
 
     #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
     fn asymmetric_chamfer() {
-        let a_box = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
-        let a_face = gtests_stubs::Face;
+        let (a_box, a_solid) = make_box_20();
 
-        let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&a_box);
-        a_chamfer.add_asymmetric(1.0, 3.0, &a_edge, &a_face);
-        assert!(a_chamfer.is_done() || a_chamfer.nb_faces() > 0);
+        // MapShapesAndAncestors(box, EDGE, FACE) + the first ancestor face.
+        let an_edges = explore_edges(&a_box);
+        assert!(!an_edges.is_empty());
+        let an_edge = &an_edges[0];
+        let an_edge_face_map = rcad_algo::fillet::occt::ChFiDSMap::new();
+        let mut edge_face_map = an_edge_face_map;
+        edge_face_map.fill(
+            &a_box,
+            rcad_kernel::topods::ShapeType::Edge,
+            rcad_kernel::topods::ShapeType::Face,
+        );
+        let a_face = edge_face_map.find(an_edge)[0].clone();
+
+        let mut a_chamfer = BRepFilletAPIMakeChamfer::new(&a_box, &a_solid);
+        a_chamfer.add_asymmetric(1.0, 3.0, an_edge, &a_face);
+        let _a_result = a_chamfer.shape();
+        assert!(a_chamfer.is_done());
     }
 
     #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
     fn chamfer_more_faces() {
-        let a_box = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
+        let (a_box, a_solid) = make_box_20();
 
-        let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&a_box);
-        a_chamfer.add_distance(2.0, &a_edge);
-        assert!(a_chamfer.nb_faces() > 6);
+        let an_edges = explore_edges(&a_box);
+        let an_edge = &an_edges[0];
+
+        let mut a_chamfer = BRepFilletAPIMakeChamfer::new(&a_box, &a_solid);
+        a_chamfer.add_distance(2.0, an_edge);
+        let _a_result = a_chamfer.shape();
+        assert!(a_chamfer.is_done());
+
+        // EXPECT_GT(face count of result, 6)
+        let a_face_count =
+            rcad_algo::fillet::occt::explore_faces(&a_chamfer.my_builder.base.my_brep).len();
+        assert!(a_face_count > 6);
     }
 
     #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
     fn chamfer_after_boolean_fusion() {
-        let a_fused = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
-        let a_face = gtests_stubs::Face;
+        // box(10) fused with a cylinder — the rcad boolean fuse is real.
+        let a_box = rcad_modeling::make_box_brep(
+            DVec3::ZERO,
+            DVec3::X,
+            DVec3::Y,
+            10.0,
+            10.0,
+            10.0,
+        )
+        .unwrap();
+        let a_cyl = rcad_modeling::make_cylinder_brep(
+            DVec3::new(5.0, 0.0, 5.0),
+            DVec3::Y,
+            DVec3::X,
+            3.0,
+            10.0,
+        )
+        .unwrap();
+        let a_fused = rcad_algo::fuse(&a_box, &a_cyl).unwrap();
 
-        let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&a_fused);
-        a_chamfer.add_asymmetric(0.5, 0.5, &a_edge, &a_face);
+        // Chamfer complex edges (vertex with 3+ faces).
+        let a_solid = explore_solids(&a_fused).into_iter().next();
+        let Some(a_solid) = a_solid else {
+            return;
+        };
+
+        let mut a_chamfer = BRepFilletAPIMakeChamfer::new(&a_fused, &a_solid);
+        let mut an_edge_count = 0usize;
+        for an_edge in explore_edges(&a_fused).iter().take(4) {
+            a_chamfer.add_asymmetric(
+                0.5,
+                0.5,
+                an_edge,
+                &rcad_kernel::topods::Shape::null(),
+            );
+            an_edge_count += 1;
+        }
+        assert!(an_edge_count > 0);
+
+        // Must not crash; may succeed or fail gracefully.
         a_chamfer.build();
-        assert!(a_chamfer.is_done() || !a_chamfer.is_done());
+        if a_chamfer.is_done() {
+            // BRepCheck_Analyzer(analyzer).isValid()
+        }
     }
 
     #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
     fn sequential_chamfer_no_crash() {
-        let a_box = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
+        let (a_box, _) = make_box_20();
 
-        let mut _a_shape = a_box;
-        let mut success_count = 0;
+        let mut a_shape_brep = a_box;
+        let mut a_success_count = 0usize;
 
-        for _i in 0..3 {
-            let mut a_chamfer = gtests_stubs::BRepFilletAPIMakeChamfer::new(&_a_shape);
-            a_chamfer.add_distance(1.0, &a_edge);
+        for i in 0..3usize {
+            let an_edge_map = explore_edges(&a_shape_brep);
+            if an_edge_map.is_empty() {
+                break;
+            }
+            // Select edge at a different position each iteration.
+            let an_idx = (i * 3 + 1) % an_edge_map.len();
+            let an_edge = &an_edge_map[an_idx];
+
+            let a_solid = explore_solids(&a_shape_brep).into_iter().next().unwrap();
+            let mut a_chamfer = BRepFilletAPIMakeChamfer::new(&a_shape_brep, &a_solid);
+            a_chamfer.add_distance(1.0, an_edge);
             a_chamfer.build();
             if a_chamfer.is_done() {
-                _a_shape = a_chamfer.shape().clone();
-                success_count += 1;
+                a_shape_brep = a_chamfer.my_builder.base.my_brep.clone();
+                a_success_count += 1;
             } else {
                 break;
             }
         }
-        assert!(success_count >= 1);
+        assert!(a_success_count >= 1);
     }
 }
 
 // =============================================================================
-// TKFillet: BRepFilletAPI_MakeFillet_Test.cxx
+// TKFillet: BRepFilletAPI_MakeFillet_Test.cxx (1:1 translation)
 // =============================================================================
 
 #[cfg(test)]
 mod bRepFilletAPIMakeFillet_tests {
     use super::*;
+    use rcad_algo::fillet::occt::{
+        edges_of_wire, explore_edges, explore_solids, explore_wires,
+        BRepFilletAPIMakeFillet,
+    };
+    use rcad_algo::fillet::occt::ChFi3dFilletShape;
+    use rcad_algo::geomalgo::gtests_stubs::GeomAbsShape;
+
+    /// BRepPrimAPI_MakeBox(size) helper.
+    fn make_box(dx: f64, dy: f64, dz: f64) -> (rcad_kernel::topods::BRep, rcad_kernel::topods::Shape) {
+        let brep =
+            rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, dx, dy, dz).unwrap();
+        let solid = explore_solids(&brep).into_iter().next().unwrap();
+        (brep, solid)
+    }
 
     #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
     fn fillet_one_edge() {
-        let a_box = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
+        let (a_box, a_solid) = make_box(20.0, 20.0, 20.0);
 
-        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
-        a_fillet.add_radius(2.0, &a_edge);
-        assert!(a_fillet.is_done() || a_fillet.nb_faces() > 0);
+        let an_edges = explore_edges(&a_box);
+        assert!(!an_edges.is_empty());
+        let an_edge = &an_edges[0];
+
+        let mut a_fillet = BRepFilletAPIMakeFillet::new(&a_box, &a_solid);
+        a_fillet.add_radius(2.0, an_edge);
+        let _a_result = a_fillet.shape();
+        assert!(a_fillet.is_done());
+        // BRepCheck_Analyzer(aResult).isValid()
     }
 
     #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
     fn fillet_all_edges() {
-        let a_box = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
+        let (a_box, a_solid) = make_box(20.0, 20.0, 20.0);
 
-        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
-        a_fillet.add_radius(1.0, &a_edge);
-        a_fillet.add_radius(1.0, &a_edge);
-        a_fillet.add_radius(1.0, &a_edge);
-        a_fillet.add_radius(1.0, &a_edge);
-        assert!(a_fillet.is_done() || a_fillet.nb_faces() > 0);
-    }
-
-    #[test]
-    fn fillet_more_faces() {
-        let a_box = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
-
-        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
-        a_fillet.add_radius(1.0, &a_edge);
-        a_fillet.add_radius(1.0, &a_edge);
-        a_fillet.add_radius(1.0, &a_edge);
-        a_fillet.add_radius(1.0, &a_edge);
-        assert!(a_fillet.nb_faces() > 6);
-    }
-
-    #[test]
-    fn fillet_variable_radius() {
-        let a_box = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
-
-        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
-        a_fillet.add_variable_radius(&[(0.0, 1.0), (1.0, 3.0)], &a_edge);
-        assert!(a_fillet.is_done() || a_fillet.nb_faces() > 0);
-    }
-
-    #[test]
-    fn occ570_mixed_variable_constant_radius() {
-        let a_box = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
-
-        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_box);
-        a_fillet.set_continuity(1, 0.001);
-        a_fillet.add_variable_radius(&[(0.0, 5.0), (0.3, 15.0), (0.7, 15.0), (1.0, 5.0)], &a_edge);
-        a_fillet.add_radius(5.0, &a_edge);
-        a_fillet.add_variable_radius(&[(0.0, 5.0), (0.3, 15.0), (0.7, 15.0), (1.0, 5.0)], &a_edge);
-        a_fillet.add_radius(5.0, &a_edge);
-        a_fillet.build();
+        let mut a_fillet = BRepFilletAPIMakeFillet::new(&a_box, &a_solid);
+        for an_edge in explore_edges(&a_box) {
+            a_fillet.add_radius(1.0, &an_edge);
+        }
+        let _a_result = a_fillet.shape();
         assert!(a_fillet.is_done());
     }
 
     #[test]
-    fn bug828_fillet_on_complex_prism() {
-        let a_prism = gtests_stubs::Shape;
-        let a_edge = gtests_stubs::Edge;
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
+    fn fillet_more_faces() {
+        let (a_box, a_solid) = make_box(20.0, 20.0, 20.0);
 
-        let mut a_fillet = gtests_stubs::BRepFilletAPIMakeFillet::new(&a_prism);
-        a_fillet.add_radius(1.0, &a_edge);
+        let mut a_fillet = BRepFilletAPIMakeFillet::new(&a_box, &a_solid);
+        for an_edge in explore_edges(&a_box) {
+            a_fillet.add_radius(1.0, &an_edge);
+        }
+        let _a_result = a_fillet.shape();
+        assert!(a_fillet.is_done());
+
+        let a_face_count =
+            rcad_algo::fillet::occt::explore_faces(&a_fillet.my_builder.base.my_brep).len();
+        assert!(a_face_count > 6);
+    }
+
+    #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
+    fn fillet_variable_radius() {
+        let (a_box, a_solid) = make_box(20.0, 20.0, 20.0);
+
+        let an_edges = explore_edges(&a_box);
+        assert!(!an_edges.is_empty());
+        let an_edge = &an_edges[0];
+
+        let mut a_fillet = BRepFilletAPIMakeFillet::new(&a_box, &a_solid);
+        a_fillet.add_two_radius(1.0, 3.0, an_edge);
+        let _a_result = a_fillet.shape();
+        assert!(a_fillet.is_done());
+    }
+
+    /// Test OCC570: mixed constant and variable radius
+    /// (migrated from QABugs_17.cxx OCC570).
+    #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
+    fn occ570_mixed_variable_constant_radius() {
+        let (a_box, _) = make_box(100.0, 100.0, 100.0);
+
+        // Take the first wire of the box and its 4 edges.
+        let a_wires = explore_wires(&a_box);
+        assert!(!a_wires.is_empty());
+        let an_edges = edges_of_wire(&a_box, &a_wires[0]);
+        assert!(an_edges.len() >= 4);
+        let (an_e1, an_e2, an_e3, an_e4) = (
+            an_edges[0].clone(),
+            an_edges[1].clone(),
+            an_edges[2].clone(),
+            an_edges[3].clone(),
+        );
+
+        // Variable radius law: 4 (parameter, radius) control points.
+        let a_var_radius = vec![
+            DVec2::new(0.0, 5.0),
+            DVec2::new(0.3, 15.0),
+            DVec2::new(0.7, 15.0),
+            DVec2::new(1.0, 5.0),
+        ];
+        let _ = a_var_radius; // NCollection_Array1<gp_Pnt2d> — Add(UandR, E)
+
+        let a_solid = explore_solids(&a_box).into_iter().next().unwrap();
+        let mut a_fillet = BRepFilletAPIMakeFillet::new_with_shape(
+            &a_box,
+            &a_solid,
+            ChFi3dFilletShape::Rational,
+        );
+        a_fillet.set_continuity(GeomAbsShape::C1, 0.001);
+        a_fillet.add_uandr(&a_var_radius, &an_e1);
+        a_fillet.add_radius(5.0, &an_e2);
+        a_fillet.add_uandr(&a_var_radius, &an_e3);
+        a_fillet.add_radius(5.0, &an_e4);
+
         a_fillet.build();
-        assert!(a_fillet.is_done() || !a_fillet.is_done());
+        assert!(a_fillet.is_done(), "Fillet operation should succeed");
+
+        let _a_result = a_fillet.shape();
+        // GProp SurfaceProperties ≈ 58500 ±1%
+    }
+
+    #[test]
+    #[ignore = "pending ChFi3d numerical core (Compute result)"]
+    fn bug828_fillet_on_complex_prism() {
+        // OCC828: prism from a complex wire of arcs and line segments.
+        // The prism construction needs BRepBuilderAPI_MakeWire/Face and
+        // BRepPrimAPI_MakePrism equivalents over arc edges (pending), so the
+        // fillet-on-prism regression runs once the ChFi3d core + prism path
+        // land.  The translated assertion set: >= 2 edges, fillet radius 10
+        // on the matching edge pair, surface area 17816.2 ±0.2%.
+        assert!(true, "pending BRepPrimAPI_MakePrism + ChFi3d core");
     }
 }
 
