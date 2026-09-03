@@ -47,8 +47,7 @@ pub use super::topopebrepds::{
     TopOpeBRepDSSurface, TopOpeBRepDSSurfaceCurveInterference, TopOpeBRepDSTransition,
 };
 
-#[derive(Debug, Clone, Default)]
-pub struct TopOpeBRepBuildHBuilder;
+pub type TopOpeBRepBuildHBuilder = super::topopebrepbuild::TopOpeBRepBuildBuilder;
 
 // =========================================================================
 // OCCT ChFi3d_Builder member fields (ChFi3d_Builder.hxx L741-763, L841-846)
@@ -142,7 +141,7 @@ impl ChFi3dBuilder {
             bad_shape: None,
         };
         b.my_ds = Some(TopOpeBRepDSHDataStructure::default());
-        b.my_coup = Some(TopOpeBRepBuildHBuilder);
+        b.my_coup = Some(TopOpeBRepBuildHBuilder::default());
         // myEFMap.Fill(S, TopAbs_EDGE, TopAbs_FACE);  (L354)
         b.my_ef_map.fill(&brep, topods::ShapeType::Edge, topods::ShapeType::Face);
         // myESoMap.Fill(S, TopAbs_EDGE, TopAbs_SOLID);  (L355)

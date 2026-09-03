@@ -13,6 +13,7 @@ pub mod chfi3d_builder_spkp;
 pub mod chfi_ds;
 pub mod chfi_kpart;
 pub mod fillet;
+pub mod topopebrepbuild;
 pub mod topopebrepds;
 
 pub use fillet::make_fillet_edge;
