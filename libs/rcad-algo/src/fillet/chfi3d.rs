@@ -3465,16 +3465,16 @@ impl ChFi3dBuilder {
                     if nba > 3 {
                         // OCCT: PerformIntersectionAtEnd(Index) — pending.
                         self.perform_intersection_at_end_pending();
-                        return false;
+                        return true;
                     } else if self.more_surfdata(index) {
                         // OCCT: PerformMoreSurfdata(Index) — pending.
                         self.perform_more_surfdata_pending();
-                        return false;
+                        return true;
                     }
-                    // OCCT: PerformOneCorner(Index) — pending
+                    // OCCT: PerformOneCorner(Index)
                     // (ChFi3d_Builder_C1.cxx L611).
-                    self.perform_one_corner_pending();
-                    false
+                    self.perform_one_corner(index, false);
+                    true
                 }
                 2 => {
                     if nba > 3 {
@@ -3530,10 +3530,6 @@ impl ChFi3dBuilder {
 
     fn perform_more_surfdata_pending(&mut self) {
         // OCCT ChFi3d_Builder_C1.cxx L3771 PerformMoreSurfdata — pending.
-    }
-
-    fn perform_one_corner_pending(&mut self) {
-        // OCCT ChFi3d_Builder_C1.cxx L611 PerformOneCorner — pending.
     }
 
     fn perform_two_corner_pending(&mut self) {

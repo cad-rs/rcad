@@ -8,6 +8,7 @@ pub mod brep_fillet_api;
 pub mod chfi3d;
 pub mod chfi3d_builder_0;
 pub mod chfi3d_builder_0_filds;
+pub mod chfi3d_builder_c1;
 pub mod chfi_ds;
 pub mod chfi_kpart;
 pub mod fillet;

@@ -885,6 +885,25 @@ impl BRepAdaptorSurface {
         &self.surface
     }
 
+    /// OCCT L834-851: BRE.MakeFace(FFv, Sface, tol) + Bs.Initialize(FFv,
+    /// false) builds a bare face over the (possibly extended) surface and
+    /// loads the adaptor from it.  rcad carries the surface directly on the
+    /// adaptor; the bare-face construction collapses into this constructor
+    /// (architecture note, chfi3d_builder_c1).
+    pub fn initialize_surface(surface: Surface3) -> Self {
+        let (b, _, _, _, _) = surface_natural_bounds(&surface);
+        BRepAdaptorSurface {
+            brep: topods::BRep::default(),
+            face: Shape::null(),
+            surface,
+            ufirst: b[0],
+            ulast: b[1],
+            vfirst: b[2],
+            vlast: b[3],
+            bounds_set: false,
+        }
+    }
+
     /// OCCT BRepAdaptor_Surface::GeomSurfaceOriginal()/FirstUParameter...
     pub fn value(&self, u: f64, v: f64) -> DVec3 {
         use rcad_kernel::geom::SurfaceEval as _;

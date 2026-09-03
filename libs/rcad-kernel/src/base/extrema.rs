@@ -1857,6 +1857,61 @@ pub fn ext_cc_line_conic(
     ExtCCResult { interior, corners }
 }
 
+/// OCCT `Extrema_LocateExtCC(C1, C2, U1, U2)` — the local extremum of two
+/// curves refined by Newton from the seed parameters (Extrema_LocateExtCC
+/// does not perform a global search; it converges from the seeds).
+/// Returns `(par1, par2, point1, point2)` or None when the Newton walk
+/// leaves the curves' natural domains.
+pub fn extrema_locate_ext_cc(
+    c1: &Curve3,
+    c2: &Curve3,
+    seed1: f64,
+    seed2: f64,
+) -> Option<(f64, f64, DVec3, DVec3)> {
+    use crate::geom::CurveEval as _;
+    let dom1 = curve_domain(c1);
+    let dom2 = curve_domain(c2);
+    let (mut s, mut t) = (seed1.clamp(dom1[0], dom1[1]), seed2.clamp(dom2[0], dom2[1]));
+    let h = H_CC;
+    for _ in 0..MAX_ITER_CC {
+        let p1 = c1.point_at(s);
+        let p2 = c2.point_at(t);
+        let diff = p1 - p2;
+        let d1 = c1.derivative_at(s);
+        let d2 = c2.derivative_at(t);
+        // Gradient of |P1(s) - P2(t)|^2.
+        let g = [2.0 * diff.dot(d1), -2.0 * diff.dot(d2)];
+        if g[0].hypot(g[1]) < GRAD_TOL_CC {
+            break;
+        }
+        // Diagonal Hessian (positive terms of d^2/ds^2, d^2/dt^2).
+        let dd1 = (c1.derivative_at(s + h) - c1.derivative_at(s - h)) / (2.0 * h);
+        let dd2 = (c2.derivative_at(t + h) - c2.derivative_at(t - h)) / (2.0 * h);
+        let h11 = 2.0 * (d1.dot(d1) + diff.dot(dd1));
+        let h22 = 2.0 * (d2.dot(d2) - diff.dot(dd2));
+        let ds = -g[0] / (h11.abs().max(1e-30) * h11.signum());
+        let dt = -g[1] / (h22.abs().max(1e-30) * h22.signum());
+        let mut alpha = 1.0f64;
+        let f0 = diff.length_squared();
+        let (mut ns, mut nt) = (s, t);
+        for _ in 0..8 {
+            ns = (s + alpha * ds).clamp(dom1[0], dom1[1]);
+            nt = (t + alpha * dt).clamp(dom2[0], dom2[1]);
+            if (c1.point_at(ns) - c2.point_at(nt)).length_squared() < f0 {
+                break;
+            }
+            alpha *= 0.5;
+        }
+        let step = (ns - s).hypot(nt - t);
+        s = ns;
+        t = nt;
+        if step < PARAM_TOL_CC {
+            break;
+        }
+    }
+    Some((s, t, c1.point_at(s), c2.point_at(t)))
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
