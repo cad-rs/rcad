@@ -158,3 +158,21 @@ pub fn elslib_torus_value(
     let radial = u.cos() * x_ax + u.sin() * y_ax;
     center + (major_radius + minor_radius * v.cos()) * radial + minor_radius * v.sin() * axis
 }
+
+/// OCCT ElCLib::InPeriod (ElCLib.cxx L95-111) — the value of U in the
+/// periodic range [UFirst, ULast].
+pub fn in_period(u: f64, ufirst: f64, ulast: f64) -> f64 {
+    // In order to avoid FLT_Overflow exception.
+    if !u.is_finite() || !ufirst.is_finite() || !ulast.is_finite() {
+        return u;
+    }
+
+    let period = ulast - ufirst;
+
+    // OCCT: aPeriod < Epsilon(theULast), Epsilon(V) = relative machine eps.
+    if period < f64::EPSILON * ulast.abs() {
+        return u;
+    }
+
+    (ufirst).max(u + period * ((ufirst - u) / period).ceil())
+}

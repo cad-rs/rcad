@@ -25,6 +25,7 @@ pub mod gtests_stubs; // Stubs for OCCT GTest translations (minimal impls to com
 pub mod plate;       // Plate (variational spline plate: constraints + Plate_Plate solver)
 pub mod geomplate;   // GeomPlate (plate surface building on top of Plate)
 pub mod geomfill;    // GeomFill (BSplineCurves filling: Stretch/Coons/Curved)
+pub mod law;         // Law (evolution laws: Function/Constant/Composite)
 
 pub use int_polyh::IntPolyhPoint;
 pub use top_trans::surface_transition::SurfaceTransition;
