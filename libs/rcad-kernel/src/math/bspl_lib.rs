@@ -124,31 +124,51 @@ pub fn flat_index(degree: usize, index: usize, mults: &[i32], periodic: bool) ->
     index as usize
 }
 
-/// OCCT BSplCLib::NbPoles(Degree, Periodic, Mults).
+/// OCCT BSplCLib::NbPoles(Degree, Periodic, Mults) (BSplCLib.cxx L392-451).
 pub fn nb_poles(degree: usize, periodic: bool, mults: &[i32]) -> usize {
     let l = mults.len() as i32;
     let mf = ati(mults, 1);
     let ml = ati(mults, l);
-    if mf <= 0 || ml <= 0 {
+    if mf <= 0 {
+        return 0;
+    }
+    if ml <= 0 {
         return 0;
     }
     let degree = degree as i32;
-    let mut sigma = 0i32;
+    let mut sigma;
     if periodic {
-        if mf > degree || ml > degree || mf != ml {
+        if mf > degree {
             return 0;
         }
-        sigma = ml;
-        for i in 2..=(l - 1) {
-            sigma += ati(mults, i);
+        if ml > degree {
+            return 0;
         }
-        sigma += degree;
+        if mf != ml {
+            return 0;
+        }
+        sigma = mf;
     } else {
-        sigma = mf + ml;
-        for i in 2..=(l - 1) {
-            sigma += ati(mults, i);
+        let deg1 = degree + 1;
+        if mf > deg1 {
+            return 0;
         }
-        sigma -= degree + 1;
+        if ml > deg1 {
+            return 0;
+        }
+        sigma = mf + ml - deg1;
+    }
+
+    for i in 1..(l - 1) {
+        // OCCT: pmu[i] = Mults(Mults.Lower() + i), i = 1..(Upper - Lower - 1).
+        let m = ati(mults, 1 + i);
+        if m <= 0 {
+            return 0;
+        }
+        if m > degree {
+            return 0;
+        }
+        sigma += m;
     }
     sigma.max(0) as usize
 }

@@ -7,6 +7,9 @@
 
 use crate::geom::{BSplineCurve2, BezierCurve2, Curve2d};
 
+pub mod bspline_curve;
+pub use bspline_curve::Geom2dBSplineCurve;
+
 /// Split a 2D BSpline curve into Bezier segments.
 ///
 /// OCCT: `Geom2dConvert::BSplineCurveToBezierCurve`.
