@@ -97,6 +97,10 @@ pub struct TopOpeBRepBuildBuilder {
     pub static_solid_index: i32,
     /// OCCT: TopTools_DataMapOfIntegerListOfShape myNewEdges.
     pub my_new_edges: std::collections::HashMap<i32, Vec<Shape>>,
+    /// OCCT: Handle(NCollection_HArray1<ListOfShape>) myNewFaces.
+    pub my_new_faces: std::collections::HashMap<i32, Vec<Shape>>,
+    /// OCCT: TopTools_DataMapOfShapeListOfShape myEdgesForFaces.
+    pub my_edges_for_faces: std::collections::HashMap<u64, Vec<Shape>>,
 
     /// rcad architecture: the BRep the shapes live in (OCCT reads geometry
     /// from shape handles).
@@ -122,6 +126,8 @@ impl Default for TopOpeBRepBuildBuilder {
             my_classify_def: false,
             my_classify_val: false,
             my_new_edges: std::collections::HashMap::new(),
+            my_new_faces: std::collections::HashMap::new(),
+            my_edges_for_faces: std::collections::HashMap::new(),
             my_map1: IndexedShapeMap::default(),
             my_map2: IndexedShapeMap::default(),
             my_list_of_face: Vec::new(),
@@ -2000,5 +2006,86 @@ impl TopOpeBRepBuildBuilder {
         // (TopOpeBRepDS_DataStructure::RemovePoint — pending DS unit; the
         // zero-count entries are tracked here).
         let _ = &tp;
+    }
+}
+
+// =========================================================================
+// OCCT TopOpeBRepBuild_Builder::BuildFaces (BuildFaces.cxx L38-140) — the
+// Perform() pre-processing that turns the DS surfaces into new faces from
+// their curve interferences.
+// =========================================================================
+impl TopOpeBRepBuildBuilder {
+    /// OCCT BuildFaces.cxx L38-103 — BuildFaces(iS, HDS).
+    pub fn build_faces_surface(&mut self, is_: i32) {
+        // const TopOpeBRepDS_Surface& aTBS = HDS->Surface(iS).
+        let (tbs_tol, surface) = {
+            let hds = self.my_data_structure.as_ref().expect("DS");
+            let tbs = hds.surface(is_);
+            (tbs.tolerance(), tbs.surface.clone())
+        };
+
+        // myBuildTool.MakeFace(aFace, aTBS) — the face on the DS surface
+        // (TopOpeBRepDS_BuildTool::MakeFace — pending BRep_Builder unit;
+        // the wire set collects the start elements instead).
+        let a_face = Shape::null();
+        let _ = surface;
+
+        // TopOpeBRepBuild_WireEdgeSet WES(aFace, this) — the start elements
+        // of the face wire set.
+        let mut wes_start_elements: Vec<Shape> = Vec::new();
+
+        // TopOpeBRepDS_CurveIterator SCurves(HDS->SurfaceCurves(iS)) — the
+        // surface interferences of the surface table entry.
+        let surface_curves: Vec<(i32, Orientation, Option<rcad_kernel::geom::Curve2d>)> = {
+            let hds = self.my_data_structure.as_ref().expect("DS");
+            hds.surface_interferences(is_)
+                .iter()
+                .filter_map(|it| {
+                    if let TopOpeBRepDSInterference::SurfaceCurve(sc) = it {
+                        Some((sc.index_g, sc.transition.orientation_in(), sc.pcurve.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        for (ic, ori, pc) in surface_curves {
+            let hds = self.my_data_structure.as_ref().expect("DS");
+            let cds = hds.curve(ic);
+            let _ = cds;
+            // for the NewEdges(iC) list (filled by BuildEdges(iC)).
+            let new_edges = self.my_new_edges.get(&ic).cloned().unwrap_or_default();
+            drop(hds);
+            for mut an_edge in new_edges {
+                // aTBCTol = BRep_Tool::Tolerance(aE); if (aTBCTol <
+                // aTBSTol) aBB.UpdateEdge(aE, aTBSTol) — the edge tolerance
+                // raise (BRep_Builder::UpdateEdge — pending unit).
+                let _ = tbs_tol;
+                // myBuildTool.Orientation(anEdge, ori).
+                an_edge.orientation = ori;
+                // myBuildTool.PCurve(aFace, anEdge, CDS, PC) — the pcurve
+                // binding on the new face (pending BRep_Builder unit; the
+                // pcurve payload is carried by the interference).
+                let _ = &pc;
+                wes_start_elements.push(an_edge);
+            }
+        }
+
+        // TopOpeBRepBuild_FaceBuilder FABU(WES, aFace);
+        // MakeFaces(aFace, FABU, FaceList) — pending FaceBuilder unit.
+        let _face_list: &mut Vec<Shape> = self.my_new_faces.entry(is_).or_default();
+    }
+
+    /// OCCT BuildFaces.cxx L107-140 — BuildFaces(HDS).
+    pub fn build_faces_hds(&mut self) {
+        let n = {
+            let ds = self.my_data_structure.as_ref().expect("DS");
+            ds.surfaces.len() as i32
+        };
+        self.my_new_faces.clear();
+        for is_ in 1..=n {
+            self.build_faces_surface(is_);
+        }
     }
 }
