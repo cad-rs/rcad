@@ -15,6 +15,7 @@
 //! `Length()` becomes `self[i-1]` / `self.len()`).
 
 use glam::{DVec2, DVec3};
+use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::topo::topods::{Orientation, Shape, TEdgeData, TShape};
 use rcad_kernel::topods;
 use std::sync::Arc;
@@ -122,6 +123,13 @@ pub struct ChFiDSElSpine;
 
 #[derive(Debug, Clone)]
 pub struct ChFiDSSurfData;
+
+/// OCCT NCollection_HArray1<ChFiDS_CircSection> — pending ChFiDS_CircSection
+/// translation; ChFi3d_FilBuilder::Sect returns this opaquely.
+pub type ChFiDSCircSectionArray = Vec<ChFiDSCircSection>;
+
+#[derive(Debug, Clone)]
+pub struct ChFiDSCircSection;
 
 // =========================================================================
 // OCCT ChFiDS_CommonPoint.hxx L139-151 — private fields.
@@ -269,7 +277,7 @@ impl ChFiDSSpine {
             offsetspine: Vec::new(),
             abscissa: None,
             offset_abscissa: None,
-            tolesp: 1e-7, // Precision::Confusion()
+            tolesp: CONFUSION, // Precision::Confusion()
             firstparam: 0.0,
             lastparam: 0.0,
             firstprolon: false,
@@ -496,6 +504,15 @@ impl ChFiDSSpine {
     pub fn error_status(&self) -> ChFiDS_ErrorStatus {
         self.errorstate
     }
+
+    /// OCCT ChFiDS_Spine.cxx Absc(const TopoDS_Vertex&) — the abscissa of a
+    /// vertex on the composite spine.  The body runs through Prepare() and
+    /// the BRepAdaptor_Curve composite traversal (pending translation); the
+    /// call sites (SetRadius at a vertex) are marked pending boundaries.
+    pub fn absc_of_vertex(&self, _v: &Shape) -> f64 {
+        // OCCT: double npar = Absc(V); — pending BRepAdaptor_Curve.
+        0.0
+    }
 }
 
 /// OCCT TopExp::FirstVertex(E) — the edge TShape stores its start vertex.
@@ -663,7 +680,7 @@ impl ChFiDSFilSpine {
         }
         let radius = self.parandrad[0].y;
         for i in 1..self.parandrad.len() {
-            if (radius - self.parandrad[i].y).abs() > 1e-7 {
+            if (radius - self.parandrad[i].y).abs() > CONFUSION {
                 return false;
             }
         }
@@ -693,7 +710,7 @@ impl ChFiDSFilSpine {
         while i < self.parandrad.len() {
             let par = self.parandrad[i].x;
             let rad = self.parandrad[i].y;
-            if (rad - start_rad).abs() > 1e-7 {
+            if (rad - start_rad).abs() > CONFUSION {
                 return false;
             }
             if (ul - par).abs() <= f64::MIN_POSITIVE {
@@ -730,7 +747,7 @@ impl ChFiDSFilSpine {
         while i < self.parandrad.len() {
             let par = self.parandrad[i].x;
             let rad = self.parandrad[i].y;
-            if (rad - start_rad).abs() > 1e-7 {
+            if (rad - start_rad).abs() > CONFUSION {
                 panic!("Standard_DomainError: Edge is not constant");
             }
             if (ul - par).abs() <= f64::MIN_POSITIVE {
@@ -750,6 +767,24 @@ impl ChFiDSFilSpine {
             panic!("Standard_DomainError: Spine is not constant");
         }
         self.parandrad[0].y
+    }
+
+    /// OCCT ChFiDS_FilSpine.cxx L309-315.
+    pub fn radius_on_edge(&self, e: &Shape) -> f64 {
+        let ie = self.base.index_of_edge(e);
+        self.radius_on(ie)
+    }
+
+    /// OCCT ChFiDS_FilSpine.cxx L123-130.
+    ///
+    /// The `Absc(V)` spine query (abscissa of a vertex on the composite
+    /// spine curve) depends on the BRepAdaptor_Curve machinery
+    /// (ChFiDS_Spine.cxx Prepare/Absc) that is pending translation, so the
+    /// parameter resolution point is a marked boundary.
+    pub fn set_radius_at_vertex(&mut self, radius: f64, v: &Shape) {
+        let npar = self.base.absc_of_vertex(v);
+        let uandr = DVec2::new(npar, radius);
+        self.set_radius_uandr(uandr, 0);
     }
 }
 

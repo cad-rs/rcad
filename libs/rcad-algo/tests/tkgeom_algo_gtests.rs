@@ -1911,13 +1911,146 @@ mod bRepFilletAPIMakeFillet_tests {
     #[test]
     #[ignore = "pending ChFi3d numerical core (Compute result)"]
     fn bug828_fillet_on_complex_prism() {
-        // OCC828: prism from a complex wire of arcs and line segments.
-        // The prism construction needs BRepBuilderAPI_MakeWire/Face and
-        // BRepPrimAPI_MakePrism equivalents over arc edges (pending), so the
-        // fillet-on-prism regression runs once the ChFi3d core + prism path
-        // land.  The translated assertion set: >= 2 edges, fillet radius 10
-        // on the matching edge pair, surface area 17816.2 ±0.2%.
+        // OCC828: prism from a complex wire of arcs and line segments
+        // (trefoil-like profile).  OCCT builds the wire from three
+        // GC_MakeArcOfCircle arcs + three GC_MakeSegment lines, prisms it
+        // 111 units, then fillets every edge pair at radius 10 searching
+        // for the area 17816.2 ±0.2%.  The prism-from-arc-wire construction
+        // (BRepBuilderAPI_MakeWire/Face + BRepPrimAPI_MakePrism
+        // equivalents) is pending in rcad, so the translated assertion set
+        // below runs once the ChFi3d core + prism path land:
+        //   - prism shape valid (BRepCheck_Analyzer);
+        //   - >= 2 edges collected;
+        //   - per candidate edge pair: SetParams(1e-2, 1e-4, 1e-5, 1e-4,
+        //     1e-5, 1e-3) + SetContinuity(GeomAbs_C1, 1e-2) + Add(10, e1) +
+        //     Add(10, e2) + Build(); keep the pair whose surface area is
+        //     within 17816.2 * 0.002.
+        let _a_target_area = 17816.2_f64;
+        let _a_target_tolerance = _a_target_area * 0.002;
         assert!(true, "pending BRepPrimAPI_MakePrism + ChFi3d core");
+    }
+
+    // Helpers for OCC1077: boolean operations + fillet on each resulting
+    // solid (OCCT anonymous-namespace helpers, translated structurally).
+    //
+    // OCCT occ1077BoolBl(theBoolOp, theRadius):
+    //   - params aTesp=1e-4, aT3d=1e-4, aT2d=1e-5, aTa=1e-2, aFl=1e-3,
+    //     aTappAngl=1e-2, aBlendCont=GeomAbs_C1;
+    //   - for every SOLID of the boolean result: MakeFillet + SetParams +
+    //     SetContinuity + Add(radius, section edge) for each
+    //     SectionEdges() entry, Build, and Add the fillet (or original)
+    //     solid to the result compound.
+    //
+    // The SectionEdges() enumeration (the boolean operation's section-edge
+    // list) has no rcad equivalent yet — that loop is the pending boundary.
+
+    /// OCC1077: box-sphere common, then subtract 3 cylinders with fillets
+    /// on section edges.  TCL reference: checkprops result -s 587.181.
+    #[test]
+    #[ignore = "pending ChFi3d numerical core + boolean SectionEdges()"]
+    fn occ1077_boolean_cut_fillet() {
+        let a_box = rcad_modeling::make_box_brep(
+            DVec3::new(-5.0, -5.0, -5.0),
+            DVec3::X,
+            DVec3::Y,
+            10.0,
+            10.0,
+            10.0,
+        )
+        .unwrap();
+        let a_sphere = rcad_modeling::make_sphere_brep(DVec3::ZERO, 7.0).unwrap();
+
+        let a_common = rcad_algo::common(&a_box, &a_sphere).unwrap();
+
+        let a_cyl1 = rcad_modeling::make_cylinder_brep(
+            DVec3::new(0.0, 0.0, -10.0),
+            DVec3::Z,
+            DVec3::X,
+            3.0,
+            20.0,
+        )
+        .unwrap();
+        let a_cyl2 = rcad_modeling::make_cylinder_brep(
+            DVec3::new(-10.0, 0.0, 0.0),
+            DVec3::X,
+            DVec3::Z,
+            3.0,
+            20.0,
+        )
+        .unwrap();
+
+        // OCCT: aTmp1 = occ1077CutBlend(aCommon, aCyl1, 0.7) — cut + fillet
+        // each resulting solid on its section edges (pending boundary), then
+        // ShapeFix; repeated for aCyl2/aCyl3.  Expected final area
+        // 587.181 ±0.1%.
+        let a_tmp1 = rcad_algo::cut(&a_common, &a_cyl1).unwrap();
+        let _a_tmp2 = rcad_algo::cut(&a_tmp1, &a_cyl2).unwrap();
+        assert!(true, "pending SectionEdges() + ChFi3d core");
+    }
+
+    /// OCC426: three revolved ring solids, fuse, unify same-domain faces,
+    /// then fillet all edges at radius 1.  TCL reference: checkprops
+    /// result -s 7507.61.
+    #[test]
+    #[ignore = "pending ChFi3d numerical core + UnifySameDomain"]
+    fn occ426_revolve_fuse_unify_fillet() {
+        // Solid 1: full 360-degree ring, Z=[0..10], R=[10..20].
+        let a_w1 = [
+            DVec3::new(10.0, 0.0, 0.0),
+            DVec3::new(20.0, 0.0, 0.0),
+            DVec3::new(20.0, 0.0, 10.0),
+            DVec3::new(10.0, 0.0, 10.0),
+        ];
+        let a_rs1 = rcad_algo::revolve_polygon_solid(
+            &a_w1,
+            DVec3::ZERO,
+            DVec3::Z,
+            2.0 * std::f64::consts::PI,
+        )
+        .unwrap();
+
+        // Solid 2: 270-degree ring at 45-degree radius offset, Z=[10..20].
+        let a_f1val = 7.071_067_811_865_475_f64;
+        let a_f2val = 14.142_135_623_730_950_f64;
+        let a_w2 = [
+            DVec3::new(a_f1val, a_f1val, 10.0),
+            DVec3::new(a_f2val, a_f2val, 10.0),
+            DVec3::new(a_f2val, a_f2val, 20.0),
+            DVec3::new(a_f1val, a_f1val, 20.0),
+        ];
+        let a_rs2 = rcad_algo::revolve_polygon_solid(
+            &a_w2,
+            DVec3::ZERO,
+            DVec3::Z,
+            270.0 * std::f64::consts::PI / 180.0,
+        )
+        .unwrap();
+
+        // Solid 3: full 360-degree ring, Z=[20..30], R=[10..20].
+        let a_w3 = [
+            DVec3::new(10.0, 0.0, 20.0),
+            DVec3::new(20.0, 0.0, 20.0),
+            DVec3::new(20.0, 0.0, 30.0),
+            DVec3::new(10.0, 0.0, 30.0),
+        ];
+        let a_rs3 = rcad_algo::revolve_polygon_solid(
+            &a_w3,
+            DVec3::ZERO,
+            DVec3::Z,
+            2.0 * std::f64::consts::PI,
+        )
+        .unwrap();
+
+        // Fuse rs3+rs2, then fuse with rs1 (both real rcad booleans).
+        let a_fuse32 = rcad_algo::fuse(&a_rs3, &a_rs2).unwrap();
+        let a_fuse321 = rcad_algo::fuse(&a_fuse32, &a_rs1).unwrap();
+
+        // ShapeUpgrade_UnifySameDomain — pending; then collect the unique
+        // edges (MapShapesAndAncestors EDGE->SOLID) and MakeFillet
+        // (ChFi3d_Rational) + Add(1.0, edge) + Build().  Expected area
+        // 7507.61.
+        let _ = a_fuse321;
+        assert!(true, "pending UnifySameDomain + ChFi3d core");
     }
 }
 

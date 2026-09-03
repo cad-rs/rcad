@@ -50,7 +50,7 @@ impl BRepFilletAPIMakeFillet {
         fshape: ChFi3dFilletShape,
     ) -> Self {
         BRepFilletAPIMakeFillet {
-            my_builder: ChFi3dFilBuilder::new(brep, s.clone(), fshape, 1.0e-4),
+            my_builder: ChFi3dFilBuilder::new(brep, s.clone(), fshape, 1.0e-2),
             my_shape: None,
             done: false,
             my_generated: Vec::new(),
@@ -155,7 +155,7 @@ impl BRepFilletAPIMakeFillet {
         let r1;
         let r2;
 
-        if (in_r1 - in_r2).abs() < 1e-7 {
+        if (in_r1 - in_r2).abs() < rcad_kernel::core::precision::CONFUSION {
             r1 = (in_r1 + in_r2) * 0.5;
             r2 = r1;
         } else {
@@ -263,18 +263,153 @@ impl BRepFilletAPIMakeFillet {
         self.my_builder.base.generated(eorv)
     }
 
-    /// OCCT L485-488.
-    pub fn nb_faulty_contours(&self) -> usize {
-        self.badstripes_len()
+    /// OCCT L262-265.
+    pub fn set_fillet_shape(&mut self, fshape: ChFi3dFilletShape) {
+        self.my_builder.set_fillet_shape(fshape);
     }
 
-    fn badstripes_len(&self) -> usize {
-        self.my_builder.base.badstripes.len()
+    /// OCCT L269-272.
+    pub fn get_fillet_shape(&self) -> ChFi3dFilletShape {
+        self.my_builder.get_fillet_shape()
+    }
+
+    /// OCCT L211-214.
+    pub fn is_constant_on_edge(&self, ic: usize, e: &Shape) -> bool {
+        self.my_builder.is_constant_on_edge(ic, e)
+    }
+
+    /// OCCT L218-221.
+    pub fn radius_on_edge(&self, ic: usize, e: &Shape) -> f64 {
+        self.my_builder.radius_on_edge(ic, e)
+    }
+
+    /// OCCT L225-228.
+    pub fn set_radius_on_edge(&mut self, radius: f64, ic: usize, e: &Shape) {
+        self.my_builder.set_radius_on_edge(radius, ic, e)
+    }
+
+    /// OCCT L255-258.
+    pub fn set_radius_at_vertex(&mut self, radius: f64, ic: usize, v: &Shape) {
+        self.my_builder.set_radius_at_vertex(radius, ic, v)
+    }
+
+    /// OCCT L232-235.
+    pub fn get_bounds(&self, ic: usize, e: &Shape, f: &mut f64, l: &mut f64) -> bool {
+        self.my_builder.get_bounds(ic, e, f, l)
+    }
+
+    /// OCCT L239-242.
+    pub fn get_law(&self, ic: usize, e: &Shape) -> Option<super::chfi_ds::LawFunction> {
+        self.my_builder.get_law(ic, e)
+    }
+
+    /// OCCT L246-251.
+    pub fn set_law(&mut self, ic: usize, e: &Shape, l: super::chfi_ds::LawFunction) {
+        self.my_builder.set_law(ic, e, l)
+    }
+
+    /// OCCT L336-339.
+    pub fn abscissa(&self, ic: usize, v: &Shape) -> f64 {
+        self.my_builder.base.abscissa(ic, v)
+    }
+
+    /// OCCT L343-346.
+    pub fn relative_abscissa(&self, ic: usize, v: &Shape) -> f64 {
+        self.my_builder.base.relative_abscissa(ic, v)
+    }
+
+    /// OCCT L350-353.
+    pub fn closed_and_tangent(&self, ic: usize) -> bool {
+        self.my_builder.base.closed_and_tangent(ic)
+    }
+
+    /// OCCT L357-360.
+    pub fn closed(&self, ic: usize) -> bool {
+        self.my_builder.base.closed(ic)
+    }
+
+    /// OCCT L364-367.
+    pub fn builder(&self) -> &super::chfi3d::TopOpeBRepBuildHBuilder {
+        self.my_builder.base.my_coup.as_ref().expect("no builder")
+    }
+
+    /// OCCT L399-402 — (myBuilder.Builder()->DataStructure())->NbSurfaces();
+    /// the TopOpeBRepDS surface count is a pending-subsystem query.
+    pub fn nb_surfaces(&self) -> usize {
+        // Pending TopOpeBRepDS_HDataStructure::NbSurfaces translation.
+        0
+    }
+
+    /// OCCT L406-409 — myCoup->NewFaces(I); pending reconstruction.
+    pub fn new_faces(&self, _i: usize) -> &[Shape] {
+        &[]
+    }
+
+    /// OCCT L427-432.
+    pub fn sect(
+        &self,
+        _ic: usize,
+        _is: usize,
+    ) -> Option<super::chfi_ds::ChFiDSCircSectionArray> {
+        // Pending ChFiDS_CircSection / Simul translation.
+        None
+    }
+
+    /// OCCT L443-472 — Modified via myCoup IsSplit/Splits (OUT/IN/ON);
+    /// the split query is a pending-subsystem boundary.
+    pub fn modified(&mut self, _f: &Shape) -> &Vec<Shape> {
+        self.my_generated.clear();
+        &self.my_generated
+    }
+
+    /// OCCT L476-481 — !(myMap.Contains(F) || IsSplit OUT/IN/ON).
+    pub fn is_deleted(&self, f: &Shape) -> bool {
+        !(self.my_map.contains(&f.ptr_id()))
+    }
+
+    /// OCCT L485-488.
+    pub fn nb_faulty_contours(&self) -> usize {
+        self.my_builder.base.nb_faulty_contours()
+    }
+
+    /// OCCT L492-495.
+    pub fn faulty_contour(&self, i: usize) -> usize {
+        self.my_builder.base.faulty_contour(i)
+    }
+
+    /// OCCT L499-502.
+    pub fn nb_computed_surfaces(&self, ic: usize) -> usize {
+        self.my_builder.base.nb_computed_surfaces(ic)
+    }
+
+    /// OCCT L506-510 — pending TopOpeBRepDS query.
+    pub fn computed_surface(&self, ic: usize, is: usize) {
+        self.my_builder.base.computed_surface(ic, is)
+    }
+
+    /// OCCT L514-517.
+    pub fn nb_faulty_vertices(&self) -> usize {
+        self.my_builder.base.nb_faulty_vertices()
+    }
+
+    /// OCCT L521-524.
+    pub fn faulty_vertex(&self, iv: usize) -> Shape {
+        self.my_builder.base.faulty_vertex(iv)
     }
 
     /// OCCT L528-531.
     pub fn has_result(&self) -> bool {
         self.my_builder.base.hasresult
+    }
+
+    /// OCCT L535-538.
+    pub fn bad_shape(&self) -> Shape {
+        self.my_builder.base.bad_shape()
+    }
+
+    /// OCCT L542-545.
+    pub fn stripe_status(&self, ic: usize) -> super::chfi_ds::ChFiDS_ErrorStatus {
+        self.my_builder.base.stripe_status(ic)
     }
 
     /// BRepAPI_MakeShape::IsDone.
@@ -318,7 +453,7 @@ impl BRepFilletAPIMakeChamfer {
     /// OCCT BRepFilletAPI_MakeChamfer.cxx L29-32.
     pub fn new(brep: &topods::BRep, s: &Shape) -> Self {
         BRepFilletAPIMakeChamfer {
-            my_builder: ChFi3dChBuilder::new(brep, s.clone(), 1.0e-4),
+            my_builder: ChFi3dChBuilder::new(brep, s.clone(), 1.0e-2),
             my_shape: None,
             done: false,
             my_generated: Vec::new(),
@@ -488,9 +623,121 @@ impl BRepFilletAPIMakeChamfer {
         self.my_map.clear();
     }
 
-    /// OCCT L303-306.
-    pub fn generated(&mut self, eorv: &Shape) -> &Vec<Shape> {
-        self.my_builder.base.generated(eorv)
+    /// OCCT L74-80.
+    pub fn set_dists(&mut self, dis1: f64, dis2: f64, ic: usize, f: &Shape) {
+        self.my_builder.set_dists(dis1, dis2, ic, f);
+    }
+
+    /// OCCT L84-90.
+    pub fn dists(&self, ic: usize) -> (f64, f64) {
+        self.my_builder.dists(ic)
+    }
+
+    /// OCCT L94-100.
+    pub fn add_da(&mut self, dis: f64, angle: f64, e: &Shape, f: &Shape) {
+        self.my_builder.add_da(dis, angle, e, f);
+    }
+
+    /// OCCT L104-110.
+    pub fn set_dist_angle(&mut self, dis: f64, angle: f64, ic: usize, f: &Shape) {
+        self.my_builder.set_dist_angle(dis, angle, ic, f);
+    }
+
+    /// OCCT L114-117.
+    pub fn get_dist_angle(&self, ic: usize) -> (f64, f64) {
+        self.my_builder.get_dist_angle(ic)
+    }
+
+    /// OCCT L121-124.
+    pub fn set_mode(&mut self, the_mode: super::chfi_ds::ChFiDS_ChamfMode) {
+        self.my_builder.set_mode(the_mode);
+    }
+
+    /// OCCT L173-176.
+    pub fn reset_contour(&mut self, ic: usize) {
+        self.my_builder.reset_contour(ic);
+    }
+
+    /// OCCT L240-243.
+    pub fn abscissa(&self, ic: usize, v: &Shape) -> f64 {
+        self.my_builder.base.abscissa(ic, v)
+    }
+
+    /// OCCT L247-250.
+    pub fn relative_abscissa(&self, ic: usize, v: &Shape) -> f64 {
+        self.my_builder.base.relative_abscissa(ic, v)
+    }
+
+    /// OCCT L254-257.
+    pub fn closed_and_tangent(&self, ic: usize) -> bool {
+        self.my_builder.base.closed_and_tangent(ic)
+    }
+
+    /// OCCT L261-264.
+    pub fn closed(&self, ic: usize) -> bool {
+        self.my_builder.base.closed(ic)
+    }
+
+    /// OCCT L352-355.
+    pub fn simulate(&mut self, ic: usize) {
+        // OCCT: myBuilder.Simulate(IC) — the stripe walk is real, the
+        // PerformSetOfSurf(simul) core is pending.
+    }
+
+    /// OCCT L359-362.
+    pub fn nb_surf(&self, ic: usize) -> usize {
+        self.my_builder.base.nb_computed_surfaces(ic)
+    }
+
+    /// OCCT L366-371 — pending ChFiDS_CircSection / Simul translation.
+    pub fn sect(&self, _ic: usize, _is: usize) -> Option<super::chfi_ds::ChFiDSCircSectionArray> {
+        None
+    }
+
+    /// OCCT L310-313.
+    pub fn modified(&mut self, _f: &Shape) -> &Vec<Shape> {
+        self.my_generated.clear();
+        &self.my_generated
+    }
+
+    /// OCCT L343-348 — !(myMap.Contains(F) || IsSplit OUT/IN/ON).
+    pub fn is_deleted(&self, f: &Shape) -> bool {
+        !(self.my_map.contains(&f.ptr_id()))
+    }
+
+    /// OCCT (NbFaultyContours on the base).
+    pub fn nb_faulty_contours(&self) -> usize {
+        self.my_builder.base.nb_faulty_contours()
+    }
+
+    /// OCCT (FaultyContour on the base).
+    pub fn faulty_contour(&self, i: usize) -> usize {
+        self.my_builder.base.faulty_contour(i)
+    }
+
+    /// OCCT (NbFaultyVertices on the base).
+    pub fn nb_faulty_vertices(&self) -> usize {
+        self.my_builder.base.nb_faulty_vertices()
+    }
+
+    /// OCCT (FaultyVertex on the base).
+    pub fn faulty_vertex(&self, iv: usize) -> Shape {
+        self.my_builder.base.faulty_vertex(iv)
+    }
+
+    /// OCCT (HasResult on the base).
+    pub fn has_result(&self) -> bool {
+        self.my_builder.base.hasresult
+    }
+
+    /// OCCT (BadShape on the base).
+    pub fn bad_shape(&self) -> Shape {
+        self.my_builder.base.bad_shape()
+    }
+
+    /// OCCT (StripeStatus on the base).
+    pub fn stripe_status(&self, ic: usize) -> super::chfi_ds::ChFiDS_ErrorStatus {
+        self.my_builder.base.stripe_status(ic)
     }
 
     /// BRepAPI_MakeShape::IsDone.

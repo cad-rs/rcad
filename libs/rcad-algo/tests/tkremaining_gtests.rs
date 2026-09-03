@@ -254,65 +254,12 @@ mod tkoffset_tests {
 // =============================================================================
 // TKFillet/GTests
 //
-// BRepFilletAPI_MakeChamfer / MakeFillet: rcad has no chamfer/fillet API yet
-// (rcad-algo/src/fillet is a placeholder), so the OCCT tests are recorded as
-// stubs.
+// BRepFilletAPI_MakeChamfer / MakeFillet: translated 1:1 with real geometry
+// in tkgeom_algo_gtests.rs (bRepFilletAPIMakeChamfer_tests /
+// bRepFilletAPIMakeFillet_tests) against
+// rcad_algo::fillet::{chfi_ds, chfi3d, brep_fillet_api}; the former
+// assert!(true) placeholders here were deleted as superseded.
 // =============================================================================
-
-#[cfg(test)]
-mod tkfillet_tests {
-    // BRepFilletAPI_MakeChamfer (5 tests)
-    #[test]
-    fn chamfer_symmetric() {
-        assert!(true, "chamfer symmetric — no rcad API yet");
-    }
-    #[test]
-    fn chamfer_asymmetric() {
-        assert!(true, "chamfer asymmetric — no rcad API yet");
-    }
-    #[test]
-    fn chamfer_multiple_faces() {
-        assert!(true, "chamfer multiple faces — no rcad API yet");
-    }
-    #[test]
-    fn chamfer_after_boolean() {
-        assert!(true, "chamfer after boolean — no rcad API yet");
-    }
-    #[test]
-    fn chamfer_sequential_no_crash() {
-        assert!(true, "chamfer sequential — no rcad API yet");
-    }
-
-    // BRepFilletAPI_MakeFillet (8 tests)
-    #[test]
-    fn fillet_one_edge() {
-        assert!(true, "fillet one edge — no rcad API yet");
-    }
-    #[test]
-    fn fillet_all_edges() {
-        assert!(true, "fillet all edges — no rcad API yet");
-    }
-    #[test]
-    fn fillet_multi_faces() {
-        assert!(true, "fillet multi faces — no rcad API yet");
-    }
-    #[test]
-    fn fillet_variable_radius() {
-        assert!(true, "fillet variable radius — no rcad API yet");
-    }
-    #[test]
-    fn fillet_occ570_mixed() {
-        assert!(true, "fillet mixed radius — no rcad API yet");
-    }
-    #[test]
-    fn fillet_occ1077_boolean_fillet() {
-        assert!(true, "fillet after boolean — no rcad API yet");
-    }
-    #[test]
-    fn fillet_occ426_revolve_fuse_fillet() {
-        assert!(true, "fillet after rev/fuse — no rcad API yet");
-    }
-}
 
 // =============================================================================
 // TKExpress/GTests

@@ -23,7 +23,8 @@ use rcad_kernel::topo::topods::Orientation;
 use rcad_kernel::topods::{self, Shape};
 
 use super::chfi_ds::{
-    ChFi3dFilletShape, ChFiDSSpineHandle, ChFiDS_State, ChFiDS_ChamfMode, ChFiDS_ErrorStatus,
+    ChFi3dFilletShape, ChFiDSSpineHandle, ChFiDS_State, ChFiDS_ChamfMethod, ChFiDS_ChamfMode,
+    ChFiDS_ErrorStatus,
     ChFiDSStripeMap, ChFiDSChamfSpine, ChFiDSFilSpine, ChFiDSStripe, ChFiDSMap, LawFunction,
     SharedStripe,
 };
@@ -296,6 +297,113 @@ impl ChFi3dBuilder {
             return self.value(ic).base().last_vertex();
         }
         Shape::null()
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L1316-1328.
+    pub fn abscissa(&self, ic: usize, v: &Shape) -> f64 {
+        if ic <= self.nb_elements() {
+            return self.value(ic).base().absc_of_vertex(v);
+        }
+        -1.0
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L1330-1341.
+    pub fn relative_abscissa(&self, ic: usize, v: &Shape) -> f64 {
+        if ic <= self.nb_elements() {
+            return self.abscissa(ic, v) / self.length(ic);
+        }
+        -1.0
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L1343-1353.
+    pub fn closed(&self, ic: usize) -> bool {
+        if ic <= self.nb_elements() {
+            return self.value(ic).base().is_closed();
+        }
+        false
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L1355-1365.
+    pub fn closed_and_tangent(&self, ic: usize) -> bool {
+        if ic <= self.nb_elements() {
+            return self.value(ic).base().is_periodic();
+        }
+        false
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L398-401.
+    pub fn nb_faulty_contours(&self) -> usize {
+        self.badstripes.len()
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L403-428 — the index (in myListStripe) of
+    /// the I-th faulty stripe; handle identity compares Arc pointers.
+    pub fn faulty_contour(&self, i: usize) -> usize {
+        let st = match self.badstripes.get(i.wrapping_sub(1)) {
+            Some(s) => s,
+            None => return 0,
+        };
+        for (k, stripe) in self.my_list_stripe.iter().enumerate() {
+            if std::sync::Arc::ptr_eq(st, stripe) {
+                return k + 1;
+            }
+        }
+        0
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L430-455.
+    pub fn nb_computed_surfaces(&self, ic: usize) -> usize {
+        let st = match self.my_list_stripe.get(ic.wrapping_sub(1)) {
+            Some(s) => s,
+            None => return 0,
+        };
+        let guard = st.read().expect("stripe lock");
+        match guard.spine() {
+            None => return 0,
+            Some(_) => {}
+        }
+        guard.my_hdata.len()
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L457-474 — depends on the pending
+    /// TopOpeBRepDS surface table (myDS->Surface(isurf)).
+    pub fn computed_surface(&self, _ic: usize, _is: usize) {
+        // Pending TopOpeBRepDS_HDataStructure::Surface translation.
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L476-479.
+    pub fn nb_faulty_vertices(&self) -> usize {
+        self.badvertices.len()
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L481-497.
+    pub fn faulty_vertex(&self, iv: usize) -> Shape {
+        match self.badvertices.get(iv.wrapping_sub(1)) {
+            Some(v) => v.clone(),
+            None => Shape::null(),
+        }
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L499-511.
+    pub fn has_result(&self) -> bool {
+        self.hasresult
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L512-518.
+    pub fn bad_shape(&self) -> Shape {
+        assert!(self.hasresult, "ChFi3d_Builder::BadShape() - no result");
+        self.bad_shape.clone().expect("no bad shape")
+    }
+
+    /// OCCT ChFi3d_Builder_1.cxx L520-545 (StripeStatus of the IC-th
+    /// contour's spine).
+    pub fn stripe_status(&self, ic: usize) -> ChFiDS_ErrorStatus {
+        let st = self.value_stripe(ic);
+        let guard = st.read().expect("stripe lock");
+        match guard.spine() {
+            Some(sp) => sp.base().error_status(),
+            None => ChFiDS_ErrorStatus::Error,
+        }
     }
 
     /// OCCT ChFi3d_Builder.cxx L178-675 (Compute).
@@ -655,6 +763,62 @@ impl ChFi3dFilBuilder {
         }
     }
 
+    /// OCCT ChFi3d_FilBuilder.cxx L302-309.
+    pub fn set_radius_at_vertex(&mut self, radius: f64, ic: usize, v: &Shape) {
+        if ic <= self.base.nb_elements() {
+            let sp = self.base.value_stripe(ic);
+            let mut st = sp.write().expect("stripe lock");
+            if let Some(fsp) = st.my_spine.as_mut().and_then(|s| s.down_cast_fil_mut()) {
+                fsp.set_radius_at_vertex(radius, v);
+            }
+        }
+    }
+
+    /// OCCT ChFi3d_FilBuilder.cxx L313-320 — fsp->UnSetRadius(V); the
+    /// UnSetRadius body needs Absc(V) (pending BRepAdaptor_Curve).
+    pub fn unset_at_vertex(&mut self, ic: usize, v: &Shape) {
+        if ic <= self.base.nb_elements() {
+            let _ = (ic, v);
+            // Pending: fsp->UnSetRadius(V).
+        }
+    }
+
+    /// OCCT ChFi3d_FilBuilder.cxx L335-343.
+    pub fn is_constant_on_edge(&self, ic: usize, e: &Shape) -> bool {
+        if ic <= self.base.nb_elements() {
+            let sp = self.base.value(ic);
+            if let Some(fsp) = sp.down_cast_fil() {
+                return fsp.is_constant_on(fsp.base.index_of_edge(e));
+            }
+        }
+        false
+    }
+
+    /// OCCT ChFi3d_FilBuilder.cxx L347-355.
+    pub fn radius_on_edge(&self, ic: usize, e: &Shape) -> f64 {
+        if ic <= self.base.nb_elements() {
+            let sp = self.base.value(ic);
+            if let Some(fsp) = sp.down_cast_fil() {
+                return fsp.radius_on_edge(e);
+            }
+        }
+        -1.0
+    }
+
+    /// OCCT ChFi3d_FilBuilder.cxx L359-372 — GetBounds via ChangeLaw(E);
+    /// the Law_Function Bounds query is pending the Law package.
+    pub fn get_bounds(&self, _ic: usize, _e: &Shape, _f: &mut f64, _l: &mut f64) -> bool {
+        false
+    }
+
+    /// OCCT ChFi3d_FilBuilder.cxx L376-384 — pending Law package.
+    pub fn get_law(&self, _ic: usize, _e: &Shape) -> Option<LawFunction> {
+        None
+    }
+
+    /// OCCT ChFi3d_FilBuilder.cxx L388-398 — pending Law package.
+    pub fn set_law(&mut self, _ic: usize, _e: &Shape, _l: LawFunction) {}
+
     /// OCCT ChFi3d_FilBuilder.cxx L402-435 (Simulate) — the stripe walk is
     /// real; PerformSetOfSurf(simul=true) is pending.
     pub fn simulate(&mut self, ic: usize) {
@@ -837,6 +1001,151 @@ impl ChFi3dChBuilder {
         match sp.down_cast_chamf() {
             Some(csp) => csp.dists(),
             None => panic!("Standard_DomainError: not a chamfer spine"),
+        }
+    }
+
+    /// OCCT ChFi3d_ChBuilder.cxx L368-441 (SetDists).
+    ///
+    /// The face-search loop is translated 1:1; the ConcaveSide choice
+    /// (ChFi3d::ConcaveSide over BRepAdaptor_Surface) is a pending
+    /// boundary, so the symmetric/asymmetric branch decision keeps the
+    /// OCCT structure and falls to the SetDists(Dis1, Dis2) arm.
+    pub fn set_dists(&mut self, dis1: f64, dis2: f64, ic: usize, f: &Shape) {
+        if ic <= self.base.nb_elements() {
+            let sp = self.base.value_stripe(ic);
+            let mut st = sp.write().expect("stripe lock");
+            let Some(csp) = st.my_spine.as_mut().and_then(|s| s.down_cast_chamf_mut()) else {
+                return;
+            };
+
+            // Search the first edge which has a common face equal to F
+            let mut i = 1usize;
+            let mut found = false;
+            while i <= csp.base.nb_edges() && !found {
+                let (f1, f2) = search_common_faces(&self.base.my_ef_map, csp.base.edges(i));
+                found = f1.is_same(f) || f2.is_same(f);
+                i += 1;
+            }
+
+            if found {
+                // OCCT L404-412: Sb1/Sb2 Initialize + ConcaveSide choice —
+                // pending ChFi3d::ConcaveSide translation; the branch it
+                // selects is csp->SetDists(Dis2, Dis1) vs SetDists(Dis1, Dis2).
+                csp.set_dists(dis1, dis2);
+            } else {
+                panic!(
+                    "Standard_DomainError: the face is not common to any of edges of the contour"
+                );
+            }
+        }
+    }
+
+    /// OCCT ChFi3d_ChBuilder.cxx L445-477 (AddDA).
+    pub fn add_da(&mut self, dis1: f64, angle: f64, e: &Shape, f: &Shape) {
+        if self.base.contains(e) == 0 && self.base.my_ef_map.contains(e) {
+            let mut stripe = ChFiDSStripe::default();
+            let mut sp = ChFiDSSpineHandle::Chamf(ChFiDSChamfSpine::with_tol(self.base.tolesp));
+
+            let mut e_wnt = e.clone();
+            e_wnt.orientation = Orientation::Forward;
+
+            let added = {
+                {
+                    let Some(csp) = sp.down_cast_chamf_mut() else {
+                        return;
+                    };
+                    csp.base.set_edges(e_wnt);
+                }
+                if self.perform_element(&sp, -1.0, f) {
+                    let Some(csp) = sp.down_cast_chamf_mut() else {
+                        return;
+                    };
+                    csp.base.load();
+                    true
+                } else {
+                    false
+                }
+            };
+            if added {
+                stripe.change_spine(sp);
+                let shared = std::sync::Arc::new(std::sync::RwLock::new(stripe));
+                // OCCT: myListStripe.Append(Stripe);
+                self.base.my_list_stripe.push(shared.clone());
+                // OCCT: Spine->SetDistAngle(Dis1, Angle);
+                {
+                    let mut st = shared.write().expect("stripe lock");
+                    if let Some(csp) = st.my_spine.as_mut().and_then(|s| s.down_cast_chamf_mut())
+                    {
+                        csp.set_dist_angle(dis1, angle);
+                    }
+                }
+                self.perform_extremity_pending();
+            }
+        }
+    }
+
+    /// OCCT ChFi3d_ChBuilder.cxx L480-528 (SetDistAngle).
+    pub fn set_dist_angle(&mut self, dis: f64, angle: f64, ic: usize, f: &Shape) {
+        if ic <= self.base.nb_elements() {
+            let sp = self.base.value_stripe(ic);
+            let mut st = sp.write().expect("stripe lock");
+            let Some(csp) = st.my_spine.as_mut().and_then(|s| s.down_cast_chamf_mut()) else {
+                return;
+            };
+
+            // Search the first edge which has a common face equal to F
+            let mut i = 1usize;
+            let mut found = false;
+            while i <= csp.base.nb_edges() && !found {
+                let (f1, f2) = search_common_faces(&self.base.my_ef_map, csp.base.edges(i));
+                found = f1.is_same(f) || f2.is_same(f);
+                i += 1;
+            }
+
+            if found {
+                csp.set_dist_angle(dis, angle);
+            } else {
+                panic!("Standard_DomainError: the face is not common to any edges of the contour");
+            }
+        }
+    }
+
+    /// OCCT ChFi3d_ChBuilder.cxx L530-537 (GetDistAngle).
+    pub fn get_dist_angle(&self, ic: usize) -> (f64, f64) {
+        let sp = self.base.value(ic);
+        match sp.down_cast_chamf() {
+            Some(csp) => csp.get_dist_angle(),
+            None => panic!("Standard_DomainError: not a chamfer spine"),
+        }
+    }
+
+    /// OCCT ChFi3d_ChBuilder.cxx L539-544 (SetMode).
+    pub fn set_mode(&mut self, the_mode: ChFiDS_ChamfMode) {
+        self.my_mode = the_mode;
+    }
+
+    /// OCCT ChFi3d_ChBuilder.cxx L546-555 (IsChamfer).
+    pub fn is_chamfer(&self, ic: usize) -> ChFiDS_ChamfMethod {
+        let sp = self.base.value(ic);
+        match sp.down_cast_chamf() {
+            Some(csp) => csp.is_chamfer(),
+            None => panic!("Standard_DomainError: not a chamfer spine"),
+        }
+    }
+
+    /// OCCT ChFi3d_ChBuilder.cxx L557-562 (Mode).
+    pub fn mode(&self) -> ChFiDS_ChamfMode {
+        self.my_mode
+    }
+
+    /// OCCT ChFi3d_ChBuilder.cxx L564-570 (ResetContour).
+    pub fn reset_contour(&mut self, ic: usize) {
+        if ic <= self.base.nb_elements() {
+            let sp = self.base.value_stripe(ic);
+            let mut st = sp.write().expect("stripe lock");
+            if let Some(csp) = st.my_spine.as_mut().and_then(|s| s.down_cast_chamf_mut()) {
+                csp.base.reset(true);
+            }
         }
     }
 
