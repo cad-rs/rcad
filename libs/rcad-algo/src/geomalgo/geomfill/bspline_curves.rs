@@ -48,15 +48,19 @@ fn arrange(
     for i in 1..=3usize {
         let mut trouve = false;
 
+        // OCCT: GC[] is a 0-based C array indexed by the 1-based i/j loop
+        // variables — candidate GC[j] / previous GC[i-1] map to gc[j] /
+        // gc[i-1] unchanged.
+        //
         // search for a degenerated curve = point, which would match first
         let mut j = i;
         while j <= 3 && !trouve {
-            let start = ops_start(&gc[j - 1]);
-            let end = ops_end(&gc[j - 1]);
+            let start = ops_start(&gc[j]);
+            let end = ops_end(&gc[j]);
             if start.distance(end) < tol {
                 // this is a degenerated line, does it match the last endpoint?
-                if start.distance(ops_end(&gc[i - 2])) < tol {
-                    gc.swap(i - 1, j - 1);
+                if start.distance(ops_end(&gc[i - 1])) < tol {
+                    gc.swap(i, j);
                     trouve = true;
                 }
             }
@@ -67,12 +71,12 @@ fn arrange(
         if !trouve {
             let mut j = i;
             while j <= 3 && !trouve {
-                if ops_start(&gc[j - 1]).distance(ops_end(&gc[i - 2])) < tol {
-                    gc.swap(i - 1, j - 1);
+                if ops_start(&gc[j]).distance(ops_end(&gc[i - 1])) < tol {
+                    gc.swap(i, j);
                     trouve = true;
-                } else if ops_end(&gc[j - 1]).distance(ops_end(&gc[i - 2])) < tol {
-                    gc[j - 1] = gc[j - 1].reversed();
-                    gc.swap(i - 1, j - 1);
+                } else if ops_end(&gc[j]).distance(ops_end(&gc[i - 1])) < tol {
+                    gc[j] = gc[j].reversed();
+                    gc.swap(i, j);
                     trouve = true;
                 }
                 j += 1;
