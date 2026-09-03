@@ -7,7 +7,7 @@
 pub mod constraints;
 pub mod d123;
 pub mod pinpoint_constraint;
-// pub mod plate;  // L3 core, added with the Plate_Plate commit
+pub mod plate;
 
 pub use constraints::{
     FreeGtoCConstraint, GlobalTranslationConstraint, GtoCConstraint, LineConstraint,
