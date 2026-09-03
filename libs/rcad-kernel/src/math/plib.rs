@@ -535,3 +535,28 @@ pub fn eval_lagrange(
     }
     return_code
 }
+
+/// OCCT PLib::CoefficientsPoles for gp_Pnt arrays (PLib.cxx L1482-1493),
+/// dispatching to the dim = 3 version (L1522-1608).  Converts the power
+/// coefficients of a degree `n = len - 1` polynomial into the Bezier poles.
+/// Only the non-rational path (WCoefs == nullptr) is used by GeomFill_Coons.
+pub fn coefficients_poles(coefs: &[DVec3]) -> Vec<DVec3> {
+    let reflen = coefs.len();
+    let mut poles = vec![DVec3::ZERO; reflen];
+    // Les Extremites.
+    poles[0] = coefs[0];
+    poles[reflen - 1] = coefs[reflen - 1];
+
+    for i in 2..reflen {
+        let cnp = binomial(reflen - 1, i - 1);
+        poles[i - 1] = coefs[i - 1] / cnp;
+    }
+
+    for i in 1..=reflen - 1 {
+        for j in (i..reflen).rev() {
+            let prev = poles[j - 1];
+            poles[j] += prev;
+        }
+    }
+    poles
+}

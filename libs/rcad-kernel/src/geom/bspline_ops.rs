@@ -206,3 +206,51 @@ impl BSplineCurve3 {
         }
     }
 }
+
+impl BSplineCurve3 {
+    /// OCCT Geom_BSplineCurve::IsRational — architecture note: rcad stores a
+    /// weight array with an implicit 1.0 for non-rational curves, so
+    /// rationality is observed as "any weight != 1".
+    pub fn is_rational(&self) -> bool {
+        self.weights.iter().any(|&w| w != 1.0)
+    }
+
+    /// OCCT Geom_BSplineCurve::Reverse (Geom_BSplineCurve.cxx L496-516):
+    /// BSplCLib::Reverse(myKnots) + BSplCLib::Reverse(myMults) +
+    /// BSplCLib::Reverse(myPoles, last) + BSplCLib::Reverse(myWeights, last),
+    /// then the flat knot vector is rebuilt.  On rcad's flat knot vector,
+    /// reversing (knots, mults) and re-expanding equals order-reversing the
+    /// flat array while reflecting each value (kfirst + klast - k) — the
+    /// combined BSplCLib::Reverse(Knots) / Reverse(Mults) effect.
+    pub fn reversed(&self) -> BSplineCurve3 {
+        let kfirst = self.knots[0];
+        let klast = self.knots[self.knots.len() - 1];
+        let knots: Vec<f64> = self.knots.iter().rev().map(|k| kfirst + klast - k).collect();
+        let control_points: Vec<DVec3> = self.control_points.iter().rev().copied().collect();
+        let mut weights: Vec<f64> = self.weights.clone();
+        if self.is_rational() {
+            weights.reverse();
+        }
+        BSplineCurve3 {
+            degree: self.degree,
+            knots,
+            control_points,
+            weights,
+            is_periodic: self.is_periodic,
+        }
+    }
+
+    /// OCCT Geom_BSplineCurve::SetKnots — replaces the (knots, mults) arrays
+    /// keeping the pole count; rcad rebuilds the flat knot vector.
+    pub fn set_knots(&mut self, knots: &[f64], mults: &[i32]) {
+        assert_eq!(knots.len(), mults.len(), "SetKnots: knots/mults length mismatch");
+        let mut flat =
+            Vec::with_capacity(knots.iter().zip(mults.iter()).map(|(_, m)| *m as usize).sum());
+        for (k, m) in knots.iter().zip(mults.iter()) {
+            for _ in 0..*m {
+                flat.push(*k);
+            }
+        }
+        self.knots = flat;
+    }
+}

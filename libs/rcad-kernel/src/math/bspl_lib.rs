@@ -2452,3 +2452,46 @@ pub fn knot_analysis(
         }
     }
 }
+
+/// OCCT BSplCLib::Reparametrize (BSplCLib.cxx L756-797) — linearly
+/// reparametrizes the (distinct) knot array onto [U1, U2], preserving the
+/// knot distribution.
+pub fn reparametrize(u1: f64, u2: f64, knots: &mut [f64]) {
+    let lower = 1i32;
+    let upper = knots.len() as i32;
+    let u_first = u1.min(u2);
+    let u_last = u2.max(u1);
+    let new_length = u_last - u_first;
+    let k_set = knot_form(knots, lower, upper);
+    if k_set == KnotFormDist::Uniform {
+        let du = new_length / (upper - lower) as f64;
+        set_at(knots, lower, u_first);
+        for i in (lower + 1)..=upper {
+            let v = at(knots, i - 1) + du;
+            set_at(knots, i, v);
+        }
+    } else {
+        let mut k2;
+        let mut ratio;
+        let mut k1 = at(knots, lower);
+        let length = at(knots, upper) - at(knots, lower);
+        set_at(knots, lower, u_first);
+
+        for i in (lower + 1)..=upper {
+            k2 = at(knots, i);
+            ratio = (k2 - k1) / length;
+            let v = at(knots, i - 1) + (new_length * ratio);
+            set_at(knots, i, v);
+
+            // for CheckCurveData
+            let eps = epsilon() * at(knots, i - 1).abs();
+            if at(knots, i) - at(knots, i - 1) <= eps {
+                // OCCT: nextafter(Knots(i-1) + Eps, RealLast()).
+                let v = (at(knots, i - 1) + eps).next_up();
+                set_at(knots, i, v);
+            }
+
+            k1 = k2;
+        }
+    }
+}
