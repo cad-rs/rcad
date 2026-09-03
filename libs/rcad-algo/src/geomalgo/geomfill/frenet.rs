@@ -242,7 +242,7 @@ impl Frenet {
             if !is_lin[i - 1] && !is_const[i - 1] {
                 func.set_ratio(1.0 / ave_func[i - 1]); // Normalization
                 let value = |u: f64| func.eval_d0(u);
-                let mut ext = ExtPC::new_fn(
+                let ext = ExtPC::new_fn(
                     origin,
                     TOL_F,
                     my_c2_disc[i - 1],
@@ -282,7 +282,7 @@ impl Frenet {
                 for j in 0..local.len() - 1 {
                     if local[j + 1] - local[j] > PTOL {
                         let value = |u: f64| func.eval_d0(u);
-                        let mut ext = ExtPC::new_fn(origin, TOL_F, local[j], local[j + 1], &value);
+                        let ext = ExtPC::new_fn(origin, TOL_F, local[j], local[j + 1], &value);
                         if ext.is_done() {
                             for k in 1..=ext.nb_ext() {
                                 let value2 = ext.square_distance(k);
@@ -776,7 +776,10 @@ impl TrihedronLaw for Frenet {
             Some(Curve3::Trimmed(TrimmedCurve3::new(curve, first, last)));
     }
 
-    /// OCCT D0 (L472-628).
+    /// OCCT D0 (L472-628).  The near-singular branch recursively calls D0
+    /// at a shifted parameter (OCCT L596-610) — the recursion terminates
+    /// there through the non-degenerate branch.
+    #[allow(unused_mut)]
     fn d0(&self, the_param: f64, tangent: &mut DVec3, normal: &mut DVec3, binormal: &mut DVec3) -> bool {
         let a_tol = GP_RESOLUTION;
         let mut index = 0usize;
