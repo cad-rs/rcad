@@ -17,6 +17,11 @@ pub fn find_knot_span(degree: usize, knots: &[f64], t: f64) -> usize {
     let t_min = knots[degree];
     let t_max = knots[knots.len() - degree - 1];
     let t_clamped = t.clamp(t_min, t_max);
+    // Standard findSpan special case (NURBS Book A2.1): at the right end the
+    // span is the last valid one (half-open knot convention otherwise).
+    if t_clamped >= t_max {
+        return knots.len() - degree - 2;
+    }
     let mut span = degree;
     for (i, &knot) in knots.iter().enumerate().take(knots.len() - degree - 1).skip(degree) {
         if knot <= t_clamped { span = i; } else { break; }

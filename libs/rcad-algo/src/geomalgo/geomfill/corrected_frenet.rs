@@ -626,15 +626,9 @@ impl TrihedronLaw for CorrectedFrenet {
         Box::new(copy)
     }
 
-    /// OCCT SetCurve (L332-356).
-    #[allow(unconditional_recursion)]
+    /// OCCT SetCurve (L332-356) — base call through the shared helper.
     fn set_curve(&mut self, c: Curve3) -> bool {
-        // Base-class initialization (the lint sees the same-name method).
-        #[allow(unconditional_recursion)]
-        fn base_set_curve(this: &mut CorrectedFrenet, c: Curve3) -> bool {
-            TrihedronLaw::set_curve(this, c)
-        }
-        base_set_curve(self, c.clone());
+        super::trihedron_law::trihedron_law_base_set_curve(self, c.clone());
         // frenet->SetCurve(C)
         TrihedronLaw::set_curve(&mut self.frenet, c.clone());
         let analytic = matches!(
@@ -869,11 +863,9 @@ impl TrihedronLaw for CorrectedFrenet {
         }
     }
 
-    /// OCCT SetInterval (L967-976).  Calls the base implementation
-    /// explicitly (the lint sees the same-name method as recursion).
-    #[allow(unconditional_recursion)]
+    /// OCCT SetInterval (L967-976) — base call through the shared helper.
     fn set_interval(&mut self, first: f64, last: f64) {
-        TrihedronLaw::set_interval(self, first, last);
+        super::trihedron_law::trihedron_law_base_set_interval(self, first, last);
         TrihedronLaw::set_interval(&mut self.frenet, first, last);
         if !self.is_frenet {
             if let Some(evol) = &mut self.evol_around_t {

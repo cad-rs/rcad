@@ -59,7 +59,9 @@ pub trait TrihedronLaw {
     /// OCCT protected member `myTrimmed` (write access for the base class).
     fn set_my_trimmed(&mut self, c: Option<Curve3>);
 
-    /// OCCT SetCurve (GeomFill_TrihedronLaw.cxx L29-35).
+    /// OCCT SetCurve (GeomFill_TrihedronLaw.cxx L29-35) — the default body;
+    /// overriding implementations reuse
+    /// [`trihedron_law_base_set_curve`].
     fn set_curve(&mut self, c: Curve3) -> bool {
         self.set_my_curve(c.clone());
         // myTrimmed = myCurve;
@@ -152,4 +154,26 @@ pub trait TrihedronLaw {
     fn is_only_by3d_curve(&self) -> bool {
         false
     }
+}
+
+
+/// OCCT GeomFill_TrihedronLaw::SetCurve base implementation — a Rust trait
+/// default body cannot be invoked explicitly when a type overrides the
+/// method (the fully-qualified call resolves to the override), so the base
+/// logic lives in a free function.
+pub fn trihedron_law_base_set_curve(law: &mut dyn TrihedronLaw, c: Curve3) -> bool {
+    law.set_my_curve(c.clone());
+    // myTrimmed = myCurve;
+    law.set_my_trimmed(Some(c));
+    true
+}
+
+/// OCCT GeomFill_TrihedronLaw::SetInterval base implementation — same
+/// explicit-base-call pattern as [`trihedron_law_base_set_curve`].
+pub fn trihedron_law_base_set_interval(law: &mut dyn TrihedronLaw, first: f64, last: f64) {
+    let curve = law
+        .my_curve()
+        .clone()
+        .expect("GeomFill_TrihedronLaw::SetInterval with null curve");
+    law.set_my_trimmed(Some(Curve3::Trimmed(TrimmedCurve3::new(curve, first, last))));
 }

@@ -89,11 +89,15 @@ impl LawComposite {
             eps = -self.ptol;
         }
         if self.curfunc.is_none() {
-            let mut last_law = self.funclist.last().unwrap().borrow_mut();
+            // OCCT: curfunc = funclist.Last(); curfunc->Bounds(f, last);
+            //       curfunc = funclist.First(); curfunc->Bounds(first, l);
+            self.curfunc = Some(self.funclist.last().unwrap().clone());
+            let mut last_law = self.curfunc.as_ref().unwrap().borrow_mut();
             let mut f_tmp = 0.0;
             last_law.bounds(&mut f_tmp, &mut self.last);
             drop(last_law);
-            let mut first_law = self.funclist.first().unwrap().borrow_mut();
+            self.curfunc = Some(self.funclist.first().unwrap().clone());
+            let mut first_law = self.curfunc.as_ref().unwrap().borrow_mut();
             let mut l_tmp = 0.0;
             first_law.bounds(&mut self.first, &mut l_tmp);
             drop(first_law);

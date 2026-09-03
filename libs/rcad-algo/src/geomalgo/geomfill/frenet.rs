@@ -742,11 +742,9 @@ impl TrihedronLaw for Frenet {
         Box::new(copy)
     }
 
-    /// OCCT SetCurve (L127-154).  Calls the base-class implementation
-    /// explicitly (the lint sees the same-name method as recursion).
-    #[allow(unconditional_recursion)]
+    /// OCCT SetCurve (L127-154) — base call through the shared helper.
     fn set_curve(&mut self, c: Curve3) -> bool {
-        TrihedronLaw::set_curve(self, c.clone());
+        super::trihedron_law::trihedron_law_base_set_curve(self, c.clone());
         // GeomAbs_Circle/Ellipse/Hyperbola/Parabola/Line — no problem;
         // the other types need a singularity search.
         let analytic = matches!(
@@ -766,16 +764,9 @@ impl TrihedronLaw for Frenet {
         true
     }
 
-    /// OCCT SetInterval (base) + trimmed view (Adjust = False).
+    /// OCCT SetInterval — base implementation (trimmed view, Adjust=False).
     fn set_interval(&mut self, first: f64, last: f64) {
-        let curve = self
-            .base
-            .my_curve
-            .as_ref()
-            .expect("GeomFill_TrihedronLaw::SetInterval with null curve")
-            .clone();
-        self.base.my_trimmed =
-            Some(Curve3::Trimmed(TrimmedCurve3::new(curve, first, last)));
+        super::trihedron_law::trihedron_law_base_set_interval(self, first, last);
     }
 
     /// OCCT D0 (L472-628).  The near-singular branch recursively calls D0
