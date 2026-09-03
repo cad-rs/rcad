@@ -2817,3 +2817,150 @@ pub fn max_knot_mult(mults: &[i32], k1: i32, k2: i32) -> i32 {
     }
     max_mult
 }
+
+/// OCCT BSplCLib::Intervals (BSplCLib.cxx L4834-4958) — the interval bounds
+/// of a BSpline for the given continuity (a knot with multiplicity greater
+/// than `degree - continuity` is a boundary).  Returns the array with
+/// `count + 1` entries; the count is `len - 1`.
+#[allow(clippy::too_many_arguments)]
+pub fn intervals(
+    knots: &[f64],
+    mults: &[i32],
+    degree: usize,
+    is_periodic: bool,
+    continuity: i32,
+    first: f64,
+    last: f64,
+    tolerance: f64,
+) -> Vec<f64> {
+    let a_first_index = if is_periodic {
+        1i32
+    } else {
+        first_uknot_index_mults(degree, mults)
+    };
+    let a_last_index = if is_periodic {
+        mults.len() as i32
+    } else {
+        last_uknot_index_mults(degree, mults)
+    };
+    // remove all knots with multiplicity less or equal than
+    // (degree - continuity) except first and last.
+    let mut a_new_knots: Vec<f64> = Vec::new();
+    for an_index in a_first_index..=a_last_index {
+        if ati(mults, an_index) > degree as i32 - continuity
+            || an_index == a_first_index
+            || an_index == a_last_index
+        {
+            a_new_knots.push(at(knots, an_index));
+        }
+    }
+    let a_nb_new_knots = a_new_knots.len() as i32;
+    // the range boundaries
+    let mut a_cur_first = first;
+    let mut a_cur_last = last;
+    let mut a_period = 0.0f64;
+    let mut a_first_period = 0i32;
+    let mut a_last_period = 0i32;
+    // move boundaries into period
+    if is_periodic {
+        let a_lower = at(knots, 1);
+        let an_upper = at(knots, knots.len() as i32);
+        a_period = an_upper - a_lower;
+        while a_cur_first < a_lower {
+            a_cur_first += a_period;
+            a_first_period -= 1;
+        }
+        while a_cur_last < a_lower {
+            a_cur_last += a_period;
+            a_last_period -= 1;
+        }
+        while a_cur_first >= an_upper {
+            a_cur_first -= a_period;
+            a_first_period += 1;
+        }
+        while a_cur_last >= an_upper {
+            a_cur_last -= a_period;
+            a_last_period += 1;
+        }
+    }
+    // locate the left and nearest knot for boundaries
+    let mut an_index1 = 0i32;
+    let mut an_index2 = 0i32;
+    let mut a_dummy_double = 0.0f64;
+    let empty_mults: Vec<i32> = Vec::new();
+    // we use version of LocateParameter that doesn't need multiplicities
+    locate_parameter_knots_mults(
+        degree,
+        &a_new_knots,
+        &empty_mults,
+        a_cur_first,
+        false,
+        1,
+        a_nb_new_knots,
+        &mut an_index1,
+        &mut a_dummy_double,
+    );
+    locate_parameter_knots_mults(
+        degree,
+        &a_new_knots,
+        &empty_mults,
+        a_cur_last,
+        false,
+        1,
+        a_nb_new_knots,
+        &mut an_index2,
+        &mut a_dummy_double,
+    );
+    // the case when the beginning of the range coincides with the next knot
+    if an_index1 < a_nb_new_knots
+        && (at(&a_new_knots, an_index1 + 1) - a_cur_first).abs() < tolerance
+    {
+        an_index1 += 1;
+    }
+    // the case when the ending of the range coincides with the current knot
+    if a_nb_new_knots > 0 && (at(&a_new_knots, an_index2) - a_cur_last).abs() < tolerance {
+        an_index2 -= 1;
+    }
+    let a_nb_intervals =
+        (an_index2 - an_index1 + 1 + (a_last_period - a_first_period) * (a_nb_new_knots - 1)) as usize;
+    // fill the interval array
+    let mut out = vec![0.0f64; a_nb_intervals + 1];
+    if is_periodic && a_last_period != a_first_period {
+        let mut an_index = 1usize;
+        // part from the beginning of range to the end of the first period
+        let mut i = an_index1;
+        while i < a_new_knots.len() as i32 {
+            out[an_index - 1] = at(&a_new_knots, i) + a_first_period as f64 * a_period;
+            an_index += 1;
+            i += 1;
+        }
+        // full periods
+        let mut a_period_num = a_first_period + 1;
+        while a_period_num < a_last_period {
+            for i in 1..a_new_knots.len() as i32 {
+                out[an_index - 1] = at(&a_new_knots, i) + a_period_num as f64 * a_period;
+                an_index += 1;
+            }
+            a_period_num += 1;
+        }
+        // part from the beginning of the last period to the end of range
+        for i in 1..=an_index2 {
+            out[an_index - 1] = at(&a_new_knots, i) + a_last_period as f64 * a_period;
+            an_index += 1;
+        }
+    } else {
+        let mut an_index = 1usize;
+        let mut i = an_index1;
+        while i <= an_index2 {
+            out[an_index - 1] = at(&a_new_knots, i) + a_first_period as f64 * a_period;
+            an_index += 1;
+            i += 1;
+        }
+    }
+    // update the first position (the beginning of range doesn't coincide
+    // with the knot at anIndex1 in general)
+    out[0] = first;
+    // write the ending of the range (we didn't write it at all)
+    out[a_nb_intervals] = last;
+    out
+}
