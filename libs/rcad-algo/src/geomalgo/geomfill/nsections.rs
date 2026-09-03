@@ -849,11 +849,10 @@ impl SectionLaw for NSections {
     }
 }
 
-fn circle_bounds(c: &Circle3) -> (f64, f64) {
+fn circle_bounds(_c: &Circle3) -> (f64, f64) {
     (0.0, 2.0 * std::f64::consts::PI)
 }
 
-/// OCCT gp_Ax1::IsParallel — angle <= tol or PI - angle <= tol.
 /// OCCT gp_Ax1::IsParallel — Angle(Other) <= Tol or PI - Angle(Other) <= Tol.
 fn axes_parallel(a: DVec3, b: DVec3, angular_tolerance: f64) -> bool {
     let ang = super::frenet::gp_vec_angle(a, b);
