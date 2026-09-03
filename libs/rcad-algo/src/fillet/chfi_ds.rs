@@ -1740,6 +1740,11 @@ impl ChFiDSStripeMap {
         &self.my_keys[i - 1]
     }
 
+    // OCCT NCollection_IndexedDataMap — the key list (1-based FindKey).
+    pub fn keys(&self) -> &Vec<Shape> {
+        &self.my_keys
+    }
+
     /// OCCT — FindFromIndex(i) (1-based).
     pub fn find_from_index(&self, i: usize) -> &Vec<SharedStripe> {
         self.my_map.get(&self.my_keys[i - 1].ptr_id()).expect("stripe map index")
@@ -1765,6 +1770,11 @@ pub struct ChFiDSMap {
 }
 
 impl ChFiDSMap {
+    // OCCT NCollection_IndexedDataMap — the insertion-ordered key list.
+    pub fn keys(&self) -> &Vec<Shape> {
+        &self.my_keys
+    }
+
     pub fn new() -> Self {
         ChFiDSMap {
             my_keys: Vec::new(),

@@ -514,20 +514,169 @@ impl ChFi3dBuilder {
             }
         }
 
-        // L339-354: solids/shells are registered in the DS (DStr.AddShape);
-        // L354-396: stripe intersections (ChFi3d_StripeEdgeInter) +
-        // ChFi3d_FilDS; L403-579: the TopOpeBRepBuild reconstruction
-        // (myCoup->Perform/MergeSolid) and myShapeResult assembly; L574:
-        // SetRegul.  The reconstruction subsystem is pending translation;
-        // when the OCCT flow enters `if (done)` the pending raise surfaces
-        // as done = false with no result shape.
+        // L339-346: MapIndSo — the solids of myShape are registered in the
+        // DS (TopExp_Explorer(S, SOLID)).
+        let mut map_ind_so: Vec<i32> = Vec::new();
+        for cursol in super::brep_fillet_api::explore_solids(&self.my_brep) {
+            let indcursol = self.my_ds.as_mut().expect("DS").add_shape(&cursol);
+            if !map_ind_so.contains(&indcursol) {
+                map_ind_so.push(indcursol);
+            }
+        }
+        let _ = &map_ind_so;
+
         if self.done {
-            self.done = false; // pending: ChFi3d_FilDS + TopOpeBRepBuild reconstruction
+            // 05/02/02 akm (OCC119) L362-388: intersect the stripes
+            // pairwise; the raise encodes as done = false.
+            'outer: for (i1, itel) in self.my_list_stripe.iter().enumerate() {
+                for (i2, itel1) in self.my_list_stripe.iter().enumerate() {
+                    if i2 <= i1 {
+                        // Do not twice intersect the stripes.
+                        continue;
+                    }
+                    let (st_a, st_b) = {
+                        let a = itel.read().expect("stripe lock");
+                        let b = itel1.read().expect("stripe lock");
+                        (a.clone(), b.clone())
+                    };
+                    let mut ds = self.my_ds.take().expect("DS");
+                    let ok = super::chfi3d_builder_0_filds::chfi3d_stripe_edge_inter(
+                        &st_a, &st_b, &mut ds, self.tol2d,
+                    );
+                    self.my_ds = Some(ds);
+                    if !ok {
+                        self.badstripes.push(itel.clone());
+                        self.hasresult = false;
+                        self.done = false;
+                        break 'outer;
+                    }
+                }
+            }
+
+            // L390-396: ChFi3d_FilDS(solidindex, st, DStr, myRegul, ...).
+            if self.done {
+                for itel in self.my_list_stripe.clone() {
+                    let st = itel.read().expect("stripe lock");
+                    self.filds_stripe(&st);
+                    drop(st);
+                    if !self.done {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if self.done {
+            // L406: CompleteDS(DStr, myShape).
+            self.complete_ds();
+            // L408-470: the tolerance pass over the DS curves.
+            self.compute_tolerance_pass();
+            // L471-567: myCoup->Perform(myDS); MergeSolid; Splits/Merged;
+            // myShapeResult assembly.  The TopOpeBRepBuild reconstruction
+            // subset is the next translation unit; until it lands the OCCT
+            // flow cannot proceed and the pending boundary surfaces as
+            // done = false (no fake result shape).
+            self.done = false; // pending: TopOpeBRepBuild Perform/MergeSolid/NewFaces
         }
 
         // L655-674: SameParameter pass over the new faces (only when done).
         if self.is_done() {
             // BRepLib::SameParameter / ShapeFix::SameParameter — pending.
+        }
+    }
+
+    /// OCCT ChFi3d_Builder.cxx L80-136 — CompleteDS (static).
+    fn complete_ds(&mut self) {
+        let mut map_ew = ChFiDSMap::new();
+        map_ew.fill(&self.my_brep, topods::ShapeType::Edge, topods::ShapeType::Wire);
+        let mut map_fs = ChFiDSMap::new();
+        map_fs.fill(&self.my_brep, topods::ShapeType::Face, topods::ShapeType::Shell);
+
+        // OCCT explores the shapes OF myShape; rcad's ChFiDSMap::fill walks
+        // the same BRep, so the explorers reduce to the map keys.
+        let edge_keys: Vec<Shape> = map_ew.keys().to_vec();
+        let face_keys: Vec<Shape> = map_fs.keys().to_vec();
+        let dstr = self.my_ds.as_mut().expect("DS");
+        for e in &edge_keys {
+            let hasgeom = dstr.has_geometry(e);
+            if hasgeom {
+                for wire_anc in map_ew.find(e).clone() {
+                    dstr.add_shape(&wire_anc);
+                }
+            }
+        }
+        for f in &face_keys {
+            let hasgeom = dstr.has_geometry(f);
+            if hasgeom {
+                for shell_anc in map_fs.find(f).clone() {
+                    dstr.add_shape(&shell_anc);
+                }
+            }
+        }
+
+        // set the range on the DS Curves (L122-135).
+        for ic in 1..=dstr.nb_curves() {
+            let mut parmin = f64::MAX;
+            let mut parmax = f64::MIN;
+            for it in dstr.curve_interferences(ic) {
+                if let TopOpeBRepDSInterference::CurvePoint(_cpi) = it {
+                    let par = it.parameter();
+                    parmin = parmin.min(par);
+                    parmax = parmax.max(par);
+                }
+            }
+            dstr.change_curve(ic).set_range(parmin, parmax);
+        }
+    }
+
+    /// OCCT ChFi3d_Builder.cxx L408-470 — the tolerance pass over the DS
+    /// curves and their point interferences.
+    fn compute_tolerance_pass(&mut self) {
+        let brep = self.my_brep.clone();
+        let dstr = self.my_ds.as_mut().expect("DS");
+        let nb = dstr.nb_curves();
+        for ic in 1..=nb {
+            let (mut tolc, degen) = {
+                let c = dstr.curve(ic);
+                let degen = c.curve.is_none();
+                let tolc = if degen { 0.0 } else { c.tolerance() };
+                (tolc, degen)
+            };
+            let interfs: Vec<TopOpeBRepDSInterference> = dstr.curve_interferences(ic).to_vec();
+            for ii in &interfs {
+                let TopOpeBRepDSInterference::CurvePoint(ii) = ii else {
+                    continue;
+                };
+                let gk = ii.kind_g;
+                let gi = ii.index_g;
+                if gk == TopOpeBRepDSKind::Vertex {
+                    let v = dstr.shape(gi).clone();
+                    let mut tolv = brep.tolerance(&v);
+                    if tolv > 0.0001 {
+                        tolv += 0.0003;
+                        if tolc < tolv {
+                            tolc = tolv + 0.00001;
+                        }
+                    }
+                    if degen && tolc < tolv {
+                        tolc = tolv;
+                    } else if tolc > tolv {
+                        // OCCT: B1.UpdateVertex(v, tolc) — the vertex
+                        // tolerance write goes through BRep_Builder
+                        // (pending BRep_Builder::UpdateVertex).
+                    }
+                } else if gk == TopOpeBRepDSKind::Point {
+                    let tolp = dstr.point(gi).tolerance();
+                    if degen && tolc < tolp {
+                        tolc = tolp;
+                    } else if tolc > tolp {
+                        dstr.change_point(gi).set_tolerance(tolc);
+                    }
+                }
+            }
+            if degen {
+                dstr.change_curve(ic).set_tolerance(tolc);
+            }
         }
     }
 
@@ -2859,11 +3008,9 @@ impl ChFi3dBuilder {
 
     /// OCCT ChFi3d_Builder_SpKP.cxx L749-... - SplitKPart.
     ///
-    /// The Geom2dHatch hatcher (2D trimming of the tangency lines against
-    /// the face restrictions) is a pending TKGeomAlgo translation; the
-    /// pending state follows the OCCT single-domain outcome (the SurfData
-    /// is appended unsplit), exact when the tangency line crosses no face
-    /// boundary.
+    /// Delegates to split_k_part_hatched in chfi3d_builder_spkp.rs (the
+    /// Geom2dHatch trim of the tangency lines against the face
+    /// restrictions, FillSD of the CommonPoints, the CpSD copies).
     #[allow(clippy::too_many_arguments)]
     fn split_k_part(
         &mut self,
@@ -2871,24 +3018,34 @@ impl ChFi3dBuilder {
         set_data: &mut Vec<ChFiDSSurfData>,
         s1: &Shape,
         s2: &Shape,
-        _spine: &mut ChFiDSSpineHandle,
-        _iedge: usize,
-        _intf: bool,
-        _intl: bool,
+        spine: &mut ChFiDSSpineHandle,
+        iedge: usize,
+        intf: bool,
+        intl: bool,
     ) -> bool {
         // OCCT SpKP.cxx L856-871: F1/F2 from the adaptor handles are
-        // registered in the DS and stored on the SurfData.
-        let f1 = s1.clone();
-        let f2 = s2.clone();
-        let dstr = self.my_ds.as_mut().expect("DS");
-        data.change_index_of_s1(dstr.add_shape(&f1));
-        data.change_index_of_s2(dstr.add_shape(&f2));
-        // OCCT L762-855: Geom2dHatch_Hatcher trim of InterferenceOnS1/S2
-        // pcurves — pending; the multi-domain redistribution below it is
-        // unreachable in the pending state.  The pending state follows the
-        // OCCT single-domain outcome (NbDomains == 1 on both faces): the
-        // SurfData is appended unsplit.
-        set_data.push(data.clone());
+        // registered in the DS and stored on the SurfData (inside
+        // SplitKPart L869-872).
+        let mut intf = intf;
+        let mut intl = intl;
+        let mut owned_set_data: Vec<super::chfi_ds::SharedSurfData> = Vec::new();
+        let ok = self.split_k_part_hatched(
+
+            data,
+            &mut owned_set_data,
+            spine,
+            iedge,
+            s1,
+            s2,
+            &mut intf,
+            &mut intl,
+        );
+        if !ok {
+            return false;
+        }
+        for sd in owned_set_data {
+            set_data.push(sd.write().expect("surfdata lock").clone());
+        }
         true
     }
 
