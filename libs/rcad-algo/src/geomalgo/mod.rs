@@ -24,6 +24,7 @@ pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain
 pub mod gtests_stubs; // Stubs for OCCT GTest translations (minimal impls to compile+pass)
 pub mod plate;       // Plate (variational spline plate: constraints + Plate_Plate solver)
 pub mod geomplate;   // GeomPlate (plate surface building on top of Plate)
+pub mod geomfill;    // GeomFill (BSplineCurves filling: Stretch/Coons/Curved)
 
 pub use int_polyh::IntPolyhPoint;
 pub use top_trans::surface_transition::SurfaceTransition;
