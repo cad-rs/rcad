@@ -1238,6 +1238,10 @@ pub struct ChFiDSStripe {
     /// OCCT: occ::handle<NCollection_HSequence<occ::handle<ChFiDS_SurfData>>>
     /// myHdata
     pub my_hdata: Vec<SharedSurfData>,
+    /// OCCT: occ::handle<Geom2d_Curve> pcrv1
+    pub pcrv1: Option<rcad_kernel::geom::Curve2d>,
+    /// OCCT: occ::handle<Geom2d_Curve> pcrv2
+    pub pcrv2: Option<rcad_kernel::geom::Curve2d>,
     /// OCCT: int myChoix
     pub my_choix: i32,
     /// OCCT: int indexOfSolid
@@ -1277,6 +1281,8 @@ impl Default for ChFiDSStripe {
             parfin2: 0.0,
             my_spine: None,
             my_hdata: Vec::new(),
+            pcrv1: None,
+            pcrv2: None,
             my_choix: 0,
             index_of_solid: 0,
             index_ofcurve1: 0,
@@ -1857,5 +1863,91 @@ impl ChFiDSSpine {
     /// OCCT ChFiDS_Spine.cxx Period() — the spine period (last abscissa).
     pub fn period(&self) -> f64 {
         self.abscissa.as_ref().map_or(0.0, |a| a[a.len() - 1])
+    }
+}
+impl ChFiDSStripe {
+    /// OCCT ChFiDS_Stripe.lxx — SetCurve(Icurv, IsFirst).
+    pub fn set_curve(&mut self, icurv: i32, is_first: bool) {
+        if is_first {
+            self.index_ofcurve1 = icurv;
+        } else {
+            self.index_ofcurve2 = icurv;
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — SetParameters(IsFirst, Pardeb, Parfin).
+    pub fn set_parameters(&mut self, is_first: bool, pardeb: f64, parfin: f64) {
+        if is_first {
+            self.pardeb1 = pardeb;
+            self.parfin1 = parfin;
+        } else {
+            self.pardeb2 = pardeb;
+            self.parfin2 = parfin;
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — ChangePCurve(IsFirst) (assignable slot).
+    pub fn change_pcurve(&mut self, is_first: bool, pc: rcad_kernel::geom::Curve2d) {
+        if is_first {
+            self.pcrv1 = Some(pc);
+        } else {
+            self.pcrv2 = Some(pc);
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — SetIndexPoint(Index, IsFirst, OnS).
+    pub fn set_index_point(&mut self, index: i32, is_first: bool, on_s: i32) {
+        if on_s == 1 {
+            if is_first {
+                self.indexfirst_pon_s1 = index;
+            } else {
+                self.indexlast_pon_s1 = index;
+            }
+        } else if is_first {
+            self.indexfirst_pon_s2 = index;
+        } else {
+            self.indexlast_pon_s2 = index;
+        }
+    }
+
+    /// OCCT ChFiDS_Stripe.lxx — SetSolidIndex(I).
+    pub fn set_solid_index(&mut self, i: i32) {
+        self.index_of_solid = i;
+    }
+}
+impl ChFiDS_CommonPoint {
+    /// OCCT ChFiDS_CommonPoint.lxx — IsOnArc().
+    pub fn is_on_arc(&self) -> bool {
+        self.isonarc
+    }
+
+    /// OCCT ChFiDS_CommonPoint.lxx — Arc().
+    pub fn arc(&self) -> &Shape {
+        &self.arc
+    }
+
+    /// OCCT ChFiDS_CommonPoint.lxx — ParameterOnArc().
+    pub fn parameter_on_arc(&self) -> f64 {
+        self.prmarc
+    }
+
+    /// OCCT ChFiDS_CommonPoint.lxx — TransitionOnArc().
+    pub fn transition_on_arc(&self) -> Orientation {
+        self.traarc
+    }
+
+    /// OCCT ChFiDS_CommonPoint.lxx — IsVertex().
+    pub fn is_vertex(&self) -> bool {
+        self.isvtx
+    }
+
+    /// OCCT ChFiDS_CommonPoint.lxx — Vertex().
+    pub fn vertex(&self) -> &Shape {
+        &self.vtx
+    }
+
+    /// OCCT ChFiDS_CommonPoint.lxx — Tolerance().
+    pub fn tolerance(&self) -> f64 {
+        self.tol
     }
 }

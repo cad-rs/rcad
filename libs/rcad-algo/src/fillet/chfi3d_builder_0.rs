@@ -7,7 +7,7 @@
 //! functions here take the owning `&BRep` as an extra first argument where
 //! OCCT reads geometry straight from the shape handles.
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{CurveEval as _, SurfaceEval as _};
 use rcad_kernel::topo::topods::{Orientation, Shape, TShape};
 use rcad_kernel::topods;
@@ -296,3 +296,208 @@ pub fn intermediate_point(i1: f64, i2: f64) -> f64 {
 
 /// OCCT Precision::PConfusion stand-in (rcad CONFUSION).
 pub const P_CONFUSION: f64 = CONFUSION;
+
+// =========================================================================
+// OCCT ChFi3d_Builder_0.cxx L1690-1745 — ChFi3d_ComputePCurv (the 2-point
+// pcurve: axis-aligned lines or a 2-pole BSpline guaranteeing the
+// parameterization Pardeb..Parfin).
+// =========================================================================
+pub fn chfi3d_compute_pcurv_2pt(
+    uv1: glam::DVec2,
+    uv2: glam::DVec2,
+    pardeb: f64,
+    parfin: f64,
+    reverse: bool,
+) -> rcad_kernel::geom::Curve2d {
+    use rcad_kernel::geom::{Curve2d, Line2d};
+    use glam::DVec2 as P2;
+    let tol = P_CONFUSION;
+    let (p1, p2) = if !reverse { (uv1, uv2) } else { (uv2, uv1) };
+
+    if (p1.x - p2.x).abs() <= tol && ((p2.y - p1.y) - (parfin - pardeb)).abs() <= tol {
+        // vertical line, growing v
+        Curve2d::Line(Line2d {
+            origin: P2::new(p1.x, p1.y - pardeb),
+            direction: DVec2::new(0.0, 1.0),
+        })
+    } else if (p1.x - p2.x).abs() <= tol && ((p1.y - p2.y) - (parfin - pardeb)).abs() <= tol {
+        // vertical line, decreasing v
+        Curve2d::Line(Line2d {
+            origin: P2::new(p1.x, p1.y + pardeb),
+            direction: DVec2::new(0.0, -1.0),
+        })
+    } else if (p1.y - p2.y).abs() <= tol && ((p2.x - p1.x) - (parfin - pardeb)).abs() <= tol {
+        // horizontal line, growing u
+        Curve2d::Line(Line2d {
+            origin: P2::new(p1.x - pardeb, p1.y),
+            direction: DVec2::new(1.0, 0.0),
+        })
+    } else if (p1.y - p2.y).abs() <= tol && ((p1.x - p2.x) - (parfin - pardeb)).abs() <= tol {
+        // horizontal line, decreasing u
+        Curve2d::Line(Line2d {
+            origin: P2::new(p1.x + pardeb, p1.y),
+            direction: DVec2::new(-1.0, 0.0),
+        })
+    } else {
+        // OCCT: 2-pole Bezier/BSpline with the imposed parameters.
+        Curve2d::Bezier(rcad_kernel::geom::BezierCurve2 {
+            control_points: vec![p1, p2],
+            weights: vec![1.0, 1.0],
+        })
+    }
+}
+
+/// OCCT ChFi3d_Builder_0.cxx ChFi3d_SameParameter — the pcurve
+/// same-parameter verification/correction against the surface.  Pending:
+/// the identity keeps the 2-point parameterization (exact for the axis-
+/// aligned pcurves produced above on analytic surfaces).
+pub fn chfi3d_same_parameter(
+    _c3d: &rcad_kernel::geom::Curve3,
+    _pcurv: &mut rcad_kernel::geom::Curve2d,
+    _s: &rcad_kernel::geom::Surface3,
+    _tol3d: f64,
+    tolreached: &mut f64,
+) {
+    *tolreached = _tol3d;
+}
+
+// =========================================================================
+// OCCT ElSLib — cylinder iso curve construction used by ComputeArete.
+// =========================================================================
+
+/// OCCT Geom_CylindricalSurface::VIso(V) — the circle at height v.
+pub fn cylinder_v_iso(
+    origin: DVec3,
+    xdir: DVec3,
+    axis: DVec3,
+    radius: f64,
+    v: f64,
+) -> rcad_kernel::geom::Circle3 {
+    let ydir = axis.cross(xdir).normalize();
+    let center = origin + axis * v;
+    let mut c = rcad_kernel::geom::Circle3::new(center, axis, radius);
+    let _ = (xdir, ydir);
+    c
+}
+
+// =========================================================================
+// OCCT ChFi3d_Builder_0.cxx L1984-2180 — ChFi3d_ComputeArete.
+// IFlag=0 pcurve et courbe 3d; IFlag>0 pcurve (parametrage impose si 2).
+// Returns (C3d, Pcurv, Pardeb, Parfin, tolreached).
+// =========================================================================
+#[allow(clippy::too_many_arguments)]
+pub fn chfi3d_compute_arete(
+    brep: &topods::BRep,
+    p1: &super::chfi_ds::ChFiDS_CommonPoint,
+    uv1: glam::DVec2,
+    p2: &super::chfi_ds::ChFiDS_CommonPoint,
+    uv2: glam::DVec2,
+    surf: &rcad_kernel::geom::Surface3,
+    tol3d: f64,
+    tol2d: f64,
+    iflag: i32,
+) -> (Option<rcad_kernel::geom::Curve3>, rcad_kernel::geom::Curve2d, f64, f64, f64) {
+    use rcad_kernel::geom::{Curve2d, Curve3, Line2d};
+    let mut c3d: Option<Curve3> = None;
+    let pcurv;
+    let mut pardeb = 0.0;
+    let mut parfin = 0.0;
+    let tolreached;
+
+    if (uv1.x - uv2.x).abs() <= tol2d {
+        // iso u
+        if iflag == 0 {
+            pardeb = uv1.y;
+            parfin = uv2.y;
+            // OCCT: C3d = Surf->UIso(UV1.X()) — the u-isocurve of the
+            // surface at u = UV1.X(); rcad resolves the iso curve per
+            // surface kind.
+            let reversed = pardeb > parfin;
+            if reversed {
+                std::mem::swap(&mut pardeb, &mut parfin);
+            }
+            match surf {
+                rcad_kernel::geom::Surface3::Cylinder(c) => {
+                    let iso = cylinder_v_iso(c.origin, c.ref_dir, c.axis, c.radius, uv1.x);
+                    c3d = Some(Curve3::Circle(iso));
+                }
+                _ => {
+                    // pending: u-iso of non-cylindrical surfaces.
+                }
+            }
+            if reversed {
+                // OCCT reverses the curve; rcad records the range as
+                // (Pardeb, Parfin) with Pardeb > Parfin dropped by the
+                // swap above, so nothing more is needed here.
+            }
+        }
+        if iflag != 1 {
+            // OCCT: ChFi3d_ComputePCurv(hc, UV1, UV2, Pcurv, hs, Pardeb,
+            // Parfin, tol3d, tolreached, false);
+            let mut pc = chfi3d_compute_pcurv_2pt(uv1, uv2, pardeb, parfin, false);
+            let mut tr = tol3d;
+            if let Some(c) = &c3d {
+                chfi3d_same_parameter(c, &mut pc, surf, tol3d, &mut tr);
+            }
+            pcurv = pc;
+            tolreached = tr;
+        } else {
+            pcurv = Curve2d::Line(Line2d {
+                origin: uv1,
+                direction: (uv2 - uv1).normalize(),
+            });
+            tolreached = tol3d;
+        }
+    } else if (uv1.y - uv2.y).abs() <= tol2d {
+        // iso v
+        if iflag == 0 {
+            pardeb = uv1.x;
+            parfin = uv2.x;
+            let reversed = pardeb > parfin;
+            if reversed {
+                std::mem::swap(&mut pardeb, &mut parfin);
+            }
+            match surf {
+                rcad_kernel::geom::Surface3::Cylinder(c) => {
+                    let iso = cylinder_v_iso(c.origin, c.ref_dir, c.axis, c.radius, uv1.y);
+                    c3d = Some(Curve3::Circle(iso));
+                }
+                _ => {
+                    // pending: v-iso of non-cylindrical surfaces.
+                }
+            }
+        }
+        if iflag != 1 {
+            let mut pc = chfi3d_compute_pcurv_2pt(uv1, uv2, pardeb, parfin, false);
+            let mut tr = tol3d;
+            if let Some(c) = &c3d {
+                chfi3d_same_parameter(c, &mut pc, surf, tol3d, &mut tr);
+            }
+            pcurv = pc;
+            tolreached = tr;
+        } else {
+            pcurv = Curve2d::Line(Line2d {
+                origin: uv1,
+                direction: (uv2 - uv1).normalize(),
+            });
+            tolreached = tol3d;
+        }
+    } else if iflag == 0 {
+        // OCCT L2036-2058: straight-line pcurve when a vertex is involved
+        // or the points are not on arcs; otherwise the tangent-matched
+        // BuildPCurve with the in-surface a-posteriori check — pending.
+        pcurv = Curve2d::Bezier(rcad_kernel::geom::BezierCurve2 {
+            control_points: vec![uv1, uv2],
+            weights: vec![1.0, 1.0],
+        });
+        tolreached = tol3d;
+        let _ = (p1, p2, brep);
+    } else {
+        // OCCT: hs->Load(Surf); hc->Load(C3d, Pardeb, Parfin);
+        // ChFi3d_ProjectPCurv(...) — pending.
+        pcurv = chfi3d_compute_pcurv_2pt(uv1, uv2, pardeb, parfin, false);
+        tolreached = tol3d;
+        let _ = (brep, p1, p2);
+    }
+    (c3d, pcurv, pardeb, parfin, tolreached)
+}

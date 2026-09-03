@@ -49,6 +49,8 @@ pub struct TopOpeBRepDSHDataStructure {
     pub surfaces: Vec<rcad_kernel::geom::Surface3>,
     /// OCCT: curves table (TopOpeBRepDS_Curve), 1-based indices.
     pub curves: Vec<rcad_kernel::geom::Curve3>,
+    /// OCCT: points table (TopOpeBRepDS_Point), 1-based indices.
+    pub points: Vec<(DVec3, f64)>,
     /// OCCT: shapes table (arbitrary TopoDS_Shape), 1-based indices.
     pub shapes: Vec<Shape>,
     /// OCCT: shape -> index lookup by TShape pointer identity.
@@ -66,6 +68,12 @@ impl TopOpeBRepDSHDataStructure {
     pub fn add_curve(&mut self, c: rcad_kernel::geom::Curve3) -> i32 {
         self.curves.push(c);
         self.curves.len() as i32
+    }
+
+    /// OCCT TopOpeBRepDS_DataStructure::AddPoint(P) - 1-based index.
+    pub fn add_point(&mut self, p: DVec3, tol: f64) -> i32 {
+        self.points.push((p, tol));
+        self.points.len() as i32
     }
 
     /// OCCT TopOpeBRepDS_DataStructure::AddShape(S) - an already-present
@@ -529,12 +537,14 @@ impl ChFi3dBuilder {
         // L301-332: construct fillets on each vertex + feed the DS
         if self.done {
             for j in 1..=self.my_vdata_map.extent() {
-                // L310: PerformFilletOnVertex(j) — pending corner machinery;
-                // the OCCT catch path appends the vertex:
-                self.perform_fillet_on_vertex_pending();
-                self.badvertices.push(self.my_vdata_map.find_key(j).clone());
-                self.hasresult = false;
-                self.done = true;
+                // L310: PerformFilletOnVertex(j) — the OCCT try/catch maps
+                // to the success flag; the catch path appends the vertex:
+                let ok = self.perform_fillet_on_vertex(j);
+                if !ok {
+                    self.badvertices.push(self.my_vdata_map.find_key(j).clone());
+                    self.hasresult = false;
+                    self.done = true;
+                }
                 if !self.done {
                     self.badvertices.push(self.my_vdata_map.find_key(j).clone());
                 }
@@ -550,8 +560,12 @@ impl ChFi3dBuilder {
         // L354-396: stripe intersections (ChFi3d_StripeEdgeInter) +
         // ChFi3d_FilDS; L403-579: the TopOpeBRepBuild reconstruction
         // (myCoup->Perform/MergeSolid) and myShapeResult assembly; L574:
-        // SetRegul.  All depend on the pending TopOpeBRepDS /
-        // TopOpeBRepBuild subsystems and are unreachable with done=false.
+        // SetRegul.  The reconstruction subsystem is pending translation;
+        // when the OCCT flow enters `if (done)` the pending raise surfaces
+        // as done = false with no result shape.
+        if self.done {
+            self.done = false; // pending: ChFi3d_FilDS + TopOpeBRepBuild reconstruction
+        }
 
         // L655-674: SameParameter pass over the new faces (only when done).
         if self.is_done() {
@@ -3302,5 +3316,300 @@ mod kpart_tests {
             matches!(surf, rcad_kernel::geom::Surface3::Cylinder(c) if (c.radius - 2.0).abs() < 1e-9),
             "KPart surface is the radius-2 cylinder, got {surf:?}"
         );
+        assert!(
+            sd.index_of_s1 >= 1 && sd.index_of_s2 >= 1,
+            "support faces registered in the DS (SpKP L870-871)"
+        );
+
+        // PerformFilletOnVertex -> PerformSingularCorner: the stripe end
+        // curves (the quarter-circle arcs) are computed and stored in the
+        // DS per OCCT Builder.cxx L682-755.
+        assert!(
+            st.index_ofcurve1 > 0 && st.index_ofcurve2 > 0,
+            "both singular end arcs created, got {}/{}",
+            st.index_ofcurve1,
+            st.index_ofcurve2
+        );
+        for ic in [st.index_ofcurve1, st.index_ofcurve2] {
+            let curve = &fillet.base.my_ds.as_ref().unwrap().curves[ic as usize - 1];
+            assert!(
+                matches!(curve, rcad_kernel::geom::Curve3::Circle(c) if (c.radius - 2.0).abs() < 1e-9),
+                "singular end arc is a radius-2 circle"
+            );
+        }
+    }
+}
+
+impl ChFi3dBuilder {
+    /// OCCT ChFi3d_Builder.cxx L682-755 — PerformSingularCorner: load
+    /// vertex and degenerated edges.
+    pub fn perform_singular_corner(&mut self, index: usize) {
+        let vtx = self.my_vdata_map.find_key(index).clone();
+        let stripes = self.my_vdata_map.find_from_index(index).clone();
+
+        let mut ivtx = 0i32;
+        for (i, stripe) in stripes.iter().enumerate() {
+            // SurfData concerned and its CommonPoints.
+            let mut sens = 0i32;
+            let num = {
+                let st = stripe.read().expect("stripe lock");
+                chfi3d_index_of_surf_data(&vtx, &st, &mut sens)
+            };
+            let isfirst = sens == 1;
+
+            // OCCT: Fd = stripe->SetOfSurfData()->Sequence().Value(num);
+            let (cv1, cv2) = {
+                let guard = stripe.read().expect("stripe lock");
+                let Some(fd) = guard.my_hdata.get((num - 1) as usize) else {
+                    continue;
+                };
+                (
+                    fd.vertex(isfirst, 1).clone(),
+                    fd.vertex(isfirst, 2).clone(),
+                )
+            };
+            // Is it always degenerated?
+            if !(cv1.point().distance(cv2.point()) <= 0.0) {
+                continue;
+            }
+            // if yes the vertex is stored in the stripe and the edge at end
+            // is created.
+            if i == 0 {
+                ivtx = chfi3d_index_point_in_ds(&cv1, self.my_ds.as_mut().expect("DS"));
+            }
+
+            // OCCT: VOnS1/VOnS2 = PCurveOnSurf()->Value(First/LastParameter).
+            let (von_s1, von_s2) = {
+                let (fi1, fi2) = (
+                    stripe.read().expect("stripe lock").my_hdata[(num - 1) as usize].intf1.clone(),
+                    stripe.read().expect("stripe lock").my_hdata[(num - 1) as usize].intf2.clone(),
+                );
+                if isfirst {
+                    (
+                        fi1.pcurve_on_surf().map(|pc| pc.point_at(fi1.parameter(true))),
+                        fi2.pcurve_on_surf().map(|pc| pc.point_at(fi2.parameter(true))),
+                    )
+                } else {
+                    (
+                        fi1.pcurve_on_surf().map(|pc| pc.point_at(fi1.parameter(false))),
+                        fi2.pcurve_on_surf().map(|pc| pc.point_at(fi2.parameter(false))),
+                    )
+                }
+            };
+            let (Some(von_s1), Some(von_s2)) = (von_s1, von_s2) else {
+                continue;
+            };
+
+            // OCCT: ChFi3d_ComputeArete(CV1, VOnS1, CV2, VOnS2,
+            // DStr.Surface(Fd->Surf()).Surface(), C3d, PCurv, Pardeb,
+            // Parfin, tolapp3d, tolapp2d, tolreached, 0);
+            let surf_index = stripe.read().expect("stripe lock").my_hdata[(num - 1) as usize].surf_index;
+            let surf = self.my_ds.as_ref().expect("DS").surfaces[surf_index as usize - 1].clone();
+            let (c3d, pcurv, pardeb, parfin, _tolreached) = super::chfi3d_builder_0::chfi3d_compute_arete(
+                &self.my_brep,
+                &cv1,
+                von_s1,
+                &cv2,
+                von_s2,
+                &surf,
+                self.tolapp3d,
+                self.tolapp2d,
+                0,
+            );
+
+            // OCCT: Crv = TopOpeBRepDS_Curve(C3d, tolreached); Icurv =
+            // DStr.AddCurve(Crv);
+            let Some(c3d) = c3d else {
+                continue;
+            };
+            let icurv = self.my_ds.as_mut().expect("DS").add_curve(c3d);
+
+            let mut stw = stripe.write().expect("stripe lock");
+            stw.set_curve(icurv, isfirst);
+            stw.set_parameters(isfirst, pardeb, parfin);
+            stw.change_pcurve(isfirst, pcurv);
+            stw.set_index_point(ivtx, isfirst, 1);
+            stw.set_index_point(ivtx, isfirst, 2);
+        }
+    }
+
+    /// OCCT ChFi3d_Builder.cxx L759-920 - PerformFilletOnVertex.
+    /// Returns false where the OCCT code would raise on a pending boundary.
+    pub fn perform_fillet_on_vertex(&mut self, index: usize) -> bool {
+        let vtx = self.my_vdata_map.find_key(index).clone();
+        let stripes = self.my_vdata_map.find_from_index(index).clone();
+
+        let mut i = 0usize;
+        let mut nondegenere = true;
+        let mut toujoursdegenere = true;
+        let mut sp_free_boundary_at_end = false;
+        for stripe in &stripes {
+            let st = stripe.read().expect("stripe lock");
+            let Some(sp) = st.spine() else {
+                continue;
+            };
+            // SurfData and its CommonPoints.
+            let mut sens = 0i32;
+            let num = chfi3d_index_of_surf_data(&vtx, &st, &mut sens);
+            let isfirst = sens == 1;
+            let Some(fd) = st.my_hdata.get((num as usize).saturating_sub(1)) else {
+                i += 1;
+                continue;
+            };
+            let cv1 = fd.vertex(isfirst, 1);
+            let cv2 = fd.vertex(isfirst, 2);
+            // Is it always degenerated?
+            if cv1.point().distance(cv2.point()) <= 0.0 {
+                nondegenere = false;
+            } else {
+                toujoursdegenere = false;
+            }
+            sp_free_boundary_at_end = sp.base().status(isfirst) == ChFiDS_State::FreeBoundary;
+            i += 1;
+        }
+
+        // calcul du nombre de faces = nombre d'aretes (sharp edges).
+        let nba = super::chfi3d_builder_0::chfi3d_number_of_sharp_edges(
+            &vtx,
+            &self.my_ve_map,
+            &self.my_ef_map,
+            &self.my_brep,
+        );
+
+        if nondegenere {
+            // Normal processing.  A false return encodes the OCCT raise on
+            // a pending boundary.
+            match i {
+                1 => {
+                    if sp_free_boundary_at_end {
+                        return true;
+                    }
+                    if nba > 3 {
+                        // OCCT: PerformIntersectionAtEnd(Index) — pending.
+                        self.perform_intersection_at_end_pending();
+                        return false;
+                    } else if self.more_surfdata(index) {
+                        // OCCT: PerformMoreSurfdata(Index) — pending.
+                        self.perform_more_surfdata_pending();
+                        return false;
+                    }
+                    // OCCT: PerformOneCorner(Index) — pending
+                    // (ChFi3d_Builder_C1.cxx L611).
+                    self.perform_one_corner_pending();
+                    false
+                }
+                2 => {
+                    if nba > 3 {
+                        self.perform_more_three_corner_pending();
+                    } else {
+                        self.perform_two_corner_pending();
+                    }
+                    false
+                }
+                3 => {
+                    if nba > 3 {
+                        self.perform_more_three_corner_pending();
+                    } else {
+                        self.perform_three_corner_pending();
+                    }
+                    false
+                }
+                _ => {
+                    self.perform_more_three_corner_pending();
+                    false
+                }
+            }
+        } else if toujoursdegenere {
+            // Single case processing
+            self.perform_singular_corner(index);
+            true
+        } else {
+            // Last chance...
+            self.perform_more_three_corner_pending();
+            false
+        }
+    }
+
+    /// OCCT ChFi3d_Builder_C1.cxx L4601-4640 — MoreSurfdata.
+    pub fn more_surfdata(&self, index: usize) -> bool {
+        // intersection at end is created on several surfdata if:
+        // - the number of surfdata concerning the vertex is more than 1.
+        // - and if the last but one surfdata has one of commonpoints on one
+        //   of the two arcs, which constitute the intersections of the face
+        //   at end and of the fillet.  The FindFace-dependent tail is
+        //   pending; the stripe-count check is translated.
+        let stripes = self.my_vdata_map.find_from_index(index);
+        let Some(stripe) = stripes.first() else {
+            return false;
+        };
+        let st = stripe.read().expect("stripe lock");
+        st.my_hdata.len() > 1
+    }
+
+    fn perform_intersection_at_end_pending(&mut self) {
+        // OCCT ChFi3d_Builder_C2.cxx PerformIntersectionAtEnd — pending.
+    }
+
+    fn perform_more_surfdata_pending(&mut self) {
+        // OCCT ChFi3d_Builder_C1.cxx L3771 PerformMoreSurfdata — pending.
+    }
+
+    fn perform_one_corner_pending(&mut self) {
+        // OCCT ChFi3d_Builder_C1.cxx L611 PerformOneCorner — pending.
+    }
+
+    fn perform_two_corner_pending(&mut self) {
+        // OCCT ChFi3d_Builder_CnCrn.cxx PerformTwoCorner — pending.
+    }
+
+    fn perform_three_corner_pending(&mut self) {
+        // OCCT ChFi3d_Builder_CnCrn.cxx PerformThreeCorner — pending.
+    }
+
+    fn perform_more_three_corner_pending(&mut self) {
+        // OCCT ChFi3d_Builder_CnCrn.cxx PerformMoreThreeCorner — pending.
+    }
+}
+
+/// OCCT ChFi3d_Builder_0.cxx L3446-3495 — ChFi3d_IndexOfSurfData.
+pub fn chfi3d_index_of_surf_data(v1: &Shape, cd: &ChFiDSStripe, sens: &mut i32) -> i32 {
+    let spine = cd.spine().expect("null spine");
+    let mut index = 0i32;
+    *sens = 1;
+    let e = spine.base().edges(1).clone();
+    let vref = if e.orientation == Orientation::Reversed {
+        e.as_edge().expect("edge").last.clone()
+    } else {
+        e.as_edge().expect("edge").first.clone()
+    };
+    if vref.is_same(v1) {
+        index = 1;
+    } else {
+        let e1 = spine.base().edges(spine.base().nb_edges()).clone();
+        let vref = if e1.orientation == Orientation::Reversed {
+            e1.as_edge().expect("edge").first.clone()
+        } else {
+            e1.as_edge().expect("edge").last.clone()
+        };
+        *sens = -1;
+        if vref.is_same(v1) {
+            index = cd.my_hdata.len() as i32;
+        } else {
+            panic!("Standard_ConstructionError: ChFi3d_IndexOfSurfData() - wrong construction parameters");
+        }
+    }
+    index
+}
+
+/// OCCT ChFi3d_Builder_0.cxx L2345-2366 — ChFi3d_IndexPointInDS.
+pub fn chfi3d_index_point_in_ds(
+    p1: &super::chfi_ds::ChFiDS_CommonPoint,
+    dstr: &mut TopOpeBRepDSHDataStructure,
+) -> i32 {
+    if p1.is_vertex() {
+        let v = p1.vertex().clone();
+        dstr.add_shape(&v)
+    } else {
+        dstr.add_point(p1.point(), p1.tolerance())
     }
 }
