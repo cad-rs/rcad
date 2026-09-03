@@ -79,6 +79,38 @@ impl Ax2 {
     pub fn axis(&self) -> Ax1 {
         Ax1::new(self.location, self.direction)
     }
+
+    /// OCCT gp_Ax2(P, V) two-argument constructor (gp_Ax2.cxx L27-85): the X
+    /// direction is the unit vector perpendicular to V having a zero in the
+    /// coordinate of the smallest |component| of V, applied through
+    /// SetXDirection (gp_Ax2.hxx L143-147).  With D already perpendicular to
+    /// V, SetXDirection(D) equals Ax2::new(P, V, D).
+    pub fn from_direction(location: DVec3, direction: DVec3) -> Self {
+        let a = direction.x;
+        let b = direction.y;
+        let c = direction.z;
+        let aabs = a.abs();
+        let babs = b.abs();
+        let cabs = c.abs();
+        let d = if babs <= aabs && babs <= cabs {
+            if aabs > cabs {
+                DVec3::new(-c, 0.0, a)
+            } else {
+                DVec3::new(c, 0.0, -a)
+            }
+        } else if aabs <= babs && aabs <= cabs {
+            if babs > cabs {
+                DVec3::new(0.0, -c, b)
+            } else {
+                DVec3::new(0.0, c, -b)
+            }
+        } else if aabs > babs {
+            DVec3::new(-b, a, 0.0)
+        } else {
+            DVec3::new(b, -a, 0.0)
+        };
+        Self::new(location, direction, d)
+    }
 }
 
 /// OCCT gp_Ax3 (right- or left-handed coordinate system).

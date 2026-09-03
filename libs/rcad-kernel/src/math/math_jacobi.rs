@@ -195,6 +195,24 @@ impl MathJacobi {
         &self.eigen_vectors
     }
 
+    /// OCCT math_Jacobi::Value(Num) (math_Jacobi.lxx) — the eigenvalue
+    /// number Num.  Eigenvalues are in the range (1..n).
+    pub fn value(&self, num: usize) -> f64 {
+        self.eigen_values.get(num)
+    }
+
+    /// OCCT math_Jacobi::Vector(Num, V) (math_Jacobi.lxx) — returns the
+    /// eigenvector V of number Num (column Num of the eigenvector matrix).
+    /// Eigenvectors are in the range (1..n).
+    pub fn vector(&self, num: usize) -> VecD {
+        let n = self.eigen_vectors.n_rows();
+        let mut v = VecD::new(n);
+        for j in 1..=n {
+            v.set(j, self.eigen_vectors.get(j, num));
+        }
+        v
+    }
+
     /// OCCT AA() — the input matrix (unchanged copy).
     pub fn aa(&self) -> &MatD {
         &self.aa
