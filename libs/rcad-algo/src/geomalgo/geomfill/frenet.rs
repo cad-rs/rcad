@@ -742,7 +742,9 @@ impl TrihedronLaw for Frenet {
         Box::new(copy)
     }
 
-    /// OCCT SetCurve (L127-154).
+    /// OCCT SetCurve (L127-154).  Calls the base-class implementation
+    /// explicitly (the lint sees the same-name method as recursion).
+    #[allow(unconditional_recursion)]
     fn set_curve(&mut self, c: Curve3) -> bool {
         TrihedronLaw::set_curve(self, c.clone());
         // GeomAbs_Circle/Ellipse/Hyperbola/Parabola/Line — no problem;
@@ -779,7 +781,7 @@ impl TrihedronLaw for Frenet {
     /// OCCT D0 (L472-628).  The near-singular branch recursively calls D0
     /// at a shifted parameter (OCCT L596-610) — the recursion terminates
     /// there through the non-degenerate branch.
-    #[allow(unused_mut)]
+    #[allow(unused_mut, unused_assignments, unconditional_recursion)]
     fn d0(&self, the_param: f64, tangent: &mut DVec3, normal: &mut DVec3, binormal: &mut DVec3) -> bool {
         let a_tol = GP_RESOLUTION;
         let mut index = 0usize;
