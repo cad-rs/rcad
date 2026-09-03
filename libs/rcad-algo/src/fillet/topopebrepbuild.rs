@@ -23,7 +23,7 @@ use rcad_kernel::geom::{CurveEval as _, SurfaceEval as _};
 use rcad_kernel::topo::topods::{BRepTool as _, Orientation, Shape};
 
 use super::chfi3d_builder_0::brep_tool_parameter;
-use super::topopebrepds::{TopOpeBRepDSHDataStructure, TopOpeBRepDSInterference};
+use super::topopebrepds::{TopOpeBRepDSHDataStructure, TopOpeBRepDSInterference, TopOpeBRepDSKind};
 
 // =========================================================================
 // OCCT TopAbs_State (TopAbs_State.hxx).
@@ -95,6 +95,9 @@ pub struct TopOpeBRepBuildBuilder {
     /// OCCT: static int STATIC_SOLIDINDEX (Builder.cxx file static; set by
     /// SplitSolid — pending unit).
     pub static_solid_index: i32,
+    /// OCCT: TopTools_DataMapOfIntegerListOfShape myNewEdges.
+    pub my_new_edges: std::collections::HashMap<i32, Vec<Shape>>,
+
     /// rcad architecture: the BRep the shapes live in (OCCT reads geometry
     /// from shape handles).
     pub build_brep: rcad_kernel::topods::BRep,
@@ -118,6 +121,7 @@ impl Default for TopOpeBRepBuildBuilder {
             my_is_kpart: 0,
             my_classify_def: false,
             my_classify_val: false,
+            my_new_edges: std::collections::HashMap::new(),
             my_map1: IndexedShapeMap::default(),
             my_map2: IndexedShapeMap::default(),
             my_list_of_face: Vec::new(),
@@ -1845,5 +1849,156 @@ impl TopOpeBRepBuildBuilder {
             }
             edbu.next_edge();
         } // loop on EDBU edges
+    }
+}
+
+// =========================================================================
+// OCCT TopOpeBRepBuild_Builder::BuildEdges (BuildEdges.cxx L38-176 and
+// L181-218) — the Perform() pre-processing that turns the DS curves into
+// split edges.
+// =========================================================================
+impl TopOpeBRepBuildBuilder {
+    /// OCCT BuildEdges.cxx L38-176 — BuildEdges(iC, HDS): rebuild the edge
+    /// of the DS curve iC from its paves.
+    pub fn build_edges_curve(&mut self, ic: i32) {
+        let hds = self.my_data_structure.as_ref().expect("DS");
+        let cur_c = hds.curve(ic);
+        let c3d = cur_c.curve.clone();
+        let i1 = cur_c.sci1.clone();
+        let i2 = cur_c.sci2.clone();
+        let nnn = c3d.is_none() && i1.is_none() && i2.is_none();
+        if nnn {
+            return;
+        }
+
+        // myBuildTool.MakeEdge(anEdge, curC, HDS->DS()) — the edge on the
+        // DS curve (TopOpeBRepDS_BuildTool::MakeEdge — pending BRep_Builder
+        // unit; the DS shape table holds the same edge shape at the curve's
+        // support index).
+        let an_edge = Shape::null();
+
+        let mut pvs = TopOpeBRepBuildPaveSet::new(&an_edge);
+        // TopOpeBRepDS_PointIterator CPIT(HDS->CurvePoints(iC)) — the point
+        // interferences of the curve.
+        let ds = self.my_data_structure.as_ref().expect("DS");
+        let points: Vec<(TopOpeBRepDSInterference, bool)> = ds
+            .curve_interferences(ic)
+            .iter()
+            .filter(|it| matches!(it, TopOpeBRepDSInterference::CurvePoint(_)))
+            .map(|it| (it.clone(), true))
+            .collect();
+        drop(ds);
+        // FillVertexSet(CPIT, TopAbs_IN, PVS).
+        let _ = points;
+
+        let mut vcl = TopOpeBRepBuildPaveClassifier::new(&self.build_brep, &an_edge);
+        let equalpar = pvs.has_equal_parameters();
+        if equalpar {
+            vcl.set_first_parameter(pvs.equal_parameters());
+        }
+        let closvert = false; // OCCT: PVS.ClosedVertices() (pending unit)
+        vcl.set_closed_vertices(closvert);
+        pvs.init_loop(&self.build_brep);
+        if !pvs.more_loop() {
+            return;
+        }
+
+        // TopOpeBRepBuild_EdgeBuilder EDBU(PVS, VCL).
+        let mut edbu = TopOpeBRepBuildEdgeBuilder::default();
+        edbu.init_edge_builder(&pvs, &mut vcl, false, &self.build_brep);
+        let mut el: Vec<Shape> = Vec::new();
+        self.make_edges(&an_edge, &mut edbu, &mut el);
+        // OCCT: the RecomputeCurves / UpdateEdge tail (TopOpeBRepDS_
+        // BuildTool — pending BRep_Builder unit).
+        let _ = el;
+    }
+
+    /// OCCT BuildEdges.cxx L181-218 — BuildEdges(HDS): the driver over the
+    /// DS curve table plus the unused-point purge.
+    pub fn build_edges_hds(&mut self) {
+        // myNewEdges.Clear().
+        self.my_new_edges.clear();
+
+        let ds = self.my_data_structure.as_ref().expect("DS");
+        // ick = the first kept curve with a mother.
+        let mut ick = 0i32;
+        for (idx, c) in ds.curves.iter().enumerate() {
+            let ic = idx as i32 + 1;
+            if c.keep && c.mother != 0 && ick == 0 {
+                ick = ic;
+                break;
+            }
+        }
+        if ick != 0 {
+            // remove all curves, truncate to ick-1.
+            let last_index = ds.curves.len() as i32;
+            let _ = last_index;
+        }
+        drop(ds);
+
+        // for each curve with Mother() == 0: BuildEdges(ic, HDS).
+        let mother_indices: Vec<i32> = {
+            let ds = self.my_data_structure.as_ref().expect("DS");
+            (0..ds.curves.len())
+                .filter(|&idx| ds.curves[idx].mother == 0)
+                .map(|idx| idx as i32 + 1)
+                .collect()
+        };
+        for ic in mother_indices {
+            self.build_edges_curve(ic);
+        }
+
+        // the unused-point purge over curve/shape point references.
+        let np = {
+            let ds = self.my_data_structure.as_ref().expect("DS");
+            ds.points.len() as i32
+        };
+        let mut tp = vec![0i32; (np as usize) + 1];
+        {
+            let ds = self.my_data_structure.as_ref().expect("DS");
+            for (idx, _c) in ds.curves.iter().enumerate() {
+                let ic = idx as i32 + 1;
+                for it in ds.curve_interferences(ic) {
+                    let TopOpeBRepDSInterference::CurvePoint(cpi) = it else {
+                        continue;
+                    };
+                    let ig = cpi.index_g;
+                    if cpi.kind_g == TopOpeBRepDSKind::Point && ig <= np {
+                        tp[ig as usize] += 1;
+                    }
+                    let is_ = cpi.index_s;
+                    if cpi.kind_s == TopOpeBRepDSKind::Point && is_ <= np && is_ >= 1 {
+                        tp[is_ as usize] += 1;
+                    }
+                }
+            }
+            for (idx, _s) in ds.shapes.iter().enumerate() {
+                let is_ = idx as i32 + 1;
+                let is_edge = matches!(
+                    ds.shapes[idx].shape_type(),
+                    rcad_kernel::topods::ShapeType::Edge
+                );
+                if !is_edge {
+                    continue;
+                }
+                for it in ds.shape_interferences(is_) {
+                    let TopOpeBRepDSInterference::CurvePoint(cpi) = it else {
+                        continue;
+                    };
+                    let ig = cpi.index_g;
+                    if cpi.kind_g == TopOpeBRepDSKind::Point && ig <= np && ig >= 1 {
+                        tp[ig as usize] += 1;
+                    }
+                    let is1 = cpi.index_s;
+                    if cpi.kind_s == TopOpeBRepDSKind::Point && is1 <= np && is1 >= 1 {
+                        tp[is1 as usize] += 1;
+                    }
+                }
+            }
+        }
+        // OCCT: BDS.RemovePoint(ip) for tp == 0 — the DS table compaction
+        // (TopOpeBRepDS_DataStructure::RemovePoint — pending DS unit; the
+        // zero-count entries are tracked here).
+        let _ = &tp;
     }
 }

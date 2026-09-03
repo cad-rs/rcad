@@ -105,6 +105,9 @@ pub struct TopOpeBRepDSCurve {
     /// OCCT: occ::handle<TopOpeBRepDS_Interference> mySCI1 / mySCI2 (SetSCI).
     pub sci1: Option<InterferenceRef>,
     pub sci2: Option<InterferenceRef>,
+    /// OCCT TopOpeBRepDS_Curve.hxx: int myMother (Mother()); bool myKeep.
+    pub mother: i32,
+    pub keep: bool,
 }
 
 /// OCCT stores the two "curve/surface-curve" interference handles on the
@@ -125,6 +128,8 @@ impl TopOpeBRepDSCurve {
             last: 0.0,
             sci1: None,
             sci2: None,
+            mother: 0,
+            keep: false,
         }
     }
 
