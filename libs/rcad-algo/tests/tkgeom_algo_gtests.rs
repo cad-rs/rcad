@@ -36,6 +36,8 @@
 //!   GeomFill_CorrectedFrenet_Test.cxx — the corrected-Frenet trihedron on
 //!     BSpline curves: endless-loop prevention, small-step handling,
 //!     parameter progression, and the no-hang reproducer case.
+//!   GeomFill_NSections_Test.cxx — the OCC27875 single-section construction
+//!     (must not throw; ComputeSurface early-returns for one curve).
 //!
 //! 1:1 translations of the OCCT tests against the rcad OCCT-aligned APIs.
 
@@ -3417,5 +3419,34 @@ mod geom_fill_corrected_frenet_tests {
         TrihedronLaw::d0(&a_corrected_frenet, 0.0, &mut a_tangent, &mut a_normal, &mut a_binormal);
         TrihedronLaw::d0(&a_corrected_frenet, 0.5, &mut a_tangent, &mut a_normal, &mut a_binormal);
         TrihedronLaw::d0(&a_corrected_frenet, 1.0, &mut a_tangent, &mut a_normal, &mut a_binormal);
+    }
+}
+
+// GeomFill_NSections_Test.cxx
+mod geom_fill_nsections_tests {
+    use super::*;
+    use rcad_algo::geomalgo::geomfill::NSections;
+    use rcad_kernel::geom::{BSplineCurve3, Curve3};
+
+    // makeSimpleLinearCurve(): degree-1 through (0,0,0) and (1,0,0).
+    fn make_simple_linear_curve() -> Curve3 {
+        Curve3::BSpline(BSplineCurve3::from_knots_mults(
+            1,
+            vec![0.0, 1.0],
+            vec![2, 2],
+            vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+        ))
+    }
+
+    // TEST(GeomFill_NSectionsTest, OCC27875_SingleCurveDoesNotThrow)
+    // Must not throw even though the result may be degenerate — the
+    // ComputeSurface early-return for a single section leaves mySurface
+    // null and the constructor completes.
+    #[test]
+    fn occ27875_single_curve_does_not_throw() {
+        let a_curve = make_simple_linear_curve();
+        let a_nc = vec![a_curve];
+        // EXPECT_NO_THROW: construction must not panic.
+        let _a_ns = NSections::new(a_nc);
     }
 }
