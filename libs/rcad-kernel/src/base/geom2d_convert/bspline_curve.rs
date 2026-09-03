@@ -112,6 +112,16 @@ fn at_knot(knots: &[f64], i: i32) -> f64 {
 }
 
 #[inline]
+fn set_at_knot(knots: &mut [f64], i: i32, v: f64) {
+    knots[(i - 1) as usize] = v;
+}
+
+#[inline]
+fn set_at_mult(mults: &mut [i32], i: i32, v: i32) {
+    mults[(i - 1) as usize] = v;
+}
+
+#[inline]
 fn at_weight(weights: &[f64], i: i32) -> f64 {
     weights[(i - 1) as usize]
 }
@@ -395,5 +405,583 @@ impl Geom2dBSplineCurve {
                 *parameter += period;
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Modification operations (Geom2d_BSplineCurve.cxx)
+    // ------------------------------------------------------------------
+
+    /// OCCT Geom2d_BSplineCurve::IncreaseDegree (Geom2d_BSplineCurve.cxx
+    /// L236-293).  The BSplCLib gp_Pnt2d overload (BSplCLib_1.cxx L153-178)
+    /// dispatches through `BSplCLib_IncreaseDegree`
+    /// (BSplCLib_CurveComputation.pxx L538-590): rational curves are
+    /// homogenized to dim 3 (PLib::SetPoles), the flat Dimension kernel runs,
+    /// and the result is dehomogenized (PLib::GetPoles).
+    pub fn increase_degree(&mut self, degree: usize) {
+        if degree == self.my_deg {
+            return;
+        }
+
+        if degree < self.my_deg || degree > BSPLIB_MAX_DEGREE {
+            panic!("Standard_ConstructionError: BSpline curve: IncreaseDegree: bad degree value");
+        }
+
+        let from_k1 = self.first_uknot_index();
+        let to_k2 = self.last_uknot_index();
+
+        let step = (degree - self.my_deg) as i32;
+
+        // OCCT npoles(1, myPoles.Length() + Step * (ToK2 - FromK1)) in poles;
+        // the flat buffer holds `dim` doubles per pole.
+        let npoles_len = self.my_poles.len() + (step * (to_k2 - from_k1)) as usize;
+
+        let nbknots = crate::math::bspl_lib::increase_degree_count_knots(
+            self.my_deg,
+            degree,
+            self.my_periodic,
+            &self.my_mults,
+        );
+
+        let weights_opt = if self.my_rational {
+            Some(&self.my_weights[..])
+        } else {
+            None
+        };
+        let (poles_flat, dim) = flatten_poles(&self.my_poles, weights_opt);
+        let mut npoles_flat = vec![0.0f64; npoles_len * dim];
+        let mut nknots = vec![0.0f64; nbknots];
+        let mut nmults = vec![0i32; nbknots];
+
+        crate::math::bspl_lib::increase_degree(
+            self.my_deg,
+            degree,
+            self.my_periodic,
+            dim,
+            &poles_flat,
+            &self.my_knots,
+            &self.my_mults,
+            &mut npoles_flat,
+            &mut nknots,
+            &mut nmults,
+        );
+
+        self.my_deg = degree;
+        let (poles, weights) = unflatten_poles(&npoles_flat, dim);
+        self.my_poles = poles;
+        if self.my_rational {
+            self.my_weights = weights;
+        } else {
+            self.my_weights = unit_weights(self.my_poles.len());
+        }
+        self.my_knots = nknots;
+        self.my_mults = nmults;
+        self.update_knots();
+    }
+
+    /// OCCT Geom2d_BSplineCurve::IncreaseMultiplicity(Index, M)
+    /// (Geom2d_BSplineCurve.cxx L297-304).
+    pub fn increase_multiplicity(&mut self, index: i32, m: i32) {
+        let k = [at_knot(&self.my_knots, index)];
+        let m_arr = [m - self.my_mults[(index - 1) as usize]];
+        // OCCT passes Epsilon(1.) — machine epsilon at 1.0 == f64::EPSILON.
+        self.insert_knots(&k, &m_arr, f64::EPSILON, true);
+    }
+
+    /// OCCT Geom2d_BSplineCurve::IncreaseMultiplicity(I1, I2, M)
+    /// (Geom2d_BSplineCurve.cxx L308-318).
+    pub fn increase_multiplicity_range(&mut self, i1: i32, i2: i32, m: i32) {
+        let mut k = Vec::with_capacity((i2 - i1 + 1) as usize);
+        let mut m_arr = Vec::with_capacity((i2 - i1 + 1) as usize);
+        for i in i1..=i2 {
+            k.push(at_knot(&self.my_knots, i));
+            m_arr.push(m - self.my_mults[(i - 1) as usize]);
+        }
+        self.insert_knots(&k, &m_arr, f64::EPSILON, true);
+    }
+
+    /// OCCT Geom2d_BSplineCurve::InsertKnots(Knots, Mults, Epsilon, Add)
+    /// (Geom2d_BSplineCurve.cxx L343-406).  Dispatch through
+    /// `BSplCLib_InsertKnots` (BSplCLib_CurveComputation.pxx L381-437):
+    /// rational curves homogenized to dim 3.
+    pub fn insert_knots(&mut self, knots: &[f64], mults: &[i32], epsilon: f64, add: bool) {
+        // Check and compute new sizes
+        let mut nbpoles = 0i32;
+        let mut nbknots = 0i32;
+
+        if !crate::math::bspl_lib::prepare_insert_knots(
+            self.my_deg,
+            self.my_periodic,
+            &self.my_knots,
+            &self.my_mults,
+            knots,
+            Some(mults),
+            &mut nbpoles,
+            &mut nbknots,
+            epsilon,
+            add,
+        ) {
+            panic!("Standard_ConstructionError: Geom2d_BSplineCurve::InsertKnots");
+        }
+
+        if nbpoles as usize == self.my_poles.len() {
+            return;
+        }
+
+        let weights_opt = if self.my_rational {
+            Some(&self.my_weights[..])
+        } else {
+            None
+        };
+        let (poles_flat, dim) = flatten_poles(&self.my_poles, weights_opt);
+        let mut npoles_flat = vec![0.0f64; nbpoles as usize * dim];
+        let mut nknots = vec![0.0f64; nbknots as usize];
+        let mut nmults = vec![0i32; nbknots as usize];
+
+        crate::math::bspl_lib::insert_knots(
+            self.my_deg,
+            self.my_periodic,
+            dim,
+            &poles_flat,
+            &self.my_knots,
+            &self.my_mults,
+            knots,
+            Some(mults),
+            &mut npoles_flat,
+            &mut nknots,
+            &mut nmults,
+            epsilon,
+            add,
+        );
+
+        let (poles, weights) = unflatten_poles(&npoles_flat, dim);
+        if self.my_rational {
+            self.my_weights = weights;
+        } else {
+            self.my_weights = unit_weights(nbpoles as usize);
+        }
+        self.my_poles = poles;
+        self.my_knots = nknots;
+        self.my_mults = nmults;
+        self.update_knots();
+    }
+
+    /// OCCT Geom2d_BSplineCurve::Segment(U1, U2, theTolerance)
+    /// (Geom2d_BSplineCurve.cxx L707-888).
+    pub fn segment(&mut self, au1: f64, au2: f64, tolerance: f64) {
+        if au2 < au1 {
+            panic!("Standard_DomainError: Geom2d_BSplineCurve::Segment");
+        }
+
+        let mut new_u1 = 0.0f64;
+        let mut new_u2 = 0.0f64;
+        let mut u = 0.0f64;
+        let mut du = 0.0f64;
+        let mut adddu = 0.0f64;
+        let was_periodic = self.my_periodic;
+
+        let u1 = au1;
+        let u2 = au2;
+
+        let mut knots2 = [0.0f64; 2];
+        let mults2 = [self.my_deg as i32, self.my_deg as i32];
+
+        // define param distance to keep (eap, Apr 18 2002, occ311)
+        if self.my_periodic {
+            let period = self.last_parameter() - self.first_parameter();
+            du = u2 - u1;
+            if du - period > crate::core::precision::PCONFUSION {
+                panic!("Standard_DomainError: Geom2d_BSplineCurve::Segment");
+            }
+            if du > period {
+                du = period;
+            }
+            adddu = du;
+        }
+
+        let knots_upper = self.my_knots.len() as i32;
+        let mut index = 0i32;
+        crate::math::bspl_lib::locate_parameter_knots_mults(
+            self.my_deg,
+            &self.my_knots,
+            &self.my_mults,
+            u1,
+            self.my_periodic,
+            1,
+            knots_upper,
+            &mut index,
+            &mut new_u1,
+        );
+        let mut index = 0i32;
+        crate::math::bspl_lib::locate_parameter_knots_mults(
+            self.my_deg,
+            &self.my_knots,
+            &self.my_mults,
+            u2,
+            self.my_periodic,
+            1,
+            knots_upper,
+            &mut index,
+            &mut new_u2,
+        );
+
+        //-- DBB
+        let a_nu2 = new_u2;
+        //-- DBB
+
+        let mut abs_umax = new_u1.abs().max(new_u2.abs());
+        abs_umax = abs_umax.max(self.first_parameter().abs().max(self.last_parameter().abs()));
+        let eps = epsilon_of(abs_umax).max(tolerance);
+
+        knots2[0] = new_u1.min(new_u2);
+        knots2[1] = new_u1.max(new_u2);
+        self.insert_knots(&knots2, &mults2, eps, false);
+
+        if self.my_periodic {
+            // set the origine at NewU1
+            let mut index = 0i32;
+            let knots_upper = self.my_knots.len() as i32;
+            crate::math::bspl_lib::locate_parameter_knots_mults(
+                self.my_deg,
+                &self.my_knots,
+                &self.my_mults,
+                u1,
+                self.my_periodic,
+                1,
+                knots_upper,
+                &mut index,
+                &mut u,
+            );
+            if (at_knot(&self.my_knots, index + 1) - u).abs() <= eps {
+                index += 1;
+            }
+            self.set_origin(index);
+            self.set_not_periodic();
+            new_u2 = new_u1 + du;
+        }
+
+        // compute index1 and index2 to set the new knots and mults
+        let mut index1 = 0i32;
+        let mut index2 = 0i32;
+        let from_u1 = 1i32;
+        let to_u2 = self.my_knots.len() as i32;
+        let mut u = 0.0f64;
+        crate::math::bspl_lib::locate_parameter_knots_mults(
+            self.my_deg,
+            &self.my_knots,
+            &self.my_mults,
+            new_u1,
+            self.my_periodic,
+            from_u1,
+            to_u2,
+            &mut index1,
+            &mut u,
+        );
+        if (at_knot(&self.my_knots, index1 + 1) - u).abs() <= eps {
+            index1 += 1;
+        }
+        crate::math::bspl_lib::locate_parameter_knots_mults(
+            self.my_deg,
+            &self.my_knots,
+            &self.my_mults,
+            new_u2,
+            self.my_periodic,
+            from_u1,
+            to_u2,
+            &mut index2,
+            &mut u,
+        );
+        if (at_knot(&self.my_knots, index2 + 1) - u).abs() <= eps || index2 == index1 {
+            index2 += 1;
+        }
+
+        let nbknots = (index2 - index1 + 1) as usize;
+        let mut nknots = vec![0.0f64; nbknots];
+        let mut nmults = vec![0i32; nbknots];
+
+        // to restore changed U1
+        if du > 0.0 {
+            // if was periodic
+            du = new_u1 - u1;
+        }
+
+        let mut k = 1i32;
+        for i in index1..=index2 {
+            set_at_knot(&mut nknots, k, at_knot(&self.my_knots, i) - du);
+            set_at_mult(&mut nmults, k, self.my_mults[(i - 1) as usize]);
+            k += 1;
+        }
+        set_at_mult(&mut nmults, 1, self.my_deg as i32 + 1);
+        set_at_mult(&mut nmults, nbknots as i32, self.my_deg as i32 + 1);
+
+        // compute index1 and index2 to set the new poles and weights
+        let mut pindex1 =
+            crate::math::bspl_lib::pole_index(self.my_deg, index1, self.my_periodic, &self.my_mults);
+        let mut pindex2 =
+            crate::math::bspl_lib::pole_index(self.my_deg, index2, self.my_periodic, &self.my_mults);
+
+        pindex1 += 1;
+        pindex2 = (pindex2 + 1).min(self.my_poles.len() as i32);
+
+        let nbpoles = (pindex2 - pindex1 + 1) as usize;
+        let mut npoles: Vec<DVec2> = Vec::with_capacity(nbpoles);
+        let mut nweights: Vec<f64> = Vec::new();
+
+        if self.my_rational {
+            nweights.reserve(nbpoles);
+            for i in pindex1..=pindex2 {
+                npoles.push(self.my_poles[(i - 1) as usize]);
+                nweights.push(at_weight(&self.my_weights, i));
+            }
+        } else {
+            for i in pindex1..=pindex2 {
+                npoles.push(self.my_poles[(i - 1) as usize]);
+            }
+        }
+
+        //-- DBB
+        if was_periodic {
+            set_at_knot(&mut nknots, 1, u1);
+            if a_nu2 < u2 {
+                set_at_knot(&mut nknots, nbknots as i32, u1 + adddu);
+            }
+        }
+        //-- DBB
+
+        self.my_knots = nknots;
+        self.my_mults = nmults;
+        self.my_poles = npoles;
+        if self.my_rational {
+            self.my_weights = nweights;
+        } else {
+            self.my_weights = unit_weights(self.my_poles.len());
+        }
+        self.update_knots();
+    }
+
+    /// OCCT Geom2d_BSplineCurve::SetOrigin (Geom2d_BSplineCurve.cxx
+    /// L989-1083).
+    pub fn set_origin(&mut self, index: i32) {
+        if !self.my_periodic {
+            panic!("Standard_NoSuchObject: Geom2d_BSplineCurve::SetOrigin");
+        }
+        let first = self.first_uknot_index();
+        let last = self.last_uknot_index();
+
+        if (index < first) || (index > last) {
+            panic!("Standard_DomainError: Geom2d_BSplineCurve::SetOrigin");
+        }
+
+        let nbknots = self.my_knots.len();
+        let nbpoles = self.my_poles.len();
+
+        let mut nknots = vec![0.0f64; nbknots];
+        let mut nmults = vec![0i32; nbknots];
+
+        // set the knots and mults
+        let period = at_knot(&self.my_knots, last) - at_knot(&self.my_knots, first);
+        let mut k = 1i32;
+        for i in index..=last {
+            set_at_knot(&mut nknots, k, at_knot(&self.my_knots, i));
+            set_at_mult(&mut nmults, k, self.my_mults[(i - 1) as usize]);
+            k += 1;
+        }
+        for i in (first + 1)..=index {
+            set_at_knot(&mut nknots, k, at_knot(&self.my_knots, i) + period);
+            set_at_mult(&mut nmults, k, self.my_mults[(i - 1) as usize]);
+            k += 1;
+        }
+
+        // OCCT: int index = 1;
+        //       for (i = first + 1; i <= Index; i++) index += myMults.Value(i);
+        let origin = index;
+        let mut index = 1i32;
+        for i in (first + 1)..=origin {
+            index += self.my_mults[(i - 1) as usize];
+        }
+        // set the poles and weights
+        let mut npoles: Vec<DVec2> = vec![DVec2::ZERO; nbpoles];
+        let mut nweights: Vec<f64> = Vec::new();
+        let first = 1i32;
+        let last = nbpoles as i32;
+        if self.my_rational {
+            nweights.resize(nbpoles, 0.0);
+            let mut k = 1i32;
+            for i in index..=last {
+                npoles[(k - 1) as usize] = self.my_poles[(i - 1) as usize];
+                nweights[(k - 1) as usize] = at_weight(&self.my_weights, i);
+                k += 1;
+            }
+            for i in first..index {
+                npoles[(k - 1) as usize] = self.my_poles[(i - 1) as usize];
+                nweights[(k - 1) as usize] = at_weight(&self.my_weights, i);
+                k += 1;
+            }
+        } else {
+            let mut k = 1i32;
+            for i in index..=last {
+                npoles[(k - 1) as usize] = self.my_poles[(i - 1) as usize];
+                k += 1;
+            }
+            for i in first..index {
+                npoles[(k - 1) as usize] = self.my_poles[(i - 1) as usize];
+                k += 1;
+            }
+        }
+
+        self.my_poles = npoles;
+        self.my_knots = nknots;
+        self.my_mults = nmults;
+        if self.my_rational {
+            self.my_weights = nweights;
+        } else {
+            self.my_weights = unit_weights(nbpoles);
+        }
+        self.update_knots();
+    }
+
+    /// OCCT Geom2d_BSplineCurve::SetNotPeriodic
+    /// (Geom2d_BSplineCurve.cxx L1087-1130).  Dispatch through
+    /// `BSplCLib_Unperiodize` (BSplCLib_CurveComputation.pxx L602-642):
+    /// rational curves homogenized to dim 3.
+    pub fn set_not_periodic(&mut self) {
+        if self.my_periodic {
+            let mut nb_knots = 0i32;
+            let mut nb_poles = 0i32;
+            crate::math::bspl_lib::prepare_unperiodize(
+                self.my_deg,
+                &self.my_mults,
+                &mut nb_knots,
+                &mut nb_poles,
+            );
+
+            let weights_opt = if self.is_rational() {
+                Some(&self.my_weights[..])
+            } else {
+                None
+            };
+            let (poles_flat, dim) = flatten_poles(&self.my_poles, weights_opt);
+            let mut npoles_flat = vec![0.0f64; nb_poles as usize * dim];
+            let mut nknots = vec![0.0f64; nb_knots as usize];
+            let mut nmults = vec![0i32; nb_knots as usize];
+
+            crate::math::bspl_lib::unperiodize(
+                self.my_deg,
+                &self.my_mults,
+                &self.my_knots,
+                &poles_flat,
+                &mut nmults,
+                &mut nknots,
+                &mut npoles_flat,
+            );
+
+            let (poles, weights) = unflatten_poles(&npoles_flat, dim);
+            self.my_poles = poles;
+            if self.my_rational {
+                self.my_weights = weights;
+            } else {
+                self.my_weights = unit_weights(self.my_poles.len());
+            }
+            self.my_mults = nmults;
+            self.my_knots = nknots;
+            self.my_periodic = false;
+            self.update_knots();
+        }
+    }
+
+    /// OCCT Geom2d_BSplineCurve::LocateU (Geom2d_BSplineCurve_1.cxx L710-760).
+    pub fn locate_u(
+        &self,
+        u: f64,
+        parametric_tolerance: f64,
+        i1: &mut i32,
+        i2: &mut i32,
+        with_knot_repetition: bool,
+    ) {
+        let mut new_u = u;
+
+        let cknots: &Vec<f64> = if with_knot_repetition {
+            &self.my_flat_knots
+        } else {
+            &self.my_knots
+        };
+
+        self.periodic_normalization(&mut new_u); // Attention a la periode
+        let knots_len = cknots.len() as i32;
+        let ufirst = at_knot(cknots, 1);
+        let ulast = at_knot(cknots, knots_len);
+        let p_parametric_tolerance = parametric_tolerance.abs();
+        if (new_u - ufirst).abs() <= p_parametric_tolerance {
+            *i1 = 1;
+            *i2 = 1;
+        } else if (new_u - ulast).abs() <= p_parametric_tolerance {
+            *i1 = knots_len;
+            *i2 = knots_len;
+        } else if new_u < ufirst {
+            *i2 = 1;
+            *i1 = 0;
+        } else if new_u > ulast {
+            *i1 = knots_len;
+            *i2 = *i1 + 1;
+        } else {
+            *i1 = 1;
+            crate::math::bspl_lib::hunt(cknots, new_u, i1);
+            *i1 = (*i1).min(knots_len).max(1);
+            while *i1 + 1 <= knots_len
+                && (at_knot(cknots, *i1 + 1) - new_u).abs() <= p_parametric_tolerance
+            {
+                *i1 += 1;
+            }
+            if (at_knot(cknots, *i1) - new_u).abs() <= p_parametric_tolerance {
+                *i2 = *i1;
+            } else {
+                *i2 = *i1 + 1;
+            }
+        }
+    }
+}
+
+/// OCCT PLib::SetPoles — flatten poles to the flat kernel representation.
+/// Non-rational: (x, y) per pole, dim 2.  Rational (PLib::SetPoles(Poles,
+/// Weights, FPoles)): homogeneous (x*w, y*w, w) per pole, dim 3.
+fn flatten_poles(poles: &[DVec2], weights: Option<&[f64]>) -> (Vec<f64>, usize) {
+    match weights {
+        None => {
+            let mut flat = Vec::with_capacity(poles.len() * 2);
+            for p in poles {
+                flat.push(p.x);
+                flat.push(p.y);
+            }
+            (flat, 2)
+        }
+        Some(w) => {
+            let mut flat = Vec::with_capacity(poles.len() * 3);
+            for (p, &wi) in poles.iter().zip(w.iter()) {
+                flat.push(p.x * wi);
+                flat.push(p.y * wi);
+                flat.push(wi);
+            }
+            (flat, 3)
+        }
+    }
+}
+
+/// OCCT PLib::GetPoles — restore poles (and weights when homogeneous) from
+/// the flat kernel representation.
+fn unflatten_poles(flat: &[f64], dim: usize) -> (Vec<DVec2>, Vec<f64>) {
+    if dim == 3 {
+        let n = flat.len() / 3;
+        let mut poles = Vec::with_capacity(n);
+        let mut weights = Vec::with_capacity(n);
+        for c in flat.chunks_exact(3) {
+            weights.push(c[2]);
+            poles.push(DVec2::new(c[0] / c[2], c[1] / c[2]));
+        }
+        (poles, weights)
+    } else {
+        let poles = flat
+            .chunks_exact(2)
+            .map(|c| DVec2::new(c[0], c[1]))
+            .collect();
+        (poles, Vec::new())
     }
 }
