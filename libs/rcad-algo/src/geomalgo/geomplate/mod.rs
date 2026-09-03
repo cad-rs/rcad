@@ -5,8 +5,10 @@
 //! Geom2dInt_GInter/Discretise/LoadCurve/Intersect) is anchor-out-of-scope
 //! and follows the ThruSections precedent: API skeleton, backfill later.
 
+pub mod build_average_plane;
 pub mod point_constraint;
 pub mod surface;
 
+pub use build_average_plane::{Aij, BuildAveragePlane};
 pub use point_constraint::PointConstraint;
 pub use surface::GeomPlateSurface;
