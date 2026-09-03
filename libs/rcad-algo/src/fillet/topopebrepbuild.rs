@@ -104,7 +104,7 @@ impl Default for TopOpeBRepBuildBuilder {
     fn default() -> Self {
         TopOpeBRepBuildBuilder {
             my_data_structure: None,
-            my_build_tool: TopOpeBRepDSBuildTool,
+            my_build_tool: TopOpeBRepDSBuildTool::default(),
             my_split_in: HashMap::new(),
             my_split_on: HashMap::new(),
             my_split_out: HashMap::new(),
@@ -131,7 +131,11 @@ impl Default for TopOpeBRepBuildBuilder {
 /// construction (MakeSolid/MakeShell/CopyFace/UpdateSurface/...).  The
 /// individual operations are translated with the BRep builder units.
 #[derive(Debug, Clone, Default)]
-pub struct TopOpeBRepDSBuildTool;
+pub struct TopOpeBRepDSBuildTool {
+    // OCCT BRep_Builder operations recorded here until the BRep_Builder
+    // facade unit lands (TopOpeBRepDS_BuildTool.cxx).
+    pub pending_edge_vertices: Vec<(Shape, f64)>,
+}
 
 impl TopOpeBRepBuildBuilder {
     pub fn new() -> Self {
@@ -1743,5 +1747,103 @@ impl TopOpeBRepBuildEdgeBuilder {
     pub fn parameter(&self) -> f64 {
         let idx = self.area.loop_pave_index();
         self.loops[idx].parameter()
+    }
+}
+
+impl TopOpeBRepBuildBuilder {
+    // =========================================================================
+    // OCCT TopOpeBRepBuild_Builder::MakeEdges (Merge.cxx L516-632).
+    // =========================================================================
+    #[allow(clippy::only_used_in_recursion)]
+    pub fn make_edges(&mut self, an_edge: &Shape, edbu: &mut TopOpeBRepBuildEdgeBuilder, l: &mut Vec<Shape>) {
+        // for (EDBU.InitEdge(); EDBU.MoreEdge(); EDBU.NextEdge())
+        edbu.init_edge();
+        while edbu.more_edge() {
+            // 1 vertex sur edge courante => suppression edge.
+            let mut nloop = 0usize;
+            edbu.init_vertex();
+            while edbu.more_vertex() {
+                nloop += 1;
+                edbu.next_vertex();
+            }
+            if nloop <= 1 {
+                edbu.next_edge();
+                continue;
+            }
+
+            // myBuildTool.CopyEdge(anEdge, newEdge) — the BRep_Builder edge
+            // copy (TopOpeBRepDS_BuildTool facade; pending BRep_Builder
+            // unit, a fresh null edge stands in for the copy).
+            let mut new_edge = Shape::null();
+
+            let mut hasvertex = false;
+            edbu.init_vertex();
+            while edbu.more_vertex() {
+                let mut v = edbu.vertex().clone();
+                let vori = v.orientation;
+
+                let ds = self.my_data_structure.as_ref().expect("DS");
+                let hassd = false; // HasSameDomain(V) — the DS same-domain table pending unit
+                if hassd {
+                    // on prend le vertex reference de V.
+                    let iref = 0; // SameDomainReference(V)
+                    v = ds.shape(iref).clone();
+                    v.orientation = vori;
+                }
+                let _ = &ds;
+
+                let ori_v = v.orientation;
+                if ori_v != Orientation::External {
+                    // betonnage.
+                    let mut equafound = false;
+                    let ed = new_edge.as_edge();
+                    if let Some(ed) = ed {
+                        for (ve, ori_ve) in [
+                            (&ed.first, Orientation::Forward),
+                            (&ed.last, Orientation::Reversed),
+                        ] {
+                            let is_equal = v.is_same(ve) && v.orientation == ve.orientation;
+                            if is_equal {
+                                equafound = true;
+                                break;
+                            } else if ori_ve == Orientation::Forward
+                                || ori_ve == Orientation::Reversed
+                            {
+                                if ori_v == ori_ve {
+                                    equafound = true;
+                                    break;
+                                }
+                            } else if ori_ve == Orientation::Internal
+                                || ori_ve == Orientation::External
+                            {
+                                let par_v = edbu.parameter();
+                                let par_ve =
+                                    brep_tool_parameter(&self.build_brep, ve, &new_edge);
+                                if par_v == par_ve {
+                                    equafound = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !equafound {
+                        hasvertex = true;
+                        let par_v = edbu.parameter();
+                        // myBuildTool.AddEdgeVertex(newEdge, V);
+                        // myBuildTool.Parameter(newEdge, V, parV);
+                        // (BRep_Builder edge-vertex insertion — pending
+                        // BRep_Builder unit; the vertex/parameter pair is
+                        // recorded on the build tool pending list.)
+                        self.my_build_tool.pending_edge_vertices.push((v.clone(), par_v));
+                    }
+                }
+                edbu.next_vertex();
+            } // loop on vertices of new edge newEdge
+
+            if hasvertex {
+                l.push(new_edge);
+            }
+            edbu.next_edge();
+        } // loop on EDBU edges
     }
 }
