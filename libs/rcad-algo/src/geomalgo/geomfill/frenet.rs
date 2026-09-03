@@ -29,7 +29,7 @@ const MAX_DERIV_ORDER: i32 = 3;
 const GP_RESOLUTION: f64 = 2.2250738585072014e-308;
 
 /// OCCT static FDeriv (L48-56): computes (F/|F|)'.
-fn f_deriv(f: DVec3, df: DVec3) -> DVec3 {
+pub(crate) fn f_deriv(f: DVec3, df: DVec3) -> DVec3 {
     let norma = f.length();
     (df - f * (f.dot(df)) / (norma * norma)) / norma
 }
@@ -43,7 +43,7 @@ fn d_deriv(f: DVec3, df: DVec3, d2f: DVec3) -> DVec3 {
 }
 
 /// OCCT static CosAngle (L81-102): cosine between two vectors.
-fn cos_angle(v1: DVec3, v2: DVec3) -> f64 {
+pub(crate) fn cos_angle(v1: DVec3, v2: DVec3) -> f64 {
     let a_tol = GP_RESOLUTION;
     let m1 = v1.length();
     let m2 = v2.length();
@@ -62,7 +62,7 @@ fn cos_angle(v1: DVec3, v2: DVec3) -> f64 {
 }
 
 /// OCCT gp_Vec::Angle (gp_Vec.hxx L488 -> gp_Dir.cxx L27-53).
-fn gp_vec_angle(a: DVec3, b: DVec3) -> f64 {
+pub(crate) fn gp_vec_angle(a: DVec3, b: DVec3) -> f64 {
     assert!(
         a.length() > GP_RESOLUTION && b.length() > GP_RESOLUTION,
         "gp_VectorWithNullMagnitude"
@@ -85,7 +85,7 @@ fn gp_vec_angle(a: DVec3, b: DVec3) -> f64 {
 /// OCCT Adaptor3d_Curve::NbIntervals for the continuity mapping used by
 /// Frenet (GeomAbs_C2/C3/CN): only the BSpline base has subdivisions; the
 /// elementary curves have one interval.
-fn curve_nb_intervals(c: &Curve3, s: GeomAbsShape) -> usize {
+pub(crate) fn curve_nb_intervals(c: &Curve3, s: GeomAbsShape) -> usize {
     match c {
         Curve3::BSpline(bs) => {
             let _ = s;
@@ -121,7 +121,7 @@ fn curve_intervals(c: &Curve3, s: GeomAbsShape) -> Vec<f64> {
 
 /// OCCT myTrimmed->D2 / D3 / DN evaluations — the trimmed view evaluates the
 /// base curve at unchanged parameters.
-fn law_d2(c: &Curve3, u: f64) -> (DVec3, DVec3, DVec3) {
+pub(crate) fn law_d2(c: &Curve3, u: f64) -> (DVec3, DVec3, DVec3) {
     match c {
         Curve3::BSpline(bs) => {
             let p = bs.point_at(u);
@@ -140,7 +140,7 @@ fn law_d2(c: &Curve3, u: f64) -> (DVec3, DVec3, DVec3) {
     }
 }
 
-fn law_d3(c: &Curve3, u: f64) -> (DVec3, DVec3, DVec3, DVec3) {
+pub(crate) fn law_d3(c: &Curve3, u: f64) -> (DVec3, DVec3, DVec3, DVec3) {
     match c {
         Curve3::BSpline(bs) => {
             let p = bs.point_at(u);
@@ -154,7 +154,7 @@ fn law_d3(c: &Curve3, u: f64) -> (DVec3, DVec3, DVec3, DVec3) {
     }
 }
 
-fn law_dn(c: &Curve3, u: f64, n: usize) -> DVec3 {
+pub(crate) fn law_dn(c: &Curve3, u: f64, n: usize) -> DVec3 {
     match c {
         Curve3::BSpline(bs) => bs.dn(u, n),
         Curve3::Trimmed(tc) => law_dn(&tc.curve, u, n),
@@ -162,7 +162,7 @@ fn law_dn(c: &Curve3, u: f64, n: usize) -> DVec3 {
     }
 }
 
-fn law_d0(c: &Curve3, u: f64) -> DVec3 {
+pub(crate) fn law_d0(c: &Curve3, u: f64) -> DVec3 {
     c.point_at(u)
 }
 

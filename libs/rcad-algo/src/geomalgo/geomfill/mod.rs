@@ -8,6 +8,7 @@
 
 pub mod bspline_curves;
 pub mod coons;
+pub mod corrected_frenet;
 pub mod curved;
 pub mod filling;
 pub mod frenet;
@@ -18,6 +19,7 @@ pub mod trihedron_law;
 pub use bspline_curves::{BSplineCurves, FillingStyle};
 pub use trihedron_law::{PipeError, TrihedronLaw, TrihedronLawBase};
 pub use coons::Coons;
+pub use corrected_frenet::{CorrectedFrenet, Trihedron};
 pub use curved::Curved;
 pub use filling::FillingBase;
 pub use frenet::Frenet;

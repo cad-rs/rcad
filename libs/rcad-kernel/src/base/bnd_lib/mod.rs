@@ -1004,3 +1004,28 @@ pub fn curve2d_bounding_box(c: &Curve2d, u1: f64, u2: f64, tol: f64) -> [f64; 4]
         _ => other_curve2d_box_uv(c, u1, u2, tol),
     }
 }
+
+/// Function-version of [`curve_bounding_box_range`] (OCCT
+/// `BndLib_Add3dCurve::Add(Adaptor3d_Curve, U1, U2, Tol, Box)` with an
+/// arbitrary point-evaluation adaptor, e.g. GeomFill_SnglrFunc used as a
+/// curve): sample `eval` over [u1, u2], pad by `tol`, and return the box
+/// together with the gap (= `tol`, as `Bnd_Box::GetGap()`).
+pub fn curve_box_range_fn(
+    eval: &dyn Fn(f64) -> DVec3,
+    u1: f64,
+    u2: f64,
+    tol: f64,
+) -> ([DVec3; 2], f64) {
+    let mut mn = DVec3::splat(f64::INFINITY);
+    let mut mx = DVec3::splat(f64::NEG_INFINITY);
+    const N_GRID: usize = 64;
+    for i in 0..=N_GRID {
+        let u = u1 + (u2 - u1) * (i as f64) / (N_GRID as f64);
+        let p = eval(u);
+        mn = mn.min(p);
+        mx = mx.max(p);
+    }
+    mn -= DVec3::splat(tol);
+    mx += DVec3::splat(tol);
+    ([mn, mx], tol)
+}
