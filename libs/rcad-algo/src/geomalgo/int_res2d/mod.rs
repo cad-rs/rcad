@@ -679,6 +679,261 @@ impl IntersectionBase {
             self.done = false;
         }
     }
+
+    /// OCCT Append(Other, FirstParam1, LastParam1, FirstParam2, LastParam2)
+    /// (IntRes2d_Intersection.cxx L182-390) — merges the results of another
+    /// intersection restricted to the parameter windows, joining
+    /// collinear-continuation segments and dropping points interior to a
+    /// merged segment.
+    pub fn append_intersector(
+        &mut self,
+        other: &IntersectionBase,
+        first_param1: f64,
+        last_param1: f64,
+        first_param2: f64,
+        last_param2: f64,
+    ) {
+        if other.done {
+            // -- Verification of the Position of the IntersectionPoints.
+            let n = other.lpnt.len();
+            for i in 1..=n {
+                let p = &other.lpnt[i - 1];
+                let p_param_on_first = p.param_on_first();
+                let p_param_on_second = p.param_on_second();
+                let mut t1 = p.transition_of_first().clone();
+                let mut t2 = p.transition_of_second().clone();
+                let pt = p.value();
+
+                internal_verify_position(
+                    &mut t1,
+                    &mut t2,
+                    p_param_on_first,
+                    p_param_on_second,
+                    first_param1,
+                    last_param1,
+                    first_param2,
+                    last_param2,
+                );
+
+                self.insert(&IntersectionPoint::new(
+                    pt,
+                    p_param_on_first,
+                    p_param_on_second,
+                    t1,
+                    t2,
+                    false,
+                ));
+            }
+
+            //--------------------------------------------------
+            //-- IntersectionSegment
+            //-- (we assume that a composite curve is always bounded)
+            //-- (a segment has always a FirstPoint and a LastPoint)
+            //--------------------------------------------------
+            let n = other.lseg.len();
+            let (mut seg_modif_p1first, mut seg_modif_p1second) = (0.0, 0.0);
+            let (mut seg_modif_p2first, mut seg_modif_p2second) = (0.0, 0.0);
+
+            for i in 1..=n {
+                let p1 = other.lseg[i - 1].first_point().clone();
+                let p1_param_on_first = p1.param_on_first();
+                let p1_param_on_second = p1.param_on_second();
+                let mut p1_t1 = p1.transition_of_first().clone();
+                let mut p1_t2 = p1.transition_of_second().clone();
+                let p1_pt = p1.value();
+
+                internal_verify_position(
+                    &mut p1_t1,
+                    &mut p1_t2,
+                    p1_param_on_first,
+                    p1_param_on_second,
+                    first_param1,
+                    last_param1,
+                    first_param2,
+                    last_param2,
+                );
+
+                let p2 = other.lseg[i - 1].last_point().clone();
+                let p2_param_on_first = p2.param_on_first();
+                let p2_param_on_second = p2.param_on_second();
+                let mut p2_t1 = p2.transition_of_first().clone();
+                let mut p2_t2 = p2.transition_of_second().clone();
+                let p2_pt = p2.value();
+
+                let oppos = other.lseg[i - 1].is_opposite();
+
+                internal_verify_position(
+                    &mut p2_t1,
+                    &mut p2_t2,
+                    p2_param_on_first,
+                    p2_param_on_second,
+                    first_param1,
+                    last_param1,
+                    first_param2,
+                    last_param2,
+                );
+
+                //-- Loop on the previous segments.
+                let an = self.lseg.len();
+                let mut not_yet_modified = true;
+                let mut j = 1usize;
+                while (j <= an) && not_yet_modified {
+                    let anp1 = self.lseg[j - 1].first_point().clone();
+                    let anp1_param_on_first = anp1.param_on_first();
+                    let anp1_param_on_second = anp1.param_on_second();
+                    let anp2 = self.lseg[j - 1].last_point().clone();
+                    let anp2_param_on_first = anp2.param_on_first();
+                    let anp2_param_on_second = anp2.param_on_second();
+
+                    if oppos == self.lseg[j - 1].is_opposite() {
+                        //---------------------------------------------------------------
+                        //--    AnP1---------AnP2
+                        //--                  P1-------------P2
+                        //--
+                        if paramequal(p1_param_on_first, anp2_param_on_first)
+                            && paramequal(p1_param_on_second, anp2_param_on_second)
+                        {
+                            not_yet_modified = false;
+                            self.lseg[j - 1] =
+                                IntersectionSegment::with_points(&anp1, &p2, oppos, false);
+                            seg_modif_p1first = anp1_param_on_first;
+                            seg_modif_p1second = anp1_param_on_second;
+                            seg_modif_p2first = p2_param_on_first;
+                            seg_modif_p2second = p2_param_on_second;
+                        }
+                        //---------------------------------------------------------------
+                        //--                                AnP1---------AnP2
+                        //--                  P1-------------P2
+                        //--
+                        else if paramequal(p2_param_on_first, anp1_param_on_first)
+                            && paramequal(p2_param_on_second, anp1_param_on_second)
+                        {
+                            not_yet_modified = false;
+                            self.lseg[j - 1] =
+                                IntersectionSegment::with_points(&p1, &anp2, oppos, false);
+                            seg_modif_p1first = p1_param_on_first;
+                            seg_modif_p1second = p1_param_on_second;
+                            seg_modif_p2first = anp2_param_on_first;
+                            seg_modif_p2second = anp2_param_on_second;
+                        }
+                        //---------------------------------------------------------------
+                        //--    AnP2---------AnP1
+                        //--                  P1-------------P2
+                        //--
+                        if paramequal(p1_param_on_first, anp1_param_on_first)
+                            && paramequal(p1_param_on_second, anp1_param_on_second)
+                        {
+                            not_yet_modified = false;
+                            self.lseg[j - 1] =
+                                IntersectionSegment::with_points(&anp2, &p2, oppos, false);
+                            seg_modif_p1first = p2_param_on_first;
+                            seg_modif_p1second = p2_param_on_second;
+                            seg_modif_p2first = anp2_param_on_first;
+                            seg_modif_p2second = anp2_param_on_second;
+                        }
+                        //---------------------------------------------------------------
+                        //--                                AnP2---------AnP1
+                        //--                  P1-------------P2
+                        //--
+                        else if paramequal(p2_param_on_first, anp2_param_on_first)
+                            && paramequal(p2_param_on_second, anp2_param_on_second)
+                        {
+                            not_yet_modified = false;
+                            self.lseg[j - 1] =
+                                IntersectionSegment::with_points(&p1, &anp1, oppos, false);
+                            seg_modif_p1first = p1_param_on_first;
+                            seg_modif_p1second = p1_param_on_second;
+                            seg_modif_p2first = anp1_param_on_first;
+                            seg_modif_p2second = anp1_param_on_second;
+                        }
+                    }
+                    j += 1;
+                }
+                if not_yet_modified {
+                    self.append_segment(&IntersectionSegment::with_points(
+                        &IntersectionPoint::new(
+                            p1_pt,
+                            p1_param_on_first,
+                            p1_param_on_second,
+                            p1_t1,
+                            p1_t2,
+                            false,
+                        ),
+                        &IntersectionPoint::new(
+                            p2_pt,
+                            p2_param_on_first,
+                            p2_param_on_second,
+                            p2_t1,
+                            p2_t2,
+                            false,
+                        ),
+                        oppos,
+                        false,
+                    ));
+                } else {
+                    //--------------------------------------------------------------
+                    //-- Are some Existing Points in this segment ?
+                    //--------------------------------------------------------------
+                    let mut rnbpts = self.lpnt.len() as i64;
+                    let mut rp: i64 = 1;
+                    while (rp <= rnbpts) && (rp >= 1) {
+                        let pon_first = self.lpnt[(rp - 1) as usize].param_on_first();
+                        let pon_second = self.lpnt[(rp - 1) as usize].param_on_second();
+
+                        if ((pon_first >= seg_modif_p1first && pon_first <= seg_modif_p2first)
+                            || (pon_first <= seg_modif_p1first && pon_first >= seg_modif_p2first))
+                            && ((pon_second >= seg_modif_p1second
+                                && pon_second <= seg_modif_p2second)
+                                || (pon_second <= seg_modif_p1second
+                                    && pon_second >= seg_modif_p2second))
+                        {
+                            self.lpnt.remove((rp - 1) as usize);
+                            rp -= 1;
+                            rnbpts -= 1;
+                        }
+                        rp += 1;
+                    }
+                }
+            }
+            //--------------------------------------------------
+            //-- Remove some Points ?
+            //-- Example : Points which lie in a segment.
+            //--------------------------------------------------
+
+            self.done = true;
+        } else {
+            self.done = false;
+        }
+    }
+}
+
+/// OCCT static InternalVerifyPosition (IntRes2d_Intersection.cxx L431-465).
+#[allow(clippy::too_many_arguments)]
+fn internal_verify_position(
+    t1: &mut Transition,
+    t2: &mut Transition,
+    p_param_on_first: f64,
+    p_param_on_second: f64,
+    first_param1: f64,
+    last_param1: f64,
+    first_param2: f64,
+    last_param2: f64,
+) {
+    if t1.position_on_curve() != Position::Middle
+        && !(paramequal(p_param_on_first, first_param1) || paramequal(p_param_on_first, last_param1))
+    {
+        if (p_param_on_first > first_param1) && (p_param_on_first < last_param1) {
+            t1.set_position(Position::Middle);
+        }
+    }
+    if t2.position_on_curve() != Position::Middle
+        && !(paramequal(p_param_on_second, first_param2)
+            || paramequal(p_param_on_second, last_param2))
+    {
+        if (p_param_on_second > first_param2) && (p_param_on_second < last_param2) {
+            t2.set_position(Position::Middle);
+        }
+    }
 }
 
 impl Default for IntersectionBase {

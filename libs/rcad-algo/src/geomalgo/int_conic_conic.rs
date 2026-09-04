@@ -429,6 +429,210 @@ impl IntConicConic {
         }
         self.base.set_values(&self.inter.base);
     }
+
+    // -- Remaining conic x conic Perform overloads ---------------------------
+    //
+    // IntCurveCurveGen::InternalPerform dispatches into these by curve kind.
+    // Each body is the OCCT overload listed in the file header; they are
+    // ported in a follow-up unit (they need the IntAna2d offset pre-pass +
+    // SetBinfBsupFromIntAna2d, or the dedicated closed-form implementation).
+
+    /// OCCT Perform(const gp_Lin2d& L1, const gp_Lin2d& L2)
+    /// (IntCurve_IntConicConic_1.cxx L1381-2233).
+    pub fn perform_line_line(
+        &mut self,
+        _l1: &Line2d,
+        _d1: &Res2dDomain,
+        _l2: &Line2d,
+        _d2: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Lin, Lin) — IntCurve_IntConicConic_1.cxx L1381, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Lin2d& L, const gp_Circ2d& C)
+    /// (IntCurve_IntConicConic_1.cxx L2236-2652).
+    pub fn perform_line_circle(
+        &mut self,
+        _l: &Line2d,
+        _dl: &Res2dDomain,
+        _c: &Circle2d,
+        _dc: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Lin, Circ) — IntCurve_IntConicConic_1.cxx L2236, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Lin2d& L, const gp_Elips2d& E)
+    /// (IntCurve_IntConicConic.hxx L112 decl, body in _1.cxx — dedicated
+    /// closed-form implementation).
+    pub fn perform_line_ellipse(
+        &mut self,
+        _l: &Line2d,
+        _dl: &Res2dDomain,
+        _e: &Ellipse2d,
+        _de: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Lin, Elips) — not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Lin2d& L, const gp_Parab2d& P)
+    /// (IntCurve_IntConicConic.cxx L109-226).
+    pub fn perform_line_parabola(
+        &mut self,
+        _l: &Line2d,
+        _dl: &Res2dDomain,
+        _p: &Parabola2d,
+        _dp: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Lin, Parab) — IntCurve_IntConicConic.cxx L109, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Lin2d& L, const gp_Hypr2d& H)
+    /// (IntCurve_IntConicConic.cxx L230-333).
+    pub fn perform_line_hyperbola(
+        &mut self,
+        _l: &Line2d,
+        _dl: &Res2dDomain,
+        _h: &Hyperbola2d,
+        _dh: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Lin, Hypr) — IntCurve_IntConicConic.cxx L230, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Circ2d& C1, const gp_Circ2d& C2)
+    /// (IntCurve_IntConicConic_1.cxx L807-1238).
+    pub fn perform_circle_circle(
+        &mut self,
+        _c1: &Circle2d,
+        _d1: &Res2dDomain,
+        _c2: &Circle2d,
+        _d2: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Circ, Circ) — IntCurve_IntConicConic_1.cxx L807, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Circ2d& C, const gp_Elips2d& E)
+    /// (IntCurve_IntConicConic.cxx L439-482).
+    pub fn perform_circle_ellipse(
+        &mut self,
+        _c: &Circle2d,
+        _dc: &Res2dDomain,
+        _e: &Ellipse2d,
+        _de: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Circ, Elips) — IntCurve_IntConicConic.cxx L439, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Circ2d& C, const gp_Parab2d& P)
+    /// (IntCurve_IntConicConic.cxx L337-435).
+    pub fn perform_circle_parabola(
+        &mut self,
+        _c: &Circle2d,
+        _dc: &Res2dDomain,
+        _p: &Parabola2d,
+        _dp: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Circ, Parab) — IntCurve_IntConicConic.cxx L337, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Circ2d& C, const gp_Hypr2d& H)
+    /// (IntCurve_IntConicConic.cxx L486-581).
+    pub fn perform_circle_hyperbola(
+        &mut self,
+        _c: &Circle2d,
+        _dc: &Res2dDomain,
+        _h: &Hyperbola2d,
+        _dh: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Circ, Hypr) — IntCurve_IntConicConic.cxx L486, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Elips2d& E, const gp_Parab2d& P)
+    /// (IntCurve_IntConicConic.cxx L692-806).
+    pub fn perform_ellipse_parabola(
+        &mut self,
+        _e: &Ellipse2d,
+        _de: &Res2dDomain,
+        _p: &Parabola2d,
+        _dp: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Elips, Parab) — IntCurve_IntConicConic.cxx L692, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Elips2d& E, const gp_Hypr2d& H)
+    /// (IntCurve_IntConicConic.cxx L962-1063).
+    pub fn perform_ellipse_hyperbola(
+        &mut self,
+        _e: &Ellipse2d,
+        _de: &Res2dDomain,
+        _h: &Hyperbola2d,
+        _dh: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Elips, Hypr) — IntCurve_IntConicConic.cxx L962, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Parab2d& P1, const gp_Parab2d& P2)
+    /// (IntCurve_IntConicConic.cxx L585-688).
+    pub fn perform_parabola_parabola(
+        &mut self,
+        _p1: &Parabola2d,
+        _d1: &Res2dDomain,
+        _p2: &Parabola2d,
+        _d2: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Parab, Parab) — IntCurve_IntConicConic.cxx L585, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Parab2d& P, const gp_Hypr2d& H)
+    /// (IntCurve_IntConicConic.cxx L810-911).
+    pub fn perform_parabola_hyperbola(
+        &mut self,
+        _p: &Parabola2d,
+        _dp: &Res2dDomain,
+        _h: &Hyperbola2d,
+        _dh: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Parab, Hypr) — IntCurve_IntConicConic.cxx L810, not ported yet");
+    }
+
+    /// OCCT Perform(const gp_Hypr2d& H1, const gp_Hypr2d& H2)
+    /// (IntCurve_IntConicConic.cxx L1067-1168).
+    pub fn perform_hyperbola_hyperbola(
+        &mut self,
+        _h1: &Hyperbola2d,
+        _d1: &Res2dDomain,
+        _h2: &Hyperbola2d,
+        _d2: &Res2dDomain,
+        _tol_conf: f64,
+        _tol: f64,
+    ) {
+        unimplemented!("IntConicConic::Perform(Hypr, Hypr) — IntCurve_IntConicConic.cxx L1067, not ported yet");
+    }
 }
 
 impl Default for IntConicConic {

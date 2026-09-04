@@ -97,6 +97,13 @@ pub trait Curve2dAdaptor {
     fn parabola(&self) -> Parabola2d;
     /// OCCT Hyperbola() — valid when GetType() == Hyperbola.
     fn hyperbola(&self) -> Hyperbola2d;
+    /// OCCT Adaptor2d_Curve2d::NbIntervals(GeomAbs_C1) — number of C1
+    /// continuity intervals over the curve domain. All rcad curve kinds are
+    /// C1-continuous across their domain, so the default is 1 (matching
+    /// Geom2dAdaptor_Curve for non-composite curves).
+    fn nb_intervals_c1(&self) -> i32 {
+        1
+    }
 }
 
 /// OCCT GeomAbs_CurveType of a `Curve2d` (Geom2dAdaptor_Curve::GetType).
@@ -680,6 +687,31 @@ pub mod geom2d_curve_tool {
         c.last_parameter()
     }
 
+    /// OCCT Geom2dInt_Geom2dCurveTool::NbIntervals
+    /// (Geom2dInt_Geom2dCurveTool.lxx L169-178) — the
+    /// Adaptor2d_Curve2d::NbIntervals(GeomAbs_C1) count.
+    pub fn nb_intervals(c: &dyn Curve2dAdaptor) -> i32 {
+        c.nb_intervals_c1()
+    }
+
+    /// OCCT Geom2dInt_Geom2dCurveTool::Intervals (lxx L146-154) — fills an
+    /// NCollection_Array1(1, NbIntervals+1). With the single C1 interval the
+    /// bounds are [FirstParameter, LastParameter]
+    /// (Geom2dAdaptor_Curve::Intervals). `tab` is 0-based storage for the
+    /// 1-based array: logical index i lives at tab[i - 1]; when the C1
+    /// interval machinery lands (BSpline C1 knots) this grows with it.
+    pub fn intervals(c: &dyn Curve2dAdaptor, tab: &mut [f64]) {
+        let n = c.nb_intervals_c1() as usize;
+        tab[0] = c.first_parameter();
+        tab[n] = c.last_parameter();
+    }
+
+    /// OCCT Geom2dInt_Geom2dCurveTool::GetInterval (lxx L158-166) —
+    /// a = Tab(i), b = Tab(i+1).
+    pub fn get_interval(tab: &[f64], i: usize) -> (f64, f64) {
+        (tab[i - 1], tab[i])
+    }
+
     /// OCCT Geom2dInt_Geom2dCurveTool::Value (L68-71).
     pub fn value(c: &dyn Curve2dAdaptor, u: f64) -> DVec2 {
         c.value(u)
@@ -718,6 +750,21 @@ pub mod geom2d_curve_tool {
     /// OCCT Geom2dInt_Geom2dCurveTool::Circle (L44-47).
     pub fn circle(c: &dyn Curve2dAdaptor) -> Circle2d {
         c.circle()
+    }
+
+    /// OCCT Geom2dInt_Geom2dCurveTool::Ellipse (lxx) — the adaptor accessor.
+    pub fn ellipse(c: &dyn Curve2dAdaptor) -> Ellipse2d {
+        c.ellipse()
+    }
+
+    /// OCCT Geom2dInt_Geom2dCurveTool::Parabola (lxx) — the adaptor accessor.
+    pub fn parabola(c: &dyn Curve2dAdaptor) -> Parabola2d {
+        c.parabola()
+    }
+
+    /// OCCT Geom2dInt_Geom2dCurveTool::Hyperbola (lxx) — the adaptor accessor.
+    pub fn hyperbola(c: &dyn Curve2dAdaptor) -> Hyperbola2d {
+        c.hyperbola()
     }
 }
 
@@ -2559,6 +2606,97 @@ pub struct TheIntConicCurveOfGInter {
 }
 
 impl TheIntConicCurveOfGInter {
+    /// OCCT IntCurve_IntConicCurveGen() — default constructor
+    /// (IntCurve_IntConicCurveGen.lxx L23).
+    pub fn bare() -> Self {
+        TheIntConicCurveOfGInter {
+            base: IntersectionBase::new(),
+        }
+    }
+
+    /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Lin2d& L,
+    /// const IntRes2d_Domain& D1, ThePCurve, const IntRes2d_Domain& D2,
+    /// TolConf, Tol) (IntCurve_IntConicCurveGen.lxx L26-35).
+    pub fn perform_line(
+        &mut self,
+        line: &Line2d,
+        d1: &Res2dDomain,
+        pcurve: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        self.perform_imp(&IConicTool::new_line(line), d1, pcurve, d2, tol_conf, tol);
+    }
+
+    /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Circ2d& C, ...)
+    /// (IntCurve_IntConicCurveGen.lxx L37-52).
+    pub fn perform_circle(
+        &mut self,
+        c: &Circle2d,
+        d1: &Res2dDomain,
+        pcurve: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        if !d1.is_closed() {
+            let mut d = d1.clone();
+            d.set_equivalent_parameters(d1.first_parameter(), d1.first_parameter() + PI2);
+            self.perform_imp(&IConicTool::new_circle(c), &d, pcurve, d2, tol_conf, tol);
+        } else {
+            self.perform_imp(&IConicTool::new_circle(c), d1, pcurve, d2, tol_conf, tol);
+        }
+    }
+
+    /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Elips2d& E, ...)
+    /// (IntCurve_IntConicCurveGen.lxx L54-69).
+    pub fn perform_ellipse(
+        &mut self,
+        e: &Ellipse2d,
+        d1: &Res2dDomain,
+        pcurve: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        if !d1.is_closed() {
+            let mut d = d1.clone();
+            d.set_equivalent_parameters(d1.first_parameter(), d1.first_parameter() + PI2);
+            self.perform_imp(&IConicTool::new_ellipse(e), &d, pcurve, d2, tol_conf, tol);
+        } else {
+            self.perform_imp(&IConicTool::new_ellipse(e), d1, pcurve, d2, tol_conf, tol);
+        }
+    }
+
+    /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Parab2d& Prb, ...)
+    /// (IntCurve_IntConicCurveGen.lxx L71-79).
+    pub fn perform_parabola(
+        &mut self,
+        p: &Parabola2d,
+        d1: &Res2dDomain,
+        pcurve: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        self.perform_imp(&IConicTool::new_parabola(p), d1, pcurve, d2, tol_conf, tol);
+    }
+
+    /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Hypr2d& H, ...)
+    /// (IntCurve_IntConicCurveGen.lxx L81-89).
+    pub fn perform_hyperbola(
+        &mut self,
+        h: &Hyperbola2d,
+        d1: &Res2dDomain,
+        pcurve: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        self.perform_imp(&IConicTool::new_hyperbola(h), d1, pcurve, d2, tol_conf, tol);
+    }
+
     /// OCCT IntCurve_IntConicCurveGen(const gp_Lin2d&, ...) (lxx L33-42).
     pub fn new_line(
         line: &Line2d,
