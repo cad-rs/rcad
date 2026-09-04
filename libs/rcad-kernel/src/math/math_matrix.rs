@@ -9,9 +9,9 @@ use super::{IntVec, MatD, VecD};
 /// OCCT math_Matrix.
 #[derive(Debug, Clone)]
 pub struct Matrix {
-    pub(crate) data: MatD,
-    pub(crate) lower_row: i32,
-    pub(crate) lower_col: i32,
+    pub data: MatD,
+    pub lower_row: i32,
+    pub lower_col: i32,
 }
 
 impl Matrix {
@@ -37,6 +37,17 @@ impl Matrix {
         for r in 1..=self.row_number() {
             for c in 1..=self.col_number() {
                 self.data.m[(r - 1) as usize][(c - 1) as usize] = init;
+            }
+        }
+    }
+
+    /// OCCT math_Matrix::Set(I1, I2, J1, J2, M) — replaces the sub-matrix
+    /// [I1..I2, J1..J2] by the contents of M.
+    pub fn set_block(&mut self, i1: i32, i2: i32, j1: i32, j2: i32, m: &Matrix) {
+        for i in i1..=i2 {
+            for j in j1..=j2 {
+                let v = m.get(i - i1 + m.lower_row, j - j1 + m.lower_col);
+                self.set(i, j, v);
             }
         }
     }
@@ -96,8 +107,8 @@ impl Matrix {
 /// OCCT math_Vector.
 #[derive(Debug, Clone)]
 pub struct Vector {
-    pub(crate) data: VecD,
-    pub(crate) lower: i32,
+    pub data: VecD,
+    pub lower: i32,
 }
 
 impl Vector {
@@ -148,8 +159,8 @@ impl Vector {
 /// OCCT math_IntegerVector.
 #[derive(Debug, Clone)]
 pub struct IntegerVector {
-    pub(crate) data: IntVec,
-    pub(crate) lower: i32,
+    pub data: IntVec,
+    pub lower: i32,
 }
 
 impl IntegerVector {

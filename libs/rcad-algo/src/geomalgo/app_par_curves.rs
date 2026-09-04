@@ -19,177 +19,18 @@
 
 use rcad_kernel::math::bspl_lib::locate_parameter_flat;
 use rcad_kernel::math::math_householder::Householder;
+use rcad_kernel::math::math_matrix::{IntegerVector as IVector, Matrix, Vector as RVector};
 use rcad_kernel::math::math_recipes::{dactcl_decompose, dactcl_solve, MATH_STATUS_OK};
-use rcad_kernel::math::{IntVec, MatD, VecD};
+use rcad_kernel::math::{MatD, VecD};
 
 use glam::{DVec2, DVec3};
 
 use super::app_def::{my_line_tool, MultiLine};
-use super::approx_int::{AppParConstraint, MultiBSpCurve, MultiCurve, MultiPoint};
+use super::approx_int::{AppParConstraint, ConstraintCouple, MultiBSpCurve, MultiCurve, MultiPoint};
+use rcad_kernel::math::math_uzawa::Uzawa;
 
 /// OCCT MinPivot default of DACTCL_Decompose / DACTCL_Solve (1.0e-20).
 const DACTCL_MIN_PIVOT: f64 = 1.0e-20;
-
-// ---------------------------------------------------------------------------
-// math_Matrix / math_Vector / math_IntegerVector wrappers
-// ---------------------------------------------------------------------------
-
-/// OCCT math_Matrix — 1-based storage with arbitrary LowerRow/LowerCol.
-#[derive(Debug, Clone)]
-struct Matrix {
-    data: MatD,
-    lower_row: i32,
-    lower_col: i32,
-}
-
-impl Matrix {
-    /// OCCT math_Matrix(I1, I2, J1, J2) (zero-initialized storage).
-    fn new(i1: i32, i2: i32, j1: i32, j2: i32) -> Self {
-        assert!(i2 >= i1 && j2 >= j1, "math_Matrix: bad range");
-        Matrix {
-            data: MatD::new((i2 - i1 + 1) as usize, (j2 - j1 + 1) as usize),
-            lower_row: i1,
-            lower_col: j1,
-        }
-    }
-
-    /// OCCT math_Matrix(I1, I2, J1, J2, InitValue).
-    fn new_init(i1: i32, i2: i32, j1: i32, j2: i32, init: f64) -> Self {
-        let mut m = Matrix::new(i1, i2, j1, j2);
-        m.init(init);
-        m
-    }
-
-    /// OCCT Init(Value).
-    fn init(&mut self, init: f64) {
-        for r in 1..=self.row_number() {
-            for c in 1..=self.col_number() {
-                self.data.m[(r - 1) as usize][(c - 1) as usize] = init;
-            }
-        }
-    }
-
-    #[inline]
-    fn get(&self, i: i32, j: i32) -> f64 {
-        self.data.get(
-            (i - self.lower_row + 1).max(1) as usize,
-            (j - self.lower_col + 1).max(1) as usize,
-        )
-    }
-
-    #[inline]
-    fn set(&mut self, i: i32, j: i32, v: f64) {
-        self.data.set(
-            (i - self.lower_row + 1).max(1) as usize,
-            (j - self.lower_col + 1).max(1) as usize,
-            v,
-        );
-    }
-
-    /// OCCT RowNumber().
-    fn row_number(&self) -> i32 {
-        self.data.n_rows() as i32
-    }
-
-    /// OCCT ColNumber().
-    fn col_number(&self) -> i32 {
-        self.data.n_cols() as i32
-    }
-
-    /// OCCT LowerRow().
-    fn lower_row(&self) -> i32 {
-        self.lower_row
-    }
-
-    /// Normalized (1-based) storage view, for the rcad Householder whose
-    /// entry points take MatD.
-    fn data(&self) -> &MatD {
-        &self.data
-    }
-
-    fn data_mut(&mut self) -> &mut MatD {
-        &mut self.data
-    }
-}
-
-/// OCCT math_Vector — 1-based storage with arbitrary lower bound.
-#[derive(Debug, Clone)]
-struct RVector {
-    data: VecD,
-    lower: i32,
-}
-
-impl RVector {
-    /// OCCT math_Vector(I1, I2).
-    fn new(i1: i32, i2: i32) -> Self {
-        assert!(i2 >= i1, "math_Vector: bad range");
-        RVector {
-            data: VecD::new((i2 - i1 + 1) as usize),
-            lower: i1,
-        }
-    }
-
-    /// OCCT math_Vector(I1, I2, InitValue).
-    fn new_init(i1: i32, i2: i32, init: f64) -> Self {
-        let mut v = RVector::new(i1, i2);
-        for r in 1..=v.data.len() {
-            v.data.set(r, init);
-        }
-        v
-    }
-
-    #[inline]
-    fn get(&self, i: i32) -> f64 {
-        self.data.get((i - self.lower + 1).max(1) as usize)
-    }
-
-    #[inline]
-    fn set(&mut self, i: i32, v: f64) {
-        self.data.set((i - self.lower + 1).max(1) as usize, v);
-    }
-
-    /// OCCT Length().
-    fn length(&self) -> i32 {
-        self.data.len() as i32
-    }
-
-    /// OCCT Upper().
-    fn upper(&self) -> i32 {
-        self.lower + self.length() - 1
-    }
-}
-
-/// OCCT math_IntegerVector — 1-based storage with arbitrary lower bound.
-#[derive(Debug, Clone)]
-struct IVector {
-    data: IntVec,
-    lower: i32,
-}
-
-impl IVector {
-    /// OCCT math_IntegerVector(I1, I2, InitValue).
-    fn new_init(i1: i32, i2: i32, init: i32) -> Self {
-        assert!(i2 >= i1, "math_IntegerVector: bad range");
-        let mut v = IVector {
-            data: IntVec::new((i2 - i1 + 1) as usize),
-            lower: i1,
-        };
-        for r in 1..=v.data.len() {
-            v.data.set(r, init);
-        }
-        v
-    }
-
-    #[inline]
-    fn get(&self, i: i32) -> i32 {
-        self.data.get((i - self.lower + 1).max(1) as usize)
-    }
-
-    #[inline]
-    fn set(&mut self, i: i32, v: i32) {
-        self.data.set((i - self.lower + 1).max(1) as usize, v);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // AppParCurves::BernsteinMatrix / Bernstein / SplineFunction
@@ -257,6 +98,53 @@ pub fn bernstein(nb_poles: i32, u: &VecD, a: &mut Matrix, da: &mut Matrix) {
             let bj1 = b.get(j - 1);
             da.set(i, j, n_deg as f64 * (bj1 - bj));
             a.set(i, j, u1 * bj + u0 * bj1);
+        }
+    }
+}
+
+/// OCCT AppParCurves::SecondDerivativeBernstein (AppParCurves.cxx L105-155).
+pub fn second_derivative_bernstein(u: f64, dda: &mut RVector) {
+    let nb_poles = dda.length();
+    let deg = nb_poles - 1;
+    let n4 = deg * (deg - 1);
+    let mut b = RVector::new(1, deg - 1);
+    b.set(1, 1.0);
+
+    // Cas particulier si degre = 1:
+    if deg == 1 {
+        dda.set(1, 0.0);
+        dda.set(2, 0.0);
+    } else if deg == 2 {
+        dda.set(1, 2.0);
+        dda.set(2, -4.0);
+        dda.set(3, 2.0);
+    } else {
+        for id in 2..=(deg - 1) {
+            let mut y0 = b.get(1);
+            let mut y1 = u * y0;
+            b.set(1, y0 - y1);
+            for j in 2..=(id - 1) {
+                let xs = y1;
+                y0 = b.get(j);
+                y1 = u * y0;
+                b.set(j, y0 - y1 + xs);
+            }
+            b.set(id, y1);
+        }
+
+        let n4f = n4 as f64;
+        let v = n4f * b.get(1);
+        dda.set(1, v);
+        let v = n4f * (-2.0 * b.get(1) + b.get(2));
+        dda.set(2, v);
+        let v = n4f * (b.get(deg - 2) - 2.0 * b.get(deg - 1));
+        dda.set(deg, v);
+        let v = n4f * b.get(deg - 1);
+        dda.set(deg + 1, v);
+
+        for j in 2..=(deg - 2) {
+            let v = n4f * (b.get(j - 1) - 2.0 * b.get(j) + b.get(j + 1));
+            dda.set(j + 1, v);
         }
     }
 }
@@ -2280,6 +2168,757 @@ fn affect(
     }
 }
 
+// ---------------------------------------------------------------------------
+// AppParCurves_ResolConstraint
+// ---------------------------------------------------------------------------
+
+/// OCCT AppParCurves_ResolConstraint (AppParCurves_ResolConstraint.gxx
+/// whole file) — given a MultiLine SSP with constraints points, finds the
+/// best curve solution to approximate it. The poles from SCurv issued for
+/// example from the least squares are used as a guess solution for the
+/// Uzawa algorithm (math_Uzawa, tolerance `tolerance`); Bern / DA are the
+/// Bernstein and derivative-Bernstein matrices of the MultiLine. The
+/// MultiCurve SCurv is modified with the new multipoles.
+///
+/// Note: the OCCT curvature-equation block inside the constructor is
+/// commented out in the C++ source and is not ported either. The
+/// `Error()` accessor declared by the instantiation headers has no
+/// definition in the OCCT library (dead declaration) — not ported.
+#[derive(Debug, Clone)]
+pub struct ResolConstraint {
+    done: bool,
+    /// OCCT Err (set by no code path in OCCT).
+    _err: f64,
+    cont: Matrix,
+    de_cont: Matrix,
+    secont: RVector,
+    ctcinv: Matrix,
+    vardua: RVector,
+    inc_pass: i32,
+    inc_tan: i32,
+    inc_curv: i32,
+    /// OCCT IPas / ITan / ICurv (NCollection_Array1<int>, 1-based).
+    ipas: Vec<i32>,
+    itan: Vec<i32>,
+    icurv: Vec<i32>,
+}
+
+impl ResolConstraint {
+    /// OCCT AppParCurves_ResolConstraint(SSP, SCurv, FirstPoint, LastPoint,
+    /// TheConstraints, Bern, DerivativeBern, Tolerance = 1.0e-10)
+    /// (gxx ctor L40-503).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        ssp: &MultiLine,
+        scurv: &mut MultiCurve,
+        first_point: i32,
+        last_point: i32,
+        the_constraints: &[ConstraintCouple],
+        bern: &Matrix,
+        derivative_bern: &Matrix,
+        tolerance: f64,
+    ) -> Self {
+        let nb_constraints =
+            ResolConstraint::nb_constraints(ssp, first_point, last_point, the_constraints);
+        let nb_columns = ResolConstraint::nb_columns(ssp, scurv.nb_poles() as i32 - 1);
+        let mut r = ResolConstraint {
+            done: false,
+            _err: 0.0,
+            cont: Matrix::new_init(1, nb_constraints, 1, nb_columns, 0.0),
+            de_cont: Matrix::new_init(1, nb_constraints, 1, nb_columns, 0.0),
+            secont: RVector::new_init(1, nb_constraints, 0.0),
+            ctcinv: Matrix::new(1, nb_constraints, 1, nb_constraints),
+            vardua: RVector::new(1, nb_constraints),
+            inc_pass: 0,
+            inc_tan: 0,
+            inc_curv: 0,
+            ipas: vec![0; (last_point - first_point + 1) as usize],
+            itan: vec![0; (last_point - first_point + 1) as usize],
+            icurv: vec![0; (last_point - first_point + 1) as usize],
+        };
+        r.perform(
+            ssp,
+            scurv,
+            first_point,
+            last_point,
+            the_constraints,
+            bern,
+            derivative_bern,
+            tolerance,
+        );
+        r
+    }
+
+    /// The constructor body (gxx L59-503).
+    #[allow(clippy::too_many_arguments)]
+    fn perform(
+        &mut self,
+        ssp: &MultiLine,
+        scurv: &mut MultiCurve,
+        first_point: i32,
+        last_point: i32,
+        the_constraints: &[ConstraintCouple],
+        bern: &Matrix,
+        derivative_bern: &Matrix,
+        tolerance: f64,
+    ) {
+        let nb_cu = scurv.nb_curves() as i32;
+        let mut myindex;
+        let def = scurv.nb_poles() as i32 - 1;
+        let nb3d = my_line_tool::nb_p3d(ssp) as i32;
+        let nb2d = my_line_tool::nb_p2d(ssp) as i32;
+        let n_pol = def + 1;
+        let n_pol2 = 2 * n_pol;
+        let mut fc = AppParConstraint::NoConstraint;
+        let mut lc = AppParConstraint::NoConstraint;
+        let mut cons;
+        // Boucle de calcul du nombre de points de passage afin de
+        // dimensionner les matrices.
+        self.inc_pass = 0;
+        self.inc_tan = 0;
+        self.inc_curv = 0;
+        for couple in the_constraints {
+            myindex = couple.index;
+            cons = couple.constraint;
+            if myindex == first_point {
+                fc = cons;
+            }
+            if myindex == last_point {
+                lc = cons;
+            }
+            if cons as i32 >= 1 {
+                self.inc_pass += 1; // IncPass = nbre de points de passage.
+                self.ipas[(self.inc_pass - 1) as usize] = myindex;
+            }
+            if cons as i32 >= 2 {
+                self.inc_tan += 1; // IncTan = nbre de points de tangence.
+                self.itan[(self.inc_tan - 1) as usize] = myindex;
+            }
+            if cons as i32 == 3 {
+                self.inc_curv += 1; // IncCurv = nbre de pts de courbure.
+                self.icurv[(self.inc_curv - 1) as usize] = myindex;
+            }
+        }
+        if self.inc_pass == 0 {
+            self.done = true;
+            return;
+        }
+        let mut mynb3d = nb3d;
+        let mut mynb2d = nb2d;
+        if nb3d == 0 {
+            mynb3d = 1;
+        }
+        if nb2d == 0 {
+            mynb2d = 1;
+        }
+        let c_col = nb3d * 3 + nb2d * 2;
+        // Declaration et initialisation des matrices et vecteurs de
+        // contraintes:
+        let mut cont_init = Matrix::new_init(1, self.inc_pass, 1, n_pol, 0.0);
+        let mut start = RVector::new(1, c_col * n_pol);
+        let mut ibont = vec![vec![0i32; self.inc_tan as usize]; nb_cu as usize];
+        // Filling Cont for the passing points:
+        // =================================================
+        for i in 1..=self.inc_pass {
+            // Cette partie ne depend que de Bernstein
+            let npt = self.ipas[(i - 1) as usize];
+            for j in 1..=n_pol {
+                let v = bern.get(npt, j);
+                cont_init.set(i, j, v);
+            }
+        }
+        for i in 1..=c_col {
+            let v = cont_init.clone();
+            self.cont.set_block(
+                self.inc_pass * (i - 1) + 1,
+                self.inc_pass * i,
+                n_pol * (i - 1) + 1,
+                n_pol * i,
+                &v,
+            );
+        }
+        // Retrieval of starting vectors for Uzawa. This vector represents
+        // the poles of SCurv.
+        // Filling of secont and resolution.
+        let mut tab_v = vec![DVec3::ZERO; mynb3d as usize];
+        let mut tab_v2d = vec![DVec2::ZERO; mynb2d as usize];
+        let mut tab_p = vec![DVec3::ZERO; mynb3d as usize];
+        let mut tab_p2d = vec![DVec2::ZERO; mynb2d as usize];
+        let mut inc3 = c_col * self.inc_pass + 1;
+        let mut inc_col = 0i32;
+        let mut inc_sec = 0i32;
+        for k in 1..=nb_cu {
+            if k <= nb3d {
+                for i in 1..=self.inc_tan {
+                    let npt = self.itan[(i - 1) as usize];
+                    // choix du maximum de tangence pour exprimer la
+                    // colinearite:
+                    my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                    let v = tab_v[(k - 1) as usize];
+                    let t1v = v.x;
+                    let t2v = v.y;
+                    let t3v = v.z;
+                    let mut tmax = t1v.abs();
+                    ibont[(k - 1) as usize][(i - 1) as usize] = 1;
+                    if t2v.abs() > tmax {
+                        tmax = t2v.abs();
+                        ibont[(k - 1) as usize][(i - 1) as usize] = 2;
+                    }
+                    if t3v.abs() > tmax {
+                        tmax = t3v.abs();
+                        ibont[(k - 1) as usize][(i - 1) as usize] = 3;
+                    }
+                    let ib = ibont[(k - 1) as usize][(i - 1) as usize];
+                    if ib == 3 {
+                        for j in 1..=n_pol {
+                            let daij = derivative_bern.get(npt, j);
+                            let val = daij * t3v / tmax;
+                            self.cont.set(inc3, j + n_pol + inc_col, val);
+                            let val = -daij * t2v / tmax;
+                            self.cont.set(inc3, j + n_pol2 + inc_col, val);
+                            let val = daij * t3v / tmax;
+                            self.cont.set(inc3 + 1, j + inc_col, val);
+                            let val = -daij * t1v / tmax;
+                            self.cont.set(inc3 + 1, j + n_pol2 + inc_col, val);
+                        }
+                    } else if ib == 1 {
+                        for j in 1..=n_pol {
+                            let daij = derivative_bern.get(npt, j);
+                            let val = daij * t3v / tmax;
+                            self.cont.set(inc3, j + inc_col, val);
+                            let val = -daij * t1v / tmax;
+                            self.cont.set(inc3, j + n_pol2 + inc_col, val);
+                            let val = daij * t2v / tmax;
+                            self.cont.set(inc3 + 1, j + inc_col, val);
+                            let val = -daij * t1v / tmax;
+                            self.cont.set(inc3 + 1, j + n_pol + inc_col, val);
+                        }
+                    } else if ib == 2 {
+                        for j in 1..=(def + 1) {
+                            let daij = derivative_bern.get(npt, j);
+                            let val = daij * t3v / tmax;
+                            self.cont.set(inc3, j + n_pol + inc_col, val);
+                            let val = -daij * t2v / tmax;
+                            self.cont.set(inc3, j + n_pol2 + inc_col, val);
+                            let val = daij * t2v / tmax;
+                            self.cont.set(inc3 + 1, j + inc_col, val);
+                            let val = -daij * t1v / tmax;
+                            self.cont.set(inc3 + 1, j + n_pol + inc_col, val);
+                        }
+                    }
+                    inc3 += 2;
+                }
+                // Remplissage du second membre:
+                for i in 1..=self.inc_pass {
+                    my_line_tool::value_3d(ssp, self.ipas[(i - 1) as usize] as usize, &mut tab_p);
+                    let poi = tab_p[(k - 1) as usize];
+                    self.secont.set(i + inc_sec, poi.x);
+                    self.secont.set(i + self.inc_pass + inc_sec, poi.y);
+                    self.secont.set(i + 2 * self.inc_pass + inc_sec, poi.z);
+                }
+                inc_sec += 3 * self.inc_pass;
+                // Vecteur de depart:
+                for j in 1..=n_pol {
+                    let poi = scurv.value(j as usize).point(k as usize);
+                    start.set(j + inc_col, poi.x);
+                    start.set(j + n_pol + inc_col, poi.y);
+                    start.set(j + n_pol2 + inc_col, poi.z);
+                }
+                inc_col += 3 * n_pol;
+            } else {
+                for i in 1..=self.inc_tan {
+                    let npt = self.itan[(i - 1) as usize];
+                    my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                    let v2d = tab_v2d[(k - nb3d - 1) as usize];
+                    let t1v = v2d.x;
+                    let t2v = v2d.y;
+                    let mut tmax = t1v.abs();
+                    ibont[(k - 1) as usize][(i - 1) as usize] = 1;
+                    if t2v.abs() > tmax {
+                        tmax = t2v.abs();
+                        ibont[(k - 1) as usize][(i - 1) as usize] = 2;
+                    }
+                    for j in 1..=n_pol {
+                        let daij = derivative_bern.get(npt, j);
+                        let val = daij * t2v;
+                        self.cont.set(inc3, j + inc_col, val);
+                        let val = -daij * t1v;
+                        self.cont.set(inc3, j + n_pol + inc_col, val);
+                    }
+                    inc3 += 1;
+                }
+                // Remplissage du second membre:
+                for i in 1..=self.inc_pass {
+                    my_line_tool::value_2d(ssp, self.ipas[(i - 1) as usize] as usize, &mut tab_p2d);
+                    // OCCT: `Poi2d = tabP2d(i - nb3d);` — the pass-point
+                    // index expression is kept verbatim (identical to the
+                    // curve index only for pure-2D lines; OCCT compiles
+                    // this file with the range checks disabled).
+                    let poi2d = tab_p2d[(i - nb3d - 1) as usize];
+                    self.secont.set(i + inc_sec, poi2d.x);
+                    self.secont.set(i + self.inc_pass + inc_sec, poi2d.y);
+                }
+                inc_sec += 2 * self.inc_pass;
+                // Remplissage du vecteur de depart:
+                for j in 1..=n_pol {
+                    let poi2d = scurv.value(j as usize).point2d(k as usize);
+                    start.set(j + inc_col, poi2d.x);
+                    start.set(j + n_pol + inc_col, poi2d.y);
+                }
+                inc_col += n_pol2;
+            }
+        }
+        // Equations exprimant le meme rapport de tangence sur chaque courbe:
+        // On prend les coordonnees les plus significatives.
+        inc3 -= 1;
+        for i in 1..=self.inc_tan {
+            inc_col = 0;
+            let npt = self.itan[(i - 1) as usize];
+            for k in 1..=(nb_cu - 1) {
+                inc3 += 1;
+                // Initialize first relation variable (T1)
+                let mut add_index_1 = 0i32;
+                let a_val = ibont[(k - 1) as usize][(i - 1) as usize];
+                let mut ip = 0i32;
+                let t1v;
+                match a_val {
+                    1 => {
+                        // T1 ~ T1x
+                        if k <= nb3d {
+                            my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                            t1v = tab_v[(k - 1) as usize].x;
+                            ip = 3 * n_pol;
+                        } else {
+                            my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                            t1v = tab_v2d[(k - nb3d - 1) as usize].x;
+                            ip = 2 * n_pol;
+                        }
+                        add_index_1 = 0;
+                    }
+                    2 => {
+                        // T1 ~ T1y
+                        let yv;
+                        if k <= nb3d {
+                            my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                            ip = 3 * n_pol;
+                            yv = tab_v[(k - 1) as usize].y;
+                        } else {
+                            my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                            ip = 2 * n_pol;
+                            yv = tab_v2d[(k - nb3d - 1) as usize].y;
+                        }
+                        t1v = yv;
+                        add_index_1 = n_pol;
+                    }
+                    _ => {
+                        // 3: T1 ~ T1z
+                        my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                        t1v = tab_v[(k - 1) as usize].z;
+                        ip = 3 * n_pol;
+                        add_index_1 = 2 * n_pol;
+                    }
+                }
+                // Initialize second relation variable (T2)
+                let mut add_index_2 = 0i32;
+                let a_next_val = ibont[k as usize][(i - 1) as usize];
+                let t2v;
+                match a_next_val {
+                    1 => {
+                        // T2 ~ T2x
+                        if (k + 1) <= nb3d {
+                            my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                            t2v = tab_v[k as usize].x;
+                        } else {
+                            my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                            t2v = tab_v2d[(k + 1 - nb3d - 1) as usize].x;
+                        }
+                        add_index_2 = 0;
+                    }
+                    2 => {
+                        // T2 ~ T2y
+                        if (k + 1) <= nb3d {
+                            my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                            t2v = tab_v[k as usize].y;
+                        } else {
+                            my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                            t2v = tab_v2d[(k + 1 - nb3d - 1) as usize].y;
+                        }
+                        add_index_2 = n_pol;
+                    }
+                    _ => {
+                        // 3: T2 ~ T2z
+                        my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                        t2v = tab_v[k as usize].z;
+                        add_index_2 = 2 * n_pol;
+                    }
+                }
+                // Relations between T1 and T2:
+                for j in 1..=n_pol {
+                    let daij = derivative_bern.get(npt, j);
+                    let val = daij * t2v;
+                    self.cont.set(inc3, j + inc_col + add_index_1, val);
+                    let val = -daij * t1v;
+                    self.cont.set(inc3, j + ip + inc_col + add_index_2, val);
+                }
+                inc_col += ip;
+            }
+        }
+        // Equations concernant la courbure: commented out in the OCCT
+        // source (gxx L398-455) — not ported.
+
+        // Resolution par Uzawa:
+        // math_Uzawa UzaResol(Cont, Secont, Start, Tolerance) — ctor 1 with
+        // EpsLix = Tolerance, EpsLic = 1.0e-06, NbIterations = 500.
+        let uza_resol = Uzawa::new(&self.cont, &self.secont, &start, tolerance, 1.0e-06, 500);
+        if !uza_resol.is_done() {
+            self.done = false;
+            return;
+        }
+        self.ctcinv = uza_resol.inverse_cont().clone();
+        uza_resol.duale(&mut self.vardua);
+        for i in 1..=self.ctcinv.row_number() {
+            for j in i..=self.ctcinv.row_number() {
+                let v = self.ctcinv.get(j, i);
+                self.ctcinv.set(i, j, v);
+            }
+        }
+        self.done = true;
+        let mut vec_poles = RVector::new(1, c_col * n_pol);
+        let uza_value = uza_resol.value();
+        for i in 1..=vec_poles.length() {
+            let v = uza_value.get(i);
+            vec_poles.set(i, v);
+        }
+        let mut polinit = 1;
+        let mut polfin = n_pol;
+        if fc as i32 >= 1 {
+            polinit = 2;
+        }
+        if lc as i32 >= 1 {
+            polfin = n_pol - 1;
+        }
+        for i in polinit..=polfin {
+            let mut inc_col = 0i32;
+            let mut mpol = MultiPoint::new(nb3d as usize, nb2d as usize);
+            for k in 1..=nb_cu {
+                if k <= nb3d {
+                    let pol = DVec3::new(
+                        vec_poles.get(inc_col + i),
+                        vec_poles.get(inc_col + n_pol + i),
+                        vec_poles.get(inc_col + 2 * n_pol + i),
+                    );
+                    mpol.set_point(k as usize, pol);
+                    inc_col += 3 * n_pol;
+                } else {
+                    let pol2d = DVec2::new(
+                        vec_poles.get(inc_col + i),
+                        vec_poles.get(inc_col + n_pol + i),
+                    );
+                    mpol.set_point2d(k as usize, pol2d);
+                    inc_col += 2 * n_pol;
+                }
+            }
+            scurv.set_value(i as usize, mpol);
+        }
+    }
+
+    /// OCCT IsDone() (gxx L505-508).
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// OCCT NbConstraints(SSP, FirstPoint, LastPoint, TheConstraints)
+    /// (gxx L510-547).
+    pub fn nb_constraints(
+        ssp: &MultiLine,
+        _first_point: i32,
+        _last_point: i32,
+        the_constraints: &[ConstraintCouple],
+    ) -> i32 {
+        // Boucle de calcul du nombre de points de passage afin de
+        // dimensionner les matrices.
+        let mut a_inc_pass = 0;
+        let mut a_inc_tan = 0;
+        let mut a_inc_curv = 0;
+        for couple in the_constraints {
+            let cons = couple.constraint;
+            if cons as i32 >= 1 {
+                a_inc_pass += 1;
+            }
+            if cons as i32 >= 2 {
+                a_inc_tan += 1;
+            }
+            if cons as i32 == 3 {
+                a_inc_curv += 1;
+            }
+        }
+        let nb3d = my_line_tool::nb_p3d(ssp) as i32;
+        let nb2d = my_line_tool::nb_p2d(ssp) as i32;
+        let a_ccol = nb3d * 3 + nb2d * 2;
+        a_ccol * a_inc_pass + a_inc_tan * (a_ccol - 1) + 3 * a_inc_curv
+    }
+
+    /// OCCT NbColumns(SSP, Deg) (gxx L549-556).
+    pub fn nb_columns(ssp: &MultiLine, deg: i32) -> i32 {
+        let nb3d = my_line_tool::nb_p3d(ssp) as i32;
+        let nb2d = my_line_tool::nb_p2d(ssp) as i32;
+        let c_col = nb3d * 3 + nb2d * 2;
+        c_col * (deg + 1)
+    }
+
+    /// OCCT ConstraintMatrix() (gxx L558-561).
+    pub fn constraint_matrix(&self) -> &Matrix {
+        &self.cont
+    }
+
+    /// OCCT InverseMatrix() (gxx L563-566).
+    pub fn inverse_matrix(&self) -> &Matrix {
+        &self.ctcinv
+    }
+
+    /// OCCT Duale() (gxx L568-571).
+    pub fn duale(&self) -> &RVector {
+        &self.vardua
+    }
+
+    /// OCCT ConstraintDerivative(SSP, Parameters, Deg, DA) (gxx L573-948) —
+    /// fills DeCont with the derivative of the constraint matrix.
+    pub fn constraint_derivative(
+        &mut self,
+        ssp: &MultiLine,
+        parameters: &VecD,
+        deg: i32,
+        da: &Matrix,
+    ) -> &Matrix {
+        let nb_cu = my_line_tool::nb_p3d(ssp) as i32 + my_line_tool::nb_p2d(ssp) as i32;
+        let n_pol = deg + 1;
+        let n_pol2 = 2 * n_pol;
+        let mut ibont = vec![vec![0i32; self.inc_tan as usize]; nb_cu as usize];
+        let mut dec_init = Matrix::new_init(1, self.inc_pass, 1, n_pol, 0.0);
+        let mut dda = RVector::new(1, n_pol);
+
+        let nb3d = my_line_tool::nb_p3d(ssp) as i32;
+        let nb2d = my_line_tool::nb_p2d(ssp) as i32;
+        let mut mynb3d = nb3d;
+        let mut mynb2d = nb2d;
+        if nb3d == 0 {
+            mynb3d = 1;
+        }
+        if nb2d == 0 {
+            mynb2d = 1;
+        }
+        let c_col = nb3d * 3 + nb2d * 2;
+        let _ = (mynb3d, mynb2d);
+        let mut tab_v = vec![DVec3::ZERO; mynb3d as usize];
+        let mut tab_v2d = vec![DVec2::ZERO; mynb2d as usize];
+        for i in 1..=self.de_cont.row_number() {
+            for j in 1..=self.de_cont.col_number() {
+                self.de_cont.set(i, j, 0.0);
+            }
+        }
+        //  Remplissage de DK pour les points de passages:
+        for i in 1..=self.inc_pass {
+            let npt = self.ipas[(i - 1) as usize];
+            for j in 1..=n_pol {
+                let v = da.get(npt, j);
+                dec_init.set(i, j, v);
+            }
+        }
+        for i in 1..=c_col {
+            let v = dec_init.clone();
+            self.de_cont.set_block(
+                self.inc_pass * (i - 1) + 1,
+                self.inc_pass * i,
+                n_pol * (i - 1) + 1,
+                n_pol * i,
+                &v,
+            );
+        }
+        // Pour les points de tangence:
+        let mut inc3 = c_col * self.inc_pass + 1;
+        let mut inc_col = 0i32;
+        for k in 1..=nb_cu {
+            if k <= nb3d {
+                for i in 1..=self.inc_tan {
+                    let npt = self.itan[(i - 1) as usize];
+                    // choix du maximum de tangence pour exprimer la
+                    // colinearite:
+                    my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                    let v = tab_v[(k - 1) as usize];
+                    let t1v = v.x;
+                    let t2v = v.y;
+                    let t3v = v.z;
+                    let tmax = t1v.abs();
+                    ibont[(k - 1) as usize][(i - 1) as usize] = 1;
+                    if t2v.abs() > tmax {
+                        ibont[(k - 1) as usize][(i - 1) as usize] = 2;
+                    }
+                    if t3v.abs() > tmax {
+                        ibont[(k - 1) as usize][(i - 1) as usize] = 3;
+                    }
+                    second_derivative_bernstein(parameters.get(npt as usize), &mut dda);
+                    let ib = ibont[(k - 1) as usize][(i - 1) as usize];
+                    if ib == 3 {
+                        for j in 1..=n_pol {
+                            let ddaij = dda.get(j);
+                            let val = ddaij * t3v / tmax;
+                            self.de_cont.set(inc3, j + n_pol + inc_col, val);
+                            let val = -ddaij * t2v / tmax;
+                            self.de_cont.set(inc3, j + n_pol2 + inc_col, val);
+                            let val = ddaij * t3v / tmax;
+                            self.de_cont.set(inc3 + 1, j + inc_col, val);
+                            let val = -ddaij * t1v / tmax;
+                            self.de_cont.set(inc3 + 1, j + n_pol2 + inc_col, val);
+                        }
+                    } else if ib == 1 {
+                        for j in 1..=n_pol {
+                            let ddaij = dda.get(j);
+                            let val = ddaij * t3v / tmax;
+                            self.de_cont.set(inc3, j + inc_col, val);
+                            let val = -ddaij * t1v / tmax;
+                            self.de_cont.set(inc3, j + n_pol2 + inc_col, val);
+                            let val = ddaij * t2v / tmax;
+                            self.de_cont.set(inc3 + 1, j + inc_col, val);
+                            let val = -ddaij * t1v / tmax;
+                            self.de_cont.set(inc3 + 1, j + n_pol + inc_col, val);
+                        }
+                    } else if ib == 2 {
+                        for j in 1..=n_pol {
+                            let ddaij = dda.get(j);
+                            let val = ddaij * t3v / tmax;
+                            self.de_cont.set(inc3, j + n_pol + inc_col, val);
+                            let val = -ddaij * t2v / tmax;
+                            self.de_cont.set(inc3, j + n_pol2 + inc_col, val);
+                            let val = ddaij * t2v / tmax;
+                            self.de_cont.set(inc3 + 1, j + inc_col, val);
+                            let val = -ddaij * t1v / tmax;
+                            self.de_cont.set(inc3 + 1, j + n_pol + inc_col, val);
+                        }
+                    }
+                    inc3 += 2;
+                }
+                inc_col += 3 * n_pol;
+            } else {
+                for i in 1..=self.inc_tan {
+                    let npt = self.itan[(i - 1) as usize];
+                    second_derivative_bernstein(parameters.get(npt as usize), &mut dda);
+                    my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                    // OCCT: `V2d = tabV2d(k);` — kept verbatim (the
+                    // second-derivative variant indexes the 2D tangent
+                    // table by the absolute curve index; the ctor above
+                    // uses (k - nb3d)).
+                    let v2d = tab_v2d[(k - 1) as usize];
+                    let t1v = v2d.x;
+                    let t2v = v2d.y;
+                    let tmax = t1v.abs();
+                    ibont[(k - 1) as usize][(i - 1) as usize] = 1;
+                    if t2v.abs() > tmax {
+                        ibont[(k - 1) as usize][(i - 1) as usize] = 2;
+                    }
+                    for j in 1..=n_pol {
+                        let ddaij = dda.get(j);
+                        let val = ddaij * t2v;
+                        self.de_cont.set(inc3, j + inc_col, val);
+                        let val = -ddaij * t1v;
+                        self.de_cont.set(inc3, j + n_pol + inc_col, val);
+                    }
+                    inc3 += 1;
+                }
+            }
+        }
+        // Equations exprimant le meme rapport de tangence sur chaque courbe:
+        // On prend les coordonnees les plus significatives.
+        inc3 -= 1;
+        for i in 1..=self.inc_tan {
+            inc_col = 0;
+            let npt = self.itan[(i - 1) as usize];
+            second_derivative_bernstein(parameters.get(npt as usize), &mut dda);
+            for k in 1..=(nb_cu - 1) {
+                inc3 += 1;
+                let t1v;
+                let mut ip = 0i32;
+                let ib = ibont[(k - 1) as usize][(i - 1) as usize];
+                if ib == 1 {
+                    if k <= nb3d {
+                        my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                        t1v = tab_v[(k - 1) as usize].x;
+                        ip = 3 * n_pol;
+                    } else {
+                        my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                        t1v = tab_v2d[(k - 1) as usize].x;
+                        ip = 2 * n_pol;
+                    }
+                } else if ib == 2 {
+                    if k <= nb3d {
+                        my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                        t1v = tab_v[(k - 1) as usize].y;
+                        ip = 3 * n_pol;
+                    } else {
+                        my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                        t1v = tab_v2d[(k - 1) as usize].y;
+                        ip = 2 * n_pol;
+                    }
+                } else {
+                    my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                    t1v = tab_v[(k - 1) as usize].z;
+                    ip = 3 * n_pol;
+                }
+                let t2v;
+                let ib_next = ibont[k as usize][(i - 1) as usize];
+                if ib_next == 1 {
+                    // Relations between T1? and T2x:
+                    if (k + 1) <= nb3d {
+                        my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                        t2v = tab_v[k as usize].x;
+                    } else {
+                        my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                        t2v = tab_v2d[k as usize].x;
+                    }
+                } else if ib_next == 2 {
+                    // Relations between T1? and T2y:
+                    if (k + 1) <= nb3d {
+                        my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                        t2v = tab_v[k as usize].y;
+                    } else {
+                        my_line_tool::tangency_2d(ssp, npt as usize, &mut tab_v2d);
+                        t2v = tab_v2d[k as usize].y;
+                    }
+                } else {
+                    // Relations between T1? and T2z:
+                    my_line_tool::tangency_3d(ssp, npt as usize, &mut tab_v);
+                    t2v = tab_v[k as usize].z;
+                }
+                // The (T1 kind, T2 kind) pair selects the pole-column
+                // offsets, exactly as in the OCCT switch cascade (the OCCT
+                // branches are: a=1 -> +0; a=2 -> +Npol; a=3 -> +2*Npol on
+                // the T1 side, mirrored on the T2 side with the IP gap).
+                let (a_off, b_off) = match (ib, ib_next) {
+                    (1, 1) => (0, 0),
+                    (1, 2) => (0, n_pol),
+                    (1, 3) => (0, 2 * n_pol),
+                    (2, 1) => (n_pol, 0),
+                    (2, 2) => (n_pol, n_pol),
+                    (2, 3) => (n_pol, 2 * n_pol),
+                    (_, 1) => (2 * n_pol, 0),
+                    (_, 2) => (2 * n_pol, n_pol),
+                    (_, _) => (2 * n_pol, 2 * n_pol),
+                };
+                for j in 1..=n_pol {
+                    let daij = dda.get(j);
+                    // OCCT writes these ratio rows into Cont (not DeCont)
+                    // inside ConstraintDerivative — kept verbatim.
+                    let val = daij * t2v;
+                    self.cont.set(inc3, j + a_off + inc_col, val);
+                    let val = -daij * t1v;
+                    self.cont.set(inc3, j + ip + b_off + inc_col, val);
+                }
+                inc_col += ip;
+            }
+        }
+        &self.de_cont
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2452,5 +3091,78 @@ mod tests {
         let mut e2 = 0.0;
         ls.error(&mut f, &mut e3, &mut e2);
         assert!(f < 1.0e-6, "fit error too large: {}", f);
+    }
+}
+
+#[cfg(test)]
+mod resol_constraint_tests {
+    use super::*;
+    use rcad_kernel::math::math_matrix::Matrix as KernelMatrix;
+
+    // Pure-2D line (1 curve), ONE pass-point constraint (IncPass = 1 — the
+    // smallest form that stays inside the OCCT `tabP2d(i - nb3d)` typo's
+    // bounds; larger IncPass values read out of range in the OCCT source,
+    // which compiles this file with range checks disabled).
+    // The y second member is negative, so the starting point X0 = 0 is
+    // infeasible and the dual iteration moves: the solved y-poles sit on
+    // the constraint boundary, the feasible x side stays at the guess.
+    #[test]
+    fn pass_point_2d_resolution() {
+        let pts = vec![DVec2::new(0.0, 0.0), DVec2::new(2.0, -2.0), DVec2::new(4.0, 0.0)];
+        let ml = MultiLine::new_tab_p2d(&pts);
+        let constraints = vec![ConstraintCouple {
+            index: 2,
+            constraint: AppParConstraint::PassPoint,
+        }];
+
+        let parameters = VecD { v: vec![0.0, 0.5, 1.0] };
+        let mut bern = KernelMatrix::new(1, 3, 1, 3);
+        let mut da = KernelMatrix::new(1, 3, 1, 3);
+        bernstein(3, &parameters, &mut bern, &mut da);
+
+        let mut scurv = MultiCurve::new(3, 0, 1);
+
+        let nb_c = ResolConstraint::nb_constraints(&ml, 1, 3, &constraints);
+        assert_eq!(nb_c, 2, "CCol(2) * IncPass(1)");
+        assert_eq!(ResolConstraint::nb_columns(&ml, 2), 6, "CCol(2) * Npol(3)");
+
+        let mut res = ResolConstraint::new(&ml, &mut scurv, 1, 3, &constraints, &bern, &da, 1.0e-10);
+        assert!(res.is_done(), "Uzawa resolution must complete");
+        assert_eq!(res.constraint_matrix().row_number(), 2);
+        assert_eq!(res.constraint_matrix().col_number(), 6);
+
+        // The Uzawa solution vector exists; SCurv poles 1..3 (polinit=1,
+        // polfin=3 with FC/LC unconstrained) receive the corrected poles.
+        // The feasible x side stays at the guess (0), the infeasible y side
+        // moves onto the constraint boundary.
+        for i in 1..=3 {
+            let p = scurv.value(i).point2d(1);
+            println!("DBG pole {} = ({}, {})", i, p.x, p.y);
+        }
+        let p2 = scurv.value(2).point2d(1);
+        assert!(p2.x.abs() < 1.0e-5, "feasible x stays at guess, got {}", p2.x);
+        let row = [0.25f64, 0.5, 0.25];
+        let expect_y = -2.0 / (row[0] * row[0] + row[1] * row[1] + row[2] * row[2]);
+        let y_fit = row[0] * scurv.value(1).point2d(1).y
+            + row[1] * scurv.value(2).point2d(1).y
+            + row[2] * scurv.value(3).point2d(1).y;
+        assert!(
+            (y_fit - (-2.0)).abs() < 1.0e-4,
+            "constraint row·y must equal Secont(-2), got {}",
+            y_fit
+        );
+        let _ = expect_y;
+
+        // ConstraintDerivative runs over the same constraint set (pass
+        // block = DA rows; no tangency rows).
+        let de = res.constraint_derivative(&ml, &parameters, 2, &da);
+        // Coordinate-block layout: block c occupies rows (IncPass*(c-1)+1
+        // .. IncPass*c) x cols (Npol*(c-1)+1 .. Npol*c); with IncPass = 1
+        // the x block is row 1 / cols 1..3 and the y block row 2 / cols
+        // 4..6, both equal to the DA row of the constrained point.
+        for j in 1..=3 {
+            assert!((de.get(1, j) - da.get(2, j)).abs() < 1.0e-12, "DeCont x block");
+            assert!((de.get(2, j + 3) - da.get(2, j)).abs() < 1.0e-12, "DeCont y block");
+        }
     }
 }
