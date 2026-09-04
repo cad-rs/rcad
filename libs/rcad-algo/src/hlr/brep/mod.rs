@@ -15,6 +15,7 @@ pub mod cl_props;
 pub mod b_surface_tool;
 pub mod curve;
 pub mod line_tool;
+pub mod sl_props;
 pub mod surface;
 
 pub use b_curve_tool::{b_curve_value, CurveView};
@@ -22,5 +23,6 @@ pub use b_surface_tool::{
     nb_samples_u_range, nb_samples_u_total, nb_samples_v_range, nb_samples_v_total,
 };
 pub use cl_props::CLProps;
+pub use sl_props::SLProps;
 pub use line_tool as line_tool_mod;
 pub use surface::Surface;

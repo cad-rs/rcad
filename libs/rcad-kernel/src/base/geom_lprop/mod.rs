@@ -893,4 +893,6 @@ mod tests {
 }
 
 pub mod cl_props_base;
+pub mod sl_props_base;
 pub use cl_props_base::{CLPropsCurve2d, ClPropsBase};
+pub use sl_props_base::{SLPropsSurface, SlPropsBase};
