@@ -16,6 +16,7 @@ pub mod math_poly;
 pub mod newton_function_root;
 pub mod trig_equation_function;
 pub mod math_recipes;
+pub mod math_householder;
 pub mod function_set_root;
 pub mod p_lib_jacobi;
 pub mod p_lib_jacobi_data;
@@ -99,6 +100,23 @@ impl MatD {
     }
     pub fn n_cols(&self) -> usize {
         self.m[0].len()
+    }
+
+    /// OCCT math_Matrix::SetCol(Index, V) — replaces the column Index by the
+    /// vector V.
+    pub fn set_col(&mut self, index: usize, v: &VecD) {
+        for r in 1..=self.n_rows() {
+            self.set(r, index, v.get(r));
+        }
+    }
+
+    /// OCCT math_Matrix::Col(Index) — returns the column Index as a vector.
+    pub fn col(&self, index: usize) -> VecD {
+        let mut v = VecD::new(self.n_rows());
+        for r in 1..=self.n_rows() {
+            v.set(r, self.get(r, index));
+        }
+        v
     }
 }
 
