@@ -122,7 +122,7 @@ fn polygon_properties(pts: &[DVec2]) -> (f64, f64) {
 /// direction at the vertex has the smallest angle with the current edge's
 /// tangent (two passes: degenerated/closed edges first, then the rest; the
 /// nearest 2D point breaks ties, L522-703).
-fn order_wire_edges(
+pub(crate) fn order_wire_edges(
     ds: &dyn ShapeSource,
     face_idx: usize,
     edges: &[(usize, Orientation)],
@@ -249,7 +249,7 @@ fn order_wire_edges(
     // OCCT WireExplorer::Next loop (L393-705).
     loop {
         let candidates: Vec<usize> = my_map.get(&cur_v2).cloned().unwrap_or_default();
-        if candidates.is_empty() {
+            if candidates.is_empty() {
             break;
         }
         let old_v = cur_v2;
@@ -629,7 +629,7 @@ fn elclib_value(t: f64, line_origin: DVec2, line_dir: DVec2) -> DVec2 {
 /// IntTools_FClass2d::Init (L588-619) and surf->IsUPeriodic/IsVPeriodic in
 /// Perform (L655-658): U periodic for cone/cylinder/torus/sphere/surface of
 /// revolution; V periodic only for torus.
-fn surface_periodic(surf: &Surface3) -> (bool, bool) {
+pub(crate) fn surface_periodic(surf: &Surface3) -> (bool, bool) {
     match surf {
         Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Revolution(_) => {
             (true, false)
