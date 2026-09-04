@@ -18,6 +18,7 @@
 //! slice access).  `BandMatrix` stands in for the band-shaped `math_Matrix`.
 
 use super::plib::eval_polynomial_flat;
+use glam::{DVec2, DVec3};
 
 /// OCCT BSplCLib::FirstUKnotIndex(Degree, Mults) over (knots, mults) arrays.
 pub fn first_uknot_index_mults(degree: usize, mults: &[i32]) -> i32 {
@@ -2963,4 +2964,231 @@ pub fn intervals(
     // write the ending of the range (we didn't write it at all)
     out[a_nb_intervals] = last;
     out
+}
+
+// ---------------------------------------------------------------------------
+// BSplCLib::PolesCoefficients + CacheD1/CoefsD1 (non-rational Bezier)
+// ---------------------------------------------------------------------------
+
+/// OCCT BSplCLib_PolesCoefficients_Bezier (BSplCLib_CurveComputation.pxx)
+/// for a non-rational 3D Bezier: the power (Taylor) coefficients of the
+/// curve, CachePoles[ii] = D^{ii} P(0) / ii! — the BuildCache conversion
+/// with U=0, SpanDomain=1 (same flow as approx_int::bezier_poles_to_coeffs,
+/// hosted here where the OCCT method lives).
+pub fn poles_coefficients_3d(poles: &[DVec3]) -> Vec<DVec3> {
+    let deg = poles.len() - 1;
+    let mut psav: Vec<DVec3> = poles.to_vec();
+    let mut knot = vec![0.0f64; 2 * deg];
+    for k in deg..2 * deg {
+        knot[k] = 1.0;
+    }
+    let mut ddmi = 2 * deg + 1;
+    for i in 0..deg {
+        ddmi -= 1;
+        let mut jdmi = ddmi;
+        for j in (i..deg).rev() {
+            jdmi -= 1;
+            let coef = if knot[jdmi] == knot[j] {
+                0.0
+            } else {
+                1.0 / (knot[jdmi] - knot[j])
+            };
+            psav[j + 1] = (psav[j + 1] - psav[j]) * coef;
+        }
+    }
+    // OCCT Bohm third phase (BSplCLib.cxx L1384-1399): multiply by the
+    // degrees — psav[i] *= Degree!/(Degree-i)!.
+    let mut coef = deg as f64;
+    let mut dmi = deg;
+    for i in 1..=deg {
+        psav[i] *= coef;
+        dmi -= 1;
+        coef *= dmi as f64;
+    }
+    // OCCT BuildCache non-rational branch (CurveComputation.pxx L1581-1589):
+    // CachePoles[ii] multiplied by LocalValue accumulated as
+    // LocalValue *= SpanDomain/ii — with the Bezier window SpanDomain = 1,
+    // giving CachePoles[ii] = psav[ii-1] / (ii-1)!.
+    let mut local_value = 1.0f64;
+    let mut out = Vec::with_capacity(deg + 1);
+    for ii in 0..=deg {
+        out.push(psav[ii] * local_value);
+        local_value *= 1.0 / (ii as f64 + 1.0);
+    }
+    out
+}
+
+/// OCCT BSplCLib_PolesCoefficients_Bezier — the 2D form.
+pub fn poles_coefficients_2d(poles: &[DVec2]) -> Vec<DVec2> {
+    let deg = poles.len() - 1;
+    let mut psav: Vec<DVec2> = poles.to_vec();
+    let mut knot = vec![0.0f64; 2 * deg];
+    for k in deg..2 * deg {
+        knot[k] = 1.0;
+    }
+    let mut ddmi = 2 * deg + 1;
+    for i in 0..deg {
+        ddmi -= 1;
+        let mut jdmi = ddmi;
+        for j in (i..deg).rev() {
+            jdmi -= 1;
+            let coef = if knot[jdmi] == knot[j] {
+                0.0
+            } else {
+                1.0 / (knot[jdmi] - knot[j])
+            };
+            psav[j + 1] = (psav[j + 1] - psav[j]) * coef;
+        }
+    }
+    // OCCT Bohm third phase (BSplCLib.cxx L1384-1399): multiply by the
+    // degrees — psav[i] *= Degree!/(Degree-i)!.
+    let mut coef = deg as f64;
+    let mut dmi = deg;
+    for i in 1..=deg {
+        psav[i] *= coef;
+        dmi -= 1;
+        coef *= dmi as f64;
+    }
+    // OCCT BuildCache non-rational branch (CurveComputation.pxx L1581-1589):
+    // CachePoles[ii] multiplied by LocalValue accumulated as
+    // LocalValue *= SpanDomain/ii — with the Bezier window SpanDomain = 1,
+    // giving CachePoles[ii] = psav[ii-1] / (ii-1)!.
+    let mut local_value = 1.0f64;
+    let mut out = Vec::with_capacity(deg + 1);
+    for ii in 0..=deg {
+        out.push(psav[ii] * local_value);
+        local_value *= 1.0 / (ii as f64 + 1.0);
+    }
+    out
+}
+
+/// OCCT BSplCLib_CacheD1 (BSplCLib_CurveComputation.pxx L1307-1346), the
+/// non-rational 3D form: evaluates the power coefficients at
+/// NewParameter = (Parameter - CacheParameter) / SpanLenght with
+/// PLib::EvalPolynomial(U, 1, Degree, 3, ...) and divides the derivative by
+/// the span (ModifyCoordsDivide).
+pub fn cache_d1_3d(
+    parameter: f64,
+    degree: i32,
+    cache_parameter: f64,
+    span_lenght: f64,
+    poles: &[DVec3],
+    point: &mut DVec3,
+    vec: &mut DVec3,
+) {
+    let new_parameter = (parameter - cache_parameter) / span_lenght;
+    let mut coeffs_flat = Vec::with_capacity(poles.len() * 3);
+    for p in poles {
+        coeffs_flat.extend_from_slice(&[p.x, p.y, p.z]);
+    }
+    // OCCT PLib::EvalPolynomial(Par, 1, Degree, Dimension, ...) —
+    // eval_poly1 (PLib.cxx L746-767): theHorner walks DOWN from the
+    // highest-degree coefficient over the ascending storage.
+    let dim = 3usize;
+    let deg = degree as usize;
+    let mut local0 = [0.0f64; 3];
+    let mut local1 = [0.0f64; 3];
+    for i in 0..dim {
+        // aCoeffs = &PolynomialCoeff + Degree * Dimension — starts at the
+        // HIGHEST-degree coefficient.
+        local0[i] = coeffs_flat[deg * dim + i];
+        local1[i] = 0.0;
+    }
+    let mut coeffs = deg * dim;
+    for _ in 0..deg {
+        coeffs -= dim;
+        for i in 0..dim {
+            let val = local0[i];
+            local1[i] = local1[i] * new_parameter + val;
+            local0[i] = val * new_parameter + coeffs_flat[coeffs + i];
+        }
+    }
+    let inv_span = 1.0 / span_lenght; // ModifyCoordsDivide.
+    *point = DVec3::new(local0[0], local0[1], local0[2]);
+    *vec = DVec3::new(local1[0] * inv_span, local1[1] * inv_span, local1[2] * inv_span);
+}
+
+/// OCCT BSplCLib_CacheD1 — the 2D form.
+pub fn cache_d1_2d(
+    parameter: f64,
+    degree: i32,
+    cache_parameter: f64,
+    span_lenght: f64,
+    poles: &[DVec2],
+    point: &mut DVec2,
+    vec: &mut DVec2,
+) {
+    let new_parameter = (parameter - cache_parameter) / span_lenght;
+    let mut coeffs_flat = Vec::with_capacity(poles.len() * 2);
+    for p in poles {
+        coeffs_flat.extend_from_slice(&[p.x, p.y]);
+    }
+    // OCCT PLib::EvalPolynomial — eval_poly1 (PLib.cxx L746-767), dim = 2.
+    let dim = 2usize;
+    let deg = degree as usize;
+    let mut local0 = [0.0f64; 2];
+    let mut local1 = [0.0f64; 2];
+    for i in 0..dim {
+        // aCoeffs = &PolynomialCoeff + Degree * Dimension — starts at the
+        // HIGHEST-degree coefficient.
+        local0[i] = coeffs_flat[deg * dim + i];
+        local1[i] = 0.0;
+    }
+    let mut coeffs = deg * dim;
+    for _ in 0..deg {
+        coeffs -= dim;
+        for i in 0..dim {
+            let val = local0[i];
+            local1[i] = local1[i] * new_parameter + val;
+            local0[i] = val * new_parameter + coeffs_flat[coeffs + i];
+        }
+    }
+    let inv_span = 1.0 / span_lenght; // ModifyCoordsDivide.
+    *point = DVec2::new(local0[0], local0[1]);
+    *vec = DVec2::new(local1[0] * inv_span, local1[1] * inv_span);
+}
+
+/// OCCT BSplCLib::CoefsD1 (BSplCLib.lxx L65-74) — CacheD1 with
+/// CacheParameter = 0 and SpanLenght = 1 (Bezier curves ONLY, the poles
+/// being the power coefficients from PolesCoefficients).
+pub fn coefs_d1_3d(u: f64, poles: &[DVec3], point: &mut DVec3, vec: &mut DVec3) {
+    cache_d1_3d(u, poles.len() as i32 - 1, 0.0, 1.0, poles, point, vec);
+}
+
+/// OCCT BSplCLib::CoefsD1 (BSplCLib.lxx L76-85) — the 2D form.
+pub fn coefs_d1_2d(u: f64, poles: &[DVec2], point: &mut DVec2, vec: &mut DVec2) {
+    cache_d1_2d(u, poles.len() as i32 - 1, 0.0, 1.0, poles, point, vec);
+}
+
+#[cfg(test)]
+mod coefs_tests {
+    use super::*;
+
+    // Quadratic Bezier (0,0)-(2,4)-(4,0): power coefficients must be
+    // c0=(0,0), c1=2*(Q1-Q0)=(4,8), c2=P''(0)/2=(0,-8); CoefsD1 at 0.5 must
+    // give P=(2,2), P'=(4,0).
+    #[test]
+    fn quadratic_coeffs_and_d1() {
+        let poles = vec![DVec2::new(0.0, 0.0), DVec2::new(2.0, 4.0), DVec2::new(4.0, 0.0)];
+        let c = poles_coefficients_2d(&poles);
+        assert!((c[0].x - 0.0).abs() < 1e-12 && (c[0].y - 0.0).abs() < 1e-12);
+        assert!((c[1].x - 4.0).abs() < 1e-12 && (c[1].y - 8.0).abs() < 1e-12);
+        assert!((c[2].x - 0.0).abs() < 1e-12 && (c[2].y + 8.0).abs() < 1e-12);
+        let mut pt = DVec2::ZERO;
+        let mut v = DVec2::ZERO;
+        coefs_d1_2d(0.5, &c, &mut pt, &mut v);
+        assert!((pt.x - 2.0).abs() < 1e-12 && (pt.y - 2.0).abs() < 1e-12, "pt={:?}", pt);
+        assert!((v.x - 4.0).abs() < 1e-12 && (v.y - 0.0).abs() < 1e-12, "v={:?}", v);
+    }
+}
+
+#[cfg(test)]
+mod coefs_debug {
+    use super::*;
+    #[test]
+    fn debug_2d_coeffs() {
+        let poles = vec![DVec2::new(0.0, 0.0), DVec2::new(2.0, 4.0), DVec2::new(4.0, 0.0)];
+        let c = poles_coefficients_2d(&poles);
+        println!("DBG c = {:?}", c);
+    }
 }
