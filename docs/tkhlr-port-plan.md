@@ -1,5 +1,15 @@
 # TKHLR 1:1 翻译推进计划（多 session runway）
 
+> **交接快照（2026-09-04 session 结束时）**
+> - 提交链（rcad 子模块分支 `sd-hash-wip`）：`7011f938` 计划落盘 → `89fdd3ec` Stage 0 → `78789bbf` Stage 1 → `6f0f12b8` 2a 审计+Bnd_Range → `34dfaa5b` 2a-1 批次（Intf 数据类/BoundSortBox/PGProps+PEquation）→ `da383601` 2a-1 完成（IntCurve 三泛型）→ `5ef9ae00` 2a-2 IntImp 部分（ZerCSParFunc + IntCS）。
+> - 回归基线（全部全绿）：algo lib 115/115、kernel lib 645/645、tkhelix_gtests 16/16、pavefiller_stage_tests 26/26。
+> - **下一步 = §7 勾选表第一个未完成项：2a-2 剩余**——`IntImpParGen_Intersector.gxx`（824 行，`$OCCT_SRC/src/ModelingAlgorithms/TKGeomAlgo/IntImpParGen/`）+ IntConicCurve 双泛型（`IntCurve_IntConicCurveGen.gxx` 92 + `IntCurve_UserIntConicCurveGen.gxx` 889，二者 Perform 引擎绑定 IntImpParGen_Intersector 与 HLRBRep_Curve/CurveTool）。之后按 2a-3 → 2a-4 → 2b。
+> - 已确立的翻译模式（沿例勿改）：OCCT gxx 模板参数 → Rust trait（`ProjPCurveTool`/`PSurfaceTool`/`CurveTool3d`，见 `geomalgo/int_curve_generics.rs` 与 `geomalgo/int_imp/`）；gxx/lxx 内联翻译；每函数 `// OCCT <文件> L<起>-<止>` 标注；每个叶子翻译配 OCCT 解析锚点单测。
+> - 两个已踩过的契约坑：**(1)** `ThePSurfaceTool::D1`/`TheCurveTool::D1` 的 P 输出就是曲面/曲线点本身（测试桩写成 ZERO 会使 F≡0、触发 f2<=eps 的 done=true 提前返回——症状是 root 原样返回起点）；**(2)** `GProp_GProps::MatrixOfInertia` 经 HOperator 移轴到质心。另有怪癖照抄清单见 §5。
+> - 子模块工作树有 3 个**非本任务**的遗留修改（`algo_ext/mod.rs`、`fillet/topopebrepbuild.rs`、`tests/tkgeom_algo_gtests.rs`）——提交时只 `git add` 本任务文件，勿混入。
+> - shell 的 cwd 会被重置到 `C:\Users\lilu\works\rcad-pro`（根仓库），编译/测试前先 `cd rcad`。
+
+>
 > 本文档是 TKHLR（Hidden Line Removal）移植的持久 runway 文档。每个 session
 > 开场必读：先看 §7 进度勾选表，从第一个未勾选任务继续；完成一项勾一项。
 > 勘察日期：2026-09-04（数字与结论基于当日 OCCT 树实测）。
