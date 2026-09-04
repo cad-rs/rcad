@@ -2919,6 +2919,756 @@ impl ResolConstraint {
     }
 }
 
+// ---------------------------------------------------------------------------
+// AppParCurves_Function (ParFunction)
+// ---------------------------------------------------------------------------
+
+// OCCT math_Vector operator helpers (member-operator semantics: the result
+// carries the LEFT operand's bounds; component counts must match).
+
+/// OCCT math_Vector::operator+.
+fn v_add(a: &RVector, b: &RVector) -> RVector {
+    let mut r = RVector::new(a.lower, a.upper());
+    for i in a.lower..=a.upper() {
+        let v = a.get(i) + b.get(i);
+        r.set(i, v);
+    }
+    r
+}
+
+/// OCCT math_Vector::operator-.
+fn v_sub(a: &RVector, b: &RVector) -> RVector {
+    let mut r = RVector::new(a.lower, a.upper());
+    for i in a.lower..=a.upper() {
+        let v = a.get(i) - b.get(i);
+        r.set(i, v);
+    }
+    r
+}
+
+/// OCCT math_Vector::operator*(Standard_Real).
+fn v_scale(a: &RVector, s: f64) -> RVector {
+    let mut r = RVector::new(a.lower, a.upper());
+    for i in a.lower..=a.upper() {
+        let v = a.get(i) * s;
+        r.set(i, v);
+    }
+    r
+}
+
+/// OCCT math_Vector::Multiplied(Vector) — the dot product.
+fn v_dot(a: &RVector, b: &RVector) -> f64 {
+    let mut s = 0.0;
+    for i in a.lower..=a.upper() {
+        s += a.get(i) * b.get(i);
+    }
+    s
+}
+
+/// OCCT AppParCurves_Function (AppParCurves_Function.gxx whole file) — the
+/// objective function of the Gradient minimization: a least-square fit
+/// (ParLeastSquare) optionally corrected by the constrained resolution
+/// (ResolConstraint), evaluating F = Sum ||C(ui) - PTL(i)||2 and its
+/// gradient over the parameters.
+#[derive(Debug, Clone)]
+pub struct ParFunction {
+    /// OCCT MyMultiLine.
+    my_multi_line: MultiLine,
+    /// OCCT MyMultiCurve.
+    my_multi_curve: MultiCurve,
+    /// OCCT myParameters.
+    my_parameters: RVector,
+    /// OCCT ValGrad_F.
+    val_grad_f: RVector,
+    /// OCCT MyF.
+    my_f: Matrix,
+    /// OCCT PTLX / PTLY / PTLZ (the point tables, filled only when the
+    /// intermediate points are constrained).
+    ptlx: Matrix,
+    ptly: Matrix,
+    ptlz: Matrix,
+    /// OCCT A / DA (the Bernstein function matrices).
+    a: Matrix,
+    da: Matrix,
+    /// OCCT MyLeastSquare.
+    my_least_square: LeastSquare,
+    first_p: i32,
+    last_p: i32,
+    nb_p: i32,
+    a_deb: i32,
+    a_fin: i32,
+    degre: i32,
+    nbcu: i32,
+    contraintes: bool,
+    /// OCCT myConstraints.
+    my_constraints: Vec<ConstraintCouple>,
+    /// OCCT tabdim (HArray1(0, NbCu-1)).
+    tabdim: Vec<i32>,
+    /// OCCT FVal / ERR3d / ERR2d / Done.
+    f_val: f64,
+    err3d: f64,
+    err2d: f64,
+    done: bool,
+}
+
+impl ParFunction {
+    /// OCCT AppParCurves_Function(SSP, FirstPoint, LastPoint, TheConstraints,
+    /// Parameters, Deg) (gxx ctor L21-129).
+    pub fn new(
+        ssp: &MultiLine,
+        first_point: i32,
+        last_point: i32,
+        the_constraints: &[ConstraintCouple],
+        parameters: &VecD,
+        deg: i32,
+    ) -> Self {
+        let nb3d = my_line_tool::nb_p3d(ssp) as i32;
+        let nb2d = my_line_tool::nb_p2d(ssp) as i32;
+        let nb_pts = nb3d + nb2d;
+        let mut f = ParFunction {
+            my_multi_line: ssp.clone(),
+            my_multi_curve: MultiCurve::new((deg + 1) as usize, 0, 0),
+            my_parameters: RVector::new(1, parameters.len() as i32),
+            val_grad_f: RVector::new(first_point, last_point),
+            my_f: Matrix::new_init(first_point, last_point, 1, nb_pts, 0.0),
+            ptlx: Matrix::new_init(first_point, last_point, 1, nb_pts, 0.0),
+            ptly: Matrix::new_init(first_point, last_point, 1, nb_pts, 0.0),
+            ptlz: Matrix::new_init(first_point, last_point, 1, nb_pts, 0.0),
+            a: Matrix::new(first_point, last_point, 1, deg + 1),
+            da: Matrix::new(first_point, last_point, 1, deg + 1),
+            my_least_square: LeastSquare::new_no_params(
+                ssp,
+                first_point,
+                last_point,
+                Self::first_constraint(the_constraints, first_point),
+                Self::last_constraint(the_constraints, last_point),
+                deg + 1,
+            ),
+            first_p: 0,
+            last_p: 0,
+            nb_p: 0,
+            a_deb: 0,
+            a_fin: 0,
+            degre: 0,
+            nbcu: 0,
+            contraintes: false,
+            my_constraints: the_constraints.to_vec(),
+            tabdim: Vec::new(),
+            f_val: 0.0,
+            err3d: 0.0,
+            err2d: 0.0,
+            done: false,
+        };
+        for i in 1..=(parameters.len() as i32) {
+            let v = parameters.get(i as usize);
+            f.my_parameters.set(i, v);
+        }
+        f.first_p = first_point;
+        f.last_p = last_point;
+        f.nb_p = f.last_p - f.first_p + 1;
+        f.a_deb = f.first_p;
+        f.a_fin = f.last_p;
+        f.degre = deg;
+        f.contraintes = false;
+        for couple in the_constraints {
+            let cons = couple.constraint;
+            let myindex = couple.index;
+            if myindex == f.first_p {
+                if cons as i32 >= 1 {
+                    f.a_deb += 1;
+                }
+            } else if myindex == f.last_p {
+                if cons as i32 >= 1 {
+                    f.a_fin -= 1;
+                }
+            } else if cons as i32 >= 1 {
+                f.contraintes = true;
+            }
+        }
+        let mut mynb3d = nb3d;
+        let mut mynb2d = nb2d;
+        if nb3d == 0 {
+            mynb3d = 1;
+        }
+        if nb2d == 0 {
+            mynb2d = 1;
+        }
+        f.nbcu = nb3d + nb2d;
+        f.tabdim = vec![0i32; f.nbcu as usize];
+        if f.contraintes {
+            for i in 1..=f.nbcu {
+                if i <= nb3d {
+                    f.tabdim[(i - 1) as usize] = 3;
+                } else {
+                    f.tabdim[(i - 1) as usize] = 2;
+                }
+            }
+            let mut tab_p = vec![DVec3::ZERO; mynb3d as usize];
+            let mut tab_p2d = vec![DVec2::ZERO; mynb2d as usize];
+            for i in f.first_p..=f.last_p {
+                if nb3d != 0 && nb2d != 0 {
+                    my_line_tool::value_3d_2d(ssp, i as usize, &mut tab_p, &mut tab_p2d);
+                } else if nb3d != 0 {
+                    my_line_tool::value_3d(ssp, i as usize, &mut tab_p);
+                } else {
+                    my_line_tool::value_2d(ssp, i as usize, &mut tab_p2d);
+                }
+                for j in 1..=f.nbcu {
+                    if f.tabdim[(j - 1) as usize] == 3 {
+                        let p = tab_p[(j - 1) as usize];
+                        f.ptlx.set(i, j, p.x);
+                        f.ptly.set(i, j, p.y);
+                        f.ptlz.set(i, j, p.z);
+                    } else {
+                        let p = tab_p2d[(j - 1) as usize];
+                        f.ptlx.set(i, j, p.x);
+                        f.ptly.set(i, j, p.y);
+                    }
+                }
+            }
+        }
+        f
+    }
+
+    /// OCCT FirstConstraint(TheConstraints, FirstPoint) (gxx L131-153).
+    pub fn first_constraint(
+        the_constraints: &[ConstraintCouple],
+        first_point: i32,
+    ) -> AppParConstraint {
+        let mut cons = AppParConstraint::NoConstraint;
+        for couple in the_constraints {
+            cons = couple.constraint;
+            let myindex = couple.index;
+            if myindex == first_point {
+                break;
+            }
+        }
+        cons
+    }
+
+    /// OCCT LastConstraint(TheConstraints, LastPoint) (gxx L155-177).
+    pub fn last_constraint(
+        the_constraints: &[ConstraintCouple],
+        last_point: i32,
+    ) -> AppParConstraint {
+        let mut cons = AppParConstraint::NoConstraint;
+        for couple in the_constraints {
+            cons = couple.constraint;
+            let myindex = couple.index;
+            if myindex == last_point {
+                break;
+            }
+        }
+        cons
+    }
+
+    /// OCCT Value(X, F) (gxx L179-269).
+    pub fn value(&mut self, x: &VecD, f: &mut f64) -> bool {
+        // myParameters = X.
+        for i in 1..=self.my_parameters.length() {
+            let v = x.get(i as usize);
+            self.my_parameters.set(i, v);
+        }
+        // Resolution moindres carres:
+        // ===========================
+        self.my_least_square.perform(&{
+            let mut v = VecD::new(self.my_parameters.length() as usize);
+            for i in 1..=self.my_parameters.length() {
+                v.set(i as usize, self.my_parameters.get(i));
+            }
+            v
+        });
+        if !self.my_least_square.is_done() {
+            self.done = false;
+            return false;
+        }
+        if !self.contraintes {
+            let mut e3 = 0.0;
+            let mut e2 = 0.0;
+            let mut fval = 0.0;
+            self.my_least_square.error(&mut fval, &mut e3, &mut e2);
+            self.f_val = fval;
+            self.err3d = e3;
+            self.err2d = e2;
+            *f = self.f_val;
+        } else {
+            // Resolution avec contraintes:
+            // ============================
+            let n_pol = self.degre + 1;
+            let mut err3d = 0.0;
+            let mut err2d = 0.0;
+            let mut ptcxci = RVector::new(1, n_pol);
+            let mut ptcyci = RVector::new(1, n_pol);
+            let mut ptczci = RVector::new(1, n_pol);
+            self.my_multi_curve = self.my_least_square.bezier_value();
+            self.a = self.my_least_square.function_matrix().clone();
+            let mut my_multi_curve = self.my_multi_curve.clone();
+            let resol = ResolConstraint::new(
+                &self.my_multi_line,
+                &mut my_multi_curve,
+                self.first_p,
+                self.last_p,
+                &self.my_constraints,
+                &self.a,
+                self.my_least_square.derivative_function_matrix(),
+                1.0e-10,
+            );
+            self.my_multi_curve = my_multi_curve;
+            if !resol.is_done() {
+                self.done = false;
+                return false;
+            }
+            // Calcul de F = Sum||C(ui)-Ptli||2  sur toutes les courbes :
+            // ========================================================================
+            let mut f_val = 0.0;
+            for ci in 1..=self.nbcu {
+                let dimen = self.tabdim[(ci - 1) as usize];
+                for j in 1..=n_pol {
+                    if dimen == 3 {
+                        let p = self.my_multi_curve.value(j as usize).point(ci as usize);
+                        ptcxci.set(j, p.x);
+                        ptcyci.set(j, p.y);
+                        ptczci.set(j, p.z);
+                    } else {
+                        let p = self.my_multi_curve.value(j as usize).point2d(ci as usize);
+                        ptcxci.set(j, p.x);
+                        ptcyci.set(j, p.y);
+                    }
+                }
+                // Calcul de F:
+                // ============
+                for i in self.a_deb..=self.a_fin {
+                    let mut aa = 0.0;
+                    let mut bb = 0.0;
+                    let mut cc = 0.0;
+                    for j in 1..=n_pol {
+                        let aij = self.a.get(i, j);
+                        aa += aij * ptcxci.get(j);
+                        bb += aij * ptcyci.get(j);
+                        if dimen == 3 {
+                            cc += aij * ptczci.get(j);
+                        }
+                    }
+                    let fx = aa - self.ptlx.get(i, ci);
+                    let fy = bb - self.ptly.get(i, ci);
+                    let mut fi = fx * fx + fy * fy;
+                    self.my_f.set(i, ci, fi);
+                    if dimen == 3 {
+                        let fz = cc - self.ptlz.get(i, ci);
+                        fi += fz * fz;
+                        self.my_f.set(i, ci, fi);
+                        if fi.sqrt() > err3d {
+                            err3d = fi.sqrt();
+                        }
+                    } else if fi.sqrt() > err2d {
+                        err2d = fi.sqrt();
+                    }
+                    f_val += fi;
+                }
+            }
+            self.f_val = f_val;
+            self.err3d = err3d;
+            self.err2d = err2d;
+            *f = self.f_val;
+        }
+        self.done = true;
+        true
+    }
+
+    /// OCCT Perform(X) (gxx L271-600).
+    pub fn perform(&mut self, x: &VecD) {
+        let n_pol = self.degre + 1;
+        // myParameters = X.
+        for i in 1..=self.my_parameters.length() {
+            let v = x.get(i as usize);
+            self.my_parameters.set(i, v);
+        }
+        // Resolution moindres carres:
+        // ===========================
+        let x_copy = {
+            let mut v = VecD::new(self.my_parameters.length() as usize);
+            for i in 1..=self.my_parameters.length() {
+                v.set(i as usize, self.my_parameters.get(i));
+            }
+            v
+        };
+        self.my_least_square.perform(&x_copy);
+        if !self.my_least_square.is_done() {
+            self.done = false;
+            return;
+        }
+        for j in 1..=self.val_grad_f.length() {
+            self.val_grad_f.set(j, 0.0);
+        }
+        if !self.contraintes {
+            let mut f_val = 0.0;
+            let mut e3 = 0.0;
+            let mut e2 = 0.0;
+            self.my_least_square
+                .error_gradient(&mut self.val_grad_f.data, &mut f_val, &mut e3, &mut e2);
+            self.f_val = f_val;
+            self.err3d = e3;
+            self.err2d = e2;
+        } else {
+            let mut cons = AppParConstraint::NoConstraint;
+            let mut grad_f = Matrix::new_init(self.first_p, self.last_p, 1, self.nbcu, 0.0);
+            let mut ptcxci = RVector::new(1, n_pol);
+            let mut ptcyci = RVector::new(1, n_pol);
+            let mut ptczci = RVector::new(1, n_pol);
+            let mut err3d = 0.0;
+            let mut err2d = 0.0;
+            let mut ptcox = Matrix::new_init(1, n_pol, 1, self.nbcu, 0.0);
+            let mut ptcoy = Matrix::new_init(1, n_pol, 1, self.nbcu, 0.0);
+            let mut ptcoz = Matrix::new_init(1, n_pol, 1, self.nbcu, 0.0);
+            let mut ptcx = Matrix::new_init(1, n_pol, 1, self.nbcu, 0.0);
+            let mut ptcy = Matrix::new_init(1, n_pol, 1, self.nbcu, 0.0);
+            let mut ptcz = Matrix::new_init(1, n_pol, 1, self.nbcu, 0.0);
+            self.my_multi_curve = self.my_least_square.bezier_value();
+            for ci in 1..=self.nbcu {
+                let dimen = self.tabdim[(ci - 1) as usize];
+                for j in 1..=n_pol {
+                    if dimen == 3 {
+                        let p = self.my_multi_curve.value(j as usize).point(ci as usize);
+                        ptcox.set(j, ci, p.x);
+                        ptcoy.set(j, ci, p.y);
+                        ptcoz.set(j, ci, p.z);
+                    } else {
+                        let p = self.my_multi_curve.value(j as usize).point2d(ci as usize);
+                        ptcox.set(j, ci, p.x);
+                        ptcoy.set(j, ci, p.y);
+                        ptcoz.set(j, ci, 0.0);
+                    }
+                }
+            }
+            self.a = self.my_least_square.function_matrix().clone();
+            self.da = self.my_least_square.derivative_function_matrix().clone();
+            // Resolution avec contraintes:
+            // ============================
+            let mut my_multi_curve = self.my_multi_curve.clone();
+            let mut resol = ResolConstraint::new(
+                &self.my_multi_line,
+                &mut my_multi_curve,
+                self.first_p,
+                self.last_p,
+                &self.my_constraints,
+                &self.a,
+                &self.da,
+                1.0e-10,
+            );
+            self.my_multi_curve = my_multi_curve;
+            if !resol.is_done() {
+                self.done = false;
+                return;
+            }
+            // Calcul de F = Sum||C(ui)-Ptli||2 et du gradient non contraint
+            // de F pour chaque point PointIndex.
+            // ========================================================================
+            let mut f_val = 0.0;
+            for j in self.first_p..=self.last_p {
+                self.val_grad_f.set(j, 0.0);
+            }
+            let tr_a = self.a.transposed();
+            let tr_da = self.da.transposed();
+            let restm = self.a.transposed().multiplied(&self.a).inverse();
+            let k = resol.constraint_matrix().clone();
+            let dk = resol
+                .constraint_derivative(&self.my_multi_line, x, self.degre, &self.da)
+                .clone();
+            let tk = k.transposed();
+            let vardua = resol.duale().clone();
+            let kk = k.transposed().multiplied(resol.inverse_matrix());
+            let dtk = dk.transposed();
+            let mut dptco = RVector::new(1, k.col_number());
+            let mut dptco1 = Matrix::new_init(self.first_p, self.last_p, 1, k.col_number(), 0.0);
+            let mut dkptc = RVector::new(1, k.row_number());
+            for ci in 1..=self.nbcu {
+                let dimen = self.tabdim[(ci - 1) as usize];
+                for j in 1..=n_pol {
+                    if dimen == 3 {
+                        let p = self.my_multi_curve.value(j as usize).point(ci as usize);
+                        ptcx.set(j, ci, p.x);
+                        ptcy.set(j, ci, p.y);
+                        ptcz.set(j, ci, p.z);
+                    } else {
+                        let p = self.my_multi_curve.value(j as usize).point2d(ci as usize);
+                        ptcx.set(j, ci, p.x);
+                        ptcy.set(j, ci, p.y);
+                        ptcz.set(j, ci, 0.0);
+                    }
+                }
+            }
+            // Calcul du gradient sans contraintes:
+            // ====================================
+            for ci in 1..=self.nbcu {
+                let dimen = self.tabdim[(ci - 1) as usize];
+                for i in self.a_deb..=self.a_fin {
+                    let mut aa = 0.0;
+                    let mut bb = 0.0;
+                    let mut cc = 0.0;
+                    let mut daa = 0.0;
+                    let mut dbb = 0.0;
+                    let mut dcc = 0.0;
+                    for j in 1..=n_pol {
+                        let aij = self.a.get(i, j);
+                        let daij = self.da.get(i, j);
+                        let px = ptcx.get(j, ci);
+                        let py = ptcy.get(j, ci);
+                        aa += aij * px;
+                        bb += aij * py;
+                        daa += daij * px;
+                        dbb += daij * py;
+                        if dimen == 3 {
+                            let pz = ptcz.get(j, ci);
+                            cc += aij * pz;
+                            dcc += daij * pz;
+                        }
+                    }
+                    let fx = aa - self.ptlx.get(i, ci);
+                    let fy = bb - self.ptly.get(i, ci);
+                    let mut fi = fx * fx + fy * fy;
+                    self.my_f.set(i, ci, fi);
+                    let g = 2.0 * (daa * fx + dbb * fy);
+                    grad_f.set(i, ci, g);
+                    if dimen == 3 {
+                        let fz = cc - self.ptlz.get(i, ci);
+                        fi += fz * fz;
+                        self.my_f.set(i, ci, fi);
+                        grad_f.set(i, ci, g + 2.0 * dcc * fz);
+                        if fi.sqrt() > err3d {
+                            err3d = fi.sqrt();
+                        }
+                    } else if fi.sqrt() > err2d {
+                        err2d = fi.sqrt();
+                    }
+                    f_val += fi;
+                    let v = self.val_grad_f.get(i) + grad_f.get(i, ci);
+                    self.val_grad_f.set(i, v);
+                }
+            }
+            // Calcul de DK*PTC:
+            // =================
+            for i in 1..=k.row_number() {
+                let mut inc = 0i32;
+                for ci in 1..=self.nbcu {
+                    let dimen = self.tabdim[(ci - 1) as usize];
+                    dkptc.set(i, 0.0);
+                    for j in 1..=n_pol {
+                        let v = dkptc.get(i)
+                            + dk.get(i, j + inc) * ptcx.get(j, ci)
+                            + dk.get(i, j + inc + n_pol) * ptcy.get(j, ci);
+                        dkptc.set(i, v);
+                        if dimen == 3 {
+                            let v = dkptc.get(i) + dk.get(i, j + inc + 2 * n_pol) * ptcz.get(j, ci);
+                            dkptc.set(i, v);
+                        }
+                    }
+                    if dimen == 3 {
+                        inc += 3 * n_pol;
+                    } else {
+                        inc += 2 * n_pol;
+                    }
+                }
+            }
+            // DERR = (DTK)*Vardua - KK * ((DKPTC) + K * (DTK)*Vardua).
+            let base = dtk.multiplied_vec(&vardua);
+            let inner = v_add(&dkptc, &k.multiplied_vec(&base));
+            let mut derr = v_sub(&base, &kk.multiplied_vec(&inner));
+            // rajout du gradient avec contraintes:
+            // ====================================
+            // dPTCO1/duk = [d(TA)/duk*[A*PTCO-PTL] + TA*dA/duk*PTCO]
+            let mut inc = 0i32;
+            for ci in 1..=self.nbcu {
+                let dimen = self.tabdim[(ci - 1) as usize];
+                ptcxci = ptcox.col(ci);
+                ptcyci = ptcoy.col(ci);
+                ptczci = ptcoz.col(ci);
+                ptcxci = ptcx.col(ci);
+                ptcyci = ptcy.col(ci);
+                ptczci = ptcz.col(ci);
+                let errx = v_sub(&self.a.multiplied_vec(&ptcxci), &self.ptlx.col(ci));
+                let erry = v_sub(&self.a.multiplied_vec(&ptcyci), &self.ptly.col(ci));
+                let errz = v_sub(&self.a.multiplied_vec(&ptczci), &self.ptlz.col(ci));
+                let scalx = self.da.multiplied_vec(&ptcxci); // Scal = DA * PTCO
+                let scaly = self.da.multiplied_vec(&ptcyci);
+                let scalz = self.da.multiplied_vec(&ptczci);
+                let erruzax = v_sub(&ptcxci, &ptcox.col(ci));
+                let erruzay = v_sub(&ptcyci, &ptcoy.col(ci));
+                let erruzaz = v_sub(&ptczci, &ptcoz.col(ci));
+                for pi in self.first_p..=self.last_p {
+                    let trdapi = tr_da.col(pi);
+                    let trapi = tr_a.col(pi);
+                    let taa = v_dot(&trapi, &self.a.row(pi));
+                    let mut scal = 0.0;
+                    for j in 1..=n_pol {
+                        let v1 = v_add(
+                            &v_scale(&trdapi, errx.get(pi)),
+                            &v_scale(&trapi, scalx.get(pi)),
+                        );
+                        dptco1.set(pi, j + inc, v1.get(j));
+                        let v2 = v_add(
+                            &v_scale(&trdapi, erry.get(pi)),
+                            &v_scale(&trapi, scaly.get(pi)),
+                        );
+                        dptco1.set(pi, j + inc + n_pol, v2.get(j));
+                        scal += dptco1.get(pi, j + inc) * taa * erruzax.get(j)
+                            + dptco1.get(pi, j + inc + n_pol) * taa * erruzay.get(j);
+                        if dimen == 3 {
+                            let v3 = v_add(
+                                &v_scale(&trdapi, errz.get(pi)),
+                                &v_scale(&trapi, scalz.get(pi)),
+                            );
+                            dptco1.set(pi, j + inc + 2 * n_pol, v3.get(j));
+                            scal += dptco1.get(pi, j + inc + 2 * n_pol) * taa * erruzaz.get(j);
+                        }
+                    }
+                    let v = self.val_grad_f.get(pi) - 2.0 * scal;
+                    self.val_grad_f.set(pi, v);
+                }
+                if dimen == 3 {
+                    inc += 3 * n_pol;
+                } else {
+                    inc += 2 * n_pol;
+                }
+            }
+            // on calcule DPTCO = - RESTM * DPTCO1:
+            // Calcul de DPTCO/duk:
+            // dPTCO/duk = -Inv(T(A)*A)*[d(TA)/duk*[A*PTCO-PTL] + TA*dA/duk*PTCO]
+            inc = 0;
+            for pi in self.first_p..=self.last_p {
+                for couple in &self.my_constraints {
+                    if couple.index == pi {
+                        cons = couple.constraint;
+                        break;
+                    }
+                }
+                if cons as i32 >= 1 {
+                    inc = 0;
+                    for ci in 1..=self.nbcu {
+                        let dimen = self.tabdim[(ci - 1) as usize];
+                        for j in 1..=n_pol {
+                            dptco.set(j + inc, 0.0);
+                            dptco.set(j + inc + n_pol, 0.0);
+                            if dimen == 3 {
+                                dptco.set(j + inc + 2 * n_pol, 0.0);
+                            }
+                            for k in 1..=n_pol {
+                                let v = dptco.get(j + inc)
+                                    - restm.get(j, k) * dptco1.get(pi, j + inc);
+                                dptco.set(j + inc, v);
+                                let v = dptco.get(j + inc + n_pol)
+                                    - restm.get(j, k) * dptco1.get(pi, j + inc + n_pol);
+                                dptco.set(j + inc + n_pol, v);
+                                if dimen == 3 {
+                                    let v = dptco.get(j + inc + 2 * n_pol)
+                                        - restm.get(j, k) * dptco1.get(pi, j + inc + 2 * n_pol);
+                                    dptco.set(j + inc + 2 * n_pol, v);
+                                }
+                            }
+                        }
+                        if dimen == 3 {
+                            inc += 3 * n_pol;
+                        } else {
+                            inc += 2 * n_pol;
+                        }
+                    }
+                    let step = kk.multiplied_vec(&k.multiplied_vec(&dptco));
+                    derr = v_sub(&derr, &step);
+                    inc = 0;
+                    for ci in 1..=self.nbcu {
+                        let dimen = self.tabdim[(ci - 1) as usize];
+                        ptcxci = ptcox.col(ci);
+                        ptcyci = ptcoy.col(ci);
+                        ptczci = ptcoz.col(ci);
+                        ptcxci = ptcx.col(ci);
+                        ptcyci = ptcy.col(ci);
+                        ptczci = ptcz.col(ci);
+                        let erruzax = v_sub(&ptcxci, &ptcox.col(ci));
+                        let erruzay = v_sub(&ptcyci, &ptcoy.col(ci));
+                        let erruzaz = v_sub(&ptczci, &ptcoz.col(ci));
+                        let mut scal = 0.0;
+                        for j in 1..=n_pol {
+                            scal = (self.a.get(pi, j) * erruzax.get(j))
+                                * (self.a.get(pi, j) * derr.get(j + inc))
+                                + (self.a.get(pi, j) * erruzay.get(j))
+                                    * (self.a.get(pi, j) * derr.get(j + inc + n_pol));
+                            if dimen == 3 {
+                                scal += (self.a.get(pi, j) * erruzax.get(j))
+                                    * (self.a.get(pi, j) * derr.get(j + inc + 2 * n_pol));
+                            }
+                        }
+                        let v = self.val_grad_f.get(pi) + 2.0 * scal;
+                        self.val_grad_f.set(pi, v);
+                        if dimen == 3 {
+                            inc += 3 * n_pol;
+                        } else {
+                            inc += 2 * n_pol;
+                        }
+                    }
+                }
+            }
+            self.f_val = f_val;
+            self.err3d = err3d;
+            self.err2d = err2d;
+            let _ = (tk, vardua, cons);
+        }
+        self.done = true;
+    }
+
+    /// OCCT NbVariables() (gxx L602-605).
+    pub fn nb_variables(&self) -> i32 {
+        self.nb_p
+    }
+
+    /// OCCT Gradient(X, G) (gxx L607-612).
+    pub fn gradient(&mut self, x: &VecD, g: &mut RVector) -> bool {
+        self.perform(x);
+        for i in g.lower..=g.upper() {
+            let v = self.val_grad_f.get(i);
+            g.set(i, v);
+        }
+        true
+    }
+
+    /// OCCT Values(X, F, G) (gxx L614-620).
+    pub fn values(&mut self, x: &VecD, f: &mut f64, g: &mut RVector) -> bool {
+        self.perform(x);
+        *f = self.f_val;
+        for i in g.lower..=g.upper() {
+            let v = self.val_grad_f.get(i);
+            g.set(i, v);
+        }
+        true
+    }
+
+    /// OCCT CurveValue() (gxx L622-627).
+    pub fn curve_value(&mut self) -> &MultiCurve {
+        if !self.contraintes {
+            self.my_multi_curve = self.my_least_square.bezier_value();
+        }
+        &self.my_multi_curve
+    }
+
+    /// OCCT Error(IPoint, CurveIndex) (gxx L629-632).
+    pub fn error(&self, ipoint: i32, curve_index: i32) -> f64 {
+        self.my_f.get(ipoint, curve_index).sqrt()
+    }
+
+    /// OCCT MaxError3d() (gxx L634-637).
+    pub fn max_error_3d(&self) -> f64 {
+        self.err3d
+    }
+
+    /// OCCT MaxError2d() (gxx L639-642).
+    pub fn max_error_2d(&self) -> f64 {
+        self.err2d
+    }
+
+    /// OCCT NewParameters() (gxx L644-647).
+    pub fn new_parameters(&self) -> &RVector {
+        &self.my_parameters
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3164,5 +3914,75 @@ mod resol_constraint_tests {
             assert!((de.get(1, j) - da.get(2, j)).abs() < 1.0e-12, "DeCont x block");
             assert!((de.get(2, j + 3) - da.get(2, j)).abs() < 1.0e-12, "DeCont y block");
         }
+    }
+}
+
+#[cfg(test)]
+mod par_function_tests {
+    use super::*;
+    use rcad_kernel::math::math_matrix::Matrix as KernelMatrix;
+
+    // No-constraint path: ParFunction::Value/Perform must reproduce the
+    // ParLeastSquare F and gradient; the constrained path with zero
+    // intermediate constraints (all constraints at the endpoints only) must
+    // leave Contraintes == false and take the same branch.
+    #[test]
+    fn value_and_gradient_no_constraints() {
+        // Cubic Bezier sampled at u = 0, 1/3, 2/3, 1 (same data as the
+        // LeastSquare exact-reconstruction test).
+        let p0 = DVec3::new(0.0, 0.0, 0.0);
+        let p1 = DVec3::new(3.0, 0.0, 1.0);
+        let p2 = DVec3::new(3.0, 3.0, 2.0);
+        let p3 = DVec3::new(6.0, 3.0, 5.0);
+        let eval = |u: f64| -> DVec3 {
+            let (b0, b1, b2, b3) = (
+                (1.0 - u) * (1.0 - u) * (1.0 - u),
+                3.0 * u * (1.0 - u) * (1.0 - u),
+                3.0 * u * u * (1.0 - u),
+                u * u * u,
+            );
+            p0 * b0 + p1 * b1 + p2 * b2 + p3 * b3
+        };
+        let pts: Vec<DVec3> = [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]
+            .iter()
+            .map(|u| eval(*u))
+            .collect();
+        let ml = MultiLine::new_tab_p3d(&pts);
+        let parameters = VecD { v: vec![0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0] };
+
+        // Endpoint pass-point constraints only: the intermediate flag stays
+        // false (OCCT Contraintes == false).
+        let constraints = vec![
+            ConstraintCouple { index: 1, constraint: AppParConstraint::PassPoint },
+            ConstraintCouple { index: 4, constraint: AppParConstraint::PassPoint },
+        ];
+
+        let mut func = ParFunction::new(&ml, 1, 4, &constraints, &parameters, 3);
+        assert_eq!(func.nb_variables(), 4);
+
+        // Value:
+        let mut f = 0.0;
+        let ok = func.value(&parameters, &mut f);
+        assert!(ok, "Value must succeed");
+        // Exact data at the Bernstein parameters -> F ~ 0.
+        assert!(f < 1.0e-9, "F must vanish on exact data, got {}", f);
+        assert!(func.max_error_3d() < 1.0e-9);
+
+        // Gradient:
+        let mut g = RVector::new(1, 4);
+        let ok = func.gradient(&parameters, &mut g);
+        assert!(ok);
+        for i in 1..=4 {
+            assert!(g.get(i).abs() < 1.0e-9, "gradient component {} = {}", i, g.get(i));
+        }
+
+        // Values (combined):
+        let mut f2 = 0.0;
+        let ok = func.values(&parameters, &mut f2, &mut g);
+        assert!(ok && (f2 - f).abs() < 1.0e-12);
+
+        // CurveValue must return the reconstructed poles.
+        let curve = func.curve_value();
+        assert_eq!(curve.nb_poles(), 4);
     }
 }

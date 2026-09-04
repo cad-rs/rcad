@@ -57,6 +57,27 @@ impl MathGauss {
     }
 
     /// OCCT math_Gauss::Determinant.
+    /// OCCT math_Gauss::Invert(Inv) (math_Gauss.cxx L71-98) — fills a
+    /// normalized matrix with the inverse of the LU-decomposed matrix
+    /// (column-by-column LU_Solve on unit vectors).
+    pub fn invert(&self) -> MatD {
+        assert!(self.done, "StdFail_NotDone: math_Gauss::Invert");
+        let n = self.lu.n_rows();
+        let mut inv = MatD::new(n, self.lu.n_cols());
+        for j in 1..=n {
+            let mut column = VecD::new(n);
+            for i in 1..=n {
+                column.set(i, 0.0);
+            }
+            column.set(j, 1.0);
+            lu_solve(&self.lu, &self.index, &mut column);
+            for i in 1..=self.lu.n_rows() {
+                inv.set(i, j, column.get(i));
+            }
+        }
+        inv
+    }
+
     pub fn determinant(&self) -> f64 {
         assert!(self.done, "math_Gauss::Determinant - not done");
         let mut result = self.d;

@@ -93,6 +93,97 @@ impl Matrix {
         self.lower_col + self.col_number() - 1
     }
 
+    /// OCCT math_Matrix::Row(Row) (math_Matrix.cxx L60-74).
+    pub fn row(&self, row: i32) -> Vector {
+        let mut result = Vector::new(self.lower_col, self.upper_col());
+        for index in self.lower_col..=self.upper_col() {
+            let v = self.get(row, index);
+            result.set(index, v);
+        }
+        result
+    }
+
+    /// OCCT math_Matrix::Col(Col) (math_Matrix.cxx L76-90).
+    pub fn col(&self, col: i32) -> Vector {
+        let mut result = Vector::new(self.lower_row, self.upper_row());
+        for index in self.lower_row..=self.upper_row() {
+            let v = self.get(index, col);
+            result.set(index, v);
+        }
+        result
+    }
+
+    /// OCCT math_Matrix::Transposed() (math_Matrix.lxx L490-507).
+    pub fn transposed(&self) -> Matrix {
+        let mut result =
+            Matrix::new(self.lower_col, self.upper_col(), self.lower_row, self.upper_row());
+        for i in self.lower_row..=self.upper_row() {
+            for j in self.lower_col..=self.upper_col() {
+                let v = self.get(i, j);
+                result.set(j, i, v);
+            }
+        }
+        result
+    }
+
+    /// OCCT math_Matrix::Multiplied(Right) — matrix product
+    /// (math_Matrix.lxx L589+).
+    pub fn multiplied(&self, right: &Matrix) -> Matrix {
+        assert!(
+            self.col_number() == right.row_number(),
+            "Standard_DimensionError: math_Matrix::Multiplied"
+        );
+        let mut result = Matrix::new_init(
+            self.lower_row,
+            self.upper_row(),
+            right.lower_col(),
+            right.upper_col(),
+            0.0,
+        );
+        for i in self.lower_row..=self.upper_row() {
+            for j in right.lower_col()..=right.upper_col() {
+                let mut v = 0.0;
+                for k in self.lower_col..=self.upper_col() {
+                    v += self.get(i, k) * right.get(k, j);
+                }
+                result.set(i, j, v);
+            }
+        }
+        result
+    }
+
+    /// OCCT math_Matrix::Multiplied(Right) — matrix x vector
+    /// (math_Matrix.cxx L134-160).
+    pub fn multiplied_vec(&self, right: &Vector) -> Vector {
+        assert!(
+            self.col_number() == right.length(),
+            "Standard_DimensionError: math_Matrix::Multiplied"
+        );
+        let mut result = Vector::new(self.lower_row, self.upper_row());
+        for i in self.lower_row..=self.upper_row() {
+            let mut v = 0.0;
+            for (pos, j) in (self.lower_col..=self.upper_col()).enumerate() {
+                v += self.get(i, j) * right.get(right.lower + pos as i32);
+            }
+            result.set(i, v);
+        }
+        result
+    }
+
+    /// OCCT math_Matrix::Inverse() (math_Matrix.cxx L203-208) — copy +
+    /// Invert() via math_Gauss; math_SingularMatrix on failure.
+    pub fn inverse(&self) -> Matrix {
+        assert!(
+            self.row_number() == self.col_number(),
+            "math_NotSquare: math_Matrix::Invert"
+        );
+        let mut result = self.clone();
+        let gauss = super::math_gauss::MathGauss::new(&result.data);
+        assert!(gauss.is_done(), "math_SingularMatrix: math_Matrix::Invert");
+        *result.data_mut() = gauss.invert();
+        result
+    }
+
     /// Normalized (1-based) storage view, for the legacy MatD-based entry
     /// points (e.g. rcad Householder).
     pub fn data(&self) -> &MatD {
