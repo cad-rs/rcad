@@ -2900,12 +2900,12 @@ impl BRepBuilder {
         // OCCT BRep_Builder::UpdateEdge (BRep_Builder.cxx L692): the pcurve is
         // stored under `L.Predivided(E.Location())` — see curve_on_surface.
         let key = (face.ptr_id(), compose_pcurve_location(face.location, edge.location, &brep.locations));
-        brep.edge_mut(edge).pcurves.insert(key, (pc, t1, t2));
+        brep.edge_mut_inplace(edge).pcurves.insert(key, (pc, t1, t2));
     }
 
     /// OCCT BRep_Builder::UpdateEdge(aE, theTol) �?update edge tolerance.
     pub fn update_edge_tolerance(&mut self, brep: &mut BRep, edge: Shape, tol: f64) {
-        let ed = brep.edge_mut(edge);
+        let ed = brep.edge_mut_inplace(edge);
         ed.tolerance = ed.tolerance.max(tol);
     }
 
@@ -2929,7 +2929,7 @@ impl BRepBuilder {
             ));
         }
         let (ta, tb) = pc_parameter_range(&pcurve);
-        let ed = brep.edge_mut(edge);
+        let ed = brep.edge_mut_inplace(edge);
         for k in &fkeys {
             ed.pcurves
                 .insert(*k, (pcurve.clone(), ta, tb));
@@ -2971,7 +2971,7 @@ impl BRepBuilder {
                 compose_pcurve_location(face.location, el, &brep.locations),
             ));
         }
-        let ed = brep.edge_mut(edge);
+        let ed = brep.edge_mut_inplace(edge);
         for k in &fkeys {
             ed.pcurves
                 .insert(*k, (pcurve1.clone(), a_first, a_last));
@@ -2994,7 +2994,7 @@ impl BRepBuilder {
         curve: usize,
         location: u32,
     ) {
-        let ed = brep.edge_mut(edge);
+        let ed = brep.edge_mut_inplace(edge);
         ed.representations
             .push(CurveRepresentation::Curve3D { curve, location });
     }
@@ -3233,7 +3233,7 @@ impl BRepBuilder {
     /// OCCT BRep_Builder::Degenerated(aE, true) �?set degenerated flag AND clear 3D curve.
     /// OCCT removes the 3D curve when marking an edge as degenerated.
     pub fn set_edge_degenerated_with_clear(&mut self, brep: &mut BRep, edge: Shape, flag: bool) {
-        let ed = brep.edge_mut(edge);
+        let ed = brep.edge_mut_inplace(edge);
         ed.degenerated = flag;
         if flag {
             ed.curve = None;

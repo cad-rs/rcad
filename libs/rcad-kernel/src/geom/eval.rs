@@ -2521,6 +2521,48 @@ impl Curve2dEval for Curve2d {
             _ => -t,
         }
     }
+    fn is_closed(&self) -> bool {
+        // OCCT Geom2d_Curve::IsClosed delegated per variant (the enum impl
+        // previously fell back to the trait default `false` for every
+        // variant, including the periodic Circle/Ellipse).
+        match self {
+            Curve2d::Trimmed(tc) => tc.is_closed(),
+            Curve2d::Line(c) => c.is_closed(),
+            Curve2d::Circle(c) => c.is_closed(),
+            Curve2d::Ellipse(c) => c.is_closed(),
+            Curve2d::Parabola(c) => c.is_closed(),
+            Curve2d::Hyperbola(c) => c.is_closed(),
+            Curve2d::CircleInvolute(c) => c.is_closed(),
+            Curve2d::ArchimedeanSpiral(c) => c.is_closed(),
+            Curve2d::LogarithmicSpiral(c) => c.is_closed(),
+            Curve2d::SineWave(c) => c.is_closed(),
+            Curve2d::BSpline(c) => c.is_closed(),
+            Curve2d::Bezier(c) => c.is_closed(),
+            Curve2d::Offset(c) => c.basis.is_closed(),
+            Curve2d::AHTBezier(c) => c.is_closed(),
+            Curve2d::TBezier(c) => c.is_closed(),
+        }
+    }
+    fn is_periodic(&self) -> bool {
+        // OCCT Geom2d_Curve::IsPeriodic delegated per variant.
+        match self {
+            Curve2d::Trimmed(tc) => tc.is_periodic(),
+            Curve2d::Line(c) => c.is_periodic(),
+            Curve2d::Circle(c) => c.is_periodic(),
+            Curve2d::Ellipse(c) => c.is_periodic(),
+            Curve2d::Parabola(c) => c.is_periodic(),
+            Curve2d::Hyperbola(c) => c.is_periodic(),
+            Curve2d::CircleInvolute(c) => c.is_periodic(),
+            Curve2d::ArchimedeanSpiral(c) => c.is_periodic(),
+            Curve2d::LogarithmicSpiral(c) => c.is_periodic(),
+            Curve2d::SineWave(c) => c.is_periodic(),
+            Curve2d::BSpline(c) => c.is_periodic(),
+            Curve2d::Bezier(c) => c.is_periodic(),
+            Curve2d::Offset(c) => c.basis.is_periodic(),
+            Curve2d::AHTBezier(c) => c.is_periodic(),
+            Curve2d::TBezier(c) => c.is_periodic(),
+        }
+    }
 }
 
 impl Curve2dEval for TrimmedCurve2 {

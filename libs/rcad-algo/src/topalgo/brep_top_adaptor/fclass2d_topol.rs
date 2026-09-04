@@ -227,7 +227,13 @@ impl<'a> FClass2dTopol<'a> {
             .brep
             .face_surface_world(&self.face)
             .unwrap_or_else(fallback_plane_surf);
-        FaceShapeSource::new(&self.face, surf, &self.brep.locations)
+        // The kernel BRep locations table has no identity slot (transforms
+        // start at index 0); the ShapeSource pcurve lookup reads the table
+        // with the DS convention (slot 0 = identity) — prepend it.
+        let locations_ds: Vec<glam::DAffine3> = std::iter::once(glam::DAffine3::IDENTITY)
+            .chain(self.brep.locations.iter().copied())
+            .collect();
+        FaceShapeSource::new(&self.face, surf, &locations_ds)
     }
 
     /// The ctor body (cxx L96-513).
@@ -259,7 +265,11 @@ impl<'a> FClass2dTopol<'a> {
             .brep
             .face_surface_world(&a_face)
             .unwrap_or_else(fallback_plane_surf);
-        let source = FaceShapeSource::new(&a_face, surf_world, &self.brep.locations);
+        // Kernel -> DS location table convention (slot 0 = identity).
+        let locations_ds: Vec<glam::DAffine3> = std::iter::once(glam::DAffine3::IDENTITY)
+            .chain(self.brep.locations.iter().copied())
+            .collect();
+        let source = FaceShapeSource::new(&a_face, surf_world, &locations_ds);
 
         let mut a_nb_e = 0usize;
         let mut an_is_bad_wire = false;

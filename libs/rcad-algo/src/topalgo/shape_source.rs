@@ -106,15 +106,22 @@ pub struct FaceShapeSource<'a> {
     /// needs the wires to enumerate each wire's edges).
     wires: Vec<Shape>,
     edge_index: HashMap<(u64, u32), usize>,
-    locations: &'a [glam::DAffine3],
+    /// The location table in the **DS convention** (slot 0 = identity, real
+    /// transforms from index 1) — `edge_pcurve_on_face` /
+    /// `compose_face_edge_pcurve_location` read it with that convention.
+    /// Callers holding a kernel-BRep table (no identity slot, transforms
+    /// start at index 0) must prepend the identity first.
+    locations: Vec<glam::DAffine3>,
 }
 
 impl<'a> FaceShapeSource<'a> {
     /// Build the adapter: index 0 is the face, the wire edges (outer + inner,
     /// in traversal order) follow, then the wires themselves. `surf` is the
     /// face surface (already location-transformed by the caller, matching
-    /// the DS convention).
-    pub fn new(face: &'a Shape, surf: Surface3, locations: &'a [glam::DAffine3]) -> Self {
+    /// the DS convention). `locations` is the DS-convention table
+    /// (slot 0 = identity — the BOPDS tables and the SolidExplorer already
+    /// carry that shape; a kernel BRep table must be converted first).
+    pub fn new(face: &'a Shape, surf: Surface3, locations: &[glam::DAffine3]) -> Self {
         let mut edges: Vec<Shape> = Vec::new();
         let mut wires: Vec<Shape> = Vec::new();
         if let TShape::Face(fd) = &*face.data {
@@ -140,7 +147,7 @@ impl<'a> FaceShapeSource<'a> {
             edges,
             wires,
             edge_index,
-            locations,
+            locations: locations.to_vec(),
         }
     }
 }
@@ -200,6 +207,6 @@ impl ShapeSource for FaceShapeSource<'_> {
             .unwrap_or(glam::DAffine3::IDENTITY)
     }
     fn locations(&self) -> &[glam::DAffine3] {
-        self.locations
+        &self.locations
     }
 }

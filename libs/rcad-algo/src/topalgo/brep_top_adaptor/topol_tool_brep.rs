@@ -637,7 +637,6 @@ pub(crate) mod tests {
     /// through the nowires branch.  Un-ignore once the locations-table
     /// convention is aligned.
     #[test]
-    #[ignore = "FClassifier boundary-On: FaceShapeSource locations-table convention misalignment (runway 2a-4 follow-up)"]
     fn fclass2d_topol_perform_boundary_on() {
         let (brep, face) = square_face();
         let f = FClass2dTopol::new(&brep, &face, 1e-6);
