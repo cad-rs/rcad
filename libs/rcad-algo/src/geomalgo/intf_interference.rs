@@ -91,6 +91,12 @@ impl Interference {
         &mut self.my_s_poins
     }
 
+    /// Mutable access to myTZones (protected member; Intf_Interference-
+    /// Polygon2d::Clean and ::Intersect merge and remove tangent zones).
+    pub(crate) fn my_t_zones_mut(&mut self) -> &mut Vec<TangentZone> {
+        &mut self.my_t_zones
+    }
+
     /// OCCT NbSectionPoints() — lxx L22-25.
     pub fn nb_section_points(&self) -> usize {
         self.my_s_poins.len()

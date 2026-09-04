@@ -18,6 +18,7 @@ pub mod intf;        // Intf (Intf_PIType, Intf_SectionPoint, Intf_Tool, InterUt
 pub mod intf_tangent_zone; // Intf_TangentZone
 pub mod intf_section_line; // Intf_SectionLine
 pub mod intf_interference; // Intf_Interference + Intf_Polygon2d
+pub mod intf_interference_polygon2d; // Intf_InterferencePolygon2d (2D polygon auto/pair interference)
 pub mod intf_interference_polygon_polyhedron; // Intf_InterferencePolygonPolyhedron gxx (polygon3d/polyhedron interference)
 pub mod int_curve_generics; // IntCurve_Polygon2dGen / DistBetweenPCurvesGen / ExactIntersectionPoint
 pub mod int_imp;       // IntImp (ZerCSParFunc + IntCS curve-surface root solver)

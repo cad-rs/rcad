@@ -866,3 +866,30 @@ mod tests {
         assert!(!ex.an_error_occurred());
     }
 }
+
+// ---------------------------------------------------------------------------
+// OCCT IntCurve_Polygon2dGen : Intf_Polygon2d — the sampled polygon
+// implements the Intf interference base-class interface (the hxx
+// inheritance), consumed by Intf_InterferencePolygon2d.
+// ---------------------------------------------------------------------------
+
+impl<C> crate::geomalgo::intf_interference::IntfPolygon2d for Polygon2dGen<C> {
+    fn bounding(&self) -> &BndBox2d {
+        &self.my_box
+    }
+    fn bounding_mut(&mut self) -> &mut BndBox2d {
+        &mut self.my_box
+    }
+    fn closed(&self) -> bool {
+        self.closed_polygon
+    }
+    fn deflection_over_estimation(&self) -> f64 {
+        Polygon2dGen::deflection_over_estimation(self)
+    }
+    fn nb_segments(&self) -> i32 {
+        Polygon2dGen::nb_segments(self)
+    }
+    fn segment(&self, the_index: i32) -> (DVec2, DVec2) {
+        Polygon2dGen::segment(self, the_index)
+    }
+}
