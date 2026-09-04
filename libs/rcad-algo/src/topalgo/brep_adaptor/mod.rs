@@ -5,5 +5,6 @@
 //!   adaptor of an edge on a face).
 
 pub mod curve2d;
+pub mod surface;
 
 pub use curve2d::BRepCurve2d;
