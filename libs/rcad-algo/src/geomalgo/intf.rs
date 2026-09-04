@@ -124,6 +124,29 @@ impl IntfSectionPoint {
         self.incide
     }
 
+    /// OCCT Intf_SectionPoint::ParamOnFirst() — Intf_SectionPoint.lxx
+    /// L17-20: `(IndexO2 - 1) + ParamObje`.
+    pub fn param_on_first(&self) -> f64 {
+        (self.index_o2 - 1) as f64 + self.param_obje
+    }
+
+    /// OCCT Intf_SectionPoint::ParamOnSecond() — Intf_SectionPoint.lxx
+    /// L22-25: `(IndexT2 - 1) + ParamTool`.
+    pub fn param_on_second(&self) -> f64 {
+        (self.index_t2 - 1) as f64 + self.param_tool
+    }
+
+    /// OCCT Intf_SectionPoint::IsEqual(Other) — Intf_SectionPoint.lxx
+    /// L37-41: same logical information on both supports.
+    pub fn is_equal(&self, other: &IntfSectionPoint) -> bool {
+        self.dimen_obje == other.dimen_obje
+            && self.index_o1 == other.index_o1
+            && self.index_o2 == other.index_o2
+            && self.dimen_tool == other.dimen_tool
+            && self.index_t1 == other.index_t1
+            && self.index_t2 == other.index_t2
+    }
+
     /// OCCT Intf_SectionPoint::IsOnSameEdge (L76-133).
     pub fn is_on_same_edge(&self, other: &IntfSectionPoint) -> bool {
         let mut is_on = false;

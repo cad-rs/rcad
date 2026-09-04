@@ -12,6 +12,8 @@ pub mod surface;
 pub mod volume;
 pub mod inertia;
 pub mod linear;
+pub mod pg_props;
+pub mod pequation;
 pub mod plate;
 
 // Re-export public API
@@ -29,3 +31,5 @@ pub use volume::{
 pub use inertia::{InertiaTensor, PrincipalProps, inertia_tensor, principal_properties};
 pub use linear::linear_properties;
 pub use plate::*;
+pub use pg_props::GPropPGProps;
+pub use pequation::{EquationType, PEquation};

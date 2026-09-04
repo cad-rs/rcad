@@ -18,8 +18,10 @@
 //!
 //! OCCT src: FoundationClasses/TKMath/Bnd/Bnd_Box.cxx
 
+pub mod bound_sort_box;
 pub mod range;
 
+pub use bound_sort_box::BoundSortBox;
 pub use range::{IntersectStatus, Range};
 
 use crate::geom::Curve3;

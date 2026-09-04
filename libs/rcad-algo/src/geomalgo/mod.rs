@@ -15,6 +15,9 @@ pub mod int_surf;    // IntSurf (Quadric, LineOn2S, PntOn2S)
 pub mod top_trans;   // TopTrans (CurveTransition, SurfaceTransition)
 pub mod int_polyh;   // IntPolyh (triangle-triangle intersection support types)
 pub mod intf;        // Intf (Intf_PIType, Intf_SectionPoint, Intf_Tool, InterUtils helpers)
+pub mod intf_tangent_zone; // Intf_TangentZone
+pub mod intf_section_line; // Intf_SectionLine
+pub mod intf_interference; // Intf_Interference + Intf_Polygon2d
 pub mod int_curv_surf; // IntCurveSurface polygon/polyhedron sampling + IntPatch_Polyhedron
 pub mod hatch;       // Geom2dHatch (Elements container + Intersector local geometry)
 pub mod geom2d_gcc;   // Geom2dGcc (tangent-line constraint: Lin2d2Tan + iter solver)
