@@ -8,29 +8,25 @@
 //!   - Geom2dInt_Geom2dCurveTool.cxx/.lxx — the parametric-curve tool
 //!     (NbSamples/EpsX/FirstParameter/LastParameter/Value/D1/D2/D3/DN).
 //!   - IntCurve_IConicTool.cxx — the implicit conic tool (the ImpTool side).
-//!   - IntImpParGen.cxx — NormalizeOnDomain / DeterminePosition /
-//!     DetermineTransition.
-//!   - Geom2dInt_MyImpParToolOfTheIntersectorOfTheIntConicCurveOfGInter.cxx —
-//!     the signed-distance function F(u) = Dist(ImpCurve, P(u)) with derivative.
 //!   - Extrema_GCurveLocator.hxx + Extrema_GenLocateExtPC.hxx +
 //!     Extrema_GFuncExtPC.hxx + Geom2dInt_TheProjPCurOfGInter.cxx — the
 //!     point-to-curve projection (FindParameter) used by FindV.
-//!   - IntImpParGen_Intersector.gxx — the walking Perform (points + segments
-//!     + domain clipping + transitions).
-//!   - IntCurve_IntConicCurveGen.lxx — the conic × curve dispatcher.
+//!
+//! The generic engines and the package statics live in their own modules:
+//! `int_imp_par_gen` (IntImpParGen_Intersector.gxx + IntImpParGen.cxx +
+//! MyImpParTool), `int_conic_curve_gen` (IntCurve_IntConicCurveGen
+//! gxx/.lxx) and `user_int_conic_curve_gen` (IntCurve_UserIntConicCurveGen);
+//! the GInter instantiations (Geom2dInt_Geom2dCurveTool /
+//! Geom2dInt_TheProjPCurOfGInter / TheIntersectorOfTheIntConicCurveOfGInter
+//! / TheIntConicCurveOfGInter) are the tool markers and concrete wrappers at
+//! the end of this file.
 
 use glam::DVec2;
-use rcad_kernel::geom::{
-    BezierCurve2, BSplineCurve2, Circle2d, Curve2d, Curve2dEval, Ellipse2d, Hyperbola2d, Line2d,
-    Parabola2d,
-};
+use rcad_kernel::geom::{Circle2d, Curve2d, Curve2dEval, Ellipse2d, Hyperbola2d, Line2d, Parabola2d};
 use rcad_kernel::math::function_set_root::{FunctionSetRoot, FunctionSetWithDerivatives};
-use rcad_kernel::math::root::{FunctionAllRoots, FunctionSample, FunctionValue, FunctionWithDerivative};
+use rcad_kernel::math::root::{FunctionValue, FunctionWithDerivative};
 
-use super::int_res2d::{
-    Domain as Res2dDomain, IntersectionBase, IntersectionPoint, IntersectionSegment, Position,
-    Situation, Transition, TypeTrans,
-};
+use super::int_res2d::{Domain as Res2dDomain, IntersectionBase};
 
 /// gp::Resolution() — OCCT gp.hxx.
 const GP_RESOLUTION: f64 = 1e-15;
@@ -1222,207 +1218,6 @@ impl IConicTool {
     }
 }
 
-/// OCCT IntImpParGen (IntImpParGen.cxx) — static helpers.
-pub mod int_imp_par_gen {
-    use super::*;
-
-    const TOLERANCE_ANGULAIRE: f64 = 0.00000001;
-    const DERIVEE_PREMIERE_NULLE: f64 = 0.000000000001;
-
-    /// OCCT IntImpParGen::NormalizeOnDomain (L28-46).
-    pub fn normalize_on_domain(param: f64, domain: &Res2dDomain) -> f64 {
-        let mut mod_param = param;
-        if domain.is_closed() {
-            let (t, mut periode) = domain.equivalent_parameters();
-            periode -= t;
-            while mod_param < domain.first_parameter() && mod_param + periode < domain.last_parameter() {
-                mod_param += periode;
-            }
-            while mod_param > domain.last_parameter() && mod_param - periode > domain.first_parameter() {
-                mod_param -= periode;
-            }
-        }
-        mod_param
-    }
-
-    /// OCCT IntImpParGen::DeterminePosition (L49-83).
-    pub fn determine_position(pos: &mut Position, domain: &Res2dDomain, pnt: DVec2, param: f64) {
-        *pos = Position::Middle;
-        if domain.has_first_point() {
-            if pnt.distance(domain.first_point()) <= domain.first_tolerance() {
-                *pos = Position::Head;
-            }
-        }
-        if domain.has_last_point() {
-            if pnt.distance(domain.last_point()) <= domain.last_tolerance() {
-                if *pos == Position::Head {
-                    if (param - domain.last_parameter()).abs() < (param - domain.first_parameter()).abs() {
-                        *pos = Position::End;
-                    }
-                } else {
-                    *pos = Position::End;
-                }
-            }
-        }
-    }
-
-    /// OCCT IntImpParGen::DetermineTransition (L86-206) — the full overload
-    /// with the second derivatives (TOUCH classification).
-    pub fn determine_transition(
-        pos1: Position,
-        tan1: &mut DVec2,
-        norm1: DVec2,
-        t1: &mut Transition,
-        pos2: Position,
-        tan2: &mut DVec2,
-        norm2: DVec2,
-        t2: &mut Transition,
-        _tol: f64,
-    ) {
-        let mut courbure1 = true;
-        let mut courbure2 = true;
-        let mut decide = true;
-
-        t1.set_position(pos1);
-        t2.set_position(pos2);
-
-        if tan1.length_squared() <= DERIVEE_PREMIERE_NULLE {
-            *tan1 = norm1;
-            courbure1 = false;
-            if tan1.length_squared() <= DERIVEE_PREMIERE_NULLE {
-                decide = false;
-            }
-        }
-        if tan2.length_squared() <= DERIVEE_PREMIERE_NULLE {
-            *tan2 = norm2;
-            courbure2 = false;
-            if tan2.length_squared() <= DERIVEE_PREMIERE_NULLE {
-                decide = false;
-            }
-        }
-
-        if !decide {
-            t1.set_value_undecided(pos1);
-            t2.set_value_undecided(pos2);
-        } else {
-            let sgn = tan1.x * tan2.y - tan1.y * tan2.x;
-            let norm = tan1.length() * tan2.length();
-            if sgn.abs() <= TOLERANCE_ANGULAIRE * norm {
-                // Transition TOUCH.
-                let opos = tan1.dot(*tan2) < 0.0;
-                if !(courbure1 || courbure2) {
-                    t1.set_value_touch(true, pos1, Situation::Unknown, opos);
-                    t2.set_value_touch(true, pos2, Situation::Unknown, opos);
-                } else {
-                    let norm_v = DVec2::new(-tan1.y, tan1.x);
-                    let val1 = if !courbure1 { 0.0 } else { norm_v.dot(norm1) };
-                    let val2 = if !courbure2 { 0.0 } else { norm_v.dot(norm2) };
-                    if (val1 - val2).abs() <= TOLERANCE_ANGULAIRE {
-                        t1.set_value_touch(true, pos1, Situation::Unknown, opos);
-                        t2.set_value_touch(true, pos2, Situation::Unknown, opos);
-                    } else if val2 > val1 {
-                        t2.set_value_touch(true, pos2, Situation::Inside, opos);
-                        if opos {
-                            t1.set_value_touch(true, pos1, Situation::Inside, opos);
-                        } else {
-                            t1.set_value_touch(true, pos1, Situation::Outside, opos);
-                        }
-                    } else {
-                        // val1 > val2
-                        t2.set_value_touch(true, pos2, Situation::Outside, opos);
-                        if opos {
-                            t1.set_value_touch(true, pos1, Situation::Outside, opos);
-                        } else {
-                            t1.set_value_touch(true, pos1, Situation::Inside, opos);
-                        }
-                    }
-                }
-            } else if sgn < 0.0 {
-                t1.set_value_in_out(false, pos1, TypeTrans::In);
-                t2.set_value_in_out(false, pos2, TypeTrans::Out);
-            } else {
-                // sgn > 0
-                t1.set_value_in_out(false, pos1, TypeTrans::Out);
-                t2.set_value_in_out(false, pos2, TypeTrans::In);
-            }
-        }
-    }
-
-    /// OCCT IntImpParGen::DetermineTransition (L209-251) — the IN/OUT-only
-    /// overload (returns false when the transition cannot be decided).
-    pub fn determine_transition_in_out(
-        pos1: Position,
-        tan1: &mut DVec2,
-        t1: &mut Transition,
-        pos2: Position,
-        tan2: &mut DVec2,
-        t2: &mut Transition,
-        _tol: f64,
-    ) -> bool {
-        t1.set_position(pos1);
-        t2.set_position(pos2);
-
-        let tan1_mag = tan1.length();
-        if tan1_mag <= DERIVEE_PREMIERE_NULLE {
-            return false;
-        }
-        let tan2_mag = tan2.length();
-        if tan2_mag <= DERIVEE_PREMIERE_NULLE {
-            return false;
-        }
-
-        let sgn = tan1.x * tan2.y - tan1.y * tan2.x;
-        let norm = tan1_mag * tan2_mag;
-        if sgn.abs() <= TOLERANCE_ANGULAIRE * norm {
-            return false;
-        } else if sgn < 0.0 {
-            t1.set_value_in_out(false, pos1, TypeTrans::In);
-            t2.set_value_in_out(false, pos2, TypeTrans::Out);
-        } else {
-            t1.set_value_in_out(false, pos1, TypeTrans::Out);
-            t2.set_value_in_out(false, pos2, TypeTrans::In);
-        }
-        true
-    }
-}
-
-use int_imp_par_gen::normalize_on_domain;
-
-/// OCCT Geom2dInt_MyImpParToolOfTheIntersectorOfTheIntConicCurveOfGInter
-/// (Geom2dInt_MyImpParToolOfTheIntersectorOfTheIntConicCurveOfGInter_0.cxx) —
-/// the signed-distance function F(u) = Dist(ImpCurve, P(u)) with derivative
-/// F'(u) = GradDist(P(u))·P'(u).
-pub struct MyImpParTool<'a> {
-    imp_tool: &'a IConicTool,
-    par_curve: &'a dyn Curve2dAdaptor,
-}
-
-impl<'a> MyImpParTool<'a> {
-    pub fn new(imp_tool: &'a IConicTool, par_curve: &'a dyn Curve2dAdaptor) -> Self {
-        MyImpParTool { imp_tool, par_curve }
-    }
-}
-
-impl FunctionValue for MyImpParTool<'_> {
-    fn value(&mut self, param: f64) -> Option<f64> {
-        Some(self.imp_tool.distance(geom2d_curve_tool::value(self.par_curve, param)))
-    }
-}
-
-impl FunctionWithDerivative for MyImpParTool<'_> {
-    fn derivative(&mut self, param: f64) -> Option<f64> {
-        let pt = geom2d_curve_tool::value(self.par_curve, param);
-        let grad = self.imp_tool.grad_distance(pt);
-        let (_, tan) = geom2d_curve_tool::d1(self.par_curve, param);
-        Some(grad.dot(tan))
-    }
-    fn values(&mut self, param: f64) -> Option<(f64, f64)> {
-        let v = self.value(param)?;
-        let d = self.derivative(param)?;
-        Some((v, d))
-    }
-}
-
 /// OCCT Extrema_GCurveLocator (Extrema_GCurveLocator.hxx L84-129) — Locate:
 /// among a set of samples {C(ui)}, find the point closest to P.
 fn locate_on_curve(
@@ -1877,9 +1672,107 @@ pub mod proj_p_cur_of_g_inter {
     }
 }
 
-/// OCCT Geom2dInt_TheIntersectorOfTheIntConicCurveOfGInter —
-/// IntImpParGen_Intersector (IntImpParGen_Intersector.gxx): the walking
-/// intersection of an implicit conic with a parametric curve.
+
+// ---------------------------------------------------------------------------
+// OCCT Geom2dInt instantiations of the generic IntImpParGen_Intersector and
+// IntCurve_IntConicCurveGen engines (the _0.cxx template-argument sets).
+// ---------------------------------------------------------------------------
+
+/// OCCT Geom2dInt_Geom2dCurveTool (hxx) — the parametric-curve tool of the
+/// GInter instantiations, served over `dyn Curve2dAdaptor`. It carries the
+/// ParTool role of IntImpParGen_Intersector and — as in OCCT, where
+/// HLRBRep_CurveTool plays both roles for the CInter instantiation — also
+/// the ThePCurveTool role of IntCurve_UserIntConicCurveGen for
+/// Adaptor2d-based callers.
+pub struct Geom2dCurveTool;
+
+impl<'a> crate::geomalgo::int_imp_par_gen::ParTool<dyn Curve2dAdaptor + 'a> for Geom2dCurveTool {
+    fn nb_samples_uv(c: &(dyn Curve2dAdaptor + 'a), u1: f64, u2: f64) -> i32 {
+        geom2d_curve_tool::nb_samples_2(c, u1, u2)
+    }
+    fn eps_x(c: &(dyn Curve2dAdaptor + 'a)) -> f64 {
+        geom2d_curve_tool::eps_x(c)
+    }
+    fn value(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> DVec2 {
+        geom2d_curve_tool::value(c, u)
+    }
+    fn d1(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> (DVec2, DVec2) {
+        geom2d_curve_tool::d1(c, u)
+    }
+    fn d2(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> (DVec2, DVec2, DVec2) {
+        geom2d_curve_tool::d2(c, u)
+    }
+}
+
+impl<'a> crate::geomalgo::user_int_conic_curve_gen::PCurveTool<dyn Curve2dAdaptor + 'a>
+    for Geom2dCurveTool
+{
+    fn nb_intervals(c: &(dyn Curve2dAdaptor + 'a)) -> i32 {
+        geom2d_curve_tool::nb_intervals(c)
+    }
+    fn intervals(c: &(dyn Curve2dAdaptor + 'a), tab: &mut [f64]) {
+        geom2d_curve_tool::intervals(c, tab)
+    }
+    fn get_interval(_c: &(dyn Curve2dAdaptor + 'a), index: usize, tab: &[f64]) -> (f64, f64) {
+        geom2d_curve_tool::get_interval(tab, index)
+    }
+    fn first_parameter(c: &(dyn Curve2dAdaptor + 'a)) -> f64 {
+        geom2d_curve_tool::first_parameter(c)
+    }
+    fn last_parameter(c: &(dyn Curve2dAdaptor + 'a)) -> f64 {
+        geom2d_curve_tool::last_parameter(c)
+    }
+    fn value(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> DVec2 {
+        geom2d_curve_tool::value(c, u)
+    }
+    fn get_type(c: &(dyn Curve2dAdaptor + 'a)) -> Curve2dType {
+        geom2d_curve_tool::get_type(c)
+    }
+    fn line(c: &(dyn Curve2dAdaptor + 'a)) -> Line2d {
+        geom2d_curve_tool::line(c)
+    }
+    fn circle(c: &(dyn Curve2dAdaptor + 'a)) -> Circle2d {
+        geom2d_curve_tool::circle(c)
+    }
+    fn ellipse(c: &(dyn Curve2dAdaptor + 'a)) -> Ellipse2d {
+        geom2d_curve_tool::ellipse(c)
+    }
+    fn parabola(c: &(dyn Curve2dAdaptor + 'a)) -> Parabola2d {
+        geom2d_curve_tool::parabola(c)
+    }
+    fn hyperbola(c: &(dyn Curve2dAdaptor + 'a)) -> Hyperbola2d {
+        geom2d_curve_tool::hyperbola(c)
+    }
+}
+
+/// OCCT Geom2dInt_TheProjPCurOfGInter (cxx) — the point projection on the
+/// parametric curve (the ProjectOnPCurveTool role of the GInter
+/// instantiations).
+pub struct TheProjPCurOfGInter;
+
+impl<'a> crate::geomalgo::int_imp_par_gen::ProjectOnPCurveTool<dyn Curve2dAdaptor + 'a>
+    for TheProjPCurOfGInter
+{
+    fn find_parameter(c: &(dyn Curve2dAdaptor + 'a), p: DVec2, tol: f64) -> f64 {
+        proj_p_cur_of_g_inter::find_parameter_unbounded(c, p, tol)
+    }
+    fn find_parameter_between(
+        c: &(dyn Curve2dAdaptor + 'a),
+        p: DVec2,
+        low: f64,
+        high: f64,
+        tol: f64,
+    ) -> f64 {
+        proj_p_cur_of_g_inter::find_parameter_bounded(c, p, low, high, tol)
+    }
+}
+
+/// OCCT Geom2dInt_TheIntersectorOfTheIntConicCurveOfGInter — the
+/// IntImpParGen_Intersector instantiation over the Geom2dInt tools
+/// (Geom2dInt_TheIntersectorOfTheIntConicCurveOfGInter_0.cxx: ImpTool =
+/// IntCurve_IConicTool, ParTool = Geom2dInt_Geom2dCurveTool,
+/// ProjectOnPCurveTool = Geom2dInt_TheProjPCurOfGInter, ParCurve =
+/// Adaptor2d_Curve2d).
 #[derive(Debug, Clone)]
 pub struct TheIntersectorOfTheIntConicCurveOfGInter {
     pub base: IntersectionBase,
@@ -1892,189 +1785,8 @@ impl TheIntersectorOfTheIntConicCurveOfGInter {
         }
     }
 
-    /// OCCT IntImpParGen_Intersector::FindU (L781-788).
-    fn find_u(
-        &self,
-        parameter: f64,
-        par_curve: &dyn Curve2dAdaptor,
-        imp_tool: &IConicTool,
-    ) -> (DVec2, f64) {
-        let point = geom2d_curve_tool::value(par_curve, parameter);
-        (point, imp_tool.find_parameter(point))
-    }
-
-    /// OCCT IntImpParGen_Intersector::FindV (L790-824).
-    fn find_v(
-        &self,
-        parameter: f64,
-        imp_tool: &IConicTool,
-        par_curve: &dyn Curve2dAdaptor,
-        par_domain: &Res2dDomain,
-        v0: f64,
-        v1: f64,
-        tolerance: f64,
-    ) -> f64 {
-        let point = imp_tool.value(parameter);
-        if par_domain.is_closed() {
-            let v = proj_p_cur_of_g_inter::find_parameter_unbounded(par_curve, point, tolerance);
-            normalize_on_domain(v, par_domain)
-        } else {
-            let (mut vv0, mut vv1) = (v0, v1);
-            if v1 < v0 {
-                vv0 = v1;
-                vv1 = v0;
-            }
-            let mut x = proj_p_cur_of_g_inter::find_parameter_bounded(par_curve, point, vv0, vv1, tolerance);
-            if x > vv1 {
-                x = vv1;
-            } else if x < vv0 {
-                x = vv0;
-            }
-            x
-        }
-    }
-
-    /// OCCT IntImpParGen_Intersector::And_Domaine_Objet1_Intersections
-    /// (L42-222).
-    #[allow(clippy::too_many_arguments)]
-    fn and_domaine_objet1_intersections(
-        &self,
-        imp_tool: &IConicTool,
-        par_curve: &dyn Curve2dAdaptor,
-        imp_domain: &Res2dDomain,
-        par_domain: &Res2dDomain,
-        nb_resultats: &mut usize,
-        inter2_and_domain2: &[f64],
-        inter1: &[f64],
-        resultat1: &mut [f64],
-        resultat2: &mut [f64],
-        eps_nul: f64,
-    ) {
-        let nb_bornes_intersection = *nb_resultats;
-        *nb_resultats = 0;
-
-        let mut i = 0usize;
-        while i < nb_bornes_intersection {
-            let mut param1 = inter1[i];
-            let mut param2 = inter1[i + 1];
-            let (mut indice_1, mut indice_2) = (i, i + 1);
-            if param1 > param2 {
-                let t = param1;
-                param1 = param2;
-                param2 = t;
-                indice_1 = i + 1;
-                indice_2 = i;
-            }
-
-            let pt1 = imp_tool.value(param1);
-            let pt2 = imp_tool.value(param2);
-
-            let mut is_on_the_imp_curve_domain1 = true;
-            let mut is_on_the_imp_curve_domain2 = true;
-            if imp_domain.has_first_point() {
-                if param1 < imp_domain.first_parameter() {
-                    if pt1.distance(imp_domain.first_point()) > imp_domain.first_tolerance() {
-                        is_on_the_imp_curve_domain1 = false;
-                    }
-                }
-            }
-            if is_on_the_imp_curve_domain1 && imp_domain.has_last_point() {
-                if param1 > imp_domain.last_parameter() {
-                    if pt1.distance(imp_domain.last_point()) > imp_domain.last_tolerance() {
-                        is_on_the_imp_curve_domain1 = false;
-                    }
-                }
-            }
-            if imp_domain.has_first_point() {
-                if param2 < imp_domain.first_parameter() {
-                    if pt2.distance(imp_domain.first_point()) > imp_domain.first_tolerance() {
-                        is_on_the_imp_curve_domain2 = false;
-                    }
-                }
-            }
-            if is_on_the_imp_curve_domain2 && imp_domain.has_last_point() {
-                if param2 > imp_domain.last_parameter() {
-                    if pt2.distance(imp_domain.last_point()) > imp_domain.last_tolerance() {
-                        is_on_the_imp_curve_domain2 = false;
-                    }
-                }
-            }
-
-            if is_on_the_imp_curve_domain1 {
-                // Bound 1 is on the domain.
-                *nb_resultats += 1;
-                resultat1[*nb_resultats - 1] = inter1[indice_1];
-                resultat2[*nb_resultats - 1] = inter2_and_domain2[indice_1];
-                // Bound 2 is also on the domain.
-                if is_on_the_imp_curve_domain2 {
-                    *nb_resultats += 1;
-                    resultat1[*nb_resultats - 1] = inter1[indice_2];
-                    resultat2[*nb_resultats - 1] = inter2_and_domain2[indice_2];
-                } else {
-                    // Bound 1 on the domain and bound 2 outside.
-                    let t = imp_domain.last_parameter();
-                    *nb_resultats += 1;
-                    resultat1[*nb_resultats - 1] = t;
-                    resultat2[*nb_resultats - 1] = self.find_v(
-                        t,
-                        imp_tool,
-                        par_curve,
-                        par_domain,
-                        inter2_and_domain2[indice_1],
-                        inter2_and_domain2[indice_2],
-                        eps_nul,
-                    );
-                }
-            } else if is_on_the_imp_curve_domain2 {
-                // Bound 1 is not on the domain.
-                let t = imp_domain.first_parameter();
-                *nb_resultats += 1;
-                resultat1[*nb_resultats - 1] = t;
-                resultat2[*nb_resultats - 1] = self.find_v(
-                    t,
-                    imp_tool,
-                    par_curve,
-                    par_domain,
-                    inter2_and_domain2[indice_1],
-                    inter2_and_domain2[indice_2],
-                    eps_nul,
-                );
-                *nb_resultats += 1;
-                resultat1[*nb_resultats - 1] = inter1[indice_2];
-                resultat2[*nb_resultats - 1] = inter2_and_domain2[indice_2];
-            } else if param1 < imp_domain.first_parameter() && param2 > imp_domain.last_parameter() {
-                // Both bounds are outside the domain.
-                let t = imp_domain.first_parameter();
-                *nb_resultats += 1;
-                resultat1[*nb_resultats - 1] = t;
-                resultat2[*nb_resultats - 1] = self.find_v(
-                    t,
-                    imp_tool,
-                    par_curve,
-                    par_domain,
-                    inter2_and_domain2[indice_1],
-                    inter2_and_domain2[indice_2],
-                    eps_nul,
-                );
-                let t = imp_domain.last_parameter();
-                *nb_resultats += 1;
-                resultat1[*nb_resultats - 1] = t;
-                resultat2[*nb_resultats - 1] = self.find_v(
-                    t,
-                    imp_tool,
-                    par_curve,
-                    par_domain,
-                    inter2_and_domain2[indice_1],
-                    inter2_and_domain2[indice_2],
-                    eps_nul,
-                );
-            }
-            i += 2;
-        }
-    }
-
-    /// OCCT IntImpParGen_Intersector::Perform (L245-779).
-    #[allow(clippy::too_many_arguments)]
+    /// OCCT IntImpParGen_Intersector::Perform (IntImpParGen_Intersector.gxx
+    /// L245-779) via the generic engine.
     pub fn perform(
         &mut self,
         imp_tool: &IConicTool,
@@ -2084,510 +1796,17 @@ impl TheIntersectorOfTheIntConicCurveOfGInter {
         tol_conf: f64,
         tol: f64,
     ) {
-        let mut head_on_imp = false;
-        let mut head_on_par = false;
-        let mut end_on_imp = false;
-        let mut end_on_par = false;
-
-        self.base.reset_fields();
-
-        let mut imp_par_tool = MyImpParTool::new(imp_tool, par_curve);
-
-        if !(par_domain.has_first_point() && par_domain.has_last_point()) {
-            panic!("Standard_ConstructionError: Domaine sur courbe incorrect");
-        }
-
-        let nb_echantillons = geom2d_curve_tool::nb_samples_2(
-            par_curve,
-            par_domain.first_parameter(),
-            par_domain.last_parameter(),
-        );
-
-        let mut eps_x = geom2d_curve_tool::eps_x(par_curve);
-        if eps_x > 1.0e-10 {
-            eps_x = 1.0e-10;
-        }
-        let eps_nul = if tol_conf <= 1.0e-10 { 1.0e-10 } else { tol_conf };
-        let eps_dist = if tol <= 1.0e-10 { 1.0e-10 } else { tol };
-
-        let tolerance_angulaire = eps_dist;
-
-        if (par_domain.last_parameter() - par_domain.first_parameter()) < 100.0 * eps_x {
-            eps_x = (par_domain.last_parameter() - par_domain.first_parameter()) * 0.01;
-        }
-
-        let sample2 = FunctionSample::new(
-            par_domain.first_parameter(),
-            par_domain.last_parameter(),
-            nb_echantillons,
-        );
-        let mut sol = FunctionAllRoots::new(&mut imp_par_tool, &sample2, eps_x, eps_dist, eps_nul);
-
-        if !sol.is_done() {
-            self.base.done = false;
-            return;
-        }
-
-        let nb_segments_solution = sol.nb_intervals();
-        let nb_points_solution = sol.nb_points();
-
-        // ---- Treatment of the point solutions ----
-        for i in 1..=nb_points_solution {
-            let param2 = sol.get_point(i);
-            let (pt, mut param1) = self.find_u(param2, par_curve, imp_tool);
-
-            if imp_domain.is_closed() {
-                param1 = normalize_on_domain(param1, imp_domain);
-            }
-
-            let mut is_on_the_imp_curve_domain = true;
-            if imp_domain.has_first_point() {
-                if param1 < imp_domain.first_parameter() {
-                    if pt.distance(imp_domain.first_point()) > imp_domain.first_tolerance() {
-                        is_on_the_imp_curve_domain = false;
-                    }
-                }
-            }
-            if is_on_the_imp_curve_domain && imp_domain.has_last_point() {
-                if param1 > imp_domain.last_parameter() {
-                    if pt.distance(imp_domain.last_point()) > imp_domain.last_tolerance() {
-                        is_on_the_imp_curve_domain = false;
-                    }
-                }
-            }
-
-            if is_on_the_imp_curve_domain {
-                let (pt1, mut tan1, norm1) = imp_tool.d2(param1);
-                let (pt2, mut tan2, norm2) = geom2d_curve_tool::d2(par_curve, param2);
-
-                let mut pos1 = Position::Middle;
-                let mut pos2 = Position::Middle;
-                int_imp_par_gen::determine_position(&mut pos1, imp_domain, pt1, param1);
-                int_imp_par_gen::determine_position(&mut pos2, par_domain, pt2, param2);
-
-                if pos1 == Position::End {
-                    end_on_imp = true;
-                } else if pos1 == Position::Head {
-                    head_on_imp = true;
-                }
-                if pos2 == Position::End {
-                    end_on_par = true;
-                } else if pos2 == Position::Head {
-                    head_on_par = true;
-                }
-
-                let mut trans1 = Transition::empty();
-                let mut trans2 = Transition::empty();
-                int_imp_par_gen::determine_transition(
-                    pos1,
-                    &mut tan1,
-                    norm1,
-                    &mut trans1,
-                    pos2,
-                    &mut tan2,
-                    norm2,
-                    &mut trans2,
-                    tolerance_angulaire,
-                );
-
-                let ip = IntersectionPoint::new(
-                    pt1,
-                    param1,
-                    param2,
-                    trans1,
-                    trans2,
-                    self.base.reversed_parameters(),
-                );
-                self.base.insert(&ip);
-            }
-        }
-        // ---- End of the treatment of the point solutions ----
-
-        // ---- Treatment of the segments ----
-        let mut inter2_and_domaine2: Vec<f64> = vec![0.0; 2 + 8 * nb_segments_solution];
-        let mut inter1: Vec<f64> = vec![0.0; 2 + 8 * nb_segments_solution];
-        let mut nb_segments_crees = 0usize;
-
-        let mut j2 = 0usize;
-        for j in 1..=nb_segments_solution {
-            let (param2_inf, param2_sup) = sol.get_interval(j);
-            let (_, mut param1_inf) = self.find_u(param2_inf, par_curve, imp_tool);
-            let (_, mut param1_sup) = self.find_u(param2_sup, par_curve, imp_tool);
-
-            // ---- Closed implicit curve ----
-            if imp_domain.is_closed() {
-                let (param1_origine, param1_fin) = imp_domain.equivalent_parameters();
-                let periode = param1_fin - param1_origine;
-
-                while param1_inf < param1_origine {
-                    param1_inf += periode;
-                }
-                while param1_sup < param1_origine {
-                    param1_sup += periode;
-                }
-
-                let (_, mut t2, n2) = geom2d_curve_tool::d2(par_curve, param2_inf);
-                let (_, mut t1, n1) = imp_tool.d2(param1_inf);
-                if t1.length_squared() <= GP_RESOLUTION {
-                    t1 = n1;
-                }
-                if t2.length_squared() <= GP_RESOLUTION {
-                    t2 = n2;
-                }
-
-                if t1.dot(t2) >= 0.0 {
-                    // param1_inf designates an entering point.
-                    if param1_inf >= param1_sup {
-                        param1_sup += periode;
-                    }
-                } else if param1_inf <= param1_sup {
-                    param1_inf += periode;
-                }
-
-                let decal1 = if param1_inf > param1_sup {
-                    param1_sup + periode
-                } else {
-                    param1_inf + periode
-                };
-                if imp_domain.last_parameter() > decal1 {
-                    inter2_and_domaine2[j2] = param2_inf;
-                    inter1[j2] = param1_inf + periode;
-                    inter2_and_domaine2[j2 + 1] = param2_sup;
-                    inter1[j2 + 1] = param1_sup + periode;
-                    j2 += 2;
-                    nb_segments_crees += 1;
-                }
-
-                let decal2 = if param1_inf < param1_sup {
-                    param1_sup - periode
-                } else {
-                    param1_inf - periode
-                };
-                if imp_domain.first_parameter() < decal2 {
-                    inter2_and_domaine2[j2] = param2_inf;
-                    inter1[j2] = param1_inf - periode;
-                    inter2_and_domaine2[j2 + 1] = param2_sup;
-                    inter1[j2 + 1] = param1_sup - periode;
-                    j2 += 2;
-                    nb_segments_crees += 1;
-                }
-            }
-
-            inter2_and_domaine2[j2] = param2_inf;
-            inter1[j2] = param1_inf;
-            inter2_and_domaine2[j2 + 1] = param2_sup;
-            inter1[j2 + 1] = param1_sup;
-        }
-
-        // INTER2_DOMAINE2 : intersection AND curve domain as a function of
-        // PARAM2; INTER1 : intersection AND curve domain as a function of PARAM1.
-        let nb_segments_solution_total = nb_segments_solution + nb_segments_crees;
-        let mut resultat1: Vec<f64> = vec![0.0; 2 + (1 + nb_segments_solution_total) * 2];
-        let mut resultat2: Vec<f64> = vec![0.0; 2 + (1 + nb_segments_solution_total) * 2];
-        let mut nb_resultats = nb_segments_solution_total * 2;
-
-        self.and_domaine_objet1_intersections(
-            imp_tool,
-            par_curve,
-            imp_domain,
-            par_domain,
-            &mut nb_resultats,
-            &inter2_and_domaine2,
-            &inter1,
-            &mut resultat1,
-            &mut resultat2,
-            eps_nul,
-        );
-
-        // Inlined Calcule_Toutes_Transitions.
+        fn engine<'a>(
+        ) -> super::int_imp_par_gen::Intersector<dyn Curve2dAdaptor + 'a, Geom2dCurveTool, TheProjPCurOfGInter>
         {
-            let dist_mini_imp_curve = eps_nul;
-            let tolerance_angulaire_dist_mini = dist_mini_imp_curve;
-
-            let mut k = 0usize;
-            while k < nb_resultats {
-                let ip1 = k + 1;
-                let mut only_one_point = false;
-
-                let mut param1_on1 = resultat1[k];
-                let mut param1_on2 = resultat2[k];
-                let mut param2_on1 = resultat1[ip1];
-                let mut param2_on2 = resultat2[ip1];
-
-                let pt1_on1 = imp_tool.value(param1_on1);
-                let pt2_on1 = imp_tool.value(param2_on1);
-                let pt1_on2 = geom2d_curve_tool::value(par_curve, param1_on2);
-                let pt2_on2 = geom2d_curve_tool::value(par_curve, param2_on2);
-
-                if !imp_domain.is_closed() {
-                    if pt1_on1.distance(pt2_on1) <= dist_mini_imp_curve {
-                        if pt1_on2.distance(pt2_on2) <= dist_mini_imp_curve {
-                            only_one_point = true;
-                        }
-                    }
-                }
-
-                param1_on1 = normalize_on_domain(param1_on1, imp_domain);
-                param1_on2 = normalize_on_domain(param1_on2, par_domain);
-
-                let (mut pt1_on1_2, mut tan1, norm1) = imp_tool.d2(param1_on1);
-                let (mut pt1_on2_2, mut tan2, norm2) = geom2d_curve_tool::d2(par_curve, param1_on2);
-
-                let mut pos1 = Position::Middle;
-                let mut pos2 = Position::Middle;
-                int_imp_par_gen::determine_position(&mut pos1, imp_domain, pt1_on1_2, param1_on1);
-                int_imp_par_gen::determine_position(&mut pos2, par_domain, pt1_on2_2, param1_on2);
-
-                if pos1 == Position::End {
-                    end_on_imp = true;
-                } else if pos1 == Position::Head {
-                    head_on_imp = true;
-                }
-                if pos2 == Position::End {
-                    end_on_par = true;
-                } else if pos2 == Position::Head {
-                    head_on_par = true;
-                }
-
-                let mut trans1 = Transition::empty();
-                let mut trans2 = Transition::empty();
-                int_imp_par_gen::determine_transition(
-                    pos1,
-                    &mut tan1,
-                    norm1,
-                    &mut trans1,
-                    pos2,
-                    &mut tan2,
-                    norm2,
-                    &mut trans2,
-                    tolerance_angulaire_dist_mini,
-                );
-
-                // Detection of the case: intersection at the end of both domains.
-                if pos1 != Position::Middle && pos2 != Position::Middle {
-                    let m = 0.5 * (pt1_on1_2.x + pt1_on2_2.x);
-                    pt1_on1_2.x = m;
-                    let m = 0.5 * (pt1_on1_2.y + pt1_on2_2.y);
-                    pt1_on1_2.y = m;
-                }
-
-                let new_p1 = IntersectionPoint::new(
-                    pt1_on1_2,
-                    param1_on1,
-                    param1_on2,
-                    trans1,
-                    trans2,
-                    self.base.reversed_parameters(),
-                );
-                if !only_one_point {
-                    let mut new_p2 = IntersectionPoint::empty();
-
-                    param2_on1 = normalize_on_domain(param2_on1, imp_domain);
-                    param2_on2 = normalize_on_domain(param2_on2, par_domain);
-
-                    let (mut pt2_on1_2, mut tan1b, norm1b) = imp_tool.d2(param2_on1);
-                    let (mut pt2_on2_2, mut tan2b, norm2b) = geom2d_curve_tool::d2(par_curve, param2_on2);
-
-                    let mut pos1b = Position::Middle;
-                    let mut pos2b = Position::Middle;
-                    int_imp_par_gen::determine_position(&mut pos1b, imp_domain, pt2_on1_2, param2_on1);
-                    int_imp_par_gen::determine_position(&mut pos2b, par_domain, pt2_on2_2, param2_on2);
-
-                    if pos1b == Position::End {
-                        end_on_imp = true;
-                    } else if pos1b == Position::Head {
-                        head_on_imp = true;
-                    }
-                    if pos2b == Position::End {
-                        end_on_par = true;
-                    } else if pos2b == Position::Head {
-                        head_on_par = true;
-                    }
-
-                    let mut trans1b = Transition::empty();
-                    let mut trans2b = Transition::empty();
-                    int_imp_par_gen::determine_transition(
-                        pos1b,
-                        &mut tan1b,
-                        norm1b,
-                        &mut trans1b,
-                        pos2b,
-                        &mut tan2b,
-                        norm2b,
-                        &mut trans2b,
-                        tolerance_angulaire_dist_mini,
-                    );
-
-                    // Detection of the case: intersection at the end of both domains.
-                    if pos1b != Position::Middle && pos2b != Position::Middle {
-                        let m = 0.5 * (pt2_on1_2.x + pt2_on2_2.x);
-                        pt2_on1_2.x = m;
-                        let m = 0.5 * (pt2_on1_2.y + pt2_on2_2.y);
-                        pt2_on1_2.y = m;
-                    }
-
-                    new_p2.set_values(
-                        pt2_on1_2,
-                        param2_on1,
-                        param2_on2,
-                        trans1b,
-                        trans2b,
-                        self.base.reversed_parameters(),
-                    );
-
-                    let segopposite = tan1b.dot(tan2b) < 0.0;
-
-                    let new_seg = IntersectionSegment::with_points(
-                        &new_p1,
-                        &new_p2,
-                        segopposite,
-                        self.base.reversed_parameters(),
-                    );
-                    self.base.append_segment(&new_seg);
-                } else {
-                    self.base.insert(&new_p1);
-                }
-                k += 2;
-            }
+            super::int_imp_par_gen::Intersector::new()
         }
-
-        // ---- The boundary points are tested as solutions ----
-        if !head_on_imp && imp_domain.has_first_point() {
-            if !head_on_par {
-                if imp_domain.first_point().distance(par_domain.first_point())
-                    <= imp_domain.first_tolerance().max(par_domain.first_tolerance())
-                {
-                    let param1 = imp_domain.first_parameter();
-                    let param2 = par_domain.first_parameter();
-                    let (pt1, mut tan1, norm1) = imp_tool.d2(param1);
-                    let (pt2, mut tan2, norm2) = geom2d_curve_tool::d2(par_curve, param2);
-                    let mut trans1 = Transition::empty();
-                    let mut trans2 = Transition::empty();
-                    int_imp_par_gen::determine_transition(
-                        Position::Head,
-                        &mut tan1,
-                        norm1,
-                        &mut trans1,
-                        Position::Head,
-                        &mut tan2,
-                        norm2,
-                        &mut trans2,
-                        tolerance_angulaire,
-                    );
-                    let ip = IntersectionPoint::new(
-                        imp_domain.first_point(),
-                        param1,
-                        param2,
-                        trans1,
-                        trans2,
-                        self.base.reversed_parameters(),
-                    );
-                    let _ = pt1;
-                    let _ = pt2;
-                    self.base.insert(&ip);
-                }
-            }
-            if !end_on_par {
-                if imp_domain.first_point().distance(par_domain.last_point())
-                    <= imp_domain.first_tolerance().max(par_domain.last_tolerance())
-                {
-                    let param1 = imp_domain.first_parameter();
-                    let param2 = par_domain.last_parameter();
-                    let (_, mut tan1, norm1) = imp_tool.d2(param1);
-                    let (_, mut tan2, norm2) = geom2d_curve_tool::d2(par_curve, param2);
-                    let mut trans1 = Transition::empty();
-                    let mut trans2 = Transition::empty();
-                    int_imp_par_gen::determine_transition(
-                        Position::Head,
-                        &mut tan1,
-                        norm1,
-                        &mut trans1,
-                        Position::End,
-                        &mut tan2,
-                        norm2,
-                        &mut trans2,
-                        tolerance_angulaire,
-                    );
-                    let ip = IntersectionPoint::new(
-                        imp_domain.first_point(),
-                        param1,
-                        param2,
-                        trans1,
-                        trans2,
-                        self.base.reversed_parameters(),
-                    );
-                    self.base.insert(&ip);
-                }
-            }
-        }
-
-        if !end_on_imp && imp_domain.has_last_point() {
-            if !head_on_par {
-                if imp_domain.last_point().distance(par_domain.first_point())
-                    <= imp_domain.last_tolerance().max(par_domain.first_tolerance())
-                {
-                    let param1 = imp_domain.last_parameter();
-                    let param2 = par_domain.first_parameter();
-                    let (_, mut tan1, norm1) = imp_tool.d2(param1);
-                    let (_, mut tan2, norm2) = geom2d_curve_tool::d2(par_curve, param2);
-                    let mut trans1 = Transition::empty();
-                    let mut trans2 = Transition::empty();
-                    int_imp_par_gen::determine_transition(
-                        Position::End,
-                        &mut tan1,
-                        norm1,
-                        &mut trans1,
-                        Position::Head,
-                        &mut tan2,
-                        norm2,
-                        &mut trans2,
-                        tolerance_angulaire,
-                    );
-                    let ip = IntersectionPoint::new(
-                        imp_domain.last_point(),
-                        param1,
-                        param2,
-                        trans1,
-                        trans2,
-                        self.base.reversed_parameters(),
-                    );
-                    self.base.insert(&ip);
-                }
-            }
-            if !end_on_par {
-                if imp_domain.last_point().distance(par_domain.last_point())
-                    <= imp_domain.last_tolerance().max(par_domain.last_tolerance())
-                {
-                    let param1 = imp_domain.last_parameter();
-                    let param2 = par_domain.last_parameter();
-                    let (_, mut tan1, norm1) = imp_tool.d2(param1);
-                    let (_, mut tan2, norm2) = geom2d_curve_tool::d2(par_curve, param2);
-                    let mut trans1 = Transition::empty();
-                    let mut trans2 = Transition::empty();
-                    int_imp_par_gen::determine_transition(
-                        Position::End,
-                        &mut tan1,
-                        norm1,
-                        &mut trans1,
-                        Position::End,
-                        &mut tan2,
-                        norm2,
-                        &mut trans2,
-                        tolerance_angulaire,
-                    );
-                    let ip = IntersectionPoint::new(
-                        imp_domain.last_point(),
-                        param1,
-                        param2,
-                        trans1,
-                        trans2,
-                        self.base.reversed_parameters(),
-                    );
-                    self.base.insert(&ip);
-                }
-            }
-        }
-        self.base.done = true;
+        let mut myintersection = engine();
+        myintersection
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+        myintersection.perform(imp_tool, imp_domain, par_curve, par_domain, tol_conf, tol);
+        self.base = myintersection.base;
     }
 }
 
@@ -2597,26 +1816,24 @@ impl Default for TheIntersectorOfTheIntConicCurveOfGInter {
     }
 }
 
-/// OCCT Geom2dInt_TheIntConicCurveOfGInter — IntCurve_IntConicCurveGen
-/// (IntCurve_IntConicCurveGen.gxx/.lxx): intersection of a conic with a
-/// parametric curve.
+/// OCCT Geom2dInt_TheIntConicCurveOfGInter — the IntCurve_IntConicCurveGen
+/// instantiation over the same tools
+/// (Geom2dInt_TheIntConicCurveOfGInter_0.cxx).
 #[derive(Debug, Clone)]
 pub struct TheIntConicCurveOfGInter {
     pub base: IntersectionBase,
 }
 
 impl TheIntConicCurveOfGInter {
-    /// OCCT IntCurve_IntConicCurveGen() — default constructor
-    /// (IntCurve_IntConicCurveGen.lxx L23).
+    /// OCCT IntCurve_IntConicCurveGen() (IntCurve_IntConicCurveGen.lxx L30).
     pub fn bare() -> Self {
         TheIntConicCurveOfGInter {
             base: IntersectionBase::new(),
         }
     }
 
-    /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Lin2d& L,
-    /// const IntRes2d_Domain& D1, ThePCurve, const IntRes2d_Domain& D2,
-    /// TolConf, Tol) (IntCurve_IntConicCurveGen.lxx L26-35).
+    /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Lin2d& L, ...)
+    /// (IntCurve_IntConicCurveGen.lxx L44-53).
     pub fn perform_line(
         &mut self,
         line: &Line2d,
@@ -2630,7 +1847,7 @@ impl TheIntConicCurveOfGInter {
     }
 
     /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Circ2d& C, ...)
-    /// (IntCurve_IntConicCurveGen.lxx L37-52).
+    /// (IntCurve_IntConicCurveGen.lxx L56-74).
     pub fn perform_circle(
         &mut self,
         c: &Circle2d,
@@ -2650,7 +1867,7 @@ impl TheIntConicCurveOfGInter {
     }
 
     /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Elips2d& E, ...)
-    /// (IntCurve_IntConicCurveGen.lxx L54-69).
+    /// (IntCurve_IntConicCurveGen.lxx L77-94).
     pub fn perform_ellipse(
         &mut self,
         e: &Ellipse2d,
@@ -2670,7 +1887,7 @@ impl TheIntConicCurveOfGInter {
     }
 
     /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Parab2d& Prb, ...)
-    /// (IntCurve_IntConicCurveGen.lxx L71-79).
+    /// (IntCurve_IntConicCurveGen.lxx L97-105).
     pub fn perform_parabola(
         &mut self,
         p: &Parabola2d,
@@ -2684,7 +1901,7 @@ impl TheIntConicCurveOfGInter {
     }
 
     /// OCCT IntCurve_IntConicCurveGen::Perform(const gp_Hypr2d& H, ...)
-    /// (IntCurve_IntConicCurveGen.lxx L81-89).
+    /// (IntCurve_IntConicCurveGen.lxx L108-116).
     pub fn perform_hyperbola(
         &mut self,
         h: &Hyperbola2d,
@@ -2706,9 +1923,7 @@ impl TheIntConicCurveOfGInter {
         tol_conf: f64,
         tol: f64,
     ) -> Self {
-        let mut r = TheIntConicCurveOfGInter {
-            base: IntersectionBase::new(),
-        };
+        let mut r = TheIntConicCurveOfGInter::bare();
         r.perform_imp(&IConicTool::new_line(line), d1, pcurve, d2, tol_conf, tol);
         r
     }
@@ -2722,9 +1937,7 @@ impl TheIntConicCurveOfGInter {
         tol_conf: f64,
         tol: f64,
     ) -> Self {
-        let mut r = TheIntConicCurveOfGInter {
-            base: IntersectionBase::new(),
-        };
+        let mut r = TheIntConicCurveOfGInter::bare();
         let tool = IConicTool::new_circle(c);
         if !d1.is_closed() {
             let mut d = d1.clone();
@@ -2745,9 +1958,7 @@ impl TheIntConicCurveOfGInter {
         tol_conf: f64,
         tol: f64,
     ) -> Self {
-        let mut r = TheIntConicCurveOfGInter {
-            base: IntersectionBase::new(),
-        };
+        let mut r = TheIntConicCurveOfGInter::bare();
         let tool = IConicTool::new_ellipse(e);
         if !d1.is_closed() {
             let mut d = d1.clone();
@@ -2768,9 +1979,7 @@ impl TheIntConicCurveOfGInter {
         tol_conf: f64,
         tol: f64,
     ) -> Self {
-        let mut r = TheIntConicCurveOfGInter {
-            base: IntersectionBase::new(),
-        };
+        let mut r = TheIntConicCurveOfGInter::bare();
         r.perform_imp(&IConicTool::new_parabola(p), d1, pcurve, d2, tol_conf, tol);
         r
     }
@@ -2784,15 +1993,13 @@ impl TheIntConicCurveOfGInter {
         tol_conf: f64,
         tol: f64,
     ) -> Self {
-        let mut r = TheIntConicCurveOfGInter {
-            base: IntersectionBase::new(),
-        };
+        let mut r = TheIntConicCurveOfGInter::bare();
         r.perform_imp(&IConicTool::new_hyperbola(h), d1, pcurve, d2, tol_conf, tol);
         r
     }
 
-    /// OCCT IntCurve_IntConicCurveGen::Perform(ICurve, D1, PCurve, D2, TolConf,
-    /// Tol) (lxx L119-130).
+    /// OCCT IntCurve_IntConicCurveGen::Perform(const IntCurve_IConicTool&,
+    /// ...) (IntCurve_IntConicCurveGen.lxx L119-130).
     fn perform_imp(
         &mut self,
         imp_tool: &IConicTool,
@@ -2808,5 +2015,11 @@ impl TheIntConicCurveOfGInter {
             .set_reversed_parameters(self.base.reversed_parameters());
         myintersection.perform(imp_tool, d1, pcurve, d2, tol_conf, tol);
         self.base.set_values(&myintersection.base);
+    }
+}
+
+impl Default for TheIntConicCurveOfGInter {
+    fn default() -> Self {
+        TheIntConicCurveOfGInter::bare()
     }
 }

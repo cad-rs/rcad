@@ -1,11 +1,11 @@
 # TKHLR 1:1 翻译推进计划（多 session runway）
 
 > **交接快照（2026-09-04 session 结束时）**
-> - 提交链（rcad 子模块分支 `sd-hash-wip`）：`7011f938` 计划落盘 → `89fdd3ec` Stage 0 → `78789bbf` Stage 1 → `6f0f12b8` 2a 审计+Bnd_Range → `34dfaa5b` 2a-1 批次（Intf 数据类/BoundSortBox/PGProps+PEquation）→ `da383601` 2a-1 完成（IntCurve 三泛型）→ `5ef9ae00` 2a-2 IntImp 部分（ZerCSParFunc + IntCS）。
-> - 回归基线（全部全绿）：algo lib 115/115、kernel lib 645/645、tkhelix_gtests 16/16、pavefiller_stage_tests 26/26。
-> - **下一步 = §7 勾选表第一个未完成项：2a-2 剩余**——`IntImpParGen_Intersector.gxx`（824 行，`$OCCT_SRC/src/ModelingAlgorithms/TKGeomAlgo/IntImpParGen/`）+ IntConicCurve 双泛型（`IntCurve_IntConicCurveGen.gxx` 92 + `IntCurve_UserIntConicCurveGen.gxx` 889，二者 Perform 引擎绑定 IntImpParGen_Intersector 与 HLRBRep_Curve/CurveTool）。之后按 2a-3 → 2a-4 → 2b。
-> - 已确立的翻译模式（沿例勿改）：OCCT gxx 模板参数 → Rust trait（`ProjPCurveTool`/`PSurfaceTool`/`CurveTool3d`，见 `geomalgo/int_curve_generics.rs` 与 `geomalgo/int_imp/`）；gxx/lxx 内联翻译；每函数 `// OCCT <文件> L<起>-<止>` 标注；每个叶子翻译配 OCCT 解析锚点单测。
-> - 两个已踩过的契约坑：**(1)** `ThePSurfaceTool::D1`/`TheCurveTool::D1` 的 P 输出就是曲面/曲线点本身（测试桩写成 ZERO 会使 F≡0、触发 f2<=eps 的 done=true 提前返回——症状是 root 原样返回起点）；**(2)** `GProp_GProps::MatrixOfInertia` 经 HOperator 移轴到质心。另有怪癖照抄清单见 §5。
+> - 提交链（rcad 子模块分支 `sd-hash-wip`）：`7011f938` 计划落盘 → `89fdd3ec` Stage 0 → `78789bbf` Stage 1 → `6f0f12b8` 2a 审计+Bnd_Range → `34dfaa5b` 2a-1 批次（Intf 数据类/BoundSortBox/PGProps+PEquation）→ `da383601` 2a-1 完成（IntCurve 三泛型）→ `5ef9ae00` 2a-2 IntImp 部分（ZerCSParFunc + IntCS）→ `0114ac87` 2a-2 完成（IntImpParGen_Intersector 泛型引擎 + IntConicCurve 双泛型，见 §7）。
+> - 回归基线（全部全绿）：algo lib 120/120（115+5 新增）、kernel lib 645/645、tkhelix_gtests 16/16、pavefiller_stage_tests 26/26、tkgeom_algo_gtests 134+1。
+> - **下一步 = §7 勾选表第一个未完成项：2a-3**——Intf_InterferencePolygonPolyhedron.gxx（1368）→ IntCurve_IntPolyPolyGen.gxx（1797）→ IntCurveSurface_HInter 组装（581）。之后按 2a-4 → 2b。
+> - 已确立的翻译模式（沿例勿改）：OCCT gxx 模板参数 → Rust trait，**曲线类型本身也是 trait/struct 泛型参数 `C: ?Sized`**（`ParTool<C>`/`ProjectOnPCurveTool<C>`/`PCurveTool<C>`，见 `geomalgo/int_imp_par_gen.rs`）；具体实例化 = marker 类型上的 `impl<'a> ParTool<dyn Curve2dAdaptor + 'a>`（生命周期弹性，等价 C++ `const Adaptor2d_Curve2d&`）+ 具体薄壳结构体（TheIntersectorOfTheIntConicCurveOfGInter / TheIntConicCurveOfGInter）；gxx/lxx 内联翻译；每函数 `// OCCT <文件> L<起>-<止>` 标注；每个叶子翻译配 OCCT 解析锚点单测。
+> - 两个已踩过的契约坑：**(1)** `ThePSurfaceTool::D1`/`TheCurveTool::D1` 的 P 输出就是曲面/曲线点本身（测试桩写成 ZERO 会使 F≡0、触发 f2<=eps 的 done=true 提前返回——症状是 root 原样返回起点）；**(2)** `GProp_GProps::MatrixOfInertia` 经 HOperator 移轴到质心。另有怪癖照抄清单见 §5。**新坑 (3)**：IntConicCurveGen 的 C/E ctor+Perform 在 `!D1.IsClosed()` 时只注入 SetEquivalentParameters(F, F+2π)，**域边界 first/last 不变**——弧域外的交点角参数仍会被丢弃（锚点测试 circle_ctor_quirk_non_closed_domain 记录了该行为）。
 > - 子模块工作树有 3 个**非本任务**的遗留修改（`algo_ext/mod.rs`、`fillet/topopebrepbuild.rs`、`tests/tkgeom_algo_gtests.rs`）——提交时只 `git add` 本任务文件，勿混入。
 > - shell 的 cwd 会被重置到 `C:\Users\lilu\works\rcad-pro`（根仓库），编译/测试前先 `cd rcad`。
 
@@ -246,12 +246,12 @@ Poly_Triangulation/Polygon3D/PolygonOnTriangulation/BRepMesh 依赖 ——
 | IntStart_SearchOnBoundaries.gxx（1232） | Contap_TheSearch | ◐ int_patch/so_on_bounds.rs 1:1，但 domain=UV 矩形近似；Contap 需真实 TopolTool（面 wires 边界弧）→ 2a-4 |
 | IntStart_SearchInside.gxx（313） | Contap_TheSearchInside | ✅ imp_prm/search_inside.rs（TopolTool→网格采样适配） |
 | IntImp_IntCS.gxx（198） | TheExactInterCSurf | ◐ int_patch/int_cs.rs 仅 canonic 路径；非 canonic（多面体）路径 → 2a-3 |
-| IntImp_ZerCSParFunc.gxx（116） | TheCSFunctionOfInterCSurf | ❌ 新写 |
-| IntImpParGen_Intersector.gxx（824） | TheIntersectorOfTheIntConicCurve | ❌ 新写（imp_prm/function_set_root.rs 是同族但不等同） |
+| IntImp_ZerCSParFunc.gxx（116） | TheCSFunctionOfInterCSurf | ✅ geomalgo/int_imp/zer_cs_par_func.rs（5ef9ae00） |
+| IntImpParGen_Intersector.gxx（824） | TheIntersectorOfTheIntConicCurve | ✅ geomalgo/int_imp_par_gen.rs 泛型 `Intersector<C, PT, JT>`（引擎 1:1）+ geom2d_int.rs 的 GInter 具体薄壳（引擎体最初由 InterCurveCurve session 以 GInter 具体实例落地，本轮泛型化去重） |
 | IntCurve_IntCurveCurveGen.gxx（1033） | HLRBRep_CInter | ✅ geomalgo/int_curve_curve_gen.rs（Geom2dInt_GInter 实例） |
 | IntCurve_IntPolyPolyGen.gxx（1797） | TheIntPCurvePCurveOfCInter | ❌ 新写（int_curve_curve_gen.rs L14 明确 NOT yet） |
-| IntCurve_UserIntConicCurveGen.gxx（889） | IntConicCurveOfCInter | ❌ 新写 |
-| IntCurve_IntConicCurveGen.gxx（92） | TheIntConicCurveOfCInter | ❌ 新写 |
+| IntCurve_UserIntConicCurveGen.gxx（889） | IntConicCurveOfCInter | ✅ geomalgo/user_int_conic_curve_gen.rs（5 Perform + 5 InternalPerform 泛型 1:1；conic-typed pcurve 臂调用 IntConicConic 各重载——E-E 已实现，其余 13 个为 documented unimplemented，Stage 3b） |
+| IntCurve_IntConicCurveGen.gxx（92） | TheIntConicCurveOfCInter | ✅ geomalgo/int_conic_curve_gen.rs 泛型壳（gxx C/E/P/H ctor + lxx Lin ctor/Perform×6）|
 | IntCurve_Polygon2dGen.gxx（383） | ThePolygon2dOf… | ❌ 新写 |
 | IntCurve_DistBetweenPCurvesGen.gxx（105） | TheDistBetweenPCurves | ❌ 新写 |
 | IntCurve_ExactIntersectionPoint.gxx（271） | ExactIntersectionPoint… | ❌ 新写 |
@@ -271,7 +271,7 @@ Poly_Triangulation/Polygon3D/PolygonOnTriangulation/BRepMesh 依赖 ——
   - 2a-4 TopolTool 真实版：Adaptor3d_TopolTool/BRepTopAdaptor_TopolTool/HVertex/BRepAdaptor_Curve2d + so_on_bounds 的 BRep 边分支保真（Contap_TheSearch 依赖）
 - [x] **2a-1** 小项批次翻译（✅ Bnd_Range → `rcad-kernel/src/math/bnd/range.rs`；✅ Bnd_BoundSortBox → `bnd/bound_sort_box.rs`（voxel grid + LargeBoxes 通道 + 位掩码三轴过滤，Compare(gp_Pln) 因 Bnd_Box::IsOut(Pln) 未移植而 defer 并注释）；✅ GProp_PGProps + GProp_PEquation → `kernel base/gprop/pg_props.rs` + `pequation.rs`（**关键语义：MatrixOfInertia 经 GProp::HOperator 从原点惯性移轴到质心**，GProp_GProps.cxx L110-115；Jacobi 复用 math_Jacobi 移植）；✅ **2a-1c** IntCurve 三泛型 → `geomalgo/int_curve_generics.rs`：Polygon2dGen（ComputeWithBox 的 deflection 收敛循环逐行，`t` 与 dx/dy 在分支前声明照抄）、DistBetweenPCurvesGen（实现 FunctionSetWithDerivatives）、ExactIntersectionPoint（math_FunctionSetRoot 驱动 + 四段 bound-widening 重试循环），`TheCurveTool` 模板参数 → `ProjPCurveTool` trait；kernel BndBox2d 补 IsOut(Bnd_Box2d)（Bnd_Box2d.cxx L456-511 快慢双路径）。测试 2/2。⚠️ IntConicCurveGen(92)/UserIntConicCurveGen(889) 的 Perform 引擎体绑定 HLRBRep_Curve/CurveTool + IntImpParGen_Intersector → 并入 2a-2/3a）
 - [x] **2a-1b** Intf 数据类：SectionPoint 补 ParamOnFirst/ParamOnSecond/IsEqual（SectionPoint.lxx L17-41）、Intf_TangentZone、Intf_SectionLine（IsEnd 末点返回 Length 的怪癖照抄）、Intf_Interference（Insert zone 合并 + Insert 线段拼接）、Intf_Polygon2d→trait（geomalgo/intf_tangent_zone.rs、intf_section_line.rs、intf_interference.rs）
-- [ ] **2a-2** 中项批次（◐ IntImp 部分 2026-09-04 完成并提交：`geomalgo/int_imp/`（ZerCSParFunc 全文 + IntCS 全文含 3 次 w-restart 循环与 MarginCoef 边界扩张；`ThePSurfaceTool`/`TheCurveTool` → `PSurfaceTool`/`CurveTool3d` trait，HLRBRep_Surface/HLRBRep_Curve（Stage 3a）直接实现即可实例化 TheCSFunctionOfInterCSurf/TheExactInterCSurf；kernel `math_FunctionSetRoot::SetTolerance` 补齐（math_FunctionSetRoot.cxx L777-783）；Precision::Confusion=1e-7/SquareConfusion=1e-14 常量落位。解析锚点：平面 z=0 × 直线 (w,0,w) 收敛到原点 2/2——注意 OCCT 契约：`TheCurveTool::D1`/`ThePSurfaceTool::D1` 的 P 输出即曲线/面点，测试桩必须遵守，否则 F≡0 触发 f2<=eps 的 done=true 提前返回）。⬜ IntImpParGen_Intersector(824)、IntConicCurve 双泛型（IntConicCurveGen 92 + UserIntConicCurveGen 889）、IntCS 若干 gxx（IntImp_IntCS 已完成））
+- [x] **2a-2** 中项批次（✅ 2026-09-04 完成并提交。①IntImp 部分（5ef9ae00）：`geomalgo/int_imp/`（ZerCSParFunc 全文 + IntCS 全文含 3 次 w-restart 循环与 MarginCoef 边界扩张）；`ThePSurfaceTool`/`TheCurveTool` → `PSurfaceTool`/`CurveTool3d` trait；kernel `math_FunctionSetRoot::SetTolerance` 补齐；Precision 常量落位。解析锚点：平面 z=0 × 直线 (w,0,w) 收敛到原点 2/2。②IntImpParGen_Intersector(824)：引擎体已在 InterCurveCurve session 以 GInter 具体实例落地（geom2d_int.rs），本轮抽出为泛型 `geomalgo/int_imp_par_gen.rs`——`Intersector<C: ?Sized, PT: ParTool<C>, JT: ProjectOnPCurveTool<C>>`（824 行 1:1：FindU/FindV/And_Domaine_Objet1_Intersections/Perform 含封闭隐式曲线周期偏移与 Calcule_Toutes_Transitions 内联）+ IntImpParGen.cxx 静态函数（NormalizeOnDomain/DeterminePosition/DetermineTransition×2）+ 泛化 MyImpParTool；geom2d_int.rs 删除硬编码副本（-1134 行），恢复为 `impl<'a> ParTool<dyn Curve2dAdaptor + 'a>` marker + 具体薄壳包装（生命周期弹性 = C++ `const Adaptor2d_Curve2d&`）。③IntConicCurve 双泛型：`int_conic_curve_gen.rs`（gxx C/E/P/H ctor + lxx Lin/Perform×6，含 !IsClosed→SetEquivalentParameters 怪癖）+ `user_int_conic_curve_gen.rs`（889 行 1:1：5 ctor + 5 Perform 含 NbIntervals>1 复合区间循环（Ok 中断怪癖照抄）+ 5 InternalPerform 按曲线类型分发，conic 臂走 IntConicConic（E-E 实装，其余 documented unimplemented 待 3b），default 臂走 IntConicCurveGen→Intersector）。锚点测试 5 个：圆×共线 Bezier 精确交点（u=(17±2√17)/34）经 GInter 壳与 User 变体双路径、弧域怪癖两态、线×Bezier 单交点、IntImpParGen 静态函数。⚠️ 工作区 3 个非本任务文件未混入。回归：algo lib 120（115+5）、kernel 645、tkhelix 16、pavefiller 26、tkgeom_algo_gtests 134+1）
 - [ ] **2a-3** 大项批次翻译
 - [ ] **2a-4** TopolTool 真实版
 - [ ] **Stage 2b** Contap 包 1:1

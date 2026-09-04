@@ -26,6 +26,9 @@ pub mod geom2d_gcc;   // Geom2dGcc (tangent-line constraint: Lin2d2Tan + iter so
 pub mod geom2d_int;   // Geom2dInt (imp-par chain: IntConicCurveOfGInter + Intersector)
 pub mod int_conic_conic; // IntCurve (PConic + PConicTool binding + IntConicConic E-E)
 pub mod int_curve_curve_gen; // IntCurve_IntCurveCurveGen == Geom2dInt_GInter dispatcher
+pub mod int_imp_par_gen; // IntImpParGen (Intersector gxx + statics + MyImpParTool)
+pub mod int_conic_curve_gen; // IntCurve_IntConicCurveGen gxx/.lxx (conic x pcurve shell)
+pub mod user_int_conic_curve_gen; // IntCurve_UserIntConicCurveGen (conic x pcurve kind dispatch)
 pub mod inter_cc;    // Geom2dAPI_InterCurveCurve (2D curve-curve intersection API)
 pub mod app_def;     // AppDef (MultiLine + MultiPointConstraint approximation input)
 pub mod app_par_curves; // AppParCurves (Bernstein/SplineFunction + LeastSquare template)
