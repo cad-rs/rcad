@@ -5,3 +5,7 @@
 
 pub mod class2d;
 pub mod fclass2d;
+pub mod fclass2d_topol; // BRepTopAdaptor_FClass2d (the TopolTool classifier)
+pub mod hvertex_brep;   // BRepTopAdaptor_HVertex
+pub mod topol_tool_brep; // BRepTopAdaptor_TopolTool
+pub mod brep_adaptor_bridge {}
