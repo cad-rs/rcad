@@ -3450,3 +3450,146 @@ mod geom_fill_nsections_tests {
         let _a_ns = NSections::new(a_nc);
     }
 }
+// =============================================================================
+// Geom2dAPI_InterCurveCurve_Test.cxx
+//
+// Three GTests over Geom2dAPI_InterCurveCurve. OCC29289 exercises the
+// ellipse-ellipse path of the Geom2dInt_GInter dispatcher (Perform(C1,C2) ->
+// ComputeDomain -> InternalPerform E-E -> IntConicConic E-E ->
+// IntImpParGen_Intersector) plus math_TrigonometricEquationFunction and
+// math_NewtonFunctionRoot at each intersection parameter.
+// =============================================================================
+#[cfg(test)]
+mod geom2d_api_inter_curve_curve_tests {
+    use super::*;
+    use rcad_algo::geomalgo::inter_cc::InterCurveCurve;
+    use rcad_kernel::geom::Ellipse2d;
+    use rcad_kernel::math::newton_function_root::NewtonFunctionRoot;
+    use rcad_kernel::math::trig_equation_function::TrigonometricEquationFunction;
+
+    // TEST(Geom2dAPI_InterCurveCurve_Test, OCC29289_EllipseIntersectionNewtonRoot)
+    #[test]
+    fn occ29289_ellipse_intersection_newton_root() {
+        // Create two ellipses
+        // gp_Elips2d e1(gp_Ax2d(gp_Pnt2d(0., 0.), gp_Dir2d(gp_Dir2d::D::X)), 2., 1.);
+        let e1 = Ellipse2d {
+            center: DVec2::ZERO,
+            major_dir: DVec2::X,
+            major_radius: 2.0,
+            minor_radius: 1.0,
+        };
+        let ge1 = Curve2d::Ellipse(e1);
+        // gp_Elips2d e2(gp_Ax2d(gp_Pnt2d(0.5, 0.5), gp_Dir2d(1., 1.)), 2., 1.);
+        let e2 = Ellipse2d {
+            center: DVec2::new(0.5, 0.5),
+            major_dir: DVec2::new(1.0, 1.0).normalize(),
+            major_radius: 2.0,
+            minor_radius: 1.0,
+        };
+        let ge2 = Curve2d::Ellipse(e2);
+
+        // Find intersection points
+        let mut intersector = InterCurveCurve::new();
+        intersector.init(Some(&ge1), Some(&ge2), 1.0e-7);
+        assert!(
+            intersector.nb_points() > 0,
+            "Error: intersector found no points"
+        );
+
+        // Setup trigonometric equation:
+        // A*cos(x)^2 + 2*B*cos(x)*sin(x) + C*cos(x) + D*sin(x) + E.
+        let (a, b, c, d, e) = (1.875, -0.75, -0.5, -0.25, -0.25);
+        let mut my_f = TrigonometricEquationFunction::new(a, b, c, d, e);
+
+        let tol1 = 1.0e-15;
+        let eps = 1.5e-12;
+        let nit = [5i32, 6, 7, 6];
+
+        // For each intersection point, verify Newton root finding
+        let mut teta_prev = 0.0;
+        for i in 1..=intersector.nb_points() {
+            let teta = intersector.intersector().point(i).param_on_first();
+            let x = teta - 0.1 * (teta - teta_prev);
+            teta_prev = teta;
+
+            // math_NewtonFunctionRoot Resol(MyF, X, Tol1, Eps, Nit[i - 1]).
+            let resol = NewtonFunctionRoot::new_full_range(&mut my_f, x, tol1, eps, nit[i - 1]);
+            assert!(resol.is_done(), "Error: Newton is not done for {}", teta);
+
+            let teta_newton = resol.root();
+            assert!(
+                (teta - teta_newton).abs() <= 1.0e-7,
+                "Error: Newton root is wrong for {}",
+                teta
+            );
+        }
+    }
+
+    // TEST(Geom2dAPI_InterCurveCurve_Test, PointRejectsZeroIndex)
+    #[test]
+    fn point_rejects_zero_index() {
+        let an_ellipse1 = Ellipse2d {
+            center: DVec2::new(0.0, 0.0),
+            major_dir: DVec2::new(1.0, 0.0),
+            major_radius: 2.0,
+            minor_radius: 1.0,
+        };
+        let a_curve1 = Curve2d::Ellipse(an_ellipse1);
+        let an_ellipse2 = Ellipse2d {
+            center: DVec2::new(0.5, 0.5),
+            major_dir: DVec2::new(1.0, 1.0).normalize(),
+            major_radius: 2.0,
+            minor_radius: 1.0,
+        };
+        let a_curve2 = Curve2d::Ellipse(an_ellipse2);
+
+        let an_intersector = InterCurveCurve::new_curves(Some(&a_curve1), Some(&a_curve2), 1.0e-7);
+        assert!(an_intersector.nb_points() > 0);
+
+        // EXPECT_THROW((void)anIntersector.Point(0), Standard_OutOfRange).
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = an_intersector.point(0);
+        }))
+        .is_err());
+    }
+
+    // TEST(Geom2dAPI_InterCurveCurve_Test, Init_NullHandle_RaisesException)
+    // Regression test for bug #11: Init with null handle must raise
+    // Standard_NullObject.
+    #[test]
+    fn init_null_handle_raises_exception() {
+        // occ::handle<Geom2d_Curve> aNullCurve; — mapped to None.
+        let an_ellipse = Ellipse2d {
+            center: DVec2::new(0.0, 0.0),
+            major_dir: DVec2::new(1.0, 0.0),
+            major_radius: 2.0,
+            minor_radius: 1.0,
+        };
+        let a_valid_curve = Curve2d::Ellipse(an_ellipse);
+
+        // Both null.
+        assert!(std::panic::catch_unwind(|| {
+            let _ = InterCurveCurve::new_curves(None, None, 1.0e-7);
+        })
+        .is_err());
+
+        // First null.
+        assert!(std::panic::catch_unwind(|| {
+            let _ = InterCurveCurve::new_curves(None, Some(&a_valid_curve), 1.0e-7);
+        })
+        .is_err());
+
+        // Second null.
+        assert!(std::panic::catch_unwind(|| {
+            let _ = InterCurveCurve::new_curves(Some(&a_valid_curve), None, 1.0e-7);
+        })
+        .is_err());
+
+        // Single-curve Init with null.
+        let mut an_inter = InterCurveCurve::new();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            an_inter.init_curve(None, 1.0e-7);
+        }))
+        .is_err());
+    }
+}
