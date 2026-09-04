@@ -228,7 +228,41 @@ Poly_Triangulation/Polygon3D/PolygonOnTriangulation/BRepMesh 依赖 ——
 - [x] 计划落盘 + module-map 指向（2026-09-04）
 - [x] **Stage 0** 叶子包：top_bas / intrv / top_cnx / HLRAlgo 静态+EdgesBlock+Projector（2026-09-04 完成并提交；kernel Trsf 同步补齐 OCCT scale/form 语义 + SetTransformation/SetScaleFactor/SetTranslationPart/Invert/VectorialPart/Value + gp_Vec/gp_Dir/gp_Lin::Transform；单测 12 个全绿。**HLRAppli_ReflectLines 推迟至 Stage 3g 之后**——它依赖 HLRBRep_Algo/HLRToShape/BRepLib::SameParameter）
 - [x] **Stage 1** HLRAlgo 数据结构（EdgeStatus/Interference/Intersection/BiPoint/Coincidence/WiresBlock/Poly 系列小结构/EdgeIterator；2026-09-04 完成并提交。要点：EdgeStatus::Hide 的 `if (!OnFace)` guard 照抄、EdgeIterator 的隐藏区间缓存语义（当前段=上一可见段 End 至下一可见段 Start）、指针字段→借用映射；单测 15/15）
-- [ ] **Stage 2a** 泛型引擎审计+补齐（IntStart/Intf/IntConicConic 重载/Bnd_SortBox/EPCOfExtPC2d/PEquation/BRepAdaptor_Curve2d）
+- [x] **Stage 2a（审计完成 2026-09-04）**：泛型引擎闭包已逐个实测（The* 类 `_0.cxx` 的 gxx include → 实际行数 → rcad 现状）：
+
+| 泛型体（OCCT 实测行数） | 消费者 | rcad 状态 |
+|---|---|---|
+| IntWalk_IWalking.gxx（3152） | Contap_TheIWalking | ✅ int_patch/imp_prm/i_walking.rs（3037 行 1:1） |
+| IntStart_SearchOnBoundaries.gxx（1232） | Contap_TheSearch | ◐ int_patch/so_on_bounds.rs 1:1，但 domain=UV 矩形近似；Contap 需真实 TopolTool（面 wires 边界弧）→ 2a-4 |
+| IntStart_SearchInside.gxx（313） | Contap_TheSearchInside | ✅ imp_prm/search_inside.rs（TopolTool→网格采样适配） |
+| IntImp_IntCS.gxx（198） | TheExactInterCSurf | ◐ int_patch/int_cs.rs 仅 canonic 路径；非 canonic（多面体）路径 → 2a-3 |
+| IntImp_ZerCSParFunc.gxx（116） | TheCSFunctionOfInterCSurf | ❌ 新写 |
+| IntImpParGen_Intersector.gxx（824） | TheIntersectorOfTheIntConicCurve | ❌ 新写（imp_prm/function_set_root.rs 是同族但不等同） |
+| IntCurve_IntCurveCurveGen.gxx（1033） | HLRBRep_CInter | ✅ geomalgo/int_curve_curve_gen.rs（Geom2dInt_GInter 实例） |
+| IntCurve_IntPolyPolyGen.gxx（1797） | TheIntPCurvePCurveOfCInter | ❌ 新写（int_curve_curve_gen.rs L14 明确 NOT yet） |
+| IntCurve_UserIntConicCurveGen.gxx（889） | IntConicCurveOfCInter | ❌ 新写 |
+| IntCurve_IntConicCurveGen.gxx（92） | TheIntConicCurveOfCInter | ❌ 新写 |
+| IntCurve_Polygon2dGen.gxx（383） | ThePolygon2dOf… | ❌ 新写 |
+| IntCurve_DistBetweenPCurvesGen.gxx（105） | TheDistBetweenPCurves | ❌ 新写 |
+| IntCurve_ExactIntersectionPoint.gxx（271） | ExactIntersectionPoint… | ❌ 新写 |
+| Intf_InterferencePolygonPolyhedron.gxx（1368） | TheInterferenceOfInterCSurf | ❌ 新写（intf.rs 仅 PIType/SectionPoint 数据类） |
+| IntCurveSurface_HInter.cxx（581） | HInter 组装 | ❌ 新写（int_curv_surf.rs 仅采样类） |
+| Intf_Interference 基类 + Intf_Polygon2d（488） | 上述 Intf 引擎的地基 | ❌ 新写 |
+| Bnd_Range（327）→ 消费者 Contap_TheIWalking.hxx；Bnd_BoundSortBox（774）→ HLRBRep_InterCSurf | HLRBRep_Data | ❌ 本轮起补 |
+| GProp_PEquation（342）→ 消费者 HLRBRep_Surface.cxx | HLRBRep_Data | ❌ 新写 |
+| Extrema_EPCOfExtPC2d → 消费者 Contap_HContTool.cxx | Contap | ❌ 2a-2 |
+| IntCurve_IntConicConic（缺 8/9 重载）→ 消费者 CInter/IntConicCurveOfCInter | Stage 3b | ◐ |
+| Geom2dHatch_Hatcher/Intersector → 消费者 HLRTopoBRep_FaceIsoLiner.cxx（在 Stage 3d，非 Contap） | Stage 3d | ❌ |
+
+  **Stage 2 内部补齐顺序（重排）：**
+  - 2a-1 小项批次（~2300 行，低风险）：Bnd_Range、Bnd_BoundSortBox、GProp_PEquation、Intf_Interference/Polygon2d、IntCurve_IntConicCurveGen、IntCurve_Polygon2dGen、IntCurve_DistBetweenPCurvesGen、IntCurve_ExactIntersectionPoint
+  - 2a-2 中项批次：IntImp_ZerCSParFunc、IntImp_IntCS 非 canonic 补全、IntImpParGen_Intersector
+  - 2a-3 大项批次：Intf_InterferencePolygonPolyhedron、IntCurve_UserIntConicCurveGen、IntCurve_IntPolyPolyGen、IntCurveSurface_HInter 组装
+  - 2a-4 TopolTool 真实版：Adaptor3d_TopolTool/BRepTopAdaptor_TopolTool/HVertex/BRepAdaptor_Curve2d + so_on_bounds 的 BRep 边分支保真（Contap_TheSearch 依赖）
+- [ ] **2a-1** 小项批次翻译（✅ Bnd_Range → `rcad-kernel/src/math/bnd/range.rs`（kernel 回归 642 全绿）；⬜ Bnd_BoundSortBox、GProp_PEquation、Intf_Interference/Polygon2d、IntCurve_IntConicCurveGen、IntCurve_Polygon2dGen、IntCurve_DistBetweenPCurvesGen、IntCurve_ExactIntersectionPoint）
+- [ ] **2a-2** 中项批次翻译
+- [ ] **2a-3** 大项批次翻译
+- [ ] **2a-4** TopolTool 真实版
 - [ ] **Stage 2b** Contap 包 1:1
 - [ ] **Stage 3a** HLRBRep adaptor/tool 层（含 TopolTool/BRepAdaptor_Curve2d）
 - [ ] **Stage 3b** HLRBRep 相交层 + The* 实例化

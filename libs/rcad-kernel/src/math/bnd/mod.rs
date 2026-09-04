@@ -18,6 +18,10 @@
 //!
 //! OCCT src: FoundationClasses/TKMath/Bnd/Bnd_Box.cxx
 
+pub mod range;
+
+pub use range::{IntersectStatus, Range};
+
 use crate::geom::Curve3;
 use glam::DVec3;
 
@@ -668,5 +672,78 @@ mod tests {
         assert!((bb[1].x - 2.0).abs() < 1e-12);
         assert!((bb[0].z).abs() < 1e-12); // circle in XY plane
         assert!((bb[1].z).abs() < 1e-12);
+    }
+}
+
+// Bnd_Range tests (OCCT Bnd_Range.hxx/.cxx anchors) live in range.rs.
+#[cfg(test)]
+mod range_tests {
+    use super::range::{IntersectStatus, Range};
+
+    /// OCCT Bnd_Range void semantics: default ctor is VOID; Delta() negative;
+    /// Get* return empty.
+    #[test]
+    fn void_range_semantics() {
+        let r = Range::new();
+        assert!(r.is_void());
+        assert!(r.delta() < 0.0);
+        assert_eq!(r.get_min(), None);
+        assert_eq!(r.get_bounds(), None);
+        assert_eq!(r.center(), None);
+        // Add revives a void range to a single point.
+        let mut r2 = Range::new();
+        r2.add_parameter(3.5);
+        assert_eq!(r2.get_bounds(), Some((3.5, 3.5)));
+    }
+
+    /// OCCT Bnd_Range::Common / Union / Add (cxx L21-61, hxx L114-127).
+    #[test]
+    fn common_union_add() {
+        let mut a = Range::from_bounds(0.0, 10.0);
+        a.common(&Range::from_bounds(5.0, 20.0));
+        assert_eq!(a.get_bounds(), Some((5.0, 10.0)));
+
+        let mut b = Range::from_bounds(8.0, 12.0);
+        assert!(b.union_with(&Range::from_bounds(11.0, 15.0)));
+        assert_eq!(b.get_bounds(), Some((8.0, 15.0)));
+        // Separated ranges cannot be united.
+        assert!(!b.union_with(&Range::from_bounds(20.0, 25.0)));
+        // Add merges unconditionally.
+        b.add_range(&Range::from_bounds(20.0, 25.0));
+        assert_eq!(b.get_bounds(), Some((8.0, 25.0)));
+    }
+
+    /// OCCT Bnd_Range::IsIntersected non-periodic (cxx L65-90): Boundary at
+    /// the ends, In strictly inside, Out outside.
+    #[test]
+    fn is_intersected_statuses() {
+        let r = Range::from_bounds(0.0, 10.0);
+        assert_eq!(r.is_intersected(5.0, 0.0), IntersectStatus::In);
+        assert_eq!(r.is_intersected(0.0, 0.0), IntersectStatus::Boundary);
+        assert_eq!(r.is_intersected(10.0, 0.0), IntersectStatus::Boundary);
+        assert_eq!(r.is_intersected(11.0, 0.0), IntersectStatus::Out);
+        // Periodic: 12 == 2 mod 10 lies inside the shifted lattice.
+        assert_eq!(r.is_intersected(12.0, 10.0), IntersectStatus::In);
+        assert_eq!(r.is_intersected(20.0, 10.0), IntersectStatus::Boundary);
+    }
+
+    /// OCCT Bnd_Range::Split (cxx L132-171): [3,15] by 5 -> [3,5],[5,15];
+    /// periodic split of [3,15] by value 5 period 4 -> [3,5],[5,9],[9,13],[13,15].
+    #[test]
+    fn split_simple_and_periodic() {
+        let r = Range::from_bounds(3.0, 15.0);
+        let mut parts = Vec::new();
+        r.split(5.0, &mut parts, 0.0);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].get_bounds(), Some((3.0, 5.0)));
+        assert_eq!(parts[1].get_bounds(), Some((5.0, 15.0)));
+
+        let mut pparts = Vec::new();
+        r.split(5.0, &mut pparts, 4.0);
+        assert_eq!(pparts.len(), 4);
+        assert_eq!(pparts[0].get_bounds(), Some((3.0, 5.0)));
+        assert_eq!(pparts[1].get_bounds(), Some((5.0, 9.0)));
+        assert_eq!(pparts[2].get_bounds(), Some((9.0, 13.0)));
+        assert_eq!(pparts[3].get_bounds(), Some((13.0, 15.0)));
     }
 }
