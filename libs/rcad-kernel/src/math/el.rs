@@ -159,6 +159,12 @@ pub fn elslib_torus_value(
     center + (major_radius + minor_radius * v.cos()) * radial + minor_radius * v.sin() * axis
 }
 
+/// OCCT ElCLib::Parameter(const gp_Lin2d&, const gp_Pnt2d&) — the parameter
+/// of the 2D point on the 2D line: (P - Location)·Direction.
+pub fn elclib_line_parameter_2d(p: glam::DVec2, origin: glam::DVec2, direction: glam::DVec2) -> f64 {
+    (p - origin).dot(direction)
+}
+
 /// OCCT ElCLib::InPeriod (ElCLib.cxx L95-111) — the value of U in the
 /// periodic range [UFirst, ULast].
 pub fn in_period(u: f64, ufirst: f64, ulast: f64) -> f64 {

@@ -3,6 +3,8 @@
 // OCCT: TKTopAlgo toolkit — topological algorithms belonging
 // to TKTopAlgo layer: BRepClass3d, BRepClass, BRepExtrema, BRepBndLib, etc.
 
+pub mod adaptor2d;          // Adaptor2d (Line2d — the TopolTool restriction adaptor)
+pub mod adaptor3d;          // Adaptor3d (HVertex + TopolTool)
 pub mod brep_bnd_lib;       // BRepBndLib
 pub mod brep_class;         // BRepClass (FaceExplorer, Edge, FClassifier)
 pub mod brep_class3d;       // BRepClass3d

@@ -26,6 +26,7 @@ use super::inter_utils::{
     sort_start_points, QuadCurvExactLike, SortedStartPoints,
 };
 use super::{HCurveTool, HInterHost, HSurfaceTool, IntersectionPoint, SurfaceType, UVBounds};
+use crate::topalgo::adaptor3d::TopolTool;
 
 /// OCCT IntCurveSurface_InterImpl THE_TOLTANGENCY (pxx L49).
 pub(crate) const IMPL_THE_TOLTANGENCY: f64 = 0.00000001;
@@ -44,7 +45,7 @@ pub(crate) const THE_NBSAMPLESONHYPR: usize = 32;
 
 /// OCCT IntCurveSurface_InterImpl::Perform (pxx L63-86) — perform the
 /// intersection decomposing the surface by C2 intervals.
-pub(crate) fn perform<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform<C: ?Sized, CT, S, ST, H>(
     the_curve: &C,
     the_surface: &S,
     host: &mut H,
@@ -66,7 +67,7 @@ pub(crate) fn perform<C: ?Sized, CT, S: ?Sized, ST, H>(
 
 /// OCCT IntCurveSurface_InterImpl::PerformBounds (pxx L97-182).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn perform_bounds<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_bounds<C: ?Sized, CT, S, ST, H>(
     the_curve: &C,
     the_surface: &S,
     the_u1: f64,
@@ -150,7 +151,7 @@ pub(crate) fn perform_bounds<C: ?Sized, CT, S: ?Sized, ST, H>(
 }
 
 /// OCCT IntCurveSurface_InterImpl::PerformPolygon (pxx L185-218).
-pub(crate) fn perform_polygon<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_polygon<C: ?Sized, CT, S, ST, H>(
     the_curve: &C,
     the_polygon: &ThePolygonOfHInter,
     the_surface: &S,
@@ -179,7 +180,7 @@ pub(crate) fn perform_polygon<C: ?Sized, CT, S: ?Sized, ST, H>(
 }
 
 /// OCCT IntCurveSurface_InterImpl::PerformPolyhedron (pxx L220-242).
-pub(crate) fn perform_polyhedron<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_polyhedron<C: ?Sized, CT, S, ST, H>(
     the_curve: &C,
     the_surface: &S,
     the_polyhedron: &ThePolyhedronOfHInter,
@@ -198,7 +199,7 @@ pub(crate) fn perform_polyhedron<C: ?Sized, CT, S: ?Sized, ST, H>(
 }
 
 /// OCCT IntCurveSurface_InterImpl::PerformPolygonPolyhedron (pxx L245-268).
-pub(crate) fn perform_polygon_polyhedron<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_polygon_polyhedron<C: ?Sized, CT, S, ST, H>(
     the_curve: &C,
     the_polygon: &ThePolygonOfHInter,
     the_surface: &S,
@@ -220,7 +221,7 @@ pub(crate) fn perform_polygon_polyhedron<C: ?Sized, CT, S: ?Sized, ST, H>(
 
 /// OCCT IntCurveSurface_InterImpl::PerformPolygonPolyhedronBSB (pxx
 /// L271-295).
-pub(crate) fn perform_polygon_polyhedron_bsb<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_polygon_polyhedron_bsb<C: ?Sized, CT, S, ST, H>(
     the_curve: &C,
     the_polygon: &ThePolygonOfHInter,
     the_surface: &S,
@@ -243,7 +244,7 @@ pub(crate) fn perform_polygon_polyhedron_bsb<C: ?Sized, CT, S: ?Sized, ST, H>(
 
 /// OCCT IntCurveSurface_InterImpl::InternalPerformBSB (pxx L298-355).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn internal_perform_bsb<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn internal_perform_bsb<C: ?Sized, CT, S, ST, H>(
     the_curve: &C,
     the_polygon: &ThePolygonOfHInter,
     the_surface: &S,
@@ -278,7 +279,7 @@ pub(crate) fn internal_perform_bsb<C: ?Sized, CT, S: ?Sized, ST, H>(
 /// IntCS (IntCurveSurface_TheCSFunctionOfHInter_0.cxx /
 /// TheExactHInter_0.cxx).
 #[allow(clippy::too_many_arguments)]
-fn internal_perform_body<C: ?Sized, CT, S: ?Sized, ST, H>(
+fn internal_perform_body<C: ?Sized, CT, S, ST, H>(
     interference: InterferencePolygonPolyhedron,
     the_curve: &C,
     the_polygon: &ThePolygonOfHInter,
@@ -328,7 +329,7 @@ fn internal_perform_body<C: ?Sized, CT, S: ?Sized, ST, H>(
 
 /// OCCT IntCurveSurface_InterImpl::InternalPerform (pxx L357-414).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn internal_perform<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn internal_perform<C: ?Sized, CT, S, ST, H>(
     the_curve: &C,
     the_polygon: &ThePolygonOfHInter,
     the_surface: &S,
@@ -357,7 +358,7 @@ pub(crate) fn internal_perform<C: ?Sized, CT, S: ?Sized, ST, H>(
 
 /// OCCT IntCurveSurface_InterImpl::InternalPerformCurveQuadric (pxx
 /// L416-439).
-pub(crate) fn internal_perform_curve_quadric<C: ?Sized, CT, S: ?Sized, ST, Q, H>(
+pub(crate) fn internal_perform_curve_quadric<C: ?Sized, CT, S, ST, Q, H>(
     the_curve: &C,
     the_surface: &S,
     host: &mut H,
@@ -379,7 +380,7 @@ pub(crate) fn internal_perform_curve_quadric<C: ?Sized, CT, S: ?Sized, ST, Q, H>
 /// OCCT IntCurveSurface_InterImpl::InternalPerformPolygonBounds (pxx
 /// L441-520).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn internal_perform_polygon_bounds<C: ?Sized, CT, S: ?Sized, ST, Q, H>(
+pub(crate) fn internal_perform_polygon_bounds<C: ?Sized, CT, S, ST, Q, H>(
     the_curve: &C,
     the_polygon: &ThePolygonOfHInter,
     the_surface: &S,
@@ -413,10 +414,27 @@ pub(crate) fn internal_perform_polygon_bounds<C: ?Sized, CT, S: ?Sized, ST, Q, H
                 ThePolyhedronOfHInter::new_tool::<S, ST>(the_surface, nbsu, nbsv, the_u1, the_v1, the_u2, the_v2);
             host.internal_perform(the_curve, the_polygon, the_surface, &polyhedron, the_u1, the_v1, the_u2, the_v2);
         } else {
-            // OCCT L489-501: the BSplineSurface branch samples through
-            // Adaptor3d_TopolTool::SamplePnts — the TopolTool dependency is
-            // runway 2a-4.
-            let _ = <ST as HSurfaceTool>::u_trim(the_surface, the_u1, the_u2, 1.0e-9);
+            // OCCT L489-510: sample the trimmed surface through
+            // Adaptor3d_TopolTool::SamplePnts and rebuild the polyhedron on
+            // the original surface with the sample parameter arrays.
+            let mut a_s = <ST as HSurfaceTool>::u_trim(the_surface, the_u1, the_u2, 1.0e-9);
+            a_s = <ST as HSurfaceTool>::v_trim(&a_s, the_v1, the_v2, 1.0e-9);
+            let mut a_top_tool = TopolTool::<S, ST>::new(&a_s);
+            let defl = 0.1;
+            a_top_tool.sample_pnts(defl, 10, 10);
+
+            let nbpu = a_top_tool.nb_samples_u() as usize;
+            let nbpv = a_top_tool.nb_samples_v() as usize;
+            let mut u_pars = vec![0.0f64; nbpu];
+            let mut v_pars = vec![0.0f64; nbpv];
+            a_top_tool.u_parameters(&mut u_pars);
+            a_top_tool.v_parameters(&mut v_pars);
+
+            let polyhedron =
+                ThePolyhedronOfHInter::new_tool_params::<S, ST>(the_surface, &u_pars, &v_pars);
+            host.internal_perform(
+                the_curve, the_polygon, the_surface, &polyhedron, the_u1, the_v1, the_u2, the_v2,
+            );
         }
     } else {
         internal_perform_curve_quadric::<C, CT, S, ST, Q, H>(the_curve, the_surface, host);
@@ -425,7 +443,7 @@ pub(crate) fn internal_perform_polygon_bounds<C: ?Sized, CT, S: ?Sized, ST, Q, H
 
 /// OCCT IntCurveSurface_InterImpl::PerformConicSurfLine (pxx L522-708).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn perform_conic_surf_line<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_conic_surf_line<C: ?Sized, CT, S, ST, H>(
     the_line: &Line3,
     the_curve: &C,
     the_surface: &S,
@@ -588,7 +606,7 @@ pub(crate) fn perform_conic_surf_line<C: ?Sized, CT, S: ?Sized, ST, H>(
 
 /// OCCT IntCurveSurface_InterImpl::PerformConicSurfCircle (pxx L711-759).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn perform_conic_surf_circle<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_conic_surf_circle<C: ?Sized, CT, S, ST, H>(
     the_circle: &Circle3,
     the_curve: &C,
     the_surface: &S,
@@ -638,7 +656,7 @@ pub(crate) fn perform_conic_surf_circle<C: ?Sized, CT, S: ?Sized, ST, H>(
 
 /// OCCT IntCurveSurface_InterImpl::PerformConicSurfEllipse (pxx L762-810).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn perform_conic_surf_ellipse<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_conic_surf_ellipse<C: ?Sized, CT, S, ST, H>(
     the_ellipse: &Ellipse3,
     the_curve: &C,
     the_surface: &S,
@@ -686,7 +704,7 @@ pub(crate) fn perform_conic_surf_ellipse<C: ?Sized, CT, S: ?Sized, ST, H>(
 
 /// OCCT IntCurveSurface_InterImpl::PerformConicSurfParabola (pxx L813-888).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn perform_conic_surf_parabola<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_conic_surf_parabola<C: ?Sized, CT, S, ST, H>(
     the_parab: &Parabola3,
     the_curve: &C,
     the_surface: &S,
@@ -754,7 +772,7 @@ pub(crate) fn perform_conic_surf_parabola<C: ?Sized, CT, S: ?Sized, ST, H>(
 
 /// OCCT IntCurveSurface_InterImpl::PerformConicSurfHyperbola (pxx L891-966).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn perform_conic_surf_hyperbola<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn perform_conic_surf_hyperbola<C: ?Sized, CT, S, ST, H>(
     the_hypr: &Hyperbola3,
     the_curve: &C,
     the_surface: &S,
@@ -819,7 +837,7 @@ pub(crate) fn perform_conic_surf_hyperbola<C: ?Sized, CT, S: ?Sized, ST, H>(
 }
 
 /// OCCT IntCurveSurface_InterImpl::AppendIntAna (pxx L969-1002).
-pub(crate) fn append_int_ana<C: ?Sized, CT, S: ?Sized, ST, H>(
+pub(crate) fn append_int_ana<C: ?Sized, CT, S, ST, H>(
     the_curve: &C,
     the_surface: &S,
     the_int_ana: &IntConicQuad,

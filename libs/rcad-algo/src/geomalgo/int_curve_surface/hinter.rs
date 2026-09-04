@@ -37,7 +37,7 @@ impl HInter {
 
     /// OCCT Perform(Curve, Surface) (cxx L106-116) — compute the
     /// intersection decomposing the surface by C2 intervals.
-    pub fn perform<C: ?Sized, CT, S: ?Sized, ST>(&mut self, curve: &C, surface: &S)
+    pub fn perform<C: ?Sized, CT, S, ST>(&mut self, curve: &C, surface: &S)
     where
         CT: HCurveTool<Curve = C> + crate::geomalgo::int_imp::CurveTool3d<Curve = C>,
         ST: HSurfaceTool<Surface = S> + crate::geomalgo::int_imp::PSurfaceTool<Surface = S>,
@@ -48,7 +48,7 @@ impl HInter {
     /// OCCT Perform(Curve, Surface, U0, V0, U1, V1) (cxx L120-150) —
     /// perform with the given UV bounds.
     #[allow(clippy::too_many_arguments)]
-    pub fn perform_bounds<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_bounds<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         surface: &S,
@@ -64,7 +64,7 @@ impl HInter {
     }
 
     /// OCCT Perform(Curve, Polygon, Surface) (cxx L154-168).
-    pub fn perform_polygon<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_polygon<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         polygon: &ThePolygonOfHInter,
@@ -77,7 +77,7 @@ impl HInter {
     }
 
     /// OCCT Perform(Curve, Surface, Polyhedron) (cxx L172-190).
-    pub fn perform_polyhedron<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_polyhedron<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         surface: &S,
@@ -90,7 +90,7 @@ impl HInter {
     }
 
     /// OCCT Perform(Curve, Polygon, Surface, Polyhedron) (cxx L194-219).
-    pub fn perform_polygon_polyhedron<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_polygon_polyhedron<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         polygon: &ThePolygonOfHInter,
@@ -107,7 +107,7 @@ impl HInter {
 
     /// OCCT Perform(Curve, Polygon, Surface, Polyhedron, BndBSB)
     /// (cxx L223-251).
-    pub fn perform_polygon_polyhedron_bsb<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_polygon_polyhedron_bsb<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         polygon: &ThePolygonOfHInter,
@@ -126,7 +126,7 @@ impl HInter {
     /// OCCT InternalPerform(Curve, Polygon, Surface, Polyhedron, U0, V0, U1,
     /// V1, BSB) (cxx L255-284).
     #[allow(clippy::too_many_arguments)]
-    pub fn internal_perform_bsb<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn internal_perform_bsb<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         polygon: &ThePolygonOfHInter,
@@ -149,7 +149,7 @@ impl HInter {
     /// OCCT InternalPerform(Curve, Polygon, Surface, Polyhedron, U0, V0, U1,
     /// V1) (cxx L288-315).
     #[allow(clippy::too_many_arguments)]
-    pub fn internal_perform<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn internal_perform<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         polygon: &ThePolygonOfHInter,
@@ -169,7 +169,7 @@ impl HInter {
     }
 
     /// OCCT InternalPerformCurveQuadric(Curve, Surface) (cxx L319-330).
-    pub fn internal_perform_curve_quadric<C: ?Sized, CT, S: ?Sized, ST>(&mut self, curve: &C, surface: &S)
+    pub fn internal_perform_curve_quadric<C: ?Sized, CT, S, ST>(&mut self, curve: &C, surface: &S)
     where
         CT: HCurveTool<Curve = C> + crate::geomalgo::int_imp::CurveTool3d<Curve = C>,
         ST: HSurfaceTool<Surface = S> + crate::geomalgo::int_imp::PSurfaceTool<Surface = S>,
@@ -183,7 +183,7 @@ impl HInter {
     /// (cxx L334-365) — the 7-arg version; instantiates
     /// InternalPerformPolygonBounds.
     #[allow(clippy::too_many_arguments)]
-    pub fn internal_perform_polygon_bounds<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn internal_perform_polygon_bounds<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         polygon: &ThePolygonOfHInter,
@@ -204,7 +204,7 @@ impl HInter {
     /// OCCT PerformConicSurf(Line, Curve, Surface, U1, V1, U2, V2)
     /// (cxx L369-402).
     #[allow(clippy::too_many_arguments)]
-    pub fn perform_conic_line<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_conic_line<C: ?Sized, CT, S, ST>(
         &mut self,
         line: &Line3,
         curve: &C,
@@ -222,7 +222,7 @@ impl HInter {
 
     /// OCCT PerformConicSurf(Circle, ...) (cxx L406-433).
     #[allow(clippy::too_many_arguments)]
-    pub fn perform_conic_circle<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_conic_circle<C: ?Sized, CT, S, ST>(
         &mut self,
         circle: &Circle3,
         curve: &C,
@@ -242,7 +242,7 @@ impl HInter {
 
     /// OCCT PerformConicSurf(Ellipse, ...) (cxx L437-464).
     #[allow(clippy::too_many_arguments)]
-    pub fn perform_conic_ellipse<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_conic_ellipse<C: ?Sized, CT, S, ST>(
         &mut self,
         ellipse: &Ellipse3,
         curve: &C,
@@ -262,7 +262,7 @@ impl HInter {
 
     /// OCCT PerformConicSurf(Parab, ...) (cxx L468-500).
     #[allow(clippy::too_many_arguments)]
-    pub fn perform_conic_parabola<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_conic_parabola<C: ?Sized, CT, S, ST>(
         &mut self,
         parab: &Parabola3,
         curve: &C,
@@ -282,7 +282,7 @@ impl HInter {
 
     /// OCCT PerformConicSurf(Hypr, ...) (cxx L504-536).
     #[allow(clippy::too_many_arguments)]
-    pub fn perform_conic_hyperbola<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn perform_conic_hyperbola<C: ?Sized, CT, S, ST>(
         &mut self,
         hyper: &Hyperbola3,
         curve: &C,
@@ -301,7 +301,7 @@ impl HInter {
     }
 
     /// OCCT AppendIntAna(Curve, Surface, IntAna) (cxx L540-550).
-    pub fn append_int_ana<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn append_int_ana<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         surface: &S,
@@ -314,7 +314,7 @@ impl HInter {
     }
 
     /// OCCT AppendPoint(Curve, w, Surface, u, v) (cxx L554-571).
-    pub fn append_point<C: ?Sized, CT, S: ?Sized, ST>(
+    pub fn append_point<C: ?Sized, CT, S, ST>(
         &mut self,
         curve: &C,
         lw: f64,
@@ -332,7 +332,7 @@ impl HInter {
 
     /// OCCT AppendSegment(Curve, u0, u1, Surface) (cxx L575-581) — not
     /// implemented in OCCT either.
-    pub fn append_segment<C: ?Sized, CT, S: ?Sized, ST>(&mut self, _u0: f64, _u1: f64)
+    pub fn append_segment<C: ?Sized, CT, S, ST>(&mut self, _u0: f64, _u1: f64)
     where
         CT: HCurveTool<Curve = C> + crate::geomalgo::int_imp::CurveTool3d<Curve = C>,
         ST: HSurfaceTool<Surface = S> + crate::geomalgo::int_imp::PSurfaceTool<Surface = S>,
@@ -342,7 +342,7 @@ impl HInter {
 
     /// OCCT DoSurface(surface, u0, u1, v0, v1, pntsOnSurface, boxSurface,
     /// gap) (cxx L60-77) — the 50x50 sampling grid (row-major here).
-    pub(crate) fn do_surface<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+    pub(crate) fn do_surface<S, ST: HSurfaceTool<Surface = S>>(
         surface: &S,
         u0: f64,
         u1: f64,
@@ -357,7 +357,7 @@ impl HInter {
 
     /// OCCT DoNewBounds(surface, u0, u1, v0, v1, pntsOnSurface, X, Y, Z,
     /// Bounds) (cxx L81-102).
-    pub(crate) fn do_new_bounds<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+    pub(crate) fn do_new_bounds<S, ST: HSurfaceTool<Surface = S>>(
         surface: &S,
         u0: f64,
         u1: f64,
@@ -376,7 +376,7 @@ impl HInter {
 impl<
         C: ?Sized,
         CT: HCurveTool<Curve = C> + crate::geomalgo::int_imp::CurveTool3d<Curve = C>,
-        S: ?Sized,
+        S,
         ST: HSurfaceTool<Surface = S> + crate::geomalgo::int_imp::PSurfaceTool<Surface = S>,
     > HInterHost<C, CT, S, ST> for HInter
 {
@@ -533,8 +533,16 @@ mod tests {
         }
     }
 
-    /// The plane z = 0 with S(u, v) = (u, v, 0).
-    struct TestPlaneSurf;
+    /// The plane z = 0 with S(u, v) = (u, v, 0) over the stored window
+    /// (the OCCT adaptor carries the parameter bounds so UTrim/VTrim can
+    /// narrow them).
+    #[derive(Clone)]
+    struct TestPlaneSurf {
+        u0: f64,
+        u1: f64,
+        v0: f64,
+        v1: f64,
+    }
 
     impl TestPlaneSurf {
         fn point_at(&self, u: f64, v: f64) -> DVec3 {
@@ -545,9 +553,12 @@ mod tests {
         }
     }
 
-    /// The cylinder x^2 + y^2 = R^2 with v = z over [v0, v1].
+    /// The cylinder x^2 + y^2 = R^2 with v = z over the stored window.
+    #[derive(Clone)]
     struct TestCylSurf {
         radius: f64,
+        u0: f64,
+        u1: f64,
         v0: f64,
         v1: f64,
     }
@@ -771,7 +782,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     macro_rules! impl_surface_tools {
-        ($marker:ident, $surf:ty, $u0:expr, $u1:expr, $v0:expr, $v1:expr, $stype:expr,
+        ($marker:ident, $surf:ty, $stype:expr,
          $is_u_closed:expr, $is_u_periodic:expr, $u_period:expr, $is_v_closed:expr,
          $is_v_periodic:expr, $v_period:expr, $plane:expr, $cylinder:expr) => {
             struct $marker;
@@ -781,17 +792,17 @@ mod tests {
                 type BasisCurve = TestBasisCurve;
                 type BasisSurface = TestBasisSurface;
 
-                fn first_u_parameter(_s: &$surf) -> f64 {
-                    $u0
+                fn first_u_parameter(s: &$surf) -> f64 {
+                    s.u0
                 }
-                fn first_v_parameter(_s: &$surf) -> f64 {
-                    $v0
+                fn first_v_parameter(s: &$surf) -> f64 {
+                    s.v0
                 }
-                fn last_u_parameter(_s: &$surf) -> f64 {
-                    $u1
+                fn last_u_parameter(s: &$surf) -> f64 {
+                    s.u1
                 }
-                fn last_v_parameter(_s: &$surf) -> f64 {
-                    $v1
+                fn last_v_parameter(s: &$surf) -> f64 {
+                    s.v1
                 }
                 fn nb_u_intervals(_s: &$surf, _sh: GeomAbsShape) -> usize {
                     1
@@ -799,13 +810,13 @@ mod tests {
                 fn nb_v_intervals(_s: &$surf, _sh: GeomAbsShape) -> usize {
                     1
                 }
-                fn u_intervals(_s: &$surf, tab: &mut [f64], _sh: GeomAbsShape) {
-                    tab[0] = $u0;
-                    tab[1] = $u1;
+                fn u_intervals(s: &$surf, tab: &mut [f64], _sh: GeomAbsShape) {
+                    tab[0] = s.u0;
+                    tab[1] = s.u1;
                 }
-                fn v_intervals(_s: &$surf, tab: &mut [f64], _sh: GeomAbsShape) {
-                    tab[0] = $v0;
-                    tab[1] = $v1;
+                fn v_intervals(s: &$surf, tab: &mut [f64], _sh: GeomAbsShape) {
+                    tab[0] = s.v0;
+                    tab[1] = s.v1;
                 }
                 fn is_u_closed(_s: &$surf) -> bool {
                     $is_u_closed
@@ -886,6 +897,26 @@ mod tests {
                 fn offset_value(_s: &$surf) -> f64 {
                     panic!("Standard_NoSuchObject");
                 }
+                fn u_trim(s: &$surf, first: f64, last: f64, _tol: f64) -> $surf {
+                    // OCCT GeomAdaptor_Surface::UTrim — the same surface,
+                    // narrowed U window.
+                    let mut t = s.clone();
+                    t.u0 = first;
+                    t.u1 = last;
+                    t
+                }
+                fn v_trim(s: &$surf, first: f64, last: f64, _tol: f64) -> $surf {
+                    let mut t = s.clone();
+                    t.v0 = first;
+                    t.v1 = last;
+                    t
+                }
+                fn bezier(_s: &$surf) -> &rcad_kernel::geom::BezierSurface {
+                    panic!("Standard_NoSuchObject");
+                }
+                fn bspline(_s: &$surf) -> &rcad_kernel::geom::BSplineSurface {
+                    panic!("Standard_NoSuchObject");
+                }
                 fn nb_u_poles(_s: &$surf) -> usize {
                     panic!("Standard_NoSuchObject");
                 }
@@ -914,17 +945,17 @@ mod tests {
                 fn d1(s: &$surf, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
                     s.d1_at(u, v)
                 }
-                fn first_u_parameter(_s: &$surf) -> f64 {
-                    $u0
+                fn first_u_parameter(s: &$surf) -> f64 {
+                    s.u0
                 }
-                fn last_u_parameter(_s: &$surf) -> f64 {
-                    $u1
+                fn last_u_parameter(s: &$surf) -> f64 {
+                    s.u1
                 }
-                fn first_v_parameter(_s: &$surf) -> f64 {
-                    $v0
+                fn first_v_parameter(s: &$surf) -> f64 {
+                    s.v0
                 }
-                fn last_v_parameter(_s: &$surf) -> f64 {
-                    $v1
+                fn last_v_parameter(s: &$surf) -> f64 {
+                    s.v1
                 }
                 fn u_resolution(_s: &$surf, r3d: f64) -> f64 {
                     r3d
@@ -939,10 +970,6 @@ mod tests {
     impl_surface_tools!(
         PlaneST,
         TestPlaneSurf,
-        -2.0,
-        2.0,
-        -2.0,
-        2.0,
         SurfaceType::Plane,
         false,
         false,
@@ -962,10 +989,6 @@ mod tests {
     impl_surface_tools!(
         CylST,
         TestCylSurf,
-        0.0,
-        std::f64::consts::TAU,
-        -1.0,
-        1.0,
         SurfaceType::Cylinder,
         true,
         true,
@@ -974,12 +997,8 @@ mod tests {
         false,
         unreachable!(),
         panic!("Standard_NoSuchObject"),
-        CylindricalSurface::new_with_ref_dir(DVec3::ZERO, DVec3::Z, s_radius(), DVec3::X)
+        CylindricalSurface::new_with_ref_dir(DVec3::ZERO, DVec3::Z, 2.0, DVec3::X)
     );
-
-    fn s_radius() -> f64 {
-        2.0
-    }
 
     /// The OCCT Adaptor3d_Curve / Adaptor3d_Surface stubs — never reached by
     /// the anchors (only the EstLim* basis-surface paths use them).
@@ -1039,7 +1058,12 @@ mod tests {
             first: -5.0,
             last: 5.0,
         };
-        let surface = TestPlaneSurf;
+        let surface = TestPlaneSurf {
+            u0: -2.0,
+            u1: 2.0,
+            v0: -2.0,
+            v1: 2.0,
+        };
 
         let mut h = HInter::new();
         h.perform::<TestLineCurve, LineCT, TestPlaneSurf, PlaneST>(&curve, &surface);
@@ -1069,6 +1093,8 @@ mod tests {
         };
         let surface = TestCylSurf {
             radius: 2.0,
+            u0: 0.0,
+            u1: std::f64::consts::TAU,
             v0: -1.0,
             v1: 1.0,
         };
@@ -1108,7 +1134,12 @@ mod tests {
             weights: vec![1.0, 1.0, 1.0],
         };
         let curve = TestBezierCurve { bez };
-        let surface = TestPlaneSurf;
+        let surface = TestPlaneSurf {
+            u0: -2.0,
+            u1: 2.0,
+            v0: -2.0,
+            v1: 2.0,
+        };
 
         let mut h = HInter::new();
         h.perform::<TestBezierCurve, BezierCT, TestPlaneSurf, PlaneST>(&curve, &surface);
@@ -1143,7 +1174,12 @@ mod tests {
             weights: vec![1.0, 1.0, 1.0],
         };
         let curve = TestBezierCurve { bez };
-        let surface = TestPlaneSurf;
+        let surface = TestPlaneSurf {
+            u0: -2.0,
+            u1: 2.0,
+            v0: -2.0,
+            v1: 2.0,
+        };
 
         let polygon = crate::geomalgo::int_curv_surf::ThePolygonOfHInter::new_tool::<
             TestBezierCurve,

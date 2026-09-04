@@ -181,7 +181,7 @@ pub(crate) fn est_lim_for_inf_surf(u1new: &mut f64, u2new: &mut f64, v1new: &mut
 
 /// OCCT IntCurveSurface_InterUtils::EstLimForInfExtr (pxx L148-371).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn est_lim_for_inf_extr<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn est_lim_for_inf_extr<S, ST: HSurfaceTool<Surface = S>>(
     line: &Line3,
     surface: &S,
     is_off_surf: bool,
@@ -383,7 +383,7 @@ pub(crate) fn est_lim_for_inf_extr<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
 
 /// OCCT IntCurveSurface_InterUtils::EstLimForInfRevl (pxx L376-494).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn est_lim_for_inf_revl<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn est_lim_for_inf_revl<S, ST: HSurfaceTool<Surface = S>>(
     line: &Line3,
     surface: &S,
     u1inf: bool,
@@ -503,7 +503,7 @@ pub(crate) fn est_lim_for_inf_revl<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
 
 /// OCCT IntCurveSurface_InterUtils::EstLimForInfOffs (pxx L499-734).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn est_lim_for_inf_offs<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn est_lim_for_inf_offs<S, ST: HSurfaceTool<Surface = S>>(
     line: &Line3,
     surface: &S,
     nbsu: usize,
@@ -718,7 +718,7 @@ pub(crate) fn est_lim_for_inf_offs<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
 }
 
 /// OCCT IntCurveSurface_InterUtils::ComputeTransitions (pxx L855-895).
-pub(crate) fn compute_transitions<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn compute_transitions<C: ?Sized, CT: HCurveTool<Curve = C>, S, ST: HSurfaceTool<Surface = S>>(
     curve: &C,
     w: f64,
     trans_on_curve: &mut TransitionOnCurve,
@@ -751,7 +751,7 @@ pub(crate) fn compute_transitions<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Size
 }
 
 /// OCCT IntCurveSurface_InterUtils::ComputeParamsOnQuadric (pxx L900-925).
-pub(crate) fn compute_params_on_quadric<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn compute_params_on_quadric<S, ST: HSurfaceTool<Surface = S>>(
     surface: &S,
     p: DVec3,
     u: &mut f64,
@@ -798,7 +798,7 @@ pub(crate) fn compute_params_on_quadric<S: ?Sized, ST: HSurfaceTool<Surface = S>
 /// OCCT IntCurveSurface_InterUtils::DoSurface (pxx L930-983) — sample the
 /// 50x50 grid into `the_pnts_on_surface` (row-major, index (iU*50 + iV),
 /// mirroring the 1-based SetValue(iU+1, iV+1)) and fill the bounding box.
-pub(crate) fn do_surface<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn do_surface<S, ST: HSurfaceTool<Surface = S>>(
     the_surface: &S,
     the_u0: f64,
     the_u1: f64,
@@ -845,7 +845,7 @@ pub(crate) fn do_surface<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
 /// OCCT IntCurveSurface_InterUtils::DoNewBounds (pxx L988-1107) — the grid
 /// is row-major, index (iU - 1) * 50 + (iV - 1) for the 1-based
 /// thePntsOnSurface.Value(iU, iV).
-pub(crate) fn do_new_bounds<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn do_new_bounds<S, ST: HSurfaceTool<Surface = S>>(
     the_surface: &S,
     the_u0: f64,
     the_u1: f64,
@@ -952,7 +952,7 @@ pub(crate) fn do_new_bounds<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
 /// parameter validation + transition; returns the point when it should be
 /// appended.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn compute_append_point<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn compute_append_point<C: ?Sized, CT: HCurveTool<Curve = C>, S, ST: HSurfaceTool<Surface = S>>(
     the_curve: &C,
     the_lw: f64,
     the_surface: &S,
@@ -1012,7 +1012,7 @@ pub(crate) fn compute_append_point<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Siz
 /// OCCT IntCurveSurface_InterUtils::ProcessIntAna (pxx L1187-1228) —
 /// returns done and fills theIsParallel/thePoints.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn process_int_ana<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn process_int_ana<C: ?Sized, CT: HCurveTool<Curve = C>, S, ST: HSurfaceTool<Surface = S>>(
     the_curve: &C,
     the_surface: &S,
     the_int_ana: &IntConicQuad,
@@ -1051,7 +1051,7 @@ pub(crate) fn process_int_ana<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Sized, S
 /// The QuadCurvExactType template parameter of PerformCurveQuadric — the
 /// constructor + results contract (the OCCT
 /// IntCurveSurface_TheQuadCurvExactHInter API).
-pub trait QuadCurvExactLike<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Sized, ST: HSurfaceTool<Surface = S>> {
+pub trait QuadCurvExactLike<C: ?Sized, CT: HCurveTool<Curve = C>, S, ST: HSurfaceTool<Surface = S>> {
     /// OCCT TheQuadCurvExactHInter(S, C).
     fn construct(s: &S, c: &C) -> Self;
     /// OCCT IsDone().
@@ -1063,7 +1063,7 @@ pub trait QuadCurvExactLike<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Sized, ST:
 }
 
 /// OCCT IntCurveSurface_InterUtils::PerformCurveQuadric (pxx L1238-1274).
-pub(crate) fn perform_curve_quadric<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Sized, ST: HSurfaceTool<Surface = S>, Q>(
+pub(crate) fn perform_curve_quadric<C: ?Sized, CT: HCurveTool<Curve = C>, S, ST: HSurfaceTool<Surface = S>, Q>(
     the_curve: &C,
     the_surface: &S,
     the_points: &mut Vec<IntersectionPoint>,
@@ -1092,7 +1092,7 @@ pub(crate) fn perform_curve_quadric<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Si
 
 /// OCCT IntCurveSurface_InterUtils::ProcessLinTorus (pxx L1282-1315) —
 /// returns false when the fallback to the polyhedron path is needed.
-pub(crate) fn process_lin_torus<C: ?Sized, CT: HCurveTool<Curve = C>, S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn process_lin_torus<C: ?Sized, CT: HCurveTool<Curve = C>, S, ST: HSurfaceTool<Surface = S>>(
     the_line: &Line3,
     the_curve: &C,
     the_surface: &S,
@@ -1246,7 +1246,7 @@ pub(crate) fn sort_start_points(the_points: &mut SortedStartPoints) {
 /// OCCT IntCurveSurface_InterUtils::ProcessSortedPoints (pxx L1455-1519) —
 /// drive the exact intersection from the sorted start points.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn process_sorted_points<C: ?Sized, CT: HCurveTool<Curve = C> + CurveTool3d<Curve = C>, S: ?Sized, ST: HSurfaceTool<Surface = S> + PSurfaceTool<Surface = S>, F>(
+pub(crate) fn process_sorted_points<C: ?Sized, CT: HCurveTool<Curve = C> + CurveTool3d<Curve = C>, S, ST: HSurfaceTool<Surface = S> + PSurfaceTool<Surface = S>, F>(
     the_exact_inter: &mut IntCS<S, C, ST, CT, F>,
     the_rsnld: &mut FunctionSetRoot,
     the_points: &SortedStartPoints,
@@ -1325,7 +1325,7 @@ impl UVBounds {
 
 /// OCCT IntCurveSurface_InterUtils::DecomposeSurfaceIntervals (pxx
 /// L1549-1610).
-pub(crate) fn decompose_surface_intervals<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+pub(crate) fn decompose_surface_intervals<S, ST: HSurfaceTool<Surface = S>>(
     the_surface: &S,
     the_intervals: &mut Vec<UVBounds>,
 ) {

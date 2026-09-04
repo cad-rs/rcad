@@ -105,7 +105,7 @@ impl<'a, C: ?Sized, CT: HCurveTool<Curve = C>> TheQuadCurvFuncNew<'a, C, CT>
 /// L28-55 + .cxx L29-78) — the roots of the signed distance function.  The
 /// struct stores no adaptor references (like the OCCT value class); the
 /// `'a`/tool parameters only carry the instantiation identity.
-pub struct TheQuadCurvExactHInter<'a, S: ?Sized, ST: HSurfaceTool<Surface = S>, C: ?Sized, CT: HCurveTool<Curve = C>> {
+pub struct TheQuadCurvExactHInter<'a, S, ST: HSurfaceTool<Surface = S>, C: ?Sized, CT: HCurveTool<Curve = C>> {
     nbpnts: i32,
     pnts: Vec<f64>,
     nbintv: i32,
@@ -113,7 +113,7 @@ pub struct TheQuadCurvExactHInter<'a, S: ?Sized, ST: HSurfaceTool<Surface = S>, 
     _types: std::marker::PhantomData<fn(&'a (), &ST, &CT)>,
 }
 
-impl<'a, S: ?Sized, ST: HSurfaceTool<Surface = S>, C: ?Sized, CT: HCurveTool<Curve = C>>
+impl<'a, S, ST: HSurfaceTool<Surface = S>, C: ?Sized, CT: HCurveTool<Curve = C>>
     TheQuadCurvExactHInter<'a, S, ST, C, CT>
 {
     /// OCCT TheQuadCurvExactHInter(S, C) (cxx L29-41) — runs
@@ -163,7 +163,7 @@ impl<'a, S: ?Sized, ST: HSurfaceTool<Surface = S>, C: ?Sized, CT: HCurveTool<Cur
     }
 }
 
-impl<'a, S: ?Sized, ST: HSurfaceTool<Surface = S>, C: ?Sized, CT: HCurveTool<Curve = C>>
+impl<'a, S, ST: HSurfaceTool<Surface = S>, C: ?Sized, CT: HCurveTool<Curve = C>>
     QuadCurvExactLike<C, CT, S, ST> for TheQuadCurvExactHInter<'a, S, ST, C, CT>
 {
     fn construct(s: &S, c: &C) -> Self {
@@ -182,7 +182,7 @@ impl<'a, S: ?Sized, ST: HSurfaceTool<Surface = S>, C: ?Sized, CT: HCurveTool<Cur
 
 /// OCCT IntCurveSurface_QuadricCurveExactInterUtils::PerformIntersection
 /// (QuadricCurveExactInterUtils.pxx L45-132).
-pub fn perform_intersection<'a, S: ?Sized, ST, C: ?Sized, CT, QuadCurvFuncType>(
+pub fn perform_intersection<'a, S, ST, C: ?Sized, CT, QuadCurvFuncType>(
     the_surface: &S,
     the_curve: &'a C,
     the_pnts: &mut Vec<f64>,

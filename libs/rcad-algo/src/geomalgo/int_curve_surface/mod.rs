@@ -737,15 +737,13 @@ pub trait HSurfaceTool {
     fn u_intervals(s: &Self::Surface, tab: &mut [f64], sh: GeomAbsShape);
     /// OCCT VIntervals(S, Tab, Sh) (hxx L82-87).
     fn v_intervals(s: &Self::Surface, tab: &mut [f64], sh: GeomAbsShape);
-    /// OCCT UTrim(S, First, Last, Tol) (hxx L90-96) — needs
-    /// Adaptor3d_TopolTool (runway 2a-4).
-    fn u_trim(_s: &Self::Surface, _first: f64, _last: f64, _tol: f64) -> ! {
-        unimplemented!("Adaptor3d_HSurfaceTool::UTrim — Adaptor3d_TopolTool dependency (runway 2a-4)");
-    }
-    /// OCCT VTrim(S, First, Last, Tol) (hxx L99-105) — same dependency.
-    fn v_trim(_s: &Self::Surface, _first: f64, _last: f64, _tol: f64) -> ! {
-        unimplemented!("Adaptor3d_HSurfaceTool::VTrim — Adaptor3d_TopolTool dependency (runway 2a-4)");
-    }
+    /// OCCT UTrim(S, First, Last, Tol) (hxx L90-96) — the OCCT
+    /// GeomAdaptor_Surface::UTrim (cxx L886-892) keeps the SAME underlying
+    /// surface and narrows the U parameter window, returning a fresh
+    /// adaptor; the concrete tool reproduces that narrowing.
+    fn u_trim(s: &Self::Surface, first: f64, last: f64, tol: f64) -> Self::Surface;
+    /// OCCT VTrim(S, First, Last, Tol) (hxx L99-105) — same narrowing in V.
+    fn v_trim(s: &Self::Surface, first: f64, last: f64, tol: f64) -> Self::Surface;
     /// OCCT IsUClosed(S) (hxx L107-110).
     fn is_u_closed(s: &Self::Surface) -> bool;
     /// OCCT IsVClosed(S) (hxx L112-115).
@@ -821,6 +819,12 @@ pub trait HSurfaceTool {
     fn u_degree(s: &Self::Surface) -> usize;
     /// OCCT Adaptor3d_Surface::VDegree().
     fn v_degree(s: &Self::Surface) -> usize;
+    /// OCCT Adaptor3d_Surface::Bezier() — valid when GetType() ==
+    /// BezierSurface.
+    fn bezier(s: &Self::Surface) -> &rcad_kernel::geom::BezierSurface;
+    /// OCCT Adaptor3d_Surface::BSpline() — valid when GetType() ==
+    /// BSplineSurface.
+    fn bspline(s: &Self::Surface) -> &rcad_kernel::geom::BSplineSurface;
 
     /// OCCT NbSamplesU(S, u1, u2) (Adaptor3d_HSurfaceTool.cxx L72-93).
     fn nb_samples_u(s: &Self::Surface, u1: f64, u2: f64) -> usize {
@@ -910,7 +914,7 @@ pub trait HSurfaceTool {
 pub trait HInterHost<
     C: ?Sized,
     CT: HCurveTool<Curve = C> + crate::geomalgo::int_imp::CurveTool3d<Curve = C>,
-    S: ?Sized,
+    S,
     ST: HSurfaceTool<Surface = S> + crate::geomalgo::int_imp::PSurfaceTool<Surface = S>,
 > {
     /// The `done` field (HInter.cxx passes `done` as `bool& theDone`).
