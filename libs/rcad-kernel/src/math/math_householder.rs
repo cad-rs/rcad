@@ -27,10 +27,10 @@ pub struct Householder {
 
 impl Householder {
     /// OCCT math_Householder(A, B, EPS = 1.0e-20) — the matrix-B constructor
-    /// (cxx L28-40).
+    /// (cxx L28-40): Sol(1, A.ColNumber(), 1, B.ColNumber()).
     pub fn new(a: &MatD, b: &MatD, eps: f64) -> Self {
         let mut h = Householder {
-            sol: MatD::new(a.n_cols(), 1),
+            sol: MatD::new(a.n_cols(), b.n_cols()),
             q: MatD::new(a.n_rows(), a.n_cols()),
             done: false,
             mylowerarow: 1,
