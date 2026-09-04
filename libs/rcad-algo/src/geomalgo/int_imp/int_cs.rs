@@ -15,7 +15,7 @@ use super::{
 /// curve/surface intersection point.  `PS`/`CT` are the OCCT
 /// ThePSurfaceTool/TheCurveTool template parameters (kept as phantom type
 /// parameters, exactly like the OCCT template instantiation).
-pub struct IntCS<'a, S, C, PS, CT, F>
+pub struct IntCS<'a, S: ?Sized, C: ?Sized, PS, CT, F>
 where
     PS: PSurfaceTool<Surface = S>,
     CT: CurveTool3d<Curve = C>,
@@ -33,14 +33,14 @@ where
 
 /// Access to the ZerCS function's cached state and its auxillary geometry
 /// (OCCT: myFunction.Root()/.Point()/.AuxillarSurface()/.AuxillarCurve()).
-pub trait ZerCSAccessors<S, C> {
+pub trait ZerCSAccessors<S: ?Sized, C: ?Sized> {
     fn root(&self) -> f64;
     fn point(&self) -> DVec3;
     fn auxillar_surface(&self) -> &S;
     fn auxillar_curve(&self) -> &C;
 }
 
-impl<'a, S, C, PS, CT, F> IntCS<'a, S, C, PS, CT, F>
+impl<'a, S: ?Sized, C: ?Sized, PS, CT, F> IntCS<'a, S, C, PS, CT, F>
 where
     PS: PSurfaceTool<Surface = S>,
     CT: CurveTool3d<Curve = C>,

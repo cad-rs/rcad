@@ -14,7 +14,7 @@ use super::{CurveTool3d, PSurfaceTool};
 /// whose zero is a curve/surface intersection point.  It also caches the
 /// squared distance `f` and the mid-point `p` after each evaluation, as
 /// OCCT does.
-pub struct ZerCSParFunc<'a, S, C, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>> {
+pub struct ZerCSParFunc<'a, S: ?Sized, C: ?Sized, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>> {
     surface: &'a S,
     curve: &'a C,
     p: DVec3,
@@ -22,7 +22,7 @@ pub struct ZerCSParFunc<'a, S, C, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d
     _tools: std::marker::PhantomData<fn(&S, &C) -> (PS, CT)>,
 }
 
-impl<'a, S, C, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>>
+impl<'a, S: ?Sized, C: ?Sized, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>>
     ZerCSParFunc<'a, S, C, PS, CT>
 {
     /// OCCT IntImp_ZerCSParFunc(S, C) — gxx L23-29.
@@ -57,7 +57,7 @@ impl<'a, S, C, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>>
     }
 }
 
-impl<'a, S, C, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>> ZerCSAccessors<S, C>
+impl<'a, S: ?Sized, C: ?Sized, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>> ZerCSAccessors<S, C>
     for ZerCSParFunc<'a, S, C, PS, CT>
 {
     fn root(&self) -> f64 {
@@ -74,7 +74,7 @@ impl<'a, S, C, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>> ZerCSA
     }
 }
 
-impl<'a, S, C, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>>
+impl<'a, S: ?Sized, C: ?Sized, PS: PSurfaceTool<Surface = S>, CT: CurveTool3d<Curve = C>>
     FunctionSetWithDerivatives for ZerCSParFunc<'a, S, C, PS, CT>
 {
     /// OCCT NbVariables() — gxx L31-34.

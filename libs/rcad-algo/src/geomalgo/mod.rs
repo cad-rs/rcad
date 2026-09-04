@@ -23,6 +23,7 @@ pub mod intf_interference_polygon_polyhedron; // Intf_InterferencePolygonPolyhed
 pub mod int_curve_generics; // IntCurve_Polygon2dGen / DistBetweenPCurvesGen / ExactIntersectionPoint
 pub mod int_imp;       // IntImp (ZerCSParFunc + IntCS curve-surface root solver)
 pub mod int_curv_surf; // IntCurveSurface polygon/polyhedron sampling + IntPatch_Polyhedron
+pub mod int_curve_surface; // IntCurveSurface HInter assembly (data classes + tools + Inter.pxx/InterUtils.pxx + HInter)
 pub mod hatch;       // Geom2dHatch (Elements container + Intersector local geometry)
 pub mod geom2d_gcc;   // Geom2dGcc (tangent-line constraint: Lin2d2Tan + iter solver)
 pub mod geom2d_int;   // Geom2dInt (imp-par chain: IntConicCurveOfGInter + Intersector)
@@ -50,3 +51,4 @@ pub use intf::{
     PolygonLike,
 };
 pub use int_curv_surf::{IntPatchPolyhedron, ThePolygonOfHInter, ThePolyhedronOfHInter};
+pub use int_curve_surface::HInter;

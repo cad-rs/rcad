@@ -1317,3 +1317,225 @@ impl ToolPolyh<ThePolyhedronOfHInter> for ThePolyhedronToolOfHInter {
 /// engine stores no template-typed state, so the instantiation is the
 /// tool-marker pair used at the call sites.
 pub type TheInterferenceOfHInter = crate::geomalgo::intf_interference_polygon_polyhedron::InterferencePolygonPolyhedron;
+
+// ---------------------------------------------------------------------------
+// Tool-driven constructors — the OCCT IntCurveSurface_ThePolygonOfHInter /
+// ThePolyhedronOfHInter constructors take the ADAPTOR
+// (occ::handle<Adaptor3d_Curve> / Adaptor3d_Surface) and sample through
+// IntCurveSurface_TheHCurveTool / Adaptor3d_HSurfaceTool (the polygon via
+// IntCurveSurface_PolygonUtils::Init<CurveType, CurveTool>, the polyhedron
+// via GeomGridEval_Surface).  The evaluators below route the sampling
+// through the tool traits; the landed constructors above are the same code
+// instantiated over the raw geometry evaluators.
+// ---------------------------------------------------------------------------
+
+use std::marker::PhantomData;
+
+use crate::geomalgo::int_curve_surface::{HCurveTool, HSurfaceTool};
+use crate::geomalgo::intf::{PolygonLike, PolyhedronLike};
+
+/// Curve evaluator over a tool-described adaptor (the TheCurveTool
+/// dispatch of IntCurveSurface_PolygonUtils::Init).
+pub struct CurveEvalByTool<'a, C: ?Sized, CT> {
+    curve: &'a C,
+    _tool: PhantomData<fn(&CT)>,
+}
+
+impl<'a, C: ?Sized, CT: HCurveTool<Curve = C>> CurveEval for CurveEvalByTool<'a, C, CT> {
+    fn point_at(&self, t: f64) -> DVec3 {
+        CT::value(self.curve, t)
+    }
+    fn tangent_at(&self, t: f64) -> DVec3 {
+        CT::d1(self.curve, t).1.normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        [CT::first_parameter(self.curve), CT::last_parameter(self.curve)]
+    }
+}
+
+/// Surface evaluator over a tool-described adaptor (the GeomGridEval_Surface
+/// dispatch of IntCurveSurface_ThePolyhedronOfHInter::Init).
+pub struct SurfaceEvalByTool<'a, S: ?Sized, ST> {
+    surface: &'a S,
+    _tool: PhantomData<fn(&ST)>,
+}
+
+impl<'a, S: ?Sized, ST: HSurfaceTool<Surface = S>> SurfaceEval for SurfaceEvalByTool<'a, S, ST> {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        ST::d0(self.surface, u, v)
+    }
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let (_p, d1u, d1v) = ST::d1(self.surface, u, v);
+        d1u.cross(d1v).normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 4] {
+        [
+            ST::first_u_parameter(self.surface),
+            ST::last_u_parameter(self.surface),
+            ST::first_v_parameter(self.surface),
+            ST::last_v_parameter(self.surface),
+        ]
+    }
+}
+
+impl ThePolygonOfHInter {
+    /// OCCT IntCurveSurface_ThePolygonOfHInter(Curve, NbPnt) over the
+    /// adaptor — Binf/Bsup from TheHCurveTool::First/LastParameter
+    /// (ThePolygonOfHInter.cxx L28-38).
+    pub fn new_tool<C: ?Sized, CT: HCurveTool<Curve = C>>(curve: &C, nb_pnt: usize) -> Self {
+        let nb = if nb_pnt < 5 { 5 } else { nb_pnt };
+        let mut poly = ThePolygonOfHInter {
+            bnd: BndBox::new(),
+            deflection: 0.0,
+            nb_pnt_in: nb,
+            points: Vec::with_capacity(nb),
+            closed_polygon: false,
+            binf: CT::first_parameter(curve),
+            bsup: CT::last_parameter(curve),
+            params: None,
+        };
+        poly.init_uniform(&CurveEvalByTool::<C, CT> { curve, _tool: PhantomData });
+        poly
+    }
+
+    /// OCCT IntCurveSurface_ThePolygonOfHInter(Curve, U1, U2, NbPnt)
+    /// (ThePolygonOfHInter.cxx L42-54).
+    pub fn new_tool_range<C: ?Sized, CT: HCurveTool<Curve = C>>(
+        curve: &C,
+        u1: f64,
+        u2: f64,
+        nb_pnt: usize,
+    ) -> Self {
+        let nb = if nb_pnt < 5 { 5 } else { nb_pnt };
+        let mut poly = ThePolygonOfHInter {
+            bnd: BndBox::new(),
+            deflection: 0.0,
+            nb_pnt_in: nb,
+            points: Vec::with_capacity(nb),
+            closed_polygon: false,
+            binf: u1,
+            bsup: u2,
+            params: None,
+        };
+        poly.init_uniform(&CurveEvalByTool::<C, CT> { curve, _tool: PhantomData });
+        poly
+    }
+
+    /// OCCT IntCurveSurface_ThePolygonOfHInter(Curve, Upars)
+    /// (ThePolygonOfHInter.cxx L58-68).
+    pub fn new_tool_params<C: ?Sized, CT: HCurveTool<Curve = C>>(curve: &C, u_pars: &[f64]) -> Self {
+        let nb = u_pars.len();
+        let mut poly = ThePolygonOfHInter {
+            bnd: BndBox::new(),
+            deflection: 0.0,
+            nb_pnt_in: nb,
+            points: Vec::with_capacity(nb),
+            closed_polygon: false,
+            binf: u_pars[0],
+            bsup: u_pars[nb - 1],
+            params: None,
+        };
+        poly.init_with_params(&CurveEvalByTool::<C, CT> { curve, _tool: PhantomData }, u_pars);
+        poly
+    }
+}
+
+impl ThePolyhedronOfHInter {
+    /// OCCT IntCurveSurface_ThePolyhedronOfHInter(Surface, nbdU, nbdV, U1,
+    /// V1, U2, V2) over the adaptor (ThePolyhedronOfHInter.cxx L46-70).
+    pub fn new_tool<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+        surface: &S,
+        nbdu: usize,
+        nbdv: usize,
+        u1: f64,
+        v1: f64,
+        u2: f64,
+        v2: f64,
+    ) -> Self {
+        let nbdu = if nbdu < 3 { 3 } else { nbdu };
+        let nbdv = if nbdv < 3 { 3 } else { nbdv };
+        let mut poly = ThePolyhedronOfHInter {
+            nb_delta_u: nbdu,
+            nb_delta_v: nbdv,
+            bnd: BndBox::new(),
+            components_bnd: Vec::new(),
+            deflection: epsilon_100(),
+            points: Vec::new(),
+            us: Vec::new(),
+            vs: Vec::new(),
+            is_on_bounds: Vec::new(),
+            u_min_singular: false,
+            u_max_singular: false,
+            v_min_singular: false,
+            v_max_singular: false,
+            border_deflection: 0.0,
+        };
+        poly.init_uniform(
+            &SurfaceEvalByTool::<S, ST> { surface, _tool: PhantomData },
+            u1,
+            v1,
+            u2,
+            v2,
+        );
+        poly
+    }
+
+    /// OCCT IntCurveSurface_ThePolyhedronOfHInter(Surface, Upars, Vpars)
+    /// (ThePolyhedronOfHInter.cxx L72-98).
+    pub fn new_tool_params<S: ?Sized, ST: HSurfaceTool<Surface = S>>(
+        surface: &S,
+        u_pars: &[f64],
+        v_pars: &[f64],
+    ) -> Self {
+        assert!(
+            u_pars.len() >= 2 && v_pars.len() >= 2,
+            "IntCurveSurface_ThePolyhedronOfHInter() - parameter arrays must contain at least two values"
+        );
+        let nbdu = u_pars.len() - 1;
+        let nbdv = v_pars.len() - 1;
+        let mut poly = ThePolyhedronOfHInter {
+            nb_delta_u: nbdu,
+            nb_delta_v: nbdv,
+            bnd: BndBox::new(),
+            components_bnd: Vec::new(),
+            deflection: epsilon_100(),
+            points: Vec::new(),
+            us: Vec::new(),
+            vs: Vec::new(),
+            is_on_bounds: Vec::new(),
+            u_min_singular: false,
+            u_max_singular: false,
+            v_min_singular: false,
+            v_max_singular: false,
+            border_deflection: 0.0,
+        };
+        poly.init_with_params(
+            &SurfaceEvalByTool::<S, ST> { surface, _tool: PhantomData },
+            u_pars,
+            v_pars,
+        );
+        poly
+    }
+}
+
+/// OCCT IntCurveSurface_ThePolyhedronOfHInter is the PolyhedronType of the
+/// HInter assembly (IntCurveSurface_InterUtils::SectionPointToParameters).
+impl PolyhedronLike for ThePolyhedronOfHInter {
+    fn triangle(&self, t: usize) -> (usize, usize, usize) {
+        ThePolyhedronOfHInter::triangle(self, t)
+    }
+    fn point(&self, index: usize) -> DVec3 {
+        ThePolyhedronOfHInter::point(self, index)
+    }
+    fn parameters(&self, index: usize) -> (f64, f64) {
+        ThePolyhedronOfHInter::parameters(self, index)
+    }
+}
+
+/// OCCT IntCurveSurface_ThePolygonOfHInter is the PolygonType of the HInter
+/// assembly.
+impl PolygonLike for ThePolygonOfHInter {
+    fn approx_param_on_curve(&self, index: usize, param_on_line: f64) -> f64 {
+        ThePolygonOfHInter::approx_param_on_curve(self, index, param_on_line)
+    }
+}

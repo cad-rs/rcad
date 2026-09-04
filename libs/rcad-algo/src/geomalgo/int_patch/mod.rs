@@ -24,6 +24,7 @@ pub mod w_line_tool;
 pub mod transitions;
 pub mod int_cs;
 pub mod int_conic_quad;
+pub mod int_lin_torus;
 pub mod so_on_bounds;
 pub mod restriction;
 pub mod elclib;
