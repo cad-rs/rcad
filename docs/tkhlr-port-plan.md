@@ -292,3 +292,35 @@ Poly_Triangulation/Polygon3D/PolygonOnTriangulation/BRepMesh 依赖 ——
 - [ ] **Stage 4c** occt-test-gen hlr 接入
 - [ ] **Stage 4d** exact_hlr 3 用例闭环 + module-map 更新
 - [ ] Stage 5 poly 线路（用户决策后另立计划）
+
+## 8. Session 交接记录（2026-09-04，2a-2 全部 + 2a-3①②③ 完成）
+
+**接续提示词：读本文档 §0 + §7 + §8，从 §7 第一个未勾选项（2a-3④，勘察已在文档头部快照）继续。**
+
+### 本 session 提交链（rcad 子模块 sd-hash-wip，全部零回归）
+
+| commit | 内容 |
+|---|---|
+| `57ab4ff5` | **2a-2 完成**：IntImpParGen_Intersector.gxx（824）从 geom2d_int.rs 的 GInter 硬编码副本泛型化为 `int_imp_par_gen.rs::Intersector<C: ?Sized, PT: ParTool<C>, JT: ProjectOnPCurveTool<C>>`（+IntImpParGen.cxx 静态函数 + 泛化 MyImpParTool）；IntConicCurve 双泛型 = `int_conic_curve_gen.rs`（gxx 92 + lxx）+ `user_int_conic_curve_gen.rs`（889：5 ctor/5 Perform/5 InternalPerform）；geom2d_int.rs 净删 1134 行，GInter 实例化 = `impl<'a> ParTool<dyn Curve2dAdaptor + 'a>` marker（Geom2dCurveTool/TheProjPCurOfGInter）+ 具体薄壳包装 |
+| `5cde756c` | **2a-3①**：Intf_InterferencePolygonPolyhedron.gxx（1368）→ `intf_interference_polygon_polyhedron.rs`（7 ctor/6 Perform/Interference±normal 双穿越/MKK 边界外扩/Intersect 5 参+9 参/sVertex-sEdge-dPiE 分类/KHROMOV 边界挠度分支/Extrema_ExtElC 边贴近尾段）+ Intf::PlaneEquation + ToolPolygon3d/ToolPolyh trait + TheInterferenceOfHInter alias |
+| `f528da46` | **2a-3②**：Intf_InterferencePolygon2d.cxx（819）→ `intf_interference_polygon2d.rs`（自/双干涉、Clean 的 Only1Seg 怪癖与 decal 回卷、Intersect 的 parO/parT 1-based 槽 + sinTeta/rayIntf 相切带 + L718 封闭接缝 guard）；Polygon2dGen 实现 IntfPolygon2d trait |
+| `3466868b` | **2a-3③**：IntCurve_IntPolyPolyGen.gxx（1797）→ `int_poly_poly_gen.rs`（Perform 双曲线公共版 + 自交版 + findIntersect + HeadOrEndPoint + GetIntersection 递归二分；**gxx L1390 的 Tol/TolConf 递归换位怪癖照抄**）；geom2d_int.rs 新增 GInterPolyTool<'a> 三合一工具 marker + TheIntPCurvePCurveOfGInter 具体壳；int_curve_curve_gen.rs 补 `intcurvcurv` 成员（GInter 第三个子引擎）并接通两个 unimplemented 臂 |
+| `6b331eee`/`10ece47f`/`49bfb935`/`9a69c4a6` | 文档 runway 更新（2a-3④ 勘察清单在文档头部快照：Inter.pxx/InterUtils.pxx 函数级清单、依赖状态、④-a/④-b/④-c 切分） |
+
+### 回归基线（全绿，以此为准）
+
+algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645**、tkgeom_algo_gtests **134+1**、tkhelix **16**、pavefiller **26**。锚点测试全部在各自模块 `#[cfg(test)]` 内（tkgeom_algo_gtests.rs 是外部遗留修改区，勿动）。
+
+### 本 session 新确立的翻译模式（沿例勿改）
+
+1. **曲线类型也是模板参数**：`ParTool<C: ?Sized>` / `ProjectOnPCurveTool<C>` / `PCurveTool<C>` 把曲线类型做成 trait 泛型参数（OCCT 模板的 ParCurve/TheCurve）。**禁忌**：关联类型写 `type Curve = dyn Trait` 会固化 `+ 'static`，破坏 C++ `const Adaptor2d_Curve2d&` 的生命周期弹性（E0521）——正确做法是 marker 带 `PhantomData<&'a ()>` + `impl<'a> Trait<dyn Trait + 'a> for Marker<'a>`（见 GInterPolyTool<'a>），或引擎方法级泛型 + 具体壳内 helper-fn（`fn engine<'a>() -> Intersector<dyn Curve2dAdaptor + 'a, ...>`）。
+2. **具体壳包装泛型引擎**：OCCT `_0.cxx` 具体实例化 = rcad 具体薄壳结构体（持有 base/域等无生命周期状态），方法内构造泛型引擎（helper-fn 技巧），perform 后拷回 base——递归状态在单次 perform 内保持（IntPolyPolyGen 的 RecursD1/D2 递归即此）。
+3. **macro_rules 在 impl 块内的 hygiene**：宏体引用 `self`/局部变量（如 `composite`）必须在**函数体内**定义宏（int_curve_curve_gen.rs 的 finish! 先例），impl 层定义会 hygiene 失败。
+4. **已踩坑**：bash 管道 `| tail` 会吞掉 python 的失败退出码 → 后续 `rm` 误删暂存文件（两次中招）——append+rm 必须分开两条命令并先验证；`python -c "..."` 内含反引号/`\U` 会转义地狱——大段脚本一律 Write 落盘再跑。
+
+### 下一 session 入口（按序）
+
+1. **2a-3④**：IntCurveSurface_HInter 组装（勘察清单/④-a④-b④-c 切分见文档头部快照）。
+2. **2a-4**：Adaptor3d_TopolTool/BRepTopAdaptor_TopolTool/HVertex/BRepAdaptor_Curve2d（Contap_TheSearch 依赖；也是 HInter 的 BSplineSurface-TopolTool 分支依赖）。
+3. **2b**：Contap 包 1:1（SurfProps→HContTool→HCurve2dTool→Point/Line→SurfFunction→ArcFunction→ContAna→Contour 2389 行）。
+
