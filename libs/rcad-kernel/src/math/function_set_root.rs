@@ -621,6 +621,15 @@ impl FunctionSetRoot {
         self.done
     }
 
+    /// OCCT SetTolerance(theTolerance) — math_FunctionSetRoot.cxx L777-783:
+    /// copies the per-variable stop tolerances (called after the 2-arg
+    /// constructor and before Perform).
+    pub fn set_tolerance(&mut self, the_tolerance: &[f64]) {
+        for (dst, src) in self.tol.iter_mut().zip(the_tolerance.iter()) {
+            *dst = *src;
+        }
+    }
+
     /// OCCT Root(V) 鈥?panics when not done.
     pub fn root(&self) -> Vec<f64> {
         assert!(self.done, "FunctionSetRoot: not done");
@@ -765,7 +774,7 @@ impl FunctionSetRoot {
             for i in 0..ninc {
                 self.sol[i] += ambda * self.dh[i];
             }
-            for i in 0..ninc {
+for i in 0..ninc {
                 self.is_divergent = self.is_divergent
                     || self.sol[i] < the_inf_bound[i]
                     || self.sol[i] > the_sup_bound[i];
