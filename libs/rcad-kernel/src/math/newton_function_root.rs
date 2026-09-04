@@ -77,6 +77,10 @@ impl NewtonFunctionRoot {
             let ok = f.values(self.x);
 
             if let Some((fxv, dfxv)) = ok {
+                // OCCT: F.Values(X, Fx, DFx) writes Fx before the step, so the
+                // loop condition sees the value at the current X.
+                fx = fxv;
+                self._dfx = dfxv;
                 let abs_fx = fxv.abs();
                 if abs_fx < best_fx {
                     best_fx = abs_fx;
