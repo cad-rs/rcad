@@ -15,6 +15,7 @@ pub mod math_jacobi;
 pub mod math_poly;
 pub mod newton_function_root;
 pub mod trig_equation_function;
+pub mod math_recipes;
 pub mod function_set_root;
 pub mod p_lib_jacobi;
 pub mod p_lib_jacobi_data;
