@@ -11,6 +11,7 @@
 //!   WiresBlock, poly data structures, EdgeIterator)
 
 pub mod algo;
+pub mod contap;
 pub mod intrv;
 pub mod top_bas;
 pub mod top_cnx;

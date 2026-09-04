@@ -10,6 +10,7 @@
 // (TKTopAlgo -> BRepClass -> IntRes2d).
 
 pub mod int_patch;   // IntPatch + IntAna + IntCurveSurface intersection chain
+pub mod extrema_gen_ext_pc2d; // Extrema_EPCOfExtPC2d (GGenExtPC + GFuncExtPC 2D instantiation)
 pub mod int_res2d;   // IntRes2d (2D intersection data types)
 pub mod int_surf;    // IntSurf (Quadric, LineOn2S, PntOn2S)
 pub mod top_trans;   // TopTrans (CurveTransition, SurfaceTransition)

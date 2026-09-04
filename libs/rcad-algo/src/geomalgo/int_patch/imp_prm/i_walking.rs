@@ -14,9 +14,61 @@ use rcad_kernel::geom::{Surface3, SurfaceEval};
 
 use crate::geomalgo::int_surf::{LineOn2S, PntOn2S};
 
-use super::function_set_root::FunctionSetRoot;
+use super::function_set_root::{FunctionSetRoot, FunctionSetWithDerivatives2};
 use super::path_point::{InteriorPoint, PathPoint};
 use super::surf_function::SurfFunction;
+
+/// OCCT IntWalk_IWalking template parameter `TheIWFunction` — the surface
+/// function the walking algorithm drives (math_FunctionSetWithDerivatives
+/// shape).  The template argument maps to this trait: the IntPatch
+/// instantiation is [`SurfFunction`], the Contap instantiation lives in
+/// `hlr::contap::surf_function`.
+pub trait IWFunction: Clone + FunctionSetWithDerivatives2 {
+    /// OCCT Derivatives(X, D).
+    fn derivatives(&mut self, x: &[f64; 2]) -> Option<[f64; 2]>;
+    /// OCCT Root().
+    fn root(&self) -> f64;
+    /// OCCT IsTangent().
+    fn is_tangent(&mut self) -> bool;
+    /// OCCT Direction3d().
+    fn direction_3d(&mut self) -> DVec3;
+    /// OCCT Direction2d().
+    fn direction_2d(&mut self) -> DVec2;
+    /// OCCT Point().
+    fn point(&self) -> DVec3;
+    /// OCCT Func.Set(Caro) — re-bind the function to the surface.
+    fn set_surface(&mut self, s: &Surface3);
+    /// OCCT ThePSurfaceTool::Value(Func.PSurface(), U, V) — the surface
+    /// point the function is bound to.
+    fn surface_value(&self, u: f64, v: f64) -> DVec3;
+}
+
+impl IWFunction for SurfFunction {
+    fn derivatives(&mut self, x: &[f64; 2]) -> Option<[f64; 2]> {
+        SurfFunction::derivatives(self, x)
+    }
+    fn root(&self) -> f64 {
+        SurfFunction::root(self)
+    }
+    fn is_tangent(&mut self) -> bool {
+        SurfFunction::is_tangent(self)
+    }
+    fn direction_3d(&mut self) -> DVec3 {
+        SurfFunction::direction_3d(self)
+    }
+    fn direction_2d(&mut self) -> DVec2 {
+        SurfFunction::direction_2d(self)
+    }
+    fn point(&self) -> DVec3 {
+        SurfFunction::point(self)
+    }
+    fn set_surface(&mut self, s: &Surface3) {
+        SurfFunction::set_surface(self, s.clone())
+    }
+    fn surface_value(&self, u: f64, v: f64) -> DVec3 {
+        self.p_surface().point_at(u, v)
+    }
+}
 
 // OCCT constants (IntWalk_IWalking.gxx L36-40).
 const COS_REF_3D: f64 = 0.98; // correspond to 11.478 deg
@@ -429,8 +481,8 @@ impl IWalking {
     }
 
     /// OCCT IsTangentExtCheck (gxx L52-88).
-    fn is_tangent_ext_check(
-        func: &mut SurfFunction,
+    fn is_tangent_ext_check<F: IWFunction>(
+        func: &mut F,
         u: f64,
         v: f64,
         step_u: f64,
@@ -468,11 +520,11 @@ impl IWalking {
     /// `domain` is the corrected face UV rectangle ([u_min, u_max, v_min,
     /// v_max]) — the OCCT adaptor surface carries the restricted face domain,
     /// while the rcad Surface3 exposes the natural (possibly infinite) domain.
-    pub fn perform(
+    pub fn perform<F: IWFunction>(
         &mut self,
         pnts1: &[PathPoint],
         pnts2: &[InteriorPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         caro: &Surface3,
         domain: [f64; 4],
         reversed: bool,
@@ -575,7 +627,7 @@ impl IWalking {
             v_resolution(domain, rcad_kernel::precision::CONFUSION),
         ];
 
-        func.set_surface(caro.clone());
+        func.set_surface(&caro.clone());
 
         if self.my_s_range_u.delta() > self.tolerance[0].max(rcad_kernel::precision::PCONFUSION) {
             self.my_s_range_u.enlarge(self.my_s_range_u.delta());
@@ -640,10 +692,10 @@ impl IWalking {
     /// OCCT Perform(Pnts1, Func, Caro, Reversed) (gxx L317-391) — without
     /// interior points.
     #[allow(dead_code)]
-    pub fn perform_no_interior(
+    pub fn perform_no_interior<F: IWFunction>(
         &mut self,
         pnts1: &[PathPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         caro: &Surface3,
         domain: [f64; 4],
         reversed: bool,
@@ -706,7 +758,7 @@ impl IWalking {
             self.vm = vtemp;
         }
 
-        func.set_surface(caro.clone());
+        func.set_surface(&caro.clone());
 
         if nb_pnts1 != 0 {
             self.compute_open_line(&u_mult, &v_mult, pnts1, func, &mut rajout);
@@ -862,11 +914,11 @@ impl IWalking {
     // =====================================================================
     // TestArretPassage — open lines (gxx L593-775)
     // =====================================================================
-    fn test_arret_passage_open(
+    fn test_arret_passage_open<F: IWFunction>(
         &mut self,
         u_mult: &[f64],
         v_mult: &[f64],
-        func: &mut SurfFunction,
+        func: &mut F,
         uv: &mut [f64; 2],
         irang: &mut i32,
     ) -> bool {
@@ -1132,9 +1184,9 @@ impl IWalking {
     // =====================================================================
     // TestArretAjout (gxx L965-1031)
     // =====================================================================
-    fn test_arret_ajout(
+    fn test_arret_ajout<F: IWFunction>(
         &mut self,
-        func: &mut SurfFunction,
+        func: &mut F,
         uv: &mut [f64; 2],
         irang: &mut i32,
         psol: &mut PntOn2S,
@@ -1181,9 +1233,9 @@ impl IWalking {
     // =====================================================================
     // FillPntsInHoles (gxx L1033-1181)
     // =====================================================================
-    fn fill_pnts_in_holes(
+    fn fill_pnts_in_holes<F: IWFunction>(
         &mut self,
-        func: &mut SurfFunction,
+        func: &mut F,
         mut copy_seq_alone: Vec<i32>,
         pnts_in_holes: &mut Vec<InteriorPoint>,
     ) {
@@ -1342,12 +1394,12 @@ impl IWalking {
     // =====================================================================
     // TestArretCadre (gxx L1183-1397)
     // =====================================================================
-    fn test_arret_cadre(
+    fn test_arret_cadre<F: IWFunction>(
         &mut self,
         u_mult: &[f64],
         v_mult: &[f64],
         line: &mut IWLine,
-        func: &mut SurfFunction,
+        func: &mut F,
         uv: &mut [f64; 2],
         irang: &mut i32,
     ) {
@@ -1518,9 +1570,9 @@ impl IWalking {
     // =====================================================================
     // TestDeflection (gxx L2628-2899)
     // =====================================================================
-    fn test_deflection(
+    fn test_deflection<F: IWFunction>(
         &mut self,
-        func: &mut SurfFunction,
+        func: &mut F,
         finished: bool,
         uv: &[f64; 2],
         status_precedent: StatusDeflection,
@@ -1726,12 +1778,12 @@ impl IWalking {
     // =====================================================================
     // ComputeOpenLine (gxx L1414-1928)
     // =====================================================================
-    fn compute_open_line(
+    fn compute_open_line<F: IWFunction>(
         &mut self,
         u_mult: &[f64],
         v_mult: &[f64],
         pnts1: &[PathPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         rajout: &mut bool,
     ) {
         let mut i: usize = 1;
@@ -2154,13 +2206,13 @@ impl IWalking {
     // =====================================================================
     // ComputeCloseLine (gxx L2007-2624)
     // =====================================================================
-    fn compute_close_line(
+    fn compute_close_line<F: IWFunction>(
         &mut self,
         u_mult: &[f64],
         v_mult: &[f64],
         pnts1: &[PathPoint],
         pnts2: &[InteriorPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         rajout: &mut bool,
     ) {
         let mut i: usize = 1;
@@ -2724,19 +2776,19 @@ impl IWalking {
     // =====================================================================
     // MakeWalkingPoint (gxx L2918-2951)
     // =====================================================================
-    fn make_walking_point(&mut self, case: i32, u: f64, v: f64, func: &mut SurfFunction, psol: &mut PntOn2S) {
+    fn make_walking_point<F: IWFunction>(&mut self, case: i32, u: f64, v: f64, func: &mut F, psol: &mut PntOn2S) {
         make_walking_point(self.reversed, case, u, v, func, psol);
     }
 
     // =====================================================================
     // OpenLine (gxx L2953-2998)
     // =====================================================================
-    fn open_line(
+    fn open_line<F: IWFunction>(
         &mut self,
         n: i32,
         psol: &PntOn2S,
         pnts1: &[PathPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         line: &mut IWLine,
     ) {
         let mut uv = [0.0f64; 2];
@@ -2834,13 +2886,13 @@ impl IWalking {
     // =====================================================================
     // IsPointOnLine(IntSurf_PntOn2S, Binf, Bsup, Solver, Func) (gxx L3059-3152)
     // =====================================================================
-    fn is_point_on_line(
+    fn is_point_on_line<F: IWFunction>(
         &mut self,
         p_on_2s: &PntOn2S,
         inf_bounds: &[f64; 2],
         sup_bounds: &[f64; 2],
         solver: &mut FunctionSetRoot,
-        func: &mut SurfFunction,
+        func: &mut F,
     ) -> bool {
         let eps = f64::EPSILON; // OCCT: Epsilon(1.) = ULP of 1.0.
         let a_p3d = p_on_2s.value();
@@ -2911,8 +2963,8 @@ impl IWalking {
 
             let a_vec_prms2 = solver.root();
 
-            let pa = func.p_surface().point_at(a_umin, a_vmin);
-            let pb = func.p_surface().point_at(a_vec_prms2[0], a_vec_prms2[1]);
+            let pa = func.surface_value(a_umin, a_vmin);
+            let pb = func.surface_value(a_vec_prms2[0], a_vec_prms2[1]);
             let a_sq_d1 = pb.distance_squared(a_p3d);
             let a_sq_d2 = pa.distance_squared(pb);
 
@@ -2925,12 +2977,12 @@ impl IWalking {
 }
 
 /// OCCT IntWalk_IWalking::MakeWalkingPoint (gxx L2918-2951) — free function.
-fn make_walking_point(
+fn make_walking_point<F: IWFunction>(
     reversed: bool,
     case: i32,
     u: f64,
     v: f64,
-    func: &mut SurfFunction,
+    func: &mut F,
     psol: &mut PntOn2S,
 ) {
     if case == 1 || case == 2 {
@@ -2943,7 +2995,7 @@ fn make_walking_point(
 }
 
 /// OCCT TestPassedSolutionWithNegativeState (gxx L1931-2002).
-fn test_passed_solution_with_negative_state(
+fn test_passed_solution_with_negative_state<F: IWFunction>(
     wd: &[WalkingData],
     u_mult: &[f64],
     v_mult: &[f64],
@@ -2951,7 +3003,7 @@ fn test_passed_solution_with_negative_state(
     prev_vp: f64,
     nb_multiplicities: &[i32],
     tolerance: &[f64; 2],
-    func: &mut SurfFunction,
+    func: &mut F,
     uv: &mut [f64; 2],
     irang: &mut i32,
 ) -> bool {

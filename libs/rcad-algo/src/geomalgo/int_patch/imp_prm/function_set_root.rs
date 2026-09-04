@@ -14,6 +14,39 @@ use rcad_kernel::math::root::FunctionValue;
 
 use super::surf_function::SurfFunction;
 
+/// OCCT math_FunctionSetWithDerivatives — the 2-variable / 1-equation
+/// interface consumed by math_FunctionSetRoot.  The template parameter of
+/// the OCCT solver maps to this trait; both the IntPatch SurfFunction and
+/// the Contap SurfFunction implement it.
+pub trait FunctionSetWithDerivatives2 {
+    /// OCCT Value(X, F).
+    fn value(&mut self, x: &[f64; 2]) -> Option<f64>;
+    /// OCCT Values(X, F, D).
+    fn values(&mut self, x: &[f64; 2]) -> Option<(f64, [f64; 2])>;
+    /// OCCT Tolerance().
+    fn tolerance(&self) -> f64;
+    /// OCCT GetStateNumber().
+    fn get_state_number(&mut self) -> i32 {
+        0
+    }
+}
+
+/// The IntPatch instantiation (IntPatch_SurfFunction).
+impl FunctionSetWithDerivatives2 for SurfFunction {
+    fn value(&mut self, x: &[f64; 2]) -> Option<f64> {
+        SurfFunction::value(self, x)
+    }
+    fn values(&mut self, x: &[f64; 2]) -> Option<(f64, [f64; 2])> {
+        SurfFunction::values(self, x)
+    }
+    fn tolerance(&self) -> f64 {
+        SurfFunction::tolerance(self)
+    }
+    fn get_state_number(&mut self) -> i32 {
+        SurfFunction::get_state_number(self)
+    }
+}
+
 const EPS: f64 = 1e-32;
 const EPS2: f64 = 1e-64;
 const EPS_SQRT: f64 = 1e-16;
@@ -23,22 +56,22 @@ const PROGRES: f64 = 0.005;
 /// search / minimization (OCCT MyDirFunction, math_FunctionSetRoot.cxx L70-195).
 /// `f` is a raw pointer, mirroring the OCCT `void* F` (the function is owned
 /// by the caller, alive for the whole Perform).
-struct DirFunction {
+struct DirFunction<F: ?Sized> {
     p0: [f64; 2],
     dir: [f64; 2],
     p: [f64; 2],
     fv: [f64; 1],
-    f: *mut SurfFunction,
+    f: *mut F,
 }
 
-impl DirFunction {
-    fn new(f: &mut SurfFunction) -> Self {
+impl<F: ?Sized + FunctionSetWithDerivatives2> DirFunction<F> {
+    fn new(f: &mut F) -> Self {
         DirFunction {
             p0: [0.0; 2],
             dir: [0.0; 2],
             p: [0.0; 2],
             fv: [0.0],
-            f: f as *mut SurfFunction,
+            f: f as *mut F,
         }
     }
 
@@ -57,7 +90,7 @@ impl DirFunction {
         f2: &mut f64,
         gnr1: &mut f64,
     ) -> bool {
-        let func = unsafe { &mut *self.f };
+        let func: &mut F = unsafe { &mut *self.f };
         let Some((val, d)) = func.values(&sol) else {
             return false;
         };
@@ -76,7 +109,7 @@ impl DirFunction {
     }
 }
 
-impl FunctionValue for DirFunction {
+impl<F: ?Sized + FunctionSetWithDerivatives2> FunctionValue for DirFunction<F> {
     /// OCCT MyDirFunction::Value(x, fval) (L120-150): F along the direction.
     fn value(&mut self, x: f64) -> Option<f64> {
         for i in 0..2 {
@@ -95,14 +128,14 @@ impl FunctionValue for DirFunction {
 
 /// OCCT MinimizeDirection (math_FunctionSetRoot.cxx L198-264) — minimization
 /// from three points P0, P1, P2.  `delta` is updated to `tsol * (P1 - P0)`.
-fn minimize_direction_3(
+fn minimize_direction_3<F: ?Sized + FunctionSetWithDerivatives2>(
     p0: &[f64; 2],
     p1: &[f64; 2],
     p2: &[f64; 2],
     f1: f64,
     delta: &mut [f64; 2],
     tol: &[f64; 2],
-    f: &mut DirFunction,
+    f: &mut DirFunction<F>,
 ) -> bool {
     // (1) Evaluation d'une tolerance parametrique 1D.
     let mut tol1d = 2.1f64;
@@ -154,7 +187,7 @@ fn minimize_direction_3(
 /// OCCT MinimizeDirection (math_FunctionSetRoot.cxx L266-436) — minimization
 /// from two points and a derivative.  `dir` is updated to `tsol * dir`.
 #[allow(clippy::too_many_arguments)]
-fn minimize_direction_2(
+fn minimize_direction_2<F: ?Sized + FunctionSetWithDerivatives2>(
     p: &[f64; 2],
     dir: &mut [f64; 2],
     p_value: f64,
@@ -162,7 +195,7 @@ fn minimize_direction_2(
     gradient: &[f64; 2],
     d_gradient: &[f64; 2],
     tol: &[f64; 2],
-    f: &mut DirFunction,
+    f: &mut DirFunction<F>,
 ) -> bool {
     if !p_value.is_finite() || !p_dir_value.is_finite() {
         return false;
@@ -428,7 +461,7 @@ pub struct FunctionSetRoot {
 
 impl FunctionSetRoot {
     /// OCCT math_FunctionSetRoot(F, Tolerance, NbIterations = 100).
-    pub fn new(_f: &mut SurfFunction, tol: [f64; 2]) -> Self {
+    pub fn new<F: ?Sized + FunctionSetWithDerivatives2>(_f: &mut F, tol: [f64; 2]) -> Self {
         FunctionSetRoot {
             done: false,
             sol: [0.0; 2],
@@ -444,9 +477,9 @@ impl FunctionSetRoot {
     }
 
     /// OCCT Perform(F, StartingPoint, InfBound, SupBound) (L796-1100).
-    pub fn perform(
+    pub fn perform<F: ?Sized + FunctionSetWithDerivatives2>(
         &mut self,
-        f: &mut SurfFunction,
+        f: &mut F,
         starting_point: [f64; 2],
         inf_bound: [f64; 2],
         sup_bound: [f64; 2],
