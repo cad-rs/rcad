@@ -279,9 +279,25 @@ impl<'a> Curve<'a> {
         self.c().d0(u)
     }
 
-    /// OCCT Tangent (cxx L301-313) — HLRBRep_CLProps dependency, Stage 3a-3.
-    pub fn tangent(&self, _at_start: bool) -> (glam::DVec2, glam::DVec2) {
-        todo!("HLRBRep_CLProps translation (Stage 3a-3)")
+    /// OCCT Tangent (cxx L301-313) — the 2D point and tangent at the start
+    /// (or end); a null first derivative falls to the higher-order
+    /// significant derivative through the CLProps.
+    pub fn tangent(&self, at_start: bool) -> (glam::DVec2, glam::DVec2) {
+        let u = if at_start {
+            self.c().first_parameter()
+        } else {
+            self.c().last_parameter()
+        };
+
+        let mut p = glam::DVec2::ZERO;
+        self.d0_2d(u, &mut p);
+        // HLRBRep_CLProps CLP(2, Epsilon(1.)); SetCurve; SetParameter(U).
+        let mut clp = super::cl_props::CLProps::new(2, f64::EPSILON);
+        clp.set_curve(self);
+        clp.set_parameter(u);
+        // StdFail_UndefinedDerivative_Raise_if(!CLP.IsTangentDefined()).
+        let d = clp.tangent().expect("StdFail_UndefinedDerivative");
+        (p, d)
     }
 
     /// OCCT FirstParameter (lxx).
@@ -538,6 +554,9 @@ mod tests {
         fn d1(&self, u: f64) -> (Point3, Vec3) {
             (Point3::new(u, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0))
         }
+        fn d2(&self, u: f64) -> (Point3, Vec3, Vec3) {
+            (Point3::new(u, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO)
+        }
         fn get_type(&self) -> CurveType {
             CurveType::Line
         }
@@ -635,5 +654,107 @@ mod tests {
         fn my_type_for_test(&self) -> CurveType {
             self.my_type
         }
+    }
+}
+
+#[cfg(test)]
+mod tangent_tests {
+    use super::*;
+    use glam::DVec3;
+    use rcad_kernel::math::gp::Ax2;
+
+    use crate::hlr::brep::b_curve_tool::CurveView;
+
+    // Re-export the line fixture shape from the primary test module via a
+    // local copy (the CurveView for a segment on X).
+    struct LineEdge(f64);
+
+    impl CurveView for LineEdge {
+        fn first_parameter(&self) -> f64 {
+            0.0
+        }
+        fn last_parameter(&self) -> f64 {
+            self.0
+        }
+        fn d0(&self, u: f64) -> Point3 {
+            Point3::new(u, 0.0, 0.0)
+        }
+        fn d1(&self, u: f64) -> (Point3, Vec3) {
+            (Point3::new(u, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0))
+        }
+        fn d2(&self, u: f64) -> (Point3, Vec3, Vec3) {
+            (Point3::new(u, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO)
+        }
+        fn get_type(&self) -> CurveType {
+            CurveType::Line
+        }
+        fn line(&self) -> rcad_kernel::geom::Line3 {
+            rcad_kernel::geom::Line3 {
+                origin: Point3::ZERO,
+                direction: Vec3::new(1.0, 0.0, 0.0),
+            }
+        }
+        fn circle(&self) -> Circle3 {
+            panic!("Standard_NoSuchObject");
+        }
+        fn ellipse(&self) -> rcad_kernel::geom::Ellipse3 {
+            panic!("Standard_NoSuchObject");
+        }
+        fn degree(&self) -> i32 {
+            0
+        }
+        fn nb_poles(&self) -> i32 {
+            0
+        }
+        fn nb_knots(&self) -> i32 {
+            0
+        }
+        fn is_closed(&self) -> bool {
+            false
+        }
+        fn is_periodic(&self) -> bool {
+            false
+        }
+        fn period(&self) -> f64 {
+            0.0
+        }
+        fn resolution(&self, r3d: f64) -> f64 {
+            r3d
+        }
+        fn parameter_3d(&self, p2d: f64) -> f64 {
+            p2d
+        }
+        fn poles(&self) -> Vec<Point3> {
+            Vec::new()
+        }
+    }
+
+    /// OCCT anchor: Tangent(AtStart) on the projected segment — the point
+    /// (0, 0) with tangent (1, 0); Tangent at end — (3, 0), (1, 0)
+    /// (cxx L301-313 through HLRBRep_CLProps).
+    #[test]
+    fn hlr_curve_tangent_at_ends() {
+        static PROJ: std::sync::OnceLock<Projector> = std::sync::OnceLock::new();
+        let proj: &'static Projector = PROJ.get_or_init(|| {
+            Projector::from_ax2(&Ax2::new(
+                DVec3::ZERO,
+                DVec3::new(0.0, 0.0, 1.0),
+                DVec3::new(1.0, 0.0, 0.0),
+            ))
+        });
+        static EDGE: std::sync::OnceLock<LineEdge> = std::sync::OnceLock::new();
+        let edge: &'static LineEdge = EDGE.get_or_init(|| LineEdge(3.0));
+
+        let mut c = Curve::new();
+        c.projector(proj);
+        c.load(edge);
+
+        let (p0, d0) = c.tangent(true);
+        assert!((p0.x - 0.0).abs() < 1e-12 && p0.y.abs() < 1e-12);
+        assert!((d0.x - 1.0).abs() < 1e-12 && d0.y.abs() < 1e-12);
+
+        let (p1, d1) = c.tangent(false);
+        assert!((p1.x - 3.0).abs() < 1e-12 && p1.y.abs() < 1e-12);
+        assert!((d1.x - 1.0).abs() < 1e-12 && d1.y.abs() < 1e-12);
     }
 }

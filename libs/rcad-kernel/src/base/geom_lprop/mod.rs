@@ -14,8 +14,18 @@ use crate::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval
 /// OCCT: `LProp_Status`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LPropStatus {
-    Defined,
+    /// OCCT `LProp_Undecided` (0).
     Undecided,
+    /// OCCT `LProp_Undefined` (1) — no significant derivative exists.
+    Undefined,
+    /// OCCT `LProp_Defined` (2).
+    Defined,
+    /// OCCT `LProp_Computed` (3).
+    Computed,
+    /// rcad-only (not in OCCT): the legacy concrete ClProps2d/ClProps3d
+    /// "no significant derivative" state; kept for those pre-existing
+    /// implementations. Appended last so the OCCT-ordered comparisons
+    /// (`>= Defined`) on the generic engine are unaffected.
     Zero,
 }
 
@@ -881,3 +891,6 @@ mod tests {
         assert!((gc - 1.0).abs() < 1e-7); // Unit sphere: K = 1
     }
 }
+
+pub mod cl_props_base;
+pub use cl_props_base::{CLPropsCurve2d, ClPropsBase};
