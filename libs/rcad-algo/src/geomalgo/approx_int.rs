@@ -312,6 +312,40 @@ pub struct MultiBSpCurve {
 }
 
 impl MultiBSpCurve {
+    /// OCCT AppParCurves_MultiBSpCurve(NbPol) (AppParCurves_MultiBSpCurve.cxx
+    /// L53-57) — myDegree = 0, NbPol empty multipoints.
+    pub fn new_nbpol(nbpol: usize) -> Self {
+        MultiBSpCurve {
+            degree: 0,
+            knots: Vec::new(),
+            mults: Vec::new(),
+            poles: vec![MultiPoint::default(); nbpol],
+        }
+    }
+
+    /// OCCT MultiBSpCurve::SetValue(i, MPole) (MultiCurve base behavior).
+    pub fn set_value(&mut self, i: usize, mp: MultiPoint) {
+        self.poles[i - 1] = mp;
+    }
+
+    /// OCCT MultiBSpCurve::SetKnots(theKnots) (AppParCurves_MultiBSpCurve.cxx
+    /// L85-89).
+    pub fn set_knots(&mut self, the_knots: &[f64]) {
+        self.knots = the_knots.to_vec();
+    }
+
+    /// OCCT MultiBSpCurve::SetMultiplicities(theMults)
+    /// (AppParCurves_MultiBSpCurve.cxx L93-98) — recomputes
+    /// myDegree = ComputeDegree(theMults, NbPoles()) = sum - NbPoles - 1.
+    pub fn set_multiplicities_i32(&mut self, the_mults: &[i32]) {
+        let mut sum = 0usize;
+        for v in the_mults {
+            sum += *v as usize;
+        }
+        self.mults = the_mults.iter().map(|v| *v as usize).collect();
+        self.degree = sum - self.nb_poles() - 1;
+    }
+
     /// OCCT MultiBSpCurve(CU, Knots, Mults): build from one Bezier MultiCurve.
     pub fn from_bezier(cu: &MultiCurve, knots: Vec<f64>, mults: Vec<usize>) -> Self {
         MultiBSpCurve {

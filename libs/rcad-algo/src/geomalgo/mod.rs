@@ -23,6 +23,7 @@ pub mod int_conic_conic; // IntCurve (PConic + PConicTool binding + IntConicConi
 pub mod int_curve_curve_gen; // IntCurve_IntCurveCurveGen == Geom2dInt_GInter dispatcher
 pub mod inter_cc;    // Geom2dAPI_InterCurveCurve (2D curve-curve intersection API)
 pub mod app_def;     // AppDef (MultiLine + MultiPointConstraint approximation input)
+pub mod app_par_curves; // AppParCurves (Bernstein/SplineFunction + LeastSquare template)
 pub mod gcc_ana;      // GccAna (analytic 2D constraint solvers: Circ2d3Tan Apollonius)
 pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain
 pub mod gtests_stubs; // Stubs for OCCT GTest translations (minimal impls to compile+pass)
