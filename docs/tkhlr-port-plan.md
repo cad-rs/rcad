@@ -227,7 +227,7 @@ Poly_Triangulation/Polygon3D/PolygonOnTriangulation/BRepMesh 依赖 ——
 
 - [x] 计划落盘 + module-map 指向（2026-09-04）
 - [x] **Stage 0** 叶子包：top_bas / intrv / top_cnx / HLRAlgo 静态+EdgesBlock+Projector（2026-09-04 完成并提交；kernel Trsf 同步补齐 OCCT scale/form 语义 + SetTransformation/SetScaleFactor/SetTranslationPart/Invert/VectorialPart/Value + gp_Vec/gp_Dir/gp_Lin::Transform；单测 12 个全绿。**HLRAppli_ReflectLines 推迟至 Stage 3g 之后**——它依赖 HLRBRep_Algo/HLRToShape/BRepLib::SameParameter）
-- [ ] **Stage 1** HLRAlgo 数据结构（EdgeStatus…EdgeIterator）
+- [x] **Stage 1** HLRAlgo 数据结构（EdgeStatus/Interference/Intersection/BiPoint/Coincidence/WiresBlock/Poly 系列小结构/EdgeIterator；2026-09-04 完成并提交。要点：EdgeStatus::Hide 的 `if (!OnFace)` guard 照抄、EdgeIterator 的隐藏区间缓存语义（当前段=上一可见段 End 至下一可见段 Start）、指针字段→借用映射；单测 15/15）
 - [ ] **Stage 2a** 泛型引擎审计+补齐（IntStart/Intf/IntConicConic 重载/Bnd_SortBox/EPCOfExtPC2d/PEquation/BRepAdaptor_Curve2d）
 - [ ] **Stage 2b** Contap 包 1:1
 - [ ] **Stage 3a** HLRBRep adaptor/tool 层（含 TopolTool/BRepAdaptor_Curve2d）

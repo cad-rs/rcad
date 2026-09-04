@@ -291,3 +291,123 @@ fn hlr_algo_projector_shoot() {
     assert_eq!(l.pos, DVec3::new(0.5, -0.25, 0.0));
     assert!((l.dir + DVec3::Z).length() < 1e-12);
 }
+
+// ---- Stage 1: HLRAlgo data structures ----
+
+use super::algo::bi_point::BiPoint;
+use super::algo::coincidence::Coincidence;
+use super::algo::edge_iterator::EdgeIterator;
+use super::algo::edge_status::EdgeStatus;
+use super::algo::interference::Interference;
+use super::algo::intersection::Intersection;
+use rcad_kernel::topods::State;
+
+/// OCCT HLRAlgo_EdgeStatus hide/show state machine (EdgeStatus.cxx
+/// L103-123): hiding on-face intervals subtracts from the visible sequence.
+#[test]
+fn hlr_algo_edge_status_state_machine() {
+    // OCCT Interval(Start, TolStart, End, TolEnd) raises tolerances to the
+    // representable epsilon of each bound (Interval.cxx L64-73).
+    let eps30 = super::intrv::epsilon(30.0) as f32;
+    let eps60 = super::intrv::epsilon(60.0) as f32;
+    let eps100 = super::intrv::epsilon(100.0) as f32;
+    let mut st = EdgeStatus::from_bounds(0.0, 0.0, 100.0, 0.0);
+    assert!(st.all_visible());
+    assert_eq!(st.nb_visible_part(), 1);
+    assert_eq!(st.visible_part(1), (0.0, 0.0, 100.0, 0.0));
+
+    // Hide the middle: two visible parts remain.
+    st.hide(30.0, 0.0, 60.0, 0.0, false, false); // OCCT: subtract runs when OnFace == false
+    assert!(!st.all_visible() && !st.all_hidden());
+    assert_eq!(st.nb_visible_part(), 2);
+    assert_eq!(st.visible_part(1), (0.0, 0.0, 30.0, eps30));
+    assert_eq!(st.visible_part(2), (60.0, eps60, 100.0, eps100));
+
+    // Hide everything: all hidden.
+    st.hide(0.0, 0.0, 100.0, 0.0, false, false);
+    assert!(st.all_hidden());
+    assert_eq!(st.nb_visible_part(), 0);
+
+    // ShowAll restores the full visible state.
+    st.show_all();
+    assert!(st.all_visible());
+    assert_eq!(st.nb_visible_part(), 1);
+
+    // HideAll flags hidden without touching the interval sequence.
+    st.hide_all();
+    assert!(st.all_hidden());
+
+    // Hiding with OnFace == false is a no-op (cxx L110 guard).
+    let mut st2 = EdgeStatus::from_bounds(0.0, 0.0, 50.0, 0.0);
+    st2.hide(10.0, 0.0, 20.0, 0.0, true, false);
+    assert!(st2.all_visible());
+    assert_eq!(st2.nb_visible_part(), 1);
+}
+
+/// OCCT HLRAlgo_EdgeIterator over the visible parts (EdgeIterator.cxx
+/// L42-94, lxx L41-70): the cached hidden interval runs between the end of
+/// one visible part and the start of the next.
+#[test]
+fn hlr_algo_edge_iterator_visible_parts() {
+    let eps30 = super::intrv::epsilon(30.0) as f32;
+    let eps60 = super::intrv::epsilon(60.0) as f32;
+    let eps100 = super::intrv::epsilon(100.0) as f32;
+    let mut st = EdgeStatus::from_bounds(0.0, 0.0, 100.0, 0.0);
+    st.hide(30.0, 0.0, 60.0, 0.0, false, false); // OCCT: subtract runs when OnFace == false
+
+    let mut it = EdgeIterator::new();
+    it.init_visible(&st);
+    assert!(it.more_visible());
+    assert_eq!(it.visible(), (0.0, 0.0, 30.0, eps30));
+    it.next_visible();
+    assert!(it.more_visible());
+    assert_eq!(it.visible(), (60.0, eps60, 100.0, eps100));
+    it.next_visible();
+    assert!(!it.more_visible());
+
+    // Hidden iterator: AllHidden == false -> 2 hidden intervals between the
+    // visible parts (cached intervals) plus the outer ranges.
+    it.init_hidden(&st);
+    let mut seen = Vec::new();
+    while it.more_hidden() {
+        seen.push(it.hidden());
+        it.next_hidden();
+    }
+    // The first cached interval = [end of part 1 = 30, start of part 2 = 60].
+    assert_eq!(seen[0], (30.0, eps30, 60.0, eps60));
+}
+
+/// OCCT HLRAlgo_BiPoint flag bits (BiPoint.hxx L193-241) and the
+/// Interference/Intersection/Coincidence accessors.
+#[test]
+fn hlr_algo_bi_point_flags_and_interference() {
+    let mut bp = BiPoint::from_flags_bool(
+        0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 5, true, false, true, false,
+    );
+    assert_eq!(bp.indices_ref().shape_index, 5);
+    assert!(bp.rg1_line() && !bp.rgn_line() && bp.out_line() && !bp.int_line());
+    assert!(!bp.hidden());
+    bp.indices().seg_flags = 0;
+    bp.set_hidden(true);
+    assert!(bp.hidden());
+
+    let inter = Interference::from_parts(
+        Intersection::from_parts(
+            Orientation::Reversed,
+            2,
+            3,
+            4,
+            0.5,
+            1e-7,
+            State::On,
+        ),
+        Coincidence::new(),
+        Orientation::Forward,
+        Orientation::Internal,
+        Orientation::External,
+    );
+    assert_eq!(inter.intersection().parameter(), 0.5);
+    assert_eq!(inter.intersection().state(), State::On);
+    assert_eq!(inter.transition(), Orientation::Internal);
+    assert_eq!(inter.boundary_transition(), Orientation::External);
+}
