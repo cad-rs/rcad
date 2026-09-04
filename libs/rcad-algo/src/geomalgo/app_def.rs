@@ -13,7 +13,224 @@
 
 use glam::{DVec2, DVec3};
 
-use super::approx_int::MultiPoint;
+use super::approx_int::{ApproxStatus, MultiPoint};
+
+/// OCCT AppDef_MyLineTool (AppDef_MyLineTool.hxx/.cxx) — "Example of
+/// MultiLine tool corresponding to the tools of the packages AppParCurves
+/// and Approx. For Approx, the tool will not add points if the algorithms
+/// want some." This is the ToolLine binding of the AppDef instantiations of
+/// AppParCurves_LeastSquare.gxx / AppParCurves_ComputeLine.gxx; the OCCT
+/// statics are mapped to free functions of this module. Output arrays are
+/// passed as slices sized for the multipoint (the OCCT NCollection_Array1
+/// Lower() offset is carried by the slice index).
+pub mod my_line_tool {
+    use super::{ApproxStatus, DVec2, DVec3, MultiLine};
+
+    /// OCCT AppDef_MyLineTool::FirstPoint (AppDef_MyLineTool.cxx L16-19).
+    pub fn first_point(_ml: &MultiLine) -> usize {
+        1
+    }
+
+    /// OCCT AppDef_MyLineTool::LastPoint (AppDef_MyLineTool.cxx L21-24).
+    pub fn last_point(ml: &MultiLine) -> usize {
+        ml.nb_multi_points()
+    }
+
+    /// OCCT AppDef_MyLineTool::NbP2d (AppDef_MyLineTool.cxx L26-29).
+    pub fn nb_p2d(ml: &MultiLine) -> usize {
+        ml.value(1).base.nb_points2d()
+    }
+
+    /// OCCT AppDef_MyLineTool::NbP3d (AppDef_MyLineTool.cxx L31-34).
+    pub fn nb_p3d(ml: &MultiLine) -> usize {
+        ml.value(1).base.nb_points()
+    }
+
+    /// OCCT AppDef_MyLineTool::Value(ML, MPointIndex, tabPt) — the 3d points
+    /// of the multipoint MPointIndex when only 3d points exist
+    /// (AppDef_MyLineTool.cxx L36-45).
+    pub fn value_3d(ml: &MultiLine, mpoint_index: usize, tab_pt: &mut [DVec3]) {
+        let mpc = ml.value(mpoint_index);
+        let nbp3d = mpc.base.nb_points();
+        for i in 1..=nbp3d {
+            tab_pt[i - 1] = mpc.base.point(i);
+        }
+    }
+
+    /// OCCT AppDef_MyLineTool::Value(ML, MPointIndex, tabPt2d) — the 2d
+    /// points of the multipoint MPointIndex when only 2d points exist
+    /// (AppDef_MyLineTool.cxx L47-58).
+    pub fn value_2d(ml: &MultiLine, mpoint_index: usize, tab_pt2d: &mut [DVec2]) {
+        let mpc = ml.value(mpoint_index);
+        let nbp3d = mpc.base.nb_points();
+        let nbp2d = mpc.base.nb_points2d();
+        for i in 1..=nbp2d {
+            tab_pt2d[i - 1] = mpc.base.point2d(nbp3d + i);
+        }
+    }
+
+    /// OCCT AppDef_MyLineTool::Value(ML, MPointIndex, tabPt, tabPt2d) — the
+    /// 3d and 2d points of the multipoint MPointIndex
+    /// (AppDef_MyLineTool.cxx L60-76).
+    pub fn value_3d_2d(
+        ml: &MultiLine,
+        mpoint_index: usize,
+        tab_pt: &mut [DVec3],
+        tab_pt2d: &mut [DVec2],
+    ) {
+        let mpc = ml.value(mpoint_index);
+        let nbp3d = mpc.base.nb_points();
+        let nbp2d = mpc.base.nb_points2d();
+        for i in 1..=nbp3d {
+            tab_pt[i - 1] = mpc.base.point(i);
+        }
+        for i in 1..=nbp2d {
+            tab_pt2d[i - 1] = mpc.base.point2d(nbp3d + i);
+        }
+    }
+
+    /// OCCT AppDef_MyLineTool::Tangency(ML, MPointIndex, tabV) — the 3d
+    /// tangencies of the multipoint MPointIndex when only 3d points exist
+    /// (AppDef_MyLineTool.cxx L78-93).
+    pub fn tangency_3d(ml: &MultiLine, mpoint_index: usize, tab_v: &mut [DVec3]) -> bool {
+        let mpc = ml.value(mpoint_index);
+        if mpc.is_tangency_point() {
+            let nbp3d = mpc.base.nb_points();
+            for i in 1..=nbp3d {
+                tab_v[i - 1] = mpc.tang(i);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// OCCT AppDef_MyLineTool::Tangency(ML, MPointIndex, tabV2d) — the 2d
+    /// tangencies of the multipoint MPointIndex when only 2d points exist
+    /// (AppDef_MyLineTool.cxx L95-110).
+    pub fn tangency_2d(ml: &MultiLine, mpoint_index: usize, tab_v2d: &mut [DVec2]) -> bool {
+        let mpc = ml.value(mpoint_index);
+        if mpc.is_tangency_point() {
+            let nbp3d = mpc.base.nb_points();
+            let nbp2d = mpc.base.nb_points2d();
+            for i in 1..=nbp2d {
+                tab_v2d[i - 1] = mpc.tang2d(nbp3d + i);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// OCCT AppDef_MyLineTool::Tangency(ML, MPointIndex, tabV, tabV2d) — the
+    /// 3d and 2d tangencies of the multipoint MPointIndex
+    /// (AppDef_MyLineTool.cxx L112-131).
+    pub fn tangency_3d_2d(
+        ml: &MultiLine,
+        mpoint_index: usize,
+        tab_v: &mut [DVec3],
+        tab_v2d: &mut [DVec2],
+    ) -> bool {
+        let mpc = ml.value(mpoint_index);
+        if mpc.is_tangency_point() {
+            let nbp3d = mpc.base.nb_points();
+            let nbp2d = mpc.base.nb_points2d();
+            for i in 1..=nbp3d {
+                tab_v[i - 1] = mpc.tang(i);
+            }
+            for i in 1..=nbp2d {
+                tab_v2d[i - 1] = mpc.tang2d(nbp3d + i);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// OCCT AppDef_MyLineTool::MakeMLBetween (AppDef_MyLineTool.cxx L152-158)
+    /// — "Is never called in the algorithms. Nothing is done." (stub
+    /// returning theML).
+    pub fn make_ml_between(ml: &MultiLine, _i1: usize, _i2: usize, _nb_p_min: usize) -> MultiLine {
+        ml.clone() // stub
+    }
+
+    /// OCCT AppDef_MyLineTool::MakeMLOneMorePoint
+    /// (AppDef_MyLineTool.cxx L160-164) — "Is never called in the
+    /// algorithms. Nothing is done."
+    pub fn make_ml_one_more_point(
+        _ml: &MultiLine,
+        _i1: usize,
+        _i2: usize,
+        _indbad: usize,
+        _other_line: &mut MultiLine,
+    ) -> bool {
+        false
+    }
+
+    /// OCCT AppDef_MyLineTool::WhatStatus (AppDef_MyLineTool.cxx L166-170) —
+    /// returns Approx_NoPointsAdded.
+    pub fn what_status(_ml: &MultiLine, _i1: usize, _i2: usize) -> ApproxStatus {
+        ApproxStatus::NoPointsAdded
+    }
+
+    /// OCCT AppDef_MyLineTool::Curvature(ML, MPointIndex, tabV) — the 3d
+    /// curvatures of the multipoint MPointIndex when only 3d points exist
+    /// (AppDef_MyLineTool.cxx L172-187).
+    pub fn curvature_3d(ml: &MultiLine, mpoint_index: usize, tab_v: &mut [DVec3]) -> bool {
+        let mpc = ml.value(mpoint_index);
+        if mpc.is_curvature_point() {
+            let nbp3d = mpc.base.nb_points();
+            for i in 1..=nbp3d {
+                tab_v[i - 1] = mpc.curv(i);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// OCCT AppDef_MyLineTool::Curvature(ML, MPointIndex, tabV2d) — the 2d
+    /// curvatures of the multipoint MPointIndex when only 2d points exist
+    /// (AppDef_MyLineTool.cxx L189-204).
+    pub fn curvature_2d(ml: &MultiLine, mpoint_index: usize, tab_v2d: &mut [DVec2]) -> bool {
+        let mpc = ml.value(mpoint_index);
+        if mpc.is_curvature_point() {
+            let nbp3d = mpc.base.nb_points();
+            let nbp2d = mpc.base.nb_points2d();
+            for i in 1..=nbp2d {
+                tab_v2d[i - 1] = mpc.curv2d(nbp3d + i);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// OCCT AppDef_MyLineTool::Curvature(ML, MPointIndex, tabV, tabV2d) — the
+    /// 3d and 2d curvatures of the multipoint MPointIndex
+    /// (AppDef_MyLineTool.cxx L206-225).
+    pub fn curvature_3d_2d(
+        ml: &MultiLine,
+        mpoint_index: usize,
+        tab_v: &mut [DVec3],
+        tab_v2d: &mut [DVec2],
+    ) -> bool {
+        let mpc = ml.value(mpoint_index);
+        if mpc.is_curvature_point() {
+            let nbp3d = mpc.base.nb_points();
+            let nbp2d = mpc.base.nb_points2d();
+            for i in 1..=nbp3d {
+                tab_v[i - 1] = mpc.curv(i);
+            }
+            for i in 1..=nbp2d {
+                tab_v2d[i - 1] = mpc.curv2d(nbp3d + i);
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // AppDef_MultiPointConstraint
