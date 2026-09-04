@@ -20,6 +20,7 @@ pub mod math_householder;
 pub mod math_matrix;
 pub mod math_crout;
 pub mod math_uzawa;
+pub mod math_bfgs;
 pub mod function_set_root;
 pub mod p_lib_jacobi;
 pub mod p_lib_jacobi_data;

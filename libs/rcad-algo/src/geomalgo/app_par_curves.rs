@@ -19,7 +19,9 @@
 
 use rcad_kernel::math::bspl_lib::{coefs_d1_2d, coefs_d1_3d, locate_parameter_flat, poles_coefficients_2d, poles_coefficients_3d};
 use rcad_kernel::math::math_householder::Householder;
-use rcad_kernel::math::math_matrix::{IntegerVector as IVector, Matrix, Vector as RVector};
+use rcad_kernel::math::math_matrix::{
+    IntegerVector as IVector, Matrix, Vector as RVector, Vector as KernelVector,
+};
 use rcad_kernel::math::math_recipes::{dactcl_decompose, dactcl_solve, MATH_STATUS_OK};
 use rcad_kernel::math::{MatD, VecD};
 
@@ -3671,6 +3673,11 @@ impl ParFunction {
     pub fn new_parameters(&self) -> &RVector {
         &self.my_parameters
     }
+
+    /// OCCT NewParameters()(Index) — the i-th new parameter component.
+    pub fn new_parameter(&self, index: i32) -> f64 {
+        self.my_parameters.get(index)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3875,13 +3882,18 @@ impl Gradient {
             // Tol2d, Eps, NbIterations); Parameters =
             // MyF.NewParameters(); SCU = MyF.CurveValue();
             // -- The Gradient_BFGS shell + math_BFGS minimizer are not yet
-            //    ported (see the file header); the OCCT Eps constant is
-            //    documented for that unit.
-            let _eps = 1.0e-07;
-            unimplemented!(
-                "AppParCurves_Gradient: the Gradient_BFGS refinement loop \
-                 (math_BFGS) is not ported yet"
-            );
+            let eps = 1.0e-07;
+            // AppParCurves_Gradient_BFGS FResol(MyF, Parameters, Tol3d,
+            // Tol2d, Eps, NbIterations).
+            let mut f_resol =
+                GradientBfgs::new(&mut my_f, parameters, tol3d, tol2d, eps, nb_iterations);
+            // Parameters = MyF.NewParameters();
+            for i in 1..=f_resol.nb_variables() {
+                let v = f_resol.new_parameter(i);
+                parameters.set(i as usize, v);
+            }
+            // SCU = MyF.CurveValue();
+            self.scu = my_f.curve_value().clone();
         }
         self.av_error = 0.0;
         for j in first_point..=last_point {
@@ -3932,6 +3944,162 @@ impl Gradient {
         self.m_error2d
     }
 }
+
+// ---------------------------------------------------------------------------
+// AppParCurves_Gradient_BFGS (the Gradient_BFGS shell)
+// ---------------------------------------------------------------------------
+
+/// The F interface consumed by the Gradient_BFGS IsSolutionReached override:
+/// math_MultipleVarFunctionWithGradient + ParFunction's MaxError3d/2d (the
+/// OCCT C-style down-cast `(AppDef_ParFunctionOfMyGradientbis*) & F`).
+pub trait GradientFunction:
+    rcad_kernel::math::math_bfgs::MultipleVarFunctionWithGradient
+{
+    /// OCCT ParFunction::MaxError3d().
+    fn max_error_3d(&self) -> f64;
+    /// OCCT ParFunction::MaxError2d().
+    fn max_error_2d(&self) -> f64;
+}
+
+// OCCT: AppParCurves_Function : public math_MultipleVarFunctionWithGradient
+// — the trait delegation to the inherent Value/Gradient/Values.
+impl rcad_kernel::math::math_bfgs::MultipleVarFunction for ParFunction {
+    fn nb_variables(&self) -> i32 {
+        ParFunction::nb_variables(self)
+    }
+    fn value(&mut self, x: &KernelVector, f: &mut f64) -> bool {
+        let mut xv = VecD::new(x.length() as usize);
+        for i in 1..=x.length() {
+            xv.set(i as usize, x.get(i));
+        }
+        ParFunction::value(self, &xv, f)
+    }
+}
+impl rcad_kernel::math::math_bfgs::MultipleVarFunctionWithGradient for ParFunction {
+    fn gradient(&mut self, x: &KernelVector, g: &mut KernelVector) -> bool {
+        let mut xv = VecD::new(x.length() as usize);
+        for i in 1..=x.length() {
+            xv.set(i as usize, x.get(i));
+        }
+        let mut gv = RVector::new(g.lower, g.upper());
+        let ok = ParFunction::gradient(self, &xv, &mut gv);
+        for i in g.lower..=g.upper() {
+            let v = gv.get(i);
+            g.set(i, v);
+        }
+        ok
+    }
+    fn values(&mut self, x: &KernelVector, f: &mut f64, g: &mut KernelVector) -> bool {
+        let mut xv = VecD::new(x.length() as usize);
+        for i in 1..=x.length() {
+            xv.set(i as usize, x.get(i));
+        }
+        let mut gv = RVector::new(g.lower, g.upper());
+        let ok = ParFunction::values(self, &xv, f, &mut gv);
+        for i in g.lower..=g.upper() {
+            let v = gv.get(i);
+            g.set(i, v);
+        }
+        ok
+    }
+}
+impl GradientFunction for ParFunction {
+    fn max_error_3d(&self) -> f64 {
+        ParFunction::max_error_3d(self)
+    }
+    fn max_error_2d(&self) -> f64 {
+        ParFunction::max_error_2d(self)
+    }
+}
+
+/// OCCT AppParCurves_Gradient_BFGS
+/// (AppDef_Gradient_BFGSOfMyGradientbisOfBSplineCompute.hxx/.cxx L20-42):
+/// math_BFGS with the IsSolutionReached override — the solution is reached
+/// when the minimum stops moving OR the approximation errors fall inside
+/// the 3d/2d tolerances. Rust has no inheritance: math_BFGS::Perform takes
+/// the IsSolutionReached test as an injected checker (the exact equivalent
+/// of the OCCT virtual dispatch).
+#[derive(Clone)]
+pub struct GradientBfgs {
+    /// OCCT base math_BFGS part.
+    bfgs: rcad_kernel::math::math_bfgs::Bfgs,
+    /// OCCT myTol3d / myTol2d.
+    my_tol3d: f64,
+    my_tol2d: f64,
+}
+
+impl GradientBfgs {
+    /// OCCT AppDef_Gradient_BFGSOfMyGradientbisOfBSplineCompute(F,
+    /// StartingPoint, Tolerance3d, Tolerance2d, Eps, NbIterations = 200)
+    /// (cxx L20-28): Perform(F, StartingPoint).
+    pub fn new<F: GradientFunction>(
+        f: &mut F,
+        starting_point: &VecD,
+        tolerance3d: f64,
+        tolerance2d: f64,
+        eps: f64,
+        nb_iterations: i32,
+    ) -> Self {
+        let n = starting_point.len() as i32;
+        let mut g = GradientBfgs {
+            bfgs: rcad_kernel::math::math_bfgs::Bfgs::new(n, eps, nb_iterations, 1.0e-12),
+            my_tol3d: tolerance3d,
+            my_tol2d: tolerance2d,
+        };
+        let start = rcad_kernel::math::math_matrix::Vector::new_init(
+            1,
+            n,
+            0.0,
+        );
+        let mut start = start;
+        for i in 1..=n {
+            let v = starting_point.get(i as usize);
+            start.set(i, v);
+        }
+        g.bfgs
+            .perform_with_checker(f, &start, &mut |the_minimum, previous_minimum, f| {
+                // OCCT IsSolutionReached (cxx L30-42).
+                let result = 2.0 * (the_minimum - previous_minimum).abs()
+                    <= 1.0e-10 * (the_minimum.abs() + previous_minimum.abs()) + 1.0e-12;
+                let m_err3d = f.max_error_3d();
+                let m_err2d = f.max_error_2d();
+                let result2 = m_err3d <= g.my_tol3d && m_err2d <= g.my_tol2d;
+                result || result2
+            });
+        g
+    }
+
+    /// OCCT IsSolutionReached(F) (cxx L30-42) — kept as the inherent
+    /// documentation of the injected test above.
+    pub fn is_solution_reached(
+        &self,
+        the_minimum: f64,
+        previous_minimum: f64,
+        m_err3d: f64,
+        m_err2d: f64,
+    ) -> bool {
+        let result = 2.0 * (the_minimum - previous_minimum).abs()
+            <= 1.0e-10 * (the_minimum.abs() + previous_minimum.abs()) + 1.0e-12;
+        let result2 = m_err3d <= self.my_tol3d && m_err2d <= self.my_tol2d;
+        result || result2
+    }
+
+    /// OCCT math_BFGS::Location() (lxx).
+    pub fn location(&self) -> &rcad_kernel::math::math_matrix::Vector {
+        self.bfgs.location()
+    }
+
+    /// OCCT math_BFGS::NbVariables() via the location length.
+    pub fn nb_variables(&self) -> i32 {
+        self.bfgs.location().length()
+    }
+
+    /// OCCT NewParameters()(i) after the resolution (the location vector).
+    pub fn new_parameter(&self, index: i32) -> f64 {
+        self.bfgs.location().get(index)
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -4301,5 +4469,48 @@ mod gradient_tests {
         assert!((parameters.get(2) - 0.5).abs() < 1.0e-3);
         // The curve value carries the least-square poles.
         assert_eq!(g.value().nb_poles(), 3);
+    }
+}
+
+#[cfg(test)]
+mod gradient_bfgs_tests {
+    use super::*;
+
+    // Overdetermined case: 5 points approximated by a quadratic (3 poles).
+    // The projection + BFGS refinement must converge with the errors driven
+    // inside the tolerances (OCCT Gradient ctor semantics end-to-end).
+    #[test]
+    fn gradient_bfgs_refinement_converges() {
+        let pts: Vec<DVec2> = [0.0, 0.25, 0.5, 0.75, 1.0]
+            .iter()
+            .map(|u| {
+                let y = 4.0 * u * (1.0 - u); // parabola-like arc
+                DVec2::new(4.0 * u, y)
+            })
+            .collect();
+        let ml = MultiLine::new_tab_p2d(&pts);
+        let constraints = vec![
+            ConstraintCouple { index: 1, constraint: AppParConstraint::PassPoint },
+            ConstraintCouple { index: 5, constraint: AppParConstraint::PassPoint },
+        ];
+        let mut parameters = VecD { v: vec![0.0, 0.2, 0.45, 0.8, 1.0] };
+
+        let g = Gradient::new(
+            &ml,
+            1,
+            5,
+            &constraints,
+            &mut parameters,
+            2,
+            1.0e-4,
+            1.0e-4,
+            200,
+        );
+        assert!(g.is_done(), "projection + BFGS must reach the tolerances");
+        assert!(
+            g.max_error_2d() <= 1.0e-4 + 1.0e-9,
+            "max 2d error must be inside tolerance, got {}",
+            g.max_error_2d()
+        );
     }
 }
