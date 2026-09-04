@@ -18,6 +18,7 @@ pub mod intf;        // Intf (Intf_PIType, Intf_SectionPoint, Intf_Tool, InterUt
 pub mod intf_tangent_zone; // Intf_TangentZone
 pub mod intf_section_line; // Intf_SectionLine
 pub mod intf_interference; // Intf_Interference + Intf_Polygon2d
+pub mod int_curve_generics; // IntCurve_Polygon2dGen / DistBetweenPCurvesGen / ExactIntersectionPoint
 pub mod int_curv_surf; // IntCurveSurface polygon/polyhedron sampling + IntPatch_Polyhedron
 pub mod hatch;       // Geom2dHatch (Elements container + Intersector local geometry)
 pub mod geom2d_gcc;   // Geom2dGcc (tangent-line constraint: Lin2d2Tan + iter solver)

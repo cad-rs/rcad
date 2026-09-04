@@ -549,6 +549,54 @@ impl BndBox2d {
         let g = self.gap;
         p.x < self.x_min - g || p.x > self.x_max + g || p.y < self.y_min - g || p.y > self.y_max + g
     }
+
+    /// OCCT Bnd_Box2d::IsOut(const Bnd_Box2d& Other) — Bnd_Box2d.cxx
+    /// L456-511: fast path for non-open/non-void/non-whole boxes, then the
+    /// per-flag general path.
+    pub fn is_out_box(&self, other: &BndBox2d) -> bool {
+        // Fast path for non-open, non-void, non-whole boxes.
+        if self.flags == 0 && other.flags == 0 {
+            let a_delta = other.gap + self.gap;
+            if self.x_min - other.x_max > a_delta {
+                return true;
+            }
+            if other.x_min - self.x_max > a_delta {
+                return true;
+            }
+            if self.y_min - other.y_max > a_delta {
+                return true;
+            }
+            if other.y_min - self.y_max > a_delta {
+                return true;
+            }
+            return false;
+        }
+
+        // Handle special cases.
+        if self.is_void() || other.is_void() {
+            return true;
+        }
+        if self.is_whole() || other.is_whole() {
+            return false;
+        }
+
+        let Some((oxmin, oymin, oxmax, oymax)) = other.get() else {
+            return true;
+        };
+        if (self.flags & XMIN2D_OPEN) == 0 && oxmax < (self.x_min - self.gap) {
+            return true;
+        }
+        if (self.flags & XMAX2D_OPEN) == 0 && oxmin > (self.x_max + self.gap) {
+            return true;
+        }
+        if (self.flags & YMIN2D_OPEN) == 0 && oymax < (self.y_min - self.gap) {
+            return true;
+        }
+        if (self.flags & YMAX2D_OPEN) == 0 && oymin > (self.y_max + self.gap) {
+            return true;
+        }
+        false
+    }
 }
 
 impl Default for BndBox2d {
