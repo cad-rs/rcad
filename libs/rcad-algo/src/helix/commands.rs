@@ -1,13 +1,17 @@
 //! OCCT BRepTest_HelixCommands.cxx (Draw TKTopTest) — the DRAW command layer
 //! over HelixBRep_BuilderHelix.
 //!
-//! 1:1 translation of the `helix` / `comphelix` / `spiral` / `comphelix2` /
-//! `helix2` / `spiral2` commands (L117-547), including the static
-//! `theHelixAxis = gp_Ax3(P0, DZ, OX)` default (L48).  Each function mirrors
+//! 1:1 translation of the `setaxis` / `helix` / `comphelix` / `spiral` /
+//! `comphelix2` / `helix2` / `spiral2` commands (L117-547), including the
+//! static `theHelixAxis = gp_Ax3(P0, DZ, OX)` default (L48) — modeled as
+//! thread-local state so that a `setaxis` call in one test case cannot leak
+//! into another (OCCT re-initializes it per DRAW run).  Each command mirrors
 //! the argument parsing and `SetParameters` overload used by the DRAW
 //! command; `DisplayHelixResult` maps to the returned `Result` (non-zero
 //! ErrorStatus = OCCT `catch` failure, WarningStatus/ToleranceReached stay
 //! reachable on the builder).
+
+use std::cell::RefCell;
 
 use glam::DVec3;
 use rcad_kernel::math::gp::Ax3;
@@ -15,9 +19,31 @@ use rcad_kernel::math::gp::Ax3;
 use super::helix_brep::BuilderHelix;
 use rcad_kernel::topo::topods::BRep;
 
-/// OCCT static theHelixAxis (BRepTest_HelixCommands.cxx L48).
+thread_local! {
+    /// OCCT static theHelixAxis (BRepTest_HelixCommands.cxx L48).
+    static THE_HELIX_AXIS: RefCell<Ax3> = RefCell::new(Ax3::from_pnt_n_vx(
+        DVec3::ZERO,
+        DVec3::Z,
+        DVec3::X,
+    ));
+}
+
+/// OCCT static theHelixAxis (BRepTest_HelixCommands.cxx L48) — current value.
 pub fn the_helix_axis() -> Ax3 {
-    Ax3::from_pnt_n_vx(DVec3::ZERO, DVec3::Z, DVec3::X)
+    THE_HELIX_AXIS.with(|a| *a.borrow())
+}
+
+/// OCCT `setaxis x y z Nx Ny Nz Xx Xy Xz` (BRepTest_HelixCommands.cxx
+/// L117-139) — relocates the static theHelixAxis (arg-count usage checks are
+/// DRAW-interpreter concerns).
+pub fn setaxis(x: f64, y: f64, z: f64, nx: f64, ny: f64, nz: f64, xx: f64, xy: f64, xz: f64) {
+    THE_HELIX_AXIS.with(|a| {
+        let mut axis = a.borrow_mut();
+        // OCCT L134-136.
+        axis.set_location(DVec3::new(x, y, z));
+        axis.set_direction(DVec3::new(nx, ny, nz));
+        axis.set_x_direction(DVec3::new(xx, xy, xz));
+    });
 }
 
 /// OCCT `comphelix name np D1 D2 [Di...] H1 [Hi...] P1 [Pi...] PF1 [PFi...]`

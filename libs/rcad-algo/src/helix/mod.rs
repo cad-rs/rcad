@@ -3,9 +3,9 @@
 
 pub mod commands;
 #[cfg(test)]
-#[cfg(test)]
 pub mod tests;
 pub mod helix_brep;
 pub mod helix_geom;
 
-pub use commands::{comphelix, comphelix2, helix, helix2, spiral, spiral2};
+pub use commands::{comphelix, comphelix2, helix, helix2, setaxis, spiral, spiral2,
+                   the_helix_axis};

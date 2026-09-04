@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use glam::DVec3;
-use rcad_kernel::geom::{BSplineCurve3, Curve3};
+use rcad_kernel::geom::{BSplineCurve3, Curve3, TrimmedCurve3};
 use rcad_kernel::math::gp::{Ax1, Ax3, Lin};
 use rcad_kernel::math::GeomAbsShape;
 use rcad_kernel::topo::topods::{tshape_flags, BRep, Orientation, Shape, TEdgeData, TShape,
@@ -461,51 +461,43 @@ impl BuilderHelix {
         let mut first_shape: Option<Shape> = None;
         let mut last_shape: Option<Shape> = None;
 
-        for (idx, a_c) in a_sc.iter().enumerate() {
+        for (idx, a_c_bs) in a_sc.iter().enumerate() {
             let i = idx + 1;
+            // OCCT L536: occ::handle<Geom_Curve> aC = aSC(i); — may be
+            // replaced by a Geom_TrimmedCurve below.
+            let mut a_c: Curve3 = Curve3::BSpline(a_c_bs.clone());
+            //
             if i == 1 {
                 if a_t1 > 0.0 {
-                    // OCCT trims the first curve to [aT1, LastParameter] via
-                    // Geom_TrimmedCurve — the trimmed range affects the edge
-                    // parameter range only.
-                    a_t2 = a_c.last_parameter();
-                    let range = [a_t1, a_t2];
-                    // The trimmed curve keeps the same poles; represent it as
-                    // a range restriction.
-                    let mut c = a_c.clone();
-                    c.knots = c.knots.clone();
-                    let _ = range;
-                    // (aT1 == 0 for every pipeline caller; full port of the
-                    // trimmed curve is deferred until a caller needs it.)
+                    // OCCT L540-545: aCT = new Geom_TrimmedCurve(aC, aT1, aT2);
+                    // aC = aCT; — the trim bounds live in the basis parameter
+                    // space.
+                    a_t2 = curve_last_parameter(&a_c);
+                    a_c = Curve3::Trimmed(TrimmedCurve3::new(a_c, a_t1, a_t2));
                 }
-                a_t1 = a_c.first_parameter();
-                let a_p1 = rcad_kernel::math::bspl::de_boor(
-                    a_c.degree,
-                    &a_c.knots,
-                    &a_c.control_points,
-                    &a_c.weights,
-                    a_t1,
-                );
+                // OCCT L546-549: aT1 = aC->FirstParameter(); aC->D0(aT1, aP1);
+                // aBB.MakeVertex(aV1, aP1, myTolReached);
+                // aV1.Orientation(TopAbs_FORWARD).
+                a_t1 = curve_first_parameter(&a_c);
+                let a_p1 = curve_d0(&a_c, a_t1);
                 // aBB.MakeVertex(aV1, aP1, myTolReached); aV1 FORWARD.
                 let mut v = self.make_vertex(a_p1);
                 v.orientation = Orientation::Forward;
                 a_v1 = Some(v);
             }
 
-            a_t2 = a_c.last_parameter();
-            let a_p2 = rcad_kernel::math::bspl::de_boor(
-                a_c.degree,
-                &a_c.knots,
-                &a_c.control_points,
-                &a_c.weights,
-                a_t2,
-            );
+            // OCCT L552-555: aT2 = aC->LastParameter(); aC->D0(aT2, aP2);
+            // aBB.MakeVertex(aV2, aP2, myTolReached);
+            // aV2.Orientation(TopAbs_REVERSED).
+            a_t2 = curve_last_parameter(&a_c);
+            let a_p2 = curve_d0(&a_c, a_t2);
             let mut v2 = self.make_vertex(a_p2);
             v2.orientation = Orientation::Reversed;
             a_v2 = Some(v2);
 
-            // aBME.Init(aC, aV1, aV2); bIsDone check.
-            let (b_is_done, a_e) = self.make_edge(a_c, a_v1.as_ref().unwrap(), a_v2.as_ref().unwrap());
+            // OCCT L557: aBME.Init(aC, aV1, aV2); bIsDone check.
+            let (b_is_done, a_e) =
+                self.make_edge(&a_c, a_v1.as_ref().unwrap(), a_v2.as_ref().unwrap());
             if !b_is_done {
                 self.my_error_status = 3;
                 return (Vec::new(), Shape::new(null_tshape(), 0, Orientation::Forward), Shape::new(null_tshape(), 0, Orientation::Forward));
@@ -542,11 +534,12 @@ impl BuilderHelix {
     }
 
     /// BRepBuilderAPI_MakeEdge::Init(C, V1, V2) + BRep_Builder::UpdateEdge
-    /// equivalent: creates a new edge TShape over the BSpline with the
-    /// [First, Last] parameter range and tolerance `my_tol_reached`.
-    fn make_edge(&mut self, c: &BSplineCurve3, v1: &Shape, v2: &Shape) -> (bool, Shape) {
-        let curve = Curve3::BSpline(c.clone());
-        let range = [c.first_parameter(), c.last_parameter()];
+    /// equivalent: creates a new edge TShape over the curve (BSpline or
+    /// trimmed BSpline) with the [First, Last] parameter range and tolerance
+    /// `my_tol_reached`.
+    fn make_edge(&mut self, c: &Curve3, v1: &Shape, v2: &Shape) -> (bool, Shape) {
+        let curve = c.clone();
+        let range = [curve_first_parameter(c), curve_last_parameter(c)];
         let index = self.brep.tshapes.len();
         let ts = arc_tshape_edge(&curve, v1, v2, range, self.my_tol_reached);
         self.brep.tshapes.push(ts.clone());
@@ -598,6 +591,9 @@ impl BuilderHelix {
 
         let (f1, l1) = (prev_ed.range[0], prev_ed.range[1]);
         let (f2, l2) = (next_ed.range[0], next_ed.range[1]);
+        // OCCT L626-634 down-casts BRep_Tool::Curve to Geom_BSplineCurve; a
+        // trimmed-curve edge would yield a null handle there (unreachable in
+        // the OCCT pipeline).  rcad leaves such an edge unchanged instead.
         let mut a_cprev = match &prev_ed.curve {
             Some(Curve3::BSpline(b)) => b.clone(),
             _ => return (the_prev.clone(), the_next.clone()),
@@ -758,6 +754,26 @@ fn vertex_point(v: &Shape) -> DVec3 {
         TShape::Vertex(vd) => vd.point,
         _ => DVec3::ZERO,
     }
+}
+
+/// Geom_Curve::FirstParameter — virtual dispatch over the (possibly
+/// trimmed) curve.
+fn curve_first_parameter(c: &Curve3) -> f64 {
+    use rcad_kernel::geom::CurveEval;
+    c.default_domain()[0]
+}
+
+/// Geom_Curve::LastParameter.
+fn curve_last_parameter(c: &Curve3) -> f64 {
+    use rcad_kernel::geom::CurveEval;
+    c.default_domain()[1]
+}
+
+/// Geom_Curve::D0 — virtual dispatch; a Geom_TrimmedCurve evaluates its
+/// basis curve in the shared parameter space.
+fn curve_d0(c: &Curve3, t: f64) -> DVec3 {
+    use rcad_kernel::geom::CurveEval;
+    c.point_at(t)
 }
 
 /// OCCT gp_Vec::Angle — angle in [0, PI] between two vectors.

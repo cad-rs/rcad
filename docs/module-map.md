@@ -96,7 +96,7 @@
 |---|---|---|---|
 | `feat/` | TKFeat | `BRepFeat`、`LocOpe` | ⬜ 空占位 |
 | `fillet/` | TKFillet | `BRepFilletAPI`、`ChFi2d`、`ChFi3d`、`ChFiDS`、`ChFiKPart`、`BRepBlend`、`Blend`、`BlendFunc`、`FilletSurf` | ◐ `fillet/fillet.rs`（原 algo_ext 兼容层）已迁入；ChFi3d/BRepFilletAPI 主体未移植 |
-| `helix/` | TKHelix | `HelixBRep`、`HelixGeom` | ✅ `helix_geom/`（HelixCurve/Tools/BuilderApproxCurve/BuilderHelixGen/BuilderHelixCoil/BuilderHelix）、`helix_brep/`（BuilderHelix）、`commands.rs`（BRepTest_HelixCommands DRAW 命令层）；验证基线 = `helix/standard` 全网格 56/56（含 WIRE 计数参考 JSON）+ 4 个 OCCT 实测拓扑单测 |
+| `helix/` | TKHelix | `HelixBRep`、`HelixGeom` | ✅ 全包 1:1 对齐（2026-09-04 复审）：`helix_geom/`（HelixCurve/Tools/BuilderApproxCurve/BuilderHelixGen/BuilderHelixCoil/BuilderHelix）、`helix_brep/`（BuilderHelix：Perform/BuildPart/Smoothing/SmoothingEdges + 6 个 SetParameters 重载）、`commands.rs`（BRepTest_HelixCommands 命令层含 setaxis + theHelixAxis 静态）。复审补齐：HelixCurve 缺失的 Intervals/Resolution/IsClosed/IsPeriodic/Period（HelixCurve.cxx L128-160）、Tools_Eval 维度检查（Tools.cxx L59-62）、BuilderHelixCoil 对 ApprCurve3D 输出参数 myTolReached 的写入语义（Tools.cxx L139 在 HasResult 检查前写入）、BuildPart 的 aT1>0 Geom_TrimmedCurve 裁剪分支（HelixBRep L540-545，Curve3::Trimmed）。验证基线 = `helix/standard` 全网格 56/56（含 WIRE 计数参考 JSON）+ helix 单测 5 + tkhelix_gtests 16 |
 | `hlr/` | TKHLR | `HLRBRep`、`HLRAlgo`、`HLRAppli`、`HLRTopoBRep`、`Contap`、`Intrv`、`TopBas`、`TopCnx` | ⬜ 空占位 |
 | `offset/` | TKOffset | `BRepOffset`、`BRepOffsetAPI`、`BiTgte`、`Draft` | ⬜ 空占位 |
 | `shhealing/` | TKShHealing | `ShapeFix`、`ShapeAnalysis`、`ShapeBuild`、`ShapeExtend`、`ShapeConstruct`、`ShapeCustom`、`ShapeUpgrade`、`ShapeProcess`、`ShapeProcessAPI`、`ShapeAlgo`、`SHMessage` | ◐ `healing/`、`shape_analysis/`、`shape_custom.rs`（原 algo_ext 兼容层）已迁入；其余子包未移植 |

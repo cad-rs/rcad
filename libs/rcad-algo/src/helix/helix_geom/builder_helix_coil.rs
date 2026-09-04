@@ -22,10 +22,12 @@ impl BuilderHelixCoil {
         }
     }
 
-    /// OCCT HelixGeom_BuilderHelixCoil::Perform (L38-68).
+    /// OCCT HelixGeom_BuilderHelixCoil::Perform
+    /// (HelixGeom_BuilderHelixCoil.cxx L38-68).
     pub fn perform(&mut self) {
         self.hgen.base.my_error_status = 0;
         self.hgen.base.my_warning_status = 0;
+        // Initialize variables for curve approximation.
         // Clear previous results and setup helix adaptor.
         self.hgen.base.my_curves.clear();
         // Load helix parameters into the adaptor.
@@ -38,21 +40,28 @@ impl BuilderHelixCoil {
             self.hgen.my_taper_angle,
             self.hgen.my_is_clock_wise,
         );
-        // Perform B-spline approximation of the helix curve.
-        let (i_err, a_bc, tol_reached) = tools::appr_curve3d(
+        // Perform B-spline approximation of the helix curve (OCCT L91-97):
+        // myTolReached is passed as the ApprCurve3D output reference.
+        let (i_err, a_bc, the_max_error) = tools::appr_curve3d(
             &a_adaptor,
             self.hgen.base.my_tolerance,
             self.hgen.base.my_cont,
             self.hgen.base.my_max_seg,
             self.hgen.base.my_max_degree,
         );
+        // OCCT ApprCurve3D writes theMaxError from its L139 onward, i.e. on
+        // the return-2 and return-0 paths; the return-1 path (approximation
+        // not done) leaves it untouched.
+        if i_err != 1 {
+            self.hgen.base.my_tol_reached = the_max_error;
+        }
         if i_err != 0 {
             self.hgen.base.my_error_status = 2;
         } else {
-            if let Some(bc) = a_bc {
-                self.hgen.base.my_curves.push(bc);
-            }
-            self.hgen.base.my_tol_reached = tol_reached;
+            self.hgen
+                .base
+                .my_curves
+                .push(a_bc.expect("ApprCurve3D returned 0 without a BSpline"));
         }
     }
 

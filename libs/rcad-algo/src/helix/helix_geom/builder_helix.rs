@@ -35,7 +35,7 @@ impl BuilderHelix {
         self.my_position = *a_ax2;
     }
 
-    /// OCCT Position (L40-43).
+    /// OCCT Position (HelixGeom_BuilderHelix.cxx L41-44).
     pub fn position(&self) -> &Ax2 {
         &self.my_position
     }

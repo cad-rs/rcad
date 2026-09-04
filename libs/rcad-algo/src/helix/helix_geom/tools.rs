@@ -6,16 +6,18 @@
 
 use super::helix_curve::HelixCurve;
 use rcad_kernel::geom::BSplineCurve3;
-use rcad_kernel::math::adv_approx::{ApproxAFunction, DichoCutting, EvaluatorFunction};
+use rcad_kernel::math::adv_approx::{ApproxAFunction, EvaluatorFunction};
 use rcad_kernel::math::GeomAbsShape;
 
-/// OCCT class HelixGeom_Tools_Eval — evaluator for the approximation.
+/// OCCT class HelixGeom_Tools_Eval — evaluator class for approximation
+/// (HelixGeom_Tools.cxx L29-46).  OCCT holds a handle to the adaptor curve;
+/// rcad borrows it (no shared handles).
 struct ToolsEval<'a> {
     fonct: &'a HelixCurve,
 }
 
 impl<'a> EvaluatorFunction for ToolsEval<'a> {
-    /// OCCT HelixGeom_Tools_Eval::Evaluate (L48-91).
+    /// OCCT HelixGeom_Tools_Eval::Evaluate (HelixGeom_Tools.cxx L48-91).
     fn evaluate(
         &mut self,
         start_end: &[f64; 2],
@@ -24,8 +26,15 @@ impl<'a> EvaluatorFunction for ToolsEval<'a> {
         result: &mut [f64],
     ) -> i32 {
         let _ = start_end;
+        // OCCT L55: *ErrorCode = 0.
+        let mut error_code = 0;
         let par = param;
-        let _par = par;
+
+        // Dimension is incorrect (OCCT L59-62) — the error code is recorded
+        // and evaluation continues, exactly as in OCCT.
+        if result.len() != 3 {
+            error_code = 1;
+        }
 
         match order {
             0 => {
@@ -33,35 +42,36 @@ impl<'a> EvaluatorFunction for ToolsEval<'a> {
                 result[0] = pnt.x;
                 result[1] = pnt.y;
                 result[2] = pnt.z;
-                0
             }
             1 => {
                 let (_p, v1) = self.fonct.eval_d1(par);
                 result[0] = v1.x;
                 result[1] = v1.y;
                 result[2] = v1.z;
-                0
             }
             2 => {
                 let (_p, _v1, v2) = self.fonct.eval_d2(par);
                 result[0] = v2.x;
                 result[1] = v2.y;
                 result[2] = v2.z;
-                0
             }
             _ => {
                 result[0] = 0.0;
                 result[1] = 0.0;
                 result[2] = 0.0;
-                3
+                error_code = 3;
             }
         }
+        error_code
     }
 }
 
-/// OCCT HelixGeom_Tools::ApprCurve3D (L95-156) — approximates a helix
-/// adaptor curve by a BSpline.  Returns `(error_code, bspline, max_error)`;
-/// error code 0 on success.
+/// OCCT HelixGeom_Tools::ApprCurve3D (HelixGeom_Tools.cxx L95-156) —
+/// approximates a helix adaptor curve by a BSpline.  Returns
+/// `(error_code, bspline, max_error)`; error code 0 on success.  OCCT writes
+/// `theMaxError` through the output reference from L139 onward (i.e. on the
+/// return-2 and return-0 paths, but not on the return-1 path); the caller
+/// mirrors that write discipline.
 pub fn appr_curve3d(
     the_hc: &HelixCurve,
     the_tol: f64,
@@ -71,10 +81,14 @@ pub fn appr_curve3d(
 ) -> (i32, Option<BSplineCurve3>, f64) {
     let first = the_hc.first_parameter();
     let last = the_hc.last_parameter();
-    // Setup approximation dimensions and tolerances: Num3DSS = 1.
+    // Setup approximation dimensions and tolerances (OCCT L109-113):
+    // Num1DSS = 0, Num2DSS = 0, Num3DSS = 1, ThreeDTol->Init(theTol).
     let three_d_tol = [the_tol];
 
-    // Setup approximation function and perform approximation.
+    // Setup approximation function and perform approximation (OCCT L118-131).
+    // OCCT passes `AdvApprox_DichoCutting aCutTool` (L107) explicitly; the
+    // rcad kernel approximator (AdvApprox_ApproxAFunction port) runs the
+    // dichotomy cutting internally, so the cut tool has no ctor argument.
     let mut ev = ToolsEval { fonct: the_hc };
     let a_approx = ApproxAFunction::new(
         0,
@@ -112,7 +126,7 @@ pub fn appr_curve3d(
     (0, Some(bspl), max_error)
 }
 
-/// OCCT HelixGeom_Tools::ApprHelix (L160-190).
+/// OCCT HelixGeom_Tools::ApprHelix (HelixGeom_Tools.cxx L160-190).
 #[allow(clippy::too_many_arguments)]
 pub fn appr_helix(
     a_t1: f64,
@@ -130,7 +144,7 @@ pub fn appr_helix(
     let a_cont = GeomAbsShape::C2;
     let a_max_degree = 8;
     let a_max_seg = 150;
-    // Perform curve approximation.
+    // Perform curve approximation (OCCT L182-188).
     appr_curve3d(
         &a_adaptor,
         the_tol,
@@ -138,11 +152,4 @@ pub fn appr_helix(
         a_max_seg,
         a_max_degree,
     )
-}
-
-/// OCCT AdvApprox_DichoCutting default construction site kept local for the
-/// builder (the engine ctor takes the cut tool by reference in OCCT).
-#[allow(dead_code)]
-fn _cut_tool_witness() -> DichoCutting {
-    DichoCutting
 }

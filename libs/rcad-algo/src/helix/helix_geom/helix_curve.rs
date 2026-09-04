@@ -32,7 +32,8 @@ impl Default for HelixCurve {
 }
 
 impl HelixCurve {
-    /// OCCT HelixGeom_HelixCurve() — default constructor.
+    /// OCCT HelixGeom_HelixCurve() — default constructor
+    /// (HelixGeom_HelixCurve.cxx L30-42).
     pub fn new() -> Self {
         let last = 2.0 * std::f64::consts::PI;
         let pitch = 1.0;
@@ -50,7 +51,8 @@ impl HelixCurve {
         }
     }
 
-    /// OCCT HelixGeom_HelixCurve::Load() — sets default values for parameters.
+    /// OCCT HelixGeom_HelixCurve::Load() — sets default values for parameters
+    /// (HelixGeom_HelixCurve.cxx L47-50).
     pub fn load_default(&mut self) {
         let (first, last, pitch, r_start, taper_angle, is_clock_wise) = (
             self.first,
@@ -64,7 +66,8 @@ impl HelixCurve {
     }
 
     /// OCCT HelixGeom_HelixCurve::Load(aT1, aT2, aPitch, aRStart,
-    /// aTaperAngle, aIsCW) — sets helix parameters (L54-96).
+    /// aTaperAngle, aIsCW) — sets helix parameters
+    /// (HelixGeom_HelixCurve.cxx L54-97).
     pub fn load(
         &mut self,
         a_t1: f64,
@@ -103,27 +106,57 @@ impl HelixCurve {
         }
     }
 
-    /// OCCT FirstParameter.
+    /// OCCT FirstParameter (HelixGeom_HelixCurve.cxx L100-102).
     pub fn first_parameter(&self) -> f64 {
         self.first
     }
 
-    /// OCCT LastParameter.
+    /// OCCT LastParameter (HelixGeom_HelixCurve.cxx L107-109).
     pub fn last_parameter(&self) -> f64 {
         self.last
     }
 
-    /// OCCT Continuity.
+    /// OCCT Continuity (HelixGeom_HelixCurve.cxx L114-117).
     pub fn continuity(&self) -> GeomAbsShape {
         GeomAbsShape::CN
     }
 
-    /// OCCT NbIntervals.
+    /// OCCT NbIntervals (HelixGeom_HelixCurve.cxx L121-124).
     pub fn nb_intervals(&self, _s: GeomAbsShape) -> usize {
         1
     }
 
-    /// OCCT EvalD0 (L164-180).
+    /// OCCT Intervals (HelixGeom_HelixCurve.cxx L128-131).
+    pub fn intervals(&self, t: &mut [f64], _s: GeomAbsShape) {
+        t[0] = self.first;
+        t[1] = self.last;
+    }
+
+    /// OCCT Resolution (HelixGeom_HelixCurve.cxx L136-139) — throws
+    /// Standard_NotImplemented.
+    pub fn resolution(&self, _r3d: f64) -> f64 {
+        panic!("HelixGeom_HelixCurve::Resolution");
+    }
+
+    /// OCCT IsClosed (HelixGeom_HelixCurve.cxx L143-146) — throws
+    /// Standard_NotImplemented.
+    pub fn is_closed(&self) -> bool {
+        panic!("HelixGeom_HelixCurve::IsClosed");
+    }
+
+    /// OCCT IsPeriodic (HelixGeom_HelixCurve.cxx L150-153) — throws
+    /// Standard_NotImplemented.
+    pub fn is_periodic(&self) -> bool {
+        panic!("HelixGeom_HelixCurve::IsPeriodic");
+    }
+
+    /// OCCT Period (HelixGeom_HelixCurve.cxx L157-160) — throws
+    /// Standard_DomainError.
+    pub fn period(&self) -> f64 {
+        panic!("HelixGeom_HelixCurve::Period");
+    }
+
+    /// OCCT EvalD0 (HelixGeom_HelixCurve.cxx L164-180).
     pub fn eval_d0(&self, the_t: f64) -> DVec3 {
         // Calculate trigonometric values and radius.
         let a_ct = the_t.cos();
@@ -139,7 +172,8 @@ impl HelixCurve {
         DVec3::new(a_x, a_y, a_z)
     }
 
-    /// OCCT EvalD1 (L184-214) — point and first derivative.
+    /// OCCT EvalD1 (HelixGeom_HelixCurve.cxx L184-215) — point and first
+    /// derivative.
     pub fn eval_d1(&self, the_t: f64) -> (DVec3, DVec3) {
         let a_ct = the_t.cos();
         let a_st = the_t.sin();
@@ -167,7 +201,8 @@ impl HelixCurve {
         (a_p, a_v1)
     }
 
-    /// OCCT EvalD2 (L218-258) — point, first and second derivatives.
+    /// OCCT EvalD2 (HelixGeom_HelixCurve.cxx L218-259) — point, first and
+    /// second derivatives.
     pub fn eval_d2(&self, the_t: f64) -> (DVec3, DVec3, DVec3) {
         let a_ct = the_t.cos();
         let a_st = the_t.sin();
@@ -204,7 +239,7 @@ impl HelixCurve {
         (a_p, a_v1, a_v2)
     }
 
-    /// OCCT EvalDN (L262-278).
+    /// OCCT EvalDN (HelixGeom_HelixCurve.cxx L262-279).
     pub fn eval_dn(&self, the_t: f64, the_n: i32) -> DVec3 {
         match the_n {
             1 => {

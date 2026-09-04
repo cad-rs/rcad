@@ -45,44 +45,45 @@ impl BuilderApproxCurveBase {
         }
     }
 
-    /// OCCT SetApproxParameters.
+    /// OCCT SetApproxParameters
+    /// (HelixGeom_BuilderApproxCurve.cxx L37-44).
     pub fn set_approx_parameters(&mut self, a_cont: GeomAbsShape, a_max_degree: i32, a_max_seg: i32) {
         self.my_cont = a_cont;
         self.my_max_degree = a_max_degree;
         self.my_max_seg = a_max_seg;
     }
 
-    /// OCCT ApproxParameters.
+    /// OCCT ApproxParameters (HelixGeom_BuilderApproxCurve.cxx L48-55).
     pub fn approx_parameters(&self) -> (GeomAbsShape, i32, i32) {
         (self.my_cont, self.my_max_degree, self.my_max_seg)
     }
 
-    /// OCCT SetTolerance.
+    /// OCCT SetTolerance (HelixGeom_BuilderApproxCurve.cxx L59-62).
     pub fn set_tolerance(&mut self, a_tolerance: f64) {
         self.my_tolerance = a_tolerance;
     }
 
-    /// OCCT Tolerance.
+    /// OCCT Tolerance (HelixGeom_BuilderApproxCurve.cxx L66-69).
     pub fn tolerance(&self) -> f64 {
         self.my_tolerance
     }
 
-    /// OCCT ToleranceReached.
+    /// OCCT ToleranceReached (HelixGeom_BuilderApproxCurve.cxx L73-76).
     pub fn tolerance_reached(&self) -> f64 {
         self.my_tol_reached
     }
 
-    /// OCCT Curves.
+    /// OCCT Curves (HelixGeom_BuilderApproxCurve.cxx L80-83).
     pub fn curves(&self) -> &Vec<BSplineCurve3> {
         &self.my_curves
     }
 
-    /// OCCT ErrorStatus.
+    /// OCCT ErrorStatus (HelixGeom_BuilderApproxCurve.cxx L87-90).
     pub fn error_status(&self) -> i32 {
         self.my_error_status
     }
 
-    /// OCCT WarningStatus.
+    /// OCCT WarningStatus (HelixGeom_BuilderApproxCurve.cxx L94-97).
     pub fn warning_status(&self) -> i32 {
         self.my_warning_status
     }
