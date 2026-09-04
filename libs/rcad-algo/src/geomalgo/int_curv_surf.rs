@@ -152,6 +152,11 @@ impl ThePolygonOfHInter {
         self.nb_pnt_in - 1
     }
 
+    /// OCCT Bounding().
+    pub fn bounding(&self) -> &BndBox {
+        &self.bnd
+    }
+
     /// OCCT InfParameter().
     pub fn inf_parameter(&self) -> f64 {
         self.binf
@@ -773,6 +778,12 @@ impl ThePolyhedronOfHInter {
         &self.bnd
     }
 
+    /// OCCT ComponentsBounding(TheComponentsBounding) — the per-triangle
+    /// boxes filled by FillBounding (1-based: component i at slice i - 1).
+    pub fn components_bounding(&self) -> &[BndBox] {
+        &self.components_bnd
+    }
+
     /// OCCT DeflectionOverEstimation().
     pub fn deflection_over_estimation(&self) -> f64 {
         self.deflection
@@ -1228,3 +1239,81 @@ impl IntPatchPolyhedron {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// OCCT IntCurveSurface_ThePolygonToolOfHInter / ThePolyhedronToolOfHInter —
+// the ToolPolygon3d / ToolPolyh instantiation of
+// Intf_InterferencePolygonPolyhedron over the sampled polygon/polyhedron
+// (IntCurveSurface_ThePolygonToolOfHInter.hxx / ThePolyhedronToolOfHInter.hxx).
+// ---------------------------------------------------------------------------
+
+use crate::geomalgo::intf_interference_polygon_polyhedron::{
+    ToolPolyh, ToolPolygon3d,
+};
+
+/// OCCT IntCurveSurface_ThePolygonToolOfHInter — static tool marker.
+pub struct ThePolygonToolOfHInter;
+
+impl ToolPolygon3d<ThePolygonOfHInter> for ThePolygonToolOfHInter {
+    fn deflection_over_estimation(the_polyg: &ThePolygonOfHInter) -> f64 {
+        the_polyg.deflection_over_estimation()
+    }
+    fn bounding(the_polyg: &ThePolygonOfHInter) -> &BndBox {
+        the_polyg.bounding()
+    }
+    fn closed(the_polyg: &ThePolygonOfHInter) -> bool {
+        the_polyg.closed()
+    }
+    fn nb_segments(the_polyg: &ThePolygonOfHInter) -> usize {
+        the_polyg.nb_segments()
+    }
+    fn begin_of_seg(the_polyg: &ThePolygonOfHInter, i_lin: usize) -> DVec3 {
+        the_polyg.begin_of_seg(i_lin)
+    }
+    fn end_of_seg(the_polyg: &ThePolygonOfHInter, i_lin: usize) -> DVec3 {
+        the_polyg.end_of_seg(i_lin)
+    }
+}
+
+/// OCCT IntCurveSurface_ThePolyhedronToolOfHInter — static tool marker.
+pub struct ThePolyhedronToolOfHInter;
+
+impl ToolPolyh<ThePolyhedronOfHInter> for ThePolyhedronToolOfHInter {
+    fn deflection_over_estimation(the_polyh: &ThePolyhedronOfHInter) -> f64 {
+        the_polyh.deflection_over_estimation()
+    }
+    fn bounding(the_polyh: &ThePolyhedronOfHInter) -> &BndBox {
+        the_polyh.bounding()
+    }
+    fn components_bounding(the_polyh: &ThePolyhedronOfHInter) -> &[BndBox] {
+        the_polyh.components_bounding()
+    }
+    fn triangle(the_polyh: &ThePolyhedronOfHInter, ttri: usize) -> [usize; 3] {
+        let (a, b, c) = the_polyh.triangle(ttri);
+        [a, b, c]
+    }
+    fn point(the_polyh: &ThePolyhedronOfHInter, i: usize) -> DVec3 {
+        the_polyh.point(i)
+    }
+    fn tri_connex(
+        the_polyh: &ThePolyhedronOfHInter,
+        triang: usize,
+        pivot: usize,
+        pedge: usize,
+    ) -> (i32, i32) {
+        the_polyh.tri_connex(triang, pivot, pedge)
+    }
+    fn is_on_bound(the_polyh: &ThePolyhedronOfHInter, ind_p1: usize, ind_p2: usize) -> bool {
+        the_polyh.is_on_bound(ind_p1, ind_p2)
+    }
+    fn get_border_deflection(the_polyh: &ThePolyhedronOfHInter) -> f64 {
+        the_polyh.get_border_deflection()
+    }
+}
+
+/// OCCT IntCurveSurface_TheInterferenceOfHInter — the
+/// Intf_InterferencePolygonPolyhedron instantiation over the sampled
+/// polygon/polyhedron (IntCurveSurface_TheInterferenceOfHInter_0.cxx).  The
+/// engine stores no template-typed state, so the instantiation is the
+/// tool-marker pair used at the call sites.
+pub type TheInterferenceOfHInter = crate::geomalgo::intf_interference_polygon_polyhedron::InterferencePolygonPolyhedron;

@@ -84,6 +84,13 @@ impl Interference {
         self.tolerance = t;
     }
 
+    /// Mutable access to mySPoins (protected member; the concrete
+    /// Interference* subclasses Append their section points during
+    /// Intersect).
+    pub(crate) fn my_s_poins_mut(&mut self) -> &mut Vec<IntfSectionPoint> {
+        &mut self.my_s_poins
+    }
+
     /// OCCT NbSectionPoints() — lxx L22-25.
     pub fn nb_section_points(&self) -> usize {
         self.my_s_poins.len()
