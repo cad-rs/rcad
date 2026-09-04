@@ -16,7 +16,8 @@
 //     unimplemented!() (ThruSections skeleton precedent).
 
 use super::geom2d_int::{
-    geom2d_curve_tool, TheIntConicCurveOfGInter, Curve2dAdaptor, Curve2dType,
+    geom2d_curve_tool, TheIntConicCurveOfGInter, TheIntPCurvePCurveOfGInter, Curve2dAdaptor,
+    Curve2dType,
 };
 use super::int_conic_conic::IntConicConic;
 use super::int_res2d::{Domain as Res2dDomain, IntersectionBase};
@@ -37,6 +38,8 @@ pub struct IntCurveCurveGen {
     intconiconi: IntConicConic,
     /// OCCT intconicurv.
     intconicurv: TheIntConicCurveOfGInter,
+    /// OCCT intcurvcurv (Geom2dInt_GInter.hxx L178).
+    intcurvcurv: TheIntPCurvePCurveOfGInter,
     /// OCCT param1inf / param1sup / param2inf / param2sup.
     param1inf: f64,
     param1sup: f64,
@@ -51,6 +54,7 @@ impl IntCurveCurveGen {
             base: IntersectionBase::new(),
             intconiconi: IntConicConic::new(),
             intconicurv: TheIntConicCurveOfGInter::bare(),
+            intcurvcurv: TheIntPCurvePCurveOfGInter::new(),
             param1inf: -PRECISION_INFINITE,
             param1sup: PRECISION_INFINITE,
             param2inf: -PRECISION_INFINITE,
@@ -230,15 +234,10 @@ impl IntCurveCurveGen {
             }
             _ => {
                 self.base.reset_fields();
-                // intcurvcurv.SetReversedParameters(false);
-                // intcurvcurv.Perform(C, D1, TolConf, Tol);
-                // -- Geom2dInt_TheIntPCurvePCurveOfGInter (IntCurve_IntPolyPolyGen)
-                //    is not yet ported (see file header).
-                unimplemented!(
-                    "IntCurve_IntCurveCurveGen: pcurve x same-pcurve self-intersection \
-                     (Geom2dInt_TheIntPCurvePCurveOfGInter / IntCurve_IntPolyPolyGen) is not \
-                     ported yet"
-                );
+                self.intcurvcurv.base.set_reversed_parameters(false);
+                self.intcurvcurv.perform_cd(c, d, tol_conf, tol);
+                self.base.set_values(&self.intcurvcurv.base);
+                self.base.done = true;
             }
         }
     }
@@ -888,17 +887,19 @@ impl IntCurveCurveGen {
                     finish_conicurv!();
                 }
                 _ => {
-                    // intcurvcurv.SetReversedParameters(false);
-                    // intcurvcurv.Perform(C1, D1, C2, D2, TolConf, Tol);
-                    // -- Geom2dInt_TheIntPCurvePCurveOfGInter
-                    //    (IntCurve_IntPolyPolyGen.gxx) is not yet ported
-                    //    (see file header).
-                    let _ = composite;
-                    unimplemented!(
-                        "IntCurve_IntCurveCurveGen: pcurve x pcurve intersection \
-                         (Geom2dInt_TheIntPCurvePCurveOfGInter / IntCurve_IntPolyPolyGen) is \
-                         not ported yet"
-                    );
+                    self.intcurvcurv.base.set_reversed_parameters(false);
+                    self.intcurvcurv.perform(c1, d1, c2, d2, tol_conf, tol);
+                    if composite {
+                        self.base.append_intersector(
+                            &self.intcurvcurv.base,
+                            self.param1inf,
+                            self.param1sup,
+                            self.param2inf,
+                            self.param2sup,
+                        );
+                    } else {
+                        self.base.set_values(&self.intcurvcurv.base);
+                    }
                 }
             },
         }

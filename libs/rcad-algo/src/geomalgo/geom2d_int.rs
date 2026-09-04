@@ -2023,3 +2023,158 @@ impl Default for TheIntConicCurveOfGInter {
         TheIntConicCurveOfGInter::bare()
     }
 }
+
+// ---------------------------------------------------------------------------
+// OCCT Geom2dInt instantiation of IntCurve_IntPolyPolyGen.
+// ---------------------------------------------------------------------------
+
+/// OCCT Geom2dInt tool triple over `dyn Curve2dAdaptor`
+/// (Geom2dInt_Geom2dCurveTool + Geom2dInt_TheProjPCurOfGInter, bundled for
+/// the IntCurve_IntPolyPolyGen template parameters).  The lifetime
+/// parameter keeps the curve references lifetime-elastic like the C++
+/// `const Adaptor2d_Curve2d&` signatures.
+pub struct GInterPolyTool<'a>(std::marker::PhantomData<&'a ()>);
+
+impl<'a> crate::geomalgo::int_curve_generics::ProjPCurveTool for GInterPolyTool<'a> {
+    type Curve = dyn Curve2dAdaptor + 'a;
+    fn value(c: &Self::Curve, u: f64) -> DVec2 {
+        geom2d_curve_tool::value(c, u)
+    }
+    fn d1(c: &Self::Curve, u: f64) -> (DVec2, DVec2) {
+        geom2d_curve_tool::d1(c, u)
+    }
+    fn eps_x(c: &Self::Curve) -> f64 {
+        geom2d_curve_tool::eps_x(c)
+    }
+}
+
+impl<'a> crate::geomalgo::int_imp_par_gen::ParTool<dyn Curve2dAdaptor + 'a> for GInterPolyTool<'a> {
+    fn nb_samples_uv(c: &(dyn Curve2dAdaptor + 'a), u1: f64, u2: f64) -> i32 {
+        geom2d_curve_tool::nb_samples_2(c, u1, u2)
+    }
+    fn eps_x(c: &(dyn Curve2dAdaptor + 'a)) -> f64 {
+        geom2d_curve_tool::eps_x(c)
+    }
+    fn value(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> DVec2 {
+        geom2d_curve_tool::value(c, u)
+    }
+    fn d1(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> (DVec2, DVec2) {
+        geom2d_curve_tool::d1(c, u)
+    }
+    fn d2(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> (DVec2, DVec2, DVec2) {
+        geom2d_curve_tool::d2(c, u)
+    }
+}
+
+impl<'a> crate::geomalgo::int_imp_par_gen::ProjectOnPCurveTool<dyn Curve2dAdaptor + 'a>
+    for GInterPolyTool<'a>
+{
+    fn find_parameter(c: &(dyn Curve2dAdaptor + 'a), p: DVec2, tol: f64) -> f64 {
+        proj_p_cur_of_g_inter::find_parameter_unbounded(c, p, tol)
+    }
+    fn find_parameter_between(
+        c: &(dyn Curve2dAdaptor + 'a),
+        p: DVec2,
+        low: f64,
+        high: f64,
+        tol: f64,
+    ) -> f64 {
+        proj_p_cur_of_g_inter::find_parameter_bounded(c, p, low, high, tol)
+    }
+}
+
+/// OCCT Geom2dInt_TheIntPCurvePCurveOfGInter — the IntCurve_IntPolyPolyGen
+/// instantiation over the Geom2dInt tools
+/// (Geom2dInt_TheIntPCurvePCurveOfGInter_0.cxx).
+#[derive(Debug, Clone)]
+pub struct TheIntPCurvePCurveOfGInter {
+    pub base: IntersectionBase,
+    pub domain_on_curve1: Res2dDomain,
+    pub domain_on_curve2: Res2dDomain,
+    min_pnt_nb: i32,
+}
+
+impl TheIntPCurvePCurveOfGInter {
+    /// OCCT IntCurve_IntPolyPolyGen() (gxx L84-89).
+    pub fn new() -> Self {
+        TheIntPCurvePCurveOfGInter {
+            base: IntersectionBase::new(),
+            domain_on_curve1: Res2dDomain::infinite(),
+            domain_on_curve2: Res2dDomain::infinite(),
+            min_pnt_nb: 20,
+        }
+    }
+
+    /// OCCT GetMinNbSamples() (gxx L1787-1790).
+    pub fn get_min_nb_samples(&self) -> i32 {
+        self.min_pnt_nb
+    }
+
+    /// OCCT SetMinNbSamples(theMinNbSamples) (gxx L1794-1797).
+    pub fn set_min_nb_samples(&mut self, the_min_nb_samples: i32) {
+        self.min_pnt_nb = the_min_nb_samples;
+    }
+
+    /// OCCT Perform(C1, D1, C2, D2, TheTolConf, TheTol) (gxx L93-292).
+    pub fn perform(
+        &mut self,
+        c1: &dyn Curve2dAdaptor,
+        d1: &Res2dDomain,
+        c2: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        the_tol_conf: f64,
+        the_tol: f64,
+    ) {
+        fn engine<'a>(
+        ) -> super::int_poly_poly_gen::IntPolyPolyGen<dyn Curve2dAdaptor + 'a, GInterPolyTool<'a>>
+        {
+            super::int_poly_poly_gen::IntPolyPolyGen::new()
+        }
+        let mut e = engine();
+        e.set_min_nb_samples(self.min_pnt_nb);
+        e.perform(c1, d1, c2, d2, the_tol_conf, the_tol);
+        self.base = e.base;
+        self.domain_on_curve1 = e.domain_on_curve1;
+        self.domain_on_curve2 = e.domain_on_curve2;
+    }
+
+    /// OCCT Perform(C1, D1, TheTolConf, TheTol) (gxx L297-386) — the
+    /// auto-intersection form.
+    pub fn perform_cd(
+        &mut self,
+        c1: &dyn Curve2dAdaptor,
+        d1: &Res2dDomain,
+        the_tol_conf: f64,
+        the_tol: f64,
+    ) {
+        self.perform_auto(c1, d1, the_tol_conf, the_tol);
+    }
+
+    /// OCCT Perform(C1, D1, TheTolConf, TheTol) (gxx L297-386) — the
+    /// auto-intersection form.
+    pub fn perform_auto(
+        &mut self,
+        c1: &dyn Curve2dAdaptor,
+        d1: &Res2dDomain,
+        the_tol_conf: f64,
+        the_tol: f64,
+    ) {
+        fn engine<'a>(
+        ) -> super::int_poly_poly_gen::IntPolyPolyGen<dyn Curve2dAdaptor + 'a, GInterPolyTool<'a>>
+        {
+            super::int_poly_poly_gen::IntPolyPolyGen::new()
+        }
+        let mut e = engine();
+        e.set_min_nb_samples(self.min_pnt_nb);
+        e.perform_auto(c1, d1, the_tol_conf, the_tol);
+        self.base = e.base;
+        self.domain_on_curve1 = e.domain_on_curve1;
+        self.domain_on_curve2 = e.domain_on_curve2;
+    }
+}
+
+impl Default for TheIntPCurvePCurveOfGInter {
+    fn default() -> Self {
+        TheIntPCurvePCurveOfGInter::new()
+    }
+}

@@ -28,7 +28,7 @@ const MAJORATION_DEFLECTION: f64 = 1.5;
 /// HLRBRep_CurveTool; Geom2dInt uses IntCurveCurveGen's own tool.)
 pub trait ProjPCurveTool {
     /// OCCT `TheCurve` type.
-    type Curve;
+    type Curve: ?Sized;
     /// OCCT TheCurveTool::Value(C, U) — point at parameter U.
     fn value(c: &Self::Curve, u: f64) -> DVec2;
     /// OCCT TheCurveTool::D1(C, U, P, T) — point and tangent.
@@ -45,7 +45,7 @@ pub trait ProjPCurveTool {
 /// `TheIndex` are 1-based point indices); the Vec members here are 0-based
 /// and every access subtracts 1.
 #[derive(Debug, Clone)]
-pub struct Polygon2dGen<C> {
+pub struct Polygon2dGen<C: ?Sized> {
     the_pnts: Vec<DVec2>,
     the_params: Vec<f64>,
     the_index: Vec<i32>,
@@ -56,10 +56,10 @@ pub struct Polygon2dGen<C> {
     bsup: f64,
     closed_polygon: bool,
     my_box: BndBox2d,
-    _curve: std::marker::PhantomData<C>,
+    _curve: std::marker::PhantomData<fn(&C)>,
 }
 
-impl<C> Default for Polygon2dGen<C> {
+impl<C: ?Sized> Default for Polygon2dGen<C> {
     fn default() -> Self {
         panic!("IntCurve_Polygon2dGen has no default constructor in OCCT")
     }
@@ -83,7 +83,7 @@ fn calcul_region(x: f64, y: f64, x1: f64, x2: f64, y1: f64, y2: f64) -> i32 {
     r
 }
 
-impl<C> Polygon2dGen<C> {
+impl<C: ?Sized> Polygon2dGen<C> {
     /// OCCT DeflectionOverEstimation() — lxx L20-23.
     pub fn deflection_over_estimation(&self) -> f64 {
         self.the_deflection
@@ -125,7 +125,7 @@ impl<C> Polygon2dGen<C> {
     }
 }
 
-impl<C> Polygon2dGen<C> {
+impl<C: ?Sized> Polygon2dGen<C> {
     /// OCCT IntCurve_Polygon2dGen(C, tNbPts, D, Tol) — gxx L38-117: uniform
     /// sampling and initial deflection estimate.
     pub fn new<T: ProjPCurveTool<Curve = C>>(
@@ -423,7 +423,7 @@ impl<C> Polygon2dGen<C> {
 /// (DistBetweenPCurvesGen.gxx L33-105).  OCCT stores `void*` curve
 /// pointers; the Rust struct borrows nothing and implements the function
 /// set generically over the tool.
-pub struct DistBetweenPCurvesGen<'a, C, T>
+pub struct DistBetweenPCurvesGen<'a, C: ?Sized, T>
 where
     T: ProjPCurveTool<Curve = C>,
 {
@@ -432,7 +432,7 @@ where
     _tool: std::marker::PhantomData<fn(&C, &C) -> T>,
 }
 
-impl<'a, C, T> DistBetweenPCurvesGen<'a, C, T>
+impl<'a, C: ?Sized, T> DistBetweenPCurvesGen<'a, C, T>
 where
     T: ProjPCurveTool<Curve = C>,
 {
@@ -446,7 +446,7 @@ where
     }
 }
 
-impl<C, T> FunctionSetWithDerivatives for DistBetweenPCurvesGen<'_, C, T>
+impl<C: ?Sized, T> FunctionSetWithDerivatives for DistBetweenPCurvesGen<'_, C, T>
 where
     T: ProjPCurveTool<Curve = C>,
 {
@@ -497,7 +497,7 @@ where
 /// OCCT IntCurve_ExactIntersectionPoint — exact intersection of two curves
 /// by Newton iteration seeded from polygon intersections, with the
 /// bound-widening retry loops (ExactIntersectionPoint.gxx L25-271).
-pub struct ExactIntersectionPoint<C, T>
+pub struct ExactIntersectionPoint<C: ?Sized, T>
 where
     T: ProjPCurveTool<Curve = C>,
 {
@@ -524,7 +524,7 @@ pub trait Polygon2dLike {
     fn approx_param_on_curve(&self, index: i32, param_on_line: f64) -> f64;
 }
 
-impl<C> Polygon2dLike for Polygon2dGen<C> {
+impl<C: ?Sized> Polygon2dLike for Polygon2dGen<C> {
     fn nb_segments(&self) -> i32 {
         Polygon2dGen::nb_segments(self)
     }
@@ -542,7 +542,7 @@ impl<C> Polygon2dLike for Polygon2dGen<C> {
     }
 }
 
-impl<C, T> ExactIntersectionPoint<C, T>
+impl<C: ?Sized, T> ExactIntersectionPoint<C, T>
 where
     T: ProjPCurveTool<Curve = C>,
 {
@@ -873,7 +873,7 @@ mod tests {
 // inheritance), consumed by Intf_InterferencePolygon2d.
 // ---------------------------------------------------------------------------
 
-impl<C> crate::geomalgo::intf_interference::IntfPolygon2d for Polygon2dGen<C> {
+impl<C: ?Sized> crate::geomalgo::intf_interference::IntfPolygon2d for Polygon2dGen<C> {
     fn bounding(&self) -> &BndBox2d {
         &self.my_box
     }
