@@ -104,6 +104,105 @@ impl MultiPoint {
     pub fn nb_points2d(&self) -> usize {
         self.p2d.len()
     }
+
+    /// OCCT AppParCurves_MultiPoint(tabP) (AppParCurves_MultiPoint.cxx L44-58)
+    /// — a MultiPoint only composed of 3D points.
+    pub fn new_tab_p3d(tab_p: &[DVec3]) -> Self {
+        MultiPoint {
+            p3d: tab_p.to_vec(),
+            p2d: Vec::new(),
+            nb_p3d: tab_p.len(),
+        }
+    }
+
+    /// OCCT AppParCurves_MultiPoint(tabP2d) (AppParCurves_MultiPoint.cxx
+    /// L60-74) — a MultiPoint only composed of 2D points.
+    pub fn new_tab_p2d(tab_p2d: &[DVec2]) -> Self {
+        MultiPoint {
+            p3d: Vec::new(),
+            p2d: tab_p2d.to_vec(),
+            nb_p3d: 0,
+        }
+    }
+
+    /// OCCT AppParCurves_MultiPoint(tabP, tabP2d) (AppParCurves_MultiPoint.cxx
+    /// L76-101).
+    pub fn new_tab_p3d_p2d(tab_p: &[DVec3], tab_p2d: &[DVec2]) -> Self {
+        MultiPoint {
+            p3d: tab_p.to_vec(),
+            p2d: tab_p2d.to_vec(),
+            nb_p3d: tab_p.len(),
+        }
+    }
+
+    /// OCCT Dimension(Index) (hxx inline) — the dimension of the point of
+    /// range Index (1-based global index).
+    pub fn dimension(&self, index: usize) -> i32 {
+        assert!(
+            index >= 1 && index <= self.nb_p3d + self.p2d.len(),
+            "AppParCurves_MultiPoint::Dimension() - wrong index"
+        );
+        if index <= self.nb_p3d {
+            3
+        } else {
+            2
+        }
+    }
+
+    /// OCCT Transform(CuIndex, x, dx, y, dy, z, dz)
+    /// (AppParCurves_MultiPoint.cxx L103-119) —
+    /// newx = x + dx*oldx, newy = y + dy*oldy, newz = z + dz*oldz.
+    pub fn transform(
+        &mut self,
+        cu_index: usize,
+        x: f64,
+        dx: f64,
+        y: f64,
+        dy: f64,
+        z: f64,
+        dz: f64,
+    ) {
+        assert!(
+            self.dimension(cu_index) == 3,
+            "Standard_OutOfRange: AppParCurves_MultiPoint::Transform"
+        );
+        let p = self.point(cu_index);
+        let new_p = DVec3::new(x + p.x * dx, y + p.y * dy, z + p.z * dz);
+        self.set_point(cu_index, new_p);
+    }
+
+    /// OCCT Transform2d(CuIndex, x, dx, y, dy)
+    /// (AppParCurves_MultiPoint.cxx L121-136).
+    pub fn transform2d(&mut self, cu_index: usize, x: f64, dx: f64, y: f64, dy: f64) {
+        assert!(
+            self.dimension(cu_index) == 2,
+            "Standard_OutOfRange: AppParCurves_MultiPoint::Transform2d"
+        );
+        let p = self.point2d(cu_index);
+        let new_p = DVec2::new(x + p.x * dx, y + p.y * dy);
+        self.set_point2d(cu_index, new_p);
+    }
+
+    /// OCCT Dump(o) (AppParCurves_MultiPoint.cxx L244-277) — prints the
+    /// current state.
+    pub fn dump(&self) {
+        println!("AppParCurves_MultiPoint dump:");
+        let (a_nb_pnts3d, a_nb_pnts2d) = (self.nb_points(), self.nb_points2d());
+        println!("It contains {} 3d points and {} 2d points.", a_nb_pnts3d, a_nb_pnts2d);
+        for i in 1..=a_nb_pnts3d {
+            let p = self.point(i);
+            println!("3D-Point #{}", i);
+            println!(" Pole x = {}", p.x);
+            println!(" Pole y = {}", p.y);
+            println!(" Pole z = {}", p.z);
+        }
+        for i in (self.nb_p3d + 1)..=(self.nb_p3d + a_nb_pnts2d) {
+            let p = self.point2d(i);
+            println!("2D-Point #{}", i);
+            println!(" Pole x = {}", p.x);
+            println!(" Pole y = {}", p.y);
+        }
+    }
 }
 
 /// OCCT AppParCurves_MultiCurve — a Bezier multi-curve: `poles` holds the
