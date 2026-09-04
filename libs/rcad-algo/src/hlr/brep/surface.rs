@@ -315,6 +315,27 @@ impl<'a> Surface<'a> {
     pub fn is_u_closed(&self) -> bool {
         self.my_surf.is_u_closed()
     }
+    /// OCCT SurfaceTool::UTrim — BRepAdaptor_Surface::UTrim (the narrowed
+    /// window copy).
+    pub fn u_trim(&self, first: f64, last: f64, tol: f64) -> Surface<'a> {
+        let mut s = Surface {
+            my_surf: self.my_surf.u_trim(first, last, tol),
+            my_type: self.my_type,
+            my_proj: self.my_proj,
+        };
+        // The Bezier-degree-1 -> Plane classification is preserved by the
+        // window narrowing (my_type unchanged).
+        let _ = &mut s;
+        s
+    }
+    /// OCCT SurfaceTool::VTrim.
+    pub fn v_trim(&self, first: f64, last: f64, tol: f64) -> Surface<'a> {
+        Surface {
+            my_surf: self.my_surf.v_trim(first, last, tol),
+            my_type: self.my_type,
+            my_proj: self.my_proj,
+        }
+    }
     /// OCCT IsVClosed (lxx L99-104).
     pub fn is_v_closed(&self) -> bool {
         self.my_surf.is_v_closed()

@@ -105,7 +105,7 @@ impl Default for BRepAdaptorSurface<'_> {
 
 // The BRepAdaptor_Surface surface queries delegate to the restricted
 // GeomAdaptor (OCCT BRepAdaptor_Surface forwards to mySurf the same way).
-impl BRepAdaptorSurface<'_> {
+impl<'a> BRepAdaptorSurface<'a> {
     pub fn first_u_parameter(&self) -> f64 {
         self.my_surf.first_u_parameter()
     }
@@ -189,6 +189,25 @@ impl BRepAdaptorSurface<'_> {
     }
     pub fn is_v_closed(&self) -> bool {
         self.my_surf.get_type() == GeomAbsSurfaceType::Torus
+    }
+    /// OCCT BRepAdaptor_Surface::UTrim — the narrowed window on the same
+    /// surface (GeomAdaptor semantics).
+    pub fn u_trim(&self, first: f64, last: f64, _tol: f64) -> BRepAdaptorSurface<'a> {
+        let d = self.my_surf.uv_window();
+        BRepAdaptorSurface {
+            my_face: self.my_face.clone(),
+            my_surf: self.my_surf.clone_with_window([first.min(last), last.max(first), d[2], d[3]]),
+            _brep: std::marker::PhantomData,
+        }
+    }
+    /// OCCT BRepAdaptor_Surface::VTrim.
+    pub fn v_trim(&self, first: f64, last: f64, _tol: f64) -> BRepAdaptorSurface<'a> {
+        let d = self.my_surf.uv_window();
+        BRepAdaptorSurface {
+            my_face: self.my_face.clone(),
+            my_surf: self.my_surf.clone_with_window([d[0], d[1], first.min(last), last.max(first)]),
+            _brep: std::marker::PhantomData,
+        }
     }
 }
 

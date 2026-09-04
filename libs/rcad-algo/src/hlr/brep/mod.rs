@@ -16,6 +16,8 @@ pub mod b_surface_tool;
 pub mod curve;
 pub mod line_tool;
 pub mod sl_props;
+pub mod inter_csurf;
+pub mod surface_tool;
 pub mod surface;
 
 pub use b_curve_tool::{b_curve_value, CurveView};
