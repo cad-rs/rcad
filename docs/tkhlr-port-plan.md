@@ -1,16 +1,23 @@
 # TKHLR 1:1 翻译推进计划（多 session runway）
 
-> **交接快照（2026-09-05 session 2 结束时）**
-> - 提交链（rcad 子模块分支 `sd-hash-wip`）：`7011f938` 计划落盘 → Stage 0/1 → 2a 审计 + 2a-1~2a-4（Intf/IntCurve/IntImp/IntImpParGen/IntCurveSurface_HInter 泛型引擎闭包 + Adaptor3d/BRep TopolTool 层，2a 全关）→ **2b Contap 包 1:1 完成**（`hlr/contap/` 全包：SurfaceAdapter + GeomSurfaceAdapter/GeomTool、SurfProps、Point/Line/IType/TFunction、HCurve2dTool、HContTool（thread_local 静态）、SurfFunction/ArcFunction、ContAna、ContapDomain trait + Adaptor3d TopolTool impl、TheSearchInside、TheSearch（SearchOnBoundaries 1:1）、Contour 2389 行拆 contour/{mod,functions,perform,perform_ana}；连带 kernel/geomalgo 泛型化：Extrema_EPCOfExtPC2d（GGenExtPC+GFuncExtPC 2D）、math_FunctionSetRoot 抽 `FunctionSetWithDerivatives2` trait、IntWalk_IWalking 抽 `IWFunction` trait——IntPatch 调用点零破坏）。
-> - 回归基线（全部全绿）：algo lib **174 通过 + 1 ignore**（150 → +21 Contap 叶子锚点 + 3 EPCOfExtPC2d 锚点；ignore = FClass2d 边界 On 锚点，根因见 §8 前文）、kernel lib **645**/645、tkhelix_gtests 16/16、pavefiller_stage_tests 26/26、tkgeom_algo_gtests 134+1。Contour 集成锚点：圆柱侧影端到端（ContAna 两条 silhouette 线 + PerformSolRst + LineConstructor 全链，transition Out/Undecided 与 OCCT 字面一致）。
-> - **下一步 = Stage 3a：HLRBRep adaptor/tool 层**（Curve(215/632/169)/Surface(197/335/271)/CurveTool/SurfaceTool/BCurveTool/BSurfaceTool/LineTool/CLProps/SLProps）。3a 完成后 Contap 即可对 HLRBRep_Surface 跑真实 HLR 面（HLRBRep_Curve/HLRBRep_Surface 实现同一套 SurfaceAdapter/ContapDomain；BRepTopAdaptor_TopolTool 补 ContapDomain impl）。
->   注意：Contap 已全包落地（`hlr/contap/`）；Contap_HContTool.cxx 的 `static double uinf..vsup` 已译为 thread_local。3b 时 domain 用 BRepTopAdaptor_TopolTool（补 ContapDomain impl，`topalgo/brep_top_adaptor/topol_tool_brep.rs`）。
->   遗留对齐项（非阻塞，已定位根因）：FClass2d 边界 On 兜底——FaceShapeSource 传 kernel BRep locations 表（无 identity 槽位 0）给 `edge_pcurve_on_face`（按 bop DS 表约定读），pcurve 键落空 → FaceExplorer::segment=None → nowires → In；对齐该表约定后 un-ignore `fclass2d_topol_perform_boundary_on`。
->   **本轮发现的两处 kernel 缺口（非阻塞，3a/3b 顺手项）**：(a) `Curve2d` 枚举级 `Curve2dEval::is_closed/is_periodic` 未按 variant 委托（恒为 trait 默认 false）——`geom2d_int::Curve2dAdaptor::is_periodic` 对圆/椭圆返回 false，靠 `period()` 的 match 兜住；3a 修枚举委托。(b) `geom2d_int.rs` 私有 `GFuncExtPC`（LocateExtPC 投影用）的 `PPc = p - pc` 与 OCCT `TheVector PPc(myP, myPc) = pc - p` 符号相反——零点集合相同故 FindParameter 无影响，但若复用其 IsMin 分类会翻转；2b 已在 `extrema_gen_ext_pc2d.rs` 落了符号正确的 1:1 版。
->   HInter 已就绪的挂载点：`geomalgo/int_curve_surface/`（mod=数据类+HCurveTool/HSurfaceTool/HInterHost trait、inter_utils=InterUtils.pxx、inter_impl=Inter.pxx、hinter=HInter 壳+4 锚点、quad_curv_exact=QuadCurvExact 引擎）；IntConicQuad 类壳（含 Line/Ellipse/Line×Plane 分支）在 `int_patch/int_conic_quad.rs`；IntLinTorus 在 `int_patch/int_lin_torus.rs`；ElSLib 反向 Parameters×5 在 kernel `math/el.rs`；采样类工具泛型构造器 `ThePolygonOfHInter::new_tool*/ThePolyhedronOfHInter::new_tool*` 在 `int_curv_surf.rs`。Stage 3b 的 HLRBRep_CInter/The*OfInterCSurf 实例化只需为 HLRBRep_Curve/HLRBRep_Surface 实现同一套 trait。
-> - 已确立的翻译模式（沿例勿改）：OCCT gxx 模板参数 → Rust trait，**曲线类型本身也是 trait/struct 泛型参数 `C: ?Sized`**（`ParTool<C>`/`ProjectOnPCurveTool<C>`/`PCurveTool<C>`，见 `geomalgo/int_imp_par_gen.rs`）；具体实例化 = marker 类型上的 `impl<'a> ParTool<dyn Curve2dAdaptor + 'a>`（生命周期弹性，等价 C++ `const Adaptor2d_Curve2d&`）+ 具体薄壳结构体（TheIntersectorOfTheIntConicCurveOfGInter / TheIntConicCurveOfGInter）；gxx/lxx 内联翻译；每函数 `// OCCT <文件> L<起>-<止>` 标注；每个叶子翻译配 OCCT 解析锚点单测。
-> - 两个已踩过的契约坑：**(1)** `ThePSurfaceTool::D1`/`TheCurveTool::D1` 的 P 输出就是曲面/曲线点本身（测试桩写成 ZERO 会使 F≡0、触发 f2<=eps 的 done=true 提前返回——症状是 root 原样返回起点）；**(2)** `GProp_GProps::MatrixOfInertia` 经 HOperator 移轴到质心。另有怪癖照抄清单见 §5。**新坑 (3)**：IntConicCurveGen 的 C/E ctor+Perform 在 `!D1.IsClosed()` 时只注入 SetEquivalentParameters(F, F+2π)，**域边界 first/last 不变**——弧域外的交点角参数仍会被丢弃（锚点测试 circle_ctor_quirk_non_closed_domain 记录了该行为）。
-> - 子模块工作树有 3 个**非本任务**的遗留修改（`algo_ext/mod.rs`、`fillet/topopebrepbuild.rs`、`tests/tkgeom_algo_gtests.rs`）——提交时只 `git add` 本任务文件，勿混入。
+> **交接快照（2026-09-05 session 4 结束时）**
+> - 提交链（rcad 子模块分支 `sd-hash-wip`）：`7011f938` 计划落盘 → Stage 0/1 → 2a 全关（泛型引擎闭包 + Adaptor3d/BRep TopolTool 层）→ `dc9cf575` **2b Contap 包 1:1 完成**（`hlr/contap/` 全包 + Extrema_EPCOfExtPC2d + FunctionSetRoot/IWalking 泛型化）→ `55549b30` 3a 修复 → `ccde4456`+`8eb52a47` **3a HLRBRep adaptor/tool 层完成** → `e226a8f9` **3b-1 SLProps 链** → `d92659f9` **3b-2 HLRBRep_InterCSurf** → `4833acd8` §7 文档。
+> - 回归基线（全部全绿，零 ignore）：algo lib **184**、kernel lib **648**、tkhelix_gtests 16/16、pavefiller_stage_tests 26/26、tkgeom_algo_gtests 134+1、tkbo_gtests 40/40。
+> - **本 session（session 4）完成清单**：
+>   1. `55549b30` 三修复：kernel `Curve2d` 枚举级 is_closed/is_periodic 按 variant 委托（原恒 false）；BRepBuilder 六个 UpdateEdge 系方法 `edge_mut`(Arc::make_mut COW)→`edge_mut_inplace`——COW 克隆分裂 TShape 身份，wire 引用的边看不到后补 pcurve（2a-4 边界 On ignore 的第二层根因）；FaceShapeSource 持 DS 约定 locations 表（槽 0=identity）+ kernel-BRep 调用方前置 identity → **`fclass2d_topol_perform_boundary_on` un-ignore，algo lib ignore 归零**。
+>   2. `ccde4456`+`8eb52a47` 3a：`topalgo/brep_adaptor/surface.rs`（BRepAdaptorSurface = Initialize(F,R=true) 受限形 + poles_grid）+ `hlr/brep/`{surface(197/335/271 全方法+IsSide/IsAbove/SideRowsOfPoles、curve(215/632/169 投影分类+透视公式+UpdateMinMax)、b_surface_tool、b_curve_tool=CurveView trait}。HLRBRep_Surface 实现 SurfaceAdapter（Contap 直连）；HLRBRep_Curve 实现 CurveView。
+>   3. `8eb52a47` kernel `geom_lprop/cl_props_base.rs`（GeomLProp_CLPropsBase+LProp_CurveUtils 泛型引擎；**LPropStatus 重排为 OCCT 判别序 Undecided/Undefined/Defined/Computed**——旧序 Defined 排第一会让 `>= Defined` 比较在初始 Undecided 就误判 true；rcad-only Zero 追加尾部）+ `hlr/brep/cl_props.rs`（CLPropsATool 委托，D3 空体照抄）+ Curve::tangent 接通 + line_tool.rs。
+>   4. `e226a8f9` kernel `geom_lprop/sl_props_base.rs`（GeomLProp_SLPropsBase+GeomLProp_SurfaceUtils 泛型引擎：主曲率经基本形式+math_DirectPolynomialRoots+脐点捷径，ComputeSurfNormal→CSLib::Normal）+ `hlr/brep/sl_props.rs`（SLPropsATool 委托）。
+>   5. `d92659f9` `hlr/brep/surface_tool.rs`（**HLRBRep_LineTool** = HCurveTool+CurveTool3d over gp_Lin：无限域/CN/ElCLib/空 Intervals 体/零高阶导/NbSamples=3；**HLRBRep_SurfaceTool** = HSurfaceTool+PSurfaceTool over HLRBRep_Surface：全成员一行转发，UTrim/VTrim=窗口收窄，Basis*/Direction/OffsetValue/Bezier/BSpline=NoSuchObject 臂）+ `hlr/brep/inter_csurf.rs`（**HLRBRep_InterCSurf** = IntCurveSurface Inter.pxx 组装绑定固定类型 TheCurve=gp_Lin/TheSurface=HLRBRep_Surface——InterCSurf.hxx L44-53 别名表实证 TheCurve 是 gp_Lin 非适配器）+ BRepAdaptorSurface/Surface 补 u_trim/v_trim。锚点：线/平面 w=1.5 UV(0,0.5)、线/单位圆柱两次穿越 w=1/3。
+> - **3b 剩余（下一 session 按序）**：
+>   1. **ContapDomain for BRepTopAdaptor_TopolTool**：`ContapDomain` trait 已在 `hlr/contap/domain.rs`（Adaptor3d TopolTool 已 impl）；BRep 侧卡在 `BRepCurve2d<'a>` 是借用型，塞不进 `'static` 的 `Arc<dyn Curve2dAdaptor>`——需把 `hlr/brep/` 的 HLRBRep_Data（3f）所有权设计定为 `Arc<BRep>` 后一并落地。
+>   2. **HLRBRep_CInter**（CInter.hxx 275 行 = IntCurve_IntCurveCurveGen.gxx 实例化）：需先把 `geomalgo/int_curve_curve_gen.rs`（1095 行，当前 concrete 绑定 Geom2dInt 类型）泛型化出 TheCurve/TheCurveTool 工具参数，再以 HLRBRep_Curve(CurveView)/CurveTool 绑定实例化；CInter 的 Circle→Ellipse 投影分类依赖已落地的 `Curve::update()`。注意 2b 先例：InterCSurf 走的是 landed 引擎直通（因为 TheCurve=gp_Lin 无需泛型化），CInter 不同——TheCurve 是 HLRBRep_CurvePtr，必须泛型化引擎本体。
+>   3. **HLRBRep_Intersector**（99/858）——CInter 之上的边交点缓存层。
+>   4. 之后 3c-3g：EdgeInterferenceTool→HLRBRep_Data(2683 拆子模块)→Hider→InternalAlgo→Algo→HLRToShape。
+> - **HLR 消费链现状**：`hlr/brep/` 已有 surface/curve/b_curve_tool/b_surface_tool/cl_props/sl_props/line_tool/surface_tool/inter_csurf 九件；Contap 引擎（`hlr/contap/`）已可经 SurfaceAdapter 直接消费 HLRBRep_Surface；InterCSurf 已可对 HLRBRep_Surface 跑线/面相交。HLRBRep_Curve 的 CurveView（投影 2D 视图）已具备 update() 投影分类——CInter 实例化时 Circle/Ellipse 像由 curve.rs 的 `circle()`/`ellipse()` 提供。
+> - 已确立的翻译模式（沿例勿改）：OCCT gxx 模板参数 → Rust trait；具体实例化 = marker 类型（可带 `PhantomData<&'a ()>` 生命周期）上的 impl；工具静态组优先绑进 landed 的泛型引擎（InterCSurf 先例：landed 引擎直通，零新引擎代码）；gxx/lxx 内联翻译；每函数 `// OCCT <文件> L<起>-<止>` 标注；每个叶子翻译配 OCCT 解析锚点单测。**HLR 方法论特例**：HLRBRep_Surface 持 `my_proj: *const Projector` 裸指针（OCCT 同形，Data 拥有 Projector）；`HLRBRep_Curve::d3_2d`/`HLRBRep_Curve::dn` 是 OCCT 空函数体的照抄（非缺陷）。
+> - 本 session 踩坑：**(4)** glam 自带 `Vec3` 是 f32——kernel 里写泛型引擎 import glam 时必须 `use crate::geom::Vec3`（=DVec3 别名），别 `use glam::Vec3`；**(5)** 旧枚举判别序被隐式数值比较依赖时（LPropStatus `>= Defined`），重排枚举必须全库 grep 使用点（旧 ClProps2d/3d 的 rcad-only `Zero` 变体追加尾部保旧语义）。
+> - 子模块工作树遗留修改（非本任务）：`algo_ext/mod.rs`、`fillet/topopebrepbuild.rs`、`tests/tkgeom_algo_gtests.rs`、`topalgo/brep_class/face_explorer.rs`（face_explorer 是本 session 探针清除后的 LF/CRLF 噪声，diff 为空可还原）——提交时只 `git add` 本任务文件。
 > - shell 的 cwd 会被重置到 `C:\Users\lilu\works\rcad-pro`（根仓库），编译/测试前先 `cd rcad`。
 
 >
@@ -362,6 +369,35 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 2. **fixture 顶点方向**：OCCT BRep_Builder::Add(E,V) 在边上存顶点方向（起点 FORWARD、终点 REVERSED）；BRepTools_WireExplorer 的 V1/V2 链依赖它。rcad fixture 用 add_tedge 时必须给终顶点传 Reversed 克隆，否则 wire 走断（ordered 只剩 1 条边）。
 3. **遗留对齐项（唯一 #[ignore]，已定位根因）**：`fclass2d_topol_perform_boundary_on`——OCCT 边界点走 SiDans==0 → BRepClass_FaceClassifier → On。rcad 兜底返回 In 的根因：FaceShapeSource 把 kernel BRep locations 表（identity 无槽位 0）传给 `edge_pcurve_on_face`（该函数按 bop DS 表约定"槽 0 = identity"读）→ pcurve 键全部落空 → FaceExplorer::segment=None → nowires → In。对齐表约定后 un-ignore。
 4. **坑**：bash heredoc 大文件追加必截断（第 4 次）；对既有子系统加临时 eprintln 探针后必须立即清除（本次 face_explorer.rs 探针已全部清除）。
+
+### 本 session 追加 3（2026-09-05，session 4：3a 完成 + 3b InterCSurf）
+
+| commit | 内容 |
+|---|---|
+| `55549b30` | 3a 修复三件：Curve2d 枚举委托 / UpdateEdge 原地身份（COW 分裂根因）/ locations 表对齐（un-ignore 边界 On） |
+| `ccde4456` | 3a part 1：BRepAdaptorSurface + HLRBRep_Surface/Curve + B{Surface,Curve}Tool（1840 行） |
+| `8eb52a47` | 3a part 2：ClPropsBase 泛型引擎 + LPropStatus OCCT 判别序 + HLRBRep_CLProps + Curve::tangent + LineTool |
+| `e226a8f9` | 3b part 1：SlPropsBase 泛型引擎（基本形式+DirectPolynomialRoots+脐点捷径）+ HLRBRep_SLProps |
+| `d92659f9` | 3b part 2：HLRBRep_LineTool/SurfaceTool 工具绑定 + HLRBRep_InterCSurf 实例化（线/平面、线/圆柱锚点） |
+| `4833acd8` | §7 文档（3a 全关 + 3b 两项落地） |
+
+**本 session 新确立的翻译事实（沿例勿改）：**
+
+1. **InterCSurf 的 TheCurve 是 gp_Lin**（InterCSurf.hxx L44-53 别名表）——HLR 的线/面相交输入是视线/轮廓直线，不是任意曲线适配器。因此该实例化走「landed HInter 引擎直通 + 固定类型参数」零新引擎代码；与 CInter 不同（TheCurve=HLRBRep_CurvePtr 必须泛型化 IntCurveCurveGen 引擎本体）。
+2. **HLRBRep_LineTool 的怪癖照抄清单**：Intervals 空函数体；D2/D3 = ElCLib::D1 + 零向量；DN 仅 N=1 返回方向；Circle/Ellipse/Hypr/Parab 返回默认构造（rcad 用 panic 标记不可达）；Bezier/BSpline 返回 null handle；**NbSamples=3**（非 Trait 默认 10）。
+3. **HLRBRep_SurfaceTool 全成员一行转发**到 HLRBRep_Surface 适配器；UTrim/VTrim = BRepAdaptor_Surface::UTrim（窗口收窄同一曲面，GeomAdaptor 语义）；BasisCurve/BasisSurface/Direction/OffsetValue/Bezier/BSpline = Standard_NoSuchObject 路径（BRepAdaptor_Surface 对非偏移/非拉伸面的行为）；NbSamplesU/V 分派与 Adaptor3d_HSurfaceTool 相同（用 trait 默认即可）。
+4. **HLRBRep_Surface 的裸指针**：`my_proj: *const Projector` 按 OCCT 同形保留（`unsafe impl Send`；Projector 由 Data 拥有、Surface 只读引用——与 OCCT HLRBRep_Data 对象图相同）。
+5. **HLRBRep_Curve 的空函数体**：`d3_2d`（cxx L406）与 `dn`（cxx L410-413 返回 gp_Vec2d()）是 OCCT 字面行为；CLProps 的 D3 评估经 ATool 调到空体后 deriv[2] 保持零——切线搜索自然落到更高阶失败，与 OCCT 一致。
+6. **坑 (4)**：kernel 泛型文件 `use glam::Vec3` 会引入 f32 类型——必须 `use crate::geom::Vec3`（=DVec3 别名）。
+7. **坑 (5)**：枚举判别序被隐式数值比较依赖时（LPropStatus `>= Defined`、`== Undefined`），重排为 OCCT 序后必须全库 grep 使用点；旧实现的 rcad-only 状态（Zero）追加尾部而非删除，保旧语义零回归。
+8. **BRepBuilder COW 陷阱（坑 (6)，2a-4 边界 On 的第二层根因）**：`Arc::make_mut` 式 `edge_mut` 在其它句柄（wire）已引用 TShape 时克隆分身——BRepBuilder 的 UpdateEdge 系方法（补 pcurve/3D 曲线/公差/退化标记）必须用 `edge_mut_inplace`；语义 = OCCT BRep_Builder::UpdateEdge 原地改 TShape。
+
+### 下一 session 入口（按序）
+
+1. **ContapDomain for BRepTopAdaptor_TopolTool**：`ContapDomain` trait 在 `hlr/contap/domain.rs`（Adaptor3d TopolTool 已 impl）；BRep 侧需 HLRBRep_Data 的 `Arc<BRep>` 所有权设计——BRepCurve2d<'a> 借用型塞不进 'static Arc<dyn Curve2dAdaptor>。方案：HLRBRep_Data 持 Arc<BRep>，BRep 侧 TopolTool 的弧句柄改为持 Arc 的 owned 变体（新增 `BRepCurve2dOwned { brep: Arc<BRep>, ... }` impl Curve2dAdaptor），ContapDomain::arc() 返回 `Arc::new(BRepCurve2dOwned)`。
+2. **HLRBRep_CInter**：先把 `geomalgo/int_curve_curve_gen.rs`（concrete Geom2dInt 绑定）泛型化出 TheCurve/TheCurveTool 工具参数（参考 int_imp_par_gen.rs 的 `Intersector<C: ?Sized, PT, JT>` 泛型化先例——从 concrete 抽 trait 引擎 + 旧实例化作薄壳保零回归），再以 HLRBRep_Curve/CurveTool 绑定实例化。CInter 的子引擎绑定：IntCurve_TheProjPCur=TheProjPCurOfCInter、IntConicConic、TheIntConicCurve=TheIntConicCurveOfCInter、TheIntPCurvePCurve=TheIntPCurvePCurveOfCInter（Polygon2d/DistBetweenPCurves/ExactIntersectionPoint gxx 均需 HLR 实例化薄壳）。
+3. **HLRBRep_Intersector**（99/858）：CInter 之上的边交点缓存/调度层。
+4. 之后 3c（BRepApprox 链路）→ 3d（HLRTopoBRep）→ 3e/3f/3g。
 
 ### 下一 session 入口（2026-09-05 session 1 留，已被 session 2 取代，见文末）
 
