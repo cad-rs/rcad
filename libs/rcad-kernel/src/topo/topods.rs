@@ -1,5 +1,6 @@
 use crate::geom::{Curve2d, Curve3, Surface3, SurfaceEval};
 use crate::core::precision::{CONFUSION, parametric_default};
+use crate::core::precision::INFINITE_VALUE;
 use crate::math::bspl::{
     bezier_curve_resolution, bezier_surface_resolution, bspline_curve_resolution,
     bspline_surface_resolution,
@@ -3195,6 +3196,126 @@ impl BRepBuilder {
         sd.my_shapes.retain(|s| s.index != face.index);
     }
 
+    /// OCCT TopoDS_Builder::Add(aShape, aComponent) with an edge parent
+    /// (TopoDS_Builder.cxx L37-100) — the VERTEX-to-EDGE child append: the
+    /// relative orientation (the parent REVERSED reverses the child), then
+    /// `aTShape->myShapes.Append(aChild)`.  The rcad `first` / `last` fields
+    /// mirror the front/back of the OCCT myShapes list (the data
+    /// TopExp::FirstVertex / LastVertex read back).
+    ///
+    /// The relative-location adjustment (TopoDS_Builder.cxx L65-70) is the
+    /// identity no-op here: the DSFiller-built edges carry no locations.
+    pub fn add_to_edge(&mut self, brep: &mut BRep, edge: Shape, vertex: Shape) {
+        // aShape will be frozen when the Exception is raised (TopoDS_FrozenShape).
+        let ed_flags = brep.edge(edge.clone()).flags;
+        if ed_flags & tshape_flags::FREE == 0 {
+            panic!("TopoDS_FrozenShape: TopoDS_Builder::Add");
+        }
+        // aChild = aComponent; the relative orientation (TopAbs::Reverse =
+        // Compose(REVERSED, ...)).
+        let mut child = vertex;
+        if edge.orientation == Orientation::Reversed {
+            child.orientation = Orientation::Reversed.compose(child.orientation);
+        }
+        // Edge identity must be preserved: the DS holds Shape handles onto
+        // the same TShape (the edge_mut_inplace in-place edit contract).
+        let ed = brep.edge_mut_inplace(edge);
+        if ed.first.is_null() {
+            ed.first = child.clone();
+        }
+        ed.last = child.clone();
+        ed.my_shapes.push(child);
+        // aTShape->Modified(true).
+    }
+
+    /// OCCT TopoDS_Builder::Remove(aShape, aComponent) with an edge parent
+    /// (TopoDS_Builder.cxx L107-133) — the relative orientation/location of
+    /// aComponent, then the first `anIter.Value() == S` entry (IsEqual:
+    /// TShape + Location + Orientation) is removed from myShapes.  The
+    /// `first` / `last` mirrors are recomputed from the remaining list
+    /// (OCCT reads the front/back of myShapes instead).
+    pub fn remove_from_edge(&mut self, brep: &mut BRep, edge: Shape, vertex: Shape) {
+        // S = aComponent with the parent-relative orientation.
+        let mut s = vertex;
+        if edge.orientation == Orientation::Reversed {
+            s.orientation = Orientation::Reversed.compose(s.orientation);
+        }
+        let ed = brep.edge_mut_inplace(edge);
+        // The location adjustment is the identity no-op (no locations).
+        if let Some(pos) = ed.my_shapes.iter().position(|c| c.is_equal(&s)) {
+            ed.my_shapes.remove(pos);
+        }
+        ed.first = ed.my_shapes.first().cloned().unwrap_or_else(Shape::null);
+        ed.last = ed.my_shapes.last().cloned().unwrap_or_else(Shape::null);
+        // aTShape->Modified(true).
+    }
+
+    /// OCCT BRep_Builder::UpdateVertex(V, Par, E, Tol)
+    /// (BRep_Builder.cxx L1221-1313) — the vertex is searched among the
+    /// edge's stored children; the matched child's orientation selects the
+    /// update target: a FORWARD child sets the range First on every GCurve
+    /// representation, a REVERSED child the range Last, and an INTERNAL /
+    /// unmatched vertex gets the point-on-curve parameter (the rcad
+    /// vertex_params map).  The vertex tolerance is updated (max).
+    pub fn update_vertex_on_edge(&mut self, brep: &mut BRep, v: Shape, par: f64, e: Shape, tol: f64) {
+        // throw Standard_DomainError("BRep_Builder::Infinite parameter")
+        // (Precision::IsPositiveInfinite / IsNegativeInfinite).
+        if par >= 0.5 * INFINITE_VALUE || par <= -0.5 * INFINITE_VALUE {
+            panic!("Standard_DomainError: BRep_Builder::Infinite parameter");
+        }
+        // Search the vertex in the edge (TopoDS_Iterator itv(E.Oriented(
+        // TopAbs_FORWARD))) — ori = TopAbs_INTERNAL until matched.
+        let mut ori = Orientation::Internal;
+        let children = brep.edge(e.clone()).my_shapes.clone();
+        let degenerated = brep.edge(e.clone()).degenerated;
+        // if the edge has no vertices and is degenerated use the vertex
+        // orientation (RLE, june 94).
+        if children.is_empty() && degenerated {
+            ori = v.orientation;
+        }
+        for vcur in &children {
+            if v.is_same(vcur) {
+                ori = vcur.orientation;
+                if ori == v.orientation {
+                    break;
+                }
+            }
+        }
+        {
+            let ed = brep.edge_mut_inplace(e);
+            match ori {
+                Orientation::Forward => {
+                    // GC->First(Par) on every GCurve representation.
+                    ed.range[0] = par;
+                    for entry in ed.pcurves.values_mut() {
+                        entry.1 = par;
+                    }
+                }
+                Orientation::Reversed => {
+                    // GC->Last(Par) on every GCurve representation.
+                    ed.range[1] = par;
+                    for entry in ed.pcurves.values_mut() {
+                        entry.2 = par;
+                    }
+                }
+                _ => {
+                    // UpdatePoints(lpr, Par, ...) — the point-on-curve
+                    // parameter stored on the vertex's edge entry.
+                    let id = v.ptr_id();
+                    ed.vertex_params.insert(id, par);
+                }
+            }
+        }
+        // TV->UpdateTolerance(Tol) — the max-update; the no-op case skips
+        // the mutation (the rcad TShape Arc is shared and Arc::make_mut
+        // would split the identity).
+        let cur = brep.vertex_tolerance(&v);
+        if tol > cur {
+            brep.vertex_mut(v).tolerance = tol;
+        }
+        // TE->Modified(true).
+    }
+
     /// OCCT BRep_Builder::Transfert(aEin, aEout) �?copy 3D curve from one edge to another.
     /// Copies the Curve3D representation (first one found) from edge_in to edge_out.
     pub fn transfert_edge_curve(&mut self, brep: &mut BRep, edge_in: Shape, edge_out: Shape) {
@@ -3769,6 +3890,62 @@ mod tests {
         assert_eq!(brep.shell(shell.clone()).faces.len(), 1);
         bld.remove_from_shell(&mut brep, shell.clone(), f.clone());
         assert!(brep.shell(shell.clone()).faces.is_empty());
+    }
+
+    /// OCCT anchor: the edge-children builders used by the HLRTopoBRep
+    /// DSFiller — TopoDS_Builder::Add/Remove on an edge and
+    /// BRep_Builder::UpdateVertex(V, Par, E, Tol) (a FORWARD child updates
+    /// the range First, a REVERSED child the range Last).
+    #[test]
+    fn test_builder_edge_vertex_add_remove_update() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+
+        // An EmptyCopy edge carries no vertices: Add(V0) then Add(V1)
+        // rebuild myShapes / first / last.
+        let e = {
+            let full = bld.add_edge(
+                &mut brep,
+                Some(Curve3::Line(Line3 {
+                    origin: DVec3::ZERO,
+                    direction: DVec3::X,
+                })),
+                v0.clone(),
+                {
+                    // OCCT BRep_Builder::Add(E, V) stores the end vertex
+                    // REVERSED on the edge.
+                    let mut vr = v1.clone();
+                    vr.orientation = Orientation::Reversed;
+                    vr
+                },
+                [0.0, 1.0],
+            );
+            brep.empty_copy(full)
+        };
+        assert!(brep.edge(e.clone()).my_shapes.is_empty());
+        bld.add_to_edge(&mut brep, e.clone(), v0.clone());
+        let mut v1r = v1.clone();
+        v1r.orientation = Orientation::Reversed;
+        bld.add_to_edge(&mut brep, e.clone(), v1r.clone());
+        assert_eq!(brep.edge(e.clone()).my_shapes.len(), 2);
+        assert!(brep.first_vertex(&e).is_same(&v0));
+        assert!(brep.last_vertex(&e).is_same(&v1));
+
+        // UpdateVertex with the FORWARD child moves the range First; with
+        // the REVERSED child the range Last.
+        bld.update_vertex_on_edge(&mut brep, v0.clone(), 0.25, e.clone(), 1e-7);
+        assert_eq!(brep.edge_range(&e)[0], 0.25);
+        bld.update_vertex_on_edge(&mut brep, v1.clone(), 0.75, e.clone(), 1e-7);
+        assert_eq!(brep.edge_range(&e), [0.25, 0.75]);
+
+        // Remove(V0) drops the matching (IsEqual) child and mirrors
+        // first/last from the remaining list.
+        bld.remove_from_edge(&mut brep, e.clone(), v0.clone());
+        assert_eq!(brep.edge(e.clone()).my_shapes.len(), 1);
+        assert!(brep.first_vertex(&e).is_same(&v1));
+        assert!(brep.last_vertex(&e).is_same(&v1));
     }
 
     #[test]

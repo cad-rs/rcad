@@ -28,6 +28,10 @@ use crate::topalgo::brep_top_adaptor::hvertex_brep::BRepHVertex;
 const MY_INFINITE: f64 = rcad_kernel::precision::INFINITE_VALUE;
 
 /// OCCT BRepTopAdaptor_TopolTool.
+// Clone: the OCCT HLR MST map (NCollection_DataMap::Bind) copies the
+// BRepTopAdaptor_Tool value (a copy of two handles); the rcad equivalent
+// needs the whole tool chain clonable.
+#[derive(Clone)]
 pub struct BRepTopolTool {
     /// The owning BRep (BRep_Tool / BRepAdaptor accessors) — the
     /// refcounted handle copy (see `brep_adaptor::curve2d`).

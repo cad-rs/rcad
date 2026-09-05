@@ -29,6 +29,7 @@ pub mod fclass2d;
 pub mod hatch_gen;
 pub mod hatching;
 pub mod intersector;
+pub mod hatcher;    // Geom2dHatch_Hatcher (main engine: Trim / ComputeDomains / Domain)
 
 #[cfg(test)]
 mod tests;

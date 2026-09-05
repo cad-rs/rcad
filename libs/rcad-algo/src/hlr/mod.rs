@@ -16,6 +16,7 @@ pub mod contap;
 pub mod intrv;
 pub mod top_bas;
 pub mod top_cnx;
+pub mod topo_brep; // HLRTopoBRep: DSFiller / Data / FaceData / VData / FaceIsoLiner / OutLiner
 
 #[cfg(test)]
 pub mod tests;

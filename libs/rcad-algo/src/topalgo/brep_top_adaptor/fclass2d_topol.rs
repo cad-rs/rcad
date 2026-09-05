@@ -176,6 +176,10 @@ fn fallback_plane_surf() -> Surface3 {
 }
 
 /// OCCT BRepTopAdaptor_FClass2d — the face classifier.
+// Clone: the OCCT HLR MST map (NCollection_DataMap::Bind) copies the
+// BRepTopAdaptor_Tool value (a copy of two handles); the rcad equivalent
+// needs the whole tool chain clonable.
+#[derive(Clone)]
 pub struct FClass2dTopol {
     /// OCCT keeps the shapes alive through TopoDS handles (the refcounted
     /// BRep handle copy — see `brep_adaptor::curve2d`).
