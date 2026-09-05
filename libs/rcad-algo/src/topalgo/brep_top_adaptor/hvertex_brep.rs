@@ -2,39 +2,38 @@
 //! BRepTopAdaptor_TopolTool, with the parametric-resolution refinement.
 //!
 //! 1:1 translation of OCCT `BRepTopAdaptor_HVertex.hxx` (L17-57) + `.cxx`
-//! (L24-192).
+//! (L24-192).  The OCCT constructor keeps a refcounted copy of the
+//! `Handle(BRepAdaptor_Curve2d)`; rcad holds the adaptor by value (an
+//! `Arc<BRep>` clone plus small fields — the same handle copy).
 
 use glam::DVec2;
-use rcad_kernel::geom::{CurveEval, SurfaceEval};
+use rcad_kernel::geom::{SurfaceEval};
 use glam::DVec3;
-use rcad_kernel::topods::{BRep, BRepTool, Orientation, Shape};
+use rcad_kernel::topods::{BRepTool, Orientation, Shape};
 
 use crate::geomalgo::geom2d_int::Curve2dAdaptor;
-use crate::topalgo::adaptor3d::HVertex;
+use crate::topalgo::adaptor3d::hvertex::{HVertex, HVertexBehavior};
 use crate::topalgo::brep_adaptor::curve2d::BRepCurve2d;
 
 /// OCCT BRepTopAdaptor_HVertex — a TopoDS_Vertex bound to its pcurve
 /// adaptor.
-pub struct BRepHVertex<'c, 'a> {
+pub struct BRepHVertex {
     /// OCCT Adaptor3d_HVertex base subobject (never initialized by the BRep
     /// subclass ctor; Value/Resolution/IsSame are all overridden).
     pub(crate) base: HVertex,
     /// OCCT myVtx.
     my_vtx: Shape,
     /// OCCT myCurve.
-    my_curve: &'c BRepCurve2d<'a>,
-    /// The owning BRep (BRep_Tool accessors).
-    brep: &'c BRep,
+    my_curve: BRepCurve2d,
 }
 
-impl<'c, 'a> BRepHVertex<'c, 'a> {
+impl BRepHVertex {
     /// OCCT BRepTopAdaptor_HVertex(V, C) (cxx L26-30).
-    pub fn new(v: &Shape, c: &'c BRepCurve2d<'a>) -> Self {
+    pub fn new(v: &Shape, c: BRepCurve2d) -> Self {
         BRepHVertex {
             base: HVertex::new(),
             my_vtx: v.clone(),
             my_curve: c,
-            brep: c.brep(),
         }
     }
 
@@ -51,25 +50,26 @@ impl<'c, 'a> BRepHVertex<'c, 'a> {
 
     /// OCCT Parameter(C) (cxx L38-43) — BRep_Tool::Parameter(myVtx,
     /// brhc->Edge(), brhc->Face()).
-    pub fn parameter(&self, _c: &BRepCurve2d<'a>) -> f64 {
-        self.brep
+    pub fn parameter(&self, _c: &BRepCurve2d) -> f64 {
+        self.my_curve
+            .brep()
             .parameter_on_edge(&self.my_vtx, self.my_curve.edge(), self.my_curve.face())
             .unwrap_or(0.0)
     }
 
     /// OCCT Resolution(C) (cxx L45-170) — the parametric resolution of the
     /// vertex on its pcurve, refined against the face surface.
-    pub fn resolution(&self, c: &BRepCurve2d<'a>) -> f64 {
+    pub fn resolution(&self, c: &BRepCurve2d) -> f64 {
         let f = c.face();
         // OCCT BRepAdaptor_Surface S(F, false) — the face surface; the
         // pcurve and the surface share the face-local frame.
-        let surf = self
-            .brep
+        let surf = c
+            .brep()
             .face_surface(f)
             .expect("BRepAdaptor_Surface: face has no surface");
 
         // double tv = BRep_Tool::Tolerance(myVtx);
-        let tv = self.brep.vertex_tolerance(&self.my_vtx);
+        let tv = c.brep().vertex_tolerance(&self.my_vtx);
         // double p = BRep_Tool::Parameter(myVtx, brhc->Edge(), brhc->Face());
         let p = self.parameter(c);
         let or = self.orientation();
@@ -84,8 +84,8 @@ impl<'c, 'a> BRepHVertex<'c, 'a> {
         let mag = dc.length();
 
         // double URes = S.UResolution(tv); double VRes = S.VResolution(tv);
-        let u_res = self.brep.u_resolution(f, tv);
-        let v_res = self.brep.v_resolution(f, tv);
+        let u_res = c.brep().u_resolution(f, tv);
+        let v_res = c.brep().v_resolution(f, tv);
         // double tURes = C->Resolution(URes); double tVRes = C->Resolution(VRes);
         let t_u_res = Curve2dAdaptor::resolution(c, u_res);
         let t_v_res = Curve2dAdaptor::resolution(c, v_res);
@@ -171,7 +171,43 @@ impl<'c, 'a> BRepHVertex<'c, 'a> {
 
     /// OCCT IsSame(Other) (cxx L177-182) — downcast + TopoDS IsSame (same
     /// TShape and location).
-    pub fn is_same(&self, other: &BRepHVertex<'c, 'a>) -> bool {
+    pub fn is_same(&self, other: &BRepHVertex) -> bool {
         self.my_vtx.is_same(&other.my_vtx)
+    }
+
+    /// The bound pcurve adaptor (the OCCT myCurve handle).
+    pub fn curve(&self) -> &BRepCurve2d {
+        &self.my_curve
+    }
+}
+
+impl HVertexBehavior for BRepHVertex {
+    fn value(&self) -> DVec2 {
+        BRepHVertex::value(self)
+    }
+    fn parameter(&self, _c: &dyn Curve2dAdaptor) -> f64 {
+        // OCCT ignores C and reads BRep_Tool::Parameter on myCurve's
+        // edge/face (the engine always passes the bound arc).
+        BRepHVertex::parameter(self, &self.my_curve)
+    }
+    fn resolution(&self, _c: &dyn Curve2dAdaptor) -> f64 {
+        // OCCT evaluates against C (== the bound arc in every engine call
+        // site) and myCurve's face surface.
+        BRepHVertex::resolution(self, &self.my_curve)
+    }
+    fn orientation(&self) -> Orientation {
+        BRepHVertex::orientation(self)
+    }
+    fn is_same(&self, other: &dyn HVertexBehavior) -> bool {
+        // OCCT static-downcasts Other to BRepTopAdaptor_HVertex and
+        // compares the TopoDS vertices; mixed kinds never occur inside one
+        // domain.
+        match other.topo_vertex() {
+            Some(v) => self.my_vtx.is_same(v),
+            None => false,
+        }
+    }
+    fn topo_vertex(&self) -> Option<&Shape> {
+        Some(&self.my_vtx)
     }
 }

@@ -194,6 +194,10 @@ impl Curve2dAdaptor for Line2dAdaptor {
     fn hyperbola(&self) -> rcad_kernel::geom::Hyperbola2d {
         panic!("Standard_NoSuchObject");
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// OCCT Continuity() (cxx L100-103) — GeomAbs_CN.

@@ -100,6 +100,10 @@ pub trait Curve2dAdaptor {
     fn nb_intervals_c1(&self) -> i32 {
         1
     }
+    /// OCCT `occ::down_cast<T>(handle)` support — the concrete adaptor as
+    /// Any (BRepTopAdaptor_TopolTool::Initialize down-casts the restriction
+    /// arc handle to BRepAdaptor_Curve2d).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// OCCT GeomAbs_CurveType of a `Curve2d` (Geom2dAdaptor_Curve::GetType).
@@ -225,6 +229,9 @@ impl Curve2dAdaptor for Curve2d {
             Curve2d::Hyperbola(h) => *h,
             _ => panic!("Standard_NoSuchObject: Curve2d::Hyperbola"),
         }
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -597,6 +604,10 @@ impl Curve2dAdaptor for AdaptorOffsetCurve {
             _ => {}
         }
         nbs.min(300)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

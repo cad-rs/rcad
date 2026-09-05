@@ -15,6 +15,7 @@
 use glam::DVec2;
 use rcad_kernel::geom::{Point3, Surface3, SurfaceEval};
 use rcad_kernel::topods::{BRep, BRepTool, Orientation, Shape, State, TShape};
+use std::sync::Arc;
 
 use crate::geomalgo::geom2d_int::Curve2dAdaptor;
 use crate::topalgo::adaptor3d::topol_tool::analyse;
@@ -27,20 +28,21 @@ use crate::topalgo::brep_top_adaptor::hvertex_brep::BRepHVertex;
 const MY_INFINITE: f64 = rcad_kernel::precision::INFINITE_VALUE;
 
 /// OCCT BRepTopAdaptor_TopolTool.
-pub struct BRepTopolTool<'a> {
-    /// The owning BRep (BRep_Tool / BRepAdaptor accessors).
-    brep: &'a BRep,
+pub struct BRepTopolTool {
+    /// The owning BRep (BRep_Tool / BRepAdaptor accessors) — the
+    /// refcounted handle copy (see `brep_adaptor::curve2d`).
+    brep: Arc<BRep>,
     /// OCCT myFace (FORWARD-oriented in Initialize).
     my_face: Shape,
     /// OCCT myS — surfaced through (brep, my_face).
     my_nb_samples_u: i32,
     my_nb_samples_v: i32,
     /// OCCT myFClass2d (created lazily by Classify / IsThePointOn).
-    my_fclass2d: Option<FClass2dTopol<'a>>,
+    my_fclass2d: Option<FClass2dTopol>,
     /// OCCT myCurve (set by Initialize(C)).
-    my_curve: Option<BRepCurve2d<'a>>,
+    my_curve: Option<BRepCurve2d>,
     /// OCCT myCurves (the face edges as pcurve adaptors, in explorer order).
-    my_curves: Vec<BRepCurve2d<'a>>,
+    my_curves: Vec<BRepCurve2d>,
     /// OCCT myCIterator — the NCollection_List iterator position.
     my_c_iterator: usize,
     /// OCCT myVIterator — the TopExp_Explorer(edge, VERTEX) position.
@@ -53,9 +55,9 @@ pub struct BRepTopolTool<'a> {
     my_dv: f64,
 }
 
-impl<'a> BRepTopolTool<'a> {
+impl BRepTopolTool {
     /// OCCT BRepTopAdaptor_TopolTool() (cxx L43-51).
-    pub fn new(brep: &'a BRep) -> Self {
+    pub fn new(brep: Arc<BRep>) -> Self {
         BRepTopolTool {
             brep,
             my_face: Shape::null(),
@@ -75,7 +77,7 @@ impl<'a> BRepTopolTool<'a> {
     }
 
     /// OCCT BRepTopAdaptor_TopolTool(Surface) (cxx L55-60).
-    pub fn new_with_surface(brep: &'a BRep, face: &Shape) -> Self {
+    pub fn new_with_surface(brep: Arc<BRep>, face: &Shape) -> Self {
         let mut t = BRepTopolTool::new(brep);
         t.initialize_surface(face);
         t
@@ -104,7 +106,7 @@ impl<'a> BRepTopolTool<'a> {
                 if let TShape::Wire(wd) = &*w.data {
                     for e in &wd.edges {
                         self.my_curves
-                            .push(BRepCurve2d::new_edge_face(self.brep, e, &f));
+                            .push(BRepCurve2d::new_edge_face(self.brep.clone(), e, &f));
                     }
                 }
             }
@@ -113,7 +115,7 @@ impl<'a> BRepTopolTool<'a> {
     }
 
     /// OCCT Initialize(C) (cxx L98-105).
-    pub fn initialize_curve(&mut self, c: &BRepCurve2d<'a>) {
+    pub fn initialize_curve(&mut self, c: &BRepCurve2d) {
         self.my_curve = Some(c.clone());
     }
 
@@ -133,7 +135,7 @@ impl<'a> BRepTopolTool<'a> {
     }
 
     /// OCCT Value() (cxx L130-133).
-    pub fn value(&self) -> Option<&BRepCurve2d<'a>> {
+    pub fn value(&self) -> Option<&BRepCurve2d> {
         self.my_curves.get(self.my_c_iterator)
     }
 
@@ -170,10 +172,13 @@ impl<'a> BRepTopolTool<'a> {
         self.my_v_iterator_pos += 1;
     }
 
-    /// OCCT Vertex() (cxx L167-170).
-    pub fn vertex(&self) -> Option<BRepHVertex<'_, 'a>> {
+    /// OCCT Vertex() (cxx L167-170) — new BRepTopAdaptor_HVertex(V,
+    /// myCurve); the rcad vertex owns its adaptor copy.
+    pub fn vertex(&self) -> Option<BRepHVertex> {
         let v = self.my_v_iterator.get(self.my_v_iterator_pos)?.clone();
-        self.my_curve.as_ref().map(|c| BRepHVertex::new(&v, c))
+        self.my_curve
+            .as_ref()
+            .map(|c| BRepHVertex::new(&v, c.clone()))
     }
 
     /// OCCT Classify(P, Tol, RecadreOnPeriodic) (cxx L174-187).
@@ -182,7 +187,8 @@ impl<'a> BRepTopolTool<'a> {
             return State::Unknown;
         }
         if self.my_fclass2d.is_none() {
-            self.my_fclass2d = Some(FClass2dTopol::new(self.brep, &self.my_face.clone(), tol));
+            self.my_fclass2d =
+                Some(FClass2dTopol::new(self.brep.clone(), &self.my_face.clone(), tol));
         }
         self.my_fclass2d
             .as_ref()
@@ -193,7 +199,8 @@ impl<'a> BRepTopolTool<'a> {
     /// OCCT IsThePointOn(P, Tol, RecadreOnPeriodic) (cxx L191-201).
     pub fn is_the_point_on(&mut self, p: DVec2, tol: f64, recadre_on_periodic: bool) -> bool {
         if self.my_fclass2d.is_none() {
-            self.my_fclass2d = Some(FClass2dTopol::new(self.brep, &self.my_face.clone(), tol));
+            self.my_fclass2d =
+                Some(FClass2dTopol::new(self.brep.clone(), &self.my_face.clone(), tol));
         }
         State::On
             == self
@@ -211,12 +218,12 @@ impl<'a> BRepTopolTool<'a> {
     }
 
     /// OCCT Orientation(C) (cxx L213-217).
-    pub fn orientation_curve(&self, c: &BRepCurve2d<'a>) -> Orientation {
+    pub fn orientation_curve(&self, c: &BRepCurve2d) -> Orientation {
         c.edge().orientation
     }
 
     /// OCCT Orientation(V) (cxx L221-224) — Adaptor3d_TopolTool::Orientation.
-    pub fn orientation_vertex(&self, v: &BRepHVertex<'_, 'a>) -> Orientation {
+    pub fn orientation_vertex(&self, v: &BRepHVertex) -> Orientation {
         // The base implementation returns V->Orientation().
         v.orientation()
     }
@@ -406,7 +413,7 @@ impl<'a> BRepTopolTool<'a> {
     }
 
     /// OCCT Tol3d(C) (cxx L605-619) — BRep_Tool::Tolerance(edge).
-    pub fn tol3d_curve(&self, c: &BRepCurve2d<'a>) -> f64 {
+    pub fn tol3d_curve(&self, c: &BRepCurve2d) -> f64 {
         match &*c.edge().data {
             TShape::Edge(ed) => ed.tolerance,
             _ => 0.0,
@@ -414,12 +421,12 @@ impl<'a> BRepTopolTool<'a> {
     }
 
     /// OCCT Tol3d(V) (cxx L623-636).
-    pub fn tol3d_vertex(&self, v: &BRepHVertex<'_, 'a>) -> f64 {
+    pub fn tol3d_vertex(&self, v: &BRepHVertex) -> f64 {
         self.brep.vertex_tolerance(v.vertex())
     }
 
     /// OCCT Pnt(V) (cxx L640-653).
-    pub fn pnt(&self, v: &BRepHVertex<'_, 'a>) -> Point3 {
+    pub fn pnt(&self, v: &BRepHVertex) -> Point3 {
         self.brep.vertex_position(v.vertex())
     }
 
@@ -601,7 +608,7 @@ pub(crate) mod tests {
             wd.edges[0].clone()
         };
 
-        let c = BRepCurve2d::new_edge_face(&brep, &bottom_edge, &face);
+        let c = BRepCurve2d::new_edge_face(Arc::new(brep), &bottom_edge, &face);
         assert_eq!(c.first_parameter(), 0.0);
         assert_eq!(c.last_parameter(), 1.0);
         let (p, v) = c.d1(0.5);
@@ -617,7 +624,7 @@ pub(crate) mod tests {
     #[test]
     fn fclass2d_topol_anchor() {
         let (brep, face) = square_face();
-        let f = FClass2dTopol::new(&brep, &face, 1e-6);
+        let f = FClass2dTopol::new(Arc::new(brep), &face, 1e-6);
 
         assert_eq!(f.perform(DVec2::new(0.5, 0.5), true), State::In);
         assert_eq!(f.perform(DVec2::new(2.0, 2.0), true), State::Out);
@@ -639,7 +646,7 @@ pub(crate) mod tests {
     #[test]
     fn fclass2d_topol_perform_boundary_on() {
         let (brep, face) = square_face();
-        let f = FClass2dTopol::new(&brep, &face, 1e-6);
+        let f = FClass2dTopol::new(Arc::new(brep), &face, 1e-6);
         assert_eq!(f.perform(DVec2::new(0.5, 0.0), true), State::On);
     }
 
@@ -649,7 +656,7 @@ pub(crate) mod tests {
     #[test]
     fn brep_topol_tool_anchor() {
         let (brep, face) = square_face();
-        let mut tool = BRepTopolTool::new_with_surface(&brep, &face);
+        let mut tool = BRepTopolTool::new_with_surface(Arc::new(brep), &face);
 
         assert_eq!(tool.more(), true);
         let mut count = 0;
@@ -689,7 +696,7 @@ pub(crate) mod tests {
     #[test]
     fn brep_topol_tool_vertex_iterator_anchor() {
         let (brep, face) = square_face();
-        let mut tool = BRepTopolTool::new_with_surface(&brep, &face);
+        let mut tool = BRepTopolTool::new_with_surface(Arc::new(brep), &face);
         tool.init();
         assert!(tool.more());
         let first_curve = tool.value().unwrap().clone();

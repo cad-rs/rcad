@@ -8,10 +8,16 @@
 //! existing `impl Curve2dAdaptor for Curve2d` (matching the landed
 //! Geom2dAdaptor translation, whose `resolution` is the pass-through
 //! convention).
+//!
+//! Ownership: OCCT keeps the shapes alive through TopoDS handles over a
+//! refcounted TShape graph; rcad's HLRBRep_Data (the future owner of the
+//! adaptor chain) holds the `BRep` in an `Arc`, and this adaptor holds a
+//! refcounted clone — the handle copy.
 
 use glam::DVec2;
 use rcad_kernel::geom::Curve2d;
 use rcad_kernel::topods::{BRep, BRepTool, Shape};
+use std::sync::Arc;
 
 use crate::geomalgo::geom2d_int::{Curve2dAdaptor, Curve2dType};
 use rcad_kernel::math::GeomAbsShape;
@@ -19,10 +25,10 @@ use rcad_kernel::math::GeomAbsShape;
 /// OCCT BRepAdaptor_Curve2d — "allows to use an Edge on a Face like a 2d
 /// curve".
 #[derive(Clone)]
-pub struct BRepCurve2d<'a> {
+pub struct BRepCurve2d {
     /// OCCT keeps the shapes alive through TopoDS handles; the BRep owns
-    /// the TShape graph.
-    brep: &'a BRep,
+    /// the TShape graph (rcad: the refcounted handle copy).
+    brep: Arc<BRep>,
     /// OCCT myEdge.
     my_edge: Shape,
     /// OCCT myFace.
@@ -34,9 +40,9 @@ pub struct BRepCurve2d<'a> {
     my_last: f64,
 }
 
-impl<'a> BRepCurve2d<'a> {
+impl BRepCurve2d {
     /// OCCT BRepAdaptor_Curve2d() (cxx L21) — uninitialized.
-    pub fn new(brep: &'a BRep) -> Self {
+    pub fn new(brep: Arc<BRep>) -> Self {
         BRepCurve2d {
             brep,
             my_edge: Shape::null(),
@@ -51,7 +57,7 @@ impl<'a> BRepCurve2d<'a> {
     }
 
     /// OCCT BRepAdaptor_Curve2d(E, F) (cxx L24-27).
-    pub fn new_edge_face(brep: &'a BRep, e: &Shape, f: &Shape) -> Self {
+    pub fn new_edge_face(brep: Arc<BRep>, e: &Shape, f: &Shape) -> Self {
         let mut c = BRepCurve2d::new(brep);
         c.initialize(e, f);
         c
@@ -80,8 +86,13 @@ impl<'a> BRepCurve2d<'a> {
     }
 
     /// The owning BRep (the OCCT global BRep_Tool context).
-    pub fn brep(&self) -> &'a BRep {
-        self.brep
+    pub fn brep(&self) -> &BRep {
+        &self.brep
+    }
+
+    /// The refcounted BRep handle (the OCCT handle copy).
+    pub fn brep_arc(&self) -> Arc<BRep> {
+        self.brep.clone()
     }
 
     /// OCCT Geom2dAdaptor_Curve::Curve() — the loaded pcurve.
@@ -90,7 +101,7 @@ impl<'a> BRepCurve2d<'a> {
     }
 }
 
-impl Curve2dAdaptor for BRepCurve2d<'_> {
+impl Curve2dAdaptor for BRepCurve2d {
     /// OCCT Geom2dAdaptor_Curve::FirstParameter() — the loaded range start.
     fn first_parameter(&self) -> f64 {
         self.my_first
@@ -178,11 +189,15 @@ impl Curve2dAdaptor for BRepCurve2d<'_> {
     fn hyperbola(&self) -> rcad_kernel::geom::Hyperbola2d {
         Curve2dAdaptor::hyperbola(&self.my_curve)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// OCCT GeomAbs continuity of the loaded pcurve (Geom2dAdaptor passes
 /// through the curve's own continuity).
-impl BRepCurve2d<'_> {
+impl BRepCurve2d {
     pub fn continuity(&self) -> GeomAbsShape {
         GeomAbsShape::C1
     }

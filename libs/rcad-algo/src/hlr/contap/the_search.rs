@@ -93,7 +93,7 @@ fn find_vertex(
     domain.init_vertex_iterator();
     while domain.more_vertex() {
         let vtx = domain.vertex();
-        let param = crate::hlr::contap::h_cont_tool::parameter(&vtx, a.as_ref());
+        let param = crate::hlr::contap::h_cont_tool::parameter(vtx.as_ref(), a.as_ref());
 
         // Evaluate the function and look compared to tolerance of the
         // Vertex. If distance <= tolerance then add a vertex to the list of
@@ -650,8 +650,8 @@ fn point_process(
     let mut goon = domain.more_vertex();
     while goon {
         let vtx = domain.vertex();
-        let dist = (para - crate::hlr::contap::h_cont_tool::parameter(&vtx, a.as_ref())).abs();
-        let mut toler = crate::hlr::contap::h_cont_tool::tolerance(&vtx, a.as_ref());
+        let dist = (para - crate::hlr::contap::h_cont_tool::parameter(vtx.as_ref(), a.as_ref())).abs();
+        let mut toler = crate::hlr::contap::h_cont_tool::tolerance(vtx.as_ref(), a.as_ref());
 
         if dist <= toler {
             // Locate the vertex in the list of solutions
@@ -843,7 +843,10 @@ impl TheSearch {
                     // Contap instantiation (NbPoints() == 0).
                     let (pt, tol, prm) = crate::hlr::contap::h_cont_tool::value(a.as_ref(), 1);
                     if crate::hlr::contap::h_cont_tool::is_vertex(a.as_ref(), 1) {
-                        let vtx = crate::hlr::contap::h_cont_tool::vertex(a.as_ref(), 1);
+                        let vtx = std::sync::Arc::new(crate::hlr::contap::h_cont_tool::vertex(
+                            a.as_ref(),
+                            1,
+                        ));
                         self.spnt.push(ThePathPointOfTheSearch::with_vertex(
                             pt, tol, vtx, a.clone(), prm,
                         ));

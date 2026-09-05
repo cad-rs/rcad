@@ -176,8 +176,10 @@ fn fallback_plane_surf() -> Surface3 {
 }
 
 /// OCCT BRepTopAdaptor_FClass2d — the face classifier.
-pub struct FClass2dTopol<'a> {
-    brep: &'a BRep,
+pub struct FClass2dTopol {
+    /// OCCT keeps the shapes alive through TopoDS handles (the refcounted
+    /// BRep handle copy — see `brep_adaptor::curve2d`).
+    brep: std::sync::Arc<BRep>,
     /// OCCT Face (FORWARD-oriented in the ctor).
     face: Shape,
     /// OCCT TabClass.
@@ -198,9 +200,9 @@ pub struct FClass2dTopol<'a> {
     vmax: f64,
 }
 
-impl<'a> FClass2dTopol<'a> {
+impl FClass2dTopol {
     /// OCCT BRepTopAdaptor_FClass2d(F, TolUV) (cxx L88-513).
-    pub fn new(brep: &'a BRep, a_face: &Shape, tol_uv: f64) -> Self {
+    pub fn new(brep: std::sync::Arc<BRep>, a_face: &Shape, tol_uv: f64) -> Self {
         let mut r = FClass2dTopol {
             brep,
             face: a_face.clone(),
@@ -337,12 +339,12 @@ impl<'a> FClass2dTopol<'a> {
                 }
 
                 let a_curve_adaptor_2d =
-                    BRepCurve2d::new_edge_face(self.brep, &edge, &a_face);
+                    BRepCurve2d::new_edge_face(self.brep.clone(), &edge, &a_face);
 
                 //-- Check cases when it was forgotten to code degenerated:
                 //-- PRO17410 (janv 99)
                 if !degenerated {
-                    degenerated = is_degenerated_3d(self.brep, &edge, pfbid, plbid);
+                    degenerated = is_degenerated_3d(&self.brep, &edge, pfbid, plbid);
                 }
 
                 //-- ----------------------------------------
@@ -387,7 +389,7 @@ impl<'a> FClass2dTopol<'a> {
                     let mut dist3dptcourant_ancienpnt = 1e+20;
                     let mut p3d = DVec3::ZERO;
                     if !degenerated {
-                        p3d = curve3d_point_at(self.brep, &edge, u);
+                        p3d = curve3d_point_at(&self.brep, &edge, u);
                         if nbpnts > 1 && ancien_pnt3d_initialise {
                             dist3dptcourant_ancienpnt = p3d.distance(ancien_pnt3d);
                         }
@@ -395,7 +397,7 @@ impl<'a> FClass2dTopol<'a> {
                     // patch
                     let mut is_real_curve3d = true;
                     if dist3dptcourant_ancienpnt < rcad_kernel::precision::CONFUSION {
-                        let mid_p3d = curve3d_point_at(self.brep, &edge, u - du / 2.0);
+                        let mid_p3d = curve3d_point_at(&self.brep, &edge, u - du / 2.0);
                         if p3d.distance(mid_p3d) < rcad_kernel::precision::CONFUSION {
                             is_real_curve3d = false;
                         }

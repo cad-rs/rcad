@@ -5,7 +5,7 @@
 
 use glam::DVec2;
 use rcad_kernel::math::el::elclib_line_parameter_2d;
-use rcad_kernel::topods::Orientation;
+use rcad_kernel::topods::{Orientation, Shape};
 
 use crate::geomalgo::geom2d_int::Curve2dAdaptor;
 
@@ -68,6 +68,52 @@ impl HVertex {
 impl Default for HVertex {
     fn default() -> Self {
         HVertex::new()
+    }
+}
+
+/// The polymorphic `occ::handle<Adaptor3d_HVertex>` interface as consumed
+/// by the Contap engines (IntStart_SearchOnBoundaries / Contap_Contour):
+/// Value/Parameter/Resolution/Orientation/IsSame are virtual and
+/// BRepTopAdaptor_HVertex overrides them all.
+pub trait HVertexBehavior {
+    /// OCCT Value().
+    fn value(&self) -> DVec2;
+    /// OCCT Parameter(C).
+    fn parameter(&self, c: &dyn Curve2dAdaptor) -> f64;
+    /// OCCT Resolution(C).
+    fn resolution(&self, c: &dyn Curve2dAdaptor) -> f64;
+    /// OCCT Orientation().
+    fn orientation(&self) -> Orientation;
+    /// OCCT IsSame(Other) — the polymorphic same-vertex test.
+    fn is_same(&self, other: &dyn HVertexBehavior) -> bool;
+    /// The BRep topological vertex (BRepTopAdaptor_HVertex::Vertex());
+    /// None on the Adaptor3d base. This is the IsSame down-cast aid
+    /// (OCCT static-downcasts the other handle to BRepTopAdaptor_HVertex).
+    fn topo_vertex(&self) -> Option<&Shape>;
+}
+
+/// OCCT `occ::handle<Adaptor3d_HVertex>` — the refcounted polymorphic
+/// vertex handle carried through the Contap engines.
+pub type HVertexHandle = std::sync::Arc<dyn HVertexBehavior>;
+
+impl HVertexBehavior for HVertex {
+    fn value(&self) -> DVec2 {
+        HVertex::value(self)
+    }
+    fn parameter(&self, c: &dyn Curve2dAdaptor) -> f64 {
+        HVertex::parameter(self, c)
+    }
+    fn resolution(&self, c: &dyn Curve2dAdaptor) -> f64 {
+        HVertex::resolution(self, c)
+    }
+    fn orientation(&self) -> Orientation {
+        HVertex::orientation(self)
+    }
+    fn is_same(&self, other: &dyn HVertexBehavior) -> bool {
+        self.my_pnt.distance(other.value()) <= rcad_kernel::precision::CONFUSION
+    }
+    fn topo_vertex(&self) -> Option<&Shape> {
+        None
     }
 }
 

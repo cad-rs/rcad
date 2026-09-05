@@ -15,7 +15,7 @@ use crate::geomalgo::extrema_gen_ext_pc2d::EPCOfExtPC2d;
 use crate::geomalgo::int_patch::GeomAbsSurfaceType;
 
 use crate::hlr::contap::surface_adaptor::{GeomSurfaceAdapter, SurfaceAdapter};
-use crate::topalgo::adaptor3d::hvertex::HVertex;
+use crate::topalgo::adaptor3d::hvertex::{HVertex, HVertexBehavior};
 
 thread_local! {
     /// OCCT Contap_HContTool.cxx L24: `static double uinf, vinf, usup, vsup;`
@@ -211,12 +211,12 @@ pub fn project(c: &dyn Curve2dAdaptor, p: DVec2) -> Option<(f64, DVec2)> {
 }
 
 /// OCCT Tolerance (cxx L306-311) — V->Resolution(C).
-pub fn tolerance(v: &HVertex, c: &dyn Curve2dAdaptor) -> f64 {
+pub fn tolerance(v: &dyn HVertexBehavior, c: &dyn Curve2dAdaptor) -> f64 {
     v.resolution(c)
 }
 
 /// OCCT Parameter (cxx L313-318) — V->Parameter(C).
-pub fn parameter(v: &HVertex, c: &dyn Curve2dAdaptor) -> f64 {
+pub fn parameter(v: &dyn HVertexBehavior, c: &dyn Curve2dAdaptor) -> f64 {
     v.parameter(c)
 }
 

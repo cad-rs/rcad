@@ -348,6 +348,10 @@ impl Curve2dAdaptor for PConic {
             semi_minor: self.prm2,
         }
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------

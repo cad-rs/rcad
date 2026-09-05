@@ -2,15 +2,15 @@
 //
 // Contap_Point.hxx L35-131 + Contap_Point.cxx L21-44 + Contap_Point.lxx
 // L19-153.  The OCCT handle members `arc` (handle<Adaptor2d_Curve2d>) and
-// `vtx` (handle<Adaptor3d_HVertex>) become Arc + the Adaptor3d HVertex
-// value type; the Standard_DomainError guards map to panics with the same
-// control flow.
+// `vtx` (handle<Adaptor3d_HVertex>) become Arc + the polymorphic
+// HVertexHandle; the Standard_DomainError guards map to panics with the
+// same control flow.
 
 use glam::DVec3;
 use rcad_kernel::topo::topods::Orientation;
 
 use crate::geomalgo::int_patch::transitions::Transition;
-use crate::topalgo::adaptor3d::hvertex::HVertex;
+use crate::topalgo::adaptor3d::hvertex::HVertexHandle;
 
 /// OCCT `occ::handle<Adaptor2d_Curve2d>` as used by Contap data classes.
 pub type Arc = std::sync::Arc<dyn crate::geomalgo::geom2d_int::Curve2dAdaptor>;
@@ -28,7 +28,7 @@ pub struct Point {
     traarc: Transition,
     prmarc: f64,
     isvtx: bool,
-    vtx: Option<HVertex>,
+    vtx: Option<HVertexHandle>,
     ismult: bool,
     my_internal: bool,
 }
@@ -89,7 +89,7 @@ impl Point {
     }
 
     /// OCCT SetVertex(V) (lxx L36-41).
-    pub fn set_vertex(&mut self, v: HVertex) {
+    pub fn set_vertex(&mut self, v: HVertexHandle) {
         self.isvtx = true;
         self.vtx = Some(v);
     }
@@ -181,7 +181,7 @@ impl Point {
     }
 
     /// OCCT Vertex (lxx L145-153).
-    pub fn vertex(&self) -> &HVertex {
+    pub fn vertex(&self) -> &HVertexHandle {
         if !self.isvtx {
             panic!("Standard_DomainError: Contap_Point::Vertex");
         }
@@ -205,6 +205,7 @@ fn _orientation_shape(o: Orientation) -> Orientation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::topalgo::adaptor3d::hvertex::HVertex;
     use glam::DVec2;
 
     /// OCCT anchor: the default point carries no arc/vertex; SetValue
@@ -243,7 +244,11 @@ mod tests {
     #[test]
     fn contap_point_set_value_clears_flags() {
         let mut p = Point::new();
-        p.set_vertex(HVertex::new_with(DVec2::ZERO, Orientation::Forward, 1e-7));
+        p.set_vertex(std::sync::Arc::new(HVertex::new_with(
+            DVec2::ZERO,
+            Orientation::Forward,
+            1e-7,
+        )));
         assert!(p.is_vertex());
         p.set_value(DVec3::ZERO, 0.0, 0.0);
         assert!(!p.is_vertex());

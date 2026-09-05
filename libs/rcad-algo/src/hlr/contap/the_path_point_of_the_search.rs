@@ -3,11 +3,11 @@
 //
 // Contap_ThePathPointOfTheSearch.hxx L27-141 + _0.cxx L24-57.  The OCCT
 // `occ::handle<Adaptor2d_Curve2d> arc` maps to [`Arc`], the vertex to the
-// Adaptor3d HVertex value.
+// polymorphic HVertexHandle.
 
 use rcad_kernel::geom::Point3;
 
-use crate::topalgo::adaptor3d::hvertex::HVertex;
+use crate::topalgo::adaptor3d::hvertex::{HVertex, HVertexHandle};
 
 use super::point::Arc;
 
@@ -17,7 +17,7 @@ pub struct ThePathPointOfTheSearch {
     point: Point3,
     tol: f64,
     isnew: bool,
-    vtx: Option<HVertex>,
+    vtx: Option<HVertexHandle>,
     arc: Option<Arc>,
     param: f64,
 }
@@ -37,7 +37,7 @@ impl ThePathPointOfTheSearch {
 
     /// OCCT Contap_ThePathPointOfTheSearch(P, Tol, V, A, Parameter)
     /// (_0.cxx L31-44).
-    pub fn with_vertex(p: Point3, tol: f64, v: HVertex, a: Arc, parameter: f64) -> Self {
+    pub fn with_vertex(p: Point3, tol: f64, v: HVertexHandle, a: Arc, parameter: f64) -> Self {
         ThePathPointOfTheSearch {
             point: p,
             tol,
@@ -62,7 +62,14 @@ impl ThePathPointOfTheSearch {
     }
 
     /// OCCT SetValue(P, Tol, V, A, Parameter) (hxx L81-93).
-    pub fn set_value_vertex(&mut self, p: Point3, tol: f64, v: HVertex, a: Arc, parameter: f64) {
+    pub fn set_value_vertex(
+        &mut self,
+        p: Point3,
+        tol: f64,
+        v: HVertexHandle,
+        a: Arc,
+        parameter: f64,
+    ) {
         self.isnew = false;
         self.point = p;
         self.tol = tol;
@@ -96,7 +103,7 @@ impl ThePathPointOfTheSearch {
     }
 
     /// OCCT Vertex (hxx L122-129) — raises Standard_DomainError when new.
-    pub fn vertex(&self) -> &HVertex {
+    pub fn vertex(&self) -> &HVertexHandle {
         if self.isnew {
             panic!("Standard_DomainError: ThePathPointOfTheSearch::Vertex");
         }
@@ -138,8 +145,12 @@ mod tests {
     /// variant isnew=true; Vertex() raises DomainError when new.
     #[test]
     fn path_point_vertex_semantics() {
-        let vtx = HVertex::new_with(DVec2::ZERO, Orientation::Forward, 1e-7);
-        let p = ThePathPointOfTheSearch::with_vertex(DVec3::ONE, 1e-5, vtx.clone(), test_arc(), 0.5);
+        let vtx: HVertexHandle = std::sync::Arc::new(HVertex::new_with(
+            DVec2::ZERO,
+            Orientation::Forward,
+            1e-7,
+        ));
+        let p = ThePathPointOfTheSearch::with_vertex(DVec3::ONE, 1e-5, vtx, test_arc(), 0.5);
         assert!(!p.is_new());
         assert!((p.parameter() - 0.5).abs() < 1e-15);
         assert!((p.tolerance() - 1e-5).abs() < 1e-15);
