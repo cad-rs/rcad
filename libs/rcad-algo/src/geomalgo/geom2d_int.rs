@@ -2189,3 +2189,117 @@ impl Default for TheIntPCurvePCurveOfGInter {
         TheIntPCurvePCurveOfGInter::new()
     }
 }
+
+// ---------------------------------------------------------------------------
+// OCCT Geom2dInt_GInter — the IntCurve_IntCurveCurveGen instantiation over
+// the Adaptor2d_Curve2d curves (Geom2dInt_GInter_0.cxx: TheCurve =
+// Adaptor2d_Curve2d, TheCurveTool = Geom2dInt_Geom2dCurveTool,
+// IntCurve_TheIntConicCurve = Geom2dInt_TheIntConicCurveOfGInter,
+// IntCurve_TheIntPCurvePCurve = Geom2dInt_TheIntPCurvePCurveOfGInter).
+// ---------------------------------------------------------------------------
+
+impl crate::geomalgo::int_curve_curve_gen::IntConicCurveMember<dyn Curve2dAdaptor>
+    for TheIntConicCurveOfGInter
+{
+    fn base(&self) -> &IntersectionBase {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut IntersectionBase {
+        &mut self.base
+    }
+    fn perform_line(
+        &mut self,
+        l: &Line2d,
+        d1: &Res2dDomain,
+        c: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        TheIntConicCurveOfGInter::perform_line(self, l, d1, c, d2, tol_conf, tol)
+    }
+    fn perform_circle(
+        &mut self,
+        c: &Circle2d,
+        d1: &Res2dDomain,
+        pcurve: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        TheIntConicCurveOfGInter::perform_circle(self, c, d1, pcurve, d2, tol_conf, tol)
+    }
+    fn perform_ellipse(
+        &mut self,
+        e: &Ellipse2d,
+        d1: &Res2dDomain,
+        pcurve: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        TheIntConicCurveOfGInter::perform_ellipse(self, e, d1, pcurve, d2, tol_conf, tol)
+    }
+    fn perform_parabola(
+        &mut self,
+        p: &Parabola2d,
+        d1: &Res2dDomain,
+        pcurve: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        TheIntConicCurveOfGInter::perform_parabola(self, p, d1, pcurve, d2, tol_conf, tol)
+    }
+    fn perform_hyperbola(
+        &mut self,
+        h: &Hyperbola2d,
+        d1: &Res2dDomain,
+        pcurve: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        TheIntConicCurveOfGInter::perform_hyperbola(self, h, d1, pcurve, d2, tol_conf, tol)
+    }
+}
+
+impl crate::geomalgo::int_curve_curve_gen::IntPCurvePCurveMember<dyn Curve2dAdaptor>
+    for TheIntPCurvePCurveOfGInter
+{
+    fn base(&self) -> &IntersectionBase {
+        &self.base
+    }
+    fn base_mut(&mut self) -> &mut IntersectionBase {
+        &mut self.base
+    }
+    fn perform(
+        &mut self,
+        c1: &dyn Curve2dAdaptor,
+        d1: &Res2dDomain,
+        c2: &dyn Curve2dAdaptor,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        TheIntPCurvePCurveOfGInter::perform(self, c1, d1, c2, d2, tol_conf, tol)
+    }
+    fn perform_cd(&mut self, c: &dyn Curve2dAdaptor, d: &Res2dDomain, tol_conf: f64, tol: f64) {
+        TheIntPCurvePCurveOfGInter::perform_cd(self, c, d, tol_conf, tol)
+    }
+    fn set_min_nb_samples(&mut self, the_min_nb_samples: i32) {
+        TheIntPCurvePCurveOfGInter::set_min_nb_samples(self, the_min_nb_samples)
+    }
+    fn get_min_nb_samples(&self) -> i32 {
+        TheIntPCurvePCurveOfGInter::get_min_nb_samples(self)
+    }
+}
+
+/// OCCT Geom2dInt_GInter (Geom2dInt_GInter_0.cxx) — the concrete
+/// IntCurve_IntCurveCurveGen instantiation for the GInter chain.
+pub type GInter = crate::geomalgo::int_curve_curve_gen::IntCurveCurveGen<
+    dyn Curve2dAdaptor,
+    Geom2dCurveTool,
+    TheIntConicCurveOfGInter,
+    TheIntPCurvePCurveOfGInter,
+>;

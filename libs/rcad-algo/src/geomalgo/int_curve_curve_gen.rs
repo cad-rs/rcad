@@ -1,26 +1,121 @@
-// OCCT Geom2dInt_GInter == IntCurve_IntCurveCurveGen — 1:1 Rust translation
-// of IntCurve_IntCurveCurveGen.hxx/.lxx/.gxx as instantiated by
-// Geom2dInt_GInter_0.cxx (TheCurve=Adaptor2d_Curve2d,
-// TheCurveTool=Geom2dInt_Geom2dCurveTool, IntCurve_TheIntConicCurve=
-// Geom2dInt_TheIntConicCurveOfGInter, IntCurve_IntConicConic,
-// IntCurve_TheIntPCurvePCurve=Geom2dInt_TheIntPCurvePCurveOfGInter).
+// OCCT IntCurve_IntCurveCurveGen — 1:1 Rust translation of
+// IntCurve_IntCurveCurveGen.hxx/.lxx/.gxx as a generic engine over the
+// template parameters TheCurve (`C`), TheCurveTool ([`PCurveTool`]),
+// IntCurve_TheIntConicCurve ([`IntConicCurveMember`]) and
+// IntCurve_TheIntPCurvePCurve ([`IntPCurvePCurveMember`]).
+//
+// Instantiations:
+//   - Geom2dInt_GInter (Geom2dInt_GInter_0.cxx): C = Adaptor2d_Curve2d
+//     (`dyn Curve2dAdaptor`), TheCurveTool = Geom2dInt_Geom2dCurveTool,
+//     TheIntConicCurve = Geom2dInt_TheIntConicCurveOfGInter,
+//     TheIntPCurvePCurve = Geom2dInt_TheIntPCurvePCurveOfGInter — the
+//     [`super::geom2d_int::GInter`] alias;
+//   - HLRBRep_CInter (HLRBRep_CInter_0.cxx, Stage 3b): C = HLRBRep_Curve,
+//     TheCurveTool = HLRBRep_CurveTool, TheIntConicCurve =
+//     HLRBRep_TheIntConicCurveOfCInter, TheIntPCurvePCurve =
+//     HLRBRep_TheIntPCurvePCurveOfCInter.
 //
 // Members:
-//   - intconiconi: IntConicConic (conic x conic)              — ported
-//     (Ellipse-Ellipse overload; see int_conic_conic.rs).
-//   - intconicurv: TheIntConicCurveOfGInter (conic x pcurve)  — ported
-//     (geom2d_int.rs).
-//   - intcurvcurv: TheIntPCurvePCurveOfGInter (pcurve x pcurve,
-//     IntCurve_IntPolyPolyGen.gxx, 1797 lines)                — NOT yet
-//     ported; the dispatch arms that would call it carry an
-//     unimplemented!() (ThruSections skeleton precedent).
+//   - intconiconi: IntConicConic (conic x conic) — concrete, shared by
+//     every instantiation (int_conic_conic.rs);
+//   - intconicurv: the conic x pcurve sub-engine member;
+//   - intcurvcurv: the pcurve x pcurve sub-engine member
+//     (IntCurve_IntPolyPolyGen.gxx, 1797 lines).
 
-use super::geom2d_int::{
-    geom2d_curve_tool, TheIntConicCurveOfGInter, TheIntPCurvePCurveOfGInter, Curve2dAdaptor,
-    Curve2dType,
-};
+use rcad_kernel::geom::{Circle2d, Ellipse2d, Hyperbola2d, Line2d, Parabola2d};
+
+use super::geom2d_int::Curve2dType;
 use super::int_conic_conic::IntConicConic;
 use super::int_res2d::{Domain as Res2dDomain, IntersectionBase};
+use super::user_int_conic_curve_gen::PCurveTool;
+
+/// OCCT `IntCurve_TheIntConicCurve` template parameter — the conic x
+/// parametric-curve sub-engine member of IntCurve_IntCurveCurveGen
+/// (Geom2dInt_TheIntConicCurveOfGInter / HLRBRep_TheIntConicCurveOfCInter).
+pub trait IntConicCurveMember<C: ?Sized> {
+    /// The IntRes2d_Intersection base subobject.
+    fn base(&self) -> &IntersectionBase;
+    /// The base subobject for writes (the gxx `intconicurv.base.Set...`).
+    fn base_mut(&mut self) -> &mut IntersectionBase;
+    /// OCCT IntCurve_IntConicCurveGen::Perform(gp_Lin2d, ...) (lxx L44-53).
+    fn perform_line(
+        &mut self,
+        l: &Line2d,
+        d1: &Res2dDomain,
+        c: &C,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    );
+    /// OCCT Perform(gp_Circ2d, ...) (lxx L56-74).
+    fn perform_circle(
+        &mut self,
+        c: &Circle2d,
+        d1: &Res2dDomain,
+        pcurve: &C,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    );
+    /// OCCT Perform(gp_Elips2d, ...) (lxx L77-94).
+    fn perform_ellipse(
+        &mut self,
+        e: &Ellipse2d,
+        d1: &Res2dDomain,
+        pcurve: &C,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    );
+    /// OCCT Perform(gp_Parab2d, ...) (lxx L97-105).
+    fn perform_parabola(
+        &mut self,
+        p: &Parabola2d,
+        d1: &Res2dDomain,
+        pcurve: &C,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    );
+    /// OCCT Perform(gp_Hypr2d, ...) (lxx L108-116).
+    fn perform_hyperbola(
+        &mut self,
+        h: &Hyperbola2d,
+        d1: &Res2dDomain,
+        pcurve: &C,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    );
+}
+
+/// OCCT `IntCurve_TheIntPCurvePCurve` template parameter — the pcurve x
+/// pcurve sub-engine member of IntCurve_IntCurveCurveGen (the
+/// IntCurve_IntPolyPolyGen instantiation).
+pub trait IntPCurvePCurveMember<C: ?Sized> {
+    /// The IntRes2d_Intersection base subobject.
+    fn base(&self) -> &IntersectionBase;
+    /// The base subobject for writes.
+    fn base_mut(&mut self) -> &mut IntersectionBase;
+    /// OCCT IntCurve_IntPolyPolyGen::Perform(C1, D1, C2, D2, ...) (gxx
+    /// L93-292).
+    fn perform(
+        &mut self,
+        c1: &C,
+        d1: &Res2dDomain,
+        c2: &C,
+        d2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    );
+    /// OCCT IntCurve_IntPolyPolyGen::Perform(C1, D1, ...) (gxx L297-386) —
+    /// the auto-intersection form.
+    fn perform_cd(&mut self, c: &C, d: &Res2dDomain, tol_conf: f64, tol: f64);
+    /// OCCT IntCurve_IntPolyPolyGen::SetMinNbSamples (gxx L1794-1797).
+    fn set_min_nb_samples(&mut self, the_min_nb_samples: i32);
+    /// OCCT IntCurve_IntPolyPolyGen::GetMinNbSamples (gxx L1787-1790).
+    fn get_min_nb_samples(&self) -> i32;
+}
 
 /// OCCT Precision::Infinite() (Precision.hxx — 1e100).
 const PRECISION_INFINITE: f64 = 1.0e100;
@@ -30,47 +125,52 @@ fn precision_is_infinite(v: f64) -> bool {
     v >= PRECISION_INFINITE || v <= -PRECISION_INFINITE
 }
 
-/// OCCT IntCurve_IntCurveCurveGen (Geom2dInt_GInter).
-#[derive(Debug, Clone)]
-pub struct IntCurveCurveGen {
+/// OCCT IntCurve_IntCurveCurveGen — the curve/curve intersection
+/// dispatcher, generic over the template parameters.
+pub struct IntCurveCurveGen<C: ?Sized, PT: PCurveTool<C>, IC: IntConicCurveMember<C>, IPP: IntPCurvePCurveMember<C>>
+{
     pub base: IntersectionBase,
     /// OCCT intconiconi.
     intconiconi: IntConicConic,
     /// OCCT intconicurv.
-    intconicurv: TheIntConicCurveOfGInter,
+    intconicurv: IC,
     /// OCCT intcurvcurv (Geom2dInt_GInter.hxx L178).
-    intcurvcurv: TheIntPCurvePCurveOfGInter,
+    intcurvcurv: IPP,
     /// OCCT param1inf / param1sup / param2inf / param2sup.
     param1inf: f64,
     param1sup: f64,
     param2inf: f64,
     param2sup: f64,
+    _tools: std::marker::PhantomData<fn(&C, &PT, &IC, &IPP)>,
 }
 
-impl IntCurveCurveGen {
+impl<C: ?Sized, PT: PCurveTool<C>, IC: IntConicCurveMember<C> + Default, IPP: IntPCurvePCurveMember<C> + Default>
+    IntCurveCurveGen<C, PT, IC, IPP>
+{
     /// OCCT IntCurve_IntCurveCurveGen() (lxx L20-26).
     pub fn new() -> Self {
         IntCurveCurveGen {
             base: IntersectionBase::new(),
             intconiconi: IntConicConic::new(),
-            intconicurv: TheIntConicCurveOfGInter::bare(),
-            intcurvcurv: TheIntPCurvePCurveOfGInter::new(),
+            intconicurv: IC::default(),
+            intcurvcurv: IPP::default(),
             param1inf: -PRECISION_INFINITE,
             param1sup: PRECISION_INFINITE,
             param2inf: -PRECISION_INFINITE,
             param2sup: PRECISION_INFINITE,
+            _tools: std::marker::PhantomData,
         }
     }
 
     /// OCCT IntCurve_IntCurveCurveGen(C, TolConf, Tol) (lxx L29-38).
-    pub fn new_c(c: &dyn Curve2dAdaptor, tol_conf: f64, tol: f64) -> Self {
+    pub fn new_c(c: &C, tol_conf: f64, tol: f64) -> Self {
         let mut r = IntCurveCurveGen::new();
         r.perform_c(c, tol_conf, tol);
         r
     }
 
     /// OCCT IntCurve_IntCurveCurveGen(C, D, TolConf, Tol) (lxx L41-51).
-    pub fn new_cd(c: &dyn Curve2dAdaptor, d: &Res2dDomain, tol_conf: f64, tol: f64) -> Self {
+    pub fn new_cd(c: &C, d: &Res2dDomain, tol_conf: f64, tol: f64) -> Self {
         let mut r = IntCurveCurveGen::new();
         r.perform_cd(c, d, tol_conf, tol);
         r
@@ -78,8 +178,8 @@ impl IntCurveCurveGen {
 
     /// OCCT IntCurve_IntCurveCurveGen(C1, C2, TolConf, Tol) (lxx L54-64).
     pub fn new_cc(
-        c1: &dyn Curve2dAdaptor,
-        c2: &dyn Curve2dAdaptor,
+        c1: &C,
+        c2: &C,
         tol_conf: f64,
         tol: f64,
     ) -> Self {
@@ -90,9 +190,9 @@ impl IntCurveCurveGen {
 
     /// OCCT IntCurve_IntCurveCurveGen(C1, D1, C2, TolConf, Tol) (lxx L67-78).
     pub fn new_cd_c(
-        c1: &dyn Curve2dAdaptor,
+        c1: &C,
         d1: &Res2dDomain,
-        c2: &dyn Curve2dAdaptor,
+        c2: &C,
         tol_conf: f64,
         tol: f64,
     ) -> Self {
@@ -103,8 +203,8 @@ impl IntCurveCurveGen {
 
     /// OCCT IntCurve_IntCurveCurveGen(C1, C2, D2, TolConf, Tol) (lxx L81-92).
     pub fn new_cc_d(
-        c1: &dyn Curve2dAdaptor,
-        c2: &dyn Curve2dAdaptor,
+        c1: &C,
+        c2: &C,
         d2: &Res2dDomain,
         tol_conf: f64,
         tol: f64,
@@ -118,9 +218,9 @@ impl IntCurveCurveGen {
     /// (lxx L95-107).
     #[allow(clippy::too_many_arguments)]
     pub fn new_cd_cd(
-        c1: &dyn Curve2dAdaptor,
+        c1: &C,
         d1: &Res2dDomain,
-        c2: &dyn Curve2dAdaptor,
+        c2: &C,
         d2: &Res2dDomain,
         tol_conf: f64,
         tol: f64,
@@ -157,14 +257,24 @@ impl IntCurveCurveGen {
         self.base.segment(n)
     }
 
+    /// OCCT SetMinNbSamples (gxx L1023-1028) — forwards to intcurvcurv.
+    pub fn set_min_nb_samples(&mut self, the_min_nb_samples: i32) {
+        self.intcurvcurv.set_min_nb_samples(the_min_nb_samples);
+    }
+
+    /// OCCT GetMinNbSamples (gxx L1030-1033).
+    pub fn get_min_nb_samples(&self) -> i32 {
+        self.intcurvcurv.get_min_nb_samples()
+    }
+
     // -- Perform overloads --------------------------------------------------
 
     /// OCCT Perform(C, TolConf, Tol) — self-intersection
     /// (IntCurve_IntCurveCurveGen.gxx L29-89).
-    pub fn perform_c(&mut self, c: &dyn Curve2dAdaptor, tol_conf: f64, tol: f64) {
+    pub fn perform_c(&mut self, c: &C, tol_conf: f64, tol: f64) {
         let mut d1 = Res2dDomain::infinite();
         let tol_domain = if tol < tol_conf { tol_conf } else { tol };
-        let typ = geom2d_curve_tool::get_type(c);
+        let typ = PT::get_type(c);
         match typ {
             Curve2dType::Ellipse
             | Curve2dType::Circle
@@ -176,8 +286,8 @@ impl IntCurveCurveGen {
                 return;
             }
             _ => {
-                let paraminf = geom2d_curve_tool::first_parameter(c);
-                let paramsup = geom2d_curve_tool::last_parameter(c);
+                let paraminf = PT::first_parameter(c);
+                let paramsup = PT::last_parameter(c);
                 if precision_is_infinite(paraminf) && precision_is_infinite(paramsup) {
                     self.base.done = false;
                     return;
@@ -187,17 +297,17 @@ impl IntCurveCurveGen {
                     if paramsup < PRECISION_INFINITE {
                         //--         paraminf-----------paramsup
                         d1.set_values_bounded(
-                            geom2d_curve_tool::value(c, paraminf),
+                            PT::value(c, paraminf),
                             paraminf,
                             tol_domain,
-                            geom2d_curve_tool::value(c, paramsup),
+                            PT::value(c, paramsup),
                             paramsup,
                             tol_domain,
                         );
                     } else {
                         //--        paraminf------------...
                         d1.set_values_semi(
-                            geom2d_curve_tool::value(c, paraminf),
+                            PT::value(c, paraminf),
                             paraminf,
                             tol_domain,
                             true,
@@ -206,7 +316,7 @@ impl IntCurveCurveGen {
                 } else if paramsup < PRECISION_INFINITE {
                     //--    ...-----------------paramsup
                     d1.set_values_semi(
-                        geom2d_curve_tool::value(c, paramsup),
+                        PT::value(c, paramsup),
                         paramsup,
                         tol_domain,
                         false,
@@ -220,8 +330,8 @@ impl IntCurveCurveGen {
 
     /// OCCT Perform(C, D, TolConf, Tol) — self-intersection with domain
     /// (IntCurve_IntCurveCurveGen.gxx L91-116).
-    pub fn perform_cd(&mut self, c: &dyn Curve2dAdaptor, d: &Res2dDomain, tol_conf: f64, tol: f64) {
-        let typ = geom2d_curve_tool::get_type(c);
+    pub fn perform_cd(&mut self, c: &C, d: &Res2dDomain, tol_conf: f64, tol: f64) {
+        let typ = PT::get_type(c);
         match typ {
             Curve2dType::Ellipse
             | Curve2dType::Circle
@@ -234,9 +344,9 @@ impl IntCurveCurveGen {
             }
             _ => {
                 self.base.reset_fields();
-                self.intcurvcurv.base.set_reversed_parameters(false);
+                self.intcurvcurv.base_mut().set_reversed_parameters(false);
                 self.intcurvcurv.perform_cd(c, d, tol_conf, tol);
-                self.base.set_values(&self.intcurvcurv.base);
+                self.base.set_values(self.intcurvcurv.base());
                 self.base.done = true;
             }
         }
@@ -245,8 +355,8 @@ impl IntCurveCurveGen {
     /// OCCT Perform(C1, C2, TolConf, Tol) (IntCurve_IntCurveCurveGen.lxx L109-121).
     pub fn perform_cc(
         &mut self,
-        c1: &dyn Curve2dAdaptor,
-        c2: &dyn Curve2dAdaptor,
+        c1: &C,
+        c2: &C,
         tol_conf: f64,
         tol: f64,
     ) {
@@ -260,9 +370,9 @@ impl IntCurveCurveGen {
     /// OCCT Perform(C1, D1, C2, TolConf, Tol) (IntCurve_IntCurveCurveGen.lxx L124-136).
     pub fn perform_cd_c(
         &mut self,
-        c1: &dyn Curve2dAdaptor,
+        c1: &C,
         d1: &Res2dDomain,
-        c2: &dyn Curve2dAdaptor,
+        c2: &C,
         tol_conf: f64,
         tol: f64,
     ) {
@@ -275,8 +385,8 @@ impl IntCurveCurveGen {
     /// OCCT Perform(C1, C2, D2, TolConf, Tol) (IntCurve_IntCurveCurveGen.lxx L139-151).
     pub fn perform_cc_d(
         &mut self,
-        c1: &dyn Curve2dAdaptor,
-        c2: &dyn Curve2dAdaptor,
+        c1: &C,
+        c2: &C,
         d2: &Res2dDomain,
         tol_conf: f64,
         tol: f64,
@@ -288,42 +398,42 @@ impl IntCurveCurveGen {
     }
 
     /// OCCT ComputeDomain(C1, TolDomain) (IntCurve_IntCurveCurveGen.gxx L120-177).
-    pub fn compute_domain(&self, c1: &dyn Curve2dAdaptor, tol_domain: f64) -> Res2dDomain {
+    pub fn compute_domain(&self, c1: &C, tol_domain: f64) -> Res2dDomain {
         let mut d1 = Res2dDomain::infinite();
 
-        let typ = geom2d_curve_tool::get_type(c1);
+        let typ = PT::get_type(c1);
         match typ {
             Curve2dType::Ellipse | Curve2dType::Circle => {
                 //---------------------------------------------------------------
                 //-- if the curve is a trimmed curve, first and last parameters
                 //-- will be the parameters used to build the domain
                 //--
-                let firstparameter = geom2d_curve_tool::first_parameter(c1);
-                let lastparameter = geom2d_curve_tool::last_parameter(c1);
+                let firstparameter = PT::first_parameter(c1);
+                let lastparameter = PT::last_parameter(c1);
 
-                let p1 = geom2d_curve_tool::value(c1, firstparameter);
-                let p2 = geom2d_curve_tool::value(c1, lastparameter);
+                let p1 = PT::value(c1, firstparameter);
+                let p2 = PT::value(c1, lastparameter);
                 d1.set_values_bounded(p1, firstparameter, tol_domain, p2, lastparameter, tol_domain);
                 d1.set_equivalent_parameters(firstparameter, firstparameter + std::f64::consts::PI + std::f64::consts::PI);
             }
             _ => {
-                let paraminf = geom2d_curve_tool::first_parameter(c1);
-                let paramsup = geom2d_curve_tool::last_parameter(c1);
+                let paraminf = PT::first_parameter(c1);
+                let paramsup = PT::last_parameter(c1);
                 if paraminf > -PRECISION_INFINITE {
                     if paramsup < PRECISION_INFINITE {
                         //--         paraminf-----------paramsup
                         d1.set_values_bounded(
-                            geom2d_curve_tool::value(c1, paraminf),
+                            PT::value(c1, paraminf),
                             paraminf,
                             tol_domain,
-                            geom2d_curve_tool::value(c1, paramsup),
+                            PT::value(c1, paramsup),
                             paramsup,
                             tol_domain,
                         );
                     } else {
                         //--        paraminf------------...
                         d1.set_values_semi(
-                            geom2d_curve_tool::value(c1, paraminf),
+                            PT::value(c1, paraminf),
                             paraminf,
                             tol_domain,
                             true,
@@ -332,7 +442,7 @@ impl IntCurveCurveGen {
                 } else if paramsup < PRECISION_INFINITE {
                     //--    ...-----------------paramsup
                     d1.set_values_semi(
-                        geom2d_curve_tool::value(c1, paramsup),
+                        PT::value(c1, paramsup),
                         paramsup,
                         tol_domain,
                         false,
@@ -348,18 +458,18 @@ impl IntCurveCurveGen {
     #[allow(clippy::too_many_arguments)]
     pub fn perform_cd_cd(
         &mut self,
-        c1: &dyn Curve2dAdaptor,
+        c1: &C,
         d1: &Res2dDomain,
-        c2: &dyn Curve2dAdaptor,
+        c2: &C,
         d2: &Res2dDomain,
         tol_conf: f64,
         tol: f64,
     ) {
         self.base.reset_fields();
-        let nbi1 = geom2d_curve_tool::nb_intervals(c1);
+        let nbi1 = PT::nb_intervals(c1);
         if nbi1 > 1 {
-            self.param1inf = geom2d_curve_tool::first_parameter(c1);
-            self.param1sup = geom2d_curve_tool::last_parameter(c1);
+            self.param1inf = PT::first_parameter(c1);
+            self.param1sup = PT::last_parameter(c1);
         } else {
             self.param1inf = if d1.has_first_point() {
                 d1.first_parameter()
@@ -372,10 +482,10 @@ impl IntCurveCurveGen {
                 PRECISION_INFINITE
             };
         }
-        let nbi2 = geom2d_curve_tool::nb_intervals(c2);
+        let nbi2 = PT::nb_intervals(c2);
         if nbi2 > 1 {
-            self.param2inf = geom2d_curve_tool::first_parameter(c2);
-            self.param2sup = geom2d_curve_tool::last_parameter(c2);
+            self.param2inf = PT::first_parameter(c2);
+            self.param2sup = PT::last_parameter(c2);
         } else {
             self.param2inf = if d2.has_first_point() {
                 d2.first_parameter()
@@ -393,8 +503,8 @@ impl IntCurveCurveGen {
             // 1-based array of length nbi+2 (logical indices 1..=nbi+1).
             let mut tab1 = vec![0.0; (nbi1 + 2) as usize];
             let mut tab2 = vec![0.0; (nbi2 + 2) as usize];
-            geom2d_curve_tool::intervals(c1, &mut tab1);
-            geom2d_curve_tool::intervals(c2, &mut tab2);
+            PT::intervals(c1, &mut tab1);
+            PT::intervals(c2, &mut tab2);
             self.internal_composite_perform(
                 c1, d1, 1, nbi1, &tab1, c2, d2, 1, nbi2, &tab2, tol_conf, tol, true,
             );
@@ -410,16 +520,16 @@ impl IntCurveCurveGen {
     #[allow(clippy::too_many_arguments)]
     fn internal_perform(
         &mut self,
-        c1: &dyn Curve2dAdaptor,
+        c1: &C,
         d1: &Res2dDomain,
-        c2: &dyn Curve2dAdaptor,
+        c2: &C,
         d2: &Res2dDomain,
         tol_conf: f64,
         tol: f64,
         composite: bool,
     ) {
-        let typ1 = geom2d_curve_tool::get_type(c1);
-        let typ2 = geom2d_curve_tool::get_type(c2);
+        let typ1 = PT::get_type(c1);
+        let typ2 = PT::get_type(c2);
 
         // The per-arm tail shared by every switch arm: Append in composite
         // mode, SetValues otherwise (gxx L255-262 and all repeats).
@@ -442,14 +552,14 @@ impl IntCurveCurveGen {
             () => {
                 if composite {
                     self.base.append_intersector(
-                        &self.intconicurv.base,
+                        self.intconicurv.base(),
                         self.param1inf,
                         self.param1sup,
                         self.param2inf,
                         self.param2sup,
                     );
                 } else {
-                    self.base.set_values(&self.intconicurv.base);
+                    self.base.set_values(self.intconicurv.base());
                 }
             };
         }
@@ -459,9 +569,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Line => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_line_line(
-                        &geom2d_curve_tool::line(c1),
+                        &PT::line(c1),
                         d1,
-                        &geom2d_curve_tool::line(c2),
+                        &PT::line(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -471,9 +581,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Circle => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_line_circle(
-                        &geom2d_curve_tool::line(c1),
+                        &PT::line(c1),
                         d1,
-                        &geom2d_curve_tool::circle(c2),
+                        &PT::circle(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -483,9 +593,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Ellipse => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_line_ellipse(
-                        &geom2d_curve_tool::line(c1),
+                        &PT::line(c1),
                         d1,
-                        &geom2d_curve_tool::ellipse(c2),
+                        &PT::ellipse(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -495,9 +605,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Parabola => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_line_parabola(
-                        &geom2d_curve_tool::line(c1),
+                        &PT::line(c1),
                         d1,
-                        &geom2d_curve_tool::parabola(c2),
+                        &PT::parabola(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -507,9 +617,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Hyperbola => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_line_hyperbola(
-                        &geom2d_curve_tool::line(c1),
+                        &PT::line(c1),
                         d1,
-                        &geom2d_curve_tool::hyperbola(c2),
+                        &PT::hyperbola(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -517,9 +627,9 @@ impl IntCurveCurveGen {
                     finish_coniconiconi!();
                 }
                 _ => {
-                    self.intconicurv.base.set_reversed_parameters(false);
+                    self.intconicurv.base_mut().set_reversed_parameters(false);
                     self.intconicurv.perform_line(
-                        &geom2d_curve_tool::line(c1),
+                        &PT::line(c1),
                         d1,
                         c2,
                         d2,
@@ -533,9 +643,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Line => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_line_circle(
-                        &geom2d_curve_tool::line(c2),
+                        &PT::line(c2),
                         d2,
-                        &geom2d_curve_tool::circle(c1),
+                        &PT::circle(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -545,9 +655,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Circle => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_circle_circle(
-                        &geom2d_curve_tool::circle(c1),
+                        &PT::circle(c1),
                         d1,
-                        &geom2d_curve_tool::circle(c2),
+                        &PT::circle(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -557,9 +667,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Ellipse => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_circle_ellipse(
-                        &geom2d_curve_tool::circle(c1),
+                        &PT::circle(c1),
                         d1,
-                        &geom2d_curve_tool::ellipse(c2),
+                        &PT::ellipse(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -569,9 +679,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Parabola => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_circle_parabola(
-                        &geom2d_curve_tool::circle(c1),
+                        &PT::circle(c1),
                         d1,
-                        &geom2d_curve_tool::parabola(c2),
+                        &PT::parabola(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -581,9 +691,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Hyperbola => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_circle_hyperbola(
-                        &geom2d_curve_tool::circle(c1),
+                        &PT::circle(c1),
                         d1,
-                        &geom2d_curve_tool::hyperbola(c2),
+                        &PT::hyperbola(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -591,9 +701,9 @@ impl IntCurveCurveGen {
                     finish_coniconiconi!();
                 }
                 _ => {
-                    self.intconicurv.base.set_reversed_parameters(false);
+                    self.intconicurv.base_mut().set_reversed_parameters(false);
                     self.intconicurv.perform_circle(
-                        &geom2d_curve_tool::circle(c1),
+                        &PT::circle(c1),
                         d1,
                         c2,
                         d2,
@@ -607,9 +717,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Line => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_line_ellipse(
-                        &geom2d_curve_tool::line(c2),
+                        &PT::line(c2),
                         d2,
-                        &geom2d_curve_tool::ellipse(c1),
+                        &PT::ellipse(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -619,9 +729,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Circle => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_circle_ellipse(
-                        &geom2d_curve_tool::circle(c2),
+                        &PT::circle(c2),
                         d2,
-                        &geom2d_curve_tool::ellipse(c1),
+                        &PT::ellipse(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -631,9 +741,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Ellipse => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_ellipse_ellipse(
-                        &geom2d_curve_tool::ellipse(c1),
+                        &PT::ellipse(c1),
                         d1,
-                        &geom2d_curve_tool::ellipse(c2),
+                        &PT::ellipse(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -643,9 +753,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Parabola => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_ellipse_parabola(
-                        &geom2d_curve_tool::ellipse(c1),
+                        &PT::ellipse(c1),
                         d1,
-                        &geom2d_curve_tool::parabola(c2),
+                        &PT::parabola(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -655,9 +765,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Hyperbola => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_ellipse_hyperbola(
-                        &geom2d_curve_tool::ellipse(c1),
+                        &PT::ellipse(c1),
                         d1,
-                        &geom2d_curve_tool::hyperbola(c2),
+                        &PT::hyperbola(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -665,9 +775,9 @@ impl IntCurveCurveGen {
                     finish_coniconiconi!();
                 }
                 _ => {
-                    self.intconicurv.base.set_reversed_parameters(false);
+                    self.intconicurv.base_mut().set_reversed_parameters(false);
                     self.intconicurv.perform_ellipse(
-                        &geom2d_curve_tool::ellipse(c1),
+                        &PT::ellipse(c1),
                         d1,
                         c2,
                         d2,
@@ -681,9 +791,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Line => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_line_parabola(
-                        &geom2d_curve_tool::line(c2),
+                        &PT::line(c2),
                         d2,
-                        &geom2d_curve_tool::parabola(c1),
+                        &PT::parabola(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -693,9 +803,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Circle => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_circle_parabola(
-                        &geom2d_curve_tool::circle(c2),
+                        &PT::circle(c2),
                         d2,
-                        &geom2d_curve_tool::parabola(c1),
+                        &PT::parabola(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -705,9 +815,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Ellipse => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_ellipse_parabola(
-                        &geom2d_curve_tool::ellipse(c2),
+                        &PT::ellipse(c2),
                         d2,
-                        &geom2d_curve_tool::parabola(c1),
+                        &PT::parabola(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -717,9 +827,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Parabola => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_parabola_parabola(
-                        &geom2d_curve_tool::parabola(c1),
+                        &PT::parabola(c1),
                         d1,
-                        &geom2d_curve_tool::parabola(c2),
+                        &PT::parabola(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -729,9 +839,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Hyperbola => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_parabola_hyperbola(
-                        &geom2d_curve_tool::parabola(c1),
+                        &PT::parabola(c1),
                         d1,
-                        &geom2d_curve_tool::hyperbola(c2),
+                        &PT::hyperbola(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -739,9 +849,9 @@ impl IntCurveCurveGen {
                     finish_coniconiconi!();
                 }
                 _ => {
-                    self.intconicurv.base.set_reversed_parameters(false);
+                    self.intconicurv.base_mut().set_reversed_parameters(false);
                     self.intconicurv.perform_parabola(
-                        &geom2d_curve_tool::parabola(c1),
+                        &PT::parabola(c1),
                         d1,
                         c2,
                         d2,
@@ -755,9 +865,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Line => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_line_hyperbola(
-                        &geom2d_curve_tool::line(c2),
+                        &PT::line(c2),
                         d2,
-                        &geom2d_curve_tool::hyperbola(c1),
+                        &PT::hyperbola(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -767,9 +877,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Circle => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_circle_hyperbola(
-                        &geom2d_curve_tool::circle(c2),
+                        &PT::circle(c2),
                         d2,
-                        &geom2d_curve_tool::hyperbola(c1),
+                        &PT::hyperbola(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -779,9 +889,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Ellipse => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_ellipse_hyperbola(
-                        &geom2d_curve_tool::ellipse(c2),
+                        &PT::ellipse(c2),
                         d2,
-                        &geom2d_curve_tool::hyperbola(c1),
+                        &PT::hyperbola(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -791,9 +901,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Parabola => {
                     self.intconiconi.base.set_reversed_parameters(true);
                     self.intconiconi.perform_parabola_hyperbola(
-                        &geom2d_curve_tool::parabola(c2),
+                        &PT::parabola(c2),
                         d2,
-                        &geom2d_curve_tool::hyperbola(c1),
+                        &PT::hyperbola(c1),
                         d1,
                         tol_conf,
                         tol,
@@ -803,9 +913,9 @@ impl IntCurveCurveGen {
                 Curve2dType::Hyperbola => {
                     self.intconiconi.base.set_reversed_parameters(false);
                     self.intconiconi.perform_hyperbola_hyperbola(
-                        &geom2d_curve_tool::hyperbola(c1),
+                        &PT::hyperbola(c1),
                         d1,
-                        &geom2d_curve_tool::hyperbola(c2),
+                        &PT::hyperbola(c2),
                         d2,
                         tol_conf,
                         tol,
@@ -813,9 +923,9 @@ impl IntCurveCurveGen {
                     finish_coniconiconi!();
                 }
                 _ => {
-                    self.intconicurv.base.set_reversed_parameters(false);
+                    self.intconicurv.base_mut().set_reversed_parameters(false);
                     self.intconicurv.perform_hyperbola(
-                        &geom2d_curve_tool::hyperbola(c1),
+                        &PT::hyperbola(c1),
                         d1,
                         c2,
                         d2,
@@ -827,9 +937,9 @@ impl IntCurveCurveGen {
             },
             _ => match typ2 {
                 Curve2dType::Line => {
-                    self.intconicurv.base.set_reversed_parameters(true);
+                    self.intconicurv.base_mut().set_reversed_parameters(true);
                     self.intconicurv.perform_line(
-                        &geom2d_curve_tool::line(c2),
+                        &PT::line(c2),
                         d2,
                         c1,
                         d1,
@@ -839,9 +949,9 @@ impl IntCurveCurveGen {
                     finish_conicurv!();
                 }
                 Curve2dType::Circle => {
-                    self.intconicurv.base.set_reversed_parameters(true);
+                    self.intconicurv.base_mut().set_reversed_parameters(true);
                     self.intconicurv.perform_circle(
-                        &geom2d_curve_tool::circle(c2),
+                        &PT::circle(c2),
                         d2,
                         c1,
                         d1,
@@ -851,9 +961,9 @@ impl IntCurveCurveGen {
                     finish_conicurv!();
                 }
                 Curve2dType::Ellipse => {
-                    self.intconicurv.base.set_reversed_parameters(true);
+                    self.intconicurv.base_mut().set_reversed_parameters(true);
                     self.intconicurv.perform_ellipse(
-                        &geom2d_curve_tool::ellipse(c2),
+                        &PT::ellipse(c2),
                         d2,
                         c1,
                         d1,
@@ -863,9 +973,9 @@ impl IntCurveCurveGen {
                     finish_conicurv!();
                 }
                 Curve2dType::Parabola => {
-                    self.intconicurv.base.set_reversed_parameters(true);
+                    self.intconicurv.base_mut().set_reversed_parameters(true);
                     self.intconicurv.perform_parabola(
-                        &geom2d_curve_tool::parabola(c2),
+                        &PT::parabola(c2),
                         d2,
                         c1,
                         d1,
@@ -875,9 +985,9 @@ impl IntCurveCurveGen {
                     finish_conicurv!();
                 }
                 Curve2dType::Hyperbola => {
-                    self.intconicurv.base.set_reversed_parameters(true);
+                    self.intconicurv.base_mut().set_reversed_parameters(true);
                     self.intconicurv.perform_hyperbola(
-                        &geom2d_curve_tool::hyperbola(c2),
+                        &PT::hyperbola(c2),
                         d2,
                         c1,
                         d1,
@@ -887,18 +997,18 @@ impl IntCurveCurveGen {
                     finish_conicurv!();
                 }
                 _ => {
-                    self.intcurvcurv.base.set_reversed_parameters(false);
+                    self.intcurvcurv.base_mut().set_reversed_parameters(false);
                     self.intcurvcurv.perform(c1, d1, c2, d2, tol_conf, tol);
                     if composite {
                         self.base.append_intersector(
-                            &self.intcurvcurv.base,
+                            self.intcurvcurv.base(),
                             self.param1inf,
                             self.param1sup,
                             self.param2inf,
                             self.param2sup,
                         );
                     } else {
-                        self.base.set_values(&self.intcurvcurv.base);
+                        self.base.set_values(self.intcurvcurv.base());
                     }
                 }
             },
@@ -911,12 +1021,12 @@ impl IntCurveCurveGen {
     fn internal_composite_perform_no_recurs(
         &mut self,
         nb_inter_c1: i32,
-        c1: &dyn Curve2dAdaptor,
+        c1: &C,
         num_inter_c1: i32,
         tab1: &[f64],
         d1: &Res2dDomain,
         nb_inter_c2: i32,
-        c2: &dyn Curve2dAdaptor,
+        c2: &C,
         num_inter_c2: i32,
         tab2: &[f64],
         d2: &Res2dDomain,
@@ -937,7 +1047,7 @@ impl IntCurveCurveGen {
         let (mut param_inf, mut param_sup);
 
         if nb_inter_c1 > 1 {
-            let (pi, ps) = geom2d_curve_tool::get_interval(tab1, num_inter_c1 as usize);
+            let (pi, ps) = PT::get_interval(c1, num_inter_c1 as usize, tab1);
             param_inf = pi;
             param_sup = ps;
             //--------------------------------------------------------------
@@ -959,10 +1069,10 @@ impl IntCurveCurveGen {
             if (param_sup - param_inf) > 1e-10 {
                 domain_c1_num_inter = Res2dDomain::infinite();
                 domain_c1_num_inter.set_values_bounded(
-                    geom2d_curve_tool::value(c1, param_inf),
+                    PT::value(c1, param_inf),
                     param_inf,
                     d1.first_tolerance(),
-                    geom2d_curve_tool::value(c1, param_sup),
+                    PT::value(c1, param_sup),
                     param_sup,
                     d1.last_tolerance(),
                 );
@@ -981,7 +1091,7 @@ impl IntCurveCurveGen {
         //-- Creation du domaine associe a la portion de C2
         //----------------------------------------------------------------------
         if nb_inter_c2 > 1 {
-            let (pi, ps) = geom2d_curve_tool::get_interval(tab2, num_inter_c2 as usize);
+            let (pi, ps) = PT::get_interval(c2, num_inter_c2 as usize, tab2);
             param_inf = pi;
             param_sup = ps;
             //--------------------------------------------------------------
@@ -1003,10 +1113,10 @@ impl IntCurveCurveGen {
             if (param_sup - param_inf) > 1e-10 {
                 domain_c2_num_inter = Res2dDomain::infinite();
                 domain_c2_num_inter.set_values_bounded(
-                    geom2d_curve_tool::value(c2, param_inf),
+                    PT::value(c2, param_inf),
                     param_inf,
                     d2.first_tolerance(),
-                    geom2d_curve_tool::value(c2, param_sup),
+                    PT::value(c2, param_sup),
                     param_sup,
                     d2.last_tolerance(),
                 );
@@ -1038,12 +1148,12 @@ impl IntCurveCurveGen {
     #[allow(clippy::too_many_arguments)]
     fn internal_composite_perform(
         &mut self,
-        c1: &dyn Curve2dAdaptor,
+        c1: &C,
         d1: &Res2dDomain,
         xxx_num_inter_c1: i32,
         nb_inter_c1: i32,
         tab1: &[f64],
-        c2: &dyn Curve2dAdaptor,
+        c2: &C,
         d2: &Res2dDomain,
         xxx_num_inter_c2: i32,
         nb_inter_c2: i32,
@@ -1088,7 +1198,35 @@ impl IntCurveCurveGen {
     }
 }
 
-impl Default for IntCurveCurveGen {
+impl<C: ?Sized, PT: PCurveTool<C>, IC: IntConicCurveMember<C> + Clone, IPP: IntPCurvePCurveMember<C> + Clone> Clone
+    for IntCurveCurveGen<C, PT, IC, IPP>
+{
+    fn clone(&self) -> Self {
+        IntCurveCurveGen {
+            base: self.base.clone(),
+            intconiconi: self.intconiconi.clone(),
+            intconicurv: Clone::clone(&self.intconicurv),
+            intcurvcurv: Clone::clone(&self.intcurvcurv),
+            param1inf: self.param1inf,
+            param1sup: self.param1sup,
+            param2inf: self.param2inf,
+            param2sup: self.param2sup,
+            _tools: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<C: ?Sized, PT: PCurveTool<C>, IC: IntConicCurveMember<C>, IPP: IntPCurvePCurveMember<C>>
+    std::fmt::Debug for IntCurveCurveGen<C, PT, IC, IPP>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IntCurveCurveGen").field("base", &self.base).finish()
+    }
+}
+
+impl<C: ?Sized, PT: PCurveTool<C>, IC: IntConicCurveMember<C> + Default, IPP: IntPCurvePCurveMember<C> + Default>
+    Default for IntCurveCurveGen<C, PT, IC, IPP>
+{
     fn default() -> Self {
         IntCurveCurveGen::new()
     }

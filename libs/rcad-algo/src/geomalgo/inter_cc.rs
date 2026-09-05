@@ -10,7 +10,7 @@ use glam::DVec2;
 use rcad_kernel::geom::{Curve2d, TrimmedCurve2};
 
 use super::geom2d_int::Curve2dAdaptor;
-use super::int_curve_curve_gen::IntCurveCurveGen;
+use super::geom2d_int::GInter;
 use super::int_res2d::IntersectionPoint;
 
 /// OCCT Geom2dAPI_InterCurveCurve.
@@ -23,7 +23,7 @@ pub struct InterCurveCurve {
     /// OCCT myCurve2.
     my_curve2: Option<Curve2d>,
     /// OCCT myIntersector.
-    my_intersector: IntCurveCurveGen,
+    my_intersector: GInter,
 }
 
 impl InterCurveCurve {
@@ -35,7 +35,7 @@ impl InterCurveCurve {
             my_is_done: false,
             my_curve1: None,
             my_curve2: None,
-            my_intersector: IntCurveCurveGen::new(),
+            my_intersector: GInter::new(),
         }
     }
 
@@ -70,7 +70,7 @@ impl InterCurveCurve {
 
         // Geom2dAdaptor_Curve AC1(C1); Geom2dAdaptor_Curve AC2(C2);
         // myIntersector = Geom2dInt_GInter(AC1, AC2, Tol, Tol);
-        self.my_intersector = IntCurveCurveGen::new_cc(c1, c2, tol, tol);
+        self.my_intersector = GInter::new_cc(c1, c2, tol, tol);
         self.my_is_done = self.my_intersector.is_done();
     }
 
@@ -84,7 +84,7 @@ impl InterCurveCurve {
 
         // Geom2dAdaptor_Curve AC1(C1);
         // myIntersector = Geom2dInt_GInter(AC1, Tol, Tol);
-        self.my_intersector = IntCurveCurveGen::new_c(c1, tol, tol);
+        self.my_intersector = GInter::new_c(c1, tol, tol);
         self.my_is_done = self.my_intersector.is_done();
     }
 
@@ -214,7 +214,7 @@ impl InterCurveCurve {
 
     /// OCCT Intersector() (lxx L19-22) — return the algorithmic object from
     /// Intersection.
-    pub fn intersector(&self) -> &IntCurveCurveGen {
+    pub fn intersector(&self) -> &GInter {
         &self.my_intersector
     }
 }
