@@ -28,7 +28,9 @@ pub mod int_curve_surface; // IntCurveSurface HInter assembly (data classes + to
 pub mod hatch;       // Geom2dHatch (Elements container + Intersector local geometry)
 pub mod geom2d_gcc;   // Geom2dGcc (tangent-line constraint: Lin2d2Tan + iter solver)
 pub mod geom2d_int;   // Geom2dInt (imp-par chain: IntConicCurveOfGInter + Intersector)
-pub mod int_conic_conic; // IntCurve (PConic + PConicTool binding + IntConicConic E-E)
+pub mod int_conic_conic; // IntCurve (PConic + PConicTool binding + IntConicConic E-E + Lin-Lin)
+pub mod int_conic_conic_tool; // IntCurve_IntConicConic_Tool.hxx/.cxx (Interval/PeriodicInterval/LC transitions)
+pub mod int_conic_conic_lin_circ; // IntConicConic::Perform(gp_Lin2d, gp_Circ2d) (_1.cxx L2236-2652)
 pub mod int_curve_curve_gen; // IntCurve_IntCurveCurveGen == Geom2dInt_GInter dispatcher
 pub mod int_imp_par_gen; // IntImpParGen (Intersector gxx + statics + MyImpParTool)
 pub mod int_poly_poly_gen; // IntCurve_IntPolyPolyGen gxx (pcurve x pcurve polyline intersection) // IntImpParGen (Intersector gxx + statics + MyImpParTool)

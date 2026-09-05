@@ -1239,19 +1239,8 @@ impl IntConicConic {
         }
     }
 
-    /// OCCT Perform(const gp_Lin2d& L, const gp_Circ2d& C)
-    /// (IntCurve_IntConicConic_1.cxx L2236-2652).
-    pub fn perform_line_circle(
-        &mut self,
-        _l: &Line2d,
-        _dl: &Res2dDomain,
-        _c: &Circle2d,
-        _dc: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
-    ) {
-        unimplemented!("IntConicConic::Perform(Lin, Circ) — IntCurve_IntConicConic_1.cxx L2236, not ported yet");
-    }
+    // OCCT Perform(const gp_Lin2d& L, const gp_Circ2d& C) lives in
+    // `int_conic_conic_lin_circ` (the _1.cxx Lin-Circ section).
 
     /// OCCT Perform(const gp_Lin2d& L, const gp_Elips2d& E)
     /// (IntCurve_IntConicConic.hxx L112 decl, body in _1.cxx — dedicated
