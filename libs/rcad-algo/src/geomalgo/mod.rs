@@ -46,6 +46,9 @@ pub mod brep_approx; // BRepApprox (TheMultiLineOfApprox + LineTool + SurfaceToo
 pub mod bspl_compute_line; // Approx_BSplComputeLine.gxx == AppDef_BSplineCompute
 pub mod gcc_ana;      // GccAna (analytic 2D constraint solvers: Circ2d3Tan Apollonius)
 pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain
+pub mod brep_approx_prm_prm; // BRepApprox PrmPrm chain: ThePrmPrmSvSurfacesOfApprox (ApproxInt_PrmPrmSvSurfaces.gxx) + TheInt2S (IntImp_Int2S.gxx) + TheFunctionOfTheInt2S (IntImp_ZerParFunc.gxx)
+pub mod brep_approx_imp_prm; // BRepApprox ImpPrm chain: TheImpPrmSvSurfacesOfApprox (ApproxInt_ImpPrmSvSurfaces.gxx) + TheZerImpFunc (IntImp_ZerImpFunc.gxx)
+pub mod brep_approx_approx; // BRepApprox_Approx = ApproxInt_Approx.gxx instantiation (Perform quadric switch + concrete driver shell)
 pub mod gtests_stubs; // Stubs for OCCT GTest translations (minimal impls to compile+pass)
 pub mod plate;       // Plate (variational spline plate: constraints + Plate_Plate solver)
 pub mod geomplate;   // GeomPlate (plate surface building on top of Plate)

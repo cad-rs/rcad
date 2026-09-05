@@ -14,6 +14,10 @@
 // encoding used for Adaptor3d_Surface in hlr::contap::surface_adaptor), so the
 // pointer maps to `Option<Arc<dyn SvSurfaces>>`.
 //
+// The ApproxInt_Approx engine seam impls (the BRepApprox_Approx_0.cxx
+// alias-table binding) live in the child module [seams].
+mod seams;
+
 // OCCT handle<T> fields map to Arc<T> (Option-wrapped for nullable handles);
 // NCollection_Array1 out-parameters map to slices whose index carries the
 // OCCT Lower() offset; local arrays over [Low, High] map to a Vec indexed by
@@ -203,9 +207,11 @@ impl ApproxLine {
 /// approximation algorithm needs some extra points on the line; a new line is
 /// then created which shares the same surfaces and functions (hxx L43-48).
 #[derive(Clone)]
-pub struct TheMultiLineOfApprox {
-    /// OCCT PtrOnmySvSurfaces (hxx L134).
-    ptr_on_my_sv_surfaces: Option<SharedSvSurfaces>,
+pub struct TheMultiLineOfApprox<'a> {
+    /// OCCT PtrOnmySvSurfaces (hxx L134) — the OCCT void* keeps the
+    /// surfaces functor alive in the caller's scope; the rcad slot carries
+    /// the lifetime instead of a raw pointer.
+    ptr_on_my_sv_surfaces: Option<Arc<dyn SvSurfaces + 'a>>,
     /// OCCT myLine (hxx L135).
     my_line: Option<Arc<ApproxLine>>,
     /// OCCT indicemin (hxx L136).
@@ -238,7 +244,7 @@ pub struct TheMultiLineOfApprox {
     v2o: f64,
 }
 
-impl TheMultiLineOfApprox {
+impl<'a> TheMultiLineOfApprox<'a> {
     /// OCCT BRepApprox_TheMultiLineOfApprox() (hxx L41; gxx L32-50).
     pub fn new() -> Self {
         TheMultiLineOfApprox {
@@ -267,7 +273,7 @@ impl TheMultiLineOfApprox {
     #[allow(clippy::too_many_arguments)]
     pub fn new_sv_surfaces(
         line: Arc<ApproxLine>,
-        sv_surfaces: Option<SharedSvSurfaces>,
+        sv_surfaces: Option<Arc<dyn SvSurfaces + 'a>>,
         nb_p3d: usize,
         nb_p2d: usize,
         approx_u1v1: bool,
@@ -511,7 +517,7 @@ impl TheMultiLineOfApprox {
         low: usize,
         high: usize,
         a_nb_pnts_to_insert: usize,
-    ) -> TheMultiLineOfApprox {
+    ) -> TheMultiLineOfApprox<'a> {
         // OCCT L306-328: without a surfaces functor, return an empty line
         // over [1, 1].
         let sv = match &self.ptr_on_my_sv_surfaces {
@@ -832,7 +838,7 @@ impl TheMultiLineOfApprox {
         the_low: usize,
         the_high: usize,
         the_indbad: usize,
-        the_new_multi_line: &mut TheMultiLineOfApprox,
+        the_new_multi_line: &mut TheMultiLineOfApprox<'a>,
     ) -> bool {
         let mut other_line_made = false;
 
@@ -984,15 +990,12 @@ impl TheMultiLineOfApprox {
     }
 }
 
-impl Default for TheMultiLineOfApprox {
+impl Default for TheMultiLineOfApprox<'_> {
     fn default() -> Self {
         TheMultiLineOfApprox::new()
     }
 }
 
-// ---------------------------------------------------------------------------
-// BRepApprox_TheMultiLineToolOfApprox
-// ---------------------------------------------------------------------------
 
 /// OCCT BRepApprox_TheMultiLineToolOfApprox
 /// (BRepApprox_TheMultiLineToolOfApprox.hxx L30-123) — the static LineTool
@@ -1026,14 +1029,14 @@ pub mod the_multi_line_tool {
     /// OCCT BRepApprox_TheMultiLineToolOfApprox::Value(ML, MPointIndex,
     /// tabPt) (hxx L49-51; lxx L57-62) — the 3d points of the multipoint
     /// MPointIndex when only 3d points exist.
-    pub fn value_3d(ml: &TheMultiLineOfApprox, index: usize, tab_pnt: &mut [DVec3]) {
+    pub fn value_3d(ml: &TheMultiLineOfApprox<'_>, index: usize, tab_pnt: &mut [DVec3]) {
         ml.value_3d(index, tab_pnt)
     }
 
     /// OCCT BRepApprox_TheMultiLineToolOfApprox::Value(ML, MPointIndex,
     /// tabPt2d) (hxx L55-57; lxx L66-71) — the 2d points of the multipoint
     /// MPointIndex when only 2d points exist.
-    pub fn value_2d(ml: &TheMultiLineOfApprox, index: usize, tab_pnt2d: &mut [DVec2]) {
+    pub fn value_2d(ml: &TheMultiLineOfApprox<'_>, index: usize, tab_pnt2d: &mut [DVec2]) {
         ml.value_2d(index, tab_pnt2d)
     }
 
@@ -1041,7 +1044,7 @@ pub mod the_multi_line_tool {
     /// tabPt, tabPt2d) (hxx L61-64; lxx L75-81) — the 3d and 2d points of
     /// the multipoint MPointIndex.
     pub fn value_3d_2d(
-        ml: &TheMultiLineOfApprox,
+        ml: &TheMultiLineOfApprox<'_>,
         index: usize,
         tab_pnt: &mut [DVec3],
         tab_pnt2d: &mut [DVec2],
@@ -1052,14 +1055,14 @@ pub mod the_multi_line_tool {
     /// OCCT BRepApprox_TheMultiLineToolOfApprox::Tangency(ML, MPointIndex,
     /// tabV) (hxx L68-70; lxx L85-90) — the 3d tangency points of the
     /// multipoint MPointIndex when only 3d points exist.
-    pub fn tangency_3d(ml: &TheMultiLineOfApprox, index: usize, tab_v: &mut [DVec3]) -> bool {
+    pub fn tangency_3d(ml: &TheMultiLineOfApprox<'_>, index: usize, tab_v: &mut [DVec3]) -> bool {
         ml.tangency_3d(index, tab_v)
     }
 
     /// OCCT BRepApprox_TheMultiLineToolOfApprox::Tangency(ML, MPointIndex,
     /// tabV2d) (hxx L74-76; lxx L94-99) — the 2d tangency points of the
     /// multipoint MPointIndex only when 2d points exist.
-    pub fn tangency_2d(ml: &TheMultiLineOfApprox, index: usize, tab_v2d: &mut [DVec2]) -> bool {
+    pub fn tangency_2d(ml: &TheMultiLineOfApprox<'_>, index: usize, tab_v2d: &mut [DVec2]) -> bool {
         ml.tangency_2d(index, tab_v2d)
     }
 
@@ -1067,7 +1070,7 @@ pub mod the_multi_line_tool {
     /// tabV, tabV2d) (hxx L80-83; lxx L103-109) — the 3d and 2d tangency
     /// points of the multipoint MPointIndex.
     pub fn tangency_3d_2d(
-        ml: &TheMultiLineOfApprox,
+        ml: &TheMultiLineOfApprox<'_>,
         index: usize,
         tab_v: &mut [DVec3],
         tab_v2d: &mut [DVec2],
@@ -1078,7 +1081,7 @@ pub mod the_multi_line_tool {
     /// OCCT BRepApprox_TheMultiLineToolOfApprox::Curvature(ML, MPointIndex,
     /// tabV) (hxx L87-89; lxx L113-120) — the instantiation returns False
     /// unconditionally.
-    pub fn curvature_3d(_ml: &TheMultiLineOfApprox, _index: usize, _tab_v: &mut [DVec3]) -> bool {
+    pub fn curvature_3d(_ml: &TheMultiLineOfApprox<'_>, _index: usize, _tab_v: &mut [DVec3]) -> bool {
         false
     }
 
@@ -1086,7 +1089,7 @@ pub mod the_multi_line_tool {
     /// tabV2d) (hxx L93-95; lxx L124-131) — the instantiation returns False
     /// unconditionally.
     pub fn curvature_2d(
-        _ml: &TheMultiLineOfApprox,
+        _ml: &TheMultiLineOfApprox<'_>,
         _index: usize,
         _tab_v2d: &mut [DVec2],
     ) -> bool {
@@ -1097,7 +1100,7 @@ pub mod the_multi_line_tool {
     /// tabV, tabV2d) (hxx L99-102; lxx L135-144) — the instantiation returns
     /// False unconditionally.
     pub fn curvature_3d_2d(
-        _ml: &TheMultiLineOfApprox,
+        _ml: &TheMultiLineOfApprox<'_>,
         _index: usize,
         _tab_v: &mut [DVec3],
         _tab_v2d: &mut [DVec2],
@@ -1108,31 +1111,31 @@ pub mod the_multi_line_tool {
     /// OCCT BRepApprox_TheMultiLineToolOfApprox::MakeMLBetween(ML, I1, I2,
     /// NbPMin) (hxx L105-108; lxx L161-168) — is called if WhatStatus
     /// returned "PointsAdded".
-    pub fn make_ml_between(
-        ml: &TheMultiLineOfApprox,
+    pub fn make_ml_between<'a>(
+        ml: &TheMultiLineOfApprox<'a>,
         i1: usize,
         i2: usize,
         nb_p_min: usize,
-    ) -> TheMultiLineOfApprox {
+    ) -> TheMultiLineOfApprox<'a> {
         ml.make_ml_between(i1, i2, nb_p_min)
     }
 
     /// OCCT BRepApprox_TheMultiLineToolOfApprox::MakeMLOneMorePoint(ML, I1,
     /// I2, indbad, OtherLine) (hxx L111-115; lxx L172-179) — is called when
     /// the Bezier curve contains a loop.
-    pub fn make_ml_one_more_point(
-        ml: &TheMultiLineOfApprox,
+    pub fn make_ml_one_more_point<'a>(
+        ml: &TheMultiLineOfApprox<'a>,
         i1: usize,
         i2: usize,
         indbad: usize,
-        other_line: &mut TheMultiLineOfApprox,
+        other_line: &mut TheMultiLineOfApprox<'a>,
     ) -> bool {
         ml.make_ml_one_more_point(i1, i2, indbad, other_line)
     }
 
     /// OCCT BRepApprox_TheMultiLineToolOfApprox::WhatStatus(ML, I1, I2)
     /// (hxx L117-119; lxx L148-157).
-    pub fn what_status(ml: &TheMultiLineOfApprox, _i1: usize, _i2: usize) -> ApproxStatus {
+    pub fn what_status(ml: &TheMultiLineOfApprox<'_>, _i1: usize, _i2: usize) -> ApproxStatus {
         ml.what_status()
     }
 
@@ -1522,7 +1525,7 @@ mod tests {
 
     /// A valid multi-line over the 3-point line with the offsets
     /// Xo=10 Yo=20 Zo=30, U1o=0.1 V1o=0.2 U2o=0.3 V2o=0.4.
-    fn multi_line_3pts(sv: Option<SharedSvSurfaces>) -> TheMultiLineOfApprox {
+    fn multi_line_3pts<'a>(sv: Option<Arc<dyn SvSurfaces + 'a>>) -> TheMultiLineOfApprox<'a> {
         let line = Arc::new(ApproxLine::new_line_on_2s(Some(line_on_2s_3pts()), false));
         TheMultiLineOfApprox::new_sv_surfaces(
             line, sv, 1, 1, true, true, 10.0, 20.0, 30.0, 0.1, 0.2, 0.3, 0.4, true, 1, 3,

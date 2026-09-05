@@ -1521,6 +1521,33 @@ impl WLineApprox {
         indicemin: usize,
         indicemax: usize,
     ) {
+        // OCCT Perform(WLine) runs the shared sequence with the Init cut
+        // flag = true (L212-215).
+        self.perform_impl(ml, true, approx_xyz, approx_u1v1, approx_u2v2, indicemin, indicemax);
+    }
+
+    /// OCCT ApproxInt_Approx Perform shared sequence: prepareDS (L521-534),
+    /// the nbpntbez -> myBezierApprox determination, fillData (L501-517),
+    /// buildKnots (L538-619), the two-knot split (L205-210), the Init
+    /// (L212-215 / L337-340 / L389-392) and buildCurve (L623-751).  `cut` is
+    /// the Init cutting flag: `true` for Perform(WLine) (L212-215) and
+    /// myData.myBezierApprox for the Perform(Surf1, Surf2) PrmPrm tail
+    /// (L337-340) and the Perform(ISurf, PSurf) tail (L389-392).
+    ///
+    /// rcad note: OCCT Inits both myComputeLine and myComputeLineBezier
+    /// here; the landed engine has not landed the non-Bezier ComputeLine
+    /// branch of buildCurve, so only myComputeLineBezier is Inited (kept
+    /// from the landed behavior).
+    pub fn perform_impl<ML: ApproxIntMultiLine>(
+        &mut self,
+        ml: &ML,
+        cut: bool,
+        approx_xyz: bool,
+        approx_u1v1: bool,
+        approx_u2v2: bool,
+        indicemin: usize,
+        indicemax: usize,
+    ) {
         // prepareDS (L521-534).
         self.my_tol_reached3d = 0.0;
         self.my_tol_reached2d = 0.0;
@@ -1546,7 +1573,7 @@ impl WLineApprox {
             self.my_tol3d,
             self.my_tol2d,
             self.my_nb_iter_max,
-            true,
+            cut,
             self.parametrization,
         );
         self.build_curve(ml);
