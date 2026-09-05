@@ -221,6 +221,13 @@ impl BRepTopolTool {
         }
     }
 
+    /// The owning BRep read-back (no OCCT counterpart: the OCCT tool reads
+    /// the global TShape graph; the rcad tool carries the refcounted BRep
+    /// and hands it to the kernel-context consumers, HLRBRep_Data.my_brep).
+    pub fn brep(&self) -> &Arc<BRep> {
+        &self.brep
+    }
+
     /// OCCT Orientation(C) (cxx L213-217).
     pub fn orientation_curve(&self, c: &BRepCurve2d) -> Orientation {
         c.edge().orientation

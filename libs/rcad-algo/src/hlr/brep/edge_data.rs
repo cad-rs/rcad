@@ -17,6 +17,10 @@ use crate::hlr::algo::edges_block::MinMaxIndices;
 use super::curve::Curve;
 
 /// OCCT HLRBRep_EdgeData.
+//
+// Clone: the OCCT class is copied by the default copy assignment in
+// HLRBRep_Data::Write (`*ed = *e1`, cxx L568).
+#[derive(Clone)]
 pub struct EdgeData<'a> {
     my_flags: i32,
     my_hide_count: i32,

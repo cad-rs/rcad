@@ -18,6 +18,11 @@ use crate::hlr::algo::projector::Projector;
 use crate::hlr::brep::b_curve_tool::CurveView;
 
 /// OCCT HLRBRep_Curve.
+//
+// Clone: the OCCT class is a value member of HLRBRep_EdgeData copied by
+// the default copy assignment (`*ed = *e1`, HLRBRep_Data.cxx L568 in
+// Write); every member is a handle/pointer/plain-value copy.
+#[derive(Clone)]
 pub struct Curve<'a> {
     /// OCCT myCurve (BRepAdaptor_Curve).
     my_curve: Option<&'a dyn CurveView>,
@@ -277,6 +282,12 @@ impl<'a> Curve<'a> {
     /// OCCT Value3D (lxx) / D0 3D (lxx L~180) — the 3D point of parameter U.
     pub fn value_3d(&self, u: f64) -> Point3 {
         self.c().d0(u)
+    }
+
+    /// OCCT D1(U, P, V) 3D (lxx L59-62: HLRBRep_BCurveTool::D1(myCurve, U, P, V))
+    /// — the 3D point and tangent of parameter U.
+    pub fn d1_3d(&self, u: f64) -> (Point3, Vec3) {
+        self.c().d1(u)
     }
 
     /// OCCT Tangent (cxx L301-313) — the 2D point and tangent at the start

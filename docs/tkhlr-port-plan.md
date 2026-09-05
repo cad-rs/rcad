@@ -1,6 +1,15 @@
 # TKHLR 1:1 翻译推进计划（多 session runway）
 
-> **交接快照（2026-09-05 session 9 结束时）**
+> **交接快照（2026-09-05 session 10 结束时）**
+> - **session 10 完成清单（Stage 3f + 3g 全关——HLR 精确管线全链贯通）**：两波六代理（K/L/M → N/O1/O2）+ 主线程骨架与裁决。
+>   1. **3f**：`hlr/brep/data/`（mod.rs = Data<'a> 70 字段契约 + CUT_LAR/CUT_BIG/MASK32/SIZEUV 常量 + counters thread_local；update.rs = ctor/Destroy(Drop)/Write/Update/InitBoundSort/InitEdge/MoreEdge/NextEdge/Edge/InitInterference + lxx（8 锚点）；classify.rs 2416 行 = NextInterference/RejectedInterference/EdgeState/HidingStartLevel/Compare/OrientOutLine/OrientOthEdge/Classify/SimplClassify/RejectedPoint/SameVertex/IsBadFace（7 锚点）；tableau_rejection.rs = cxx L77-492（5 锚点））+ face_data.rs（EMaskFlags 位表 + cxx/lxx 全访问器，3 锚点）+ edge_face_tool.rs（UVPoint 7 参/CurvatureValue + ExtPF 本地翻译，6 锚点）。怪癖照抄：InitEdge 双自增、Vertical 判据只查 0..6 维、Maxz>Maxx→Maxx=Maxy 笔误、0x80008000 位测（MASK 常量 + wrapping_sub）、IntRes2d→REJECT_MASK 环绕。
+>   2. **3g**：hider.rs（1343 行 = Hide 主循环 L41-852 全量；try/catch→catch_unwind；OwnHiding 空体照抄；**3e 的 EdgeInterferenceTool Data trait impl 在此接通**；锚点 4+2 #[ignore]——阻塞点已实证在 intersector 层（2D 直线横穿返回段而非点），修复后自动转绿）+ algo.rs（组合+Deref 转发 OCCT 继承）+ shape_to_hlr.rs（Load/ExploreFace/ExploreShape；Data<'static> 经 leak 路线；6 锚点）+ shape_bounds.rs（SDataHandle=Option<Arc<dyn Any+Send+Sync>> 不透明语义）+ internal_algo.rs（1654 行：Update/Load/InitEdgeStatus/Select/ShowAll/HideAll/PartialHide/Hide/HideSelected（heapsort 逐行）；8 锚点）+ hlr_to_shape.rs（1146 行：InternalCompound/DrawFace/DrawEdge + lxx 20 filter + HLRBRep.cxx MakeEdge/MakeEdge3d 包静态；8 锚点）。
+>   3. **契约裁决（uv_point）**：K 的 7 参签名（brep + edge Shape 显式）vs M 的 OCCT 5 参调用点——Data 增 my_brep: Option<&'a BRep>（rcad kernel-context deviation，DSFiller insert 先例），M 按 my_e_map 槽位接线；主代理 SendMessage 裁决 + L 接线。
+> - **回归基线（session 10）**：algo lib **349**（299 → +50，**2 ignore** = hider 的 Hide 分段双锚，阻塞在 intersector 层待修）、kernel **649**、tkhelix 16、builder 76+1、pavefiller 26、tkgeom_algo 134+1、tkbo 40。
+> - **HLR 精确管线全链贯通**：Algo(Add/Load) → InternalAlgo(Update→ShapeToHLR::Load→DSFiller::Insert→BRepApprox/Contap/FaceIsoLiner) → Data.Update → Hider.Hide → HLRToShape(V/Rg1/RgN/OutLine/Hiding × Visible/Hidden compounds)。**下一站 Stage 4 验收闭环**（4a gen_hlr_ref.py——勘察进行中）。
+> - **已知遗留（session 10）**：① intersector 层的 2D 直线×直线交点语义（段 vs 带 transition 的点）待对齐——hider 双锚 ignore 的根因；② HLRBRep_Curve::GetCurve().Edge() 不可表示（CurveView 无 TopoDS 反向指针）→ MakeEdge3d 返回 null 边（OutLineVCompound3d 输出空，DrawEdge IsNull 分支吸收）；③ BRepLib_MakeEdge2d 缺（Hyperbola/Parabola/Bezier/BSpline 2D 臂走 NotDone 等价分支）；④ fclass2d 的 wire walk 起点顶点随 HashMap 迭代序翻转（测试以预绑定分类器稳定，本质修复待 fclass2d 对齐 pass）。
+> - **并行子代理模式（session 10 实证补充）**：主代理预落 struct 字段契约（data/mod.rs 的 70 字段）+ 骨架先行 = 多代理并发零注册冲突；跨代理契约冲突经 SendMessage 快速裁决（uv_point 7 参 vs 5 参调用点，一轮消息收敛）；主代理预读消费者源文写对接点清单进 brief。
+
 > - 提交链（rcad 子模块分支 `sd-hash-wip`）：`7011f938` 计划落盘 → Stage 0/1 → 2a 全关 → `dc9cf575` 2b Contap 全包 → 3a → 3b SLProps/InterCSurf → `fe89ac91` **ContapDomain for BRepTopAdaptor_TopolTool** → `729f0366` **IntCurveCurveGen 泛型化** → `2f9b2d3e` **CInter 实例化 + Intersector（3b 全关）** → `2f1ac08e` **IntConicConic::Perform(Lin,Circ) + Tool 区间机制** → `d1dc1ad1` **Stage 3c-1** → `432bff94` **approx_int 引擎接缝泛型化**（ApproxIntWLine/ApproxIntMultiLine trait，零行为变更）→ `a0867176` **IntConicConic 全部 13 个 dispatch 臂激活 + BRepApprox 数据/工具层（SvSurfaces trait/ApproxLine/TheMultiLineOfApprox/MultiLineTool/SurfaceTool，1915 行）** → session 8 `5e782450`+`79807080` **Stage 3c-2 全关 + Geom2dHatch 叶子层 + 3e 干涉八件** → **session 9：Stage 3d 全关（Hatcher 主引擎 + BRepTopAdaptor_Tool + HLRTopoBRep 全包，两波五代理）**。
 > - 回归基线（全部全绿）：algo lib **299**（267 → +32：Hatcher 5 + Tool 3 + Data/FaceData/VData 8 + DSFiller 8 + FaceIsoLiner 5 + OutLiner 3，**0 ignore**）、kernel lib **649**（+1 内核锚点）、tkhelix_gtests 16/16、**pavefiller_stage_tests 26/26、builder_stage_tests 76/76 + builder_stage_smoke 1/1（builder 分阶段）**、tkgeom_algo_gtests 134+1、tkbo_gtests 40/40。
 > - **session 9 完成清单（3d 全关，两波五代理 + 主线程集成）**：
@@ -321,8 +330,8 @@ Poly_Triangulation/Polygon3D/PolygonOnTriangulation/BRepMesh 依赖 ——
 - [x] **Stage 3c** BRepApprox_Approx 链路（**3c-1 ✅ `d1dc1ad1`**：AppParCurves_BSpFunction/BSpGradient.gxx → app_par_curves_bsp.rs + Approx_BSplComputeLine.gxx → bspl_compute_line.rs，AppDef_BSplineCompute 实例化，OCCT ComputeCurve 死声明省略。锚点 2 个：四分之一圆 17 点逼近达容差、两点 Interpol 度 1。**3c-2 ✅ 2026-09-05 session 8**：① 引擎接缝——`impl ApproxIntWLine for ApproxLine` + `impl ApproxIntMultiLine for TheMultiLineOfApprox`（brep_approx/ 目录化：mod.rs 1912 + seams.rs 425，锚点 4 个）；② 函数族——`brep_approx_prm_prm.rs`（ZerParFunc/Int2S/PrmPrmSvSurfaces + choix_ref/compute_tangence，锚点 6）+ `brep_approx_imp_prm.rs`（ZerImpFunc/ImpPrmSvSurfaces 含 Singular/NonSingular/FillInitialVectorOfSolution 全链，锚点 3）+ `TheMultiLineOfApprox<'a>` 生命周期槽（OCCT void* 语义）；③ 本体——`brep_approx_approx.rs`（perform_wline/perform_prm_prm quadric switch/perform_implicit/SetParameters/accessors，747 行，锚点 4）+ 引擎 `perform_impl(cut)` 零行为重构。怪癖照抄：P2DOnFirst=ApproxU1V1、MakeMLBetween 空线失败语义、gxx L611 SetCoord(tu2,tu2) 笔误、quadric switch default 臂 Quad 默认构造。基线 algo lib **240**）
 - [x] **Stage 3d** HLRTopoBRep 包（✅ 2026-09-05 session 9：`geomalgo/hatch/hatcher.rs`（Hatcher 主引擎 2385 行总量 1:1，锚点 5）+ `topalgo/brep_top_adaptor/tool.rs`（BRepTopAdaptor_Tool）+ `hlr/topo_brep/`（Data/FaceData/VData/DSFiller/FaceIsoLiner/OutLiner，两波五代理；锚点 24：Data 8 + DSFiller 8 + FaceIsoLiner 5 + OutLiner 3；kernel topods.rs +3 BRepBuilder 方法）。全链 OutLiner::Fill → DSFiller::Insert → Data 就绪。基线 algo lib 299 / kernel 649）
 - [x] **Stage 3e** HLRBRep 干涉数据结构（✅ 2026-09-05 session 8 并行完成：`hlr/brep/` 八件——BiPoint/BiPnt2D（hxx-only）/AreaLimit/EdgeIList/VertexList/FaceIterator/EdgeInterferenceTool/EdgeBuilder（521 全 1:1）；锚点 11 个全绿。遗留：EdgeInterferenceTool 的 `Data` trait 待 3f HLRBRep_Data 实现）
-- [ ] **Stage 3f** HLRBRep Data（拆子模块）
-- [ ] **Stage 3g** Hider→InternalAlgo→Algo→HLRToShape + 烟囱测试
+- [x] **Stage 3f** HLRBRep Data（拆子模块）（✅ 2026-09-05 session 10：`hlr/brep/data/` = mod.rs（Data\<'a\> 70 字段契约 + 文件静态常量/counters）+ update.rs（ctor/Write/Update/InitBoundSort/InitEdge/exploration + lxx，8 锚点）+ classify.rs（2416 行：NextInterference…IsBadFace 16 方法 + 文件静态，7 锚点）+ tableau_rejection.rs（cxx L77-492，5 锚点）；连带 face_data.rs（FaceData 方法+lxx 13 对位访问器，3 锚点）与 edge_face_tool.rs（UVPoint/CurvatureValue + ExtPF 本地翻译，6 锚点）；uv_point 7 参契约裁决（Data.my_brep kernel 上下文 + my_e_map 槽位）；hlr:: 树 125/125 绿）
+- [◐] **Stage 3g** Hider→InternalAlgo→Algo→HLRToShape（✅ 2026-09-05 session 10 六件全落：hider 1343 行 + algo + internal_algo 1654 行 + hlr_to_shape 1146 行 + shape_to_hlr + shape_bounds；锚点 26 + 2 #[ignore]（Hide 分段双锚，阻塞在 intersector 层）。**余：盒体/圆柱端到端烟囱测试**——等 intersector 交点语义对齐后一并落)
 - [ ] **Stage 4a** gen_hlr_ref.py（含无头 spike）
 - [ ] **Stage 4b** hlr/commands.rs
 - [ ] **Stage 4c** occt-test-gen hlr 接入
@@ -518,3 +527,26 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 1. **Stage 3f**：HLRBRep_Data（2683 行拆 `brep/data/` 子模块，持 Arc\<BRep\>；落 3e 的 EdgeInterferenceTool `Data` trait；EdgeData::Set 的 TopoDS→CurveView 桥接；HLRBRep_Surface/Curve 与 Projector 的所有权收口）。
 2. **Stage 3g**：Hider(852) → ShapeBounds → InternalAlgo(1020) → Algo → HLRToShape + 盒体/圆柱烟囱测试。
 3. **Stage 4**：4a gen_hlr_ref.py（无头 vcomputehlr spike）→ 4b commands.rs → 4c occt-test-gen 接入 → 4d exact_hlr 3 用例闭环 + module-map 更新。
+
+### 本 session 追加（2026-09-05，session 10：Stage 3f + 3g 全关，HLR 精确管线全链贯通）
+
+| commit | 内容 |
+|---|---|
+| （本轮代码提交） | **3f+3g 全关**：`hlr/brep/data/`（Data 70 字段契约 + update/classify 2416 行/tableau_rejection 473 行）+ face_data + edge_face_tool + hider 1343 行（Hide 主循环全量 + EIT Data trait impl 接通）+ algo（组合+Deref）+ internal_algo 1654 行 + hlr_to_shape 1146 行（含 HLRBRep.cxx 包静态）+ shape_to_hlr + shape_bounds。两波六代理（K/L/M→N/O1/O2）+ uv_point 契约裁决；锚点 50+（data 20、face_data 3、edge_face_tool 6、hider 6、algo 4、internal_algo 4、hlr_to_shape 4、shape 6）；algo lib **349**（2 ignore = hider 双锚，阻塞在 intersector 层） |
+
+**本 session 新确立的翻译事实（沿例勿改）：**
+
+1. **struct 字段契约由主代理预落**（data/mod.rs 70 字段按 hxx L134-286 顺序）——三个代理并发写 impl 零冲突；子模块可访问父模块私有字段（seams.rs 先例）。
+2. **跨代理契约冲突的裁决流**：冲突方 SendMessage 主代理 → 主代理改共享契约（Data.my_brep）→ SendMessage 双方接线责任——一轮消息收敛，不重发任务。
+3. **`Arc<dyn Any + Send + Sync>` 作为 OCCT `handle<Standard_Transient>` 的不透明语义**（ShapeBounds.SDataHandle）——消费侧以 `down_cast` 取回。
+4. **Data<'static> 的 leak 路线**（shape_to_hlr）：`brep.clone()` 与 curve adaptor 各 leak 一个 `&'static`（init_edge 的 Arc::as_ptr 先例同族）；HLR 会话对象数量有限，泄漏有界。
+5. **OCCT 继承 → Rust 组合 + Deref/DerefMut**（Algo { internal: InternalAlgo }）——HLRToShape 的 `myAlgo->X()` 直接 deref 映射。
+6. **catch_unwind(AssertUnwindSafe(...)) 对应 OCCT try/catch**（Hider 的 try 体抽私有方法，catch 分支忽略 Result）。
+7. **怪癖照抄清单（session 10）**：InitEdge 的 `myHideCount` 双自增；Vertical 判据只查 0..6 维；`if (Maxz>Maxx){Maxx=Maxy;}`；`& 0x80008000` i32 位测（const MASK + wrapping_sub）；NextEdge 非测试路径不写 HideCount；ExploreShape 的 flag[0] 落槽；REVERSED `visible = fd.Back()`；heapsort `k <<= 1` 逐行；注释掉的 TriOk 冒泡排序保留为注释。
+8. **kernel-context 显式化**：uv_point(brep, ..., edge, ...) 的 brep/edge 是 OCCT 全局 TShape 图的 rcad 显式参数（DSFiller insert 先例的推广）。
+
+### 下一 session 入口（按序）
+
+1. **intersector 交点语义对齐**（hider 双锚 un-ignore 的前置）：`Intersector::perform` 对 2D 直线横穿返回段而非带 In/Out transition 的点——对照 OCCT IntRes2d 的 $OCCT_SRC 行为逐分支核查。
+2. **3g 收尾**：盒体/圆柱端到端烟囱测试（HLRBRep_Algo Add→Projector→Update→Hide→HLRToShape 全链 + nbshapes 结构断言）。
+3. **Stage 4a**：gen_hlr_ref.py（勘察报告由代理 P 交付：VComputeHLR 调用链/无头可行性/6 自包含用例显式参数）→ 4b commands.rs → 4c occt-test-gen 接入 → 4d exact_hlr 3 用例闭环 + module-map 更新。

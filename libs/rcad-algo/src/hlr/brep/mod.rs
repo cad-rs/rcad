@@ -42,6 +42,15 @@ pub mod b_surface_tool;
 pub mod curve;
 pub mod curve_tool;
 pub mod edge_builder;
+pub mod data;           // HLRBRep_Data (the HLR data structure, Stage 3f)
+pub mod edge_face_tool; // HLRBRep_EdgeFaceTool
+pub mod face_data;      // HLRBRep_FaceData
+pub mod algo;           // HLRBRep_Algo (the user entry)
+pub mod hider;          // HLRBRep_Hider
+pub mod hlr_to_shape;   // HLRBRep_HLRToShape
+pub mod internal_algo;  // HLRBRep_InternalAlgo
+pub mod shape_bounds;   // HLRBRep_ShapeBounds
+pub mod shape_to_hlr;   // HLRBRep_ShapeToHLR
 pub mod edge_data;
 pub mod edge_ilist;
 pub mod edge_interference_tool;

@@ -4,20 +4,24 @@
 //! (L26-56) + `.lxx` (L22-96): an exploration iterator over the wires and
 //! edges of a face.
 //!
-//! Documented deferrals:
-//! - OCCT `InitEdge(HLRBRep_FaceData& fd)` reads `fd.Wires()`; the
-//!   HLRBRep_FaceData structure lands with Stage 3f, so the rcad iterator
-//!   binds the [`WiresBlock`] (what `fd.Wires()` returns) at construction.
-//! - The cached `myEdges` handle is re-derived per access through
-//!   `myWires->Wire(iWire)`: `WiresBlock::wire` needs `&mut`, and the
-//!   accessed block is invariantly `Wire(iWire)` between `NextEdge` calls,
-//!   so the lookups are equivalent.  The per-access accessors therefore
-//!   take `&mut self` where OCCT has const methods.
+//! Architecture note (the HLRBRep_Data value-member form): OCCT
+//! `myFaceItr1` / `myFaceItr2` are default-constructed members of
+//! HLRBRep_Data — the `myWires` handle stays null until `InitEdge(fd)`
+//! binds `fd.Wires()`.  The rcad iterator mirrors that with a raw
+//! `*mut WiresBlock` (the `HLRBRep_Surface::myProj` /
+//! `Intersector::mySurface` raw-handle precedent): the constructor keeps
+//! the OCCT null-handle default and [`FaceIterator::init_edge`] performs
+//! the `myWires = fd.Wires()` binding.  The per-access accessors keep the
+//! OCCT const receivers (the raw handle needs no `&mut`).
+
+use std::marker::PhantomData;
+use std::sync::Arc;
 
 use rcad_kernel::topods::Orientation;
 
 use crate::hlr::algo::edges_block::EdgesBlock;
 use crate::hlr::algo::wires_block::WiresBlock;
+use crate::hlr::brep::face_data::FaceData;
 
 /// OCCT HLRBRep_FaceIterator.
 pub struct FaceIterator<'a> {
@@ -25,30 +29,37 @@ pub struct FaceIterator<'a> {
     nb_wires: i32,
     i_edge: i32,
     nb_edges: i32,
-    my_wires: &'a mut WiresBlock,
+    /// OCCT `occ::handle<HLRAlgo_WiresBlock> myWires` — null until InitEdge
+    /// (the default-constructed member handle).
+    my_wires: *mut WiresBlock,
+    /// The lifetime parameter of the OCCT value-member form (unused by the
+    /// raw handle; kept so `FaceIterator<'a>` stays the Data member type).
+    marker: PhantomData<&'a mut WiresBlock>,
 }
 
 impl<'a> FaceIterator<'a> {
-    /// OCCT HLRBRep_FaceIterator() — cxx L26 (`= default`; the ints and
-    /// handles stay uninitialized/null).  The rcad iterator binds the
-    /// WiresBlock reference at construction (see the module deferrals);
-    /// the counters keep the neutral default 0.
-    pub fn new(wires: &'a mut WiresBlock) -> Self {
+    /// OCCT HLRBRep_FaceIterator() — cxx L26 (`= default`; the counters
+    /// stay uninitialized, the handle is null).  `wires` is the OCCT null
+    /// handle stand-in: pass `std::ptr::null_mut()` for the default state;
+    /// [`FaceIterator::init_edge`] binds the real `fd.Wires()`.
+    pub fn new(wires: *mut WiresBlock) -> Self {
         FaceIterator {
             i_wire: 0,
             nb_wires: 0,
             i_edge: 0,
             nb_edges: 0,
             my_wires: wires,
+            marker: PhantomData,
         }
     }
 
     /// OCCT InitEdge(HLRBRep_FaceData& fd) — cxx L30-39: begin an
-    /// exploration of the edges of the face `fd` (the `fd.Wires()` read is
-    /// the construction-time binding).
-    pub fn init_edge(&mut self) {
+    /// exploration of the edges of the face `fd` (`myWires = fd.Wires()`).
+    pub fn init_edge(&mut self, fd: *mut FaceData<'_>) {
         self.i_wire = 0;
-        self.nb_wires = self.my_wires.nb_wires() as i32;
+        // myWires = fd.Wires();
+        self.my_wires = unsafe { (*fd).wires() };
+        self.nb_wires = unsafe { (*self.my_wires).nb_wires() } as i32;
 
         self.i_edge = 0;
         self.nb_edges = 0;
@@ -62,9 +73,9 @@ impl<'a> FaceIterator<'a> {
             self.i_wire += 1;
             if self.i_wire <= self.nb_wires {
                 self.i_edge = 1;
-                // myEdges = myWires->Wire(iWire) — fused into the per-access
-                // lookups (see the module deferrals).
-                self.nb_edges = self.my_wires.wire(self.i_wire as usize).nb_edges() as i32;
+                // myEdges = myWires->Wire(iWire).
+                self.nb_edges =
+                    unsafe { (*self.my_wires).wire(self.i_wire as usize) }.nb_edges() as i32;
             }
         }
     }
@@ -93,45 +104,54 @@ impl<'a> FaceIterator<'a> {
         self.next_edge();
     }
 
-    /// OCCT Wire — lxx L51-54: the edges of the current wire.
-    pub fn wire(&mut self) -> &mut EdgesBlock {
-        self.my_wires.wire(self.i_wire as usize)
+    /// OCCT Wire — lxx L51-54: the edges of the current wire (the shared
+    /// handle is handed out mutable, as the OCCT callers mutate the block
+    /// through it).
+    pub fn wire(&self) -> &mut EdgesBlock {
+        unsafe { (*self.my_wires).wire(self.i_wire as usize) }
     }
 
     /// OCCT Edge — lxx L58-61.
-    pub fn edge(&mut self) -> i32 {
-        self.my_wires.wire(self.i_wire as usize).edge(self.i_edge as usize)
+    pub fn edge(&self) -> i32 {
+        unsafe { (*self.my_wires).wire(self.i_wire as usize) }.edge(self.i_edge as usize)
     }
 
     /// OCCT Orientation — lxx L65-68.
-    pub fn orientation(&mut self) -> Orientation {
-        self.my_wires
-            .wire(self.i_wire as usize)
-            .orientation(self.i_edge as usize)
+    pub fn orientation(&self) -> Orientation {
+        unsafe { (*self.my_wires).wire(self.i_wire as usize) }.orientation(self.i_edge as usize)
     }
 
     /// OCCT OutLine — lxx L72-75.
-    pub fn out_line(&mut self) -> bool {
-        self.my_wires.wire(self.i_wire as usize).out_line(self.i_edge as usize)
+    pub fn out_line(&self) -> bool {
+        unsafe { (*self.my_wires).wire(self.i_wire as usize) }.out_line(self.i_edge as usize)
     }
 
     /// OCCT Internal — lxx L79-82.
-    pub fn internal(&mut self) -> bool {
-        self.my_wires
-            .wire(self.i_wire as usize)
-            .internal(self.i_edge as usize)
+    pub fn internal(&self) -> bool {
+        unsafe { (*self.my_wires).wire(self.i_wire as usize) }.internal(self.i_edge as usize)
     }
 
     /// OCCT Double — lxx L86-89.
-    pub fn double(&mut self) -> bool {
-        self.my_wires.wire(self.i_wire as usize).double(self.i_edge as usize)
+    pub fn double(&self) -> bool {
+        unsafe { (*self.my_wires).wire(self.i_wire as usize) }.double(self.i_edge as usize)
     }
 
     /// OCCT IsoLine — lxx L93-96.
-    pub fn iso_line(&mut self) -> bool {
-        self.my_wires
-            .wire(self.i_wire as usize)
-            .iso_line(self.i_edge as usize)
+    pub fn iso_line(&self) -> bool {
+        unsafe { (*self.my_wires).wire(self.i_wire as usize) }.iso_line(self.i_edge as usize)
+    }
+
+    /// The test-only InitEdge form: binds the WiresBlock directly (the
+    /// rcad FaceData-less construction of the iterator anchors).
+    #[cfg(test)]
+    fn init_edge_wires(&mut self, wires: *mut WiresBlock) {
+        self.i_wire = 0;
+        self.my_wires = wires;
+        self.nb_wires = unsafe { (*self.my_wires).nb_wires() } as i32;
+
+        self.i_edge = 0;
+        self.nb_edges = 0;
+        self.next_edge();
     }
 }
 
@@ -166,8 +186,8 @@ mod tests {
     #[test]
     fn face_iterator_edge_walk_order() {
         let mut wb = two_wire_block();
-        let mut it = FaceIterator::new(&mut wb);
-        it.init_edge();
+        let mut it = FaceIterator::new(std::ptr::null_mut());
+        it.init_edge_wires(&mut wb);
         // Edge 1 of wire 1.
         assert!(it.more_edge());
         assert!(it.beginning_of_wire());
@@ -203,8 +223,8 @@ mod tests {
     #[test]
     fn face_iterator_skip_wire() {
         let mut wb = two_wire_block();
-        let mut it = FaceIterator::new(&mut wb);
-        it.init_edge();
+        let mut it = FaceIterator::new(std::ptr::null_mut());
+        it.init_edge_wires(&mut wb);
         assert_eq!(it.edge(), 10);
         it.skip_wire();
         assert!(it.more_edge());
@@ -214,5 +234,15 @@ mod tests {
         assert_eq!(it.wire().nb_edges(), 1);
         it.next_edge();
         assert!(!it.more_edge());
+    }
+
+    /// The default-constructed iterator (cxx L26 `= default`): the handle
+    /// is null and the counters sit at their neutral 0 (the OCCT members
+    /// are uninitialized; the exploration is only defined after InitEdge —
+    /// BeginningOfWire (iEdge == 1) is false).
+    #[test]
+    fn face_iterator_default_state() {
+        let it = FaceIterator::<'_>::new(std::ptr::null_mut());
+        assert!(!it.beginning_of_wire());
     }
 }

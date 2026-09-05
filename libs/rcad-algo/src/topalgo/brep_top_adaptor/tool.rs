@@ -139,6 +139,13 @@ impl BRepTopAdaptorTool {
 
     /// OCCT Destroy() (cxx L138-140).
     pub fn destroy(&mut self) {}
+
+    /// The owning BRep read-back (no OCCT counterpart: the OCCT tool reads
+    /// the global TShape graph; the rcad tool hands the refcounted BRep of
+    /// its TopolTool to the kernel-context consumers, HLRBRep_Data.my_brep).
+    pub fn brep(&self) -> &Arc<BRep> {
+        self.my_topol_tool.brep()
+    }
 }
 
 impl Drop for BRepTopAdaptorTool {
