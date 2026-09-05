@@ -48,19 +48,32 @@ impl Algo {
 
     /// OCCT Add(const TopoDS_Shape& S, const occ::handle<Standard_Transient>&
     /// SData, const int nbIso) (cxx L41-46) — add the Shape <S>.
-    pub fn add_with_data(&mut self, s: &Shape, s_data: SDataHandle, nb_iso: i32) {
+    ///
+    /// rcad kernel-context explicitation (the ds_filler insert(brep, ...)
+    /// precedent): the OCCT S lives in the global TShape graph the Load
+    /// reads; the rcad caller hands the owning BRep of S alongside (it
+    /// becomes the InternalAlgo session context, captured at Load).
+    pub fn add_with_data(
+        &mut self,
+        brep: &Arc<rcad_kernel::BRep>,
+        s: &Shape,
+        s_data: SDataHandle,
+        nb_iso: i32,
+    ) {
         // Load(new HLRTopoBRep_OutLiner(S), SData, nbIso);
         self.internal
-            .load_with_data(&Arc::new(OutLiner::with_original_shape(s)), s_data, nb_iso);
+            .load_with_data(brep, &Arc::new(OutLiner::with_original_shape(s)), s_data, nb_iso);
     }
 
     /// OCCT Add(const TopoDS_Shape& S, const int nbIso) (cxx L50-53) — adds
     /// the shape S to this framework, and specifies the number of
     /// isoparameters nbiso desired in visualizing S.
-    pub fn add(&mut self, s: &Shape, nb_iso: i32) {
+    ///
+    /// rcad kernel-context explicitation: see [`Algo::add_with_data`].
+    pub fn add(&mut self, brep: &Arc<rcad_kernel::BRep>, s: &Shape, nb_iso: i32) {
         // Load(new HLRTopoBRep_OutLiner(S), nbIso);
         self.internal
-            .load(&Arc::new(OutLiner::with_original_shape(s)), nb_iso);
+            .load(brep, &Arc::new(OutLiner::with_original_shape(s)), nb_iso);
     }
 
     /// OCCT Index(const TopoDS_Shape& S) (cxx L57-74) — return the index of
@@ -200,10 +213,10 @@ mod tests {
     /// is found by its original shape and an unknown shape returns 0.
     #[test]
     fn add_and_index_original_and_zero_for_unknown() {
-        let (_brep, face) = face_shape();
+        let (brep, face) = face_shape();
         let mut algo = Algo::new();
         assert_eq!(algo.internal.nb_shapes(), 0);
-        algo.add(&face, 0);
+        algo.add(&brep, &face, 0);
         assert_eq!(algo.internal.nb_shapes(), 1);
         // the original shape is found at index 1.
         assert_eq!(algo.index(&face), 1);
@@ -216,9 +229,9 @@ mod tests {
     /// the ShapeBounds.
     #[test]
     fn add_with_data_forwards_sdata() {
-        let (_brep, face) = face_shape();
+        let (brep, face) = face_shape();
         let mut algo = Algo::new();
-        algo.add_with_data(&face, Some(Arc::new(7_u32)), 3);
+        algo.add_with_data(&brep, &face, Some(Arc::new(7_u32)), 3);
         assert_eq!(algo.internal.nb_shapes(), 1);
         assert_eq!(algo.index(&face), 1);
         let sb = algo.internal.shape_bounds(1);
@@ -231,10 +244,10 @@ mod tests {
     /// shape.
     #[test]
     fn out_lined_shape_nullify_clears_all() {
-        let (_brep, face) = face_shape();
+        let (brep, face) = face_shape();
         let mut algo = Algo::new();
-        algo.add(&face, 0);
-        algo.add(&face, 0);
+        algo.add(&brep, &face, 0);
+        algo.add(&brep, &face, 0);
         // set a non-null outlined shape + a dirty data structure on both.
         for i in 1..=2 {
             let sb = algo.internal.shape_bounds(i);
@@ -262,9 +275,9 @@ mod tests {
     /// encoding).
     #[test]
     fn new_from_and_deref_forwarding() {
-        let (_brep, face) = face_shape();
+        let (brep, face) = face_shape();
         let mut algo = Algo::new();
-        algo.add(&face, 2);
+        algo.add(&brep, &face, 2);
         let copy = Algo::new_from(&algo);
         assert_eq!(copy.internal.nb_shapes(), 1);
         // the Deref forwarding reaches NbShapes on the base.

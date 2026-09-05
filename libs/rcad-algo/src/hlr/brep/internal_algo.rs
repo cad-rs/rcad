@@ -20,8 +20,12 @@
 // - the OCCT overloads Select(I) / ShowAll(I) / HideAll(I) / Hide() /
 //   Hide(I) / Hide(I, J) / Load(...) map to distinct names (Rust has no
 //   overload resolution);
-// - `myDS->Update(myProj)` feeds the rcad kernel-context BRep documented on
-//   [Data::update] — scanned from the loaded Data (see [`InternalAlgo::update`]).
+// - the OCCT global TShape graph maps to the session kernel context
+//   `my_brep: Arc<BRep>` (the ds_filler::insert(brep, ...) explicitation
+//   precedent): the OutLiner faces/edges belong to it, it is captured at
+//   Load from the caller, and both the ShapeToHLR::Load call of Update and
+//   the myDS->Update(myProj) kernel context read it (see
+//   [`InternalAlgo::update`]).
 
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -72,6 +76,12 @@ pub struct InternalAlgo {
     my_map_of_shape_tool: Vec<(Shape, BRepTopAdaptorTool)>,
     /// OCCT myDebug (hxx L136).
     my_debug: bool,
+    /// The session kernel context (no OCCT member — the OCCT global TShape
+    /// graph stand-in, the ds_filler::insert(brep, ...) explicitation
+    /// precedent): the OutLiner faces/edges of every loaded shape belong to
+    /// this BRep; captured from the caller at Load and consumed by Update
+    /// (the ShapeToHLR::Load arena and the myDS->Update kernel context).
+    my_brep: Option<Arc<rcad_kernel::BRep>>,
 }
 
 impl InternalAlgo {
@@ -83,6 +93,7 @@ impl InternalAlgo {
             my_shapes: Vec::new(),
             my_map_of_shape_tool: Vec::new(),
             my_debug: false,
+            my_brep: None,
         }
     }
 
@@ -99,6 +110,9 @@ impl InternalAlgo {
             my_shapes: a.my_shapes.clone(),
             my_map_of_shape_tool: a.my_map_of_shape_tool.clone(),
             my_debug: a.my_debug,
+            // the copy shares the OCCT global graph (myDS = A->DataStructure()
+            // shares the TShape graph) — the session context rides.
+            my_brep: a.my_brep.clone(),
         }
     }
 
@@ -169,8 +183,18 @@ impl InternalAlgo {
                 //   dv = DS[i - 1]->NbVertices(); de = ...; df = ...;
                 // }
                 let loaded = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    // the per-shape builder arena of the landed rcad Load form
-                    let mut arena = rcad_kernel::BRep::new();
+                    // OCCT L96: DS[i - 1] = HLRBRep_ShapeToHLR::Load(SB.Shape(),
+                    //   myProj, myMapOfShapeTool, SB.NbOfIso()); — the Load walks
+                    //   the OCCT global TShape graph the shapes live in; the
+                    //   rcad session kernel context (captured at Load, the
+                    //   ds_filler::insert(brep, ...) precedent) rides in as the
+                    //   mutable builder arena.
+                    let mut arena = self
+                        .my_brep
+                        .as_ref()
+                        .expect("HLRBRep_InternalAlgo::Update : no kernel context")
+                        .as_ref()
+                        .clone();
                     shape_to_hlr::load(
                         &mut arena,
                         unsafe { &mut *out_liner },
@@ -216,8 +240,9 @@ impl InternalAlgo {
             // myDS->Update(myProj);
             // (the rcad [Data::update] carries the owning BRep — the
             // kernel-context deviation documented there; it rides in my_brep
-            // of the loaded Data.  The OCCT global TShape-graph stand-in
-            // scans the source array before the merge / drop.)
+            // of the loaded Data, the per-Load leaked view of the session
+            // kernel context.  The OCCT global TShape-graph stand-in scans
+            // the source array before the merge / drop.)
             let bridge = ds.iter().find_map(|d| d.brep());
 
             // if (n == 1) { myDS = DS[0]; }
@@ -345,7 +370,20 @@ impl InternalAlgo {
 
     /// OCCT Load(S, SData, nbIso) (cxx L189-195) — add the shape S with its
     /// ShapeData (the setter overload keeps the OCCT argument order).
-    pub fn load_with_data(&mut self, s: &Arc<crate::hlr::topo_brep::out_liner::OutLiner>, s_data: SDataHandle, nb_iso: i32) {
+    ///
+    /// rcad kernel-context capture (no OCCT statement, the ds_filler
+    /// precedent): the OCCT graph is global, so Load(S, ...) needs no graph
+    /// argument; the rcad OutLiner faces/edges belong to the caller's owning
+    /// BRep, handed in alongside and stored as the session context.
+    pub fn load_with_data(
+        &mut self,
+        brep: &Arc<rcad_kernel::BRep>,
+        s: &Arc<crate::hlr::topo_brep::out_liner::OutLiner>,
+        s_data: SDataHandle,
+        nb_iso: i32,
+    ) {
+        // rcad: the session kernel context (the OCCT global graph stand-in).
+        self.my_brep = Some(brep.clone());
         // myShapes.Append(HLRBRep_ShapeBounds(S, SData, nbIso, 0, 0, 0, 0, 0, 0));
         self.my_shapes
             .push(ShapeBounds::new_with_data(s.clone(), s_data, nb_iso, 0, 0, 0, 0, 0, 0));
@@ -354,7 +392,16 @@ impl InternalAlgo {
     }
 
     /// OCCT Load(S, nbIso) (cxx L199-203) — add the shape S.
-    pub fn load(&mut self, s: &Arc<crate::hlr::topo_brep::out_liner::OutLiner>, nb_iso: i32) {
+    ///
+    /// rcad kernel-context capture: see [`InternalAlgo::load_with_data`].
+    pub fn load(
+        &mut self,
+        brep: &Arc<rcad_kernel::BRep>,
+        s: &Arc<crate::hlr::topo_brep::out_liner::OutLiner>,
+        nb_iso: i32,
+    ) {
+        // rcad: the session kernel context (the OCCT global graph stand-in).
+        self.my_brep = Some(brep.clone());
         // myShapes.Append(HLRBRep_ShapeBounds(S, nbIso, 0, 0, 0, 0, 0, 0));
         self.my_shapes
             .push(ShapeBounds::new(s.clone(), nb_iso, 0, 0, 0, 0, 0, 0));
@@ -1339,9 +1386,13 @@ mod tests {
         let s1 = StdArc::new(OutLiner::new());
         assert_eq!(ia.index(&s1), 0);
 
+        // the session kernel context of the Load calls (the OCCT global
+        // graph stand-in; the OutLiner fixtures wrap no real shape).
+        let brep = StdArc::new(rcad_kernel::BRep::new());
+
         // Load(S, nbIso): the ShapeBounds append with zero bounds and the DS
         // nullify.
-        ia.load(&s1, 2);
+        ia.load(&brep, &s1, 2);
         assert_eq!(ia.nb_shapes(), 1);
         assert!(ia.data_structure().is_none());
         assert_eq!(ia.index(&s1), 1);
@@ -1351,7 +1402,7 @@ mod tests {
 
         // Load(S, SData, nbIso) + ShapeData(I, SData).
         let s2 = StdArc::new(OutLiner::new());
-        ia.load_with_data(&s2, Some(StdArc::new(7u32)), 0);
+        ia.load_with_data(&brep, &s2, Some(StdArc::new(7u32)), 0);
         assert_eq!(ia.nb_shapes(), 2);
         assert_eq!(ia.index(&s2), 2);
         ia.shape_data(2, Some(StdArc::new(11u32)));

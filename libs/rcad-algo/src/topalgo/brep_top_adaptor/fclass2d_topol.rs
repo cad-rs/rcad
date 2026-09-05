@@ -814,3 +814,124 @@ impl FClass2dTopol {
 use Curve2d as _;
 #[allow(unused_imports)]
 use SurfaceEval as _;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
+    use rcad_kernel::topods::BRepBuilder;
+    use rcad_kernel::BRep;
+
+    /// The planar square face [0,10]x[0,10] at z = 0 with NO pcurves: the
+    /// OCCT primitive edges carry per-face pcurves, but an HLR-loaded face
+    /// (or a face built by projection) may not — OCCT then falls back to
+    /// BRep_Tool::CurveOnPlane (BRep_Tool.cxx L367-372) inside
+    /// BRep_Tool::CurveOnSurface, which the FClass2d init reads through the
+    /// same call (cxx L142).
+    fn plane_square_face_no_pcurve() -> (std::sync::Arc<BRep>, Shape) {
+        let mut brep = BRep::new();
+        let mut b = BRepBuilder::new();
+        let p = |x: f64, y: f64| glam::DVec3::new(x, y, 0.0);
+        let a = p(0.0, 0.0);
+        let bp = p(10.0, 0.0);
+        let c = p(10.0, 10.0);
+        let d = p(0.0, 10.0);
+        let seg = |o: glam::DVec3, e: glam::DVec3| {
+            Curve3::Line(Line3 {
+                origin: o,
+                direction: (e - o).normalize(),
+            })
+        };
+        let v = [
+            b.add_vertex(&mut brep, a, 1e-7),
+            b.add_vertex(&mut brep, bp, 1e-7),
+            b.add_vertex(&mut brep, c, 1e-7),
+            b.add_vertex(&mut brep, d, 1e-7),
+        ];
+        // OCCT TopoDS_Edge: the last vertex child is stored REVERSED
+        // (the smoke fixture convention).
+        let e0 = b.add_edge(
+            &mut brep,
+            Some(seg(a, bp)),
+            v[0].clone(),
+            {
+                let mut x = v[1].clone();
+                x.orientation = Orientation::Reversed;
+                x
+            },
+            [0.0, 10.0],
+        );
+        let e1 = b.add_edge(
+            &mut brep,
+            Some(seg(bp, c)),
+            v[1].clone(),
+            {
+                let mut x = v[2].clone();
+                x.orientation = Orientation::Reversed;
+                x
+            },
+            [0.0, 10.0],
+        );
+        let e2 = b.add_edge(
+            &mut brep,
+            Some(seg(c, d)),
+            v[2].clone(),
+            {
+                let mut x = v[3].clone();
+                x.orientation = Orientation::Reversed;
+                x
+            },
+            [0.0, 10.0],
+        );
+        let e3 = b.add_edge(
+            &mut brep,
+            Some(seg(d, a)),
+            v[3].clone(),
+            {
+                let mut x = v[0].clone();
+                x.orientation = Orientation::Reversed;
+                x
+            },
+            [0.0, 10.0],
+        );
+        let wire = brep.add_twire(vec![e0, e1, e2, e3]);
+        let face = brep.add_tface(
+            Some(Surface3::Plane(Plane {
+                origin: DVec3::ZERO,
+                normal: DVec3::Z,
+                u_dir: DVec3::X,
+                v_dir: DVec3::Y,
+            })),
+            wire,
+            Vec::new(),
+            None,
+            Some([0.0, 10.0, 0.0, 10.0]),
+            Vec::new(),
+            true,
+        );
+        (std::sync::Arc::new(brep), face)
+    }
+
+    /// OCCT anchor: the CurveOnPlane projection fallback (BRep_Tool.cxx
+    /// L367-372 -> CurveOnPlane L379-450) keeps the FClass2d init from the
+    /// early return (cxx L142-145) on a pcurve-less planar face: TabClass
+    /// gets the wire polygon and classify answers In inside, Out outside,
+    /// Out for the far point (the pre-fallback behavior classified every
+    /// point In because TabClass stayed empty).
+    #[test]
+    fn classify_planar_face_without_pcurves_in_out_far_out() {
+        let (brep, face) = plane_square_face_no_pcurve();
+        let fc = FClass2dTopol::new(brep.clone(), &face, 1e-7);
+
+        // The init built the wire polygon (no early return).
+        let (ntab, _oriens, _polys) = fc.debug_state();
+        assert_eq!(ntab, 1, "TabClass must hold the square wire polygon");
+
+        assert_eq!(fc.perform(DVec2::new(5.0, 5.0), false), State::In);
+        assert_eq!(fc.perform(DVec2::new(15.0, 5.0), false), State::Out);
+        assert_eq!(fc.perform(DVec2::new(1.0e6, 1.0e6), false), State::Out);
+        // OCCT PerformInfinitePoint (cxx L515-523): the UV-window corner
+        // mirrored outside the boundary must be Out as well.
+        assert_eq!(fc.perform_infinite_point(), State::Out);
+    }
+}

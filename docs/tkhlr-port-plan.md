@@ -12,6 +12,11 @@
 >   3. **P（Stage 4a 勘察，交付报告）**：VComputeHLR 完整调用链（ViewerTest_ObjectCommands.cxx L3141-3377；**ViewerTest 实际在 src/Draw/TKViewerTest/，计划里的 src/ViewerTest 是旧布局**）；显式 9 元组完全无头可达（L3261-3266 仅在无 AIS 上下文且无显式方向时拒绝；L3375 DBRep::Set 无条件落盘）；**6 自包含用例全部 viewname=""——默认视图 V3d_XposYnegZpos 等效元组 dir=(1,-1,1)/up=(-1,1,2)**（V3d.hxx L59-60 + gp_Ax2::SetYDirection 正交化）；COMPUTE_HLR 从不传 -showHiddenEdges → **网格 result 的隐藏 sub-compound 恒空**（隐藏参考需额外跑一次带开关）；poly_hlr 的 case depsilon 经 -deps 生效（bug25813_1/_3 实为 1e-7）。
 >   4. **gen_hlr_ref.py 落地（主线程）**：`tools/gen-occt-ref/gen_hlr_ref.py`——每 vcomputehlr 一次独立 DRAWEXE 进程（同进程第二次 HLR 会损坏第一个结果的形状）；**`-b` batch 模式必需**（交互模式 exit 不 flush C stdio，lprops 的 printf Mass 块丢失）；lprops 输出走 C++ stdout（Tcl 返回值为空，与 nbshapes 不同）；algotype 需剥 Tcl 引号。产出 4/6 JSON（`tests/occt/step_reference/occt_hlr_*.json`；exact bug25813_1 的 mass_total=204.19 与 case length **自检精确 PASS** + 非空隐藏参考 266.526）。**尾巴（4a 续）**：Plate/bug25813_3 的 lprops 对 HLR 结果随机 ACCESS VIOLATION（OCCT DRAWEXE 侧缺陷，与 rcad 无关；9+ 次重试确定失败），候选解 = C++ runner（occt-bool-runner 方式直链 TKHLR+TKGProp 绕开 Tcl）；poly 3 例 polyAlgo 结果空（Stage 5 单列，生成器支持）。
 >   5. **S（3g 烟囱闭环，`hlr/tests.rs` +~870 行）**：盒体 box 10x20x30 端到端 = **与 OCCT 完全一致**（经 VComputeHLR 同投影 (1,-1,1)/(-1,1,2) 的 DRAWEXE lprops 对拍 + 12 条线段角点解析像 1e-6）；圆柱部分锚定。**烟囱暴露的 5 个管线缺口（测试注释已记录，未改管线）**：① InternalAlgo::update 的 arena 接线（每 shape 新建空 BRep 而面/边属调用方 BRep——索引读取 panic,smoke 从测试侧按 OCCT Update 语句序注入 owning BRep）；② fclass2d_topol 缺 OCCT CurveOnPlane 投影回退（curve_on_surface None → classify 恒 In）；③ Contap 圆柱轮廓只找到 φ=45° 一条（缺 φ=225°）→ 底圆远半弧未被隐藏；④ seam 的 rg1_line=false（edges_to_faces 对 seam 只记 1 次面）→ seam 误入 VCompound（OCCT 归 Rg1LineVCompound）；⑤ 共享圆边被每邻面双重绘制（Used 去重未生效）。**这 5 项 = Stage 4d（exact_hlr 3 用例闭环）前的对齐主攻清单**。
+>   6. **T/U/V/W 四代理（缺口对齐 + 4a 收官）**：
+>      - **T（Contap 双轮廓）**：Contap 链路本身对齐——真缺陷在共享 2D 分类器求交器 \`g_inter.rs\`：射线上的域外逆向交点照常输出，而 OCCT \`DomainIntersection\`（IntCurve_IntConicConic_1.cxx L641-714）丢弃域外解/钳位域端解并赋 Head/End。修复 +39 行（每 root 按 OCCT 语义处理 param1），以临时 C++ 工具对 OCCT 8.0.0 二进制求证 6 探针全 IN。圆柱双轮廓锚点落地，smoke 期望更新为对齐后真值（OutLine 2 条、每圆 3 段弧共 6 段）。
+>      - **U（CurveOnPlane 回退）**：OCCT FClass2d init **没有**回退语句（cxx L142-145 与 rcad 原写法一致）——真回退在 **BRep_Tool::CurveOnSurface 内部**（BRep_Tool.cxx L367-372 → CurveOnPlane L379-450：平面判定剥壳/Predivided location/TransformedParameter/ProjectOnPlane KeepParam）。修复落在 kernel topods.rs \`curve_on_plane\`（~70 行，复用 project_on_plane 已落地链）；顺带改写 edge_face_tool 一个与 OCCT 相悖的旧断言。锚点：无 pcurve 平面脸 (5,5)In/(15,5)Out/(1e6,1e6)Out（修复前恒 In）。
+>      - **V（arena 产线化）**：InternalAlgo 增 my_brep 会话图捕获（load 首参），update 的空 arena 改会话 BRep clone；烟囱恢复自然 Algo 路径（add→update→hide），**断言数字不变**；Data::set_brep 对称访问器。
+>      - **W（C++ runner，4a 收官）**：\`tools/occt-hlr-runner/\`（CMake+build.bat+main.cpp 661 行——无头复刻 VComputeHLR L3299-3362 精确/poly 双分支 + BRepPrimAPI/BRepAlgoAPI/BuildFilling 模型 API 化 + BRepTools_ShapeSet nbshapes + LinearProperties）。**box/bug25813_1 与 OCCT lprops 逐位吻合**（146.969384567/204.19032694460864；nbshapes 与 gen_hlr_ref JSON 完全一致）；**ptorus 官方 viewer 路径 302.685 与 case length 逐位一致**。**根因定论**：exact_hlr Plate/ptorus 的 tuple 路径崩溃 = **OCCT 8.0.0 自身 HLRBRep exact-algo 数值稳健性 bug**（HLRToShape 抽取段 AV，headless DRAWEXE 同崩）——gen_hlr_ref 缺两个 JSON 的解释闭环；viewer-path 数值（302.685/406.283）与 runner poly 值已入 ref_output.txt 并合入 poly JSON。
 > - **HLR 精确管线全链贯通**：Algo(Add/Load) → InternalAlgo(Update→ShapeToHLR::Load→DSFiller::Insert→BRepApprox/Contap/FaceIsoLiner) → Data.Update → Hider.Hide → HLRToShape(V/Rg1/RgN/OutLine/Hiding × Visible/Hidden compounds)。**下一站 Stage 4 验收闭环**（4a gen_hlr_ref.py——勘察进行中）。
 > - **已知遗留（session 10）**：① intersector 层的 2D 直线×直线交点语义（段 vs 带 transition 的点）待对齐——hider 双锚 ignore 的根因；② HLRBRep_Curve::GetCurve().Edge() 不可表示（CurveView 无 TopoDS 反向指针）→ MakeEdge3d 返回 null 边（OutLineVCompound3d 输出空，DrawEdge IsNull 分支吸收）；③ BRepLib_MakeEdge2d 缺（Hyperbola/Parabola/Bezier/BSpline 2D 臂走 NotDone 等价分支）；④ fclass2d 的 wire walk 起点顶点随 HashMap 迭代序翻转（测试以预绑定分类器稳定，本质修复待 fclass2d 对齐 pass）。
 > - **并行子代理模式（session 10 实证补充）**：主代理预落 struct 字段契约（data/mod.rs 的 70 字段）+ 骨架先行 = 多代理并发零注册冲突；跨代理契约冲突经 SendMessage 快速裁决（uv_point 7 参 vs 5 参调用点，一轮消息收敛）；主代理预读消费者源文写对接点清单进 brief。
@@ -568,3 +573,20 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 1. **烟囱暴露的 5 缺口对齐**（Stage 4d 主攻前置）：③ Contap 圆柱第二轮廓（φ=225°）→ ④ seam 的 rg1_line（edges_to_faces 双面记录）→ ⑤ 共享边 Used 去重 → ① InternalAlgo arena 接线（产线化测试侧注入）→ ② fclass2d_topol CurveOnPlane 回退。
 2. **4a 尾巴**：Plate/bug25813_3 的参考生成（DRAWEXE lprops 对 HLR 结果 ACCESS VIOLATION——C++ runner 直链 TKHLR+TKGProp 替代 Tcl，occt-bool-runner 方式）。
 3. **4d**：exact_hlr 用例的 rcad 管线断言（消费 occt_hlr_*.json；盒体烟囱已证管线对 box 类真值精确）。
+
+### 本 session 追加 3（2026-09-06，session 11 续：四缺口对齐 + 4a C++ runner 收官）
+
+| commit | 内容 |
+|---|---|
+| （本轮代码提交 3） | **缺口①②③对齐 + 4a runner**：g_inter.rs DomainIntersection 语义（域外解丢弃/域端钳位 Head-End，+39 行）→ 圆柱双轮廓 + 每圆 3 段弧；kernel curve_on_plane（BRep_Tool.cxx L367-450 回退，~70 行）→ 无 pcurve 平面脸正确分类；InternalAlgo 会话 BRep（my_brep 捕获 + update clone，smoke 走自然路径断言不变）；tools/occt-hlr-runner（661 行 C++，box/bug25813_1 逐位吻合，ptorus viewer-path 302.685 定论 tuple 崩溃 = OCCT 8.0.0 exact-algo bug） |
+
+**新确立的翻译事实（沿例勿改）：**
+
+1. **域外解处理属求交器语义**：IntCurve_IntConicConic_1.cxx L641-714 的 DomainIntersection（丢弃/钳位/Head-End 赋位）是求交器（g_inter）的职责，不是消费者的——分类器射线上的域外交点必须在此层处理。
+2. **回退语句要落在 OCCT 所在的层**：FClass2d init 无回退；BRep_Tool::CurveOnSurface 的 L367-372 "Try projection on plane" 才是回退点——修在 kernel 的 curve_on_surface 尾部，而不是给 FClass2d 加层。
+3. **顺带发现并修正与 OCCT 相悖的旧断言**要给出二进制级证据（W/T 用安装版 OCCT 直接求证），不许凭推理改期望。
+
+### 下一 session 入口（按序）
+
+1. **烟囱剩余 3 缺口**：④ seam rg1_line（kernel 需存 edge-face regularity；锚点 ShapeToHLR.cxx L118-131 BRep_Tool::Continuity(F1,F2)→reg1/regn）→ ⑤ 共享边 Used 去重（HLRToShape DrawFace 的 Used 流转）→ Hider 层的底圆远半弧隐藏（hider/HidingStartLevel 对圆柱 case）。
+2. **4d**：exact_hlr 消费 occt_hlr_*.json 的 rcad 断言（bug25813_1 204.19 + box 烟囱真值已备；Plate/ptorus 用 viewer-path 302.685/406.283 或 C++ runner 数值）+ module-map 更新。

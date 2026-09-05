@@ -1042,6 +1042,14 @@ impl<'a> Data<'a> {
         self.my_brep
     }
 
+    /// rcad kernel-context installer — no OCCT counterpart (the [Data::my_brep]
+    /// deviation accessor): the ShapeToHLR::Load installs the per-Load leaked
+    /// view of the session kernel context so the post-Update hiding phases
+    /// read the loaded graph even before `myDS->Update(myProj)` stores it.
+    pub fn set_brep(&mut self, brep: &'a rcad_kernel::topods::BRep) {
+        self.my_brep = Some(brep);
+    }
+
     /// OCCT Tolerance(const float tol) (lxx L33-36) — set the tolerance for
     /// the rejections during the exploration.
     pub fn set_tolerance(&mut self, tol: f32) {

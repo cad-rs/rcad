@@ -671,6 +671,11 @@ pub fn load(
 
     // OCCT L100: occ::handle<HLRBRep_Data> DS = new HLRBRep_Data(nbVert, nbEdge, nbFace);
     let mut ds: Data<'static> = Data::new(nb_vert, nb_edge, nb_face);
+    // rcad: the Data kernel context rides with the Load (the [Data::set_brep]
+    // deviation accessor) — the leaked BRep view above is the per-Load image
+    // of the session kernel context the OCCT Data would read through the
+    // global TShape graph.
+    ds.set_brep(brep_st);
 
     // OCCT L101-105: HLRBRep_EdgeData* ed = nullptr;
     // if (nbEdge != 0) { ed = &(DS->EDataArray().ChangeValue(1)); }

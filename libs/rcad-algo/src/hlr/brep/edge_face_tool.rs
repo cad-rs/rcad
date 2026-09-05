@@ -228,7 +228,9 @@ mod tests {
     use super::*;
     use glam::DVec3;
     use rcad_kernel::base::proj_lib::CurveType;
-    use rcad_kernel::geom::{Circle3, Curve3, Ellipse3, Line2d, Line3, Plane, Surface3};
+    use rcad_kernel::geom::{
+        Circle3, Curve3, CylindricalSurface, Ellipse3, Line2d, Line3, Plane, Surface3,
+    };
     use rcad_kernel::topo::topods::BRepBuilder;
 
     use crate::hlr::brep::b_curve_tool::CurveView;
@@ -517,12 +519,15 @@ mod tests {
         assert!(v.abs() < 1e-9, "v={v}");
     }
 
-    /// OCCT anchor: no candidate classifies IN/ON -> index stays 0 and
-    /// UVPoint returns false (cxx L88-91).  A face without a UV window
-    /// gives the empty RealLast/RealFirst BRepTools::UVBounds box, so the
-    /// extrema list stays empty.
+    /// OCCT anchor: the planar CurveOnPlane fallback routes the fixture to
+    /// the pcurve branch of UVPoint (HLRBRep_EdgeFaceTool.cxx L68-81).  The
+    /// edge carries no STORED pcurve, but BRep_Tool::CurveOnSurface computes
+    /// one on the fly (BRep_Tool.cxx L367-372 -> CurveOnPlane L379-450:
+    /// planar face + 3D curve -> ProjLib projection), so the IsNull branch
+    /// is NOT taken: BRepAdaptor_Curve2d D0(1.0) = (1, 0) and UVPoint
+    /// returns true.
     #[test]
-    fn uv_point_not_found_returns_false() {
+    fn uv_point_plane_curve_on_plane_fallback_pcurve() {
         let mut brep = rcad_kernel::BRep::new();
         let mut b = BRepBuilder::new();
         let v1 = b.add_vertex(&mut brep, DVec3::new(0.0, 0.0, 5.0), 1e-7);
@@ -556,6 +561,62 @@ mod tests {
 
         let view = LineEdge {
             origin: Point3::new(0.0, 0.0, 5.0),
+            len: 2.0,
+        };
+        let mut c = Curve::new();
+        c.load(&view);
+        let mut s = Surface::new();
+        s.load(&brep, &face);
+
+        let mut u = 0.0;
+        let mut v = 0.0;
+        let found = uv_point(&brep, 1.0, &mut c, &e, &mut s, &mut u, &mut v);
+        assert!(found);
+        assert!((u - 1.0).abs() < 1e-12, "u={u}");
+        assert!(v.abs() < 1e-12, "v={v}");
+    }
+
+    /// OCCT anchor: no candidate classifies IN/ON -> index stays 0 and
+    /// UVPoint returns false (cxx L88-91).  Reachable only for a NON-planar
+    /// face: CurveOnPlane returns null there (BRep_Tool.cxx L400-404), so
+    /// the IsNull extrema branch runs; with no UV window the extrema list
+    /// stays empty.
+    #[test]
+    fn uv_point_not_found_returns_false() {
+        let mut brep = rcad_kernel::BRep::new();
+        let mut b = BRepBuilder::new();
+        let v1 = b.add_vertex(&mut brep, DVec3::new(2.0, 0.0, 5.0), 1e-7);
+        let v2 = b.add_vertex(&mut brep, DVec3::new(2.0, 0.0, 7.0), 1e-7);
+        let e = b.add_edge(
+            &mut brep,
+            Some(Curve3::Line(Line3 {
+                origin: DVec3::new(2.0, 0.0, 5.0),
+                direction: DVec3::new(0.0, 0.0, 1.0),
+            })),
+            v1,
+            v2,
+            [0.0, 2.0],
+        );
+        let wire = brep.add_twire(vec![e.clone()]);
+        // No uv_domain: the face carries no UV window.
+        let face = brep.add_tface(
+            Some(Surface3::Cylinder(CylindricalSurface {
+                origin: DVec3::new(0.0, 0.0, 0.0),
+                axis: DVec3::new(0.0, 0.0, 1.0),
+                radius: 2.0,
+                ref_dir: DVec3::new(1.0, 0.0, 0.0),
+                y_dir: None,
+            })),
+            wire,
+            Vec::new(),
+            None,
+            None,
+            Vec::new(),
+            true,
+        );
+
+        let view = LineEdge {
+            origin: Point3::new(2.0, 0.0, 5.0),
             len: 2.0,
         };
         let mut c = Curve::new();

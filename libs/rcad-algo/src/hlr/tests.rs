@@ -683,36 +683,22 @@ fn smoke_box_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shape) {
     (brep, solid)
 }
 
-/// The VComputeHLR run (the exact-Algo branch): Add + Projector + the
-/// Update body + Hide, then the HLRToShape extraction.  Returns (v, outline,
-/// h) compounds.
+/// The VComputeHLR run (the exact-Algo branch): Add + Projector + Update +
+/// Hide, then the HLRToShape extraction.  Returns (v, outline, h) compounds.
 ///
-/// Pipeline wiring gap (recorded): [`SmokeAlgo::update`] builds each shape
-/// DS over a fresh per-load `BRep` arena (internal_algo.rs L173), while the
-/// loaded OutLiner faces/edges live in the caller's BRep — the kernel
-/// context the OCCT global TShape graph provides for free.  Every
-/// index-based read (`BRep::face` / `tolerance` / `face_surface_world`,
-/// topods.rs L1429) then targets the empty arena and panics ("index out of
-/// bounds: the len is 0 but the index is 21").  Until the context flows
-/// (e.g. the OutLiner carrying its owning BRep, as the OCCT handle graph
-/// equivalent), this smoke drives the very same Update body from the test
-/// side with the owning BRep — the 1:1 OCCT Update statement sequence:
-/// ShapeToHLR::Load, the ShapeBounds sizes bookkeeping, myDS->Update(myProj)
-/// — and runs the real Hide + HLRToShape on the InternalAlgo.
+/// The owning BRep rides with Add as the session kernel context — the
+/// InternalAlgo Update builds every shape DS over it and feeds it to the
+/// `myDS->Update(myProj)` phase (the OCCT global TShape graph stand-in the
+/// loaded shapes live in).
 fn smoke_run_hlr(
     solid: &rcad_kernel::topods::Shape,
-    brep: &'static mut rcad_kernel::BRep,
+    brep: rcad_kernel::BRep,
 ) -> (
     rcad_kernel::topods::Shape,
     rcad_kernel::topods::Shape,
     rcad_kernel::topods::Shape,
 ) {
-    use crate::hlr::brep::shape_bounds::ShapeBounds;
-    use crate::hlr::brep::shape_to_hlr;
-    use crate::hlr::topo_brep::out_liner::OutLiner;
-    use std::sync::Arc;
-
-    // OCCT L3305: aHlrAlgo->Projector(aProjector) — the V3d_XposYnegZpos
+    // OCCT L3303: aHlrAlgo->Projector(aProjector) — the V3d_XposYnegZpos
     // equivalent frame: dir (1,-1,1), up (-1,1,2); X = up ^ dir = (1,1,0).
     let proj = SmokeProjector::from_ax2(&SmokeAx2::new(
         glam::DVec3::ZERO,
@@ -721,46 +707,14 @@ fn smoke_run_hlr(
     ));
 
     let mut algo = SmokeAlgo::new();
-    // OCCT L3304: aHlrAlgo->Add(aSh, aNbIsolines);
-    algo.add(solid, 0);
+    // OCCT L3302: aHlrAlgo->Add(aSh, aNbIsolines);
+    algo.add(&std::sync::Arc::new(brep), solid, 0);
     algo.set_projector(&proj);
-
-    // the Update body (OCCT HLRBRep_InternalAlgo::Update cxx L150-161) with
-    // the owning BRep as the kernel context.
-    let (shape, s_data, nb_iso) = {
-        let sb = algo.internal.shape_bounds(1);
-        (sb.shape().clone(), sb.shape_data().clone(), sb.nb_of_iso())
-    };
-    let out_liner: *mut OutLiner = Arc::as_ptr(&shape) as *const OutLiner as *mut OutLiner;
-    let mut mst: Vec<(
-        rcad_kernel::topods::Shape,
-        crate::topalgo::brep_top_adaptor::tool::BRepTopAdaptorTool,
-    )> = Vec::new();
-    // DS[i-1] = HLRBRep_ShapeToHLR::Load(SB.Shape(), myProj, MST, nbIso).
-    let mut ds = shape_to_hlr::load(brep, unsafe { &mut *out_liner }, &proj, &mut mst, 0);
-    let (dv, de, df) = (ds.nb_vertices(), ds.nb_edges(), ds.nb_faces());
-    // SB = HLRBRep_ShapeBounds(SB.Shape(), SB.ShapeData(), SB.NbOfIso(),
-    //                           1, dv, 1, de, 1, df);
-    let sb = ShapeBounds::new_with_data(
-        shape,
-        s_data,
-        nb_iso,
-        1,
-        dv as i32,
-        1,
-        de as i32,
-        1,
-        df as i32,
-    );
-    *algo.internal.shape_bounds(1) = sb;
-    // myDS->Update(myProj);
-    ds.update(brep, &proj);
-    // myDS = DS[0] (the n == 1 branch).
-    algo.internal.install_ds_for_test(*ds);
-
-    // OCCT L3307: aHlrAlgo->Hide();
+    // OCCT L3304: aHlrAlgo->Update();
+    algo.update();
+    // OCCT L3305: aHlrAlgo->Hide();
     algo.hide();
-    // OCCT L3310-3318: the HLRToShape filters.
+    // OCCT L3307-3313: the HLRToShape filters.
     let mut hts = SmokeHLRToShape::new(&mut algo);
     let v = hts.v_compound();
     let outline = hts.out_line_v_compound();
@@ -777,7 +731,6 @@ fn smoke_run_hlr(
 #[test]
 fn smoke_box_hlr_end_to_end() {
     let (brep, solid) = smoke_box_solid();
-    let brep: &'static mut rcad_kernel::BRep = Box::leak(Box::new(brep));
     let (v, outline, h) = smoke_run_hlr(&solid, brep);
 
     // no outlines on a pure-plane solid.
@@ -887,7 +840,6 @@ fn smoke_box_hlr_stable_over_three_runs() {
     let mut results = Vec::new();
     for _ in 0..3 {
         let (brep, solid) = smoke_box_solid();
-        let brep: &'static mut rcad_kernel::BRep = Box::leak(Box::new(brep));
         let (v, outline, h) = smoke_run_hlr(&solid, brep);
         let mut vs = Vec::new();
         if !v.is_null() {
@@ -1125,9 +1077,13 @@ fn ellipse_arc_len(a: f64, b: f64, u1: f64, u2: f64) -> f64 {
 ///
 /// Pipeline gaps recorded against that reference (the anchors below pin the
 /// currently matching subset):
-/// - Contap finds only ONE of the two contour lines (the phi = 45 deg one,
-///   x' = +10); the phi = 225 deg line is absent, so the circles split at a
-///   single tangent and the bottom far arc is never hidden (HCompound null).
+/// - FIXED (agent T, the OCCT DomainIntersection rule in g_inter.rs): Contap
+///   finds BOTH contour lines (the phi = 45 deg one at x' = +10 and the
+///   phi = 225 deg one at x' = -10) and both cap circles split at the two
+///   tangency points (ellipse params 0 and pi, plus the seam at 7*pi/4).
+/// - The bottom far half-ellipse (params [0, pi], 25.2237) is still drawn in
+///   VCompound; OCCT moves it to HCompound — the hider layer remains to
+///   align (recorded gap).
 /// - The seam edge keeps rg1_line = false (the edges_to_faces map lists the
 ///   side face once, so no G1 continuity is computed) and is drawn in
 ///   VCompound; OCCT draws it in Rg1LineVCompound.
@@ -1136,18 +1092,20 @@ fn ellipse_arc_len(a: f64, b: f64, u1: f64, u2: f64) -> f64 {
 #[test]
 fn smoke_cylinder_hlr_end_to_end() {
     let (brep, solid) = smoke_cylinder_solid();
-    let brep: &'static mut rcad_kernel::BRep = Box::leak(Box::new(brep));
     let (v, outline, h) = smoke_run_hlr(&solid, brep);
 
     let b_minor = 10.0f64 / 3.0f64.sqrt();
     let per = ellipse_arc_len(10.0, b_minor, 0.0, std::f64::consts::TAU);
 
-    // the outline: the phi = 45 deg silhouette line — projected length
-    // 24.49490, at x' = +10, y' from 0 to 24.49490 (OCCT-exact).
+    // the outline: BOTH silhouette lines (OCCT-exact, the OutLineVCompound
+    // reference) — projected length 24.49490 each, at x' = +10 (phi = 45 deg)
+    // and x' = -10 (phi = 225 deg), y' from 0 to 24.49490.
     let mut o_edges = Vec::new();
     assert!(!outline.is_null(), "outline compound is null");
     compound_edges(&outline, &mut o_edges);
     assert!(!o_edges.is_empty(), "no outline edges");
+    let mut plus_outline = false;
+    let mut minus_outline = false;
     for o in &o_edges {
         match o {
             SegSummary::Line { len, p1, p2 } => {
@@ -1158,11 +1116,22 @@ fn smoke_cylinder_hlr_end_to_end() {
                 assert!((lo.y).abs() < 1e-9, "silhouette start {:?}", lo);
                 assert!((hi.y - 60.0 / 6.0f64.sqrt()).abs() < 1e-9);
                 assert!((lo.x - hi.x).abs() < 1e-9);
-                assert!((lo.x - 10.0).abs() < 1e-9);
+                if (lo.x - 10.0).abs() < 1e-9 {
+                    plus_outline = true;
+                } else if (lo.x + 10.0).abs() < 1e-9 {
+                    minus_outline = true;
+                } else {
+                    panic!("silhouette at unexpected x' = {:?}", lo.x);
+                }
             }
             _ => panic!("outline edge is not a line: {:?}", o),
         }
     }
+    assert!(
+        plus_outline && minus_outline,
+        "both phi = 45/225 deg silhouettes are required (OCCT truth): {:?}",
+        o_edges
+    );
 
     // the visible sharp edges: ellipse arcs of a = 10, b = 10/sqrt(3) — the
     // projected images of the cap circles — plus the seam line.  The seam
@@ -1190,17 +1159,31 @@ fn smoke_cylinder_hlr_end_to_end() {
             _ => panic!("unexpected visible edge: {:?}", e),
         }
     }
-    assert_eq!(v_ellipse_arcs, 4, "two arcs per cap circle: {:?}", v_edges);
+    assert_eq!(
+        v_ellipse_arcs, 6,
+        "three arcs per cap circle (seam + 2 tangency splits): {:?}",
+        v_edges
+    );
     assert_eq!(v_seam, 1, "exactly one seam edge drawn");
 
-    // the drawn arc pieces: [315 deg, 360 deg] + [0 deg, 315 deg] per circle
-    // (the split at the seam vertex image), each piece twice.
+    // the drawn arc pieces: [0, pi] (far half) + [pi, 7*pi/4] +
+    // [7*pi/4, 2*pi] (near halves) per circle — the two tangency splits
+    // (ellipse params 0 and pi, the phi = 45/225 deg silhouettes) and the
+    // seam split at 7*pi/4; each piece twice (recorded gap).
     let tau = std::f64::consts::TAU;
+    let half = std::f64::consts::PI;
     let split = 7.0 * std::f64::consts::FRAC_PI_4;
     let mut ranges = edges_with_ranges(&v);
     ranges.retain(|(u1, u2)| *u2 - *u1 < tau); // drop the seam line
     ranges.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    let expect = [(0.0, split), (0.0, split), (split, tau), (split, tau)];
+    let expect = [
+        (0.0, half),
+        (0.0, half),
+        (half, split),
+        (half, split),
+        (split, tau),
+        (split, tau),
+    ];
     for (i, (u1, u2)) in ranges.iter().enumerate() {
         assert!(
             (u1 - expect[i].0).abs() < 1e-9 && (u2 - expect[i].1).abs() < 1e-9,
@@ -1212,8 +1195,9 @@ fn smoke_cylinder_hlr_end_to_end() {
         );
     }
 
-    // the arc total: every piece of both circles is drawn (the OCCT
-    // reference draws the top full ellipse + the bottom near half only —
+    // the arc total: every piece of both circles is drawn — the OCCT
+    // reference draws the top full ellipse + the bottom near half only
+    // (the bottom far half [0, pi] still awaits the hider alignment —
     // see the recorded gaps).
     let mut v_arc = 0.0;
     for (u1, u2) in &ranges {
@@ -1222,7 +1206,7 @@ fn smoke_cylinder_hlr_end_to_end() {
     assert!((v_arc - 2.0 * per).abs() < 1e-2, "visible arc {}", v_arc);
 
     // the hidden compound: OCCT holds the far half of the bottom ellipse
-    // (25.2237) — currently null (recorded gap).
+    // (25.2237) — currently null (recorded gap, the hider layer).
     assert!(h.is_null(), "unexpected hidden compound");
 }
 
@@ -1250,7 +1234,6 @@ fn smoke_cylinder_hlr_stable_over_three_runs() {
     let mut results = Vec::new();
     for _ in 0..3 {
         let (brep, solid) = smoke_cylinder_solid();
-        let brep: &'static mut rcad_kernel::BRep = Box::leak(Box::new(brep));
         let (v, outline, h) = smoke_run_hlr(&solid, brep);
         let mut vs = Vec::new();
         if !v.is_null() {
@@ -1308,3 +1291,110 @@ fn smoke_results_equal(
     vec_eq(av, bv) && vec_eq(ao, bo) && vec_eq(ah, bh)
 }
 
+
+
+// ---- The cylinder Contap minimal repro (agent T) ----
+// OCCT anchor: Contap_Contour::Perform over the `pcylinder c 10 30` side
+// face with the smoke view direction (1,-1,1)/sqrt(3) — Contap_ContAna
+// Perform(gp_Cylinder, gp_Dir) (Contap_ContAna.cxx L116-138) yields TWO
+// silhouette generatrices (pt1 = loc + R*normale at u = 45 deg, pt2 = loc -
+// R*normale at u = 225 deg); the restriction search finds both tangency
+// points on each cap circle (u = pi/4 and u = 5*pi/4), so PerformAna
+// (Contap_Contour.cxx L2156-2389) ends with one split Lin per generatrix,
+// each carrying the two cap vertices.
+#[test]
+fn contour_cylinder_side_face_two_silhouettes() {
+    use crate::hlr::contap::contour::Contour;
+    use crate::hlr::contap::i_type::IType;
+    use crate::topalgo::brep_top_adaptor::tool::BRepTopAdaptorTool;
+    use std::sync::Arc;
+
+    let (brep, solid) = smoke_cylinder_solid();
+
+    // The direction OutLiner::fill computes: vecz transformed by the
+    // inverted projection — the normalized (1,-1,1)/sqrt(3).
+    let proj = SmokeProjector::from_ax2(&SmokeAx2::new(
+        glam::DVec3::ZERO,
+        glam::DVec3::new(1.0, -1.0, 1.0),
+        glam::DVec3::new(1.0, 1.0, 0.0),
+    ));
+    let mut tr = *proj.transformation();
+    tr.invert();
+    let vecz = tr.transform_vec(glam::DVec3::new(0.0, 0.0, 1.0));
+    let vecz = vecz.normalize();
+    assert!((vecz.x - 1.0 / 3.0f64.sqrt()).abs() < 1e-12);
+    assert!((vecz.y + 1.0 / 3.0f64.sqrt()).abs() < 1e-12);
+
+    // The cylindrical side face of the fixture.
+    let mut faces = Vec::new();
+    fn walk(s: &rcad_kernel::topods::Shape, out: &mut Vec<rcad_kernel::topods::Shape>) {
+        use rcad_kernel::topods::TShape;
+        match &*s.data {
+            TShape::Compound(c) => {
+                for ch in c {
+                    walk(ch, out);
+                }
+            }
+            TShape::Solid(sl) => {
+                for sh in &sl.shells {
+                    walk(sh, out);
+                }
+            }
+            TShape::Shell(sh) => {
+                for f in &sh.faces {
+                    walk(f, out);
+                }
+            }
+            TShape::Face(_) => out.push(s.clone()),
+            _ => {}
+        }
+    }
+    walk(&solid, &mut faces);
+    let tool_brep = Arc::new(brep);
+    let mut silhouettes = Vec::new();
+    for f in &faces {
+        let mut brt = BRepTopAdaptorTool::new_face(tool_brep.clone(), f, 1e-7);
+        let surface = brt.get_surface().unwrap().clone();
+        if !matches!(
+            surface.get_type(),
+            crate::geomalgo::int_patch::GeomAbsSurfaceType::Cylinder
+        ) {
+            continue;
+        }
+        let mut fo = Contour::with_direction(vecz);
+        fo.perform(&surface, brt.get_topol_tool());
+        assert!(fo.is_done());
+        for i in 1..=fo.nb_lines() {
+            let l = fo.line(i);
+            assert_eq!(l.type_contour(), IType::Lin);
+            assert_eq!(l.nb_vertex(), 2);
+            let lin = l.line();
+            assert!((lin.direction.z - 1.0).abs() < 1e-12);
+            silhouettes.push(lin.origin);
+        }
+    }
+
+    // The two generatrices at u = 45 deg (x' = +10) and u = 225 deg
+    // (x' = -10): origins (+-10/sqrt(2), +-10/sqrt(2), 0) on the base circle.
+    assert_eq!(silhouettes.len(), 2, "silhouettes={:?}", silhouettes);
+    let r2 = 10.0f64 / 2.0f64.sqrt();
+    let mut matched_pos = false;
+    let mut matched_neg = false;
+    for o in &silhouettes {
+        if (o.z).abs() < 1e-9 && (o.x - r2).abs() < 1e-9 && (o.y - r2).abs() < 1e-9 {
+            matched_pos = true;
+        }
+        if (o.z).abs() < 1e-9 && (o.x + r2).abs() < 1e-9 && (o.y + r2).abs() < 1e-9 {
+            matched_neg = true;
+        }
+    }
+    assert!(
+        matched_pos && matched_neg,
+        "the phi=225 deg silhouette is missing: {:?}",
+        silhouettes
+    );
+
+    // Both lines run the full height v in [0, 30] (the vertex parameters).
+    // The cap-circle split parameters are checked through the smoke
+    // end-to-end test below.
+}
