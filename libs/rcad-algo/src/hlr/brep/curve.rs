@@ -305,6 +305,11 @@ impl<'a> Curve<'a> {
         self.c().first_parameter()
     }
 
+    /// OCCT GetType (lxx L138-141) — the projected-curve classification.
+    pub fn get_type(&self) -> CurveType {
+        self.my_type
+    }
+
     /// OCCT LastParameter (lxx).
     pub fn last_parameter(&self) -> f64 {
         self.c().last_parameter()

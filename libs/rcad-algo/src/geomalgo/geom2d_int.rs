@@ -1229,18 +1229,79 @@ impl IConicTool {
     }
 }
 
+/// OCCT `TheCurveTool` template parameter of the Extrema_GCurveLocator /
+/// Extrema_GFuncExtPC / Extrema_GenLocateExtPC instantiations behind
+/// TheProjPCur::FindParameter (Geom2dInt_TheCurveLocatorOfTheProjPCurOfGInter
+/// / HLRBRep_TheCurveLocatorOfTheProjPCurOfCInter share the same gxx bodies
+/// over their respective TheCurve/TheCurveTool bindings).
+pub trait LocatorCurveTool<C: ?Sized> {
+    /// OCCT FirstParameter(C).
+    fn first_parameter(c: &C) -> f64;
+    /// OCCT LastParameter(C).
+    fn last_parameter(c: &C) -> f64;
+    /// OCCT Value(C, U).
+    fn value(c: &C, u: f64) -> DVec2;
+    /// OCCT D0(C, U).
+    fn d0(c: &C, u: f64) -> DVec2;
+    /// OCCT D1(C, U).
+    fn d1(c: &C, u: f64) -> (DVec2, DVec2);
+    /// OCCT D2(C, U).
+    fn d2(c: &C, u: f64) -> (DVec2, DVec2, DVec2);
+    /// OCCT DN(C, U, N).
+    fn dn(c: &C, u: f64, n: i32) -> DVec2;
+    /// OCCT GetType(C).
+    fn get_type(c: &C) -> Curve2dType;
+    /// OCCT NbSamples(C).
+    fn nb_samples(c: &C) -> i32;
+    /// OCCT EpsX(C).
+    fn eps_x(c: &C) -> f64;
+}
+
+impl<'a> LocatorCurveTool<dyn Curve2dAdaptor + 'a> for Geom2dCurveTool {
+    fn first_parameter(c: &(dyn Curve2dAdaptor + 'a)) -> f64 {
+        geom2d_curve_tool::first_parameter(c)
+    }
+    fn last_parameter(c: &(dyn Curve2dAdaptor + 'a)) -> f64 {
+        geom2d_curve_tool::last_parameter(c)
+    }
+    fn value(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> DVec2 {
+        geom2d_curve_tool::value(c, u)
+    }
+    fn d0(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> DVec2 {
+        geom2d_curve_tool::d0(c, u)
+    }
+    fn d1(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> (DVec2, DVec2) {
+        geom2d_curve_tool::d1(c, u)
+    }
+    fn d2(c: &(dyn Curve2dAdaptor + 'a), u: f64) -> (DVec2, DVec2, DVec2) {
+        geom2d_curve_tool::d2(c, u)
+    }
+    fn dn(c: &(dyn Curve2dAdaptor + 'a), u: f64, n: i32) -> DVec2 {
+        geom2d_curve_tool::dn(c, u, n)
+    }
+    fn get_type(c: &(dyn Curve2dAdaptor + 'a)) -> Curve2dType {
+        geom2d_curve_tool::get_type(c)
+    }
+    fn nb_samples(c: &(dyn Curve2dAdaptor + 'a)) -> i32 {
+        geom2d_curve_tool::nb_samples(c)
+    }
+    fn eps_x(c: &(dyn Curve2dAdaptor + 'a)) -> f64 {
+        geom2d_curve_tool::eps_x(c)
+    }
+}
+
 /// OCCT Extrema_GCurveLocator (Extrema_GCurveLocator.hxx L84-129) — Locate:
 /// among a set of samples {C(ui)}, find the point closest to P.
-fn locate_on_curve(
+fn locate_on_curve<C: ?Sized, T: LocatorCurveTool<C>>(
     p: DVec2,
-    c: &dyn Curve2dAdaptor,
+    c: &C,
     nb_u: i32,
     u_min: f64,
     u_sup: f64,
 ) -> (f64, DVec2) {
     assert!(nb_u >= 2, "Standard_OutOfRange");
-    let a_uinf = geom2d_curve_tool::first_parameter(c);
-    let a_ulast = geom2d_curve_tool::last_parameter(c);
+    let a_uinf = T::first_parameter(c);
+    let a_ulast = T::last_parameter(c);
     let a_u1 = a_uinf.min(a_ulast);
     let a_u2 = a_uinf.max(a_ulast);
     let mut a_u11 = u_min.min(u_sup);
@@ -1257,7 +1318,7 @@ fn locate_on_curve(
     let mut a_u_min = 0.0;
     let mut a_pnt_min = DVec2::ZERO;
     for _ in 1..nb_u {
-        let a_pt = geom2d_curve_tool::value(c, a_u);
+        let a_pt = T::value(c, a_u);
         let a_dist2 = a_pt.distance_squared(p);
         if a_dist2 < a_dist2_min {
             a_dist2_min = a_dist2;
@@ -1271,9 +1332,9 @@ fn locate_on_curve(
 
 /// OCCT Extrema_GFuncExtPC (Extrema_GFuncExtPC.hxx) — the function
 /// F(u) = (C(u)-P)·D1c/|D1c| with its derivative, used by math_FunctionRoot.
-struct GFuncExtPC<'a> {
+struct GFuncExtPC<'a, C: ?Sized, T: LocatorCurveTool<C>> {
     p: DVec2,
-    c: &'a dyn Curve2dAdaptor,
+    c: &'a C,
     u: f64,
     pc: DVec2,
     d1f: f64,
@@ -1287,15 +1348,16 @@ struct GFuncExtPC<'a> {
     max_deriv_order: i32,
     uinfium: f64,
     usupremum: f64,
+    _tool: std::marker::PhantomData<fn(&T)>,
 }
 
 const G_FUNC_MIN_TOL: f64 = 1e-20;
 const G_FUNC_MIN_STEP: f64 = 1e-7;
 const G_FUNC_MAX_ORDER: i32 = 3;
 
-impl<'a> GFuncExtPC<'a> {
+impl<'a, C: ?Sized, T: LocatorCurveTool<C>> GFuncExtPC<'a, C, T> {
     /// OCCT Extrema_GFuncExtPC(P, C) constructor (L76-101).
-    fn new(p: DVec2, c: &'a dyn Curve2dAdaptor) -> Self {
+    fn new(p: DVec2, c: &'a C) -> Self {
         let mut f = GFuncExtPC {
             p,
             c,
@@ -1310,11 +1372,12 @@ impl<'a> GFuncExtPC<'a> {
             _d1_init: false,
             tol: G_FUNC_MIN_TOL,
             max_deriv_order: 0,
-            uinfium: geom2d_curve_tool::first_parameter(c),
-            usupremum: geom2d_curve_tool::last_parameter(c),
+            uinfium: T::first_parameter(c),
+            usupremum: T::last_parameter(c),
+            _tool: std::marker::PhantomData,
         };
         f.sub_interval_initialize();
-        match geom2d_curve_tool::get_type(c) {
+        match T::get_type(c) {
             Curve2dType::BezierCurve
             | Curve2dType::BSplineCurve
             | Curve2dType::OffsetCurve
@@ -1332,8 +1395,8 @@ impl<'a> GFuncExtPC<'a> {
 
     /// OCCT SubIntervalInitialize (L420-424).
     fn sub_interval_initialize(&mut self) {
-        self.uinfium = geom2d_curve_tool::first_parameter(self.c);
-        self.usupremum = geom2d_curve_tool::last_parameter(self.c);
+        self.uinfium = T::first_parameter(self.c);
+        self.usupremum = T::last_parameter(self.c);
     }
 
     /// OCCT SearchOfTolerance (L428-457).
@@ -1347,7 +1410,7 @@ impl<'a> GFuncExtPC<'a> {
             if u > self.usupremum {
                 u = self.usupremum;
             }
-            let (_, v_der) = geom2d_curve_tool::d1(self.c, u);
+            let (_, v_der) = T::d1(self.c, u);
             if !(v_der.x.is_infinite() || v_der.y.is_infinite()) {
                 let vm = v_der.length();
                 if vm > a_max {
@@ -1377,7 +1440,7 @@ impl<'a> GFuncExtPC<'a> {
             panic!("Standard_TypeMismatch: No init");
         }
         self.u = u;
-        let (pc, mut d1c) = geom2d_curve_tool::d1(self.c, u);
+        let (pc, mut d1c) = T::d1(self.c, u);
         self.pc = pc;
         if d1c.x.is_infinite() || d1c.y.is_infinite() {
             return None;
@@ -1396,7 +1459,7 @@ impl<'a> GFuncExtPC<'a> {
                 let mut n = 1;
                 let mut is_deriv_found = false;
                 loop {
-                    let v = geom2d_curve_tool::dn(self.c, self.u, n + 1);
+                    let v = T::dn(self.c, self.u, n + 1);
                     ndu = v.length();
                     is_deriv_found = ndu > self.tol;
                     if is_deriv_found || n >= self.max_deriv_order {
@@ -1406,8 +1469,8 @@ impl<'a> GFuncExtPC<'a> {
                             } else {
                                 self.u - a_delta
                             };
-                            let p1 = geom2d_curve_tool::d0(self.c, self.u.min(u2));
-                            let p2 = geom2d_curve_tool::d0(self.c, self.u.max(u2));
+                            let p1 = T::d0(self.c, self.u.min(u2));
+                            let p2 = T::d0(self.c, self.u.max(u2));
                             let v1 = p2 - p1;
                             if v.dot(v1) < 0.0 {
                                 d1c = -v;
@@ -1423,15 +1486,15 @@ impl<'a> GFuncExtPC<'a> {
                     // Derivative approximated by three points.
                     let (p1, p2, p3) = if self.u - self.uinfium < 2.0 * a_delta {
                         (
-                            geom2d_curve_tool::d0(self.c, self.u),
-                            geom2d_curve_tool::d0(self.c, self.u + a_delta),
-                            geom2d_curve_tool::d0(self.c, self.u + 2.0 * a_delta),
+                            T::d0(self.c, self.u),
+                            T::d0(self.c, self.u + a_delta),
+                            T::d0(self.c, self.u + 2.0 * a_delta),
                         )
                     } else {
                         (
-                            geom2d_curve_tool::d0(self.c, self.u - 2.0 * a_delta),
-                            geom2d_curve_tool::d0(self.c, self.u - a_delta),
-                            geom2d_curve_tool::d0(self.c, self.u),
+                            T::d0(self.c, self.u - 2.0 * a_delta),
+                            T::d0(self.c, self.u - a_delta),
+                            T::d0(self.c, self.u),
                         )
                     };
                     d1c = if self.u - self.uinfium < 2.0 * a_delta {
@@ -1462,7 +1525,7 @@ impl<'a> GFuncExtPC<'a> {
         self.pc = pc_old;
         self.p = p_old;
 
-        let (pc2, d1c, d2c) = geom2d_curve_tool::d2(self.c, u);
+        let (pc2, d1c, d2c) = T::d2(self.c, u);
         self.pc = pc2;
         let ndu = d1c.length();
         let the_df;
@@ -1529,13 +1592,13 @@ impl<'a> GFuncExtPC<'a> {
     }
 }
 
-impl FunctionValue for GFuncExtPC<'_> {
+impl<C: ?Sized, T: LocatorCurveTool<C>> FunctionValue for GFuncExtPC<'_, C, T> {
     fn value(&mut self, x: f64) -> Option<f64> {
         self.func_value(x)
     }
 }
 
-impl FunctionWithDerivative for GFuncExtPC<'_> {
+impl<C: ?Sized, T: LocatorCurveTool<C>> FunctionWithDerivative for GFuncExtPC<'_, C, T> {
     fn derivative(&mut self, x: f64) -> Option<f64> {
         self.func_values(x).map(|(_, d)| d)
     }
@@ -1610,15 +1673,15 @@ fn math_function_root_1d(
 /// OCCT Extrema_GenLocateExtPC (Extrema_GenLocateExtPC.hxx L108-126) — local
 /// extremum of the distance from a point to a curve near a seed parameter.
 /// Returns the parameter of the found extremum.
-fn gen_locate_ext_pc(
+fn gen_locate_ext_pc<C: ?Sized, T: LocatorCurveTool<C>>(
     p: DVec2,
-    c: &dyn Curve2dAdaptor,
+    c: &C,
     u0: f64,
     u_min: f64,
     u_sup: f64,
     tol_u: f64,
 ) -> Option<(f64, bool)> {
-    let mut f = GFuncExtPC::new(p, c);
+    let mut f = GFuncExtPC::<C, T>::new(p, c);
     f.set_point(p);
     let root = math_function_root_1d(&mut f, u0, tol_u, u_min, u_sup, 100)?;
     let (uu, _) = (root.0, root.1);
@@ -1636,49 +1699,82 @@ fn gen_locate_ext_pc(
     }
 }
 
+/// OCCT TheProjPCur::FindParameter(C, P, LowParameter, HighParameter, Tol)
+/// (the shared body of Geom2dInt_TheProjPCurOfGInter.cxx L27-65 and
+/// HLRBRep_TheProjPCurOfCInter_0.cxx L24-56): sample-locator seed then the
+/// local extremum refinement.
+pub fn proj_cur_find_parameter_bounded<C: ?Sized, T: LocatorCurveTool<C>>(
+    c: &C,
+    p: DVec2,
+    low_parameter: f64,
+    high_parameter: f64,
+    _tol: f64,
+) -> f64 {
+    let nb_pts = T::nb_samples(c);
+    let the_eps_x = T::eps_x(c);
+    let (a_u_min, a_pnt_min) = locate_on_curve::<C, T>(p, c, nb_pts, low_parameter, high_parameter);
+    let _ = a_pnt_min;
+    let default_param = a_u_min;
+    let locate = gen_locate_ext_pc::<C, T>(p, c, default_param, low_parameter, high_parameter, the_eps_x);
+    let the_param;
+    match locate {
+        None => {
+            the_param = default_param;
+        }
+        Some((param, is_min)) => {
+            if !is_min {
+                the_param = default_param;
+            } else {
+                the_param = param;
+            }
+        }
+    }
+    the_param
+}
+
+/// OCCT TheProjPCur::FindParameter(C, P, Tol) (the shared tail: the curve
+/// domain bounds).
+pub fn proj_cur_find_parameter_unbounded<C: ?Sized, T: LocatorCurveTool<C>>(
+    c: &C,
+    p: DVec2,
+    tol: f64,
+) -> f64 {
+    proj_cur_find_parameter_bounded::<C, T>(
+        c,
+        p,
+        T::first_parameter(c),
+        T::last_parameter(c),
+        tol,
+    )
+}
+
 /// OCCT Geom2dInt_TheProjPCurOfGInter (Geom2dInt_TheProjPCurOfGInter.cxx) —
 /// projection of a point onto the parametric curve.
 pub mod proj_p_cur_of_g_inter {
     use super::*;
 
-    /// OCCT FindParameter(C, P, LowParameter, HighParameter, Tol) (L27-65).
-    pub fn find_parameter_bounded(
-        c: &dyn Curve2dAdaptor,
+    /// OCCT FindParameter(C, P, LowParameter, HighParameter, Tol) (L27-65) —
+    /// the shared body instantiated for the Geom2dInt tools.
+    pub fn find_parameter_bounded<'a>(
+        c: &(dyn Curve2dAdaptor + 'a),
         p: DVec2,
         low_parameter: f64,
         high_parameter: f64,
-        _tol: f64,
+        tol: f64,
     ) -> f64 {
-        let nb_pts = geom2d_curve_tool::nb_samples(c);
-        let the_eps_x = geom2d_curve_tool::eps_x(c);
-        let (a_u_min, a_pnt_min) = locate_on_curve(p, c, nb_pts, low_parameter, high_parameter);
-        let _ = a_pnt_min;
-        let default_param = a_u_min;
-        let locate = gen_locate_ext_pc(p, c, default_param, low_parameter, high_parameter, the_eps_x);
-        let the_param;
-        match locate {
-            None => {
-                the_param = default_param;
-            }
-            Some((param, is_min)) => {
-                if !is_min {
-                    the_param = default_param;
-                } else {
-                    the_param = param;
-                }
-            }
-        }
-        the_param
+        super::proj_cur_find_parameter_bounded::<dyn Curve2dAdaptor + 'a, Geom2dCurveTool>(
+            c,
+            p,
+            low_parameter,
+            high_parameter,
+            tol,
+        )
     }
 
     /// OCCT FindParameter(C, P, Tol) (L67-79).
-    pub fn find_parameter_unbounded(c: &dyn Curve2dAdaptor, p: DVec2, tol: f64) -> f64 {
-        find_parameter_bounded(
-            c,
-            p,
-            geom2d_curve_tool::first_parameter(c),
-            geom2d_curve_tool::last_parameter(c),
-            tol,
+    pub fn find_parameter_unbounded<'a>(c: &(dyn Curve2dAdaptor + 'a), p: DVec2, tol: f64) -> f64 {
+        super::proj_cur_find_parameter_unbounded::<dyn Curve2dAdaptor + 'a, Geom2dCurveTool>(
+            c, p, tol,
         )
     }
 }

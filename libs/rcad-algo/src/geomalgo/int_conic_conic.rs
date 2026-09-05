@@ -37,10 +37,20 @@ use rcad_kernel::geom::{Circle2d, Ellipse2d, Hyperbola2d, Line2d, Parabola2d};
 use super::geom2d_int::{
     elclib2d, Curve2dAdaptor, Curve2dType, IConicTool, TheIntersectorOfTheIntConicCurveOfGInter,
 };
-use super::int_res2d::{Domain as Res2dDomain, IntersectionBase};
+use super::int_res2d::{
+    Domain as Res2dDomain, IntersectionBase, IntersectionPoint, IntersectionSegment, Position,
+    Situation, Transition, TypeTrans,
+};
 
 /// 2*pi (OCCT: M_PI + M_PI).
 const PI2: f64 = std::f64::consts::TAU;
+
+/// OCCT IntCurve_IntConicConic_1.cxx L40-44: the file-local angular
+/// tolerance (1.e-15 — "at least to make an accordance between transition
+/// and position computation").
+const TOLERANCE_ANGULAIRE: f64 = 1.0e-15;
+/// OCCT Precision::PConfusion().
+const PRECISION_P_CONFUSION: f64 = 1.0e-9;
 
 // ---------------------------------------------------------------------------
 // IntCurve_PConic
@@ -443,16 +453,790 @@ impl IntConicConic {
 
     /// OCCT Perform(const gp_Lin2d& L1, const gp_Lin2d& L2)
     /// (IntCurve_IntConicConic_1.cxx L1381-2233).
+    #[allow(clippy::too_many_arguments)]
     pub fn perform_line_line(
         &mut self,
-        _l1: &Line2d,
-        _d1: &Res2dDomain,
-        _l2: &Line2d,
-        _d2: &Res2dDomain,
+        l1: &Line2d,
+        domain1: &Res2dDomain,
+        l2: &Line2d,
+        domain2: &Res2dDomain,
         _tol_conf: f64,
-        _tol: f64,
+        tol_r: f64,
     ) {
-        unimplemented!("IntConicConic::Perform(Lin, Lin) — IntCurve_IntConicConic_1.cxx L1381, not ported yet");
+        self.base.reset_fields();
+
+        //-- Coordonnees du point d intersection sur chacune des 2 droites
+        let mut u1 = 0.0;
+        let mut u2 = 0.0;
+        //-- Nombre de points solution : 1 : Intersection
+        //--                             0 : Non Confondues
+        //--                             2 : Confondues a la tolerance pres
+        let mut nbsol = 0i32;
+        let mut pt_seg1 = IntersectionPoint::empty();
+        let mut pt_seg2 = IntersectionPoint::empty();
+        let mut a_half_sin_l1_l2 = 0.0;
+        let mut tol = tol_r;
+        if tol < PRECISION_P_CONFUSION {
+            tol = PRECISION_P_CONFUSION;
+        }
+
+        line_line_geometric_intersection(l1, l2, tol, &mut u1, &mut u2, &mut a_half_sin_l1_l2, &mut nbsol);
+
+        let tan1 = l1.direction;
+        let tan2 = l2.direction;
+
+        let a_cos_t1_t2 = tan1.dot(tan2);
+        let is_opposite = a_cos_t1_t2 < 0.0;
+
+        self.base.done = true;
+
+        if nbsol == 1 && check_ll_coincidence(l1, l2, domain1, domain2, tol) {
+            nbsol = 2;
+        }
+
+        if nbsol == 1 {
+            //---------------------------------------------------
+            //-- d: distance du point I a partir de laquelle  les
+            //--  points de parametre U1+d et U2+-d sont ecartes
+            //--  d une distance superieure a Tol.
+            //---------------------------------------------------
+            let mut pos1a = Position::Middle;
+            let mut pos2a = Position::Middle;
+            let mut pos1b = Position::Middle;
+            let mut pos2b = Position::Middle;
+            let d = 0.5 * tol / a_half_sin_l1_l2;
+            let mut u1inf = u1 - d;
+            let mut u1sup = u1 + d;
+            let u1mu2 = u1 - u2;
+            let u1pu2 = u1 + u2;
+            let mut res1inf = 0.0;
+            let mut res1sup = 0.0;
+            let mut prod_vect_tan;
+
+            //---------------------------------------------------
+            //-- On agrandit la zone U1inf U1sup pour tenir compte
+            //-- des tolerances des points en bout
+            //--
+            if domain1.has_first_point() {
+                if l2.distance(domain1.first_point()) < domain1.first_tolerance() {
+                    if u1inf > domain1.first_parameter() {
+                        u1inf = domain1.first_parameter();
+                    }
+                    if u1sup < domain1.first_parameter() {
+                        u1sup = domain1.first_parameter();
+                    }
+                }
+            }
+            if domain1.has_last_point() {
+                if l2.distance(domain1.last_point()) < domain1.last_tolerance() {
+                    if u1inf > domain1.last_parameter() {
+                        u1inf = domain1.last_parameter();
+                    }
+                    if u1sup < domain1.last_parameter() {
+                        u1sup = domain1.last_parameter();
+                    }
+                }
+            }
+            if domain2.has_first_point() {
+                if l1.distance(domain2.first_point()) < domain2.first_tolerance() {
+                    let p = elclib2d::line_parameter(l1.origin, l1.direction, domain2.first_point());
+                    if u1inf > p {
+                        u1inf = p;
+                    }
+                    if u1sup < p {
+                        u1sup = p;
+                    }
+                }
+            }
+            if domain2.has_last_point() {
+                if l1.distance(domain2.last_point()) < domain2.last_tolerance() {
+                    let p = elclib2d::line_parameter(l1.origin, l1.direction, domain2.last_point());
+                    if u1inf > p {
+                        u1inf = p;
+                    }
+                    if u1sup < p {
+                        u1sup = p;
+                    }
+                }
+            }
+            //-----------------------------------------------------------------
+
+            domain_intersection(
+                domain1,
+                u1inf,
+                u1sup,
+                &mut res1inf,
+                &mut res1sup,
+                &mut pos1a,
+                &mut pos1b,
+            );
+
+            if (res1sup - res1inf) < 0.0 {
+                //-- Si l intersection est vide
+                //--
+            } else {
+                //-- (Domain1  INTER   Zone Intersection)    non vide
+                prod_vect_tan = tan1.x * tan2.y - tan1.y * tan2.x;
+
+                // #####################################################################
+                // ##  Longueur Minimale d un segment    Sur Courbe 1
+                // #####################################################################
+
+                let long_mini_seg = tol;
+
+                if ((res1sup - res1inf) <= long_mini_seg)
+                    || ((pos1a == pos1b) && (pos1a != Position::Middle))
+                {
+                    //-------------------------------  Un seul Point -------------------
+                    //--- lorsque la longueur du segment est inferieure a ??
+                    //--- ou si deux points designent le meme bout
+                    // gka #0022833
+                    let a_cur_trans = if prod_vect_tan >= TOLERANCE_ANGULAIRE {
+                        TypeTrans::Out
+                    } else if prod_vect_tan <= -TOLERANCE_ANGULAIRE {
+                        TypeTrans::In
+                    } else {
+                        TypeTrans::Undecided
+                    };
+
+                    let mut new_point1 = IntersectionPoint::empty();
+                    if compute_int_point(
+                        domain1,
+                        domain2,
+                        l1,
+                        l2,
+                        a_cos_t1_t2,
+                        u1,
+                        u2,
+                        &mut res1inf,
+                        &mut res1sup,
+                        1,
+                        a_cur_trans,
+                        &mut new_point1,
+                    ) {
+                        self.base.append_point(&new_point1);
+                    }
+
+                    //------------------------------------------------------
+                } //---------------   Fin du cas  :   1 seul point --------------------
+                else {
+                    //-- Intersection AND Domain1  --------> Segment ---------------------
+                    let mut u2inf;
+                    let mut u2sup;
+                    let mut res2inf = 0.0;
+                    let mut res2sup = 0.0;
+
+                    if is_opposite {
+                        u2inf = u1pu2 - res1sup;
+                        u2sup = u1pu2 - res1inf;
+                    } else {
+                        u2inf = res1inf - u1mu2;
+                        u2sup = res1sup - u1mu2;
+                    }
+
+                    domain_intersection(
+                        domain2,
+                        u2inf,
+                        u2sup,
+                        &mut res2inf,
+                        &mut res2sup,
+                        &mut pos2a,
+                        &mut pos2b,
+                    );
+                    let _ = (u2inf, u2sup);
+
+                    // ####################################################################
+                    // ##  Test sur la longueur minimale d un segment sur Ligne2
+                    // ####################################################################
+                    let res2sup_m_res2inf = res2sup - res2inf;
+                    if res2sup_m_res2inf < 0.0 {
+                        //-- Pas de solutions On retourne Vide
+                    } else if (res2sup_m_res2inf > long_mini_seg)
+                        || ((pos2a == pos2b) && (pos2a != Position::Middle))
+                    {
+                        //----------- Calcul des attributs du segment --------------
+                        //-- Attention, les bornes Res1inf(sup) bougent donc il faut
+                        //--  eventuellement recalculer les attributs
+
+                        if is_opposite {
+                            res1inf = u1pu2 - res2sup;
+                            res1sup = u1pu2 - res2inf;
+                            let tampon = res2inf;
+                            res2inf = res2sup;
+                            res2sup = tampon;
+                            let pos = pos2a;
+                            pos2a = pos2b;
+                            pos2b = pos;
+                        } else {
+                            res1inf = u1mu2 + res2inf;
+                            res1sup = u1mu2 + res2sup;
+                        }
+
+                        pos1a = find_position_ll(&mut res1inf, domain1);
+                        pos1b = find_position_ll(&mut res1sup, domain1);
+
+                        let mut t1a = Transition::empty();
+                        let mut t2a = Transition::empty();
+                        let mut t1b = Transition::empty();
+                        let mut t2b = Transition::empty();
+
+                        if prod_vect_tan >= TOLERANCE_ANGULAIRE {
+                            // &&&&&&&&&&&&&&&
+                            t1a.set_value_in_out(false, pos1a, TypeTrans::Out);
+                            t2a.set_value_in_out(false, pos2a, TypeTrans::In);
+                        } else if prod_vect_tan <= -TOLERANCE_ANGULAIRE {
+                            t1a.set_value_in_out(false, pos1a, TypeTrans::In);
+                            t2a.set_value_in_out(false, pos2a, TypeTrans::Out);
+                        } else {
+                            t1a.set_value_touch(false, pos1a, Situation::Unknown, is_opposite);
+                            t2a.set_value_touch(false, pos2a, Situation::Unknown, is_opposite);
+                        }
+
+                        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                        //~~~~~~~  C O N V E N T I O N    -    S E G M E N T     ~~~~~~~
+                        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                        //~~ On Renvoie un segment dans les cas suivants :            ~~
+                        //~~   (1) Extremite L1 L2   ------>    Extremite L1 L2       ~~
+                        //~~   (2) Extremite L1 L2   ------>    Intersection          ~~
+                        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+                        let mut result_is_a_point = false;
+
+                        if ((res1sup - res1inf) <= long_mini_seg)
+                            || ((res2sup - res2inf).abs() <= long_mini_seg)
+                        {
+                            //-- On force la creation d un point
+                            result_is_a_point = true;
+                        } else {
+                            //------------------------------------------------------------
+                            //-- On traite les cas ou l intersection est situee du
+                            //-- Mauvais cote du domaine
+                            //-- Attention : Res2inf <-> Pos2a        Res2sup <-> Pos2b
+                            //--  et         Res1inf <-> Pos1a        Res1sup <-> Pos1b
+                            //--             avec Res1inf <= Res1sup
+                            //------------------------------------------------------------
+                            //-- Le point sera : Res1inf,Res2inf,T1a(Pos1a),T2a(Pos2a)
+                            //------------------------------------------------------------
+
+                            if pos1a == Position::Head {
+                                if pos1b != Position::End && u1 < res1inf {
+                                    result_is_a_point = true;
+                                    u1 = res1inf;
+                                    u2 = res2inf;
+                                }
+                            }
+                            if pos1b == Position::End {
+                                if pos1a != Position::Head && u1 > res1sup {
+                                    result_is_a_point = true;
+                                    u1 = res1sup;
+                                    u2 = res2sup;
+                                }
+                            }
+
+                            if pos2a == Position::Head {
+                                if pos2b != Position::End && u2 < res2inf {
+                                    result_is_a_point = true;
+                                    u2 = res2inf;
+                                    u1 = res1inf;
+                                }
+                            } else if pos2a == Position::End {
+                                if pos2b != Position::Head && u2 > res2inf {
+                                    result_is_a_point = true;
+                                    u2 = res2inf;
+                                    u1 = res1inf;
+                                }
+                            }
+                            if pos2b == Position::Head {
+                                if pos2a != Position::End && u2 < res2sup {
+                                    result_is_a_point = true;
+                                    u2 = res2sup;
+                                    u1 = res1sup;
+                                }
+                            } else if pos2b == Position::End {
+                                if pos2a != Position::Head && u2 > res2sup {
+                                    result_is_a_point = true;
+                                    u2 = res2sup;
+                                    u1 = res1sup;
+                                }
+                            }
+                        }
+
+                        if (!result_is_a_point) && (pos1a != Position::Middle || pos2a != Position::Middle)
+                        {
+                            if prod_vect_tan >= TOLERANCE_ANGULAIRE {
+                                //&&&&&&&&&&&&&&
+                                t1b.set_value_in_out(false, pos1b, TypeTrans::Out);
+                                t2b.set_value_in_out(false, pos2b, TypeTrans::In);
+                            } else if prod_vect_tan <= -TOLERANCE_ANGULAIRE {
+                                t1b.set_value_in_out(false, pos1b, TypeTrans::In);
+                                t2b.set_value_in_out(false, pos2b, TypeTrans::Out);
+                            } else {
+                                t1b.set_value_touch(false, pos1b, Situation::Unknown, is_opposite);
+                                t2b.set_value_touch(false, pos2b, Situation::Unknown, is_opposite);
+                            }
+                            let ptdebut;
+                            if pos1a == Position::Middle {
+                                let t3 = if is_opposite {
+                                    if pos2a == Position::Head {
+                                        res2sup
+                                    } else {
+                                        res2inf
+                                    }
+                                } else if pos2a == Position::Head {
+                                    res2inf
+                                } else {
+                                    res2sup
+                                };
+                                ptdebut = elclib2d::line_value(l2.origin, l2.direction, t3);
+                                res1inf = elclib2d::line_parameter(l1.origin, l1.direction, ptdebut);
+                            } else {
+                                let t4 = if pos1a == Position::Head {
+                                    res1inf
+                                } else {
+                                    res1sup
+                                };
+                                ptdebut = elclib2d::line_value(l1.origin, l1.direction, t4);
+                                res2inf = elclib2d::line_parameter(l2.origin, l2.direction, ptdebut);
+                            }
+                            pt_seg1.set_values(ptdebut, res1inf, res2inf, t1a, t2a, false);
+                            if pos1b != Position::Middle || pos2b != Position::Middle {
+                                //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                                //~~ Ajustement des parametres et du point renvoye
+                                let ptfin;
+                                if pos1b == Position::Middle {
+                                    ptfin = elclib2d::line_value(l2.origin, l2.direction, res2sup);
+                                    res1inf = elclib2d::line_parameter(l1.origin, l1.direction, ptfin);
+                                } else {
+                                    ptfin = elclib2d::line_value(l1.origin, l1.direction, res1sup);
+                                    res2inf = elclib2d::line_parameter(l2.origin, l2.direction, ptfin);
+                                }
+                                pt_seg2.set_values(ptfin, res1sup, res2sup, t1b, t2b, false);
+                                let segment =
+                                    IntersectionSegment::with_points(&pt_seg1, &pt_seg2, is_opposite, false);
+                                self.base.append_segment(&segment);
+                            } else {
+                                //-- Extremite(L1 ou L2)  ------>   Point Middle(L1 et L2)
+
+                                pos1b = find_position_ll(&mut u1, domain1);
+                                pos2b = find_position_ll(&mut u2, domain2);
+                                if prod_vect_tan >= TOLERANCE_ANGULAIRE {
+                                    t1b.set_value_in_out(false, pos1b, TypeTrans::Out);
+                                    t2b.set_value_in_out(false, pos2b, TypeTrans::In);
+                                } else if prod_vect_tan <= -TOLERANCE_ANGULAIRE {
+                                    t1b.set_value_in_out(false, pos1b, TypeTrans::In);
+                                    t2b.set_value_in_out(false, pos2b, TypeTrans::Out);
+                                } else {
+                                    t1b.set_value_touch(false, pos1b, Situation::Unknown, is_opposite);
+                                    t2b.set_value_touch(false, pos2b, Situation::Unknown, is_opposite);
+                                }
+
+                                pt_seg2.set_values(
+                                    elclib2d::line_value(l2.origin, l2.direction, u2),
+                                    u1,
+                                    u2,
+                                    t1b,
+                                    t2b,
+                                    false,
+                                );
+
+                                if ((res1inf - u1).abs() > long_mini_seg)
+                                    && ((res2inf - u2).abs() > long_mini_seg)
+                                {
+                                    let segment = IntersectionSegment::with_points(
+                                        &pt_seg1,
+                                        &pt_seg2,
+                                        is_opposite,
+                                        false,
+                                    );
+                                    self.base.append_segment(&segment);
+                                } else {
+                                    let p = segment_to_point(&pt_seg1, &t1a, &t2a, &pt_seg2, &t1b, &t2b);
+                                    self.base.append_point(&p);
+                                }
+                            }
+                        } //-- (Pos1a!=IntRes2d_Middle || Pos2a!=IntRes2d_Middle) --
+                        else {
+                            //-- Pos1a == Pos2a == Middle
+                            if pos1b == Position::Middle {
+                                pos1b = pos1a;
+                            }
+                            if pos2b == Position::Middle {
+                                pos2b = pos2a;
+                            }
+                            if result_is_a_point {
+                                //-- Middle sur le segment A
+                                //--
+                                if pos1b != Position::Middle || pos2b != Position::Middle {
+                                    let ptfin;
+                                    if pos1b == Position::Middle {
+                                        let t2 = if is_opposite {
+                                            if pos2b == Position::Head {
+                                                res2sup
+                                            } else {
+                                                res2inf
+                                            }
+                                        } else if pos2b == Position::Head {
+                                            res2inf
+                                        } else {
+                                            res2sup
+                                        };
+                                        ptfin = elclib2d::line_value(l2.origin, l2.direction, t2);
+                                        res1sup = elclib2d::line_parameter(l1.origin, l1.direction, ptfin);
+                                        // modified by NIZHNY-MKK  Tue Feb 15 10:54:51 2000.BEGIN
+                                        pos1b = find_position_ll(&mut res1sup, domain1);
+                                        // modified by NIZHNY-MKK  Tue Feb 15 10:54:55 2000.END
+                                    } else {
+                                        let t1 = if pos1b == Position::Head {
+                                            res1inf
+                                        } else {
+                                            res1sup
+                                        };
+                                        ptfin = elclib2d::line_value(l1.origin, l1.direction, t1);
+                                        res2sup = elclib2d::line_parameter(l2.origin, l2.direction, ptfin);
+                                        // modified by NIZHNY-MKK  Tue Feb 15 10:55:08 2000.BEGIN
+                                        pos2b = find_position_ll(&mut res2sup, domain2);
+                                        // modified by NIZHNY-MKK  Tue Feb 15 10:55:11 2000.END
+                                    }
+                                    if prod_vect_tan >= TOLERANCE_ANGULAIRE {
+                                        t1b.set_value_in_out(false, pos1b, TypeTrans::Out);
+                                        t2b.set_value_in_out(false, pos2b, TypeTrans::In);
+                                    } else if prod_vect_tan <= -TOLERANCE_ANGULAIRE {
+                                        t1b.set_value_in_out(false, pos1b, TypeTrans::In);
+                                        t2b.set_value_in_out(false, pos2b, TypeTrans::Out);
+                                    } else {
+                                        t1b.set_value_touch(false, pos1b, Situation::Unknown, is_opposite);
+                                        t2b.set_value_touch(false, pos2b, Situation::Unknown, is_opposite);
+                                    }
+                                    pt_seg2.set_values(ptfin, res1sup, res2sup, t1b, t2b, false);
+                                    self.base.append_point(&pt_seg2);
+                                } else {
+                                    pos1b = find_position_ll(&mut u1, domain1);
+                                    pos2b = find_position_ll(&mut u2, domain2);
+
+                                    if prod_vect_tan >= TOLERANCE_ANGULAIRE {
+                                        t1b.set_value_in_out(false, pos1b, TypeTrans::Out);
+                                        t2b.set_value_in_out(false, pos2b, TypeTrans::In);
+                                    } else if prod_vect_tan <= -TOLERANCE_ANGULAIRE {
+                                        t1b.set_value_in_out(false, pos1b, TypeTrans::In);
+                                        t2b.set_value_in_out(false, pos2b, TypeTrans::Out);
+                                    } else {
+                                        t1b.set_value_touch(false, pos1b, Situation::Unknown, is_opposite);
+                                        t2b.set_value_touch(false, pos2b, Situation::Unknown, is_opposite);
+                                    }
+                                    pt_seg1.set_values(
+                                        elclib2d::line_value(l2.origin, l2.direction, u2),
+                                        u1,
+                                        u2,
+                                        t1b,
+                                        t2b,
+                                        false,
+                                    );
+                                    self.base.append_point(&pt_seg1);
+                                }
+                            } else {
+                                pt_seg1.set_values(
+                                    elclib2d::line_value(l2.origin, l2.direction, u2),
+                                    u1,
+                                    u2,
+                                    t1a,
+                                    t2a,
+                                    false,
+                                );
+
+                                if pos1b != Position::Middle || pos2b != Position::Middle {
+                                    if prod_vect_tan >= TOLERANCE_ANGULAIRE {
+                                        t1b.set_value_in_out(false, pos1b, TypeTrans::Out);
+                                        t2b.set_value_in_out(false, pos2b, TypeTrans::In);
+                                    } else if prod_vect_tan <= -TOLERANCE_ANGULAIRE {
+                                        t1b.set_value_in_out(false, pos1b, TypeTrans::In);
+                                        t2b.set_value_in_out(false, pos2b, TypeTrans::Out);
+                                    } else {
+                                        t1b.set_value_touch(false, pos1b, Situation::Unknown, is_opposite);
+                                        t2b.set_value_touch(false, pos2b, Situation::Unknown, is_opposite);
+                                    }
+                                    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                                    //~~ Ajustement des parametres et du point renvoye
+                                    let ptfin;
+                                    if pos1b == Position::Middle {
+                                        ptfin = elclib2d::line_value(l2.origin, l2.direction, res2sup);
+                                        res1sup = elclib2d::line_parameter(l1.origin, l1.direction, ptfin);
+                                    } else {
+                                        ptfin = elclib2d::line_value(l1.origin, l1.direction, res1sup);
+                                        res2sup = elclib2d::line_parameter(l2.origin, l2.direction, ptfin);
+                                    }
+
+                                    pt_seg2.set_values(ptfin, res1sup, res2sup, t1b, t2b, false);
+
+                                    if ((u1 - res1sup).abs() > long_mini_seg)
+                                        || ((u2 - res2sup).abs() > long_mini_seg)
+                                    {
+                                        //-- Modif du 1er Octobre 92 (Pour Composites)
+
+                                        let segment = IntersectionSegment::with_points(
+                                            &pt_seg1,
+                                            &pt_seg2,
+                                            is_opposite,
+                                            false,
+                                        );
+                                        self.base.append_segment(&segment);
+                                    } else {
+                                        let p = segment_to_point(&pt_seg1, &t1a, &t2a, &pt_seg2, &t1b, &t2b);
+                                        self.base.append_point(&p);
+                                    }
+                                } else {
+                                    self.base.append_point(&pt_seg1);
+                                }
+                            }
+                        }
+                    } //----- Fin Creation Segment ----(Res2sup-Res2inf>Tol)-------------
+                    else {
+                        //------ (Intersection And Domain1)  AND  Domain2  --> Point ------
+                        //-- Attention Res1sup peut etre  different de  U2
+                        //--   Mais on a Res1sup-Res1inf < Tol
+
+                        // gka #0022833
+                        let a_cur_trans = if prod_vect_tan >= TOLERANCE_ANGULAIRE {
+                            TypeTrans::In
+                        } else if prod_vect_tan <= -TOLERANCE_ANGULAIRE {
+                            TypeTrans::Out
+                        } else {
+                            TypeTrans::Undecided
+                        };
+
+                        let mut new_point1 = IntersectionPoint::empty();
+                        if compute_int_point(
+                            domain2,
+                            domain1,
+                            l2,
+                            l1,
+                            a_cos_t1_t2,
+                            u2,
+                            u1,
+                            &mut res2inf,
+                            &mut res2sup,
+                            2,
+                            a_cur_trans,
+                            &mut new_point1,
+                        ) {
+                            self.base.append_point(&new_point1);
+                        }
+                    }
+                }
+            }
+
+            // #ifdef OCCT_DEBUG (the printf trace) is an OCCT debug block.
+        } else if nbsol == 2 {
+            //== Droites confondues a la tolerance pres
+            //--On traite ici le cas de segments resultats non neccess. bornes
+            //--
+            //--On prend la droite D1 comme reference ( pour le sens positif )
+            //--
+            let mut res_has_first_point = 0i32;
+            let mut res_has_last_point = 0i32;
+            let mut param_start;
+            let mut param_start2;
+            let mut param_end;
+            let mut param_end2;
+            let org2_sur_l1 = elclib2d::line_parameter(l1.origin, l1.direction, l2.origin);
+            //== 3 : L1 et L2 bornent
+            //== 2 :       L2 borne
+            //== 1 : L1 borne
+            if domain1.has_first_point() {
+                res_has_first_point = 1;
+            }
+            if domain1.has_last_point() {
+                res_has_last_point = 1;
+            }
+            if is_opposite {
+                if domain2.has_last_point() {
+                    res_has_first_point += 2;
+                }
+                if domain2.has_first_point() {
+                    res_has_last_point += 2;
+                }
+            } else {
+                if domain2.has_last_point() {
+                    res_has_last_point += 2;
+                }
+                if domain2.has_first_point() {
+                    res_has_first_point += 2;
+                }
+            }
+            if res_has_first_point == 0 && res_has_last_point == 0 {
+                //~~~~ Creation d un segment infini avec Opposite
+                self.base.append_segment(&IntersectionSegment::infinite(is_opposite));
+            } else {
+                //-- On obtient au pire une demi-droite
+                match res_has_first_point {
+                    1 => {
+                        param_start = domain1.first_parameter();
+                        param_start2 = if is_opposite {
+                            org2_sur_l1 - param_start
+                        } else {
+                            param_start - org2_sur_l1
+                        };
+                    }
+                    2 => {
+                        if is_opposite {
+                            param_start2 = domain2.last_parameter();
+                            param_start = org2_sur_l1 - param_start2;
+                        } else {
+                            param_start2 = domain2.first_parameter();
+                            param_start = org2_sur_l1 + param_start2;
+                        }
+                    }
+                    3 => {
+                        if is_opposite {
+                            param_start2 = domain2.last_parameter();
+                            param_start = org2_sur_l1 - param_start2;
+                            if param_start < domain1.first_parameter() {
+                                param_start = domain1.first_parameter();
+                                param_start2 = org2_sur_l1 - param_start;
+                            }
+                        } else {
+                            param_start2 = domain2.first_parameter();
+                            param_start = org2_sur_l1 + param_start2;
+                            if param_start < domain1.first_parameter() {
+                                param_start = domain1.first_parameter();
+                                param_start2 = param_start - org2_sur_l1;
+                            }
+                        }
+                    }
+                    _ => {
+                        //~~~ Segment Infini a gauche
+                        param_start = 0.0;
+                        param_start2 = 0.0;
+                    }
+                }
+
+                match res_has_last_point {
+                    1 => {
+                        param_end = domain1.last_parameter();
+                        param_end2 = if is_opposite {
+                            org2_sur_l1 - param_end
+                        } else {
+                            param_end - org2_sur_l1
+                        };
+                    }
+                    2 => {
+                        if is_opposite {
+                            param_end2 = domain2.first_parameter();
+                            param_end = org2_sur_l1 - param_end2;
+                        } else {
+                            param_end2 = domain2.last_parameter();
+                            param_end = org2_sur_l1 + param_end2;
+                        }
+                    }
+                    3 => {
+                        if is_opposite {
+                            param_end2 = domain2.first_parameter();
+                            param_end = org2_sur_l1 - param_end2;
+                            if param_end > domain1.last_parameter() {
+                                param_end = domain1.last_parameter();
+                                param_end2 = org2_sur_l1 - param_end;
+                            }
+                        } else {
+                            param_end2 = domain2.last_parameter();
+                            param_end = org2_sur_l1 + param_end2;
+                            if param_end > domain1.last_parameter() {
+                                param_end = domain1.last_parameter();
+                                param_end2 = param_end - org2_sur_l1;
+                            }
+                        }
+                    }
+                    _ => {
+                        //~~~ Segment Infini a droite
+                        param_end = 0.0;
+                        param_end2 = 0.0;
+                    }
+                }
+
+                let mut tinf = Transition::empty();
+                let mut tsup = Transition::empty();
+
+                if res_has_first_point != 0 {
+                    if res_has_last_point != 0 {
+                        //~~~ Creation de la borne superieure
+                        //~~~ L1 :     |------------->       ou          |-------------->
+                        //~~~ L2 : <------------|            ou  <----|
+                        if param_end >= (param_start - tol) {
+                            //~~~ Creation d un segment
+                            let mut pos1;
+                            let mut pos2;
+                            pos1 = find_position_ll(&mut param_start, domain1);
+                            pos2 = find_position_ll(&mut param_start2, domain2);
+                            tinf.set_value_touch(true, pos1, Situation::Unknown, is_opposite);
+                            tsup.set_value_touch(true, pos2, Situation::Unknown, is_opposite);
+                            let p1 = IntersectionPoint::new(
+                                elclib2d::line_value(l1.origin, l1.direction, param_start),
+                                param_start,
+                                param_start2,
+                                tinf,
+                                tsup,
+                                false,
+                            );
+                            if param_end > (param_start + tol) {
+                                //~~~ Le segment est assez long
+                                pos1 = find_position_ll(&mut param_end, domain1);
+                                pos2 = find_position_ll(&mut param_end2, domain2);
+                                tinf.set_value_touch(true, pos1, Situation::Unknown, is_opposite);
+                                tsup.set_value_touch(true, pos2, Situation::Unknown, is_opposite);
+
+                                let p2 = IntersectionPoint::new(
+                                    elclib2d::line_value(l1.origin, l1.direction, param_end),
+                                    param_end,
+                                    param_end2,
+                                    tinf,
+                                    tsup,
+                                    false,
+                                );
+                                let seg = IntersectionSegment::with_points(&p1, &p2, is_opposite, false);
+                                self.base.append_segment(&seg);
+                            } else {
+                                //~~~~ le segment est de longueur inferieure a Tol
+                                self.base.append_point(&p1);
+                            }
+                        } //-- if( ParamEnd >= ...)
+                    } else {
+                        //~~~ Creation de la demi droite   |----------->
+                        let mut pos1 = find_position_ll(&mut param_start, domain1);
+                        let mut pos2 = find_position_ll(&mut param_start2, domain2);
+                        tinf.set_value_touch(true, pos1, Situation::Unknown, is_opposite);
+                        tsup.set_value_touch(true, pos2, Situation::Unknown, is_opposite);
+
+                        let p = IntersectionPoint::new(
+                            elclib2d::line_value(l1.origin, l1.direction, param_start),
+                            param_start,
+                            param_start2,
+                            tinf,
+                            tsup,
+                            false,
+                        );
+                        let seg = IntersectionSegment::with_one_point(&p, true, is_opposite, false);
+                        self.base.append_segment(&seg);
+                        let _ = (&mut pos1, &mut pos2);
+                    }
+                } else {
+                    let mut pos1 = find_position_ll(&mut param_end, domain1);
+                    let mut pos2 = find_position_ll(&mut param_end2, domain2);
+                    tinf.set_value_touch(true, pos1, Situation::Unknown, is_opposite);
+                    tsup.set_value_touch(true, pos2, Situation::Unknown, is_opposite);
+
+                    let p2 = IntersectionPoint::new(
+                        elclib2d::line_value(l1.origin, l1.direction, param_end),
+                        param_end,
+                        param_end2,
+                        tinf,
+                        tsup,
+                        false,
+                    );
+                    let seg = IntersectionSegment::with_one_point(&p2, false, is_opposite, false);
+                    self.base.append_segment(&seg);
+                    let _ = (&mut pos1, &mut pos2);
+                    //~~~ Creation de la demi droite   <-----------|
+                }
+            }
+        }
     }
 
     /// OCCT Perform(const gp_Lin2d& L, const gp_Circ2d& C)
@@ -643,4 +1427,342 @@ impl Default for IntConicConic {
     fn default() -> Self {
         IntConicConic::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// The file-static helpers of IntCurve_IntConicConic_1.cxx
+// ---------------------------------------------------------------------------
+
+/// OCCT DomainIntersection (_1.cxx L641-727).
+#[allow(clippy::too_many_arguments)]
+fn domain_intersection(
+    domain: &Res2dDomain,
+    u1inf: f64,
+    u1sup: f64,
+    res1inf: &mut f64,
+    res1sup: &mut f64,
+    pos_inf: &mut Position,
+    pos_sup: &mut Position,
+) {
+    if domain.has_first_point() {
+        if u1sup < (domain.first_parameter() - domain.first_tolerance()) {
+            *res1inf = 1.0;
+            *res1sup = -1.0;
+            return;
+        }
+        if u1inf > (domain.first_parameter() + domain.first_tolerance()) {
+            *res1inf = u1inf;
+            *pos_inf = Position::Middle;
+        } else {
+            *res1inf = domain.first_parameter();
+            *pos_inf = Position::Head;
+        }
+    } else {
+        *res1inf = u1inf;
+        *pos_inf = Position::Middle;
+    }
+
+    if domain.has_last_point() {
+        if u1inf > (domain.last_parameter() + domain.last_tolerance()) {
+            *res1inf = 1.0;
+            *res1sup = -1.0;
+            return;
+        }
+        if u1sup < (domain.last_parameter() - domain.last_tolerance()) {
+            *res1sup = u1sup;
+            *pos_sup = Position::Middle;
+        } else {
+            *res1sup = domain.last_parameter();
+            *pos_sup = Position::End;
+        }
+    } else {
+        *res1sup = u1sup;
+        *pos_sup = Position::Middle;
+    }
+    //-- Si un des points est en bout ,
+    //-- on s assure que les parametres sont corrects
+    if *res1inf > *res1sup {
+        if *pos_sup == Position::Middle {
+            *res1sup = *res1inf;
+        } else {
+            *res1inf = *res1sup;
+        }
+    }
+    //--- Traitement des cas ou une intersection vraie est dans la tolerance
+    //--  d un des bouts (the OCCT commented-out block).
+}
+
+/// OCCT LineLineGeometricIntersection (_1.cxx L730-775).
+fn line_line_geometric_intersection(
+    l1: &Line2d,
+    l2: &Line2d,
+    tol: f64,
+    u1: &mut f64,
+    u2: &mut f64,
+    sin_demi_angle: &mut f64,
+    nbsol: &mut i32,
+) {
+    let u1x = l1.direction.x;
+    let u1y = l1.direction.y;
+    let u2x = l2.direction.x;
+    let u2y = l2.direction.y;
+    let uo21x = l2.origin.x - l1.origin.x;
+    let uo21y = l2.origin.y - l1.origin.y;
+
+    let mut d = u1y * u2x - u1x * u2y;
+
+    // modified by NIZHNY-MKK  Tue Feb 15 10:54:04 2000.BEGIN
+    //    if(std::abs(D)<1e-15) { //-- Droites //
+    if d.abs() < TOLERANCE_ANGULAIRE {
+        // modified by NIZHNY-MKK  Tue Feb 15 10:54:11 2000.END
+        d = u1y * uo21x - u1x * uo21y;
+        *nbsol = if d.abs() <= tol { 2 } else { 0 };
+    } else {
+        *u1 = (uo21y * u2x - uo21x * u2y) / d;
+        *u2 = (uo21y * u1x - uo21x * u1y) / d;
+        //------------------- Calcul du Sin du demi angle  entre L1 et L2
+        //----
+        if d < 0.0 {
+            d = -d;
+        }
+        if d > 1.0 {
+            d = 1.0; //-- Deja vu !
+        }
+        *sin_demi_angle = (0.5 * d.asin()).sin();
+        *nbsol = 1;
+    }
+}
+
+/// OCCT FindPositionLL (_1.cxx L1209-1237).
+fn find_position_ll(param: &mut f64, domain: &Res2dDomain) -> Position {
+    let mut a_dpar = rcad_kernel::precision::INFINITE_VALUE;
+    let mut a_pos = Position::Middle;
+    let mut a_res_par = *param;
+    if domain.has_first_point() {
+        a_dpar = (*param - domain.first_parameter()).abs();
+        if a_dpar <= domain.first_tolerance() {
+            a_res_par = domain.first_parameter();
+            a_pos = Position::Head;
+        }
+    }
+    if domain.has_last_point() {
+        let a_d2 = (*param - domain.last_parameter()).abs();
+        if a_d2 <= domain.last_tolerance() && (a_pos == Position::Middle || a_d2 < a_dpar) {
+            a_res_par = domain.last_parameter();
+            a_pos = Position::End;
+        }
+    }
+    *param = a_res_par;
+    a_pos
+}
+
+/// OCCT getDomainParametrs (_1.cxx L1240-1252) — gka 0022833.
+fn get_domain_parameters(
+    the_domain: &Res2dDomain,
+    the_first: &mut f64,
+    the_last: &mut f64,
+    the_tol1: &mut f64,
+    the_tol2: &mut f64,
+) {
+    *the_first = if the_domain.has_first_point() {
+        the_domain.first_parameter()
+    } else {
+        -rcad_kernel::precision::INFINITE_VALUE
+    };
+    *the_last = if the_domain.has_last_point() {
+        the_domain.last_parameter()
+    } else {
+        rcad_kernel::precision::INFINITE_VALUE
+    };
+    *the_tol1 = if the_domain.has_first_point() {
+        the_domain.first_tolerance()
+    } else {
+        0.0
+    };
+    *the_tol2 = if the_domain.has_last_point() {
+        the_domain.last_tolerance()
+    } else {
+        0.0
+    };
+}
+
+/// OCCT computeIntPoint (_1.cxx L1254-1356) — the intersection point for the
+/// case when the specified domain is less than the intersection tolerance
+/// (gka 0022833).
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
+fn compute_int_point(
+    the_cur_domain: &Res2dDomain,
+    the_domain_other: &Res2dDomain,
+    the_cur_lin: &Line2d,
+    the_other_lin: &Line2d,
+    the_cos_t1_t2: f64,
+    the_par_cur: f64,
+    the_par_other: f64,
+    the_res_inf: &mut f64,
+    the_res_sup: &mut f64,
+    the_num: i32,
+    the_cur_trans: TypeTrans,
+    the_new_point: &mut IntersectionPoint,
+) -> bool {
+    if (*the_res_sup - the_par_cur).abs() > (*the_res_inf - the_par_cur).abs() {
+        *the_res_sup = *the_res_inf;
+    }
+
+    let a_res2 = the_par_other + (*the_res_sup - the_par_cur) * the_cos_t1_t2;
+
+    let mut a_first2 = 0.0;
+    let mut a_last2 = 0.0;
+    let mut a_tol21 = 0.0;
+    let mut a_tol22 = 0.0;
+    let mut a_tol11 = 0.0;
+    let mut a_tol12 = 0.0;
+
+    get_domain_parameters(
+        the_domain_other,
+        &mut a_first2,
+        &mut a_last2,
+        &mut a_tol21,
+        &mut a_tol22,
+    );
+
+    if a_res2 < a_first2 - a_tol21 || a_res2 > a_last2 + a_tol22 {
+        return false;
+    }
+
+    //------ compute parameters of intersection point --
+    let mut a_t1 = Transition::empty();
+    let mut a_t2 = Transition::empty();
+    let mut res_sup = *the_res_sup;
+    let a_pos1a = find_position_ll(&mut res_sup, the_cur_domain);
+    *the_res_sup = res_sup;
+    let mut a_res2m = a_res2;
+    let a_pos2a = find_position_ll(&mut a_res2m, the_domain_other);
+    let an_other_trans = if the_cur_trans == TypeTrans::Out {
+        TypeTrans::In
+    } else if the_cur_trans == TypeTrans::In {
+        TypeTrans::Out
+    } else {
+        TypeTrans::Undecided
+    };
+
+    if the_cur_trans != TypeTrans::Undecided {
+        a_t1.set_value_in_out(false, a_pos1a, the_cur_trans);
+        a_t2.set_value_in_out(false, a_pos2a, an_other_trans);
+    } else {
+        let an_opposite = the_cos_t1_t2 < 0.0;
+        a_t1.set_value_touch(false, a_pos1a, Situation::Unknown, an_opposite);
+        a_t2.set_value_touch(false, a_pos2a, Situation::Unknown, an_opposite);
+    }
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    //--------------------------------------------------
+    // gka bug 0022833
+    let mut a_res_u1 = the_par_cur;
+    let mut a_res_u2 = the_par_other;
+
+    let mut a_first1 = 0.0;
+    let mut a_last1 = 0.0;
+    get_domain_parameters(the_cur_domain, &mut a_first1, &mut a_last1, &mut a_tol11, &mut a_tol12);
+
+    let is_inside1 = the_par_cur >= a_first1 && the_par_cur <= a_last1;
+    let is_inside2 = the_par_other >= a_first2 && the_par_other <= a_last2;
+
+    if !is_inside1 || !is_inside2 {
+        if is_inside1 {
+            let pt1 = elclib2d::line_value(the_other_lin.origin, the_other_lin.direction, a_res2);
+            a_res_u2 = a_res2;
+            let a_par1 = elclib2d::line_parameter(the_cur_lin.origin, the_cur_lin.direction, pt1);
+            a_res_u1 = if a_par1 >= a_first1 && a_par1 <= a_last1 {
+                a_par1
+            } else {
+                *the_res_sup
+            };
+        } else if is_inside2 {
+            let a_pt1 =
+                elclib2d::line_value(the_cur_lin.origin, the_cur_lin.direction, *the_res_sup);
+            a_res_u1 = *the_res_sup;
+            let a_par2 = elclib2d::line_parameter(the_other_lin.origin, the_other_lin.direction, a_pt1);
+            a_res_u2 = if a_par2 >= a_first2 && a_par2 <= a_last2 {
+                a_par2
+            } else {
+                a_res2
+            };
+        } else {
+            // PKVf
+            //  check that parameters are within range on both curves
+            if the_par_cur < a_first1 - a_tol11
+                || the_par_cur > a_last1 + a_tol12
+                || the_par_other < a_first2 - a_tol21
+                || the_par_other > a_last2 + a_tol22
+            {
+                return false;
+            }
+            // PKVt
+            a_res_u1 = *the_res_sup;
+            a_res_u2 = a_res2;
+        }
+    }
+    let a_pres = (elclib2d::line_value(the_cur_lin.origin, the_cur_lin.direction, a_res_u1)
+        + elclib2d::line_value(the_other_lin.origin, the_other_lin.direction, a_res_u2))
+        * 0.5;
+    if the_num == 1 {
+        the_new_point.set_values(a_pres, a_res_u1, a_res_u2, a_t1, a_t2, false);
+    } else {
+        the_new_point.set_values(a_pres, a_res_u2, a_res_u1, a_t2, a_t1, false);
+    }
+    true
+}
+
+/// OCCT CheckLLCoincidence (_1.cxx L1363-1377) — returns true if the input
+/// are trimmed curves and they coincide within tolerance.
+fn check_ll_coincidence(
+    l1: &Line2d,
+    l2: &Line2d,
+    domain1: &Res2dDomain,
+    domain2: &Res2dDomain,
+    the_tol: f64,
+) -> bool {
+    let is_first1 = domain1.has_first_point() && l2.distance(domain1.first_point()) < the_tol;
+    let is_last1 = domain1.has_last_point() && l2.distance(domain1.last_point()) < the_tol;
+    if is_first1 && is_last1 {
+        return true;
+    }
+    let is_first2 = domain2.has_first_point() && l1.distance(domain2.first_point()) < the_tol;
+    let is_last2 = domain2.has_last_point() && l1.distance(domain2.last_point()) < the_tol;
+    is_first2 && is_last2
+}
+
+/// OCCT SegmentToPoint (_1.cxx L2620-2649).
+#[allow(clippy::too_many_arguments)]
+fn segment_to_point(
+    pa: &IntersectionPoint,
+    t1a: &Transition,
+    t2a: &Transition,
+    pb: &IntersectionPoint,
+    t1b: &Transition,
+    t2b: &Transition,
+) -> IntersectionPoint {
+    if (t1b.position_on_curve() == Position::Middle) && (t2b.position_on_curve() == Position::Middle)
+    {
+        return pa.clone();
+    }
+    if (t1a.position_on_curve() == Position::Middle) && (t2a.position_on_curve() == Position::Middle)
+    {
+        return pb.clone();
+    }
+
+    let mut t1 = *t1a;
+    let mut t2 = *t2a;
+    let mut u1 = pa.param_on_first();
+    let mut u2 = pa.param_on_second();
+
+    if t1.position_on_curve() == Position::Middle {
+        t1.set_position(t1b.position_on_curve());
+        u1 = pb.param_on_first();
+    }
+    if t2.position_on_curve() == Position::Middle {
+        t2.set_position(t2b.position_on_curve());
+        u2 = pb.param_on_second();
+    }
+    IntersectionPoint::new(pa.value(), u1, u2, t1, t2, false)
 }
