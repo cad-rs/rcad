@@ -20,7 +20,8 @@
 
 use glam::DVec2;
 use rcad_kernel::base::proj_lib::CurveType;
-use rcad_kernel::geom::{BSplineCurve2, Circle3, Curve3, Ellipse3, Line2d, Line3};
+use rcad_kernel::geom::{BSplineCurve2, Curve2d};
+use rcad_kernel::topo::brep_lib::MakeEdge2d;
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, Shape, TShape};
 
 use crate::hlr::algo::edge_iterator::EdgeIterator;
@@ -677,14 +678,20 @@ impl<'a> HLRToShape<'a> {
 // file (HLRBRep.cxx has no dedicated rcad file; moved wholesale when the
 // coordinator opens one).
 //
-// Kernel gaps (reported; the OCCT BRepLib_MakeEdge2d builder has no rcad
-// counterpart): the 2D support curves are rebuilt on the z = 0 plane image
-// (vertices at the trimmed ends, a 3D curve of the same family, the
-// [p1, p2] range).  The pcurve-on-XY-plane representation of OCCT is not
-// stored (the rcad pcurve map is keyed by an owning face).  The conic /
-// Bezier / BSpline pcurve rebuilds whose 2D poles / knots the rcad Curve
-// adaptor does not expose keep the OCCT case structure and produce the null
-// edge (the BRepLib_MakeEdge2d NotDone branch of the OCCT callers).
+// The edge construction routes through the kernel `brep_lib::MakeEdge2d`
+// (the 1:1 BRepLib_MakeEdge2d translation: vertices at the trimmed ends,
+// the OCCT error arms, the [p1, p2] range; the pcurve-on-BRepLib::Plane
+// representation is carried as the parameterization-preserving plane image
+// of the 2D support — see the kernel module notes).
+//
+// Remaining kernel gaps (reported; in the HLRBRep_Curve adaptor, not in
+// BRepLib_MakeEdge2d): the Hyperbola()/Parabola() accessors of the OCCT
+// HLRBRep_Curve (cxx L463-473) are still default-constructed stubs in the
+// rcad adaptor (curve.rs), and the Geom2d_BezierCurve / Geom2d_BSplineCurve
+// rebuilds of HLRBRep::MakeEdge (cxx L86-158) need the 2D-projected poles /
+// knots accessors the CurveView does not expose.  Those arms keep the OCCT
+// case structure and produce the null edge (the BRepLib_MakeEdge2d NotDone
+// branch of the OCCT callers).
 // ============================================================================
 mod hlr_brep {
     use super::*;
@@ -703,22 +710,36 @@ mod hlr_brep {
         match ec.get_type() {
             // case GeomAbs_Line: Edg = BRepLib_MakeEdge2d(ec.Line(), sta, end);
             CurveType::Line => {
-                edg = make_edge_2d_line(arena, ec.line(), sta, end);
+                let mut mke2d = MakeEdge2d::new(arena);
+                mke2d.init_params(&Curve2d::Line(ec.line()), sta, end);
+                if mke2d.is_done() {
+                    edg = mke2d.edge();
+                }
             }
             // case GeomAbs_Circle: Edg = BRepLib_MakeEdge2d(ec.Circle(), sta, end);
             CurveType::Circle => {
-                edg = make_edge_2d_circle(arena, ec.circle(), sta, end);
+                let mut mke2d = MakeEdge2d::new(arena);
+                mke2d.init_params(&Curve2d::Circle(ec.circle()), sta, end);
+                if mke2d.is_done() {
+                    edg = mke2d.edge();
+                }
             }
             // case GeomAbs_Ellipse: Edg = BRepLib_MakeEdge2d(ec.Ellipse(), sta, end);
             CurveType::Ellipse => {
-                edg = make_edge_2d_ellipse(arena, ec.ellipse(), sta, end);
+                let mut mke2d = MakeEdge2d::new(arena);
+                mke2d.init_params(&Curve2d::Ellipse(ec.ellipse()), sta, end);
+                if mke2d.is_done() {
+                    edg = mke2d.edge();
+                }
             }
-            // case GeomAbs_Hyperbola / GeomAbs_Parabola — the kernel gap of
-            // the module note; the NotDone branch keeps the null edge.
+            // case GeomAbs_Hyperbola / GeomAbs_Parabola — the HLRBRep_Curve
+            // adaptor stubs (see the module note); the NotDone branch keeps
+            // the null edge.
             CurveType::Hyperbola | CurveType::Parabola => {}
             // case GeomAbs_BezierCurve / GeomAbs_BSplineCurve — the 2D
-            // poles / knots rebuilds of cxx L86-158 have no rcad accessor
-            // (the kernel gap); the NotDone branch keeps the null edge.
+            // poles / knots rebuilds of cxx L86-158 need the CurveView
+            // accessors (the module note); the NotDone branch keeps the null
+            // edge.
             CurveType::Bezier | CurveType::BSpline => {}
             // default: the 15-pole degree-1 approximation (cxx L160-186).
             CurveType::Other => {
@@ -768,7 +789,11 @@ mod hlr_brep {
                 };
                 // BRepLib_MakeEdge2d mke2d(ec2d, sta, end);
                 // if (mke2d.IsDone()) { Edg = mke2d.Edge(); }
-                edg = make_edge_2d_bspline(arena, &ec2d, sta, end);
+                let mut mke2d = MakeEdge2d::new(arena);
+                mke2d.init_params(&Curve2d::BSpline(ec2d), sta, end);
+                if mke2d.is_done() {
+                    edg = mke2d.edge();
+                }
             }
         }
         // return Edg;
@@ -787,133 +812,6 @@ mod hlr_brep {
     pub(super) fn make_edge_3d(_arena: &mut BRep, _ec: &Curve, _u1: f64, _u2: f64) -> Shape {
         // TopoDS_Edge Edg; ... return Edg;
         Shape::null()
-    }
-
-    /// The rcad BRepLib_MakeEdge2d stand-in over a line support (the
-    /// kernel-gap note of the module header): the trimmed ends become the
-    /// vertices, the z = 0 image is the 3D curve, [p1, p2] the range.
-    fn make_edge_2d_line(arena: &mut BRep, l: Line2d, p1: f64, p2: f64) -> Shape {
-        let a = glam::DVec3::new(
-            l.origin.x + l.direction.x * p1,
-            l.origin.y + l.direction.y * p1,
-            0.0,
-        );
-        let b3 = glam::DVec3::new(
-            l.origin.x + l.direction.x * p2,
-            l.origin.y + l.direction.y * p2,
-            0.0,
-        );
-        let v1 = arena.add_tvertex(a);
-        let v2 = arena.add_tvertex(b3);
-        let dir = glam::DVec3::new(l.direction.x, l.direction.y, 0.0);
-        arena.add_tedge(
-            Some(Curve3::Line(Line3 {
-                origin: a,
-                direction: dir.normalize_or_zero(),
-            })),
-            v1,
-            v2,
-            [p1, p2],
-        )
-    }
-
-    /// The rcad BRepLib_MakeEdge2d stand-in over a circle support.
-    fn make_edge_2d_circle(
-        arena: &mut BRep,
-        c: rcad_kernel::geom::Circle2d,
-        p1: f64,
-        p2: f64,
-    ) -> Shape {
-        let pt = |u: f64| {
-            glam::DVec3::new(
-                c.center.x + c.radius * (c.x_dir.x * u.cos() + c.y_dir.x * u.sin()),
-                c.center.y + c.radius * (c.x_dir.y * u.cos() + c.y_dir.y * u.sin()),
-                0.0,
-            )
-        };
-        let v1 = arena.add_tvertex(pt(p1));
-        let v2 = arena.add_tvertex(pt(p2));
-        arena.add_tedge(
-            Some(Curve3::Circle(Circle3 {
-                center: glam::DVec3::new(c.center.x, c.center.y, 0.0),
-                normal: glam::DVec3::Z,
-                x_dir: glam::DVec3::new(c.x_dir.x, c.x_dir.y, 0.0),
-                y_dir: glam::DVec3::new(c.y_dir.x, c.y_dir.y, 0.0),
-                radius: c.radius,
-            })),
-            v1,
-            v2,
-            [p1, p2],
-        )
-    }
-
-    /// The rcad BRepLib_MakeEdge2d stand-in over an ellipse support
-    /// (gp_Elips2d parameterization: center + major*u_dir*cos + minor*v_dir*sin).
-    fn make_edge_2d_ellipse(
-        arena: &mut BRep,
-        e: rcad_kernel::geom::Ellipse2d,
-        p1: f64,
-        p2: f64,
-    ) -> Shape {
-        let pt = |u: f64| {
-            glam::DVec3::new(
-                e.center.x
-                    + e.major_radius * e.major_dir.x * u.cos()
-                    + e.minor_radius * -e.major_dir.y * u.sin(),
-                e.center.y
-                    + e.major_radius * e.major_dir.y * u.cos()
-                    + e.minor_radius * e.major_dir.x * u.sin(),
-                0.0,
-            )
-        };
-        let v1 = arena.add_tvertex(pt(p1));
-        let v2 = arena.add_tvertex(pt(p2));
-        arena.add_tedge(
-            Some(Curve3::Ellipse(Ellipse3 {
-                center: glam::DVec3::new(e.center.x, e.center.y, 0.0),
-                normal: glam::DVec3::Z,
-                major_dir: glam::DVec3::new(e.major_dir.x, e.major_dir.y, 0.0),
-                major_radius: e.major_radius,
-                minor_radius: e.minor_radius,
-            })),
-            v1,
-            v2,
-            [p1, p2],
-        )
-    }
-
-    /// The degree-1 evaluation of the rcad BSplineCurve2 (flat knot vector,
-    /// weights 1) — the local stand-in for the Geom2d_BSplineCurve::Value of
-    /// BRepLib_MakeEdge2d (no public evaluator on the kernel type).
-    fn bspline1_value(c: &BSplineCurve2, t: f64) -> DVec2 {
-        let n = c.control_points.len();
-        let k = &c.knots;
-        // the parameter domain [k[degree], k[nb_poles]]
-        let t = t.clamp(k[1], k[n]);
-        // the knot span: the largest i with k[i] <= t (i in 1..n)
-        let mut i = 1usize;
-        while i + 1 <= n && k[i + 1] <= t {
-            i += 1;
-        }
-        // the degree-1 lerp between poles i-1 and i over [k[i], k[i+1]]
-        let span = k[i + 1] - k[i];
-        if span <= 0.0 {
-            return c.control_points[i - 1];
-        }
-        let a = (t - k[i]) / span;
-        c.control_points[i - 1] * (1.0 - a) + c.control_points[i] * a
-    }
-
-    /// The rcad BRepLib_MakeEdge2d stand-in over the degree-1 approximation
-    /// BSpline of the OCCT default case: the ends are sampled as the
-    /// vertices and the range [p1, p2] is kept (the curve-less edge form of
-    /// the kernel gap).
-    fn make_edge_2d_bspline(arena: &mut BRep, c: &BSplineCurve2, p1: f64, p2: f64) -> Shape {
-        let a = bspline1_value(c, p1);
-        let b3 = bspline1_value(c, p2);
-        let v1 = arena.add_tvertex(glam::DVec3::new(a.x, a.y, 0.0));
-        let v2 = arena.add_tvertex(glam::DVec3::new(b3.x, b3.y, 0.0));
-        arena.add_tedge(None, v1, v2, [p1, p2])
     }
 }
 

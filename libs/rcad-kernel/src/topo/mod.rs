@@ -4,3 +4,4 @@ pub mod topods;
 pub mod topo_query;
 pub mod topo_simplify;
 pub mod brep_graph;
+pub mod brep_lib;

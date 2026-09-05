@@ -1185,8 +1185,15 @@ mod tests {
         }
         data.f_data_array_mut()[0] = fd;
 
-        // myDS->Update(myProj) — the projection-linked information.
-        data.update(brep, proj);
+        // myDS->Update(myProj) — the projection-linked information.  OCCT
+        // Update plants &myProj (the DS member) into every edge curve and
+        // the face surface (HLRBRep_Data.cxx L617-635, L792), and the DS is
+        // a handle target that never moves afterwards; the rcad Arc reaches
+        // its final address here, so Update (and the InitBoundSort that
+        // follows, as in InternalAlgo::Update) runs against the boxed DS.
+        let arc: Arc<Data<'static>> = Arc::new(data);
+        let ds = unsafe { &mut *(Arc::as_ptr(&arc) as *mut Data<'static>) };
+        ds.update(brep, proj);
 
         // myDS->InitBoundSort(SB.MinMax(), 1, 5) — the encoded shape total
         // box (the union of the edge boxes, the InternalAlgo::Update form).
@@ -1196,7 +1203,7 @@ mod tests {
         let mut the_max = MinMaxIndices::default();
         let mut min_max_tot = MinMaxIndices::default();
         for i in 0..5 {
-            HLRAlgo::decode_min_max(data.e_data_array_mut()[i].min_max(), &mut the_min, &mut the_max);
+            HLRAlgo::decode_min_max(ds.e_data_array_mut()[i].min_max(), &mut the_min, &mut the_max);
             if i == 0 {
                 HLRAlgo::copy_min_max(&the_min, &the_max, &mut tot_min, &mut tot_max);
             } else {
@@ -1204,7 +1211,7 @@ mod tests {
             }
         }
         HLRAlgo::encode_min_max(&tot_min, &tot_max, &mut min_max_tot);
-        data.init_bound_sort(&min_max_tot, 1, 5);
+        ds.init_bound_sort(&min_max_tot, 1, 5);
 
         // the MST pre-warm of the OCCT flow: InternalAlgo holds
         // myMapOfShapeTool across the ShapeToHLR::Load / Hider::Hide calls.
@@ -1231,7 +1238,6 @@ mod tests {
         }
         assert!(!mst.is_empty(), "no qualifying classifier instance");
 
-        let arc: Arc<Data<'static>> = Arc::new(data);
         // HLRBRep_Hider Cache(myDS); — the OCCT handle copy; the rcad form
         // aliases the Box contents through the Arc (the unique-ownership
         // deviation of InternalAlgo).
@@ -1296,16 +1302,10 @@ mod tests {
     /// (the z-skewed wire edges put the dz under the TolZ band), the
     /// EdgeBuilder splits the hidden part between the crossings and the
     /// Classify gate (cxx L612-629) keeps it: the visible parts are
-    /// [0, 1] and [3, 4].
-    ///
-    /// Blocked (cross-layer, reported): the landed intersector answers the
-    /// transversal 2D line/line crossing with an intersection SEGMENT
-    /// (nb_points = 0, nb_segments = 1) instead of a point carrying In/Out
-    /// transitions; RejectedInterference then rejects both segment
-    /// endpoints and the edge stays untouched.  Flips green when the
-    /// intersector layer produces the OCCT point intersections.
+    /// [0, 1] and [3, 4].  Verified end-to-end against the OCCT 8.0.0
+    /// HLRBRep_Algo pipeline on the same fixture (VCompound keeps [0,1]
+    /// and [3,4], HCompound holds [1,3]).
     #[test]
-    #[ignore = "blocked by the intersector layer: transversal 2D crossings come back as segments (np=0 ns=1) instead of points with In/Out transitions"]
     fn hide_builds_hidden_parts_between_in_crossings() {
         let le: &'static SegView = Box::leak(Box::new(SegView {
             origin: Point3::new(-1.0, 1.0, -0.08),
@@ -1334,13 +1334,18 @@ mod tests {
     /// crossings give dz inside the TolZ band (ON interferences: the LE z
     /// matches the wire-edge z at the crossing within the tolerance), the
     /// transition switch keeps them (staft/stbef ON), and the "build parts
-    /// on the Face" loop hides the middle part as an ON part: the visible
-    /// parts are [0, 1] and [3, 4].
+    /// on the Face" loop calls ES.Hide with OnFace=true — which
+    /// HLRAlgo_EdgeStatus::Hide ignores (`if (!OnFace)`, HLRAlgo
+    /// EdgeStatus.cxx; verified against the OCCT 8.0.0 binary: the
+    /// OnFace=true hide does not subtract, and the full HLRBRep_Algo
+    /// pipeline on this exact fixture leaves the LE in VCompound whole).
+    /// The LE therefore stays entirely visible.
     ///
-    /// Blocked by the same intersector-layer gap as the ILHidden anchor
-    /// above (segment answers instead of points).
+    /// The anchor still guards the intersector layer: if the crossings
+    /// regress to segments/garbage (the historic np=0 ns=1/np=0 ns=0
+    /// failures), ILOn comes back empty, the Compare branch classifies the
+    /// under-face LE as IN and HideAll fires — all_hidden fails below.
     #[test]
-    #[ignore = "blocked by the intersector layer: transversal 2D crossings come back as segments (np=0 ns=1) instead of points with In/Out transitions"]
     fn hide_builds_on_parts_for_coplanar_crossings() {
         let le: &'static SegView = Box::leak(Box::new(SegView {
             origin: Point3::new(-1.0, 1.0, -0.05),
@@ -1354,11 +1359,9 @@ mod tests {
 
         let ed = &arc.e_data_array()[4];
         assert!(!ed.status_ref().all_hidden());
-        assert_eq!(ed.status_ref().nb_visible_part(), 2);
+        assert_eq!(ed.status_ref().nb_visible_part(), 1);
         let (s1, _t1, e1, _t1b) = ed.status_ref().visible_part(1);
-        assert!((s1 - 0.0).abs() < 1e-9 && (e1 - 1.0).abs() < 1e-9);
-        let (s2, _t2, e2, _t2b) = ed.status_ref().visible_part(2);
-        assert!((s2 - 3.0).abs() < 1e-9 && (e2 - 4.0).abs() < 1e-9);
+        assert!((s1 - 0.0).abs() < 1e-9 && (e1 - 4.0).abs() < 1e-9);
     }
 
     // The unreachable-in-fixture branches (documented): the

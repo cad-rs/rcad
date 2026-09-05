@@ -104,6 +104,60 @@ fn polygon_properties(pts: &[DVec2]) -> (f64, f64) {
     (the_area, the_perimeter)
 }
 
+/// OCCT NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>
+/// (BRepTools_WireExplorer.cxx L224) keyed by the vertex `(ptr_id, location)`:
+/// insertion-ordered entries plus a key position index for the Add /
+/// RemoveKey operations. The IndexedMap iterates in insertion order — a
+/// HashMap iteration would make the wire-walk start vertex (Init L315-323)
+/// depend on the per-instance hash seed.
+#[derive(Default)]
+struct IndexedVertexMap {
+    entries: Vec<((u64, u32), Orientation)>,
+    pos: std::collections::HashMap<(u64, u32), usize>,
+}
+
+impl IndexedVertexMap {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// OCCT vmap.Extent().
+    fn extent(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// OCCT vmap(ind) — 1-based in OCCT, 0-based here.
+    fn at(&self, ind: usize) -> ((u64, u32), Orientation) {
+        self.entries[ind]
+    }
+
+    /// OCCT Init L253-258 / L263-268: `currsize = vmap.Extent();
+    /// ind = vmap.Add(V); if (currsize >= ind) vmap.RemoveKey(V);`.
+    /// Add is a no-op for an existing key (the stored value is kept), so the
+    /// composed operation is a toggle: present -> RemoveKey; absent -> append
+    /// with the given orientation.
+    fn toggle_add(&mut self, key: (u64, u32), ori: Orientation) {
+        match self.pos.remove(&key) {
+            Some(p) => {
+                self.entries.remove(p);
+                for q in self.pos.values_mut() {
+                    if *q > p {
+                        *q -= 1;
+                    }
+                }
+            }
+            None => {
+                self.pos.insert(key, self.entries.len());
+                self.entries.push((key, ori));
+            }
+        }
+    }
+}
+
 /// OCCT BRepTools_WireExplorer (BRepTools_WireExplorer.cxx L121-705) — 1:1
 /// translation: reorder a wire's edges into a continuous loop.
 ///
@@ -136,7 +190,10 @@ pub(crate) fn order_wire_edges(
     // OCCT WireExplorer::Init L232-292: myMap (V1 only), vmap (degree
     // parity), the per-edge traversal endpoints, and the infinite edges.
     let mut my_map: HashMap<(u64, u32), Vec<usize>> = HashMap::new();
-    let mut vmap: HashMap<(u64, u32), Orientation> = HashMap::new();
+    // OCCT L224: NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>
+    // vmap — the insertion-order vertex parity map for the open-wire start
+    // vertex.
+    let mut vmap = IndexedVertexMap::new();
     let mut edge_v1: Vec<(u64, u32)> = Vec::with_capacity(n);
     let mut edge_v2: Vec<(u64, u32)> = Vec::with_capacity(n);
     let mut kept: Vec<usize> = Vec::with_capacity(n);
@@ -150,15 +207,11 @@ pub(crate) fn order_wire_edges(
         kept.push(i);
         edge_v1.push(v1);
         edge_v2.push(v2);
-        // OCCT L244-259: myMap(V1).Append(E); vmap toggle V1 FORWARD.
+        // OCCT L253-258: myMap(V1).Append(E); vmap toggle V1 FORWARD.
         my_map.entry(v1).or_default().push(key);
-        if vmap.insert(v1, Orientation::Forward).is_some() {
-            vmap.remove(&v1);
-        }
+        vmap.toggle_add(v1, Orientation::Forward);
         // OCCT L261-269: vmap toggle V2 REVERSED.
-        if vmap.insert(v2, Orientation::Reversed).is_some() {
-            vmap.remove(&v2);
-        }
+        vmap.toggle_add(v2, Orientation::Reversed);
         // OCCT L271-290: infinite edge (V1 or V2 null).
         if v1.0 == 0 || v2.0 == 0 {
             an_inf_emap.push(key);
@@ -178,13 +231,15 @@ pub(crate) fn order_wire_edges(
         }
     }
 
-    // OCCT L306-366: the start vertex.
+    // OCCT L306-324: the start vertex.
     let mut start_v: Option<(u64, u32)> = None;
     if !vmap.is_empty() {
-        // Open wire: the FORWARD-parity vertex (L316-323).
-        for (v, o) in &vmap {
-            if *o == Orientation::Forward {
-                start_v = Some(*v);
+        // Open wire: the FORWARD-parity vertex (L315-323) — the IndexedMap
+        // iteration walks the entries in insertion order.
+        for ind in 0..vmap.extent() {
+            let (v, o) = vmap.at(ind);
+            if o == Orientation::Forward {
+                start_v = Some(v);
                 break;
             }
         }
@@ -1728,6 +1783,190 @@ impl FClass2d {
             a_u_res
         } else {
             a_v_res
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::order_wire_edges;
+    use crate::topalgo::brep_top_adaptor::fclass2d_topol::FClass2dTopol;
+    use crate::topalgo::shape_source::{FaceShapeSource, ShapeSource};
+    use glam::{DVec2, DVec3};
+    use rcad_kernel::geom::{Curve2d, Curve3, Line2d, Line3, Plane, Surface3};
+    use rcad_kernel::topods::{BRep, BRepBuilder, BRepTool, Orientation, Shape, State, TShape};
+    use std::sync::Arc;
+
+    /// Build the plane z = 0 face whose outer wire holds the given edge
+    /// chain points (line edges, pcurves identical to the XY coordinates —
+    /// the same construction as the topol_tool_brep square fixture).
+    fn plane_face(pts: &[DVec3], edge_pairs: &[(usize, usize)]) -> (BRep, Shape) {
+        let mut brep = BRep::new();
+        let mut b = BRepBuilder::new();
+        let vs: Vec<Shape> = pts.iter().map(|p| b.add_vertex(&mut brep, *p, 1e-7)).collect();
+        let mut edges = Vec::new();
+        for &(i, j) in edge_pairs {
+            let a = pts[i];
+            let c = pts[j];
+            let curve = Curve3::Line(Line3 {
+                origin: a,
+                direction: (c - a).normalize(),
+            });
+            let range = [0.0, (c - a).length()];
+            // OCCT BRep_Builder::Add(E, V): the start vertex FORWARD, the end
+            // vertex REVERSED.
+            let v_first = vs[i].clone();
+            let mut v_last = vs[j].clone();
+            v_last.orientation = Orientation::Reversed;
+            edges.push(b.add_edge(&mut brep, Some(curve), v_first, v_last, range));
+        }
+        let wire = brep.add_twire(edges.clone());
+        let face = brep.add_tface(
+            Some(Surface3::Plane(Plane {
+                origin: DVec3::ZERO,
+                normal: DVec3::Z,
+                u_dir: DVec3::X,
+                v_dir: DVec3::Y,
+            })),
+            wire,
+            Vec::new(),
+            Some(DVec3::new(0.5, 0.5, 0.0)),
+            Some([0.0, 4.0, 0.0, 2.0]),
+            Vec::new(),
+            true,
+        );
+        for (k, &(i, j)) in edge_pairs.iter().enumerate() {
+            let (a2, b2) = (
+                DVec2::new(pts[i].x, pts[i].y),
+                DVec2::new(pts[j].x, pts[j].y),
+            );
+            let len = (b2 - a2).length();
+            let pc = Curve2d::Line(Line2d {
+                origin: a2,
+                direction: (b2 - a2) / len,
+            });
+            b.add_pcurve(&mut brep, edges[k].clone(), face.clone(), pc, 0.0, len);
+        }
+        (brep, face)
+    }
+
+    /// The FaceShapeSource view of a kernel face (index 0 = face, the wire
+    /// edges follow) with the DS location convention (slot 0 = identity).
+    fn face_source<'a>(brep: &'a BRep, face: &'a Shape) -> (Vec<glam::DAffine3>, FaceShapeSource<'a>) {
+        let surf = brep.face_surface_world(face).unwrap();
+        let locations_ds: Vec<glam::DAffine3> = std::iter::once(glam::DAffine3::IDENTITY)
+            .chain(brep.locations.iter().copied())
+            .collect();
+        let source = FaceShapeSource::new(face, surf, &locations_ds);
+        (locations_ds, source)
+    }
+
+    /// A wire with two disjoint open chains: (0,0)-(1,0)-(1,1) and
+    /// (2,0)-(3,0)-(3,1). The Init vmap (BRepTools_WireExplorer.cxx L224,
+    /// NCollection_IndexedMap) keeps two FORWARD-parity vertices — (0,0)
+    /// inserted first, (2,0) third.
+    fn multi_chain_face() -> (BRep, Shape) {
+        let pts = [
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(2.0, 0.0, 0.0),
+            DVec3::new(3.0, 0.0, 0.0),
+            DVec3::new(3.0, 1.0, 0.0),
+        ];
+        let pairs = [(0, 1), (1, 2), (3, 4), (4, 5)];
+        plane_face(&pts, &pairs)
+    }
+
+    /// OCCT anchor (BRepTools_WireExplorer.cxx L315-323): the walk over an
+    /// open wire starts at the first FORWARD-parity vertex of the vmap in
+    /// IndexedMap insertion order — here (0,0), the start of chain one. The
+    /// pre-fix code iterated a HashMap, whose per-instance order made the
+    /// walk (and the classification) depend on the hash seed.
+    #[test]
+    fn wire_walk_starts_at_first_forward_vertex_in_insertion_order() {
+        let (brep, face) = multi_chain_face();
+        let (_locations, source) = face_source(&brep, &face);
+        let raw_edges: Vec<(usize, Orientation)> = match &*face.data {
+            TShape::Face(fd) => match &*fd.outer_wire.data {
+                TShape::Wire(wd) => wd
+                    .edges
+                    .iter()
+                    .map(|e| {
+                        (
+                            source.map_shape_index(e.ptr_id(), e.location).unwrap(),
+                            e.orientation,
+                        )
+                    })
+                    .collect(),
+                _ => panic!("not a wire"),
+            },
+            _ => panic!("not a face"),
+        };
+
+        // The walk covers chain one only (it stops at the chain end); the
+        // result repeats the input pairs.
+        let expected = vec![raw_edges[0], raw_edges[1]];
+        for _ in 0..3 {
+            assert_eq!(order_wire_edges(&source, 0, &raw_edges), expected);
+        }
+    }
+
+    /// Determinism anchor: three classifier instances over the same DS give
+    /// identical classifications (the empirical In/Out flip of the
+    /// seed-sensitive wire walk).
+    #[test]
+    fn fclass2d_topol_instances_agree_on_same_ds() {
+        let (brep, face) = multi_chain_face();
+        let brep = Arc::new(brep);
+        let probes = [
+            DVec2::new(0.5, 0.5),
+            DVec2::new(2.5, 0.5),
+            DVec2::new(5.0, 5.0),
+            DVec2::new(0.5, 0.0),
+        ];
+        let mut reference: Option<Vec<State>> = None;
+        for _ in 0..3 {
+            let f = FClass2dTopol::new(brep.clone(), &face, 1e-6);
+            let states: Vec<State> = probes.iter().map(|p| f.perform(*p, true)).collect();
+            match &reference {
+                None => reference = Some(states),
+                Some(r) => assert_eq!(states, *r),
+            }
+        }
+    }
+
+    /// Determinism anchor on a closed square: every instance classifies
+    /// identically and the center is IN (the hider fixture kept a
+    /// pre-verified classifier instance because the first one used to be
+    /// seed-sensitive).
+    #[test]
+    fn fclass2d_topol_instances_agree_on_closed_square() {
+        let pts = [
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
+        ];
+        let pairs = [(0, 1), (1, 2), (2, 3), (3, 0)];
+        let (brep, face) = plane_face(&pts, &pairs);
+        let brep = Arc::new(brep);
+        let mut reference: Option<Vec<State>> = None;
+        for _ in 0..3 {
+            let f = FClass2dTopol::new(brep.clone(), &face, 1e-6);
+            let states = vec![
+                f.perform(DVec2::new(0.5, 0.5), true),
+                f.perform(DVec2::new(2.0, 2.0), true),
+                f.perform_infinite_point(),
+            ];
+            match &reference {
+                None => {
+                    assert_eq!(states[0], State::In);
+                    assert_eq!(states[1], State::Out);
+                    reference = Some(states);
+                }
+                Some(r) => assert_eq!(states, *r),
+            }
         }
     }
 }
