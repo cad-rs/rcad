@@ -1,16 +1,23 @@
 # TKHLR 1:1 翻译推进计划（多 session runway）
 
-> **交接快照（2026-09-05 session 5 结束时）**
-> - 提交链（rcad 子模块分支 `sd-hash-wip`）：`7011f938` 计划落盘 → Stage 0/1 → 2a 全关 → `dc9cf575` 2b Contap 全包 → `55549b30`+`ccde4456`+`8eb52a47` 3a → `e226a8f9`+`d92659f9`+`4833acd8` 3b SLProps/InterCSurf → `fe89ac91` **3b ContapDomain for BRepTopAdaptor_TopolTool** → `729f0366` **IntCurveCurveGen 泛型化** → `2f9b2d3e` **3b CInter 实例化 + Intersector（3b 全关）**。
-> - 回归基线（全部全绿）：algo lib **192**、kernel lib **648**、tkhelix_gtests 16/16、**pavefiller_stage_tests 26/26、builder_stage_tests 76/76 + builder_stage_smoke 1/1（builder 分阶段）**、tkgeom_algo_gtests 134+1、tkbo_gtests 40/40。
-> - **本 session（session 5）完成清单（3b 剩余三项全关）**：
+> **交接快照（2026-09-05 session 6 结束时）**
+> - 提交链（rcad 子模块分支 `sd-hash-wip`）：`7011f938` 计划落盘 → Stage 0/1 → 2a 全关 → `dc9cf575` 2b Contap 全包 → 3a → 3b SLProps/InterCSurf → `fe89ac91` **ContapDomain for BRepTopAdaptor_TopolTool** → `729f0366` **IntCurveCurveGen 泛型化** → `2f9b2d3e` **CInter 实例化 + Intersector（3b 全关）** → `2f1ac08e` **IntConicConic::Perform(Lin,Circ) + Tool 区间机制**。
+> - 回归基线（全部全绿）：algo lib **194**、kernel lib **648**、tkhelix_gtests 16/16、**pavefiller_stage_tests 26/26、builder_stage_tests 76/76 + builder_stage_smoke 1/1（builder 分阶段）**、tkgeom_algo_gtests 134+1、tkbo_gtests 40/40。
+> - **session 5 完成清单（3b 剩余三项全关）**：
 >   1. `fe89ac91` **ContapDomain for BRepTopAdaptor_TopolTool**：`Curve2dAdaptor::as_any` = occ::down_cast 支撑（BRepTopolTool::Initialize/Orientation 下行转换限制弧句柄）；`HVertexBehavior` trait + `HVertexHandle` = `handle<Adaptor3d_HVertex>` 的多态句柄（Value/Parameter/Resolution/Orientation/IsSame 全虚，BRepTopAdaptor_HVertex 全覆盖）；BRep 侧四类（BRepCurve2d/BRepHVertex/FClass2dTopol/BRepTopolTool）整体从借用转 **Arc\<BRep\> 所有权**（HLRBRep_Data 所有权设计）；ContapDomain::edge() → Option\<Shape\>（OCCT void* 语义）；锚点 = 经 ContapDomain trait 驱动 BRep 域全迭代。
 >   2. `729f0366` **IntCurveCurveGen 泛型化**：concrete Geom2dInt 绑定 → `IntCurveCurveGen<C, PT: PCurveTool<C>, IC, IPP>` 引擎（+子引擎成员接口 `IntConicCurveMember`/`IntPCurvePCurveMember` + gxx L1023 SetMinNbSamples）；GInter = 类型别名级实例化；**Extrema 定位机制泛型化**（LocatorCurveTool：GCurveLocator/GFuncExtPC/GenLocateExtPC + 共享 FindParameter 体 proj_cur_find_parameter_{bounded,unbounded}，Geom2d 签名零回归）。
 >   3. `2f9b2d3e` **CInter 家族 + Intersector**：`hlr/brep/curve_tool.rs`（HLRBRep_CurveTool 静态工具，PCurveTool/ParTool/LocatorCurveTool 三面）；`c_inter.rs`（TheProjPCurOfCInter/TheIntersectorOfCInter/TheIntConicCurveOfCInter/IntConicCurveOfCInter/CPolyTool+TheIntPCurvePCurveOfCInter/CInter 别名级实例化）；**IntConicConic::Perform(Lin,Lin) 1:1**（_1.cxx L1381-2233 + 7 个文件静态助手 + 文件局部 TOLERANCE_ANGULAIRE=1e-15）；`edge_data.rs`（HLRBRep_EdgeData 位旗标全套）；`intersector.rs`（HLRBRep_Intersector 99/858：双边 decalage 循环/SimulateOnePoint/CS 分支含 polyhedron 参数窗剔除）。锚点 6 个。
-> - **HLR 消费链现状**：`hlr/brep/` 十二件（surface/curve/b_curve_tool/b_surface_tool/cl_props/sl_props/line_tool/surface_tool/inter_csurf/curve_tool/c_inter/edge_data/intersector）；Contap 可经 BRepTopolTool 的 ContapDomain 直接消费真实面域；CInter/Intersector 可对投影边跑 2D 相交、Intersector 可跑线/面 CS。3c 前无缺口（IntConicConic 其余 12 个重载除外，见下）。
-> - **已知遗留（非 3b 验收项）**：IntConicConic 其余 12 个 conic×conic 重载 documented unimplemented（E-E 走 imp-par 先例；HLR 圆/圆弧边对会在 dispatch 时命中——3d/3f 消费前按 E-E 先例评估委托或照 _1.cxx 闭式移植）；Contap quadric-exact 死分支仍待 Adaptor3d_CurveOnSurface（3d）；EdgeData::Set 的 TopoDS→CurveView 桥接在 3f Data 落地。
+> - **session 6 完成清单**：
+>   1. `2f1ac08e` **IntConicConic::Perform(gp_Lin2d, gp_Circ2d) 1:1**（_1.cxx L2236-2652）+ **IntConicConic_Tool 机制**（Tool.hxx/.cxx：Interval/PeriodicInterval 含 FirstIntersection/SecondIntersection/Normalize/Complement、Determine_Transition_LC 的 TOUCH 曲率比较分支、NormalizeOnCircleDomain）+ LineCircleGeometricIntersection（Circle± 带、IsDirect 翻转、KHROMOV 2000 双解拆分）+ ProjectOnLAndIntersectWithLDomain + gp 助手（Coefficients/Angle/CircleD1/D2/LineD1）。CInter 的 Line×Circle 与 Circle×Line 两个 dispatch 臂激活。锚点 2 个（圆心在线上的双穿越退化为 2 点；切线 y=1 单点 TOUCH）。**IntCurveCurveGen dispatch 剩余缺口降为 11 个 conic×conic 重载（Lin×Ells/Circ×Circ/Lin×Prb/Lin×Hypr/Ells×Prb/Ells×Hypr/Prb×Prb/Circ×Prb/Circ×Hypr/Ells×Ells 已走 imp-par 委托、Prb×Hypr/Hypr×Hypr）**——注意 E-E 用的 imp-par 委托先例，其余按 _1.cxx 闭式补。
+> - **Stage 3c 勘察结论（下一 session 直接开工）**：
+>   - BRepApprox_Approx_0.cxx include 的是 **ApproxInt_Approx.gxx**（rcad approx_int.rs 已按 GeomInt WLApprox 实例落地过同款 gxx）→ 3c-2 = approx_int 引擎泛型化 + BRepApprox 工具绑定，先例同 2a 的 int_curve_curve_gen。
+>   - BRepApprox_TheComputeLineOfApprox = **AppDef_BSplineCompute** = **Approx_BSplComputeLine.gxx**（1458 行）实例化 → 3c-1 需先译该 gxx（泛型 over MultiLine/LineTool/LSQ 门面），连带 **AppDef_MyBSplGradientOfBSplineCompute / MyGradientbisOfBSplineCompute**（hxx-only ~136 行各，包 BSpParLeastSquare+BSpParFunction+BSpGradient_BFGS / ParLeastSquare+ParFunction+Gradient_BFGS 链）。
+>   - app_par_curves.rs 已有 LeastSquare（含 new_bsp BSP 构造族）/ResolConstraint/ParFunction/Gradient/GradientBfgs，但 **AppParCurves_BSpParFunction.gxx 未落地**（MyBSplGradient 需要）——3c-1 的一部分。
+>   - 量级：3c-1 ≈ 1458(gxx) + 2×136(hxx) + ~600(BSpParFunction) ≈ 2400 OCCT 行，独占一个 session；3c-2（ApproxInt 泛型化 + BRepApprox_Approx/ApproxLine + SurfaceTool + PrmPrmSvSurfaces/Int2S 函数族）另占一个 session。
+> - **HLR 消费链现状**：`hlr/brep/` 十三件；Contap 可经 BRepTopolTool 的 ContapDomain 直接消费真实面域；CInter/Intersector 可对投影边跑 2D 相交（直线×直线/圆已闭式激活）、Intersector 可跑线/面 CS。
+> - **已知遗留（非 3b 验收项）**：IntConicConic 其余 11 个 conic×conic 重载（见上）；Contap quadric-exact 死分支仍待 Adaptor3d_CurveOnSurface（3d）；EdgeData::Set 的 TopoDS→CurveView 桥接在 3f Data 落地。
 > - 已确立的翻译模式（沿例勿改）：OCCT gxx 模板参数 → Rust trait；具体实例化 = 类型别名（GInter/CInter 先例）+ marker 类型（`PhantomData<&'a ()>` 生命周期弹性）；工具静态组绑进 landed 泛型引擎（as_any = DownCast 先例）；gxx/lxx 内联翻译；每函数 `// OCCT <文件> L<起>-<止>` 标注；每个叶子翻译配 OCCT 解析锚点单测。**HLR 方法论特例**：HLRBRep_Surface 持 `my_proj: *const Projector` 裸指针、Intersector 持 `my_surface: Option<*const Surface>`（OCCT 同形，Data 拥有点对象）；`HLRBRep_Curve::d3_2d`/`dn` 是 OCCT 空函数体的照抄。
-> - 本 session 踩坑：**(6)** `&Arc<dyn Trait>` → `&dyn Trait` 不自动 deref 强转（rustc 先试 unsize 失败报 E0277）——调用点必须 `.as_ref()`；**(7)** heredoc 大文件追加第 6 次截断——一律 Write 落盘 + `cat >>` 拼接，截断后 `sed -i 'N,Md'` 清尾再重拼；**(8)** `git checkout <file>` 恢复前先确认目标状态（本次被中断未执行，靠 grep 行号定位截断点清理）。
+> - 踩坑累积：**(6)** `&Arc<dyn Trait>` → `&dyn Trait` 不自动 deref 强转——调用点必须 `.as_ref()`；**(7)** heredoc 大文件追加第 6 次截断——一律 Write 落盘 + `cat >>` 拼接，截断后 `sed -i 'N,Md'` 清尾再重拼；**(8)** `git checkout <file>` 恢复前先确认目标状态；**(9)** 1:1 审查点：OCCT 字面 no-op（如 Lin-Circ 的 `if (Cinf >= Csup)` 同值自赋）与未初始化 out 参数（Lin-Lin 的 Pos1a/2a）必须照抄/以中性默认初始化，不许"顺手修正"。
 > - 子模块工作树遗留修改（非本任务）：`algo_ext/mod.rs`、`fillet/topopebrepbuild.rs`、`tests/tkgeom_algo_gtests.rs`、`topalgo/brep_class/face_explorer.rs`——提交时只 `git add` 本任务文件。
 > - shell 的 cwd 会被重置到 `C:\Users\lilu\works\rcad-pro`（根仓库），编译/测试前先 `cd rcad`；回归必含 builder 分阶段（builder_stage_tests + pavefiller_stage_tests）。
 
@@ -388,9 +395,10 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 
 ### 下一 session 入口（按序）
 
-1. **Stage 3c**：BRepApprox_Approx 链路（AppDef_BSplineCompute —— math runway 的下一站，按 AppParCurves 已 landed 的 LeastSquare/ResolConstraint/Gradient 底座继续）。
-2. 顺手项（可选，HLR 圆/圆弧边对消费前必须补）：IntConicConic 其余 12 个 conic×conic 重载——按 E-E 先例评估复用 imp-par 引擎委托，或照 IntCurve_IntConicConic_1.cxx（Lin×Circ L2236 / Lin×Ells L2861 / Circ×Circ L807）与 IntCurve_IntConicConic.cxx 闭式移植。
-3. 之后 3d（HLRTopoBRep：DSFiller/Data/FaceIsoLiner/OutLiner + Geom2dHatch_Hatcher）→ 3e（干涉数据结构 + EdgeData::Set 的 TopoDS→CurveView 桥）→ 3f（Data 2683 拆子模块，持 Arc\<BRep\>）→ 3g（Hider→InternalAlgo→Algo→HLRToShape + 烟囱测试）。
+1. **Stage 3c-1**：`Approx_BSplComputeLine.gxx`（1458 行）泛型引擎 + `AppDef_BSplineCompute` 实例化 + `AppDef_MyBSplGradientOfBSplineCompute`/`MyGradientbisOfBSplineCompute`（hxx-only）+ **AppParCurves_BSpParFunction.gxx**（~600 行，未落地）——量级 ≈2400 OCCT 行，独占一个 session（勘察结论见头部快照）。
+2. **Stage 3c-2**：approx_int.rs（ApproxInt_Approx.gxx 的 GeomInt 实例）泛型化 + BRepApprox_Approx/ApproxLine + BRepApprox_SurfaceTool + PrmPrmSvSurfaces/Int2S 函数族绑定。
+3. 顺手项（HLR 圆/圆弧边对消费前必须补）：IntConicConic 其余 11 个 conic×conic 重载——Lin×Ells（_1.cxx L2861）/Circ×Circ（L807）照 _1.cxx 闭式移植（Lin×Circ 已落地 `2f1ac08e`），其余按 E-E imp-par 先例评估委托。
+4. 之后 3d（HLRTopoBRep：DSFiller/Data/FaceIsoLiner/OutLiner + Geom2dHatch_Hatcher）→ 3e（干涉数据结构 + EdgeData::Set 的 TopoDS→CurveView 桥）→ 3f（Data 2683 拆子模块，持 Arc\<BRep\>）→ 3g（Hider→InternalAlgo→Algo→HLRToShape + 烟囱测试）。
 
 ### 本 session 追加 4（2026-09-05，session 5：3b 全关 + Intersector）
 
