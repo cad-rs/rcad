@@ -26,6 +26,16 @@
 //! banded LDLT, math_BFGS line search) is the bottom layer of the chain and
 //! is kept semantically equivalent (least squares solved by normal equations
 //! with Gaussian elimination; BFGS with a golden-section line search).
+//!
+//! Genericization seams: the engine bodies (WLineApprox, ComputeLine,
+//! LeastSquare, ParFunction, Gradient, check_multicurve, approx_parameters,
+//! define_par_type) are generic over [`ApproxIntMultiLine`] (the
+//! ApproxInt_TheMultiLine / ApproxInt_TheMultiLineTool template parameters)
+//! and read the wrapped walking line through its [`ApproxIntWLine`]
+//! (TheWLine) seam.  The concrete GeomInt binding is [`WLineAccess`] over
+//! [`IntPatchLine`]; a BRepApprox_Approx binding implements the same traits
+//! for BRepApprox_TheMultiLineOfApprox over BRepApprox_ApproxLine
+//! (BRepApprox_Approx_0.cxx L68-71) without touching the engine bodies.
 
 use crate::geomalgo::int_patch::{IntPatchLine, WLinePnt};
 use glam::{DVec2, DVec3};
@@ -534,6 +544,90 @@ pub fn bezier_increase_degree_2d(poles: &[DVec2], new_deg: usize) -> Vec<DVec2> 
     p
 }
 
+// OCCT template parameter seams of the ApproxInt_Approx engine
+// (ApproxInt_Approx.gxx).  The engine body only consumes the MultiLine and
+// the WLine through the two traits below, so a second instantiation of the
+// chain (BRepApprox_Approx = the same ApproxInt_Approx.gxx compiled with
+// TheMultiLine = BRepApprox_TheMultiLineOfApprox and TheWLine =
+// BRepApprox_ApproxLine, BRepApprox_Approx_0.cxx L68-71) can be added by
+// implementing the traits for the new binding without touching the engine.
+
+/// OCCT template parameter TheWLine of ApproxInt_Approx.gxx
+/// (Handle_TheWLine: IntPatch_WLine for GeomInt_WLApprox,
+/// BRepApprox_ApproxLine for BRepApprox_Approx).  Only the operations used
+/// by ComputeTrsf3d / ComputeTrsf2d (ApproxInt_Approx.gxx L35-84) are
+/// required: NbPnts, Point(i).Value, Point(i).ParametersOnS1/S2.
+pub trait ApproxIntWLine {
+    /// OCCT TheWLine::NbPnts().
+    fn nb_pnts(&self) -> usize;
+    /// OCCT TheWLine::Point(i).Value() (1-based index).
+    fn point_p3d(&self, i: usize) -> DVec3;
+    /// OCCT TheWLine::Point(i).ParametersOnS1(U, V).
+    fn point_uv1(&self, i: usize) -> DVec2;
+    /// OCCT TheWLine::Point(i).ParametersOnS2(U, V).
+    fn point_uv2(&self, i: usize) -> DVec2;
+}
+
+/// The Approx_Data translation + approximated-flag bundle the engine body
+/// passes to the ApproxInt_TheMultiLine constructor (the myData
+/// ApproxU1V1/ApproxU2V2/Xo..V2o fields, ApproxInt_Approx.gxx L548-564
+/// buildKnots and L638-654 buildCurve).
+pub struct ApproxLineTrsf {
+    pub approx_u1v1: bool,
+    pub approx_u2v2: bool,
+    pub xo: f64,
+    pub yo: f64,
+    pub zo: f64,
+    pub u1o: f64,
+    pub v1o: f64,
+    pub u2o: f64,
+    pub v2o: f64,
+}
+
+/// OCCT template parameter TheMultiLine of ApproxInt_Approx.gxx /
+/// Approx_BSplComputeLine.gxx / Approx_ComputeLine.gxx (the
+/// ApproxInt_TheMultiLine alias, an ApproxInt_MultiLine.gxx
+/// instantiation).  The method set mirrors the ApproxInt_MultiLineTool
+/// static interface (ApproxInt_MultiLineTool.lxx L24-139: NbP2d, NbP3d,
+/// FirstPoint, LastPoint, Value, Tangency, WhatStatus, MakeMLBetween,
+/// MakeMLOneMorePoint; Curvature/Dump are never called by the engines and
+/// are omitted) plus the sub-line constructor the engine body invokes
+/// directly.
+pub trait ApproxIntMultiLine: Sized {
+    /// OCCT template parameter TheWLine — the wrapped walking line.
+    type TheWLine: ApproxIntWLine;
+    /// OCCT ApproxInt_MultiLine::myLine.
+    fn the_wline(&self) -> &Self::TheWLine;
+    /// OCCT LineTool::FirstPoint (ApproxInt_MultiLineTool.lxx L45).
+    fn first_point(&self) -> usize;
+    /// OCCT LineTool::LastPoint (L51).
+    fn last_point(&self) -> usize;
+    /// OCCT LineTool::NbP3d (L33).
+    fn nb_p3d(&self) -> usize;
+    /// OCCT LineTool::NbP2d (L24).
+    fn nb_p2d(&self) -> usize;
+    /// OCCT LineTool::WhatStatus (L133).
+    fn what_status(&self) -> ApproxStatus;
+    /// OCCT LineTool::Value(ML, Index, TabPnt) (L61).
+    fn value_p3d(&self, index: usize) -> DVec3;
+    /// OCCT LineTool::Value(ML, Index, TabPnt2d) (L70).
+    fn value_p2d(&self, index: usize) -> Vec<DVec2>;
+    /// OCCT LineTool::Tangency(ML, Index, TabV, TabV2d) (L111) — None
+    /// degrades the constraint to PassPoint.
+    fn tangency(&self, index: usize) -> Option<(Vec<DVec3>, Vec<DVec2>)>;
+    /// OCCT LineTool::MakeMLBetween (L120).
+    fn make_ml_between(&self, low: usize, high: usize, n: usize) -> Option<Self>;
+    /// OCCT LineTool::MakeMLOneMorePoint (L128).
+    fn make_ml_one_more_point(&self, low: usize, high: usize, indbad: usize) -> Option<Self>;
+    /// OCCT ApproxInt_TheMultiLine constructor (ApproxInt_MultiLine.gxx
+    /// L50-77) as invoked by ApproxInt_Approx::buildKnots (L548-564) and
+    /// buildCurve (L638-654): the same multi-line restricted to
+    /// [indicemin, indicemax] carrying the engine translation (theTrsf)
+    /// and the approximated flags; every other binding datum is shared
+    /// with `self`.
+    fn sub_line(&self, indicemin: usize, indicemax: usize, the_trsf: &ApproxLineTrsf) -> Self;
+}
+
 /// OCCT GeomInt_TheMultiLineOfWLApprox + TheMultiLineToolOfWLApprox —
 /// access to the WLine points of one approximation part (indices are
 /// 1-based into the WLine point array, OCCT IntPatch_WLine 1-based).
@@ -755,6 +849,89 @@ impl<'a> WLineAccess<'a> {
     }
 }
 
+/// OCCT TheWLine = IntPatch_WLine binding of the GeomInt_WLApprox chain
+/// (GeomInt_WLApprox_0.cxx L47-49).
+impl ApproxIntWLine for IntPatchLine {
+    fn nb_pnts(&self) -> usize {
+        self.wline_pnts.len()
+    }
+    fn point_p3d(&self, i: usize) -> DVec3 {
+        self.wline_pnts[i - 1].p3d
+    }
+    fn point_uv1(&self, i: usize) -> DVec2 {
+        let p = &self.wline_pnts[i - 1];
+        DVec2::new(p.u1, p.v1)
+    }
+    fn point_uv2(&self, i: usize) -> DVec2 {
+        let p = &self.wline_pnts[i - 1];
+        DVec2::new(p.u2, p.v2)
+    }
+}
+
+/// OCCT TheMultiLine = GeomInt_TheMultiLineOfWLApprox binding
+/// (GeomInt_WLApprox_0.cxx L68-71) — forwards to the inherent
+/// ApproxInt_MultiLine methods above.
+impl<'a> ApproxIntMultiLine for WLineAccess<'a> {
+    type TheWLine = IntPatchLine;
+
+    fn the_wline(&self) -> &IntPatchLine {
+        self.line
+    }
+    fn first_point(&self) -> usize {
+        WLineAccess::first_point(self)
+    }
+    fn last_point(&self) -> usize {
+        WLineAccess::last_point(self)
+    }
+    fn nb_p3d(&self) -> usize {
+        WLineAccess::nb_p3d(self)
+    }
+    fn nb_p2d(&self) -> usize {
+        WLineAccess::nb_p2d(self)
+    }
+    fn what_status(&self) -> ApproxStatus {
+        WLineAccess::what_status(self)
+    }
+    fn value_p3d(&self, index: usize) -> DVec3 {
+        WLineAccess::value_p3d(self, index)
+    }
+    fn value_p2d(&self, index: usize) -> Vec<DVec2> {
+        WLineAccess::value_p2d(self, index)
+    }
+    fn tangency(&self, index: usize) -> Option<(Vec<DVec3>, Vec<DVec2>)> {
+        WLineAccess::tangency(self, index)
+    }
+    fn make_ml_between(&self, low: usize, high: usize, n: usize) -> Option<Self> {
+        WLineAccess::make_ml_between(self, low, high, n)
+    }
+    fn make_ml_one_more_point(&self, low: usize, high: usize, indbad: usize) -> Option<Self> {
+        WLineAccess::make_ml_one_more_point(self, low, high, indbad)
+    }
+    fn sub_line(&self, indicemin: usize, indicemax: usize, the_trsf: &ApproxLineTrsf) -> Self {
+        WLineAccess {
+            line: self.line,
+            indicemin,
+            indicemax,
+            nbp3d: self.nbp3d,
+            nbp2d: self.nbp2d,
+            approx_u1v1: the_trsf.approx_u1v1,
+            approx_u2v2: the_trsf.approx_u2v2,
+            p2d_on_first: self.p2d_on_first,
+            xo: the_trsf.xo,
+            yo: the_trsf.yo,
+            zo: the_trsf.zo,
+            u1o: the_trsf.u1o,
+            v1o: the_trsf.v1o,
+            u2o: the_trsf.u2o,
+            v2o: the_trsf.v2o,
+            s1: self.s1,
+            s2: self.s2,
+            uv1: self.uv1,
+            uv2: self.uv2,
+        }
+    }
+}
+
 /// OCCT NonSingularProcessing (ApproxInt_ImpPrmSvSurfaces.gxx L287-321): the
 /// 2D tangent (theTg2D) on a surface with the derivative basis (DU, DV) such
 /// that Tg3D = DU*Tg2D.X() + DV*Tg2D.Y() holds.  aNormal = DU x DV must be
@@ -789,9 +966,9 @@ fn surface_kind(s: &Surface3) -> &'static str {
 /// OCCT Approx_ComputeLine::CheckMultiCurve (Approx_ComputeLine.gxx
 /// L134-428): reject a fit whose poles make a loop that the data does not
 /// justify; on rejection `the_indbad` locates the longest segment.
-fn check_multicurve(
+fn check_multicurve<ML: ApproxIntMultiLine>(
     the_multi_curve: &MultiCurve,
-    ml: &WLineAccess,
+    ml: &ML,
     the_indfirst: usize,
     the_indlast: usize,
     the_indbad: &mut usize,
@@ -1335,9 +1512,9 @@ impl WLineApprox {
     }
 
     /// OCCT ApproxInt_Approx::Perform (L184-218) — the shared core.
-    pub fn perform(
+    pub fn perform<ML: ApproxIntMultiLine>(
         &mut self,
-        ml: &WLineAccess,
+        ml: &ML,
         approx_xyz: bool,
         approx_u1v1: bool,
         approx_u2v2: bool,
@@ -1378,18 +1555,21 @@ impl WLineApprox {
 
     /// OCCT ApproxInt_Approx::fillData (L501-517) — ComputeTrsf3d/2d.
     /// The translation minima are taken over the WHOLE WLine (ComputeTrsf3d
-    /// L35-53 and ComputeTrsf2d L57-85 iterate theLine->NbPnts()).
-    fn fill_data(&mut self, ml: &WLineAccess) {
-        let all_pnts: Vec<WLinePnt> = ml.line.wline_pnts.clone();
+    /// L35-53 and ComputeTrsf2d L57-85 iterate theLine->NbPnts()), read
+    /// through the TheWLine seam.
+    fn fill_data<ML: ApproxIntMultiLine>(&mut self, ml: &ML) {
+        let wl = ml.the_wline();
+        let nb_pnts = wl.nb_pnts();
         // ComputeTrsf3d.
         if self.approx_xyz {
             let mut xmin = f64::INFINITY;
             let mut ymin = f64::INFINITY;
             let mut zmin = f64::INFINITY;
-            for p in &all_pnts {
-                xmin = xmin.min(p.p3d.x);
-                ymin = ymin.min(p.p3d.y);
-                zmin = zmin.min(p.p3d.z);
+            for i in 1..=nb_pnts {
+                let p = wl.point_p3d(i);
+                xmin = xmin.min(p.x);
+                ymin = ymin.min(p.y);
+                zmin = zmin.min(p.z);
             }
             self.xo = -xmin;
             self.yo = -ymin;
@@ -1399,13 +1579,14 @@ impl WLineApprox {
             self.yo = 0.0;
             self.zo = 0.0;
         }
-        // ComputeTrsf2d on surface 1.
+        // ComputeTrsf2d on surface 1 (onFirst = true).
         if self.approx_u1v1 {
             let mut umin = f64::INFINITY;
             let mut vmin = f64::INFINITY;
-            for p in &all_pnts {
-                umin = umin.min(p.u1);
-                vmin = vmin.min(p.v1);
+            for i in 1..=nb_pnts {
+                let uv = wl.point_uv1(i);
+                umin = umin.min(uv.x);
+                vmin = vmin.min(uv.y);
             }
             self.u1o = -umin;
             self.v1o = -vmin;
@@ -1413,13 +1594,14 @@ impl WLineApprox {
             self.u1o = 0.0;
             self.v1o = 0.0;
         }
-        // ComputeTrsf2d on surface 2.
+        // ComputeTrsf2d on surface 2 (onFirst = false).
         if self.approx_u2v2 {
             let mut umin = f64::INFINITY;
             let mut vmin = f64::INFINITY;
-            for p in &all_pnts {
-                umin = umin.min(p.u2);
-                vmin = vmin.min(p.v2);
+            for i in 1..=nb_pnts {
+                let uv = wl.point_uv2(i);
+                umin = umin.min(uv.x);
+                vmin = vmin.min(uv.y);
             }
             self.u2o = -umin;
             self.v2o = -vmin;
@@ -1430,7 +1612,7 @@ impl WLineApprox {
     }
 
     /// OCCT ApproxInt_Approx::buildKnots (L538-619).
-    fn build_knots(&mut self, ml: &WLineAccess) {
+    fn build_knots<ML: ApproxIntMultiLine>(&mut self, ml: &ML) {
         self.my_knots.clear();
         if !self.my_bezier_approx {
             self.my_knots.push(self.indicemin);
@@ -1482,33 +1664,29 @@ impl WLineApprox {
     }
 
     /// OCCT ApproxInt_Approx::buildCurve (L623-751).
-    fn build_curve(&mut self, ml: &WLineAccess) {
+    fn build_curve<ML: ApproxIntMultiLine>(&mut self, ml: &ML) {
         self.my_bez_to_bspl.reset();
         let mut kind = 0usize;
         loop {
             let imin = self.my_knots[kind];
             let imax = self.my_knots[kind + 1];
-            let sub = WLineAccess {
-                line: ml.line,
-                indicemin: imin,
-                indicemax: imax,
-                nbp3d: ml.nbp3d,
-                nbp2d: ml.nbp2d,
-                approx_u1v1: self.approx_u1v1,
-                approx_u2v2: self.approx_u2v2,
-                p2d_on_first: ml.p2d_on_first,
-                xo: self.xo,
-                yo: self.yo,
-                zo: self.zo,
-                u1o: self.u1o,
-                v1o: self.v1o,
-                u2o: self.u2o,
-                v2o: self.v2o,
-                s1: ml.s1,
-                s2: ml.s2,
-                uv1: ml.uv1,
-                uv2: ml.uv2,
-            };
+            // OCCT L638-654: ApproxInt_TheMultiLine(theline, thePtrSVSurf,
+            // ...myData flags and translation..., imin, imax).
+            let sub = ml.sub_line(
+                imin,
+                imax,
+                &ApproxLineTrsf {
+                    approx_u1v1: self.approx_u1v1,
+                    approx_u2v2: self.approx_u2v2,
+                    xo: self.xo,
+                    yo: self.yo,
+                    zo: self.zo,
+                    u1o: self.u1o,
+                    v1o: self.v1o,
+                    u2o: self.u2o,
+                    v2o: self.v2o,
+                },
+            );
             self.my_compute_line_bezier.perform(&sub);
             if self.my_compute_line_bezier.nb_multi_curves() == 0 {
                 return;
@@ -1725,12 +1903,12 @@ impl ComputeLine {
 
     /// OCCT Approx_ComputeLine::Parameters (L1249-1322) — chord-length /
     /// centripetal / iso-parametric parameters of the part points.
-    fn parameters(&self, ml: &WLineAccess, first_p: usize, last_p: usize) -> VecD {
+    fn parameters<ML: ApproxIntMultiLine>(&self, ml: &ML, first_p: usize, last_p: usize) -> VecD {
         approx_parameters(ml, first_p, last_p, self.par)
     }
 
     /// OCCT Approx_ComputeLine::FirstTangencyVector (L430-512).
-    fn first_tangency_vector(&self, ml: &WLineAccess, index: usize) -> VecD {
+    fn first_tangency_vector<ML: ApproxIntMultiLine>(&self, ml: &ML, index: usize) -> VecD {
         let nb_p3d = ml.nb_p3d();
         let nb_p2d = ml.nb_p2d();
         let dim = nb_p3d * 3 + nb_p2d * 2;
@@ -1783,7 +1961,7 @@ impl ComputeLine {
     }
 
     /// OCCT Approx_ComputeLine::LastTangencyVector (L514-595).
-    fn last_tangency_vector(&self, ml: &WLineAccess, index: usize) -> VecD {
+    fn last_tangency_vector<ML: ApproxIntMultiLine>(&self, ml: &ML, index: usize) -> VecD {
         let nb_p3d = ml.nb_p3d();
         let nb_p2d = ml.nb_p2d();
         let dim = nb_p3d * 3 + nb_p2d * 2;
@@ -1836,7 +2014,13 @@ impl ComputeLine {
     }
 
     /// OCCT Approx_ComputeLine::SearchFirstLambda (L597-655).
-    fn search_first_lambda(&self, ml: &WLineAccess, the_param: &VecD, v: &VecD, index: usize) -> f64 {
+    fn search_first_lambda<ML: ApproxIntMultiLine>(
+        &self,
+        ml: &ML,
+        the_param: &VecD,
+        v: &VecD,
+        index: usize,
+    ) -> f64 {
         let nb_p3d = ml.nb_p3d();
         let nb_p2d = ml.nb_p2d();
         let p1 = ml.value_p3d(index);
@@ -1863,7 +2047,13 @@ impl ComputeLine {
     }
 
     /// OCCT Approx_ComputeLine::SearchLastLambda (L657-715).
-    fn search_last_lambda(&self, ml: &WLineAccess, the_param: &VecD, v: &VecD, index: usize) -> f64 {
+    fn search_last_lambda<ML: ApproxIntMultiLine>(
+        &self,
+        ml: &ML,
+        the_param: &VecD,
+        v: &VecD,
+        index: usize,
+    ) -> f64 {
         let nb_p3d = ml.nb_p3d();
         let nb_p2d = ml.nb_p2d();
         let p1 = ml.value_p3d(index - 1);
@@ -1890,9 +2080,9 @@ impl ComputeLine {
     }
 
     /// OCCT Approx_ComputeLine::Compute (L1324-1441).
-    fn compute(
+    fn compute<ML: ApproxIntMultiLine>(
         &mut self,
-        ml: &WLineAccess,
+        ml: &ML,
         fpt: usize,
         lpt: usize,
         para: &mut VecD,
@@ -1977,7 +2167,12 @@ impl ComputeLine {
 
     /// OCCT Approx_ComputeLine::ComputeCurve (L1443-1690): the interpolation
     /// path used when the part has too few points.
-    fn compute_curve(&mut self, ml: &WLineAccess, firstpt: usize, lastpt: usize) -> bool {
+    fn compute_curve<ML: ApproxIntMultiLine>(
+        &mut self,
+        ml: &ML,
+        firstpt: usize,
+        lastpt: usize,
+    ) -> bool {
         let myfirstpt = firstpt;
         let mylastpt = lastpt;
         let nbp = lastpt - firstpt + 1;
@@ -2062,7 +2257,7 @@ impl ComputeLine {
     }
 
     /// OCCT Approx_ComputeLine::Perform (L832-1219) — the cutting loop.
-    pub fn perform(&mut self, ml: &WLineAccess) {
+    pub fn perform<ML: ApproxIntMultiLine>(&mut self, ml: &ML) {
         if !self.my_is_clear {
             self.mymulti_curves.clear();
             self.mypar.clear();
@@ -2152,7 +2347,7 @@ impl ComputeLine {
                             param.set(i, p.get(i));
                         }
                         self.the_multi_curve = MultiCurve::new(2, ml.nb_p3d(), ml.nb_p2d());
-                        let mut an_other_line2: Option<WLineAccess> = None;
+                        let mut an_other_line2: Option<ML> = None;
                         let mut is_other_line2_made = false;
                         let mut indbad = 0usize;
                         ok = self.compute(
@@ -2236,7 +2431,7 @@ impl ComputeLine {
                                 self.mymulti_curves.clear();
                                 return;
                             }
-                            let mut an_other_line3: Option<WLineAccess> = None;
+                            let mut an_other_line3: Option<ML> = None;
                             let mut indbad2 = 0usize;
                             if !check_multicurve(
                                 &self.the_multi_curve,
@@ -2448,8 +2643,8 @@ pub struct LeastSquare {
 impl LeastSquare {
     /// OCCT LeastSquare(SSP, FirstPoint, LastPoint, FirstCons, LastCons,
     /// NbPol) constructor + Init (L138-167, L274-508).
-    pub fn new(
-        ml: &WLineAccess,
+    pub fn new<ML: ApproxIntMultiLine>(
+        ml: &ML,
         first_point: usize,
         last_point: usize,
         mut first_cons: AppParConstraint,
@@ -2562,7 +2757,7 @@ impl LeastSquare {
 
     /// OCCT Affect (L1064-1205): fill the tangent (Vt) vectors at `index`;
     /// when the line has no tangency the constraint degrades to PassPoint.
-    fn affect(&mut self, index: usize, cons: &mut AppParConstraint, ml: &WLineAccess) {
+    fn affect<ML: ApproxIntMultiLine>(&mut self, index: usize, cons: &mut AppParConstraint, ml: &ML) {
         if *cons >= AppParConstraint::TangencyPoint {
             let vt = if index == self.myfirstp {
                 &mut self.vec1t
@@ -3403,8 +3598,8 @@ fn gauss_solve(a: &[Vec<f64>], b: &[f64]) -> Option<Vec<f64>> {
 // LeastSquare; used by the Gradient and the BFGS minimizer.
 // ============================================================================
 
-pub struct ParFunction<'a> {
-    pub ml: &'a WLineAccess<'a>,
+pub struct ParFunction<'a, ML: ApproxIntMultiLine + 'a> {
+    pub ml: &'a ML,
     pub my_parameters: VecD,
     pub my_multi_curve: MultiCurve,
     pub my_least_square: LeastSquare,
@@ -3421,10 +3616,10 @@ pub struct ParFunction<'a> {
     pub done: bool,
 }
 
-impl<'a> ParFunction<'a> {
+impl<'a, ML: ApproxIntMultiLine + 'a> ParFunction<'a, ML> {
     /// OCCT AppParCurves_Function constructor (L36-143).
     pub fn new(
-        ml: &'a WLineAccess<'a>,
+        ml: &'a ML,
         first_point: usize,
         last_point: usize,
         constraints: &[ConstraintCouple],
@@ -3659,8 +3854,8 @@ impl Gradient {
     /// OCCT AppParCurves_Gradient constructor (L44-219) with the BFGS
     /// refinement replaced by its semantic equivalent (a bounded number of
     /// Gauss-Newton steps on the interior parameters).
-    pub fn new(
-        ml: &WLineAccess,
+    pub fn new<ML: ApproxIntMultiLine>(
+        ml: &ML,
         first_point: usize,
         last_point: usize,
         constraints: &[ConstraintCouple],
@@ -4329,8 +4524,8 @@ fn max_param_ratio(pars: &[f64]) -> f64 {
 /// OCCT ApproxInt_Approx::Parameters (ApproxInt_Approx.gxx L88-162) —
 /// chord-length / centripetal / iso-parametric parameterization of the
 /// MultiLine points on [firstP, lastP], normalized to [0, 1].
-pub fn approx_parameters(
-    ml: &WLineAccess,
+pub fn approx_parameters<ML: ApproxIntMultiLine>(
+    ml: &ML,
     first_p: usize,
     last_p: usize,
     par: ApproxParamType,
@@ -4384,8 +4579,8 @@ pub fn approx_parameters(
 
 /// OCCT ApproxInt_KnotTools::DefineParType (L669-848): choose the
 /// parameterization by the curvature profile of the part.
-pub fn define_par_type(
-    ml: &WLineAccess,
+pub fn define_par_type<ML: ApproxIntMultiLine>(
+    ml: &ML,
     the_fpar: usize,
     the_lpar: usize,
     the_approx_xyz: bool,
