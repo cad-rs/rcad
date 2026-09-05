@@ -31,6 +31,8 @@ pub mod geom2d_int;   // Geom2dInt (imp-par chain: IntConicCurveOfGInter + Inter
 pub mod int_conic_conic; // IntCurve (PConic + PConicTool binding + IntConicConic E-E + Lin-Lin)
 pub mod int_conic_conic_tool; // IntCurve_IntConicConic_Tool.hxx/.cxx (Interval/PeriodicInterval/LC transitions)
 pub mod int_conic_conic_lin_circ; // IntConicConic::Perform(gp_Lin2d, gp_Circ2d) (_1.cxx L2236-2652)
+pub mod int_conic_conic_circ_circ; // IntConicConic::Perform(gp_Circ2d, gp_Circ2d) (_1.cxx L807-1253)
+pub mod int_conic_conic_lin_ells; // IntConicConic::Perform(gp_Lin2d, gp_Elips2d) (_1.cxx L2861-3215)
 pub mod int_curve_curve_gen; // IntCurve_IntCurveCurveGen == Geom2dInt_GInter dispatcher
 pub mod int_imp_par_gen; // IntImpParGen (Intersector gxx + statics + MyImpParTool)
 pub mod int_poly_poly_gen; // IntCurve_IntPolyPolyGen gxx (pcurve x pcurve polyline intersection) // IntImpParGen (Intersector gxx + statics + MyImpParTool)
@@ -40,6 +42,7 @@ pub mod inter_cc;    // Geom2dAPI_InterCurveCurve (2D curve-curve intersection A
 pub mod app_def;     // AppDef (MultiLine + MultiPointConstraint approximation input)
 pub mod app_par_curves; // AppParCurves (Bernstein/SplineFunction + LeastSquare template)
 pub mod app_par_curves_bsp; // AppParCurves BSP variants (BSpFunction + BSpGradient gxx)
+pub mod brep_approx; // BRepApprox (TheMultiLineOfApprox + LineTool + SurfaceTool + ApproxLine)
 pub mod bspl_compute_line; // Approx_BSplComputeLine.gxx == AppDef_BSplineCompute
 pub mod gcc_ana;      // GccAna (analytic 2D constraint solvers: Circ2d3Tan Apollonius)
 pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain

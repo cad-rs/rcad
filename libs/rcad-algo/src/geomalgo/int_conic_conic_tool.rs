@@ -15,7 +15,7 @@ pub(crate) const PI_PPI: f64 = std::f64::consts::TAU;
 /// OCCT Tool.cxx L20: `#define TOLERANCE_ANGULAIRE 0.00000001`.
 const TOLERANCE_ANGULAIRE: f64 = 0.00000001;
 /// OCCT gp::Resolution() (gp.hxx).
-const GP_RESOLUTION: f64 = 1.0e-15;
+pub(crate) const GP_RESOLUTION: f64 = 1.0e-15;
 
 /// OCCT IntCurve_IntConicConic_Tool.hxx L47-64 — a bounded-or-unbounded
 /// real interval with domain-bound flags.

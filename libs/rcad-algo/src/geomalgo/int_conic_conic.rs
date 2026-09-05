@@ -9,13 +9,10 @@
 // trait, so PConic implements Curve2dAdaptor with the IntCurve_PConicTool
 // semantics (Value/D1/D2/EpsX/NbSamples per PConicTool.cxx L24-131).
 //
-// Ported so far: the Ellipse-Ellipse Perform overload
-// (IntCurve_IntConicConic.cxx L915-958) — the path used by
-// Geom2dAPI_InterCurveCurve for two Geom2d_Ellipses (OCC29289 anchor).
-//
-// Deferred overloads (each needs the IntAna2d offset pre-pass +
-// SetBinfBsupFromIntAna2d, or the dedicated closed-form implementation):
-//   - Perform(Lin,  Parab)    IntCurve_IntConicConic.cxx L109-226
+// Ported: the Ellipse-Ellipse Perform overload (L915-958 — the path used by
+// Geom2dAPI_InterCurveCurve for two Geom2d_Ellipses, OCC29289 anchor) and all
+// ten remaining Perform overloads of IntCurve_IntConicConic.cxx:
+//   - Perform(Lin,  Parab)    L109-226
 //   - Perform(Lin,  Hypr)     L230-333
 //   - Perform(Circ, Parab)    L337-435
 //   - Perform(Circ, Elips)    L439-482
@@ -25,13 +22,17 @@
 //   - Perform(Parab, Hypr)    L810-911
 //   - Perform(Elips, Hypr)    L962-1063
 //   - Perform(Hypr,  Hypr)    L1067-1168
-//   - Perform(Circ, Circ)     IntCurve_IntConicConic_1.cxx L807-1238
-//   - Perform(Lin,  Lin)      IntCurve_IntConicConic_1.cxx L1381-2233
-//   - Perform(Lin,  Circ)     IntCurve_IntConicConic_1.cxx L2236-2652
-// plus the (L, Elips)/(L, ...)/... constructor overloads in
-// IntCurve_IntConicConic.lxx.
+// plus the file-static constants and helpers of that file (L48-87,
+// SetBinfBsupFromIntAna2d L1172-1266; the IntAna2d offset pre-pass uses
+// rcad-kernel's AnaIntersection2d = IntAna2d_AnaIntersection).
+//
+// The dedicated closed-form overloads of IntCurve_IntConicConic_1.cxx live in
+// sibling modules (int_conic_conic_lin_circ / int_conic_conic_circ_circ /
+// int_conic_conic_lin_ells); the (L, Elips)/(L, ...)/... constructor overloads
+// live in IntCurve_IntConicConic.lxx.
 
 use glam::DVec2;
+use rcad_kernel::base::int_ana2d::{AnaIntersection2d, Conic2d};
 use rcad_kernel::geom::{Circle2d, Ellipse2d, Hyperbola2d, Line2d, Parabola2d};
 
 use super::geom2d_int::{
@@ -51,6 +52,14 @@ const PI2: f64 = std::f64::consts::TAU;
 const TOLERANCE_ANGULAIRE: f64 = 1.0e-15;
 /// OCCT Precision::PConfusion().
 const PRECISION_P_CONFUSION: f64 = 1.0e-9;
+
+// OCCT IntCurve_IntConicConic.cxx L48-50 (file-static constants).
+/// OCCT PARAM_MAX_ON_PARABOLA (L48).
+const PARAM_MAX_ON_PARABOLA: f64 = 100000000.0;
+/// OCCT PARAM_MAX_ON_HYPERBOLA (L49).
+const PARAM_MAX_ON_HYPERBOLA: f64 = 10000.0;
+/// OCCT TOL_EXACT_INTER (L50).
+const TOL_EXACT_INTER: f64 = 1.0e-7;
 
 // ---------------------------------------------------------------------------
 // IntCurve_PConic
@@ -111,12 +120,14 @@ impl PConic {
         }
     }
 
-    /// OCCT IntCurve_PConic(const gp_Parab2d& P) (IntCurve_PConic.cxx L58-66).
+    /// OCCT IntCurve_PConic(const gp_Parab2d& P) (IntCurve_PConic.cxx L58-66):
+    /// prm1 = P.Focal(). rcad's focal_param is gp_Parab2d::Parameter()
+    /// (= 2 * Focal), so prm1 keeps the OCCT Focal value.
     pub fn new_parabola(p: &Parabola2d) -> Self {
         PConic {
             axe_origin: p.origin,
             axe_xdir: p.axis_dir,
-            prm1: p.focal_param,
+            prm1: p.focal_param * 0.5,
             prm2: 0.0,
             the_eps_x: 0.00000001,
             the_accuracy: 20,
@@ -346,7 +357,8 @@ impl Curve2dAdaptor for PConic {
         Parabola2d {
             origin: self.axe_origin,
             axis_dir: self.axe_xdir,
-            focal_param: self.prm1,
+            // prm1 is the OCCT Focal; focal_param = Parameter() = 2 * Focal.
+            focal_param: self.prm1 * 2.0,
         }
     }
 
@@ -444,12 +456,14 @@ impl IntConicConic {
         self.base.set_values(&self.inter.base);
     }
 
-    // -- Remaining conic x conic Perform overloads ---------------------------
+    // -- Conic x conic Perform overloads of IntCurve_IntConicConic.cxx -------
     //
     // IntCurveCurveGen::InternalPerform dispatches into these by curve kind.
-    // Each body is the OCCT overload listed in the file header; they are
-    // ported in a follow-up unit (they need the IntAna2d offset pre-pass +
-    // SetBinfBsupFromIntAna2d, or the dedicated closed-form implementation).
+    // Each body is the 1:1 translation of the OCCT overload cited in its doc
+    // marker; the conic-as-implicit x PConic-as-parametric intersection is
+    // done by self.inter (IntImpParGen), with an IntAna2d analytic pre-pass
+    // (translated through rcad-kernel's AnaIntersection2d) restricting the
+    // parametric domain when the parametric conic is a parabola/hyperbola.
 
     /// OCCT Perform(const gp_Lin2d& L1, const gp_Lin2d& L2)
     /// (IntCurve_IntConicConic_1.cxx L1381-2233).
@@ -1242,179 +1256,1338 @@ impl IntConicConic {
     // OCCT Perform(const gp_Lin2d& L, const gp_Circ2d& C) lives in
     // `int_conic_conic_lin_circ` (the _1.cxx Lin-Circ section).
 
-    /// OCCT Perform(const gp_Lin2d& L, const gp_Elips2d& E)
-    /// (IntCurve_IntConicConic.hxx L112 decl, body in _1.cxx — dedicated
-    /// closed-form implementation).
-    pub fn perform_line_ellipse(
-        &mut self,
-        _l: &Line2d,
-        _dl: &Res2dDomain,
-        _e: &Ellipse2d,
-        _de: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
-    ) {
-        unimplemented!("IntConicConic::Perform(Lin, Elips) — not ported yet");
-    }
+    // OCCT Perform(const gp_Lin2d& L, const gp_Elips2d& E) lives in
+    // `int_conic_conic_lin_ells` (the _1.cxx Lin-Ells closed form).
+    // OCCT Perform(const gp_Circ2d& C1, const gp_Circ2d& C2) lives in
+    // `int_conic_conic_circ_circ` (the _1.cxx Circ-Circ closed form).
 
-    /// OCCT Perform(const gp_Lin2d& L, const gp_Parab2d& P)
+    /// OCCT Perform(const gp_Lin2d& L, const IntRes2d_Domain& DL,
+    /// const gp_Parab2d& P, const IntRes2d_Domain& DP, TolConf, Tol)
     /// (IntCurve_IntConicConic.cxx L109-226).
     pub fn perform_line_parabola(
         &mut self,
-        _l: &Line2d,
-        _dl: &Res2dDomain,
-        _p: &Parabola2d,
-        _dp: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
+        l: &Line2d,
+        dl: &Res2dDomain,
+        p: &Parabola2d,
+        dp: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
     ) {
-        unimplemented!("IntConicConic::Perform(Lin, Parab) — IntCurve_IntConicConic.cxx L109, not ported yet");
+        self.base.reset_fields();
+        let itool = IConicTool::new_line(l);
+        let mut pcurve = PConic::new_parabola(p);
+        pcurve.set_accuracy(20);
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+
+        // OCCT L124-131.
+        let mut binf = rcad_kernel::precision::INFINITE_VALUE;
+        let mut bsup = -rcad_kernel::precision::INFINITE_VALUE;
+        let mut maxtol = if tol > tol_conf { tol } else { tol_conf };
+        if maxtol < 1.0e-7 {
+            maxtol = 1.0e-7;
+        }
+        let mut was_set = false;
+
+        // OCCT L133-134: gp_Pnt2d Pntinf, Pntsup (default (0,0)) + the reusable
+        // IntAna2d_AnaIntersection.
+        let mut pntinf = DVec2::ZERO;
+        let mut pntsup = DVec2::ZERO;
+        let mut the_int_ana2d = AnaIntersection2d::new();
+
+        // OCCT L136-161: two offset lines bracketing the exact line.
+        maxtol *= 100.0;
+        // OCCT quirk kept 1:1: the offset components read Direction().Y()
+        // then Direction().X().
+        let mut offset = DVec2::new(maxtol * l.direction.y, maxtol * l.direction.x);
+        let lp = l.translate(offset);
+        the_int_ana2d.perform_parabola_conic(p, &Conic2d::from_line(&lp));
+        set_binf_bsup_from_int_ana2d_parab(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            p,
+            maxtol,
+            PARAM_MAX_ON_PARABOLA,
+        );
+
+        offset = -offset;
+        let lm = l.translate(offset);
+        the_int_ana2d.perform_parabola_conic(p, &Conic2d::from_line(&lm));
+        set_binf_bsup_from_int_ana2d_parab(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            p,
+            maxtol,
+            PARAM_MAX_ON_PARABOLA,
+        );
+
+        // OCCT L163-225.
+        if binf <= bsup {
+            if !bounded_domain(dp) {
+                // OCCT L165-179.
+                let mut tolinf = 0.0;
+                let mut tolsup = 0.0;
+                if set_bounded_domain(
+                    dp,
+                    &mut binf,
+                    &mut tolinf,
+                    &mut pntinf,
+                    &mut bsup,
+                    &mut tolsup,
+                    &mut pntsup,
+                ) {
+                    let dp_modif = Res2dDomain::bounded(pntinf, binf, tolinf, pntsup, bsup, tolsup);
+                    self.inter.perform(&itool, dl, &pcurve, &dp_modif, tol_conf, tol);
+                } else {
+                    self.base.done = true;
+                    return;
+                }
+            } else {
+                // OCCT L180-216.
+                let mut ft = 0.0;
+                let mut lt = 0.0;
+                if binf < dp.first_parameter() {
+                    binf = dp.first_parameter();
+                    pntinf = dp.first_point();
+                    ft = dp.first_tolerance();
+                    if bsup < dp.first_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                if bsup > dp.last_parameter() {
+                    bsup = dp.last_parameter();
+                    pntsup = dp.last_point();
+                    lt = dp.last_tolerance();
+                    if binf > dp.last_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                let dp_modif = Res2dDomain::bounded(pntinf, binf, ft, pntsup, bsup, lt);
+                // OCCT L207: first pass with the exact-intersection tolerance.
+                self.inter
+                    .perform(&itool, dl, &pcurve, &dp_modif, TOL_EXACT_INTER, TOL_EXACT_INTER);
+                self.base.set_values(&self.inter.base);
+                was_set = true;
+                // OCCT L210-215: retry with the caller tolerances when the
+                // exact pass found no points.
+                if self.base.is_done() && self.base.nb_points() == 0 {
+                    self.base.reset_fields();
+                    self.inter.perform(&itool, dl, &pcurve, &dp_modif, tol_conf, tol);
+                    was_set = false;
+                }
+            }
+            // OCCT L217-220.
+            if !was_set {
+                self.base.set_values(&self.inter.base);
+            }
+        } else {
+            // OCCT L222-225.
+            self.base.done = true;
+        }
     }
 
-    /// OCCT Perform(const gp_Lin2d& L, const gp_Hypr2d& H)
+    /// OCCT Perform(const gp_Lin2d& L, const IntRes2d_Domain& DL,
+    /// const gp_Hypr2d& H, const IntRes2d_Domain& DH, TolConf, Tol)
     /// (IntCurve_IntConicConic.cxx L230-333).
     pub fn perform_line_hyperbola(
         &mut self,
-        _l: &Line2d,
-        _dl: &Res2dDomain,
-        _h: &Hyperbola2d,
-        _dh: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
+        l: &Line2d,
+        dl: &Res2dDomain,
+        h: &Hyperbola2d,
+        dh: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
     ) {
-        unimplemented!("IntConicConic::Perform(Lin, Hypr) — IntCurve_IntConicConic.cxx L230, not ported yet");
+        // OCCT L237-242.
+        self.base.reset_fields();
+        let itool = IConicTool::new_line(l);
+        let mut pcurve = PConic::new_hyperbola(h);
+        pcurve.set_accuracy(20);
+
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+
+        // OCCT L244-258.
+        let mut binf = rcad_kernel::precision::INFINITE_VALUE;
+        let mut bsup = -rcad_kernel::precision::INFINITE_VALUE;
+        let maxtol_base;
+        if tol > tol_conf {
+            maxtol_base = tol;
+        } else {
+            maxtol_base = tol_conf;
+        }
+        let mut maxtol = maxtol_base * 100.0;
+        if maxtol < 0.000001 {
+            maxtol = 0.000001;
+        }
+        let mut pntinf = DVec2::ZERO;
+        let mut pntsup = DVec2::ZERO;
+        let mut the_int_ana2d = AnaIntersection2d::new();
+
+        // OCCT L259-281: two translated hyperbolas bracketing the exact one.
+        let mut offset = DVec2::new(maxtol * h.major_dir.x, maxtol * h.major_dir.y);
+        let hp = Hyperbola2d {
+            center: h.center + offset,
+            ..*h
+        };
+        the_int_ana2d.perform_hyperbola_conic(&hp, &Conic2d::from_line(l));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+
+        offset = -offset;
+        let hm = Hyperbola2d {
+            center: h.center + offset,
+            ..*h
+        };
+        the_int_ana2d.perform_hyperbola_conic(&hm, &Conic2d::from_line(l));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+
+        // OCCT L282-332.
+        if binf <= bsup {
+            if !bounded_domain(dh) {
+                // OCCT L284-298.
+                let mut tolinf = 0.0;
+                let mut tolsup = 0.0;
+                if set_bounded_domain(
+                    dh,
+                    &mut binf,
+                    &mut tolinf,
+                    &mut pntinf,
+                    &mut bsup,
+                    &mut tolsup,
+                    &mut pntsup,
+                ) {
+                    let dh_modif = Res2dDomain::bounded(pntinf, binf, tolinf, pntsup, bsup, tolsup);
+                    self.inter.perform(&itool, dl, &pcurve, &dh_modif, tol_conf, tol);
+                } else {
+                    self.base.done = true;
+                    return;
+                }
+            } else {
+                // OCCT L299-326.
+                let mut ft = 0.0;
+                let mut lt = 0.0;
+                if binf < dh.first_parameter() {
+                    binf = dh.first_parameter();
+                    pntinf = dh.first_point();
+                    ft = dh.first_tolerance();
+                    if bsup < dh.first_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                if bsup > dh.last_parameter() {
+                    bsup = dh.last_parameter();
+                    pntsup = dh.last_point();
+                    lt = dh.last_tolerance();
+                    if binf > dh.last_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                let dh_modif = Res2dDomain::bounded(pntinf, binf, ft, pntsup, bsup, lt);
+                self.inter.perform(&itool, dl, &pcurve, &dh_modif, tol_conf, tol);
+            }
+            // OCCT L327.
+            self.base.set_values(&self.inter.base);
+        } else {
+            // OCCT L329-332.
+            self.base.done = true;
+        }
     }
 
-    /// OCCT Perform(const gp_Circ2d& C1, const gp_Circ2d& C2)
-    /// (IntCurve_IntConicConic_1.cxx L807-1238).
-    pub fn perform_circle_circle(
-        &mut self,
-        _c1: &Circle2d,
-        _d1: &Res2dDomain,
-        _c2: &Circle2d,
-        _d2: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
-    ) {
-        unimplemented!("IntConicConic::Perform(Circ, Circ) — IntCurve_IntConicConic_1.cxx L807, not ported yet");
-    }
-
-    /// OCCT Perform(const gp_Circ2d& C, const gp_Elips2d& E)
+    /// OCCT Perform(const gp_Circ2d& C, const IntRes2d_Domain& DC,
+    /// const gp_Elips2d& E, const IntRes2d_Domain& DE, TolConf, Tol)
     /// (IntCurve_IntConicConic.cxx L439-482).
     pub fn perform_circle_ellipse(
         &mut self,
-        _c: &Circle2d,
-        _dc: &Res2dDomain,
-        _e: &Ellipse2d,
-        _de: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
+        c: &Circle2d,
+        dc: &Res2dDomain,
+        e: &Ellipse2d,
+        de: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
     ) {
-        unimplemented!("IntConicConic::Perform(Circ, Elips) — IntCurve_IntConicConic.cxx L439, not ported yet");
+        // OCCT L446-451.
+        self.base.reset_fields();
+        let itool = IConicTool::new_circle(c);
+        let mut pcurve = PConic::new_ellipse(e);
+        pcurve.set_accuracy(20);
+
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+
+        // OCCT L453-480.
+        if !dc.is_closed() {
+            let mut d1 = dc.clone();
+            d1.set_equivalent_parameters(dc.first_parameter(), dc.first_parameter() + PI2);
+            if !de.is_closed() {
+                let mut d2 = de.clone();
+                d2.set_equivalent_parameters(de.first_parameter(), de.first_parameter() + PI2);
+                self.inter.perform(&itool, &d1, &pcurve, &d2, tol_conf, tol);
+            } else {
+                self.inter.perform(&itool, &d1, &pcurve, de, tol_conf, tol);
+            }
+        } else {
+            if !de.is_closed() {
+                let mut d2 = de.clone();
+                d2.set_equivalent_parameters(de.first_parameter(), de.first_parameter() + PI2);
+                self.inter.perform(&itool, dc, &pcurve, &d2, tol_conf, tol);
+            } else {
+                self.inter.perform(&itool, dc, &pcurve, de, tol_conf, tol);
+            }
+        }
+        // OCCT L481.
+        self.base.set_values(&self.inter.base);
     }
 
-    /// OCCT Perform(const gp_Circ2d& C, const gp_Parab2d& P)
+    /// OCCT Perform(const gp_Circ2d& C, const IntRes2d_Domain& DC,
+    /// const gp_Parab2d& P, const IntRes2d_Domain& DP, TolConf, Tol)
     /// (IntCurve_IntConicConic.cxx L337-435).
     pub fn perform_circle_parabola(
         &mut self,
-        _c: &Circle2d,
-        _dc: &Res2dDomain,
-        _p: &Parabola2d,
-        _dp: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
+        c: &Circle2d,
+        dc: &Res2dDomain,
+        p: &Parabola2d,
+        dp: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
     ) {
-        unimplemented!("IntConicConic::Perform(Circ, Parab) — IntCurve_IntConicConic.cxx L337, not ported yet");
+        // OCCT L344-348.
+        self.base.reset_fields();
+        let itool = IConicTool::new_circle(c);
+        let mut pcurve = PConic::new_parabola(p);
+        pcurve.set_accuracy(20);
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+
+        // OCCT L350-354.
+        let mut d = dc.clone();
+        if !dc.is_closed() {
+            d.set_equivalent_parameters(dc.first_parameter(), dc.first_parameter() + PI2);
+        }
+
+        // OCCT L356-383: two concentric circles bracketing the exact one.
+        let mut binf = rcad_kernel::precision::INFINITE_VALUE;
+        let mut bsup = -rcad_kernel::precision::INFINITE_VALUE;
+        let mut pntinf = DVec2::ZERO;
+        let mut pntsup = DVec2::ZERO;
+        let maxtol = c.radius / 10.0;
+        let mut cp = *c;
+        cp.radius = c.radius + maxtol;
+        let mut the_int_ana2d = AnaIntersection2d::new();
+        the_int_ana2d.perform_parabola_conic(p, &Conic2d::from_circle(&cp));
+        set_binf_bsup_from_int_ana2d_parab(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            p,
+            maxtol,
+            PARAM_MAX_ON_PARABOLA,
+        );
+        if c.radius > maxtol {
+            cp.radius = c.radius - maxtol;
+            the_int_ana2d.perform_parabola_conic(p, &Conic2d::from_circle(&cp));
+            set_binf_bsup_from_int_ana2d_parab(
+                &the_int_ana2d,
+                &mut binf,
+                &mut pntinf,
+                &mut bsup,
+                &mut pntsup,
+                p,
+                maxtol,
+                PARAM_MAX_ON_PARABOLA,
+            );
+        }
+
+        // OCCT L384-434.
+        if binf <= bsup {
+            if !bounded_domain(dp) {
+                // OCCT L386-400.
+                let mut tolinf = 0.0;
+                let mut tolsup = 0.0;
+                if set_bounded_domain(
+                    dp,
+                    &mut binf,
+                    &mut tolinf,
+                    &mut pntinf,
+                    &mut bsup,
+                    &mut tolsup,
+                    &mut pntsup,
+                ) {
+                    let dp_modif = Res2dDomain::bounded(pntinf, binf, tolinf, pntsup, bsup, tolsup);
+                    self.inter.perform(&itool, &d, &pcurve, &dp_modif, tol_conf, tol);
+                } else {
+                    self.base.done = true;
+                    return;
+                }
+            } else {
+                // OCCT L401-428.
+                let mut ft = 0.0;
+                let mut lt = 0.0;
+                if binf < dp.first_parameter() {
+                    binf = dp.first_parameter();
+                    pntinf = dp.first_point();
+                    ft = dp.first_tolerance();
+                    if bsup < dp.first_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                if bsup > dp.last_parameter() {
+                    bsup = dp.last_parameter();
+                    pntsup = dp.last_point();
+                    lt = dp.last_tolerance();
+                    if binf > dp.last_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                let dp_modif = Res2dDomain::bounded(pntinf, binf, ft, pntsup, bsup, lt);
+                self.inter.perform(&itool, &d, &pcurve, &dp_modif, tol_conf, tol);
+            }
+            // OCCT L429.
+            self.base.set_values(&self.inter.base);
+        } else {
+            // OCCT L431-434.
+            self.base.done = true;
+        }
     }
 
-    /// OCCT Perform(const gp_Circ2d& C, const gp_Hypr2d& H)
+    /// OCCT Perform(const gp_Circ2d& C, const IntRes2d_Domain& DC,
+    /// const gp_Hypr2d& H, const IntRes2d_Domain& DH, TolConf, Tol)
     /// (IntCurve_IntConicConic.cxx L486-581).
     pub fn perform_circle_hyperbola(
         &mut self,
-        _c: &Circle2d,
-        _dc: &Res2dDomain,
-        _h: &Hyperbola2d,
-        _dh: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
+        c: &Circle2d,
+        dc: &Res2dDomain,
+        h: &Hyperbola2d,
+        dh: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
     ) {
-        unimplemented!("IntConicConic::Perform(Circ, Hypr) — IntCurve_IntConicConic.cxx L486, not ported yet");
+        // OCCT L493-503.
+        self.base.reset_fields();
+        let itool = IConicTool::new_circle(c);
+        let mut pcurve = PConic::new_hyperbola(h);
+        pcurve.set_accuracy(20);
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+        let mut d = dc.clone();
+
+        if !dc.is_closed() {
+            d.set_equivalent_parameters(dc.first_parameter(), dc.first_parameter() + PI2);
+        }
+        // OCCT L504-529: two translated hyperbolas bracketing the exact one.
+        let mut binf = rcad_kernel::precision::INFINITE_VALUE;
+        let mut bsup = -rcad_kernel::precision::INFINITE_VALUE;
+        let mut pntinf = DVec2::ZERO;
+        let mut pntsup = DVec2::ZERO;
+        let maxtol = c.radius / 10.0;
+        let mut offset = DVec2::new(maxtol * h.major_dir.x, maxtol * h.major_dir.y);
+        let hp = Hyperbola2d {
+            center: h.center + offset,
+            ..*h
+        };
+        let mut the_int_ana2d = AnaIntersection2d::new();
+        the_int_ana2d.perform_hyperbola_conic(&hp, &Conic2d::from_circle(c));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+        offset = -offset;
+        let hm = Hyperbola2d {
+            center: h.center + offset,
+            ..*h
+        };
+        the_int_ana2d.perform_hyperbola_conic(&hm, &Conic2d::from_circle(c));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+
+        // OCCT L530-580.
+        if binf <= bsup {
+            if !bounded_domain(dh) {
+                // OCCT L532-546.
+                let mut tolinf = 0.0;
+                let mut tolsup = 0.0;
+                if set_bounded_domain(
+                    dh,
+                    &mut binf,
+                    &mut tolinf,
+                    &mut pntinf,
+                    &mut bsup,
+                    &mut tolsup,
+                    &mut pntsup,
+                ) {
+                    let dh_modif = Res2dDomain::bounded(pntinf, binf, tolinf, pntsup, bsup, tolsup);
+                    self.inter.perform(&itool, &d, &pcurve, &dh_modif, tol_conf, tol);
+                } else {
+                    self.base.done = true;
+                    return;
+                }
+            } else {
+                // OCCT L547-574.
+                let mut ft = 0.0;
+                let mut lt = 0.0;
+                if binf < dh.first_parameter() {
+                    binf = dh.first_parameter();
+                    pntinf = dh.first_point();
+                    ft = dh.first_tolerance();
+                    if bsup < dh.first_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                if bsup > dh.last_parameter() {
+                    bsup = dh.last_parameter();
+                    pntsup = dh.last_point();
+                    lt = dh.last_tolerance();
+                    if binf > dh.last_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                let dh_modif = Res2dDomain::bounded(pntinf, binf, ft, pntsup, bsup, lt);
+                self.inter.perform(&itool, &d, &pcurve, &dh_modif, tol_conf, tol);
+            }
+            // OCCT L575.
+            self.base.set_values(&self.inter.base);
+        } else {
+            // OCCT L577-580.
+            self.base.done = true;
+        }
     }
 
-    /// OCCT Perform(const gp_Elips2d& E, const gp_Parab2d& P)
-    /// (IntCurve_IntConicConic.cxx L692-806).
-    pub fn perform_ellipse_parabola(
-        &mut self,
-        _e: &Ellipse2d,
-        _de: &Res2dDomain,
-        _p: &Parabola2d,
-        _dp: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
-    ) {
-        unimplemented!("IntConicConic::Perform(Elips, Parab) — IntCurve_IntConicConic.cxx L692, not ported yet");
-    }
-
-    /// OCCT Perform(const gp_Elips2d& E, const gp_Hypr2d& H)
-    /// (IntCurve_IntConicConic.cxx L962-1063).
-    pub fn perform_ellipse_hyperbola(
-        &mut self,
-        _e: &Ellipse2d,
-        _de: &Res2dDomain,
-        _h: &Hyperbola2d,
-        _dh: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
-    ) {
-        unimplemented!("IntConicConic::Perform(Elips, Hypr) — IntCurve_IntConicConic.cxx L962, not ported yet");
-    }
-
-    /// OCCT Perform(const gp_Parab2d& P1, const gp_Parab2d& P2)
+    /// OCCT Perform(const gp_Parab2d& P1, const IntRes2d_Domain& DP1,
+    /// const gp_Parab2d& P2, const IntRes2d_Domain& DP2, TolConf, Tol)
     /// (IntCurve_IntConicConic.cxx L585-688).
     pub fn perform_parabola_parabola(
         &mut self,
-        _p1: &Parabola2d,
-        _d1: &Res2dDomain,
-        _p2: &Parabola2d,
-        _d2: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
+        p1: &Parabola2d,
+        dp1: &Res2dDomain,
+        p2: &Parabola2d,
+        dp2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
     ) {
-        unimplemented!("IntConicConic::Perform(Parab, Parab) — IntCurve_IntConicConic.cxx L585, not ported yet");
+        // OCCT L592-596.
+        self.base.reset_fields();
+        let itool = IConicTool::new_parabola(p1);
+        let mut pcurve = PConic::new_parabola(p2);
+        pcurve.set_accuracy(20);
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+
+        // OCCT L598-612.
+        let mut binf = rcad_kernel::precision::INFINITE_VALUE;
+        let mut bsup = -rcad_kernel::precision::INFINITE_VALUE;
+        let maxtol_base;
+        if tol > tol_conf {
+            maxtol_base = tol;
+        } else {
+            maxtol_base = tol_conf;
+        }
+        let mut maxtol = maxtol_base * 100.0;
+        if maxtol < 0.000001 {
+            maxtol = 0.000001;
+        }
+        // P2.MirrorAxis().Direction() is the parabola X direction.
+        let mut offset = DVec2::new(maxtol * p2.axis_dir.x, maxtol * p2.axis_dir.y);
+        let pp = Parabola2d {
+            origin: p2.origin + offset,
+            ..*p2
+        };
+        let mut pntinf = DVec2::ZERO;
+        let mut pntsup = DVec2::ZERO;
+        let mut the_int_ana2d = AnaIntersection2d::new();
+        the_int_ana2d.perform_parabola_conic(&pp, &Conic2d::from_parabola(p1));
+        set_binf_bsup_from_int_ana2d_parab(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            p2,
+            maxtol,
+            PARAM_MAX_ON_PARABOLA,
+        );
+
+        // OCCT L626-636.
+        offset = -offset;
+        let pm = Parabola2d {
+            origin: p2.origin + offset,
+            ..*p2
+        };
+        the_int_ana2d.perform_parabola_conic(&pm, &Conic2d::from_parabola(p1));
+        set_binf_bsup_from_int_ana2d_parab(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            p2,
+            maxtol,
+            PARAM_MAX_ON_PARABOLA,
+        );
+
+        // OCCT L637-687.
+        if binf <= bsup {
+            if !bounded_domain(dp2) {
+                // OCCT L639-653.
+                let mut tolinf = 0.0;
+                let mut tolsup = 0.0;
+                if set_bounded_domain(
+                    dp2,
+                    &mut binf,
+                    &mut tolinf,
+                    &mut pntinf,
+                    &mut bsup,
+                    &mut tolsup,
+                    &mut pntsup,
+                ) {
+                    let dp_modif = Res2dDomain::bounded(pntinf, binf, tolinf, pntsup, bsup, tolsup);
+                    self.inter.perform(&itool, dp1, &pcurve, &dp_modif, tol_conf, tol);
+                } else {
+                    self.base.done = true;
+                    return;
+                }
+            } else {
+                // OCCT L654-681.
+                let mut ft = 0.0;
+                let mut lt = 0.0;
+                if binf < dp2.first_parameter() {
+                    binf = dp2.first_parameter();
+                    pntinf = dp2.first_point();
+                    ft = dp2.first_tolerance();
+                    if bsup < dp2.first_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                if bsup > dp2.last_parameter() {
+                    bsup = dp2.last_parameter();
+                    pntsup = dp2.last_point();
+                    lt = dp2.last_tolerance();
+                    if binf > dp2.last_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                let dp_modif = Res2dDomain::bounded(pntinf, binf, ft, pntsup, bsup, lt);
+                self.inter.perform(&itool, dp1, &pcurve, &dp_modif, tol_conf, tol);
+            }
+            // OCCT L682.
+            self.base.set_values(&self.inter.base);
+        } else {
+            // OCCT L684-687.
+            self.base.done = true;
+        }
     }
 
-    /// OCCT Perform(const gp_Parab2d& P, const gp_Hypr2d& H)
+    /// OCCT Perform(const gp_Elips2d& E, const IntRes2d_Domain& DE,
+    /// const gp_Parab2d& P, const IntRes2d_Domain& DP, TolConf, Tol)
+    /// (IntCurve_IntConicConic.cxx L692-806).
+    pub fn perform_ellipse_parabola(
+        &mut self,
+        e: &Ellipse2d,
+        de: &Res2dDomain,
+        p: &Parabola2d,
+        dp: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        // OCCT L699-703.
+        self.base.reset_fields();
+        let itool = IConicTool::new_ellipse(e);
+        let mut pcurve = PConic::new_parabola(p);
+        pcurve.set_accuracy(20);
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+
+        // OCCT L705-709.
+        let mut d = de.clone();
+        if !de.is_closed() {
+            d.set_equivalent_parameters(de.first_parameter(), de.first_parameter() + PI2);
+        }
+
+        // OCCT L713-727: the Tol/TolConf maxtol is computed then overwritten by
+        // the minor-radius term; two concentric ellipses bracket the exact one.
+        #[allow(unused_assignments)]
+        let mut maxtol = if tol > tol_conf { tol } else { tol_conf };
+        maxtol = e.minor_radius / 10.0;
+        let mut binf = rcad_kernel::precision::INFINITE_VALUE;
+        let mut bsup = -rcad_kernel::precision::INFINITE_VALUE;
+        let mut pntinf = DVec2::ZERO;
+        let mut pntsup = DVec2::ZERO;
+        let mut ep = *e;
+        ep.major_radius = e.major_radius + maxtol;
+        ep.minor_radius = e.minor_radius + maxtol;
+        let mut the_int_ana2d = AnaIntersection2d::new();
+        the_int_ana2d.perform_parabola_conic(p, &Conic2d::from_ellipse(&ep));
+        set_binf_bsup_from_int_ana2d_parab(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            p,
+            maxtol,
+            PARAM_MAX_ON_PARABOLA,
+        );
+
+        // OCCT L738-751.
+        if e.minor_radius > maxtol {
+            ep.minor_radius = e.minor_radius - maxtol;
+            ep.major_radius = e.major_radius - maxtol;
+            the_int_ana2d.perform_parabola_conic(p, &Conic2d::from_ellipse(&ep));
+            set_binf_bsup_from_int_ana2d_parab(
+                &the_int_ana2d,
+                &mut binf,
+                &mut pntinf,
+                &mut bsup,
+                &mut pntsup,
+                p,
+                maxtol,
+                PARAM_MAX_ON_PARABOLA,
+            );
+        }
+
+        // OCCT L753-805.
+        if binf <= bsup {
+            if !bounded_domain(dp) {
+                // OCCT L755-769.
+                let mut tolinf = 0.0;
+                let mut tolsup = 0.0;
+                if set_bounded_domain(
+                    dp,
+                    &mut binf,
+                    &mut tolinf,
+                    &mut pntinf,
+                    &mut bsup,
+                    &mut tolsup,
+                    &mut pntsup,
+                ) {
+                    let dp_modif = Res2dDomain::bounded(pntinf, binf, tolinf, pntsup, bsup, tolsup);
+                    self.inter.perform(&itool, &d, &pcurve, &dp_modif, tol_conf, tol);
+                } else {
+                    self.base.done = true;
+                    return;
+                }
+            } else {
+                // OCCT L770-799.
+                let mut ft = 0.0;
+                let mut lt = 0.0;
+                if binf < dp.first_parameter() {
+                    binf = dp.first_parameter();
+                    pntinf = dp.first_point();
+                    ft = dp.first_tolerance();
+                    if bsup < dp.first_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                if bsup > dp.last_parameter() {
+                    bsup = dp.last_parameter();
+                    pntsup = dp.last_point();
+                    lt = dp.last_tolerance();
+                    if binf > dp.last_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                let dp_modif = Res2dDomain::bounded(pntinf, binf, ft, pntsup, bsup, lt);
+                self.inter.perform(&itool, &d, &pcurve, &dp_modif, tol_conf, tol);
+            }
+            // OCCT L800.
+            self.base.set_values(&self.inter.base);
+        } else {
+            // OCCT L802-805.
+            self.base.done = true;
+        }
+    }
+
+    /// OCCT Perform(const gp_Elips2d& E, const IntRes2d_Domain& DE,
+    /// const gp_Hypr2d& H, const IntRes2d_Domain& DH, TolConf, Tol)
+    /// (IntCurve_IntConicConic.cxx L962-1063).
+    pub fn perform_ellipse_hyperbola(
+        &mut self,
+        e: &Ellipse2d,
+        de: &Res2dDomain,
+        h: &Hyperbola2d,
+        dh: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
+    ) {
+        // OCCT L969-979.
+        self.base.reset_fields();
+        let itool = IConicTool::new_ellipse(e);
+        let mut pcurve = PConic::new_hyperbola(h);
+        pcurve.set_accuracy(20);
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+        let mut de_modif = de.clone();
+
+        if !de.is_closed() {
+            de_modif.set_equivalent_parameters(de.first_parameter(), de.first_parameter() + PI2);
+        }
+
+        // OCCT L981-1006: two translated hyperbolas bracketing the exact one.
+        let mut binf = rcad_kernel::precision::INFINITE_VALUE;
+        let mut bsup = -rcad_kernel::precision::INFINITE_VALUE;
+        let mut pntinf = DVec2::ZERO;
+        let mut pntsup = DVec2::ZERO;
+        let maxtol = e.minor_radius / 10.0;
+        let mut offset = DVec2::new(maxtol * h.major_dir.x, maxtol * h.major_dir.y);
+        let hp = Hyperbola2d {
+            center: h.center + offset,
+            ..*h
+        };
+        let mut the_int_ana2d = AnaIntersection2d::new();
+        the_int_ana2d.perform_hyperbola_conic(&hp, &Conic2d::from_ellipse(e));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+        offset = -offset;
+        let hm = Hyperbola2d {
+            center: h.center + offset,
+            ..*h
+        };
+        the_int_ana2d.perform_hyperbola_conic(&hm, &Conic2d::from_ellipse(e));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+
+        // OCCT L1007-1062.
+        if binf <= bsup {
+            if !bounded_domain(dh) {
+                // OCCT L1009-1023.
+                let mut tolinf = 0.0;
+                let mut tolsup = 0.0;
+                if set_bounded_domain(
+                    dh,
+                    &mut binf,
+                    &mut tolinf,
+                    &mut pntinf,
+                    &mut bsup,
+                    &mut tolsup,
+                    &mut pntsup,
+                ) {
+                    let dh_modif = Res2dDomain::bounded(pntinf, binf, tolinf, pntsup, bsup, tolsup);
+                    self.inter.perform(&itool, &de_modif, &pcurve, &dh_modif, tol_conf, tol);
+                } else {
+                    self.base.done = true;
+                    return;
+                }
+            } else {
+                // OCCT L1024-1056.
+                let mut ft = 0.0;
+                let mut lt = 0.0;
+                if binf < dh.first_parameter() {
+                    binf = dh.first_parameter();
+                    pntinf = dh.first_point();
+                    ft = dh.first_tolerance();
+                    if bsup < dh.first_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                if bsup > dh.last_parameter() {
+                    bsup = dh.last_parameter();
+                    pntsup = dh.last_point();
+                    lt = dh.last_tolerance();
+                    if binf > dh.last_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                if binf >= bsup {
+                    self.base.done = true;
+                    return;
+                }
+                let dh_modif = Res2dDomain::bounded(pntinf, binf, ft, pntsup, bsup, lt);
+                self.inter.perform(&itool, &de_modif, &pcurve, &dh_modif, tol_conf, tol);
+            }
+            // OCCT L1057.
+            self.base.set_values(&self.inter.base);
+        } else {
+            // OCCT L1059-1062.
+            self.base.done = true;
+        }
+    }
+
+    /// OCCT Perform(const gp_Parab2d& P, const IntRes2d_Domain& DP,
+    /// const gp_Hypr2d& H, const IntRes2d_Domain& DH, TolConf, Tol)
     /// (IntCurve_IntConicConic.cxx L810-911).
     pub fn perform_parabola_hyperbola(
         &mut self,
-        _p: &Parabola2d,
-        _dp: &Res2dDomain,
-        _h: &Hyperbola2d,
-        _dh: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
+        p: &Parabola2d,
+        dp: &Res2dDomain,
+        h: &Hyperbola2d,
+        dh: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
     ) {
-        unimplemented!("IntConicConic::Perform(Parab, Hypr) — IntCurve_IntConicConic.cxx L810, not ported yet");
+        // OCCT L817-820. Note: OCCT does NOT call PCurve.SetAccuracy() in this
+        // overload — the hyperbola PConic keeps its constructor accuracy (50).
+        self.base.reset_fields();
+        let itool = IConicTool::new_parabola(p);
+        let pcurve = PConic::new_hyperbola(h);
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+
+        // OCCT L822-836.
+        let mut binf = rcad_kernel::precision::INFINITE_VALUE;
+        let mut bsup = -rcad_kernel::precision::INFINITE_VALUE;
+        let maxtol_base;
+        if tol > tol_conf {
+            maxtol_base = tol;
+        } else {
+            maxtol_base = tol_conf;
+        }
+        let mut maxtol = maxtol_base * 100.0;
+        if maxtol < 0.000001 {
+            maxtol = 0.000001;
+        }
+        let mut offset = DVec2::new(maxtol * h.major_dir.x, maxtol * h.major_dir.y);
+        let hp = Hyperbola2d {
+            center: h.center + offset,
+            ..*h
+        };
+        let mut pntinf = DVec2::ZERO;
+        let mut pntsup = DVec2::ZERO;
+        let mut the_int_ana2d = AnaIntersection2d::new();
+        the_int_ana2d.perform_hyperbola_conic(&hp, &Conic2d::from_parabola(p));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+
+        // OCCT L849-859.
+        offset = -offset;
+        let hm = Hyperbola2d {
+            center: h.center + offset,
+            ..*h
+        };
+        the_int_ana2d.perform_hyperbola_conic(&hm, &Conic2d::from_parabola(p));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+
+        // OCCT L860-910.
+        if binf <= bsup {
+            if !bounded_domain(dh) {
+                // OCCT L862-876.
+                let mut tolinf = 0.0;
+                let mut tolsup = 0.0;
+                if set_bounded_domain(
+                    dh,
+                    &mut binf,
+                    &mut tolinf,
+                    &mut pntinf,
+                    &mut bsup,
+                    &mut tolsup,
+                    &mut pntsup,
+                ) {
+                    let dh_modif = Res2dDomain::bounded(pntinf, binf, tolinf, pntsup, bsup, tolsup);
+                    self.inter.perform(&itool, dp, &pcurve, &dh_modif, tol_conf, tol);
+                } else {
+                    self.base.done = true;
+                    return;
+                }
+            } else {
+                // OCCT L877-904.
+                let mut ft = 0.0;
+                let mut lt = 0.0;
+                if binf < dh.first_parameter() {
+                    binf = dh.first_parameter();
+                    pntinf = dh.first_point();
+                    ft = dh.first_tolerance();
+                    if bsup < dh.first_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                if bsup > dh.last_parameter() {
+                    bsup = dh.last_parameter();
+                    pntsup = dh.last_point();
+                    lt = dh.last_tolerance();
+                    if binf > dh.last_parameter() {
+                        self.base.done = true;
+                        return;
+                    }
+                }
+                let dh_modif = Res2dDomain::bounded(pntinf, binf, ft, pntsup, bsup, lt);
+                self.inter.perform(&itool, dp, &pcurve, &dh_modif, tol_conf, tol);
+            }
+            // OCCT L905.
+            self.base.set_values(&self.inter.base);
+        } else {
+            // OCCT L907-910.
+            self.base.done = true;
+        }
     }
 
-    /// OCCT Perform(const gp_Hypr2d& H1, const gp_Hypr2d& H2)
+    /// OCCT Perform(const gp_Hypr2d& H1, const IntRes2d_Domain& DH1,
+    /// const gp_Hypr2d& H2, const IntRes2d_Domain& DH2, TolConf, Tol)
     /// (IntCurve_IntConicConic.cxx L1067-1168).
     pub fn perform_hyperbola_hyperbola(
         &mut self,
-        _h1: &Hyperbola2d,
-        _d1: &Res2dDomain,
-        _h2: &Hyperbola2d,
-        _d2: &Res2dDomain,
-        _tol_conf: f64,
-        _tol: f64,
+        h1: &Hyperbola2d,
+        dh1: &Res2dDomain,
+        h2: &Hyperbola2d,
+        dh2: &Res2dDomain,
+        tol_conf: f64,
+        tol: f64,
     ) {
-        unimplemented!("IntConicConic::Perform(Hypr, Hypr) — IntCurve_IntConicConic.cxx L1067, not ported yet");
+        // OCCT L1074-1079.
+        self.base.reset_fields();
+        let itool = IConicTool::new_hyperbola(h1);
+        let mut pcurve = PConic::new_hyperbola(h2);
+        pcurve.set_accuracy(20);
+
+        self.inter
+            .base
+            .set_reversed_parameters(self.base.reversed_parameters());
+
+        // OCCT L1081-1095.
+        let mut binf = rcad_kernel::precision::INFINITE_VALUE;
+        let mut bsup = -rcad_kernel::precision::INFINITE_VALUE;
+        let maxtol_base;
+        if tol > tol_conf {
+            maxtol_base = tol;
+        } else {
+            maxtol_base = tol_conf;
+        }
+        let mut maxtol = maxtol_base * 100.0;
+        if maxtol < 0.000001 {
+            maxtol = 0.000001;
+        }
+        let mut offset = DVec2::new(maxtol * h2.major_dir.x, maxtol * h2.major_dir.y);
+        let hp = Hyperbola2d {
+            center: h2.center + offset,
+            ..*h2
+        };
+        let mut pntinf = DVec2::ZERO;
+        let mut pntsup = DVec2::ZERO;
+        let mut the_int_ana2d = AnaIntersection2d::new();
+        the_int_ana2d.perform_hyperbola_conic(&hp, &Conic2d::from_hyperbola(h1));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h2,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+
+        // OCCT L1108-1118.
+        offset = -offset;
+        let hm = Hyperbola2d {
+            center: h2.center + offset,
+            ..*h2
+        };
+        the_int_ana2d.perform_hyperbola_conic(&hm, &Conic2d::from_hyperbola(h1));
+        set_binf_bsup_from_int_ana2d_hyper(
+            &the_int_ana2d,
+            &mut binf,
+            &mut pntinf,
+            &mut bsup,
+            &mut pntsup,
+            h2,
+            maxtol,
+            PARAM_MAX_ON_HYPERBOLA,
+        );
+
+        // OCCT L1119-1167.
+        if binf <= bsup {
+            if !bounded_domain(dh2) {
+                // OCCT L1121-1135.
+                let mut tolinf = 0.0;
+                let mut tolsup = 0.0;
+                if set_bounded_domain(
+                    dh2,
+                    &mut binf,
+                    &mut tolinf,
+                    &mut pntinf,
+                    &mut bsup,
+                    &mut tolsup,
+                    &mut pntsup,
+                ) {
+                    let dh_modif = Res2dDomain::bounded(pntinf, binf, tolinf, pntsup, bsup, tolsup);
+                    self.inter.perform(&itool, dh1, &pcurve, &dh_modif, tol_conf, tol);
+                } else {
+                    self.base.done = true;
+                    return;
+                }
+            } else {
+                // OCCT L1136-1160: the clamps have no nested early-exit here;
+                // the binf >= bsup check is done separately (lbr 22 sept 97).
+                let mut ft = 0.0;
+                let mut lt = 0.0;
+                if binf < dh2.first_parameter() {
+                    binf = dh2.first_parameter();
+                    pntinf = dh2.first_point();
+                    ft = dh2.first_tolerance();
+                }
+                if bsup > dh2.last_parameter() {
+                    bsup = dh2.last_parameter();
+                    pntsup = dh2.last_point();
+                    lt = dh2.last_tolerance();
+                }
+
+                if binf >= bsup {
+                    self.base.done = true;
+                    return;
+                }
+                let dh_modif = Res2dDomain::bounded(pntinf, binf, ft, pntsup, bsup, lt);
+                self.inter.perform(&itool, dh1, &pcurve, &dh_modif, tol_conf, tol);
+            }
+            // OCCT L1162.
+            self.base.set_values(&self.inter.base);
+        } else {
+            // OCCT L1164-1167.
+            self.base.done = true;
+        }
     }
 }
 
 impl Default for IntConicConic {
     fn default() -> Self {
         IntConicConic::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The file-static constants and helpers of IntCurve_IntConicConic.cxx
+// ---------------------------------------------------------------------------
+
+/// OCCT BOUNDED_DOMAIN (IntCurve_IntConicConic.cxx L52-55).
+fn bounded_domain(domain: &Res2dDomain) -> bool {
+    domain.has_first_point() && domain.has_last_point()
+}
+
+/// OCCT SET_BOUNDED_DOMAIN (IntCurve_IntConicConic.cxx L57-87).
+#[allow(clippy::too_many_arguments)]
+fn set_bounded_domain(
+    domain: &Res2dDomain,
+    binf: &mut f64,
+    tolinf: &mut f64,
+    pntinf: &mut DVec2,
+    bsup: &mut f64,
+    tolsup: &mut f64,
+    pntsup: &mut DVec2,
+) -> bool {
+    if domain.has_first_point() {
+        if *binf < domain.first_parameter() {
+            *pntinf = domain.first_point();
+            *binf = domain.first_parameter();
+            *tolinf = domain.first_tolerance();
+        }
+    }
+    if domain.has_last_point() {
+        // OCCT L76 keeps the FirstParameter() comparison in the bsup branch.
+        if *bsup > domain.first_parameter() {
+            *pntsup = domain.last_point();
+            *bsup = domain.last_parameter();
+            *tolsup = domain.last_tolerance();
+        }
+    }
+    let result = *bsup > *binf;
+    //   if(bsup<=binf) return(false);
+    //   return(true);
+    result
+}
+
+/// OCCT SetBinfBsupFromIntAna2d — the gp_Parab2d overload
+/// (IntCurve_IntConicConic.cxx L1172-1218). Grows [binf, bsup] around the
+/// IntAna2d intersection parameters on PR, damping each by dparam.
+fn set_binf_bsup_from_int_ana2d_parab(
+    the_int_ana2d: &AnaIntersection2d,
+    binf: &mut f64,
+    pntinf: &mut DVec2,
+    bsup: &mut f64,
+    pntsup: &mut DVec2,
+    pr: &Parabola2d,
+    maxtol: f64,
+    limite: f64,
+) {
+    if the_int_ana2d.is_done() {
+        if !the_int_ana2d.is_empty() {
+            for p in 1..=the_int_ana2d.nb_points() {
+                let mut param = the_int_ana2d.point(p).param_on_first();
+
+                if param.abs() < limite {
+                    // ElCLib::D1(param, PR, P, V) — elclib2d takes the OCCT
+                    // Focal (= focal_param / 2, gp_Parab2d::Parameter = 2*Focal).
+                    let focal = pr.focal_param * 0.5;
+                    let ydir = DVec2::new(-pr.axis_dir.y, pr.axis_dir.x);
+                    let (_p, v) =
+                        elclib2d::parabola_d1(pr.origin, pr.axis_dir, ydir, focal, param);
+                    let norme_d1 = v.length();
+                    let mut dparam = 100.0 * maxtol / norme_d1;
+                    if dparam < 1e-3 {
+                        dparam = 1e-3;
+                    }
+                    param -= dparam;
+
+                    if param < *binf {
+                        *binf = param;
+                        *pntinf =
+                            elclib2d::parabola_value(pr.origin, pr.axis_dir, ydir, focal, param);
+                    }
+                    param += dparam + dparam;
+                    if param > *bsup {
+                        *bsup = param;
+                        *pntsup =
+                            elclib2d::parabola_value(pr.origin, pr.axis_dir, ydir, focal, param);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// OCCT SetBinfBsupFromIntAna2d — the gp_Hypr2d overload
+/// (IntCurve_IntConicConic.cxx L1220-1266). Grows [binf, bsup] around the
+/// IntAna2d intersection parameters on H, damping each by dparam.
+fn set_binf_bsup_from_int_ana2d_hyper(
+    the_int_ana2d: &AnaIntersection2d,
+    binf: &mut f64,
+    pntinf: &mut DVec2,
+    bsup: &mut f64,
+    pntsup: &mut DVec2,
+    h: &Hyperbola2d,
+    maxtol: f64,
+    limite: f64,
+) {
+    if the_int_ana2d.is_done() {
+        if !the_int_ana2d.is_empty() {
+            for p in 1..=the_int_ana2d.nb_points() {
+                let mut param = the_int_ana2d.point(p).param_on_first();
+
+                if param.abs() < limite {
+                    // ElCLib::D1(param, H, P, V).
+                    let minor_dir = DVec2::new(-h.major_dir.y, h.major_dir.x);
+                    let (_p, v) = elclib2d::hyperbola_d1(
+                        h.center,
+                        h.major_dir,
+                        minor_dir,
+                        h.semi_major,
+                        h.semi_minor,
+                        param,
+                    );
+                    let norme_d1 = v.length();
+                    let mut dparam = 100.0 * maxtol / norme_d1;
+                    if dparam < 1e-3 {
+                        dparam = 1e-3;
+                    }
+                    param -= dparam;
+
+                    if param < *binf {
+                        *binf = param;
+                        *pntinf = elclib2d::hyperbola_value(
+                            h.center,
+                            h.major_dir,
+                            minor_dir,
+                            h.semi_major,
+                            h.semi_minor,
+                            param,
+                        );
+                    }
+                    param += dparam + dparam;
+                    if param > *bsup {
+                        *bsup = param;
+                        *pntsup = elclib2d::hyperbola_value(
+                            h.center,
+                            h.major_dir,
+                            minor_dir,
+                            h.semi_major,
+                            h.semi_minor,
+                            param,
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1754,4 +2927,325 @@ fn segment_to_point(
         u2 = pb.param_on_second();
     }
     IntersectionPoint::new(pa.value(), u1, u2, t1, t2, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f64::consts::TAU;
+
+    const TOL_CHECK: f64 = 1.0e-5;
+
+    /// Closed domain [0, 2*pi] on the canonical frame starting at `start`
+    /// (the IntCurveCurveGen::ComputeDomain convention).
+    fn closed_domain(start: DVec2) -> Res2dDomain {
+        let mut d = Res2dDomain::infinite();
+        d.set_values_bounded(start, 0.0, 1.0e-9, start, TAU, 1.0e-9);
+        d.set_equivalent_parameters(0.0, TAU);
+        d
+    }
+
+    /// Bounded domain on the segment [origin + t0*dir, origin + t1*dir].
+    fn bounded_line_domain(origin: DVec2, dir: DVec2, t0: f64, t1: f64) -> Res2dDomain {
+        let mut d = Res2dDomain::infinite();
+        d.set_values_bounded(origin + dir * t0, t0, 1.0e-9, origin + dir * t1, t1, 1.0e-9);
+        d
+    }
+
+    /// The parabola {(u^2, u)}: vertex at `origin`, axis +X, focal_param 0.5
+    /// (ElCLib parameterization: P(u) = origin + u^2/(2p)*axis + u*perp).
+    fn std_parabola(origin: DVec2, axis: DVec2) -> Parabola2d {
+        Parabola2d {
+            origin,
+            axis_dir: axis,
+            focal_param: 0.5,
+        }
+    }
+
+    /// The unit-scale hyperbola (a = b = 1): P(t) = center + cosh(t)*major
+    /// + sinh(t)*perp.
+    fn std_hyperbola(center: DVec2) -> Hyperbola2d {
+        Hyperbola2d {
+            center,
+            major_dir: DVec2::new(1.0, 0.0),
+            semi_major: 1.0,
+            semi_minor: 1.0,
+        }
+    }
+
+    fn sorted_points(ic: &IntConicConic) -> Vec<(f64, f64)> {
+        let mut pts: Vec<(f64, f64)> = (1..=ic.base.nb_points())
+            .map(|i| {
+                let p = ic.base.point(i).value();
+                (p.x, p.y)
+            })
+            .collect();
+        pts.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap()
+                .then(a.0.partial_cmp(&b.0).unwrap())
+        });
+        pts
+    }
+
+    fn assert_points(ic: &IntConicConic, expected: &[(f64, f64)]) {
+        let pts = sorted_points(ic);
+        assert_eq!(pts.len(), expected.len(), "pts={:?}", pts);
+        for (got, want) in pts.iter().zip(expected.iter()) {
+            assert!(
+                (got.0 - want.0).abs() < TOL_CHECK && (got.1 - want.1).abs() < TOL_CHECK,
+                "got {:?} want {:?}",
+                pts,
+                expected
+            );
+        }
+    }
+
+    /// OCCT anchor: the vertical line x = 1 crossing the parabola
+    /// {(u^2, u)} at (1, 1) and (1, -1) (u = +-1); the unbounded parabola
+    /// domain exercises the SetBinfBsupFromIntAna2d pre-pass path.
+    #[test]
+    fn line_parabola_two_crossings() {
+        let p = std_parabola(DVec2::ZERO, DVec2::new(1.0, 0.0));
+        let dp = Res2dDomain::infinite();
+        let l = Line2d {
+            origin: DVec2::new(1.0, -2.0),
+            direction: DVec2::new(0.0, 1.0),
+        };
+        let dl = bounded_line_domain(l.origin, l.direction, 0.0, 4.0);
+
+        let mut ic = IntConicConic::new();
+        ic.perform_line_parabola(&l, &dl, &p, &dp, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_segments(), 0);
+        assert_eq!(ic.base.nb_points(), 2, "nb_pt={}", ic.base.nb_points());
+        assert_points(&ic, &[(1.0, -1.0), (1.0, 1.0)]);
+    }
+
+    /// OCCT anchor: the vertical line x = 2 crossing the hyperbola
+    /// (cosh t, sinh t) at x = cosh(t) = 2, i.e. (2, +-sqrt(3)) with
+    /// t = +-arcosh(2).
+    #[test]
+    fn line_hyperbola_two_crossings() {
+        let h = std_hyperbola(DVec2::ZERO);
+        let dh = Res2dDomain::infinite();
+        let l = Line2d {
+            origin: DVec2::new(2.0, -3.0),
+            direction: DVec2::new(0.0, 1.0),
+        };
+        let dl = bounded_line_domain(l.origin, l.direction, 0.0, 6.0);
+
+        let mut ic = IntConicConic::new();
+        ic.perform_line_hyperbola(&l, &dl, &h, &dh, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_points(), 2, "nb_pt={}", ic.base.nb_points());
+        assert_points(&ic, &[(2.0, -1.7320508), (2.0, 1.7320508)]);
+    }
+
+    /// OCCT anchor: the circle x^2 + y^2 = 2.25 against the ellipse
+    /// x^2/4 + y^2 = 1 — four crossings at x^2 = 5/3, y^2 = 7/12.
+    #[test]
+    fn circle_ellipse_four_crossings() {
+        let c = Circle2d {
+            center: DVec2::ZERO,
+            x_dir: DVec2::new(1.0, 0.0),
+            y_dir: DVec2::new(0.0, 1.0),
+            radius: 1.5,
+        };
+        let dc = closed_domain(DVec2::new(1.5, 0.0));
+        let e = Ellipse2d {
+            center: DVec2::ZERO,
+            major_dir: DVec2::new(1.0, 0.0),
+            major_radius: 2.0,
+            minor_radius: 1.0,
+        };
+        let de = closed_domain(DVec2::new(2.0, 0.0));
+
+        let mut ic = IntConicConic::new();
+        ic.perform_circle_ellipse(&c, &dc, &e, &de, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_points(), 4, "nb_pt={}", ic.base.nb_points());
+        let x = (5.0f64 / 3.0).sqrt();
+        let y = (7.0f64 / 12.0).sqrt();
+        assert_points(
+            &ic,
+            &[(-x, -y), (x, -y), (-x, y), (x, y)],
+        );
+    }
+
+    /// OCCT anchor: the unit circle against the parabola {(u^2, u)} —
+    /// u^4 + u^2 = 1 gives u^2 = (sqrt(5)-1)/2 and two crossings.
+    #[test]
+    fn circle_parabola_two_crossings() {
+        let c = Circle2d {
+            center: DVec2::ZERO,
+            x_dir: DVec2::new(1.0, 0.0),
+            y_dir: DVec2::new(0.0, 1.0),
+            radius: 1.0,
+        };
+        let dc = closed_domain(DVec2::new(1.0, 0.0));
+        let p = std_parabola(DVec2::ZERO, DVec2::new(1.0, 0.0));
+        let dp = Res2dDomain::infinite();
+
+        let mut ic = IntConicConic::new();
+        ic.perform_circle_parabola(&c, &dc, &p, &dp, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_points(), 2, "nb_pt={}", ic.base.nb_points());
+        let x = (5.0f64.sqrt() - 1.0) / 2.0;
+        let y = x.sqrt();
+        assert_points(&ic, &[(x, -y), (x, y)]);
+    }
+
+    /// OCCT anchor: the circle x^2 + y^2 = 4 against the hyperbola
+    /// x^2 - y^2 = 1 — cosh(2t) = 4 gives two crossings on the positive
+    /// hyperbola branch.
+    #[test]
+    fn circle_hyperbola_two_crossings() {
+        let c = Circle2d {
+            center: DVec2::ZERO,
+            x_dir: DVec2::new(1.0, 0.0),
+            y_dir: DVec2::new(0.0, 1.0),
+            radius: 2.0,
+        };
+        let dc = closed_domain(DVec2::new(2.0, 0.0));
+        let h = std_hyperbola(DVec2::ZERO);
+        let dh = Res2dDomain::infinite();
+
+        let mut ic = IntConicConic::new();
+        ic.perform_circle_hyperbola(&c, &dc, &h, &dh, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_points(), 2, "nb_pt={}", ic.base.nb_points());
+        let x = 2.5f64.sqrt();
+        let y = 1.5f64.sqrt();
+        assert_points(&ic, &[(x, -y), (x, y)]);
+    }
+
+    /// OCCT anchor: the parabola {(u^2, u)} against the ellipse
+    /// x^2/4 + y^2 = 1 — y^4 + 4y^2 - 4 = 0 gives y^2 = 2(sqrt(2)-1)
+    /// and two crossings (x = y^2).
+    #[test]
+    fn ellipse_parabola_two_crossings() {
+        let e = Ellipse2d {
+            center: DVec2::ZERO,
+            major_dir: DVec2::new(1.0, 0.0),
+            major_radius: 2.0,
+            minor_radius: 1.0,
+        };
+        let de = closed_domain(DVec2::new(2.0, 0.0));
+        let p = std_parabola(DVec2::ZERO, DVec2::new(1.0, 0.0));
+        let dp = Res2dDomain::infinite();
+
+        let mut ic = IntConicConic::new();
+        ic.perform_ellipse_parabola(&e, &de, &p, &dp, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_points(), 2, "nb_pt={}", ic.base.nb_points());
+        let y2 = 2.0 * (2.0f64.sqrt() - 1.0);
+        let y = y2.sqrt();
+        assert_points(&ic, &[(y2, -y), (y2, y)]);
+    }
+
+    /// OCCT anchor: the parabola {(u^2, u)} against the mirrored parabola
+    /// (2 - s^2, -s) (vertex (2,0), axis -X) — u^2 = 2 - u^2 gives two
+    /// crossings at (1, +-1).
+    #[test]
+    fn parabola_parabola_two_crossings() {
+        let p1 = std_parabola(DVec2::ZERO, DVec2::new(1.0, 0.0));
+        let dp1 = Res2dDomain::infinite();
+        let p2 = std_parabola(DVec2::new(2.0, 0.0), DVec2::new(-1.0, 0.0));
+        let dp2 = Res2dDomain::infinite();
+
+        let mut ic = IntConicConic::new();
+        ic.perform_parabola_parabola(&p1, &dp1, &p2, &dp2, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_points(), 2, "nb_pt={}", ic.base.nb_points());
+        assert_points(&ic, &[(1.0, -1.0), (1.0, 1.0)]);
+    }
+
+    /// OCCT anchor: the ellipse x^2/4 + y^2 = 1 against the hyperbola
+    /// x^2 - y^2 = 1 — 5x^2/4 = 2 gives two crossings on the positive
+    /// hyperbola branch (the gp_Hypr2d parameterization only covers it).
+    /// The bounded DH domain exercises the ft/lt clamp + binf>=bsup branch.
+    #[test]
+    fn ellipse_hyperbola_two_crossings() {
+        let e = Ellipse2d {
+            center: DVec2::ZERO,
+            major_dir: DVec2::new(1.0, 0.0),
+            major_radius: 2.0,
+            minor_radius: 1.0,
+        };
+        let de = closed_domain(DVec2::new(2.0, 0.0));
+        let h = std_hyperbola(DVec2::ZERO);
+        let mut dh = Res2dDomain::infinite();
+        dh.set_values_bounded(
+            DVec2::new(2.0f64.cosh(), -2.0f64.sinh()),
+            -2.0,
+            1.0e-9,
+            DVec2::new(2.0f64.cosh(), 2.0f64.sinh()),
+            2.0,
+            1.0e-9,
+        );
+
+        let mut ic = IntConicConic::new();
+        ic.perform_ellipse_hyperbola(&e, &de, &h, &dh, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_points(), 2, "nb_pt={}", ic.base.nb_points());
+        let x = 1.6f64.sqrt();
+        let y = 0.6f64.sqrt();
+        assert_points(&ic, &[(x, -y), (x, y)]);
+    }
+
+    /// OCCT anchor: the parabola {(u^2, u)} (implicit side) against the
+    /// hyperbola x^2 - y^2 = 1 — x^2 - x - 1 = 0 gives x = golden ratio
+    /// and two crossings on the positive hyperbola branch.
+    #[test]
+    fn parabola_hyperbola_two_crossings() {
+        let p = std_parabola(DVec2::ZERO, DVec2::new(1.0, 0.0));
+        let dp = Res2dDomain::infinite();
+        let h = std_hyperbola(DVec2::ZERO);
+        let dh = Res2dDomain::infinite();
+
+        let mut ic = IntConicConic::new();
+        ic.perform_parabola_hyperbola(&p, &dp, &h, &dh, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_points(), 2, "nb_pt={}", ic.base.nb_points());
+        let x = (1.0 + 5.0f64.sqrt()) / 2.0;
+        let y = x.sqrt();
+        assert_points(&ic, &[(x, -y), (x, y)]);
+    }
+
+    /// OCCT anchor: H1 x^2/4 - y^2 = 1 (implicit side) against H2
+    /// (x-3)^2 - y^2 = 1 (unit hyperbola centered (3,0), parametric side).
+    /// The crossings on the positive branches seen by OCCT's machinery
+    /// (IConicTool::Distance only vanishes for x_obj > 0 on an implicit
+    /// hyperbola) come from x^2/4 = (x-3)^2: x = 6, y = +-2*sqrt(2),
+    /// cosh(t) = 3 on H2.
+    #[test]
+    fn hyperbola_hyperbola_two_crossings() {
+        let h1 = Hyperbola2d {
+            center: DVec2::ZERO,
+            major_dir: DVec2::new(1.0, 0.0),
+            semi_major: 2.0,
+            semi_minor: 1.0,
+        };
+        let dh1 = Res2dDomain::infinite();
+        let h2 = std_hyperbola(DVec2::new(3.0, 0.0));
+        let dh2 = Res2dDomain::infinite();
+
+        let mut ic = IntConicConic::new();
+        ic.perform_hyperbola_hyperbola(&h1, &dh1, &h2, &dh2, 1.0e-9, 1.0e-9);
+
+        assert!(ic.base.is_done());
+        assert_eq!(ic.base.nb_points(), 2, "nb_pt={}", ic.base.nb_points());
+        let y = 8.0f64.sqrt();
+        assert_points(&ic, &[(6.0, -y), (6.0, y)]);
+    }
 }
