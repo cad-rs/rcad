@@ -52,6 +52,29 @@ const EPS2: f64 = 1e-64;
 const EPS_SQRT: f64 = 1e-16;
 const PROGRES: f64 = 0.005;
 
+/// OCCT Standard_Real.hxx Epsilon(V) (L242-246) — the distance from V to the
+/// next representable value away from zero.
+fn epsilon(v: f64) -> f64 {
+    let na = f64::from_bits(v.to_bits() + 1);
+    if v >= 0.0 {
+        na - v
+    } else {
+        v - na
+    }
+}
+
+/// OCCT math_FunctionSetRoot::IsSolutionReached (hxx L69-79) — the solution
+/// is reached when the last step satisfies |Delta(i)| <= Tol(i) for every
+/// unknown.
+fn is_solution_reached(delta: &[f64; 2], tol: &[f64; 2]) -> bool {
+    for i in 0..delta.len() {
+        if delta[i].abs() > tol[i] {
+            return false;
+        }
+    }
+    true
+}
+
 /// A 1-D restriction of the function along a direction, used by the line
 /// search / minimization (OCCT MyDirFunction, math_FunctionSetRoot.cxx L70-195).
 /// `f` is a raw pointer, mirroring the OCCT `void* F` (the function is owned
@@ -590,12 +613,16 @@ impl FunctionSetRoot {
             return;
         }
         let mut ambda2 = gnr1;
-        let mut save0 = f2.max(EPS_SQRT);
-        let _a_tol_func = f.tolerance();
+        // OCCT: Save(0) = std::max(F2, EpsSqrt) — the rank-0 history used by
+        // the accelerator test (Save is the member array of the OCCT class,
+        // filled at Save(Kount) = F2 at each loop pass).
+        let mut save = vec![0.0f64; self.itermax as usize + 1];
+        save[0] = f2.max(EPS_SQRT);
+        // OCCT: double aTol_Func = Epsilon(F2) (Standard_Real.hxx L242-246).
+        let a_tol_func = epsilon(f2);
 
         if f2 <= EPS || gnr1 <= EPS2 {
             self.done = false;
-            let _ = &mut save0;
             self.done = true;
             self.state = f.get_state_number();
             return;
@@ -603,6 +630,7 @@ impl FunctionSetRoot {
 
         let mut ambda: f64;
         let mut previous_minimum: f64;
+        let mut old_gr: f64;
         let mut old_f: f64;
         let mut sol_save = [0.0; 2];
         let mut previous_solution = [0.0; 2];
@@ -618,7 +646,7 @@ impl FunctionSetRoot {
         while kount < self.itermax {
             kount += 1;
             previous_minimum = f2;
-            old_f = gnr1;
+            old_gr = gnr1;
             previous_solution = self.sol;
             sol_save = self.sol;
 
@@ -929,6 +957,104 @@ impl FunctionSetRoot {
                                 }
                             }
                         }
+                        dy = gh[0] * dh[0] + gh[1] * dh[1];
+                    }
+                }
+
+                // ---------------------------------------------
+                //  on passe aux tests d'ARRET (OCCT L1292-1390)
+                // ---------------------------------------------
+                save[kount as usize] = f2;
+                // Est ce la solution ?
+                let verif;
+                if change_direction {
+                    verif = true;
+                    // Gradient : Il faut eviter de boucler
+                } else {
+                    if kount > 1 {
+                        // Pour accelerer les cas quasi-quadratique
+                        verif =
+                            save[(kount - 1) as usize] < 1.0e-4 * save[(kount - 2) as usize];
+                    } else {
+                        verif = f2 < 1.0e-6 * save[0]; // Pour les cas dejas solutions
+                    }
+                }
+                if verif {
+                    for i in 0..ninc {
+                        delta[i] = previous_solution[i] - self.sol[i];
+                    }
+
+                    if is_solution_reached(&delta, &self.tol) {
+                        if previous_minimum < f2 {
+                            self.sol = sol_save;
+                        }
+                        self.done = false;
+                        let _ = f.value(&self.sol); // update F before GetStateNumber
+                        self.done = true;
+                        self.state = f.get_state_number();
+                        return;
+                    }
+                }
+                // fin du test solution
+
+                // Analyse de la progression...
+                // comparison of current minimum and previous minimum
+                if (f2 - previous_minimum) <= a_tol_func {
+                    if kount > 5 {
+                        // L'historique est il bon ?
+                        if f2 >= 0.95 * save[(kount - 5) as usize] {
+                            if !change_direction {
+                                change_direction = true;
+                            } else {
+                                self.done = false;
+                                let _ = f.value(&self.sol); // update F before GetStateNumber
+                                self.done = true;
+                                self.state = f.get_state_number();
+                                return; //  si un gain inf a 5% on sort
+                            }
+                        } else {
+                            change_direction = false; // If yes we restart
+                        }
+                    } else {
+                        change_direction = false; // No history, we continue
+                    }
+                    // If the gradient does not decrease sufficiently with
+                    // Newton, we try the gradient method unless f decreases
+                    // (as strange as it may seem, with NEWTON the gradient of
+                    // f can increase while f decreases: in this case we must
+                    // keep NEWTON)
+                    if (gnr1 > 0.9 * old_gr) && (f2 > 0.5 * previous_minimum) {
+                        change_direction = true;
+                    }
+
+                    // If we don't decide to change strategy, we verify
+                    // if not already done
+                    if (!change_direction) && (!verif) {
+                        for i in 0..ninc {
+                            delta[i] = previous_solution[i] - self.sol[i];
+                        }
+                        if is_solution_reached(&delta, &self.tol) {
+                            self.done = false;
+                            let _ = f.value(&self.sol); // update F before GetStateNumber
+                            self.done = true;
+                            self.state = f.get_state_number();
+                            return;
+                        }
+                    }
+                } else { // Cas de regression
+                    if !change_direction {
+                        // On passe au gradient
+                        change_direction = true;
+                        self.sol = previous_solution;
+                        if !f_dir.value_vec(self.sol, &mut ff, &mut df, &mut gh, &mut f2, &mut gnr1)
+                        {
+                            self.done = false;
+                            self.state = f.get_state_number();
+                            return;
+                        }
+                    } else {
+                        self.state = f.get_state_number();
+                        return; // y a plus d'issues
                     }
                 }
             }
