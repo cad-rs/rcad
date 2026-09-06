@@ -417,6 +417,7 @@ fn hlr_algo_bi_point_flags_and_interference() {
 
 use super::algo::projector::Projector as SmokeProjector;
 use super::brep::algo::Algo as SmokeAlgo;
+use super::brep::hider::Hider;
 use super::brep::hlr_to_shape::HLRToShape as SmokeHLRToShape;
 use rcad_kernel::geom::{Circle3, Curve3, Line3, Plane, Surface3};
 use rcad_kernel::math::gp::Ax2 as SmokeAx2;
@@ -727,6 +728,399 @@ pub(crate) fn smoke_run_hlr(
     let outline = hts.out_line_v_compound();
     let h = hts.h_compound();
     (v, rg1v, rgnv, outline, h)
+}
+
+/// OCCT probe truth (session-18, bug25813_1): after the Load/ExploreFace
+/// pass the small-cylinder lateral face carries a two-edge IntL wire (the
+/// silhouette generator pieces) whose w_edge records hold the Internal
+/// flag, and `Data::Update`'s OrientOutLine (Data.cxx L1746-1877) must have
+/// rewritten every such w_edge orientation to FORWARD/REVERSED before Hide.
+/// That rewrite is the precondition for the NextInterference F/R guard
+/// (Data.cxx L1277) to intersect the IntL wedges at all - without it the
+/// two IN interferences that hide the big-top rim middle (16.9334) never
+/// come into existence.
+#[test]
+fn bug25813_1_intl_wedges_present_and_reoriented_after_update() {
+    // pcylinder cc 10 30 / pcylinder cc2 8 50 / ttranslate cc2 0 0 2 / bfuse
+    let cc = rcad_modeling::make_cylinder_brep(
+        glam::DVec3::ZERO,
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        glam::DVec3::new(1.0, 0.0, 0.0),
+        10.0,
+        30.0,
+    )
+    .expect("pcylinder cc 10 30");
+    let cc2 = rcad_modeling::make_cylinder_brep(
+        glam::DVec3::new(0.0, 0.0, 2.0),
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        glam::DVec3::new(1.0, 0.0, 0.0),
+        8.0,
+        50.0,
+    )
+    .expect("pcylinder cc2 8 50");
+    let fused = crate::fuse(&cc, &cc2).expect("bfuse a cc cc2");
+    let solid = fused
+        .tshapes
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_)))
+        .map(|(i, ts)| {
+            rcad_kernel::topods::Shape::from_parts(
+                ts.clone(),
+                i,
+                0,
+                rcad_kernel::topods::Orientation::Forward,
+            )
+        })
+        .expect("root solid");
+
+    let proj = SmokeProjector::from_ax2(&SmokeAx2::new(
+        glam::DVec3::ZERO,
+        glam::DVec3::new(1.0, -1.0, 1.0),
+        glam::DVec3::new(1.0, 1.0, 0.0),
+    ));
+    let mut algo = SmokeAlgo::new();
+    algo.add(&std::sync::Arc::new(fused), &solid, 0);
+    algo.set_projector(&proj);
+    // OCCT L3304: aHlrAlgo->Update() — runs the withOutL/OrientOutLine pass.
+    algo.update();
+
+    let ds = algo.data_structure().expect("data structure");
+    let mut intl_total = 0usize;
+    let mut intl_unrewritten: Vec<(usize, usize, usize, Orientation)> = Vec::new();
+    for (fi, fd) in ds.f_data_array().iter().enumerate() {
+        let wb = fd.wires();
+        let wb = unsafe { &mut *wb };
+        for wi in 1..=wb.nb_wires() {
+            let eb = wb.wire(wi);
+            for ei in 1..=eb.nb_edges() {
+                if eb.internal(ei) {
+                    intl_total += 1;
+                    let ori = eb.orientation(ei);
+                    if !matches!(ori, Orientation::Forward | Orientation::Reversed) {
+                        intl_unrewritten.push((fi + 1, wi, ei, ori));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        intl_total >= 2,
+        "no IntL w_edges registered (OCCT X19: the outlined faces carry \
+         two-edge IntL wires with the Internal flag)"
+    );
+    assert!(
+        intl_unrewritten.is_empty(),
+        "IntL w_edges still not reoriented to FORWARD/REVERSED after Update \
+         (OCCT X20 requires F/R via OrientOutLine): {intl_unrewritten:?}"
+    );
+
+    // OCCT X17 truth: the rim-vs-silhouette crossings sit at 3D params
+    // 1.4288992721907325 / 3.2834897081939571 on the big-top rim edge, i.e.
+    // 2D params 0.6435/2.4981 after the myOX=-0.78539816339744828 offset.
+    // The intersector only reports crossings inside the edge's 2D domain
+    // [FirstParameter+myOX, LastParameter+myOX]; dump every analytic edge's
+    // type and 3D range so the domain windows are visible in the test log.
+    for (ei, ed) in ds.e_data_array().iter().enumerate() {
+        let ec = ed.geometry();
+        let t = ec.get_type();
+        if matches!(
+            t,
+            rcad_kernel::base::proj_lib::CurveType::Circle
+                | rcad_kernel::base::proj_lib::CurveType::Ellipse
+        ) {
+            let p1 = ec.parameter_3d(ec.first_parameter());
+            let p2 = ec.parameter_3d(ec.last_parameter());
+            println!(
+                "INTLDS edge={} type={:?} range3d=({p1:.17}, {p2:.17})",
+                ei + 1,
+                t
+            );
+        }
+    }
+}
+
+/// OCCT exact_hlr/bug25813_1 truth (session-18 probe X17): the full
+/// pipeline hides the big-top rim far-upper middle (the two IN
+/// interferences at 1.4288992721907325 / 3.2834897081939571 against the
+/// small-cylinder lateral face's IntL silhouette wedges), giving a hidden
+/// compound of exactly 3 arcs totalling 62.3361 projected length
+/// (25.2237 big-bottom far half + 20.1790 z=30 inner-rim far half +
+/// 16.9334 big-top far-upper middle) and a visible compound of 15 edges /
+/// 204.1903.  Regression for the Classify LevelFlag Z-gate, which in OCCT
+/// (Data.cxx L2026-2040, L2059-2073, L2087-2101, L2159-2173) has 15
+/// comparisons - the symmetric MinMaxVert.Max[7]-iFaceMinMax.Min[7] term
+/// does not exist.
+#[test]
+fn bug25813_1_hidden_compound_three_arcs() {
+    let cc = rcad_modeling::make_cylinder_brep(
+        glam::DVec3::ZERO,
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        glam::DVec3::new(1.0, 0.0, 0.0),
+        10.0,
+        30.0,
+    )
+    .expect("pcylinder cc 10 30");
+    let cc2 = rcad_modeling::make_cylinder_brep(
+        glam::DVec3::new(0.0, 0.0, 2.0),
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        glam::DVec3::new(1.0, 0.0, 0.0),
+        8.0,
+        50.0,
+    )
+    .expect("pcylinder cc2 8 50");
+    let fused = crate::fuse(&cc, &cc2).expect("bfuse a cc cc2");
+    let solid = fused
+        .tshapes
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_)))
+        .map(|(i, ts)| {
+            rcad_kernel::topods::Shape::from_parts(
+                ts.clone(),
+                i,
+                0,
+                rcad_kernel::topods::Orientation::Forward,
+            )
+        })
+        .expect("root solid");
+    let brep = fused;
+    let (v, rg1v, rgnv, outline, h) = smoke_run_hlr(&solid, brep);
+
+    let mut h_edges = Vec::new();
+    assert!(!h.is_null(), "hidden compound is null");
+    compound_edges(&h, &mut h_edges);
+    assert_eq!(h_edges.len(), 3, "hidden edges: {h_edges:?}");
+    let mass = super::acceptance::compound_mass(&h);
+    assert!(
+        (mass - 62.3360975).abs() < 1e-5,
+        "hidden projected mass {mass} vs OCCT 62.3360975: {h_edges:?}"
+    );
+
+    let mut v_edges = Vec::new();
+    assert!(!v.is_null(), "visible compound is null");
+    compound_edges(&v, &mut v_edges);
+    assert!(!v_edges.is_empty(), "visible compound empty");
+    // OCCT's visible result = the 11 sharp V arcs + the 4 outline lines;
+    // the RgN seam lines are NOT part of it (gap3: rcad still emits them).
+    let vis_mass = super::acceptance::compound_mass(&v)
+        + super::acceptance::compound_mass(&rg1v)
+        + super::acceptance::compound_mass(&outline);
+    assert!(
+        (vis_mass - 204.1903269).abs() < 1e-5,
+        "visible projected mass {vis_mass} vs OCCT 204.1903269"
+    );
+    // gap3 witness: OCCT's RgNLineVCompound is empty for this case; rcad
+    // still emits the two seam lines (24.4949 + 17.9629 = 42.4578).  Flip
+    // to 0 when the seam RgN routing is fixed.
+    let rgn_mass = super::acceptance::compound_mass(&rgnv);
+    assert!(
+        (rgn_mass - 42.457822208241754).abs() < 1e-5,
+        "RgN mass {rgn_mass}: expected the two seam lines 42.4578 (gap3)"
+    );
+}
+
+/// Diagnostic one level below [`bug25813_1_rim_middle_partially_hidden_by_outlined_faces`]:
+/// drive the Data interference loop for the outlined faces and record every
+/// surviving/rejected interference of the ellipse edges, to separate
+/// "the intersector produces no crossings" from "RejectedPoint drops them".
+#[test]
+fn bug25813_1_interference_loop_over_outlined_faces() {
+    let cc = rcad_modeling::make_cylinder_brep(
+        glam::DVec3::ZERO,
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        glam::DVec3::new(1.0, 0.0, 0.0),
+        10.0,
+        30.0,
+    )
+    .expect("pcylinder cc 10 30");
+    let cc2 = rcad_modeling::make_cylinder_brep(
+        glam::DVec3::new(0.0, 0.0, 2.0),
+        glam::DVec3::new(0.0, 0.0, 1.0),
+        glam::DVec3::new(1.0, 0.0, 0.0),
+        8.0,
+        50.0,
+    )
+    .expect("pcylinder cc2 8 50");
+    let fused = crate::fuse(&cc, &cc2).expect("bfuse a cc cc2");
+    let solid = fused
+        .tshapes
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_)))
+        .map(|(i, ts)| {
+            rcad_kernel::topods::Shape::from_parts(
+                ts.clone(),
+                i,
+                0,
+                rcad_kernel::topods::Orientation::Forward,
+            )
+        })
+        .expect("root solid");
+
+    let proj = SmokeProjector::from_ax2(&SmokeAx2::new(
+        glam::DVec3::ZERO,
+        glam::DVec3::new(1.0, -1.0, 1.0),
+        glam::DVec3::new(1.0, 1.0, 0.0),
+    ));
+    let mut algo = SmokeAlgo::new();
+    algo.add(&std::sync::Arc::new(fused), &solid, 0);
+    algo.set_projector(&proj);
+    algo.update();
+    // the real single-shape hide: runs Select + InitEdgeStatus +
+    // InitBoundSort (which fills the sorted global edge list phase 2 of
+    // MoreEdge iterates) + the per-face Hider passes.
+    algo.hide_shape(1);
+
+    for fi in [1usize, 4usize] {
+        let ds = algo.data_structure_mut().expect("data structure");
+        let mut mst: Vec<(
+            rcad_kernel::topods::Shape,
+            crate::topalgo::brep_top_adaptor::tool::BRepTopAdaptorTool,
+        )> = Vec::new();
+        ds.init_edge(fi, &mut mst);
+        while ds.more_edge() {
+            let e = ds.edge();
+            let ec = ds.e_data_array()[e - 1].geometry();
+            let t = ec.get_type();
+            let analytic = matches!(
+                t,
+                rcad_kernel::base::proj_lib::CurveType::Circle
+                    | rcad_kernel::base::proj_lib::CurveType::Ellipse
+            );
+            ds.init_interference();
+            while ds.more_interference() {
+                if ds.rejected_interference() {
+                    let above = ds.above_interference();
+                    if analytic && above {
+                        println!("REJ-ABOVE face={fi} E={e} type={t:?}");
+                    }
+                } else if analytic {
+                    let itf = ds.interference();
+                    println!(
+                        "HIT face={fi} E={e} type={t:?} st={:?} p={:?}",
+                        itf.intersection().state(),
+                        itf.intersection().parameter()
+                    );
+                }
+                ds.next_interference();
+            }
+            // record which face-edges were visited for this analytic LE
+            if analytic {
+                println!(
+                    "VISIT face={fi} E={e} lastFE={} ori={:?} int={}",
+                    ds.fe(),
+                    ds.fe_ori(),
+                    ds.fe_internal()
+                );
+            }
+            ds.next_edge(true);
+        }
+
+        // OCCT X17: the Hider classifies the rim midpoint (lf=1,
+        // param=2.3561944901923448) against this face; the OCCT verdict is
+        // IN (state=0, level=2). Probe the same verdict here.
+        let ds2 = algo.data_structure().expect("data structure");
+        let _ = ds2;
+    }
+    {
+        let ds = algo.data_structure_mut().expect("data structure");
+        // the big-top rim half candidates: ellipse edges with 3D range
+        // [0.78539816339744828, 3.92699081698724139].
+        for ei in 0..ds.e_data_array().len() {
+            let (p1, p2, is_ell) = {
+                let ed = &ds.e_data_array()[ei];
+                let ec = ed.geometry();
+                (
+                    ec.parameter_3d(ec.first_parameter()),
+                    ec.parameter_3d(ec.last_parameter()),
+                    matches!(
+                        ec.get_type(),
+                        rcad_kernel::base::proj_lib::CurveType::Ellipse
+                    ),
+                )
+            };
+            if is_ell
+                && (p1 - 0.78539816339744828).abs() < 1e-9
+                && (p2 - 3.92699081698724139).abs() < 1e-9
+            {
+                let ed_ptr = &ds.e_data_array()[ei] as *const _;
+                let mut lvl = 0i32;
+                let st = ds.classify(
+                    (ei + 1) as i32,
+                    unsafe { &*ed_ptr },
+                    true,
+                    &mut lvl,
+                    2.3561944901923448,
+                );
+                println!(
+                    "CLASSIFY edge={ei} range=({p1:.6},{p2:.6}) -> state={st:?} level={lvl}"
+                );
+                if ei == 1 {
+                    // replicate the LevelFlag gate (classify.rs L1842-1914)
+                    // word by word for the failing edge.
+                    let ec2 = unsafe { &*ed_ptr }.geometry();
+                    let tol = unsafe { &*ed_ptr }.tolerance() as f64;
+                    let p3 = ec2.value_3d(2.3561944901923448);
+                    let mut x = 0.0f64;
+                    let mut y = 0.0f64;
+                    let mut z = 0.0f64;
+                    ds.projector().project_xyz(p3, &mut x, &mut y, &mut z);
+                    let mut tmin = [0.0f64; 16];
+                    let mut tmax = [0.0f64; 16];
+                    HLRAlgo::init_min_max(2.0e100, &mut tmin, &mut tmax);
+                    HLRAlgo::update_min_max(x, y, z, &mut tmin, &mut tmax);
+                    HLRAlgo::enlarge_min_max(tol, &mut tmin, &mut tmax);
+                    let mut vmin = MinMaxIndices::default();
+                    let mut vmax = MinMaxIndices::default();
+                    crate::hlr::brep::data::reject1(
+                        ds.deca(),
+                        &tmin,
+                        &tmax,
+                        ds.sur_d(),
+                        &mut vmin,
+                        &mut vmax,
+                    );
+                    let mut mmv = MinMaxIndices::default();
+                    HLRAlgo::encode_min_max(&vmin, &vmax, &mut mmv);
+                    let mm = ds.i_face_min_max();
+                    for k in 0..8usize {
+                        let a = mm.max[k].wrapping_sub(mmv.min[k]) & 0x80008000u32 as i32;
+                        let b = mmv.max[k].wrapping_sub(mm.min[k]) & 0x80008000u32 as i32;
+                        println!(
+                            "GATE k={k} a={a:08x} b={b:08x}{}",
+                            if a | b != 0 { "  <-- REJECT" } else { "" }
+                        );
+                    }
+                    println!(
+                        "GATE z={z:.17} tol={tol:.17}"
+                    );
+                    println!(
+                        "GATE face w6 min={:08x} max={:08x} | w7 min={:08x} max={:08x}",
+                        mm.min[6], mm.max[6], mm.min[7], mm.max[7]
+                    );
+                    println!(
+                        "GATE pt   w6 min={:08x} max={:08x} | w7 min={:08x} max={:08x}",
+                        mmv.min[6], mmv.max[6], mmv.min[7], mmv.max[7]
+                    );
+                    println!(
+                        "GATE raw z-lanes: deca14={:.17} surD14={:.17} tmin14={:.17} tmax14={:.17} | deca15={:.17} surD15={:.17} tmin15={:.17} tmax15={:.17}",
+                        ds.deca()[14],
+                        ds.sur_d()[14],
+                        tmin[14],
+                        tmax[14],
+                        ds.deca()[15],
+                        ds.sur_d()[15],
+                        tmin[15],
+                        tmax[15]
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// OCCT anchor (DRAWEXE `vcomputehlr b result -algoType algo 0 0 0 1 -1 1

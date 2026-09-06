@@ -223,7 +223,7 @@ fn projected_edge_len(curve: Option<&Curve3>, range: [f64; 2]) -> f64 {
 }
 
 /// Total projected curve length of every edge in a compound tree.
-fn compound_mass(s: &Shape) -> f64 {
+pub(crate) fn compound_mass(s: &Shape) -> f64 {
     if s.is_null() {
         return 0.0;
     }

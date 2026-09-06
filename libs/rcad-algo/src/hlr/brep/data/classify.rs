@@ -80,7 +80,7 @@ fn adjust_parameter(e: &mut EdgeData, h: bool, p: &mut f64, t: &mut f32) {
 
 /// OCCT file static REJECT1 (HLRBRep_Data.cxx L1950-1989, anonymous
 /// namespace) — the 16-direction integer decalage box of a point box.
-fn reject1(
+pub(crate) fn reject1(
     the_deca: &[f64; 16],
     the_tot_min: &[f64; 16],
     the_tot_max: &[f64; 16],
@@ -1907,7 +1907,9 @@ impl<'a> super::Data<'a> {
                 || ((i_face_min_max.max[6].wrapping_sub(min_max_vert.min[6])) & REJECT_MASK) != 0
                 || ((min_max_vert.max[6].wrapping_sub(i_face_min_max.min[6])) & REJECT_MASK) != 0
                 || ((i_face_min_max.max[7].wrapping_sub(min_max_vert.min[7])) & REJECT_MASK) != 0
-                || ((min_max_vert.max[7].wrapping_sub(i_face_min_max.min[7])) & REJECT_MASK) != 0
+            // OCCT L2026-2040: the LevelFlag gate ends at Max[7]-Min[7] -
+            // the symmetric MinMaxVert.Max[7]-iFaceMinMax.Min[7] term does
+            // NOT exist in OCCT.
             {
                 //-- Rejection en Z
                 return state;
@@ -1949,7 +1951,8 @@ impl<'a> super::Data<'a> {
                 || ((i_face_min_max.max[6].wrapping_sub(min_max_vert.min[6])) & REJECT_MASK) != 0
                 || ((min_max_vert.max[6].wrapping_sub(i_face_min_max.min[6])) & REJECT_MASK) != 0
                 || ((i_face_min_max.max[7].wrapping_sub(min_max_vert.min[7])) & REJECT_MASK) != 0
-                || ((min_max_vert.max[7].wrapping_sub(i_face_min_max.min[7])) & REJECT_MASK) != 0
+            // OCCT L2059-2073: the start gate ends at Max[7]-Min[7] - no
+            // MinMaxVert.Max[7]-iFaceMinMax.Min[7] term in OCCT.
             {
                 //-- Rejection en Z
                 return state;
@@ -1988,7 +1991,8 @@ impl<'a> super::Data<'a> {
                 || ((i_face_min_max.max[6].wrapping_sub(min_max_vert.min[6])) & REJECT_MASK) != 0
                 || ((min_max_vert.max[6].wrapping_sub(i_face_min_max.min[6])) & REJECT_MASK) != 0
                 || ((i_face_min_max.max[7].wrapping_sub(min_max_vert.min[7])) & REJECT_MASK) != 0
-                || ((min_max_vert.max[7].wrapping_sub(i_face_min_max.min[7])) & REJECT_MASK) != 0
+            // OCCT L2087-2101: the end gate ends at Max[7]-Min[7] - no
+            // MinMaxVert.Max[7]-iFaceMinMax.Min[7] term in OCCT.
             {
                 //-- Rejection en Z
                 return state;
@@ -2030,7 +2034,11 @@ impl<'a> super::Data<'a> {
                 || ((i_face_min_max.max[6].wrapping_sub(min_max_vert.min[6])) & REJECT_MASK) != 0
                 || ((min_max_vert.max[6].wrapping_sub(i_face_min_max.min[6])) & REJECT_MASK) != 0
                 || ((i_face_min_max.max[7].wrapping_sub(min_max_vert.min[7])) & REJECT_MASK) != 0
-                || ((min_max_vert.max[7].wrapping_sub(i_face_min_max.min[7])) & REJECT_MASK) != 0
+            // OCCT L2159-2173: the mid gate ends at Max[7]-Min[7] - no
+            // MinMaxVert.Max[7]-iFaceMinMax.Min[7] term in OCCT.  (This
+            // asymmetric omission is what lets the OCCT classify pass for a
+            // sample whose depth sits below the face's quantized z-min -
+            // the bug25813_1 big-top rim middle.)
             {
                 //-- Rejection en Z
                 return state;

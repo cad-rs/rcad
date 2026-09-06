@@ -27,6 +27,8 @@ mod classify;
 mod tableau_rejection;
 mod update;
 
+pub(crate) use classify::reject1;
+
 /// OCCT file statics of HLRBRep_Data.cxx (L40-75): the TRACE counters are
 /// file-scope globals in OCCT; rcad keeps them as thread-locals (the
 /// Contap_HContTool static precedent).

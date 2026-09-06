@@ -1088,6 +1088,33 @@ impl<'a> Data<'a> {
         }
     }
 
+    /// The myFE member (set per face-edge inside NextInterference) — test /
+    /// tooling read access; OCCT keeps it private.
+    pub fn fe(&self) -> usize {
+        self.my_fe
+    }
+
+    /// The myFEOri member — test / tooling read access.
+    pub fn fe_ori(&self) -> Orientation {
+        self.my_fe_ori
+    }
+
+    /// The myFEInternal member — test / tooling read access.
+    pub fn fe_internal(&self) -> bool {
+        self.my_fe_internal
+    }
+
+    /// The iFaceMinMax member (the hiding-face wires-block min-max) — test /
+    /// tooling read access; OCCT keeps it private.
+    pub fn i_face_min_max(&self) -> MinMaxIndices {
+        unsafe { *self.i_face_min_max }
+    }
+
+    /// The myDeca member — test / tooling read access.
+    pub fn deca(&self) -> &[f64; 16] {
+        &self.my_deca
+    }
+
     /// OCCT HLRBRep_Data::InitInterference (cxx L1223-1229).
     pub fn init_interference(&mut self) {
         // myLLProps.SetCurve(myLEGeom);
