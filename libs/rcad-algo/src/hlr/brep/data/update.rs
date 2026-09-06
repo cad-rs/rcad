@@ -852,10 +852,12 @@ impl<'a> Data<'a> {
             let brt = &mut mst[pos].1;
             // myClassifier = BRT.GetTopolTool();
             self.my_classifier = brt.get_topol_tool().clone();
-            // rcad: the kernel context rides with the bound tool (the same
-            // refcounted BRep allocation; the HLR object graph keeps it
-            // alive for 'a — the raw-handle precedent).
-            self.my_brep = Some(unsafe { &*Arc::as_ptr(brt.brep()) });
+            // OCCT: the MST tool reads the GLOBAL TShape graph — always the
+            // current kernel context.  The rcad per-tool arena snapshot can
+            // be stale (it is taken at ds_filler::insert entry, BEFORE the
+            // FaceIsoLiner contour edges are appended to the same arena), so
+            // the kernel context stays [Data::my_brep] (the owning session
+            // clone set by Data::update) and is NOT overridden here.
         } else {
             // BRepTopAdaptor_Tool BRT(topodsface, Precision::PConfusion());
             let tool_brep = Arc::new(

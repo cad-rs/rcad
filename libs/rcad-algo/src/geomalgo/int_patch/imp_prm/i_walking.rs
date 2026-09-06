@@ -715,6 +715,13 @@ impl IWalking {
                 self.seq_single.push(pnts1[i - 1].clone());
             }
         }
+        if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+            eprintln!(
+                "[IWDBG] perform end: nb_lines={} lengths={:?}",
+                self.lines.len(),
+                self.lines.iter().map(|l| l.nb_points()).collect::<Vec<_>>()
+            );
+        }
         self.done = true;
     }
 
@@ -797,6 +804,13 @@ impl IWalking {
             if self.wd1[i].etat > 0 {
                 self.seq_single.push(pnts1[i - 1].clone());
             }
+        }
+        if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+            eprintln!(
+                "[IWDBG] perform(no-interior) end: nb_lines={} lengths={:?}",
+                self.lines.len(),
+                self.lines.iter().map(|l| l.nb_points()).collect::<Vec<_>>()
+            );
         }
         self.done = true;
     }

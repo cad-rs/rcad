@@ -361,6 +361,12 @@ pub(crate) fn perform_domain(c: &mut Contour, domain: &mut dyn ContapDomain) {
             compute_internal_points(&mut theline, c.my_sfunc(), eps_u, eps_v);
             line_constructor(c.slin_mut(), domain, &mut theline, &*surf); //-- lbr
             theline.reset_seq_of_vertex();
+            if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+                eprintln!(
+                    "[CWDBG] after line_constructor j={j}: contour nb_lines={}",
+                    c.slin().len()
+                );
+            }
         }
 
         // cxx L1839-1870 — the crossing-vertex multiple marking.

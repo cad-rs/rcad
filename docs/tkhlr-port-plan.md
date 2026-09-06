@@ -611,3 +611,12 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 1. 按"剩余两缺口的机制级诊断"续打：先用安装版 OCCT（tools/occt-hlr-runner 加 Hider/Data 层探针或 debug 构建重编 TKHLR）裁决 16.93 的真实归属，再修 classify/Project 语义或接受几何结论；ptorus 验证 d2d 候选修复 + IWalking 方向链；seam regularity 经 bfuse 的传递。
 2. 三缺口全绿后：删全部临时探针 → un-ignore 两个 acceptance 测试 → `cargo test -p occt-generated-tests --test generated_occt_boolean_hlr_exact_hlr` 全绿 → module-map 基线数字终版。
 3. 残余记录项（非阻塞，同 session 11 清单）不变。
+
+### 本 session 追加 6（2026-09-06，session 12 续：ptorus 连破三关，断点收敛到 DS 边提取）
+
+| 修复 | 内容 |
+|---|---|
+| d2d 归一化（已验证生效） | `contap/surf_function.rs`：`d2d = (-fpv/d, fpu/d)`（OCCT cxx L271 `d2d` 是 gp_Dir2d 构造即归一化；旧代码存未归一化向量）→ IWalking 从 0 线变 52 线 |
+| init_edge MST 过期 arena（已验证生效） | `brep/data/update.rs`：MST 命中分支**不再覆盖** `Data::my_brep`——工具快照拍摄于 ds_filler::insert 入口，早于 FaceIsoLiner 轮廓边入 arena（len 7 vs 索引 12 越界 panic 的根因）；kernel 上下文恒为 Data::update 设置的完整会话 clone（OCCT 语义：MST 读全局 TShape 图，永远最新） |
+
+**ptorus 现状**：IWalking `nb_lines=52`（含重复片段，起点去重疑似失效——OCCT 用 etat 取负标记 crossing point 防重建，rcad 已对齐该机制但 52>1 说明仍有偏差）→ Contour `nb_lines=51`（采纳正常）→ **断点 = FaceIsoLiner→DS 轮廓边→HLRToShape 提取段**（visible mass 仍 0；注意隐藏阶段已经能引用到轮廓边——说明 DS 边存在，疑点收窄到边的 3D 曲线/range 建造或 OutLine 旗标）。探针已埋好：`RCAD_IWALK_DEBUG`（i_walking domain/wd1/wd2/perform end + contour perform.rs 的 CWDBG after line_constructor）。
