@@ -740,22 +740,8 @@ impl FunctionSetRoot {
                                 good = false;
                                 if descente_iter == 0 {
                                     // C'est le premier pas qui flanche, on fait
-                                    // une interpolation.
-                                    descente_iter += 1;
-                                    good = minimize_direction_3(
-                                        &previous_solution,
-                                        &sol_save,
-                                        &self.sol,
-                                        old_f,
-                                        &mut delta,
-                                        &self.tol,
-                                        &mut f_dir,
-                                    );
-                                } else if change_direction
-                                    || descente_iter > 1
-                                    || old_f > previous_minimum
-                                {
-                                    // La progression a ete utile, on minimise.
+                                    // une interpolation. (OCCT L1024: the 2-point
+                                    // + derivative MinimizeDirection variant.)
                                     descente_iter += 1;
                                     good = minimize_direction_2(
                                         &sol_save,
@@ -764,6 +750,23 @@ impl FunctionSetRoot {
                                         f2,
                                         &dh_save,
                                         &gh,
+                                        &self.tol,
+                                        &mut f_dir,
+                                    );
+                                } else if change_direction
+                                    || descente_iter > 1
+                                    || old_f > previous_minimum
+                                {
+                                    // La progression a ete utile, on minimise.
+                                    // (OCCT L1030: the 3-point MinimizeDirection
+                                    // variant.)
+                                    descente_iter += 1;
+                                    good = minimize_direction_3(
+                                        &previous_solution,
+                                        &sol_save,
+                                        &self.sol,
+                                        old_f,
+                                        &mut delta,
                                         &self.tol,
                                         &mut f_dir,
                                     );

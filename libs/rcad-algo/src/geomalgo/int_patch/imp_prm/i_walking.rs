@@ -1490,9 +1490,6 @@ impl IWalking {
                     } else if self.nb_multiplicities[i] > 0 {
                         let mut k = n;
                         while k < n + self.nb_multiplicities[i] as usize {
-                            if k >= u_mult.len() {
-                                break;
-                            }
                             a_vec1 = DVec2::new(up - u_mult[k], vp - v_mult[k]);
                             a_vec2 = DVec2::new(uc - u_mult[k], vc - v_mult[k]);
                             cut_vector_by_tolerances(&mut a_vec1, &self.tolerance);
@@ -1568,9 +1565,6 @@ impl IWalking {
                 } else if self.nb_multiplicities[i] > 0 {
                     let mut j = n;
                     while j < n + self.nb_multiplicities[i] as usize {
-                        if j >= u_mult.len() {
-                            break;
-                        }
                         a_vec1 = DVec2::new(up - u_mult[j], vp - v_mult[j]);
                         a_vec2 = DVec2::new(uv[0] - u_mult[j], uv[1] - v_mult[j]);
                         cut_vector_by_tolerances(&mut a_vec1, &self.tolerance);

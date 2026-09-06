@@ -613,20 +613,29 @@ fn acceptance_bug25813_1_vs_occt_json() {
 /// official DRAWEXE viewer path (vinit+vdisplay+vcomputehlr).  rcad must
 /// produce the same result without crashing.
 ///
-/// IGNORED (remaining exact-HLR gaps, the session-19 runway item): with the
-/// wd1/wd2 dummy-slot alignment restored (the true OCCT layout), the walking
-/// produces 42 fragments totalling 246.4 — walks terminate early (OCCT walks
-/// 4 whole contour lines, 389.62 total, hidden remainder 86.94).  The
-/// session-17/18 state (17 fragments, 303.867 at the 1e-2 line) was an
-/// off-by-one compensating artifact, not OCCT behavior, and was removed.
-/// The gxx wd logic is now verified textually aligned line-by-line; the
-/// remaining divergence lives downstream in the numeric chain
-/// (IntWalk_PWalking.cxx — never audited line-by-line — and/or the
-/// Contap_SurfFunction / math_FunctionSetRoot root/derivative values).
-/// Un-ignore when the walks assemble into the 4 OCCT edges with the hidden
-/// compound at 86.94 and the mass is bit-exact at 302.685.
+/// IGNORED (remaining exact-HLR gaps, the session-19 runway item): after the
+/// compute_tangency Destination off-by-one fix (the lost 4th contour line),
+/// the visible tree matches the OCCT viewer path structurally — EDGE:4 /
+/// VERTEX:7 — with visible mass 302.6867 vs the printed 302.685 (1.7e-3).
+/// Two gaps keep this ignored:
+/// 1. mass bit-exactness: the walk trajectories sample differently (rcad
+///    2680/1584 walk points vs OCCT 81/215 on the two long lines; identical
+///    net lengths) — traced to math_FunctionSetRoot done=false exits (100
+///    iterations exhausted at F~1e-16, ~1 in 5 walk steps, halving PasC).
+///    Next suspect: SearchDirection's math_SVD IsDone branch (OCCT can fall
+///    back to the gradient direction; the rcad closed-form collapse never
+///    fails).
+/// 2. the hidden gate: the 86.94 figure is a mixed-measure derivation
+///    (3D walk total 389.62 minus the projected visible 302.685), not an
+///    OCCT measurement — the runner -algo run crashes inside OCCT on this
+///    case and the viewer path never extracts hidden compounds.  The torus
+///    contour near/far halves project onto each other, so the projected
+///    hidden mass needs re-derivation from a trustworthy source before this
+///    assert can mean anything.
+/// Un-ignore when the mass rounds to the printed 302.685 and the hidden
+/// gate is re-derived from real OCCT behavior.
 #[test]
-#[ignore = "remaining gap: walks terminate early (42 fragments / 246.4) vs the 4 OCCT contour lines (389.62); diverence is in the PWalking/numeric chain, not the wd layout"]
+#[ignore = "remaining gaps: visible mass 302.6867 vs printed 302.685 (walk sampling density, FunctionSetRoot done=false exits); hidden gate 86.94 is a mixed-measure derivation needing re-derivation"]
 fn acceptance_ptorus_vs_viewer_path() {
     let text = ref_output_text();
     let (mass_ref, edges_ref) = parse_supplement(&text, "exact_hlr/bug25813_3");

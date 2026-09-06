@@ -355,7 +355,7 @@ pub(crate) fn compute_tangency(
     let surf = func.surface().clone();
 
     for i in 1..=nb_points {
-        if destination[i] == 0 {
+        if destination[i - 1] == 0 {
             let pstart = solrst.point(i);
             let thearc = pstart.arc();
             let theparam = pstart.parameter();
@@ -389,11 +389,11 @@ pub(crate) fn compute_tangency(
                 let values_ok = func.values(&x).is_some();
                 if values_ok && func.is_tangent() {
                     ppoint.set_tangency(true);
-                    destination[i] = seqlength as i32 + 1;
+                    destination[i - 1] = seqlength as i32 + 1;
                     if !pstart.is_new() {
                         let vtx = pstart.vertex().clone();
                         for k in (i + 1)..=nb_points {
-                            if destination[k] == 0 {
+                            if destination[k - 1] == 0 {
                                 let pstart2 = solrst.point(k);
                                 if !pstart2.is_new() {
                                     let vtx2 = pstart2.vertex().clone();
@@ -409,7 +409,7 @@ pub(crate) fn compute_tangency(
                                         x[0] = pt2d.x;
                                         x[1] = pt2d.y;
                                         ppoint.add_uv(x[0], x[1]);
-                                        destination[k] = seqlength as i32 + 1;
+                                        destination[k - 1] = seqlength as i32 + 1;
                                     }
                                 }
                             }
@@ -456,7 +456,7 @@ pub(crate) fn compute_tangency(
                                 ppoint.set_tangency(true);
                             }
                             ppoint.set_passing(ispassing);
-                            destination[i] = seqlength as i32 + 1;
+                            destination[i - 1] = seqlength as i32 + 1;
                             seqpdep.push(ppoint);
                             seqlength += 1;
                         } else {
@@ -505,9 +505,9 @@ pub(crate) fn compute_tangency(
                             } else {
                                 loc_trans = Orientation::Forward; // (not reached in OCCT)
                             }
-                            destination[i] = seqlength as i32 + 1;
+                            destination[i - 1] = seqlength as i32 + 1;
                             for k in (i + 1)..=nb_points {
-                                if destination[k] == 0 {
+                                if destination[k - 1] == 0 {
                                     let pstart2 = solrst.point(k);
                                     if !pstart2.is_new() {
                                         let vtx2 = pstart2.vertex().clone();
@@ -560,7 +560,7 @@ pub(crate) fn compute_tangency(
                                                     vtxorien,
                                                 );
                                             }
-                                            destination[k] = seqlength as i32 + 1;
+                                            destination[k - 1] = seqlength as i32 + 1;
                                         }
                                     }
                                 }
@@ -587,7 +587,7 @@ pub(crate) fn compute_tangency(
 
                             if fairpt && tobeverified {
                                 for k in i..=nb_points {
-                                    if destination[k] == seqlength as i32 + 1 {
+                                    if destination[k - 1] == seqlength as i32 + 1 {
                                         let theparam = solrst.point(k).parameter();
                                         let thearc2 = solrst.point(k).arc();
                                         let arcorien = domain.orientation_arc(&thearc2);
@@ -625,8 +625,8 @@ pub(crate) fn compute_tangency(
                             } else {
                                 // il faut remettre en "ordre" si on ne garde pas le point.
                                 for k in i..=nb_points {
-                                    if destination[k] == seqlength as i32 + 1 {
-                                        destination[k] = -destination[k];
+                                    if destination[k - 1] == seqlength as i32 + 1 {
+                                        destination[k - 1] = -destination[k - 1];
                                     }
                                 }
                             }
