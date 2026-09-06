@@ -620,3 +620,24 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 | init_edge MST 过期 arena（已验证生效） | `brep/data/update.rs`：MST 命中分支**不再覆盖** `Data::my_brep`——工具快照拍摄于 ds_filler::insert 入口，早于 FaceIsoLiner 轮廓边入 arena（len 7 vs 索引 12 越界 panic 的根因）；kernel 上下文恒为 Data::update 设置的完整会话 clone（OCCT 语义：MST 读全局 TShape 图，永远最新） |
 
 **ptorus 现状**：IWalking `nb_lines=52`（含重复片段，起点去重疑似失效——OCCT 用 etat 取负标记 crossing point 防重建，rcad 已对齐该机制但 52>1 说明仍有偏差）→ Contour `nb_lines=51`（采纳正常）→ **断点 = FaceIsoLiner→DS 轮廓边→HLRToShape 提取段**（visible mass 仍 0；注意隐藏阶段已经能引用到轮廓边——说明 DS 边存在，疑点收窄到边的 3D 曲线/range 建造或 OutLine 旗标）。探针已埋好：`RCAD_IWALK_DEBUG`（i_walking domain/wd1/wd2/perform end + contour perform.rs 的 CWDBG after line_constructor）。
+
+### 本 session 追加 7（session 12 续 2：方法论回归——源码逐行审查替代运行时探针）
+
+按 AGENTS.md 阶段 2 纪律（不 println、从拓扑差异回溯到函数、逐行核对 OCCT 源码）完成 ptorus 断链的静态审查，结论：
+
+**已逐行核对为 1:1 的链路（从 Contap 到提取的 8 个环节）**：
+1. `contap/contour/perform.rs`（fo.perform 内部：52 线采纳 51）
+2. `topo_brep/ds_filler.rs` insert（fo.perform 调用点 L175，done=true nb_lines=51/26）
+3. `ds_filler.rs` insert_face（51 条全部 IType::Walking；Walking 分支造边 + `add_int_l(f).push(e)` L751）
+4. `topo_brep/data.rs` is_int_l_face_edge / is_spl_e_edge_edge（cxx L116-131 形式一致）
+5. `out_liner.rs` process_face（IntL 块：INTERNAL 化 → SameEdge 检查 → B.Add(W,E) → B.Add(NF,W)，与 cxx L157-257 一致）
+6. `out_liner.rs` build_shape（cxx L307-340 一致）
+7. `brep/shape_to_hlr.rs` explore_shape（**OriginalShape 的 shell 探索**，传原始面 F 给 explore_face——cxx L254-310 一致）
+8. `shape_to_hlr.rs` explore_face（DS 查询用原始面 F、拓扑遍历用 FM(i)=NF——cxx L187-243 一致；Int 旗标 → SetWEdge）
+
+**RunTime 实测（CDBG，生成 harness 临时探针）**：RgNV=2（缝，来自 Load 的 regn=CN ✓），V/OutV/Rg1V/IsoV/H 全 0。typ=2（OutLine）提取条件 = 面局部 `Itf.Internal()` 旗标（HLRToShape.cxx L176-186）→ 该旗标来自 SetWEdge 的 `Int = IsIntLFaceEdge(原始F, E)`。
+
+**剩余唯一疑点（下 session 首查，读源码可决）**：IntL 的键与内容在 UpdateEdgeData 时刻的同一性——
+(a) `ds.add_int_l(f)` 的 f（insert 探索路径的原始面）与 explore_face 的 f（explore_shape 探索路径的原始面）ptr_id 是否同一 Arc；
+(b) insert_face 压入 IntL 的边 TShape 与 process_face 写入 NF 的边 TShape 是否同一（make_edge 是否被调用两次各造一份）；
+(c) 另发现真缺口：**rcad 缺 `HLRToShape::OutLineHCompound` 访问器**（hxx L122，ViewerTest L3290 消费）——补齐属形式完成项。
