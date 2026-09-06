@@ -862,14 +862,21 @@ fn bug25813_1_hidden_compound_three_arcs() {
         30.0,
     )
     .expect("pcylinder cc 10 30");
+    // the generated harness translates cc2 via apply_transform — measure
+    // whether that fixture variant leaks the seam into the Iso compound.
     let cc2 = rcad_modeling::make_cylinder_brep(
-        glam::DVec3::new(0.0, 0.0, 2.0),
+        glam::DVec3::ZERO,
         glam::DVec3::new(0.0, 0.0, 1.0),
         glam::DVec3::new(1.0, 0.0, 0.0),
         8.0,
         50.0,
     )
     .expect("pcylinder cc2 8 50");
+    let cc2 = {
+        let mut shape = cc2;
+        shape.apply_transform(glam::DAffine3::from_translation(glam::DVec3::new(0.0, 0.0, 2.0)));
+        shape
+    };
     let fused = crate::fuse(&cc, &cc2).expect("bfuse a cc cc2");
     let solid = fused
         .tshapes
@@ -887,7 +894,25 @@ fn bug25813_1_hidden_compound_three_arcs() {
         })
         .expect("root solid");
     let brep = fused;
-    let (v, rg1v, rgnv, outline, h) = smoke_run_hlr(&solid, brep);
+    // inline the pipeline (smoke_run_hlr's flow) so the Iso compound can be
+    // measured too — the harness sums V + OutLine + Rg1 + Iso.
+    let proj = SmokeProjector::from_ax2(&SmokeAx2::new(
+        glam::DVec3::ZERO,
+        glam::DVec3::new(1.0, -1.0, 1.0),
+        glam::DVec3::new(1.0, 1.0, 0.0),
+    ));
+    let mut algo = SmokeAlgo::new();
+    algo.add(&std::sync::Arc::new(brep), &solid, 0);
+    algo.set_projector(&proj);
+    algo.update();
+    algo.hide();
+    let mut hts = SmokeHLRToShape::new(&mut algo);
+    let v = hts.v_compound();
+    let rg1v = hts.rg1_line_v_compound();
+    let rgnv = hts.rg_n_line_v_compound();
+    let outline = hts.out_line_v_compound();
+    let iso = hts.iso_line_v_compound();
+    let h = hts.h_compound();
 
     let mut h_edges = Vec::new();
     assert!(!h.is_null(), "hidden compound is null");
@@ -919,6 +944,14 @@ fn bug25813_1_hidden_compound_three_arcs() {
     assert!(
         (rgn_mass - 42.457822208241754).abs() < 1e-5,
         "RgN mass {rgn_mass}: expected the two seam lines 42.4578 (gap3)"
+    );
+    println!(
+        "COMPOUND masses: v={:.6} rg1v={:.6} rgnv={:.6} outline={:.6} iso={:.6}",
+        super::acceptance::compound_mass(&v),
+        super::acceptance::compound_mass(&rg1v),
+        rgn_mass,
+        super::acceptance::compound_mass(&outline),
+        super::acceptance::compound_mass(&iso),
     );
 }
 
