@@ -238,10 +238,7 @@ impl BndBoxTreeSelectorLine {
         let l0 = -CONFUSION;
         let l1 = self.max_param;
         let ext = rcad_kernel::base::extrema::ext_cc_line_conic(
-            &rcad_kernel::geom::Line3 {
-                origin: self.line_origin,
-                direction: self.line_dir,
-            },
+            &rcad_kernel::geom::Line3::new(self.line_origin, self.line_dir),
             l0,
             l1,
             curve,

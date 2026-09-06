@@ -165,7 +165,7 @@ pub fn make_line_pd(point: Point3, direction: Vec3) -> Result<Line3, GceError> {
     if dir.length_squared() < 0.5 {
         return Err(GceError::NullAxis);
     }
-    Ok(Line3 { origin: point, direction: dir })
+    Ok(Line3::new(point, dir))
 }
 
 /// Construct a line passing through two points.
@@ -184,10 +184,7 @@ pub fn make_line_2p(p1: Point3, p2: Point3) -> Result<Line3, GceError> {
 ///
 /// OCCT: `GC_MakeLine(gp_Lin, gp_Pnt)`.
 pub fn make_line_parallel_point(line: &Line3, point: Point3) -> Result<Line3, GceError> {
-    Ok(Line3 {
-        origin: point,
-        direction: line.direction,
-    })
+    Ok(Line3::new(point, line.direction))
 }
 
 // ============================================================================

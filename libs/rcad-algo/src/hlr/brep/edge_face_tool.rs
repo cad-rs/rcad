@@ -258,10 +258,7 @@ mod tests {
             CurveType::Line
         }
         fn line(&self) -> Line3 {
-            Line3 {
-                origin: self.origin,
-                direction: Vec3::new(1.0, 0.0, 0.0),
-            }
+            Line3::new(self.origin, Vec3::new(1.0, 0.0, 0.0))
         }
         fn circle(&self) -> Circle3 {
             panic!("Standard_NoSuchObject");
@@ -312,10 +309,7 @@ mod tests {
             b.add_vertex(brep, p2, 1e-7),
             b.add_vertex(brep, p3, 1e-7),
         ];
-        let seg = |a: Point3, bb: Point3| Curve3::Line(Line3 {
-            origin: a,
-            direction: (bb - a).normalize(),
-        });
+        let seg = |a: Point3, bb: Point3| Curve3::Line(Line3::new(a, (bb - a).normalize()));
         let e0 = b.add_edge(brep, Some(seg(p0, p1)), vs[0].clone(), vs[1].clone(), [0.0, 2.0]);
         let e1 = b.add_edge(brep, Some(seg(p1, p2)), vs[1].clone(), vs[2].clone(), [0.0, 2.0]);
         let e2 = b.add_edge(brep, Some(seg(p2, p3)), vs[2].clone(), vs[3].clone(), [0.0, 2.0]);
@@ -376,10 +370,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, DVec3::new(2.0, 0.0, 5.0), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(Curve3::Line(Line3 {
-                origin: DVec3::new(0.0, 0.0, 5.0),
-                direction: DVec3::new(1.0, 0.0, 0.0),
-            })),
+            Some(Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, 5.0), DVec3::new(1.0, 0.0, 0.0)))),
             v1,
             v2,
             [0.0, 2.0],
@@ -424,10 +415,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, DVec3::new(1.5, 0.0, 2.0), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(Curve3::Line(Line3 {
-                origin: DVec3::new(1.5, 0.0, 0.0),
-                direction: DVec3::new(0.0, 0.0, 1.0),
-            })),
+            Some(Curve3::Line(Line3::new(DVec3::new(1.5, 0.0, 0.0), DVec3::new(0.0, 0.0, 1.0)))),
             v1,
             v2,
             [0.0, 2.0],
@@ -493,10 +481,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, DVec3::new(2.0, 0.0, 6.0), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(Curve3::Line(Line3 {
-                origin: DVec3::new(1.0, 0.0, 6.0),
-                direction: DVec3::new(1.0, 0.0, 0.0),
-            })),
+            Some(Curve3::Line(Line3::new(DVec3::new(1.0, 0.0, 6.0), DVec3::new(1.0, 0.0, 0.0)))),
             v1,
             v2,
             [0.0, 1.0],
@@ -534,10 +519,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, DVec3::new(2.0, 0.0, 5.0), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(Curve3::Line(Line3 {
-                origin: DVec3::new(0.0, 0.0, 5.0),
-                direction: DVec3::new(1.0, 0.0, 0.0),
-            })),
+            Some(Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, 5.0), DVec3::new(1.0, 0.0, 0.0)))),
             v1,
             v2,
             [0.0, 2.0],
@@ -589,10 +571,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, DVec3::new(2.0, 0.0, 7.0), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(Curve3::Line(Line3 {
-                origin: DVec3::new(2.0, 0.0, 5.0),
-                direction: DVec3::new(0.0, 0.0, 1.0),
-            })),
+            Some(Curve3::Line(Line3::new(DVec3::new(2.0, 0.0, 5.0), DVec3::new(0.0, 0.0, 1.0)))),
             v1,
             v2,
             [0.0, 2.0],
@@ -640,10 +619,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, DVec3::new(2.0, 0.0, 0.0), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(Curve3::Line(Line3 {
-                origin: DVec3::ZERO,
-                direction: DVec3::new(1.0, 0.0, 0.0),
-            })),
+            Some(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0)))),
             v1,
             v2,
             [0.0, 2.0],
@@ -682,10 +658,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, DVec3::new(0.0, 0.0, 2.0), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(Curve3::Line(Line3 {
-                origin: DVec3::ZERO,
-                direction: DVec3::new(0.0, 0.0, 1.0),
-            })),
+            Some(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::new(0.0, 0.0, 1.0)))),
             v1,
             v2,
             [0.0, 2.0],

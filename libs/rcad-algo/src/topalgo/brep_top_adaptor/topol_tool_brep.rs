@@ -558,10 +558,7 @@ pub(crate) mod tests {
         for i in 0..4 {
             let a = pts[i];
             let bb = pts[(i + 1) % 4];
-            let curve = Curve3::Line(Line3 {
-                origin: a,
-                direction: (bb - a).normalize(),
-            });
+            let curve = Curve3::Line(Line3::new(a, (bb - a).normalize()));
             let range = [0.0, (bb - a).length()];
             // OCCT BRep_Builder::Add(E, V) stores the start vertex FORWARD
             // and the end vertex REVERSED on the edge.

@@ -681,10 +681,7 @@ mod tests {
             CurveType::Line
         }
         fn line(&self) -> rcad_kernel::geom::Line3 {
-            rcad_kernel::geom::Line3 {
-                origin: Point3::ZERO,
-                direction: Vec3::new(1.0, 0.0, 0.0),
-            }
+            rcad_kernel::geom::Line3::new(Point3::ZERO, Vec3::new(1.0, 0.0, 0.0))
         }
         fn circle(&self) -> Circle3 {
             panic!("Standard_NoSuchObject");
@@ -809,10 +806,7 @@ mod tangent_tests {
             CurveType::Line
         }
         fn line(&self) -> rcad_kernel::geom::Line3 {
-            rcad_kernel::geom::Line3 {
-                origin: Point3::ZERO,
-                direction: Vec3::new(1.0, 0.0, 0.0),
-            }
+            rcad_kernel::geom::Line3::new(Point3::ZERO, Vec3::new(1.0, 0.0, 0.0))
         }
         fn circle(&self) -> Circle3 {
             panic!("Standard_NoSuchObject");

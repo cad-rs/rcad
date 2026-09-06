@@ -1808,10 +1808,7 @@ mod tests {
         for &(i, j) in edge_pairs {
             let a = pts[i];
             let c = pts[j];
-            let curve = Curve3::Line(Line3 {
-                origin: a,
-                direction: (c - a).normalize(),
-            });
+            let curve = Curve3::Line(Line3::new(a, (c - a).normalize()));
             let range = [0.0, (c - a).length()];
             // OCCT BRep_Builder::Add(E, V): the start vertex FORWARD, the end
             // vertex REVERSED.

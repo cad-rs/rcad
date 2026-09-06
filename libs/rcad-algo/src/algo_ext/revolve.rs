@@ -153,10 +153,7 @@ pub fn revolve_polygon_full_turn(
         if line_axis_dist <= EPS && d_perp > 1.0 - 1e-9 {
             continue;
         }
-        let curve = Curve3::Line(Line3 {
-            origin: profile_verts[i],
-            direction: d_n,
-        });
+        let curve = Curve3::Line(Line3::new(profile_verts[i], d_n));
         let e = brep.add_tedge(
             Some(curve),
             vtx[i].clone().unwrap(),
@@ -402,16 +399,10 @@ pub fn revolve_polygon_full_turn(
                     let v0 = vtx[i].clone().or_else(|| Some(brep.add_tvertex(profile_verts[i]))).unwrap();
                     let v1 = vtx[j].clone().or_else(|| Some(brep.add_tvertex(profile_verts[j]))).unwrap();
                     let len = d.length();
-                    brep.add_tedge(Some(Curve3::Line(Line3 {
-                        origin: profile_verts[i],
-                        direction: d_n,
-                    })), v0, v1, [0.0, len])
+                    brep.add_tedge(Some(Curve3::Line(Line3::new(profile_verts[i], d_n))), v0, v1, [0.0, len])
                 }
             };
-            let profile_line = Curve3::Line(Line3 {
-                origin: profile_verts[i],
-                direction: d_n,
-            });
+            let profile_line = Curve3::Line(Line3::new(profile_verts[i], d_n));
             let surface = Surface3::Revolution(RevolutionSurface {
                 profile: Box::new(profile_line),
                 axis_origin,
@@ -516,10 +507,7 @@ pub fn revolve_polygon_partial(
         if len <= EPS {
             continue;
         }
-        let curve = Curve3::Line(Line3 {
-            origin: profile_verts[i],
-            direction: d / len,
-        });
+        let curve = Curve3::Line(Line3::new(profile_verts[i], d / len));
         prof[i] = Some(brep.add_tedge(Some(curve), vtx[i].clone(), rev(&vtx[j]), [0.0, len]));
     }
 
@@ -603,10 +591,7 @@ pub fn revolve_polygon_partial(
         } else {
             // Skew line: general revolution surface.
             Surface3::Revolution(RevolutionSurface {
-                profile: Box::new(Curve3::Line(Line3 {
-                    origin: profile_verts[i],
-                    direction: d_n,
-                })),
+                profile: Box::new(Curve3::Line(Line3::new(profile_verts[i], d_n))),
                 axis_origin,
                 axis_dir: dir,
             })

@@ -299,10 +299,7 @@ impl PlaneProjector {
         let o = self.to_uv(line.origin);
         let p1 = self.to_uv(line.origin + line.direction);
         let dir = (p1 - o).normalize_or_zero();
-        self.projector.set_line(Line3 {
-            origin: DVec3::new(o.x, o.y, 0.0),
-            direction: DVec3::new(dir.x, dir.y, 0.0),
-        });
+        self.projector.set_line(Line3::new(DVec3::new(o.x, o.y, 0.0), DVec3::new(dir.x, dir.y, 0.0)));
         self.projector.done();
     }
 
@@ -468,10 +465,7 @@ impl CylinderProjector {
         let o = self.to_uv(line.origin);
         let p1 = self.to_uv(line.origin + line.direction);
         let dir = (p1 - o).normalize_or_zero();
-        self.projector.set_line(Line3 {
-            origin: DVec3::new(o.x, o.y, 0.0),
-            direction: DVec3::new(dir.x, dir.y, 0.0),
-        });
+        self.projector.set_line(Line3::new(DVec3::new(o.x, o.y, 0.0), DVec3::new(dir.x, dir.y, 0.0)));
         self.projector.done();
         if dir.x.abs() < 1e-12 {
             self.projector.set_periodic();

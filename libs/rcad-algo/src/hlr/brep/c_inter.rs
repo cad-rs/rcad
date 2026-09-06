@@ -415,10 +415,7 @@ mod tests {
             CurveType::Line
         }
         fn line(&self) -> Line3 {
-            Line3 {
-                origin: self.origin,
-                direction: self.dir,
-            }
+            Line3::new(self.origin, self.dir)
         }
         fn circle(&self) -> Circle3 {
             panic!("Standard_NoSuchObject");

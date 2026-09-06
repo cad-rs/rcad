@@ -532,10 +532,7 @@ mod tests {
             rcad_kernel::base::proj_lib::CurveType::Line
         }
         fn line(&self) -> rcad_kernel::geom::Line3 {
-            Line3 {
-                origin: Point3::ZERO,
-                direction: Vec3::new(1.0, 0.0, 0.0),
-            }
+            Line3::new(Point3::ZERO, Vec3::new(1.0, 0.0, 0.0))
         }
         fn circle(&self) -> rcad_kernel::geom::Circle3 {
             panic!("no circle");
@@ -578,10 +575,7 @@ mod tests {
         let v2 = b.add_vertex(brep, DVec3::new(2.0, 0.0, z), 1e-7);
         let e = b.add_edge(
             brep,
-            Some(rcad_kernel::geom::Curve3::Line(Line3 {
-                origin: DVec3::new(0.0, 0.0, z),
-                direction: DVec3::new(1.0, 0.0, 0.0),
-            })),
+            Some(rcad_kernel::geom::Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, z), DVec3::new(1.0, 0.0, 0.0)))),
             v1,
             v2,
             [0.0, 2.0],
@@ -650,10 +644,7 @@ mod tests {
                 rcad_kernel::base::proj_lib::CurveType::Line
             }
             fn line(&self) -> rcad_kernel::geom::Line3 {
-                Line3 {
-                    origin: Point3::ZERO,
-                    direction: Vec3::new(1.0, 0.0, 0.0),
-                }
+                Line3::new(Point3::ZERO, Vec3::new(1.0, 0.0, 0.0))
             }
             fn circle(&self) -> rcad_kernel::geom::Circle3 {
                 panic!("no circle");
@@ -703,10 +694,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, DVec3::new(0.0, 0.0, 2.0), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(rcad_kernel::geom::Curve3::Line(Line3 {
-                origin: DVec3::ZERO,
-                direction: DVec3::new(0.0, 0.0, 1.0),
-            })),
+            Some(rcad_kernel::geom::Curve3::Line(Line3::new(DVec3::ZERO, DVec3::new(0.0, 0.0, 1.0)))),
             v1,
             v2,
             [0.0, 2.0],

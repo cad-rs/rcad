@@ -131,10 +131,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<(topods::BRep, usi
         let d = p1 - p0;
         let len = d.length();
         let curve = if len > EPS {
-            Some(Curve3::Line(Line3 {
-                origin: p0,
-                direction: d / len,
-            }))
+            Some(Curve3::Line(Line3::new(p0, d / len)))
         } else {
             None
         };
@@ -221,10 +218,7 @@ fn build_prism_from_sections(
             ..end_sr
         };
         brep.add_tedge(
-            Some(Curve3::Line(Line3 {
-                origin: p0,
-                direction: dir,
-            })),
+            Some(Curve3::Line(Line3::new(p0, dir))),
             start_sr,
             end_sr,
             [0.0, len],

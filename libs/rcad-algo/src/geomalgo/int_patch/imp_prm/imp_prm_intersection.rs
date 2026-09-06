@@ -1345,7 +1345,7 @@ impl ImpPrmIntersection {
                 }
 
                 // Create the RLine.
-                let mut rline = IntPatchLine::analytic(IntPatchIType::Restriction, rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }), [0.0, 1.0]);
+                let mut rline = IntPatchLine::analytic(IntPatchIType::Restriction, rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)), [0.0, 1.0]);
                 rline.line_type = IntPatchIType::Restriction;
                 // OCCT L1599-1623: the RLine carries the transitions when
                 // TransitionOK (IntPatch_RLine(false, trans1, trans2)); otherwise

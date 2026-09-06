@@ -2594,10 +2594,7 @@ impl BeanFaceIntersector {
     // OCCT L100-114: default constructor
     pub fn new() -> Self {
         BeanFaceIntersector {
-            my_curve: BRepAdaptorCurve::new(Curve3::Line(rcad_kernel::geom::Line3 {
-                origin: DVec3::ZERO,
-                direction: DVec3::X,
-            })),
+            my_curve: BRepAdaptorCurve::new(Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X))),
             my_surface: BRepAdaptorSurface::new(Surface3::Plane(rcad_kernel::geom::Plane::new(
                 DVec3::ZERO,
                 DVec3::Z,
@@ -4734,10 +4731,7 @@ mod tests {
     #[test]
     fn test_line_plane_intersect() {
         // Line along Z axis through origin — crosses the plane at z=1
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(0.0, 0.0, -5.0),
-            direction: DVec3::Z,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, -5.0), DVec3::Z));
         // Plane at z=1 (horizontal)
         let surface = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
 
@@ -4759,10 +4753,7 @@ mod tests {
     #[test]
     fn test_line_plane_no_intersect() {
         // Line along X axis at z=100 — parallel to plane at z=1, no intersection
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-5.0, 0.0, 100.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-5.0, 0.0, 100.0), DVec3::X));
         let surface = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
 
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
@@ -4818,10 +4809,7 @@ mod tests {
     #[test]
     fn test_line_cylinder_intersect() {
         // Line along X axis at z=4, y=0 — crosses cylinder Z-axis at x=±3
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-10.0, 0.0, 4.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-10.0, 0.0, 4.0), DVec3::X));
         // Cylinder along Z axis, radius=5
         let surface = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
@@ -4851,10 +4839,7 @@ mod tests {
     #[test]
     fn test_line_sphere_intersect() {
         // Line along X axis through origin — passes through sphere at origin
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-10.0, 0.0, 0.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-10.0, 0.0, 0.0), DVec3::X));
         // Sphere at origin, radius=3
         let surface = Surface3::Sphere(SphericalSurface::new(DVec3::ZERO, DVec3::Z, 3.0));
 
@@ -4877,10 +4862,7 @@ mod tests {
     #[test]
     fn test_edge_coincident_with_plane() {
         // Line on Z=0 plane
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-5.0, -5.0, 0.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-5.0, -5.0, 0.0), DVec3::X));
         let surface = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
 
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
@@ -4902,10 +4884,7 @@ mod tests {
     #[test]
     fn test_no_intersection() {
         // Line along X axis at y=0, z=100 — far from sphere at origin
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-10.0, 0.0, 100.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-10.0, 0.0, 100.0), DVec3::X));
         let surface = Surface3::Sphere(SphericalSurface::new(DVec3::ZERO, DVec3::Z, 3.0));
 
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
@@ -4951,10 +4930,7 @@ mod tests {
     // ── BRepAdaptorCurve ───────────────────────────────────────────────────
     #[test]
     fn test_brep_adaptor_curve_basic() {
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let bac = BRepAdaptorCurve::new(curve);
         assert_eq!(bac.get_type(), GeomAbsCurveType::Line);
         let p = bac.value(5.0);
@@ -4984,10 +4960,7 @@ mod tests {
     // ── IntCurveSurfaceHInter ───────────────────────────────────────────────
     #[test]
     fn test_int_curve_surface_hinter() {
-        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3 {
-            origin: DVec3::new(-5.0, 0.0, 0.0),
-            direction: DVec3::X,
-        }));
+        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3::new(DVec3::new(-5.0, 0.0, 0.0), DVec3::X)));
         let surface = BRepAdaptorSurface::new(Surface3::Plane(Plane::new(
             DVec3::new(0.0, 0.0, 1.0),
             DVec3::Z,
@@ -5093,10 +5066,7 @@ mod tests {
     // ── ExtremaExtCS: basic ─────────────────────────────────────────────────
     #[test]
     fn test_extrema_ext_cs_line_plane() {
-        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3 {
-            origin: DVec3::new(0.0, 0.0, -5.0),
-            direction: DVec3::Z,
-        }));
+        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, -5.0), DVec3::Z)));
         let surface = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
         let mut ext = ExtremaExtCS::new();
         ext.initialize_with_bounds(&surface, -10.0, 10.0, -10.0, 10.0, 1e-7, 1e-7);
@@ -5107,10 +5077,7 @@ mod tests {
     // ── ExtremaGenExtCS: basic ──────────────────────────────────────────────
     #[test]
     fn test_extrema_gen_ext_cs_basic() {
-        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3 {
-            origin: DVec3::new(0.0, 0.0, -5.0),
-            direction: DVec3::Z,
-        }));
+        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, -5.0), DVec3::Z)));
         let surface = BRepAdaptorSurface::new(Surface3::Plane(Plane::new(
             DVec3::new(0.0, 0.0, 1.0),
             DVec3::Z,
@@ -5179,10 +5146,7 @@ mod tests {
     // ── Curve resolution helper ─────────────────────────────────────────────
     #[test]
     fn test_curve_resolution() {
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let res = crate::bop::int_tools::curve_range::curve_resolution(&curve, 0.0, 1e-7);
         assert!(res > 0.0);
     }
@@ -5222,10 +5186,7 @@ mod tests {
     // ── BeanFaceIntersector: SetContext ──────────────────────────────────────
     #[test]
     fn test_set_context() {
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(0.0, 0.0, -5.0),
-            direction: DVec3::Z,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, -5.0), DVec3::Z));
         let surface = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
         bfi.set_context(BeanContext::new());
@@ -5278,10 +5239,7 @@ mod tests {
     // ── ProjPointOnCurve ────────────────────────────────────────────────────
     #[test]
     fn test_proj_point_on_curve() {
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let proj = ProjPointOnCurve::new(DVec3::new(5.0, 3.0, 0.0), &curve, -10.0, 10.0);
         assert!(proj.nb_points() > 0);
         let dist = proj.lower_distance();

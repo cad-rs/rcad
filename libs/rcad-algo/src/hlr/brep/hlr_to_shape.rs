@@ -946,10 +946,7 @@ mod tests {
             CurveType::Line
         }
         fn line(&self) -> rcad_kernel::geom::Line3 {
-            rcad_kernel::geom::Line3 {
-                origin: self.origin,
-                direction: self.dir,
-            }
+            rcad_kernel::geom::Line3::new(self.origin, self.dir)
         }
         fn circle(&self) -> rcad_kernel::geom::Circle3 {
             panic!("Standard_NoSuchObject");

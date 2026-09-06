@@ -67,10 +67,7 @@ pub fn populate_box_geom(brep: &mut rcad_kernel::BRep) {
         let TShape::Edge(ed) = Arc::make_mut(ts) else {
             continue;
         };
-        ed.curve = Some(Curve3::Line(Line3 {
-            origin: p0,
-            direction: dir,
-        }));
+        ed.curve = Some(Curve3::Line(Line3::new(p0, dir)));
         ed.range = [0.0, len.max(TOLERANCE_LEN_MIN)];
         ed.degenerated = len <= TOLERANCE_LEN_MIN;
     }
@@ -237,10 +234,7 @@ pub fn recompute_plane_surfaces(brep: &mut rcad_kernel::BRep) {
         let TShape::Edge(ed) = Arc::make_mut(ts) else {
             continue;
         };
-        ed.curve = Some(Curve3::Line(Line3 {
-            origin: p0,
-            direction: dir,
-        }));
+        ed.curve = Some(Curve3::Line(Line3::new(p0, dir)));
         ed.range = [0.0, (p1 - p0).dot(dir)];
         ed.degenerated = len <= TOLERANCE_LEN_MIN;
     }

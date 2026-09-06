@@ -284,10 +284,7 @@ pub fn extrude_profile_solid(
             ProfileSegment::Line { p0, p1 } => {
                 let d = *p1 - *p0;
                 let len = d.length();
-                Some(Curve3::Line(Line3 {
-                    origin: *p0,
-                    direction: if len > TOLERANCE_LEN_MIN { d / len } else { DVec3::X },
-                }))
+                Some(Curve3::Line(Line3::new(*p0, if len > TOLERANCE_LEN_MIN { d / len } else { DVec3::X })))
             }
             ProfileSegment::Arc {
                 center,
@@ -332,10 +329,7 @@ pub fn extrude_profile_solid(
         let d = dir * depth;
         let len = d.length();
         e_ver.push(brep.add_tedge(
-            Some(Curve3::Line(Line3 {
-                origin: profile[i].p0(),
-                direction: if len > TOLERANCE_LEN_MIN { dir } else { DVec3::X },
-            })),
+            Some(Curve3::Line(Line3::new(profile[i].p0(), if len > TOLERANCE_LEN_MIN { dir } else { DVec3::X }))),
             v[i].clone(),
             rev_v(&ve[i]),
             [0.0, len],

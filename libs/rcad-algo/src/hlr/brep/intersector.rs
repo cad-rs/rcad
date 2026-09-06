@@ -637,10 +637,7 @@ mod tests {
             CurveType::Line
         }
         fn line(&self) -> rcad_kernel::geom::Line3 {
-            rcad_kernel::geom::Line3 {
-                origin: self.origin,
-                direction: self.dir,
-            }
+            rcad_kernel::geom::Line3::new(self.origin, self.dir)
         }
         fn circle(&self) -> Circle3 {
             panic!("Standard_NoSuchObject");
@@ -793,10 +790,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, glam::DVec3::new(2.0, 0.0, 0.5), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
-                origin: glam::DVec3::new(0.0, 0.0, 0.5),
-                direction: glam::DVec3::new(1.0, 0.0, 0.0),
-            })),
+            Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(glam::DVec3::new(0.0, 0.0, 0.5), glam::DVec3::new(1.0, 0.0, 0.0)))),
             v1,
             v2,
             [0.0, 2.0],
@@ -822,10 +816,7 @@ mod tests {
 
         let mut inter = Intersector::new();
         inter.load(&hsurf);
-        let line = Line3 {
-            origin: glam::DVec3::new(0.0, 0.5, 2.0),
-            direction: glam::DVec3::new(0.0, 0.0, -1.0),
-        };
+        let line = Line3::new(glam::DVec3::new(0.0, 0.5, 2.0), glam::DVec3::new(0.0, 0.0, -1.0));
         inter.perform_line(&line, 100.0);
 
         assert!(inter.is_done());

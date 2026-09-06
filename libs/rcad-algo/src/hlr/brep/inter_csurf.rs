@@ -225,10 +225,7 @@ mod tests {
         let v2 = b.add_vertex(brep, DVec3::new(2.0, 0.0, z), 1e-7);
         let e = b.add_edge(
             brep,
-            Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
-                origin: DVec3::new(0.0, 0.0, z),
-                direction: DVec3::new(1.0, 0.0, 0.0),
-            })),
+            Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::new(0.0, 0.0, z), DVec3::new(1.0, 0.0, 0.0)))),
             v1,
             v2,
             [0.0, 2.0],
@@ -256,10 +253,7 @@ mod tests {
         let v2 = b.add_vertex(brep, DVec3::new(0.0, 0.0, 2.0), 1e-7);
         let e = b.add_edge(
             brep,
-            Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
-                origin: DVec3::ZERO,
-                direction: DVec3::new(0.0, 0.0, 1.0),
-            })),
+            Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::new(0.0, 0.0, 1.0)))),
             v1,
             v2,
             [0.0, 2.0],
@@ -299,10 +293,7 @@ mod tests {
         hsurf.load(&brep, &face);
 
         let mut ics = InterCSurf::new();
-        let line = Line3 {
-            origin: DVec3::new(0.0, 0.5, 2.0),
-            direction: DVec3::new(0.0, 0.0, -1.0),
-        };
+        let line = Line3::new(DVec3::new(0.0, 0.5, 2.0), DVec3::new(0.0, 0.0, -1.0));
         ics.perform(&line, &hsurf);
 
         assert!(ics.is_done());
@@ -330,10 +321,7 @@ mod tests {
         hsurf.load(&brep, &face);
 
         let mut ics = InterCSurf::new();
-        let line = Line3 {
-            origin: DVec3::new(-2.0, 0.0, 1.0),
-            direction: DVec3::new(1.0, 0.0, 0.0),
-        };
+        let line = Line3::new(DVec3::new(-2.0, 0.0, 1.0), DVec3::new(1.0, 0.0, 0.0));
         ics.perform(&line, &hsurf);
 
         assert!(ics.is_done());

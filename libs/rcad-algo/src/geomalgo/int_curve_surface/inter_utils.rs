@@ -220,10 +220,7 @@ pub(crate) fn est_lim_for_inf_extr<S, ST: HSurfaceTool<Surface = S>>(
         use rcad_kernel::base::extrema::line_line_extrema;
         for _i in 0..=nbsu {
             let a_p = <ST as HSurfaceTool>::d0(surface, u, 0.0);
-            let a_l = Line3 {
-                origin: a_p,
-                direction: a_dir_of_ext,
-            };
+            let a_l = Line3::new(a_p, a_dir_of_ext);
 
             // OCCT Extrema_ExtElC aExtr(aL, Line, tolang): IsDone/IsParallel.
             let a_extr = line_line_extrema(&a_l, line);

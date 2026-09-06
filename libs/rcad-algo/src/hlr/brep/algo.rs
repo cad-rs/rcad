@@ -163,10 +163,7 @@ mod tests {
         let e1 = b.add_edge(
             &mut brep,
             Some(rcad_kernel::geom::Curve3::Line(
-                rcad_kernel::geom::Line3 {
-                    origin: DVec3::new(0.0, 0.0, 0.0),
-                    direction: DVec3::new(1.0, 0.0, 0.0),
-                },
+                rcad_kernel::geom::Line3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)),
             )),
             va.clone(),
             vb.clone(),
@@ -175,10 +172,7 @@ mod tests {
         let e2 = b.add_edge(
             &mut brep,
             Some(rcad_kernel::geom::Curve3::Line(
-                rcad_kernel::geom::Line3 {
-                    origin: DVec3::new(1.0, 0.0, 0.0),
-                    direction: DVec3::new(0.0, 1.0, 0.0),
-                },
+                rcad_kernel::geom::Line3::new(DVec3::new(1.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0)),
             )),
             vb.clone(),
             vc.clone(),
@@ -187,10 +181,7 @@ mod tests {
         let e3 = b.add_edge(
             &mut brep,
             Some(rcad_kernel::geom::Curve3::Line(
-                rcad_kernel::geom::Line3 {
-                    origin: DVec3::new(1.0, 1.0, 0.0),
-                    direction: DVec3::new(-1.0, 0.0, 0.0),
-                },
+                rcad_kernel::geom::Line3::new(DVec3::new(1.0, 1.0, 0.0), DVec3::new(-1.0, 0.0, 0.0)),
             )),
             vc.clone(),
             va.clone(),

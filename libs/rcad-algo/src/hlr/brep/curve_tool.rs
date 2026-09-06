@@ -353,10 +353,7 @@ mod tests {
             CurveType::Line
         }
         fn line(&self) -> Line3 {
-            Line3 {
-                origin: Point3::ZERO,
-                direction: Vec3::new(1.0, 0.0, 0.0),
-            }
+            Line3::new(Point3::ZERO, Vec3::new(1.0, 0.0, 0.0))
         }
         fn circle(&self) -> Circle3 {
             panic!("Standard_NoSuchObject");

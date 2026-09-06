@@ -1246,10 +1246,7 @@ pub fn process_segments(
 
         let mut rline = IntPatchLine::analytic(
             IntPatchIType::Restriction,
-            Curve3::Line(rcad_kernel::geom::Line3 {
-                origin: DVec3::ZERO,
-                direction: DVec3::X,
-            }),
+            Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)),
             [paramf, paraml],
         );
         if on_first {
@@ -1287,10 +1284,7 @@ pub fn process_segments(
                 }
                 rline = IntPatchLine::analytic(
                     IntPatchIType::Restriction,
-                    Curve3::Line(rcad_kernel::geom::Line3 {
-                        origin: DVec3::ZERO,
-                        direction: DVec3::X,
-                    }),
+                    Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)),
                     [paramf, paraml],
                 );
                 if on_first {
@@ -1315,10 +1309,7 @@ pub fn process_segments(
                 }
                 rline = IntPatchLine::analytic(
                     IntPatchIType::Restriction,
-                    Curve3::Line(rcad_kernel::geom::Line3 {
-                        origin: DVec3::ZERO,
-                        direction: DVec3::X,
-                    }),
+                    Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)),
                     [paramf, paraml],
                 );
                 rline.trans1 = Some(Transition::new_in_out(false, trans1));
@@ -1332,10 +1323,7 @@ pub fn process_segments(
         } else {
             rline = IntPatchLine::analytic(
                 IntPatchIType::Restriction,
-                Curve3::Line(rcad_kernel::geom::Line3 {
-                    origin: DVec3::ZERO,
-                    direction: DVec3::X,
-                }),
+                Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)),
                 [paramf, paraml],
             );
             if on_first {

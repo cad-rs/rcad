@@ -336,10 +336,7 @@ pub fn make_fillet_plane_plane_lin(
         origin: lin2dpln.0,
         direction: lin2dpln.1,
     });
-    let glinpln1 = Curve3::Line(Line3 {
-        origin: linpln.0,
-        direction: linpln.1,
-    });
+    let glinpln1 = Curve3::Line(Line3::new(linpln.0, linpln.1));
     let glin2dcyl1 = rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
         origin: lin2dcyl,
         direction: DVec2::new(0.0, 1.0),
@@ -365,10 +362,7 @@ pub fn make_fillet_plane_plane_lin(
         origin: lin2dpln.0,
         direction: lin2dpln.1,
     });
-    let glinpln2 = Curve3::Line(Line3 {
-        origin: pv,
-        direction: axis_cylinder,
-    });
+    let glinpln2 = Curve3::Line(Line3::new(pv, axis_cylinder));
     let glin2dcyl2 = rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
         origin: DVec2::new(ang, 0.0),
         direction: DVec2::new(0.0, 1.0),

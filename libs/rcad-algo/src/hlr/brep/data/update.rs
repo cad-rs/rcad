@@ -1218,10 +1218,7 @@ mod tests {
             CurveType::Line
         }
         fn line(&self) -> Line3 {
-            Line3 {
-                origin: self.origin,
-                direction: self.dir,
-            }
+            Line3::new(self.origin, self.dir)
         }
         fn circle(&self) -> rcad_kernel::geom::Circle3 {
             panic!("Standard_NoSuchObject");
@@ -1313,10 +1310,7 @@ mod tests {
         for i in 0..4 {
             let e = b.add_edge(
                 &mut brep,
-                Some(rcad_kernel::geom::Curve3::Line(Line3 {
-                    origin: p[i],
-                    direction: dirs[i],
-                })),
+                Some(rcad_kernel::geom::Curve3::Line(Line3::new(p[i], dirs[i]))),
                 verts[i].clone(),
                 verts[(i + 1) % 4].clone(),
                 [0.0, 10.0],

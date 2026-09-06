@@ -850,10 +850,7 @@ mod tests {
         let c = p(10.0, 10.0);
         let d = p(0.0, 10.0);
         let seg = |o: glam::DVec3, e: glam::DVec3| {
-            Curve3::Line(Line3 {
-                origin: o,
-                direction: (e - o).normalize(),
-            })
+            Curve3::Line(Line3::new(o, (e - o).normalize()))
         };
         let v = [
             b.add_vertex(&mut brep, a, 1e-7),

@@ -1673,10 +1673,7 @@ pub fn ellipse_d1(e: &rcad_kernel::geom::Ellipse3, u: f64) -> DVec3 {
 pub fn reverse_curve(c: &rcad_kernel::geom::Curve3) -> rcad_kernel::geom::Curve3 {
     match c {
         rcad_kernel::geom::Curve3::Line(l) => {
-            rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
-                origin: l.origin,
-                direction: -l.direction,
-            })
+            rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(l.origin, -l.direction))
         }
         rcad_kernel::geom::Curve3::Circle(ci) => {
             rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {

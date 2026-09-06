@@ -209,10 +209,7 @@ fn plane_image(c: &Curve2d) -> Option<Curve3> {
     let p3 = |p: DVec2| pln.point_at(p.x, p.y);
     let d3 = |d: DVec2| pln.u_dir * d.x + pln.v_dir * d.y;
     match c {
-        Curve2d::Line(l) => Some(Curve3::Line(Line3 {
-            origin: p3(l.origin),
-            direction: d3(l.direction),
-        })),
+        Curve2d::Line(l) => Some(Curve3::Line(Line3::new(p3(l.origin), d3(l.direction)))),
         Curve2d::Circle(c2) => Some(Curve3::Circle(Circle3 {
             center: p3(c2.center),
             normal: pln.normal,

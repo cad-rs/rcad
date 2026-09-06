@@ -125,10 +125,7 @@ mod tests {
     /// evaluations, and the zero higher derivatives (lxx bodies).
     #[test]
     fn line_tool_statics() {
-        let l = Line3 {
-            origin: Point3::new(1.0, 2.0, 3.0),
-            direction: Vec3::new(0.0, 0.0, 1.0),
-        };
+        let l = Line3::new(Point3::new(1.0, 2.0, 3.0), Vec3::new(0.0, 0.0, 1.0));
         assert_eq!(first_parameter(&l), f64::MIN);
         assert_eq!(last_parameter(&l), f64::MAX);
         assert_eq!(continuity(&l), 4);

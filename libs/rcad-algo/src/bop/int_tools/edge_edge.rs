@@ -81,8 +81,8 @@ fn type_to_integer(the_c_type: &Curve3) -> i32 {
 impl EdgeEdgeIntersector {
     pub fn new() -> Self {
         EdgeEdgeIntersector {
-            curve1: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
-            curve2: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
+            curve1: Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)),
+            curve2: Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)),
             range1: [0.0, 1.0], range2: [0.0, 1.0],
             edge1_tol: 1e-7, edge2_tol: 1e-7,
             edge1_v1: usize::MAX, edge1_v2: usize::MAX,

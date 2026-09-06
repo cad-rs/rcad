@@ -1412,7 +1412,7 @@ pub fn curve_on_surface(
             // OCCT: V.SetLinearForm(Duv.X(), D1U, Duv.Y(), D1V).
             let dir = l.direction.x * p.u_dir + l.direction.y * p.v_dir;
             Some((
-                rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: dir }),
+                rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(o, dir)),
                 CurveType3d::Line,
             ))
         }
@@ -1463,7 +1463,7 @@ pub fn curve_on_surface(
                 let o = c.origin + c.radius * (u0.cos() * x + u0.sin() * y) + v0 * z;
                 let dir = if l.direction.y < 0.0 { -z } else { z };
                 Some((
-                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: dir }),
+                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(o, dir)),
                     CurveType3d::Line,
                 ))
             } else {
@@ -1507,7 +1507,7 @@ pub fn curve_on_surface(
                 let gen_dir = semi.sin() * radial + semi.cos() * z;
                 let dir = if l.direction.y < 0.0 { -gen_dir } else { gen_dir };
                 Some((
-                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: dir }),
+                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(o, dir)),
                     CurveType3d::Line,
                 ))
             } else {

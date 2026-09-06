@@ -254,10 +254,7 @@ mod tests {
             CurveType::Line
         }
         fn line(&self) -> rcad_kernel::geom::Line3 {
-            rcad_kernel::geom::Line3 {
-                origin: self.origin,
-                direction: self.dir,
-            }
+            rcad_kernel::geom::Line3::new(self.origin, self.dir)
         }
         fn circle(&self) -> rcad_kernel::geom::Circle3 {
             panic!("Standard_NoSuchObject");
@@ -344,10 +341,7 @@ mod tests {
             let c = corners[(k + 1) % 4];
             let e = b.add_edge(
                 &mut brep,
-                Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
-                    origin: a,
-                    direction: (c - a).normalize(),
-                })),
+                Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(a, (c - a).normalize()))),
                 vs[k].clone(),
                 vs[(k + 1) % 4].clone(),
                 [0.0, 2.0],
@@ -1931,10 +1925,7 @@ impl<'a> super::Data<'a> {
 
         let lin_l = self.my_proj.shoot(psta.x, psta.y); // OCCT L2192: gp_Lin L
         // OCCT gp_Lin → the rcad kernel line (the Lin/Line3 field mapping).
-        let l = Line3 {
-            origin: lin_l.pos,
-            direction: lin_l.dir,
-        };
+        let l = Line3::new(lin_l.pos, lin_l.dir);
         let mut w_lim = elclib::line_parameter(&l, plim);
         self.my_intersector.perform_line(&l, w_lim);
         if self.my_intersector.is_done() {

@@ -593,10 +593,7 @@ impl SolidExplorer {
     /// Only intersections whose UV lies inside the face's 2D domain are counted
     /// (OCCT IntCurvesFace_Intersector.cxx L256-286: Classify(Puv) == IN/ON).
     pub(crate) fn ray_face_param(&self, p: DVec3, dir: DVec3, f: &ExplorerFace) -> Option<f64> {
-        let line = Curve3::Line(rcad_kernel::geom::Line3 {
-            origin: p,
-            direction: dir,
-        });
+        let line = Curve3::Line(rcad_kernel::geom::Line3::new(p, dir));
         let line_for_points = line.clone();
         let adapt_curve = BRepAdaptorCurve::new(line);
         let adapt_surf = BRepAdaptorSurface::new(f.surf.clone());
@@ -891,10 +888,7 @@ impl SolidExplorer {
         let quad = crate::geomalgo::int_surf::quadric::Quadric::from_surface3(&f.surf);
         if let Some(quad) = quad {
             if quad.type_quadric() != crate::geomalgo::int_surf::quadric::QuadricType::Other {
-                let line = rcad_kernel::geom::Line3 {
-                    origin: l_origin,
-                    direction: l_dir,
-                };
+                let line = rcad_kernel::geom::Line3::new(l_origin, l_dir);
                 let (in_quadric, pts) = match crate::geomalgo::int_patch::int_cs::intersect_line_quadric(
                     &line, &quad,
                 ) {
@@ -941,10 +935,7 @@ impl SolidExplorer {
                 return Some((false, out));
             }
         }
-        let line = Curve3::Line(rcad_kernel::geom::Line3 {
-            origin: l_origin,
-            direction: l_dir,
-        });
+        let line = Curve3::Line(rcad_kernel::geom::Line3::new(l_origin, l_dir));
         let mut hics = rcad_kernel::base::geom_api::int_cs::IntCS::new();
         hics.perform(&line, &f.surf);
         if !hics.is_done() {

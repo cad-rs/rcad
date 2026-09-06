@@ -435,10 +435,7 @@ mod tests {
         // the end vertex REVERSED on the edge.
         let e1 = b.add_edge(
             &mut brep,
-            Some(Curve3::Line(Line3 {
-                origin: Point3::new(0.0, 0.0, 0.0),
-                direction: Vec3::new(1.0, 0.0, 0.0),
-            })),
+            Some(Curve3::Line(Line3::new(Point3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)))),
             v1.clone(),
             {
                 let mut x = v2.clone();
@@ -449,10 +446,7 @@ mod tests {
         );
         let e2 = b.add_edge(
             &mut brep,
-            Some(Curve3::Line(Line3 {
-                origin: Point3::new(1.0, 0.0, 0.0),
-                direction: Vec3::new(0.0, 1.0, 0.0),
-            })),
+            Some(Curve3::Line(Line3::new(Point3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)))),
             v2.clone(),
             {
                 let mut x = v3.clone();

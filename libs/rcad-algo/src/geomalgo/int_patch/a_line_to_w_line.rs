@@ -688,14 +688,11 @@ impl ALineToWLine {
 
             let mut line = IntPatchLine {
                 line_type: IntPatchIType::Walking,
-                curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
-                    origin: wline_pnts[0].p3d,
-                    direction: if wline_pnts.len() > 1 {
+                curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(wline_pnts[0].p3d, if wline_pnts.len() > 1 {
                         (wline_pnts[1].p3d - wline_pnts[0].p3d).normalize_or_zero()
                     } else {
                         DVec3::X
-                    },
-                }),
+                    })),
                 t_range: [0.0, 1.0],
                 pcurve1: None,
                 pcurve2: None,
@@ -722,10 +719,7 @@ impl ALineToWLine {
             // OCCT L954-961: keep the line only when it has more than one point.
             if line.wline_pnts.len() > 1 {
                 let wpts = &line.wline_pnts;
-                line.curve = rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
-                    origin: wpts[0].p3d,
-                    direction: (wpts[1].p3d - wpts[0].p3d).normalize_or_zero(),
-                });
+                line.curve = rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(wpts[0].p3d, (wpts[1].p3d - wpts[0].p3d).normalize_or_zero()));
                 if std::env::var("RCAD_WL_DEBUG").is_ok() {
                     eprintln!("[WL-SEG] n={} f={:?} l={:?} dist={:.3e}", wpts.len(), wpts[0].p3d, wpts[wpts.len()-1].p3d, wpts[0].p3d.distance(wpts[wpts.len()-1].p3d));
                     if wpts.len() <= 12 {

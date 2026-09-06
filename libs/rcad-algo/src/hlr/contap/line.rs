@@ -191,10 +191,7 @@ impl Line {
         if self.typ_l != IType::Lin {
             panic!("Standard_DomainError: Contap_Line::Line");
         }
-        Line3 {
-            origin: self.pt,
-            direction: self.dir1,
-        }
+        Line3::new(self.pt, self.dir1)
     }
 
     /// OCCT Circle (lxx L80-87) — gp_Circ(gp_Ax2(pt, dir1, dir2), rad):

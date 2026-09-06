@@ -926,10 +926,7 @@ pub fn compute_fillet_curves(
         _ => {
             let edge_dir = (p1 - p0).normalize_or(DVec3::Z);
             curves.push(FilletCurve {
-                curve: Curve3::Line(Line3 {
-                    origin: p0,
-                    direction: any_perpendicular(edge_dir),
-                }),
+                curve: Curve3::Line(Line3::new(p0, any_perpendicular(edge_dir))),
                 parameter_range: [0.0, radius],
                 is_start: true,
             });
@@ -1040,10 +1037,7 @@ fn compute_variable_fillet_curves(
             }
             _ => {
                 curves.push(FilletCurve {
-                    curve: Curve3::Line(Line3 {
-                        origin: pt,
-                        direction: edge_info.tangent_start,
-                    }),
+                    curve: Curve3::Line(Line3::new(pt, edge_info.tangent_start)),
                     parameter_range: [0.0, rp.radius],
                     is_start: t < 0.5,
                 });
@@ -1201,10 +1195,7 @@ fn push_line_edge(
     let delta = p1 - p0;
     let len = delta.length();
     let dir = if len > EPS { delta / len } else { DVec3::X };
-    let curve = Some(Curve3::Line(Line3 {
-        origin: p0,
-        direction: dir,
-    }));
+    let curve = Some(Curve3::Line(Line3::new(p0, dir)));
     brep.add_edge_flat(start, end, curve, [0.0, len])
 }
 

@@ -558,10 +558,7 @@ pub(crate) fn smoke_box_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shap
             v_last.orientation = rcad_kernel::topods::Orientation::Reversed;
             let e = b.add_edge(
                 &mut brep,
-                Some(Curve3::Line(Line3 {
-                    origin: a,
-                    direction: (c - a).normalize(),
-                })),
+                Some(Curve3::Line(Line3::new(a, (c - a).normalize()))),
                 vs[i].clone(),
                 v_last,
                 [0.0, (c - a).length()],
@@ -1413,10 +1410,7 @@ pub(crate) fn smoke_cylinder_solid() -> (rcad_kernel::BRep, rcad_kernel::topods:
     // the seam line (r, 0, 0) -> (r, 0, h).
     let seam = b.add_edge(
         &mut brep,
-        Some(Curve3::Line(Line3 {
-            origin: glam::DVec3::new(r, 0.0, 0.0),
-            direction: glam::DVec3::new(0.0, 0.0, 1.0),
-        })),
+        Some(Curve3::Line(Line3::new(glam::DVec3::new(r, 0.0, 0.0), glam::DVec3::new(0.0, 0.0, 1.0)))),
         v_lo.clone(),
         oriented(&v_hi, rcad_kernel::topods::Orientation::Reversed),
         [0.0, h],

@@ -580,10 +580,7 @@ fn perform_planes(
     }
 
     let mut a_curve = IntersectionCurve {
-        curve: Curve3::Line(Line3 {
-            origin: res.line_origin,
-            direction: res.line_dir,
-        }),
+        curve: Curve3::Line(Line3::new(res.line_origin, res.line_dir)),
         t_range: [pmin, pmax],
         pcurve1: Some(Curve2d::Line(lin2d1)),
         pcurve2: Some(Curve2d::Line(lin2d2)),

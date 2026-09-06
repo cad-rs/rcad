@@ -422,22 +422,10 @@ impl ContAna {
             panic!("Standard_OutOfRange: Contap_ContAna::Line");
         }
         match index {
-            1 => rcad_kernel::geom::Line3 {
-                origin: self.pt1,
-                direction: self.dir1,
-            },
-            2 => rcad_kernel::geom::Line3 {
-                origin: self.pt2,
-                direction: self.dir2,
-            },
-            3 => rcad_kernel::geom::Line3 {
-                origin: self.pt3,
-                direction: self.dir3,
-            },
-            4 => rcad_kernel::geom::Line3 {
-                origin: self.pt4,
-                direction: self.dir4,
-            },
+            1 => rcad_kernel::geom::Line3::new(self.pt1, self.dir1),
+            2 => rcad_kernel::geom::Line3::new(self.pt2, self.dir2),
+            3 => rcad_kernel::geom::Line3::new(self.pt3, self.dir3),
+            4 => rcad_kernel::geom::Line3::new(self.pt4, self.dir4),
             _ => panic!("Standard_OutOfRange: Program error in Contap_ContAna"),
         }
     }
@@ -537,9 +525,12 @@ mod tests {
         assert!(ana.is_done());
         assert_eq!(ana.nb_contours(), 2);
         assert_eq!(ana.type_contour(), Curve2dType::Line);
-        // Solution direction z-component = 1 / tan(sida) = cot(30 deg).
+        // The analytic solution direction is cost0*X + sint0*Y + cot(30)*Z =
+        // (1, 0, sqrt(3)) (cxx L275-278); dir1 is a gp_Dir, so SetXYZ stores
+        // it normalized — z = cot(30) / |(1, 0, cot(30))| = sqrt(3)/2.
         let l1 = ana.line(1);
-        let expected = 1.0 / (30f64).to_radians().tan();
+        let cot = 1.0 / (30f64).to_radians().tan();
+        let expected = cot / (1.0 + cot * cot).sqrt();
         assert!((l1.direction.z - expected).abs() < 1e-12);
     }
 

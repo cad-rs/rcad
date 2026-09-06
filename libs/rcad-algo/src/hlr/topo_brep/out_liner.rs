@@ -861,10 +861,7 @@ mod tests {
         for i in 0..4 {
             let a = pts[i];
             let bb = pts[(i + 1) % 4];
-            let curve = Curve3::Line(Line3 {
-                origin: a,
-                direction: (bb - a).normalize(),
-            });
+            let curve = Curve3::Line(Line3::new(a, (bb - a).normalize()));
             // OCCT BRep_Builder::Add(E, V) stores the start vertex FORWARD
             // and the end vertex REVERSED on the edge.
             let v_first = vs[i].clone();
@@ -895,10 +892,7 @@ mod tests {
         for i in 0..4 {
             let a = pts1[i];
             let bb = pts1[(i + 1) % 4];
-            let curve = Curve3::Line(Line3 {
-                origin: a,
-                direction: (bb - a).normalize(),
-            });
+            let curve = Curve3::Line(Line3::new(a, (bb - a).normalize()));
             let v_first = vs1[i].clone();
             let mut v_last = vs1[(i + 1) % 4].clone();
             v_last.orientation = Orientation::Reversed;

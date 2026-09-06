@@ -1942,7 +1942,7 @@ mod tests {
 
     #[test]
     fn project_onto_line_curve() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let q = DVec3::new(3.0, 4.0, 0.0);
         let r = closest_point_on_curve(&line, q, 32);
         let expected = DVec3::new(3.0, 0.0, 0.0);
@@ -1965,7 +1965,7 @@ mod tests {
     #[test]
     fn project_onto_line_curve_oblique() {
         let dir = DVec3::new(1.0, 1.0, 0.0).normalize();
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: dir });
+        let line = Curve3::Line(Line3::new(DVec3::ZERO, dir));
         let q = DVec3::new(0.0, 1.0, 2.0);
         let r = closest_point_on_curve(&line, q, 32);
         let t = q.dot(dir);
@@ -2077,7 +2077,7 @@ mod tests {
     #[test]
     fn line_circle_far_away() {
         // line y=5 (x-axis at z=0), circle radius 1 at origin -> min dist 4.
-        let l = Curve3::Line(crate::geom::Line3 { origin: DVec3::new(0.0, 5.0, 0.0), direction: DVec3::X });
+        let l = Curve3::Line(crate::geom::Line3::new(DVec3::new(0.0, 5.0, 0.0), DVec3::X));
         let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
         let cands = match &c {
             Curve3::Circle(cc) => line_circle_extrema(match &l { Curve3::Line(ll) => ll, _ => unreachable!() }, cc),
@@ -2090,7 +2090,7 @@ mod tests {
     #[test]
     fn line_circle_intersecting() {
         // line y=0.5 passes through circle radius 1 at origin -> min dist 0.
-        let l = Curve3::Line(crate::geom::Line3 { origin: DVec3::new(0.0, 0.5, 0.0), direction: DVec3::X });
+        let l = Curve3::Line(crate::geom::Line3::new(DVec3::new(0.0, 0.5, 0.0), DVec3::X));
         let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
         let cands = match &c {
             Curve3::Circle(cc) => line_circle_extrema(match &l { Curve3::Line(ll) => ll, _ => unreachable!() }, cc),
@@ -2104,7 +2104,7 @@ mod tests {
     fn line_circle_off_plane() {
         // line z=3, x-axis; circle radius 1 at origin in xy-plane.
         // Line is parallel to circle plane at offset 3 -> min dist = 3 (dc2d=0 <= R).
-        let l = Curve3::Line(crate::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let l = Curve3::Line(crate::geom::Line3::new(DVec3::ZERO, DVec3::X));
         // shift the circle to z=3 so the line is at offset -3
         let c = Curve3::Circle(Circle3::new(DVec3::new(0.0, 0.0, 3.0), DVec3::Z, 1.0));
         let cands = match &c {
@@ -2119,7 +2119,7 @@ mod tests {
     fn line_ellipse_extrema_smoke() {
         // line x=4 (direction +y); ellipse major 3 (x), minor 1 (y) at origin.
         // Nearest ellipse point is (3, 0) -> dist 1.
-        let l = Curve3::Line(crate::geom::Line3 { origin: DVec3::new(4.0, 0.0, 0.0), direction: DVec3::Y });
+        let l = Curve3::Line(crate::geom::Line3::new(DVec3::new(4.0, 0.0, 0.0), DVec3::Y));
         let e = Curve3::Ellipse(crate::geom::Ellipse3 {
             center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
             major_radius: 3.0, minor_radius: 1.0,

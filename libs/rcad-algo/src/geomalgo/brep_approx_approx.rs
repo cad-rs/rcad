@@ -440,10 +440,7 @@ mod tests {
         let v2 = b.add_vertex(&mut brep, DVec3::new(1.0, 0.0, 1.0), 1e-7);
         let e = b.add_edge(
             &mut brep,
-            Some(rcad_kernel::geom::Curve3::Line(Line3 {
-                origin: DVec3::new(1.0, 0.0, 0.0),
-                direction: DVec3::new(0.0, 0.0, 1.0),
-            })),
+            Some(rcad_kernel::geom::Curve3::Line(Line3::new(DVec3::new(1.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 1.0)))),
             v1,
             v2,
             [0.0, 1.0],

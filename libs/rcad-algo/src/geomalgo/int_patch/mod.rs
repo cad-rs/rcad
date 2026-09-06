@@ -386,10 +386,7 @@ impl IntPatchLine {
         }
     }
     pub fn walking(pnts: Vec<WLinePnt>, wt: WLineType) -> Self {
-        let line = rcad_kernel::geom::Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
+        let line = rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X);
         Self {
             line_type: IntPatchIType::Walking,
             curve: Curve3::Line(line),

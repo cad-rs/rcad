@@ -1051,10 +1051,7 @@ mod tests {
     #[test]
     fn hinter_line_plane_intana_anchor() {
         let curve = TestLineCurve {
-            line: Line3 {
-                origin: DVec3::new(0.0, 0.25, 1.0),
-                direction: DVec3::new(1.0, 0.0, -1.0).normalize(),
-            },
+            line: Line3::new(DVec3::new(0.0, 0.25, 1.0), DVec3::new(1.0, 0.0, -1.0).normalize()),
             first: -5.0,
             last: 5.0,
         };
@@ -1084,10 +1081,7 @@ mod tests {
     #[test]
     fn hinter_line_cylinder_intana_anchor() {
         let curve = TestLineCurve {
-            line: Line3 {
-                origin: DVec3::new(-10.0, 0.0, 0.5),
-                direction: DVec3::X,
-            },
+            line: Line3::new(DVec3::new(-10.0, 0.0, 0.5), DVec3::X),
             first: -10.0,
             last: 12.0,
         };

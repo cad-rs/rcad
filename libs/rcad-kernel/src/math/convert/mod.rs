@@ -1282,10 +1282,7 @@ mod tests {
 
     #[test]
     fn line_bspline_endpoints() {
-        let line = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
+        let line = Line3::new(DVec3::ZERO, DVec3::X);
         let bs = line_to_bspline(&line);
         let p0 = bs.point_at(0.0);
         let p1 = bs.point_at(1.0);

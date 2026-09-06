@@ -1758,10 +1758,7 @@ pub trait SweptSurfaceEval: SurfaceEval {
 
 pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
     match curve {
-        Curve3::Line(l) => Curve3::Line(Line3 {
-            origin: loc.transform_point3(l.origin),
-            direction: loc.transform_vector3(l.direction),
-        }),
+        Curve3::Line(l) => Curve3::Line(Line3::new(loc.transform_point3(l.origin), loc.transform_vector3(l.direction))),
         Curve3::Circle(c) => {
             let center = loc.transform_point3(c.center);
             let normal = loc.transform_vector3(c.normal).normalize_or_zero();

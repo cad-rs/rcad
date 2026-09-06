@@ -4193,10 +4193,7 @@ mod tests {
         let e = {
             let full = bld.add_edge(
                 &mut brep,
-                Some(Curve3::Line(Line3 {
-                    origin: DVec3::ZERO,
-                    direction: DVec3::X,
-                })),
+                Some(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))),
                 v0.clone(),
                 {
                     // OCCT BRep_Builder::Add(E, V) stores the end vertex
@@ -4239,10 +4236,7 @@ mod tests {
         let mut bld = BRepBuilder::new();
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let e_in = bld.add_edge(&mut brep, Some(curve.clone()), v0, v1, [0.0, 1.0]);
 
         // Use different vertices so add_tedge creates a distinct edge (dedup by vertex pair)
@@ -4284,10 +4278,7 @@ mod tests {
         let mut bld = BRepBuilder::new();
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let e = bld.add_edge(&mut brep, Some(curve), v0, v1, [0.0, 1.0]);
         assert!(!brep.edge(e.clone()).degenerated);
         assert!(brep.edge(e.clone()).curve.is_some());
