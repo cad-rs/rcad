@@ -1047,11 +1047,14 @@ impl Circle2d {
 /// an elliptical path on the parameter domain of an adjacent surface.
 ///
 /// Parametric form: `center + major_dir * a*cos(t) + minor_dir * b*sin(t)`
-/// where `minor_dir = rotate_ccw_90(major_dir)`.  Default domain: `[0, 2π]`.
+/// where `minor_dir` is the stored Y direction of the positioning 2D axis
+/// (OCCT gp_Ax22d keeps both directions; `gp_Elips2d::Reverse` negates the
+/// Y direction and keeps X).  Default domain: `[0, 2π]`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Ellipse2d {
     pub center: Point2,
     pub major_dir: Vec2,
+    pub minor_dir: Vec2,
     pub major_radius: f64,
     pub minor_radius: f64,
 }
@@ -1877,10 +1880,10 @@ pub fn reverse_curve2d(curve: &Curve2d) -> Curve2d {
             y_dir: -c.y_dir,
             ..*c
         }),
-        // Geom2d_Ellipse::Reverse: minor axis (implied by major_dir rotation
-        // sense) negated through the major axis flip.
+        // Geom2d_Ellipse::Reverse (gp_Elips2d::Reverse): the X (major)
+        // direction is kept, the stored Y direction is negated.
         Curve2d::Ellipse(e) => Curve2d::Ellipse(Ellipse2d {
-            major_dir: -e.major_dir,
+            minor_dir: -e.minor_dir,
             ..*e
         }),
         Curve2d::Parabola(p) => Curve2d::Parabola(Parabola2d {

@@ -343,22 +343,33 @@ fn parse_curve2d(c: &mut Cursor<'_>) -> Result<Curve2d, OcctBrepError> {
             direction: c.parse_dir2()?,
         })),
         "2" => {
+            // The stream stores the center, the X axis and the Y axis
+            // (GeomTools_Curve2dSet circle Print/operator>>).
             let center = c.parse_point2()?;
-            let _dx = c.parse_dir2()?;
-            let _dy = c.parse_dir2()?;
+            let x_dir = c.parse_dir2()?;
+            let y_dir = c.parse_dir2()?;
             Ok(Curve2d::Circle(Circle2d {
                 center,
-                x_dir: glam::DVec2::X,
-                y_dir: glam::DVec2::Y,
+                x_dir,
+                y_dir,
                 radius: c.parse_f64()?,
             }))
         }
-        "3" => Ok(Curve2d::Ellipse(Ellipse2d {
-            center: c.parse_point2()?,
-            major_dir: c.parse_dir2()?,
-            major_radius: c.parse_f64()?,
-            minor_radius: c.parse_f64()?,
-        })),
+        "3" => {
+            // The stream stores the center, the X axis, the Y axis and the
+            // two radii (GeomTools_Curve2dSet ellipse Print/operator>>;
+            // gp_Ax22d carries both directions).
+            let center = c.parse_point2()?;
+            let major_dir = c.parse_dir2()?;
+            let minor_dir = c.parse_dir2()?;
+            Ok(Curve2d::Ellipse(Ellipse2d {
+                center,
+                major_dir,
+                minor_dir,
+                major_radius: c.parse_f64()?,
+                minor_radius: c.parse_f64()?,
+            }))
+        }
         "4" | "5" => Err(OcctBrepError::Unsupported(
             format!("2D curve type {ty}").into(),
         )),

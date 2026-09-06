@@ -450,7 +450,7 @@ Poly_Triangulation/Polygon3D/PolygonOnTriangulation/BRepMesh 依赖 ——
 - [x] **Stage 4a** gen_hlr_ref.py（✅ session 11：4/6 JSON + tools/occt-hlr-runner ref_output.txt）
 - [◐] **Stage 4b** hlr/commands.rs（无头验收走 occt-test-gen hlr_translate 的 HLR_HELPERS + rcad smoke 路径，HLRTest Tcl 层未单独移植；如后续需要交互式 DRAW 等价再单列）
 - [x] **Stage 4c** occt-test-gen hlr 接入（✅ session 12：tools/occt-test-gen/src/hlr_translate.rs（try_translate_hlr_script + generate_hlr_batch + HLR_HELPERS 镜像 ViewerTest VComputeHLR L3299-3362 组成）+ main.rs 4 接入点（mod 声明 / batch 分支 exact_hlr|poly_hlr / translate_draw_script_inner 分发 / 生成文件 generated_occt_boolean_hlr_{grid}.rs）；80 例 locate_data_file 永久排除、Plate 因无 BRepOffsetAPI_MakeFilling 跳过、poly_hlr 88 例按 Stage 5 跳过）
-- [◐] **Stage 4d** exact_hlr 断言闭环（session 12：hlr/acceptance.rs 三测试——box 全绿（消费 ref_output.txt，9/3 边 + 三 mass 全中）；bug25813_1 与 ptorus 两测试就位带完整 OCCT 真值分解注释、#[ignore] 待最后两缺口（见文末 session 12 追加段的机制级诊断）。阶段 2 已再修 6 处形式偏差，combined mass 266.5264 与 OCCT 精确一致）
+- [x] **Stage 4d** exact_hlr 断言闭环（✅ 2026-09-07 session 19 收口：hlr/acceptance.rs 三测试全绿——box 全绿（ref_output 三 mass 全中）；**bug25813_1 全绿 = 全树 nbshapes 30/15/5、36/18/6 全等 + mass 逐位（rel≤3.5e-8）**；**ptorus 全绿 un-ignore = 4 整线/7 顶点/visible mass 302.68545（印刷值 302.685）**——修复链 = compute_tangency Destination 错位（丢第 4 条线）+ math_FunctionSetRoot 停止测试段移出 Sort‖Progres 守卫（cxx L972/L1266）+ 隐藏门重推导（ptorus 全轮廓可见，86.94 系量纲混算幻影））
 - [ ] Stage 5 poly 线路（用户决策后另立计划）
 
 ## 8. Session 交接记录（2026-09-04，2a-2 全部 + 2a-3①②③④ 完成，2a-3 全部关闭）

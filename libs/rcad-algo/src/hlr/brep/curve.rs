@@ -104,8 +104,13 @@ impl<'a> Curve<'a> {
                     / (fm_oz * (self.my_of * self.my_vx + p2d * self.my_vz)
                         + self.my_of * self.my_ox * self.my_vz);
             }
-            // gp::Resolution()
-            return if self.my_vx <= 1e-15 { p2d } else { p2d / self.my_vx };
+            // gp::Resolution() = RealSmall() = DBL_MIN
+            // (2.2250738585072014e-308).
+            return if self.my_vx <= f64::MIN_POSITIVE {
+                p2d
+            } else {
+                p2d / self.my_vx
+            };
         } else if self.my_type == CurveType::Ellipse {
             return p2d - self.my_ox;
         }
@@ -460,11 +465,16 @@ impl<'a> Curve<'a> {
             e.center = trsf.apply(e.center);
             e.normal = trsf.transform_vec(e.normal);
             e.major_dir = trsf.transform_vec(e.major_dir);
-            // ProjLib::Project(gp_Pln(gp::XOY()), E).
+            let minor3 = e.normal.cross(e.major_dir).normalize();
+            let minor3 = trsf.transform_vec(minor3);
+            // ProjLib::Project(gp_Pln(gp::XOY()), E) — both axes projected
+            // (ProjLib_Plane::Project: gp_Ax22d(P2d, X2d, Y2d)).
             let major_dir = glam::DVec2::new(e.major_dir.x, e.major_dir.y).normalize_or_zero();
+            let minor_dir = glam::DVec2::new(minor3.x, minor3.y).normalize_or_zero();
             return Ellipse2d {
                 center: glam::DVec2::new(e.center.x, e.center.y),
                 major_dir,
+                minor_dir,
                 major_radius: e.major_radius,
                 minor_radius: e.minor_radius,
             };
@@ -483,14 +493,14 @@ impl<'a> Curve<'a> {
         let mut el = Ellipse2d {
             center: p,
             major_dir: d.normalize_or_zero(),
+            minor_dir: glam::DVec2::new(-d.y, d.x),
             major_radius: c.radius,
             minor_radius: c.radius * rap,
         };
         if d1.z < 0.0 {
-            // El.Reverse(): swap the radii around the minor axis — the rcad
-            // Ellipse2d keeps the frame; the OCCT reversal flips the major
-            // axis direction.
-            el.major_dir = -el.major_dir;
+            // El.Reverse(): the X direction is kept, the stored Y direction
+            // is negated (gp_Elips2d::Reverse).
+            el.minor_dir = -el.minor_dir;
         }
         el
     }

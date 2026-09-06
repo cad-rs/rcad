@@ -398,6 +398,7 @@ fn projected_curve_to_2d(proj: &Curve3, pl: &Plane) -> Option<Curve2d> {
                 Some(Curve2d::Ellipse(Ellipse2d {
                     center: p2d,
                     major_dir: x2d,
+                    minor_dir: y2d,
                     major_radius: e.major_radius,
                     minor_radius: e.minor_radius,
                 }))

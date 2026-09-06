@@ -7555,6 +7555,7 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
         return Some(Curve2d::Ellipse(Ellipse2d {
             center,
             major_dir,
+            minor_dir: glam::DVec2::new(-major_dir.y, major_dir.x),
             major_radius: *major,
             minor_radius: *minor,
         }));

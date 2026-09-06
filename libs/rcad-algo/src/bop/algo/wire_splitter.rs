@@ -1821,6 +1821,7 @@ mod resolution_tests {
         let ell = Curve2d::Ellipse(Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::X,
+            minor_dir: DVec2::Y,
             major_radius: 2.0,
             minor_radius: 0.5,
         });

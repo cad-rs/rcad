@@ -664,6 +664,7 @@ mod tests {
         let e2 = Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::X,
+            minor_dir: DVec2::Y,
             major_radius: 3.0,
             minor_radius: 1.5,
         };

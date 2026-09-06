@@ -1561,6 +1561,7 @@ pub(crate) fn smoke_cylinder_solid() -> (rcad_kernel::BRep, rcad_kernel::topods:
     let _ = Ellipse2d {
         center: glam::DVec2::ZERO,
         major_dir: glam::DVec2::X,
+        minor_dir: glam::DVec2::Y,
         major_radius: r,
         minor_radius: r,
     };

@@ -843,6 +843,7 @@ mod eval_tests {
         let e = Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::X,
+            minor_dir: DVec2::Y,
             major_radius: 10.0,
             minor_radius: 5.0,
         };
@@ -850,6 +851,43 @@ mod eval_tests {
         assert!((p0 - DVec2::new(10.0, 0.0)).length() < 1e-12);
         let p_half = e.point_at(PI / 2.0);
         assert!((p_half - DVec2::new(0.0, 5.0)).length() < 1e-12);
+    }
+
+    /// OCCT anchor (gp_Elips2d.hxx Reverse, L217-222 + Geom2d_Ellipse):
+    /// Reverse keeps the X (major) direction and negates the stored Y
+    /// direction, so P'(t) = P(-t) — ReversedParameter(U) = -U.
+    #[test]
+    fn ellipse2d_reverse_keeps_major_negates_minor() {
+        use std::f64::consts::{FRAC_1_SQRT_2, PI};
+        let major = DVec2::new(FRAC_1_SQRT_2, FRAC_1_SQRT_2);
+        let e = Ellipse2d {
+            center: DVec2::new(1.0, 2.0),
+            major_dir: major,
+            minor_dir: DVec2::new(-major.y, major.x),
+            major_radius: 10.0,
+            minor_radius: 5.0,
+        };
+        let rev = reverse_curve2d(&Curve2d::Ellipse(e));
+        let r = match rev {
+            Curve2d::Ellipse(r) => r,
+            _ => panic!("reverse_curve2d must preserve the Ellipse kind"),
+        };
+        // The X direction is unchanged; the Y direction is negated.
+        assert_eq!(r.major_dir, e.major_dir, "X direction kept");
+        assert_eq!(r.minor_dir, -e.minor_dir, "Y direction negated");
+        assert_eq!(r.center, e.center);
+        assert_eq!(r.major_radius, e.major_radius);
+        assert_eq!(r.minor_radius, e.minor_radius);
+        // P'(t) = P(-t).
+        for t in [0.3f64, 1.1, 2.7] {
+            let pt = r.point_at(t);
+            let pm = e.point_at(-t);
+            assert!(
+                pt.distance(pm) < 1e-12,
+                "reversed ellipse P({t}) must equal P(-t)"
+            );
+        }
+        let _ = PI;
     }
 
     #[test]

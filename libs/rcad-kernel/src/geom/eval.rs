@@ -107,7 +107,7 @@ impl Conic2dEval for Ellipse2d {
         if a.abs() < 1e-15 { 1.0 } else { (1.0 - (b * b) / (a * a)).sqrt() }
     }
     fn x_axis(&self) -> DVec2 { self.major_dir }
-    fn y_axis(&self) -> DVec2 { turn_2d(self.major_dir) }
+    fn y_axis(&self) -> DVec2 { self.minor_dir }
 }
 
 impl Conic2dEval for Parabola2d {
@@ -2288,24 +2288,20 @@ impl Curve2dEval for Circle2d {
 
 impl Curve2dEval for Ellipse2d {
     fn point_at(&self, t: f64) -> DVec2 {
-        let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
         self.center
             + self.major_dir * (self.major_radius * t.cos())
-            + minor * (self.minor_radius * t.sin())
+            + self.minor_dir * (self.minor_radius * t.sin())
     }
     fn tangent_at(&self, t: f64) -> DVec2 {
-        let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
-        (-self.major_radius * t.sin() * self.major_dir + self.minor_radius * t.cos() * minor)
+        (-self.major_radius * t.sin() * self.major_dir + self.minor_radius * t.cos() * self.minor_dir)
             .normalize()
     }
     fn derivative_at(&self, t: f64) -> DVec2 {
-        let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
-        -self.major_radius * t.sin() * self.major_dir + self.minor_radius * t.cos() * minor
+        -self.major_radius * t.sin() * self.major_dir + self.minor_radius * t.cos() * self.minor_dir
     }
     /// OCCT-aligned: D2(t) = -a·cos(t)·X_Dir - b·sin(t)·Y_Dir.
     fn derivative2_at(&self, t: f64) -> DVec2 {
-        let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
-        -self.major_radius * t.cos() * self.major_dir - self.minor_radius * t.sin() * minor
+        -self.major_radius * t.cos() * self.major_dir - self.minor_radius * t.sin() * self.minor_dir
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]

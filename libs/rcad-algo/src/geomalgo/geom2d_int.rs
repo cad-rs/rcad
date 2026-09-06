@@ -1046,18 +1046,18 @@ impl IConicTool {
         }
     }
 
-    /// OCCT IntCurve_IConicTool(gp_Elips2d) (L86-97).
+    /// OCCT IntCurve_IConicTool(gp_Elips2d) (L86-97) — Axis = Elips.Axis()
+    /// keeps both stored directions (a reversed ellipse keeps its negated Y).
     pub fn new_ellipse(e: &Ellipse2d) -> Self {
         let a = e.major_radius;
         let b = e.minor_radius;
-        let minor_dir = DVec2::new(-e.major_dir.y, e.major_dir.x);
         IConicTool {
             prm1: a,
             prm2: b,
             prm3: (a * a - b * b).sqrt(),
-            axis: (e.center, e.major_dir, minor_dir),
+            axis: (e.center, e.major_dir, e.minor_dir),
             typ: Curve2dType::Ellipse,
-            abs_to_object: (e.center, e.major_dir, minor_dir),
+            abs_to_object: (e.center, e.major_dir, e.minor_dir),
         }
     }
 

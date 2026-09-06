@@ -492,6 +492,7 @@ pub(super) fn synthesize_plane_pcurve_for_edge_topods(
             Some(Curve2d::Ellipse(rcad_kernel::geom::Ellipse2d {
                 center,
                 major_dir: md,
+                minor_dir: glam::DVec2::new(-md.y, md.x),
                 major_radius: e.major_radius.max(1e-9),
                 minor_radius: e.minor_radius.max(1e-9),
             }))

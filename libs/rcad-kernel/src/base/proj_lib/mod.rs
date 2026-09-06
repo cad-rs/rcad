@@ -229,6 +229,7 @@ impl Projector {
                 Curve2d::Ellipse(crate::geom::Ellipse2d {
                     center: DVec2::new(e.center.x, e.center.y),
                     major_dir: DVec2::new(e.major_dir.x, e.major_dir.y),
+                    minor_dir: DVec2::new(-e.major_dir.y, e.major_dir.x),
                     major_radius: e.major_radius,
                     minor_radius: e.minor_radius,
                 })

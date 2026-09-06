@@ -348,6 +348,7 @@ impl Curve2dAdaptor for PConic {
         Ellipse2d {
             center: self.axe_origin,
             major_dir: self.axe_xdir,
+            minor_dir: DVec2::new(-self.axe_xdir.y, self.axe_xdir.x),
             major_radius: self.prm1,
             minor_radius: self.prm2,
         }
@@ -3058,6 +3059,7 @@ mod tests {
         let e = Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::new(1.0, 0.0),
+            minor_dir: DVec2::new(0.0, 1.0),
             major_radius: 2.0,
             minor_radius: 1.0,
         };
@@ -3133,6 +3135,7 @@ mod tests {
         let e = Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::new(1.0, 0.0),
+            minor_dir: DVec2::new(0.0, 1.0),
             major_radius: 2.0,
             minor_radius: 1.0,
         };
@@ -3177,6 +3180,7 @@ mod tests {
         let e = Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::new(1.0, 0.0),
+            minor_dir: DVec2::new(0.0, 1.0),
             major_radius: 2.0,
             minor_radius: 1.0,
         };
