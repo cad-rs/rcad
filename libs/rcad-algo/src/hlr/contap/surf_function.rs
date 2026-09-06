@@ -288,7 +288,9 @@ impl SurfFunction {
             if d <= GP_RESOLUTION {
                 self.tangent = true;
             } else {
-                self.d2d = (-self.fpv, self.fpu);
+                // OCCT cxx L271: `d2d = gp_Dir2d(-Fpv, Fpu)` — the d2d member
+                // is a gp_Dir2d (hxx L113), normalized by construction.
+                self.d2d = (-self.fpv / d, self.fpu / d);
                 let s = self.my_surf.as_deref().expect("Contap_SurfFunction::Set");
                 let (pt, d1u, d1v) = s.d1(self.usol, self.vsol); // ajout jag 02.95
                 self.solpt = pt;
@@ -424,9 +426,108 @@ impl crate::geomalgo::int_patch::imp_prm::i_walking::IWFunction for SurfFunction
 mod tests {
     use super::*;
     use glam::DVec3;
-    use rcad_kernel::geom::{CylindricalSurface, Surface3};
+    use rcad_kernel::geom::{CylindricalSurface, Surface3, ToroidalSurface};
 
     use crate::hlr::contap::surface_adaptor::GeomSurfaceAdapter;
+
+    /// TEMP-DEBUG: probe the solver from the seam point.
+    #[test]
+    fn temp_probe_solver_seam() {
+        use crate::geomalgo::int_patch::imp_prm::function_set_root::FunctionSetRoot;
+        let tor = ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::new(0.0, 0.0, 1.0),
+            major_radius: 30.0,
+            minor_radius: 10.0,
+            ref_dir: DVec3::new(1.0, 0.0, 0.0),
+        };
+        let mut f = SurfFunction::new();
+        f.set_dir(DVec3::new(1.0, -1.0, 1.0).normalize());
+        f.set(std::sync::Arc::new(GeomSurfaceAdapter::new(
+            Surface3::Torus(tor),
+        )));
+        f.set_tolerance(1e-7);
+        let mut solver = FunctionSetRoot::new(&mut f, [1.5915494309189534e-8, 1.5915494309189534e-8]);
+        let start = [0.0, 5.497515982079354];
+        solver.perform(&mut f, start, [0.0, 0.0], [6.283185307179586, 6.283185307179586]);
+        println!(
+            "SOLVER done={} root={:?} F={:.3e}",
+            solver.is_done(),
+            solver.root(),
+            f.root()
+        );
+        let (val, grad) = f.values(&[0.0, 5.497515982079354]).unwrap();
+        println!("SOLVER F(start)={val:.3e} grad={grad:?}");
+    }
+
+    /// TEMP-DEBUG: probe the torus gradient at the departure point.
+    #[test]
+    fn temp_probe_torus_gradient() {
+        let tor = ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::new(0.0, 0.0, 1.0),
+            major_radius: 30.0,
+            minor_radius: 10.0,
+            ref_dir: DVec3::new(1.0, 0.0, 0.0),
+        };
+        let adapter = GeomSurfaceAdapter::new(Surface3::Torus(tor));
+        let mut p = Point3::ZERO;
+        let mut n = Vec3Shape::ZERO;
+        let mut dnu = Vec3Shape::ZERO;
+        let mut dnv = Vec3Shape::ZERO;
+        super::surf_props::norm_and_dn(
+            &adapter,
+            0.7853981633974486,
+            6.283185307179586,
+            &mut p,
+            &mut n,
+            &mut dnu,
+            &mut dnv,
+        );
+        println!("PROBE p={p:?} n={n:?} dnu={dnu:?} dnv={dnv:?}");
+        // finite differences for reference
+        let h = 1e-4;
+        let u0 = 0.7853981633974486;
+        let v0 = 6.283185307179586;
+        let (p0, du_fd, dv_fd) = rcad_kernel::geom::SurfaceEval::derivatives(
+            &rcad_kernel::geom::Surface3::Torus(ToroidalSurface {
+                center: DVec3::ZERO,
+                axis: DVec3::new(0.0, 0.0, 1.0),
+                major_radius: 30.0,
+                minor_radius: 10.0,
+                ref_dir: DVec3::new(1.0, 0.0, 0.0),
+            }),
+            u0,
+            v0,
+        );
+        let _ = p0;
+        println!("PROBE d1 du={du_fd:?} dv={dv_fd:?}");
+        let (_, _, _, puu, puv, pvv) = rcad_kernel::geom::SurfaceEval::derivatives2(
+            &rcad_kernel::geom::Surface3::Torus(ToroidalSurface {
+                center: DVec3::ZERO,
+                axis: DVec3::new(0.0, 0.0, 1.0),
+                major_radius: 30.0,
+                minor_radius: 10.0,
+                ref_dir: DVec3::new(1.0, 0.0, 0.0),
+            }),
+            u0,
+            v0,
+        );
+        println!("PROBE d2 puu={puu:?} puv={puv:?} pvv={pvv:?}");
+        let mut f = SurfFunction::new();
+        f.set_dir(DVec3::new(1.0, -1.0, 1.0).normalize());
+        f.set(std::sync::Arc::new(GeomSurfaceAdapter::new(
+            Surface3::Torus(tor),
+        )));
+        let (val, grad) = f.values(&[0.7853981633974486, 6.283185307179586]).unwrap();
+        println!("PROBE F={val} grad={grad:?} mean={}", f.my_mean);
+        let d = (grad[0] * grad[0] + grad[1] * grad[1]).sqrt();
+        println!("PROBE d2d=({},{})", -grad[1] / d, grad[0] / d);
+        assert!(!f.is_tangent());
+        let d2d = f.direction_2d();
+        let d3d = f.direction_3d();
+        println!("PROBE d2d={d2d:?} d3d={d3d:?}");
+    }
 
     /// OCCT anchor: on a unit cylinder along Z with the contour direction
     /// +X, F(u,v) = cos(u); the silhouette is at u = pi/2.  myMean from

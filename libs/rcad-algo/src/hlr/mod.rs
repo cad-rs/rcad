@@ -19,6 +19,9 @@ pub mod top_cnx;
 pub mod topo_brep; // HLRTopoBRep: DSFiller / Data / FaceData / VData / FaceIsoLiner / OutLiner
 
 #[cfg(test)]
+mod acceptance; // Stage 4d: OCCT reference-data acceptance tests
+
+#[cfg(test)]
 pub mod tests;
 
 pub use intrv::{Intervals, Interval as IntrvInterval, Position as IntrvPosition};

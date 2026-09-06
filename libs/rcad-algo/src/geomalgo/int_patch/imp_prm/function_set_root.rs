@@ -388,6 +388,73 @@ fn search_direction(
     }
 }
 
+/// OCCT SearchDirection (math_FunctionSetRoot.cxx L534-620) — the
+/// constrained overload: the Newton system is solved over the free unknowns
+/// only (the constrained ones stay fixed on the bound); the gradient
+/// fallback keeps the same structure.
+fn search_direction_constrained(
+    df: &[[f64; 2]; 1],
+    gh: &[f64; 2],
+    ff: &[f64; 1],
+    constraints: &[i32; 2],
+    change_direction: bool,
+    inv_length_max: &[f64; 2],
+    direction: &mut [f64; 2],
+    dy: &mut f64,
+) {
+    let ninc = 2;
+    let cons = constraints.iter().filter(|c| **c != 0).count();
+    if cons == 0 {
+        search_direction(df, gh, ff, change_direction, inv_length_max, direction, dy);
+        return;
+    }
+    if cons == ninc {
+        // There is nothing left to do.
+        *direction = [0.0; 2];
+        *dy = 0.0;
+        return;
+    }
+    // (1) General case: define a sub-problem over the free unknowns.
+    let mut df2 = [[0.0f64; 2]; 1];
+    let mut my_gh = [0.0f64; 2];
+    let mut my_direction = [0.0f64; 2];
+    let mut my_inv_length_max = [0.0f64; 2];
+    let mut k = 0usize;
+    for (i, cst) in constraints.iter().enumerate() {
+        if *cst == 0 {
+            my_gh[k] = gh[i];
+            my_inv_length_max[k] = inv_length_max[i];
+            my_direction[k] = direction[i];
+            df2[0][k] = df[0][i];
+            k += 1;
+        }
+    }
+    // (2) Solve it.
+    search_direction(
+        &df2,
+        &my_gh,
+        ff,
+        change_direction,
+        &my_inv_length_max,
+        &mut my_direction,
+        dy,
+    );
+    // (3) Interpret: rebuild the full Direction.
+    let mut k = 0usize;
+    for (i, cst) in constraints.iter().enumerate() {
+        if *cst == 0 {
+            if !change_direction {
+                direction[i] = my_direction[k];
+            } else {
+                direction[i] = -gh[i];
+            }
+            k += 1;
+        } else {
+            direction[i] = 0.0;
+        }
+    }
+}
+
 /// OCCT Bounds (math_FunctionSetRoot.cxx L623-705).
 #[allow(clippy::too_many_arguments)]
 fn bounds(
@@ -733,13 +800,15 @@ impl FunctionSetRoot {
                         // On essaye de progresser sur le bord.
                         sol_save = self.sol;
                         old_f = f2;
-                        // Conditional SearchDirection uses constraints; for the
-                        // 1-eq case with a fixed unknown the step is zero on it.
+                        // Conditional SearchDirection (OCCT L1118) uses the
+                        // constraints: the Newton system is solved over the
+                        // free unknowns only.
                         let mut cond_dir = change_direction;
-                        search_direction(
+                        search_direction_constrained(
                             &df,
                             &gh,
                             &ff,
+                            &constraints,
                             cond_dir,
                             &inv_length_max,
                             &mut dh,

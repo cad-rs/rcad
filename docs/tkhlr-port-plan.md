@@ -330,10 +330,10 @@ Poly_Triangulation/Polygon3D/PolygonOnTriangulation/BRepMesh 依赖 ——
 - [x] **Stage 3e** HLRBRep 干涉数据结构（✅ 2026-09-05 session 8 并行完成：`hlr/brep/` 八件——BiPoint/BiPnt2D（hxx-only）/AreaLimit/EdgeIList/VertexList/FaceIterator/EdgeInterferenceTool/EdgeBuilder（521 全 1:1）；锚点 11 个全绿。遗留：EdgeInterferenceTool 的 `Data` trait 待 3f HLRBRep_Data 实现）
 - [x] **Stage 3f** HLRBRep Data（拆子模块）（✅ 2026-09-05 session 10：`hlr/brep/data/` = mod.rs（Data\<'a\> 70 字段契约 + 文件静态常量/counters）+ update.rs（ctor/Write/Update/InitBoundSort/InitEdge/exploration + lxx，8 锚点）+ classify.rs（2416 行：NextInterference…IsBadFace 16 方法 + 文件静态，7 锚点）+ tableau_rejection.rs（cxx L77-492，5 锚点）；连带 face_data.rs（FaceData 方法+lxx 13 对位访问器，3 锚点）与 edge_face_tool.rs（UVPoint/CurvatureValue + ExtPF 本地翻译，6 锚点）；uv_point 7 参契约裁决（Data.my_brep kernel 上下文 + my_e_map 槽位）；hlr:: 树 125/125 绿）
 - [x] **Stage 3g** Hider→InternalAlgo→Algo→HLRToShape（✅ session 10 六件全落 + **session 11 烟囱闭环**：`hlr/tests.rs` 4 个端到端 smoke——**盒体与 OCCT 完全一致**（VCompound 9 边 146.96939 = OCCT lprops、HCompound 3 边 48.98980、12 条投影线段逐一解析对拍 1e-6、可见/隐藏归属一致）+ 圆柱部分锚定（φ=45° 轮廓/椭圆弧分段/seam 像）+ 稳定性 3 连跑。锚点 26+4+2 转绿 = hlr:: 151/0/0）
-- [ ] **Stage 4a** gen_hlr_ref.py（含无头 spike）
-- [ ] **Stage 4b** hlr/commands.rs
-- [ ] **Stage 4c** occt-test-gen hlr 接入
-- [ ] **Stage 4d** exact_hlr 3 用例闭环 + module-map 更新
+- [x] **Stage 4a** gen_hlr_ref.py（✅ session 11：4/6 JSON + tools/occt-hlr-runner ref_output.txt）
+- [◐] **Stage 4b** hlr/commands.rs（无头验收走 occt-test-gen hlr_translate 的 HLR_HELPERS + rcad smoke 路径，HLRTest Tcl 层未单独移植；如后续需要交互式 DRAW 等价再单列）
+- [x] **Stage 4c** occt-test-gen hlr 接入（✅ session 12：tools/occt-test-gen/src/hlr_translate.rs（try_translate_hlr_script + generate_hlr_batch + HLR_HELPERS 镜像 ViewerTest VComputeHLR L3299-3362 组成）+ main.rs 4 接入点（mod 声明 / batch 分支 exact_hlr|poly_hlr / translate_draw_script_inner 分发 / 生成文件 generated_occt_boolean_hlr_{grid}.rs）；80 例 locate_data_file 永久排除、Plate 因无 BRepOffsetAPI_MakeFilling 跳过、poly_hlr 88 例按 Stage 5 跳过）
+- [◐] **Stage 4d** exact_hlr 断言闭环（session 12：hlr/acceptance.rs 三测试——box 全绿（消费 ref_output.txt，9/3 边 + 三 mass 全中）；bug25813_1 与 ptorus 两测试就位带完整 OCCT 真值分解注释、#[ignore] 待最后两缺口（见文末 session 12 追加段的机制级诊断）。阶段 2 已再修 6 处形式偏差，combined mass 266.5264 与 OCCT 精确一致）
 - [ ] Stage 5 poly 线路（用户决策后另立计划）
 
 ## 8. Session 交接记录（2026-09-04，2a-2 全部 + 2a-3①②③④ 完成，2a-3 全部关闭）
@@ -588,3 +588,26 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 
 1. **4d**：exact_hlr 消费 occt_hlr_*.json 的 rcad 断言（`tools/gen-occt-ref/gen_hlr_ref.py` 已产 bug25813_1+poly×3；box/ptorus/Plate 用 occt-hlr-runner 的 ref_output 值）+ occt-test-gen hlr 接入（4c）+ module-map 更新。
 2. **残余记录项**：④ 附带——`brep_tool_is_closed_edge_face`（ExploreFace 的 Dbl/IsReallyClosed）按 face ptr_id 匹配而非曲面值匹配，对 OutLinedShape 面副本会把 seam 的 Dbl 判 false（X 报告，不影响 typ 过滤）；烟囱 fixture 的 pcurve 注册注释已过时（U 报告）。
+
+### 本 session 追加 5（2026-09-06，session 12：Stage 4c 全关 + 4d 断言就位 + 阶段2 再修 6 处）
+
+| commit | 内容 |
+|---|---|
+| （本轮代码提交） | **4c 全关 + 4d 断言就位**：`tools/occt-test-gen/src/hlr_translate.rs`（根仓库）+ main.rs 4 接入点；`hlr/acceptance.rs`（box 全绿消费 ref_output.txt；bug25813_1/ptorus 就位 #[ignore]）；阶段 2 修复——Contap destination 上界（Contap_Contour.cxx L1645 `Array1(1,NbPointRst+1)`）+ vectg.Reverse（L856-858）+ kernel BRep_Tool::CurveOnSurface 闭合缝 REVERSED 取 PCurve2（BRep_Tool.cxx L339/353-357）+ fclass2d 有向 occurrence 走查 + TopoDS EmptyCopy 旗标重置（TopoDS_TShape.hxx L169）+ surf_function d2d 归一化候选修复（cxx L271 gp_Dir2d）。基线 algo lib **364+2i** / builder **76+1** / pavefiller **26** / tktopalgo **36** |
+
+**剩余两缺口的机制级诊断（下一 session 直接续打，勿重推导）：**
+
+1. **bug25813_1 顶缘弧隐藏区间丢失（差 16.9334）**——诊断链已闭合到最后一步：
+   - 已验证正确：orient_out_line 改写 outline 边 orientation（Data::Update L843）→ next_interference 可见它们；求交参数 (1.4289, 3.2835) **精确正确**（x'=±8 穿越点，Parameter3d 转换在 rejected_point L2270 已有）；Builder 产出 mask=3 的完整区间 [1.4289, 3.2835]（其 2D 弧长 ≈16.93 与 OCCT 隐藏块吻合）；hiding_start_level=-2 两干涉都通过 Level 过滤。
+   - 卡点：`classify(2.356)`（区间中点）被 k=7（dim14/15=视图深度 z）编码盒门拒绝 → aTestState=OUT → `ES.Hide` 被跳过（OCCT Hider.cxx L609-628 同构）。中点 3D (-7.07,7.07,30) 深度 9.16 确在 face4 盒 [10.79,36.56] 外。
+   - **矛盾（下一 session 首查）**：按射线几何（视线 P0+u·(1,-1,1)，u∈[1.415,12.7] 穿过小圆柱径向脚印）中点**应被遮挡**，但深度比较显示小圆柱面在视线上的深度 (20.1) **大于**点的深度 (15.86)——即点在遮挡面之前，几何上不该被隐藏。而 OCCT 真值 204.19 里确有 16.93 被隐藏。⇒ ①用安装版 OCCT 直接验证被隐藏的 16.93 到底在哪条边（此前"OCCT 真值分解"是代理从 DRAWEXE 提取的间接结论，与射线分析矛盾，二者必有一错）；②核对 rcad `Project(P,x,y,z)` 的 z 语义与 OCCT HLRAlgo_Projector::Project 逐行（含 dp/ perspective 分支）。
+2. **ptorus IWalking 0 线**——Contap 侧已通（8 restriction + 20 interior + 8 departure）；surf_function d2d 归一化候选修复已落（cxx L271）但未验证；RCAD_IWALK_DEBUG 探针已埋（i_walking/function_set_root）。首查走行方向/步进在圆环参数化下的符号与归一化。
+3. **小圆柱 seam 落 Iso 而非 RgN**（生成 harness 计入 Iso 多 17.97）：nbIso=0 时 OCCT IsoLineVCompound 恒空；疑似 bfuse 丢失 seam 的 CN regularity（bop 层 CurveOn2Surfaces 传递）或 Data 的 Iso 旗标判定。cylinder smoke 的 seam 归 RgN 正确，对照融合前后 regularity 存储即可定位。
+
+**临时探针（下 session 修完即删，已随本提交入库存档）**：`RCAD_HLR_TRACE`（classify.rs/update.rs/internal_algo.rs 的 trace_enabled 块 + hider.rs builder 探针 + classify REJECT 探针）、`RCAD_IWALK_DEBUG`（i_walking/function_set_root 的 TEMP-DEBUG dump）。
+
+### 下一 session 入口（按序）
+
+1. 按"剩余两缺口的机制级诊断"续打：先用安装版 OCCT（tools/occt-hlr-runner 加 Hider/Data 层探针或 debug 构建重编 TKHLR）裁决 16.93 的真实归属，再修 classify/Project 语义或接受几何结论；ptorus 验证 d2d 候选修复 + IWalking 方向链；seam regularity 经 bfuse 的传递。
+2. 三缺口全绿后：删全部临时探针 → un-ignore 两个 acceptance 测试 → `cargo test -p occt-generated-tests --test generated_occt_boolean_hlr_exact_hlr` 全绿 → module-map 基线数字终版。
+3. 残余记录项（非阻塞，同 session 11 清单）不变。

@@ -425,7 +425,7 @@ use rcad_kernel::topo::topods::{BRepBuilder, TShape};
 /// A projected result edge summary: the curve kind, the trimmed length and
 /// the two end points (the plane image of the 2D support: z = 0).
 #[derive(Debug, Clone, PartialEq)]
-enum SegSummary {
+pub(crate) enum SegSummary {
     Line {
         len: f64,
         p1: glam::DVec3,
@@ -448,7 +448,7 @@ enum SegSummary {
     Other,
 }
 
-fn seg_summary(e: &rcad_kernel::topods::Shape) -> SegSummary {
+pub(crate) fn seg_summary(e: &rcad_kernel::topods::Shape) -> SegSummary {
     match &*e.data {
         TShape::Edge(ed) => {
             let v1 = ed
@@ -493,7 +493,7 @@ fn seg_summary(e: &rcad_kernel::topods::Shape) -> SegSummary {
 }
 
 /// The compound summary: the flattened edge summaries of a result compound.
-fn compound_edges(
+pub(crate) fn compound_edges(
     s: &rcad_kernel::topods::Shape,
     out: &mut Vec<SegSummary>,
 ) {
@@ -513,7 +513,7 @@ fn compound_edges(
 /// solid.  Built with the kernel BRepBuilder (the plane_brep fixture form).
 /// Returns the owning BRep (the kernel context the HLR loads read through)
 /// and the solid shape.
-fn smoke_box_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shape) {
+pub(crate) fn smoke_box_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shape) {
     let mut brep = rcad_kernel::BRep::new();
     let mut b = BRepBuilder::new();
     let p = |x: f64, y: f64, z: f64| glam::DVec3::new(x, y, z);
@@ -693,7 +693,7 @@ fn smoke_box_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shape) {
 /// InternalAlgo Update builds every shape DS over it and feeds it to the
 /// `myDS->Update(myProj)` phase (the OCCT global TShape graph stand-in the
 /// loaded shapes live in).
-fn smoke_run_hlr(
+pub(crate) fn smoke_run_hlr(
     solid: &rcad_kernel::topods::Shape,
     brep: rcad_kernel::BRep,
 ) -> (
@@ -871,7 +871,7 @@ fn smoke_box_hlr_stable_over_three_runs() {
 /// cylindrical side face with a seam, two planar caps, radius 10, height
 /// 30.  Built like the box fixture: outward surfaces, pcurves per
 /// (edge, face) (the seam carries the closed pair u = 0 / u = 2*pi).
-fn smoke_cylinder_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shape) {
+pub(crate) fn smoke_cylinder_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shape) {
     use rcad_kernel::geom::{Circle2d, CylindricalSurface, Ellipse2d, Line2d};
     let r = 10.0f64;
     let h = 30.0f64;
@@ -1073,7 +1073,7 @@ fn smoke_cylinder_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shape) {
 }
 
 /// The projected ellipse-arc length over an angle span (Simpson).
-fn ellipse_arc_len(a: f64, b: f64, u1: f64, u2: f64) -> f64 {
+pub(crate) fn ellipse_arc_len(a: f64, b: f64, u1: f64, u2: f64) -> f64 {
     let f = |t: f64| (a * a * t.sin() * t.sin() + b * b * t.cos() * t.cos()).sqrt();
     let n = 64;
     let hh = (u2 - u1) / n as f64;
@@ -1323,7 +1323,7 @@ fn smoke_cylinder_hlr_end_to_end() {
 }
 
 /// The (range) pairs of the ellipse edges of a result compound.
-fn edges_with_ranges(s: &rcad_kernel::topods::Shape) -> Vec<(f64, f64)> {
+pub(crate) fn edges_with_ranges(s: &rcad_kernel::topods::Shape) -> Vec<(f64, f64)> {
     let mut out = Vec::new();
     fn walk(s: &rcad_kernel::topods::Shape, out: &mut Vec<(f64, f64)>) {
         match &*s.data {

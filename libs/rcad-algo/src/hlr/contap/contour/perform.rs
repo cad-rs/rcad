@@ -123,11 +123,12 @@ pub(crate) fn perform_domain(c: &mut Contour, domain: &mut dyn ContapDomain) {
     let nb_point_rst = c.solrst().nb_points();
     let mut seqpdep: Vec<PathPoint> = Vec::new();
     // NCollection_Array1<int> Destination(1, NbPointRst + 1); Init(0) — the
-    // slot 0 stays unused (1-based indexing).
+    // array lower bound is 1, upper bound is NbPointRst + 1 (ComputeTangency
+    // indexes it 1-based). The slot 0 stays unused.
     let mut destination = vec![0i32; nb_point_rst + 2];
     if nb_point_rst != 0 {
         let (f, _af, srst, _sins, _slin) = c.parts_mut();
-        compute_tangency(srst, domain, f, &mut seqpdep, &mut destination[1..=nb_point_rst]);
+        compute_tangency(srst, domain, f, &mut seqpdep, &mut destination[1..=nb_point_rst + 1]);
     }
 
     // jag 940616  solins.Perform(SFunc,Surf,Domain,1.e-6);
@@ -192,6 +193,18 @@ pub(crate) fn perform_domain(c: &mut Contour, domain: &mut dyn ContapDomain) {
         }
 
         let nblines = iwalk.nb_lines();
+        // TEMP-DEBUG
+        if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+            eprintln!(
+                "[CWDBG] nb_point_rst={} nb_point_ins={} seqpdep={} seqpins={} iwalk_done={} nblines={}",
+                nb_point_rst,
+                nb_point_ins,
+                seqpdep.len(),
+                seqpins.len(),
+                iwalk.is_done(),
+                nblines
+            );
+        }
         for j in 1..=nblines {
             let iwline = iwalk.value(j);
             let nbpts = iwline.nb_points();
@@ -201,7 +214,9 @@ pub(crate) fn perform_domain(c: &mut Contour, domain: &mut dyn ContapDomain) {
             // jag 941018 On calcule une seule fois la transition
             let (tgline_v, kk) = iwline.tangent_vector();
             k = kk as usize;
-            let (u_v, v_v) = iwline.line().value(k).parameters_on_surface(false);
+            // OCCT cxx L1717: iwline->Line()->Value(k) — IntSurf_LineOn2S::Value
+            // is 1-based; the rcad LineOn2S::value is 0-based.
+            let (u_v, v_v) = iwline.line().value(k - 1).parameters_on_surface(false);
             u = u_v;
             v = v_v;
             tgline = tgline_v;
@@ -374,6 +389,36 @@ pub(crate) fn perform_domain(c: &mut Contour, domain: &mut dyn ContapDomain) {
                 }
             }
         }
+    }
+
+    // TEMP-DEBUG
+    if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+        for (li, l) in c.slin().iter().enumerate() {
+            let vinfo: Vec<String> = (1..=l.nb_vertex())
+                .map(|iv| {
+                    let vt = l.vertex(iv);
+                    format!(
+                        "[onarc={} mult={} par={:.3}]",
+                        vt.is_on_arc(),
+                        vt.is_multiple(),
+                        vt.parameter_on_line()
+                    )
+                })
+                .collect();
+            eprintln!(
+                "[SLIN] {} typ={:?} nbpnts={} trans={:?} vertices={:?}",
+                li + 1,
+                l.type_contour(),
+                if l.type_contour() == crate::hlr::contap::i_type::IType::Walking {
+                    l.nb_pnts()
+                } else {
+                    0
+                },
+                l.transition_on_s(),
+                vinfo
+            );
+        }
+        eprintln!("[SLIN] total={}", c.slin().len());
     }
 
     // jag 940620 On ajoute le traitement des restrictions solutions.

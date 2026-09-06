@@ -677,6 +677,16 @@ impl<'a> Data<'a> {
                 }
                 // HLRAlgo::DecodeMinMax(EDataFE2.MinMax(), EdgeMin, EdgeMax);
                 HLRAlgo::decode_min_max(edatafe2.min_max(), &mut edge_min, &mut edge_max);
+                if Self::trace_enabled() && face == 4 {
+                    eprintln!(
+                        "[TRACE] face4 box accum: fe={} d14min={} d15min={} d14max={} d15max={}",
+                        self.my_fe,
+                        (edge_min.max[6] >> 16) & 0xFFFF,
+                        edge_min.max[6] & 0xFFFF,
+                        (edge_max.max[6] >> 16) & 0xFFFF,
+                        edge_max.max[6] & 0xFFFF,
+                    );
+                }
                 if self.my_face_itr1.beginning_of_wire() {
                     HLRAlgo::copy_min_max(&edge_min, &edge_max, &mut wire_min, &mut wire_max);
                 } else {
@@ -712,6 +722,28 @@ impl<'a> Data<'a> {
         self.my_nbr_sort_ed = 0;
         // const HLRAlgo_EdgesBlock::MinMaxIndices& MinMaxShap = MinMaxTot;
         let min_max_shap = min_max_tot;
+        let trace = Self::trace_enabled();
+        if trace {
+            eprintln!(
+                "[TRACE] init_bound_sort: e[{e1},{e2}] tot=min({},{},{},{},{},{},{},{}) max({},{},{},{},{},{},{},{})",
+                min_max_shap.min[0],
+                min_max_shap.min[1],
+                min_max_shap.min[2],
+                min_max_shap.min[3],
+                min_max_shap.min[4],
+                min_max_shap.min[5],
+                min_max_shap.min[6],
+                min_max_shap.min[7],
+                min_max_shap.max[0],
+                min_max_shap.max[1],
+                min_max_shap.max[2],
+                min_max_shap.max[3],
+                min_max_shap.max[4],
+                min_max_shap.max[5],
+                min_max_shap.max[6],
+                min_max_shap.max[7],
+            );
+        }
 
         // for (int e = e1; e <= e2; e++)
         let mut e = e1;
@@ -743,6 +775,27 @@ impl<'a> Data<'a> {
                     self.my_nbr_sort_ed += 1;
                     // myEdgeIndices(myNbrSortEd) = e;
                     self.my_edge_indices[self.my_nbr_sort_ed - 1] = e as i32;
+                } else if trace {
+                    let le_min_max = unsafe { &*self.my_le_min_max };
+                    eprintln!(
+                        "[TRACE]   init_bound_sort drop e={e} box=min({},{},{},{},{},{},{},{}) max({},{},{},{},{},{},{},{})",
+                        le_min_max.min[0],
+                        le_min_max.min[1],
+                        le_min_max.min[2],
+                        le_min_max.min[3],
+                        le_min_max.min[4],
+                        le_min_max.min[5],
+                        le_min_max.min[6],
+                        le_min_max.min[7],
+                        le_min_max.max[0],
+                        le_min_max.max[1],
+                        le_min_max.max[2],
+                        le_min_max.max[3],
+                        le_min_max.max[4],
+                        le_min_max.max[5],
+                        le_min_max.max[6],
+                        le_min_max.max[7],
+                    );
                 }
             }
             e += 1;
@@ -872,6 +925,12 @@ impl<'a> Data<'a> {
                 // iFaceData->Simple(iFaceSimp);
                 unsafe { (*self.i_face_data).set_simple(self.i_face_simp) };
                 self.my_cur_sort_ed = 1;
+                if Self::trace_enabled() {
+                    eprintln!(
+                        "[TRACE] more_edge flip: iFace={} nbr={} -> cur=1",
+                        self.i_face, self.my_nbr_sort_ed
+                    );
+                }
                 self.next_edge(false);
             }
         }
@@ -915,6 +974,12 @@ impl<'a> Data<'a> {
         } else {
             // myLE = Edge();
             self.my_le = self.edge();
+            if Self::trace_enabled() && self.i_face == 5 {
+                eprintln!(
+                    "[TRACE] next_edge visit(sorted): iFace=5 cur={} le={}",
+                    self.my_cur_sort_ed, self.my_le
+                );
+            }
             self.my_le_out_line = false;
             self.my_le_internal = false;
             self.my_le_double = false;
@@ -929,14 +994,28 @@ impl<'a> Data<'a> {
         }
         let le = unsafe { &mut *self.my_le_data };
         if le.vertical() {
+            if Self::trace_enabled() && self.i_face == 5 {
+                eprintln!("[TRACE] next_edge reject: iFace=5 LE={} vertical", self.my_le);
+            }
             self.next_edge(true);
             return;
         }
         if le.hide_count() > self.my_hide_count - 2 {
+            if Self::trace_enabled() && self.i_face == 5 {
+                eprintln!(
+                    "[TRACE] next_edge reject: iFace=5 LE={} hide_count={} > {}",
+                    self.my_le,
+                    le.hide_count(),
+                    self.my_hide_count - 2
+                );
+            }
             self.next_edge(true);
             return;
         }
         if le.status_ref().all_hidden() {
+            if Self::trace_enabled() && self.i_face == 5 {
+                eprintln!("[TRACE] next_edge reject: iFace=5 LE={} all_hidden", self.my_le);
+            }
             self.next_edge(true);
             return;
         }
@@ -960,6 +1039,20 @@ impl<'a> Data<'a> {
             || ((le_min_max.max[7].wrapping_sub(i_face_min_max.min[7])) & MASK_80008000) != 0
         {
             //-- rejection en z
+            if Self::trace_enabled() && self.i_face == 5 {
+                eprintln!(
+                    "[TRACE] next_edge reject: iFace=5 LE={} minmax le=min({},{},{},{},{},{},{},{}) max({},{},{},{},{},{},{},{}) face=min({},{},{},{},{},{},{},{}) max({},{},{},{},{},{},{},{})",
+                    self.my_le,
+                    le_min_max.min[0], le_min_max.min[1], le_min_max.min[2], le_min_max.min[3],
+                    le_min_max.min[4], le_min_max.min[5], le_min_max.min[6], le_min_max.min[7],
+                    le_min_max.max[0], le_min_max.max[1], le_min_max.max[2], le_min_max.max[3],
+                    le_min_max.max[4], le_min_max.max[5], le_min_max.max[6], le_min_max.max[7],
+                    i_face_min_max.min[0], i_face_min_max.min[1], i_face_min_max.min[2], i_face_min_max.min[3],
+                    i_face_min_max.min[4], i_face_min_max.min[5], i_face_min_max.min[6], i_face_min_max.min[7],
+                    i_face_min_max.max[0], i_face_min_max.max[1], i_face_min_max.max[2], i_face_min_max.max[3],
+                    i_face_min_max.max[4], i_face_min_max.max[5], i_face_min_max.max[6], i_face_min_max.max[7],
+                );
+            }
             self.next_edge(true);
             return;
         }
@@ -970,8 +1063,14 @@ impl<'a> Data<'a> {
             le_geom.view(),
             self.my_le_tol as f64,
         ) {
+            if Self::trace_enabled() && self.i_face == 5 {
+                eprintln!("[TRACE] next_edge reject: iFace=5 LE={} is_above", self.my_le);
+            }
             self.next_edge(true);
             return;
+        }
+        if Self::trace_enabled() && self.i_face == 5 {
+            eprintln!("[TRACE] next_edge kept:   iFace=5 LE={}", self.my_le);
         }
         // edge is OK
     }

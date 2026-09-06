@@ -177,12 +177,13 @@ impl Line {
         self.curv.as_ref().expect("Contap_Line::NbPnts").nb_points()
     }
 
-    /// OCCT Point(Index) (lxx L62-69) — 1-based.
+    /// OCCT Point(Index) (lxx L62-69) — 1-based (myLine->Value(Index) with
+    /// the 1-based IntSurf_LineOn2S::Value).
     pub fn point(&self, index: usize) -> &PntOn2S {
         if self.typ_l != IType::Walking {
             panic!("Standard_DomainError: Contap_Line::Point");
         }
-        self.curv.as_ref().unwrap().value(index)
+        self.curv.as_ref().unwrap().value(index - 1)
     }
 
     /// OCCT Line (lxx L71-78).

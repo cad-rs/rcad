@@ -4484,7 +4484,11 @@ fn filter_knots(inds: &mut Vec<usize>, min_nb_pnts: usize) -> Vec<usize> {
                     }
                 } else if an_idx == inds.len() && lknots.len() >= 2 {
                     let a_last_good_idx = lknots[lknots.len() - 2];
-                    if inds[inds.len() - 1] - 2 * min_nb_pnts >= a_last_good_idx {
+                    // OCCT L418: theInds.Last() - 2*theMinNbPnts >= aLastGoodIdx
+                    // — the C++ int subtraction may go negative and simply
+                    // fail the comparison; rewritten without the usize
+                    // underflow.
+                    if inds[inds.len() - 1] >= a_last_good_idx + 2 * min_nb_pnts {
                         *lknots.last_mut().unwrap() = inds[inds.len() - 1] - min_nb_pnts;
                         lknots.push(inds[inds.len() - 1]);
                         an_inds_prev = inds[an_idx - 1];

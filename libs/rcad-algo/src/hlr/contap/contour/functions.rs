@@ -575,6 +575,7 @@ pub(crate) fn compute_tangency(
                                     if after == State::In {
                                         ispassing = true;
                                     } else {
+                                        vectg = -vectg;
                                         dirtg = -dirtg;
                                     }
                                 } else if after != State::In {

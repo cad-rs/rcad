@@ -655,6 +655,35 @@ impl IWalking {
             self.compute_close_line(&u_mult, &v_mult, pnts1, pnts2, func, &mut rajout);
         }
 
+        // TEMP-DEBUG
+        if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+            eprintln!(
+                "[IWDBG] domain um={} umax={} vm={} vmax={} tol={:?} ranges u={:?} v={:?}",
+                self.um, self.um_max, self.vm, self.vm_max, self.tolerance,
+                (self.my_s_range_u.a, self.my_s_range_u.b, self.my_s_range_u.is_void),
+                (self.my_s_range_v.a, self.my_s_range_v.b, self.my_s_range_v.is_void)
+            );
+            for i in 1..self.wd1.len() {
+                eprintln!(
+                    "[IWDBG] wd1[{}] etat={} u={} v={}",
+                    i, self.wd1[i].etat, self.wd1[i].ustart, self.wd1[i].vstart
+                );
+            }
+            for i in 1..self.wd2.len() {
+                eprintln!(
+                    "[IWDBG] wd2[{}] etat={} u={} v={}",
+                    i, self.wd2[i].etat, self.wd2[i].ustart, self.wd2[i].vstart
+                );
+            }
+            eprintln!(
+                "[IWDBG] after walking: lines={} alone={:?} ajout={:?} singles={}",
+                self.lines.len(),
+                self.seq_alone,
+                self.seq_ajout,
+                self.seq_single.len()
+            );
+        }
+
         if self.to_fill_holes {
             let max_nb_iter = 10;
             let mut nb_iter = 0;
@@ -1619,6 +1648,10 @@ impl IWalking {
             }
             if cosi2 < COS_REF_3D {
                 // angle 3d too great.
+                // TEMP-DEBUG
+                if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+                    eprintln!("[TDEF] reject 3d angle: cosi={cosi} cosi2={cosi2} corde={corde:?} pd3d={:?}", self.previous_d3d);
+                }
                 *step /= 2.0;
                 let step_u = (*step * self.previous_d2d.x).abs();
                 let step_v = (*step * self.previous_d2d.y).abs();
@@ -1664,6 +1697,10 @@ impl IWalking {
         {
             let mut cosi2 = cosi * cosi / duv;
             if cosi2 < COS_REF_2D || cosi < 0.0 {
+                // TEMP-DEBUG
+                if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+                    eprintln!("[TDEF] reject 2d angle: cosi={cosi} cosi2={cosi2} duv={duv}");
+                }
                 *step /= 2.0;
                 let step_u = (*step * self.previous_d2d.x).abs();
                 let step_v = (*step * self.previous_d2d.y).abs();
@@ -1682,6 +1719,10 @@ impl IWalking {
             cosi2 = cosi * cosi / func.direction_3d().length_squared() / norme;
             if cosi2 < COS_REF_3D {
                 // angle 3d too great.
+                // TEMP-DEBUG
+                if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+                    eprintln!("[TDEF] reject chord-vs-d3d: cosi={cosi} cosi2={cosi2} norme={norme}");
+                }
                 *step /= 2.0;
                 let step_u = (*step * self.previous_d2d.x).abs();
                 let step_v = (*step * self.previous_d2d.y).abs();
@@ -1913,8 +1954,35 @@ impl IWalking {
                         born_inf[1] = self.vm;
                         born_sup[1] = self.vm_max;
                     }
+                    // TEMP-DEBUG
+                    if std::env::var("RCAD_IWALK_DEBUG").is_ok() && cl.nb_points() <= 2 {
+                        let r = rs_nld.root();
+                        let rstr = if rs_nld.is_done() {
+                            format!("{:?}", r)
+                        } else {
+                            "n/a".to_string()
+                        };
+                        eprintln!(
+                            "[OPL] i={} pts={} sgn={} cadre={} done={} root={} sol={:?} uvap={:?} pas={:.3e} prevstat={:?} d2d={:?} d3d={:?} p3d={:?} prev={:?}",
+                            i, cl.nb_points(), step_sign, cadre, rs_nld.is_done(),
+                            func.root(), rstr, uvap, pas_c, a_status,
+                            self.previous_d2d, self.previous_d3d,
+                            func.point(), self.previous_point.value()
+                        );
+                    }
                     if rs_nld.is_done() {
                         if func.root().abs() > func.tolerance() {
+                            // TEMP-DEBUG
+                            if std::env::var("RCAD_IWALK_DEBUG").is_ok() && cl.nb_points() <= 200 {
+                                eprintln!(
+                                    "[BADROOT] i={} pts={} root={:.3e} uvap={:?} pas={:.3e}",
+                                    i,
+                                    cl.nb_points(),
+                                    func.root(),
+                                    uvap,
+                                    pas_c
+                                );
+                            }
                             pas_c /= 2.0;
                             pas_cu = (pas_c * self.previous_d2d.x).abs();
                             pas_cv = (pas_c * self.previous_d2d.y).abs();
@@ -2006,11 +2074,19 @@ impl IWalking {
                                 arrive = false;
                                 arret_ajout = false;
                                 tgtend = false;
+                                // OCCT gxx L1689/1693:
+                                // previousPoint.ParametersOnS2(UVap(1), UVap(2))
+                                // — ParametersOnS1/S2 is a const getter, so the
+                                // previous point is left untouched and UVap is
+                                // reset to its stored parameters.
                                 if !self.reversed {
-                                    let (_, _) = self.previous_point.parameters_on_surface(false);
-                                    self.previous_point.set_value_uv(false, uvap[0], uvap[1]);
+                                    let (u, v) = self.previous_point.parameters_on_surface(false);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 } else {
-                                    self.previous_point.set_value_uv(true, uvap[0], uvap[1]);
+                                    let (u, v) = self.previous_point.parameters_on_surface(true);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 }
                             } else if arret_ajout || cadre {
                                 arrive = true;
@@ -2112,6 +2188,18 @@ impl IWalking {
                         }
                     } else {
                         // No numerical solution.
+                        // TEMP-DEBUG
+                        if std::env::var("RCAD_IWALK_DEBUG").is_ok() && cl.nb_points() <= 200 {
+                            eprintln!(
+                                "[NOTDONE] i={} pts={} uvap={:?} pas={:.3e} root={:.3e} sgn={}",
+                                i,
+                                cl.nb_points(),
+                                uvap,
+                                pas_c,
+                                func.root(),
+                                step_sign
+                            );
+                        }
                         pas_c /= 2.0;
                         pas_cu = (pas_c * self.previous_d2d.x).abs();
                         pas_cv = (pas_c * self.previous_d2d.y).abs();
@@ -2135,6 +2223,19 @@ impl IWalking {
 
                 if arrive {
                     cl.set_tangency_at_end(tgtend);
+                    // TEMP-DEBUG
+                    if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+                        eprintln!(
+                            "[OPEN-END] i={} n={} pts={} arrive_reason: status={:?} arret_ajout={} cadre={} last_uv={:?}",
+                            i,
+                            n,
+                            cl.nb_points(),
+                            a_status,
+                            arret_ajout,
+                            cadre,
+                            cl.value(cl.nb_points()).value_on_surface(self.reversed)
+                        );
+                    }
                     self.lines.push(cl);
                     movementdirectioninfo[i] = 0;
                     if self.wd1[i].etat > 0 {
@@ -2460,11 +2561,18 @@ impl IWalking {
                             arrive = self.test_arret_passage_close(u_mult, v_mult, &uvap, i as i32, &mut ipass);
                             if arrive {
                                 // Reset proper parameter to test the arrow.
+                                // OCCT gxx L2292/2296: Psol.ParametersOnS2(UVap(1),
+                                // UVap(2)) — the getter copies the Psol (= the
+                                // first line point) parameters into UVap.
                                 psol = cl.value(1).clone();
                                 if !self.reversed {
-                                    psol.set_value_uv(false, uvap[0], uvap[1]);
+                                    let (u, v) = psol.parameters_on_surface(false);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 } else {
-                                    psol.set_value_uv(true, uvap[0], uvap[1]);
+                                    let (u, v) = psol.parameters_on_surface(true);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 }
                                 cadre = false;
                             } else {
@@ -2525,10 +2633,16 @@ impl IWalking {
                                 arrive = false;
                                 arret_ajout = false;
                                 tgtend = false;
+                                // OCCT gxx L2357/2361: previousPoint.ParametersOnS2(UVap(1),
+                                // UVap(2)) — const getter, previousPoint untouched.
                                 if !self.reversed {
-                                    self.previous_point.set_value_uv(false, uvap[0], uvap[1]);
+                                    let (u, v) = self.previous_point.parameters_on_surface(false);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 } else {
-                                    self.previous_point.set_value_uv(true, uvap[0], uvap[1]);
+                                    let (u, v) = self.previous_point.parameters_on_surface(true);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 }
                             } else if arret_ajout || cadre {
                                 if arrive {

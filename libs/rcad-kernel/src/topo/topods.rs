@@ -1366,18 +1366,24 @@ impl BRep {
     /// - TFace (BRep_TFace.cxx L44-52): Surface + Location + Tolerance only
     ///   (NaturalRestriction stays false, no sample-point caches).
     pub fn empty_copy(&mut self, r: Shape) -> Shape {
+        // OCCT TopoDS_Txx::EmptyCopy() (TopoDS_TEdge.cxx L24-27 et al.) builds
+        // `new TopoDS_Txx()` — the default constructor, whose flags are the
+        // DEFAULT set Free | Modified | Orientable (TopoDS_TShape.hxx L169).
+        // The source's frozen state (a shape attached to a parent) does not
+        // carry over; copying it would make B.Add raise TopoDS_FrozenShape on
+        // the fresh copy.
         let ts = &self.tshapes[r.index];
         let new = match &**ts {
             TShape::Vertex(vd) => Arc::new(TShape::Vertex(TVertexData {
                 my_shapes: Vec::new(),
-                flags: vd.flags,
+                flags: tshape_flags::DEFAULT,
                 point: vd.point,
                 tolerance: vd.tolerance,
                 points: Vec::new(),
             })),
             TShape::Edge(ed) => Arc::new(TShape::Edge(TEdgeData {
                 my_shapes: Vec::new(),
-                flags: ed.flags,
+                flags: tshape_flags::DEFAULT,
                 curve: ed.curve.clone(),
                 first: Shape::null(),
                 last: Shape::null(),
@@ -1395,12 +1401,12 @@ impl BRep {
             })),
             TShape::Wire(wd) => Arc::new(TShape::Wire(TWireData {
                 my_shapes: Vec::new(),
-                flags: wd.flags,
+                flags: tshape_flags::DEFAULT,
                 edges: Vec::new(),
             })),
             TShape::Face(fd) => Arc::new(TShape::Face(TFaceData {
                 my_shapes: Vec::new(),
-                flags: fd.flags,
+                flags: tshape_flags::DEFAULT,
                 surface: fd.surface.clone(),
                 surface_location: fd.surface_location,
                 outer_wire: Shape::null(),
@@ -1415,12 +1421,12 @@ impl BRep {
             })),
             TShape::Shell(sd) => Arc::new(TShape::Shell(TShellData {
                 my_shapes: Vec::new(),
-                flags: sd.flags,
+                flags: tshape_flags::DEFAULT,
                 faces: Vec::new(),
             })),
             TShape::Solid(sd) => Arc::new(TShape::Solid(TSolidData {
                 my_shapes: Vec::new(),
-                flags: sd.flags,
+                flags: tshape_flags::DEFAULT,
                 shells: Vec::new(),
                 internal_vertices: Vec::new(),
                 internal_edges: Vec::new(),
@@ -2114,6 +2120,17 @@ impl BRepTool for BRep {
     }
 
     fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)> {
+        // OCCT BRep_Tool.cxx L339 + L353-357: a closed (seam) edge occurrence
+        // with REVERSED orientation selects the SECOND pcurve of its
+        // BRep_CurveOnClosedSurface pair (PCurve2); FORWARD selects PCurve1.
+        // BRep_Tool::CurveOnSurface carries the rule, so every adaptor built
+        // on it (BRepAdaptor_Curve2d, the FClass2d polygon walk, ...) reads
+        // the seam side matching the wire traversal direction.
+        if edge.orientation == Orientation::Reversed && self.is_edge_closed_on_face(edge, face) {
+            if let Some(second) = self.curve_on_surface_second(edge, face) {
+                return Some(second);
+            }
+        }
         // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve of
         // an edge on a face is keyed by `aLoc = L.Predivided(E.Location())` —
         // the face location divided by the edge's location.  A located edge

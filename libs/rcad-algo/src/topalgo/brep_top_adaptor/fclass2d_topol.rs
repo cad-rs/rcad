@@ -318,7 +318,16 @@ impl FClass2dTopol {
 
             for (ei, or) in &ordered {
                 nb_edges = nb_edges.saturating_sub(1);
-                let edge = source.shape_at(*ei);
+                // OCCT WireExplorer::Current() hands the ORIENTED edge
+                // occurrence, and BRep_Tool::CurveOnSurface(E, F) keys the
+                // closed-seam PCurve1/PCurve2 selection on that orientation
+                // (BRep_Tool.cxx L339, L353-357).  The rcad shape source
+                // indexes edge occurrences by (TShape, Location) — both seam
+                // instances of a closed wire collapse to one index carrying
+                // the orientation of the instance stored first — so the wire
+                // traversal orientation is re-applied here.
+                let mut edge = source.shape_at(*ei);
+                edge.orientation = *or;
                 if *or != Orientation::Forward && *or != Orientation::Reversed {
                     continue;
                 }
@@ -456,7 +465,11 @@ impl FClass2dTopol {
                         fleche_v = 0.0;
                         // OCCT re-runs the WireExplorer over the SAME wire.
                         for (ei2, or2) in &ordered {
-                            let edge = source.shape_at(*ei2);
+                            // The oriented edge occurrence (see the first
+                            // walk): the source index carries only the
+                            // first-stored seam instance's orientation.
+                            let mut edge = source.shape_at(*ei2);
+                            edge.orientation = *or2;
                             if *or2 != Orientation::Forward && *or2 != Orientation::Reversed {
                                 continue;
                             }

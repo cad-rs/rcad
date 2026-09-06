@@ -916,6 +916,30 @@ mod tests {
 }
 
 impl<'a> super::Data<'a> {
+    // TEMPORARY diagnostic (to be removed): RCAD_HLR_TRACE=1 enables a
+    // run trace of orient_out_line and next_interference.
+    pub(crate) fn trace_enabled() -> bool {
+        use std::sync::OnceLock;
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("RCAD_HLR_TRACE").is_ok())
+    }
+
+    pub(crate) fn trace_i_face(&self) -> usize {
+        self.i_face
+    }
+
+    pub(crate) fn trace_my_fe(&self) -> usize {
+        self.my_fe
+    }
+
+    pub(crate) fn trace_edge_ends(&self, e: usize) -> (DVec3, DVec3) {
+        let ed = &self.my_e_data[e - 1];
+        let ec = ed.geometry();
+        let sta = ec.parameter_3d(ec.first_parameter());
+        let end = ec.parameter_3d(ec.last_parameter());
+        (ec.value_3d(sta), ec.value_3d(end))
+    }
+
     /// OCCT MoreInterference (HLRBRep_Data.lxx L103-107) — the interference
     /// exploration query (part of the interference group of [classify]).
     pub fn more_interference(&self) -> bool {
@@ -962,6 +986,21 @@ impl<'a> super::Data<'a> {
             self.my_fe_out_line = self.my_face_itr1.out_line();
             self.my_fe_internal = self.my_face_itr1.internal();
             self.my_fe_double = self.my_face_itr1.double();
+            if Self::trace_enabled() {
+                eprintln!(
+                    "[TRACE] next_interf: iFace={} LE={} FE={} ori={:?} out={} int={} dbl={} test={} cur={} nbr={}",
+                    self.i_face,
+                    self.my_le,
+                    self.my_fe,
+                    self.my_fe_ori,
+                    self.my_fe_out_line,
+                    self.my_fe_internal,
+                    self.my_fe_double,
+                    self.i_face_test,
+                    self.my_cur_sort_ed,
+                    self.my_nbr_sort_ed,
+                );
+            }
             // OCCT L1272-1275: myFEData / myFEGeom / myFETol / myFEType.
             self.my_fe_data = &mut self.my_e_data[(self.my_fe - 1) as usize];
             self.my_fe_geom =
@@ -1207,6 +1246,44 @@ impl<'a> super::Data<'a> {
                                     .with(|c| c.set(c.get() + self.my_nb_points as i32));
                                 counters::NB_SEG_INTERSECTION
                                     .with(|c| c.set(c.get() + self.my_nb_segments as i32));
+                                if Self::trace_enabled() {
+                                    eprintln!(
+                                        "[TRACE]   -> LE={}({:?}) FE={}({:?}) done={} pts={} segs={}",
+                                        self.my_le,
+                                        unsafe { &*self.my_le_geom }.get_type(),
+                                        self.my_fe,
+                                        unsafe { &*self.my_fe_geom }.get_type(),
+                                        self.my_intersector.is_done(),
+                                        self.my_nb_points,
+                                        self.my_nb_segments,
+                                    );
+                                    if self.my_nb_points == 0 && self.my_nb_segments == 0 {
+                                        let le = unsafe { &*self.my_le_geom };
+                                        let fe = unsafe { &*self.my_fe_geom };
+                                        let samp = |c: &crate::hlr::brep::curve::Curve| {
+                                            let (u1, u2) = (c.first_parameter(), c.last_parameter());
+                                            let mut s = String::new();
+                                            for k in 0..=4 {
+                                                let u = u1 + (u2 - u1) * (k as f64) / 4.0;
+                                                let p = c.value(u);
+                                                s.push_str(&format!("({:.4},{:.4})", p.x, p.y));
+                                            }
+                                            format!("[{:.4},{:.4}] {}", u1, u2, s)
+                                        };
+                                        eprintln!(
+                                            "[TRACE]      LE{} {:?} {}",
+                                            self.my_le,
+                                            le.get_type(),
+                                            samp(le)
+                                        );
+                                        eprintln!(
+                                            "[TRACE]      FE{} {:?} {}",
+                                            self.my_fe,
+                                            fe.get_type(),
+                                            samp(fe)
+                                        );
+                                    }
+                                }
                             }
                         } else {
                         }
@@ -1468,6 +1545,12 @@ impl<'a> super::Data<'a> {
             }
             it += 1;
         }
+        if Self::trace_enabled() {
+            eprintln!(
+                "[TRACE] hiding_start_level: E={} iFace={} -> level={}",
+                e, self.i_face, level
+            );
+        }
         level
     }
 
@@ -1518,6 +1601,16 @@ impl<'a> super::Data<'a> {
                     ed1.set_used(false);
                 }
                 if (eb1.out_line(ie1 as usize) || eb1.internal(ie1 as usize)) && !ed1.vertical() {
+                    if Self::trace_enabled() {
+                        eprintln!(
+                            "[TRACE] orient_out_line: face={} edge={} blockOri={:?} out={} int={}",
+                            i,
+                            self.my_fe,
+                            eb1.orientation(ie1 as usize),
+                            eb1.out_line(ie1 as usize),
+                            eb1.internal(ie1 as usize),
+                        );
+                    }
                     let mut p: f64;
                     let mut pu: f64 = 0.0; // OCCT uninitialized; neutral default 0.
                     let mut pv: f64 = 0.0;
@@ -1607,6 +1700,12 @@ impl<'a> super::Data<'a> {
                                 }
                             }
                             eb1.set_orientation(ie1 as usize, self.my_fe_ori);
+                            if Self::trace_enabled() {
+                                eprintln!(
+                                    "[TRACE]   -> face={} edge={} setOri={:?} (uv ok, normal ok)",
+                                    i, self.my_fe, self.my_fe_ori
+                                );
+                            }
                         }
                     } else {
                         // OCCT L1866-1870: the #ifdef OCCT_DEBUG "UVPoint
@@ -1761,6 +1860,38 @@ impl<'a> super::Data<'a> {
 
             HLRAlgo::encode_min_max(&vert_min, &vert_max, &mut min_max_vert);
             let i_face_min_max = unsafe { &*self.i_face_min_max };
+            {
+                // TEMPORARY diagnostic: find the rejecting dimension.
+                let mut rej_k: i32 = -1;
+                for k in 0..8usize {
+                    if ((i_face_min_max.max[k].wrapping_sub(min_max_vert.min[k])) & REJECT_MASK)
+                        != 0
+                        || ((min_max_vert.max[k].wrapping_sub(i_face_min_max.min[k])) & REJECT_MASK)
+                            != 0
+                    {
+                        rej_k = k as i32;
+                        break;
+                    }
+                }
+                if Self::trace_enabled() && rej_k >= 0 {
+                    let p3 = ec.value_3d(sta);
+                    eprintln!(
+                        "[TRACE] classify REJECT level_flag: E={} iFace={} param={:.6} k={} p3d=({:.4},{:.4},{:.4}) projz={:.4} faceMin={:?} faceMax={:?} ptMin={:?} ptMax={:?}",
+                        e,
+                        self.i_face,
+                        param,
+                        rej_k,
+                        p3.x,
+                        p3.y,
+                        p3.z,
+                        zsta,
+                        &i_face_min_max.min[..],
+                        &i_face_min_max.max[..],
+                        &min_max_vert.min[..],
+                        &min_max_vert.max[..],
+                    );
+                }
+            }
             if ((i_face_min_max.max[0].wrapping_sub(min_max_vert.min[0])) & REJECT_MASK) != 0
                 || ((min_max_vert.max[0].wrapping_sub(i_face_min_max.min[0])) & REJECT_MASK) != 0
                 || ((i_face_min_max.max[1].wrapping_sub(min_max_vert.min[1])) & REJECT_MASK) != 0
@@ -1929,6 +2060,23 @@ impl<'a> super::Data<'a> {
         };
         let mut w_lim = elclib::line_parameter(&l, plim);
         self.my_intersector.perform_line(&l, w_lim);
+        let trace_cl = Self::trace_enabled();
+        let trace_hits: &mut Vec<(f64, f64, f64, bool)> = &mut Vec::new();
+        let _ = trace_hits;
+        if trace_cl {
+            eprintln!(
+                "[TRACE] classify: E={} iFace={} param={:.6} plim=({:.4},{:.4},{:.4}) w_lim0={:.6} done={} nbpts={}",
+                e,
+                self.i_face,
+                param,
+                plim.x,
+                plim.y,
+                plim.z,
+                w_lim,
+                self.my_intersector.is_done(),
+                if self.my_intersector.is_done() { self.my_intersector.nb_points() } else { 0 },
+            );
+        }
         if self.my_intersector.is_done() {
             let nb_points = self.my_intersector.nb_points();
             if nb_points > 0 {
@@ -1969,6 +2117,7 @@ impl<'a> super::Data<'a> {
                     // (the PInter/Tr out values are not read in OCCT either).
                     let (_p_inter, mut u, mut v, w, _tr) =
                         self.my_intersector.cs_point(i as usize).values();
+                    let mut in_domain = false;
                     if w < w_lim {
                         let mut a_dummy_shift: f64 = 0.0; // OCCT uninitialized; neutral default 0.
                         if period_u > 0.0 {
@@ -1988,9 +2137,12 @@ impl<'a> super::Data<'a> {
                         // OCCT L2254: myClassifier->Classify(pnt2d,
                         // Precision::PConfusion()) — the default
                         // RecadreOnPeriodic = Standard_False.
-                        if self.my_classifier.classify(pnt2d, PRECISION_P_CONFUSION, false)
-                            != State::Out
-                        {
+                        let cl = self.my_classifier.classify(pnt2d, PRECISION_P_CONFUSION, false);
+                        in_domain = cl != State::Out;
+                        if trace_cl {
+                            trace_hits.push((u, v, w, in_domain));
+                        }
+                        if in_domain {
                             state = State::In;
                             *level += 1;
                             if !level_flag {
@@ -1999,6 +2151,9 @@ impl<'a> super::Data<'a> {
                         }
                     }
                     i += 1;
+                }
+                if trace_cl {
+                    eprintln!("[TRACE] classify hits (u,v,w,in): {:?}", trace_hits);
                 }
             }
         }

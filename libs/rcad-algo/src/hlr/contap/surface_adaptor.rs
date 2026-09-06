@@ -205,7 +205,14 @@ impl SurfaceAdapter for GeomSurfaceAdapter {
         SurfaceEval::derivatives(&self.surf, u, v)
     }
     fn d2(&self, u: f64, v: f64) -> (Point3, Vec3, Vec3, Vec3, Vec3, Vec3) {
-        SurfaceEval::derivatives2(&self.surf, u, v)
+        // The kernel SurfaceEval::derivatives2 returns (P, d1u, d1v,
+        // d2/du2, d2/dudv, d2/dv2); the OCCT Adaptor3d_Surface::D2 order is
+        // (P, D1U, D1V, D2U, D2V, D2UV) — D2V is the pure-v second
+        // derivative and D2UV the mixed one.  Contap_SurfProps.cxx L341-346
+        // (NormAndDn default arm) and HLRBRep_EdgeFaceTool::CurvatureValue
+        // consume the OCCT order.
+        let (p, d1u, d1v, d2u, d2uv, d2v) = SurfaceEval::derivatives2(&self.surf, u, v);
+        (p, d1u, d1v, d2u, d2v, d2uv)
     }
     /// OCCT GeomAdaptor_Surface::UResolution (cxx L1818-1892).
     fn u_resolution(&self, r3d: f64) -> f64 {

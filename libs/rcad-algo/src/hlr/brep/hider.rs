@@ -175,12 +175,32 @@ impl Hider {
         self.ds().init_interference();
         while self.ds().more_interference() {
             if self.ds().rejected_interference() {
+                if Data::trace_enabled() {
+                    eprintln!(
+                        "[TRACE] hide E={} iFace={} LE-vs-FE={} REJECTED above={}",
+                        e,
+                        self.ds().trace_i_face(),
+                        self.ds().trace_my_fe(),
+                        self.ds().above_interference(),
+                    );
+                }
                 if self.ds().above_interference() && self.ds().simple_hiding_face() {
                     has_out = true;
                 }
             } else {
                 // HLRAlgo_Interference& Int = myDS->Interference();
+                let ti = self.ds().trace_i_face();
+                let tf = self.ds().trace_my_fe();
                 let int_: &Interference = self.ds().interference();
+                if Data::trace_enabled() {
+                    eprintln!(
+                        "[TRACE] hide E={e} iFace={ti} FE={tf} state={:?} param={:.6} trans={:?} borit={:?}",
+                        int_.intersection().state(),
+                        int_.intersection().parameter(),
+                        int_.transition(),
+                        int_.boundary_transition(),
+                    );
+                }
                 // switch (Int.Intersection().State())
                 match int_.intersection().state() {
                     State::In => {
@@ -193,6 +213,18 @@ impl Hider {
                 }
             }
             self.ds().next_interference();
+        }
+        if Data::trace_enabled() && (!il_hidden.is_empty() || !il_on.is_empty()) {
+            let (p1, p2) = self.ds().trace_edge_ends(e);
+            eprintln!(
+                "[TRACE] hide E={} iFace={} RESULT il_hidden={} il_on={} ends {:?}..{:?}",
+                e,
+                self.ds().trace_i_face(),
+                il_hidden.len(),
+                il_on.len(),
+                p1,
+                p2,
+            );
         }
 
         //-- ============================================================
@@ -584,9 +616,24 @@ impl Hider {
                 if il_hidden.is_empty() {
                     // Edge hidden
                     unsafe { (*ed).status().hide_all() }; // ES.HideAll(); // ***********
+                    if Data::trace_enabled() {
+                        eprintln!("[TRACE] hide E={} iFace={} FILTERED-EMPTY -> HideAll", e, self.ds().trace_i_face());
+                    }
                 } else {
                     found_hidden = true;
                 }
+            }
+            if Data::trace_enabled() {
+                let kept: Vec<(f64, f64)> = il_hidden
+                    .iter()
+                    .map(|i| (i.intersection().parameter(), i.intersection().level() as f64))
+                    .collect();
+                eprintln!(
+                    "[TRACE] hide E={} iFace={} AFTER-FILTER il_hidden={:?}",
+                    e,
+                    self.ds().trace_i_face(),
+                    kept,
+                );
             }
 
             if !il_hidden.is_empty() {
@@ -652,6 +699,9 @@ impl Hider {
                             Orientation::Internal | Orientation::External => {}
                         }
                         eb.next_vertex();
+                    }
+                    if Data::trace_enabled() && e == 2 {
+                        eprintln!("[TRACE] builder E=2 mask={a_mask_p1p2} p1={p1:.6} p2={p2:.6}");
                     }
 
                     if a_mask_p1p2 != 3 || p2 - p1 <= 1.0e-7 {

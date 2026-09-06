@@ -12,7 +12,7 @@
 // Contap_ContAna — the conflicting constants of the plan §5 are kept
 // verbatim) and tole = 5.0e-6.
 
-mod functions;
+pub(crate) mod functions;
 mod perform;
 mod perform_ana;
 
