@@ -896,6 +896,24 @@ fn explore_face(
             let int = s.data_structure().is_int_l_face_edge(f, &e);
             let iso = s.data_structure().is_iso_l_face_edge(f, &e);
             let out = s.data_structure().is_out_l_face_edge(f, &e);
+            if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+                let has_int_l = s.data_structure().face_has_int_l(f);
+                let int_l_len = if has_int_l {
+                    s.data_structure().face_int_l(f).len()
+                } else {
+                    0
+                };
+                let same = int_l_len > 0
+                    && s.data_structure()
+                        .face_int_l(f)
+                        .iter()
+                        .any(|x| x.is_same(&e));
+                eprintln!(
+                    "[SFDBG] edge ie? int={int} out={out} iso={iso} dbl probe: has_int_l={has_int_l} int_l_len={int_l_len} e_same_any={same} e_ptr={:x} f_ptr={:x}",
+                    e.ptr_id(),
+                    f.ptr_id()
+                );
+            }
             // OCCT L235: bool Dbl = BRepTools::IsReallyClosed(E, theFace);
             let dbl = brep_tools_is_really_closed(brep, &e, &the_face);
             // OCCT L236: fd.SetWEdge(nw, ne, ie, anOrientE, Out, Int, Dbl, Iso);

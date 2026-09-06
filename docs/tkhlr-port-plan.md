@@ -641,3 +641,9 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 (a) `ds.add_int_l(f)` 的 f（insert 探索路径的原始面）与 explore_face 的 f（explore_shape 探索路径的原始面）ptr_id 是否同一 Arc；
 (b) insert_face 压入 IntL 的边 TShape 与 process_face 写入 NF 的边 TShape 是否同一（make_edge 是否被调用两次各造一份）；
 (c) 另发现真缺口：**rcad 缺 `HLRToShape::OutLineHCompound` 访问器**（hxx L122，ViewerTest L3290 消费）——补齐属形式完成项。
+
+### 本 session 追加 8（session 12 终：ptorus 根因实锤——TShape Arc 身份分裂）
+
+探针实证（SFDBG/CWDBG）：IntL 非空（51/26 条，键 ptr 正确）、建边链全 in-place（add_edge/add_to_edge/update_edge_pcurve 均 edge_mut_inplace）——但 **explore_face 探索到的 NF 边 Arc ≠ IntL 边 Arc**（e_same_any=false 全体成立）。OCCT 语义：B.Add 存同一 TShape 句柄、BRep_Builder 原地变更、身份永不分裂；rcad 的 `wire_mut`/`face_mut`/`shell_mut` 仍是 `Arc::make_mut`（topods.rs L1652-1670）——当 wire/face 的 Arc 被多处引用（arena + 局部句柄 + 父容器）时 make_mut 克隆分身，导致 NF 实际存储的 wire/edge 与 IntL/DS 记账的句柄分裂 → Int 旗标永不命中 → 轮廓边从所有 compound 消失（仅 RgN 缝存活的准确解释）。
+
+**修复方向（下 session 首任务）**：容器类（wire/face/shell/compound）的变异器与 builder_add 家族改为身份保持语义（仿 edge_mut_inplace 的裸指针原地变异，或建后不再变异的构造式用法）；审计清单 = topods.rs L3215-3320 全部 make_mut 变异器 + builder_add/make_wire/make_shell 调用序。修完 SFDBG 的 e_same_any 应转 true → RgNV=2 之外应出现轮廓边 → 对照 OCCT 302.685。

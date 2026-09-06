@@ -814,6 +814,14 @@ pub(crate) fn insert_face(
             }
         }
     }
+    if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+        eprintln!(
+            "[CWDBG] insert_face END: int_l={} out_l={} key_ptr={:x}",
+            ds.face_int_l(f).len(),
+            ds.face_out_l(f).len(),
+            f.ptr_id()
+        );
+    }
 }
 
 //=======================================================================
