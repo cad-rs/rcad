@@ -596,6 +596,18 @@ impl<'a> HLRToShape<'a> {
         self.internal_compound(1, true, s, false)
     }
 
+    /// OCCT OutLineHCompound() (lxx L140-143) — return hidden outlines.
+    pub fn out_line_h_compound(&mut self) -> Shape {
+        // return InternalCompound(2, false, TopoDS_Shape());
+        self.internal_compound(2, false, &Shape::null(), false)
+    }
+
+    /// OCCT OutLineHCompound(const TopoDS_Shape& S) (lxx L147-150).
+    pub fn out_line_h_compound_of_shape(&mut self, s: &Shape) -> Shape {
+        // return InternalCompound(2, false, S);
+        self.internal_compound(2, false, s, false)
+    }
+
     /// OCCT HCompound() (lxx L98-101) — return hidden sharp edges (of
     /// C0-continuity).
     pub fn h_compound(&mut self) -> Shape {

@@ -932,9 +932,21 @@ fn explore_face(
                 } else {
                     "-".into()
                 };
+                let e_kind = e.as_edge().map(|ed| {
+                    match ed.curve {
+                        Some(rcad_kernel::geom::Curve3::Line(_)) => "L",
+                        Some(rcad_kernel::geom::Curve3::Circle(_)) => "C",
+                        Some(rcad_kernel::geom::Curve3::Ellipse(_)) => "E",
+                        Some(rcad_kernel::geom::Curve3::BSpline(_)) => "B",
+                        _ => "?",
+                    }
+                });
                 eprintln!(
-                    "[SFDBG] int={int} out={out} iso={iso} has_int_l={has_int_l} int_l_len={int_l_len} e_same_any={same} {ds0} e_ptr={:x}",
-                    e.ptr_id()
+                    "[SFDBG] int={int} out={out} iso={iso} has_int_l={has_int_l} int_l_len={int_l_len} e_same_any={same} {ds0} e_ptr={:x} e_idx={} e_kind={} e_rng={:?}",
+                    e.ptr_id(),
+                    e.index,
+                    e_kind.unwrap_or("?"),
+                    e.as_edge().map(|ed| ed.range)
                 );
             }
             // OCCT L235: bool Dbl = BRepTools::IsReallyClosed(E, theFace);

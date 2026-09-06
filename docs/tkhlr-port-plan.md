@@ -666,3 +666,9 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 终极探针数据（单次运行）：`has_int_l=true int_l_len=51 has_spl=false`（IntL 边的 SplE 表**为空**——即 process_face 走的是 else 分支、把 **IntL 原始边** 加进了 NF）→ 按此，探索到的边必须就是 IntL 原始 Arc、IsSame 回退必命中。但实测被探索边 ptr（2bca3f2xxxx，连续段位）≠ IntL ptr（2bca3ea-ee 段）——**"process_face 存入的句柄"与"探索器产出的句柄"不一致**。
 
 下一动作（精确到函数，读源码即可决）：(1) rcad `TopExpExplorer`（brep 遍历器）——`current()` 返回的是父 TShape 里存的 child 句柄，还是按 index 从 arena 重解析的句柄；(2) `insert()` 的 `top_exp_faces(s,...)` 与 `load()` 的面探索是否产出同一 Arc 的面句柄（两处探索路径的 Arc 一致性）；(3) 71 条被探索边实例 vs 预期 53（2 缝 + 51 轮廓）——多出的 18 条从哪个 wire 来。三者都是纯读码核对，无歧义空间。
+
+### 本 session 追加 12（session 14：Int 旗标已全部正确——断点移至 Hider 自隐藏）
+
+容器变异器 in-place 修复 + 全链对齐后，SFDBG 实测：**51 条轮廓边全部 int=true / e_same_any=true**（e_kind=B BSpline，idx 9+，IntL 注册链完全打通）；被探索的缝边 SplE 分段（idx 150+，Circle 类）为 process_edges 正常产物。**补齐真缺口 `HLRToShape::OutLineHCompound/OfShape`（lxx L140-150）。**
+
+**当前断点（最后一段）**：轮廓边旗标全对，但 visible mass 仍 0 → **Hider 对 torus 自隐藏（单面 solid 的轮廓被自己的面隐藏）把全部轮廓判成了 hidden**（OCCT 应为近半 visible 302.685 / 远半 hidden）。下一动作：对照 Hider.cxx 自隐藏路径的 Classify 深度语义（dz 符号 / myProj.Project 的 z 约定 / RejectedPoint 的 dz≥TolZ 判据 L2349-2361）与 rcad classify.rs/hider.rs 对应段；重点核对 z 是否"沿视线方向深度"及 near/fare 判定符号。
