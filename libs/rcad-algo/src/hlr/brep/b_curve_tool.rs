@@ -58,6 +58,21 @@ pub trait CurveView {
     /// OCCT Poles(C, T) (cxx L59-79) — the pole array; empty for the other
     /// curve types.
     fn poles(&self) -> Vec<Point3>;
+    /// OCCT Knots — the distinct knots of the BSpline (cxx L606-619);
+    /// empty for the other curve types.
+    fn knots(&self) -> Vec<f64> {
+        Vec::new()
+    }
+    /// OCCT Multiplicities — the per-knot multiplicities (cxx L621-634);
+    /// empty for the other curve types.
+    fn multiplicities(&self) -> Vec<i32> {
+        Vec::new()
+    }
+    /// OCCT Weights — the homogeneous weights (empty for the other curve
+    /// types; all 1.0 when non-rational).
+    fn weights(&self) -> Vec<f64> {
+        Vec::new()
+    }
 }
 
 /// OCCT NbSamples(C, U0, U1) (cxx L25-55).

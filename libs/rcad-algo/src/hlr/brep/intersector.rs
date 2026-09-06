@@ -442,58 +442,61 @@ impl<'a> Intersector<'a> {
                     .get()
                     .expect("ThePolyhedronOfInterCSurf::Bounding");
                 //-- On va rejeter tous les points de parametres > P
-                let mut p;
-                p = elclib::line_parameter(l, glam::DVec3::new(x0, y0, z0));
-                let mut pmin = p;
-                let mut pmax = p;
-                p = elclib::line_parameter(l, glam::DVec3::new(x0, y0, z1));
-                if pmin > p {
-                    pmin = p;
+                // (OCCT uses lowercase `p` as the corner temp and uppercase
+                // `P` for the parameter — renamed `pp` here to avoid
+                // shadowing the wLim parameter.)
+                let mut pp;
+                pp = elclib::line_parameter(l, glam::DVec3::new(x0, y0, z0));
+                let mut pmin = pp;
+                let mut pmax = pp;
+                pp = elclib::line_parameter(l, glam::DVec3::new(x0, y0, z1));
+                if pmin > pp {
+                    pmin = pp;
                 }
-                if pmax < p {
-                    pmax = p;
+                if pmax < pp {
+                    pmax = pp;
                 }
-                p = elclib::line_parameter(l, glam::DVec3::new(x1, y0, z0));
-                if pmin > p {
-                    pmin = p;
+                pp = elclib::line_parameter(l, glam::DVec3::new(x1, y0, z0));
+                if pmin > pp {
+                    pmin = pp;
                 }
-                if pmax < p {
-                    pmax = p;
+                if pmax < pp {
+                    pmax = pp;
                 }
-                p = elclib::line_parameter(l, glam::DVec3::new(x1, y0, z1));
-                if pmin > p {
-                    pmin = p;
+                pp = elclib::line_parameter(l, glam::DVec3::new(x1, y0, z1));
+                if pmin > pp {
+                    pmin = pp;
                 }
-                if pmax < p {
-                    pmax = p;
+                if pmax < pp {
+                    pmax = pp;
                 }
-                p = elclib::line_parameter(l, glam::DVec3::new(x0, y1, z0));
-                if pmin > p {
-                    pmin = p;
+                pp = elclib::line_parameter(l, glam::DVec3::new(x0, y1, z0));
+                if pmin > pp {
+                    pmin = pp;
                 }
-                if pmax < p {
-                    pmax = p;
+                if pmax < pp {
+                    pmax = pp;
                 }
-                p = elclib::line_parameter(l, glam::DVec3::new(x0, y1, z1));
-                if pmin > p {
-                    pmin = p;
+                pp = elclib::line_parameter(l, glam::DVec3::new(x0, y1, z1));
+                if pmin > pp {
+                    pmin = pp;
                 }
-                if pmax < p {
-                    pmax = p;
+                if pmax < pp {
+                    pmax = pp;
                 }
-                p = elclib::line_parameter(l, glam::DVec3::new(x1, y1, z0));
-                if pmin > p {
-                    pmin = p;
+                pp = elclib::line_parameter(l, glam::DVec3::new(x1, y1, z0));
+                if pmin > pp {
+                    pmin = pp;
                 }
-                if pmax < p {
-                    pmax = p;
+                if pmax < pp {
+                    pmax = pp;
                 }
-                p = elclib::line_parameter(l, glam::DVec3::new(x1, y1, z1));
-                if pmin > p {
-                    pmin = p;
+                pp = elclib::line_parameter(l, glam::DVec3::new(x1, y1, z1));
+                if pmin > pp {
+                    pmin = pp;
                 }
-                if pmax < p {
-                    pmax = p;
+                if pmax < pp {
+                    pmax = pp;
                 }
                 pmin -= 0.000001;
                 pmax += 0.000001;

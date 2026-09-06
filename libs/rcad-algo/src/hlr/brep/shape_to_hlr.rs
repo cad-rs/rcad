@@ -543,7 +543,7 @@ impl CurveView for EdgeCurveAdaptor {
     }
     fn nb_knots(&self) -> i32 {
         match &self.curve {
-            Curve3::BSpline(b) => b.knots.len() as i32,
+            Curve3::BSpline(b) => run_length_knots(&b.knots).len() as i32,
             _ => 0,
         }
     }
@@ -586,6 +586,46 @@ impl CurveView for EdgeCurveAdaptor {
             _ => Vec::new(),
         }
     }
+    fn knots(&self) -> Vec<f64> {
+        match &self.curve {
+            // OCCT Geom_BSplineCurve::Knots() — the distinct knots; the rcad
+            // carrier stores the flat vector.
+            Curve3::BSpline(b) => run_length_knots(&b.knots).into_iter().map(|(k, _)| k).collect(),
+            _ => Vec::new(),
+        }
+    }
+    fn multiplicities(&self) -> Vec<i32> {
+        match &self.curve {
+            // OCCT Geom_BSplineCurve::Multiplicities() — per distinct knot.
+            Curve3::BSpline(b) => {
+                run_length_knots(&b.knots).into_iter().map(|(_, m)| m).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+    fn weights(&self) -> Vec<f64> {
+        match &self.curve {
+            Curve3::BSpline(b) => b.weights.clone(),
+            Curve3::Bezier(b) => b.weights.clone(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// The OCCT-style (knot, multiplicity) pairs from the rcad flat knot vector
+/// (each knot repeated its multiplicity — the expand_knots precedent).
+fn run_length_knots(flat: &[f64]) -> Vec<(f64, i32)> {
+    let mut out: Vec<(f64, i32)> = Vec::new();
+    for &k in flat {
+        if let Some(last) = out.last_mut() {
+            if last.0 == k {
+                last.1 += 1;
+                continue;
+            }
+        }
+        out.push((k, 1));
+    }
+    out
 }
 
 impl EdgeCurveAdaptor {

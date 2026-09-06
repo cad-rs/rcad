@@ -494,10 +494,13 @@ impl<'a> Curve<'a> {
         // return gp_Parab2d();
     }
 
-    /// OCCT IsRational (lxx) — through the poles' weights; the rcad edge
-    /// view carries rationality with the curve data (Stage 3f wiring).
+    /// OCCT IsRational (lxx) — HLRBRep_BCurveTool::IsRational(myCurve); the
+    /// rcad carrier reads the weights (all 1.0 = non-rational).
     pub fn is_rational(&self) -> bool {
-        false
+        self.c()
+            .weights()
+            .iter()
+            .any(|&w| w != 1.0)
     }
 
     /// OCCT Degree (lxx).
@@ -513,6 +516,72 @@ impl<'a> Curve<'a> {
     /// OCCT NbKnots (lxx).
     pub fn nb_knots(&self) -> i32 {
         self.c().nb_knots()
+    }
+
+    /// OCCT Knots (cxx L606-619) — the distinct knots of the raw BSpline.
+    pub fn knots(&self) -> Vec<f64> {
+        self.c().knots()
+    }
+
+    /// OCCT Multiplicities (cxx L621-634) — the per-knot multiplicities of
+    /// the raw BSpline.
+    pub fn multiplicities(&self) -> Vec<i32> {
+        self.c().multiplicities()
+    }
+
+    /// OCCT Poles(TP) (cxx L477-507) — the raw 3D poles (BSpline or Bezier)
+    /// transformed by the projector, taken as 2D.
+    pub fn poles(&self) -> Vec<glam::DVec2> {
+        let tp3 = self.c().poles();
+        let trsf = self.proj().transformation().clone();
+        tp3.iter()
+            .map(|&p| {
+                let q = trsf.apply(p);
+                glam::DVec2::new(q.x, q.y)
+            })
+            .collect()
+    }
+
+    /// OCCT Poles(aCurve, TP) (cxx L510-529) — the same projection over an
+    /// explicit pole array (the segmented 3D BSpline copy).
+    pub fn poles_of(&self, tp3: &[Point3]) -> Vec<glam::DVec2> {
+        let trsf = self.proj().transformation().clone();
+        tp3.iter()
+            .map(|&p| {
+                let q = trsf.apply(p);
+                glam::DVec2::new(q.x, q.y)
+            })
+            .collect()
+    }
+
+    /// OCCT PolesAndWeights(TP, TW) (cxx L532-604) — the raw 3D poles and
+    /// weights, the poles transformed by the projector.
+    pub fn poles_and_weights(&self) -> (Vec<glam::DVec2>, Vec<f64>) {
+        let tp3 = self.c().poles();
+        let tw = self.c().weights();
+        let trsf = self.proj().transformation().clone();
+        let tp = tp3
+            .iter()
+            .map(|&p| {
+                let q = trsf.apply(p);
+                glam::DVec2::new(q.x, q.y)
+            })
+            .collect();
+        (tp, tw)
+    }
+
+    /// OCCT PolesAndWeights(aCurve, TP, TW) (cxx L577-604) — the same
+    /// projection over an explicit pole/weight array.
+    pub fn poles_and_weights_of(&self, tp3: &[Point3], tw: &[f64]) -> (Vec<glam::DVec2>, Vec<f64>) {
+        let trsf = self.proj().transformation().clone();
+        let tp = tp3
+            .iter()
+            .map(|&p| {
+                let q = trsf.apply(p);
+                glam::DVec2::new(q.x, q.y)
+            })
+            .collect();
+        (tp, tw.to_vec())
     }
 
     /// OCCT Resolution (lxx).

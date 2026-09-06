@@ -748,11 +748,81 @@ mod hlr_brep {
             // adaptor stubs (see the module note); the NotDone branch keeps
             // the null edge.
             CurveType::Hyperbola | CurveType::Parabola => {}
-            // case GeomAbs_BezierCurve / GeomAbs_BSplineCurve — the 2D
-            // poles / knots rebuilds of cxx L86-158 need the CurveView
-            // accessors (the module note); the NotDone branch keeps the null
-            // edge.
-            CurveType::Bezier | CurveType::BSpline => {}
+            // case GeomAbs_BezierCurve (cxx L63-84): the 2D Bezier from the
+            // projected poles (+ weights when rational).
+            CurveType::Bezier => {
+                let ec2d = if ec.is_rational() {
+                    let (poles, weights) = ec.poles_and_weights();
+                    rcad_kernel::geom::BezierCurve2 {
+                        control_points: poles,
+                        weights,
+                    }
+                } else {
+                    let poles = ec.poles();
+                    let nb = poles.len();
+                    rcad_kernel::geom::BezierCurve2 {
+                        control_points: poles,
+                        weights: vec![1.0; nb],
+                    }
+                };
+                // BRepLib_MakeEdge2d mke2d(ec2d, sta, end);
+                // if (mke2d.IsDone()) { Edg = mke2d.Edge(); }
+                let mut mke2d = MakeEdge2d::new(arena);
+                mke2d.init_params(&Curve2d::Bezier(ec2d), sta, end);
+                if mke2d.is_done() {
+                    edg = mke2d.edge();
+                }
+            }
+            // case GeomAbs_BSplineCurve (cxx L82-158).
+            CurveType::BSpline => {
+                // theCurve->IsPeriodic() && !GAcurve.IsClosed() — the segment
+                // branch.
+                let ec2d = if ec.is_periodic() && !ec.is_closed() {
+                    // theCurve->Segment(sta, end); knots/mults of the
+                    // segmented copy; the poles projected from the copy
+                    // (cxx L86-107).  Geom_BSplineCurve::Segment is not
+                    // represented in the rcad kernel carrier; the branch is
+                    // dead for the HLR DS (the OutLiner pieces are clamped
+                    // non-periodic curves) — documented unimplemented.
+                    unimplemented!("Geom_BSplineCurve::Segment (HLRBRep::MakeEdge cxx L89)");
+                } else {
+                    // cxx L109-143: the full 2D rebuild from the raw curve.
+                    let knots = ec.knots();
+                    let mults = ec.multiplicities();
+                    let (poles, weights) = if ec.is_rational() {
+                        ec.poles_and_weights()
+                    } else {
+                        (ec.poles(), Vec::new())
+                    };
+                    // the flat knot vector of the rcad BSpline representation
+                    // (each knot repeated its multiplicity — the
+                    // expand_knots precedent).
+                    let mut knots_flat: Vec<f64> = Vec::new();
+                    for (i, &k) in knots.iter().enumerate() {
+                        for _ in 0..mults[i] {
+                            knots_flat.push(k);
+                        }
+                    }
+                    let weights = if weights.is_empty() {
+                        vec![1.0; poles.len()]
+                    } else {
+                        weights
+                    };
+                    rcad_kernel::geom::BSplineCurve2 {
+                        degree: ec.degree() as usize,
+                        knots: knots_flat,
+                        control_points: poles,
+                        weights,
+                    }
+                };
+                // BRepLib_MakeEdge2d mke2d(ec2d, sta, end);
+                // if (mke2d.IsDone()) { Edg = mke2d.Edge(); }
+                let mut mke2d = MakeEdge2d::new(arena);
+                mke2d.init_params(&Curve2d::BSpline(ec2d), sta, end);
+                if mke2d.is_done() {
+                    edg = mke2d.edge();
+                }
+            }
             // default: the 15-pole degree-1 approximation (cxx L160-186).
             CurveType::Other => {
                 // const int nbPnt = 15;
