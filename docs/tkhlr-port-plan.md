@@ -654,3 +654,9 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 2. **实测排除**：修后 e_same 仍 false → 分裂点不在容器变异器。进一步实证：被探索的 NF 边是**晚于 IntL 的新 TShape**（ptr 段位证明）——它们是 `process_edges` 的 **SplE 分段**（`empty_copy` 新建，OCCT cxx L713-758 忠实翻译，本身正确）。
 3. **真正的机制（已还原）**：OCCT 的轮廓边查找走 `IsSplEEdgeEdge(IntLEdge, E)`——IntL 存原始边，NF 存 SplE 分段，通过 `EdgeHasSplE(IntLEdge) → SplE 列表含 E` 匹配。rcad 的 is_spl_e_edge_edge 已对齐。断点 = **Walking 分支的内部点没有走 insert_vertex 注册**（→ SplE 表按边注册依赖 init_vertex，若无注册则 process_edges 不为这些边建 SplE / 或建了但查询回退原边比较必 false）。对照点：OCCT DSFiller cxx L161-171（walking 分支的 `if (P.IsInternal()) InsertVertex(P, tol, E, DS)`）与 rcad insert_face 非 Restriction 分支的对应语句。
 4. 下 session 首查：rcad insert_face 非 Restriction 分支的 insert_vertex 调用与 OCCT L146-192 逐行对照（重点 L161-171 内部点注册），补齐后 SFDBG 的 int 应转 true。
+
+### 本 session 追加 10（session 13 续：SplE 机制还原完毕，收口点钉死）
+
+静态还原完成 OCCT 的完整匹配机制：insert_face 把 IntL **原始边**推入列表；process_edges（insert 尾）为 DS 注册表中**有内部点注册**的边造 SplE 分段（empty_copy 新 TShape）；process_face 的 IntL 块对 EdgeHasSplE 的边**改加 SplE 分段**；提取查询 IsIntLFaceEdge 走 IsSplEEdgeEdge（SplE 列表含被探索边 → true；无 SplE → 回退原边 IsSame）。
+
+单次运行实测：IntL=51（原始边 ptr 1b08fe6-ec 段）、被探索边 = 1b08fef-ff 段（= SplE 分段，证明 process_face 的 EdgeHasSplE 分支**生效**）→ 但 is_int_l_face_edge 仍 false ⇒ **SplE 映射的键（DS my_edges_vertices 注册表的边句柄）与 IntL 边句柄不一致**，或 SplE 分段与被探索分段非同一 Arc。收口动作（纯读源码可决，无需探针）：(1) rcad data.rs my_edges_vertices 的注册键来源——insert_face Walking 分支谁调 init_vertex（对照 OCCT：walking 分支无 InsertVertex，注册表应仅有 restriction/iso 边 → 则 SplE 空 → process_face 应走 else 加原始边 → 与实测"探索到 SplE 分段"矛盾——即 rcad 的注册表被某种自播种污染，process_edges 对未注册边造了 SplE——对 OCCT L713-758 的 InitEdge/MoreEdge 语义逐行核对即可定位）；(2) 修复后验证 = SFDBG int=true → OutLineV 非空 → mass≈302.685。
