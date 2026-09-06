@@ -126,6 +126,19 @@ impl WalkingData {
             vstart: 0.0,
         }
     }
+
+    /// The deterministic encoding of the OCCT out-of-bounds `wd[I]` read at
+    /// the `I <= nbPath` loop heads (ComputeOpenLine gxx L1486, Perform
+    /// L305/L387, ComputeCloseLine L2112): the LinearVector slot beyond the
+    /// filled range holds indeterminate memory whose etat practically fails
+    /// every `> 11 / < -11 / > 0 / < 0 / > 12` test — encoded as etat 0.
+    fn oob_default() -> Self {
+        WalkingData {
+            etat: 0,
+            ustart: 0.0,
+            vstart: 0.0,
+        }
+    }
 }
 
 /// OCCT Bnd_Range — an interval used for the estimated U/V range of the
@@ -459,12 +472,11 @@ impl IWalking {
 
     /// OCCT Clear (gxx L119-134).
     fn clear(&mut self) {
+        // OCCT: wd1/wd2/nbMultiplicities are 0-based NCollection_LinearVector
+        // filled by Append — slot 0 holds the FIRST point; no dummy slot.
         self.wd1.clear();
         self.wd2.clear();
-        self.wd1.push(WalkingData::dummy());
-        self.wd2.push(WalkingData::dummy());
         self.nb_multiplicities.clear();
-        self.nb_multiplicities.push(-1);
         self.done = false;
         self.seq_ajout.clear();
         self.lines.clear();
@@ -604,6 +616,10 @@ impl IWalking {
                 v_mult.push(v);
             }
         }
+        // OCCT: the LinearVector holds exactly nbPnts1 slots (0-based); the
+        // `I <= nbPath` loop heads read one slot past the end — encoded as a
+        // trailing default whose etat 0 fails every state test.
+        self.wd1.push(WalkingData::oob_default());
 
         for i in 1..=nb_pnts2 {
             let an_ip = &pnts2[i - 1];
@@ -632,6 +648,9 @@ impl IWalking {
             }
             self.wd2.push(a_wd2);
         }
+        // Same one-past-the-end read at the ComputeCloseLine `I <= nbLoop`
+        // head (gxx L2112).
+        self.wd2.push(WalkingData::oob_default());
 
         self.tolerance = [
             // OCCT gxx L244-245 / L358-359: tolerance(1) =
@@ -785,6 +804,9 @@ impl IWalking {
                 v_mult.push(v);
             }
         }
+        // The one-past-the-end read at the `I <= nbPath` loop heads (gxx
+        // L387 seqSingle / L1486 ComputeOpenLine).
+        self.wd1.push(WalkingData::oob_default());
 
         self.tolerance = [
             // OCCT gxx L244-245 / L358-359: tolerance(1) =
