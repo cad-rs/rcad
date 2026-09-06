@@ -730,6 +730,76 @@ pub(crate) fn smoke_run_hlr(
     (v, rg1v, rgnv, outline, h)
 }
 
+/// The eight HLRToShape filter outputs of one exact-algorithm run
+/// (ViewerTest_ObjectCommands.cxx L3308-3326).
+#[allow(dead_code)]
+pub(crate) struct VComputeFilters {
+    /// aVisible[HLRBRep_Sharp] (L3308).
+    pub v: rcad_kernel::topods::Shape,
+    /// aVisible[HLRBRep_OutLine] (L3309).
+    pub outline_v: rcad_kernel::topods::Shape,
+    /// aVisible[HLRBRep_Rg1Line] (L3310).
+    pub rg1_v: rcad_kernel::topods::Shape,
+    /// aVisible[HLRBRep_IsoLine] (L3315).
+    pub iso_v: rcad_kernel::topods::Shape,
+    /// aHidden[HLRBRep_Sharp] (L3319).
+    pub h: rcad_kernel::topods::Shape,
+    /// aHidden[HLRBRep_OutLine] (L3320).
+    pub outline_h: rcad_kernel::topods::Shape,
+    /// aHidden[HLRBRep_Rg1Line] (L3321).
+    pub rg1_h: rcad_kernel::topods::Shape,
+    /// aHidden[HLRBRep_IsoLine] (L3326).
+    pub iso_h: rcad_kernel::topods::Shape,
+}
+
+/// The VComputeHLR exact-algorithm arm (ViewerTest_ObjectCommands.cxx
+/// L3301-3326): Add(aSh, aNbIsolines) / Projector / Update / Hide, then the
+/// eight HLRToShape filter calls in the OCCT order.  The RgN filters stay
+/// unextracted (toShowCNEdges == false, L3311-3313 / L3322-3324).
+pub(crate) fn smoke_run_hlr_vcompute(
+    solid: &rcad_kernel::topods::Shape,
+    brep: rcad_kernel::BRep,
+) -> VComputeFilters {
+    // OCCT L3296-3300: the projector built from the DRAW view frame — the
+    // V3d_XposYnegZpos equivalent: dir (1,-1,1), up (-1,1,2).
+    let proj = SmokeProjector::from_ax2(&SmokeAx2::new(
+        glam::DVec3::ZERO,
+        glam::DVec3::new(1.0, -1.0, 1.0),
+        glam::DVec3::new(1.0, 1.0, 0.0),
+    ));
+
+    let mut algo = SmokeAlgo::new();
+    // OCCT L3302: aHlrAlgo->Add(aSh, aNbIsolines);
+    algo.add(&std::sync::Arc::new(brep), solid, 0);
+    algo.set_projector(&proj);
+    // OCCT L3304: aHlrAlgo->Update();
+    algo.update();
+    // OCCT L3305: aHlrAlgo->Hide();
+    algo.hide();
+
+    let mut hts = SmokeHLRToShape::new(&mut algo);
+    // OCCT L3308-3315: aVisible[...] = filter calls in order.
+    let v = hts.v_compound();
+    let outline_v = hts.out_line_v_compound();
+    let rg1_v = hts.rg1_line_v_compound();
+    let iso_v = hts.iso_line_v_compound();
+    // OCCT L3319-3326: aHidden[...] = filter calls in order.
+    let h = hts.h_compound();
+    let outline_h = hts.out_line_h_compound();
+    let rg1_h = hts.rg1_line_h_compound();
+    let iso_h = hts.iso_line_h_compound();
+    VComputeFilters {
+        v,
+        outline_v,
+        rg1_v,
+        iso_v,
+        h,
+        outline_h,
+        rg1_h,
+        iso_h,
+    }
+}
+
 /// OCCT probe truth (session-18, bug25813_1): after the Load/ExploreFace
 /// pass the small-cylinder lateral face carries a two-edge IntL wire (the
 /// silhouette generator pieces) whose w_edge records hold the Internal

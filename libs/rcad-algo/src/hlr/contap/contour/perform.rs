@@ -193,18 +193,6 @@ pub(crate) fn perform_domain(c: &mut Contour, domain: &mut dyn ContapDomain) {
         }
 
         let nblines = iwalk.nb_lines();
-        // TEMP-DEBUG
-        if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-            eprintln!(
-                "[CWDBG] nb_point_rst={} nb_point_ins={} seqpdep={} seqpins={} iwalk_done={} nblines={}",
-                nb_point_rst,
-                nb_point_ins,
-                seqpdep.len(),
-                seqpins.len(),
-                iwalk.is_done(),
-                nblines
-            );
-        }
         for j in 1..=nblines {
             let iwline = iwalk.value(j);
             let nbpts = iwline.nb_points();
@@ -361,12 +349,6 @@ pub(crate) fn perform_domain(c: &mut Contour, domain: &mut dyn ContapDomain) {
             compute_internal_points(&mut theline, c.my_sfunc(), eps_u, eps_v);
             line_constructor(c.slin_mut(), domain, &mut theline, &*surf); //-- lbr
             theline.reset_seq_of_vertex();
-            if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-                eprintln!(
-                    "[CWDBG] after line_constructor j={j}: contour nb_lines={}",
-                    c.slin().len()
-                );
-            }
         }
 
         // cxx L1839-1870 — the crossing-vertex multiple marking.
@@ -395,36 +377,6 @@ pub(crate) fn perform_domain(c: &mut Contour, domain: &mut dyn ContapDomain) {
                 }
             }
         }
-    }
-
-    // TEMP-DEBUG
-    if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-        for (li, l) in c.slin().iter().enumerate() {
-            let vinfo: Vec<String> = (1..=l.nb_vertex())
-                .map(|iv| {
-                    let vt = l.vertex(iv);
-                    format!(
-                        "[onarc={} mult={} par={:.3}]",
-                        vt.is_on_arc(),
-                        vt.is_multiple(),
-                        vt.parameter_on_line()
-                    )
-                })
-                .collect();
-            eprintln!(
-                "[SLIN] {} typ={:?} nbpnts={} trans={:?} vertices={:?}",
-                li + 1,
-                l.type_contour(),
-                if l.type_contour() == crate::hlr::contap::i_type::IType::Walking {
-                    l.nb_pnts()
-                } else {
-                    0
-                },
-                l.transition_on_s(),
-                vinfo
-            );
-        }
-        eprintln!("[SLIN] total={}", c.slin().len());
     }
 
     // jag 940620 On ajoute le traitement des restrictions solutions.

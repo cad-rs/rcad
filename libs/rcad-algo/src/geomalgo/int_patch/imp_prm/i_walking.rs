@@ -127,11 +127,14 @@ impl WalkingData {
         }
     }
 
-    /// The deterministic encoding of the OCCT out-of-bounds `wd[I]` read at
-    /// the `I <= nbPath` loop heads (ComputeOpenLine gxx L1486, Perform
-    /// L305/L387, ComputeCloseLine L2112): the LinearVector slot beyond the
-    /// filled range holds indeterminate memory whose etat practically fails
-    /// every `> 11 / < -11 / > 0 / < 0 / > 12` test — encoded as etat 0.
+    /// The deterministic encoding of the OCCT out-of-bounds `wd[I]` read in
+    /// the WITHOUT-interior Perform (gxx L317-391): that entry point has no
+    /// Clear() call, so on a fresh object the fill starts at slot 0 and the
+    /// `I <= nbPath` loop heads read one slot past the filled range —
+    /// indeterminate memory whose etat practically fails every
+    /// `> 11 / < -11 / > 0 / < 0 / > 12` test, encoded as etat 0.
+    /// (The with-interior Perform is exempt: Clear() prepends the dummy
+    /// slot, keeping every read aligned and in bounds.)
     fn oob_default() -> Self {
         WalkingData {
             etat: 0,
@@ -470,13 +473,18 @@ impl IWalking {
         self.epsilon = epsilon * epsilon;
     }
 
-    /// OCCT Clear (gxx L119-134).
+    /// OCCT Clear (gxx L110-137) — clears the containers and appends a dummy
+    /// WalkingData (etat=-10) to wd1/wd2 and -1 to nbMultiplicities, "to
+    /// maintain start index of 1": the 0-based NCollection_LinearVector
+    /// therefore holds [dummy, point 1 .. point N] and every algorithm loop
+    /// `I = 1 ..= N` reads the aligned point, in bounds.
     fn clear(&mut self) {
-        // OCCT: wd1/wd2/nbMultiplicities are 0-based NCollection_LinearVector
-        // filled by Append — slot 0 holds the FIRST point; no dummy slot.
         self.wd1.clear();
         self.wd2.clear();
+        self.wd1.push(WalkingData::dummy());
+        self.wd2.push(WalkingData::dummy());
         self.nb_multiplicities.clear();
+        self.nb_multiplicities.push(-1);
         self.done = false;
         self.seq_ajout.clear();
         self.lines.clear();
@@ -616,10 +624,8 @@ impl IWalking {
                 v_mult.push(v);
             }
         }
-        // OCCT: the LinearVector holds exactly nbPnts1 slots (0-based); the
-        // `I <= nbPath` loop heads read one slot past the end — encoded as a
-        // trailing default whose etat 0 fails every state test.
-        self.wd1.push(WalkingData::oob_default());
+        // (Clear() prepended the dummy slot: wd1 = [dummy, p1 .. pN] and the
+        // `I <= nbPath` loops read p1 .. pN aligned, in bounds — no tail.)
 
         for i in 1..=nb_pnts2 {
             let an_ip = &pnts2[i - 1];
@@ -648,9 +654,8 @@ impl IWalking {
             }
             self.wd2.push(a_wd2);
         }
-        // Same one-past-the-end read at the ComputeCloseLine `I <= nbLoop`
-        // head (gxx L2112).
-        self.wd2.push(WalkingData::oob_default());
+        // (Same alignment for wd2 = [dummy, loop 1 .. loop M]; ComputeCloseLine
+        // reads `I <= nbLoop` in bounds.)
 
         self.tolerance = [
             // OCCT gxx L244-245 / L358-359: tolerance(1) =
@@ -687,35 +692,6 @@ impl IWalking {
             self.compute_close_line(&u_mult, &v_mult, pnts1, pnts2, func, &mut rajout);
         }
 
-        // TEMP-DEBUG
-        if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-            eprintln!(
-                "[IWDBG] domain um={} umax={} vm={} vmax={} tol={:?} ranges u={:?} v={:?}",
-                self.um, self.um_max, self.vm, self.vm_max, self.tolerance,
-                (self.my_s_range_u.a, self.my_s_range_u.b, self.my_s_range_u.is_void),
-                (self.my_s_range_v.a, self.my_s_range_v.b, self.my_s_range_v.is_void)
-            );
-            for i in 1..self.wd1.len() {
-                eprintln!(
-                    "[IWDBG] wd1[{}] etat={} u={} v={}",
-                    i, self.wd1[i].etat, self.wd1[i].ustart, self.wd1[i].vstart
-                );
-            }
-            for i in 1..self.wd2.len() {
-                eprintln!(
-                    "[IWDBG] wd2[{}] etat={} u={} v={}",
-                    i, self.wd2[i].etat, self.wd2[i].ustart, self.wd2[i].vstart
-                );
-            }
-            eprintln!(
-                "[IWDBG] after walking: lines={} alone={:?} ajout={:?} singles={}",
-                self.lines.len(),
-                self.seq_alone,
-                self.seq_ajout,
-                self.seq_single.len()
-            );
-        }
-
         if self.to_fill_holes {
             let max_nb_iter = 10;
             let mut nb_iter = 0;
@@ -746,13 +722,6 @@ impl IWalking {
             if self.wd1[i].etat > 0 {
                 self.seq_single.push(pnts1[i - 1].clone());
             }
-        }
-        if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-            eprintln!(
-                "[IWDBG] perform end: nb_lines={} lengths={:?}",
-                self.lines.len(),
-                self.lines.iter().map(|l| l.nb_points()).collect::<Vec<_>>()
-            );
         }
         self.done = true;
     }
@@ -841,13 +810,6 @@ impl IWalking {
             if self.wd1[i].etat > 0 {
                 self.seq_single.push(pnts1[i - 1].clone());
             }
-        }
-        if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-            eprintln!(
-                "[IWDBG] perform(no-interior) end: nb_lines={} lengths={:?}",
-                self.lines.len(),
-                self.lines.iter().map(|l| l.nb_points()).collect::<Vec<_>>()
-            );
         }
         self.done = true;
     }
@@ -1070,9 +1032,7 @@ impl IWalking {
                         {
                             i_candidates.push(i);
                             sq_dist_candidates.push(dup * dup + dvp * dvp);
-                        } else if i < self.nb_multiplicities.len()
-                            && self.nb_multiplicities[i] > 0
-                            && i_candidates.is_empty()
+                        } else if self.nb_multiplicities[i] > 0 && i_candidates.is_empty()
                         {
                             let mut n: usize = 0;
                             for k in 1..i {
@@ -1080,12 +1040,11 @@ impl IWalking {
                             }
                             let mut j = n;
                             while j < n + self.nb_multiplicities[i] as usize {
-                                if j < u_mult.len()
-                                    && ((up - u_mult[j]) * (uv[0] - u_mult[j])
-                                        + (vp - v_mult[j]) * (uv[1] - v_mult[j])
-                                        < 0.0
-                                        || (uv[0] - u_mult[j]).abs() < tolu
-                                            && (uv[1] - v_mult[j]).abs() < tolv)
+                                if (up - u_mult[j]) * (uv[0] - u_mult[j])
+                                    + (vp - v_mult[j]) * (uv[1] - v_mult[j])
+                                    < 0.0
+                                    || (uv[0] - u_mult[j]).abs() < tolu
+                                        && (uv[1] - v_mult[j]).abs() < tolv
                                 {
                                     *irang = i as i32;
                                     arrive = true;
@@ -1236,22 +1195,20 @@ impl IWalking {
                     || ((uv1 - utest).abs() < tolu && (uv2 - vtest).abs() < tolv)
                 {
                     *irang = i as i32;
-                } else if i < self.nb_multiplicities.len() && self.nb_multiplicities[i] > 0 {
+                } else if self.nb_multiplicities[i] > 0 {
                     let mut n: usize = 0;
                     for k in 1..i {
                         n += self.nb_multiplicities[k] as usize;
                     }
                     let mut j = n;
                     while j < n + self.nb_multiplicities[i] as usize {
-                        if j < u_mult.len() {
-                            let u_multj = u_mult[j] / deltau;
-                            let v_multj = v_mult[j] / deltav;
-                            if ((up - u_multj) * (uv1 - u_multj) + (vp - v_multj) * (uv2 - v_multj) < 0.0)
-                                || ((uv1 - u_multj).abs() < tolu && (uv2 - v_multj).abs() < tolv)
-                            {
-                                *irang = i as i32;
-                                break;
-                            }
+                        let u_multj = u_mult[j] / deltau;
+                        let v_multj = v_mult[j] / deltav;
+                        if ((up - u_multj) * (uv1 - u_multj) + (vp - v_multj) * (uv2 - v_multj) < 0.0)
+                            || ((uv1 - u_multj).abs() < tolu && (uv2 - v_multj).abs() < tolv)
+                        {
+                            *irang = i as i32;
+                            break;
                         }
                         j += 1;
                     }
@@ -1699,10 +1656,6 @@ impl IWalking {
             }
             if cosi2 < COS_REF_3D {
                 // angle 3d too great.
-                // TEMP-DEBUG
-                if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-                    eprintln!("[TDEF] reject 3d angle: cosi={cosi} cosi2={cosi2} corde={corde:?} pd3d={:?}", self.previous_d3d);
-                }
                 *step /= 2.0;
                 let step_u = (*step * self.previous_d2d.x).abs();
                 let step_v = (*step * self.previous_d2d.y).abs();
@@ -1748,10 +1701,6 @@ impl IWalking {
         {
             let mut cosi2 = cosi * cosi / duv;
             if cosi2 < COS_REF_2D || cosi < 0.0 {
-                // TEMP-DEBUG
-                if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-                    eprintln!("[TDEF] reject 2d angle: cosi={cosi} cosi2={cosi2} duv={duv}");
-                }
                 *step /= 2.0;
                 let step_u = (*step * self.previous_d2d.x).abs();
                 let step_v = (*step * self.previous_d2d.y).abs();
@@ -1770,10 +1719,6 @@ impl IWalking {
             cosi2 = cosi * cosi / func.direction_3d().length_squared() / norme;
             if cosi2 < COS_REF_3D {
                 // angle 3d too great.
-                // TEMP-DEBUG
-                if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-                    eprintln!("[TDEF] reject chord-vs-d3d: cosi={cosi} cosi2={cosi2} norme={norme}");
-                }
                 *step /= 2.0;
                 let step_u = (*step * self.previous_d2d.x).abs();
                 let step_v = (*step * self.previous_d2d.y).abs();
@@ -2005,35 +1950,8 @@ impl IWalking {
                         born_inf[1] = self.vm;
                         born_sup[1] = self.vm_max;
                     }
-                    // TEMP-DEBUG
-                    if std::env::var("RCAD_IWALK_DEBUG").is_ok() && cl.nb_points() <= 2 {
-                        let r = rs_nld.root();
-                        let rstr = if rs_nld.is_done() {
-                            format!("{:?}", r)
-                        } else {
-                            "n/a".to_string()
-                        };
-                        eprintln!(
-                            "[OPL] i={} pts={} sgn={} cadre={} done={} root={} sol={:?} uvap={:?} pas={:.3e} prevstat={:?} d2d={:?} d3d={:?} p3d={:?} prev={:?}",
-                            i, cl.nb_points(), step_sign, cadre, rs_nld.is_done(),
-                            func.root(), rstr, uvap, pas_c, a_status,
-                            self.previous_d2d, self.previous_d3d,
-                            func.point(), self.previous_point.value()
-                        );
-                    }
                     if rs_nld.is_done() {
                         if func.root().abs() > func.tolerance() {
-                            // TEMP-DEBUG
-                            if std::env::var("RCAD_IWALK_DEBUG").is_ok() && cl.nb_points() <= 200 {
-                                eprintln!(
-                                    "[BADROOT] i={} pts={} root={:.3e} uvap={:?} pas={:.3e}",
-                                    i,
-                                    cl.nb_points(),
-                                    func.root(),
-                                    uvap,
-                                    pas_c
-                                );
-                            }
                             pas_c /= 2.0;
                             pas_cu = (pas_c * self.previous_d2d.x).abs();
                             pas_cv = (pas_c * self.previous_d2d.y).abs();
@@ -2239,18 +2157,6 @@ impl IWalking {
                         }
                     } else {
                         // No numerical solution.
-                        // TEMP-DEBUG
-                        if std::env::var("RCAD_IWALK_DEBUG").is_ok() && cl.nb_points() <= 200 {
-                            eprintln!(
-                                "[NOTDONE] i={} pts={} uvap={:?} pas={:.3e} root={:.3e} sgn={}",
-                                i,
-                                cl.nb_points(),
-                                uvap,
-                                pas_c,
-                                func.root(),
-                                step_sign
-                            );
-                        }
                         pas_c /= 2.0;
                         pas_cu = (pas_c * self.previous_d2d.x).abs();
                         pas_cv = (pas_c * self.previous_d2d.y).abs();
@@ -2274,19 +2180,6 @@ impl IWalking {
 
                 if arrive {
                     cl.set_tangency_at_end(tgtend);
-                    // TEMP-DEBUG
-                    if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-                        eprintln!(
-                            "[OPEN-END] i={} n={} pts={} arrive_reason: status={:?} arret_ajout={} cadre={} last_uv={:?}",
-                            i,
-                            n,
-                            cl.nb_points(),
-                            a_status,
-                            arret_ajout,
-                            cadre,
-                            cl.value(cl.nb_points()).value_on_surface(self.reversed)
-                        );
-                    }
                     self.lines.push(cl);
                     movementdirectioninfo[i] = 0;
                     if self.wd1[i].etat > 0 {
@@ -3191,18 +3084,17 @@ fn test_passed_solution_with_negative_state<F: IWFunction>(
                     arrive = true;
                     uv[0] = utest;
                     uv[1] = vtest;
-                } else if i < nb_multiplicities.len() && nb_multiplicities[i] > 0 {
+                } else if nb_multiplicities[i] > 0 {
                     let mut n: usize = 0;
                     for k in 1..i {
                         n += nb_multiplicities[k] as usize;
                     }
                     let mut j = n;
                     while j < n + nb_multiplicities[i] as usize {
-                        if j < u_mult.len()
-                            && ((prev_up - u_mult[j]) * (uv[0] - u_mult[j])
-                                + (prev_vp - v_mult[j]) * (uv[1] - v_mult[j])
-                                < 0.0
-                                || (uv[0] - u_mult[j]).abs() < tolu && (uv[1] - v_mult[j]).abs() < tolv)
+                        if (prev_up - u_mult[j]) * (uv[0] - u_mult[j])
+                            + (prev_vp - v_mult[j]) * (uv[1] - v_mult[j])
+                            < 0.0
+                            || (uv[0] - u_mult[j]).abs() < tolu && (uv[1] - v_mult[j]).abs() < tolv
                         {
                             *irang = i as i32;
                             arrive = true;

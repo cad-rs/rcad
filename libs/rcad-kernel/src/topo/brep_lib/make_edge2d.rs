@@ -388,9 +388,12 @@ impl<'a> MakeEdge2d<'a> {
     }
 
     /// OCCT `BRepLib_MakeVertex` (BRepLib_MakeVertex.cxx) — `B.MakeVertex(V,
-    /// Point(P), Precision::Confusion())` through the arena.
+    /// Point(P), Precision::Confusion())` through the arena.  MakeVertex is
+    /// always a new TShape (the position-quantized [`BRep::add_tvertex`]
+    /// registry has no OCCT counterpart and must not serve the
+    /// OCCT-translated builders).
     fn make_vertex(&mut self, p: DVec3) -> Shape {
-        self.brep.add_tvertex(p)
+        self.brep.add_tvertex_unique(p)
     }
 
     /// OCCT `Init(C, VV1, VV2, pp1, pp2)` (cxx L466-632) — this one really

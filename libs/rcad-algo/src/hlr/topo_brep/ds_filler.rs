@@ -173,13 +173,6 @@ pub fn insert(
             }
             // FO.Perform(Surface, Domain) — Domain = BRT.GetTopolTool().
             fo.perform(&surface, mst[domain_pos].1.get_topol_tool());
-            if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-                eprintln!(
-                    "[CWDBG] ds_filler call site: done={} nb_lines={}",
-                    fo.is_done(),
-                    if fo.is_done() { fo.nb_lines() } else { 0 }
-                );
-            }
             if fo.is_done() {
                 if !fo.is_empty() {
                     insert_face(brep, f, &s1, fo, ds, with_pcurve);
@@ -229,20 +222,6 @@ pub(crate) fn insert_face(
     // not translated (OCCT keeps it commented out).
 
     let nb_lines = fo.nb_lines();
-    if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-        let types: Vec<&str> = (1..=nb_lines)
-            .map(|i| match fo.line(i).type_contour() {
-                IType::Restriction => "Rst",
-                IType::Lin => "Lin",
-                IType::Circle => "Cir",
-                IType::Walking => "Wlk",
-            })
-            .collect();
-        eprintln!(
-            "[CWDBG] insert_face: nb_lines={} types={:?}",
-            nb_lines, types
-        );
-    }
     for cur_line in 1..=nb_lines {
         let line = fo.line(cur_line);
         let nb_points = line.nb_vertex();
@@ -813,17 +792,6 @@ pub(crate) fn insert_face(
                 }
             }
         }
-    }
-    if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-        let int_l = ds.face_int_l(f);
-        let ptrs: Vec<String> = int_l.iter().take(4).map(|x| format!("{:x}", x.ptr_id())).collect();
-        eprintln!(
-            "[CWDBG] insert_face END: int_l={} out_l={} key_ptr={:x} first_int_l_ptrs={:?}",
-            int_l.len(),
-            ds.face_out_l(f).len(),
-            f.ptr_id(),
-            ptrs
-        );
     }
 }
 

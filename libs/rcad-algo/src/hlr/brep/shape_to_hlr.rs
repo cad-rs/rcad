@@ -936,59 +936,6 @@ fn explore_face(
             let int = s.data_structure().is_int_l_face_edge(f, &e);
             let iso = s.data_structure().is_iso_l_face_edge(f, &e);
             let out = s.data_structure().is_out_l_face_edge(f, &e);
-            if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-                let has_int_l = s.data_structure().face_has_int_l(f);
-                let int_l_len = if has_int_l {
-                    s.data_structure().face_int_l(f).len()
-                } else {
-                    0
-                };
-                let same = int_l_len > 0
-                    && s.data_structure()
-                        .face_int_l(f)
-                        .iter()
-                        .any(|x| x.is_same(&e));
-                let ds0 = if int_l_len > 0 {
-                    let x0 = s.data_structure().face_int_l(f)[0].clone();
-                    let has_spl = s.data_structure().edge_has_spl_e(&x0);
-                    let spl_len = if has_spl {
-                        s.data_structure().edge_spl_e(&x0).len()
-                    } else {
-                        0
-                    };
-                    let spl0_ptr = if spl_len > 0 {
-                        format!("{:x}", s.data_structure().edge_spl_e(&x0)[0].ptr_id())
-                    } else {
-                        "-".into()
-                    };
-                    format!(
-                        "i0={:x} has_spl={} spl_len={} spl0={} same_spl0={}",
-                        x0.ptr_id(),
-                        has_spl,
-                        spl_len,
-                        spl0_ptr,
-                        spl_len > 0 && s.data_structure().edge_spl_e(&x0)[0].is_same(&e)
-                    )
-                } else {
-                    "-".into()
-                };
-                let e_kind = e.as_edge().map(|ed| {
-                    match ed.curve {
-                        Some(rcad_kernel::geom::Curve3::Line(_)) => "L",
-                        Some(rcad_kernel::geom::Curve3::Circle(_)) => "C",
-                        Some(rcad_kernel::geom::Curve3::Ellipse(_)) => "E",
-                        Some(rcad_kernel::geom::Curve3::BSpline(_)) => "B",
-                        _ => "?",
-                    }
-                });
-                eprintln!(
-                    "[SFDBG] int={int} out={out} iso={iso} has_int_l={has_int_l} int_l_len={int_l_len} e_same_any={same} {ds0} e_ptr={:x} e_idx={} e_kind={} e_rng={:?}",
-                    e.ptr_id(),
-                    e.index,
-                    e_kind.unwrap_or("?"),
-                    e.as_edge().map(|ed| ed.range)
-                );
-            }
             // OCCT L235: bool Dbl = BRepTools::IsReallyClosed(E, theFace);
             let dbl = brep_tools_is_really_closed(brep, &e, &the_face);
             // OCCT L236: fd.SetWEdge(nw, ne, ie, anOrientE, Out, Int, Dbl, Iso);

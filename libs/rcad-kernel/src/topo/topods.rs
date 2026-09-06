@@ -511,12 +511,29 @@ impl BRep {
         }
         out
     }
+    /// rcad legacy position-quantized vertex identity — NO OCCT
+    /// counterpart.  OCCT never dedups by position at vertex creation; the
+    /// quantized registry exists for the flows that do not yet carry the
+    /// OCCT handle-sharing (each one's alignment is tracked separately).
+    /// The OCCT `BRep_Builder::MakeVertex` translation is
+    /// [`BRep::add_tvertex_unique`].
     pub fn add_tvertex(&mut self, point: DVec3) -> Shape {
-        // OCCT-aligned: identity-based sharing �?same position �?same TShape::Vertex.
         let key = VertexKey::from(point);
         if let Some(sr) = self.vert_by_pos.get(&key) {
             return sr.clone();
         }
+        let sr = self.add_tvertex_unique(point);
+        self.vert_by_pos.insert(key, sr.clone());
+        sr
+    }
+
+    /// OCCT `BRep_Builder::MakeVertex(V, Point(P), Tol)` — always a new
+    /// TShape::Vertex (BRepLib_MakeVertex.cxx: `B.MakeVertex(V, Point(P),
+    /// Precision::Confusion())`).  Vertex sharing in OCCT comes from
+    /// explicitly re-using a vertex handle, never from a position lookup;
+    /// the OCCT-translated builders (BRepLib_MakeEdge's BRepLib_MakeVertex)
+    /// must therefore create fresh endpoints.
+    pub fn add_tvertex_unique(&mut self, point: DVec3) -> Shape {
         let index = self.tshapes.len();
         let tshape = Arc::new(TShape::Vertex(TVertexData {
             my_shapes: Vec::new(),
@@ -537,7 +554,6 @@ impl BRep {
             orientation: Orientation::Forward,
             location: 0,
         };
-        self.vert_by_pos.insert(key, sr.clone());
         sr
     }
 
@@ -1255,6 +1271,26 @@ impl BRep {
                 TShape::Edge(ed) => {
                     if let Some(ref mut curve) = ed.curve {
                         xf_curve(curve, mat);
+                    }
+                    // OCCT BRepTools_TrsfModification carries the edge
+                    // regularities through the transform: BRepTools_Modifier.cxx
+                    // L191-195 re-establishes M->Continuity(CurE, F1, F2, ...)
+                    // (TrsfModification.cxx L441-449 = the original
+                    // BRep_Tool::Continuity) on the transformed faces via
+                    // aBB.Continuity.  The rcad in-place transform is the
+                    // equivalent rebuild: the stored CurveOn2Surfaces surfaces
+                    // are absolute values and must be transformed with the
+                    // faces (BRep_Tool::Continuity(E, F1, F2) matches them by
+                    // value — a stale untransformed surface silently degrades
+                    // the seam regularity to C0).
+                    for cr in &mut ed.representations {
+                        if let CurveRepresentation::CurveOn2Surfaces {
+                            surface1, surface2, ..
+                        } = cr
+                        {
+                            xf_surface(surface1, mat);
+                            xf_surface(surface2, mat);
+                        }
                     }
                 }
                 TShape::Face(fd) => {

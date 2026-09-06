@@ -837,17 +837,6 @@ impl InternalAlgo {
             // int i, j, n = myShapes.Length();
             let n = self.my_shapes.len();
 
-            if crate::hlr::brep::data::Data::trace_enabled() {
-                for (k, sb) in self.my_shapes.iter().enumerate() {
-                    let (v1, v2, e1, e2, f1, f2) = sb.bounds();
-                    eprintln!(
-                        "[TRACE] hide: bound {} of {} = v[{v1},{v2}] e[{e1},{e2}] f[{f1},{f2}]",
-                        k + 1,
-                        n
-                    );
-                }
-            }
-
             if self.my_debug {
                 println!(" Total hiding");
             }

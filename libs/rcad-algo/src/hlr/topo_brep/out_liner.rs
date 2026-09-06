@@ -517,16 +517,6 @@ impl OutLiner {
         // OCCT L157: if (myDS.FaceHasIntL(F)) — get the InternalOutLines on
         // face F.
         if self.my_ds.face_has_int_l(f) {
-            if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-                let il = self.my_ds.face_int_l(f);
-                let p0 = il.iter().take(3).map(|x| format!("{:x}", x.ptr_id())).collect::<Vec<_>>();
-                eprintln!(
-                    "[PFDBG] process_face IntL: f_ptr={:x} len={} first={:?}",
-                    f.ptr_id(),
-                    il.len(),
-                    p0
-                );
-            }
             // OCCT L159: TopoDS_Wire W; (null until MakeWire).
             let mut w = Shape::null();
 
@@ -668,16 +658,6 @@ impl OutLiner {
             // OCCT L254-257: if (!W.IsNull()) { B.Add(NF, W); } — add the new
             // wire in the new face.
             if !w.is_null() {
-                if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
-                    let wd = w.as_wire().map(|x| x.edges.len()).unwrap_or(0);
-                    let nfc = nf
-                        .as_face()
-                        .map(|x| x.my_shapes.len())
-                        .unwrap_or(0);
-                    eprintln!(
-                        "[PFDBG] IntL wire added to NF: wire_edges={wd} nf_children={nfc}"
-                    );
-                }
                 builder_add(brep, &nf, &w);
             }
         }

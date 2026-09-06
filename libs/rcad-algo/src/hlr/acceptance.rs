@@ -33,9 +33,13 @@ use std::path::PathBuf;
 
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
+use rcad_kernel::topo::topods::{BRep, BRepBuilder};
 use rcad_kernel::topods::{Orientation, Shape, TShape};
 
-use super::tests::{compound_edges, ellipse_arc_len, smoke_box_solid, smoke_run_hlr, SegSummary};
+use super::tests::{
+    compound_edges, ellipse_arc_len, smoke_box_solid, smoke_run_hlr, smoke_run_hlr_vcompute,
+    SegSummary, VComputeFilters,
+};
 
 // ---- reference data location ----
 
@@ -264,31 +268,6 @@ fn compound_edge_count(s: &Shape) -> usize {
     out
 }
 
-/// Number of distinct endpoint vertices in a compound tree (keyed by TShape
-/// pointer — the nbshapes-style unique shape count over the result compound).
-fn compound_vertex_count(s: &Shape) -> usize {
-    if s.is_null() {
-        return 0;
-    }
-    fn walk(s: &Shape, seen: &mut HashSet<u64>) {
-        match &*s.data {
-            TShape::Compound(c) => {
-                for ch in c {
-                    walk(ch, seen);
-                }
-            }
-            TShape::Edge(ed) => {
-                seen.insert(ed.first.ptr_id());
-                seen.insert(ed.last.ptr_id());
-            }
-            _ => {}
-        }
-    }
-    let mut seen = HashSet::new();
-    walk(s, &mut seen);
-    seen.len()
-}
-
 /// (v, rg1v, rgnv, outline) tuple access: the four visible compounds of
 /// [`smoke_run_hlr`].
 struct VisibleCompounds {
@@ -299,26 +278,6 @@ struct VisibleCompounds {
 }
 
 impl VisibleCompounds {
-    /// The DRAW `COMPUTE_HLR` result composition with toShowCNEdges == false
-    /// (ViewerTest_ObjectCommands.cxx L3288-3331): VCompound +
-    /// OutLineVCompound + Rg1LineVCompound (+ IsoLineVCompound); the
-    /// RgNLineVCompound (the CN seam edges) is NOT part of the emitted
-    /// result. The OCCT reference masses measure exactly this composition.
-    fn result_mass(&self) -> f64 {
-        compound_mass(&self.v)
-            + compound_mass(&self.rg1v)
-            + compound_mass(&self.outline)
-    }
-    fn result_edges(&self) -> usize {
-        compound_edge_count(&self.v)
-            + compound_edge_count(&self.rg1v)
-            + compound_edge_count(&self.outline)
-    }
-    fn result_vertices(&self) -> usize {
-        compound_vertex_count(&self.v)
-            + compound_vertex_count(&self.rg1v)
-            + compound_vertex_count(&self.outline)
-    }
     fn total_mass(&self) -> f64 {
         compound_mass(&self.v)
             + compound_mass(&self.rg1v)
@@ -330,12 +289,6 @@ impl VisibleCompounds {
             + compound_edge_count(&self.rg1v)
             + compound_edge_count(&self.rgnv)
             + compound_edge_count(&self.outline)
-    }
-    fn total_vertices(&self) -> usize {
-        compound_vertex_count(&self.v)
-            + compound_vertex_count(&self.rg1v)
-            + compound_vertex_count(&self.rgnv)
-            + compound_vertex_count(&self.outline)
     }
     /// The OCCT-style diagnostic print: per-compound curve-kind/length lists.
     fn dump(&self, tag: &str) {
@@ -362,6 +315,98 @@ fn assert_rel(actual: f64, reference: f64, what: &str) {
         rel <= 1.0e-2,
         "{what}: rcad {actual} vs OCCT reference {reference} (rel err {rel:.3e} > 1e-2)"
     );
+}
+
+/// The AGENTS.md valid-digit line: the rcad value must reproduce the OCCT
+/// reference through its printed significant digits.  The runner lprops
+/// values carry 17 digits and the DRAW references 5-6; the pin is the
+/// 6-digit reading of the reference (rel <= 1e-7 leaves the half-ulp of the
+/// last printed digit plus platform fp noise as the only slack).
+fn assert_valid_digits(actual: f64, reference: f64, what: &str) {
+    let rel = ((actual - reference) / reference).abs();
+    assert!(
+        rel <= 1.0e-7,
+        "{what}: rcad {actual} vs OCCT reference {reference} (rel err {rel:.3e} > 1e-7)"
+    );
+}
+
+/// The DRAW-value line: the rcad value must round to the OCCT printed value
+/// (the half-ulp of its last printed digit).
+fn assert_printed_value(actual: f64, printed: f64, what: &str) {
+    assert!(
+        (actual - printed).abs() <= 5.0e-4,
+        "{what}: rcad {actual} does not round to the printed OCCT value {printed}"
+    );
+}
+
+// ---- the OCCT VComputeHLR result assembly ----
+
+/// The nbshapes-style unique shape counts of a result tree — the runner's
+/// `nbshapes` (BRepTools_ShapeSet::Add(S) + per-type unique counts, dedup by
+/// IsSame = TShape + Location; the rcad ptr_id stands in for the identity).
+/// Returns (vertex, edge, compound).
+fn nbshapes_counts(s: &Shape) -> (usize, usize, usize) {
+    if s.is_null() {
+        return (0, 0, 0);
+    }
+    fn walk(s: &Shape, seen_v: &mut HashSet<u64>, seen_e: &mut HashSet<u64>, nc: &mut usize) {
+        match &*s.data {
+            TShape::Compound(c) => {
+                *nc += 1;
+                for ch in c {
+                    walk(ch, seen_v, seen_e, nc);
+                }
+            }
+            TShape::Edge(ed) => {
+                if seen_e.insert(s.ptr_id()) {
+                    seen_v.insert(ed.first.ptr_id());
+                    seen_v.insert(ed.last.ptr_id());
+                }
+            }
+            TShape::Vertex(_) => {
+                seen_v.insert(s.ptr_id());
+            }
+            _ => {}
+        }
+    }
+    let mut seen_v = HashSet::new();
+    let mut seen_e = HashSet::new();
+    let mut nc = 0;
+    walk(s, &mut seen_v, &mut seen_e, &mut nc);
+    (seen_v.len(), seen_e.len(), nc)
+}
+
+/// OCCT ViewerTest_ObjectCommands.cxx L3335-3350: aCompVis / aCompHid are
+/// made unconditionally — with `-showHiddenEdges` off the hidden filters are
+/// never extracted, aCompHid stays an EMPTY (but non-null) compound and is
+/// still counted by nbshapes (the box reference: COMPOUND 4 = aCompRes +
+/// aCompVis + empty aCompHid + VCompound) — then aCompRes gets aCompVis and
+/// aCompHid.  The non-null filters enter in the HLRBRep_TypeOfResultingEdge
+/// order (IsoLine=0, OutLine=1, Rg1Line=2, RgNLine=3, Sharp=4); the RgN
+/// slots are never filled (toShowCNEdges == false).
+fn vcompute_result_tree(f: &VComputeFilters, show_hidden: bool) -> Shape {
+    let mut b = BRepBuilder::new();
+    let mut arena = BRep::new();
+
+    let mut vis: Vec<Shape> = Vec::new();
+    for c in [&f.iso_v, &f.outline_v, &f.rg1_v, &f.v] {
+        if !c.is_null() {
+            vis.push(c.clone());
+        }
+    }
+    let a_comp_vis = b.make_compound(&mut arena, vis);
+
+    let mut hid: Vec<Shape> = Vec::new();
+    if show_hidden {
+        for c in [&f.iso_h, &f.outline_h, &f.rg1_h, &f.h] {
+            if !c.is_null() {
+                hid.push(c.clone());
+            }
+        }
+    }
+    let a_comp_hid = b.make_compound(&mut arena, hid);
+
+    b.make_compound(&mut arena, vec![a_comp_vis, a_comp_hid])
 }
 
 /// The root solid Shape of a BRep pool (the same root-finding rule as
@@ -422,28 +467,20 @@ fn acceptance_box_vs_ref_output() {
 }
 
 /// The `exact_hlr/bug25813_1` DRAW case against
-/// `tests/occt/step_reference/occt_hlr_exact_hlr_bug25813_1.json`:
+/// `tests/occt/step_reference/occt_hlr_exact_hlr_bug25813_1.json` and the
+/// `#### RUN bug25813_1 -algo` block of ref_output.txt:
 /// `pcylinder cc 10 30` / `pcylinder cc2 8 50` / `ttranslate cc2 0 0 2` /
 /// `bfuse a cc cc2`, viewed from dir (1,-1,1) up (-1,1,2) — the same frame
-/// the smoke runner hardcodes. Visible mass vs JSON mass_total (204.19),
-/// visible+hidden vs mass_hidden_total (266.526), visible EDGE 15 and hidden
-/// EDGE 18 (the JSON nbshapes corroboration).
+/// the smoke runner hardcodes.
 ///
-/// IGNORED (remaining exact-HLR gap, measured against the official DRAWEXE
-/// viewer-path truth): OCCT emits 11 sharp arcs (119.275) + 4 outline lines
-/// (84.9156) visible and 3 hidden arcs (62.3361: the big-bottom far half
-/// 25.2237, the z=30 inner-rim far half 20.179, and the big-top far-upper
-/// middle 16.9334). rcad matches everything except that the big-top rim's
-/// far-upper half is drawn as ONE visible arc (25.224) where OCCT splits it
-/// at the small-cylinder outline crossings (x' = +/-8, y' = 27.95) into
-/// 4.1452 + 16.9334 + 4.1452 and hides the middle. rcad visible mass is
-/// therefore 221.12 (rel err 8.3e-2) and hidden 45.40. The two outline
-/// pieces are registered as internal w_edges of the hiding face, but
-/// Data::Intersect's candidate guard (Forward/Reversed only, mirroring
-/// OCCT HLRBRep_Data.cxx L1275) never intersects them; the OCCT mechanism
-/// producing this split is still to be identified. Un-ignore when closed.
+/// The OCCT nbshapes numbers count the whole VComputeHLR result tree
+/// (ViewerTest_ObjectCommands.cxx L3335-3350): the visible-only run is
+/// VERTEX:30 / EDGE:15 / COMPOUND:5 (aCompRes + aCompVis + the empty
+/// aCompHid + VCompound + OutLineVCompound) and the -showHiddenEdges run is
+/// VERTEX:36 / EDGE:18 / COMPOUND:6 (+ HCompound with the 3 hidden arcs /
+/// 6 fresh vertices).  The mass pins run at the AGENTS.md valid-digit line
+/// against the runner's 17-digit lprops values.
 #[test]
-#[ignore = "remaining hider gap: the big-top far-upper arc is not split/hidden at the small-cylinder outline crossings (16.9334)"]
 fn acceptance_bug25813_1_vs_occt_json() {
     let j: serde_json::Value =
         serde_json::from_str(&ref_json_text("occt_hlr_exact_hlr_bug25813_1.json"))
@@ -451,9 +488,13 @@ fn acceptance_bug25813_1_vs_occt_json() {
     let mass_total = j["mass_total"].as_f64().expect("mass_total");
     let mass_hidden_total = j["mass_hidden_total"].as_f64().expect("mass_hidden_total");
     let ref_result_edges = j["nbshapes_result"]["EDGE"].as_u64().expect("EDGE") as usize;
-    let ref_hidden_edges = j["nbshapes_hidden"]["EDGE"].as_u64().expect("EDGE") as usize;
     let ref_result_vertices = j["nbshapes_result"]["VERTEX"].as_u64().expect("VERTEX") as usize;
+    let ref_result_compounds =
+        j["nbshapes_result"]["COMPOUND"].as_u64().expect("COMPOUND") as usize;
+    let ref_hidden_edges = j["nbshapes_hidden"]["EDGE"].as_u64().expect("EDGE") as usize;
     let ref_hidden_vertices = j["nbshapes_hidden"]["VERTEX"].as_u64().expect("VERTEX") as usize;
+    let ref_hidden_compounds =
+        j["nbshapes_hidden"]["COMPOUND"].as_u64().expect("COMPOUND") as usize;
     // The JSON projector frame equals the smoke_run_hlr projector (the
     // V3d_XposYnegZpos view of the DRAW runner).
     let dir: Vec<f64> = j["dir"]
@@ -471,6 +512,12 @@ fn acceptance_bug25813_1_vs_occt_json() {
     assert_eq!(dir, vec![1.0, -1.0, 1.0], "JSON view dir");
     assert_eq!(up, vec![-1.0, 1.0, 2.0], "JSON view up");
 
+    // The runner's 17-digit lprops references (the valid-digit pins).
+    let run = parse_algo_run(&ref_output_text(), "bug25813_1");
+    let ref_mass_total = run.mass_total.expect("bug25813_1 -algo MASS_TOTAL");
+    let ref_mass_hidden_total = run.mass_hidden_total.expect("bug25813_1 -algo MASS_HIDDEN_TOTAL");
+    let ref_mass_hidden_only = run.mass_hidden_only.expect("bug25813_1 -algo MASS_HIDDEN_ONLY");
+
     // The DRAW fixture, built with the rcad primapi equivalents:
     // pcylinder cc 10 30 / pcylinder cc2 8 50 / ttranslate cc2 0 0 2.
     let cc = rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 10.0, 30.0)
@@ -486,56 +533,100 @@ fn acceptance_bug25813_1_vs_occt_json() {
     // bfuse a cc cc2
     let fused = crate::fuse(&cc, &cc2).expect("bfuse a cc cc2");
     let solid = root_solid(&fused);
-    let (v, rg1v, rgnv, outline, h) = smoke_run_hlr(&solid, fused);
-    let vis = VisibleCompounds { v, rg1v, rgnv, outline };
-    vis.dump("bug25813_1");
-    let _ = rgnv;
+
+    // OCCT L3307-3326: the eight HLRToShape filter calls (the extraction is
+    // stateless across calls — InternalCompound resets Used/HideCount at
+    // entry — so one pipeline run feeds both result trees).
+    let f = smoke_run_hlr_vcompute(&solid, fused);
     println!(
-        "ACCEPT bug25813_1: visible mass {} (edges {}, vertices {}) vs mass_total \
-         {mass_total} (edges {ref_result_edges}, vertices {ref_result_vertices}); \
-         hidden mass {} (edges {}, vertices {}) ; combined {} vs mass_hidden_total \
-         {mass_hidden_total}",
-        vis.result_mass(),
-        vis.result_edges(),
-        vis.result_vertices(),
-        compound_mass(&h),
-        compound_edge_count(&h),
-        compound_vertex_count(&h),
-        vis.result_mass() + compound_mass(&h),
+        "ACCEPT bug25813_1 filters: V({}) OutLineV({}) Rg1V({}) IsoV({}) | \
+         H({}) OutLineH({}) Rg1H({}) IsoH({})",
+        compound_edge_count(&f.v),
+        compound_edge_count(&f.outline_v),
+        compound_edge_count(&f.rg1_v),
+        compound_edge_count(&f.iso_v),
+        compound_edge_count(&f.h),
+        compound_edge_count(&f.outline_h),
+        compound_edge_count(&f.rg1_h),
+        compound_edge_count(&f.iso_h),
     );
 
-    assert_rel(vis.result_mass(), mass_total, "visible mass vs mass_total");
-    assert_rel(
-        vis.result_mass() + compound_mass(&h),
-        mass_hidden_total,
-        "visible+hidden mass vs mass_hidden_total",
+    // ---- run 1: the visible-only result tree (L3335-3350, no hidden) ----
+    let res1 = vcompute_result_tree(&f, false);
+    let (v1, e1, c1) = nbshapes_counts(&res1);
+    let m1 = compound_mass(&res1);
+    println!(
+        "ACCEPT bug25813_1 run1: nbshapes VERTEX:{v1} EDGE:{e1} COMPOUND:{c1} \
+         (OCCT {ref_result_vertices}/{ref_result_edges}/{ref_result_compounds}), \
+         mass {m1} vs MASS_TOTAL {ref_mass_total}"
     );
-    // nbshapes EDGE pins (the OCCT HLRToShape output corroboration).
-    assert_eq!(vis.result_edges(), ref_result_edges, "visible EDGE count");
-    assert_eq!(compound_edge_count(&h), ref_hidden_edges, "hidden EDGE count");
-    // VERTEX pins: the OCCT nbshapes VERTEX:30/36. If rcad's fuse output
-    // partitions the seam/tangency vertices benignly differently these are
-    // informational; the edge and mass pins above stay authoritative.
-    assert_eq!(vis.result_vertices(), ref_result_vertices, "visible VERTEX count");
-    assert_eq!(compound_vertex_count(&h), ref_hidden_vertices, "hidden VERTEX count");
+    assert_eq!(
+        (v1, e1, c1),
+        (
+            ref_result_vertices,
+            ref_result_edges,
+            ref_result_compounds
+        ),
+        "run-1 nbshapes (visible-only result tree)"
+    );
+    assert_valid_digits(m1, ref_mass_total, "run-1 mass vs MASS_TOTAL");
+    assert_rel(m1, mass_total, "run-1 mass vs JSON mass_total");
+
+    // ---- run 2: the -showHiddenEdges result tree ----
+    let res2 = vcompute_result_tree(&f, true);
+    let (v2, e2, c2) = nbshapes_counts(&res2);
+    let m2 = compound_mass(&res2);
+    println!(
+        "ACCEPT bug25813_1 run2: nbshapes VERTEX:{v2} EDGE:{e2} COMPOUND:{c2} \
+         (OCCT {ref_hidden_vertices}/{ref_hidden_edges}/{ref_hidden_compounds}), \
+         mass {m2} vs MASS_HIDDEN_TOTAL {ref_mass_hidden_total}; \
+         hidden-only mass {} vs MASS_HIDDEN_ONLY {ref_mass_hidden_only}",
+        compound_mass(&f.h)
+    );
+    assert_eq!(
+        (v2, e2, c2),
+        (ref_hidden_vertices, ref_hidden_edges, ref_hidden_compounds),
+        "run-2 nbshapes (-showHiddenEdges result tree)"
+    );
+    assert_valid_digits(m2, ref_mass_hidden_total, "run-2 mass vs MASS_HIDDEN_TOTAL");
+    assert_rel(m2, mass_hidden_total, "run-2 mass vs JSON mass_hidden_total");
+    assert_valid_digits(
+        compound_mass(&f.h),
+        ref_mass_hidden_only,
+        "hidden-only mass vs MASS_HIDDEN_ONLY",
+    );
+    // The hidden-tree composition: OCCT emits exactly one non-null hidden
+    // filter here (the 3-arc HCompound); OutLineH/Rg1H/IsoH stay null.
+    assert!(
+        f.outline_h.is_null() && f.rg1_h.is_null() && f.iso_h.is_null(),
+        "unexpected non-null hidden filters (OutLineH/Rg1H/IsoH must be null)"
+    );
+    assert_eq!(compound_edge_count(&f.h), 3, "the 3 hidden sharp arcs");
 }
 
 /// The `exact_hlr/bug25813_3` DRAW case (`ptorus a 30 10`) against the
 /// `#### SUPPLEMENT` DRAWEXE viewer-path truth of ref_output.txt:
-/// Mass 302.685 with 4 visible edges. NOTE: OCCT 8.0.0 itself access-violates
-/// on this case via the C++ tuple projector path (exit 139, documented in
-/// ref_output.txt); the 302.685 truth comes from the official DRAWEXE viewer
-/// path (vinit+vdisplay+vcomputehlr). rcad must produce the same result
-/// without crashing.
+/// Mass 302.685 with 4 visible edges (VERTEX:7 — one contour line closes,
+/// its single closed edge carries one vertex for both ends).  NOTE: OCCT
+/// 8.0.0 itself access-violates on this case via the C++ tuple projector
+/// path (exit 139, documented in ref_output.txt); the truth comes from the
+/// official DRAWEXE viewer path (vinit+vdisplay+vcomputehlr).  rcad must
+/// produce the same result without crashing.
 ///
-/// IGNORED (remaining exact-HLR gap): the torus panic is closed and Contap
-/// now feeds the walking stage correctly (the restriction search finds the 8
-/// boundary tangency points, the inside search 20 points, ComputeTangency
-/// builds 8 departure points), but the IntWalk_IWalking engine returns done
-/// with 0 lines, so rcad emits 0 visible edges. Un-ignore when the walking
-/// engine walks the torus contour lines.
+/// IGNORED (remaining exact-HLR gaps, the session-19 runway item): with the
+/// wd1/wd2 dummy-slot alignment restored (the true OCCT layout), the walking
+/// produces 42 fragments totalling 246.4 — walks terminate early (OCCT walks
+/// 4 whole contour lines, 389.62 total, hidden remainder 86.94).  The
+/// session-17/18 state (17 fragments, 303.867 at the 1e-2 line) was an
+/// off-by-one compensating artifact, not OCCT behavior, and was removed.
+/// The gxx wd logic is now verified textually aligned line-by-line; the
+/// remaining divergence lives downstream in the numeric chain
+/// (IntWalk_PWalking.cxx — never audited line-by-line — and/or the
+/// Contap_SurfFunction / math_FunctionSetRoot root/derivative values).
+/// Un-ignore when the walks assemble into the 4 OCCT edges with the hidden
+/// compound at 86.94 and the mass is bit-exact at 302.685.
 #[test]
-#[ignore = "remaining gap: IntWalk_IWalking produces 0 contour lines for the torus (8 departure + 20 interior start points are fed correctly)"]
+#[ignore = "remaining gap: walks terminate early (42 fragments / 246.4) vs the 4 OCCT contour lines (389.62); diverence is in the PWalking/numeric chain, not the wd layout"]
 fn acceptance_ptorus_vs_viewer_path() {
     let text = ref_output_text();
     let (mass_ref, edges_ref) = parse_supplement(&text, "exact_hlr/bug25813_3");
@@ -546,19 +637,50 @@ fn acceptance_ptorus_vs_viewer_path() {
     let torus = rcad_modeling::make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 30.0, 10.0)
         .expect("ptorus a 30 10");
     let solid = root_solid(&torus);
-    let (v, rg1v, rgnv, outline, h) = smoke_run_hlr(&solid, torus);
-    let vis = VisibleCompounds { v, rg1v, rgnv, outline };
-    vis.dump("bug25813_3");
-    println!(
-        "ACCEPT bug25813_3 (ptorus 30 10): visible mass {} (edges {}) vs viewer-path \
-         Mass {mass_ref}; hidden mass {} (edges {})",
-        vis.result_mass(),
-        vis.result_edges(),
-        compound_mass(&h),
-        compound_edge_count(&h),
-    );
 
-    assert_eq!(vis.result_edges(), 4, "visible EDGE count (viewer path: 4)");
-    assert_rel(vis.result_mass(), mass_ref, "visible mass vs viewer-path Mass");
+    let f = smoke_run_hlr_vcompute(&solid, torus);
+    println!(
+        "ACCEPT bug25813_3 filters: V({}) OutLineV({}) Rg1V({}) IsoV({}) | \
+         H({}) OutLineH({}) Rg1H({}) IsoH({})",
+        compound_edge_count(&f.v),
+        compound_edge_count(&f.outline_v),
+        compound_edge_count(&f.rg1_v),
+        compound_edge_count(&f.iso_v),
+        compound_edge_count(&f.h),
+        compound_edge_count(&f.outline_h),
+        compound_edge_count(&f.rg1_h),
+        compound_edge_count(&f.iso_h),
+    );
+    let mut segs = Vec::new();
+    compound_edges(&f.outline_v, &mut segs);
+    println!("ACCEPT bug25813_3 OutLineV segments: {segs:?}");
+    segs.clear();
+    compound_edges(&f.outline_h, &mut segs);
+    println!("ACCEPT bug25813_3 OutLineH segments: {segs:?}");
+
+    // run 1: the visible-only result tree; OCCT viewer path: EDGE:4 /
+    // VERTEX:7 / Mass 302.685 (all four contour edges, one visible interval
+    // each; no compound-count reference exists — the C++ tuple path crashed
+    // on this case, so only EDGE/VERTEX/mass are pinned).
+    let res1 = vcompute_result_tree(&f, false);
+    let (v1, e1, c1) = nbshapes_counts(&res1);
+    let m1 = compound_mass(&res1);
+    println!(
+        "ACCEPT bug25813_3 run1: nbshapes VERTEX:{v1} EDGE:{e1} COMPOUND:{c1} \
+         (OCCT viewer path VERTEX:7 EDGE:4), mass {m1} vs Mass {mass_ref}"
+    );
+    assert_eq!(e1, 4, "visible EDGE count (viewer path: 4)");
+    assert_eq!(v1, 7, "visible VERTEX count (the closed-contour edge shares)");
+    assert_printed_value(m1, mass_ref, "run-1 mass vs viewer-path Mass");
+    // run 2: the hidden compound — the OCCT hidden mass is the analytic
+    // two-tangent-band remainder (389.62 contour total - 302.685 visible).
+    let res2 = vcompute_result_tree(&f, true);
+    let (_, e2, _) = nbshapes_counts(&res2);
+    let m2 = compound_mass(&f.outline_h) + compound_mass(&f.h);
+    println!(
+        "ACCEPT bug25813_3 run2: tree edges {e2}, hidden mass {m2} vs the \
+         analytic 86.94 (389.62 contour total - 302.685 visible)"
+    );
+    assert_rel(m2, 86.94, "hidden mass vs the analytic remainder");
 }
 
