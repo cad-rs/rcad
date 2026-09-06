@@ -672,3 +672,9 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 容器变异器 in-place 修复 + 全链对齐后，SFDBG 实测：**51 条轮廓边全部 int=true / e_same_any=true**（e_kind=B BSpline，idx 9+，IntL 注册链完全打通）；被探索的缝边 SplE 分段（idx 150+，Circle 类）为 process_edges 正常产物。**补齐真缺口 `HLRToShape::OutLineHCompound/OfShape`（lxx L140-150）。**
 
 **当前断点（最后一段）**：轮廓边旗标全对，但 visible mass 仍 0 → **Hider 对 torus 自隐藏（单面 solid 的轮廓被自己的面隐藏）把全部轮廓判成了 hidden**（OCCT 应为近半 visible 302.685 / 远半 hidden）。下一动作：对照 Hider.cxx 自隐藏路径的 Classify 深度语义（dz 符号 / myProj.Project 的 z 约定 / RejectedPoint 的 dz≥TolZ 判据 L2349-2361）与 rcad classify.rs/hider.rs 对应段；重点核对 z 是否"沿视线方向深度"及 near/fare 判定符号。
+
+### 本 session 追加 13（session 15：旗标全通、缝分割生效；唯一断点 = Hider 自隐藏 CS 深度）
+
+容器变异器修复的实效已验证：RgN 可见缝从 2 → 5（缝被 SplE 正确分段后提取），RgNH+IsoH=1（隐藏侧也出现了）。轮廓边 51 条全部 int=true 注册。DrawFace/DrawEdge/InternalCompound（含 Used 重置、HideCount 延迟、leftover 遍历）逐行对照均一致。
+
+**唯一剩余断点**：torus 轮廓边的 EdgeStatus 全部 hidden（visible 区间空）。机制上 = 自隐藏 classify 的射线-面 CS 深度判定把近半轮廓也判了 IN。剩余对照 = `my_proj.shoot` 射线方向/参数化 + `elclib::line_parameter` + `perform_line` 多面体求交的 w 值符号（OCCT Data.cxx L2192-2262 已确认；rcad classify.rs L2059-2091 结构一致）→ 需打印一次 near-half 轮廓片段的 (w, w_lim) 实测值对拍即可定位（classify hits 探针已埋，trace_cl 开关）。修复后验证：OutV 非空 → mass≈302.685。
