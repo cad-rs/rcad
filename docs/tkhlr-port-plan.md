@@ -1,5 +1,27 @@
 # TKHLR 1:1 翻译推进计划（多 session runway）
 
+> **交接快照（2026-09-06 session 15 终 —— 取代下方 session 11 快照，两份都要读）**
+> - **当前位置：Stage 0-3 + 4a + 4c 全关；4b 被无头路径取代（见 §7 勾选）；4d 进行中——box 验收全绿，bug25813_1/ptorus 两个验收测试已写好并 #[ignore]，剩余三个窄缺口（见下）。**
+> - **提交链（本子模块）**：`c436f91b`(4c+4d+6修复) → `6f0b5439`(ptorus三连解锁) → `8e489252`(8环节静态审查) → `466cdb97`(容器变异器in-place) → `23dc22d2`(SplE机制还原) → `6cbebd64`(Int旗标实证+OutLineHCompound) → `ccd2d78a`/`a88011a0`(终极探针数据)。根仓库指针已同步。注意：曾误提交他 session 的 `docs/tkfeat-fillet-offset-port-plan.md` 后已 reset 撤出，该文件保持未跟踪。
+> - **回归基线（当前全绿）**：algo lib **364+2i** / builder **76+1** / pavefiller **26** / tktopalgo **36** / kernel **663**。生成测试 `cargo test -p occt-generated-tests --test generated_occt_boolean_hlr_exact_hlr`（根仓库跑）：bug25813_1 现值未复测（修复前 239.09）、ptorus 现值 0.000（目标 302.685）、box 用例在 rcad acceptance.rs 全绿（146.969/48.990）。
+>
+> **剩余三缺口 + 收尾（按序）：**
+>
+> **① ptorus 轮廓边全部误判 hidden（visible mass 0，目标 302.685）——断点已钉死到数值级：**
+> - 已打通（勿重查）：IntWalking 产 52 线（d2d 归一化修复后）→ Contour 采纳 51 → insert_face 建边入 IntL（51 条全 Wlk 型 BSpline，idx 9+，range [0,1]）→ process_face 加 INTERNAL 线到 NF → explore_face 旗标 **int=true 全部正确**（SFDBG 实证）→ DrawFace/DrawEdge/InternalCompound 逐行一致。
+> - 实测症状：轮廓边 EdgeStatus **全部 hidden**（visible 区间空）→ OutV 空 → mass 0。缝边 RgN 2→5（SplE 分段+提取已生效，容器变异器 in-place 修复的实效）。
+> - 已排除（勿重查）：Classify 三重门（param/end/0.4·sta+0.6·end）、TolZ 三分支（iFaceTest×OutLine/Internal→bigSize·0.01）、Shoot 方向（NZ=负Z，rcad 一致）、wLim-=TolZ、周期调整、w<wLim→classifier→IN、DrawFace/DrawEdge/InternalCompound（Used 重置/HideCount 延迟/leftover）、is_int_l_face_edge/is_spl_e_edge_edge、add_edge/add_to_edge/update_edge_pcurve（均 in-place）。
+> - **收口动作**：单次运行抓一个近半轮廓片段的 classify `(w, w_lim)` 实测对拍——探针已埋：classify.rs 的 `trace_cl` 块打 `[TRACE] classify hits (u,v,w,in)`（注意：该 trace 只在 CS 实际执行后打印；torus 运行中**没有任何 classify: 行**——先查 Compare 回退路径（Hider.cxx L385 `Compare→Classify(LevelFlag=false)→HideAll`）是否为隐藏来源及其 trace 条件）。候选偏差：`elclib::line_parameter`（边上点射线参数化符号）与 `perform_line` 多面体求交 w 值。若 CS 无命中且 Compare 判 IN——对照 OCCT Data.cxx L2192-2262 的 Shoot/ElCLib::Parameter 符号约定。
+>
+> **② bug25813_1 差 16.9334**：combined 266.5264 已精确；可见侧缺的恰是 OCCT 隐藏的大顶缘中段弧 [1.4289, 3.2835]（3D 参，隐藏区间构建正确但被 Classify 盒门在 k=7 深度维拒绝——见追加 8 段矛盾分析）。与 ① 同属 Hider 深度语义，先复测当前 mass 再定。
+>
+> **③ seam Iso→RgN**：nbIso=0 时 OCCT IsoLineVCompound 恒空，融合体小圆柱 seam 被 rcad 计入 Iso（harness 会多算）。cylinder smoke 的 seam 归 RgN 正确 → 对照 bfuse 输出的 regularity（CurveOn2Surfaces/CN）是否丢失（bop 层）或 Data 的 Iso 旗标判定。
+>
+> **收尾机械项**：删全部临时探针（RCAD_HLR_TRACE：classify.rs/update.rs/hider.rs/internal_algo.rs；RCAD_IWALK_DEBUG：i_walking.rs/function_set_root.rs/ds_filler.rs/out_liner.rs/contour perform.rs；SFDBG：shape_to_hlr.rs；生成 harness 的 hlr_debug_compounds/census）→ un-ignore 两个 acceptance 测试 → 重生成 harness → 三用例全绿（204.19/302.685/146.969+48.990）→ §7 勾选 → module-map 终版 → 提交同步。
+>
+> **验证命令（从各自目录）**：根仓库 `cargo test -p occt-generated-tests --test generated_occt_boolean_hlr_exact_hlr`；rcad 内 `cargo test -p rcad-algo --lib`（364+2i）+ builder 76+1 + pavefiller 26 + tktopalgo 36。重生成 harness：`cargo run -p occt-test-gen -- --batch-boolean --batch-grid exact_hlr`（生成文件 gitignored）。
+> - 纪律提醒：4 个他 session 遗留脏文件勿 add（algo_ext/mod.rs、fillet/topopebrepbuild.rs、tests/tkgeom_algo_gtests.rs、topalgo/brep_class/face_explorer.rs）；tkfeat-fillet-offset-port-plan.md 保持未跟踪；代码注释全英文；探针在收口提交时必须删净。
+> - 下方 session 11 快照与其余追加段（含追加 8-13 的完整诊断链）仍有效，冲突处以本快照为准。
 > **交接快照（2026-09-06 session 11 终）**
 > - **当前位置：Stage 0-3 全关，HLR 精确管线全链贯通且盒体/圆柱端到端 = OCCT 真值逐位一致。剩 Stage 4d 收官（exact_hlr 断言闭环 + 4c 接入 + module-map）与两条残余记录项。**
 > - 提交链（rcad 子模块 sd-hash-wip）：`7011f938` 计划落盘 → Stage 0/1 → 2a 全关 → `dc9cf575` 2b Contap 全包 → 3a → 3b 全关（`fe89ac91`/`729f0366`/`2f9b2d3e`）→ `2f1ac08e` Lin×Circ → `d1dc1ad1` 3c-1 → `432bff94` approx_int 泛型化 → `a0867176` conic 全臂 + BRepApprox 层 → session 8 `5e782450`/`79807080` **3c-2 全关 + Geom2dHatch 叶子 + 3e 干涉八件** → session 9 `91e5ff1f` **3d 全关（Hatcher 主引擎 + BRepTopAdaptor_Tool + HLRTopoBRep 全包）** → session 10 `5a6adf51` **3f+3g 全关（Data/Hider/InternalAlgo/HLRToShape/ShapeToHLR/ShapeBounds + 3e EIT Data trait）** → session 11 `38936196` **烟囱闭环（盒体=OCCT 真值）+ Q/R 修复 + MakeEdge2d + gen_hlr_ref.py** → `dc7de1e0` **缺口①②③（DomainIntersection/CurveOnPlane/会话 BRep）** → `81a03db1` **缺口④⑤ + Hider 圆柱远半弧全关**。根仓库：`a04c7da`/`4b08687`（tools/occt-hlr-runner 与 occt_hlr_*.json 属根仓库 tools/tests）。
