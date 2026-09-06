@@ -8,7 +8,7 @@ use glam::{DVec2, DVec3, DAffine3};
 use rcad_kernel::geom::{
     Circle2d, Circle3, Curve2d, Curve3, CylindricalSurface, Line2d, Line3, Plane, Surface3,
 };
-use rcad_kernel::topods::{self, CurveRepresentation, Orientation, Shape};
+use rcad_kernel::topods::{self, CurveRepresentation, GeomAbsShape, Orientation, Shape, BRepBuilder};
 use rcad_kernel::BRep;
 use rcad_kernel::CurveEval;
 
@@ -146,6 +146,10 @@ impl MakeCylinder {
                 pcurve2: Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::Y)),
                 range: [0.0, h],
             });
+        // OCCT BRepPrim_Builder::SetPCurve(E, F, L1, L2) (BRepPrim_Builder.cxx
+        // L107-118): after the closed pcurve pair UpdateEdge, the seam
+        // regularity — myBuilder.Continuity(E, F, F, GeomAbs_CN).
+        BRepBuilder::new().continuity(&mut t, &e_seam, &f_lat, &f_lat, GeomAbsShape::CN);
         // OCCT BRepPrim_OneAxis::TopFace/BottomFace (L465-468/L506-509): cap
         // circle pcurves — gp_Circ2d((0,0), MeridianValue(V).X()).
         t.edge_mut_inplace(e_top.clone()).pcurves.insert(
@@ -218,10 +222,16 @@ mod tests {
             "seam must carry a CurveOnClosedSurface representation on the lateral face"
         );
         let pc1 = ed.pcurves.get(&(lat.ptr_id(), lat.location)).expect("pcurve1 at lateral face key");
-        let pc2 = ed.pcurves
-            .get(&(lat.ptr_id(), lat.location))
-            .expect("pcurve2 at shifted key");
-        let (Curve2d::Line(l1), Curve2d::Line(l2)) = (&pc1.0, &pc2.0) else {
+        // the second pcurve of the closed pair has no separate pcurves-map
+        // key — it lives in the CurveOnClosedSurface representation next to
+        // pcurve1 (OCCT BRep_CurveOnClosedSurface::PCurve2).
+        let rep = ed.representations.iter().find_map(|r| match r {
+            CurveRepresentation::CurveOnClosedSurface { face, pcurve2, .. } if *face == (lat.ptr_id(), lat.location) =>
+                Some(pcurve2.clone()),
+            _ => None,
+        })
+        .expect("pcurve2 at shifted key");
+        let (Curve2d::Line(l1), Curve2d::Line(l2)) = (&pc1.0, &rep) else {
             panic!("seam pcurves must be 2D lines");
         };
         let Line2d { origin: o1, .. } = l1;

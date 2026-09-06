@@ -160,9 +160,25 @@ pub struct TVertexData {
 }
 
 /// OCCT BRep_CurveRepresentation �?how an edge lies on a face or in 3D.
+/// OCCT GeomAbs_Shape (TKG3d/GeomAbs/GeomAbs_Shape.hxx L47-56) — the
+/// continuity order with the OCCT enum ranking C0 < G1 < C1 < G2 < C2 < C3
+/// < CN (G1/G2 interleave the C-levels) used by the `rg >= GeomAbs_G1`
+/// comparisons of HLRBRep_ShapeToHLR::Load (cxx L130-131) and the
+/// BRep_Builder::Continuity storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum GeomAbsShape {
+    C0,
+    G1,
+    C1,
+    G2,
+    C2,
+    C3,
+    CN,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CurveRepresentation {
-    /// BRep_GCurve �?3D curve.
+    /// BRep_GCurve M-oM-?M-=?3D curve.
     Curve3D { curve: usize, location: u32 },
     /// BRep_CurveOnSurface �?pcurve on a face.
     CurveOnSurface {
@@ -177,6 +193,59 @@ pub enum CurveRepresentation {
         pcurve2: Curve2d,
         range: [f64; 2],
     },
+    /// OCCT BRep_CurveOn2Surfaces — the regularity of an edge lying on two
+    /// surfaces (BRep_CurveOn2Surfaces.hxx L1-77): surface1/surface2 with
+    /// location1/location2 (the base BRep_CurveRepresentation location is
+    /// location1) and the continuity.  The rcad surfaces travel as values
+    /// (the surface_same stand-in for the Geom_Surface handle identity).
+    CurveOn2Surfaces {
+        surface1: Surface3,
+        surface2: Surface3,
+        location1: u32,
+        location2: u32,
+        continuity: GeomAbsShape,
+    },
+}
+
+impl CurveRepresentation {
+    /// OCCT BRep_CurveRepresentation::IsRegularity() (BRep_CurveRepresentation.cxx
+    /// L60-64) — true only for the BRep_CurveOn2Surfaces kind (the base
+    /// returns false, BRep_CurveRepresentation.cxx L75-79).
+    pub fn is_regularity(&self) -> bool {
+        matches!(self, CurveRepresentation::CurveOn2Surfaces { .. })
+    }
+
+    /// OCCT BRep_CurveOn2Surfaces::IsRegularity(S1, S2, L1, L2)
+    /// (BRep_CurveOn2Surfaces.cxx L63-72): the (surface, location) pairs
+    /// match in either order.  The rcad surface comparison is surface_same
+    /// (the Geom_Surface handle identity stand-in).
+    pub fn is_regularity_on(
+        &self,
+        s1: &Surface3,
+        s2: &Surface3,
+        l1: u32,
+        l2: u32,
+    ) -> bool {
+        match self {
+            CurveRepresentation::CurveOn2Surfaces {
+                surface1,
+                surface2,
+                location1,
+                location2,
+                ..
+            } => {
+                (surface_same(surface1, s1)
+                    && surface_same(surface2, s2)
+                    && *location1 == l1
+                    && *location2 == l2)
+                    || (surface_same(surface1, s2)
+                        && surface_same(surface2, s1)
+                        && *location1 == l2
+                        && *location2 == l1)
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,6 +381,77 @@ impl BRep {
                 .copied()
                 .unwrap_or(glam::DAffine3::IDENTITY)
         }
+    }
+
+    /// OCCT BRep_Tool::CurveOnPlane (BRep_Tool.cxx L379-450): for a planar
+    /// surface, return the projection of the edge's 3D curve onto the plane
+    /// (the pcurve computed on the fly, never stored).  Reached from
+    /// [`BRepTool::curve_on_surface`] when no stored representation matches
+    /// (BRep_Tool.cxx L367-372).
+    ///
+    /// `surf` is the face's LOCAL surface (CurveOnSurface L308 fetches
+    /// `BRep_Tool::Surface(F, l)` without the location applied), `ed` the
+    /// edge TShape data (the BRep_TEdge read of L341).
+    fn curve_on_plane(
+        &self,
+        edge: &Shape,
+        face: &Shape,
+        surf: &Surface3,
+        ed: &TEdgeData,
+    ) -> Option<(Curve2d, f64, f64)> {
+        // L385: First = Last = 0. (rcad: the None return carries no range.)
+        // L388-398: check if the surface is planar — one
+        // Geom_RectangularTrimmedSurface level unwrapped to its basis.
+        let surf = match surf {
+            Surface3::Trimmed(ts) => ts.basis.as_ref(),
+            s => s,
+        };
+        // L400-404: not a plane -> null pcurve.
+        let Surface3::Plane(pl) = surf else {
+            return None;
+        };
+
+        // L406-415: check the existence of the 3d curve in the edge
+        // (BRep_Tool::Curve(E, aCurveLocation, f, l); rcad architecture note:
+        // the 3D curve representation carries no own location, so the curve
+        // location is the edge wrapper location).
+        let Some(c3d) = ed.curve.as_ref() else {
+            return None;
+        };
+        let mut f = ed.range[0];
+        let mut l = ed.range[1];
+
+        // L417: aCurveLocation = aCurveLocation.Predivided(L) — the curve
+        // expressed in the face-local frame (L^-1 * E.Location()).
+        let a_curve_location =
+            self.get_location(face.location).inverse() * self.get_location(edge.location);
+        // L418-419: First = f; Last = l (the raw 3D range, taken BEFORE the
+        // location rescale of L426-427).
+        let first = f;
+        let last = l;
+
+        // L421-428: transform the curve and update the parameters by the
+        // scale factor (Geom_Curve::TransformedParameter(P, T) =
+        // P / T.ScaleFactor()).  rcad architecture note: the location table
+        // stores DAffine3 with no separate gp_Trsf scale member; the scale
+        // factor is recovered as the image length of a unit axis (1 for the
+        // rigid locations the pipeline builds).
+        let c3d = if a_curve_location != glam::DAffine3::IDENTITY {
+            let scale = a_curve_location.transform_vector3(glam::DVec3::X).length();
+            f /= scale;
+            l /= scale;
+            crate::geom::transform_curve(c3d, &a_curve_location)
+        } else {
+            c3d.clone()
+        };
+
+        // L430-435: GeomProjLib::ProjectOnPlane of the trimmed curve along
+        // the plane normal (KeepParametrization = true); L437-441:
+        // ProjLib_ProjectedCurve + Geom2dAdaptor::MakeCurve; L443-447: the
+        // Geom2d_TrimmedCurve basis unwrap — the landed
+        // geom_proj_lib::project_on_plane::curve_on_plane translation.
+        crate::base::geom_proj_lib::project_on_plane::curve_on_plane(&c3d, [f, l], pl)
+            .map(|pc| (pc, first, last))
     }
 
     /// OCCT BRep_Builder::UpdateEdge / BRep_Tool::CurveOnSurface
@@ -2060,7 +2200,12 @@ impl BRepTool for BRep {
                 }
             }
         }
-        best.map(|(_, v)| v)
+        if let Some((_, v)) = best {
+            return Some(v);
+        }
+        // OCCT BRep_Tool.cxx L367-372: "Curve is not found. Try projection
+        // on plane" -> *theIsStored = false; CurveOnPlane(E, S, L, First, Last).
+        self.curve_on_plane(edge, face, &fsurf, ed)
     }
 
     fn is_edge_closed_on_face(&self, edge: &Shape, face: &Shape) -> bool {
@@ -2987,7 +3132,59 @@ impl BRepBuilder {
         ed.tolerance = ed.tolerance.max(tol);
     }
 
-    /// OCCT BRep_Builder::UpdateEdge(aE, aC3d) �?set 3D curve.
+    /// OCCT BRep_Builder::Continuity(E, F1, F2, C) (BRep_Builder.cxx
+    /// L1012-1021) -> Continuity(E, S1, S2, L1, L2, C) (L1025-1043): the
+    /// face surfaces with the locations `L.Predivided(E.Location())` (the
+    /// compose_pcurve_location stand-in) are stored through the UpdateCurves
+    /// regularity walk (static, BRep_Builder.cxx L376-405): an existing
+    /// matching BRep_CurveOn2Surfaces takes the continuity, otherwise a new
+    /// one is appended.
+    pub fn continuity(
+        &mut self,
+        brep: &mut BRep,
+        edge: &Shape,
+        f1: &Shape,
+        f2: &Shape,
+        c: GeomAbsShape,
+    ) {
+        // OCCT L1017-1019: S1 = Surface(F1, l1); S2 = Surface(F2, l2).
+        // (a missing rcad surface — the OCCT null handle — stores nothing.)
+        let (Some(s1), Some(s2)) = (
+            face_surface_value(brep, f1),
+            face_surface_value(brep, f2),
+        ) else {
+            return;
+        };
+        // OCCT L1037-1038: l1 = L1.Predivided(E.Location());
+        // l2 = L2.Predivided(E.Location());
+        let l1 = compose_pcurve_location(f1.location, edge.location, &brep.locations);
+        let l2 = compose_pcurve_location(f2.location, edge.location, &brep.locations);
+
+        // OCCT L1040: UpdateCurves(TE->ChangeCurves(), S1, S2, l1, l2, C)
+        // (static UpdateCurves, BRep_Builder.cxx L376-405).
+        let ed = brep.edge_mut_inplace(edge.clone());
+        for cr in ed.representations.iter_mut() {
+            // OCCT L387: cr->IsRegularity(S1, S2, L1, L2).
+            if cr.is_regularity_on(&s1, &s2, l1, l2) {
+                // OCCT L397-398: cr->Continuity(C).
+                if let CurveRepresentation::CurveOn2Surfaces { continuity, .. } = cr {
+                    *continuity = c;
+                }
+                return;
+            }
+        }
+        // OCCT L402-403: new BRep_CurveOn2Surfaces(S1, S2, L1, L2, C).
+        ed.representations
+            .push(CurveRepresentation::CurveOn2Surfaces {
+                surface1: s1,
+                surface2: s2,
+                location1: l1,
+                location2: l2,
+                continuity: c,
+            });
+    }
+
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC3d) — set 3D curve.
     pub fn update_edge_curve3d(
         &mut self,
         brep: &mut BRep,
@@ -3368,6 +3565,17 @@ fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
         Curve2d::Trimmed(tc) => (tc.t_min, tc.t_max),
         Curve2d::Circle(_) => (0.0, std::f64::consts::TAU),
         _ => (0.0, 1.0),
+    }
+}
+
+/// The face surface value of a face Shape (OCCT BRep_Tool::Surface(F) —
+/// the TFace surface without the Location applied).  None for non-faces or
+/// surfaceless faces (the OCCT null handle has no rcad equivalent; the
+/// BRep_Builder::Continuity caller stores nothing in that case).
+pub fn face_surface_value(brep: &BRep, f: &Shape) -> Option<Surface3> {
+    match &*brep.tshapes[f.index] {
+        TShape::Face(fd) => fd.surface.clone(),
+        _ => None,
     }
 }
 

@@ -20,12 +20,16 @@
 //   sanctioned for this stage), and every edge curve adaptor is leaked
 //   next to it (the &'static CurveView of the Data object graph).
 // - OCCT BRep_Tool::Continuity reads the regularity stored on the edge
-//   curve representations; the rcad TEdgeData carries no regularity field
-//   (kernel gap), so the helper reports the OCCT default GeomAbs_C0.
+//   curve representations (the BRep_CurveOn2Surfaces records); the rcad
+//   equivalent is the CurveOn2Surfaces representation written through the
+//   BRepBuilder::continuity (the BRep_Builder::Continuity form).
 
 use rcad_kernel::base::proj_lib::CurveType;
 use rcad_kernel::geom::Curve3;
-use rcad_kernel::topods::{tshape_flags, BRep, BRepTool, Orientation, Shape, ShapeType};
+use rcad_kernel::topods::{
+    compose_pcurve_location, face_surface_value, tshape_flags, CurveRepresentation, GeomAbsShape,
+    BRep, BRepTool, Orientation, Shape, ShapeType,
+};
 
 use crate::hlr::algo::projector::Projector;
 use crate::hlr::brep::b_curve_tool::CurveView;
@@ -125,25 +129,39 @@ fn epsilon(v: f64) -> f64 {
     }
 }
 
-/// OCCT GeomAbs_Shape (TKG3d) — the continuity order with the OCCT enum
-/// ranking (C0 < C1 < C2 < C3 < CN < G1 < G2) used by the
-/// `rg >= GeomAbs_G1` comparisons of Load (cxx L130-131).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum GeomAbsShape {
-    C0,
-    C1,
-    C2,
-    C3,
-    CN,
-    G1,
-    G2,
-}
+/// OCCT BRep_Tool::Continuity(E, F1, F2) (BRep_Tool.cxx L1180-1188) ->
+/// Continuity(E, S1, S2, L1, L2) (BRep_Tool.cxx L1223-1246) — the regularity
+/// stored on the (E, F1/F2) curve representations.  The OCCT default is
+/// GeomAbs_C0 when no representation matches (L1245).
+fn brep_tool_continuity(brep: &BRep, e: &Shape, f1: &Shape, f2: &Shape) -> GeomAbsShape {
+    // OCCT L1184-1186: S1 = Surface(F1, l1); S2 = Surface(F2, l2).
+    let (Some(s1), Some(s2)) = (
+        face_surface_value(brep, f1),
+        face_surface_value(brep, f2),
+    ) else {
+        // the OCCT null-surface case has no matching representation.
+        return GeomAbsShape::C0;
+    };
+    // OCCT L1229-1230: l1 = L1.Predivided(E.Location());
+    // l2 = L2.Predivided(E.Location());
+    let l1 = compose_pcurve_location(f1.location, e.location, &brep.locations);
+    let l2 = compose_pcurve_location(f2.location, e.location, &brep.locations);
 
-/// OCCT BRep_Tool::Continuity(E, F1, F2) (BRep_Tool.cxx L918-941) — the
-/// regularity stored on the (E, F1/F2) curve representations.  The rcad
-/// TEdgeData carries no regularity field (kernel gap; no rcad builder sets
-/// one), so every edge reads the OCCT default GeomAbs_C0.
-fn brep_tool_continuity(_brep: &BRep, _e: &Shape, _f1: &Shape, _f2: &Shape) -> GeomAbsShape {
+    // the representation scan (OCCT L1236-1244).
+    let ed = match e.as_edge() {
+        Some(ed) => ed,
+        None => return GeomAbsShape::C0,
+    };
+    for cr in &ed.representations {
+        // OCCT L1239: cr->IsRegularity(S1, S2, l1, l2).
+        if cr.is_regularity_on(&s1, &s2, l1, l2) {
+            // OCCT L1241: return cr->Continuity();
+            if let CurveRepresentation::CurveOn2Surfaces { continuity, .. } = cr {
+                return *continuity;
+            }
+        }
+    }
+    // OCCT L1245: return GeomAbs_C0;
     GeomAbsShape::C0
 }
 

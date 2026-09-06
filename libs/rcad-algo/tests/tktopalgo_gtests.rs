@@ -524,7 +524,7 @@ mod make_face_tests {
 #[cfg(test)]
 mod transform_tests {
     use super::*;
-    use rcad_kernel::math::gp::Trsf;
+    use rcad_kernel::math::gp::{Trsf, TrsfForm};
     use rcad_modeling::{make_box_brep, transform_brep};
 
     /// 10x10x10 box from the origin (BRepPrimAPI_MakeBox(10,10,10)).
@@ -546,6 +546,8 @@ mod transform_tests {
         let trsf = Trsf {
             matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             loc: glam::DVec3::new(100.0, 0.0, 0.0),
+            scale: 1.0,
+            form: TrsfForm::CompoundTrsf,
         };
         let mut shape = unit_box();
         transform_brep(&mut shape, &trsf);
@@ -565,6 +567,8 @@ mod transform_tests {
         let trsf = Trsf {
             matrix: [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
             loc: glam::DVec3::ZERO,
+            scale: 1.0,
+            form: TrsfForm::CompoundTrsf,
         };
         let mut shape = unit_box();
         transform_brep(&mut shape, &trsf);
@@ -585,8 +589,10 @@ mod transform_tests {
     fn scale() {
         // gp_Trsf::SetScale(origin, 2.0): 2x scaling about the origin.
         let trsf = Trsf {
-            matrix: [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]],
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             loc: glam::DVec3::ZERO,
+            scale: 2.0,
+            form: TrsfForm::Scale,
         };
         let mut shape = unit_box();
         transform_brep(&mut shape, &trsf);
@@ -611,8 +617,10 @@ mod transform_tests {
         )
         .expect("box failed");
         let trsf = Trsf {
-            matrix: [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             loc: glam::DVec3::ZERO,
+            scale: -1.0,
+            form: TrsfForm::PntMirror,
         };
         transform_brep(&mut shape, &trsf);
         let com = centroid(&shape);
@@ -629,6 +637,8 @@ mod transform_tests {
         let trsf = Trsf {
             matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             loc: glam::DVec3::new(50.0, 50.0, 50.0),
+            scale: 1.0,
+            form: TrsfForm::CompoundTrsf,
         };
         let mut shape = unit_box();
         transform_brep(&mut shape, &trsf);

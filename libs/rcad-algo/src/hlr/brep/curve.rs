@@ -311,9 +311,10 @@ impl<'a> Curve<'a> {
         (p, d)
     }
 
-    /// OCCT FirstParameter (lxx).
+    /// OCCT FirstParameter (lxx L66-69) — Parameter2d of the raw curve
+    /// first parameter.
     pub fn first_parameter(&self) -> f64 {
-        self.c().first_parameter()
+        self.parameter_2d(self.c().first_parameter())
     }
 
     /// OCCT GetType (lxx L138-141) — the projected-curve classification.
@@ -321,9 +322,10 @@ impl<'a> Curve<'a> {
         self.my_type
     }
 
-    /// OCCT LastParameter (lxx).
+    /// OCCT LastParameter (lxx L73-76) — Parameter2d of the raw curve
+    /// last parameter.
     pub fn last_parameter(&self) -> f64 {
-        self.c().last_parameter()
+        self.parameter_2d(self.c().last_parameter())
     }
 
     /// OCCT IsClosed (lxx).

@@ -17,6 +17,11 @@
 >      - **U（CurveOnPlane 回退）**：OCCT FClass2d init **没有**回退语句（cxx L142-145 与 rcad 原写法一致）——真回退在 **BRep_Tool::CurveOnSurface 内部**（BRep_Tool.cxx L367-372 → CurveOnPlane L379-450：平面判定剥壳/Predivided location/TransformedParameter/ProjectOnPlane KeepParam）。修复落在 kernel topods.rs \`curve_on_plane\`（~70 行，复用 project_on_plane 已落地链）；顺带改写 edge_face_tool 一个与 OCCT 相悖的旧断言。锚点：无 pcurve 平面脸 (5,5)In/(15,5)Out/(1e6,1e6)Out（修复前恒 In）。
 >      - **V（arena 产线化）**：InternalAlgo 增 my_brep 会话图捕获（load 首参），update 的空 arena 改会话 BRep clone；烟囱恢复自然 Algo 路径（add→update→hide），**断言数字不变**；Data::set_brep 对称访问器。
 >      - **W（C++ runner，4a 收官）**：\`tools/occt-hlr-runner/\`（CMake+build.bat+main.cpp 661 行——无头复刻 VComputeHLR L3299-3362 精确/poly 双分支 + BRepPrimAPI/BRepAlgoAPI/BuildFilling 模型 API 化 + BRepTools_ShapeSet nbshapes + LinearProperties）。**box/bug25813_1 与 OCCT lprops 逐位吻合**（146.969384567/204.19032694460864；nbshapes 与 gen_hlr_ref JSON 完全一致）；**ptorus 官方 viewer 路径 302.685 与 case length 逐位一致**。**根因定论**：exact_hlr Plate/ptorus 的 tuple 路径崩溃 = **OCCT 8.0.0 自身 HLRBRep exact-algo 数值稳健性 bug**（HLRToShape 抽取段 AV，headless DRAWEXE 同崩）——gen_hlr_ref 缺两个 JSON 的解释闭环；viewer-path 数值（302.685/406.283）与 runner poly 值已入 ref_output.txt 并合入 poly JSON。
+>   7. **X/Y/Z 三代理（缺口④⑤ + Hider 圆柱远半弧，全关）**：
+>      - **X（seam regularity）**：以源码定论——seam 携带 **GeomAbs_CN 而非 G1**（BRepPrim_Builder.cxx L107-118 的 SetPCurve 尾句），OCCT 枚举序 C0<G1<C1<G2<C2<C3<CN → reg1/regn 双 true → seam 归 **RgNLineVCompound**（typ 4；简报的 Rg1LineVCompound 是 G1 假设下的近似）。落地：kernel GeomAbsShape 真实枚举序 + CurveOn2Surfaces 表示 + is_regularity + BRepBuilder::continuity（BRep_Builder.cxx L1012-1043 + UpdateCurves L376-405）；brep_tool_continuity 真实现（BRep_Tool.cxx L1180-1246）；modeling 四个 primitive（cylinder/cone/sphere/torus）补 CN。附带修 make_cylinder 的一个 HEAD 即红的测试。
+>      - **Y（Used 去重）**：核实**缺口⑤已在 3f/3g 关闭**——hlr_to_shape.rs 的"注释 OCCT 原文"是引用注释惯例，活代码在正下方；运行时实证 VCompound 7 边无重复。新增无双重绘制断言（椭圆弧两两端点对唯一性）钉死。
+>      - **Z（Hider 圆柱远半弧）**：两处 1:1 底层偏差——① kernel \`Lin::transform\` 丢方向旋转（OCCT gp_Ax1::Transform 同时转 vdir，gp.rs）→ Projector::Shoot 的世界系视线与圆柱面永不相交；② \`Curve::First/LastParameter\` 缺 Parameter2d 包装（HLRBRep_Curve.lxx L66-76）→ 分类点被 my_ox=−π/4 偏移致过度隐藏。修复后 **cylinder smoke 与 OCCT 真值逐位一致**：V=5 弧 75.671、H=1 段底远半弧 25.2237、outline 2 条、seam 在 RgN。
+>   8. **顺手项**：tktopalgo_gtests 的 5 处 Trsf 字面量补 form/scale（89fdd3ec 遗留，按 OCCT SetScale/SetMirror/SetRotation 成员序 matrix=identity+scale 承载）→ 36/36。
 > - **HLR 精确管线全链贯通**：Algo(Add/Load) → InternalAlgo(Update→ShapeToHLR::Load→DSFiller::Insert→BRepApprox/Contap/FaceIsoLiner) → Data.Update → Hider.Hide → HLRToShape(V/Rg1/RgN/OutLine/Hiding × Visible/Hidden compounds)。**下一站 Stage 4 验收闭环**（4a gen_hlr_ref.py——勘察进行中）。
 > - **已知遗留（session 10）**：① intersector 层的 2D 直线×直线交点语义（段 vs 带 transition 的点）待对齐——hider 双锚 ignore 的根因；② HLRBRep_Curve::GetCurve().Edge() 不可表示（CurveView 无 TopoDS 反向指针）→ MakeEdge3d 返回 null 边（OutLineVCompound3d 输出空，DrawEdge IsNull 分支吸收）；③ BRepLib_MakeEdge2d 缺（Hyperbola/Parabola/Bezier/BSpline 2D 臂走 NotDone 等价分支）；④ fclass2d 的 wire walk 起点顶点随 HashMap 迭代序翻转（测试以预绑定分类器稳定，本质修复待 fclass2d 对齐 pass）。
 > - **并行子代理模式（session 10 实证补充）**：主代理预落 struct 字段契约（data/mod.rs 的 70 字段）+ 骨架先行 = 多代理并发零注册冲突；跨代理契约冲突经 SendMessage 快速裁决（uv_point 7 参 vs 5 参调用点，一轮消息收敛）；主代理预读消费者源文写对接点清单进 brief。
@@ -590,3 +595,14 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 
 1. **烟囱剩余 3 缺口**：④ seam rg1_line（kernel 需存 edge-face regularity；锚点 ShapeToHLR.cxx L118-131 BRep_Tool::Continuity(F1,F2)→reg1/regn）→ ⑤ 共享边 Used 去重（HLRToShape DrawFace 的 Used 流转）→ Hider 层的底圆远半弧隐藏（hider/HidingStartLevel 对圆柱 case）。
 2. **4d**：exact_hlr 消费 occt_hlr_*.json 的 rcad 断言（bug25813_1 204.19 + box 烟囱真值已备；Plate/ptorus 用 viewer-path 302.685/406.283 或 C++ runner 数值）+ module-map 更新。
+
+### 本 session 追加 4（2026-09-06，session 11 续 2：缺口④⑤ + Hider 圆柱远半弧全关）
+
+| commit | 内容 |
+|---|---|
+| （本轮代码提交 4） | **缺口④⑤ + Hider 远半弧全关**：kernel GeomAbsShape 真实枚举序 + CurveOn2Surfaces regularity 存储 + BRepBuilder::continuity + brep_tool_continuity 真实现（seam=CN → RgNLineVCompound）；Y 核实缺口⑤已在 3f/3g 关闭并加去重 pin 断言；kernel Lin::transform 方向修复 + Curve::First/LastParameter 的 Parameter2d 包装 → 圆柱 smoke 与 OCCT 真值逐位一致（V=5 弧 75.671 / H=1 弧 25.2237 / seam 在 RgN）；tktopalgo_gtests Trsf 字面量补齐（36/36） |
+
+### 下一 session 入口（按序）
+
+1. **4d**：exact_hlr 消费 occt_hlr_*.json 的 rcad 断言（`tools/gen-occt-ref/gen_hlr_ref.py` 已产 bug25813_1+poly×3；box/ptorus/Plate 用 occt-hlr-runner 的 ref_output 值）+ occt-test-gen hlr 接入（4c）+ module-map 更新。
+2. **残余记录项**：④ 附带——`brep_tool_is_closed_edge_face`（ExploreFace 的 Dbl/IsReallyClosed）按 face ptr_id 匹配而非曲面值匹配，对 OutLinedShape 面副本会把 seam 的 Dbl 判 false（X 报告，不影响 typ 过滤）；烟囱 fixture 的 pcurve 注册注释已过时（U 报告）。

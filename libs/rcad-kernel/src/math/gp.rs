@@ -242,10 +242,13 @@ impl Lin {
         }
     }
 
-    /// OCCT gp_Lin::Transform(theT) — gp_Lin.hxx L178: only the location is
-    /// transformed (this OCCT version does not touch the direction here).
+    /// OCCT gp_Lin::Transform(theT) — gp_Lin.hxx L178: `pos.Transform(theT)`
+    /// where `pos` is a gp_Ax1 (gp_Lin.hxx L213); gp_Ax1::Transform
+    /// (gp_Ax1.hxx L201-205) moves the location AND transforms the
+    /// direction (a gp_Dir: normalized).
     pub fn transform(&mut self, t: &Trsf) {
         self.pos = t.apply(self.pos);
+        self.dir = t.transform_dir(self.dir);
     }
 }
 

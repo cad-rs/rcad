@@ -5,7 +5,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Circle3, Curve2d, Curve3, Line2d, Surface3, ToroidalSurface};
-use rcad_kernel::topods::{self, CurveRepresentation, Orientation, Shape};
+use rcad_kernel::topods::{self, CurveRepresentation, GeomAbsShape, Orientation, Shape, BRepBuilder};
 use rcad_kernel::BRep;
 
 pub struct MakeTorus {
@@ -85,6 +85,10 @@ impl MakeTorus {
                 pcurve2: Curve2d::Line(Line2d::new(DVec2::new(0.0, pi2), DVec2::X)),
                 range: [0.0, pi2],
             });
+        // OCCT BRepPrim_Builder::SetPCurve(E, F, L1, L2) (BRepPrim_Builder.cxx
+        // L107-118): after the closed pcurve pair UpdateEdge, the closed edge
+        // regularity -- myBuilder.Continuity(E, F, F, GeomAbs_CN).
+        BRepBuilder::new().continuity(&mut t, &e_outer, &face, &face, GeomAbsShape::CN);
         // OCCT LateralFace (L432-438): ESTART closed edge — SetPCurve(E, F,
         // Lin(myAngle, 0), Lin(0, 0)): V-direction lines at U=2*PI (pcurve1)
         // and U=0 (pcurve2), range [VMin, VMax].
@@ -100,6 +104,10 @@ impl MakeTorus {
                 pcurve2: Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::Y)),
                 range: [0.0, pi2],
             });
+        // OCCT BRepPrim_Builder::SetPCurve(E, F, L1, L2) (BRepPrim_Builder.cxx
+        // L107-118): after the closed pcurve pair UpdateEdge, the seam
+        // regularity -- myBuilder.Continuity(E, F, F, GeomAbs_CN).
+        BRepBuilder::new().continuity(&mut t, &e_seam, &face, &face, GeomAbsShape::CN);
         let shell = t.add_tshell(vec![face]);
         t.add_tsolid(vec![shell]);
         Ok(t)

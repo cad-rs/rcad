@@ -684,7 +684,10 @@ fn smoke_box_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shape) {
 }
 
 /// The VComputeHLR run (the exact-Algo branch): Add + Projector + Update +
-/// Hide, then the HLRToShape extraction.  Returns (v, outline, h) compounds.
+/// Hide, then the HLRToShape extraction.  Returns (v, rg1v, rgnv, outline, h)
+/// compounds — the sharp (typ 5), Rg1Line (typ 3), RgNLine (typ 4) visible
+/// compounds, the outlines (typ 2) and the hidden sharp compound (OCCT
+/// HLRBRep_HLRToShape.hxx L71-104).
 ///
 /// The owning BRep rides with Add as the session kernel context — the
 /// InternalAlgo Update builds every shape DS over it and feeds it to the
@@ -694,6 +697,8 @@ fn smoke_run_hlr(
     solid: &rcad_kernel::topods::Shape,
     brep: rcad_kernel::BRep,
 ) -> (
+    rcad_kernel::topods::Shape,
+    rcad_kernel::topods::Shape,
     rcad_kernel::topods::Shape,
     rcad_kernel::topods::Shape,
     rcad_kernel::topods::Shape,
@@ -717,9 +722,11 @@ fn smoke_run_hlr(
     // OCCT L3307-3313: the HLRToShape filters.
     let mut hts = SmokeHLRToShape::new(&mut algo);
     let v = hts.v_compound();
+    let rg1v = hts.rg1_line_v_compound();
+    let rgnv = hts.rg_n_line_v_compound();
     let outline = hts.out_line_v_compound();
     let h = hts.h_compound();
-    (v, outline, h)
+    (v, rg1v, rgnv, outline, h)
 }
 
 /// OCCT anchor (DRAWEXE `vcomputehlr b result -algoType algo 0 0 0 1 -1 1
@@ -731,7 +738,7 @@ fn smoke_run_hlr(
 #[test]
 fn smoke_box_hlr_end_to_end() {
     let (brep, solid) = smoke_box_solid();
-    let (v, outline, h) = smoke_run_hlr(&solid, brep);
+    let (v, _rg1v, _rgnv, outline, h) = smoke_run_hlr(&solid, brep);
 
     // no outlines on a pure-plane solid.
     let mut outline_edges = Vec::new();
@@ -840,7 +847,7 @@ fn smoke_box_hlr_stable_over_three_runs() {
     let mut results = Vec::new();
     for _ in 0..3 {
         let (brep, solid) = smoke_box_solid();
-        let (v, outline, h) = smoke_run_hlr(&solid, brep);
+        let (v, _rg1v, _rgnv, outline, h) = smoke_run_hlr(&solid, brep);
         let mut vs = Vec::new();
         if !v.is_null() {
             compound_edges(&v, &mut vs);
@@ -1015,6 +1022,18 @@ fn smoke_cylinder_solid() -> (rcad_kernel::BRep, rcad_kernel::topods::Shape) {
         h,
         1e-7,
     );
+    // OCCT BRepPrim_Builder::SetPCurve(E, F, L1, L2) (BRepPrim_Builder.cxx
+    // L107-118): after the closed pcurve pair UpdateEdge, the seam regularity
+    // — myBuilder.Continuity(E, F, F, GeomAbs_CN).  This is the record the
+    // HLRBRep_ShapeToHLR::Load reads back as rg = CN (reg1 AND regn true,
+    // cxx L129-131).
+    b.continuity(
+        &mut brep,
+        &seam,
+        &side,
+        &side,
+        rcad_kernel::topods::GeomAbsShape::CN,
+    );
     // caps: the circles project to full circles.
     b.add_pcurve(
         &mut brep,
@@ -1081,18 +1100,35 @@ fn ellipse_arc_len(a: f64, b: f64, u1: f64, u2: f64) -> f64 {
 ///   finds BOTH contour lines (the phi = 45 deg one at x' = +10 and the
 ///   phi = 225 deg one at x' = -10) and both cap circles split at the two
 ///   tangency points (ellipse params 0 and pi, plus the seam at 7*pi/4).
-/// - The bottom far half-ellipse (params [0, pi], 25.2237) is still drawn in
-///   VCompound; OCCT moves it to HCompound — the hider layer remains to
-///   align (recorded gap).
-/// - The seam edge keeps rg1_line = false (the edges_to_faces map lists the
-///   side face once, so no G1 continuity is computed) and is drawn in
-///   VCompound; OCCT draws it in Rg1LineVCompound.
-/// - Each circle arc is drawn twice (the shared circle edge is loaded per
-///   adjacent face without the Used-flag dedupe of the OCCT face walk).
+/// - FIXED (the hider layer): the bottom far half-ellipse (params [0, pi],
+///   25.2237) is hidden by the cylindrical side face through the OCCT
+///   Compare/Classify branch (no boundary interferences: the endpoints are
+///   the silhouette tangency vertices and the seam is z-rejected).  This
+///   needed two 1:1 corrections: HLRAlgo_Projector::Shoot transforms the
+///   line by myInvTrsf where gp_Lin::Transform moves the gp_Ax1 position
+///   AND its direction (gp_Lin.hxx L178 -> gp_Ax1.hxx L201-205), and
+///   HLRBRep_Curve::First/LastParameter are Parameter2d of the raw curve
+///   parameters (HLRBRep_Curve.lxx L66-76).
+/// - CLOSED (gap 4, the seam regularity): the seam edge is a
+///   BRepPrim_Builder::SetPCurve(E, F, L1, L2) closed pair, so OCCT records
+///   Continuity(E, F, F, GeomAbs_CN) on it (BRepPrim_Builder.cxx L117);
+///   HLRBRep_ShapeToHLR::Load reads rg = CN with the GeomAbs_Shape ranking
+///   C0 < G1 < C1 < G2 < C2 < C3 < CN (GeomAbs_Shape.hxx L47-56), so
+///   reg1 = (CN >= G1) AND regn = (CN >= G2) (cxx L129-131).  The
+///   HLRBRep_HLRToShape typ filters (HLRBRep_HLRToShape.cxx L186-196) then
+///   route the Rg1+RgN seam OUT of VCompound (typ 5) and Rg1LineVCompound
+///   (typ 3: Rg1Line && !RgNLine) into RgNLineVCompound (typ 4: RgNLine).
+/// - CLOSED (gap 5): each shared edge is drawn exactly once — the OCCT
+///   Used-flag dedupe of the HLRBRep_HLRToShape face walk
+///   (InternalCompound cxx L75-87 reset + DrawFace cxx L168-225 +
+///   DrawEdge, aligned in brep/hlr_to_shape.rs and the EMaskUsed flag of
+///   brep/edge_data.rs): the first face that reaches a circle edge draws
+///   it and sets Used, the adjacent-face occurrence skips; the seam
+///   closed pair (forward + reversed in the side wire) draws once.
 #[test]
 fn smoke_cylinder_hlr_end_to_end() {
     let (brep, solid) = smoke_cylinder_solid();
-    let (v, outline, h) = smoke_run_hlr(&solid, brep);
+    let (v, rg1v, rgnv, outline, h) = smoke_run_hlr(&solid, brep);
 
     let b_minor = 10.0f64 / 3.0f64.sqrt();
     let per = ellipse_arc_len(10.0, b_minor, 0.0, std::f64::consts::TAU);
@@ -1134,9 +1170,9 @@ fn smoke_cylinder_hlr_end_to_end() {
     );
 
     // the visible sharp edges: ellipse arcs of a = 10, b = 10/sqrt(3) — the
-    // projected images of the cap circles — plus the seam line.  The seam
-    // (7.07107, -4.08249) -> (7.07107, 20.41241) is the projected image of
-    // the (r, 0, z) line.
+    // projected images of the cap circles ONLY.  The seam edge (reg1 AND
+    // regn from the CN regularity) is excluded from VCompound by the typ 5
+    // filter (!Rg1Line || OutLine) of HLRBRep_HLRToShape.cxx L196.
     let mut v_edges = Vec::new();
     assert!(!v.is_null(), "v_compound is null");
     compound_edges(&v, &mut v_edges);
@@ -1149,27 +1185,53 @@ fn smoke_cylinder_hlr_end_to_end() {
                 assert!((major - 10.0).abs() < 1e-9 && (minor - b_minor).abs() < 1e-9);
                 v_ellipse_arcs += 1;
             }
-            SegSummary::Line { p1, p2, .. } => {
-                // the seam image: x' = r/sqrt(2), y' from -r/sqrt(6) to
-                // (-r + 2h)/sqrt(6).
-                assert!((p1.x - p2.x).abs() < 1e-9);
-                assert!((p1.x - 10.0 / 2.0f64.sqrt()).abs() < 1e-9);
+            SegSummary::Line { .. } => {
                 v_seam += 1;
             }
             _ => panic!("unexpected visible edge: {:?}", e),
         }
     }
     assert_eq!(
-        v_ellipse_arcs, 6,
-        "three arcs per cap circle (seam + 2 tangency splits): {:?}",
+        v_ellipse_arcs, 5,
+        "OCCT VCompound = the full top ellipse (3 arcs) + the bottom near half (2 arcs): {:?}",
         v_edges
     );
-    assert_eq!(v_seam, 1, "exactly one seam edge drawn");
+    assert_eq!(v_seam, 0, "the seam must leave VCompound (typ 5): {:?}", v_edges);
 
-    // the drawn arc pieces: [0, pi] (far half) + [pi, 7*pi/4] +
-    // [7*pi/4, 2*pi] (near halves) per circle — the two tangency splits
-    // (ellipse params 0 and pi, the phi = 45/225 deg silhouettes) and the
-    // seam split at 7*pi/4; each piece twice (recorded gap).
+    // the seam edge (rg1_line AND rg_n_line, HLRBRep_HLRToShape.cxx L188 vs
+    // L192) is NOT in Rg1LineVCompound (typ 3 needs !RgNLine) — the Rg1
+    // compound stays null.
+    let mut rg1_edges = Vec::new();
+    if !rg1v.is_null() {
+        compound_edges(&rg1v, &mut rg1_edges);
+    }
+    assert!(rg1_edges.is_empty(), "no Rg1Line edge expected: {:?}", rg1_edges);
+
+    // gap 4 pin: the seam lands in RgNLineVCompound (typ 4: RgNLine &&
+    // !OutLine, cxx L190-192) — the projected (r, 0, z) line x' = r/sqrt(2),
+    // y' from -r/sqrt(6) to (-r + 2h)/sqrt(6), projected length h*2/sqrt(6).
+    assert!(!rgnv.is_null(), "rgn_line_v_compound is null");
+    let mut rgn_edges = Vec::new();
+    compound_edges(&rgnv, &mut rgn_edges);
+    assert_eq!(rgn_edges.len(), 1, "exactly one seam edge drawn: {:?}", rgn_edges);
+    match &rgn_edges[0] {
+        SegSummary::Line { len, p1, p2 } => {
+            assert!((len - 60.0 / 6.0f64.sqrt()).abs() < 1e-9);
+            assert!((p1.z).abs() < 1e-9 && (p2.z).abs() < 1e-9);
+            assert!((p1.x - p2.x).abs() < 1e-9);
+            assert!((p1.x - 10.0 / 2.0f64.sqrt()).abs() < 1e-9);
+            let (lo, hi) = if p1.y < p2.y { (*p1, *p2) } else { (*p2, *p1) };
+            assert!((lo.y + 10.0 / 6.0f64.sqrt()).abs() < 1e-9, "seam lo {:?}", lo);
+            assert!((hi.y - 50.0 / 6.0f64.sqrt()).abs() < 1e-9, "seam hi {:?}", hi);
+        }
+        _ => panic!("seam edge is not a line: {:?}", rgn_edges[0]),
+    }
+
+    // the drawn arc pieces: the TOP circle keeps [0, pi] + [pi, 7*pi/4] +
+    // [7*pi/4, 2*pi] (the full ellipse), the BOTTOM circle keeps only the
+    // near halves [pi, 7*pi/4] + [7*pi/4, 2*pi] — the far half [0, pi] went
+    // to the hidden compound (the two tangency splits at the phi = 45/225
+    // deg silhouettes and the seam split at 7*pi/4).
     let tau = std::f64::consts::TAU;
     let half = std::f64::consts::PI;
     let split = 7.0 * std::f64::consts::FRAC_PI_4;
@@ -1177,7 +1239,6 @@ fn smoke_cylinder_hlr_end_to_end() {
     ranges.retain(|(u1, u2)| *u2 - *u1 < tau); // drop the seam line
     ranges.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     let expect = [
-        (0.0, half),
         (0.0, half),
         (half, split),
         (half, split),
@@ -1195,19 +1256,70 @@ fn smoke_cylinder_hlr_end_to_end() {
         );
     }
 
-    // the arc total: every piece of both circles is drawn — the OCCT
-    // reference draws the top full ellipse + the bottom near half only
-    // (the bottom far half [0, pi] still awaits the hider alignment —
-    // see the recorded gaps).
+    // gap 5 pin: no arc segment is drawn twice — the ellipse arcs carry
+    // pairwise distinct (unordered) endpoint pairs (the OCCT Used-flag
+    // dedupe; a broken dedupe would repeat the first face's arcs verbatim).
+    let arc_ends: Vec<(glam::DVec3, glam::DVec3)> = v_edges
+        .iter()
+        .filter_map(|e| match e {
+            SegSummary::Ellipse { p1, p2, .. } => Some((*p1, *p2)),
+            _ => None,
+        })
+        .collect();
+    for i in 0..arc_ends.len() {
+        for j in (i + 1)..arc_ends.len() {
+            let (a1, a2) = arc_ends[i];
+            let (b1, b2) = arc_ends[j];
+            let same = |p: glam::DVec3, q: glam::DVec3| (p - q).length() < 1e-9;
+            let dup = (same(a1, b1) && same(a2, b2)) || (same(a1, b2) && same(a2, b1));
+            assert!(
+                !dup,
+                "shared edge drawn twice: arc[{i}] {:?} vs arc[{j}] {:?}",
+                arc_ends[i],
+                arc_ends[j]
+            );
+        }
+    }
+
+    // the arc total: the OCCT reference draws the top full ellipse + the
+    // bottom near half (75.671 = 1.5 perimeters; the far half 25.2237 is in
+    // the hidden compound).
     let mut v_arc = 0.0;
     for (u1, u2) in &ranges {
         v_arc += ellipse_arc_len(10.0, b_minor, *u1, *u2);
     }
-    assert!((v_arc - 2.0 * per).abs() < 1e-2, "visible arc {}", v_arc);
+    assert!((v_arc - 1.5 * per).abs() < 1e-2, "visible arc {}", v_arc);
 
-    // the hidden compound: OCCT holds the far half of the bottom ellipse
-    // (25.2237) — currently null (recorded gap, the hider layer).
-    assert!(h.is_null(), "unexpected hidden compound");
+    // the hidden compound: OCCT holds the far half of the bottom ellipse —
+    // exactly one arc over [0, pi] (the projected 25.2237), endpoints at
+    // the silhouette tangency images (x' = +/-10, y' = 0).
+    assert!(!h.is_null(), "the hidden compound is null");
+    let mut h_edges = Vec::new();
+    compound_edges(&h, &mut h_edges);
+    assert_eq!(h_edges.len(), 1, "one hidden arc: {:?}", h_edges);
+    match &h_edges[0] {
+        SegSummary::Ellipse { p1, p2, major, minor, .. } => {
+            assert!((major - 10.0).abs() < 1e-9 && (minor - b_minor).abs() < 1e-9);
+            let (lo, hi) = if p1.x < p2.x { (*p1, *p2) } else { (*p2, *p1) };
+            assert!((lo.x + 10.0).abs() < 1e-9 && lo.y.abs() < 1e-9, "h lo {:?}", lo);
+            assert!((hi.x - 10.0).abs() < 1e-9 && hi.y.abs() < 1e-9, "h hi {:?}", hi);
+        }
+        _ => panic!("hidden edge is not an ellipse arc: {:?}", h_edges[0]),
+    }
+    let mut h_ranges = edges_with_ranges(&h);
+    assert_eq!(h_ranges.len(), 1);
+    let (h1, h2) = h_ranges.remove(0);
+    assert!(
+        (h1 - 0.0).abs() < 1e-9 && (h2 - half).abs() < 1e-9,
+        "hidden arc range ({},{})",
+        h1,
+        h2
+    );
+    assert!(
+        (ellipse_arc_len(10.0, b_minor, h1, h2) - 25.2237).abs() < 1e-3,
+        "hidden arc length {}",
+        ellipse_arc_len(10.0, b_minor, h1, h2)
+    );
 }
 
 /// The (range) pairs of the ellipse edges of a result compound.
@@ -1234,7 +1346,7 @@ fn smoke_cylinder_hlr_stable_over_three_runs() {
     let mut results = Vec::new();
     for _ in 0..3 {
         let (brep, solid) = smoke_cylinder_solid();
-        let (v, outline, h) = smoke_run_hlr(&solid, brep);
+        let (v, _rg1v, _rgnv, outline, h) = smoke_run_hlr(&solid, brep);
         let mut vs = Vec::new();
         if !v.is_null() {
             compound_edges(&v, &mut vs);
