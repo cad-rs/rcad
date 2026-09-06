@@ -853,6 +853,26 @@ impl SurfaceEval for ToroidalSurface {
     fn v_reversed_parameter(&self, t: f64) -> f64 {
         2.0 * PI - t
     }
+    /// OCCT ElSLib::D2 for a torus — exact analytic second derivatives
+    /// (the trait-default finite differences have no OCCT counterpart; the
+    /// Contap walker consumes D2 through Contap_SurfProps::NormAndDn's
+    /// generic branch for toroidal surfaces).
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        let x_ax = self.ref_dir.normalize_or_zero();
+        let y_ax = self.axis.cross(x_ax).normalize();
+        let (su, cu) = u.sin_cos();
+        let (sv, cv) = v.sin_cos();
+        let r_vec = cu * x_ax + su * y_ax;
+        let r_perp = -su * x_ax + cu * y_ax;
+        let tube = self.major_radius + self.minor_radius * cv;
+        let p = self.center + tube * r_vec + self.minor_radius * sv * self.axis;
+        let dpu = tube * r_perp;
+        let dpv = -self.minor_radius * sv * r_vec + self.minor_radius * cv * self.axis;
+        let dpuu = -tube * r_vec;
+        let dpuv = self.minor_radius * sv * r_perp;
+        let dpvv = -self.minor_radius * (cv * r_vec + sv * self.axis);
+        (p, dpu, dpv, dpuu, dpuv, dpvv)
+    }
 }
 
 impl ToroidalSurface {
