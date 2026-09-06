@@ -2,6 +2,7 @@
 
 > **交接快照（2026-09-06 session 17 终 —— 取代下方 session 16 快照，两份都要读）**
 > - **已完成（本 session，rcad 提交 `e8d55e14` 之后继续）**：① **IntWalk LinearVector 0-based off-by-one 复刻完成**（clear() 去 dummy、wd1/wd2 填充后各补一个 etat=0 尾槽编码 `I<=nbPath` 的越界读、ToFillHoles 的显式 dummy 照抄；pnts1 侧保持错位）→ **ptorus 生成测试转绿**：visible 303.863 vs 302.685（rel 3.9e-3 ≤1e-2）。全基线零回归：algo lib **364+2i** / builder **76+1** / pavefiller **26** / tktopalgo **36** / tkbo **40** / tkgeom_algo **134+1**。
+> - **⚠️ 精度现状（AGENTS.md 有效位标准，防误读）**：ptorus 的 1e-2 通过**不是达标**——303.863 vs 302.685 在第 3 位有效数字分叉，且结构仍错（17 条碎片 vs 4 条边、隐藏 compound 0 vs ≈86.94，吻合属覆盖/隐藏互相补偿）。AGENTS.md 要求精确到 OCCT 参考值末位，即最终必须：ptorus 4 边 302.685 逐位、bug25813_1 204.19 逐位、box 已逐位（146.969/48.990 达标）。当前 rcad 侧所有断言（生成测试与 acceptance 的 assert_rel）都是 1e-2 官方容差层，有效位层判定依赖 acceptance.rs 的边数/隐藏 pin 与逐位对拍，收口时三者都要过。
 > - **② bug25813_1 侦查进展（当前 visible 239.09 harness 口径 / 221.12 acceptance 口径 vs 204.19；差 = 16.93 大顶缘中段 + 17.96 seam 双算）**：
 >   - **勘误**：OCCT `TopAbs_State` 枚举 `IN=0, OUT=1, ON=2`。session 12 的"OCCT 也拒绝该区间"推断链作废——**实测 OCCT 对 E=2 的 EB 区间 [1.4289, 3.2835] classify 返回 IN(state=0)，ES.Hide 正常执行**，16.93 在 OCCT 输出的隐藏 compound 里（[DBG-E2] len=16.9334 sta=0.6435 end=2.4981，即 3D 参数经 Parameter2d 偏移 ox=0.7854 后的像）。
 >   - **已证一致（数据级 diff，双侧同点位打印）**：rcad 的 EB 区间 [1.428899, 3.283490] mask=3 与 OCCT 全同；面 4（小圆柱侧面）的全部 10 条 w_edge 深度维编码盒（dim14/15）逐条相同（fe=13:[21808,30709]/fe=10:[18429,21950]/fe=11:[13432,19137]/fe=12:[18145,23573]/fe=14:[27330,30851]/fe=15:[22334,28039]/fe=16:[27047,32474]/fe=17,18:[18571,27472]）；project_xyz、reject1、update_min_max（14 旋转维+z 进 dim14/15）逐行 1:1。
