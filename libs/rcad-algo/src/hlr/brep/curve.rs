@@ -130,8 +130,19 @@ impl<'a> Curve<'a> {
                     let trsf = self.proj().transformation().clone();
                     let mut d1 = trsf.transform_vec(circ.normal);
                     d1 = d1.normalize();
-                    // D1.IsParallel(gp::DZ(), Precision::Angular())
-                    if (d1.z.abs() - 1.0).abs() < ANGULAR {
+                    // D1.IsParallel(gp::DZ(), Precision::Angular()) —
+                    // gp_Dir::Angle (gp_Dir.cxx L27-52, acos/asin branch form)
+                    // + IsParallel (gp_Dir.hxx L191-196).
+                    let cosinus = d1.dot(Vec3::new(0.0, 0.0, 1.0));
+                    let sinus = d1.cross(Vec3::new(0.0, 0.0, 1.0)).length();
+                    let ang = if cosinus > -0.70710678118655 && cosinus < 0.70710678118655 {
+                        cosinus.acos()
+                    } else if cosinus < 0.0 {
+                        std::f64::consts::PI - sinus.asin()
+                    } else {
+                        sinus.asin()
+                    };
+                    if ang <= ANGULAR || std::f64::consts::PI - ang <= ANGULAR {
                         self.my_type = CurveType::Circle;
                     } else if d1.z.abs() < ANGULAR * 10.0 {
                         //*10: The minor radius of ellipse should not be too small.
@@ -598,15 +609,27 @@ impl<'a> Curve<'a> {
     }
 }
 
-/// gp_Dir::AngleWithRef(A, V) — the angle from `a` to `other` signed by the
-// reference direction `v` (the triple product sign).
+/// gp_Dir::AngleWithRef(Other, Vref) — gp/gp_Dir.cxx L58-83. The inputs are
+/// normalized gp_Dir coords: no length division and no clamping; for
+/// |cos| >= 0.70710678118655 OCCT switches to asin(|cross|).
 fn angle_with_ref(other: Vec3, a: Vec3, v: Vec3) -> f64 {
-    let dot = (a.dot(other) / (a.length() * other.length())).clamp(-1.0, 1.0);
-    let angle = dot.acos();
-    if a.cross(other).dot(v) < 0.0 {
-        -angle
+    // gp_XYZ XYZ = coord.Crossed(Other.coord);
+    let xyz = a.cross(other);
+    // double Cosinus = coord.Dot(Other.coord);  (unit dirs, no normalization)
+    let cosinus = a.dot(other);
+    // double Sinus = XYZ.Modulus();
+    let sinus = xyz.length();
+    let ang = if cosinus > -0.70710678118655 && cosinus < 0.70710678118655 {
+        cosinus.acos()
+    } else if cosinus < 0.0 {
+        std::f64::consts::PI - sinus.asin()
     } else {
-        angle
+        sinus.asin()
+    };
+    if xyz.dot(v) >= 0.0 {
+        ang
+    } else {
+        -ang
     }
 }
 
