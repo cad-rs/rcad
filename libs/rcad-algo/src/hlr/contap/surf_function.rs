@@ -420,6 +420,15 @@ impl crate::geomalgo::int_patch::imp_prm::i_walking::IWFunction for SurfFunction
     fn surface_value(&self, u: f64, v: f64) -> glam::DVec3 {
         self.surface().value(u, v)
     }
+    /// OCCT ThePSurfaceTool::UResolution(Func.PSurface(), R3d) — the
+    /// analytic resolution of the bound adaptor.
+    fn u_resolution(&self, r3d: f64) -> f64 {
+        self.surface().u_resolution(r3d)
+    }
+    /// OCCT ThePSurfaceTool::VResolution(Func.PSurface(), R3d).
+    fn v_resolution(&self, r3d: f64) -> f64 {
+        self.surface().v_resolution(r3d)
+    }
 }
 
 #[cfg(test)]

@@ -41,6 +41,11 @@ pub trait IWFunction: Clone + FunctionSetWithDerivatives2 {
     /// OCCT ThePSurfaceTool::Value(Func.PSurface(), U, V) — the surface
     /// point the function is bound to.
     fn surface_value(&self, u: f64, v: f64) -> DVec3;
+    /// OCCT ThePSurfaceTool::UResolution(Func.PSurface(), R3d) — the
+    /// analytic parametric resolution of the bound surface.
+    fn u_resolution(&self, r3d: f64) -> f64;
+    /// OCCT ThePSurfaceTool::VResolution(Func.PSurface(), R3d).
+    fn v_resolution(&self, r3d: f64) -> f64;
 }
 
 impl IWFunction for SurfFunction {
@@ -67,6 +72,12 @@ impl IWFunction for SurfFunction {
     }
     fn surface_value(&self, u: f64, v: f64) -> DVec3 {
         self.p_surface().point_at(u, v)
+    }
+    fn u_resolution(&self, r3d: f64) -> f64 {
+        surface3_u_resolution(self.p_surface(), r3d)
+    }
+    fn v_resolution(&self, r3d: f64) -> f64 {
+        surface3_v_resolution(self.p_surface(), r3d)
     }
 }
 
@@ -623,8 +634,10 @@ impl IWalking {
         }
 
         self.tolerance = [
-            u_resolution(domain, rcad_kernel::precision::CONFUSION),
-            v_resolution(domain, rcad_kernel::precision::CONFUSION),
+            // OCCT gxx L244-245 / L358-359: tolerance(1) =
+            // ThePSurfaceTool::UResolution(Caro, Precision::Confusion()).
+            IWFunction::u_resolution(func, rcad_kernel::precision::CONFUSION),
+            IWFunction::v_resolution(func, rcad_kernel::precision::CONFUSION),
         ];
 
         func.set_surface(&caro.clone());
@@ -774,8 +787,10 @@ impl IWalking {
         }
 
         self.tolerance = [
-            u_resolution(domain, rcad_kernel::precision::CONFUSION),
-            v_resolution(domain, rcad_kernel::precision::CONFUSION),
+            // OCCT gxx L244-245 / L358-359: tolerance(1) =
+            // ThePSurfaceTool::UResolution(Caro, Precision::Confusion()).
+            IWFunction::u_resolution(func, rcad_kernel::precision::CONFUSION),
+            IWFunction::v_resolution(func, rcad_kernel::precision::CONFUSION),
         ];
 
         self.um = domain[0];
@@ -3196,22 +3211,82 @@ fn cut_vector_by_tolerances(v: &mut DVec2, tolerance: &[f64; 2]) {
     }
 }
 
-/// rcad adaptation of Adaptor3d_HSurfaceTool::UResolution / VResolution
-/// (the corrected face domain).
-fn u_resolution(domain: [f64; 4], tol3d: f64) -> f64 {
-    let u_extent = (domain[1] - domain[0]).abs();
-    if u_extent.is_finite() && u_extent > 1e-12 {
-        tol3d.max(1e-9) / u_extent
-    } else {
-        rcad_kernel::precision::PCONFUSION
+/// OCCT GeomAdaptor_Surface::UResolution (cxx L1818-1892) over the rcad
+/// surface carrier — the per-type analytic parametric resolution the
+/// walking tolerance is derived from (gxx L244).
+pub fn surface3_u_resolution(s: &Surface3, r3d: f64) -> f64 {
+    let conf = rcad_kernel::precision::CONFUSION;
+    let arc_res = |r: f64| -> f64 {
+        if r <= 1. {
+            2. * r.asin()
+        } else {
+            2. * std::f64::consts::PI
+        }
+    };
+    match s {
+        Surface3::Torus(t) => {
+            let r = t.major_radius + t.minor_radius;
+            if r > conf {
+                arc_res(r3d / (2. * r))
+            } else {
+                0.
+            }
+        }
+        Surface3::Sphere(s2) => {
+            if s2.radius > conf {
+                arc_res(r3d / (2. * s2.radius))
+            } else {
+                0.
+            }
+        }
+        Surface3::Cylinder(c) => {
+            if c.radius > conf {
+                arc_res(r3d / (2. * c.radius))
+            } else {
+                0.
+            }
+        }
+        Surface3::Cone(c) => {
+            // VIso circle radii: r(V) = refR + V * tan(semi) — the bounded
+            // domain drives the ratio (GeomAdaptor uses the U iso radius).
+            let r = c.radius.max(1e-12);
+            if r > conf {
+                arc_res(r3d / r)
+            } else {
+                0.
+            }
+        }
+        Surface3::Plane(_) => r3d,
+        _ => r3d * 0.01,
     }
 }
 
-fn v_resolution(domain: [f64; 4], tol3d: f64) -> f64 {
-    let v_extent = (domain[3] - domain[2]).abs();
-    if v_extent.is_finite() && v_extent > 1e-12 {
-        tol3d.max(1e-9) / v_extent
-    } else {
-        rcad_kernel::precision::PCONFUSION
+/// OCCT GeomAdaptor_Surface::VResolution (cxx L1896-1959).
+pub fn surface3_v_resolution(s: &Surface3, r3d: f64) -> f64 {
+    let conf = rcad_kernel::precision::CONFUSION;
+    let arc_res = |r: f64| -> f64 {
+        if r <= 1. {
+            2. * r.asin()
+        } else {
+            2. * std::f64::consts::PI
+        }
+    };
+    match s {
+        Surface3::Torus(t) => {
+            if t.minor_radius > conf {
+                arc_res(r3d / (2. * t.minor_radius))
+            } else {
+                0.
+            }
+        }
+        Surface3::Sphere(s2) => {
+            if s2.radius > conf {
+                arc_res(r3d / (2. * s2.radius))
+            } else {
+                0.
+            }
+        }
+        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Plane(_) => r3d,
+        _ => r3d * 0.01,
     }
 }
