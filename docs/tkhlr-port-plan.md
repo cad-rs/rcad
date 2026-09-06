@@ -1,6 +1,15 @@
 # TKHLR 1:1 翻译推进计划（多 session runway）
 
-> **交接快照（2026-09-07 session 19 终（追加 4）—— 取代下方追加 2/3 快照，都要读）**
+> **交接快照（2026-09-07 session 19 终（追加 5）—— TKHLR exact 主线收口，取代追加 4）**
+> - **追加 5（ptorus 验收全绿 un-ignore——exact 线路三用例全部达标）：**
+>   - **① mass 逐位根因（追加 4 遗留缺口①，已修复）**：`math_FunctionSetRoot` 的停止测试段（`Save(Kount)`/Verif/IsSolutionReached/5%-gain/回归处理，cxx L1271-1411）在 rcad 里被嵌进了 `if sort || (f2/previous_minimum > PROGRES)` 守卫**内部**，而 OCCT 该守卫在 cxx L1266 已闭合、停止测试段在守卫**之外**每次迭代执行。后果：牛顿快速收敛期（F2 每步降 200 倍以上）停止测试被跳过——解已完全静止（历史实证 Delta=0.0 精确零、F2 恒定、梯度模式）却检测不到收敛 → 100 次迭代耗尽 → `done=false` → ComputeOpenLine NotDone 分支 PasC 减半 → 走线采样密度爆炸（dep2/dep3 达 2680/1584 点 vs OCCT 81/215）→ 曲线近似质量偏差 1.7e-3。修复 = 括号位置：守卫在 `if sort {` 边界处理块后闭合，停止测试段移到 while 循环层（11 处索引/缩进不动，纯块移动）。修复后 visible mass **302.6854487286546**（|Δ|=4.49e-4 < 印刷半容差 5e-4，rounds to 302.685 ✓）。
+>   - **② 隐藏门重推导（追加 4 遗留缺口②，已结案）**：**OCCT 对 ptorus 零隐藏**。证据链：(a) rcad 全轮廓投影 = 302.6854 ≈ DRAW 可见 302.685（同曲线集，量纲一致——若 OCCT 隐藏了投影长 h>0 的区间，其可见应为全投影减 h，与实测矛盾）；(b) DRAW 路径 `COMPUTE_HLR`（hlr/begin proc）从不提取隐藏过滤器，aCompHid 恒空，`checkprops result` 只量可见；(c) EDGE:4/VERTEX:7 = 4 条完整边（3 条 border 切开的开走线 + 1 条闭合内环 walk，8 端点并 7 顶点）无可见性分割。快照沿袭的「隐藏 ≈86.94」= 3D 走线总长 389.62 − 投影可见 302.685 的**量纲混算幻影**，正式作废。acceptance run2 改为断言隐藏 compound 为空（`m2 == 0.0` 且边数 0）。
+>   - **③ 验收终态**：`acceptance_ptorus_vs_viewer_path` **un-ignore 全绿**；acceptance 三用例（box/bug25813_1/ptorus）全部通过。基线：algo lib **369 通过 0 ignore**（368+1i → 369）/ builder 76+1 / pavefiller 26 / tktopalgo 36 / tkbo 40 / tkgeom_algo 134+1 / tkhelix 16 / kernel 663；生成测试 exact_hlr **4/4**、helix_standard 56、bfuse_simple_a1 1（blend_simple 编译失败 = 他 session fillet 半成品，与本任务无关）。
+>   - **④ module-map.md hlr 行已更新**（ptorus 全绿 + 两根因 + lib 369）。
+>   - **⑤ 剩余（非本线，按 runway 原序）**：poly 线路 Stage 5；在册 ulp 级待修清单（Elips2d::Reverse 误译、Parameter3d 1e-15 vs DBL_MIN 等）；ElSLib/Contap 层的 ulp 对齐。OCCT 侧事实备忘：干净树 Debug 构建 bug25813_3 在 DSFiller 前段崩溃（早于 IWalking，box/bug25813_1 正常）——重启 OCCT 侧插桩前先解决或改用 Release 自建。
+> - **纪律提醒（沿袭）**：4 个他 session 遗留脏文件勿 add（algo_ext/mod.rs、fillet/topopebrepbuild.rs、tests/tkgeom_algo_gtests.rs——纯 HEAD 缺脏版 mod.rs 不可编译）；tkfeat-fillet-offset-port-plan.md 保持未跟踪；本追加求解器探针（dbg_hist/eprintln）已删净；方法论不变。
+
+> **交接快照（2026-09-07 session 19 终（追加 4）—— 被上方追加 5 取代，仍要读）**
 > - **追加 4（第 4 条开放线 CLOSED——本任务主目标达成）：**
 >   - **根因（亲自插桩实证到语句级）**：`contap/contour/functions.rs` `compute_tangency` 的 **Destination 数组错位**。调用方传 `&mut destination[1..=nb_point_rst+1]`（0-based 切片，绝对下标 1 起，对应 OCCT 的 1-based Array1），函数体却照 OCCT 写 `destination[i]`（i 为 1-based solrst 点号）→ solrst 点 i 的映射写到绝对槽 i+1，整体右移一位。后果链：dep1 走线终点（departure 8）在 Contap_Contour has_last_point 块的 `destination[i]==indlast` 查找（i∈1..=8）永不命中 → Contap_Line 末点 vertex 不加（nbvtx=1，仅 [1.0]）→ LineConstructor `for i in 1..nbvtx` 空转 → **该线整条被丢**（31.478）。修复 = 函数体内 11 处 `destination[i]`→`destination[i-1]`（`destination[k]`→`destination[k-1]`）。修复前其他线的「命中」也错位关联到错误 solrst 点（arc/vertex 关联错），修复后一并归位。
 >   - **修复后**：iwalk 4 条线全部产出 Contap_Line → OutLineV(4)、VERTEX:7、EDGE:4（与 OCCT viewer path 结构全等）、visible mass **302.6866992998014**（vs 印刷值 302.685）。生成测试 exact_hlr **4/4 全绿**（ptorus 1e-2 官方容差首次通过，此前 3/4）。

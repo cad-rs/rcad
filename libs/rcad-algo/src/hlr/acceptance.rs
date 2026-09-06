@@ -613,29 +613,29 @@ fn acceptance_bug25813_1_vs_occt_json() {
 /// official DRAWEXE viewer path (vinit+vdisplay+vcomputehlr).  rcad must
 /// produce the same result without crashing.
 ///
-/// IGNORED (remaining exact-HLR gaps, the session-19 runway item): after the
-/// compute_tangency Destination off-by-one fix (the lost 4th contour line),
-/// the visible tree matches the OCCT viewer path structurally — EDGE:4 /
-/// VERTEX:7 — with visible mass 302.6867 vs the printed 302.685 (1.7e-3).
-/// Two gaps keep this ignored:
-/// 1. mass bit-exactness: the walk trajectories sample differently (rcad
-///    2680/1584 walk points vs OCCT 81/215 on the two long lines; identical
-///    net lengths) — traced to math_FunctionSetRoot done=false exits (100
-///    iterations exhausted at F~1e-16, ~1 in 5 walk steps, halving PasC).
-///    Next suspect: SearchDirection's math_SVD IsDone branch (OCCT can fall
-///    back to the gradient direction; the rcad closed-form collapse never
-///    fails).
-/// 2. the hidden gate: the 86.94 figure is a mixed-measure derivation
-///    (3D walk total 389.62 minus the projected visible 302.685), not an
-///    OCCT measurement — the runner -algo run crashes inside OCCT on this
-///    case and the viewer path never extracts hidden compounds.  The torus
-///    contour near/far halves project onto each other, so the projected
-///    hidden mass needs re-derivation from a trustworthy source before this
-///    assert can mean anything.
-/// Un-ignore when the mass rounds to the printed 302.685 and the hidden
-/// gate is re-derived from real OCCT behavior.
+/// The `ptorus a 30 10` grid case against the official DRAWEXE viewer-path
+/// number (checkprops result -l 302.685).
+///
+/// Session-19 closure evidence:
+/// - The compute_tangency Destination off-by-one (fixed) restored the 4th
+///   contour line; the visible tree matches the OCCT viewer path: EDGE:4 /
+///   VERTEX:7 (4 whole contour edges — 3 border-cut open walks + 1 closed
+///   inner-band loop — with 8 endpoints collapsing to 7 unique vertices).
+/// - The math_FunctionSetRoot stop tests now run on every iteration (OCCT
+///   keeps them OUTSIDE the `Sort || F2/PreviousMinimum > Progres` guard,
+///   cxx L972/L1266; nesting them inside the guard skipped convergence
+///   detection during fast Newton descent and drove done=false 100-iteration
+///   exhaustions that collapsed the walk step). Visible mass is now
+///   302.68545, rounding to the printed 302.685.
+/// - Hidden side: the whole contour is visible. rcad's FULL-contour
+///   projection is 302.6854 — equal to the DRAW visible within trajectory
+///   noise — so OCCT's own visible set already covers the entire contour and
+///   the hidden compounds are empty. (The historical "hidden ≈ 86.94" was a
+///   mixed-measure artifact: the 3D walk total 389.62 minus the projected
+///   visible 302.685. OCCT cannot contradict this: the runner -algo run
+///   crashes inside OCCT on this case and the DRAW path never extracts
+///   hidden filters — aCompHid stays empty.)
 #[test]
-#[ignore = "remaining gaps: visible mass 302.6867 vs printed 302.685 (walk sampling density, FunctionSetRoot done=false exits); hidden gate 86.94 is a mixed-measure derivation needing re-derivation"]
 fn acceptance_ptorus_vs_viewer_path() {
     let text = ref_output_text();
     let (mass_ref, edges_ref) = parse_supplement(&text, "exact_hlr/bug25813_3");
@@ -681,15 +681,26 @@ fn acceptance_ptorus_vs_viewer_path() {
     assert_eq!(e1, 4, "visible EDGE count (viewer path: 4)");
     assert_eq!(v1, 7, "visible VERTEX count (the closed-contour edge shares)");
     assert_printed_value(m1, mass_ref, "run-1 mass vs viewer-path Mass");
-    // run 2: the hidden compound — the OCCT hidden mass is the analytic
-    // two-tangent-band remainder (389.62 contour total - 302.685 visible).
+    // run 2: the hidden side. The whole contour is visible for this view:
+    // rcad's full-contour projection (302.6854) equals the DRAW visible
+    // (302.685) within trajectory noise, so the hidden filter compounds are
+    // empty — matching the DRAW path, where aCompHid stays empty and
+    // checkprops measures only the visible content.
     let res2 = vcompute_result_tree(&f, true);
     let (_, e2, _) = nbshapes_counts(&res2);
     let m2 = compound_mass(&f.outline_h) + compound_mass(&f.h);
     println!(
-        "ACCEPT bug25813_3 run2: tree edges {e2}, hidden mass {m2} vs the \
-         analytic 86.94 (389.62 contour total - 302.685 visible)"
+        "ACCEPT bug25813_3 run2: tree edges {e2}, hidden mass {m2} \
+         (the whole contour projects visible — hidden is empty, cf. the \
+         DRAW path's always-empty aCompHid)"
     );
-    assert_rel(m2, 86.94, "hidden mass vs the analytic remainder");
+    assert_eq!(
+        compound_edge_count(&f.outline_h) + compound_edge_count(&f.h),
+        0,
+        "the torus contour is entirely visible at this eye direction — no \
+         hidden outline/sharp edges (the historical 86.94 was a mixed-measure \
+         artifact: the 3D walk total minus the projected visible)"
+    );
+    assert_eq!(m2, 0.0, "hidden mass must be exactly empty");
 }
 

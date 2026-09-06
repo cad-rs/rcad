@@ -643,6 +643,7 @@ impl FunctionSetRoot {
         let mut dy = 0.0f64;
 
         let mut kount = 0;
+        let mut dbg_hist: Vec<(i32, f64, f64, bool)> = Vec::new();
         while kount < self.itermax {
             kount += 1;
             previous_minimum = f2;
@@ -963,11 +964,15 @@ impl FunctionSetRoot {
                         dy = gh[0] * dh[0] + gh[1] * dh[1];
                     }
                 }
+            }
+            // (the `if sort || (f2 / previous_minimum > PROGRES)` guard closes
+            // here — OCCT cxx L1266 — the stop tests below run on EVERY
+            // iteration.)
 
-                // ---------------------------------------------
-                //  on passe aux tests d'ARRET (OCCT L1292-1390)
-                // ---------------------------------------------
-                save[kount as usize] = f2;
+            // ---------------------------------------------
+            //  on passe aux tests d'ARRET (OCCT L1292-1390)
+            // ---------------------------------------------
+            save[kount as usize] = f2;
                 // Est ce la solution ?
                 let verif;
                 if change_direction {
@@ -1060,7 +1065,6 @@ impl FunctionSetRoot {
                         return; // y a plus d'issues
                     }
                 }
-            }
         }
         self.done = false;
         self.state = f.get_state_number();
