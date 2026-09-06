@@ -1640,35 +1640,59 @@ pub fn nb_faces(&self) -> usize {
         }
     }
 
-    /// Mutate a wire's data.
+    /// Mutate a wire's data in place, preserving Arc identity (the OCCT
+    /// BRep_Builder edits TShapes in place; `Arc::make_mut` would split the
+    /// identity whenever the wire is referenced by the arena plus another
+    /// container — the same contract as [`BRep::edge_mut_inplace`]).
     pub fn wire_mut(&mut self, r: Shape) -> &mut TWireData {
-        match Arc::make_mut(&mut self.tshapes[r.index]) {
-            TShape::Wire(w) => w,
-            _ => panic!("wire_mut: Shape {} is not a Wire", r.index),
+        // SAFETY: the caller holds &mut BRep (exclusive borrow of the tshape
+        // slot) and is building the shape sequentially; every other reference
+        // observes the change, matching the OCCT in-place builder semantics.
+        let ptr = Arc::as_ptr(&self.tshapes[r.index]) as *mut TShape;
+        unsafe {
+            match &mut *ptr {
+                TShape::Wire(w) => w,
+                _ => panic!("wire_mut: Shape {} is not a Wire", r.index),
+            }
         }
     }
 
-    /// Mutate a face's data.
+    /// Mutate a face's data in place, preserving Arc identity (see
+    /// [`BRep::wire_mut`]).
     pub fn face_mut(&mut self, r: Shape) -> &mut TFaceData {
-        match Arc::make_mut(&mut self.tshapes[r.index]) {
-            TShape::Face(f) => f,
-            _ => panic!("face_mut: Shape {} is not a Face", r.index),
+        // SAFETY: see wire_mut.
+        let ptr = Arc::as_ptr(&self.tshapes[r.index]) as *mut TShape;
+        unsafe {
+            match &mut *ptr {
+                TShape::Face(f) => f,
+                _ => panic!("face_mut: Shape {} is not a Face", r.index),
+            }
         }
     }
 
-    /// Mutate a shell's data.
+    /// Mutate a shell's data in place, preserving Arc identity (see
+    /// [`BRep::wire_mut`]).
     pub fn shell_mut(&mut self, r: Shape) -> &mut TShellData {
-        match Arc::make_mut(&mut self.tshapes[r.index]) {
-            TShape::Shell(s) => s,
-            _ => panic!("shell_mut: Shape {} is not a Shell", r.index),
+        // SAFETY: see wire_mut.
+        let ptr = Arc::as_ptr(&self.tshapes[r.index]) as *mut TShape;
+        unsafe {
+            match &mut *ptr {
+                TShape::Shell(s) => s,
+                _ => panic!("shell_mut: Shape {} is not a Shell", r.index),
+            }
         }
     }
 
-    /// Mutate a solid's data.
+    /// Mutate a solid's data in place, preserving Arc identity (see
+    /// [`BRep::wire_mut`]).
     pub fn solid_mut(&mut self, r: Shape) -> &mut TSolidData {
-        match Arc::make_mut(&mut self.tshapes[r.index]) {
-            TShape::Solid(s) => s,
-            _ => panic!("solid_mut: Shape {} is not a Solid", r.index),
+        // SAFETY: see wire_mut.
+        let ptr = Arc::as_ptr(&self.tshapes[r.index]) as *mut TShape;
+        unsafe {
+            match &mut *ptr {
+                TShape::Solid(s) => s,
+                _ => panic!("solid_mut: Shape {} is not a Solid", r.index),
+            }
         }
     }
 

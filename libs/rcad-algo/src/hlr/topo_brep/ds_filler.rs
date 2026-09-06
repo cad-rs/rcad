@@ -815,11 +815,14 @@ pub(crate) fn insert_face(
         }
     }
     if std::env::var("RCAD_IWALK_DEBUG").is_ok() {
+        let int_l = ds.face_int_l(f);
+        let ptrs: Vec<String> = int_l.iter().take(4).map(|x| format!("{:x}", x.ptr_id())).collect();
         eprintln!(
-            "[CWDBG] insert_face END: int_l={} out_l={} key_ptr={:x}",
-            ds.face_int_l(f).len(),
+            "[CWDBG] insert_face END: int_l={} out_l={} key_ptr={:x} first_int_l_ptrs={:?}",
+            int_l.len(),
             ds.face_out_l(f).len(),
-            f.ptr_id()
+            f.ptr_id(),
+            ptrs
         );
     }
 }

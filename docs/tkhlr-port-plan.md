@@ -647,3 +647,10 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 探针实证（SFDBG/CWDBG）：IntL 非空（51/26 条，键 ptr 正确）、建边链全 in-place（add_edge/add_to_edge/update_edge_pcurve 均 edge_mut_inplace）——但 **explore_face 探索到的 NF 边 Arc ≠ IntL 边 Arc**（e_same_any=false 全体成立）。OCCT 语义：B.Add 存同一 TShape 句柄、BRep_Builder 原地变更、身份永不分裂；rcad 的 `wire_mut`/`face_mut`/`shell_mut` 仍是 `Arc::make_mut`（topods.rs L1652-1670）——当 wire/face 的 Arc 被多处引用（arena + 局部句柄 + 父容器）时 make_mut 克隆分身，导致 NF 实际存储的 wire/edge 与 IntL/DS 记账的句柄分裂 → Int 旗标永不命中 → 轮廓边从所有 compound 消失（仅 RgN 缝存活的准确解释）。
 
 **修复方向（下 session 首任务）**：容器类（wire/face/shell/compound）的变异器与 builder_add 家族改为身份保持语义（仿 edge_mut_inplace 的裸指针原地变异，或建后不再变异的构造式用法）；审计清单 = topods.rs L3215-3320 全部 make_mut 变异器 + builder_add/make_wire/make_shell 调用序。修完 SFDBG 的 e_same_any 应转 true → RgNV=2 之外应出现轮廓边 → 对照 OCCT 302.685。
+
+### 本 session 追加 9（session 13：容器变异器已改 in-place；断点再收窄一环）
+
+1. **已完成**：`topods.rs` 的 wire_mut/face_mut/shell_mut/solid_mut 全部从 `Arc::make_mut` 改为身份保持的原地变异（同 edge_mut_inplace 契约）。
+2. **实测排除**：修后 e_same 仍 false → 分裂点不在容器变异器。进一步实证：被探索的 NF 边是**晚于 IntL 的新 TShape**（ptr 段位证明）——它们是 `process_edges` 的 **SplE 分段**（`empty_copy` 新建，OCCT cxx L713-758 忠实翻译，本身正确）。
+3. **真正的机制（已还原）**：OCCT 的轮廓边查找走 `IsSplEEdgeEdge(IntLEdge, E)`——IntL 存原始边，NF 存 SplE 分段，通过 `EdgeHasSplE(IntLEdge) → SplE 列表含 E` 匹配。rcad 的 is_spl_e_edge_edge 已对齐。断点 = **Walking 分支的内部点没有走 insert_vertex 注册**（→ SplE 表按边注册依赖 init_vertex，若无注册则 process_edges 不为这些边建 SplE / 或建了但查询回退原边比较必 false）。对照点：OCCT DSFiller cxx L161-171（walking 分支的 `if (P.IsInternal()) InsertVertex(P, tol, E, DS)`）与 rcad insert_face 非 Restriction 分支的对应语句。
+4. 下 session 首查：rcad insert_face 非 Restriction 分支的 insert_vertex 调用与 OCCT L146-192 逐行对照（重点 L161-171 内部点注册），补齐后 SFDBG 的 int 应转 true。
