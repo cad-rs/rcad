@@ -908,10 +908,33 @@ fn explore_face(
                         .face_int_l(f)
                         .iter()
                         .any(|x| x.is_same(&e));
+                let ds0 = if int_l_len > 0 {
+                    let x0 = s.data_structure().face_int_l(f)[0].clone();
+                    let has_spl = s.data_structure().edge_has_spl_e(&x0);
+                    let spl_len = if has_spl {
+                        s.data_structure().edge_spl_e(&x0).len()
+                    } else {
+                        0
+                    };
+                    let spl0_ptr = if spl_len > 0 {
+                        format!("{:x}", s.data_structure().edge_spl_e(&x0)[0].ptr_id())
+                    } else {
+                        "-".into()
+                    };
+                    format!(
+                        "i0={:x} has_spl={} spl_len={} spl0={} same_spl0={}",
+                        x0.ptr_id(),
+                        has_spl,
+                        spl_len,
+                        spl0_ptr,
+                        spl_len > 0 && s.data_structure().edge_spl_e(&x0)[0].is_same(&e)
+                    )
+                } else {
+                    "-".into()
+                };
                 eprintln!(
-                    "[SFDBG] edge ie? int={int} out={out} iso={iso} dbl probe: has_int_l={has_int_l} int_l_len={int_l_len} e_same_any={same} e_ptr={:x} f_ptr={:x}",
-                    e.ptr_id(),
-                    f.ptr_id()
+                    "[SFDBG] int={int} out={out} iso={iso} has_int_l={has_int_l} int_l_len={int_l_len} e_same_any={same} {ds0} e_ptr={:x}",
+                    e.ptr_id()
                 );
             }
             // OCCT L235: bool Dbl = BRepTools::IsReallyClosed(E, theFace);

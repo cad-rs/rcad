@@ -660,3 +660,9 @@ algo lib **135**（120→125→130→135 逐批 +5 锚点）、kernel lib **645*
 静态还原完成 OCCT 的完整匹配机制：insert_face 把 IntL **原始边**推入列表；process_edges（insert 尾）为 DS 注册表中**有内部点注册**的边造 SplE 分段（empty_copy 新 TShape）；process_face 的 IntL 块对 EdgeHasSplE 的边**改加 SplE 分段**；提取查询 IsIntLFaceEdge 走 IsSplEEdgeEdge（SplE 列表含被探索边 → true；无 SplE → 回退原边 IsSame）。
 
 单次运行实测：IntL=51（原始边 ptr 1b08fe6-ec 段）、被探索边 = 1b08fef-ff 段（= SplE 分段，证明 process_face 的 EdgeHasSplE 分支**生效**）→ 但 is_int_l_face_edge 仍 false ⇒ **SplE 映射的键（DS my_edges_vertices 注册表的边句柄）与 IntL 边句柄不一致**，或 SplE 分段与被探索分段非同一 Arc。收口动作（纯读源码可决，无需探针）：(1) rcad data.rs my_edges_vertices 的注册键来源——insert_face Walking 分支谁调 init_vertex（对照 OCCT：walking 分支无 InsertVertex，注册表应仅有 restriction/iso 边 → 则 SplE 空 → process_face 应走 else 加原始边 → 与实测"探索到 SplE 分段"矛盾——即 rcad 的注册表被某种自播种污染，process_edges 对未注册边造了 SplE——对 OCCT L713-758 的 InitEdge/MoreEdge 语义逐行核对即可定位）；(2) 修复后验证 = SFDBG int=true → OutLineV 非空 → mass≈302.685。
+
+### 本 session 追加 11（session 13 终 2：终极对照数据 + 下一动作）
+
+终极探针数据（单次运行）：`has_int_l=true int_l_len=51 has_spl=false`（IntL 边的 SplE 表**为空**——即 process_face 走的是 else 分支、把 **IntL 原始边** 加进了 NF）→ 按此，探索到的边必须就是 IntL 原始 Arc、IsSame 回退必命中。但实测被探索边 ptr（2bca3f2xxxx，连续段位）≠ IntL ptr（2bca3ea-ee 段）——**"process_face 存入的句柄"与"探索器产出的句柄"不一致**。
+
+下一动作（精确到函数，读源码即可决）：(1) rcad `TopExpExplorer`（brep 遍历器）——`current()` 返回的是父 TShape 里存的 child 句柄，还是按 index 从 arena 重解析的句柄；(2) `insert()` 的 `top_exp_faces(s,...)` 与 `load()` 的面探索是否产出同一 Arc 的面句柄（两处探索路径的 Arc 一致性）；(3) 71 条被探索边实例 vs 预期 53（2 缝 + 51 轮廓）——多出的 18 条从哪个 wire 来。三者都是纯读码核对，无歧义空间。
