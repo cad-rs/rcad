@@ -85,3 +85,26 @@ PATH="/c/tools/occt-debug/win64/vc14/bind:$PATH" tools/occt-bool-runner/build/De
 - 冻结文件勿动：`algo_ext/mod.rs`（TEMP-EXCLUDED 注释版）、`fillet/topopebrepbuild.rs`（WIP）、`tests/tkgeom_algo_gtests.rs`——当前工作树已恢复为冻结态（未提交），**不要 git add/checkout 它们**。
 - rcad-render 的 rcad_algorithms 导入损坏为预存问题（bc0bfa85 删库），不在范围。
 - TKHLR exact 线路已于本 session 收口（box/bug25813_1/ptorus 三验收全绿，提交 ce92a09d 及之前），勿回退。
+
+## 结案记录（2026-09-07 后续 session）
+
+**j1/j2 已全绿（bcommon_simple 83/83）。根因不在布尔管线——本档此前的定性
+（"DS→BRep 环装配缺陷"）是错的；缺陷在测试生成器。**
+
+- **真根因**：根仓库 `tools/occt-test-gen/src/main.rs` 的 draw-script
+  `ttranslate` 圆柱折叠分支先把平移写进 `*base`，但重发的
+  `make_cylinder_brep` 行用了**旧 base 值**——平移被静默丢弃。j1 变成
+  `common(c1, c2@原点)`（两圆柱完全重合），结果=完整 c1，面积
+  15079.644737231005 = 12566.37 + 2×1256.64 逐位吻合；j2 的孔打在盒角而非
+  (5,5,-2) 中心（V12 vs V10）。这也解释了"每个提交逐位同败"——生成器对
+  所有提交产出同样的坏测试，二分结论在此意义上成立但指向了错误层。
+- **修复**：发射折叠后的新 base（tools/occt-test-gen 根仓库提交）。
+- **取证更正**：交接时引用的 step-topo-diff"平面帽 0 边环/OPEN_SHELL=3"
+  来自过期 STEP 产物；当前代码导出的 j1 是结构完整的 c1（2V/3E/3F，
+  计数断言恰好通过，仅面积断言暴露）。
+- **volumemaker A1 为另一独立预存失败**（嵌套球 mkvolume→cut 返回未裁剪
+  外球）：用旧生成器 stash 实测逐位相同失败，与本修复无关，待查。
+- TKHLR(session16-19)对布尔管线的改动（Line3 清扫/FunctionSetRoot/
+  Ellipse2d）经逐 commit 排查均与本问题无关；另发现 e65d5ee1 提交信息
+  声称的 elclib 去归一化不在该提交的树中（elclib.rs 仍双重 normalize），
+  属声称未落地，ulp 级，不影响本问题。
