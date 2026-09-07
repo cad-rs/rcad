@@ -16,7 +16,7 @@ use super::chfi3d_builder_0::{
     chfi3d_fil_point_in_ds, chfi3d_fil_vertex_in_ds, chfi3d_same_parameter, P_CONFUSION,
 };
 use super::chfi_ds::{ChFiDSRegul, ChFiDSStripe, ChFiDSSurfData};
-use super::topopebrepds::{
+use super::chfi3d_ds::{
     TopOpeBRepDSHDataStructure, TopOpeBRepDSInterference, TopOpeBRepDSKind,
     TopOpeBRepDSSolidSurfaceInterference,
 };
@@ -122,6 +122,7 @@ pub fn cut_edge(
         return;
     }
     let ic = sd.index_of(ons);
+    // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L2499
     let iv = dstr.add_shape(v);
     let e_forward = {
         let mut e = dstr.shape(ic).clone();
@@ -137,6 +138,7 @@ pub fn cut_edge(
         if vv.is_same(v) {
             let or = topabs_reverse(vor);
             let par = brep_tool_parameter(brep, vv, &e_forward);
+            // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2500
             let li = dstr.change_shape_interferences(ic);
             query_add_vertex_in_edge(li, ic, iv, par, or);
         }
@@ -157,10 +159,12 @@ pub fn find_index_point(
     *ipoin = 0;
     let p = fd.vertex(false, on_s).point();
 
+    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2533
     for sci in dstr.surface_interferences(fd.surf()) {
         let TopOpeBRepDSInterference::SurfaceCurve(sci) = sci else {
             continue;
         };
+        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2542
         for cpi in dstr.curve_interferences(sci.index_g) {
             let TopOpeBRepDSInterference::CurvePoint(cpi) = cpi else {
                 continue;
@@ -454,6 +458,7 @@ pub fn chfi3d_filds(
                 isurf,
             ),
         );
+        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2687
         dstr.change_shape_interferences(solid_index).push(ssi);
 
         let fi1 = fd.interference_on_s1().clone();
@@ -464,6 +469,7 @@ pub fn chfi3d_filds(
         // Processing to manage double interferences.
         if j > 1 {
             if v1.is_on_arc() && v3.is_on_arc() && v1.arc().is_same(v3.arc()) {
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2701
                 if chfi3d_contains(dstr.shape_interferences(iarc1), iarc1, ipoin1, false, false)
                     && (v1.transition_on_arc() != v3.transition_on_arc())
                 {
@@ -474,11 +480,13 @@ pub fn chfi3d_filds(
                         v1.parameter_on_arc(),
                         false,
                     );
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2705
                     dstr.change_shape_interferences_of(v1.arc()).push(interp1);
                 }
             }
 
             if v2.is_on_arc() && v4.is_on_arc() && v2.arc().is_same(v4.arc()) {
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2713
                 if chfi3d_contains(dstr.shape_interferences(iarc2), iarc2, ipoin2, false, false)
                     && (v2.transition_on_arc() != v4.transition_on_arc())
                 {
@@ -489,6 +497,7 @@ pub fn chfi3d_filds(
                         v2.parameter_on_arc(),
                         false,
                     );
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2717
                     dstr.change_shape_interferences_of(v2.arc()).push(interp2);
                 }
             }
@@ -502,6 +511,7 @@ pub fn chfi3d_filds(
                 trafil1 = dstr.shape(ishape1).orientation;
             } else {
                 let mut or = Orientation::Forward;
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2734
                 chfi3d_orientation(
                     dstr.shape_interferences(solid_index),
                     solid_index,
@@ -522,6 +532,7 @@ pub fn chfi3d_filds(
             trafil1 = topabs_reverse(trafil2);
         } else {
             let mut or = Orientation::Forward;
+            // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2745
             chfi3d_orientation(
                 dstr.shape_interferences(solid_index),
                 solid_index,
@@ -573,6 +584,7 @@ pub fn chfi3d_filds(
                     let spine = cordat.spine().expect("spine");
                     let arcspine = spine.base().edges(1).clone();
                     boutde_vtx = v1.vertex().clone();
+                    // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L2797
                     let iarcspine = dstr.add_shape(&arcspine);
                     let ivtx = cordat.indexfirst_pon_s1;
 
@@ -588,11 +600,14 @@ pub fn chfi3d_filds(
                     ovtx = topabs_reverse(ovtx);
                     let parvtx = brep_tool_parameter(brep, &boutde_vtx, &arcspine);
                     let interfv = chfi3d_fil_vertex_in_ds(ovtx, iarcspine, ivtx, parvtx);
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2814
                     dstr.change_shape_interferences(iarcspine).push(interfv);
                 }
             } else {
                 if v1.is_on_arc() {
+                    // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L2821
                     iarc1 = dstr.add_shape(v1.arc());
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2822
                     if !chfi3d_contains(
                         dstr.shape_interferences(iarc1),
                         iarc1,
@@ -607,12 +622,15 @@ pub fn chfi3d_filds(
                             v1.parameter_on_arc(),
                             is_vertex1,
                         );
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2829
                         dstr.change_shape_interferences_of(v1.arc()).push(interp1);
                     }
                 }
 
                 if v2.is_on_arc() {
+                    // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L2835
                     iarc2 = dstr.add_shape(v2.arc());
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2836
                     if !chfi3d_contains(
                         dstr.shape_interferences(iarc2),
                         iarc2,
@@ -627,6 +645,7 @@ pub fn chfi3d_filds(
                             v2.parameter_on_arc(),
                             is_vertex2,
                         );
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2843
                         dstr.change_shape_interferences_of(v2.arc()).push(interp2);
                     }
                 }
@@ -644,6 +663,7 @@ pub fn chfi3d_filds(
                 pardeb = pd;
                 parfin = pf;
 
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2862
                 let li_empty = dstr.curve_interferences(icurv).is_empty();
                 if li_empty {
                     if cordat.first_pcurve_orientation() == Orientation::Reversed {
@@ -661,7 +681,9 @@ pub fn chfi3d_filds(
                             pardeb,
                             is_vertex2,
                         );
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2874
                         dstr.change_curve_interferences(icurv).push(interp1);
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2875
                         dstr.change_curve_interferences(icurv).push(interp2);
                     } else {
                         let interp1 = chfi3d_fil_point_in_ds(
@@ -678,17 +700,21 @@ pub fn chfi3d_filds(
                             parfin,
                             is_vertex2,
                         );
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2874
                         dstr.change_curve_interferences(icurv).push(interp1);
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2875
                         dstr.change_curve_interferences(icurv).push(interp2);
                     }
                 }
                 let interfc1 = chfi3d_fil_curve_in_ds(icurv, isurf, pcurv, et1);
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2878
                 dstr.change_surface_interferences(isurf).push(interfc1.clone());
                 if ipoin1 == ipoin2 {
                     dstr.change_curve(icurv).nullify();
                     // OCCT: TCurv.SetSCI(Interfc1, bidinterf).
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2884
                     if let TopOpeBRepDSInterference::SurfaceCurve(sc) = &interfc1 {
-                        let refd = super::topopebrepds::InterferenceRef {
+                        let refd = super::chfi3d_ds::InterferenceRef {
                             pcurve: sc.pcurve.clone(),
                             index_s: sc.index_s,
                             index_g: sc.index_g,
@@ -706,7 +732,9 @@ pub fn chfi3d_filds(
                     num_edge += 1; // The previous edge of the vertex has already been found.
                     let spine = cordat.spine().expect("spine");
                     let arcspine = spine.base().edges(num_edge).clone();
+                    // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L2900
                     let iarcspine = dstr.add_shape(&arcspine);
+                    // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L2901
                     let ivtx = dstr.add_shape(&boutde_vtx);
                     let mut ovtx = Orientation::Forward;
                     let ed = arcspine.as_edge().expect("not an edge");
@@ -718,6 +746,7 @@ pub fn chfi3d_filds(
                     ovtx = topabs_reverse(ovtx);
                     let parvtx = brep_tool_parameter(brep, &boutde_vtx, &arcspine);
                     let interfv = chfi3d_fil_vertex_in_ds(ovtx, iarcspine, ivtx, parvtx);
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2915
                     dstr.change_shape_interferences(iarcspine).push(interfv);
                 } // End of the removal
 
@@ -735,10 +764,12 @@ pub fn chfi3d_filds(
                     // pcurve is associated via SCI to TopOpeBRepDSCurve.
                     let pcurv = chfi3d_compute_pcurv_2pt(uv1, uv2, pardeb, parfin, false);
                     let interfc1 = chfi3d_fil_curve_in_ds(icurv, isurf, Some(pcurv), et1);
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2928
                     dstr.change_surface_interferences(isurf).push(interfc1.clone());
                     dstr.change_curve(icurv).nullify();
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2931
                     if let TopOpeBRepDSInterference::SurfaceCurve(sc) = &interfc1 {
-                        let refd = super::topopebrepds::InterferenceRef {
+                        let refd = super::chfi3d_ds::InterferenceRef {
                             pcurve: sc.pcurve.clone(),
                             index_s: sc.index_s,
                             index_g: sc.index_g,
@@ -762,6 +793,7 @@ pub fn chfi3d_filds(
                         .change_curve(icurv)
                         .set_tolerance(t_tol.max(tolreached));
                     let interfc1 = chfi3d_fil_curve_in_ds(icurv, isurf, Some(pc), et1);
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2949
                     dstr.change_surface_interferences(isurf).push(interfc1);
                 }
             }
@@ -772,12 +804,14 @@ pub fn chfi3d_filds(
         if ic_fil1 != 0 {
             let interfc3 =
                 chfi3d_fil_curve_in_ds(ic_fil1, isurf, fi1.pcurve_on_surf().cloned(), trafil1);
+            // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2960
             dstr.change_surface_interferences(isurf).push(interfc3.clone());
             ishape1 = fd.index_of_s1;
             // Case of degenerated edge: pcurve is associated via SCI.
             if dstr.curve(ic_fil1).curve.is_none() {
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2968
                 if let TopOpeBRepDSInterference::SurfaceCurve(sc) = &interfc3 {
-                    let refd = super::topopebrepds::InterferenceRef {
+                    let refd = super::chfi3d_ds::InterferenceRef {
                         pcurve: sc.pcurve.clone(),
                         index_s: sc.index_s,
                         index_g: sc.index_g,
@@ -797,6 +831,7 @@ pub fn chfi3d_filds(
                         fi1.pcurve_on_face().cloned(),
                         fi1.transition(),
                     );
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2980
                     dstr.change_surface_interferences(ishape1).push(interfc1);
                 } else if ishape1 > 0 {
                     regon1.set_s2(ishape1, true);
@@ -806,6 +841,7 @@ pub fn chfi3d_filds(
                         fi1.pcurve_on_face().cloned(),
                         fi1.transition(),
                     );
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L2986
                     dstr.change_shape_interferences(ishape1).push(interfc1);
                 }
                 reglist.push(regon1);
@@ -872,6 +908,7 @@ pub fn chfi3d_filds(
 
             // OCCT holds a live list reference: the second Contains sees the
             // first append.  rcad re-fetches the list for each test.
+            // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3037
             if !chfi3d_contains(
                 dstr.curve_interferences(ic_fil1),
                 ic_fil1,
@@ -886,8 +923,10 @@ pub fn chfi3d_filds(
                     fi1.parameter_first(),
                     is_vertex1,
                 );
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3044
                 dstr.change_curve_interferences(ic_fil1).push(interp1);
             }
+            // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3046
             if ipoin == ipoin1
                 || !chfi3d_contains(
                     dstr.curve_interferences(ic_fil1),
@@ -904,6 +943,7 @@ pub fn chfi3d_filds(
                     fi1.parameter_last(),
                     is_vertex,
                 );
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3050
                 dstr.change_curve_interferences(ic_fil1).push(interp3);
             }
             ipoin1 = ipoin;
@@ -914,12 +954,14 @@ pub fn chfi3d_filds(
         if ic_fil2 != 0 {
             let interfc4 =
                 chfi3d_fil_curve_in_ds(ic_fil2, isurf, fi2.pcurve_on_surf().cloned(), trafil2);
+            // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3060
             dstr.change_surface_interferences(isurf).push(interfc4.clone());
             ishape2 = fd.index_of_s2;
             // Case of degenerated edge: pcurve is associated via SCI.
             if dstr.curve(ic_fil2).curve.is_none() {
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3068
                 if let TopOpeBRepDSInterference::SurfaceCurve(sc) = &interfc4 {
-                    let refd = super::topopebrepds::InterferenceRef {
+                    let refd = super::chfi3d_ds::InterferenceRef {
                         pcurve: sc.pcurve.clone(),
                         index_s: sc.index_s,
                         index_g: sc.index_g,
@@ -939,6 +981,7 @@ pub fn chfi3d_filds(
                         fi2.pcurve_on_face().cloned(),
                         fi2.transition(),
                     );
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3080
                     dstr.change_surface_interferences(ishape2).push(interfc2);
                 } else if ishape2 > 0 {
                     regon2.set_s2(ishape2, true);
@@ -948,6 +991,7 @@ pub fn chfi3d_filds(
                         fi2.pcurve_on_face().cloned(),
                         fi2.transition(),
                     );
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3086
                     dstr.change_shape_interferences(ishape2).push(interfc2);
                 }
                 reglist.push(regon2);
@@ -1019,6 +1063,7 @@ pub fn chfi3d_filds(
                 ipoin = chfi3d_index_point_in_ds(fd.vertex_last_on_s2(), dstr);
             }
 
+            // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3142
             if !chfi3d_contains(
                 dstr.curve_interferences(ic_fil2),
                 ic_fil2,
@@ -1033,8 +1078,10 @@ pub fn chfi3d_filds(
                     fi2.parameter_first(),
                     is_vertex2,
                 );
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3148
                 dstr.change_curve_interferences(ic_fil2).push(interp2);
             }
+            // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3150
             if ipoin == ipoin2
                 || !chfi3d_contains(
                     dstr.curve_interferences(ic_fil2),
@@ -1051,6 +1098,7 @@ pub fn chfi3d_filds(
                     fi2.parameter_last(),
                     is_vertex,
                 );
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3154
                 dstr.change_curve_interferences(ic_fil2).push(interp4);
             }
             ipoin2 = ipoin;
@@ -1070,6 +1118,7 @@ pub fn chfi3d_filds(
                 let (pd, pf) = cordat.last_parameters();
                 pardeb = pd;
                 parfin = pf;
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3176
                 let li_empty = dstr.curve_interferences(icurv).is_empty();
                 if li_empty {
                     if cordat.last_pcurve_orientation() == Orientation::Reversed {
@@ -1087,7 +1136,9 @@ pub fn chfi3d_filds(
                             pardeb,
                             is_vertex2,
                         );
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3188
                         dstr.change_curve_interferences(icurv).push(interp5);
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3189
                         dstr.change_curve_interferences(icurv).push(interp6);
                     } else {
                         let interp5 = chfi3d_fil_point_in_ds(
@@ -1104,16 +1155,20 @@ pub fn chfi3d_filds(
                             parfin,
                             is_vertex2,
                         );
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3188
                         dstr.change_curve_interferences(icurv).push(interp5);
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3189
                         dstr.change_curve_interferences(icurv).push(interp6);
                     }
                 }
                 let interfc1 = chfi3d_fil_curve_in_ds(icurv, isurf, pcurv, et1);
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3192
                 dstr.change_surface_interferences(isurf).push(interfc1.clone());
                 if ipoin1 == ipoin2 {
                     dstr.change_curve(icurv).nullify();
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3198
                     if let TopOpeBRepDSInterference::SurfaceCurve(sc) = &interfc1 {
-                        let refd = super::topopebrepds::InterferenceRef {
+                        let refd = super::chfi3d_ds::InterferenceRef {
                             pcurve: sc.pcurve.clone(),
                             index_s: sc.index_s,
                             index_g: sc.index_g,
@@ -1150,16 +1205,19 @@ pub fn chfi3d_filds(
                 pardeb = pd;
                 parfin = pf;
                 icurv = dstr
-                    .add_curve(super::topopebrepds::TopOpeBRepDSCurve::new(c3d, tolreached));
+                    .add_curve(super::chfi3d_ds::TopOpeBRepDSCurve::new(c3d, tolreached));
                 regfilfil.set_curve(icurv);
                 regfilfil.set_s1(isurf, false);
                 let interp5 =
                     chfi3d_fil_point_in_ds(Orientation::Forward, icurv, ipoin1, pardeb, is_vertex1);
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3234
                 dstr.change_curve_interferences(icurv).push(interp5);
                 let interp6 =
                     chfi3d_fil_point_in_ds(Orientation::Reversed, icurv, ipoin2, parfin, is_vertex2);
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3236
                 dstr.change_curve_interferences(icurv).push(interp6);
                 let interfc1 = chfi3d_fil_curve_in_ds(icurv, isurf, Some(pcurv), et1);
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3238
                 dstr.change_surface_interferences(isurf).push(interfc1);
             }
         }
@@ -1199,23 +1257,28 @@ pub fn chfi3d_filds(
                         num_edge += 1; // Go to the next edge.
                     }
                 }
+                // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L3284
                 let iarcspine = dstr.add_shape(&arcspine);
                 let ivtx;
                 if j == seqfil.len() {
                     ivtx = cordat.indexlast_pon_s1;
                 } else {
+                    // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L3292
                     ivtx = dstr.add_shape(&boutde_vtx);
                 }
                 ovtx = topabs_reverse(ovtx);
                 let parvtx = brep_tool_parameter(brep, &boutde_vtx, &arcspine);
                 let interfv = chfi3d_fil_vertex_in_ds(ovtx, iarcspine, ivtx, parvtx);
+                // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3298
                 dstr.change_shape_interferences(iarcspine).push(interfv);
             }
         } else if !closed || j != seqfil.len() {
             // Processing of interference Point / Edges.
             if v3.is_on_arc() {
                 if !(v3.is_vertex() && fd.is_on_curve1()) {
+                    // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L3308
                     iarc1 = dstr.add_shape(v3.arc());
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3309
                     if !chfi3d_contains(
                         dstr.shape_interferences(iarc1),
                         iarc1,
@@ -1230,6 +1293,7 @@ pub fn chfi3d_filds(
                             v3.parameter_on_arc(),
                             v3.is_vertex(),
                         );
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3317
                         dstr.change_shape_interferences_of(v3.arc()).push(interfpp);
                     }
                 }
@@ -1237,7 +1301,9 @@ pub fn chfi3d_filds(
 
             if v4.is_on_arc() {
                 if !(v4.is_vertex() && fd.is_on_curve2()) {
+                    // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_0.cxx L3326
                     iarc2 = dstr.add_shape(v4.arc());
+                    // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3327
                     if !chfi3d_contains(
                         dstr.shape_interferences(iarc2),
                         iarc2,
@@ -1252,6 +1318,7 @@ pub fn chfi3d_filds(
                             v4.parameter_on_arc(),
                             v4.is_vertex(),
                         );
+                        // D6 routing: interference quadruplets stay on the facade (no BOPDS per-shape equivalent); OCCT ChFi3d_Builder_0.cxx L3335
                         dstr.change_shape_interferences_of(v4.arc()).push(intfpp);
                     }
                 }

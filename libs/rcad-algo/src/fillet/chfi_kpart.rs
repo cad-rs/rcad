@@ -18,7 +18,7 @@ use rcad_kernel::topods;
 
 use super::chfi3d::TopOpeBRepDSHDataStructure;
 use super::chfi_ds::{ChFiDSSpineHandle, ChFiDSSurfData};
-use super::topopebrepds::{TopOpeBRepDSCurve, TopOpeBRepDSSurface};
+use super::chfi3d_ds::{TopOpeBRepDSCurve, TopOpeBRepDSSurface};
 
 // =========================================================================
 // OCCT ChFiKPart_ComputeData_Fcts.cxx L27-45 — ChFiKPart_InPeriod.

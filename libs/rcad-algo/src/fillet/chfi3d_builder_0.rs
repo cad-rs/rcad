@@ -14,7 +14,7 @@ use rcad_kernel::topods;
 
 use super::chfi3d::is_tangent_faces;
 use super::chfi_ds::{ChFiDSMap, ChFiDS_State, ChFiDSStripe, ChFiDSSurfData};
-use super::topopebrepds::{
+use super::chfi3d_ds::{
     TopOpeBRepDSCurvePointInterference, TopOpeBRepDSCurve, TopOpeBRepDSHDataStructure,
     TopOpeBRepDSInterference, TopOpeBRepDSKind, TopOpeBRepDSSurfaceCurveInterference,
 };

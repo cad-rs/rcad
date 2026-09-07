@@ -116,10 +116,10 @@ const P_OPERATOR_INTERSECTION: f64 = PITOL;
 // OCCT CpSD (SpKP.cxx L144-158): construct a new SurfData sharing the faces
 // and copying the surface / interferences (registered as new DS entries).
 // =========================================================================
-fn cp_sd(dstr: &mut super::topopebrepds::TopOpeBRepDSHDataStructure, data: &ChFiDSSurfData) -> ChFiDSSurfData {
+fn cp_sd(dstr: &mut super::chfi3d_ds::TopOpeBRepDSHDataStructure, data: &ChFiDSSurfData) -> ChFiDSSurfData {
     let mut new_data = ChFiDSSurfData::default();
     let tos = dstr.surface(data.surf()).clone();
-    new_data.change_surf(dstr.add_surface(super::topopebrepds::TopOpeBRepDSSurface::new(
+    new_data.change_surf(dstr.add_surface(super::chfi3d_ds::TopOpeBRepDSSurface::new(
         tos.surface.clone(),
         tos.tolerance(),
     )));
@@ -133,14 +133,14 @@ fn cp_sd(dstr: &mut super::topopebrepds::TopOpeBRepDSHDataStructure, data: &ChFi
 
 /// OCCT CpInterf (SpKP.cxx L116-137).
 fn cp_interf(
-    dstr: &mut super::topopebrepds::TopOpeBRepDSHDataStructure,
+    dstr: &mut super::chfi3d_ds::TopOpeBRepDSHDataStructure,
     fi: &super::chfi_ds::ChFiDS_FaceInterference,
 ) -> super::chfi_ds::ChFiDS_FaceInterference {
     let mut new_f = fi.clone();
     let toc_curve = dstr.curve(fi.line_index()).curve.clone();
     let new_c = toc_curve.clone();
     new_f.set_interference(
-        dstr.add_curve(super::topopebrepds::TopOpeBRepDSCurve::new(new_c, dstr.curve(fi.line_index()).tolerance())),
+        dstr.add_curve(super::chfi3d_ds::TopOpeBRepDSCurve::new(new_c, dstr.curve(fi.line_index()).tolerance())),
         fi.transition(),
         fi.pcurve_on_face().cloned(),
         fi.pcurve_on_surf().cloned(),
@@ -332,7 +332,7 @@ fn analytic_domain(hits: &[(f64, PointOnElement)], pcf: f64, pcl: f64) -> HatchD
 #[allow(clippy::too_many_arguments)]
 fn fill_sd(
     brep: &topods::BRep,
-    dstr: &mut super::topopebrepds::TopOpeBRepDSHDataStructure,
+    dstr: &mut super::chfi3d_ds::TopOpeBRepDSHDataStructure,
     cd: &mut ChFiDSSurfData,
     boundary: &[Shape],
     dom: &HatchDomain,
@@ -512,7 +512,9 @@ impl ChFi3dBuilder {
 
         // Return faces + register the support faces in the DS.
         let dstr = self.my_ds.as_mut().expect("DS");
+        // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_SpKP.cxx L871
         data.change_index_of_s1(dstr.add_shape(&f1));
+        // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_SpKP.cxx L872
         data.change_index_of_s2(dstr.add_shape(&f2));
 
         let nb1 = if hits1.is_some() { 1usize } else { 0usize };

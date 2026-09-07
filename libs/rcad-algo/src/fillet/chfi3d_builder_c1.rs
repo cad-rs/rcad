@@ -29,7 +29,7 @@ use super::chfi3d_builder_0_filds::{chfi3d_contains, geom2d_int_g_inter};
 use super::chfi3d::{topabs_compose, topabs_reverse, ChFi3dBuilder};
 use super::chfi3d::chfi3d_index_of_surf_data;
 use super::chfi_ds::{ChFiDS_CommonPoint, ChFiDS_State, ChFiDSSurfData, SharedStripe};
-use super::topopebrepds::{
+use super::chfi3d_ds::{
     TopOpeBRepDSCurve, TopOpeBRepDSHDataStructure, TopOpeBRepDSInterference, TopOpeBRepDSKind,
     TopOpeBRepDSPoint,
 };
