@@ -6,7 +6,7 @@
 > - **逐包裁决**：TKFeat 布尔调用 100% TKBO（`BRepFeat_Builder` 直接继承 `BOPAlgo_BOP`，`BRepFeat_MakeCylindricalHole` 五处 `BOPAlgo_BOP::Perform`，另用 `BRepAlgoAPI_Cut×7/Fuse×4/Section×2/Common×2` + `BOPAlgo_BuilderFace`），**零 TKBool include**；TKOffset 的 `BRepOffset` 已完全 BOPAlgo 化（`BOPAlgo_PaveFiller`（BRepOffset_Tool.cxx:1475）、`MakerVolume`（MakeOffset.cxx:5071/5159/5214）、`Splitter/Section/BOP/BuilderFace`（MakeOffset_1.cxx:42-45）、`BRepAlgoAPI_Check`）；TKFillet 的 ChFi3d 体系写在 `TopOpeBRepDS` + `TopOpeBRepBuild_HBuilder`（仅 7 方法面：Perform/MergeSolid/IsSplit/Splits/Merged/NewFaces/NewEdges，成员 `myCoup`，ChFi3d_Builder.hxx:180 `Builder()` 访问器）上，**但老布尔求交器 TopOpeBRep 零引用**（TopOpeBRepBuild/DS/Tool 内部也不引用它）。
 > - **已确认决策（用户拍板，2026-09-06）**：① "不依赖 TKBool" 精确化为"不引入 TopOpeBRep 求交器与 BRepProj；TopOpeBRepDS / TopOpeBRepBuild(HBuilder 子集) / TopOpeBRepTool(子集) / BRepAlgo(工具类) / BRepFill(按需) 作为伴随翻译的非布尔支撑"；② 顺序 = **fillet → offset → feat**；③ BRepFill **按需引入、逐类对齐**；④ TKBO 缺口（BOPAlgo_Section / BOPAlgo_MakerVolume）作为 Stage 0 前置先补齐。详见 §8。
 > - **规模**：三 toolkit 本体 ~148.8k OCCT 行（TKFillet ~79.7k / TKOffset ~41.4k / TKFeat ~27.7k）+ 伴随件按需。rcad `fillet/` 已有 ~17.3k 行翻译但**整个模块 TEMP-EXCLUDED**（topopebrepbuild.rs 编辑中途），`feat/`、`offset/` 空占位未声明。
-> - **下一 session 入口**：§7 进度表 Stage 0.1（fillet WIP 收尾恢复编译）。
+> - **下一 session 入口**：§7 进度表 Stage 0.4（ChFi3d DS 交互 BOPDS 重映射）；0.2/0.3（BOPAlgo_Section / MakerVolume）已由并行代理推进。
 > - 回归基线（沿用 tkhlr-port-plan 口径，全绿为准）：algo lib 361/0、kernel 663、builder_stage_tests 76 + smoke 1、pavefiller_stage_tests 26、boolean 网格（bopfuse 748/0、bopcommon 755/0、boptuc 745/0、bcut 729/0 含 g6、splitter 12/12）。
 > - 本文档体例沿 `tkhlr-port-plan.md`：§0 开场流程 → §7 进度勾选表从第一个未勾选项继续，完成一项勾一项。
 
@@ -17,6 +17,12 @@
 3. 看 §7 勾选表，从第一个未勾选任务继续；一次只推进一个子阶段，完成后勾选并在 §9 追加 session 记录。
 4. 每个子阶段一次提交（rcad 子模块），提交信息注明 `Stage x.y：<内容摘要>`；提交前跑 §2 的回归集。
 5. 纪律沿 AGENTS.md：阶段 1（翻译期）不跑测试不看结果、每函数 `cargo check -p rcad-algo`、`// OCCT <文件> L<起>-<止>` 锚点、代码注释全英文、单文件 <2000 行。
+6. **并行子代理纪律（Session 1 方法论纠正后确立）**：翻译类任务可并行给子代理，但任务书与验收必须守住阶段 1 边界——
+   - 验收标准 = `cargo check -p rcad-algo` 编译通过 + **形式对照表审查**（OCCT 行号 ↔ rcad 语句逐条可核）；**禁止把"单测通过"设为交付门槛**；
+   - **禁止代理跑 OCCT DRAWEXE 实测数值再让代码对齐结果**（AGENTS.md：运行时驱动的伪对齐）；
+   - 禁止为测试结果引入 OCCT 没有的绕行/开关/补丁（Session 1 教训：stage_by_stage 载体 + my_is_splitter 专有开关，审查后已全部删除改为字面序列）；
+   - 缺基础设施时的正确做法 = 注明架构差异 + 提出最小可见性/接口变更请求，由主代理统一处理（先例：builder.rs 十方法 pub(crate)）；
+   - 单测代码可以写（作为阶段 2 资产保留在 `#[cfg(test)]`），但翻译期不以其通过为验收；阶段 2 调试入口 = §2 验收标准 + step-topo-diff。
 
 ## 1. 规模与结构（勘察结论）
 
@@ -85,7 +91,7 @@ OCCT 根：`C:/Users/lilu/works/OCCT/src/ModelingAlgorithms/`（`$OCCT_SRC`）�
 2. **网格**（OCCT `$OCCT_SRC/tests/` 顶层用例数）：blend 10、chamfer 13、fillet2d 5（Stage 1）；offset 24、thrusection 10、draft 4（Stage 2）；feat 8、evolved 5、mkface 10、pipe 5、nproject 4（Stage 2/3）。另有 bugs/modalg_* 的 featprism/featdprism/featrevol/featrf/blend/chamf/offsetshape 用例按需纳入。
 3. **永久排除**（不算待办）：offset/draft 等网格中 `restore *.rle` 数据驱动用例（沿 AGENTS.md 外部数据规则）；nproject 网格如依赖外部数据同此处理。
 4. **GTests**：TKFillet 2（BRepFilletAPI_MakeFillet_Test / MakeChamfer_Test）+ TKOffset 3（BRepOffset_MakeOffset_Test / BRepOffsetAPI_MakeThickSolid_Test / MakePipeShell_Test）落位 `tests/tkfillet_gtests.rs` / `tests/tkoffset_gtests.rs`；Sewing_Test 归 shhealing 范畴不翻。TKFeat 无 GTests。
-5. **红线**：不引入 TopOpeBRep 求交器与 BRepProj；不把 ChFi3d 合并层重写到 BOPAlgo（违反 1:1 方法论）；OCCT 没有的步骤/概念一律不加。
+5. **红线**：不引入 TopOpeBRep 求交器与 BRepProj；TKBool 全段（TopOpeBRepBuild / TopOpeBRepDS / TopOpeBRepTool）**不逐行翻译**，其功能由 rcad TKBO 层等价实现（D6，2026-09-07 修订，取代旧表述"伴随翻译"与"不把 ChFi3d 合并层重写到 BOPAlgo"条款）；OCCT（TKFeat/TKFillet/TKOffset 本体 + TKBO）没有的步骤/概念一律不加。
 6. **每子阶段回归集**（提交前必跑）：`cd rcad && cargo test -p rcad-algo --lib` 全绿；boolean 网格基线（bopfuse/bopcommon/boptuc/bcut/splitter，run_grid.ps1 必须取最新编译产物）；builder_stage_tests + pavefiller_stage_tests 不回归。
 
 ## 3. 目录布局
@@ -124,6 +130,7 @@ libs/rcad-algo/src/
 - **0.1 fillet WIP 收尾**：`fillet/topopebrepbuild.rs` 编辑收尾 → `lib.rs` L12 取消 `// TEMP-EXCLUDED`，恢复 `pub mod fillet;` 编译 → 对 fillet/ 现有 12 文件做对齐标记盘点（哪些函数已 `✅ OCCT-aligned`、哪些 WIP），缺口清单回填 §7。`algo_ext/mod.rs` L24/L33 再导出同步恢复。
 - **0.2 BOPAlgo_Section 1:1**（OCCT TKBO/BOPAlgo/BOPAlgo_Section.cxx，414 行）：真 SECTION 语义（section edges + 可选 PCurve/SetApproxPCurve），替换 `brep_algo_api/mod.rs` 中 `BooleanOpType::Section → 退化为 cut` 的路径。消费方：BRepFill_Draft、BRepFill_TrimShellCorner、BRepFeat_MakeLinearForm、BRepFeat_MakeRevolutionForm + BRepAlgo_NormalProjection。配解析锚点单测。
 - **0.3 BOPAlgo_MakerVolume 1:1**（OCCT TKBO/BOPAlgo/BOPAlgo_MakerVolume.cxx，414 行）：BRepOffset_MakeOffset 三处调用（MakeOffset.cxx:5071/5159/5214）。注意与 `builder_solid.rs`（BOPAlgo_BuilderSolid）是两个类，勿混淆。配锚点单测。
+- **0.4 ChFi3d DS 交互 BOPDS 重映射**（D6 派生，Session 1 新增）：`topopebrepds.rs` 退役，ChFi3d 各文件对 DS 的交互全部重映射到 rcad BOPDS（`bop/ds/`）等价结构 + ChFi3d 附属 side-table（Kind 索引的圆角曲面/脊线/交点表，架构差异注释说明），每处调用点带映射注释（OCCT 行号 + BOPDS 锚点）。前置盘点（Session 1 代理产出）：HBuilder 7 方法零真实调用；DS 交互集中度 filds 83 / chfi3d 17 / builder_0 9 / spkp 8 / kpart 2 / c1 0；BOPDS 缺口 = Kind 索引几何侧表 / Transition / 任意 (GK,G,SK,S) 干扰四元组 / has_geometry 适配。完成后删除 `topopebrepds.rs`，转 Stage 1f。
 
 ### Stage 1：TKFillet（~79.7k + 老布尔子集伴随，6-10 session）
 
@@ -165,7 +172,7 @@ libs/rcad-algo/src/
 
 1. **OCCT 8.0 BRepAlgoAPI 属 TKBO**——按 7.x 旧认知判依赖会把 BRepFeat/ 的调用点误记成 TKBool；EXTERNLIB.cmake 是权威。
 2. **BRepFill 在 TKBool 目录但内容是扫掠/放样**，内部已走现代 BOP——按需引入不算"依赖 TKBool"，目录归属 ≠ 依赖语义。
-3. **ChFi3d 求交自己算**（ChFiDS spine 数据 + ChFi3d 内部相交），老布尔只用于最终合并（HBuilder 7 方法）；TopOpeBRepBuild/DS/Tool 内部零引用 TopOpeBRep 求交器——所以老布尔"构建半边"要翻，"求交半边"永不翻。
+3. **ChFi3d 求交自己算**（ChFiDS spine 数据 + ChFi3d 内部相交），老布尔只用于最终合并（HBuilder 7 方法）；TopOpeBRepBuild/DS/Tool 内部零引用 TopOpeBRep 求交器。2026-09-07 D6 裁决后：老布尔"构建半边"**不再翻译**——HBuilder 7 方法面由 rcad TKBO 管线等价实现（`fillet/hbuilder.rs` 门面，1g 接线）；TopOpeBRepDS 数据结构也 BOPDS 化重映射（0.4）。"求交半边"永不翻不变。
 4. **BRepFeat_Builder 继承 BOPAlgo_BOP**：Rust 无继承，用组合 + 委托映射，继承关系必须写进文件头注释；不许借机改架构。
 5. **BRepOffset_MakeOffset_1.cxx 9,533 行**：按 OCCT 函数组拆多个 rs 文件（先例 chfi3d_builder_*.rs 拆法），单文件 <2000 行。
 6. **rcad `BooleanOpType::Section` 当前退化为 cut**：BRepFill_Draft/TrimShellCorner/MakeLinearForm/MakeRevolutionForm/NormalProjection 五类调用点必须真 SECTION 语义——Stage 0.2 关闭前不得开 2a/3b。
@@ -199,18 +206,19 @@ libs/rcad-algo/src/
 ## 7. 进度勾选表（每 session 更新）
 
 **Stage 0 前置收口**
-- [ ] 0.1 fillet WIP 收尾：topopebrepbuild.rs 收尾 + lib.rs 恢复编译 + 12 文件对齐标记盘点
-- [ ] 0.2 BOPAlgo_Section 1:1 + 锚点单测 + 替换 Section→cut 退化路径
-- [ ] 0.3 BOPAlgo_MakerVolume 1:1 + 锚点单测
+- [x] 0.1 fillet WIP 收尾（Session 1 完成，含 D6 裁决处置：topopebrepbuild.rs ~2100 行老布尔算法翻译整文件删除，hbuilder.rs TKBO 门面占位，lib.rs/algo_ext 再导出恢复，基线 369/0）
+- [x] 0.2 BOPAlgo_Section 1:1 + 退化路径替换（Session 1 完成；锚点单测为阶段 2 资产；翻译期验收 = cargo check + 形式对照审查，见 §0.6）
+- [x] 0.3 BOPAlgo_MakerVolume 1:1（Session 1 完成；同上；与 0.2 合并提交因共享 bop/algo/mod.rs 声明）
+- [ ] 0.4 ChFi3d DS 交互 BOPDS 重映射（D6 派生；前置盘点见 §9 Session 1）
 
 **Stage 1 TKFillet**
 - [ ] 1a ChFi2d（4,645）热身 + fillet2d 网格 5 用例
 - [ ] 1b ChFiDS 盘点补全
 - [ ] 1c ChFiKPart 标准例族（5,389）
-- [ ] 1d TopOpeBRepDS/Tool 子集（按 ChFi3d 引用清单）
+- [ ] 1d DS 交互 BOPDS 重映射落地（0.4 映射表驱动；PointIterator/InterferenceIterator 等老 DS 迭代器 → BOPDS 等价实现，不再翻译）
 - [ ] 1e BRepBlend/Blend/BlendFunc（27,115，按消费面）
 - [ ] 1f ChFi3d 主体（36,532；续六件 + 新增 builder_2/_6/_cncrn/_chbuilder）
-- [ ] 1g TopOpeBRepBuild HBuilder 7 方法闭包补全
+- [ ] 1g HBuilder 门面 7 方法 TKBO 接线（hbuilder.rs；语义锚 = BOPAlgo_Builder/Splitter 等价路径，方法头标注 OCCT 行号 + D6 裁决 + TKBO 锚点）
 - [ ] 1h BRepFilletAPI 门面 + FilletSurf；验收 blend 10 + chamfer 13 网格 + GTests 2
 
 **Stage 2 TKOffset**
@@ -240,8 +248,27 @@ libs/rcad-algo/src/
 | D3 | BRepFill 引入策略 | 按需引入、逐类对齐（每类标注首个消费方），不整包扫 | 2026-09-06 用户确认 |
 | D4 | TKBO 缺口时序 | BOPAlgo_Section / BOPAlgo_MakerVolume 作为 Stage 0 前置先补齐并加单测 | 2026-09-06 用户确认 |
 | D5 | 伴随件目录位置 | 新建 `brep_algo/`（OCCT TKBool/BRepAlgo 包）与 `brep_fill/`（OCCT TKBool/BRepFill 包）两个顶层目录，module-map 挂归属；ChFi3d 链的 TopOpeBRepDS/Build 子集留在 fillet/ 内（延续现状） | 建议值，开工如无异议照此执行 |
+| D6 | TKBool 依赖实现方式 | **TKBool 全段（TopOpeBRepBuild / TopOpeBRepDS / TopOpeBRepTool）不逐行翻译**；TKFeat/TKFillet/TKOffset 依赖其功能处由 rcad TKBO 层等价实现：① HBuilder 7 方法 = `fillet/hbuilder.rs` 门面 + TKBO 内核（1g 接线）；② TopOpeBRepDS 数据结构 = BOPDS 重映射（0.4，完成后删 topopebrepds.rs）。**取代 D1 中 TopOpeBRepBuild/DS/Tool 的"伴随翻译"部分与旧红线第三句**；D1 的"不引入 TopOpeBRep 求交器与 BRepProj"及 BRepAlgo 工具类 / BRepFill 按需引入维持不变 | 2026-09-07 用户确认（AskUserQuestion：彻底 TKBO 化含 BOPDS + topopebrepbuild.rs 整文件删除） |
 
 ## 9. Session 交接记录
+
+### Session 1 交接（2026-09-07：D6 裁决 + Stage 0.1 收尾 + 0.2/0.3 并行推进）
+
+- **用户裁决 D6（本 session 最重要的变更）**：用户明确"1:1 翻译对齐时遇到 TKBool 的代码，要用 TKBO 的代码实现"。经 AskUserQuestion 确认两件事：① 彻底 TKBO 化（含 BOPDS）——TopOpeBRepDS 数据结构层也不保留，ChFi3d 的 DS 交互全部重映射到 rcad BOPDS；② topopebrepbuild.rs 里已翻译的 ~2100 行老布尔算法（PaveSet/PaveClassifier/AreaBuilder/EdgeBuilder/Merge/BuildEdges/BuildFaces/SplitShapes + 翻译中途的 InterferenceIterator/PointIterator 计划）整文件删除。D6 已落 §8，取代 D1 的"伴随翻译"部分与旧红线第三句；本档 §2.5/§4/§5.3/§7 已同步改写。
+- **Stage 0.1 完成内容**：计划落盘提交 `77592157`；删 `fillet/topopebrepbuild.rs`；新建 `fillet/hbuilder.rs`（TopOpeBRepBuildHBuilder TKBO 门面占位，仅构造面——盘点确认 7 方法在现有代码中零真实调用，见下）；`fillet/mod.rs` 声明切换；chfi3d.rs 的 `pub type` 别名改 `pub use super::hbuilder::...`（my_coup 字段/brep_fillet_api 的 builder() 访问器不动，保持 OCCT ChFi3d_Builder.hxx L180 形式）；lib.rs L12 与 algo_ext/mod.rs 两处 TEMP-EXCLUDED 再导出恢复；`cargo check -p rcad-algo` 全绿；lib 测试基线 369/0。
+- **fillet/ 12 文件对齐标记盘点（0.1 收尾项，回填如下）**：全部 12 文件 `✅ OCCT-aligned` 标记数为 **0**——即现有 ~17.3k 行翻译全部是"未做逐行对齐审查"状态（骨架级翻译，非 1:1 审查过）。pending 注释计数：chfi3d.rs 66、chfi_ds.rs 13、builder_c1 11、brep_fillet_api 11、builder_0 7、spkp 8、kpart 5、filds 2。**结论：Stage 1 的每个字母项都必须带着"对现翻译重新逐行审查"的预期开工，不能假设现有行已对齐。**
+- **0.4 前置盘点（Explore 代理产出，已回填 §4 Stage 0 描述）**：HBuilder 7 方法零真实调用点（仅 my_coup 构造 + brep_fillet_api.rs:332 builder() 访问器）；DS 交互集中度 = filds 83 / chfi3d 17 / builder_0 9 / spkp 8 / kpart 2 / c1 0（dstr 调用数）；BOPDS 缺口四项 = Kind 索引几何侧表（DS_Surface/Curve/Point）/ Transition / 任意 (GK,G,SK,S) 干扰四元组 / has_geometry 适配；chfi_ds.rs 与 brep_fillet_api.rs 零 DS 依赖（干净边界）。承载建议：BOPDS 不动，建 ChFi3d 附属 side-table。
+- **新确立工作模式（用户 2026-09-07 指示"用多个并行子代理推进"）**：翻译类任务并行化约定——主代理预置 mod.rs 声明 + 文件骨架（消除声明竞态）；每个子代理只拥有自己的 .rs 文件（Section 代理额外拥有 brep_algo_api/mod.rs 的退化路径替换）；编译隔离用 `CARGO_TARGET_DIR=target_b`；提交点由主代理串行执行（git add 指定文件，严禁混提）；只读调研类代理随时可并行。
+- **⚠️ 方法论纠正（用户 2026-09-07，Session 1 最重要的过程教训）**：0.2/0.3 第一轮代理任务书违反 AGENTS.md 两阶段纪律——把"单测通过"设为交付门槛、代理跑 OCCT DRAWEXE 实测数值对齐、为凑结果引入载体绕行（stage_by_stage + my_is_splitter）。经用户纠正后返工：两个文件的 perform 路径已重写为 OCCT 字面序列（绕行全删），主代理做了形式抽查（perform_internal1 / perform_internal 逐语句对照 OCCT 行号通过），纪律条目已固化进 §0.6。**后续所有翻译 session 按 §0.6 执行，勿重蹈。**
+- **遗留（阶段 2 入口任务，翻译期不阻塞提交）**：全量 `cargo test -p rcad-algo --lib` 在引入 section/maker_volume 单测后出现挂死（进程 CPU≈0，单线程复跑被主代理中止未定位）——挂死点待阶段 2 用 `--test-threads=1 --nocapture` 定位；代理报告的接口缺口（BOPAlgo_Tools::FillInternals、PrepareHistory/Modified、PaveFiller 并行/glue setter、单参数 check_data 判据、rcad-kernel volume 不跳 INTERNAL 面）已如实记录在两个文件的头注释与单测注释中，留阶段 2/2b 处理。
+- **本 session 提交链**：`77592157` 计划落盘 → Stage 0.1 提交（删 topopebrepbuild.rs + hbuilder 门面 + §0.6 纪律 + 本档更新）→ Stage 0.2+0.3 合并提交（section.rs 999→981 行 + maker_volume.rs 1094 行 + Section→cut 退化路径替换 + builder.rs 十方法 pub(crate)）→ 根仓库 sync 指针。
+- **0.2/0.3 状态**：两个翻译代理产出已验收——perform 路径为 OCCT 字面序列（Section L100-163：CheckData→Prepare→FIV→BR(V)→FIE→BR(E)→BuildSection→PrepareHistory→PostTreat；MakerVolume L102-194：CheckData→Prepare(内联)→FillImages×4(intersect 时)→CollectFaces→MakeBox→BuildSolids→RemoveBox→FillInternalShapes→BuildShape→PrepareHistory→BuildShape 尾段，**无 BuildResult 调用**——OCCT 源码实测如此，代理照搬正确）；绕行载体已全部删除；主代理形式抽查通过；builder.rs 十方法 pub(crate) 支撑直接委托。
+- **下一 session 入口（Stage 0.4，按序）**：
+  1. `cd rcad && cargo test -p rcad-algo --lib` 确认基线全绿；
+  2. 按 §4 Stage 0.4 的盘点数据开工 BOPDS 重映射：先建 ChFi3dDSSideTables（surfaces/curves/points + 干扰四元组轻量记录 + Transition 载荷），从 filds.rs（83 处，最大头）开始重映射，每处带 `// OCCT <file> L<行> → BOPDS <锚点>` 映射注释；
+  3. 全部重映射完成后删 topopebrepds.rs，勾 0.4，转 Stage 1a（ChFi2d 热身）。
+- **回归基线口径**：不变（algo lib 369/0 + §2.6 boolean 网格基线）。
+- 后续 session 交接格式（沿 tkhlr-port-plan §8 体例）：本 session 提交链 / 回归基线 / 新确立翻译模式 / 下一 session 入口。
 
 ### Session 0 交接（2026-09-07：调研 + 计划落盘，零代码改动）
 

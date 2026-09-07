@@ -34,11 +34,12 @@ use super::chfi_ds::{
 };
 
 // =========================================================================
-// OCCT TopOpeBRepDS_HDataStructure / TopOpeBRepBuild_HBuilder — the DS
-// types live in the topopebrepds module (1:1 translation of the
-// TKBool/TopOpeBRepDS subset the builder uses).  The TopOpeBRepBuild
-// reconstruction subsystem is pending; referenced by the builder as an
-// opaque handle until translated.
+// OCCT TopOpeBRepDS_HDataStructure / TopOpeBRepBuild_HBuilder.  User
+// ruling 2026-09-07: TKBool code is not translated 1:1 — the rebuild
+// behavior is implemented over the rcad TKBO pipeline.  The DS value
+// types remain as the ChFi3d form carrier pending the BOPDS remap
+// (Stage 0.4); the HBuilder facade lives in `hbuilder` (7-method TKBO
+// wiring in Stage 1g).
 // =========================================================================
 
 pub use super::topopebrepds::{
@@ -47,7 +48,7 @@ pub use super::topopebrepds::{
     TopOpeBRepDSSurface, TopOpeBRepDSSurfaceCurveInterference, TopOpeBRepDSTransition,
 };
 
-pub type TopOpeBRepBuildHBuilder = super::topopebrepbuild::TopOpeBRepBuildBuilder;
+pub use super::hbuilder::TopOpeBRepBuildHBuilder;
 
 // =========================================================================
 // OCCT ChFi3d_Builder member fields (ChFi3d_Builder.hxx L741-763, L841-846)
