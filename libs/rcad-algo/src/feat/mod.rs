@@ -5,6 +5,11 @@
 //! started in parallel with Stage 1 per ruling D7 (2026-09-07).
 
 pub mod brep_feat_builder;
+pub mod brep_feat_form;
+pub mod brep_feat_form_2;
+pub mod brep_feat_gluer;
+pub mod brep_feat_split_shape;
+pub mod brep_feat_status;
 pub mod brep_feat_make_cylindrical_hole;
 pub mod loc_ope_operation;
 pub mod loc_ope_pnt_face;
