@@ -1971,7 +1971,7 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::Prepare (BOPAlgo_Builder.cxx L156-164).
-    fn prepare(&mut self) {
+    pub(crate) fn prepare(&mut self) {
         // OCCT L158-163: BRep_Builder aBB; MakeCompound(aC); myShape = aC;
         // rcad: topods::BRep is the equivalent of TopoDS_Compound for result.
         self.my_shape = Some(topods::BRep::new());
@@ -1986,7 +1986,7 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Builder::FillImagesVertices (BOPAlgo_Builder_1.cxx L40-67).
     /// Maps each SD vertex pair as myImages[source]->[target], myShapesSD, myOrigins.
-    fn fill_images_vertices(&mut self) {
+    pub(crate) fn fill_images_vertices(&mut self) {
         // OCCT L40-66: NCollection_DataMap<int, int>::Iterator aIt(myDS->ShapesSD());
         // rcad: DS::shapes_sd is HashMap<usize, usize> (source鈫扴D).
         let sd_pairs: Vec<(usize, usize)> = self.ds.shapes_sd
@@ -2010,7 +2010,7 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
     /// Maps source edges -> split images via pave-block real edge.
     /// Also handles CommonBlocks via myShapesSD.
-    fn fill_images_edges(&mut self) {
+    pub(crate) fn fill_images_edges(&mut self) {
         let aNbS = self.ds.nb_source_shapes();
         for i in 0..aNbS {
             let aSI = self.ds.shape_info(i);
@@ -2056,7 +2056,7 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::FillImagesContainers (BOPAlgo_Builder_1.cxx L172-193).
     /// Builds wire/shell/compsolid images from edge/face/solid images.
     /// For each source shape of theType, calls FillImagesContainer.
-    fn fill_images_containers(&mut self, the_type: topods::ShapeType) {
+    pub(crate) fn fill_images_containers(&mut self, the_type: topods::ShapeType) {
         let a_nb_s = self.ds.nb_source_shapes();
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info(i);
@@ -2246,7 +2246,7 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
     /// Splits faces using section edges.
     /// Calls BuildSplitFaces -> FillSameDomainFaces -> FillInternalVertices.
-    fn fill_images_faces(&mut self) {
+    pub(crate) fn fill_images_faces(&mut self) {
         // OCCT L218: BuildSplitFaces
         self.build_split_faces();
         if self.has_errors() { return; }
@@ -4099,7 +4099,7 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Builder::FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
     /// Builds split solids: FillIn3DParts -> BuildSplitSolids -> FillInternalShapes.
-    fn fill_images_solids(&mut self) {
+    pub(crate) fn fill_images_solids(&mut self) {
         // OCCT L62-73: check all DS source shapes for SOLID type
         let a_nb_s = self.ds.nb_source_shapes();
         let mut has_solid = false;
@@ -5272,7 +5272,7 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-217).
-    fn fill_images_compounds(&mut self) {
+    pub(crate) fn fill_images_compounds(&mut self) {
         // OCCT L199-201: fence map + NbSourceShapes 鈥?TopTools_ShapeMapHasher.
         let mut a_mfp: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
         let a_nb_s = self.ds.nb_source_shapes();
@@ -5346,7 +5346,7 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::PrepareHistory (BOPAlgo_Builder_4.cxx L164-252).
-    fn prepare_history(&mut self) {
+    pub(crate) fn prepare_history(&mut self) {
         // OCCT L166-168: if (!HasHistory()) return;
         if !self.my_fill_history { return; }
 
@@ -5499,7 +5499,7 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::PostTreat (BOPAlgo_Builder.cxx L461-486).
-    fn post_treat(&mut self) {
+    pub(crate) fn post_treat(&mut self) {
         // OCCT L466-480: in non-destructive mode, collect source V/E/F shapes
         // into aMA (aMapToAvoid 鈥?tolerance of these shapes is not corrected).
         // rcad: non-destructive mode is not enabled for the boolean pipeline
@@ -6760,7 +6760,7 @@ impl<'a> Builder<'a> {
     /// (or the argument itself if it has no images) to myShape, deduplicated by fence.
     /// When arguments are solids, the intermediate calls (VERTEX..SHELL, COMPOUND)
     /// are no-ops; only BuildResult(SOLID) adds shapes into the result compound.
-    fn build_result(&mut self, the_type: topods::ShapeType) {
+    pub(crate) fn build_result(&mut self, the_type: topods::ShapeType) {
         // OCCT L133: fence map 鈥?TopTools_ShapeMapHasher (TShape + Location).
         let mut a_m_fence: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
         // OCCT L136-167: iterate myArguments, filter by theType

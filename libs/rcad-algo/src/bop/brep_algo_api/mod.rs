@@ -1,6 +1,8 @@
 use rcad_kernel::topo_shape::Shape;
 use crate::bop::algo::builder::{Builder, BooleanError, BooleanOpType};
 use crate::bop::algo::pave_filler::PaveFiller;
+use crate::bop::algo::section::BOPAlgoSection;
+use crate::bop::algo::section_attribute::SectionAttribute;
 use crate::bop::ds::DS;
 use rcad_kernel::core::message::{NoopProgress, ProgressScope};
 use rcad_kernel::topods::{TEdgeData, TFaceData, TShape, TShellData, TSolidData, TWireData};
@@ -170,7 +172,83 @@ macro_rules! def_bool_op {
 def_bool_op!(FuseOp, Union);
 def_bool_op!(CommonOp, Intersection);
 def_bool_op!(CutOp, Cut);
-def_bool_op!(SectionOp, Section);
+
+// 閳光偓閳光偓 BRepAlgoAPI_Section 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+/// OCCT BRepAlgoAPI_Section — the true SECTION operation, driven by
+/// BOPAlgo_Section (BOPAlgo_Section.cxx). Replaces the former degraded path
+/// that mapped Section onto Cut.
+pub struct SectionOp {
+    pub algo: BuilderAlgo,
+    /// OCCT BRepAlgoAPI_Section::myApprox (Init, BRepAlgoAPI_Section.cxx
+    /// L146): default false.
+    pub my_approx: bool,
+    /// OCCT myComputePCurveOn1 (Init L147): default false.
+    pub my_compute_pcurve1: bool,
+    /// OCCT myComputePCurveOn2 (Init L148): default false.
+    pub my_compute_pcurve2: bool,
+}
+impl SectionOp {
+    pub fn new() -> Self {
+        // OCCT BRepAlgoAPI_Section::Init (L142-153): myApprox =
+        // myComputePCurve1 = myComputePCurve2 = false.
+        Self {
+            algo: BuilderAlgo::new(),
+            my_approx: false,
+            my_compute_pcurve1: false,
+            my_compute_pcurve2: false,
+        }
+    }
+    pub fn from_shapes(s1: Shape, s2: Shape) -> Self {
+        // OCCT BRepAlgoAPI_Section(Sh1, Sh2, PerformNow) :
+        // BRepAlgoAPI_BooleanOperation(Sh1, Sh2, BOPAlgo_SECTION):
+        // myArguments.Append(theS1); myTools.Append(theS2);
+        let mut s = Self::new();
+        s.algo.arguments = vec![s1];
+        s.algo.tools = vec![s2];
+        s
+    }
+    pub fn set_arguments(&mut self, args: Vec<Shape>) { self.algo.set_arguments(args); }
+    pub fn get_arguments(&self) -> &[Shape] { self.algo.get_arguments() }
+    pub fn set_run_parallel(&mut self, b: bool) { self.algo.set_run_parallel(b); }
+    pub fn get_run_parallel(&self) -> bool { self.algo.get_run_parallel() }
+    pub fn set_fuzzy_value(&mut self, v: f64) { self.algo.set_fuzzy_value(v); }
+    pub fn get_fuzzy_value(&self) -> f64 { self.algo.get_fuzzy_value() }
+    pub fn set_non_destructive(&mut self, b: bool) { self.algo.set_non_destructive(b); }
+    pub fn get_non_destructive(&self) -> bool { self.algo.get_non_destructive() }
+    pub fn set_glue(&mut self, g: i32) { self.algo.set_glue(g); }
+    pub fn get_glue(&self) -> i32 { self.algo.get_glue() }
+    pub fn set_check_inverted(&mut self, b: bool) { self.algo.set_check_inverted(b); }
+    pub fn get_check_inverted(&self) -> bool { self.algo.get_check_inverted() }
+    // OCCT BRepAlgoAPI_Section::Approximation (L171-174).
+    pub fn approximation(&mut self, b: bool) { self.my_approx = b; }
+    // OCCT BRepAlgoAPI_Section::ComputePCurveOn1 (L176-179).
+    pub fn compute_pcurve_on1(&mut self, b: bool) { self.my_compute_pcurve1 = b; }
+    // OCCT BRepAlgoAPI_Section::ComputePCurveOn2 (L181-184).
+    pub fn compute_pcurve_on2(&mut self, b: bool) { self.my_compute_pcurve2 = b; }
+    // OCCT BRepAlgoAPI_BuilderShape
+    pub fn build(&mut self) {
+        self.algo.bs.result = None; self.algo.bs.err = None;
+        match run_build_section_brep(&self.algo, self.my_approx, self.my_compute_pcurve1, self.my_compute_pcurve2)
+        {
+            Ok(brep) => {
+                // OCCT BOPAlgo_Section::myShape is the result compound.
+                let root = brep.tshapes.iter().enumerate().rev()
+                    .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Compound(_)))
+                    .map(|(i, ts)| Shape::from_parts(ts.clone(), i, 0, rcad_kernel::topods::Orientation::Forward));
+                match root {
+                    Some(s) => self.algo.bs.result = Some(s),
+                    None => self.algo.bs.err = Some(BooleanError::InvalidResult("no root shape")),
+                }
+            }
+            Err(e) => self.algo.bs.err = Some(e),
+        }
+    }
+    pub fn shape(&self) -> &Shape { self.algo.bs.shape() }
+}
+impl Algo for SectionOp {
+    fn is_done(&self) -> bool { self.algo.is_done() }
+    fn error(&self) -> Option<&BooleanError> { self.algo.error() }
+}
 
 // 閳光偓閳光偓 BRepAlgoAPI_Defeaturing 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 pub struct DefeaturingOp {
@@ -599,6 +677,58 @@ fn run_build_splitter_brep(algo: &BuilderAlgo) -> Result<rcad_kernel::BRep, Bool
     builder.build().map_err(|_| BooleanError::InvalidResult("splitter failed"))
 }
 
+/// BRep-form SECTION build — the true BOPAlgo_Section pipeline (replaces the
+/// former degraded path that mapped Section onto Cut).
+///
+/// OCCT BRepAlgoAPI_BooleanOperation::Build (BRepAlgoAPI_BooleanOperation.cxx
+/// L177-184): aLArgs = myArguments + myTools -> IntersectShapes (the
+/// PaveFiller); then L199-200: myBuilder = new BOPAlgo_Section;
+/// myBuilder->SetArguments(myDSFiller->Arguments()) — BOPAlgo_Section
+/// inherits BOPAlgo_Builder and has no myTools: objects and tools form ONE
+/// argument list.
+fn run_build_section_brep(
+    algo: &BuilderAlgo,
+    my_approx: bool,
+    my_compute_pcurve1: bool,
+    my_compute_pcurve2: bool,
+) -> Result<rcad_kernel::BRep, BooleanError> {
+    if algo.arguments.is_empty() || algo.tools.is_empty() {
+        return Err(BooleanError::TooFewArguments);
+    }
+    let mut all_args = algo.arguments.clone();
+    all_args.extend(algo.tools.iter().cloned());
+    let mut filler = PaveFiller::new();
+    filler.set_arguments(all_args);
+    filler.ds_mut().set_locations(algo.locations.clone());
+    filler.set_fuzzy_value(algo.fuzzy_value);
+    // OCCT BRepAlgoAPI_Section::Init (BRepAlgoAPI_Section.cxx L143-152):
+    // myApprox = myComputePCurve1 = myComputePCurve2 = false (the caller
+    // flags override them); SetAttributes (L196-200):
+    // myDSFiller->SetSectionAttribute(BOPAlgo_SectionAttribute(myApprox,
+    // myComputePCurve1, myComputePCurve2)).
+    filler.my_section_attribute = SectionAttribute {
+        approximation: my_approx,
+        pcurve_on_s1: my_compute_pcurve1,
+        pcurve_on_s2: my_compute_pcurve2,
+        ..Default::default()
+    };
+    let a_prog = NoopProgress;
+    let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+    filler.perform(&a_ps);
+    let fuzz = filler.fuzzy_value();
+    // OCCT BRepAlgoAPI_BooleanOperation::Build L199-200: BOPAlgo_Section over
+    // the DS arguments (objects + tools as one list).
+    let mut a_section = BOPAlgoSection::new(filler.ds(), fuzz);
+    a_section.set_arguments(filler.ds().arguments.clone());
+    a_section.perform();
+    if a_section.has_errors() {
+        return Err(BooleanError::InvalidResult("section failed"));
+    }
+    a_section
+        .result_brep()
+        .ok_or(BooleanError::InvalidResult("no section result"))
+}
+
 /// OCCT shortcut: `BRepAlgoAPI_Splitter(objects, tools).Shape()`.
 /// BRep form: returns the compound of the split parts of the OBJECTS.
 pub fn splitter(
@@ -653,6 +783,19 @@ pub fn cut(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::
     run_build_brep(&op, BooleanOpType::Cut)
 }
 
+/// OCCT shortcut: `BRepAlgoAPI_Section(a, b).Shape()` — the true SECTION
+/// operation (BOPAlgo_Section::BuildSection); PCurve options take the
+/// BRepAlgoAPI_Section defaults (off).
+pub fn section(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
+    let mut op = BuilderAlgo::new();
+    let mut global_locs = vec![glam::DAffine3::IDENTITY];
+    let mut cache = std::collections::HashMap::new();
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs, &mut cache);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs, &mut cache);
+    op.locations = global_locs;
+    run_build_section_brep(&op, false, false, false)
+}
+
 /// OCCT shortcut: `BRepAlgoAPI_Cut21(a, b).Shape()` 閳?`b` minus `a`.
 pub fn cut21(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     cut(b, a) // swap args 閳?b - a
@@ -667,7 +810,7 @@ pub fn boolean_op(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRe
         BooleanOpType::Intersection => common(a, b),
         BooleanOpType::Cut => cut(a, b),
         BooleanOpType::Cut21 => cut21(a, b),
-        BooleanOpType::Section => cut(a, b),
+        BooleanOpType::Section => section(a, b),
         BooleanOpType::Unknown => Err(BooleanError::TooFewArguments),
     }
 }

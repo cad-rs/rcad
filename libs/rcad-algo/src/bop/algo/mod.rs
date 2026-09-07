@@ -12,6 +12,8 @@
 //! | builder_area         | BOPAlgo_BuilderArea         | Area building                   |
 //! | builder_face         | BOPAlgo_BuilderFace         | Face splitting                  |
 //! | builder_solid        | BOPAlgo_BuilderSolid        | Solid building                  |
+//! | maker_volume         | BOPAlgo_MakerVolume         | Solid building from solids/faces|
+//! | section              | BOPAlgo_Section             | Section edges computation       |
 //! | shell_splitter       | BOPAlgo_ShellSplitter       | Shell partitioning              |
 //! | section_attribute    | BOPAlgo_SectionAttribute    | Section parameters              |
 
@@ -22,6 +24,8 @@ pub mod builder;
 pub mod builder_area;
 pub mod builder_face;
 pub mod builder_solid;
+pub mod maker_volume;
+pub mod section;
 pub mod shell_splitter;
 pub mod wire_splitter;
 pub mod argument_analyzer;
