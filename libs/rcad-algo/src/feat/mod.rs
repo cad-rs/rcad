@@ -6,3 +6,15 @@
 
 pub mod brep_feat_builder;
 pub mod brep_feat_make_cylindrical_hole;
+pub mod loc_ope_operation;
+pub mod loc_ope_pnt_face;
+pub mod loc_ope_find_edges;
+pub mod loc_ope_find_edges_in_face;
+pub mod loc_ope_cs_intersector;
+pub mod loc_ope_curve_shape_intersector;
+pub mod loc_ope_generated_shape;
+pub mod loc_ope_glued_shape;
+pub mod loc_ope_build_shape;
+pub mod loc_ope_gluer;
+pub mod loc_ope_build_wires;
+pub mod loc_ope_spliter;

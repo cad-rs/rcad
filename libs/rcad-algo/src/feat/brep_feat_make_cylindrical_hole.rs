@@ -93,133 +93,15 @@ pub enum BRepFeatStatusError {
     NullToolU,
 }
 
-/// OCCT gp_Ax1 (gp_Ax1.hxx) — an axis defined by a location point and a unit
-/// direction. rcad carries the two vectors directly.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GpAx1 {
-    /// OCCT gp_Ax1::Location()
-    pub location: glam::DVec3,
-    /// OCCT gp_Ax1::Direction() (gp_Dir — unit vector)
-    pub direction: glam::DVec3,
-}
-
-/// OCCT LocOpe_PntFace (LocOpe_PntFace.hxx) — a point on a face with the line
-/// parameter and the surface U,V parameters. API surface carried per OCCT;
-/// produced by the LocOpe intersector (architecture difference #1).
-#[derive(Debug, Clone, Default)]
-pub struct LocOpePntFace {
-    my_pnt: Option<glam::DVec3>,  // OCCT: myPnt
-    my_face: Option<Shape>,       // OCCT: myFace (TopoDS_Face)
-    my_param: f64,                // OCCT: myParam
-    my_u: f64,                    // OCCT: myU
-    my_v: f64,                    // OCCT: myV
-}
-
-impl LocOpePntFace {
-    /// Default (null) state — the TopoDS_Face is null and the scalars are 0.
-    pub fn new() -> Self {
-        Self::default()
-    }
-    /// OCCT LocOpe_PntFace::Pnt()
-    pub fn pnt(&self) -> glam::DVec3 {
-        self.my_pnt.unwrap_or(glam::DVec3::ZERO)
-    }
-    /// OCCT LocOpe_PntFace::Face()
-    pub fn face(&self) -> Option<&Shape> {
-        self.my_face.as_ref()
-    }
-    /// OCCT LocOpe_PntFace::Parameter()
-    pub fn parameter(&self) -> f64 {
-        self.my_param
-    }
-    /// OCCT LocOpe_PntFace::UParameter()
-    pub fn u_parameter(&self) -> f64 {
-        self.my_u
-    }
-    /// OCCT LocOpe_PntFace::VParameter()
-    pub fn v_parameter(&self) -> f64 {
-        self.my_v
-    }
-}
-
-/// OCCT LocOpe_CurveShapeIntersector (LocOpe_CurveShapeIntersector.hxx) —
-/// intersects a line with all the faces of a shape and sorts the points along
-/// the line. API surface carried per OCCT; the intersection body lands with
-/// the LocOpe stage (architecture difference #1) — until then the intersector
-/// reports IsDone() == false.
-#[allow(dead_code)]
-pub(crate) struct LocOpeCurveShapeIntersector {
-    my_axis: GpAx1,     // OCCT: myAxis
-    my_shape: Shape,    // OCCT: myShape
-}
-
-impl LocOpeCurveShapeIntersector {
-    /// OCCT LocOpe_CurveShapeIntersector(Axis, S).
-    pub fn new(the_axis: GpAx1, the_shape: &Shape) -> Self {
-        LocOpeCurveShapeIntersector {
-            my_axis: the_axis,
-            my_shape: the_shape.clone(),
-        }
-    }
-    /// OCCT LocOpe_CurveShapeIntersector::IsDone() — false until the LocOpe
-    /// stage lands (architecture difference #1).
-    pub fn is_done(&self) -> bool {
-        false
-    }
-    /// OCCT LocOpe_CurveShapeIntersector::NbPoints().
-    pub fn nb_points(&self) -> i32 {
-        0
-    }
-    /// OCCT LocOpe_CurveShapeIntersector::LocalizeAfter(From, Or, IndFrom,
-    /// IndTo) — the Standard_Real parameter overload.
-    pub fn localize_after(
-        &self,
-        _from: f64,
-        _the_or: &mut rcad_kernel::topods::Orientation,
-        _ind_from: &mut i32,
-        _ind_to: &mut i32,
-    ) -> bool {
-        false
-    }
-    /// OCCT LocOpe_CurveShapeIntersector::LocalizeAfter(From, Or, IndFrom,
-    /// IndTo) — the Standard_Integer index overload (Rust has no overloading).
-    pub fn localize_after_index(
-        &self,
-        _from: i32,
-        _the_or: &mut rcad_kernel::topods::Orientation,
-        _ind_from: &mut i32,
-        _ind_to: &mut i32,
-    ) -> bool {
-        false
-    }
-    /// OCCT LocOpe_CurveShapeIntersector::LocalizeBefore(From, Or, IndFrom,
-    /// IndTo) — the Standard_Integer index overload.
-    pub fn localize_before(
-        &self,
-        _from: i32,
-        _the_or: &mut rcad_kernel::topods::Orientation,
-        _ind_from: &mut i32,
-        _ind_to: &mut i32,
-    ) -> bool {
-        false
-    }
-    /// OCCT LocOpe_CurveShapeIntersector::LocalizeBefore(From, Or, IndFrom,
-    /// IndTo) — the Standard_Real parameter overload (Rust has no
-    /// overloading).
-    pub fn localize_before_param(
-        &self,
-        _from: f64,
-        _the_or: &mut rcad_kernel::topods::Orientation,
-        _ind_from: &mut i32,
-        _ind_to: &mut i32,
-    ) -> bool {
-        false
-    }
-    /// OCCT LocOpe_CurveShapeIntersector::Point(Index).
-    pub fn point(&self, _index: i32) -> LocOpePntFace {
-        LocOpePntFace::new()
-    }
-}
+// OCCT gp_Ax1 -> rcad_kernel::math::gp::Ax1;  OCCT LocOpe_PntFace and
+// LocOpe_CurveShapeIntersector -> the loc_ope_* translations (Stage 3c
+// front half).  The Stage 3a local stubs were retired when the real
+// modules landed; the int-overload quirk (LocalizeBefore(int) implicitly
+// converts to the Real overload, cxx L294 -> L381) is replicated inside
+// `LocOpeCurveShapeIntersector::localize_before_index`.
+use rcad_kernel::math::gp::Ax1;
+use super::loc_ope_curve_shape_intersector::LocOpeCurveShapeIntersector;
+use super::loc_ope_pnt_face::LocOpePntFace;
 
 /// OCCT BRepPrim_Cylinder (TKPrim/BRepPrim/BRepPrim_Cylinder.cxx) — a
 /// cylinder solid primitive. API surface carried per OCCT (Shell/TopFace/
@@ -297,7 +179,7 @@ fn baryc(s: &Shape, brep: Option<&topods::BRep>) -> glam::DVec3 {
 /// OCCT static BoxParameters (MakeCylindricalHole.cxx L719-747) — the
 /// parameters of a bounding box in the direction of the axis of the hole.
 /// OCCT fills parmin/parmax; rcad returns the pair.
-fn box_parameters(s: &Shape, axis: &GpAx1) -> (f64, f64) {
+fn box_parameters(s: &Shape, axis: &Ax1) -> (f64, f64) {
     //
     // OCCT L723-726: Bnd_Box B; BRepBndLib::Add(S, B);
     // B.Get(c[0], c[2], c[4], c[1], c[3], c[5]);
@@ -343,7 +225,7 @@ fn box_parameters(s: &Shape, axis: &GpAx1) -> (f64, f64) {
 /// the cylinder cap along the axis from the intersection point on the face.
 /// OCCT returns bool with the outOff out-parameter; rcad returns Option<f64>
 /// (None == OCCT false).
-fn get_offset(pnt_info: &LocOpePntFace, radius: f64, axis: &GpAx1) -> Option<f64> {
+fn get_offset(pnt_info: &LocOpePntFace, radius: f64, axis: &Ax1) -> Option<f64> {
     // OCCT L754-755: FF = PntInfo.Face(); BRepAdaptor_Surface FFA(FF);
     let _ff = pnt_info.face();
     let _radius = radius;
@@ -373,7 +255,7 @@ fn create_cyl(
     pnt_info_first: &LocOpePntFace,
     pnt_info_last: &LocOpePntFace,
     radius: f64,
-    axis: &GpAx1,
+    axis: &Ax1,
 ) -> CreatedCylinder {
     let mut off_f = 0.0f64; // OCCT L787: offF = 0.
     let mut off_l = 0.0f64; // OCCT L787: offL = 0.
@@ -416,7 +298,7 @@ fn create_cyl(
 pub struct BRepFeatMakeCylindricalHole {
     /// The BRepFeat_Builder base sub-object (composition + delegation).
     pub(crate) base: BRepFeatBuilder,
-    my_axis: GpAx1,                     // OCCT L105: myAxis
+    my_axis: Ax1,                     // OCCT L105: myAxis
     my_ax_def: bool,                    // OCCT L106: myAxDef
     my_status: BRepFeatStatus,          // OCCT L107: myStatus
     my_is_blind: bool,                  // OCCT L108: myIsBlind
@@ -435,7 +317,7 @@ impl BRepFeatMakeCylindricalHole {
     pub fn new() -> Self {
         BRepFeatMakeCylindricalHole {
             base: BRepFeatBuilder::new(),
-            my_axis: GpAx1 {
+            my_axis: Ax1 {
                 location: glam::DVec3::ZERO,
                 direction: glam::DVec3::Z,
             },
@@ -452,7 +334,7 @@ impl BRepFeatMakeCylindricalHole {
     /// OCCT BRepFeat_MakeCylindricalHole::Init(const gp_Ax1& Axis) (lxx
     /// L31-35) — sets the axis of the hole(s) (the Init overload without a
     /// shape; Rust has no overloading).
-    pub fn init_axis(&mut self, axis: GpAx1) {
+    pub fn init_axis(&mut self, axis: Ax1) {
         self.my_axis = axis;
         self.my_ax_def = true;
     }
@@ -460,7 +342,7 @@ impl BRepFeatMakeCylindricalHole {
     /// OCCT BRepFeat_MakeCylindricalHole::Init(const TopoDS_Shape& S, const
     /// gp_Ax1& Axis) (lxx L39-44) — sets the shape and axis on which hole(s)
     /// will be performed.
-    pub fn init(&mut self, s: &Shape, axis: GpAx1) {
+    pub fn init(&mut self, s: &Shape, axis: Ax1) {
         self.base.init(s);
         self.my_axis = axis;
         self.my_ax_def = true;
@@ -495,7 +377,7 @@ impl BRepFeatMakeCylindricalHole {
         // OCCT L67-72: LocOpe_CurveShapeIntersector theASI(myAxis, aObject);
         // if (!theASI.IsDone() || theASI.NbPoints() <= 0) { myStatus =
         // BRepFeat_InvalidPlacement; return; }
-        let the_asi = LocOpeCurveShapeIntersector::new(self.my_axis, &a_object);
+        let the_asi = LocOpeCurveShapeIntersector::new_axis(&self.my_axis, &a_object);
         if !the_asi.is_done() || the_asi.nb_points() <= 0 {
             self.my_status = BRepFeatStatus::InvalidPlacement;
             return;
@@ -546,7 +428,7 @@ impl BRepFeatMakeCylindricalHole {
         self.my_status = BRepFeatStatus::NoError; // OCCT L116
         //
         // OCCT L118-123.
-        let the_asi = LocOpeCurveShapeIntersector::new(self.my_axis, &a_object);
+        let the_asi = LocOpeCurveShapeIntersector::new_axis(&self.my_axis, &a_object);
         if !the_asi.is_done() {
             self.my_status = BRepFeatStatus::InvalidPlacement;
             return;
@@ -574,7 +456,7 @@ impl BRepFeatMakeCylindricalHole {
             } else {
                 // TopAbs_REVERSED
                 pnt_info_last = the_asi.point(ind_to);
-                ok = the_asi.localize_before(ind_from, &mut the_or, &mut ind_from, &mut ind_to);
+                ok = the_asi.localize_before_index(ind_from, &mut the_or, &mut ind_from, &mut ind_to);
                 if ok {
                     if the_or != topods::Orientation::Forward {
                         ok = false;
@@ -690,7 +572,7 @@ impl BRepFeatMakeCylindricalHole {
         self.my_status = BRepFeatStatus::NoError; // OCCT L267
         //
         // OCCT L269-274.
-        let the_asi = LocOpeCurveShapeIntersector::new(self.my_axis, &a_object);
+        let the_asi = LocOpeCurveShapeIntersector::new_axis(&self.my_axis, &a_object);
         if !the_asi.is_done() {
             self.my_status = BRepFeatStatus::InvalidPlacement;
             return;
@@ -706,12 +588,12 @@ impl BRepFeatMakeCylindricalHole {
         if ok {
             if the_or == topods::Orientation::Reversed {
                 // on reset (OCCT L285)
-                ok = the_asi.localize_before(ind_from, &mut the_or, &mut ind_from, &mut ind_to);
+                ok = the_asi.localize_before_index(ind_from, &mut the_or, &mut ind_from, &mut ind_to);
                 // It is possible to search for the next.
             }
             if ok && the_or == topods::Orientation::Forward {
                 pnt_info_first = the_asi.point(ind_from);
-                ok = the_asi.localize_before(
+                ok = the_asi.localize_before_index(
                     the_asi.nb_points() + 1,
                     &mut the_or,
                     &mut ind_from,
@@ -786,7 +668,7 @@ impl BRepFeatMakeCylindricalHole {
         self.my_status = BRepFeatStatus::NoError; // OCCT L370
         //
         // OCCT L372-377.
-        let the_asi = LocOpeCurveShapeIntersector::new(self.my_axis, &a_object);
+        let the_asi = LocOpeCurveShapeIntersector::new_axis(&self.my_axis, &a_object);
         if !the_asi.is_done() {
             self.my_status = BRepFeatStatus::InvalidPlacement;
             return;
@@ -809,14 +691,14 @@ impl BRepFeatMakeCylindricalHole {
         if ok {
             if the_or == topods::Orientation::Reversed {
                 // reset (OCCT L400)
-                ok = the_asi.localize_before(ind_from, &mut the_or, &mut ind_from, &mut ind_to);
+                ok = the_asi.localize_before_index(ind_from, &mut the_or, &mut ind_from, &mut ind_to);
                 // It is possible to find the next.
             }
             if ok && the_or == topods::Orientation::Forward {
                 pnt_info_first = the_asi.point(ind_from);
                 // OCCT L406: LocalizeBefore(thePTo, ...) — the parameter
                 // overload.
-                ok = the_asi.localize_before_param(the_p_to, &mut the_or, &mut ind_from, &mut ind_to);
+                ok = the_asi.localize_before(the_p_to, &mut the_or, &mut ind_from, &mut ind_to);
                 if ok {
                     if the_or == topods::Orientation::Forward {
                         // OCCT L411: LocalizeAfter(IndTo, ...) — the index
@@ -894,7 +776,7 @@ impl BRepFeatMakeCylindricalHole {
         self.my_status = BRepFeatStatus::NoError; // OCCT L487
         //
         // OCCT L489-494.
-        let the_asi = LocOpeCurveShapeIntersector::new(self.my_axis, &a_object);
+        let the_asi = LocOpeCurveShapeIntersector::new_axis(&self.my_axis, &a_object);
         if !the_asi.is_done() {
             self.my_status = BRepFeatStatus::InvalidPlacement;
             return;
@@ -910,7 +792,7 @@ impl BRepFeatMakeCylindricalHole {
         if ok {
             if the_or == topods::Orientation::Reversed {
                 // reset (OCCT L505)
-                ok = the_asi.localize_before(ind_from, &mut the_or, &mut ind_from, &mut ind_to);
+                ok = the_asi.localize_before_index(ind_from, &mut the_or, &mut ind_from, &mut ind_to);
                 // it is possible to find the next
             }
             ok = ok && the_or == topods::Orientation::Forward;
