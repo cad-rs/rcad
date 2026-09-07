@@ -214,9 +214,9 @@ libs/rcad-algo/src/
 **Stage 1 TKFillet**
 - [x] 1a ChFi2d（4,645）热身（Session 2 完成：7 文件 ~6,970 行；锚点单测留作阶段 2 资产；fillet2d 网格验收延至 4.1 生成器接入；已知缺口 = geom2d_gcc Circ2d2TanRad line×line/line×circle 分支 panic、ShapeAnalysis CheckSelfIntersection stub、BuildCurves3d no-op、ProjectPointOnCurve 私有桥）
 - [x] 1b ChFiDS 盘点补全（Session 2 完成：盘点表 + 3 新文件 633 行 + 20+ 方法补齐；NOT-IN-OCCT 5 项已标注待裁决；Law 机制 pending → 1e；Spine.prepare partial/Stripe.Reset 残缺/ElSpine 字段级 → 后续对齐）
-- [ ] 1c ChFiKPart 标准例族（5,389）
+- [x] 1c ChFiKPart 标准例族（Session 2 完成：14/14 cxx 全翻，6 文件 5,795 行含 gp 支撑原语 940 行；缺口 = ProjLib_ProjectedCurve 缺（Sphere 非 iso 轮廓角 panic）、face U range 缺省回退 (0,2π)——已标注）
 - [ ] 1d DS 交互 BOPDS 重映射落地（0.4 映射表驱动；PointIterator/InterferenceIterator 等老 DS 迭代器 → BOPDS 等价实现，不再翻译）
-- [ ] 1e BRepBlend/Blend/BlendFunc（27,115，按消费面；ChFiDS Law 机制 pending 在此关闭）
+- [x] 1e BRepBlend/Blend/BlendFunc（Session 2 完成第一批：消费清单盘点表 + Law 包全量闭合 4 小件 787 行 + Blend 核心 7 文件 2,409 行；第二批 = Walking/AppSurf/CSFunction/SurfRstFunction + BlendFunc Chamfer/ConstRad 族，挂 1f 消费点；kernel 缺口 5 项已 unimplemented!+锚点标注）
 - [ ] 1f ChFi3d 主体（36,532；续六件 + 新增 builder_2/_6/_cncrn/_chbuilder；素材 = 1b 的 NOT-IN-OCCT 清单 + MapIndSo SHELL 缺口 + IndexPointInDS UpdateVertex 缺口）
 - [ ] 1g HBuilder 门面 7 方法 TKBO 接线（hbuilder.rs；语义锚 = BOPAlgo_Builder/Splitter 等价路径，方法头标注 OCCT 行号 + D6 裁决 + TKBO 锚点）
 - [ ] 1h BRepFilletAPI 门面 + FilletSurf；验收 blend 10 + chamfer 13 网格 + GTests 2
@@ -230,8 +230,8 @@ libs/rcad-algo/src/
 
 **Stage 3 TKFeat**（D7：与 Stage 1 并行提前开工）
 - [x] 3a BRepFeat_Builder 架构映射 + MakeCylindricalHole 烟囱（Session 2 完成：feat 2 文件 2,730 行；继承链逐成员映射入文件头；缺口 ①build_shape/②DoSplitSEAMOnFace 已由主代理改 pub(crate) 关闭；③FillIn3DParts 虚覆盖手动派发；④LocOpe_CurveShapeIntersector/PntFace 骨架、⑤BRepPrim_Cylinder 骨架、⑥GetOffset 走 OCCT offF=Radius 回退、⑦location 表未携带——均在注释锚点标注，分别等 3c/TKPrim/阶段 2）
-- [ ] 3b BRepFeat Form 家族（14,362；Form → Prism 族 → RibSlot → Gluer/SplitShape）
-- [ ] 3c LocOpe（13,342；小件 → Prism 族/Generator → SplitShape/WiresOnShape/SplitDrafts）；验收 feat 8 + mkface 10 + evolved 5
+- [ ] 3b BRepFeat Form 家族（14,362；Form → Prism 族 → RibSlot → Gluer/SplitShape；依赖 3c 前半已落地）
+- [ ] 3c LocOpe（13,342）——**前半已完**（Session 2：12 个 loc_ope 模块 ~3,780 行：Operation/PntFace/FindEdges/FindEdgesInFace/CSIntersector/CurveShapeIntersector/GeneratedShape/GluedShape/Gluer部分/BuildShape；3a 遗留骨架已由主代理合拢退役）；**后半待做** = BuildWires/WiresOnShape/Spliter/Generator/Prism 族/大件（阻塞项：IntCurvesFace_Intersector/BRepIntCurveSurface_Inter 全量翻译、BRepTools_Substitution、TopolTool::Classify standalone）；验收 feat 8 + mkface 10 + evolved 5
 
 **Stage 4 验收闭环**
 - [ ] 4.1 occt-test-gen 接入 11 网格（先修 BooleanOp/BooleanOptions 漂移）
@@ -260,6 +260,8 @@ libs/rcad-algo/src/
 - **语义审计结论（E/F 双代理，全部通过）**：17 处 add_shape（filds 10 + chfi3d 5 + spkp 2）逐一核查——当前全为 location=0 构造，双键 (ptr_id, location) 与旧单键**逐点等价、零行为漂移**；碰撞仅在 instancing 输入可达，且 OCCT 本就按 TShape+Location 判等——**双键是恢复对齐**（旧 ptr_id 单键才是历史偏差）。门面 Clone 链核实满足 ChFi3dBuilder derive Clone；DS 索引在消费文件中全程不透明传递（无 ±1 算术、无字段直触）。路由注释 78 条（filds 67 / chfi3d 9 / spkp 2），均带 OCCT 锚点。**记档（非 D6 引入，Stage 1f/后续对齐素材）**：① OCCT Builder.cxx L347-352 SHELL 注册在 rcad MapIndSo 缺失；② OCCT Builder_0.cxx L2329-2333 B.UpdateVertex 在 IndexPointInDS 缺失；③ `Shape::is_same`（rcad-kernel/topo_shape.rs L135）只比 ptr_id 丢 Location，自称 IsSame 但不完整——实例化输入下 filds 的 arc/vertex 配对比较会混同 DS 已分开的实例。
 - **并行推进状态**：代理 E（filds + builder_0）/ 代理 F（chfi3d + spkp + kpart）均已交付——语义审计零漂移、78 条克制注释、零逻辑修复；主代理终验（cargo check 0 error + 基线）后 Stage 0.4 提交（含 kpart ignore + 本档更新 + module-map fillet 行）→ 根 sync。
 - **Stage 1a/1b/3a 并行交付（Session 2 后半，5 代理同跑）**：G（chfi2d 189 + ana_fillet_algo 1,638）、H（fillet_algo 1,580 + chamfer_api 297）、I（builder 1,899 + builder_0 1,086）、我（fillet_api 196）、J（feat 1,606 + 1,124）、K（chfi_ds 盘点 + 3 新文件 633）。联合编译 0 error + 基线 377/0/1。**关键事实**：ChFi2d_Builder 不经 Ana/Fillet/ChamferAPI，直用 geomalgo 的 Geom2dGcc；命名约定统一 init_wire/init_edges（H 的 init 已由主代理重命名）；NbResults/Result 按 OCCT 非 const 用 &mut self。
+- **第二轮并行交付（1e 第一批 L / 3c 前半 M / 1c O）**：L = 消费清单盘点表（1e 批次路线图）+ Law 包全量闭合 787 行 + Blend 核心 7 文件 2,409 行（Blend_Point 813 / Ruled 968 / 三层 trait / CurvPointRadInv）；M = 12 个 loc_ope 模块 ~3,780 行（3a 骨架由主代理退役合拢：真身 `localize_before`(f64)/`localize_before_index`(i32)，OCCT int→double 转调 quirk 已在真身内复刻；Gluer 的 Perform/AddEdges 与 BuildWires/Spliter 推迟）；O = ChFiKPart 14/14 cxx 全翻 5,795 行（chfi_kpart 1,340 / chasym 1,176 / fil 1,232 / gp 原语 940 / ch_plncyl 656 / ch 451）。终验 cargo check 0 error + 基线 377/0/1。
+- **第二轮缺口记档**：kernel/geomalgo = Adaptor3d Resolution 族 + NbIntervals/Intervals + GeomConvert::CurveToBSplineCurve + CSLib DN/Normal Array2（unimplemented!+锚点，第二批 CSFunction 消费点）；ProjLib_ProjectedCurve 缺（ChFiKPart Sphere 非 iso 轮廓角 panic 路径）；IntCurvesFace_Intersector/BRepIntCurveSurface_Inter 现为近似载体（正式翻译后解除 loc_ope 两个 GAP 标注）；BRepTopAdaptor_TopolTool::Classify standalone 限制（恒 OUT 保守缺省）；ChFiKPart face U range 缺省 (0,2π) 回退；ShapeAnalysis CheckSelfIntersection stub（shhealing 域）；BuildCurves3d no-op；ProjectPointOnCurve 私有桥建议正式翻译；ExtremaCurveCurve 64 采样旋钮待阶段 2 审。
 - **Stage 1a/3a 基础设施缺口记档（全部注释锚点标注，按归属待办）**：geomalgo 侧 = geom2d_gcc Circ2d2TanRad line×line/line×circle 分支 panic（最常见 case！阶段 2/4 补）；kernel 侧 = ShapeAnalysis CheckSelfIntersection stub（shhealing 域）、BuildCurves3d 无等价（no-op 桥）、ProjectPointOnCurve 私有桥（建议正式翻译）、add_vertex 走位置缓存非 MakeVertex 语义、Shape::is_same 丢 Location（0.4 已记）；ExtremaCurveCurve 64 采样旋钮 = rcad 专有（阶段 2 审）。feat 侧 = LocOpe_CurveShapeIntersector/PntFace + BRepPrim_Cylinder 骨架（等 3c/TKPrim）、GetOffset 走 OCCT 自身回退、location 表未携带。
 - **下一 session 入口**：Stage 1a ChFi2d 热身（4,645 行，零布尔依赖；AnaFilletAlgo/FilletAlgo/ChamferAPI/Builder/FilletAPI → `fillet/chfi2d_*.rs`；翻译纪律沿 §0 含 §0.6 并行代理约束；锚点 = 直线-圆/圆-圆 2D 解析解单测可写但翻译期不以其通过为验收）。
 - **本 session 提交链**：Stage 0.4 提交（chfi3d_ds 门面 + 6 文件路径 + kpart ignore + 文档）→ 根 sync。

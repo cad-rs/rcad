@@ -5,6 +5,13 @@
 //! `fillet` holds the legacy `make_fillet_edge` compatibility helper
 //! (blend on a single edge) pending absorption into the aligned pipeline.
 
+pub mod brep_blend;
+pub mod brep_blend_curv_point_rad_inv;
+pub mod brep_blend_func;
+pub mod brep_blend_func_inv;
+pub mod brep_blend_function;
+pub mod brep_blend_point;
+pub mod brep_blend_ruled;
 pub mod brep_fillet_api;
 pub mod chfi2d;
 pub mod chfi2d_ana_fillet_algo;
