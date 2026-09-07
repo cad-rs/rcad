@@ -29,22 +29,68 @@ pub struct ProjectOnSurface {
     last_point: Option<DVec3>,
     last_uv: Option<DVec2>,
     last_distance: f64,
+    // OCCT GeomGridEval_Surface pattern (Extrema_GenExtCS::Initialize
+    // L256-285): the surface grid is sampled ONCE at init and reused as the
+    // Newton seed source for every query.
+    grid_points: Vec<(DVec3, f64, f64)>,
 }
 
 impl ProjectOnSurface {
-    /// OCCT: Init(aS, Umin, Usup, Vmin, Vsup, Tol)
+    /// OCCT: Init(aS, Umin, Usup, Vmin, Vsup, Tol).
     pub fn init(&mut self, surf: Surface3, uv_bounds: [f64; 4], tolerance: f64) {
-        self.surf = surf;
+        // OCCT GeomAPI_ProjectPointOnSurf::Init(aS, U1, U2, V1, V2, Tol)
+        // (IntTools_Context.cxx L257-260) restricts the projection SEARCH to
+        // the face's UV rectangle. A revolution face over a line profile has
+        // an unbounded natural V domain, so projecting on the raw surface
+        // costs an unbounded-domain grid per query. Restrict the domain here.
+        use rcad_kernel::geom::SurfaceEval;
+        let restricted = if uv_bounds.iter().all(|b| b.is_finite()) {
+            Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface {
+                basis: Box::new(surf.clone()),
+                trim: uv_bounds,
+            })
+        } else {
+            surf.clone()
+        };
+        self.surf = restricted;
         self.uv_bounds = uv_bounds;
         self.tolerance = tolerance;
         self.last_point = None;
         self.last_uv = None;
         self.last_distance = f64::MAX;
+        // OCCT GeomGridEval_Surface::EvaluateGrid over the (restricted) UV
+        // rectangle — sampled once, reused per query as the Newton seed.
+        let (nu, nv) = (10usize, 10usize);
+        let mut grid = Vec::with_capacity((nu + 1) * (nv + 1));
+        for i in 0..=nu {
+            let u = uv_bounds[0] + (uv_bounds[1] - uv_bounds[0]) * i as f64 / nu as f64;
+            for j in 0..=nv {
+                let v = uv_bounds[2] + (uv_bounds[3] - uv_bounds[2]) * j as f64 / nv as f64;
+                if u.is_finite() && v.is_finite() {
+                    grid.push((surf.point_at(u, v), u, v));
+                }
+            }
+        }
+        self.grid_points = grid;
     }
 
     /// OCCT: Perform(aP) — find closest point on surface.
     pub fn perform(&mut self, point: DVec3) {
-        let (uv, proj) = crate::bop::closest_point_on_surface(&self.surf, point);
+        // OCCT GeomGridEval pattern: seed the Newton from the cached grid's
+        // best cell (pure arithmetic), then refine on the restricted surface.
+        use rcad_kernel::geom::SurfaceEval;
+        let mut seed = (self.uv_bounds[0], self.uv_bounds[2]);
+        let mut best_sq = f64::INFINITY;
+        for (p, gu, gv) in self.grid_points.iter() {
+            let d = p.distance_squared(point);
+            if d < best_sq {
+                best_sq = d;
+                seed = (*gu, *gv);
+            }
+        }
+        let near = crate::extrema::closest_point_on_surface_near(&self.surf, point, seed.0, seed.1);
+        let uv = DVec2::new(near.params.0, near.params.1);
+        let proj = near.point;
         if std::env::var("RCAD_PROJ_DEBUG").is_ok() {
             eprintln!("[PROJ] surf={:?} point=({:.3},{:.3},{:.3}) -> uv=({:.4},{:.4}) proj=({:.3},{:.3},{:.3}) dist={:.4}",
                 std::mem::discriminant(&self.surf), point.x, point.y, point.z,
@@ -57,7 +103,7 @@ impl ProjectOnSurface {
         // point, so clamping (instead of wrapping) would move the solution to
         // a wrong 3D location. Non-periodic directions are clamped to the
         // boundary (the constrained nearest point lies there).
-        use rcad_kernel::geom::SurfaceEval;
+
         let mut u = uv.x;
         let mut v = uv.y;
         let u0 = self.uv_bounds[0];
@@ -303,14 +349,19 @@ impl IntToolsContext {
         // myC uses the edge's real parameter range (BRepAdaptor_Curve from the
         // edge, not the bare curve's default domain).
         let edge_range = ds.shapes[n_e].shape.as_edge().map(|ed| ed.range).unwrap_or([a_t1, a_t2]);
+        let uv_bounds = ds.face_uv_boundary(n_f);
         let mut bfi = crate::bop::int_tools::bean_face_intersector::BeanFaceIntersector::with_adaptors(
             crate::bop::int_tools::bean_face_intersector::BRepAdaptorCurve::with_range(
                 curve.clone(), edge_range[0], edge_range[1]),
-            crate::bop::int_tools::bean_face_intersector::BRepAdaptorSurface::new(surf.clone()),
+            // OCCT IntTools_BeanFaceIntersector(myC, myS): myS is the CONTEXT's
+            // SurfaceAdaptor(myFace) — BRepAdaptor_Surface(theFace), whose
+            // parameter domain is the face's UV rect, not the surface's
+            // natural domain (IntTools_Context.cxx L225-242).
+            crate::bop::int_tools::bean_face_intersector::BRepAdaptorSurface::with_uv_bounds(
+                surf.clone(), uv_bounds),
             a_tol_e,
             a_tol_f,
         );
-        let uv_bounds = ds.face_uv_boundary(n_f);
         bfi.set_surface_parameters(uv_bounds[0], uv_bounds[1], uv_bounds[2], uv_bounds[3]);
         bfi.set_bean_parameters(a_t1, a_t2);
         bfi.perform();
@@ -973,6 +1024,7 @@ impl IntToolsContext {
                 last_point: None,
                 last_uv: None,
                 last_distance: f64::MAX,
+                grid_points: Vec::new(),
             };
             proj.init(surf, uv_bounds, 1e-12);
             self.proj_ps_cache.insert(fi, proj);
@@ -1256,7 +1308,7 @@ mod tests {
             tolerance: 1e-12,
             last_point: None,
             last_uv: None,
-            last_distance: f64::MAX,
+            last_distance: f64::MAX,            grid_points: Vec::new(),
         };
         proj.perform(DVec3::new(2.0, 3.0, 5.0));
         let (u, v) = proj.lower_distance_parameters();
@@ -1280,7 +1332,7 @@ mod tests {
             tolerance: 1e-12,
             last_point: None,
             last_uv: None,
-            last_distance: f64::MAX,
+            last_distance: f64::MAX,            grid_points: Vec::new(),
         };
         proj.perform(DVec3::new(0.5, 0.5, 5.0));
         let (u, v) = proj.lower_distance_parameters();

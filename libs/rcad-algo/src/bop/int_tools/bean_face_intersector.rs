@@ -5,7 +5,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::precision::{ANGULAR, CONFUSION, PCONFUSION, is_infinite_value};
-use rcad_kernel::projection::{closest_point_on_curve, closest_point_on_surface};
+use rcad_kernel::projection::{closest_point_on_curve, closest_point_on_surface, closest_point_on_surface_near};
 use std::cmp::Ordering;
 use std::f64::consts::PI;
 
@@ -181,6 +181,14 @@ fn surface_type(surface: &Surface3) -> GeomAbsSurfaceType {
         Surface3::Torus(_) => GeomAbsSurfaceType::Torus,
         Surface3::Bezier(_) => GeomAbsSurfaceType::BezierSurface,
         Surface3::BSpline(_) => GeomAbsSurfaceType::BSplineSurface,
+        // OCCT GeomAbs_SurfaceOfRevolution / GeomAbs_SurfaceOfExtrusion are
+        // distinct types (Adaptor3d_SurfaceType); conflating them with
+        // GeomAbs_OtherSurface wrongly enables the ComputeLocalized path
+        // (IntTools_BeanFaceIntersector.cxx L327-338 restricts localization to
+        // Bezier/Other/BSpline surfaces) which OCCT never takes for
+        // revolution faces.
+        Surface3::Revolution(_) => GeomAbsSurfaceType::SurfaceOfRevolution,
+        Surface3::LinearExtrusion(_) => GeomAbsSurfaceType::SurfaceOfExtrusion,
         _ => GeomAbsSurfaceType::OtherSurface,
     }
 }
@@ -674,6 +682,31 @@ impl BRepAdaptorSurface {
             first_v: domain[2],
             last_v: domain[3],
         }
+    }
+
+    /// OCCT BRepAdaptor_Surface(theFace) (IntTools_Context::SurfaceAdaptor):
+    /// the adaptor's parameter domain is the FACE's UV rect (BRepTools::
+    /// UVBounds), not the surface's natural domain. A revolution face built
+    /// over a line profile has an unbounded natural V domain, so the face
+    /// window must be supplied explicitly (IntTools_Context::UVBounds).
+    pub fn with_uv_bounds(surface: Surface3, uv_bounds: [f64; 4]) -> Self {
+        BRepAdaptorSurface {
+            surface,
+            first_u: uv_bounds[0],
+            last_u: uv_bounds[1],
+            first_v: uv_bounds[2],
+            last_v: uv_bounds[3],
+        }
+    }
+
+    /// The surface restricted to the adaptor's UV window - the analogue of the
+    /// OCCT face-restricted HSurface (BRepAdaptor_Surface evaluates within the
+    /// face UV rect only).
+    pub fn restricted_surface(&self) -> Surface3 {
+        Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface {
+            basis: Box::new(self.surface.clone()),
+            trim: [self.first_u, self.last_u, self.first_v, self.last_v],
+        })
     }
 
     pub fn surface(&self) -> &Surface3 {
@@ -1319,6 +1352,41 @@ impl ExtremaExtCS {
 
         let Some(ref surf) = self.surface else { return };
 
+        // OCCT Extrema_ExtCS::Perform dispatch (Extrema_ExtCS.cxx L113-250):
+        // quadric surfaces take the exact ExtElCS branch, every other surface
+        // type (SurfaceOfRevolution/BSpline/...) is computed by
+        // Extrema_GenExtCS (NbT=12, NbU=NbV=10, 13 for periodic axes).
+        let stype = surface_type(surf);
+        let is_quadric = matches!(
+            stype,
+            GeomAbsSurfaceType::Plane
+                | GeomAbsSurfaceType::Cylinder
+                | GeomAbsSurfaceType::Cone
+                | GeomAbsSurfaceType::Sphere
+                | GeomAbsSurfaceType::Torus
+        );
+        if !is_quadric {
+            // OCCT L138-149 (Line case): the curve range is clamped to the
+            // parameter span of the surface's bounding box corners when the
+            // UV bounds are finite (they are, for a face-window adaptor).
+            let mut ext = crate::bop::int_tools::extrema_gen_ext_cs::ExtremaGenExtCS::new();
+            let u_periodic = surf.is_u_periodic();
+            let v_periodic = surf.is_v_periodic();
+            let nb_u = if u_periodic { 13 } else { 10 };
+            let nb_v = if v_periodic { 13 } else { 10 };
+            ext.initialize(surf, nb_u, nb_v, self.u_min, self.u_max, self.v_min, self.v_max, precision_pconfusion());
+            ext.perform(curve, 12, first, last, precision_pconfusion());
+            if ext.is_done() {
+                for i in 1..=ext.nb_ext() {
+                    let (t, u, v) = ext.point(i);
+                    let p = curve.value(t);
+                    self.extrema.push((t, p, u, v));
+                }
+            }
+            self.is_done = true;
+            return;
+        }
+
         // Multi-resolution scan: 500 points coarse, then cluster + refine
         let coarse_n = 500usize;
         let dt = (last - first) / coarse_n as f64;
@@ -1862,19 +1930,36 @@ impl IntCurveSurfaceHInter {
             return;
         }
 
+        // OCCT IntCurveSurface_Inter.pxx PerformConicSurf (L560-745): the
+        // non-quadric path builds the polyhedron over the FACE's UV window
+        // (BRepAdaptor_Surface first/last UV, nbsu/nbsv >= 20), never over the
+        // raw surface. A revolution face over a line profile has an unbounded
+        // natural V domain, so the raw-surface projection both misclassifies
+        // hits beyond the face bounds and pays an unbounded-domain grid per
+        // sample. rcad restricts the projection to the face window.
+        let surf = surface.restricted_surface();
+
         // OCCT L138-179: non-analytic curves (BSpline/Bezier) — sampling path
         let tol = precision_confusion() * 20.0;
 
-        // Phase 1: coarse sampling (100 points) to detect transition intervals
+        // Phase 1: coarse sampling (100 points) to detect transition intervals.
+        // OCCT evaluates the line progressively; the projection of each sample
+        // is seeded with the previous sample's UV (the first sample carries
+        // the full grid cost).
         let coarse_n = 100usize;
         let dt_coarse = (last - first) / coarse_n as f64;
         let mut inside_prev = false;
         let mut seg_start = first;
+        let mut prev_uv: Option<(f64, f64)> = None;
 
         for i in 0..=coarse_n {
             let t = first + i as f64 * dt_coarse;
             let p = curve.value(t);
-            let proj = closest_point_on_surface(surf, p, 16);
+            let proj = match prev_uv {
+                Some((u0, v0)) => closest_point_on_surface_near(&surf, p, u0, v0),
+                None => closest_point_on_surface(&surf, p, 16),
+            };
+            prev_uv = Some(proj.params);
             let inside = proj.distance < tol;
 
             if inside && !inside_prev {
@@ -1882,8 +1967,8 @@ impl IntCurveSurfaceHInter {
             } else if !inside && inside_prev {
                 // Transition: inside → outside, refine both boundaries
                 let refined_start =
-                    self.refine_crossing(curve, surf, seg_start - dt_coarse, seg_start, tol, true);
-                let refined_end = self.refine_crossing(curve, surf, seg_start, t, tol, false);
+                    self.refine_crossing(curve, &surf, seg_start - dt_coarse, seg_start, tol, true);
+                let refined_end = self.refine_crossing(curve, &surf, seg_start, t, tol, false);
                 if refined_start < refined_end {
                     self.segments.push(IntCurveSurfaceIntersectionSegment::new(
                         IntCurveSurfaceIntersectionPoint::new(refined_start, 0.0, 0.0),
@@ -1910,10 +1995,10 @@ impl IntCurveSurfaceHInter {
             ));
         }
 
-        // Phase 2: refine points with UV projection
+        // Phase 2: refine points with UV projection, seeded from the Phase-1 UV.
         for pt in self.points.iter_mut() {
             let p = curve.value(pt.w());
-            let proj = closest_point_on_surface(surf, p, 16);
+            let proj = closest_point_on_surface_near(&surf, p, pt.u(), pt.v());
             *pt = IntCurveSurfaceIntersectionPoint::new(pt.w(), proj.params.0, proj.params.1);
         }
 
@@ -2887,7 +2972,10 @@ impl BeanFaceIntersector {
     // OCCT L397-461: Distance(theArg) — compute shortest distance from curve point at theArg to surface
     fn distance_simple(&self, the_arg: f64) -> f64 {
         let a_point = self.my_curve.value(the_arg);
-        let proj = closest_point_on_surface(self.my_surface.surface(), a_point, 16);
+        // OCCT Distance uses the face-restricted projector (mySurface =
+        // BRepAdaptor_Surface(theFace)); the projection domain is the face UV
+        // rect, not the natural surface domain.
+        let proj = closest_point_on_surface(&self.my_surface.restricted_surface(), a_point, 16);
 
         if proj.distance < f64::MAX {
             return proj.distance;
@@ -2986,7 +3074,10 @@ impl BeanFaceIntersector {
         let mut a_distance = real_last();
         let mut projection_found = false;
 
-        let proj = closest_point_on_surface(self.my_surface.surface(), a_point, 16);
+        // OCCT Distance uses the face-restricted projector (mySurface =
+        // BRepAdaptor_Surface(theFace)); the projection domain is the face UV
+        // rect, not the natural surface domain.
+        let proj = closest_point_on_surface(&self.my_surface.restricted_surface(), a_point, 16);
         if proj.distance < f64::MAX {
             *the_u_parameter = proj.params.0;
             *the_v_parameter = proj.params.1;

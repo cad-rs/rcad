@@ -2904,6 +2904,25 @@ impl DS {
         self.face_actual_uv_bounds(fi)
     }
 
+    /// The face's surface restricted to its UV rect — the analogue of the OCCT
+    /// face-restricted BRepAdaptor_Surface used by every projection entry
+    /// (ProjPS L257-260, MakePCurveOnFace, BuildPCurveForEdgeOnFace).  A
+    /// revolution face built over a line profile has an unbounded natural V
+    /// domain, so projections against the raw surface pay an unbounded-domain
+    /// grid per sample and can land outside the face.
+    pub fn face_restricted_surface(&self, fi: usize) -> Option<Surface3> {
+        let surf = self.face_surface(fi)?;
+        let uv = self.face_uv_boundary(fi);
+        if uv.iter().all(|b| b.is_finite()) {
+            Some(Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface {
+                basis: Box::new(surf),
+                trim: uv,
+            }))
+        } else {
+            Some(surf)
+        }
+    }
+
     /// OCCT BRep_Tool::UVBounds — the face's actual UV bounds computed by
     /// sampling the boundary edges' pcurves. rcad faces build pcurves
     /// incrementally (MakePCurves runs after VF/EF/FF), so the boundary edges'

@@ -12,4 +12,5 @@ pub mod face_face;
 pub mod face_make_curve;
 pub mod context;
 pub mod bean_face_intersector;
+pub mod extrema_gen_ext_cs;
 pub mod curve_range;
