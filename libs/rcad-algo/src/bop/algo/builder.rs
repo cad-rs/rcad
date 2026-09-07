@@ -3040,7 +3040,7 @@ impl<'a> Builder<'a> {
     /// closed surface but is not yet marked closed: creates the second pcurve
     /// by translating the existing pcurve by one period, and stores both as a
     /// CurveOnClosedSurface representation.
-    fn do_split_seam_on_face(&self, a_split: &Shape, a_f: &Shape) -> bool {
+    pub(crate) fn do_split_seam_on_face(&self, a_split: &Shape, a_f: &Shape) -> bool {
         let mut b_is_left = false;
         let mut an_u_period = 0.0;
         let mut an_v_period = 0.0;
@@ -5519,7 +5519,7 @@ impl<'a> Builder<'a> {
     // ====================================================================
 
     /// OCCT BOPAlgo_BOP::BuildShape (BOPAlgo_BOP.cxx L885-1107).
-    fn build_shape(&mut self) {
+    pub(crate) fn build_shape(&mut self) {
         // OCCT BOPAlgo_BOP::CheckData sets myDims from arguments/tools.
         self.compute_dims();
         // OCCT L889-911: for 3D+3D, if any argument solid is open, use the

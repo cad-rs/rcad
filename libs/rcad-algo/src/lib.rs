@@ -10,6 +10,7 @@ pub mod algo_ext;
 pub mod helix;
 pub mod hlr;
 pub mod fillet;
+pub mod feat;
 pub mod shhealing;
 
 // Re-export boolean operation API at top level
