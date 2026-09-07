@@ -291,3 +291,251 @@ impl BSplineCurve3 {
         DVec3::new(poles_res[off], poles_res[off + 1], poles_res[off + 2])
     }
 }
+
+impl BSplineCurve3 {
+    /// OCCT BSplCLib::Resolution(Poles, ArrayDimension, NumPoles, Weights,
+    /// FlatKnots, Degree, Tolerance3D, UTolerance)
+    /// (BSplCLib.cxx L4316-4820) — the parametric resolution of a BSpline.
+    /// OCCT unrolls ArrayDimension 2/3/4 with identical arithmetic per
+    /// coordinate k (ascending k); the generic loop below keeps the same
+    /// accumulation order.  3D curve path (ArrayDimension = 3).
+    pub fn bsplclib_resolution(&self, tolerance_3d: f64) -> f64 {
+        // OCCT setup (BSplCLib.cxx L4317-4337).
+        let degree = self.degree;
+        let deg1 = degree + 1;
+        let deg2 = (degree << 1) + 1;
+        let fk = &self.knots; // FlatKnots (0-based flat sequence)
+        let num_poles = fk.len() - deg1; // OCCT: FlatKnots.Length() - Deg1
+        let num_poles_occt = self.control_points.len(); // OCCT NumPoles argument
+        let max_derivative: f64;
+
+        if self.is_rational() {
+            // OCCT Weights branch (dim-3 form, BSplCLib.cxx L4440-4560).
+            let wg = &self.weights;
+            let mut min_weights = wg[0];
+            for &w in wg.iter().take(num_poles_occt).skip(1) {
+                if w < min_weights {
+                    min_weights = w;
+                }
+            }
+
+            let mut max_der = 0.0f64;
+            for ii in 1..num_poles {
+                let ii_index = ii % num_poles_occt;
+                let ii_minus = (ii - 1) % num_poles_occt;
+                let wg_ii_index = wg[ii_index];
+                let wg_ii_minus = wg[ii_minus];
+                let inverse = 1.0 / (fk[ii + degree] - fk[ii]);
+                let lower = (ii - deg1).max(0);
+                let upper = (deg2 + ii).min(num_poles);
+
+                for jj in lower..upper {
+                    let jj_index = jj % num_poles_occt;
+                    let mut value = 0.0f64;
+                    for kk in 0..3 {
+                        let pa_jj = self.control_points[jj_index][kk];
+                        let pa_ii = self.control_points[ii_index][kk];
+                        let pa_mi = self.control_points[ii_minus][kk];
+                        let mut factor =
+                            ((pa_jj - pa_ii) * wg_ii_index) - ((pa_jj - pa_mi) * wg_ii_minus);
+                        if factor < 0.0 {
+                            factor = -factor;
+                        }
+                        value += factor;
+                    }
+                    value *= inverse;
+                    if max_der < value {
+                        max_der = value;
+                    }
+                }
+            }
+            max_derivative = max_der / min_weights;
+        } else {
+            // OCCT non-weighted branch (dim-3 form, L4664-4700).
+            let mut max_der = 0.0f64;
+            for ii in 1..num_poles {
+                let ii_index = ii % num_poles_occt;
+                let ii_minus = (ii - 1) % num_poles_occt;
+                let inverse = 1.0 / (fk[ii + degree] - fk[ii]);
+                let mut value = 0.0f64;
+                for kk in 0..3 {
+                    let mut factor =
+                        self.control_points[ii_index][kk] - self.control_points[ii_minus][kk];
+                    if factor < 0.0 {
+                        factor = -factor;
+                    }
+                    value += factor;
+                }
+                value *= inverse;
+                if max_der < value {
+                    max_der = value;
+                }
+            }
+            max_derivative = max_der;
+        }
+
+        let max_derivative = max_derivative * degree as f64;
+        if max_derivative > f64::MIN_POSITIVE {
+            // OCCT: UTolerance = Tolerance3D / max_derivative.
+            tolerance_3d / max_derivative
+        } else {
+            // OCCT: UTolerance = Tolerance3D / RealSmall().
+            tolerance_3d / f64::MIN_POSITIVE
+        }
+    }
+
+    /// OCCT BSplCLib::Intervals(theKnots, theMults, theDegree, isPeriodic,
+    /// theContinuity, theFirst, theLast, theTolerance, theIntervals)
+    /// (BSplCLib.cxx L4824-4948).  Returns the number of intervals; when
+    /// `intervals_out` is Some, fills it with the interval bounds.
+    pub fn bsplclib_intervals(
+        &self,
+        continuity: i32,
+        first: f64,
+        last: f64,
+        tolerance: f64,
+        mut intervals_out: Option<&mut Vec<f64>>,
+    ) -> usize {
+        use crate::math::bspl_lib::{
+            at, ati, first_uknot_index_mults, last_uknot_index_mults, locate_parameter_main,
+        };
+
+        let (the_knots, the_mults) = self.knots_mults();
+
+        // Remove all knots with multiplicity less or equal than
+        // (degree - continuity) except first and last (BSplCLib.cxx L4833-4845).
+        let degree = self.degree as i32;
+        let a_first_index = if self.is_periodic {
+            1
+        } else {
+            first_uknot_index_mults(degree as usize, &the_mults)
+        };
+        let a_last_index = if self.is_periodic {
+            the_knots.len() as i32
+        } else {
+            last_uknot_index_mults(degree as usize, &the_mults)
+        };
+        let mut a_new_knots: Vec<f64> = Vec::new();
+        for an_index in a_first_index..=a_last_index {
+            if ati(&the_mults, an_index) > (degree - continuity)
+                || an_index == a_first_index
+                || an_index == a_last_index
+            {
+                a_new_knots.push(at(&the_knots, an_index));
+            }
+        }
+        let a_nb_new_knots = a_new_knots.len() as i32;
+
+        // The range boundaries (BSplCLib.cxx L4848-4877).
+        let mut a_cur_first = first;
+        let mut a_cur_last = last;
+        let mut a_period = 0.0f64;
+        let mut a_first_period = 0i32;
+        let mut a_last_period = 0i32;
+        if self.is_periodic {
+            let a_lower = the_knots[0];
+            let an_upper = the_knots[the_knots.len() - 1];
+            a_period = an_upper - a_lower;
+
+            while a_cur_first < a_lower {
+                a_cur_first += a_period;
+                a_first_period -= 1;
+            }
+            while a_cur_last < a_lower {
+                a_cur_last += a_period;
+                a_last_period -= 1;
+            }
+            while a_cur_first >= an_upper {
+                a_cur_first -= a_period;
+                a_first_period += 1;
+            }
+            while a_cur_last >= an_upper {
+                a_cur_last -= a_period;
+                a_last_period += 1;
+            }
+        }
+
+        // Locate the left and nearest knot for boundaries (L4879-4899) — the
+        // LocateParameter variant without multiplicities.
+        let mut an_index1 = 0i32;
+        let mut an_index2 = 0i32;
+        let mut a_dummy_double = 0.0f64;
+        locate_parameter_main(
+            &a_new_knots,
+            a_cur_first,
+            false,
+            1,
+            a_nb_new_knots,
+            &mut an_index1,
+            &mut a_dummy_double,
+            0.0,
+            1.0,
+        );
+        locate_parameter_main(
+            &a_new_knots,
+            a_cur_last,
+            false,
+            1,
+            a_nb_new_knots,
+            &mut an_index2,
+            &mut a_dummy_double,
+            0.0,
+            1.0,
+        );
+
+        // The case when the beginning of the range coincides with the next knot.
+        if an_index1 < a_nb_new_knots
+            && (a_new_knots[an_index1 as usize] - a_cur_first).abs() < tolerance
+        {
+            an_index1 += 1;
+        }
+        // The case when the ending of the range coincides with the current knot.
+        if a_nb_new_knots > 0
+            && (a_new_knots[(an_index2 - 1) as usize] - a_cur_last).abs() < tolerance
+        {
+            an_index2 -= 1;
+        }
+        let a_nb_intervals = (an_index2 - an_index1 + 1
+            + (a_last_period - a_first_period) * (a_nb_new_knots - 1)) as usize;
+
+        // Fill the interval array (BSplCLib.cxx L4922-4945).
+        if let Some(out) = intervals_out.as_deref_mut() {
+            out.clear();
+            if self.is_periodic && a_last_period != a_first_period {
+                // Part from the beginning of range to the end of the first period.
+                let mut i = an_index1;
+                while i < a_nb_new_knots {
+                    out.push(a_new_knots[i as usize] + a_first_period as f64 * a_period);
+                    i += 1;
+                }
+                // Full periods.
+                let mut a_period_num = a_first_period + 1;
+                while a_period_num < a_last_period {
+                    let mut i = 1;
+                    while i < a_nb_new_knots {
+                        out.push(a_new_knots[i as usize] + a_period_num as f64 * a_period);
+                        i += 1;
+                    }
+                    a_period_num += 1;
+                }
+                // Part from the beginning of the last period to the end of range.
+                let mut i = 1;
+                while i <= an_index2 {
+                    out.push(a_new_knots[i as usize] + a_last_period as f64 * a_period);
+                    i += 1;
+                }
+            } else {
+                let mut i = an_index1;
+                while i <= an_index2 {
+                    out.push(a_new_knots[i as usize] + a_first_period as f64 * a_period);
+                    i += 1;
+                }
+            }
+            // Update the first position and write the ending of the range.
+            out[0] = first;
+            out.push(last);
+        }
+
+        a_nb_intervals
+    }
+}

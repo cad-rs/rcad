@@ -148,7 +148,7 @@ impl IntVec {
 /// OCCT GeomAbs_Shape (TKG3d GeomAbs package) — continuity order.  Placed
 /// here because the TKMath approximation stack (PLib / AdvApprox) consumes
 /// it; re-exported for the algorithm crates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum GeomAbsShape {
     C0,
     C1,

@@ -12,12 +12,6 @@
 //! the rcad solver (OCCT D(i, j) -> d[i - 1][j - 1]); `math_Gauss` maps to
 //! [`MathGauss`]; `gp_Vec` / `gp_Vec2d` map to `DVec3` / `DVec2` (OCCT
 //! `SetLinearForm(A, V1, B, V2)` becomes `A * V1 + B * V2`).
-//!
-//! Pending (kernel gaps):
-//! - GetTolerance / Resolution need `Adaptor3d_Surface::UResolution /
-//!   VResolution` (GeomAdaptor_Surface resolution is an untranslated
-//!   adaptor-layer subsystem).
-//! - NbIntervals / Intervals need `Adaptor3d_Curve::NbIntervals / Intervals`.
 
 use glam::{DVec2, DVec3};
 
@@ -103,12 +97,12 @@ impl<'a> BlendFuncRuled<'a> {
     }
 
     /// OCCT GetTolerance(Tolerance, Tol) (BlendFunc_Ruled.cxx L65-71) —
-    /// UResolution / VResolution of the two surfaces.  Pending kernel gap
-    /// (see the module header).
-    pub fn get_tolerance(&self, _tolerance: &mut [f64], _tol: f64) {
-        unimplemented!(
-            "BlendFunc_Ruled::GetTolerance: pending Adaptor3d_Surface::UResolution/VResolution"
-        );
+    /// UResolution / VResolution of the two surfaces.
+    pub fn get_tolerance(&self, tolerance: &mut [f64], tol: f64) {
+        tolerance[0] = self.surf1.u_resolution(tol);
+        tolerance[1] = self.surf1.v_resolution(tol);
+        tolerance[2] = self.surf2.u_resolution(tol);
+        tolerance[3] = self.surf2.v_resolution(tol);
     }
 
     /// OCCT GetBounds(InfBound, SupBound) (BlendFunc_Ruled.cxx L73-93).
@@ -615,17 +609,19 @@ impl<'a> BlendFuncRuled<'a> {
     }
 
     /// OCCT NbIntervals(S) (BlendFunc_Ruled.cxx L593-599) —
-    /// `curv->NbIntervals(BlendFunc::NextShape(S))`.  Pending kernel gap
-    /// (see the module header).
-    pub fn nb_intervals(&self, _s: GeomAbsShape) -> usize {
-        let _next = blend_func_next_shape(_s);
-        unimplemented!("BlendFunc_Ruled::NbIntervals: pending Adaptor3d_Curve::NbIntervals");
+    /// `curv->NbIntervals(BlendFunc::NextShape(S))`.
+    pub fn nb_intervals(&self, s: GeomAbsShape) -> usize {
+        self.curv.nb_intervals(blend_func_next_shape(s))
     }
 
-    /// OCCT Intervals(T, S) (BlendFunc_Ruled.cxx L603-606).  Pending kernel
-    /// gap (see the module header).
-    pub fn intervals(&self, _t: &mut [f64], _s: GeomAbsShape) {
-        unimplemented!("BlendFunc_Ruled::Intervals: pending Adaptor3d_Curve::Intervals");
+    /// OCCT Intervals(T, S) (BlendFunc_Ruled.cxx L603-606) —
+    /// `curv->Intervals(T, BlendFunc::NextShape(S))`.
+    pub fn intervals(&self, t: &mut [f64], s: GeomAbsShape) {
+        let mut intervals = Vec::new();
+        self.curv.intervals(&mut intervals, blend_func_next_shape(s));
+        for (dst, src) in t.iter_mut().zip(intervals) {
+            *dst = src;
+        }
     }
 
     /// OCCT GetShape(NbPoles, NbKnots, Degree, NbPoles2d)
@@ -758,12 +754,14 @@ impl<'a> BlendFuncRuled<'a> {
     }
 
     /// OCCT Resolution(IC2d, Tol, TolU, TolV) (BlendFunc_Ruled.cxx L732-744).
-    /// Pending kernel gap (see the module header).
-    pub fn resolution(&self, ic_2d: i32, tol: f64, _tol_u: &mut f64, _tol_v: &mut f64) {
-        let _ = (ic_2d, tol);
-        unimplemented!(
-            "BlendFunc_Ruled::Resolution: pending Adaptor3d_Surface::UResolution/VResolution"
-        );
+    pub fn resolution(&self, ic_2d: i32, tol: f64, tol_u: &mut f64, tol_v: &mut f64) {
+        if ic_2d == 1 {
+            *tol_u = self.surf1.u_resolution(tol);
+            *tol_v = self.surf1.v_resolution(tol);
+        } else {
+            *tol_u = self.surf2.u_resolution(tol);
+            *tol_v = self.surf2.v_resolution(tol);
+        }
     }
 }
 

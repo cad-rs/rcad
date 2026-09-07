@@ -66,3 +66,60 @@ pub trait BlendCurvPointFuncInv: FunctionSetWithDerivatives {
     /// OCCT IsSolution(Sol, Tol) — true if Sol is a zero of the function.
     fn is_solution(&mut self, sol: &[f64], tol: f64) -> bool;
 }
+
+/// OCCT Blend_SurfPointFuncInv — deferred class for a function used to
+/// compute a blending surface between a surface and a point on a curve,
+/// finding a solution on the surface (Blend_SurfPointFuncInv.hxx L25-60).
+/// The vector X is U, V.
+pub trait BlendSurfPointFuncInv: FunctionSetWithDerivatives {
+    /// OCCT NbVariables() (Blend_SurfPointFuncInv.cxx L19-22) — returns 2.
+    fn nb_variables(&self) -> usize {
+        2
+    }
+
+    /// OCCT NbEquations() — the number of equations of the function.
+    fn nb_equations(&self) -> usize;
+
+    /// OCCT Set(P) — sets the Point on which a solution has to be found.
+    fn set_point(&mut self, p: DVec3);
+
+    /// OCCT GetTolerance(Tolerance, Tol) — the parametric tolerance for the
+    /// variables; Tol is the tolerance used in 3d space.
+    fn get_tolerance(&self, tolerance: &mut [f64], tol: f64);
+
+    /// OCCT GetBounds(InfBound, SupBound) — the lowest / greatest values
+    /// allowed for the variables.
+    fn get_bounds(&self, inf_bound: &mut [f64], sup_bound: &mut [f64]);
+
+    /// OCCT IsSolution(Sol, Tol) — true if Sol is a zero of the function.
+    fn is_solution(&mut self, sol: &[f64], tol: f64) -> bool;
+}
+
+/// OCCT Blend_SurfCurvFuncInv — deferred class for a function used to compute
+/// a blending surface between a surface and a curve, finding a solution on a
+/// restriction of the surface (Blend_SurfCurvFuncInv.hxx L26-70).
+/// The vector X is t, U, V.
+pub trait BlendSurfCurvFuncInv: FunctionSetWithDerivatives {
+    /// OCCT NbVariables() (Blend_SurfCurvFuncInv.cxx L19-22) — returns 3.
+    fn nb_variables(&self) -> usize {
+        3
+    }
+
+    /// OCCT NbEquations() — the number of equations of the function.
+    fn nb_equations(&self) -> usize;
+
+    /// OCCT Set(Rst) — sets the restriction on which a solution has to be
+    /// found.
+    fn set_rst(&mut self, rst: &Curve2d);
+
+    /// OCCT GetTolerance(Tolerance, Tol) — the parametric tolerance for the
+    /// variables; Tol is the tolerance used in 3d space.
+    fn get_tolerance(&self, tolerance: &mut [f64], tol: f64);
+
+    /// OCCT GetBounds(InfBound, SupBound) — the lowest / greatest values
+    /// allowed for the variables.
+    fn get_bounds(&self, inf_bound: &mut [f64], sup_bound: &mut [f64]);
+
+    /// OCCT IsSolution(Sol, Tol) — true if Sol is a zero of the function.
+    fn is_solution(&mut self, sol: &[f64], tol: f64) -> bool;
+}
