@@ -1,17 +1,17 @@
 //! OCCT Extrema_GenExtCS (TKGeomBase/Extrema/Extrema_GenExtCS.cxx) with its
 //! math support classes math_PSO / math_PSOParticlesPool /
-//! math_BullardGenerator (FoundationClasses/TKMath/math) and the objective
-//! functions Extrema_GlobOptFuncCS / Extrema_GlobOptFuncConicS
-//! (TKGeomBase/Extrema).
+//! math_BullardGenerator (FoundationClasses/TKMath/math), the objective
+//! functions Extrema_GlobOptFuncCS / Extrema_GlobOptFuncConicS and the
+//! solution function set Extrema_FuncExtCS (TKGeomBase/Extrema).
 //!
-//! rcad note: `function_set_root.rs` is the 2-variable instantiation of
-//! math_FunctionSetRoot used by IntPatch. The final Newton refinement here is
-//! the 3-variable instantiation (the Extrema_GlobOptFuncCS system), written
-//! against the same OCCT algorithm.
+//! The final refinement of Perform is the N-variable math_FunctionSetRoot
+//! (translated 1:1 in `rcad-kernel/src/math/function_set_root.rs`) applied to
+//! the 3-variable Extrema_FuncExtCS function set.
 
-use crate::bop::int_tools::bean_face_intersector::{BRepAdaptorCurve, BRepAdaptorSurface};
+use crate::bop::int_tools::bean_face_intersector::BRepAdaptorCurve;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::math::function_set_root::{FunctionSetRoot, FunctionSetWithDerivatives};
 
 const MAX_PARAM_VAL: f64 = 1.0e+10;
 const BORDER_DIVISOR: f64 = 1.0e+4;
@@ -433,11 +433,24 @@ impl ExtremaGenExtCS {
             None => return,
         };
 
-        let ctype = curve_type_of(curve);
-        let stype = surface_type_of(&surf);
+        // OCCT L305: myF.Initialize(C, *myS).
+        let mut my_f = FuncExtCS::new(curve.curve(), &surf);
+
+        // OCCT L312-320: infinite t bounds are trimmed to GetCurvMaxParamVal(C).
+        let mut my_tmin = tmin;
+        let mut my_tsup = tsup;
+        let a_c_max_val = get_curv_max_param_val(curve);
+        if rcad_kernel::precision::is_infinite_value(my_tsup) {
+            my_tsup = a_c_max_val;
+        }
+        if rcad_kernel::precision::is_infinite_value(my_tmin) {
+            my_tmin = -a_c_max_val;
+        }
 
         // OCCT L324-337: aNbVar = 1 for quadric surfaces, 2 for conic curves,
         // 3 otherwise.
+        let ctype = curve_type_of(curve);
+        let stype = surface_type_of(&surf);
         let is_quadric = matches!(
             stype,
             SType::Plane | SType::Cylinder | SType::Cone | SType::Sphere | SType::Torus
@@ -445,43 +458,59 @@ impl ExtremaGenExtCS {
         let is_conic = !matches!(ctype, ConicType::None);
         let nb_var = if is_quadric { 1 } else if is_conic { 2 } else { 3 };
 
+        let tol = [tol1, self.tol2, self.tol2];
+
+        // OCCT L348: aNbParticles = 48.
         const NB_PARTICLES: usize = 48;
-        // OCCT L348-356: closed/periodic curves spanning > 2/3 period are split.
-        let a_nb_int_c = 1usize;
-        let _ = a_nb_int_c;
-        let mut tuv = [tmin + 0.5 * (tsup - tmin), self.umin, self.vmin];
-        let tuvinf = [tmin, self.umin, self.vmin];
-        let tuvsup = [tsup, self.umax, self.vmax];
-        match nb_var {
-            1 => {
-                Self::glob_min_c_quadric(curve, &surf, self.tsample, self.usample, self.vsample,
-                    NB_PARTICLES, tuvinf, tuvsup, &mut tuv);
-            }
-            2 => {
-                Self::glob_min_conic_s(curve, &surf, self.tsample, self.usample, self.vsample,
-                    NB_PARTICLES, tuvinf, tuvsup, &mut tuv);
-            }
-            _ => {
-                Self::glob_min_gen_cs(curve, &surf, self.tsample, self.usample, self.vsample,
-                    NB_PARTICLES, tuvinf, tuvsup, &mut tuv);
+
+        // OCCT L347-356: closed/periodic curves spanning > 2/3 period split in
+        // two intervals (the "false extrema" of a single sweep).
+        let mut a_nb_int_c = 1usize;
+        if curve.is_closed() || curve.is_periodic() {
+            let a_period = curve.period();
+            if curve.last_parameter() - curve.first_parameter() > 2. * a_period / 3. {
+                a_nb_int_c = 2;
             }
         }
 
-        // OCCT L384-385: math_FunctionSetRoot refinement on the
-        // Extrema_GlobOptFuncCS system seeded by the PSO result.
-        let func = GlobOptFuncCS {
-            curve: curve.curve(),
-            surface: &surf,
-            tf: tmin,
-            tl: tsup,
-            umin: self.umin,
-            umax: self.umax,
-            vmin: self.vmin,
-            vmax: self.vmax,
-        };
-        let solution = cs_newton_refine(&func, tuv, tuvinf, tuvsup, tol1, self.tol2);
-        if let Some((t, u, v, f)) = solution {
-            self.extrema.push((t, u, v, f));
+        let d_t = (my_tsup - my_tmin) / a_nb_int_c as f64;
+        for an_int in 1..=a_nb_int_c {
+            let tuv_inf = [my_tmin + (an_int as f64 - 1.) * d_t, self.umin, self.vmin];
+            let tuv_sup = [tuv_inf[0] + d_t, self.umax, self.vmax];
+            let mut tuv = [tuv_inf[0] + 0.5 * d_t, self.umin, self.vmin];
+
+            match nb_var {
+                1 => {
+                    Self::glob_min_c_quadric(curve, &surf, self.tsample, self.usample,
+                        self.vsample, NB_PARTICLES, tuv_inf, tuv_sup, &mut tuv);
+                }
+                2 => {
+                    Self::glob_min_conic_s(curve, &surf, self.tsample, self.usample,
+                        self.vsample, NB_PARTICLES, tuv_inf, tuv_sup, &mut tuv);
+                }
+                _ => {
+                    Self::glob_min_gen_cs(curve, &surf, self.tsample, self.usample,
+                        self.vsample, NB_PARTICLES, tuv_inf, tuv_sup, &mut tuv);
+                }
+            }
+
+            // OCCT L384-385: the math_FunctionSetRoot refinement of myF seeded
+            // by the PSO result (default NbIterations = 100).
+            let mut an_a = FunctionSetRoot::new(&my_f, &tol, 100);
+            an_a.perform(&mut my_f, &tuv, &tuv_inf, &tuv_sup, false);
+        }
+
+        // OCCT L389-418: remove the "false" extrema caused by dividing the
+        // curve interval (keep the solutions within SquareConfusion of the
+        // minimum).
+        if a_nb_int_c > 1 && my_f.nb_ext() > 1 {
+            my_f.filter_false_extrema();
+        }
+
+        for i in 1..=my_f.nb_ext() {
+            let (t, _p1) = my_f.point_on_curve(i);
+            let (u, v, _p2) = my_f.point_on_surface(i);
+            self.extrema.push((t, u, v, my_f.square_distance(i)));
         }
         self.is_done = true;
     }
@@ -765,94 +794,213 @@ impl ExtremaGenExtCS {
     }
 }
 
-/// The math_FunctionSetRoot refinement of the Extrema_GlobOptFuncCS system
-/// (3 equations: the distance gradient) — the 3-variable instantiation of the
-/// algorithm translated in `function_set_root.rs` (damped Newton on the
-/// Hessian with the OCCT bounds clamp and the |Delta| <= Tol stop tests).
-fn cs_newton_refine(
-    func: &GlobOptFuncCS,
-    seed: [f64; 3],
-    inf: [f64; 3],
-    sup: [f64; 3],
-    tol1: f64,
-    tol2: f64,
-) -> Option<(f64, f64, f64, f64)> {
-    let tol = [tol1, tol2, tol2];
-    let mut x = seed;
-    for i in 0..3 {
-        if x[i] <= inf[i] {
-            x[i] = inf[i];
-        } else if x[i] > sup[i] {
-            x[i] = sup[i];
+/// OCCT Extrema_GenExtCS::GetCurvMaxParamVal (Extrema_GenExtCS.cxx L94-114)
+/// — HyperbolaLimit for a hyperbola-based curve, MaxParamVal otherwise.
+fn get_curv_max_param_val(curve: &BRepAdaptorCurve) -> f64 {
+    if curve_type_of(curve) == ConicType::Hyperbola {
+        return HYPERBOLA_LIMIT;
+    }
+    MAX_PARAM_VAL
+}
+
+/// OCCT Extrema_FuncExtCS (TKGeomBase/Extrema/Extrema_FuncExtCS.cxx L1-238)
+/// — the function set
+/// { F1(t,u,v) = (C(t)-S(u,v)).Dtc(t) }
+/// { F2(t,u,v) = (C(t)-S(u,v)).Dus(u,v) }
+/// { F3(t,u,v) = (C(t)-S(u,v)).Dvs(u,v) }
+/// whose roots are the curve/surface extremalities.  GetStateNumber records
+/// each accepted solution (deduplicated by curve parameter).
+pub(crate) struct FuncExtCS<'a> {
+    curve: &'a Curve3,
+    surface: &'a Surface3,
+    my_t: f64,
+    my_u: f64,
+    my_v: f64,
+    my_p1: DVec3,
+    my_p2: DVec3,
+    my_sq_dist: Vec<f64>,
+    // Extrema_POnCurv (parameter, point) / Extrema_POnSurf (u, v, point).
+    my_point1: Vec<(f64, DVec3)>,
+    my_point2: Vec<(f64, f64, DVec3)>,
+}
+
+impl<'a> FuncExtCS<'a> {
+    /// OCCT Extrema_FuncExtCS(C, S) -> Initialize(C, S) (cxx L59-77).
+    pub fn new(curve: &'a Curve3, surface: &'a Surface3) -> Self {
+        let mut f = FuncExtCS {
+            curve,
+            surface,
+            my_t: 0.0,
+            my_u: 0.0,
+            my_v: 0.0,
+            my_p1: DVec3::ZERO,
+            my_p2: DVec3::ZERO,
+            my_sq_dist: Vec::new(),
+            my_point1: Vec::new(),
+            my_point2: Vec::new(),
+        };
+        f.initialize();
+        f
+    }
+
+    /// OCCT Initialize(C, S) (cxx L66-77).
+    pub fn initialize(&mut self) {
+        self.my_sq_dist.clear();
+        self.my_point1.clear();
+        self.my_point2.clear();
+    }
+
+    /// OCCT NbExt() (cxx L189-193).
+    pub fn nb_ext(&self) -> usize {
+        self.my_sq_dist.len()
+    }
+
+    /// OCCT SquareDistance(N) (cxx L196-206).
+    pub fn square_distance(&self, n: usize) -> f64 {
+        self.my_sq_dist[n - 1]
+    }
+
+    /// OCCT PointOnCurve(N) — (parameter, point) (cxx L209-216).
+    pub fn point_on_curve(&self, n: usize) -> (f64, DVec3) {
+        self.my_point1[n - 1]
+    }
+
+    /// OCCT PointOnSurface(N) — (u, v, point) (cxx L219-226).
+    pub fn point_on_surface(&self, n: usize) -> (f64, f64, DVec3) {
+        self.my_point2[n - 1]
+    }
+
+    /// OCCT GetStateNumber() (cxx L156-186): record the current solution,
+    /// deduplicated by curve parameter with Precision::SquarePConfusion.
+    fn record_solution(&mut self) {
+        let tol2d = rcad_kernel::precision::PCONFUSION * rcad_kernel::precision::PCONFUSION;
+        let nb_sol = self.my_sq_dist.len();
+        for i in 1..=nb_sol {
+            let (a_t, _) = self.my_point1[i - 1];
+            let mut d = a_t - self.my_t;
+            d *= d;
+            if d <= tol2d {
+                return;
+            }
+        }
+        self.my_sq_dist.push(self.my_p1.distance_squared(self.my_p2));
+        self.my_point1.push((self.my_t, self.my_p1));
+        self.my_point2.push((self.my_u, self.my_v, self.my_p2));
+    }
+
+    /// OCCT Extrema_GenExtCS::Perform L391-418 — remove the "false" extrema
+    /// caused by dividing the curve interval (keep the solutions within
+    /// Precision::SquareConfusion of the minimum).
+    pub fn filter_false_extrema(&mut self) {
+        let sq_dists1 = self.my_sq_dist.clone();
+        let pnts_on_crv1 = self.my_point1.clone();
+        let pnts_on_surf1 = self.my_point2.clone();
+
+        let mut a_min_dist = f64::MAX;
+        for &a_dist in &sq_dists1 {
+            if a_dist < a_min_dist {
+                a_min_dist = a_dist;
+            }
+        }
+        self.my_sq_dist.clear();
+        self.my_point1.clear();
+        self.my_point2.clear();
+        const A_TOL: f64 = rcad_kernel::precision::SQUARE_CONFUSION;
+        for (i, &a_dist) in sq_dists1.iter().enumerate() {
+            if (a_dist - a_min_dist).abs() <= A_TOL {
+                self.my_sq_dist.push(a_dist);
+                self.my_point1.push(pnts_on_crv1[i]);
+                self.my_point2.push(pnts_on_surf1[i]);
+            }
         }
     }
-    let mut f = func.value(x[0], x[1], x[2]);
-    let mut g = func.gradient(x[0], x[1], x[2]);
-    for _ in 0..100 {
-        // Numeric Jacobian of the gradient (the Hessian).
-        let mut h = [[0.0f64; 3]; 3];
-        for j in 0..3 {
-            let eps = 1e-7 * (sup[j] - inf[j]).max(1e-3);
-            let mut xp = x;
-            xp[j] = (xp[j] + eps).min(sup[j]);
-            let mut xm = x;
-            xm[j] = (xm[j] - eps).max(inf[j]);
-            let gp = func.gradient(xp[0], xp[1], xp[2]);
-            let gm = func.gradient(xm[0], xm[1], xm[2]);
-            for r in 0..3 {
-                h[r][j] = (gp[r] - gm[r]) / (xp[j] - xm[j]);
-            }
-        }
-        // Solve H d = -G (3x3, partial pivoting).
-        let mut a = h;
-        let mut b = [-g[0], -g[1], -g[2]];
-        let mut det_acc = 1.0;
-        for col in 0..3 {
-            let mut piv = col;
-            for r in col + 1..3 {
-                if a[r][col].abs() > a[piv][col].abs() {
-                    piv = r;
-                }
-            }
-            if a[piv][col].abs() < 1e-30 {
-                return Some((x[0], x[1], x[2], f));
-            }
-            if piv != col {
-                a.swap(piv, col);
-                b.swap(piv, col);
-            }
-            det_acc *= a[col][col];
-            for r in col + 1..3 {
-                let m = a[r][col] / a[col][col];
-                for cc in col..3 {
-                    a[r][cc] -= m * a[col][cc];
-                }
-                b[r] -= m * b[col];
-            }
-        }
-        let mut d = [0.0f64; 3];
-        for r in (0..3).rev() {
-            let mut s = b[r];
-            for cc in r + 1..3 {
-                s -= a[r][cc] * d[cc];
-            }
-            d[r] = s / a[r][r];
-        }
-        // OCCT: clamp the step to the bounds and stop on |Delta| <= Tol.
-        let mut delta_max = 0.0f64;
-        for i in 0..3 {
-            let xn = (x[i] + d[i]).clamp(inf[i], sup[i]);
-            delta_max = delta_max.max((xn - x[i]).abs() / tol[i].max(1e-15));
-            x[i] = xn;
-        }
-        f = func.value(x[0], x[1], x[2]);
-        g = func.gradient(x[0], x[1], x[2]);
-        let _ = g;
-        if delta_max <= 1.0 {
-            break;
-        }
+}
+
+impl<'a> FunctionSetWithDerivatives for FuncExtCS<'a> {
+    /// OCCT NbVariables() (cxx L80-83).
+    fn nb_variables(&self) -> usize {
+        3
     }
-    Some((x[0], x[1], x[2], f))
+
+    /// OCCT NbEquations() (cxx L86-89).
+    fn nb_equations(&self) -> usize {
+        3
+    }
+
+    /// OCCT Value(UV, F) (cxx L92-122): D1-based evaluations; the vector
+    /// P1P2 = myP1 - myP2 = C(t) - S(u,v) (gp_Vec(myP2, myP1)).
+    fn value(&mut self, uv: &[f64], f: &mut [f64]) -> bool {
+        self.my_t = uv[0];
+        self.my_u = uv[1];
+        self.my_v = uv[2];
+
+        let dtc = CurveEval::derivative_at(self.curve, self.my_t);
+        let (_, dus, dvs) = SurfaceEval::derivatives(self.surface, self.my_u, self.my_v);
+        self.my_p1 = CurveEval::point_at(self.curve, self.my_t);
+        self.my_p2 = SurfaceEval::point_at(self.surface, self.my_u, self.my_v);
+
+        let p1p2 = self.my_p1 - self.my_p2;
+
+        f[0] = p1p2.dot(dtc);
+        f[1] = p1p2.dot(dus);
+        f[2] = p1p2.dot(dvs);
+
+        true
+    }
+
+    /// OCCT Derivatives(UV, DF) (cxx L127-132) — delegates to Values.
+    fn derivatives(&mut self, uv: &[f64], df: &mut [Vec<f64>]) -> bool {
+        let mut f = [0.0f64; 3];
+        self.values(uv, &mut f, df);
+        true
+    }
+
+    /// OCCT Values(UV, F, Df) (cxx L137-186): D2-based function set and
+    /// Jacobian.
+    fn values(&mut self, uv: &[f64], f: &mut [f64], df: &mut [Vec<f64>]) -> bool {
+        self.my_t = uv[0];
+        self.my_u = uv[1];
+        self.my_v = uv[2];
+
+        let (dtc, dttc) = (
+            CurveEval::derivative_at(self.curve, self.my_t),
+            CurveEval::derivative2_at(self.curve, self.my_t),
+        );
+        // kernel derivatives2 = (P, D1U, D1V, D2UU, D2UV, D2VV); the OCCT D2
+        // evaluation order is Dus, Dvs, Duus, Dvvs, Duvs.
+        let (_, dus, dvs, duus, duvs, dvvs) =
+            SurfaceEval::derivatives2(self.surface, self.my_u, self.my_v);
+
+        self.my_p1 = CurveEval::point_at(self.curve, self.my_t);
+        self.my_p2 = SurfaceEval::point_at(self.surface, self.my_u, self.my_v);
+
+        let p1p2 = self.my_p1 - self.my_p2;
+
+        f[0] = p1p2.dot(dtc);
+        f[1] = p1p2.dot(dus);
+        f[2] = p1p2.dot(dvs);
+
+        df[0][0] = dtc.length_squared() + p1p2.dot(dttc);
+        df[0][1] = -dus.dot(dtc);
+        df[0][2] = -dvs.dot(dtc);
+
+        df[1][0] = -df[0][1]; // Dtc.Dot(Dus);
+        df[1][1] = -dus.length_squared() + p1p2.dot(duus);
+        df[1][2] = -dvs.dot(dus) + p1p2.dot(duvs);
+
+        df[2][0] = -df[0][2]; // -Df(1,3)
+        df[2][1] = df[1][2]; // -Dus.Dot(Dvs)+P1P2.Dot(Duvs);
+        df[2][2] = -dvs.length_squared() + p1p2.dot(dvvs);
+
+        true
+    }
+
+    /// OCCT GetStateNumber() (cxx L156-186) — the solver calls this at every
+    /// solution-acceptance return; the function records the current state.
+    fn get_state_number(&mut self) -> i32 {
+        self.record_solution();
+        0
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]

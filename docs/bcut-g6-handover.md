@@ -4,6 +4,46 @@
 > 超时。方法论:严格 1:1 翻译 OCCT,不自创。已完成大半(PaveFiller 124s→<1s,
 > 全部回归绿),剩余两个翻译单元在文末,按清单机械执行即可。
 
+## session 21 增补(同日):A/B 两单元已完成
+
+- **A 完成**:bean_face_intersector.rs 的 `IntCurveSurfaceHInter` 自创
+  Phase1/Phase2/refine_crossing 采样投影全删,结构体改为持有
+  `geomalgo::int_curve_surface::Intersection`(PARAMEQUAL 去重基类),
+  `perform` 经 `hinter_adaptor.rs`(BRepAdaptorCurveTool/BRepAdaptorSurfaceTool
+  两个 tool trait + IntCurveSurfaceHInter 的 HInterHost 实现)直通已 1:1 的
+  inter_impl 引擎——Line×Revolution 走 PerformConicSurfLine L560-745 非解析
+  分支(面窗口 polyhedron nbsu/nbsv>=20 + IntfTool::lin_box + 每段
+  2 点 polygon + internal_perform 干涉 + ZerCSParFunc/IntCS 精化)。
+  bean 的 distance_simple/distance_with_uv 同时改为 OCCT L397/L465 形式:
+  `myContext->ProjPS(face)` 缓存项目器(context.rs 新增
+  `ProjectOnSurface::new_init`;每 bean init 一次 10x10 种子网格,
+  查询只做 Newton),不再每次调用重建 32x32 全网格。
+- **B 完成**:kernel function_set_root.rs 补齐 OCCT `State = F.GetStateNumber()`
+  全部调用点(trait 新增带默认实现的 `get_state_number`);新翻译
+  `Extrema_FuncExtCS`(Extrema_FuncExtCS.cxx 全文,D1/D2 函数集 +
+  GetStateNumber 去重记录解);ExtremaGenExtCS::perform 按
+  Extrema_GenExtCS.cxx L299-423 重写(aNbIntC 闭合/周期分段循环、每段
+  GlobMin* + math_FunctionSetRoot(myF, Tol)、filter_false_extrema 假极值
+  过滤);自创 `cs_newton_refine` 数值 Hessian Newton 已删。
+- **回归**:rcad lib 369/369、kernel 664/664、builder_stage 76+smoke 1、
+  pavefiller_stage 26/26 全绿;布尔网格(子测试级,含 geometry_loads+
+  draw_script 两条/case):bcommon 166/166、bcut 201 过+17i(g6 两条
+  filtered)、bfuse 196/196+8i、bopcommon 755/755+1i、bopcut 729/729+29i、
+  bopfuse 748/748+2i;boptuc 741 过/4 失败(ze7/ze8/ze9/zf1)、
+  splitter 16 过/2 失败(a2/b2)——经 stash 反向验证,这 6 个失败在
+  不含本 session 改动的工作树上同样失败,属冻结 fillet 线/已提交代码的
+  既有失败,非本次引入。
+- **遗留(下一单元)**:g6 仍超时,但慢点已从 EF 采样(本单元已删)移到
+  主 PF 的 **EE 递归**(Line×Circle/BSpline 近交对)。诊断结论
+  (RCAD_HANGDBG 临时插桩实测,已还原):FindSolutionsRec 对近切线
+  对的 3 叉树达 ~10^5 节点 × ~0.7ms/节点(解析曲线点值+逐节点
+  BndBuildBox/find_parameters walk),单对 ~100s。OCCT 同算法每节点
+  仅 ~10μs(C++),故 OCCT 全程秒级。下一单元:1:1 审查
+  IntTools_EdgeEdge 的 FindParameters 自适应步长(k 增长/aMaxDt 上限)、
+  BndLib_Add3dCurve 弧盒与 Resolution 语义,找形式差异使树收敛。
+  另:tkdata_remaining_gtests 编译失败(minor_dir)系 2850e5e7
+  (Ellipse2d frame 修改)未同步测试所致,与本线无关,待单独修。
+
 ## G6 是什么
 
 ```

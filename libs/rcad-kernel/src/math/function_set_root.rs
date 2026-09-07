@@ -21,6 +21,13 @@ pub trait FunctionSetWithDerivatives {
     fn value(&mut self, x: &[f64], f: &mut [f64]) -> bool;
     fn derivatives(&mut self, x: &[f64], df: &mut [Vec<f64>]) -> bool;
     fn values(&mut self, x: &[f64], f: &mut [f64], df: &mut [Vec<f64>]) -> bool;
+    /// OCCT math_FunctionSetWithDerivatives::GetStateNumber — invoked by the
+    /// solvers at each solution-acceptance return so stateful functions can
+    /// record the solution (math_FunctionSetWithDerivatives.hxx default
+    /// returns 0).
+    fn get_state_number(&mut self) -> i32 {
+        0
+    }
 }
 
 /// OCCT math_SVD::Solve fallback 鈥?least-squares / min-norm solution of
@@ -718,7 +725,7 @@ impl FunctionSetRoot {
         if !f_dir.value_full(&self.sol, &mut self.ff, &mut self.df, &mut self.gh, &mut f2, &mut gnr1) {
             self.done = false;
             if !stop_on_divergent || !self.is_divergent {
-                self.state = 0;
+                self.state = f_dir.f.get_state_number();
             }
             return;
         }
@@ -730,7 +737,7 @@ impl FunctionSetRoot {
             self.done = false;
             if !stop_on_divergent || !self.is_divergent {
                 self.done = true;
-                self.state = 0;
+                self.state = f_dir.f.get_state_number();
             }
             return;
         }
@@ -756,7 +763,7 @@ impl FunctionSetRoot {
                 if !stop_on_divergent || !self.is_divergent {
                     self.done = true;
                     f_dir.f.value(&self.sol, &mut self.ff);
-                    self.state = 0;
+                    self.state = f_dir.f.get_state_number();
                 }
                 return;
             }
@@ -807,7 +814,7 @@ for i in 0..ninc {
             {
                 self.done = false;
                 if !stop_on_divergent || !self.is_divergent {
-                    self.state = 0;
+                    self.state = f_dir.f.get_state_number();
                 }
                 return;
             }
@@ -817,7 +824,7 @@ for i in 0..ninc {
                 if !stop_on_divergent || !self.is_divergent {
                     self.done = true;
                     f_dir.f.value(&self.sol, &mut self.ff);
-                    self.state = 0;
+                    self.state = f_dir.f.get_state_number();
                 }
                 return;
             }
@@ -932,7 +939,7 @@ for i in 0..ninc {
                         {
                             self.done = false;
                             if !stop_on_divergent || !self.is_divergent {
-                                self.state = 0;
+                                self.state = f_dir.f.get_state_number();
                             }
                             return;
                         }
@@ -945,7 +952,7 @@ for i in 0..ninc {
                             if !stop_on_divergent || !self.is_divergent {
                                 self.done = true;
                                 f_dir.f.value(&self.sol, &mut self.ff);
-                                self.state = 0;
+                                self.state = f_dir.f.get_state_number();
                             }
                             return;
                         }
@@ -1024,7 +1031,7 @@ for i in 0..ninc {
                             {
                                 self.done = false;
                                 if !stop_on_divergent || !self.is_divergent {
-                                    self.state = 0;
+                                    self.state = f_dir.f.get_state_number();
                                 }
                                 return;
                             }
@@ -1073,7 +1080,7 @@ for i in 0..ninc {
                             {
                                 self.done = false;
                                 if !stop_on_divergent || !self.is_divergent {
-                                    self.state = 0;
+                                    self.state = f_dir.f.get_state_number();
                                 }
                                 return;
                             }
@@ -1132,7 +1139,7 @@ for i in 0..ninc {
                             {
                                 self.done = false;
                                 if !stop_on_divergent || !self.is_divergent {
-                                    self.state = 0;
+                                    self.state = f_dir.f.get_state_number();
                                 }
                                 return;
                             }
@@ -1163,7 +1170,7 @@ for i in 0..ninc {
                     if !stop_on_divergent || !self.is_divergent {
                         self.done = true;
                         f_dir.f.value(&self.sol, &mut self.ff);
-                        self.state = 0;
+                        self.state = f_dir.f.get_state_number();
                     }
                     return;
                 }
@@ -1179,7 +1186,7 @@ for i in 0..ninc {
                             self.done = false;
                             if !stop_on_divergent || !self.is_divergent {
                                 self.done = true;
-                                self.state = 0;
+                                self.state = f_dir.f.get_state_number();
                             }
                             return;
                         }
@@ -1201,7 +1208,7 @@ for i in 0..ninc {
                         if !stop_on_divergent || !self.is_divergent {
                             self.done = true;
                             f_dir.f.value(&self.sol, &mut self.ff);
-                            self.state = 0;
+                            self.state = f_dir.f.get_state_number();
                         }
                         return;
                     }
@@ -1221,13 +1228,13 @@ for i in 0..ninc {
                     ) {
                         self.done = false;
                         if !stop_on_divergent || !self.is_divergent {
-                            self.state = 0;
+                            self.state = f_dir.f.get_state_number();
                         }
                         return;
                     }
                 } else {
                     if !stop_on_divergent || !self.is_divergent {
-                        self.state = 0;
+                        self.state = f_dir.f.get_state_number();
                     }
                     return;
                 }
@@ -1236,7 +1243,7 @@ for i in 0..ninc {
         }
         self.kount = kount - 1;
         if !stop_on_divergent || !self.is_divergent {
-            self.state = 0;
+            self.state = f_dir.f.get_state_number();
         }
     }
 

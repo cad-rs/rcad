@@ -36,9 +36,26 @@ pub struct ProjectOnSurface {
 }
 
 impl ProjectOnSurface {
+    /// OCCT: new GeomAPI_ProjectPointOnSurf() followed by
+    /// Init(aS, Umin, Usup, Vmin, Vsup, Tol) — public so the
+    /// BeanFaceIntersector can hold its own face projector
+    /// (IntTools_BeanFaceIntersector.cxx Distance: myContext->ProjPS).
+    pub fn new_init(surf: Surface3, uv_bounds: [f64; 4], tolerance: f64) -> Self {
+        let mut p = ProjectOnSurface {
+            surf: surf.clone(),
+            uv_bounds,
+            tolerance,
+            last_point: None,
+            last_uv: None,
+            last_distance: f64::MAX,
+            grid_points: Vec::new(),
+        };
+        p.init(surf, uv_bounds, tolerance);
+        p
+    }
+
     /// OCCT: Init(aS, Umin, Usup, Vmin, Vsup, Tol).
-    pub fn init(&mut self, surf: Surface3, uv_bounds: [f64; 4], tolerance: f64) {
-        // OCCT GeomAPI_ProjectPointOnSurf::Init(aS, U1, U2, V1, V2, Tol)
+    pub fn init(&mut self, surf: Surface3, uv_bounds: [f64; 4], tolerance: f64) {        // OCCT GeomAPI_ProjectPointOnSurf::Init(aS, U1, U2, V1, V2, Tol)
         // (IntTools_Context.cxx L257-260) restricts the projection SEARCH to
         // the face's UV rectangle. A revolution face over a line profile has
         // an unbounded natural V domain, so projecting on the raw surface
