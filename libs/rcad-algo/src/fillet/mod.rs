@@ -1,10 +1,18 @@
 //! OCCT TKFillet — modules named 1:1 after the OCCT TKFillet packages:
-//! `chfi_ds` (ChFiDS), `chfi3d` (ChFi3d), `brep_fillet_api` (BRepFilletAPI).
+//! `chfi2d*` (ChFi2d), `chfi_ds` (ChFiDS), `chfi3d*` (ChFi3d),
+//! `brep_fillet_api` (BRepFilletAPI).
 //!
 //! `fillet` holds the legacy `make_fillet_edge` compatibility helper
 //! (blend on a single edge) pending absorption into the aligned pipeline.
 
 pub mod brep_fillet_api;
+pub mod chfi2d;
+pub mod chfi2d_ana_fillet_algo;
+pub mod chfi2d_builder;
+pub mod chfi2d_builder_0;
+pub mod chfi2d_chamfer_api;
+pub mod chfi2d_fillet_algo;
+pub mod chfi2d_fillet_api;
 pub mod chfi3d;
 pub mod chfi3d_builder_0;
 pub mod chfi3d_builder_0_filds;

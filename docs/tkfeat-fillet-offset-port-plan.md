@@ -212,12 +212,12 @@ libs/rcad-algo/src/
 - [x] 0.4 ChFi3d DS 交互 BOPDS 重映射（Session 2 完成：chfi3d_ds.rs 门面 688 行替代 topopebrepds.rs；E/F 双代理语义审计 = 双键逐点等价零漂移；78 条克制路由注释；两处 D6 前翻译缺口 + is_same kernel 缺陷记档 1f）
 
 **Stage 1 TKFillet**
-- [ ] 1a ChFi2d（4,645）热身 + fillet2d 网格 5 用例
-- [ ] 1b ChFiDS 盘点补全
+- [x] 1a ChFi2d（4,645）热身（Session 2 完成：7 文件 ~6,970 行；锚点单测留作阶段 2 资产；fillet2d 网格验收延至 4.1 生成器接入；已知缺口 = geom2d_gcc Circ2d2TanRad line×line/line×circle 分支 panic、ShapeAnalysis CheckSelfIntersection stub、BuildCurves3d no-op、ProjectPointOnCurve 私有桥）
+- [x] 1b ChFiDS 盘点补全（Session 2 完成：盘点表 + 3 新文件 633 行 + 20+ 方法补齐；NOT-IN-OCCT 5 项已标注待裁决；Law 机制 pending → 1e；Spine.prepare partial/Stripe.Reset 残缺/ElSpine 字段级 → 后续对齐）
 - [ ] 1c ChFiKPart 标准例族（5,389）
 - [ ] 1d DS 交互 BOPDS 重映射落地（0.4 映射表驱动；PointIterator/InterferenceIterator 等老 DS 迭代器 → BOPDS 等价实现，不再翻译）
-- [ ] 1e BRepBlend/Blend/BlendFunc（27,115，按消费面）
-- [ ] 1f ChFi3d 主体（36,532；续六件 + 新增 builder_2/_6/_cncrn/_chbuilder）
+- [ ] 1e BRepBlend/Blend/BlendFunc（27,115，按消费面；ChFiDS Law 机制 pending 在此关闭）
+- [ ] 1f ChFi3d 主体（36,532；续六件 + 新增 builder_2/_6/_cncrn/_chbuilder；素材 = 1b 的 NOT-IN-OCCT 清单 + MapIndSo SHELL 缺口 + IndexPointInDS UpdateVertex 缺口）
 - [ ] 1g HBuilder 门面 7 方法 TKBO 接线（hbuilder.rs；语义锚 = BOPAlgo_Builder/Splitter 等价路径，方法头标注 OCCT 行号 + D6 裁决 + TKBO 锚点）
 - [ ] 1h BRepFilletAPI 门面 + FilletSurf；验收 blend 10 + chamfer 13 网格 + GTests 2
 
@@ -228,8 +228,8 @@ libs/rcad-algo/src/
 - [ ] 2d BiTgte（3,218）+ Draft 包（3,470）
 - [ ] 2e BRepOffsetAPI 门面 15 类按序；验收 offset 非 .rle + thrusection 10 + draft 4 + GTests 3
 
-**Stage 3 TKFeat**
-- [ ] 3a BRepFeat_Builder 架构映射 + MakeCylindricalHole 烟囱
+**Stage 3 TKFeat**（D7：与 Stage 1 并行提前开工）
+- [x] 3a BRepFeat_Builder 架构映射 + MakeCylindricalHole 烟囱（Session 2 完成：feat 2 文件 2,730 行；继承链逐成员映射入文件头；缺口 ①build_shape/②DoSplitSEAMOnFace 已由主代理改 pub(crate) 关闭；③FillIn3DParts 虚覆盖手动派发；④LocOpe_CurveShapeIntersector/PntFace 骨架、⑤BRepPrim_Cylinder 骨架、⑥GetOffset 走 OCCT offF=Radius 回退、⑦location 表未携带——均在注释锚点标注，分别等 3c/TKPrim/阶段 2）
 - [ ] 3b BRepFeat Form 家族（14,362；Form → Prism 族 → RibSlot → Gluer/SplitShape）
 - [ ] 3c LocOpe（13,342；小件 → Prism 族/Generator → SplitShape/WiresOnShape/SplitDrafts）；验收 feat 8 + mkface 10 + evolved 5
 
@@ -249,6 +249,7 @@ libs/rcad-algo/src/
 | D4 | TKBO 缺口时序 | BOPAlgo_Section / BOPAlgo_MakerVolume 作为 Stage 0 前置先补齐并加单测 | 2026-09-06 用户确认 |
 | D5 | 伴随件目录位置 | 新建 `brep_algo/`（OCCT TKBool/BRepAlgo 包）与 `brep_fill/`（OCCT TKBool/BRepFill 包）两个顶层目录，module-map 挂归属；ChFi3d 链的 TopOpeBRepDS/Build 子集留在 fillet/ 内（延续现状） | 建议值，开工如无异议照此执行 |
 | D6 | TKBool 依赖实现方式 | **TKBool 全段（TopOpeBRepBuild / TopOpeBRepDS / TopOpeBRepTool）不逐行翻译**；TKFeat/TKFillet/TKOffset 依赖其功能处由 rcad TKBO 层等价实现：① HBuilder 7 方法 = `fillet/hbuilder.rs` 门面 + TKBO 内核（1g 接线）；② TopOpeBRepDS 数据结构 = BOPDS 重映射（0.4，完成后删 topopebrepds.rs）。**取代 D1 中 TopOpeBRepBuild/DS/Tool 的"伴随翻译"部分与旧红线第三句**；D1 的"不引入 TopOpeBRep 求交器与 BRepProj"及 BRepAlgo 工具类 / BRepFill 按需引入维持不变 | 2026-09-07 用户确认（AskUserQuestion：彻底 TKBO 化含 BOPDS + topopebrepbuild.rs 整文件删除） |
+| D7 | Stage 3 (TKFeat) 提前开工 | TKFeat 与 Stage 1 并行推进（`feat/` 文件集与 `fillet/` 零交集，无文件冲突）；理由：其硬前置（TKBO 管线 + BOPAlgo_Section/MakerVolume）已全部关闭，反而 Stage 2 的 TKOffset 还需 2c 先引入 BRepFill；Stage 2 维持在 Stage 1 后 | 2026-09-07 用户确认（"TKFeat 好像没有安排吧？"+ 开工指示） |
 
 ## 9. Session 交接记录
 
@@ -258,6 +259,8 @@ libs/rcad-algo/src/
 - **Stage 0.4 地基（代理 D 产出，主代理已审计）**：`fillet/topopebrepds.rs`（514 行）退役 → `fillet/chfi3d_ds.rs`（688 行）门面。值类型 10 个原名原样迁移（形式载体）；门面 `TopOpeBRepDSHDataStructure` 23 方法签名不变，路由 = shape 注册/查询 → BOPDS `bop::ds::DS`（`append_shape`/`index`，(ptr_id, location) 双键——比旧 ptr_id 单键更贴 OCCT IsSame 语义，属对齐改进）+ 几何载荷 → `ChFi3dDSSideTables`（1-based）+ 干扰四元组列表留门面（BOPDS 无 per-shape 等价物，D6 架构差异已注释）。6 消费文件纯路径替换；chfi3d.rs 3 行 `.side.` 字段跟随（零逻辑）。`cargo check` 0 error；基线 377/0/1 保持。
 - **语义审计结论（E/F 双代理，全部通过）**：17 处 add_shape（filds 10 + chfi3d 5 + spkp 2）逐一核查——当前全为 location=0 构造，双键 (ptr_id, location) 与旧单键**逐点等价、零行为漂移**；碰撞仅在 instancing 输入可达，且 OCCT 本就按 TShape+Location 判等——**双键是恢复对齐**（旧 ptr_id 单键才是历史偏差）。门面 Clone 链核实满足 ChFi3dBuilder derive Clone；DS 索引在消费文件中全程不透明传递（无 ±1 算术、无字段直触）。路由注释 78 条（filds 67 / chfi3d 9 / spkp 2），均带 OCCT 锚点。**记档（非 D6 引入，Stage 1f/后续对齐素材）**：① OCCT Builder.cxx L347-352 SHELL 注册在 rcad MapIndSo 缺失；② OCCT Builder_0.cxx L2329-2333 B.UpdateVertex 在 IndexPointInDS 缺失；③ `Shape::is_same`（rcad-kernel/topo_shape.rs L135）只比 ptr_id 丢 Location，自称 IsSame 但不完整——实例化输入下 filds 的 arc/vertex 配对比较会混同 DS 已分开的实例。
 - **并行推进状态**：代理 E（filds + builder_0）/ 代理 F（chfi3d + spkp + kpart）均已交付——语义审计零漂移、78 条克制注释、零逻辑修复；主代理终验（cargo check 0 error + 基线）后 Stage 0.4 提交（含 kpart ignore + 本档更新 + module-map fillet 行）→ 根 sync。
+- **Stage 1a/1b/3a 并行交付（Session 2 后半，5 代理同跑）**：G（chfi2d 189 + ana_fillet_algo 1,638）、H（fillet_algo 1,580 + chamfer_api 297）、I（builder 1,899 + builder_0 1,086）、我（fillet_api 196）、J（feat 1,606 + 1,124）、K（chfi_ds 盘点 + 3 新文件 633）。联合编译 0 error + 基线 377/0/1。**关键事实**：ChFi2d_Builder 不经 Ana/Fillet/ChamferAPI，直用 geomalgo 的 Geom2dGcc；命名约定统一 init_wire/init_edges（H 的 init 已由主代理重命名）；NbResults/Result 按 OCCT 非 const 用 &mut self。
+- **Stage 1a/3a 基础设施缺口记档（全部注释锚点标注，按归属待办）**：geomalgo 侧 = geom2d_gcc Circ2d2TanRad line×line/line×circle 分支 panic（最常见 case！阶段 2/4 补）；kernel 侧 = ShapeAnalysis CheckSelfIntersection stub（shhealing 域）、BuildCurves3d 无等价（no-op 桥）、ProjectPointOnCurve 私有桥（建议正式翻译）、add_vertex 走位置缓存非 MakeVertex 语义、Shape::is_same 丢 Location（0.4 已记）；ExtremaCurveCurve 64 采样旋钮 = rcad 专有（阶段 2 审）。feat 侧 = LocOpe_CurveShapeIntersector/PntFace + BRepPrim_Cylinder 骨架（等 3c/TKPrim）、GetOffset 走 OCCT 自身回退、location 表未携带。
 - **下一 session 入口**：Stage 1a ChFi2d 热身（4,645 行，零布尔依赖；AnaFilletAlgo/FilletAlgo/ChamferAPI/Builder/FilletAPI → `fillet/chfi2d_*.rs`；翻译纪律沿 §0 含 §0.6 并行代理约束；锚点 = 直线-圆/圆-圆 2D 解析解单测可写但翻译期不以其通过为验收）。
 - **本 session 提交链**：Stage 0.4 提交（chfi3d_ds 门面 + 6 文件路径 + kpart ignore + 文档）→ 根 sync。
 - **回归基线口径**：algo lib 377/0/1（新增 section 2 + maker_volume 3 + fillet 既有 3）+ §2.6 boolean 网格基线不变。
