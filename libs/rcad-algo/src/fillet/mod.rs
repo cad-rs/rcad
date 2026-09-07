@@ -31,6 +31,11 @@ pub mod chfi_ds_spine;
 pub mod chfi_ds_stripe;
 pub mod chfi_ds_surfdata;
 pub mod chfi_kpart;
+pub mod chfi_kpart_ch;
+pub mod chfi_kpart_ch_plncyl;
+pub mod chfi_kpart_chasym;
+pub mod chfi_kpart_fil;
+pub mod chfi_kpart_gp;
 pub mod fillet;
 pub mod hbuilder;
 
