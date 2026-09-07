@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 // =========================================================================
 // OCCT ChFiDS_State.hxx — enum ChFiDS_State
+// ✅ OCCT-aligned: ChFiDS_State.hxx (7 values, declaration order preserved)
 // =========================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -37,6 +38,7 @@ pub enum ChFiDS_State {
 
 // =========================================================================
 // OCCT ChFiDS_ErrorStatus.hxx — enum ChFiDS_ErrorStatus
+// ✅ OCCT-aligned: ChFiDS_ErrorStatus.hxx (5 values, declaration order preserved)
 // =========================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +52,7 @@ pub enum ChFiDS_ErrorStatus {
 
 // =========================================================================
 // OCCT ChFi3d_FilletShape.hxx — enum ChFi3d_FilletShape
+// ✅ OCCT-aligned: ChFi3d/ChFi3d_FilletShape.hxx (3 values)
 // =========================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +64,7 @@ pub enum ChFi3dFilletShape {
 
 // =========================================================================
 // OCCT ChFiDS_ChamfMethod.hxx — enum ChFiDS_ChamfMethod
+// ✅ OCCT-aligned: ChFiDS_ChamfMethod.hxx (3 values)
 // =========================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +76,7 @@ pub enum ChFiDS_ChamfMethod {
 
 // =========================================================================
 // OCCT ChFiDS_ChamfMode.hxx — enum ChFiDS_ChamfMode
+// ✅ OCCT-aligned: ChFiDS_ChamfMode.hxx (3 values)
 // =========================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +91,7 @@ pub enum ChFiDS_ChamfMode {
 
 // =========================================================================
 // OCCT ChFiDS_TypeOfConcavity.hxx — enum ChFiDS_TypeOfConcavity
+// ✅ OCCT-aligned: ChFiDS_TypeOfConcavity.hxx (6 values)
 // =========================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,8 +303,12 @@ pub struct ChFiDSSurfData {
     pub twistons2: bool,
     /// OCCT: TopAbs_Orientation orientation
     pub orientation: Orientation,
-    /// rcad extension: the fillet surface's DS index (OCCT stores the
-    /// surface in the TopOpeBRepDS; the DS placeholder mirrors it).
+    /// NOT IN OCCT (review): rcad extension field.  OCCT keeps the fillet
+    /// surface index in TopOpeBRepDS and SurdData::ChangeSurf routes to
+    /// indexOfConge; rcad mirrors the DS surface index here.  Note that
+    /// surf()/change_surf() below therefore route to this field instead of
+    /// index_of_conge (formal misalignment vs OCCT SurfData.lxx L81-84 /
+    /// L151-154 — deferred to the alignment session).
     pub surf_index: i32,
 }
 
@@ -483,13 +493,78 @@ impl ChFiDSSurfData {
     }
 }
 // =========================================================================
+// OCCT ChFiDS_CircSection (ChFiDS_CircSection.hxx + .cxx L23-63) — a
+// section of fillet: the portion of a circle or a line between two
+// parameters.  OCCT gp_Circ maps to geom::Circle3, gp_Lin to math::gp::Lin.
+// ✅ OCCT-aligned: ChFiDS_CircSection.cxx L23-63
+// =========================================================================
 
-/// OCCT NCollection_HArray1<ChFiDS_CircSection> — pending ChFiDS_CircSection
-/// translation; ChFi3d_FilBuilder::Sect returns this opaquely.
+/// OCCT NCollection_HArray1<ChFiDS_CircSection> — ChFi3d_FilBuilder::Sect
+/// returns this.
 pub type ChFiDSCircSectionArray = Vec<ChFiDSCircSection>;
 
-#[derive(Debug, Clone)]
-pub struct ChFiDSCircSection;
+#[derive(Debug, Clone, Copy)]
+pub struct ChFiDSCircSection {
+    /// OCCT: gp_Circ myCirc
+    pub mycirc: rcad_kernel::geom::Circle3,
+    /// OCCT: gp_Lin myLin
+    pub mylin: rcad_kernel::math::gp::Lin,
+    /// OCCT: double myF
+    pub myf: f64,
+    /// OCCT: double myL
+    pub myl: f64,
+}
+
+impl Default for ChFiDSCircSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ChFiDSCircSection {
+    /// OCCT ChFiDS_CircSection.cxx L23-27.
+    pub fn new() -> Self {
+        ChFiDSCircSection {
+            mycirc: rcad_kernel::geom::Circle3 {
+                center: DVec3::ZERO,
+                normal: DVec3::Z,
+                x_dir: DVec3::X,
+                y_dir: DVec3::Y,
+                radius: 0.0,
+            },
+            mylin: rcad_kernel::math::gp::Lin {
+                pos: DVec3::ZERO,
+                dir: DVec3::Z,
+            },
+            myf: 0.0,
+            myl: 0.0,
+        }
+    }
+
+    /// OCCT ChFiDS_CircSection.cxx L31-36 — Set(const gp_Circ&, F, L).
+    pub fn set_circ(&mut self, c: rcad_kernel::geom::Circle3, f: f64, l: f64) {
+        self.mycirc = c;
+        self.myf = f;
+        self.myl = l;
+    }
+
+    /// OCCT ChFiDS_CircSection.cxx L40-45 — Set(const gp_Lin&, F, L).
+    pub fn set_lin(&mut self, c: rcad_kernel::math::gp::Lin, f: f64, l: f64) {
+        self.mylin = c;
+        self.myf = f;
+        self.myl = l;
+    }
+
+    /// OCCT ChFiDS_CircSection.cxx L49-54 — Get(gp_Circ&, F, L).
+    pub fn get_circ(&self) -> (rcad_kernel::geom::Circle3, f64, f64) {
+        (self.mycirc, self.myf, self.myl)
+    }
+
+    /// OCCT ChFiDS_CircSection.cxx L58-63 — Get(gp_Lin&, F, L).
+    pub fn get_lin(&self) -> (rcad_kernel::math::gp::Lin, f64, f64) {
+        (self.mylin, self.myf, self.myl)
+    }
+}
 
 // =========================================================================
 // OCCT ChFiDS_CommonPoint.hxx L139-151 — private fields.
@@ -592,7 +667,8 @@ impl ChFiDS_CommonPoint {
         self.point
     }
 
-    /// OCCT ChFiDS_CommonPoint::IsEqual(other, Tol) — tolerance compare.
+    /// NOT IN OCCT (review): ChFiDS_CommonPoint has no IsEqual in
+    /// ChFiDS_CommonPoint.hxx/.cxx — rcad-side tolerance compare helper.
     pub fn is_equal(&self, other: &ChFiDS_CommonPoint, tol: f64) -> bool {
         self.point.distance(other.point) <= tol
     }
@@ -965,13 +1041,27 @@ impl ChFiDSSpine {
         self.errorstate
     }
 
-    /// OCCT ChFiDS_Spine.cxx Absc(const TopoDS_Vertex&) — the abscissa of a
-    /// vertex on the composite spine.  The body runs through Prepare() and
-    /// the BRepAdaptor_Curve composite traversal (pending translation); the
-    /// call sites (SetRadius at a vertex) are marked pending boundaries.
-    pub fn absc_of_vertex(&self, _v: &Shape) -> f64 {
-        // OCCT: double npar = Absc(V); — pending BRepAdaptor_Curve.
-        0.0
+    /// OCCT ChFiDS_Spine.cxx L304-330 — Absc(const TopoDS_Vertex&).
+    pub fn absc_of_vertex(&self, v: &Shape) -> f64 {
+        for i in 1..=self.spine.len() {
+            let e = &self.spine[i - 1];
+            let ed = e.as_edge().expect("ChFiDS_Spine::Absc: not an edge");
+            let d = &ed.first;
+            let f = &ed.last;
+            if d.is_same(v) && e.orientation == Orientation::Forward {
+                return self.first_parameter_of(i);
+            }
+            if d.is_same(v) && e.orientation == Orientation::Reversed {
+                return self.last_parameter_of(i);
+            }
+            if f.is_same(v) && e.orientation == Orientation::Forward {
+                return self.last_parameter_of(i);
+            }
+            if f.is_same(v) && e.orientation == Orientation::Reversed {
+                return self.first_parameter_of(i);
+            }
+        }
+        -1.0
     }
 }
 
@@ -1251,6 +1341,7 @@ impl ChFiDSFilSpine {
 // =========================================================================
 // OCCT ChFiDS_ChamfSpine — ChFiDS_ChamfSpine.cxx L24-45 (ctors) and
 // L47-126 (dist/angle accessors).  Fields: ChFiDS_ChamfSpine.hxx L58-64.
+// ✅ OCCT-aligned: ChFiDS_ChamfSpine.cxx L26-126 + .hxx fields
 // =========================================================================
 
 #[derive(Debug, Clone)]
@@ -1580,6 +1671,7 @@ impl ChFiDSStripe {
 // OCCT ChFiDS_Regul (ChFiDS_Regul.hxx + .cxx) — storage of a curve and its
 // 2 faces or surfaces of support.  A negative S index encodes a surface
 // (IsSurfaceN).
+// ✅ OCCT-aligned: ChFiDS_Regul.cxx L21-96
 // =========================================================================
 #[derive(Debug, Clone, Copy)]
 pub struct ChFiDSRegul {
@@ -1641,8 +1733,11 @@ impl ChFiDSRegul {
     }
 }
 
-/// OCCT handle<ChFiDS_Spine> polymorphic slot: down_cast chooses the
-/// concrete derived spine, matching ChFi3d_FilBuilder / ChFi3d_ChBuilder.
+// NOT IN OCCT (review): architecture shim — OCCT uses occ::handle<ChFiDS_Spine>
+// to hold the polymorphic FilSpine/ChamfSpine derived spines; Rust models the
+// inheritance by composition, so the handle becomes a tagged enum.  The
+// base()/base_mut()/down_cast_* accessors are the Rust equivalent of using the
+// handle as ChFiDS_Spine& / occ::down_cast<ChFiDS_FilSpine> etc.
 #[derive(Debug, Clone)]
 pub enum ChFiDSSpineHandle {
     Fil(ChFiDSFilSpine),
@@ -1702,14 +1797,16 @@ pub type SharedStripe = Arc<std::sync::RwLock<ChFiDSStripe>>;
 // OCCT ChFiDS_StripeMap — ChFiDS_StripeMap.hxx L65-69
 // (NCollection_IndexedDataMap<TopoDS_Vertex, List<Stripe>>).
 // Keyed by TShape pointer identity (IsSame semantics).
+// ✅ OCCT-aligned: ChFiDS_StripeMap.cxx L22-56 + .lxx L19-29
+// (the rcad my_keys/my_map pair models the IndexedDataMap)
 // =========================================================================
 
 #[derive(Debug, Clone, Default)]
 pub struct ChFiDSStripeMap {
     /// Insertion-ordered keys (FindKey(i) is 1-based in OCCT).
-    my_keys: Vec<Shape>,
+    pub(crate) my_keys: Vec<Shape>,
     /// FindFromIndex values keyed by TShape pointer.
-    my_map: std::collections::HashMap<u64, Vec<SharedStripe>>,
+    pub(crate) my_map: std::collections::HashMap<u64, Vec<SharedStripe>>,
 }
 
 impl ChFiDSStripeMap {
@@ -1765,8 +1862,8 @@ impl ChFiDSStripeMap {
 
 #[derive(Debug, Clone, Default)]
 pub struct ChFiDSMap {
-    my_keys: Vec<Shape>,
-    my_map: std::collections::HashMap<u64, Vec<Shape>>,
+    pub(crate) my_keys: Vec<Shape>,
+    pub(crate) my_map: std::collections::HashMap<u64, Vec<Shape>>,
 }
 
 impl ChFiDSMap {
@@ -2008,7 +2105,9 @@ impl ChFiDSSpine {
     /// elementary-spine index for the abscissa L, adjusting L for periodic
     /// contours and tangent extensions.  Returns the index; -1 encodes the
     /// first tangent extension, len+1 the last one (OCCT conventions).
-    fn prepare(&self, l: &mut f64) -> i32 {
+    /// NOTE: partial vs OCCT (the final hasref adjustment and L adjustment
+    /// blocks are missing) — full line-by-line review deferred.
+    pub(crate) fn prepare(&self, l: &mut f64) -> i32 {
         let tol = self.tolesp.max(CONFUSION);
         let last = self.abscissa.as_ref().map_or(0.0, |a| a[a.len() - 1]);
         let len = self.abscissa.as_ref().map_or(0, |a| a.len()) as i32;
@@ -2175,6 +2274,7 @@ impl ChFiDSSpine {
 }
 
 /// OCCT ElCLib::InPeriod(U, UFirst, ULast).
+// ✅ OCCT-aligned: ElCLib/ElCLib.cxx InPeriod (helper, no ChFiDS cxx body)
 pub fn elclib_in_period(u: f64, ufirst: f64, ulast: f64) -> f64 {
     let period = ulast - ufirst;
     if period <= 0.0 {
