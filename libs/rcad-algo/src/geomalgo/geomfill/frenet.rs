@@ -97,7 +97,7 @@ pub(crate) fn curve_nb_intervals(c: &Curve3, s: GeomAbsShape) -> usize {
 }
 
 /// OCCT Adaptor3d_Curve::Intervals.
-fn curve_intervals(c: &Curve3, s: GeomAbsShape) -> Vec<f64> {
+pub(crate) fn curve_intervals(c: &Curve3, s: GeomAbsShape) -> Vec<f64> {
     match c {
         Curve3::BSpline(bs) => {
             let _ = s;

@@ -97,9 +97,11 @@ impl PolynomialConvertor {
             }
 
             // OCCT: math_Matrix aH(1, anOrdre, 1, anOrdre);
-            // PLib::HermiteCoefficients(-1, 1, anOrdre/2 - 1, anOrdre/2 - 1, aH);
+            // PLib::HermiteCoefficients(-1, 1, anOrdre/2 - 1, anOrdre/2 - 1, aH)
+            // — the real PLib body relocated to
+            // rcad_kernel::math::plib::hermite_coefficients (E0 迁位).
             let mut a_h = Matrix::new(1, an_ordre as i32, 1, an_ordre as i32);
-            plib_hermite_coefficients(
+            rcad_kernel::math::plib::hermite_coefficients(
                 -1.0,
                 1.0,
                 an_ordre as i32 / 2 - 1,
@@ -437,89 +439,3 @@ impl Default for PolynomialConvertor {
     }
 }
 
-/// GAP carrier: OCCT PLib::HermiteCoefficients (TKMath/PLib/PLib.cxx
-/// L1404-1470). Carried here (crate-private) because rcad-kernel's PLib port
-/// does not yet host it; move to `rcad_kernel::math::plib` when available.
-pub(crate) fn plib_hermite_coefficients(
-    first_parameter: f64,
-    last_parameter: f64,
-    first_order: i32,
-    last_order: i32,
-    matrix_coefs: &mut Matrix,
-) -> bool {
-    let nb_coeff = (first_order + last_order + 2) as i32;
-    let mut iof: i32 = 0;
-    let mut prod: f64;
-    let mut t_borne = first_parameter;
-    let mut coeff = Vector::new(1, nb_coeff);
-    let mut b = Vector::new_init(1, nb_coeff, 0.0);
-    let mut mat = Matrix::new_init(1, nb_coeff, 1, nb_coeff, 0.0);
-
-    // Test de validites
-    if first_order < 0 || last_order < 0 {
-        return false;
-    }
-    let d1 = first_parameter.abs();
-    let d2 = last_parameter.abs();
-    if d1 > 100.0 || d2 > 100.0 {
-        return false;
-    }
-    let d2 = d2 + d1;
-    if d2 < 0.01 {
-        return false;
-    }
-    if (last_parameter - first_parameter).abs() / d2 < 0.01 {
-        return false;
-    }
-
-    // Calcul de la matrice a inverser (MAT)
-    let ordre = [first_order + 1, last_order + 1];
-
-    for cote in 0..=1i32 {
-        for r in 1..=nb_coeff {
-            coeff.set(r, 1.0);
-        }
-
-        for pp in 1..=ordre[cote as usize] {
-            let ii = pp + iof;
-            prod = 1.0;
-
-            for jj in pp..=nb_coeff {
-                // tout se passe dans les 3 lignes suivantes
-                let coeff_jj = coeff.get(jj);
-                mat.set(ii, jj, coeff_jj * prod);
-                coeff.set(jj, coeff_jj * (jj - pp) as f64);
-                prod *= t_borne;
-            }
-        }
-        t_borne = last_parameter;
-        iof = ordre[0];
-    }
-
-    // resolution du systemes
-    let resol_coeff = MathGauss::with_min_pivot(&mat.data, 1.0e-10);
-    if !resol_coeff.is_done() {
-        return false;
-    }
-
-    for ii in 1..=nb_coeff {
-        // OCCT: B(ii) = 1; ResolCoeff.Solve(B, Coeff) — the rcad MathGauss
-        // solves in place, so B is copied into a scratch vector.
-        b.set(ii, 1.0);
-        let mut x = VecD::new(nb_coeff as usize);
-        for r in 1..=nb_coeff {
-            x.set(r as usize, b.get(r));
-        }
-        let mut x = x;
-        resol_coeff.solve(&mut x);
-        for r in 1..=nb_coeff {
-            coeff.set(r, x.get(r as usize));
-        }
-        // OCCT: MatrixCoefs.SetRow(ii, Coeff).
-        for c in 1..=nb_coeff {
-            matrix_coefs.set(ii, c, coeff.get(c));
-        }
-        b.set(ii, 0.0);
-    }
-    true
-}

@@ -51,6 +51,17 @@ impl GpMat {
         }
     }
 
+    /// OCCT gp_Mat::SetCols (gp_Mat.hxx) — assigns the three columns from
+    /// the given vectors: Value(i, 1) = theA(i), Value(i, 2) = theB(i),
+    /// Value(i, 3) = theC(i).
+    pub fn set_cols(&mut self, the_a: DVec3, the_b: DVec3, the_c: DVec3) {
+        self.mat = [
+            [the_a.x, the_b.x, the_c.x],
+            [the_a.y, the_b.y, the_c.y],
+            [the_a.z, the_b.z, the_c.z],
+        ];
+    }
+
     /// OCCT gp_Mat::SetRotation (gp_Mat.cxx): Rodrigues' rotation formula
     /// R = I + sin(theta) K + (1 - cos(theta)) K^2 with K the skew matrix of
     /// the normalized axis.
