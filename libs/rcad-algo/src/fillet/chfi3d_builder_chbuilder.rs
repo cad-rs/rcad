@@ -268,9 +268,11 @@ fn section_2d_points(lin: &BRepBlendLine) -> (glam::DVec2, glam::DVec2, glam::DV
     (pf1, pl1, pf2, pl2)
 }
 
-/// OCCT `SD->SetSimul(sec)` — pending boundary: no simul slot on
-/// ChFiDSSurfData (chfi_ds.rs note); the array is dropped here.
-fn store_simul(_data: &mut ChFiDSSurfData, _sec: ChFiDSCircSectionArray) {}
+/// OCCT `SD->SetSimul(sec)` — the simul slot landed with Stage 1f round 2
+/// (chfi_ds_surfdata.rs); the array is stored, no longer dropped.
+fn store_simul(data: &mut ChFiDSSurfData, sec: ChFiDSCircSectionArray) {
+    data.set_simul(Some(sec));
+}
 
 /// OCCT ElSLib::ConeD1(U, V, Pos, Radius, SAngle, P, Vu, Vv)
 /// (ElSLib.cxx L687-740) on the rcad ConicalSurface axes.

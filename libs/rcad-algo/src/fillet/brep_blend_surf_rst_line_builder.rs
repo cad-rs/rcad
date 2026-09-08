@@ -1521,12 +1521,7 @@ impl<'a> BRepBlendSurfRstLineBuilder<'a> {
             let pts = func.point_on_s();
             let ptrst = func.point_on_rst();
             // OCCT (cxx L1629): pt2drst = Func.Pnt2dOnRst();
-            // PENDING: Blend_SurfRstFunction::Pnt2dOnRst (OCCT
-            // Blend_SurfRstFunction.hxx L123) is missing from the rcad trait
-            // (shared file outside this batch's ownership — gap reported);
-            // the stand-in evaluates the restriction at the function's
-            // parameter.
-            let pt2drst = self.rst.value(func.parameter_on_rst());
+            let pt2drst = func.pnt2d_on_rst();
             let curpoint;
             if curpointistangent {
                 curpoint = BlendPoint::new_on_surface_curve_on_surface(

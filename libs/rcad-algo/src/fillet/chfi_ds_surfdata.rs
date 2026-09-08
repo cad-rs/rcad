@@ -6,7 +6,9 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::topo::topods::Orientation;
 
-use super::chfi_ds::{ChFiDS_CommonPoint, ChFiDS_FaceInterference, ChFiDSSurfData};
+use super::chfi_ds::{
+    ChFiDS_CommonPoint, ChFiDS_FaceInterference, ChFiDSCircSectionArray, ChFiDSSurfData,
+};
 
 // =========================================================================
 // OCCT ChFiDS_SurfData — missing method translations
@@ -32,7 +34,8 @@ impl ChFiDSSurfData {
         self.ufspine = other.ufspine;
         self.ulspine = other.ulspine;
 
-        // OCCT: simul = Other->simul (pending boundary)
+        // OCCT: simul = Other->simul.
+        self.simul = other.simul.clone();
 
         self.p2df1 = other.p2df1;
         self.p2dl1 = other.p2dl1;
@@ -192,6 +195,26 @@ impl ChFiDSSurfData {
         self.p2df2 = p2df2;
         self.p2dl2 = p2dl2;
     }
+
+    /// OCCT ChFiDS_SurfData.cxx L218-221 — Simul().  Architecture mapping:
+    /// the transient-handle down-cast to NCollection_HArray1<ChFiDS_CircSection>
+    /// (FilBuilder Sect, ChFi3d_FilBuilder.cxx L465) is implicit — the rcad
+    /// slot already carries the concrete array.
+    pub fn simul(&self) -> Option<ChFiDSCircSectionArray> {
+        self.simul.clone()
+    }
+
+    /// OCCT ChFiDS_SurfData.cxx L225-228 — SetSimul(S).  The handle
+    /// parameter may be null (SimulKPart calls SetSimul unconditionally,
+    /// ChFi3d_FilBuilder.cxx L559), so the rcad slot takes the Option.
+    pub fn set_simul(&mut self, s: Option<ChFiDSCircSectionArray>) {
+        self.simul = s;
+    }
+
+    /// OCCT ChFiDS_SurfData.cxx L232-235 — ResetSimul().
+    pub fn reset_simul(&mut self) {
+        self.simul = None;
+    }
 }
 
 // =========================================================================
@@ -228,5 +251,30 @@ impl ChFiDS_CommonPoint {
     /// OCCT ChFiDS_CommonPoint.hxx L127 — HasVector().
     pub fn has_vector(&self) -> bool {
         self.hasvector
+    }
+}
+
+#[cfg(test)]
+mod simul_tests {
+    use super::super::chfi_ds::{ChFiDSCircSection, ChFiDSSurfData};
+
+    /// OCCT anchor: Simul / SetSimul / ResetSimul (ChFiDS_SurfData.cxx
+    /// L218-235) and the simul transfer in Copy (L44-72).
+    #[test]
+    fn simul_slot_roundtrip() {
+        let mut sd = ChFiDSSurfData::default();
+        assert!(sd.simul().is_none());
+
+        let sec = vec![ChFiDSCircSection::new(), ChFiDSCircSection::new()];
+        sd.set_simul(Some(sec));
+        let got = sd.simul().expect("simul stored");
+        assert_eq!(got.len(), 2);
+
+        let mut copied = ChFiDSSurfData::default();
+        copied.copy(&sd);
+        assert!(copied.simul().is_some(), "Copy transfers the simul slot");
+
+        sd.reset_simul();
+        assert!(sd.simul().is_none());
     }
 }

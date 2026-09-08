@@ -39,6 +39,7 @@ pub mod chfi2d_chamfer_api;
 pub mod chfi2d_fillet_algo;
 pub mod chfi2d_fillet_api;
 pub mod chfi3d;
+pub mod chfi3d_perform;
 pub mod chfi3d_builder_0;
 pub mod chfi3d_builder_2;
 pub mod chfi3d_builder_2b;

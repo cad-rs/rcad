@@ -14,10 +14,6 @@
 //! (`domain1->Initialize(rst1)` / `domain2->Initialize(rst2)`), so the
 //! vertex scans see no vertices until the consumer carries the edge
 //! identity (pending boundary).
-//!   - PENDING: Blend_RstRstFunction::Decroch(Sol, Tgrst1, Nrrst1, Tgrst2,
-//!     Nrrst2) (CheckInside, cxx L1961) is missing from the rcad
-//!     BlendRstRstFunction trait (shared trait file outside this batch's
-//!     ownership; gap reported) — the stand-in reports Blend_NoDecroch.
 
 use glam::{DVec2, DVec3};
 
@@ -1754,16 +1750,20 @@ impl<'a> BRepBlendRstRstLineBuilder<'a> {
         }
 
         // lost contact
-        // OCCT (cxx L1961): Decroch = Func.Decroch(sol, tgrst1, norst1, tgrst2, norst2);
-        // PENDING: Blend_RstRstFunction::Decroch is missing from the rcad
-        // BlendRstRstFunction trait (shared file outside this batch's
-        // ownership — gap reported); the stand-in reports Blend_NoDecroch.
-        let tgrst1 = DVec3::ZERO;
-        let norst1 = DVec3::ZERO;
-        let tgrst2 = DVec3::ZERO;
-        let norst2 = DVec3::ZERO;
-        let _ = (tgrst1, norst1, tgrst2, norst2);
-        *decroch = BlendDecrochStatus::NoDecroch;
+        // OCCT (cxx L1955-1961):
+        //   gp_Vec tgrst1, norst1, tgrst2, norst2;
+        //   Decroch = Func.Decroch(sol, tgrst1, norst1, tgrst2, norst2);
+        let mut tgrst1 = DVec3::ZERO;
+        let mut norst1 = DVec3::ZERO;
+        let mut tgrst2 = DVec3::ZERO;
+        let mut norst2 = DVec3::ZERO;
+        *decroch = func.decroch(
+            &self.sol,
+            &mut tgrst1,
+            &mut norst1,
+            &mut tgrst2,
+            &mut norst2,
+        );
 
         *situ_on_c1 == TopAbsState::In
             && *situ_on_c2 == TopAbsState::In

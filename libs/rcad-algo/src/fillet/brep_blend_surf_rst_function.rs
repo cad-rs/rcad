@@ -44,6 +44,10 @@ pub trait BlendSurfRstFunction: BlendAppFunction {
     /// OCCT Pnt2dOnS() — the U,V coordinates of the point on the surface.
     fn pnt2d_on_s(&self) -> DVec2;
 
+    /// OCCT Pnt2dOnRst() (Blend_SurfRstFunction.hxx L123) — the U,V
+    /// coordinates of the point on the curve on surface.
+    fn pnt2d_on_rst(&self) -> DVec2;
+
     /// OCCT ParameterOnRst() — the parameter of the point on the
     /// restriction.
     fn parameter_on_rst(&self) -> f64;

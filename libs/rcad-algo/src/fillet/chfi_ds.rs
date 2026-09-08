@@ -247,8 +247,8 @@ impl ChFiDS_FaceInterference {
 
 // =========================================================================
 // OCCT ChFiDS_SurfData.hxx L154-179 — fields; accessors from
-// ChFiDS_SurfData.cxx / .lxx.  The Simul handle (simul) is pending the
-// ChFiDS_CircSection translation.
+// ChFiDS_SurfData.cxx / .lxx.  The Simul handle (simul, hxx L169) maps to
+// the concrete ChFiDSCircSectionArray slot (see the field note).
 // =========================================================================
 
 /// OCCT ChFiDS_SurfData — all the data of one fillet surface patch along
@@ -283,6 +283,13 @@ pub struct ChFiDSSurfData {
     pub myfirstextend: f64,
     /// OCCT: double mylastextend
     pub mylastextend: f64,
+    /// OCCT ChFiDS_SurfData.hxx L169: occ::handle<Standard_Transient> simul.
+    /// Architecture mapping: the only payload TKFillet ever binds to this
+    /// transient handle is a NCollection_HArray1<ChFiDS_CircSection>
+    /// (SimulKPart, ChFi3d_FilBuilder.cxx L473 / ChFi3d_ChBuilder.cxx L655),
+    /// so the generic handle maps to the concrete section-array slot and
+    /// Simul() needs no down-cast.
+    pub simul: Option<ChFiDSCircSectionArray>,
     /// OCCT: int indexOfS1
     pub index_of_s1: i32,
     /// OCCT: int indexOfC1
@@ -329,6 +336,7 @@ impl Default for ChFiDSSurfData {
             ulspine: 0.0,
             myfirstextend: 0.0,
             mylastextend: 0.0,
+            simul: None,
             index_of_s1: 0,
             index_of_c1: 0,
             index_of_s2: 0,

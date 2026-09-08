@@ -1466,39 +1466,45 @@ impl super::chfi3d::ChFi3dBuilder {
                         // only becomes reachable once the GeomFill machinery
                         // lands (fil.surface() is None until then).
                         let _ = &ns;
-                        self.done = complete_data_pending(
-                            &cursd.read().expect("surfdata lock"),
-                            &ns,
-                            &s1,
-                            &pc1,
-                            &s2,
-                            &pc2,
-                            f2.orientation,
-                            false,
-                            false,
-                            false,
-                            false,
-                            false,
-                        );
+                        self.done = {
+                            let mut data = cursd.write().expect("surfdata lock");
+                            self.complete_data_surfcoin(
+                                &mut data,
+                                &ns,
+                                &s1,
+                                pc1.as_ref(),
+                                &s2,
+                                pc2.as_ref(),
+                                f2.orientation,
+                                false,
+                                false,
+                                false,
+                                false,
+                                false,
+                            )
+                        };
                         cursd
                             .write()
                             .expect("surfdata lock")
                             .change_index_of_s1(0);
                     } else {
-                        self.done = complete_data_pending(
-                            &cursd.read().expect("surfdata lock"),
-                            &newsurf,
-                            &s1,
-                            &pc1,
-                            &s2,
-                            &pc2,
-                            f1.orientation,
-                            true,
-                            false,
-                            false,
-                            false,
-                            false,
-                        );
+                        self.done = {
+                            let mut data = cursd.write().expect("surfdata lock");
+                            self.complete_data_surfcoin(
+                                &mut data,
+                                &newsurf,
+                                &s1,
+                                pc1.as_ref(),
+                                &s2,
+                                pc2.as_ref(),
+                                f1.orientation,
+                                true,
+                                false,
+                                false,
+                                false,
+                                false,
+                            )
+                        };
                         if pointuon2 {
                             cursd
                                 .write()

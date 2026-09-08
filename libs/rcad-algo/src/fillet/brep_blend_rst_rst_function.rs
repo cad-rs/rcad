@@ -8,6 +8,7 @@
 
 use glam::{DVec2, DVec3};
 
+use super::brep_blend::BlendDecrochStatus;
 use super::brep_blend_function::BlendAppFunction;
 
 /// OCCT Blend_RstRstFunction — deferred class for a function used to compute
@@ -71,6 +72,21 @@ pub trait BlendRstRstFunction: BlendAppFunction {
     /// OCCT Tangent2dOnRst2() — the tangent vector at PointOnRst2, in the
     /// parametric space of the second surface.
     fn tangent_2d_on_rst2(&self) -> DVec2;
+
+    /// OCCT Decroch (Blend_RstRstFunction.hxx L154-158) — a criterion of
+    /// decrochage (lost contact) specific to the function.  The parameter
+    /// names follow the consumer call site (BRepBlend_RstRstLineBuilder.cxx
+    /// L1961: Decroch = Func.Decroch(sol, tgrst1, norst1, tgrst2, norst2)).
+    /// Warning: can be called without a previous call of IsSolution but the
+    /// values calculated can be senseless.
+    fn decroch(
+        &self,
+        sol: &[f64],
+        tgrst1: &mut DVec3,
+        nrrst1: &mut DVec3,
+        tgrst2: &mut DVec3,
+        nrrst2: &mut DVec3,
+    ) -> BlendDecrochStatus;
 
     /// OCCT GetMinimalDistance() (Blend_RstRstFunction.cxx L31) — throws
     /// Standard_NotImplemented in OCCT.

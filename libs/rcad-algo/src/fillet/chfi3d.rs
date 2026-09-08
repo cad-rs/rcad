@@ -573,16 +573,20 @@ impl ChFi3dBuilder {
             // L408-470: the tolerance pass over the DS curves.
             self.compute_tolerance_pass();
             // L471-567: myCoup->Perform(myDS); MergeSolid; Splits/Merged;
-            // myShapeResult assembly.  The TopOpeBRepBuild reconstruction
-            // subset is the next translation unit; until it lands the OCCT
-            // flow cannot proceed and the pending boundary surfaces as
-            // done = false (no fake result shape).
-            self.done = false; // pending: TopOpeBRepBuild Perform/MergeSolid/NewFaces
+            // myShapeResult assembly (TopOpeBRepBuild reconstruction — the
+            // 7-method HBuilder surface lives in chfi3d_perform.rs; the
+            // TKBO body is the Stage 1g wiring, W11 of the requirements
+            // list).
+            self.perform_hbuilder_reconstruction(&map_ind_so);
+            // W3 (set_regul derived dispatch): OCCT virtual-dispatches into
+            // ChFi3d_FilBuilder::SetRegul from this base flow — the
+            // composition-model hook lands together with the Form
+            // pure-virtual-slots architecture decision (1g round).
         }
 
         // L655-674: SameParameter pass over the new faces (only when done).
         if self.is_done() {
-            // BRepLib::SameParameter / ShapeFix::SameParameter — pending.
+            self.same_parameter_pass();
         }
     }
 
@@ -723,8 +727,14 @@ impl ChFi3dBuilder {
         }
         if let Some(l) = self.my_evi_map.get(&eouv.ptr_id()) {
             for i in l.clone() {
-                // OCCT L968: myCoup->NewFaces(I) — pending reconstruction.
-                let _ = i;
+                // OCCT L968: myGenerated = myCoup->NewFaces(I)
+                // (W5 of the 1g wiring list).
+                self.my_generated = self
+                    .my_coup
+                    .as_ref()
+                    .expect("HBuilder")
+                    .new_faces(i)
+                    .to_vec();
             }
         }
         &self.my_generated
@@ -987,10 +997,11 @@ impl ChFi3dFilBuilder {
     /// OCCT ChFi3d_FilBuilder.cxx L402-435 (Simulate) — the stripe walk is
     /// real; PerformSetOfSurf(simul=true) is pending.
     pub fn simulate(&mut self, ic: usize) {
-        for (i, stripe) in self.base.my_list_stripe.iter().enumerate() {
+        for i in 0..self.base.my_list_stripe.len() {
             if i + 1 == ic {
-                // OCCT: PerformSetOfSurf(itel.ChangeValue(), true) — pending.
-                let _ = stripe;
+                // OCCT: PerformSetOfSurf(itel.ChangeValue(), true) (W7).
+                let stripe = self.base.my_list_stripe[i].clone();
+                self.base.perform_set_of_surf(&stripe, true);
                 break;
             }
         }
@@ -3349,11 +3360,24 @@ impl ChFi3dBuilder {
         }
 
         // L3894: PerformSetOfKGen — the numerical walking core
-        // (Builder_2.cxx L3298-3882, BRepBlend/Extrema based) is a pending
-        // translation; with a fully-KPart spine it processes no section.
-        let _ = simul;
+        // (Builder_2.cxx L3298-3882).
+        self.perform_set_of_k_gen(stripe, simul);
 
-        // L3896-3899: ChFi3d_MakeExtremities — pending (Builder_6.cxx).
+        // L3896-3899: ChFi3d_MakeExtremities (Builder_2.cxx), only when the
+        // sections are materialized.
+        if !simul {
+            let brep = self.my_brep.clone();
+            let mut dstr = self.my_ds.as_mut().expect("DS");
+            let mut st = stripe.write().expect("stripe lock");
+            super::chfi3d_builder_2c::chfi3d_make_extremities(
+                &brep,
+                &mut st,
+                dstr,
+                &self.my_ef_map,
+                self.tolapp3d,
+                self.tol2d,
+            );
+        }
         true
     }
 }
