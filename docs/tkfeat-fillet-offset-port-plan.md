@@ -23,6 +23,8 @@
    - 禁止为测试结果引入 OCCT 没有的绕行/开关/补丁（Session 1 教训：stage_by_stage 载体 + my_is_splitter 专有开关，审查后已全部删除改为字面序列）；
    - 缺基础设施时的正确做法 = 注明架构差异 + 提出最小可见性/接口变更请求，由主代理统一处理（先例：builder.rs 十方法 pub(crate)）；
    - 单测代码可以写（作为阶段 2 资产保留在 `#[cfg(test)]`），但翻译期不以其通过为验收；阶段 2 调试入口 = §2 验收标准 + step-topo-diff。
+   - **严格 1:1 范围（用户 2026-09-08 点名强化）**：核心模块（MAT2d/Bisector/MAT/MakeOffset_1/MakeOffset/BRepOffsetAPI 门面等引擎与心脏件）的每一个 OCCT 函数体都必须完整逐行翻译——**禁止用 staged/pending/panic 载体替代本模块自己的 OCCT 代码体**；"分批交付"只指批次不指省略；GAP carrier 仅允许用于其他包尚未翻译的依赖（标注依赖名 + 锚点 + 保留 OCCT 失败路径）；交付报告必须逐函数核对"OCCT 函数总数 = rcad 已翻函数数"。
+   - **D6 矛盾裁决协议（用户 2026-09-08 点名：判断须在过程中提出）**：严格 1:1（OCCT 调用全保留）与 D6（TKBool 被调方不翻译改 TKBO 实现）在被调方为 TKBool 的调用点上必然冲突。代理遇到 TKBool 依赖（TopOpeBRepBuild/TopOpeBRepDS/TopOpeBRepTool/老 DS 迭代器；crate::brep_algo 与 brep_fill/ 是 D1/D3 批准翻译件不算）时**禁止自行选边**，必须在交付报告单列 "D6 JUDGMENT REQUIRED" 清单（调用点行号 + OCCT 行为 + 选项 A=1:1 保留调用由主代理安排 TKBO 等价实现 / 选项 B=GAP 留裁决），由主代理逐例裁决。首例已立案：2a face_restrictor.rs 的 WireToFace::MakeFaces GAP 注记"待 TopOpeBRepBuild 批"隐含翻译 TKBool——按 D6 应改为 TKBO 等价实现，待裁决。
 
 ## 1. 规模与结构（勘察结论）
 
@@ -202,6 +204,7 @@ libs/rcad-algo/src/
 | FilletSurf | 无 | Stage 1h |
 | BRepOffset/BRepOffsetAPI/BiTgte/Draft | offset/ 空（仅 thru_sections 沾边） | Stage 2 |
 | BRepFeat/LocOpe | feat/ 空 | Stage 3 |
+| **TKTopAlgo/MAT2d + MAT + Bisector（~13.2k 行）**（Session 2 第七轮发现：BRepFill_OffsetWire 的引擎 = MAT2d/BisectingLocus/LinkTopoBilo + Bisector_Bisec 栈，2c 闭环阻塞项） | MAT2d 5,205 / Bisector 6,327 / MAT 1,671 | **归属 TKTopAlgo（非 TKMath，目录实证）→ rcad 落点 = rcad-algo/src/topalgo/（mat2d/、bisector/、mat/ 子目录），待排期（建议 3 代理）** |
 
 ## 7. 进度勾选表（每 session 更新）
 
@@ -223,10 +226,10 @@ libs/rcad-algo/src/
 
 **Stage 2 TKOffset**
 - [x] 2a brep_algo/ 工具包 5 类（Session 2 第六轮：AsDes 259/Image 320/Loop 1093（r#loop 关键字转义，未拆分）/FaceRestrictor 519/NormalProjection 875 + tool.rs 710 共享 re-host 层；真实现消费 = BRepAlgoAPI_Section（0.2）、FClass2d、GeomProjLib、AxeOfInertia。GAP：TopOpeBRepBuild_WireToFace::MakeFaces（待 TKBool/TopOpeBRepBuild 批）、ProjLib_HCompProjectedCurve/Approx_CurveOnSurface、BRepLib_MakeWire；feat 内两处 BRepAlgoLoop 占位待主代理迁位）
-- [ ] 2b BRepOffset 核心（28,932）——**批1 已完**（Session 2 第六轮：MakeSimpleOffset 1,251 + Offset 两文件 2,360 全落；GAP 10 组标注，BRepOffset::Surface 365 行列下一翻译单元）。**待做** = Inter2d/Inter3d → Tool（4,659，含 PaveFiller 驱动段 Tool.cxx:1475）→ MakeOffset_1（9,533 按函数组拆）→ MakeOffset（5,659）；前置盘点 bop/int_tools/ 覆盖度）
-- [ ] 2c BRepFill 第一批（OffsetWire/CompatibleWires/Generator/Draft/TrimShellCorner）
-- [ ] 2d BiTgte（3,218）+ Draft 包（3,470）
-- [ ] 2e BRepOffsetAPI 门面 15 类按序；验收 offset 非 .rle + thrusection 10 + draft 4 + GTests 3
+- [x] 2b BRepOffset 核心（28,932）——**三批全完（Session 2 第六+七+八轮）**：批1 MakeSimpleOffset 1,251 + Offset 2,360；批2 Surface(=BRepOffset.cxx 479，计划更正：8.0 无 BRepOffset_Surface.cxx) + Inter2d 2,977 + Inter3d 1,649 + Tool 5,508（含 PaveFiller 驱动段 cxx L1475-1591 的 D6 关键消费→crate::bop 映射）；批3 MakeOffset_1 10,113 行十文件（81/81 函数计数等式，零 TKBool 调用 grep 验证）+ MakeOffset 6,690 五文件（69/69 等式；IntTools_FClass2d 裁决=TKBO 件非 TKBool、950 行列翻译排期）。GAP 10 组+承载件标注齐
+- [x] 2c BRepFill 第一批（Session 2 第七轮：OffsetWire 2,309 / CompatibleWires 2,079 / Generator 2,066 含 GeomFill_Generator/Profiler re-host；TrimShellCorner 随 2e MakeThickSolid 批）。**关键发现**：OffsetWire 引擎 = TKTopAlgo MAT2d/Bisector/MAT 栈（~13.2k 行，§6 已立案，topalgo/ 落点已建）——OffsetWire 当前为形式载体待该栈落地；后续 Pipe/Filling/Evolved 触发式）
+- [x] 2d BiTgte（3,218）+ Draft 包（Session 2 第七轮：BiTgte 5 文件 4,028 行（Blended L1-2664 两分文件，消费 brep_algo::{as_des,image}）+ Draft 9 文件 5,197 行（Draft_Modification+_1 全量三拆）。首消费方 BRepOffsetAPI_DraftAngle（2e 已落地））
+- [x] 2e BRepOffsetAPI 门面 13 类（Sewing 归 shhealing 排除）（Session 2 第八轮：8,273 行/17 文件，179/179 函数计数等式，D6 判断清单为零。GAP = 计划内未翻依赖：TKShHealing 排除件、BRepFill 未翻引擎（Draft/Filling/PipeShell/Evolved）、TKTopAlgo 工具族）。验收 offset 非 .rle + thrusection 10 + draft 4 + GTests 3 随 Stage 4
 
 **Stage 3 TKFeat**（D7：与 Stage 1 并行提前开工）
 - [x] 3a BRepFeat_Builder 架构映射 + MakeCylindricalHole 烟囱（Session 2 完成：feat 2 文件 2,730 行；继承链逐成员映射入文件头；缺口 ①build_shape/②DoSplitSEAMOnFace 已由主代理改 pub(crate) 关闭；③FillIn3DParts 虚覆盖手动派发；④LocOpe_CurveShapeIntersector/PntFace 骨架、⑤BRepPrim_Cylinder 骨架、⑥GetOffset 走 OCCT offF=Radius 回退、⑦location 表未携带——均在注释锚点标注，分别等 3c/TKPrim/阶段 2）
