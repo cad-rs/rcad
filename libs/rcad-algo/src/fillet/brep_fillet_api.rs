@@ -455,6 +455,22 @@ impl BRepFilletAPIMakeFillet {
         assert!(self.done, "StdFail_NotDone: BRepFilletAPI_MakeFillet::Shape()");
         self.my_shape.clone().expect("no shape")
     }
+
+    /// Test-world extraction bridge (the FilletResult.brep pattern,
+    /// algo_ext::topods_ext::extract_result_brep): flattens the result root
+    /// shape into the self-contained BRep the test world consumes
+    /// (StepWriter / total_surface_area).  OCCT has no equivalent (the
+    /// TopoDS_Shape carries its arena implicitly) — the rcad BRep-pool
+    /// architecture difference #4 glue.
+    pub fn result_brep(&mut self) -> Option<rcad_kernel::topo::topods::BRep> {
+        if !self.done {
+            return None;
+        }
+        let locations = self.my_builder.base.my_brep.locations.clone();
+        self.my_shape
+            .as_ref()
+            .map(|s| crate::algo_ext::topods_ext::extract_result_brep(s, locations))
+    }
 }
 
 // =========================================================================
