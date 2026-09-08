@@ -219,18 +219,19 @@ libs/rcad-algo/src/
 - [x] 1e BRepBlend/Blend/BlendFunc（Session 2 三批完成：批1 盘点+Law 闭合+Blend 核心；批2 traits+Extremity/PointOnRst/Line+kernel 缺口 5/5 补齐（GeomAdaptor/BSplCLib/GeomConvert/CSLib 全套带锚点）；批3 Walking 全主体 L143-2769 + AppSurf 家族 + Chamfer/ConstRad 全族 10 类型 + 双 LineBuilder 全函数体（含 OCCT L1545 字面 bug 保留）。余项 GAP 标注：Approx_SweepApproximation::perform、math_SVD 回退分支、GeomFill::GetCircle（独立批）、BlendSurfRstFunction::Pnt2dOnRst 与 BlendRstRstFunction::Decroch 两 trait 缺口（消费点站位））
 - [x] 1f ChFi3d 主体（36,532）——**两批完**（第一批：Builder_2 4,534 行 / CnCrn 5,668 行 / Builder_6 3,013 行 / ChBuilder 2,081 行，含 OCCT L3280 笔误 bug-compatible 保留与 10 个 Builder_0 缺失 helper 重宿主；第二批：chfi3d_perform.rs Perform 流（HBuilder 重建/同参数/SimulKPart/Sect/SetRegul + HBuilder 7 方法面）+ chfi_ds simul 槽 + SurfRst/RstRst 两 trait 缺口闭合 + W1-W10 主代理接线）。**余项（1g/审查期）**：builder_0 helper 迁回去重、1b NOT-IN-OCCT 清单审查、MapIndSo SHELL 缺口、IndexPointInDS UpdateVertex 缺口、HBuilder 7 方法 TKBO 本体（= 1g）
 - [ ] 1g HBuilder 门面 7 方法 TKBO 接线（hbuilder.rs；语义锚 = BOPAlgo_Builder/Splitter 等价路径，方法头标注 OCCT 行号 + D6 裁决 + TKBO 锚点）
-- [ ] 1h BRepFilletAPI 门面 + FilletSurf；验收 blend 10 + chamfer 13 网格 + GTests 2
+- [x] 1h BRepFilletAPI 门面 + FilletSurf（Session 2 第六轮：brep_fillet_api.rs 830→1,117 行——MakeFillet 6 处补缺含 W10 sect 接线、MakeChamfer 7 处、MakeFillet2d 整类 24 方法（委托 chfi2d_builder）；fillet_surf.rs 1,306 行全包（InternalBuilder+Builder 门面+全访问器，5 项 GAP 标注：PerformElSpine、ConstRad 的 BlendFunction 接线、ElSpine 近似曲线、Continuity 读回、IntPlanEdge）。blend 10 + chamfer 13 网格 + GTests 2 验收随 Stage 4）
 
 **Stage 2 TKOffset**
-- [ ] 2a brep_algo/ 工具包 5 类（~4.0k）
-- [ ] 2b BRepOffset 核心（28,932；MakeSimpleOffset 烟囱先行 → Offset/Inter2d/Inter3d/Tool → MakeOffset_1 → MakeOffset）
+- [x] 2a brep_algo/ 工具包 5 类（Session 2 第六轮：AsDes 259/Image 320/Loop 1093（r#loop 关键字转义，未拆分）/FaceRestrictor 519/NormalProjection 875 + tool.rs 710 共享 re-host 层；真实现消费 = BRepAlgoAPI_Section（0.2）、FClass2d、GeomProjLib、AxeOfInertia。GAP：TopOpeBRepBuild_WireToFace::MakeFaces（待 TKBool/TopOpeBRepBuild 批）、ProjLib_HCompProjectedCurve/Approx_CurveOnSurface、BRepLib_MakeWire；feat 内两处 BRepAlgoLoop 占位待主代理迁位）
+- [ ] 2b BRepOffset 核心（28,932）——**批1 已完**（Session 2 第六轮：MakeSimpleOffset 1,251 + Offset 两文件 2,360 全落；GAP 10 组标注，BRepOffset::Surface 365 行列下一翻译单元）。**待做** = Inter2d/Inter3d → Tool（4,659，含 PaveFiller 驱动段 Tool.cxx:1475）→ MakeOffset_1（9,533 按函数组拆）→ MakeOffset（5,659）；前置盘点 bop/int_tools/ 覆盖度）
 - [ ] 2c BRepFill 第一批（OffsetWire/CompatibleWires/Generator/Draft/TrimShellCorner）
 - [ ] 2d BiTgte（3,218）+ Draft 包（3,470）
 - [ ] 2e BRepOffsetAPI 门面 15 类按序；验收 offset 非 .rle + thrusection 10 + draft 4 + GTests 3
 
 **Stage 3 TKFeat**（D7：与 Stage 1 并行提前开工）
 - [x] 3a BRepFeat_Builder 架构映射 + MakeCylindricalHole 烟囱（Session 2 完成：feat 2 文件 2,730 行；继承链逐成员映射入文件头；缺口 ①build_shape/②DoSplitSEAMOnFace 已由主代理改 pub(crate) 关闭；③FillIn3DParts 虚覆盖手动派发；④LocOpe_CurveShapeIntersector/PntFace 骨架、⑤BRepPrim_Cylinder 骨架、⑥GetOffset 走 OCCT offF=Radius 回退、⑦location 表未携带——均在注释锚点标注，分别等 3c/TKPrim/阶段 2）
-- [ ] 3b BRepFeat Form 家族——**两批完（除 Make* 六件）**：Form 基类 + Gluer + SplitShape + Status/PerfSelection + RibSlot 3,406 行（8.0 的 RibSlot 不继承 Form，直接继承 MakeShape——虚派发决策范围缩小到 Make* 六件）。**待做** = MakeDPrism/MakePrism/MakeRevol/MakeRevolutionForm/MakePipe/MakeLinearForm；设计点 = curves/baryc_curve 纯虚槽 trait-object 方案（主代理拍板）+ W3/W6 基类→派生虚派发 hook；缺口 = BuilderShape myHistory、BRepCheck_Analyzer standalone、FClass2d/QuasiUniformDeflection（GAP panic 标注）
+- [x] 3b BRepFeat Form 家族——**全完**（Session 2 第五轮：Make* 六件 MakePrism/MakeDPrism/MakeRevol/MakeRevolutionForm/MakePipe/MakeLinearForm 全落地 + RibSlot 3,406 行 + Form 基类/Gluer/SplitShape/Status 族。**架构拍板落地**：Form 纯虚槽 → `BRepFeatFormSlots` trait（curves/baryc_curve + form() 基类访问器）+ 单参 `global_perform(slots: &mut dyn ...)`（主代理原两参方案 E0499 重叠借用不可编译，代理修正并注释）；8.0 实际继承核实：MakeRevolutionForm/MakeLinearForm 走 RibSlot 组合不进 slots（仅 Prism/DPrism/Revol/Pipe 四件进）。GAP 维持：BRepSweep/GeomFill/Extrema 族、IsValid/IsInside）
+- [x] 1g HBuilder 门面 7 方法 TKBO 接线（Session 2 第五轮：hbuilder.rs 19→651 行，Perform 的 BuildVertices/BuildEdges/BuildFaces 三段 + merge_solid 驱动 rcad Splitter 管线 + mySplit/merged 六表 + myNewEdges/Faces/Vertices 表，7 方法签名保持 X 形式调用点零改动。**余项 D6 标注**：拆片池归属、Filds closing-curve 未翻致 new_faces 中性退化、split_ds_edges 仅填 IN（消费端只查 IN））
 - [x] 3c LocOpe（13,342）——**前半+后半完（21 类全翻）**（Session 2 第四轮后半：Prism 族 5 类 + Pipe + Generator + SplitDrafts(1,976) + WiresOnShape(2,345) + BuildWires + Spliter；关键核实：8.0 的 Prism 族/RibSlot 不继承 GeneratedShape/Form、Generator 不消费 BRepFill_Generator——计划前提修正）。**carrier 待后续**：BRepSweep_Prism/Revol、BRepFill_Pipe/Evolved::Perform、BRepAlgo_Loop（1,151 行，待 2a）、LocOpe_SplitShape 核心、IntCurvesFace 全量翻译、BRepCheck_Analyzer standalone；验收 feat 8 + mkface 10 + evolved 5 随 Stage 4
 
 **Stage 4 验收闭环**
