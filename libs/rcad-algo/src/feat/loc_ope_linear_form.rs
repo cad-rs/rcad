@@ -14,8 +14,9 @@
 // 1. NCollection_DataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>,
 //    TopTools_ShapeMapHasher> (myMap) — HashMap keyed by (TShape ptr,
 //    Location); never iterated.
-// 2. BRepSweep_Prism — the sweep engine has no rcad equivalent yet; the
-//    BRepSweepPrism carrier of loc_ope_prism.rs is reused (same GAP).
+// 2. BRepSweep_Prism — the sweep engine is the crate::brep_sweep
+//    translation (BRepSweepPrism); the former loc_ope_prism.rs GAP carrier
+//    is removed.
 // 3. BRepTools_Modifier + BRepTools_TrsfModification — re-hosted in
 //    loc_ope_prism.rs (pub(crate), same GAP).
 // 4. gp_Trsf::SetTranslation maps to Trsf::identity() +
@@ -25,10 +26,11 @@
 //
 // first consumer: BRepFeat_MakeLinearForm (3b).
 
+use crate::brep_sweep::BRepSweepPrism;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
-use crate::feat::loc_ope_prism::{ BRepSweepPrism, BRepToolsModifier, BRepToolsTrsfModification };
+use crate::feat::loc_ope_prism::{ BRepToolsModifier, BRepToolsTrsfModification };
 use glam::DVec3;
 use indexmap::IndexMap;
 use rcad_kernel::math::gp::Trsf;
@@ -168,8 +170,9 @@ impl LocOpeLinearForm {
             the_base = modif.modified_shape(&the_base);
         }
 
-        // OCCT cxx L106 (arch. diff. #2).
-        let my_prism = BRepSweepPrism::new(&the_base, self.my_vec);
+        // OCCT cxx L106 (arch. diff. #2): BRepSweep_Prism thePrism(theBase,
+        // myVec) — the OCCT default arguments are C=false, Canonize=true.
+        let mut my_prism = BRepSweepPrism::with_vec(&the_base, self.my_vec, false, true);
 
         // OCCT cxx L108-109.
         self.my_first_shape = my_prism.first_shape();
@@ -183,9 +186,13 @@ impl LocOpeLinearForm {
                     // OCCT cxx L119-120.
                     self.my_map.insert(shape_key(&edg), Vec::new());
                     // OCCT cxx L121.
-                    let desc = my_prism.shape_of_edge(&edg);
-                    // OCCT cxx L122-125.
-                    if !desc.is_null() {
+                    let desc = my_prism.shape_of(&edg);
+                    // OCCT cxx L122-125: if (!desc.IsNull()) — the engine
+                    // null result is the Vertex-typed dummy of Shape::null();
+                    // the kernel is_null() (index == usize::MAX) also fires
+                    // for pool-built real shapes, so the emptiness test is
+                    // the type test (a real generated shape is non-Vertex).
+                    if desc.shape_type() != ShapeType::Vertex {
                         self.my_map
                             .get_mut(&shape_key(&edg))
                             .expect("myMap(edg)")
@@ -217,9 +224,13 @@ impl LocOpeLinearForm {
                 // OCCT cxx L144-145.
                 self.my_map.insert(shape_key(&edg), Vec::new());
                 // OCCT cxx L146.
-                let desc = my_prism.shape_of_edge(&edg);
-                // OCCT cxx L147-158.
-                if !desc.is_null() {
+                let desc = my_prism.shape_of(&edg);
+                // OCCT cxx L147-158: if (!desc.IsNull()) — the engine null
+                // result is the Vertex-typed dummy of Shape::null(); the
+                // kernel is_null() (index == usize::MAX) also fires for
+                // pool-built real shapes, so the emptiness test is the type
+                // test (a real generated shape is non-Vertex).
+                if desc.shape_type() != ShapeType::Vertex {
                     if entry.1.len() >= 2 {
                         toremove = true;
                     } else {
@@ -252,9 +263,14 @@ impl LocOpeLinearForm {
                         // OCCT cxx L182-183.
                         self.my_map.insert(shape_key(&edg), Vec::new());
                         // OCCT cxx L184.
-                        let desc = my_prism.shape_of_edge(&edg);
-                        // OCCT cxx L185-188.
-                        if !desc.is_null() {
+                        let desc = my_prism.shape_of(&edg);
+                        // OCCT cxx L185-188: if (!desc.IsNull()) — the engine
+                        // null result is the Vertex-typed dummy of
+                        // Shape::null(); the kernel is_null()
+                        // (index == usize::MAX) also fires for pool-built
+                        // real shapes, so the emptiness test is the type
+                        // test (a real generated shape is non-Vertex).
+                        if desc.shape_type() != ShapeType::Vertex {
                             self.my_map
                                 .get_mut(&shape_key(&edg))
                                 .expect("myMap(edg)")

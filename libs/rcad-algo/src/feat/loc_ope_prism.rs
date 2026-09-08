@@ -14,11 +14,10 @@
 //    TopTools_ShapeMapHasher> (myMap) — HashMap keyed by (TShape ptr,
 //    Location); the map is never iterated, only Bound/UnBound/operator()
 //    accessed.
-// 2. BRepSweep_Prism (TKTopAlgo/BRepSweep) — the sweep engine has no rcad
-//    equivalent yet; the BRepSweepPrism carrier below carries the OCCT
-//    constructor/accessor surface with a GAP panic (port plan §0.6 gap
-//    annotation). Everything downstream of the construction (IntPerf) is
-//    translated 1:1 against the carrier.
+// 2. BRepSweep_Prism (TKPrim/BRepSweep) — the sweep engine is the
+//    crate::brep_sweep translation (BRepSweepPrism); IntPerf consumes it
+//    through the OCCT constructor/accessor surface (the former GAP panic
+//    carrier is removed).
 // 3. BRepTools_Modifier + BRepTools_TrsfModification (TKTopAlgo/BRepTools)
 //    — the myIsTrans branch vehicle; the BRepToolsModifier /
 //    BRepToolsTrsfModification carriers below carry the same GAP (they are
@@ -36,6 +35,7 @@
 // first consumer: BRepFeat_MakePrism (3b) — Perform/IntPerf drive the prism
 // engine and read Shape/FirstShape/LastShape/Shapes/Curves/BarycCurve.
 
+use crate::brep_sweep::BRepSweepPrism;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
@@ -97,40 +97,6 @@ impl BRepToolsModifier {
     pub(crate) fn modified_shape(&self, the_shape: &Shape) -> Shape {
         let _ = the_shape;
         panic!("GAP: BRepTools_Modifier::ModifiedShape (TKTopAlgo/BRepTools not translated)");
-    }
-}
-
-/// OCCT BRepSweep_Prism (BRepSweep_Prism.hxx) — the prism sweep engine
-/// (architecture difference #2; GAP: BRepSweep has no rcad translation yet
-/// — the GAP panic is the §0.6 annotation; the LocOpe_Prism::IntPerf body
-/// below is translated 1:1 against this surface).
-pub(crate) struct BRepSweepPrism;
-
-impl BRepSweepPrism {
-    /// OCCT BRepSweep_Prism::BRepSweep_Prism(S, V).
-    pub(crate) fn new(_the_base: &Shape, _the_vec: DVec3) -> Self {
-        panic!("GAP: BRepSweep_Prism (TKTopAlgo/BRepSweep not translated)");
-    }
-
-    /// OCCT BRepSweep_Prism::FirstShape().
-    pub(crate) fn first_shape(&self) -> Shape {
-        panic!("GAP: BRepSweep_Prism (unreachable while the engine is a GAP)");
-    }
-
-    /// OCCT BRepSweep_Prism::LastShape().
-    pub(crate) fn last_shape(&self) -> Shape {
-        panic!("GAP: BRepSweep_Prism (unreachable while the engine is a GAP)");
-    }
-
-    /// OCCT BRepSweep_Prism::Shape() — the whole sweep result.
-    pub(crate) fn shape(&self) -> Shape {
-        panic!("GAP: BRepSweep_Prism (unreachable while the engine is a GAP)");
-    }
-
-    /// OCCT BRepSweep_Prism::Shape(E) — the generated shape of an ancestor.
-    pub(crate) fn shape_of_edge(&self, the_e: &Shape) -> Shape {
-        let _ = the_e;
-        panic!("GAP: BRepSweep_Prism (unreachable while the engine is a GAP)");
     }
 }
 
@@ -257,8 +223,9 @@ impl LocOpePrism {
             the_base = modif.modified_shape(&the_base);
         }
 
-        // OCCT cxx L122 (arch. diff. #2).
-        let the_prism = BRepSweepPrism::new(&the_base, self.my_vec);
+        // OCCT cxx L122 (arch. diff. #2): BRepSweep_Prism thePrism(theBase,
+        // myVec) — the OCCT default arguments are C=false, Canonize=true.
+        let mut the_prism = BRepSweepPrism::with_vec(&the_base, self.my_vec, false, true);
 
         // OCCT cxx L124-125.
         self.my_first_shape = the_prism.first_shape();
@@ -272,9 +239,13 @@ impl LocOpePrism {
                     // OCCT cxx L135-136.
                     self.my_map.insert(shape_key(&edg), Vec::new());
                     // OCCT cxx L137.
-                    let desc = the_prism.shape_of_edge(&edg);
-                    // OCCT cxx L138-141.
-                    if !desc.is_null() {
+                    let desc = the_prism.shape_of(&edg);
+                    // OCCT cxx L138-141: if (!desc.IsNull()) — the engine
+                    // null result is the Vertex-typed dummy of Shape::null();
+                    // the kernel is_null() (index == usize::MAX) also fires
+                    // for pool-built real shapes, so the emptiness test is
+                    // the type test (a real generated shape is non-Vertex).
+                    if desc.shape_type() != ShapeType::Vertex {
                         self.my_map
                             .get_mut(&shape_key(&edg))
                             .expect("myMap(edg)")
@@ -307,9 +278,13 @@ impl LocOpePrism {
                 // OCCT cxx L160-161.
                 self.my_map.insert(shape_key(&edg), Vec::new());
                 // OCCT cxx L162.
-                let desc = the_prism.shape_of_edge(&edg);
-                // OCCT cxx L163-174.
-                if !desc.is_null() {
+                let desc = the_prism.shape_of(&edg);
+                // OCCT cxx L163-174: if (!desc.IsNull()) — the engine null
+                // result is the Vertex-typed dummy of Shape::null(); the
+                // kernel is_null() (index == usize::MAX) also fires for
+                // pool-built real shapes, so the emptiness test is the type
+                // test (a real generated shape is non-Vertex).
+                if desc.shape_type() != ShapeType::Vertex {
                     if entry.1.len() >= 2 {
                         toremove = true;
                     } else {
@@ -342,9 +317,14 @@ impl LocOpePrism {
                         // OCCT cxx L198-199.
                         self.my_map.insert(shape_key(&edg), Vec::new());
                         // OCCT cxx L200.
-                        let desc = the_prism.shape_of_edge(&edg);
-                        // OCCT cxx L201-204.
-                        if !desc.is_null() {
+                        let desc = the_prism.shape_of(&edg);
+                        // OCCT cxx L201-204: if (!desc.IsNull()) — the engine
+                        // null result is the Vertex-typed dummy of
+                        // Shape::null(); the kernel is_null()
+                        // (index == usize::MAX) also fires for pool-built
+                        // real shapes, so the emptiness test is the type
+                        // test (a real generated shape is non-Vertex).
+                        if desc.shape_type() != ShapeType::Vertex {
                             self.my_map
                                 .get_mut(&shape_key(&edg))
                                 .expect("myMap(edg)")

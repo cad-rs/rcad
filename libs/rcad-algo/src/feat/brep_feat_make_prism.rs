@@ -31,8 +31,9 @@
 // 5. The dead local `sl` of Perform(Length) (cxx L274-275) is not
 //    translated (same note as the IntList of BRepFeat_Form.cxx L175-176).
 // 6. LocOpe_Prism is consumed through the loc_ope_prism.rs translation
-//    (its BRepSweep_Prism engine is a GAP carrier there); Curves() stores
-//    the sequence of handles, BarycCurve() the single handle.
+//    (its BRepSweep_Prism engine is the crate::brep_sweep translation);
+//    Curves() stores the sequence of handles, BarycCurve() the single
+//    handle.
 
 use crate::bop::algo::builder::BooleanOpType;
 use crate::feat::brep_feat_builder::{explorer, BRepFeatBuilder};

@@ -13,8 +13,9 @@
 // 1. NCollection_DataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>,
 //    TopTools_ShapeMapHasher> (myMap) — HashMap keyed by (TShape ptr,
 //    Location); never iterated.
-// 2. BRepSweep_Revol — the sweep engine has no rcad equivalent yet; the
-//    BRepSweepRevol carrier of loc_ope_revol.rs is reused (same GAP).
+// 2. BRepSweep_Revol — the sweep engine is the crate::brep_sweep
+//    translation (BRepSweepRevol); the former loc_ope_revol.rs GAP carrier
+//    is removed.
 // 3. BRepTools_Modifier + BRepTools_TrsfModification — re-hosted in
 //    loc_ope_prism.rs (pub(crate), same GAP).
 // 4. gp_Trsf::SetRotation(Ax, Ang) — the trsf_set_rotation GAP helper of
@@ -27,11 +28,12 @@
 //
 // first consumer: BRepFeat_MakeRevolutionForm (3b).
 
+use crate::brep_sweep::BRepSweepRevol;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
 use crate::feat::loc_ope_prism::{ BRepToolsModifier, BRepToolsTrsfModification };
-use crate::feat::loc_ope_revol::{ trsf_set_rotation, BRepSweepRevol };
+use crate::feat::loc_ope_revol::trsf_set_rotation;
 use glam::DVec3;
 use indexmap::IndexMap;
 use rcad_kernel::math::gp::{ Ax1, Trsf };
@@ -123,8 +125,15 @@ impl LocOpeRevolutionForm {
             the_base = modif.modified_shape(&the_base);
         }
 
-        // OCCT cxx L81 (arch. diff. #2).
-        let the_revol = BRepSweepRevol::new(&the_base, &self.my_axis, self.my_angle);
+        // OCCT cxx L81 (arch. diff. #2): BRepSweep_Revol theRevol(theBase,
+        // myAxis, myAngle) — the OCCT default argument is C=false; the
+        // gp_Ax1 axis travels as the (location, direction) tuple.
+        let mut the_revol = BRepSweepRevol::with_angle(
+            &the_base,
+            (self.my_axis.location, self.my_axis.direction),
+            self.my_angle,
+            false,
+        );
 
         // OCCT cxx L83-84.
         self.my_first_shape = the_revol.first_shape();
@@ -138,9 +147,13 @@ impl LocOpeRevolutionForm {
                     // OCCT cxx L94-95.
                     self.my_map.insert(shape_key(&edg), Vec::new());
                     // OCCT cxx L96.
-                    let desc = the_revol.shape_of_edge(&edg);
-                    // OCCT cxx L97-100.
-                    if !desc.is_null() {
+                    let desc = the_revol.shape_of(&edg);
+                    // OCCT cxx L97-100: if (!desc.IsNull()) — the engine
+                    // null result is the Vertex-typed dummy of Shape::null();
+                    // the kernel is_null() (index == usize::MAX) also fires
+                    // for pool-built real shapes, so the emptiness test is
+                    // the type test (a real generated shape is non-Vertex).
+                    if desc.shape_type() != ShapeType::Vertex {
                         self.my_map
                             .get_mut(&shape_key(&edg))
                             .expect("myMap(edg)")
@@ -172,9 +185,13 @@ impl LocOpeRevolutionForm {
                 // OCCT cxx L119-120.
                 self.my_map.insert(shape_key(&edg), Vec::new());
                 // OCCT cxx L121.
-                let desc = the_revol.shape_of_edge(&edg);
-                // OCCT cxx L122-133.
-                if !desc.is_null() {
+                let desc = the_revol.shape_of(&edg);
+                // OCCT cxx L122-133: if (!desc.IsNull()) — the engine null
+                // result is the Vertex-typed dummy of Shape::null(); the
+                // kernel is_null() (index == usize::MAX) also fires for
+                // pool-built real shapes, so the emptiness test is the type
+                // test (a real generated shape is non-Vertex).
+                if desc.shape_type() != ShapeType::Vertex {
                     if entry.1.len() >= 2 {
                         toremove = true;
                     } else {
@@ -207,9 +224,14 @@ impl LocOpeRevolutionForm {
                         // OCCT cxx L157-158.
                         self.my_map.insert(shape_key(&edg), Vec::new());
                         // OCCT cxx L159.
-                        let desc = the_revol.shape_of_edge(&edg);
-                        // OCCT cxx L160-163.
-                        if !desc.is_null() {
+                        let desc = the_revol.shape_of(&edg);
+                        // OCCT cxx L160-163: if (!desc.IsNull()) — the engine
+                        // null result is the Vertex-typed dummy of
+                        // Shape::null(); the kernel is_null()
+                        // (index == usize::MAX) also fires for pool-built
+                        // real shapes, so the emptiness test is the type
+                        // test (a real generated shape is non-Vertex).
+                        if desc.shape_type() != ShapeType::Vertex {
                             self.my_map
                                 .get_mut(&shape_key(&edg))
                                 .expect("myMap(edg)")

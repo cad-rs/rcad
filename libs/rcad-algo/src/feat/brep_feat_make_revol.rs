@@ -26,8 +26,8 @@
 // 5. The dead local `sl` of Perform(Angle) (cxx L293-294) is not
 //    translated (the MakePrism Perform(Length) note).
 // 6. LocOpe_Revol is consumed through the loc_ope_revol.rs translation
-//    (its BRepSweep_Revol engine is a GAP carrier there); BarycCurve()
-//    carries the null handle as None.
+//    (its BRepSweep_Revol engine is the crate::brep_sweep translation);
+//    BarycCurve() carries the null handle as None.
 
 use crate::bop::algo::builder::BooleanOpType;
 use crate::feat::brep_feat_builder::{explorer, BRepFeatBuilder};
