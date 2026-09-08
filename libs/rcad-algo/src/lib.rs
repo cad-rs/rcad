@@ -11,6 +11,7 @@ pub mod helix;
 pub mod hlr;
 pub mod fillet;
 pub mod brep_algo;
+pub mod brep_fill;
 pub mod feat;
 pub mod offset;
 pub mod shhealing;
