@@ -585,6 +585,22 @@ impl TrihedronWithGuide for GuideTrihedronPlan {
     /// OCCT Origine (L519-520) — Nothing!!
     fn origine(&mut self, _param1: f64, _param2: f64) {}
 
+    /// OCCT Copy() through the down_cast<GeomFill_TrihedronWithGuide> view
+    /// (GeomFill_LocationGuide::Copy L520) — the concrete result is this
+    /// type; the body mirrors Copy (L469-480).
+    fn copy_with_guide(&self) -> Box<dyn TrihedronWithGuide> {
+        let guide = self
+            .guide_base
+            .my_guide
+            .clone()
+            .expect("null myGuide in GuideTrihedronPlan::Copy");
+        let mut copy = GuideTrihedronPlan::new(&guide);
+        if let Some(curve) = self.my_curve.clone() {
+            TrihedronLaw::set_curve(&mut copy, curve);
+        }
+        Box::new(copy)
+    }
+
     fn current_point_on_guide(&self) -> DVec3 {
         self.guide_base.my_cur_point_on_guide.get()
     }

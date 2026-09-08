@@ -45,6 +45,14 @@ pub struct IntCurveSurfaceHInter {
 }
 
 impl IntCurveSurfaceHInter {
+    /// OCCT IntCurveSurface_HInter::IsDone().
+    pub fn is_done(&self) -> bool {
+        panic!(
+            "GAP: IntCurveSurface_HInter host tools (HCurveTool/HSurfaceTool over Curve3/\
+             Surface3) are not translated — see file header"
+        )
+    }
+
     /// OCCT IntCurveSurface_HInter::Perform(HCurve, Surface).
     pub fn perform(&mut self, _curve: &Curve3, _surface: &Surface3) {
         panic!(

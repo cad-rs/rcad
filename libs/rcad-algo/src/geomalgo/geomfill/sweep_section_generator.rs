@@ -76,7 +76,7 @@ impl QuasiUniformDeflection3d {
 
 /// OCCT gp_Vec::AngleWithRef (gp_Dir.cxx L55-84) — signed angle from V to
 /// Other measured in the plane reference Vref (pure math helper).
-fn gp_vec_angle_with_ref(v: DVec3, other: DVec3, vref: DVec3) -> f64 {
+pub(crate) fn gp_vec_angle_with_ref(v: DVec3, other: DVec3, vref: DVec3) -> f64 {
     let xyz = v.cross(other);
     let cosinus = v.dot(other);
     let sinus = xyz.length();
@@ -99,7 +99,7 @@ pub(crate) fn gp_vec_is_parallel(v1: DVec3, v2: DVec3, tol: f64) -> bool {
     v1.cross(v2).length() <= tol * v1.length() * v2.length()
 }
 
-fn gp_vec_is_opposite(v1: DVec3, v2: DVec3, tol: f64) -> bool {
+pub(crate) fn gp_vec_is_opposite(v1: DVec3, v2: DVec3, tol: f64) -> bool {
     -(v1.dot(v2)) > v1.length() * v2.length() * (1.0 - tol)
 }
 

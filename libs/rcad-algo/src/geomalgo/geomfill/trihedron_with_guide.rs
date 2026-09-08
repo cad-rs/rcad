@@ -34,6 +34,11 @@ pub trait TrihedronWithGuide: TrihedronLaw {
     /// OCCT Origine(Param1, Param2) — pure virtual.
     fn origine(&mut self, param1: f64, param2: f64);
 
+    /// OCCT Copy() viewed through the concrete GeomFill_TrihedronWithGuide
+    /// down-cast — the form consumed by GeomFill_LocationGuide::Copy
+    /// (GeomFill_LocationGuide.cxx L520).
+    fn copy_with_guide(&self) -> Box<dyn TrihedronWithGuide>;
+
     /// OCCT CurrentPointOnGuide (GeomFill_TrihedronWithGuide.cxx L27-32) —
     /// the current point on guide found by D0, D1 or D2.
     fn current_point_on_guide(&self) -> DVec3 {

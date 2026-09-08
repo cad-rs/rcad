@@ -648,6 +648,13 @@ impl FunctionSetRoot {
         self.kount
     }
 
+    /// OCCT FunctionSetErrors() (math_FunctionSetRoot.hxx) — the function-set
+    /// error values at the found root (myFF; filled when the solution is
+    /// accepted).
+    pub fn function_set_errors(&self) -> &[f64] {
+        &self.ff
+    }
+
     /// OCCT Derivative()(1,1) 鈥?the (1,1) Jacobian entry after a 1-variable run.
     pub fn derivative(&self) -> f64 {
         self.df[0][0]
