@@ -329,6 +329,10 @@ libs/rcad-algo/src/
 - **D6 JUDGMENT REQUIRED 协议**（用户点名"判断须过程中提出"）：严格 1:1 与 D6（TKBool→TKBO）在 TKBool 调用点必然冲突——代理遇 TKBool 依赖禁止自行选边，交付报告单列清单由主代理逐例裁决；豁免件=crate::brep_algo 与 brep_fill/（D1/D3 批准翻译件）。**已立案待裁决**：① 2a face_restrictor.rs 的 WireToFace::MakeFaces 注记"待 TopOpeBRepBuild 批"——按 D6 应改 TKBO 等价（rcad bop/algo/builder_face.rs 已有 BOPAlgo_BuilderFace 可承载）；② O2 上报 IntTools_FClass2d——已裁决=TKBO 件非 TKBool，R2 已翻真身（`bop/int_tools/int_tools_fclass2d.rs`，切换签名 `new_face(Arc<BRep>,&Shape,f64)`+`is_hole()`），O2 在 `offset/brep_offset_make_offset.rs` 的 panic 载体待切换；③ 批1 offset.rs 的 `brep_offset_surface()` stub 缺 allow_c0 参 vs 真实现 4 参——消费方切换时补参。
 - **协作坑**：① 并行代理曾对共享 kernel 文件跑 `git restore`（已广播禁令）；② Windows 下 `mv` 大小写改名静默失效——必须 cp+rm；③ Bash 工具 cwd 会被重置到根仓库——**每条命令都要显式 cd**；④ 预注册 mod.rs 必须用 Edit 精确改，禁 sed 批处理（两次误删事故）；⑤ 代理编译隔离用 CARGO_TARGET_DIR=target_xx 且会落在意外位置（target_h 曾被扫进提交——已 gitignore `target_*/`，git add 仍需显式文件列表）。
 
+**E0. 第九轮已交付（本快照提交后陆续到达的代理交付，验收同 C.2 标准）**：
+- R2 IntTools_FClass2d 1,256 行（8=8+1 等式，零 GAP carrier）✅；R4 GeomFill 消费族 2,858 行（geom_fill/polynomial_convertor/quasi_angular_convertor/gp_mat/line/profiler/section_generator，计数等式全过）✅。
+- R4 staged（**新排期项，随 Sweep 闭包批**）：GeomFill_Pipe + GeomFill_Sweep 闭包 ~7,700 OCCT 行（SectionPlacement 983/LocationGuide 1471/GuideTrihedronAC 395/GuideTrihedronPlan 582/TrihedronWithGuide 33/CurveAndTrihedron 344/UniformSection 295/Fixed 118/ConstantBiNormal 295/Darboux 561/SweepSectionGenerator 698/CircularBlendFunc 676/Sweep 1248）+ AppBlend_AppSurf gxx 实例（无人认领，被 Sweep 阻塞）+ PLib hermite/gp coaxial 暂居件迁位。BRepFill_Pipe 与 MakePipeShell 的端到端依赖此批。
+
 **E. 剩余工作（按序）**：
 1. 第九轮验收（C.2 五件）→ 全绿 → 分组提交（offset/analyze+mat 修复一组、proj_lib+approx+geomfill 一组、brep_fill 引擎一组）→ 根 sync；
 2. carrier 切换批（C.3 三个 D6 项）；
