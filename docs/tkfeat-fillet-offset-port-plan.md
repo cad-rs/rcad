@@ -238,9 +238,9 @@ libs/rcad-algo/src/
 - [x] 3c LocOpe（13,342）——**前半+后半完（21 类全翻）**（Session 2 第四轮后半：Prism 族 5 类 + Pipe + Generator + SplitDrafts(1,976) + WiresOnShape(2,345) + BuildWires + Spliter；关键核实：8.0 的 Prism 族/RibSlot 不继承 GeneratedShape/Form、Generator 不消费 BRepFill_Generator——计划前提修正）。**carrier 待后续**：BRepSweep_Prism/Revol、BRepFill_Pipe/Evolved::Perform、BRepAlgo_Loop（1,151 行，待 2a）、LocOpe_SplitShape 核心、IntCurvesFace 全量翻译、BRepCheck_Analyzer standalone；验收 feat 8 + mkface 10 + evolved 5 随 Stage 4
 
 **Stage 4 验收闭环**
-- [ ] 4.1 occt-test-gen 接入 11 网格（先修 BooleanOp/BooleanOptions 漂移）
-- [ ] 4.2 ref 基线扩展（draw_ref_step/gen_ref_topology 命令族）
-- [ ] 4.3 step-topo-diff 逐用例对齐转绿
+- [x] 4.1 occt-test-gen 接入 11 网格（2026-09-08 完成：BooleanOp 漂移修至 boolean_op Result API；dead emission offset_shape/depouille 删除改 skip；feature_grids.rs 四接入点 + cases.list 模板检测 + begin dset 变量解析；53 生成测试（blend 13/fillet2d 6/mkface 34）；生成器自测 60/60。**余项**：~1,060 非外部数据用例等门面 pub 访问器（BRepOffsetAPI/feat 门面 Shape() 恢复 OCCT 公开形式 + .brep 桥）——门面解锁批进行中）
+- [x] 4.2 ref 基线扩展（2026-09-08 完成：grid_cases.py 共享模块 + 两工具重写（bfuse_simple 102/102 回归一致）；937 ref STEP + 937 拓扑 JSON（blend 183/draft 100/evolved 9/feat 129/fillet2d 10/mkface 89/offset 212/pipe 55/thrusection 150）；跳过 = 2,856 外部数据（永久规则）+ 32 无形状结果 + 32 上游 TODO 缺陷（OCC23748/24909/7166/26556/22810））
+- [ ] 4.3 step-topo-diff 逐用例对齐转绿（依赖 4.1 门面解锁批收口）
 - [ ] 4.4 module-map.md 更新 + 本档收尾
 
 ## 8. 决策记录
@@ -335,8 +335,17 @@ libs/rcad-algo/src/
 - R4 staged（**新排期项，随 Sweep 闭包批**）：GeomFill_Pipe + GeomFill_Sweep 闭包 ~7,700 OCCT 行（SectionPlacement 983/LocationGuide 1471/GuideTrihedronAC 395/GuideTrihedronPlan 582/TrihedronWithGuide 33/CurveAndTrihedron 344/UniformSection 295/Fixed 118/ConstantBiNormal 295/Darboux 561/SweepSectionGenerator 698/CircularBlendFunc 676/Sweep 1248）+ AppBlend_AppSurf gxx 实例（无人认领，被 Sweep 阻塞）+ PLib hermite/gp coaxial 暂居件迁位。BRepFill_Pipe 与 MakePipeShell 的端到端依赖此批。
 
 **E. 剩余工作（按序）**：
-1. 第九轮验收（C.2 五件）→ 全绿 → 分组提交（offset/analyze+mat 修复一组、proj_lib+approx+geomfill 一组、brep_fill 引擎一组）→ 根 sync；
-2. carrier 切换批（C.3 三个 D6 项）；
-3. Stage 4：4.1 occt-test-gen 接入 11 网格（先修 BooleanOp/BooleanOptions 漂移）→ 4.2 ref 基线扩展（blend/chamf/offsetshape/featprism 等）→ 4.3 step-topo-diff 逐用例转绿（进入阶段 2 跑测试模式）→ 4.4 module-map 行更新（feat/fillet/offset/brep_algo/brep_fill/topalgo 新栈）+ §7 收尾。
+1. ~~第九轮验收 → 分组提交 → 根 sync~~ **已完成（E1 记录）**；
+2. ~~carrier 切换批~~ **已完成（E1 记录）**；
+3. Stage 4：~~4.1 接入~~（完成）→ ~~4.2 ref 基线~~（完成）→ **4.3 step-topo-diff 逐用例转绿（当前入口；先等门面解锁批收口）** → 4.4 module-map 行更新 + §7 收尾。
 
-**F. 回归基线**：lib 394/0/4ignored；boolean 网格基线不变（bopfuse 748/0 等，§2.6）。
+**E1. 验收收官记录（2026-09-08 续推 session，本段即权威交接点）**：
+
+- **第九轮验收（C.2 五件全过）**：先确认存活代理静默（轮内代理实际存活至 17:42，最终产物比 §C 快照新——draft/pipe_shell 为全量翻译、proj_lib_h_comp_projected_curve(_b) 落地 = CompProjectedCurve.cxx L52-2391 双文件拆分）。主代理补完中间态 25+ 编译错（kernel adaptor Curve2dEval trait、pipe_shell_b 声明、edge3d_law_new 基类 handle 枚举（OCCT L431 实证）、PipeShell ctor 用 wire 版 Vertices、OCCT aVertex[2] 数组形式等）+ 一处语义修复（generator::top_exp_vertices 误用于 wire）。六件函数计数等式独立复核成立；形式抽查（quasi Section、BRepFill::Axe、ComputeIntervals）逐语句一致。
+- **提交链（rcad 子模块）**：`d419914e` 组1（Analyse+FClass2d 真身）→ `2ea230ed` 组2（ProjLib/Approx/GeomFill 栈 16 文件）→ `7a6ed310` C.3 carrier 批（①WireToFace::MakeFaces→BOPAlgo_BuilderFace TKBO 等价（本地 BOPDS + FORWARD 规范化，builder.rs 先例）②make_offset_e FClass2d 切真身（new_face 携 Init 载荷，BRep 句柄构架差异注释）③BRepOffset::Surface 补 allow_c0=false（hxx L44-47 缺省实证））→ `201979aa` 组3（brep_fill 引擎 15 文件 14,158 行：round-9 六件 + evolved 批 Evolved 52=52/TrimSurfaceTool 8=8/OffsetAncestors 6=6）。根 sync：`04c47d8`。
+- **E0 载体清单同步关闭**：`b2278cf0` BRepOffsetAnalyse 真身全消费点落地（tool_d/inter2d 再导出、bi_tgte Edges 按 OCCT 重载分流 edges_on_face/edges_on_vertex、Type→type_、my_type→type_of() 共 10 文件）；BRepOffsetAnalyse derive Clone 建模 OCCT const* myAnalyzer（Perform 后不可变）。**树内 D6 JUDGMENT REQUIRED 标记清零**。
+- **Stage 4.1/4.2 完成（§7 已勾）**：4.1 提交 `c269b57`（53 生成测试；余项=门面 pub 访问器，解锁批进行中）；4.2 提交 `8cd940e`（937 ref STEP + 937 拓扑 JSON 入库）。
+- **回归基线（提交门槛实测）**：lib **403/0/4**（+9 第九轮锚点）、kernel **664/0**（+1）、stage **76/0 + smoke 1/0 + pavefiller 26/0**（worktree b2278cf0 实测）；boolean 五网格基线复跑进行中。**磁盘事件**：C: 盘 0 可用致构建失败——清理 agent 隔离 target 目录 + 根 incremental 缓存释放 52 GB（默认 target 未动）。
+- **新排期项（承接 E0 R4 staged 之外新增）**：① 门面解锁批（进行中）；② BRepFill_MultiLine/ApproxSeewing 兄弟类（TrimSurfaceTool::Project 消费）；③ BRepMAT2d_* 包装类与 topalgo/mat2d 内核的统一（evolved 载体暂居）；④ BRepTools_Modifier/Quilt/TrsfModification 正式批（现 feat/evolved 载体）；⑤ kernel regularity/continuity 表（evolved 的 UpdateTolerances no-op 族）。
+
+**F. 回归基线**：lib 403/0/4ignored（+kernel 664/0）；stage 76+smoke 1+pavefiller 26；boolean 五网格基线不变（bopfuse 748/0 等，§2.6，复跑中）。

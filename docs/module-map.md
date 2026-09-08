@@ -94,11 +94,11 @@
 
 | rcad 目录 | OCCT toolkit | OCCT packages（源码路径 `$OCCT_SRC/src/ModelingAlgorithms/<TK>/<Package>/`） | 状态 |
 |---|---|---|---|
-| `feat/` | TKFeat | `BRepFeat`、`LocOpe` | ⬜ 空占位 |
-| `fillet/` | TKFillet | `BRepFilletAPI`、`ChFi2d`、`ChFi3d`、`ChFiDS`、`ChFiKPart`、`BRepBlend`、`Blend`、`BlendFunc`、`FilletSurf` | ◐ `fillet/fillet.rs`（原 algo_ext 兼容层）已迁入；ChFi3d 骨架翻译 ~14k 行（全部待 1:1 逐行审查，0 对齐标记）。D6 裁决（2026-09-07）：TKBool 件不翻译——`chfi3d_ds.rs` = TopOpeBRepDS 门面（shape 注册路由 BOPDS `bop::ds::DS` + ChFi3d 侧表），`hbuilder.rs` = TopOpeBRepBuild_HBuilder 门面（7 方法 TKBO 接线在 1g）；ChFi2d（1a）/ChFiKPart 扩充（1c）/BRepBlend（1e）未开工 |
+| `feat/` | TKFeat | `BRepFeat`、`LocOpe` | ◐ 翻译面完成（Session 2：3a Builder 架构映射 + MakeCylindricalHole 烟囱、3b Form 家族全件含 RibSlot 3,406 行、3c LocOpe 21 类全翻；BRepSweep/GeomFill/Extrema 族 GAP 载体标注）。验收 feat 8 + mkface 10 + evolved 5 网格随 Stage 4.3 |
+| `fillet/` | TKFillet | `BRepFilletAPI`、`ChFi2d`、`ChFi3d`、`ChFiDS`、`ChFiKPart`、`BRepBlend`、`Blend`、`BlendFunc`、`FilletSurf` | ◐ Stage 1 全关（2026-09-08，tkfeat 计划 §7：1a ChFi2d 7 文件 / 1b ChFiDS 盘点补全 / 1c ChFiKPart 14/14 cxx / 1e BRepBlend+Blend+BlendFunc 三批含 Walking 全主体 / 1f ChFi3d 主体两批含 Perform 流 / 1g HBuilder TKBO 接线 651 行 / 1h BRepFilletAPI+FilletSurf 全包；0.4 起废 topopebrepds.rs → `chfi3d_ds.rs` BOPDS 门面）。D6（2026-09-07）：TKBool 件不翻译——HBuilder 7 方法=TKBO 等价、DS 交互=BOPDS 重映射。blend 10 + chamfer 13 网格 + GTests 2 验收随 Stage 4.3 |
 | `helix/` | TKHelix | `HelixBRep`、`HelixGeom` | ✅ 全包 1:1 对齐（2026-09-04 复审）：`helix_geom/`（HelixCurve/Tools/BuilderApproxCurve/BuilderHelixGen/BuilderHelixCoil/BuilderHelix）、`helix_brep/`（BuilderHelix：Perform/BuildPart/Smoothing/SmoothingEdges + 6 个 SetParameters 重载）、`commands.rs`（BRepTest_HelixCommands 命令层含 setaxis + theHelixAxis 静态）。复审补齐：HelixCurve 缺失的 Intervals/Resolution/IsClosed/IsPeriodic/Period（HelixCurve.cxx L128-160）、Tools_Eval 维度检查（Tools.cxx L59-62）、BuilderHelixCoil 对 ApprCurve3D 输出参数 myTolReached 的写入语义（Tools.cxx L139 在 HasResult 检查前写入）、BuildPart 的 aT1>0 Geom_TrimmedCurve 裁剪分支（HelixBRep L540-545，Curve3::Trimmed）。验证基线 = `helix/standard` 全网格 56/56（含 WIRE 计数参考 JSON）+ helix 单测 5 + tkhelix_gtests 16 |
 | `hlr/` | TKHLR | `HLRBRep`、`HLRAlgo`、`HLRAppli`、`HLRTopoBRep`、`Contap`、`Intrv`、`TopBas`、`TopCnx` | ◐ 精确线路 Stage 0-3 全关 + Stage 4 推进中（4a/4c 关，4d 断言就位：box 验收全绿 = OCCT ref_output 逐位；**bug25813_1 验收全绿 = 全树 nbshapes 30/15/5、36/18/6 全等 + mass 逐位（rel≤3.5e-8）**；**ptorus 验收全绿（2026-09-07 un-ignore）= 4 整线/7 顶点/visible mass 302.68545（印刷值 302.685）——修复 = compute_tangency Destination 数组错位（丢第 4 条线）+ math_FunctionSetRoot 停止测试段移到 Sort‖Progres 守卫外每次迭代执行（cxx L972/L1266）；ptorus 对该视角全轮廓可见，隐藏 compound 为空（86.94 系 3D 总长与投影可见的量纲混算幻影）**；poly 线路单列 Stage 5）。基线 algo lib 369 / builder 76+1 / pavefiller 26 / tktopalgo 36 / tkbo 40 / tkgeom_algo 134+1。**分 session runway 计划与进度勾选表见 `docs/tkhlr-port-plan.md`，每 session 开场先读它** |
-| `offset/` | TKOffset | `BRepOffset`、`BRepOffsetAPI`、`BiTgte`、`Draft` | ⬜ 空占位 |
+| `offset/` | TKOffset | `BRepOffset`、`BRepOffsetAPI`、`BiTgte`、`Draft` | ◐ 翻译面完成（Session 2：2b 全三批含 MakeOffset_1 十文件/MakeOffset 五文件 + Analyse 真身、2d BiTgte 5 文件 + Draft 9 文件、2e BRepOffsetAPI 13 门面 179/179 等式；C.3/E0 载体切换收官——FClass2d/BRepOffset::Surface/BRepOffsetAnalyse 全部真身驱动）。验收 offset 非 .rle + draft 4 网格随 Stage 4.3（门面 pub 访问器解锁批进行中） |
 | `shhealing/` | TKShHealing | `ShapeFix`、`ShapeAnalysis`、`ShapeBuild`、`ShapeExtend`、`ShapeConstruct`、`ShapeCustom`、`ShapeUpgrade`、`ShapeProcess`、`ShapeProcessAPI`、`ShapeAlgo`、`SHMessage` | ◐ `healing/`、`shape_analysis/`、`shape_custom.rs`（原 algo_ext 兼容层）已迁入；其余子包未移植 |
 | `xmesh/` | TKXMesh | `XBRepMesh` | ⬜ 空占位 |
 
@@ -106,7 +106,7 @@
 
 | OCCT toolkit | packages | 备注 |
 |---|---|---|
-| TKBool | `BRepAlgo`、`BRepFill`、`BRepProj`、`TopOpeBRep`、`TopOpeBRepBuild`、`TopOpeBRepDS`、`TopOpeBRepTool` | TopOpeBRep* 为旧版布尔（rcad 用 TKBO 路线，勿移植）；`BRepFill`（sweep/section）可按需建 `boolfill/` 或并入 feat |
+| TKBool | `BRepAlgo`、`BRepFill`、`BRepProj`、`TopOpeBRep`、`TopOpeBRepBuild`、`TopOpeBRepDS`、`TopOpeBRepTool` | TopOpeBRep* 为旧版布尔（rcad 用 TKBO 路线，勿移植）；`BRepAlgo` 工具 5 类 → `brep_algo/`（Session 2 落地，D1 批准翻译件）；`BRepFill` 按需逐类 → `brep_fill/`（Session 2 落地：OffsetWire/CompatibleWires/Generator/Draft/TrimEdgeTool/Pipe/Filling/PipeShell/Evolved/Axe/TrimSurfaceTool/OffsetAncestors，D3 策略）；TopOpeBRepBuild/DS/Tool 按 D6 不翻译（HBuilder 门面 + BOPDS 重映射替代，见 `fillet/` 行） |
 | TKMesh | `BRepMesh`、`IMeshData`、`IMeshTools`、`BRepMeshData` | rcad 三角剖分走自有 mesh（见 AGENTS.md「后续重构指导」），不 1:1 移植 |
 
 ## 4. 命名与翻译约定（摘要，全文见根 AGENTS.md）
