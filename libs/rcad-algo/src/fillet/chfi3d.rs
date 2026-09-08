@@ -3675,7 +3675,8 @@ impl ChFi3dBuilder {
                     if nba > 3 {
                         self.perform_more_three_corner_pending();
                     } else {
-                        self.perform_two_corner_pending();
+                        // OCCT ChFi3d_Builder.cxx L868: PerformTwoCorner(Index).
+                        self.perform_two_corner_pending(index);
                     }
                     false
                 }
@@ -3683,7 +3684,8 @@ impl ChFi3dBuilder {
                     if nba > 3 {
                         self.perform_more_three_corner_pending();
                     } else {
-                        self.perform_three_corner_pending();
+                        // OCCT ChFi3d_Builder.cxx L891: PerformThreeCorner(Index).
+                        self.perform_three_corner_pending(index);
                     }
                     false
                 }
@@ -3727,12 +3729,27 @@ impl ChFi3dBuilder {
         // OCCT ChFi3d_Builder_C1.cxx L3771 PerformMoreSurfdata — pending.
     }
 
-    fn perform_two_corner_pending(&mut self) {
-        // OCCT ChFi3d_Builder_CnCrn.cxx PerformTwoCorner — pending.
+    fn perform_two_corner_pending(&mut self, index: usize) {
+        // OCCT ChFi3d_Builder.cxx L868: PerformTwoCorner(Index) — the pure
+        // virtual resolves to the ChFi3d_FilBuilder override
+        // (ChFi3d_FilBuilder_C2.cxx L143).  The override reads only members
+        // inherited from ChFi3d_Builder, so the rcad composition routes
+        // through the base struct.
+        super::chfi3d_filbuilder_c2::perform_two_corner(self, index);
     }
 
-    fn perform_three_corner_pending(&mut self) {
-        // OCCT ChFi3d_Builder_CnCrn.cxx PerformThreeCorner — pending.
+    fn perform_three_corner_pending(&mut self, index: usize) {
+        // OCCT ChFi3d_Builder.cxx L891: PerformThreeCorner(Index) — the pure
+        // virtual resolves to the ChFi3d_FilBuilder override
+        // (ChFi3d_FilBuilder_C3.cxx L241).  The override consumes the
+        // FilBuilder member myShape (BlendFunc_SectionShape, set by
+        // SetFilletShape, OCCT ChFi3d_FilBuilder.cxx L157-171).  The rcad
+        // base struct carries no blend-shape member; the Rational mapping is
+        // the constructor default of both OCCT ChFi3d_FilBuilder (L147-153)
+        // and rcad ChFi3dFilBuilder::new — see the F1 delivery report note
+        // on the composition-model dispatch.
+        let my_shape = super::brep_blend_func::BlendFuncSectionShape::Rational;
+        super::chfi3d_filbuilder_c3::perform_three_corner(self, my_shape, index);
     }
 
     fn perform_more_three_corner_pending(&mut self) {
