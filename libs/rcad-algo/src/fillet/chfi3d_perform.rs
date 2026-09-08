@@ -89,10 +89,11 @@
 //!   W10. brep_fillet_api.rs L349-355 / L694 (the Sect facade): route to
 //!       `ChFi3dFilBuilder::sect` (this file) instead of returning None.
 //!
-//!   W11. hbuilder.rs: move the `impl TopOpeBRepBuildHBuilder` block below
-//!       into fillet/hbuilder.rs and give the 7 methods their TKBO-backed
-//!       bodies (the module doc there already reserves this surface).
-//!       Until then the bodies are pending-boundary neutrals.
+//!   W11. hbuilder.rs (DONE, Stage 1g): the `impl TopOpeBRepBuildHBuilder`
+//!       block that used to live in this file was moved to
+//!       fillet/hbuilder.rs and the 7 methods received their TKBO-backed
+//!       bodies (the module doc there carries the D6 wiring notes).  The
+//!       call forms in this file are unchanged.
 //!
 //!   N1. Still-untranslated Perform-flow stages (future translation, not
 //!       wiring): the corner tails behind chfi3d.rs L3698-3715 —
@@ -108,55 +109,19 @@ use rcad_kernel::geom::{Curve2dEval as _, Surface3};
 use rcad_kernel::topo::topods::{BRepBuilder, BRepTool as _};
 use rcad_kernel::topods::{self, Shape};
 
-use super::chfi3d::{ChFi3dBuilder, ChFi3dFilBuilder, TopOpeBRepDSHDataStructure};
+use super::chfi3d::{ChFi3dBuilder, ChFi3dFilBuilder};
 use super::chfi3d_builder_0::{surface_type_of, GeomAbsSurfaceType};
 use super::chfi3d_builder_2::TopAbsState;
 use super::chfi_ds::{ChFiDSCircSection, ChFiDSCircSectionArray, ChFiDSSurfData};
 use super::chfi_kpart_gp::{surface3_ax3, GpAx3, GpCirc};
-use super::hbuilder::TopOpeBRepBuildHBuilder;
 
 // =========================================================================
-// OCCT TopOpeBRepBuild_HBuilder — the myCoup call surface consumed by the
-// ChFi3d Perform flow.  The inherent impl block lives in this file per the
-// Stage 1f ownership split (hbuilder.rs itself is read-only this round);
-// Stage 1g moves it into hbuilder.rs with TKBO-backed bodies (item W11).
-// Until then every body is the pending-boundary neutral: the reconstruction
-// below keeps the exact OCCT flow shape, and the merges report "nothing
-// merged" so the result assembly degrades to the identity compound.
+// Stage 1g: the 7-method `impl TopOpeBRepBuildHBuilder` block that used to
+// live here (pending-boundary neutrals) has been migrated to hbuilder.rs
+// (item W11) with its TKBO-backed bodies.  Rust resolves methods across
+// inherent impl blocks of one crate, so the call forms below
+// (`coup.perform(...)` / `coup.merge_solid(...)` / ...) are unchanged.
 // =========================================================================
-
-impl TopOpeBRepBuildHBuilder {
-    /// OCCT TopOpeBRepBuild_HBuilder.hxx L52 — Perform(HDS).
-    pub fn perform(&mut self, _ds: &mut TopOpeBRepDSHDataStructure) {}
-
-    /// OCCT TopOpeBRepBuild_HBuilder.hxx L85 — MergeSolid(S, TB).
-    pub fn merge_solid(&mut self, _s: &Shape, _tb: TopAbsState) {}
-
-    /// OCCT TopOpeBRepBuild_HBuilder.hxx L88 — IsSplit(S, ToBuild).
-    pub fn is_split(&self, _s: &Shape, _to_build: TopAbsState) -> bool {
-        false
-    }
-
-    /// OCCT TopOpeBRepBuild_HBuilder.hxx L91 — Splits(S, ToBuild).
-    pub fn splits(&self, _s: &Shape, _to_build: TopAbsState) -> Vec<Shape> {
-        Vec::new()
-    }
-
-    /// OCCT TopOpeBRepBuild_HBuilder.hxx L98 — Merged(S, ToBuild).
-    pub fn merged(&self, _s: &Shape, _to_build: TopAbsState) -> Vec<Shape> {
-        Vec::new()
-    }
-
-    /// OCCT TopOpeBRepBuild_HBuilder.hxx L105 — NewEdges(I).
-    pub fn new_edges(&self, _i: i32) -> Vec<Shape> {
-        Vec::new()
-    }
-
-    /// OCCT TopOpeBRepBuild_HBuilder.hxx L111 — NewFaces(I).
-    pub fn new_faces(&self, _i: i32) -> Vec<Shape> {
-        Vec::new()
-    }
-}
 
 impl ChFi3dBuilder {
     /// OCCT ChFi3d_Builder.cxx L471-578 — the reconstruction tail of
