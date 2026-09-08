@@ -145,4 +145,13 @@ pub trait LocationLaw {
     fn rotation(&self, _centre: &mut DVec3) {
         panic!("Standard_NotImplemented: GeomFill_SectionLaw::Rotation");
     }
+
+    /// OCCT `occ::down_cast<T>(handle)` support — the concrete law as Any
+    /// (BRepFill_PipeShell down-casts Law(i) to GeomFill_LocationGuide,
+    /// BRepFill_PipeShell.cxx L489/L1219/L1271).
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// The mutable form of [`LocationLaw::as_any`] — the downcast sites
+    /// mutate the guide through the handle (Set / EraseRotation).
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }

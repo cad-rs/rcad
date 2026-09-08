@@ -60,6 +60,19 @@ pub(crate) fn shape_reversed(s: &Shape) -> Shape {
     c
 }
 
+/// OCCT gp_Trsf::SetValues(M(1, 1), ..., V.Z()) over the law frame — the
+/// BRepFill_Pipe::Perform form (the brep_fill_location_law.rs re-host); a
+/// null determinant keeps the OCCT Standard_ConstructionError failure.
+fn fila_set_values(m: &GpMat, v: DVec3) -> DAffine3 {
+    match crate::brep_fill::brep_fill_location_law::gp_trsf_set_values(&[
+        m.mat[0][0], m.mat[0][1], m.mat[0][2], v.x, m.mat[1][0], m.mat[1][1], m.mat[1][2],
+        v.y, m.mat[2][0], m.mat[2][1], m.mat[2][2], v.z,
+    ]) {
+        Ok(fila) => fila,
+        Err(()) => panic!("gp_Trsf::SetValues, null determinant"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GAP carriers — the sweep engine stack (architecture difference #1)
 // ---------------------------------------------------------------------------
@@ -108,46 +121,18 @@ pub enum BRepFillTransitionStyle {
 }
 
 /// GAP: GeomFill_DiscreteTrihedron (TKGeomAlgo/GeomFill, parallel batch) —
-/// the trihedron law constructed for GeomFill_IsDiscreteTrihedron.
-#[derive(Debug)]
-pub struct GeomFillDiscreteTrihedron;
+/// the trihedron law constructed for GeomFill_IsDiscreteTrihedron (the
+/// pipe_shell split-unit carrier).
+use super::brep_fill_pipe_shell_b::GeomFillDiscreteTrihedron;
 
-/// OCCT GeomFill_TrihedronLaw handle — the constructed law of the Perform
-/// switch (the Frenet / CorrectedFrenet arms carry the translated
-/// geomalgo::geomfill classes; DiscreteTrihedron is the GAP above).
-#[allow(dead_code)]
-pub enum TrihedronLawHandle {
-    /// OCCT GeomFill_Frenet.
-    Frenet(Box<crate::geomalgo::geomfill::frenet::Frenet>),
-    /// OCCT GeomFill_CorrectedFrenet.
-    CorrectedFrenet(Box<crate::geomalgo::geomfill::corrected_frenet::CorrectedFrenet>),
-    /// OCCT GeomFill_DiscreteTrihedron.
-    DiscreteTrihedron(GeomFillDiscreteTrihedron),
-}
-
-/// GAP: GeomFill_CurveAndTrihedron (TKGeomAlgo/GeomFill, parallel batch) —
-/// the location law over a curve + trihedron law.
-pub struct GeomFillCurveAndTrihedron {
-    #[allow(dead_code)]
-    the_law: Option<TrihedronLawHandle>,
-}
-
-impl GeomFillCurveAndTrihedron {
-    /// OCCT new GeomFill_CurveAndTrihedron(TLaw).
-    pub fn new(the_law: Option<TrihedronLawHandle>) -> Self {
-        GeomFillCurveAndTrihedron { the_law }
-    }
-
-    /// OCCT GeomFill_LocationLaw::GetDomain(f, l).
-    pub fn get_domain(&self, _first: &mut f64, _last: &mut f64) {
-        panic!("GAP: GeomFill_CurveAndTrihedron (GeomFill batch) — see file header")
-    }
-
-    /// OCCT GeomFill_LocationLaw::D0(param, M, V).
-    pub fn d0(&self, _param: f64, _m: &mut DMat3, _v: &mut DVec3) {
-        panic!("GAP: GeomFill_CurveAndTrihedron (GeomFill batch) — see file header")
-    }
-}
+/// OCCT GeomFill_CurveAndTrihedron — the real batch-1 translation
+/// (geomalgo/geomfill/curve_and_trihedron.rs); the ctor carries the
+/// `Box<dyn TrihedronLaw>` law (the OCCT handle(GeomFill_TrihedronLaw)
+/// TLaw of BRepFill_Pipe.cxx L228).
+use crate::geomalgo::geomfill::curve_and_trihedron::CurveAndTrihedron as GeomFillCurveAndTrihedron;
+use crate::geomalgo::geomfill::gp_mat::GpMat;
+use crate::geomalgo::geomfill::location_law::LocationLaw;
+use crate::geomalgo::geomfill::trihedron_law::TrihedronLaw;
 
 /// GAP: BRepFill_LocationLaw (TKBool/BRepFill) — the spine location law
 /// (BRepFill_Edge3DLaw result); not translated (plan D3).
@@ -692,22 +677,22 @@ impl BRepFillPipe {
         self.define_real_segmax();
 
         // OCCT L210-224: the trihedron law of the mode.
-        let t_law = match self.my_mode {
-            GeomFillTrihedron::IsFrenet => Some(TrihedronLawHandle::Frenet(Box::new(
+        let t_law: Option<Box<dyn TrihedronLaw>> = match self.my_mode {
+            GeomFillTrihedron::IsFrenet => Some(Box::new(
                 crate::geomalgo::geomfill::frenet::Frenet::new(),
-            ))),
-            GeomFillTrihedron::IsCorrectedFrenet => {
-                Some(TrihedronLawHandle::CorrectedFrenet(Box::new(
-                    crate::geomalgo::geomfill::corrected_frenet::CorrectedFrenet::new(),
-                )))
-            }
+            )),
+            GeomFillTrihedron::IsCorrectedFrenet => Some(Box::new(
+                crate::geomalgo::geomfill::corrected_frenet::CorrectedFrenet::new(),
+            )),
             GeomFillTrihedron::IsDiscreteTrihedron => {
-                Some(TrihedronLawHandle::DiscreteTrihedron(GeomFillDiscreteTrihedron))
+                Some(GeomFillDiscreteTrihedron::new().into_trihedron_law())
             }
             _ => None,
         };
-        // OCCT L225-231.
-        let loc = GeomFillCurveAndTrihedron::new(t_law);
+        // OCCT L225-231.  The OCCT ctor takes the possibly-null TLaw handle;
+        // the rcad Box has no null state (the ctor guard above restricts
+        // myMode to the three switch kinds).
+        let loc = GeomFillCurveAndTrihedron::new(t_law.expect("null TLaw"));
         self.my_loc = Some(BRepFillEdge3DLaw::new(the_spine, &loc));
         let my_loc = self.my_loc.as_ref().expect("myLoc");
         if my_loc.nb_law() == 0 {
@@ -733,17 +718,17 @@ impl BRepFillPipe {
         let _ = &mut the_prof;
 
         // OCCT L242-265: construct First && Last Shape — the law frame at
-        // the first parameter (the law access is the GAP above).
+        // the first parameter.
         let my_loc = self.my_loc.as_ref().expect("myLoc");
         let law1 = my_loc.law(1);
-        let mut m = DMat3::IDENTITY;
+        let mut m = GpMat::identity();
         let mut v = DVec3::ZERO;
         let mut first = 0.0;
         let mut last = 0.0;
         law1.get_domain(&mut first, &mut last);
         law1.d0(first, &mut m, &mut v);
-        let mut fila = DAffine3::from_mat3(m);
-        fila.translation = v;
+        // OCCT fila.SetValues(M(1, 1), ..., V.Z()).
+        let mut fila = fila_set_values(&m, v);
 
         // OCCT L264-271.
         fila = self.my_trsf * fila;
@@ -765,12 +750,12 @@ impl BRepFillPipe {
         let nb_law = self.my_loc.as_ref().expect("myLoc").nb_law();
         let my_loc = self.my_loc.as_ref().expect("myLoc");
         let law_n = my_loc.law(nb_law);
-        let mut m = DMat3::IDENTITY;
+        let mut m = GpMat::identity();
         let mut v = DVec3::ZERO;
         law_n.get_domain(&mut first, &mut last);
         law_n.d0(last, &mut m, &mut v);
-        let mut fila = DAffine3::from_mat3(m);
-        fila.translation = v;
+        // OCCT fila.SetValues(M(1, 1), ..., V.Z()).
+        let mut fila = fila_set_values(&m, v);
 
         // OCCT L293-307.
         fila = self.my_trsf * fila;

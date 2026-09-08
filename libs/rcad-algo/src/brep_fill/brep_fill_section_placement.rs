@@ -396,4 +396,14 @@ impl BRepAdaptorCompCurve {
              BRepFill_SectionPlacement::Perform (BRepFill_SectionPlacement.cxx L168)"
         )
     }
+
+    /// OCCT BRepAdaptor_CompCurve::D1(U, P, V) — the point/derivative form
+    /// consumed by BRepFill_PipeShell::Set(AuxiliarySpine, ...)
+    /// (BRepFill_PipeShell.cxx L392-393).
+    pub fn d1(&self, _u: f64, _p: &mut DVec3, _v: &mut DVec3) {
+        panic!(
+            "GAP: BRepAdaptor_CompCurve (TKBRep) is not translated — \
+             BRepFill_PipeShell::Set (BRepFill_PipeShell.cxx L392)"
+        )
+    }
 }

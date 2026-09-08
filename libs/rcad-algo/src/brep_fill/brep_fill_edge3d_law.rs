@@ -95,6 +95,12 @@ impl LocationLaw for Box<dyn LocationLaw> {
     fn get_average_law(&self, am: &mut GpMat, av: &mut glam::DVec3) {
         self.as_ref().get_average_law(am, av)
     }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self.as_ref().as_any()
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self.as_mut().as_any_mut()
+    }
 }
 
 /// OCCT GeomAdaptor_Curve(C, First, Last) — the rcad adaptor restricts the

@@ -42,11 +42,22 @@ use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, BRepBuilder, ShapeType, TShape, tshape_flags};
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::brep_fill::brep_fill_pipe::{
     add_to_shell, add_to_solid, set_closed_flag, shape_reversed, topods_iterator,
-    BRepFillLocationLaw, BRepFillSectionLaw, BRepFillShapeLaw, BRepFillSweep, GeomAbsShape,
+    BRepFillLocationLaw, BRepFillSectionLaw, BRepFillSweep, GeomAbsShape,
     GeomFillApproxStyle, ShapeArray2, BRepFillTransitionStyle, TOPABS_IN,
 };
+use crate::brep_fill::brep_fill_section_law::BRepFillSectionLawOps;
+// The real OCCT BRepFill_ShapeLaw (TKBool/BRepFill) — the section law of
+// BRepFill_Draft::Init (cxx L459).  The location-law chain (the real
+// BRepFill_DraftLaw / BRepFill_Sweep) stays on the placeholder carriers
+// below: the real laws consume the owning `BRep` pool while BRepFill_Draft
+// works on detached shapes (architecture difference #5), and the
+// GeomFill_LocationDraft translation has not landed.
+use crate::brep_fill::brep_fill_shape_law::BRepFillShapeLaw;
 use crate::brep_fill::generator::ShapeKey;
 
 /// OCCT Precision::Confusion().
@@ -695,7 +706,7 @@ pub struct BRepFillDraft {
     angmax: f64,                        // OCCT: angmax
     my_tol: f64,                        // OCCT: myTol
     my_loc: Option<BRepFillDraftLaw>,   // OCCT: myLoc (None = null handle)
-    my_sec: Option<BRepFillSectionLaw>, // OCCT: mySec (None = null handle)
+    my_sec: Option<Rc<RefCell<dyn BRepFillSectionLawOps>>>, // OCCT: mySec (None = null handle)
     my_sections: Option<ShapeArray2>,   // OCCT: mySections
     my_faces: Option<ShapeArray2>,      // OCCT: myFaces
     my_generated: Vec<Shape>,           // OCCT: myGenerated
@@ -957,18 +968,22 @@ impl BRepFillDraft {
         let g = brep_lib_make_edge_wire(&mut pool, tc, p_first, p_last, 0.0, length);
 
         // OCCT L459: mySec = new BRepFill_ShapeLaw(G, true).
-        self.my_sec = Some(BRepFillShapeLaw::new_with_wire(&g, true).into());
+        self.my_sec = Some(Rc::new(RefCell::new(BRepFillShapeLaw::new(&pool, &g, true))));
 
         let _ = surf;
     }
 
     /// OCCT BRepFill_Draft::BuildShell(Surf, KeepOutSide) (cxx L466-531).
     fn build_shell(&mut self, surf: &Option<Surface3>, keep_out_side: bool) {
-        // OCCT L469-481: the sweep construction.
+        // OCCT L469-471: BRepFill_Sweep Sweep(mySec, myLoc, true).  The
+        // mySec member carries the real BRepFill_ShapeLaw slot; the sweep
+        // construction stays on the placeholder carriers of brep_fill_pipe
+        // until the owning-pool refactor + the GeomFill_LocationDraft
+        // translation land (see the import note).
         let mut dummy: HashMap<ShapeKey, Shape> = HashMap::new();
         let mut dummy2: HashMap<ShapeKey, ShapeArray2> = HashMap::new();
         let mut dummy3: HashMap<ShapeKey, ShapeArray2> = HashMap::new();
-        let my_sec = BRepFillShapeLaw::new(&Shape::null()).into();
+        let my_sec = crate::brep_fill::brep_fill_pipe::BRepFillSectionLaw;
         let my_loc_draft = BRepFillDraftLaw::new(&Shape::null(), &GeomFillLocationDraft::new(DVec3::Y, 0.0));
         let my_loc: &BRepFillLocationLaw = upcast_law(&my_loc_draft);
         let mut sweep = BRepFillSweep::new(my_sec, my_loc, true);

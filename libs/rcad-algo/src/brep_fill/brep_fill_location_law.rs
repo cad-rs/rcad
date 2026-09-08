@@ -203,7 +203,7 @@ fn trsf_orthogonalize(m: &GpMat) -> GpMat {
 /// OCCT gp_Trsf::SetValues(a11..a34) (gp_Trsf.cxx L346-385) — the null
 /// determinant raise is the Err branch; the vectorial part is scaled by
 /// det^(1/3) and orthogonalized, loc = col4 (the geomfill/sweep.rs re-host).
-fn gp_trsf_set_values(a: &[f64; 12]) -> Result<DAffine3, ()> {
+pub(crate) fn gp_trsf_set_values(a: &[f64; 12]) -> Result<DAffine3, ()> {
     let m = GpMat::from_rows(a[0], a[1], a[2], a[4], a[5], a[6], a[8], a[9], a[10]);
     let mut s = m.mat[0][0] * (m.mat[1][1] * m.mat[2][2] - m.mat[1][2] * m.mat[2][1])
         - m.mat[0][1] * (m.mat[1][0] * m.mat[2][2] - m.mat[1][2] * m.mat[2][0])

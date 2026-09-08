@@ -104,6 +104,8 @@ use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, ShapeType};
 use std::collections::{HashMap, HashSet};
 
+use crate::geomalgo::geomfill::corrected_frenet::Trihedron;
+
 use crate::feat::loc_ope_split_drafts_b::{
     contains, make_face, new_edge, new_plane, BRepToolsSubstitution, GeomFillPipe, GeomIntIntSS,
     LocOpeSplitShape,
@@ -494,15 +496,21 @@ impl LocOpeSplitDrafts {
             let pipe_profile = i2s
                 .line(1)
                 .expect("GeomInt_IntSS::Line(1) out of range");
-            the_pipe.generate_particular_case(true);
-            the_pipe.init(the_line_pipe.clone(), pipe_profile);
-            the_pipe.perform(true);
+            the_pipe.set_generate_particular_case(true);
+            // OCCT L188: thePipe.Init(TheLinePipe, i2s.Line(1)) — the
+            // Init(Path, FirstSect, Option = IsCorrectedFrenet) form.
+            the_pipe.init_with_trihedron(
+                &the_line_pipe.clone(),
+                &pipe_profile,
+                Trihedron::IsCorrectedFrenet,
+            );
+            the_pipe.perform(true, false);
             if !the_pipe.is_done() {
                 panic!("Standard_ConstructionError: GeomFill_Pipe : Cannot make a surface");
             }
 
             // OCCT L195-196: Spl = thePipe.Surface(); HAS->Load(Spl).
-            let spl = the_pipe.surface().expect("GeomFill_Pipe::Surface");
+            let spl = the_pipe.surface().expect("GeomFill_Pipe::Surface").clone();
             has = BRepAdaptorSurface::new(spl);
 
             // OCCT L198: LocOpe_SplitShape splw(W);
@@ -768,16 +776,23 @@ impl LocOpeSplitDrafts {
                     let _ = (f, l);
                     // OCCT L432-439.
                     let mut the_pipe = GeomFillPipe::new();
-                    the_pipe.generate_particular_case(true);
-                    the_pipe.init(the_line_pipe.clone(), c);
-                    the_pipe.perform(true);
+                    the_pipe.set_generate_particular_case(true);
+                    // OCCT L433: thePipe.Init(TheLinePipe, C) — the
+                    // Init(Path, FirstSect, Option = IsCorrectedFrenet) form.
+                    the_pipe.init_with_trihedron(
+                        &the_line_pipe.clone(),
+                        &c,
+                        Trihedron::IsCorrectedFrenet,
+                    );
+                    the_pipe.perform(true, false);
                     if !the_pipe.is_done() {
                         panic!("Standard_ConstructionError: GeomFill_Pipe : Cannot make a surface");
                     }
 
                     // OCCT L441-445.
-                    let mut the_ps = the_pipe.surface().expect("GeomFill_Pipe::Surface");
-                    the_ps = geom_rectangular_trimmed_basis_surface(&the_ps);
+                    let the_ps = geom_rectangular_trimmed_basis_surface(
+                        the_pipe.surface().expect("GeomFill_Pipe::Surface"),
+                    );
 
                     // OCCT L447-449.
                     let new_face = make_face_from_surface(&mut pool, Some(the_ps), CONFUSION);

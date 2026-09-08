@@ -587,55 +587,10 @@ impl LocOpeSplitShape {
     }
 }
 
-/// OCCT GeomFill_Pipe (GeomFill_Pipe.hxx) — deferred body; the surface
-/// consumed by LocOpe_SplitDrafts::Perform is carried below (architecture
-/// difference #3).
-pub(crate) struct GeomFillPipe {
-    my_particular_case: bool,                 // OCCT: myGenParticularCase
-    my_curves: (Option<Curve3>, Option<Curve3>), // OCCT: myFirst/ myLast (the Init section curves)
-    my_done: bool,                            // OCCT: myIsDone
-    my_surface: Option<Surface3>,             // OCCT: mySurface
-}
-
-impl GeomFillPipe {
-    /// OCCT GeomFill_Pipe::GeomFill_Pipe().
-    pub(crate) fn new() -> Self {
-        GeomFillPipe {
-            my_particular_case: false,
-            my_curves: (None, None),
-            my_done: false,
-            my_surface: None,
-        }
-    }
-
-    /// OCCT GeomFill_Pipe::GenerateParticularCase(ByPipe) — deferred body;
-    /// the flag is carried.
-    pub(crate) fn generate_particular_case(&mut self, the_by_pipe: bool) {
-        self.my_particular_case = the_by_pipe;
-    }
-
-    /// OCCT GeomFill_Pipe::Init(Path, Profile) — the section curves are
-    /// carried (Geom_Line / Geom_Curve handles).
-    pub(crate) fn init(&mut self, the_path: Curve3, the_profile: Curve3) {
-        self.my_curves = (Some(the_path), Some(the_profile));
-    }
-
-    /// OCCT GeomFill_Pipe::Perform(ByPipe) — deferred body (needs the
-    /// GeomFill_Sweep translation); IsDone stays false.
-    pub(crate) fn perform(&mut self, _the_by_pipe: bool) {
-        // deferred: myDone stays false until the GeomFill body lands.
-    }
-
-    /// OCCT GeomFill_Pipe::IsDone().
-    pub(crate) fn is_done(&self) -> bool {
-        self.my_done
-    }
-
-    /// OCCT GeomFill_Pipe::Surface() — None carries the OCCT null handle.
-    pub(crate) fn surface(&self) -> Option<Surface3> {
-        self.my_surface.clone()
-    }
-}
+/// OCCT GeomFill_Pipe (GeomFill_Pipe.hxx) — the real TKGeomAlgo translation
+/// (geomalgo/geomfill/pipe.rs, sweep-closure batch 2).  The deferred-body
+/// stub is gone; the LocOpe_SplitDrafts call sites carry the real class.
+pub(crate) use crate::geomalgo::geomfill::pipe::Pipe as GeomFillPipe;
 
 /// OCCT GeomInt_IntSS (GeomInt_IntSS.hxx L30-120) — deferred body; the
 /// member surface consumed by LocOpe_SplitDrafts (myDone, myLines,

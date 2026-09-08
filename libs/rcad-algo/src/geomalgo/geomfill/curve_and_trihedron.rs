@@ -419,4 +419,14 @@ impl LocationLaw for CurveAndTrihedron {
             _ => panic!("Standard_NoSuchObject: GeomFill_CurveAndTrihedron::Rotation"),
         }
     }
+
+    /// OCCT `occ::down_cast<T>(handle)` support (the trait requirement).
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    /// The mutable form of [`LocationLaw::as_any`].
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }

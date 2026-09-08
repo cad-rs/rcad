@@ -1139,4 +1139,14 @@ impl LocationLaw for LocationGuide {
     fn rotation(&self, _centre: &mut DVec3) {
         panic!("Standard_NotImplemented: GeomFill_LocationGuide::Rotation");
     }
+
+    /// OCCT `occ::down_cast<GeomFill_LocationGuide>` support.
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    /// The mutable form of [`LocationLaw::as_any`].
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
