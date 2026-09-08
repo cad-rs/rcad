@@ -12,7 +12,9 @@ pub mod revolve;
 pub mod extrude_profile;
 pub mod geom_populate;
 
-mod topods_ext;
+// pub(crate): the extraction helpers are consumed by the offset/feat
+// facades' result_brep test-world bridges (extract_result_brep).
+pub(crate) mod topods_ext;
 pub mod bool_ops_ext;
 pub mod brep_algo;
 pub mod brep_tools;

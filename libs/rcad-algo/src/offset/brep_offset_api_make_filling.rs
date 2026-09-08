@@ -353,4 +353,31 @@ impl BRepOffsetAPIMakeFilling {
     pub fn g2_error_at(&mut self, index: i32) -> f64 {
         self.my_filling.g2_error_at(index)
     }
+
+    /// OCCT BRepBuilderAPI_MakeShape::Shape() — a PUBLIC member of the OCCT
+    /// API (BRepBuilderAPI_MakeShape.hxx: Standard_EXPORT const TopoDS_Shape&
+    /// Shape() const; raises StdFail_NotDone when not done).
+    pub fn shape(&self) -> Shape {
+        assert!(
+            self.is_done(),
+            "StdFail_NotDone: BRepOffsetAPI_MakeFilling::Shape()"
+        );
+        self.my_shape.clone()
+    }
+
+    /// Test-world extraction bridge (the FilletResult.brep pattern,
+    /// algo_ext::topods_ext::extract_result_brep): flattens the result root
+    /// shape into the self-contained BRep the test world consumes
+    /// (StepWriter / total_surface_area).  OCCT has no equivalent (the
+    /// TopoDS_Shape carries its arena implicitly) — the rcad BRep-pool
+    /// architecture difference #4 glue.
+    pub fn result_brep(&mut self) -> Option<rcad_kernel::topo::topods::BRep> {
+        if !self.is_done() || self.my_shape.is_null() {
+            return None;
+        }
+        Some(crate::algo_ext::topods_ext::extract_result_brep(
+            &self.my_shape,
+            Vec::new(),
+        ))
+    }
 }

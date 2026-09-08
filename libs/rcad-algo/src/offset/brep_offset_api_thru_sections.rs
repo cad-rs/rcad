@@ -604,6 +604,52 @@ impl BRepOffsetAPIThruSections {
         brep_lib_encode_regularity(&self.my_shape.clone());
     }
 
+    /// OCCT BRepBuilderAPI_Command::IsDone() — a PUBLIC member of the OCCT
+    /// API (BRepBuilderAPI_Command.hxx: Standard_Boolean IsDone() const);
+    /// the rcad field keeps the crate visibility, the accessor restores the
+    /// OCCT-public surface (form restoration, no behavior change).
+    pub fn is_done(&self) -> bool {
+        self.my_done
+    }
+
+    /// Test-world input bridge for the rcad BRep-pool architecture
+    /// difference #4: the engines read TShape-internal reference indices
+    /// against this pool (top_exp_vertices(&my_brep, …), …), so input
+    /// wire/vertex shapes must be built natively in it.  OCCT has no
+    /// counterpart (a TopoDS_Shape carries no pool); no algorithm behavior
+    /// is changed — the accessor only exposes the existing my_brep member.
+    pub fn brep_mut(&mut self) -> &mut BRep {
+        &mut self.my_brep
+    }
+
+    /// OCCT BRepBuilderAPI_MakeShape::Shape() — a PUBLIC member of the OCCT
+    /// API (BRepBuilderAPI_MakeShape.hxx: Standard_EXPORT const TopoDS_Shape&
+    /// Shape() const; raises StdFail_NotDone when not done).
+    pub fn shape(&self) -> Shape {
+        assert!(
+            self.my_done,
+            "StdFail_NotDone: BRepOffsetAPI_ThruSections::Shape()"
+        );
+        self.my_shape.clone()
+    }
+
+    /// Test-world extraction bridge (the FilletResult.brep pattern,
+    /// algo_ext::topods_ext::extract_result_brep): flattens the
+    /// (my_brep arena, my_shape root) pair into the self-contained BRep the
+    /// test world consumes (StepWriter / total_surface_area).  OCCT has no
+    /// equivalent (the TopoDS_Shape carries its arena implicitly) — the
+    /// rcad BRep-pool architecture difference #4 glue.
+    pub fn result_brep(&mut self) -> Option<BRep> {
+        if !self.my_done || self.my_shape.is_null() {
+            return None;
+        }
+        let locations = self.my_brep.locations.clone();
+        Some(crate::algo_ext::topods_ext::extract_result_brep(
+            &self.my_shape,
+            locations,
+        ))
+    }
+
     /// OCCT BRepOffsetAPI_ThruSections::CreateRuled() (cxx L542-702).
     pub(crate) fn create_ruled(&mut self) {
         // OCCT L543-546.

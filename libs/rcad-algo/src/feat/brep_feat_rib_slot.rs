@@ -736,6 +736,23 @@ impl BRepFeatRibSlot {
         self.my_shape.as_ref()
     }
 
+    /// Test-world extraction bridge (the FilletResult.brep pattern,
+    /// algo_ext::topods_ext::extract_result_brep): flattens the result root
+    /// shape into the self-contained BRep the test world consumes
+    /// (StepWriter / total_surface_area).  OCCT has no equivalent (the
+    /// TopoDS_Shape carries its arena implicitly) — the rcad BRep-pool
+    /// architecture difference #4 glue.
+    pub fn result_brep(&self) -> Option<rcad_kernel::topo::topods::BRep> {
+        let my_shape = self.my_shape.as_ref()?;
+        if my_shape.is_null() {
+            return None;
+        }
+        Some(crate::algo_ext::topods_ext::extract_result_brep(
+            my_shape,
+            Vec::new(),
+        ))
+    }
+
     // -----------------------------------------------------------------
     // LFPerform (cxx L82-259) — topological reconstruction of ribs.
     // -----------------------------------------------------------------
