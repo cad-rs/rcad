@@ -330,6 +330,7 @@ libs/rcad-algo/src/
 - **协作坑**：① 并行代理曾对共享 kernel 文件跑 `git restore`（已广播禁令）；② Windows 下 `mv` 大小写改名静默失效——必须 cp+rm；③ Bash 工具 cwd 会被重置到根仓库——**每条命令都要显式 cd**；④ 预注册 mod.rs 必须用 Edit 精确改，禁 sed 批处理（两次误删事故）；⑤ 代理编译隔离用 CARGO_TARGET_DIR=target_xx 且会落在意外位置（target_h 曾被扫进提交——已 gitignore `target_*/`，git add 仍需显式文件列表）。
 
 **E0. 第九轮已交付（本快照提交后陆续到达的代理交付，验收同 C.2 标准）**：
+- R1 BRepOffset_Analyse 1,717 行（27=27+1 shim 等式，TreatTangentFaces L371-806 全循环逐行；附 BRepOffsetInterval 8/8）✅。carrier 切换清单（主代理收官统一做）：bi_tgte_blended/inter2d/inter3d/tool_d 四处 BRepOffsetAnalyse 载体→super::brep_offset_analyse::BRepOffsetAnalyse（types(e)→type_(e)、edges(s,t,le) 按 s 分流 edges_on_vertex/face、interval.my_type→type_of()）。
 - R2 IntTools_FClass2d 1,256 行（8=8+1 等式，零 GAP carrier）✅；R4 GeomFill 消费族 2,858 行（geom_fill/polynomial_convertor/quasi_angular_convertor/gp_mat/line/profiler/section_generator，计数等式全过）✅。
 - R4 staged（**新排期项，随 Sweep 闭包批**）：GeomFill_Pipe + GeomFill_Sweep 闭包 ~7,700 OCCT 行（SectionPlacement 983/LocationGuide 1471/GuideTrihedronAC 395/GuideTrihedronPlan 582/TrihedronWithGuide 33/CurveAndTrihedron 344/UniformSection 295/Fixed 118/ConstantBiNormal 295/Darboux 561/SweepSectionGenerator 698/CircularBlendFunc 676/Sweep 1248）+ AppBlend_AppSurf gxx 实例（无人认领，被 Sweep 阻塞）+ PLib hermite/gp coaxial 暂居件迁位。BRepFill_Pipe 与 MakePipeShell 的端到端依赖此批。
 
