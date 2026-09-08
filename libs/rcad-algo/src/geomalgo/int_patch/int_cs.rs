@@ -10,6 +10,11 @@
 //   - The generic polygon/polyhedron path (for non-canonic curves and Torus
 //     quadrics) is not reachable from ImpImp FF: quadric boundary arcs are
 //     always lines/circles, and IntCS is only invoked when TypeQuad != Torus.
+//   - The ChFi3d corner-tail flow (ChFi3d_Builder_C1.cxx Update, L191-280)
+//     performs the same IntCurveSurface_HInter::Perform(ct, fb) with
+//     Ellipse/Parabola/Hyperbola interference curves against Plane/Cylinder/
+//     Cone/Sphere prolongation surfaces, so the full PerformBounds conic
+//     switch (Inter.pxx L121-139) is dispatched here.
 
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
@@ -200,11 +205,59 @@ impl IntCurveSurface {
                 }
                 ana_points = pts;
             }
+            Curve3::Ellipse(e) => {
+                // OCCT PerformBounds case GeomAbs_Ellipse (Inter.pxx L129-131)
+                // -> PerformConicSurfEllipse.
+                let (in_quadric, pts) = match perform_conic_surf_ellipse(e, &quad) {
+                    None => {
+                        self.done = false;
+                        return;
+                    }
+                    Some(r) => r,
+                };
+                if in_quadric {
+                    self.is_parallel = true;
+                }
+                ana_points = pts;
+            }
+            Curve3::Parabola(p) => {
+                // OCCT PerformBounds case GeomAbs_Parabola (Inter.pxx L132-134)
+                // -> PerformConicSurfParabola.
+                let (in_quadric, pts) = match perform_conic_surf_parabola(p, &quad) {
+                    None => {
+                        self.done = false;
+                        return;
+                    }
+                    Some(r) => r,
+                };
+                if in_quadric {
+                    self.is_parallel = true;
+                }
+                ana_points = pts;
+            }
+            Curve3::Hyperbola(h) => {
+                // OCCT PerformBounds case GeomAbs_Hyperbola (Inter.pxx L135-137)
+                // -> PerformConicSurfHyperbola.
+                let (in_quadric, pts) = match perform_conic_surf_hyperbola(h, &quad) {
+                    None => {
+                        self.done = false;
+                        return;
+                    }
+                    Some(r) => r,
+                };
+                if in_quadric {
+                    self.is_parallel = true;
+                }
+                ana_points = pts;
+            }
             _ => {
-                // Non-canonic curve: the generic polygon path in OCCT would be
-                // used; not reachable for quadric-quadric FF (boundary arcs are
-                // lines/circles).  Mark not-done so BoundedArc falls back to
-                // math_FunctionAllRoots (OCCT does the same when IntCS fails).
+                // Non-canonic curve (Bezier/BSpline/...): the OCCT PerformBounds
+                // default branch (IntCurveSurface_Inter.pxx L139-180) runs the
+                // polygonal/polyhedron interference, or the exact quadric solver
+                // (TheQuadCurvExactHInter) for Plane/Cylinder/Cone/Sphere — both
+                // carried by geomalgo::int_curve_surface over adaptors.  This
+                // concrete IntCurveSurface carrier reports not-done there, so the
+                // caller takes its documented fallback.
                 self.done = false;
                 return;
             }
@@ -228,20 +281,56 @@ impl IntCurveSurface {
     pub fn is_done(&self) -> bool {
         self.done
     }
-    /// OCCT NbPoints().
+    /// OCCT IntCurveSurface_Intersection::NbPoints
+    /// (IntCurveSurface_Intersection.cxx L45-52): StdFail_NotDone when not
+    /// done.
     pub fn nb_points(&self) -> usize {
+        if !self.done {
+            panic!("StdFail_NotDone: IntCurveSurface_Intersection::NbPoints");
+        }
         self.points.len()
     }
-    /// OCCT Point(Index) — 1-based.
+    /// OCCT IntCurveSurface_Intersection::Point(N)
+    /// (IntCurveSurface_Intersection.cxx L65-72): StdFail_NotDone when not
+    /// done; lpnt.Value(N) is the 1-based sequence access and raises
+    /// Standard_OutOfRange outside [1, NbPoints()].
     pub fn point(&self, index: usize) -> IntersectionPoint {
+        if !self.done {
+            panic!("StdFail_NotDone: IntCurveSurface_Intersection::Point");
+        }
+        if index < 1 || index > self.points.len() {
+            panic!(
+                "Standard_OutOfRange: IntCurveSurface_Intersection::Point({}) with NbPoints()={}",
+                index,
+                self.points.len()
+            );
+        }
         self.points[index - 1]
     }
-    /// OCCT NbSegments().
+    /// OCCT IntCurveSurface_Intersection::NbSegments
+    /// (IntCurveSurface_Intersection.cxx L55-62): StdFail_NotDone when not
+    /// done.
     pub fn nb_segments(&self) -> usize {
+        if !self.done {
+            panic!("StdFail_NotDone: IntCurveSurface_Intersection::NbSegments");
+        }
         self.segments.len()
     }
-    /// OCCT Segment(Index) — 1-based.
+    /// OCCT IntCurveSurface_Intersection::Segment(N)
+    /// (IntCurveSurface_Intersection.cxx L75-82): StdFail_NotDone when not
+    /// done; lseg.Value(N) is the 1-based sequence access and raises
+    /// Standard_OutOfRange outside [1, NbSegments()].
     pub fn segment(&self, index: usize) -> IntersectionSegment {
+        if !self.done {
+            panic!("StdFail_NotDone: IntCurveSurface_Intersection::Segment");
+        }
+        if index < 1 || index > self.segments.len() {
+            panic!(
+                "Standard_OutOfRange: IntCurveSurface_Intersection::Segment({}) with NbSegments()={}",
+                index,
+                self.segments.len()
+            );
+        }
         self.segments[index - 1]
     }
     /// OCCT myIsParallel.
@@ -282,8 +371,10 @@ fn compute_append_point(
     let mut u = su;
     let mut v = sv;
 
-    let is_circle = matches!(curve, Curve3::Circle(_));
-    if curve.is_periodic() || is_circle {
+    // OCCT: CurveTool::IsPeriodic || aCType == GeomAbs_Circle ||
+    // aCType == GeomAbs_Ellipse (InterUtils.pxx L1142-1145).
+    let is_circle_or_ellipse = matches!(curve, Curve3::Circle(_) | Curve3::Ellipse(_));
+    if curve.is_periodic() || is_circle_or_ellipse {
         w = elclib_in_period(w, w0, w0 + curve_period(curve));
     }
 
@@ -366,7 +457,9 @@ fn elclib_in_period(x: f64, a: f64, b: f64) -> f64 {
 
 fn curve_period(curve: &Curve3) -> f64 {
     match curve {
-        Curve3::Circle(_) => std::f64::consts::TAU,
+        // OCCT Adaptor3d_Curve::Period() = LastParameter - FirstParameter;
+        // Geom_Circle/Geom_Ellipse domains are always [0, 2*PI].
+        Curve3::Circle(_) | Curve3::Ellipse(_) => std::f64::consts::TAU,
         _ => curve.default_domain()[1] - curve.default_domain()[0],
     }
 }
@@ -469,5 +562,110 @@ fn intersect_circle_quadric(
         }
     } else {
         super::int_conic_quad::intersect_circle_quadric(circle, quad)
+    }
+}
+
+/// OCCT IntCurveSurface_Inter.pxx ProcessIntAna tail (InterUtils.pxx
+/// L1188-1231): not-done -> None; IsInQuadric()/IsParallel() -> (true, no
+/// points); otherwise the (Point(i), ParamOnConic(i)) pairs (1-based).
+fn finish_int_ana(
+    ana: &super::int_conic_quad::IntConicQuad,
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    if !ana.is_done() {
+        return None;
+    }
+    if ana.is_in_quadric() || ana.is_parallel() {
+        return Some((true, Vec::new()));
+    }
+    let pts = (1..=ana.nb_points())
+        .map(|i| (ana.point(i), ana.param_on_conic(i)))
+        .collect();
+    Some((false, pts))
+}
+
+/// OCCT IntCurveSurface_Inter.pxx PerformConicSurfEllipse (L769-820): the
+/// Plane surface uses the (Elips, Pln, Tolang, Tol) overload (IntAna
+/// IntConicQuad.cxx L562-565 delegates it to the quadric path), the
+/// Cylinder/Cone/Sphere quadrics use the (Elips, Quadric) overload.  The
+/// default branch (Torus and non-quadrics) falls back to the polygonal
+/// interference path (IntCurveSurface_Inter.pxx L816-819, carried by
+/// geomalgo::int_curve_surface::inter_impl); this concrete IntCurveSurface
+/// carrier reports not-done there.  Returns None when not done, otherwise
+/// (in_quadric, (point, W) pairs).
+fn perform_conic_surf_ellipse(
+    ellipse: &rcad_kernel::geom::Ellipse3,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    use super::int_conic_quad::IntConicQuad;
+    let quad_type = quad.type_quadric();
+    if quad_type == crate::geomalgo::int_surf::quadric::QuadricType::Plane {
+        let ana = IntConicQuad::new_ellipse_plane(ellipse, &quad.plane());
+        finish_int_ana(&ana)
+    } else if matches!(
+        quad_type,
+        crate::geomalgo::int_surf::quadric::QuadricType::Cylinder
+            | crate::geomalgo::int_surf::quadric::QuadricType::Cone
+            | crate::geomalgo::int_surf::quadric::QuadricType::Sphere
+    ) {
+        let ana = IntConicQuad::new_ellipse_quadric(ellipse, quad);
+        finish_int_ana(&ana)
+    } else {
+        None
+    }
+}
+
+/// OCCT IntCurveSurface_Inter.pxx PerformConicSurfParabola (L822-880): the
+/// Plane surface uses the (Parab, Pln, Tolang) overload (IntAna
+/// IntConicQuad.cxx L567-570 delegates it to the quadric path), the
+/// Cylinder/Cone/Sphere quadrics use the (Parab, Quadric) overload.  The
+/// default branch falls back to the polyhedron path (IntCurveSurface_Inter.pxx
+/// L852-878); this carrier reports not-done there.
+fn perform_conic_surf_parabola(
+    parabola: &rcad_kernel::geom::Parabola3,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    use super::int_conic_quad::IntConicQuad;
+    let quad_type = quad.type_quadric();
+    if quad_type == crate::geomalgo::int_surf::quadric::QuadricType::Plane {
+        let ana = IntConicQuad::new_parabola_plane(parabola, &quad.plane());
+        finish_int_ana(&ana)
+    } else if matches!(
+        quad_type,
+        crate::geomalgo::int_surf::quadric::QuadricType::Cylinder
+            | crate::geomalgo::int_surf::quadric::QuadricType::Cone
+            | crate::geomalgo::int_surf::quadric::QuadricType::Sphere
+    ) {
+        let ana = IntConicQuad::new_parabola_quadric(parabola, quad);
+        finish_int_ana(&ana)
+    } else {
+        None
+    }
+}
+
+/// OCCT IntCurveSurface_Inter.pxx PerformConicSurfHyperbola (L882-940): the
+/// Plane surface uses the (Hypr, Pln, Tolang) overload (IntAna
+/// IntConicQuad.cxx L572-575 delegates it to the quadric path), the
+/// Cylinder/Cone/Sphere quadrics use the (Hypr, Quadric) overload.  The
+/// default branch falls back to the polyhedron path (IntCurveSurface_Inter.pxx
+/// L912-938); this carrier reports not-done there.
+fn perform_conic_surf_hyperbola(
+    hyperbola: &rcad_kernel::geom::Hyperbola3,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    use super::int_conic_quad::IntConicQuad;
+    let quad_type = quad.type_quadric();
+    if quad_type == crate::geomalgo::int_surf::quadric::QuadricType::Plane {
+        let ana = IntConicQuad::new_hyperbola_plane(hyperbola, &quad.plane());
+        finish_int_ana(&ana)
+    } else if matches!(
+        quad_type,
+        crate::geomalgo::int_surf::quadric::QuadricType::Cylinder
+            | crate::geomalgo::int_surf::quadric::QuadricType::Cone
+            | crate::geomalgo::int_surf::quadric::QuadricType::Sphere
+    ) {
+        let ana = IntConicQuad::new_hyperbola_quadric(hyperbola, quad);
+        finish_int_ana(&ana)
+    } else {
+        None
     }
 }
