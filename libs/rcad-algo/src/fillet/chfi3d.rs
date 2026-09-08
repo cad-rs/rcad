@@ -3658,12 +3658,14 @@ impl ChFi3dBuilder {
                         return true;
                     }
                     if nba > 3 {
-                        // OCCT: PerformIntersectionAtEnd(Index) — pending.
-                        self.perform_intersection_at_end_pending();
+                        // OCCT ChFi3d_Builder.cxx L828:
+                        // PerformIntersectionAtEnd(Index).
+                        super::chfi3d_builder_c2::perform_intersection_at_end(self, index);
                         return true;
                     } else if self.more_surfdata(index) {
-                        // OCCT: PerformMoreSurfdata(Index) — pending.
-                        self.perform_more_surfdata_pending();
+                        // OCCT ChFi3d_Builder.cxx L840:
+                        // PerformMoreSurfdata(Index).
+                        super::chfi3d_builder_c2b::perform_more_surfdata(self, index);
                         return true;
                     }
                     // OCCT: PerformOneCorner(Index)
@@ -3673,7 +3675,9 @@ impl ChFi3dBuilder {
                 }
                 2 => {
                     if nba > 3 {
-                        self.perform_more_three_corner_pending();
+                        // OCCT ChFi3d_Builder.cxx L868:
+                        // PerformMoreThreeCorner(Index, i).
+                        self.perform_more_three_corner(index, i as i32);
                     } else {
                         // OCCT ChFi3d_Builder.cxx L868: PerformTwoCorner(Index).
                         self.perform_two_corner_pending(index);
@@ -3682,7 +3686,9 @@ impl ChFi3dBuilder {
                 }
                 3 => {
                     if nba > 3 {
-                        self.perform_more_three_corner_pending();
+                        // OCCT ChFi3d_Builder.cxx L891:
+                        // PerformMoreThreeCorner(Index, i).
+                        self.perform_more_three_corner(index, i as i32);
                     } else {
                         // OCCT ChFi3d_Builder.cxx L891: PerformThreeCorner(Index).
                         self.perform_three_corner_pending(index);
@@ -3690,7 +3696,7 @@ impl ChFi3dBuilder {
                     false
                 }
                 _ => {
-                    self.perform_more_three_corner_pending();
+                    self.perform_more_three_corner(index, i as i32);
                     false
                 }
             }
@@ -3700,7 +3706,7 @@ impl ChFi3dBuilder {
             true
         } else {
             // Last chance...
-            self.perform_more_three_corner_pending();
+            self.perform_more_three_corner(index, i as i32);
             false
         }
     }
@@ -3719,14 +3725,6 @@ impl ChFi3dBuilder {
         };
         let st = stripe.read().expect("stripe lock");
         st.my_hdata.len() > 1
-    }
-
-    fn perform_intersection_at_end_pending(&mut self) {
-        // OCCT ChFi3d_Builder_C2.cxx PerformIntersectionAtEnd — pending.
-    }
-
-    fn perform_more_surfdata_pending(&mut self) {
-        // OCCT ChFi3d_Builder_C1.cxx L3771 PerformMoreSurfdata — pending.
     }
 
     fn perform_two_corner_pending(&mut self, index: usize) {
@@ -3750,10 +3748,6 @@ impl ChFi3dBuilder {
         // on the composition-model dispatch.
         let my_shape = super::brep_blend_func::BlendFuncSectionShape::Rational;
         super::chfi3d_filbuilder_c3::perform_three_corner(self, my_shape, index);
-    }
-
-    fn perform_more_three_corner_pending(&mut self) {
-        // OCCT ChFi3d_Builder_CnCrn.cxx PerformMoreThreeCorner — pending.
     }
 }
 

@@ -208,7 +208,7 @@ fn update_cs(
     let mut isol = 0usize;
     let mut isolbis = 0usize;
     for i in 1..=nbp {
-        w = intersection.point(i - 1).w();
+        w = intersection.point(i).w();
         if isperiodic {
             w = recadre(w, *wop, isfirst, uf, ul);
         }
@@ -219,7 +219,7 @@ fn update_cs(
     }
     if isperiodic {
         for i in 1..=nbp {
-            w = intersection.point(i - 1).w();
+            w = intersection.point(i).w();
             if uf <= w
                 && ul >= w
                 && (w - *wop).abs() < distbis
@@ -237,7 +237,7 @@ fn update_cs(
     }
     let w;
     if !recadrebis {
-        let pint = intersection.point(isol - 1);
+        let pint = intersection.point(isol);
         *p2dbout = DVec2::new(pint.u(), pint.v());
         let wraw = pint.w();
         w = if isperiodic {
@@ -246,11 +246,11 @@ fn update_cs(
             wraw
         };
     } else if dist > distbis {
-        let pint = intersection.point(isolbis - 1);
+        let pint = intersection.point(isolbis);
         *p2dbout = DVec2::new(pint.u(), pint.v());
         w = wbis;
     } else {
-        let pint = intersection.point(isol - 1);
+        let pint = intersection.point(isol);
         *p2dbout = DVec2::new(pint.u(), pint.v());
         let wraw = pint.w();
         w = super::chfi_ds::elclib_in_period(wraw, uf, ul);
@@ -268,7 +268,7 @@ fn update_cs(
 // update FIop/CPop.
 // =========================================================================
 #[allow(clippy::too_many_arguments)]
-fn inters_update_on_same(
+pub(crate) fn inters_update_on_same(
     hgs: &GeomAdaptorSurface,
     hbs: &mut BRepAdaptorSurface,
     c3dfi: &rcad_kernel::geom::Curve3,
@@ -415,15 +415,17 @@ fn update_on_face(
 
 // =========================================================================
 // OCCT ChFi3d_Builder_C1.cxx L421-449 — ChFi3d_ExtendSurface: a plane /
-// quadric keeps prol = 0; the GeomLib::ExtendSurfByLength extension of a
-// BSpline/Bezier face surface is a pending TKGeomAlgo translation (the
-// surface is returned unextended, matching the pre-extension state).
+// quadric keeps prol = 0; a BSpline/Bezier face surface is extended on
+// both u/v sides through GeomLib::ExtendSurfByLength (translated in
+// chfi3d_builder_c2.rs — the KPart / GeomConvert_ApproxSurface branches
+// are GAP carriers there).
 // =========================================================================
 pub fn chfi3d_extend_surface(s: &mut rcad_kernel::geom::Surface3, prol: &mut i32) {
     if *prol != 0 {
         return;
     }
 
+    // OCCT L426-434: prol = BSpline ? 1 : Bezier ? 2 : 0.
     *prol = match s {
         rcad_kernel::geom::Surface3::BSpline(_) => 1,
         rcad_kernel::geom::Surface3::Bezier(_) => 2,
@@ -434,8 +436,20 @@ pub fn chfi3d_extend_surface(s: &mut rcad_kernel::geom::Surface3, prol: &mut i32
     }
 
     // OCCT L436-447: bounds, D0 length, and the four
-    // GeomLib::ExtendSurfByLength calls (u/v, both senses) — pending.
-    let _ = s;
+    // GeomLib::ExtendSurfByLength calls (u/v, both senses).
+    let (umin, umax, vmin, vmax) = {
+        let [u0, u1, v0, v1] = s.default_domain();
+        (u0, u1, v0, v1)
+    };
+    let p1 = s.point_at(umin, vmin);
+    let p2 = s.point_at(umax, vmax);
+    let length = p1.distance(p2);
+
+    use rcad_kernel::geom::SurfaceEval as _;
+    super::chfi3d_builder_c2_geomlib::geom_lib_extend_surf_by_length(s, length, 1, false, true);
+    super::chfi3d_builder_c2_geomlib::geom_lib_extend_surf_by_length(s, length, 1, true, true);
+    super::chfi3d_builder_c2_geomlib::geom_lib_extend_surf_by_length(s, length, 1, false, false);
+    super::chfi3d_builder_c2_geomlib::geom_lib_extend_surf_by_length(s, length, 1, true, false);
 }
 
 // =========================================================================
@@ -1579,7 +1593,296 @@ impl ChFi3dBuilder {
             // OCCT L1397-1630: VARIANT 1 — a small missing end of curve is
             // added for the extension of the face at end and the limitation
             // of the opposing face (OnSame corners only).
-            self.perform_onsame_tail_pending();
+            //
+            // First of all the points are cut with the edge of the spine
+            // (OCCT L1409-1426).
+            let iarcspine = self.my_ds.as_mut().expect("DS").add_shape(&arcspine);
+            let ivtx = self.my_ds.as_mut().expect("DS").add_shape(&vtx);
+            let mut ovtx = Orientation::Forward;
+            // ex.Init(Arcspine.Oriented(FORWARD), VERTEX): the matching
+            // vertex carries its orientation in the edge.
+            let (sp_v1, sp_v2) = super::chfi3d_builder_0::topexp_vertices(&arcspine);
+            if vtx.is_same(&sp_v1) {
+                ovtx = sp_v1.orientation;
+            } else if vtx.is_same(&sp_v2) {
+                ovtx = sp_v2.orientation;
+            }
+            ovtx = topabs_reverse(ovtx);
+            let mut parvtx = brep_tool_parameter(&self.my_brep, &vtx, &arcspine);
+            let interfv = super::chfi3d_builder_0::chfi3d_fil_vertex_in_ds(
+                ovtx,
+                iarcspine,
+                ivtx,
+                parvtx,
+            );
+            self.my_ds
+                .as_mut()
+                .expect("DS")
+                .change_shape_interferences(iarcspine)
+                .push(interfv);
+
+            // Now the missing curves are constructed (OCCT L1429-1470).
+            // VARIANT1: parVtx = BRep_Tool::Parameter(Vtx, Arcprol).
+            parvtx = brep_tool_parameter(&self.my_brep, &vtx, &arcprol);
+            let fiop = fd.interference(ifop_arc).clone();
+            let Some((hcop, _, _)) = self.my_brep.curve_on_surface(&arcprol, &fop) else {
+                panic!("Standard_ConstructionError: Failed to get p-curve of edge");
+            };
+            let pop1 = hcop.point_at(parvtx);
+            let pop2 = fiop
+                .pcurve_on_face()
+                .expect("Fiop PCurveOnFace")
+                .point_at(fiop.parameter(isfirst));
+            let Some((hcv, _, _)) = self.my_brep.curve_on_surface(&arcprol, &fv) else {
+                panic!("Standard_ConstructionError: Failed to get p-curve of edge");
+            };
+            let mut pv1 = hcv.point_at(parvtx);
+            let mut pv2 = p2dbout;
+            chfi3d_recale(bs, &mut pv1, &mut pv2, true);
+            let pardeb_t = [pop1.x, pop1.y, pv1.x, pv1.y];
+            let parfin_t = [pop2.x, pop2.y, pv2.x, pv2.y];
+            let (bu1, bu2, bv1, bv2) = chfi3d_boite(pv1, pv2);
+            chfi3d_bound_fac(bs, bu1, bu2, bv1, bv2, true);
+            let bop = hbop.as_mut().expect("Bop");
+            let (bu1, bu2, bv1, bv2) = chfi3d_boite(pop1, pop2);
+            chfi3d_bound_fac(bop, bu1, bu2, bv1, bv2, true);
+
+            let bs_view = GeomAdaptorSurface::new(bs.surface.clone());
+            let bop_view = GeomAdaptorSurface::new(bop.surface.clone());
+            let computed = chfi3d_compute_curves(
+                &bop_view,
+                &bs_view,
+                pardeb_t,
+                parfin_t,
+                self.tolapp3d,
+                self.tol2d,
+                &mut tolreached,
+            );
+            let (zob3d, zob2dop, zob2dv) = match computed {
+                Some(res) => (res.c3d, res.pc1, res.pc2),
+                None => panic!("Standard_Failure: OneCorner : echec calcul intersection"),
+            };
+            // OCCT L1449-1452.
+            udeb = zob3d.default_domain()[0];
+            ufin = zob3d.default_domain()[1];
+            let izob = self
+                .my_ds
+                .as_mut()
+                .expect("DS")
+                .add_curve(TopOpeBRepDSCurve::new(Some(zob3d.clone()), tolreached));
+
+            // it is determined if Fop has an edge of sewing and if the
+            // curve has an intersection with the sewing edge
+            // (OCCT L1465-1500).
+            let (cout, ecout) = chfi3d_couture(&self.my_brep, &fop);
+            couture = cout;
+            edgecouture = ecout;
+
+            if couture && !self.my_brep.is_edge_degenerated(&edgecouture) {
+                let (ce, _) = self
+                    .my_brep
+                    .edge_curve_world(&edgecouture)
+                    .expect("sewing curve");
+                let ext = rcad_kernel::base::extrema::extrema_curve_curve(
+                    &ce,
+                    &zob3d,
+                    32,
+                );
+                if !ext.pairs.is_empty() {
+                    let mut imin = 0usize;
+                    let mut distmin2 = f64::MAX;
+                    for (i, pair) in ext.pairs.iter().enumerate() {
+                        let d2 = pair.distance * pair.distance;
+                        if d2 < distmin2 {
+                            distmin2 = d2;
+                            imin = i;
+                        }
+                    }
+                    if distmin2 <= 1.0e-8 {
+                        let best = &ext.pairs[imin];
+                        par1 = best.param1;
+                        par2 = best.param2;
+                        let p1 = best.point1;
+                        indpt = self
+                            .my_ds
+                            .as_mut()
+                            .expect("DS")
+                            .add_point(TopOpeBRepDSPoint::new(p1, 1.0e-4));
+                        intcouture = true;
+                        curv1 = Some(rcad_kernel::geom::Curve3::Trimmed(
+                            rcad_kernel::geom::TrimmedCurve3::new(zob3d.clone(), udeb, par2),
+                        ));
+                        curv2 = Some(rcad_kernel::geom::Curve3::Trimmed(
+                            rcad_kernel::geom::TrimmedCurve3::new(zob3d.clone(), par2, ufin),
+                        ));
+                        icurv1 = self
+                            .my_ds
+                            .as_mut()
+                            .expect("DS")
+                            .add_curve(TopOpeBRepDSCurve::new(curv1.clone(), tolreached));
+                        icurv2 = self
+                            .my_ds
+                            .as_mut()
+                            .expect("DS")
+                            .add_curve(TopOpeBRepDSCurve::new(curv2.clone(), tolreached));
+                    }
+                }
+            }
+            if intcouture {
+                // interference of curv1 and curv2 on IShape
+                // (OCCT L1502-1520).
+                let et = topabs_reverse(topabs_compose(ovtx, oarcprolv));
+                compute_curve2d(
+                    curv1.as_ref().expect("curv1"),
+                    &fop,
+                    &mut c2d1,
+                    &self.my_brep,
+                );
+                let interf = chfi3d_fil_curve_in_ds(icurv1, ishape, c2d1.clone(), et);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_shape_interferences(ishape)
+                    .push(interf);
+                compute_curve2d(
+                    curv2.as_ref().expect("curv2"),
+                    &fop,
+                    &mut c2d2,
+                    &self.my_brep,
+                );
+                let interf = chfi3d_fil_curve_in_ds(icurv2, ishape, c2d2.clone(), et);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_shape_interferences(ishape)
+                    .push(interf);
+
+                // limitation of the sewing edge (OCCT L1522-1546).
+                let iarc = self.my_ds.as_mut().expect("DS").add_shape(&edgecouture);
+                let (vdeb, vfin) = super::chfi3d_builder_0::topexp_vertices(&edgecouture);
+                let pard = brep_tool_parameter(&self.my_brep, &vdeb, &edgecouture);
+                let parf = brep_tool_parameter(&self.my_brep, &vfin, &edgecouture);
+                let ori = if (par1 - pard).abs() < (parf - par1).abs() {
+                    Orientation::Reversed
+                } else {
+                    Orientation::Forward
+                };
+                let interfedge = super::chfi3d_builder_0::chfi3d_fil_point_in_ds(
+                    ori, iarc, indpt, par1, false,
+                );
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_shape_interferences(iarc)
+                    .push(interfedge);
+
+                // interference of curv1 and curv2 on Iop
+                // (OCCT L1549-1567).
+                let iop = self.my_ds.as_mut().expect("DS").add_shape(&fop);
+                let et = topabs_reverse(topabs_compose(ovtx, oarcprolop));
+                compute_curve2d(
+                    curv1.as_ref().expect("curv1"),
+                    &fop,
+                    &mut c2d1,
+                    &self.my_brep,
+                );
+                let interfop = chfi3d_fil_curve_in_ds(icurv1, iop, c2d1.clone(), et);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_shape_interferences(iop)
+                    .push(interfop);
+                compute_curve2d(
+                    curv2.as_ref().expect("curv2"),
+                    &fop,
+                    &mut c2d2,
+                    &self.my_brep,
+                );
+                let interfop = chfi3d_fil_curve_in_ds(icurv2, iop, c2d2.clone(), et);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_shape_interferences(iop)
+                    .push(interfop);
+                let interfprol = super::chfi3d_builder_0::chfi3d_fil_vertex_in_ds(
+                    Orientation::Forward,
+                    icurv1,
+                    ivtx,
+                    udeb,
+                );
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_curve_interferences(icurv1)
+                    .push(interfprol);
+                let interfprol =
+                    super::chfi3d_builder_0::chfi3d_fil_point_in_ds(Orientation::Reversed, icurv1, indpt, par2, false);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_curve_interferences(icurv1)
+                    .push(interfprol);
+                let icc = st.index_point(isfirst, ifop_arc);
+                let interfprol =
+                    super::chfi3d_builder_0::chfi3d_fil_point_in_ds(Orientation::Forward, icurv2, indpt, par2, false);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_curve_interferences(icurv2)
+                    .push(interfprol);
+                let interfprol =
+                    super::chfi3d_builder_0::chfi3d_fil_point_in_ds(Orientation::Reversed, icurv2, icc, ufin, false);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_curve_interferences(icurv2)
+                    .push(interfprol);
+            } else {
+                // OCCT L1568-1597: no sewing intersection — the zob curve is
+                // stored whole.
+                let et = topabs_reverse(topabs_compose(ovtx, oarcprolv));
+                let interf =
+                    chfi3d_fil_curve_in_ds(izob, ishape, Some(zob2dv.clone()), et);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_shape_interferences(ishape)
+                    .push(interf);
+                let et = topabs_reverse(topabs_compose(ovtx, oarcprolop));
+                let iop = self.my_ds.as_mut().expect("DS").add_shape(&fop);
+                let interfop =
+                    chfi3d_fil_curve_in_ds(izob, iop, Some(zob2dop.clone()), et);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_shape_interferences(iop)
+                    .push(interfop);
+                let interfprol = super::chfi3d_builder_0::chfi3d_fil_vertex_in_ds(
+                    Orientation::Forward,
+                    izob,
+                    ivtx,
+                    udeb,
+                );
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_curve_interferences(izob)
+                    .push(interfprol);
+                let icc = st.index_point(isfirst, ifop_arc);
+                let interfprol =
+                    super::chfi3d_builder_0::chfi3d_fil_point_in_ds(Orientation::Reversed, izob, icc, ufin, false);
+                self.my_ds
+                    .as_mut()
+                    .expect("DS")
+                    .change_curve_interferences(izob)
+                    .push(interfprol);
+                // VARIANT1 (OCCT L1599-1613): box update on the missing end.
+                if ifop_arc == 1 {
+                    box1.add(zob3d.point_at(ufin));
+                } else {
+                    box2.add(zob3d.point_at(ufin));
+                }
+            }
         }
         chfi3d_enlarge_box_dstr(
             &self.my_brep,
@@ -1642,18 +1945,15 @@ impl ChFi3dBuilder {
         *fd.change_interference(ifad_arc) = fiad_arc;
     }
 
-    /// OCCT ChFi3d_Builder_C2.cxx PerformIntersectionAtEnd — pending.
-    fn perform_intersection_at_end(&mut self, _index: usize) {
-        // Pending translation (Builder_C2.cxx).
+    /// OCCT ChFi3d_Builder_C1.cxx L1828 — PerformIntersectionAtEnd (the
+    /// translation lives in chfi3d_builder_c2.rs).
+    fn perform_intersection_at_end(&mut self, index: usize) {
+        super::chfi3d_builder_c2::perform_intersection_at_end(self, index);
     }
-
-    /// OCCT C1.cxx L1397-1630 OnSame VARIANT-1 tail — pending (OnSame
-    /// corners only; the box KPart corner path is !onsame).
-    fn perform_onsame_tail_pending(&mut self) {}
 }
 
 /// OCCT Geom2dAPI_ProjectPointOnCurve(P2d, Cd).LowerDistanceParameter().
-fn project_point_on_curve2d(p: DVec2, cd: &rcad_kernel::geom::Curve2d) -> f64 {
+pub(crate) fn project_point_on_curve2d(p: DVec2, cd: &rcad_kernel::geom::Curve2d) -> f64 {
     let [f0, l0] = cd.default_domain();
     let n = 64usize;
     let mut best = f0;
