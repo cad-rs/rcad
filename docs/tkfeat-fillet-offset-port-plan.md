@@ -304,3 +304,34 @@ libs/rcad-algo/src/
   4. 对 fillet/ 12 文件做逐函数对齐标记盘点（`✅ OCCT-aligned` / WIP 清单），缺口回填 §7 后转 0.2（BOPAlgo_Section）。
 - **回归基线口径**：沿 tkhlr-port-plan 头部（algo lib 361/0、kernel 663、builder_stage_tests 76 + smoke 1、pavefiller_stage_tests 26）+ §2.6 的 boolean 网格基线（bopfuse 748/0、bopcommon 755/0、boptuc 745/0、bcut 729/0 含 g6、splitter 12/12）。
 - 后续 session 交接格式（沿 tkhlr-port-plan §8 体例）：本 session 提交链 / 回归基线 / 新确立翻译模式 / 下一 session 入口。
+
+### Session 2 工作状态快照（2026-09-08 实时交接——多轮并行推进后，供新 session 无缝续推）
+
+> **本快照 = 唯一权威交接点**。Session 2 在本档落盘后继续推进了 8 轮并行代理（累计 33+ 代理任务、~150k 行 OCCT 1:1 翻译入库），§7 勾选 24 项中 21 项完成。以下为中断时点完整状态。
+
+**A. 提交链（全部已入库 rcad 子模块，sd-hash-wip 分支）**：
+`77592157` 计划落盘 → `38e2c903` Stage 0.1（D6：删 topopebrepbuild.rs+hbuilder 门面）→ `6b181307` Stage 0.2+0.3（BOPAlgo_Section+MakerVolume）→ `27d3ea32` Stage 0.4（chfi3d_ds.rs 门面替代 topopebrepds.rs）→ `967a8cb6` 1a ChFi2d → `ee9ab1cf` 1b ChFiDS → `8b02f20a` 1e 批1 → `06e9bf75` 1c ChFiKPart → `203054c9` 3c 前半 → `85a91ada` gitignore → `b1f3f46c` 3b 批1 → `5df4b483` 1f 二轮 → `1b30bac9` 1e 批2+3 → `eb3506eb` 1f 批1 → `886b3ec9` 3b Make* → `1a9a88f6` 1g HBuilder TKBO → `c243478d` 1h（**STAGE 1 CLOSED**）→ `3e257715` 2a BRepAlgo → `33f30a43` 2b 批1 → `748c18d2` 2b批2+2c+2d → `9b35f75a` TKTopAlgo 数学栈 → `92e9eace` 2b尾+2e（**STAGE 2 翻译面完成**）→ `4074edd6`/`7990a49a` 文档。根仓库 sync 至 `e3167a5`。
+
+**B. 验证状态**：最后全绿点 = `cargo check 0 error` + lib 基线 `394 passed / 0 failed / 4 ignored`（394 含各轮锚点单测；4 ignored = kpart 挂死测试等）。**当前工作树 ≠ 全绿**：第九轮 6 代理仍在写（见 D）。
+
+**C. 未提交工作树内容（新 session 第一件事 = 验收下述文件并提交）**：
+1. 主代理已完成未提交项：`brep_algo/as_des.rs` 加 `#[derive(Clone)]`（MakeOffset_1 接口修复）；`topalgo/mat/{mat_bisector,mat_edge}.rs` 各加 2 个 `clear_*` 方法（~MAT2d_Mat2d 析构置空语义）；§0.6 两条新纪律 + §6 MAT2d 行 + §7 Stage2 勾选（已在 `7990a49a` 之后又改动或部分未入库——以 `git diff docs/` 为准）。
+2. **第九轮 6 代理进行中（可能被 session 中断杀掉，文件处于中间态）**：
+   - R1 `offset/brep_offset_analyse.rs`（BRepOffset_Analyse ~1,600 行）——验收=函数计数等式；
+   - R3 `libs/rcad-kernel/src/base/proj_lib.rs`（增补）+ `geomalgo/approx_curve_on_surface.rs` + `geomalgo/proj_lib_h_comp_projected_curve.rs`（ProjLib/Approx 族）——体量大，允许 staged；
+   - R4 `geomalgo/geomfill/` 新文件（GetCircle 5 重载/Pipe/Sweep/SectionGenerator 消费族）；
+   - R5 `brep_fill/brep_fill_{draft,trim_edge_tool,pipe}.rs`（引擎批1）——已知中间态错误：trim_edge_tool 缺 `use rcad_kernel::Curve2dEval` 等 import；
+   - R6 `brep_fill/brep_fill_{filling,pipe_shell,evolved,axe}.rs`（引擎批2，~9k OCCT 行，允许分批）。
+   验收标准（§0.6）：每件函数计数等式（OCCT 函数总数=rcad 已翻数）+ cargo check + 形式抽查；GAP carrier 仅限外部未翻依赖。
+
+**D. 新确立协议与坑（全部已写入 §0.6，新 session 必读）**：
+- **严格 1:1 范围**（用户点名）：非 TKBool 依赖的模块全函数体翻译，禁 staged/pending 替代，交付报告必须给"OCCT 函数总数=rcad 已翻数"等式；
+- **D6 JUDGMENT REQUIRED 协议**（用户点名"判断须过程中提出"）：严格 1:1 与 D6（TKBool→TKBO）在 TKBool 调用点必然冲突——代理遇 TKBool 依赖禁止自行选边，交付报告单列清单由主代理逐例裁决；豁免件=crate::brep_algo 与 brep_fill/（D1/D3 批准翻译件）。**已立案待裁决**：① 2a face_restrictor.rs 的 WireToFace::MakeFaces 注记"待 TopOpeBRepBuild 批"——按 D6 应改 TKBO 等价（rcad bop/algo/builder_face.rs 已有 BOPAlgo_BuilderFace 可承载）；② O2 上报 IntTools_FClass2d——已裁决=TKBO 件非 TKBool，R2 已翻真身（`bop/int_tools/int_tools_fclass2d.rs`，切换签名 `new_face(Arc<BRep>,&Shape,f64)`+`is_hole()`），O2 在 `offset/brep_offset_make_offset.rs` 的 panic 载体待切换；③ 批1 offset.rs 的 `brep_offset_surface()` stub 缺 allow_c0 参 vs 真实现 4 参——消费方切换时补参。
+- **协作坑**：① 并行代理曾对共享 kernel 文件跑 `git restore`（已广播禁令）；② Windows 下 `mv` 大小写改名静默失效——必须 cp+rm；③ Bash 工具 cwd 会被重置到根仓库——**每条命令都要显式 cd**；④ 预注册 mod.rs 必须用 Edit 精确改，禁 sed 批处理（两次误删事故）；⑤ 代理编译隔离用 CARGO_TARGET_DIR=target_xx 且会落在意外位置（target_h 曾被扫进提交——已 gitignore `target_*/`，git add 仍需显式文件列表）。
+
+**E. 剩余工作（按序）**：
+1. 第九轮验收（C.2 五件）→ 全绿 → 分组提交（offset/analyze+mat 修复一组、proj_lib+approx+geomfill 一组、brep_fill 引擎一组）→ 根 sync；
+2. carrier 切换批（C.3 三个 D6 项）；
+3. Stage 4：4.1 occt-test-gen 接入 11 网格（先修 BooleanOp/BooleanOptions 漂移）→ 4.2 ref 基线扩展（blend/chamf/offsetshape/featprism 等）→ 4.3 step-topo-diff 逐用例转绿（进入阶段 2 跑测试模式）→ 4.4 module-map 行更新（feat/fillet/offset/brep_algo/brep_fill/topalgo 新栈）+ §7 收尾。
+
+**F. 回归基线**：lib 394/0/4ignored；boolean 网格基线不变（bopfuse 748/0 等，§2.6）。
