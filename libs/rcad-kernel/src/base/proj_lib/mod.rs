@@ -18,6 +18,8 @@ use crate::geom::{
 // OCCT ProjLib package additions (TKGeomBase/ProjLib).
 pub mod adaptor; // Adaptor2d_Curve2d / Adaptor3d_Curve / Adaptor3d_Surface encodings
 pub mod project; // ProjLib::Project overloads + MakePCurveOfType + IsAnaSurf
+pub mod proj_lib_projected_curve; // ProjLib_ProjectedCurve + the analytic ProjLib_* members
+pub mod proj_lib_projected_curve_b; // ProjLib_ProjectedCurve class + Perform
 pub mod prj_resolve; // ProjLib_PrjFunc + ProjLib_PrjResolve
 
 pub use adaptor::{

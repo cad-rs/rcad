@@ -62,31 +62,77 @@ pub fn chfi_kpart_pcurve(
 // =========================================================================
 // OCCT ChFiKPart_ComputeData_Fcts.cxx L83-135 — ChFiKPart_ProjPC.
 // For spherical corners the contours which of are not isos the circle is
-// projected.  Pending boundary: the projection itself is
-// ProjLib_ProjectedCurve (TKGeomBase/ProjLib), not translated in rcad yet —
-// the OCCT NotImplemented paths are preserved and the ProjLib call is a
-// marked boundary.
+// projected.
 // =========================================================================
 pub fn chfi_kpart_proj_pc(
-    _cg: &Curve3,
-    sg: &Surface3,
-    _pcurv: &mut rcad_kernel::geom::Curve2d,
+    cg: &rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor,
+    sg: &rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomSurfaceAdaptor,
+    pcurv: &mut rcad_kernel::geom::Curve2d,
 ) {
-    // OCCT L87: if (Sg.GetType() < GeomAbs_BezierSurface) { ... } else throw.
+    use rcad_kernel::base::proj_lib::proj_lib_projected_curve_b::ProjLibProjectedCurve;
+    use rcad_kernel::base::proj_lib::{Adaptor3dSurface, GeomAbsSurfaceType};
+    use rcad_kernel::geom::{BezierCurve2, BSplineCurve2, Curve2d};
+
+    // OCCT L87: if (Sg.GetType() < GeomAbs_BezierSurface) — the five
+    // analytic kinds precede BezierSurface in the GeomAbs_SurfaceType
+    // ordering.
     let is_analytic = matches!(
-        sg,
-        Surface3::Plane(_)
-            | Surface3::Cylinder(_)
-            | Surface3::Cone(_)
-            | Surface3::Sphere(_)
-            | Surface3::Torus(_)
+        sg.get_type(),
+        GeomAbsSurfaceType::Plane
+            | GeomAbsSurfaceType::Cylinder
+            | GeomAbsSurfaceType::Cone
+            | GeomAbsSurfaceType::Sphere
+            | GeomAbsSurfaceType::Torus
     );
     if is_analytic {
-        // OCCT L89-91: ProjLib_ProjectedCurve Projc(HSg, HCg); then the
-        // Line / Bezier / BSpline switch.  Pending boundary — the rcad
-        // ProjLib translation does not exist yet.
-        panic!("Standard_NotImplemented: ProjLib_ProjectedCurve pending in rcad (approximate pcurve)");
+        // OCCT L88-91: HCg = new GeomAdaptor_Curve(Cg);
+        //              HSg = new GeomAdaptor_Surface(Sg);
+        //              ProjLib_ProjectedCurve Projc(HSg, HCg);
+        let hc = std::sync::Arc::new(cg.clone());
+        let hs = std::sync::Arc::new(sg.clone());
+        let projc = ProjLibProjectedCurve::with_surface_curve(hs, hc);
+        // OCCT L92-129: the Line / Bezier / BSpline switch over the
+        // projection result.
+        match projc.get_type() {
+            rcad_kernel::base::proj_lib::CurveType::Line => {
+                // OCCT L95-97: Pcurv = new Geom2d_Line(Projc.Line()).
+                *pcurv = Curve2d::Line(projc.line());
+            }
+            rcad_kernel::base::proj_lib::CurveType::Bezier => {
+                // OCCT L99-111: the poles (+ the weights when rational)
+                // rebuild the Geom2d_BezierCurve.
+                if let Some(bez) = projc.bezier() {
+                    *pcurv = Curve2d::Bezier(BezierCurve2 {
+                        control_points: bez.control_points,
+                        weights: bez.weights,
+                    });
+                } else {
+                    panic!("Standard_NotImplemented: failed approximation of the pcurve ");
+                }
+            }
+            rcad_kernel::base::proj_lib::CurveType::BSpline => {
+                // OCCT L113-129: the poles / knots / multiplicities (+ the
+                // weights when rational) rebuild the Geom2d_BSplineCurve.
+                // The rcad BSplineCurve2 carries the same data with the knot
+                // vector flat-expanded.
+                if let Some(b) = projc.bspline() {
+                    *pcurv = Curve2d::BSpline(BSplineCurve2 {
+                        degree: b.degree,
+                        knots: b.knots,
+                        control_points: b.control_points,
+                        weights: b.weights,
+                    });
+                } else {
+                    panic!("Standard_NotImplemented: failed approximation of the pcurve ");
+                }
+            }
+            // OCCT L130-133: default: throw
+            // Standard_NotImplemented("failed approximation of the pcurve ").
+            _ => panic!("Standard_NotImplemented: failed approximation of the pcurve "),
+        }
     } else {
+        // OCCT L134-137: throw
+        // Standard_NotImplemented("approximate pcurve on the left surface").
         panic!("Standard_NotImplemented: approximate pcurve on the left surface");
     }
 }
@@ -510,15 +556,31 @@ pub(crate) fn face_cone(s: &Shape) -> Option<super::chfi_kpart_gp::GpConicalSurf
     })
 }
 
-/// OCCT BRepAdaptor_Surface::FirstUParameter()/LastUParameter() — the face
-/// UV bounds (TFaceData::uv_domain); the fallback is the natural u domain
-/// of the analytic surface (pending boundary when the face carries no
-/// uv_domain).
+/// OCCT ChFiKPart_ComputeData.cxx L115-116 (and its L131/L150/L165
+/// siblings) — `S2->FirstUParameter(), S2->LastUParameter()` of the
+/// BRepAdaptor_Surface built by ChFi3d_Builder::ConexFaces
+/// (ChFi3d_Builder_2.cxx L884: `Sb.Initialize(F)` with the default
+/// Restriction = true, BRepAdaptor_Surface.hxx L65).
+/// BRepAdaptor_Surface::Initialize (BRepAdaptor_Surface.cxx L71-76) loads
+/// `BRepTools::UVBounds(F, umin, umax, vmin, vmax)` as the adaptor domain,
+/// so the first/last U parameters are the FACE's parameter-space box.  The
+/// rcad TFaceData::uv_domain cache carries that box; when it is absent the
+/// OCCT AddUVBounds empty-box fallback applies — the surface natural
+/// domain (BRepTools.cxx L139-153), and a null surface leaves the box void
+/// (L76-79).  The former rcad (0, 2*pi) constant is gone.
 pub(crate) fn face_u_range(s: &Shape) -> (f64, f64) {
     if let Some([umin, umax, ..]) = s.as_face().and_then(|f| f.uv_domain) {
         (umin, umax)
     } else {
-        (0.0, 2.0 * std::f64::consts::PI)
+        // OCCT BRepTools::AddUVBounds L139-153: the empty box takes the
+        // surface natural bounds; a null surface leaves it void (zeros).
+        match s.as_face().and_then(|f| f.surface.as_ref()) {
+            Some(surf) => {
+                let [u1, u2, _, _] = rcad_kernel::geom::SurfaceEval::default_domain(surf);
+                (u1, u2)
+            }
+            None => (0.0, 0.0),
+        }
     }
 }
 

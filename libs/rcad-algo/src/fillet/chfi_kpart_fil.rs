@@ -1005,11 +1005,18 @@ pub fn chfi_kpart_sphere(
     let axci = GpAx3::new_pn_vx(cen, dci, ddx);
     let ci2 = GpCirc::new(axci, rad);
     let c = Curve3::Circle(ci2.to_circle3());
-    // OCCT L162-164: GeomAdaptor_Surface AS(gsph); GeomAdaptor_Curve AC(C, 0, ang);
+    // OCCT L162-164: GeomAdaptor_Surface AS(gsph); GeomAdaptor_Curve AC(C, 0., ang);
     // ChFiKPart_ProjPC(AC, AS, C2dFil) — the pcurve of the circle on the
-    // sphere support surface via ProjLib_ProjectedCurve (pending rcad
-    // translation of TKGeomBase/ProjLib).
-    chfi_kpart_proj_pc(&c, &gsph, &mut c2dfil);
+    // sphere support surface via ProjLib_ProjectedCurve.
+    let as_ = rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomSurfaceAdaptor::new(
+        gsph.clone(),
+    );
+    let ac = rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor::with_range(
+        c.clone(),
+        0.0,
+        ang,
+    );
+    chfi_kpart_proj_pc(&ac, &as_, &mut c2dfil);
     // OCCT L165-166: p2dbid = C2dFil->Value(0.); pp2dbid = (uu1, vv1).
     let p2dbid = curve2d_value_zero(&c2dfil);
     let pp2dbid = DVec2::new(uu1, vv1);
