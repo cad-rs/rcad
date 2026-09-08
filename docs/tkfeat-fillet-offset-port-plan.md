@@ -337,7 +337,7 @@ libs/rcad-algo/src/
 **E. 剩余工作（按序）**：
 1. ~~第九轮验收 → 分组提交 → 根 sync~~ **已完成（E1 记录）**；
 2. ~~carrier 切换批~~ **已完成（E1 记录）**；
-3. Stage 4：~~4.1 接入~~（完成）→ ~~4.2 ref 基线~~（完成）→ **4.3 step-topo-diff 逐用例转绿（当前入口；先等门面解锁批收口）** → 4.4 module-map 行更新 + §7 收尾。
+3. Stage 4：~~4.1 接入~~（完成）→ ~~4.2 ref 基线~~（完成）→ **4.3 逐用例转绿（进行中：blend a1/a3 真实链全过；F0-F3+角点尾+死锁修复已落地；剩余 9 例的前沿见 E2 §blend）** → 4.4 module-map 行更新 + §7 收尾。
 
 **E1. 验收收官记录（2026-09-08 续推 session，本段即权威交接点）**：
 
@@ -348,4 +348,13 @@ libs/rcad-algo/src/
 - **回归基线（提交门槛实测）**：lib **403/0/4**（+9 第九轮锚点）、kernel **664/0**（+1）、stage **76/0 + smoke 1/0 + pavefiller 26/0**（worktree b2278cf0 实测）；boolean 五网格基线复跑进行中。**磁盘事件**：C: 盘 0 可用致构建失败——清理 agent 隔离 target 目录 + 根 incremental 缓存释放 52 GB（默认 target 未动）。
 - **新排期项（承接 E0 R4 staged 之外新增）**：① 门面解锁批（进行中）；② BRepFill_MultiLine/ApproxSeewing 兄弟类（TrimSurfaceTool::Project 消费）；③ BRepMAT2d_* 包装类与 topalgo/mat2d 内核的统一（evolved 载体暂居）；④ BRepTools_Modifier/Quilt/TrsfModification 正式批（现 feat/evolved 载体）；⑤ kernel regularity/continuity 表（evolved 的 UpdateTolerances no-op 族）。
 
-**F. 回归基线**：lib 403/0/4ignored（+kernel 664/0）；stage 76+smoke 1+pavefiller 26；boolean 五网格基线不变（bopfuse 748/0 等，§2.6，复跑中）。
+**E2. Session-3 实时续推记录（2026-09-08 深夜，第五轮并行 8 代理后）**：
+
+- **第九轮组 1-3 + carrier 批全落地**：组 1/2/3 提交（`d419914e`/`2ea230ed`/`201979aa`）→ C.3 批（`7a6ed310`）→ E0 Analyse 批（`b2278cf0`）→ 门面解锁（`813beef0`）→ Sweep 批 1/2/3（`3f8973cc`/`5e9c1c35`/`c67561b2`+part B 再派清单）→ F1（`32dbe2ba`）→ F3（`bdf4b299`）→ F2+死锁+守卫（`5b6a832f`）→ BRepSweep 全包（`ddc8d551`，148=148，lib 406）→ feat 切换（`811a9307`）→ F0（`94be5dde`/`7b13941`）→ int_patch（`e05ebf17`）→ pipe_shell 切换（`e602ba5a`）→ 角点尾（`b7f81ab5`）→ fillet_surf（`62f151da`）。基线 lib **407/0/4**、kernel **671/0**、stage 76+1+26；全量套件（--tests）真实目标全绿。
+- **4.3 blend 真实链现状（13 例断言口径）**：**a1/a3 PASS**（首批全量断言通过——单边倒角全链路：ChFi3d surf→FilDS→HBuilder 合并→Solid）；x1 拓扑断言全过、面积差 3%（BSpline 圆角近似——F3 后重测待验证）；a2/p8/p9/q2 断言差；a4=真实 OCCT too-big-radius raise（C1 L1285，需查分支真实性）；q1/q4/q7=`Point(5)` 越界（DS 点表未及——下一前沿）；complex b5/g9=2b:400 null-spine。
+- **本 session 关键修复（全部带 OCCT 锚点、零绕行）**：① OCC119 RwLock 自重入死锁（c1 OCC119 循环自身走已持有守卫直读）；② 同类第二处（onecorner+more_surfdata）；③ chfi3d_ds 全访问器 IsBound 沉淀语义（curve/shape/point 系，DataStructure.cxx 同构）；④ 5 处 update_cs point(i-1)→point(i) 索引修正（0/1-based）；⑤ gtest Ellipse2d minor_dir 存量破损 7 处；⑥ gi=0 根因=PerformIntersectionAtEnd 空钩（角点记录在 OCCT 中于该函数内部设置）。
+- **关键教训**：① 测试发射必须走真门面（blend 曾接在遗留 fillet.rs 上，量了半天"假链路"）；② 翻译完的类必须有调用点巡检（KPart 三后端零调用点 = 无效翻译）；③ `cargo test | tail` 管道吞退出码——验证禁止经管道；④ 验证口径必须含 `--tests`（--lib 不编集成目标，存量破损数日未察觉）；⑤ 并行代理隔离 target 目录是磁盘杀手——session 末必须集中清理。
+- **E2 剩余前沿（4.3 续）**：blend 9 例（q 族 Point 表、a4 raise 真实性、x1 面积=BSpline 圆角近似、a2/p8/p9 断言）；thrusection a1 下一瓶颈=CompatibleWires 空边数据；BRepFill_Sweep part B（~2,300 行，再派清单在批 3 报告 §4）；GeomFill_Pipe/Sweep 的 AppBlend_AppSurf 正式批；W3（SetFilletShape 非 Rational 派发拼接）待拍板；pipe_shell 切换后的 thrusection/pipe 网格全量重测。
+- **boolean 五网格回归**：复跑进行中（本轮提交后）；若守卫/切换引入任何回归即回滚定位。
+
+**F. 回归基线**：lib 407/0/4ignored（+kernel 671/0）；stage 76+smoke 1+pavefiller 26；boolean 五网格基线不变（bopfuse 748/0 等，§2.6）。
