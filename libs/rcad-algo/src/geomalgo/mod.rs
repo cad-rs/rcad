@@ -54,6 +54,7 @@ pub mod plate;       // Plate (variational spline plate: constraints + Plate_Pla
 pub mod geomplate;   // GeomPlate (plate surface building on top of Plate)
 pub mod geomfill;    // GeomFill (BSplineCurves filling: Stretch/Coons/Curved)
 pub mod law;         // Law (evolution laws: Function/Constant/Composite)
+pub mod approx_curve_on_surface; // Approx_CurveOnSurface (curve-on-surface approximation over AdvApprox)
 
 pub use int_polyh::IntPolyhPoint;
 pub use top_trans::surface_transition::SurfaceTransition;

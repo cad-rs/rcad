@@ -15,6 +15,22 @@ use crate::geom::{
     Parabola3, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
 
+// OCCT ProjLib package additions (TKGeomBase/ProjLib).
+pub mod adaptor; // Adaptor2d_Curve2d / Adaptor3d_Curve / Adaptor3d_Surface encodings
+pub mod project; // ProjLib::Project overloads + MakePCurveOfType + IsAnaSurf
+pub mod prj_resolve; // ProjLib_PrjFunc + ProjLib_PrjResolve
+
+pub use adaptor::{
+    Adaptor2dCurve2d, Adaptor3dCurve, Adaptor3dSurface, CurveOnSurface, Geom2dCurveAdaptor,
+    GeomAbsSurfaceType,
+};
+pub use project::{
+    is_ana_surf, make_pcurve_of_type, project_cone_circ, project_cone_lin, project_cone_pnt,
+    project_cylinder_circ, project_cylinder_lin, project_cylinder_pnt, project_pln_circ,
+    project_pln_elips, project_pln_hypr, project_pln_lin, project_pln_parab, project_pln_pnt,
+    project_sphere_circ, project_sphere_pnt, project_torus_circ, project_torus_pnt,
+};
+
 // ============================================================================
 // CurveType — mirrors GeomAbs_CurveType
 // ============================================================================
