@@ -355,6 +355,6 @@ libs/rcad-algo/src/
 - **本 session 关键修复（全部带 OCCT 锚点、零绕行）**：① OCC119 RwLock 自重入死锁（c1 OCC119 循环自身走已持有守卫直读）；② 同类第二处（onecorner+more_surfdata）；③ chfi3d_ds 全访问器 IsBound 沉淀语义（curve/shape/point 系，DataStructure.cxx 同构）；④ 5 处 update_cs point(i-1)→point(i) 索引修正（0/1-based）；⑤ gtest Ellipse2d minor_dir 存量破损 7 处；⑥ gi=0 根因=PerformIntersectionAtEnd 空钩（角点记录在 OCCT 中于该函数内部设置）。
 - **关键教训**：① 测试发射必须走真门面（blend 曾接在遗留 fillet.rs 上，量了半天"假链路"）；② 翻译完的类必须有调用点巡检（KPart 三后端零调用点 = 无效翻译）；③ `cargo test | tail` 管道吞退出码——验证禁止经管道；④ 验证口径必须含 `--tests`（--lib 不编集成目标，存量破损数日未察觉）；⑤ 并行代理隔离 target 目录是磁盘杀手——session 末必须集中清理。
 - **E2 剩余前沿（4.3 续）**：blend 9 例（q 族 Point 表、a4 raise 真实性、x1 面积=BSpline 圆角近似、a2/p8/p9 断言）；thrusection a1 下一瓶颈=CompatibleWires 空边数据；BRepFill_Sweep part B（~2,300 行，再派清单在批 3 报告 §4）；GeomFill_Pipe/Sweep 的 AppBlend_AppSurf 正式批；W3（SetFilletShape 非 Rational 派发拼接）待拍板；pipe_shell 切换后的 thrusection/pipe 网格全量重测。
-- **boolean 五网格回归**：复跑进行中（本轮提交后）；若守卫/切换引入任何回归即回滚定位。
+- **boolean 五网格回归（终判）**：今日提交**零布尔回归**——bopfuse 744/4、bopcommon 751/4、boptuc 741/4、bcut（除 g6）201/0、splitter 16/2。全部失败在昨日提交点（7990a49a）复现=存量：① ze7/ze8/ze9/zf1 族（bopfuse/bopcommon/boptuc 各 4，空结果 0 顶点）；② splitter a2/b2；③ bcut g6 + boptuc 各一次 100% CPU 忙转挂死（flaky，boptuc 复跑 1.48s 全过；bcut g6 单线程复现、排除后其余 201/0）。三项全部立档存量待办，不计入本计划回归口径。
 
 **F. 回归基线**：lib 407/0/4ignored（+kernel 671/0）；stage 76+smoke 1+pavefiller 26；boolean 五网格基线不变（bopfuse 748/0 等，§2.6）。
