@@ -215,8 +215,9 @@ impl BRepOffsetOffset {
             let _ = (uu1, uu2);
         }
 
-        // OCCT L524: TheSurf = BRepOffset::Surface(S, myOffset, myStatus).
-        let mut the_surf = brep_offset_surface(&s, my_offset, &mut self.my_status);
+        // OCCT L524: TheSurf = BRepOffset::Surface(S, myOffset, myStatus) —
+        // the OCCT call uses the hxx default allowC0 = false.
+        let mut the_surf = brep_offset_surface(&s, my_offset, &mut self.my_status, false);
 
         // processing offsets of faces with possible degenerated edges
         // OCCT L526-807.

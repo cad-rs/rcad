@@ -296,8 +296,8 @@ impl BRepOffsetMakeOffset {
                             if pon_el.distance(pon_e) <= PRECISION_PCONFUSION {
                                 let mut b_is_hole;
                                 // OCCT L3378-3385: aE1/aE2, aW1/aW2, aPL,
-                                // IntTools_FClass2d aClsf [D6 JUDGMENT
-                                // REQUIRED: TKBool/IntTools].
+                                // IntTools_FClass2d aClsf (D6 adjudicated:
+                                // TKBO/IntTools real body, see below).
                                 let (a_e1, a_e2) = if a_circ.radius > a_circ_oe.radius {
                                     (an_edge.clone(), oe.clone())
                                 } else {
@@ -328,9 +328,20 @@ impl BRepOffsetMakeOffset {
                                     let mut a_face =
                                         bb.make_face(&mut self.my_brep, Some(a_pl.clone()), Shape::null());
                                     bat::builder_add_face_wire(&mut a_face, a_w);
+                                    // OCCT L3373/L3394-3395: IntTools_FClass2d
+                                    // aClsf; aClsf.Init(aFace,
+                                    // Precision::Confusion()); bIsHole =
+                                    // aClsf.IsHole().  The rcad classifier is
+                                    // constructed with the owning BRep handle
+                                    // (OCCT reaches it through the TopoDS
+                                    // handles) — `new_face` carries the same
+                                    // Init payload (cxx L61-66).
                                     let mut a_clsf =
-                                        super::brep_offset_make_offset::IntToolsFClass2d;
-                                    a_clsf.init(&a_face, PRECISION_CONFUSION);
+                                        crate::bop::int_tools::int_tools_fclass2d::IntToolsFClass2d::new_face(
+                                            std::sync::Arc::new(self.my_brep.clone()),
+                                            &a_face,
+                                            PRECISION_CONFUSION,
+                                        );
                                     b_is_hole = a_clsf.is_hole();
                                     if (b_is_hole && i == 0) || (!b_is_hole && i == 1) {
                                         // OCCT L3345: aW.Nullify(); BB.MakeWire(aW);
@@ -338,8 +349,6 @@ impl BRepOffsetMakeOffset {
                                         *a_w = bb.make_wire(&mut self.my_brep);
                                         bat::builder_add_wire_edge(a_w, &bat::reversed(a_e));
                                     }
-                                    let _ = b_is_hole;
-                                    b_is_hole = false;
                                 }
                                 //
                                 let mut new_face_new = bb.make_face(

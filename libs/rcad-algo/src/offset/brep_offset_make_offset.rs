@@ -473,22 +473,9 @@ impl GeomFillGenerator {
     }
 }
 
-/// OCCT IntTools_FClass2d (TKBool/IntTools) — GAP carrier
-/// [D6 JUDGMENT REQUIRED: TKBool dependency, see the delivery report]
-/// (architecture difference #52): the face classifier of MakeMissingWalls.
-pub(crate) struct IntToolsFClass2d;
-
-impl IntToolsFClass2d {
-    /// OCCT IntTools_FClass2d::Init(Face, Tol).
-    pub fn init(&mut self, _face: &Shape, _tol: f64) {
-        panic!("GAP: IntTools_FClass2d::Init (TKBool/IntTools not translated)");
-    }
-
-    /// OCCT IntTools_FClass2d::IsHole().
-    pub fn is_hole(&self) -> bool {
-        panic!("GAP: IntTools_FClass2d::IsHole (TKBool/IntTools not translated)");
-    }
-}
+// OCCT IntTools_FClass2d — the real body lives in
+// crate::bop::int_tools::int_tools_fclass2d (the C.3 carrier switch; the
+// local panic carrier is deleted).
 
 /// OCCT BOPAlgo_MakerVolume (TKBO/BOPAlgo) — GAP carrier (architecture
 /// difference #52): the MakeVolume engine of BuildShellsCompleteInter.

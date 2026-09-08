@@ -10,8 +10,9 @@
 //! 2. BRepTopAdaptor_FClass2d -> topalgo::brep_top_adaptor::fclass2d::
 //!    FClass2d over FaceShapeSource (loc_ope_wires_on_shape_b.rs arch.
 //!    diff. #8 precedent).
-//! 3. TopOpeBRepBuild_WireToFace is a GAP-pending re-host (see the struct
-//!    comment).
+//! 3. TopOpeBRepBuild_WireToFace::MakeFaces runs over the D6-adjudicated TKBO
+//!    equivalent (BOPAlgo_BuilderFace on a local BOPDS) — see the struct
+//!    comment.
 //! 4. BRep_Builder edits are in-place Arc::make_mut mutations (tool.rs);
 //!    OCCT TShape sharing makes them visible through every handle, rcad
 //!    mutates the owning copy.
@@ -279,11 +280,8 @@ impl BRepAlgoFaceRestrictor {
 /// OCCT TopOpeBRepBuild_WireToFace (TopOpeBRepBuild_WireToFace.cxx L32-64) —
 /// the AddWire/MakeFaces vehicle of the non-correction Perform path.
 ///
-/// GAP (architecture difference #3): MakeFaces drives the TKBool
-/// TopOpeBRepBuild chain (WireEdgeSet / FaceBuilder with ForceClass=true /
-/// TopOpeBRepBuild_Builder::MakeFaces) which is not translated yet; the
-/// output list stays empty so the callers take the empty-faces path.  Closes
-/// with the TKBool/TopOpeBRepBuild batch.
+/// D6 (2026-09-07): MakeFaces is implemented over the equivalent TKBO engine
+/// (BOPAlgo_BuilderFace) — see [`Self::make_faces`].
 pub struct TopOpeBRepBuildWireToFace {
     /// OCCT: myLW.
     my_lw: Vec<Shape>,
@@ -313,19 +311,41 @@ impl TopOpeBRepBuildWireToFace {
     }
 
     /// OCCT TopOpeBRepBuild_WireToFace::MakeFaces(F, LF) (cxx L50-64).
-    pub fn make_faces(&mut self, _f: &Shape, lf: &mut Vec<Shape>) {
+    ///
+    /// D6 adjudication (2026-09-07, plan §0.6/§8): the TKBool
+    /// TopOpeBRepBuild chain (WireEdgeSet / FaceBuilder with ForceClass=true /
+    /// TopOpeBRepBuild_Builder::MakeFaces) is NOT translated; the equivalent
+    /// TKBO path is BOPAlgo_BuilderFace on the reference face with the wires'
+    /// edges as the section-edge set (rcad bop/algo/builder_face.rs — the
+    /// same engine the boolean FaceSplit path consumes).
+    pub fn make_faces(&mut self, f: &Shape, lf: &mut Vec<Shape>) {
         lf.clear();
 
-        // OCCT L55-62:
-        //   TopOpeBRepBuild_WireEdgeSet wes(F);
-        //   for (it(myLW)) wes.AddShape(it.Value());
-        //   bool ForceClass = true;
-        //   TopOpeBRepBuild_FaceBuilder FB;
-        //   FB.InitFaceBuilder(wes, F, ForceClass);
-        //   TopOpeBRepDS_BuildTool BT(TopOpeBRepTool_APPROX);
-        //   TopOpeBRepBuild_Builder B(BT);
-        //   B.MakeFaces(F, FB, LF);
-        // (pending — see the struct comment.)
+        // OCCT L55-58: TopOpeBRepBuild_WireEdgeSet wes(F); wes.AddShape(W)
+        // per wire — the wire edges become the BuilderFace section-edge set.
+        // A local BOPDS mirrors the OCCT BuildTool-side shape registration.
+        let mut ds = crate::bop::ds::DS::new();
+        let face_index = ds.append_shape(f.clone());
+        let mut edges: Vec<Shape> = Vec::new();
+        for w in &self.my_lw {
+            for e in explorer(w, ShapeType::Edge, ShapeType::Shape) {
+                ds.append_shape(e.clone());
+                edges.push(e);
+            }
+        }
+
+        // OCCT L60-63: FaceBuilder(wes, F, ForceClass=true) +
+        // Builder::MakeFaces(F, FB, LF) -> BOPAlgo_BuilderFace::Perform.
+        // myFace is normalized to FORWARD (BOPAlgo_BuilderFace::SetFace,
+        // BuilderFace.cxx L79-84; same encoding as bop/algo/builder.rs
+        // L2490-2494).
+        let f_forward = Shape::new(f.data.clone(), f.location, Orientation::Forward);
+        let mut bf = crate::bop::algo::builder_face::BuilderFace::new(&ds);
+        bf.my_face = Some(f_forward);
+        bf.my_face_index = Some(face_index);
+        bf.my_edges = edges;
+        bf.perform();
+        lf.extend(bf.my_areas);
     }
 }
 

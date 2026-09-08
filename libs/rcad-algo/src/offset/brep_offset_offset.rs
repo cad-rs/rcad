@@ -65,19 +65,11 @@ pub enum BRepOffsetStatus {
 // GAP carriers / leaves (architecture differences #9-#17, #20).
 // ---------------------------------------------------------------------------
 
-/// OCCT BRepOffset::Surface(Surface, Offset, theStatus, allowC0 = true)
-/// (BRepOffset.cxx L44-365) — the elementary offset-surface factory.
-/// GAP: staged as the next translation unit of the package (architecture
-/// difference #9).
-pub(super) fn brep_offset_surface(
-    the_surface: &Surface3,
-    the_offset: f64,
-    the_status: &mut BRepOffsetStatus,
-) -> Surface3 {
-    let _ = (the_surface, the_offset);
-    *the_status = BRepOffsetStatus::Good;
-    panic!("GAP: BRepOffset::Surface (BRepOffset.cxx L44-365 staged, not translated)");
-}
+/// OCCT BRepOffset::Surface (BRepOffset.cxx L44-202) — the elementary
+/// offset-surface factory; the real body lives in [`super::brep_offset_surface`]
+/// (the C.3 carrier switch; the old 3-argument stub is deleted).  The OCCT
+/// hxx default is `allowC0 = false` (BRepOffset.hxx L44-47).
+pub use super::brep_offset_surface::brep_offset_surface;
 
 /// OCCT BRepOffset_Tool::Gabarit(aCurve) (BRepOffset_Tool.cxx L313-...) —
 /// GAP (architecture difference #10).
