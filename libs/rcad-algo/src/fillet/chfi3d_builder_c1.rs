@@ -28,7 +28,7 @@ use super::chfi3d_builder_0::chfi3d_fil_curve_in_ds;
 use super::chfi3d_builder_0_filds::{chfi3d_contains, geom2d_int_g_inter};
 use super::chfi3d::{topabs_compose, topabs_reverse, ChFi3dBuilder};
 use super::chfi3d::chfi3d_index_of_surf_data;
-use super::chfi_ds::{ChFiDS_CommonPoint, ChFiDS_State, ChFiDSSurfData, SharedStripe};
+use super::chfi_ds::{ChFiDS_CommonPoint, ChFiDS_State, ChFiDSStripe, ChFiDSSurfData, SharedStripe};
 use super::chfi3d_ds::{
     TopOpeBRepDSCurve, TopOpeBRepDSHDataStructure, TopOpeBRepDSInterference, TopOpeBRepDSKind,
     TopOpeBRepDSPoint,
@@ -1187,10 +1187,29 @@ impl ChFi3dBuilder {
             // intersecting fillets — take all the interferences with faces
             // from all the stripes and look if their pcurves intersect our
             // cork pcurve.
+            // RwLock is not re-entrant: the self stripe (and its current
+            // surfdata) are already write-locked by this function, so the
+            // self entries are read through the held guards; OCCT reads
+            // everything through raw handles with no locks.
             for a_check_stripe in &self.my_list_stripe {
-                let guard = a_check_stripe.read().expect("stripe lock");
-                for a_data_arc in &guard.my_hdata {
-                    let a_data = a_data_arc.read().expect("surfdata lock");
+                let is_self_stripe = std::sync::Arc::ptr_eq(a_check_stripe, &stripe);
+                let guard_owned;
+                let stripe_ref: &ChFiDSStripe = if is_self_stripe {
+                    &st
+                } else {
+                    guard_owned = a_check_stripe.read().expect("stripe lock");
+                    &guard_owned
+                };
+                for a_data_arc in &stripe_ref.my_hdata {
+                    let data_owned;
+                    let a_data: &ChFiDSSurfData = if is_self_stripe
+                        && std::sync::Arc::ptr_eq(a_data_arc, &fd_lock)
+                    {
+                        &fd
+                    } else {
+                        data_owned = a_data_arc.read().expect("surfdata lock");
+                        &data_owned
+                    };
                     let common_face = if ishape == a_data.index_of_s1 {
                         Some(1)
                     } else if ishape == a_data.index_of_s2 {

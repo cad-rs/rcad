@@ -206,6 +206,7 @@ mod geom2d_ellipse_tests {
         Curve2d::Ellipse(Ellipse2d {
             center: Point2::ZERO,
             major_dir: Vec2::X,
+            minor_dir: Vec2::Y,
             major_radius: 5.0,
             minor_radius: 3.0,
         })

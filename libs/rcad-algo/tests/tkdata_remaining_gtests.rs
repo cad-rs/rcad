@@ -1420,7 +1420,7 @@ mod tkdata_tkg2d_tests {
         let curves: Vec<Curve2d> = vec![
             Curve2d::Line(Line2d { origin: Point2::ZERO, direction: Vec2::X }),
             Curve2d::Circle(Circle2d::new(Point2::ZERO, 2.0)),
-            Curve2d::Ellipse(Ellipse2d { center: Point2::ZERO, major_dir: Vec2::X, major_radius: 3.0, minor_radius: 2.0 }),
+            Curve2d::Ellipse(Ellipse2d { center: Point2::ZERO, major_dir: Vec2::X, minor_dir: Vec2::Y, major_radius: 3.0, minor_radius: 2.0 }),
             Curve2d::Parabola(Parabola2d { origin: Point2::ZERO, axis_dir: Vec2::X, focal_param: 1.0 }),
             Curve2d::Hyperbola(Hyperbola2d { center: Point2::ZERO, major_dir: Vec2::X, semi_major: 3.0, semi_minor: 2.0 }),
         ];
@@ -1436,7 +1436,7 @@ mod tkdata_tkg2d_tests {
     #[test]
     fn geom2d_grid_eval_ellipse() {
         let e = Curve2d::Ellipse(Ellipse2d {
-            center: Point2::ZERO, major_dir: Vec2::X,
+            center: Point2::ZERO, major_dir: Vec2::X, minor_dir: Vec2::Y,
             major_radius: 3.0, minor_radius: 2.0,
         });
         for i in 0..=12 {
@@ -1485,8 +1485,8 @@ mod tkdata_tkg2d_tests {
         let c2 = Curve2d::Circle(Circle2d::new(Point2::ZERO, 5.0));
         assert_eq!(format!("{:?}", c1), format!("{:?}", c2));
         // Ellipse 锟?same radii
-        let e1 = Curve2d::Ellipse(Ellipse2d { center: Point2::ZERO, major_dir: Vec2::X, major_radius: 3.0, minor_radius: 2.0 });
-        let e2 = Curve2d::Ellipse(Ellipse2d { center: Point2::ZERO, major_dir: Vec2::X, major_radius: 3.0, minor_radius: 2.0 });
+        let e1 = Curve2d::Ellipse(Ellipse2d { center: Point2::ZERO, major_dir: Vec2::X, minor_dir: Vec2::Y, major_radius: 3.0, minor_radius: 2.0 });
+        let e2 = Curve2d::Ellipse(Ellipse2d { center: Point2::ZERO, major_dir: Vec2::X, minor_dir: Vec2::Y, major_radius: 3.0, minor_radius: 2.0 });
         assert_eq!(format!("{:?}", e1), format!("{:?}", e2));
     }
 

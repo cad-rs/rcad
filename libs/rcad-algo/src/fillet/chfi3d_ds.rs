@@ -392,7 +392,7 @@ pub struct ChFi3dDSSideTables {
 // ChFi3d DS facade — the ChFi3d call surface of the retired
 // TopOpeBRepDS_HDataStructure, carried by BOPDS + side tables (D6).
 // =========================================================================
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TopOpeBRepDSHDataStructure {
     /// rcad TKBO BOPDS data structure — the shape registration carrier
     /// (D6).  Populated only through `DS::append_shape`; the facade never
@@ -412,6 +412,30 @@ pub struct TopOpeBRepDSHDataStructure {
     pub curve_interferences: HashMap<i32, Vec<TopOpeBRepDSInterference>>,
     /// OCCT: per-surface interference lists (ChangeSurfaceInterferences(I)).
     pub surface_interferences: HashMap<i32, Vec<TopOpeBRepDSInterference>>,
+    /// OCCT DataStructure.cxx myEmptyCurve — the throwaway sink returned by
+    /// Curve/ChangeCurve for an unbound index (IsBound guard); writes land
+    /// here and are discarded on the next access.
+    pub sink_curve: TopOpeBRepDSCurve,
+    /// OCCT DataStructure.cxx myEmptyShape — the KeepShape-guarded sink of
+    /// Shape(I)/ChangeShape(I) for an unbound index.
+    pub sink_shape: Shape,
+    /// OCCT DataStructure.cxx ChangePoint(I) IsBound sink.
+    pub sink_point: TopOpeBRepDSPoint,
+}
+
+impl Default for TopOpeBRepDSHDataStructure {
+    fn default() -> Self {
+        TopOpeBRepDSHDataStructure {
+            bopds: DS::new(),
+            side: ChFi3dDSSideTables::default(),
+            shape_interferences: HashMap::new(),
+            curve_interferences: HashMap::new(),
+            surface_interferences: HashMap::new(),
+            sink_curve: TopOpeBRepDSCurve::new(None, 0.0),
+            sink_shape: Shape::null(),
+            sink_point: TopOpeBRepDSPoint::new(glam::DVec3::ZERO, 0.0),
+        }
+    }
 }
 
 impl Clone for TopOpeBRepDSHDataStructure {
@@ -432,6 +456,9 @@ impl Clone for TopOpeBRepDSHDataStructure {
             shape_interferences: self.shape_interferences.clone(),
             curve_interferences: self.curve_interferences.clone(),
             surface_interferences: self.surface_interferences.clone(),
+            sink_curve: self.sink_curve.clone(),
+            sink_shape: self.sink_shape.clone(),
+            sink_point: self.sink_point.clone(),
         }
     }
 }
@@ -490,27 +517,46 @@ impl TopOpeBRepDSHDataStructure {
         self.side.curves.len() as i32
     }
 
-    /// OCCT TopOpeBRepDS_DataStructure::Shape(I) — 1-based.
-    /// Routes to BOPDS `DS::shape` (shape table lives in BOPDS, D6).
+    /// OCCT TopOpeBRepDS_DataStructure::Shape(I) (DataStructure.cxx
+    /// Shape/KeepShape guard): an unbound index reads the empty-shape sink.
+    /// 1-based.  Routes to BOPDS `DS::shape` (shape table lives in BOPDS,
+    /// D6).
     pub fn shape(&self, i: i32) -> &Shape {
+        if i < 1 || (i as usize) > self.bopds.shapes.len() {
+            return &self.sink_shape;
+        }
         self.bopds.shape((i - 1) as usize)
     }
 
-    /// OCCT TopOpeBRepDS_DataStructure::ChangeShape(I).
+    /// OCCT TopOpeBRepDS_DataStructure::ChangeShape(I) — the unbound-index
+    /// sink write (same guard family as Shape(I)).
     /// Routes to BOPDS `DS::change_shape_info(..).shape` (D6).
     pub fn change_shape(&mut self, i: i32) -> &mut Shape {
+        if i < 1 || (i as usize) > self.bopds.shapes.len() {
+            return &mut self.sink_shape;
+        }
         &mut self.bopds.change_shape_info((i - 1) as usize).shape
     }
 
-    /// OCCT TopOpeBRepDS_DataStructure::Curve(I).
+    /// OCCT TopOpeBRepDS_DataStructure::Curve(I) (DataStructure.cxx L398):
+    /// `if (!myCurves.IsBound(I)) return myEmptyCurve;` — an unbound index
+    /// reads the throwaway empty curve.
     /// Routes to the ChFi3d side table.
     pub fn curve(&self, i: i32) -> &TopOpeBRepDSCurve {
+        if i < 1 || (i as usize) > self.side.curves.len() {
+            return &self.sink_curve;
+        }
         &self.side.curves[(i - 1) as usize]
     }
 
-    /// OCCT TopOpeBRepDS_DataStructure::ChangeCurve(I).
+    /// OCCT TopOpeBRepDS_DataStructure::ChangeCurve(I) (DataStructure.cxx
+    /// ChangeCurve): an unbound index returns the throwaway sink — writes
+    /// land there and are discarded on the next access.
     /// Routes to the ChFi3d side table.
     pub fn change_curve(&mut self, i: i32) -> &mut TopOpeBRepDSCurve {
+        if i < 1 || (i as usize) > self.side.curves.len() {
+            return &mut self.sink_curve;
+        }
         &mut self.side.curves[(i - 1) as usize]
     }
 
@@ -526,15 +572,24 @@ impl TopOpeBRepDSHDataStructure {
         &mut self.side.surfaces[(i - 1) as usize]
     }
 
-    /// OCCT TopOpeBRepDS_DataStructure::Point(I).
+    /// OCCT TopOpeBRepDS_DataStructure::Point(I) — OCCT raises
+    /// Standard_OutOfRange for an out-of-range index (no sink on the const
+    /// accessor).
     /// Routes to the ChFi3d side table.
     pub fn point(&self, i: i32) -> &TopOpeBRepDSPoint {
+        if i < 1 || (i as usize) > self.side.points.len() {
+            panic!("Standard_OutOfRange: TopOpeBRepDS_DataStructure::Point({})", i);
+        }
         &self.side.points[(i - 1) as usize]
     }
 
-    /// OCCT TopOpeBRepDS_DataStructure::ChangePoint(I).
+    /// OCCT TopOpeBRepDS_DataStructure::ChangePoint(I) — IsBound-guarded:
+    /// an unbound index returns the throwaway sink.
     /// Routes to the ChFi3d side table.
     pub fn change_point(&mut self, i: i32) -> &mut TopOpeBRepDSPoint {
+        if i < 1 || (i as usize) > self.side.points.len() {
+            return &mut self.sink_point;
+        }
         &mut self.side.points[(i - 1) as usize]
     }
 

@@ -334,6 +334,21 @@ pub fn chfi3d_stripe_edge_inter(
 
 // =========================================================================
 // OCCT ChFi3d_Builder_0.cxx L2565-3341 — ChFi3d_FilDS.
+//
+// Closing-curve emission (the HBuilder BuildFaces feeding points): FilDS
+// puts every fillet-patch boundary curve into the DS so that
+// TopOpeBRepBuild_Builder::BuildFaces (BuildFaces.cxx L40-107) can close
+// the patch wires —
+//   - the start closing curve  (j == 1, !isInDS1): Icurv =
+//     CorDat->FirstCurve(), pcurve + CurvePoint paves at Ipoin1/Ipoin2,
+//     SCI onto Isurf (L2855-2889);
+//   - the inter-fillet closing curves (j > 1, !isInDS1): the arete curve
+//     between consecutive SurfData (L2918-2950);
+//   - the end closing curve (j == SeqFil.Length(), !isInDS2): Icurv =
+//     CorDat->LastCurve() (L3171-3204) and the ChFi3d_ComputeArete curve
+//     for the open-end stripe (L3218-3240).
+// The face-interference curves IcFil1/IcFil2 and their SCI records on the
+// support faces (L2952-3160) complete the surface-curve binding.
 // =========================================================================
 pub fn chfi3d_filds(
     brep: &topods::BRep,

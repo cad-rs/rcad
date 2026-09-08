@@ -1193,6 +1193,7 @@ mod geom2d_gcc_lin2d2tan_tests {
         let a_curve2d = Curve2d::Ellipse(Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::X,
+            minor_dir: DVec2::Y,
             major_radius: 150.0,
             minor_radius: 100.0,
         });
@@ -1218,6 +1219,7 @@ mod geom2d_gcc_lin2d2tan_tests {
         let a_curve2d = Curve2d::Ellipse(Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::X,
+            minor_dir: DVec2::Y,
             major_radius: 150.0,
             minor_radius: 100.0,
         });
@@ -3475,6 +3477,7 @@ mod geom2d_api_inter_curve_curve_tests {
         let e1 = Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::X,
+            minor_dir: DVec2::Y,
             major_radius: 2.0,
             minor_radius: 1.0,
         };
@@ -3483,6 +3486,7 @@ mod geom2d_api_inter_curve_curve_tests {
         let e2 = Ellipse2d {
             center: DVec2::new(0.5, 0.5),
             major_dir: DVec2::new(1.0, 1.0).normalize(),
+            minor_dir: DVec2::new(-1.0, 1.0).normalize(),
             major_radius: 2.0,
             minor_radius: 1.0,
         };
@@ -3531,6 +3535,7 @@ mod geom2d_api_inter_curve_curve_tests {
         let an_ellipse1 = Ellipse2d {
             center: DVec2::new(0.0, 0.0),
             major_dir: DVec2::new(1.0, 0.0),
+            minor_dir: DVec2::new(0.0, 1.0),
             major_radius: 2.0,
             minor_radius: 1.0,
         };
@@ -3538,6 +3543,7 @@ mod geom2d_api_inter_curve_curve_tests {
         let an_ellipse2 = Ellipse2d {
             center: DVec2::new(0.5, 0.5),
             major_dir: DVec2::new(1.0, 1.0).normalize(),
+            minor_dir: DVec2::new(-1.0, 1.0).normalize(),
             major_radius: 2.0,
             minor_radius: 1.0,
         };
@@ -3562,6 +3568,7 @@ mod geom2d_api_inter_curve_curve_tests {
         let an_ellipse = Ellipse2d {
             center: DVec2::new(0.0, 0.0),
             major_dir: DVec2::new(1.0, 0.0),
+            minor_dir: DVec2::new(0.0, 1.0),
             major_radius: 2.0,
             minor_radius: 1.0,
         };
