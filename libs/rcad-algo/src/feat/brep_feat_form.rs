@@ -43,14 +43,15 @@
 //   BRepFeat_Form::mySbOK..myPSOK           -> my_sb_ok..my_ps_ok
 //   BRepFeat_Form::myStatusError            -> my_status_error
 //
-// Architecture differences (referenced from the affected functions):
 // 1. Curves(S) / BarycCurve() are pure virtuals of BRepFeat_Form (hxx
-//    L130-132), overridden by the form-feature subclasses (MakePrism /
-//    MakeDPrism / MakeRevol / MakePipe / MakeRevolutionForm — stage 3c).
-//    The two virtual slots are carried as methods that stop with a pure
-//    virtual marker (the C++ base-class slot is not callable either); the
-//    Rust dispatch mechanism (trait object or equivalent) lands with the
-//    first subclass translation.
+//    L130-132). Refactor 2026-09-08 (architecture decision): the two slots
+//    are the BRepFeatFormSlots trait below; the concrete form-feature
+//    subclasses (MakePrism/MakeDPrism/MakeRevol/MakeRevolutionForm/MakePipe/
+//    MakeLinearForm, stage 3b) implement the trait and enter GlobalPerform
+//    through it. The free global_perform takes the slots trait object and
+//    re-takes the BRepFeatForm sub-object per region around the two pure
+//    virtual dispatches (Rust cannot borrow the base sub-object and the
+//    whole implementor at the same time).
 // 2. BRepAlgoAPI_Cut is driven on the rcad (PaveFiller, Builder) vehicle,
 //    re-hosted below as CutVehicle (same vehicle as
 //    bop/brep_algo_api::run_build and BRepFeatBuilder::perform_bop); the
@@ -198,7 +199,7 @@ fn descendants(the_s: &Shape, map_f: &mut OcctShapeMap) {
 /// (BRepFeat_Form.hxx L39-66).
 pub struct BRepFeatForm {
     my_done: bool,            // BRepBuilderAPI_Command::myDone
-    my_shape: Option<Shape>,  // BRepBuilderAPI_MakeShape::myShape (None = null)
+    pub(crate) my_shape: Option<Shape>,  // BRepBuilderAPI_MakeShape::myShape (None = null)
     my_generated: Vec<Shape>, // BRepBuilderAPI_MakeShape::myGenerated
     // --- BRepFeat_Form protected members (hxx L151-166) ---
     pub(crate) my_fuse: bool,
@@ -209,14 +210,14 @@ pub struct BRepFeatForm {
     // OCCT myMap: DataMap<Shape, List<Shape>>; the key shape is carried as
     // the tuple head (the UpdateDescendants SkipFace test reads the key
     // ShapeType).
-    my_map: HashMap<(u64, u32), (Shape, Vec<Shape>)>,
-    my_f_shape: Shape,
-    my_l_shape: Shape,
-    my_new_edges: Vec<Shape>,
-    my_tgt_edges: Vec<Shape>,
-    my_perf_selection: BRepFeatPerfSelection,
-    my_just_gluer: bool,
-    my_just_feat: bool,
+    pub(crate) my_map: HashMap<(u64, u32), (Shape, Vec<Shape>)>,
+    pub(crate) my_f_shape: Shape,
+    pub(crate) my_l_shape: Shape,
+    pub(crate) my_new_edges: Vec<Shape>,
+    pub(crate) my_tgt_edges: Vec<Shape>,
+    pub(crate) my_perf_selection: BRepFeatPerfSelection,
+    pub(crate) my_just_gluer: bool,
+    pub(crate) my_just_feat: bool,
     pub(crate) my_sbase: Shape,
     // mySkface is written/read by the sketch-feature subclasses (stage 3c);
     // the base class only carries the member.
@@ -237,7 +238,7 @@ pub struct BRepFeatForm {
     my_su_ok: bool,
     my_gf_ok: bool,
     my_ps_ok: bool,
-    my_status_error: BRepFeatStatusError,
+    pub(crate) my_status_error: BRepFeatStatusError,
 }
 
 impl BRepFeatForm {
@@ -277,12 +278,12 @@ impl BRepFeatForm {
     // --- BRepBuilderAPI_Command / MakeShape base ---
 
     /// OCCT BRepBuilderAPI_Command::Done().
-    fn done(&mut self) {
+    pub(crate) fn done(&mut self) {
         self.my_done = true;
     }
 
     /// OCCT BRepBuilderAPI_Command::NotDone().
-    fn not_done(&mut self) {
+    pub(crate) fn not_done(&mut self) {
         self.my_done = false;
     }
 
@@ -291,20 +292,9 @@ impl BRepFeatForm {
         self.my_done
     }
 
-    // --- pure virtual slots (architecture difference #1) ---
-
-    /// OCCT BRepFeat_Form::Curves(S) = 0 (hxx L130) — pure virtual; the
-    /// override lands with the form-feature subclasses (stage 3c).
-    pub fn curves(&mut self, _s: &mut Vec<Option<Curve3>>) {
-        panic!("pure virtual BRepFeat_Form::Curves called — overridden by the form-feature subclasses (MakePrism/MakeDPrism/MakeRevol/MakePipe/MakeRevolutionForm, stage 3c)");
-    }
-
-    /// OCCT BRepFeat_Form::BarycCurve() = 0 (hxx L132) — pure virtual; the
-    /// override lands with the form-feature subclasses (stage 3c). None
-    /// carries the OCCT null handle.
-    pub fn baryc_curve(&mut self) -> Option<Curve3> {
-        panic!("pure virtual BRepFeat_Form::BarycCurve called — overridden by the form-feature subclasses (MakePrism/MakeDPrism/MakeRevol/MakePipe/MakeRevolutionForm, stage 3c)");
-    }
+    // The OCCT pure virtual slots (hxx L130-132) are carried by the
+    // BRepFeatFormSlots trait below (architecture decision 2026-09-08);
+    // the struct carries no panicking stubs anymore.
 
     // --- Form.lxx inline members (L39-85) ---
 
@@ -441,20 +431,52 @@ impl BRepFeatForm {
         &self.my_generated
     }
 
-    /// OCCT BRepFeat_Form::GlobalPerform (cxx L59-1239) — topological
-    /// reconstruction of the result.
-    pub fn global_perform(&mut self) {
+}
+
+/// OCCT BRepFeat_Form pure virtual slots (hxx L130-132) — the C++ override
+/// points in the composition model: refactor to slots trait (architecture
+/// decision 2026-09-08). Every form-feature subclass (MakePrism / MakeDPrism
+/// / MakeRevol / MakeRevolutionForm / MakePipe / MakeLinearForm) implements
+/// this trait on itself and enters the shared GlobalPerform through it.
+///
+/// The trait carries the `form()` accessor in addition to the two OCCT pure
+/// virtuals: Rust cannot hold `&mut self.form` (the base sub-object) and
+/// `&mut dyn BRepFeatFormSlots` (the same allocation) live at once, so the
+/// C++ implicit this-split is expressed by the accessor and the free
+/// global_perform re-takes the sub-object per region around the two pure
+/// virtual dispatches.
+pub trait BRepFeatFormSlots {
+    /// OCCT BRepFeat_Form::Curves(S) = 0 (hxx L130).
+    fn curves(&mut self, s: &mut Vec<Option<Curve3>>);
+
+    /// OCCT BRepFeat_Form::BarycCurve() = 0 (hxx L132). None carries the
+    /// OCCT null handle.
+    fn baryc_curve(&mut self) -> Option<Curve3>;
+
+    /// The owned base sub-object (the BRepFeat_Form fields).
+    fn form(&mut self) -> &mut BRepFeatForm;
+}
+
+/// OCCT BRepFeat_Form::GlobalPerform (cxx L59-1239) — topological result
+/// reconstruction.
+/// refactor: virtual dispatch -> slots trait (architecture decision
+/// 2026-09-08); the body is the previous BRepFeatForm::global_perform with
+/// `self.` renamed to `form.` and the two pure virtual calls dispatched
+/// through the slots.
+pub fn global_perform(slots: &mut dyn BRepFeatFormSlots) {
+    // Region 1: the base sub-object, up to the Curves dispatch.
+    let form = slots.form();
         // OCCT L68-77.
-        if !self.my_sb_ok
-            || !self.my_gs_ok
-            || !self.my_sf_ok
-            || !self.my_su_ok
-            || !self.my_gf_ok
-            || !self.my_sk_ok
-            || !self.my_ps_ok
+        if !form.my_sb_ok
+            || !form.my_gs_ok
+            || !form.my_sf_ok
+            || !form.my_su_ok
+            || !form.my_gf_ok
+            || !form.my_sk_ok
+            || !form.my_ps_ok
         {
-            self.my_status_error = BRepFeatStatusError::NotInitialized;
-            self.not_done();
+            form.my_status_error = BRepFeatStatusError::NotInitialized;
+            form.not_done();
             return;
         }
         //
@@ -462,13 +484,13 @@ impl BRepFeatForm {
         let mut the_ope = 2i32;
         //
         // OCCT L84-104.
-        if self.my_just_feat && !self.my_fuse {
-            self.my_status_error = BRepFeatStatusError::InvOption;
-            self.not_done();
+        if form.my_just_feat && !form.my_fuse {
+            form.my_status_error = BRepFeatStatusError::InvOption;
+            form.not_done();
             return;
-        } else if self.my_just_feat {
+        } else if form.my_just_feat {
             the_ope = 2;
-        } else if !self.my_glued_f.is_empty() {
+        } else if !form.my_glued_f.is_empty() {
             the_ope = 1;
         }
         let mut change_ope = false;
@@ -477,12 +499,12 @@ impl BRepFeatForm {
         let mut until_in_shape = false;
         //
         // OCCT L110-133.
-        if !self.my_sfrom.is_null() {
+        if !form.my_sfrom.is_null() {
             from_in_shape = true;
-            for ffrom in explorer(&self.my_sfrom, ShapeType::Face, ShapeType::Shape) {
+            for ffrom in explorer(&form.my_sfrom, ShapeType::Face, ShapeType::Shape) {
                 // OCCT L116-122: the inner explorer over mySbase.
                 let mut found = false;
-                for cur in explorer(&self.my_sbase, ShapeType::Face, ShapeType::Shape) {
+                for cur in explorer(&form.my_sbase, ShapeType::Face, ShapeType::Shape) {
                     if shape_is_same(&cur, &ffrom) {
                         found = true;
                         break;
@@ -497,11 +519,11 @@ impl BRepFeatForm {
         }
         //
         // OCCT L135-158.
-        if !self.my_suntil.is_null() {
+        if !form.my_suntil.is_null() {
             until_in_shape = true;
-            for funtil in explorer(&self.my_suntil, ShapeType::Face, ShapeType::Shape) {
+            for funtil in explorer(&form.my_suntil, ShapeType::Face, ShapeType::Shape) {
                 let mut found = false;
-                for cur in explorer(&self.my_sbase, ShapeType::Face, ShapeType::Shape) {
+                for cur in explorer(&form.my_sbase, ShapeType::Face, ShapeType::Shape) {
                     if shape_is_same(&cur, &funtil) {
                         found = true;
                         break;
@@ -519,7 +541,10 @@ impl BRepFeatForm {
         //
         // OCCT L163-164: NCollection_Sequence<Geom_Curve> scur; Curves(scur).
         let mut scur: Vec<Option<Curve3>> = Vec::new();
-        self.curves(&mut scur);
+        slots.curves(&mut scur);
+        // Region 2: re-take of the base sub-object (see the trait
+        // documentation).
+        let form = slots.form();
         //
         // OCCT L166: mf, Mf, mu, Mu (carried in the loop below).
         // OCCT L168-170.
@@ -539,14 +564,14 @@ impl BRepFeatForm {
         // --- 1) by intersection ---
         //
         // OCCT L181-185: Intersection Tool Shape From.
-        if !self.my_sfrom.is_null() {
-            a_si1.init(&self.my_sfrom);
+        if !form.my_sfrom.is_null() {
+            a_si1.init(&form.my_sfrom);
             a_si1.perform_cur(&scur);
         }
         //
         // OCCT L188-192: Intersection Tool Shape Until.
-        if !self.my_suntil.is_null() {
-            a_si2.init(&self.my_suntil);
+        if !form.my_suntil.is_null() {
+            a_si2.init(&form.my_suntil);
             a_si2.perform_cur(&scur);
         }
         //
@@ -580,8 +605,8 @@ impl BRepFeatForm {
                         ku = a_si2.nb_points(jj);
                     } else if mu > big_mf {
                         if sens == -1 {
-                            self.my_status_error = BRepFeatStatusError::IntervalOverlap;
-                            self.not_done();
+                            form.my_status_error = BRepFeatStatusError::IntervalOverlap;
+                            form.not_done();
                             return;
                         }
                         sens = 1;
@@ -589,8 +614,8 @@ impl BRepFeatForm {
                         ku = a_si2.nb_points(jj);
                     } else {
                         if sens == 1 {
-                            self.my_status_error = BRepFeatStatusError::IntervalOverlap;
-                            self.not_done();
+                            form.my_status_error = BRepFeatStatusError::IntervalOverlap;
+                            form.not_done();
                             return;
                         }
                         sens = -1;
@@ -679,14 +704,14 @@ impl BRepFeatForm {
             let mut b = BRepBuilder::new();
             let comp = b.make_compound(&mut pool, Vec::new());
             // OCCT L344-351.
-            if !self.my_sfrom.is_null() {
-                if let Some(s) = brep_feat_tool(&self.my_sfrom, &f_from, oriffrom) {
+            if !form.my_sfrom.is_null() {
+                if let Some(s) = brep_feat_tool(&form.my_sfrom, &f_from, oriffrom) {
                     b.add_to_compound(&mut pool, comp.clone(), s);
                 }
             }
             // OCCT L352-359.
-            if !self.my_suntil.is_null() {
-                if let Some(s) = brep_feat_tool(&self.my_suntil, &f_until, orifuntil) {
+            if !form.my_suntil.is_null() {
+                if let Some(s) = brep_feat_tool(&form.my_suntil, &f_until, orifuntil) {
                     b.add_to_compound(&mut pool, comp.clone(), s);
                 }
             }
@@ -696,9 +721,9 @@ impl BRepFeatForm {
             let mut locmap: HashMap<(u64, u32), (Shape, Vec<Shape>)> = HashMap::new();
             let comp_solids = explorer(&comp, ShapeType::Solid, ShapeType::Shape);
             // OCCT L365: if (expp.More() && !Comp.IsNull() && !myGShape.IsNull()).
-            if !comp_solids.is_empty() && !comp.is_null() && !self.my_gshape.is_null() {
+            if !comp_solids.is_empty() && !comp.is_null() && !form.my_gshape.is_null() {
                 // OCCT L367: BRepAlgoAPI_Cut trP(myGShape, Comp).
-                let tr_p = CutVehicle::new(&self.my_gshape, &comp);
+                let tr_p = CutVehicle::new(&form.my_gshape, &comp);
                 // OCCT L368-374: exp over the SOLIDs of trP.Shape();
                 // exp.Current().IsNull() == the explorer found nothing.
                 let res_solids = tr_p
@@ -723,12 +748,12 @@ impl BRepFeatForm {
                     } else {
                         // else X1 (OCCT L390-510).
                         // OCCT L392-429.
-                        if !self.my_sfrom.is_null() {
-                            for fac in explorer(&self.my_sfrom, ShapeType::Face, ShapeType::Shape)
+                        if !form.my_sfrom.is_null() {
+                            for fac in explorer(&form.my_sfrom, ShapeType::Face, ShapeType::Shape)
                             {
                                 if !from_in_shape {
                                     // OCCT L401-402.
-                                    self.my_map
+                                    form.my_map
                                         .insert(shape_key(&fac), (fac.clone(), Vec::new()));
                                 } else {
                                     // OCCT L406-407.
@@ -738,7 +763,7 @@ impl BRepFeatForm {
                                 if tr_p.is_deleted(&fac) {
                                     // OCCT L409-410: empty block.
                                 } else if !from_in_shape {
-                                    let e = self.my_map
+                                    let e = form.my_map
                                         .entry(shape_key(&fac))
                                         .or_insert_with(|| (fac.clone(), Vec::new()));
                                     e.1 = tr_p.modified(&fac);
@@ -758,19 +783,19 @@ impl BRepFeatForm {
                         } // if(!mySFrom.IsNull())
                         //
                         // OCCT L431-468.
-                        if !self.my_suntil.is_null() {
+                        if !form.my_suntil.is_null() {
                             for fac in
-                                explorer(&self.my_suntil, ShapeType::Face, ShapeType::Shape)
+                                explorer(&form.my_suntil, ShapeType::Face, ShapeType::Shape)
                             {
                                 if !until_in_shape {
-                                    self.my_map
+                                    form.my_map
                                         .insert(shape_key(&fac), (fac.clone(), Vec::new()));
                                 } else {
                                     locmap.insert(shape_key(&fac), (fac.clone(), Vec::new()));
                                 }
                                 if tr_p.is_deleted(&fac) {
                                 } else if !until_in_shape {
-                                    let e = self.my_map
+                                    let e = form.my_map
                                         .entry(shape_key(&fac))
                                         .or_insert_with(|| (fac.clone(), Vec::new()));
                                     e.1 = tr_p.modified(&fac);
@@ -790,13 +815,13 @@ impl BRepFeatForm {
                         } // if(!mySUntil.IsNull())
                         //
                         // OCCT L470: UpdateDescendants(trP, theGShape, true).
-                        self.update_descendants_bop(&tr_p, &the_gshape, true);
+                        form.update_descendants_bop(&tr_p, &the_gshape, true);
                         //
                         // OCCT L472-509.
-                        the_glue.init(&self.my_sbase, &the_gshape);
+                        the_glue.init(&form.my_sbase, &the_gshape);
                         // (Key, Value) pairs of myGluedF (the key shape is
                         // the tuple head).
-                        let glued_items: Vec<(Shape, Shape)> = self
+                        let glued_items: Vec<(Shape, Shape)> = form
                             .my_glued_f
                             .values()
                             .map(|(k, v)| (k.clone(), v.clone()))
@@ -838,10 +863,10 @@ impl BRepFeatForm {
             } // if(expp.More() && !Comp.IsNull() && !myGShape.IsNull())
             else {
                 // OCCT L513-547.
-                the_glue.init(&self.my_sbase, &self.my_gshape);
+                the_glue.init(&form.my_sbase, &form.my_gshape);
                 // (Key, Value) pairs of myGluedF: glface = Key, fac = Value
                 // (cxx L518-519).
-                let glued_pairs: Vec<(Shape, Shape)> = self
+                let glued_pairs: Vec<(Shape, Shape)> = form
                     .my_glued_f
                     .values()
                     .map(|(k, v)| (k.clone(), v.clone()))
@@ -849,7 +874,7 @@ impl BRepFeatForm {
                 for (glface, fac) in glued_pairs {
                     // OCCT L520-526: find glface among the faces of myGShape.
                     let mut found = false;
-                    for cur in explorer(&self.my_gshape, ShapeType::Face, ShapeType::Shape) {
+                    for cur in explorer(&form.my_gshape, ShapeType::Face, ShapeType::Shape) {
                         if shape_is_same(&cur, &glface) {
                             found = true;
                             break;
@@ -879,7 +904,7 @@ impl BRepFeatForm {
             //
             // OCCT L549-569: add gluing on start and end face if necessary.
             if from_in_shape && collage {
-                for fac2 in explorer(&self.my_sfrom, ShapeType::Face, ShapeType::Shape) {
+                for fac2 in explorer(&form.my_sfrom, ShapeType::Face, ShapeType::Shape) {
                     // OCCT L557: for (it.Initialize(locmap(fac2))).
                     if let Some((_, l)) = locmap.get(&shape_key(&fac2)) {
                         for it in l.clone() {
@@ -900,7 +925,7 @@ impl BRepFeatForm {
             //
             // OCCT L571-591.
             if until_in_shape && collage {
-                for fac2 in explorer(&self.my_suntil, ShapeType::Face, ShapeType::Shape) {
+                for fac2 in explorer(&form.my_suntil, ShapeType::Face, ShapeType::Shape) {
                     if let Some((_, l)) = locmap.get(&shape_key(&fac2)) {
                         for it in l.clone() {
                             let fac1 = it;
@@ -921,8 +946,8 @@ impl BRepFeatForm {
             // OCCT L593-599.
             let ope = the_glue.ope_type();
             if ope == LocOpeOperation::Invalid
-                || (self.my_fuse && ope != LocOpeOperation::Fuse)
-                || (!self.my_fuse && ope != LocOpeOperation::Cut)
+                || (form.my_fuse && ope != LocOpeOperation::Fuse)
+                || (!form.my_fuse && ope != LocOpeOperation::Cut)
                 || !collage
             {
                 the_ope = 2;
@@ -941,12 +966,12 @@ impl BRepFeatForm {
                 if let Some(shshs) = the_glue.resulting_shape().cloned() {
                     // OCCT L615.
                     if brep_algo_is_valid(&shshs) {
-                        self.update_descendants_gluer(&the_glue);
+                        form.update_descendants_gluer(&the_glue);
                         // OCCT L618-619.
-                        self.my_new_edges = the_glue.edges().clone();
-                        self.my_tgt_edges = the_glue.tgt_edges().clone();
-                        self.done();
-                        self.my_shape = Some(shshs);
+                        form.my_new_edges = the_glue.edges().clone();
+                        form.my_tgt_edges = the_glue.tgt_edges().clone();
+                        form.done();
+                        form.my_shape = Some(shshs);
                     } else {
                         the_ope = 2;
                         change_ope = true;
@@ -963,15 +988,15 @@ impl BRepFeatForm {
         //
         // --- case without gluing + Tool with proper dimensions
         //     (OCCT L640-652) ---
-        if the_ope == 2 && change_ope && self.my_just_gluer {
-            self.my_just_gluer = false;
+        if the_ope == 2 && change_ope && form.my_just_gluer {
+            form.my_just_gluer = false;
             the_ope = 0;
         }
         //
         // --- case without gluing (OCCT L654-1236) ---
         if the_ope == 2 {
             // OCCT L662: theGShape = myGShape.
-            let mut the_gshape = self.my_gshape.clone();
+            let mut the_gshape = form.my_gshape.clone();
             // OCCT L663-669: if (ChangeOpe) — the debug trace only.
             //
             // OCCT L671-673: the compound Comp.
@@ -979,21 +1004,21 @@ impl BRepFeatForm {
             let mut b = BRepBuilder::new();
             let comp = b.make_compound(&mut pool, Vec::new());
             // OCCT L674-706.
-            if !self.my_sfrom.is_null() || !self.my_suntil.is_null() {
-                if !self.my_sfrom.is_null() && !from_in_shape {
-                    if let Some(s) = brep_feat_tool(&self.my_sfrom, &f_from, oriffrom) {
+            if !form.my_sfrom.is_null() || !form.my_suntil.is_null() {
+                if !form.my_sfrom.is_null() && !from_in_shape {
+                    if let Some(s) = brep_feat_tool(&form.my_sfrom, &f_from, oriffrom) {
                         b.add_to_compound(&mut pool, comp.clone(), s);
                     }
                 }
-                if !self.my_suntil.is_null() && !until_in_shape {
-                    if !self.my_sfrom.is_null() {
-                        if !shape_is_same(&self.my_sfrom, &self.my_suntil) {
-                            if let Some(s) = brep_feat_tool(&self.my_suntil, &f_until, orifuntil) {
+                if !form.my_suntil.is_null() && !until_in_shape {
+                    if !form.my_sfrom.is_null() {
+                        if !shape_is_same(&form.my_sfrom, &form.my_suntil) {
+                            if let Some(s) = brep_feat_tool(&form.my_suntil, &f_until, orifuntil) {
                                 b.add_to_compound(&mut pool, comp.clone(), s);
                             }
                         }
                     } else {
-                        if let Some(s) = brep_feat_tool(&self.my_suntil, &f_until, orifuntil) {
+                        if let Some(s) = brep_feat_tool(&form.my_suntil, &f_until, orifuntil) {
                             b.add_to_compound(&mut pool, comp.clone(), s);
                         }
                     }
@@ -1001,32 +1026,32 @@ impl BRepFeatForm {
             }
             //
             // OCCT L708-723: update type of selection.
-            if self.my_perf_selection == BRepFeatPerfSelection::SelectionU && !until_in_shape {
-                self.my_perf_selection = BRepFeatPerfSelection::NoSelection;
-            } else if self.my_perf_selection == BRepFeatPerfSelection::SelectionFU
+            if form.my_perf_selection == BRepFeatPerfSelection::SelectionU && !until_in_shape {
+                form.my_perf_selection = BRepFeatPerfSelection::NoSelection;
+            } else if form.my_perf_selection == BRepFeatPerfSelection::SelectionFU
                 && !from_in_shape
                 && !until_in_shape
             {
-                self.my_perf_selection = BRepFeatPerfSelection::NoSelection;
-            } else if self.my_perf_selection == BRepFeatPerfSelection::SelectionShU
+                form.my_perf_selection = BRepFeatPerfSelection::NoSelection;
+            } else if form.my_perf_selection == BRepFeatPerfSelection::SelectionShU
                 && !until_in_shape
             {
-                self.my_perf_selection = BRepFeatPerfSelection::NoSelection;
+                form.my_perf_selection = BRepFeatPerfSelection::NoSelection;
             }
             //
             // OCCT L725-799.
             let comp_solids = explorer(&comp, ShapeType::Solid, ShapeType::Shape);
-            if !comp_solids.is_empty() && !comp.is_null() && !self.my_gshape.is_null() {
+            if !comp_solids.is_empty() && !comp.is_null() && !form.my_gshape.is_null() {
                 // OCCT L728: BRepAlgoAPI_Cut trP(myGShape, Comp).
-                let tr_p = CutVehicle::new(&self.my_gshape, &comp);
+                let tr_p = CutVehicle::new(&form.my_gshape, &comp);
                 // OCCT L729-736: the result is necessarily a compound.
                 let res_solids = tr_p
                     .shape()
                     .map(|s| explorer(s, ShapeType::Solid, ShapeType::Shape))
                     .unwrap_or_default();
                 if res_solids.is_empty() {
-                    self.my_status_error = BRepFeatStatusError::EmptyCutResult;
-                    self.not_done();
+                    form.my_status_error = BRepFeatStatusError::EmptyCutResult;
+                    form.not_done();
                     return;
                 }
                 // OCCT L737-743: only solids are preserved.
@@ -1035,20 +1060,20 @@ impl BRepFeatForm {
                 let mut b_g = BRepBuilder::new();
                 the_gshape = b_g.make_compound(&mut pool_g, res_solids.clone());
                 if !brep_algo_is_valid(&the_gshape) {
-                    self.my_status_error = BRepFeatStatusError::InvShape;
-                    self.not_done();
+                    form.my_status_error = BRepFeatStatusError::InvShape;
+                    form.not_done();
                     return;
                 }
                 // OCCT L750-773.
-                if !self.my_sfrom.is_null() {
+                if !form.my_sfrom.is_null() {
                     if !from_in_shape {
-                        for fac in explorer(&self.my_sfrom, ShapeType::Face, ShapeType::Shape) {
+                        for fac in explorer(&form.my_sfrom, ShapeType::Face, ShapeType::Shape) {
                             // OCCT L758-759.
-                            self.my_map.insert(shape_key(&fac), (fac.clone(), Vec::new()));
+                            form.my_map.insert(shape_key(&fac), (fac.clone(), Vec::new()));
                             // OCCT L760-770.
                             if tr_p.is_deleted(&fac) {
                             } else {
-                                let e = self.my_map
+                                let e = form.my_map
                                         .entry(shape_key(&fac))
                                         .or_insert_with(|| (fac.clone(), Vec::new()));
                                 e.1 = tr_p.modified(&fac);
@@ -1060,14 +1085,14 @@ impl BRepFeatForm {
                     }
                 }
                 // OCCT L774-797.
-                if !self.my_suntil.is_null() {
+                if !form.my_suntil.is_null() {
                     if !until_in_shape {
-                        for fac in explorer(&self.my_suntil, ShapeType::Face, ShapeType::Shape) {
-                            self.my_map.insert(shape_key(&fac), (fac.clone(), Vec::new()));
+                        for fac in explorer(&form.my_suntil, ShapeType::Face, ShapeType::Shape) {
+                            form.my_map.insert(shape_key(&fac), (fac.clone(), Vec::new()));
                             if tr_p.is_deleted(&fac) {
                             } else {
                                 let a_modified = tr_p.modified(&fac);
-                                let e = self.my_map
+                                let e = form.my_map
                                         .entry(shape_key(&fac))
                                         .or_insert_with(|| (fac.clone(), Vec::new()));
                                 e.1 = a_modified;
@@ -1076,9 +1101,9 @@ impl BRepFeatForm {
                                 // the assignment, so the bound entry makes
                                 // the test false and the append is dead;
                                 // kept with the same evaluation order.
-                                let b_map_empty = self.my_map.is_empty();
+                                let b_map_empty = form.my_map.is_empty();
                                 if b_map_empty {
-                                    let e = self
+                                    let e = form
                                         .my_map
                                         .get_mut(&shape_key(&fac))
                                         .expect("map entry");
@@ -1089,15 +1114,15 @@ impl BRepFeatForm {
                     }
                 }
                 // OCCT L798: UpdateDescendants(trP, theGShape, true).
-                self.update_descendants_bop(&tr_p, &the_gshape, true);
+                form.update_descendants_bop(&tr_p, &the_gshape, true);
             } // if(expp.More() && !Comp.IsNull() && !myGShape.IsNull())
             //
             // OCCT L802: generation of "just feature" for assembly = Parts of
             // tool.
-            let b_flag = self.my_perf_selection != BRepFeatPerfSelection::NoSelection;
+            let b_flag = form.my_perf_selection != BRepFeatPerfSelection::NoSelection;
             let mut the_builder = BRepFeatBuilder::new();
-            the_builder.init_with_tool(&self.my_sbase, &the_gshape);
-            the_builder.set_operation_with_flag(self.my_fuse as i32, b_flag);
+            the_builder.init_with_tool(&form.my_sbase, &the_gshape);
+            the_builder.set_operation_with_flag(form.my_fuse as i32, b_flag);
             the_builder.perform_bop();
             //
             // OCCT L809-810: NCollection_List lshape; PartsOfTool(lshape).
@@ -1112,33 +1137,38 @@ impl BRepFeatForm {
             //
             // --- Selection of pieces of tool to be preserved
             //     (OCCT L818-1212) ---
-            if !lshape.is_empty() && self.my_perf_selection != BRepFeatPerfSelection::NoSelection
-            {
+            // OCCT L1115: the condition is evaluated first so that the
+            // region-2 form borrow ends before the pure virtual dispatch.
+            let has_selection = !lshape.is_empty()
+                && form.my_perf_selection != BRepFeatPerfSelection::NoSelection;
+            if has_selection {
                 // OCCT L823-829.
-                let c = self.baryc_curve();
+                let c = slots.baryc_curve();
+                // Region 3: re-take of the base sub-object.
+                let form = slots.form();
                 let Some(c) = c else {
-                    self.my_status_error = BRepFeatStatusError::EmptyBaryCurve;
-                    self.not_done();
+                    form.my_status_error = BRepFeatStatusError::EmptyBaryCurve;
+                    form.not_done();
                     return;
                 };
                 //
                 // OCCT L831-927.
-                if self.my_perf_selection == BRepFeatPerfSelection::SelectionSh {
+                if form.my_perf_selection == BRepFeatPerfSelection::SelectionSh {
                     let (nprmin, nprmax, npbmin, npbmax, nflag1) =
-                        brep_feat_parametric_min_max(&self.my_sbase, &c, false);
+                        brep_feat_parametric_min_max(&form.my_sbase, &c, false);
                     prmin = nprmin;
                     prmax = nprmax;
                     pbmin = npbmin;
                     pbmax = npbmax;
                     flag1 = nflag1;
-                } else if self.my_perf_selection == BRepFeatPerfSelection::SelectionFU {
+                } else if form.my_perf_selection == BRepFeatPerfSelection::SelectionFU {
                     // OCCT L837-841 (flag1 is the in/out parameter of the two
                     // calls).
                     let (prmin1, prmax1, prbmin1, prbmax1, flag1a) =
-                        brep_feat_parametric_min_max(&self.my_sfrom, &c, false);
+                        brep_feat_parametric_min_max(&form.my_sfrom, &c, false);
                     flag1 = flag1a;
                     let (prmin2, prmax2, prbmin2, prbmax2, flag1b) =
-                        brep_feat_parametric_min_max(&self.my_suntil, &c, false);
+                        brep_feat_parametric_min_max(&form.my_suntil, &c, false);
                     flag1 = flag1b;
                     // OCCT L843-865: case of revolutions.
                     if geom_curve_is_periodic(&c) {
@@ -1157,21 +1187,21 @@ impl BRepFeatForm {
                         pbmin = prbmin1.min(prbmin2);
                         pbmax = prbmax1.max(prbmax2);
                     }
-                } else if self.my_perf_selection == BRepFeatPerfSelection::SelectionShU {
+                } else if form.my_perf_selection == BRepFeatPerfSelection::SelectionShU {
                     // OCCT L869-899.
-                    if !self.my_just_feat && sens == 0 {
+                    if !form.my_just_feat && sens == 0 {
                         sens = 1;
                     }
                     if sens == 0 {
-                        self.my_status_error = BRepFeatStatusError::IncDirection;
-                        self.not_done();
+                        form.my_status_error = BRepFeatStatusError::IncDirection;
+                        form.not_done();
                         return;
                     }
                     let (prmin1, prmax1, prbmin1, prbmax1, flag1a) =
-                        brep_feat_parametric_min_max(&self.my_suntil, &c, false);
+                        brep_feat_parametric_min_max(&form.my_suntil, &c, false);
                     flag1 = flag1a;
                     let (prmin2, prmax2, prbmin2, prbmax2, flag1b) =
-                        brep_feat_parametric_min_max(&self.my_sbase, &c, false);
+                        brep_feat_parametric_min_max(&form.my_sbase, &c, false);
                     flag1 = flag1b;
                     if sens == 1 {
                         prmin = prmin2;
@@ -1184,17 +1214,17 @@ impl BRepFeatForm {
                         pbmin = prbmin1;
                         pbmax = prbmax2;
                     }
-                } else if self.my_perf_selection == BRepFeatPerfSelection::SelectionU {
+                } else if form.my_perf_selection == BRepFeatPerfSelection::SelectionU {
                     // OCCT L901-927.
                     if sens == 0 {
-                        self.my_status_error = BRepFeatStatusError::IncDirection;
-                        self.not_done();
+                        form.my_status_error = BRepFeatStatusError::IncDirection;
+                        form.not_done();
                         return;
                     }
                     // Find parts of the tool containing descendants of Shape
                     // Until (OCCT L912 passes flag1).
                     let (prmin1, prmax1, prbmin1, prbmax1, flag1a) =
-                        brep_feat_parametric_min_max(&self.my_suntil, &c, false);
+                        brep_feat_parametric_min_max(&form.my_suntil, &c, false);
                     flag1 = flag1a;
                     if sens == 1 {
                         prmin = f64::MIN;
@@ -1212,11 +1242,11 @@ impl BRepFeatForm {
                 // OCCT L929-1113: finer choice of ParametricMinMax in case
                 // when the tool intersects Shapes From and Until.
                 let delta = CONFUSION;
-                if self.my_perf_selection != BRepFeatPerfSelection::NoSelection {
+                if form.my_perf_selection != BRepFeatPerfSelection::NoSelection {
                     // OCCT L939-1025.
-                    if !self.my_suntil.is_null() {
+                    if !form.my_suntil.is_null() {
                         let mut map_funtil = OcctShapeMap::new();
-                        descendants(&self.my_suntil, &mut map_funtil);
+                        descendants(&form.my_suntil, &mut map_funtil);
                         if !map_funtil.is_empty() {
                             for it in &lshape {
                                 for expf in explorer(it, ShapeType::Face, ShapeType::Shape) {
@@ -1270,9 +1300,9 @@ impl BRepFeatForm {
                         }
                     }
                     // OCCT L1026-1112.
-                    if !self.my_sfrom.is_null() {
+                    if !form.my_sfrom.is_null() {
                         let mut map_ffrom = OcctShapeMap::new();
-                        descendants(&self.my_sfrom, &mut map_ffrom);
+                        descendants(&form.my_sfrom, &mut map_ffrom);
                         if !map_ffrom.is_empty() {
                             for it in &lshape {
                                 for expf in explorer(it, ShapeType::Face, ShapeType::Shape) {
@@ -1329,7 +1359,7 @@ impl BRepFeatForm {
                 //
                 // OCCT L1115-1176: parse PartsOfTool to preserve or not
                 // depending on ParametricMinMax.
-                if !self.my_just_feat {
+                if !form.my_just_feat {
                     let mut keep_parts = false;
                     for it in &lshape {
                         // OCCT L1124-1142.
@@ -1371,8 +1401,8 @@ impl BRepFeatForm {
                     // OCCT L1165-1175: case when no part of the tool is
                     // preserved.
                     if !keep_parts {
-                        self.my_status_error = BRepFeatStatusError::NoParts;
-                        self.not_done();
+                        form.my_status_error = BRepFeatStatusError::NoParts;
+                        form.not_done();
                         return;
                     }
                 } else {
@@ -1396,30 +1426,36 @@ impl BRepFeatForm {
                         }
                     }
                     let compo = b_c.make_compound(&mut pool_c, compo_children);
-                    self.my_shape = Some(compo);
+                    form.my_shape = Some(compo);
                 }
             }
             //
             // --- Generation of result myShape (OCCT L1214-1235) ---
-            if !self.my_just_feat {
+            // Region 4: re-take of the base sub-object.
+            let form = slots.form();
+            if !form.my_just_feat {
                 // OCCT L1220-1228.
                 if b_flag {
                     the_builder.perform_result();
-                    self.my_shape = builder_result_shape(&mut the_builder);
+                    form.my_shape = builder_result_shape(&mut the_builder);
                 } else {
-                    self.my_shape = builder_result_shape(&mut the_builder);
+                    form.my_shape = builder_result_shape(&mut the_builder);
                 }
-                self.done();
+                form.done();
             } else {
                 // OCCT L1233: all is already done.
-                self.done();
+                form.done();
             }
         }
         //
         // OCCT L1238.
-        self.my_status_error = BRepFeatStatusError::OK;
+        // Region 5: re-take of the base sub-object (the region-4 borrow is
+        // scoped to the block above).
+        let form = slots.form();
+        form.my_status_error = BRepFeatStatusError::OK;
     }
 
+impl BRepFeatForm {
     /// OCCT BRepFeat_Form::UpdateDescendants(const LocOpe_Gluer& G)
     /// (cxx L1310-1335).
     fn update_descendants_gluer(&mut self, the_g: &LocOpeGluer) {
@@ -1456,7 +1492,7 @@ impl BRepFeatForm {
     /// aBOP, const TopoDS_Shape& S, const bool SkipFace) (cxx L1512-1579).
     /// The aBOP argument carries the CutVehicle of the performed cut
     /// (architecture difference #2).
-    fn update_descendants_bop(
+    pub(crate) fn update_descendants_bop(
         &mut self,
         a_bop: &CutVehicle,
         the_s: &Shape,

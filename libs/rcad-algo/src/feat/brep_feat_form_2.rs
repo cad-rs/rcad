@@ -351,6 +351,83 @@ pub fn brep_feat_parametric_min_max(
     (prmin, prmax, prbmin, prbmax, flag)
 }
 
+/// OCCT BRepFeat::ParametricBarycenter (BRepFeat.cxx L119-195) — the
+/// "parametric" barycentre of the shape S on the curve CC (consumed by the
+/// SensOfPrism/SensOfRevol statics of the form-feature subclasses, 3b).
+pub fn brep_feat_parametric_barycenter(the_s: &Shape, the_cc: &Curve3) -> f64 {
+    // OCCT L121-130: theMap; extpc over [FirstParameter, LastParameter].
+    let mut the_map = OcctShapeMap::new();
+    let mut nbp = 0i32;
+    let mut parbar = 0f64;
+    for edg in explorer(the_s, ShapeType::Edge, ShapeType::Shape) {
+        // OCCT L134-138.
+        if !map_add(&mut the_map, &edg) {
+            continue;
+        }
+        if !brep_tool_degenerated(&edg) {
+            // OCCT L141-142: BRep_Tool::Curve + Transformed (the
+            // identity-location reduction).
+            let Some((c, f, l)) = brep_tool_curve(&edg) else {
+                continue;
+            };
+            for i in 1..NECHANTBARYC {
+                let prm = ((NECHANTBARYC - i) as f64 * f + i as f64 * l) / NECHANTBARYC as f64;
+                let pone = c.point_at(prm);
+                // OCCT L148: extpc.Perform(pone) — projection on CC.
+                let extpc = rcad_kernel::base::extrema::ExtPC::new(
+                    pone,
+                    the_cc,
+                    CONFUSION,
+                    the_cc.default_domain()[0],
+                    the_cc.default_domain()[1],
+                );
+                if extpc.is_done() && extpc.nb_ext() >= 1 {
+                    let mut dist2_min = extpc.square_distance(1);
+                    let mut kmin = 1usize;
+                    for k in 2..=extpc.nb_ext() {
+                        let dist2 = extpc.square_distance(k);
+                        if dist2 < dist2_min {
+                            dist2_min = dist2;
+                            kmin = k;
+                        }
+                    }
+                    nbp += 1;
+                    let prmp = extpc.point(kmin).param;
+                    parbar += prmp;
+                }
+            }
+        }
+    }
+    // OCCT L169-191: adds every vertex (the k-loop of the OCCT source only
+    // refreshes Dist2Min; nbp increments regardless — source quirk kept).
+    for vtx in explorer(the_s, ShapeType::Vertex, ShapeType::Shape) {
+        if !map_add(&mut the_map, &vtx) {
+            continue;
+        }
+        let pone = brep_tool_pnt(&vtx);
+        let extpc = rcad_kernel::base::extrema::ExtPC::new(
+            pone,
+            the_cc,
+            CONFUSION,
+            the_cc.default_domain()[0],
+            the_cc.default_domain()[1],
+        );
+        if extpc.is_done() && extpc.nb_ext() >= 1 {
+            let mut dist2_min = extpc.square_distance(1);
+            for k in 2..=extpc.nb_ext() {
+                let dist2 = extpc.square_distance(k);
+                if dist2 < dist2_min {
+                    dist2_min = dist2;
+                }
+            }
+            nbp += 1;
+        }
+    }
+    // OCCT L193-194.
+    parbar /= nbp as f64;
+    parbar
+}
+
 /// OCCT BRepFeat::IsInside(F1, F2) (BRepFeat.cxx L467-520) — GAP
 /// (architecture difference #4): the body needs BRepTopAdaptor_FClass2d +
 /// GCPnts_QuasiUniformDeflection + GeomProjLib::Curve2d over
@@ -590,6 +667,14 @@ impl CutVehicle {
     /// OCCT BRepAlgoAPI_Cut(S1, S2) + Perform (BRepAlgoAPI_Cut.cxx L44-66:
     /// myBuilder myOperation = BOPAlgo_CUT; Perform with the two arguments).
     pub(crate) fn new(the_s1: &Shape, the_s2: &Shape) -> Self {
+        Self::with_operation(the_s1, the_s2, BooleanOpType::Cut)
+    }
+
+    /// OCCT BRepAlgoAPI_Fuse/Cut(S1, S2) with an explicit operation — the
+    /// subclass constructors (BRepAlgoAPI_Fuse.cxx / BRepAlgoAPI_Cut.cxx
+    /// L44-66) differ only in myOperation; consumed by the form-feature
+    /// subclasses (stage 3b).
+    pub(crate) fn with_operation(the_s1: &Shape, the_s2: &Shape, op: BooleanOpType) -> Self {
         let mut vehicle = CutVehicle {
             my_shape: None,
             my_history: BRepToolsHistory::new(),
@@ -603,7 +688,7 @@ impl CutVehicle {
         p_pf.perform(&a_ps);
         let mut a_builder = crate::bop::algo::builder::Builder::new(
             p_pf.ds(),
-            BooleanOpType::Cut,
+            op,
             p_pf.fuzzy_value(),
         );
         a_builder.my_arguments = p_pf.ds().arguments.clone();
@@ -615,6 +700,71 @@ impl CutVehicle {
             Ok((brep, _)) => {
                 // The root result shape (the run_build convention: the last
                 // Solid/Shell TShape of the pool).
+                let root = brep
+                    .tshapes
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, ts)| {
+                        matches!(
+                            ts.as_ref(),
+                            TShape::Solid(_) | TShape::Shell(_)
+                        )
+                    })
+                    .map(|(i, ts)| {
+                        Shape::from_parts(
+                            ts.clone(),
+                            i,
+                            0,
+                            rcad_kernel::topods::Orientation::Forward,
+                        )
+                    });
+                vehicle.my_shape = root;
+            }
+            Err(_) => {
+                vehicle.my_shape = None;
+            }
+        }
+        vehicle.my_history = a_builder
+            .my_history
+            .take()
+            .unwrap_or_else(BRepToolsHistory::new);
+        vehicle
+    }
+
+    /// OCCT BRepAlgoAPI_Cut default ctor + SetArguments(aLObj) +
+    /// SetTools(aLTools) + Build() — the N-arguments/N-tools form consumed
+    /// by the form-feature subclasses (stage 3b). The PaveFiller receives
+    /// the concatenated list; the Builder keeps the tools tail (the
+    /// run_build vehicle model).
+    pub(crate) fn with_args_tools(
+        arguments: Vec<Shape>,
+        tools: Vec<Shape>,
+        op: BooleanOpType,
+    ) -> Self {
+        let mut vehicle = CutVehicle {
+            my_shape: None,
+            my_history: BRepToolsHistory::new(),
+        };
+        // BOPAlgo_BOP with N arguments + N tools on the rcad vehicle.
+        let mut all_args = arguments;
+        all_args.extend(tools.iter().cloned());
+        let mut p_pf = PaveFiller::new();
+        p_pf.set_arguments(all_args);
+        let a_prog = rcad_kernel::message::NoopProgress;
+        let a_ps = rcad_kernel::message::ProgressScope::new(&a_prog, "intersect", 100);
+        p_pf.perform(&a_ps);
+        let mut a_builder = crate::bop::algo::builder::Builder::new(
+            p_pf.ds(),
+            op,
+            p_pf.fuzzy_value(),
+        );
+        a_builder.my_arguments = p_pf.ds().arguments.clone();
+        a_builder.my_tools = tools;
+        // OCCT: BRepAlgoAPI_Algo::SetFillHistory(true) — the API default.
+        a_builder.my_fill_history = true;
+        match a_builder.build_with_history_topods() {
+            Ok((brep, _)) => {
                 let root = brep
                     .tshapes
                     .iter()

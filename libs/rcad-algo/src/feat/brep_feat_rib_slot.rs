@@ -654,8 +654,8 @@ pub(crate) fn geom_lib_extend_curve_to_point(
 pub struct BRepFeatRibSlot {
     // --- BRepBuilderAPI_Command / MakeShape base ---
     my_done: bool,            // BRepBuilderAPI_Command::myDone
-    my_shape: Option<Shape>,  // BRepBuilderAPI_MakeShape::myShape (None = null)
-    my_generated: Vec<Shape>, // BRepBuilderAPI_MakeShape::myGenerated
+    pub(crate) my_shape: Option<Shape>,  // BRepBuilderAPI_MakeShape::myShape (None = null)
+    pub(crate) my_generated: Vec<Shape>, // BRepBuilderAPI_MakeShape::myGenerated
     // --- BRepFeat_RibSlot members (hxx L197-217) ---
     pub(crate) my_first_pnt: DVec3,
     pub(crate) my_last_pnt: DVec3,
@@ -717,12 +717,12 @@ impl BRepFeatRibSlot {
     // --- BRepBuilderAPI_Command / MakeShape base ---
 
     /// OCCT BRepBuilderAPI_Command::Done().
-    fn done(&mut self) {
+    pub(crate) fn done(&mut self) {
         self.my_done = true;
     }
 
     /// OCCT BRepBuilderAPI_Command::NotDone().
-    fn not_done(&mut self) {
+    pub(crate) fn not_done(&mut self) {
         self.my_done = false;
     }
 
