@@ -15,6 +15,9 @@ pub mod brep_lib;           // BRepLib
 pub mod brep_adaptor;       // BRepAdaptor (Curve2d)
 pub mod brep_top_adaptor;   // BRepTopAdaptor (FClass2d, TopolTool)
 pub mod brep_check;         // BRepCheck (migrated from algo_ext)
+pub mod mat2d;            // MAT2d (bisecting locus on 2d lines — OffsetWire engine)
+pub mod bisector;          // Bisector (2d bisector curves — MAT2d feed)
+pub mod mat;               // MAT (MAT graph — consumed by MAT2d)
 pub mod gcpnts;             // GCPnts (QuasiUniformDeflection)
 pub mod brep_copy;          // BRepBuilderAPI_Copy
 pub mod thru_sections;      // BRepOffsetAPI_ThruSections (loft — BRepFill port pending)
