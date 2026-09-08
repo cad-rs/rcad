@@ -65,6 +65,7 @@ pub mod chfi_kpart_chasym;
 pub mod chfi_kpart_fil;
 pub mod chfi_kpart_gp;
 pub mod fillet;
+pub mod fillet_surf;
 pub mod hbuilder;
 
 pub use fillet::make_fillet_edge;

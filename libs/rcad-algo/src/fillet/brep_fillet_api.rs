@@ -13,6 +13,8 @@ use std::sync::Arc;
 use rcad_kernel::topo::topods::Shape;
 use rcad_kernel::topods;
 
+use super::chfi2d::ChFi2dConstructionError;
+use super::chfi2d_builder::ChFi2dBuilder;
 use super::chfi_ds::{ChFi3dFilletShape, ChFiDS_ChamfMethod, ChFiDSStripeMap, ChFiDSMap};
 use super::chfi3d::{ChFi3dChBuilder, ChFi3dFilBuilder};
 use crate::geomalgo::gtests_stubs::GeomAbsShape;
@@ -110,8 +112,7 @@ impl BRepFilletAPIMakeFillet {
         let mut iinc = 0usize;
         let ic = self.my_builder.base.contains_in_spine(e, &mut iinc);
         if ic > 0 {
-            let _ = (&l, ic, iinc);
-            // OCCT: SetRadius(L, IC, IinC) — Law_Function pending.
+            self.set_radius_law(l, ic, iinc);
         }
     }
 
@@ -151,8 +152,7 @@ impl BRepFilletAPIMakeFillet {
     }
 
     /// OCCT L130-149.
-    pub fn set_radius_r1r2(&mut self, in_r1: f64, in_r2: f64, ic: usize, iinc: usize) {
-        let r1;
+    pub fn set_radius_r1r2(&mut self, in_r1: f64, in_r2: f64, ic: usize, iinc: usize) {        let r1;
         let r2;
 
         if (in_r1 - in_r2).abs() < rcad_kernel::core::precision::CONFUSION {
@@ -166,6 +166,11 @@ impl BRepFilletAPIMakeFillet {
         let last_uandr = glam::DVec2::new(1.0, r2);
         self.my_builder.set_radius_uandr(first_uandr, ic, iinc);
         self.my_builder.set_radius_uandr(last_uandr, ic, iinc);
+    }
+
+    /// OCCT L153-158 — SetRadius(const handle<Law_Function>& L, IC, IinC).
+    pub fn set_radius_law(&mut self, l: super::chfi_ds::LawFunction, ic: usize, iinc: usize) {
+        self.my_builder.set_radius_law(l, ic, iinc);
     }
 
     /// OCCT L190-193.
@@ -334,37 +339,65 @@ impl BRepFilletAPIMakeFillet {
     }
 
     /// OCCT L399-402 — (myBuilder.Builder()->DataStructure())->NbSurfaces();
-    /// the TopOpeBRepDS surface count is a pending-subsystem query.
+    /// the rcad DS keeps the surface table on the ChFi3d side tables.
     pub fn nb_surfaces(&self) -> usize {
-        // Pending TopOpeBRepDS_HDataStructure::NbSurfaces translation.
-        0
+        self.my_builder
+            .base
+            .my_ds
+            .as_ref()
+            .map(|ds| ds.side.surfaces.len())
+            .unwrap_or(0)
     }
 
-    /// OCCT L406-409 — myCoup->NewFaces(I); pending reconstruction.
-    pub fn new_faces(&self, _i: usize) -> &[Shape] {
-        &[]
+    /// OCCT L406-409 — myBuilder.Builder()->NewFaces(I).
+    pub fn new_faces(&self, i: usize) -> Vec<Shape> {
+        self.my_builder
+            .base
+            .my_coup
+            .as_ref()
+            .expect("no builder")
+            .new_faces(i as i32)
     }
 
-    /// OCCT L427-432.
+    /// OCCT L427-432 — myBuilder.Sect(IC, IS).
     pub fn sect(
         &self,
-        _ic: usize,
-        _is: usize,
+        ic: usize,
+        is: usize,
     ) -> Option<super::chfi_ds::ChFiDSCircSectionArray> {
-        // Pending ChFiDS_CircSection / Simul translation.
-        None
+        self.my_builder.sect(ic, is)
     }
 
-    /// OCCT L443-472 — Modified via myCoup IsSplit/Splits (OUT/IN/ON);
-    /// the split query is a pending-subsystem boundary.
-    pub fn modified(&mut self, _f: &Shape) -> &Vec<Shape> {
+    /// OCCT L443-472 — Modified via myCoup IsSplit/Splits (OUT/IN/ON).
+    pub fn modified(&mut self, f: &Shape) -> &Vec<Shape> {
         self.my_generated.clear();
+
+        let coup = self.my_builder.base.my_coup.as_ref().expect("no builder");
+        if coup.is_split(f, super::chfi3d_builder_2::TopAbsState::Out) {
+            for s in coup.splits(f, super::chfi3d_builder_2::TopAbsState::Out) {
+                self.my_generated.push(s);
+            }
+        }
+        if coup.is_split(f, super::chfi3d_builder_2::TopAbsState::In) {
+            for s in coup.splits(f, super::chfi3d_builder_2::TopAbsState::In) {
+                self.my_generated.push(s);
+            }
+        }
+        if coup.is_split(f, super::chfi3d_builder_2::TopAbsState::On) {
+            for s in coup.splits(f, super::chfi3d_builder_2::TopAbsState::On) {
+                self.my_generated.push(s);
+            }
+        }
         &self.my_generated
     }
 
     /// OCCT L476-481 — !(myMap.Contains(F) || IsSplit OUT/IN/ON).
     pub fn is_deleted(&self, f: &Shape) -> bool {
-        !(self.my_map.contains(&f.ptr_id()))
+        let coup = self.my_builder.base.my_coup.as_ref().expect("no builder");
+        !(self.my_map.contains(&f.ptr_id())
+            || coup.is_split(f, super::chfi3d_builder_2::TopAbsState::Out)
+            || coup.is_split(f, super::chfi3d_builder_2::TopAbsState::In)
+            || coup.is_split(f, super::chfi3d_builder_2::TopAbsState::On))
     }
 
     /// OCCT L485-488.
@@ -679,31 +712,61 @@ impl BRepFilletAPIMakeChamfer {
         self.my_builder.base.closed(ic)
     }
 
-    /// OCCT L352-355.
+    /// OCCT L352-355 — myBuilder.Simulate(IC).
     pub fn simulate(&mut self, ic: usize) {
-        // OCCT: myBuilder.Simulate(IC) — the stripe walk is real, the
-        // PerformSetOfSurf(simul) core is pending.
+        self.my_builder.simulate(ic);
     }
 
-    /// OCCT L359-362.
+    /// OCCT L359-362 — myBuilder.NbSurf(IC).
     pub fn nb_surf(&self, ic: usize) -> usize {
-        self.my_builder.base.nb_computed_surfaces(ic)
+        self.my_builder.nb_surf(ic)
     }
 
-    /// OCCT L366-371 — pending ChFiDS_CircSection / Simul translation.
-    pub fn sect(&self, _ic: usize, _is: usize) -> Option<super::chfi_ds::ChFiDSCircSectionArray> {
-        None
+    /// OCCT L366-371 — myBuilder.Sect(IC, IS).
+    pub fn sect(&self, ic: usize, is: usize) -> Option<super::chfi_ds::ChFiDSCircSectionArray> {
+        self.my_builder.sect(ic, is)
     }
 
-    /// OCCT L310-313.
-    pub fn modified(&mut self, _f: &Shape) -> &Vec<Shape> {
+    /// OCCT L268-271 — myBuilder.Builder().
+    pub fn builder(&self) -> &super::chfi3d::TopOpeBRepBuildHBuilder {
+        self.my_builder.base.my_coup.as_ref().expect("no builder")
+    }
+
+    /// OCCT L303-306 — myBuilder.Generated(EorV).
+    pub fn generated(&mut self, eorv: &Shape) -> &Vec<Shape> {
+        self.my_builder.base.generated(eorv)
+    }
+
+    /// OCCT L310-339 — Modified via myCoup IsSplit/Splits (OUT/IN/ON).
+    pub fn modified(&mut self, f: &Shape) -> &Vec<Shape> {
         self.my_generated.clear();
+
+        let coup = self.my_builder.base.my_coup.as_ref().expect("no builder");
+        if coup.is_split(f, super::chfi3d_builder_2::TopAbsState::Out) {
+            for s in coup.splits(f, super::chfi3d_builder_2::TopAbsState::Out) {
+                self.my_generated.push(s);
+            }
+        }
+        if coup.is_split(f, super::chfi3d_builder_2::TopAbsState::In) {
+            for s in coup.splits(f, super::chfi3d_builder_2::TopAbsState::In) {
+                self.my_generated.push(s);
+            }
+        }
+        if coup.is_split(f, super::chfi3d_builder_2::TopAbsState::On) {
+            for s in coup.splits(f, super::chfi3d_builder_2::TopAbsState::On) {
+                self.my_generated.push(s);
+            }
+        }
         &self.my_generated
     }
 
     /// OCCT L343-348 — !(myMap.Contains(F) || IsSplit OUT/IN/ON).
     pub fn is_deleted(&self, f: &Shape) -> bool {
-        !(self.my_map.contains(&f.ptr_id()))
+        let coup = self.my_builder.base.my_coup.as_ref().expect("no builder");
+        !(self.my_map.contains(&f.ptr_id())
+            || coup.is_split(f, super::chfi3d_builder_2::TopAbsState::Out)
+            || coup.is_split(f, super::chfi3d_builder_2::TopAbsState::In)
+            || coup.is_split(f, super::chfi3d_builder_2::TopAbsState::On))
     }
 
     /// OCCT (NbFaultyContours on the base).
@@ -751,6 +814,230 @@ impl BRepFilletAPIMakeChamfer {
         assert!(
             self.done,
             "StdFail_NotDone: BRepFilletAPI_MakeChamfer::Shape()"
+        );
+        self.my_shape.clone().expect("no shape")
+    }
+}
+
+// =========================================================================
+// OCCT BRepFilletAPI_LocalOperation (LocalOperation.hxx, no .cxx — the
+// base class is pure abstract with no data members).  The Rust
+// translation carries no base struct: the virtual API surface of
+// LocalOperation (Add / ResetContour / NbContours / Contour / NbEdges /
+// Edge / Remove / Length / FirstVertex / LastVertex / Abscissa /
+// RelativeAbscissa / ClosedAndTangent / Closed / Reset / Simulate /
+// NbSurf / Sect) is provided 1:1 by BRepFilletAPIMakeFillet and
+// BRepFilletAPIMakeChamfer above.
+// =========================================================================
+
+// =========================================================================
+// OCCT BRepFilletAPI_MakeFillet2d (MakeFillet2d.hxx/.cxx/.lxx).  Unlike
+// MakeFillet / MakeChamfer this derives from BRepBuilderAPI_MakeShape
+// (not LocalOperation) and wraps an independent 2D path: ChFi2d_Builder.
+// =========================================================================
+
+#[derive(Debug, Clone)]
+pub struct BRepFilletAPIMakeFillet2d {
+    /// OCCT: ChFi2d_Builder myMakeChFi2d.
+    pub my_make_chfi2d: ChFi2dBuilder,
+    /// BRepAPI_MakeShape: TopoDS_Shape myShape.
+    pub my_shape: Option<Shape>,
+    /// BRepAPI_MakeShape: done flag.
+    pub done: bool,
+    /// BRepAPI_MakeShape: myGenerated list.
+    pub my_generated: Vec<Shape>,
+}
+
+impl BRepFilletAPIMakeFillet2d {
+    /// OCCT BRepFilletAPI_MakeFillet2d.cxx L25 — default constructor.
+    pub fn new() -> Self {
+        BRepFilletAPIMakeFillet2d {
+            my_make_chfi2d: ChFi2dBuilder::new(),
+            my_shape: None,
+            done: false,
+            my_generated: Vec::new(),
+        }
+    }
+
+    /// OCCT L29-32 — myMakeChFi2d.Init(F).
+    pub fn new_with_face(brep: &topods::BRep, f: &Shape) -> Self {
+        let mut res = BRepFilletAPIMakeFillet2d::new();
+        // OCCT ChFi2d_Builder owns its BRep internally; rcad passes the
+        // owning BRep per call (architecture: no hierarchical handles).
+        res.my_make_chfi2d.init(brep, f.clone());
+        res
+    }
+
+    /// OCCT L36-39 — myMakeChFi2d.Init(F).
+    pub fn init(&mut self, brep: &topods::BRep, f: &Shape) {
+        self.my_make_chfi2d.init(brep, f.clone());
+    }
+
+    /// OCCT L43-46 — myMakeChFi2d.Init(RefFace, ModFace).
+    pub fn init_modified(&mut self, brep: &topods::BRep, ref_face: &Shape, mod_face: &Shape) {
+        self.my_make_chfi2d
+            .init_modified(brep, ref_face.clone(), mod_face.clone());
+    }
+
+    /// OCCT L50-53 — myMakeChFi2d.AddFillet(V, Radius).
+    pub fn add_fillet(&mut self, v: &Shape, radius: f64) -> Shape {
+        self.my_make_chfi2d.add_fillet(v, radius)
+    }
+
+    /// OCCT L57-60 — myMakeChFi2d.ModifyFillet(Fillet, Radius).
+    pub fn modify_fillet(&mut self, fillet: &Shape, radius: f64) -> Shape {
+        self.my_make_chfi2d.modify_fillet(fillet, radius)
+    }
+
+    /// OCCT L64-67 — myMakeChFi2d.RemoveFillet(Fillet).
+    pub fn remove_fillet(&mut self, fillet: &Shape) -> Shape {
+        self.my_make_chfi2d.remove_fillet(fillet)
+    }
+
+    /// OCCT L71-77 — myMakeChFi2d.AddChamfer(E1, E2, D1, D2).
+    pub fn add_chamfer_edges(
+        &mut self,
+        e1: &Shape,
+        e2: &Shape,
+        d1: f64,
+        d2: f64,
+    ) -> Shape {
+        self.my_make_chfi2d.add_chamfer_edges(e1, e2, d1, d2)
+    }
+
+    /// OCCT L81-87 — myMakeChFi2d.AddChamfer(E, V, D, Ang).
+    pub fn add_chamfer_edge_vertex(
+        &mut self,
+        e: &Shape,
+        v: &Shape,
+        d: f64,
+        ang: f64,
+    ) -> Shape {
+        self.my_make_chfi2d.add_chamfer_edge_vertex(e, v, d, ang)
+    }
+
+    /// OCCT L91-98 — myMakeChFi2d.ModifyChamfer(Chamfer, E1, E2, D1, D2).
+    pub fn modify_chamfer_edges(
+        &mut self,
+        chamfer: &Shape,
+        e1: &Shape,
+        e2: &Shape,
+        d1: f64,
+        d2: f64,
+    ) -> Shape {
+        self.my_make_chfi2d.modify_chamfer_edges(chamfer, e1, e2, d1, d2)
+    }
+
+    /// OCCT L102-108 — myMakeChFi2d.ModifyChamfer(Chamfer, E, D, Ang).
+    pub fn modify_chamfer_angle(
+        &mut self,
+        chamfer: &Shape,
+        e: &Shape,
+        d: f64,
+        ang: f64,
+    ) -> Shape {
+        self.my_make_chfi2d.modify_chamfer_angle(chamfer, e, d, ang)
+    }
+
+    /// OCCT L112-115 — myMakeChFi2d.RemoveChamfer(Chamfer).
+    pub fn remove_chamfer(&mut self, chamfer: &Shape) -> Shape {
+        self.my_make_chfi2d.remove_chamfer(chamfer)
+    }
+
+    /// OCCT L119-122 (MakeFillet2d.cxx) — myMakeChFi2d.BasisEdge(E).
+    pub fn basis_edge(&self, e: &Shape) -> Shape {
+        self.my_make_chfi2d.basis_edge(e)
+    }
+
+    /// OCCT L126-138 — Build: test if the operation is done.
+    pub fn build(&mut self) {
+        // test if the operation is done
+        if self.status() == ChFi2dConstructionError::IsDone {
+            // Done();
+            self.done = true;
+            self.my_shape = Some(self.my_make_chfi2d.result());
+        } else {
+            // NotDone();
+            self.done = false;
+        }
+    }
+
+    /// OCCT L142-147 — Modified: myGenerated.Append(DescendantEdge(E)).
+    pub fn modified(&mut self, e: &Shape) -> &Vec<Shape> {
+        self.my_generated.clear();
+        let descendant = self.my_make_chfi2d.descendant_edge(e);
+        self.my_generated.push(descendant);
+        &self.my_generated
+    }
+
+    /// OCCT L151-154 — NbCurves: NbFillet() + NbChamfer().
+    pub fn nb_curves(&self) -> usize {
+        self.nb_fillet() + self.nb_chamfer()
+    }
+
+    /// OCCT L158-171 — NewEdges(I): FilletEdges()(I) or ChamferEdges()(I-NbFillet()).
+    pub fn new_edges(&mut self, i: usize) -> &Vec<Shape> {
+        self.my_generated.clear();
+        if i <= self.nb_fillet() {
+            let e = self.my_make_chfi2d.fillet_edges()[i - 1].clone();
+            self.my_generated.push(e);
+        } else {
+            let e = self.my_make_chfi2d.chamfer_edges()[i - self.nb_fillet() - 1].clone();
+            self.my_generated.push(e);
+        }
+        &self.my_generated
+    }
+
+    /// OCCT MakeFillet2d.lxx L19-22 — myMakeChFi2d.IsModified(E).
+    pub fn is_modified(&self, e: &Shape) -> bool {
+        self.my_make_chfi2d.is_modified(e)
+    }
+
+    /// OCCT MakeFillet2d.lxx L26-29 — myMakeChFi2d.FilletEdges().
+    pub fn fillet_edges(&self) -> &[Shape] {
+        self.my_make_chfi2d.fillet_edges()
+    }
+
+    /// OCCT MakeFillet2d.lxx L33-36 — myMakeChFi2d.NbFillet().
+    pub fn nb_fillet(&self) -> usize {
+        self.my_make_chfi2d.nb_fillet()
+    }
+
+    /// OCCT MakeFillet2d.lxx L40-43 — myMakeChFi2d.ChamferEdges().
+    pub fn chamfer_edges(&self) -> &[Shape] {
+        self.my_make_chfi2d.chamfer_edges()
+    }
+
+    /// OCCT MakeFillet2d.lxx L47-50 — myMakeChFi2d.NbChamfer().
+    pub fn nb_chamfer(&self) -> usize {
+        self.my_make_chfi2d.nb_chamfer()
+    }
+
+    /// OCCT MakeFillet2d.lxx L54-57 — myMakeChFi2d.HasDescendant(E).
+    pub fn has_descendant(&self, e: &Shape) -> bool {
+        self.my_make_chfi2d.has_descendant(e)
+    }
+
+    /// OCCT MakeFillet2d.lxx L61-64 — myMakeChFi2d.DescendantEdge(E).
+    pub fn descendant_edge(&self, e: &Shape) -> Shape {
+        self.my_make_chfi2d.descendant_edge(e)
+    }
+
+    /// OCCT MakeFillet2d.lxx L68-71 — myMakeChFi2d.Status().
+    pub fn status(&self) -> ChFi2dConstructionError {
+        self.my_make_chfi2d.status()
+    }
+
+    /// BRepAPI_MakeShape::IsDone.
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// BRepAPI_MakeShape::Shape() (raises StdFail_NotDone when not done).
+    pub fn shape(&self) -> Shape {
+        assert!(
+            self.done,
+            "StdFail_NotDone: BRepFilletAPI_MakeFillet2d::Shape()"
         );
         self.my_shape.clone().expect("no shape")
     }
