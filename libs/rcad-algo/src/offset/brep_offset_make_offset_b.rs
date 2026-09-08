@@ -115,7 +115,7 @@ impl BRepOffsetMakeOffset {
             if a_li.is_empty() {
                 continue;
             }
-            if a_li.last().unwrap().my_type == ChFiDS_TypeOfConcavity::Mixed {
+            if a_li.last().unwrap().type_of() == ChFiDS_TypeOfConcavity::Mixed {
                 self.my_error = BRepOffset_Error::MixedConnectivity;
                 return;
             }
@@ -1016,7 +1016,7 @@ impl BRepOffsetMakeOffset {
                 let anc = self.my_analyse.ancestors(&e);
                 if anc.len() == 2 {
                     let l = self.my_analyse.type_(&e);
-                    if !l.is_empty() && l[0].my_type == ot {
+                    if !l.is_empty() && l[0].type_of() == ot {
                         let mut cur_offset = self.my_offset;
                         if shape_data_map::is_bound(&self.my_face_offset, &anc[0]) {
                             cur_offset = shape_data_map::find(&self.my_face_offset, &anc[0]);
@@ -1202,7 +1202,7 @@ impl BRepOffsetMakeOffset {
                     //--------------------------------------------------------------------
                     let e = exp;
                     let l = self.my_analyse.type_(&e);
-                    if !l.is_empty() && l[0].my_type != rt {
+                    if !l.is_empty() && l[0].type_of() != rt {
                         let oo = e.orientation;
                         let a_gen = sf.generated(&e);
                         let oe = bat::oriented(&a_gen, oo);
@@ -1314,7 +1314,7 @@ impl BRepOffsetMakeOffset {
                     let l = self.my_analyse.type_(&e);
                     let or = e.orientation;
                     oe.orientation = or;
-                    if !l.is_empty() && l[0].my_type != rt {
+                    if !l.is_empty() && l[0].type_of() != rt {
                         if shape_data_map::is_bound(&created, &oe) {
                             let mut ne = shape_data_map::find(&created, &oe);
                             if ne.orientation == Orientation::Reversed {

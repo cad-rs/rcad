@@ -906,7 +906,7 @@ pub(crate) fn fill_contours(
                     continue;
                 }
                 let lint = analyser.type_(&an_edge);
-                if !lint.is_empty() && lint[0].my_type == ChFiDS_TypeOfConcavity::FreeBound {
+                if !lint.is_empty() && lint[0].type_of() == ChFiDS_TypeOfConcavity::FreeBound {
                     shape_data_map::bind(map_ef, &an_edge, a_face.clone());
                     edges.push(an_edge);
                 }
@@ -1168,7 +1168,7 @@ impl BRepOffsetMakeOffset {
             my_face_offset: HashMap::new(),
             my_faces: OcctIndexedShapeMap::new(),
             my_original_faces: OcctIndexedShapeMap::new(),
-            my_analyse: BRepOffsetAnalyse,
+            my_analyse: BRepOffsetAnalyse::new(),
             my_offset_shape: Shape::null(),
             my_init_offset_face: BRepAlgoImage::new(),
             my_init_offset_edge: BRepAlgoImage::new(),

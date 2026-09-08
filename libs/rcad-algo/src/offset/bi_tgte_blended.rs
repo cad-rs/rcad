@@ -81,74 +81,10 @@ type AncestorsMap = IndexMap<ShapeKey, (Shape, Vec<Shape>)>;
 // GAP carriers (architecture differences #22-#27, #29).
 // ===========================================================================
 
-/// OCCT BRepOffset_Interval (TKOffset/BRepOffset/BRepOffset_Interval.hxx) —
-/// GAP carrier (arch. diff. #23).
-#[derive(Clone, Copy)]
-pub struct BRepOffsetInterval;
-
-impl BRepOffsetInterval {
-    /// OCCT BRepOffset_Interval::Type().
-    pub fn type_of_concavity(&self) -> ChFiDS_TypeOfConcavity {
-        panic!("GAP: BRepOffset_Interval::Type (TKOffset/BRepOffset not translated)");
-    }
-}
-
-/// OCCT BRepOffset_Analyse (TKOffset/BRepOffset/BRepOffset_Analyse.hxx /
-/// .cxx) — GAP carrier (arch. diff. #22).
-#[derive(Default)]
-pub struct BRepOffsetAnalyse;
-
-impl BRepOffsetAnalyse {
-    /// OCCT BRepOffset_Analyse::BRepOffset_Analyse() — the empty ctor.
-    pub fn new() -> Self {
-        BRepOffsetAnalyse
-    }
-
-    /// OCCT BRepOffset_Analyse::BRepOffset_Analyse(S, Tol).
-    pub fn with_shape(_s: &Shape, _tol: f64) -> Self {
-        panic!("GAP: BRepOffset_Analyse(S, Tol) (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_Analyse::Perform(S, Tol).
-    pub fn perform(&mut self, _s: &Shape, _tol: f64) {
-        panic!("GAP: BRepOffset_Analyse::Perform (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_Analyse::Clear().
-    pub fn clear(&mut self) {}
-
-    /// OCCT BRepOffset_Analyse::Ancestors(S) -> const
-    /// TopTools_ListOfShape&.
-    pub fn ancestors(&self, _s: &Shape) -> &[Shape] {
-        panic!("GAP: BRepOffset_Analyse::Ancestors (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_Analyse::HasAncestor(S).
-    pub fn has_ancestor(&self, _s: &Shape) -> bool {
-        panic!("GAP: BRepOffset_Analyse::HasAncestor (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_Analyse::TangentEdges(Edge, Vertex, Edges).
-    pub fn tangent_edges(&self, _edge: &Shape, _vertex: &Shape, _edges: &mut Vec<Shape>) {
-        panic!("GAP: BRepOffset_Analyse::TangentEdges (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_Analyse::Edges(S, Type, Edges).
-    pub fn edges(
-        &self,
-        _s: &Shape,
-        _type_of: ChFiDS_TypeOfConcavity,
-        _edges: &mut Vec<Shape>,
-    ) {
-        panic!("GAP: BRepOffset_Analyse::Edges (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_Analyse::Type(E) -> const
-    /// TopTools_ListOfBRepOffset_Interval&.
-    pub fn types(&self, _e: &Shape) -> &[BRepOffsetInterval] {
-        panic!("GAP: BRepOffset_Analyse::Type (TKOffset/BRepOffset not translated)");
-    }
-}
+// OCCT BRepOffset_Interval / BRepOffset_Analyse — the real bodies live in
+// super::brep_offset_analyse (the E0 carrier-switch list; the local panic
+// carriers are deleted).  Re-exported for the Blended consumers.
+pub use super::brep_offset_analyse::{BRepOffsetAnalyse, BRepOffsetInterval};
 
 /// OCCT BRepOffset_Inter3d (TKOffset/BRepOffset/BRepOffset_Inter3d.hxx /
 /// .cxx) — GAP carrier (arch. diff. #23).
@@ -432,7 +368,7 @@ fn add(
             let ie = of.generated(&a_local_vertex);
             if e.is_equal(&ie) {
                 // OCCT L185: L = Analyse.Ancestors(exp.Current()).
-                let l = analyse.ancestors(&a_local_vertex).to_vec();
+                let l = analyse.ancestors(&a_local_vertex).clone();
                 for it_value in l {
                     map.insert(it_value, ());
                 }
@@ -1138,7 +1074,7 @@ fn find_created_edge(
         // OCCT L684-700.
         tang_e.clear();
         if center_analyse.has_ancestor(v1) {
-            tang_e = center_analyse.ancestors(v1).to_vec();
+            tang_e = center_analyse.ancestors(v1).clone();
             for itl in &tang_e {
                 if find {
                     break;

@@ -99,18 +99,11 @@ type VEMap = IndexMap<ShapeKey, (Shape, Vec<Shape>)>;
 // GAP / architecture carriers (architecture differences #22-#33).
 // ---------------------------------------------------------------------------
 
-/// OCCT BRepOffset_Analyse (BRepOffset_Analyse.hxx) — GAP carrier
-/// (architecture difference #24): the Analyse is the next translation unit of
-/// the package; EdgeReplacement panics until it lands.
-pub struct BRepOffsetAnalyse;
-
-impl BRepOffsetAnalyse {
-    /// OCCT BRepOffset_Analyse::EdgeReplacement(F, E).
-    pub fn edge_replacement(&self, the_f: &Shape, the_e: &Shape) -> Shape {
-        let _ = (the_f, the_e);
-        panic!("GAP: BRepOffset_Analyse::EdgeReplacement (BRepOffset_Analyse.cxx not translated)");
-    }
-}
+/// OCCT BRepOffset_Analyse (BRepOffset_Analyse.hxx) — the real body lives in
+/// super::brep_offset_analyse (the E0 carrier-switch list; the local
+/// EdgeReplacement panic carrier is deleted).  Re-exported for the Inter2d
+/// consumers (brep_offset_inter2d_b globs this module).
+pub use super::brep_offset_analyse::BRepOffsetAnalyse;
 
 /// OCCT BRepOffset_Tool::MapVertexEdges(F, MVE) (BRepOffset_Tool.cxx) — GAP
 /// leaf (architecture difference #23); switch to the parallel

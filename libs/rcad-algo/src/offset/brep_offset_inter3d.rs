@@ -404,7 +404,7 @@ impl BRepOffsetInter3d {
         for exp_value in explorer(shape_init, ShapeType::Edge, ShapeType::Shape) {
             let e = exp_value;
             let l = analyse.type_(&e);
-            if !l.is_empty() && l[0].my_type == ot {
+            if !l.is_empty() && l[0].type_of() == ot {
                 //-----------------------------------------------------------
                 // edge is of the proper type , return adjacent faces.
                 //-----------------------------------------------------------
@@ -460,7 +460,7 @@ impl BRepOffsetInter3d {
 
                                 is_to_skip = set_contains(&mtev, e2)
                                     && (a_l.is_empty()
-                                        || (!a_l.is_empty() && a_l[0].my_type != ot));
+                                        || (!a_l.is_empty() && a_l[0].type_of() != ot));
                             }
 
                             if e1.is_same(e2) || is_to_skip {
@@ -487,7 +487,7 @@ impl BRepOffsetInter3d {
                                 //-------------------------------------------------------
                                 let l = analyse.type_(e2);
                                 if !l.is_empty()
-                                    && l[0].my_type
+                                    && l[0].type_of()
                                         == crate::fillet::chfi_ds::ChFiDS_TypeOfConcavity::Tangential
                                 {
                                     continue;
@@ -768,7 +768,7 @@ impl BRepOffsetInter3d {
                     continue;
                 }
                 //
-                let ot = l[0].my_type;
+                let ot = l[0].type_of();
                 if ot != crate::fillet::chfi_ds::ChFiDS_TypeOfConcavity::Convex
                     && ot != crate::fillet::chfi_ds::ChFiDS_TypeOfConcavity::Concave
                 {

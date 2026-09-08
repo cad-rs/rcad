@@ -964,7 +964,7 @@ impl BRepOffsetMakeOffset {
                 // OCCT L3910: myAnalyse.Type(E).First().Type() — the OCCT
                 // First() on the (Analyse-guaranteed non-empty) list.
                 let t_e = self.my_analyse.type_(&e);
-                let first_type = t_e.first().expect("Type(E).First() on empty list").my_type;
+                let first_type = t_e.first().expect("Type(E).First() on empty list").type_of();
                 if first_type == ChFiDS_TypeOfConcavity::FreeBound {
                     set_add(&mut free_edges, &e);
                 }
@@ -1110,7 +1110,7 @@ impl BRepOffsetMakeOffset {
                     let ed = le[0].clone();
                     if self.my_analyse.has_ancestor(&ed) {
                         let li = self.my_analyse.type_(&ed);
-                        if li.len() == 1 && li[0].my_type == ChFiDS_TypeOfConcavity::Tangential {
+                        if li.len() == 1 && li[0].type_of() == ChFiDS_TypeOfConcavity::Tangential {
                             b.continuity(&mut self.my_brep, &oe, &f1, &f2, GeomAbsShape::G1);
                         }
                     }
@@ -1329,10 +1329,9 @@ impl BRepOffsetMakeOffset {
             // (architecture difference #59).
             let mut mes_view = datamap_view(the_mes);
             let build_view = datamap_view(the_build);
-            // OCCT L4703: the Analyse argument — the Inter2d translation
-            // carries its module-local Analyse GAP carrier (architecture
-            // difference #60); theMapSF(aF) is the mutable entry form.
-            let analyse_i2d = super::brep_offset_inter2d::BRepOffsetAnalyse;
+            // OCCT L4703: the Analyse argument — the default-constructed
+            // Analyse passed by OCCT (theMapSF(aF) is the mutable entry form).
+            let analyse_i2d = super::brep_offset_inter2d::BRepOffsetAnalyse::new();
             let ok = {
                 let ofi = shape_data_map::change_find(the_map_sf, &a_f);
                 BRepOffsetInter2d::connex_int_by_int(
@@ -1370,9 +1369,9 @@ impl BRepOffsetMakeOffset {
             let a_tol_f = brep_tool_tolerance(&a_f);
             let mut mes_view = datamap_view(the_mes);
             let build_view = datamap_view(the_build);
-            // OCCT L4737: the Analyse argument — the Inter2d carrier (arch.
-            // difference #60); theMapSF(aF) is the mutable entry form.
-            let analyse_i2d = super::brep_offset_inter2d::BRepOffsetAnalyse;
+            // OCCT L4737: the Analyse argument — the default-constructed
+            // Analyse passed by OCCT (theMapSF(aF) is the mutable entry form).
+            let analyse_i2d = super::brep_offset_inter2d::BRepOffsetAnalyse::new();
             {
                 let ofi = shape_data_map::change_find(the_map_sf, &a_f);
                 BRepOffsetInter2d::connex_int_by_int_in_vert(

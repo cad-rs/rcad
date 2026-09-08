@@ -297,47 +297,7 @@ pub(crate) fn update_vertex_tolerances(the_face: &Shape) {
 // carriers here).
 // ---------------------------------------------------------------------------
 
-/// OCCT BRepOffset_Interval (BRepOffset_Interval.hxx L30-70) — GAP carrier
-/// (staged; the Type() accessor is the only consumed form of this batch).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BRepOffsetInterval {
-    /// OCCT: myType (ChFiDS_TypeOfConcavity).
-    pub my_type: crate::fillet::chfi_ds::ChFiDS_TypeOfConcavity,
-}
-
-/// OCCT BRepOffset_Analyse (BRepOffset_Analyse.hxx L40-140) — GAP carrier
-/// (staged as its own translation unit of the package; the accessor
-/// surface is the one consumed by Inter3d and Tool).
-#[derive(Debug, Clone)]
-pub(crate) struct BRepOffsetAnalyse;
-
-impl BRepOffsetAnalyse {
-    /// OCCT BRepOffset_Analyse::Type(E) — the interval list of the edge.
-    pub fn type_(&self, _e: &Shape) -> Vec<BRepOffsetInterval> {
-        panic!("GAP: BRepOffset_Analyse::Type (BRepOffset_Analyse not translated)");
-    }
-    /// OCCT BRepOffset_Analyse::Ancestors(S).
-    pub fn ancestors(&self, _s: &Shape) -> Vec<Shape> {
-        panic!("GAP: BRepOffset_Analyse::Ancestors (BRepOffset_Analyse not translated)");
-    }
-    /// OCCT BRepOffset_Analyse::HasAncestor(S).
-    pub fn has_ancestor(&self, _s: &Shape) -> bool {
-        panic!("GAP: BRepOffset_Analyse::HasAncestor (BRepOffset_Analyse not translated)");
-    }
-    /// OCCT BRepOffset_Analyse::Descendants(S) — the nullable form.
-    pub fn descendants(&self, _s: &Shape) -> Option<Vec<Shape>> {
-        panic!("GAP: BRepOffset_Analyse::Descendants (BRepOffset_Analyse not translated)");
-    }
-    /// OCCT BRepOffset_Analyse::Generated(S).
-    pub fn generated(&self, _s: &Shape) -> Shape {
-        panic!("GAP: BRepOffset_Analyse::Generated (BRepOffset_Analyse not translated)");
-    }
-    /// OCCT BRepOffset_Analyse::NewFaces().
-    pub fn new_faces(&self) -> Vec<Shape> {
-        panic!("GAP: BRepOffset_Analyse::NewFaces (BRepOffset_Analyse not translated)");
-    }
-    /// OCCT BRepOffset_Analyse::TangentEdges(Edge, Vertex, TangOnV).
-    pub fn tangent_edges(&self, _edge: &Shape, _vertex: &Shape, _tang_on_v: &mut Vec<Shape>) {
-        panic!("GAP: BRepOffset_Analyse::TangentEdges (BRepOffset_Analyse not translated)");
-    }
-}
+// OCCT BRepOffset_Interval / BRepOffset_Analyse — the real bodies live in
+// super::brep_offset_analyse (the E0 carrier-switch list; the local panic
+// carriers are deleted).  Re-exported for the Inter3d / Tool consumers.
+pub(crate) use super::brep_offset_analyse::{BRepOffsetAnalyse, BRepOffsetInterval};

@@ -843,7 +843,7 @@ pub fn check_bounds(
             let l = analyse.type_(&an_edge);
             if !l.is_empty() || brep_tool_degenerated(&an_edge) {
                 // OCCT L3344-3345: OT = L.First().Type().
-                let ot = l.first().map(|iv| iv.my_type);
+                let ot = l.first().map(|iv| iv.type_of());
                 let ot_tangential = ot == Some(crate::fillet::chfi_ds::ChFiDS_TypeOfConcavity::Tangential);
                 if ot_tangential || brep_tool_degenerated(&an_edge) {
                     // OCCT L3347-3349: aCurve = CurveOnSurface with the

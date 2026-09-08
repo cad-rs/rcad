@@ -197,7 +197,9 @@ impl BiTgteBlend {
                     // OCCT L1407-1447.
                     let mut let_: Vec<Shape> = Vec::new();
                     if as_.shape_type() == ShapeType::Face {
-                        self.my_analyse.edges(
+                        // OCCT L1410: Analyse.Edges(TopoDS::Face(As), ...) —
+                        // the face overload.
+                        self.my_analyse.edges_on_face(
                             &as_,
                             ChFiDS_TypeOfConcavity::Tangential,
                             &mut let_,
@@ -220,7 +222,9 @@ impl BiTgteBlend {
                             let (ov1, ov2) = top_exp_vertices_shape(&ote);
                             let mut le: Vec<Shape> = Vec::new();
                             if !edge_tgt.contains_key(&shape_key(&v1)) {
-                                self.my_analyse.edges(
+                                // OCCT L1426: Analyse.Edges(V1, ...) — the
+                                // vertex overload.
+                                self.my_analyse.edges_on_vertex(
                                     &v1,
                                     ChFiDS_TypeOfConcavity::Tangential,
                                     &mut le,
@@ -232,7 +236,7 @@ impl BiTgteBlend {
                             }
                             if !edge_tgt.contains_key(&shape_key(&v2)) {
                                 le.clear();
-                                self.my_analyse.edges(
+                                self.my_analyse.edges_on_vertex(
                                     &v2,
                                     ChFiDS_TypeOfConcavity::Tangential,
                                     &mut le,
@@ -305,8 +309,8 @@ impl BiTgteBlend {
                 let anc = ancestors_find(&map, &e).to_vec();
                 if anc.len() == 2 {
                     // OCCT L1510: L = myAnalyse.Type(E).
-                    let l = self.my_analyse.types(&e);
-                    if !l.is_empty() && l[0].type_of_concavity() == ot {
+                    let l = self.my_analyse.type_(&e);
+                    if !l.is_empty() && l[0].type_of() == ot {
                         // OCCT L1513-1516.
                         let anc_first = anc[0].clone();
                         let anc_last = anc[1].clone();
@@ -434,15 +438,15 @@ impl BiTgteBlend {
                     // will disappear are not set)
                     // --------------------------------------------------------------
                     // OCCT L1626: L = myAnalyse.Type(CurE).
-                    let l = self.my_analyse.types(&cur_e);
-                    if !l.is_empty() && l[0].type_of_concavity() != ot {
+                    let l = self.my_analyse.type_(&cur_e);
+                    if !l.is_empty() && l[0].type_of() != ot {
                         // a priori doe s not disappear, so it is set
                         let cur_oe = self.my_map_sf[&cur_f].generated(&cur_e);
                         self.my_as_des
                             .add(&cur_of, &oriented_shape(&cur_oe, cur_e.orientation));
                     } else {
                         // OCCT L1638: Lanc = myAnalyse.Ancestors(CurE).
-                        let lanc = self.my_analyse.ancestors(&cur_e).to_vec();
+                        let lanc = self.my_analyse.ancestors(&cur_e).clone();
                         let lanc_first = lanc.first().expect("BiTgte_Blend: empty ancestors");
                         let lanc_last = lanc.last().expect("BiTgte_Blend: empty ancestors");
                         if !self.my_faces.contains_key(lanc_first)

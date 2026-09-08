@@ -646,6 +646,12 @@ fn build_ancestors(s: &Shape, ma: &mut ShapeIndexedDataMap<Vec<Shape>>) {
 
 /// OCCT BRepOffset_Analyse — analyses the shape to find the parts of edges
 /// connecting the convex, concave or tangent faces.
+///
+/// `Clone` models the OCCT `const BRepOffset_Analyse* myAnalyzer` pointer
+/// storage (BRepOffset_MakeOffset_1 SetAnalysis): the analyse is immutable
+/// after Perform, so a copy is read-equivalent to the OCCT alias (the
+/// mutable myDescendants cache recomputes lazily in each copy).
+#[derive(Clone)]
 pub struct BRepOffsetAnalyse {
     // Inputs
     my_shape: Shape,              //< OCCT: myShape — input shape to analyze
