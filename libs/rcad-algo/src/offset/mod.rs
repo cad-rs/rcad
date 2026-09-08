@@ -60,3 +60,4 @@ pub mod brep_offset_make_offset_1_g;
 pub mod brep_offset_make_offset_1_h;
 pub mod brep_offset_make_offset_1_i;
 pub mod brep_offset_make_offset_1_j;
+pub mod brep_offset_analyse;

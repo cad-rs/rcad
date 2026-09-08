@@ -15,3 +15,4 @@ pub mod bean_face_intersector;
 pub mod hinter_adaptor;
 pub mod extrema_gen_ext_cs;
 pub mod curve_range;
+pub mod int_tools_fclass2d;
