@@ -124,7 +124,7 @@ fn int_plan_edge(ed: &Shape, p: &Plane, w: &mut f64, tol3d: f64) -> bool {
     // OCCT L91-106: the nearest intersection point wins.
     if intersection.is_done() {
         let nbp = intersection.nb_points();
-        for iip in 0..nbp {
+        for iip in 1..=nbp {
             let ip = intersection.point(iip);
             let pint = ip.p;
             let d = pint.distance(or);
