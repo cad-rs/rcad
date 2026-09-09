@@ -1085,6 +1085,177 @@ impl BRep {
         before - self.tshapes.len()
     }
 
+    /// Import a shape tree into this BRep pool.  OCCT TopoDS handles are
+    /// pool-free; the rcad pool is the mutable backing store and every
+    /// index-based accessor (`edge_mut` / `tolerance` / ...) resolves
+    /// through `tshapes[index]`, so a tree whose handles were materialized
+    /// in another pool (or pool-free, index 0) must be materialized here
+    /// before index-based consumers may touch it (architecture A1/D6 note;
+    /// no OCCT counterpart — the OCCT form is the plain handle copy).
+    ///
+    /// Every TShape Arc of the tree that is not registered here gets a slot;
+    /// container data fields are rewritten to the imported child handles so
+    /// the returned tree carries pool-local indices end to end.  TShapes
+    /// already registered keep their Arc identity (shared, never cloned); a
+    /// container whose children were rewritten is re-registered as a new Arc
+    /// (the OCCT BRep_Builder::Add stores the child handle inside the parent
+    /// TShape the same way — the rewrite is that store, done in one pass).
+    pub fn import_shape_tree(&mut self, root: &Shape) -> Shape {
+        let mut registry: HashMap<u64, usize> = HashMap::new();
+        for (i, ts) in self.tshapes.iter().enumerate() {
+            registry.insert(Arc::as_ptr(ts) as u64, i);
+        }
+        let mut imported: HashMap<u64, Shape> = HashMap::new();
+        Self::import_node(self, root, &mut registry, &mut imported)
+    }
+
+    fn import_node(
+        brep: &mut BRep,
+        s: &Shape,
+        registry: &mut HashMap<u64, usize>,
+        imported: &mut HashMap<u64, Shape>,
+    ) -> Shape {
+        if s.ptr_id() == 0 {
+            return s.clone();
+        }
+        let pid = s.ptr_id();
+        if let Some(done) = imported.get(&pid) {
+            return done.clone();
+        }
+        // Collect the child handles of the container (the same fields the
+        // data-side walkers read).
+        let kids: Vec<Shape> = match &*s.data {
+            TShape::Vertex(v) => v.my_shapes.clone(),
+            TShape::Edge(e) => {
+                let mut k = e.my_shapes.clone();
+                k.push(e.first.clone());
+                k.push(e.last.clone());
+                k
+            }
+            TShape::Wire(w) => {
+                let mut k = w.my_shapes.clone();
+                k.extend(w.edges.iter().cloned());
+                k
+            }
+            TShape::Face(f) => {
+                let mut k = f.my_shapes.clone();
+                k.push(f.outer_wire.clone());
+                k.extend(f.inner_wires.iter().cloned());
+                k.extend(f.internal_vertices.iter().cloned());
+                k
+            }
+            TShape::Shell(sh) => {
+                let mut k = sh.my_shapes.clone();
+                k.extend(sh.faces.iter().cloned());
+                k
+            }
+            TShape::Solid(sd) => {
+                let mut k = sd.my_shapes.clone();
+                k.extend(sd.shells.iter().cloned());
+                k.extend(sd.internal_vertices.iter().cloned());
+                k.extend(sd.internal_edges.iter().cloned());
+                k
+            }
+            TShape::CompSolid(c) | TShape::Compound(c) => c.clone(),
+        };
+        let mut changed = false;
+        let new_kids: Vec<Shape> = kids
+            .iter()
+            .map(|k| {
+                let ni = Self::import_node(brep, k, registry, imported);
+                changed |= ni.ptr_id() != k.ptr_id() || ni.index != k.index;
+                ni
+            })
+            .collect();
+        // A node already registered in this pool with an unchanged child set
+        // keeps its slot and Arc identity.
+        if !changed {
+            if let Some(&idx) = registry.get(&pid) {
+                if idx < brep.tshapes.len() && Arc::ptr_eq(&brep.tshapes[idx], &s.data) {
+                    let out = Shape {
+                        data: brep.tshapes[idx].clone(),
+                        index: idx,
+                        location: s.location,
+                        orientation: s.orientation,
+                    };
+                    imported.insert(pid, out.clone());
+                    return out;
+                }
+            }
+        }
+        // Rewrite the container fields with the imported children (see the
+        // method doc for the BRep_Builder::Add analogy) and register the
+        // rewritten TShape.  The field groups are taken at the offsets the
+        // kid collection above used, per variant.
+        let data = match &*s.data {
+            TShape::Vertex(v) => {
+                let mut vd = v.clone();
+                let n = vd.my_shapes.len();
+                vd.my_shapes = new_kids[..n].to_vec();
+                TShape::Vertex(vd)
+            }
+            TShape::Edge(e) => {
+                let mut ed = e.clone();
+                let n = ed.my_shapes.len();
+                ed.my_shapes = new_kids[..n].to_vec();
+                ed.first = new_kids[n].clone();
+                ed.last = new_kids[n + 1].clone();
+                TShape::Edge(ed)
+            }
+            TShape::Wire(w) => {
+                let mut wd = w.clone();
+                let n = wd.my_shapes.len();
+                wd.my_shapes = new_kids[..n].to_vec();
+                wd.edges = new_kids[n..].to_vec();
+                TShape::Wire(wd)
+            }
+            TShape::Face(f) => {
+                let mut fd = f.clone();
+                let n_my = fd.my_shapes.len();
+                let n_iw = fd.inner_wires.len();
+                let n_iv = fd.internal_vertices.len();
+                let base = n_my;
+                fd.my_shapes = new_kids[..n_my].to_vec();
+                fd.outer_wire = new_kids[base].clone();
+                fd.inner_wires = new_kids[base + 1..base + 1 + n_iw].to_vec();
+                fd.internal_vertices = new_kids[base + 1 + n_iw..base + 1 + n_iw + n_iv].to_vec();
+                TShape::Face(fd)
+            }
+            TShape::Shell(sh) => {
+                let mut sd = sh.clone();
+                let n = sd.my_shapes.len();
+                sd.my_shapes = new_kids[..n].to_vec();
+                sd.faces = new_kids[n..].to_vec();
+                TShape::Shell(sd)
+            }
+            TShape::Solid(sd) => {
+                let mut sd = sd.clone();
+                let n_my = sd.my_shapes.len();
+                let n_sh = sd.shells.len();
+                let n_iv = sd.internal_vertices.len();
+                let n_ie = sd.internal_edges.len();
+                let base = n_my;
+                sd.my_shapes = new_kids[..n_my].to_vec();
+                sd.shells = new_kids[base..base + n_sh].to_vec();
+                sd.internal_vertices = new_kids[base + n_sh..base + n_sh + n_iv].to_vec();
+                sd.internal_edges = new_kids[base + n_sh + n_iv..base + n_sh + n_iv + n_ie].to_vec();
+                TShape::Solid(sd)
+            }
+            TShape::CompSolid(_) | TShape::Compound(_) => TShape::Compound(new_kids.clone()),
+        };
+        let index = brep.tshapes.len();
+        brep.tshapes.push(Arc::new(data));
+        registry.insert(Arc::as_ptr(&brep.tshapes[index]) as u64, index);
+        let out = Shape {
+            data: brep.tshapes[index].clone(),
+            index,
+            location: s.location,
+            orientation: s.orientation,
+        };
+        imported.insert(pid, out.clone());
+        out
+    }
+
     /// Apply an affine transform to all vertex positions, edge curves, and
     /// face surfaces in-place.  Equivalent to `rcad_kernel::BRep::apply_transform`.
     pub fn apply_transform(&mut self, mat: glam::DAffine3) {
@@ -3795,6 +3966,79 @@ impl ShapeType {
 mod tests {
     use super::*;
     use crate::geom::*;
+
+    /// BRep::import_shape_tree anchor: a pool-free tree (the BuilderSolid
+    /// product form, index 0) is materialized into the target pool with
+    /// pool-local indices end to end, Arc identity is preserved for nodes
+    /// already registered, and the imported handles resolve through the
+    /// index-based accessors.
+    #[test]
+    fn test_import_shape_tree_materializes_pool_free_tree() {
+        let mut src = BRep::new();
+        // Build a minimal face tree in the source pool: v1, v2, edge, wire,
+        // face.
+        let v1 = src.add_tvertex_unique(DVec3::new(0.0, 0.0, 0.0));
+        let v2 = src.add_tvertex_unique(DVec3::new(1.0, 0.0, 0.0));
+        let e = src.add_tedge(None, v1.clone(), v2.clone(), [0.0, 1.0]);
+        let w = BRepBuilder::new().build_wire(&mut src, vec![e.clone()]);
+        let f = BRepBuilder::new().make_face(&mut src, None, w.clone());
+
+        // Simulate the pool-free BuilderSolid product: a fresh Shell Arc
+        // (index 0) wrapping the source face handle (foreign index).
+        let shell = Shape::new(
+            Arc::new(TShape::Shell(TShellData {
+                my_shapes: vec![f.clone()],
+                flags: tshape_flags::CLOSED,
+                faces: vec![f.clone()],
+            })),
+            0,
+            Orientation::Forward,
+        );
+        let solid = Shape::new(
+            Arc::new(TShape::Solid(TSolidData {
+                my_shapes: vec![shell.clone()],
+                flags: tshape_flags::CLOSED,
+                shells: vec![shell.clone()],
+                internal_vertices: Vec::new(),
+                internal_edges: Vec::new(),
+            })),
+            0,
+            Orientation::Forward,
+        );
+
+        // Import into an empty target pool.
+        let mut dst = BRep::new();
+        let imported = dst.import_shape_tree(&solid);
+        assert_eq!(imported.index, 6, "children first: v0,v1,e,w,f,shell,solid");
+
+        // The whole tree resolves through pool-local indices: walk to the
+        // edge via solid -> shell -> face -> wire -> edges and mutate it
+        // (the former "edge_mut: Shape N is not an Edge" defect).
+        let sd = imported.as_solid().expect("solid");
+        let sh = &sd.shells[0];
+        assert_eq!(sh.index, 5, "shell registered before the solid");
+        let wire = match sh.data.as_ref() {
+            TShape::Shell(shd) => match shd.faces[0].data.as_ref() {
+                TShape::Face(fd) => fd.outer_wire.clone(),
+                _ => panic!("face expected"),
+            },
+            _ => panic!("shell expected"),
+        };
+        let edge = match wire.data.as_ref() {
+            TShape::Wire(wd) => wd.edges[0].clone(),
+            _ => panic!("wire expected"),
+        };
+        assert_eq!(edge.index, 2, "vertices, then edge, wire, face, shell, solid");
+        let ed = dst.edge_mut(edge.clone());
+        ed.tolerance = 1.0e-4;
+        assert_eq!(dst.tolerance(&edge), 1.0e-4, "imported edge is mutable");
+
+        // NOTE: re-importing the SAME source tree re-rewrites containers
+        // whose internal handles still reference unregistered source Arcs
+        // (non-idempotent by design — the pipeline imports a BuilderSolid
+        // product exactly once and then consumes the returned tree).
+        assert_eq!(dst.tshapes.len(), 7, "one materialization, no residue");
+    }
 
     #[test]
     fn test_orientation_values() {

@@ -85,17 +85,18 @@ pub struct TopOpeBRepBuildHBuilder {
     pub my_new_vertices: HashMap<i32, Shape>,
     /// OCCT Builder.hxx L122: myDataStructure = HDS (stored at Perform).
     pub my_data_structure: Option<TopOpeBRepDSHDataStructure>,
-    /// D6 architecture: OCCT shapes are pool-free handles; rcad TopoDS_Shape
-    /// lives inside a BRep TShape pool.  All shapes materialized by Perform
-    /// (new vertices / edges / faces) are built into this pool.
-    pub my_build_brep: BRep,
-    /// D6 architecture: the merge-pipeline result pool.  The MergeSolid
-    /// reconstruction (BOPAlgo_BuilderSolid, the MakeSolids equivalent)
-    /// produces pool-free solid handles wrapping the already-materialized
-    /// face handles, so no separate result pool is needed; the field stays
-    /// for the OCCT HBuilder surface completeness and is cleared per run.
-    pub my_merge_brep: Option<BRep>,
 }
+
+// D6 architecture (pool identity, converged): OCCT shapes are pool-free
+// handles and rcad TopoDS_Shape resolution is pool-local
+// (`tshapes[index]`).  All shapes materialized by Perform / MergeSolid are
+// built into the CALLER's pool (the ChFi3d builder's my_brep, passed to
+// perform / merge_solid) — the same pool the DS shapes and the result
+// compound live in — so every handle the HBuilder hands back resolves in
+// one pool.  The former private my_build_brep pool produced handles that
+// resolved only in that private pool and broke every downstream
+// index-based consumer (the same_parameter_pass "edge_mut: Shape N is not
+// an Edge" defect).
 
 impl TopOpeBRepBuildHBuilder {
     // OCCT TopOpeBRepBuild_HBuilder.hxx L52 — Perform(HDS).
@@ -120,7 +121,7 @@ impl TopOpeBRepBuildHBuilder {
     // `bopds`, the geometry payloads (surface / curve / point tables) in
     // `side`, and the interference quadruplets in the facade maps (D6
     // architecture difference: BOPDS has no per-shape quadruplet lists).
-    pub fn perform(&mut self, ds: &mut TopOpeBRepDSHDataStructure) {
+    pub fn perform(&mut self, brep: &mut BRep, ds: &mut TopOpeBRepDSHDataStructure) {
         // Builder.cxx L121: Clear();
         self.clear();
         // Builder.cxx L122: myDataStructure = HDS;
@@ -128,23 +129,23 @@ impl TopOpeBRepBuildHBuilder {
 
         // Builder.cxx L123: BuildVertices(HDS) — TopOpeBRepBuild_
         // BuildVertices.cxx L25-36: for every DS point, MakeVertex.
-        self.build_vertices(ds);
+        self.build_vertices(brep, ds);
 
         // Builder.cxx L125: BuildEdges(HDS) — TopOpeBRepBuild_BuildEdges.cxx
         // L38-100 (per DS curve) and L104-146 (curve walk with the
         // mother-curve filter).
-        self.build_edges(ds);
+        self.build_edges(brep, ds);
 
         // Builder.cxx L126: BuildFaces(HDS) — TopOpeBRepBuild_BuildFaces.cxx
         // L99-107: myNewFaces = new HArray1(0, NbSurfaces); for each DS
         // surface BuildFaces(iS, HDS) (L40-95).
-        self.build_faces(ds);
+        self.build_faces(brep, ds);
 
         // Builder.cxx L466-475 (the SplitEdge pass over the DS shapes with
         // point interferences, reached from MergeShapes' SplitShapes walk —
         // performed once here so the tables are ready before MergeSolid,
         // mirroring the OCCT fill order Build* -> split tables).
-        self.split_ds_edges(ds);
+        self.split_ds_edges(brep, ds);
     }
 
     /// OCCT TopOpeBRepBuild_Builder::Clear (Builder.cxx L182-245) — drops
@@ -161,22 +162,20 @@ impl TopOpeBRepBuildHBuilder {
         self.my_new_edges.clear();
         self.my_new_faces.clear();
         self.my_new_vertices.clear();
-        self.my_build_brep = BRep::new();
-        self.my_merge_brep = None;
     }
 
     /// OCCT TopOpeBRepBuild_Builder::BuildVertices (BuildVertices.cxx
     /// L25-36): for iP = 1..NbPoints, MakeVertex(ChangeNewVertex(iP),
     /// HDS->Point(iP)).  The DS point table routes to the facade `side`
     /// table (D6).
-    fn build_vertices(&mut self, ds: &TopOpeBRepDSHDataStructure) {
+    fn build_vertices(&mut self, brep: &mut BRep, ds: &TopOpeBRepDSHDataStructure) {
         let n = ds.side.points.len() as i32;
         let mut b1 = BRepBuilder::new();
         for ip in 1..=n {
             // BuildTool::MakeVertex(V, DSP): point + tolerance of the DS point.
             let dsp = ds.point(ip);
-            let v = self.my_build_brep.add_tvertex_unique(dsp.point());
-            b1.update_vertex_tolerance(&mut self.my_build_brep, v.clone(), dsp.tolerance());
+            let v = brep.add_tvertex_unique(dsp.point());
+            b1.update_vertex_tolerance(brep, v.clone(), dsp.tolerance());
             self.my_new_vertices.insert(ip, v);
         }
     }
@@ -193,7 +192,7 @@ impl TopOpeBRepBuildHBuilder {
     /// L77-99) is the replaced-curve remap of the old DS — the facade side
     /// table carries `mother` for the filter and has no removal, so only
     /// the L133-140 mother gate is translated.
-    fn build_edges(&mut self, ds: &TopOpeBRepDSHDataStructure) {
+    fn build_edges(&mut self, brep: &mut BRep, ds: &TopOpeBRepDSHDataStructure) {
         let nb_curves = ds.side.curves.len() as i32;
         for ic in 1..=nb_curves {
             let c = ds.curve(ic);
@@ -251,13 +250,14 @@ impl TopOpeBRepBuildHBuilder {
                     <= CONFUSION;
                 if closed_curve {
                     let v = self.pave_vertex(
+                        brep,
                         ds,
                         paves[0].1,
                         TopOpeBRepDSKind::Point,
                         &Some(curve.clone()),
                         equal_par,
                     );
-                    let piece = self.my_build_brep.add_tedge(
+                    let piece = brep.add_tedge(
                         Some(curve.clone()),
                         v.clone(),
                         v.clone(),
@@ -295,12 +295,10 @@ impl TopOpeBRepBuildHBuilder {
                 if pb - pa <= CONFUSION {
                     continue;
                 }
-                let va = self.bound_vertex(ds, ipa, &curve, pa);
-                let vb = self.bound_vertex(ds, ipb, &curve, pb);
+                let va = self.bound_vertex(brep, ds, ipa, &curve, pa);
+                let vb = self.bound_vertex(brep, ds, ipb, &curve, pb);
                 // BuildTool::MakeEdge on the DS curve with the piece range.
-                let e = self
-                    .my_build_brep
-                    .add_tedge(Some(curve.clone()), va, vb, [pa, pb]);
+                let e = brep.add_tedge(Some(curve.clone()), va, vb, [pa, pb]);
                 pieces.push(e);
             }
             // BuildEdges.cxx L75: NCollection_List& EL = ChangeNewEdges(iC).
@@ -316,6 +314,7 @@ impl TopOpeBRepBuildHBuilder {
     /// myNewVertices table filled by build_vertices.
     fn bound_vertex(
         &mut self,
+        brep: &mut BRep,
         _ds: &TopOpeBRepDSHDataStructure,
         ipoint: i32,
         curve: &rcad_kernel::geom::Curve3,
@@ -327,7 +326,7 @@ impl TopOpeBRepBuildHBuilder {
             }
         }
         let p = curve.point_at(param);
-        self.my_build_brep.add_tvertex_unique(p)
+        brep.add_tvertex_unique(p)
     }
 
     /// OCCT TopOpeBRepBuild_Builder::BuildFaces (BuildFaces.cxx L99-107 per
@@ -352,7 +351,7 @@ impl TopOpeBRepBuildHBuilder {
     /// areas from the WireEdgeSet.  The rcad equivalent chains the new
     /// edges by shared end vertices; only closed chains become faces —
     /// open chains produce no face, as in OCCT.
-    fn build_faces(&mut self, ds: &TopOpeBRepDSHDataStructure) {
+    fn build_faces(&mut self, brep: &mut BRep, ds: &TopOpeBRepDSHDataStructure) {
         let nb_surfaces = ds.side.surfaces.len() as i32;
         // BuildFaces.cxx L102: the array spans 0..NbSurfaces — every index
         // is bound (possibly to an empty list).
@@ -412,13 +411,9 @@ impl TopOpeBRepBuildHBuilder {
                         // In-place edit (the OCCT BRep_Builder::UpdateEdge
                         // semantics): the piece handle recorded in
                         // myNewEdges observes the change.
-                        let piece_tol = self.my_build_brep.tolerance(piece);
+                        let piece_tol = brep.tolerance(piece);
                         if piece_tol < a_tbs_tol {
-                            b1.update_edge_tolerance(
-                                &mut self.my_build_brep,
-                                piece.clone(),
-                                a_tbs_tol,
-                            );
+                            b1.update_edge_tolerance(brep, piece.clone(), a_tbs_tol);
                         }
                         // BuildFaces.cxx L84: the SCI orientation.
                         let mut oriented = piece.clone();
@@ -434,12 +429,12 @@ impl TopOpeBRepBuildHBuilder {
 
             // FaceBuilder equivalent: chain by shared end vertices; closed
             // chains become faces on the DS surface.
-            let loops = chain_closed_loops(&self.my_build_brep, &start_elements);
+            let loops = chain_closed_loops(brep, &start_elements);
             let surface = ds.surface(is).surface().clone();
             let mut faces: Vec<Shape> = Vec::new();
             for loop_edges in loops {
-                let w = b1.build_wire(&mut self.my_build_brep, loop_edges.clone());
-                let f = b1.make_face(&mut self.my_build_brep, Some(surface.clone()), w);
+                let w = b1.build_wire(brep, loop_edges.clone());
+                let f = b1.make_face(brep, Some(surface.clone()), w);
                 // BuildFaces.cxx L85-86: myBuildTool.PCurve(aFace, anEdge,
                 // CDS, PC) — the SCI pcurve of the piece's curve is put on
                 // the edge for the built face (BRep_Tool::CurveOnSurface
@@ -452,16 +447,15 @@ impl TopOpeBRepBuildHBuilder {
                         .and_then(|(_, pc)| pc.clone());
                     if let Some(pc) = pc {
                         let [t1, t2] = pc.default_domain();
-                        self.my_build_brep
-                            .edge_mut_inplace(e.clone())
+                        brep.edge_mut_inplace(e.clone())
                             .pcurves
                             .insert((f.ptr_id(), f.location), (pc, t1, t2));
                     }
                 }
-            faces.push(f);
+                faces.push(f);
+            }
+            self.my_new_faces.insert(is, faces);
         }
-        self.my_new_faces.insert(is, faces);
-    }
     }
 
     /// OCCT TopOpeBRepBuild_Builder::SplitEdge pass (Builder.cxx L925-1152,
@@ -480,18 +474,14 @@ impl TopOpeBRepBuildHBuilder {
     /// copy keeps the source curve, tolerance and pcurve representations)
     /// + AddEdgeVertex/Parameter per pave vertex.
     ///
-    /// D6 architecture note (pool identity): OCCT pieces are free TShape
-    /// handles.  rcad materializes the piece TShapes into the facade build
-    /// pool (my_build_brep — same carrier as the Build* products), and the
-    /// recorded piece handles carry the SOURCE shape's (index, location) so
-    /// the frozen pool-bound consumer (the compute-tail tolerance pass
-    /// resolving pieces through the caller's BRep, chfi3d_perform.rs
-    /// L187-200) keeps resolving the source edge — whose tolerance every
-    /// piece shares by CopyEdge.  The data side of the recorded handle is
-    /// the real restricted piece (range + carried pcurves), so data-driven
-    /// consumers (BuildFaces chaining, the solid merge) read the OCCT
-    /// piece form.  Converges fully once the DS owns the build pool.
-    fn split_ds_edges(&mut self, ds: &TopOpeBRepDSHDataStructure) {
+    /// D6 architecture note (pool identity, converged): OCCT pieces are free
+    /// TShape handles; rcad materializes the piece TShapes into the caller's
+    /// pool (brep — the same pool the DS shapes and the Build* products
+    /// live in), and the recorded piece handles are the real restricted
+    /// pieces (range + carried pcurves + the CopyEdge tolerance), so every
+    /// index-based consumer resolving through the caller's BRep
+    /// (chfi3d_perform.rs L187-200) reads the OCCT piece form directly.
+    fn split_ds_edges(&mut self, brep: &mut BRep, ds: &TopOpeBRepDSHDataStructure) {
         let entries: Vec<i32> = ds.shape_interferences.keys().copied().collect();
         for ishape in entries {
             let list = ds.shape_interferences(ishape);
@@ -561,15 +551,15 @@ impl TopOpeBRepBuildHBuilder {
             let mut vend = v_last.clone();
             for (par, ip, kind) in &paves {
                 if (*par - first).abs() <= CONFUSION {
-                    vstart = self.pave_vertex(ds, *ip, *kind, &curve, *par);
+                    vstart = self.pave_vertex(brep, ds, *ip, *kind, &curve, *par);
                 } else if (*par - last).abs() <= CONFUSION {
-                    vend = self.pave_vertex(ds, *ip, *kind, &curve, *par);
+                    vend = self.pave_vertex(brep, ds, *ip, *kind, &curve, *par);
                 }
             }
             bounds.push((first, vstart));
             for (par, ip, kind) in &paves {
                 if *par > first + CONFUSION && *par < last - CONFUSION {
-                    bounds.push((*par, self.pave_vertex(ds, *ip, *kind, &curve, *par)));
+                    bounds.push((*par, self.pave_vertex(brep, ds, *ip, *kind, &curve, *par)));
                 }
             }
             bounds.push((last, vend));
@@ -585,15 +575,14 @@ impl TopOpeBRepBuildHBuilder {
                 // BuildTool.cxx L293-318 CopyEdge: the piece keeps the
                 // source curve, tolerance and pcurve representations;
                 // Merge.cxx L590-594 AddEdgeVertex/Parameter records the
-                // pave vertex parameters.
-                let piece = self.my_build_brep.add_tedge(
-                    curve.clone(),
-                    va.clone(),
-                    vb.clone(),
-                    [*pa, *pb],
-                );
+                // pave vertex parameters.  In-place edit (the OCCT
+                // BRep_Builder::UpdateEdge semantics): the recorded piece
+                // handle must observe the edits, so the pool slot Arc is
+                // mutated in place (edge_mut would copy-on-write and leave
+                // the recorded handle on the pre-edit data).
+                let piece = brep.add_tedge(curve.clone(), va.clone(), vb.clone(), [*pa, *pb]);
                 {
-                    let pd = self.my_build_brep.edge_mut(piece.clone());
+                    let pd = brep.edge_mut_inplace(piece.clone());
                     pd.tolerance = src_tol;
                     pd.degenerated = src_degenerated;
                     for (fk, (pcv, t1, t2)) in &src_pcurves {
@@ -602,14 +591,7 @@ impl TopOpeBRepBuildHBuilder {
                     pd.vertex_params.insert(va.ptr_id(), *pa);
                     pd.vertex_params.insert(vb.ptr_id(), *pb);
                 }
-                // D6 pool-identity carrier (see the method doc): real piece
-                // data + the source shape's pool resolution.
-                edge_list.push(Shape::from_parts(
-                    piece.data,
-                    e_forward.index,
-                    e_forward.location,
-                    Orientation::Forward,
-                ));
+                edge_list.push(piece);
             }
 
             // Builder.cxx L1033: the pieces are the ChangeMerged list of the
@@ -628,6 +610,7 @@ impl TopOpeBRepBuildHBuilder {
     /// BuildTool::MakeEdge bound-vertex form.
     fn pave_vertex(
         &mut self,
+        brep: &mut BRep,
         ds: &TopOpeBRepDSHDataStructure,
         ip: i32,
         kind: TopOpeBRepDSKind,
@@ -643,7 +626,7 @@ impl TopOpeBRepBuildHBuilder {
         }
         if let Some(c) = curve {
             let p = c.point_at(param);
-            return self.my_build_brep.add_tvertex_unique(p);
+            return brep.add_tvertex_unique(p);
         }
         Shape::null()
     }
@@ -670,11 +653,23 @@ impl TopOpeBRepBuildHBuilder {
     //     L2687) and adds NewFaces(iS) oriented by the interference
     //     transition (the fillet patches);
     //   - MakeSolids = BuilderSolid::Perform, Areas() = the SolidList.
-    pub fn merge_solid(&mut self, s: &Shape, tb: TopAbsState) {
+    pub fn merge_solid(&mut self, brep: &mut BRep, s: &Shape, tb: TopAbsState) {
+        let _ = brep;
         // MergeShapes L192-195: myState1/myState2 = ToBuild; the rcad
         // tables key by state below.
         // SplitSolid L1602-1607 (FillSolid over LS1): the object solid's
         // own faces enter the face set with their as-found orientations.
+        // Pending boundary (recorded 2026-09-09): OCCT SplitShapes /
+        // SplitFace1 (Builder.cxx L1171-1289) rebuilds every face carrying
+        // split edges or intersection edges (FillFace + AddIntersectionEdges
+        // + FaceBuilder) so the support faces share edge TShapes with the
+        // patches; the rcad merge feeds the as-found faces, the patch faces
+        // cannot chain by edge identity and BuilderSolid drops them
+        // (perform_shapes_to_avoid) — the blend-2 closed-patch front (E3-I
+        // item 3 / q4).  A first SplitFace1 translation attempt regressed
+        // a3/q1 (loop classification / pcurve-transfer semantics of
+        // FillFace+FaceBuilder need the full 1:1 study) and was reverted;
+        // re-land it together with FillFace/FaceBuilder proper.
         let mut faces = solid_faces(s);
         // SplitSolid L1631-1662: the DS intersection surfaces of the solid.
         let ds = self.my_data_structure.as_ref().expect("Perform first");
@@ -702,7 +697,11 @@ impl TopOpeBRepBuildHBuilder {
         let mut bs = BuilderSolid::new(&ds.bopds);
         bs.my_shapes = faces;
         bs.perform();
-        let pieces: Vec<Shape> = bs.my_solids;
+        // Pool identity (see the struct doc): BuilderSolid produces
+        // pool-free solid handles (index 0, the bop pipeline convention);
+        // their trees are consumed data-side (solid walkers, STEP export,
+        // area), so the plain handles are recorded.
+        let pieces: Vec<Shape> = bs.my_solids.clone();
 
         // SplitSolid L1647-1650: ChangeMerged(S1oriented, ToBuild1) =
         // SolidList; L1653-1669: MarkSplit(Scur, ToBuild1) and

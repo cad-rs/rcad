@@ -133,10 +133,13 @@ impl ChFi3dBuilder {
     /// solids, collected at Compute L339-346 — chfi3d.rs L519-527).
     pub fn perform_hbuilder_reconstruction(&mut self, map_ind_so: &[i32]) {
         // L471: myCoup->Perform(myDS);
+        // Pool identity: the HBuilder products materialize into my_brep —
+        // the same pool the DS shapes live in — so every handle handed back
+        // (NewEdges / NewFaces / Splits / Merged) resolves here.
         {
             let coup = self.my_coup.as_mut().expect("HBuilder");
             let dstr = self.my_ds.as_mut().expect("DS");
-            coup.perform(dstr);
+            coup.perform(&mut self.my_brep, dstr);
         }
 
         // L472-478: MergeSolid(curshape, TopAbs_IN) over MapIndSo.
@@ -146,7 +149,7 @@ impl ChFi3dBuilder {
                 dstr.shape(*indsol).clone()
             };
             let coup = self.my_coup.as_mut().expect("HBuilder");
-            coup.merge_solid(&curshape, TopAbsState::In);
+            coup.merge_solid(&mut self.my_brep, &curshape, TopAbsState::In);
         }
 
         // L405 (scoping note): OCCT declares `BRep_Builder B1` once before
@@ -303,16 +306,21 @@ impl ChFi3dBuilder {
             };
             for a_f in a_lf {
                 // L668: BRepLib::SameParameter(aF, SameParTol, true);
+                // Pending boundary: the BRepLib::SameParameter (S, Tol,
+                // Enforce) static is docket gap 3 (TKShHealing W3 front
+                // batch); wire it when that batch lands.
                 // L669: ShapeFix::SameParameter(aF, false, SameParTol);
-                // Pending boundary: the W1-6 ShapeFix::SameParameter real
-                // body is wired and run (2026-09-09 experiment), but the
-                // HBuilder-built faces (hbuilder.rs build_faces chain)
-                // carry sub-shape refs whose pool index disagrees with
-                // their data Arc ("edge_mut: Shape N is not an Edge" in
-                // the kpart test) — the pool-identity defect must close
-                // first (same family as the blend-2 closed-patch face
-                // assembly front).  Re-wire on its fix.
-                let _ = (&a_f, same_par_tol);
+                // The W1-6 real body resolves the face subtree through
+                // my_brep; the HBuilder faces are my_brep-materialized since
+                // the pool-identity convergence (hbuilder.rs Perform).
+                super::super::shhealing::shape_fix::shape_fix::same_parameter(
+                    &mut self.my_brep,
+                    &a_f,
+                    false,
+                    same_par_tol,
+                    super::super::shhealing::shape_fix::shape_fix::MessageProgressRange,
+                    None,
+                );
             }
         }
     }
