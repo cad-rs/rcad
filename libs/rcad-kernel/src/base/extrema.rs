@@ -86,9 +86,13 @@ pub struct POnSurface {
 /// Performs Newton refinement starting from `seed` to find a local minimum
 /// of the distance function. Returns None if the search fails to converge
 /// or the distance increases.
-pub fn extrema_locate_ext_pc(
+///
+/// The curve parameter is generic over [`CurveEval`] (OCCT works over the
+/// `Adaptor3d_Curve` hierarchy; `Curve3` is one concrete instance, the
+/// `Adaptor3d_CurveOnSurface` re-host another).
+pub fn extrema_locate_ext_pc<C: CurveEval>(
     point: DVec3,
-    curve: &Curve3,
+    curve: &C,
     seed: f64,
     uinf: f64,
     usup: f64,

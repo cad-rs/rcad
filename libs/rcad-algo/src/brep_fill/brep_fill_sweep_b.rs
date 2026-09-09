@@ -861,7 +861,7 @@ pub(super) fn build_face(
                 );
                 if fs.found() {
                     is_plan = true;
-                    the_plane = Some(fs.surface());
+                    the_plane = fs.surface();
                 }
             }
             // BB.UpdateEdge(E1, Tol1); ... (restore the tolerances)

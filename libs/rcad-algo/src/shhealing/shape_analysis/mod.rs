@@ -13,12 +13,19 @@
 //! - [`wire_order::ShapeAnalysisWireOrder`]: OCCT ShapeAnalysis_WireOrder (W1-1)
 //! - [`free_bounds::ShapeAnalysisFreeBounds`]: OCCT ShapeAnalysis_FreeBounds (W1-5)
 
+pub mod analysis;
+pub mod curve;
 pub mod edge;
 pub mod free_bounds;
+pub mod surface;
+pub mod wire;
+pub mod wire_checks;
 pub mod wire_order;
 
+pub use curve::ShapeAnalysisCurve;
 pub use edge::ShapeAnalysisEdge;
 pub use free_bounds::ShapeAnalysisFreeBounds;
+pub use surface::ShapeAnalysisSurface;
 pub use wire_order::ShapeAnalysisWireOrder;
 
 use crate::algo_ext::tolerance::*;

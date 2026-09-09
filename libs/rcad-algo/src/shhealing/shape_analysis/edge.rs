@@ -47,6 +47,10 @@ use rcad_kernel::topods::{
 use rcad_kernel::BRep;
 
 use crate::shhealing::shape_extend::status::{decode_status, encode_status, ShapeExtendStatus};
+use crate::topalgo::brep_lib_validate_edge::{
+    Adaptor3dCurveOnSurface, BRepLibValidateEdge, Geom2dAdaptorCurve, GeomAdaptorCurve,
+    GeomAdaptorSurface,
+};
 
 // OCCT Standard_Real.hxx L179-186: RealLast() - the biggest representable real.
 const REAL_LAST: f64 = f64::MAX;
@@ -389,103 +393,12 @@ fn shape_is_same(a: &Shape, b: &Shape) -> bool {
 // GAP carriers (untranslated other-package dependencies).
 // ---------------------------------------------------------------------------
 
-/// GAP carrier for `Adaptor3d_CurveOnSurface` (TKGeomBase/TKG3d adaptors are
-/// untranslated): the pcurve-on-surface pair with its parameter range.  The
-/// dependency, the OCCT construction anchors and the consumption sites are
-/// kept; GAP: closes with the adaptor front batch.
-struct Adaptor3dCurveOnSurfaceRc {
-    pcurve: Curve2d,
-    surface: Surface3,
-    #[allow(dead_code)]
-    first: f64,
-    #[allow(dead_code)]
-    last: f64,
-}
-
-/// GAP carrier for `BRepLib_ValidateEdge` (TKTopAlgo/BRepLib, untranslated):
-/// the maximal deviation between the 3D curve and the pcurve-on-surface,
-/// sampled on the control points (the same reduction as the feat
-/// `shape_analysis_edge_check_same_parameter` substitute,
-/// feat/loc_ope_wires_on_shape_b.rs architecture difference #12).
-/// Dependency + OCCT anchors + the UpdateTolerance consumption shape are
-/// kept.  GAP: closes with the brep_lib_validate_edge front batch (W2).
-struct BRepLibValidateEdge {
-    c3d: Curve3,
-    c3d_first: f64,
-    c3d_last: f64,
-    cs: Adaptor3dCurveOnSurfaceRc,
-    #[allow(dead_code)]
-    same_parameter: bool,
-    control_points_number: usize,
-    max_deviation: f64,
-}
-
-impl BRepLibValidateEdge {
-    fn new(
-        c3d: &Curve3,
-        c3d_first: f64,
-        c3d_last: f64,
-        cs: Adaptor3dCurveOnSurfaceRc,
-        same_parameter: bool,
-    ) -> Self {
-        BRepLibValidateEdge {
-            c3d: c3d.clone(),
-            c3d_first,
-            c3d_last,
-            cs,
-            same_parameter,
-            control_points_number: 0,
-            max_deviation: 0.0,
-        }
-    }
-
-    fn set_control_points_number(&mut self, the_nb: usize) {
-        self.control_points_number = the_nb;
-    }
-
-    fn process(&mut self) {
-        // Reduced ValidateEdge walk: sample both curves and keep the maximal
-        // deviation (the feat reduction).  The control points number is the
-        // OCCT SetControlPointsNumber(NbControl - 1) argument.
-        let nb = if self.control_points_number == 0 {
-            23
-        } else {
-            self.control_points_number + 1
-        };
-        let f = if self.cs.first > self.c3d_first {
-            self.cs.first
-        } else {
-            self.c3d_first
-        };
-        let l = if self.cs.last < self.c3d_last {
-            self.cs.last
-        } else {
-            self.c3d_last
-        };
-        for i in 0..nb {
-            let t = if nb == 1 {
-                f
-            } else {
-                f + (l - f) * (i as f64) / (nb as f64 - 1.0)
-            };
-            let p3d = self.c3d.point_at(t);
-            let uv = self.cs.pcurve.point_at(t);
-            let ps = self.cs.surface.point_at(uv.x, uv.y);
-            let dev = (p3d - ps).length();
-            if dev > self.max_deviation {
-                self.max_deviation = dev;
-            }
-        }
-    }
-
-    fn update_tolerance(&self, maxdev: &mut f64) {
-        *maxdev = self.max_deviation;
-    }
-
-    fn is_done(&self) -> bool {
-        true
-    }
-}
+// The BRepLib_ValidateEdge GAP carrier was retired: CheckSameParameter now
+// consumes the real 1:1 translation
+// `crate::topalgo::brep_lib_validate_edge::BRepLibValidateEdge` (with the
+// GeomAdaptor_Curve / Geom2dAdaptor_Curve / GeomAdaptor_Surface /
+// Adaptor3d_CurveOnSurface re-hosts) at the OCCT L785-798 / L808-817 call
+// forms.
 
 /// OCCT BRepExtrema_SupportType (BRepExtrema_DistShapeShape.hxx).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1410,7 +1323,9 @@ impl ShapeAnalysisEdge {
         }
 
         // Create adaptor for the curve (OCCT L740: GeomAdaptor_Curve(aC3D,
-        // aFirst, aLast) - the (curve, range) pair of the GAP carrier).
+        // aFirst, aLast)).
+        let a_gac = GeomAdaptorCurve::new(a_c3d.clone(), a_first, a_last);
+
         // OCCT L742-747: the face surface + location.
         let (a_face_surf, a_face_loc) = if !face.is_null() {
             brep_tool_surface_loc(brep, face)
@@ -1502,17 +1417,14 @@ impl ShapeAnalysisEdge {
 
             // Compute deviation between curves (OCCT L785-789: the
             // Geom2dAdaptor_Curve + GeomAdaptor_Surface +
-            // Adaptor3d_CurveOnSurface construction - the GAP-carrier pair).
-            let acs = Adaptor3dCurveOnSurfaceRc {
-                pcurve: a_pc,
-                surface: a_st,
-                first: f,
-                last: l,
-            };
+            // Adaptor3d_CurveOnSurface construction).
+            let a_ghpc = Geom2dAdaptorCurve::new(a_pc, f, l);
+            let a_gahs = GeomAdaptorSurface::new(a_st);
+            let a_acs = Adaptor3dCurveOnSurface::new(a_ghpc, a_gahs);
 
             let mut a_validate_edge =
-                BRepLibValidateEdge::new(&a_c3d, a_first, a_last, acs, same_parameter);
-            a_validate_edge.set_control_points_number((nb_control - 1) as usize);
+                BRepLibValidateEdge::new(a_gac.clone(), a_acs, same_parameter);
+            a_validate_edge.set_control_points_number(nb_control - 1);
             a_validate_edge.process();
             a_validate_edge.update_tolerance(maxdev);
             if !a_validate_edge.is_done() {
@@ -1533,17 +1445,16 @@ impl ShapeAnalysisEdge {
                     } else {
                         a_face_surf.clone()
                     };
-                    let acs = Adaptor3dCurveOnSurfaceRc {
-                        pcurve: a_pc,
-                        surface: a_st,
-                        first: a_first,
-                        last: a_last,
-                    };
+                    // OCCT L808-816: the Geom2dAdaptor_Curve +
+                    // GeomAdaptor_Surface + Adaptor3d_CurveOnSurface
+                    // construction.
+                    let a_ghpc = Geom2dAdaptorCurve::new(a_pc, a_first, a_last);
+                    let a_gahs = GeomAdaptorSurface::new(a_st);
+                    let a_acs = Adaptor3dCurveOnSurface::new(a_ghpc, a_gahs);
 
                     let mut a_validate_edge_on_plane =
-                        BRepLibValidateEdge::new(&a_c3d, a_first, a_last, acs, same_parameter);
-                    a_validate_edge_on_plane
-                        .set_control_points_number((nb_control - 1) as usize);
+                        BRepLibValidateEdge::new(a_gac.clone(), a_acs, same_parameter);
+                    a_validate_edge_on_plane.set_control_points_number(nb_control - 1);
                     a_validate_edge_on_plane.process();
                     a_validate_edge_on_plane.update_tolerance(maxdev);
                     if !a_validate_edge_on_plane.is_done() {

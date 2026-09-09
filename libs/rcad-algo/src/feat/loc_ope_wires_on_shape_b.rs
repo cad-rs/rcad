@@ -34,16 +34,19 @@
 //    FindInternalIntersections takes the OCCT !IsDone() continue (cxx
 //    L1347-1350) for every face edge. GAP: closes with the TKGeomAlgo
 //    ExtCC batch.
-// 12. ShapeAnalysis_Edge::CheckSameParameter -> reduced re-host
-//    shape_analysis_edge_check_same_parameter below (pcurve/surface sampling
-//    max-deviation, the same reduction as BRep::same_parameter in
-//    rcad-kernel). GAP: the OCCT BRepLib_ValidateEdge walk.
+// 12. ShapeAnalysis_Edge::CheckSameParameter -> re-hosted below with the
+//    real BRepLib_ValidateEdge walk (topalgo::brep_lib_validate_edge,
+//    OCCT L785-798 call form).
 // 13. Standard_Real Epsilon(theValue) (Standard_Real.hxx L238-247) ->
 //    machine-epsilon re-host below (pure math).
 // 14. BRepTools::UVBounds (BRepTools.cxx L137-181 via AddUVBounds) and
 //    BRep_Tool::IsClosed(E, F) -> re-hosts below.
 
 use crate::feat::brep_feat_builder::explorer;
+use crate::topalgo::brep_lib_validate_edge::{
+    Adaptor3dCurveOnSurface, BRepLibValidateEdge, Geom2dAdaptorCurve, GeomAdaptorCurve,
+    GeomAdaptorSurface,
+};
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{
     translate_curve2d, Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval,
@@ -380,10 +383,10 @@ impl ExtremaExtCC {
 }
 
 /// OCCT ShapeAnalysis_Edge::CheckSameParameter(edge, face, maxdev)
-/// (ShapeAnalysis_Edge.cxx L704-833) — reduced re-host (architecture
-/// difference #12): the deviation is the max sampled distance between the 3D
-/// curve and the pcurve-lifted point (the BRep::same_parameter reduction of
-/// BRepLib_ValidateEdge). Returns true when maxdev exceeds the edge
+/// (ShapeAnalysis_Edge.cxx L704-833) — re-host with the real
+/// BRepLib_ValidateEdge walk (architecture difference #12 re-pointed to
+/// topalgo::brep_lib_validate_edge; the OCCT NbControl default is 23,
+/// ShapeAnalysis_Edge.hxx). Returns true when maxdev exceeds the edge
 /// tolerance (the DONE1 status OCCT reports).
 fn shape_analysis_edge_check_same_parameter(
     the_edge: &Shape,
@@ -396,6 +399,11 @@ fn shape_analysis_edge_check_same_parameter(
         return false;
     }
     *the_maxdev = 0.0;
+    // OCCT L718-719: TE->SameParameter().
+    let same_parameter = match the_edge.data.as_ref() {
+        TShape::Edge(ed) => ed.same_parameter,
+        _ => false,
+    };
     // OCCT L722-729: the 3D curve.
     let Some((c3d, f, l)) = brep_tool_curve(the_edge) else {
         return false;
@@ -408,18 +416,20 @@ fn shape_analysis_edge_check_same_parameter(
     let Some(surf) = brep_tool_surface(the_face) else {
         return false;
     };
-    // Reduced BRepLib_ValidateEdge walk: sample both curves over the range.
-    const NB_SAMPLES: usize = 23;
-    for i in 0..NB_SAMPLES {
-        let u = f + (l - f) * (i as f64) / (NB_SAMPLES - 1) as f64;
-        let p3d = c3d.point_at(u);
-        let uv = pc.point_at(u);
-        let ps = surf.point_at(uv.x, uv.y);
-        let dev = (p3d - ps).length();
-        if dev > *the_maxdev {
-            *the_maxdev = dev;
-        }
-    }
+    // OCCT L785-798: the Geom2dAdaptor_Curve + GeomAdaptor_Surface +
+    // Adaptor3d_CurveOnSurface construction, then the real
+    // BRepLib_ValidateEdge Process/UpdateTolerance walk.
+    let a_ghpc = Geom2dAdaptorCurve::new(pc, f, l);
+    let a_gahs = GeomAdaptorSurface::new(surf);
+    let a_acs = Adaptor3dCurveOnSurface::new(a_ghpc, a_gahs);
+    let mut a_validate_edge = BRepLibValidateEdge::new(
+        GeomAdaptorCurve::new(c3d, f, l),
+        a_acs,
+        same_parameter,
+    );
+    a_validate_edge.set_control_points_number(23 - 1);
+    a_validate_edge.process();
+    a_validate_edge.update_tolerance(the_maxdev);
     // OCCT L833: status DONE1 when maxdev > tolerance.
     *the_maxdev > brep_tool_tolerance(the_edge)
 }
