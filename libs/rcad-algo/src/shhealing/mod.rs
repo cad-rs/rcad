@@ -14,6 +14,8 @@ pub mod shape_construct;
 pub mod shape_custom;
 pub mod shape_custom_curve2d;
 pub mod shape_extend;
+pub mod shape_fix;
+pub mod shape_upgrade;
 
 pub use healing::{HealingMode, HealingOptions, HealingReport, analyze_and_heal};
 pub use shape_custom::restrict_to_bspline;
