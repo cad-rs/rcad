@@ -130,9 +130,8 @@ impl PolyBis {
 mod tests {
     use super::*;
 
-    // OCCT Bisector_PolyBis — direct-API regression (not run in CI).
+    // OCCT Bisector_PolyBis — direct-API regression.
     #[test]
-    #[ignore]
     fn poly_bis_append_and_interval() {
         let mut poly = PolyBis::new();
         for i in 0..5 {
@@ -143,6 +142,12 @@ mod tests {
         }
         assert_eq!(poly.length(), 5);
         assert!(!poly.is_empty());
-        assert_eq!(poly.interval(2.5), 2);
+        // OCCT Interval(2.5) on params 0..4 (PolyBis.cxx L81-119): dU = 1,
+        // IntU = int(2.5) + 1 = 3; thePoints[3].ParamOnBis() = 2 < 2.5 so
+        // the forward walk runs and i=4 (param 3 >= 2.5) sets IntU = 3.
+        assert_eq!(poly.interval(2.5), 3);
+        // U beyond/at the last parameter returns nbPoints - 1 (L82-85).
+        assert_eq!(poly.interval(4.0), 4);
+        assert_eq!(poly.interval(5.0), 4);
     }
 }

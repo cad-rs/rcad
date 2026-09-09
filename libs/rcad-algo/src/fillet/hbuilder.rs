@@ -230,6 +230,44 @@ impl TopOpeBRepBuildHBuilder {
                 continue;
             }
 
+            // BuildEdges.cxx L52-63: equalpar = PVS.HasEqualParameters()
+            // (PaveSet.cxx L363-407: two distinct paves share one parameter
+            // within PConfusion); closvert = PVS.ClosedVertices()
+            // (PaveSet.cxx L462-487).  On a closed base curve the
+            // EdgeBuilder closed loop yields the single closed edge over
+            // the base edge's natural domain — BuildTool::MakeEdge
+            // (BuildTool.cxx L157-171) builds the base edge on the curve's
+            // natural bounds (its setrange branch is a constant-false dead
+            // path), so the degenerate DS range plays no part in the
+            // product edge.
+            let p_confusion = rcad_kernel::core::precision::p_confusion();
+            let equal_par = paves[0].0;
+            let equalpar = paves
+                .iter()
+                .all(|(p, _)| (*p - equal_par).abs() < p_confusion);
+            if equalpar {
+                let [nat_first, nat_last] = curve.default_domain();
+                let closed_curve = (curve.point_at(nat_first).distance(curve.point_at(nat_last)))
+                    <= CONFUSION;
+                if closed_curve {
+                    let v = self.pave_vertex(
+                        ds,
+                        paves[0].1,
+                        TopOpeBRepDSKind::Point,
+                        &Some(curve.clone()),
+                        equal_par,
+                    );
+                    let piece = self.my_build_brep.add_tedge(
+                        Some(curve.clone()),
+                        v.clone(),
+                        v.clone(),
+                        [nat_first, nat_last],
+                    );
+                    self.my_new_edges.insert(ic, vec![piece]);
+                    continue;
+                }
+            }
+
             // MakeEdges (Merge.cxx L440-622): consecutive paves bound the
             // new edges; paves sitting on the curve bounds identify the
             // bound vertices, interior paves get the DS-point vertices.
@@ -420,10 +458,10 @@ impl TopOpeBRepBuildHBuilder {
                             .insert((f.ptr_id(), f.location), (pc, t1, t2));
                     }
                 }
-                faces.push(f);
-            }
-            self.my_new_faces.insert(is, faces);
+            faces.push(f);
         }
+        self.my_new_faces.insert(is, faces);
+    }
     }
 
     /// OCCT TopOpeBRepBuild_Builder::SplitEdge pass (Builder.cxx L925-1152,
@@ -777,7 +815,15 @@ fn chain_closed_loops(brep: &BRep, edges: &[Shape]) -> Vec<Vec<Shape>> {
         let ed = brep.edge(e.clone());
         let kf = (ed.first.ptr_id(), ed.first.location);
         let kl = (ed.last.ptr_id(), ed.last.location);
-        (kf, kl)
+        // A REVERSED handle runs from LastVertex to FirstVertex — the
+        // flip applied during chaining must be honored here, otherwise
+        // the walk never turns a corner (the loop would stay open
+        // whenever the wire direction opposes the stored edge range).
+        if e.orientation == Orientation::Reversed {
+            (kl, kf)
+        } else {
+            (kf, kl)
+        }
     };
     let flip = |e: &Shape| -> Shape {
         let orientation = match e.orientation {

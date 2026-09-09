@@ -522,17 +522,34 @@ impl ChFi3dBuilder {
             }
         }
 
-        // L339-346: MapIndSo — the solids of myShape are registered in the
-        // DS (TopExp_Explorer(S, SOLID)).
+        // L339-354: MapIndSo — the solids of myShape, then the shells of
+        // myShape that are not inside a solid, are registered in the DS
+        // (TopExp_Explorer(myShape, TopAbs_SOLID) and
+        //  TopExp_Explorer(myShape, TopAbs_SHELL, TopAbs_SOLID)).
         let mut map_ind_so: Vec<i32> = Vec::new();
-        for cursol in super::brep_fillet_api::explore_solids(&self.my_brep) {
+        let mut expso: Vec<Shape> = Vec::new();
+        topexp_explore(&self.my_shape, topods::ShapeType::Solid, None, &mut expso);
+        for cursol in expso {
             // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder.cxx L344
             let indcursol = self.my_ds.as_mut().expect("DS").add_shape(&cursol);
             if !map_ind_so.contains(&indcursol) {
                 map_ind_so.push(indcursol);
             }
         }
-        let _ = &map_ind_so;
+        let mut expsh: Vec<Shape> = Vec::new();
+        topexp_explore(
+            &self.my_shape,
+            topods::ShapeType::Shell,
+            Some(topods::ShapeType::Solid),
+            &mut expsh,
+        );
+        for cursh in expsh {
+            // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder.cxx L351
+            let indcursh = self.my_ds.as_mut().expect("DS").add_shape(&cursh);
+            if !map_ind_so.contains(&indcursh) {
+                map_ind_so.push(indcursh);
+            }
+        }
 
         if self.done {
             // 05/02/02 akm (OCC119) L362-388: intersect the stripes
@@ -3479,6 +3496,45 @@ fn spine_append_el_spine(spine: &mut ChFiDSSpineHandle, els: super::chfi_ds::ChF
     }
 }
 
+/// OCCT TopExp_Explorer(S, T, A) — the depth-first walk over the shape
+/// tree: collects the shapes of type `want` that are not contained in a
+/// shape of type `avoid` (the second explorer form of Compute L349-354).
+/// The walk follows myShape's tree refs only — pool entries not reachable
+/// from the root are never visited, as in OCCT.
+fn topexp_explore(
+    sh: &Shape,
+    want: topods::ShapeType,
+    avoid: Option<topods::ShapeType>,
+    out: &mut Vec<Shape>,
+) {
+    let ty = sh.shape_type();
+    if Some(ty) == avoid {
+        return;
+    }
+    if ty == want {
+        out.push(sh.clone());
+        return;
+    }
+    match &*sh.data {
+        topods::TShape::Compound(cs) | topods::TShape::CompSolid(cs) => {
+            for c in cs {
+                topexp_explore(c, want, avoid, out);
+            }
+        }
+        topods::TShape::Solid(sd) => {
+            for s in &sd.shells {
+                topexp_explore(s, want, avoid, out);
+            }
+        }
+        topods::TShape::Shell(sd) => {
+            for f in &sd.faces {
+                topexp_explore(f, want, avoid, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// OCCT ChFi3d_Builder_0.cxx L2300-2328 — ChFi3d_SolidIndex.
 fn chfi3d_solid_index(
     stripe: &ChFiDSStripe,
@@ -3520,15 +3576,14 @@ mod kpart_tests {
 
     /// OCCT BRepFilletAPI_MakeFillet::Build on a box: PerformSetOfSurf
     /// detects the plane-plane KPart, ChFiKPart_MakeFillet computes the
-    /// cylinder SurfData analytically, and the corner machinery is the
-    /// only pending stage.
+    /// cylinder SurfData analytically, and the corner arc is computed by
+    /// PerformOneCorner via ChFi3d_ComputeCurves (the box vertex carries
+    /// three sharp edges, so the Builder.cxx L868 gate selects it).
     ///
-    /// Ignored: hangs (blocked, zero CPU) since the fillet module returned
-    /// to the build — pre-existing chfi_kpart/builder-0 path issue, NOT
-    /// introduced by the Stage 0.1 re-home.  Diagnose during the Stage 1c
-    /// ChFiKPart line-by-line alignment; do not un-ignore before then.
+    /// Formerly ignored for a zero-CPU hang; the hang is gone since the
+    /// E2/E3 fillet rounds (RwLock re-entrancy + KPart anchor fixes) and
+    /// the test now runs to its assertions.
     #[test]
-    #[ignore = "hangs (pre-existing fillet path); Stage 1c ChFiKPart alignment entry task"]
     fn compute_box_edge_produces_kpart_surfdata() {
         let brep = rcad_modeling::make_box_brep(
             glam::DVec3::ZERO,
@@ -3585,9 +3640,19 @@ mod kpart_tests {
             let Some(curve) = curve else {
                 panic!("singular end arc curve is null");
             };
+            // OCCT ChFi3d_ComputeCurves tail (Builder_0.cxx L3833): the
+            // corner arc enters the DS as Geom_TrimmedCurve(C3d, Udeb,
+            // Ufin) over the basis intersection circle.
+            let basis = match curve {
+                rcad_kernel::geom::Curve3::Trimmed(tr) => Some((*tr.curve).clone()),
+                other => Some(other.clone()),
+            };
+            let Some(basis) = basis else {
+                panic!("singular end arc basis curve is null");
+            };
             assert!(
-                matches!(curve, rcad_kernel::geom::Curve3::Circle(c) if (c.radius - 2.0).abs() < 1e-9),
-                "singular end arc is a radius-2 circle"
+                matches!(basis, rcad_kernel::geom::Curve3::Circle(c) if (c.radius - 2.0).abs() < 1e-9),
+                "singular end arc is a trimmed radius-2 circle, got {curve:?}"
             );
         }
     }
@@ -3779,7 +3844,11 @@ impl ChFi3dBuilder {
                         // OCCT ChFi3d_Builder.cxx L868: PerformTwoCorner(Index).
                         self.perform_two_corner_pending(index);
                     }
-                    false
+                    // OCCT PerformFilletOnVertex is void (L759-920): taking
+                    // a corner path raises nothing — the badvertices /
+                    // hasresult encoding lives solely in the compute loop's
+                    // try/catch (L310-332).
+                    true
                 }
                 3 => {
                     if nba > 3 {
@@ -3790,11 +3859,13 @@ impl ChFi3dBuilder {
                         // OCCT ChFi3d_Builder.cxx L891: PerformThreeCorner(Index).
                         self.perform_three_corner_pending(index);
                     }
-                    false
+                    // Void in OCCT (see the case-2 note).
+                    true
                 }
                 _ => {
                     self.perform_more_three_corner(index, i as i32);
-                    false
+                    // Void in OCCT (see the case-2 note).
+                    true
                 }
             }
         } else if toujoursdegenere {
@@ -3804,7 +3875,8 @@ impl ChFi3dBuilder {
         } else {
             // Last chance...
             self.perform_more_three_corner(index, i as i32);
-            false
+            // Void in OCCT (see the case-2 note).
+            true
         }
     }
 

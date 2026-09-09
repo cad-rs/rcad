@@ -61,16 +61,18 @@ pub(crate) fn rotate_half_pi(v: DVec2) -> DVec2 {
 mod tests {
     use std::sync::Arc;
 
-    // OCCT Bisector::IsConvex — direct-API regression (not run in CI).
+    // OCCT Bisector::IsConvex — direct-API regression.
     #[test]
-    #[ignore]
     fn is_convex_on_unit_circle() {
         use super::super::bisector_curve::Geom2dCurveHandle;
         use rcad_kernel::geom::{Circle2d, Curve2d};
         let c = Circle2d::new(glam::DVec2::ZERO, 1.0);
         let cu: Arc<dyn super::super::bisector_curve::BisectorCurve> =
             Arc::new(Geom2dCurveHandle::new(Curve2d::Circle(c)));
-        // Sign 1 on a ccw circle: convex (V1 x V2 > 0 -> 1*positive > tol).
-        assert!(super::is_convex(&cu, 1.0));
+        // OCCT Bisector.cxx L33: Sign * (V1 ^ V2) < Tol.  At the mid
+        // parameter of a ccw unit circle the cross product is +1, so
+        // Sign=1 gives 1 < 1e-5 = false; Sign=-1 gives -1 < 1e-5 = true.
+        assert!(!super::is_convex(&cu, 1.0));
+        assert!(super::is_convex(&cu, -1.0));
     }
 }

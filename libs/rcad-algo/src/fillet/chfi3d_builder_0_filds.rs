@@ -184,17 +184,23 @@ pub fn find_index_point(
 // OCCT Geom2dInt_GInter — pending TKGeomAlgo translation for BSpline
 // pcurves; the analytic (line/circle/ellipse) cases run through the
 // AnaIntersection2d chain, matching Geom2dInt_TheIntConicCurveOfGInter.
-// The (dom.first, dom.last) pairs mirror the OCCT callers loading the
-// pcurves into Geom2dAdaptor_Curve with restricted parameter domains
-// (Geom2dAdaptor_Curve(C, First, Last)); only intersection points whose
-// parameters fall inside both domains are kept.  Returns
-// (nb_points, nb_segments).
+// BSpline/Bezier pcurves run the general TheIntPCurvePCurveOfGInter
+// vehicle (re-host architecture difference #31 — the same engine as
+// chfi3d_builder_cncrn.rs / brep_offset_inter2d.rs), the OCCT StripeEdgeInter
+// call form Perform(aPCurve1, aPCurve2, tol2d, Precision::PConfusion())
+// (ChFi3d_Builder_0.cxx L3433-3441).  The (dom.first, dom.last) pairs
+// mirror the OCCT callers loading the pcurves into Geom2dAdaptor_Curve
+// with restricted parameter domains (Geom2dAdaptor_Curve(C, First, Last));
+// only intersection points whose parameters fall inside both domains are
+// kept.  Returns (nb_points, nb_segments).
 // =========================================================================
 pub fn geom2d_int_g_inter(
     pc1: &rcad_kernel::geom::Curve2d,
     dom1: (f64, f64),
     pc2: &rcad_kernel::geom::Curve2d,
     dom2: (f64, f64),
+    tol_conf: f64,
+    tol: f64,
 ) -> (usize, usize) {
     use rcad_kernel::base::int_ana2d::{AnaIntersection2d, Conic2d};
 
@@ -207,9 +213,28 @@ pub fn geom2d_int_g_inter(
         )
     }
     if !is_conic_like(pc1) || !is_conic_like(pc2) {
-        // BSpline/Bezier pcurves: the generic GInter chain is pending; no
-        // intersection is reported (the analytic box cases never hit it).
-        return (0, 0);
+        // BSpline/Bezier pcurves: the general GInter vehicle (re-host #31,
+        // mirroring chfi3d_builder_cncrn.rs Geom2dIntGInter::engine over
+        // the translated IntRes2d/IntCurve machinery).
+        let mut inter = crate::geomalgo::geom2d_int::TheIntPCurvePCurveOfGInter::new();
+        let d1 = crate::geomalgo::int_res2d::Domain::bounded(
+            pc1.point_at(dom1.0),
+            dom1.0,
+            tol_conf,
+            pc1.point_at(dom1.1),
+            dom1.1,
+            tol_conf,
+        );
+        let d2 = crate::geomalgo::int_res2d::Domain::bounded(
+            pc2.point_at(dom2.0),
+            dom2.0,
+            tol_conf,
+            pc2.point_at(dom2.1),
+            dom2.1,
+            tol_conf,
+        );
+        inter.perform(pc1, &d1, pc2, &d2, tol_conf, tol);
+        return (inter.base.nb_points(), inter.base.nb_segments());
     }
 
     let mut inter = AnaIntersection2d::new();
@@ -339,8 +364,9 @@ pub fn chfi3d_stripe_edge_inter(
                 (afi1.parameter_first(), afi1.parameter_last()),
                 afi2.pcurve_on_face().unwrap(),
                 (afi2.parameter_first(), afi2.parameter_last()),
+                tol2d,
+                rcad_kernel::core::precision::p_confusion(),
             );
-            let _ = tol2d;
             if nb_segments > 0 || nb_points > 0 {
                 // OCCT: throw StdFail_NotDone("StripeEdgeInter : fillets
                 // have too big radiuses").

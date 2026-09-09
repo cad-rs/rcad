@@ -1246,6 +1246,8 @@ impl ChFi3dBuilder {
                         (udeb, ufin),
                         &a_pcurve,
                         (a_fi.parameter_first(), a_fi.parameter_last()),
+                        self.tol2d,
+                        rcad_kernel::core::precision::p_confusion(),
                     );
                     if nb_segments > 0 || nb_points > 0 {
                         panic!("StdFail_NotDone: OneCorner : fillets have too big radiuses");
@@ -1287,8 +1289,14 @@ impl ChFi3dBuilder {
                 // OCCT C1 L1197-1198: the other pcurve is loaded with the
                 // domain of the trimmed interference curve; the cork pcurve
                 // with (Udeb, Ufin).
-                let (nb_points, nb_segments) =
-                    geom2d_int_g_inter(&pc_val, (udeb, ufin), &other_pc, (of, ol));
+                let (nb_points, nb_segments) = geom2d_int_g_inter(
+                    &pc_val,
+                    (udeb, ufin),
+                    &other_pc,
+                    (of, ol),
+                    self.tol2d,
+                    rcad_kernel::core::precision::p_confusion(),
+                );
                 if nb_segments > 0 || nb_points > 0 {
                     panic!("StdFail_NotDone: OneCorner : fillets have too big radiuses");
                 }

@@ -205,6 +205,7 @@ libs/rcad-algo/src/
 | BRepOffset/BRepOffsetAPI/BiTgte/Draft | offset/ 空（仅 thru_sections 沾边） | Stage 2 |
 | BRepFeat/LocOpe | feat/ 空 | Stage 3 |
 | **TKTopAlgo/MAT2d + MAT + Bisector（~13.2k 行）**（Session 2 第七轮发现：BRepFill_OffsetWire 的引擎 = MAT2d/BisectingLocus/LinkTopoBilo + Bisector_Bisec 栈，2c 闭环阻塞项） | MAT2d 5,205 / Bisector 6,327 / MAT 1,671 | **归属 TKTopAlgo（非 TKMath，目录实证）→ rcad 落点 = rcad-algo/src/topalgo/（mat2d/、bisector/、mat/ 子目录），待排期（建议 3 代理）** |
+| **TKShHealing（路径 B 子集 ~62k 行）**（2026-09-09 立项插队：本计划 4.3 的 offset/feat 网格验收面硬依赖） | healing/、shape_analysis/、shape_build/、shape_extend/、shape_custom.rs 早期兼容层 13,117 行（非严格 1:1） | **独立计划 `docs/TKSHHEALING_PATH_B_PLAN.md`（W0–W5），插队映射见 §9 E3-H；blend 前线不受其阻塞** |
 
 ## 7. 进度勾选表（每 session 更新）
 
@@ -481,3 +482,59 @@ libs/rcad-algo/src/
 - **本轮新固化调试资产（复用）**：① 分类点探针法：hatch 零命中时打印 ClassificationPoint 与 UV 射线交点计数（spkp.rs classify_point_in_face）；② ref STEP 反读曲面放置定位锚点偏差（grep AXIS2_PLACEMENT_3D，q4 torus z=6 即此法实证，免去 OCCT 插桩）；③ 面类型探针（perform_set_of_k_part 打 HS1/HS2 Plane/Cyl）判定 plandab 分派。
 - **在役协议（沿用+强化）**：验证禁经管道；回归口径 = lib+kernel+stage+pavefiller+五网格；探针即用即清（本轮 chfi3d.rs/spkp.rs/kpart_fil.rs 三批已清）；并行代理文件不相交 + CARGO_TARGET_DIR 隔离（注意：共享树整 crate 编译，A 代理在编期间主代理测试会被阻塞——排程时错开）；`git add` 显式清单；生成的测试文件改探针后用 `cargo run -p occt-test-gen -- --batch-boolean --batch-grid blend_simple --merge-groups` 再生成清除；生成器 trotate/ttranslate 修复已在根库（E3-D），旋转类用例面积以修复后为准。
 - **资产位置**：blend 验证 = `cd tests/occt && RCAD_STEP_DIR=step_output CARGO_TARGET_DIR=target_xx cargo test -p occt-generated-tests --test generated_occt_boolean_blend_simple|--complex`（test 目录 target_q1 已热，首跑他 target 需重编）；拓扑对比 = `STEP_TOPOLOGY_DUMP=tools/step-topo-dump/build/Release/step_topology_dump.exe + PATH 加 OCCT bin` 后 `tools/step-topo-diff/target/release/step-topo-diff.exe tests/occt/step_output/occt_blend_simple_q4.step tests/occt/step_output/ref/blend_simple_Q4.step`；OCCT 源 = `C:/Users/lilu/works/OCCT/src/ModelingAlgorithms/TKFillet`。
+
+### E3-H. ShHealing 路径 B 插队规划（2026-09-09，用户立项——唯一权威插队映射）
+
+**背景：** `docs/TKSHHEALING_PATH_B_PLAN.md`（根仓库，草案）确立 TKShHealing 的 1:1 翻译路径 B（W0–W5，净新增 ~62k 行）。本节把它作为**本计划 4.3 offset/feat 网格验收面的前置依赖**正式插入推进时序；插队原则沿其 §2（不平行开战线，做某 docket 前先 1:1 掉它依赖的 healing 类）。
+
+**依赖依据（本计划对 shhealing 的硬依赖点，逐条实证）：**
+1. **offset 网格 4.3 转绿** = `unifysamedom` 命令 390 用例（389 自包含）→ `ShapeUpgrade_UnifySameDomain`（ShHealing W1-6，4.7k 行）+ TKOffset 调 `ShapeBuild_ReShape` ×4（W1-2）+ `ShapeAnalysis_FreeBounds`/`ShapeCustom_Curve2d`（W1-5，TKOffset 直接调用）；
+2. **feat 网格 4.3 转绿** → `ShapeAnalysis_Edge`/`WireOrder`（W1-1，TKFeat 直接调用）+ `ShapeConstruct_ProjectCurveOnSurface`（W1-4）；
+3. **本计划管线内已点名的 healing 载体**（落地后逐个回填，全部带 OCCT 锚点）：
+   - `chfi3d_perform.rs` same_parameter_pass 的 `BRepLib::SameParameter` + `ShapeFix::SameParameter`（compute 尾每次执行，现 no-op——**x1 3%/g9 4.5% 面积断言差的候选贡献源**，W3 ShapeFix_SameParameter 落地后回填并重测重估批）；
+   - `set_regul` 的 `BRep_Builder::Continuity`（chfi3d_perform.rs pending 边界，W3 后）；
+   - `chfi2d` 的 ShapeAnalysis CheckSelfIntersection stub（1a 记档，shhealing 域）；
+   - `BuildCurves3d` no-op 桥（kernel 侧记档）；
+   - Sewing（2e 排除件，归 shhealing 范畴，W3+ 按需）；
+4. **门面解锁批余项**（4.1 记档：~1,060 非外部数据用例等门面 pub 访问器）中 offset/feat 网格占大头 → W1 直接决定 4.3 的可验收用例面。
+
+**不阻塞声明：** blend 前线（q4 闭合面片 / q2-p9 多棱角点 / q7 blend-on-blend / 重估批 / EvolRad 运行时）**零 healing 依赖**，按 E3-G 队列继续推进，不被 W0–W5 阻塞（两计划 §2 插入原则一致）。
+
+**插队时序（与 E3-G 工作队列合并后的排程）：**
+
+| 时点 | 前线（本计划 4.3 主线） | ShHealing（并行/插队） |
+|---|---|---|
+| 立即 | q4 blend-2 闭合面片装配（进行中）；q2/p9 子代理（进行中） | **W0 审计与脚手架**（一次性：docket 表冻结 + 前置依赖审计 + occt-test-gen 扩 heal 命令翻译表 + heal 自包含 ref 基线；只读 + 根仓库工具/文档，与本计划零文件冲突） |
+| W0 后 | blend 收尾 + 重估批 | **W1 前置包 6 小批** = 下一个 offset/feat docket 的 phase 0：W1-3 ShapeExtend 底座先行 → W1-1/W1-4（feat 门）→ W1-2/W1-5（offset 门）→ W1-6 UnifySameDomain（M1 硬门，末位） |
+| W1 后 | offset/feat 网格逐用例转绿（消费新翻译件）；blend 间歇 | W2 ShapeAnalysis 主体（~19k 行，翻译批可并行派子代理——翻译期验收 = cargo check + 形式对照，沿 §0.6） |
+| W2 后 | 同上 + SameParameter 回填实验 | W3 ShapeFix 主体（~32k 行；SameParameter/Continuity 回填本计划载体；ComposeShell 末位评估可降 C） |
+| W3 后 | 同上 | W4 ShapeUpgrade 子集收尾（~9k 行） |
+| 全部 | 4.4 module-map 收尾 | W5 验收固化（**与 4.4 合并收口**：三层 oracle 全绿 + 531 GTests + 五网格零回归 + module-map shhealing 行） |
+
+**M1 门槛（ShHealing 计划 §7）即本计划 4.3 offset/feat 转绿的准入条件**：offset 389 unifysamedom 用例 + feat 网格 + 五网格零回归。
+
+**资源纪律：**
+- `shhealing/` 目录物理隔离（rcad-algo/src/shhealing/ 按包分子目录），与本计划文件零合并面；W0-2 前置依赖审计爆出的缺口（ProjLib/Extrema/Geom2dInt/BRepCheck）按「新前置批」插队，优先级高于所属 W 批；
+- 并行子代理沿 §0.6 两阶段纪律（翻译期不跑测试、函数计数等式、D6 判断清单上交）；shhealing 无 TKBool 依赖，D6 面预期为空；
+- 现有 13,117 行兼容层只在触碰时按 Rule 4 返工（1:1 版落地同一提交删除旧实现），不主动全量重写；docket 表标注将被替换的兼容层文件；
+- W0 的生成器扩展（occt-test-gen 扩 heal 命令翻译表）在根仓库 tools/，与本计划 rcad 子模块工作互斥面为零，但**与 4.1 门面解锁批共用生成器文件——串行执行**；
+- 五网格回归口径不变，W1-6 落地后补跑 offset 网格作 M1 实证。
+
+**本节生效动作（下一个 docket 边界执行）：**
+1. 派 W0 审计代理（只读 + 文档 + 生成器，独立 target 目录）；
+2. W0 交付后，把 ShHealing §2.1 的 W1 六小批挂入本计划 §7 勾选表（新增「Stage 4.3-HP 前置包」组，逐批勾选）；
+3. same_parameter_pass 回填实验（W3 交付后）记入重估批重测记录。
+
+### E3-I. Session-3 续推记录（2026-09-09，重构链三缺陷 + q2/p9 角点批收官 + ShHealing W0 启动）
+
+- **基线复验**：lib 407/0/4 → **411/0/0**（4 个 ignore 全部转正，见下）；kernel 671/0。
+- **4 个忽略测试转正**：bisector 3 个（is_convex/interval 的测试预期与 OCCT 语义写反——实现本就 1:1，按 Bisector.cxx L33 / PolyBis.cxx L81-119 修正断言并去 ignore）；kpart 挂死测试的挂死已消（历轮 RwLock/KPart 修复副作用），端弧断言未剥 OCCT Geom_TrimmedCurve 壳（ComputeCurves 尾 Builder_0.cxx L3833 包壳实证）——修正后转正。
+- **重构链三缺陷（q4 攻坚副产物，波及全部 blend 用例）**：
+  1. `chain_closed_loops` 的 `ends()` 无视 Reversed 翻转 → 链永不闭合、new_faces 恒空 → **a1/a3 的历史 PASS 全是 checkprops 1% 容差掩盖的假通过**（a1 输入 60000 vs 期望 59527.9 偏差 472 < 595 容差）。修复后 a1/a3/q1 真实通过。
+  2. MapIndSo 全池扫描（explore_solids）→ 布尔产物 BRep 池多 Solid TShape 时身份错位（q4 blend2 实证 ptr 两值）→ 按 OCCT L339-354 改 topexp_explore 树遍历（补 SHELL 避 SOLID 第二段）。
+  3. build_edges 缺 equalpar 闭合分支（BuildEdges.cxx L52-63 + PaveSet.cxx L363-487）→ (2π,2π) 退化域被丢 → 补闭合整圆边分支。
+- **q2/p9 角点批（子代理交付，7/7 函数计数等式，D6 空）**：新文件 chfi3d_builder_c2c.rs（PerformTwoCornerbyInter 全分支 1:1，ChFi3d_Builder_C2.cxx L108-1043 + Reduce×2 + IntCS + ComputesIntPC 5/6 参 + InPeriod）+ cncrn 的 Geom2dIntGInter 真引擎 re-host（对齐 brep_offset_inter2d.rs #31）+ filbuilder_c2 GAP 载体删除 + DS take/放回修复。主代理跟进：perform_fillet_on_vertex 的 2/3/_ 角点臂 false→true（OCCT L759-920 为 void，异常编码只在 compute 循环 try/catch L310-332）；filds 的 geom2d_int_g_inter BSpline/Bezier 短路 stub → 真 TheIntPCurvePCurveOfGInter 引擎（签名补 (tol2d, PConfusion)，OCCT L3435 形式，c1 两调用点同步）。
+- **blend 网格现状**：simple 14/22（a1/a3/q1 真实 PASS；p9 从 pivot panic 推进到 is_done 门——MoreThreeCorner 走了部分结果分支 cncrn_b.rs:2962（OCCT CnCrn L3893-3926 同构）；q2 门定位到顶点循环内一次 mid-loop done=false 推入 badvertices（hasresult=false 出口），嫌疑 filbuilder_c2.rs:451 fb.done 编码）；complex 3/4（b5 PASS、g9 4.5% 同基线）。
+- **ShHealing 插队启动**：E3-H 节落盘；W0 审计与脚手架代理已开工（docket 表/依赖审计/生成器 heal 翻译表/ref 基线）。
+- **回归（提交门槛实测，零新增）**：lib 411/0/0、kernel 671/0、stage 76/0 + smoke 1/0 + pavefiller 26/0；blend_simple 14/22 + blend_complex 3/4（失败面同构）；五网格 splitter 16/2、bopfuse 744/4、bopcommon 751/4、boptuc 741/4、bcut 除 g6 201/0。探针全部清除。
+- **下一 session 入口**：① p9 = PerformMoreThreeCorner 部分结果分支为何未走满（cncrn 域内审计，OCCT L3700-3926 对照）；② q2 = 顶点循环 mid-loop done=false 的源头（filbuilder_c2.rs:451 fb.done 编码嫌疑）；③ q4 blend2 = 闭合面片装配（FaceBuilder 外+内 wire 组装 + BuilderSolid 分类丢弃，探针证据：2 环面片进 merge 但面积逐位不变）；④ W0 交付后派 W1 六小批（E3-H 时序表）。

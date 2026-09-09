@@ -122,9 +122,8 @@ impl PointOnBis {
 mod tests {
     use super::*;
 
-    // OCCT Bisector_PointOnBis — direct-API regression (not run in CI).
+    // OCCT Bisector_PointOnBis — direct-API regression.
     #[test]
-    #[ignore]
     fn point_on_bis_defaults_and_accessors() {
         let mut p = PointOnBis::new();
         assert!(!p.is_infinite());
