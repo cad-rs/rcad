@@ -114,22 +114,40 @@ pub enum ChFiDS_TypeOfConcavity {
 pub struct LawFunction;
 
 // =========================================================================
-// OCCT ChFiDS_ElSpine — elementary spine (pending full field translation,
-// ChFiDS_ElSpine.hxx).  Referenced by ChFiDS_Spine::elspines.
+// OCCT ChFiDS_ElSpine — elementary spine (ChFiDS_ElSpine.hxx L46-162).
+// Referenced by ChFiDS_Spine::elspines.  OCCT derives the class from
+// Adaptor3d_Curve and stores a GeomAdaptor_Curve member; rcad models the
+// loaded Geom_Curve as an Option<Curve3> (the null-curve state cannot exist
+// in OCCT — it is the architecture carrier for "curve not yet built by
+// ChFi3d_PerformElSpine").
 // =========================================================================
 
 #[derive(Debug, Clone)]
 pub struct ChFiDSElSpine {
-    /// OCCT ChFiDS_ElSpine.hxx: double firstparam / lastparam
+    /// OCCT ChFiDS_ElSpine.hxx L148: GeomAdaptor_Curve curve (the loaded
+    /// Geom_Curve; SetCurve/Load per ChFiDS_ElSpine.cxx L299-302).
+    pub curve: Option<rcad_kernel::geom::Curve3>,
+    /// OCCT ChFiDS_ElSpine.hxx L156-157: double pfirst / plast
+    /// (FirstParameter()/LastParameter() getters, .cxx L76-86).
     pub firstparam: f64,
     pub lastparam: f64,
-    /// OCCT: gp_Pnt firstPnt / lastPnt, gp_Vec firstTgt / lastTgt
+    /// OCCT ChFiDS_ElSpine.hxx L149-152: gp_Pnt ptfirst/ptlast,
+    /// gp_Vec tgfirst/tglast.
     pub firstpnt: DVec3,
     pub firsttgt: DVec3,
     pub lastpnt: DVec3,
     pub lasttgt: DVec3,
-    /// OCCT: bool periodic
+    /// OCCT ChFiDS_ElSpine.hxx L153: NCollection_Sequence<gp_Ax1>
+    /// VerticesWithTangents.
+    pub vertices_with_tangents: Vec<rcad_kernel::math::gp::Ax1>,
+    /// OCCT ChFiDS_ElSpine.hxx L159: double period.
+    pub period: f64,
+    /// OCCT ChFiDS_ElSpine.hxx L160: bool periodic.
     pub periodic: bool,
+    /// OCCT ChFiDS_ElSpine.hxx L161-162: double pfirstsav / plastsav
+    /// (constructor default Precision::Infinite(), .cxx L37-45).
+    pub pfirstsav: f64,
+    pub plastsav: f64,
     /// OCCT: ChangeNext() / ChangePrevious() — SurfData links
     pub next: Option<SharedSurfData>,
     pub previous: Option<SharedSurfData>,
@@ -1915,11 +1933,19 @@ impl ChFiDSMap {
                         for fs in &sd.faces {
                             if let Some(fts) = brep.tshapes.get(fs.index) {
                                 if let TShape::Face(fd) = fts.as_ref() {
-                                    if let Some(wt) = brep.tshapes.get(fd.outer_wire.index) {
-                                        if let TShape::Wire(wd) = wt.as_ref() {
-                                            for we in &wd.edges {
-                                                if let Some(es) = child_shape(we.index) {
-                                                    pairs.push((es, anc.clone()));
+                                    // OCCT ChFiDS_Map.cxx L27-30 delegates to
+                                    // TopExp::MapShapesAndAncestors, which
+                                    // traverses every wire of the face — the
+                                    // outer wire and the inner (hole) wires.
+                                    let face_wires = std::iter::once(&fd.outer_wire)
+                                        .chain(fd.inner_wires.iter());
+                                    for wire_ref in face_wires {
+                                        if let Some(wt) = brep.tshapes.get(wire_ref.index) {
+                                            if let TShape::Wire(wd) = wt.as_ref() {
+                                                for we in &wd.edges {
+                                                    if let Some(es) = child_shape(we.index) {
+                                                        pairs.push((es, anc.clone()));
+                                                    }
                                                 }
                                             }
                                         }
@@ -1937,14 +1963,23 @@ impl ChFiDSMap {
                                     for fs in &shd.faces {
                                         if let Some(fts) = brep.tshapes.get(fs.index) {
                                             if let TShape::Face(fd) = fts.as_ref() {
-                                                if let Some(wt) =
-                                                    brep.tshapes.get(fd.outer_wire.index)
-                                                {
-                                                    if let TShape::Wire(wd) = wt.as_ref() {
-                                                        for we in &wd.edges {
-                                                            if let Some(es) = child_shape(we.index)
-                                                            {
-                                                                pairs.push((es, anc.clone()));
+                                                // OCCT ChFiDS_Map.cxx L27-30:
+                                                // MapShapesAndAncestors covers
+                                                // inner wires too.
+                                                let face_wires =
+                                                    std::iter::once(&fd.outer_wire)
+                                                        .chain(fd.inner_wires.iter());
+                                                for wire_ref in face_wires {
+                                                    if let Some(wt) =
+                                                        brep.tshapes.get(wire_ref.index)
+                                                    {
+                                                        if let TShape::Wire(wd) = wt.as_ref() {
+                                                            for we in &wd.edges {
+                                                                if let Some(es) =
+                                                                    child_shape(we.index)
+                                                                {
+                                                                    pairs.push((es, anc.clone()));
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -1968,17 +2003,24 @@ impl ChFiDSMap {
                     if !want {
                         continue;
                     }
-                    if let Some(wt) = brep.tshapes.get(fd.outer_wire.index) {
-                        if let TShape::Wire(wd) = wt.as_ref() {
-                            for we in &wd.edges {
-                                if let Some(es) = child_shape(we.index) {
-                                    if tor == topods::ShapeType::Edge {
-                                        pairs.push((es.clone(), anc.clone()));
-                                    }
-                                    if tor == topods::ShapeType::Vertex {
-                                        if let Some(ed) = es.as_edge() {
-                                            for v in [&ed.first, &ed.last] {
-                                                pairs.push((v.clone(), anc.clone()));
+                    // OCCT ChFiDS_Map.cxx L27-30: MapShapesAndAncestors
+                    // traverses every wire of the face — the outer wire and
+                    // the inner (hole) wires.
+                    let face_wires =
+                        std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter());
+                    for wire_ref in face_wires {
+                        if let Some(wt) = brep.tshapes.get(wire_ref.index) {
+                            if let TShape::Wire(wd) = wt.as_ref() {
+                                for we in &wd.edges {
+                                    if let Some(es) = child_shape(we.index) {
+                                        if tor == topods::ShapeType::Edge {
+                                            pairs.push((es.clone(), anc.clone()));
+                                        }
+                                        if tor == topods::ShapeType::Vertex {
+                                            if let Some(ed) = es.as_edge() {
+                                                for v in [&ed.first, &ed.last] {
+                                                    pairs.push((v.clone(), anc.clone()));
+                                                }
                                             }
                                         }
                                     }

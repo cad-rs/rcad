@@ -433,3 +433,19 @@ libs/rcad-algo/src/
 - **新立档项（前沿 1 的下游，按序待办）**：① q4 bfuse+blend 链的棱注册（"no suitable edges"）；② q7/p9 blend-on-blend 角点（ref Sphere 角球 / pivot curve）；③ q2 并入前沿 2（StartSol/PerformFirstSection 批）。
 - **本轮提交链**：rcad `本提交`（chfi_kpart.rs 切点锚点 + chfi3d_builder_spkp.rs 去 hatch 窗口 + 本档）→ 根仓库（生成器修复 + blend_simple/blend_complex 测试重生成说明 + sync）。
 - **下一 session 入口**：E3-C 队列第 2 项（PerformElSpine + ElSpine 曲线字段 + FilBuilder::PerformFirstSection 翻译批，b5/g9+q2 前沿）——红线路径、验收标准沿 E3-C 原文（函数计数等式 + 禁载体填包装 + a1/a3/q1 不回退）。
+
+### E3-E. Session-3 续推记录（2026-09-09，前沿 2 PerformElSpine + ElSpine + PerformFirstSection 批收官 + q4 ef_map 修复）
+
+- **基线复验**：lib 407/0/4 ✅、kernel 671/0 ✅。
+- **前沿 2 收官（E3-C 队列第 2 项，子代理 A 两轮交付，主代理验收）**：
+  1. **主批（49/49 函数计数等式）**：`ChFi3d_PerformElSpine`（Builder_0.cxx L4797-5327）+ ChFi3d statics（CurveCleaner/GoodExt/ApproxByC2/IsSmooth）+ `ChFi3d_FilBuilder::PerformFirstSection`（FilBuilder.cxx L1500-1534，ConstRad 分支真身 + Walking 已翻侧调用；EvolRad 分支 = GAP 8 带失败路径）+ `Geom_BSplineCurve` 七原语（RemoveKnot/InsertKnots/Segment/SetPeriodic/SetOrigin×2/SetNotPeriodic）+ `GeomConvert_CompCurveToBSplineCurve` 全类 + `BRepLib::BuildCurve3d`（GAP 6 保留 OCCT L5022 raise）+ ChFiDS_ElSpine 曲线字段与 13 方法（chfi_ds.rs/chfi_ds_spine.rs）+ Builder_2.cxx L3265-3279 尾段接线（chfi3d.rs）。主代理形式抽查通过（Concat 三级容差梯 L5081-5094、Reparametrize L5102-5104、PerformFirstSection L1517-1524 逐语句一致）。新文件 `fillet/chfi3d_perform_elspine.rs`（1,616 行）。D6 清单空。
+  2. **二轮（knot 向量非法 bug 的形式对齐修复）**：phase-2 实测 q2/q4 在 `GCPnts_AbscissaPoint` 处 de_boor 下溢——病态曲线 deg=6/8 极点/flat knots=10（违反 Σmults=poles+deg+1=15）。根因 = GAP 3 载体 kernel `extend_curve_to_point` 的 Start 分支 knot 算术只靠巧合成立。修复 = **按严格 1:1 换成 `GeomLib::ExtendCurveToPoint`（GeomLib.cxx L1269-1413）真身** + 新翻译依赖层 `PLib::HermiteCoefficients`（PLib.cxx L1404-1478）/`GeomLib::ComputeLambda`（L126-253，内留 log-vs-linear 采样注记）/`PLib::CoefficientsPoles`（L1482-1605）/`GeomLib_PolyFunc`（L18-60）→ 新文件 `fillet/chfi3d_geom_lib.rs`（579 行）。GAP 3 关闭，原 kernel extend 载体引用全删。主代理抽查 Hermite L1404-1461 逐行一致。
+- **主代理并行修复（全部 OCCT 锚点、非 TKBool 1:1）**：
+  1. **q4 根因 = `ChFiDSMap::fill` 丢 inner_wires**（chfi_ds.rs 三分支）：OCCT `ChFiDS_Map.cxx L27-30` 委托 `TopExp::MapShapesAndAncestors`（遍历面全部 wire），rcad 只走 outer_wire → 交线圆（顶面内孔线）无 (Edge,Face) 祖先 → conexfaces ff2=null → perform_element false → "no suitable edges"。已修，探针证据：q4 顶面 outer=[11,14,16,18] inner=[[7]]。
+  2. **kernel `BSplCLib::RemoveKnot` 漏 `Poles.Lower()`**（bspl_lib.rs）：OCCT L2435 `p = Poles.Lower() + index*Dimension`，rcad 漏 +1 → index_pole=0 时 1-based at() 下溢。已修。
+  3. **kernel `Convert_ConicToBSplineCurve::BuildCosAndSin` TgtTheta 分支 1-based 索引未平移**（convert/mod.rs）：OCCT L458-470 的 `CosNumerator(2*ii)/(2*ii+1)` 原样写进 0-based Vec → 末次迭代越界且跳过 index1。已按文件既定 0-based 约定平移（2*ii-1/2*ii）。
+- **blend 网格现状（E3-E 收官实测）**：blend_simple = a1/a3/q1 PASS；q2 = multi-edge 未 done（疑 GAP 8 EvolRad 声明路径，断言类）；q4 = 面积 197.12 vs 192.343（2.5%，断言类）；q7 = blend-on-blend 角球前沿（面积 150 vs 133.982，结果未混合）；p9 = 角点 pivot（filbuilder_c2.rs:977）；a2/a4/p8/x1 面积差（与 E3-C/D 同态）。blend_complex = **b5 PASS（StartSol echec 灭）**；g9 = 面积 2199.11 vs 2104.35（4.5%，断言类）。**前沿 2 的结构性失败（StartSol/no-suitable-edges/knot panic）全部清零。**
+- **回归（提交门槛实测，零新增）**：lib 407/0/4、kernel 671/0（含本轮三处 kernel 修复）、stage 76/0、pavefiller 26/0；五网格 744/4、751/4、741/4、bcut 除 g6 201/0、splitter 16/2。探针全部清除（rcad eprintln×2 批、生成测试 q4 探针经再生成清除、误生成于 rcad/tests/ 的测试产物已删）。
+- **新立档项**：① GAP 8 `BlendFunc_EvolRad`+`FilSpine::Law`（q2 的 EvolRad else-分支；建议 BlendFunc/Law 批）；② q4 面积 2.5% 差（疑 plandab 面序/凹凸性——ef_map 祖先序与 OCCT ConexFaces 顺序的形式审计）；③ q7/p9 blend-on-blend 角点（PerformCorner/角球）；④ g9 4.5% 面积（ElSpine 近似精度链）。
+- **本轮提交链**：rcad `本提交`（PerformElSpine 批 + geom_lib 层 + fill inner_wires + kernel 两修复 + 本档）→ 根 sync。
+- **下一 session 入口**：E3-C 队列第 3 项重估批（x1/a2/p8/q2/q4/g9 断言差逐格攻坚）或 q7 角点前沿；开工前先核对 brep_fill/ 文件归属。

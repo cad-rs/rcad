@@ -1712,12 +1712,15 @@ fn build_cos_and_sin(
         let direct = alpha.cos();
         let inverse = 1.0 / direct;
         for ii in 1..=num_spans {
-            cos_numerator[(2 * ii) as usize] = inverse * (param + alpha).cos();
-            sin_numerator[(2 * ii) as usize] = inverse * (param + alpha).sin();
-            denominator[(2 * ii) as usize] = direct;
-            cos_numerator[(2 * ii + 1) as usize] = (param + 2.0 * alpha).cos();
-            sin_numerator[(2 * ii + 1) as usize] = (param + 2.0 * alpha).sin();
-            denominator[(2 * ii + 1) as usize] = 1.0;
+            // OCCT indices are 1-based: CosNumerator(2*ii) / (2*ii+1) over
+            // arrays of num_poles = 2*num_spans+1 entries — shifted to
+            // 0-based (2*ii-1 / 2*ii) as in build_cos_and_sin_alg.
+            cos_numerator[(2 * ii - 1) as usize] = inverse * (param + alpha).cos();
+            sin_numerator[(2 * ii - 1) as usize] = inverse * (param + alpha).sin();
+            denominator[(2 * ii - 1) as usize] = direct;
+            cos_numerator[(2 * ii) as usize] = (param + 2.0 * alpha).cos();
+            sin_numerator[(2 * ii) as usize] = (param + 2.0 * alpha).sin();
+            denominator[(2 * ii) as usize] = 1.0;
             knots[ii as usize] = param + 2.0 * alpha;
             mults[ii as usize] = 2;
             param += 2.0 * alpha;

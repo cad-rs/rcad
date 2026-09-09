@@ -954,20 +954,23 @@ pub fn perform_three_corner(
             let pasmax = (w_last - w_first) * 0.05;
             // OCCT L778-784: cornerspine = new ChFiDS_ElSpine;
             // SetCurve(spinecoin); FirstParameter(WFirst - pasmax);
-            // LastParameter(WLast + pasmax).  Architecture: rcad
-            // ChFiDSElSpine carries no curve yet (elspine_guide_curve
-            // supplies the walking guide); the parameters land on the
-            // same fields and the spinecoin curve is consumed by the
-            // pending curve storage.
-            let _ = &spinecoin;
+            // LastParameter(WLast + pasmax).  The ChFiDSElSpine curve field
+            // (ChFiDS_ElSpine.hxx L148, ChFiDS_ElSpine.cxx L299-302) carries
+            // the spinecoin curve; the walking guide reads it through
+            // elspine_guide_curve.
             let cornerspine = Arc::new(RwLock::new(ChFiDSElSpine {
+                curve: Some(spinecoin),
                 firstparam: w_first - pasmax,
                 lastparam: w_last + pasmax,
                 firstpnt: DVec3::ZERO,
                 firsttgt: DVec3::ZERO,
                 lastpnt: DVec3::ZERO,
                 lasttgt: DVec3::ZERO,
+                vertices_with_tangents: Vec::new(),
+                period: 0.0,
                 periodic: false,
+                pfirstsav: f64::INFINITY,
+                plastsav: f64::INFINITY,
                 next: None,
                 previous: None,
             }));

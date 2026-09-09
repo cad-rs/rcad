@@ -2641,7 +2641,9 @@ pub fn remove_knot(
     // ------------------------------------
     // build the poles for anti Boor Scheme
     // ------------------------------------
-    let mut p = index_pole * dimension as i32;
+    // OCCT L2435: p = Poles.Lower() + index * Dimension — the 1-based
+    // lower bound (1) must be added, at() below is 1-based too.
+    let mut p = 1 + index_pole * dimension as i32;
     let mut poles_local = vec![0.0f64; ((2 * degree_i + 1) * dimension as i32) as usize];
     for i in 0..=(length + depth) {
         let j = boor_index(i, length, depth) * dimension as i32;

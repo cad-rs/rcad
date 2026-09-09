@@ -35,6 +35,8 @@ use rcad_kernel::topo::topods::{Orientation, Shape};
 use rcad_kernel::topods;
 
 use super::chfi3d::{is_tangent_faces, next_side, topabs_reverse};
+use super::brep_blend_func_consrad::BlendFuncConstRad;
+use super::brep_blend_walking::BRepBlendWalking;
 use super::chfi3d_builder_0::{
     brep_tool_parameter, chfi3d_compute_curves, topexp_face_edges, topexp_vertices,
     vec_is_parallel, BRepAdaptorSurface, GeomAdaptorSurface, P_CONFUSION,
@@ -183,38 +185,10 @@ impl BRepAdaptorSurface {
 // =========================================================================
 
 impl ChFiDSElSpine {
-    // The FirstParameter/LastParameter getters+setters, IsPeriodic, Period
-    // and D1 live in chfi3d_builder_6b (translated by the ComputeData
-    // stage) and in chfi_ds_spine — not redefined here.
-
-    /// OCCT ChFiDS_ElSpine.hxx — SetPeriodic(B).
-    pub fn set_periodic(&mut self, b: bool) {
-        self.periodic = b;
-    }
-
-    /// OCCT ChFiDS_ElSpine.hxx — SaveFirstParameter() / SaveLastParameter().
-    /// rcad carries no saved-parameter slots (ChFiDS_ElSpine field set is
-    /// the pending boundary); the restores at the call sites go through the
-    /// saved locals (wfsav/wlsav), as in OCCT.
-    pub fn save_first_parameter(&mut self) {}
-
-    /// See save_first_parameter.
-    pub fn save_last_parameter(&mut self) {}
-
-    /// OCCT ChFiDS_ElSpine.cxx — the composite curve of the elementary
-    /// spine as an Adaptor3d_Curve.  Pending (no curve slot on the rcad
-    /// ChFiDSElSpine struct) — returns None, which makes the dependent
-    /// extrema/projection queries report the OCCT not-done path.
-    pub fn adaptor_curve(&self) -> Option<rcad_kernel::geom::Curve3> {
-        None
-    }
-
-    /// OCCT ChFiDS_ElSpine.cxx — Value(U) (myCurve.Value).  Pending
-    /// BRepAdaptor_Curve; the linear model through the first tangent
-    /// stands in.
-    pub fn value(&self, u: f64) -> DVec3 {
-        self.firstpnt + self.firsttgt * (u - self.firstparam)
-    }
+    // The ChFiDS_ElSpine method translations (SetPeriodic, Period,
+    // SaveFirst/LastParameter, SetOrigin, Resolution, SetCurve, the
+    // curve-backed Value/D1/D2 and the vertex list) live in chfi_ds_spine
+    // per the ChFiDS_ElSpine.hxx field completion — not redefined here.
 }
 
 // =========================================================================
@@ -1324,25 +1298,71 @@ impl super::chfi3d::ChFi3dBuilder {
         panic!("Standard_Failure: StartSol echec");
     }
 
-    /// OCCT ChFi3d_Builder::PerformFirstSection (declared in
-    /// ChFi3d_Builder.hxx, defined outside Builder_2.cxx) — pending owning
-    /// translation; the OCCT failure path (Standard_False) is reported.
+    /// OCCT ChFi3d_FilBuilder.cxx L1500-1534 — PerformFirstSection(Spine,
+    /// HGuide, Choix, S1, S2, I1, I2, Par, SolDep, Pos1, Pos2).  The
+    /// FilBuilder override called from StartSol (Builder_2.cxx L1058/L1092);
+    /// rcad models the override on the shared ChFi3dBuilder (the blend
+    /// builder configuration), which is where the StartSol calls land.
     #[allow(clippy::too_many_arguments)]
     fn perform_first_section(
         &mut self,
-        _spine: &ChFiDSSpineHandle,
-        _hguide: &ChFiDSElSpine,
-        _choix: i32,
-        _hs1: &BRepAdaptorSurface,
-        _hs2: &BRepAdaptorSurface,
-        _i1: &BRepTopAdaptorTopolTool,
-        _i2: &BRepTopAdaptorTopolTool,
-        _w: f64,
-        _soldep: &mut [f64; 4],
-        _pos1: &mut TopAbsState,
-        _pos2: &mut TopAbsState,
+        spine: &ChFiDSSpineHandle,
+        hguide: &ChFiDSElSpine,
+        choix: i32,
+        s1: &BRepAdaptorSurface,
+        s2: &BRepAdaptorSurface,
+        i1: &BRepTopAdaptorTopolTool,
+        i2: &BRepTopAdaptorTopolTool,
+        par: f64,
+        soldep: &mut [f64; 4],
+        pos1: &mut TopAbsState,
+        pos2: &mut TopAbsState,
     ) -> bool {
-        false
+        // OCCT L1512-1516: down_cast<ChFiDS_FilSpine>(Spine).
+        let Some(fsp) = spine.down_cast_fil() else {
+            panic!(
+                "Standard_ConstructionError: PerformSurf : this is not the spine of a fillet"
+            );
+        };
+        // OCCT L1517: TolGuide = HGuide->Resolution(tolapp3d).
+        let tol_guide = hguide.resolution(self.tolapp3d);
+        if fsp.is_constant() {
+            // OCCT L1520-1524: BRepBlend_ConstRad Func(S1, S2, HGuide);
+            // Func.Set(fsp->Radius(), Choix); Func.Set(myShape);
+            // BRepBlend_Walking TheWalk(S1, S2, I1, I2, HGuide);
+            // return TheWalk.PerformFirstSection(Func, Par, SolDep,
+            //     tolapp3d, TolGuide, Pos1, Pos2);
+            // (the second Set is the BlendFunc_SectionShape overload — the
+            // builder's myShape / BlendFunc_SectionShape member,
+            // ChFi3d_FilBuilder.hxx L377.)
+            let guide = hguide
+                .curve
+                .as_ref()
+                .expect("ElSpine curve (ChFiDS_ElSpine carries a loaded curve)");
+            let mut func = BlendFuncConstRad::new(&s1.surface, &s2.surface, guide);
+            func.set(fsp.radius(), choix);
+            func.set_section_shape(self.my_blend_shape);
+            let mut the_walk = BRepBlendWalking::new(&s1.surface, &s2.surface, i1, i2, guide);
+            the_walk.perform_first_section(
+                &mut func,
+                par,
+                soldep,
+                self.tolapp3d,
+                tol_guide,
+                pos1,
+                pos2,
+            )
+        } else {
+            // GAP: BRepBlend_EvolRad = typedef BlendFunc_EvolRad (OCCT
+            // BlendFunc/BlendFunc_EvolRad.cxx) together with
+            // ChFiDS_FilSpine::Law(HGuide) (Law_Composite) are pending the
+            // BlendFunc/Law batches — the OCCT branch (FilBuilder.cxx
+            // L1526-1533: BRepBlend_EvolRad Func(S1, S2, HGuide, fsp->Law(
+            // HGuide)); Func.Set(Choix); Func.Set(myShape); Walking ... )
+            // cannot be constructed yet; the caller-side failure path
+            // (Standard_False) is preserved.
+            false
+        }
     }
 
     /// OCCT ChFi3d_Builder_2.cxx L1146-1519 — StartSol (the Spine overload;

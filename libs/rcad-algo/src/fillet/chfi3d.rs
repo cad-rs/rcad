@@ -2836,16 +2836,23 @@ pub fn next_side(
 }
 
 impl super::chfi_ds::ChFiDSElSpine {
-    /// OCCT ChFiDS_ElSpine default construction.
+    /// OCCT ChFiDS_ElSpine.cxx L37-45 — the default construction
+    /// (pfirst/plast/period = 0, periodic = false,
+    /// pfirstsav/plastsav = Precision::Infinite()).
     pub fn new() -> Self {
         super::chfi_ds::ChFiDSElSpine {
+            curve: None,
             firstparam: 0.0,
             lastparam: 0.0,
             firstpnt: DVec3::ZERO,
             firsttgt: DVec3::ZERO,
             lastpnt: DVec3::ZERO,
             lasttgt: DVec3::ZERO,
+            vertices_with_tangents: Vec::new(),
+            period: 0.0,
             periodic: false,
+            pfirstsav: f64::INFINITY,
+            plastsav: f64::INFINITY,
             next: None,
             previous: None,
         }
@@ -3359,9 +3366,47 @@ impl ChFi3dBuilder {
             }
         }
 
-        // L3265-3278: ChFi3d_PerformElSpine over the sections — pending
-        // (Builder_0.cxx ChFi3d_PerformElSpine, needs the composite
-        // curve approximation machinery).
+        // OCCT Builder_2.cxx L3265-3270: ChFi3d_PerformElSpine over the
+        // elspines (ILES.ChangeValue(), Spine, myConti, tolesp).
+        let n_elspines = spine.base().elspines.len();
+        for i in 0..n_elspines {
+            // The rcad elspines live inside the spine record (OCCT: a
+            // separate handle list); the element is swapped out for the
+            // duration of the call — the take/put-back borrow artifact
+            // (precedent chfi3d_builder_2b ChangeSpine).
+            let mut es = std::mem::replace(
+                &mut spine.base_mut().elspines[i],
+                super::chfi_ds::ChFiDSElSpine::new(),
+            );
+            super::chfi3d_perform_elspine::chfi3d_perform_elspine(
+                &mut es,
+                &mut spine,
+                self.my_conti,
+                self.tolesp,
+                false,
+            );
+            spine.base_mut().elspines[i] = es;
+        }
+        // OCCT Builder_2.cxx L3271-3278: the offset elspines for the
+        // ConstThroatWithPenetration chamfer mode (IsOffset = true).
+        if spine.base().mode() == super::chfi_ds::ChFiDS_ChamfMode::ConstThroatWithPenetrationChamfer
+        {
+            let n_offset = spine.base().offset_elspines.len();
+            for i in 0..n_offset {
+                let mut es = std::mem::replace(
+                    &mut spine.base_mut().offset_elspines[i],
+                    super::chfi_ds::ChFiDSElSpine::new(),
+                );
+                super::chfi3d_perform_elspine::chfi3d_perform_elspine(
+                    &mut es,
+                    &mut spine,
+                    self.my_conti,
+                    self.tolesp,
+                    true,
+                );
+                spine.base_mut().offset_elspines[i] = es;
+            }
+        }
         // L3279
         spine.base_mut().set_split_done(true);
         st.my_spine = Some(spine);

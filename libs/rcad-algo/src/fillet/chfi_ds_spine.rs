@@ -4,6 +4,7 @@
 //! `chfi_ds.rs` exceeds the 2000-line guideline.
 
 use glam::DVec3;
+use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::topo::topods::{Orientation, Shape};
 use rcad_kernel::geom::CurveEval as _;
 
@@ -230,4 +231,120 @@ impl ChFiDSElSpine {
     pub fn last_point_and_tgt(&self) -> (DVec3, DVec3) {
         (self.lastpnt, self.lasttgt)
     }
+
+    /// OCCT ChFiDS_ElSpine.cxx L90-93 — GetSavedFirstParameter().
+    pub fn get_saved_first_parameter(&self) -> f64 {
+        self.pfirstsav
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L97-100 — GetSavedLastParameter().
+    pub fn get_saved_last_parameter(&self) -> f64 {
+        self.plastsav
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L155-159 — SetPeriodic(I).
+    pub fn set_periodic(&mut self, i: bool) {
+        self.periodic = i;
+        self.period = self.lastparam - self.firstparam;
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L163-170 — Period().
+    pub fn period(&self) -> f64 {
+        if !self.periodic {
+            panic!("Standard_Failure: ElSpine non periodique");
+        }
+        self.period
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L216-219 — SaveFirstParameter().
+    pub fn save_first_parameter(&mut self) {
+        self.pfirstsav = self.firstparam;
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L223-226 — SaveLastParameter().
+    pub fn save_last_parameter(&mut self) {
+        self.plastsav = self.lastparam;
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L230-242 — SetOrigin(O): re-origin of the
+    /// underlying periodic BSpline (downcast to Geom_BSplineCurve, then
+    /// bs->SetOrigin(O, Precision::PConfusion()) + curve.Load(bs)).  The
+    /// Geom_BSplineCurve::SetOrigin(U, Tol) body lives with the other
+    /// BSpline primitives in chfi3d_perform_elspine (performed by
+    /// ChFi3d_PerformElSpine).  The null-curve state cannot exist in OCCT;
+    /// the no-op keeps the pre-PerformElSpine consumer behavior.
+    pub fn set_origin(&mut self, o: f64) {
+        if let Some(rcad_kernel::geom::Curve3::BSpline(bs)) = self.curve.as_mut() {
+            super::chfi3d_perform_elspine::bspline_set_origin_u_tol(bs, o, CONFUSION);
+        }
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L134-137 — Resolution(R3d) (the
+    /// GeomAdaptor_Curve resolution of the loaded curve).  Null-curve
+    /// fallback: the pre-PerformElSpine consumers keep the input tolerance
+    /// (the stub semantics this method replaces).
+    pub fn resolution(&self, r3d: f64) -> f64 {
+        match &self.curve {
+            Some(c) => c.resolution(r3d),
+            None => r3d,
+        }
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L299-302 — SetCurve(C) (curve.Load(C)).
+    pub fn set_curve(&mut self, c: rcad_kernel::geom::Curve3) {
+        self.curve = Some(c);
+    }
+
+    /// OCCT ChFiDS_ElSpine — the loaded curve as the Adaptor3d_Curve basis
+    /// (Adaptor3d_Curve::Value/D1/... route to the GeomAdaptor_Curve
+    /// member).  None encodes the not-yet-performed state (OCCT has no null
+    /// curve).
+    pub fn adaptor_curve(&self) -> Option<rcad_kernel::geom::Curve3> {
+        self.curve.clone()
+    }
+
+    /// OCCT ChFiDS_ElSpine (Adaptor3d_Curve::Value → curve member Value).
+    pub fn value(&self, u: f64) -> DVec3 {
+        match &self.curve {
+            Some(c) => c.point_at(u),
+            None => self.firstpnt + self.firsttgt * (u - self.firstparam),
+        }
+    }
+
+    /// OCCT ChFiDS_ElSpine (Adaptor3d_Curve::D1 → curve member D1).
+    pub fn d1(&self, u: f64) -> (DVec3, DVec3) {
+        match &self.curve {
+            Some(c) => (c.point_at(u), c.derivative_at(u)),
+            None => (DVec3::ZERO, DVec3::ZERO),
+        }
+    }
+
+    /// OCCT ChFiDS_ElSpine (Adaptor3d_Curve::D2 → curve member D2).
+    pub fn d2(&self, u: f64) -> (DVec3, DVec3, DVec3) {
+        match &self.curve {
+            Some(c) => (c.point_at(u), c.derivative_at(u), c.derivative2_at(u)),
+            None => (DVec3::ZERO, DVec3::ZERO, DVec3::ZERO),
+        }
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L262-265 — AddVertexWithTangent(anAx1).
+    pub fn add_vertex_with_tangent(&mut self, an_ax1: rcad_kernel::math::gp::Ax1) {
+        self.vertices_with_tangents.push(an_ax1);
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L285-288 — NbVertices().
+    pub fn nb_vertices(&self) -> usize {
+        self.vertices_with_tangents.len()
+    }
+
+    /// OCCT ChFiDS_ElSpine.cxx L292-295 — VertexWithTangent(Index) (1-based).
+    pub fn vertex_with_tangent(&self, index: usize) -> rcad_kernel::math::gp::Ax1 {
+        self.vertices_with_tangents[index - 1]
+    }
+
+    // OCCT ChFiDS_ElSpine.cxx L339-384 — Line()/Circle()/Ellipse()/
+    // Hyperbola()/Parabola()/Bezier()/BSpline() (the typed curve queries
+    // behind GetType()).  Pending consumer: no translated ChFi3d code calls
+    // them yet; each routes to the matching Curve3 variant of `curve` when
+    // a consumer appears.
 }

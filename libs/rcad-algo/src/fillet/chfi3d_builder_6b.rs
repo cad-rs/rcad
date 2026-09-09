@@ -71,31 +71,9 @@ impl ChFiDSElSpine {
         self.periodic
     }
 
-    /// OCCT ChFiDS_ElSpine::Period() — the parameter period.
-    pub fn period(&self) -> f64 {
-        self.lastparam - self.firstparam
-    }
-
-    /// OCCT ChFiDS_ElSpine::SetOrigin(Ori) — re-origin of the underlying
-    /// curve (pending the curve machinery; boundary no-op).
-    pub fn set_origin(&mut self, _ori: f64) {}
-
-    /// OCCT ChFiDS_ElSpine::Resolution(Tol3d) — pending the curve
-    /// machinery; the input 3d tolerance stands in.
-    pub fn resolution(&self, tol3d: f64) -> f64 {
-        tol3d
-    }
-
-    /// OCCT ChFiDS_ElSpine::D1(U, P, V) — pending the curve machinery
-    /// (zero derivatives at the boundary).  gp_Pnt/gp_Vec map to DVec3.
-    pub fn d1(&self, _u: f64) -> (glam::DVec3, glam::DVec3) {
-        (glam::DVec3::ZERO, glam::DVec3::ZERO)
-    }
-
-    /// OCCT ChFiDS_ElSpine::D2(U, P, V1, V2) — pending the curve machinery.
-    pub fn d2(&self, _u: f64) -> (glam::DVec3, glam::DVec3, glam::DVec3) {
-        (glam::DVec3::ZERO, glam::DVec3::ZERO, glam::DVec3::ZERO)
-    }
+    // Period(), SetOrigin(), Resolution(), D1 and D2 are the OCCT-aligned
+    // translations in chfi_ds_spine.rs (ChFiDS_ElSpine.cxx) — not
+    // redefined here.
 }
 
 /// OCCT `aHElSpine == HGuide` (handle identity) — rcad boundary substitute
@@ -107,11 +85,15 @@ pub fn elspine_matches_handle(a: &ChFiDSElSpine, hguide: &ChFiDSElSpineHandle) -
 }
 
 /// The rcad Walking binds the guide as a &Curve3 (BRepBlend_Walking.cxx
-/// ctor reads the ElSpine curve).  Pending boundary: the ElSpine curve
-/// machinery is deferred (ChFiDSElSpine carries no curve yet), so the
-/// ctor binds a straight-line placeholder at the axis origin.
+/// ctor reads the ElSpine curve).  The real curve is the composite the
+/// ChFi3d_PerformElSpine loaded onto the ElSpine (OCCT Builder_0.cxx L5321
+/// ES.SetCurve(BSpline), chfi3d_perform_elspine); the linear construction
+/// below remains only for the null-curve state, which cannot exist in OCCT
+/// (pre-PerformElSpine consumers keep the former boundary behavior).
 pub fn elspine_guide_curve(hguide: &ChFiDSElSpineHandle) -> rcad_kernel::geom::Curve3 {
-    let _ = hguide;
+    if let Some(c) = hguide.read().expect("elspine lock").curve.clone() {
+        return c;
+    }
     rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
         glam::DVec3::ZERO,
         glam::DVec3::X,
