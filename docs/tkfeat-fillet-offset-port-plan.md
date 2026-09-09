@@ -538,3 +538,10 @@ libs/rcad-algo/src/
 - **ShHealing 插队启动**：E3-H 节落盘；W0 审计与脚手架代理已开工（docket 表/依赖审计/生成器 heal 翻译表/ref 基线）。
 - **回归（提交门槛实测，零新增）**：lib 411/0/0、kernel 671/0、stage 76/0 + smoke 1/0 + pavefiller 26/0；blend_simple 14/22 + blend_complex 3/4（失败面同构）；五网格 splitter 16/2、bopfuse 744/4、bopcommon 751/4、boptuc 741/4、bcut 除 g6 201/0。探针全部清除。
 - **下一 session 入口**：① p9 = PerformMoreThreeCorner 部分结果分支为何未走满（cncrn 域内审计，OCCT L3700-3926 对照）；② q2 = 顶点循环 mid-loop done=false 的源头（filbuilder_c2.rs:451 fb.done 编码嫌疑）；③ q4 blend2 = 闭合面片装配（FaceBuilder 外+内 wire 组装 + BuilderSolid 分类丢弃，探针证据：2 环面片进 merge 但面积逐位不变）；④ W0 交付后派 W1 六小批（E3-H 时序表）。
+
+### E3-J. ShHealing W1 包收官 + SameParameter 回填实验（2026-09-09 续）
+
+- **W1 六小批全部入库**：W1-3 ShapeExtend 7 类（`dad1072e`，2,163 行）→ W1-1 Edge/WireOrder（`1e7bcf78`，2,710 行，28=28/22=22）→ W1-4 ProjectCurveOnSurface（`58de7ac1`，3,727 行，20=20，GeomAPI_PointsToBSpline 批内升级）→ W1-2 ShapeBuild 四类（`cee60772`，1,939 行，ReShape 底座展平 + Status/`int modif` 两处形式修正；任务书树况纠正：OCCT 8 无 ShapeBuild_Wire）→ W1-5 FreeBounds/Curve2d（`6708cdf5`，2,015 行，16=16/4=4）→ W1-6 UnifySameDomain 100% + ShapeFix statics（`e8e9cc9c`，7,923 行，49 函数 + 8 函数，13 段分段 check）。全部逐批主代理独立复验 + 形式抽查，lib 411/0/0 保持，D6 全空。
+- **SameParameter 回填实验（真身接线实测）**：chfi3d_perform.rs `same_parameter_pass` 接入 W1-6 真身后 kpart 测试暴露 **HBuilder 构建面片的池身份缺陷**——子形状引用的 `data` Arc 是 Edge 但 `index` 与池槽位不一致（`edge_mut: Shape N is not an Edge`）。已回退至 pending no-op 并在调用点记档（`a06157a1`）。**该缺陷与 blend-2 闭合面片装配（q4）同族——build_faces/build_wire/make_face 链的子形状索引一致性是下一个统一攻坚点**，修好后可同时解锁：SameParameter 回填（x1/g9 面积差候选修复）、blend-2 闭合面片、q4 终局。
+- **根 sync**：`6c1f30f` → `755feb5` → `8ae133d`（W1 收官）。
+- **下一 session 入口**：① HBuilder 面片池身份缺陷攻坚（build_faces 链 + blend-2/q4/SameParameter 三线同源，主代理自领）；② offset 门面接线批（unifysamedom 命令 → W1-6 真身 + 生成器 available 翻旗，M1 oracle 才可实测）；③ W2 ShapeAnalysis 主体（Root/Curve/Surface/Wire 序）+ docket 前置批（BRepLib_ValidateEdge / FindSurface）；④ W3 ShapeFix 主体（收 W1-6/W1-1 的 ShapeFix 族 GAP 载体）。
