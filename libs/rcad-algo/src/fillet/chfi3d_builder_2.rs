@@ -36,6 +36,7 @@ use rcad_kernel::topods;
 
 use super::chfi3d::{is_tangent_faces, next_side, topabs_reverse};
 use super::brep_blend_func_consrad::BlendFuncConstRad;
+use super::brep_blend_func_evolrad::BlendFuncEvolRad;
 use super::brep_blend_walking::BRepBlendWalking;
 use super::chfi3d_builder_0::{
     brep_tool_parameter, chfi3d_compute_curves, topexp_face_edges, topexp_vertices,
@@ -1353,15 +1354,34 @@ impl super::chfi3d::ChFi3dBuilder {
                 pos2,
             )
         } else {
-            // GAP: BRepBlend_EvolRad = typedef BlendFunc_EvolRad (OCCT
-            // BlendFunc/BlendFunc_EvolRad.cxx) together with
-            // ChFiDS_FilSpine::Law(HGuide) (Law_Composite) are pending the
-            // BlendFunc/Law batches — the OCCT branch (FilBuilder.cxx
-            // L1526-1533: BRepBlend_EvolRad Func(S1, S2, HGuide, fsp->Law(
-            // HGuide)); Func.Set(Choix); Func.Set(myShape); Walking ... )
-            // cannot be constructed yet; the caller-side failure path
-            // (Standard_False) is preserved.
-            false
+            // OCCT L1526-1533: BRepBlend_EvolRad Func(S1, S2, HGuide,
+            // fsp->Law(HGuide)); Func.Set(Choix); Func.Set(myShape);
+            // BRepBlend_Walking TheWalk(S1, S2, I1, I2, HGuide);
+            // return TheWalk.PerformFirstSection(Func, Par, SolDep,
+            //     tolapp3d, TolGuide, Pos1, Pos2);
+            let guide = hguide
+                .curve
+                .as_ref()
+                .expect("ElSpine curve (ChFiDS_ElSpine carries a loaded curve)");
+            // OCCT: fsp->Law(HGuide) — a null law cannot exist in OCCT
+            // (AppendElSpine has appended the ComputeLaw composite); the
+            // expect keeps the OCCT null-handle failure path explicit.
+            let law = fsp
+                .law_of(hguide)
+                .expect("ChFiDS_FilSpine::Law: no law for this elspine");
+            let mut func = BlendFuncEvolRad::new(&s1.surface, &s2.surface, guide, law);
+            func.set(choix);
+            func.set_section_shape(self.my_blend_shape);
+            let mut the_walk = BRepBlendWalking::new(&s1.surface, &s2.surface, i1, i2, guide);
+            the_walk.perform_first_section(
+                &mut func,
+                par,
+                soldep,
+                self.tolapp3d,
+                tol_guide,
+                pos1,
+                pos2,
+            )
         }
     }
 

@@ -316,7 +316,10 @@ pub fn chfi_kpart_make_fillet_pln_cyl_circ(
     // OCCT L317-318: ElSLib::PlaneD0(u, v, PosPl, Or); cPln = Or.
     let orproj = elslib_plane_d0(u0, v0, &pospl);
     let cpln = orproj;
-    or = or + dp * radius;
+    // OCCT ChFiKPart_ComputeData_FilPlnCyl.cxx L317-319: ElSLib::PlaneD0
+    // REASSIGNS Or to its projection on the plane, then the Radius*Dp offset
+    // starts from that projected point — the torus/sphere centre circle.
+    or = cpln + dp * radius;
     let mut ptsp;
     let mut dsp;
     // Modification for the PtSp found at the wrong side of the sewing edge.
@@ -620,7 +623,10 @@ pub fn chfi_kpart_make_fillet_pln_con_circ(
     let c2dpln = DVec2::new(u0, v0);
     // OCCT L81-82: ElSLib::PlaneD0(u, v, PosPl, Or); cPln = Or.
     let cpln = elslib_plane_d0(u0, v0, &pospl);
-    or = or + dp * radius;
+    // OCCT ChFiKPart_ComputeData_FilPlnCon.cxx L81-83: ElSLib::PlaneD0
+    // REASSIGNS Or to its projection on the plane, then the Radius*Dp offset
+    // starts from that projected point.
+    or = cpln + dp * radius;
 
     let (ptsp, dsp) =
         super::chfi_kpart_gp::elclib_circle_d1(first, &spine.pos, spine.radius);

@@ -107,7 +107,7 @@ impl BRepFilletAPIMakeFillet {
     }
 
     /// OCCT L94-104 (Add(Law, E)) — the law variant of Add.
-    pub fn add_law(&mut self, l: super::chfi_ds::LawFunction, e: &Shape) {
+    pub fn add_law(&mut self, l: crate::geomalgo::law::LawFunctionHandle, e: &Shape) {
         self.my_builder.add(e);
         let mut iinc = 0usize;
         let ic = self.my_builder.base.contains_in_spine(e, &mut iinc);
@@ -169,7 +169,12 @@ impl BRepFilletAPIMakeFillet {
     }
 
     /// OCCT L153-158 — SetRadius(const handle<Law_Function>& L, IC, IinC).
-    pub fn set_radius_law(&mut self, l: super::chfi_ds::LawFunction, ic: usize, iinc: usize) {
+    pub fn set_radius_law(
+        &mut self,
+        l: crate::geomalgo::law::LawFunctionHandle,
+        ic: usize,
+        iinc: usize,
+    ) {
         self.my_builder.set_radius_law(l, ic, iinc);
     }
 

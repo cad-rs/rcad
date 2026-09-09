@@ -152,15 +152,15 @@ impl ChFi3dBuilder {
         b.my_ds = Some(TopOpeBRepDSHDataStructure::default());
         b.my_coup = Some(TopOpeBRepBuildHBuilder::default());
         // myEFMap.Fill(S, TopAbs_EDGE, TopAbs_FACE);  (L354)
-        b.my_ef_map.fill(&brep, topods::ShapeType::Edge, topods::ShapeType::Face);
+        b.my_ef_map.fill(&brep, &b.my_shape, topods::ShapeType::Edge, topods::ShapeType::Face);
         // myESoMap.Fill(S, TopAbs_EDGE, TopAbs_SOLID);  (L355)
-        b.my_eso_map.fill(&brep, topods::ShapeType::Edge, topods::ShapeType::Solid);
+        b.my_eso_map.fill(&brep, &b.my_shape, topods::ShapeType::Edge, topods::ShapeType::Solid);
         // myEShMap.Fill(S, TopAbs_EDGE, TopAbs_SHELL);  (L356)
-        b.my_esh_map.fill(&brep, topods::ShapeType::Edge, topods::ShapeType::Shell);
+        b.my_esh_map.fill(&brep, &b.my_shape, topods::ShapeType::Edge, topods::ShapeType::Shell);
         // myVFMap.Fill(S, TopAbs_VERTEX, TopAbs_FACE);  (L357)
-        b.my_vf_map.fill(&brep, topods::ShapeType::Vertex, topods::ShapeType::Face);
+        b.my_vf_map.fill(&brep, &b.my_shape, topods::ShapeType::Vertex, topods::ShapeType::Face);
         // myVEMap.Fill(S, TopAbs_VERTEX, TopAbs_EDGE);  (L358)
-        b.my_ve_map.fill(&brep, topods::ShapeType::Vertex, topods::ShapeType::Edge);
+        b.my_ve_map.fill(&brep, &b.my_shape, topods::ShapeType::Vertex, topods::ShapeType::Edge);
         // SetParams(Ta, 1.0e-4, 1.e-5, 1.e-4, 1.e-5, 1.e-3);  (L359)
         b.set_params(ta, 1.0e-4, 1.0e-5, 1.0e-4, 1.0e-5, 1.0e-3);
         // SetContinuity(GeomAbs_C1, Ta);  (L360)
@@ -601,9 +601,19 @@ impl ChFi3dBuilder {
     /// OCCT ChFi3d_Builder.cxx L80-136 — CompleteDS (static).
     fn complete_ds(&mut self) {
         let mut map_ew = ChFiDSMap::new();
-        map_ew.fill(&self.my_brep, topods::ShapeType::Edge, topods::ShapeType::Wire);
+        map_ew.fill(
+            &self.my_brep,
+            &self.my_shape,
+            topods::ShapeType::Edge,
+            topods::ShapeType::Wire,
+        );
         let mut map_fs = ChFiDSMap::new();
-        map_fs.fill(&self.my_brep, topods::ShapeType::Face, topods::ShapeType::Shell);
+        map_fs.fill(
+            &self.my_brep,
+            &self.my_shape,
+            topods::ShapeType::Face,
+            topods::ShapeType::Shell,
+        );
 
         // OCCT explores the shapes OF myShape; rcad's ChFiDSMap::fill walks
         // the same BRep, so the explorers reduce to the map keys.
@@ -889,14 +899,13 @@ impl ChFi3dFilBuilder {
     }
 
     /// OCCT ChFi3d_FilBuilder.cxx L234-241.
-    pub fn set_radius_law(&mut self, c: LawFunction, ic: usize, iinc: usize) {
+    pub fn set_radius_law(&mut self, c: crate::geomalgo::law::LawFunctionHandle, ic: usize, iinc: usize) {
         if ic <= self.base.nb_elements() {
             let sp = self.base.value_stripe(ic);
             let mut st = sp.write().expect("stripe lock");
-            if let Some(ChFiDSSpineHandle::Fil(_fsp)) = st.my_spine.as_mut() {
-                // OCCT: fsp->SetRadius(C, IinC) — Law_Function storage
-                // pending TKMath Law package translation.
-                let _ = (&c, iinc);
+            if let Some(ChFiDSSpineHandle::Fil(fsp)) = st.my_spine.as_mut() {
+                // OCCT L239: fsp->SetRadius(C, IinC);
+                fsp.set_radius_law_fn(c, iinc);
             }
         }
     }
@@ -2748,7 +2757,11 @@ mod tests {
         .unwrap();
         let efmap = ChFiDSMap::new();
         let mut efmap = efmap;
-        efmap.fill(&brep, topods::ShapeType::Edge, topods::ShapeType::Face);
+        let box_root = crate::fillet::brep_fillet_api::explore_solids(&brep)
+            .into_iter()
+            .next()
+            .expect("box solid");
+        efmap.fill(&brep, &box_root, topods::ShapeType::Edge, topods::ShapeType::Face);
         // Two sharp box edges sharing a vertex: FreeBoundary only when a
         // face is missing; here the faces exist so the state is one of the
         // concavity outcomes.
@@ -3275,7 +3288,7 @@ impl ChFi3dBuilder {
                             spine.base_mut().set_first_tgt(0.0f64.min(wfirst_j));
                             current_he.lastparam = wfirst_j;
                             current_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
-                            spine.base_mut().elspines.push(current_he.clone());
+                            spine_append_el_spine(&mut spine, current_he.clone());
                             current_he.next = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                             current_he = super::chfi_ds::ChFiDSElSpine::new();
 
@@ -3296,7 +3309,7 @@ impl ChFi3dBuilder {
                         // section between two KPart
                         current_he.lastparam = wfirst_j;
                         current_he.set_last_point_and_tgt(pfirst_j, tfirst_j);
-                        spine.base_mut().elspines.push(current_he.clone());
+                        spine_append_el_spine(&mut spine, current_he.clone());
                         current_he.next = Some(std::sync::Arc::new(std::sync::RwLock::new(cur_sd.clone())));
                         current_he = super::chfi_ds::ChFiDSElSpine::new();
 
@@ -3339,7 +3352,7 @@ impl ChFi3dBuilder {
                     if !ya_k_part {
                         current_he.periodic = true;
                     }
-                    spine.base_mut().elspines.push(current_he.clone());
+                    spine_append_el_spine(&mut spine, current_he.clone());
 
                     current_offset_he.lastparam = w_end_periodic;
                     current_offset_he.set_last_point_and_tgt(p_end_periodic, t_end_periodic);
@@ -3357,7 +3370,7 @@ impl ChFi3dBuilder {
                 if spine.base().last_parameter() - wlast_book > self.tolesp {
                     current_he.lastparam = spine.base().last_parameter();
                     current_he.set_last_point_and_tgt(plast, tlast);
-                    spine.base_mut().elspines.push(current_he.clone());
+                    spine_append_el_spine(&mut spine, current_he.clone());
 
                     current_offset_he.lastparam = spine.base().last_parameter();
                     current_offset_he.set_last_point_and_tgt(plast, tlast);
@@ -3451,6 +3464,18 @@ impl ChFi3dBuilder {
             );
         }
         true
+    }
+}
+
+/// OCCT Spine->AppendElSpine(HE) — the virtual dispatch: the ChFiDS_FilSpine
+/// override (ChFiDS_FilSpine.cxx L369-373) appends the law (AppendLaw) on
+/// top of the base append; the base ChFiDS_Spine only pushes.  (The offset
+/// variant AppendOffsetElSpine has no FilSpine override and stays a plain
+/// push.)
+fn spine_append_el_spine(spine: &mut ChFiDSSpineHandle, els: super::chfi_ds::ChFiDSElSpine) {
+    match spine {
+        ChFiDSSpineHandle::Fil(fsp) => fsp.append_el_spine_fil(&els),
+        _ => spine.base_mut().elspines.push(els),
     }
 }
 

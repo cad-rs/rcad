@@ -17,6 +17,8 @@ pub mod brep_blend_func_chamfer_c;
 pub mod brep_blend_func_consrad;
 pub mod brep_blend_func_consrad_b;
 pub mod brep_blend_func_consrad_c;
+pub mod brep_blend_func_evolrad;
+pub mod brep_blend_func_evolrad_b;
 pub mod brep_blend_function;
 pub mod brep_blend_point;
 pub mod brep_blend_app_surf;

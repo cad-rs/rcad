@@ -240,6 +240,14 @@ fn hatcher_trim(
     hits
 }
 
+/// Probe helpers (temporary, use-and-clean).
+fn dom_first_param(d: &HatchDomain) -> Option<f64> {
+    d.first_point.as_ref().map(|p| p.parameter)
+}
+fn dom_second_param(d: &HatchDomain) -> Option<f64> {
+    d.second_point.as_ref().map(|p| p.parameter)
+}
+
 /// 2D curve-curve intersections (the Geom2dHatch_Intersector analytic
 /// subset): returns (parameter on c1, parameter on c2) pairs.
 fn intersect_curve2d(
@@ -298,6 +306,73 @@ fn intersect_curve2d(
         }
     }
     out
+}
+
+/// OCCT Geom2dHatch_Hatching::ClassificationPoint (L311-325): a point on
+/// the hatching curve used for classification — for bounded curves the
+/// point at the first parameter.
+fn hatch_classification_point(pc: &rcad_kernel::geom::Curve2d) -> DVec2 {
+    use rcad_kernel::geom::Curve2d;
+    match pc {
+        Curve2d::Line(l) => l.origin,
+        Curve2d::Circle(c) => DVec2::new(c.center.x + c.radius, c.center.y),
+        _ => DVec2::ZERO,
+    }
+}
+
+/// The Geom2dHatch_Classifier equivalent for the analytic subset: even-odd
+/// ray casting in the face UV space against the boundary element pcurves
+/// (OCCT TopClass_FaceClassifier / FClass2d semantics; the element set is
+/// the same the hatcher trims against).  Returns true when the point is IN
+/// the face.
+fn classify_point_in_face(brep: &topods::BRep, face: &Shape, p: DVec2) -> bool {
+    let mut crossings = 0u32;
+    for e in topexp_face_edges(brep, face) {
+        let mut e_fwd = e.clone();
+        e_fwd.orientation = Orientation::Forward;
+        let mut face_fwd = face.clone();
+        face_fwd.orientation = Orientation::Forward;
+        let Some((epc, ef, el)) = brep.curve_on_surface(&e_fwd, &face_fwd) else {
+            continue;
+        };
+        use rcad_kernel::geom::Curve2d;
+        match &epc {
+            Curve2d::Line(l) => {
+                // Ray: (px + t, py), t > 0.  Solve l.origin.y + s*l.dir.y = py.
+                if l.direction.y.abs() < 1e-12 {
+                    continue;
+                }
+                let s = (p.y - l.origin.y) / l.direction.y;
+                if s < ef - PITOL || s > el + PITOL {
+                    continue;
+                }
+                let x = l.origin.x + s * l.direction.x;
+                if x > p.x {
+                    crossings += 1;
+                }
+            }
+            Curve2d::Circle(c) => {
+                let dy = p.y - c.center.y;
+                if dy.abs() >= c.radius {
+                    continue;
+                }
+                let dx = (c.radius * c.radius - dy * dy).sqrt();
+                for x in [c.center.x + dx, c.center.x - dx] {
+                    if x <= p.x {
+                        continue;
+                    }
+                    // Parameter on the circle for the crossing point.
+                    let ang = DVec2::new(x - c.center.x, dy).y.atan2(DVec2::new(x - c.center.x, dy).x);
+                    let ang = if ang < 0.0 { ang + 2.0 * std::f64::consts::PI } else { ang };
+                    if ang >= ef - PITOL && ang <= el + PITOL {
+                        crossings += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    crossings % 2 == 1
 }
 
 /// The single analytic domain built from the hits: bounded by the extreme
@@ -482,11 +557,20 @@ impl ChFi3dBuilder {
             Some(pc) => {
                 let hits = hatcher_trim(&self.my_brep, &f1, pc, pcf1, pcl1);
                 if hits.is_empty() {
-                    // OCCT: Nb1 == 0 — "tangency line out of the face".
-                    return false;
+                    // OCCT Geom2dHatch_Hatcher::ComputeDomains L1173-1186: a
+                    // hatching crossing no boundary element is classified —
+                    // IN gives one point-less domain (the whole closed
+                    // hatching), OUT leaves no domain ("tangency line out of
+                    // the face", SplitKPart L798).
+                    let cp = hatch_classification_point(pc);
+                    if !classify_point_in_face(&self.my_brep, &f1, cp) {
+                        return false;
+                    }
+                    (Some(Vec::new()), HatchDomain::default())
+                } else {
+                    let d = analytic_domain(&hits, pcf1, pcl1);
+                    (Some(hits), d)
                 }
-                let d = analytic_domain(&hits, pcf1, pcl1);
-                (Some(hits), d)
             }
             None => (None, HatchDomain::default()),
         };
@@ -494,10 +578,16 @@ impl ChFi3dBuilder {
             Some(pc) => {
                 let hits = hatcher_trim(&self.my_brep, &f2, pc, pcf2, pcl2);
                 if hits.is_empty() {
-                    return false;
+                    // Same classification semantics for the second face.
+                    let cp = hatch_classification_point(pc);
+                    if !classify_point_in_face(&self.my_brep, &f2, cp) {
+                        return false;
+                    }
+                    (Some(Vec::new()), HatchDomain::default())
+                } else {
+                    let d = analytic_domain(&hits, pcf2, pcl2);
+                    (Some(hits), d)
                 }
-                let d = analytic_domain(&hits, pcf2, pcl2);
-                (Some(hits), d)
             }
             None => (None, HatchDomain::default()),
         };

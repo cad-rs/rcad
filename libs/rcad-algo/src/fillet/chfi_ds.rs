@@ -1905,153 +1905,143 @@ impl ChFiDSMap {
         }
     }
 
-    /// OCCT ChFiDS_Map::Fill(S, TOR, TOS) — TopExp::MapShapesAndAncestors:
-    /// every shape of type `tor` (the key) is mapped to the shapes of type
-    /// `tos` that contain it.
+    /// OCCT ChFiDS_Map::Fill(S, TOR, TOS) — ChFiDS_Map.cxx L27-30 delegates
+    /// to TopExp::MapShapesAndAncestors (TopExp.cxx): the ancestors of type
+    /// `tos` are explored from the shape `s` first (shape order), each
+    /// ancestor contributes its child shapes of type `tor`
+    /// (M(index).Append(anc), unconditionally), then a tail pass registers
+    /// the `tor` shapes of `s` living under no `tos` ancestor with an empty
+    /// list.
     pub fn fill(
         &mut self,
         brep: &topods::BRep,
+        s: &Shape,
         tor: topods::ShapeType,
         tos: topods::ShapeType,
     ) {
         self.my_keys.clear();
         self.my_map.clear();
 
-        // Emit (key, ancestor) pairs per TopExp::MapShapesAndAncestors.
-        let mut pairs: Vec<(Shape, Shape)> = Vec::new();
-        for (fi, ts) in brep.tshapes.iter().enumerate() {
-            let anc = Shape::from_parts(ts.clone(), fi, 0, Orientation::Forward);
-            let child_shape =
-                |idx: usize| -> Option<Shape> {
-                    brep.tshapes.get(idx).map(|t| {
-                        Shape::from_parts(t.clone(), idx, 0, Orientation::Forward)
-                    })
-                };
-            match ts.as_ref() {
-                TShape::Shell(sd) => {
-                    if tos == topods::ShapeType::Shell && tor == topods::ShapeType::Edge {
-                        for fs in &sd.faces {
-                            if let Some(fts) = brep.tshapes.get(fs.index) {
-                                if let TShape::Face(fd) = fts.as_ref() {
-                                    // OCCT ChFiDS_Map.cxx L27-30 delegates to
-                                    // TopExp::MapShapesAndAncestors, which
-                                    // traverses every wire of the face — the
-                                    // outer wire and the inner (hole) wires.
-                                    let face_wires = std::iter::once(&fd.outer_wire)
-                                        .chain(fd.inner_wires.iter());
-                                    for wire_ref in face_wires {
-                                        if let Some(wt) = brep.tshapes.get(wire_ref.index) {
-                                            if let TShape::Wire(wd) = wt.as_ref() {
-                                                for we in &wd.edges {
-                                                    if let Some(es) = child_shape(we.index) {
-                                                        pairs.push((es, anc.clone()));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+        fn map_shape(brep: &topods::BRep, idx: usize) -> Option<Shape> {
+            brep.tshapes
+                .get(idx)
+                .map(|t| Shape::from_parts(t.clone(), idx, 0, Orientation::Forward))
+        }
+
+        // TopExp_Explorer(shape, t): the shapes of type t inside `shape`,
+        // in tree order.
+        fn explorer_shapes(
+            brep: &topods::BRep,
+            shape: &Shape,
+            t: topods::ShapeType,
+            out: &mut Vec<Shape>,
+        ) {
+            let kind = match brep.tshapes.get(shape.index) {
+                Some(ts) => ts.as_ref(),
+                None => return,
+            };
+            let mut visit_children = |child: &Shape, out: &mut Vec<Shape>| {
+                explorer_shapes(brep, child, t, out);
+            };
+            match kind {
+                TShape::Solid(sd) => {
+                    if t == topods::ShapeType::Solid {
+                        out.push(shape.clone());
+                    }
+                    for shs in &sd.shells {
+                        if let Some(c) = map_shape(brep, shs.index) {
+                            visit_children(&c, out);
                         }
                     }
                 }
-                TShape::Solid(sd) => {
-                    if tos == topods::ShapeType::Solid && tor == topods::ShapeType::Edge {
-                        for shs in &sd.shells {
-                            if let Some(shts) = brep.tshapes.get(shs.index) {
-                                if let TShape::Shell(shd) = shts.as_ref() {
-                                    for fs in &shd.faces {
-                                        if let Some(fts) = brep.tshapes.get(fs.index) {
-                                            if let TShape::Face(fd) = fts.as_ref() {
-                                                // OCCT ChFiDS_Map.cxx L27-30:
-                                                // MapShapesAndAncestors covers
-                                                // inner wires too.
-                                                let face_wires =
-                                                    std::iter::once(&fd.outer_wire)
-                                                        .chain(fd.inner_wires.iter());
-                                                for wire_ref in face_wires {
-                                                    if let Some(wt) =
-                                                        brep.tshapes.get(wire_ref.index)
-                                                    {
-                                                        if let TShape::Wire(wd) = wt.as_ref() {
-                                                            for we in &wd.edges {
-                                                                if let Some(es) =
-                                                                    child_shape(we.index)
-                                                                {
-                                                                    pairs.push((es, anc.clone()));
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                TShape::Shell(sd) => {
+                    if t == topods::ShapeType::Shell {
+                        out.push(shape.clone());
+                    }
+                    for fs in &sd.faces {
+                        if let Some(c) = map_shape(brep, fs.index) {
+                            visit_children(&c, out);
                         }
                     }
                 }
                 TShape::Face(fd) => {
-                    // Face ancestors: faces over edges (EDGE,FACE) and over
-                    // vertices (VERTEX,FACE).
-                    let want = matches!(
-                        (tor, tos),
-                        (topods::ShapeType::Edge, topods::ShapeType::Face)
-                            | (topods::ShapeType::Vertex, topods::ShapeType::Face)
-                    );
-                    if !want {
-                        continue;
+                    if t == topods::ShapeType::Face {
+                        out.push(shape.clone());
                     }
-                    // OCCT ChFiDS_Map.cxx L27-30: MapShapesAndAncestors
-                    // traverses every wire of the face — the outer wire and
-                    // the inner (hole) wires.
-                    let face_wires =
-                        std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter());
-                    for wire_ref in face_wires {
-                        if let Some(wt) = brep.tshapes.get(wire_ref.index) {
-                            if let TShape::Wire(wd) = wt.as_ref() {
-                                for we in &wd.edges {
-                                    if let Some(es) = child_shape(we.index) {
-                                        if tor == topods::ShapeType::Edge {
-                                            pairs.push((es.clone(), anc.clone()));
-                                        }
-                                        if tor == topods::ShapeType::Vertex {
-                                            if let Some(ed) = es.as_edge() {
-                                                for v in [&ed.first, &ed.last] {
-                                                    pairs.push((v.clone(), anc.clone()));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                    // Every wire of the face — the outer wire and the inner
+                    // (hole) wires.
+                    for wire_ref in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                        if let Some(c) = map_shape(brep, wire_ref.index) {
+                            visit_children(&c, out);
+                        }
+                    }
+                }
+                TShape::Wire(wd) => {
+                    if t == topods::ShapeType::Wire {
+                        out.push(shape.clone());
+                    }
+                    for we in &wd.edges {
+                        if let Some(c) = map_shape(brep, we.index) {
+                            visit_children(&c, out);
                         }
                     }
                 }
                 TShape::Edge(ed) => {
-                    // Edge ancestors: edges over vertices (VERTEX,EDGE).
-                    if tos == topods::ShapeType::Edge && tor == topods::ShapeType::Vertex {
+                    if t == topods::ShapeType::Edge {
+                        out.push(shape.clone());
+                    }
+                    if t == topods::ShapeType::Vertex {
                         for v in [&ed.first, &ed.last] {
-                            pairs.push((v.clone(), anc.clone()));
+                            out.push(v.clone());
                         }
                     }
                 }
-                _ => {}
+                TShape::Vertex(_) => {
+                    if t == topods::ShapeType::Vertex {
+                        out.push(shape.clone());
+                    }
+                }
+                TShape::CompSolid(children) | TShape::Compound(children) => {
+                    let this = match kind {
+                        TShape::CompSolid(_) => topods::ShapeType::CompSolid,
+                        _ => topods::ShapeType::Compound,
+                    };
+                    if t == this {
+                        out.push(shape.clone());
+                    }
+                    for c in children {
+                        visit_children(c, out);
+                    }
+                }
             }
         }
 
-        for (key, anc) in pairs {
+        // Ancestor pass: visit ancestors, then their children.
+        let mut ancestors = Vec::new();
+        explorer_shapes(brep, s, tos, &mut ancestors);
+        for anc in ancestors {
+            let mut children = Vec::new();
+            explorer_shapes(brep, &anc, tor, &mut children);
+            for key in children {
+                let k = key.ptr_id();
+                if !self.my_map.contains_key(&k) {
+                    self.my_keys.push(key.clone());
+                    self.my_map.insert(k, Vec::new());
+                }
+                let list = self.my_map.get_mut(&k).unwrap();
+                // OCCT M(index).Append(anc) — unconditional.
+                list.push(anc.clone());
+            }
+        }
+
+        // Tail pass: tor shapes of s under no tos ancestor.
+        let mut tail = Vec::new();
+        explorer_shapes(brep, s, tor, &mut tail);
+        for key in tail {
             let k = key.ptr_id();
             if !self.my_map.contains_key(&k) {
                 self.my_keys.push(key.clone());
                 self.my_map.insert(k, Vec::new());
-            }
-            let list = self.my_map.get_mut(&k).unwrap();
-            // MapShapesAndAncestors does not append the ancestor twice for
-            // the same key entry.
-            if !list.iter().any(|a| a.ptr_id() == anc.ptr_id()) {
-                list.push(anc);
             }
         }
     }

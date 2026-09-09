@@ -435,7 +435,13 @@ impl FilletSurfInternalBuilder {
         // GAP: the composite ElSpine approximation (ChFi3d_Builder_0.cxx
         // ChFi3d_PerformElSpine) is pending in rcad (chfi3d.rs L3335 note);
         // the handle keeps the constructed endpoints/tangents above.
-        sp.base_mut().append_el_spine(hels); // L314
+        // OCCT L314: sp->AppendElSpine(hels) — the ChFiDS_FilSpine override
+        // (ChFiDS_FilSpine.cxx L369-373) also appends the ComputeLaw
+        // composite; the base append is the non-fillet fallback.
+        match sp.down_cast_fil_mut() {
+            Some(fsp) => fsp.append_el_spine_fil(&hels),
+            None => sp.base_mut().append_el_spine(hels),
+        } // L314
         sp.base_mut().set_split_done(true); // L315
         restore_spine(&stripe, sp);
         0

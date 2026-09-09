@@ -449,3 +449,18 @@ libs/rcad-algo/src/
 - **新立档项**：① GAP 8 `BlendFunc_EvolRad`+`FilSpine::Law`（q2 的 EvolRad else-分支；建议 BlendFunc/Law 批）；② q4 面积 2.5% 差（疑 plandab 面序/凹凸性——ef_map 祖先序与 OCCT ConexFaces 顺序的形式审计）；③ q7/p9 blend-on-blend 角点（PerformCorner/角球）；④ g9 4.5% 面积（ElSpine 近似精度链）。
 - **本轮提交链**：rcad `本提交`（PerformElSpine 批 + geom_lib 层 + fill inner_wires + kernel 两修复 + 本档）→ 根 sync。
 - **下一 session 入口**：E3-C 队列第 3 项重估批（x1/a2/p8/q2/q4/g9 断言差逐格攻坚）或 q7 角点前沿；开工前先核对 brep_fill/ 文件归属。
+
+### E3-F. Session-3 续推记录（2026-09-09，GAP 8 EvolRad+Law 批 + q4 三层修复 + fill 祖先序 1:1）
+
+- **基线复验**：lib 407/0/4 ✅、kernel 671/0 ✅。
+- **GAP 8 关闭（子代理 B 交付，主代理验收）**：`BlendFunc_EvolRad`（=BRepBlend_EvolRad typedef）39/39 函数（evolrad.rs 964 + evolrad_b.rs 1637，含 ComputeValues L194-843/IsSolution/Section×3 全函数体）+ `ChFiDS_FilSpine` Law 机制 10/10（chfi_ds_spine.rs +635：SetRadius(Law)/ComputeLaw/mklaw/AppendLaw/Law/ChangeLaw/MaxRadFromSeqAndLaws 等）+ PerformFirstSection EvolRad 分支真身接线（builder_2.rs）。Law 包复用既有 geomalgo/law 翻译（12 文件，抽验一致）。GAP 余项 = math_SVD（第二机会求解器，OCCT !IsDone 路径保留）；D6 空。主代理抽查 PerformFirstSection L1526-1533 接线逐语句一致。
+- **运行时接线（主代理补完）**：`Spine->AppendElSpine` 虚派发（OCCT FilSpine.cxx L369-373 覆写 = base push + AppendLaw）——chfi3d.rs perform_set_of_k_part 四处 elspines.push 换为 spine_append_el_spine 派发（offset_elspines 无覆写保持直推）；fillet_surf.rs AppendElSpine 同步切换（B 交付内）。
+- **主代理 q4 三层修复（全部 OCCT 行号锚点）**：
+  1. **`ChFiDSMap::fill` 重写为形状驱动**（chfi_ds.rs）：OCCT ChFiDS_Map.cxx L27-30 → TopExp::MapShapesAndAncestors（TopExp.cxx）= 祖先优先遍历（按形状序探祖先→每个祖先注册其子形状，M(index).Append 无条件追加）+ 尾遍（不在祖先下的 TS 注册空表）。rcad 原按全池序遍历 + 去重追加——序与语义都不 1:1。fill 签名加形状参数，chfi3d.rs ctor 五处 + complete_ds 两处 + 测试一处全部改传根形状。
+  2. **hatcher 零命中 → 分类语义**（spkp.rs）：OCCT Geom2dHatch_Hatcher::ComputeDomains L1173-1186 —— 零命中时用 ClassificationPoint（hatch 曲线首参点，Hatching.cxx L311-325）分类，IN 建无点域（整条闭合 hatch 即域）、OUT 才无域（"tangency line out of the face"）。rcad 原零命中直接 false。分类器 = 解析子集的 UV 射线偶奇（Geom2dHatch_Classifier 等价，注释锚点）。q4 平面侧闭合切缝圆（r=2 全在面内）由此获得无点域，SplitKPart L889 分支放行。
+  3. **环面锚点修复**（chfi_kpart_fil.rs cyl+con 两处）：OCCT FilPlnCyl.cxx L317-319 / FilPlnCon.cxx L81-83 —— `ElSLib::PlaneD0` 会把 Or **重赋值为平面投影点**，随后的 `Or += Radius*Dp` 从投影点起算。rcad 用未投影的 Cyl.Location() 起算 → 环面中心 z=3.5（应为 6，ref STEP 实证 TOROIDAL_SURFACE at (2.5,2.5,6) R2 r1）→ 圆柱侧切缝线 v=1 落在面 v 域 [2.5,10] 之外 → 零命中。
+- **q4 进展现状**：两层 SD 全部健康产出（split OK / hdata=1 / status Ok / filds done）——但最终结果仍 = 输入未动（面积 197.1239 逐位不变，rcad 8 面 vs ref 12 面 1Torus+2BS+2Cyl+7Plane）。**丢弃点收敛到 perform_hbuilder_reconstruction 对 bfuse 产物输入形状的重构**（同一代码路径对 make_box 输入的第一 blend 正常）→ **新立档**。
+- **blend 网格现状**：simple = a1/a3/q1 PASS（14/22）；complex = b5 PASS（3/4）。q2 = 三边定半径多棱角点前沿（非 EvolRad 路径，与 p9 同族）。
+- **回归（提交门槛实测，零新增）**：lib 407/0/4、kernel 671/0、stage 76/0、pavefiller 26/0；五网格 744/4、751/4、741/4、bcut 除 g6 201/0、splitter 16/2。探针全部清除。
+- **新立档项**：① q4/kfuse 族：perform_hbuilder_reconstruction 对布尔产物输入的重构丢失（下一个主攻点）；② q2/p9 多棱角点（filbuilder_c2 pivot）；③ q7 blend-on-blend 角球；④ x1/a2/p8/g9/q4 面积断言差。
+- **本轮提交链**：rcad `本提交`（GAP8 批 + fill 祖先序 + 分类域 + 环面锚点 + AppendElSpine 派发 + 本档）→ 根 sync。
