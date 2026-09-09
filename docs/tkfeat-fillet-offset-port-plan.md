@@ -358,3 +358,16 @@ libs/rcad-algo/src/
 - **boolean 五网格回归（终判）**：今日提交**零布尔回归**——bopfuse 744/4、bopcommon 751/4、boptuc 741/4、bcut（除 g6）201/0、splitter 16/2。全部失败在昨日提交点（7990a49a）复现=存量：① ze7/ze8/ze9/zf1 族（bopfuse/bopcommon/boptuc 各 4，空结果 0 顶点）；② splitter a2/b2；③ bcut g6 + boptuc 各一次 100% CPU 忙转挂死（flaky，boptuc 复跑 1.48s 全过；bcut g6 单线程复现、排除后其余 201/0）。三项全部立档存量待办，不计入本计划回归口径。
 
 **F. 回归基线**：lib 407/0/4ignored（+kernel 671/0）；stage 76+smoke 1+pavefiller 26；boolean 五网格基线不变（bopfuse 748/0 等，§2.6）。
+
+**E3. 新 session 入口（E2 交接完毕时点，2026-09-09 凌晨收官）**：
+
+- **开场三步**：① 通读本档 §0 → §9 E2/E3 → AGENTS.md；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 407/0/4（kernel 671/0）；③ 从下方工作队列取第一项开工。
+- **工作队列（按序）**：
+  1. **blend 9 例前沿（4.3 主线）**：a) q1/q4/q7 = `chfi3d_ds.rs:581 Point(5) 越界`——DS 点表未及该索引，追 FILDS 段点记录路径（注意：raise 本身是 OCCT 同构守卫，要修的是上游为何引用未记录的点）；b) a4 = C1 L1285 too-big-radius raise——确认分支由真实几何触发还是上游偏差；c) x1 拓扑全过、面积差 3%——BSpline 圆角近似（BRepBlend/Walking 精度链，F3 已落 ProjLib 检查是否改善）；d) a2/p8/p9/q2 断言差；e) complex b5/g9 = `chfi3d_builder_2b.rs:400` null-spine。
+  2. **BRepFill_Sweep part B**（~2,300 OCCT 行）：BuildShell(L2213-3207)/Build(L3213-3530)/PerformCorner(L3587-3906)/RebuildTopOrBottomEdge(L4047-4151) + 静态族；先staging BRepFill_TrimShellCorner、BRepTools_Substitution、BRepLib_FindSurface 真身、Approx_SameParameter、GeomLib_CheckCurveOnSurface、EncodeRegularity、通用 Surface3 UIso/VIso（再派清单全文在 Sweep 批 3 交付报告 §4，工作树无存档——需向该代理报告重建或从本档重列）。
+  3. **thrusection/pipe 网格全量重测**：a1 已到 CompatibleWires 空边瓶颈（compatible_wires.rs:92 `BRep::edge` usize::MAX）——追 thrusections 栈的空边来源。
+  4. **W3 拍板落地**：SetFilletShape 非 Rational 派发拼接（F1 报告 §2 architecture note）。
+  5. **存量立档项（不计入回归口径，按需处理）**：ze7/ze8/ze9/zf1 族（三网格空结果）、splitter a2/b2、bcut g6 挂死 + boptuc flaky 忙转（100% CPU，单线程可定位：`--test-threads=1 --nocapture` 看 "has been running" 警告）。
+- **在役协议（本 session 新固化，沿用到收敛）**：① 验证禁经管道（`cargo test | tail` 吞退出码）；② 回归口径必须含 `--tests`；③ 探针即用即清（HANGPROBE 模式：入口 eprintln + `--nocapture` + timeout 定位挂点，定位后全删）；④ 共享树并行代理各持文件不相交 + 隔离 CARGO_TARGET_DIR（session 末清 target_*救磁盘，本 session 曾因此释放 52GB）；⑤ `git add` 显式文件清单。
+- **资产位置**：内核函数计数/按名匹配脚本曾在 `rcad/temp/count_fns.py` + `match_names.py`（被 F3 代理清 temp 误删，按 E1 口径可重建：OCCT 侧=列 0 起 `::` 定义行 + static，rcad 侧=`fn` 名 snake 匹配）；boolean 回归命令 = `cargo test -p occt-generated-tests --test generated_occt_boolean_{grid}`（网格文件 gitignored，重生成走 occt-test-gen `--batch-boolean --batch-grid {g}`）；blend 验证 = `cd tests/occt && RCAD_STEP_DIR=step_output [RCAD_STEP_ONLY=1] CARGO_TARGET_DIR=target_xx timeout 90 cargo test -p occt-generated-tests --test generated_occt_boolean_blend_simple -- --nocapture`。
+- **提交链尾**：rcad 最新 `a81b5494`（docs verdict）← `6dd40808`（E2）← `62f151da` ← `e602ba5a` ← `e05ebf17` ← `b7f81ab5`（角点尾）← `5b6a832f`（F2）← `bdf4b299`（F3）← `32dbe2ba`（F1）← `94be5dde`（F0）← `ddc8d551`（BRepSweep）← `811a9307` ← `c67561b2`（批3A）← `5e9c1c35`（批2）← `3f8973cc`（批1）；根最新 `4ab09d8`（sync）。
