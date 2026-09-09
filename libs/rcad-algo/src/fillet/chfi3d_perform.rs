@@ -304,10 +304,14 @@ impl ChFi3dBuilder {
             for a_f in a_lf {
                 // L668: BRepLib::SameParameter(aF, SameParTol, true);
                 // L669: ShapeFix::SameParameter(aF, false, SameParTol);
-                // Pending boundary: BRepLib::SameParameter and
-                // ShapeFix::SameParameter have no rcad carrier yet; the
-                // loop keeps the OCCT iteration shape (same neutralization
-                // style as chfi3d_builder_chbuilder.rs L1694-1697).
+                // Pending boundary: the W1-6 ShapeFix::SameParameter real
+                // body is wired and run (2026-09-09 experiment), but the
+                // HBuilder-built faces (hbuilder.rs build_faces chain)
+                // carry sub-shape refs whose pool index disagrees with
+                // their data Arc ("edge_mut: Shape N is not an Edge" in
+                // the kpart test) — the pool-identity defect must close
+                // first (same family as the blend-2 closed-patch face
+                // assembly front).  Re-wire on its fix.
                 let _ = (&a_f, same_par_tol);
             }
         }
