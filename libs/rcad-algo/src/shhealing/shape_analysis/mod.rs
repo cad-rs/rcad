@@ -11,11 +11,14 @@
 //! The OCCT ShapeAnalysis class translations (Path B):
 //! - [`edge::ShapeAnalysisEdge`]: OCCT ShapeAnalysis_Edge (W1-1)
 //! - [`wire_order::ShapeAnalysisWireOrder`]: OCCT ShapeAnalysis_WireOrder (W1-1)
+//! - [`free_bounds::ShapeAnalysisFreeBounds`]: OCCT ShapeAnalysis_FreeBounds (W1-5)
 
 pub mod edge;
+pub mod free_bounds;
 pub mod wire_order;
 
 pub use edge::ShapeAnalysisEdge;
+pub use free_bounds::ShapeAnalysisFreeBounds;
 pub use wire_order::ShapeAnalysisWireOrder;
 
 use crate::algo_ext::tolerance::*;

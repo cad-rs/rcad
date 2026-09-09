@@ -12,6 +12,7 @@ pub mod shape_analysis;
 pub mod shape_build;
 pub mod shape_construct;
 pub mod shape_custom;
+pub mod shape_custom_curve2d;
 pub mod shape_extend;
 
 pub use healing::{HealingMode, HealingOptions, HealingReport, analyze_and_heal};
