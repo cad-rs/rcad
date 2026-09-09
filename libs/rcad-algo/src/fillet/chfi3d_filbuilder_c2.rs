@@ -41,19 +41,12 @@ use super::chfi3d_builder_cncrn::chfi3d_is_in_front;
 use super::chfi3d_ds::TopOpeBRepDSCurve;
 use super::chfi_ds::{ChFiDS_CommonPoint, ChFiDS_State, ChFiDSStripe, SharedStripe, SharedSurfData};
 
-/// OCCT ChFi3d_Builder.hxx L196 — PerformTwoCornerbyInter is a non-virtual
-/// ChFi3d_Builder method defined in ChFi3d_Builder_C2.cxx L102-1043 (the
-/// base Builder file, outside this F1 batch).  GAP carrier: the OCCT failure
-/// path (Standard_False = the caller falls through to the cornerdata
-/// construction) is reported until the owning batch lands.
-impl ChFi3dBuilder {
-    pub fn perform_two_cornerby_inter(&mut self, _index: usize) -> bool {
-        // GAP carrier: OCCT ChFi3d_Builder_C2.cxx L108 (ChFi3d_Builder::
-        // PerformTwoCornerbyInter) not translated; returns false = the OCCT
-        // not-done path consumed at ChFi3d_FilBuilder_C2.cxx L475/L501.
-        false
-    }
-}
+// =========================================================================
+// OCCT ChFi3d_Builder_C2.cxx L108-1043 — ChFi3d_Builder::
+// PerformTwoCornerbyInter (the base-class method consumed by the
+// c1biseau/c1rotule branches below).  The 1:1 translation lives in
+// `chfi3d_builder_c2c` (impl ChFi3dBuilder::perform_two_cornerby_inter).
+// =========================================================================
 
 // =========================================================================
 // OCCT ChFi3d_Builder_0.cxx L1451-1465 — ChFi3d_Coefficient.
@@ -780,8 +773,12 @@ pub fn perform_two_corner(fb: &mut ChFi3dBuilder, index: usize) {
     //------ (OCCT L458-514)
     let mut done = false;
     if c1biseau {
-        // OCCT L469.
+        // OCCT L469: done = PerformTwoCornerbyInter(Index).  OCCT reads the
+        // same myDS reference; the rcad take/put-back hands the DS over for
+        // the nested call.
+        fb.my_ds = Some(dstr);
         done = fb.perform_two_cornerby_inter(index);
+        dstr = fb.my_ds.take().expect("DS");
         if !done {
             // OCCT L477-480.
             fb.perform_more_three_corner(index, 2);
@@ -811,8 +808,12 @@ pub fn perform_two_corner(fb: &mut ChFi3dBuilder, index: usize) {
                 sd2g.interference_on_s2().clone(),
             )
         };
-        // OCCT L496.
+        // OCCT L496: done = PerformTwoCornerbyInter(Index).  OCCT reads the
+        // same myDS reference; the rcad take/put-back hands the DS over for
+        // the nested call.
+        fb.my_ds = Some(dstr);
         done = fb.perform_two_cornerby_inter(index);
+        dstr = fb.my_ds.take().expect("DS");
         if !done {
             // restore (OCCT L501-513)
             {

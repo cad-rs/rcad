@@ -59,6 +59,7 @@ pub mod chfi3d_builder_c1;
 pub mod chfi3d_builder_c2;
 pub mod chfi3d_builder_c2_geomlib;
 pub mod chfi3d_builder_c2b;
+pub mod chfi3d_builder_c2c;
 pub mod chfi3d_filbuilder_c2;
 pub mod chfi3d_filbuilder_c3;
 pub mod chfi3d_builder_spkp;

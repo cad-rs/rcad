@@ -21,6 +21,7 @@
 //! `chfi3d_builder_cncrn_b.rs` (file-size rule).
 
 use glam::{DVec2, DVec3};
+use rcad_kernel::geom::Curve2d;
 use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _, SurfaceEval as _};
 use rcad_kernel::topo::topods::BRepTool as _;
 use rcad_kernel::topods::{self, Orientation, Shape};
@@ -849,43 +850,117 @@ impl ExtremaExtPC {
     }
 }
 
-/// OCCT Geom2dInt_GInter — pending TKGeomAlgo translation (same gap as
-/// chfi3d_builder_0_filds.rs: the BSpline-chain intersection); IsDone()=
-/// false keeps the OCCT fallback branches of ChFi3d_IntTraces in effect.
-pub struct Geom2dIntGInter;
+/// OCCT Geom2dInt_GInter re-host (architecture difference #31, mirroring
+/// brep_offset_inter2d.rs) — the TheIntPCurvePCurveOfGInter vehicle over the
+/// translated IntRes2d/IntCurve machinery; the results surface (IsDone /
+/// IsEmpty / NbPoints / Point / NbSegments) mirrors the OCCT GInter.  The
+/// curve adaptors are the Geom2dAdaptorCurve loads above (curve + trimmed
+/// domain).
+pub struct Geom2dIntGInter {
+    base: crate::geomalgo::int_res2d::IntersectionBase,
+}
 
-#[allow(dead_code)]
 impl Geom2dIntGInter {
     pub fn new() -> Self {
-        Geom2dIntGInter
+        Geom2dIntGInter {
+            base: crate::geomalgo::int_res2d::IntersectionBase::new(),
+        }
     }
-    /// OCCT Geom2dInt_GInter::Perform(C, TolConf, Tol) — single curve.
-    pub fn perform(&mut self, _c1: &Geom2dAdaptorCurve, _tol_conf: f64, _tol: f64) {}
+
+    fn engine(
+        c1: &Curve2d,
+        f1: f64,
+        l1: f64,
+        c2: &Curve2d,
+        f2: f64,
+        l2: f64,
+        tol_conf: f64,
+        tol: f64,
+    ) -> crate::geomalgo::int_res2d::IntersectionBase {
+        let mut inter = crate::geomalgo::geom2d_int::TheIntPCurvePCurveOfGInter::new();
+        let d1 = crate::geomalgo::int_res2d::Domain::bounded(
+            c1.point_at(f1),
+            f1,
+            tol_conf,
+            c1.point_at(l1),
+            l1,
+            tol_conf,
+        );
+        let d2 = crate::geomalgo::int_res2d::Domain::bounded(
+            c2.point_at(f2),
+            f2,
+            tol_conf,
+            c2.point_at(l2),
+            l2,
+            tol_conf,
+        );
+        inter.perform(c1, &d1, c2, &d2, tol_conf, tol);
+        inter.base
+    }
+
+    /// OCCT Geom2dInt_GInter::Perform(C, TolConf, Tol) — the single-curve
+    /// (auto-intersection) form.
+    pub fn perform(&mut self, c1: &Geom2dAdaptorCurve, tol_conf: f64, tol: f64) {
+        let curve1 = match &c1.curve {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        self.base = Self::engine(
+            &curve1,
+            c1.first,
+            c1.last,
+            &curve1,
+            c1.first,
+            c1.last,
+            tol_conf,
+            tol,
+        );
+    }
+
     /// OCCT Geom2dInt_GInter::Perform(C1, C2, TolConf, Tol).
     pub fn perform2(
         &mut self,
-        _c1: &Geom2dAdaptorCurve,
-        _c2: &Geom2dAdaptorCurve,
-        _tol_conf: f64,
-        _tol: f64,
+        c1: &Geom2dAdaptorCurve,
+        c2: &Geom2dAdaptorCurve,
+        tol_conf: f64,
+        tol: f64,
     ) {
+        let curve1 = match &c1.curve {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let curve2 = match &c2.curve {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        self.base = Self::engine(
+            &curve1,
+            c1.first,
+            c1.last,
+            &curve2,
+            c2.first,
+            c2.last,
+            tol_conf,
+            tol,
+        );
     }
     pub fn is_done(&self) -> bool {
-        false
+        self.base.is_done()
     }
     pub fn is_empty(&self) -> bool {
-        true
+        self.base.is_empty()
     }
     pub fn nb_segments(&self) -> i32 {
-        0
+        self.base.nb_segments() as i32
     }
     pub fn nb_points(&self) -> i32 {
-        0
+        self.base.nb_points() as i32
     }
     /// OCCT IntRes2d_Intersection::Point(i) — (Value, ParamOnFirst,
     /// ParamOnSecond).
-    pub fn point(&self, _n: i32) -> (DVec2, f64, f64) {
-        (DVec2::ZERO, 0.0, 0.0)
+    pub fn point(&self, n: i32) -> (DVec2, f64, f64) {
+        let p = self.base.point(n as usize);
+        (p.value(), p.param_on_first(), p.param_on_second())
     }
 }
 
