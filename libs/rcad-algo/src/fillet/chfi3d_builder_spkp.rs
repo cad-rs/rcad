@@ -207,11 +207,11 @@ fn hatcher_trim(
             continue;
         };
         // Intersections of the hatching pcurve with the element pcurve.
+        // OCCT Geom2dHatch_Hatcher::Trim intersects along the whole hatching
+        // curve (the KPart tangency lines are unbounded Geom2d_Lines) — no
+        // window on the hatching parameter.
         let pts = intersect_curve2d(pc, &epc);
         for (u_hatch, u_elem) in pts {
-            if u_hatch < pcf - PITOL || u_hatch > pcl + PITOL {
-                continue;
-            }
             if u_elem < ef - PITOL || u_elem > el + PITOL {
                 continue;
             }

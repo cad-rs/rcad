@@ -240,7 +240,7 @@ libs/rcad-algo/src/
 **Stage 4 验收闭环**
 - [x] 4.1 occt-test-gen 接入 11 网格（2026-09-08 完成：BooleanOp 漂移修至 boolean_op Result API；dead emission offset_shape/depouille 删除改 skip；feature_grids.rs 四接入点 + cases.list 模板检测 + begin dset 变量解析；53 生成测试（blend 13/fillet2d 6/mkface 34）；生成器自测 60/60。**余项**：~1,060 非外部数据用例等门面 pub 访问器（BRepOffsetAPI/feat 门面 Shape() 恢复 OCCT 公开形式 + .brep 桥）——门面解锁批进行中）
 - [x] 4.2 ref 基线扩展（2026-09-08 完成：grid_cases.py 共享模块 + 两工具重写（bfuse_simple 102/102 回归一致）；937 ref STEP + 937 拓扑 JSON（blend 183/draft 100/evolved 9/feat 129/fillet2d 10/mkface 89/offset 212/pipe 55/thrusection 150）；跳过 = 2,856 外部数据（永久规则）+ 32 无形状结果 + 32 上游 TODO 缺陷（OCC23748/24909/7166/26556/22810））
-- [ ] 4.3 step-topo-diff 逐用例对齐转绿（依赖 4.1 门面解锁批收口）
+- [ ] 4.3 step-topo-diff 逐用例对齐转绿（依赖 4.1 门面解锁批收口；E3-D 后 blend_simple a1/a3/q1 PASS，q1/q4/q7 的 Point(5) 失败模式已灭——见 §9 E3-D）
 - [ ] 4.4 module-map.md 更新 + 本档收尾
 
 ## 8. 决策记录
@@ -419,3 +419,17 @@ libs/rcad-algo/src/
   - **OCCT 插桩流程（本轮实证）**：插桩文件必须用 **Edit 工具**（Bash/python 写 OCCT 源被安全钩子拦截）；heredoc 传 `\\n` 会落盘成真换行（printf 探针用 chr(92) 拼接）；增量编译 `MSBuild build_debug/src/ModelingAlgorithms/TK{Fillet,Bool}/{TK*,INSTALL}.vcxproj /p:Configuration=Debug /p:Platform=x64`（各 ~1-2 分钟，装到 C:/tools/occt-debug/bind）；**exe 目录的 DLL 副本会盖过新装 DLL——重跑 blend_probe 前必须手动 cp 刷新**；用后 `git checkout -- <files>` 还原 OCCT 源 + 重编重装干净 DLL。
   - **在役协议（沿用）**：验证禁经管道（tail 吞退出码）；回归口径含 lib+kernel+stage+pavefiller+boolean 五网格（本轮全绿零新增：744/4、751/4、741/4、bcut 除 g6 201/0、splitter 16/2）；探针即用即清；并行代理文件不相交 + 隔离 CARGO_TARGET_DIR + **session 末集中清理 target_***（本轮释放 ~20GB）；`git add` 显式清单。
 - **资产位置**：blend_probe = `cd C:/Users/lilu/works/rcad-pro && PATH="/c/tools/occt-debug/win64/vc14/bind:$PATH" ./tools/occt-bool-runner/build/Debug/blend_probe.exe`（q1 几何，可换半径/边号参数；重编 `cmake --build tools/occt-bool-runner/build --config Debug --target blend_probe`）；blend 网格验证 = `cd tests/occt && RCAD_STEP_DIR=step_output CARGO_TARGET_DIR=target_xx cargo test -p occt-generated-tests --test generated_occt_boolean_blend_simple|--test generated_occt_boolean_blend_complex`（test 目录的 target_* 本轮已清，首跑需重编）；OCCT q1 参考面积 = 11.8686（blend_probe 实测 11.868609）。
+
+### E3-D. Session-3 续推记录（2026-09-09，前沿 1 SplitKPart 切缝线 pcurve 审计收官 + 生成器几何缺陷修复）
+
+- **基线复验**：lib 407/0/4 ✅（开场跑 `cargo test -p rcad-algo --lib`；kernel 671/0）。
+- **前沿 1 收官（E3-C 队列第 1 项）——真根因不在审计链内，而在两处形式偏差**：
+  1. **KPart plane-plane PCurveOnFace 锚点错误（chfi_kpart.rs make_fillet_plane_plane_lin）**：OCCT ChFiKPart_ComputeData_FilPlnPln.cxx 用 `ElSLib::CylinderD1` 的**切点 P** 锚定两面 pcurve 与 3D 干扰线（L99 切点1 → L121 PlaneParameters(Pos1,P) → L126 gp_Lin(P,Axis)；L146 切点2(Ang,0) → L150 PlaneParameters(Pos2,P) → L156 linPln.SetLocation(P)）；rcad 全部错用了 `Pv`（两平面交线上的点=棱线本身）→ 切缝线恰好落在面边界棱上 → hatcher 命中全是元素端点（Forward/Reversed）→ fill_sd 走 SetVertex 分支 → AddPoint 零记录 → `Point(5)` panic。已按 OCCT 行号锚点修复（p_tang1/p_tang2）。
+  2. **hatcher_trim 的 rcad 自创窗口过滤（chfi3d_builder_spkp.rs）**：rcad 对 hatch 参数做 `u_hatch∈[pcf,pcl]` 过滤——KPart 干扰的 FirstParameter/LastParameter 缺省为 0，把面中段穿越命中全部滤掉。OCCT Geom2dHatch_Hatcher::Trim 沿整条无界 Geom2d_Line 求交、无 hatch 参数窗口——过滤已删（元素参数域检查保留，属 intersector 本义）。
+- **修后 rcad 侧证据（临时 eprintln 探针，已清）**：q1 两面 hatch 锚点=(0.8,0)/(0.2,0)，命中=(u_hatch 0/1, 元素参数 0.8/0.2, INTERNAL×4)——与 E3-A/E3-B 的 OCCT 插桩真值（元素参数 0.8/0.2 中段穿越、4×INTERNAL→SetArc→AddPoint 记点）逐点一致；4×ARC-branch 验收由 fill_sd 的 Internal→SetArc 路径达成。OCCT 侧本轮未再插桩（复用 E3-A/E3-B 真值，blend_probe q1 面积 11.868609 不变）。
+- **blend_simple 网格现状（修复+生成器修复后）**：**a1/a3/q1 PASS（q1 面积 11.8686 精确达标）**；q4=脱离 Point(5) 后推进到 bfuse 结果上第二次 blend 的棱注册失败（chfi3d.rs:438 "no suitable edges"，新前沿）；q7=两次 blend 的 KPart/hatch 全对，但结果=未混合 box（面积 150 vs 133.982，ref 有 Sphere 角球=blend-on-blend 角点处理前沿）；q2=StartSol echec（=前沿 2，基线同态非本次引入）；p9=从 build 整体失败推进到角点 pivot 处理（filbuilder_c2.rs:977 "pivot curve"，stash 对照实证为进展非回归）；a2/a4/p8/x1 面积差与 E3-C 记录同态。blend_complex b5/g9 不变（StartSol）。
+- **⚠️ 生成器几何缺陷修复（根仓库 tools/occt-test-gen/src/main.rs，本 session 最重要发现）**：blend 网格含 `trotate`+`ttranslate` 链的用例（Q1/Q4/Q7 至少三例）**rcad 输入几何错误**——`ttranslate` 的 cylinder 分支把平移折叠进记录的 base 并硬编码轴 `DVec3::Z` 重建圆柱，**丢弃了先前 `trotate` 已施加的旋转**（Q1 的圆柱轴本应 ±Y，实际仍 Z → bcut 切割区完全不同 → 修前面积 13.99997≈完整 box）。修复：新增 `draw_shape_rotated` 集合，`trotate` 发真实 transform 时记录形状名；被旋转形状的后续 `ttranslate` 走通用刚体 transform（不再折叠）；纯平移场景保留 HLR 位精确折叠路径。生成器自测 60/60。**教训：E3-C 之前的 blend 旋转类用例面积数字全部是对错误几何测的，重新评估时以本轮之后的数据为准。**
+- **回归（提交门槛实测，零新增）**：lib 407/0/4、kernel 671/0、stage 76/0、pavefiller 26/0；boolean 五网格 744/4、751/4、741/4、bcut 除 g6 201/0、splitter 16/2（全部与 E2/E3-C 基线一致，g6 挂死为已立档存量）。
+- **新立档项（前沿 1 的下游，按序待办）**：① q4 bfuse+blend 链的棱注册（"no suitable edges"）；② q7/p9 blend-on-blend 角点（ref Sphere 角球 / pivot curve）；③ q2 并入前沿 2（StartSol/PerformFirstSection 批）。
+- **本轮提交链**：rcad `本提交`（chfi_kpart.rs 切点锚点 + chfi3d_builder_spkp.rs 去 hatch 窗口 + 本档）→ 根仓库（生成器修复 + blend_simple/blend_complex 测试重生成说明 + sync）。
+- **下一 session 入口**：E3-C 队列第 2 项（PerformElSpine + ElSpine 曲线字段 + FilBuilder::PerformFirstSection 翻译批，b5/g9+q2 前沿）——红线路径、验收标准沿 E3-C 原文（函数计数等式 + 禁载体填包装 + a1/a3/q1 不回退）。

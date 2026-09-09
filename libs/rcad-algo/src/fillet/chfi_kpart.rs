@@ -653,7 +653,9 @@ pub fn make_fillet_plane_plane_lin(
     data.change_surf(surf_index);
 
     // On regarde si l orientation du cylindre est la meme que celle des faces.
-    let (_p, deru, derv) = elslib_cylinder_d1(0.0, 0.0, c, xdir, axis_cylinder, radius);
+    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L99: ElSLib::CylinderD1(0., 0.,
+    // CylAx3, Radius, P, deru, derv) — P is the tangency point on face 1.
+    let (p_tang1, deru, derv) = elslib_cylinder_d1(0.0, 0.0, c, xdir, axis_cylinder, radius);
     let norcyl = deru.cross(derv).normalize();
     let norpl = pl1.normal.normalize();
     let mut norface = norpl;
@@ -669,10 +671,13 @@ pub fn make_fillet_plane_plane_lin(
 
     // On charge les FaceInterferences avec les pcurves et courbes 3d.
     // La face 1.
-    let mut p2dpln = elslib_plane_parameters(pl1, pv);
+    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L121: ElSLib::PlaneParameters(Pos1, P, u, v)
+    // — the face-1 pcurve passes through the tangency point P (L99), not Pv.
+    let mut p2dpln = elslib_plane_parameters(pl1, p_tang1);
     let dir2dpln = DVec2::new(axis_cylinder.dot(xdir_of(pl1)), axis_cylinder.dot(ydir_of(pl1)));
     let mut lin2dpln = (p2dpln, dir2dpln);
-    let linpln = (pv, axis_cylinder);
+    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L126: gp_Lin linPln(P, AxisCylinder).
+    let linpln = (p_tang1, axis_cylinder);
     let lin2dcyl = DVec2::new(0.0, 0.0);
     let trans;
     let mut toreverse2 = norcyl.dot(norpl) <= 0.0;
@@ -698,11 +703,14 @@ pub fn make_fillet_plane_plane_lin(
     );
 
     // La face 2.
-    let (_p, deru, derv) = elslib_cylinder_d1(ang, 0.0, c, xdir, axis_cylinder, radius);
+    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L146: ElSLib::CylinderD1(Ang, 0.,
+    // CylAx3, Radius, P, deru, derv) — P is recomputed at the face-2 tangency.
+    let (p_tang2, deru, derv) = elslib_cylinder_d1(ang, 0.0, c, xdir, axis_cylinder, radius);
     let norcyl = deru.cross(derv).normalize();
     let norpl2 = pl2.normal.normalize();
     toreverse2 = norcyl.dot(norpl2) <= 0.0;
-    p2dpln = elslib_plane_parameters(pl2, pv);
+    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L150: ElSLib::PlaneParameters(Pos2, P, u, v).
+    p2dpln = elslib_plane_parameters(pl2, p_tang2);
     lin2dpln = (
         p2dpln,
         DVec2::new(axis_cylinder.dot(xdir_of(pl2)), axis_cylinder.dot(ydir_of(pl2))),
@@ -711,7 +719,8 @@ pub fn make_fillet_plane_plane_lin(
         origin: lin2dpln.0,
         direction: lin2dpln.1,
     });
-    let glinpln2 = Curve3::Line(Line3::new(pv, axis_cylinder));
+    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L156: linPln.SetLocation(P).
+    let glinpln2 = Curve3::Line(Line3::new(p_tang2, axis_cylinder));
     let glin2dcyl2 = rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
         origin: DVec2::new(ang, 0.0),
         direction: DVec2::new(0.0, 1.0),
