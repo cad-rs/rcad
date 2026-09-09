@@ -1241,7 +1241,12 @@ impl ChFi3dBuilder {
                         // Degenerates.
                         continue;
                     }
-                    let (nb_points, nb_segments) = geom2d_int_g_inter(&pc_val, &a_pcurve);
+                    let (nb_points, nb_segments) = geom2d_int_g_inter(
+                        &pc_val,
+                        (udeb, ufin),
+                        &a_pcurve,
+                        (a_fi.parameter_first(), a_fi.parameter_last()),
+                    );
                     if nb_segments > 0 || nb_points > 0 {
                         panic!("StdFail_NotDone: OneCorner : fillets have too big radiuses");
                     }
@@ -1279,8 +1284,11 @@ impl ChFi3dBuilder {
                 let Some(other_pc) = an_other_intrf.pcurve.clone() else {
                     continue;
                 };
-                let _ = (of, ol);
-                let (nb_points, nb_segments) = geom2d_int_g_inter(&pc_val, &other_pc);
+                // OCCT C1 L1197-1198: the other pcurve is loaded with the
+                // domain of the trimmed interference curve; the cork pcurve
+                // with (Udeb, Ufin).
+                let (nb_points, nb_segments) =
+                    geom2d_int_g_inter(&pc_val, (udeb, ufin), &other_pc, (of, ol));
                 if nb_segments > 0 || nb_points > 0 {
                     panic!("StdFail_NotDone: OneCorner : fillets have too big radiuses");
                 }

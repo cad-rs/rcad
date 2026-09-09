@@ -869,15 +869,17 @@ impl IntConicConic {
                         );
                         self.base.append_segment(&new_seg);
                     } else {
+                        // OCCT _1.cxx L3201/L3205: Insert(NewPoint1); Insert(NewPoint2);
                         if pos1a != Position::Middle || pos2a != Position::Middle {
-                            self.base.append_point(&new_point1);
+                            self.base.insert(&new_point1);
                         }
                         if pos1b != Position::Middle || pos2b != Position::Middle {
-                            self.base.append_point(&new_point2);
+                            self.base.insert(&new_point2);
                         }
                     }
                 } else {
-                    self.base.append_point(&new_point1);
+                    // OCCT _1.cxx L3211: Insert(NewPoint1);
+                    self.base.insert(&new_point1);
                 }
             }
         }

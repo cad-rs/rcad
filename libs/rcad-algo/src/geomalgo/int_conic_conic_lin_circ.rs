@@ -466,7 +466,8 @@ impl IntConicConic {
             );
 
             //--------------------------------------------------------------------
-            let c_domain_and_res = c_domain.second_intersection(&c_int1);
+            // OCCT _1.cxx L2385: CDomainAndRes = CDomain.SecondIntersection(CInt2);
+            let c_domain_and_res = c_domain.second_intersection(&c_int2);
 
             project_on_l_and_intersect_with_l_domain(
                 circle,
@@ -789,15 +790,17 @@ impl IntConicConic {
                         );
                         self.base.append_segment(&new_seg);
                     } else {
+                        // OCCT _1.cxx L2598/L2602: Insert(NewPoint1); Insert(NewPoint2);
                         if pos1a != Position::Middle || pos2a != Position::Middle {
-                            self.base.append_point(&new_point1);
+                            self.base.insert(&new_point1);
                         }
                         if pos1b != Position::Middle || pos2b != Position::Middle {
-                            self.base.append_point(&new_point2);
+                            self.base.insert(&new_point2);
                         }
                     }
                 } else {
-                    self.base.append_point(&new_point1);
+                    // OCCT _1.cxx L2614: Insert(NewPoint1);
+                    self.base.insert(&new_point1);
                 }
             }
         }

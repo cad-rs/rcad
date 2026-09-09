@@ -102,6 +102,13 @@ pub struct ChFi3dBuilder {
     pub my_shape_result: Option<Shape>,
     // OCCT: TopoDS_Shape badShape (L845)
     pub bad_shape: Option<Shape>,
+    /// OCCT ChFi3d_FilBuilder.hxx: BlendFunc_Shape myShape — stored on the
+    /// rcad base struct because the PerformThreeCorner virtual dispatch
+    /// (ChFi3d_Builder.cxx L891 -> ChFi3d_FilBuilder_C3.cxx L241) crosses
+    /// the composition boundary; only ChFi3d_FilBuilder reads/writes it
+    /// (SetFilletShape L157-171), the default is the OCCT constructor
+    /// default (Rational, L147-153).
+    pub my_blend_shape: super::brep_blend_func::BlendFuncSectionShape,
     /// The BRep the root shape belongs to (rcad architecture: TopoDS_Shape
     /// lives inside a BRep TShape table; OCCT has global handle graphs).
     pub my_brep: rcad_kernel::topods::BRep,
@@ -140,6 +147,7 @@ impl ChFi3dBuilder {
             my_generated: Vec::new(),
             my_shape_result: None,
             bad_shape: None,
+            my_blend_shape: super::brep_blend_func::BlendFuncSectionShape::Rational,
         };
         b.my_ds = Some(TopOpeBRepDSHDataStructure::default());
         b.my_coup = Some(TopOpeBRepBuildHBuilder::default());
@@ -760,23 +768,17 @@ impl ChFi3dBuilder {
 }
 
 // =========================================================================
-// OCCT ChFi3d_FilBuilder (ChFi3d_FilBuilder.hxx) — BlendFunc_Shape myShape
-// field is renamed my_blend_shape to avoid the base myShape collision.
+// OCCT ChFi3d_FilBuilder (ChFi3d_FilBuilder.hxx L377) — the fillet section
+// shape member is BlendFunc_SectionShape myShape; the rcad field is renamed
+// my_blend_shape to avoid the base myShape collision and uses the
+// BlendFuncSectionShape enum from brep_blend_func (no local duplicate).
 // =========================================================================
-
-/// OCCT BlendFunc_Shape (TKGeomAlgo/BlendFunc): the fillet section shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlendFuncShape {
-    Rational,
-    QuasiAngular,
-    Polynomial,
-}
 
 #[derive(Debug, Clone)]
 pub struct ChFi3dFilBuilder {
     pub base: ChFi3dBuilder,
-    /// OCCT ChFi3d_FilBuilder.hxx: BlendFunc_Shape myShape.
-    pub my_blend_shape: BlendFuncShape,
+    /// OCCT ChFi3d_FilBuilder.hxx L377: BlendFunc_SectionShape myShape.
+    pub my_blend_shape: super::brep_blend_func::BlendFuncSectionShape,
 }
 
 impl ChFi3dFilBuilder {
@@ -789,7 +791,7 @@ impl ChFi3dFilBuilder {
     ) -> Self {
         let mut b = ChFi3dFilBuilder {
             base: ChFi3dBuilder::new(brep, s, ta),
-            my_blend_shape: BlendFuncShape::Rational,
+            my_blend_shape: super::brep_blend_func::BlendFuncSectionShape::Rational,
         };
         b.set_fillet_shape(fshape);
         b
@@ -798,20 +800,45 @@ impl ChFi3dFilBuilder {
     /// OCCT ChFi3d_FilBuilder.cxx L157-171.
     pub fn set_fillet_shape(&mut self, fshape: ChFi3dFilletShape) {
         match fshape {
-            ChFi3dFilletShape::Rational => self.my_blend_shape = BlendFuncShape::Rational,
-            ChFi3dFilletShape::QuasiAngular => {
-                self.my_blend_shape = BlendFuncShape::QuasiAngular
+            ChFi3dFilletShape::Rational => {
+                self.my_blend_shape =
+                    super::brep_blend_func::BlendFuncSectionShape::Rational;
+                self.base.my_blend_shape =
+                    super::brep_blend_func::BlendFuncSectionShape::Rational;
             }
-            ChFi3dFilletShape::Polynomial => self.my_blend_shape = BlendFuncShape::Polynomial,
+            ChFi3dFilletShape::QuasiAngular => {
+                self.my_blend_shape =
+                    super::brep_blend_func::BlendFuncSectionShape::QuasiAngular;
+                self.base.my_blend_shape =
+                    super::brep_blend_func::BlendFuncSectionShape::QuasiAngular;
+            }
+            ChFi3dFilletShape::Polynomial => {
+                self.my_blend_shape =
+                    super::brep_blend_func::BlendFuncSectionShape::Polynomial;
+                self.base.my_blend_shape =
+                    super::brep_blend_func::BlendFuncSectionShape::Polynomial;
+            }
         }
     }
 
     /// OCCT ChFi3d_FilBuilder.cxx L175-193.
     pub fn get_fillet_shape(&self) -> ChFi3dFilletShape {
         match self.my_blend_shape {
-            BlendFuncShape::Rational => ChFi3dFilletShape::Rational,
-            BlendFuncShape::QuasiAngular => ChFi3dFilletShape::QuasiAngular,
-            BlendFuncShape::Polynomial => ChFi3dFilletShape::Polynomial,
+            super::brep_blend_func::BlendFuncSectionShape::Rational => {
+                ChFi3dFilletShape::Rational
+            }
+            super::brep_blend_func::BlendFuncSectionShape::QuasiAngular => {
+                ChFi3dFilletShape::QuasiAngular
+            }
+            super::brep_blend_func::BlendFuncSectionShape::Polynomial => {
+                ChFi3dFilletShape::Polynomial
+            }
+            super::brep_blend_func::BlendFuncSectionShape::Linear => {
+                // No ChFi3d_FilletShape maps to BlendFunc_Linear; the OCCT
+                // getter (L175-193) leaves filshape at the Rational default
+                // when no case matches.
+                ChFi3dFilletShape::Rational
+            }
         }
     }
 
@@ -3741,12 +3768,10 @@ impl ChFi3dBuilder {
         // virtual resolves to the ChFi3d_FilBuilder override
         // (ChFi3d_FilBuilder_C3.cxx L241).  The override consumes the
         // FilBuilder member myShape (BlendFunc_SectionShape, set by
-        // SetFilletShape, OCCT ChFi3d_FilBuilder.cxx L157-171).  The rcad
-        // base struct carries no blend-shape member; the Rational mapping is
-        // the constructor default of both OCCT ChFi3d_FilBuilder (L147-153)
-        // and rcad ChFi3dFilBuilder::new — see the F1 delivery report note
-        // on the composition-model dispatch.
-        let my_shape = super::brep_blend_func::BlendFuncSectionShape::Rational;
+        // SetFilletShape, OCCT ChFi3d_FilBuilder.cxx L157-171); the rcad
+        // composition keeps that member on the base struct so this dispatch
+        // reads the actual value instead of the constructor default.
+        let my_shape = self.my_blend_shape;
         super::chfi3d_filbuilder_c3::perform_three_corner(self, my_shape, index);
     }
 }

@@ -184,11 +184,17 @@ pub fn find_index_point(
 // OCCT Geom2dInt_GInter — pending TKGeomAlgo translation for BSpline
 // pcurves; the analytic (line/circle/ellipse) cases run through the
 // AnaIntersection2d chain, matching Geom2dInt_TheIntConicCurveOfGInter.
-// Returns (nb_points, nb_segments).
+// The (dom.first, dom.last) pairs mirror the OCCT callers loading the
+// pcurves into Geom2dAdaptor_Curve with restricted parameter domains
+// (Geom2dAdaptor_Curve(C, First, Last)); only intersection points whose
+// parameters fall inside both domains are kept.  Returns
+// (nb_points, nb_segments).
 // =========================================================================
 pub fn geom2d_int_g_inter(
     pc1: &rcad_kernel::geom::Curve2d,
+    dom1: (f64, f64),
     pc2: &rcad_kernel::geom::Curve2d,
+    dom2: (f64, f64),
 ) -> (usize, usize) {
     use rcad_kernel::base::int_ana2d::{AnaIntersection2d, Conic2d};
 
@@ -236,7 +242,18 @@ pub fn geom2d_int_g_inter(
     if !inter.is_done() {
         return (0, 0);
     }
-    (inter.nb_points(), 0)
+    let mut nb_points = 0usize;
+    for n in 1..=inter.nb_points() {
+        let p = inter.point(n);
+        if p.param_on_first() >= dom1.0
+            && p.param_on_first() <= dom1.1
+            && p.param_on_second() >= dom2.0
+            && p.param_on_second() <= dom2.1
+        {
+            nb_points += 1;
+        }
+    }
+    (nb_points, 0)
 }
 
 fn ellipse_of(pc: &rcad_kernel::geom::Curve2d) -> Option<rcad_kernel::geom::Ellipse2d> {
@@ -319,7 +336,9 @@ pub fn chfi3d_stripe_edge_inter(
             }
             let (nb_points, nb_segments) = geom2d_int_g_inter(
                 afi1.pcurve_on_face().unwrap(),
+                (afi1.parameter_first(), afi1.parameter_last()),
                 afi2.pcurve_on_face().unwrap(),
+                (afi2.parameter_first(), afi2.parameter_last()),
             );
             let _ = tol2d;
             if nb_segments > 0 || nb_points > 0 {

@@ -473,9 +473,23 @@ impl super::chfi3d::ChFi3dBuilder {
             // sinon solution approchee.
             inside = true;
 
+            // OCCT StartSol L894 re-reads Stripe->ChangeSpine() — the spine
+            // this function already holds as a local.  Put the local back
+            // for the duration of the call and take it out again, so the
+            // callee's take sees the same object (StartSol restores it on
+            // every exit path).
+            {
+                let mut st = stripe.write().expect("stripe lock");
+                st.my_spine = Some(spine);
+            }
             self.start_sol_on_stripe(
                 stripe, guide, &mut hs1, &mut hs2, it1, it2, &mut pp1, &mut pp2, &mut first,
             );
+            spine = {
+                let mut st = stripe.write().expect("stripe lock");
+                st.my_spine.take()
+            }
+            .expect("null spine");
 
             last = wf;
             if guide.is_periodic() {
@@ -1034,6 +1048,16 @@ impl super::chfi3d::ChFi3dBuilder {
         // OCCT L3303: NCollection_List<handle<ChFiDS_ElSpine>>& ll =
         //   Spine->ChangeElSpines();  (rcad: taken by value, restored below)
         let mut ll = std::mem::take(&mut spine.base_mut().elspines);
+        // OCCT PerformSetOfKGen L3303 holds Spine only as a reference — the
+        // spine stays reachable through Stripe->ChangeSpine() while the
+        // elspine loop runs, and PerformSetOfSurfOnElSpine (L2216) re-reads
+        // that same reference.  Model the aliasing by putting the spine
+        // back for the duration of the loop and taking it out again after
+        // (PerformSetOfSurfOnElSpine restores it on every exit path).
+        {
+            let mut st = stripe.write().expect("stripe lock");
+            st.my_spine = Some(spine);
+        }
         {
             let mut iles = 0usize;
             while iles < ll.len() {
@@ -1041,6 +1065,11 @@ impl super::chfi3d::ChFi3dBuilder {
                 iles += 1;
             }
         }
+        let mut spine = {
+            let mut st = stripe.write().expect("stripe lock");
+            st.my_spine.take()
+        }
+        .expect("null spine");
         if !simul {
             let mut dstr = self.my_ds.take().expect("DS");
             let brep = self.my_brep.clone();

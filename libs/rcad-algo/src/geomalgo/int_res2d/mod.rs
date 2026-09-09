@@ -622,24 +622,28 @@ impl IntersectionBase {
             return;
         }
         let u = pnt.param_on_first();
+        let u2 = pnt.param_on_second();
         let mut i = 0usize;
         let mut b = n + 1;
         while i < n {
+            // OCCT binds `const IntRes2d_IntersectionPoint& Pnti = lpnt(i);`
+            // before the bound updates: the duplicate test below reads the
+            // captured point, never re-indexes after i is set to exit.
             let ui = self.lpnt[i].param_on_first();
+            let ui2 = self.lpnt[i].param_on_second();
+            let ui_t1 = self.lpnt[i].transition_of_first().clone();
+            let ui_t2 = self.lpnt[i].transition_of_second().clone();
             if ui >= u {
                 b = i + 1;
-                i = n;
+                i = n - 1;
             }
             if paramequal(ui, u) {
-                if paramequal(pnt.param_on_second(), self.lpnt[i].param_on_second()) {
-                    if transition_equal(pnt.transition_of_first(), self.lpnt[i].transition_of_first())
-                        && transition_equal(
-                            pnt.transition_of_second(),
-                            self.lpnt[i].transition_of_second(),
-                        )
+                if paramequal(u2, ui2) {
+                    if transition_equal(pnt.transition_of_first(), &ui_t1)
+                        && transition_equal(pnt.transition_of_second(), &ui_t2)
                     {
                         b = 0;
-                        i = n;
+                        i = n - 1;
                     }
                 }
             }

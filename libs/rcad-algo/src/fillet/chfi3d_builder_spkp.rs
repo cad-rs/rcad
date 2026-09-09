@@ -215,12 +215,16 @@ fn hatcher_trim(
             if u_elem < ef - PITOL || u_elem > el + PITOL {
                 continue;
             }
+            // OCCT HatchGen_PointOnElement.cxx L39-49: the position of the
+            // point on the element maps from the IntRes2d position on curve
+            // — Head -> TopAbs_FORWARD, Middle -> TopAbs_INTERNAL,
+            // End -> TopAbs_REVERSED.
             let position = if (u_elem - ef).abs() <= PITOL {
                 TopAbsPosition::Forward
             } else if (u_elem - el).abs() <= PITOL {
                 TopAbsPosition::Reversed
             } else {
-                TopAbsPosition::On
+                TopAbsPosition::Internal
             };
             hits.push((
                 u_hatch,
