@@ -1092,12 +1092,13 @@ impl BRepFillPipeShell {
         let mut dummy2: ShapeToArray2Map = ShapeToArray2Map::new();
         let mut dummy3: ShapeToArray2Map = ShapeToArray2Map::new();
         mk_sw.build(
+            brep,
             &mut dummy,
             &mut dummy2,
             &mut dummy3,
             self.my_transition,
             the_continuity,
-            GEOM_FILL_LOCATION,
+            crate::geomalgo::geomfill::sweep::GeomFillApproxStyle::GeomFill_Location,
             self.my_max_degree,
             self.my_max_segments,
         );

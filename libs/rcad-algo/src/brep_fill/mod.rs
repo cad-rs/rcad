@@ -30,3 +30,8 @@ pub mod brep_fill_shape_law;
 pub mod brep_fill_edge3d_law;
 pub mod brep_fill_nsections;
 pub mod brep_fill_sweep;
+pub mod brep_fill_sweep_b;
+pub mod brep_fill_trim_shell_corner;
+pub mod brep_fill_sweep_b2;
+pub mod brep_fill_sweep_c;
+pub mod brep_fill_sweep_d;

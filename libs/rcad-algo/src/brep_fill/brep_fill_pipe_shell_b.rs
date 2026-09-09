@@ -284,30 +284,6 @@ pub fn brep_gprop_linear_properties_centre(_profile: &Shape) -> DVec3 {
 //  class lives in brep_fill_sweep.rs).
 // ===========================================================================
 
-/// OCCT BRepFill_Sweep::Build(WDone, WInter, WSubS, Transition, Continuity,
-/// Whatdegree, Degmax, Segmax) — GAP: the part-B backlog of
-/// BRepFill_Sweep.cxx is not translated (see the brep_fill_sweep.rs header);
-/// the call site keeps the OCCT failure path.
-#[allow(clippy::too_many_arguments)]
-impl crate::brep_fill::brep_fill_sweep::BRepFillSweep {
-    pub fn build(
-        &mut self,
-        _w_done: &mut ShapeSet,
-        _w_inter: &mut ShapeToArray2Map,
-        _w_sub_s: &mut ShapeToArray2Map,
-        _transition: BRepFillTransitionStyle,
-        _continuity: GeomAbsShape,
-        _what_degree: i32,
-        _degmax: i32,
-        _segmax: i32,
-    ) {
-        panic!(
-            "GAP: BRepFill_Sweep::Build (TKBool/BRepFill, part-B backlog) is not translated — \
-             see file header"
-        )
-    }
-}
-
 /// OCCT GeomFill_Location constant for BRepFill_Sweep::Build.
 pub const GEOM_FILL_LOCATION: i32 = 1;
 

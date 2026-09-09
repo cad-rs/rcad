@@ -21,3 +21,6 @@ pub mod mat;               // MAT (MAT graph — consumed by MAT2d)
 pub mod gcpnts;             // GCPnts (QuasiUniformDeflection)
 pub mod brep_copy;          // BRepBuilderAPI_Copy
 pub mod thru_sections;      // BRepOffsetAPI_ThruSections (loft — BRepFill port pending)
+pub mod brep_tools_substitution;
+pub mod brep_lib_find_surface;
+pub mod brep_lib_encode_regularity;

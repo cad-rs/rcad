@@ -35,7 +35,7 @@ use std::rc::Rc;
 
 use glam::DVec3;
 
-use rcad_kernel::geom::{CurveEval, BSplineSurface, Circle3, Curve3, Line3, Surface3, TrimmedCurve3};
+use rcad_kernel::geom::{CurveEval, BSplineSurface, Circle3, Curve3, Ellipse3, Line3, Surface3, TrimmedCurve3};
 use rcad_kernel::math::gp::GP_RESOLUTION;
 use rcad_kernel::math::GeomAbsShape;
 use rcad_kernel::topo::topods::{surface_adaptor_basis_and_bounds, BRep, BRepBuilder, Shape};
@@ -56,10 +56,9 @@ pub use crate::brep_fill::brep_fill_pipe_shell_b::BRepFillTransitionStyle;
 // ---------------------------------------------------------------------------
 
 /// OCCT ElSLib + Geom_BSplineSurface::UIso over the rcad Surface3 — the
-/// u-varying iso curve at `u`.  The Revolution / LinearExtrusion / Offset /
-/// Trimmed variants keep the OCCT failure path (kernel GAP).
-fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {
-    match surf {
+/// u-varying iso curve at `u`.  The Offset / remaining variants keep the
+/// OCCT failure path (kernel GAP).
+pub(super) fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {    match surf {
         // ElSLib::PlaneUIso (ElSLib.cxx): line through P(u, 0) along the V
         // direction.
         Surface3::Plane(pl) => Curve3::Line(Line3 {
@@ -118,6 +117,43 @@ fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {
         // Geom_BSplineSurface::UIso: the poles of the iso are the
         // homogeneous De Boor evaluation of the u basis per V column.
         Surface3::BSpline(bs) => Curve3::BSpline(bspline_surface_uiso(bs, u)),
+        // OCCT Geom_SurfaceOfLinearExtrusion::UIso
+        // (Geom_SurfaceOfLinearExtrusion.cxx L275-281): the ruling line
+        // (basisCurve->Value(U), direction).
+        Surface3::LinearExtrusion(le) => Curve3::Line(Line3 {
+            origin: le.profile.point_at(u),
+            direction: le.direction,
+        }),
+        // OCCT Geom_SurfaceOfRevolution::UIso (Geom_SurfaceOfRevolution.cxx
+        // L372-381): the basis curve rotated by U about the axis
+        // (C->Rotate(Ax1(loc, direction), U)).
+        Surface3::Revolution(rev) => {
+            curve3_rotated_about_axis(&rev.profile, rev.axis_origin, rev.axis_dir, u)
+        }
+        // OCCT Geom_RectangularTrimmedSurface::UIso
+        // (Geom_RectangularTrimmedSurface.cxx L444-458): the basis UIso,
+        // restricted to the v-trim range when isvtrimmed (the rcad flag maps
+        // to "the stored v-trim bounds differ from the basis natural domain").
+        Surface3::Trimmed(ts) => {
+            let c = surface_uiso(&ts.basis, u);
+            if basis_v_bounds_of(&ts.basis) != (ts.trim[2], ts.trim[3]) {
+                Curve3::Trimmed(TrimmedCurve3 {
+                    curve: Box::new(c),
+                    first: ts.trim[2],
+                    last: ts.trim[3],
+                })
+            } else {
+                c
+            }
+        }
+        // OCCT Geom_OffsetSurface::UIso (Geom_OffsetSurface.cxx L601-655)
+        // approximates the offset iso through AdvApprox_ApproxAFunction and
+        // the Geom_OffsetSurface_UIsoEvaluator — the AdvApprox evaluator
+        // wiring is a kernel GAP (plan §0.6).
+        Surface3::Offset(_) => panic!(
+            "GAP: Geom_OffsetSurface::UIso (TKG3d/Geom, AdvApprox evaluator \
+             wiring) — BRepFill_Sweep::BuildWire"
+        ),
         _ => panic!(
             "GAP: Geom_*Surface::UIso (TKMath/TKG3d kernel re-host) is not \
              translated for this surface type — BRepFill_Sweep::BuildWire"
@@ -125,9 +161,17 @@ fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {
     }
 }
 
+/// The natural v-bounds of a basis surface (the OCCT `isvtrimmed` check
+/// compares the trim bounds against the basis domain).
+fn basis_v_bounds_of(surf: &Surface3) -> (f64, f64) {
+    use rcad_kernel::geom::SurfaceEval;
+    let d = surf.default_domain();
+    (d[2], d[3])
+}
+
 /// OCCT ElSLib + Geom_BSplineSurface::VIso over the rcad Surface3 — the
 /// v-varying iso curve at `v`.  Same GAP note as [`surface_uiso`].
-fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
+pub(super) fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
     match surf {
         // ElSLib::PlaneVIso: line through P(0, v) along the U direction.
         Surface3::Plane(pl) => Curve3::Line(Line3 {
@@ -170,9 +214,155 @@ fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
         }),
         // Geom_BSplineSurface::VIso.
         Surface3::BSpline(bs) => Curve3::BSpline(bspline_surface_viso_full(bs, v)),
+        // OCCT Geom_SurfaceOfLinearExtrusion::VIso
+        // (Geom_SurfaceOfLinearExtrusion.cxx L285-291): the basis curve
+        // translated by V*direction (Vdir.Multiply(V); basis->Translated).
+        Surface3::LinearExtrusion(le) => {
+            curve3_translated(&le.profile, le.direction * v)
+        }
+        // OCCT Geom_SurfaceOfRevolution::VIso (Geom_SurfaceOfRevolution.cxx
+        // L383-411): the parallel circle (Loc, axis, Rad) built at the basis
+        // point of parameter V.
+        Surface3::Revolution(rev) => {
+            // Pnt Pc = basisCurve->Value(V);
+            let pc = rev.profile.point_at(v);
+            // gp_Lin L1(loc, direction); Rad = L1.Distance(Pc).
+            let axis = rev.axis_dir;
+            let rad = (pc - rev.axis_origin - (pc - rev.axis_origin).dot(axis) * axis).length();
+            // Ax2 Rep — the circle frame: center C on the axis, XDir D the
+            // radial direction (P = Pc - C normalized when Rad > Resolution).
+            let c = rev.axis_origin + (pc - rev.axis_origin).dot(axis) * axis;
+            let x_dir = if rad > GP_RESOLUTION {
+                let d = pc - c;
+                if d.length() > GP_RESOLUTION {
+                    d.normalize_or_zero()
+                } else {
+                    // gp_Ax2(C, direction) default X — any orthogonal
+                    // direction (the OCCT default picks a solver-dependent
+                    // one; the radial projection is degenerate here).
+                    DVec3::Z.cross(axis).normalize_or_zero()
+                }
+            } else {
+                DVec3::Z.cross(axis).normalize_or_zero()
+            };
+            Curve3::Circle(Circle3 {
+                center: c,
+                normal: axis,
+                x_dir,
+                y_dir: axis.cross(x_dir).normalize_or_zero(),
+                radius: rad,
+            })
+        }
+        // OCCT Geom_RectangularTrimmedSurface::VIso
+        // (Geom_RectangularTrimmedSurface.cxx L463-477): the basis VIso,
+        // restricted to the u-trim range when isutrimmed.
+        Surface3::Trimmed(ts) => {
+            let c = surface_viso(&ts.basis, v);
+            if basis_v_bounds_of(&ts.basis) != (ts.trim[0], ts.trim[1]) {
+                Curve3::Trimmed(TrimmedCurve3 {
+                    curve: Box::new(c),
+                    first: ts.trim[0],
+                    last: ts.trim[1],
+                })
+            } else {
+                c
+            }
+        }
+        // OCCT Geom_OffsetSurface::VIso (Geom_OffsetSurface.cxx L657-706) —
+        // the same AdvApprox GAP as UIso.
+        Surface3::Offset(_) => panic!(
+            "GAP: Geom_OffsetSurface::VIso (TKG3d/Geom, AdvApprox evaluator \
+             wiring) — BRepFill_Sweep::BuildWire"
+        ),
         _ => panic!(
             "GAP: Geom_*Surface::VIso (TKMath/TKG3d kernel re-host) is not \
              translated for this surface type — BRepFill_Sweep::BuildWire"
+        ),
+    }
+}
+
+/// OCCT gp_GTrsf-based `Geom_Curve::Translated(T)` over the rcad Curve3 —
+/// supported for the analytic / poles-based variants (the OCCT operation
+/// translates the geometry representation in place); the remaining curve
+/// kinds keep the OCCT failure path.
+fn curve3_translated(c: &Curve3, t: DVec3) -> Curve3 {
+    match c {
+        Curve3::Line(l) => Curve3::Line(Line3 {
+            origin: l.origin + t,
+            direction: l.direction,
+        }),
+        Curve3::Circle(ci) => Curve3::Circle(Circle3 {
+            center: ci.center + t,
+            ..ci.clone()
+        }),
+        Curve3::Ellipse(el) => Curve3::Ellipse(Ellipse3 {
+            center: el.center + t,
+            ..el.clone()
+        }),
+        Curve3::BSpline(bs) => Curve3::BSpline(rcad_kernel::geom::BSplineCurve3 {
+            control_points: bs.control_points.iter().map(|p| p + t).collect(),
+            ..bs.clone()
+        }),
+        Curve3::Bezier(bz) => Curve3::Bezier(rcad_kernel::geom::BezierCurve3 {
+            control_points: bz.control_points.iter().map(|p| p + t).collect(),
+            weights: bz.weights.clone(),
+        }),
+        Curve3::Trimmed(tr) => Curve3::Trimmed(TrimmedCurve3 {
+            curve: Box::new(curve3_translated(&tr.curve, t)),
+            first: tr.first,
+            last: tr.last,
+        }),
+        _ => panic!(
+            "GAP: Geom_Curve::Translated (TKG3d/Geom kernel re-host) for this \
+             curve type — Geom_SurfaceOfLinearExtrusion::VIso"
+        ),
+    }
+}
+
+/// OCCT `Geom_Curve::Rotate(Ax1, Angle)` over the rcad Curve3 — the
+/// rotation about the (origin, direction) axis applied to the geometry
+/// representation; supported for the analytic / poles-based variants.
+fn curve3_rotated_about_axis(c: &Curve3, origin: DVec3, direction: DVec3, angle: f64) -> Curve3 {
+    use glam::DAffine3;
+    let axis = DAffine3::from_rotation_translation(
+        glam::DQuat::from_axis_angle(direction, angle),
+        DVec3::ZERO,
+    );
+    let rot = |p: DVec3| origin + axis.transform_point3(p - origin);    match c {
+        Curve3::Line(l) => Curve3::Line(Line3 {
+            origin: rot(l.origin),
+            direction: axis.transform_vector3(l.direction),
+        }),
+        Curve3::Circle(ci) => Curve3::Circle(Circle3 {
+            center: rot(ci.center),
+            normal: axis.transform_vector3(ci.normal),
+            x_dir: axis.transform_vector3(ci.x_dir),
+            y_dir: axis.transform_vector3(ci.y_dir),
+            radius: ci.radius,
+        }),
+        Curve3::Ellipse(el) => Curve3::Ellipse(Ellipse3 {
+            center: rot(el.center),
+            normal: axis.transform_vector3(el.normal),
+            major_dir: axis.transform_vector3(el.major_dir),
+            major_radius: el.major_radius,
+            minor_radius: el.minor_radius,
+        }),
+        Curve3::BSpline(bs) => Curve3::BSpline(rcad_kernel::geom::BSplineCurve3 {
+            control_points: bs.control_points.iter().map(|p| rot(*p)).collect(),
+            ..bs.clone()
+        }),
+        Curve3::Bezier(bz) => Curve3::Bezier(rcad_kernel::geom::BezierCurve3 {
+            control_points: bz.control_points.iter().map(|p| rot(*p)).collect(),
+            weights: bz.weights.clone(),
+        }),
+        Curve3::Trimmed(tr) => Curve3::Trimmed(TrimmedCurve3 {
+            curve: Box::new(curve3_rotated_about_axis(&tr.curve, origin, direction, angle)),
+            first: tr.first,
+            last: tr.last,
+        }),
+        _ => panic!(
+            "GAP: Geom_Curve::Rotate (TKG3d/Geom kernel re-host) for this \
+             curve type — Geom_SurfaceOfRevolution::UIso"
         ),
     }
 }

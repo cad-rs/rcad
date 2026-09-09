@@ -64,3 +64,6 @@ pub use intf::{
 };
 pub use int_curv_surf::{IntPatchPolyhedron, ThePolygonOfHInter, ThePolyhedronOfHInter};
 pub use int_curve_surface::HInter;
+pub mod approx_same_parameter;
+pub mod geom_lib_check_curve_on_surface;
+pub mod geom_lib_same_range;
