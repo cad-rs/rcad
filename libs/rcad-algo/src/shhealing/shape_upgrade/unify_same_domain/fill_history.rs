@@ -15,16 +15,9 @@ impl ShapeUpgradeUnifySameDomain {
             return;
         }
 
-        // OCCT L4489: the context history.
-        // GAP carrier: ShapeBuild_ReShape::History() (OCCT
-        // BRepTools_ReShape.cxx L647-695) is not translated (reshape.rs
-        // L412 keeps the GAP note) — NEEDED EDIT IN
-        // shhealing/shape_build/reshape.rs to land the context history.
-        // The carrier keeps the empty-context path: every shape not present
-        // in the result as-is falls into the removal branch, exactly as an
-        // empty context history does in OCCT.
-        let a_ctx_history = BRepToolsHistory::new();
-        let _ = (&a_ctx_history);
+        // OCCT L4489: the context history — all modifications recorded by
+        // the reshaper during the operation.
+        let a_ctx_history = self.my_context.history();
 
         // OCCT L4493: the algorithm history.
         let mut a_usd_history = BRepToolsHistory::new();
@@ -86,25 +79,9 @@ impl ShapeUpgradeUnifySameDomain {
         }
 
         // OCCT L4556-4557: myHistory->Merge(aUSDHistory).
-        // NEEDED EDIT IN bop/history.rs: add Clear/Merge (OCCT
-        // BRepTools_History.cxx) — the bridge below applies the merge
-        // through the operation contract (myHistory is empty at this point,
-        // so the merge is exactly the recorded op set of aUSDHistory).
         if let Some(my_history) = self.my_history.as_mut() {
-            brep_tools_history_merge(my_history, &a_usd_history);
+            my_history.merge(&a_usd_history);
         }
     }
-}
-
-/// The BRepTools_History::Merge bridge (OCCT BRepTools_History.cxx): the
-/// rcad history type has no Merge yet, and the USD history is built inside
-/// FillHistory, so the bridge re-applies its operation set.  Replaced by
-/// the type-level Merge when the NEEDED EDIT lands.
-fn brep_tools_history_merge(my_history: &mut BRepToolsHistory, a_usd_history: &BRepToolsHistory) {
-    // The USD history records only Remove operations (the context-history
-    // carrier above keeps the modified list empty); the merge reduces to
-    // re-applying the removals, which the public API expresses through
-    // is_removed/modified probes per input shape.
-    let _ = (my_history, a_usd_history);
 }
 

@@ -221,11 +221,10 @@ impl ShapeUpgradeUnifySameDomain {
         self.my_face_plane_map.clear();
         self.my_ef_map.clear();
         self.my_face_new_face.clear();
-        // OCCT L3003: myHistory->Clear() — the rcad BRepToolsHistory has no
-        // Clear yet (NEEDED EDIT IN bop/history.rs: add Clear, OCCT
-        // BRepTools_History.cxx); re-creation is semantically identical for
-        // the handle held from the constructor.
-        self.my_history = Some(BRepToolsHistory::new());
+        // OCCT L3003: myHistory->Clear().
+        if let Some(my_history) = self.my_history.as_mut() {
+            my_history.clear();
+        }
     }
 
     // OCCT ShapeUpgrade_UnifySameDomain.cxx L3008-3011: AllowInternalEdges.
@@ -261,6 +260,25 @@ impl ShapeUpgradeUnifySameDomain {
     // handle the user may have installed).
     pub fn history(&self) -> Option<&BRepToolsHistory> {
         self.my_history.as_ref()
+    }
+
+    /// Test-world extraction bridge (the BRepOffsetAPI_DraftAngle
+    /// `result_brep` pattern, `algo_ext::topods_ext::extract_result_brep`):
+    /// flattens the (brep arena, `my_shape` root) pair into the
+    /// self-contained BRep the generated-test world consumes (StepWriter /
+    /// topology counts).  OCCT has no equivalent (the TopoDS_Shape carries
+    /// its arena implicitly) — the rcad BRep-pool architecture difference
+    /// #4 glue.  The extracted root is the hxx L135 `Shape()` result; the
+    /// `brep` argument is the pool `Build` ran on (cxx L4454-4469).
+    pub fn result_brep(&self, brep: &BRep) -> Option<BRep> {
+        if self.my_shape.is_null() {
+            return None;
+        }
+        let locations = brep.locations.clone();
+        Some(crate::algo_ext::topods_ext::extract_result_brep(
+            &self.my_shape,
+            locations,
+        ))
     }
 
     // OCCT cxx L3022-3028: KeepShape.

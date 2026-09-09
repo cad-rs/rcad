@@ -23,12 +23,14 @@
 //!   is the reverse order, so OCCT rank comparisons go through
 //!   [`occt_type_rank`].
 
+use crate::bop::history::{BRepToolsHistory, TRelationType, is_supported_type};
 use crate::shhealing::shape_build::brep_tool::{
     brep_tool_is_closed, builder_add, iter_subshapes, occt_is_partner, occt_is_same,
     set_flag_inplace, shape_is_null, topexp_explorer,
 };
 use crate::shhealing::shape_build::edge::ShapeBuildEdge;
 use crate::shhealing::shape_extend::{ShapeExtendStatus, decode_status, encode_status};
+use indexmap::IndexMap;
 use rcad_kernel::topo::topods::{BRep, Orientation, Shape, ShapeType};
 use std::collections::{HashMap, HashSet};
 
@@ -73,6 +75,22 @@ impl TReplacement {
             Shape::null()
         }
     }
+
+    /// OCCT TReplacement::RelationResult (BRepTools_ReShape.hxx L226-228):
+    /// the raw result of the relation (MergeOrdinary records included).
+    fn relation_result(&self) -> Shape {
+        self.my_result.clone()
+    }
+
+    /// OCCT TReplacement::RelationKind (BRepTools_ReShape.hxx L229-233):
+    /// the relation between an initial shape and the replacement result.
+    fn relation_kind(&self) -> TRelationType {
+        if self.my_kind == TReplacementKind::Remove {
+            TRelationType::Removed
+        } else {
+            TRelationType::Modified
+        }
+    }
 }
 
 /// OCCT ShapeBuild_ReShape : BRepTools_ReShape.
@@ -80,7 +98,11 @@ impl TReplacement {
 pub struct ShapeBuildReShape {
     /// OCCT `myShapeToReplacement`: maps each shape to its replacement. If a
     /// shape is not bound then the shape is replaced by itself.
-    my_shape_to_replacement: HashMap<ShapeKey, TReplacement>,
+    /// Architecture note: OCCT's DataMap key is the TopoDS_Shape itself; the
+    /// rcad key is the (ptr, location) ShapeKey with the key Shape carried
+    /// alongside the value (the unify_same_domain IndexedDataMap precedent)
+    /// — map iteration (`History`) needs the key shapes.
+    my_shape_to_replacement: HashMap<ShapeKey, (Shape, TReplacement)>,
     /// OCCT `myNewShapes`.
     my_new_shapes: HashSet<ShapeKey>,
     /// OCCT `myStatus` (ShapeExtend bit field; -1 = Apply not yet run).
@@ -194,10 +216,13 @@ impl ShapeBuildReShape {
         // traversal time (BRepTools_ReShape.cxx L203-206).
         self.my_shape_to_replacement.insert(
             shape_key(&shape),
-            TReplacement {
-                my_result: newshape.clone(),
-                my_kind: the_kind,
-            },
+            (
+                shape.clone(),
+                TReplacement {
+                    my_result: newshape.clone(),
+                    my_kind: the_kind,
+                },
+            ),
         );
         self.my_new_shapes.insert(shape_key(&newshape));
     }
@@ -230,7 +255,7 @@ impl ShapeBuildReShape {
                 res = shape.clone();
                 from_map = false;
             }
-            Some(replacement) => {
+            Some((_a_shape, replacement)) => {
                 res = replacement.result();
                 if shape.orientation == Orientation::Reversed {
                     reverse_orientation(&mut res);
@@ -313,7 +338,7 @@ impl ShapeBuildReShape {
                 newsh = shape.clone();
                 res = 0;
             }
-            Some(replacement) => {
+            Some((_a_shape, replacement)) => {
                 // OCCT L346: newsh = myShapeToReplacement(shape).Result() — a
                 // MergeOrdinary record carries no result (the product is only
                 // reachable from the main part), so Status sees a removal.
@@ -409,9 +434,64 @@ impl ShapeBuildReShape {
         self.my_new_shapes.contains(&shape_key(the_shape))
     }
 
-    // OCCT BRepTools_ReShape::History (L647-695) is not translated: it
-    // depends on BRepTools_History, which has no rcad equivalent, and no
-    // TKShHealing entry point (fixshape chain) calls it.
+    /// OCCT BRepTools_ReShape::History (BRepTools_ReShape.cxx L647-695): the
+    /// history of the reshaper modifications, built from the replacement
+    /// table (a chain walk per recorded shape; a shape whose images all
+    /// vanished is reported as removed).
+    pub fn history(&self) -> BRepToolsHistory {
+        // OCCT L649: a new empty history.
+        let mut a_history = BRepToolsHistory::new();
+
+        // OCCT L652-674: fill the history from the replacement table.
+        for (a_shape, _a_replacement) in self.my_shape_to_replacement.values() {
+            // OCCT L655-660: unsupported types and new shapes are skipped.
+            if !is_supported_type(a_shape) || self.my_new_shapes.contains(&shape_key(a_shape)) {
+                continue;
+            }
+
+            // OCCT L663-664: the intermediates chain (NCollection_IndexedMap)
+            // and the modification set (NCollection_Map).  The rcad IndexMap
+            // stands for both (insertion-ordered, keyed by identity).
+            let mut a_intermediates: IndexMap<ShapeKey, Shape> = IndexMap::new();
+            let mut a_modified: IndexMap<ShapeKey, Shape> = IndexMap::new();
+            a_intermediates.insert(shape_key(a_shape), a_shape.clone());
+            let mut a_i = 0usize;
+            while a_i < a_intermediates.len() {
+                let a_intermediate = a_intermediates.get_index(a_i).unwrap().1.clone();
+                a_i += 1;
+                match self.my_shape_to_replacement.get(&shape_key(&a_intermediate)) {
+                    None => {
+                        // OCCT L671-673: the chain end — Add(aModified,
+                        // aIntermediate).
+                        a_modified
+                            .insert(shape_key(&a_intermediate), a_intermediate.clone());
+                    }
+                    Some((_a_shape, a_replacement)) => {
+                        // OCCT L674-684: a non-removed relation extends the
+                        // chain with its relation result.
+                        if a_replacement.relation_kind() != TRelationType::Removed {
+                            let a_result = a_replacement.relation_result();
+                            if !shape_is_null(&a_result) {
+                                a_intermediates.insert(shape_key(&a_result), a_result);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if a_modified.is_empty() {
+                // OCCT L686-688.
+                a_history.remove(a_shape);
+            } else {
+                // OCCT L689-695.
+                for (_a_key, a_m) in &a_modified {
+                    a_history.add_modified(a_shape, a_m);
+                }
+            }
+        }
+
+        a_history
+    }
 
     // -------------------------------------------------------------------
     // ShapeBuild_ReShape derived-class section (ShapeBuild_ReShape.cxx)
