@@ -31,11 +31,14 @@ fn triangle_wire() -> (BRep, Shape) {
 fn init_from_wire_and_basic_access() {
     let (mut brep, wire) = triangle_wire();
     let mut wd = WireData::new();
-    assert!(wd.init(&wire, true, true));
+    assert!(wd.init(&mut brep, &wire, true, true));
     assert_eq!(wd.nb_edges(), 3);
     // Edge 1 endpoint order.
     let e1 = wd.edge(1);
-    let ed = WireData::edge_data(&e1).unwrap();
+    let ed = match e1.data.as_ref() {
+        rcad_kernel::topo::topods::TShape::Edge(ed) => ed,
+        _ => panic!("edge expected"),
+    };
     assert_eq!(
         match ed.first.data.as_ref() {
             rcad_kernel::topo::topods::TShape::Vertex(v) => v.point,
@@ -55,7 +58,7 @@ fn init_from_wire_and_basic_access() {
 fn reverse_and_remove_semantics() {
     let (mut brep, wire) = triangle_wire();
     let mut wd = WireData::new();
-    wd.init(&wire, true, true);
+    wd.init(&mut brep, &wire, true, true);
 
     let e0 = wd.edge(1);
     wd.reverse();
@@ -77,7 +80,7 @@ fn reverse_and_remove_semantics() {
 fn seam_detection() {
     let (mut brep, wire) = triangle_wire();
     let mut wd = WireData::new();
-    wd.init(&wire, true, true);
+    wd.init(&mut brep, &wire, true, true);
     // Duplicate the first edge REVERSED: same TShape, opposite orientation
     // -> a seam pair per OCCT ComputeSeams.
     let mut e1 = wd.edge(1);

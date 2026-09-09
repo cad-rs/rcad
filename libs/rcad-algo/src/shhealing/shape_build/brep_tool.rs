@@ -12,6 +12,13 @@
 //! Identity mapping note: OCCT compares `myLocation` by value while rcad
 //! stores locations as indices into `BRep::locations`; the helpers therefore
 //! compare the resolved `DAffine3` values, not the indices.
+//!
+//! W1-3 dedup note: these TopExp/TopoDS primitives are the single walk
+//! implementations of the healing stack — the 1:1
+//! `shhealing/shape_extend::ShapeExtendExplorer` (OCCT ShapeExtend_Explorer)
+//! delegates its `TopoDS_Iterator` and `TopExp_Explorer` needs to
+//! [`iter_subshapes`] / [`topexp_explorer`] instead of re-implementing them;
+//! there is no duplicated explorer walk in `shape_extend/`.
 
 use rcad_kernel::topo::topods::{
     BRep, Orientation, Shape, ShapeType, TShape, tshape_flags,

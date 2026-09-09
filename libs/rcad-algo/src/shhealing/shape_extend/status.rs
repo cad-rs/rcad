@@ -1,11 +1,15 @@
-//! OCCT ShapeExtend_Status + ShapeExtend::EncodeStatus/DecodeStatus
-//! (TKShHealing ShapeExtend package).
+//! OCCT ShapeExtend package class (TKShHealing): `ShapeExtend.hxx`
+//! (L27-56) + `ShapeExtend.cxx` (L27-109), the `ShapeExtend_Status`
+//! enumeration (`ShapeExtend_Status.hxx` L37-80) and the
+//! `ShapeExtend_Parametrisation` enumeration
+//! (`ShapeExtend_Parametrisation.hxx` L24-29).
 //!
-//! 1:1 translation of `ShapeExtend_Status.hxx` (L37-64) and the two static
-//! methods in `ShapeExtend.cxx`. The status is a bit field shared by the whole
-//! ShapeFix/ShapeAnalysis/ShapeBuild healing stack.
+//! The status is a bit field shared by the whole ShapeFix/ShapeAnalysis/
+//! ShapeBuild healing stack.
 
-/// OCCT ShapeExtend_Status (ShapeExtend_Status.hxx L37-64).
+use std::sync::OnceLock;
+
+/// OCCT ShapeExtend_Status (ShapeExtend_Status.hxx L37-80).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShapeExtendStatus {
     /// Nothing done, everything OK.
@@ -48,9 +52,44 @@ pub enum ShapeExtendStatus {
     Fail,
 }
 
-/// OCCT ShapeExtend::EncodeStatus (ShapeExtend.cxx L38-80): enumeration to a
-/// bit flag. OK encodes to 0x0000; DONE# to bit #; DONE to the whole low byte;
-/// FAIL# to bit # raised by one byte; FAIL to the whole high byte.
+/// OCCT ShapeExtend_Parametrisation (ShapeExtend_Parametrisation.hxx
+/// L24-29): kind of global parametrisation on the composite surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeExtendParametrisation {
+    /// Each patch of the 1st row and column adds its range,
+    /// Ui+1 = Ui + URange(i,1), etc.
+    Natural,
+    /// Each patch gives range 1.: Ui = i-1, Vj = j-1.
+    Uniform,
+    /// Uniform parametrisation with global range [0,1].
+    Unitary,
+}
+
+/// OCCT ShapeExtend::Init (ShapeExtend.cxx L27-50): inits using of
+/// ShapeExtend, loading the messages output by ShapeHealing algorithms.
+///
+/// GAP carrier: the message-resource load
+/// (`Message_MsgFile::LoadFromEnv("CSF_SHMessage", "SHAPE")` /
+/// `LoadFromString(SHMessage_SHAPE_us)` and the
+/// `Standard_ProgramError` throw, ShapeExtend.cxx L38-48) belongs to the
+/// untranslated TKMessage package; the init-once guard and the failure
+/// path shape are kept.
+pub fn init() {
+    static INIT: OnceLock<()> = OnceLock::new();
+    if INIT.get().is_some() {
+        return;
+    }
+    // OCCT L37-48: load the Message File for Shape Healing and throw
+    // Standard_ProgramError when the "ShapeFix.FixSmallSolid.MSG0" resource
+    // is still missing.  GAP: TKMessage Message_MsgFile is untranslated;
+    // rcad registers the guard so the load happens once (the resource
+    // registry itself is pending the TKMessage batch).
+    let _ = INIT.set(());
+}
+
+/// OCCT ShapeExtend::EncodeStatus (ShapeExtend.cxx L54-98): enumeration to
+/// a bit flag. OK encodes to 0x0000; DONE# to bit #; DONE to the whole low
+/// byte; FAIL# to bit # raised by one byte; FAIL to the whole high byte.
 pub fn encode_status(status: ShapeExtendStatus) -> i32 {
     match status {
         ShapeExtendStatus::Ok => 0x0000,
@@ -75,8 +114,8 @@ pub fn encode_status(status: ShapeExtendStatus) -> i32 {
     }
 }
 
-/// OCCT ShapeExtend::DecodeStatus (ShapeExtend.cxx L82-90): OK is true only
-/// when the flag is completely empty; any other status is a bit test.
+/// OCCT ShapeExtend::DecodeStatus (ShapeExtend.cxx L102-109): OK is true
+/// only when the flag is completely empty; any other status is a bit test.
 pub fn decode_status(flag: i32, status: ShapeExtendStatus) -> bool {
     if status == ShapeExtendStatus::Ok {
         return flag == 0;
