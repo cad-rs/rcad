@@ -464,3 +464,20 @@ libs/rcad-algo/src/
 - **回归（提交门槛实测，零新增）**：lib 407/0/4、kernel 671/0、stage 76/0、pavefiller 26/0；五网格 744/4、751/4、741/4、bcut 除 g6 201/0、splitter 16/2。探针全部清除。
 - **新立档项**：① q4/kfuse 族：perform_hbuilder_reconstruction 对布尔产物输入的重构丢失（下一个主攻点）；② q2/p9 多棱角点（filbuilder_c2 pivot）；③ q7 blend-on-blend 角球；④ x1/a2/p8/g9/q4 面积断言差。
 - **本轮提交链**：rcad `本提交`（GAP8 批 + fill 祖先序 + 分类域 + 环面锚点 + AppendElSpine 派发 + 本档）→ 根 sync。
+
+### E3-G. 新 session 入口（E3-F 收官时点，2026-09-09——唯一权威交接点）
+
+- **开场三步**：① 通读本档 §0 → §9 E3-D/E3-E/E3-F → AGENTS.md（严格 1:1 修复原则 = 用户点名，非 TKBool 模块全部逐行对齐、改动必带 OCCT 行号锚点、GAP 仅限外部未翻依赖、函数计数等式）；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 **407/0/4**（kernel 671/0、stage 76+smoke 1+pavefiller 26）；③ 从下方工作队列取项并行开工（翻译批派子代理、调试攻坚主代理自领，文件不相交 + 隔离 CARGO_TARGET_DIR）。
+- **提交链尾**：rcad 最新 = E3-F 提交（GAP8 EvolRad 39/39+Law 10/10+PerformFirstSection EvolRad 真身+AppendElSpine 派发+fill 祖先序+hatcher 分类域+环面 PlaneD0 投影锚点）← E3-E（PerformElSpine 批 49/49+ExtendCurveToPoint 真身+ChFiDS_Map inner_wires+kernel RemoveKnot Lower/BuildCosAndSin 索引）← `a43606e9`（E3-D 前沿1 KPart 切点锚点+hatch 窗口删除）；根仓库三次 sync 对齐。**工作树干净（探针已全清）**。
+- **blend 断言现状（E3-F 收官实测）**：simple = **a1/a3/q1 PASS**（14/22）；complex = **b5 PASS**（3/4）。失败面：q4（SD 全链健康但最终结果=输入未动，见队列1）、q2（三边定半径多棱，非 EvolRad 路径）、p9（filbuilder_c2.rs:977 "pivot curve"）、q7（结果=未混合 box，面积 150 vs 133.982）、a2/a4/p8/x1（面积断言差）、g9（2199.11 vs 2104.35，4.5%）。
+- **工作队列（按序，①② 可并行）**：
+  1. **q4/kfuse 前沿（主攻，主代理自领）**：第二次 blend（圆棱 KPart 环面）的 SD 全链健康（KParticular YES → compute OK → SplitKPart OK lsd=1 → perform_set_of_surf hdata=1 status Ok → filds done），但最终结果 = 输入未动（面积 197.1239 逐位不变；rcad 8 面 1Cyl vs ref 12 面 1Torus+2BS+2Cyl+7Plane）。**丢弃点已收敛到 `perform_hbuilder_reconstruction`（chfi3d_perform.rs L134）对 bfuse 产物输入形状的重构——同一代码路径对 make_box 输入的第一 blend 正常**。探针技巧（用后即清）：perform_set_of_k_part 的 HS1/HS2 面类型打印、split_k_part_hatched 的 hits 数、filds 前后 stripe 状态、step-topo-diff 面/曲面类型对比（q4 ref=blend_simple_Q4.step：Torus at (2.5,2.5,6) R2 r1 已实证）。
+  2. **q2/p9 多棱角点前沿（可派子代理）**：多棱 spine 的角点机制（PerformCorner/ filbuilder_c2 pivot）。q2=Q1 切割形三边 r=0.2（"multi-edge fillet" build 未 done）；p9=box 两半径 1/0.5（c2.rs:977 `hpivot.expect("pivot curve")` None）。入口：OCCT ChFi3d_FilBuilder_C2 / PerformCorner 链与 rcad chfi3d_filbuilder_c2.rs 形式对照。
+  3. **q7 blend-on-blend 前沿**：第二次 blend 的输入是 blend 产物；诊断技巧 = 在生成的 q7 测试里临时 `maybe_export_step(&s, "..._INTERM")` 导出中间体（第一次 blend 已返回纯 box——先修第一次 blend 在 5³ box r=2 的行为，或确认角点机制）。
+  4. **重估批**：x1（62827.4 vs 60963.9，3%）、a2/p8、g9（4.5%，ElSpine 近似精度链——注意 E3-E 的 ComputeLambda log-vs-linear 采样注记）。
+  5. **EvolRad 运行时验证**：AppendElSpine 派发已接（E3-F）；变半径端到端需 mkevol 族网格（4.1 生成器 KNOWN_UNTRANSLATABLE 含 mkevol——生成器扩展另批）。math_SVD GAP（EvolRad Section D1/D2 第二机会求解器）随 TKMath 批。
+  6. **thrusection/pipe 续测**（E3-C 队列4 沿用）：26 失败 = facade→my_work 填充链 null edge；**bre p_fill/ 文件开工前先核对归属**。
+  7. **TrimShellCorner D6 裁决**（队列5 沿用）。
+- **本轮新固化调试资产（复用）**：① 分类点探针法：hatch 零命中时打印 ClassificationPoint 与 UV 射线交点计数（spkp.rs classify_point_in_face）；② ref STEP 反读曲面放置定位锚点偏差（grep AXIS2_PLACEMENT_3D，q4 torus z=6 即此法实证，免去 OCCT 插桩）；③ 面类型探针（perform_set_of_k_part 打 HS1/HS2 Plane/Cyl）判定 plandab 分派。
+- **在役协议（沿用+强化）**：验证禁经管道；回归口径 = lib+kernel+stage+pavefiller+五网格；探针即用即清（本轮 chfi3d.rs/spkp.rs/kpart_fil.rs 三批已清）；并行代理文件不相交 + CARGO_TARGET_DIR 隔离（注意：共享树整 crate 编译，A 代理在编期间主代理测试会被阻塞——排程时错开）；`git add` 显式清单；生成的测试文件改探针后用 `cargo run -p occt-test-gen -- --batch-boolean --batch-grid blend_simple --merge-groups` 再生成清除；生成器 trotate/ttranslate 修复已在根库（E3-D），旋转类用例面积以修复后为准。
+- **资产位置**：blend 验证 = `cd tests/occt && RCAD_STEP_DIR=step_output CARGO_TARGET_DIR=target_xx cargo test -p occt-generated-tests --test generated_occt_boolean_blend_simple|--complex`（test 目录 target_q1 已热，首跑他 target 需重编）；拓扑对比 = `STEP_TOPOLOGY_DUMP=tools/step-topo-dump/build/Release/step_topology_dump.exe + PATH 加 OCCT bin` 后 `tools/step-topo-diff/target/release/step-topo-diff.exe tests/occt/step_output/occt_blend_simple_q4.step tests/occt/step_output/ref/blend_simple_Q4.step`；OCCT 源 = `C:/Users/lilu/works/OCCT/src/ModelingAlgorithms/TKFillet`。
