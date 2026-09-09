@@ -174,58 +174,65 @@ pub(crate) const OCCT_PI_4: f64 = std::f64::consts::PI / 4.0;
 // GAP carriers / leaves (architecture differences #42-#54).
 // ===========================================================================
 
-/// OCCT BRepOffset_Analyse::Perform(S, Tol) — GAP free-function form of the
-/// tool_d carrier extension (architecture difference #42).
-pub(crate) fn analyse_perform(_a: &mut BRepOffsetAnalyse, _s: &Shape, _tol: f64) {
-    panic!("GAP: BRepOffset_Analyse::Perform (BRepOffset_Analyse.cxx not translated)");
+/// OCCT BRepOffset_Analyse::Perform(S, Tol) — the R1 real body
+/// (brep_offset_analyse.rs perform, BRepOffset_Analyse.cxx L200-380); the
+/// free-function bridge keeps the MakeOffset call forms unchanged.
+pub(crate) fn analyse_perform(a: &mut BRepOffsetAnalyse, s: &Shape, tol: f64) {
+    a.perform(s, tol);
 }
 
 /// OCCT BRepOffset_Analyse::SetOffsetValue(Offset).
-pub(crate) fn analyse_set_offset_value(_a: &mut BRepOffsetAnalyse, _offset: f64) {
-    panic!("GAP: BRepOffset_Analyse::SetOffsetValue (BRepOffset_Analyse.cxx not translated)");
+pub(crate) fn analyse_set_offset_value(a: &mut BRepOffsetAnalyse, offset: f64) {
+    a.set_offset_value(offset);
 }
 
 /// OCCT BRepOffset_Analyse::SetFaceOffsetMap(Map).
-pub(crate) fn analyse_set_face_offset_map(_a: &mut BRepOffsetAnalyse, _m: &DataMapOfShapeReal) {
-    panic!("GAP: BRepOffset_Analyse::SetFaceOffsetMap (BRepOffset_Analyse.cxx not translated)");
+pub(crate) fn analyse_set_face_offset_map(a: &mut BRepOffsetAnalyse, m: &DataMapOfShapeReal) {
+    a.set_face_offset_map(m);
 }
 
-/// OCCT BRepOffset_Analyse::Edges(S, TC, L) — the tangent-edge collection.
+/// OCCT BRepOffset_Analyse::Edges(S, TC, L) — the tangent-edge collection;
+/// dispatches on the shape kind (vertex -> EdgesOnVertex, else ->
+/// EdgesOnFace), the E0 re-host split.
 pub(crate) fn analyse_edges(
-    _a: &BRepOffsetAnalyse,
-    _s: &Shape,
-    _tc: ChFiDS_TypeOfConcavity,
-    _l: &mut Vec<Shape>,
+    a: &BRepOffsetAnalyse,
+    s: &Shape,
+    tc: ChFiDS_TypeOfConcavity,
+    l: &mut Vec<Shape>,
 ) {
-    panic!("GAP: BRepOffset_Analyse::Edges (BRepOffset_Analyse.cxx not translated)");
+    if s.shape_type() == ShapeType::Vertex {
+        a.edges_on_vertex(s, tc, l);
+    } else {
+        a.edges_on_face(s, tc, l);
+    }
 }
 
 /// OCCT BRepOffset_Analyse::HasGenerated(S).
-pub(crate) fn analyse_has_generated(_a: &BRepOffsetAnalyse, _s: &Shape) -> bool {
-    panic!("GAP: BRepOffset_Analyse::HasGenerated (BRepOffset_Analyse.cxx not translated)");
+pub(crate) fn analyse_has_generated(a: &BRepOffsetAnalyse, s: &Shape) -> bool {
+    a.has_generated(s)
 }
 
 /// OCCT BRepOffset_Analyse::AddFaces(F, Co, Dummy, TC) — the no-RT form.
 pub(crate) fn analyse_add_faces(
-    _a: &BRepOffsetAnalyse,
-    _f: &Shape,
-    _co: &mut Shape,
-    _dummy: &mut OcctShapeSet,
-    _tc: ChFiDS_TypeOfConcavity,
+    a: &BRepOffsetAnalyse,
+    f: &Shape,
+    co: &mut Shape,
+    dummy: &mut OcctShapeSet,
+    tc: ChFiDS_TypeOfConcavity,
 ) {
-    panic!("GAP: BRepOffset_Analyse::AddFaces (BRepOffset_Analyse.cxx not translated)");
+    a.add_faces(f, co, dummy, tc);
 }
 
 /// OCCT BRepOffset_Analyse::AddFaces(F, Co, Dummy, TC, RT) — the RT form.
 pub(crate) fn analyse_add_faces_rt(
-    _a: &BRepOffsetAnalyse,
-    _f: &Shape,
-    _co: &mut Shape,
-    _dummy: &mut OcctShapeSet,
-    _tc: ChFiDS_TypeOfConcavity,
-    _rt: ChFiDS_TypeOfConcavity,
+    a: &BRepOffsetAnalyse,
+    f: &Shape,
+    co: &mut Shape,
+    dummy: &mut OcctShapeSet,
+    tc: ChFiDS_TypeOfConcavity,
+    rt: ChFiDS_TypeOfConcavity,
 ) {
-    panic!("GAP: BRepOffset_Analyse::AddFaces (BRepOffset_Analyse.cxx not translated)");
+    a.add_faces_2_types(f, co, dummy, tc, rt);
 }
 
 /// OCCT BRepOffset_MakeLoops (TKOffset/BRepOffset/BRepOffset_MakeLoops.hxx /
