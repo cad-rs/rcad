@@ -7,6 +7,16 @@
 //! - `ShapeAnalysis_Face`: face analysis (boundary validity, param domain, surface-wire consistency)
 //!
 //! All functions are non-destructive analysis tools that return structured reports.
+//!
+//! The OCCT ShapeAnalysis class translations (Path B):
+//! - [`edge::ShapeAnalysisEdge`]: OCCT ShapeAnalysis_Edge (W1-1)
+//! - [`wire_order::ShapeAnalysisWireOrder`]: OCCT ShapeAnalysis_WireOrder (W1-1)
+
+pub mod edge;
+pub mod wire_order;
+
+pub use edge::ShapeAnalysisEdge;
+pub use wire_order::ShapeAnalysisWireOrder;
 
 use crate::algo_ext::tolerance::*;
 use glam::DVec3;
@@ -1087,34 +1097,8 @@ pub struct FaceAnalysisReport {
     pub all_wires_closed: bool,
     /// Whether the face orientation matches the surface normal.
     pub orientation_matches_surface: bool,
-    /// Surface-wire consistency issues.
-    pub surface_wire_issues: Vec<SurfaceWireIssue>,
     /// Parameter domain of the face.
     pub param_domain: Option<(f64, f64, f64, f64)>,
-}
-
-/// An issue with surface-wire consistency.
-#[derive(Debug, Clone)]
-pub struct SurfaceWireIssue {
-    /// Kind of issue.
-    pub kind: SurfaceWireIssueKind,
-    /// Description of the issue.
-    pub description: String,
-    /// Edge index where the issue occurs (if applicable).
-    pub edge_idx: Option<usize>,
-}
-
-/// Classification of surface-wire consistency issues.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SurfaceWireIssueKind {
-    /// Edge is not on the surface.
-    EdgeNotOnSurface,
-    /// PCurve is degenerate.
-    DegeneratePCurve,
-    /// Wire is outside surface domain.
-    WireOutsideDomain,
-    /// Normal direction mismatch.
-    NormalMismatch,
 }
 
 /// Analyze a face for validity and characteristics.
@@ -1130,7 +1114,6 @@ pub fn analyze_face(
         wire_reports: Vec::new(),
         all_wires_closed: true,
         orientation_matches_surface: true,
-        surface_wire_issues: Vec::new(),
         param_domain: None,
     };
 
@@ -1158,133 +1141,11 @@ pub fn analyze_face(
         }
     }
 
-    // Check surface-wire consistency
-    report.surface_wire_issues =
-        check_surface_wire_consistency(brep, solid_idx, shell_idx, face_idx);
-
     // Check orientation
     report.orientation_matches_surface =
         check_face_orientation(brep, solid_idx, shell_idx, face_idx);
 
     report
-}
-
-/// Check consistency between surface and wire geometry.
-fn check_surface_wire_consistency(
-    brep: &rcad_kernel::BRep,
-    solid_idx: usize,
-    shell_idx: usize,
-    face_idx: usize,
-) -> Vec<SurfaceWireIssue> {
-    let mut issues = Vec::new();
-
-    let fd = match ns_face_data(brep, solid_idx, shell_idx, face_idx) {
-        Some(fd) => fd,
-        None => return issues,
-    };
-
-    let surface = match fd.surface {
-        Some(ref s) => s,
-        None => return issues,
-    };
-    let face_index = fd.outer_wire.index;
-
-    // Check each edge in the outer wire
-    let wd = match ns_wire_data(brep, solid_idx, shell_idx, face_idx, None) {
-        Some(wd) => wd,
-        None => return issues,
-    };
-    for er in &wd.edges {
-        let edge_idx = er.index;
-        // Check if edge has a PCurve on this face
-        let has_pcurve = e_edge_data(brep, edge_idx)
-            .map(|ed| ed.pcurves.contains_key(&brep.pcurve_key(face_index)))
-            .unwrap_or(false);
-
-        if !has_pcurve {
-            let is_degenerate = e_edge_data(brep, edge_idx)
-                .map(|ed| ed.degenerated)
-                .unwrap_or(false);
-            if !is_degenerate {
-                if let Some(ref curve) =
-                    e_edge_data(brep, edge_idx).and_then(|ed| ed.curve.as_ref())
-                {
-                    let range = e_edge_data(brep, edge_idx)
-                        .map(|ed| ed.range)
-                        .unwrap_or_else(|| {
-                            let d = curve.default_domain();
-                            [d[0], d[1]]
-                        });
-
-                    let n_samples = 5;
-                    let dt = (range[1] - range[0]) / n_samples as f64;
-                    let mut max_deviation: f64 = 0.0;
-
-                    for i in 0..=n_samples {
-                        let t = range[0] + dt * i as f64;
-                        let p = curve.point_at(t);
-                        if let Some(proj) = project_point_to_surface_simple(surface, p) {
-                            let deviation = (p - proj).length();
-                            max_deviation = max_deviation.max(deviation);
-                        }
-                    }
-
-                    if max_deviation > TOLERANCE_MESH_LEGACY {
-                        issues.push(SurfaceWireIssue {
-                            kind: SurfaceWireIssueKind::EdgeNotOnSurface,
-                            description: format!(
-                                "Edge {} does not lie on surface (max deviation: {})",
-                                edge_idx, max_deviation
-                            ),
-                            edge_idx: Some(edge_idx),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    issues
-}
-
-/// Simple point-to-surface projection for checking edge-on-surface.
-fn project_point_to_surface_simple(surface: &Surface3, point: DVec3) -> Option<DVec3> {
-    // Use the domain center as initial guess for iterative projection
-    let domain = surface.default_domain();
-    let u_center = (domain[0] + domain[1]) / 2.0;
-    let v_center = (domain[2] + domain[3]) / 2.0;
-
-    // For analytical surfaces, use direct projection
-    match surface {
-        Surface3::Plane(p) => {
-            let d = (point - p.origin).dot(p.normal);
-            Some(point - p.normal * d)
-        }
-        Surface3::Sphere(s) => {
-            let v = point - s.center;
-            let len = v.length();
-            if len < TOLERANCE_FLOAT_LOOSE {
-                None
-            } else {
-                Some(s.center + v / len * s.radius)
-            }
-        }
-        Surface3::Cylinder(c) => {
-            let v = point - c.origin;
-            let along = v.dot(c.axis);
-            let radial = v - c.axis * along;
-            let radial_len = radial.length();
-            if radial_len < TOLERANCE_FLOAT_LOOSE {
-                None
-            } else {
-                Some(c.origin + c.axis * along + radial / radial_len * c.radius)
-            }
-        }
-        _ => {
-            // For other surfaces, return the center point as a placeholder
-            Some(surface.point_at(u_center, v_center))
-        }
-    }
 }
 
 /// Check if face orientation matches surface normal direction.
@@ -1393,15 +1254,6 @@ pub fn analyze_brep(brep: &rcad_kernel::BRep) -> BRepAnalysisReport {
                         if !face_report.all_wires_closed {
                             issues
                                 .push(format!("Face ({}, {}, {}) has unclosed wires", si, shi, fi));
-                        }
-                        if !face_report.surface_wire_issues.is_empty() {
-                            issues.push(format!(
-                                "Face ({}, {}, {}) has {} surface-wire issues",
-                                si,
-                                shi,
-                                fi,
-                                face_report.surface_wire_issues.len()
-                            ));
                         }
                         report.faces.push((si, shi, fi, face_report));
                     }
