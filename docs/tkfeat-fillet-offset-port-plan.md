@@ -546,7 +546,16 @@ libs/rcad-algo/src/
 - **根 sync**：`6c1f30f` → `755feb5` → `8ae133d`（W1 收官）。
 - **下一 session 入口**：① HBuilder 面片池身份缺陷攻坚（build_faces 链 + blend-2/q4/SameParameter 三线同源，主代理自领）；② offset 门面接线批（unifysamedom 命令 → W1-6 真身 + 生成器 available 翻旗，M1 oracle 才可实测）；③ W2 ShapeAnalysis 主体（Root/Curve/Surface/Wire 序）+ docket 前置批（BRepLib_ValidateEdge / FindSurface）；④ W3 ShapeFix 主体（收 W1-6/W1-1 的 ShapeFix 族 GAP 载体）。
 
-### E3-K. 新 session 入口（E3-J 收官时点，2026-09-09——唯一权威交接点）
+### E3-L. 新 session 入口（E3-K 池身份收敛收官时点，2026-09-10——唯一权威交接点）
+
+- **开场三步**：① 通读本档 §0 → §9 E3-I/J/K/L → AGENTS.md → ShHealing 两份；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 **411/0/0**（kernel **672/0**、stage 76+smoke 1+pavefiller 26、blend_simple **14 过/8 败** = a1/a3/q1 真实 PASS、五网格 splitter 16/2 bopfuse 744/4 bopcommon 751/4 boptuc 741/4 bcut 除 g6 201/0）；③ 从下方工作队列取项并行开工。
+- **提交链尾**：rcad 最新 `d7c02290`（Stage 4.3-HP unifysamedom 门面接线批：BRepTools_History Clear/Merge 1:1 + ReShape History 1:1 + UnifySameDomain fill_history 载体拆除 + result_brep 桥）← `67134772`（**Stage 4.3 池身份收敛**：Perform/MergeSingle 单池化进调用方 my_brep、删 my_build_brep/my_merge_brep、split_ds_edges 记真实拆分片 + edge_mut_inplace 修 COW 陈旧、same_parameter_pass 重接 W1-6 真身、kernel BRep::import_shape_tree + 锚点测试）；根最新 `006ac62`（生成器 unify 真门面发射 + ref JSON 锚定 + proc 截断 + offset 状态机）← `fad3803`。
+- **⚠️ 池身份缺陷已关闭**：`edge_mut: Shape N is not an Edge`（E3-J 记档）随单池收敛消灭，SameParameter 回填已在 compute 尾真实运行。**q4/blend-2 终局前沿重新定性**：缺口不在池机制，而在 OCCT `SplitFace1`（Builder.cxx L1171-1289）支撑面重建缺失——FillFace（拆分边换片+朝向复合）+ AddIntersectionEdges（面上接触曲线新边=与补丁共享 TShape 的缝合机制）+ FaceBuilder 线环重组。首次翻译尝试（loop 按边数排序分类 + pcurve 转移简化）使 a3/q1 回退已回退；再登陆必须带 FillFace/FaceBuilder 完整 1:1。**教训（探针实证）**：一个线环边朝向 R↔F 翻转 = 面积积分差整整一个自然域贡献（±4.0），朝向复合语义是 SplitFace1 的核心难点。
+- **M1 实测结论（代理 A 交付）**：docket "offset 395/394 自包含"不可复现——文件级扫描 773/803 带外部数据；**M1 真实可测集 = 3**（shape_type_i_c V3/V5/V9），且 40/40 生成 offset/heal unify 用例全部失败于**预存 offset 引擎 GAP 桩**（BRepTools_Quilt::Add @ brep_offset_make_offset.rs:287、GeomLib_IsPlanarSurface @ :445），0 门面接线错误。**M1 转绿的前置 = offset 引擎 GAP 批**（Quilt + IsPlanarSurface，新立档）。
+- **工作队列（按序）**：① SplitFace1 完整 1:1 翻译批（q4/blend-2 终局，带 FillFace/AddIntersectionEdges/FaceBuilder + 朝向复合语义，函数计数等式）；② offset 引擎 GAP 批（BRepTools_Quilt::Add + GeomLib_IsPlanarSurface 真身，解 M1 的 40 例）；③ 等 W2 代理（Root/Curve/Surface/Wire 批 + ValidateEdge/FindSurface 前置，后台运行中）交付验收提交；④ blend 重估批（p9/q2/q7 + x1/g9 面积）+ blend_complex 复测；⑤ W3 ShapeFix 主体。
+- **在役协议**：验证禁经管道；回归口径 lib+kernel+stage+pavefiller+五网格；探针即用即清（本轮 PROBE-ASM/SA-FACE 已全清）；并行代理文件不相交 + CARGO_TARGET_DIR 隔离（target_e3l_a 22G 待清，target_main/target_e3l_b/e3l_main 在役）；`git add` 显式清单；共享树并行期每 Edit 后整树 check（B 代理 E0603 实证）。
+
+### E3-K. 新 session 入口（E3-J 收官时点，2026-09-09——已由 E3-L 取代，存档）
 
 - **开场三步**：① 通读本档 §0 → §9 E3-I/E3-J/E3-K → AGENTS.md → `docs/TKSHHEALING_PATH_B_PLAN.md` + `docs/TKSHHEALING_PATH_B_DOCKET.md`（ShHealing 侧两份）；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 **411/0/0**（kernel 671/0、stage 76+smoke 1+pavefiller 26、blend 14/22+3/4、五网格 splitter 16/2 bopfuse 744/4 bopcommon 751/4 boptuc 741/4 bcut 除 g6 201/0）；③ 从下方工作队列取项并行开工。
 - **提交链尾**：rcad 最新 `6f9705e1`（E3-J+E3-K docs）← `a06157a1`（SameParameter 回填实验记档）← `e8e9cc9c`（W1-6）← `6708cdf5`（W1-5）← `cee60772`（W1-2）← `58de7ac1`（W1-4）← `1e7bcf78`（W1-1）← `dad1072e`（W1-3）← `3af88bf8`（W0 module-map）← `a1c0c926`/`7e67adfc`（E3-I）← `9e584914`（E3-G docs）；根最新 `fad3803`。**工作树干净（探针零残留）**。
