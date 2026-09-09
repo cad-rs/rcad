@@ -296,7 +296,7 @@ impl ShapeBuildReShape {
     /// to be replaced. With `last`, the final replacement is searched
     /// recursively via Apply.
     pub fn status(&mut self, brep: &mut BRep, ashape: &Shape, last: bool) -> (i32, Shape) {
-        let mut res = 0;
+        let mut res: i32;
         if shape_is_null(ashape) {
             return (0, Shape::null());
         }
@@ -314,7 +314,10 @@ impl ShapeBuildReShape {
                 res = 0;
             }
             Some(replacement) => {
-                newsh = replacement.my_result.clone();
+                // OCCT L346: newsh = myShapeToReplacement(shape).Result() — a
+                // MergeOrdinary record carries no result (the product is only
+                // reachable from the main part), so Status sees a removal.
+                newsh = replacement.result();
                 res = 1;
             }
         }
@@ -440,8 +443,11 @@ impl ShapeBuildReShape {
             return newsh; // Critere d arret.
         }
 
+        // OCCT L58: int modif = 0 — declared once before the container
+        // branches (each branch returns, so the branches never share state).
+        let mut modif: i32 = 0;
+
         if st == ShapeType::Compound || st == ShapeType::CompSolid {
-            let mut modif = 0;
             let c = brep.add_tcompound(Vec::new());
             for sh in iter_subshapes(brep, shape, true, true) {
                 let (stat, newsh) = self.status(brep, &sh, false);
@@ -459,7 +465,6 @@ impl ShapeBuildReShape {
         }
 
         if st == ShapeType::Solid {
-            let mut modif = 0;
             let c = brep.add_tcompound(Vec::new());
             let s = brep.add_tsolid(Vec::new());
             for sh in iter_subshapes(brep, shape, true, true) {
@@ -492,7 +497,6 @@ impl ShapeBuildReShape {
         }
 
         if st == ShapeType::Shell {
-            let mut modif = 0;
             let c = brep.add_tcompound(Vec::new());
             let s = brep.add_tshell(Vec::new());
             for sh in iter_subshapes(brep, shape, true, true) {
