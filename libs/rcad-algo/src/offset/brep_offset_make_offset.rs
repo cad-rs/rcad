@@ -62,7 +62,8 @@
 // 43. BRepOffset_MakeLoops (TKOffset/BRepOffset) — GAP carrier (the local
 //     BRepOffsetMakeLoops below; the Build / BuildOnContext / BuildFaces
 //     leaves panic until the unit lands).
-// 44. BRepTools_Quilt (TKTopAlgo/BRepTools) — GAP carrier (Glue form).
+// 44. BRepTools_Quilt (TKBRep/BRepTools) — the real body lives in
+//     crate::topalgo::brep_tools_quilt (the Glue form, re-exported below).
 // 45. BRepBuilderAPI_Sewing — the BRepBuilderAPISewing GAP carrier of
 //     bi_tgte_blended.rs (arch. diff. #24).
 // 46. BRepLib::{BuildCurves3d, SameParameter, UpdateTolerances, SortFaces,
@@ -81,7 +82,7 @@
 //     volume re-host of the kernel base::gprop is keyed by the BRep pool,
 //     not by a TopoDS_Shape, so the carrier keeps the OCCT zero-mass failure
 //     path until the TopoDS form lands).
-// 52. BRepLib_FindSurface / GeomLib_IsPlanarSurface / GeomFill_Generator /
+// 52. BRepLib_FindSurface / GeomFill_Generator /
 //     IntTools_FClass2d / BOPAlgo_MakerVolume / BOPTools_AlgoTools::
 //     MakeSplitEdge (the TopoDS form; the rcad bop::tools carrier is the
 //     BOPDS-index form) / GeomAPI_ProjectPointOnCurve (the (P, C) form) /
@@ -90,6 +91,9 @@
 //     / GeomFill_Generator / Adaptor3d_CurveOnSurface +
 //     Geom2dAdaptor_Curve + GeomAdaptor_Surface — GAP carriers/leaves; each
 //     keeps the OCCT call form and the failure path at its call site.
+//     (GeomLib_IsPlanarSurface left this list: the real body of
+//     crate::geomalgo::geom_lib_is_planar_surface is re-exported below; its
+//     remaining iso-curve GAP leaves live in that unit.)
 // 53. gp_Vec / gp_Pnt / gp_Dir arithmetic -> DVec3; gp_Circ / gp_Cone /
 //     gp_Pln / gp_Sphere / gp_Ax1..3 -> the rcad_kernel::geom carriers
 //     (Circle3 / ConicalSurface / Plane / SphericalSurface; the Ax3
@@ -271,27 +275,11 @@ impl BRepOffsetMakeLoops {
     }
 }
 
-/// OCCT BRepTools_Quilt (TKTopAlgo/BRepTools/BRepTools_Quilt.hxx / .cxx) —
-/// GAP carrier (architecture difference #44): the Glue form used by
-/// IsConnectedShell / MakeThickSolid / MakeShells.
-pub(crate) struct BRepToolsQuilt;
-
-impl BRepToolsQuilt {
-    /// OCCT BRepTools_Quilt::BRepTools_Quilt().
-    pub fn new() -> Self {
-        BRepToolsQuilt
-    }
-
-    /// OCCT BRepTools_Quilt::Add(S).
-    pub fn add(&mut self, _s: &Shape) {
-        panic!("GAP: BRepTools_Quilt::Add (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_Quilt::Shells().
-    pub fn shells(&self) -> Shape {
-        panic!("GAP: BRepTools_Quilt::Shells (TKTopAlgo/BRepTools not translated)");
-    }
-}
+/// OCCT BRepTools_Quilt (TKBRep/BRepTools/BRepTools_Quilt.hxx / .cxx) — the
+/// real body lives in crate::topalgo::brep_tools_quilt (architecture
+/// difference #44); the Glue form used by IsConnectedShell / MakeThickSolid
+/// / MakeShells keeps the OCCT import path through the re-export.
+pub(crate) use crate::topalgo::brep_tools_quilt::BRepToolsQuilt;
 
 /// OCCT BRepLib::SortFaces(S, LF) — GAP static leaf (architecture
 /// difference #46): fills LF with the faces of S ordered by decreasing
@@ -430,26 +418,12 @@ impl BRepLibFindSurface {
     }
 }
 
-/// OCCT GeomLib_IsPlanarSurface (TKTopAlgo/GeomLib) — GAP carrier
-/// (architecture difference #52): the planarity probe of IsPlanar.
-pub(crate) struct GeomLibIsPlanarSurface;
-
-impl GeomLibIsPlanarSurface {
-    /// OCCT GeomLib_IsPlanarSurface(S, Tol).
-    pub fn new(_s: &Surface3, _tol: f64) -> Self {
-        GeomLibIsPlanarSurface
-    }
-
-    /// OCCT GeomLib_IsPlanarSurface::IsPlanar().
-    pub fn is_planar(&self) -> bool {
-        panic!("GAP: GeomLib_IsPlanarSurface::IsPlanar (TKTopAlgo/GeomLib not translated)");
-    }
-
-    /// OCCT GeomLib_IsPlanarSurface::Plan().
-    pub fn plan(&self) -> rcad_kernel::geom::Plane {
-        panic!("GAP: GeomLib_IsPlanarSurface::Plan (TKTopAlgo/GeomLib not translated)");
-    }
-}
+/// OCCT GeomLib_IsPlanarSurface (TKGeomBase/GeomLib/GeomLib_IsPlanarSurface.hxx
+/// / .cxx) — the real body lives in
+/// crate::geomalgo::geom_lib_is_planar_surface (architecture difference
+/// #52); the IsPlanar consumption keeps the OCCT import path through the
+/// re-export.
+pub(crate) use crate::geomalgo::geom_lib_is_planar_surface::GeomLibIsPlanarSurface;
 
 /// OCCT GeomFill_Generator (TKGeomAlgo/GeomFill) — GAP carrier
 /// (architecture difference #52): the two-section ruled-surface generator
@@ -1001,7 +975,7 @@ pub(crate) fn remove_corks(s: &mut Shape, faces: &mut OcctIndexedShapeMap) {
 
 /// OCCT IsConnectedShell (cxx L742-753).
 pub(crate) fn is_connected_shell(s: &Shape) -> bool {
-    let mut glue = BRepToolsQuilt;
+    let mut glue = BRepToolsQuilt::new();
     glue.add(s);
 
     let ss = glue.shells();
