@@ -17,6 +17,11 @@ use crate::geom::{
 
 // OCCT ProjLib package additions (TKGeomBase/ProjLib).
 pub mod adaptor; // Adaptor2d_Curve2d / Adaptor3d_Curve / Adaptor3d_Surface encodings
+pub mod brep_adaptor; // OCCT BRepAdaptor_Surface / BRepAdaptor_Curve (TKBRep/BRepAdaptor) + BRepTools::UVBounds
+pub mod geom_adaptor_curve; // OCCT GeomAdaptor_Curve (TKG3d/GeomAdaptor)
+pub mod geom_adaptor_surface; // OCCT GeomAdaptor_Surface (TKG3d/GeomAdaptor)
+pub mod geom_adaptor_transformed_curve; // OCCT GeomAdaptor_TransformedCurve (TKG3d/GeomAdaptor)
+pub mod geom_adaptor_transformed_surface; // OCCT GeomAdaptor_TransformedSurface (TKG3d/GeomAdaptor)
 pub mod project; // ProjLib::Project overloads + MakePCurveOfType + IsAnaSurf
 pub mod proj_lib_projected_curve; // ProjLib_ProjectedCurve + the analytic ProjLib_* members
 pub mod proj_lib_projected_curve_b; // ProjLib_ProjectedCurve class + Perform
@@ -26,6 +31,14 @@ pub use adaptor::{
     Adaptor2dCurve2d, Adaptor3dCurve, Adaptor3dSurface, CurveOnSurface, Geom2dCurveAdaptor,
     GeomAbsSurfaceType,
 };
+pub use brep_adaptor::{
+    brep_tools_add_uv_bounds, brep_tools_uv_bounds, location_transformation, BRepAdaptorCurve,
+    BRepAdaptorSurface,
+};
+pub use geom_adaptor_curve::{Adaptor3dCurveGeom, GeomCurveAdaptor};
+pub use geom_adaptor_surface::{Adaptor3dSurfaceGeom, GeomSurfaceAdaptor};
+pub use geom_adaptor_transformed_curve::TransformedCurveAdaptor;
+pub use geom_adaptor_transformed_surface::TransformedSurfaceAdaptor;
 pub use project::{
     is_ana_surf, make_pcurve_of_type, project_cone_circ, project_cone_lin, project_cone_pnt,
     project_cylinder_circ, project_cylinder_lin, project_cylinder_pnt, project_pln_circ,

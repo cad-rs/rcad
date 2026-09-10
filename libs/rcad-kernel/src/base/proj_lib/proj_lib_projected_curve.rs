@@ -1,7 +1,6 @@
 //! ProjLib_ProjectedCurve support translation (TKGeomBase/ProjLib) — part A:
-//! the consumed GeomAdaptor encodings, the analytic ProjLib_Plane /
-//! Cylinder / Cone / Sphere / Torus members and the ProjLib_ProjectedCurve.cxx
-//! static helpers.
+//! the analytic ProjLib_Plane / Cylinder / Cone / Sphere / Torus members and
+//! the ProjLib_ProjectedCurve.cxx static helpers.
 //!
 //! Sources (OCCT 8.0):
 //!   - ProjLib_ProjectedCurve.cxx L52-159 (static helpers) + L242-270 (the
@@ -10,9 +9,12 @@
 //!     ProjLib_Cone.cxx L32-180, ProjLib_Sphere.cxx L36-246,
 //!     ProjLib_Torus.cxx L30-193, ProjLib_Projector.cxx L124-148 (the base
 //!     Project bodies) + L166-251 (UFrame / VFrame)
-//!   - GeomAdaptor_Curve / GeomAdaptor_Surface (TKG3d) — the constructor
-//!     forms consumed by ChFiKPart_ComputeData_Fcts.cxx L83-135 and
-//!     ChFiKPart_ComputeData_Sphere.cxx L162-164
+//!
+//! The consumed GeomAdaptor encodings (`GeomCurveAdaptor` /
+//! `GeomSurfaceAdaptor` and their geometry-accessor traits) are the canonical
+//! 1:1 translations of OCCT GeomAdaptor_Curve / GeomAdaptor_Surface that live
+//! in the `geom_adaptor_curve` / `geom_adaptor_surface` modules; they stay
+//! importable from this module path (the original consumer home).
 //!
 //! Architecture differences (rcad encodings):
 //!   - OCCT ProjLib_* members derive from ProjLib_Projector and hold the
@@ -28,27 +30,16 @@
 //!     `ConicalSurface::apex` is the gp_Cone Location() reference point
 //!     (radius == RefRadius there); the OCCT Apex() is
 //!     [`ConicalSurface::apex_point`].
-//!   - OCCT GeomAdaptor_Surface(theSurf) loads the surface NATURAL bounds
-//!     (GeomAdaptor_Surface.hxx Load: theSurf->Bounds(...)); the restricted
-//!     window form Load(S, U1, U2, V1, V2) sets the adaptor domain directly.
-//!
-//! GAP carriers (outside-scope deps, each keeps the OCCT failure path):
-//!   - `Adaptor3dSurfaceGeom::axe_of_revolution` (Adaptor3d_Surface::
-//!     AxeOfRevolution) — the surface-of-revolution branch of
-//!     ProjLib_ProjectedCurve::Perform is deferred with the
-//!     ProjLib_HCompProjectedCurve + Approx_CurveOnSurface payload; see the
-//!     `proj_lib_projected_curve_b` module header.
 
 use glam::{DVec2, DVec3};
 
-use super::adaptor::{Adaptor3dCurve, Adaptor3dSurface, GeomAbsSurfaceType};
+use super::adaptor::Adaptor3dSurface;
 use super::{CurveType, Projector};
 use crate::core::precision;
 use crate::geom::{
-    Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse3, Hyperbola3, Line3,
-    Parabola3, Plane, SphericalSurface, Surface3, ToroidalSurface,
+    Circle3, ConicalSurface, Curve2d, CylindricalSurface, Ellipse3, Hyperbola3, Line3, Parabola3,
+    Plane, SphericalSurface, ToroidalSurface,
 };
-use crate::math::GeomAbsShape;
 
 pub(crate) const TWO_PI: f64 = std::f64::consts::TAU;
 
@@ -132,492 +123,18 @@ fn mirror_lin2d_about_axis(line: Line3, axis_loc: DVec2, axis_dir: DVec2) -> Lin
 }
 
 // =========================================================================
-// OCCT GeomAdaptor_Curve (TKG3d) — the consumed constructor subset
+// OCCT GeomAdaptor_Curve / GeomAdaptor_Surface (TKG3d) — the canonical 1:1
+// translations live in the `geom_adaptor_curve` / `geom_adaptor_surface`
+// modules; the consumed names stay importable from this module path (the
+// original consumer home).
 // =========================================================================
 
-/// OCCT GeomAdaptor_Curve — the Adaptor3d_Curve instance over a Geom_Curve.
-///
-/// Both consumed constructor forms are provided: `GeomAdaptor_Curve(C)` and
-/// the restricted `GeomAdaptor_Curve(C, First, Last)` (the form used by
-/// ChFiKPart_ComputeData_Sphere.cxx L163: `GeomAdaptor_Curve AC(C, 0., ang)`).
-#[derive(Clone, Debug)]
-pub struct GeomCurveAdaptor {
-    /// OCCT: handle(Geom_Curve) myCurve.
-    pub curve: Curve3,
-    /// OCCT: Standard_Real myFirst.
-    pub first: f64,
-    /// OCCT: Standard_Real myLast.
-    pub last: f64,
-}
-
-impl GeomCurveAdaptor {
-    /// OCCT GeomAdaptor_Curve(const handle(Geom_Curve)& C) — the natural
-    /// domain of the curve.
-    pub fn new(curve: Curve3) -> Self {
-        use crate::geom::CurveEval;
-        let [first, last] = CurveEval::default_domain(&curve);
-        GeomCurveAdaptor { curve, first, last }
-    }
-
-    /// OCCT GeomAdaptor_Curve(const handle(Geom_Curve)& C, First, Last).
-    pub fn with_range(curve: Curve3, first: f64, last: f64) -> Self {
-        GeomCurveAdaptor { curve, first, last }
-    }
-
-    /// OCCT Load(C, First, Last) — re-restrict the domain.
-    pub fn load_with_range(&mut self, curve: Curve3, first: f64, last: f64) {
-        self.curve = curve;
-        self.first = first;
-        self.last = last;
-    }
-}
-
-impl Adaptor3dCurve for GeomCurveAdaptor {
-    /// OCCT FirstParameter() — the restricted first parameter.
-    fn first_parameter(&self) -> f64 {
-        self.first
-    }
-
-    /// OCCT LastParameter() — the restricted last parameter.
-    fn last_parameter(&self) -> f64 {
-        self.last
-    }
-
-    /// OCCT Value(U) — the underlying curve evaluation.
-    fn value(&self, u: f64) -> DVec3 {
-        use crate::geom::CurveEval;
-        self.curve.point_at(u)
-    }
-
-    /// OCCT D1(U, P, V).
-    fn d1(&self, u: f64) -> (DVec3, DVec3) {
-        use crate::geom::CurveEval;
-        (self.curve.point_at(u), self.curve.derivative_at(u))
-    }
-
-    /// OCCT D2(U, P, V1, V2).
-    fn d2(&self, u: f64) -> (DVec3, DVec3, DVec3) {
-        use crate::geom::CurveEval;
-        (
-            self.curve.point_at(u),
-            self.curve.derivative_at(u),
-            self.curve.derivative2_at(u),
-        )
-    }
-
-    /// OCCT Continuity() — CN for the elementary kinds (the codebase-wide
-    /// encoding of non-composite rcad curves).
-    fn continuity(&self) -> GeomAbsShape {
-        GeomAbsShape::CN
-    }
-
-    /// OCCT NbIntervals(S) — a single interval for the elementary curves.
-    fn nb_intervals(&self, _s: GeomAbsShape) -> usize {
-        1
-    }
-
-    /// OCCT Intervals(T, S) — the whole restricted domain.
-    fn intervals(&self, _s: GeomAbsShape) -> Vec<f64> {
-        vec![self.first, self.last]
-    }
-
-    /// OCCT Trim(First, Last, Tol) — restrict the domain of the same curve.
-    fn trim(&self, first: f64, last: f64, _tol: f64) -> std::sync::Arc<dyn Adaptor3dCurve> {
-        std::sync::Arc::new(GeomCurveAdaptor::with_range(
-            self.curve.clone(),
-            first,
-            last,
-        ))
-    }
-}
-
-/// The OCCT Adaptor3d_Curve geometry accessors (Line()/Circle()/Ellipse()/
-/// Parabola()/Hyperbola()) — the downcasts dispatched by
-/// [`project_dispatch`] after GetType().
-pub trait Adaptor3dCurveGeom: Adaptor3dCurve {
-    /// OCCT Adaptor3d_Curve::GetType() — the curve kind (consumed by the
-    /// Project dispatch of ProjLib_ProjectedCurve.cxx L242-270).
-    fn get_type(&self) -> CurveType;
-    /// OCCT Line() — valid when GetType() == GeomAbs_Line.
-    fn line(&self) -> Line3;
-    /// OCCT Circle() — valid when GetType() == GeomAbs_Circle.
-    fn circle(&self) -> Circle3;
-    /// OCCT Ellipse() — valid when GetType() == GeomAbs_Ellipse.
-    fn ellipse(&self) -> Ellipse3;
-    /// OCCT Parabola() — valid when GetType() == GeomAbs_Parabola.
-    fn parabola(&self) -> Parabola3;
-    /// OCCT Hyperbola() — valid when GetType() == GeomAbs_Hyperbola.
-    fn hyperbola(&self) -> Hyperbola3;
-    /// OCCT Adaptor3d_Curve::Trim(First, Last, Tol) — the trimmed handle,
-    /// rebinding through the geometry-accessor interface (the rcad encoding
-    /// of the handle rebinding in TrimC3d).
-    fn trim_geom(&self, first: f64, last: f64, tol: f64) -> std::sync::Arc<dyn Adaptor3dCurveGeom>;
-}
-
-macro_rules! geom_curve_payload {
-    ($get:ident, $variant:ident, $payload:ty) => {
-        fn $get(&self) -> $payload {
-            match &self.curve {
-                Curve3::$variant(g) => *g,
-                _ => panic!("GeomAdaptor_Curve: curve kind mismatch"),
-            }
-        }
-    };
-}
-
-impl Adaptor3dCurveGeom for GeomCurveAdaptor {
-    /// OCCT Adaptor3d_Curve::GetType() — the elementary kinds map 1:1; the
-    /// composite kinds report OtherCurve for the dispatch fall-through.
-    fn get_type(&self) -> CurveType {
-        match &self.curve {
-            Curve3::Line(_) => CurveType::Line,
-            Curve3::Circle(_) => CurveType::Circle,
-            Curve3::Ellipse(_) => CurveType::Ellipse,
-            Curve3::Parabola(_) => CurveType::Parabola,
-            Curve3::Hyperbola(_) => CurveType::Hyperbola,
-            Curve3::BSpline(_) => CurveType::BSpline,
-            Curve3::Bezier(_) => CurveType::Bezier,
-            _ => CurveType::Other,
-        }
-    }
-
-    geom_curve_payload!(line, Line, Line3);
-    geom_curve_payload!(circle, Circle, Circle3);
-    geom_curve_payload!(ellipse, Ellipse, Ellipse3);
-    geom_curve_payload!(parabola, Parabola, Parabola3);
-    geom_curve_payload!(hyperbola, Hyperbola, Hyperbola3);
-
-    /// OCCT Adaptor3d_Curve::Trim — restrict the domain of the same curve.
-    fn trim_geom(&self, first: f64, last: f64, _tol: f64) -> std::sync::Arc<dyn Adaptor3dCurveGeom> {
-        std::sync::Arc::new(GeomCurveAdaptor::with_range(
-            self.curve.clone(),
-            first,
-            last,
-        ))
-    }
-}
+pub use super::geom_adaptor_curve::{Adaptor3dCurveGeom, GeomCurveAdaptor};
+pub use super::geom_adaptor_surface::{Adaptor3dSurfaceGeom, GeomSurfaceAdaptor};
 
 // =========================================================================
-// OCCT GeomAdaptor_Surface (TKG3d) — the consumed constructor subset
+// OCCT GeomAdaptor_Surface — canonical 1:1 lives in `geom_adaptor_surface`.
 // =========================================================================
-
-/// OCCT GeomAdaptor_Surface(theSurf) — the Adaptor3d_Surface instance over a
-/// Geom_Surface loaded with the surface NATURAL bounds (GeomAdaptor_Surface.hxx
-/// Load: theSurf->Bounds(U1, U2, V1, V2)).
-#[derive(Clone, Debug)]
-pub struct GeomSurfaceAdaptor {
-    /// OCCT: handle(Geom_Surface) mySurface.
-    pub surface: Surface3,
-    /// OCCT: Standard_Real myUFirst / myULast / myVFirst / myVLast.
-    pub u_first: f64,
-    pub u_last: f64,
-    pub v_first: f64,
-    pub v_last: f64,
-}
-
-impl GeomSurfaceAdaptor {
-    /// OCCT GeomAdaptor_Surface(const handle(Geom_Surface)& theSurf) — the
-    /// natural bounds domain.
-    pub fn new(surface: Surface3) -> Self {
-        use crate::geom::SurfaceEval;
-        let [u1, u2, v1, v2] = SurfaceEval::default_domain(&surface);
-        GeomSurfaceAdaptor {
-            surface,
-            u_first: u1,
-            u_last: u2,
-            v_first: v1,
-            v_last: v2,
-        }
-    }
-
-    /// OCCT Load(theSurf, U1, U2, V1, V2) — the restricted window form.
-    pub fn load_with_window(&mut self, surface: Surface3, u1: f64, u2: f64, v1: f64, v2: f64) {
-        self.surface = surface;
-        self.u_first = u1;
-        self.u_last = u2;
-        self.v_first = v1;
-        self.v_last = v2;
-    }
-}
-
-impl Adaptor3dSurface for GeomSurfaceAdaptor {
-    fn first_u_parameter(&self) -> f64 {
-        self.u_first
-    }
-
-    fn last_u_parameter(&self) -> f64 {
-        self.u_last
-    }
-
-    fn first_v_parameter(&self) -> f64 {
-        self.v_first
-    }
-
-    fn last_v_parameter(&self) -> f64 {
-        self.v_last
-    }
-
-    fn value(&self, u: f64, v: f64) -> DVec3 {
-        use crate::geom::SurfaceEval;
-        self.surface.point_at(u, v)
-    }
-
-    fn d1(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
-        use crate::geom::SurfaceEval;
-        self.surface.derivatives(u, v)
-    }
-
-    fn d2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
-        use crate::geom::SurfaceEval;
-        self.surface.derivatives2(u, v)
-    }
-
-    fn d3(
-        &self,
-        u: f64,
-        v: f64,
-    ) -> (
-        DVec3,
-        DVec3,
-        DVec3,
-        DVec3,
-        DVec3,
-        DVec3,
-        DVec3,
-        DVec3,
-        DVec3,
-        DVec3,
-    ) {
-        // OCCT GeomAdaptor_Surface::D3 — the third-order partials.  The
-        // consumed ProjLib paths use D1 only; the third partials ride on the
-        // kernel finite-difference scaffold of SurfaceEval.
-        use crate::geom::SurfaceEval;
-        let h = 1e-4;
-        let base = self.surface.derivatives2(u, v);
-        let d2u = self.surface.derivatives2(u + h, v);
-        let d2v = self.surface.derivatives2(u, v + h);
-        let puu = base.3;
-        let puv = base.4;
-        let pvv = base.5;
-        (
-            base.0,
-            base.1,
-            base.2,
-            puu,
-            puv,
-            pvv,
-            (d2u.3 - puu) / h,
-            (d2u.4 - puv) / h,
-            (d2v.5 - pvv) / h,
-            (d2v.4 - puv) / h,
-        )
-    }
-
-    /// OCCT UResolution(R3d) (GeomAdaptor_Surface.cxx) — the per-type
-    /// parametric resolution of the analytic kinds.
-    fn u_resolution(&self, r3d: f64) -> f64 {
-        match &self.surface {
-            Surface3::Torus(s) => {
-                let r = s.major_radius + s.minor_radius;
-                if r > precision::CONFUSION {
-                    r3d / (2.0 * r)
-                } else {
-                    0.0
-                }
-            }
-            Surface3::Sphere(s) => {
-                let r = s.radius;
-                if r > precision::CONFUSION {
-                    r3d / (2.0 * r)
-                } else {
-                    0.0
-                }
-            }
-            Surface3::Cylinder(s) => {
-                let r = s.radius;
-                if r > precision::CONFUSION {
-                    r3d / (2.0 * r)
-                } else {
-                    0.0
-                }
-            }
-            Surface3::Cone(_) => {
-                if self.v_last - self.v_first > 1.0e10 {
-                    // Not truly bounded => unknown resolution.
-                    precision::parametric_default(r3d)
-                } else {
-                    // OCCT: R = max(radius of the VFirst iso, radius of the
-                    // VLast iso); Res = R3d / R.
-                    let r1 = (self.v_last * self.my_cone_tan()).abs();
-                    let r2 = (self.v_first * self.my_cone_tan()).abs();
-                    let r = r1.max(r2);
-                    if r > precision::CONFUSION {
-                        r3d / r
-                    } else {
-                        0.0
-                    }
-                }
-            }
-            Surface3::Plane(_) => r3d,
-            _ => precision::parametric_default(r3d),
-        }
-    }
-
-    /// OCCT VResolution(R3d) — the non-periodic analytic kinds resolve the
-    /// parametric tolerance through Precision::Parametric.
-    fn v_resolution(&self, r3d: f64) -> f64 {
-        precision::parametric_default(r3d)
-    }
-
-    fn get_type(&self) -> GeomAbsSurfaceType {
-        match &self.surface {
-            Surface3::Plane(_) => GeomAbsSurfaceType::Plane,
-            Surface3::Cylinder(_) => GeomAbsSurfaceType::Cylinder,
-            Surface3::Cone(_) => GeomAbsSurfaceType::Cone,
-            Surface3::Sphere(_) => GeomAbsSurfaceType::Sphere,
-            Surface3::Torus(_) => GeomAbsSurfaceType::Torus,
-            Surface3::Bezier(_) => GeomAbsSurfaceType::BezierSurface,
-            Surface3::BSpline(_) => GeomAbsSurfaceType::BSplineSurface,
-            Surface3::Revolution(_) => GeomAbsSurfaceType::SurfaceOfRevolution,
-            Surface3::LinearExtrusion(_) => GeomAbsSurfaceType::SurfaceOfExtrusion,
-            Surface3::Offset(_) => GeomAbsSurfaceType::OffsetSurface,
-            _ => GeomAbsSurfaceType::OtherSurface,
-        }
-    }
-
-    fn is_u_periodic(&self) -> bool {
-        use crate::geom::SurfaceEval;
-        self.surface.is_u_periodic()
-    }
-
-    fn u_period(&self) -> f64 {
-        // OCCT GeomAdaptor_Surface::UPeriod() — the analytic quadrics are
-        // 2*pi periodic in U; the other kinds are deferred with the
-        // corresponding Perform branches.
-        match &self.surface {
-            Surface3::Cylinder(_)
-            | Surface3::Cone(_)
-            | Surface3::Sphere(_)
-            | Surface3::Torus(_) => TWO_PI,
-            _ => panic!("GAP: GeomAdaptor_Surface::UPeriod for the non-analytic kinds"),
-        }
-    }
-
-    fn is_v_periodic(&self) -> bool {
-        use crate::geom::SurfaceEval;
-        self.surface.is_v_periodic()
-    }
-
-    fn v_period(&self) -> f64 {
-        // OCCT GeomAdaptor_Surface::VPeriod() — only the torus is 2*pi
-        // periodic in V.
-        match &self.surface {
-            Surface3::Torus(_) => TWO_PI,
-            _ => panic!("GAP: GeomAdaptor_Surface::VPeriod for the non-analytic kinds"),
-        }
-    }
-
-    fn u_continuity(&self) -> GeomAbsShape {
-        GeomAbsShape::CN
-    }
-
-    fn v_continuity(&self) -> GeomAbsShape {
-        GeomAbsShape::CN
-    }
-
-    fn nb_u_intervals(&self, _s: GeomAbsShape) -> usize {
-        1
-    }
-
-    fn nb_v_intervals(&self, _s: GeomAbsShape) -> usize {
-        1
-    }
-
-    fn u_intervals(&self, _s: GeomAbsShape) -> Vec<f64> {
-        vec![self.u_first, self.u_last]
-    }
-
-    fn v_intervals(&self, _s: GeomAbsShape) -> Vec<f64> {
-        vec![self.v_first, self.v_last]
-    }
-
-    fn shallow_copy(&self) -> std::sync::Arc<dyn Adaptor3dSurface> {
-        std::sync::Arc::new(self.clone())
-    }
-
-    fn kernel_surface(&self) -> Option<&Surface3> {
-        Some(&self.surface)
-    }
-}
-
-impl GeomSurfaceAdaptor {
-    /// The cone semi-angle slope for the UResolution cone arm.
-    fn my_cone_tan(&self) -> f64 {
-        match &self.surface {
-            Surface3::Cone(c) => c.half_angle_rad.tan(),
-            _ => 1.0,
-        }
-    }
-}
-
-/// The OCCT Adaptor3d_Surface geometry accessors (Plane()/Cylinder()/Cone()/
-/// Sphere()/Torus()) consumed by ProjLib_ProjectedCurve::Perform.
-pub trait Adaptor3dSurfaceGeom: Adaptor3dSurface {
-    /// OCCT Plane() — valid when GetType() == GeomAbs_Plane.
-    fn plane(&self) -> Plane;
-    /// OCCT Cylinder() — valid when GetType() == GeomAbs_Cylinder.
-    fn cylinder(&self) -> CylindricalSurface;
-    /// OCCT Cone() — valid when GetType() == GeomAbs_Cone.
-    fn cone(&self) -> ConicalSurface;
-    /// OCCT Sphere() — valid when GetType() == GeomAbs_Sphere.
-    fn sphere(&self) -> SphericalSurface;
-    /// OCCT Torus() — valid when GetType() == GeomAbs_Torus.
-    fn torus(&self) -> ToroidalSurface;
-    /// OCCT AxeOfRevolution() — the surface-of-revolution axis.  GAP carrier:
-    /// the revolution branch of Perform (ProjLib_ProjectedCurve.cxx L546-612)
-    /// is deferred with the ProjLib_HCompProjectedCurve + Approx_CurveOnSurface
-    /// payload; see the `proj_lib_projected_curve_b` module header.
-    fn axe_of_revolution(&self) -> (DVec3, DVec3) {
-        panic!("GAP: Adaptor3d_Surface::AxeOfRevolution not translated")
-    }
-}
-
-impl Adaptor3dSurfaceGeom for GeomSurfaceAdaptor {
-    fn plane(&self) -> Plane {
-        match &self.surface {
-            Surface3::Plane(g) => *g,
-            _ => panic!("GeomAdaptor_Surface: surface kind mismatch"),
-        }
-    }
-
-    fn cylinder(&self) -> CylindricalSurface {
-        match &self.surface {
-            Surface3::Cylinder(g) => *g,
-            _ => panic!("GeomAdaptor_Surface: surface kind mismatch"),
-        }
-    }
-
-    fn cone(&self) -> ConicalSurface {
-        match &self.surface {
-            Surface3::Cone(g) => *g,
-            _ => panic!("GeomAdaptor_Surface: surface kind mismatch"),
-        }
-    }
-
-    fn sphere(&self) -> SphericalSurface {
-        match &self.surface {
-            Surface3::Sphere(g) => *g,
-            _ => panic!("GeomAdaptor_Surface: surface kind mismatch"),
-        }
-    }
-
-    fn torus(&self) -> ToroidalSurface {
-        match &self.surface {
-            Surface3::Torus(g) => *g,
-            _ => panic!("GeomAdaptor_Surface: surface kind mismatch"),
-        }
-    }
-}
 
 /// Field copy of the [`Projector`] base result (the `myResult = P` move of
 /// Perform; `Projector` itself carries no derive).

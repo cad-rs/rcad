@@ -20,11 +20,14 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 
+use crate::core::precision;
 use crate::geom::Curve2dEval;
+use crate::geom::{Circle3, Ellipse3, Hyperbola3, Line3, Parabola3};
 
 use crate::math::GeomAbsShape;
 
 use super::CurveType;
+use super::proj_lib_projected_curve::Adaptor3dCurveGeom;
 
 // ---------------------------------------------------------------------------
 // GeomAbs_SurfaceType — mirrors GeomAbs_SurfaceType
@@ -86,6 +89,27 @@ pub trait Adaptor2dCurve2d {
     /// OCCT Trim(FirstParam, LastParam, Tol) — returns a curve equivalent of
     /// `self` restricted to [First, Last].
     fn trim(&self, first_param: f64, last_param: f64, tol: f64) -> Arc<dyn Adaptor2dCurve2d>;
+    /// OCCT Adaptor2d_Curve2d::IsClosed() — the base class raises
+    /// Standard_NoSuchObject (Adaptor2d_Curve2d.cxx).
+    fn is_closed(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::IsClosed")
+    }
+    /// OCCT Adaptor2d_Curve2d::IsPeriodic() — consumed by
+    /// Adaptor3d_CurveOnSurface::IsPeriodic (Adaptor3d_CurveOnSurface.cxx
+    /// L1151-1160).
+    fn is_periodic(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::IsPeriodic")
+    }
+    /// OCCT Adaptor2d_Curve2d::Period() — the base class raises
+    /// Standard_NoSuchObject (Adaptor2d_Curve2d.cxx).
+    fn period(&self) -> f64 {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Period")
+    }
+    /// OCCT Adaptor2d_Curve2d::Resolution(R3d) — the base class raises
+    /// Standard_NoSuchObject (Adaptor2d_Curve2d.hxx L124).
+    fn resolution(&self, _r3d: f64) -> f64 {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Resolution")
+    }
 }
 
 /// OCCT `occ::handle<Adaptor2d_Curve2d>` — shared ownership.
@@ -116,6 +140,76 @@ pub trait Adaptor3dCurve {
     fn intervals(&self, s: GeomAbsShape) -> Vec<f64>;
     /// OCCT Trim(First, Last, Tol).
     fn trim(&self, first: f64, last: f64, tol: f64) -> Arc<dyn Adaptor3dCurve>;
+    /// OCCT Adaptor3d_Curve::ShallowCopy() (Adaptor3d_Curve.cxx L38-42) — the
+    /// base class throws Standard_NotImplemented.
+    fn shallow_copy(&self) -> Arc<dyn Adaptor3dCurve> {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::ShallowCopy")
+    }
+    /// OCCT Adaptor3d_Curve::IsClosed() (Adaptor3d_Curve.cxx L89-93).
+    fn is_closed(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::IsClosed")
+    }
+    /// OCCT Adaptor3d_Curve::IsPeriodic() (Adaptor3d_Curve.cxx L96-100).
+    fn is_periodic(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::IsPeriodic")
+    }
+    /// OCCT Adaptor3d_Curve::Period() (Adaptor3d_Curve.cxx L103-108).
+    fn period(&self) -> f64 {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::Period")
+    }
+    /// OCCT Adaptor3d_Curve::Resolution(R3d) (Adaptor3d_Curve.cxx L111-115).
+    fn resolution(&self, _r3d: f64) -> f64 {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::Resolution")
+    }
+    /// OCCT Adaptor3d_Curve::D3(U, P, V1, V2, V3) — the EvalD3 composition
+    /// (Adaptor3d_Curve.hxx L116-124); the base EvalD3 throws
+    /// Standard_NotImplemented (Adaptor3d_Curve.cxx L225-232).
+    fn d3(&self, _u: f64) -> (DVec3, DVec3, DVec3, DVec3) {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::EvalD3")
+    }
+    /// OCCT Adaptor3d_Curve::DN(U, N) — the EvalDN composition
+    /// (Adaptor3d_Curve.hxx L126-130).  The rcad default keeps the
+    /// established order-dispatch encoding: N=1 delegates to D1, N=2 to D2
+    /// and the remaining orders raise the OCCT Standard_NotImplemented of
+    /// the base EvalDN (Adaptor3d_Curve.cxx L235-244).
+    fn dn(&self, u: f64, n: i32) -> DVec3 {
+        match n {
+            1 => self.d1(u).1,
+            2 => self.d2(u).2,
+            _ => panic!("Standard_NotImplemented: Adaptor3d_Curve::EvalDN"),
+        }
+    }
+    /// OCCT Adaptor3d_Curve::Degree() (Adaptor3d_Curve.cxx L160-164).
+    fn degree(&self) -> usize {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::Degree")
+    }
+    /// OCCT Adaptor3d_Curve::IsRational() (Adaptor3d_Curve.cxx L167-171).
+    fn is_rational(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::IsRational")
+    }
+    /// OCCT Adaptor3d_Curve::NbPoles() (Adaptor3d_Curve.cxx L174-178).
+    fn nb_poles(&self) -> usize {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::NbPoles")
+    }
+    /// OCCT Adaptor3d_Curve::NbKnots() (Adaptor3d_Curve.cxx L181-185).
+    fn nb_knots(&self) -> usize {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::NbKnots")
+    }
+    /// OCCT Adaptor3d_Curve::Bezier() (Adaptor3d_Curve.cxx L188-192) — the
+    /// Geom_BezierCurve payload.
+    fn bezier(&self) -> crate::geom::BezierCurve3 {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::Bezier")
+    }
+    /// OCCT Adaptor3d_Curve::BSpline() (Adaptor3d_Curve.cxx L195-199) — the
+    /// Geom_BSplineCurve payload.
+    fn bspline(&self) -> crate::geom::BSplineCurve3 {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::BSpline")
+    }
+    /// OCCT Adaptor3d_Curve::OffsetCurve() (Adaptor3d_Curve.cxx L202-206) —
+    /// the Geom_OffsetCurve payload.
+    fn offset_curve(&self) -> crate::geom::OffsetCurve3 {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::OffsetCurve")
+    }
 }
 
 /// OCCT `occ::handle<Adaptor3d_Curve>` — shared ownership.
@@ -189,15 +283,89 @@ pub trait Adaptor3dSurface {
     /// OCCT VIntervals(T, S).
     fn v_intervals(&self, s: GeomAbsShape) -> Vec<f64>;
     /// OCCT UTrim(U1, U2, Eps) — the surface restricted in U.
-    /// GAP (staged): the Geom_RectangularTrimmedSurface adaptor family is not
-    /// translated yet.
+    /// The base class throws Standard_NotImplemented
+    /// (Adaptor3d_Surface.cxx L123-131).
     fn u_trim(&self, _u1: f64, _u2: f64, _eps: f64) -> Arc<dyn Adaptor3dSurface> {
-        panic!("GAP: Adaptor3d_Surface::UTrim not translated");
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::UTrim")
     }
     /// OCCT VTrim(V1, V2, Eps) — the surface restricted in V.
-    /// GAP (staged): see [`Adaptor3dSurface::u_trim`].
+    /// The base class throws Standard_NotImplemented
+    /// (Adaptor3d_Surface.cxx L134-142).
     fn v_trim(&self, _v1: f64, _v2: f64, _eps: f64) -> Arc<dyn Adaptor3dSurface> {
-        panic!("GAP: Adaptor3d_Surface::VTrim not translated");
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::VTrim")
+    }
+    /// OCCT Adaptor3d_Surface::IsUClosed() (Adaptor3d_Surface.cxx L145-149).
+    fn is_u_closed(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::IsUClosed")
+    }
+    /// OCCT Adaptor3d_Surface::IsVClosed() (Adaptor3d_Surface.cxx L152-156).
+    fn is_v_closed(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::IsVClosed")
+    }
+    /// OCCT Adaptor3d_Surface::UDegree() (Adaptor3d_Surface.cxx).
+    fn u_degree(&self) -> usize {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::UDegree")
+    }
+    /// OCCT Adaptor3d_Surface::NbUPoles() (Adaptor3d_Surface.cxx).
+    fn nb_u_poles(&self) -> usize {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::NbUPoles")
+    }
+    /// OCCT Adaptor3d_Surface::VDegree() (Adaptor3d_Surface.cxx).
+    fn v_degree(&self) -> usize {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::VDegree")
+    }
+    /// OCCT Adaptor3d_Surface::NbVPoles() (Adaptor3d_Surface.cxx).
+    fn nb_v_poles(&self) -> usize {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::NbVPoles")
+    }
+    /// OCCT Adaptor3d_Surface::NbUKnots() (Adaptor3d_Surface.cxx).
+    fn nb_u_knots(&self) -> usize {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::NbUKnots")
+    }
+    /// OCCT Adaptor3d_Surface::NbVKnots() (Adaptor3d_Surface.cxx).
+    fn nb_v_knots(&self) -> usize {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::NbVKnots")
+    }
+    /// OCCT Adaptor3d_Surface::IsURational() (Adaptor3d_Surface.cxx).
+    fn is_u_rational(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::IsURational")
+    }
+    /// OCCT Adaptor3d_Surface::IsVRational() (Adaptor3d_Surface.cxx).
+    fn is_v_rational(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::IsVRational")
+    }
+    /// OCCT Adaptor3d_Surface::Bezier() — the Geom_BezierSurface payload.
+    fn bezier(&self) -> crate::geom::BezierSurface {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::Bezier")
+    }
+    /// OCCT Adaptor3d_Surface::BSpline() — the Geom_BSplineSurface payload.
+    fn bspline(&self) -> crate::geom::BSplineSurface {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::BSpline")
+    }
+    /// OCCT Adaptor3d_Surface::Direction() — the extrusion direction
+    /// (gp_Dir payload).
+    fn direction(&self) -> DVec3 {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::Direction")
+    }
+    /// OCCT Adaptor3d_Surface::BasisCurve() — the basis curve adaptor of an
+    /// extrusion / revolution surface.
+    fn basis_curve(&self) -> Arc<dyn Adaptor3dCurve> {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::BasisCurve")
+    }
+    /// OCCT Adaptor3d_Surface::BasisSurface() — the basis surface adaptor of
+    /// an offset surface.
+    fn basis_surface(&self) -> Arc<dyn Adaptor3dSurface> {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::BasisSurface")
+    }
+    /// OCCT Adaptor3d_Surface::OffsetValue().
+    fn offset_value(&self) -> f64 {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::OffsetValue")
+    }
+    /// OCCT Adaptor3d_Surface::DN(U, V, Nu, Nv) — the EvalDN composition;
+    /// the base EvalDN throws Standard_NotImplemented
+    /// (Adaptor3d_Surface.cxx).
+    fn dn(&self, _u: f64, _v: f64, _nu: i32, _nv: i32) -> DVec3 {
+        panic!("Standard_NotImplemented: Adaptor3d_Surface::EvalDN")
     }
     /// OCCT ShallowCopy().
     fn shallow_copy(&self) -> Arc<dyn Adaptor3dSurface>;
@@ -224,24 +392,46 @@ pub type SurfaceHandle = Arc<dyn Adaptor3dSurface>;
 pub struct Geom2dCurveAdaptor {
     /// OCCT: handle(Geom2d_Curve) myCurve.
     pub curve: crate::geom::Curve2d,
+    /// OCCT: Standard_Real myFirst — the restricted first parameter
+    /// (Geom2dAdaptor_Curve::Load(UFirst, ULast) form).
+    pub first: f64,
+    /// OCCT: Standard_Real myLast.
+    pub last: f64,
 }
 
 impl Geom2dCurveAdaptor {
-    /// OCCT Geom2dAdaptor_Curve(C).
+    /// OCCT Geom2dAdaptor_Curve(C) -> Load(C): the curve natural domain
+    /// (Geom2dAdaptor_Curve.hxx Load(theCurve)).
     pub fn new(curve: crate::geom::Curve2d) -> Self {
-        Geom2dCurveAdaptor { curve }
+        let [first, last] = curve.default_domain();
+        Geom2dCurveAdaptor {
+            curve,
+            first,
+            last,
+        }
+    }
+
+    /// OCCT Geom2dAdaptor_Curve(C, First, Last) -> Load(C, First, Last):
+    /// the restricted parameter window (the form used by
+    /// BRepAdaptor_Curve.cxx L202-203: HC->Load(PC, pf, pl)).
+    pub fn with_range(curve: crate::geom::Curve2d, first: f64, last: f64) -> Self {
+        Geom2dCurveAdaptor {
+            curve,
+            first,
+            last,
+        }
     }
 }
 
 impl Adaptor2dCurve2d for Geom2dCurveAdaptor {
-    /// OCCT FirstParameter().
+    /// OCCT FirstParameter() — the restricted first parameter.
     fn first_parameter(&self) -> f64 {
-        self.curve.default_domain()[0]
+        self.first
     }
 
-    /// OCCT LastParameter().
+    /// OCCT LastParameter() — the restricted last parameter.
     fn last_parameter(&self) -> f64 {
-        self.curve.default_domain()[1]
+        self.last
     }
 
     /// OCCT Value(U).
@@ -314,7 +504,93 @@ impl Adaptor2dCurve2d for Geom2dCurveAdaptor {
                 t_min: first_param,
                 t_max: last_param,
             }),
+            first: first_param,
+            last: last_param,
         })
+    }
+
+    /// OCCT Geom2dAdaptor_Curve::IsClosed (Geom2dAdaptor_Curve.cxx
+    /// L588-602): the endpoint-distance test on the restricted domain.  The
+    /// OCCT Precision::IsPositiveInfinite / IsNegativeInfinite guards ride
+    /// the IEEE infinity encoding (see the Precision::Infinite coordination
+    /// batch note in docs).
+    fn is_closed(&self) -> bool {
+        let last = self.last;
+        let first = self.first;
+        if last != f64::INFINITY && first != f64::NEG_INFINITY {
+            let pd = self.value(first);
+            let pf = self.value(last);
+            return (pf - pd).length() <= precision::CONFUSION;
+        }
+        false
+    }
+
+    /// OCCT Geom2dAdaptor_Curve::IsPeriodic (Geom2dAdaptor_Curve.cxx
+    /// L604-607): the basis curve periodicity.
+    fn is_periodic(&self) -> bool {
+        self.curve.is_periodic()
+    }
+
+    /// OCCT Geom2dAdaptor_Curve::Period (Geom2dAdaptor_Curve.cxx L611-614):
+    /// myCurve->LastParameter() - myCurve->FirstParameter().
+    fn period(&self) -> f64 {
+        self.curve.default_domain()[1] - self.curve.default_domain()[0]
+    }
+
+    /// OCCT Geom2dAdaptor_Curve::Resolution(Ruv)
+    /// (Geom2dAdaptor_Curve.cxx L1186-1222) — the per-type parametric
+    /// resolution.
+    fn resolution(&self, ruv: f64) -> f64 {
+        use crate::geom::Curve2d;
+        match self.curve.inner() {
+            Curve2d::Line(_) => ruv,
+            Curve2d::Circle(c) => {
+                let r = c.radius;
+                if r > ruv / 2.0 {
+                    2.0 * (ruv / (2.0 * r)).asin()
+                } else {
+                    2.0 * std::f64::consts::PI
+                }
+            }
+            Curve2d::Ellipse(e) => ruv / e.major_radius,
+            // OCCT L1206-1214: Geom2d_BezierCurve / Geom2d_BSplineCurve
+            // Resolution — the BSplCLib pole-magnitude engine; the rcad 2D
+            // poles ride the 3D engine through the z=0 embedding (pole
+            // magnitudes are invariant).
+            Curve2d::BSpline(b) => {
+                let poles3: Vec<glam::DVec3> = b
+                    .control_points
+                    .iter()
+                    .map(|p| glam::DVec3::new(p.x, p.y, 0.0))
+                    .collect();
+                crate::math::bspl::bspl_curve_resolution(
+                    &poles3,
+                    Some(&b.weights[..]),
+                    &b.knots,
+                    b.degree,
+                    ruv,
+                )
+            }
+            Curve2d::Bezier(b) => {
+                let poles3: Vec<glam::DVec3> = b
+                    .control_points
+                    .iter()
+                    .map(|p| glam::DVec3::new(p.x, p.y, 0.0))
+                    .collect();
+                let degree = b.control_points.len() - 1;
+                let mut flat_knots = vec![0.0; degree + 1];
+                flat_knots.extend(std::iter::repeat_n(1.0, degree + 1));
+                crate::math::bspl::bspl_curve_resolution(
+                    &poles3,
+                    Some(&b.weights[..]),
+                    &flat_knots,
+                    degree,
+                    ruv,
+                )
+            }
+            // OCCT default arm L1216-1218: Precision::Parametric(Ruv).
+            _ => precision::parametric_default(ruv),
+        }
     }
 }
 
@@ -367,14 +643,23 @@ pub struct CurveOnSurface {
     pub my2d_curve: Curve2dHandle,
     /// OCCT: handle(Adaptor3d_Surface) mySurface.
     pub my_surface: SurfaceHandle,
+    /// OCCT: GeomAbs_CurveType myType — set by the Load/EvalKPart pair; the
+    /// constructor default is GeomAbs_OtherCurve
+    /// (Adaptor3d_CurveOnSurface.cxx L873-876).  GAP (staged): the EvalKPart
+    /// refinement (Adaptor3d_CurveOnSurface.cxx L1553-1830) is not
+    /// translated, so the type keeps the constructor value.
+    pub my_type: CurveType,
 }
 
 impl CurveOnSurface {
-    /// OCCT Adaptor3d_CurveOnSurface(C2D, S).
+    /// OCCT Adaptor3d_CurveOnSurface(C2D, S) (Adaptor3d_CurveOnSurface.cxx
+    /// L881-889): myType = GeomAbs_OtherCurve, myIntCont = GeomAbs_CN,
+    /// Load(S), Load(C).
     pub fn new(the2d_curve: Curve2dHandle, the_surface: SurfaceHandle) -> Self {
         CurveOnSurface {
             my2d_curve: the2d_curve,
             my_surface: the_surface,
+            my_type: CurveType::Other,
         }
     }
 
@@ -462,8 +747,90 @@ impl Adaptor3dCurve for CurveOnSurface {
         vec![self.first_parameter(), self.last_parameter()]
     }
 
-    /// GAP (staged): Adaptor3d_CurveOnSurface::Trim.
-    fn trim(&self, _first: f64, _last: f64, _tol: f64) -> Arc<dyn Adaptor3dCurve> {
-        panic!("GAP: Adaptor3d_CurveOnSurface::Trim not translated");
+    /// GAP (staged): Adaptor3d_CurveOnSurface::Trim — the OCCT body
+    /// (Adaptor3d_CurveOnSurface.cxx L1133-1141) rebuilds the adaptor with
+    /// Load(mySurface) + Load(myCurve->Trim(First, Last, Tol)).
+    fn trim(&self, first: f64, last: f64, tol: f64) -> Arc<dyn Adaptor3dCurve> {
+        let hcs = CurveOnSurface::new(self.my2d_curve.trim(first, last, tol), self.my_surface.clone());
+        Arc::new(hcs)
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::IsClosed (Adaptor3d_CurveOnSurface.cxx
+    /// L1145-1148): myCurve->IsClosed().
+    fn is_closed(&self) -> bool {
+        self.my2d_curve.is_closed()
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::IsPeriodic
+    /// (Adaptor3d_CurveOnSurface.cxx L1151-1160): true for the Circle /
+    /// Ellipse myType, else myCurve->IsPeriodic().
+    fn is_periodic(&self) -> bool {
+        if self.my_type == CurveType::Circle || self.my_type == CurveType::Ellipse {
+            return true;
+        }
+        self.my2d_curve.is_periodic()
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Period
+    /// (Adaptor3d_CurveOnSurface.cxx L1163-1170): 2*pi for the Circle /
+    /// Ellipse myType, else myCurve->Period().
+    fn period(&self) -> f64 {
+        if self.my_type == CurveType::Circle || self.my_type == CurveType::Ellipse {
+            return std::f64::consts::TAU;
+        }
+        self.my2d_curve.period()
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Resolution
+    /// (Adaptor3d_CurveOnSurface.cxx L1364-1371):
+    /// myCurve->Resolution(min(UResolution(R3d), VResolution(R3d))).
+    fn resolution(&self, r3d: f64) -> f64 {
+        let ru = self.my_surface.u_resolution(r3d);
+        let rv = self.my_surface.v_resolution(r3d);
+        self.my2d_curve.resolution(ru.min(rv))
+    }
+}
+
+impl Adaptor3dCurveGeom for CurveOnSurface {
+    /// OCCT Adaptor3d_CurveOnSurface::GetType
+    /// (Adaptor3d_CurveOnSurface.cxx L1374-1377): returns myType.
+    fn get_type(&self) -> CurveType {
+        self.my_type
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Line (L1381-1387) — the myLin payload
+    /// cached by EvalKPart; the Standard_NoSuchObject raise fires when
+    /// myType != GeomAbs_Line.
+    fn line(&self) -> Line3 {
+        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Line(): curve is not a line")
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Circle (L1390-1396) — the myCirc
+    /// payload cached by EvalKPart; raises when myType != GeomAbs_Circle.
+    fn circle(&self) -> Circle3 {
+        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Line(): curve is not a circle")
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Ellipse (L1399-1403) —
+    /// to3d(mySurface->Plane(), myCurve->Ellipse()); unreachable with the
+    /// staged EvalKPart (see the struct docs).
+    fn ellipse(&self) -> Ellipse3 {
+        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Ellipse")
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Hyperbola (L1406-1410) — see Ellipse.
+    fn hyperbola(&self) -> Hyperbola3 {
+        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Hyperbola")
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Parabola (L1413-1417) — see Ellipse.
+    fn parabola(&self) -> Parabola3 {
+        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Parabola")
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Trim — see the Adaptor3dCurve trim.
+    fn trim_geom(&self, first: f64, last: f64, tol: f64) -> Arc<dyn Adaptor3dCurveGeom> {
+        let hcs = CurveOnSurface::new(self.my2d_curve.trim(first, last, tol), self.my_surface.clone());
+        Arc::new(hcs)
     }
 }
