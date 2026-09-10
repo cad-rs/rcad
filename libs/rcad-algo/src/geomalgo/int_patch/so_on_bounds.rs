@@ -928,7 +928,7 @@ fn bounded_arc(
     if !rejection {
         let quadric = func.quadric().clone();
         let type_quad = quadric.type_quadric();
-        let mut type_con_s = CurveType3d::Other;
+        let mut type_con_s = GeomAbsCurveType::OtherCurve;
 
         // ---- Exact intersection (L339-472).
         let mut int_cs = IntCurveSurface::new();
@@ -1044,7 +1044,7 @@ fn bounded_arc(
                             if a_tang {
                                 a_tang = a_tang && yf.abs() < maxdist && yl.abs() < maxdist;
                             }
-                            if a_tang && is_int_cs_done && type_con_s == CurveType3d::Line {
+                            if a_tang && is_int_cs_done && type_con_s == GeomAbsCurveType::Line {
                                 // Interval from exact intersection: tangent only if
                                 // all points are on the same side.
                                 let sf = yf.signum();
@@ -1356,16 +1356,25 @@ fn treat_lc(
 // 3D curve of a boundary arc on the surface (Adaptor3d_CurveOnSurface)
 // =====================================================================
 
-/// OCCT GeomAbs_CurveType for the 3D curve of the boundary arc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CurveType3d {
-    Line,
-    Circle,
-    Other,
-}
+// OCCT GeomAbs_CurveType for the 3D curve of the boundary arc.  The canonical
+// nine-variant enum lives in rcad_kernel::math (GeomAbs_CurveType.hxx
+// L23-31); the former local three-variant CurveType3d copy (Line/Circle/
+// Other) was deleted (Rule 4).
+use rcad_kernel::math::GeomAbsCurveType;
 
-fn is_canonic(t: CurveType3d) -> bool {
-    matches!(t, CurveType3d::Line | CurveType3d::Circle)
+/// OCCT IntStart_SearchOnBoundaries.gxx L454-456: the exact IntCS path runs
+/// for the canonic types GeomAbs_Line / GeomAbs_Circle / GeomAbs_Ellipse /
+/// GeomAbs_Parabola / GeomAbs_Hyperbola; every other type (OffsetCurve,
+/// BSpline, Bezier, OtherCurve) takes the numeric FunctionAllRoots path.
+fn is_canonic(t: GeomAbsCurveType) -> bool {
+    matches!(
+        t,
+        GeomAbsCurveType::Line
+            | GeomAbsCurveType::Circle
+            | GeomAbsCurveType::Ellipse
+            | GeomAbsCurveType::Parabola
+            | GeomAbsCurveType::Hyperbola
+    )
 }
 
 /// OCCT IsDegenerated(Handle(Adaptor3d_CurveOnSurface)) (L167-176):
@@ -1403,7 +1412,7 @@ const EVAL_KPART_ANGULAR: f64 = 1.0e-12;
 pub fn curve_on_surface(
     a: &Curve2d,
     surf: &Surface3,
-) -> Option<(rcad_kernel::geom::Curve3, CurveType3d)> {
+) -> Option<(rcad_kernel::geom::Curve3, GeomAbsCurveType)> {
     match (a, surf) {
         // Plane: myType = the 2D curve type; Circle -> to3d, Line -> D1 form.
         (Curve2d::Line(l), Surface3::Plane(p)) => {
@@ -1413,7 +1422,7 @@ pub fn curve_on_surface(
             let dir = l.direction.x * p.u_dir + l.direction.y * p.v_dir;
             Some((
                 rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(o, dir)),
-                CurveType3d::Line,
+                GeomAbsCurveType::Line,
             ))
         }
         (Curve2d::Circle(c), Surface3::Plane(p)) => {
@@ -1431,7 +1440,7 @@ pub fn curve_on_surface(
                     y_dir,
                     radius: c.radius,
                 }),
-                CurveType3d::Circle,
+                GeomAbsCurveType::Circle,
             ))
         }
         (Curve2d::Line(l), Surface3::Cylinder(c)) => {
@@ -1454,7 +1463,7 @@ pub fn curve_on_surface(
                         y_dir: if opposite { -uy } else { uy },
                         radius: c.radius,
                     }),
-                    CurveType3d::Circle,
+                    GeomAbsCurveType::Circle,
                 ))
             } else if l.direction.x.abs() <= EVAL_KPART_ANGULAR {
                 // Iso U: ElSLib::CylinderUIso(U) translated by P.Y(); opposite
@@ -1464,7 +1473,7 @@ pub fn curve_on_surface(
                 let dir = if l.direction.y < 0.0 { -z } else { z };
                 Some((
                     rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(o, dir)),
-                    CurveType3d::Line,
+                    GeomAbsCurveType::Line,
                 ))
             } else {
                 None
@@ -1497,7 +1506,7 @@ pub fn curve_on_surface(
                         y_dir: if opposite { -uy } else { uy },
                         radius: r,
                     }),
-                    CurveType3d::Circle,
+                    GeomAbsCurveType::Circle,
                 ))
             } else if l.direction.x.abs() <= EVAL_KPART_ANGULAR {
                 // Iso U: ElSLib::ConeUIso(U) translated by P.Y().
@@ -1508,7 +1517,7 @@ pub fn curve_on_surface(
                 let dir = if l.direction.y < 0.0 { -gen_dir } else { gen_dir };
                 Some((
                     rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(o, dir)),
-                    CurveType3d::Line,
+                    GeomAbsCurveType::Line,
                 ))
             } else {
                 None
@@ -1539,7 +1548,7 @@ pub fn curve_on_surface(
                         y_dir: if opposite { -uy } else { uy },
                         radius,
                     }),
-                    CurveType3d::Circle,
+                    GeomAbsCurveType::Circle,
                 ))
             } else {
                 // U = const -> meridian circle through the poles: plane spanned
@@ -1563,7 +1572,7 @@ pub fn curve_on_surface(
                         y_dir: z,
                         radius: r,
                     }),
-                    CurveType3d::Circle,
+                    GeomAbsCurveType::Circle,
                 ))
             }
         }
@@ -1587,7 +1596,7 @@ pub fn curve_on_surface(
                         y_dir: if opposite { -uy } else { uy },
                         radius,
                     }),
-                    CurveType3d::Circle,
+                    GeomAbsCurveType::Circle,
                 ))
             } else if l.direction.x.abs() <= EVAL_KPART_ANGULAR {
                 // U = const: ElSLib::TorusUIso(U) rotated around its own axis by
@@ -1608,7 +1617,7 @@ pub fn curve_on_surface(
                         y_dir: if opposite { -yx } else { yx },
                         radius: t.minor_radius,
                     }),
-                    CurveType3d::Circle,
+                    GeomAbsCurveType::Circle,
                 ))
             } else {
                 None

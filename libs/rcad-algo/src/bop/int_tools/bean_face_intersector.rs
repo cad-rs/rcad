@@ -131,18 +131,11 @@ fn real_last() -> f64 {
 // ============================================================================
 // CurveGeomType / SurfaceGeomType (OCCT GeomAbs_CurveType / GeomAbs_SurfaceType)
 // ============================================================================
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeomAbsCurveType {
-    Line,
-    Circle,
-    Ellipse,
-    Hyperbola,
-    Parabola,
-    BezierCurve,
-    BSplineCurve,
-    OffsetCurve,
-    OtherCurve,
-}
+// Canonical GeomAbs_CurveType lives in rcad_kernel::math (OCCT GeomAbs_CurveType.hxx
+// L23-31, nine enumerators in OCCT order).  Re-exported here so the historic
+// import path crate::bop::int_tools::bean_face_intersector::GeomAbsCurveType
+// (hlr/brep/data) keeps resolving; the local copy was deleted (Rule 4).
+pub use rcad_kernel::math::GeomAbsCurveType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeomAbsSurfaceType {

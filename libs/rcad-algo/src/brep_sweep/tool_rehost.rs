@@ -333,19 +333,12 @@ pub fn geom_adaptor_surface_get_type(s: &Surface3) -> GeomAbsSurfaceType {
 // (Geom_TrimmedCurve::GetType).
 // ---------------------------------------------------------------------------
 
-/// The GeomAbs_CurveType subset consumed by the classifications.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeomAbsCurveType {
-    Line,
-    Circle,
-    Ellipse,
-    Hyperbola,
-    Parabola,
-    Bezier,
-    BSpline,
-    Offset,
-    Other,
-}
+// Canonical GeomAbs_CurveType lives in rcad_kernel::math (OCCT
+// GeomAbs_CurveType.hxx L23-31, nine enumerators in OCCT order).  Re-exported
+// here so the historic import path super::tool_rehost::GeomAbsCurveType
+// (brep_sweep/rotation.rs) keeps resolving; the local copy with the shortened
+// variant names (Bezier/BSpline/Offset/Other) was deleted (Rule 4).
+pub use rcad_kernel::math::GeomAbsCurveType;
 
 /// The GeomAbs_CurveType of an rcad curve value.
 pub fn curve_type(c: &Curve3) -> GeomAbsCurveType {
@@ -355,11 +348,11 @@ pub fn curve_type(c: &Curve3) -> GeomAbsCurveType {
         Curve3::Ellipse(_) => GeomAbsCurveType::Ellipse,
         Curve3::Hyperbola(_) => GeomAbsCurveType::Hyperbola,
         Curve3::Parabola(_) => GeomAbsCurveType::Parabola,
-        Curve3::Bezier(_) => GeomAbsCurveType::Bezier,
-        Curve3::BSpline(_) => GeomAbsCurveType::BSpline,
-        Curve3::Offset(_) => GeomAbsCurveType::Offset,
+        Curve3::Bezier(_) => GeomAbsCurveType::BezierCurve,
+        Curve3::BSpline(_) => GeomAbsCurveType::BSplineCurve,
+        Curve3::Offset(_) => GeomAbsCurveType::OffsetCurve,
         Curve3::Trimmed(t) => curve_type(&t.curve),
-        _ => GeomAbsCurveType::Other,
+        _ => GeomAbsCurveType::OtherCurve,
     }
 }
 

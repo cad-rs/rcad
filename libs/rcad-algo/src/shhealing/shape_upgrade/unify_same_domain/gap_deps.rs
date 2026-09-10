@@ -17,17 +17,16 @@ use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, BRepBuilder, BRepTool, GeomAbsShape, TShape};
 use rcad_kernel::{base::convert as math_convert, geom};
 
-/// OCCT GeomAbs_CurveType (GeomAbs_CurveType.hxx L26-66) — the members the
-/// class switches on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeomAbsCurveType {
-    Line,
-    Circle,
-    Ellipse,
-    BSplineCurve,
-    BezierCurve,
-    OtherCurve,
-}
+/// OCCT GeomAbs_CurveType (GeomAbs_CurveType.hxx L23-31).  The canonical
+/// nine-variant enum lives in rcad_kernel::math; re-exported here so the
+/// historic import path super::gap_deps::GeomAbsCurveType (statics_a,
+/// statics_b, merge_sub_seq, union_pcurves) keeps resolving.  The former
+/// local six-variant copy was deleted (Rule 4): ShapeUpgrade_UnifySameDomain.cxx
+/// switches only on Line/Circle/BezierCurve/BSplineCurve (L125/131/1900/1921/
+/// 2568-2615), so the canonical variants absent from the old copy
+/// (Hyperbola/Parabola/OffsetCurve) take the same catch-all branch the local
+/// OtherCurve took.
+pub use rcad_kernel::math::GeomAbsCurveType;
 
 /// OCCT GeomAbs_SurfaceType — the Plane check of BRepAdaptor_Surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

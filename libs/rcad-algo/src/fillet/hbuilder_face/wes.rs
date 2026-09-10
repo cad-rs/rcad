@@ -318,11 +318,14 @@ impl ShapeSet for WireEdgeSet {
             let b = match &*s.data {
                 TShape::Edge(ed) => {
                     let t = ed.curve.as_ref().map(|c| match c {
-                        rcad_kernel::geom::Curve3::BSpline(_) => CurveType::BSplineCurve,
-                        rcad_kernel::geom::Curve3::Bezier(_) => CurveType::BezierCurve,
-                        _ => CurveType::Other,
+                        rcad_kernel::geom::Curve3::BSpline(_) => GeomAbsCurveType::BSplineCurve,
+                        rcad_kernel::geom::Curve3::Bezier(_) => GeomAbsCurveType::BezierCurve,
+                        _ => GeomAbsCurveType::OtherCurve,
                     });
-                    matches!(t, Some(CurveType::BSplineCurve) | Some(CurveType::BezierCurve))
+                    matches!(
+                        t,
+                        Some(GeomAbsCurveType::BSplineCurve) | Some(GeomAbsCurveType::BezierCurve)
+                    )
                 }
                 _ => false,
             };
@@ -564,9 +567,9 @@ impl ShapeSet for WireEdgeSet {
 }
 
 /// The BRepAdaptor_Curve GetType result the AddStartElement check needs
-/// (the OCCT GeomAbs_CurveType values consumed).
-enum CurveType {
-    BSplineCurve,
-    BezierCurve,
-    Other,
-}
+/// (the OCCT GeomAbs_CurveType values consumed).  The canonical nine-variant
+/// enum lives in rcad_kernel::math (GeomAbs_CurveType.hxx L23-31); the
+/// former private three-variant copy (BSplineCurve/BezierCurve/Other) was
+/// deleted (Rule 4).  WireEdgeSet.cxx L88-113 tests only BSpline/Bezier, so
+/// every other canonical type takes the branch the local Other took.
+use rcad_kernel::math::GeomAbsCurveType;

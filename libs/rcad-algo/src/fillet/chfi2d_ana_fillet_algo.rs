@@ -184,14 +184,14 @@ fn topexp_vertices_cum_ori(e: &Shape) -> (Shape, Shape) {
 }
 
 // =========================================================================
-// OCCT GeomAbs_CurveType subset used by BRepAdaptor_Curve::GetType().
+// OCCT GeomAbs_CurveType used by BRepAdaptor_Curve::GetType().  The
+// canonical nine-variant enum lives in rcad_kernel::math (OCCT
+// GeomAbs_CurveType.hxx L23-31); the former private three-variant copy
+// (Line/Circle/Other) was deleted (Rule 4).  ChFi2d_AnaFilletAlgo.cxx
+// L189-242 only tests Line/Circle, so the remaining canonical variants all
+// take the same non-analytic branch the local Other used to take.
 // =========================================================================
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GeomAbsCurveType {
-    Line,
-    Circle,
-    Other,
-}
+use rcad_kernel::math::GeomAbsCurveType;
 
 /// OCCT BRepAdaptor_Curve stand-in: the edge's 3D curve plus its parameter
 /// range (rcad edges carry both on the TShape; OCCT reads them through
@@ -215,7 +215,7 @@ impl BRepAdaptorCurve {
         match self.curve {
             Curve3::Line(_) => GeomAbsCurveType::Line,
             Curve3::Circle(_) => GeomAbsCurveType::Circle,
-            _ => GeomAbsCurveType::Other,
+            _ => GeomAbsCurveType::OtherCurve,
         }
     }
 

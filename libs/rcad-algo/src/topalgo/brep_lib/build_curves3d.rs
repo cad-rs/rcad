@@ -514,19 +514,10 @@ fn distinct_knots(knots: &[f64]) -> usize {
 // null handle) and read the type/knots from the variants.
 // ---------------------------------------------------------------------------
 
-/// OCCT GeomAbs_CurveType (TKG3d/GeomAbs/GeomAbs_CurveType.hxx).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeomAbsCurveType {
-    Line,
-    Circle,
-    Ellipse,
-    Hyperbola,
-    Parabola,
-    BezierCurve,
-    BSplineCurve,
-    OffsetCurve,
-    OtherCurve,
-}
+/// OCCT GeomAbs_CurveType (TKG3d/GeomAbs/GeomAbs_CurveType.hxx L23-31).
+/// The canonical nine-variant enum lives in rcad_kernel::math; the former
+/// local copy was deleted (Rule 4).
+use rcad_kernel::math::GeomAbsCurveType;
 
 /// OCCT Geom2dAdaptor_Curve(Curve2d, First, Last) (TKG3d/Geom2dAdaptor) —
 /// the pcurve adaptor (a null handle plays None; the trimmed curve is

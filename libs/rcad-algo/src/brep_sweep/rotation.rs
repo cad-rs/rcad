@@ -808,8 +808,8 @@ impl NumLinearRegularSweepSlots for BRepSweepRotation {
             };
             let c_type = curve_type(&a_c);
             if c_type == GeomAbsCurveType::Line
-                || c_type == GeomAbsCurveType::BSpline
-                || c_type == GeomAbsCurveType::Bezier
+                || c_type == GeomAbsCurveType::BSplineCurve
+                || c_type == GeomAbsCurveType::BezierCurve
             {
                 // OCCT L860-861: TopExp::Vertices(Edge(aGenS), V1, V2).
                 let (v1, v2) = crate::brep_algo::tool::top_exp_vertices_raw(a_gen_s);

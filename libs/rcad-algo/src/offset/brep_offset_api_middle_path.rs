@@ -22,7 +22,8 @@
 //!    (TKTopAlgo/BRepGProp), GeomAPI_Interpolate and GeomLib::Inertia
 //!    (TKGeomAlgo) and BRepLib::BuildCurve3d (TKBRep) — the GAP carriers
 //!    below keep the call sites (reported gap).
-//! 4. GeomAbs_CurveType -> the local enum; the BRepAdaptor_Curve::GetType
+//! 4. GeomAbs_CurveType -> the canonical rcad_kernel::math enum (re-exported
+//!    below); the BRepAdaptor_Curve::GetType
 //!    reads map to the Curve3 variant discriminant; the Geom_Line/Bezier/
     //!    BSpline analyses of the statics map to the rcad curve data.
 //! 5. TangentOfEdge -> the CurveEval tangent_at carrier; TopExp::
@@ -47,19 +48,12 @@ use crate::brep_algo::tool::{
 };
 use rcad_kernel::topo::topods::TShape;
 
-/// OCCT GeomAbs_CurveType (TKMath/GeomAbs_CurveType.hxx L27-38).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeomAbsCurveType {
-    Line,
-    Circle,
-    Ellipse,
-    Hyperbola,
-    Parabola,
-    Bezier,
-    BSplineCurve,
-    OffsetCurve,
-    OtherCurve,
-}
+/// OCCT GeomAbs_CurveType (TKMath/GeomAbs/GeomAbs_CurveType.hxx L23-31).
+/// Canonical nine-variant enum lives in rcad_kernel::math; re-exported here
+/// so the historic import path crate::offset::brep_offset_api_middle_path::
+/// GeomAbsCurveType (brep_offset_api_middle_path_b.rs) keeps resolving.  The
+/// former local copy (with the shortened Bezier variant) was deleted (Rule 4).
+pub use rcad_kernel::math::GeomAbsCurveType;
 
 // ---------------------------------------------------------------------------
 // GAP carriers (architecture differences #2/#3).
@@ -291,7 +285,7 @@ pub(crate) fn type_of_edge(the_edge: &Shape) -> GeomAbsCurveType {
             Curve3::Ellipse(_) => GeomAbsCurveType::Ellipse,
             Curve3::Hyperbola(_) => GeomAbsCurveType::Hyperbola,
             Curve3::Parabola(_) => GeomAbsCurveType::Parabola,
-            Curve3::Bezier(_) => GeomAbsCurveType::Bezier,
+            Curve3::Bezier(_) => GeomAbsCurveType::BezierCurve,
             Curve3::BSpline(_) => GeomAbsCurveType::BSplineCurve,
             Curve3::Offset(_) => GeomAbsCurveType::OffsetCurve,
             Curve3::SineWave(_) => GeomAbsCurveType::OtherCurve,
