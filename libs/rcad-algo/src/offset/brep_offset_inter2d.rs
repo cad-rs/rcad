@@ -105,14 +105,6 @@ type VEMap = IndexMap<ShapeKey, (Shape, Vec<Shape>)>;
 /// consumers (brep_offset_inter2d_b globs this module).
 pub use super::brep_offset_analyse::BRepOffsetAnalyse;
 
-/// OCCT BRepOffset_Tool::MapVertexEdges(F, MVE) (BRepOffset_Tool.cxx) — GAP
-/// leaf (architecture difference #23); switch to the parallel
-/// `super::brep_offset_tool::BRepOffsetTool::map_vertex_edges` when it lands.
-pub fn brep_offset_tool_map_vertex_edges(the_f: &Shape, the_mve: &mut HashMap<ShapeKey, Vec<Shape>>) {
-    let _ = (the_f, the_mve);
-    panic!("GAP: BRepOffset_Tool::MapVertexEdges (BRepOffset_Tool.cxx — parallel Stage 2b module)");
-}
-
 /// OCCT BRepLib::SameParameter(E, Tol, DoAlsoMinmax) — GAP no-op leaf
 /// (architecture difference #26; the brep_offset_offset_b.rs precedent).
 pub fn brep_lib_same_parameter(_the_e: &Shape, _the_tol: f64) {}

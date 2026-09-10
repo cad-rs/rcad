@@ -30,6 +30,7 @@ use crate::feat::loc_ope_wires_on_shape_b::brep_tool_degenerated;
 
 use super::brep_offset_inter2d::*;
 use super::brep_offset_offset_b::BRepOffsetOffset;
+use super::brep_offset_tool::{shape_data_map, ShapeDataMap};
 
 // ---------------------------------------------------------------------------
 // GAP leaves local to this part.
@@ -688,16 +689,16 @@ impl BRepOffsetInter2d {
         // (architecture difference #33).
         let _ = the_range;
 
-        // OCCT L1849-1850: MVE = MapVertexEdges(FI) — GAP leaf
-        // (architecture difference #23).
-        let mut mve: HashMap<ShapeKey, Vec<Shape>> = HashMap::new();
-        brep_offset_tool_map_vertex_edges(fi, &mut mve);
+        // OCCT L1849-1850: MVE = MapVertexEdges(FI) (BRepOffset_Tool.cxx
+        // L3685-3716) — the parallel brep_offset_tool_c body.
+        let mut mve: ShapeDataMap<Vec<Shape>> = HashMap::new();
+        super::brep_offset_tool_c::map_vertex_edges(fi, &mut mve);
 
         //---------------------
         // OCCT L1855-1899: Extension of edges.
         //---------------------
         let mut ne = Shape::null();
-        for (_, l) in mve.iter() {
+        for (_, l) in mve.values() {
             // OCCT L1868-1877: YaBuild.
             let mut ya_build = false;
             for itl in l {

@@ -1184,7 +1184,8 @@ impl BRepOffsetMakeOffset {
             a_presence_map.insert(a_f.ptr_id());
 
             let a_surf = bat::brep_tool_surface(a_f);
-            let (a_umin, a_umax, a_vmin, a_vmax) = brep_tools_uv_bounds(a_f);
+            let (a_umin, a_umax, a_vmin, a_vmax) =
+                super::brep_offset_make_offset::brep_tools_uv_bounds(&self.my_brep, a_f);
 
             // Continuity check.
             // OCCT L4429-4433: aSurf->Continuity() == GeomAbs_C0 — the
@@ -1770,10 +1771,31 @@ fn surface_u_iso(_the_s: &Surface3, _the_u: f64) -> Curve3 {
     panic!("GAP: Geom_Surface::UIso (TKMath/Geom not translated)");
 }
 
-/// OCCT BRep_Tool::Parameters(V, F) — the vertex UV parameters on the face
-/// — GAP leaf (architecture difference #58).
-fn brep_tool_parameters_vf(_the_v: &Shape, _the_f: &Shape) -> DVec2 {
-    panic!("GAP: BRep_Tool::Parameters(V, F) (TKTopAlgo/BRep not translated)");
+/// OCCT BRep_Tool::Parameters(V, F) (BRep_Tool.cxx L1661-1703) — the vertex
+/// UV parameters on the face.
+fn brep_tool_parameters_vf(the_v: &Shape, the_f: &Shape) -> DVec2 {
+    // OCCT L1667-1677: the PointRepresentation branch.  The rcad
+    // PointRepresentation::PointOnSurface carries a pool index (architecture
+    // difference: no surface value / location pair), and the offset pipeline
+    // never creates vertex surface points, so the branch cannot match here —
+    // the edge walk below is the producing path.
+    // OCCT L1686-1700: the edge walk.
+    for e in bat::explorer(the_f, ShapeType::Edge, ShapeType::Shape) {
+        let (v_f, v_l) = bat::top_exp_vertices_raw(&e);
+        let same_f = v_f.as_ref().map_or(false, |vf| the_v.is_same(vf));
+        let same_l = v_l.as_ref().map_or(false, |vl| the_v.is_same(vl));
+        if same_f || same_l {
+            let (p_f, p_l) = bat::brep_tool_uv_points(&e, the_f);
+            if same_f {
+                return p_f;
+            } else {
+                // Ambiguity (natural) for degenerated edges.
+                return p_l;
+            }
+        }
+    }
+    // OCCT: throw Standard_NoSuchObject("BRep_Tool:: no parameters on surface").
+    panic!("Standard_NoSuchObject: BRep_Tool:: no parameters on surface");
 }
 
 /// OCCT Geom_Surface::Continuity() — GAP leaf (architecture difference #58:

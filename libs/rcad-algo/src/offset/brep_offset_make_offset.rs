@@ -116,7 +116,7 @@ use std::collections::HashMap;
 use glam::{DVec2, DVec3};
 
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::topo::topods::{BRep, BRepBuilder, Orientation, ShapeType};
+use rcad_kernel::topo::topods::{BRep, BRepBuilder, BRepTool, Orientation, ShapeType};
 use rcad_kernel::topo_shape::Shape;
 
 use super::brep_offset_offset_b::BRepOffsetOffset;
@@ -277,10 +277,376 @@ pub(crate) fn brep_lib_same_parameter_3(_e: &Shape, _tol: f64) {}
 /// (architecture difference #46).
 pub(crate) fn brep_lib_update_tolerances(_s: &mut Shape) {}
 
-/// OCCT BRepTools::UVBounds(F, Umin, Umax, Vmin, Vmax) — GAP static leaf
-/// (architecture difference #47).
-pub(crate) fn brep_tools_uv_bounds(_f: &Shape) -> (f64, f64, f64, f64) {
-    panic!("GAP: BRepTools::UVBounds (TKTopAlgo/BRepTools not translated)");
+/// OCCT Bnd_Box2d — the 2D bounding box carrier of BRepTools::AddUVBounds
+/// (architecture difference #47: the rcad plain-struct form of the OCCT
+/// open/void box semantics used here: void when empty).
+struct BndBox2d {
+    a_xmin: f64,
+    a_ymin: f64,
+    a_xmax: f64,
+    a_ymax: f64,
+}
+
+impl BndBox2d {
+    fn new_void() -> Self {
+        BndBox2d {
+            a_xmin: f64::INFINITY,
+            a_ymin: f64::INFINITY,
+            a_xmax: f64::NEG_INFINITY,
+            a_ymax: f64::NEG_INFINITY,
+        }
+    }
+
+    /// OCCT Bnd_Box2d::IsVoid().
+    fn is_void(&self) -> bool {
+        self.a_xmin > self.a_xmax || self.a_ymin > self.a_ymax
+    }
+
+    /// OCCT Bnd_Box2d::Update(X, Y).
+    fn update(&mut self, x: f64, y: f64) {
+        if x < self.a_xmin {
+            self.a_xmin = x;
+        }
+        if y < self.a_ymin {
+            self.a_ymin = y;
+        }
+        if x > self.a_xmax {
+            self.a_xmax = x;
+        }
+        if y > self.a_ymax {
+            self.a_ymax = y;
+        }
+    }
+
+    /// OCCT Bnd_Box2d::Update(Xmin, Ymin, Xmax, Ymax).
+    fn update_box(&mut self, xmin: f64, ymin: f64, xmax: f64, ymax: f64) {
+        if xmin < self.a_xmin {
+            self.a_xmin = xmin;
+        }
+        if ymin < self.a_ymin {
+            self.a_ymin = ymin;
+        }
+        if xmax > self.a_xmax {
+            self.a_xmax = xmax;
+        }
+        if ymax > self.a_ymax {
+            self.a_ymax = ymax;
+        }
+    }
+
+    /// OCCT Bnd_Box2d::Add(other).
+    fn add_box(&mut self, other: &BndBox2d) {
+        if other.is_void() {
+            return;
+        }
+        self.update_box(other.a_xmin, other.a_ymin, other.a_xmax, other.a_ymax);
+    }
+}
+
+/// OCCT BRep_Tool::CurveOnSurface(E, F) (BRep_Tool.cxx L339-401) — the
+/// pool-free offset form: the edge's representations are matched by
+/// (surface value, L.Predivided(E.Location())) — the owning-face pointer
+/// stands in for the surface handle identity (architecture difference #61).
+fn brep_tool_curve_on_surface_uv(the_e: &Shape, the_f: &Shape) -> Option<(Curve2d, f64, f64)> {
+    let a_surf = bat::brep_tool_surface(the_f);
+    let fkey = (the_f.ptr_id(), the_f.location);
+    let ed = match the_e.data.as_ref() {
+        rcad_kernel::topo::topods::TShape::Edge(ed) => ed,
+        _ => return None,
+    };
+    // 1) The exact pcurves row (identity-location fast path).
+    if let Some(v) = ed.pcurves.get(&fkey) {
+        return Some(v.clone());
+    }
+    // 2) OCCT L350-367: iterate the edge's curve representations;
+    //    cr->IsCurveOnSurface(S, loc) matches the surface value and the
+    //    composed location.  Pool-free matching: the location component and
+    //    the stored owning-face pointer (surface-value equality is carried
+    //    by the pointer for the shapes of one tree).
+    let mut a_p1: Option<(Curve2d, f64, f64)> = None;
+    let mut a_p2: Option<(Curve2d, f64, f64)> = None;
+    for rep in &ed.representations {
+        match rep {
+            rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface {
+                face: (fptr, lhash),
+                pcurve,
+                range,
+            } => {
+                if *fptr == fkey.0 {
+                    if let Some(s) = &a_surf {
+                        let _ = s;
+                    }
+                    a_p1 = Some((pcurve.clone(), range[0], range[1]));
+                }
+            }
+            rcad_kernel::topo::topods::CurveRepresentation::CurveOnClosedSurface {
+                face: (fptr, lhash),
+                pcurve1,
+                pcurve2,
+                range,
+            } => {
+                if *fptr == fkey.0 {
+                    a_p1 = Some((pcurve1.clone(), range[0], range[1]));
+                    a_p2 = Some((pcurve2.clone(), range[0], range[1]));
+                }
+            }
+            _ => {}
+        }
+    }
+    // OCCT L353-357: a seam occurrence with a REVERSED edge selects PCurve2.
+    if the_e.orientation == Orientation::Reversed {
+        if let Some(p2) = a_p2 {
+            return Some(p2);
+        }
+    }
+    if let Some(p1) = a_p1 {
+        return Some(p1);
+    }
+    // 3) Fall back to the location-only match over the pcurves rows.
+    for ((fptr, lhash), v) in ed.pcurves.iter() {
+        if *lhash == fkey.1 {
+            return Some(v.clone());
+        }
+        let _ = fptr;
+    }
+    None
+}
+
+/// OCCT BRepTools::AddUVBounds(aF, aE, aB) (BRepTools.cxx L181-365).
+fn brep_tools_add_uv_bounds_edge(
+    the_brep: &BRep,
+    a_f: &Shape,
+    a_e: &Shape,
+    a_b: &mut BndBox2d,
+) {
+    //
+    // OCCT L186-193: aC2D = BRep_Tool::CurveOnSurface(aE, aF, aT1, aT2).
+    let (a_c2d, a_t1, a_t2) = match brep_tool_curve_on_surface_uv(a_e, a_f) {
+        Some(t) => t,
+        None => return,
+    };
+    // OCCT L196: BndLib_Add2dCurve::Add(aC2D, aT1, aT2, 0., aBoxC).
+    let a_box_c = rcad_kernel::curve2d_bounding_box(&a_c2d, a_t1, a_t2, 0.0);
+    let mut a_xmin = 0.0f64;
+    let mut a_ymin = 0.0f64;
+    let mut a_xmax = 0.0f64;
+    let mut a_ymax = 0.0f64;
+    let a_box_c_void = !(a_box_c[0] <= a_box_c[1] && a_box_c[2] <= a_box_c[3]);
+    if !a_box_c_void {
+        a_xmin = a_box_c[0];
+        a_xmax = a_box_c[1];
+        a_ymin = a_box_c[2];
+        a_ymax = a_box_c[3];
+    }
+    //
+    // OCCT L199-201: aS = BRep_Tool::Surface(aF); aS->Bounds(aUmin, aUmax, aVmin, aVmax).
+    let a_s = match bat::brep_tool_surface(a_f) {
+        Some(s) => s,
+        None => return,
+    };
+    let (a_umin, a_umax, a_vmin, a_vmax) = {
+        let d = a_s.default_domain();
+        (d[0], d[1], d[2], d[3])
+    };
+    //
+    // OCCT L204-209: unwrap the RectangularTrimmedSurface basis.
+    let a_s_basis = match &a_s {
+        Surface3::Trimmed(t) => (*t.basis).clone(),
+        _ => a_s.clone(),
+    };
+    //
+    // OCCT L212+: if (!aS->IsUPeriodic()).
+    if !a_s_basis.is_u_periodic() {
+        let mut is_u_periodic = false;
+        // OCCT L219-221: BSpline verification when the box exceeds bounds.
+        if matches!(a_s_basis, Surface3::BSpline(_)) && (a_xmin < a_umin || a_xmax > a_umax) {
+            let a_tol2 = 100.0
+                * rcad_kernel::core::precision::CONFUSION
+                * rcad_kernel::core::precision::CONFUSION;
+            is_u_periodic = true;
+            // 1. Verify that the surface is U-closed (L226-238).
+            if !a_s_basis.is_u_closed() {
+                let a_v_step = a_vmax - a_vmin;
+                let mut a_v = a_vmin;
+                while a_v <= a_vmax {
+                    let p1 = a_s_basis.point_at(a_umin, a_v);
+                    let p2 = a_s_basis.point_at(a_umax, a_v);
+                    if p1.distance_squared(p2) > a_tol2 {
+                        is_u_periodic = false;
+                        break;
+                    }
+                    a_v += a_v_step;
+                }
+            }
+            // 2. Verify periodicity of surface inside UV-bounds (L240-306).
+            if is_u_periodic {
+                let a_v = (a_vmin + a_vmax) * 0.5;
+                let mut a_u = [0.0f64; 6];
+                let mut a_upp = [0.0f64; 6];
+                let mut a_nb_pnt = 0usize;
+                if a_xmin < a_umin {
+                    a_u[0] = a_xmin;
+                    a_u[1] = (a_xmin + a_umin) * 0.5;
+                    a_u[2] = a_umin;
+                    a_upp[0] = a_u[0] + a_umax - a_umin;
+                    a_upp[1] = a_u[1] + a_umax - a_umin;
+                    a_upp[2] = a_u[2] + a_umax - a_umin;
+                    a_nb_pnt += 3;
+                }
+                if a_xmax > a_umax {
+                    a_u[a_nb_pnt] = a_umax;
+                    a_u[a_nb_pnt + 1] = (a_xmax + a_umax) * 0.5;
+                    a_u[a_nb_pnt + 2] = a_xmax;
+                    a_upp[a_nb_pnt] = a_u[a_nb_pnt] - a_umax + a_umin;
+                    a_upp[a_nb_pnt + 1] = a_u[a_nb_pnt + 1] - a_umax + a_umin;
+                    a_upp[a_nb_pnt + 2] = a_u[a_nb_pnt + 2] - a_umax + a_umin;
+                    a_nb_pnt += 3;
+                }
+                for an_ind in 0..a_nb_pnt {
+                    let p1 = a_s_basis.point_at(a_u[an_ind], a_v);
+                    let p2 = a_s_basis.point_at(a_upp[an_ind], a_v);
+                    if p1.distance_squared(p2) > a_tol2 {
+                        is_u_periodic = false;
+                        break;
+                    }
+                }
+            }
+        }
+        // OCCT L309-320: the clamp.
+        if !is_u_periodic {
+            if (a_xmin < a_umin) && (a_umin < a_xmax) {
+                a_xmin = a_umin;
+            }
+            if (a_xmin < a_umax) && (a_umax < a_xmax) {
+                a_xmax = a_umax;
+            }
+        }
+    }
+    //
+    // OCCT L323+: if (!aS->IsVPeriodic()).
+    if !a_s_basis.is_v_periodic() {
+        let mut is_v_periodic = false;
+        if matches!(a_s_basis, Surface3::BSpline(_)) && (a_ymin < a_vmin || a_ymax > a_vmax) {
+            let a_tol2 = 100.0
+                * rcad_kernel::core::precision::CONFUSION
+                * rcad_kernel::core::precision::CONFUSION;
+            is_v_periodic = true;
+            if !a_s_basis.is_v_closed() {
+                let a_u_step = a_umax - a_umin;
+                let mut a_u = a_umin;
+                while a_u <= a_umax {
+                    let p1 = a_s_basis.point_at(a_u, a_vmin);
+                    let p2 = a_s_basis.point_at(a_u, a_vmax);
+                    if p1.distance_squared(p2) > a_tol2 {
+                        is_v_periodic = false;
+                        break;
+                    }
+                    a_u += a_u_step;
+                }
+            }
+            if is_v_periodic {
+                let a_u = (a_umin + a_umax) * 0.5;
+                let mut a_v = [0.0f64; 6];
+                let mut a_vpp = [0.0f64; 6];
+                let mut a_nb_pnt = 0usize;
+                if a_ymin < a_vmin {
+                    a_v[0] = a_ymin;
+                    a_v[1] = (a_ymin + a_vmin) * 0.5;
+                    a_v[2] = a_vmin;
+                    a_vpp[0] = a_v[0] + a_vmax - a_vmin;
+                    a_vpp[1] = a_v[1] + a_vmax - a_vmin;
+                    a_vpp[2] = a_v[2] + a_vmax - a_vmin;
+                    a_nb_pnt += 3;
+                }
+                if a_ymax > a_vmax {
+                    a_v[a_nb_pnt] = a_vmax;
+                    a_v[a_nb_pnt + 1] = (a_ymax + a_vmax) * 0.5;
+                    a_v[a_nb_pnt + 2] = a_ymax;
+                    a_vpp[a_nb_pnt] = a_v[a_nb_pnt] - a_vmax + a_vmin;
+                    a_vpp[a_nb_pnt + 1] = a_v[a_nb_pnt + 1] - a_vmax + a_vmin;
+                    a_vpp[a_nb_pnt + 2] = a_v[a_nb_pnt + 2] - a_vmax + a_vmin;
+                    a_nb_pnt += 3;
+                }
+                for an_ind in 0..a_nb_pnt {
+                    let p1 = a_s_basis.point_at(a_u, a_v[an_ind]);
+                    let p2 = a_s_basis.point_at(a_u, a_vpp[an_ind]);
+                    if p1.distance_squared(p2) > a_tol2 {
+                        is_v_periodic = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if !is_v_periodic {
+            if (a_ymin < a_vmin) && (a_vmin < a_ymax) {
+                a_ymin = a_vmin;
+            }
+            if (a_ymin < a_vmax) && (a_vmax < a_ymax) {
+                a_ymax = a_vmax;
+            }
+        }
+    }
+    // OCCT L362-366: aBoxS.Update(aXmin, aYmin, aXmax, aYmax); aB.Add(aBoxS).
+    a_b.update_box(a_xmin, a_ymin, a_xmax, a_ymax);
+}
+
+/// OCCT BRepTools::AddUVBounds(FF, B) (BRepTools.cxx L125-159) — the face
+/// form.
+fn brep_tools_add_uv_bounds_face(the_brep: &BRep, a_ff: &Shape, a_b: &mut BndBox2d) {
+    // OCCT L128-129: F = FF oriented FORWARD.
+    let a_f = bat::oriented(a_ff, Orientation::Forward);
+    // OCCT L132-136: fill the box for the given face.
+    let mut a_box = BndBox2d::new_void();
+    for ex in bat::explorer(&a_f, ShapeType::Edge, ShapeType::Shape) {
+        brep_tools_add_uv_bounds_edge(the_brep, &a_f, &ex, &mut a_box);
+    }
+    // OCCT L139-154: if the box is empty, get natural bounds.
+    if a_box.is_void() {
+        let a_surf = match bat::brep_tool_surface(&a_f) {
+            Some(s) => s,
+            None => return,
+        };
+        let (u_min, u_max, v_min, v_max) = {
+            let d = a_surf.default_domain();
+            // OCCT L150-151: aSurf->Bounds(UMin, UMax, VMin, VMax) — the OCCT
+            // infinite surfaces (Geom_Plane::Bounds L181-184) return finite
+            // Precision::Infinite() magnitudes (2e100); the rcad
+            // default_domain carries true infinities, so map to the OCCT
+            // finite form (architecture difference #61).
+            fn to_occt_infinite(v: f64) -> f64 {
+                if v == f64::INFINITY {
+                    rcad_kernel::core::precision::INFINITE_VALUE
+                } else if v == f64::NEG_INFINITY {
+                    -rcad_kernel::core::precision::INFINITE_VALUE
+                } else {
+                    v
+                }
+            }
+            (
+                to_occt_infinite(d[0]),
+                to_occt_infinite(d[1]),
+                to_occt_infinite(d[2]),
+                to_occt_infinite(d[3]),
+            )
+        };
+        a_box.update_box(u_min, v_min, u_max, v_max);
+    }
+    // OCCT L157: add the face box to the result.
+    a_b.add_box(&a_box);
+}
+
+/// OCCT BRepTools::UVBounds(F, Umin, Umax, Vmin, Vmax) (BRepTools.cxx L64-80).
+/// (the_chfi3d_builder_cncrn.rs (brep, face) form; the pcurve resolution goes
+/// through the BRepTool::CurveOnSurface surface-value matcher.)
+pub(crate) fn brep_tools_uv_bounds(the_brep: &BRep, _f: &Shape) -> (f64, f64, f64, f64) {
+    // OCCT L70-71: Bnd_Box2d B; AddUVBounds(F, B).
+    let mut a_b = BndBox2d::new_void();
+    brep_tools_add_uv_bounds_face(the_brep, _f, &mut a_b);
+    if !a_b.is_void() {
+        (a_b.a_xmin, a_b.a_xmax, a_b.a_ymin, a_b.a_ymax)
+    } else {
+        (0.0, 0.0, 0.0, 0.0)
+    }
 }
 
 /// OCCT BRepTools::Update(F) — GAP static leaf (architecture difference
@@ -976,6 +1342,21 @@ pub(crate) fn eval_max(s: &Shape, tol: &mut f64) {
     }
 }
 
+/// OCCT BRep_Builder::Add(aCompound, aShape) — the shared-TShape mutation
+/// form (BRep_Builder.cxx: the added child is visible through every
+/// TopoDS_Shape handle of the compound).
+///
+/// Architecture difference #61: the kernel BRepBuilder::add_to_compound
+/// mutates via Arc::make_mut, which clones the TShape whenever another Arc
+/// handle exists — a compound handle retained by the caller then keeps the
+/// pre-mutation (empty) TShape, while the BRep pool slot carries the child.
+/// This wrapper re-binds the caller's handle onto the pool slot after the
+/// add so the OCCT "all handles see the mutation" semantics hold.
+pub(crate) fn bb_add_to_compound(brep: &mut BRep, compound: &mut Shape, shape: &Shape) {
+    BRepBuilder::new().add_to_compound(brep, compound.clone(), shape.clone());
+    compound.data = brep.tshapes[compound.index].clone();
+}
+
 // ===========================================================================
 // OCCT class (BRepOffset_MakeOffset.hxx L65-285).
 // ===========================================================================
@@ -1313,6 +1694,7 @@ impl BRepOffsetMakeOffset {
     }
 
     /// OCCT BRepOffset_MakeOffset::BuildFaceComp (cxx L1873-1891).
+    /// OCCT BRepOffset_MakeOffset::BuildFaceComp (cxx L1869-1889).
     pub(crate) fn build_face_comp(&mut self) {
         let mut a_bb = BRepBuilder::new();
         self.my_face_comp = a_bb.make_compound(&mut self.my_brep, vec![]);
@@ -1324,7 +1706,9 @@ impl BRepOffsetMakeOffset {
                 a_face = a_planface.clone();
             }
             let a_face = oriented(&a_face, an_or);
-            a_bb.add_to_compound(&mut self.my_brep, self.my_face_comp.clone(), a_face);
+            // OCCT L1881: aBB.Add(myFaceComp, aFace.Oriented(anOr)) — the
+            // retained-handle form (architecture difference #61).
+            bb_add_to_compound(&mut self.my_brep, &mut self.my_face_comp, &a_face);
         }
     }
 

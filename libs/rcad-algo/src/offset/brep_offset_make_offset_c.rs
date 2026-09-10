@@ -726,7 +726,7 @@ impl BRepOffsetMakeOffset {
         //-----------------------------------------------
         let mut a_dmvv: DmvvMap = indexmap::IndexMap::new();
         for i in 1..=modif.extent() {
-            if a_ps_more() {
+            if !a_ps_more() {
                 self.my_error = BRepOffset_Error::UserBreak;
                 return;
             }
@@ -788,7 +788,8 @@ impl BRepOffsetMakeOffset {
                 &mut self.my_image_vv,
             );
         }
-        if a_ps_more() {
+        // OCCT L3026-3031: if (!aPS.More()) — UserBreak guard.
+        if !a_ps_more() {
             self.my_error = BRepOffset_Error::UserBreak;
             return;
         }
@@ -849,7 +850,8 @@ impl BRepOffsetMakeOffset {
             self.my_make_loops
                 .build_faces(&mut lof, &mut self.my_as_des, &mut self.my_image_offset);
         }
-        if a_ps_more() {
+        // OCCT L3095-3100: if (!aPS.More()) — UserBreak guard.
+        if !a_ps_more() {
             self.my_error = BRepOffset_Error::UserBreak;
             return;
         }
@@ -936,9 +938,10 @@ impl BRepToolsSubstitution {
     }
 }
 
-/// The OCCT `!aPS.More()` user-break probe — the flattened NoopProgress
-/// scope never breaks (architecture difference #40); the helper keeps the
-/// OCCT branch structure at every former `aPS.More()` site without a scope.
+/// The OCCT `aPS.More()` probe — the flattened NoopProgress scope is never
+/// canceled and never exhausted, so `More()` always yields true (architecture
+/// difference #40); the helper keeps the OCCT branch structure at every
+/// former `if (!aPS.More())` site without a scope.
 fn a_ps_more() -> bool {
-    false
+    true
 }
