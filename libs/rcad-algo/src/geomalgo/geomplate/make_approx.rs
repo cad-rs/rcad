@@ -8,12 +8,23 @@
 //!
 //! GAP leaf: `AdvApp2Var_ApproxAFunc2Var` (with `AdvApprox_DichoCutting`,
 //! `AdvApp2Var_Criterion` dispatch and `AdvApp2Var_Patch` evaluation) is the
-//! untranslated AdvApp2Var package.  Each OCCT AppPlate construction site is
-//! preserved at its exact anchor; until it lands the approximation result
-//! stays null (mySurface = AppPlate.Surface(1) never executes), which keeps
-//! the OCCT failure path where a failed approximation leaves the surface
-//! null and the caller falls back (GeomPlate_BuildPlateSurface Perform
-//! L537-580 chains on the MakeApprox result).
+//! remaining AdvApp2Var closure.  The leaf layer of the package has landed
+//! in [`crate::geomalgo::adv_app2_var`]: SysBase subset (mnfndeb_/mgenmsg_/
+//! mgsomsg_/maermsg_/mvriraz_/mcrfill_/mcrrqst_/mcrdelt_), MathBase subset
+//! (pow__di/mfac_/mmdrc11_/mmrtptt_), ApproxF2var engines mma1her_/
+//! mma2ac1_/mma2ac2_/mma2ac3_/mma2jmx_/mma2roo_/mmapptt_/mmmapcoe_/mmaperm_/
+//! mma2moy_/mma2fx6_ and the MMAPGS*/MLGDRTL block data.  Still untranslated
+//! (bottom-up order): MathBase mmjacan_/mmjaccv_/mmapcmp_/mmaperx_/mmfmca8_/
+//! mmfmca9_/mmfmtb1_/mmmpocur_/mmtrpjj_/mmveps3_/mzsnorm_, ApproxF2var
+//! mma2cdi_/mma2ce1_+ce2/cfu/cfv/er1/er2/mma2can_/mma2ds1_+ds2/fdi/cdi/jak/
+//! cnt/fer/noc/nop/jak/mjacpt_/mma2fnc_ and the classes AdvApp2Var_Node/Iso/
+//! Network/Framework/Patch/Context/Criterion/ApproxAFunc2Var.
+//! Each OCCT AppPlate construction site is preserved at its exact anchor;
+//! until the closure lands the approximation result stays null
+//! (mySurface = AppPlate.Surface(1) never executes), which keeps the OCCT
+//! failure path where a failed approximation leaves the surface null and the
+//! caller falls back (GeomPlate_BuildPlateSurface Perform L537-580 chains on
+//! the MakeApprox result).
 //!
 //! `handle(Geom_BSplineSurface)` -> `Option<BSplineSurface>` (kernel type;
 //! None models the null handle).

@@ -52,6 +52,7 @@ pub mod brep_approx_approx; // BRepApprox_Approx = ApproxInt_Approx.gxx instanti
 pub mod gtests_stubs; // Stubs for OCCT GTest translations (minimal impls to compile+pass)
 pub mod plate;       // Plate (variational spline plate: constraints + Plate_Plate solver)
 pub mod geomplate;   // GeomPlate (plate surface building on top of Plate)
+pub mod adv_app2_var; // AdvApp2Var (2-var adaptive approximation stack: SysBase/MathBase/ApproxF2var engines + block data)
 pub mod geomfill;    // GeomFill (BSplineCurves filling: Stretch/Coons/Curved)
 pub mod law;         // Law (evolution laws: Function/Constant/Composite)
 pub mod approx_curve_on_surface; // Approx_CurveOnSurface (curve-on-surface approximation over AdvApprox)

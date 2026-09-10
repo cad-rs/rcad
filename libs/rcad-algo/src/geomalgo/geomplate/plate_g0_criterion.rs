@@ -1,14 +1,18 @@
 //! OCCT GeomPlate_PlateG0Criterion (TKGeomAlgo/GeomPlate) — 1:1 port of
 //! GeomPlate_PlateG0Criterion.cxx / .hxx.
 //!
-//! GAP leaves: the base class `AdvApp2Var_Criterion` and the `Value` body's
-//! `AdvApp2Var_Patch`/`AdvApp2Var_Context`/`PLib::EvalPoly2Var` machinery
-//! belong to the untranslated AdvApp2Var package (ModelingData/TKGeomBase/
-//! AdvApp2Var).  The criterion carries the base-class members
-//! (myMaxValue/myType/myRepartition) and the patch-evaluation entry point
-//! preserves the untranslated-dependency failure path; `IsSatisfied` is
-//! complete.  The criterion is only consumed through
-//! AdvApp2Var_ApproxAFunc2Var, which is itself the MakeApprox GAP.
+//! GAP leaves: the base class `AdvApp2Var_Criterion` accessors are complete
+//! here; the `Value` body's `AdvApp2Var_Patch`/`AdvApp2Var_Context`/
+//! `PLib::EvalPoly2Var` machinery still waits for the remaining AdvApp2Var
+//! closure.  The leaf engine layer landed in
+//! [`crate::geomalgo::adv_app2_var`] (SysBase/MathBase subsets, ApproxF2var
+//! mma1her_/mma2ac1_/mma2ac2_/mma2ac3_/mma2jmx_/mma2roo_/mmapptt_/mmmapcoe_/
+//! mmaperm_/mma2moy_/mma2fx6_ + MMAPGS*/MLGDRTL block data); the classes
+//! (Patch/Context) and PLib::EvalPolynomial remain.  The criterion carries
+//! the base-class members (myMaxValue/myType/myRepartition) and the
+//! patch-evaluation entry point preserves the untranslated-dependency
+//! failure path; `IsSatisfied` is complete.  The criterion is only consumed
+//! through AdvApp2Var_ApproxAFunc2Var, which is itself the MakeApprox GAP.
 
 use glam::{DVec2, DVec3};
 
@@ -32,8 +36,10 @@ pub enum AdvApp2VarCriterionRepartition {
 }
 
 /// GAP carrier for OCCT AdvApp2Var_Patch — the patch object whose
-/// polynomial-coefficient buffers the criterion evaluates; the AdvApp2Var
-/// package is untranslated, so only the CritValue slot exists here.
+/// polynomial-coefficient buffers the criterion evaluates; the
+/// AdvApp2Var_Patch class (AdvApp2Var_Patch.cxx, over the not-yet-landed
+/// mma2ce*/mma2can_* engines) is the remaining dependency, so only the
+/// CritValue slot exists here.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AdvApp2VarPatchCarrier {
     crit_value: f64,

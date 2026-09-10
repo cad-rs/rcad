@@ -45,8 +45,8 @@ use super::adaptor::{Adaptor3dCurve, Adaptor3dSurface, GeomAbsSurfaceType};
 use super::{CurveType, Projector};
 use crate::core::precision;
 use crate::geom::{
-    Circle3, ConicalSurface, Curve3, CylindricalSurface, Ellipse3, Hyperbola3, Line3, Parabola3,
-    Plane, SphericalSurface, Surface3, ToroidalSurface,
+    Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse3, Hyperbola3, Line3,
+    Parabola3, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
 use crate::math::GeomAbsShape;
 
@@ -1566,6 +1566,47 @@ pub(crate) fn trim_c3d(
         *my_curve = my_curve.trim_geom(f, l, precision::CONFUSION);
         singular_case[1] = number_of_singular_case;
     }
+}
+
+// =========================================================================
+// OCCT ProjLib_ProjectedCurve.cxx L163-238 — static ExtendC2d
+// =========================================================================
+
+/// OCCT static ExtendC2d(aRes, t, dt, u1, u2, v1, v2, FirstOrLast,
+/// NumberOfSingularCase) (ProjLib_ProjectedCurve.cxx L163-238): appends the
+/// straight segment running from the curve end to the degenerate-surface
+/// boundary onto the 2d result (consumed by the BSpline-surface branch
+/// L511-522, the default branch L678-687 and the ComputeApprox fallback
+/// L742-753 of Perform).
+///
+/// GAP leaf: the body needs `Geom2dConvert_CompCurveToBSplineCurve`
+/// (Geom2dConvert_CompCurveToBSplineCurve.cxx L20-250, the C1
+/// concat-onto-BSpline machinery with `Add(aSegment, aTol, anAfter)` +
+/// `BSplineCurve()`), not translated in rcad-kernel
+/// (base::geom2d_convert carries only the simplified
+/// `compose_curves_to_bspline` helper); the anchor is preserved with the
+/// OCCT failure path (aRes unchanged, caller keeps the unextended result —
+/// the same state OCCT produces when the concat is refused).  Remaining
+/// consumed pieces once the dependency lands: Curve2d D1 at the end
+/// parameter, the boundary direction switch (L188-210), the parallel /
+/// intersection parameter (L213-229) and the trimmed-segment concat
+/// (L231-237).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn extend_c2d(
+    _a_res: &mut Curve2d,
+    _t: f64,
+    _dt: f64,
+    _u1: f64,
+    _u2: f64,
+    _v1: f64,
+    _v2: f64,
+    _first_or_last: i32,
+    _number_of_singular_case: i32,
+) {
+    unimplemented!(
+        "ProjLib_ProjectedCurve::ExtendC2d (OCCT L163-238) needs \
+         Geom2dConvert_CompCurveToBSplineCurve (untranslated)"
+    );
 }
 
 // =========================================================================
