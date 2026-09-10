@@ -9,21 +9,17 @@
 //!    HashMap<ShapeKey, (Shape, Shape)> (the entry keeps the key shape);
 //!    NCollection_DataMap<TopoDS_Shape, List, ...> -> HashMap<ShapeKey,
 //!    (Shape, Vec<Shape>)>.
-//! 2. BRepAdaptor_Curve/BRepAdaptor_Surface map to the rcad geometry values
-//!    carried by the Shape (Curve3 / Surface3); GeomAdaptor::MakeCurve
-//!    (cxx L324/L363) is the identity (the rcad adaptor IS the geom value).
+//! 2. BRepAdaptor_Curve/BRepAdaptor_Surface are the kernel 1:1 bodies
+//!    (rcad_kernel::base::proj_lib::brep_adaptor); GeomAdaptor::MakeCurve
+//!    (cxx L324/L363) is the identity on the adaptor's loaded 3D curve (the
+//!    rcad adaptor IS the geom value).  GAP: the curve-on-surface arm of
+//!    GeomAdaptor::MakeCurve (an edge without a 3D curve) is not translated;
+//!    the OCCT path derives the 3D image there, rcad skips the solution.
 //! 3. GeomAbs_Shape -> rcad_kernel::topods::GeomAbsShape; GeomAbs_CurveType
-//!    maps to the Curve3 variant discriminant (IsElementary).
-//! 4. The projection machinery is GAP-pending:
-//!    - ProjLib_HCompProjectedCurve (TKGeomBase/TKTopAlgo projection of a
-//!      curve on a surface) — pending; nb_curves() is 0 so the OCCT
-//!      per-solution loop never runs (the pending-classification behavior).
-//!      GAP: closes with the ProjLib batch.
-//!    - Approx_CurveOnSurface (TKGeomBase approximation) — pending; kept
-//!      behind the same GAP.
-//!    - BRepLib_MakeWire (TKBRep connected-wire builder) — pending;
-//!      IsDone() is false so BuildWire takes the OCCT not-a-wire exit.
-//!      GAP: closes with the BRepLib batch.
+//!    maps to the kernel base::proj_lib::CurveType (IsElementary).
+//! 4. BRepLib_MakeWire (TKBRep connected-wire builder) — pending;
+//!    IsDone() is false so BuildWire takes the OCCT not-a-wire exit.
+//!    GAP: closes with the BRepLib batch.
 //! 5. BRepAlgoAPI_Section (cxx L465) -> bop::brep_algo_api::SectionOp (the
 //!    real BOPAlgo_Section-driven implementation).
 //! 6. BRepTopAdaptor_FClass2d -> topalgo::brep_top_adaptor::fclass2d::
@@ -32,15 +28,24 @@
 //!    OCCT TShape sharing makes them visible through every handle, rcad
 //!    mutates the owning copy.
 
+use std::sync::Arc;
+
 use crate::brep_algo::tool::{
-    brep_tool_curve, brep_tool_surface, builder_add_compound_shape, builder_make_compound,
-    builder_make_edge, builder_make_vertex, builder_range_edge_on_face,
-    builder_set_degenerated, builder_update_edge_pcurve, builder_update_vertex_point_tol,
-    builder_update_vertex_tol, explorer, oriented, shape_key, top_exp_vertices_raw, ShapeKey,
+    brep_tool_surface, builder_add_compound_shape, builder_make_compound, builder_make_edge,
+    builder_make_vertex, builder_range_edge_on_face, builder_set_degenerated,
+    builder_update_edge_pcurve, builder_update_vertex_point_tol, builder_update_vertex_tol,
+    explorer, oriented, shape_key, top_exp_vertices_raw, ShapeKey,
 };
+use crate::geomalgo::approx_curve_on_surface::ApproxCurveOnSurface;
+use crate::geomalgo::proj_lib_h_comp_projected_curve::{
+    geom2d_adaptor_curve, new_h_comp_projected_curve, CompProjectedCurve,
+};
+use rcad_kernel::base::proj_lib::adaptor::Curve2dHandle;
+use rcad_kernel::base::proj_lib::brep_adaptor::{BRepAdaptorCurve, BRepAdaptorSurface};
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::Adaptor3dCurveGeom;
+use rcad_kernel::base::proj_lib::Adaptor3dSurface;
 use rcad_kernel::geom::{
-    Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval, TrimmedCurve2,
-    BSplineCurve2,
+    Curve2d, Curve2dEval, Curve3, CurveEval, TrimmedCurve2, BSplineCurve2,
 };
 use rcad_kernel::precision::CONFUSION;
 use rcad_kernel::topo_shape::Shape;
@@ -48,16 +53,6 @@ use rcad_kernel::topods::{GeomAbsShape, Orientation, ShapeType};
 use std::collections::HashMap;
 
 use crate::bop::brep_algo_api::{Algo, SectionOp};
-
-/// OCCT handle<Adaptor2d_Curve2d> HPCur (cxx L251) — either the
-/// isoparametric Geom2dAdaptor_Curve(PCur2d) (cxx L291/L309) or the
-/// ProjLib_HCompProjectedCurve handle itself (cxx L314).
-pub enum HPCurve {
-    /// Geom2dAdaptor_Curve over the trimmed isoparametric pcurve.
-    Geom2d,
-    /// The ProjLib_HCompProjectedCurve handle.
-    Projector,
-}
 
 /// OCCT BRepAlgo_NormalProjection (BRepAlgo_NormalProjection.hxx L34-119) —
 /// makes the projection of a wire on a shape.
@@ -232,6 +227,18 @@ impl BRepAlgoNormalProjection {
         vertex_res = builder_make_compound();
         let mut ya_vertex_res = false;
 
+        // Architecture difference #2 (module header): BRepAdaptor_Curve /
+        // BRepAdaptor_Surface read BRep_Tool through the owning BRep pool,
+        // and a bare rcad Shape does not reference its producing pool.  The
+        // input trees are adopted into standalone pools at their own flat
+        // indices (topo_builder::brep_from_shape = the TopoDS_Builder::
+        // MakeShape / Add glue; the feat loc_ope_find_edges_in_face.rs
+        // precedent).  The locations table of the adopting pool is empty:
+        // the projection inputs carry identity locations (architecture
+        // difference #1 of the feat precedent).
+        let brep_edges = rcad_kernel::topo::topo_builder::brep_from_shape(&self.my_to_proj, &[]);
+        let brep_faces = rcad_kernel::topo::topo_builder::brep_from_shape(&self.my_shape, &[]);
+
         // The rcad result pool for the created vertices/edges (the
         // BRepLib_MakeVertex/BRepLib_MakeEdge vehicles; feat precedent).
         let mut pool = rcad_kernel::topods::BRep::new();
@@ -239,33 +246,33 @@ impl BRepAlgoNormalProjection {
         for i in 1..=nb_edges {
             descen_list.clear();
             let edge_shape = edges[i - 1].clone();
-            // OCCT L221: hcur = new BRepAdaptor_Curve(TopoDS::Edge(...)).
-            let hcur = brep_tool_curve(&edge_shape);
-            let elementary = match &hcur {
-                Some((c, _, _)) => is_elementary(c),
-                None => false,
-            };
+            // OCCT L221: hcur = new BRepAdaptor_Curve(TopoDS::Edge(
+            // Edges->Value(i))).
+            let hcur = BRepAdaptorCurve::with_edge(&brep_edges, &edge_shape);
+            // OCCT L222: Elementary = IsElementary(*hcur).
+            let elementary = is_elementary(&hcur);
             for j in 1..=nb_faces {
                 let face_shape = faces[j - 1].clone();
-                // OCCT L225-226: hsur = new BRepAdaptor_Surface(...).
-                let Some(hsur) = brep_tool_surface(&face_shape) else {
-                    continue;
-                };
+                // OCCT L225-226: hsur = new BRepAdaptor_Surface(TopoDS::Face(
+                // Faces->Value(j))) — the ctor default R = Standard_True (the
+                // face UV-window restriction of Initialize).
+                let hsur = BRepAdaptorSurface::with_face(&brep_faces, &face_shape, true);
 
-                // computation of TolU and TolV (OCCT L230-233).
-                let tol_u = rcad_kernel::topo::topods::u_resolution_for_surface(&hsur, self.my_tol3d) / 20.0;
-                let tol_v = rcad_kernel::topo::topods::v_resolution_for_surface(&hsur, self.my_tol3d) / 20.0;
+                // OCCT L232-233: TolU = hsur->UResolution(myTol3d) / 20;
+                // TolV = hsur->VResolution(myTol3d) / 20.
+                let tol_u = hsur.u_resolution(self.my_tol3d) / 20.0;
+                let tol_v = hsur.v_resolution(self.my_tol3d) / 20.0;
 
-                // OCCT L238-239: the projection tool (architecture
-                // difference #4 — pending ProjLib; nb_curves() is 0 so the
-                // per-solution loop below never runs).
-                let h_projector = ProjLibHCompProjectedCurve::new(
-                    &hsur,
-                    hcur.as_ref().map(|(c, _, _)| c),
+                // OCCT L238-239: HProjector = new ProjLib_HCompProjectedCurve(
+                // hsur, hcur, TolU, TolV, myMaxDist) — the projector over the
+                // BRepAdaptor_Surface / BRepAdaptor_Curve handles.
+                let h_projector: Arc<CompProjectedCurve> = Arc::new(new_h_comp_projected_curve(
+                    Arc::new(hsur.clone()),
+                    Arc::new(hcur.clone()),
                     tol_u,
                     tol_v,
                     self.my_max_dist,
-                );
+                ));
 
                 // OCCT L245-252: the per-solution locals.
                 let mut prj = Shape::null(); // OCCT L245: TopoDS_Shape prj (null).
@@ -275,13 +282,17 @@ impl BRepAlgoNormalProjection {
                 let mut pfin = glam::DVec2::ZERO;
                 let mut uiso = 0.0f64;
                 let mut viso = 0.0f64;
-                let mut hp_cur = HPCurve::Projector;
-                let mut pcur2d: Option<Curve2d> = None; // Only for isoparametric projection
+                // OCCT L251: occ::handle<Adaptor2d_Curve2d> HPCur — either
+                // the isoparametric Geom2dAdaptor_Curve(PCur2d) (L291/L309)
+                // or the projector handle itself (L314).
+                let mut hp_cur: Curve2dHandle;
+                let mut pcur2d: Option<Curve2d> = None; // OCCT L252: only for the isoparametric projection
 
                 for k in 1..=h_projector.nb_curves() {
                     if h_projector.is_single_pnt(k, &mut p2d) {
-                        // OCCT L262-268: the punctual solution.
-                        let p = h_projector.get_surface().point_at(p2d.x, p2d.y);
+                        // OCCT L262-268: the punctual solution —
+                        // GetSurface()->D0(P2d.X(), P2d.Y(), P).
+                        let p = h_projector.get_surface().value(p2d.x, p2d.y);
                         prj = pool.add_tvertex(p);
                         descen_list.push(prj.clone());
                         builder_add_compound_shape(&mut vertex_res, &prj);
@@ -298,12 +309,16 @@ impl BRepAlgoNormalProjection {
                         /**************************************************************/
                         // OCCT L276-315: the isoparametric branches.
                         if h_projector.is_u_iso(k, &mut uiso) {
-                            h_projector.d0(udeb, &mut pdeb);
-                            h_projector.d0(ufin, &mut pfin);
+                            // OCCT L282-283: HProjector->D0(Udeb, Pdeb) /
+                            // D0(Ufin, Pfin).
+                            pdeb = h_projector.d0(udeb);
+                            pfin = h_projector.d0(ufin);
                             poles[0] = pdeb;
                             poles[1] = pfin;
                             knots[0] = udeb;
                             knots[1] = ufin;
+                            // OCCT L288-289: BS2d = new Geom2d_BSplineCurve(
+                            // Poles, Knots, Mults, Deg).
                             let bs2d = Curve2d::BSpline(BSplineCurve2 {
                                 degree: deg,
                                 // OCCT knots/mults expanded (Mults == Deg+1).
@@ -311,36 +326,49 @@ impl BRepAlgoNormalProjection {
                                 control_points: vec![poles[0], poles[1]],
                                 weights: vec![1.0, 1.0],
                             });
+                            // OCCT L290: PCur2d = new Geom2d_TrimmedCurve(
+                            // BS2d, Udeb, Ufin).
                             pcur2d = Some(Curve2d::Trimmed(TrimmedCurve2 {
                                 curve: Box::new(bs2d),
                                 t_min: udeb,
                                 t_max: ufin,
                             }));
-                            hp_cur = HPCurve::Geom2d;
+                            // OCCT L291: HPCur = new Geom2dAdaptor_Curve(
+                            // PCur2d).
+                            hp_cur = geom2d_adaptor_curve(pcur2d.clone().expect("PCur2d"));
                             only3d = true;
                         } else if h_projector.is_v_iso(k, &mut viso) {
-                            h_projector.d0(udeb, &mut pdeb);
-                            h_projector.d0(ufin, &mut pfin);
+                            // OCCT L300-301: HProjector->D0(Udeb, Pdeb) /
+                            // D0(Ufin, Pfin).
+                            pdeb = h_projector.d0(udeb);
+                            pfin = h_projector.d0(ufin);
                             poles[0] = pdeb;
                             poles[1] = pfin;
                             knots[0] = udeb;
                             knots[1] = ufin;
+                            // OCCT L306-307: BS2d = new Geom2d_BSplineCurve(
+                            // Poles, Knots, Mults, Deg).
                             let bs2d = Curve2d::BSpline(BSplineCurve2 {
                                 degree: deg,
                                 knots: vec![knots[0], knots[0], knots[1], knots[1]],
                                 control_points: vec![poles[0], poles[1]],
                                 weights: vec![1.0, 1.0],
                             });
+                            // OCCT L308: PCur2d = new Geom2d_TrimmedCurve(
+                            // BS2d, Udeb, Ufin).
                             pcur2d = Some(Curve2d::Trimmed(TrimmedCurve2 {
                                 curve: Box::new(bs2d),
                                 t_min: udeb,
                                 t_max: ufin,
                             }));
-                            hp_cur = HPCurve::Geom2d;
+                            // OCCT L309: HPCur = new Geom2dAdaptor_Curve(
+                            // PCur2d).
+                            hp_cur = geom2d_adaptor_curve(pcur2d.clone().expect("PCur2d"));
                             only3d = true;
                         } else {
-                            // OCCT L314: HPCur = HProjector.
-                            hp_cur = HPCurve::Projector;
+                            // OCCT L314: HPCur = HProjector (the projector
+                            // handle upcast to handle(Adaptor2d_Curve2d)).
+                            hp_cur = h_projector.clone();
                         }
 
                         // OCCT L317-320.
@@ -351,11 +379,25 @@ impl BRepAlgoNormalProjection {
                         }
 
                         if only2d && only3d {
-                            // OCCT L322-329.
-                            let Some((c, _, _)) = &hcur else {
+                            // OCCT L324: BRepLib_MakeEdge MKed(
+                            // GeomAdaptor::MakeCurve(*hcur), Udeb, Ufin) —
+                            // MakeCurve is the identity on the adaptor's
+                            // loaded 3D curve (module header architecture
+                            // difference #2).  GAP: the curve-on-surface arm
+                            // of GeomAdaptor::MakeCurve (an edge without a
+                            // 3D curve) is not translated; the OCCT path
+                            // derives the 3D image there, rcad skips the
+                            // solution.
+                            if hcur.transformed.my_con_surf.is_some() {
                                 continue;
-                            };
-                            prj = pool.add_tedge(Some(c.clone()), Shape::null(), Shape::null(), [udeb, ufin]);
+                            }
+                            let mked_curve = hcur.transformed.my_curve.curve.clone();
+                            prj = pool.add_tedge(
+                                Some(mked_curve),
+                                Shape::null(),
+                                Shape::null(),
+                                [udeb, ufin],
+                            );
                             if let Some(pc) = &pcur2d {
                                 builder_update_edge_pcurve(&mut prj, pc, &face_shape, self.my_tol3d);
                             }
@@ -366,42 +408,76 @@ impl BRepAlgoNormalProjection {
                                 builder_update_vertex_tol(&mut v, self.my_tol3d);
                             }
                         } else {
-                            // OCCT L331-341: the approximation
-                            // (architecture difference #4 — pending).
+                            // OCCT L335-336: Approx_CurveOnSurface appr(
+                            // HPCur, hsur, Udeb, Ufin, myTol3d);
+                            // appr.Perform(myMaxSeg, myMaxDegree, myContinuity,
+                            // Only3d, Only2d).
+                            //
+                            // Architecture difference: the rcad kernel carries
+                            // two GeomAbsShape encodings (topods = the OCCT
+                            // 7-variant order, math = the 5-variant adaptor
+                            // stack order); myContinuity flows from the
+                            // topods form (the set_params API) to the math
+                            // form (the approx body).  The G1/G2 arms
+                            // reproduce the OCCT normalize step of
+                            // Approx_CurveOnSurface.cxx L373-385 (G1 -> C1,
+                            // G2 -> C2); the C3/CN -> C2 restriction stays in
+                            // the approx body.
+                            let appr_continuity = match self.my_continuity {
+                                GeomAbsShape::C0 => rcad_kernel::math::GeomAbsShape::C0,
+                                GeomAbsShape::G1 => rcad_kernel::math::GeomAbsShape::C1,
+                                GeomAbsShape::C1 => rcad_kernel::math::GeomAbsShape::C1,
+                                GeomAbsShape::G2 => rcad_kernel::math::GeomAbsShape::C2,
+                                GeomAbsShape::C2 => rcad_kernel::math::GeomAbsShape::C2,
+                                GeomAbsShape::C3 => rcad_kernel::math::GeomAbsShape::C3,
+                                GeomAbsShape::CN => rcad_kernel::math::GeomAbsShape::CN,
+                            };
                             let mut appr = ApproxCurveOnSurface::new(
-                                &hp_cur,
-                                &hsur,
+                                hp_cur,
+                                Arc::new(hsur.clone()),
                                 udeb,
                                 ufin,
                                 self.my_tol3d,
                             );
                             appr.perform(
-                                self.my_max_seg,
-                                self.my_max_degree,
-                                self.my_continuity,
+                                self.my_max_seg as i32,
+                                self.my_max_degree as i32,
+                                appr_continuity,
                                 only3d,
                                 only2d,
                             );
 
-                            if appr.max_error_3d() > 1.0e3 * self.my_tol3d {
+                            // OCCT L338-341.
+                            if appr.max_error3d() > 1.0e3 * self.my_tol3d {
                                 continue;
                             }
 
                             // OCCT L357-360.
                             if !only3d {
-                                pcur2d = appr.curve_2d();
+                                pcur2d = appr.curve2d();
                             }
                             if only2d {
-                                // OCCT L361-365.
-                                let Some((c, _, _)) = &hcur else {
+                                // OCCT L361-365: BRepLib_MakeEdge MKed(
+                                // GeomAdaptor::MakeCurve(*hcur), Udeb, Ufin) —
+                                // see the MakeCurve GAP note above.
+                                if hcur.transformed.my_con_surf.is_some() {
                                     continue;
-                                };
-                                prj = pool.add_tedge(Some(c.clone()), Shape::null(), Shape::null(), [udeb, ufin]);
+                                }
+                                let mked_curve = hcur.transformed.my_curve.curve.clone();
+                                prj = pool.add_tedge(
+                                    Some(mked_curve),
+                                    Shape::null(),
+                                    Shape::null(),
+                                    [udeb, ufin],
+                                );
                             } else {
                                 // OCCT L368-439: the degenerated test and
                                 // the edge creation.
                                 degenerated = true;
-                                let Some(bs3d) = appr.curve_3d() else {
+                                // OCCT L373: BS3d = appr.Curve3d() — the null
+                                // handle would crash the OCCT dereference; the
+                                // rcad Option keeps the skip.
+                                let Some(bs3d) = appr.curve3d() else {
                                     continue;
                                 };
                                 let mut p1 = glam::DVec3::ZERO;
@@ -466,16 +542,18 @@ impl BRepAlgoNormalProjection {
                                     builder_set_degenerated(&mut prj, true);
                                 } else {
                                     // OCCT L438: prj = BRepLib_MakeEdge(BS3d).Edge().
-                                    prj = pool.add_tedge(Some(bs3d), Shape::null(), Shape::null(), [
-                                        bs3d_first,
-                                        bs3d_last,
-                                    ]);
+                                    prj = pool.add_tedge(
+                                        Some(Curve3::BSpline(bs3d)),
+                                        Shape::null(),
+                                        Shape::null(),
+                                        [bs3d_first, bs3d_last],
+                                    );
                                 }
                             }
 
                             // OCCT L442-451.
                             if let Some(pc) = &pcur2d {
-                                let max_err = appr.max_error_3d();
+                                let max_err = appr.max_error3d();
                                 builder_update_edge_pcurve(&mut prj, pc, &face_shape, max_err);
                                 if let Some(v) = top_exp_vertices_raw(&prj).0 {
                                     let mut v = v;
@@ -633,9 +711,10 @@ impl BRepAlgoNormalProjection {
 
     /// OCCT BRepAlgo_NormalProjection::IsElementary(C) const
     /// (cxx L623-638) — Line/Circle/Ellipse/Hyperbola/Parabola are
-    /// elementary (the GeomAbs_CurveType maps to the rcad Curve3 variant of
-    /// the basis curve; architecture difference #3).
-    pub fn is_elementary(&self, c: &Curve3) -> bool {
+    /// elementary (GetType over the Adaptor3d_Curve; the GeomAbs_CurveType
+    /// maps to the kernel base::proj_lib::CurveType — architecture
+    /// difference #3).
+    pub fn is_elementary(&self, c: &dyn Adaptor3dCurveGeom) -> bool {
         is_elementary(c)
     }
 
@@ -681,18 +760,17 @@ fn builder_add_edge_vertex_fwd_rev(e: &mut Shape, v: &Shape) {
     crate::brep_algo::tool::builder_add_edge_vertex(e, &vr);
 }
 
-/// OCCT BRepAlgo_NormalProjection::IsElementary — shared with the method.
-fn is_elementary(c: &Curve3) -> bool {
-    use rcad_kernel::geom::Curve3 as C3;
-    // OCCT BRepAdaptor_Curve::GetType: the trimmed wrapper is transparent
-    // (the basis curve type is reported).
-    let basis = match c {
-        C3::Trimmed(t) => t.basis_curve(),
-        other => other,
-    };
+/// OCCT BRepAlgo_NormalProjection::IsElementary — shared with the method
+/// (cxx L623-638): the GetType switch over the elementary conic kinds.
+fn is_elementary(c: &dyn Adaptor3dCurveGeom) -> bool {
+    use rcad_kernel::base::proj_lib::CurveType;
     matches!(
-        basis,
-        C3::Line(_) | C3::Circle(_) | C3::Ellipse(_) | C3::Hyperbola(_) | C3::Parabola(_)
+        c.get_type(),
+        CurveType::Line
+            | CurveType::Circle
+            | CurveType::Ellipse
+            | CurveType::Hyperbola
+            | CurveType::Parabola
     )
 }
 
@@ -731,145 +809,7 @@ impl BRepLibMakeWire {
     }
 }
 
-/// OCCT ProjLib_HCompProjectedCurve — pending TKGeomBase/TKTopAlgo
-/// translation (architecture difference #4).  The accessor surface mirrors
-/// the OCCT handle; nb_curves() is 0 so the Build() per-solution loop never
-/// runs (the pending-classification behavior).  GAP: closes with the ProjLib
-/// batch.
-// The stored constructor state (myCurve/myTolU/myTolV/myMaxDist) is the
-// pending implementation working set; dead-code is allowed while the GAP
-// stands.
-#[allow(dead_code)]
-pub struct ProjLibHCompProjectedCurve {
-    my_surface: Option<Surface3>, // OCCT: GetSurface()
-    my_curve: Option<Curve3>,
-    my_tol_u: f64,
-    my_tol_v: f64,
-    my_max_dist: f64,
-}
-
-impl ProjLibHCompProjectedCurve {
-    /// OCCT new ProjLib_HCompProjectedCurve(S, C, TolU, TolV, MaxDist).
-    pub fn new(
-        the_surface: &Surface3,
-        the_curve: Option<&Curve3>,
-        the_tol_u: f64,
-        the_tol_v: f64,
-        the_max_dist: f64,
-    ) -> Self {
-        ProjLibHCompProjectedCurve {
-            my_surface: Some(the_surface.clone()),
-            my_curve: the_curve.cloned(),
-            my_tol_u: the_tol_u,
-            my_tol_v: the_tol_v,
-            my_max_dist: the_max_dist,
-        }
-    }
-
-    /// OCCT ProjLib_HCompProjectedCurve::NbCurves() — pending (0).
-    pub fn nb_curves(&self) -> usize {
-        0
-    }
-
-    /// OCCT IsSinglePnt(Index, P) — pending (false).
-    pub fn is_single_pnt(&self, _index: usize, _p: &mut glam::DVec2) -> bool {
-        false
-    }
-
-    /// OCCT Bounds(Index, U1, U2) — pending.
-    pub fn bounds(&self, _index: usize, _u1: &mut f64, _u2: &mut f64) {}
-
-    /// OCCT IsUIso(Index, U) — pending (false).
-    pub fn is_u_iso(&self, _index: usize, _u: &mut f64) -> bool {
-        false
-    }
-
-    /// OCCT IsVIso(Index, V) — pending (false).
-    pub fn is_v_iso(&self, _index: usize, _v: &mut f64) -> bool {
-        false
-    }
-
-    /// OCCT D0(U, P) — pending.
-    pub fn d0(&self, _u: f64, _p: &mut glam::DVec2) {}
-
-    /// OCCT MaxDistance(Index) — pending (0).
-    pub fn max_distance(&self, _index: usize) -> f64 {
-        0.0
-    }
-
-    /// OCCT GetSurface() — the projected-on surface.
-    pub fn get_surface(&self) -> &Surface3 {
-        self.my_surface.as_ref().expect("GetSurface()")
-    }
-}
-
-/// OCCT Approx_CurveOnSurface — pending TKGeomBase translation
-/// (architecture difference #4).  Perform leaves the errors at 0 and the
-/// curves null (the OCCT failure output).  GAP: closes with the Approx
-/// batch.
-#[allow(dead_code)]
-pub struct ApproxCurveOnSurface {
-    my_hp_cur: HPCurve, // OCCT: the handle<Adaptor2d_Curve2d>
-    my_surf: Surface3,  // OCCT: the handle<Adaptor3d_Surface>
-    my_udeb: f64,
-    my_ufin: f64,
-    my_tol3d: f64,
-    my_max_error_3d: f64,
-    my_curve2d: Option<Curve2d>,
-    my_curve3d: Option<Curve3>,
-}
-
-impl ApproxCurveOnSurface {
-    /// OCCT Approx_CurveOnSurface(HPC, SURF, Udeb, Ufin, Tol3d).
-    pub fn new(
-        the_hp_cur: &HPCurve,
-        the_surf: &Surface3,
-        the_udeb: f64,
-        the_ufin: f64,
-        the_tol3d: f64,
-    ) -> Self {
-        ApproxCurveOnSurface {
-            my_hp_cur: match the_hp_cur {
-                HPCurve::Geom2d => HPCurve::Geom2d,
-                HPCurve::Projector => HPCurve::Projector,
-            },
-            my_surf: the_surf.clone(),
-            my_udeb: the_udeb,
-            my_ufin: the_ufin,
-            my_tol3d: the_tol3d,
-            my_max_error_3d: 0.0,
-            my_curve2d: None,
-            my_curve3d: None,
-        }
-    }
-
-    /// OCCT Approx_CurveOnSurface::Perform(MaxSeg, MaxDegree, Continuity,
-    /// Only3d, Only2d) — pending (the failure output).
-    pub fn perform(
-        &mut self,
-        _max_seg: usize,
-        _max_degree: usize,
-        _continuity: GeomAbsShape,
-        _only3d: bool,
-        _only2d: bool,
-    ) {
-        self.my_max_error_3d = 0.0;
-        self.my_curve2d = None;
-        self.my_curve3d = None;
-    }
-
-    /// OCCT MaxError3d().
-    pub fn max_error_3d(&self) -> f64 {
-        self.my_max_error_3d
-    }
-
-    /// OCCT Curve2d().
-    pub fn curve_2d(&self) -> Option<Curve2d> {
-        self.my_curve2d.clone()
-    }
-
-    /// OCCT Curve3d().
-    pub fn curve_3d(&self) -> Option<Curve3> {
-        self.my_curve3d.clone()
-    }
-}
+// OCCT ProjLib_HCompProjectedCurve / Approx_CurveOnSurface: the real 1:1
+// bodies live in geomalgo (proj_lib_h_comp_projected_curve{,_b}.rs and
+// approx_curve_on_surface.rs) — the former stubs were deleted and every
+// call point in Build() is wired to them (the E3-S queue-1 follow-on).

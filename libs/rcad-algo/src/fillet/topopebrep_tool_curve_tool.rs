@@ -6,11 +6,13 @@
 //! - the static `::MakePCurve(PC)` (TopOpeBRepTool_CurveTool.cxx L111-140)
 //! - `TopOpeBRepTool_CurveTool::MakePCurveOnFace` (L1040-1155)
 //!
-//! Consumed dependencies translated in the same file (each is private to
-//! this projection chain):
-//! - `BRepTools::UVBounds(F, ...)` / `BRepTools::AddUVBounds(F, B)` /
-//!   `BRepTools::AddUVBounds(F, E, B)` (TKBRep/BRepTools/BRepTools.cxx
-//!   L64-77, L125-158, L183-368) — consumed by MakePCurveOnFace.
+//! Supporting dependencies:
+//! - `BRepTools::UVBounds(F, ...)` / `AddUVBounds(F, B)` /
+//!   `AddUVBounds(F, E, B)` (TKBRep/BRepTools/BRepTools.cxx L64-77,
+//!   L123-158, L170-362) — the kernel canonical 1:1 bodies in
+//!   `rcad-kernel/src/base/proj_lib/brep_adaptor.rs` (the former private
+//!   copy of this file was deleted; the dedup rule keeps the complete
+//!   aligned body only).
 //! - `BRepAdaptor_Surface(F, R)` — the consumed subset of
 //!   BRepAdaptor_Surface::Initialize (TKBRep/BRepAdaptor/
 //!   BRepAdaptor_Surface.cxx L65-92).
@@ -40,7 +42,6 @@ use std::sync::Arc;
 
 use glam::DVec2;
 
-use rcad_kernel::base::bnd_lib::curve2d_bounding_box;
 use rcad_kernel::base::proj_lib::proj_lib_projected_curve::{
     Adaptor3dCurveGeom, GeomCurveAdaptor, GeomSurfaceAdaptor,
 };
@@ -49,307 +50,10 @@ use rcad_kernel::base::proj_lib::proj_lib_projected_curve_b::{
 };
 use rcad_kernel::base::proj_lib::{
     Adaptor3dCurve, Adaptor3dSurface, CurveType, CurveOnSurface, Geom2dCurveAdaptor,
-    GeomAbsSurfaceType,
 };
-use rcad_kernel::core::precision;
-use rcad_kernel::geom::{
-    Curve2d, Curve2dEval as _, Plane, Surface3, SurfaceEval as _, TrimmedCurve2,
-};
+use rcad_kernel::geom::{Curve2d, Curve2dEval as _, Plane, Surface3, TrimmedCurve2};
 use rcad_kernel::math::GeomAbsShape;
-use rcad_kernel::topo::topods::{BRep, BRepTool as _, Orientation, Shape, TShape};
-
-// =========================================================================
-// OCCT Bnd_Box2d (TKMath/Bnd) — the minimal semantics consumed by the
-// BRepTools::UVBounds translation below (IsVoid / Get / Update / Add;
-// Bnd_Box2d.hxx).  A void box carries +inf/-inf bounds so Update/Add set
-// it exactly like the OCCT void state.
-// =========================================================================
-
-#[derive(Debug, Clone, Copy)]
-struct BndBox2d {
-    xmin: f64,
-    ymin: f64,
-    xmax: f64,
-    ymax: f64,
-}
-
-impl BndBox2d {
-    /// OCCT Bnd_Box2d::IsVoid.
-    fn is_void(&self) -> bool {
-        self.xmin > self.xmax || self.ymin > self.ymax
-    }
-
-    /// OCCT Bnd_Box2d::Update(X, Y, X2, Y2) — grow to include the box
-    /// (a void box takes the given bounds).
-    fn update(&mut self, x: f64, y: f64, x2: f64, y2: f64) {
-        self.xmin = self.xmin.min(x);
-        self.ymin = self.ymin.min(y);
-        self.xmax = self.xmax.max(x2);
-        self.ymax = self.ymax.max(y2);
-    }
-
-    /// OCCT Bnd_Box2d::Add(theOther) — union with the other box.
-    fn add(&mut self, other: &BndBox2d) {
-        self.update(other.xmin, other.ymin, other.xmax, other.ymax);
-    }
-
-    /// OCCT Bnd_Box2d::Get.
-    fn get(&self) -> (f64, f64, f64, f64) {
-        (self.xmin, self.ymin, self.xmax, self.ymax)
-    }
-}
-
-impl Default for BndBox2d {
-    /// OCCT Bnd_Box2d() — the void state.
-    fn default() -> Self {
-        BndBox2d {
-            xmin: f64::INFINITY,
-            ymin: f64::INFINITY,
-            xmax: f64::NEG_INFINITY,
-            ymax: f64::NEG_INFINITY,
-        }
-    }
-}
-
-// =========================================================================
-// OCCT BRepTools.cxx — the UVBounds family consumed by MakePCurveOnFace
-// =========================================================================
-
-/// The face's edge occurrence list in OCCT wire order (the TopExp_Explorer
-/// walk of TopOpeBRepTool); the rcad face data stores the outer wire plus
-/// the inner wires (architecture difference).
-fn face_edge_shapes(brep: &BRep, f: &Shape) -> Vec<Shape> {
-    let mut out = Vec::new();
-    if let TShape::Face(fd) = f.data.as_ref() {
-        for wire in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
-            if let TShape::Wire(wd) = wire.data.as_ref() {
-                out.extend(wd.edges.iter().cloned());
-            }
-        }
-    }
-    let _ = brep;
-    out
-}
-
-/// OCCT BRepTools.cxx L64-77 — UVBounds(F, UMin, UMax, VMin, VMax).
-fn brep_tools_uv_bounds(brep: &BRep, f: &Shape) -> (f64, f64, f64, f64) {
-    // OCCT L66: Bnd_Box2d B; AddUVBounds(F, B);
-    let mut b = BndBox2d::default();
-    brep_tools_add_uv_bounds(brep, f, &mut b);
-    // OCCT L67-73: if (!B.IsVoid()) B.Get(...) else all zero.
-    if !b.is_void() {
-        b.get()
-    } else {
-        (0.0, 0.0, 0.0, 0.0)
-    }
-}
-
-/// OCCT BRepTools.cxx L125-158 — AddUVBounds(FF, B): union of the
-/// per-edge pcurve boxes; a face without edges or pcurves falls back to
-/// the surface natural bounds.
-fn brep_tools_add_uv_bounds(brep: &BRep, ff: &Shape, b: &mut BndBox2d) {
-    // OCCT L127-128: TopoDS_Face F = FF; F.Orientation(TopAbs_FORWARD).
-    let mut f = ff.clone();
-    f.orientation = Orientation::Forward;
-    // OCCT L129: TopExp_Explorer ex(F, TopAbs_EDGE) — the edge walk.
-    // OCCT L133-136: fill box for the given face.
-    let mut a_box = BndBox2d::default();
-    for e in face_edge_shapes(brep, &f) {
-        brep_tools_add_uv_bounds_edge(brep, &f, &e, &mut a_box);
-    }
-    // OCCT L139-154: if the box is empty (face without edges or without
-    // pcurves), get natural bounds.
-    if a_box.is_void() {
-        // OCCT L141-148: aSurf = BRep_Tool::Surface(F, L); null -> return.
-        let Some(a_surf) = brep.face_surface(&f) else {
-            return;
-        };
-        // OCCT L150: aSurf->Bounds(UMin, UMax, VMin, VMax).
-        let [u_min, u_max, v_min, v_max] = a_surf.default_domain();
-        // OCCT L152: aBox.Update(UMin, VMin, UMax, VMax).
-        a_box.update(u_min, v_min, u_max, v_max);
-    }
-    // OCCT L157: B.Add(aBox).
-    b.add(&a_box);
-}
-
-/// OCCT BRepTools.cxx L183-368 — AddUVBounds(aF, aE, aB): the pcurve box of
-/// one edge clamped to the surface natural bounds on the non-periodic
-/// directions (with the BSpline closedness verification of OCCT L201-357).
-fn brep_tools_add_uv_bounds_edge(brep: &BRep, a_f: &Shape, a_e: &Shape, a_b: &mut BndBox2d) {
-    // OCCT L185: aXmin = aYmin = aXmax = aYmax = 0.0.
-    let mut a_xmin = 0.0_f64;
-    let mut a_ymin = 0.0_f64;
-    let mut a_xmax = 0.0_f64;
-    let mut a_ymax = 0.0_f64;
-    // OCCT L186: aUmin/aUmax/aVmin/aVmax (the surface natural bounds).
-    //
-    // OCCT L188-193: aC2D = BRep_Tool::CurveOnSurface(aE, aF, aT1, aT2);
-    // null -> return.
-    let Some((a_c2d, a_t1, a_t2)) = brep.curve_on_surface(a_e, a_f) else {
-        return;
-    };
-    // OCCT L196: BndLib_Add2dCurve::Add(aC2D, aT1, aT2, 0., aBoxC) +
-    // L198-200: aBoxC.Get(aXmin, aYmin, aXmax, aYmax) when not void.  The
-    // rcad BndLib encoding (curve2d_bounding_box) always produces a box,
-    // so the OCCT void branch never triggers (architecture difference).
-    let [bxmin, bymin, bxmax, bymax] = curve2d_bounding_box(&a_c2d, a_t1, a_t2, 0.0);
-    a_xmin = bxmin;
-    a_ymin = bymin;
-    a_xmax = bxmax;
-    a_ymax = bymax;
-    // OCCT L202-204: aS = BRep_Tool::Surface(aF, aLoc); aS->Bounds(...).
-    // OCCT dereferences a null aS here (crash); rcad keeps the read through
-    // the Option and mirrors the crash as a panic (architecture difference).
-    let a_s = brep
-        .face_surface(a_f)
-        .expect("BRepTools::AddUVBounds: face without surface");
-    let [a_umin, a_umax, a_vmin, a_vmax] = a_s.default_domain();
-    // OCCT L206-211: a RectangularTrimmedSurface is replaced by its basis
-    // surface; rcad Surface3 has no trimmed-surface variant, so the
-    // downcast is a no-op (architecture difference).
-    let a_s_basis = a_s;
-    let _ = a_s_basis;
-
-    // OCCT L213-265: the U clamp for a non-U-periodic surface.
-    if !a_s.is_u_periodic() {
-        let mut is_u_periodic = false;
-        // OCCT L220-263: the BSpline closedness verification.
-        if matches!(a_s, Surface3::BSpline(_)) && (a_xmin < a_umin || a_xmax > a_umax) {
-            let a_tol2 = 100.0 * precision::CONFUSION * precision::CONFUSION;
-            is_u_periodic = true;
-            // OCCT L227-238: verify the surface is U-closed.
-            if !a_s.is_u_closed() {
-                let a_v_step = a_vmax - a_vmin;
-                let mut a_v = a_vmin;
-                while a_v <= a_vmax {
-                    let p1 = a_s.point_at(a_umin, a_v);
-                    let p2 = a_s.point_at(a_umax, a_v);
-                    if p1.distance(p2) > a_tol2 {
-                        is_u_periodic = false;
-                        break;
-                    }
-                    a_v += a_v_step;
-                }
-            }
-            // OCCT L240-262: verify the periodicity inside the edge UV
-            // bounds (3 or 6 sample pairs).
-            if is_u_periodic {
-                let a_v = (a_vmin + a_vmax) * 0.5;
-                let mut a_u = [0.0_f64; 6];
-                let mut a_upp = [0.0_f64; 6];
-                let mut a_nb_pnt = 0_usize;
-                if a_xmin < a_umin {
-                    a_u[0] = a_xmin;
-                    a_u[1] = (a_xmin + a_umin) * 0.5;
-                    a_u[2] = a_umin;
-                    a_upp[0] = a_u[0] + a_umax - a_umin;
-                    a_upp[1] = a_u[1] + a_umax - a_umin;
-                    a_upp[2] = a_u[2] + a_umax - a_umin;
-                    a_nb_pnt += 3;
-                }
-                if a_xmax > a_umax {
-                    a_u[a_nb_pnt] = a_umax;
-                    a_u[a_nb_pnt + 1] = (a_xmax + a_umax) * 0.5;
-                    a_u[a_nb_pnt + 2] = a_xmax;
-                    a_upp[a_nb_pnt] = a_u[a_nb_pnt] - a_umax + a_umin;
-                    a_upp[a_nb_pnt + 1] = a_u[a_nb_pnt + 1] - a_umax + a_umin;
-                    a_upp[a_nb_pnt + 2] = a_u[a_nb_pnt + 2] - a_umax + a_umin;
-                    a_nb_pnt += 3;
-                }
-                for an_ind in 0..a_nb_pnt {
-                    let p1 = a_s.point_at(a_u[an_ind], a_v);
-                    let p2 = a_s.point_at(a_upp[an_ind], a_v);
-                    if p1.distance(p2) > a_tol2 {
-                        is_u_periodic = false;
-                        break;
-                    }
-                }
-            }
-        }
-        // OCCT L265-276: clamp the box to the natural U bounds.
-        if !is_u_periodic {
-            if (a_xmin < a_umin) && (a_umin < a_xmax) {
-                a_xmin = a_umin;
-            }
-            if (a_xmin < a_umax) && (a_umax < a_xmax) {
-                a_xmax = a_umax;
-            }
-        }
-    }
-
-    // OCCT L278-357: the V clamp for a non-V-periodic surface (the mirror
-    // of the U arm).
-    if !a_s.is_v_periodic() {
-        let mut is_v_periodic = false;
-        if matches!(a_s, Surface3::BSpline(_)) && (a_ymin < a_vmin || a_ymax > a_vmax) {
-            let a_tol2 = 100.0 * precision::CONFUSION * precision::CONFUSION;
-            is_v_periodic = true;
-            // OCCT L296-307: verify the surface is V-closed.
-            if !a_s.is_v_closed() {
-                let a_u_step = a_umax - a_umin;
-                let mut a_u = a_umin;
-                while a_u <= a_umax {
-                    let p1 = a_s.point_at(a_u, a_vmin);
-                    let p2 = a_s.point_at(a_u, a_vmax);
-                    if p1.distance(p2) > a_tol2 {
-                        is_v_periodic = false;
-                        break;
-                    }
-                    a_u += a_u_step;
-                }
-            }
-            // OCCT L309-331: verify the periodicity inside the edge UV
-            // bounds.
-            if is_v_periodic {
-                let a_u = (a_umin + a_umax) * 0.5;
-                let mut a_v = [0.0_f64; 6];
-                let mut a_vpp = [0.0_f64; 6];
-                let mut a_nb_pnt = 0_usize;
-                if a_ymin < a_vmin {
-                    a_v[0] = a_ymin;
-                    a_v[1] = (a_ymin + a_vmin) * 0.5;
-                    a_v[2] = a_vmin;
-                    a_vpp[0] = a_v[0] + a_vmax - a_vmin;
-                    a_vpp[1] = a_v[1] + a_vmax - a_vmin;
-                    a_vpp[2] = a_v[2] + a_vmax - a_vmin;
-                    a_nb_pnt += 3;
-                }
-                if a_ymax > a_vmax {
-                    a_v[a_nb_pnt] = a_vmax;
-                    a_v[a_nb_pnt + 1] = (a_ymax + a_vmax) * 0.5;
-                    a_v[a_nb_pnt + 2] = a_ymax;
-                    a_vpp[a_nb_pnt] = a_v[a_nb_pnt] - a_vmax + a_vmin;
-                    a_vpp[a_nb_pnt + 1] = a_v[a_nb_pnt + 1] - a_vmax + a_vmin;
-                    a_vpp[a_nb_pnt + 2] = a_v[a_nb_pnt + 2] - a_vmax + a_vmin;
-                    a_nb_pnt += 3;
-                }
-                for an_ind in 0..a_nb_pnt {
-                    let p1 = a_s.point_at(a_u, a_v[an_ind]);
-                    let p2 = a_s.point_at(a_u, a_vpp[an_ind]);
-                    if p1.distance(p2) > a_tol2 {
-                        is_v_periodic = false;
-                        break;
-                    }
-                }
-            }
-        }
-        // OCCT L333-344: clamp the box to the natural V bounds.
-        if !is_v_periodic {
-            if (a_ymin < a_vmin) && (a_vmin < a_ymax) {
-                a_ymin = a_vmin;
-            }
-            if (a_ymin < a_vmax) && (a_vmax < a_ymax) {
-                a_ymax = a_vmax;
-            }
-        }
-    }
-
-    // OCCT L359-365: aBoxS.Update(...); aB.Add(aBoxS).
-    let mut a_box_s = BndBox2d::default();
-    a_box_s.update(a_xmin, a_ymin, a_xmax, a_ymax);
-    a_b.add(&a_box_s);
-}
+use rcad_kernel::topo::topods::{BRep, BRepTool as _, Shape};
 
 // =========================================================================
 // OCCT BRepAdaptor_Surface::Initialize (TKBRep/BRepAdaptor/
@@ -377,8 +81,10 @@ pub(crate) fn brep_adaptor_surface(brep: &BRep, f: &Shape, restriction: bool) ->
         }));
     };
     if restriction {
-        // OCCT L77-80: UVBounds(F, ...) then Load(S, U1, U2, V1, V2, Trsf).
-        let (umin, umax, vmin, vmax) = brep_tools_uv_bounds(brep, f);
+        // OCCT L77-80: UVBounds(F, ...) then Load(S, U1, U2, V1, V2, Trsf)
+        // — the kernel canonical BRepTools::UVBounds
+        // (base::proj_lib::brep_adaptor.rs, BRepTools.cxx L64-77).
+        let (umin, umax, vmin, vmax) = rcad_kernel::base::proj_lib::brep_tools_uv_bounds(brep, f);
         let mut bas = GeomSurfaceAdaptor::new(world);
         bas.load_with_window(bas.surface.clone(), umin, umax, vmin, vmax);
         bas
@@ -665,8 +371,10 @@ pub(crate) fn curve_tool_make_pcurve_on_face(
     let mut c2d = curve_tool_make_pcurve(&projcurv);
     *tol_reached2d = projcurv.get_tolerance();
 
-    // OCCT L1072-1073: BRepTools::UVBounds(F, UMin, UMax, VMin, VMax).
-    let (u_min, u_max, v_min, v_max) = brep_tools_uv_bounds(brep, f);
+    // OCCT L1072-1073: BRepTools::UVBounds(F, UMin, UMax, VMin, VMax) —
+    // the kernel canonical body (base::proj_lib::brep_adaptor.rs,
+    // BRepTools.cxx L64-77).
+    let (u_min, u_max, v_min, v_max) = rcad_kernel::base::proj_lib::brep_tools_uv_bounds(brep, f);
 
     // OCCT L1075-1081: the mid-parameter test point.
     let f_par = gac.first_parameter();
