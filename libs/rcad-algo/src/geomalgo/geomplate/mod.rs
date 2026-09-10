@@ -8,11 +8,15 @@
 pub mod build_average_plane;
 pub mod build_plate_surface;
 pub mod curve_constraint;
+pub mod make_approx;
+pub mod plate_g0_criterion;
 pub mod point_constraint;
 pub mod surface;
 
 pub use build_average_plane::{Aij, BuildAveragePlane};
 pub use build_plate_surface::BuildPlateSurface;
-pub use curve_constraint::CurveConstraint;
+pub use curve_constraint::{CurveBoundary, CurveConstraint};
+pub use make_approx::MakeApprox;
+pub use plate_g0_criterion::PlateG0Criterion;
 pub use point_constraint::PointConstraint;
 pub use surface::GeomPlateSurface;

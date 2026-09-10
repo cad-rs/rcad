@@ -895,13 +895,11 @@ impl BRepFillFilling {
             let seuil;
             let mut s2d: Vec<glam::DVec2> = Vec::new();
             let mut s3d: Vec<glam::DVec3> = Vec::new();
-            // OCCT L701-702 — the rcad GeomPlate port keeps the
-            // point-constraint path only (Disc2dContour/Disc3dContour are
-            // curve path); the calls are kept for form.
+            // OCCT L701-702: Disc2dContour(4, S2D); Disc3dContour(4, 1, S3D).
             {
                 let builder = self.my_builder.as_mut().expect("myBuilder");
-                builder.disc2d_contour();
-                builder.disc3d_contour();
+                builder.disc2d_contour(&mut s2d);
+                builder.disc3d_contour(1, &mut s3d);
             }
             // OCCT L703.
             seuil = self

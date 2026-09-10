@@ -83,6 +83,43 @@ impl GeomPlateSurface {
         p3 + a_surf_p
     }
 
+    /// OCCT EvalD1 (GeomPlate_Surface.cxx L207-217) — returns
+    /// (Point, D1U, D1V).
+    pub fn eval_d1(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let a_surf_d1 = self.my_surfinit.derivatives(u, v);
+        let p1 = DVec2::new(u, v);
+        let p3 = self.my_surfinter.evaluate(p1);
+        let v2u = self.my_surfinter.evaluate_derivative(p1, 1, 0);
+        let v2v = self.my_surfinter.evaluate_derivative(p1, 0, 1);
+        (
+            p3 + a_surf_d1.0,
+            a_surf_d1.1 + v2u,
+            a_surf_d1.2 + v2v,
+        )
+    }
+
+    /// OCCT EvalD2 (GeomPlate_Surface.cxx L221-237) — returns
+    /// (Point, D1U, D1V, D2U, D2V, D2UV).
+    #[allow(clippy::type_complexity)]
+    pub fn eval_d2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        let a_surf_d2 = self.my_surfinit.derivatives2(u, v);
+        let p1 = DVec2::new(u, v);
+        let p3 = self.my_surfinter.evaluate(p1);
+        let v2u_interp = self.my_surfinter.evaluate_derivative(p1, 1, 0);
+        let v2v_interp = self.my_surfinter.evaluate_derivative(p1, 0, 1);
+        let v2u = self.my_surfinter.evaluate_derivative(p1, 2, 0);
+        let v2v = self.my_surfinter.evaluate_derivative(p1, 0, 2);
+        let v2uv = self.my_surfinter.evaluate_derivative(p1, 1, 1);
+        (
+            p3 + a_surf_d2.0,
+            a_surf_d2.1 + v2u_interp,
+            a_surf_d2.2 + v2v_interp,
+            a_surf_d2.3 + v2u,
+            a_surf_d2.4 + v2v,
+            a_surf_d2.5 + v2uv,
+        )
+    }
+
     /// OCCT basis surface access (hxx `Surface()`).
     pub fn basis_surface(&self) -> &Surface3 {
         &self.my_surfinit
