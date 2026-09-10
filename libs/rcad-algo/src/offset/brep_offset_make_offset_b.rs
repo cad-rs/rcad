@@ -726,7 +726,7 @@ impl BRepOffsetMakeOffset {
             }
         } else {
             self.my_make_loops
-                .build(&mut lfe, &as_des, &imoe, &mut self.my_image_vv);
+                .build(&lfe, &mut as_des, &mut imoe, &mut self.my_image_vv);
             if a_ps_outer.user_break() {
                 self.my_error = BRepOffset_Error::UserBreak;
                 return;

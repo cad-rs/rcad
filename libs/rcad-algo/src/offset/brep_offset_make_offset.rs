@@ -235,52 +235,11 @@ pub(crate) fn analyse_add_faces_rt(
     a.add_faces_2_types(f, co, dummy, tc, rt);
 }
 
-/// OCCT BRepOffset_MakeLoops (TKOffset/BRepOffset/BRepOffset_MakeLoops.hxx /
-/// .cxx) — GAP carrier (architecture difference #43).
-pub(crate) struct BRepOffsetMakeLoops;
-
-impl BRepOffsetMakeLoops {
-    /// OCCT BRepOffset_MakeLoops::BRepOffset_MakeLoops().
-    pub fn new() -> Self {
-        BRepOffsetMakeLoops
-    }
-
-    /// OCCT BRepOffset_MakeLoops::Build(LF, AsDes, ImageOffset, Image,
-    /// theRange).
-    pub fn build(
-        &mut self,
-        _lf: &mut Vec<Shape>,
-        _as_des: &BRepAlgoAsDes,
-        _image_offset: &BRepAlgoImage,
-        _image: &mut BRepAlgoImage,
-    ) {
-        panic!("GAP: BRepOffset_MakeLoops::Build (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_MakeLoops::BuildOnContext(LC, Analyze, AsDes,
-    /// ImageOffset, InSide, theRange).
-    pub fn build_on_context(
-        &mut self,
-        _lc: &mut Vec<Shape>,
-        _analyse: &BRepOffsetAnalyse,
-        _as_des: &BRepAlgoAsDes,
-        _image_offset: &BRepAlgoImage,
-        _in_side: bool,
-    ) {
-        panic!("GAP: BRepOffset_MakeLoops::BuildOnContext (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_MakeLoops::BuildFaces(LOF, AsDes, ImageOffset,
-    /// theRange).
-    pub fn build_faces(
-        &mut self,
-        _lof: &mut Vec<Shape>,
-        _as_des: &BRepAlgoAsDes,
-        _image_offset: &BRepAlgoImage,
-    ) {
-        panic!("GAP: BRepOffset_MakeLoops::BuildFaces (TKOffset/BRepOffset not translated)");
-    }
-}
+// OCCT BRepOffset_MakeLoops (TKOffset/BRepOffset/BRepOffset_MakeLoops.hxx /
+// .cxx) — the real body lives in brep_offset_make_offset_loops.rs (the
+// 2000-line module split; architecture difference #43); the class type
+// keeps the OCCT import path through the re-export.
+pub(crate) use super::brep_offset_make_offset_loops::BRepOffsetMakeLoops;
 
 /// OCCT BRepTools_Quilt (TKBRep/BRepTools/BRepTools_Quilt.hxx / .cxx) — the
 /// real body lives in crate::topalgo::brep_tools_quilt (architecture
@@ -288,13 +247,12 @@ impl BRepOffsetMakeLoops {
 /// / MakeShells keeps the OCCT import path through the re-export.
 pub(crate) use crate::topalgo::brep_tools_quilt::BRepToolsQuilt;
 
-/// OCCT BRepLib::SortFaces(S, LF) — GAP static leaf (architecture
-/// difference #46): fills LF with the faces of S ordered by decreasing
-/// area.  The OCCT failure path keeps the faces unsorted (LF is filled by
-/// the plain explorer here once the leaf lands — until then it panics at
-/// the first call).
-pub(crate) fn brep_lib_sort_faces(_s: &Shape, _lf: &mut Vec<Shape>) {
-    panic!("GAP: BRepLib::SortFaces (TKTopAlgo/BRepLib not translated)");
+/// OCCT BRepLib::SortFaces(S, LF) — the real body lives in
+/// crate::topalgo::brep_lib::BRepLib::sort_faces (OCCT BRepLib.cxx
+/// L2894-2953); this keeps the offset-module import path under the same
+/// signature.
+pub(crate) fn brep_lib_sort_faces(s: &Shape, lf: &mut Vec<Shape>) {
+    crate::topalgo::brep_lib::brep_lib::BRepLib::sort_faces(s, lf);
 }
 
 /// OCCT BRepLib::BuildCurves3d(S, Tol) — GAP static leaf (architecture

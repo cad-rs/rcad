@@ -17,6 +17,10 @@ use std::collections::HashMap;
 
 /// OCCT BRepAlgo_Image (BRepAlgo_Image.hxx L34-100) — stores link between a
 /// shape S and a shape NewS obtained from S; NewS is an image of S.
+/// Clone is the OCCT Handle copy: every Shape payload stays Arc-shared, so
+/// the cloned image keys by the same TShape identities (SetImageVV carrier
+/// of BRepOffset_MakeLoops::Build).
+#[derive(Clone)]
 pub struct BRepAlgoImage {
     /// OCCT: roots.
     roots: Vec<Shape>,

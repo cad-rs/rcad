@@ -26,7 +26,10 @@
 use std::collections::HashMap;
 
 use glam::DVec2;
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3, SurfaceEval};
+use rcad_kernel::geom::{
+    Circle3, Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Surface3, SurfaceEval,
+    TrimmedCurve3,
+};
 use rcad_kernel::math::bnd::BndBox2d;
 use rcad_kernel::topo::topods::{Orientation, ShapeType, State, TShape};
 use rcad_kernel::topo_shape::Shape;
@@ -34,6 +37,7 @@ use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::math::el::elslib_cone_parameters;
 
 use crate::brep_algo::tool as bat;
+use super::brep_offset_tool_iso::{surface_uiso, surface_viso};
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_wires_on_shape_b::{
     brep_tool_curve_on_surface, brep_tool_degenerated, brep_tool_range, brep_tool_tolerance,
@@ -267,19 +271,19 @@ fn make_face(
     let hasiso = s.is_elementary();
     if hasiso {
         if !umininf {
-            cumin = Some(surface_uiso_gap(s, u_min));
+            cumin = Some(surface_uiso(s, u_min));
         }
         if !umaxinf {
-            cumax = Some(surface_uiso_gap(s, u_max));
+            cumax = Some(surface_uiso(s, u_max));
         }
         if !vmininf {
-            cvmin = Some(surface_viso_gap(s, v_min));
+            cvmin = Some(surface_viso(s, v_min));
             if gabarit(cvmin.as_ref().expect("viso")) <= tol_apex {
                 vmindegen = true;
             }
         }
         if !vmaxinf {
-            cvmax = Some(surface_viso_gap(s, v_max));
+            cvmax = Some(surface_viso(s, v_max));
             if gabarit(cvmax.as_ref().expect("viso")) <= tol_apex {
                 vmaxdegen = true;
             }
@@ -449,19 +453,6 @@ fn b_make_edge_curve(c: &Curve3, tol: f64) -> Shape {
     e
 }
 
-/// OCCT Geom_Surface::UIso(U) — GAP carrier (the iso-curve construction is
-/// not translated; the brep_offset_offset_b.rs #1608 precedent).
-fn surface_uiso_gap(s: &Surface3, _u: f64) -> Curve3 {
-    let _ = s;
-    panic!("GAP: Geom_Surface::UIso (iso-curve construction not translated)");
-}
-
-/// OCCT Geom_Surface::VIso(V) — GAP carrier (idem).
-fn surface_viso_gap(s: &Surface3, _v: f64) -> Curve3 {
-    let _ = s;
-    panic!("GAP: Geom_Surface::VIso (iso-curve construction not translated)");
-}
-
 // ---------------------------------------------------------------------------
 // OCCT static EnlargeGeometry (cxx L2923-3222).
 // ---------------------------------------------------------------------------
@@ -592,7 +583,7 @@ fn enlarge_geometry(
         } else {
             // OCCT L3035-3050: the viso Gabarit probes — GAP leaves (the
             // iso-curve construction; annotated above).
-            let viso_gap = surface_viso_gap(s, vf1);
+            let viso_gap = surface_viso(s, vf1);
             let _du_default = gcpnts_length_gap(&viso_gap) * coeff;
             let _ = (&mut enlarge_ufirst, &mut enlarge_ulast);
         }
@@ -606,10 +597,10 @@ fn enlarge_geometry(
             enlarge_v = false;
         } else {
             // OCCT L3064-3080: the uiso/viso Gabarit probes — GAP leaves.
-            let uiso_gap = surface_uiso_gap(s, uf1);
+            let uiso_gap = surface_uiso(s, uf1);
             let _dv_default = gcpnts_length_gap(&uiso_gap) * coeff;
-            let viso1_gap = surface_viso_gap(s, vf1);
-            let viso2_gap = surface_viso_gap(s, vf2);
+            let viso1_gap = surface_viso(s, vf1);
+            let viso2_gap = surface_viso(s, vf2);
             if gabarit(&viso1_gap) <= tol_apex {
                 enlarge_vfirst = false;
                 *is_v1degen = true;
@@ -649,10 +640,10 @@ fn enlarge_geometry(
 
         // OCCT L3132-3147: the iso Gabarits — GAP leaves (the iso-curve
         // construction; annotated above).
-        let uiso1_gap = surface_uiso_gap(s, su1);
-        let uiso2_gap = surface_uiso_gap(s, su2);
-        let viso1_gap = surface_viso_gap(s, sv1);
-        let viso2_gap = surface_viso_gap(s, sv2);
+        let uiso1_gap = surface_uiso(s, su1);
+        let uiso2_gap = surface_uiso(s, su2);
+        let viso1_gap = surface_viso(s, sv1);
+        let viso2_gap = surface_viso(s, sv2);
         let gabarit_uiso1 = gabarit(&uiso1_gap);
         let gabarit_uiso2 = gabarit(&uiso2_gap);
         let gabarit_viso1 = gabarit(&viso1_gap);

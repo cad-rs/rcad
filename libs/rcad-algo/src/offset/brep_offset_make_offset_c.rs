@@ -782,9 +782,9 @@ impl BRepOffsetMakeOffset {
             a_bf_tool.build_splits_of_trimmed_faces(&mut self.my_image_offset, &a_ps_1);
         } else {
             self.my_make_loops.build(
-                &mut lf,
-                &self.my_as_des,
-                &self.my_image_offset,
+                &lf,
+                &mut self.my_as_des,
+                &mut self.my_image_offset,
                 &mut self.my_image_vv,
             );
         }
@@ -804,8 +804,8 @@ impl BRepOffsetMakeOffset {
         self.my_make_loops.build_on_context(
             &mut lc,
             &self.my_analyse,
-            &self.my_as_des,
-            &self.my_image_offset,
+            &mut self.my_as_des,
+            &mut self.my_image_offset,
             in_side,
         );
     }
@@ -847,7 +847,7 @@ impl BRepOffsetMakeOffset {
             a_bf_tool.build_splits_of_trimmed_faces(&mut self.my_image_offset, &a_ps_1);
         } else {
             self.my_make_loops
-                .build_faces(&mut lof, &self.my_as_des, &self.my_image_offset);
+                .build_faces(&mut lof, &mut self.my_as_des, &mut self.my_image_offset);
         }
         if a_ps_more() {
             self.my_error = BRepOffset_Error::UserBreak;
