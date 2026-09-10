@@ -834,66 +834,11 @@ fn pcurve_payloads_differ(a: &Option<rcad_kernel::geom::Curve2d>, b: &Option<rca
 }
 
 // =========================================================================
-// OCCT ChFi3d_Builder::CallPerformSurf — L630-818.
+// OCCT ChFi3d_Builder::CallPerformSurf — L630-818.  The SimulSurf /
+// PerformSurf overloads it dispatches to are the OCCT ChFi3d_FilBuilder.cxx
+// real bodies, translated in chfi3d_builder_2d (ChFi3d_FilBuilder.cxx
+// L558-784 / L1538-1717).
 // =========================================================================
-
-/// Pending-leaf stand-in of ChFi3d_Builder::SimulSurf (the 2-surface
-/// overload, SD out) — the owning translation (ChFi3d_Builder_C2/CnCrn
-/// family) has not landed; the OCCT failure path (IsDone() == false) is
-/// reported.
-#[allow(clippy::too_many_arguments)]
-fn simul_surf_2faces_pending(
-    _sd: &SharedSurfData,
-    _hguide: &ChFiDSElSpine,
-    _spine: &ChFiDSSpineHandle,
-    _choix: i32,
-    _hs1: &BRepAdaptorSurface,
-    _it1: &BRepTopAdaptorTopolTool,
-    _hs2: &BRepAdaptorSurface,
-    _it2: &BRepTopAdaptorTopolTool,
-    _tolesp: f64,
-    _first: &mut f64,
-    _last: &mut f64,
-    _inside_f: bool,
-    _inside_l: bool,
-    _forward: bool,
-    _rec_on_s1: bool,
-    _rec_on_s2: bool,
-    _soldep: &[f64; 4],
-    _intf: &mut i32,
-    _intl: &mut i32,
-) -> bool {
-    false
-}
-
-/// Pending-leaf stand-in of ChFi3d_Builder::PerformSurf (the 2-surface
-/// overload, SeqSD out) — see simul_surf_2faces_pending.
-#[allow(clippy::too_many_arguments)]
-fn perform_surf_2faces_pending(
-    _seqsd: &mut Vec<SharedSurfData>,
-    _hguide: &ChFiDSElSpine,
-    _spine: &ChFiDSSpineHandle,
-    _choix: i32,
-    _hs1: &BRepAdaptorSurface,
-    _it1: &BRepTopAdaptorTopolTool,
-    _hs2: &BRepAdaptorSurface,
-    _it2: &BRepTopAdaptorTopolTool,
-    _max_step: f64,
-    _fleche: f64,
-    _tolesp: f64,
-    _first: &mut f64,
-    _last: &mut f64,
-    _inside_f: bool,
-    _inside_l: bool,
-    _forward: bool,
-    _rec_on_s1: bool,
-    _rec_on_s2: bool,
-    _soldep: &[f64; 4],
-    _intf: &mut i32,
-    _intl: &mut i32,
-) -> bool {
-    false
-}
 
 impl super::chfi3d::ChFi3dBuilder {
     /// OCCT ChFi3d_Builder_2.cxx L630-818 — CallPerformSurf (encapsulates
@@ -959,12 +904,12 @@ impl super::chfi3d::ChFi3dBuilder {
         let mut isdone;
 
         if simul {
-            isdone = simul_surf_2faces_pending(
+            isdone = self.simul_surf(
                 sd, hguide, spine, choix, hs1, it1, hs2, it2, self.tolesp, first, last, inside,
                 inside, forward, rec_on_s1, rec_on_s2, soldep, intf, intl,
             );
         } else {
-            isdone = perform_surf_2faces_pending(
+            isdone = self.perform_surf(
                 seqsd, hguide, spine, choix, hs1, it1, hs2, it2, max_step, fleche, self.tolesp,
                 first, last, inside, inside, forward, rec_on_s1, rec_on_s2, soldep, intf, intl,
             );
@@ -994,12 +939,12 @@ impl super::chfi3d::ChFi3dBuilder {
             if reprise {
                 choix = next_side(&mut or1, &mut or2, stripe_or1, stripe_or2, stripe_choix);
                 if simul {
-                    isdone = simul_surf_2faces_pending(
+                    isdone = self.simul_surf(
                         sd, hguide, spine, choix, &hson1, it1, &hson2, it2, self.tolesp, first,
                         last, inside, inside, forward, rec_on_s1, rec_on_s2, soldep, intf, intl,
                     );
                 } else {
-                    isdone = perform_surf_2faces_pending(
+                    isdone = self.perform_surf(
                         seqsd, hguide, spine, choix, &hson1, it1, &hson2, it2, max_step, fleche,
                         self.tolesp, first, last, inside, inside, forward, rec_on_s1, rec_on_s2,
                         soldep, intf, intl,

@@ -48,6 +48,7 @@ pub mod chfi3d_builder_0;
 pub mod chfi3d_builder_2;
 pub mod chfi3d_builder_2b;
 pub mod chfi3d_builder_2c;
+pub mod chfi3d_builder_2d;
 pub mod chfi3d_builder_6;
 pub mod chfi3d_builder_6b;
 pub mod chfi3d_builder_cncrn;

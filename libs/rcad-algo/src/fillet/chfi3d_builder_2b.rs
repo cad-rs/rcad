@@ -73,205 +73,11 @@ impl GeomFillConstrainedFilling {
 }
 
 // =========================================================================
-// Pending-leaf stand-ins of ChFi3d_Builder::SimulSurf / PerformSurf (the
-// curve-curve and curve-surface overloads used by
-// PerformSetOfSurfOnElSpine).  The owning translations live outside
-// Builder_2.cxx; the OCCT flow continues regardless (return values are
-// ignored at these call sites).
+// The curve-curve / curve-surface SimulSurf / PerformSurf overloads used by
+// PerformSetOfSurfOnElSpine are the OCCT ChFi3d_FilBuilder.cxx real bodies,
+// translated in chfi3d_builder_2d (ChFi3d_FilBuilder.cxx L788-1016,
+// L1020-1248, L1252-1496, L1721-1890, L1894-2064, L2068-2270).
 // =========================================================================
-#[allow(clippy::too_many_arguments)]
-fn simul_surf_cc_pending(
-    _sd: &SharedSurfData,
-    _hguide: &super::chfi_ds::ChFiDSElSpine,
-    _spine: &super::chfi_ds::ChFiDSSpineHandle,
-    _choix: i32,
-    _hs1: &BRepAdaptorSurface,
-    _it1: &BRepTopAdaptorTopolTool,
-    _hc1: &Option<BRepAdaptorCurve2d>,
-    _hsref1: &BRepAdaptorSurface,
-    _hcref1: &Option<BRepAdaptorCurve2d>,
-    _decroch1: bool,
-    _or1: rcad_kernel::topo::topods::Orientation,
-    _hs2: &BRepAdaptorSurface,
-    _it2: &BRepTopAdaptorTopolTool,
-    _hc2: &Option<BRepAdaptorCurve2d>,
-    _hsref2: &BRepAdaptorSurface,
-    _hcref2: &Option<BRepAdaptorCurve2d>,
-    _decroch2: bool,
-    _or2: rcad_kernel::topo::topods::Orientation,
-    _locfleche: f64,
-    _tolesp: f64,
-    _first: &mut f64,
-    _last: &mut f64,
-    _inside_f: bool,
-    _inside_l: bool,
-    _forward: bool,
-    _rec_p1: bool,
-    _rec_rst1: bool,
-    _rec_p2: bool,
-    _rec_rst2: bool,
-    _soldepcc: &[f64; 2],
-) {
-}
-
-/// Pending PerformSurf — curve/curve overload (see simul_surf_cc_pending).
-#[allow(clippy::too_many_arguments)]
-fn perform_surf_cc_pending(
-    _seqsd: &mut Vec<SharedSurfData>,
-    _hguide: &super::chfi_ds::ChFiDSElSpine,
-    _spine: &super::chfi_ds::ChFiDSSpineHandle,
-    _choix: i32,
-    _hs1: &BRepAdaptorSurface,
-    _it1: &BRepTopAdaptorTopolTool,
-    _hc1: &Option<BRepAdaptorCurve2d>,
-    _hsref1: &BRepAdaptorSurface,
-    _hcref1: &Option<BRepAdaptorCurve2d>,
-    _decroch1: bool,
-    _or1: rcad_kernel::topo::topods::Orientation,
-    _hs2: &BRepAdaptorSurface,
-    _it2: &BRepTopAdaptorTopolTool,
-    _hc2: &Option<BRepAdaptorCurve2d>,
-    _hsref2: &BRepAdaptorSurface,
-    _hcref2: &Option<BRepAdaptorCurve2d>,
-    _decroch2: bool,
-    _or2: rcad_kernel::topo::topods::Orientation,
-    _max_step: f64,
-    _locfleche: f64,
-    _tolesp: f64,
-    _first: &mut f64,
-    _last: &mut f64,
-    _inside_f: bool,
-    _inside_l: bool,
-    _forward: bool,
-    _rec_p1: bool,
-    _rec_rst1: bool,
-    _rec_p2: bool,
-    _rec_rst2: bool,
-    _soldepcc: &[f64; 2],
-) {
-}
-
-/// Pending SimulSurf — curve-on-surface (obstacle on S1) overload.
-#[allow(clippy::too_many_arguments)]
-fn simul_surf_cs1_pending(
-    _sd: &SharedSurfData,
-    _hguide: &super::chfi_ds::ChFiDSElSpine,
-    _spine: &super::chfi_ds::ChFiDSSpineHandle,
-    _choix: i32,
-    _hs1: &BRepAdaptorSurface,
-    _it1: &BRepTopAdaptorTopolTool,
-    _hc1: &Option<BRepAdaptorCurve2d>,
-    _hsref1: &BRepAdaptorSurface,
-    _hcref1: &Option<BRepAdaptorCurve2d>,
-    _decroch1: bool,
-    _hs2: &BRepAdaptorSurface,
-    _it2: &BRepTopAdaptorTopolTool,
-    _or2: rcad_kernel::topo::topods::Orientation,
-    _locfleche: f64,
-    _tolesp: f64,
-    _first: &mut f64,
-    _last: &mut f64,
-    _inside_f: bool,
-    _inside_l: bool,
-    _forward: bool,
-    _rec_p1: bool,
-    _rec_s2: bool,
-    _rec_rst1: bool,
-    _soldepcs: &[f64; 3],
-) {
-}
-
-/// Pending PerformSurf — curve-on-surface (obstacle on S1) overload.
-#[allow(clippy::too_many_arguments)]
-fn perform_surf_cs1_pending(
-    _seqsd: &mut Vec<SharedSurfData>,
-    _hguide: &super::chfi_ds::ChFiDSElSpine,
-    _spine: &super::chfi_ds::ChFiDSSpineHandle,
-    _choix: i32,
-    _hs1: &BRepAdaptorSurface,
-    _it1: &BRepTopAdaptorTopolTool,
-    _hc1: &Option<BRepAdaptorCurve2d>,
-    _hsref1: &BRepAdaptorSurface,
-    _hcref1: &Option<BRepAdaptorCurve2d>,
-    _decroch1: bool,
-    _hs2: &BRepAdaptorSurface,
-    _it2: &BRepTopAdaptorTopolTool,
-    _or2: rcad_kernel::topo::topods::Orientation,
-    _max_step: f64,
-    _locfleche: f64,
-    _tolesp: f64,
-    _first: &mut f64,
-    _last: &mut f64,
-    _inside_f: bool,
-    _inside_l: bool,
-    _forward: bool,
-    _rec_p1: bool,
-    _rec_s2: bool,
-    _rec_rst1: bool,
-    _soldepcs: &[f64; 3],
-) {
-}
-
-/// Pending SimulSurf — curve-on-surface (obstacle on S2) overload.
-#[allow(clippy::too_many_arguments)]
-fn simul_surf_cs2_pending(
-    _sd: &SharedSurfData,
-    _hguide: &super::chfi_ds::ChFiDSElSpine,
-    _spine: &super::chfi_ds::ChFiDSSpineHandle,
-    _choix: i32,
-    _hs1: &BRepAdaptorSurface,
-    _it1: &BRepTopAdaptorTopolTool,
-    _or1: rcad_kernel::topo::topods::Orientation,
-    _hs2: &BRepAdaptorSurface,
-    _it2: &BRepTopAdaptorTopolTool,
-    _hc2: &Option<BRepAdaptorCurve2d>,
-    _hsref2: &BRepAdaptorSurface,
-    _hcref2: &Option<BRepAdaptorCurve2d>,
-    _decroch2: bool,
-    _locfleche: f64,
-    _tolesp: f64,
-    _first: &mut f64,
-    _last: &mut f64,
-    _inside_f: bool,
-    _inside_l: bool,
-    _forward: bool,
-    _rec_p2: bool,
-    _rec_s1: bool,
-    _rec_rst2: bool,
-    _soldepcs: &[f64; 3],
-) {
-}
-
-/// Pending PerformSurf — curve-on-surface (obstacle on S2) overload.
-#[allow(clippy::too_many_arguments)]
-fn perform_surf_cs2_pending(
-    _seqsd: &mut Vec<SharedSurfData>,
-    _hguide: &super::chfi_ds::ChFiDSElSpine,
-    _spine: &super::chfi_ds::ChFiDSSpineHandle,
-    _choix: i32,
-    _hs1: &BRepAdaptorSurface,
-    _it1: &BRepTopAdaptorTopolTool,
-    _or1: rcad_kernel::topo::topods::Orientation,
-    _hs2: &BRepAdaptorSurface,
-    _it2: &BRepTopAdaptorTopolTool,
-    _hc2: &Option<BRepAdaptorCurve2d>,
-    _hsref2: &BRepAdaptorSurface,
-    _hcref2: &Option<BRepAdaptorCurve2d>,
-    _decroch2: bool,
-    _max_step: f64,
-    _locfleche: f64,
-    _tolesp: f64,
-    _first: &mut f64,
-    _last: &mut f64,
-    _inside_f: bool,
-    _inside_l: bool,
-    _forward: bool,
-    _rec_p2: bool,
-    _rec_s1: bool,
-    _rec_rst2: bool,
-    _soldepcs: &[f64; 3],
-) {
-}
 
 // =========================================================================
 // OCCT ChFi3d_Builder_0.cxx ChFi3d_MKBound overloads (used by
@@ -697,18 +503,18 @@ impl super::chfi3d::ChFi3dBuilder {
                 soldepcc[0] = w1;
                 soldepcc[1] = w2;
                 if simul {
-                    simul_surf_cc_pending(
-                        &sd, guide, &spine, choix, &hs1, it1, &hc1, &hsref1, &hcref1, decroch1,
-                        or1, &hs2, it2, &hc2, &hsref2, &hcref2, decroch2, or2, locfleche,
-                        self.tolesp, &mut first, &mut last, inside, inside, forward, rec_p1,
-                        rec_rst1, rec_p2, rec_rst2, &soldepcc,
-                    );
-                } else {
-                    perform_surf_cc_pending(
-                        &mut seqsd, guide, &spine, choix, &hs1, it1, &hc1, &hsref1, &hcref1,
-                        decroch1, or1, &hs2, it2, &hc2, &hsref2, &hcref2, decroch2, or2, max_step,
+                    self.simul_surf_rst_rst(
+                        &sd, guide, &spine, choix, &hs1, it1, &hc1, &hsref1, &hcref1,
+                        &mut decroch1, or1, &hs2, it2, &hc2, &hsref2, &hcref2, &mut decroch2, or2,
                         locfleche, self.tolesp, &mut first, &mut last, inside, inside, forward,
                         rec_p1, rec_rst1, rec_p2, rec_rst2, &soldepcc,
+                    );
+                } else {
+                    self.perform_surf_rst_rst(
+                        &mut seqsd, guide, &spine, choix, &hs1, it1, &hc1, &hsref1, &hcref1,
+                        &mut decroch1, or1, &hs2, it2, &hc2, &hsref2, &hcref2, &mut decroch2, or2,
+                        max_step, locfleche, self.tolesp, &mut first, &mut last, inside, inside,
+                        forward, rec_p1, rec_rst1, rec_p2, rec_rst2, &soldepcc,
                     );
                 }
                 {
@@ -737,16 +543,17 @@ impl super::chfi3d::ChFi3dBuilder {
                 soldepcs[0] = pp2.x;
                 soldepcs[1] = pp2.y;
                 if simul {
-                    simul_surf_cs1_pending(
-                        &sd, guide, &spine, choix, &hs1, it1, &hc1, &hsref1, &hcref1, decroch1,
-                        &hs2, it2, or2, locfleche, self.tolesp, &mut first, &mut last, inside,
-                        inside, forward, rec_p1, rec_s2, rec_rst1, &soldepcs,
+                    self.simul_surf_face_rst(
+                        &sd, guide, &spine, choix, &hs1, it1, &hc1, &hsref1, &hcref1,
+                        &mut decroch1, &hs2, it2, or2, locfleche, self.tolesp, &mut first,
+                        &mut last, inside, inside, forward, rec_p1, rec_s2, rec_rst1, &soldepcs,
                     );
                 } else {
-                    perform_surf_cs1_pending(
+                    self.perform_surf_face_rst(
                         &mut seqsd, guide, &spine, choix, &hs1, it1, &hc1, &hsref1, &hcref1,
-                        decroch1, &hs2, it2, or2, max_step, locfleche, self.tolesp, &mut first,
-                        &mut last, inside, inside, forward, rec_p1, rec_s2, rec_rst1, &soldepcs,
+                        &mut decroch1, &hs2, it2, or2, max_step, locfleche, self.tolesp,
+                        &mut first, &mut last, inside, inside, forward, rec_p1, rec_s2, rec_rst1,
+                        &soldepcs,
                     );
                 }
                 {
@@ -771,16 +578,17 @@ impl super::chfi3d::ChFi3dBuilder {
                 soldepcs[0] = pp1.x;
                 soldepcs[1] = pp1.y;
                 if simul {
-                    simul_surf_cs2_pending(
+                    self.simul_surf_rst_face(
                         &sd, guide, &spine, choix, &hs1, it1, or1, &hs2, it2, &hc2, &hsref2,
-                        &hcref2, decroch2, locfleche, self.tolesp, &mut first, &mut last, inside,
-                        inside, forward, rec_p2, rec_s1, rec_rst2, &soldepcs,
+                        &hcref2, &mut decroch2, locfleche, self.tolesp, &mut first, &mut last,
+                        inside, inside, forward, rec_p2, rec_s1, rec_rst2, &soldepcs,
                     );
                 } else {
-                    perform_surf_cs2_pending(
+                    self.perform_surf_rst_face(
                         &mut seqsd, guide, &spine, choix, &hs1, it1, or1, &hs2, it2, &hc2,
-                        &hsref2, &hcref2, decroch2, max_step, locfleche, self.tolesp, &mut first,
-                        &mut last, inside, inside, forward, rec_p2, rec_s1, rec_rst2, &soldepcs,
+                        &hsref2, &hcref2, &mut decroch2, max_step, locfleche, self.tolesp,
+                        &mut first, &mut last, inside, inside, forward, rec_p2, rec_s1, rec_rst2,
+                        &soldepcs,
                     );
                 }
                 {
