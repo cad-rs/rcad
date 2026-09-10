@@ -56,6 +56,7 @@ pub mod adv_app2_var; // AdvApp2Var (2-var adaptive approximation stack: SysBase
 pub mod geomfill;    // GeomFill (BSplineCurves filling: Stretch/Coons/Curved)
 pub mod law;         // Law (evolution laws: Function/Constant/Composite)
 pub mod approx_curve_on_surface; // Approx_CurveOnSurface (curve-on-surface approximation over AdvApprox)
+pub mod proj_lib_h_comp_projected_curve; // ProjLib_CompProjectedCurve + ProjLib_HCompProjectedCurve alias
 pub mod gcpnts_curve; // GCPnts adaptor-interface projection (Adaptor3d_Curve / Adaptor2d_Curve2d shims)
 pub mod gcpnts_abscissa_point; // CPnts/GCPnts_AbscissaPoint Length machinery over the adaptors
 pub mod gcpnts_tangential_deflection; // GCPnts_TangentialDeflection + GCPnts_DistFunction

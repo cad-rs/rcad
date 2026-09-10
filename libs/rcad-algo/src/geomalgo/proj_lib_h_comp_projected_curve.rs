@@ -41,7 +41,7 @@ use rcad_kernel::geom::{Curve2d, Curve3, Line2d};
 use rcad_kernel::math::GeomAbsShape;
 
 use crate::geomalgo::approx_curve_on_surface::ApproxCurveOnSurface;
-use crate::geomalgo::int_patch::GeomAbsSurfaceType;
+use rcad_kernel::base::proj_lib::GeomAbsSurfaceType;
 
 use b::{d1, d2, d2_curv_on_surf, dich_exact_bound, exact_bound, initial_point};
 
@@ -686,11 +686,13 @@ impl CompProjectedCurve {
         // processing projection bounds (cxx L1873-1878).
         let mut b_arr = vec![0.0f64; 2 * self.my_nb_curves as usize];
         for i in 1..=self.my_nb_curves {
-            self.bounds(
-                i,
-                &mut b_arr[(2 * i - 1) as usize - 1],
-                &mut b_arr[(2 * i) as usize - 1],
-            );
+            // OCCT: Bounds(i, BArr->ChangeValue(2 * i - 1), BArr->ChangeValue(2 * i))
+            // passes two references into the same array; C++ allows it, Rust
+            // does not, so the pair is split out of one slice (architecture
+            // difference only — the two slots addressed are unchanged).
+            let lo = (2 * i - 1) as usize - 1;
+            let (left, right) = b_arr.split_at_mut(lo + 1);
+            self.bounds(i, &mut left[lo], &mut right[0]);
         }
 
         // processing curve discontinuities (cxx L1880-1888).

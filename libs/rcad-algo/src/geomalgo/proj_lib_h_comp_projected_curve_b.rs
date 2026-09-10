@@ -30,10 +30,13 @@ use rcad_kernel::base::proj_lib::adaptor::{
     Adaptor2dCurve2d, Adaptor3dCurve, Adaptor3dSurface, Curve2dHandle, CurveOnSurface,
     SurfaceHandle,
 };
+use rcad_kernel::base::proj_lib::GeomAbsSurfaceType;
 use rcad_kernel::base::proj_lib::prj_resolve::PrjResolve;
 use rcad_kernel::core::precision::{p_confusion, CONFUSION};
-use rcad_kernel::geom::{Curve2d, Line2d};
+use rcad_kernel::geom::{Curve2d, Curve3, Line2d, TrimmedCurve2};
 use rcad_kernel::math::GeomAbsShape;
+
+use crate::geomalgo::approx_curve_on_surface::ApproxCurveOnSurface;
 
 use super::CompProjectedCurve;
 use super::{FUNC_TOL, CurveHandleAlias};
@@ -219,7 +222,7 @@ pub(crate) fn d2(
     // DS3_u, DS3_v, DS3_uuv, DS3_uvv) — the D3 call provides every order.
     let (s, ds1_u, ds1_v, ds2_u, ds2_v, ds2_uv, ds3_u, ds3_v, ds3_uuv, ds3_uvv) =
         surface.d3(u, v);
-    let (_c, dc1_t, dc2_t) = curve.d2(t);
+    let (c, dc1_t, dc2_t) = curve.d2(t);
     let ort = s - c;
 
     let d_e_dt = DVec2::new(-dc1_t.dot(ds1_u), -dc1_t.dot(ds1_v));
@@ -281,7 +284,7 @@ pub(crate) fn d2_curv_on_surf(
     // DS3_u, DS3_v, DS3_uuv, DS3_uvv) — the D3 call provides every order.
     let (s, ds1_u, ds1_v, ds2_u, ds2_v, ds2_uv, ds3_u, ds3_v, ds3_uuv, ds3_uvv) =
         surface.d3(u, v);
-    let (_c, dc1_t, dc2_t) = curve.d2(t);
+    let (c, dc1_t, dc2_t) = curve.d2(t);
     let ort = s - c;
 
     let d_e_dt = DVec2::new(-dc1_t.dot(ds1_u), -dc1_t.dot(ds1_v));
@@ -800,6 +803,7 @@ pub(crate) fn init_body(this: &mut CompProjectedCurve) {
     let max_step = 0.1 * (last_u - first_u);
     let search_step = 10.0 * min_step;
     let mut step = search_step;
+    let mut walk_step = 0.0f64; // OCCT cxx L688 declares WalkStep with Step.
 
     let a_low_border = DVec2::new(surface.first_u_parameter(), surface.first_v_parameter());
     let a_upp_border = DVec2::new(surface.last_u_parameter(), surface.last_v_parameter());
@@ -812,6 +816,8 @@ pub(crate) fn init_body(this: &mut CompProjectedCurve) {
     let mut same_deb = false;
 
     let mut triple = DVec3::ZERO;
+    // OCCT cxx L718: gp_Pnt Triple, prevTriple;
+    let mut prev_triple = DVec3::ZERO;
 
     // Basic loop (cxx L720).
     while t <= last_u {
@@ -939,4 +945,599 @@ pub(crate) fn init_body(this: &mut CompProjectedCurve) {
                 }
                 triple = DVec3::new(t, u, v);
                 if t != first_u {
-                    // Search for exact boundary point
+                    // Search for exact boundary point (cxx L850-865).
+                    tol = this.my_tol_u.min(this.my_tol_v);
+                    let mut a_d = DVec2::ZERO;
+                    d1(t, triple.y, triple.z, &mut a_d, curve.as_ref(), surface.as_ref());
+                    tol /= a_d.x.abs().max(a_d.y.abs());
+
+                    if !exact_bound(
+                        &mut triple,
+                        t - step,
+                        tol,
+                        this.my_tol_u,
+                        this.my_tol_v,
+                        curve.as_ref(),
+                        surface.as_ref(),
+                    ) {
+                        // OCCT writes a debug trace here (cxx L858-860); the
+                        // fallback call itself is unconditional.
+                        dich_exact_bound(
+                            &mut triple,
+                            t - step,
+                            tol,
+                            this.my_tol_u,
+                            this.my_tol_v,
+                            curve.as_ref(),
+                            surface.as_ref(),
+                        );
+                    }
+                }
+                new_part = true;
+            } else {
+                if t == last_u {
+                    break;
+                }
+                t += step;
+                if t > last_u {
+                    step = step + last_u - t;
+                    t = last_u;
+                }
+            }
+        }
+        if !new_part {
+            break;
+        }
+
+        // We have found a new continuous part (cxx L885-895).
+        let h_seq: Vec<DVec3> = Vec::new(); // OCCT: new NCollection_HSequence<gp_Pnt>()
+        this.my_sequence.as_mut().unwrap().push(h_seq);
+        this.my_nb_curves += 1;
+        this.my_sequence.as_mut().unwrap()[(this.my_nb_curves - 1) as usize].push(triple);
+        prev_triple = triple;
+
+        if triple.x == last_u {
+            break; // return;
+        }
+
+        // Computation of WalkStep (cxx L901-916).
+        let mut d1_v = DVec3::ZERO;
+        let mut d2_v = DVec3::ZERO;
+        d2_curv_on_surf(
+            triple.x,
+            triple.y,
+            triple.z,
+            &mut d1_v,
+            &mut d2_v,
+            curve.as_ref(),
+            surface.as_ref(),
+        );
+        let mut magn_d1 = d1_v.length();
+        let mut magn_d2 = d2_v.length();
+        if magn_d2 < CONFUSION {
+            walk_step = max_step;
+        } else {
+            walk_step = max_step.min(min_step.max(0.1 * magn_d1 / magn_d2));
+        }
+
+        step = walk_step;
+
+        t = triple.x + step;
+        if t > last_u {
+            t = last_u;
+        }
+        let mut prev_step = step;
+        // OCCT cxx L923: double U0, V0;
+        let mut u0 = 0.0f64;
+        let mut v0 = 0.0f64;
+
+        // Here we are trying to prolong continuous part (cxx L926).
+        while t <= last_u && new_part {
+            u0 = triple.y + (step / prev_step) * (triple.y - prev_triple.y);
+            v0 = triple.z + (step / prev_step) * (triple.z - prev_triple.z);
+            // adjust U0 to be in [FirstUParameter,LastUParameter] (cxx L931-934).
+            u0 = u0.max(a_low_border.x).min(a_upp_border.x);
+            // adjust V0 to be in [FirstVParameter,LastVParameter] (cxx L935-936).
+            v0 = v0.max(a_low_border.y).min(a_upp_border.y);
+
+            a_prj_ps.perform(
+                t,
+                u0,
+                v0,
+                a_tol,
+                a_low_border,
+                a_upp_border,
+                FUNC_TOL,
+                true,
+            );
+            if !a_prj_ps.is_done() {
+                if step <= GLOBAL_MIN_STEP {
+                    // Search for exact boundary point (cxx L942-978).
+                    tol = this.my_tol_u.min(this.my_tol_v);
+                    let mut d = DVec2::ZERO;
+                    d1(triple.x, triple.y, triple.z, &mut d, curve.as_ref(), surface.as_ref());
+                    tol /= d.x.abs().max(d.y.abs());
+
+                    if !exact_bound(
+                        &mut triple,
+                        t,
+                        tol,
+                        this.my_tol_u,
+                        this.my_tol_v,
+                        curve.as_ref(),
+                        surface.as_ref(),
+                    ) {
+                        dich_exact_bound(
+                            &mut triple,
+                            t,
+                            tol,
+                            this.my_tol_u,
+                            this.my_tol_v,
+                            curve.as_ref(),
+                            surface.as_ref(),
+                        );
+                    }
+
+                    if (triple.x
+                        - this.my_sequence.as_ref().unwrap()[(this.my_nb_curves - 1) as usize]
+                            .last()
+                            .unwrap()
+                            .x)
+                        > 1.0e-10
+                    {
+                        this.my_sequence.as_mut().unwrap()[(this.my_nb_curves - 1) as usize]
+                            .push(triple);
+                    }
+                    if (last_u - triple.x) < tol {
+                        t = last_u + 1.0;
+                        break;
+                    } // return;
+
+                    step = search_step;
+                    t = triple.x + step;
+                    if t > (last_u - min_step / 2.0) {
+                        step = step + last_u - t;
+                        t = last_u;
+                    }
+                    new_part = false;
+                } else {
+                    // decrease step (cxx L981-996).
+                    let save_step = step;
+                    step /= 2.0;
+                    t = triple.x + step;
+                    if t > (last_u - min_step / 4.0) {
+                        step = step + last_u - t;
+                        if (step - save_step).abs() <= p_confusion() {
+                            step = GLOBAL_MIN_STEP; // to avoid looping
+                        }
+                        t = last_u;
+                    }
+                }
+            }
+            // Go further
+            else {
+                prev_triple = triple;
+                prev_step = step;
+                let a_sol = a_prj_ps.solution();
+                triple = DVec3::new(t, a_sol.x, a_sol.y);
+
+                // Check for possible local traps.
+                this.update_triple_by_trap_criteria(&mut triple);
+
+                // Protection from case when the whole curve lies on a seam
+                // (cxx L1012-1041).
+                if !is_splits_computed {
+                    let mut is_u_possible = false;
+                    if surface.is_u_periodic()
+                        && (triple.y - surface.first_u_parameter()).abs() > p_confusion()
+                        && (triple.y - surface.last_u_parameter()).abs() > p_confusion()
+                    {
+                        is_u_possible = true;
+                    }
+
+                    let mut is_v_possible = false;
+                    if surface.is_v_periodic()
+                        && (triple.z - surface.first_v_parameter()).abs() > p_confusion()
+                        && (triple.z - surface.last_v_parameter()).abs() > p_confusion()
+                    {
+                        is_v_possible = true;
+                    }
+
+                    if is_u_possible || is_v_possible {
+                        // When point is good conditioned.
+                        build_curve_splits(
+                            curve.clone(),
+                            surface.clone(),
+                            this.my_tol_u,
+                            this.my_tol_v,
+                            &mut a_splits,
+                        );
+                        is_splits_computed = true;
+                    }
+                }
+
+                if (triple.x
+                    - this.my_sequence.as_ref().unwrap()[(this.my_nb_curves - 1) as usize]
+                        .last()
+                        .unwrap()
+                        .x)
+                    > 1.0e-10
+                {
+                    this.my_sequence.as_mut().unwrap()[(this.my_nb_curves - 1) as usize]
+                        .push(triple);
+                }
+                if t == last_u {
+                    t = last_u + 1.0;
+                    break;
+                } // return;
+                // Computation of WalkStep (cxx L1050-1065).
+                d2_curv_on_surf(
+                    triple.x,
+                    triple.y,
+                    triple.z,
+                    &mut d1_v,
+                    &mut d2_v,
+                    curve.as_ref(),
+                    surface.as_ref(),
+                );
+                magn_d1 = d1_v.length();
+                magn_d2 = d2_v.length();
+                if magn_d2 < CONFUSION {
+                    walk_step = max_step;
+                } else {
+                    walk_step = max_step.min(min_step.max(0.1 * magn_d1 / magn_d2));
+                }
+
+                step = walk_step;
+                t += step;
+                if t > (last_u - min_step / 2.0) {
+                    step = step + last_u - t;
+                    t = last_u;
+                }
+
+                // We assume at least one point of cache inside of a split
+                // (cxx L1076-1099).
+                let a_size = a_splits.len();
+                let mut an_idx = a_split_idx;
+                while an_idx < a_size {
+                    let a_param = a_splits[an_idx];
+                    if (a_param - triple.x).abs() < p_confusion() {
+                        // The current point is equal to a split point.
+                        new_part = false;
+
+                        // Move split index to avoid check of the whole list.
+                        a_split_idx += 1;
+                        break;
+                    } else if a_param < t + p_confusion() {
+                        // The next point crosses the split point.
+                        t = a_param;
+                        step = t - prev_triple.x;
+                    }
+                    an_idx += 1;
+                } // for (int anIdx = aSplitIdx; anIdx < aSize; ++anIdx)
+            }
+        }
+    }
+
+    // Sequence post-proceeding (cxx L1101).
+
+    // 1. Removing poor parts (cxx L1103-1118).
+    let nb_part = this.my_nb_curves;
+    let mut ipart = 1usize;
+    for _i in 1..=nb_part {
+        if this.my_sequence.as_ref().unwrap()[(ipart - 1) as usize].len() < 2 {
+            this.my_sequence.as_mut().unwrap().remove(ipart - 1);
+            this.my_nb_curves -= 1;
+        } else {
+            ipart += 1;
+        }
+    }
+
+    if this.my_nb_curves == 0 {
+        return;
+    }
+
+    // 2. Removing common parts of bounds (cxx L1121-1133).
+    for i in 1..this.my_nb_curves {
+        let a_prev_last_x = this.my_sequence.as_ref().unwrap()[(i - 1) as usize]
+            .last()
+            .unwrap()
+            .x;
+        if a_prev_last_x >= this.my_sequence.as_ref().unwrap()[i as usize][0].x {
+            this.my_sequence.as_mut().unwrap()[i as usize][0].x = a_prev_last_x + 1.0e-12;
+        }
+    }
+
+    // 3. Computation of the maximum distance from each part of curve to
+    // surface (cxx L1135-1155).
+    this.my_max_distance = Some(vec![0.0f64; this.my_nb_curves as usize]);
+    for i in 1..=this.my_nb_curves {
+        for j in 1..=this.my_sequence.as_ref().unwrap()[(i - 1) as usize].len() {
+            let a_triple = this.my_sequence.as_ref().unwrap()[(i - 1) as usize][j - 1];
+            let p_on_c = curve.value(a_triple.x);
+            let p_on_s = surface.value(a_triple.y, a_triple.z);
+            let distance = p_on_c.distance(p_on_s);
+            if this.my_max_distance.as_ref().unwrap()[(i - 1) as usize] < distance {
+                this.my_max_distance.as_mut().unwrap()[(i - 1) as usize] = distance;
+            }
+        }
+    }
+
+    // 4. Check the projection to be a single point (cxx L1157-1187).
+    this.my_sngl_pnts = Some(vec![true; this.my_nb_curves as usize]);
+
+    for i in 1..=this.my_nb_curves {
+        // compute an average U and V
+        let mut ave_u = 0.0f64;
+        let mut ave_v = 0.0f64;
+        let a_len = this.my_sequence.as_ref().unwrap()[(i - 1) as usize].len();
+
+        for j in 1..=a_len {
+            ave_u += this.my_sequence.as_ref().unwrap()[(i - 1) as usize][j - 1].y;
+            ave_v += this.my_sequence.as_ref().unwrap()[(i - 1) as usize][j - 1].z;
+        }
+        ave_u /= a_len as f64;
+        ave_v /= a_len as f64;
+
+        let p_moy = DVec2::new(ave_u, ave_v);
+        for j in 1..=a_len {
+            let a_triple = this.my_sequence.as_ref().unwrap()[(i - 1) as usize][j - 1];
+            let p_curr = DVec2::new(a_triple.y, a_triple.z);
+            if p_curr.distance(p_moy) > (if this.my_tol_u < this.my_tol_v { this.my_tol_v } else { this.my_tol_u })
+            {
+                this.my_sngl_pnts.as_mut().unwrap()[(i - 1) as usize] = false;
+                break;
+            }
+        }
+    }
+
+    // 5. Check the projection to be an isoparametric curve of the surface
+    // (cxx L1189-1225).
+    this.my_u_iso = Some(vec![true; this.my_nb_curves as usize]);
+    this.my_v_iso = Some(vec![true; this.my_nb_curves as usize]);
+
+    for i in 1..=this.my_nb_curves {
+        let mut a_p = DVec2::ZERO;
+        if this.is_single_pnt(i, &mut a_p)
+            || this.my_sequence.as_ref().unwrap()[(i - 1) as usize].len() <= 2
+        {
+            this.my_u_iso.as_mut().unwrap()[(i - 1) as usize] = false;
+            this.my_v_iso.as_mut().unwrap()[(i - 1) as usize] = false;
+            continue;
+        }
+
+        // new test for isoparametrics
+        if this.my_sequence.as_ref().unwrap()[(i - 1) as usize].len() > 2 {
+            // compute an average U and V
+            let mut ave_u = 0.0f64;
+            let mut ave_v = 0.0f64;
+            let a_len = this.my_sequence.as_ref().unwrap()[(i - 1) as usize].len();
+
+            for j in 1..=a_len {
+                ave_u += this.my_sequence.as_ref().unwrap()[(i - 1) as usize][j - 1].y;
+                ave_v += this.my_sequence.as_ref().unwrap()[(i - 1) as usize][j - 1].z;
+            }
+            ave_u /= a_len as f64;
+            ave_v /= a_len as f64;
+
+            // is i-part U-isoparametric ?
+            for j in 1..=a_len {
+                if (this.my_sequence.as_ref().unwrap()[(i - 1) as usize][j - 1].y - ave_u).abs()
+                    > this.my_tol_u
+                {
+                    this.my_u_iso.as_mut().unwrap()[(i - 1) as usize] = false;
+                    break;
+                }
+            }
+
+            // is i-part V-isoparametric ?
+            for j in 1..=a_len {
+                if (this.my_sequence.as_ref().unwrap()[(i - 1) as usize][j - 1].z - ave_v).abs()
+                    > this.my_tol_v
+                {
+                    this.my_v_iso.as_mut().unwrap()[(i - 1) as usize] = false;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Perform (cxx L1229-1411)
+// ---------------------------------------------------------------------------
+
+/// OCCT ProjLib_CompProjectedCurve::Perform (cxx L1229-1411) — computes the
+/// 2D/3D approximation results for each continuous part of the projection.
+pub(crate) fn perform_body(this: &mut CompProjectedCurve) {
+    if this.my_nb_curves == 0 {
+        return;
+    }
+
+    let mut approx2d = this.my_proj2d;
+    let mut approx3d = this.my_proj3d;
+    let mut udeb = 0.0f64;
+    let mut ufin = 0.0f64;
+    let mut u_iso = 0.0f64;
+    let mut v_iso = 0.0f64;
+    // OCCT cxx L1241: handle(Adaptor3d_Surface) HS = mySurface->ShallowCopy();
+    // (for expanding the bounds of the surface).
+    let mut hs: SurfaceHandle = this.my_surface.as_ref().unwrap().shallow_copy();
+    // OCCT cxx L1238: occ::handle(Adaptor2d_Curve2d) HPCur;
+    let mut h_p_cur: Curve2dHandle;
+    // OCCT cxx L1242-1243: the two result-curve temporaries are declared once,
+    // OUTSIDE the part loop, and are deliberately not reset per part.
+    let mut p_cur2d: Option<Curve2d> = None; // Only for isoparametric projection
+    let mut p_cur3d: Option<Curve3> = None;
+
+    if this.my_proj2d {
+        this.my_result2d_point = Some(vec![DVec2::ZERO; this.my_nb_curves as usize]);
+        this.my_result2d_curve = Some(vec![None; this.my_nb_curves as usize]);
+    }
+
+    if this.my_proj3d {
+        this.my_result3d_point = Some(vec![DVec3::ZERO; this.my_nb_curves as usize]);
+        this.my_result3d_curve = Some(vec![None; this.my_nb_curves as usize]);
+    }
+
+    this.my_result_is_point = Some(vec![false; this.my_nb_curves as usize]);
+
+    this.my_result3d_approx_error = Some(vec![0.0f64; this.my_nb_curves as usize]);
+
+    this.my_result2d_u_approx_error = Some(vec![0.0f64; this.my_nb_curves as usize]);
+
+    this.my_result2d_v_approx_error = Some(vec![0.0f64; this.my_nb_curves as usize]);
+
+    for k in 1..=this.my_nb_curves {
+        let mut a_p2d = DVec2::ZERO;
+        if this.is_single_pnt(k, &mut a_p2d) {
+            // Part k of the projection is punctual
+            let p_ons = this.my_surface.as_ref().unwrap().value(a_p2d.x, a_p2d.y);
+            if this.my_proj2d {
+                this.my_result2d_point.as_mut().unwrap()[(k - 1) as usize] = a_p2d;
+            }
+            if this.my_proj3d {
+                this.my_result3d_point.as_mut().unwrap()[(k - 1) as usize] = p_ons;
+            }
+            this.my_result_is_point.as_mut().unwrap()[(k - 1) as usize] = true;
+        } else {
+            this.bounds(k, &mut udeb, &mut ufin);
+            let dir: DVec2; // Only for isoparametric projection
+
+            if this.is_u_iso(k, &mut u_iso) {
+                // Part k of the projection is U-isoparametric curve
+                approx2d = false;
+
+                let pdeb = this.d0(udeb);
+                let pfin = this.d0(ufin);
+                udeb = pdeb.y;
+                ufin = pfin.y;
+                if udeb > ufin {
+                    dir = DVec2::new(0.0, -1.0); // gp_Dir2d::D::NY
+                    udeb = -udeb;
+                    ufin = -ufin;
+                } else {
+                    dir = DVec2::new(0.0, 1.0); // gp_Dir2d::D::Y
+                }
+                p_cur2d = Some(Curve2d::Trimmed(TrimmedCurve2 {
+                    curve: Box::new(Curve2d::Line(Line2d {
+                        origin: DVec2::new(u_iso, 0.0),
+                        direction: dir,
+                    })),
+                    t_min: udeb,
+                    t_max: ufin,
+                }));
+                // OCCT cxx L1341: HPCur = new Geom2dAdaptor_Curve(PCur2d);
+                h_p_cur = super::geom2d_adaptor_curve(p_cur2d.clone().unwrap());
+            } else if this.is_v_iso(k, &mut v_iso) {
+                // Part k of the projection is V-isoparametric curve
+                approx2d = false;
+
+                let pdeb = this.d0(udeb);
+                let pfin = this.d0(ufin);
+                udeb = pdeb.x;
+                ufin = pfin.x;
+                if udeb > ufin {
+                    dir = DVec2::new(-1.0, 0.0); // gp_Dir2d::D::NX
+                    udeb = -udeb;
+                    ufin = -ufin;
+                } else {
+                    dir = DVec2::new(1.0, 0.0); // gp_Dir2d::D::X
+                }
+                p_cur2d = Some(Curve2d::Trimmed(TrimmedCurve2 {
+                    curve: Box::new(Curve2d::Line(Line2d {
+                        origin: DVec2::new(0.0, v_iso),
+                        direction: dir,
+                    })),
+                    t_min: udeb,
+                    t_max: ufin,
+                }));
+                // OCCT cxx L1353: HPCur = new Geom2dAdaptor_Curve(PCur2d);
+                h_p_cur = super::geom2d_adaptor_curve(p_cur2d.clone().unwrap());
+            } else {
+                if !this.my_surface.as_ref().unwrap().is_u_periodic() {
+                    let d_u = 10.0 * this.my_tol_u;
+
+                    let mut u1 = this.my_surface.as_ref().unwrap().first_u_parameter();
+                    let mut u2 = this.my_surface.as_ref().unwrap().last_u_parameter();
+                    u1 -= d_u;
+                    u2 += d_u;
+
+                    hs = hs.u_trim(u1, u2, 0.0);
+                }
+
+                if !this.my_surface.as_ref().unwrap().is_v_periodic() {
+                    let d_v = 10.0 * this.my_tol_v;
+
+                    let mut v1 = this.my_surface.as_ref().unwrap().first_v_parameter();
+                    let mut v2 = this.my_surface.as_ref().unwrap().last_v_parameter();
+                    v1 -= d_v;
+                    v2 += d_v;
+
+                    hs = hs.v_trim(v1, v2, 0.0);
+                }
+
+                // OCCT cxx L1360-1363:
+                //   handle(ProjLib_CompProjectedCurve) HP =
+                //     down_cast<ProjLib_CompProjectedCurve>(this->ShallowCopy());
+                //   HP->Load(HS);
+                //   HPCur = HP;
+                // The rcad value model requires the Load to happen before the
+                // handle is shared (architecture difference; ShallowCopy itself
+                // is modeled by Clone, see the parent module).
+                let mut hp = this.clone();
+                hp.load_surface(hs.clone());
+                h_p_cur = Arc::new(hp);
+            }
+
+            if approx2d || approx3d {
+                let only2d;
+                let only3d;
+                if approx2d && approx3d {
+                    only2d = !approx2d;
+                    only3d = !approx3d;
+                } else {
+                    only2d = approx2d;
+                    only3d = approx3d;
+                }
+
+                let mut appr = ApproxCurveOnSurface::new(
+                    h_p_cur.clone(),
+                    hs.clone(),
+                    udeb,
+                    ufin,
+                    this.my_tol3d,
+                );
+                appr.perform(
+                    this.my_max_seg,
+                    this.my_max_degree,
+                    this.my_continuity,
+                    only3d,
+                    only2d,
+                );
+
+                if approx2d {
+                    p_cur2d = appr.curve2d();
+                    this.my_result2d_u_approx_error.as_mut().unwrap()[(k - 1) as usize] =
+                        appr.max_error2d_u();
+                    this.my_result2d_v_approx_error.as_mut().unwrap()[(k - 1) as usize] =
+                        appr.max_error2d_v();
+                }
+
+                if approx3d {
+                    p_cur3d = appr.curve3d().map(Curve3::BSpline);
+                    this.my_result3d_approx_error.as_mut().unwrap()[(k - 1) as usize] =
+                        appr.max_error3d();
+                }
+            }
+
+            if this.my_proj2d {
+                this.my_result2d_curve.as_mut().unwrap()[(k - 1) as usize] = p_cur2d.clone();
+            }
+
+            if this.my_proj3d {
+                this.my_result3d_curve.as_mut().unwrap()[(k - 1) as usize] = p_cur3d.clone();
+            }
+        }
+    }
+}
