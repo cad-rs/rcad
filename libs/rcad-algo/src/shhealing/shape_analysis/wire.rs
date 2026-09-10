@@ -369,6 +369,15 @@ impl ShapeAnalysisWire {
         self.my_wire.as_ref()
     }
 
+    /// Mutable access to the loaded wire data.  OCCT Load(sbwd) stores the
+    /// caller's ShapeExtend_WireData handle, so the local `sewd` handle and
+    /// `saw->WireData()` are the same object (the free_bounds connection
+    /// flow mutates it through both); the rcad value model resolves the
+    /// aliasing to a single owner with this accessor.
+    pub fn wire_data_mut(&mut self) -> Option<&mut WireData> {
+        self.my_wire.as_mut()
+    }
+
     pub fn face(&self) -> &Shape {
         &self.my_face
     }
