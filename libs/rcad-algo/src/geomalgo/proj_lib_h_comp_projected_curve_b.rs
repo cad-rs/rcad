@@ -23,6 +23,9 @@ use glam::{DVec2, DVec3};
 
 use rcad_kernel::base::extrema::{POnCurve, POnSurface};
 use rcad_kernel::base::extrema::ExtPS;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_cc::ExtremaExtCC;
+use rcad_kernel::base::extrema_ext_cs::ExtremaExtCS;
 use rcad_kernel::base::proj_lib::adaptor::{
     Adaptor2dCurve2d, Adaptor3dCurve, Adaptor3dSurface, Curve2dHandle, CurveOnSurface,
     SurfaceHandle,
@@ -43,108 +46,8 @@ use super::{FUNC_TOL, CurveHandleAlias};
 pub(crate) const GP_RESOLUTION: f64 = 2.2250738585072014e-308;
 
 // ---------------------------------------------------------------------------
-// GAP carriers: Extrema_ExtCS / Extrema_ExtCC (staged)
+// The Extrema_ExtPS of BuildCurveSplits (cxx L2250-2259)
 // ---------------------------------------------------------------------------
-
-/// OCCT Extrema_ExtCS (TKGeomBase/Extrema) — extrema between a curve and a
-/// surface.  GAP (staged): the class is not translated; the carrier reports
-/// IsDone() == false which is the OCCT "no solutions" output and drives the
-/// Init machinery into the InitialPoint search path.
-pub(crate) struct ExtremaExtCS {
-    done: bool,
-}
-
-impl ExtremaExtCS {
-    /// OCCT Extrema_ExtCS(C, S, TolU, TolV).
-    pub(crate) fn new(
-        _curve: &dyn Adaptor3dCurve,
-        _surface: &dyn Adaptor3dSurface,
-        _tol_u: f64,
-        _tol_v: f64,
-    ) -> Self {
-        ExtremaExtCS { done: false }
-    }
-
-    /// OCCT IsDone().
-    pub(crate) fn is_done(&self) -> bool {
-        self.done
-    }
-
-    /// OCCT NbExt().
-    pub(crate) fn nb_ext(&self) -> usize {
-        0
-    }
-
-    /// OCCT IsParallel().
-    pub(crate) fn is_parallel(&self) -> bool {
-        false
-    }
-
-    /// OCCT SquareDistance(N).
-    pub(crate) fn square_distance(&self, _n: usize) -> f64 {
-        0.0
-    }
-
-    /// OCCT Points(N, P1, P2).
-    pub(crate) fn points(&self, _n: usize, _p1: &mut POnCurve, _p2: &mut POnSurface) {
-        panic!("GAP: Extrema_ExtCS::Points (Extrema package not translated)");
-    }
-}
-
-/// OCCT Extrema_ExtCC (TKGeomBase/Extrema) — extrema between two curves.
-/// GAP (staged): the class is not translated; the carrier records the setup
-/// and reports IsDone() == false, so the seam-split search (FindSplitPoint)
-/// adds no split points — the OCCT behavior when the extrema find nothing.
-pub(crate) struct ExtremaExtCC {
-    done: bool,
-    parallel: bool,
-}
-
-impl ExtremaExtCC {
-    /// OCCT Extrema_ExtCC() — the default constructor.
-    pub(crate) fn new() -> Self {
-        ExtremaExtCC {
-            done: false,
-            parallel: false,
-        }
-    }
-
-    /// OCCT SetCurve(N, C).
-    pub(crate) fn set_curve(&mut self, _n: i32, _c: &dyn Adaptor3dCurve) {}
-
-    /// OCCT SetSingleSolutionFlag(B).
-    pub(crate) fn set_single_solution_flag(&mut self, _b: bool) {}
-
-    /// OCCT SetRange(N, First, Last).
-    pub(crate) fn set_range(&mut self, _n: i32, _first: f64, _last: f64) {}
-
-    /// OCCT Perform().
-    pub(crate) fn perform(&mut self) {
-        // GAP: deferred until the Extrema_ExtCC body lands.
-        self.done = false;
-        self.parallel = false;
-    }
-
-    /// OCCT IsDone().
-    pub(crate) fn is_done(&self) -> bool {
-        self.done
-    }
-
-    /// OCCT IsParallel().
-    pub(crate) fn is_parallel(&self) -> bool {
-        self.parallel
-    }
-
-    /// OCCT NbExt().
-    pub(crate) fn nb_ext(&self) -> usize {
-        0
-    }
-
-    /// OCCT Points(N, P1, P2).
-    pub(crate) fn points(&self, _n: usize, _p1: &mut POnCurve, _p2: &mut POnCurve) {
-        panic!("GAP: Extrema_ExtCC::Points (Extrema package not translated)");
-    }
-}
 
 /// The reusable Extrema_ExtPS of BuildCurveSplits (cxx L2250-2259: Initialize
 /// + SetFlag(MIN)); each Perform(point) routes to the kernel Surface3 engine
@@ -760,10 +663,13 @@ fn split_on_direction(the_split_ds: &mut SplitDS) {
 fn find_split_point(the_split_ds: &mut SplitDS, the_min_param: f64, the_max_param: f64) {
     // Make extrema copy to avoid dependencies between different levels of
     // the recursion.
-    let mut an_ext_cc = ExtremaExtCC::new();
     let curve1 = the_split_ds.my_ext_cc_curve1.clone().unwrap();
-    an_ext_cc.set_curve(1, curve1.as_ref());
-    an_ext_cc.set_curve(2, the_split_ds.my_curve.as_ref());
+    let curve2 = the_split_ds.my_curve.clone();
+    let a_tool1 = CurveToolHandle::other(curve1.as_ref());
+    let a_tool2 = CurveToolHandle::other(curve2.as_ref());
+    let mut an_ext_cc = ExtremaExtCC::new(1.0e-10, 1.0e-10);
+    an_ext_cc.set_curve(1, &a_tool1);
+    an_ext_cc.set_curve(2, &a_tool2);
     // Search only one solution since multiple invocations are needed.
     an_ext_cc.set_single_solution_flag(true);
     an_ext_cc.set_range(1, 0.0, the_split_ds.my_ext_cc_last_2d_param);
@@ -859,7 +765,13 @@ pub(crate) fn init_body(this: &mut CompProjectedCurve) {
     let a_tol_ext = p_confusion();
     let curve = this.my_curve.clone().expect("Init");
     let surface = this.my_surface.clone().expect("Init");
-    let mut cext = ExtremaExtCS::new(curve.as_ref(), surface.as_ref(), a_tol_ext, a_tol_ext);
+    let a_curve_tool = CurveToolHandle::other(curve.as_ref());
+    let mut cext = ExtremaExtCS::new_curve_surface(
+        &a_curve_tool,
+        surface.as_ref(),
+        a_tol_ext,
+        a_tol_ext,
+    );
     if cext.is_done() && cext.nb_ext() > 0 {
         // Search for the minimum solution.
         // Avoid usage of extrema result that can be wrong for extrusion.
