@@ -158,6 +158,38 @@ pub enum GeomAbsShape {
     CN,
 }
 
+/// OCCT GeomAbs_CurveType (TKMath GeomAbs package) — identifies the type of a
+/// curve.  OCCT GeomAbs_CurveType.hxx L23-31 declares the nine enumerators
+/// below in this exact order; the discriminant order is preserved because the
+/// adaptor dispatch (GeomAdaptor_Curve::GetType()) and the ProjLib projection
+/// dispatch both branch on it.
+///
+/// This is the canonical rcad home for the type: it sits in the same file as
+/// [`GeomAbsShape`] (the sibling GeomAbs enumerator already hosted here).  The
+/// rcad-algo modules still carry local `GeomAbsCurveType` copies; converging
+/// them onto this definition is a separate batch (see the batch report).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GeomAbsCurveType {
+    /// OCCT GeomAbs_Line.
+    Line,
+    /// OCCT GeomAbs_Circle.
+    Circle,
+    /// OCCT GeomAbs_Ellipse.
+    Ellipse,
+    /// OCCT GeomAbs_Hyperbola.
+    Hyperbola,
+    /// OCCT GeomAbs_Parabola.
+    Parabola,
+    /// OCCT GeomAbs_BezierCurve.
+    BezierCurve,
+    /// OCCT GeomAbs_BSplineCurve.
+    BSplineCurve,
+    /// OCCT GeomAbs_OffsetCurve.
+    OffsetCurve,
+    /// OCCT GeomAbs_OtherCurve.
+    OtherCurve,
+}
+
 #[cfg(test)]
 pub mod math_gtests;
 #[cfg(test)]
