@@ -200,10 +200,11 @@ pub fn check_planes_normals(the_face1: &Shape, the_face2: &Shape, the_tol_ang: f
 // ---------------------------------------------------------------------------
 
 /// OCCT static PerformPlanes(theFace1, theFace2, theSide, theL1, theL2)
-/// (cxx L4537-4602) — the IntTools_FaceFace plane/plane intersection.  GAP
-/// leaf (architecture difference #30): the rcad IntTools FaceFace is
-/// DS-bound; the carrier takes the OCCT !IsDone() path (empty result
-/// lists).
+/// (cxx L4537-4602) — the IntTools_FaceFace plane/plane intersection used by
+/// the planar fast path of BRepOffset_Tool::Inter3D (cxx L1453-1467).  The
+/// bare-face IntTools_FaceFace::Perform form lives in the bop IntTools FaceFace
+/// (crate::bop::int_tools::face_face::perform_face_face_planes); this leaf
+/// builds the section edge from its first curve.
 pub(crate) fn perform_planes(
     the_face1: &Shape,
     the_face2: &Shape,
@@ -211,20 +212,103 @@ pub(crate) fn perform_planes(
     the_l1: &mut Vec<Shape>,
     the_l2: &mut Vec<Shape>,
 ) {
+    // OCCT L4543-4544: theL1.Clear(); theL2.Clear().
     the_l1.clear();
     the_l2.clear();
     // Intersect the planes using IntTools_FaceFace directly
-    // OCCT L4546-4548: aFF.SetParameters(true, true, true, Confusion);
-    // aFF.Perform(theFace1, theFace2).
-    let is_done: bool = false; // GAP: IntTools_FaceFace::Perform (bare-face form)
+    // OCCT L4545-4548: IntTools_FaceFace aFF;
+    //   aFF.SetParameters(true, true, true, Precision::Confusion());
+    //   aFF.Perform(theFace1, theFace2).
+    let (is_done, a_sc) = crate::bop::int_tools::face_face::perform_face_face_planes(
+        the_face1,
+        the_face2,
+        rcad_kernel::precision::CONFUSION,
+    );
     //
     // OCCT L4550-4553: if (!aFF.IsDone()) return.
     if !is_done {
         return;
     }
-    // OCCT L4555-4601: the single-curve edge build, OrientSection + the
-    // Side reversal, the result appends — behind the OCCT !IsDone() path.
-    let _ = (the_face1, the_face2, the_side);
+    // OCCT L4555-4559: const Sequence<IntTools_Curve>& aSC = aFF.Lines();
+    //   if (aSC.IsEmpty()) return.
+    if a_sc.is_empty() {
+        return;
+    }
+    //
+    // In Plane/Plane intersection only one curve is always produced.
+    // Make the edge from this section curve.
+    // OCCT L4563-4586.
+    let a_e;
+    let a_tf;
+    let a_tl;
+    {
+        let mut a_bb_e = bat::builder_make_edge();
+        // OCCT L4566-4568: const IntTools_Curve& aIC = aSC(1);
+        //   const Handle(Geom_Curve)& aC3D = aIC.Curve();
+        //   aBB.MakeEdge(aE, aC3D, aIC.Tolerance()).
+        let a_ic = &a_sc[0];
+        // OCCT BRep_Builder::MakeEdge(E, C, Tol) keeps the range of a bounded
+        // curve (BRep_Builder.cxx UpdateEdge: the Curve3D range is the curve's
+        // own first/last parameter).  The rcad IntersectionCurve carries the
+        // trim separately (curve + t_range — architecture difference #30), so
+        // the range is written here and re-affirmed at L4585.
+        crate::offset::brep_offset_inter2d::builder_update_edge_curve(
+            &mut a_bb_e,
+            Some(a_ic.curve.clone()),
+            a_ic.tolerance,
+        );
+        // OCCT L4569-4572: double aTF, aTL; gp_Pnt aPF, aPL;
+        //   aIC.Bounds(aTF, aTL, aPF, aPL).
+        a_tf = a_ic.t_range[0];
+        a_tl = a_ic.t_range[1];
+        let a_pf = CurveEval::point_at(&a_ic.curve, a_tf);
+        let a_pl = CurveEval::point_at(&a_ic.curve, a_tl);
+        bat::builder_range_edge(&mut a_bb_e, a_tf, a_tl);
+        // OCCT L4574-4577: MakeVertex(aVF, aPF, aIC.Tolerance()); idem aVL;
+        //   aVL.Orientation(TopAbs_REVERSED).
+        let mut a_vf = bat::builder_make_vertex();
+        bat::builder_update_vertex_point_tol(&mut a_vf, a_pf, a_ic.tolerance);
+        let mut a_vl = bat::builder_make_vertex();
+        bat::builder_update_vertex_point_tol(&mut a_vl, a_pl, a_ic.tolerance);
+        a_vl.orientation = Orientation::Reversed;
+        // OCCT L4579-4580: aBB.Add(aE, aVF); aBB.Add(aE, aVL).
+        bat::builder_add_edge_vertex(&mut a_bb_e, &a_vf);
+        bat::builder_add_edge_vertex(&mut a_bb_e, &a_vl);
+        // OCCT L4582-4583: aBB.UpdateEdge(aE, aIC.FirstCurve2d(), theFace1,
+        //   aIC.Tolerance()); aBB.UpdateEdge(aE, aIC.SecondCurve2d(),
+        //   theFace2, aIC.Tolerance()).
+        if let Some(c2d) = &a_ic.pcurve1 {
+            bat::builder_update_edge_pcurve(&mut a_bb_e, c2d, the_face1, a_ic.tolerance);
+        }
+        if let Some(c2d) = &a_ic.pcurve2 {
+            bat::builder_update_edge_pcurve(&mut a_bb_e, c2d, the_face2, a_ic.tolerance);
+        }
+        // OCCT L4585: aBB.Range(aE, aTF, aTL).
+        bat::builder_range_edge(&mut a_bb_e, a_tf, a_tl);
+        a_e = a_bb_e;
+    }
+    //
+    // Orient section
+    // OCCT L4589-4595: TopAbs_Orientation O1, O2;
+    //   BRepOffset_Tool::OrientSection(aE, theFace1, theFace2, O1, O2);
+    //   if (theSide == TopAbs_OUT) { O1 = TopAbs::Reverse(O1);
+    //                                O2 = TopAbs::Reverse(O2); }
+    let mut o1 = Orientation::Forward;
+    let mut o2 = Orientation::Forward;
+    orient_section(&a_e, the_face1, the_face2, &mut o1, &mut o2);
+    if the_side == State::Out {
+        o1 = bat::top_abs_reverse(o1);
+        o2 = bat::top_abs_reverse(o2);
+    }
+    //
+    // OCCT L4597: BRepLib::SameParameter(aE, Precision::Confusion(), true).
+    crate::offset::brep_offset_inter2d::brep_lib_same_parameter(&a_e, rcad_kernel::precision::CONFUSION);
+    //
+    // Add edge to result
+    // OCCT L4600-4601: theL1.Append(aE.Oriented(O1));
+    //   theL2.Append(aE.Oriented(O2)).
+    the_l1.push(bat::oriented(&a_e, o1));
+    the_l2.push(bat::oriented(&a_e, o2));
 }
 
 // ---------------------------------------------------------------------------

@@ -6067,9 +6067,21 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         // OCCT L222: aPB->SetEdge(nSp)
                         a_pb.0.write().unwrap().edge = n_sp;
                     } else {
-                        // OCCT L214-217: SetReference(-1); aLPB.Clear();
+                        // OCCT L214-217: SetReference(-1); aLPB.Clear() — aLPB
+                        // is the list handle fetched by ChangePaveBlocks above,
+                        // so the Clear addresses that recorded pool slot; it
+                        // must not go through ChangePaveBlocks again, which
+                        // would re-initialize the just-dropped reference
+                        // (BOPDS_DS.cxx L425-433).
+                        let n_slot = self.ds.shapes[an_ei].reference;
                         self.ds.change_shape_info(an_ei).reference = -1;
-                        self.ds.change_pave_blocks(an_ei).clear();
+                        if n_slot >= 0 {
+                            if let Some(a_lpb) =
+                                self.ds.change_pave_blocks_pool().get_mut(&(n_slot as usize))
+                            {
+                                a_lpb.clear();
+                            }
+                        }
                         break;
                     }
                 }

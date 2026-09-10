@@ -1164,10 +1164,25 @@ impl DS {
             &[]
         }
     }
-    /// OCCT BOPDS_DS::ChangePaveBlocks — returns mutable ref to existing pave
-    /// blocks, creating the entry on demand (IndexedDataMap semantics).
+    /// OCCT BOPDS_DS::ChangePaveBlocks (BOPDS_DS.cxx L425-433) — the reference
+    /// of the shape is created lazily on first access; the returned list is the
+    /// pool slot addressed by that reference.
+    ///
+    ///   BOPDS_ShapeInfo& aShapeInfo = ChangeShapeInfo(theIndex);
+    ///   if (!aShapeInfo.HasReference()) { InitPaveBlocks(theIndex); }
+    ///   return myPaveBlocksPool(aShapeInfo.Reference());
+    ///
+    /// The lazy InitPaveBlocks is what registers the reference, so every caller
+    /// of ChangePaveBlocks is guaranteed a referenced (and therefore
+    /// image-bearing) edge. Skipping it left the shape unreferenced and hence
+    /// silently dropped by BOPAlgo_Builder::FillImagesEdges (BOPAlgo_Builder_1.cxx
+    /// L84-86).
     pub fn change_pave_blocks(&mut self, i: usize) -> &mut Vec<SharedPB> {
-        self.pave_blocks_pool.entry(i).or_default()
+        if !self.has_pave_blocks(i) {
+            self.init_pave_blocks(i);
+        }
+        let key = self.shapes[i].reference as usize;
+        self.pave_blocks_pool.entry(key).or_default()
     }
 
     /// Get vertex parameters on an edge (OCCT: BRep_Tool::Parameter).
