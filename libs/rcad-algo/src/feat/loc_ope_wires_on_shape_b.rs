@@ -28,12 +28,10 @@
 //    OCCT L1227 dereferences the result without a null check on the seam
 //    path; rcad returns early instead of crashing (marked at the call site).
 //    GAP: closes with the GeomProjLib batch.
-// 11. Extrema_ExtCC (TKGeomBase; the NbExt/IsParallel/TrimmedSquareDistances/
-//    Points surface) is not translated yet; re-hosted below as ExtremaExtCC
-//    with IsDone()=false (chfi3d_builder_cncrn.rs precedent) so
-//    FindInternalIntersections takes the OCCT !IsDone() continue (cxx
-//    L1347-1350) for every face edge. GAP: closes with the TKGeomAlgo
-//    ExtCC batch.
+// 11. Extrema_ExtCC (TKGeomBase) — the landed kernel translation
+//    (rcad_kernel::base::extrema_ext_cc::ExtremaExtCC, run through
+//    GeomAdaptor_Curve + Extrema_CurveTool handles); FindInternalIntersections
+//    runs the OCCT NbExt/IsParallel/TrimmedSquareDistances/Points sequence.
 // 12. ShapeAnalysis_Edge::CheckSameParameter -> re-hosted below with the
 //    real BRepLib_ValidateEdge walk (topalgo::brep_lib_validate_edge,
 //    OCCT L785-798 call form).
@@ -48,6 +46,10 @@ use crate::topalgo::brep_lib_validate_edge::{
     GeomAdaptorSurface,
 };
 use glam::{DVec2, DVec3};
+use rcad_kernel::base::extrema::POnCurve;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_cc::ExtremaExtCC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{
     translate_curve2d, Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval,
     TrimmedCurve3,
@@ -321,65 +323,6 @@ fn geom_proj_lib_curve2d(
     _the_tol2d: f64,
 ) -> Option<Curve2d> {
     None
-}
-
-/// OCCT Extrema_ExtCC between two bounded 3D curves — pending TKGeomAlgo
-/// translation (architecture difference #11). The OCCT accessor surface is
-/// carried with "pending" outputs; IsDone() is false so the OCCT
-/// !IsDone() continue path (cxx L1347-1350) is taken.
-pub(crate) struct ExtremaExtCC;
-
-impl ExtremaExtCC {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        _the_c1: &Curve3,
-        _the_f1: f64,
-        _the_l1: f64,
-        _the_c2: &Curve3,
-        _the_f2: f64,
-        _the_l2: f64,
-    ) -> Self {
-        ExtremaExtCC
-    }
-
-    /// OCCT Extrema_ExtCC::IsDone().
-    pub fn is_done(&self) -> bool {
-        false
-    }
-
-    /// OCCT Extrema_ExtCC::NbExt().
-    pub fn nb_ext(&self) -> usize {
-        0
-    }
-
-    /// OCCT Extrema_ExtCC::IsParallel().
-    pub fn is_parallel(&self) -> bool {
-        false
-    }
-
-    /// OCCT Extrema_ExtCC::SquareDistance(N).
-    pub fn square_distance(&self, _the_n: usize) -> f64 {
-        0.0
-    }
-
-    /// OCCT Extrema_ExtCC::TrimmedSquareDistances(D1, D2, D3, D4, P1, P2,
-    /// P3, P4).
-    pub fn trimmed_square_distances(
-        &self,
-        the_dists: &mut [f64; 4],
-        _the_p11: &mut DVec3,
-        _the_p12: &mut DVec3,
-        _the_p21: &mut DVec3,
-        _the_p22: &mut DVec3,
-    ) {
-        *the_dists = [0.0; 4];
-    }
-
-    /// OCCT Extrema_ExtCC::Points(N, P1, P2).
-    pub fn points(&self, _the_n: usize, the_p1: &mut (f64, DVec3), the_p2: &mut (f64, DVec3)) {
-        the_p1.0 = 0.0;
-        the_p2.0 = 0.0;
-    }
 }
 
 /// OCCT ShapeAnalysis_Edge::CheckSameParameter(edge, face, maxdev)
@@ -1432,27 +1375,34 @@ pub(crate) fn find_internal_intersections(
             continue;
         }
 
-        // OCCT L1343-1350: the extrema (architecture difference #11 —
-        // pending; IsDone() is false so the OCCT continue is taken).
+        // OCCT L1343-1350: the extrema.
         let Some((a_curve, a_fpar, a_lpar)) = brep_tool_curve(&an_edge) else {
             continue;
         };
-        let an_extrema = ExtremaExtCC::new(
-            &the_curve,
+        // OCCT L1344-1345: GeomAdaptor_Curve theGAcurve(theCurve, thePar[0],
+        // thePar[1]); GeomAdaptor_Curve aGAcurve(aCurve, aFpar, aLpar);
+        let a_ga_curve = GeomCurveAdaptor::with_range(the_curve.clone(), the_par[0], the_par[1]);
+        let an_ga_curve = GeomCurveAdaptor::with_range(a_curve.clone(), a_fpar, a_lpar);
+        let a_tool1 = CurveToolHandle::for_curve3(&the_curve, &a_ga_curve, &a_ga_curve);
+        let a_tool2 = CurveToolHandle::for_curve3(&a_curve, &an_ga_curve, &an_ga_curve);
+        // OCCT L1345: Extrema_ExtCC anExtrema(theGAcurve, aGAcurve, TolExt,
+        // TolExt).
+        let an_extrema = ExtremaExtCC::new_curves_ranged(
+            &a_tool1,
+            &a_tool2,
             the_par[0],
             the_par[1],
-            &a_curve,
             a_fpar,
             a_lpar,
+            tol_ext,
+            tol_ext,
         );
 
         if !an_extrema.is_done() || an_extrema.nb_ext() == 0 {
             continue;
         }
 
-        // OCCT L1352-1418: unreachable while the pending ExtremaExtCC keeps
-        // is_done()==false; translated for form against the pending
-        // accessor surface.
+        // OCCT L1352-1418: the overlap / extremity / extrema checks.
         let a_nb_ext = an_extrema.nb_ext();
         let max_tol = brep_tool_tolerance(&an_edge);
         let a_max_tol2 = max_tol * max_tol;
@@ -1461,17 +1411,9 @@ pub(crate) fn find_internal_intersections(
             return;
         }
         // Check extremity distances (OCCT L1360-1379).
-        let mut dists = [0.0f64; 4];
-        let (mut a_p11, mut a_p12, mut a_p21, mut a_p22) =
-            (DVec3::ZERO, DVec3::ZERO, DVec3::ZERO, DVec3::ZERO);
-        an_extrema.trimmed_square_distances(
-            &mut dists,
-            &mut a_p11,
-            &mut a_p12,
-            &mut a_p21,
-            &mut a_p22,
-        );
-        let _ = (&a_p11, &a_p12, &a_p21, &a_p22);
+        let (d11, d12, d21, d22, _p11, _p12, _p21, _p22) =
+            an_extrema.trimmed_square_distances();
+        let dists = [d11, d12, d21, d22];
         for i in 0..4 {
             let j = if i < 2 { 0usize } else { 1usize };
             if dists[i] < a_tol_v_ext[j] / ext {
@@ -1487,11 +1429,17 @@ pub(crate) fn find_internal_intersections(
             }
 
             // OCCT L1389-1392.
-            let mut a_p_on_c1 = (0.0, DVec3::ZERO);
-            let mut a_p_on_c2 = (0.0, DVec3::ZERO);
+            let mut a_p_on_c1 = POnCurve {
+                param: 0.0,
+                point: DVec3::ZERO,
+            };
+            let mut a_p_on_c2 = POnCurve {
+                param: 0.0,
+                point: DVec3::ZERO,
+            };
             an_extrema.points(i, &mut a_p_on_c1, &mut a_p_on_c2);
-            let the_int_par = a_p_on_c1.0;
-            let an_int_par = a_p_on_c2.0;
+            let the_int_par = a_p_on_c1.param;
+            let an_int_par = a_p_on_c2.param;
             // OCCT L1393-1399.
             let mut j = 2usize;
             for jj in 0..2 {
@@ -1519,7 +1467,6 @@ pub(crate) fn find_internal_intersections(
             }
         }
     }
-    let _ = tol_ext;
 
     // OCCT L1421-1424.
     if split_pars.is_empty() {

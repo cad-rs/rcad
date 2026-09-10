@@ -21,11 +21,16 @@
 //! `chfi3d_builder_cncrn_b.rs` (file-size rule).
 
 use glam::{DVec2, DVec3};
+use rcad_kernel::base::extrema::POnCurve;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_cc::ExtremaExtCC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::Curve2d;
 use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _, SurfaceEval as _};
 use rcad_kernel::topo::topods::BRepTool as _;
-use rcad_kernel::topods::{self, Orientation, Shape};
+use rcad_kernel::topods::{self, GeomAbsShape, Orientation, Shape, ShapeType};
 
+use crate::brep_algo::normal_projection::BRepAlgoNormalProjection;
 use super::chfi3d::topabs_reverse;
 use super::chfi3d::chfi3d_index_of_surf_data;
 use super::chfi3d_builder_0::{
@@ -440,6 +445,24 @@ pub fn chfi3d_same_side(
     o1 == o2
 }
 
+/// OCCT `TopExp::MapShapes(S, TopAbs_EDGE, M)` (TopExp.cxx L75-88) — fills an
+/// `NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>` with the
+/// unique edges of `S` in exploration order.  rcad encoding: a `Vec<Shape>`
+/// deduplicated by the ShapeMapHasher key (TShape pointer, Location).
+pub(crate) fn top_exp_map_shapes_edges(the_s: &Shape) -> Vec<Shape> {
+    let mut a_map: Vec<Shape> = Vec::new();
+    for an_edge in crate::brep_algo::tool::explorer(the_s, ShapeType::Edge, ShapeType::Shape) {
+        let a_key = (an_edge.ptr_id(), an_edge.location);
+        if !a_map
+            .iter()
+            .any(|k| (k.ptr_id(), k.location) == a_key)
+        {
+            a_map.push(an_edge);
+        }
+    }
+    a_map
+}
+
 // =========================================================================
 // OCCT-form carriers for the not-yet-translated TKGeomAlgo / TKTopAlgo
 // dependencies of ChFi3d_Builder_CnCrn.cxx.  Each carrier keeps the OCCT
@@ -723,91 +746,6 @@ impl GeomLPropCLProps2d {
     /// OCCT GeomLProp_CLProps2d::Tangent(D).
     pub fn tangent(&self) -> DVec2 {
         self.tangent
-    }
-}
-
-/// OCCT BRepAlgo_NormalProjection — pending TKTopAlgo translation.  The
-/// carrier keeps the OCCT call surface; Build() reports not-done so the
-/// guarded branches of CurveHermite keep their OCCT control flow.
-pub struct BRepAlgoNormalProjection {
-    #[allow(dead_code)]
-    face: Option<Shape>,
-    #[allow(dead_code)]
-    edge: Option<Shape>,
-    done: bool,
-    #[allow(dead_code)]
-    projection: Shape,
-}
-
-impl Default for BRepAlgoNormalProjection {
-    fn default() -> Self {
-        BRepAlgoNormalProjection {
-            face: None,
-            edge: None,
-            done: false,
-            projection: Shape::null(),
-        }
-    }
-}
-
-impl BRepAlgoNormalProjection {
-    /// OCCT BRepAlgo_NormalProjection::Init(F).
-    pub fn init(&mut self, f: &Shape) {
-        self.face = Some(f.clone());
-        self.done = false;
-    }
-
-    /// OCCT BRepAlgo_NormalProjection::Add(E).
-    pub fn add(&mut self, e: &Shape) {
-        self.edge = Some(e.clone());
-    }
-
-    /// OCCT BRepAlgo_NormalProjection::SetParams(Tol3D, Tol2D, Continuity,
-    /// MaxDeg, MaxSeg).
-    pub fn set_params(
-        &mut self,
-        _tol3d: f64,
-        _tol2d: f64,
-        _continuity: i32,
-        _max_deg: i32,
-        _max_seg: i32,
-    ) {
-    }
-
-    /// OCCT BRepAlgo_NormalProjection::Build() — pending.
-    pub fn build(&mut self) {
-        self.done = false;
-    }
-
-    /// OCCT BRepAlgo_NormalProjection::IsDone().
-    pub fn is_done(&self) -> bool {
-        self.done
-    }
-
-    /// OCCT BRepAlgo_NormalProjection::Projection().
-    #[allow(dead_code)]
-    pub fn projection(&self) -> &Shape {
-        &self.projection
-    }
-}
-
-/// OCCT Extrema_ExtCC — pending TKGeomAlgo translation; IsDone()=false
-/// keeps the OCCT fallback branches of CurveHermite in effect.
-pub struct ExtremaExtCC;
-
-#[allow(dead_code)]
-impl ExtremaExtCC {
-    pub fn new() -> Self {
-        ExtremaExtCC
-    }
-    pub fn is_done(&self) -> bool {
-        false
-    }
-    pub fn is_parallel(&self) -> bool {
-        false
-    }
-    pub fn nb_ext(&self) -> i32 {
-        0
     }
 }
 
@@ -1350,15 +1288,24 @@ pub fn curve_hermite(
         control_points: extrap_poles.to_vec(),
         weights: vec![1.0; 4],
     });
-    // OCCT: BRepLib_MakeEdge Bedge(Bezier); edg = Bedge.Edge();
-    // rcad architecture: no incremental BRep builder in the fillet flow —
-    // the Hermite Bezier is carried as a curve handle; the projection step
-    // below consumes the projection result only.
-    let _edg_c3d = bezier;
+    // OCCT: BRepLib_MakeEdge Bedge(Bezier); TopoDS_Edge edg = Bedge.Edge();
+    // rcad: BRepLib_MakeEdge is the BRep_Builder edge vehicle
+    // (BRep::add_tedge = the MakeEdge TEdgeData: curve + range, no vertices,
+    // exactly the OCCT Bedge.Edge() state before it is added to a wire).
+    let mut a_pool = topods::BRep::new();
+    let a_bez_domain = rcad_kernel::geom::CurveEval::default_domain(&bezier);
+    let edg = a_pool.add_tedge(
+        Some(bezier.clone()),
+        Shape::null(),
+        Shape::null(),
+        [a_bez_domain[0], a_bez_domain[1]],
+    );
     let mut f_shape: Shape;
     *error = 1.0e-30;
     for nb in 1..=nbface {
         f_shape = face[(nb - 1) as usize].clone();
+        // OCCT: NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>
+        //       MapE1; TopoDS_Edge E1.
         let mut map_e1: Vec<Shape> = Vec::new();
         let mut e1 = Shape::null();
         let mut proj1: Option<rcad_kernel::geom::Curve2d> = None;
@@ -1366,24 +1313,31 @@ pub fn curve_hermite(
         // OCCT: BRepAlgo_NormalProjection OrtProj; OrtProj.Init(F);
         //       OrtProj.Add(edg); OrtProj.SetParams(1.e-4, 1.e-4, GeomAbs_C1,
         //       14, 16); OrtProj.Build();
-        let mut ort_proj = BRepAlgoNormalProjection::default();
+        let mut ort_proj = BRepAlgoNormalProjection::new();
         ort_proj.init(&f_shape);
-        ort_proj.add(&Shape::null());
-        ort_proj.set_params(1.0e-4, 1.0e-4, 2, 14, 16);
+        ort_proj.add(&edg);
+        ort_proj.set_params(1.0e-4, 1.0e-4, GeomAbsShape::C1, 14, 16);
         ort_proj.build();
         if ort_proj.is_done() {
             // OCCT: TopExp::MapShapes(OrtProj.Projection(), TopAbs_EDGE,
-            //       MapE1) — pending BRepAlgo_NormalProjection.
+            //       MapE1) — the IndexedMap keeps the (TShape, Location)
+            //       unique edges in explorer order (ShapeMapHasher).
+            map_e1 = top_exp_map_shapes_edges(ort_proj.projection());
             if !map_e1.is_empty() {
                 if map_e1.len() != 1 {
                     // OCCT: BRepLib_MakeFace Bface(BRep_Tool::Surface(F),
                     //       Precision::Confusion()); F = Bface.Face();
                     //       OrtProj.Init(F); OrtProj.Build(); MapE1.Clear();
-                    f_shape = f_shape.clone();
-                    let mut ort_proj2 = BRepAlgoNormalProjection::default();
-                    ort_proj2.init(&f_shape);
-                    ort_proj2.build();
+                    // GAP: BRepLib_MakeFace (TKBRep/BRepLib) — the planar
+                    // natural-bound face maker is not translated; F keeps the
+                    // same surface (see the BRepLibMakeFace carrier note in
+                    // offset/brep_offset_make_simple_offset.rs).
+                    ort_proj.init(&f_shape);
+                    ort_proj.build();
                     map_e1.clear();
+                    if ort_proj.is_done() {
+                        map_e1 = top_exp_map_shapes_edges(ort_proj.projection());
+                    }
                 }
                 if !map_e1.is_empty() {
                     let mut trouve = false;
@@ -1462,18 +1416,40 @@ pub fn curve_hermite(
     if nbface >= 2 {
         for nb in 1..=(nbface - 1) {
             let ecom_nb = ecom[(nb - 1) as usize].clone();
+            // OCCT: BRepAdaptor_Curve C(TopoDS::Edge(Ecom.Value(nb)));
+            //       C.D0(param.Value(nb), p02);
             let c = BRepAdaptorCurve::initialize(brep, &ecom_nb);
             p02 = c.value(param[(nb - 1) as usize]);
-            // OCCT: GeomAdaptor_Curve L(Bezier); Extrema_ExtCC ext(C, L);
-            let ext = ExtremaExtCC::new();
+            // OCCT: GeomAdaptor_Curve L(Bezier);
+            //       Extrema_ExtCC ext(C, L);
+            let a_c_curve = match c.curve.clone() {
+                Some(an_c) => an_c,
+                None => panic!("Standard_ConstructionError: Failed to get 3D curve of edge"),
+            };
+            let a_c_adaptor = GeomCurveAdaptor::with_range(
+                a_c_curve.clone(),
+                c.first_parameter(),
+                c.last_parameter(),
+            );
+            let a_l_adaptor = GeomCurveAdaptor::new(bezier.clone());
+            let a_c_tool = CurveToolHandle::for_curve3(&a_c_curve, &a_c_adaptor, &a_c_adaptor);
+            let a_l_tool = CurveToolHandle::for_curve3(&bezier, &a_l_adaptor, &a_l_adaptor);
+            let ext = ExtremaExtCC::new_curves(&a_c_tool, &a_l_tool, 1.0e-10, 1.0e-10);
             if ext.is_done() {
                 if !ext.is_parallel() && ext.nb_ext() != 0 {
-                    // OCCT: ext.Points(1, POnC, POnL) — pending Extrema
-                    // chain; the carrier keeps the branch shape.
-                    let pon_c = ExtremaPOnCurv::default();
-                    let pon_l = ExtremaPOnCurv::default();
-                    if pon_c.value().distance(pon_l.value()) < P_CONFUSION {
-                        param[(nb - 1) as usize] = pon_c.parameter();
+                    // OCCT: Extrema_POnCurv POnC, POnL;
+                    //       ext.Points(1, POnC, POnL);
+                    let mut pon_c = POnCurve {
+                        param: 0.0,
+                        point: DVec3::ZERO,
+                    };
+                    let mut pon_l = POnCurve {
+                        param: 0.0,
+                        point: DVec3::ZERO,
+                    };
+                    ext.points(1, &mut pon_c, &mut pon_l);
+                    if pon_c.point.distance(pon_l.point) < P_CONFUSION {
+                        param[(nb - 1) as usize] = pon_c.param;
                     } else if let Some(cp) = cproj[(nb - 1) as usize].as_ref() {
                         p01 = cp.point_at(cp.default_domain()[1]);
                     } else if let Some(cp) = cproj[nb as usize].as_ref() {
