@@ -1250,29 +1250,66 @@ impl ApproxAFunc2Var {
             }
 
             // Conversion into poles.
-            // GAP: Convert_GridPolynomialToPoles (TKMath/Convert, the
-            // 12-argument grid constructor, AdvApp2Var_ApproxAFunc2Var.cxx
-            // L964-975: Convert_GridPolynomialToPoles
-            // CvP(NbPatchInU(), NbPatchInV(), iu, iv, myMaxDegInU,
-            // myMaxDegInV, NbCoeff->Array2(), Poly->Array1(), Uint1, Vint1,
-            // Uint2, Vint2)) is not yet translated - it is owned by the
-            // convert_comp_polynomial_to_poles.rs batch.  The OCCT failure
-            // branch `if (!CvP.IsDone()) myDone = false;` is preserved: the
-            // un-translated conversion yields IsDone() == false, myDone is
-            // cleared and the surface entry keeps its null handle (the
-            // OCCT `new Geom_BSplineSurface(CvP...)` anchor L982-988 never
-            // executes with a valid conversion).  The data prepared above
-            // (NbCoeff, Poly, Uint1, Vint1, Uint2, Vint2) is exactly the
-            // ctor argument set of the un-translated converter.
-            let _ = (
-                &nb_coeff,
+            // OCCT L964-975: Convert_GridPolynomialToPoles
+            // CvP(myResult.NbPatchInU(), myResult.NbPatchInV(), iu, iv,
+            // myMaxDegInU, myMaxDegInV, NbCoeff->Array2(), Poly->Array1(),
+            // Uint1, Vint1, Uint2, Vint2) — the 12-argument grid ctor
+            // (kernel convert_grid_polynomial_to_poles).
+            let cvp = rcad_kernel::math::convert_grid_polynomial_to_poles::ConvertGridPolynomialToPoles::from_grid(
+                self.my_result.nb_patch_in_u(),
+                self.my_result.nb_patch_in_v(),
+                iu,
+                iv,
+                self.my_max_deg_in_u,
+                self.my_max_deg_in_v,
+                &nb_coeff.data(),
                 &poly,
                 &u_int1,
                 &v_int1,
                 &u_int2,
                 &v_int2,
             );
-            self.my_done = false;
+            // OCCT L976-979: if (!CvP.IsDone()) myDone = false.
+            if !cvp.is_done() {
+                self.my_done = false;
+            }
+
+            // Conversion into BSpline.
+            // OCCT L981-988: mySurfaces->ChangeValue(SSP) = new
+            // Geom_BSplineSurface(CvP.Poles(), CvP.UKnots(), CvP.VKnots(),
+            // CvP.UMultiplicities(), CvP.VMultiplicities(), CvP.UDegree(),
+            // CvP.VDegree()) — the kernel BSplineSurface carries the flat
+            // knot vectors, rebuilt here from the knots + multiplicities
+            // (the Geom_BSplineSurface internal KnotSequence construction).
+            let mut u_flat = Vec::new();
+            rcad_kernel::math::bspl_lib::knot_sequence(
+                cvp.u_knots(),
+                cvp.u_multiplicities(),
+                cvp.u_degree() as usize,
+                false,
+                &mut u_flat,
+            );
+            let mut v_flat = Vec::new();
+            rcad_kernel::math::bspl_lib::knot_sequence(
+                cvp.v_knots(),
+                cvp.v_multiplicities(),
+                cvp.v_degree() as usize,
+                false,
+                &mut v_flat,
+            );
+            let nb_u = cvp.nb_u_poles();
+            let nb_v = cvp.nb_v_poles();
+            let surface = BSplineSurface {
+                degree_u: cvp.u_degree() as usize,
+                degree_v: cvp.v_degree() as usize,
+                knots_u: u_flat,
+                knots_v: v_flat,
+                control_points: cvp.poles().clone(),
+                weights: vec![vec![1.0f64; nb_v]; nb_u],
+            };
+            if let Some(arr) = self.my_surfaces.as_mut() {
+                arr[(ssp - 1) as usize] = Some(surface);
+            }
 
             ssp += 1;
         }

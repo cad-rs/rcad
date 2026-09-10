@@ -1321,20 +1321,28 @@ impl Patch {
         nb_coeff[0] = self.my_nb_coeff_in_u;
         nb_coeff[1] = self.my_nb_coeff_in_v;
 
-        // GAP: Convert_GridPolynomialToPoles (TKMath/Convert,
-        // Convert_GridPolynomialToPoles.cxx, the 12-argument grid
-        // constructor consumed here and in
-        // AdvApp2Var_ApproxAFunc2Var::ConvertBS) is not yet translated - it
-        // is owned by the convert_comp_polynomial_to_poles.rs batch.  OCCT
-        // anchor: AdvApp2Var_Patch.cxx L1137-1142
-        // (Convert_GridPolynomialToPoles Conv(Cond.ULimit()-1,
-        // Cond.VLimit()-1, NbCoeff, SousEquation->Array1(), Intervalle,
-        // Intervalle); return new HArray2<gp_Pnt>(Conv.Poles())).
-        let _ = (&nb_coeff, &sous_equation, &intervalle);
-        panic!(
-            "GAP: Convert_GridPolynomialToPoles (12-arg grid ctor, \
-             AdvApp2Var_Patch.cxx L1137-1144) is not translated yet"
+        // OCCT L1137-1142: Convert_GridPolynomialToPoles
+        // Conv(Cond.ULimit()-1, Cond.VLimit()-1, NbCoeff,
+        // SousEquation->Array1(), Intervalle, Intervalle) — the
+        // single-patch ctor form (kernel convert_grid_polynomial_to_poles).
+        let conv = rcad_kernel::math::convert_grid_polynomial_to_poles::ConvertGridPolynomialToPoles::from_single_patch(
+            cond.u_limit() - 1,
+            cond.v_limit() - 1,
+            &nb_coeff,
+            sous_equation,
+            &intervalle,
+            &intervalle,
         );
+
+        // OCCT L1142-1144: return new HArray2<gp_Pnt>(Conv.Poles()).
+        let poles = conv.poles();
+        let mut result = Array2::new(1, conv.nb_u_poles() as i32, 1, conv.nb_v_poles() as i32);
+        for (i, row) in poles.iter().enumerate() {
+            for (j, p) in row.iter().enumerate() {
+                result.set_value((i + 1) as i32, (j + 1) as i32, *p);
+            }
+        }
+        result
     }
 
     /// OCCT Coefficients(SSPIndex, Cond) (AdvApp2Var_Patch.cxx L1149-1163).

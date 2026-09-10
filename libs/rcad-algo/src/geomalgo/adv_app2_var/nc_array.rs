@@ -67,6 +67,12 @@ impl<T: Copy + Default> Array2<T> {
         self.data[k] = value;
     }
 
+    /// The flat row-major buffer (the `->Array2()` pass-through the OCCT
+    /// handle wrappers expose to the Convert_GridPolynomialToPoles ctor).
+    pub fn data(&self) -> &[T] {
+        &self.data
+    }
+
     /// OCCT ChangeValue(theRow, theCol) - mutable access.
     pub fn change_value(&mut self, row: i32, col: i32) -> &mut T {
         let k = self.flat(row, col);

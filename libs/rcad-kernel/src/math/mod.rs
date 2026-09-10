@@ -5,6 +5,7 @@ pub mod bspl;
 pub mod bspl_lib;
 pub mod bvh;
 pub mod convert_comp_polynomial_to_poles;
+pub mod convert_grid_polynomial_to_poles;
 pub mod direct_polynomial_roots;
 pub mod el;
 pub mod gauss_points;
