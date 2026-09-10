@@ -39,6 +39,7 @@
 use rcad_kernel::base::gprop::{centroid, linear_properties, principal_properties};
 use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::geom::{Circle3, Line3, Plane};
+use rcad_kernel::topo::topo_builder::brep_from_shape;
 use rcad_kernel::topo::topods::BRepTool;
 use rcad_kernel::{surface_area, volume};
 use rcad_modeling::{
@@ -898,8 +899,8 @@ mod thru_sections_tests {
         // Boolean fusion of the two lofted shapes (BRepAlgoAPI_Fuse).
         let s1 = loft1.shape().expect("loft1");
         let s2 = loft2.shape().expect("loft2");
-        let b1 = brep_from_shape(&s1);
-        let b2 = brep_from_shape(&s2);
+        let b1 = brep_from_shape(&s1, &brep.locations);
+        let b2 = brep_from_shape(&s2, &brep.locations);
         let fused = rcad_algo::bop::brep_algo_api::fuse(&b1, &b2);
         assert!(fused.is_ok(), "Boolean fusion of lofted shapes should succeed");
     }
@@ -962,87 +963,12 @@ mod thru_sections_tests {
 
         assert!(loft.is_done(), "ThruSections must succeed");
         let shape = loft.shape().expect("ThruSections must produce a non-null shape");
-        let brep = brep_from_shape(&shape);
+        let brep = brep_from_shape(&shape, &brep.locations);
         let area = surface_area(&brep);
         assert!(
             (area - 18.1614).abs() < 0.01,
             "Surface area should be approximately 18.1614, got {area}"
         );
-    }
-
-    /// Materialize a loft shape into its own standalone BRep pool: every
-    /// TShape reachable from `s` is copied to its original flat index, so the
-    /// resulting pool is directly usable by the boolean API
-    /// (brep_top_shapes_with_locations).
-    fn brep_from_shape(s: &Shape) -> BRep {        let mut out = BRep::new();
-        let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        fn place(brep: &mut BRep, sr: &Shape, visited: &mut std::collections::HashSet<u64>) {
-            if !visited.insert(sr.ptr_id()) {
-                return;
-            }
-            if brep.tshapes.len() <= sr.index {
-                let dummy = std::sync::Arc::new(topods::TShape::Vertex(topods::TVertexData {
-                    my_shapes: Vec::new(),
-                    flags: 0,
-                    point: glam::DVec3::ZERO,
-                    tolerance: 0.0,
-                    points: Vec::new(),
-                }));
-                while brep.tshapes.len() <= sr.index {
-                    brep.tshapes.push(dummy.clone());
-                }
-            }
-            brep.tshapes[sr.index] = sr.data.clone();
-            match &*sr.data {
-                topods::TShape::Solid(sd) => {
-                    for sh in &sd.shells {
-                        place(brep, sh, visited);
-                    }
-                    for v in &sd.internal_vertices {
-                        place(brep, v, visited);
-                    }
-                    for e in &sd.internal_edges {
-                        place(brep, e, visited);
-                    }
-                }
-                topods::TShape::Shell(sd) => {
-                    for f in &sd.faces {
-                        place(brep, f, visited);
-                    }
-                }
-                topods::TShape::Face(fd) => {
-                    place(brep, &fd.outer_wire, visited);
-                    for w in &fd.inner_wires {
-                        place(brep, w, visited);
-                    }
-                    for v in &fd.internal_vertices {
-                        place(brep, v, visited);
-                    }
-                }
-                topods::TShape::Wire(wd) => {
-                    for e in &wd.edges {
-                        place(brep, e, visited);
-                    }
-                }
-                topods::TShape::Edge(ed) => {
-                    place(brep, &ed.first, visited);
-                    place(brep, &ed.last, visited);
-                }
-                topods::TShape::CompSolid(cs) => {
-                    for s in cs {
-                        place(brep, s, visited);
-                    }
-                }
-                topods::TShape::Compound(cd) => {
-                    for s in cd {
-                        place(brep, s, visited);
-                    }
-                }
-                _ => {}
-            }
-        }
-        place(&mut out, s, &mut visited);
-        out
     }
 
     /// OCCT createBSplineCurve (BRepOffsetAPI_ThruSections_Test.cxx L103-129):

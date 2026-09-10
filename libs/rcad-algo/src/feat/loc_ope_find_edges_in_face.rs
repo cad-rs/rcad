@@ -20,12 +20,14 @@
 //    analytic helpers (ElSLib.cxx); geom_lib::parameters_surface is the
 //    numeric solver and is NOT used (OCCT is analytic here).
 // 4. BRepTopAdaptor_TopolTool (TPT) — the 2D point-in-face classifier needs
-//    the face topology through BRepAdaptor_Surface, which rcad only carries
-//    for DS-anchored faces (topalgo::brep_top_adaptor is DS/pool-bound).
-//    Until that lands, the local Tpt stand-in reports TopAbs_OUT for every
-//    classify (the conservative missing-dependency behaviour, same pattern
-//    as the 3a IsDone()==false stubs) — only the shared-edge branch (partage
-//    d'edge) of Set keeps collecting. GAP: wire topol_tool_brep in.
+//    the face topology through BRepAdaptor_Surface.  rcad carries no
+//    pool-free adaptor: every BRepTool accessor reads the BRep pool at the
+//    shape's flat index, so the face is adopted into a standalone pool at
+//    that index (topo_builder::brep_from_shape = the TopoDS_Builder::
+//    MakeShape / TopoDS_Builder::Add glue) and the real
+//    topalgo::brep_top_adaptor::topol_tool_brep::BRepTopolTool is built over
+//    it.  OCCT anchor: BRepTopAdaptor_TopolTool.cxx L71-94 / L174-187,
+//    LocOpe_FindEdgesInFace.cxx L549-550 / L655.
 // 5. NCollection_Map<TopoDS_Shape, TopTools_ShapeMapHasher> is a HashMap
 //    keyed by (TShape ptr, Location) — orientation ignored, the same key
 //    scheme as feat::brep_feat_builder::OcctShapeMap.
@@ -35,12 +37,15 @@
 // profile edges lying on the support face.
 
 use crate::feat::brep_feat_builder::explorer;
+use crate::topalgo::brep_top_adaptor::topol_tool_brep::BRepTopolTool;
 use glam::DVec2;
 use glam::DVec3;
 use rcad_kernel::geom::{ Curve3, CurveEval, Surface3 };
+use rcad_kernel::topo::topo_builder::brep_from_shape;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{ ShapeType, State, TShape };
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// OCCT gp_Pln::Contains(gp_Lin, LinTol, AngTol) (gp_Pln.cxx) — the plane
 /// contains the line when the line location lies in the plane (within
@@ -150,22 +155,6 @@ fn curve_value(c: &Curve3, u: f64) -> DVec3 {
     c.point_at(u)
 }
 
-/// OCCT BRepTopAdaptor_TopolTool stand-in (architecture difference #4) —
-/// every classify reports TopAbs_OUT until the standalone-face classifier
-/// lands.
-struct Tpt;
-
-impl Tpt {
-    fn new() -> Self {
-        Tpt
-    }
-    /// OCCT BRepTopAdaptor_TopolTool::Classify(P, Tol) — missing-dependency
-    /// stub returning TopAbs_OUT (see architecture difference #4).
-    fn classify(&mut self, _p: DVec2, _tol: f64) -> State {
-        State::Out
-    }
-}
-
 /// OCCT LocOpe_FindEdgesInFace (LocOpe_FindEdgesInFace.hxx L89-113).
 pub struct LocOpeFindEdgesInFace {
     my_shape: Shape,      // OCCT: myShape (TopoDS_Shape)
@@ -221,10 +210,21 @@ impl LocOpeFindEdgesInFace {
             return;
         }
 
-        // OCCT cxx L549-550: BRepAdaptor_Surface + BRepTopAdaptor_TopolTool.
-        // Architecture difference #4: the classifier is not wired for
-        // standalone faces; Tpt::classify reports TopAbs_OUT (conservative).
-        let mut tpt = Tpt::new();
+        // OCCT cxx L549-550: occ::handle<BRepAdaptor_Surface> HS = new
+        // BRepAdaptor_Surface(myFace); BRepTopAdaptor_TopolTool TPT(HS);
+        //
+        // Architecture difference #4: BRepAdaptor_Surface holds the face and
+        // the topology accessors resolve through the global TShape graph; the
+        // rcad tool resolves every accessor through a BRep pool, so myFace
+        // must live in a pool at its source flat index.  The face graph is
+        // adopted into a standalone pool at that index (the TopoDS_Builder::
+        // MakeShape / Add glue of topo_builder::brep_from_shape) and the real
+        // BRepTopAdaptor_TopolTool is built over it.  The locations table is
+        // the produced table of the adopting pool: a bare Shape does not
+        // reference its producing pool, and the feat pipeline shapes carry
+        // identity locations (architecture difference #1).
+        let tpt_brep = Arc::new(brep_from_shape(the_f, &[]));
+        let mut tpt = BRepTopolTool::new_with_surface(tpt_brep, the_f);
 
         // OCCT cxx L552:
         for edg in explorer(&self.my_shape, ShapeType::Edge, ShapeType::Shape) {
@@ -314,7 +314,10 @@ impl LocOpeFindEdgesInFace {
                     };
                     // OCCT cxx L655: TPT.Classify(gp_Pnt2d(U,V),
                     // Precision::Confusion()) == TopAbs_OUT -> break.
-                    if tpt.classify(DVec2::new(u, v), rcad_kernel::precision::CONFUSION) == State::Out
+                    // The third parameter RecadreOnPeriodic keeps its OCCT
+                    // default Standard_True (BRepTopAdaptor_TopolTool.hxx L80).
+                    if tpt.classify(DVec2::new(u, v), rcad_kernel::precision::CONFUSION, true)
+                        == State::Out
                     {
                         break;
                     }
@@ -348,5 +351,52 @@ impl LocOpeFindEdgesInFace {
     /// OCCT LocOpe_FindEdgesInFace::Next() (lxx L720-723).
     pub fn next(&mut self) {
         self.my_it = self.my_it.map(|i| i + 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::topalgo::brep_top_adaptor::topol_tool_brep::tests::square_face;
+    use rcad_kernel::geom::Line3;
+    use rcad_kernel::topods::BRep;
+
+    /// OCCT anchors: LocOpe_FindEdgesInFace.cxx L549-550 (the
+    /// BRepAdaptor_Surface + BRepTopAdaptor_TopolTool construction over the
+    /// plane face) and L655 (TPT.Classify on the three sample points of a
+    /// candidate edge).  The edge lying inside the face passes the real
+    /// classifier and is collected, the coplanar edge outside the face's UV
+    /// boundary is rejected - the branch the retired TopAbs_OUT stand-in
+    /// could never take.
+    #[test]
+    fn set_classifies_candidates_with_the_real_topol_tool() {
+        let (mut brep, face) = square_face();
+        let edge_at = |brep: &mut BRep, a: DVec3, b: DVec3| {
+            let v0 = brep.add_tvertex(a);
+            let v1 = brep.add_tvertex(b);
+            brep.add_tedge(
+                Some(Curve3::Line(Line3::new(a, (b - a).normalize()))),
+                v0,
+                v1,
+                [0.0, (b - a).length()],
+            )
+        };
+        // Inside the unit square on z = 0, i.e. inside the face UV boundary.
+        let inside =
+            edge_at(&mut brep, DVec3::new(0.25, 0.25, 0.0), DVec3::new(0.75, 0.25, 0.0));
+        // Coplanar with the face but outside the wire (UV 5..6).
+        let outside =
+            edge_at(&mut brep, DVec3::new(5.0, 5.0, 0.0), DVec3::new(6.0, 5.0, 0.0));
+
+        let mut lif = LocOpeFindEdgesInFace::new_shape_face(&inside, &face);
+        lif.init();
+        assert!(lif.more(), "the edge inside the face must be collected");
+        assert!(lif.edge().is_same(&inside));
+        lif.next();
+        assert!(!lif.more());
+
+        let mut lif_out = LocOpeFindEdgesInFace::new_shape_face(&outside, &face);
+        lif_out.init();
+        assert!(!lif_out.more(), "the edge outside the face must be rejected");
     }
 }
