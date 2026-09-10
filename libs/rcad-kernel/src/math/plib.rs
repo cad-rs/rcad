@@ -239,6 +239,64 @@ pub fn no_derivative_eval_polynomial_flat(
     results[..dim].copy_from_slice(&local);
 }
 
+/// OCCT `PLib::EvalPoly2Var(UParameter, VParameter, UDerivativeRequest,
+/// VDerivativeRequest, UDegree, VDegree, Dimension, PolynomialCoeff,
+/// Results)` (PLib.cxx L1055-1114) - applies EvalPolynomial twice to
+/// evaluate the derivative of a 2-var polynomial (or its value).
+///
+/// The coefficients are stored v-major over u: `[c(0,0), ..., c(UDegree,0),
+/// c(0,1), ..., c(UDegree,VDegree)]`, each block of `Dimension` doubles.
+/// On return `results[0..dimension]` receives the requested derivative.
+pub fn eval_poly2_var(
+    u_parameter: f64,
+    v_parameter: f64,
+    u_derivative_request: usize,
+    v_derivative_request: usize,
+    u_degree: usize,
+    v_degree: usize,
+    dimension: usize,
+    polynomial_coeff: &[f64],
+    results: &mut [f64],
+) {
+    // int Udim = (VDegree + 1) * Dimension, index = Udim * UDerivativeRequest.
+    let udim = (v_degree + 1) * dimension;
+    let mut index = udim * u_derivative_request;
+    // NCollection_Array1<double> Curve(1, Udim * (UDerivativeRequest + 1)).
+    let mut curve = vec![0.0f64; udim * (u_derivative_request + 1)];
+    // NCollection_Array1<double> Point(1, Dimension * (VDerivativeRequest + 1)).
+    let mut point = vec![0.0f64; dimension * (v_derivative_request + 1)];
+
+    // PLib::EvalPolynomial(UParameter, UDerivativeRequest, UDegree, Udim,
+    //   PolynomialCoeff, Result[0]).
+    eval_polynomial_flat(
+        u_parameter,
+        u_derivative_request as i32,
+        u_degree as i32,
+        udim as i32,
+        polynomial_coeff,
+        &mut curve,
+    );
+
+    // PLib::EvalPolynomial(VParameter, VDerivativeRequest, VDegree,
+    //   Dimension, Result[index], Digit[0]).
+    eval_polynomial_flat(
+        v_parameter,
+        v_derivative_request as i32,
+        v_degree as i32,
+        dimension as i32,
+        &curve[index..],
+        &mut point,
+    );
+
+    // index = Dimension * VDerivativeRequest;
+    index = dimension * v_derivative_request;
+
+    // for (int i = 0; i < Dimension; i++) ResultArray[i] = Digit[index + i].
+    for (i, r) in results.iter_mut().enumerate().take(dimension) {
+        *r = point[index + i];
+    }
+}
+
 /// OCCT `PLib::HermiteInterpolate(Dimension, FirstParameter, LastParameter,
 /// FirstOrder, LastOrder, FirstConstr, LastConstr, Coefficients)`
 /// (PLib.cxx L1931-2027) — constrained Hermite interpolation on [-1, 1]

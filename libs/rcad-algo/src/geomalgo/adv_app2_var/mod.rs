@@ -40,13 +40,32 @@
 //!   (PLib.cxx L1055-1114) + the 12-arg Convert_GridPolynomialToPoles - the
 //!   consumers GeomPlate_MakeApprox / GeomPlate_PlateG0Criterion::Value keep
 //!   their OCCT failure paths until this layer lands.
+//!
+//! Class layer (landed, each with its OCCT anchor):
+//! - [`nc_array`]: the NCollection_Array2 architecture carrier.
+//! - [`node`]: AdvApp2Var_Node (AdvApp2Var_Node.hxx/.cxx).
+//! - [`criterion`]: AdvApp2Var_Criterion(Type|Repartition) as a trait +
+//!   enums (AdvApp2Var_Criterion.hxx/.cxx).
+//! - [`context`]: AdvApp2Var_Context (AdvApp2Var_Context.hxx/.cxx).
+//! - [`iso`]: AdvApp2Var_Iso (AdvApp2Var_Iso.hxx/.cxx).
+//! - [`framework`]: AdvApp2Var_Framework (AdvApp2Var_Framework.hxx/.cxx).
+//! - [`patch`]: AdvApp2Var_Patch (AdvApp2Var_Patch.hxx/.cxx).
+//! - [`network`]: AdvApp2Var_Network (AdvApp2Var_Network.hxx/.cxx).
+//! - [`approx_afunc2var`]: AdvApp2Var_ApproxAFunc2Var
+//!   (AdvApp2Var_ApproxAFunc2Var.hxx/.cxx/.lxx); the
+//!   Convert_GridPolynomialToPoles construction sites (Patch::Poles,
+//!   ConvertBS) keep the OCCT un-translated failure path until the kernel
+//!   converter batch lands.
 
+pub mod approx_afunc2var;
 pub mod approxf2var_a;
 pub mod approxf2var_b;
 pub mod approxf2var_c;
 pub mod approxf2var_d;
 pub mod approxf2var_e;
 pub mod approxf2var_f;
+pub mod context;
+pub mod criterion;
 pub mod data_mlgdrtl;
 pub mod data_mmapgs0;
 pub mod data_mmapgs1;
@@ -55,6 +74,21 @@ pub mod data_mmapgss;
 pub mod data_mmjcobi;
 pub mod data_mmjcobi_b;
 pub mod data_mmcmcnp;
+pub mod framework;
+pub mod iso;
 pub mod math_base;
 pub mod math_base_b;
+pub mod nc_array;
+pub mod network;
+pub mod node;
+pub mod patch;
 pub mod sys_base;
+
+pub use approx_afunc2var::ApproxAFunc2Var;
+pub use context::Context;
+pub use criterion::{Criterion, CriterionRepartition, CriterionType};
+pub use framework::Framework;
+pub use iso::Iso;
+pub use network::Network;
+pub use node::Node;
+pub use patch::Patch;
