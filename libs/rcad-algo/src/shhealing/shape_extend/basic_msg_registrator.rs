@@ -49,3 +49,24 @@ pub trait BasicMsgRegistrator {
         self.send_transient(dummy, message, gravity);
     }
 }
+
+/// OCCT ShapeExtend_BasicMsgRegistrator as an instantiable object — the
+/// concrete class behind the handle allocated by `ShapeFix_Root`'s
+/// constructor (ShapeFix_Root.cxx L27); all `Send` forms keep the empty
+/// base bodies (the trait defaults).
+pub struct BasicRegistrator;
+
+impl Default for BasicRegistrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BasicMsgRegistrator for BasicRegistrator {
+    fn new() -> Self
+    where
+        Self: Sized,
+    {
+        BasicRegistrator
+    }
+}

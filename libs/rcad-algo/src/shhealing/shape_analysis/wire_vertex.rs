@@ -307,6 +307,13 @@ impl ShapeAnalysisWireVertex {
         self.my_wire.as_ref()
     }
 
+    /// OCCT WireData() — the mutable form (the OCCT handle is shared and
+    /// mutable through it; the rcad value model needs the explicit
+    /// accessor, bridge #2).
+    pub fn wire_data_mut(&mut self) -> Option<&mut WireData> {
+        self.my_wire.as_mut()
+    }
+
     /// OCCT Status(num) (cxx L261-264).
     pub fn status(&self, num: i32) -> i32 {
         self.my_stat[(num - 1) as usize]

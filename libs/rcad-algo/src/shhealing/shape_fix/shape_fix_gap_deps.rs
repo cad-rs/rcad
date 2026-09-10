@@ -6,11 +6,6 @@
 //! batch, keeps OCCT's failure/no-op path where the real algorithm is missing,
 //! and is replaced wholesale when the owning batch lands:
 //!
-//! - [`ShapeFixEdgeGap`] — OCCT `ShapeFix_Edge` (ShapeFix_Edge.cxx, 957 LOC)
-//!   reduced to `FixSameParameter` + `Status`, the only members consumed by
-//!   `ShapeFix::SameParameter` (ShapeFix.cxx L101/L143/L148/L165).  W3 docket
-//!   row; the reduced body re-hosts on the landed W1-1
-//!   `ShapeAnalysis_Edge::CheckSameParameter`.
 //! - [`ShapeFixFaceGap`] — OCCT `ShapeFix_Face` (ShapeFix_Face.cxx, 3,259
 //!   LOC) reduced to the accessor/Perform surface consumed by
 //!   `ShapeUpgrade_UnifySameDomain::UnifyEdges` (cxx L4404-4421).  W3 docket
@@ -28,156 +23,27 @@
 //!   (ShapeFix.cxx L291-308).  W3 docket row; `Perform` keeps OCCT's
 //!   "nothing fixed" path.
 //! - [`brep_lib_same_parameter_edge`] — OCCT
-//!   `BRepLib::SameParameter(edge, tol, exact)` (BRepLib.cxx) reduced to the
-//!   sampled-deviation tolerance update (the docket section 4 gap 3, kernel
-//!   completion item); consumed by `GlueEdgesWith3DCurves`
-//!   (UnifySameDomain.cxx L1748).
+//!   `BRepLib::SameParameter(edge, tol)` (BRepLib.cxx, BRepLib.hxx L161)
+//!   reduced to the sampled-deviation tolerance update (the docket section 4
+//!   gap 3, kernel completion item); consumed by `GlueEdgesWith3DCurves`
+//!   (UnifySameDomain.cxx L1748) and, since the W3 tranche 1, by the 1:1
+//!   `ShapeFix_Edge::FixSameParameter` (ShapeFix_Edge.cxx L850, its true
+//!   OCCT consumer).
+//!
+//! Retired by the W3 tranche 1 (ShapeFix_Edge landed 1:1 in
+//! `shape_fix/edge.rs`): the former `ShapeFixEdgeGap` carrier (the
+//! FixSameParameter + Status reduction consumed by `ShapeFix::SameParameter`)
+//! — deleted, Rule 4.
 
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, BRepBuilder, TShape};
 use std::sync::Arc;
 
 use crate::shhealing::shape_analysis::edge::ShapeAnalysisEdge;
-use crate::shhealing::shape_extend::status::{decode_status, encode_status, ShapeExtendStatus};
-use rcad_kernel::topods::BRepTool;
 
 // ---------------------------------------------------------------------------
-// OCCT ShapeFix_Edge — W3 docket row (GAP carrier).
+// OCCT ShapeFix_Face — W3 docket row (GAP carrier).
 // ---------------------------------------------------------------------------
-
-/// OCCT `ShapeFix_Edge` reduced to the `FixSameParameter` + `Status` surface
-/// consumed by `ShapeFix::SameParameter` (ShapeFix.cxx L101, L143, L148,
-/// L165).  Replaced wholesale by the W3 1:1 translation.
-pub struct ShapeFixEdgeGap {
-    /// OCCT myStatus (ShapeFix_Root).
-    my_status: i32,
-}
-
-impl Default for ShapeFixEdgeGap {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ShapeFixEdgeGap {
-    /// OCCT ShapeFix_Edge() / ShapeFix_Root constructor (ShapeFix_Root.cxx
-    /// L31-34): myStatus = ShapeExtend_OK.
-    pub fn new() -> Self {
-        ShapeFixEdgeGap {
-            my_status: encode_status(ShapeExtendStatus::Ok),
-        }
-    }
-
-    /// OCCT ShapeFix_Edge::Status (ShapeFix_Edge.cxx L940-943) /
-    /// ShapeFix_Root::Status — the status bits of the last Fix.
-    pub fn status(&self, status: ShapeExtendStatus) -> bool {
-        decode_status(self.my_status, status)
-    }
-
-    /// OCCT ShapeFix_Edge::FixSameParameter(edge, face)
-    /// (ShapeFix_Edge.cxx L798-936) — GAP-carrier reduction.
-    ///
-    /// The OCCT body runs `BRepLib::SameParameter` on a copy of the edge and
-    /// compares it against the direct pcurve deviation (choosing the best).
-    /// The carrier keeps the observable contract of the walk in
-    /// `ShapeFix::SameParameter`: the edge SameParameter flag is set, the
-    /// maximal deviation is computed over every pcurve (W1-1
-    /// `ShapeAnalysis_Edge::CheckSameParameter`, NbControl = 23), and the
-    /// edge/vertex tolerances are raised to it when it exceeds the current
-    /// edge tolerance (OCCT L914-929).  The copy-and-compare refinement and
-    /// the `TempSameRange` repair are W3 scope.
-    pub fn fix_same_parameter(&mut self, brep: &mut BRep, edge: &Shape, face: &Shape) -> bool {
-        self.my_status = encode_status(ShapeExtendStatus::Ok);
-
-        // OCCT L804-813: a degenerated edge gets SameRange/SameParameter
-        // flags and reports no fix.
-        if let Some(ed) = edge.as_edge() {
-            if ed.degenerated {
-                let mut builder = BRepBuilder::new();
-                if !ed.same_range {
-                    // OCCT L809: TempSameRange(edge, Precision::PConfusion())
-                    // — the flag update only (the range repair is W3 scope).
-                    let mut ed_flags = ed.clone();
-                    ed_flags.same_range = true;
-                    set_edge_data(brep, edge, ed_flags);
-                }
-                // OCCT L811: B.SameParameter(edge, true).
-                builder.set_edge_same_parameter(brep, edge.clone(), true);
-                return false;
-            }
-        }
-
-        // OCCT L820-824: the extremity vertices and the current tolerances.
-        let mut sae = ShapeAnalysisEdge::new();
-        let v1 = sae.first_vertex(brep, edge);
-        let v2 = sae.last_vertex(brep, edge);
-        let tol_fv = if v1.is_null() {
-            0.0
-        } else {
-            brep.tolerance(&v1)
-        };
-        let tol_lv = if v2.is_null() {
-            0.0
-        } else {
-            brep.tolerance(&v2)
-        };
-        let tol = brep.tolerance(edge);
-
-        // OCCT L826: wasSP = BRep_Tool::SameParameter(edge).
-        let was_sp = match edge.data.as_ref() {
-            rcad_kernel::topods::TShape::Edge(ed) => ed.same_parameter,
-            _ => true,
-        };
-        // OCCT L872: B.SameParameter(edge, true) before the deviation walk.
-        // (The carrier performs no BRepLib copy run, so the flag is set on
-        // the edge itself at the same point of the flow.)
-        {
-            let mut builder = BRepBuilder::new();
-            builder.set_edge_same_parameter(brep, edge.clone(), true);
-        }
-
-        // OCCT L875-882: compute the deviation on the pcurves (all faces
-        // when the input edge was not SameParameter, the given face only
-        // otherwise).  NbControl = 23 (the OCCT default, ShapeFix.cxx L231).
-        let a_face = if !was_sp { Shape::null() } else { face.clone() };
-        let mut maxdev = 0.0;
-        sae.check_same_parameter_face(brep, edge, &a_face, &mut maxdev, 23);
-        if sae.status(ShapeExtendStatus::Fail2) {
-            // OCCT L883-886: FAIL2 of the check maps to FAIL1 here.
-            self.my_status |= encode_status(ShapeExtendStatus::Fail1);
-        }
-
-        // OCCT L914-922: restore the vertex tolerances to at least maxdev.
-        let mut builder = BRepBuilder::new();
-        if !v1.is_null() {
-            update_vertex_tolerance_max(brep, &mut builder, &v1, maxdev.max(tol_fv));
-        }
-        if !v2.is_null() {
-            update_vertex_tolerance_max(brep, &mut builder, &v2, maxdev.max(tol_lv));
-        }
-
-        // OCCT L924-929: raise the edge tolerance when the deviation
-        // exceeds it (B.UpdateEdge(edge, maxdev) + FixVertexTolerance —
-        // the vertex floors above cover the FixVertexTolerance step).
-        if maxdev > tol {
-            self.my_status |= encode_status(ShapeExtendStatus::Done1);
-            set_edge_tolerance_value(brep, edge, maxdev);
-        }
-
-        // OCCT L931-934: !wasSP && !SP -> DONE2 (the BRepLib branch did not
-        // reach a SameParameter result; the carrier has no copy run).
-        if !was_sp {
-            self.my_status |= encode_status(ShapeExtendStatus::Done2);
-        }
-        self.status(ShapeExtendStatus::Done)
-    }
-}
-
-/// OCCT `BRep_Builder::UpdateVertex(V, Tol)` — the max-with-existing
-/// tolerance update (BRep_Builder.cxx L1194-1216).
-fn update_vertex_tolerance_max(brep: &mut BRep, builder: &mut BRepBuilder, v: &Shape, tol: f64) {
-    builder.update_vertex_tolerance(brep, v.clone(), tol);
-}
 
 /// OCCT `BRep_Builder::UpdateEdge(E, Tol)` (BRep_Builder.cxx L578-600) —
 /// the max-with-existing edge tolerance update.
@@ -189,14 +55,6 @@ fn set_edge_tolerance_value(brep: &mut BRep, edge: &Shape, tol: f64) {
     if let TShape::Edge(ed) = ts {
         ed.tolerance = ed.tolerance.max(tol);
     }
-}
-
-/// In-place TEdgeData replace helper for the carrier (the
-/// `BRep_Builder::SameRange` flag writes through the shared handle).
-fn set_edge_data(brep: &mut BRep, edge: &Shape, ed: rcad_kernel::topods::TEdgeData) {
-    let ptr = Arc::as_ptr(&brep.tshapes[edge.index]) as *mut TShape;
-    let ts = unsafe { &mut *ptr };
-    *ts = TShape::Edge(ed);
 }
 
 // ---------------------------------------------------------------------------

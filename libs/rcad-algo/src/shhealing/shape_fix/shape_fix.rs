@@ -37,7 +37,7 @@ use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
 use crate::shhealing::shape_extend::basic_msg_registrator::BasicMsgRegistrator;
 use crate::shhealing::shape_extend::msg::MessageMsg;
 use crate::shhealing::shape_extend::status::ShapeExtendStatus;
-use crate::shhealing::shape_fix::shape_fix_gap_deps::ShapeFixEdgeGap;
+use crate::shhealing::shape_fix::edge::ShapeFixEdge;
 use crate::shhealing::shape_fix::shape_fix_gap_deps::ShapeFixShapeGap;
 
 /// OCCT Message_ProgressScope — the rcad architecture bridge: no abort
@@ -151,7 +151,9 @@ pub fn same_parameter(
     let mut status = true;
     let mut tol = preci;
     let iatol = tol > 0.0;
-    let mut sfe = ShapeFixEdgeGap::new();
+    // OCCT L101: Handle(ShapeFix_Edge) sfe = new ShapeFix_Edge — the W3
+    // tranche 1 1:1 class (the W1-6 GAP carrier is retired).
+    let mut sfe = ShapeFixEdge::new();
 
     // L102-103: the edge explorer and the done-message.
     let ex = topexp_explorer(brep, shape, ShapeType::Edge);
@@ -189,10 +191,13 @@ pub fn same_parameter(
                 .unwrap_or_default();
             if !a_list_of_faces.is_empty() {
                 for a_f in &a_list_of_faces {
-                    sfe.fix_same_parameter(brep, &e, a_f);
+                    // L143: sfe->FixSameParameter(E, F) — the tolerance
+                    // default is 0.0.
+                    sfe.fix_same_parameter_face(brep, &e, a_f, 0.0);
                 }
             } else {
-                sfe.fix_same_parameter(brep, &e, &Shape::null());
+                // L148: sfe->FixSameParameter(E).
+                sfe.fix_same_parameter(brep, &e, 0.0);
             }
 
             // L151-157: BRep_Tool::SameParameter(E).
