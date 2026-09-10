@@ -30,12 +30,16 @@ use super::brep_offset_offset::*;
 // ---------------------------------------------------------------------------
 
 /// OCCT BRepOffset_Offset (BRepOffset_Offset.hxx L45-158).
+///
+/// Architecture note: the OCCT global TShape arena is the caller-owned
+/// `&mut BRep` threaded through every Init (all BRepOffset_Offset instances
+/// of one BRepOffset_MakeOffset run share the MakeOffset pool, like the C++
+/// handles share the TShape heap).
 pub struct BRepOffsetOffset {
     my_shape: Shape,               // OCCT: myShape (hxx L154)
     my_status: BRepOffsetStatus,   // OCCT: myStatus (hxx L155)
     my_face: Shape,                // OCCT: myFace (hxx L156)
     my_map: HashMap<ShapeKey, Shape>, // OCCT: myMap (hxx L157)
-    my_brep: BRep,                 // rcad arena stand-in (arch. diff. #4/#19)
 }
 
 impl Default for BRepOffsetOffset {
@@ -52,21 +56,27 @@ impl BRepOffsetOffset {
             my_status: BRepOffsetStatus::Good,
             my_face: Shape::null(),
             my_map: HashMap::new(),
-            my_brep: BRep::new(),
         }
     }
 
     /// OCCT BRepOffset_Offset::BRepOffset_Offset(Face, Offset, OffsetOutside
     /// = true, JoinType = GeomAbs_Arc) (cxx L393-399).
-    pub fn with_face(the_face: &Shape, the_offset: f64, the_offset_outside: bool, the_join_type: bool) -> Self {
+    pub fn with_face(
+        the_brep: &mut BRep,
+        the_face: &Shape,
+        the_offset: f64,
+        the_offset_outside: bool,
+        the_join_type: bool,
+    ) -> Self {
         let mut res = Self::new();
-        res.init_face(the_face, the_offset, the_offset_outside, the_join_type);
+        res.init_face(the_brep, the_face, the_offset, the_offset_outside, the_join_type);
         res
     }
 
     /// OCCT BRepOffset_Offset::BRepOffset_Offset(Face, Offset, Created,
     /// OffsetOutside = true, JoinType = GeomAbs_Arc) (cxx L403-411).
     pub fn with_face_created(
+        the_brep: &mut BRep,
         the_face: &Shape,
         the_offset: f64,
         the_created: &HashMap<ShapeKey, Shape>,
@@ -74,7 +84,7 @@ impl BRepOffsetOffset {
         the_join_type: bool,
     ) -> Self {
         let mut res = Self::new();
-        res.init_face_created(the_face, the_offset, the_created, the_offset_outside, the_join_type);
+        res.init_face_created(the_brep, the_face, the_offset, the_created, the_offset_outside, the_join_type);
         res
     }
 
@@ -82,6 +92,7 @@ impl BRepOffsetOffset {
     /// Polynomial = false, Tol = 1.0e-4, Conti = GeomAbs_C1) (cxx L415-424).
     #[allow(clippy::too_many_arguments)]
     pub fn with_path(
+        the_brep: &mut BRep,
         the_path: &Shape,
         the_edge1: &Shape,
         the_edge2: &Shape,
@@ -91,7 +102,7 @@ impl BRepOffsetOffset {
         the_conti: GeomAbsShapeKind,
     ) -> Self {
         let mut res = Self::new();
-        res.init_path(the_path, the_edge1, the_edge2, the_offset, the_polynomial, the_tol, the_conti);
+        res.init_path(the_brep, the_path, the_edge1, the_edge2, the_offset, the_polynomial, the_tol, the_conti);
         res
     }
 
@@ -100,6 +111,7 @@ impl BRepOffsetOffset {
     /// GeomAbs_C1) (cxx L428-439).
     #[allow(clippy::too_many_arguments)]
     pub fn with_path_first_last(
+        the_brep: &mut BRep,
         the_path: &Shape,
         the_edge1: &Shape,
         the_edge2: &Shape,
@@ -112,8 +124,8 @@ impl BRepOffsetOffset {
     ) -> Self {
         let mut res = Self::new();
         res.init_path_first_last(
-            the_path, the_edge1, the_edge2, the_offset, the_first_edge, the_last_edge,
-            the_polynomial, the_tol, the_conti,
+            the_brep, the_path, the_edge1, the_edge2, the_offset, the_first_edge,
+            the_last_edge, the_polynomial, the_tol, the_conti,
         );
         res
     }
@@ -121,6 +133,7 @@ impl BRepOffsetOffset {
     /// OCCT BRepOffset_Offset::BRepOffset_Offset(Vertex, LEdge, Offset,
     /// Polynomial = false, Tol = 1.0e-4, Conti = GeomAbs_C1) (cxx L443-451).
     pub fn with_vertex(
+        the_brep: &mut BRep,
         the_vertex: &Shape,
         the_l_edge: &[Shape],
         the_offset: f64,
@@ -129,7 +142,7 @@ impl BRepOffsetOffset {
         the_conti: GeomAbsShapeKind,
     ) -> Self {
         let mut res = Self::new();
-        res.init_vertex(the_vertex, the_l_edge, the_offset, the_polynomial, the_tol, the_conti);
+        res.init_vertex(the_brep, the_vertex, the_l_edge, the_offset, the_polynomial, the_tol, the_conti);
         res
     }
 
@@ -137,6 +150,7 @@ impl BRepOffsetOffset {
     /// JoinType = GeomAbs_Arc) (cxx L455-462).
     pub fn init_face(
         &mut self,
+        the_brep: &mut BRep,
         the_face: &Shape,
         the_offset: f64,
         the_offset_outside: bool,
@@ -144,13 +158,14 @@ impl BRepOffsetOffset {
     ) {
         // OCCT L460: NCollection_DataMap<...> Empty.
         let the_created: HashMap<ShapeKey, Shape> = HashMap::new();
-        self.init_face_created(the_face, the_offset, &the_created, the_offset_outside, the_join_type);
+        self.init_face_created(the_brep, the_face, the_offset, &the_created, the_offset_outside, the_join_type);
     }
 
     /// OCCT BRepOffset_Offset::Init(Face, Offset, Created, OffsetOutside =
     /// true, JoinType = GeomAbs_Arc) (cxx L466-1094).
     pub fn init_face_created(
         &mut self,
+        the_brep: &mut BRep,
         face: &Shape,
         offset: f64,
         created: &HashMap<ShapeKey, Shape>,
@@ -199,7 +214,10 @@ impl BRepOffsetOffset {
         // particular case of cone
         // OCCT L501-522.
         if let Surface3::Cone(co) = &s {
-            let (uc, _vc) = elslib_cone_parameters(co, co.apex);
+            // OCCT L506-507: gp_Pnt Apex = Co->Apex(); ElSLib::Parameters(
+            // Co->Cone(), Apex, Uc, Vc) — the TRUE apex (the rcad `apex`
+            // field is the reference point; apex_point() derives the apex).
+            let (uc, _vc) = elslib_cone_parameters(co, co.apex_point());
             let _ = uc;
             let (uu1, uu2, vv1, vv2) = {
                 let b = brep_tools_uv_bounds(face);
@@ -293,8 +311,11 @@ impl BRepOffsetOffset {
                     }
                 }
                 if let Surface3::Cone(cone) = &the_surf {
-                    // OCCT L616-634: the ConicalSurface branch.
-                    let apex = cone.apex;
+                    // OCCT L616-634: the ConicalSurface branch — gp_Pnt apex
+                    // = theCone.Apex(); ElSLib::Parameters(theCone, apex, ...)
+                    // (the TRUE apex of the offset cone; the rcad `apex`
+                    // field is the reference point).
+                    let apex = cone.apex_point();
                     let (_uapex, vapex) = elslib_cone_parameters(cone, apex);
                     if vmin_degen {
                         the_surf = Surface3::Trimmed(TrimmedSurface::new(
@@ -494,16 +515,17 @@ impl BRepOffsetOffset {
         // OCCT L811-820: BRep_Builder myBuilder; MakeFace(myFace);
         // UpdateFace(myFace, TheSurf, L/TopLoc_Location(), Tolerance(Face)).
         let mut my_builder = BRepBuilder::new();
-        self.my_face = my_builder.make_face(&mut self.my_brep, None, Shape::null());
+        self.my_face = my_builder.make_face(the_brep, None, Shape::null());
         if !is_transformed {
-            update_face_surface_gap(
+            update_face_surface(
                 &self.my_face,
                 &the_surf,
                 l_loc,
                 brep_tool_tolerance(face),
+                the_brep,
             );
         } else {
-            update_face_surface_gap(&self.my_face, &the_surf, 0, brep_tool_tolerance(face));
+            update_face_surface(&self.my_face, &the_surf, 0, brep_tool_tolerance(face), the_brep);
         }
 
         let mut map_ss: HashMap<ShapeKey, Shape> = HashMap::new();
@@ -549,7 +571,7 @@ impl BRepOffsetOffset {
         for w in explorer(&cur_face, ShapeType::Wire, ShapeType::Shape) {
             let mut w_fwd = w.clone();
             w_fwd.orientation = Orientation::Forward;
-            let mut ow = my_builder.make_wire(&mut self.my_brep);
+            let mut ow = my_builder.make_wire(the_brep);
             for e in explorer(&w_fwd, ShapeType::Edge, ShapeType::Shape) {
                 let (v1, v2) = top_exp_vertices_shape(&e);
                 // OCCT L888: C2d = BRep_Tool::CurveOnSurface(E, CurFace, f, l).
@@ -579,16 +601,16 @@ impl BRepOffsetOffset {
                         if e.orientation == Orientation::Forward {
                             update_edge_2d_seam(
                                 &oe, &c2d, &c2d_1, &self.my_face,
-                                brep_tool_tolerance(&e), &mut self.my_brep,
+                                brep_tool_tolerance(&e), the_brep,
                             );
                         } else {
                             update_edge_2d_seam(
                                 &oe, &c2d_1, &c2d, &self.my_face,
-                                brep_tool_tolerance(&e), &mut self.my_brep,
+                                brep_tool_tolerance(&e), the_brep,
                             );
                         }
                     }
-                    my_builder.set_edge_range(&mut self.my_brep, oe.clone(), f, l);
+                    my_builder.set_edge_range(the_brep, oe.clone(), f, l);
                 } else {
                     // OCCT L910-957.
                     let mut eforward = e.clone();
@@ -651,7 +673,7 @@ impl BRepOffsetOffset {
                             ov1 = map_ss[&shape_key(&v1)].clone();
                         } else {
                             let nv = my_builder.add_vertex(
-                                &mut self.my_brep,
+                                the_brep,
                                 p1,
                                 brep_tool_tolerance(&v1),
                             );
@@ -663,7 +685,7 @@ impl BRepOffsetOffset {
                             ov2 = map_ss[&shape_key(&v2)].clone();
                         } else {
                             let nv = my_builder.add_vertex(
-                                &mut self.my_brep,
+                                the_brep,
                                 p2,
                                 brep_tool_tolerance(&v2),
                             );
@@ -671,14 +693,14 @@ impl BRepOffsetOffset {
                             map_ss.insert(shape_key(&v2), ov2.clone());
                         }
                         oe = my_builder.add_edge(
-                            &mut self.my_brep,
+                            the_brep,
                             None,
                             oriented_vertex(&ov1, v1.orientation),
                             oriented_vertex(&ov2, v2.orientation),
                             [0.0, 0.0],
                         );
                         if brep_tool_degenerated(&e) {
-                            my_builder.set_edge_degenerated(&mut self.my_brep, oe.clone(), true);
+                            my_builder.set_edge_degenerated(the_brep, oe.clone(), true);
                         }
                     }
                     if von_degen.contains(&shape_key(&v1)) || von_degen.contains(&shape_key(&v2)) {
@@ -707,19 +729,19 @@ impl BRepOffsetOffset {
                                 if e.orientation == Orientation::Forward {
                                     update_edge_2d_seam(
                                         &oe, &c2d, &c2d_1, &self.my_face,
-                                        brep_tool_tolerance(&e), &mut self.my_brep,
+                                        brep_tool_tolerance(&e), the_brep,
                                     );
                                 } else {
                                     update_edge_2d_seam(
                                         &oe, &c2d_1, &c2d, &self.my_face,
-                                        brep_tool_tolerance(&e), &mut self.my_brep,
+                                        brep_tool_tolerance(&e), the_brep,
                                     );
                                 }
                             }
                         } else {
                             update_edge_2d(
                                 &oe, &c2d, &self.my_face, brep_tool_tolerance(&e),
-                                &mut self.my_brep,
+                                the_brep,
                             );
                         }
                         // OCCT L1040: myBuilder.Range(OE, myFace, f, l).
@@ -749,12 +771,12 @@ impl BRepOffsetOffset {
                                 if e.orientation == Orientation::Forward {
                                     update_edge_2d_seam(
                                         &oe, &c2d, &c2d_1, &self.my_face,
-                                        brep_tool_tolerance(&e), &mut self.my_brep,
+                                        brep_tool_tolerance(&e), the_brep,
                                     );
                                 } else {
                                     update_edge_2d_seam(
                                         &oe, &c2d_1, &c2d, &self.my_face,
-                                        brep_tool_tolerance(&e), &mut self.my_brep,
+                                        brep_tool_tolerance(&e), the_brep,
                                     );
                                 }
                             }
@@ -763,14 +785,14 @@ impl BRepOffsetOffset {
                         // OCCT L1074-1079.
                         update_edge_2d(
                             &oe, &c2d, &self.my_face, brep_tool_tolerance(&e),
-                            &mut self.my_brep,
+                            the_brep,
                         );
-                        my_builder.set_edge_range(&mut self.my_brep, oe.clone(), f, l);
+                        my_builder.set_edge_range(the_brep, oe.clone(), f, l);
                     }
                     // OCCT L1080-1083.
                     if !brep_tool_degenerated(&oe) {
                         compute_curve3d(
-                            &mut self.my_brep,
+                            the_brep,
                             &oe,
                             &c2d,
                             &the_surf,
@@ -782,11 +804,11 @@ impl BRepOffsetOffset {
                 }
                 // OCCT L1086: myBuilder.Add(OW, OE.Oriented(E.Orientation())).
                 let oe_oriented = oriented_vertex(&oe, e.orientation);
-                my_builder.add_to_wire(&mut self.my_brep, ow.clone(), oe_oriented);
+                my_builder.add_to_wire(the_brep, ow.clone(), oe_oriented);
             }
             // OCCT L1088: myBuilder.Add(myFace, OW.Oriented(W.Orientation())).
             let ow_oriented = oriented_vertex(&ow, w.orientation);
-            my_builder.add_to_face(&mut self.my_brep, self.my_face.clone(), ow_oriented);
+            my_builder.add_to_face(the_brep, self.my_face.clone(), ow_oriented);
             let _ = &mut ow;
         }
 
@@ -802,6 +824,7 @@ impl BRepOffsetOffset {
     #[allow(clippy::too_many_arguments)]
     pub fn init_path(
         &mut self,
+        the_brep: &mut BRep,
         the_path: &Shape,
         the_edge1: &Shape,
         the_edge2: &Shape,
@@ -814,7 +837,7 @@ impl BRepOffsetOffset {
         let first_edge = Shape::null();
         let last_edge = Shape::null();
         self.init_path_first_last(
-            the_path, the_edge1, the_edge2, the_offset, &first_edge, &last_edge,
+            the_brep, the_path, the_edge1, the_edge2, the_offset, &first_edge, &last_edge,
             the_polynomial, the_tol, the_conti,
         );
     }
@@ -825,6 +848,7 @@ impl BRepOffsetOffset {
     #[allow(clippy::too_many_arguments)]
     pub fn init_path_first_last(
         &mut self,
+        the_brep: &mut BRep,
         path: &Shape,
         edge1: &Shape,
         edge2: &Shape,
@@ -941,10 +965,10 @@ impl BRepOffsetOffset {
         let path_tol = brep_tool_tolerance(path);
         let mut the_tol: f64;
         let mut my_builder = BRepBuilder::new();
-        self.my_face = my_builder.make_face(&mut self.my_brep, None, Shape::null());
+        self.my_face = my_builder.make_face(the_brep, None, Shape::null());
         // OCCT L1212-1213: TopLoc_Location Id; UpdateFace(myFace, S, Id,
         // PathTol).
-        update_face_surface_gap(&self.my_face, &s, 0, path_tol);
+        update_face_surface(&self.my_face, &s, 0, path_tol, the_brep);
 
         // update de Edge1. (Rem : has already a 3d curve)
         // OCCT L1216-1237.
@@ -976,28 +1000,28 @@ impl BRepOffsetOffset {
             // OCCT L1244-1247: UpdateEdge(Edge1, Dummy, ...); Degenerated(
             // Edge1, true).
             update_edge_curve3d_gap(edge1, &Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)), 0, brep_tool_tolerance(edge1));
-            my_builder.set_edge_degenerated(&mut self.my_brep, edge1.clone(), true);
+            my_builder.set_edge_degenerated(the_brep, edge1.clone(), true);
         }
 
         // OCCT L1250-1251.
         the_tol = path_tol.max(brep_tool_tolerance(edge1) + error_pipe);
-        update_edge_2d(edge1, &pc, &self.my_face, the_tol, &mut self.my_brep);
+        update_edge_2d(edge1, &pc, &self.my_face, the_tol, the_brep);
 
         // mise a same range de la nouvelle pcurve.
         // OCCT L1253-1260.
         if !c1is3d && !c1_denerated {
-            my_builder.set_edge_range(&mut self.my_brep, edge1.clone(), u1, u2);
+            my_builder.set_edge_range(the_brep, edge1.clone(), u1, u2);
         }
         set_edge_range_on_face_gap(edge1, &self.my_face, u1, u2);
         // OCCT L1260: BRepLib::SameRange(Edge1) — the same-range flag
         // consolidation (reduced to the rcad flag write).
-        my_builder.set_edge_same_range(&mut self.my_brep, edge1.clone(), true);
+        my_builder.set_edge_same_range(the_brep, edge1.clone(), true);
 
         // mise a sameparameter pour les KPart
         // OCCT L1262-1268.
         if error_pipe == 0.0 {
             the_tol = the_tol.max(tol);
-            my_builder.set_edge_same_parameter(&mut self.my_brep, edge1.clone(), true);
+            my_builder.set_edge_same_parameter(the_brep, edge1.clone(), true);
             // OCCT L1267: BRepLib::SameParameter(Edge1, TheTol).
             brep_lib_same_parameter(edge1, the_tol);
         }
@@ -1025,27 +1049,27 @@ impl BRepOffsetOffset {
             update_edge_curve3d_gap(edge2, c2.as_ref().unwrap(), 0, brep_tool_tolerance(edge2));
         } else if c2_denerated {
             update_edge_curve3d_gap(edge2, &Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)), 0, brep_tool_tolerance(edge2));
-            my_builder.set_edge_degenerated(&mut self.my_brep, edge2.clone(), true);
+            my_builder.set_edge_degenerated(the_brep, edge2.clone(), true);
         }
 
         // OCCT L1302-1303.
         the_tol = path_tol.max(brep_tool_tolerance(edge2) + error_pipe);
-        update_edge_2d(edge2, &pc, &self.my_face, the_tol, &mut self.my_brep);
+        update_edge_2d(edge2, &pc, &self.my_face, the_tol, the_brep);
 
         // mise a same range de la nouvelle pcurve.
         // OCCT L1305-1312.
-        my_builder.set_edge_same_range(&mut self.my_brep, edge2.clone(), false);
+        my_builder.set_edge_same_range(the_brep, edge2.clone(), false);
         if !c2is3d && !c2_denerated {
-            my_builder.set_edge_range(&mut self.my_brep, edge2.clone(), u1, u2);
+            my_builder.set_edge_range(the_brep, edge2.clone(), u1, u2);
         }
         set_edge_range_on_face_gap(edge2, &self.my_face, u1, u2);
-        my_builder.set_edge_same_range(&mut self.my_brep, edge2.clone(), true);
+        my_builder.set_edge_same_range(the_brep, edge2.clone(), true);
 
         // mise a sameparameter pour les KPart
         // OCCT L1314-1320.
         if error_pipe == 0.0 {
             the_tol = the_tol.max(tol);
-            my_builder.set_edge_same_parameter(&mut self.my_brep, edge2.clone(), true);
+            my_builder.set_edge_same_parameter(the_brep, edge2.clone(), true);
             brep_lib_same_parameter(edge2, the_tol);
         }
 
@@ -1072,7 +1096,7 @@ impl BRepOffsetOffset {
             // add_edge form.
             let mut my_builder = BRepBuilder::new();
             edge3 = my_builder.add_edge(
-                &mut self.my_brep,
+                the_brep,
                 None,
                 oriented_vertex(&v1f, Orientation::Forward),
                 oriented_vertex(&v2f, Orientation::Reversed),
@@ -1090,7 +1114,7 @@ impl BRepOffsetOffset {
                 // On cree un autre edge, on appelle le Sewing apres.
                 let mut my_builder = BRepBuilder::new();
                 edge3 = my_builder.add_edge(
-                    &mut self.my_brep,
+                    the_brep,
                     None,
                     oriented_vertex(&v1f, Orientation::Forward),
                     oriented_vertex(&v2f, Orientation::Reversed),
@@ -1133,13 +1157,13 @@ impl BRepOffsetOffset {
                 u1 = -u2;
                 u2 = u;
             }
-            update_edge_2d_seam(&edge3, &l1, &l2c, &self.my_face, path_tol, &mut self.my_brep);
+            update_edge_2d_seam(&edge3, &l1, &l2c, &self.my_face, path_tol, the_brep);
             set_edge_range_on_face_gap(&edge3, &self.my_face, u1, u2);
             if start_degenerated {
-                my_builder.set_edge_degenerated(&mut self.my_brep, edge3.clone(), true);
+                my_builder.set_edge_degenerated(the_brep, edge3.clone(), true);
             } else if first_edge.is_null() {
                 // then the 3d curve has not been yet computed
-                compute_curve3d(&mut self.my_brep, &edge3, &l1, &s, 0, tol_app);
+                compute_curve3d(the_brep, &edge3, &l1, &s, 0, tol_app);
             }
         } else {
             // OCCT L1417-1451: Edge4.
@@ -1147,7 +1171,7 @@ impl BRepOffsetOffset {
             if last_edge.is_null() {
                 let mut my_builder = BRepBuilder::new();
                 edge4 = my_builder.add_edge(
-                    &mut self.my_brep,
+                    the_brep,
                     None,
                     oriented_vertex(&v1l, Orientation::Forward),
                     oriented_vertex(&v2l, Orientation::Reversed),
@@ -1165,7 +1189,7 @@ impl BRepOffsetOffset {
                     // On cree un autre edge, on appelle le Sewing apres.
                     let mut my_builder = BRepBuilder::new();
                     edge4 = my_builder.add_edge(
-                        &mut self.my_brep,
+                        the_brep,
                         None,
                         oriented_vertex(&v1l, Orientation::Forward),
                         oriented_vertex(&v2l, Orientation::Reversed),
@@ -1193,13 +1217,13 @@ impl BRepOffsetOffset {
                 u1 = -u2;
                 u2 = u;
             }
-            update_edge_2d(&edge3, &l1, &self.my_face, path_tol, &mut self.my_brep);
+            update_edge_2d(&edge3, &l1, &self.my_face, path_tol, the_brep);
             set_edge_range_on_face_gap(&edge3, &self.my_face, u1, u2);
             if start_degenerated {
-                my_builder.set_edge_degenerated(&mut self.my_brep, edge3.clone(), true);
+                my_builder.set_edge_degenerated(the_brep, edge3.clone(), true);
             } else if first_edge.is_null() {
                 // then the 3d curve has not been yet computed
-                compute_curve3d(&mut self.my_brep, &edge3, &l1, &s, 0, tol_app);
+                compute_curve3d(the_brep, &edge3, &l1, &s, 0, tol_app);
             }
 
             // OCCT L1483-1511: Edge4 pcurve.
@@ -1218,13 +1242,13 @@ impl BRepOffsetOffset {
                 u1 = -u2;
                 u2 = u;
             }
-            update_edge_2d(&edge4, &l2c, &self.my_face, path_tol, &mut self.my_brep);
+            update_edge_2d(&edge4, &l2c, &self.my_face, path_tol, the_brep);
             set_edge_range_on_face_gap(&edge4, &self.my_face, u1, u2);
             if end_degenerated {
-                my_builder.set_edge_degenerated(&mut self.my_brep, edge4.clone(), true);
+                my_builder.set_edge_degenerated(the_brep, edge4.clone(), true);
             } else if last_edge.is_null() {
                 // then the 3d curve has not been yet computed
-                compute_curve3d(&mut self.my_brep, &edge4, &l2c, &s, 0, tol_app);
+                compute_curve3d(the_brep, &edge4, &l2c, &s, 0, tol_app);
             }
         }
 
@@ -1232,35 +1256,35 @@ impl BRepOffsetOffset {
         // OCCT L1514-1528.
         if !first_edge.is_null() && !start_degenerated {
             brep_lib_build_curve3d(&edge3, path_tol);
-            my_builder.set_edge_same_range(&mut self.my_brep, edge3.clone(), false);
-            my_builder.set_edge_same_parameter(&mut self.my_brep, edge3.clone(), false);
+            my_builder.set_edge_same_range(the_brep, edge3.clone(), false);
+            my_builder.set_edge_same_parameter(the_brep, edge3.clone(), false);
             brep_lib_same_parameter(&edge3, tol);
         }
         let edge4 = edge3.clone();
         if !last_edge.is_null() && !end_degenerated {
             brep_lib_build_curve3d(&edge4, path_tol);
-            my_builder.set_edge_same_range(&mut self.my_brep, edge4.clone(), false);
-            my_builder.set_edge_same_parameter(&mut self.my_brep, edge4.clone(), false);
+            my_builder.set_edge_same_range(the_brep, edge4.clone(), false);
+            my_builder.set_edge_same_parameter(the_brep, edge4.clone(), false);
             brep_lib_same_parameter(&edge4, tol);
         }
 
         // OCCT L1530-1547: the result wire; the ExchUV reversals.
-        let mut w = my_builder.make_wire(&mut self.my_brep);
+        let mut w = my_builder.make_wire(the_brep);
 
         let e1_rev = oriented_vertex(edge1, Orientation::Reversed);
-        my_builder.add_to_wire(&mut self.my_brep, w.clone(), e1_rev);
+        my_builder.add_to_wire(the_brep, w.clone(), e1_rev);
         let e2_fwd = oriented_vertex(edge2, Orientation::Forward);
-        my_builder.add_to_wire(&mut self.my_brep, w.clone(), e2_fwd);
+        my_builder.add_to_wire(the_brep, w.clone(), e2_fwd);
         let edge4 = edge3.clone();
         let e4_rev = oriented_vertex(&edge4, reverse_of(edge4.orientation));
-        my_builder.add_to_wire(&mut self.my_brep, w.clone(), e4_rev);
-        my_builder.add_to_wire(&mut self.my_brep, w.clone(), edge3.clone());
+        my_builder.add_to_wire(the_brep, w.clone(), e4_rev);
+        my_builder.add_to_wire(the_brep, w.clone(), edge3.clone());
 
         if exch_uv {
             w.orientation = reverse_of(w.orientation);
         }
 
-        my_builder.add_to_face(&mut self.my_brep, self.my_face.clone(), w.clone());
+        my_builder.add_to_face(the_brep, self.my_face.clone(), w.clone());
         if exch_uv {
             self.my_face.orientation = reverse_of(self.my_face.orientation);
         }
@@ -1279,6 +1303,7 @@ impl BRepOffsetOffset {
     /// Tol = 1.0e-4, Conti = GeomAbs_C1) (cxx L1559-1694).
     pub fn init_vertex(
         &mut self,
+        the_brep: &mut BRep,
         vertex: &Shape,
         l_edge: &[Shape],
         offset: f64,
@@ -1299,7 +1324,7 @@ impl BRepOffsetOffset {
         // OCCT L1593-1595: BRepLib_MakeWire MW; MW.Add(LEdge);
         // theWire = MW.Wire() — the rcad build_wire storage stand-in.
         let mut mw = BRepBuilder::new();
-        let mut the_wire = mw.build_wire(&mut self.my_brep, l_edge.to_vec());
+        let mut the_wire = mw.build_wire(the_brep, l_edge.to_vec());
 
         // OCCT L1597-1599: ShapeFix_Shape Fixer(theWire); Fixer.Perform();
         // theWire = TopoDS::Wire(Fixer.Shape()).
@@ -1337,7 +1362,7 @@ impl BRepOffsetOffset {
         // OCCT L1616-1619: TopLoc_Location Loc; BRep_Builder myBuilder;
         // MakeFace(myFace); SS = S.
         let mut my_builder = BRepBuilder::new();
-        my_builder.make_face(&mut self.my_brep, None, Shape::null());
+        self.my_face = my_builder.make_face(the_brep, None, Shape::null());
         let mut ss = Some(s.clone());
 
         // En polynomial, calcul de la surface par F(u,v).
@@ -1350,11 +1375,10 @@ impl BRepOffsetOffset {
         let ss = ss.unwrap_or_else(|| s.clone());
 
         // OCCT L1633: myBuilder.UpdateFace(myFace, SS, Loc, Tol).
-        self.my_face = my_builder.make_face(&mut self.my_brep, Some(ss.clone()), Shape::null());
-        update_face_surface_gap(&self.my_face, &ss, 0, tol);
+        update_face_surface(&self.my_face, &ss, 0, tol, the_brep);
 
         // OCCT L1635-1636: TopoDS_Wire W; myBuilder.MakeWire(W).
-        let mut w = my_builder.make_wire(&mut self.my_brep);
+        let mut w = my_builder.make_wire(the_brep);
 
         // OCCT L1638-1682.
         for e in l_edge {
@@ -1404,17 +1428,17 @@ impl BRepOffsetOffset {
             }
 
             // OCCT L1679-1681.
-            update_edge_2d(e, &pcurve, &self.my_face, tol, &mut self.my_brep);
+            update_edge_2d(e, &pcurve, &self.my_face, tol, the_brep);
             set_edge_range_on_face_gap(e, &self.my_face, f, l);
-            my_builder.add_to_wire(&mut self.my_brep, w.clone(), e.clone());
+            my_builder.add_to_wire(the_brep, w.clone(), e.clone());
         }
         // OCCT L1683-1691.
         if offset < 0.0 {
             let w_rev = oriented_vertex(&w, Orientation::Reversed);
-            my_builder.add_to_face(&mut self.my_brep, self.my_face.clone(), w_rev);
+            my_builder.add_to_face(the_brep, self.my_face.clone(), w_rev);
             self.my_face.orientation = reverse_of(self.my_face.orientation);
         } else {
-            my_builder.add_to_face(&mut self.my_brep, self.my_face.clone(), w.clone());
+            my_builder.add_to_face(the_brep, self.my_face.clone(), w.clone());
         }
 
         // OCCT L1693: BRepTools::Update(myFace).
@@ -1423,7 +1447,7 @@ impl BRepOffsetOffset {
 
     /// OCCT BRepOffset_Offset::Init(Edge, Offset) (cxx L1698-1724) — Only
     /// used in Rolling Ball. Pipe on Free Boundary.
-    pub fn init_edge(&mut self, edge: &Shape, offset: f64) {
+    pub fn init_edge(&mut self, the_brep: &mut BRep, edge: &Shape, offset: f64) {
         self.my_shape = edge.clone();
         let my_offset = offset.abs();
 
@@ -1447,7 +1471,7 @@ impl BRepOffsetOffset {
         // storage stand-in for the BRepLib_MakeFace(S, Tol) constructor.
         let mut my_builder = BRepBuilder::new();
         self.my_face = my_builder.make_face(
-            &mut self.my_brep,
+            the_brep,
             Some(pipe.surface()),
             Shape::null(),
         );

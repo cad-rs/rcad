@@ -26,7 +26,8 @@ use crate::feat::loc_ope_wires_on_shape_b::{
 
 use crate::offset::brep_offset_make_simple_offset::top_exp_vertices_shape;
 use crate::offset::brep_offset_offset::{
-    update_edge_2d, update_edge_2d_seam, BRepOffsetStatus, GeomAbsShapeKind,
+    update_edge_2d, update_edge_2d_seam, update_face_surface, BRepOffsetStatus,
+    GeomAbsShapeKind,
 };
 use crate::offset::brep_offset_offset_b::BRepOffsetOffset;
 use crate::offset::bi_tgte_curve_on_edge::{BiTgteCurveOnEdge, GeomApiProjectPointOnCurve};
@@ -175,6 +176,7 @@ impl BiTgteBlend {
                             // — the (F, Offset, Created) Init form (the
                             // defaults OffsetOutside=true, Join=Arc).
                             of1.init_face_created(
+                                &mut self.my_brep,
                                 &enlarged,
                                 self.my_radius,
                                 &edge_tgt,
@@ -182,12 +184,12 @@ impl BiTgteBlend {
                                 false,
                             );
                         } else {
-                            of1.init_face_created(&f, self.my_radius, &edge_tgt, true, false);
+                            of1.init_face_created(&mut self.my_brep, &f, self.my_radius, &edge_tgt, true, false);
                         }
                     } else {
                         // So this is a Free Border edge on which the ball
                         // rolls.
-                        of1.init_edge(&as_, self.my_radius);
+                        of1.init_edge(&mut self.my_brep, &as_, self.my_radius);
                     }
                     let _ = big_f;
 
@@ -352,6 +354,7 @@ impl BiTgteBlend {
                         // — the defaults Polynomial=false, Tol=1e-4,
                         // Conti=C1.
                         let of1 = BRepOffsetOffset::with_path_first_last(
+                            &mut self.my_brep,
                             &e,
                             &e_on1,
                             &e_on2,
@@ -954,6 +957,7 @@ impl BiTgteBlend {
 
                 // OCCT L2098-2101.
                 let an_offset = BRepOffsetOffset::with_path(
+                    &mut self.my_brep,
                     &cur_cut_e,
                     &e1,
                     &e2,
@@ -1099,6 +1103,7 @@ impl BiTgteBlend {
 
             // OCCT L2212: OFT(V, LOE, -myRadius, myNubs, myTol, GeomAbs_C2).
             let oft = BRepOffsetOffset::with_vertex(
+                &mut self.my_brep,
                 &v,
                 &loe,
                 -self.my_radius,
@@ -1227,11 +1232,12 @@ impl BiTgteBlend {
 
                     // OCCT L2335-2337: B.MakeFace(NewF);
                     // B.UpdateFace(NewF, S, L, Tolerance(CurF)) — the empty
-                    // face + the post-hoc surface update re-host (arch.
-                    // diff. #4/#19; the update is the no-op re-host).
+                    // face + the post-hoc surface update (BRep_Builder.cxx
+                    // L564-578; the brep_offset_offset::update_face_surface
+                    // carrier).
                     let mut new_f =
                         b.make_face(&mut self.my_brep, None, Shape::null());
-                    update_face_surface_gap(&new_f, &s, loc, brep_tool_tolerance(cur_f));
+                    update_face_surface(&new_f, &s, loc, brep_tool_tolerance(cur_f), &mut self.my_brep);
 
                     let mut map_ss: HashMap<Shape, Shape> = HashMap::new();
 
@@ -1648,11 +1654,9 @@ impl BiTgteBlend {
     }
 }
 
-/// OCCT BRep_Builder::UpdateFace(F, S, L, Tol) — the GAP no-op re-host (the
-/// same re-host as the brep_offset_offset.rs one; the rcad TFaceData surface
-/// is written at construction).
-fn update_face_surface_gap(_the_f: &Shape, _the_s: &rcad_kernel::geom::Surface3, _the_loc: u32, _the_tol: f64) {
-}
+/// OCCT BRep_Builder::UpdateFace(F, S, L, Tol) — the shared real carrier
+/// lives in brep_offset_offset::update_face_surface (BRep_Builder.cxx
+/// L564-578).
 
 /// OCCT BRepOffset_Tool::EnLargeFace(F, BigF, AddToShape) — GAP static
 /// (arch. diff. #23); the out-param BigF becomes the return value.

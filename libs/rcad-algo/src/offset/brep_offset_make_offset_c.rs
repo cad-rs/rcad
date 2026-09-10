@@ -88,7 +88,7 @@ impl BRepAdaptorCurveC {
 impl BRepOffsetMakeOffset {
     /// OCCT BRepOffset_MakeOffset::CorrectConicalFaces (cxx L2396-2853).
     pub(crate) fn correct_conical_faces(&mut self) {
-        if self.my_offset_shape.is_null() {
+        if super::brep_offset_make_offset::offset_shape_is_null(&self.my_offset_shape) {
             return;
         }
         //

@@ -437,6 +437,7 @@ pub(crate) fn update_history(
 /// OCCT TrimEdges (cxx L4752-4924).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn trim_edges(
+    the_brep: &rcad_kernel::topods::BRep,
     the_shape: &Shape,
     the_offset: f64,
     analyse: &BRepOffsetAnalyse,
@@ -593,7 +594,7 @@ pub(crate) fn trim_edges(
                     );
                     if is_line {
                         let mut a_new_edge = Shape::null();
-                        let _ = BRepOffsetInter2d::extent_edge(&ne, &mut a_new_edge, the_offset);
+                        let _ = BRepOffsetInter2d::extent_edge(the_brep, &ne, &mut a_new_edge, the_offset);
                         shape_data_map::bind(the_e_trim_e_inf, &ne, a_new_edge);
                     }
                 }

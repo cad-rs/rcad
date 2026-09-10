@@ -258,10 +258,22 @@ pub(super) fn brep_lib_build_curve3d(the_e: &Shape, the_tol: f64) {
 pub(super) fn brep_tools_update(_the_s: &Shape) {
 }
 
-/// OCCT BRep_Builder::UpdateFace(F, S, L, Tol) — GAP no-op re-host (the rcad
-/// TFaceData surface is written at construction; there is no post-hoc
-/// surface setter on the rcad BRepBuilder).
-pub(super) fn update_face_surface_gap(_the_f: &Shape, _the_s: &Surface3, _the_loc: u32, _the_tol: f64) {
+/// OCCT BRep_Builder::UpdateFace(F, S, L, Tol) (BRep_Builder.cxx L564-578)
+/// — set the face surface, tolerance and location:
+/// TF->Surface(S); TF->Tolerance(Tol); TF->Location(L.Predivided(F.Location()))
+/// (the rcad my_face wrapper location is identity at every call site, so the
+/// pre-divided location is `the_loc` itself).
+pub(super) fn update_face_surface(
+    the_f: &Shape,
+    the_s: &Surface3,
+    the_loc: u32,
+    the_tol: f64,
+    the_brep: &mut BRep,
+) {
+    let fd = the_brep.face_mut(the_f.clone());
+    fd.surface = Some(the_s.clone());
+    fd.tolerance = the_tol;
+    fd.surface_location = the_loc;
 }
 
 /// OCCT BRep_Builder::UpdateEdge(E, C3d, Tol) / UpdateEdge(E, C3d, L, Tol) —
@@ -446,8 +458,12 @@ pub(super) fn compute_curve3d(
                     {
                         the_builder.set_edge_degenerated(the_brep, edge.clone(), true);
                     } else {
-                        let circle = elslib_sphere_v_iso(sph, p.y);
-                        let circle = circle_rotate(circle, sph.axis, p.x);
+                        let circle = elslib_sphere_v_iso(sph, sph.radius, p.y);
+                        // OCCT L227-229: DRev = X ^ Y; AxeRev(Location, DRev).
+                        let d_rev =
+                            sph.ref_dir.cross(ax3_y_dir(sph.axis, sph.ref_dir));
+                        let circle =
+                            circle_rotate(circle, sph.center, d_rev, p.x);
                         let mut circle = circle;
                         // OCCT L231: if (D.IsOpposite(gp::DX2d(), ...)).
                         if d.x < 0.0 {
@@ -459,7 +475,9 @@ pub(super) fn compute_curve3d(
                 } else if let Surface3::Cylinder(cyl) = s_ty {
                     // OCCT L239-255.
                     let circle = elslib_cylinder_v_iso(cyl, cyl.radius, p.y);
-                    let circle = circle_rotate(circle, cyl.axis, p.x);
+                    // OCCT L245-247: DRev = X ^ Y; AxeRev(Location, DRev).
+                    let d_rev = cyl.ref_dir.cross(cyl.y_axis());
+                    let circle = circle_rotate(circle, cyl.origin, d_rev, p.x);
                     let mut circle = circle;
                     if d.x < 0.0 {
                         circle = circle_reversed(circle);
@@ -469,7 +487,10 @@ pub(super) fn compute_curve3d(
                 } else if let Surface3::Cone(cone) = s_ty {
                     // OCCT L256-272.
                     let circle = elslib_cone_v_iso(cone, cone.radius, cone.half_angle_rad, p.y);
-                    let circle = circle_rotate(circle, cone.axis, p.x);
+                    // OCCT L262-264: DRev = X ^ Y; AxeRev(Location, DRev).
+                    let d_rev =
+                        cone.ref_dir.cross(ax3_y_dir(cone.axis, cone.ref_dir));
+                    let circle = circle_rotate(circle, cone.apex, d_rev, p.x);
                     let mut circle = circle;
                     if d.x < 0.0 {
                         circle = circle_reversed(circle);
@@ -480,7 +501,10 @@ pub(super) fn compute_curve3d(
                     // OCCT L273-289.
                     let circle =
                         elslib_torus_v_iso(tore, tore.major_radius, tore.minor_radius, p.y);
-                    let circle = circle_rotate(circle, tore.axis, p.x);
+                    // OCCT L279-281: DRev = X ^ Y; AxeRev(Location, DRev).
+                    let d_rev =
+                        tore.ref_dir.cross(ax3_y_dir(tore.axis, tore.ref_dir));
+                    let circle = circle_rotate(circle, tore.center, d_rev, p.x);
                     let mut circle = circle;
                     if d.x < 0.0 {
                         circle = circle_reversed(circle);
@@ -495,8 +519,13 @@ pub(super) fn compute_curve3d(
                     // (rotation of circle - offset of Y); transformation en
                     // iso U (= P.X()).
                     let mut circle = elslib_sphere_u_iso(sph, sph.radius, 0.0);
-                    circle = circle_rotate(circle, sph.axis, p.y);
-                    circle = circle_rotate(circle, sph.axis, p.x);
+                    // OCCT L302-304: DRev = X ^ Direction; rotate by P.Y().
+                    let d_rev_y = sph.ref_dir.cross(sph.axis);
+                    circle = circle_rotate(circle, sph.center, d_rev_y, p.y);
+                    // OCCT L307-309: DRev = X ^ Y; rotate by P.X().
+                    let d_rev_x =
+                        sph.ref_dir.cross(ax3_y_dir(sph.axis, sph.ref_dir));
+                    circle = circle_rotate(circle, sph.center, d_rev_x, p.x);
                     let mut circle = circle;
                     if d.y < 0.0 {
                         circle = circle_reversed(circle);
@@ -527,7 +556,9 @@ pub(super) fn compute_curve3d(
                     // OCCT L351-366.
                     let circle =
                         elslib_torus_u_iso(tore, tore.major_radius, tore.minor_radius, p.x);
-                    let circle = circle_rotate(circle, tore.axis, p.y);
+                    // OCCT L357: Ci.Rotate(Ci.Axis(), P.Y()) — the rotation
+                    // about the circle's own axis.
+                    let circle = circle_rotate(circle, circle.center, circle.normal, p.y);
                     let mut circle = circle;
                     if d.y < 0.0 {
                         circle = circle_reversed(circle);
@@ -562,86 +593,281 @@ pub(super) fn compute_curve3d(
     // ... */ } — the comment-only branch.
 }
 
-// --- ComputeCurve3d GAP leaves (architecture difference #20) ---
+// --- ComputeCurve3d ElSLib leaves (architecture difference #20): the
+// TKMath/ElSLib analytic iso constructors and gp vehicle forms translated
+// 1:1. ---
 
 type GpCirc = rcad_kernel::geom::Circle3;
 type GpLin = rcad_kernel::geom::Line3;
 
-/// OCCT ElSLib::SphereVIso(Axis, Radius, V) + Ci.Rotate(AxeRev, U) — GAP.
-fn elslib_sphere_v_iso(_sph: &rcad_kernel::geom::SphericalSurface, _v: f64) -> GpCirc {
-    panic!("GAP: ElSLib::SphereVIso (TKMath/ElSLib not translated)");
+/// OCCT gp_Ax3 YDirection = ZDirection ^ XDirection (gp_Ax3.cxx: the direct
+/// right-handed frame).
+fn ax3_y_dir(z: DVec3, x: DVec3) -> DVec3 {
+    z.cross(x).normalize_or_zero()
 }
 
-/// OCCT ElSLib::CylinderVIso(Axis, Radius, V) — GAP.
+/// OCCT gp_XYZ::CrossCrossed(A1, A2) = (A2 ^ A1) ^ A2.
+fn cross_crossed(a1: DVec3, a2: DVec3) -> DVec3 {
+    a2.cross(a1).cross(a2)
+}
+
+/// OCCT gp_Ax2::SetDirection(V) (gp_Ax2.hxx L548-570): the special
+/// |V.X| = 1 branches and the general CrossCrossed re-computation.
+fn gp_ax2_set_direction(n: DVec3, x: DVec3, y: DVec3) -> (DVec3, DVec3, DVec3) {
+    let a = n.dot(x);
+    if ((a.abs() - 1.0).abs()) <= rcad_kernel::core::precision::ANGULAR {
+        if a > 0.0 {
+            let (nx, ny) = (y, n);
+            (n, nx, ny)
+        } else {
+            let nx = n;
+            let ny = x;
+            (n, nx, ny)
+        }
+    } else {
+        let nx = cross_crossed(x, n);
+        let ny = n.cross(nx).normalize_or_zero();
+        (n, nx, ny)
+    }
+}
+
+/// OCCT gp_Ax2::Rotate(A1, Ang) (gp_Ax2.hxx L299-308): the location and the
+/// X/Y directions rotate about (A1.Location(), A1.Direction()); the main
+/// direction recomputes as X ^ Y.  The gp_Trsf rotation is the Rodrigues
+/// closed form (architecture difference #2 of brep_offset_surface.rs).
+fn gp_ax2_rotate(
+    loc: &mut DVec3,
+    x: &mut DVec3,
+    y: &mut DVec3,
+    n: &mut DVec3,
+    axis_pnt: DVec3,
+    axis_dir: DVec3,
+    ang: f64,
+) {
+    let k = axis_dir.normalize_or_zero();
+    let (sa, ca) = ang.sin_cos();
+    // gp_Pnt::Rotate(A1, Ang): P' = A1.Location() + R(P - A1.Location()).
+    let q = *loc - axis_pnt;
+    let q_rot = q * ca + k.cross(q) * sa + k * (k.dot(q)) * (1.0 - ca);
+    *loc = axis_pnt + q_rot;
+    let rot_dir = |v: DVec3| -> DVec3 { v * ca + k.cross(v) * sa + k * (k.dot(v)) * (1.0 - ca) };
+    *x = rot_dir(*x);
+    *y = rot_dir(*y);
+    *n = x.cross(*y).normalize_or_zero();
+}
+
+/// OCCT gp_Circ::Rotate(Ax1, Angle) — the circle Ax2 rotation; the radius
+/// is unchanged.
+fn circle_rotate(mut c: GpCirc, axis_pnt: DVec3, axis_dir: DVec3, ang: f64) -> GpCirc {
+    let mut x = c.x_dir;
+    let mut y = c.y_dir;
+    let mut n = c.normal;
+    gp_ax2_rotate(&mut c.center, &mut x, &mut y, &mut n, axis_pnt, axis_dir, ang);
+    c.x_dir = x;
+    c.y_dir = y;
+    c.normal = n;
+    c
+}
+
+/// OCCT gp_Lin::Translate(gp_Vec) — the location shifts by the vector.
+fn line3_translate(mut l: GpLin, tr: DVec3) -> GpLin {
+    l.origin += tr;
+    l
+}
+
+/// OCCT ElSLib::SphereVIso(Axis, Radius, V) (ElSLib.cxx L1815-1834).
+fn elslib_sphere_v_iso(
+    sph: &rcad_kernel::geom::SphericalSurface,
+    radius: f64,
+    v: f64,
+) -> GpCirc {
+    let x_ax = sph.ref_dir.normalize_or_zero();
+    let n = sph.axis.normalize_or_zero();
+    let y_ax = ax3_y_dir(n, x_ax);
+    // gp_Ax2 axes = Pos.Ax2(); axes.Translate(Ve) with Ve = Dir*Radius*sin(V).
+    let center = sph.center + n * (radius * v.sin());
+    let circ_radius = radius * v.cos();
+    // if (radius < 0.) axes.SetDirection(-axes.Direction()); radius = -radius
+    // (#23170: keep the isoline on the analytical continuation for |V| >
+    // PI/2).
+    if circ_radius < 0.0 {
+        let (nn, nx, ny) = gp_ax2_set_direction(-n, x_ax, y_ax);
+        return GpCirc {
+            center,
+            normal: nn,
+            x_dir: nx,
+            y_dir: ny,
+            radius: -circ_radius,
+        };
+    }
+    GpCirc {
+        center,
+        normal: n,
+        x_dir: x_ax,
+        y_dir: y_ax,
+        radius: circ_radius,
+    }
+}
+
+/// OCCT ElSLib::CylinderVIso(Axis, Radius, V) (ElSLib.cxx L1781-1791).
 fn elslib_cylinder_v_iso(
-    _cyl: &rcad_kernel::geom::CylindricalSurface,
-    _radius: f64,
-    _v: f64,
+    cyl: &rcad_kernel::geom::CylindricalSurface,
+    radius: f64,
+    v: f64,
 ) -> GpCirc {
-    panic!("GAP: ElSLib::CylinderVIso (TKMath/ElSLib not translated)");
+    let x_ax = cyl.ref_dir.normalize_or_zero();
+    let n = cyl.axis.normalize_or_zero();
+    let y_ax = cyl.y_axis();
+    // axes.Translate(Ve) with Ve = Dir*V.
+    let center = cyl.origin + n * v;
+    GpCirc {
+        center,
+        normal: n,
+        x_dir: x_ax,
+        y_dir: y_ax,
+        radius,
+    }
 }
 
-/// OCCT ElSLib::ConeVIso(Axis, RefRadius, SemiAngle, V) — GAP.
+/// OCCT ElSLib::ConeVIso(Axis, RefRadius, SemiAngle, V) (ElSLib.cxx
+/// L1793-1813).
 fn elslib_cone_v_iso(
-    _cone: &rcad_kernel::geom::ConicalSurface,
-    _ref_radius: f64,
-    _semi_angle: f64,
-    _v: f64,
+    cone: &rcad_kernel::geom::ConicalSurface,
+    ref_radius: f64,
+    semi_angle: f64,
+    v: f64,
 ) -> GpCirc {
-    panic!("GAP: ElSLib::ConeVIso (TKMath/ElSLib not translated)");
+    let mut x_ax = cone.ref_dir.normalize_or_zero();
+    let n = cone.axis.normalize_or_zero();
+    let mut y_ax = ax3_y_dir(n, x_ax);
+    // axes.Translate(Ve) with Ve = Dir*(V*cos(SAngle)).
+    let center = cone.apex + n * (v * semi_angle.cos());
+    let mut r = ref_radius + v * semi_angle.sin();
+    // if (R < 0) { axes.XReverse(); axes.YReverse(); R = -R; }
+    if r < 0.0 {
+        x_ax = -x_ax;
+        y_ax = -y_ax;
+        r = -r;
+    }
+    GpCirc {
+        center,
+        normal: n,
+        x_dir: x_ax,
+        y_dir: y_ax,
+        radius: r,
+    }
 }
 
-/// OCCT ElSLib::TorusVIso(Axis, MajorR, MinorR, V) — GAP.
+/// OCCT ElSLib::TorusVIso(Axis, MajorR, MinorR, V) (ElSLib.cxx L1836-1856).
 fn elslib_torus_v_iso(
-    _tore: &rcad_kernel::geom::ToroidalSurface,
-    _major: f64,
-    _minor: f64,
-    _v: f64,
+    tore: &rcad_kernel::geom::ToroidalSurface,
+    major: f64,
+    minor: f64,
+    v: f64,
 ) -> GpCirc {
-    panic!("GAP: ElSLib::TorusVIso (TKMath/ElSLib not translated)");
+    let mut x_ax = tore.ref_dir.normalize_or_zero();
+    let n = tore.axis.normalize_or_zero();
+    let mut y_ax = ax3_y_dir(n, x_ax);
+    // axes.Translate(Ve) with Ve = Dir*(MinorRadius*sin(V)).
+    let center = tore.center + n * (minor * v.sin());
+    let mut r = major + minor * v.cos();
+    // if (R < 0) { axes.XReverse(); axes.YReverse(); R = -R; }
+    if r < 0.0 {
+        x_ax = -x_ax;
+        y_ax = -y_ax;
+        r = -r;
+    }
+    GpCirc {
+        center,
+        normal: n,
+        x_dir: x_ax,
+        y_dir: y_ax,
+        radius: r,
+    }
 }
 
-/// OCCT ElSLib::SphereUIso(Axis, Radius, U) — GAP.
+/// OCCT ElSLib::SphereUIso(Axis, Radius, U) (ElSLib.cxx L1738-1749): the iso
+/// 0 circle with the normal cx ^ dz and the x direction cx.
 fn elslib_sphere_u_iso(
-    _sph: &rcad_kernel::geom::SphericalSurface,
-    _radius: f64,
-    _u: f64,
+    sph: &rcad_kernel::geom::SphericalSurface,
+    radius: f64,
+    u: f64,
 ) -> GpCirc {
-    panic!("GAP: ElSLib::SphereUIso (TKMath/ElSLib not translated)");
+    let dx = sph.ref_dir.normalize_or_zero();
+    let dz = sph.axis.normalize_or_zero();
+    let dy = ax3_y_dir(dz, dx);
+    let cx = (u.cos() * dx + u.sin() * dy).normalize_or_zero();
+    let n = cx.cross(dz).normalize_or_zero();
+    GpCirc {
+        center: sph.center,
+        normal: n,
+        x_dir: cx,
+        y_dir: n.cross(cx).normalize_or_zero(),
+        radius,
+    }
 }
 
-/// OCCT ElSLib::CylinderUIso(Position, Radius, U) — GAP.
+/// OCCT ElSLib::CylinderUIso(Position, Radius, U) (ElSLib.cxx L1716-1725):
+/// the generatrix line from CylinderD1(U, 0).
 fn elslib_cylinder_u_iso(
-    _cyl: &rcad_kernel::geom::CylindricalSurface,
-    _radius: f64,
-    _u: f64,
+    cyl: &rcad_kernel::geom::CylindricalSurface,
+    radius: f64,
+    u: f64,
 ) -> GpLin {
-    panic!("GAP: ElSLib::CylinderUIso (TKMath/ElSLib not translated)");
+    let x_ax = cyl.ref_dir.normalize_or_zero();
+    let y_ax = cyl.y_axis();
+    let n = cyl.axis.normalize_or_zero();
+    // CylinderD1(U, 0, Pos, Radius): P = Loc + R*(cosU X + sinU Y); DV = Z.
+    let p = cyl.origin + radius * (u.cos() * x_ax + u.sin() * y_ax);
+    GpLin {
+        origin: p,
+        direction: n,
+    }
 }
 
-/// OCCT ElSLib::ConeUIso(Position, RefRadius, SemiAngle, U) — GAP.
+/// OCCT ElSLib::ConeUIso(Position, RefRadius, SemiAngle, U) (ElSLib.cxx
+/// L1727-1736): the generatrix line from ConeD1(U, 0).
 fn elslib_cone_u_iso(
-    _cone: &rcad_kernel::geom::ConicalSurface,
-    _ref_radius: f64,
-    _semi_angle: f64,
-    _u: f64,
+    cone: &rcad_kernel::geom::ConicalSurface,
+    ref_radius: f64,
+    semi_angle: f64,
+    u: f64,
 ) -> GpLin {
-    panic!("GAP: ElSLib::ConeUIso (TKMath/ElSLib not translated)");
+    let x_ax = cone.ref_dir.normalize_or_zero();
+    let y_ax = ax3_y_dir(cone.axis, x_ax);
+    let n = cone.axis.normalize_or_zero();
+    let (sa, ca) = semi_angle.sin_cos();
+    // ConeD1(U, 0, Pos, Radius, SAngle): P = Loc + R*(cosU X + sinU Y);
+    // Vv = sinA*(cosU X + sinU Y) + cosA*Z.
+    let p = cone.apex + ref_radius * (u.cos() * x_ax + u.sin() * y_ax);
+    let vv = sa * (u.cos() * x_ax + u.sin() * y_ax) + ca * n;
+    GpLin {
+        origin: p,
+        direction: vv,
+    }
 }
 
-/// OCCT ElSLib::TorusUIso(Axis, MajorR, MinorR, U) — GAP.
+/// OCCT ElSLib::TorusUIso(Axis, MajorR, MinorR, U) (ElSLib.cxx L1751-1768).
 fn elslib_torus_u_iso(
-    _tore: &rcad_kernel::geom::ToroidalSurface,
-    _major: f64,
-    _minor: f64,
-    _u: f64,
+    tore: &rcad_kernel::geom::ToroidalSurface,
+    major: f64,
+    minor: f64,
+    u: f64,
 ) -> GpCirc {
-    panic!("GAP: ElSLib::TorusUIso (TKMath/ElSLib not translated)");
-}
-
-/// OCCT gp_Circ::Rotate(gp_Ax1, Angle) — GAP.
-fn circle_rotate(_c: GpCirc, _axis: DVec3, _angle: f64) -> GpCirc {
-    panic!("GAP: gp_Circ::Rotate (gp_Trsf rotation not translated)");
+    let dx = tore.ref_dir.normalize_or_zero();
+    let dz = tore.axis.normalize_or_zero();
+    let dy = ax3_y_dir(dz, dx);
+    let cx = (u.cos() * dx + u.sin() * dy).normalize_or_zero();
+    let n = cx.cross(dz).normalize_or_zero();
+    // axes.Translate(Ve) with Ve = cx*MajorRadius.
+    let center = tore.center + cx * major;
+    GpCirc {
+        center,
+        normal: n,
+        x_dir: cx,
+        y_dir: n.cross(cx).normalize_or_zero(),
+        radius: minor,
+    }
 }
 
 /// OCCT Geom_Circle::Reverse() — the parameter reversal (the rcad Circle3
@@ -651,15 +877,51 @@ fn circle_reversed(mut c: GpCirc) -> GpCirc {
     c
 }
 
-/// OCCT gp_Lin::Translate(gp_Vec) — GAP.
-fn line3_translate(mut l: GpLin, _tr: DVec3) -> GpLin {
-    panic!("GAP: gp_Lin::Translate (gp_Trsf translation not translated)");
+/// OCCT ElSLib::Parameters(Cone, P, U, V) (ElSLib.cxx L1574-1607).
+pub(super) fn elslib_cone_parameters(
+    cone: &rcad_kernel::geom::ConicalSurface,
+    p: DVec3,
+) -> (f64, f64) {
+    let x_ax = cone.ref_dir.normalize_or_zero();
+    let n = cone.axis.normalize_or_zero();
+    let y_ax = ax3_y_dir(n, x_ax);
+    // gp_Trsf T; T.SetTransformation(Pos); Ploc = P.Transformed(T) — the
+    // point in the local cone frame (relative to the Location, along X/Y/Z).
+    let local = p - cone.apex;
+    let x = local.dot(x_ax);
+    let y = local.dot(y_ax);
+    let z = local.dot(n);
+
+    let radius = cone.radius;
+    let sa = cone.half_angle_rad;
+    // Check if point is at the apex.
+    let mut u = if x.abs() < f64::MIN_POSITIVE && y.abs() < f64::MIN_POSITIVE {
+        0.0
+    } else if -radius > z * sa.tan() {
+        // the point is at the wrong side of the apex
+        (-y).atan2(-x)
+    } else {
+        y.atan2(x)
+    };
+    normalize_angle(&mut u);
+
+    // V = sin(Sang) * (x cosU + y sinU - R) + z * cos(Sang).
+    let v = sa.sin() * (x * u.cos() + y * u.sin() - radius) + sa.cos() * z;
+    (u, v)
 }
 
-/// OCCT ElSLib::Parameters(Cone, P, U, V) — GAP.
-pub(super) fn elslib_cone_parameters(
-    _cone: &rcad_kernel::geom::ConicalSurface,
-    _p: DVec3,
-) -> (f64, f64) {
-    panic!("GAP: ElSLib::Parameters(Cone) (TKMath/ElSLib not translated)");
+/// OCCT ElSLib.cxx L42-57: normalizeAngle — normalize to [0, 2*PI] with the
+/// near-zero / seam preservation.
+fn normalize_angle(the_angle: &mut f64) {
+    let pipi = std::f64::consts::PI + std::f64::consts::PI;
+    let negative_resolution = -rcad_kernel::core::precision::COMPUTATIONAL;
+    while *the_angle < negative_resolution {
+        *the_angle += pipi;
+    }
+    while *the_angle > pipi * (1.0 + f64::MIN_POSITIVE) {
+        *the_angle -= pipi;
+    }
+    if *the_angle < 0.0 {
+        *the_angle = 0.0;
+    }
 }

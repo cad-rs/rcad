@@ -17,7 +17,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{
     Curve2d, Curve2dEval, Curve3, CurveEval, Line3, Surface3, SurfaceEval, TrimmedCurve3,
 };
-use rcad_kernel::topods::{CurveRepresentation, GeomAbsShape, Orientation, ShapeType, TShape};
+use rcad_kernel::topods::{BRep, CurveRepresentation, GeomAbsShape, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 
 use crate::brep_algo::as_des::BRepAlgoAsDes;
@@ -49,6 +49,92 @@ fn curve_rep_location(_the_rep: &CurveRepresentation) -> u32 {
     0
 }
 
+/// OCCT Precision::Infinite() (Precision.hxx L371) — the finite "infinite"
+/// bound (2.e+100) the OCCT parameter ranges use.
+fn precision_infinite() -> f64 {
+    2.0e100
+}
+
+/// OCCT Precision::IsInfinite(R) (Precision.hxx L350-353): |R| >= 0.5*Infinite.
+fn precision_is_infinite(r: f64) -> bool {
+    r.abs() >= 0.5 * precision_infinite()
+}
+
+/// OCCT Geom2d_Line::FirstParameter/LastParameter (Geom2d_Line.cxx L142-148):
+/// the unbounded curve parameter range is +/-Precision::Infinite() (the rcad
+/// default_domain carries +/-f64::INFINITY for the same unbounded domain —
+/// the OCCT value is finite, so the RealFirst/RealLast sentinel comparisons
+/// of ExtentEdge see it as a settable parameter bound).
+fn curve2d_first_parameter(the_c: &Curve2d) -> f64 {
+    let f = the_c.default_domain()[0];
+    if f == f64::NEG_INFINITY {
+        -precision_infinite()
+    } else {
+        f
+    }
+}
+
+/// See [`curve2d_first_parameter`].
+fn curve2d_last_parameter(the_c: &Curve2d) -> f64 {
+    let l = the_c.default_domain()[1];
+    if l == f64::INFINITY {
+        precision_infinite()
+    } else {
+        l
+    }
+}
+
+/// OCCT Geom_Line::FirstParameter/LastParameter — the same
+/// +/-Precision::Infinite() convention for the unbounded 3d line
+/// (Geom_Line.cxx; Geom_BoundedCurve does not apply).
+fn curve3_first_parameter(the_c: &Curve3) -> f64 {
+    let f = the_c.default_domain()[0];
+    if f == f64::NEG_INFINITY {
+        -precision_infinite()
+    } else {
+        f
+    }
+}
+
+/// See [`curve3_first_parameter`].
+fn curve3_last_parameter(the_c: &Curve3) -> f64 {
+    let l = the_c.default_domain()[1];
+    if l == f64::INFINITY {
+        precision_infinite()
+    } else {
+        l
+    }
+}
+
+/// OCCT Geom_Surface::Bounds — the unbounded sides are
+/// +/-Precision::Infinite() (e.g. Geom_ConicalSurface.cxx L207-214:
+/// V1 = -Precision::Infinite(); V2 = Precision::Infinite()).
+fn surface_bounds_occt(the_s: &Surface3) -> [f64; 4] {
+    let b = the_s.default_domain();
+    [
+        if b[0] == f64::NEG_INFINITY {
+            -precision_infinite()
+        } else {
+            b[0]
+        },
+        if b[1] == f64::INFINITY {
+            precision_infinite()
+        } else {
+            b[1]
+        },
+        if b[2] == f64::NEG_INFINITY {
+            -precision_infinite()
+        } else {
+            b[2]
+        },
+        if b[3] == f64::INFINITY {
+            precision_infinite()
+        } else {
+            b[3]
+        },
+    ]
+}
+
 // =========================================================================
 // OCCT BRepOffset_Inter2d — the class (BRepOffset_Inter2d.hxx L37-119).
 // =========================================================================
@@ -62,7 +148,9 @@ impl BRepOffsetInter2d {
     /// OCCT BRepOffset_Inter2d::ExtentEdge(E, NE, theOffset)
     /// (BRepOffset_Inter2d.cxx L1193-1674) — extents the edge; NE receives
     /// the extended copy.  Returns false on the projection failure paths.
-    pub fn extent_edge(e: &Shape, ne: &mut Shape, the_offset: f64) -> bool {
+    /// `the_brep` is the shared TShape pool stand-in (the representation
+    /// face keys resolve through it).
+    pub fn extent_edge(the_brep: &BRep, e: &Shape, ne: &mut Shape, the_offset: f64) -> bool {
         // OCCT L1195: BRepLib::BuildCurve3d(E); (commented out in OCCT).
 
         // OCCT L1197-1204.
@@ -103,8 +191,8 @@ impl BRepOffsetInter2d {
                     _ => unreachable!(),
                 };
                 // OCCT L1228-1229.
-                let mut first_par = the_curve.default_domain()[0];
-                let mut last_par = the_curve.default_domain()[1];
+                let mut first_par = curve2d_first_parameter(&the_curve);
+                let mut last_par = curve2d_last_parameter(&the_curve);
 
                 // OCCT L1231-1249: the bounded-pcurve extension.
                 let is_bounded = matches!(
@@ -125,8 +213,8 @@ impl BRepOffsetInter2d {
                             _ => {}
                         }
                         // OCCT L1238-1239.
-                        first_par = new_pcurve.default_domain()[0];
-                        last_par = new_pcurve.default_domain()[1];
+                        first_par = curve2d_first_parameter(&new_pcurve);
+                        last_par = curve2d_last_parameter(&new_pcurve);
                         // OCCT L1240-1247: the closed-surface second pcurve.
                         if let CurveRepresentation::CurveOnClosedSurface { pcurve2, .. } =
                             &mut ed.representations[i_rep]
@@ -158,32 +246,32 @@ impl BRepOffsetInter2d {
                 };
                 // OCCT L1264: theSurf = CurveRep->Surface() — GAP
                 // (architecture difference #32).
-                let the_surf = curve_rep_surface(&ed.representations[i_rep]);
+                let the_surf = curve_rep_surface(the_brep, &ed.representations[i_rep]);
                 // OCCT L1265-1266: the surface bounds.
-                let bounds = the_surf.default_domain();
+                let bounds = surface_bounds_occt(&the_surf);
                 let (umin, umax, vmin, vmax) = (bounds[0], bounds[1], bounds[2], bounds[3]);
 
                 // OCCT L1267-1291: the boundary lines on the finite bounds.
                 let mut bound_lines: Vec<Curve2d> = Vec::new();
-                if !vmin.is_infinite() {
+                if !precision_is_infinite(vmin) {
                     bound_lines.push(Curve2d::Line(rcad_kernel::geom::Line2d::new(
                         DVec2::new(0., vmin),
                         DVec2::X,
                     )));
                 }
-                if !umin.is_infinite() {
+                if !precision_is_infinite(umin) {
                     bound_lines.push(Curve2d::Line(rcad_kernel::geom::Line2d::new(
                         DVec2::new(umin, 0.),
                         DVec2::Y,
                     )));
                 }
-                if !vmax.is_infinite() {
+                if !precision_is_infinite(vmax) {
                     bound_lines.push(Curve2d::Line(rcad_kernel::geom::Line2d::new(
                         DVec2::new(0., vmax),
                         DVec2::X,
                     )));
                 }
-                if !umax.is_infinite() {
+                if !precision_is_infinite(umax) {
                     bound_lines.push(Curve2d::Line(rcad_kernel::geom::Line2d::new(
                         DVec2::new(umax, 0.),
                         DVec2::Y,
@@ -320,7 +408,7 @@ impl BRepOffsetInter2d {
                     l = last_par_on_pc;
                     // OCCT L1431: the MinLoc.Transformation() — the
                     // identity-location convention.
-                    if !first_par_on_pc.is_infinite() {
+                    if !precision_is_infinite(first_par_on_pc) {
                         let p2d1 = min_pc.point_at(first_par_on_pc);
                         let p1 = min_surf.point_at(p2d1.x, p2d1.y);
                         let projector = GeomAPIProjectPointOnCurve::init_point_curve(p1, c3d_ref);
@@ -328,7 +416,7 @@ impl BRepOffsetInter2d {
                             f = projector.lower_distance_parameter();
                         }
                     }
-                    if !last_par_on_pc.is_infinite() {
+                    if !precision_is_infinite(last_par_on_pc) {
                         let p2d2 = min_pc.point_at(last_par_on_pc);
                         let p2 = min_surf.point_at(p2d2.x, p2d2.y);
                         let projector = GeomAPIProjectPointOnCurve::init_point_curve(p2, c3d_ref);
@@ -339,7 +427,7 @@ impl BRepOffsetInter2d {
                 }
                 // OCCT L1464-1468.
                 builder_range_edge(ne, f, l);
-                if !f.is_infinite() && !l.is_infinite() {
+                if !precision_is_infinite(f) && !precision_is_infinite(l) {
                     brep_lib_same_parameter(ne, rcad_kernel::precision::CONFUSION);
                 }
             } else if !brep_tool_degenerated(e) {
@@ -353,7 +441,7 @@ impl BRepOffsetInter2d {
                 };
                 let min_pc = min_pc.as_ref().expect("MinPC");
                 let mut max_deviation = 0.;
-                if first_par_on_pc.is_infinite() || last_par_on_pc.is_infinite() {
+                if precision_is_infinite(first_par_on_pc) || precision_is_infinite(last_par_on_pc) {
                     // OCCT L1476-1501: the line construction.
                     if let Curve2d::Line(the_line) = min_pc {
                         let mut is_line = false;
@@ -414,7 +502,7 @@ impl BRepOffsetInter2d {
                             };
                             // OCCT L1539-1540: the surface read — GAP
                             // (architecture difference #32).
-                            let the_surf = curve_rep_surface(&ed.representations[i_rep]);
+                            let the_surf = curve_rep_surface(the_brep, &ed.representations[i_rep]);
                             // OCCT L1540: theLoc = CurveRep->Location() —
                             // the identity-location convention.
                             let the_loc = curve_rep_location(&ed.representations[i_rep]);
@@ -446,7 +534,7 @@ impl BRepOffsetInter2d {
                                             || gp_dir2d_is_parallel(the_dir, DVec2::Y, rcad_kernel::precision::ANGULAR)
                                         {
                                             // OCCT L1560-1561: the bounds.
-                                            let bounds = the_surf.default_domain();
+                                            let bounds = surface_bounds_occt(&the_surf);
                                             let (u1, u2, v1, v2) = (bounds[0], bounds[1], bounds[2], bounds[3]);
                                             let origin = the_line.origin;
                                             if (origin.x - u1).abs() <= rcad_kernel::precision::CONFUSION
@@ -508,8 +596,8 @@ impl BRepOffsetInter2d {
                 Some(c) => c.clone(),
                 None => panic!("ExtentEdge: C3d is null (the OCCT would dereference the null handle)"),
             };
-            let mut first_par = c3d.default_domain()[0];
-            let mut last_par = c3d.default_domain()[1];
+            let mut first_par = curve3_first_parameter(&c3d);
+            let mut last_par = curve3_last_parameter(&c3d);
 
             // OCCT L1610-1658.
             let is_bounded = matches!(
@@ -554,8 +642,8 @@ impl BRepOffsetInter2d {
 
                 // OCCT L1654-1657.
                 let c3d_new = a_comp_curve.bspline_curve();
-                first_par = c3d_new.default_domain()[0];
-                last_par = c3d_new.default_domain()[1];
+                first_par = curve3_first_parameter(&c3d_new);
+                last_par = curve3_last_parameter(&c3d_new);
                 builder_update_edge_curve(ne, Some(c3d_new), rcad_kernel::precision::CONFUSION);
             } else if c3d.is_periodic() {
                 // OCCT L1659-1665.
@@ -670,6 +758,7 @@ impl BRepOffsetInter2d {
     /// theEdgeIntEdges, theDMVV, theRange) (BRepOffset_Inter2d.cxx
     /// L1830-2094).
     pub fn connex_int_by_int(
+        the_brep: &BRep,
         fi: &Shape,
         ofi: &mut BRepOffsetOffset,
         mes: &mut HashMap<ShapeKey, Shape>,
@@ -719,7 +808,7 @@ impl BRepOffsetInter2d {
                     let oe = &a_local_shape;
                     // OCCT L1889-1896.
                     if !mes.contains_key(&shape_key(oe)) && !build.contains_key(&shape_key(ei)) {
-                        if !Self::extent_edge(oe, &mut ne, offset) {
+                        if !Self::extent_edge(the_brep, oe, &mut ne, offset) {
                             return false;
                         }
                         mes.insert(shape_key(oe), ne.clone());

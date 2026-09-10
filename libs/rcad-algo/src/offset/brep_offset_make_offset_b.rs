@@ -209,7 +209,7 @@ impl BRepOffsetMakeOffset {
         if self.my_error != BRepOffset_Error::NoError {
             return;
         }
-        if self.my_offset_shape.is_null() {
+        if super::brep_offset_make_offset::offset_shape_is_null(&self.my_offset_shape) {
             // not done
             self.my_done = false;
             return;
@@ -242,7 +242,7 @@ impl BRepOffsetMakeOffset {
         //-----------------------------
         // MAJ Tolerance edge and Vertex
         // ----------------------------
-        if !self.my_offset_shape.is_null() {
+        if !super::brep_offset_make_offset::offset_shape_is_null(&self.my_offset_shape) {
             if self.my_thickening {
                 let mut my_offset_shape = self.my_offset_shape.clone();
                 super::brep_offset_make_offset_d::update_tolerance(
@@ -319,7 +319,7 @@ impl BRepOffsetMakeOffset {
                 glue.add(&exp);
             }
             let mut ya_result = false;
-            if !self.my_offset_shape.is_null() {
+            if !super::brep_offset_make_offset::offset_shape_is_null(&self.my_offset_shape) {
                 for exp in
                     bat::explorer(&self.my_offset_shape, ShapeType::Face, ShapeType::Shape)
                 {
@@ -393,6 +393,7 @@ impl BRepOffsetMakeOffset {
             // OCCT ctor (cxx L403-411); the join type folds into the Arc
             // flag (architecture difference #38).
             let mut of = BRepOffsetOffset::with_face_created(
+                &mut self.my_brep,
                 &a_f,
                 a_cur_offset,
                 &shape_tgt,
@@ -453,6 +454,7 @@ impl BRepOffsetMakeOffset {
         for it in &a_new_faces {
             let a_f = it;
             let of = BRepOffsetOffset::with_face_created(
+                &mut self.my_brep,
                 a_f,
                 0.0,
                 &shape_tgt,
@@ -609,6 +611,7 @@ impl BRepOffsetMakeOffset {
         // Key1 is edge trimmed by intersection points with other edges;
         // Item is not-trimmed edge.
         if !super::brep_offset_make_offset_d::trim_edges(
+            &self.my_brep,
             &self.my_face_comp,
             self.my_offset,
             &self.my_analyse,
@@ -1060,6 +1063,7 @@ impl BRepOffsetMakeOffset {
                         // defaults Polynomial = false, Tol = 1.0e-4, Conti =
                         // GeomAbs_C1.
                         let of = BRepOffsetOffset::with_path_first_last(
+                            &mut self.my_brep,
                             &e,
                             &e_on1,
                             &e_on2,
@@ -1118,6 +1122,7 @@ impl BRepOffsetMakeOffset {
                     // the OCCT defaults Polynomial = false, Tol = 1.0e-4,
                     // Conti = GeomAbs_C1.
                     let of = BRepOffsetOffset::with_vertex(
+                        &mut self.my_brep,
                         &v,
                         &loe,
                         cur_offset,

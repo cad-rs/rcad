@@ -463,9 +463,14 @@ impl BRepToolsWireExplorer {
         self.my_index < self.my_edges.len()
     }
 
-    /// OCCT Current().
+    /// OCCT Current() — the cached myEdge (BRepTools_WireExplorer.hxx L103);
+    /// on the exhausted explorer OCCT Current() returns the null edge
+    /// (Next() nulls myEdge, BRepTools_WireExplorer.cxx L393-413).
     pub fn current(&self) -> Shape {
-        self.my_edges[self.my_index].clone()
+        match self.my_edges.get(self.my_index) {
+            Some(e) => e.clone(),
+            None => Shape::null(),
+        }
     }
 
     /// OCCT Next().
@@ -507,11 +512,27 @@ impl Adaptor3dCurveOnSurface {
     }
 }
 
-/// OCCT BRep_CurveRepresentation::Surface() — GAP leaf (architecture
-/// difference #32): the rcad representation carries the face key, not the
-/// surface value.
-pub fn curve_rep_surface(_the_rep: &rcad_kernel::topods::CurveRepresentation) -> Surface3 {
-    panic!("GAP: BRep_CurveRepresentation::Surface (the rcad CurveRepresentation carries a face key)");
+/// OCCT BRep_CurveRepresentation::Surface() (architecture difference #32):
+/// the rcad representation carries the face key (TShape pointer + location)
+/// instead of the surface value; the surface resolves through the shared
+/// BRep pool.
+pub fn curve_rep_surface(
+    the_brep: &rcad_kernel::topods::BRep,
+    the_rep: &rcad_kernel::topods::CurveRepresentation,
+) -> Surface3 {
+    let face_key = match the_rep {
+        rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. } => *face,
+        rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => *face,
+        _ => panic!("BRep_CurveRepresentation::Surface: not a curve-on-surface"),
+    };
+    let idx = the_brep
+        .index_by_ptr(face_key.0)
+        .unwrap_or_else(|| panic!("curve_rep_surface: face key not in the shared pool"));
+    the_brep
+        .shape_at(idx)
+        .as_face()
+        .and_then(|fd| fd.surface.clone())
+        .expect("curve_rep_surface: null face surface")
 }
 
 /// OCCT BRep_Builder::UpdateVertex(V, P, E, Tol) — the vertex tolerance, the

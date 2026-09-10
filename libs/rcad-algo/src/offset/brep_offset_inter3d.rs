@@ -862,13 +862,17 @@ impl BRepOffsetInter3d {
                             crate::brep_algo::tool::builder_add_compound_shape(&mut c, a_ne);
                             //
                             // keep connection from new edge to shape from which it was created
-                            // OCCT L784-786: aDMIntE(aDMIntE.Add(aNE, empty)).
+                            // OCCT L784-786: aDMIntE(aDMIntE.Add(aNE, empty)) —
+                            // the OCCT Add result feeds the 1-based
+                            // operator(); the rcad add() yields the 0-based
+                            // index.
                             let pos = shape_indexed_data_map::add(
                                 &mut a_dm_int_e,
                                 a_ne,
                                 Vec::new(),
                             );
-                            shape_indexed_data_map::value_1_mut(&mut a_dm_int_e, pos).push(a_s.clone());
+                            shape_indexed_data_map::value_1_mut(&mut a_dm_int_e, pos + 1)
+                                .push(a_s.clone());
                             // keep connection to faces created the edge as well
                             // OCCT L788-791.
                             shape_data_map::bound(&mut a_dm_int_ff, a_ne).push(f1.clone());

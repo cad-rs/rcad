@@ -851,7 +851,7 @@ impl BRepOffsetMakeOffset {
 
     /// OCCT BRepOffset_MakeOffset::MakeSolid (cxx L3794-3894).
     pub(crate) fn make_solid(&mut self) {
-        if self.my_offset_shape.is_null() {
+        if super::brep_offset_make_offset::offset_shape_is_null(&self.my_offset_shape) {
             return;
         }
         //  Modified by skv - Mon Apr  4 18:17:27 2005 Begin
@@ -981,7 +981,7 @@ impl BRepOffsetMakeOffset {
 
     /// OCCT BRepOffset_MakeOffset::EncodeRegularity (cxx L3962-4165).
     pub(crate) fn encode_regularity(&mut self) {
-        if self.my_offset_shape.is_null() {
+        if super::brep_offset_make_offset::offset_shape_is_null(&self.my_offset_shape) {
             return;
         }
         // find edges G1 in the result
@@ -1336,6 +1336,7 @@ impl BRepOffsetMakeOffset {
             let ok = {
                 let ofi = shape_data_map::change_find(the_map_sf, &a_f);
                 BRepOffsetInter2d::connex_int_by_int(
+                    &self.my_brep,
                     &a_f,
                     ofi,
                 &mut mes_view,

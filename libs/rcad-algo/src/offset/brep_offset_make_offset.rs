@@ -753,18 +753,77 @@ impl BOPAlgoMakerVolume {
     }
 }
 
+/// OCCT TopoDS_Shape::IsNull() for the myOffsetShape carrier — true when the
+/// shape carries no real TShape.  The rcad pool-free builder products (arena
+/// index = usize::MAX) still carry a REAL Compound/Shell/Solid TShape payload
+/// (e.g. BRepTools_Quilt::Shells() — the deferred compound assembly); the
+/// OCCT null handle is only the Shape::null() dummy payload.
+pub(crate) fn offset_shape_is_null(the_s: &Shape) -> bool {
+    if !the_s.is_null() {
+        return false;
+    }
+    !matches!(
+        the_s.data.as_ref(),
+        rcad_kernel::topo::topods::TShape::Compound(_)
+            | rcad_kernel::topo::topods::TShape::Shell(_)
+            | rcad_kernel::topo::topods::TShape::Solid(_)
+    )
+}
+
 /// OCCT BOPTools_AlgoTools::MakeSplitEdge(NE, V1, aT1, V2, aT2, aSourceEdge)
-/// (TKBO/BOPTools; the rcad bop::tools carrier is the BOPDS-index form) —
-/// GAP leaf (architecture difference #52).
+/// (BOPTools_AlgoTools_2.cxx L138-183) — the empty-copied FORWARD edge with
+/// the oriented extremity vertices and the ordered range.
 pub(crate) fn bop_algo_tools_make_split_edge(
-    _ne: &Shape,
-    _v1: &Shape,
-    _t1: f64,
-    _v2: &Shape,
-    _t2: f64,
-    _source_edge: &mut Shape,
+    ne: &Shape,
+    v1: &Shape,
+    t1: f64,
+    v2: &Shape,
+    t2: f64,
+    source_edge: &mut Shape,
 ) {
-    panic!("GAP: BOPTools_AlgoTools::MakeSplitEdge (TopoDS form not translated)");
+    // OCCT L143-144: E = TopoDS::Edge(aE.Oriented(TopAbs_FORWARD));
+    // E.EmptyCopy().
+    let mut e_fwd = ne.clone();
+    e_fwd.orientation = Orientation::Forward;
+    *source_edge = bat::empty_copied(&e_fwd);
+    // OCCT L146-166: the oriented extremity Adds (V1 FORWARD when aP1 < aP2,
+    // REVERSED otherwise; V2 REVERSED when aP1 < aP2, FORWARD otherwise).
+    if let rcad_kernel::topo::topods::TShape::Edge(ed) =
+        std::sync::Arc::make_mut(&mut source_edge.data)
+    {
+        if !v1.is_null() {
+            let o1 = if t1 < t2 {
+                Orientation::Forward
+            } else {
+                Orientation::Reversed
+            };
+            let ov1 = bat::oriented(v1, o1);
+            ed.my_shapes.push(ov1.clone());
+            if o1 == Orientation::Forward {
+                ed.first = ov1;
+            } else {
+                ed.last = ov1;
+            }
+        }
+        if !v2.is_null() {
+            let o2 = if t1 < t2 {
+                Orientation::Reversed
+            } else {
+                Orientation::Forward
+            };
+            let ov2 = bat::oriented(v2, o2);
+            ed.my_shapes.push(ov2.clone());
+            if o2 == Orientation::Forward {
+                ed.first = ov2;
+            } else {
+                ed.last = ov2;
+            }
+        }
+        // OCCT L168-174: BB.Range(E, aP1, aP2) / BB.Range(E, aP2, aP1).
+        ed.range = if t1 < t2 { [t1, t2] } else { [t2, t1] };
+    }
+    // OCCT L176-177: aNewEdge = E; aNewEdge.Orientation(aE.Orientation()).
+    source_edge.orientation = ne.orientation;
 }
 
 /// OCCT GeomAPI_ProjectPointOnCurve (TKTopAlgo/GeomAPI; the (P, C) form) —
