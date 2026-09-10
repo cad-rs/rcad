@@ -3,16 +3,19 @@
 //!
 //! GAP leaves: the base class `AdvApp2Var_Criterion` accessors are complete
 //! here; the `Value` body's `AdvApp2Var_Patch`/`AdvApp2Var_Context`/
-//! `PLib::EvalPoly2Var` machinery still waits for the remaining AdvApp2Var
-//! closure.  The leaf engine layer landed in
-//! [`crate::geomalgo::adv_app2_var`] (SysBase/MathBase subsets, ApproxF2var
-//! mma1her_/mma2ac1_/mma2ac2_/mma2ac3_/mma2jmx_/mma2roo_/mmapptt_/mmmapcoe_/
-//! mmaperm_/mma2moy_/mma2fx6_ + MMAPGS*/MLGDRTL block data); the classes
-//! (Patch/Context) and PLib::EvalPolynomial remain.  The criterion carries
-//! the base-class members (myMaxValue/myType/myRepartition) and the
-//! patch-evaluation entry point preserves the untranslated-dependency
-//! failure path; `IsSatisfied` is complete.  The criterion is only consumed
-//! through AdvApp2Var_ApproxAFunc2Var, which is itself the MakeApprox GAP.
+//! `PLib::EvalPoly2Var` machinery still waits for the AdvApp2Var class layer
+//! (Node/Iso/Network/Framework/Patch/Context/ApproxAFunc2Var, over the
+//! kernel B-spline types).  The full AdvApp2Var ENGINE layer is now landed
+//! in [`crate::geomalgo::adv_app2_var`] (SysBase/MathBase subsets incl.
+//! mmjacan_/mmjaccv_/mmapcmp_/mmaperx_/mmfmca8_/mmfmca9_/mmfmtb1_/mmmpocur_/
+//! mmtrpjj_/mmveps3_/mzsnorm_, ALL ApproxF2var engines mma1*-/mma2can_/
+//! mma2cd*-/mma2ce*-/mma2cf*-/mma2er*-/mma2ds*-/mma2fnc_/mmjacpt_ and the
+//! MMAPGS*/MLGDRTL/MMJCOBI/MMCMCNP block data); only the class layer above
+//! the engines remains.  The criterion carries the base-class members
+//! (myMaxValue/myType/myRepartition) and the patch-evaluation entry point
+//! preserves the untranslated-dependency failure path; `IsSatisfied` is
+//! complete.  The criterion is only consumed through
+//! AdvApp2Var_ApproxAFunc2Var, which is itself the MakeApprox GAP.
 
 use glam::{DVec2, DVec3};
 
