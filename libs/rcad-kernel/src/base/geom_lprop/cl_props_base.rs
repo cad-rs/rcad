@@ -16,6 +16,7 @@
 // instantiation lives in rcad-algo `hlr/brep/cl_props.rs`.
 
 use crate::base::geom_lprop::LPropStatus;
+use crate::core::precision::{REAL_FIRST, REAL_LAST};
 
 /// OCCT gp::Resolution() floor for the line-parameter test.
 const GP_RESOLUTION: f64 = 1e-15;
@@ -70,7 +71,7 @@ impl<'a, C: CLPropsCurve2d + ?Sized> ClPropsBase<'a, C> {
         assert!((0..=3).contains(&n), "Standard_OutOfRange: CLProps(N)");
         ClPropsBase {
             curve: None,
-            u: f64::MAX, // RealLast()
+            u: REAL_LAST, // OCCT GeomLProp_CLPropsBase.hxx L99: RealLast()
             der_order: n,
             cn: 0,
             lin_tol: resolution,
@@ -218,7 +219,9 @@ impl<'a, C: CLPropsCurve2d + ?Sized> ClPropsBase<'a, C> {
         let an_usupremum = self.c().last_parameter();
         let an_uinfimum = self.c().first_parameter();
 
-        let a_du = if an_usupremum >= f64::MAX || an_uinfimum <= f64::MIN {
+        // OCCT LProp_CurveUtils.hxx L195:
+        // if ((anUsupremum >= RealLast()) || (anUinfimum <= RealFirst()))
+        let a_du = if an_usupremum >= REAL_LAST || an_uinfimum <= REAL_FIRST {
             0.0
         } else {
             an_usupremum - an_uinfimum
@@ -251,7 +254,7 @@ impl<'a, C: CLPropsCurve2d + ?Sized> ClPropsBase<'a, C> {
     pub fn curvature(&mut self) -> f64 {
         let _an_is_defined = self.is_tangent_defined();
         if self.significant_first_derivative_order > 1 {
-            return f64::MAX; // RealLast()
+            return REAL_LAST; // OCCT LProp_CurveUtils.hxx: RealLast()
         }
         let the_d1 = self.deriv[0];
         let the_d2 = self.deriv[1];
@@ -284,7 +287,7 @@ impl<'a, C: CLPropsCurve2d + ?Sized> ClPropsBase<'a, C> {
     /// LProp_NotDefined throw.
     pub fn normal(&mut self) -> Option<DVec2> {
         let a_curvature = self.curvature();
-        if a_curvature == f64::MAX || a_curvature.abs() <= self.lin_tol {
+        if a_curvature == REAL_LAST || a_curvature.abs() <= self.lin_tol {
             return None; // LProp_NotDefined
         }
         let the_d1 = self.deriv[0];

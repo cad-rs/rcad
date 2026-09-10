@@ -7,6 +7,7 @@
 
 use glam::{DVec2, DVec3};
 
+use crate::core::precision::{REAL_FIRST, REAL_LAST};
 use crate::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
 
 /// Status of a local property computation.
@@ -386,7 +387,9 @@ impl<'a> ClProps2d<'a> {
             // significant derivative is of higher order).
             let dom = self.curve.default_domain();
             let (inf, sup) = (dom[0], dom[1]);
-            let a_du = if sup.is_infinite() || inf.is_infinite() {
+            // OCCT LProp_CurveUtils.hxx L195:
+            // if ((anUsupremum >= RealLast()) || (anUinfimum <= RealFirst()))
+            let a_du = if sup >= REAL_LAST || inf <= REAL_FIRST {
                 0.0
             } else {
                 sup - inf

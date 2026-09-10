@@ -1,6 +1,8 @@
 use crate::geom::{Curve2d, Curve3, Surface3, SurfaceEval};
-use crate::core::precision::{CONFUSION, parametric_default};
-use crate::core::precision::INFINITE_VALUE;
+use crate::core::precision::{
+    CONFUSION, REAL_FIRST, REAL_LAST, is_negative_infinite_value, is_positive_infinite_value,
+    parametric_default,
+};
 use crate::math::bspl::{
     bezier_curve_resolution, bezier_surface_resolution, bspline_curve_resolution,
     bspline_surface_resolution,
@@ -1937,16 +1939,20 @@ pub fn nb_faces(&self) -> usize {
 
     /// Axis-aligned bounding box computed from all vertex positions.
     /// Returns `None` if the BRep has no vertices.
+    ///
+    /// The sentinels follow Bnd_Box::SetVoid (Bnd_Box.hxx L103-110):
+    /// Xmin = RealLast(), Xmax = -RealLast(); the "no vertex added" state is
+    /// then exactly `mn.x >= RealLast()`.
     pub fn bounding_box(&self) -> Option<[DVec3; 2]> {
-        let mut mn = DVec3::splat(f64::INFINITY);
-        let mut mx = DVec3::splat(f64::NEG_INFINITY);
+        let mut mn = DVec3::splat(REAL_LAST);
+        let mut mx = DVec3::splat(REAL_FIRST);
         for ts in &self.tshapes {
             if let TShape::Vertex(v) = ts.as_ref() {
                 mn = mn.min(v.point);
                 mx = mx.max(v.point);
             }
         }
-        if mn.x.is_infinite() {
+        if mn.x >= REAL_LAST {
             None
         } else {
             Some([mn, mx])
@@ -3705,7 +3711,7 @@ impl BRepBuilder {
     pub fn update_vertex_on_edge(&mut self, brep: &mut BRep, v: Shape, par: f64, e: Shape, tol: f64) {
         // throw Standard_DomainError("BRep_Builder::Infinite parameter")
         // (Precision::IsPositiveInfinite / IsNegativeInfinite).
-        if par >= 0.5 * INFINITE_VALUE || par <= -0.5 * INFINITE_VALUE {
+        if is_positive_infinite_value(par) || is_negative_infinite_value(par) {
             panic!("Standard_DomainError: BRep_Builder::Infinite parameter");
         }
         // Search the vertex in the edge (TopoDS_Iterator itv(E.Oriented(

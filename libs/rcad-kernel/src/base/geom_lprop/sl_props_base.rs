@@ -22,6 +22,7 @@ use glam::DVec3;
 use crate::geom::Vec3;
 
 use crate::base::geom_lprop::LPropStatus;
+use crate::core::precision::{REAL_FIRST, REAL_LAST};
 use crate::math::cs_lib::normal_from_derivatives;
 use crate::math::direct_polynomial_roots::DirectPolynomialRoots;
 
@@ -92,8 +93,8 @@ impl<'a, S: SLPropsSurface + ?Sized> SlPropsBase<'a, S> {
         assert!((0..=2).contains(&n), "Standard_OutOfRange: SLProps(N)");
         SlPropsBase {
             surf: None,
-            u: f64::MAX, // RealLast()
-            v: f64::MAX,
+            u: REAL_LAST, // OCCT GeomLProp_SLPropsBase.hxx: RealLast()
+            v: REAL_LAST,
             der_order: n,
             cn: 0,
             lin_tol: resolution,
@@ -284,7 +285,9 @@ impl<'a, S: SLPropsSurface + ?Sized> SlPropsBase<'a, S> {
             return Some(self.d1u.normalize_or_zero()); // gp_Dir(theFirstDeriv)
         }
         let (an_uinfimum, an_vinfimum, an_usupremum, _an_vsupremum) = self.s().bounds();
-        let a_du = if an_usupremum >= f64::MAX || an_uinfimum <= f64::MIN {
+        // OCCT LProp_SurfaceUtils.hxx, the U arm of ComputeSurfTangent:
+        // if ((anUSupremum >= RealLast()) || (anUinfimum <= RealFirst()))
+        let a_du = if an_usupremum >= REAL_LAST || an_uinfimum <= REAL_FIRST {
             0.0
         } else {
             an_usupremum - an_uinfimum
@@ -315,7 +318,9 @@ impl<'a, S: SLPropsSurface + ?Sized> SlPropsBase<'a, S> {
             return Some(self.d1v.normalize_or_zero());
         }
         let (an_uinfimum, an_vinfimum, _an_usupremum, an_vsupremum) = self.s().bounds();
-        let a_dv = if an_vsupremum >= f64::MAX || an_vinfimum <= f64::MIN {
+        // OCCT LProp_SurfaceUtils.hxx, the V arm of ComputeSurfTangent:
+        // if ((anVSupremum >= RealLast()) || (anVinfimum <= RealFirst()))
+        let a_dv = if an_vsupremum >= REAL_LAST || an_vinfimum <= REAL_FIRST {
             0.0
         } else {
             an_vsupremum - an_vinfimum

@@ -8,12 +8,10 @@
 use glam::DVec3;
 
 use crate::base::gprop::pg_props::GPropPGProps;
+use crate::core::precision::{REAL_FIRST, REAL_LAST};
 use crate::geom::Plane;
 use crate::math::gp::Lin;
 use crate::math::math_jacobi::MathJacobi;
-
-const REAL_FIRST: f64 = -f64::MAX;
-const REAL_LAST: f64 = f64::MAX;
 
 /// OCCT enum class GProp_PEquation::Type (hxx L46-53).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

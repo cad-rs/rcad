@@ -21,7 +21,9 @@
 //! Each per-type Box applies `Enlarge(Tol)` internally, matching OCCT.
 
 use glam::{DVec2, DVec3};
-use crate::core::precision::{PCONFUSION, parametric_default};
+use crate::core::precision::{
+    BND_PRECISION_INFINITE, PCONFUSION, is_infinite_value, parametric_default,
+};
 use crate::geom::{
     BSplineCurve3, BezierCurve3, Circle2d, Curve2d, Curve2dEval, Curve3, CurveEval, Ellipse2d,
     Line2d, Surface3,
@@ -822,16 +824,18 @@ fn box2d_add_point(b: &mut [f64; 4], p: DVec2) {
 /// coordinate is constant at the origin (0 * inf is NaN in the OCCT point
 /// evaluation, whose comparisons leave the box bounded by the origin).
 fn line2d_box_uv(l: &Line2d, u1: f64, u2: f64, tol: f64) -> [f64; 4] {
-    const BND_PRECISION_INFINITE: f64 = 1e+100;
     let mut b = [f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY];
-    if !u1.is_infinite() {
+    // OCCT GeomBndLib_Line2d.hxx L79/L95/L107 dispatch on
+    // Precision::IsNegativeInfinite / Precision::IsPositiveInfinite
+    // (Precision.hxx L357-367); is_infinite_value is their disjunction.
+    if !is_infinite_value(u1) {
         box2d_add_point(&mut b, l.origin + l.direction * u1);
     }
-    if !u2.is_infinite() {
+    if !is_infinite_value(u2) {
         box2d_add_point(&mut b, l.origin + l.direction * u2);
     }
     for u in [u1, u2] {
-        if !u.is_infinite() {
+        if !is_infinite_value(u) {
             continue;
         }
         // Sign of the unbounded excursion per coordinate (0 * inf = NaN

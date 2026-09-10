@@ -15,6 +15,10 @@
 
 use crate::base::bnd_lib::curve2d_bounding_box;
 use crate::base::gprop::tri::face_flat_iter;
+use crate::core::precision::{
+    INFINITE_VALUE, REAL_FIRST, is_infinite_value, is_negative_infinite_value,
+    is_positive_infinite_value,
+};
 use crate::geom::{Curve2d, Curve2dEval, Surface3, SurfaceEval};
 use crate::topo::topo_shape::Shape;
 use crate::topo::topods::{self, BRepTool};
@@ -172,13 +176,17 @@ fn face_surface_area_gauss_natural(brep: &BRep, fi: usize) -> f64 {
     // BRepGProp_Face::Bounds (BRepGProp_Face.cxx L154-160): surface natural
     // parameter domain [u1,u2]x[v1,v2].
     let [lower_u, upper_u, lower_v, upper_v] = surf.default_domain();
-    // checkBounds (L418-429): an infinite bound switches + and * to AddInf /
-    // MultInf (L41-140).  With a ±INF bound, um/vm collapse to 0, u/v sample
-    // ±INF and the |N| term becomes NaN, which the convert guard (L472,
-    // |Mass| >= EPS_DIM is false for NaN) turns into mass 0.  A natural
-    // restriction face in the tested shapes is a closed bounded surface, so an
-    // unbounded natural domain yields 0 here, matching OCCT.
-    if !lower_u.is_finite() || !upper_u.is_finite() || !lower_v.is_finite() || !upper_v.is_finite()
+    // checkBounds (BRepGProp_Gauss.cxx L418-429): an infinite bound switches +
+    // and * to AddInf / MultInf (L41-140).  With an infinite bound, um/vm
+    // collapse to 0, u/v sample the infinite bound and the |N| term becomes
+    // NaN, which the convert guard (L472, |Mass| >= EPS_DIM is false for NaN)
+    // turns into mass 0.  A natural restriction face in the tested shapes is a
+    // closed bounded surface, so an unbounded natural domain yields 0 here,
+    // matching OCCT.
+    if is_infinite_value(lower_u)
+        || is_infinite_value(upper_u)
+        || is_infinite_value(lower_v)
+        || is_infinite_value(upper_v)
     {
         return 0.0;
     }
@@ -534,7 +542,7 @@ impl Ovec {
     }
     fn max_index(&self) -> usize {
         let mut i = 0usize;
-        let mut x = f64::MIN;
+        let mut x = REAL_FIRST;
         for idx in 1..=self.upper {
             if self.data[idx] > x {
                 x = self.data[idx];
@@ -545,44 +553,34 @@ impl Ovec {
     }
 }
 
-// OCCT AddInf / MultInf (BRepGProp_Gauss.cxx L41-155): infinite-aware
-// arithmetic switched in by checkBounds (L418-429).  Precision predicates
-// (Precision.hxx L340-371): IsPositiveInfinite(R) = R >= 1e100,
-// IsNegativeInfinite(R) = R <= -1e100, Infinite() = 2e100.
-const PRECISION_INFINITE: f64 = 2.0e100;
-
-fn is_pos_infinite(v: f64) -> bool {
-    v >= 0.5 * PRECISION_INFINITE
-}
-
-fn is_neg_infinite(v: f64) -> bool {
-    v <= -(0.5 * PRECISION_INFINITE)
-}
-
+// OCCT Add / AddInf / Mult / MultInf (BRepGProp_Gauss.cxx L36-155):
+// infinite-aware arithmetic switched in by checkBounds (L418-429).  The OCCT
+// predicates are Precision::IsPositiveInfinite / Precision::IsNegativeInfinite
+// returning Precision::Infinite() (Precision.hxx L357-371).
 fn add_inf(a: f64, b: f64) -> f64 {
-    if is_pos_infinite(a) {
-        if is_neg_infinite(b) {
+    if is_positive_infinite_value(a) {
+        if is_negative_infinite_value(b) {
             return 0.0;
         }
-        return PRECISION_INFINITE;
+        return INFINITE_VALUE;
     }
-    if is_pos_infinite(b) {
-        if is_neg_infinite(a) {
+    if is_positive_infinite_value(b) {
+        if is_negative_infinite_value(a) {
             return 0.0;
         }
-        return PRECISION_INFINITE;
+        return INFINITE_VALUE;
     }
-    if is_neg_infinite(a) {
-        if is_pos_infinite(b) {
+    if is_negative_infinite_value(a) {
+        if is_positive_infinite_value(b) {
             return 0.0;
         }
-        return -PRECISION_INFINITE;
+        return -INFINITE_VALUE;
     }
-    if is_neg_infinite(b) {
-        if is_pos_infinite(a) {
+    if is_negative_infinite_value(b) {
+        if is_positive_infinite_value(a) {
             return 0.0;
         }
-        return -PRECISION_INFINITE;
+        return -INFINITE_VALUE;
     }
     a + b
 }
@@ -592,17 +590,17 @@ fn mult_inf(a: f64, b: f64) -> f64 {
         // strictly zero (without any tolerances)
         return 0.0;
     }
-    if is_pos_infinite(a) {
-        return if b < 0.0 { -PRECISION_INFINITE } else { PRECISION_INFINITE };
+    if is_positive_infinite_value(a) {
+        return if b < 0.0 { -INFINITE_VALUE } else { INFINITE_VALUE };
     }
-    if is_pos_infinite(b) {
-        return if a < 0.0 { -PRECISION_INFINITE } else { PRECISION_INFINITE };
+    if is_positive_infinite_value(b) {
+        return if a < 0.0 { -INFINITE_VALUE } else { INFINITE_VALUE };
     }
-    if is_neg_infinite(a) {
-        return if b < 0.0 { PRECISION_INFINITE } else { -PRECISION_INFINITE };
+    if is_negative_infinite_value(a) {
+        return if b < 0.0 { INFINITE_VALUE } else { -INFINITE_VALUE };
     }
-    if is_neg_infinite(b) {
-        return if a < 0.0 { PRECISION_INFINITE } else { -PRECISION_INFINITE };
+    if is_negative_infinite_value(b) {
+        return if a < 0.0 { INFINITE_VALUE } else { -INFINITE_VALUE };
     }
     a * b
 }
@@ -888,14 +886,14 @@ fn face_surface_area_checkprops(
     let [bu1, bu2, bv1, bv2] = face_uv_bounds(brep, face, fi, surf);
     // checkBounds (L418-429): infinite bounds switch add/mult to inf-aware.
     // Precision::IsInfinite (Precision.hxx L350-353): |x| >= 1e100.
-    let inf_bounds = is_pos_infinite(bu1)
-        || is_neg_infinite(bu1)
-        || is_pos_infinite(bu2)
-        || is_neg_infinite(bu2)
-        || is_pos_infinite(bv1)
-        || is_neg_infinite(bv1)
-        || is_pos_infinite(bv2)
-        || is_neg_infinite(bv2);
+    let inf_bounds = is_positive_infinite_value(bu1)
+        || is_negative_infinite_value(bu1)
+        || is_positive_infinite_value(bu2)
+        || is_negative_infinite_value(bu2)
+        || is_positive_infinite_value(bv1)
+        || is_negative_infinite_value(bv1)
+        || is_positive_infinite_value(bv2)
+        || is_negative_infinite_value(bv2);
     let add = |a: f64, b: f64| if inf_bounds { add_inf(a, b) } else { a + b };
     let mult = |a: f64, b: f64| if inf_bounds { mult_inf(a, b) } else { a * b };
 

@@ -30,8 +30,8 @@
 
 use crate::base::extrema::ExtPC2d;
 use crate::core::precision::{
-    is_negative_infinite_value, is_positive_infinite_value, CONFUSION, COMPUTATIONAL,
-    INFINITE_VALUE,
+    is_infinite_value, is_negative_infinite_value, is_positive_infinite_value, CONFUSION,
+    COMPUTATIONAL, REAL_LAST,
 };
 use crate::geom::{
     Circle2d, Circle3, Curve2d, Curve2dEval, Curve3, Ellipse3, Hyperbola3, Line2d, Line3,
@@ -136,7 +136,8 @@ fn elclib_circle_parameter(pos: &Circle2d, p: DVec2) -> f64 {
 /// OCCT `ElCLib::AdjustPeriodic` (ElCLib.cxx L115-146) — adjust `u1` / `u2`
 /// into the period [`u_first`, `u_last`].
 fn elclib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u2: &mut f64) {
-    if u_first.abs() >= 0.5 * INFINITE_VALUE || u_last.abs() >= 0.5 * INFINITE_VALUE {
+    // OCCT ElCLib.cxx L121: if (Precision::IsInfinite(UFirst) || Precision::IsInfinite(ULast))
+    if is_infinite_value(u_first) || is_infinite_value(u_last) {
         *u1 = u_first;
         *u2 = u_last;
         return;
@@ -184,7 +185,7 @@ fn project_curve_vertex(c: &Curve2d, v: &Shape, p: &mut f64) -> bool {
             let mut extrema = ExtPC2d::new(pp, c, CONFUSION, uinf, usup);
             if extrema.is_done() {
                 let n = extrema.nb_ext();
-                let mut d2 = f64::MAX; // RealLast
+                let mut d2 = REAL_LAST; // OCCT BRepLib_MakeEdge2d.cxx L89: RealLast()
                 for i in 1..=n {
                     let dd2 = extrema.square_distance(i);
                     if dd2 < d2 {
@@ -572,6 +573,7 @@ macro_rules! edge_data {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::precision::INFINITE_VALUE;
     use crate::geom::{Ellipse2d, Hyperbola2d, Parabola2d, BSplineCurve2, BezierCurve2};
     use crate::math::bspl::de_boor_2d;
     use crate::topo::topods::TShape;

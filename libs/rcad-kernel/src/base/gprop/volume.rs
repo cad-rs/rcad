@@ -15,6 +15,7 @@
 use glam::DVec3;
 
 use crate::BRep;
+use crate::core::precision::is_infinite_value;
 use crate::geom::{Curve2dEval, Surface3, SurfaceEval};
 use crate::topo::topods;
 use crate::topo::topo_shape::Shape;
@@ -319,9 +320,12 @@ pub fn face_volume_gauss_natural_full(brep: &BRep, fi: usize) -> VinertFace {
     let surf = &surf_idx;
     // L1314-1316: theSurface.Bounds — surface natural parameter domain.
     let [lower_u, upper_u, lower_v, upper_v] = surf.default_domain();
-    // checkBounds (L418-429): an infinite bound makes the mass 0 (the convert
-    // guard, |Mass| >= EPS_DIM is false for NaN).
-    if !lower_u.is_finite() || !upper_u.is_finite() || !lower_v.is_finite() || !upper_v.is_finite()
+    // checkBounds (BRepGProp_Gauss.cxx L418-429): an infinite bound makes the
+    // mass 0 (the convert guard, |Mass| >= EPS_DIM is false for NaN).
+    if is_infinite_value(lower_u)
+        || is_infinite_value(upper_u)
+        || is_infinite_value(lower_v)
+        || is_infinite_value(upper_v)
     {
         return VinertFace::default();
     }

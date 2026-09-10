@@ -8,6 +8,7 @@
 
 use glam::DVec2;
 
+use crate::core::precision::REAL_LAST;
 use crate::geom::{Circle2d, Ellipse2d, Hyperbola2d, Line2d, Parabola2d, Point2, Vec2};
 
 // ============================================================================
@@ -1189,8 +1190,8 @@ impl MyDirectPolynomialRoots {
         let mut r = MyDirectPolynomialRoots {
             nbsol: 0,
             same: false,
-            sol: [f64::MAX; 16],
-            val: [f64::MAX; 16],
+            sol: [REAL_LAST; 16], // OCCT IntAna2d_Outils.cxx L48-49: RealLast()
+            val: [REAL_LAST; 16],
         };
 
         let an_aa = [a0.abs(), a1.abs(), a2.abs(), a3.abs(), a4.abs()];
@@ -1227,7 +1228,7 @@ impl MyDirectPolynomialRoots {
         // reduced polynomials (dropping the constant, then the leading term,
         // then A3) and merge the new roots.
         if pb_possible {
-            let mut an_amin: f64 = f64::MAX;
+            let mut an_amin: f64 = REAL_LAST; // OCCT L85: RealLast()
             let mut an_amax: f64 = -1.0;
             let mut an_eps = f64::EPSILON;
             for i in 0..5 {
@@ -1306,7 +1307,7 @@ impl MyDirectPolynomialRoots {
             }
 
             // Keep the first values — at least as many as the complete
-            // polynomial (OCCT L200-203).  The sentinel entries are f64::MAX,
+            // polynomial (OCCT L200-203).  The sentinel entries are RealLast(),
             // so the |val| < Epsilon branch stops at the real roots.
             let mut nbsol = 0usize;
             while nbsol < nbsol_poly_complet
