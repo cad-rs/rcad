@@ -1743,31 +1743,39 @@ pub fn concave_side(
         e2_fwd.orientation = Orientation::Reversed;
         tge2 = -tge2;
     } else {
-        // OCCT explores F1/F2 for the edge and reverses the tangent when
-        // the in-face orientation is REVERSED.
-        let in_face_reversed =
-            |f: &Shape| -> Option<bool> {
-                let fd = f.as_face()?;
-                let ts = brep.tshapes.get(fd.outer_wire.index)?;
-                let TShape::Wire(wd) = ts.as_ref() else {
-                    return None;
-                };
-                for we in &wd.edges {
-                    if we.is_same(e) {
-                        return Some(we.orientation == Orientation::Reversed);
-                    }
+        // OCCT L342-354: TopExp_Explorer over F1 — stop at the first
+        // occurrence; reverse tgE1 when the in-face orientation is
+        // REVERSED; not found -> return 0.
+        let mut found = false;
+        for we in topexp_face_edges(brep, f1) {
+            if found {
+                break;
+            }
+            if e.is_same(&we) {
+                if we.orientation == Orientation::Reversed {
+                    tge1 = -tge1;
                 }
-                None
-            };
-        match in_face_reversed(f1) {
-            Some(true) => tge1 = -tge1,
-            Some(false) => {}
-            None => return 0,
+                found = true;
+            }
         }
-        match in_face_reversed(f2) {
-            Some(true) => tge2 = -tge2,
-            Some(false) => {}
-            None => return 0,
+        if !found {
+            return 0;
+        }
+        // OCCT L359-374: the same walk over F2 for tgE2.
+        found = false;
+        for we in topexp_face_edges(brep, f2) {
+            if found {
+                break;
+            }
+            if e.is_same(&we) {
+                if we.orientation == Orientation::Reversed {
+                    tge2 = -tge2;
+                }
+                found = true;
+            }
+        }
+        if !found {
+            return 0;
         }
     }
 
@@ -1799,8 +1807,8 @@ pub fn concave_side(
         ns2 = -ns2;
     }
 
-    let dint1 = ns1.cross(tge1);
-    let dint2 = ns2.cross(tge2);
+    let mut dint1 = ns1.cross(tge1);
+    let mut dint2 = ns2.cross(tge2);
     let ang = ns1.cross(ns2).length();
     if ang > 0.0001 * std::f64::consts::PI {
         let scal = ns2.dot(dint1);
@@ -1816,13 +1824,50 @@ pub fn concave_side(
     } else {
         // the faces are locally tangent - this is fake!
         if dint1.dot(dint2) < 0.0 {
-            // This is a forgotten regularity — OCCT L447-481 re-evaluates
-            // the normals with second derivatives (S1.D2/S2.D2) after
-            // stepping the UV points along dint; the Surface3 second
-            // derivative query is pending, so this sub-branch reports the
-            // OCCT "no concave face" code 10.
-            return 10;
-        }
+            // This is a forgotten regularity.
+            // OCCT L421-430: S1.D2 re-evaluates ns1 after stepping DU/DV
+            // toward dint; the same for S2/ns2.
+            let (_pt1, mut du1, mut dv1, ddu, ddv, _dduv) = surf1.derivatives2(p2d1.x, p2d1.y);
+            du1 += if du1.dot(dint1) < 0.0 { -ddu } else { ddu };
+            dv1 += if dv1.dot(dint1) < 0.0 { -ddv } else { ddv };
+            ns1 = du1.cross(dv1);
+            ns1 = ns1.normalize();
+            if f1.orientation == Orientation::Reversed {
+                ns1 = -ns1;
+            }
+            let (_pt2, mut du2, mut dv2, ddu2, ddv2, _dduv2) =
+                surf2.derivatives2(p2d2.x, p2d2.y);
+            du2 += if du2.dot(dint2) < 0.0 { -ddu2 } else { ddu2 };
+            dv2 += if dv2.dot(dint2) < 0.0 { -ddv2 } else { ddv2 };
+            ns2 = du2.cross(dv2);
+            ns2 = ns2.normalize();
+            if f2.orientation == Orientation::Reversed {
+                ns2 = -ns2;
+            }
+
+            // OCCT L441-458: the orientation picks are re-run on the
+            // re-evaluated normals.
+            dint1 = ns1.cross(tge1);
+            dint2 = ns2.cross(tge2);
+            let ang = ns1.cross(ns2).length();
+            if ang > 0.0001 * std::f64::consts::PI {
+                let scal = ns2.dot(dint1);
+                if scal <= 0.0 {
+                    ns2 = -ns2;
+                    *or2 = Orientation::Reversed;
+                }
+                let scal = ns1.dot(dint2);
+                if scal <= 0.0 {
+                    ns1 = -ns1;
+                    *or1 = Orientation::Reversed;
+                }
+            } else {
+                // OCCT L461-465 (the debug print is OCCT_DEBUG only).  This
+                // 10 shows that the face at end is in the extension of one
+                // of two base faces.
+                return 10;
+            }
+        } else {
         // here it turns back, the points are taken in faces
         // neither too close nor too far as much as possible.
         // OCCT ChFi3d_Coefficient(dint, DU, DV, u, v): the (u,v) step of
@@ -1847,12 +1892,14 @@ pub fn concave_side(
         p2d2.x += u;
         p2d2.y += v;
         let (pt1, du1b, dv1b) = surf1.derivatives(p2d1.x, p2d1.y);
-        let mut ns1 = du1b.cross(dv1b);
+        // OCCT L483-487 reassigns the outer ns1 (the final ChoixConge test
+        // at L528 must see the updated normals).
+        ns1 = du1b.cross(dv1b);
         if f1.orientation == Orientation::Reversed {
             ns1 = -ns1;
         }
         let (pt2, du2b, dv2b) = surf2.derivatives(p2d2.x, p2d2.y);
-        let mut ns2 = du2b.cross(dv2b);
+        ns2 = du2b.cross(dv2b);
         if f2.orientation == Orientation::Reversed {
             ns2 = -ns2;
         }
@@ -1863,6 +1910,7 @@ pub fn concave_side(
         if ns2.dot(vref) > 0.0 {
             *or2 = Orientation::Reversed;
         }
+        } // OCCT L468: else of the forgotten-regularity branch (turns back)
     }
 
     let mut choix_conge = match (*or1, *or2) {
@@ -1886,7 +1934,7 @@ pub fn concave_side(
 
 use super::chfi3d_builder_0::{
     brep_tool_parameter, chfi3d_conexfaces, chfi3d_edge_state, topexp_common_vertex,
-    topexp_vertices, vec_angle, vec_is_parallel, shape_key,
+    topexp_face_edges, topexp_vertices, vec_angle, vec_is_parallel, shape_key,
 };
 
 /// OCCT ChFi3d_Builder_1.cxx L60-107 — static ReorderFaces.
@@ -2203,58 +2251,37 @@ impl ChFi3dBuilder {
                         // case, two ends of the edge in the vertex.
                         let (v1, v2) = topexp_vertices(an_edge);
                         if v1.is_same(&v2) {
+                            // OCCT L789: EdgesOfV.FindIndex(anEdge).
                             let mut an_ind = edges_of_v
                                 .iter()
                                 .position(|s| shape_key(s) == shape_key(an_edge));
+                            // OCCT L790-793: if not found, on the reversed
+                            // copy (TopAbs::Reverse keeps INTERNAL/EXTERNAL).
                             if an_ind.is_none() {
-                                let rev = {
+                                let an_edge_reversed = {
                                     let mut x = an_edge.clone();
-                                    x.orientation =
-                                        if x.orientation == Orientation::Forward {
-                                            Orientation::Reversed
-                                        } else {
-                                            Orientation::Forward
-                                        };
+                                    x.orientation = topabs_reverse(x.orientation);
                                     x
                                 };
                                 an_ind = edges_of_v
                                     .iter()
-                                    .position(|s| shape_key(s) == shape_key(&rev));
-                                if let Some(idx) = an_ind {
-                                    let mut kept = edges_of_v[idx].clone();
-                                    kept.orientation =
-                                        if kept.orientation == Orientation::Forward {
-                                            Orientation::Reversed
-                                        } else {
-                                            Orientation::Forward
-                                        };
-                                    if edges.insert(shape_key(&kept)) {
-                                        if ind_of_e < 2 {
-                                            ind_of_e += 1;
-                                            e[ind_of_e] = kept.clone();
-                                        }
-                                        edges_of_v.push(kept);
+                                    .position(|s| shape_key(s) == shape_key(&an_edge_reversed));
+                            }
+                            if let Some(an_ind) = an_ind {
+                                // OCCT L794-795: take the stored shape and
+                                // reverse it.
+                                let mut an_edge = edges_of_v[an_ind].clone();
+                                an_edge.orientation = topabs_reverse(an_edge.orientation);
+                                // OCCT L796-804: EdgesOfV.Add(anEdge) gates
+                                // the fill of E[]; the Edges map is not
+                                // touched in this branch.
+                                let an_edge_key = shape_key(&an_edge);
+                                if !edges_of_v.iter().any(|s| shape_key(s) == an_edge_key) {
+                                    if ind_of_e < 2 {
+                                        ind_of_e += 1;
+                                        e[ind_of_e] = an_edge.clone();
                                     }
-                                }
-                            } else {
-                                // Same oriented edge present twice: the
-                                // OCCT code finds it in EdgesOfV, reverses
-                                // and re-adds.
-                                if let Some(idx) = an_ind {
-                                    let mut kept = edges_of_v[idx].clone();
-                                    kept.orientation =
-                                        if kept.orientation == Orientation::Forward {
-                                            Orientation::Reversed
-                                        } else {
-                                            Orientation::Forward
-                                        };
-                                    if edges.insert(shape_key(&kept)) {
-                                        if ind_of_e < 2 {
-                                            ind_of_e += 1;
-                                            e[ind_of_e] = kept.clone();
-                                        }
-                                        edges_of_v.push(kept);
-                                    }
+                                    edges_of_v.push(an_edge);
                                 }
                             }
                         }
@@ -2277,36 +2304,58 @@ impl ChFi3dBuilder {
         }
 
         if !spine.base().is_periodic() {
-            // OCCT L830-877: count the distinct faces at each end vertex
-            // (IsSame-deduplicated over myVFMap) and mark BreakPoint when
+            // OCCT L830-853: count the distinct faces at the first vertex
+            // (It/Jt double loop over myVFMap) and mark BreakPoint when
             // more than 3.
-            let count_distinct_faces = |vertex: &Shape| -> i32 {
-                let faces = if self.my_vf_map.contains(vertex) {
-                    self.my_vf_map.find(vertex).clone()
-                } else {
-                    Vec::new()
-                };
-                let mut nbf = 0i32;
-                for (jf, cur) in faces.iter().enumerate() {
-                    let mut seen = false;
-                    for prev in faces.iter().take(jf) {
-                        if cur.is_same(prev) {
-                            seen = true;
-                            break;
-                        }
-                    }
-                    if !seen {
-                        nbf += 1;
-                    }
-                }
-                nbf
+            let fv = spine.base().first_vertex();
+            let first_faces = if self.my_vf_map.contains(&fv) {
+                self.my_vf_map.find(&fv).clone()
+            } else {
+                Vec::new()
             };
-            let mut nbf = count_distinct_faces(&spine.base().first_vertex());
+            let mut nbf = 0i32;
+            let mut jf = 0usize;
+            for cur in first_faces.iter() {
+                jf += 1;
+                let mut kf = 1usize;
+                for prev in first_faces.iter().take(jf - 1) {
+                    if cur.is_same(prev) {
+                        break;
+                    }
+                    kf += 1;
+                }
+                if kf == jf {
+                    nbf += 1;
+                }
+            }
+            // OCCT L849-853
             nbf -= nb_g1_connections;
             if nbf > 3 {
                 spine.base_mut().set_first_status(ChFiDS_State::BreakPoint);
             }
-            let mut nbf = count_distinct_faces(&spine.base().last_vertex());
+            // OCCT L854-876: same count at the last vertex.
+            let lv = spine.base().last_vertex();
+            let last_faces = if self.my_vf_map.contains(&lv) {
+                self.my_vf_map.find(&lv).clone()
+            } else {
+                Vec::new()
+            };
+            nbf = 0;
+            jf = 0;
+            for cur in last_faces.iter() {
+                jf += 1;
+                let mut kf = 1usize;
+                for prev in last_faces.iter().take(jf - 1) {
+                    if cur.is_same(prev) {
+                        break;
+                    }
+                    kf += 1;
+                }
+                if kf == jf {
+                    nbf += 1;
+                }
+            }
+            // OCCT L872-876
             nbf -= nb_g1_connections;
             if nbf > 3 {
                 spine.base_mut().set_last_status(ChFiDS_State::BreakPoint);
@@ -2425,165 +2474,92 @@ impl ChFi3dBuilder {
                         continue;
                     }
                     let (mut fvev, mut lvev) = topexp_vertices(ev);
+                    // OCCT L995-1005: connection orientation at the shared
+                    // vertex; one body follows for both orientations.
+                    let or1;
                     if lvec.is_same(&lvev) {
                         let ve1 = fvev;
                         fvev = lvev;
                         lvev = ve1;
-                        let or1 = Orientation::Reversed;
-
-                        let wf = brep_tool_parameter(&self.my_brep, &fvev, ev);
-                        let Some(c_ev) = edge_curve(ev) else {
-                            continue;
-                        };
-                        let v2 = c_ev.derivative_at(wf);
-                        let av1v2 = vec_angle(v1, v2);
-                        let rev = or1 != cur_or;
-                        let mut on_ajoute = false;
-                        if self.face_tangency(&ec, ev, &fvev) {
-                            on_ajoute =
-                                (!rev && av1v2 < std::f64::consts::PI / 2.0)
-                                    || (rev && av1v2 > std::f64::consts::PI / 2.0);
-                            if on_ajoute
-                                && (degene_on_ec
-                                    || tangent_on_vertex(
-                                        &self.my_brep, &lvec, ev, &self.my_ef_map, ta,
-                                    ))
-                            {
-                                on_ajoute = (!rev && av1v2 < ta)
-                                    || (rev && (std::f64::consts::PI - av1v2) < ta);
-                            }
-                        }
-                        if on_ajoute {
-                            fini = false; // If this can be useful (Cf PRO14713)
-                            let common_vertex = topexp_common_vertex(&ec, ev);
-                            let prev_edge = ec.clone();
-                            ec = ev.clone();
-                            ec.orientation = or1;
-                            lvec = lvev.clone();
-                            spine.base_mut().set_edges(ec.clone());
-                            let (mut cur_f1, mut cur_f2) =
-                                chfi3d_conexfaces(&ec, &self.my_ef_map);
-                            if let Some(cv) = common_vertex {
-                                reorder_faces(
-                                    &self.my_brep,
-                                    &self.my_ef_map,
-                                    &mut cur_f1,
-                                    &mut cur_f2,
-                                    &first_face,
-                                    &prev_edge,
-                                    &cv,
-                                );
-                            }
-                            self.my_edge_first_face.insert(ec.ptr_id(), cur_f1.clone());
-                            if offset > 0.0 {
-                                let an_offset_edge =
-                                    make_offset_edge(&self.my_brep, &ec, offset, &cur_f1, &cur_f2);
-                                let mut oe = an_offset_edge;
-                                oe.orientation = or1;
-                                spine.base_mut().set_offset_edges(oe);
-                            }
-                            first_face = cur_f1;
-                            cur_or = or1;
-                            if v_start.is_same(&lvev) {
-                                if self.face_tangency(ev, &spine.base().edges(1).clone(), &lvev) {
-                                    cur_st = ChFiDS_State::Closed;
-                                    fini = true;
-                                } else {
-                                    cur_st = ChFiDS_State::BreakPoint;
-                                    fini = true;
-                                }
-                            }
-                            break;
-                        } else {
-                            let nbface = if self.my_ef_map.contains(ev) {
-                                self.my_ef_map.find(ev).len()
-                            } else {
-                                0
-                            };
-                            if nbface > 1 {
-                                cur_st = ChFiDS_State::BreakPoint;
-                            }
-                            fini = (!rev && av1v2 < ta)
-                                || (rev && (std::f64::consts::PI - av1v2) < ta);
-                        }
+                        or1 = Orientation::Reversed;
                     } else {
-                        let or1 = Orientation::Forward;
+                        or1 = Orientation::Forward;
+                    }
 
-                        let wf = brep_tool_parameter(&self.my_brep, &fvev, ev);
-                        let Some(c_ev) = edge_curve(ev) else {
-                            continue;
-                        };
-                        let v2 = c_ev.derivative_at(wf);
-                        let av1v2 = vec_angle(v1, v2);
-                        let rev = or1 != cur_or;
-                        let mut on_ajoute = false;
-                        if self.face_tangency(&ec, ev, &fvev) {
-                            on_ajoute =
-                                (!rev && av1v2 < std::f64::consts::PI / 2.0)
-                                    || (rev && av1v2 > std::f64::consts::PI / 2.0);
-                            if on_ajoute
-                                && (degene_on_ec
-                                    || tangent_on_vertex(
-                                        &self.my_brep, &lvec, ev, &self.my_ef_map, ta,
-                                    ))
-                            {
-                                on_ajoute = (!rev && av1v2 < ta)
-                                    || (rev && (std::f64::consts::PI - av1v2) < ta);
-                            }
-                        }
-                        if on_ajoute {
-                            fini = false;
-                            let common_vertex = topexp_common_vertex(&ec, ev);
-                            let prev_edge = ec.clone();
-                            ec = ev.clone();
-                            ec.orientation = or1;
-                            lvec = lvev.clone();
-                            spine.base_mut().set_edges(ec.clone());
-                            let (mut cur_f1, mut cur_f2) =
-                                chfi3d_conexfaces(&ec, &self.my_ef_map);
-                            if let Some(cv) = common_vertex {
-                                reorder_faces(
-                                    &self.my_brep,
-                                    &self.my_ef_map,
-                                    &mut cur_f1,
-                                    &mut cur_f2,
-                                    &first_face,
-                                    &prev_edge,
-                                    &cv,
-                                );
-                            }
-                            self.my_edge_first_face.insert(ec.ptr_id(), cur_f1.clone());
-                            if offset > 0.0 {
-                                let an_offset_edge =
-                                    make_offset_edge(&self.my_brep, &ec, offset, &cur_f1, &cur_f2);
-                                let mut oe = an_offset_edge;
-                                oe.orientation = or1;
-                                spine.base_mut().set_offset_edges(oe);
-                            }
-                            first_face = cur_f1;
-                            cur_or = or1;
-                            if v_start.is_same(&lvev) {
-                                if self.face_tangency(ev, &spine.base().edges(1).clone(), &lvev) {
-                                    cur_st = ChFiDS_State::Closed;
-                                    fini = true;
-                                } else {
-                                    cur_st = ChFiDS_State::BreakPoint;
-                                    fini = true;
-                                }
-                            }
-                            break;
-                        } else {
-                            let nbface = if self.my_ef_map.contains(ev) {
-                                self.my_ef_map.find(ev).len()
-                            } else {
-                                0
-                            };
-                            if nbface > 1 {
-                                cur_st = ChFiDS_State::BreakPoint;
-                            }
-                            fini = (!rev && av1v2 < ta)
+                    let wf = brep_tool_parameter(&self.my_brep, &fvev, ev);
+                    let Some(c_ev) = edge_curve(ev) else {
+                        continue;
+                    };
+                    let v2 = c_ev.derivative_at(wf);
+                    let av1v2 = vec_angle(v1, v2);
+                    let rev = or1 != cur_or;
+                    let mut on_ajoute = false;
+                    if self.face_tangency(&ec, ev, &fvev) {
+                        // OCCT L1013-1024
+                        on_ajoute = (!rev && av1v2 < std::f64::consts::PI / 2.0)
+                            || (rev && av1v2 > std::f64::consts::PI / 2.0);
+                        if on_ajoute
+                            && (degene_on_ec
+                                || tangent_on_vertex(
+                                    &self.my_brep, &lvec, ev, &self.my_ef_map, ta,
+                                ))
+                        {
+                            on_ajoute = (!rev && av1v2 < ta)
                                 || (rev && (std::f64::consts::PI - av1v2) < ta);
                         }
+                    }
+                    if on_ajoute {
+                        fini = false; // If this can be useful (Cf PRO14713)
+                        let common_vertex = topexp_common_vertex(&ec, ev);
+                        let prev_edge = ec.clone();
+                        ec = ev.clone();
+                        ec.orientation = or1;
+                        lvec = lvev.clone();
+                        spine.base_mut().set_edges(ec.clone());
+                        let (mut cur_f1, mut cur_f2) = chfi3d_conexfaces(&ec, &self.my_ef_map);
+                        // OCCT L1039: ReorderFaces is called unconditionally.
+                        reorder_faces(
+                            &self.my_brep,
+                            &self.my_ef_map,
+                            &mut cur_f1,
+                            &mut cur_f2,
+                            &first_face,
+                            &prev_edge,
+                            &common_vertex.unwrap_or_else(Shape::null),
+                        );
+                        self.my_edge_first_face.insert(ec.ptr_id(), cur_f1.clone());
+                        if offset > 0.0 {
+                            let an_offset_edge =
+                                make_offset_edge(&self.my_brep, &ec, offset, &cur_f1, &cur_f2);
+                            let mut oe = an_offset_edge;
+                            oe.orientation = or1;
+                            spine.base_mut().set_offset_edges(oe);
+                        }
+                        first_face = cur_f1;
+                        cur_or = or1;
+                        // OCCT L1050-1062: back at the start vertex.
+                        if v_start.is_same(&lvev) {
+                            if self.face_tangency(ev, &spine.base().edges(1).clone(), &lvev) {
+                                cur_st = ChFiDS_State::Closed;
+                                fini = true;
+                            } else {
+                                cur_st = ChFiDS_State::BreakPoint;
+                                fini = true;
+                            }
+                        }
+                        break;
+                    } else {
+                        // OCCT L1065-1075
+                        let nbface = if self.my_ef_map.contains(ev) {
+                            self.my_ef_map.find(ev).len()
+                        } else {
+                            0
+                        };
+                        if nbface > 1 {
+                            cur_st = ChFiDS_State::BreakPoint;
+                        }
+                        fini = (!rev && av1v2 < ta)
+                            || (rev && (std::f64::consts::PI - av1v2) < ta);
                     }
                 }
                 fini = fini || (nb == spine.base().nb_edges());
@@ -2667,17 +2643,16 @@ impl ChFi3dBuilder {
                             spine.base_mut().put_in_first(ec.clone());
                             let (mut cur_f1, mut cur_f2) =
                                 chfi3d_conexfaces(&ec, &self.my_ef_map);
-                            if let Some(cv) = common_vertex {
-                                reorder_faces(
-                                    &self.my_brep,
-                                    &self.my_ef_map,
-                                    &mut cur_f1,
-                                    &mut cur_f2,
-                                    &first_face,
-                                    &prev_edge,
-                                    &cv,
-                                );
-                            }
+                            // OCCT L1145: ReorderFaces is called unconditionally.
+                            reorder_faces(
+                                &self.my_brep,
+                                &self.my_ef_map,
+                                &mut cur_f1,
+                                &mut cur_f2,
+                                &first_face,
+                                &prev_edge,
+                                &common_vertex.unwrap_or_else(Shape::null),
+                            );
                             self.my_edge_first_face.insert(ec.ptr_id(), cur_f1.clone());
                             if offset > 0.0 {
                                 let an_offset_edge =
@@ -2812,12 +2787,14 @@ pub fn topabs_compose(a: Orientation, b: Orientation) -> Orientation {
     }
 }
 
-/// OCCT TopAbs::Reverse(o).
+/// OCCT TopAbs.hxx L90-98 — TopAbs::Reverse(Or): FORWARD <-> REVERSED,
+/// INTERNAL -> INTERNAL, EXTERNAL -> EXTERNAL.
 pub fn topabs_reverse(o: Orientation) -> Orientation {
-    if o == Orientation::Reversed {
-        Orientation::Forward
-    } else {
-        Orientation::Reversed
+    match o {
+        Orientation::Forward => Orientation::Reversed,
+        Orientation::Reversed => Orientation::Forward,
+        Orientation::Internal => Orientation::Internal,
+        Orientation::External => Orientation::External,
     }
 }
 
