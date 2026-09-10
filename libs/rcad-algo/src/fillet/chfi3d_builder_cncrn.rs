@@ -24,6 +24,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::base::extrema::POnCurve;
 use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
 use rcad_kernel::base::extrema_ext_cc::ExtremaExtCC;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
 use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::Curve2d;
 use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _, SurfaceEval as _};
@@ -749,45 +750,6 @@ impl GeomLPropCLProps2d {
     }
 }
 
-/// OCCT Extrema_POnCurv — the parameter/point pair.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ExtremaPOnCurv {
-    parameter: f64,
-    value: DVec3,
-}
-
-impl ExtremaPOnCurv {
-    pub fn new(parameter: f64, value: DVec3) -> Self {
-        ExtremaPOnCurv { parameter, value }
-    }
-    pub fn parameter(&self) -> f64 {
-        self.parameter
-    }
-    pub fn value(&self) -> DVec3 {
-        self.value
-    }
-}
-
-/// OCCT Extrema_ExtPC — pending TKGeomAlgo translation; IsDone()=false
-/// keeps the OCCT fallback branches of CurveHermite in effect.
-pub struct ExtremaExtPC;
-
-#[allow(dead_code)]
-impl ExtremaExtPC {
-    pub fn new() -> Self {
-        ExtremaExtPC
-    }
-    pub fn is_done(&self) -> bool {
-        false
-    }
-    pub fn nb_ext(&self) -> i32 {
-        0
-    }
-    pub fn point(&self, _n: i32) -> ExtremaPOnCurv {
-        ExtremaPOnCurv::default()
-    }
-}
-
 /// OCCT Geom2dInt_GInter re-host (architecture difference #31, mirroring
 /// brep_offset_inter2d.rs) — the TheIntPCurvePCurveOfGInter vehicle over the
 /// translated IntRes2d/IntCurve machinery; the results surface (IsDone /
@@ -1464,11 +1426,17 @@ pub fn curve_hermite(
                     p01 = cp.point_at(cp.default_domain()[0]);
                 }
                 if p01.distance(p02) > 1.0e-4 {
-                    // OCCT: Extrema_ExtPC ext1(p01, C);
-                    let ext1 = ExtremaExtPC::new();
-                    if ext1.is_done() && ext1.nb_ext() != 0 {
-                        let pon_c = ext1.point(1);
-                        param[(nb - 1) as usize] = pon_c.parameter();
+                    // OCCT L515: Extrema_ExtPC ext1(p01, C); — the real
+                    // Extrema_GGExtPC body (kernel base::extrema_ext_pc).
+                    let ext1 =
+                        ExtremaExtPC::new_point_curve(p01, &a_c_tool, 1.0e-10);
+                    if ext1.is_done() {
+                        if ext1.nb_ext() != 0 {
+                            // OCCT L520-521: Extrema_POnCurv POnC(ext1.Point(1));
+                            //                param.ChangeValue(nb) = POnC.Parameter();
+                            let pon_c = ext1.point(1);
+                            param[(nb - 1) as usize] = pon_c.param;
+                        }
                     }
                 }
             }
