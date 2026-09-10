@@ -54,8 +54,10 @@ pub(crate) fn b_update_vertex_on_edge(e_fwd: &mut Shape, v: &Shape, par: f64, to
     }
 }
 
-/// OCCT BRepLib::BuildCurves3d(S) — GAP no-op (the MakeSimpleOffset module
-/// carries the same GAP, brep_offset_make_simple_offset.rs L249).
+/// OCCT BRepLib::BuildCurves3d(S) (BRepLib.cxx L460-464) — no-op re-host
+/// (the real body is translated in topalgo/brep_lib/build_curves3d.rs, but
+/// the Inter3d pipeline carries no &mut BRep at these call sites; the
+/// remaining GAP is the pool threading).
 fn brep_lib_build_curves3d(_the_s: &Shape) {}
 
 /// OCCT BRepLib::SameParameter(E, Tol, OnlySegments) — GAP no-op (the

@@ -18,9 +18,10 @@
 //    plan §0.6).  Everything around the engine calls is translated 1:1.
 // 3. ShapeAnalysis_FreeBounds (TKShHealing), BRepTools_Quilt (TKTopAlgo),
 //    ShapeFix_Edge::FixSameParameter (TKShHealing), GeomFill_Generator
-//    (TKGeomAlgo), BRepLib::BuildCurves3d and the planar
-//    BRepLib_MakeFace(W, OnlyPlane) constructor have no rcad translation yet
-//    — GAP carriers below.
+//    (TKGeomAlgo) and the planar BRepLib_MakeFace(W, OnlyPlane) constructor
+//    have no rcad translation yet — GAP carriers below.  (BRepLib::
+//    BuildCurves3d is translated — topalgo/brep_lib/build_curves3d.rs;
+//    the call sites call the real body over my_brep.)
 // 4. OCCT mutates TShapes in place through a global arena; rcad carries the
 //    arena as the BRep pool.  The class holds my_brep (the pool stand-in for
 //    the arena; consumed by BRepBuilder mutations and the rcad
@@ -242,13 +243,6 @@ impl BRepToolsQuilt {
 fn shape_fix_edge_fix_same_parameter(the_context: &mut ShapeBuildReShape, the_e: &Shape) {
     let _ = (the_context, the_e);
     panic!("GAP: ShapeFix_Edge::FixSameParameter (TKShHealing not translated)");
-}
-
-/// OCCT BRepLib::BuildCurves3d(S) (TKTopAlgo/BRepTools, BRepLib.cxx) — GAP:
-/// the 3d-curve rebuild walk is not translated yet.
-fn brep_lib_build_curves3d(the_s: &Shape) {
-    let _ = the_s;
-    panic!("GAP: BRepLib::BuildCurves3d (TKTopAlgo/BRepTools not translated)");
 }
 
 /// OCCT GeomFill_Generator (TKGeomAlgo/GeomFill) — the thrusection generator
@@ -1024,8 +1018,8 @@ impl BRepOffsetMakeSimpleOffset {
         a_bb.add_to_wire(&mut self.my_brep, a_wire.clone(), a_wall2.clone());
 
         // Build 3d curves on wire
-        // OCCT L592: BRepLib::BuildCurves3d(aWire).
-        brep_lib_build_curves3d(&a_wire);
+        // OCCT L592: BRepLib::BuildCurves3d(aWire) (BRepLib.cxx L460-464).
+        crate::topalgo::brep_lib::brep_lib::BRepLib::build_curves3d(&mut self.my_brep, &a_wire);
 
         // Try to build using simple planar approach.
         // OCCT L595-607: the face maker is wrapped by try/catch since it

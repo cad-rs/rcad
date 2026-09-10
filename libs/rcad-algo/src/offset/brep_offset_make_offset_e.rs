@@ -234,7 +234,8 @@ impl BRepOffsetMakeOffset {
                     bat::builder_add_wire_edge(&mut the_wire, &e4);
                 }
 
-                brep_lib_build_curves3d_tol(&the_wire, self.my_tol);
+                // OCCT BRepOffset_MakeOffset.cxx L3325: BuildCurves3d(theWire, myTol).
+                brep_lib_build_curves3d_tol(&mut self.my_brep, &the_wire, self.my_tol);
                 bat::builder_set_closed(&mut the_wire, true);
                 let mut new_face = Shape::null();
                 let mut the_surf: Option<Surface3> = None;
@@ -747,7 +748,8 @@ impl BRepOffsetMakeOffset {
                     bat::builder_add_wire_edge(&mut arc_wire, &ea1);
                     bat::builder_add_wire_edge(&mut arc_wire, &an_arc);
                     bat::builder_add_wire_edge(&mut arc_wire, &ea2);
-                    brep_lib_build_curves3d_tol(&arc_wire, self.my_tol);
+                    // OCCT BRepOffset_MakeOffset.cxx L3660: BuildCurves3d(arcWire, myTol).
+                    brep_lib_build_curves3d_tol(&mut self.my_brep, &arc_wire, self.my_tol);
                     bat::builder_set_closed(&mut arc_wire, true);
                     // OCCT L3659: BRepLib_MakeFace(arcWire, true) — the
                     // only-plane face maker (GAP leaf, arch. diff. #52).
@@ -992,7 +994,8 @@ impl BRepOffsetMakeOffset {
 
         for oe in &exp {
             let mut oe = oe.clone();
-            brep_lib_build_curve3d_edge(&oe, self.my_tol);
+            // OCCT BRepOffset_MakeOffset.cxx L3986: BRepLib::BuildCurve3d(OE, myTol).
+            brep_lib_build_curve3d_edge(&mut self.my_brep, &oe, self.my_tol);
             let roe = oe.clone();
 
             if !set_add(&mut ms, &oe) {

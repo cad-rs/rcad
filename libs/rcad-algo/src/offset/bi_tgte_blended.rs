@@ -23,8 +23,9 @@
 //     BRepOffset_Tool::EnLargeFace / BRepOffset_Interval — GAP carriers
 //     (same Stage 2b unit).
 // 24. BRepBuilderAPI_Sewing (TKTopAlgo/BRepBuilderAPI) — GAP carrier.
-// 25. BRepLib::BuildCurves3d / SameParameter — GAP static leaves (the
-//     MakeSimpleOffset module carries the same GAP for BuildCurves3d).
+// 25. BRepLib::SameParameter — GAP static leaf.  (BRepLib::BuildCurves3d
+//     is translated — topalgo/brep_lib/build_curves3d.rs; the call sites
+//     call the real body over my_brep.)
 // 26. Approx_FitAndDivide + AppCont_Function + AppParCurves_MultiCurve +
 //     Convert_CompBezierCurvesToBSplineCurve (TKGeomBase) — GAP carriers;
 //     BSplCLib::Reparametrize is translated (bspl_lib::reparametrize).
@@ -205,17 +206,6 @@ impl BRepBuilderAPISewing {
     pub fn modified(&self, _shape: &Shape) -> Shape {
         panic!("GAP: BRepBuilderAPI_Sewing::Modified (TKTopAlgo/BRepBuilderAPI not translated)");
     }
-}
-
-/// OCCT BRepLib::BuildCurves3d(S) — GAP static leaf (arch. diff. #25).
-pub fn brep_lib_build_curves3d(_the_s: &Shape) {
-    panic!("GAP: BRepLib::BuildCurves3d (TKTopAlgo/BRepLib not translated)");
-}
-
-/// OCCT BRepLib::BuildCurves3d(S, Tol) — the tolerance form of the same
-/// GAP leaf (arch. diff. #25).
-pub fn brep_lib_build_curves3d_tol(_the_s: &Shape, _the_tol: f64) {
-    panic!("GAP: BRepLib::BuildCurves3d (TKTopAlgo/BRepLib not translated)");
 }
 
 /// OCCT BRepLib::SameParameter(E, Tol) — GAP static leaf (arch. diff. #25).
@@ -1224,8 +1214,11 @@ impl BiTgteBlend {
         // that are not actually free.
         // OCCT L792: Sew = new BRepBuilderAPI_Sewing(myTol).
         let mut sew = BRepBuilderAPISewing::new(self.my_tol);
-        // OCCT L793: BRepLib::BuildCurves3d(myShape).
-        brep_lib_build_curves3d(&self.my_shape);
+        // OCCT L793: BRepLib::BuildCurves3d(myShape) (BRepLib.cxx L460-464).
+        crate::topalgo::brep_lib::brep_lib::BRepLib::build_curves3d(
+            &mut self.my_brep,
+            &self.my_shape,
+        );
         // OCCT L794-799.
         for a_face in explorer(&self.my_shape, ShapeType::Face, ShapeType::Shape) {
             sew.add(&a_face);
@@ -1322,8 +1315,13 @@ impl BiTgteBlend {
 
         // Finally construct curves 3d from edges to be transferred
         // since the partition is provided ( A Priori);
-        // OCCT L926: BRepLib::BuildCurves3d(myResult, Precision::Confusion()).
-        brep_lib_build_curves3d_tol(&self.my_result, PRECISION_CONFUSION);
+        // OCCT L926: BRepLib::BuildCurves3d(myResult, Precision::Confusion())
+        // (BRepLib.cxx L468-489).
+        crate::topalgo::brep_lib::brep_lib::BRepLib::build_curves3d_tol(
+            &mut self.my_brep,
+            &self.my_result,
+            PRECISION_CONFUSION,
+        );
 
         self.my_done = true;
     }

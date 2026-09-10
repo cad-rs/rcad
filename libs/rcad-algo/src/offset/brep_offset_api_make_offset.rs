@@ -32,9 +32,11 @@
 //!    list entry itself.
 //! 6. `Extrema_ExtPS(P, S, Tol, Tol, Extrema_ExtFlag_MIN)` maps to
 //!    rcad_kernel::base::extrema::ExtPS (MIN-only, as the OCCT flag).
-//! 7. `BRepAlgo::ConvertWire` (TKTopAlgo/BRepAlgo) and
-//!    `BRepLib::BuildCurves3d` (TKBRep/BRepLib) have no rcad translation
-//!    yet — the two GAP fns below keep the call sites (reported gap).
+//! 7. `BRepAlgo::ConvertWire` (TKTopAlgo/BRepAlgo) has no rcad translation
+//!    yet — the GAP fn below keeps the call site (reported gap).
+//!    `BRepLib::BuildCurves3d` (TKBRep/BRepLib) is translated
+//!    (topalgo/brep_lib/build_curves3d.rs); the call sites call the real
+//!    body over my_brep.
 //! 8. `BRepBuilderAPI_MakeFace(W, OnlyPlane)` maps to the BRepLibMakeFace
 //!    carrier of brep_offset_make_simple_offset.rs (IsDone=false carries
 //!    the OCCT not-a-planar-face exit).
@@ -71,12 +73,6 @@ fn brep_algo_convert_wire(
     _the_face: &Shape,
 ) -> Shape {
     panic!("GAP: BRepAlgo::ConvertWire (TKTopAlgo/BRepAlgo not translated)")
-}
-
-/// OCCT BRepLib::BuildCurves3d(S) (TKBRep/BRepLib) — computes the 3D curves
-/// of the edges; GAP (the chfi2d_builder.rs precedent).
-fn brep_lib_build_curves3d(_the_s: &Shape) {
-    panic!("GAP: BRepLib::BuildCurves3d (TKBRep/BRepLib not translated)")
 }
 
 /// OCCT TopAbs::Complement(theO) (TKTopAbs/TopAbs.cxx).
@@ -244,7 +240,11 @@ impl BRepOffsetAPIMakeOffset {
                 let an_or_of_wire = a_wire.orientation;
                 a_wire.orientation = Orientation::Forward;
                 a_wire = brep_algo_convert_wire(&a_wire, the_angle_tolerance, &a_face);
-                brep_lib_build_curves3d(&a_wire);
+                // OCCT L69: BRepLib::BuildCurves3d(aWire) (BRepLib.cxx L460-464).
+                crate::topalgo::brep_lib::brep_lib::BRepLib::build_curves3d(
+                    &mut self.my_brep,
+                    &a_wire,
+                );
                 a_wire.orientation = an_or_of_wire;
             }
             // OCCT L71: aBB.Add(aNewFace, aWire).
@@ -285,7 +285,12 @@ impl BRepOffsetAPIMakeOffset {
                     let a_wire = an_itl.clone();
                     if needs_convertion(&a_wire) {
                         let mut a_new_wire = brep_algo_convert_wire(&a_wire, a_tol, &a_face);
-                        brep_lib_build_curves3d(&a_new_wire);
+                        // OCCT L370: BRepLib::BuildCurves3d(aNewWire)
+                        // (BRepLib.cxx L460-464).
+                        crate::topalgo::brep_lib::brep_lib::BRepLib::build_curves3d(
+                            &mut self.my_brep,
+                            &a_new_wire,
+                        );
                         a_new_wire.orientation = a_wire.orientation;
                         *an_itl = a_new_wire;
                     }
@@ -294,7 +299,11 @@ impl BRepOffsetAPIMakeOffset {
                 // OCCT L390-397.
                 let face_in = self.my_face.clone();
                 self.my_face = self.convert_face(&face_in, a_tol);
-                brep_lib_build_curves3d(&self.my_face);
+                // OCCT L379: BRepLib::BuildCurves3d(myFace) (BRepLib.cxx L460-464).
+                crate::topalgo::brep_lib::brep_lib::BRepLib::build_curves3d(
+                    &mut self.my_brep,
+                    &self.my_face,
+                );
                 self.my_wires.clear();
                 for value in sub_shapes(&self.my_face) {
                     self.my_wires.push(value);

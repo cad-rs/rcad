@@ -256,16 +256,37 @@ pub(crate) fn brep_lib_sort_faces(s: &Shape, lf: &mut Vec<Shape>) {
     crate::topalgo::brep_lib::brep_lib::BRepLib::sort_faces(s, lf);
 }
 
-/// OCCT BRepLib::BuildCurves3d(S, Tol) — GAP static leaf (architecture
-/// difference #46; the bi_tgte_blended.rs #25 form).
-pub(crate) fn brep_lib_build_curves3d_tol(_s: &Shape, _tol: f64) {
-    panic!("GAP: BRepLib::BuildCurves3d(S, Tol) (TKTopAlgo/BRepLib not translated)");
+/// OCCT BRepLib::BuildCurves3d(S, Tol) (TKTopAlgo/BRepLib, BRepLib.cxx
+/// L468-489; BRepLib.hxx L99-103 defaults Continuity=GeomAbs_C1,
+/// MaxDegree=14, MaxSegment=0) — the real body lives in
+/// crate::topalgo::brep_lib::BRepLib::build_curves3d_tol; the brep
+/// argument carries the rcad pool mutation arena (architecture
+/// difference #4).
+pub(crate) fn brep_lib_build_curves3d_tol(
+    the_brep: &mut BRep,
+    the_s: &Shape,
+    the_tol: f64,
+) -> bool {
+    crate::topalgo::brep_lib::brep_lib::BRepLib::build_curves3d_tol(the_brep, the_s, the_tol)
 }
 
-/// OCCT BRepLib::BuildCurve3d(E, Tol) — GAP static leaf (architecture
-/// difference #46): rebuilds the 3D curve of the edge from its pcurves.
-pub(crate) fn brep_lib_build_curve3d_edge(_e: &Shape, _tol: f64) {
-    panic!("GAP: BRepLib::BuildCurve3d(E, Tol) (TKTopAlgo/BRepLib not translated)");
+/// OCCT BRepLib::BuildCurve3d(E, Tol) (BRepLib.cxx L301-456; BRepLib.hxx
+/// L90-94 defaults Continuity=GeomAbs_C1, MaxDegree=14, MaxSegment=0) —
+/// the same re-host for the edge form: rebuilds the 3D curve of the edge
+/// from its pcurves.
+pub(crate) fn brep_lib_build_curve3d_edge(
+    the_brep: &mut BRep,
+    the_e: &Shape,
+    the_tol: f64,
+) -> bool {
+    crate::topalgo::brep_lib::brep_lib::BRepLib::build_curve3d(
+        the_brep,
+        the_e,
+        the_tol,
+        rcad_kernel::topo::topods::GeomAbsShape::C1,
+        14,
+        0,
+    )
 }
 
 /// OCCT BRepLib::SameParameter(E, Tol, DoAlsoMinmax) — GAP static leaf

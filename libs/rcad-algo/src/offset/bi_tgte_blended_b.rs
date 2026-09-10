@@ -33,12 +33,11 @@ use crate::offset::brep_offset_offset_b::BRepOffsetOffset;
 use crate::offset::bi_tgte_curve_on_edge::{BiTgteCurveOnEdge, GeomApiProjectPointOnCurve};
 
 use super::{
-    add, brep_lib_build_curves3d, brep_lib_make_edge_3d, brep_lib_make_edge_pcurve,
-    brep_lib_same_parameter, brep_tools_update, curve_first_parameter, curve_last_parameter,
-    find_created_edge, find_vertex, is_in_face, is_on_restriction, k_part_curve_3d, make_curve,
-    make_degenerated_edge, orientation_of, oriented_shape, shape_reversed, touched, AncestorsMap,
-    BRepOffsetAnalyse, BRepOffsetInter2d, BRepOffsetInter3d, BRepOffsetMakeLoops,
-    BRepBuilderAPISewing, BiTgteBlend,
+    add, brep_lib_make_edge_3d, brep_lib_make_edge_pcurve, brep_lib_same_parameter,
+    brep_tools_update, curve_first_parameter, curve_last_parameter, find_created_edge, find_vertex,
+    is_in_face, is_on_restriction, k_part_curve_3d, make_curve, make_degenerated_edge,
+    orientation_of, oriented_shape, shape_reversed, touched, AncestorsMap, BRepOffsetAnalyse,
+    BRepOffsetInter2d, BRepOffsetInter3d, BRepOffsetMakeLoops, BRepBuilderAPISewing, BiTgteBlend,
 };
 
 use crate::brep_algo::image::BRepAlgoImage;
@@ -1464,7 +1463,11 @@ impl BiTgteBlend {
         // OCCT L2481-2506.
         let mut sew = BRepBuilderAPISewing::new(self.my_tol);
 
-        brep_lib_build_curves3d(&self.my_result);
+        // OCCT L2483: BRepLib::BuildCurves3d(myResult) (BRepLib.cxx L460-464).
+        crate::topalgo::brep_lib::brep_lib::BRepLib::build_curves3d(
+            &mut self.my_brep,
+            &self.my_result,
+        );
 
         for a_face in explorer(&self.my_result, ShapeType::Face, ShapeType::Shape) {
             sew.add(&a_face);
