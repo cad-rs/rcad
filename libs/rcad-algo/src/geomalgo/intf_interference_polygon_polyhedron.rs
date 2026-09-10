@@ -16,6 +16,8 @@
 //! The Intf.cxx package helper `Intf::PlaneEquation` is included here.
 
 use glam::DVec3;
+use rcad_kernel::base::extrema::POnCurve;
+use rcad_kernel::base::extrema_ext_elc::ExtremaExtElC;
 use rcad_kernel::geom::Line3;
 use rcad_kernel::math::bnd::{BndBox, BoundSortBox};
 use rcad_kernel::math::direct_polynomial_roots::epsilon;
@@ -702,29 +704,6 @@ impl InterferencePolygonPolyhedron {
 }
 
 impl InterferencePolygonPolyhedron {
-    /// OCCT Extrema_ExtElC(theLin1, theLin2, 0.00000001) for the line x line
-    /// case: None = IsParallel(), Some((SquareDistance, U1, U2)) otherwise
-    /// (kernel line_line_extrema keeps the OCCT parametrization).
-    fn extrema_line_line(
-        lin_pol: &Line3,
-        lin_tri: &Line3,
-    ) -> Option<(f64, f64, f64)> {
-        let a_d1 = lin_pol.direction.normalize_or_zero();
-        let a_d2 = lin_tri.direction.normalize_or_zero();
-        let a_cos_a = a_d1.dot(a_d2);
-        let a_sq_sin_a = 1.0 - a_cos_a * a_cos_a;
-        if a_sq_sin_a < 1e-30 || a_d1.cross(a_d2).length() < 1e-12 {
-            None
-        } else {
-            let mut v = rcad_kernel::base::extrema::line_line_extrema(lin_pol, lin_tri);
-            if v.is_empty() {
-                None
-            } else {
-                Some(v.remove(0))
-            }
-        }
-    }
-
     /// OCCT Intersect(BegO, EndO, Infinite, TTri, thePolyh) — the active
     /// #else branch (gxx L741-1053).  Computes the triangle plane equation
     /// itself, then classifies the segment/line x triangle intersection.
@@ -1001,37 +980,54 @@ impl InterferencePolygonPolyhedron {
                     continue;
                 }
                 let lin_tri = Line3::new(beg_t, vec_tri);
-                // OCCT Extrema_ExtElC Extrema(LinPol, LinTri, 0.00000001).
-                if let Some((dist2, u_o, u_t)) = Self::extrema_line_line(&lin_pol, &lin_tri) {
-                    // Extrema.IsParallel() == false && Extrema.NbExt() != 0.
-                    if dist2 <= self.interf.get_tolerance() * self.interf.get_tolerance() {
-                        let po = lin_pol.origin + lin_pol.direction * u_o;
-                        let pt = lin_tri.origin + lin_tri.direction * u_t;
-                        let mut param_on_o = 0.0;
-                        if is_in_segment(vec_pol, po - beg_o, n_vec_pol, &mut param_on_o, self.interf.get_tolerance())
-                        {
-                            let mut param_on_t = 0.0;
-                            if is_in_segment(vec_tri, pt - beg_t, n_vec_tri, &mut param_on_t, self.interf.get_tolerance())
-                            {
-                                let sp_lieu = beg_t + (end_t - beg_t) * param_on_t;
-                                let (tmin, tmax) = if p_tri_i > p_tri_ip1pc3 {
-                                    (p_tri_ip1pc3, p_tri_i)
-                                } else {
-                                    (p_tri_i, p_tri_ip1pc3)
+                // OCCT: Extrema_ExtElC Extrema(LinPol, LinTri, 0.00000001).
+                let an_extrema = ExtremaExtElC::line_line(&lin_pol, &lin_tri, 0.00000001);
+                if an_extrema.is_done() {
+                    // OCCT: if (Extrema.IsParallel() == false).
+                    if !an_extrema.is_parallel() {
+                        // OCCT: if (Extrema.NbExt()).
+                        if an_extrema.nb_ext() != 0 {
+                            let dist2 = an_extrema.square_distance(1);
+                            if dist2 <= self.interf.get_tolerance() * self.interf.get_tolerance() {
+                                // OCCT: Extrema.Points(1, POnC1, POnC2).
+                                let mut p_on_c1 = POnCurve {
+                                    param: 0.0,
+                                    point: DVec3::ZERO,
                                 };
-                                let sp = IntfSectionPoint::new(
-                                    sp_lieu,
-                                    typ_on_g,
-                                    0,
-                                    self.i_lin,
-                                    param_on_o,
-                                    IntfPIType::Edge,
-                                    tmin as i32,
-                                    tmax as i32,
-                                    0.0,
-                                    1.0,
-                                );
-                                self.interf.my_s_poins_mut().push(sp);
+                                let mut p_on_c2 = POnCurve {
+                                    param: 0.0,
+                                    point: DVec3::ZERO,
+                                };
+                                an_extrema.points(1, &mut p_on_c1, &mut p_on_c2);
+                                let po = p_on_c1.point;
+                                let pt = p_on_c2.point;
+                                let mut param_on_o = 0.0;
+                                if is_in_segment(vec_pol, po - beg_o, n_vec_pol, &mut param_on_o, self.interf.get_tolerance())
+                                {
+                                    let mut param_on_t = 0.0;
+                                    if is_in_segment(vec_tri, pt - beg_t, n_vec_tri, &mut param_on_t, self.interf.get_tolerance())
+                                    {
+                                        let sp_lieu = beg_t + (end_t - beg_t) * param_on_t;
+                                        let (tmin, tmax) = if p_tri_i > p_tri_ip1pc3 {
+                                            (p_tri_ip1pc3, p_tri_i)
+                                        } else {
+                                            (p_tri_i, p_tri_ip1pc3)
+                                        };
+                                        let sp = IntfSectionPoint::new(
+                                            sp_lieu,
+                                            typ_on_g,
+                                            0,
+                                            self.i_lin,
+                                            param_on_o,
+                                            IntfPIType::Edge,
+                                            tmin as i32,
+                                            tmax as i32,
+                                            0.0,
+                                            1.0,
+                                        );
+                                        self.interf.my_s_poins_mut().push(sp);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1304,37 +1300,54 @@ impl InterferencePolygonPolyhedron {
                     continue;
                 }
                 let lin_tri = Line3::new(beg_t, vec_tri);
-                // OCCT Extrema_ExtElC Extrema(LinPol, LinTri, 0.00000001).
-                if let Some((dist2, u_o, u_t)) = Self::extrema_line_line(&lin_pol, &lin_tri) {
-                    // Extrema.IsParallel() == false && Extrema.NbExt() != 0.
-                    if dist2 <= self.interf.get_tolerance() * self.interf.get_tolerance() {
-                        let po = lin_pol.origin + lin_pol.direction * u_o;
-                        let pt = lin_tri.origin + lin_tri.direction * u_t;
-                        let mut param_on_o = 0.0;
-                        if is_in_segment(vec_pol, po - beg_o, n_vec_pol, &mut param_on_o, self.interf.get_tolerance())
-                        {
-                            let mut param_on_t = 0.0;
-                            if is_in_segment(vec_tri, pt - beg_t, n_vec_tri, &mut param_on_t, self.interf.get_tolerance())
-                            {
-                                let sp_lieu = beg_t + (end_t - beg_t) * param_on_t;
-                                let (tmin, tmax) = if p_tri_i > p_tri_ip1pc3 {
-                                    (p_tri_ip1pc3, p_tri_i)
-                                } else {
-                                    (p_tri_i, p_tri_ip1pc3)
+                // OCCT: Extrema_ExtElC Extrema(LinPol, LinTri, 0.00000001).
+                let an_extrema = ExtremaExtElC::line_line(&lin_pol, &lin_tri, 0.00000001);
+                if an_extrema.is_done() {
+                    // OCCT: if (Extrema.IsParallel() == false).
+                    if !an_extrema.is_parallel() {
+                        // OCCT: if (Extrema.NbExt()).
+                        if an_extrema.nb_ext() != 0 {
+                            let dist2 = an_extrema.square_distance(1);
+                            if dist2 <= self.interf.get_tolerance() * self.interf.get_tolerance() {
+                                // OCCT: Extrema.Points(1, POnC1, POnC2).
+                                let mut p_on_c1 = POnCurve {
+                                    param: 0.0,
+                                    point: DVec3::ZERO,
                                 };
-                                let sp = IntfSectionPoint::new(
-                                    sp_lieu,
-                                    typ_on_g,
-                                    0,
-                                    self.i_lin,
-                                    param_on_o,
-                                    IntfPIType::Edge,
-                                    tmin as i32,
-                                    tmax as i32,
-                                    0.0,
-                                    1.0,
-                                );
-                                self.interf.my_s_poins_mut().push(sp);
+                                let mut p_on_c2 = POnCurve {
+                                    param: 0.0,
+                                    point: DVec3::ZERO,
+                                };
+                                an_extrema.points(1, &mut p_on_c1, &mut p_on_c2);
+                                let po = p_on_c1.point;
+                                let pt = p_on_c2.point;
+                                let mut param_on_o = 0.0;
+                                if is_in_segment(vec_pol, po - beg_o, n_vec_pol, &mut param_on_o, self.interf.get_tolerance())
+                                {
+                                    let mut param_on_t = 0.0;
+                                    if is_in_segment(vec_tri, pt - beg_t, n_vec_tri, &mut param_on_t, self.interf.get_tolerance())
+                                    {
+                                        let sp_lieu = beg_t + (end_t - beg_t) * param_on_t;
+                                        let (tmin, tmax) = if p_tri_i > p_tri_ip1pc3 {
+                                            (p_tri_ip1pc3, p_tri_i)
+                                        } else {
+                                            (p_tri_i, p_tri_ip1pc3)
+                                        };
+                                        let sp = IntfSectionPoint::new(
+                                            sp_lieu,
+                                            typ_on_g,
+                                            0,
+                                            self.i_lin,
+                                            param_on_o,
+                                            IntfPIType::Edge,
+                                            tmin as i32,
+                                            tmax as i32,
+                                            0.0,
+                                            1.0,
+                                        );
+                                        self.interf.my_s_poins_mut().push(sp);
+                                    }
+                                }
                             }
                         }
                     }

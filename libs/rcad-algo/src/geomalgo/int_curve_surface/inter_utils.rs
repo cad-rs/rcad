@@ -10,6 +10,8 @@
 //! [`crate::geomalgo::intf::PolygonLike`].
 
 use glam::DVec3;
+use rcad_kernel::base::extrema::POnCurve;
+use rcad_kernel::base::extrema_ext_elc::ExtremaExtElC;
 use rcad_kernel::base::proj_lib::CurveType;
 use rcad_kernel::geom::{Line2d, Line3, Plane};
 use rcad_kernel::math::direct_polynomial_roots::DirectPolynomialRoots;
@@ -217,26 +219,35 @@ pub(crate) fn est_lim_for_inf_extr<S, ST: HSurfaceTool<Surface = S>>(
         let step = (*u2new - *u1new) / nbsu as f64;
         let mut u = *u1new;
 
-        use rcad_kernel::base::extrema::line_line_extrema;
         for _i in 0..=nbsu {
             let a_p = <ST as HSurfaceTool>::d0(surface, u, 0.0);
             let a_l = Line3::new(a_p, a_dir_of_ext);
 
-            // OCCT Extrema_ExtElC aExtr(aL, Line, tolang): IsDone/IsParallel.
-            let a_extr = line_line_extrema(&a_l, line);
-            if a_extr.is_empty() {
+            // OCCT: Extrema_ExtElC aExtr(aL, Line, tolang).
+            let a_extr = ExtremaExtElC::line_line(&a_l, line, tolang);
+
+            // OCCT: if (!aExtr.IsDone()) return;
+            if !a_extr.is_done() {
                 return;
             }
 
-            // OCCT IsParallel: the two lines share the direction (checked
-            // above for aDirOfExt; kept structural).
-            if dir_is_parallel(a_dir_of_ext, line.direction, tolang) {
+            // OCCT: if (aExtr.IsParallel()) { NoIntersection = true; return; }
+            if a_extr.is_parallel() {
                 *no_intersection = true;
                 return;
             }
 
-            // aExtr.Points(1, aP1, aP2); v = aP1.Parameter().
-            let v = a_extr[0].1;
+            // OCCT: aExtr.Points(1, aP1, aP2); v = aP1.Parameter().
+            let mut a_p1 = POnCurve {
+                param: 0.0,
+                point: DVec3::ZERO,
+            };
+            let mut a_p2 = POnCurve {
+                param: 0.0,
+                point: DVec3::ZERO,
+            };
+            a_extr.points(1, &mut a_p1, &mut a_p2);
+            let v = a_p1.param;
             vmin = vmin.min(v);
             vmax = vmax.max(v);
 

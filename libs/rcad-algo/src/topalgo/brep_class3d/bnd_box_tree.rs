@@ -11,8 +11,11 @@
 // collected vertices/edges with the same Reject/Accept predicates (the UBTree
 // only accelerates the scan, the selection result is identical).
 
-use rcad_kernel::base::extrema::closest_point_on_curve;
-use rcad_kernel::geom::{Curve3, CurveEval};
+use rcad_kernel::base::extrema::{closest_point_on_curve, POnCurve};
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_cc::ExtremaExtCC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
+use rcad_kernel::geom::{Curve3, CurveEval, Line3};
 use rcad_kernel::math::bnd::BndBox;
 use rcad_kernel::precision::CONFUSION;
 use glam::DVec3;
@@ -214,45 +217,60 @@ impl BndBoxTreeSelectorLine {
     /// tangent case cannot be used for classification). Interferences closer
     /// than the edge tolerance are recorded with the parameters on both curves.
     fn accept_edge(&mut self, idx: usize, curve: &Curve3, tol: f64, range: [f64; 2]) -> bool {
-        // OCCT Extrema_ExtCC::IsParallel (ExtCC.cxx): true only for the
-        // line-line branch (ExtElC sets myIsPar); the line-conic branches
-        // leave it false. rcad: line_line_extrema reports parallelism by
-        // collapsing to a single constant-distance solution — detect it the
-        // same way (ExtElC line-line L268-357).
-        if let Curve3::Line(el) = curve {
-            let a_d1 = self.line_dir.normalize_or_zero();
-            let a_d2 = el.direction.normalize_or_zero();
-            if a_d1.length_squared() > 0.5 && a_d2.length_squared() > 0.5 {
-                let a_sq_sin_a = 1.0 - a_d1.dot(a_d2) * a_d1.dot(a_d2);
-                if a_sq_sin_a < 1e-30 {
-                    // OCCT L104-107: IsParallel -> the tangent case is invalid.
-                    self.is_valid = false;
-                    return false;
+        // OCCT: BRepAdaptor_Curve C(E); BRep_Tool::Range(E, f, l).
+        let a_c = GeomCurveAdaptor::with_range(curve.clone(), range[0], range[1]);
+        // OCCT: myLC = GeomAdaptor_Curve(Geom_Line(theL), -PConfusion,
+        // theMaxParam) (SetCurrentLine, BndBoxTree.hxx L90-94).
+        let l0 = -CONFUSION;
+        let l1 = self.max_param;
+        let a_line_curve = Curve3::Line(Line3::new(self.line_origin, self.line_dir));
+        let a_lc = GeomCurveAdaptor::with_range(a_line_curve.clone(), l0, l1);
+        let a_tool_c = CurveToolHandle::for_curve3(curve, &a_c, &a_c);
+        let a_tool_lc = CurveToolHandle::for_curve3(&a_line_curve, &a_lc, &a_lc);
+
+        // OCCT: Extrema_ExtCC ExtCC(C, myLC, f, l, myLC.FirstParameter(),
+        // myLC.LastParameter()).
+        let an_ext_cc = ExtremaExtCC::new_curves_ranged(
+            &a_tool_c,
+            &a_tool_lc,
+            range[0],
+            range[1],
+            l0,
+            l1,
+            1.0e-10,
+            1.0e-10,
+        );
+
+        // cxx L98-124.
+        if an_ext_cc.is_done() {
+            if an_ext_cc.is_parallel() {
+                // Tangent case is invalid for classification.
+                self.is_valid = false;
+            } else if an_ext_cc.nb_ext() > 0 {
+                let mut is_inside = false;
+                for i in 1..=an_ext_cc.nb_ext() {
+                    if an_ext_cc.square_distance(i) < tol * tol {
+                        let mut a_p1 = POnCurve {
+                            param: 0.0,
+                            point: DVec3::ZERO,
+                        };
+                        let mut a_p2 = POnCurve {
+                            param: 0.0,
+                            point: DVec3::ZERO,
+                        };
+                        an_ext_cc.points(i, &mut a_p1, &mut a_p2);
+                        // EP.myParam = P1.Parameter() (par on myE).
+                        // EP.myLParam = P2.Parameter() (par on line).
+                        self.edge_params.push((idx, a_p1.param, a_p2.param));
+                        is_inside = true;
+                    }
+                }
+                if is_inside {
+                    return true;
                 }
             }
         }
-        // OCCT Extrema_ExtCC(C, myLC, f, l, myLC.FirstParameter(),
-        // myLC.LastParameter()) — the line range is [-PConfusion, MaxParam]
-        // (SetCurrentLine L91-93). The first argument is the gp_Lin myLC
-        // (Adaptor3d_Curve of the line); ext_cc_line_conic takes the Line3.
-        let l0 = -CONFUSION;
-        let l1 = self.max_param;
-        let ext = rcad_kernel::base::extrema::ext_cc_line_conic(
-            &rcad_kernel::geom::Line3::new(self.line_origin, self.line_dir),
-            l0,
-            l1,
-            curve,
-            range[0],
-            range[1],
-        );
-        let mut inside = false;
-        for (d, p1, p2) in &ext.interior {
-            if *d < tol {
-                self.edge_params.push((idx, *p1, *p2));
-                inside = true;
-            }
-        }
-        inside
+        false
     }
 
     /// OCCT BndBoxTree.cxx L124-135 (VERTEX branch): Extrema_ExtPElC(vertex,

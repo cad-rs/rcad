@@ -140,6 +140,35 @@ impl<'a> CurveToolHandle<'a> {
         }
     }
 
+    /// The facade over the rcad encoding of OCCT `GeomAdaptor_Curve(C, First,
+    /// Last)`: the adaptor half answers the evaluation, the geometry half the
+    /// type/downcast, and the OCCT queries the rcad adaptor traits do not
+    /// carry (`Geom_Curve::IsPeriodic` / `Period` / `IsClosed`) are taken from
+    /// the kernel curve itself.
+    pub fn for_curve3(
+        curve3: &'a crate::geom::Curve3,
+        curve: &'a dyn Adaptor3dCurve,
+        geom: &'a dyn Adaptor3dCurveGeom,
+    ) -> Self {
+        // OCCT Geom_Circle::IsPeriodic() / Period() / IsClosed().
+        let a_period = match curve3 {
+            crate::geom::Curve3::Circle(_) | crate::geom::Curve3::Ellipse(_) => {
+                std::f64::consts::PI + std::f64::consts::PI
+            }
+            _ => 0.0,
+        };
+        CurveToolHandle {
+            curve,
+            geom: Some(geom),
+            curve_type: geom.get_type(),
+            is_periodic: a_period > 0.0,
+            period: a_period,
+            resolution: 1.0,
+            is_closed: a_period > 0.0,
+            curve3: Some(curve3),
+        }
+    }
+
     /// The facade over an evaluation-only adaptor handle: the OCCT queries the
     /// rcad `Adaptor3dCurve` trait does not carry are supplied by the caller.
     pub fn new(

@@ -11,11 +11,13 @@
 //! Result encoding: `mySqDist[6]` / `myPoint[6][2]` are fixed arrays exactly
 //! as in the OCCT header (L91-92).
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 
-use crate::base::extrema::POnCurve;
+use crate::base::extrema::{POnCurve, POnCurve2d};
+use crate::base::extrema_gp::dir_is_parallel;
+use crate::base::int_ana2d::AnaIntersection2d;
 use crate::core::precision::{is_infinite_value, ANGULAR, CONFUSION, INFINITE_VALUE};
-use crate::geom::{Circle3, Ellipse3, Hyperbola3, Line3, Parabola3};
+use crate::geom::{Circle2d, Circle3, Curve2dEval, Ellipse3, Hyperbola3, Line2d, Line3, Parabola3};
 use crate::math::direct_polynomial_roots::DirectPolynomialRoots;
 use crate::math::root::trig_function_roots;
 
@@ -284,6 +286,25 @@ pub(crate) fn elclib_circle_parameter(circ: &Circle3, p: DVec3) -> f64 {
     y.atan2(x)
 }
 
+/// OCCT ElCLib::CircleParameter(const gp_Ax22d& Pos, const gp_Pnt2d& P)
+/// (ElCLib.cxx L1285-1293) — the angle of P in the frame of Pos, in [0, 2*PI).
+pub(crate) fn elclib_circle2d_parameter(circ: &Circle2d, p: DVec2) -> f64 {
+    let v = p - circ.center;
+    let x = v.dot(circ.x_dir);
+    let y = v.dot(circ.y_dir);
+    // OCCT gp_Dir2d::Angle(gp_Vec2d) — the sign follows the orientation of the
+    // (XDirection, YDirection) pair, then normalizeAngle().
+    let a_cross = circ.x_dir.x * circ.y_dir.y - circ.x_dir.y * circ.y_dir.x;
+    let mut a_teta = y.atan2(x);
+    if a_cross < 0.0 {
+        a_teta = -a_teta;
+    }
+    if a_teta < 0.0 {
+        a_teta += std::f64::consts::PI + std::f64::consts::PI;
+    }
+    a_teta
+}
+
 /// OCCT gp_Lin::SquareDistance(gp_Pnt) — squared distance from the point to
 /// the line.
 pub(crate) fn line_square_distance(lin: &Line3, p: DVec3) -> f64 {
@@ -330,6 +351,114 @@ pub(crate) fn elclib_adjust_periodic(
 /// `Max(Abs(theValue), RealSmall()) * RealEpsilon()`.
 pub(crate) fn epsilon_of(the_value: f64) -> f64 {
     the_value.abs().max(2.2250738585072014e-308) * f64::EPSILON
+}
+
+// =============================================================================
+// Extrema_ExtElC2d (hxx L35-99, cxx L47-...) — the consumed ctor subset
+// =============================================================================
+
+/// OCCT Extrema_ExtElC2d (hxx L35-99) — the 2D extremum distances between two
+/// elementary curves. Only the `(gp_Lin2d, gp_Circ2d, Tol)` constructor is
+/// consumed (by `Extrema_ExtElC::PlanarLineCircleExtrema`, cxx L395); the
+/// payload uses [`POnCurve2d`] for `Extrema_POnCurv2d`.
+pub(crate) struct ExtremaExtElC2d {
+    /// hxx L92: bool myDone.
+    my_done: bool,
+    /// hxx L93: bool myIsPar.
+    my_is_par: bool,
+    /// hxx L94: int myNbExt.
+    my_nb_ext: usize,
+    /// hxx L95: double mySqDist[8].
+    my_sq_dist: [f64; 8],
+    /// hxx L96: Extrema_POnCurv2d myPoint[8][2].
+    my_point: [[POnCurve2d; 2]; 8],
+}
+
+/// The OCCT default-constructed Extrema_POnCurv2d (parameter 0, point (0,0)).
+fn default_p_on_curve2d() -> POnCurve2d {
+    POnCurve2d {
+        param: 0.0,
+        point: DVec2::ZERO,
+    }
+}
+
+impl ExtremaExtElC2d {
+    /// OCCT Extrema_ExtElC2d(const gp_Lin2d& C1, const gp_Circ2d& C2, double)
+    /// (cxx L104-167).
+    pub(crate) fn line_circle(the_c1: &Line2d, the_c2: &Circle2d, _tol: f64) -> Self {
+        let mut this = ExtremaExtElC2d {
+            my_done: false,
+            my_is_par: false,
+            my_nb_ext: 0,
+            my_sq_dist: [REAL_LAST; 8],
+            my_point: [
+                [default_p_on_curve2d(), default_p_on_curve2d()],
+                [default_p_on_curve2d(), default_p_on_curve2d()],
+                [default_p_on_curve2d(), default_p_on_curve2d()],
+                [default_p_on_curve2d(), default_p_on_curve2d()],
+                [default_p_on_curve2d(), default_p_on_curve2d()],
+                [default_p_on_curve2d(), default_p_on_curve2d()],
+                [default_p_on_curve2d(), default_p_on_curve2d()],
+                [default_p_on_curve2d(), default_p_on_curve2d()],
+            ],
+        };
+
+        // cxx L126-132.
+        let a_d = the_c1.direction;
+        let x2 = the_c2.x_dir;
+        let y2 = the_c2.y_dir;
+        let dx = a_d.dot(x2);
+        let dy = a_d.dot(y2);
+        let o1 = the_c1.origin;
+        let mut a_teta = [0.0f64; 2];
+
+        // cxx L136-146.
+        if dy.abs() <= REAL_EPSILON {
+            a_teta[0] = std::f64::consts::FRAC_PI_2;
+        } else {
+            a_teta[0] = (-dx / dy).atan();
+        }
+        a_teta[1] = a_teta[0] + std::f64::consts::PI;
+        if a_teta[0] < 0.0 {
+            a_teta[0] += std::f64::consts::PI + std::f64::consts::PI;
+        }
+
+        // cxx L148-164.
+        for an_idx in 0..2 {
+            let a_p2 = the_c2.point_at(a_teta[an_idx]);
+            // OCCT: U1 = (gp_Vec2d(O1, P2)).Dot(D).
+            let a_u1 = (a_p2 - o1).dot(a_d);
+            let a_p1 = the_c1.point_at(a_u1);
+            this.my_sq_dist[this.my_nb_ext] = a_p1.distance_squared(a_p2);
+            this.my_point[this.my_nb_ext][0] = POnCurve2d {
+                param: a_u1,
+                point: a_p1,
+            };
+            this.my_point[this.my_nb_ext][1] = POnCurve2d {
+                param: a_teta[an_idx],
+                point: a_p2,
+            };
+            this.my_nb_ext += 1;
+        }
+        this.my_done = true;
+        this
+    }
+
+    /// OCCT IsDone() (cxx).
+    pub(crate) fn is_done(&self) -> bool {
+        self.my_done
+    }
+
+    /// OCCT NbExt() (cxx).
+    pub(crate) fn nb_ext(&self) -> usize {
+        self.my_nb_ext
+    }
+
+    /// OCCT Points(N, P1, P2) (cxx) — 1-based.
+    pub(crate) fn points(&self, n: usize, p1: &mut POnCurve2d, p2: &mut POnCurve2d) {
+        *p1 = self.my_point[n - 1][0].clone();
+        *p2 = self.my_point[n - 1][1].clone();
+    }
 }
 
 // =============================================================================
@@ -409,7 +538,7 @@ impl ExtremaExtElC {
         let a_sq_sin_a = 1.0 - a_cos_a * a_cos_a;
         let mut a_u1 = 0.0;
         let mut a_u2 = 0.0;
-        if a_sq_sin_a < GP_RESOLUTION || a_cos_a.abs() > ANGULAR.cos() {
+        if a_sq_sin_a < GP_RESOLUTION || dir_is_parallel(a_d1, a_d2, ANGULAR) {
             this.my_is_par = true;
         } else {
             let a_l1l2 = the_c2.origin - the_c1.origin;
@@ -479,11 +608,14 @@ impl ExtremaExtElC {
         let a_tol_ro2o1 = GP_RESOLUTION;
         let a_ro2o1 = o2o1_raw.length();
         let o2o1 = if a_ro2o1 > a_tol_ro2o1 {
-            // cxx L513-518.
+            // cxx L513-518: O2O1.Multiply(1. / aRO2O1);
+            // aDO2O1.SetCoord(O2O1.Dot(x2), O2O1.Dot(y2), O2O1.Dot(z2));
+            // RefineDir(aDO2O1); O2O1.SetXYZ(aRO2O1 * aDO2O1.XYZ());
+            let a_o2o1_unit = o2o1_raw * (1.0 / a_ro2o1);
             let a_do2o1 = refine_dir(DVec3::new(
-                o2o1_raw.dot(x2),
-                o2o1_raw.dot(y2),
-                o2o1_raw.dot(z2),
+                a_o2o1_unit.dot(x2),
+                a_o2o1_unit.dot(y2),
+                a_o2o1_unit.dot(z2),
             ));
             a_ro2o1 * a_do2o1
         } else {
@@ -562,24 +694,101 @@ impl ExtremaExtElC {
         this
     }
 
-    /// OCCT Extrema_ExtElC::PlanarLineCircleExtrema (cxx L361-439) — GAP
-    /// carrier.
+    /// OCCT Extrema_ExtElC::PlanarLineCircleExtrema (cxx L361-439).
     ///
-    /// GAP dependency: the body needs `Extrema_ExtElC2d(gp_Lin2d, gp_Circ2d)`
-    /// (Extrema_ExtElC2d.cxx) and `IntAna2d_AnaIntersection(gp_Lin2d, gp_Circ2d)`
-    /// — neither is translated into the Extrema-language 2D form yet (only the
-    /// line/ellipse form lives in the geomalgo IntAna consumers).
-    ///
-    /// OCCT failure path preserved (cxx L365-368): when the line is not
-    /// parallel to the circle plane the method returns `false` and the caller
-    /// (cxx L485) falls through into the general 3D trigonometric solve; the
-    /// GAP returns `false` for every input, i.e. exactly the OCCT branch taken
-    /// whenever the planarity test fails, and the general solve then runs
-    /// (mathematically the same stationary-distance equation, so only the
-    /// planar short-circuit's numerically-safer root set is lost).
-    fn planar_line_circle_extrema(&mut self, _the_lin: &Line3, _the_circ: &Circle3) -> bool {
+    /// Returns `false` when the line is not parallel to the circle plane (cxx
+    /// L365-368) — the caller (cxx L485) then falls through into the general
+    /// 3D trigonometric solve.
+    fn planar_line_circle_extrema(&mut self, the_lin: &Line3, the_circ: &Circle3) -> bool {
         // cxx L361-368.
-        false
+        let a_dir_c = the_circ.normal;
+        let a_dir_l = the_lin.direction;
+        if a_dir_c.dot(a_dir_l).abs() > ANGULAR {
+            return false;
+        }
+
+        // cxx L370-398: the line is in the circle-plane completely (or parallel
+        // to it), so the extremas and intersections are searched in 2D-space.
+        let a_c_loc = the_circ.center;
+        let a_d_cx = the_circ.x_dir;
+        let a_d_cy = the_circ.y_dir;
+        let a_l_loc = the_lin.origin;
+        let a_l_dir = the_lin.direction;
+        let a_vec_cl = a_l_loc - a_c_loc;
+
+        // OCCT: gp_Ax22d aCircAxis(aPC, X, Y); gp_Circ2d aCirc2d(aCircAxis, R).
+        let a_circ2d = Circle2d {
+            center: DVec2::ZERO,
+            x_dir: DVec2::X,
+            y_dir: DVec2::Y,
+            radius: the_circ.radius,
+        };
+        let a_p_l = DVec2::new(a_vec_cl.dot(a_d_cx), a_vec_cl.dot(a_d_cy));
+        let a_d_l = DVec2::new(a_l_dir.dot(a_d_cx), a_l_dir.dot(a_d_cy));
+        let a_lin2d = Line2d::new(a_p_l, a_d_l);
+
+        // cxx L393-396: Extrema_ExtElC2d anExt2d(aLin2d, aCirc2d,
+        // Precision::Confusion()); IntAna2d_AnaIntersection anInters(aLin2d,
+        // aCirc2d).
+        let an_ext2d = ExtremaExtElC2d::line_circle(&a_lin2d, &a_circ2d, CONFUSION);
+        let mut an_inters = AnaIntersection2d::new();
+        an_inters.perform_lin_circ(&a_lin2d, &a_circ2d);
+
+        // cxx L399-408.
+        self.my_done = an_ext2d.is_done() || an_inters.is_done();
+        if !self.my_done {
+            return true;
+        }
+
+        let a_nb_extr = an_ext2d.nb_ext();
+        let a_nb_sol = an_inters.nb_points();
+        let a_nb_sum = a_nb_extr + a_nb_sol;
+
+        // cxx L410-437.
+        for an_extr_id in 1..=a_nb_sum {
+            let a_delta = an_extr_id as i64 - a_nb_extr as i64;
+
+            let a_lin_par;
+            let a_circ_par;
+            if a_delta < 1 {
+                let mut a_p_lin2d = default_p_on_curve2d();
+                let mut a_p_circ2d = default_p_on_curve2d();
+                an_ext2d.points(an_extr_id, &mut a_p_lin2d, &mut a_p_circ2d);
+                a_lin_par = a_p_lin2d.param;
+                a_circ_par = a_p_circ2d.param;
+            } else {
+                let a_point = an_inters.point(a_delta as usize);
+                a_lin_par = a_point.param_on_first();
+                // OCCT: anInters.Point(aDelta).ParamOnSecond() — the angle of
+                // the intersection point in the reference of the 2D circle
+                // (IntAna2d_AnaIntersection_3.cxx L94-97:
+                // ang = ElCLib::Parameter(C, aP2D)).
+                //
+                // rcad's AnaIntersection2d::perform_lin_circ does not fill the
+                // point payload (solve_quadratic_intersection stores (0, 0)),
+                // so the angle is re-derived with the OCCT definition from the
+                // line parameter — the same quantity the OCCT Perform body
+                // computes.  See the interface request in the delivery report.
+                let a_p2d = a_lin2d.point_at(a_lin_par);
+                a_circ_par = elclib_circle2d_parameter(&a_circ2d, a_p2d);
+            }
+
+            // OCCT: ElCLib::LineValue(aLinPar, theLin.Position()) /
+            // ElCLib::CircleValue(aCircPar, theCirc.Position(), Radius).
+            let a_p_on_l = elclib_line_value(a_lin_par, the_lin);
+            let a_p_on_c = elclib_circle_value(a_circ_par, the_circ);
+            self.my_sq_dist[self.my_nb_ext] = a_p_on_l.distance_squared(a_p_on_c);
+            self.my_point[self.my_nb_ext][0] = POnCurve {
+                param: a_lin_par,
+                point: a_p_on_l,
+            };
+            self.my_point[self.my_nb_ext][1] = POnCurve {
+                param: a_circ_par,
+                point: a_p_on_c,
+            };
+            self.my_nb_ext += 1;
+        }
+        true
     }
 
     /// OCCT Extrema_ExtElC(const gp_Lin& C1, const gp_Elips& C2)
@@ -1004,3 +1213,77 @@ impl Default for ExtremaExtElC {
         ExtremaExtElC::new()
     }
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The minimum over the extrema the class reports — the OCCT accessor
+    /// sequence `IsDone() / NbExt() / SquareDistance(i)`.
+    fn min_sq_dist(the_ext: &ExtremaExtElC) -> f64 {
+        if !the_ext.is_done() {
+            return f64::INFINITY;
+        }
+        let mut a_min = f64::INFINITY;
+        for an_idx in 1..=the_ext.nb_ext() {
+            a_min = a_min.min(the_ext.square_distance(an_idx));
+        }
+        a_min
+    }
+
+    /// Extrema_ExtElC(gp_Lin, gp_Circ): line y=5 against the circle R=1 at the
+    /// origin -> min distance 4.
+    #[test]
+    fn line_circle_far_away() {
+        let a_l = Line3::new(DVec3::new(0.0, 5.0, 0.0), DVec3::X);
+        let a_c = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0);
+        let an_ext = ExtremaExtElC::line_circle(&a_l, &a_c, CONFUSION);
+        let a_d = min_sq_dist(&an_ext).sqrt();
+        assert!((a_d - 4.0).abs() < 1e-6, "expected 4.0, got {a_d}");
+    }
+
+    /// Extrema_ExtElC(gp_Lin, gp_Circ): line y=0.5 crossing the circle R=1 at
+    /// the origin -> min distance 0.
+    #[test]
+    fn line_circle_intersecting() {
+        let a_l = Line3::new(DVec3::new(0.0, 0.5, 0.0), DVec3::X);
+        let a_c = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0);
+        let an_ext = ExtremaExtElC::line_circle(&a_l, &a_c, CONFUSION);
+        let a_d = min_sq_dist(&an_ext);
+        assert!(a_d < 1e-12, "expected 0, got {a_d}");
+    }
+
+    /// Extrema_ExtElC(gp_Lin, gp_Circ): the line is parallel to the circle
+    /// plane at offset 3 with dc2d = 0 <= R -> min distance 3.
+    #[test]
+    fn line_circle_off_plane() {
+        let a_l = Line3::new(DVec3::ZERO, DVec3::X);
+        let a_c = Circle3::new(DVec3::new(0.0, 0.0, 3.0), DVec3::Z, 1.0);
+        let an_ext = ExtremaExtElC::line_circle(&a_l, &a_c, CONFUSION);
+        let a_d = min_sq_dist(&an_ext).sqrt();
+        assert!((a_d - 3.0).abs() < 1e-6, "expected 3.0, got {a_d}");
+    }
+
+    /// Extrema_ExtElC(gp_Lin, gp_Elips): line x=4 (direction +y) against the
+    /// ellipse (major 3 along x, minor 1 along y) at the origin -> the nearest
+    /// ellipse point is (3, 0) and the min distance is 1.
+    #[test]
+    fn line_ellipse_extrema_smoke() {
+        let a_l = Line3::new(DVec3::new(4.0, 0.0, 0.0), DVec3::Y);
+        let an_e = Ellipse3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            major_radius: 3.0,
+            minor_radius: 1.0,
+        };
+        let an_ext = ExtremaExtElC::line_ellipse(&a_l, &an_e);
+        let a_d = min_sq_dist(&an_ext).sqrt();
+        assert!((a_d - 1.0).abs() < 1e-6, "expected 1.0, got {a_d}");
+    }
+}
+
