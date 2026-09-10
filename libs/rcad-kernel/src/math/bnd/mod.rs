@@ -36,6 +36,11 @@ const YMAX_OPEN: u8 = 16;
 const ZMIN_OPEN: u8 = 32;
 const ZMAX_OPEN: u8 = 64;
 
+// OCCT Bnd_Box.cxx L27 / Bnd_Box2d.cxx L27 — the packages' own
+// infinite-bounds constant (1e+100, NOT IEEE infinity and NOT
+// Precision::Infinite()); the flag-aware getters return +/- this value.
+const THE_BND_PRECISION_INFINITE: f64 = 1e100;
+
 /// OCCT Bnd_Box — axis-aligned bounding box with gap.
 ///
 /// ✅ OCCT-aligned: Add(Point), Add(Box), IsOut(Point), IsOut(Box),
@@ -87,8 +92,10 @@ impl BndBox {
         }
     }
 
-    /// OCCT Bnd_Box::Update(xmin, ymin, zmin, xmax, ymax, zmax) — the box
-    /// becomes the finite axis-aligned box (open flags cleared).
+    /// OCCT Bnd_Box::Update(xmin, ymin, zmin, xmax, ymax, zmax)
+    /// (Bnd_Box.cxx L152-180): a void box takes the rectangle with only the
+    /// VoidMask cleared, otherwise each interval min/max-merges; the open
+    /// direction flags are preserved either way.
     pub fn update(&mut self, x_min: f64, y_min: f64, z_min: f64, x_max: f64, y_max: f64, z_max: f64) {
         self.x_min = x_min;
         self.y_min = y_min;
@@ -96,7 +103,7 @@ impl BndBox {
         self.x_max = x_max;
         self.y_max = y_max;
         self.z_max = z_max;
-        self.flags &= !(VOID_MASK | XMIN_OPEN | XMAX_OPEN | YMIN_OPEN | YMAX_OPEN | ZMIN_OPEN | ZMAX_OPEN);
+        self.flags &= !VOID_MASK;
     }
 
     /// OCCT Bnd_Box::SetVoid() — the box becomes void.
@@ -140,39 +147,57 @@ impl BndBox {
     /// Set the gap.  OCCT: SetGap(Tol).
     pub fn set_gap(&mut self, tol: f64) { self.gap = tol.abs(); }
 
-    /// Enlarge the box by a tolerance in all six directions.
-    /// OCCT: Bnd_Box::Enlarge(const Standard_Real Tol).
-    /// A void box is left untouched (OCCT: void box stays void).
-    ///
-    /// 1:1 DEBT (recorded, not fixed here): OCCT Bnd_Box.hxx L154 is
-    ///   `void Enlarge(const double Tol) noexcept { Gap = std::max(Gap, std::abs(Tol)); }`
-    /// i.e. it only raises the gap and leaves the raw bounds alone; this body
-    /// instead moves the raw bounds, and the getters apply the gap as well, so
-    /// the enlargement is applied twice whenever gap != 0.  Fixing it belongs
-    /// to the coordinated flag-based Bnd_Box / Precision::Infinite batch
-    /// (tkfeat-fillet-offset-port-plan.md §9 E3-R queue 7c) so the pipeline
-    /// effect is measurable in isolation.
+    /// Enlarge the box with a tolerance value.
+    /// OCCT: Bnd_Box::Enlarge(Tol) (Bnd_Box.hxx L154):
+    /// `Gap = max(Gap, abs(Tol))` — the raw bounds are left alone; the
+    /// gap-applying getters see the enlargement exactly once.
     pub fn enlarge(&mut self, tol: f64) {
-        if self.is_void() || !tol.is_finite() { return; }
-        self.x_min -= tol;
-        self.x_max += tol;
-        self.y_min -= tol;
-        self.y_max += tol;
-        self.z_min -= tol;
-        self.z_max += tol;
+        self.gap = self.gap.max(tol.abs());
     }
 
     // ── Get corners (including gap) — OCCT: Get() ───────────────────────
 
-    /// Retrieve the finite box corners including gap.
-    /// Returns `None` if the box is void.
-    /// OCCT: void Get(xmin, ymin, zmin, xmax, ymax, zmax) const.
+    /// OCCT Bnd_Box::GetXMin() (Bnd_Box.cxx L239-242).
+    fn get_x_min(&self) -> f64 {
+        if self.is_open_xmin() { -THE_BND_PRECISION_INFINITE } else { self.x_min - self.gap }
+    }
+
+    /// OCCT Bnd_Box::GetXMax() (Bnd_Box.cxx L247-250).
+    fn get_x_max(&self) -> f64 {
+        if self.is_open_xmax() { THE_BND_PRECISION_INFINITE } else { self.x_max + self.gap }
+    }
+
+    /// OCCT Bnd_Box::GetYMin() (Bnd_Box.cxx L255-258).
+    fn get_y_min(&self) -> f64 {
+        if self.is_open_ymin() { -THE_BND_PRECISION_INFINITE } else { self.y_min - self.gap }
+    }
+
+    /// OCCT Bnd_Box::GetYMax() (Bnd_Box.cxx L263-266).
+    fn get_y_max(&self) -> f64 {
+        if self.is_open_ymax() { THE_BND_PRECISION_INFINITE } else { self.y_max + self.gap }
+    }
+
+    /// OCCT Bnd_Box::GetZMin() (Bnd_Box.cxx L271-274).
+    fn get_z_min(&self) -> f64 {
+        if self.is_open_zmin() { -THE_BND_PRECISION_INFINITE } else { self.z_min - self.gap }
+    }
+
+    /// OCCT Bnd_Box::GetZMax() (Bnd_Box.cxx L279-282).
+    fn get_z_max(&self) -> f64 {
+        if self.is_open_zmax() { THE_BND_PRECISION_INFINITE } else { self.z_max + self.gap }
+    }
+
+    /// Retrieve the box corners including gap.
+    /// Returns `None` if the box is void (the Standard_ConstructionError of
+    /// the OCCT throw).  OCCT: void Get(xmin, ymin, zmin, xmax, ymax, zmax)
+    /// const (Bnd_Box.cxx L207-231): the corners come from the flag-aware
+    /// GetXMin/GetXMax/GetYMin/GetYMax/GetZMin/GetZMax, so an open direction
+    /// reads as +/- THE_BND_PRECISION_INFINITE.
     pub fn get(&self) -> Option<(f64, f64, f64, f64, f64, f64)> {
         if self.is_void() { return None; }
-        let g = self.gap;
         Some((
-            self.x_min - g, self.y_min - g, self.z_min - g,
-            self.x_max + g, self.y_max + g, self.z_max + g,
+            self.get_x_min(), self.get_y_min(), self.get_z_min(),
+            self.get_x_max(), self.get_y_max(), self.get_z_max(),
         ))
     }
 
@@ -188,13 +213,15 @@ impl BndBox {
 
     // ── Add — OCCT: Add(Pnt), Add(Bnd_Box) ────────────────────────────
 
-    /// Extend the box to include a point.  OCCT: Add(const gp_Pnt&).
+    /// Extend the box to include a point.  OCCT: Add(const gp_Pnt&) →
+    /// Update(X, Y, Z) (Bnd_Box.cxx L605-625): a void box takes the point
+    /// with only the VoidMask cleared, otherwise each interval min/max-merges.
     pub fn add_point(&mut self, p: DVec3) {
         if self.is_void() {
             self.x_min = p.x; self.x_max = p.x;
             self.y_min = p.y; self.y_max = p.y;
             self.z_min = p.z; self.z_max = p.z;
-            self.flags = 0;
+            self.flags &= !VOID_MASK;
         } else {
             if p.x < self.x_min { self.x_min = p.x }
             if p.x > self.x_max { self.x_max = p.x }
@@ -205,101 +232,249 @@ impl BndBox {
         }
     }
 
-    /// Extend the box to enclose another box.  OCCT: Add(const Bnd_Box&).
+    /// Extend the box to enclose another box.
+    /// OCCT: Add(const Bnd_Box& Other) (Bnd_Box.cxx L516-603): the gap takes
+    /// the max, whole/void short-circuit, and each direction merges through
+    /// its open flag.
     pub fn add_box(&mut self, other: &BndBox) {
         if other.is_void() { return; }
         if self.is_void() {
             *self = other.clone();
             return;
         }
-        if other.x_min < self.x_min { self.x_min = other.x_min }
-        if other.x_max > self.x_max { self.x_max = other.x_max }
-        if other.y_min < self.y_min { self.y_min = other.y_min }
-        if other.y_max > self.y_max { self.y_max = other.y_max }
-        if other.z_min < self.z_min { self.z_min = other.z_min }
-        if other.z_max > self.z_max { self.z_max = other.z_max }
-        // Merge flags: if other has an open direction, propagate
-        self.flags |= other.flags & !VOID_MASK;
+        self.gap = self.gap.max(other.gap);
+        if self.is_whole() {
+            return;
+        }
+        if other.is_whole() {
+            self.set_whole();
+            return;
+        }
+        if !self.is_open_xmin() {
+            if other.is_open_xmin() { self.open_xmin(); }
+            else if self.x_min > other.x_min { self.x_min = other.x_min; }
+        }
+        if !self.is_open_xmax() {
+            if other.is_open_xmax() { self.open_xmax(); }
+            else if self.x_max < other.x_max { self.x_max = other.x_max; }
+        }
+        if !self.is_open_ymin() {
+            if other.is_open_ymin() { self.open_ymin(); }
+            else if self.y_min > other.y_min { self.y_min = other.y_min; }
+        }
+        if !self.is_open_ymax() {
+            if other.is_open_ymax() { self.open_ymax(); }
+            else if self.y_max < other.y_max { self.y_max = other.y_max; }
+        }
+        if !self.is_open_zmin() {
+            if other.is_open_zmin() { self.open_zmin(); }
+            else if self.z_min > other.z_min { self.z_min = other.z_min; }
+        }
+        if !self.is_open_zmax() {
+            if other.is_open_zmax() { self.open_zmax(); }
+            else if self.z_max < other.z_max { self.z_max = other.z_max; }
+        }
     }
 
     // ── IsOut — OCCT: IsOut(Pnt), IsOut(Bnd_Box) ──────────────────────
 
     /// Test if a point is outside this box.
-    /// OCCT: Standard_Boolean IsOut(const gp_Pnt&) const.
+    /// OCCT: Standard_Boolean IsOut(const gp_Pnt& P) const
+    /// (Bnd_Box.cxx L662-703): whole is out for no point, void for every
+    /// point, and each direction test is suppressed by its open flag.
     pub fn is_out_point(&self, p: DVec3) -> bool {
-        if self.is_void() { return true; }
-        let g = self.gap;
-        p.x < self.x_min - g || p.x > self.x_max + g
-            || p.y < self.y_min - g || p.y > self.y_max + g
-            || p.z < self.z_min - g || p.z > self.z_max + g
+        if self.is_whole() {
+            return false;
+        }
+        if self.is_void() {
+            return true;
+        }
+        if !self.is_open_xmin() && p.x < (self.x_min - self.gap) {
+            return true;
+        } else if !self.is_open_xmax() && p.x > (self.x_max + self.gap) {
+            return true;
+        } else if !self.is_open_ymin() && p.y < (self.y_min - self.gap) {
+            return true;
+        } else if !self.is_open_ymax() && p.y > (self.y_max + self.gap) {
+            return true;
+        } else if !self.is_open_zmin() && p.z < (self.z_min - self.gap) {
+            return true;
+        } else if !self.is_open_zmax() && p.z > (self.z_max + self.gap) {
+            return true;
+        }
+        false
     }
 
     /// Test if another bounding box does NOT intersect this one.
-    /// Returns `true` if `other` is entirely outside.
-    /// OCCT: Standard_Boolean IsOut(const Bnd_Box&) const.
+    /// OCCT: Standard_Boolean IsOut(const Bnd_Box& Other) const
+    /// (Bnd_Box.cxx L889-963): the both-all-finite fast path with early exit
+    /// per separating axis, then the void/whole short-circuits and the
+    /// flag-aware per-axis tests.
     pub fn is_out_box(&self, other: &BndBox) -> bool {
-        if self.is_void() || other.is_void() { return true; }
-        let g = self.gap + other.gap;
-        other.x_max + g < self.x_min || other.x_min - g > self.x_max
-            || other.y_max + g < self.y_min || other.y_min - g > self.y_max
-            || other.z_max + g < self.z_min || other.z_min - g > self.z_max
+        // Fast path for non-open boxes with early exit.
+        if self.flags == 0 && other.flags == 0 {
+            let a_delta = other.gap + self.gap;
+            if self.x_min - other.x_max > a_delta {
+                return true;
+            }
+            if other.x_min - self.x_max > a_delta {
+                return true;
+            }
+            if self.y_min - other.y_max > a_delta {
+                return true;
+            }
+            if other.y_min - self.y_max > a_delta {
+                return true;
+            }
+            if self.z_min - other.z_max > a_delta {
+                return true;
+            }
+            if other.z_min - self.z_max > a_delta {
+                return true;
+            }
+            return false;
+        }
+
+        // Handle special cases.
+        if self.is_void() || other.is_void() {
+            return true;
+        }
+        if self.is_whole() || other.is_whole() {
+            return false;
+        }
+
+        let a_delta = other.gap + self.gap;
+
+        if !self.is_open_xmin() && !other.is_open_xmax() && self.x_min - other.x_max > a_delta {
+            return true;
+        }
+        if !self.is_open_xmax() && !other.is_open_xmin() && other.x_min - self.x_max > a_delta {
+            return true;
+        }
+        if !self.is_open_ymin() && !other.is_open_ymax() && self.y_min - other.y_max > a_delta {
+            return true;
+        }
+        if !self.is_open_ymax() && !other.is_open_ymin() && other.y_min - self.y_max > a_delta {
+            return true;
+        }
+        if !self.is_open_zmin() && !other.is_open_zmax() && self.z_min - other.z_max > a_delta {
+            return true;
+        }
+        if !self.is_open_zmax() && !other.is_open_zmin() && other.z_min - self.z_max > a_delta {
+            return true;
+        }
+        false
     }
 
     // ── Contains — OCCT: Contains(Pnt) ─────────────────────────────────
 
     /// Test if a point is inside or on the boundary of this box.
-    /// OCCT: Standard_Boolean Contains(const gp_Pnt&) const.
+    /// OCCT: Contains(const gp_Pnt& P) const is the inline `!IsOut(P)`
+    /// (Bnd_Box.hxx).
     pub fn contains(&self, p: DVec3) -> bool {
-        if self.is_void() { return false; }
-        let g = self.gap;
-        p.x >= self.x_min - g && p.x <= self.x_max + g
-            && p.y >= self.y_min - g && p.y <= self.y_max + g
-            && p.z >= self.z_min - g && p.z <= self.z_max + g
+        !self.is_out_point(p)
     }
 
     // ── Distance — OCCT: Distance(Bnd_Box) ─────────────────────────────
 
     /// Minimum Euclidean distance between this box and another.
-    /// Returns 0 if they intersect.
-    /// OCCT: Standard_Real Distance(const Bnd_Box&) const.
+    /// Returns 0 if they intersect or either is void.
+    /// OCCT: Standard_Real Distance(const Bnd_Box& Other) const
+    /// (Bnd_Box.cxx L1249-1268): the gap- and flag-aware Get() corners of
+    /// both boxes feed the per-dimension squared distances; the sum is
+    /// square-rooted once (OCCT's exact formula).
     pub fn distance(&self, other: &BndBox) -> f64 {
-        if self.is_void() || other.is_void() || !self.is_out_box(other) {
+        if self.is_void() || other.is_void() {
             return 0.0;
         }
-        let dx = if self.x_max < other.x_min { other.x_min - self.x_max }
-                 else if other.x_max < self.x_min { self.x_min - other.x_max }
-                 else { 0.0 };
-        let dy = if self.y_max < other.y_min { other.y_min - self.y_max }
-                 else if other.y_max < self.y_min { self.y_min - other.y_max }
-                 else { 0.0 };
-        let dz = if self.z_max < other.z_min { other.z_min - self.z_max }
-                 else if other.z_max < self.z_min { self.z_min - other.z_max }
-                 else { 0.0 };
-        (dx * dx + dy * dy + dz * dz).sqrt()
+        let (axmin1, aymin1, azmin1, axmax1, aymax1, azmax1) = self.get().unwrap();
+        let (axmin2, aymin2, azmin2, axmax2, aymax2, azmax2) = other.get().unwrap();
+        let a_dist_x = distance_in_dimension(axmin1, axmax1, axmin2, axmax2);
+        let a_dist_y = distance_in_dimension(aymin1, aymax1, aymin2, aymax2);
+        let a_dist_z = distance_in_dimension(azmin1, azmax1, azmin2, azmax2);
+        (a_dist_x + a_dist_y + a_dist_z).sqrt()
     }
 
     // ── Transform — OCCT: Transformed(Trsf) ────────────────────────────
 
     /// Return a transformed copy of this box (axis-aligned result, not OBB).
-    /// OCCT: Bnd_Box Transformed(const gp_Trsf&) const.
+    /// OCCT: Bnd_Box Transformed(const gp_Trsf& T) const
+    /// (Bnd_Box.cxx L411-508): identity returns the box as-is; otherwise the
+    /// finite part (when any) contributes its 8 transformed corners, the gap
+    /// is copied, and each open direction re-opens through the transformed
+    /// direction (Add(const gp_Dir&), Bnd_Box.cxx L578-603).
+    ///
+    /// Architecture note: OCCT dispatches on gp_Trsf::Form() with a
+    /// translation fast path that returns an open box untranslated; rcad
+    /// carries a DAffine3 without a Form tag, so the general path is used
+    /// (same construction, OCCT's fast-path shortcut for open boxes is
+    /// unreachable by design here).
     pub fn transformed(&self, transform: &glam::DAffine3) -> Self {
         if self.is_void() { return Self::new(); }
-        let corners = [
-            DVec3::new(self.x_min, self.y_min, self.z_min),
-            DVec3::new(self.x_min, self.y_min, self.z_max),
-            DVec3::new(self.x_min, self.y_max, self.z_min),
-            DVec3::new(self.x_min, self.y_max, self.z_max),
-            DVec3::new(self.x_max, self.y_min, self.z_min),
-            DVec3::new(self.x_max, self.y_min, self.z_max),
-            DVec3::new(self.x_max, self.y_max, self.z_min),
-            DVec3::new(self.x_max, self.y_max, self.z_max),
-        ];
+        if *transform == glam::DAffine3::IDENTITY {
+            return self.clone();
+        }
         let mut out = Self::new();
-        for &p in &corners {
-            out.add_point(transform.transform_point3(p));
+        if self.has_finite_part() {
+            let corners = [
+                DVec3::new(self.x_min, self.y_min, self.z_min),
+                DVec3::new(self.x_max, self.y_min, self.z_min),
+                DVec3::new(self.x_min, self.y_max, self.z_min),
+                DVec3::new(self.x_max, self.y_max, self.z_min),
+                DVec3::new(self.x_min, self.y_min, self.z_max),
+                DVec3::new(self.x_max, self.y_min, self.z_max),
+                DVec3::new(self.x_min, self.y_max, self.z_max),
+                DVec3::new(self.x_max, self.y_max, self.z_max),
+            ];
+            for &p in &corners {
+                out.add_point(transform.transform_point3(p));
+            }
         }
         out.gap = self.gap;
+        if !self.is_open() {
+            return out;
+        }
+        let dirs = [
+            (self.is_open_xmin(), DVec3::new(-1.0, 0.0, 0.0)),
+            (self.is_open_xmax(), DVec3::new(1.0, 0.0, 0.0)),
+            (self.is_open_ymin(), DVec3::new(0.0, -1.0, 0.0)),
+            (self.is_open_ymax(), DVec3::new(0.0, 1.0, 0.0)),
+            (self.is_open_zmin(), DVec3::new(0.0, 0.0, -1.0)),
+            (self.is_open_zmax(), DVec3::new(0.0, 0.0, 1.0)),
+        ];
+        for (open, dir) in dirs {
+            if open {
+                out.add_dir(transform.transform_vector3(dir).normalize_or_zero());
+            }
+        }
         out
+    }
+
+    /// OCCT Bnd_Box::HasFinitePart() const (Bnd_Box.hxx L374):
+    /// `!IsVoid() && Xmax >= Xmin`.
+    fn has_finite_part(&self) -> bool {
+        !self.is_void() && self.x_max >= self.x_min
+    }
+
+    /// OCCT Bnd_Box::Add(const gp_Dir& D) (Bnd_Box.cxx L578-603): opens the
+    /// directions a (unit) direction vector points toward, thresholded at
+    /// the real epsilon (gp::RealEpsilon == DBL_EPSILON).
+    fn add_dir(&mut self, d: DVec3) {
+        if d.x < -f64::EPSILON {
+            self.open_xmin();
+        } else if d.x > f64::EPSILON {
+            self.open_xmax();
+        }
+        if d.y < -f64::EPSILON {
+            self.open_ymin();
+        } else if d.y > f64::EPSILON {
+            self.open_ymax();
+        }
+        if d.z < -f64::EPSILON {
+            self.open_zmin();
+        } else if d.z > f64::EPSILON {
+            self.open_zmax();
+        }
     }
 
     /// Clear the box (set to void).  OCCT: void Clear().
@@ -403,6 +578,24 @@ impl BndBox {
 
 impl Default for BndBox {
     fn default() -> Self { Self::new() }
+}
+
+// OCCT Bnd_Box.cxx L45-52 — DistMini2Box: the minimum squared distance
+// between two 1D intervals.
+fn dist_mini_2_box(r1_min: f64, r1_max: f64, r2_min: f64, r2_max: f64) -> f64 {
+    let a_r1 = (r1_min - r2_max) * (r1_min - r2_max);
+    let a_r2 = (r1_max - r2_min) * (r1_max - r2_min);
+    a_r1.min(a_r2)
+}
+
+// OCCT Bnd_Box.cxx L53-64 — DistanceInDimension: the squared distance in one
+// dimension, 0 when the intervals overlap.
+fn distance_in_dimension(min1: f64, max1: f64, min2: f64, max2: f64) -> f64 {
+    if (min1 <= min2 && min2 <= max1) || (min2 <= min1 && min1 <= max2) {
+        0.0
+    } else {
+        dist_mini_2_box(min1, max1, min2, max2)
+    }
 }
 
 // ── OCCT Bnd_Box2d (Bnd_Box2d.cxx) — the 2D axis-aligned box ──────────────
@@ -553,28 +746,17 @@ impl BndBox2d {
         self.gap = tol.abs();
     }
 
-    /// OCCT Bnd_Box2d::Enlarge(Tol) — grow on all four sides (void unchanged).
-    ///
-    /// 1:1 DEBT (recorded, not fixed here): OCCT Bnd_Box2d.hxx L127 is
-    ///   `void Enlarge(const double theTol) noexcept { Gap = std::max(Gap, std::abs(theTol)); }`
-    /// — it only raises the gap; this body moves the raw bounds instead while
-    /// the getters also apply the gap, so the enlargement is double-counted
-    /// whenever gap != 0.  Same coordinated batch as Bnd_Box::enlarge above
-    /// (tkfeat-fillet-offset-port-plan.md §9 E3-R queue 7c).
+    /// OCCT Bnd_Box2d::Enlarge(Tol) (Bnd_Box2d.hxx L127):
+    /// `Gap = max(Gap, abs(Tol))` — the raw bounds are left alone; the
+    /// gap-applying getters see the enlargement exactly once.
     pub fn enlarge(&mut self, tol: f64) {
-        if self.is_void() || !tol.is_finite() {
-            return;
-        }
-        self.x_min -= tol;
-        self.x_max += tol;
-        self.y_min -= tol;
-        self.y_max += tol;
+        self.gap = self.gap.max(tol.abs());
     }
 
     /// OCCT Bnd_Box2d::GetXMin() — Bnd_Box2d.cxx L127-130.
     fn get_x_min(&self) -> f64 {
         if self.flags & XMIN2D_OPEN != 0 {
-            f64::NEG_INFINITY
+            -THE_BND_PRECISION_INFINITE
         } else {
             self.x_min - self.gap
         }
@@ -583,7 +765,7 @@ impl BndBox2d {
     /// OCCT Bnd_Box2d::GetXMax() — Bnd_Box2d.cxx L134-137.
     fn get_x_max(&self) -> f64 {
         if self.flags & XMAX2D_OPEN != 0 {
-            f64::INFINITY
+            THE_BND_PRECISION_INFINITE
         } else {
             self.x_max + self.gap
         }
@@ -592,7 +774,7 @@ impl BndBox2d {
     /// OCCT Bnd_Box2d::GetYMin() — Bnd_Box2d.cxx L141-144.
     fn get_y_min(&self) -> f64 {
         if self.flags & YMIN2D_OPEN != 0 {
-            f64::NEG_INFINITY
+            -THE_BND_PRECISION_INFINITE
         } else {
             self.y_min - self.gap
         }
@@ -601,7 +783,7 @@ impl BndBox2d {
     /// OCCT Bnd_Box2d::GetYMax() — Bnd_Box2d.cxx L148-151.
     fn get_y_max(&self) -> f64 {
         if self.flags & YMAX2D_OPEN != 0 {
-            f64::INFINITY
+            THE_BND_PRECISION_INFINITE
         } else {
             self.y_max + self.gap
         }
@@ -891,6 +1073,37 @@ mod tests {
         b.set_gap(1.0);
         assert!(b.contains(DVec3::new(0.9, 0.9, 0.9)));
         assert!(b.is_out_point(DVec3::new(1.1, 0.0, 0.0)));
+    }
+
+    /// OCCT Bnd_Box::Enlarge raises the gap only (hxx L154): the raw bounds
+    /// stay untouched and the getter applies the gap exactly once.
+    #[test]
+    fn enlarge_raises_gap_only() {
+        let mut b = BndBox::from_corners(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        b.set_gap(0.5);
+        b.enlarge(2.0);
+        assert_eq!(b.get_gap(), 2.0);
+        let (xmin, ymin, zmin, xmax, ymax, zmax) = b.get().unwrap();
+        assert_eq!(xmin, -2.0);
+        assert_eq!(ymin, -2.0);
+        assert_eq!(zmin, -2.0);
+        assert_eq!(xmax, 3.0);
+        assert_eq!(ymax, 3.0);
+        assert_eq!(zmax, 3.0);
+        // A smaller tolerance does not shrink the gap.
+        b.enlarge(1.0);
+        assert_eq!(b.get_gap(), 2.0);
+    }
+
+    /// OCCT Bnd_Box2d::Enlarge mirrors the 3D gap-only semantics (hxx L127).
+    #[test]
+    fn enlarge2d_raises_gap_only() {
+        let mut b = BndBox2d::new();
+        b.update(0.0, 0.0, 1.0, 1.0);
+        b.set_gap(0.5);
+        b.enlarge(2.0);
+        assert_eq!(b.get_gap(), 2.0);
+        assert_eq!(b.get(), Some((-2.0, -2.0, 3.0, 3.0)));
     }
 
     #[test]
