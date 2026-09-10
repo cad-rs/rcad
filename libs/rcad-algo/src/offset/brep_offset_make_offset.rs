@@ -117,6 +117,7 @@ use glam::{DVec2, DVec3};
 
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, BRepTool, Orientation, ShapeType};
+use rcad_kernel::topo::topods::curve_on_surface_pool_free as brep_tool_curve_on_surface_uv;
 use rcad_kernel::topo_shape::Shape;
 
 use super::brep_offset_offset_b::BRepOffsetOffset;
@@ -346,72 +347,6 @@ impl BndBox2d {
 /// OCCT BRep_Tool::CurveOnSurface(E, F) (BRep_Tool.cxx L339-401) — the
 /// pool-free offset form: the edge's representations are matched by
 /// (surface value, L.Predivided(E.Location())) — the owning-face pointer
-/// stands in for the surface handle identity (architecture difference #61).
-fn brep_tool_curve_on_surface_uv(the_e: &Shape, the_f: &Shape) -> Option<(Curve2d, f64, f64)> {
-    let a_surf = bat::brep_tool_surface(the_f);
-    let fkey = (the_f.ptr_id(), the_f.location);
-    let ed = match the_e.data.as_ref() {
-        rcad_kernel::topo::topods::TShape::Edge(ed) => ed,
-        _ => return None,
-    };
-    // 1) The exact pcurves row (identity-location fast path).
-    if let Some(v) = ed.pcurves.get(&fkey) {
-        return Some(v.clone());
-    }
-    // 2) OCCT L350-367: iterate the edge's curve representations;
-    //    cr->IsCurveOnSurface(S, loc) matches the surface value and the
-    //    composed location.  Pool-free matching: the location component and
-    //    the stored owning-face pointer (surface-value equality is carried
-    //    by the pointer for the shapes of one tree).
-    let mut a_p1: Option<(Curve2d, f64, f64)> = None;
-    let mut a_p2: Option<(Curve2d, f64, f64)> = None;
-    for rep in &ed.representations {
-        match rep {
-            rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface {
-                face: (fptr, lhash),
-                pcurve,
-                range,
-            } => {
-                if *fptr == fkey.0 {
-                    if let Some(s) = &a_surf {
-                        let _ = s;
-                    }
-                    a_p1 = Some((pcurve.clone(), range[0], range[1]));
-                }
-            }
-            rcad_kernel::topo::topods::CurveRepresentation::CurveOnClosedSurface {
-                face: (fptr, lhash),
-                pcurve1,
-                pcurve2,
-                range,
-            } => {
-                if *fptr == fkey.0 {
-                    a_p1 = Some((pcurve1.clone(), range[0], range[1]));
-                    a_p2 = Some((pcurve2.clone(), range[0], range[1]));
-                }
-            }
-            _ => {}
-        }
-    }
-    // OCCT L353-357: a seam occurrence with a REVERSED edge selects PCurve2.
-    if the_e.orientation == Orientation::Reversed {
-        if let Some(p2) = a_p2 {
-            return Some(p2);
-        }
-    }
-    if let Some(p1) = a_p1 {
-        return Some(p1);
-    }
-    // 3) Fall back to the location-only match over the pcurves rows.
-    for ((fptr, lhash), v) in ed.pcurves.iter() {
-        if *lhash == fkey.1 {
-            return Some(v.clone());
-        }
-        let _ = fptr;
-    }
-    None
-}
-
 /// OCCT BRepTools::AddUVBounds(aF, aE, aB) (BRepTools.cxx L181-365).
 fn brep_tools_add_uv_bounds_edge(
     the_brep: &BRep,

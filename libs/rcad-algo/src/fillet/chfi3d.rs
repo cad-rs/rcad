@@ -1437,7 +1437,12 @@ pub fn define_connect_type(
 ) -> ChFiDS_TypeOfConcavity {
     use rcad_kernel::geom::CurveEval as _;
 
-    let c1 = brep.curve_on_surface(e, f1);
+    // OCCT BRep_Tool::CurveOnSurface(E, F) resolves the pcurve through the
+    // shape data, not through any pool registry — the pool-free lookup
+    // keeps the offset-engine EdgeAnalyse path (shapes of a foreign pool)
+    // representable.
+    let _ = brep;
+    let c1 = rcad_kernel::topo::topods::curve_on_surface_pool_free(e, f1);
     // For the case of seam edge
     let mut ee = e.clone();
     if f1.is_same(f2) {
@@ -1447,7 +1452,7 @@ pub fn define_connect_type(
             Orientation::Forward
         };
     }
-    let c2 = brep.curve_on_surface(&ee, f2);
+    let c2 = rcad_kernel::topo::topods::curve_on_surface_pool_free(&ee, f2);
     let (Some((c1c, _f1r, _l1r)), Some((c2c, _f2r, _l2r))) = (c1, c2) else {
         return ChFiDS_TypeOfConcavity::Other;
     };

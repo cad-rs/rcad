@@ -3900,6 +3900,72 @@ pub fn compose_pcurve_location(face_loc: u32, edge_loc: u32, locations: &[glam::
     pcurve_location_id(&composed)
 }
 
+/// OCCT BRep_Tool::CurveOnSurface(aE, aF, aFirst, aLast) (BRep_Tool.cxx
+/// L339-401) — the pool-free form: the pcurve representation walk is keyed
+/// by the owning-face pointer and the composed location instead of pool
+/// indices, so it resolves for shapes living in a different `BRep` pool
+/// than the caller's (the offset-engine EdgeAnalyse path).
+pub fn curve_on_surface_pool_free(the_e: &Shape, the_f: &Shape) -> Option<(Curve2d, f64, f64)> {
+    let fkey = (the_f.ptr_id(), the_f.location);
+    let ed = match the_e.data.as_ref() {
+        TShape::Edge(ed) => ed,
+        _ => return None,
+    };
+    // 1) The exact pcurves row (identity-location fast path).
+    if let Some(v) = ed.pcurves.get(&fkey) {
+        return Some(v.clone());
+    }
+    // 2) OCCT L350-367: iterate the edge's curve representations;
+    //    cr->IsCurveOnSurface(S, loc) matches the surface value and the
+    //    composed location.  Pool-free matching: the location component and
+    //    the stored owning-face pointer (surface-value equality is carried
+    //    by the pointer for the shapes of one tree).
+    let mut a_p1: Option<(Curve2d, f64, f64)> = None;
+    let mut a_p2: Option<(Curve2d, f64, f64)> = None;
+    for rep in &ed.representations {
+        match rep {
+            CurveRepresentation::CurveOnSurface {
+                face: (fptr, lhash),
+                pcurve,
+                range,
+            } => {
+                if *fptr == fkey.0 {
+                    a_p1 = Some((pcurve.clone(), range[0], range[1]));
+                }
+            }
+            CurveRepresentation::CurveOnClosedSurface {
+                face: (fptr, lhash),
+                pcurve1,
+                pcurve2,
+                range,
+            } => {
+                if *fptr == fkey.0 {
+                    a_p1 = Some((pcurve1.clone(), range[0], range[1]));
+                    a_p2 = Some((pcurve2.clone(), range[0], range[1]));
+                }
+            }
+            _ => {}
+        }
+    }
+    // OCCT L353-357: a seam occurrence with a REVERSED edge selects PCurve2.
+    if the_e.orientation == Orientation::Reversed {
+        if let Some(p2) = a_p2 {
+            return Some(p2);
+        }
+    }
+    if let Some(p1) = a_p1 {
+        return Some(p1);
+    }
+    // 3) Fall back to the location-only match over the pcurves rows.
+    for ((fptr, lhash), v) in ed.pcurves.iter() {
+        if *lhash == fkey.1 {
+            return Some(v.clone());
+        }
+        let _ = fptr;
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // ShapeType helpers
 // ---------------------------------------------------------------------------
