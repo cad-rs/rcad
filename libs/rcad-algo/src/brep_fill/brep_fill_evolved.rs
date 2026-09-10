@@ -37,13 +37,13 @@
 //!      classes are not translated; the underlying MAT / MAT2d / Bisector
 //!      stacks are the real topalgo translations);
 //!    - `BRepSweep_Prism` / `BRepSweep_Revol` (TKTopAlgo/BRepSweep);
-//!    - `BRepTools_Quilt` (TKTopAlgo/BRepTools);
 //!    - `Geom2dAPI_ExtremaCurveCurve` (TKGeomAlgo/Geom2dAPI — the
 //!      Extrema_ExtCC2d engine is a GAP, the mat2d_mini_path.rs precedent);
 //!    - `BndLib_Add2dCurve` (TKMath/BndLib);
 //!    - `BRepLProp::Continuity` (TKTopAlgo/BRepLProp);
-//!    - `BRepLib_FindSurface` / `BRepLib_MakeFace(Wire, OnlyPlane)` (the
-//!      brep_fill_axe.rs carriers, reused);
+//!    - `BRepLib_MakeFace(Wire, OnlyPlane)` (the brep_fill_axe.rs carrier,
+//!      reused; `BRepLib_FindSurface` itself is now the real
+//!      crate::topalgo::brep_lib_find_surface body);
 //!    - `BRepFill_OffsetWire::PerformWithBiLo` panics inside the
 //!      offset_wire.rs translation (its own GAP annotation);
 //!    - the BRepFill_TrimSurfaceTool::Project MultiLine/ApproxSeewing chain
@@ -64,6 +64,7 @@ use crate::brep_fill::brep_fill_trim_edge_tool::GeomAbsJoinType;
 use crate::brep_fill::generator::{shape_key, shape_oriented, shape_reversed, ShapeKey};
 use crate::brep_fill::offset_wire::MatSide;
 use crate::topalgo::bisector::bisector_bisec::BisectorBisec;
+use crate::topalgo::brep_tools_quilt::BRepToolsQuilt;
 use crate::topalgo::mat::{HandleMatArc, HandleMatBasicElt, HandleMatGraph, HandleMatNode};
 
 // ---------------------------------------------------------------------------
@@ -347,44 +348,6 @@ impl BRepMAT2dLinkTopoBiloCarrier {
             "GAP: BRepMAT2d_LinkTopoBilo (TKTopAlgo/BRepMAT2d not translated) — \
              see file header"
         )
-    }
-}
-
-/// GAP: BRepTools_Quilt (TKTopAlgo/BRepTools — not translated; the
-/// bi_tgte / make_offset local carrier precedent).  OCCT anchor:
-/// BRepTools_Quilt.hxx.
-#[derive(Debug, Default)]
-pub(super) struct BRepToolsQuiltCarrier;
-
-impl BRepToolsQuiltCarrier {
-    /// OCCT BRepTools_Quilt::BRepTools_Quilt().
-    pub(super) fn new() -> Self {
-        BRepToolsQuiltCarrier
-    }
-
-    /// OCCT BRepTools_Quilt::Bind(E1, E2).
-    pub(super) fn bind(&mut self, _e1: &Shape, _e2: &Shape) {
-        panic!("GAP: BRepTools_Quilt (TKTopAlgo/BRepTools not translated) — see file header")
-    }
-
-    /// OCCT BRepTools_Quilt::Add(S).
-    pub(super) fn add(&mut self, _s: &Shape) {
-        panic!("GAP: BRepTools_Quilt (TKTopAlgo/BRepTools not translated) — see file header")
-    }
-
-    /// OCCT BRepTools_Quilt::Shells().
-    pub(super) fn shells(&self) -> Shape {
-        panic!("GAP: BRepTools_Quilt (TKTopAlgo/BRepTools not translated) — see file header")
-    }
-
-    /// OCCT BRepTools_Quilt::IsCopied(S).
-    pub(super) fn is_copied(&self, _s: &Shape) -> bool {
-        panic!("GAP: BRepTools_Quilt (TKTopAlgo/BRepTools not translated) — see file header")
-    }
-
-    /// OCCT BRepTools_Quilt::Copy(S).
-    pub(super) fn copy(&self, _s: &Shape) -> Shape {
-        panic!("GAP: BRepTools_Quilt (TKTopAlgo/BRepTools not translated) — see file header")
     }
 }
 
@@ -849,7 +812,7 @@ impl BRepFillEvolved {
         cut_vevo.set_work(&work_spine.clone(), &wp);
 
         // OCCT L422-423.
-        let mut glue = BRepToolsQuiltCarrier::new();
+        let mut glue = BRepToolsQuilt::new();
         let mut c_side;
 
         //---------------------------------

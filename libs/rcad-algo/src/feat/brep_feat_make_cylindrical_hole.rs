@@ -1,11 +1,11 @@
 // OCCT BRepFeat_MakeCylindricalHole.cxx L1-811 + BRepFeat_MakeCylindricalHole.hxx
-// L1-117 + BRepFeat_MakeCylindricalHole.lxx L1-52 + BRepFeat_Status.hxx L1-28 —
-// 1:1 translation.
+// L1-117 + BRepFeat_MakeCylindricalHole.lxx L1-52 — 1:1 translation.
+// (BRepFeat_Status.hxx L1-28 / BRepFeat_StatusError.hxx L1-51 are imported
+// from crate::feat::brep_feat_status, their canonical 1:1 home.)
 //
 // Source: $OCCT_SRC/src/ModelingAlgorithms/TKFeat/BRepFeat/BRepFeat_MakeCylindricalHole.cxx
 //         $OCCT_SRC/src/ModelingAlgorithms/TKFeat/BRepFeat/BRepFeat_MakeCylindricalHole.hxx
 //         $OCCT_SRC/src/ModelingAlgorithms/TKFeat/BRepFeat/BRepFeat_MakeCylindricalHole.lxx
-//         $OCCT_SRC/src/ModelingAlgorithms/TKFeat/BRepFeat/BRepFeat_Status.hxx
 //
 // OCCT inheritance chain (BRepFeat_MakeCylindricalHole.hxx L34):
 //   BRepFeat_MakeCylindricalHole : BRepFeat_Builder : BOPAlgo_BOP : ...
@@ -33,8 +33,9 @@
 //    (surface derivative evaluation); until that support lands it reports
 //    "not defined", and the OCCT own fallback (offF/offL = Radius) applies.
 // 4. BRepFeat_Status / BRepFeat_StatusError (BRepFeat_Status.hxx L20-25 /
-//    BRepFeat_StatusError.hxx L21-51) are carried locally below with their
-//    OCCT anchors (no dedicated rcad module exists for them yet).
+//    BRepFeat_StatusError.hxx L21-51) live in the dedicated canonical module
+//    crate::feat::brep_feat_status (their 1:1 home); the Stage 3a local
+//    copies were retired here.
 // 5. Standard_ConstructionError throws (L61, L111, L262, L365, L481) map to
 //    panic! at the same conditions (rcad has no exception machinery on this
 //    facade).
@@ -42,56 +43,9 @@
 //    (... Cyl, CylTopF, CylBottF)) map to return values / Option<f64>.
 
 use crate::feat::brep_feat_builder::{pool_faces, BRepFeatBuilder};
+use crate::feat::brep_feat_status::BRepFeatStatus;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods;
-
-/// OCCT BRepFeat_Status (BRepFeat_Status.hxx L20-25) — carried locally
-/// (architecture difference #4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BRepFeatStatus {
-    /// BRepFeat_NoError
-    NoError,
-    /// BRepFeat_InvalidPlacement
-    InvalidPlacement,
-    /// BRepFeat_HoleTooLong
-    HoleTooLong,
-}
-
-/// OCCT BRepFeat_StatusError (BRepFeat_StatusError.hxx L21-51) — carried
-/// locally (architecture difference #4); used by the BRepFeat_Form family
-/// translated in a later stage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum BRepFeatStatusError {
-    OK,
-    BadDirect,
-    BadIntersect,
-    EmptyBaryCurve,
-    EmptyCutResult,
-    FalseSide,
-    IncDirection,
-    IncSlidFace,
-    IncParameter,
-    IncTypes,
-    IntervalOverlap,
-    InvFirstShape,
-    InvOption,
-    InvShape,
-    LocOpeNotDone,
-    LocOpeInvNotDone,
-    NoExtFace,
-    NoFaceProf,
-    NoGluer,
-    NoIntersectF,
-    NoIntersectU,
-    NoParts,
-    NoProjPt,
-    NotInitialized,
-    NotYetImplemented,
-    NullRealTool,
-    NullToolF,
-    NullToolU,
-}
 
 // OCCT gp_Ax1 -> rcad_kernel::math::gp::Ax1;  OCCT LocOpe_PntFace and
 // LocOpe_CurveShapeIntersector -> the loc_ope_* translations (Stage 3c

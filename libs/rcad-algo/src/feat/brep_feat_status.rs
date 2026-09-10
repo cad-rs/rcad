@@ -18,8 +18,8 @@
 // brep_feat_builder.rs). The Standard_OStream out-parameter maps to a
 // returned &'static str (rcad has no stream machinery on this facade).
 //
-// first consumer: BRepFeat_MakeCylindricalHole (3a, local copies pending
-// retirement), BRepFeat_Form family (3b).
+// first consumer: BRepFeat_MakeCylindricalHole (3a; its local copies were
+// retired and it imports BRepFeatStatus from here), BRepFeat_Form family (3b).
 
 /// OCCT BRepFeat_Status (BRepFeat_Status.hxx L20-25).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

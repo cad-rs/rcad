@@ -10,13 +10,14 @@
 //! the struct (the Stage 2e facade precedent).
 //!
 //! Architecture differences:
-//! 1. NCollection_List<TopoDS_Shape> -> Vec<Shape>; the file-static
-//!    anEmptyList (cxx L28) is the static empty Vec below (GeneratedShapes
-//!    returns a slice; the OCCT reference-to-static-list form cannot be
-//!    carried).
-//! 2. The engine members BRepFill_Evolved myEvolved and
-//!    BRepFill_AdvancedEvolved myVolume (TKBool/BRepFill) have no rcad
-//!    translation yet — the two carriers below keep the OCCT
+//! 1. NCollection_List<TopoDS_Shape> -> Vec<Shape>; OCCT's file-static
+//!    anEmptyList (cxx L28) maps to the `Vec::new()` of the not-done branch
+//!    (the OCCT reference-to-static-list form cannot be carried).
+//! 2. The engine member BRepFill_Evolved myEvolved (TKBool/BRepFill) is the
+//!    real crate::brep_fill::brep_fill_evolved translation (its single 1:1
+//!    body; the local GAP carrier was retired). The member
+//!    BRepFill_AdvancedEvolved myVolume (TKBool/BRepFill) has no rcad
+//!    translation yet — the carrier below keeps the OCCT
 //!    constructor/method surface with GAP panics (port plan section 0.6);
 //!    every facade body around the engine calls is translated 1:1.
 //! 3. The static BRepFill::Axe(Spine, Profil, Axis, POS, Tol)
@@ -31,94 +32,15 @@ use rcad_kernel::topods::ShapeType;
 
 use crate::brep_fill::offset_wire::GeomAbsJoinType;
 use crate::brep_algo::tool::sub_shapes;
+// OCCT BRepFill_Evolved (TKBool/BRepFill/BRepFill_Evolved.hxx / .cxx) — the
+// single 1:1 body lives in crate::brep_fill::brep_fill_evolved (its correct
+// location per the module map); the local GAP carrier of this file was
+// retired.
+use crate::brep_fill::brep_fill_evolved::BRepFillEvolved;
 
 // ---------------------------------------------------------------------------
 // GAP carriers (architecture difference #2/#3).
 // ---------------------------------------------------------------------------
-
-/// OCCT BRepFill_Evolved (TKBool/BRepFill, BRepFill_Evolved.hxx) — the
-/// evolved-sweep engine of MakeEvolved (architecture difference #2; GAP: no
-/// rcad translation yet — the GAP panics are the section 0.6 annotation; the
-/// storage form is kept).
-pub struct BRepFillEvolved {
-    my_is_done: bool, // OCCT: myIsDone
-    my_top: Shape,    // OCCT: myTop
-    my_bottom: Shape, // OCCT: myBottom
-    my_shape: Shape,  // OCCT: myShape
-}
-
-impl BRepFillEvolved {
-    /// OCCT BRepFill_Evolved::BRepFill_Evolved().
-    pub fn new() -> Self {
-        BRepFillEvolved {
-            my_is_done: false,
-            my_top: Shape::null(),
-            my_bottom: Shape::null(),
-            my_shape: Shape::null(),
-        }
-    }
-
-    /// OCCT BRepFill_Evolved::Perform(Spine, Profil, Axis, Join, Solid) —
-    /// GAP.
-    pub fn perform_with_wire(
-        &mut self,
-        _the_spine: &Shape,
-        _the_profil: &Shape,
-        _the_axis: &Ax3,
-        _the_join: GeomAbsJoinType,
-        _the_solid: bool,
-    ) {
-        panic!("GAP: BRepFill_Evolved::Perform (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Evolved::Perform(Spine, Profil, Axis, Join, Solid) —
-    /// the face-spine form; GAP.
-    pub fn perform_with_face(
-        &mut self,
-        _the_spine: &Shape,
-        _the_profil: &Shape,
-        _the_axis: &Ax3,
-        _the_join: GeomAbsJoinType,
-        _the_solid: bool,
-    ) {
-        panic!("GAP: BRepFill_Evolved::Perform (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Evolved::IsDone().
-    pub fn is_done(&self) -> bool {
-        self.my_is_done
-    }
-
-    /// OCCT BRepFill_Evolved::Shape().
-    pub fn shape(&self) -> Shape {
-        self.my_shape.clone()
-    }
-
-    /// OCCT BRepFill_Evolved::Top().
-    pub fn top(&self) -> &Shape {
-        &self.my_top
-    }
-
-    /// OCCT BRepFill_Evolved::Bottom().
-    pub fn bottom(&self) -> &Shape {
-        &self.my_bottom
-    }
-
-    /// OCCT BRepFill_Evolved::GeneratedShapes(SpineShape, ProfShape) — GAP.
-    pub fn generated_shapes(
-        &self,
-        _the_spine_shape: &Shape,
-        _the_prof_shape: &Shape,
-    ) -> &Vec<Shape> {
-        panic!("GAP: BRepFill_Evolved::GeneratedShapes (TKBool/BRepFill not translated)")
-    }
-}
-
-impl Default for BRepFillEvolved {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// OCCT BRepFill_AdvancedEvolved (TKBool/BRepFill) — the BOPAlgo_
 /// MakerVolume-driven engine of the theIsVolume branch (architecture
@@ -177,13 +99,6 @@ pub fn brep_fill_axe(
     _the_tol: f64,
 ) {
     panic!("GAP: BRepFill::Axe (TKBool/BRepFill not translated)");
-}
-
-/// OCCT file-static anEmptyList (cxx L28) — the empty GeneratedShapes result.
-static AN_EMPTY_LIST: std::sync::OnceLock<Vec<Shape>> = std::sync::OnceLock::new();
-
-fn an_empty_list() -> &'static Vec<Shape> {
-    AN_EMPTY_LIST.get_or_init(Vec::new)
 }
 
 /// OCCT BRepOffsetAPI_MakeEvolved (hxx L76-151).
@@ -290,11 +205,21 @@ impl BRepOffsetAPIMakeEvolved {
             }
             // OCCT L76-84.
             if the_spine.shape_type() == ShapeType::Wire {
-                r.my_evolved
-                    .perform_with_wire(the_spine, the_profil, &axis, the_join_type, the_is_solid);
+                r.my_evolved.perform_with_wire_spine(
+                    the_spine,
+                    the_profil,
+                    &axis,
+                    the_join_type,
+                    the_is_solid,
+                );
             } else {
-                r.my_evolved
-                    .perform_with_face(the_spine, the_profil, &axis, the_join_type, the_is_solid);
+                r.my_evolved.perform_with_face_spine(
+                    the_spine,
+                    the_profil,
+                    &axis,
+                    the_join_type,
+                    the_is_solid,
+                );
             }
         }
 
@@ -317,7 +242,7 @@ impl BRepOffsetAPIMakeEvolved {
     pub fn build(&mut self) {
         // OCCT L104-107.
         if self.my_evolved.is_done() {
-            self.my_shape = self.my_evolved.shape();
+            self.my_shape = self.my_evolved.shape().clone();
         } else if self.my_volume.is_done() {
             self.my_shape = self.my_volume.shape();
         }
@@ -338,10 +263,10 @@ impl BRepOffsetAPIMakeEvolved {
 
     /// OCCT BRepOffsetAPI_MakeEvolved::GeneratedShapes(SpineShape, ProfShape)
     /// (cxx L127-140).
-    pub fn generated_shapes(&self, spine_shape: &Shape, prof_shape: &Shape) -> &Vec<Shape> {
+    pub fn generated_shapes(&self, spine_shape: &Shape, prof_shape: &Shape) -> Vec<Shape> {
         // OCCT L129-132: if (!myEvolved.IsDone()) return anEmptyList.
         if !self.my_evolved.is_done() {
-            return an_empty_list();
+            return Vec::new();
         }
 
         // OCCT L134: return myEvolved.GeneratedShapes(SpineShape, ProfShape).

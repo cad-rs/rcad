@@ -998,7 +998,8 @@ pub(crate) fn create_boxes2d(
             }
             // OCCT L914-916.
             boxes.insert((e.ptr_id(), e.location), box2d);
-            bnd_box2d_add_box(&mut a_total_box, &boxes.get(&(e.ptr_id(), e.location)).unwrap());
+            // OCCT L916: aTotalBox.Add(box).
+            a_total_box.add_box(boxes.get(&(e.ptr_id(), e.location)).unwrap());
         }
     }
     a_total_box
@@ -1066,18 +1067,6 @@ pub(crate) fn bnd_lib_add2d_curve(
 ) {
     let sac = ShapeAnalysisCurve;
     sac.fill_bnd_box(c2d, u1, u2, 33, true, box2d);
-}
-
-/// OCCT Bnd_Box2d::Add(other) (Bnd_Box2d.cxx) — the union via the corners
-/// (the kernel box stores its corners privately).
-pub(crate) fn bnd_box2d_add_box(total: &mut BndBox2d, other: &BndBox2d) {
-    if let Some((x0, y0, x1, y1)) = other.get() {
-        if total.is_void() {
-            total.update(x0, y0, x1, y1);
-        } else if let Some((tx0, ty0, tx1, ty1)) = total.get() {
-            total.update(tx0.min(x0), ty0.min(y0), tx1.max(x1), ty1.max(y1));
-        }
-    }
 }
 
 /// OCCT `TShape` neighbor indices of the num-th edge in the wire (the

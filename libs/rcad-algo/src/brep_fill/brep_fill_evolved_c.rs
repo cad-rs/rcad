@@ -29,7 +29,10 @@ use crate::brep_algo::r#loop::BRepAlgoLoop;
 use crate::brep_algo::tool::{
     builder_set_closed, explorer, shape_is_closed, top_abs_reverse,
 };
-use crate::brep_fill::brep_fill_axe::BRepLibFindSurface;
+// OCCT BRepLib_FindSurface (TKTopAlgo/BRepLib_FindSurface.hxx / .cxx) — the
+// single 1:1 body lives in crate::topalgo::brep_lib_find_surface; the
+// brep_fill_axe GAP carrier was retired.
+use crate::topalgo::brep_lib_find_surface::BRepLibFindSurface;
 use crate::brep_fill::brep_fill_evolved::{
     builder_add_compound_shape, builder_add_face_wire, builder_add_solid_shell,
     builder_add_wire_edge, builder_make_compound, builder_make_face_surface, builder_make_solid,
@@ -37,7 +40,7 @@ use crate::brep_fill::brep_fill_evolved::{
     brep_tool_degenerated, brep_tool_pnt, brep_tool_surface, brep_tool_tolerance, edge_vertices,
     location_shape_moved, location_shape_set, wire_edges, BRepFillEvolved,
     BRepMAT2dBisectingLocusCarrier, BRepMAT2dLinkTopoBiloCarrier, BRepSweepPrismCarrier,
-    BRepSweepRevolCarrier, BRepToolsQuiltCarrier, DataMapOfShapeItem, DataMapOfShapeListOfShape,
+    BRepSweepRevolCarrier, DataMapOfShapeItem, DataMapOfShapeListOfShape,
 };
 use crate::brep_fill::brep_fill_offset_ancestors::BRepFillOffsetAncestors;
 use crate::brep_fill::brep_fill_pipe::{top_exp_vertices, BRepFillPipe, GeomFillTrihedron};
@@ -46,6 +49,10 @@ use crate::brep_fill::generator::{shape_key, shape_oriented, shape_reversed, Sha
 use crate::brep_fill::offset_wire::BRepFillOffsetWire;
 use crate::feat::loc_ope_prism::{BRepToolsModifier, BRepToolsTrsfModification};
 use crate::topalgo::brep_class3d::solid_classifier::SolidClassifier;
+// OCCT BRepTools_Quilt (TKBRep/BRepTools/BRepTools_Quilt.hxx / .cxx) — the
+// single 1:1 body lives in crate::topalgo::brep_tools_quilt; the local
+// BRepToolsQuiltCarrier GAP stand-in was retired.
+use crate::topalgo::brep_tools_quilt::BRepToolsQuilt;
 
 /// OCCT TopAbs_IN (the SolidClassifier state code).
 const TOPABS_IN: u8 = 0;
@@ -545,7 +552,7 @@ impl BRepFillEvolved {
         &mut self,
         vevo: &mut BRepFillEvolved,
         prof: &Shape,
-        glue: &mut BRepToolsQuiltCarrier,
+        glue: &mut BRepToolsQuilt,
     ) {
         // OCCT L1859-1862.
         if vevo.shape().is_null() {
@@ -591,7 +598,7 @@ impl BRepFillEvolved {
                             let og = crate::brep_fill::brep_fill_evolved_d::compare(&me, &ve);
                             let a_local_shape = shape_oriented(&ve, Orientation::Forward);
                             let a_local_shape2 = shape_oriented(&me, og);
-                            glue.bind(&a_local_shape, &a_local_shape2);
+                            glue.bind_edge(&a_local_shape, &a_local_shape2);
                         }
                     }
                 }
@@ -748,7 +755,7 @@ impl BRepFillEvolved {
     // -------------------------------------------------------------------
 
     /// OCCT BRepFill_Evolved::AddTopAndBottom(Glue) (L2078-2222).
-    pub(super) fn add_top_and_bottom(&mut self, glue: &mut BRepToolsQuiltCarrier) {
+    pub(super) fn add_top_and_bottom(&mut self, glue: &mut BRepToolsQuilt) {
         //  return first and last vertex of the profile.
         // OCCT L2081-2086.
         let (v0, v1) = top_exp_vertices(&self.my_profile.clone());
@@ -1096,10 +1103,22 @@ impl BRepFillEvolved {
 
         let is_plane = matches!(s, Surface3::Plane(_));
         if !is_plane {
-            // OCCT L2410-2422: BRepLib_FindSurface FS(Face, -1, true).
-            let fs = BRepLibFindSurface::new(&mut rcad_kernel::topods::BRep::new(), face, -1.0, true);
+            // OCCT L2410-2422: BRepLib_FindSurface FS(Face, -1, true);
+            // if (FS.Found()) { S = FS.Surface(); L = FS.Location(); }.
+            // The FindSurface pool lookup resolves the pcurve owner face
+            // through the brep it is given (topalgo/brep_lib_find_surface
+            // bridge #1); BRepFill_Evolved carries no pool of its own, so the
+            // face is passed with an empty one: the existing-surface probe
+            // finds nothing and the OCCT least-squares fallback (cxx
+            // L422-579) fits the plane from the shape's own curves.
+            let fs = BRepLibFindSurface::new(
+                &mut rcad_kernel::topods::BRep::new(),
+                face,
+                -1.0,
+                true,
+            );
             if fs.found() {
-                s = fs.surface();
+                s = fs.surface().expect("BRepLib_FindSurface::Surface");
                 // OCCT L2416: L = FS.Location() — the found surface carries
                 // its location in the rcad encoding (architecture difference).
             } else {

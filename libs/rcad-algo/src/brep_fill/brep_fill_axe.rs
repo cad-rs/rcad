@@ -8,12 +8,15 @@
 //! `BRepFill::Axe(Spine, Profil, Axis, POS, max(Tol, Precision::Confusion()))`).
 //!
 //! Reported gaps (plan §0.6, annotated at the call sites):
-//! - BRepLib_FindSurface (TKTopAlgo) — only used when the spine face is not
-//!   a Geom_Plane; GAP carrier below (same gap as CompatibleWires::PlaneOfWire);
 //! - BRepLib_MakeFace(Wire, onlyPlane = true) — planar face synthesis from a
 //!   wire; GAP carrier below (needs BRepLib_FindSurface internally);
 //! - BRepExtrema_ExtPC (TKTopAlgo) — GAP carrier below (same family as the
 //!   BRepExtrema_DistShapeShape gap of CompatibleWires).
+//!
+//! OCCT BRepLib_FindSurface (TKTopAlgo/BRepLib_FindSurface.hxx / .cxx) is no
+//! longer a gap: the single 1:1 body lives in
+//! crate::topalgo::brep_lib_find_surface (its correct location) and the local
+//! GAP carrier of Lt.693 was retired.
 //!
 //! Architecture notes:
 //! - `TopExp::MapShapesAndAncestors(F, VERTEX, EDGE, Map)` maps to the local
@@ -30,6 +33,9 @@ use rcad_kernel::math::gp::Ax3;
 use rcad_kernel::topo::topods::{BRep, Orientation, Shape, ShapeType, TShape};
 
 use super::offset_wire_b::{brep_tool_surface, edge_vertices, explored_children};
+// OCCT BRepLib_FindSurface (TKTopAlgo/BRepLib_FindSurface.hxx / .cxx) — the
+// single 1:1 body lives in crate::topalgo::brep_lib_find_surface.
+use crate::topalgo::brep_lib_find_surface::BRepLibFindSurface;
 
 /// OCCT Precision::Infinite().
 const INFINITE: f64 = f64::INFINITY;
@@ -37,34 +43,6 @@ const INFINITE: f64 = f64::INFINITY;
 // ---------------------------------------------------------------------------
 // GAP carriers (plan §0.6)
 // ---------------------------------------------------------------------------
-
-/// OCCT BRepLib_FindSurface (TKTopAlgo) — GAP: not translated (plan §0.6;
-/// same gap as `CompatibleWires::PlaneOfWire`).  The OCCT constructor surface
-/// is kept so the call sites stay 1:1.
-pub struct BRepLibFindSurface;
-
-impl BRepLibFindSurface {
-    /// OCCT BRepLib_FindSurface(S, Tol = -1, OnlyPlane = false).
-    pub fn new(_brep: &BRep, _s: &Shape, _tol: f64, _only_plane: bool) -> Self {
-        panic!(
-            "GAP: BRepLib_FindSurface (TKTopAlgo) is not translated — see file header"
-        )
-    }
-
-    /// OCCT Found().
-    pub fn found(&self) -> bool {
-        panic!(
-            "GAP: BRepLib_FindSurface (TKTopAlgo) is not translated — see file header"
-        )
-    }
-
-    /// OCCT Surface().
-    pub fn surface(&self) -> Surface3 {
-        panic!(
-            "GAP: BRepLib_FindSurface (TKTopAlgo) is not translated — see file header"
-        )
-    }
-}
 
 /// OCCT BRepLib_MakeFace(Wire, OnlyPlane) — GAP: the planar-face synthesis
 /// needs BRepLib_FindSurface internally (plan §0.6).
@@ -234,10 +212,13 @@ pub fn brep_fill_axe(
         // TopLoc_Location handling (L690 `BRep_Tool::Surface(Face, L)`) is
         // implicit: the rcad TFaceData surface is stored in world space.
         if !matches!(s, Some(Surface3::Plane(_))) {
-            // OCCT L693-698.
+            // OCCT L693-698: BRepLib_FindSurface FS(TopoDS::Face(Spine), -1,
+            // true); if (FS.Found()) { S = FS.Surface(); L = FS.Location(); }
+            // — the Location assignment stays implicit (world-space storage,
+            // see the architecture note above).
             let fs = BRepLibFindSurface::new(brep, spine, -1.0, true);
             if fs.found() {
-                s = Some(fs.surface());
+                s = fs.surface();
             } else {
                 // OCCT L701.
                 panic!("BRepFill_Evolved : The Face is not planar");

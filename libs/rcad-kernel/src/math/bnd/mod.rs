@@ -143,6 +143,15 @@ impl BndBox {
     /// Enlarge the box by a tolerance in all six directions.
     /// OCCT: Bnd_Box::Enlarge(const Standard_Real Tol).
     /// A void box is left untouched (OCCT: void box stays void).
+    ///
+    /// 1:1 DEBT (recorded, not fixed here): OCCT Bnd_Box.hxx L154 is
+    ///   `void Enlarge(const double Tol) noexcept { Gap = std::max(Gap, std::abs(Tol)); }`
+    /// i.e. it only raises the gap and leaves the raw bounds alone; this body
+    /// instead moves the raw bounds, and the getters apply the gap as well, so
+    /// the enlargement is applied twice whenever gap != 0.  Fixing it belongs
+    /// to the coordinated flag-based Bnd_Box / Precision::Infinite batch
+    /// (tkfeat-fillet-offset-port-plan.md §9 E3-R queue 7c) so the pipeline
+    /// effect is measurable in isolation.
     pub fn enlarge(&mut self, tol: f64) {
         if self.is_void() || !tol.is_finite() { return; }
         self.x_min -= tol;
@@ -432,14 +441,54 @@ impl BndBox2d {
         }
     }
 
-    /// OCCT Bnd_Box2d::Update(xmin, ymin, xmax, ymax) — the box becomes the
-    /// finite axis-aligned rectangle (open flags cleared).
-    pub fn update(&mut self, x_min: f64, y_min: f64, x_max: f64, y_max: f64) {
-        self.x_min = x_min;
-        self.y_min = y_min;
-        self.x_max = x_max;
-        self.y_max = y_max;
-        self.flags &= !(VOID2D_MASK | XMIN2D_OPEN | XMAX2D_OPEN | YMIN2D_OPEN | YMAX2D_OPEN);
+    /// OCCT Bnd_Box2d::Update(aXmin, aYmin, aXmax, aYmax) — Bnd_Box2d.cxx
+    /// L39-70: a void box takes the rectangle (VoidMask cleared), otherwise
+    /// each still-closed direction takes the min/max.
+    pub fn update(&mut self, x: f64, y: f64, x_max: f64, y_max: f64) {
+        if (self.flags & VOID2D_MASK) != 0 {
+            self.x_min = x;
+            self.y_min = y;
+            self.x_max = x_max;
+            self.y_max = y_max;
+            self.flags &= !VOID2D_MASK;
+        } else {
+            if (self.flags & XMIN2D_OPEN) == 0 {
+                self.x_min = self.x_min.min(x);
+            }
+            if (self.flags & XMAX2D_OPEN) == 0 {
+                self.x_max = self.x_max.max(x_max);
+            }
+            if (self.flags & YMIN2D_OPEN) == 0 {
+                self.y_min = self.y_min.min(y);
+            }
+            if (self.flags & YMAX2D_OPEN) == 0 {
+                self.y_max = self.y_max.max(y_max);
+            }
+        }
+    }
+
+    /// OCCT Bnd_Box2d::Update(X, Y) — Bnd_Box2d.cxx L72-100.
+    pub fn update_xy(&mut self, x: f64, y: f64) {
+        if (self.flags & VOID2D_MASK) != 0 {
+            self.x_min = x;
+            self.y_min = y;
+            self.x_max = x;
+            self.y_max = y;
+            self.flags &= !VOID2D_MASK;
+        } else {
+            if (self.flags & XMIN2D_OPEN) == 0 {
+                self.x_min = self.x_min.min(x);
+            }
+            if (self.flags & XMAX2D_OPEN) == 0 {
+                self.x_max = self.x_max.max(x);
+            }
+            if (self.flags & YMIN2D_OPEN) == 0 {
+                self.y_min = self.y_min.min(y);
+            }
+            if (self.flags & YMAX2D_OPEN) == 0 {
+                self.y_max = self.y_max.max(y);
+            }
+        }
     }
 
     /// OCCT Bnd_Box2d::SetVoid() — the box becomes void.
@@ -461,6 +510,23 @@ impl BndBox2d {
     pub fn is_whole(&self) -> bool {
         self.flags & (XMIN2D_OPEN | XMAX2D_OPEN | YMIN2D_OPEN | YMAX2D_OPEN)
             == (XMIN2D_OPEN | XMAX2D_OPEN | YMIN2D_OPEN | YMAX2D_OPEN)
+    }
+
+    /// OCCT Bnd_Box2d::OpenXmin() (Bnd_Box2d.hxx L164).
+    pub fn open_xmin(&mut self) {
+        self.flags |= XMIN2D_OPEN;
+    }
+    /// OCCT Bnd_Box2d::OpenXmax() (Bnd_Box2d.hxx L167).
+    pub fn open_xmax(&mut self) {
+        self.flags |= XMAX2D_OPEN;
+    }
+    /// OCCT Bnd_Box2d::OpenYmin() (Bnd_Box2d.hxx L170).
+    pub fn open_ymin(&mut self) {
+        self.flags |= YMIN2D_OPEN;
+    }
+    /// OCCT Bnd_Box2d::OpenYmax() (Bnd_Box2d.hxx L173).
+    pub fn open_ymax(&mut self) {
+        self.flags |= YMAX2D_OPEN;
     }
 
     /// OCCT Bnd_Box2d::IsOpenXmin/Xmax/Ymin/Ymax().
@@ -488,6 +554,13 @@ impl BndBox2d {
     }
 
     /// OCCT Bnd_Box2d::Enlarge(Tol) — grow on all four sides (void unchanged).
+    ///
+    /// 1:1 DEBT (recorded, not fixed here): OCCT Bnd_Box2d.hxx L127 is
+    ///   `void Enlarge(const double theTol) noexcept { Gap = std::max(Gap, std::abs(theTol)); }`
+    /// — it only raises the gap; this body moves the raw bounds instead while
+    /// the getters also apply the gap, so the enlargement is double-counted
+    /// whenever gap != 0.  Same coordinated batch as Bnd_Box::enlarge above
+    /// (tkfeat-fillet-offset-port-plan.md §9 E3-R queue 7c).
     pub fn enlarge(&mut self, tol: f64) {
         if self.is_void() || !tol.is_finite() {
             return;
@@ -550,27 +623,52 @@ impl BndBox2d {
         ))
     }
 
-    /// OCCT Bnd_Box2d::Add(Pnt2d) — extend to include a point.
+    /// OCCT Bnd_Box2d::Add(const gp_Pnt2d& thePnt) (Bnd_Box2d.hxx L206) —
+    /// the header inlines Add to Update(thePnt.X(), thePnt.Y()).
     pub fn add_point(&mut self, p: glam::DVec2) {
-        if self.is_void() {
-            self.x_min = p.x;
-            self.x_max = p.x;
-            self.y_min = p.y;
-            self.y_max = p.y;
-            self.flags &= !VOID2D_MASK;
+        self.update_xy(p.x, p.y);
+    }
+
+    /// OCCT Bnd_Box2d::Add(const Bnd_Box2d& Other) — Bnd_Box2d.cxx L258-330.
+    pub fn add_box(&mut self, other: &BndBox2d) {
+        if self.is_whole() {
+            return;
+        } else if other.is_void() {
+            return;
+        } else if other.is_whole() {
+            self.set_whole();
+        } else if self.is_void() {
+            *self = other.clone();
         } else {
-            if p.x < self.x_min {
-                self.x_min = p.x;
+            if !self.is_open_xmin() {
+                if other.is_open_xmin() {
+                    self.open_xmin();
+                } else if self.x_min > other.x_min {
+                    self.x_min = other.x_min;
+                }
             }
-            if p.x > self.x_max {
-                self.x_max = p.x;
+            if !self.is_open_xmax() {
+                if other.is_open_xmax() {
+                    self.open_xmax();
+                } else if self.x_max < other.x_max {
+                    self.x_max = other.x_max;
+                }
             }
-            if p.y < self.y_min {
-                self.y_min = p.y;
+            if !self.is_open_ymin() {
+                if other.is_open_ymin() {
+                    self.open_ymin();
+                } else if self.y_min > other.y_min {
+                    self.y_min = other.y_min;
+                }
             }
-            if p.y > self.y_max {
-                self.y_max = p.y;
+            if !self.is_open_ymax() {
+                if other.is_open_ymax() {
+                    self.open_ymax();
+                } else if self.y_max < other.y_max {
+                    self.y_max = other.y_max;
+                }
             }
+            self.gap = self.gap.max(other.gap);
         }
     }
 

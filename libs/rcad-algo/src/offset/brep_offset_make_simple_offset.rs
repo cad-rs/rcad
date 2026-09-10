@@ -219,23 +219,10 @@ impl ShapeAnalysisFreeBounds {
     }
 }
 
-/// OCCT BRepTools_Quilt (TKTopAlgo/BRepTools) — the sewing of
-/// BuildMissingWalls (architecture difference #3; GAP: no rcad translation
-/// yet — the GAP panics are the §0.6 annotation).
-pub struct BRepToolsQuilt;
-
-impl BRepToolsQuilt {
-    /// OCCT BRepTools_Quilt::Add(S).
-    pub fn add(&mut self, the_s: &Shape) {
-        let _ = the_s;
-        panic!("GAP: BRepTools_Quilt::Add (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_Quilt::Shells().
-    pub fn shells(&self) -> Shape {
-        panic!("GAP: BRepTools_Quilt::Shells (TKTopAlgo/BRepTools not translated)");
-    }
-}
+/// OCCT BRepTools_Quilt (TKBRep/BRepTools/BRepTools_Quilt.hxx / .cxx) — the
+/// real body lives in crate::topalgo::brep_tools_quilt; the sewing of
+/// BuildMissingWalls keeps the OCCT import path through the re-export.
+pub use crate::topalgo::brep_tools_quilt::BRepToolsQuilt;
 
 /// OCCT ShapeFix_Edge (TKShHealing) — the FixSameParameter of
 /// BuildMissingWalls (architecture difference #3; GAP: no rcad translation
@@ -898,7 +885,7 @@ impl BRepOffsetMakeSimpleOffset {
         // Create result shell.
         // OCCT L479-481: BRepTools_Quilt aQuilt; aQuilt.Add(aResCompound);
         // aShells = aQuilt.Shells().
-        let mut a_quilt = BRepToolsQuilt;
+        let mut a_quilt = BRepToolsQuilt::new();
         a_quilt.add(&a_res_compound);
         let a_shells = a_quilt.shells();
 

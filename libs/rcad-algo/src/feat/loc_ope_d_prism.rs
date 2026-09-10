@@ -14,12 +14,14 @@
 // 1. NCollection_DataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>,
 //    TopTools_ShapeMapHasher> (myMap) — HashMap keyed by (TShape ptr,
 //    Location); never iterated.
-// 2. BRepFill_Evolved (TKTopAlgo/BRepFill) — the evolved-prism engine has
-//    no rcad translation yet; the BRepFillEvolved carrier below carries the
-//    OCCT constructor/Perform/IsDone/GeneratedShapes surface with the GAP
-//    panic on Perform (port plan §0.6 gap annotation). Everything downstream
+// 2. BRepFill_Evolved (TKBool/BRepFill) — the evolved-prism engine's single
+//    1:1 body lives in crate::brep_fill::brep_fill_evolved (its correct
+//    location per the module map); the local GAP carrier of this file was
+//    retired and Perform maps to the OCCT Face overload
+//    (LocOpe_DPrism.cxx L110: myDPrism.Perform(mySpine, myProfile,
+//    gp::XOY()) with TopoDS_Face mySpine, hxx L73). Everything downstream
 //    (the whole IsDone() body of both constructors) is translated 1:1
-//    against the carrier.
+//    against it.
 // 3. BRepLib_MakeVertex / BRepLib_MakeEdge(V1, V2) / BRepLib_MakeWire —
 //    re-hosted below over a local rcad topods::BRep pool (the same vehicle
 //    as feat::loc_ope_build_shape::perform): MakeEdge(V1, V2) is the
@@ -47,6 +49,11 @@
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
+// OCCT BRepFill_Evolved (TKBool/BRepFill/BRepFill_Evolved.hxx / .cxx) — the
+// single 1:1 body lives in crate::brep_fill::brep_fill_evolved; the local
+// GAP carrier of this file was retired.
+use crate::brep_fill::brep_fill_evolved::BRepFillEvolved;
+use crate::brep_fill::brep_fill_trim_edge_tool::GeomAbsJoinType;
 use glam::DVec3;
 use indexmap::IndexMap;
 use rcad_kernel::geom::{ Curve3, Line3, Surface3, TrimmedCurve3, CurveEval, SurfaceEval };
@@ -157,38 +164,6 @@ fn brep_lib_update_tolerances(_s: &mut Shape) {
     panic!("GAP: BRepLib::UpdateTolerances (TKTopAlgo/BRepLib not translated)");
 }
 
-/// OCCT BRepFill_Evolved (BRepFill_Evolved.hxx) — the evolved-prism engine
-/// (architecture difference #2; GAP: BRepFill has no rcad translation yet).
-pub(crate) struct BRepFillEvolved {
-    my_done: bool, // OCCT: IsDone state
-}
-
-impl BRepFillEvolved {
-    /// OCCT BRepFill_Evolved default constructor.
-    pub(crate) fn new() -> Self {
-        BRepFillEvolved { my_done: false }
-    }
-
-    /// OCCT BRepFill_Evolved::Perform(Spine, Profile, Axe) — GAP panic (the
-    /// port plan §0.6 annotation; the LocOpe_DPrism body below is translated
-    /// 1:1 against this surface).
-    pub(crate) fn perform(&mut self, the_spine: &Shape, the_profile: &Shape, the_axe: &Ax3) {
-        let _ = (the_spine, the_profile, the_axe);
-        panic!("GAP: BRepFill_Evolved::Perform (TKTopAlgo/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Evolved::IsDone().
-    pub(crate) fn is_done(&self) -> bool {
-        self.my_done
-    }
-
-    /// OCCT BRepFill_Evolved::GeneratedShapes(S, E).
-    pub(crate) fn generated_shapes(&self, the_s: &Shape, the_e: &Shape) -> Vec<Shape> {
-        let _ = (the_s, the_e);
-        panic!("GAP: BRepFill_Evolved::GeneratedShapes (unreachable while the engine is a GAP)");
-    }
-}
-
 /// OCCT LocOpe_DPrism (LocOpe_DPrism.hxx L38-85).
 pub struct LocOpeDPrism {
     my_d_prism: BRepFillEvolved, // OCCT: myDPrism (BRepFill_Evolved)
@@ -284,7 +259,13 @@ impl LocOpeDPrism {
 
         // OCCT cxx L110 (arch. diff. #2).
         let mut my_d_prism = BRepFillEvolved::new();
-        my_d_prism.perform(&my_spine, &my_profile, &Ax3::new());
+        my_d_prism.perform_with_face_spine(
+            &my_spine,
+            &my_profile,
+            &Ax3::new(),
+            GeomAbsJoinType::Arc,
+            false,
+        );
 
         let mut my_map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
         let mut my_res = Shape::null();
@@ -644,7 +625,13 @@ impl LocOpeDPrism {
 
         // OCCT cxx L389 (arch. diff. #2).
         let mut my_d_prism = BRepFillEvolved::new();
-        my_d_prism.perform(&my_spine, &my_profile, &Ax3::new());
+        my_d_prism.perform_with_face_spine(
+            &my_spine,
+            &my_profile,
+            &Ax3::new(),
+            GeomAbsJoinType::Arc,
+            false,
+        );
 
         // myMap is never written by this constructor body (the OCCT member
         // stays empty for the (Spine, Height, Angle) form).

@@ -116,6 +116,7 @@ use std::collections::HashMap;
 use glam::{DVec2, DVec3};
 
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::math::bnd::BndBox2d;
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, BRepTool, Orientation, ShapeType};
 use rcad_kernel::topo::topods::curve_on_surface_pool_free as brep_tool_curve_on_surface_uv;
 use rcad_kernel::topo_shape::Shape;
@@ -299,72 +300,6 @@ pub(crate) fn brep_lib_same_parameter_3(_e: &Shape, _tol: f64) {}
 /// (architecture difference #46).
 pub(crate) fn brep_lib_update_tolerances(_s: &mut Shape) {}
 
-/// OCCT Bnd_Box2d — the 2D bounding box carrier of BRepTools::AddUVBounds
-/// (architecture difference #47: the rcad plain-struct form of the OCCT
-/// open/void box semantics used here: void when empty).
-struct BndBox2d {
-    a_xmin: f64,
-    a_ymin: f64,
-    a_xmax: f64,
-    a_ymax: f64,
-}
-
-impl BndBox2d {
-    fn new_void() -> Self {
-        BndBox2d {
-            a_xmin: f64::INFINITY,
-            a_ymin: f64::INFINITY,
-            a_xmax: f64::NEG_INFINITY,
-            a_ymax: f64::NEG_INFINITY,
-        }
-    }
-
-    /// OCCT Bnd_Box2d::IsVoid().
-    fn is_void(&self) -> bool {
-        self.a_xmin > self.a_xmax || self.a_ymin > self.a_ymax
-    }
-
-    /// OCCT Bnd_Box2d::Update(X, Y).
-    fn update(&mut self, x: f64, y: f64) {
-        if x < self.a_xmin {
-            self.a_xmin = x;
-        }
-        if y < self.a_ymin {
-            self.a_ymin = y;
-        }
-        if x > self.a_xmax {
-            self.a_xmax = x;
-        }
-        if y > self.a_ymax {
-            self.a_ymax = y;
-        }
-    }
-
-    /// OCCT Bnd_Box2d::Update(Xmin, Ymin, Xmax, Ymax).
-    fn update_box(&mut self, xmin: f64, ymin: f64, xmax: f64, ymax: f64) {
-        if xmin < self.a_xmin {
-            self.a_xmin = xmin;
-        }
-        if ymin < self.a_ymin {
-            self.a_ymin = ymin;
-        }
-        if xmax > self.a_xmax {
-            self.a_xmax = xmax;
-        }
-        if ymax > self.a_ymax {
-            self.a_ymax = ymax;
-        }
-    }
-
-    /// OCCT Bnd_Box2d::Add(other).
-    fn add_box(&mut self, other: &BndBox2d) {
-        if other.is_void() {
-            return;
-        }
-        self.update_box(other.a_xmin, other.a_ymin, other.a_xmax, other.a_ymax);
-    }
-}
-
 /// OCCT BRep_Tool::CurveOnSurface(E, F) (BRep_Tool.cxx L339-401) — the
 /// pool-free offset form: the edge's representations are matched by
 /// (surface value, L.Predivided(E.Location())) — the owning-face pointer
@@ -543,7 +478,9 @@ fn brep_tools_add_uv_bounds_edge(
         }
     }
     // OCCT L362-366: aBoxS.Update(aXmin, aYmin, aXmax, aYmax); aB.Add(aBoxS).
-    a_b.update_box(a_xmin, a_ymin, a_xmax, a_ymax);
+    let mut a_box_s = BndBox2d::new();
+    a_box_s.update(a_xmin, a_ymin, a_xmax, a_ymax);
+    a_b.add_box(&a_box_s);
 }
 
 /// OCCT BRepTools::AddUVBounds(FF, B) (BRepTools.cxx L125-159) — the face
@@ -552,7 +489,7 @@ fn brep_tools_add_uv_bounds_face(the_brep: &BRep, a_ff: &Shape, a_b: &mut BndBox
     // OCCT L128-129: F = FF oriented FORWARD.
     let a_f = bat::oriented(a_ff, Orientation::Forward);
     // OCCT L132-136: fill the box for the given face.
-    let mut a_box = BndBox2d::new_void();
+    let mut a_box = BndBox2d::new();
     for ex in bat::explorer(&a_f, ShapeType::Edge, ShapeType::Shape) {
         brep_tools_add_uv_bounds_edge(the_brep, &a_f, &ex, &mut a_box);
     }
@@ -585,7 +522,7 @@ fn brep_tools_add_uv_bounds_face(the_brep: &BRep, a_ff: &Shape, a_b: &mut BndBox
                 to_occt_infinite(d[3]),
             )
         };
-        a_box.update_box(u_min, v_min, u_max, v_max);
+        a_box.update(u_min, v_min, u_max, v_max);
     }
     // OCCT L157: add the face box to the result.
     a_b.add_box(&a_box);
@@ -596,10 +533,11 @@ fn brep_tools_add_uv_bounds_face(the_brep: &BRep, a_ff: &Shape, a_b: &mut BndBox
 /// through the BRepTool::CurveOnSurface surface-value matcher.)
 pub(crate) fn brep_tools_uv_bounds(the_brep: &BRep, _f: &Shape) -> (f64, f64, f64, f64) {
     // OCCT L70-71: Bnd_Box2d B; AddUVBounds(F, B).
-    let mut a_b = BndBox2d::new_void();
+    let mut a_b = BndBox2d::new();
     brep_tools_add_uv_bounds_face(the_brep, _f, &mut a_b);
-    if !a_b.is_void() {
-        (a_b.a_xmin, a_b.a_xmax, a_b.a_ymin, a_b.a_ymax)
+    // OCCT L72-77: if (!B.IsVoid()) B.Get(UMin, VMin, UMax, VMax); else all 0.
+    if let Some((u_min, v_min, u_max, v_max)) = a_b.get() {
+        (u_min, u_max, v_min, v_max)
     } else {
         (0.0, 0.0, 0.0, 0.0)
     }
@@ -676,34 +614,11 @@ pub(crate) fn brep_gprop_volume_properties(_s: &Shape) -> f64 {
     panic!("GAP: BRepGProp::VolumeProperties (TKTopAlgo/BRepGProp not translated)");
 }
 
-/// OCCT BRepLib_FindSurface (TKTopAlgo/BRepLib_FindSurface.hxx / .cxx) —
-/// GAP carrier (architecture difference #52): the plane finder of
-/// MakeMissingWalls.
-pub(crate) struct BRepLibFindSurface;
-
-impl BRepLibFindSurface {
-    /// OCCT BRepLib_FindSurface::Init(S, Tol, OnlyPlane = true).
-    pub fn init(&mut self, _s: &Shape, _tol: f64, _only_plane: bool) {
-        panic!("GAP: BRepLib_FindSurface::Init (TKTopAlgo/BRepLib_FindSurface not translated)");
-    }
-
-    /// OCCT BRepLib_FindSurface::Found().
-    pub fn found(&self) -> bool {
-        panic!("GAP: BRepLib_FindSurface::Found (TKTopAlgo/BRepLib_FindSurface not translated)");
-    }
-
-    /// OCCT BRepLib_FindSurface::ToleranceReached().
-    pub fn tolerance_reached(&self) -> f64 {
-        panic!(
-            "GAP: BRepLib_FindSurface::ToleranceReached (TKTopAlgo/BRepLib_FindSurface not translated)"
-        );
-    }
-
-    /// OCCT BRepLib_FindSurface::Surface().
-    pub fn surface(&self) -> Surface3 {
-        panic!("GAP: BRepLib_FindSurface::Surface (TKTopAlgo/BRepLib_FindSurface not translated)");
-    }
-}
+/// OCCT BRepLib_FindSurface (TKTopAlgo/BRepLib_FindSurface.hxx / .cxx) — the
+/// real body lives in crate::topalgo::brep_lib_find_surface (architecture
+/// difference #52); the plane finder of MakeMissingWalls keeps the OCCT
+/// import path through the re-export.
+pub(crate) use crate::topalgo::brep_lib_find_surface::BRepLibFindSurface;
 
 /// OCCT GeomLib_IsPlanarSurface (TKGeomBase/GeomLib/GeomLib_IsPlanarSurface.hxx
 /// / .cxx) — the real body lives in

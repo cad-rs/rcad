@@ -19,8 +19,8 @@ use crate::shhealing::shape_build::brep_tool::{builder_add, iter_subshapes, tope
 use crate::shhealing::shape_build::edge::ShapeBuildEdge;
 use crate::shhealing::shape_extend::wire_data::WireData;
 use crate::shhealing::shape_fix::intersection_tool::{
-    bnd_box2d_add_box, create_boxes2d, get_point_on_edge, select_int_pnt, shape_is_equal,
-    Geom2dIntGInterGap, ShapeBoxes2d,
+    create_boxes2d, get_point_on_edge, select_int_pnt, shape_is_equal, Geom2dIntGInterGap,
+    ShapeBoxes2d,
 };
 use crate::shhealing::shape_fix::intersection_tool::ShapeFixIntersectionTool;
 use crate::shhealing::shape_fix::split_tool::{brep_loc_transform, brep_tool_surface};

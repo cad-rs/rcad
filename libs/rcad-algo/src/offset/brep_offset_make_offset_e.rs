@@ -472,14 +472,21 @@ impl BRepOffsetMakeOffset {
                     let an_edge_tol = brep_tool_tolerance(&an_edge);
                     // Tolerances of input shape should not be increased by BRepLib_MakeFace
                     // OCCT L3498: BRepLib_FindSurface aFindPlane(theWire,
-                    // anEdgeTol, true) (GAP carrier, arch. diff. #52).
-                    let mut a_find_plane = super::brep_offset_make_offset::BRepLibFindSurface;
-                    a_find_plane.init(&the_wire, an_edge_tol, true); // only plane
+                    // anEdgeTol, true) — the 3-argument constructor (hxx
+                    // defaults: OnlyClosed = false); the body lives in
+                    // crate::topalgo::brep_lib_find_surface (arch. diff. #52).
+                    let mut a_find_plane =
+                        super::brep_offset_make_offset::BRepLibFindSurface::new(
+                            &mut self.my_brep,
+                            &the_wire,
+                            an_edge_tol,
+                            true,
+                        );
                     is_planar = false;
                     if a_find_plane.found() && a_find_plane.tolerance_reached() <= an_edge_tol {
                         let a_gc = brep_tool_curve(&an_edge);
                         let a_pln = match a_find_plane.surface() {
-                            Surface3::Plane(p) => p,
+                            Some(Surface3::Plane(p)) => p,
                             _ => panic!("BRepLib_FindSurface::Surface is not a plane"),
                         };
                         let a_max_dist = match &a_gc {

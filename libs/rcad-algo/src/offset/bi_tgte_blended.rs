@@ -70,6 +70,10 @@ use super::bi_tgte_curve_on_edge::BiTgteCurveOnEdge;
 use crate::brep_algo::as_des::BRepAlgoAsDes;
 use crate::brep_algo::image::BRepAlgoImage;
 use crate::fillet::chfi_ds::ChFiDS_TypeOfConcavity;
+// OCCT BRepTools_Quilt (TKBRep/BRepTools/BRepTools_Quilt.hxx / .cxx) — the
+// single 1:1 body lives in crate::topalgo::brep_tools_quilt (its correct
+// location); the local GAP carrier of NbBranches was retired.
+use crate::topalgo::brep_tools_quilt::BRepToolsQuilt;
 
 use rcad_kernel::core::precision::{
     ANGULAR as PRECISION_ANGULAR, APPROXIMATION as PRECISION_APPROXIMATION,
@@ -1646,27 +1650,6 @@ impl BiTgteBlend {
     /// TFaceData::surface).
     fn brep_tool_surface(f: &Shape) -> Option<Surface3> {
         f.as_face().and_then(|fd| fd.surface.clone())
-    }
-}
-
-/// OCCT BRepTools_Quilt (TKTopAlgo/BRepTools/BRepTools_Quilt.hxx / .cxx) —
-/// GAP carrier (arch. diff. #24 family).
-struct BRepToolsQuilt;
-
-impl BRepToolsQuilt {
-    /// OCCT BRepTools_Quilt::BRepTools_Quilt().
-    fn new() -> Self {
-        BRepToolsQuilt
-    }
-
-    /// OCCT BRepTools_Quilt::Add(S).
-    fn add(&mut self, _s: &Shape) {
-        panic!("GAP: BRepTools_Quilt::Add (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_Quilt::Shells().
-    fn shells(&self) -> Shape {
-        panic!("GAP: BRepTools_Quilt::Shells (TKTopAlgo/BRepTools not translated)");
     }
 }
 
