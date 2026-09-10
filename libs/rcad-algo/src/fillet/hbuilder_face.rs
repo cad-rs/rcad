@@ -86,6 +86,10 @@ mod wes;
 
 pub(crate) use wes::WireEdgeSet;
 
+// The SplitEdge1 chain (PaveSet / PaveClassifier / Area1dBuilder /
+// EdgeBuilder / SplitEdge / MakeEdges) continuation file.
+mod split_edge;
+
 // =========================================================================
 // OCCT TopOpeBRepBuild_FaceBuilder (FaceBuilder.cxx L59-661 + .hxx).
 // =========================================================================
@@ -1142,12 +1146,11 @@ impl TopOpeBRepBuildHBuilder {
             } else if t == ShapeType::Face {
                 self.split_face1(brep, ds, &a_shape, to_build1, to_build2);
             } else if t == ShapeType::Edge {
-                // OCCT: SplitEdge(aShape, ToBuild1, ToBuild2) — the
-                // SplitEdge1 body (Builder.cxx L941-1081) is carried by
-                // hbuilder.rs split_ds_edges (performed at Perform); the
-                // split pieces live in the mySplit tables, so the gate
-                // below consults IsSplit / Splits exactly as the OCCT
-                // continuation does.
+                // OCCT L1741: SplitEdge(aShape, ToBuild1, ToBuild2) — the
+                // SplitEdge1 body (Builder.cxx L941-1079): the pave walk +
+                // the 1d area walk select the per-state split pieces
+                // (hbuilder_face/split_edge.rs).
+                self.split_edge(brep, ds, &a_shape, to_build1, to_build2);
             } else {
                 continue;
             }

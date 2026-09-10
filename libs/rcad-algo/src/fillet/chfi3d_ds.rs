@@ -48,6 +48,8 @@ use rcad_kernel::topo::topods::{Orientation, Shape};
 
 use crate::bop::ds::DS;
 
+use super::chfi3d_builder_2::TopAbsState;
+
 // =========================================================================
 // OCCT TopOpeBRepDS_Kind (TopOpeBRepDS_Kind.hxx).
 // Value type = form carrier for the ChFi3d line-by-line alignment; per D6
@@ -70,23 +72,139 @@ pub enum TopOpeBRepDSKind {
 }
 
 // =========================================================================
-// OCCT TopOpeBRepDS_Transition — the fillet flow reads only the IN-state
-// orientation (Transition().Orientation(TopAbs_IN)), carried by the plain
-// TopAbs_Orientation the callers pass in.
+// OCCT TopOpeBRepDS_Transition (TopOpeBRepDS_Transition.cxx L22-313 +
+// .hxx).  The emitters hand the plain orientation O (the ctor
+// Transition(TopAbs_Orientation O) form, Transition.cxx L49-56); the
+// state pair is derived by Set(O) (Transition.cxx L205-229):
+// FORWARD -> (OUT,IN), REVERSED -> (IN,OUT), INTERNAL -> (IN,IN),
+// EXTERNAL -> (OUT,OUT).  The SplitEdge1 pave walk (Builder.cxx
+// L1991-2055 FillVertexSetOnValue) consumes Orientation(ToBuild)
+// per interference, which selects the split pieces per state
+// (TopOpeBRepBuild_Area1dBuilder + PaveClassifier).
 // =========================================================================
 #[derive(Debug, Clone, Copy)]
 pub struct TopOpeBRepDSTransition {
+    /// The plain orientation the emitter passed (the OCCT ctor input O;
+    /// Transition::Orientation(TopAbs_IN) is value-equal to it for every
+    /// Set(O)-built transition).
     pub orientation: Orientation,
+    /// OCCT: TopAbs_State myStateBefore.
+    pub state_before: TopAbsState,
+    /// OCCT: TopAbs_State myStateAfter.
+    pub state_after: TopAbsState,
+    /// OCCT: TopAbs_ShapeEnum myShapeBefore / myShapeAfter (the ctor
+    /// defaults to TopAbs_FACE, Transition.cxx L22-30).
+    pub shape_before: TopAbs_ShapeEnum,
+    pub shape_after: TopAbs_ShapeEnum,
+    /// OCCT: int myIndexBefore / myIndexAfter.
+    pub index_before: i32,
+    pub index_after: i32,
+}
+
+/// OCCT TopAbs_ShapeEnum (the transition carries the ON-shape kinds; the
+/// values follow the kernel ShapeType ordering plus the geometry kinds the
+/// DS records).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopAbs_ShapeEnum {
+    TopAbs_VERTEX,
+    TopAbs_EDGE,
+    TopAbs_WIRE,
+    TopAbs_FACE,
+    TopAbs_SHELL,
+    TopAbs_SOLID,
+    TopAbs_COMPOUND,
+    TopAbs_SHAPE,
 }
 
 impl TopOpeBRepDSTransition {
+    /// OCCT ctor Transition(const TopAbs_Orientation O) (L49-56): Set(O).
     pub fn new(orientation: Orientation) -> Self {
-        TopOpeBRepDSTransition { orientation }
+        let mut t = TopOpeBRepDSTransition {
+            orientation,
+            state_before: TopAbsState::Unknown,
+            state_after: TopAbsState::Unknown,
+            shape_before: TopAbs_ShapeEnum::TopAbs_FACE,
+            shape_after: TopAbs_ShapeEnum::TopAbs_FACE,
+            index_before: 0,
+            index_after: 0,
+        };
+        t.set_orientation(orientation);
+        t
     }
 
-    /// OCCT TopOpeBRepDS_Transition::Orientation(TopAbs_IN).
+    /// OCCT Transition::Set(const TopAbs_Orientation O) (L205-229).
+    pub fn set_orientation(&mut self, o: Orientation) {
+        match o {
+            Orientation::Forward => {
+                self.state_before = TopAbsState::Out;
+                self.state_after = TopAbsState::In;
+            }
+            Orientation::Reversed => {
+                self.state_before = TopAbsState::In;
+                self.state_after = TopAbsState::Out;
+            }
+            Orientation::Internal => {
+                self.state_before = TopAbsState::In;
+                self.state_after = TopAbsState::In;
+            }
+            Orientation::External => {
+                self.state_before = TopAbsState::Out;
+                self.state_after = TopAbsState::Out;
+            }
+        }
+    }
+
+    /// OCCT TopOpeBRepDS_Transition::Orientation(TopAbs_IN) — the read the
+    /// merge_solid SolidSurface walk consumes (value-equal to the emitter
+    /// orientation for Set(O)-built transitions).
     pub fn orientation_in(&self) -> Orientation {
         self.orientation
+    }
+
+    /// OCCT TopOpeBRepDS_Transition::Orientation(const TopAbs_State S,
+    /// const TopAbs_ShapeEnum T) (L233-265): the per-state orientation the
+    /// pave walk classifies the split pieces with.
+    pub fn orientation_for_state(&self, s: TopAbsState) -> Orientation {
+        if self.state_before == TopAbsState::On || self.state_after == TopAbsState::On {
+            self.orientation_on(s)
+        } else if self.state_before == s {
+            if self.state_after == s {
+                Orientation::Internal
+            } else {
+                Orientation::Reversed
+            }
+        } else if self.state_after == s {
+            Orientation::Forward
+        } else {
+            Orientation::External
+        }
+    }
+
+    /// OCCT TopOpeBRepDS_Transition::OrientationON (L269-313).
+    fn orientation_on(&self, s: TopAbsState) -> Orientation {
+        let mut result = Orientation::Forward;
+        if self.state_before == TopAbsState::On && self.state_after == TopAbsState::On {
+            if s == TopAbsState::In {
+                result = Orientation::Internal;
+            } else if s == TopAbsState::Out {
+                result = Orientation::External;
+            } else if s == TopAbsState::On {
+                result = Orientation::Internal;
+            }
+        } else if self.state_before == TopAbsState::On {
+            if self.state_after == s {
+                return Orientation::Forward;
+            } else {
+                return Orientation::Reversed;
+            }
+        } else if self.state_after == TopAbsState::On {
+            if self.state_before == s {
+                return Orientation::Reversed;
+            } else {
+                return Orientation::Forward;
+            }
+        }
+        result
     }
 }
 
