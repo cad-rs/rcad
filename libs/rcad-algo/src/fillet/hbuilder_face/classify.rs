@@ -1281,30 +1281,34 @@ pub(crate) fn brep_tool_parameter(brep: &BRep, v: &Shape, e: &Shape) -> f64 {
     0.0
 }
 
-/// GAP carrier of FC2D_HasCurveOnSurface (TopOpeBRepTool_2d.cxx L147-156,
-/// TKBool/TopOpeBRepTool — external untranslated dependency): true when
-/// the edge carries a stored pcurve on the face.
+/// OCCT FC2D_HasCurveOnSurface (TopOpeBRepTool_2d.cxx L147-154) — the
+/// real body is `crate::fillet::topopebrep_tool_2d::fc2d_has_curve_on_surface`;
+/// this adapter keeps the historical (E, F) -> bool call-site form.
 pub(crate) fn fc2d_has_curve_on_surface(brep: &BRep, e: &Shape, f: &Shape) -> bool {
-    brep.curve_on_surface(e, f).is_some()
+    crate::fillet::topopebrep_tool_2d::fc2d_has_curve_on_surface(brep, e, f)
 }
 
-/// GAP carrier of FC2D_CurveOnSurface (TopOpeBRepTool_2d.cxx L356-373):
-/// the OCCT body reads the old pcurve (FC2D_HasOldCurveOnSurface
-/// L162-176: C2D = BRep_Tool::CurveOnSurface(E, F), tol = Tolerance(E)),
-/// then the new one, then falls to FC2D_MakeCurveOnSurface (the
-/// projection construction, TopOpeBRepTool_2d.cxx L604+).  The carrier
-/// translates the old-curve read; the projection tail is untranslated, so
-/// the OCCT null-C2D path (a None here) is what the callers see when no
-/// stored pcurve exists.
+/// OCCT FC2D_CurveOnSurface(E, F, f, l, tol, trim3d) (TopOpeBRepTool_2d.cxx
+/// L356-376) — the real body is
+/// `crate::fillet::topopebrep_tool_2d::fc2d_curve_on_surface`; this
+/// adapter repacks the OCCT out-parameters (f, l, tol) into the
+/// historical tuple form the call sites consume.  `trim3d` follows the
+/// OCCT call site (the no-EF overload defaults it to false in OCCT).
 pub(crate) fn fc2d_curve_on_surface(
     brep: &BRep,
     e: &Shape,
     f: &Shape,
+    trim3d: bool,
 ) -> Option<(Curve2d, f64, f64, f64)> {
-    // FC2D_HasOldCurveOnSurface: C2D = BRep_Tool::CurveOnSurface(E, F),
-    // tol = BRep_Tool::Tolerance(E).
-    let tol = brep.tolerance(e);
-    brep.curve_on_surface(e, f).map(|(c2d, f2, l2)| (c2d, f2, l2, tol))
+    // OCCT call-site form: double f2, l2, tolpc; (uninitialized locals —
+    // Rust requires initialization).
+    let mut f2: f64 = 0.0;
+    let mut l2: f64 = 0.0;
+    let mut tolpc: f64 = 0.0;
+    let c2d = crate::fillet::topopebrep_tool_2d::fc2d_curve_on_surface(
+        brep, e, f, &mut f2, &mut l2, &mut tolpc, trim3d,
+    );
+    c2d.map(|c2d| (c2d, f2, l2, tolpc))
 }
 
 /// OCCT BB.UpdateEdge(E, C2D, F, tol) (BRep_Builder.cxx L1133-1173) — the
@@ -1539,7 +1543,7 @@ impl<'a> WireEdgeClassifier<'a> {
                 // WireEdgeClassifier.cxx L195-203: C2D =
                 // FC2D_CurveOnSurface(E, F, f, l, tolpc); if (!C2D.IsNull())
                 // BB.UpdateEdge(E, C2D, F, max(tolpc, tolE)).
-                if let Some((c2d, f2, l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f1_shape) {
+                if let Some((c2d, f2, l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f1_shape, false) {
                     let tol = tolpc.max(tol_e);
                     bb_update_edge_pcurve(brep, &e, &f, &c2d, f2, l2, tol);
                 }
@@ -1720,7 +1724,7 @@ impl<'a> WireEdgeClassifier<'a> {
         if !haspc {
             // jyl980406+
             // bool trim3d = true; C2D = FC2D_CurveOnSurface(E,F,f2,l2,tolpc,trim3d);
-            if let Some((c2d, f2, l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f) {
+            if let Some((c2d, f2, l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f, true) {
                 let tol_e = brep.tolerance(&e); // jyl980406+
                 let tol = tol_e.max(tolpc); // jyl980406+
                 bb_update_edge_pcurve(brep, &e, &f, &c2d, f2, l2, tol); // jyl980406+
@@ -1728,7 +1732,7 @@ impl<'a> WireEdgeClassifier<'a> {
         }
 
         // C2D = FC2D_CurveOnSurface(E, F, f2, l2, tolpc);
-        match fc2d_curve_on_surface(brep, &e, &f) {
+        match fc2d_curve_on_surface(brep, &e, &f, false) {
             Some((c2d, f2, l2, _tolpc)) => {
                 let t = 0.397891143689;
                 let par = (1.0 - t) * f2 + t * l2;
@@ -1752,7 +1756,7 @@ impl<'a> WireEdgeClassifier<'a> {
         let haspc = fc2d_has_curve_on_surface(brep, &e, &f); // jyl980402+
         if !haspc {
             // jyl980402+
-            if let Some((c2d, f2, l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f) {
+            if let Some((c2d, f2, l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f, true) {
                 let tol_e = brep.tolerance(&e); // jyl980402+
                 let tol = tol_e.max(tolpc); // jyl980402+
                 bb_update_edge_pcurve(brep, &e, &f, &c2d, f2, l2, tol); // jyl980402+
@@ -1760,7 +1764,7 @@ impl<'a> WireEdgeClassifier<'a> {
         }
 
         if self.my_first_compare {
-            let Some((c2d, f2, l2, _tolpc)) = fc2d_curve_on_surface(brep, &e, &f) else {
+            let Some((c2d, f2, l2, _tolpc)) = fc2d_curve_on_surface(brep, &e, &f, false) else {
                 return;
             };
             let t = 0.33334567;

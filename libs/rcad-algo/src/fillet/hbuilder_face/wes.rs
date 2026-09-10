@@ -199,7 +199,7 @@ impl WireEdgeSet {
     ) {
         *uiso = false;
         *viso = false;
-        let Some((pc, _fe, _le, _tolpc)) = fc2d_curve_on_surface(brep, e, f) else {
+        let Some((pc, _fe, _le, _tolpc)) = fc2d_curve_on_surface(brep, e, f, true) else {
             // WireEdgeSet.cxx L471: throw Standard_ProgramError.
             panic!("TopOpeBRepBuild_WireEdgeSet::IsUVISO");
         };
@@ -484,7 +484,7 @@ impl ShapeSet for WireEdgeSet {
                 let par_e = brep_tool_parameter(brep, &v, &e);
                 // trim3d = true; PCE = FC2D_CurveOnSurface(E, F, fiE, laE,
                 // tolpc, trim3d).
-                let pce = fc2d_curve_on_surface(brep, &e, &f);
+                let pce = fc2d_curve_on_surface(brep, &e, &f, true);
 
                 match pce {
                     Some((pce_c2d, _fie, _lae, _tolpc)) => {
@@ -515,7 +515,7 @@ impl ShapeSet for WireEdgeSet {
                     let mut d1ee = glam::DVec2::ZERO;
                     let mut pee = glam::DVec2::ZERO;
                     let par_ee = brep_tool_parameter(brep, &v, &ee);
-                    let pcee = fc2d_curve_on_surface(brep, &ee, &f);
+                    let pcee = fc2d_curve_on_surface(brep, &ee, &f, true);
 
                     match pcee {
                         Some((pcee_c2d, _fiee, _laee, _tolpc1)) => {

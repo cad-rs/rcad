@@ -654,28 +654,29 @@ impl TopOpeBRepBuildHBuilder {
     //     transition (the fillet patches);
     //   - MakeSolids = BuilderSolid::Perform, Areas() = the SolidList.
     pub fn merge_solid(&mut self, brep: &mut BRep, s: &Shape, tb: TopAbsState) {
-        let _ = brep;
         // MergeShapes L192-195: myState1/myState2 = ToBuild; the rcad
         // tables key by state below.
-        // Pending boundary (2026-09-10): the SplitFace1 machinery is fully
-        // translated in hbuilder_face.rs (WireEdgeSet/FaceBuilder/
-        // FillFace/SplitShapes/AddIntersectionEdges/MakeFaces, OCCT
-        // Builder.cxx L1171-1300) and the wiring below was attempted and
-        // REVERTED — with the current GAP leaves (FC2D_CurveOnSurface
-        // projection tail hbuilder_face/classify.rs, BRepCheck analyzer
-        // carrier) the rebuilt support faces lack usable pcurves and the
-        // area integrator breaks (a1/q1/x1 gprop panics, a3 -4%,
-        // baseline 14/8 -> 11/11).  Re-land the wiring TOGETHER with the
-        // FC2D projection-tail closure:
-        //   for face in solid_faces(s) {
-        //       if self.to_split(&ds, &face, TopAbsState::In) {
-        //           self.split_face1(brep, &mut ds_taken, &face, In, In);
-        //           faces.extend(self.splits(&face, TopAbsState::In));
-        //       } else { faces.push(face); }
-        //   }
-        let mut faces = solid_faces(s);
+        // SplitShapes/FillShape (Builder.cxx L1737): for every face of the
+        // object solid, SplitFace(face, ToBuild1, ToBuild2) lands in
+        // SplitFace1; the reconstructed pieces (Splits) replace the
+        // as-found face in SFS.  Re-landed 2026-09-10 together with the
+        // FC2D projection-tail closure (fillet/topopebrep_tool_2d.rs); the
+        // remaining GAP leaves at the FC2D leaves (ProjLib_ProjectedCurve
+        // projection arm, TopExp::MapShapesAndAncestors, TOOL::UVISO) keep
+        // the OCCT null-pcurve failure path — see the
+        // topopebrep_tool_2d.rs GAP notes.  The ds is cloned (the hbuilder
+        // owns it) so split_face1 can take &mut self.
+        let ds = self.my_data_structure.as_ref().expect("Perform first").clone();
+        let mut faces = Vec::new();
+        for face in solid_faces(s) {
+            if self.to_split(&ds, &face, tb) {
+                self.split_face1(brep, &ds, &face, tb, tb);
+                faces.extend(self.splits(&face, tb));
+            } else {
+                faces.push(face);
+            }
+        }
         // SplitSolid L1631-1662: the DS intersection surfaces of the solid.
-        let ds = self.my_data_structure.as_ref().expect("Perform first");
         let isolid = ds.bopds.index(s);
         if isolid >= 0 {
             for i in ds.shape_interferences(isolid as i32 + 1) {

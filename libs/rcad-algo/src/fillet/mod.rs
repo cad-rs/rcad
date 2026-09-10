@@ -78,5 +78,7 @@ pub mod fillet;
 pub mod fillet_surf;
 pub mod hbuilder;
 pub mod hbuilder_face;
+pub mod topopebrep_tool_2d;
+pub mod topopebrep_tool_curve_tool;
 
 pub use fillet::make_fillet_edge;
