@@ -276,9 +276,38 @@ pub(super) fn update_face_surface(
     fd.surface_location = the_loc;
 }
 
-/// OCCT BRep_Builder::UpdateEdge(E, C3d, Tol) / UpdateEdge(E, C3d, L, Tol) —
-/// GAP no-op re-host (the rcad 3d-curve representation is index-based).
-pub(super) fn update_edge_curve3d_gap(_the_e: &Shape, _the_c: &Curve3, _the_loc: u32, _the_tol: f64) {
+/// OCCT BRep_Builder::UpdateEdge(E, C3d, L, Tol) (BRep_Builder.cxx
+/// L635-651): `const TopLoc_Location l = L.Predivided(E.Location());
+/// UpdateCurves(TE->ChangeCurves(), C, l); TE->UpdateTolerance(Tol)` — the
+/// 3D curve is attached to the edge TShape in place and the tolerance is
+/// only raised.
+///
+/// Architecture difference: the OCCT BRep_Curve3D representation + the
+/// predivided TopLoc_Location maps to the rcad curve slot of the edge (the
+/// edge Shape carries the location; the topalgo
+/// brep_lib/build_curves3d.rs builder_update_edge_curve3d precedent writes
+/// the same slot).
+pub(super) fn update_edge_curve3d(
+    the_brep: &mut BRep,
+    the_e: &Shape,
+    the_c: &Curve3,
+    _the_loc: u32,
+    the_tol: f64,
+) {
+    let a_ed = the_brep.edge_mut_inplace(the_e.clone());
+    a_ed.curve = Some(the_c.clone());
+    a_ed.tolerance = a_ed.tolerance.max(the_tol);
+}
+
+/// OCCT BRep_Builder::Range(E, f, l) (BRep_Builder.cxx) — the 3D range write
+/// edits the edge TShape in place, so every handle of the edge observes it.
+/// The rcad `BRepBuilder::set_edge_range` uses `BRep::edge_mut` (the
+/// `Arc::make_mut` form) which forks the TShape identity whenever another
+/// handle of the edge is alive (the face wire always is); this is the
+/// in-place form.
+pub(super) fn set_edge_range(the_brep: &mut BRep, the_e: &Shape, the_first: f64, the_last: f64) {
+    let a_ed = the_brep.edge_mut_inplace(the_e.clone());
+    a_ed.range = [the_first, the_last];
 }
 
 /// OCCT BRep_Builder::Range(E, F, f, l) — GAP no-op re-host (face-keyed
@@ -324,21 +353,25 @@ pub(super) fn get_farest_corner(a_wire: &Shape) -> DVec3 {
 // OCCT BRepOffset_Offset.cxx L115-131 — static UpdateEdge(E, C, L, Tol): the
 // 3d-curve form ("Cut curves to avoid copies in the extensions").
 //=================================================================================================
-pub(super) fn update_edge_3d(the_e: &Shape, the_c: &Curve3, the_l: u32, the_tol: f64) {
+pub(super) fn update_edge_3d(
+    the_brep: &mut BRep,
+    the_e: &Shape,
+    the_c: &Curve3,
+    the_l: u32,
+    the_tol: f64,
+) {
     // OCCT L121-130: BRep_Builder B; down-cast to Geom_TrimmedCurve and bind
     // the basis curve.
-    let mut b = BRepBuilder::new();
     match the_c {
         Curve3::Trimmed(bc) => {
-            // GAP no-op re-host: BRep_Builder::UpdateEdge(E, C3d, L, Tol).
-            update_edge_curve3d_gap(the_e, &bc.curve, the_l, the_tol);
+            // OCCT L124: B.UpdateEdge(E, BC->BasisCurve(), L, Tol).
+            update_edge_curve3d(the_brep, the_e, &bc.curve, the_l, the_tol);
         }
         _ => {
             // OCCT L129: B.UpdateEdge(E, C, L, Tol).
-            update_edge_curve3d_gap(the_e, the_c, the_l, the_tol);
+            update_edge_curve3d(the_brep, the_e, the_c, the_l, the_tol);
         }
     }
-    let _ = &mut b;
 }
 
 //=================================================================================================
@@ -469,7 +502,7 @@ pub(super) fn compute_curve3d(
                         if d.x < 0.0 {
                             circle = circle_reversed(circle);
                         }
-                        update_edge_3d(edge, &Curve3::Circle(circle), loc, tol);
+                        update_edge_3d(the_brep, edge, &Curve3::Circle(circle), loc, tol);
                     }
                     is_computed = true;
                 } else if let Surface3::Cylinder(cyl) = s_ty {
@@ -482,7 +515,7 @@ pub(super) fn compute_curve3d(
                     if d.x < 0.0 {
                         circle = circle_reversed(circle);
                     }
-                    update_edge_3d(edge, &Curve3::Circle(circle), loc, tol);
+                    update_edge_3d(the_brep, edge, &Curve3::Circle(circle), loc, tol);
                     is_computed = true;
                 } else if let Surface3::Cone(cone) = s_ty {
                     // OCCT L256-272.
@@ -495,7 +528,7 @@ pub(super) fn compute_curve3d(
                     if d.x < 0.0 {
                         circle = circle_reversed(circle);
                     }
-                    update_edge_3d(edge, &Curve3::Circle(circle), loc, tol);
+                    update_edge_3d(the_brep, edge, &Curve3::Circle(circle), loc, tol);
                     is_computed = true;
                 } else if let Surface3::Torus(tore) = s_ty {
                     // OCCT L273-289.
@@ -509,7 +542,7 @@ pub(super) fn compute_curve3d(
                     if d.x < 0.0 {
                         circle = circle_reversed(circle);
                     }
-                    update_edge_3d(edge, &Curve3::Circle(circle), loc, tol);
+                    update_edge_3d(the_brep, edge, &Curve3::Circle(circle), loc, tol);
                     is_computed = true;
                 }
             } else if is_parallel_dy {
@@ -530,7 +563,7 @@ pub(super) fn compute_curve3d(
                     if d.y < 0.0 {
                         circle = circle_reversed(circle);
                     }
-                    update_edge_3d(edge, &Curve3::Circle(circle), loc, tol);
+                    update_edge_3d(the_brep, edge, &Curve3::Circle(circle), loc, tol);
                     is_computed = true;
                 } else if let Surface3::Cylinder(cyl) = s_ty {
                     // OCCT L319-334.
@@ -540,7 +573,7 @@ pub(super) fn compute_curve3d(
                     if d.y < 0.0 {
                         line.direction = -line.direction;
                     }
-                    update_edge_3d(edge, &Curve3::Line(line), loc, tol);
+                    update_edge_3d(the_brep, edge, &Curve3::Line(line), loc, tol);
                     is_computed = true;
                 } else if let Surface3::Cone(cone) = s_ty {
                     // OCCT L335-350.
@@ -550,7 +583,7 @@ pub(super) fn compute_curve3d(
                     if d.y < 0.0 {
                         line.direction = -line.direction;
                     }
-                    update_edge_3d(edge, &Curve3::Line(line), loc, tol);
+                    update_edge_3d(the_brep, edge, &Curve3::Line(line), loc, tol);
                     is_computed = true;
                 } else if let Surface3::Torus(tore) = s_ty {
                     // OCCT L351-366.
@@ -563,7 +596,7 @@ pub(super) fn compute_curve3d(
                     if d.y < 0.0 {
                         circle = circle_reversed(circle);
                     }
-                    update_edge_3d(edge, &Curve3::Circle(circle), loc, tol);
+                    update_edge_3d(the_brep, edge, &Curve3::Circle(circle), loc, tol);
                     is_computed = true;
                 }
             }
@@ -584,7 +617,7 @@ pub(super) fn compute_curve3d(
                 origin,
                 direction: dir,
             });
-            update_edge_3d(edge, &c3d, loc, tol);
+            update_edge_3d(the_brep, edge, &c3d, loc, tol);
         }
         is_computed = true;
     }

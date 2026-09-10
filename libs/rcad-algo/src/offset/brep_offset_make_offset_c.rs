@@ -304,6 +304,7 @@ impl BRepOffsetMakeOffset {
                 // OCCT L2617: BB.UpdateEdge(CurEdge, aTrimCurv,
                 // Precision::Confusion()).
                 super::brep_offset_offset::update_edge_3d(
+                    &mut self.my_brep,
                     &cur_edge,
                     &a_trim_curv,
                     0,

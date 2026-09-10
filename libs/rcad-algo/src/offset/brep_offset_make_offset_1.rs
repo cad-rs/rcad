@@ -426,13 +426,26 @@ pub(crate) fn update_images(
     }
 }
 
-/// OCCT BOPAlgo_Builder::Modified(S) (architecture difference #41) — the
+/// OCCT BOPAlgo_Builder::Modified(S) (BOPAlgo_Builder.cxx L225-245) — the
 /// images of the shape in the builder, an empty list when the shape has not
 /// been modified.
+///
+/// OCCT keys myImages by the DS TShape identities and the DS holds the
+/// arguments by reference, so `Modified(theArgument)` finds the entry
+/// directly.  The rcad DS deep-clones the argument graph
+/// (DS::clone_arguments_private), so an argument TShape must be translated
+/// through `ds.argument_remap` before the lookup — the contract documented on
+/// DS::argument_remap.
 pub(crate) fn builder_modified(the_gf: &Builder, the_s: &Shape) -> Vec<Shape> {
+    let a_ptr = the_gf
+        .ds
+        .argument_remap
+        .get(&the_s.ptr_id())
+        .copied()
+        .unwrap_or_else(|| the_s.ptr_id());
     the_gf
         .my_images
-        .get((the_s.ptr_id(), the_s.location))
+        .get((a_ptr, the_s.location))
         .cloned()
         .unwrap_or_default()
 }

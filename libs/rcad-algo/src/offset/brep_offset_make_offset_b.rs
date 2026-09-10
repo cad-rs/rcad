@@ -697,13 +697,16 @@ impl BRepOffsetMakeOffset {
         {
             // OCCT MakeOffset_1.cxx L9511-9533: the BuildSplitsOfExtendedFaces
             // wrapper — the local BRepOffset_BuildOffsetFaces tool.
-            // [INTERFACE NOTE — REPORTED] SetAsDesInfo consumes the OCCT
-            // shared-handle carrier Rc<RefCell<BRepAlgoAsDes>>; the owned
-            // BRepAlgoAsDes of this class has no Clone, so the handle is the
-            // engine-local form (the OCCT handle aliasing — architecture
-            // difference #39).
+            //
+            // OCCT L9519: `BRepOffset_BuildOffsetFaces aBFTool(theImage);
+            // aBFTool.SetAsDesInfo(theAsDes)` — the caller's AsDes is shared
+            // with the tool through the handle (MakeOffset.cxx L1508 passes the
+            // BuildOffsetByInter local AsDes).  The rcad form moves the caller's
+            // AsDes into the shared Rc<RefCell<>> carrier and takes it back once
+            // the tool has run — the same aliasing (architecture difference
+            // #39).
             let as_des_handle =
-                std::rc::Rc::new(std::cell::RefCell::new(BRepAlgoAsDes::new()));
+                std::rc::Rc::new(std::cell::RefCell::new(std::mem::take(&mut as_des)));
             let mut a_bf_tool =
                 super::brep_offset_make_offset_1::BRepOffsetBuildOffsetFaces::new();
             a_bf_tool.set_faces(&lfe);
@@ -719,6 +722,10 @@ impl BRepOffsetMakeOffset {
                 1,
             );
             a_bf_tool.build_splits_of_extended_faces(&mut imoe, &a_ps_1);
+            // Give the (shared) AsDes back to the caller (the OCCT handle
+            // stays the caller's — see the note above).
+            drop(a_bf_tool);
+            as_des = std::mem::take(&mut *as_des_handle.borrow_mut());
             if self.my_error != BRepOffset_Error::NoError {
                 return;
             }

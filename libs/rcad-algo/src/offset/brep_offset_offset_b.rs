@@ -610,7 +610,7 @@ impl BRepOffsetOffset {
                             );
                         }
                     }
-                    my_builder.set_edge_range(the_brep, oe.clone(), f, l);
+                    super::brep_offset_offset::set_edge_range(the_brep, &oe, f, l);
                 } else {
                     // OCCT L910-957.
                     let mut eforward = e.clone();
@@ -787,7 +787,7 @@ impl BRepOffsetOffset {
                             &oe, &c2d, &self.my_face, brep_tool_tolerance(&e),
                             the_brep,
                         );
-                        my_builder.set_edge_range(the_brep, oe.clone(), f, l);
+                        super::brep_offset_offset::set_edge_range(the_brep, &oe, f, l);
                     }
                     // OCCT L1080-1083.
                     if !brep_tool_degenerated(&oe) {
@@ -994,12 +994,12 @@ impl BRepOffsetOffset {
         // OCCT L1239-1248.
         if !c1is3d {
             // OCCT L1242: UpdateEdge(Edge1, C1, Id, Tolerance(Edge1)) — the
-            // GAP no-op 3d-curve re-host.
-            update_edge_curve3d_gap(edge1, c1.as_ref().unwrap(), 0, brep_tool_tolerance(edge1));
+            // 3d-curve attach (the UpdateEdge static re-host).
+            update_edge_curve3d(the_brep, edge1, c1.as_ref().unwrap(), 0, brep_tool_tolerance(edge1));
         } else if c1_denerated {
             // OCCT L1244-1247: UpdateEdge(Edge1, Dummy, ...); Degenerated(
             // Edge1, true).
-            update_edge_curve3d_gap(edge1, &Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)), 0, brep_tool_tolerance(edge1));
+            update_edge_curve3d(the_brep, edge1, &Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)), 0, brep_tool_tolerance(edge1));
             my_builder.set_edge_degenerated(the_brep, edge1.clone(), true);
         }
 
@@ -1046,9 +1046,9 @@ impl BRepOffsetOffset {
 
         // OCCT L1292-1300.
         if !c2is3d {
-            update_edge_curve3d_gap(edge2, c2.as_ref().unwrap(), 0, brep_tool_tolerance(edge2));
+            update_edge_curve3d(the_brep, edge2, c2.as_ref().unwrap(), 0, brep_tool_tolerance(edge2));
         } else if c2_denerated {
-            update_edge_curve3d_gap(edge2, &Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)), 0, brep_tool_tolerance(edge2));
+            update_edge_curve3d(the_brep, edge2, &Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X)), 0, brep_tool_tolerance(edge2));
             my_builder.set_edge_degenerated(the_brep, edge2.clone(), true);
         }
 
@@ -1650,17 +1650,43 @@ fn offset_basis(the_s: &Surface3) -> Surface3 {
     }
 }
 
-/// OCCT BRep_Tool::Parameter(V, E, F) — the vertex parameter on the edge's
-/// pcurve on the face (the BRepTool::parameter_on_edge trait vehicle).
+/// OCCT BRep_Tool::Parameter(V, E, F) (BRep_Tool.cxx L1519-1524) — the vertex
+/// parameter on the pcurve of the edge on the surface of the face; delegates
+/// to Parameter(V, E, S, L) (BRep_Tool.cxx L1532-1645).
 fn brep_tool_parameter_vfe(the_v: &Shape, the_e: &Shape, the_f: &Shape) -> f64 {
-    match the_e.as_edge() {
-        Some(ed) => ed
-            .pcurves
-            .get(&shape_key(the_f))
-            .map(|_| 0.0)
-            .unwrap_or(0.0),
-        None => 0.0,
+    let Some(ed) = the_e.as_edge() else {
+        return 0.0;
+    };
+    // OCCT L1539-1561: search the vertex in the edge (the E.FORWARD iterator
+    // yields first then last) and keep the orientation it carries there.
+    let mut an_orient = Orientation::Internal;
+    if the_v.is_same(&ed.first) {
+        an_orient = ed.first.orientation;
+    } else if the_v.is_same(&ed.last) {
+        an_orient = ed.last.orientation;
     }
+    // OCCT L1569: double f, l; BRep_Tool::Range(E, S, L, f, l) — the range of
+    // the pcurve of E on the face surface.
+    let (a_f, a_l) = match ed.pcurves.get(&shape_key(the_f)) {
+        Some((_, f, l)) => (*f, *l),
+        None => (ed.range[0], ed.range[1]),
+    };
+    // OCCT L1571-1575: orient == TopAbs_FORWARD -> return (rev ? l : f).
+    // OCCT L1577-1581: orient == TopAbs_REVERSED -> return (rev ? f : l).
+    let rev = the_e.orientation == Orientation::Reversed;
+    if an_orient == Orientation::Forward {
+        return if rev { a_l } else { a_f };
+    }
+    if an_orient == Orientation::Reversed {
+        return if rev { a_f } else { a_l };
+    }
+    // OCCT L1583-1601 (orient == TopAbs_INTERNAL): the BRep_TVertex::Points()
+    // walk with IsPointOnCurveOnSurface + Parameter(). Architecture
+    // difference: the rcad PointRepresentation::PointOnSurface carries (face,
+    // u, v) and drops the OCCT BRep_PointRepresentation::myParameter, so the
+    // branch cannot return the stored parameter (the call sites pass the
+    // edge's first/last vertex, which always carries FORWARD/REVERSED).
+    a_f
 }
 
 /// OCCT S->Copy() + S->Transform(L.Transformation()) — GAP (arch. diff. #9
