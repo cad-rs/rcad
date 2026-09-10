@@ -657,19 +657,22 @@ impl TopOpeBRepBuildHBuilder {
         let _ = brep;
         // MergeShapes L192-195: myState1/myState2 = ToBuild; the rcad
         // tables key by state below.
-        // SplitSolid L1602-1607 (FillSolid over LS1): the object solid's
-        // own faces enter the face set with their as-found orientations.
-        // Pending boundary (recorded 2026-09-09): OCCT SplitShapes /
-        // SplitFace1 (Builder.cxx L1171-1289) rebuilds every face carrying
-        // split edges or intersection edges (FillFace + AddIntersectionEdges
-        // + FaceBuilder) so the support faces share edge TShapes with the
-        // patches; the rcad merge feeds the as-found faces, the patch faces
-        // cannot chain by edge identity and BuilderSolid drops them
-        // (perform_shapes_to_avoid) — the blend-2 closed-patch front (E3-I
-        // item 3 / q4).  A first SplitFace1 translation attempt regressed
-        // a3/q1 (loop classification / pcurve-transfer semantics of
-        // FillFace+FaceBuilder need the full 1:1 study) and was reverted;
-        // re-land it together with FillFace/FaceBuilder proper.
+        // Pending boundary (2026-09-10): the SplitFace1 machinery is fully
+        // translated in hbuilder_face.rs (WireEdgeSet/FaceBuilder/
+        // FillFace/SplitShapes/AddIntersectionEdges/MakeFaces, OCCT
+        // Builder.cxx L1171-1300) and the wiring below was attempted and
+        // REVERTED — with the current GAP leaves (FC2D_CurveOnSurface
+        // projection tail hbuilder_face/classify.rs, BRepCheck analyzer
+        // carrier) the rebuilt support faces lack usable pcurves and the
+        // area integrator breaks (a1/q1/x1 gprop panics, a3 -4%,
+        // baseline 14/8 -> 11/11).  Re-land the wiring TOGETHER with the
+        // FC2D projection-tail closure:
+        //   for face in solid_faces(s) {
+        //       if self.to_split(&ds, &face, TopAbsState::In) {
+        //           self.split_face1(brep, &mut ds_taken, &face, In, In);
+        //           faces.extend(self.splits(&face, TopAbsState::In));
+        //       } else { faces.push(face); }
+        //   }
         let mut faces = solid_faces(s);
         // SplitSolid L1631-1662: the DS intersection surfaces of the solid.
         let ds = self.my_data_structure.as_ref().expect("Perform first");

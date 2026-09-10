@@ -77,5 +77,6 @@ pub mod chfi_kpart_gp;
 pub mod fillet;
 pub mod fillet_surf;
 pub mod hbuilder;
+pub mod hbuilder_face;
 
 pub use fillet::make_fillet_edge;
