@@ -10,15 +10,6 @@
 //! `AdjustOnPeriodic2d` (L865-891).
 //!
 //! GAP re-hosts (the iron rule: dependency + anchor + OCCT failure path):
-//! - [`ShapeFixIntersectionToolGap`] — OCCT `ShapeFix_IntersectionTool`
-//!   (ShapeFix_IntersectionTool.cxx, W3 docket row) reduced to the
-//!   constructor + `FixSelfIntersectWire` call shape consumed at
-//!   ShapeFix_Wire.cxx L1203-1205; keeps OCCT's "cannot fix" path (false,
-//!   zero counters — the wire passes through unchanged).
-//! - [`ShapeFixSplitToolGap`] — OCCT `ShapeFix_SplitTool` (W3 docket row)
-//!   reduced to the default constructor + `CutEdge` call shape consumed at
-//!   ShapeFix_Wire.cxx L3132-3160; keeps OCCT's "cannot cut" path (false —
-//!   the caller keeps the tolerance-increase branches).
 //! - [`GeomConvertCompCurveToBSplineGap`] — OCCT
 //!   `GeomConvert_CompCurveToBSplineCurve` (TKGeomBase, kernel-geom scope)
 //!   reduced to `Add`/`BSplineCurve`; keeps OCCT's `!Add` failure branch
@@ -32,6 +23,13 @@
 //!   path (the output sequences stay empty — wire_checks.rs bridge #5), so
 //!   the accessors are unreachable; they read the (x, y) parameter slots of
 //!   the sampler element type for form.
+//!
+//! Retired by the W3 tranche 3 (the real tools landed 1:1 in
+//! `shape_fix/split_tool.rs` and `shape_fix/intersection_tool.rs`): the
+//! former `ShapeFixIntersectionToolGap` (consumed by `fix_api.rs` L958) and
+//! `ShapeFixSplitToolGap` (consumed by `fix_adv.rs` and `fix_intersect.rs`
+//! L226) carriers — deleted, Rule 4; every consumer now calls the real
+//! `ShapeFix_IntersectionTool` / `ShapeFix_SplitTool`.
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3};
@@ -66,65 +64,6 @@ pub(crate) fn curve_period_2d(c: &Curve2d) -> f64 {
 // ---------------------------------------------------------------------------
 // GAP re-hosts (module doc).
 // ---------------------------------------------------------------------------
-
-/// OCCT `ShapeFix_IntersectionTool` GAP re-host (module doc).
-pub struct ShapeFixIntersectionToolGap {
-    /// OCCT myContext.
-    #[allow(dead_code)]
-    my_context: Option<ShapeBuildReShape>,
-    /// OCCT myPreci.
-    #[allow(dead_code)]
-    my_preci: f64,
-}
-
-impl ShapeFixIntersectionToolGap {
-    /// OCCT ShapeFix_IntersectionTool(Context, preci)
-    /// (ShapeFix_IntersectionTool.cxx L36-42).
-    pub fn new(context: Option<ShapeBuildReShape>, preci: f64) -> Self {
-        ShapeFixIntersectionToolGap {
-            my_context: context,
-            my_preci: preci,
-        }
-    }
-
-    /// OCCT ShapeFix_IntersectionTool::FixSelfIntersectWire
-    /// (ShapeFix_IntersectionTool.cxx L207-704) — GAP: keeps OCCT's "cannot
-    /// fix" path (the intersections cannot be computed; the wire passes
-    /// through unchanged).  Replaced by the W3 IntersectionTool tranche.
-    pub fn fix_self_intersecting_wire(
-        &mut self,
-        _brep: &mut BRep,
-        _sbwd: &mut WireData,
-        _face: &Shape,
-        nb_split: &mut i32,
-        nb_cut: &mut i32,
-        nb_removed: &mut i32,
-    ) -> bool {
-        let _ = (nb_split, nb_cut, nb_removed);
-        false
-    }
-}
-
-/// OCCT `ShapeFix_SplitTool` GAP re-host (module doc).
-pub struct ShapeFixSplitToolGap;
-
-impl ShapeFixSplitToolGap {
-    /// OCCT ShapeFix_SplitTool::CutEdge(edge, paramEnd, param, face,
-    /// IsCutLine) (ShapeFix_SplitTool.cxx L62-394) — GAP: keeps OCCT's
-    /// "cannot cut" path (the caller keeps the tolerance-increase branches).
-    /// Replaced by the W3 SplitTool tranche.
-    pub fn cut_edge(
-        &mut self,
-        _brep: &mut BRep,
-        _edge: &Shape,
-        _param_end: f64,
-        _param: f64,
-        _face: &Shape,
-        _is_cut_line: &mut bool,
-    ) -> bool {
-        false
-    }
-}
 
 /// OCCT `GeomConvert_CompCurveToBSplineCurve` GAP re-host (module doc).
 pub struct GeomConvertCompCurveToBSplineGap;

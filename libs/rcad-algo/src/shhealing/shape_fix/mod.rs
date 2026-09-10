@@ -11,21 +11,33 @@
 //!
 //! W3 tranche 2 (2026-09-10): ShapeFix_Wire (+ Wire_1 + lxx) — the full
 //! wire repair tool in `wire/` (mod + fix_api + fix_adv + fix_gaps +
-//! wire_statics).  The remaining W3 classes (Face, Shell, Shape,
-//! IntersectionTool, SplitTool, Wireframe, FixSmallFace, FixSmallSolid,
+//! wire_statics).
+//!
+//! W3 tranche 3 (2026-09-10): ShapeFix_Face (`face_a/face_b/face_c`),
+//! ShapeFix_Shell (`shell` + `shell_statics`), ShapeFix_IntersectionTool
+//! (`intersection_tool`) and ShapeFix_SplitTool (`split_tool`) — the
+//! `ShapeFixIntersectionToolGap` / `ShapeFixSplitToolGap` /
+//! `ShapeFixFaceGap` / `ShapeFixShellGap` carriers are retired (Rule 4).
+//! The remaining W3 classes (Shape, Wireframe, FixSmallFace, FixSmallSolid,
 //! EdgeConnect, EdgeProjAux, FaceConnect, ComposeShell) follow in later
-//! tranches; the GAP carriers for Face/Shell/Shape in
-//! `shape_fix_gap_deps.rs` remain annotated for those tranches (the
-//! embedded ShapeFix_Wire tool of the Face/Shape carriers now points at the
-//! real `ShapeFixWire`).
+//! tranches; the Shape GAP carrier in `shape_fix_gap_deps.rs` remains
+//! annotated for that tranche.
 
 pub mod edge;
+pub mod face_a;
+pub mod face_b;
+pub mod face_c;
 pub mod free_bounds;
+pub mod intersection_tool;
+pub mod intersection_tool_fix;
 pub mod root;
 pub mod shape_fix;
 pub mod shape_fix_gap_deps;
 pub mod shape_tolerance;
+pub mod shell;
+pub mod shell_statics;
 pub mod split_common_vertex;
+pub mod split_tool;
 pub mod wire;
 pub mod wire_segment;
 pub mod wire_vertex;

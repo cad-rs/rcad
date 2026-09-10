@@ -956,9 +956,10 @@ impl ShapeFixWire {
         if ShapeFixRoot::need_fix(self.my_fix_non_adjacent_intersecting_edges_mode, true) {
             let precision = self.base.my_precision;
             let mut i_tool =
-                crate::shhealing::shape_fix::wire::wire_statics::ShapeFixIntersectionToolGap::new(
+                crate::shhealing::shape_fix::intersection_tool::ShapeFixIntersectionTool::new(
                     self.base.my_context.clone(),
                     precision,
+                    1.0,
                 );
             let face = self.my_analyzer.face().clone();
             let mut nb_split = 0;
@@ -966,7 +967,7 @@ impl ShapeFixWire {
             let mut nb_removed = 0;
             {
                 let sbwd = self.my_analyzer.wire_data_mut().unwrap();
-                if i_tool.fix_self_intersecting_wire(
+                if i_tool.fix_self_intersect_wire(
                     brep,
                     sbwd,
                     &face,

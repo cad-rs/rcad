@@ -65,10 +65,10 @@
 //! 5. OCCT `try { OCC_CATCH_SIGNALS } catch (Standard_Failure)` blocks —
 //!    the failure arms are annotated at site (the tranche-1 precedent); rcad
 //!    raises no exceptions in these bodies, so the OK-arm flow is preserved.
-//! 6. `ShapeFix_IntersectionTool` / `ShapeFix_SplitTool` — W3 docket rows
-//!    not yet landed; the GAP re-hosts at the bottom of `fix_adv.rs` keep
-//!    the call shapes and OCCT's failure/no-op paths (module doc of
-//!    `fix_adv.rs`).
+//! 6. `ShapeFix_IntersectionTool` / `ShapeFix_SplitTool` — landed 1:1 in
+//!    the W3 tranche 3 (`shape_fix/intersection_tool.rs` +
+//!    `shape_fix/split_tool.rs`); the former GAP re-hosts are retired
+//!    (Rule 4) and the call sites use the real tools.
 //! 7. `GeomAPI_ExtremaCurveCurve` / `GeomAPI_ProjectPointOnCurve` /
 //!    `Geom2dAPI_*` / `Geom2dInt_GInter` (the general curve-curve
 //!    intersection) / `Approx_Curve3d` / `Approx_Curve2d` /

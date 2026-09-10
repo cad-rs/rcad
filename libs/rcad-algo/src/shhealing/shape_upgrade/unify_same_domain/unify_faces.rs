@@ -121,7 +121,7 @@ impl ShapeUpgradeUnifySameDomain {
 /// OCCT static SetFixWireModes (cxx L3133-3144): the ShapeFix_Wire tool
 /// flags of the ShapeFix_Face tool (the real W3 tranche 2 `ShapeFixWire`).
 pub fn set_fix_wire_modes(
-    the_sff: &mut crate::shhealing::shape_fix::shape_fix_gap_deps::ShapeFixFaceGap,
+    the_sff: &mut crate::shhealing::shape_fix::face_a::ShapeFixFace,
 ) {
     let a_fix_wire = the_sff.fix_wire_tool();
     *a_fix_wire.fix_self_intersection_mode() = 0;

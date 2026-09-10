@@ -15,7 +15,9 @@ use super::topexp::{
 use super::unify_faces::set_fix_wire_modes;
 use super::{map_add, shape_key, MapOfShape, ShapeUpgradeUnifySameDomain};
 use crate::shhealing::shape_build::brep_tool::iter_subshapes;
-use crate::shhealing::shape_fix::shape_fix_gap_deps::{ShapeFixFaceGap, ShapeFixShellGap};
+use crate::shhealing::shape_fix::face_a::ShapeFixFace;
+use crate::shhealing::shape_fix::shape_fix::MessageProgressRange;
+use crate::shhealing::shape_fix::shell::ShapeFixShell;
 
 
 impl ShapeUpgradeUnifySameDomain {
@@ -122,21 +124,22 @@ impl ShapeUpgradeUnifySameDomain {
                 }
             }
 
-            // OCCT L4404-4421: ShapeFix_Face (the W1-6 carrier; Perform keeps
-            // the "nothing fixed" path until W3).
-            let mut sff = ShapeFixFaceGap::with_face(&a_face);
-            let _ = &mut sff; // SetContext(myContext) — no carrier surface
+            // OCCT L4404-4421.
+            let mut sff = ShapeFixFace::with_face(brep, &a_face);
+            if self.my_safe_input_mode {
+                sff.base.set_context(self.my_context.clone());
+            }
             sff.set_precision(a_prec);
             sff.set_min_tolerance(a_prec);
             sff.set_max_tolerance(1.0f64.max(a_prec * 1000.0));
-            *sff.fix_orientation_mode() = false;
-            *sff.fix_add_natural_bound_mode() = false;
-            *sff.fix_intersecting_wires_mode() = false;
-            *sff.fix_loop_wires_mode() = false;
-            *sff.fix_split_face_mode() = false;
-            *sff.fix_periodic_degenerated_mode() = false;
+            *sff.fix_orientation_mode() = 0;
+            *sff.fix_add_natural_bound_mode() = 0;
+            *sff.fix_intersecting_wires_mode() = 0;
+            *sff.fix_loop_wires_mode() = 0;
+            *sff.fix_split_face_mode() = 0;
+            *sff.fix_periodic_degenerated_mode() = 0;
             set_fix_wire_modes(&mut sff);
-            sff.perform(brep);
+            sff.perform(brep, MessageProgressRange);
             let a_new_face = sff.face();
             self.my_context.replace(brep, &a_face, &a_new_face);
         }
@@ -147,9 +150,9 @@ impl ShapeUpgradeUnifySameDomain {
             let mut is_changed = false;
             for expsh in topexp_explorer(brep, &a_res1, ShapeType::Shell) {
                 let a_shell = expsh.clone();
-                let mut sfsh = ShapeFixShellGap::new();
-                sfsh.fix_face_orientation(&a_shell);
-                let a_new_shell = sfsh.shell();
+                let mut sfsh = ShapeFixShell::new();
+                sfsh.fix_face_orientation(brep, &a_shell, true, false);
+                let a_new_shell = sfsh.shell_result();
                 if !occt_is_same_shape(&a_new_shell, &a_shell) {
                     self.my_context.replace(brep, &a_shell, &a_new_shell);
                     is_changed = true;

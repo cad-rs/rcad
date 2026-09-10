@@ -356,9 +356,9 @@ pub fn remove_small_edges(
     // L294.
     sfs.set_precision(tolerance);
     // L295-297.
-    *sfs.fix_face_tool().fix_missing_seam_mode() = false;
-    *sfs.fix_face_tool().fix_orientation_mode() = false;
-    *sfs.fix_face_tool().fix_small_area_wire_mode() = false;
+    *sfs.fix_face_tool().fix_missing_seam_mode() = 0;
+    *sfs.fix_face_tool().fix_orientation_mode() = 0;
+    *sfs.fix_face_tool().fix_small_area_wire_mode() = 0;
     *sfs.fix_wire_tool().modify_topology_mode() = true;
     // L299-304.
     *sfs.fix_wire_tool().fix_connected_mode() = 0;

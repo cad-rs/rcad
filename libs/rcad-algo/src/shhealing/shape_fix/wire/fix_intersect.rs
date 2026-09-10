@@ -13,9 +13,9 @@ use crate::shhealing::shape_analysis::edge::ShapeAnalysisEdge;
 use crate::shhealing::shape_build::edge::ShapeBuildEdge;
 use crate::shhealing::shape_extend::msg::MessageMsg;
 use crate::shhealing::shape_extend::status::{encode_status, ShapeExtendStatus};
+use crate::shhealing::shape_fix::split_tool::ShapeFixSplitTool;
 use crate::shhealing::shape_fix::wire::wire_statics::{
     compute_local_deviation, param_on_first, param_on_second, pcurve_range_on_face,
-    ShapeFixSplitToolGap,
 };
 use crate::shhealing::shape_fix::wire::{
     brep_tool_pnt, brep_tool_same_parameter, brep_tool_tolerance, REAL_LAST,
@@ -223,7 +223,7 @@ impl ShapeFixWire {
                     //: j6 abv 7 Dec 98: ProSTEP TR10 r0601_id.stp #57676 &
                     // #58586: do not cut edges because of the influence on
                     // adjacent faces
-                    let mut a_tool = ShapeFixSplitToolGap;
+                    let mut a_tool = ShapeFixSplitTool;
 
                     if !a_tool.cut_edge(
                         brep,

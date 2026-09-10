@@ -26,7 +26,7 @@ use crate::shhealing::shape_extend::wire_data::WireData;
 use crate::shhealing::shape_fix::wire::wire_statics::{
     compute_local_deviation, copy_reverse_pcurves, param_on_first, param_on_second,
     pcurve_range_on_face, remove_loop, remove_loop_split, try_bending_pcurve,
-    update_edge_uv_points, ShapeFixSplitToolGap,
+    update_edge_uv_points,
 };
 use crate::shhealing::shape_fix::wire::{
     brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter, brep_tool_tolerance,

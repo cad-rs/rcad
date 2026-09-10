@@ -1154,19 +1154,23 @@ impl ShapeAnalysisWire {
 
     /// OCCT CheckLoop(aMapLoopVertices, aMapVertexEdges, aMapSmallEdges,
     /// aMapSeemEdges) (cxx L2276-2388) — the vertex-edge maps keyed by the
-    /// vertex identity (ptr, location).
-    pub fn check_loop(&mut self, brep: &mut BRep) -> bool {
+    /// vertex identity (ptr, location).  The out maps carry the OCCT NCollection
+    /// containers: the loop vertices the IndexedMap (ordered, unique), the
+    /// vertex-edge lists the DataMap, the small/seam edges the Maps (unique).
+    pub fn check_loop(
+        &mut self,
+        brep: &mut BRep,
+        a_map_loop_vertices: &mut Vec<(u64, u32)>,
+        a_map_vertex_edges: &mut std::collections::HashMap<(u64, u32), Vec<Shape>>,
+        a_map_small_edges: &mut Vec<(u64, u32)>,
+        a_map_seem_edges: &mut Vec<(u64, u32)>,
+    ) -> bool {
         self.my_status = encode_status(ShapeExtendStatus::Ok);
         if !self.is_loaded() || self.nb_edges() < 2 {
             return false;
         }
         let a_sav_preci = self.precision();
         self.set_precision(rcad_kernel::precision::INFINITE_VALUE);
-        let mut a_map_loop_vertices: Vec<(u64, u32)> = Vec::new();
-        let mut a_map_vertex_edges: std::collections::HashMap<(u64, u32), Vec<Shape>> =
-            std::collections::HashMap::new();
-        let mut a_map_small_edges: Vec<(u64, u32)> = Vec::new();
-        let mut a_map_seem_edges: Vec<(u64, u32)> = Vec::new();
 
         for i in 1..=self.nb_edges() {
             let aedge = self.my_wire.as_ref().unwrap().edge(i);
@@ -1178,11 +1182,20 @@ impl ShapeAnalysisWire {
             }
             let is_same = a_v1.ptr_id() == a_v2.ptr_id() && a_v1.location == a_v2.location;
             if self.my_wire.as_mut().unwrap().is_seam(i) {
-                a_map_seem_edges.push((aedge.ptr_id(), aedge.location));
+                let k = (aedge.ptr_id(), aedge.location);
+                if !a_map_seem_edges.contains(&k) {
+                    a_map_seem_edges.push(k);
+                }
             } else if brep_tool_degenerated(&aedge) {
-                a_map_small_edges.push((aedge.ptr_id(), aedge.location));
+                let k = (aedge.ptr_id(), aedge.location);
+                if !a_map_small_edges.contains(&k) {
+                    a_map_small_edges.push(k);
+                }
             } else if is_same && self.check_small(brep, i, brep_tool_tolerance(&a_v1)) {
-                a_map_small_edges.push((aedge.ptr_id(), aedge.location));
+                let k = (aedge.ptr_id(), aedge.location);
+                if !a_map_small_edges.contains(&k) {
+                    a_map_small_edges.push(k);
+                }
             }
 
             let k1 = (a_v1.ptr_id(), a_v1.location);
@@ -1194,9 +1207,11 @@ impl ShapeAnalysisWire {
                 alshape.push(aedge.clone());
                 alshape.push(aedge.clone());
                 if alshape.len() > 2
-                    && is_multi_vertex(alshape, &a_map_small_edges, &a_map_seem_edges)
+                    && is_multi_vertex(alshape, a_map_small_edges, a_map_seem_edges)
                 {
-                    a_map_loop_vertices.push(k1);
+                    if !a_map_loop_vertices.contains(&k1) {
+                        a_map_loop_vertices.push(k1);
+                    }
                 }
             } else {
                 let alshape = a_map_vertex_edges.get_mut(&k1).unwrap();
@@ -1204,14 +1219,18 @@ impl ShapeAnalysisWire {
                 if alshape.len() > 2
                     && is_multi_vertex(alshape, &a_map_small_edges, &a_map_seem_edges)
                 {
-                    a_map_loop_vertices.push(k1);
+                    if !a_map_loop_vertices.contains(&k1) {
+                        a_map_loop_vertices.push(k1);
+                    }
                 }
                 let alshape2 = a_map_vertex_edges.get_mut(&k2).unwrap();
                 alshape2.push(aedge.clone());
                 if alshape2.len() > 2
-                    && is_multi_vertex(alshape2, &a_map_small_edges, &a_map_seem_edges)
+                    && is_multi_vertex(alshape2, a_map_small_edges, a_map_seem_edges)
                 {
-                    a_map_loop_vertices.push(k2);
+                    if !a_map_loop_vertices.contains(&k2) {
+                        a_map_loop_vertices.push(k2);
+                    }
                 }
             }
         }
