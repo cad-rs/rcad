@@ -4,7 +4,6 @@
 //! `chfi_ds.rs` exceeds the 2000-line guideline.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use glam::{DVec2, DVec3};
@@ -363,40 +362,13 @@ impl ChFiDSElSpine {
 // L530-854 ComputeLaw, L858-870 Law, L874-889 ChangeLaw,
 // L893-929 MaxRadFromSeqAndLaws).
 //
-// Architecture deviation for the OCCT field
-// `NCollection_List<occ::handle<Law_Function>> myLaws`
-// (ChFiDS_FilSpine.hxx): the rcad ChFiDSFilSpine struct lives in
-// chfi_ds.rs (frozen for this batch) whose placeholder
-// `laws: Vec<LawFunction>` field cannot change type, so the real law
-// list is stored in the thread-local side table below, keyed by the
-// spine's first edge identity (Shape::ptr_id — the same ptr-based
-// identity the chfi3d_ds side tables use).  The key is value-stable
-// across the by-value ChFiDSSpineHandle clones that the rcad handle
-// semantics produce, so the laws follow the spine through
-// take/write-back cycles (st.my_spine = Some(spine)) exactly like the
-// other ChFiDS_FilSpine fields.
+// The law list is the `laws` member of ChFiDSFilSpine (chfi_ds.rs), the
+// OCCT field `NCollection_List<occ::handle<Law_Function>> myLaws`
+// (ChFiDS_FilSpine.hxx); it follows the spine through the by-value
+// ChFiDSSpineHandle clones exactly like the other ChFiDS_FilSpine fields.
 // =========================================================================
 
-thread_local! {
-    static FILSPINE_LAWS: RefCell<HashMap<u64, Vec<Rc<RefCell<LawComposite>>>>> =
-        RefCell::new(HashMap::new());
-}
-
 impl ChFiDSFilSpine {
-    /// The side-table key (OCCT: the spine object identity).
-    fn filspine_laws_key(&self) -> u64 {
-        self.base.spine[0].ptr_id()
-    }
-
-    /// Access to this spine's law list (OCCT: the myLaws member — stored as
-    /// Law_Composite handles, the concrete type ComputeLaw produces).
-    fn filspine_laws<R>(&self, f: impl FnOnce(&mut Vec<Rc<RefCell<LawComposite>>>) -> R) -> R {
-        FILSPINE_LAWS.with(|regs| {
-            let mut regs = regs.borrow_mut();
-            f(regs.entry(self.filspine_laws_key()).or_default())
-        })
-    }
-
     /// OCCT ChFiDS_FilSpine.cxx L235-242 — SetRadius(handle<Law_Function>&,
     /// IinC).  Literal OCCT body: the Law_Composite is a function-local
     /// object that is never stored (only parandrad.Clear() has an effect —
@@ -412,50 +384,6 @@ impl ChFiDSFilSpine {
         self.parandrad.clear();
     }
 
-    /// OCCT ChFiDS_FilSpine.cxx L50-53 (the laws.Clear() line of Reset) —
-    /// exposed for the reset paths that live in chfi_ds.rs (frozen file;
-    /// callers will be switched when it reopens).
-    pub fn clear_laws(&mut self) {
-        self.filspine_laws(|laws| laws.clear());
-    }
-
-    /// OCCT ChFiDS_FilSpine.cxx L193-215 — the splitdone tail of
-    /// SetRadius(UandR, IinC): "si le split est done il faut rejouer la law
-    /// correspondant au parametre W".  Standalone here because the
-    /// set_radius_uandr body that calls it lives in chfi_ds.rs (frozen
-    /// file, tail marked pending there); the replay is wired by its
-    /// callers.
-    pub fn perform_law_replay(&mut self, w: f64) {
-        self.filspine_laws(|laws| {
-            // OCCT: NCollection_List<...>::Iterator It(elspines);
-            //       NCollection_List<...>::Iterator Itl(laws);
-            //       Els = It.Value();
-            let els_periodic = self.base.elspines.first().map(|e| e.periodic);
-            if els_periodic == Some(true) {
-                // OCCT: if (Els->IsPeriodic()) Itl.ChangeValue() = ComputeLaw(Els);
-                if let Some(els) = self.base.elspines.first() {
-                    let newlaw = self.compute_law(els);
-                    if let Some(slot) = laws.first_mut() {
-                        *slot = newlaw;
-                    }
-                }
-            } else {
-                // OCCT: for (; It.More(); It.Next(), Itl.Next()) { ... }
-                for (i, els) in self.base.elspines.iter().enumerate() {
-                    let uf = els.first_parameter();
-                    let ul = els.last_parameter();
-                    if uf <= w && w <= ul {
-                        // OCCT: Itl.ChangeValue() = ComputeLaw(Els);
-                        let newlaw = self.compute_law(els);
-                        if let Some(slot) = laws.get_mut(i) {
-                            *slot = newlaw;
-                        }
-                    }
-                }
-            }
-        });
-    }
-
     /// OCCT ChFiDS_FilSpine.cxx L369-373 — AppendElSpine(Els) (the
     /// ChFiDS_FilSpine override: base append + AppendLaw).
     pub fn append_el_spine_fil(&mut self, els: &ChFiDSElSpine) {
@@ -469,7 +397,7 @@ impl ChFiDSFilSpine {
     pub fn append_law(&mut self, els: &ChFiDSElSpine) {
         // OCCT: occ::handle<Law_Composite> l = ComputeLaw(Els); laws.Append(l);
         let l = self.compute_law(els);
-        self.filspine_laws(|laws| laws.push(l));
+        self.laws.push(l);
     }
 
     /// OCCT ChFiDS_FilSpine.cxx L858-870 — Law(Els): the law attached to
@@ -479,7 +407,7 @@ impl ChFiDSFilSpine {
     /// as identity substitute (architecture note: OCCT compares
     /// occ::handle identity).
     pub fn law_of(&self, els: &ChFiDSElSpine) -> Option<Rc<RefCell<LawComposite>>> {
-        let laws = self.filspine_laws(|l| l.clone());
+        let laws = &self.laws;
         for (i, sp) in self.base.elspines.iter().enumerate() {
             let same = std::ptr::eq(sp, els)
                 || (sp.first_parameter() == els.first_parameter()
@@ -489,6 +417,92 @@ impl ChFiDSFilSpine {
             }
         }
         None
+    }
+
+    /// OCCT ChFiDS_FilSpine::ChangeLaw(E) head (L874-886) — the SplitDone /
+    /// IsConstant checks, the ElSpine(IE) lookup and the Law(hsp) composite.
+    fn change_law_slot(&self, e: &Shape) -> (Rc<RefCell<LawComposite>>, f64) {
+        if !self.base.splitdone {
+            panic!(
+                "Standard_DomainError: ChFiDS_FilSpine::ChangeLaw : the limits are not up-to-date"
+            );
+        }
+        let ie = self.base.index_of_edge(e);
+        if self.is_constant_on(ie) {
+            panic!(
+                "Standard_DomainError: ChFiDS_FilSpine::ChangeLaw : no law on constant edges"
+            );
+        }
+        // OCCT: occ::handle<ChFiDS_ElSpine> hsp = ElSpine(IE);
+        let hsp = self
+            .base
+            .el_spine_of_index(ie)
+            .expect("ElSpine(IE) (ChFiDS_Spine::ElSpine)");
+        let w = 0.5 * (self.base.first_parameter_of(ie) + self.base.last_parameter_of(ie));
+        // OCCT: occ::handle<Law_Composite> lc = Law(hsp); (a null law cannot
+        // exist in OCCT — AppendElSpine has appended the ComputeLaw
+        // composite; the expect keeps the null-handle failure path explicit).
+        let lc = self
+            .law_of(hsp)
+            .expect("ChFiDS_FilSpine::Law: no law for this elspine");
+        (lc, w)
+    }
+
+    /// OCCT ChFiDS_FilSpine.cxx L874-889 — ChangeLaw(E): returns the
+    /// elementary law of the composite used at the middle parameter of the
+    /// edge (the handle value of the OCCT `handle<Law_Function>&` return;
+    /// the interior RefCell borrow cannot escape — architecture note — so
+    /// callers read/assign through [`Self::assign_change_law`]).
+    pub fn change_law(&self, e: &Shape) -> Option<LawFunctionHandle> {
+        let (lc, w) = self.change_law_slot(e);
+        // OCCT: return lc->ChangeElementaryLaw(w);
+        let mut c = lc.borrow_mut();
+        c.change_elementary_law(w).map(|slot| slot.clone())
+    }
+
+    /// OCCT `fsp->ChangeLaw(E) = L` (ChFi3d_FilBuilder::SetLaw,
+    /// ChFi3d_FilBuilder.cxx L396) — the assignment through the
+    /// ChangeElementaryLaw reference replaces the composite's current
+    /// elementary law handle.
+    pub fn assign_change_law(&self, e: &Shape, l: LawFunctionHandle) {
+        let (lc, w) = self.change_law_slot(e);
+        // OCCT: ChangeElementaryLaw(W) = L.
+        let mut c = lc.borrow_mut();
+        if let Some(slot) = c.change_elementary_law(w) {
+            *slot = l;
+        }
+    }
+
+    /// OCCT ChFiDS_FilSpine.cxx L893-929 — MaxRadFromSeqAndLaws().
+    pub fn max_rad_from_seq_and_laws(&self) -> f64 {
+        let mut max_rad = 0.0f64;
+
+        for i in 1..=self.parandrad.len() {
+            if self.parandrad[i - 1].y > max_rad {
+                max_rad = self.parandrad[i - 1].y;
+            }
+        }
+
+        for law in &self.laws {
+            let (mut fpar, mut lpar) = (0.0f64, 0.0f64);
+            // OCCT: law->Bounds(fpar, lpar);
+            law.borrow().bounds(&mut fpar, &mut lpar);
+            let delta = (lpar - fpar) * 0.2;
+            for i in 0..=4usize {
+                let par = fpar + i as f64 * delta;
+                // OCCT: rad = law->Value(par);
+                let rad = law.borrow_mut().value(par);
+                if rad > max_rad {
+                    max_rad = rad;
+                }
+            }
+            let rad = law.borrow_mut().value(lpar);
+            if rad > max_rad {
+                max_rad = rad;
+            }
+        }
+
+        max_rad
     }
 
     /// OCCT ChFiDS_FilSpine.cxx L530-854 — ComputeLaw(Els) — returns the
@@ -806,64 +820,6 @@ impl ChFiDSFilSpine {
             loi.set_periodic();
         }
         Rc::new(RefCell::new(loi))
-    }
-
-    /// OCCT ChFiDS_FilSpine.cxx L874-889 — ChangeLaw(E).
-    pub fn change_law(&mut self, e: &Shape) -> Option<LawFunctionHandle> {
-        if !self.base.splitdone {
-            panic!(
-                "Standard_DomainError: ChFiDS_FilSpine::ChangeLaw : the limits are not up-to-date"
-            );
-        }
-        let ie = self.base.index_of_edge(e);
-        if self.is_constant_on(ie) {
-            panic!(
-                "Standard_DomainError: ChFiDS_FilSpine::ChangeLaw : no law on constant edges"
-            );
-        }
-        // OCCT: occ::handle<ChFiDS_ElSpine> hsp = ElSpine(IE);
-        let hsp = self
-            .base
-            .el_spine_of_index(ie)
-            .expect("ElSpine(IE) (ChFiDS_Spine::ElSpine)");
-        let w = 0.5 * (self.base.first_parameter_of(ie) + self.base.last_parameter_of(ie));
-        // OCCT: occ::handle<Law_Composite> lc = Law(hsp);
-        //       return lc->ChangeElementaryLaw(w);
-        let lc = self.law_of(hsp);
-        lc.and_then(|c| c.borrow_mut().change_elementary_law(w).cloned())
-    }
-
-    /// OCCT ChFiDS_FilSpine.cxx L893-929 — MaxRadFromSeqAndLaws().
-    pub fn max_rad_from_seq_and_laws(&self) -> f64 {
-        let mut max_rad = 0.0f64;
-
-        for i in 1..=self.parandrad.len() {
-            if self.parandrad[i - 1].y > max_rad {
-                max_rad = self.parandrad[i - 1].y;
-            }
-        }
-
-        let laws = self.filspine_laws(|l| l.clone());
-        for law in &laws {
-            let (mut fpar, mut lpar) = (0.0f64, 0.0f64);
-            // OCCT: law->Bounds(fpar, lpar);
-            law.borrow().bounds(&mut fpar, &mut lpar);
-            let delta = (lpar - fpar) * 0.2;
-            for i in 0..=4usize {
-                let par = fpar + i as f64 * delta;
-                // OCCT: rad = law->Value(par);
-                let rad = law.borrow_mut().value(par);
-                if rad > max_rad {
-                    max_rad = rad;
-                }
-            }
-            let rad = law.borrow_mut().value(lpar);
-            if rad > max_rad {
-                max_rad = rad;
-            }
-        }
-
-        max_rad
     }
 }
 

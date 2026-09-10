@@ -29,9 +29,10 @@ use rcad_kernel::topods::{self, Shape};
 use super::chfi_ds::{
     ChFi3dFilletShape, ChFiDSSpineHandle, ChFiDS_State, ChFiDS_ChamfMethod, ChFiDS_ChamfMode,
     ChFiDS_ErrorStatus,
-    ChFiDSStripeMap, ChFiDSChamfSpine, ChFiDSFilSpine, ChFiDSStripe, ChFiDSMap, LawFunction, ChFiDSSurfData,
+    ChFiDSStripeMap, ChFiDSChamfSpine, ChFiDSFilSpine, ChFiDSStripe, ChFiDSMap, ChFiDSSurfData,
     SharedStripe,
 };
+use crate::geomalgo::law::LawFunctionHandle;
 
 // =========================================================================
 // OCCT TopOpeBRepDS_HDataStructure / TopOpeBRepBuild_HBuilder.  User
@@ -1033,19 +1034,50 @@ impl ChFi3dFilBuilder {
         -1.0
     }
 
-    /// OCCT ChFi3d_FilBuilder.cxx L359-372 — GetBounds via ChangeLaw(E);
-    /// the Law_Function Bounds query is pending the Law package.
-    pub fn get_bounds(&self, _ic: usize, _e: &Shape, _f: &mut f64, _l: &mut f64) -> bool {
+    /// OCCT ChFi3d_FilBuilder::GetBounds (ChFi3d_FilBuilder.cxx L359-371).
+    pub fn get_bounds(&self, ic: usize, e: &Shape, f: &mut f64, l: &mut f64) -> bool {
+        if ic <= self.base.nb_elements() {
+            // OCCT: occ::handle<ChFiDS_FilSpine> fsp =
+            //           occ::down_cast<ChFiDS_FilSpine>(Value(IC));
+            let sp = self.base.value(ic);
+            if let Some(fsp) = sp.down_cast_fil() {
+                // OCCT: occ::handle<Law_Function>& loi = fsp->ChangeLaw(E);
+                //       if (!loi.IsNull()) { loi->Bounds(F, L); return true; }
+                // (the rcad Option models the OCCT null check).
+                if let Some(loi) = fsp.change_law(e) {
+                    loi.borrow().bounds(f, l);
+                    return true;
+                }
+            }
+        }
         false
     }
 
-    /// OCCT ChFi3d_FilBuilder.cxx L376-384 — pending Law package.
-    pub fn get_law(&self, _ic: usize, _e: &Shape) -> Option<LawFunction> {
+    /// OCCT ChFi3d_FilBuilder::GetLaw (ChFi3d_FilBuilder.cxx L374-384).
+    pub fn get_law(&self, ic: usize, e: &Shape) -> Option<LawFunctionHandle> {
+        if ic <= self.base.nb_elements() {
+            // OCCT: fsp = occ::down_cast<ChFiDS_FilSpine>(Value(IC));
+            //       return fsp->ChangeLaw(E);
+            let sp = self.base.value(ic);
+            if let Some(fsp) = sp.down_cast_fil() {
+                return fsp.change_law(e);
+            }
+        }
         None
     }
 
-    /// OCCT ChFi3d_FilBuilder.cxx L388-398 — pending Law package.
-    pub fn set_law(&mut self, _ic: usize, _e: &Shape, _l: LawFunction) {}
+    /// OCCT ChFi3d_FilBuilder::SetLaw (ChFi3d_FilBuilder.cxx L386-397).
+    pub fn set_law(&mut self, ic: usize, e: &Shape, l: LawFunctionHandle) {
+        // Check if it is necessary to check borders!
+        if ic <= self.base.nb_elements() {
+            // OCCT: fsp = occ::down_cast<ChFiDS_FilSpine>(Value(IC));
+            //       fsp->ChangeLaw(E) = L;
+            let sp = self.base.value(ic);
+            if let Some(fsp) = sp.down_cast_fil() {
+                fsp.assign_change_law(e, l);
+            }
+        }
+    }
 
     /// OCCT ChFi3d_FilBuilder.cxx L402-435 (Simulate) — the stripe walk is
     /// real; PerformSetOfSurf(simul=true) is pending.

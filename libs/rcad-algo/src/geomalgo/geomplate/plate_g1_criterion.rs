@@ -1,9 +1,9 @@
-//! OCCT GeomPlate_PlateG0Criterion (TKGeomAlgo/GeomPlate) — 1:1 port of
-//! GeomPlate_PlateG0Criterion.hxx (L27-53) and GeomPlate_PlateG0Criterion.cxx
-//! (whole file L23-124), served through the AdvApp2Var_Criterion base-class
+//! OCCT GeomPlate_PlateG1Criterion (TKGeomAlgo/GeomPlate) — 1:1 port of
+//! GeomPlate_PlateG1Criterion.hxx (L27-53) and GeomPlate_PlateG1Criterion.cxx
+//! (whole file L31-133), served through the AdvApp2Var_Criterion base-class
 //! interface (adv_app2_var::criterion::Criterion).
 
-use glam::{DVec2, DVec3};
+use glam::{DVec3, DVec2};
 use rcad_kernel::math::plib::eval_poly2_var;
 
 use crate::geomalgo::adv_app2_var::criterion::{Criterion, CriterionRepartition, CriterionType};
@@ -14,9 +14,9 @@ use crate::geomalgo::adv_app2_var::patch::Patch;
 /// re-exported from the AdvApp2Var criterion module.
 pub use crate::geomalgo::adv_app2_var::criterion::{CriterionRepartition as AdvApp2VarCriterionRepartition, CriterionType as AdvApp2VarCriterionType};
 
-/// OCCT GeomPlate_PlateG0Criterion (hxx L28-46).
+/// OCCT GeomPlate_PlateG1Criterion (hxx L28-46).
 #[derive(Debug, Clone)]
-pub struct PlateG0Criterion {
+pub struct PlateG1Criterion {
     /// hxx L47-48 (private): NCollection_Sequence<gp_XY> myData.
     my_data: Vec<DVec2>,
     /// hxx L49: NCollection_Sequence<gp_XYZ> myXYZ.
@@ -28,21 +28,21 @@ pub struct PlateG0Criterion {
     my_repartition: AdvApp2VarCriterionRepartition,
 }
 
-impl PlateG0Criterion {
-    /// OCCT ctor (GeomPlate_PlateG0Criterion.cxx L36-44) — default args
+impl PlateG1Criterion {
+    /// OCCT ctor (GeomPlate_PlateG1Criterion.cxx L31-42) — default args
     /// Type = AdvApp2Var_Absolute, Repart = AdvApp2Var_Regular (hxx L38-39).
     pub fn new(
         data: &[DVec2],
-        g0data: &[DVec3],
+        g1data: &[DVec3],
         maximum: f64,
         ctype: AdvApp2VarCriterionType,
         repart: AdvApp2VarCriterionRepartition,
     ) -> Self {
-        // myData = Data; myXYZ = G0Data; myMaxValue = Maximum;
+        // myData = Data; myXYZ = G1Data; myMaxValue = Maximum;
         // myType = Type; myRepartition = Repart;
-        PlateG0Criterion {
+        PlateG1Criterion {
             my_data: data.to_vec(),
-            my_xyz: g0data.to_vec(),
+            my_xyz: g1data.to_vec(),
             my_max_value: maximum,
             my_type: ctype,
             my_repartition: repart,
@@ -50,8 +50,8 @@ impl PlateG0Criterion {
     }
 }
 
-impl Criterion for PlateG0Criterion {
-    /// OCCT Value(P, C) (GeomPlate_PlateG0Criterion.cxx L51-116).
+impl Criterion for PlateG1Criterion {
+    /// OCCT Value(P, C) (GeomPlate_PlateG1Criterion.cxx L46-125).
     fn value(&self, p: &mut Patch, c: &Context) {
         // double UInt[2], VInt[2]; int MaxNbCoeff[2], NbCoeff[2];
         // adrCoeff = (double*)&P.Coefficients(1, C)->ChangeArray1()(
@@ -65,16 +65,16 @@ impl Criterion for PlateG0Criterion {
         let uint = [p.u0(), p.u1()];
         let vint = [p.v0(), p.v1()];
 
-        // double up, vp, dist = 0.;
-        let mut dist = 0.0f64;
+        // double up, vp, ang = 0.;
+        let mut ang = 0.0f64;
 
         // int dimension = 3 * NbCoeff[1];
         let dimension = 3 * nb_coeff[1];
         // NCollection_Array1<double> Patch(1, NbCoeff[0] * dimension);
         let mut patch = vec![0.0f64; (nb_coeff[0] * dimension) as usize];
-        // NCollection_Array1<double> Curve(1, dimension) — declared but
-        // unused in the OCCT G0 body.
-        let _curve = vec![0.0f64; dimension as usize];
+        // NCollection_Array1<double> Curve(1, 2 * dimension) — declared but
+        // unused in the OCCT G1 body.
+        let _curve = vec![0.0f64; (2 * dimension) as usize];
         // NCollection_Array1<double> Point(1, 3);
         let mut point = vec![0.0f64; 3usize];
 
@@ -100,6 +100,9 @@ impl Criterion for PlateG0Criterion {
         // int i, NbCtr = myData.Length();
         let nb_ctr = self.my_data.len();
         for i in 1..=nb_ctr {
+            // gp_Vec v1s, v2s, v3s;
+            // gp_Vec v3h(myXYZ.Value(i).X(), myXYZ.Value(i).Y(), myXYZ.Value(i).Z());
+            let v3h = self.my_xyz[i - 1];
             // gp_XY P2d = myData.Value(i);
             let p2d = self.my_data[i - 1];
             if uint[0] < p2d.x && p2d.x < uint[1] && vint[0] < p2d.y && p2d.y < vint[1] {
@@ -108,12 +111,12 @@ impl Criterion for PlateG0Criterion {
                 // vp = (2 * P2d.Y() - VInt[0] - VInt[1]) / (VInt[1] - VInt[0]);
                 let up = (2.0 * p2d.x - uint[0] - uint[1]) / (uint[1] - uint[0]);
                 let vp = (2.0 * p2d.y - vint[0] - vint[1]) / (vint[1] - vint[0]);
-                // PLib::EvalPoly2Var(up, vp, 0, 0, NbCoeff[0] - 1,
+                // PLib::EvalPoly2Var(up, vp, 1, 0, NbCoeff[0] - 1,
                 //     NbCoeff[1] - 1, 3, Coeffs[0], Digit[0]);
                 eval_poly2_var(
                     up,
                     vp,
-                    0,
+                    1,
                     0,
                     (nb_coeff[0] - 1) as usize,
                     (nb_coeff[1] - 1) as usize,
@@ -122,27 +125,53 @@ impl Criterion for PlateG0Criterion {
                     &mut point,
                 );
 
-                // P3d.SetCoord(1, Digit[0]); SetCoord(2, Digit[1]);
+                // v1s.SetCoord(1, Digit[0]); SetCoord(2, Digit[1]);
                 // SetCoord(3, Digit[2]);
-                // double x = (P3d.Coord(1) - myXYZ.Value(i).Coord(1)),
-                //        y = (P3d.Coord(2) - myXYZ.Value(i).Coord(2)),
-                //        z = (P3d.Coord(3) - myXYZ.Value(i).Coord(3)),
-                //        DistTmp = x * x + y * y + z * z;
-                // if (DistTmp > dist) dist = DistTmp;
-                let x = point[0] - self.my_xyz[i - 1].x;
-                let y = point[1] - self.my_xyz[i - 1].y;
-                let z = point[2] - self.my_xyz[i - 1].z;
-                let dist_tmp = x * x + y * y + z * z;
-                if dist_tmp > dist {
-                    dist = dist_tmp;
+                let v1s = DVec3::new(point[0], point[1], point[2]);
+
+                // PLib::EvalPoly2Var(up, vp, 0, 1, NbCoeff[0] - 1,
+                //     NbCoeff[1] - 1, 3, Coeffs[0], Digit[0]);
+                eval_poly2_var(
+                    up,
+                    vp,
+                    0,
+                    1,
+                    (nb_coeff[0] - 1) as usize,
+                    (nb_coeff[1] - 1) as usize,
+                    3,
+                    &patch,
+                    &mut point,
+                );
+
+                // v2s.SetCoord(1, Digit[0]); SetCoord(2, Digit[1]);
+                // SetCoord(3, Digit[2]);
+                let v2s = DVec3::new(point[0], point[1], point[2]);
+
+                // v3s = v1s ^ v2s;
+                let v3s = v1s.cross(v2s);
+                // if (v3s.Angle(v3h) > (M_PI / 2))
+                // {
+                //   if ((M_PI - v3s.Angle(v3h)) > ang) ang = (M_PI - v3s.Angle(v3h));
+                // }
+                // else
+                // {
+                //   if (v3s.Angle(v3h) > ang) ang = v3s.Angle(v3h);
+                // }
+                let a = gp_vec_angle(v3s, v3h);
+                if a > (std::f64::consts::PI / 2.0) {
+                    if (std::f64::consts::PI - a) > ang {
+                        ang = std::f64::consts::PI - a;
+                    }
+                } else if a > ang {
+                    ang = a;
                 }
             }
         }
-        // P.SetCritValue(std::sqrt(dist));
-        p.set_crit_value(dist.sqrt());
+        // P.SetCritValue(ang);
+        p.set_crit_value(ang);
     }
 
-    /// OCCT IsSatisfied(P) (GeomPlate_PlateG0Criterion.cxx L120-123).
+    /// OCCT IsSatisfied(P) (GeomPlate_PlateG1Criterion.cxx L130-133).
     fn is_satisfied(&self, p: &Patch) -> bool {
         p.crit_value() < self.my_max_value
     }
@@ -166,6 +195,30 @@ impl Criterion for PlateG0Criterion {
         match self.my_repartition {
             AdvApp2VarCriterionRepartition::Regular => CriterionRepartition::Regular,
             AdvApp2VarCriterionRepartition::Incremental => CriterionRepartition::Incremental,
+        }
+    }
+}
+
+/// OCCT gp_Vec::Angle (gp_Vec.hxx L488-494) — raises
+/// VectorWithNullMagnitude when a magnitude is null, then delegates to
+/// gp_Dir::Angle.  (gp::Resolution() — OCCT Standard_Real twin of
+/// DBL_MIN; modeled by f64::MIN_POSITIVE.)
+fn gp_vec_angle(v: DVec3, other: DVec3) -> f64 {
+    if v.length() <= f64::MIN_POSITIVE || other.length() <= f64::MIN_POSITIVE {
+        panic!("gp_VectorWithNullMagnitude");
+    }
+    // OCCT gp_Dir::Angle (gp_Dir.cxx L27-52): above 45 degrees the arccos
+    // gives the best precision; otherwise the arcsin.  In 3d the angular
+    // values are always positive and lie between 0 and PI.
+    let cosinus = v.dot(other) / (v.length() * other.length());
+    if cosinus > -0.70710678118655 && cosinus < 0.70710678118655 {
+        cosinus.acos()
+    } else {
+        let sinus = v.cross(other).length() / (v.length() * other.length());
+        if cosinus < 0.0 {
+            std::f64::consts::PI - sinus.asin()
+        } else {
+            sinus.asin()
         }
     }
 }

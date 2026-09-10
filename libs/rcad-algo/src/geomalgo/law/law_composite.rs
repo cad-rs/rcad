@@ -55,12 +55,13 @@ impl LawComposite {
         }
     }
 
-    /// OCCT ChangeElementaryLaw(W) (L202-207) — the elementary function of
-    /// the composite used to compute at parameter W (shared handle).
-    pub fn change_elementary_law(&mut self, w: f64) -> Option<&LawFunctionHandle> {
+    /// OCCT ChangeElementaryLaw(W) (L221-226) — returns the elementary
+    /// function of the composite used to compute at parameter W as a
+    /// mutable handle reference (`occ::handle<Law_Function>&` in OCCT).
+    pub fn change_elementary_law(&mut self, w: f64) -> Option<&mut LawFunctionHandle> {
         let mut ww = w;
         self.prepare(&mut ww);
-        self.curfunc.as_ref()
+        self.curfunc.as_mut()
     }
 
     /// OCCT ChangeLaws() — the list of elementary laws.

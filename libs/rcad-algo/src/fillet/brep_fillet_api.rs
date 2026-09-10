@@ -309,12 +309,12 @@ impl BRepFilletAPIMakeFillet {
     }
 
     /// OCCT L239-242.
-    pub fn get_law(&self, ic: usize, e: &Shape) -> Option<super::chfi_ds::LawFunction> {
+    pub fn get_law(&self, ic: usize, e: &Shape) -> Option<crate::geomalgo::law::LawFunctionHandle> {
         self.my_builder.get_law(ic, e)
     }
 
     /// OCCT L246-251.
-    pub fn set_law(&mut self, ic: usize, e: &Shape, l: super::chfi_ds::LawFunction) {
+    pub fn set_law(&mut self, ic: usize, e: &Shape, l: crate::geomalgo::law::LawFunctionHandle) {
         self.my_builder.set_law(ic, e, l)
     }
 

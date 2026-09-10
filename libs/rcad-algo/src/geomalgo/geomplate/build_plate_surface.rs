@@ -24,8 +24,7 @@
 //! - EcartContraintesMil case 2 / VerifPoints case 2 need
 //!   `LocalAnalysis_SurfaceContinuity` + `GeomLProp_SLProps`
 //!   (TKGeomAlgo/LocalAnalysis, TKGeomBase/GeomLProp),
-//! - the MakeApprox fallback surfaces come back null until AdvApp2Var
-//!   lands; a null-plate MakeApprox construction (Perform L537 with the
+//! - a null-plate MakeApprox construction (Perform L537 with the
 //!   null myGeomPlateSurface) panics exactly where OCCT dereferences null.
 //!
 //! Architecture adaptations:
@@ -51,6 +50,7 @@ use rcad_kernel::base::proj_lib::adaptor::{
 };
 use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomSurfaceAdaptor;
 use rcad_kernel::geom::{Surface3, SurfaceEval, TrimmedSurface};
+use rcad_kernel::math::GeomAbsShape;
 
 use super::build_average_plane::{Aij, BuildAveragePlane};
 use super::curve_constraint::{CurveBoundary, CurveConstraint};
@@ -484,6 +484,9 @@ impl BuildPlateSurface {
                 // handle crash; the anchor preserves that failure path.
                 panic!("GeomPlate BuildPlateSurface::Perform — MakeApprox fallback on a null myGeomPlateSurface (OCCT null-handle dereference)");
             }
+            // OCCT L537-538: GeomPlate_MakeApprox App(myGeomPlateSurface, ...);
+            // mySurfInit = App.Surface(); (the Geom_BSplineSurface upcast to
+            // the Geom_Surface handle).
             let app = MakeApprox::new(
                 self.my_geom_plate_surface.as_ref().unwrap(),
                 self.my_tol3d,
@@ -491,16 +494,12 @@ impl BuildPlateSurface {
                 3,
                 15.0 * self.my_tol3d,
                 -1,
-                0,
+                GeomAbsShape::C0,
                 1.3,
             );
-            // mySurfInit = App.Surface() — null until AdvApp2Var lands.
-            self.my_surf_init = match app.surface() {
-                Some(_s) => unimplemented!(
-                    "MakeApprox BSplineSurface -> Surface3 mapping (staged with AdvApp2Var)"
-                ),
-                None => None,
-            };
+            self.my_surf_init = app
+                .surface()
+                .map(|s| Surface3::BSpline(s.clone()));
 
             {
                 let surf = self.my_surf_init.as_ref().unwrap();
@@ -1081,17 +1080,12 @@ impl BuildPlateSurface {
                 3,
                 15.0 * self.my_tol3d,
                 -1,
-                0,
+                GeomAbsShape::C0,
                 1.3,
             );
-            // mySurfInit = App.Surface() — null until AdvApp2Var lands; the
-            // OCCT null-check at Perform L506-509 then returns.
-            self.my_surf_init = match app.surface() {
-                Some(_s) => unimplemented!(
-                    "MakeApprox BSplineSurface -> Surface3 mapping (staged with AdvApp2Var)"
-                ),
-                None => None,
-            };
+            // OCCT: mySurfInit = App.Surface(); (the Geom_BSplineSurface
+            // upcast to the Geom_Surface handle).
+            self.my_surf_init = app.surface().map(|s| Surface3::BSpline(s.clone()));
 
             self.my_surf_init_is_give = true;
             self.my_plate.init(); // Reset

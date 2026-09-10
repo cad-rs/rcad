@@ -18,7 +18,11 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::topo::topods::{Orientation, Shape, TEdgeData, TShape};
 use rcad_kernel::topods;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
+
+use crate::geomalgo::law::LawComposite;
 
 // =========================================================================
 // OCCT ChFiDS_State.hxx — enum ChFiDS_State
@@ -103,15 +107,6 @@ pub enum ChFiDS_TypeOfConcavity {
     Other,
     Mixed,
 }
-
-// =========================================================================
-// OCCT Law_Function / Law_Composite — pending TKMath Law package.
-// The ChFiDS_FilSpine law list and SetRadius(Law) overloads reference the
-// law objects opaquely until the Law package is translated.
-// =========================================================================
-
-#[derive(Debug, Clone)]
-pub struct LawFunction;
 
 // =========================================================================
 // OCCT ChFiDS_ElSpine — elementary spine (ChFiDS_ElSpine.hxx L46-162).
@@ -1110,15 +1105,32 @@ fn edge_last_vertex(e: &Shape) -> Shape {
 // Fields: ChFiDS_FilSpine.hxx (parandrad, laws).
 // =========================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ChFiDSFilSpine {
     /// OCCT: ChFiDS_Spine base class subobject.
     pub base: ChFiDSSpine,
     /// OCCT: NCollection_Sequence<gp_XY> parandrad
     pub parandrad: Vec<DVec2>,
-    /// OCCT: NCollection_List<occ::handle<Law_Function>> laws (Law package
-    /// pending; stored opaquely).
-    pub laws: Vec<LawFunction>,
+    /// OCCT: NCollection_List<occ::handle<Law_Function>> laws
+    /// (ChFiDS_FilSpine.hxx).  Architecture note: every stored value is a
+    /// ComputeLaw Law_Composite (the occ::down_cast<Law_Composite> in
+    /// ChFiDS_FilSpine::Law is total), so the rcad member carries the
+    /// concrete composite handle type directly; the base-interface accesses
+    /// (Bounds/Value in MaxRadFromSeqAndLaws) go through the LawFunction
+    /// trait.
+    pub laws: Vec<Rc<RefCell<LawComposite>>>,
+}
+
+impl std::fmt::Debug for ChFiDSFilSpine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The derived form with the law list reduced to its length (the
+        // Law_Composite handles have no Debug representation).
+        f.debug_struct("ChFiDSFilSpine")
+            .field("base", &self.base)
+            .field("parandrad", &self.parandrad)
+            .field("laws", &self.laws.len())
+            .finish()
+    }
 }
 
 impl Default for ChFiDSFilSpine {
@@ -1207,8 +1219,7 @@ impl ChFiDSFilSpine {
         self.set_radius_uandr(last_uandr, 0);
     }
 
-    /// OCCT ChFiDS_FilSpine.cxx L143-218 (the splitdone law-replay tail
-    /// depends on Law_Composite/ChFiDS_ElSpine internals — pending).
+    /// OCCT ChFiDS_FilSpine.cxx L143-218.
     pub fn set_radius_uandr(&mut self, uandr: DVec2, iinc: usize) {
         let w;
         if iinc == 0 {
@@ -1245,8 +1256,30 @@ impl ChFiDSFilSpine {
         if i == self.parandrad.len() {
             self.parandrad.push(pr);
         }
-        // si le split est done il faut rejouer la law correspondant au
-        // parametre W — pending Law_Composite translation.
+        // si le split est done il faut rejouer la law
+        // correspondant au parametre W
+        if self.base.splitdone {
+            // OCCT L196: Els = It.Value() — the first elspine (an empty list
+            // raises Standard_NoSuchObject; the direct index panics).
+            if self.base.elspines[0].periodic {
+                // OCCT L199-202: Itl.ChangeValue() = ComputeLaw(Els).
+                let newlaw = self.compute_law(&self.base.elspines[0]);
+                self.laws[0] = newlaw;
+            } else {
+                // OCCT L203-214: for (; It.More(); It.Next(), Itl.Next()).
+                for i in 0..self.base.elspines.len() {
+                    // OCCT: Els = It.Value() (handle copy).
+                    let els = self.base.elspines[i].clone();
+                    let uf = els.first_parameter();
+                    let ul = els.last_parameter();
+                    if uf <= w && w <= ul {
+                        // OCCT: Itl.ChangeValue() = ComputeLaw(Els).
+                        let newlaw = self.compute_law(&els);
+                        self.laws[i] = newlaw;
+                    }
+                }
+            }
+        }
     }
 
     /// OCCT ChFiDS_FilSpine.cxx L246-266.
