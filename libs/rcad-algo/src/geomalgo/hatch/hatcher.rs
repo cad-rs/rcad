@@ -1016,8 +1016,9 @@ impl Hatcher {
     }
 
     /// OCCT Geom2dHatch_Hatcher::ComputeDomains (cxx L1144-1806) — computes
-    /// the domains of the IndH-th hatching.
-    fn compute_domains_hatching(&mut self, indh: usize) {
+    /// the domains of the IndH-th hatching (public in the OCCT header, hxx
+    /// L148).
+    pub fn compute_domains_hatching(&mut self, indh: usize) {
         {
             let hatching = self.my_hatchings.change_find(indh);
             hatching.clr_domains();

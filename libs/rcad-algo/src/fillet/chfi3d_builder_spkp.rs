@@ -3,21 +3,23 @@
 //! translation of the analytic subset:
 //!   - CompTra (L70-82), CompCommonPoint (L89-109)
 //!   - CpSD (L144-158), AdjustParam (L162-198)
-//!   - FillSD (L627-742)
+//!   - Tri (L548-623), FillSD (L627-742)
 //!   - SplitKPart (L749-1290): the hatching of the tangency lines against
-//!     the face boundaries runs through a Geom2dHatch stand-in (Trim over
-//!     the face boundary pcurves); the periodic/multi-domain Tri parsing is
-//!     translated for the non-periodic single-domain case and the domain
-//!     classification (Adaptor3d_TopolTool::Classify) carries its pending
-//!     boundary.  SearchFace (Builder_2.cxx L1523) is pending — the
-//!     isolated-contour semantics (no neighbouring contour) stand in, which
-//!     is the exact outcome for single-stripe KPart contours.
+//!     the face boundaries runs through the landed 1:1 Geom2dHatch_Hatcher
+//!     (geomalgo/hatch/hatcher.rs) as the OCCT statements do: AddElement per
+//!     face restriction, Trim, ComputeDomains, IsDone, NbDomains, then
+//!     Domain(iH, Ind(i)) with the Tri ordering.
+//!     The tails of the extension processing (SearchFace, ChFi3d_EdgeState)
+//!     and the Adaptor3d_TopolTool::Classify of the degenerate-edge 2d point
+//!     are still pending — see the branch comments.
 
-use glam::DVec2;
-use rcad_kernel::base::int_ana2d::AnaIntersection2d;
-use rcad_kernel::geom::{Curve2dEval as _, SurfaceEval as _};
+use rcad_kernel::geom::{Curve2d, Curve2dEval as _, SurfaceEval as _, TrimmedCurve2};
 use rcad_kernel::topo::topods::{BRepTool as _, Orientation, Shape};
-use rcad_kernel::topods;
+
+use crate::geomalgo::geom2d_int::Curve2dAdaptor;
+use crate::geomalgo::hatch::hatch_gen::{Domain as HatchDomain, PointOnElement, PointOnHatching};
+use crate::geomalgo::hatch::hatcher::Hatcher;
+use crate::geomalgo::hatch::intersector::HatchIntersector;
 
 use super::chfi3d::ChFi3dBuilder;
 use super::chfi3d_builder_0::topexp_face_edges;
@@ -26,52 +28,9 @@ use super::chfi_ds::{ChFiDSSpineHandle, ChFiDSSurfData, SharedSurfData};
 /// OCCT Precision::PIntersection() = Intersection()/100 = 1.e-11.
 const PITOL: f64 = 1.0e-11;
 
-/// OCCT TopAbs_Position (the element-relative position of a hatcher point).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TopAbsPosition {
-    Forward,
-    Reversed,
-    Internal,
-    External,
-    On,
-}
-
-/// OCCT HatchGen_PointOnElement.
-#[derive(Debug, Clone)]
-pub struct PointOnElement {
-    /// The hatcher element index (rcad: index into the boundary list).
-    pub index: i32,
-    /// The parameter on the element (the boundary pcurve).
-    pub parameter: f64,
-    pub position: TopAbsPosition,
-}
-
-/// OCCT HatchGen_PointOnHatching.
-#[derive(Debug, Clone)]
-pub struct PointOnHatching {
-    /// The parameter on the hatching curve.
-    pub parameter: f64,
-    pub points: Vec<PointOnElement>,
-}
-
-/// OCCT HatchGen_Domain.
-#[derive(Debug, Clone, Default)]
-pub struct HatchDomain {
-    pub has_first_point: bool,
-    pub first_point: Option<PointOnHatching>,
-    pub has_second_point: bool,
-    pub second_point: Option<PointOnHatching>,
-}
-
-impl HatchDomain {
-    pub fn first_point(&self) -> &PointOnHatching {
-        self.first_point.as_ref().expect("no first point")
-    }
-
-    pub fn second_point(&self) -> &PointOnHatching {
-        self.second_point.as_ref().expect("no second point")
-    }
-}
+// The hatching types are the landed 1:1 HatchGen ones (geomalgo/hatch/
+// hatch_gen.rs): HatchGen_Domain (HatchDomain), HatchGen_PointOnHatching
+// (PointOnHatching) and HatchGen_PointOnElement (PointOnElement).
 
 // =========================================================================
 // OCCT CompTra (SpKP.cxx L70-82).
@@ -93,9 +52,9 @@ fn comp_common_point(
     pe: &PointOnElement,
     or: Orientation,
 ) {
-    let pos = pe.position;
+    let pos = pe.position();
     let ed = arc.as_edge().expect("not an edge");
-    let v = if pos == TopAbsPosition::Forward {
+    let v = if pos == Orientation::Forward {
         ed.first.clone()
     } else {
         ed.last.clone()
@@ -104,7 +63,7 @@ fn comp_common_point(
     fil_point.set_arc(
         P_OPERATOR_INTERSECTION,
         arc.clone(),
-        pe.parameter,
+        pe.parameter(),
         super::chfi3d::topabs_compose(arc.orientation, or),
     );
 }
@@ -159,13 +118,13 @@ fn adjust_param(
     period: f64,
     pitol: f64,
 ) -> bool {
-    if dom.has_first_point {
-        *f = dom.first_point().parameter;
+    if dom.has_first_point() {
+        *f = dom.first_point().parameter();
     } else {
         *f = 0.0;
     }
-    if dom.has_second_point {
-        *l = dom.second_point().parameter;
+    if dom.has_second_point() {
+        *l = dom.second_point().parameter();
     } else {
         *l = period;
     }
@@ -183,226 +142,83 @@ fn adjust_param(
 }
 
 // =========================================================================
-// The Geom2dHatch_Hatcher stand-in: Trim of the tangency pcurve against the
-// face boundary elements.  Returns the intersection hits (param on the
-// hatching curve, PointOnElement) sorted by parameter; the single analytic
-// domain spans the hits (or the whole curve when no hit exists).
+// OCCT Tri (SpKP.cxx L548-623): Ind holds the ranks of the domains of the
+// IndH-th hatching sorted by increasing adjusted parameter; the domain
+// without a first point is closed on the first point of the domain without a
+// second point, shifted one period back.
 // =========================================================================
-fn hatcher_trim(
-    brep: &topods::BRep,
-    face: &Shape,
-    pc: &rcad_kernel::geom::Curve2d,
-    pcf: f64,
-    pcl: f64,
-) -> Vec<(f64, PointOnElement)> {
-    let mut hits: Vec<(f64, PointOnElement)> = Vec::new();
-    let mut element_index = 0i32;
-    for e in topexp_face_edges(brep, face) {
-        element_index += 1;
-        let mut e_fwd = e.clone();
-        e_fwd.orientation = Orientation::Forward;
-        let mut face_fwd = face.clone();
-        face_fwd.orientation = Orientation::Forward;
-        let Some((epc, ef, el)) = brep.curve_on_surface(&e_fwd, &face_fwd) else {
-            continue;
-        };
-        // Intersections of the hatching pcurve with the element pcurve.
-        // OCCT Geom2dHatch_Hatcher::Trim intersects along the whole hatching
-        // curve (the KPart tangency lines are unbounded Geom2d_Lines) — no
-        // window on the hatching parameter.
-        let pts = intersect_curve2d(pc, &epc);
-        for (u_hatch, u_elem) in pts {
-            if u_elem < ef - PITOL || u_elem > el + PITOL {
-                continue;
-            }
-            // OCCT HatchGen_PointOnElement.cxx L39-49: the position of the
-            // point on the element maps from the IntRes2d position on curve
-            // — Head -> TopAbs_FORWARD, Middle -> TopAbs_INTERNAL,
-            // End -> TopAbs_REVERSED.
-            let position = if (u_elem - ef).abs() <= PITOL {
-                TopAbsPosition::Forward
-            } else if (u_elem - el).abs() <= PITOL {
-                TopAbsPosition::Reversed
-            } else {
-                TopAbsPosition::Internal
-            };
-            hits.push((
-                u_hatch,
-                PointOnElement {
-                    index: element_index,
-                    parameter: u_elem,
-                    position,
-                },
-            ));
-        }
+fn tri(
+    h: &mut Hatcher,
+    ih: usize,
+    ind: &mut [usize],
+    wref: f64,
+    period: f64,
+    pitol: f64,
+    nbdom: &mut usize,
+) -> bool {
+    // OCCT L556-561: Ind(i) = i.
+    for i in 1..=*nbdom {
+        ind[i - 1] = i;
     }
-    hits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    hits
-}
-
-/// Probe helpers (temporary, use-and-clean).
-fn dom_first_param(d: &HatchDomain) -> Option<f64> {
-    d.first_point.as_ref().map(|p| p.parameter)
-}
-fn dom_second_param(d: &HatchDomain) -> Option<f64> {
-    d.second_point.as_ref().map(|p| p.parameter)
-}
-
-/// 2D curve-curve intersections (the Geom2dHatch_Intersector analytic
-/// subset): returns (parameter on c1, parameter on c2) pairs.
-fn intersect_curve2d(
-    c1: &rcad_kernel::geom::Curve2d,
-    c2: &rcad_kernel::geom::Curve2d,
-) -> Vec<(f64, f64)> {
-    use rcad_kernel::geom::Curve2d;
-    let mut out = Vec::new();
-    match (c1, c2) {
-        (Curve2d::Line(l1), Curve2d::Line(l2)) => {
-            let mut inter = AnaIntersection2d::new();
-            inter.perform_lin_lin(l1, l2);
-            if inter.is_done() {
-                for i in 1..=inter.nb_points() {
-                    out.push((inter.point(i).param_on_first(), inter.point(i).param_on_second()));
-                }
-            }
-        }
-        _ => {
-            // The remaining analytic pairs run through the conic chain as in
-            // geom2d_int_g_inter; only the point parameters are needed.
-            let mut inter = AnaIntersection2d::new();
-            let conic_pair = (c1.clone(), c2.clone());
-            let _ = conic_pair;
-            // Line vs circle / circle vs circle cover the box fillet cases.
-            match (c1, c2) {
-                (Curve2d::Line(l), Curve2d::Circle(c)) | (Curve2d::Circle(c), Curve2d::Line(l)) => {
-                    inter.perform_lin_circ(l, c);
-                    let swap = matches!((c1, c2), (Curve2d::Circle(_), Curve2d::Line(_)));
-                    if inter.is_done() {
-                        for i in 1..=inter.nb_points() {
-                            let (a, b) = (
-                                inter.point(i).param_on_first(),
-                                inter.point(i).param_on_second(),
-                            );
-                            out.push(if swap { (b, a) } else { (a, b) });
-                        }
-                    }
-                }
-                (Curve2d::Circle(a), Curve2d::Circle(b)) => {
-                    inter.perform_circ_circ(a, b);
-                    if inter.is_done() {
-                        for i in 1..=inter.nb_points() {
-                            out.push((
-                                inter.point(i).param_on_first(),
-                                inter.point(i).param_on_second(),
-                            ));
-                        }
-                    }
-                }
-                _ => {
-                    // Non-canonical element pcurves: the Geom2dHatch
-                    // generic intersector is pending; no hits reported.
-                }
+    let mut f1 = 0.0f64;
+    let mut f2 = 0.0f64;
+    let mut l = 0.0f64;
+    // bool Invert = true; while (Invert) { Invert = false;
+    //                                    for (i = 1; i < Nbdom; i++) {...} }
+    let mut invert = true;
+    while invert {
+        invert = false;
+        for i in 1..*nbdom {
+            adjust_param(h.domain(ih, ind[i - 1]), &mut f1, &mut l, wref, period, pitol);
+            adjust_param(h.domain(ih, ind[i]), &mut f2, &mut l, wref, period, pitol);
+            if f2 < f1 {
+                ind.swap(i - 1, i);
+                invert = true;
             }
         }
     }
-    out
-}
 
-/// OCCT Geom2dHatch_Hatching::ClassificationPoint (L311-325): a point on
-/// the hatching curve used for classification — for bounded curves the
-/// point at the first parameter.
-fn hatch_classification_point(pc: &rcad_kernel::geom::Curve2d) -> DVec2 {
-    use rcad_kernel::geom::Curve2d;
-    match pc {
-        Curve2d::Line(l) => l.origin,
-        Curve2d::Circle(c) => DVec2::new(c.center.x + c.radius, c.center.y),
-        _ => DVec2::ZERO,
-    }
-}
-
-/// The Geom2dHatch_Classifier equivalent for the analytic subset: even-odd
-/// ray casting in the face UV space against the boundary element pcurves
-/// (OCCT TopClass_FaceClassifier / FClass2d semantics; the element set is
-/// the same the hatcher trims against).  Returns true when the point is IN
-/// the face.
-fn classify_point_in_face(brep: &topods::BRep, face: &Shape, p: DVec2) -> bool {
-    let mut crossings = 0u32;
-    for e in topexp_face_edges(brep, face) {
-        let mut e_fwd = e.clone();
-        e_fwd.orientation = Orientation::Forward;
-        let mut face_fwd = face.clone();
-        face_fwd.orientation = Orientation::Forward;
-        let Some((epc, ef, el)) = brep.curve_on_surface(&e_fwd, &face_fwd) else {
-            continue;
-        };
-        use rcad_kernel::geom::Curve2d;
-        match &epc {
-            Curve2d::Line(l) => {
-                // Ray: (px + t, py), t > 0.  Solve l.origin.y + s*l.dir.y = py.
-                if l.direction.y.abs() < 1e-12 {
-                    continue;
-                }
-                let s = (p.y - l.origin.y) / l.direction.y;
-                if s < ef - PITOL || s > el + PITOL {
-                    continue;
-                }
-                let x = l.origin.x + s * l.direction.x;
-                if x > p.x {
-                    crossings += 1;
-                }
+    // OCCT L583-598.
+    let mut i_sans_first = 0usize;
+    let mut i_sans_last = 0usize;
+    if *nbdom != 1 {
+        for i in 1..=*nbdom {
+            if !h.domain(ih, ind[i - 1]).has_first_point() {
+                i_sans_first = i;
             }
-            Curve2d::Circle(c) => {
-                let dy = p.y - c.center.y;
-                if dy.abs() >= c.radius {
-                    continue;
-                }
-                let dx = (c.radius * c.radius - dy * dy).sqrt();
-                for x in [c.center.x + dx, c.center.x - dx] {
-                    if x <= p.x {
-                        continue;
-                    }
-                    // Parameter on the circle for the crossing point.
-                    let ang = DVec2::new(x - c.center.x, dy).y.atan2(DVec2::new(x - c.center.x, dy).x);
-                    let ang = if ang < 0.0 { ang + 2.0 * std::f64::consts::PI } else { ang };
-                    if ang >= ef - PITOL && ang <= el + PITOL {
-                        crossings += 1;
-                    }
-                }
+            if !h.domain(ih, ind[i - 1]).has_second_point() {
+                i_sans_last = i;
             }
-            _ => {}
         }
     }
-    crossings % 2 == 1
-}
+    if i_sans_first != 0 {
+        if i_sans_last == 0 {
+            // OCCT L603-606: "Parsing : Pb of Hatcher".
+            return false;
+        }
+        // OCCT L608-614: the first point of the domain without a first point
+        // is taken from the domain without a second point, one period back.
+        // OCCT reaches the two domains through a const_cast of H.Domain();
+        // rcad takes the mutable accessor of the hatching for the same
+        // write-back.
+        let new_par = h.hatching_curve(ih).first_parameter() - period
+            + h.domain(ih, ind[i_sans_last - 1]).first_point().parameter();
+        let mut ph = h.domain(ih, ind[i_sans_last - 1]).first_point().clone();
+        ph.set_parameter(new_par);
+        h.hatching(ih)
+            .change_domain(ind[i_sans_last - 1])
+            .set_first_point(&ph);
+        h.hatching(ih)
+            .change_domain(ind[i_sans_first - 1])
+            .set_first_point(&ph);
 
-/// The single analytic domain built from the hits: bounded by the extreme
-/// hits when they exist, otherwise the whole hatching curve without points
-/// (the OCCT domain of a hatching lying strictly inside the face).
-fn analytic_domain(hits: &[(f64, PointOnElement)], pcf: f64, pcl: f64) -> HatchDomain {
-    let mut dom = HatchDomain::default();
-    if let Some((par, pe)) = hits.first() {
-        dom.has_first_point = true;
-        dom.first_point = Some(PointOnHatching {
-            parameter: *par,
-            points: vec![pe.clone()],
-        });
+        // OCCT L616-620: Ind(k) = Ind(k + 1) for k = iSansLast..Nbdom-1; Nbdom--.
+        for k in i_sans_last..*nbdom {
+            ind[k - 1] = ind[k];
+        }
+        *nbdom -= 1;
     }
-    if let Some((par, pe)) = hits.last() {
-        dom.has_second_point = true;
-        dom.second_point = Some(PointOnHatching {
-            parameter: *par,
-            points: vec![pe.clone()],
-        });
-    }
-    if hits.len() >= 2 {
-        return dom;
-    }
-    // A single hit bounds only one side; the other side stays open.
-    if hits.len() == 1 {
-        return dom;
-    }
-    let _ = (pcf, pcl);
-    dom
+    true
 }
 
 // =========================================================================
@@ -410,23 +226,23 @@ fn analytic_domain(hits: &[(f64, PointOnElement)], pcf: f64, pcl: f64) -> HatchD
 // =========================================================================
 #[allow(clippy::too_many_arguments)]
 fn fill_sd(
-    brep: &topods::BRep,
     dstr: &mut super::chfi3d_ds::TopOpeBRepDSHDataStructure,
     cd: &mut ChFiDSSurfData,
-    boundary: &[Shape],
+    m: &[Shape],
     dom: &HatchDomain,
     ponh: f64,
     isfirst: bool,
     ons: i32,
-    _pitol: f64,
+    pitol: f64,
     bout: &Shape,
 ) {
     let opp = 3 - ons;
     let surf = dstr.surface(cd.surf()).surface.clone();
 
-    let pph: Option<&PointOnHatching> = if isfirst && dom.has_first_point {
+    // OCCT L639-651: the point on hatching of the requested end of the domain.
+    let pph: Option<&PointOnHatching> = if isfirst && dom.has_first_point() {
         Some(dom.first_point())
-    } else if !isfirst && dom.has_second_point {
+    } else if !isfirst && dom.has_second_point() {
         Some(dom.second_point())
     } else {
         None
@@ -434,6 +250,7 @@ fn fill_sd(
 
     match pph {
         None => {
+            // OCCT L656-661.
             cd.change_interference(ons).set_parameter(isfirst, ponh);
             let pcons = cd.interference(ons).pcurve_on_surf().expect("pcons");
             let uv = pcons.point_at(ponh);
@@ -441,17 +258,17 @@ fn fill_sd(
             cd.change_vertex(isfirst, ons).set_point(p);
         }
         Some(ph) => {
-            // Modification to find already existing vertexes.
+            // Modification to find already existing vertexes (L664-704).
             let mut le_type = 1usize;
-            let nb_int = ph.points.len();
+            let nb_int = ph.nb_points();
             if nb_int > 1 {
                 let mut trouve = true;
                 let mut suite = true;
                 let mut v1 = Shape::null();
                 let mut v2 = Shape::null();
                 while trouve {
-                    let petemp = &ph.points[le_type - 1];
-                    if let Some(he) = boundary.get(petemp.index as usize - 1) {
+                    let petemp = ph.point(le_type);
+                    if let Some(he) = m.get(petemp.index() as usize - 1) {
                         let ed = he.as_edge().expect("not an edge");
                         v1 = ed.first.clone();
                         v2 = ed.last.clone();
@@ -474,13 +291,13 @@ fn fill_sd(
                     }
                 }
             }
-            let pe = &ph.points[le_type - 1];
-            let Some(e) = boundary.get(pe.index as usize - 1) else {
+            let pe = ph.point(le_type);
+            let Some(e) = m.get(pe.index() as usize - 1) else {
                 return;
             };
             let e = e.clone();
 
-            if pe.position != TopAbsPosition::Internal {
+            if pe.position() != Orientation::Internal {
                 let mut o = cd.interference(ons).transition();
                 if isfirst {
                     o = super::chfi3d::topabs_reverse(o);
@@ -491,21 +308,21 @@ fn fill_sd(
             } else {
                 let mut pons = cd.vertex(isfirst, ons).clone();
                 pons.set_arc(
-                    PITOL,
+                    pitol,
                     e.clone(),
-                    pe.parameter,
+                    pe.parameter(),
                     comp_tra(cd.interference(ons).transition(), e.orientation, isfirst),
                 );
                 *cd.change_vertex(isfirst, ons) = pons;
             }
-            cd.change_interference(ons).set_parameter(isfirst, ponh);
             let pcadj = cd.interference(ons).pcurve_on_surf().expect("pcadj");
             let uv = pcadj.point_at(ponh);
             let p = surf.point_at(uv.x, uv.y);
+            cd.change_interference(ons).set_parameter(isfirst, ponh);
             cd.change_vertex(isfirst, ons).set_point(p);
         }
     }
-    let pons_on_arc = cd.vertex(isfirst, ons).is_on_arc();
+    // OCCT L735-741.
     let mut popp = cd.vertex(isfirst, opp).clone();
     if !popp.is_on_arc() {
         cd.change_interference(opp).set_parameter(isfirst, ponh);
@@ -515,12 +332,14 @@ fn fill_sd(
         popp.set_point(p);
         *cd.change_vertex(isfirst, opp) = popp;
     }
-    let _ = (pons_on_arc, brep);
 }
 
 // =========================================================================
 // OCCT SplitKPart (SpKP.cxx L749-1290) — the reconstruction entry called
-// from PerformSetOfKPart.  rcad: s1/s2 carry the support faces.
+// from PerformSetOfKPart.  rcad: s1/s2 carry the support faces (the OCCT
+// S1/I1 and S2/I2 pairs — the topol tool of a BRep face only ever yields
+// BRepAdaptor_Curve2d over the face edges, BRepTopAdaptor_TopolTool.cxx
+// L86-94).
 // =========================================================================
 impl ChFi3dBuilder {
     pub fn split_k_part_hatched(
@@ -534,67 +353,121 @@ impl ChFi3dBuilder {
         intf: &mut bool,
         intl: &mut bool,
     ) -> bool {
-        // The hatching of each face is started by tangency lines.
+        // The hatching of each faces is started by tangency lines.
+
         let pitol = PITOL;
 
-        // OCCT L772-840: Trim of both tangency lines.
-        let c1 = data.interference_on_s1().pcurve_on_face().cloned();
-        let c2 = data.interference_on_s2().pcurve_on_face().cloned();
-        let mut face_fwd = |f: &Shape| {
+        // OCCT L764-771: the M1/M2 maps (element index -> restriction), the
+        // hatching indices, the domain counts and the shared intersector.
+        let mut m1: Vec<Shape> = Vec::new();
+        let mut m2: Vec<Shape> = Vec::new();
+        let mut ih1 = 0usize;
+        let mut ih2 = 0usize;
+        let mut nb1 = 1usize;
+        let mut nb2 = 1usize;
+
+        // Cutting of tangency lines (hatching).
+        let mut h1 = Hatcher::new(
+            HatchIntersector::with_tolerances(pitol, pitol),
+            self.tol2d,
+            self.tolapp3d,
+            false,
+            false,
+        );
+        let mut h2 = Hatcher::new(
+            HatchIntersector::with_tolerances(pitol, pitol),
+            self.tol2d,
+            self.tolapp3d,
+            false,
+            false,
+        );
+
+        let face_fwd = |f: &Shape| {
             let mut ff = f.clone();
             ff.orientation = Orientation::Forward;
             ff
         };
-        let f1 = face_fwd(s1);
-        let f2 = face_fwd(s2);
+        let face1 = face_fwd(s1);
+        let face2 = face_fwd(s2);
 
-        let pcf1 = data.interference_on_s1().parameter_first();
-        let pcl1 = data.interference_on_s1().parameter_last();
-        let pcf2 = data.interference_on_s2().parameter_first();
-        let pcl2 = data.interference_on_s2().parameter_last();
-
-        let (hits1, dom1) = match &c1 {
-            Some(pc) => {
-                let hits = hatcher_trim(&self.my_brep, &f1, pc, pcf1, pcl1);
-                if hits.is_empty() {
-                    // OCCT Geom2dHatch_Hatcher::ComputeDomains L1173-1186: a
-                    // hatching crossing no boundary element is classified —
-                    // IN gives one point-less domain (the whole closed
-                    // hatching), OUT leaves no domain ("tangency line out of
-                    // the face", SplitKPart L798).
-                    let cp = hatch_classification_point(pc);
-                    if !classify_point_in_face(&self.my_brep, &f1, cp) {
-                        return false;
-                    }
-                    (Some(Vec::new()), HatchDomain::default())
-                } else {
-                    let d = analytic_domain(&hits, pcf1, pcl1);
-                    (Some(hits), d)
+        // OCCT L772-773: C1 = Data->InterferenceOnS1().PCurveOnFace().
+        let c1 = data.interference_on_s1().pcurve_on_face().cloned();
+        if let Some(c1) = &c1 {
+            // OCCT L777-790: the elements are the restrictions of I1 (the
+            // face edges), each one bound to the handle it comes from.
+            for e in topexp_face_edges(&self.my_brep, &face1) {
+                // OCCT L779-780: Bc = down_cast<BRepAdaptor_Curve2d>
+                // (I1->Value()), Gc = down_cast<Geom2dAdaptor_Curve>
+                // (I1->Value()).
+                let Some((pc, first, last)) = self.my_brep.curve_on_surface(&e, &face1) else {
+                    // OCCT BRepAdaptor_Curve2d leaves the adaptor unloaded when
+                    // BRep_Tool::CurveOnSurface finds no pcurve (cxx L50-62);
+                    // such a restriction carries no hatching element.
+                    continue;
+                };
+                // OCCT Geom2dAdaptor_Curve::Load(C, First, Last) (cxx
+                // L267-273) — the loaded range of the adaptor.  rcad's
+                // Curve2d carries no range of its own, so the pcurve is
+                // restricted to the loaded one.
+                let bc = Curve2d::Trimmed(TrimmedCurve2 {
+                    curve: Box::new(pc),
+                    t_min: first,
+                    t_max: last,
+                });
+                // OCCT L783-788: ie = H1.AddElement(*Bc, Bc->Edge().Orientation())
+                // (the Gc branch is unreachable for a BRep face).
+                let ie = h1.add_element(&bc, e.orientation);
+                // OCCT L789: M1.Bind(ie, I1->Value()).
+                if m1.len() < ie {
+                    m1.resize(ie, Shape::null());
                 }
+                m1[ie - 1] = e.clone();
             }
-            None => (None, HatchDomain::default()),
-        };
-        let (hits2, dom2) = match &c2 {
-            Some(pc) => {
-                let hits = hatcher_trim(&self.my_brep, &f2, pc, pcf2, pcl2);
-                if hits.is_empty() {
-                    // Same classification semantics for the second face.
-                    let cp = hatch_classification_point(pc);
-                    if !classify_point_in_face(&self.my_brep, &f2, cp) {
-                        return false;
-                    }
-                    (Some(Vec::new()), HatchDomain::default())
-                } else {
-                    let d = analytic_domain(&hits, pcf2, pcl2);
-                    (Some(hits), d)
-                }
+            // OCCT L791-799: iH1 = H1.Trim(ll1); H1.ComputeDomains(iH1);
+            // if (!H1.IsDone(iH1)) return false; Nb1 = H1.NbDomains(iH1);
+            // if (Nb1 == 0) return false.
+            ih1 = h1.trim_curve(c1);
+            h1.compute_domains_hatching(ih1);
+            if !h1.is_done(ih1) {
+                return false;
             }
-            None => (None, HatchDomain::default()),
-        };
+            nb1 = h1.nb_domains(ih1);
+            if nb1 == 0 {
+                // "SplitKPart : tangency line out of the face"
+                return false;
+            }
+        }
 
-        // Boundary element lists (M1/M2 maps).
-        let boundary1 = topexp_face_edges(&self.my_brep, &f1);
-        let boundary2 = topexp_face_edges(&self.my_brep, &f2);
+        // OCCT L807-840: the same block for the second face.
+        let c2 = data.interference_on_s2().pcurve_on_face().cloned();
+        if let Some(c2) = &c2 {
+            for e in topexp_face_edges(&self.my_brep, &face2) {
+                let Some((pc, first, last)) = self.my_brep.curve_on_surface(&e, &face2) else {
+                    continue;
+                };
+                let bc = Curve2d::Trimmed(TrimmedCurve2 {
+                    curve: Box::new(pc),
+                    t_min: first,
+                    t_max: last,
+                });
+                let ie = h2.add_element(&bc, e.orientation);
+                // OCCT L824: M2.Bind(ie, I2->Value()).
+                if m2.len() < ie {
+                    m2.resize(ie, Shape::null());
+                }
+                m2[ie - 1] = e.clone();
+            }
+            ih2 = h2.trim_curve(c2);
+            h2.compute_domains_hatching(ih2);
+            if !h2.is_done(ih2) {
+                return false;
+            }
+            nb2 = h2.nb_domains(ih2);
+            if nb2 == 0 {
+                // "SplitKPart : tangency line out of the face"
+                return false;
+            }
+        }
 
         // Return start and end vertexes of the Spine (OCCT L842-852).
         let support = spine.base().edges(iedge).clone();
@@ -607,34 +480,47 @@ impl ChFi3dBuilder {
         // Return faces + register the support faces in the DS.
         let dstr = self.my_ds.as_mut().expect("DS");
         // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_SpKP.cxx L871
-        data.change_index_of_s1(dstr.add_shape(&f1));
+        data.change_index_of_s1(dstr.add_shape(&face1));
         // D6 routing: shape registry -> BOPDS DS (AppendShape); OCCT ChFi3d_Builder_SpKP.cxx L872
-        data.change_index_of_s2(dstr.add_shape(&f2));
+        data.change_index_of_s2(dstr.add_shape(&face2));
 
-        let nb1 = if hits1.is_some() { 1usize } else { 0usize };
-        let nb2 = if hits2.is_some() { 1usize } else { 0usize };
+        // OCCT L874-876: the domain parameter cursors, the Ind arrays and wref.
+        let mut f1 = 0.0f64;
+        let mut l1 = 0.0f64;
+        let mut f2 = 0.0f64;
+        let mut l2 = 0.0f64;
+        let mut ind1: Vec<usize> = vec![0; nb1];
+        let mut ind2: Vec<usize> = vec![0; nb2];
+        let wref = 0.0f64;
 
         // OCCT L878-880: onS switcher + cntlFiOnS (OnSame length control —
-        // only relevant for the truncation path, pending).
+        // only relevant for the pending truncation path).
         if c1.is_none() && c2.is_none() {
             // "SplitData : 2 zero lines hatching impossible"
             return false;
-        } else if c1.is_none() || (nb1 == 1 && !dom1.has_first_point) {
-            // It is checked if the point 2d of the degenerated edge is in
-            // the face (Adaptor3d_TopolTool::Classify — pending; treated as
-            // IN, the box cases never enter this branch with C1 null).
-            let pon_first = dom2.first_point.as_ref().map(|p| p.parameter).unwrap_or(pcf2);
-            let pon_second = dom2.second_point.as_ref().map(|p| p.parameter).unwrap_or(pcl2);
-            let _ = (&pon_first, &pon_second);
-            // Filling of SurfData.
+        } else if c1.is_none() || (nb1 == 1 && !h1.domain(ih1, 1).has_first_point()) {
+            // OCCT L891-900: "It is checked if the point 2d of the degenerated
+            // edge is in the face" — CD->Get2dPoints(false, 1) plus
+            // I1->Classify(p2d1, 1.e-8, false) (Adaptor3d_TopolTool::Classify
+            // over BRepTopAdaptor_FClass2d) is still pending; the C1 non-null
+            // case never enters the classification.
+            //
+            // Parsing of domains by increasing parameters (OCCT L902-906).
+            if !tri(&mut h2, ih2, &mut ind2, wref, 0.0, pitol, &mut nb2) {
+                return false;
+            }
+            // Filling of SurfData (OCCT L907-915).
             let mut cd = data.clone();
-            let pon_first = dom2.first_point.as_ref().map(|p| p.parameter).unwrap_or(pcf2);
-            let pon_second = dom2.second_point.as_ref().map(|p| p.parameter).unwrap_or(pcl2);
-            fill_sd(&self.my_brep, dstr, &mut cd, &boundary2, &dom2, pon_first, true, 2, pitol, &bout1);
-            fill_sd(&self.my_brep, dstr, &mut cd, &boundary2, &dom2, pon_second, false, 2, pitol, &bout2);
-            set_data.push(std::sync::Arc::new(std::sync::RwLock::new(cd)));
-            // intf/intl tails — the isolated-contour semantics reset both
-            // (SpKP L916-941 with SearchFace pending = false).
+            for i in 1..=nb2 {
+                let dom2 = h2.domain(ih2, ind2[i - 1]);
+                fill_sd(dstr, &mut cd, &m2, dom2, dom2.first_point().parameter(), true, 2, pitol, &bout1);
+                fill_sd(dstr, &mut cd, &m2, dom2, dom2.second_point().parameter(), false, 2, pitol, &bout2);
+                set_data.push(std::sync::Arc::new(std::sync::RwLock::new(cd.clone())));
+                cd = cp_sd(dstr, &cd);
+            }
+            // OCCT L916-941: the intf/intl tails run through SearchFace, which
+            // is still pending — the rcad tail keeps the previous stand-in
+            // (both flags reset).
             if *intf {
                 *intf = false;
             }
@@ -642,13 +528,25 @@ impl ChFi3dBuilder {
                 *intl = false;
             }
             return true;
-        } else if c2.is_none() || (nb2 == 1 && !dom2.has_first_point) {
+        } else if c2.is_none() || (nb2 == 1 && !h2.domain(ih2, 1).has_first_point()) {
+            // OCCT L945-954: the same degenerate-edge check for the second
+            // face (I2->Classify — pending).
+            //
+            // Parsing of domains by increasing parameters (OCCT L956-960).
+            if !tri(&mut h1, ih1, &mut ind1, wref, 0.0, pitol, &mut nb1) {
+                return false;
+            }
+            // Filling of SurfData (OCCT L961-969).
             let mut cd = data.clone();
-            let pon_first = dom1.first_point.as_ref().map(|p| p.parameter).unwrap_or(pcf1);
-            let pon_second = dom1.second_point.as_ref().map(|p| p.parameter).unwrap_or(pcl1);
-            fill_sd(&self.my_brep, dstr, &mut cd, &boundary1, &dom1, pon_first, true, 1, pitol, &bout1);
-            fill_sd(&self.my_brep, dstr, &mut cd, &boundary1, &dom1, pon_second, false, 1, pitol, &bout2);
-            set_data.push(std::sync::Arc::new(std::sync::RwLock::new(cd)));
+            for i in 1..=nb1 {
+                let dom1 = h1.domain(ih1, ind1[i - 1]);
+                fill_sd(dstr, &mut cd, &m1, dom1, dom1.first_point().parameter(), true, 1, pitol, &bout1);
+                fill_sd(dstr, &mut cd, &m1, dom1, dom1.second_point().parameter(), false, 1, pitol, &bout2);
+                set_data.push(std::sync::Arc::new(std::sync::RwLock::new(cd.clone())));
+                cd = cp_sd(dstr, &cd);
+            }
+            // OCCT L970-995: the intf/intl tails (SearchFace pending — same
+            // stand-in as the first branch).
             if *intf {
                 *intf = false;
             }
@@ -657,43 +555,77 @@ impl ChFi3dBuilder {
             }
             return true;
         } else {
-            // Parsing of domains by increasing parameters (non-periodic:
-            // identity order — Tri pending for the periodic cases).
-            let period1 = 0.0f64;
-            let period2 = 0.0f64;
+            // The else branch runs with both tangency lines: OCCT L997-1029.
+            let (Some(ll1), Some(ll2)) = (c1.as_ref(), c2.as_ref()) else {
+                return false;
+            };
+
+            // Parsing of domains by increasing parameters,
+            // if there is a 2d circle on a plane, one goes on 2D line of
+            // opposite face.
+            let mut period1 = 0.0f64;
+            let mut period2 = 0.0f64;
+            // OCCT Geom2dAdaptor_Curve::IsPeriodic / Period of ll1, ll2.
+            if Curve2dAdaptor::is_periodic(ll1) {
+                if !tri(&mut h2, ih2, &mut ind2, wref, 0.0, pitol, &mut nb2) {
+                    return false;
+                }
+                period1 = Curve2dAdaptor::period(ll1);
+                if !tri(&mut h1, ih1, &mut ind1, wref, period1, pitol, &mut nb1) {
+                    return false;
+                }
+            } else {
+                if !tri(&mut h1, ih1, &mut ind1, wref, 0.0, pitol, &mut nb1) {
+                    return false;
+                }
+                if Curve2dAdaptor::is_periodic(ll2) {
+                    period2 = Curve2dAdaptor::period(ll2);
+                }
+                if !tri(&mut h2, ih2, &mut ind2, wref, period2, pitol, &mut nb2) {
+                    return false;
+                }
+            }
 
             // Filling of SurfData (OCCT L1031-1085).
             let mut cd = data.clone();
-            for dom1_i in [&dom1] {
-                let mut f1 = 0.0f64;
-                let mut l1 = 0.0f64;
-                let mut f2 = 0.0f64;
-                let mut l2 = 0.0f64;
-                let acheval1 = adjust_param(dom1_i, &mut f1, &mut l1, 0.0, period1, pitol);
-                let nbcoup1 = if acheval1 { 2 } else { 1 };
+            for i in 1..=nb1 {
+                let dom1 = h1.domain(ih1, ind1[i - 1]);
+                let mut nbcoup1 = 1usize;
+                let acheval1 = adjust_param(dom1, &mut f1, &mut l1, wref, period1, pitol);
+                if acheval1 {
+                    nbcoup1 = 2;
+                }
                 for _icoup1 in 1..=nbcoup1 {
-                    let acheval2 = adjust_param(&dom2, &mut f2, &mut l2, 0.0, period2, pitol);
-                    let nbcoup2 = if acheval2 { 2 } else { 1 };
-                    for _icoup2 in 1..=nbcoup2 {
-                        if f2 <= l1 && f1 <= l2 {
-                            let tol2d = self.tol2d;
-                            if f1 >= f2 - tol2d {
-                                fill_sd(&self.my_brep, dstr, &mut cd, &boundary1, dom1_i, f1, true, 1, pitol, &bout1);
-                            }
-                            if f2 >= f1 - tol2d {
-                                fill_sd(&self.my_brep, dstr, &mut cd, &boundary2, &dom2, f2, true, 2, pitol, &bout1);
-                            }
-                            if l1 >= l2 - tol2d {
-                                fill_sd(&self.my_brep, dstr, &mut cd, &boundary2, &dom2, l2, false, 2, pitol, &bout2);
-                            }
-                            if l2 >= l1 - tol2d {
-                                fill_sd(&self.my_brep, dstr, &mut cd, &boundary1, dom1_i, l1, false, 1, pitol, &bout2);
-                            }
-                            set_data.push(std::sync::Arc::new(std::sync::RwLock::new(cd.clone())));
-                            cd = cp_sd(dstr, &cd);
+                    for j in 1..=nb2 {
+                        // OCCT L1046: the second domain is read with the loop
+                        // index (not with Ind2(j)).
+                        let dom2 = h2.domain(ih2, j);
+                        let mut nbcoup2 = 1usize;
+                        let acheval2 = adjust_param(dom2, &mut f2, &mut l2, wref, period2, pitol);
+                        if acheval2 {
+                            nbcoup2 = 2;
                         }
-                        f2 += period2;
-                        l2 += period2;
+                        for _icoup2 in 1..=nbcoup2 {
+                            if f2 <= l1 && f1 <= l2 {
+                                let tol2d = self.tol2d;
+                                if f1 >= f2 - tol2d {
+                                    fill_sd(dstr, &mut cd, &m1, dom1, f1, true, 1, pitol, &bout1);
+                                }
+                                if f2 >= f1 - tol2d {
+                                    fill_sd(dstr, &mut cd, &m2, dom2, f2, true, 2, pitol, &bout1);
+                                }
+                                if l1 >= l2 - tol2d {
+                                    fill_sd(dstr, &mut cd, &m2, dom2, l2, false, 2, pitol, &bout2);
+                                }
+                                if l2 >= l1 - tol2d {
+                                    fill_sd(dstr, &mut cd, &m1, dom1, l1, false, 1, pitol, &bout2);
+                                }
+                                set_data.push(std::sync::Arc::new(std::sync::RwLock::new(cd.clone())));
+                                cd = cp_sd(dstr, &cd);
+                            }
+                            f2 += period2;
+                            l2 += period2;
+                        }
                     }
                     f1 += period1;
                     l1 += period1;
@@ -704,9 +636,10 @@ impl ChFi3dBuilder {
                 return false;
             }
 
-            // Processing of extensions (OCCT L1087-1210): with the pending
-            // isolated-contour SearchFace the tails reduce to intf/intl =
-            // true when both points of the kept SurfData are on arcs.
+            // OCCT L1094-1227: the extension processing of the beginning of
+            // the spine (SearchFace, ChFi3d_cherche_element, ChFi3d_EdgeState)
+            // is pending; with no face search the tails reduce to the OnArc
+            // state of the kept SurfData ends.
             if *intf {
                 let sd0 = set_data[0].read().expect("surfdata lock");
                 let cp1 = sd0.vertex_first_on_s1().is_on_arc();
@@ -720,6 +653,8 @@ impl ChFi3dBuilder {
                     *intf = false;
                 }
             }
+            // OCCT L1228-1330: the extension processing of the end of the
+            // spine (pending, same reduction).
             if *intl {
                 let sdl = set_data.last().unwrap().read().expect("surfdata lock");
                 let cp1 = sdl.vertex_last_on_s1().is_on_arc();
@@ -737,7 +672,3 @@ impl ChFi3dBuilder {
         }
     }
 }
-
-// OCCT DVec2 import kept for the FillSD signature symmetry.
-#[allow(unused)]
-fn _unused_dvec2(_p: DVec2) {}

@@ -210,6 +210,16 @@ impl Hatching {
         &self.my_domains[index - 1]
     }
 
+    /// The mutable counterpart of Domain (1-based).  OCCT reaches the
+    /// domains of a hatching through a const_cast when a caller has to write
+    /// one back — ChFi3d_Builder_SpKP.cxx Tri L608-614:
+    /// `HatchGen_Domain* Dom =
+    /// ((HatchGen_Domain*)(void*)&H.Domain(iH, Ind(iSansFirst)));`.
+    /// HatchGen has no ChangeDomain at all, so the accessor lives here.
+    pub fn change_domain(&mut self, index: usize) -> &mut Domain {
+        &mut self.my_domains[index - 1]
+    }
+
     /// OCCT RemDomain (cxx L291-294) — removes the Index-th domain of the
     /// hatching (1-based).
     pub fn rem_domain(&mut self, index: usize) {
