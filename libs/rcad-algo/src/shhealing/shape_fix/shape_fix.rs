@@ -38,7 +38,7 @@ use crate::shhealing::shape_extend::basic_msg_registrator::BasicMsgRegistrator;
 use crate::shhealing::shape_extend::msg::MessageMsg;
 use crate::shhealing::shape_extend::status::ShapeExtendStatus;
 use crate::shhealing::shape_fix::edge::ShapeFixEdge;
-use crate::shhealing::shape_fix::shape_fix_gap_deps::ShapeFixShapeGap;
+use crate::shhealing::shape_fix::shape_fix_shape::ShapeFixShape;
 
 /// OCCT Message_ProgressScope — the rcad architecture bridge: no abort
 /// channel exists, so `More()` is always true and the while-loops of
@@ -341,36 +341,41 @@ pub fn encode_regularity(_brep: &mut BRep, shape: &Shape, tolang: f64) {
 // ===========================================================================
 
 /// OCCT ShapeFix::RemoveSmallEdges (ShapeFix.cxx L287-309): removes edges
-/// smaller than the tolerance through ShapeFix_Shape (the W1-6 GAP carrier
-/// for the W3 class — `Perform` keeps the "nothing fixed" path, so the
-/// shape passes through unchanged and no context replacements recorded).
+/// smaller than the tolerance through ShapeFix_Shape (the W3 tranche 4 1:1
+/// class — the former W1-6 GAP carrier is retired, Rule 4).
 pub fn remove_small_edges(
-    _brep: &mut BRep,
+    brep: &mut BRep,
     shape: &mut Shape,
     tolerance: f64,
     context: &mut Option<ShapeBuildReShape>,
 ) -> Shape {
-    let mut sfs = ShapeFixShapeGap::new();
-    // L292-293.
+    // L291: occ::handle<ShapeFix_Shape> sfs = new ShapeFix_Shape.
+    let mut sfs = ShapeFixShape::new();
+    // L292.
     sfs.init(shape);
-    // L294.
+    // L293.
     sfs.set_precision(tolerance);
-    // L295-297.
+    // L294-296: the bool false assignments to the int& face modes.
     *sfs.fix_face_tool().fix_missing_seam_mode() = 0;
     *sfs.fix_face_tool().fix_orientation_mode() = 0;
     *sfs.fix_face_tool().fix_small_area_wire_mode() = 0;
+    // L297 (L298 is the commented-out FixReorderMode line): ModifyTopologyMode
+    // is a bool& mode.
     *sfs.fix_wire_tool().modify_topology_mode() = true;
-    // L299-304.
+    // L299-304: the bool assignments to the int& wire modes.
     *sfs.fix_wire_tool().fix_connected_mode() = 0;
     *sfs.fix_wire_tool().fix_edge_curves_mode() = 0;
     *sfs.fix_wire_tool().fix_degenerated_mode() = 0;
     *sfs.fix_wire_tool().fix_self_intersection_mode() = 0;
     *sfs.fix_wire_tool().fix_lacking_mode() = 0;
     *sfs.fix_wire_tool().fix_small_mode() = 1;
-    // L305-308.
-    sfs.perform();
-    let result = sfs.shape();
-    *context = None; // sfs.Context() — the carrier records no replacements
+    // L305: sfs->Perform() — the OCCT no-arg default-progress form.
+    sfs.perform(brep, MessageProgressRange::default());
+    // L306: TopoDS_Shape result = sfs->Shape().
+    let result = sfs.shape_result();
+    // L307: context = sfs->Context().
+    *context = sfs.base.my_context.clone();
+    // L308: return result.
     result
 }
 

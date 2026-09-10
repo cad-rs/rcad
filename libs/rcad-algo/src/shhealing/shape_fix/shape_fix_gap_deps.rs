@@ -1,4 +1,4 @@
-//! GAP carriers for the W1-6 batch (ShapeFix package statics +
+//! GAP carriers for the ShapeFix batch (ShapeFix package statics +
 //! ShapeUpgrade_UnifySameDomain).
 //!
 //! These stand-ins cover dependencies owned by *other, not-yet-landed*
@@ -6,10 +6,12 @@
 //! batch, keeps OCCT's failure/no-op path where the real algorithm is missing,
 //! and is replaced wholesale when the owning batch lands:
 //!
-//! - [`ShapeFixShapeGap`] — OCCT `ShapeFix_Shape` (ShapeFix_Shape.cxx, 358
-//!   LOC) reduced to the surface consumed by `ShapeFix::RemoveSmallEdges`
-//!   (ShapeFix.cxx L291-308).  W3 docket row; `Perform` keeps OCCT's
-//!   "nothing fixed" path.
+//! - [`ShapeFixSolidGap`] — OCCT `ShapeFix_Solid` (ShapeFix_Solid.cxx, 749
+//!   LOC) reduced to the surface consumed by `ShapeFix_Shape`
+//!   (ShapeFix_Shape.cxx L49/L62/L165-166/L173/L323-351 and the lxx tool
+//!   chain L24-55).  W3 docket row; `Perform` keeps OCCT's "nothing fixed"
+//!   path; the real `ShapeFixShell` is embedded so the
+//!   FixShellTool/FixFaceTool/FixWireTool/FixEdgeTool chain stays real.
 //! - [`brep_lib_same_parameter_edge`] — OCCT
 //!   `BRepLib::SameParameter(edge, tol)` (BRepLib.cxx, BRepLib.hxx L161)
 //!   reduced to the sampled-deviation tolerance update (the docket section 4
@@ -30,12 +32,22 @@
 //! FixFaceOrientation/Shell reduction consumed by UnifySameDomain.cxx
 //! L4433-4445) carriers — deleted, Rule 4; every consumer now calls the real
 //! classes.
+//!
+//! Retired by the W3 tranche 4 (ShapeFix_Shape landed 1:1 in
+//! `shape_fix/shape_fix_shape.rs`): the former `ShapeFixShapeGap` carrier
+//! (the Init/Perform/Shape reduction consumed by `ShapeFix::RemoveSmallEdges`,
+//! ShapeFix.cxx L291-308) — deleted, Rule 4; the static now drives the real
+//! class.
 
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, BRepBuilder, TShape};
 use std::sync::Arc;
 
 use crate::shhealing::shape_analysis::edge::ShapeAnalysisEdge;
+use crate::shhealing::shape_extend::status::{encode_status, ShapeExtendStatus};
+use crate::shhealing::shape_fix::root::{MsgRegistratorHandle, ShapeFixRoot};
+use crate::shhealing::shape_fix::shape_fix::MessageProgressRange;
+use crate::shhealing::shape_fix::shell::ShapeFixShell;
 
 // ---------------------------------------------------------------------------
 // OCCT ShapeFix_Face — W3 docket row (GAP carrier).
@@ -54,85 +66,124 @@ fn set_edge_tolerance_value(brep: &mut BRep, edge: &Shape, tol: f64) {
 }
 
 // ---------------------------------------------------------------------------
-// OCCT ShapeFix_Shape — W3 docket row (GAP carrier).
+// OCCT ShapeFix_Solid — W3 docket row (GAP carrier).
 // ---------------------------------------------------------------------------
 
-// Retired by the W3 tranche 2 (ShapeFix_Wire landed 1:1 in `shape_fix/wire/`):
-// the former `ShapeFixWireGap` carrier (the mode-flag reduction consumed by
-// the `SetFixWireModes` static, UnifySameDomain.cxx L3133-3144) — deleted,
-// Rule 4.  The Face/Shape carriers embed the real `ShapeFixWire` as their
-// FixWireTool.
+// Retired by the W3 tranche 4 (ShapeFix_Shape landed 1:1 in
+// `shape_fix/shape_fix_shape.rs`): the former `ShapeFixShapeGap` carrier
+// (the Init/Perform/Shape reduction consumed by `ShapeFix::RemoveSmallEdges`,
+// ShapeFix.cxx L291-308) — deleted, Rule 4; the static drives the real class.
 
-// ---------------------------------------------------------------------------
-// OCCT ShapeFix_Shape — W3 docket row (GAP carrier).
-// ---------------------------------------------------------------------------
-
-/// OCCT `ShapeFix_Shape` reduced to the surface consumed by
-/// `ShapeFix::RemoveSmallEdges` (ShapeFix.cxx L291-308).  `Perform` keeps
-/// OCCT's "nothing fixed" path; replaced wholesale by the W3 translation.
-pub struct ShapeFixShapeGap {
-    my_shape: Shape,
-    my_precision: f64,
-    my_context: Option<()>,
-    my_face_tool: crate::shhealing::shape_fix::face_a::ShapeFixFace,
-    my_wire_tool: crate::shhealing::shape_fix::wire::ShapeFixWire,
+/// OCCT `ShapeFix_Solid` — GAP carrier for the not-yet-landed W3 docket row
+/// (ShapeFix_Solid.cxx, 749 LOC).  The carrier hosts exactly the surface
+/// consumed by `ShapeFix_Shape` (the constructor `new ShapeFix_Solid`,
+/// ShapeFix_Shape.cxx L49/L62; the SOLID case Init/SetContext/Perform calls,
+/// ShapeFix_Shape.cxx L165-171; the Set* forwarders, ShapeFix_Shape.cxx
+/// L323-351): the empty constructor (cxx L52-60), Init (cxx L75-84), the
+/// inline `FixShellTool` (hxx L69), and the Root setters that forward to the
+/// shell tool (cxx L721-748).  The real `ShapeFixShell` (the W3 tranche 3
+/// class) is embedded, so the FixShellTool/FixFaceTool/FixWireTool/
+/// FixEdgeTool chain of ShapeFix_Shape stays real.  `Perform` (cxx L460-645)
+/// keeps OCCT's "nothing fixed" path — returns false and leaves the shape
+/// unchanged; replaced wholesale when the ShapeFix_Solid batch lands.
+// The myStatus/myFixShellMode/myFixShellOrientationMode/myCreateOpenSolidMode
+// fields are stored per the OCCT hxx L133-136 but not consumed by the hosted
+// surface (the carrier does not translate Status()/Perform()).
+#[allow(dead_code)]
+pub struct ShapeFixSolidGap {
+    /// The OCCT ShapeFix_Root base subobject.
+    pub base: ShapeFixRoot,
+    /// OCCT mySolid (hxx L131).
+    pub(crate) my_solid: Shape,
+    /// OCCT myFixShell (hxx L132) — the real W3 tranche 3 class.
+    pub(crate) my_fix_shell: ShapeFixShell,
+    /// OCCT myStatus (hxx L133).
+    pub(crate) my_status: i32,
+    /// OCCT myFixShellMode (hxx L134).
+    pub(crate) my_fix_shell_mode: i32,
+    /// OCCT myFixShellOrientationMode (hxx L135).
+    pub(crate) my_fix_shell_orientation_mode: i32,
+    /// OCCT myCreateOpenSolidMode (hxx L136).
+    pub(crate) my_create_open_solid_mode: bool,
 }
 
-impl Default for ShapeFixShapeGap {
+impl Default for ShapeFixSolidGap {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ShapeFixShapeGap {
-    /// OCCT ShapeFix_Shape() (ShapeFix_Shape.cxx L40-45).
+impl ShapeFixSolidGap {
+    /// OCCT ShapeFix_Solid::ShapeFix_Solid() (cxx L52-60): empty constructor.
     pub fn new() -> Self {
-        ShapeFixShapeGap {
-            my_shape: Shape::null(),
-            my_precision: 0.0,
-            my_context: None,
-            my_face_tool: crate::shhealing::shape_fix::face_a::ShapeFixFace::new(),
-            my_wire_tool: crate::shhealing::shape_fix::wire::ShapeFixWire::new(),
+        ShapeFixSolidGap {
+            base: ShapeFixRoot::new(),
+            // OCCT L131: mySolid — the default-constructed null handle.
+            my_solid: Shape::null(),
+            // OCCT L57: myFixShell = new ShapeFix_Shell.
+            my_fix_shell: ShapeFixShell::new(),
+            // OCCT L53: myStatus = EncodeStatus(ShapeExtend_OK).
+            my_status: encode_status(ShapeExtendStatus::Ok),
+            // OCCT L54-56.
+            my_fix_shell_mode: -1,
+            my_fix_shell_orientation_mode: -1,
+            my_create_open_solid_mode: false,
         }
     }
 
-    /// OCCT ShapeFix_Shape::Init(S) (ShapeFix_Shape.cxx L52-112) — GAP: the
-    /// shape is stored and returned as is (the sub-shape fix chains are W3
-    /// scope).
-    pub fn init(&mut self, s: &Shape) {
-        self.my_shape = s.clone();
+    /// OCCT ShapeFix_Solid::Init (cxx L75-84): initializes by a solid
+    /// (mySolid = solid; myShape = solid).
+    pub fn init(&mut self, _brep: &mut BRep, solid: &Shape) {
+        // OCCT L76: mySolid = solid.
+        self.my_solid = solid.clone();
+        // OCCT L83: myShape = solid.
+        self.base.my_shape = solid.clone();
     }
 
-    /// OCCT ShapeFix_Root::SetPrecision.
-    pub fn set_precision(&mut self, prec: f64) {
-        self.my_precision = prec;
+    /// OCCT ShapeFix_Solid::FixShellTool (hxx L69, inline): returns the tool
+    /// for fixing shells (the real W3 tranche 3 class).
+    pub fn fix_shell_tool(&mut self) -> &mut ShapeFixShell {
+        &mut self.my_fix_shell
     }
 
-    /// OCCT FixFaceTool() — the ShapeFix_Face tool handle (the real W3
-    /// tranche 3 class).
-    pub fn fix_face_tool(&mut self) -> &mut crate::shhealing::shape_fix::face_a::ShapeFixFace {
-        &mut self.my_face_tool
-    }
-
-    /// OCCT FixWireTool() — the ShapeFix_Wire tool handle.
-    pub fn fix_wire_tool(&mut self) -> &mut crate::shhealing::shape_fix::wire::ShapeFixWire {
-        &mut self.my_wire_tool
-    }
-
-    /// OCCT ShapeFix_Shape::Perform — GAP: the "nothing fixed" path.
-    pub fn perform(&mut self) -> bool {
+    /// OCCT ShapeFix_Solid::Perform (cxx L460-645) — GAP: the "nothing
+    /// fixed" path (the shell-per-shell `ShapeFix_Shell::Perform` loop and
+    /// the shell-orientation stage are the ShapeFix_Solid W3 row scope); the
+    /// shape passes through unchanged and no DONE status is recorded.
+    pub fn perform(&mut self, _brep: &mut BRep, _the_progress: MessageProgressRange) -> bool {
         false
     }
 
-    /// OCCT ShapeFix_Shape::Shape() — the resulting shape.
-    pub fn shape(&self) -> Shape {
-        self.my_shape.clone()
+    /// OCCT ShapeFix_Solid::SetMsgRegistrator (cxx L721-725).
+    pub fn set_msg_registrator(&mut self, msgreg: MsgRegistratorHandle) {
+        // OCCT L723: ShapeFix_Root::SetMsgRegistrator(msgreg).
+        self.base.set_msg_registrator(msgreg.clone());
+        // OCCT L724: myFixShell->SetMsgRegistrator(msgreg).
+        self.my_fix_shell.set_msg_registrator(msgreg);
     }
 
-    /// OCCT ShapeFix_Shape::Context() — the reshape context (None: the
-    /// carrier performs no replacements).
-    pub fn context(&self) -> Option<()> {
-        self.my_context
+    /// OCCT ShapeFix_Solid::SetPrecision (cxx L729-733).
+    pub fn set_precision(&mut self, preci: f64) {
+        // OCCT L731.
+        self.base.set_precision(preci);
+        // OCCT L732: myFixShell->SetPrecision(preci).
+        self.my_fix_shell.set_precision(preci);
+    }
+
+    /// OCCT ShapeFix_Solid::SetMinTolerance (cxx L737-741).
+    pub fn set_min_tolerance(&mut self, mintol: f64) {
+        // OCCT L739.
+        self.base.set_min_tolerance(mintol);
+        // OCCT L740: myFixShell->SetMinTolerance(mintol).
+        self.my_fix_shell.set_min_tolerance(mintol);
+    }
+
+    /// OCCT ShapeFix_Solid::SetMaxTolerance (cxx L745-748).
+    pub fn set_max_tolerance(&mut self, maxtol: f64) {
+        // OCCT L747.
+        self.base.set_max_tolerance(maxtol);
+        // OCCT L748: myFixShell->SetMaxTolerance(maxtol).
+        self.my_fix_shell.set_max_tolerance(maxtol);
     }
 }
 

@@ -18,10 +18,15 @@
 //! (`intersection_tool`) and ShapeFix_SplitTool (`split_tool`) — the
 //! `ShapeFixIntersectionToolGap` / `ShapeFixSplitToolGap` /
 //! `ShapeFixFaceGap` / `ShapeFixShellGap` carriers are retired (Rule 4).
-//! The remaining W3 classes (Shape, Wireframe, FixSmallFace, FixSmallSolid,
-//! EdgeConnect, EdgeProjAux, FaceConnect, ComposeShell) follow in later
-//! tranches; the Shape GAP carrier in `shape_fix_gap_deps.rs` remains
-//! annotated for that tranche.
+//!
+//! W3 tranche 4 (2026-09-10): ShapeFix_Shape (`shape_fix_shape`, cxx + lxx)
+//! — the `ShapeFixShapeGap` carrier is retired (Rule 4) and the
+//! `ShapeFix::RemoveSmallEdges` static drives the real class; the not-yet-
+//! landed ShapeFix_Solid row is hosted by the `ShapeFixSolidGap` carrier in
+//! `shape_fix_gap_deps.rs` (the real `ShapeFixShell` is embedded, so the
+//! tool chain stays real).  The remaining W3 classes (Wireframe,
+//! FixSmallFace, FixSmallSolid, EdgeConnect, EdgeProjAux, FaceConnect,
+//! ComposeShell) follow in later tranches.
 
 pub mod edge;
 pub mod face_a;
@@ -33,6 +38,7 @@ pub mod intersection_tool_fix;
 pub mod root;
 pub mod shape_fix;
 pub mod shape_fix_gap_deps;
+pub mod shape_fix_shape;
 pub mod shape_tolerance;
 pub mod shell;
 pub mod shell_statics;
