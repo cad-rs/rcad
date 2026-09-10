@@ -1376,23 +1376,6 @@ impl GeomAPIIntSS {
     }
 }
 
-// =========================================================================
-// GeomFill: GeomFill_BSplineCurves (stub)
-// =========================================================================
-
-#[derive(Debug, Clone)]
-pub struct GeomFillBSplineCurves;
-
-impl GeomFillBSplineCurves {
-    pub fn new() -> Self {
-        GeomFillBSplineCurves
-    }
-
-    pub fn with_curves(_curve: &rcad_kernel::geom::BSplineCurve3) -> Self {
-        GeomFillBSplineCurves
-    }
-
-    pub fn is_done(&self) -> bool {
-        true
-    }
-}
+// GeomFill_BSplineCurves: no stub here.  The real 1:1 translation lives in
+// geomalgo/geomfill/bspline_curves.rs (OCCT GeomFill_BSplineCurves.cxx
+// L28-597); the GTest consumers use it directly.

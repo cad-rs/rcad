@@ -4,7 +4,7 @@
 // Contains BRepClass_FaceExplorer, BRepClass_Edge, etc.
 // (NOT BRepClass3d — that's in class3d/ module)
 
-pub mod bnd_box2d;
+pub mod bnd_lib_add2d_curve;
 pub mod edge;
 pub mod face_classifier;
 pub mod face_explorer;

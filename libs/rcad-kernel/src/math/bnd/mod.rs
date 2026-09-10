@@ -498,18 +498,55 @@ impl BndBox2d {
         self.y_max += tol;
     }
 
-    /// OCCT Bnd_Box2d::Get(xmin, ymin, xmax, ymax) — the finite corners
-    /// including the gap.  None for a void box.
+    /// OCCT Bnd_Box2d::GetXMin() — Bnd_Box2d.cxx L127-130.
+    fn get_x_min(&self) -> f64 {
+        if self.flags & XMIN2D_OPEN != 0 {
+            f64::NEG_INFINITY
+        } else {
+            self.x_min - self.gap
+        }
+    }
+
+    /// OCCT Bnd_Box2d::GetXMax() — Bnd_Box2d.cxx L134-137.
+    fn get_x_max(&self) -> f64 {
+        if self.flags & XMAX2D_OPEN != 0 {
+            f64::INFINITY
+        } else {
+            self.x_max + self.gap
+        }
+    }
+
+    /// OCCT Bnd_Box2d::GetYMin() — Bnd_Box2d.cxx L141-144.
+    fn get_y_min(&self) -> f64 {
+        if self.flags & YMIN2D_OPEN != 0 {
+            f64::NEG_INFINITY
+        } else {
+            self.y_min - self.gap
+        }
+    }
+
+    /// OCCT Bnd_Box2d::GetYMax() — Bnd_Box2d.cxx L148-151.
+    fn get_y_max(&self) -> f64 {
+        if self.flags & YMAX2D_OPEN != 0 {
+            f64::INFINITY
+        } else {
+            self.y_max + self.gap
+        }
+    }
+
+    /// OCCT Bnd_Box2d::Get(xmin, ymin, xmax, ymax) — Bnd_Box2d.cxx
+    /// L105-116: throws for a void box; otherwise the finite corners through
+    /// GetXMin/GetXMax/GetYMin/GetYMax (gap applied, open directions
+    /// infinite).  `None` models the Standard_ConstructionError.
     pub fn get(&self) -> Option<(f64, f64, f64, f64)> {
         if self.is_void() {
             return None;
         }
-        let g = self.gap;
         Some((
-            self.x_min - g,
-            self.y_min - g,
-            self.x_max + g,
-            self.y_max + g,
+            self.get_x_min(),
+            self.get_y_min(),
+            self.get_x_max(),
+            self.get_y_max(),
         ))
     }
 
@@ -537,17 +574,104 @@ impl BndBox2d {
         }
     }
 
-    /// OCCT Bnd_Box2d::IsOut(Pnt2d) — point outside the box (with gap).
-    /// A void box is out for every point; a whole box for none.
-    pub fn is_out_point(&self, p: glam::DVec2) -> bool {
-        if self.is_void() {
-            return true;
-        }
+    /// OCCT Bnd_Box2d::IsOut(const gp_Pnt2d& P) — Bnd_Box2d.cxx L354-390.
+    /// A whole box is out for no point, a void box for every point, and the
+    /// per-direction open flags suppress the corresponding test.
+    pub fn is_out_point(&self, the_p: glam::DVec2) -> bool {
         if self.is_whole() {
             return false;
         }
-        let g = self.gap;
-        p.x < self.x_min - g || p.x > self.x_max + g || p.y < self.y_min - g || p.y > self.y_max + g
+        if self.is_void() {
+            return true;
+        }
+        if (self.flags & XMIN2D_OPEN) == 0 && the_p.x < (self.x_min - self.gap) {
+            return true;
+        }
+        if (self.flags & XMAX2D_OPEN) == 0 && the_p.x > (self.x_max + self.gap) {
+            return true;
+        }
+        if (self.flags & YMIN2D_OPEN) == 0 && the_p.y < (self.y_min - self.gap) {
+            return true;
+        }
+        if (self.flags & YMAX2D_OPEN) == 0 && the_p.y > (self.y_max + self.gap) {
+            return true;
+        }
+        false
+    }
+
+    /// OCCT Bnd_Box2d::IsOut(const gp_Lin2d& theL) — Bnd_Box2d.cxx L393-416.
+    /// The signed area of the parallelogram (direction, box-center offset)
+    /// against the box half-extents projected on the line direction.
+    pub fn is_out_line(&self, the_l: &crate::geom::Line2d) -> bool {
+        if self.is_whole() {
+            return false;
+        }
+        if self.is_void() {
+            return true;
+        }
+        let Some((a_x_min, a_y_min, a_x_max, a_y_max)) = self.get() else {
+            return true;
+        };
+
+        let a_center = glam::DVec2::new((a_x_min + a_x_max) / 2.0, (a_y_min + a_y_max) / 2.0);
+        let a_heigh = glam::DVec2::new(
+            (a_x_max - a_center.x).abs(),
+            (a_y_max - a_center.y).abs(),
+        );
+
+        let a_dir = the_l.direction;
+        let a_loc = the_l.origin;
+        // gp_XY::operator^ is the 2D cross product X1*Y2 - Y1*X2.
+        let a_prod = [
+            a_dir.x * (a_center.y - a_loc.y) - a_dir.y * (a_center.x - a_loc.x),
+            a_dir.x * a_heigh.y,
+            a_dir.y * a_heigh.x,
+        ];
+        a_prod[0].abs() > (a_prod[1].abs() + a_prod[2].abs())
+    }
+
+    /// OCCT Bnd_Box2d::IsOut(const gp_Pnt2d& theP0, const gp_Pnt2d& theP1) —
+    /// Bnd_Box2d.cxx L418-454: the segment-vs-box rejection used by
+    /// BRepClass_Intersector::IsInter (BRepClass_Intersector.cxx L122-136).
+    pub fn is_out_segment(&self, the_p0: glam::DVec2, the_p1: glam::DVec2) -> bool {
+        if self.is_whole() {
+            return false;
+        }
+        if self.is_void() {
+            return true;
+        }
+        let Some((a_loc_x_min, a_loc_y_min, a_loc_x_max, a_loc_y_max)) = self.get() else {
+            return true;
+        };
+
+        // Intersect the line containing the segment.
+        let a_seg_delta = the_p1 - the_p0;
+
+        let a_center = glam::DVec2::new(
+            (a_loc_x_min + a_loc_x_max) / 2.0,
+            (a_loc_y_min + a_loc_y_max) / 2.0,
+        );
+        let a_heigh = glam::DVec2::new(
+            (a_loc_x_max - a_center.x).abs(),
+            (a_loc_y_max - a_center.y).abs(),
+        );
+
+        let a_prod = [
+            a_seg_delta.x * (a_center.y - the_p0.y) - a_seg_delta.y * (a_center.x - the_p0.x),
+            a_seg_delta.x * a_heigh.y,
+            a_seg_delta.y * a_heigh.x,
+        ];
+
+        if a_prod[0].abs() <= (a_prod[1].abs() + a_prod[2].abs()) {
+            // Intersection with the line detected; check the segment as a
+            // bounding box around its own center.
+            let a_h_seg = glam::DVec2::new(0.5 * a_seg_delta.x, 0.5 * a_seg_delta.y);
+            let a_h_seg_abs = glam::DVec2::new(a_h_seg.x.abs(), a_h_seg.y.abs());
+            let a_mid = the_p0 + a_h_seg - a_center;
+            return a_mid.x.abs() > (a_heigh.x + a_h_seg_abs.x)
+                || a_mid.y.abs() > (a_heigh.y + a_h_seg_abs.y);
+        }
+        true
     }
 
     /// OCCT Bnd_Box2d::IsOut(const Bnd_Box2d& Other) — Bnd_Box2d.cxx

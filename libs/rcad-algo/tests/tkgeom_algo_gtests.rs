@@ -1681,6 +1681,7 @@ mod bRepFilletAPIMakeChamfer_tests {
         let mut edge_face_map = an_edge_face_map;
         edge_face_map.fill(
             &a_box,
+            &a_solid,
             rcad_kernel::topods::ShapeType::Edge,
             rcad_kernel::topods::ShapeType::Face,
         );
@@ -2848,44 +2849,114 @@ mod geomAPIIntSS_tests {
 #[cfg(test)]
 mod geomFillBSplineCurves_tests {
     use super::*;
+    use rcad_algo::geomalgo::geomfill::{BSplineCurves, FillingStyle};
+    use rcad_kernel::geom::BSplineCurve3;
 
-    #[test]
-    fn construction() {
-        let _a_curve1 = rcad_kernel::geom::BSplineCurve3 {
+    /// A degree-1 BSpline over a 4-point polyline (3 segments): flat knot
+    /// vector [0,0,1/2,1/2,1,1] -> (knots, mults) = ([0,1/2,1],[2,2,2]).
+    fn polyline4(points: [DVec3; 4]) -> BSplineCurve3 {
+        BSplineCurve3 {
             degree: 1,
-            knots: vec![0.0, 1.0],
-            control_points: vec![DVec3::ZERO, DVec3::X],
-            weights: vec![1.0, 1.0],
+            knots: vec![0.0, 0.0, 0.5, 0.5, 1.0, 1.0],
+            control_points: points.to_vec(),
+            weights: vec![1.0; 4],
             is_periodic: false,
-        };
-        let _a_fill = gtests_stubs::GeomFillBSplineCurves::new();
-        assert!(true);
+        }
     }
 
-    #[test]
-    fn init() {
-        let _a_curve1 = rcad_kernel::geom::BSplineCurve3 {
+    /// A degree-1 BSpline over a single segment (2 poles).
+    fn segment(start: DVec3, end: DVec3) -> BSplineCurve3 {
+        BSplineCurve3 {
             degree: 1,
-            knots: vec![0.0, 1.0],
-            control_points: vec![DVec3::ZERO, DVec3::X],
-            weights: vec![1.0, 1.0],
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![start, end],
+            weights: vec![1.0; 2],
             is_periodic: false,
-        };
-        let _a_fill = gtests_stubs::GeomFillBSplineCurves::with_curves(&_a_curve1);
-        assert!(true);
+        }
     }
 
+    /// The unit-square contour, each side carrying 4 poles so that the
+    /// CoonsStyle pole-count guard (cxx L334-336) accepts the fill.
+    fn unit_square_contour() -> [BSplineCurve3; 4] {
+        [
+            polyline4([
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(1.0 / 3.0, 0.0, 0.0),
+                DVec3::new(2.0 / 3.0, 0.0, 0.0),
+                DVec3::new(1.0, 0.0, 0.0),
+            ]),
+            polyline4([
+                DVec3::new(1.0, 0.0, 0.0),
+                DVec3::new(1.0, 1.0 / 3.0, 0.0),
+                DVec3::new(1.0, 2.0 / 3.0, 0.0),
+                DVec3::new(1.0, 1.0, 0.0),
+            ]),
+            polyline4([
+                DVec3::new(1.0, 1.0, 0.0),
+                DVec3::new(2.0 / 3.0, 1.0, 0.0),
+                DVec3::new(1.0 / 3.0, 1.0, 0.0),
+                DVec3::new(0.0, 1.0, 0.0),
+            ]),
+            polyline4([
+                DVec3::new(0.0, 1.0, 0.0),
+                DVec3::new(0.0, 2.0 / 3.0, 0.0),
+                DVec3::new(0.0, 1.0 / 3.0, 0.0),
+                DVec3::new(0.0, 0.0, 0.0),
+            ]),
+        ]
+    }
+
+    /// OCCT GeomFill_BSplineCurves_Test.cxx L53-100 (createOCC28131Face) at
+    /// the GeomFill level: `aFill.Init(outline, c1, c2, CoonsStyle)` on a
+    /// chained boundary produces the filling surface (Surface() non-null).
     #[test]
-    fn surface() {
-        let _a_curve1 = rcad_kernel::geom::BSplineCurve3 {
-            degree: 1,
-            knots: vec![0.0, 1.0],
-            control_points: vec![DVec3::ZERO, DVec3::X],
-            weights: vec![1.0, 1.0],
-            is_periodic: false,
-        };
-        let _a_fill = gtests_stubs::GeomFillBSplineCurves::with_curves(&_a_curve1);
-        assert!(true);
+    fn chained_boundary_coons_fill() {
+        let [c1, c2, c3, c4] = unit_square_contour();
+        let a_fill = BSplineCurves::new(&c1, &c2, &c3, &c4, FillingStyle::CoonsStyle);
+        assert!(a_fill.surface().is_some());
+    }
+
+    /// OCCT GeomFill_BSplineCurves.cxx L334-336: CoonsStyle raises
+    /// Standard_ConstructionError when a side carries fewer than 4 poles.
+    #[test]
+    #[should_panic(expected = "invalid filling style")]
+    fn coons_style_pole_count_guard() {
+        let c1 = segment(DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0));
+        let c2 = segment(DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0));
+        let c3 = segment(DVec3::new(1.0, 1.0, 0.0), DVec3::new(0.0, 1.0, 0.0));
+        let _a_fill = BSplineCurves::new3(&c1, &c2, &c3, FillingStyle::CoonsStyle);
+    }
+
+    /// OCCT GeomFill_BSplineCurves.cxx L306-309: non-joined curves raise
+    /// Standard_ConstructionError ("Courbes non jointives").
+    #[test]
+    #[should_panic(expected = "Courbes non jointives")]
+    fn non_joined_rejection() {
+        let c1 = segment(DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0));
+        let c2 = segment(DVec3::new(0.0, 5.0, 0.0), DVec3::new(1.0, 5.0, 0.0));
+        let c3 = segment(DVec3::new(0.0, 9.0, 0.0), DVec3::new(1.0, 9.0, 0.0));
+        let c4 = segment(DVec3::new(0.0, 13.0, 0.0), DVec3::new(1.0, 13.0, 0.0));
+        let _a_fill = BSplineCurves::new(&c1, &c2, &c3, &c4, FillingStyle::StretchStyle);
+    }
+
+    /// OCCT GeomFill_BSplineCurves.cxx L439-597 Init(C1, C2, Type) — the
+    /// two-curve ruled fill.
+    #[test]
+    fn two_curve_ruled_fill() {
+        let c1 = polyline4([
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0 / 3.0, 0.0, 0.0),
+            DVec3::new(2.0 / 3.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+        ]);
+        let c2 = polyline4([
+            DVec3::new(0.0, 1.0, 0.0),
+            DVec3::new(1.0 / 3.0, 1.0, 0.0),
+            DVec3::new(2.0 / 3.0, 1.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+        ]);
+        let a_fill = BSplineCurves::new2(&c1, &c2, FillingStyle::StretchStyle);
+        assert!(a_fill.surface().is_some());
     }
 }
 

@@ -6,12 +6,13 @@ use glam::DVec2;
 use rcad_kernel::base::extrema::ExtPC2d;
 use rcad_kernel::base::geom_lprop::ClProps2d;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, CurveEval, Line2d};
+use rcad_kernel::math::bnd::BndBox2d;
 use rcad_kernel::topo::topods::{u_resolution_for_surface, v_resolution_for_surface};
 use rcad_kernel::topods::{Orientation, TShape};
 use rcad_kernel::PCONFUSION;
 
 use crate::topalgo::shape_source::{edge_pcurve_on_face, ShapeSource};
-use crate::topalgo::brep_class::bnd_box2d::BndBox2d;
+use crate::topalgo::brep_class::bnd_lib_add2d_curve::add_2d_curve;
 use crate::topalgo::brep_class::edge::ClassEdge;
 use crate::topalgo::brep_class::g_inter::GInter;
 use crate::geomalgo::int_res2d::{
@@ -44,10 +45,13 @@ fn max_tol_2d_cur_edge(edge: &ClassEdge, ds: &dyn ShapeSource, the_tol: f64) -> 
 /// OCCT BRepClass_Intersector.cxx L122-136: IsInter — line/segment vs box.
 fn is_inter(box_: &BndBox2d, line: &Line2d, p: f64) -> bool {
     let status = if p.is_infinite() {
-        box_.is_out_line(line.origin, line.direction)
+        // OCCT: aStatusInter = theBox.IsOut(theL);
+        box_.is_out_line(line)
     } else {
+        // OCCT: aPntF = theL.Location(); aPntL = ElCLib::Value(theP, theL);
+        let a_pnt_f = line.origin;
         let a_pnt_l = line.origin + line.direction * p;
-        box_.is_out_segment(line.origin, a_pnt_l)
+        box_.is_out_segment(a_pnt_f, a_pnt_l)
     };
     !status
 }
@@ -248,7 +252,7 @@ impl Intersector {
         let an_use_bnd_box = edge.use_bnd_box();
         let a_pnt_f = line.origin;
         if an_use_bnd_box {
-            a_bond.add_curve(&a_c2d, deb, fin, 0.0);
+            add_2d_curve(&a_c2d, deb, fin, 0.0, &mut a_bond);
             a_bond.set_gap(a_tol_z);
         }
 
