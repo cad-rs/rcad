@@ -14,10 +14,6 @@
 //! - [`ShapeFixShellGap`] — OCCT `ShapeFix_Shell` (ShapeFix_Shell.cxx, 1,727
 //!   LOC) reduced to `FixFaceOrientation`/`Shell` consumed by UnifyEdges
 //!   (cxx L4433-4435).  W3 docket row; keeps OCCT's "shell unchanged" path.
-//! - [`ShapeFixWireGap`] — OCCT `ShapeFix_Wire` (ShapeFix_Wire.cxx + _1,
-//!   6,483 LOC) reduced to the mode-flag accessors consumed by the
-//!   `SetFixWireModes` static (UnifySameDomain.cxx L3133-3144).  W3 docket
-//!   row; the flags are stored but drive no behavior.
 //! - [`ShapeFixShapeGap`] — OCCT `ShapeFix_Shape` (ShapeFix_Shape.cxx, 358
 //!   LOC) reduced to the surface consumed by `ShapeFix::RemoveSmallEdges`
 //!   (ShapeFix.cxx L291-308).  W3 docket row; `Perform` keeps OCCT's
@@ -65,6 +61,8 @@ fn set_edge_tolerance_value(brep: &mut BRep, edge: &Shape, tol: f64) {
 /// `ShapeUpgrade_UnifySameDomain::UnifyEdges` (UnifySameDomain.cxx
 /// L4404-4421).  `Perform` keeps OCCT's "nothing fixed" path: the face is
 /// returned unchanged.  Replaced wholesale by the W3 1:1 translation.
+/// The embedded FixWireTool is the REAL `ShapeFixWire` (the W3 tranche 2
+/// landed class — the former `ShapeFixWireGap` carrier is retired).
 pub struct ShapeFixFaceGap {
     my_face: Shape,
     my_precision: f64,
@@ -78,7 +76,7 @@ pub struct ShapeFixFaceGap {
     my_fix_loop_wires_mode: bool,
     my_fix_split_face_mode: bool,
     my_fix_periodic_degenerated_mode: bool,
-    my_fix_wire: ShapeFixWireGap,
+    my_fix_wire: crate::shhealing::shape_fix::wire::ShapeFixWire,
 }
 
 impl Default for ShapeFixFaceGap {
@@ -103,7 +101,7 @@ impl ShapeFixFaceGap {
             my_fix_loop_wires_mode: false,
             my_fix_split_face_mode: true,
             my_fix_periodic_degenerated_mode: true,
-            my_fix_wire: ShapeFixWireGap::new(),
+            my_fix_wire: crate::shhealing::shape_fix::wire::ShapeFixWire::new(),
         }
     }
 
@@ -175,8 +173,9 @@ impl ShapeFixFaceGap {
         &mut self.my_fix_periodic_degenerated_mode
     }
 
-    /// OCCT FixWireTool() — the ShapeFix_Wire tool handle.
-    pub fn fix_wire_tool(&mut self) -> &mut ShapeFixWireGap {
+    /// OCCT FixWireTool() — the ShapeFix_Wire tool handle (the real W3
+    /// tranche 2 class).
+    pub fn fix_wire_tool(&mut self) -> &mut crate::shhealing::shape_fix::wire::ShapeFixWire {
         &mut self.my_fix_wire
     }
 
@@ -227,105 +226,14 @@ impl ShapeFixShellGap {
 }
 
 // ---------------------------------------------------------------------------
-// OCCT ShapeFix_Wire — W3 docket row (GAP carrier).
+// OCCT ShapeFix_Shape — W3 docket row (GAP carrier).
 // ---------------------------------------------------------------------------
 
-/// OCCT `ShapeFix_Wire` reduced to the mode-flag accessors consumed by the
-/// `SetFixWireModes` static (UnifySameDomain.cxx L3133-3144).  The flags are
-/// stored but drive no behavior; replaced wholesale by the W3 translation.
-pub struct ShapeFixWireGap {
-    my_fix_self_intersection_mode: bool,
-    my_fix_non_adjacent_intersecting_edges_mode: bool,
-    my_fix_lacking_mode: bool,
-    my_fix_notched_edges_mode: bool,
-    my_modify_topology_mode: bool,
-    my_modify_remove_loop_mode: bool,
-    my_fix_gaps_by_ranges_mode: bool,
-    my_fix_small_mode: bool,
-    my_fix_connected_mode: bool,
-    my_fix_edge_curves_mode: bool,
-    my_fix_degenerated_mode: bool,
-}
-
-impl Default for ShapeFixWireGap {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ShapeFixWireGap {
-    /// OCCT ShapeFix_Wire::ShapeFix_Wire() (ShapeFix_Wire.cxx L60-67).
-    pub fn new() -> Self {
-        ShapeFixWireGap {
-            my_fix_self_intersection_mode: true,
-            my_fix_non_adjacent_intersecting_edges_mode: false,
-            my_fix_lacking_mode: true,
-            my_fix_notched_edges_mode: true,
-            my_modify_topology_mode: false,
-            my_modify_remove_loop_mode: false,
-            my_fix_gaps_by_ranges_mode: false,
-            my_fix_small_mode: true,
-            my_fix_connected_mode: true,
-            my_fix_edge_curves_mode: true,
-            my_fix_degenerated_mode: true,
-        }
-    }
-
-    /// OCCT FixSelfIntersectionMode flag.
-    pub fn fix_self_intersection_mode(&mut self) -> &mut bool {
-        &mut self.my_fix_self_intersection_mode
-    }
-
-    /// OCCT FixNonAdjacentIntersectingEdgesMode flag.
-    pub fn fix_non_adjacent_intersecting_edges_mode(&mut self) -> &mut bool {
-        &mut self.my_fix_non_adjacent_intersecting_edges_mode
-    }
-
-    /// OCCT FixLackingMode flag.
-    pub fn fix_lacking_mode(&mut self) -> &mut bool {
-        &mut self.my_fix_lacking_mode
-    }
-
-    /// OCCT FixNotchedEdgesMode flag.
-    pub fn fix_notched_edges_mode(&mut self) -> &mut bool {
-        &mut self.my_fix_notched_edges_mode
-    }
-
-    /// OCCT ModifyTopologyMode flag.
-    pub fn modify_topology_mode(&mut self) -> &mut bool {
-        &mut self.my_modify_topology_mode
-    }
-
-    /// OCCT ModifyRemoveLoopMode flag.
-    pub fn modify_remove_loop_mode(&mut self) -> &mut bool {
-        &mut self.my_modify_remove_loop_mode
-    }
-
-    /// OCCT FixGapsByRangesMode flag.
-    pub fn fix_gaps_by_ranges_mode(&mut self) -> &mut bool {
-        &mut self.my_fix_gaps_by_ranges_mode
-    }
-
-    /// OCCT FixSmallMode flag.
-    pub fn fix_small_mode(&mut self) -> &mut bool {
-        &mut self.my_fix_small_mode
-    }
-
-    /// OCCT FixConnectedMode flag.
-    pub fn fix_connected_mode(&mut self) -> &mut bool {
-        &mut self.my_fix_connected_mode
-    }
-
-    /// OCCT FixEdgeCurvesMode flag.
-    pub fn fix_edge_curves_mode(&mut self) -> &mut bool {
-        &mut self.my_fix_edge_curves_mode
-    }
-
-    /// OCCT FixDegeneratedMode flag.
-    pub fn fix_degenerated_mode(&mut self) -> &mut bool {
-        &mut self.my_fix_degenerated_mode
-    }
-}
+// Retired by the W3 tranche 2 (ShapeFix_Wire landed 1:1 in `shape_fix/wire/`):
+// the former `ShapeFixWireGap` carrier (the mode-flag reduction consumed by
+// the `SetFixWireModes` static, UnifySameDomain.cxx L3133-3144) — deleted,
+// Rule 4.  The Face/Shape carriers embed the real `ShapeFixWire` as their
+// FixWireTool.
 
 // ---------------------------------------------------------------------------
 // OCCT ShapeFix_Shape — W3 docket row (GAP carrier).
@@ -339,7 +247,7 @@ pub struct ShapeFixShapeGap {
     my_precision: f64,
     my_context: Option<()>,
     my_face_tool: ShapeFixFaceGap,
-    my_wire_tool: ShapeFixWireGap,
+    my_wire_tool: crate::shhealing::shape_fix::wire::ShapeFixWire,
 }
 
 impl Default for ShapeFixShapeGap {
@@ -356,7 +264,7 @@ impl ShapeFixShapeGap {
             my_precision: 0.0,
             my_context: None,
             my_face_tool: ShapeFixFaceGap::new(),
-            my_wire_tool: ShapeFixWireGap::new(),
+            my_wire_tool: crate::shhealing::shape_fix::wire::ShapeFixWire::new(),
         }
     }
 
@@ -378,7 +286,7 @@ impl ShapeFixShapeGap {
     }
 
     /// OCCT FixWireTool() — the ShapeFix_Wire tool handle.
-    pub fn fix_wire_tool(&mut self) -> &mut ShapeFixWireGap {
+    pub fn fix_wire_tool(&mut self) -> &mut crate::shhealing::shape_fix::wire::ShapeFixWire {
         &mut self.my_wire_tool
     }
 

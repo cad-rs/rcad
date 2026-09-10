@@ -7,12 +7,17 @@
 //!
 //! W3 tranche 1 (2026-09-10): ShapeFix_Root, ShapeFix_ShapeTolerance,
 //! ShapeFix_Edge, ShapeFix_WireSegment, ShapeFix_WireVertex,
-//! ShapeFix_SplitCommonVertex, ShapeFix_FreeBounds.  The remaining W3
-//! classes (Wire/Wire_1, Face, Shell, Shape, IntersectionTool, SplitTool,
-//! Wireframe, FixSmallFace, FixSmallSolid, EdgeConnect, EdgeProjAux,
-//! FaceConnect, ComposeShell) follow in later tranches; the GAP carriers
-//! for Face/Shell/Wire/Shape in `shape_fix_gap_deps.rs` remain annotated
-//! for those tranches.
+//! ShapeFix_SplitCommonVertex, ShapeFix_FreeBounds.
+//!
+//! W3 tranche 2 (2026-09-10): ShapeFix_Wire (+ Wire_1 + lxx) — the full
+//! wire repair tool in `wire/` (mod + fix_api + fix_adv + fix_gaps +
+//! wire_statics).  The remaining W3 classes (Face, Shell, Shape,
+//! IntersectionTool, SplitTool, Wireframe, FixSmallFace, FixSmallSolid,
+//! EdgeConnect, EdgeProjAux, FaceConnect, ComposeShell) follow in later
+//! tranches; the GAP carriers for Face/Shell/Shape in
+//! `shape_fix_gap_deps.rs` remain annotated for those tranches (the
+//! embedded ShapeFix_Wire tool of the Face/Shape carriers now points at the
+//! real `ShapeFixWire`).
 
 pub mod edge;
 pub mod free_bounds;
@@ -21,5 +26,6 @@ pub mod shape_fix;
 pub mod shape_fix_gap_deps;
 pub mod shape_tolerance;
 pub mod split_common_vertex;
+pub mod wire;
 pub mod wire_segment;
 pub mod wire_vertex;

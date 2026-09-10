@@ -119,20 +119,19 @@ impl ShapeUpgradeUnifySameDomain {
 }
 
 /// OCCT static SetFixWireModes (cxx L3133-3144): the ShapeFix_Wire tool
-/// flags of the ShapeFix_Face tool (the W1-6 carrier surface; W3 drives
-/// them).
+/// flags of the ShapeFix_Face tool (the real W3 tranche 2 `ShapeFixWire`).
 pub fn set_fix_wire_modes(
     the_sff: &mut crate::shhealing::shape_fix::shape_fix_gap_deps::ShapeFixFaceGap,
 ) {
     let a_fix_wire = the_sff.fix_wire_tool();
-    *a_fix_wire.fix_self_intersection_mode() = false;
-    *a_fix_wire.fix_non_adjacent_intersecting_edges_mode() = false;
-    *a_fix_wire.fix_lacking_mode() = false;
-    *a_fix_wire.fix_notched_edges_mode() = false;
+    *a_fix_wire.fix_self_intersection_mode() = 0;
+    *a_fix_wire.fix_non_adjacent_intersecting_edges_mode() = 0;
+    *a_fix_wire.fix_lacking_mode() = 0;
+    *a_fix_wire.fix_notched_edges_mode() = 0;
     *a_fix_wire.modify_topology_mode() = false;
-    *a_fix_wire.modify_remove_loop_mode() = false;
+    *a_fix_wire.modify_remove_loop_mode() = 0;
     *a_fix_wire.fix_gaps_by_ranges_mode() = false;
-    *a_fix_wire.fix_small_mode() = false;
+    *a_fix_wire.fix_small_mode() = 0;
 }
 
 /// OCCT static isSameSets (cxx L3146-3181): compares two sets of shapes

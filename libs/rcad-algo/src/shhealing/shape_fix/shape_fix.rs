@@ -57,6 +57,14 @@ impl MessageProgressScope {
 #[derive(Clone, Copy, Default)]
 pub struct MessageProgressRange;
 
+impl MessageProgressRange {
+    /// OCCT Message_ProgressRange::UserBreak() — the no-abort bridge: the
+    /// fix loops of `Perform` always run to completion.
+    pub fn user_break(&self) -> bool {
+        false
+    }
+}
+
 /// OCCT `NCollection_IndexedDataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>,
 /// TopTools_ShapeMapHasher>` — the rcad indexed map keyed by (TShape
 /// pointer, location index).  The TopTools_ShapeMapHasher IsSame identity
@@ -353,12 +361,12 @@ pub fn remove_small_edges(
     *sfs.fix_face_tool().fix_small_area_wire_mode() = false;
     *sfs.fix_wire_tool().modify_topology_mode() = true;
     // L299-304.
-    *sfs.fix_wire_tool().fix_connected_mode() = false;
-    *sfs.fix_wire_tool().fix_edge_curves_mode() = false;
-    *sfs.fix_wire_tool().fix_degenerated_mode() = false;
-    *sfs.fix_wire_tool().fix_self_intersection_mode() = false;
-    *sfs.fix_wire_tool().fix_lacking_mode() = false;
-    *sfs.fix_wire_tool().fix_small_mode() = true;
+    *sfs.fix_wire_tool().fix_connected_mode() = 0;
+    *sfs.fix_wire_tool().fix_edge_curves_mode() = 0;
+    *sfs.fix_wire_tool().fix_degenerated_mode() = 0;
+    *sfs.fix_wire_tool().fix_self_intersection_mode() = 0;
+    *sfs.fix_wire_tool().fix_lacking_mode() = 0;
+    *sfs.fix_wire_tool().fix_small_mode() = 1;
     // L305-308.
     sfs.perform();
     let result = sfs.shape();
