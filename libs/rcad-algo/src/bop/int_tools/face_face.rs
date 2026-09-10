@@ -580,10 +580,7 @@ fn perform_planes(
     }
 
     let mut a_curve = IntersectionCurve {
-        curve: Curve3::Line(Line3 {
-            origin: res.line_origin,
-            direction: res.line_dir,
-        }),
+        curve: Curve3::Line(Line3::new(res.line_origin, res.line_dir)),
         t_range: [pmin, pmax],
         pcurve1: Some(Curve2d::Line(lin2d1)),
         pcurve2: Some(Curve2d::Line(lin2d2)),
@@ -602,6 +599,104 @@ fn perform_planes(
     a_curve.tang_tolerance = a_tang_tol;
 
     (true, false, vec![a_curve])
+}
+
+/// OCCT BRepTools::UVBounds(F, UMin, UMax, VMin, VMax) (BRepTools.cxx L64-80 +
+/// AddUVBounds L126-157) — the UV box of the face's pcurves; when the box is
+/// void (a face without edges or without pcurves) OCCT falls back to the
+/// surface's natural bounds (L139-153).
+///
+/// `Geom_Plane::Bounds` returns +-Precision::Infinite() = +-2e100
+/// (Geom_Plane.cxx L178-185), a finite number; the rcad plane reports true
+/// infinities from `default_domain()`, so the non-finite sides are carried as
+/// the rcad Precision::Infinite stand-in instead.
+pub fn uv_bounds_of_face(f: &rcad_kernel::topo_shape::Shape, s: &Surface3) -> [f64; 4] {
+    let a_box = crate::feat::loc_ope_generator_b::brep_tools_uv_bounds(f);
+    if a_box[0] <= a_box[1] && a_box[2] <= a_box[3] {
+        return a_box;
+    }
+    let d = s.default_domain();
+    let fix = |v: f64| {
+        if v.is_finite() {
+            v
+        } else if v < 0.0 {
+            -rcad_kernel::precision::INFINITE_VALUE
+        } else {
+            rcad_kernel::precision::INFINITE_VALUE
+        }
+    };
+    [fix(d[0]), fix(d[1]), fix(d[2]), fix(d[3])]
+}
+
+/// OCCT IntTools_FaceFace::Perform (IntTools_FaceFace.cxx L330-438) — the
+/// plane/plane branch on two BARE faces (no DS).
+///
+/// This is the leaf behind `IntTools_FaceFace aFF; aFF.Perform(theFace1,
+/// theFace2)` of BRepOffset_Tool::PerformPlanes (BRepOffset_Tool.cxx
+/// L4546-4548).  The DS-bound `FaceFace::perform` above mirrors
+/// BOPAlgo_FaceFace on top of it (SetBoxes + TrsfToPoint + the general
+/// MakeCurve path); IntTools_FaceFace itself needs only the surfaces and the
+/// UV bounds of the two faces for a plane/plane pair (L395-404), so it can be
+/// driven without a DS.
+///
+/// Returns `(myIsDone, curves)`; the curves carry FirstCurve2d on `face1` and
+/// SecondCurve2d on `face2` (the SortTypes swap-back of L420-436).
+///
+/// Not covered: any surface pair other than plane/plane (that needs the
+/// general IntPatch/MakeCurve path, which is DS-bound here).  The caller's
+/// predicate (BRepOffset_Tool::Inter3D L1453-1467) routes only unbounded
+/// plane/plane pairs into PerformPlanes, so the branch is total for this leaf;
+/// a non-plane input returns `!myIsDone`, which is OCCT's own failure outcome.
+pub fn perform_face_face_planes(
+    face1: &rcad_kernel::topo_shape::Shape,
+    face2: &rcad_kernel::topo_shape::Shape,
+    fuzzy_value: f64,
+) -> (bool, Vec<IntersectionCurve>) {
+    // OCCT L378-379: S1/S2 = BRep_Tool::Surface(myFace1/myFace2).
+    let mut s_a = match crate::brep_algo::tool::brep_tool_surface(face1) {
+        Some(v) => v,
+        None => return (false, Vec::new()),
+    };
+    let mut s_b = match crate::brep_algo::tool::brep_tool_surface(face2) {
+        Some(v) => v,
+        None => return (false, Vec::new()),
+    };
+    // OCCT L346-376: SortTypes — the surface with the larger type index goes
+    // first; the pcurves are swapped back at L420-436.  Equal types (the
+    // plane/plane case) never reorder.
+    let (i_t1, i_t2) = (surface_type_index(&s_a), surface_type_index(&s_b));
+    let b_reverse = i_t1 < i_t2;
+    if b_reverse {
+        std::mem::swap(&mut s_a, &mut s_b);
+    }
+    let (f1, f2) = if b_reverse { (face2, face1) } else { (face1, face2) };
+    // OCCT L381-387: aFuzz = myFuzzyValue/2; myTolF1/myTolF2; myTol = the sum;
+    // TolArc = myTol; TolTang = TolArc.
+    let a_fuzz = fuzzy_value / 2.0;
+    let tol_f1 = crate::brep_algo::tool::brep_tool_tolerance(f1) + a_fuzz;
+    let tol_f2 = crate::brep_algo::tool::brep_tool_tolerance(f2) + a_fuzz;
+    let tol = tol_f1 + tol_f2;
+    let tol_tang = tol;
+    // OCCT L397-403: myContext->UVBounds(myFace1/myFace2) loaded on the surface
+    // adaptors (myHS1->Load(S1, umin, umax, vmin, vmax)).
+    let uv1 = uv_bounds_of_face(f1, &s_a);
+    let uv2 = uv_bounds_of_face(f2, &s_b);
+    // OCCT L395 + L405-416: the plane/plane branch — TolAng = 1e-8;
+    // PerformPlanes(myHS1, myHS2, myTolF1, myTolF2, TolAng, TolTang, ...).
+    let (p1, p2) = match (&s_a, &s_b) {
+        (Surface3::Plane(a), Surface3::Plane(b)) => (a, b),
+        _ => return (false, Vec::new()),
+    };
+    let (_plane_done, _tangent, mut curves) =
+        perform_planes(p1, uv1, p2, uv2, tol_f1, tol_f2, tol_tang);
+    // OCCT L420-436: the pcurve swap-back after a SortTypes reversal.
+    if b_reverse {
+        for a_ic in curves.iter_mut() {
+            std::mem::swap(&mut a_ic.pcurve1, &mut a_ic.pcurve2);
+        }
+    }
+    // OCCT L418: myIsDone = true.
+    (true, curves)
 }
 
 pub struct FaceFace {
@@ -885,6 +980,11 @@ impl FaceFace {
                 // OCCT IntTools_FaceFace::Perform L441-474: for the remaining
                 // analytic pairs route through IntPatch_Intersection
                 // (-> IntPatch_ImpImpIntersection -> IntAna_QuadQuadGeo).
+                // The intersector receives the faces' TopolTools created as
+                // IntTools_TopolTool (IntTools_FaceFace.cxx L475-476) — the
+                // UV-rectangle domain of the loaded adaptors, NOT the face
+                // wires.  The rectangle domains are the corrected FF UV
+                // rectangles; an empty arc list keeps that form.
                 self.intersect_int_patch(&s1, &s2, uv1, uv2, tol);
                 // OCCT IntTools_FaceFace::MakeCurve (L695-1846): clip the raw
                 // analytic lines to the two faces' domains.
@@ -961,6 +1061,12 @@ impl FaceFace {
                             a_d = d;
                         }
                     }
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        let p0 = a_c3d.point_at(a_first);
+                        eprintln!(
+                            "[TOL3D] curve start=({:.2},{:.2},{:.2}) branch=2d dev={:.6} tol_c_in={:.3e}",
+                            p0.x, p0.y, p0.z, a_d, a_tol_c);
+                    }
                     if a_d > a_tol_c {
                         a_tol_c = a_d;
                     }
@@ -977,6 +1083,12 @@ impl FaceFace {
                         if d > a_d {
                             a_d = d;
                         }
+                    }
+                    if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                        let p0 = a_c3d.point_at(a_first);
+                        eprintln!(
+                            "[TOL3D] curve start=({:.2},{:.2},{:.2}) branch=maxdist dev={:.6} tol_c_in={:.3e}",
+                            p0.x, p0.y, p0.z, a_d, a_tol_c);
                     }
                     if a_d > a_tol_c {
                         a_tol_c = a_d;

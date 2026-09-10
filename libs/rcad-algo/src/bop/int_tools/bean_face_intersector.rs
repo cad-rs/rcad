@@ -181,6 +181,14 @@ fn surface_type(surface: &Surface3) -> GeomAbsSurfaceType {
         Surface3::Torus(_) => GeomAbsSurfaceType::Torus,
         Surface3::Bezier(_) => GeomAbsSurfaceType::BezierSurface,
         Surface3::BSpline(_) => GeomAbsSurfaceType::BSplineSurface,
+        // OCCT GeomAbs_SurfaceOfRevolution / GeomAbs_SurfaceOfExtrusion are
+        // distinct types (Adaptor3d_SurfaceType); conflating them with
+        // GeomAbs_OtherSurface wrongly enables the ComputeLocalized path
+        // (IntTools_BeanFaceIntersector.cxx L327-338 restricts localization to
+        // Bezier/Other/BSpline surfaces) which OCCT never takes for
+        // revolution faces.
+        Surface3::Revolution(_) => GeomAbsSurfaceType::SurfaceOfRevolution,
+        Surface3::LinearExtrusion(_) => GeomAbsSurfaceType::SurfaceOfExtrusion,
         _ => GeomAbsSurfaceType::OtherSurface,
     }
 }
@@ -631,6 +639,12 @@ impl BRepAdaptorCurve {
     pub fn period(&self) -> f64 {
         curve_period(&self.curve)
     }
+    /// OCCT BRepAdaptor_Curve::IsClosed — the first and last points coincide.
+    pub fn is_closed(&self) -> bool {
+        CurveEval::point_at(&self.curve, self.first_param)
+            .distance(CurveEval::point_at(&self.curve, self.last_param))
+            < CONFUSION
+    }
     pub fn first_parameter(&self) -> f64 {
         self.first_param
     }
@@ -674,6 +688,31 @@ impl BRepAdaptorSurface {
             first_v: domain[2],
             last_v: domain[3],
         }
+    }
+
+    /// OCCT BRepAdaptor_Surface(theFace) (IntTools_Context::SurfaceAdaptor):
+    /// the adaptor's parameter domain is the FACE's UV rect (BRepTools::
+    /// UVBounds), not the surface's natural domain. A revolution face built
+    /// over a line profile has an unbounded natural V domain, so the face
+    /// window must be supplied explicitly (IntTools_Context::UVBounds).
+    pub fn with_uv_bounds(surface: Surface3, uv_bounds: [f64; 4]) -> Self {
+        BRepAdaptorSurface {
+            surface,
+            first_u: uv_bounds[0],
+            last_u: uv_bounds[1],
+            first_v: uv_bounds[2],
+            last_v: uv_bounds[3],
+        }
+    }
+
+    /// The surface restricted to the adaptor's UV window - the analogue of the
+    /// OCCT face-restricted HSurface (BRepAdaptor_Surface evaluates within the
+    /// face UV rect only).
+    pub fn restricted_surface(&self) -> Surface3 {
+        Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface {
+            basis: Box::new(self.surface.clone()),
+            trim: [self.first_u, self.last_u, self.first_v, self.last_v],
+        })
     }
 
     pub fn surface(&self) -> &Surface3 {
@@ -1319,6 +1358,41 @@ impl ExtremaExtCS {
 
         let Some(ref surf) = self.surface else { return };
 
+        // OCCT Extrema_ExtCS::Perform dispatch (Extrema_ExtCS.cxx L113-250):
+        // quadric surfaces take the exact ExtElCS branch, every other surface
+        // type (SurfaceOfRevolution/BSpline/...) is computed by
+        // Extrema_GenExtCS (NbT=12, NbU=NbV=10, 13 for periodic axes).
+        let stype = surface_type(surf);
+        let is_quadric = matches!(
+            stype,
+            GeomAbsSurfaceType::Plane
+                | GeomAbsSurfaceType::Cylinder
+                | GeomAbsSurfaceType::Cone
+                | GeomAbsSurfaceType::Sphere
+                | GeomAbsSurfaceType::Torus
+        );
+        if !is_quadric {
+            // OCCT L138-149 (Line case): the curve range is clamped to the
+            // parameter span of the surface's bounding box corners when the
+            // UV bounds are finite (they are, for a face-window adaptor).
+            let mut ext = crate::bop::int_tools::extrema_gen_ext_cs::ExtremaGenExtCS::new();
+            let u_periodic = surf.is_u_periodic();
+            let v_periodic = surf.is_v_periodic();
+            let nb_u = if u_periodic { 13 } else { 10 };
+            let nb_v = if v_periodic { 13 } else { 10 };
+            ext.initialize(surf, nb_u, nb_v, self.u_min, self.u_max, self.v_min, self.v_max, precision_pconfusion());
+            ext.perform(curve, 12, first, last, precision_pconfusion());
+            if ext.is_done() {
+                for i in 1..=ext.nb_ext() {
+                    let (t, u, v) = ext.point(i);
+                    let p = curve.value(t);
+                    self.extrema.push((t, p, u, v));
+                }
+            }
+            self.is_done = true;
+            return;
+        }
+
         // Multi-resolution scan: 500 points coarse, then cluster + refine
         let coarse_n = 500usize;
         let dt = (last - first) / coarse_n as f64;
@@ -1674,308 +1748,75 @@ impl IntCurveSurfaceIntersectionPoint {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct IntCurveSurfaceIntersectionSegment {
-    point1: IntCurveSurfaceIntersectionPoint,
-    point2: IntCurveSurfaceIntersectionPoint,
+// ============================================================================
+// IntCurveSurface_HInter — curve-surface intersection over the bop adaptors
+// OCCT IntCurveSurface_HInter.hxx/.cxx (TKGeomAlgo): the storage base is
+// IntCurveSurface_Intersection (the PARAMEQUAL-deduplicated point/segment
+// sequences) and the whole Perform chain delegates to the 1:1
+// IntCurveSurface_InterImpl engine through the HInterHost callbacks
+// implemented in hinter_adaptor.rs (conic curves dispatch to
+// PerformConicSurf* — the IntAna quadric branches, then the non-analytic
+// polyhedron path of PerformConicSurfLine L560-745; other curves to the
+// polygon/polyhedron interference of PerformBounds L131-179).
+// ============================================================================
+#[derive(Debug, Clone, Default)]
+pub struct IntCurveSurfaceHInter {
+    /// OCCT IntCurveSurface_Intersection base subobject.
+    pub base: crate::geomalgo::int_curve_surface::Intersection,
 }
 
-impl IntCurveSurfaceIntersectionSegment {
-    pub fn new(p1: IntCurveSurfaceIntersectionPoint, p2: IntCurveSurfaceIntersectionPoint) -> Self {
-        IntCurveSurfaceIntersectionSegment {
-            point1: p1,
-            point2: p2,
+impl IntCurveSurfaceHInter {
+    /// OCCT IntCurveSurface_HInter() (cxx L56).
+    pub fn new() -> Self {
+        IntCurveSurfaceHInter {
+            base: crate::geomalgo::int_curve_surface::Intersection::new(),
         }
     }
-    pub fn values(
+
+    /// OCCT Perform(Curve, Surface) (cxx L106-116).
+    pub fn perform(&mut self, curve: &BRepAdaptorCurve, surface: &BRepAdaptorSurface) {
+        super::hinter_adaptor::run_perform(curve, surface, self);
+    }
+
+    /// OCCT IsDone().
+    pub fn is_done(&self) -> bool {
+        self.base.is_done()
+    }
+
+    /// OCCT IsParallel().
+    pub fn is_parallel(&self) -> bool {
+        self.base.is_parallel()
+    }
+
+    /// OCCT NbPoints().
+    pub fn nb_points(&self) -> usize {
+        self.base.nb_points()
+    }
+
+    /// OCCT Point(N) — converted to the bop (w, u, v) point.
+    pub fn point(&self, idx_1based: usize) -> IntCurveSurfaceIntersectionPoint {
+        let p = self.base.point(idx_1based);
+        IntCurveSurfaceIntersectionPoint::new(p.w(), p.u(), p.v())
+    }
+
+    /// OCCT NbSegments().
+    pub fn nb_segments(&self) -> usize {
+        self.base.nb_segments()
+    }
+
+    /// OCCT Segment(N).Values(P1, P2) — converted to the bop points.
+    pub fn segment(
         &self,
+        idx_1based: usize,
     ) -> (
         IntCurveSurfaceIntersectionPoint,
         IntCurveSurfaceIntersectionPoint,
     ) {
-        (self.point1, self.point2)
-    }
-}
-
-// ============================================================================
-// IntCurveSurface_HInter — curve-surface exact intersection
-// OCCT IntCurveSurface_HInter.hxx/.cxx (TKGeomAlgo)
-//   Simplified: adaptive hierarchical sampling + binary refinement
-// ============================================================================
-#[derive(Debug, Clone)]
-pub struct IntCurveSurfaceHInter {
-    is_done: bool,
-    points: Vec<IntCurveSurfaceIntersectionPoint>,
-    segments: Vec<IntCurveSurfaceIntersectionSegment>,
-}
-
-impl IntCurveSurfaceHInter {
-    pub fn new() -> Self {
-        IntCurveSurfaceHInter {
-            is_done: false,
-            points: Vec::new(),
-            segments: Vec::new(),
-        }
-    }
-
-    // OCCT Perform: uses TheExactHInter (analytic for quadrics) + ThePolygonOfHInter (polygon approx)
-    //   then refines via Newton method on TheCSFunctionOfHInter.
-    // Simplified: adaptive coarse-fine sampling (100 coarse + 500 fine near transitions)
-    //   with bisection entry/exit refinement.
-    pub fn perform(&mut self, curve: &BRepAdaptorCurve, surface: &BRepAdaptorSurface) {
-        self.is_done = false;
-        self.points.clear();
-        self.segments.clear();
-
-        let surf = surface.surface();
-        let first = curve.first_parameter();
-        let last = curve.last_parameter();
-
-        // OCCT IntCurveSurface_Inter.pxx PerformBounds L119-137:
-        //   Analytic curves (Line/Circle/Ellipse/Parabola/Hyperbola) use
-        //   IntAna_IntConicQuad (thePerformConic path) for exact intersection.
-        //   Only BSpline/Bezier/OtherCurve falls through to sampling below.
-        let crv_type = curve.get_type();
-        let srf_type = surface.get_type();
-
-        // ThePerformConic: exact analytic intersection per type pair
-        // OCCT L119-137: Line/Circle/Ellipse/Parabola/Hyperbola use IntAna_IntConicQuad
-        let mkpt = |h: &crate::geomalgo::int_patch::curve_surface::CurveSurfaceHit| {
-            // Surface (u, v) at the hit point, via projection (ElSLib::Parameters).
-            let proj = closest_point_on_surface(surf, h.point, 16);
-            IntCurveSurfaceIntersectionPoint::new(h.curve_param, proj.params.0, proj.params.1)
-        };
-        let analytic_hits = match (crv_type, srf_type) {
-            (GeomAbsCurveType::Line, GeomAbsSurfaceType::Plane) => {
-                let line3 = curve.line();
-                let plane3 = surface.plane();
-                let hits = crate::bop::int_tools::edge_face::intersect_line_plane_with_tol(
-                    &line3,
-                    [first, last],
-                    &plane3,
-                    precision_confusion(),
-                );
-                hits.into_iter()
-                    .map(|h| IntCurveSurfaceIntersectionPoint::new(h.edge_param, 0.0, 0.0))
-                    .collect::<Vec<_>>()
-            }
-            (GeomAbsCurveType::Line, GeomAbsSurfaceType::Cylinder) => {
-                let line3 = curve.line();
-                let cyl3 = surface.cylinder();
-                let hits = crate::geomalgo::int_patch::curve_surface::intersect_line_cylinder_with_tol(
-                    &line3,
-                    [first, last],
-                    &cyl3,
-                    precision_confusion(),
-                );
-                hits.iter().map(&mkpt).collect::<Vec<_>>()
-            }
-            (GeomAbsCurveType::Line, GeomAbsSurfaceType::Sphere) => {
-                let line3 = curve.line();
-                let sph3 = surface.sphere();
-                let hits = crate::geomalgo::int_patch::curve_surface::intersect_line_sphere_with_tol(
-                    &line3,
-                    [first, last],
-                    &sph3,
-                    precision_confusion(),
-                );
-                hits.iter().map(&mkpt).collect::<Vec<_>>()
-            }
-            (GeomAbsCurveType::Line, GeomAbsSurfaceType::Cone) => {
-                let line3 = curve.line();
-                let cone3 = surface.cone();
-                let hits = crate::geomalgo::int_patch::curve_surface::intersect_line_cone_with_tol(
-                    &line3,
-                    [first, last],
-                    &cone3,
-                    precision_confusion(),
-                );
-                hits.iter().map(&mkpt).collect::<Vec<_>>()
-            }
-            // OCCT IntCurveSurface_InterUtils::ProcessLinTorus
-            // (IntCurveSurface_InterUtils.pxx L1283-1315): the line is intersected
-            // with the torus analytically (IntAna_IntLinTorus), unlike the other
-            // conic×quadric pairs which use IntAna_IntConicQuad.  The quartic
-            // roots are validated by re-evaluating the surface at the solution.
-            (GeomAbsCurveType::Line, GeomAbsSurfaceType::Torus) => {
-                let line3 = curve.line();
-                let tor3 = surface.torus();
-                let hits =
-                    crate::geomalgo::int_patch::curve_surface::intersect_line_torus_with_tol(
-                        line3,
-                        [first, last],
-                        &tor3,
-                        precision_confusion(),
-                    );
-                hits.iter().map(&mkpt).collect::<Vec<_>>()
-            }
-            (GeomAbsCurveType::Circle, GeomAbsSurfaceType::Plane) => {
-                let circ3 = curve.circle();
-                let plane3 = surface.plane();
-                let hits = crate::geomalgo::int_patch::curve_surface::intersect_circle_plane_with_tol(
-                    &circ3,
-                    [first, last],
-                    &plane3,
-                    precision_confusion(),
-                );
-                hits.iter().map(&mkpt).collect::<Vec<_>>()
-            }
-            (GeomAbsCurveType::Circle, GeomAbsSurfaceType::Cylinder) => {
-                let circ3 = curve.circle();
-                let cyl3 = surface.cylinder();
-                let hits = crate::geomalgo::int_patch::curve_surface::intersect_circle_cylinder_with_tol(
-                    &circ3,
-                    [first, last],
-                    &cyl3,
-                    precision_confusion(),
-                );
-                hits.iter().map(&mkpt).collect::<Vec<_>>()
-            }
-            (GeomAbsCurveType::Circle, GeomAbsSurfaceType::Sphere) => {
-                let circ3 = curve.circle();
-                let sph3 = surface.sphere();
-                let hits = crate::geomalgo::int_patch::curve_surface::intersect_circle_sphere_with_tol(
-                    &circ3,
-                    [first, last],
-                    &sph3,
-                    precision_confusion(),
-                );
-                hits.iter().map(&mkpt).collect::<Vec<_>>()
-            }
-            (GeomAbsCurveType::Circle, GeomAbsSurfaceType::Cone) => {
-                let circ3 = curve.circle();
-                let cone3 = surface.cone();
-                let hits = crate::geomalgo::int_patch::curve_surface::intersect_circle_cone_with_tol(
-                    &circ3,
-                    [first, last],
-                    &cone3,
-                    precision_confusion(),
-                );
-                hits.iter().map(&mkpt).collect::<Vec<_>>()
-            }
-            _ => Vec::new(),
-        };
-
-        if !analytic_hits.is_empty() {
-            self.points.extend(analytic_hits);
-            self.is_done = true;
-            return;
-        }
-
-        // OCCT L138-179: non-analytic curves (BSpline/Bezier) — sampling path
-        let tol = precision_confusion() * 20.0;
-
-        // Phase 1: coarse sampling (100 points) to detect transition intervals
-        let coarse_n = 100usize;
-        let dt_coarse = (last - first) / coarse_n as f64;
-        let mut inside_prev = false;
-        let mut seg_start = first;
-
-        for i in 0..=coarse_n {
-            let t = first + i as f64 * dt_coarse;
-            let p = curve.value(t);
-            let proj = closest_point_on_surface(surf, p, 16);
-            let inside = proj.distance < tol;
-
-            if inside && !inside_prev {
-                seg_start = t;
-            } else if !inside && inside_prev {
-                // Transition: inside → outside, refine both boundaries
-                let refined_start =
-                    self.refine_crossing(curve, surf, seg_start - dt_coarse, seg_start, tol, true);
-                let refined_end = self.refine_crossing(curve, surf, seg_start, t, tol, false);
-                if refined_start < refined_end {
-                    self.segments.push(IntCurveSurfaceIntersectionSegment::new(
-                        IntCurveSurfaceIntersectionPoint::new(refined_start, 0.0, 0.0),
-                        IntCurveSurfaceIntersectionPoint::new(refined_end, 0.0, 0.0),
-                    ));
-                }
-            }
-
-            if proj.distance < precision_confusion() * 3.0 {
-                self.points.push(IntCurveSurfaceIntersectionPoint::new(
-                    t,
-                    proj.params.0,
-                    proj.params.1,
-                ));
-            }
-
-            inside_prev = inside;
-        }
-
-        if inside_prev {
-            self.segments.push(IntCurveSurfaceIntersectionSegment::new(
-                IntCurveSurfaceIntersectionPoint::new(seg_start, 0.0, 0.0),
-                IntCurveSurfaceIntersectionPoint::new(last, 0.0, 0.0),
-            ));
-        }
-
-        // Phase 2: refine points with UV projection
-        for pt in self.points.iter_mut() {
-            let p = curve.value(pt.w());
-            let proj = closest_point_on_surface(surf, p, 16);
-            *pt = IntCurveSurfaceIntersectionPoint::new(pt.w(), proj.params.0, proj.params.1);
-        }
-
-        // Deduplicate
-        self.points
-            .dedup_by(|a, b| (a.w() - b.w()).abs() < precision_pconfusion());
-
-        self.is_done = true;
-    }
-
-    // Binary search for surface entry/exit.
-    // is_entry=true → find param where distance drops below tol
-    // is_entry=false → find param where distance rises above tol
-    fn refine_crossing(
-        &self,
-        curve: &BRepAdaptorCurve,
-        surf: &Surface3,
-        t1: f64,
-        t2: f64,
-        tol: f64,
-        is_entry: bool,
-    ) -> f64 {
-        let mut lo = t1;
-        let mut hi = t2;
-        for _ in 0..25 {
-            let mid = (lo + hi) * 0.5;
-            let p = curve.value(mid);
-            let proj = closest_point_on_surface(surf, p, 16);
-            if is_entry {
-                if proj.distance < tol {
-                    hi = mid;
-                } else {
-                    lo = mid;
-                }
-            } else {
-                if proj.distance < tol {
-                    lo = mid;
-                } else {
-                    hi = mid;
-                }
-            }
-            if (hi - lo) < precision_pconfusion() {
-                break;
-            }
-        }
-        (lo + hi) * 0.5
-    }
-
-    pub fn is_done(&self) -> bool {
-        self.is_done
-    }
-    pub fn nb_points(&self) -> usize {
-        self.points.len()
-    }
-    pub fn point(&self, idx_1based: usize) -> &IntCurveSurfaceIntersectionPoint {
-        &self.points[idx_1based - 1]
-    }
-    pub fn nb_segments(&self) -> usize {
-        self.segments.len()
-    }
-    pub fn segment(&self, idx_1based: usize) -> &IntCurveSurfaceIntersectionSegment {
-        &self.segments[idx_1based - 1]
+        let (p1, p2) = self.base.segment(idx_1based).values();
+        (
+            IntCurveSurfaceIntersectionPoint::new(p1.w(), p1.u(), p1.v()),
+            IntCurveSurfaceIntersectionPoint::new(p2.w(), p2.u(), p2.v()),
+        )
     }
 }
 
@@ -2567,6 +2408,11 @@ pub struct BeanFaceIntersector {
     my_trsf_surface: Option<Surface3>,
     // IntTools_Context myContext — computation context cache
     my_context: Option<BeanContext>,
+    // OCCT myContext->ProjPS(mySurface.Face()) — the per-face cached
+    // GeomAPI_ProjectPointOnSurf (IntTools_Context.cxx L252-260); the bean
+    // performs on a single (edge, face) couple, so a per-couple projector
+    // equals the context cache.
+    my_proj_ps: Option<super::context::ProjectOnSurface>,
     // Parameters
     my_first_parameter: f64,
     my_last_parameter: f64,
@@ -2594,16 +2440,14 @@ impl BeanFaceIntersector {
     // OCCT L100-114: default constructor
     pub fn new() -> Self {
         BeanFaceIntersector {
-            my_curve: BRepAdaptorCurve::new(Curve3::Line(rcad_kernel::geom::Line3 {
-                origin: DVec3::ZERO,
-                direction: DVec3::X,
-            })),
+            my_curve: BRepAdaptorCurve::new(Curve3::Line(rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X))),
             my_surface: BRepAdaptorSurface::new(Surface3::Plane(rcad_kernel::geom::Plane::new(
                 DVec3::ZERO,
                 DVec3::Z,
             ))),
             my_trsf_surface: None,
             my_context: None,
+            my_proj_ps: None,
             my_first_parameter: 0.0,
             my_last_parameter: 0.0,
             my_u_min_parameter: 0.0,
@@ -2888,12 +2732,27 @@ impl BeanFaceIntersector {
     }
 
     // OCCT L397-461: Distance(theArg) — compute shortest distance from curve point at theArg to surface
-    fn distance_simple(&self, the_arg: f64) -> f64 {
+    fn distance_simple(&mut self, the_arg: f64) -> f64 {
         let a_point = self.my_curve.value(the_arg);
-        let proj = closest_point_on_surface(self.my_surface.surface(), a_point, 16);
+        // OCCT Distance uses the face-restricted projector
+        // myContext->ProjPS(mySurface.Face()) — cached per face
+        // (IntTools_Context.cxx L252-260).
+        let a_projector = self.my_proj_ps.get_or_insert_with(|| {
+            super::context::ProjectOnSurface::new_init(
+                self.my_surface.surface().clone(),
+                [
+                    self.my_u_min_parameter,
+                    self.my_u_max_parameter,
+                    self.my_v_min_parameter,
+                    self.my_v_max_parameter,
+                ],
+                1e-12,
+            )
+        });
+        a_projector.perform(a_point);
 
-        if proj.distance < f64::MAX {
-            return proj.distance;
+        if a_projector.nb_points() > 0 {
+            return a_projector.lower_distance();
         }
 
         // OCCT fallback: check surface boundaries
@@ -2977,7 +2836,7 @@ impl BeanFaceIntersector {
 
     // OCCT L465-560: Distance(theArg, theUParameter, theVParameter)
     fn distance_with_uv(
-        &self,
+        &mut self,
         the_arg: f64,
         the_u_parameter: &mut f64,
         the_v_parameter: &mut f64,
@@ -2989,11 +2848,28 @@ impl BeanFaceIntersector {
         let mut a_distance = real_last();
         let mut projection_found = false;
 
-        let proj = closest_point_on_surface(self.my_surface.surface(), a_point, 16);
-        if proj.distance < f64::MAX {
-            *the_u_parameter = proj.params.0;
-            *the_v_parameter = proj.params.1;
-            a_distance = proj.distance;
+        // OCCT Distance uses the face-restricted projector
+        // myContext->ProjPS(mySurface.Face()) — cached per face
+        // (IntTools_Context.cxx L252-260).
+        let a_projector = self.my_proj_ps.get_or_insert_with(|| {
+            super::context::ProjectOnSurface::new_init(
+                self.my_surface.surface().clone(),
+                [
+                    self.my_u_min_parameter,
+                    self.my_u_max_parameter,
+                    self.my_v_min_parameter,
+                    self.my_v_max_parameter,
+                ],
+                1e-12,
+            )
+        });
+        a_projector.perform(a_point);
+
+        if a_projector.nb_points() > 0 {
+            let (u, v) = a_projector.lower_distance_parameters();
+            *the_u_parameter = u;
+            *the_v_parameter = v;
+            a_distance = a_projector.lower_distance();
             projection_found = true;
         }
 
@@ -3444,8 +3320,7 @@ impl BeanFaceIntersector {
             }
 
             for i in 1..=an_exact_intersector.nb_segments() {
-                let a_segment = an_exact_intersector.segment(i);
-                let (a_point1, a_point2) = a_segment.values();
+                let (a_point1, a_point2) = an_exact_intersector.segment(i);
 
                 let a_first_parameter = if a_point1.w() < self.my_first_parameter {
                     self.my_first_parameter
@@ -4734,10 +4609,7 @@ mod tests {
     #[test]
     fn test_line_plane_intersect() {
         // Line along Z axis through origin — crosses the plane at z=1
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(0.0, 0.0, -5.0),
-            direction: DVec3::Z,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, -5.0), DVec3::Z));
         // Plane at z=1 (horizontal)
         let surface = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
 
@@ -4759,10 +4631,7 @@ mod tests {
     #[test]
     fn test_line_plane_no_intersect() {
         // Line along X axis at z=100 — parallel to plane at z=1, no intersection
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-5.0, 0.0, 100.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-5.0, 0.0, 100.0), DVec3::X));
         let surface = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
 
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
@@ -4818,16 +4687,14 @@ mod tests {
     #[test]
     fn test_line_cylinder_intersect() {
         // Line along X axis at z=4, y=0 — crosses cylinder Z-axis at x=±3
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-10.0, 0.0, 4.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-10.0, 0.0, 4.0), DVec3::X));
         // Cylinder along Z axis, radius=5
         let surface = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
             ref_dir: DVec3::X,
             radius: 5.0,
+            y_dir: None,
         });
 
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
@@ -4850,10 +4717,7 @@ mod tests {
     #[test]
     fn test_line_sphere_intersect() {
         // Line along X axis through origin — passes through sphere at origin
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-10.0, 0.0, 0.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-10.0, 0.0, 0.0), DVec3::X));
         // Sphere at origin, radius=3
         let surface = Surface3::Sphere(SphericalSurface::new(DVec3::ZERO, DVec3::Z, 3.0));
 
@@ -4876,10 +4740,7 @@ mod tests {
     #[test]
     fn test_edge_coincident_with_plane() {
         // Line on Z=0 plane
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-5.0, -5.0, 0.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-5.0, -5.0, 0.0), DVec3::X));
         let surface = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
 
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
@@ -4901,10 +4762,7 @@ mod tests {
     #[test]
     fn test_no_intersection() {
         // Line along X axis at y=0, z=100 — far from sphere at origin
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(-10.0, 0.0, 100.0),
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(-10.0, 0.0, 100.0), DVec3::X));
         let surface = Surface3::Sphere(SphericalSurface::new(DVec3::ZERO, DVec3::Z, 3.0));
 
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
@@ -4950,10 +4808,7 @@ mod tests {
     // ── BRepAdaptorCurve ───────────────────────────────────────────────────
     #[test]
     fn test_brep_adaptor_curve_basic() {
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let bac = BRepAdaptorCurve::new(curve);
         assert_eq!(bac.get_type(), GeomAbsCurveType::Line);
         let p = bac.value(5.0);
@@ -4983,10 +4838,7 @@ mod tests {
     // ── IntCurveSurfaceHInter ───────────────────────────────────────────────
     #[test]
     fn test_int_curve_surface_hinter() {
-        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3 {
-            origin: DVec3::new(-5.0, 0.0, 0.0),
-            direction: DVec3::X,
-        }));
+        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3::new(DVec3::new(-5.0, 0.0, 0.0), DVec3::X)));
         let surface = BRepAdaptorSurface::new(Surface3::Plane(Plane::new(
             DVec3::new(0.0, 0.0, 1.0),
             DVec3::Z,
@@ -5092,10 +4944,7 @@ mod tests {
     // ── ExtremaExtCS: basic ─────────────────────────────────────────────────
     #[test]
     fn test_extrema_ext_cs_line_plane() {
-        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3 {
-            origin: DVec3::new(0.0, 0.0, -5.0),
-            direction: DVec3::Z,
-        }));
+        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, -5.0), DVec3::Z)));
         let surface = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
         let mut ext = ExtremaExtCS::new();
         ext.initialize_with_bounds(&surface, -10.0, 10.0, -10.0, 10.0, 1e-7, 1e-7);
@@ -5106,10 +4955,7 @@ mod tests {
     // ── ExtremaGenExtCS: basic ──────────────────────────────────────────────
     #[test]
     fn test_extrema_gen_ext_cs_basic() {
-        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3 {
-            origin: DVec3::new(0.0, 0.0, -5.0),
-            direction: DVec3::Z,
-        }));
+        let curve = BRepAdaptorCurve::new(Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, -5.0), DVec3::Z)));
         let surface = BRepAdaptorSurface::new(Surface3::Plane(Plane::new(
             DVec3::new(0.0, 0.0, 1.0),
             DVec3::Z,
@@ -5178,10 +5024,7 @@ mod tests {
     // ── Curve resolution helper ─────────────────────────────────────────────
     #[test]
     fn test_curve_resolution() {
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let res = crate::bop::int_tools::curve_range::curve_resolution(&curve, 0.0, 1e-7);
         assert!(res > 0.0);
     }
@@ -5206,6 +5049,7 @@ mod tests {
             axis: DVec3::Z,
             ref_dir: DVec3::X,
             radius: 10.0,
+            y_dir: None,
         });
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
         bfi.set_bean_parameters(0.0, std::f64::consts::TAU);
@@ -5220,10 +5064,7 @@ mod tests {
     // ── BeanFaceIntersector: SetContext ──────────────────────────────────────
     #[test]
     fn test_set_context() {
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::new(0.0, 0.0, -5.0),
-            direction: DVec3::Z,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, -5.0), DVec3::Z));
         let surface = Surface3::Plane(Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z));
         let mut bfi = BeanFaceIntersector::from_curve_surface(curve, surface);
         bfi.set_context(BeanContext::new());
@@ -5276,10 +5117,7 @@ mod tests {
     // ── ProjPointOnCurve ────────────────────────────────────────────────────
     #[test]
     fn test_proj_point_on_curve() {
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let proj = ProjPointOnCurve::new(DVec3::new(5.0, 3.0, 0.0), &curve, -10.0, 10.0);
         assert!(proj.nb_points() > 0);
         let dist = proj.lower_distance();
@@ -5309,6 +5147,7 @@ mod tests {
             axis: DVec3::Z,
             ref_dir: DVec3::X,
             radius: 5.0,
+            y_dir: None,
         });
         let bas = BRepAdaptorSurface::new(surface);
         assert!(bas.is_u_periodic());

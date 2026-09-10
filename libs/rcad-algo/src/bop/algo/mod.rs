@@ -12,6 +12,8 @@
 //! | builder_area         | BOPAlgo_BuilderArea         | Area building                   |
 //! | builder_face         | BOPAlgo_BuilderFace         | Face splitting                  |
 //! | builder_solid        | BOPAlgo_BuilderSolid        | Solid building                  |
+//! | maker_volume         | BOPAlgo_MakerVolume         | Solid building from solids/faces|
+//! | section              | BOPAlgo_Section             | Section edges computation       |
 //! | shell_splitter       | BOPAlgo_ShellSplitter       | Shell partitioning              |
 //! | section_attribute    | BOPAlgo_SectionAttribute    | Section parameters              |
 
@@ -22,6 +24,8 @@ pub mod builder;
 pub mod builder_area;
 pub mod builder_face;
 pub mod builder_solid;
+pub mod maker_volume;
+pub mod section;
 pub mod shell_splitter;
 pub mod wire_splitter;
 pub mod argument_analyzer;
@@ -88,23 +92,16 @@ pub fn compose_face_edge_pcurve_location(
     edge_loc: u32,
     locations: &[glam::DAffine3],
 ) -> u32 {
-    if edge_loc == 0 {
-        return face_loc;
-    }
-    let face_tr = locations
-        .get(face_loc as usize)
-        .copied()
-        .unwrap_or(glam::DAffine3::IDENTITY);
-    let edge_tr = locations
-        .get(edge_loc as usize)
-        .copied()
-        .unwrap_or(glam::DAffine3::IDENTITY);
-    let composed = face_tr * edge_tr.inverse();
-    locations
-        .iter()
-        .position(|l| *l == composed)
-        .map(|i| i as u32)
-        .unwrap_or(if face_loc == 0 { edge_loc } else { face_loc })
+    let tr = |idx: u32| -> glam::DAffine3 {
+        // DS location table: slot 0 stores identity, real transforms start
+        // at index 1 (DS::new / brep_top_shapes_with_locations).
+        locations
+            .get(idx as usize)
+            .copied()
+            .unwrap_or(glam::DAffine3::IDENTITY)
+    };
+    let composed = tr(face_loc) * tr(edge_loc).inverse();
+    rcad_kernel::topo::topods::pcurve_location_id(&composed)
 }
 
 // ===

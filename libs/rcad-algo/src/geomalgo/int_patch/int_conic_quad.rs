@@ -13,9 +13,12 @@
 //! solved analytically by reducing to a polynomial in u = tan(t/2).
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Circle3, Plane};
+use rcad_kernel::geom::{Circle3, CurveEval, Ellipse3, Hyperbola3, Line3, Parabola3, Plane};
+use rcad_kernel::math::direct_polynomial_roots::{epsilon, DirectPolynomialRoots};
+use rcad_kernel::math::el::elclib_ellipse_value;
 
 use super::quad_quad_geo::{AnaResultType, QuadQuadGeo};
+use crate::geomalgo::int_surf::quadric::Quadric;
 
 /// OCCT math_TrigonometricEquationFunction.hxx — the trigonometric equation
 /// a·cos²(x) + 2·b·cos(x)·sin(x) + c·cos(x) + d·sin(x) + e = 0, used as the
@@ -685,3 +688,469 @@ pub fn intersect_circle_plane(
         _ => (false, false, Vec::new()),
     }
 }
+
+/// OCCT IntAna_IntConicQuad::Perform(const gp_Parab&, const IntAna_Quadric&)
+/// (IntAna_IntConicQuad.cxx L273-325) — the conic-quadric intersection for a
+/// parabola.  In the parabola's frame x = y²/(2p), y = y, z = 0, so the
+/// substituted quadric becomes a quartic in y.  Used by Intf_Tool::Inters3d
+/// with the plane quadric.  Returns None when the solver is not done,
+/// Some((in_quadric, (point, param) list)) otherwise.
+pub fn intersect_parabola_quadric(
+    parabola: &Parabola3,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    let co = quadric_frame_coefs(quad)?;
+    // The parabola's frame: X = axis (symmetry, toward focus), Y = N × X,
+    // Z = N (gp_Parab::Position() — gp_Ax2 whose Z is the normal).
+    let y_dir = parabola.normal.cross(parabola.axis_dir).normalize_or_zero();
+    let nco = new_coefficients(&co, parabola.vertex, parabola.axis_dir, y_dir, parabola.normal);
+
+    // OCCT f = P.Focal() (the focal LENGTH); Un_Sur_2p = 0.25 / f.
+    let f = parabola.focal_param * 0.5;
+    let un_sur_2p = 0.25 / f;
+
+    let a4 = nco.xx * un_sur_2p * un_sur_2p;
+    let a3 = (nco.xy + nco.xy) * un_sur_2p;
+    let a2 = nco.yy + (nco.x + nco.x) * un_sur_2p;
+    let a1 = nco.y + nco.y;
+    let a0 = nco.cte;
+
+    let roots = DirectPolynomialRoots::new_quartic(a4, a3, a2, a1, a0);
+    if !roots.is_done() {
+        return None;
+    }
+    if roots.infinite_roots() {
+        return Some((true, Vec::new()));
+    }
+    let pts: Vec<(DVec3, f64)> = (1..=roots.nb_solutions())
+        .map(|i| {
+            let t = roots.value(i);
+            (parabola.point_at(t), t)
+        })
+        .collect();
+    Some((false, pts))
+}
+
+/// OCCT IntAna_IntConicQuad::Perform(const gp_Hypr&, const IntAna_Quadric&)
+/// (IntAna_IntConicQuad.cxx L335-397) — the conic-quadric intersection for a
+/// hyperbola.  In the hyperbola's frame x = R·Ch(t), y = r·Sh(t), z = 0,
+/// rewritten as a quartic in S = Exp(t); valid solutions have S >= RealEpsilon
+/// and the conic parameter is t = Ln(S).  Returns None when the solver is not
+/// done, Some((in_quadric, (point, param) list)) otherwise.
+pub fn intersect_hyperbola_quadric(
+    hyperbola: &Hyperbola3,
+    quad: &crate::geomalgo::int_surf::quadric::Quadric,
+) -> Option<(bool, Vec<(DVec3, f64)>)> {
+    let co = quadric_frame_coefs(quad)?;
+    // The hyperbola's frame: X = major, Y = N × X (minor), Z = N.
+    let y_dir = hyperbola.normal.cross(hyperbola.major_dir).normalize_or_zero();
+    let nco = new_coefficients(
+        &co,
+        hyperbola.center,
+        hyperbola.major_dir,
+        y_dir,
+        hyperbola.normal,
+    );
+
+    let r_big = hyperbola.semi_major;
+    let r_small = hyperbola.semi_minor;
+    let rr_p2 = r_big * r_big;
+    let rr_small_p2 = r_small * r_small;
+    let rr_prod = r_big * r_small;
+
+    let a4 = rr_p2 * nco.xx + rr_prod * (nco.xy + nco.xy) + rr_small_p2 * nco.yy;
+    let a3 = 4.0 * (r_big * nco.x + r_small * nco.y);
+    let a2 = 2.0 * ((nco.cte + nco.cte) + nco.xx * rr_p2 - nco.yy * rr_small_p2);
+    let a1 = 4.0 * (r_big * nco.x - r_small * nco.y);
+    let a0 = nco.xx * rr_p2 - rr_prod * (nco.xy + nco.xy) + nco.yy * rr_small_p2;
+
+    let roots = DirectPolynomialRoots::new_quartic(a4, a3, a2, a1, a0);
+    if !roots.is_done() {
+        return None;
+    }
+    if roots.infinite_roots() {
+        return Some((true, Vec::new()));
+    }
+    let mut pts = Vec::new();
+    for i in 1..=roots.nb_solutions() {
+        let t = roots.value(i);
+        if t >= f64::EPSILON {
+            let param = t.ln();
+            pts.push((hyperbola.point_at(param), param));
+        }
+    }
+    Some((false, pts))
+}
+
+// ============================================================================
+// IntAna_IntConicQuad — the class itself (IntAna_IntConicQuad.hxx) with the
+// Line and Ellipse branches and the (Line, Plane) specialisation used by the
+// IntCurveSurface assembly.  The Circle/Parabola/Hyperbola branches reuse the
+// free-function engines above.
+// ============================================================================
+
+/// OCCT IntAna_IntConicQuad — analytic intersection of a conic with a quadric.
+/// State flags per the OCCT class: done / parallel / inquadric plus the
+/// intersection points and their conic parameters (1-based accessors).
+#[derive(Debug, Clone)]
+pub struct IntConicQuad {
+    done: bool,
+    parallel: bool,
+    inquadric: bool,
+    pnts: Vec<DVec3>,
+    paramonc: Vec<f64>,
+}
+
+impl IntConicQuad {
+    /// OCCT IntAna_IntConicQuad() (IntAna_IntConicQuad.cxx L50-57) — empty.
+    pub fn new() -> Self {
+        IntConicQuad {
+            done: false,
+            parallel: false,
+            inquadric: false,
+            pnts: Vec::new(),
+            paramonc: Vec::new(),
+        }
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Lin&, const IntAna_Quadric&) (L62-65).
+    pub fn new_line_quadric(line: &Line3, quad: &Quadric) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_line_quadric(line, quad);
+        r
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Lin&, const gp_Pln&, Tolang,
+    /// Tol = 0.0, Len = 0.0) (L401-408).
+    pub fn new_line_plane(line: &Line3, pln: &Plane, tolang: f64) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_line_plane(line, pln, tolang, 0.0, 0.0);
+        r
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Circ&, const IntAna_Quadric&)
+    /// (L132-135).
+    pub fn new_circle_quadric(circle: &Circle3, quad: &Quadric) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_circle_quadric(circle, quad);
+        r
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Circ&, const gp_Pln&, Tolang,
+    /// Tol = 0.0) (L410-416).
+    pub fn new_circle_plane(circle: &Circle3, pln: &Plane, tolang: f64, tol: f64) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_circle_plane(circle, pln, tolang, tol);
+        r
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Elips&, const IntAna_Quadric&)
+    /// (L200-203).
+    pub fn new_ellipse_quadric(ellipse: &Ellipse3, quad: &Quadric) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_ellipse_quadric(ellipse, quad);
+        r
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Elips&, const gp_Pln&, Tolang,
+    /// Tol = 0.0) — delegates to the quadric path (L562-565).
+    pub fn new_ellipse_plane(ellipse: &Ellipse3, pln: &Plane) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_ellipse_quadric(ellipse, &Quadric::from_plane(pln));
+        r
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Parab&, const IntAna_Quadric&)
+    /// (L268-271).
+    pub fn new_parabola_quadric(parabola: &Parabola3, quad: &Quadric) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_parabola_quadric(parabola, quad);
+        r
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Parab&, const gp_Pln&, Tolang) —
+    /// delegates to the quadric path (L567-570).
+    pub fn new_parabola_plane(parabola: &Parabola3, pln: &Plane) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_parabola_quadric(parabola, &Quadric::from_plane(pln));
+        r
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Hypr&, const IntAna_Quadric&)
+    /// (L330-333).
+    pub fn new_hyperbola_quadric(hyperbola: &Hyperbola3, quad: &Quadric) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_hyperbola_quadric(hyperbola, quad);
+        r
+    }
+
+    /// OCCT IntAna_IntConicQuad(const gp_Hypr&, const gp_Pln&, Tolang) —
+    /// delegates to the quadric path (L572-575).
+    pub fn new_hyperbola_plane(hyperbola: &Hyperbola3, pln: &Plane) -> Self {
+        let mut r = IntConicQuad::new();
+        r.perform_hyperbola_quadric(hyperbola, &Quadric::from_plane(pln));
+        r
+    }
+
+    /// OCCT IsDone().
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// OCCT IsParallel().
+    pub fn is_parallel(&self) -> bool {
+        self.parallel
+    }
+
+    /// OCCT IsInQuadric().
+    pub fn is_in_quadric(&self) -> bool {
+        self.inquadric
+    }
+
+    /// OCCT NbPoints().
+    pub fn nb_points(&self) -> usize {
+        self.pnts.len()
+    }
+
+    /// OCCT Point(Index) — 1-based.
+    pub fn point(&self, index: usize) -> DVec3 {
+        self.pnts[index - 1]
+    }
+
+    /// OCCT ParamOnConic(Index) — 1-based.
+    pub fn param_on_conic(&self, index: usize) -> f64 {
+        self.paramonc[index - 1]
+    }
+
+    /// OCCT Perform(const gp_Lin&, const IntAna_Quadric&) (L67-127) —
+    /// substitute the parametric line into the quadric implicit equation,
+    /// giving A2·t^2 + A1·t + A0.
+    fn perform_line_quadric(&mut self, line: &Line3, quad: &Quadric) {
+        self.done = false;
+        self.inquadric = false;
+        self.parallel = false;
+        self.pnts.clear();
+        self.paramonc.clear();
+
+        let co = match quadric_frame_coefs(quad) {
+            Some(co) => co,
+            None => return,
+        };
+
+        let l = line.direction;
+        let l0 = line.origin;
+
+        let a0 = co.cte
+            + co.xx * l0.x * l0.x
+            + co.yy * l0.y * l0.y
+            + co.zz * l0.z * l0.z
+            + 2.0
+                * (l0.x * (co.x + co.xy * l0.y + co.xz * l0.z)
+                    + l0.y * (co.y + co.yz * l0.z)
+                    + co.z * l0.z);
+
+        let a1 = 2.0
+            * (l.x * (co.x + co.xx * l0.x + co.xy * l0.y + co.xz * l0.z)
+                + l.y * (co.y + co.xy * l0.x + co.yy * l0.y + co.yz * l0.z)
+                + l.z * (co.z + co.xz * l0.x + co.yz * l0.y + co.zz * l0.z));
+
+        let a2 = co.xx * l.x * l.x
+            + co.yy * l.y * l.y
+            + co.zz * l.z * l.z
+            + 2.0 * (l.x * (co.xy * l.y + co.xz * l.z) + co.yz * l.y * l.z);
+
+        let lin_quad_pol = DirectPolynomialRoots::new_quadratic(a2, a1, a0);
+        if lin_quad_pol.is_done() {
+            self.done = true;
+            if lin_quad_pol.infinite_roots() {
+                self.inquadric = true;
+            } else {
+                let nbpts = lin_quad_pol.nb_solutions();
+                for i in 1..=nbpts {
+                    let t = lin_quad_pol.value(i);
+                    self.paramonc.push(t);
+                    self.pnts.push(DVec3::new(
+                        l0.x + l.x * t,
+                        l0.y + l.y * t,
+                        l0.z + l.z * t,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// OCCT Perform(const gp_Lin&, const gp_Pln&, Tolang, Tol, Len)
+    /// (L436-492).
+    fn perform_line_plane(&mut self, line: &Line3, pln: &Plane, tolang: f64, tol: f64, len: f64) {
+        self.done = false;
+
+        // OCCT P.Coefficients(A, B, C, D): the plane equation A·X + B·Y +
+        // C·Z + D = 0 with (A, B, C) the unit normal.
+        let a = pln.normal.x;
+        let b = pln.normal.y;
+        let c = pln.normal.z;
+        let d = -pln.normal.dot(pln.origin);
+
+        let orig = line.origin;
+        let (al, bl, cl) = (line.direction.x, line.direction.y, line.direction.z);
+
+        let direc = a * al + b * bl + c * cl;
+        let dis = a * orig.x + b * orig.y + c * orig.z + d;
+
+        self.parallel = false;
+        if direc.abs() < tolang {
+            self.parallel = true;
+            if len != 0.0 && direc != 0.0 {
+                // Check the distance from the bounding point of the line to
+                // the plane.
+                let a_p1 = DVec3::new(orig.x - dis * a, orig.y - dis * b, orig.z - dis * c);
+                let a_p2 = DVec3::new(a_p1.x + len * al, a_p1.y + len * bl, a_p1.z + len * cl);
+                let dist = (pln.normal.dot(a_p2 - pln.origin)).abs();
+                if dist > tol {
+                    self.parallel = false;
+                }
+            }
+        }
+        if self.parallel {
+            self.inquadric = dis.abs() < tolang;
+        } else {
+            self.parallel = false;
+            self.inquadric = false;
+            let t = -dis / direc;
+            self.paramonc.push(t);
+            self.pnts.push(DVec3::new(
+                orig.x + t * al,
+                orig.y + t * bl,
+                orig.z + t * cl,
+            ));
+        }
+        self.done = true;
+    }
+
+    /// OCCT Perform(const gp_Circ&, const IntAna_Quadric&) — via the
+    /// free-function engine.
+    fn perform_circle_quadric(&mut self, circle: &Circle3, quad: &Quadric) {
+        match intersect_circle_quadric(circle, quad) {
+            None => {}
+            Some((in_quadric, pts)) => {
+                self.done = true;
+                self.inquadric = in_quadric;
+                if !in_quadric {
+                    for (p, t) in pts {
+                        self.pnts.push(p);
+                        self.paramonc.push(t);
+                    }
+                }
+            }
+        }
+    }
+
+    /// OCCT Perform(const gp_Circ&, const gp_Pln&, Tolang, Tol) (L494-560).
+    fn perform_circle_plane(&mut self, circle: &Circle3, pln: &Plane, tolang: f64, tol: f64) {
+        let (parallel, in_quadric, pts) = intersect_circle_plane(circle, pln, tolang, tol);
+        self.parallel = parallel;
+        self.inquadric = in_quadric;
+        for (p, t) in pts {
+            self.pnts.push(p);
+            self.paramonc.push(t);
+        }
+        self.done = true;
+    }
+
+    /// OCCT Perform(const gp_Elips&, const IntAna_Quadric&) (L205-263) —
+    /// xE = R·cos(t), yE = r·sin(t), zE = 0 substitution in the ellipse
+    /// frame.
+    fn perform_ellipse_quadric(&mut self, ellipse: &Ellipse3, quad: &Quadric) {
+        self.done = false;
+        self.inquadric = false;
+        self.parallel = false;
+
+        let co = match quadric_frame_coefs(quad) {
+            Some(co) => co,
+            None => return,
+        };
+        // OCCT Quad.NewCoefficients(..., E.Position()) — express the quadric
+        // in the ellipse frame (Z = normal, X = major_dir).
+        let y_dir = ellipse.normal.cross(ellipse.major_dir).normalize_or_zero();
+        let nco = new_coefficients(&co, ellipse.center, ellipse.major_dir, y_dir, ellipse.normal);
+
+        let r = ellipse.major_radius;
+        let r_min = ellipse.minor_radius;
+
+        let p_cos_cos = r * r * nco.xx; // Cos Cos
+        let p_sin_sin = r_min * r_min * nco.yy; // Sin Sin
+        let p_sin = r_min * nco.y; // 2 Sin
+        let p_cos = r * nco.x; // 2 Cos
+        let p_cos_sin = r * r_min * nco.xy; // 2 Cos Sin
+        let p_cte = nco.cte; // 1
+
+        let (in_quadric, ts) = match trig_function_roots(
+            p_cos_cos - p_sin_sin,
+            p_cos_sin,
+            p_cos + p_cos,
+            p_sin + p_sin,
+            p_cte + p_sin_sin,
+            0.0,
+            PI_PPI,
+        ) {
+            None => return,
+            Some(r) => r,
+        };
+
+        self.done = true;
+        if in_quadric {
+            self.inquadric = true;
+        } else {
+            for t in ts {
+                self.paramonc.push(t);
+                self.pnts.push(elclib_ellipse_value(
+                    t,
+                    ellipse.center,
+                    ellipse.major_dir,
+                    ellipse.normal,
+                    r,
+                    r_min,
+                ));
+            }
+        }
+    }
+
+    /// OCCT Perform(const gp_Parab&, const IntAna_Quadric&) — via the
+    /// free-function engine.
+    fn perform_parabola_quadric(&mut self, parabola: &Parabola3, quad: &Quadric) {
+        match intersect_parabola_quadric(parabola, quad) {
+            None => {}
+            Some((in_quadric, pts)) => {
+                self.done = true;
+                self.inquadric = in_quadric;
+                if !in_quadric {
+                    for (p, t) in pts {
+                        self.pnts.push(p);
+                        self.paramonc.push(t);
+                    }
+                }
+            }
+        }
+    }
+
+    /// OCCT Perform(const gp_Hypr&, const IntAna_Quadric&) — via the
+    /// free-function engine.
+    fn perform_hyperbola_quadric(&mut self, hyperbola: &Hyperbola3, quad: &Quadric) {
+        match intersect_hyperbola_quadric(hyperbola, quad) {
+            None => {}
+            Some((in_quadric, pts)) => {
+                self.done = true;
+                self.inquadric = in_quadric;
+                if !in_quadric {
+                    for (p, t) in pts {
+                        self.pnts.push(p);
+                        self.paramonc.push(t);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// OCCT IntAna_IntConicQuad.cxx L45: static double PIpPI = M_PI + M_PI.
+const PI_PPI: f64 = std::f64::consts::PI + std::f64::consts::PI;

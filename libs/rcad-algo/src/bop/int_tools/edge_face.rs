@@ -183,7 +183,11 @@ impl<'a> EdgeFace<'a> {
             n_e,
             n_f,
             my_edge: BRepAdaptorCurve::with_range(curve, range[0], range[1]),
-            my_face: BRepAdaptorSurface::new(surf),
+            // OCCT IntTools_EdgeFace L551: myS = myContext->SurfaceAdaptor(myFace)
+            // — BRepAdaptor_Surface(theFace), whose parameter domain is the
+            // face's UV rect (BRepTools::UVBounds), not the surface's natural
+            // domain.
+            my_face: BRepAdaptorSurface::with_uv_bounds(surf, ds.face_uv_boundary(n_f)),
             my_range: range,
             my_fuzzy_value: CONFUSION,
             my_criteria: 0.0,

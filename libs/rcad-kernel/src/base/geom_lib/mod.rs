@@ -1,13 +1,16 @@
 //! Geometry utility library (GeomLib).
 //!
 //! OCCT TKGeomBase GeomLib package: GeomLib_Tool, GeomLib_IsPlanarSurface,
-//! GeomLib_CheckCurveOnSurface.
+//! GeomLib_CheckCurveOnSurface, GeomLib::Inertia, GeomLib::AxeOfInertia.
 
 #![allow(clippy::manual_clamp)]
 
 use glam::{DVec2, DVec3};
 
 use crate::geom::{Curve2dEval, Curve3, CurveEval, Plane, Surface3, SurfaceEval};
+use crate::math::gp::Ax2;
+use crate::math::math_jacobi::MathJacobi;
+use crate::math::MatD;
 
 // OCCT Precision::Confusion()
 const TOL_CONF: f64 = 1e-7;
@@ -541,6 +544,142 @@ impl Default for CheckCurveOnSurface {
 }
 
 // ============================================================================
+// GeomLib::Inertia / GeomLib::AxeOfInertia
+// ============================================================================
+
+/// Compute the principal axes of inertia and dispersion values of an array
+/// of points.
+///
+/// OCCT: `GeomLib::Inertia` (GeomLib.cxx L1976-2093).
+/// `NCollection_Array1<gp_Pnt>` -> `&[DVec3]`; output parameters -> `&mut`.
+pub fn inertia(
+    points: &[DVec3],
+    bary: &mut DVec3,
+    x_dir: &mut DVec3,
+    y_dir: &mut DVec3,
+    x_gap: &mut f64,
+    y_gap: &mut f64,
+    z_gap: &mut f64,
+) {
+    // gp_XYZ GB(0., 0., 0.); int nb = Points.Length();
+    let mut gb = DVec3::ZERO;
+    let nb = points.len();
+    for point in points {
+        gb += *point;
+    }
+    gb /= nb as f64;
+
+    // math_Matrix M(1, 3, 1, 3); M.Init(0.);
+    let mut m = MatD::new(3, 3);
+    for point in points {
+        // Diff.SetLinearForm(-1, Points(i).XYZ(), GB)  ==  GB - Points(i).
+        let diff = gb - *point;
+        m.set(1, 1, m.get(1, 1) + diff.x * diff.x);
+        m.set(2, 2, m.get(2, 2) + diff.y * diff.y);
+        m.set(3, 3, m.get(3, 3) + diff.z * diff.z);
+        m.set(1, 2, m.get(1, 2) + diff.x * diff.y);
+        m.set(1, 3, m.get(1, 3) + diff.x * diff.z);
+        m.set(2, 3, m.get(2, 3) + diff.y * diff.z);
+    }
+    m.set(2, 1, m.get(1, 2));
+    m.set(3, 1, m.get(1, 3));
+    m.set(3, 2, m.get(2, 3));
+
+    // M /= nb;
+    for i in 1..=3usize {
+        for j in 1..=3usize {
+            m.set(i, j, m.get(i, j) / nb as f64);
+        }
+    }
+
+    let jacobi = MathJacobi::new(&m);
+    // OCCT: if (!J.IsDone()) — debug dump only, no control-flow effect.
+
+    let n1 = jacobi.value(1);
+    let n2 = jacobi.value(2);
+    let n3 = jacobi.value(3);
+
+    let r1 = n1.min(n2.min(n3));
+    let r2: f64;
+    let m1: usize;
+    let m2: usize;
+    let m3: usize;
+    if r1 == n1 {
+        m1 = 1;
+        r2 = n2.min(n3);
+        if r2 == n2 {
+            m2 = 2;
+            m3 = 3;
+        } else {
+            m2 = 3;
+            m3 = 2;
+        }
+    } else if r1 == n2 {
+        m1 = 2;
+        r2 = n1.min(n3);
+        if r2 == n1 {
+            m2 = 1;
+            m3 = 3;
+        } else {
+            m2 = 3;
+            m3 = 1;
+        }
+    } else {
+        m1 = 3;
+        r2 = n1.min(n2);
+        if r2 == n1 {
+            m2 = 1;
+            m3 = 2;
+        } else {
+            m2 = 2;
+            m3 = 1;
+        }
+    }
+
+    let v2 = jacobi.vector(m2);
+    let v3 = jacobi.vector(m3);
+
+    // gp_Dir::SetCoord normalizes; the eigenvector columns are unit vectors.
+    *bary = gb;
+    *x_dir = DVec3::new(v3.get(1), v3.get(2), v3.get(3)).normalize_or_zero();
+    *y_dir = DVec3::new(v2.get(1), v2.get(2), v2.get(3)).normalize_or_zero();
+
+    *z_gap = jacobi.value(m1).abs().sqrt();
+    *y_gap = jacobi.value(m2).abs().sqrt();
+    *x_gap = jacobi.value(m3).abs().sqrt();
+}
+
+/// Compute the main axis of inertia of an array of points.
+///
+/// OCCT: `GeomLib::AxeOfInertia` (GeomLib.cxx L2096-2124).  `Axe.XDirection`
+/// is the axis of upper inertia; `Axe.Direction` is the normal to the average
+/// plane; `is_singular` is true if the points lie on a line.  OCCT default
+/// `Tol = 1.0e-7` (GeomLib.hxx L152-156).
+pub fn axe_of_inertia(points: &[DVec3], axe: &mut Ax2, is_singular: &mut bool, tol: f64) {
+    let mut bary = DVec3::ZERO;
+    let mut ox = DVec3::ZERO;
+    let mut oy = DVec3::ZERO;
+    let mut gx = 0.0f64;
+    let mut gy = 0.0f64;
+    let mut gz = 0.0f64;
+
+    inertia(points, &mut bary, &mut ox, &mut oy, &mut gx, &mut gy, &mut gz);
+
+    if gy * points.len() as f64 <= tol {
+        // OCCT: gp_Ax2 axe(Bary, OX); OY = axe.XDirection().
+        let axe2 = Ax2::from_direction(bary, ox);
+        oy = axe2.x_direction;
+        *is_singular = true;
+    } else {
+        *is_singular = false;
+    }
+
+    // OZ = OX ^ OY; gp_Ax2 TheAxe(Bary, OZ, OX).
+    let oz = ox.cross(oy);
+    *axe = Ax2::new(bary, oz, ox);
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -587,5 +726,54 @@ mod tests {
         check.perform(&line, &pcurve, &plane);
         assert!(check.is_done());
         assert!(check.max_distance() < 1e-10);
+    }
+}
+
+/// OCCT GeomLib::FuseIntervals (GeomLib.cxx L392-456) — merges two ordered
+/// interval-bound tables into one sequence, eliminating near-duplicates.
+pub fn fuse_intervals(
+    i1: &[f64],
+    i2: &[f64],
+    seq: &mut Vec<f64>,
+    epspar: f64,
+    is_adjust_to_first_interval: bool,
+) {
+    let mut ind1 = 1usize;
+    let mut ind2 = 1usize;
+    // Fill Seq by traversing I1 and I2 simultaneously, eliminating multiple
+    // occurrences.
+    while ind1 <= i1.len() && ind2 <= i2.len() {
+        let v1 = i1[ind1 - 1];
+        let v2 = i2[ind2 - 1];
+        if (v1 - v2).abs() <= epspar {
+            // Here the elements of I1 and I2 match.
+            if is_adjust_to_first_interval {
+                seq.push(v1);
+            } else {
+                seq.push((v1 + v2) / 2.0);
+            }
+            ind1 += 1;
+            ind2 += 1;
+        } else if v1 < v2 {
+            seq.push(v1);
+            ind1 += 1;
+        } else {
+            seq.push(v2);
+            ind2 += 1;
+        }
+    }
+    if ind1 > i1.len() {
+        // I1 exhausted: complete with the end of I2.
+        while ind2 <= i2.len() {
+            seq.push(i2[ind2 - 1]);
+            ind2 += 1;
+        }
+    }
+    if ind2 > i2.len() {
+        // I2 exhausted: complete with the end of I1.
+        while ind1 <= i1.len() {
+            seq.push(i1[ind1 - 1]);
+            ind1 += 1;
+        }
     }
 }

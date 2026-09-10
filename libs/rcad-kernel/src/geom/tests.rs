@@ -158,10 +158,7 @@ mod eval_tests {
 
     #[test]
     fn line3_point_at() {
-        let l = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
+        let l = Line3::new(DVec3::ZERO, DVec3::X);
         assert!((l.point_at(3.0) - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
     }
 
@@ -233,6 +230,7 @@ mod eval_tests {
             axis: DVec3::Y,
             radius: 3.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         for u in [0.0, 1.0, PI, 2.0 * PI - 0.1] {
             let p = c.point_at(u, 0.0);
@@ -280,6 +278,7 @@ mod eval_tests {
         let t = ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: DVec3::X,
             major_radius: 5.0,
             minor_radius: 1.0,
         };
@@ -387,10 +386,7 @@ mod eval_tests {
     #[test]
     fn pipe_surface_with_line_spine_matches_cylindrical_section() {
         let surface = PipeSurface {
-            spine: Box::new(Curve3::Line(Line3 {
-                origin: DVec3::ZERO,
-                direction: DVec3::Z,
-            })),
+            spine: Box::new(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::Z))),
             ref_dir: DVec3::X,
             radius: 2.0,
         };
@@ -432,14 +428,8 @@ mod eval_tests {
     #[test]
     fn ruled_surface_interpolates_between_curves() {
         let surface = RuledSurface {
-            start: Box::new(Curve3::Line(Line3 {
-                origin: DVec3::ZERO,
-                direction: DVec3::X,
-            })),
-            end: Box::new(Curve3::Line(Line3 {
-                origin: DVec3::Y,
-                direction: DVec3::X,
-            })),
+            start: Box::new(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))),
+            end: Box::new(Curve3::Line(Line3::new(DVec3::Y, DVec3::X))),
         };
         assert!((surface.point_at(0.25, 0.0) - DVec3::new(0.25, 0.0, 0.0)).length() < 1e-12);
         assert!((surface.point_at(0.25, 1.0) - DVec3::new(0.25, 1.0, 0.0)).length() < 1e-12);
@@ -449,30 +439,21 @@ mod eval_tests {
 
     #[test]
     fn coons_surface_interpolates_all_four_boundaries() {
+        // Line3 carries the OCCT gp_Dir invariant (unit direction); the
+        // west/east boundaries use the unit direction (0, 3/5, 4/5).
+        let unit_yz = DVec3::new(0.0, 0.6, 0.8);
         let surface = CoonsSurface {
-            south: Box::new(Curve3::Line(Line3 {
-                origin: DVec3::new(0.0, 0.0, 0.0),
-                direction: DVec3::X,
-            })),
-            north: Box::new(Curve3::Line(Line3 {
-                origin: DVec3::new(0.0, 1.0, 1.0),
-                direction: DVec3::X,
-            })),
-            west: Box::new(Curve3::Line(Line3 {
-                origin: DVec3::new(0.0, 0.0, 0.0),
-                direction: DVec3::new(0.0, 1.0, 1.0),
-            })),
-            east: Box::new(Curve3::Line(Line3 {
-                origin: DVec3::new(1.0, 0.0, 0.0),
-                direction: DVec3::new(0.0, 1.0, 1.0),
-            })),
+            south: Box::new(Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::X))),
+            north: Box::new(Curve3::Line(Line3::new(unit_yz, DVec3::X))),
+            west: Box::new(Curve3::Line(Line3::new(DVec3::new(0.0, 0.0, 0.0), unit_yz))),
+            east: Box::new(Curve3::Line(Line3::new(DVec3::new(1.0, 0.0, 0.0), unit_yz))),
         };
 
         assert!((surface.point_at(0.3, 0.0) - DVec3::new(0.3, 0.0, 0.0)).length() < 1e-9);
-        assert!((surface.point_at(0.3, 1.0) - DVec3::new(0.3, 1.0, 1.0)).length() < 1e-9);
-        assert!((surface.point_at(0.0, 0.4) - DVec3::new(0.0, 0.4, 0.4)).length() < 1e-9);
-        assert!((surface.point_at(1.0, 0.4) - DVec3::new(1.0, 0.4, 0.4)).length() < 1e-9);
-        assert!((surface.point_at(0.5, 0.5) - DVec3::new(0.5, 0.5, 0.5)).length() < 1e-9);
+        assert!((surface.point_at(0.3, 1.0) - DVec3::new(0.3, 0.6, 0.8)).length() < 1e-9);
+        assert!((surface.point_at(0.0, 0.4) - DVec3::new(0.0, 0.24, 0.32)).length() < 1e-9);
+        assert!((surface.point_at(1.0, 0.4) - DVec3::new(1.0, 0.24, 0.32)).length() < 1e-9);
+        assert!((surface.point_at(0.5, 0.5) - DVec3::new(0.5, 0.3, 0.4)).length() < 1e-9);
     }
 
     #[test]
@@ -607,10 +588,7 @@ mod eval_tests {
 
     #[test]
     fn line_eval_d0_d1() {
-        let line = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
+        let line = Line3::new(DVec3::ZERO, DVec3::X);
         let p = line.point_at(5.0);
         assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-12);
         let t = line.tangent_at(5.0);
@@ -619,10 +597,7 @@ mod eval_tests {
 
     #[test]
     fn line_eval_d2_zero_second_derivative() {
-        let line = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
+        let line = Line3::new(DVec3::ZERO, DVec3::X);
         // For a line, the first derivative (tangent) is constant; second derivative is zero.
         // The curve is linear: P(t) = origin + t * direction
         // The second derivative: d²P/dt² = 0
@@ -737,6 +712,7 @@ mod eval_tests {
             axis: DVec3::Z,
             radius: 3.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let p0 = cyl.point_at(0.0, 0.0);
         assert!((p0 - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
@@ -778,6 +754,7 @@ mod eval_tests {
         let t = ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 5.0,
             minor_radius: 1.0,
         };
@@ -839,6 +816,7 @@ mod eval_tests {
         let e = Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::X,
+            minor_dir: DVec2::Y,
             major_radius: 10.0,
             minor_radius: 5.0,
         };
@@ -846,6 +824,43 @@ mod eval_tests {
         assert!((p0 - DVec2::new(10.0, 0.0)).length() < 1e-12);
         let p_half = e.point_at(PI / 2.0);
         assert!((p_half - DVec2::new(0.0, 5.0)).length() < 1e-12);
+    }
+
+    /// OCCT anchor (gp_Elips2d.hxx Reverse, L217-222 + Geom2d_Ellipse):
+    /// Reverse keeps the X (major) direction and negates the stored Y
+    /// direction, so P'(t) = P(-t) — ReversedParameter(U) = -U.
+    #[test]
+    fn ellipse2d_reverse_keeps_major_negates_minor() {
+        use std::f64::consts::{FRAC_1_SQRT_2, PI};
+        let major = DVec2::new(FRAC_1_SQRT_2, FRAC_1_SQRT_2);
+        let e = Ellipse2d {
+            center: DVec2::new(1.0, 2.0),
+            major_dir: major,
+            minor_dir: DVec2::new(-major.y, major.x),
+            major_radius: 10.0,
+            minor_radius: 5.0,
+        };
+        let rev = reverse_curve2d(&Curve2d::Ellipse(e));
+        let r = match rev {
+            Curve2d::Ellipse(r) => r,
+            _ => panic!("reverse_curve2d must preserve the Ellipse kind"),
+        };
+        // The X direction is unchanged; the Y direction is negated.
+        assert_eq!(r.major_dir, e.major_dir, "X direction kept");
+        assert_eq!(r.minor_dir, -e.minor_dir, "Y direction negated");
+        assert_eq!(r.center, e.center);
+        assert_eq!(r.major_radius, e.major_radius);
+        assert_eq!(r.minor_radius, e.minor_radius);
+        // P'(t) = P(-t).
+        for t in [0.3f64, 1.1, 2.7] {
+            let pt = r.point_at(t);
+            let pm = e.point_at(-t);
+            assert!(
+                pt.distance(pm) < 1e-12,
+                "reversed ellipse P({t}) must equal P(-t)"
+            );
+        }
+        let _ = PI;
     }
 
     #[test]
@@ -1028,10 +1043,7 @@ mod eval_tests {
 
     #[test]
     fn line3_eval_at_multiple_points() {
-        let line = Line3 {
-            origin: DVec3::new(1.0, 2.0, 3.0),
-            direction: DVec3::new(0.0, 1.0, 0.0),
-        };
+        let line = Line3::new(DVec3::new(1.0, 2.0, 3.0), DVec3::new(0.0, 1.0, 0.0));
         assert!((line.point_at(0.0) - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-12);
         assert!((line.point_at(5.0) - DVec3::new(1.0, 7.0, 3.0)).length() < 1e-12);
         assert!((line.point_at(-3.0) - DVec3::new(1.0, -1.0, 3.0)).length() < 1e-12);
@@ -1039,10 +1051,7 @@ mod eval_tests {
 
     #[test]
     fn line3_constant_tangent_and_derivative() {
-        let line = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::new(1.0, 1.0, 1.0).normalize(),
-        };
+        let line = Line3::new(DVec3::ZERO, DVec3::new(1.0, 1.0, 1.0).normalize());
         let d = DVec3::new(1.0, 1.0, 1.0).normalize();
         for &t in &[-10.0, -1.0, 0.0, 1.0, 10.0] {
             assert!((line.tangent_at(t) - d).length() < 1e-12);
@@ -1052,10 +1061,7 @@ mod eval_tests {
 
     #[test]
     fn line3_default_domain_infinite() {
-        let line = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
+        let line = Line3::new(DVec3::ZERO, DVec3::X);
         let [t0, t1] = line.default_domain();
         assert!(t0.is_infinite() && t0.is_sign_negative());
         assert!(t1.is_infinite() && t1.is_sign_positive());
@@ -1378,10 +1384,7 @@ mod eval_tests {
         // Line along X, offset along Z: tangent = X, perp = X×Z = -Y
         // The offset displaces in the -Y direction (perpendicular to both tangent and offset_dir)
         // FD tangent gives approximate direction, so just check the point differs from the line
-        let basis = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let basis = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let off = OffsetCurve3 {
             basis: Box::new(basis),
             offset_distance: 2.0,
@@ -1424,6 +1427,7 @@ mod eval_tests {
             axis: DVec3::Z,
             radius: 3.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let (p, dpu, dpv) = cyl.derivatives(0.0, 5.0);
         // dP/dv should be axis (Z)
@@ -1444,6 +1448,7 @@ mod eval_tests {
             axis: DVec3::Z,
             radius: 3.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         // Cylinder with axis Z, ref_dir=X:
         // x_ax = X, y_ax = Z×X = Y
@@ -1524,6 +1529,7 @@ mod eval_tests {
         let t = ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 5.0,
             minor_radius: 1.0,
         };
@@ -1545,6 +1551,7 @@ mod eval_tests {
         let t = ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 5.0,
             minor_radius: 1.0,
         };
@@ -1608,6 +1615,7 @@ mod eval_tests {
             axis: DVec3::Z,
             radius: 2.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         });
         // Cylinder with axis Z, ref_dir=X: dP/du at u=0 = R*y_ax = 2*Y = (0,2,0)
         let (_p, dpu, dpv) = s.derivatives(0.0, 0.0);

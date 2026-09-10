@@ -21,7 +21,9 @@
 //! Each per-type Box applies `Enlarge(Tol)` internally, matching OCCT.
 
 use glam::{DVec2, DVec3};
-use crate::core::precision::{PCONFUSION, parametric_default};
+use crate::core::precision::{
+    BND_PRECISION_INFINITE, PCONFUSION, is_infinite_value, parametric_default,
+};
 use crate::geom::{
     BSplineCurve3, BezierCurve3, Circle2d, Curve2d, Curve2dEval, Curve3, CurveEval, Ellipse2d,
     Line2d, Surface3,
@@ -814,18 +816,49 @@ fn box2d_add_point(b: &mut [f64; 4], p: DVec2) {
 }
 
 /// OCCT GeomBndLib_Line2d::Box (GeomBndLib_Line2d.hxx L70-127) — segment
-/// endpoints. Infinite parameters open the corresponding side of the box
-/// (GeomBndLib_InfiniteHelpers OpenMin/OpenMax); rcad uses the fully open box
-/// as a conservative superset.
+/// endpoints.  Infinite parameters open the corresponding side of the box
+/// (GeomBndLib_InfiniteHelpers OpenMin/OpenMax): a direction component that
+/// is nonzero at an infinite parameter opens that coordinate's side, which
+/// Bnd_Box2d::Get reads back as ±THE_BND_PRECISION_INFINITE (1e+100,
+/// Bnd_Box2d.cxx L28/L129-143); a zero direction component means the
+/// coordinate is constant at the origin (0 * inf is NaN in the OCCT point
+/// evaluation, whose comparisons leave the box bounded by the origin).
 fn line2d_box_uv(l: &Line2d, u1: f64, u2: f64, tol: f64) -> [f64; 4] {
     let mut b = [f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY];
-    if !u1.is_infinite() {
+    // OCCT GeomBndLib_Line2d.hxx L79/L95/L107 dispatch on
+    // Precision::IsNegativeInfinite / Precision::IsPositiveInfinite
+    // (Precision.hxx L357-367); is_infinite_value is their disjunction.
+    if !is_infinite_value(u1) {
         box2d_add_point(&mut b, l.origin + l.direction * u1);
     }
-    if !u2.is_infinite() {
+    if !is_infinite_value(u2) {
         box2d_add_point(&mut b, l.origin + l.direction * u2);
     }
-    // OpenMin/OpenMax: the missing endpoint leaves the box open on that side.
+    for u in [u1, u2] {
+        if !is_infinite_value(u) {
+            continue;
+        }
+        // Sign of the unbounded excursion per coordinate (0 * inf = NaN
+        // keeps the constant-origin bound on both sides).
+        let vx = l.direction.x * u;
+        let vy = l.direction.y * u;
+        if vx.is_nan() {
+            b[0] = b[0].min(l.origin.x);
+            b[1] = b[1].max(l.origin.x);
+        } else if vx < 0.0 {
+            b[0] = -BND_PRECISION_INFINITE;
+        } else {
+            b[1] = BND_PRECISION_INFINITE;
+        }
+        if vy.is_nan() {
+            b[2] = b[2].min(l.origin.y);
+            b[3] = b[3].max(l.origin.y);
+        } else if vy < 0.0 {
+            b[2] = -BND_PRECISION_INFINITE;
+        } else {
+            b[3] = BND_PRECISION_INFINITE;
+        }
+    }
     b[0] -= tol;
     b[1] += tol;
     b[2] -= tol;
@@ -1003,4 +1036,29 @@ pub fn curve2d_bounding_box(c: &Curve2d, u1: f64, u2: f64, tol: f64) -> [f64; 4]
         Curve2d::Ellipse(el) => ellipse2d_box_uv(el, u1, u2, tol),
         _ => other_curve2d_box_uv(c, u1, u2, tol),
     }
+}
+
+/// Function-version of [`curve_bounding_box_range`] (OCCT
+/// `BndLib_Add3dCurve::Add(Adaptor3d_Curve, U1, U2, Tol, Box)` with an
+/// arbitrary point-evaluation adaptor, e.g. GeomFill_SnglrFunc used as a
+/// curve): sample `eval` over [u1, u2], pad by `tol`, and return the box
+/// together with the gap (= `tol`, as `Bnd_Box::GetGap()`).
+pub fn curve_box_range_fn(
+    eval: &dyn Fn(f64) -> DVec3,
+    u1: f64,
+    u2: f64,
+    tol: f64,
+) -> ([DVec3; 2], f64) {
+    let mut mn = DVec3::splat(f64::INFINITY);
+    let mut mx = DVec3::splat(f64::NEG_INFINITY);
+    const N_GRID: usize = 64;
+    for i in 0..=N_GRID {
+        let u = u1 + (u2 - u1) * (i as f64) / (N_GRID as f64);
+        let p = eval(u);
+        mn = mn.min(p);
+        mx = mx.max(p);
+    }
+    mn -= DVec3::splat(tol);
+    mx += DVec3::splat(tol);
+    ([mn, mx], tol)
 }

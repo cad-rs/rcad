@@ -20,8 +20,9 @@ use glam::{DVec2, DVec3};
 use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{Orientation, TShape};
+use rcad_kernel::topods::{tshape_flags, Orientation, TShape, TWireData};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// OCCT BOPAlgo_EdgeInfo (BOPAlgo_WireSplitter.lxx) — per (vertex, edge) record.
 #[derive(Clone)]
@@ -80,7 +81,7 @@ impl EdgeInfo {
 #[derive(Clone)]
 pub(crate) struct ConnexityBlock {
     pub shapes: Vec<Shape>,
-    pub loops: Vec<Vec<Shape>>,
+    pub loops: Vec<Shape>,
     pub is_regular: bool,
 }
 
@@ -121,13 +122,8 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape], locations: &[glam::DAffine3
     for block in a_blocks {
         let mut a_cb = ConnexityBlock::new();
         let mut b_regular = true;
-        // Distinct vertices of the block — needed by the single-loop check.
-        let mut a_vertices: HashSet<(u64, u32)> = HashSet::new();
         for &bi in &block {
             let mut a_s = a_c_start[bi].clone();
-            for v in edge_vertices(&a_s, locations) {
-                a_vertices.insert((v.ptr_id(), v.location));
-            }
             if a_mn_regular.contains(&(a_s.ptr_id(), a_s.location)) {
                 b_regular = false;
                 a_s.orientation = Orientation::Forward;
@@ -151,15 +147,6 @@ pub(crate) fn make_connexity_blocks(edges: &[Shape], locations: &[glam::DAffine3
                     }
                 }
             }
-        }
-        // Single-loop condition: a regular block must form ONE closed loop,
-        // so its edge count must equal its distinct vertex count. Two
-        // independent wires (outer wire + hole) merged by the BFS through
-        // shared vertices violate this — the block is flagged irregular and
-        // split_block separates the loops (OCCT reference: 2 independent
-        // 4-edge loops).
-        if b_regular && block.len() != a_vertices.len() {
-            b_regular = false;
         }
         a_cb.is_regular = b_regular;
         result.push(a_cb);
@@ -224,22 +211,22 @@ fn make_connexity_blocks_core(
 }
 
 /// OCCT BOPAlgo_WireSplitter::Perform (L91-118) + MakeWires (L164-226).
-/// Returns the loops as edge sequences.
+/// Returns the loops as wire shapes.
 pub(crate) fn split_into_wires(
     face: &Shape,
     face_index: usize,
     edges: &[Shape],
     ds: &DS,
-) -> Vec<Vec<Shape>> {
+) -> Vec<Shape> {
     if edges.is_empty() {
         return Vec::new();
     }
     let mut my_lcb = make_connexity_blocks(edges, &ds.locations);
     let mut a_vcb: Vec<ConnexityBlock> = Vec::new();
-    let mut result: Vec<Vec<Shape>> = Vec::new();
+    let mut result: Vec<Shape> = Vec::new();
     for cb in my_lcb.iter_mut() {
         if cb.is_regular {
-            let a_w = make_wire(&cb.shapes);
+            let a_w = make_wire(&cb.shapes, &ds.locations);
             result.push(a_w);
         } else {
             a_vcb.push(cb.clone());
@@ -255,10 +242,55 @@ pub(crate) fn split_into_wires(
     result
 }
 
-/// OCCT BOPAlgo_WireSplitter::MakeWire (BOPAlgo_WireSplitter.lxx) — the wire
-/// is the list of edges in order.
-fn make_wire(a_le: &[Shape]) -> Vec<Shape> {
-    a_le.to_vec()
+/// OCCT BOPAlgo_WireSplitter::MakeWire (BOPAlgo_WireSplitter.lxx L78-89) —
+/// aBB.MakeWire(aWire); for each edge aBB.Add(aWire, aIt.Value());
+/// aWire.Closed(BRep_Tool::IsClosed(aWire)).
+/// The wire keeps the edge order; the CLOSED flag is set per
+/// BRep_Tool::IsClosed(theShape) for TopAbs_WIRE (BRep_Tool.cxx L1730-1749).
+pub(crate) fn make_wire(a_le: &[Shape], locations: &[glam::DAffine3]) -> Shape {
+    let mut flags = tshape_flags::DEFAULT;
+    if brep_tool_is_closed_wire(a_le, locations) {
+        flags |= tshape_flags::CLOSED;
+    }
+    Shape::new(
+        std::sync::Arc::new(TShape::Wire(TWireData {
+            my_shapes: vec![],
+            flags,
+            edges: a_le.to_vec(),
+        })),
+        0,
+        Orientation::Forward,
+    )
+}
+
+/// OCCT BRep_Tool::IsClosed(theShape) for TopAbs_WIRE (BRep_Tool.cxx
+/// L1730-1749) — explore the FORWARD-oriented wire's vertices (cumOri/cumLoc),
+/// skip INTERNAL/EXTERNAL vertices, and remove each visited vertex from the
+/// map on the second visit (TopTools_ShapeMapHasher — TShape + Location);
+/// closed = hasBound && the map is empty.
+fn brep_tool_is_closed_wire(edges: &[Shape], locations: &[glam::DAffine3]) -> bool {
+    let mut a_map: HashSet<(u64, u32)> = HashSet::new();
+    let mut has_bound = false;
+    for a_e in edges {
+        let mut a_e_f = a_e.clone();
+        // OCCT: theShape.Oriented(TopAbs_FORWARD) — the wire normalized to
+        // FORWARD; the edges keep their stored orientations.
+        a_e_f.orientation = Orientation::Forward;
+        for a_v in edge_vertices(&a_e_f, locations) {
+            if matches!(
+                a_v.orientation,
+                Orientation::Internal | Orientation::External
+            ) {
+                continue;
+            }
+            has_bound = true;
+            // OCCT L1743-1746: if (!aMap.Add(V)) aMap.Remove(V);
+            if !a_map.insert((a_v.ptr_id(), a_v.location)) {
+                a_map.remove(&(a_v.ptr_id(), a_v.location));
+            }
+        }
+    }
+    has_bound && a_map.is_empty()
 }
 
 /// OCCT BOPAlgo_WireSplitter::SplitBlock (BOPAlgo_WireSplitter_1.cxx L113-355).
@@ -366,7 +398,7 @@ fn split_block(
         b_nothing_to_do = b_nothing_to_do && b_flag;
     }
     if b_nothing_to_do {
-        let a_w = make_wire(&cb.shapes);
+        let a_w = make_wire(&cb.shapes, &ds.locations);
         cb.loops.push(a_w);
         return;
     }
@@ -398,24 +430,53 @@ fn split_block(
     if std::env::var("RCAD_WS_DEBUG").is_ok() {
         eprintln!("[WS-SM] aNb={}", a_nb);
         for (ii, (vkey, (a_v_sh, leinfo))) in my_smart_map.iter().enumerate() {
-            let _ = vkey;
             let pos = debug_located_vertex_point(a_v_sh, ds);
             let mut s = format!(
-                "[WS-SM] v{} p=({:.6},{:.6},{:.6})",
+                "[WS-SM] v{} key=({:x},{}) p=({:.6},{:.6},{:.6})",
                 ii + 1,
+                vkey.0,
+                vkey.1,
                 pos.x,
                 pos.y,
                 pos.z
             );
             for a_ei in leinfo {
                 let a_e = a_ei.edge();
+                let ev = super::builder_face::BuilderFace::edge_vertices(a_e, &ds.locations);
+                let evd: Vec<String> = ev
+                    .iter()
+                    .map(|v| {
+                        format!(
+                            "{:x}/{}",
+                            v.ptr_id(),
+                            v.location
+                        )
+                    })
+                    .collect();
+                let vd = a_e
+                    .as_edge()
+                    .map(|ed| {
+                        format!(
+                            " rawF=({:x},{},{}) rawL=({:x},{},{}) eLoc={}",
+                            Arc::as_ptr(&ed.first.data) as usize,
+                            ed.first.location,
+                            if ed.first.orientation == Orientation::Reversed { 1 } else { 0 },
+                            Arc::as_ptr(&ed.last.data) as usize,
+                            ed.last.location,
+                            if ed.last.orientation == Orientation::Reversed { 1 } else { 0 },
+                            a_e.location
+                        )
+                    })
+                    .unwrap_or_default();
                 s.push_str(&format!(
-                    " e={}o={}in={}ins={}a={:.6}",
+                    " e={}o={}in={}ins={}a={:.6} comp=[{}]{}",
                     a_e.ptr_id(),
                     if a_e.orientation == Orientation::Reversed { 1 } else { 0 },
                     a_ei.is_in() as u8,
                     a_ei.is_inside() as u8,
                     a_ei.angle(),
+                    evd.join(","),
+                    vd,
                 ));
             }
             eprintln!("{}", s);
@@ -585,7 +646,7 @@ fn path(
                         }
                     }
                     if i_priz != 0 {
-                        let a_w = make_wire(&a_buf);
+                        let a_w = make_wire(&a_buf, &ds.locations);
                         cb.loops.push(a_w);
                     }
                     if std::env::var("RCAD_WS_DEBUG").is_ok() {
@@ -1036,7 +1097,26 @@ fn angle_2d(
     // toward the interior (departure).
     let a_v2d = if b_is_in { a_pv - a_pv1 } else { a_pv1 - a_pv };
     let a_dir2d = a_v2d.normalize_or_zero();
-    angle_from_dir(a_dir2d)
+    let a_res = angle_from_dir(a_dir2d);
+    if std::env::var("RCAD_WS_DEBUG").is_ok() {
+        eprintln!(
+            "[WS-ANG] e={}o={} vin={} a_tv={:.6} f={:.6} l={:.6} dt={:.9} a_tv1={:.6} pv=({:.6},{:.6}) pv1=({:.6},{:.6}) ang={:.6}",
+            an_edge.ptr_id() % 100000,
+            if an_edge.orientation == Orientation::Reversed { 1 } else { 0 },
+            b_is_in as u8,
+            a_tv,
+            a_first,
+            a_last,
+            dt,
+            a_tv1,
+            a_pv.x,
+            a_pv.y,
+            a_pv1.x,
+            a_pv1.y,
+            a_res
+        );
+    }
+    a_res
 }
 
 /// OCCT Angle (L869-880) — angle of a 2D direction against +X, in [0, 2π).
@@ -1263,22 +1343,20 @@ fn curve2d_resolution(c: &Curve2d, tol: f64) -> f64 {
 
 fn edge_vertices(e: &Shape, locations: &[glam::DAffine3]) -> [Shape; 2] {
     match &*e.data {
-        // OCCT TopoDS_Iterator(aE) with cumOri=true (default) composes the edge
-        // orientation into the vertices (TopoDS_Iterator.cxx L35-37, L72-80):
-        // each stored vertex keeps its stored orientation composed with the
-        // edge's own orientation; a REVERSED edge iterates [last, first]. The
-        // edge Location is composed into the vertices as well (cumLoc,
-        // TopoDS_Iterator.cxx L76-78).
-        // The vertex Shape carries no index — identity is the TShape pointer
-        // (TopoDS_Shape handle semantics); index fields mix BRep and DS slots.
+        // OCCT TopoDS_Iterator(aE) iterates the edge's stored vertices IN
+        // STORAGE ORDER [first, last] (TopoDS_Iterator.cxx L57-70: the plain
+        // list iterator over TShape()->myShapes), composing the edge's
+        // orientation into each child (updateCurrentShape L72-78:
+        // TopAbs::Compose) and the edge's location (cumLoc). The order is NOT
+        // reversed for a REVERSED edge — only the child orientations flip.
         TShape::Edge(ed) => {
             let vf_loc =
                 crate::bop::algo::compose_edge_vertex_location(e.location, ed.first.location, locations);
             let vl_loc =
                 crate::bop::algo::compose_edge_vertex_location(e.location, ed.last.location, locations);
             if e.orientation == Orientation::Reversed {
-                [Shape::new(ed.last.data.clone(), vl_loc, flip_ori(ed.last.orientation)),
-                 Shape::new(ed.first.data.clone(), vf_loc, flip_ori(ed.first.orientation))]
+                [Shape::new(ed.first.data.clone(), vf_loc, flip_ori(ed.first.orientation)),
+                 Shape::new(ed.last.data.clone(), vl_loc, flip_ori(ed.last.orientation))]
             } else {
                 [Shape::new(ed.first.data.clone(), vf_loc, ed.first.orientation),
                  Shape::new(ed.last.data.clone(), vl_loc, ed.last.orientation)]
@@ -1305,20 +1383,30 @@ fn flip_ori(o: Orientation) -> Orientation {
 /// [F, R], for OCCT BRepPrim_GWedge edges [R, F]. Used by BRep_Tool::Parameter
 /// (BRep_Tool.cxx L1532-1597); do NOT use for GetNextVertex / smart-map
 /// EdgeInfo which iterate the edge as stored (composed with its orientation).
-fn edge_vertices_forward(e: &Shape) -> [Shape; 2] {
+fn edge_vertices_forward(e: &Shape, locations: &[glam::DAffine3]) -> [Shape; 2] {
     match &*e.data {
-        TShape::Edge(ed) => [
+        TShape::Edge(ed) => {
             // OCCT BRep_Tool::Parameter (BRep_Tool.cxx L1541-1561) iterates
-            // E.Oriented(TopAbs_FORWARD): the yielded sub-shapes keep their
-            // STORED orientations (the FORWARD composition is the identity).
-            // rcad previously hardcoded [F, R], which flips the stored
-            // orientations of OCCT BRepPrim_GWedge edges (created as
-            // [rev(high), low] = [R, F], make_box.rs L76-84) and produces a
-            // wrong BRep_Tool::Parameter -> wrong Angle2D at the edge's
-            // endpoints (the bopcommon f6 cap wires).
-            Shape::new(ed.first.data.clone(), ed.first.location, ed.first.orientation),
-            Shape::new(ed.last.data.clone(), ed.last.location, ed.last.orientation),
-        ],
+            // E.Oriented(TopAbs_FORWARD) through the TopoDS_Iterator, whose
+            // cumLoc composition yields each vertex with the EDGE's location
+            // composed over the stored one (TopoDS_Iterator.cxx L76-78). The
+            // stored orientations are unchanged (the FORWARD composition is
+            // the identity). rcad previously yielded the raw stored locations,
+            // so a located edge (the prism's translated cap edges share the
+            // source TShape) never matched the composed smart-map vertices and
+            // BRep_Tool::Parameter fell into the INTERNAL fallback branch —
+            // wrong parameter -> wrong Angle2D -> wrong WireSplitter walk
+            // (bcut_simple J1: the wall's bottom-piece loop crossed into the
+            // top strip and its image was dropped).
+            let vf_loc =
+                crate::bop::algo::compose_edge_vertex_location(e.location, ed.first.location, locations);
+            let vl_loc =
+                crate::bop::algo::compose_edge_vertex_location(e.location, ed.last.location, locations);
+            [
+                Shape::new(ed.first.data.clone(), vf_loc, ed.first.orientation),
+                Shape::new(ed.last.data.clone(), vl_loc, ed.last.orientation),
+            ]
+        }
         _ => [Shape::null(), Shape::null()],
     }
 }
@@ -1383,13 +1471,22 @@ fn edge_pcurve(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f
             }
             // OCCT BRep_Tool.cxx L366-368: the representation was not found —
             // fall back to CurveOnPlane, which projects the edge's 3D curve
-            // onto a planar face (BRep_Tool.cxx L373-440). rcad's plane edges
-            // normally carry a stored pcurve (BuildPCurveForEdgesOnPlane), so
-            // this only fires for planar faces whose edge has a 3D curve but no
-            // stored pcurve.
+            // onto a planar face (BRep_Tool.cxx L373-440). OCCT projects the
+            // curve WITH the edge's location applied (BRep_Tool::Curve(E,...)
+            // returns C3D->Transformed(L.Transformation())) — a located edge
+            // (the prism's translated cap edge sharing the source TShape)
+            // otherwise projects at the SOURCE position instead of its own
+            // (bcut_simple J1: the wall's bottom-piece loop sampled the top
+            // strip's UV row and its image was dropped).
             if let Some(surf) = ds.face_surface(face_index) {
                 if let rcad_kernel::geom::Surface3::Plane(pl) = surf {
                     if let Some(curve) = ed.curve.clone() {
+                        let loc = ds.get_location(e.location);
+                        let curve = if loc == glam::DAffine3::IDENTITY {
+                            curve
+                        } else {
+                            rcad_kernel::geom::transform_curve(&curve, &loc)
+                        };
                         if let Some(pc) =
                             crate::bop::algo::builder::project_edge_on_plane(&curve, &pl, ed.range)
                         {
@@ -1515,6 +1612,23 @@ fn is_closed_on_face(e: &Shape, face: &Shape) -> bool {
 
 /// OCCT BRep_Tool::Parameter(aV, aE, aF) — vertex parameter on the edge.
 fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Option<f64> {
+    let dbg = std::env::var("RCAD_WS_DEBUG").is_ok();
+    let dbg_res = |orient: u8, rev: bool, res: Option<f64>| {
+        if dbg {
+            eprintln!(
+                "[WS-PARAM] v=({:x},{}) e={:x} eo={} orient={} rev={} param={:?} fi={}",
+                v.ptr_id() % 100000,
+                v.location,
+                e.ptr_id() % 100000,
+                if e.orientation == Orientation::Reversed { 1 } else { 0 },
+                orient,
+                rev as u8,
+                res,
+                face_index
+            );
+        }
+        res
+    };
     // OCCT BRep_Tool::Parameter(V, E, F) -- BRep_Tool.cxx L1519-1523,
     // Parameter(V, E, S, L) L1532-1597. Used by Coord2d (BOPAlgo_WireSplitter_1.cxx
     // L700-712), Coord2dVf (L715-728), Angle2D (L817), RefineAngle (L1112).
@@ -1524,7 +1638,7 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
             // TEdge nodes [V1, V2] keep their STORED orientations (the FORWARD
             // composition of the normalized copy is the identity). A self-loop
             // edge has V1 and V2 the same TShape, so V matches twice.
-            let verts = edge_vertices_forward(e);
+            let verts = edge_vertices_forward(e, &ds.locations);
             let mut rev = false;
             let mut vf: Option<Shape> = None;
             for vcur in verts.iter() {
@@ -1549,7 +1663,7 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
             // range of E on the face surface (edge_pcurve selects the second
             // pcurve for a REVERSED seam edge, matching CurveOnSurface).
             let (_, f, l) = edge_pcurve(e, face_index, ds)?;
-            match orient {
+            let res = match orient {
                 Orientation::Forward => Some(if rev { l } else { f }),
                 Orientation::Reversed => Some(if rev { f } else { l }),
                 // OCCT L1583-1597 (INTERNAL or VF null): search the vertex's
@@ -1558,12 +1672,12 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
                 // stored vertex param, then the closest point on the 3D curve.
                 _ => {
                     if let Some(t) = ed.vertex_params.get(&v.ptr_id()) {
-                        return Some(*t);
+                        return dbg_res(3, rev, Some(*t));
                     }
                     let curve = ed.curve.as_ref()?;
                     let p = match &*v.data {
                         TShape::Vertex(vd) => vd.point,
-                        _ => return None,
+                        _ => return dbg_res(3, rev, None),
                     };
                     // OCCT L1601-1646: the vertex's PointRepresentation on the
                     // 3D curve; rcad approximates it with the closest point.
@@ -1583,9 +1697,17 @@ fn vertex_param_on_edge(v: &Shape, e: &Shape, face_index: usize, ds: &DS) -> Opt
                             res = if v.orientation == Orientation::Forward { f } else { l };
                         }
                     }
-                    Some(res)
+                    dbg_res(3, rev, Some(res))
                 }
-            }
+            };
+            let oc = if orient == Orientation::Forward {
+                0
+            } else if orient == Orientation::Reversed {
+                1
+            } else {
+                3
+            };
+            return dbg_res(oc, rev, res);
         }
         _ => None,
     }
@@ -1699,6 +1821,7 @@ mod resolution_tests {
         let ell = Curve2d::Ellipse(Ellipse2d {
             center: DVec2::ZERO,
             major_dir: DVec2::X,
+            minor_dir: DVec2::Y,
             major_radius: 2.0,
             minor_radius: 0.5,
         });

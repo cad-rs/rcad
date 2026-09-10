@@ -5,6 +5,8 @@
 // fallback) to combine the transitions at the head/end of a boundary edge
 // into a single IN/OUT state.
 
+pub mod surface_transition; // TopTrans_SurfaceTransition (surface variant)
+
 use glam::{DVec2, DVec3};
 use rcad_kernel::topods::{Orientation, State};
 

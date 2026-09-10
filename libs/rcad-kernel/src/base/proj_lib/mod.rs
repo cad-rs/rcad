@@ -15,6 +15,24 @@ use crate::geom::{
     Parabola3, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
 
+// OCCT ProjLib package additions (TKGeomBase/ProjLib).
+pub mod adaptor; // Adaptor2d_Curve2d / Adaptor3d_Curve / Adaptor3d_Surface encodings
+pub mod project; // ProjLib::Project overloads + MakePCurveOfType + IsAnaSurf
+pub mod proj_lib_projected_curve; // ProjLib_ProjectedCurve + the analytic ProjLib_* members
+pub mod proj_lib_projected_curve_b; // ProjLib_ProjectedCurve class + Perform
+pub mod prj_resolve; // ProjLib_PrjFunc + ProjLib_PrjResolve
+
+pub use adaptor::{
+    Adaptor2dCurve2d, Adaptor3dCurve, Adaptor3dSurface, CurveOnSurface, Geom2dCurveAdaptor,
+    GeomAbsSurfaceType,
+};
+pub use project::{
+    is_ana_surf, make_pcurve_of_type, project_cone_circ, project_cone_lin, project_cone_pnt,
+    project_cylinder_circ, project_cylinder_lin, project_cylinder_pnt, project_pln_circ,
+    project_pln_elips, project_pln_hypr, project_pln_lin, project_pln_parab, project_pln_pnt,
+    project_sphere_circ, project_sphere_pnt, project_torus_circ, project_torus_pnt,
+};
+
 // ============================================================================
 // CurveType — mirrors GeomAbs_CurveType
 // ============================================================================
@@ -229,6 +247,7 @@ impl Projector {
                 Curve2d::Ellipse(crate::geom::Ellipse2d {
                     center: DVec2::new(e.center.x, e.center.y),
                     major_dir: DVec2::new(e.major_dir.x, e.major_dir.y),
+                    minor_dir: DVec2::new(-e.major_dir.y, e.major_dir.x),
                     major_radius: e.major_radius,
                     minor_radius: e.minor_radius,
                 })
@@ -298,10 +317,7 @@ impl PlaneProjector {
         let o = self.to_uv(line.origin);
         let p1 = self.to_uv(line.origin + line.direction);
         let dir = (p1 - o).normalize_or_zero();
-        self.projector.set_line(Line3 {
-            origin: DVec3::new(o.x, o.y, 0.0),
-            direction: DVec3::new(dir.x, dir.y, 0.0),
-        });
+        self.projector.set_line(Line3::new(DVec3::new(o.x, o.y, 0.0), DVec3::new(dir.x, dir.y, 0.0)));
         self.projector.done();
     }
 
@@ -444,6 +460,7 @@ impl CylinderProjector {
                 axis: DVec3::Z,
                 radius: 1.0,
                 ref_dir: DVec3::X,
+                y_dir: None,
             },
         }
     }
@@ -466,10 +483,7 @@ impl CylinderProjector {
         let o = self.to_uv(line.origin);
         let p1 = self.to_uv(line.origin + line.direction);
         let dir = (p1 - o).normalize_or_zero();
-        self.projector.set_line(Line3 {
-            origin: DVec3::new(o.x, o.y, 0.0),
-            direction: DVec3::new(dir.x, dir.y, 0.0),
-        });
+        self.projector.set_line(Line3::new(DVec3::new(o.x, o.y, 0.0), DVec3::new(dir.x, dir.y, 0.0)));
         self.projector.done();
         if dir.x.abs() < 1e-12 {
             self.projector.set_periodic();
@@ -858,6 +872,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let line = Line3::new(DVec3::new(5.0, 0.0, 0.0), DVec3::Z);
         let mut proj = CylinderProjector::with_cylinder(&cyl);

@@ -14,9 +14,72 @@ use rcad_kernel::geom::{Surface3, SurfaceEval};
 
 use crate::geomalgo::int_surf::{LineOn2S, PntOn2S};
 
-use super::function_set_root::FunctionSetRoot;
+use super::function_set_root::{FunctionSetRoot, FunctionSetWithDerivatives2};
 use super::path_point::{InteriorPoint, PathPoint};
 use super::surf_function::SurfFunction;
+
+/// OCCT IntWalk_IWalking template parameter `TheIWFunction` — the surface
+/// function the walking algorithm drives (math_FunctionSetWithDerivatives
+/// shape).  The template argument maps to this trait: the IntPatch
+/// instantiation is [`SurfFunction`], the Contap instantiation lives in
+/// `hlr::contap::surf_function`.
+pub trait IWFunction: Clone + FunctionSetWithDerivatives2 {
+    /// OCCT Derivatives(X, D).
+    fn derivatives(&mut self, x: &[f64; 2]) -> Option<[f64; 2]>;
+    /// OCCT Root().
+    fn root(&self) -> f64;
+    /// OCCT IsTangent().
+    fn is_tangent(&mut self) -> bool;
+    /// OCCT Direction3d().
+    fn direction_3d(&mut self) -> DVec3;
+    /// OCCT Direction2d().
+    fn direction_2d(&mut self) -> DVec2;
+    /// OCCT Point().
+    fn point(&self) -> DVec3;
+    /// OCCT Func.Set(Caro) — re-bind the function to the surface.
+    fn set_surface(&mut self, s: &Surface3);
+    /// OCCT ThePSurfaceTool::Value(Func.PSurface(), U, V) — the surface
+    /// point the function is bound to.
+    fn surface_value(&self, u: f64, v: f64) -> DVec3;
+    /// OCCT ThePSurfaceTool::UResolution(Func.PSurface(), R3d) — the
+    /// analytic parametric resolution of the bound surface.
+    fn u_resolution(&self, r3d: f64) -> f64;
+    /// OCCT ThePSurfaceTool::VResolution(Func.PSurface(), R3d).
+    fn v_resolution(&self, r3d: f64) -> f64;
+}
+
+impl IWFunction for SurfFunction {
+    fn derivatives(&mut self, x: &[f64; 2]) -> Option<[f64; 2]> {
+        SurfFunction::derivatives(self, x)
+    }
+    fn root(&self) -> f64 {
+        SurfFunction::root(self)
+    }
+    fn is_tangent(&mut self) -> bool {
+        SurfFunction::is_tangent(self)
+    }
+    fn direction_3d(&mut self) -> DVec3 {
+        SurfFunction::direction_3d(self)
+    }
+    fn direction_2d(&mut self) -> DVec2 {
+        SurfFunction::direction_2d(self)
+    }
+    fn point(&self) -> DVec3 {
+        SurfFunction::point(self)
+    }
+    fn set_surface(&mut self, s: &Surface3) {
+        SurfFunction::set_surface(self, s.clone())
+    }
+    fn surface_value(&self, u: f64, v: f64) -> DVec3 {
+        self.p_surface().point_at(u, v)
+    }
+    fn u_resolution(&self, r3d: f64) -> f64 {
+        surface3_u_resolution(self.p_surface(), r3d)
+    }
+    fn v_resolution(&self, r3d: f64) -> f64 {
+        surface3_v_resolution(self.p_surface(), r3d)
+    }
+}
 
 // OCCT constants (IntWalk_IWalking.gxx L36-40).
 const COS_REF_3D: f64 = 0.98; // correspond to 11.478 deg
@@ -59,6 +122,22 @@ impl WalkingData {
     fn dummy() -> Self {
         WalkingData {
             etat: -10,
+            ustart: 0.0,
+            vstart: 0.0,
+        }
+    }
+
+    /// The deterministic encoding of the OCCT out-of-bounds `wd[I]` read in
+    /// the WITHOUT-interior Perform (gxx L317-391): that entry point has no
+    /// Clear() call, so on a fresh object the fill starts at slot 0 and the
+    /// `I <= nbPath` loop heads read one slot past the filled range —
+    /// indeterminate memory whose etat practically fails every
+    /// `> 11 / < -11 / > 0 / < 0 / > 12` test, encoded as etat 0.
+    /// (The with-interior Perform is exempt: Clear() prepends the dummy
+    /// slot, keeping every read aligned and in bounds.)
+    fn oob_default() -> Self {
+        WalkingData {
+            etat: 0,
             ustart: 0.0,
             vstart: 0.0,
         }
@@ -394,7 +473,11 @@ impl IWalking {
         self.epsilon = epsilon * epsilon;
     }
 
-    /// OCCT Clear (gxx L119-134).
+    /// OCCT Clear (gxx L110-137) — clears the containers and appends a dummy
+    /// WalkingData (etat=-10) to wd1/wd2 and -1 to nbMultiplicities, "to
+    /// maintain start index of 1": the 0-based NCollection_LinearVector
+    /// therefore holds [dummy, point 1 .. point N] and every algorithm loop
+    /// `I = 1 ..= N` reads the aligned point, in bounds.
     fn clear(&mut self) {
         self.wd1.clear();
         self.wd2.clear();
@@ -429,8 +512,8 @@ impl IWalking {
     }
 
     /// OCCT IsTangentExtCheck (gxx L52-88).
-    fn is_tangent_ext_check(
-        func: &mut SurfFunction,
+    fn is_tangent_ext_check<F: IWFunction>(
+        func: &mut F,
         u: f64,
         v: f64,
         step_u: f64,
@@ -468,11 +551,11 @@ impl IWalking {
     /// `domain` is the corrected face UV rectangle ([u_min, u_max, v_min,
     /// v_max]) — the OCCT adaptor surface carries the restricted face domain,
     /// while the rcad Surface3 exposes the natural (possibly infinite) domain.
-    pub fn perform(
+    pub fn perform<F: IWFunction>(
         &mut self,
         pnts1: &[PathPoint],
         pnts2: &[InteriorPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         caro: &Surface3,
         domain: [f64; 4],
         reversed: bool,
@@ -541,6 +624,8 @@ impl IWalking {
                 v_mult.push(v);
             }
         }
+        // (Clear() prepended the dummy slot: wd1 = [dummy, p1 .. pN] and the
+        // `I <= nbPath` loops read p1 .. pN aligned, in bounds — no tail.)
 
         for i in 1..=nb_pnts2 {
             let an_ip = &pnts2[i - 1];
@@ -569,13 +654,17 @@ impl IWalking {
             }
             self.wd2.push(a_wd2);
         }
+        // (Same alignment for wd2 = [dummy, loop 1 .. loop M]; ComputeCloseLine
+        // reads `I <= nbLoop` in bounds.)
 
         self.tolerance = [
-            u_resolution(domain, rcad_kernel::precision::CONFUSION),
-            v_resolution(domain, rcad_kernel::precision::CONFUSION),
+            // OCCT gxx L244-245 / L358-359: tolerance(1) =
+            // ThePSurfaceTool::UResolution(Caro, Precision::Confusion()).
+            IWFunction::u_resolution(func, rcad_kernel::precision::CONFUSION),
+            IWFunction::v_resolution(func, rcad_kernel::precision::CONFUSION),
         ];
 
-        func.set_surface(caro.clone());
+        func.set_surface(&caro.clone());
 
         if self.my_s_range_u.delta() > self.tolerance[0].max(rcad_kernel::precision::PCONFUSION) {
             self.my_s_range_u.enlarge(self.my_s_range_u.delta());
@@ -640,10 +729,10 @@ impl IWalking {
     /// OCCT Perform(Pnts1, Func, Caro, Reversed) (gxx L317-391) — without
     /// interior points.
     #[allow(dead_code)]
-    pub fn perform_no_interior(
+    pub fn perform_no_interior<F: IWFunction>(
         &mut self,
         pnts1: &[PathPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         caro: &Surface3,
         domain: [f64; 4],
         reversed: bool,
@@ -684,10 +773,15 @@ impl IWalking {
                 v_mult.push(v);
             }
         }
+        // The one-past-the-end read at the `I <= nbPath` loop heads (gxx
+        // L387 seqSingle / L1486 ComputeOpenLine).
+        self.wd1.push(WalkingData::oob_default());
 
         self.tolerance = [
-            u_resolution(domain, rcad_kernel::precision::CONFUSION),
-            v_resolution(domain, rcad_kernel::precision::CONFUSION),
+            // OCCT gxx L244-245 / L358-359: tolerance(1) =
+            // ThePSurfaceTool::UResolution(Caro, Precision::Confusion()).
+            IWFunction::u_resolution(func, rcad_kernel::precision::CONFUSION),
+            IWFunction::v_resolution(func, rcad_kernel::precision::CONFUSION),
         ];
 
         self.um = domain[0];
@@ -706,7 +800,7 @@ impl IWalking {
             self.vm = vtemp;
         }
 
-        func.set_surface(caro.clone());
+        func.set_surface(&caro.clone());
 
         if nb_pnts1 != 0 {
             self.compute_open_line(&u_mult, &v_mult, pnts1, func, &mut rajout);
@@ -862,11 +956,11 @@ impl IWalking {
     // =====================================================================
     // TestArretPassage — open lines (gxx L593-775)
     // =====================================================================
-    fn test_arret_passage_open(
+    fn test_arret_passage_open<F: IWFunction>(
         &mut self,
         u_mult: &[f64],
         v_mult: &[f64],
-        func: &mut SurfFunction,
+        func: &mut F,
         uv: &mut [f64; 2],
         irang: &mut i32,
     ) -> bool {
@@ -938,9 +1032,7 @@ impl IWalking {
                         {
                             i_candidates.push(i);
                             sq_dist_candidates.push(dup * dup + dvp * dvp);
-                        } else if i < self.nb_multiplicities.len()
-                            && self.nb_multiplicities[i] > 0
-                            && i_candidates.is_empty()
+                        } else if self.nb_multiplicities[i] > 0 && i_candidates.is_empty()
                         {
                             let mut n: usize = 0;
                             for k in 1..i {
@@ -948,12 +1040,11 @@ impl IWalking {
                             }
                             let mut j = n;
                             while j < n + self.nb_multiplicities[i] as usize {
-                                if j < u_mult.len()
-                                    && ((up - u_mult[j]) * (uv[0] - u_mult[j])
-                                        + (vp - v_mult[j]) * (uv[1] - v_mult[j])
-                                        < 0.0
-                                        || (uv[0] - u_mult[j]).abs() < tolu
-                                            && (uv[1] - v_mult[j]).abs() < tolv)
+                                if (up - u_mult[j]) * (uv[0] - u_mult[j])
+                                    + (vp - v_mult[j]) * (uv[1] - v_mult[j])
+                                    < 0.0
+                                    || (uv[0] - u_mult[j]).abs() < tolu
+                                        && (uv[1] - v_mult[j]).abs() < tolv
                                 {
                                     *irang = i as i32;
                                     arrive = true;
@@ -1104,22 +1195,20 @@ impl IWalking {
                     || ((uv1 - utest).abs() < tolu && (uv2 - vtest).abs() < tolv)
                 {
                     *irang = i as i32;
-                } else if i < self.nb_multiplicities.len() && self.nb_multiplicities[i] > 0 {
+                } else if self.nb_multiplicities[i] > 0 {
                     let mut n: usize = 0;
                     for k in 1..i {
                         n += self.nb_multiplicities[k] as usize;
                     }
                     let mut j = n;
                     while j < n + self.nb_multiplicities[i] as usize {
-                        if j < u_mult.len() {
-                            let u_multj = u_mult[j] / deltau;
-                            let v_multj = v_mult[j] / deltav;
-                            if ((up - u_multj) * (uv1 - u_multj) + (vp - v_multj) * (uv2 - v_multj) < 0.0)
-                                || ((uv1 - u_multj).abs() < tolu && (uv2 - v_multj).abs() < tolv)
-                            {
-                                *irang = i as i32;
-                                break;
-                            }
+                        let u_multj = u_mult[j] / deltau;
+                        let v_multj = v_mult[j] / deltav;
+                        if ((up - u_multj) * (uv1 - u_multj) + (vp - v_multj) * (uv2 - v_multj) < 0.0)
+                            || ((uv1 - u_multj).abs() < tolu && (uv2 - v_multj).abs() < tolv)
+                        {
+                            *irang = i as i32;
+                            break;
                         }
                         j += 1;
                     }
@@ -1132,9 +1221,9 @@ impl IWalking {
     // =====================================================================
     // TestArretAjout (gxx L965-1031)
     // =====================================================================
-    fn test_arret_ajout(
+    fn test_arret_ajout<F: IWFunction>(
         &mut self,
-        func: &mut SurfFunction,
+        func: &mut F,
         uv: &mut [f64; 2],
         irang: &mut i32,
         psol: &mut PntOn2S,
@@ -1181,9 +1270,9 @@ impl IWalking {
     // =====================================================================
     // FillPntsInHoles (gxx L1033-1181)
     // =====================================================================
-    fn fill_pnts_in_holes(
+    fn fill_pnts_in_holes<F: IWFunction>(
         &mut self,
-        func: &mut SurfFunction,
+        func: &mut F,
         mut copy_seq_alone: Vec<i32>,
         pnts_in_holes: &mut Vec<InteriorPoint>,
     ) {
@@ -1342,12 +1431,12 @@ impl IWalking {
     // =====================================================================
     // TestArretCadre (gxx L1183-1397)
     // =====================================================================
-    fn test_arret_cadre(
+    fn test_arret_cadre<F: IWFunction>(
         &mut self,
         u_mult: &[f64],
         v_mult: &[f64],
         line: &mut IWLine,
-        func: &mut SurfFunction,
+        func: &mut F,
         uv: &mut [f64; 2],
         irang: &mut i32,
     ) {
@@ -1401,9 +1490,6 @@ impl IWalking {
                     } else if self.nb_multiplicities[i] > 0 {
                         let mut k = n;
                         while k < n + self.nb_multiplicities[i] as usize {
-                            if k >= u_mult.len() {
-                                break;
-                            }
                             a_vec1 = DVec2::new(up - u_mult[k], vp - v_mult[k]);
                             a_vec2 = DVec2::new(uc - u_mult[k], vc - v_mult[k]);
                             cut_vector_by_tolerances(&mut a_vec1, &self.tolerance);
@@ -1479,9 +1565,6 @@ impl IWalking {
                 } else if self.nb_multiplicities[i] > 0 {
                     let mut j = n;
                     while j < n + self.nb_multiplicities[i] as usize {
-                        if j >= u_mult.len() {
-                            break;
-                        }
                         a_vec1 = DVec2::new(up - u_mult[j], vp - v_mult[j]);
                         a_vec2 = DVec2::new(uv[0] - u_mult[j], uv[1] - v_mult[j]);
                         cut_vector_by_tolerances(&mut a_vec1, &self.tolerance);
@@ -1518,9 +1601,9 @@ impl IWalking {
     // =====================================================================
     // TestDeflection (gxx L2628-2899)
     // =====================================================================
-    fn test_deflection(
+    fn test_deflection<F: IWFunction>(
         &mut self,
-        func: &mut SurfFunction,
+        func: &mut F,
         finished: bool,
         uv: &[f64; 2],
         status_precedent: StatusDeflection,
@@ -1625,12 +1708,9 @@ impl IWalking {
             }
 
             cosi = corde.dot(func.direction_3d());
-            let dir3d_sq = func.direction_3d().length_squared();
-            cosi2 = if dir3d_sq > 0.0 && norme > 0.0 {
-                cosi * cosi / dir3d_sq / norme
-            } else {
-                0.0
-            };
+            // OCCT: Cosi*Cosi / sp.Direction3d().SquareMagnitude() / Norme —
+            // no zero guard (NaN comparisons fall through to the next test).
+            cosi2 = cosi * cosi / func.direction_3d().length_squared() / norme;
             if cosi2 < COS_REF_3D {
                 // angle 3d too great.
                 *step /= 2.0;
@@ -1669,15 +1749,11 @@ impl IWalking {
                 let d2dy = self.previous_d2d.y.abs();
 
                 if d2dx < self.tolerance[0] {
-                    *step = if d2dy != 0.0 { step_v / d2dy } else { *step };
+                    *step = step_v / d2dy;
                 } else if d2dy < self.tolerance[1] {
-                    *step = if d2dx != 0.0 { step_u / d2dx } else { *step };
+                    *step = step_u / d2dx;
                 } else {
-                    *step = if d2dx != 0.0 && d2dy != 0.0 {
-                        (step_u / d2dx).min(step_v / d2dy)
-                    } else {
-                        *step
-                    };
+                    *step = (step_u / d2dx).min(step_v / d2dy);
                 }
             } else {
                 let fleche_courante = (self.previous_d3d.normalize_or_zero()
@@ -1694,15 +1770,11 @@ impl IWalking {
                     let step_v = (1.5 * dv).abs().min(self.pas * (self.vm_max - self.vm));
 
                     if d2dx < self.tolerance[0] {
-                        *step = if d2dy != 0.0 { step_v / d2dy } else { *step };
+                        *step = step_v / d2dy;
                     } else if d2dy < self.tolerance[1] {
-                        *step = if d2dx != 0.0 { step_u / d2dx } else { *step };
+                        *step = step_u / d2dx;
                     } else {
-                        *step = if d2dx != 0.0 && d2dy != 0.0 {
-                            (step_u / d2dx).min(step_v / d2dy)
-                        } else {
-                            *step
-                        };
+                        *step = (step_u / d2dx).min(step_v / d2dy);
                     }
                 } else if fleche_courante > self.fleche * self.fleche {
                     // step too great.
@@ -1722,14 +1794,10 @@ impl IWalking {
                     let step_v = (1.5 * dv).abs().min(self.pas * (self.vm_max - self.vm));
 
                     if d2dx < self.tolerance[0] {
-                        if d2dy != 0.0 {
-                            *step = (*step).min(step_v / d2dy);
-                        }
+                        *step = (*step).min(step_v / d2dy);
                     } else if d2dy < self.tolerance[1] {
-                        if d2dx != 0.0 {
-                            *step = (*step).min(step_u / d2dx);
-                        }
-                    } else if d2dx != 0.0 && d2dy != 0.0 {
+                        *step = (*step).min(step_u / d2dx);
+                    } else {
                         *step = (*step).min((step_u / d2dx).min(step_v / d2dy));
                     }
                 }
@@ -1741,12 +1809,12 @@ impl IWalking {
     // =====================================================================
     // ComputeOpenLine (gxx L1414-1928)
     // =====================================================================
-    fn compute_open_line(
+    fn compute_open_line<F: IWFunction>(
         &mut self,
         u_mult: &[f64],
         v_mult: &[f64],
         pnts1: &[PathPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         rajout: &mut bool,
     ) {
         let mut i: usize = 1;
@@ -1849,17 +1917,9 @@ impl IWalking {
                 let d2dx = self.previous_d2d.x.abs();
                 let d2dy = self.previous_d2d.y.abs();
                 if d2dx < self.tolerance[0] {
-                    pas_c = if d2dy != 0.0 {
-                        self.pas * (self.vm_max - self.vm) / d2dy
-                    } else {
-                        self.pas * (self.vm_max - self.vm)
-                    };
+                    pas_c = self.pas * (self.vm_max - self.vm) / d2dy;
                 } else if d2dy < self.tolerance[1] {
-                    pas_c = if d2dx != 0.0 {
-                        self.pas * (self.um_max - self.um) / d2dx
-                    } else {
-                        self.pas * (self.um_max - self.um)
-                    };
+                    pas_c = self.pas * (self.um_max - self.um) / d2dx;
                 } else {
                     // OCCT: pas * min((UM-Um)/d2dx, (VM-Vm)/d2dy).
                     pas_c = self.pas
@@ -1919,7 +1979,11 @@ impl IWalking {
                                         self.test_arret_ajout(func, &mut uvap, &mut n, &mut psol);
                                     save_n = n; // OCCT: SaveN = N.
                                     if arret_ajout {
-                                        tgtend = self.lines[n as usize].is_tangent_at_end();
+                                        // OCCT gxx L1633: lines.Value(N) — N is a
+                                        // 1-based line rank (TestArretAjout keeps the
+                                        // seqAjout convention), so the Vec index is N-1.
+                                        tgtend =
+                                            self.lines[(n - 1) as usize].is_tangent_at_end();
                                         n = -n;
                                     }
                                 }
@@ -1973,11 +2037,19 @@ impl IWalking {
                                 arrive = false;
                                 arret_ajout = false;
                                 tgtend = false;
+                                // OCCT gxx L1689/1693:
+                                // previousPoint.ParametersOnS2(UVap(1), UVap(2))
+                                // — ParametersOnS1/S2 is a const getter, so the
+                                // previous point is left untouched and UVap is
+                                // reset to its stored parameters.
                                 if !self.reversed {
-                                    let (_, _) = self.previous_point.parameters_on_surface(false);
-                                    self.previous_point.set_value_uv(false, uvap[0], uvap[1]);
+                                    let (u, v) = self.previous_point.parameters_on_surface(false);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 } else {
-                                    self.previous_point.set_value_uv(true, uvap[0], uvap[1]);
+                                    let (u, v) = self.previous_point.parameters_on_surface(true);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 }
                             } else if arret_ajout || cadre {
                                 arrive = true;
@@ -2173,13 +2245,13 @@ impl IWalking {
     // =====================================================================
     // ComputeCloseLine (gxx L2007-2624)
     // =====================================================================
-    fn compute_close_line(
+    fn compute_close_line<F: IWFunction>(
         &mut self,
         u_mult: &[f64],
         v_mult: &[f64],
         pnts1: &[PathPoint],
         pnts2: &[InteriorPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         rajout: &mut bool,
     ) {
         let mut i: usize = 1;
@@ -2304,22 +2376,13 @@ impl IWalking {
                 let d2dx = self.previous_d2d.x.abs();
                 let d2dy = self.previous_d2d.y.abs();
                 if d2dx < self.tolerance[0] {
-                    pas_c = if d2dy != 0.0 {
-                        self.pas * (self.vm_max - self.vm) / d2dy
-                    } else {
-                        self.pas * (self.vm_max - self.vm)
-                    };
+                    pas_c = self.pas * (self.vm_max - self.vm) / d2dy;
                 } else if d2dy < self.tolerance[1] {
-                    pas_c = if d2dx != 0.0 {
-                        self.pas * (self.um_max - self.um) / d2dx
-                    } else {
-                        self.pas * (self.um_max - self.um)
-                    };
+                    pas_c = self.pas * (self.um_max - self.um) / d2dx;
                 } else {
                     pas_c = self.pas
-                        * (self.um_max - self.um)
-                            .min(self.vm_max - self.vm)
-                        / (d2dx.max(d2dy));
+                        * ((self.um_max - self.um) / d2dx)
+                            .min((self.vm_max - self.vm) / d2dy);
                 }
 
                 pas_sav = pas_c;
@@ -2436,11 +2499,18 @@ impl IWalking {
                             arrive = self.test_arret_passage_close(u_mult, v_mult, &uvap, i as i32, &mut ipass);
                             if arrive {
                                 // Reset proper parameter to test the arrow.
+                                // OCCT gxx L2292/2296: Psol.ParametersOnS2(UVap(1),
+                                // UVap(2)) — the getter copies the Psol (= the
+                                // first line point) parameters into UVap.
                                 psol = cl.value(1).clone();
                                 if !self.reversed {
-                                    psol.set_value_uv(false, uvap[0], uvap[1]);
+                                    let (u, v) = psol.parameters_on_surface(false);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 } else {
-                                    psol.set_value_uv(true, uvap[0], uvap[1]);
+                                    let (u, v) = psol.parameters_on_surface(true);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 }
                                 cadre = false;
                             } else {
@@ -2450,10 +2520,14 @@ impl IWalking {
                                     save_n = n; // OCCT: SaveN = N.
                                     if arret_ajout {
                                         if n > 0 {
-                                            tgtend = self.lines[n as usize].is_tangent_at_end();
+                                            // OCCT gxx L2311: lines.Value(N) — 1-based rank.
+                                            tgtend = self.lines[(n - 1) as usize]
+                                                .is_tangent_at_end();
                                             n = -n;
                                         } else {
-                                            tgtend = self.lines[(-n) as usize].is_tangent_at_begining();
+                                            // OCCT gxx L2316: lines.Value(-N) — 1-based rank.
+                                            tgtend = self.lines[((-n) - 1) as usize]
+                                                .is_tangent_at_begining();
                                         }
                                         arrive = self.wd2[i].etat == 12;
                                     }
@@ -2497,10 +2571,16 @@ impl IWalking {
                                 arrive = false;
                                 arret_ajout = false;
                                 tgtend = false;
+                                // OCCT gxx L2357/2361: previousPoint.ParametersOnS2(UVap(1),
+                                // UVap(2)) — const getter, previousPoint untouched.
                                 if !self.reversed {
-                                    self.previous_point.set_value_uv(false, uvap[0], uvap[1]);
+                                    let (u, v) = self.previous_point.parameters_on_surface(false);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 } else {
-                                    self.previous_point.set_value_uv(true, uvap[0], uvap[1]);
+                                    let (u, v) = self.previous_point.parameters_on_surface(true);
+                                    uvap[0] = u;
+                                    uvap[1] = v;
                                 }
                             } else if arret_ajout || cadre {
                                 if arrive {
@@ -2748,19 +2828,19 @@ impl IWalking {
     // =====================================================================
     // MakeWalkingPoint (gxx L2918-2951)
     // =====================================================================
-    fn make_walking_point(&mut self, case: i32, u: f64, v: f64, func: &mut SurfFunction, psol: &mut PntOn2S) {
+    fn make_walking_point<F: IWFunction>(&mut self, case: i32, u: f64, v: f64, func: &mut F, psol: &mut PntOn2S) {
         make_walking_point(self.reversed, case, u, v, func, psol);
     }
 
     // =====================================================================
     // OpenLine (gxx L2953-2998)
     // =====================================================================
-    fn open_line(
+    fn open_line<F: IWFunction>(
         &mut self,
         n: i32,
         psol: &PntOn2S,
         pnts1: &[PathPoint],
-        func: &mut SurfFunction,
+        func: &mut F,
         line: &mut IWLine,
     ) {
         let mut uv = [0.0f64; 2];
@@ -2858,13 +2938,13 @@ impl IWalking {
     // =====================================================================
     // IsPointOnLine(IntSurf_PntOn2S, Binf, Bsup, Solver, Func) (gxx L3059-3152)
     // =====================================================================
-    fn is_point_on_line(
+    fn is_point_on_line<F: IWFunction>(
         &mut self,
         p_on_2s: &PntOn2S,
         inf_bounds: &[f64; 2],
         sup_bounds: &[f64; 2],
         solver: &mut FunctionSetRoot,
-        func: &mut SurfFunction,
+        func: &mut F,
     ) -> bool {
         let eps = f64::EPSILON; // OCCT: Epsilon(1.) = ULP of 1.0.
         let a_p3d = p_on_2s.value();
@@ -2935,8 +3015,8 @@ impl IWalking {
 
             let a_vec_prms2 = solver.root();
 
-            let pa = func.p_surface().point_at(a_umin, a_vmin);
-            let pb = func.p_surface().point_at(a_vec_prms2[0], a_vec_prms2[1]);
+            let pa = func.surface_value(a_umin, a_vmin);
+            let pb = func.surface_value(a_vec_prms2[0], a_vec_prms2[1]);
             let a_sq_d1 = pb.distance_squared(a_p3d);
             let a_sq_d2 = pa.distance_squared(pb);
 
@@ -2949,12 +3029,12 @@ impl IWalking {
 }
 
 /// OCCT IntWalk_IWalking::MakeWalkingPoint (gxx L2918-2951) — free function.
-fn make_walking_point(
+fn make_walking_point<F: IWFunction>(
     reversed: bool,
     case: i32,
     u: f64,
     v: f64,
-    func: &mut SurfFunction,
+    func: &mut F,
     psol: &mut PntOn2S,
 ) {
     if case == 1 || case == 2 {
@@ -2967,7 +3047,7 @@ fn make_walking_point(
 }
 
 /// OCCT TestPassedSolutionWithNegativeState (gxx L1931-2002).
-fn test_passed_solution_with_negative_state(
+fn test_passed_solution_with_negative_state<F: IWFunction>(
     wd: &[WalkingData],
     u_mult: &[f64],
     v_mult: &[f64],
@@ -2975,7 +3055,7 @@ fn test_passed_solution_with_negative_state(
     prev_vp: f64,
     nb_multiplicities: &[i32],
     tolerance: &[f64; 2],
-    func: &mut SurfFunction,
+    func: &mut F,
     uv: &mut [f64; 2],
     irang: &mut i32,
 ) -> bool {
@@ -2998,18 +3078,17 @@ fn test_passed_solution_with_negative_state(
                     arrive = true;
                     uv[0] = utest;
                     uv[1] = vtest;
-                } else if i < nb_multiplicities.len() && nb_multiplicities[i] > 0 {
+                } else if nb_multiplicities[i] > 0 {
                     let mut n: usize = 0;
                     for k in 1..i {
                         n += nb_multiplicities[k] as usize;
                     }
                     let mut j = n;
                     while j < n + nb_multiplicities[i] as usize {
-                        if j < u_mult.len()
-                            && ((prev_up - u_mult[j]) * (uv[0] - u_mult[j])
-                                + (prev_vp - v_mult[j]) * (uv[1] - v_mult[j])
-                                < 0.0
-                                || (uv[0] - u_mult[j]).abs() < tolu && (uv[1] - v_mult[j]).abs() < tolv)
+                        if (prev_up - u_mult[j]) * (uv[0] - u_mult[j])
+                            + (prev_vp - v_mult[j]) * (uv[1] - v_mult[j])
+                            < 0.0
+                            || (uv[0] - u_mult[j]).abs() < tolu && (uv[1] - v_mult[j]).abs() < tolv
                         {
                             *irang = i as i32;
                             arrive = true;
@@ -3040,22 +3119,82 @@ fn cut_vector_by_tolerances(v: &mut DVec2, tolerance: &[f64; 2]) {
     }
 }
 
-/// rcad adaptation of Adaptor3d_HSurfaceTool::UResolution / VResolution
-/// (the corrected face domain).
-fn u_resolution(domain: [f64; 4], tol3d: f64) -> f64 {
-    let u_extent = (domain[1] - domain[0]).abs();
-    if u_extent.is_finite() && u_extent > 1e-12 {
-        tol3d.max(1e-9) / u_extent
-    } else {
-        rcad_kernel::precision::PCONFUSION
+/// OCCT GeomAdaptor_Surface::UResolution (cxx L1818-1892) over the rcad
+/// surface carrier — the per-type analytic parametric resolution the
+/// walking tolerance is derived from (gxx L244).
+pub fn surface3_u_resolution(s: &Surface3, r3d: f64) -> f64 {
+    let conf = rcad_kernel::precision::CONFUSION;
+    let arc_res = |r: f64| -> f64 {
+        if r <= 1. {
+            2. * r.asin()
+        } else {
+            2. * std::f64::consts::PI
+        }
+    };
+    match s {
+        Surface3::Torus(t) => {
+            let r = t.major_radius + t.minor_radius;
+            if r > conf {
+                arc_res(r3d / (2. * r))
+            } else {
+                0.
+            }
+        }
+        Surface3::Sphere(s2) => {
+            if s2.radius > conf {
+                arc_res(r3d / (2. * s2.radius))
+            } else {
+                0.
+            }
+        }
+        Surface3::Cylinder(c) => {
+            if c.radius > conf {
+                arc_res(r3d / (2. * c.radius))
+            } else {
+                0.
+            }
+        }
+        Surface3::Cone(c) => {
+            // VIso circle radii: r(V) = refR + V * tan(semi) — the bounded
+            // domain drives the ratio (GeomAdaptor uses the U iso radius).
+            let r = c.radius.max(1e-12);
+            if r > conf {
+                arc_res(r3d / r)
+            } else {
+                0.
+            }
+        }
+        Surface3::Plane(_) => r3d,
+        _ => r3d * 0.01,
     }
 }
 
-fn v_resolution(domain: [f64; 4], tol3d: f64) -> f64 {
-    let v_extent = (domain[3] - domain[2]).abs();
-    if v_extent.is_finite() && v_extent > 1e-12 {
-        tol3d.max(1e-9) / v_extent
-    } else {
-        rcad_kernel::precision::PCONFUSION
+/// OCCT GeomAdaptor_Surface::VResolution (cxx L1896-1959).
+pub fn surface3_v_resolution(s: &Surface3, r3d: f64) -> f64 {
+    let conf = rcad_kernel::precision::CONFUSION;
+    let arc_res = |r: f64| -> f64 {
+        if r <= 1. {
+            2. * r.asin()
+        } else {
+            2. * std::f64::consts::PI
+        }
+    };
+    match s {
+        Surface3::Torus(t) => {
+            if t.minor_radius > conf {
+                arc_res(r3d / (2. * t.minor_radius))
+            } else {
+                0.
+            }
+        }
+        Surface3::Sphere(s2) => {
+            if s2.radius > conf {
+                arc_res(r3d / (2. * s2.radius))
+            } else {
+                0.
+            }
+        }
+        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Plane(_) => r3d,
+        _ => r3d * 0.01,
     }
 }

@@ -34,7 +34,16 @@ pub fn make_planar_rect_brep(
     let v1 = brep.add_tvertex(c1);
     let v2 = brep.add_tvertex(c2);
     let v3 = brep.add_tvertex(c3);
-
+    // OCCT BRepLib_MakeEdge::Init ("this one really makes the job",
+    // BRepLib_MakeEdge.cxx): the first vertex is stored FORWARD, the second
+    // REVERSED (V1.Orientation(FORWARD); V2.Orientation(REVERSED); Add(E, V1);
+    // Add(E, V2)).  TopExp::Vertices then identifies Vfirst/Vlast BY
+    // ORIENTATION, and the WireExplorer/IntTools_FClass2d wire chain relies on
+    // every edge carrying one FORWARD and one REVERSED vertex.  A plane face
+    // built with both endpoints FORWARD degenerates the chain (edge_vertices_of
+    // falls back to v1==v2) and the FClass2d classifies face-interior points
+    // OUT, breaking EF/FF intersections of the face tool.
+    let rev = |sr: Shape| Shape { orientation: rcad_kernel::topods::Orientation::Reversed, ..sr };
     let line = |p0: DVec3, p1: DVec3| -> Curve3 {
         let d = p1 - p0;
         Curve3::Line(Line3 {
@@ -42,10 +51,10 @@ pub fn make_planar_rect_brep(
             direction: d.normalize(),
         })
     };
-    let e0 = brep.add_tedge(Some(line(c0, c1)), v0.clone(), v1.clone(), [0.0, (c1 - c0).length()]);
-    let e1 = brep.add_tedge(Some(line(c1, c2)), v1.clone(), v2.clone(), [0.0, (c2 - c1).length()]);
-    let e2 = brep.add_tedge(Some(line(c2, c3)), v2.clone(), v3.clone(), [0.0, (c3 - c2).length()]);
-    let e3 = brep.add_tedge(Some(line(c3, c0)), v3.clone(), v0.clone(), [0.0, (c0 - c3).length()]);
+    let e0 = brep.add_tedge(Some(line(c0, c1)), v0.clone(), rev(v1.clone()), [0.0, (c1 - c0).length()]);
+    let e1 = brep.add_tedge(Some(line(c1, c2)), v1.clone(), rev(v2.clone()), [0.0, (c2 - c1).length()]);
+    let e2 = brep.add_tedge(Some(line(c2, c3)), v2.clone(), rev(v3.clone()), [0.0, (c3 - c2).length()]);
+    let e3 = brep.add_tedge(Some(line(c3, c0)), v3.clone(), rev(v0.clone()), [0.0, (c0 - c3).length()]);
 
     let wire = brep.add_twire(vec![e0, e1, e2, e3]);
     brep.add_tface(Some(surface), wire, vec![], None, None, vec![], false);
@@ -143,6 +152,12 @@ fn make_polygon_wire(
         }
         vertices.push(brep.add_tvertex(*p));
     }
+    // OCCT BRepLib_MakeEdge::Init vertex orientation contract: the first
+    // endpoint is stored FORWARD, the second REVERSED (see make_planar_rect_brep
+    // for the rationale — TopExp::Vertices identifies Vfirst/Vlast by
+    // orientation, and FClass2d's wire chain needs one FORWARD + one REVERSED
+    // vertex per edge).
+    let rev = |sr: Shape| Shape { orientation: rcad_kernel::topods::Orientation::Reversed, ..sr };
     let mut edges = Vec::with_capacity(n);
     for i in 0..n {
         let j = (i + 1) % n;
@@ -156,7 +171,7 @@ fn make_polygon_wire(
         let e = brep.add_tedge(
             Some(Curve3::Line(Line3::new(points[i], delta / len))),
             vertices[i].clone(),
-            vertices[j].clone(),
+            rev(vertices[j].clone()),
             [0.0, len],
         );
         edges.push(e);

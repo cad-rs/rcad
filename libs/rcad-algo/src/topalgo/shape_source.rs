@@ -101,18 +101,32 @@ pub struct FaceShapeSource<'a> {
     face: &'a Shape,
     surf: Option<Surface3>,
     edges: Vec<Shape>,
+    /// The face wires (registered AFTER the edges so the flat edge indices
+    /// stay 1..n for the pre-existing consumers; the BRepClass_FaceExplorer
+    /// needs the wires to enumerate each wire's edges).
+    wires: Vec<Shape>,
     edge_index: HashMap<(u64, u32), usize>,
-    locations: &'a [glam::DAffine3],
+    /// The location table in the **DS convention** (slot 0 = identity, real
+    /// transforms from index 1) — `edge_pcurve_on_face` /
+    /// `compose_face_edge_pcurve_location` read it with that convention.
+    /// Callers holding a kernel-BRep table (no identity slot, transforms
+    /// start at index 0) must prepend the identity first.
+    locations: Vec<glam::DAffine3>,
 }
 
 impl<'a> FaceShapeSource<'a> {
     /// Build the adapter: index 0 is the face, the wire edges (outer + inner,
-    /// in traversal order) follow. `surf` is the face surface (already
-    /// location-transformed by the caller, matching the DS convention).
-    pub fn new(face: &'a Shape, surf: Surface3, locations: &'a [glam::DAffine3]) -> Self {
+    /// in traversal order) follow, then the wires themselves. `surf` is the
+    /// face surface (already location-transformed by the caller, matching
+    /// the DS convention). `locations` is the DS-convention table
+    /// (slot 0 = identity — the BOPDS tables and the SolidExplorer already
+    /// carry that shape; a kernel BRep table must be converted first).
+    pub fn new(face: &'a Shape, surf: Surface3, locations: &[glam::DAffine3]) -> Self {
         let mut edges: Vec<Shape> = Vec::new();
+        let mut wires: Vec<Shape> = Vec::new();
         if let TShape::Face(fd) = &*face.data {
             for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                wires.push(w.clone());
                 if let TShape::Wire(wd) = &*w.data {
                     for e in &wd.edges {
                         edges.push(e.clone());
@@ -124,25 +138,34 @@ impl<'a> FaceShapeSource<'a> {
         for (i, e) in edges.iter().enumerate() {
             edge_index.insert((e.ptr_id(), e.location), i + 1);
         }
+        for (i, w) in wires.iter().enumerate() {
+            edge_index.insert((w.ptr_id(), w.location), edges.len() + i + 1);
+        }
         FaceShapeSource {
             face,
             surf: Some(surf),
             edges,
+            wires,
             edge_index,
-            locations,
+            locations: locations.to_vec(),
         }
     }
 }
 
 impl ShapeSource for FaceShapeSource<'_> {
     fn nb_shapes(&self) -> usize {
-        1 + self.edges.len()
+        1 + self.edges.len() + self.wires.len()
     }
     fn shape_at(&self, i: usize) -> Shape {
         if i == 0 {
             self.face.clone()
-        } else {
+        } else if i <= self.edges.len() {
             self.edges.get(i - 1).cloned().unwrap_or_else(Shape::null)
+        } else {
+            self.wires
+                .get(i - self.edges.len() - 1)
+                .cloned()
+                .unwrap_or_else(Shape::null)
         }
     }
     fn shape_type(&self, i: usize) -> ShapeType {
@@ -184,6 +207,6 @@ impl ShapeSource for FaceShapeSource<'_> {
             .unwrap_or(glam::DAffine3::IDENTITY)
     }
     fn locations(&self) -> &[glam::DAffine3] {
-        self.locations
+        &self.locations
     }
 }

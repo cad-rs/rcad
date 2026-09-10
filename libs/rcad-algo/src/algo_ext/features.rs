@@ -131,10 +131,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<(topods::BRep, usi
         let d = p1 - p0;
         let len = d.length();
         let curve = if len > EPS {
-            Some(Curve3::Line(Line3 {
-                origin: p0,
-                direction: d / len,
-            }))
+            Some(Curve3::Line(Line3::new(p0, d / len)))
         } else {
             None
         };
@@ -221,10 +218,7 @@ fn build_prism_from_sections(
             ..end_sr
         };
         brep.add_tedge(
-            Some(Curve3::Line(Line3 {
-                origin: p0,
-                direction: dir,
-            })),
+            Some(Curve3::Line(Line3::new(p0, dir))),
             start_sr,
             end_sr,
             [0.0, len],
@@ -251,13 +245,12 @@ fn build_prism_from_sections(
         .map(|i| add_line_edge(&mut brep, bot[i].clone(), top[i].clone(), bot_sr[i].clone(), top_sr[i].clone()))
         .collect();
 
-    // Bottom cap (outward normal = -dir). The source face's natural wire keeps
-    // its stored order when the corrected normal (-dir) agrees with the
-    // profile winding normal, and is reversed otherwise. OCCT
-    // BRepPrimAPI_MakePrism keeps the source face wire as-is; the FClass2d
-    // loop orientation of the cap after a boolean split depends on it
-    // (bfuse_simple/E1: p2's top cap at z=0 must keep its natural CCW wire so
-    // its ring loop classifies as growth, not hole).
+    // Caps. OCCT BRepSweep_Translation: the bottom cap IS the source face —
+    // natural plane = the profile winding normal n_src, wire = profile edges
+    // FORWARD, shell reference FORWARD. The top cap is the located copy with
+    // the SAME natural plane and a REVERSED shell reference. The whole shell
+    // carries DirectSolid's orientation: REVERSED when sweep . n_src > 0
+    // (BRepSweep_Translation.cxx DirectSolid: myVec.DotCross(du, dv) > 0).
     let mut n_src = DVec3::ZERO;
     for i in 0..n {
         let d0 = bot[(i + 1) % n] - bot[i];
@@ -268,25 +261,9 @@ fn build_prism_from_sections(
             break;
         }
     }
-    let bot_wire: Vec<topods::Shape> = if n_src.length_squared() > 0.5 && (-dir).dot(n_src) < 0.0 {
-        // Corrected normal opposes the profile winding: reverse the wire.
-        (0..n)
-            .map(|i| {
-                let ei = bot_edges[n - 1 - i].clone();
-                topods::Shape {
-                    data: ei.data.clone(),
-                    index: ei.index,
-                    orientation: topods::Orientation::Reversed,
-                    location: 0,
-                }
-            })
-            .collect()
-    } else {
-        bot_edges.clone()
-    };
-    let bot_wire_sr = brep.add_twire(bot_wire);
-    brep.add_tface(
-        Some(Surface3::Plane(rcad_kernel::geom::Plane::new(bot[0], -dir))),
+    let bot_wire_sr = brep.add_twire(bot_edges.clone());
+    let bot_face = brep.add_tface(
+        Some(Surface3::Plane(rcad_kernel::geom::Plane::new(bot[0], n_src))),
         bot_wire_sr,
         vec![],
         None,
@@ -295,11 +272,13 @@ fn build_prism_from_sections(
         false,
     );
 
-    // Top cap (outward normal = +dir): forward traversal of top edges
+    // Top cap: the located copy of the source face (same TShape + Location,
+    // OCCT BRepSweep_Trsf::Process, BRepSweep_Trsf.cxx L83-90: newShape.Move(loc)
+    // — the wire is NOT reversed).
     let top_wire_edges: Vec<topods::Shape> = (0..n).map(|i| top_edges[i].clone()).collect();
     let top_wire_sr = brep.add_twire(top_wire_edges);
-    brep.add_tface(
-        Some(Surface3::Plane(rcad_kernel::geom::Plane::new(top[0], dir))),
+    let top_face = brep.add_tface(
+        Some(Surface3::Plane(rcad_kernel::geom::Plane::new(top[0], n_src))),
         top_wire_sr,
         vec![],
         None,
@@ -309,44 +288,48 @@ fn build_prism_from_sections(
     );
 
     // Lateral quad faces
+    let mut lateral_faces: Vec<topods::Shape> = Vec::with_capacity(n);
     for i in 0..n {
         let j = (i + 1) % n;
         let a = bot[i];
         let b = bot[j];
-        let c = top[j];
-        let face_normal = {
-            let ab = b - a;
-            let ac = c - a;
-            let nv = ac.cross(ab);
-            if nv.length_squared() > TOLERANCE_VEC_SQ_MIN {
-                nv.normalize()
-            } else {
-                dir.cross(ab).normalize()
-            }
-        };
-        // wire: bot[i]->bot[j] (fwd), bot[j]->top[j] (fwd), top[j]->top[i] (rev), top[i]->bot[i] (rev)
+        // OCCT BRepSweep_Translation::MakeEmptyFace plane (via
+        // GeomAdaptor_SurfaceOfLinearExtrusion::Plane): u = the profile edge
+        // direction, v = -sweep direction (the base edge at v=0, the extruded
+        // copy at v=-depth), origin at the profile edge start. Runner
+        // [DBG-WIRE] bfuse_simple D9: p2 f1 o=(-100,0,100) u=(0,1,0)
+        // v=(0,0,-1).
+        let u_dir = (b - a).normalize_or_zero();
+        let v_dir = -dir;
+        let n_nat = u_dir.cross(v_dir).normalize_or_zero();
+        // OCCT BRepSweep_NumLinearRegularSweep lateral wire (the intermediate
+        // newWire of BuildShell): [sweep@V1 F, sweep@V2 R, profile R, top F].
+        // The traversal is CCW in the natural frame (runner [DBG-WIRE] p2 f1 /
+        // p1 f0). The previous [bot F, vertV2 F, top R, vertV1 R] winding was
+        // the bitwise inverse, so the FClass2d loop verdict of every split
+        // lateral face inverted to is_hole and BuilderFace dropped the face
+        // image (bfuse_simple D9: p2's x=-100 / y=100 sides vanished from the
+        // draft solid, a_sfs 14 -> 12, empty result).
         let wire_edges = vec![
-            bot_edges[i].clone(),
-            vert_edges[j].clone(),
+            vert_edges[i].clone(),
             topods::Shape {
-                data: top_edges[i].data.clone(),
-                index: top_edges[i].index,
                 orientation: topods::Orientation::Reversed,
-                location: top_edges[i].location,
+                ..vert_edges[j].clone()
             },
             topods::Shape {
-                data: vert_edges[i].data.clone(),
-                index: vert_edges[i].index,
                 orientation: topods::Orientation::Reversed,
-                location: 0,
+                ..bot_edges[i].clone()
             },
+            top_edges[i].clone(),
         ];
         let wire_sr = brep.add_twire(wire_edges);
-        brep.add_tface(
-            Some(Surface3::Plane(rcad_kernel::geom::Plane::new(
-                a,
-                face_normal,
-            ))),
+        let lat_face = brep.add_tface(
+            Some(Surface3::Plane(rcad_kernel::geom::Plane {
+                origin: a,
+                normal: n_nat,
+                u_dir,
+                v_dir,
+            })),
             wire_sr,
             vec![],
             None,
@@ -354,22 +337,24 @@ fn build_prism_from_sections(
             vec![],
             false,
         );
+        lateral_faces.push(lat_face);
     }
 
-    // Build shell and solid
-    let face_refs: Vec<topods::Shape> = brep
-        .tshapes
-        .iter()
-        .enumerate()
-        .filter(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Face(_)))
-        .map(|(i, ts)| topods::Shape {
-            data: ts.clone(),
-            index: i,
-            orientation: topods::Orientation::Forward,
-            location: 0,
-        })
-        .collect();
-    let shell = brep.add_tshell(face_refs);
+    // Build shell and solid. OCCT BRepSweep_NumLinearRegularSweep::BuildShell:
+    // the source (bottom) face and the lateral faces are referenced FORWARD,
+    // the translated (top) face REVERSED; the whole shell carries DirectSolid's
+    // orientation (REVERSED when sweep . n_src > 0).
+    let mut face_refs: Vec<topods::Shape> = Vec::with_capacity(n + 2);
+    face_refs.push(bot_face.clone());
+    face_refs.extend(lateral_faces.iter().cloned());
+    face_refs.push(topods::Shape {
+        orientation: topods::Orientation::Reversed,
+        ..top_face.clone()
+    });
+    let mut shell = brep.add_tshell(face_refs);
+    if dir.dot(n_src) > 0.0 {
+        shell.orientation = topods::Orientation::Reversed;
+    }
     brep.add_tsolid(vec![shell]);
 
     Ok(brep)

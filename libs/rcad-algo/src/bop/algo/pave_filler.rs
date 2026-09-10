@@ -760,7 +760,145 @@ impl PaveFiller {
         self.perform_internal(the_range);
     }
 
+    /// TEMP probe: dump every face's surface frame and its edges' pcurves with
+    /// world endpoints (RCAD_SPLIT_DEBUG).
+    pub(crate) fn dump_face_pcurves(&self) {
+        if std::env::var("RCAD_SPLIT_DEBUG").is_ok() {
+            use crate::topalgo::shape_source::ShapeSource as _;
+            for fi in 0..self.ds.nb_shapes() {
+                if self.ds.shape_type(fi) != topods::ShapeType::Face {
+                    continue;
+                }
+                let f_shape = self.ds.shape_at(fi);
+                let (surf_desc, f_loc) = match &*f_shape.data {
+                    topods::TShape::Face(fd) => (
+                        match &fd.surface {
+                            Some(rcad_kernel::geom::Surface3::Plane(p)) => format!(
+                                "plane o=({:.2},{:.2},{:.2}) u=({:.2},{:.2},{:.2}) v=({:.2},{:.2},{:.2})",
+                                p.origin.x, p.origin.y, p.origin.z,
+                                p.u_dir.x, p.u_dir.y, p.u_dir.z,
+                                p.v_dir.x, p.v_dir.y, p.v_dir.z
+                            ),
+                            Some(_) => "other".into(),
+                            None => "none".into(),
+                        },
+                        f_shape.location,
+                    ),
+                    _ => continue,
+                };
+                eprintln!("[PC-F] f{} {} floc={}", fi, surf_desc, f_loc);
+                if let topods::TShape::Face(fd) = &*f_shape.data {
+                    for (wi, w) in std::iter::once(&fd.outer_wire)
+                        .chain(fd.inner_wires.iter())
+                        .enumerate()
+                    {
+                        let wori = if w.orientation == topods::Orientation::Reversed { "R" } else { "F" };
+                        let eds: Vec<String> = match &*w.data {
+                            topods::TShape::Wire(wd) => wd
+                                .edges
+                                .iter()
+                                .map(|e| {
+                                    format!(
+                                        "e{}:{}",
+                                        self.ds
+                                            .map_shape_index(e.ptr_id(), e.location)
+                                            .map(|x| x.to_string())
+                                            .unwrap_or_else(|| format!("{:x}", e.ptr_id() % 100000)),
+                                        if e.orientation == topods::Orientation::Reversed { "R" } else { "F" }
+                                    )
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+                        eprintln!("[PC-F]   wire{} ori={} edges=[{}]", wi, wori, eds.join(","));
+                    }
+                }
+                for ssi in self.ds.sub_shapes(fi) {
+                    if self.ds.shape_type(*ssi) != topods::ShapeType::Edge {
+                        continue;
+                    }
+                    let e_shape = self.ds.shape_at(*ssi);
+                    let pc = crate::topalgo::shape_source::edge_pcurve_on_face(
+                        &self.ds,
+                        *ssi,
+                        fi,
+                        topods::Orientation::Forward,
+                    );
+                    let pc_desc = match &pc {
+                        Some((rcad_kernel::geom::Curve2d::Line(l), t1, t2)) => format!(
+                            "L o=({:.2},{:.2}) d=({:.2},{:.2}) t=[{:.2},{:.2}]",
+                            l.origin.x, l.origin.y, l.direction.x, l.direction.y, t1, t2
+                        ),
+                        Some((rcad_kernel::geom::Curve2d::Trimmed(t), t1, t2)) => {
+                            match &*t.curve {
+                                rcad_kernel::geom::Curve2d::Line(l) => format!(
+                                    "TL o=({:.2},{:.2}) d=({:.2},{:.2}) t=[{:.2},{:.2}]",
+                                    l.origin.x, l.origin.y, l.direction.x, l.direction.y, t1, t2
+                                ),
+                                _ => format!("TO t=[{:.2},{:.2}]", t1, t2),
+                            }
+                        }
+                        Some(_) => format!(
+                            "O t=[{:.2},{:.2}]",
+                            pc.as_ref().map(|p| p.1).unwrap_or(0.0),
+                            pc.as_ref().map(|p| p.2).unwrap_or(0.0)
+                        ),
+                        None => "none".into(),
+                    };
+                    let mut world_pts: Vec<String> = Vec::new();
+                    if let topods::TShape::Edge(ed) = &*e_shape.data {
+                        for v in [&ed.first, &ed.last] {
+                            if let topods::TShape::Vertex(vd) = &*v.data {
+                                let mut wp = vd.point;
+                                let loc = self.ds.get_location(v.location);
+                                if loc != glam::DAffine3::IDENTITY {
+                                    wp = loc.transform_point3(wp);
+                                }
+                                world_pts.push(format!("({:.2},{:.2},{:.2})", wp.x, wp.y, wp.z));
+                            }
+                        }
+                    }
+                    eprintln!(
+                        "[PC-F]   e{} pcurve={} vworld=[{}]",
+                        ssi,
+                        pc_desc,
+                        world_pts.join(",")
+                    );
+                }
+            }
+        }
+    }
+
     /// OCCT BOPAlgo_PaveFiller::PerformInternal (PaveFiller.cxx L235-379).
+
+    /// TEMP probe: TShape-level tolerance timeline for the hotspot vertices
+    /// (i6: 39=(4,3,0), 42=(4,3,2), 68=(3,3,1), 75=(5,3,1)) and every
+    /// edge/face whose tolerance exceeds 0.01.
+    pub(crate) fn dump_tol_timeline(&self, stage: &str) {
+        if std::env::var("RCAD_TOL_DEBUG").is_err() { return; }
+        const KEY: [usize; 4] = [39, 42, 68, 75];
+        let mut vt: Vec<String> = Vec::new();
+        for &k in &KEY {
+            if let Some(si) = self.ds.shapes.get(k) {
+                if let Some(v) = si.shape.as_vertex() {
+                    vt.push(format!("v{}={:.6}", k, v.tolerance));
+                }
+            }
+        }
+        let mut hot: Vec<String> = Vec::new();
+        for (i, si) in self.ds.shapes.iter().enumerate() {
+            let t = match &*si.shape.data {
+                rcad_kernel::topods::TShape::Edge(e) => e.tolerance,
+                rcad_kernel::topods::TShape::Face(f) => f.tolerance,
+                _ => continue,
+            };
+            if t > 0.01 {
+                hot.push(format!("{}:{}={:.6}", si.shape_type as i32, i, t));
+            }
+        }
+        eprintln!("[TOLT] {} vt=[{}] hot=[{}]", stage, vt.join(","), hot.join(","));
+    }
+
     pub(crate) fn perform_internal(&mut self, the_range: &ProgressScope) {
         if the_range.user_break() { return; }
         // OCCT L239-244: Message_ProgressScope aPS(theRange, "Performing intersection of shapes", 100)
@@ -775,9 +913,11 @@ impl PaveFiller {
         self.prepare(&a_ps.sub_scope("Prepare", 10));
         if self.has_errors() { return; }
         if self.check_stop("after_Prepare") { return; }
+        self.dump_face_pcurves();
 
         // OCCT: PerformVV(aPS.Next(...))
         self.perform_vv(&a_ps.sub_scope("Perform VV", 8));
+        self.dump_tol_timeline("after_Perform VV");
         if self.has_errors() { return; }
         if self.check_stop("after_PerformVV") { return; }
 
@@ -790,6 +930,7 @@ impl PaveFiller {
 
         // OCCT: PerformEE(aPS.Next(...))
         self.perform_ee(&a_ps.sub_scope("Perform EE", 10));
+        self.ds.dump_cb0("after_perform_ee");
         if self.has_errors() { return; }
         if self.check_stop("after_PerformEE") { return; }
 
@@ -804,6 +945,7 @@ impl PaveFiller {
 
         // OCCT: PerformEF(aPS.Next(...))
         self.perform_ef(&a_ps.sub_scope("Perform EF", 10));
+        self.dump_tol_timeline("after_Perform EF");
         if self.has_errors() { return; }
         if self.check_stop("after_PerformEF") { return; }
 
@@ -812,11 +954,13 @@ impl PaveFiller {
 
         // OCCT: RepeatIntersection(aPS.Next(...))
         self.repeat_intersection(&a_ps.sub_scope("Repeat intersection", 5));
+        self.dump_tol_timeline("after_Repeat intersection");
         if self.has_errors() { return; }
         if self.check_stop("after_RepeatIntersection") { return; }
 
         // OCCT: ForceInterfEE(aPS.Next(...))
         self.force_interf_ee(&a_ps.sub_scope("Force EE", 3));
+        self.ds.dump_cb0("after_force_interf_ee");
         if self.has_errors() { return; }
         if self.check_stop("after_ForceInterfEE") { return; }
 
@@ -827,6 +971,7 @@ impl PaveFiller {
 
         // OCCT: PerformFF(aPS.Next(...))
         self.perform_ff(&a_ps.sub_scope("Perform FF", 12));
+        self.dump_tol_timeline("after_Perform FF");
         if self.has_errors() { return; }
         if self.check_stop("after_PerformFF") { return; }
 
@@ -835,6 +980,7 @@ impl PaveFiller {
 
         // OCCT: MakeSplitEdges(aPS.Next(...))
         self.make_split_edges(&a_ps.sub_scope("Make split edges", 6));
+        self.ds.dump_cb0("after_make_split_edges");
         if self.has_errors() { return; }
         if self.check_stop("after_MakeSplitEdges") { return; }
 
@@ -1782,12 +1928,6 @@ impl PaveFiller {
         } else {
             return;
         };
-        if std::env::var("RCAD_EF_DEBUG").is_ok() {
-            eprintln!("[EF-DBG] n_ef_pairs={}", pairs.len());
-            for (i, (a, b)) in pairs.iter().enumerate() {
-                eprintln!("[EF-DBG]   pair[{}] = ({}, {})", i, a, b);
-            }
-        }
         if pairs.is_empty() {
             return;
         }
@@ -1853,10 +1993,6 @@ impl PaveFiller {
                 // OCCT: aMPBF.Contains(aPBR) 鈥?the set holds PB handles, so a
                 // direct pointer-id membership test matches exactly.
                 let is_on_face = a_mpbf.contains(&pbr_ptr);
-                if std::env::var("RCAD_EF_DEBUG").is_ok() {
-                    eprintln!("[EF-DBG] cand e={} f={} onFace={} n_pb={}",
-                        n_e, n_f, is_on_face, a_lpb.len());
-                }
                 if is_on_face {
                     continue;
                 }
@@ -1959,8 +2095,20 @@ impl PaveFiller {
                     // OCCT L553-555: CheckFacePaves(nV[0]/nV[1], aMIFOn, aMIFIn)
                     let b_v0 = self.check_face_paves(n_v1, &a_mif_on, &a_mif_in);
                     let b_v1_ = self.check_face_paves(n_v2, &a_mif_on, &a_mif_in);
-                    if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                        eprintln!("[EF-DBG] EDGE-EF e={} f={} r=[{:.4},{:.4}] bV=({},{}) v1={} v2={}", cand.n_e, cand.n_f, r1_first, r1_last, b_v0, b_v1_, n_v1, n_v2);
+                    if std::env::var("RCAD_EF_DEBUG").is_ok() {
+                        let e_pts = self.ds.edge_curve(cand.n_e).map(|c| {
+                            let p0 = c.point_at(r1_first);
+                            let p1 = c.point_at(r1_last);
+                            format!("({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})", p0.x, p0.y, p0.z, p1.x, p1.y, p1.z)
+                        }).unwrap_or_else(|| "?".into());
+                        let b = &self.ds.shapes[cand.n_f].bbox;
+                        let (mn, mx) = (b.corner_min().unwrap_or_default(), b.corner_max().unwrap_or_default());
+                        let f_bb = format!("({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})", mn.x, mn.y, mn.z, mx.x, mx.y, mx.z);
+                        eprintln!(
+                            "[EF-EDGE] e={} f={} r=({:.4},{:.4}) n_v1={} n_v2={} b_v0={} b_v1={} on={} in={} epts={} fbb={}",
+                            cand.n_e, cand.n_f, r1_first, r1_last, n_v1, n_v2, b_v0, b_v1_,
+                            a_mif_on.len(), a_mif_in.len(), e_pts, f_bb
+                        );
                     }
                     if !b_v0 || !b_v1_ {
                         // OCCT L556-558: myDS->AddInterf(nE, nF); break — the
@@ -2070,20 +2218,15 @@ impl PaveFiller {
                     proj.perform(a_pnew);
                     let a_dist = proj.lower_distance();
                     let (a_u, a_v) = proj.lower_distance_parameters();
-                    let in_face = proj.nb_points() > 0
+                    let nbp = proj.nb_points();
+                    let in_face = nbp > 0
                         && a_dist < a_tol_vnew
                         && self.my_context.is_point_in_face(&self.ds, cand.n_f, glam::DVec2::new(a_u, a_v));
-                    if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                        eprintln!("[EF-DBG] VERTEX case e={} f={} t={:.4} uv=({:.4},{:.4}) dist={:.3e} inFace={} splittable={}", cand.n_e, cand.n_f, a_t, a_u, a_v, a_dist, in_face, b_is_pb_splittable);
-                    }
                     if !in_face {
                         continue;
                     }
                     // OCCT L528-542: add InterfEF
                     a_mi_efc.add(cand.n_f);
-                    if std::env::var("RCAD_EE_DEBUG").is_ok() {
-                        eprintln!("[EF-DBG] VERTEX-EF e={} f={} t={:.4}", cand.n_e, cand.n_f, a_t);
-                    }
                     let idx_interf = self.ds.interf_ef.len();
                     self.ds.interf_ef.push(InterferenceEF {
                         edge: cand.n_e, face: cand.n_f,
@@ -2106,13 +2249,6 @@ impl PaveFiller {
         // OCCT BOPAlgo_Tools::PerformCommonBlocks (2nd overload, L191-244):
         //   one CommonBlock per section PaveBlock, reusing the existing CB if the
         //   PB already belongs to one; append the PB's face list.
-        if std::env::var("RCAD_EF_DEBUG").is_ok() {
-            eprintln!("[EF-DBG] end perform_ef: n_interf_ef={} n_mvcpb={}",
-                self.ds.interf_ef.len(), a_mvcpb.len());
-            for (k, iv) in self.ds.interf_ef.iter().enumerate() {
-                eprintln!("[EF-DBG]   ef[{}] e={} f={} nv={}", k, iv.edge, iv.face, iv.new_vertex);
-            }
-        }
         if !a_mpbli.is_empty() {
             let pending: Vec<(SharedPB, Vec<usize>)> = a_mpbli.values().cloned().collect();
             for (pb, faces) in &pending {
@@ -2129,19 +2265,19 @@ impl PaveFiller {
                 // OCCT L245-246: ComputeToleranceOfCB + aCB->SetTolerance
                 let a_tol_cb = Self::compute_tolerance_of_cb(cb_idx, &self.ds);
                 self.ds.common_blocks[cb_idx].set_tolerance(a_tol_cb);
+                if std::env::var("RCAD_EF_DEBUG").is_ok() {
+                    let pb1 = self.ds.common_blocks[cb_idx].pave_block1()
+                        .map(|p| std::sync::Arc::as_ptr(&p.0) as u64).unwrap_or(0);
+                    eprintln!("[EF-CB] pb={} faces=[{}] cb={} reused={} pb1={}",
+                        std::sync::Arc::as_ptr(&pb.0) as u64,
+                        faces.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(","),
+                        cb_idx, existing.is_some(), pb1);
+                }
             }
         }
         self.update_vertices_of_cb();
         if !a_mvcpb.is_empty() {
-            if std::env::var("RCAD_EF_DEBUG").is_ok() {
-                eprintln!("[EF-DBG] perform_new_vertices n_cpb={}", a_mvcpb.len());
-            }
             self.perform_new_vertices(&a_mvcpb, false);
-            if std::env::var("RCAD_EF_DEBUG").is_ok() {
-                for (k, iv) in self.ds.interf_ef.iter().enumerate() {
-                    eprintln!("[EF-DBG]   post-nv ef[{}] e={} f={} nv={}", k, iv.edge, iv.face, iv.new_vertex);
-                }
-            }
             if self.has_errors() {
                 return;
             }
@@ -2151,20 +2287,6 @@ impl PaveFiller {
         // bucket iteration order.
         for n_f in a_mi_efc.iter_keys() {
             self.ds.update_face_info_in(n_f);
-        }
-        if std::env::var("RCAD_EE_DEBUG").is_ok() {
-            for (i, si) in self.ds.shapes.iter().enumerate() {
-                if si.shape_type == ShapeType::Edge {
-                    let pbs = self.ds.edge_pave_blocks(i);
-                    if !pbs.is_empty() {
-                        let desc: Vec<String> = pbs.iter().map(|pb| {
-                            let r = pb.0.read().unwrap();
-                            format!("[{:.3},{:.3}]", r.range().0, r.range().1)
-                        }).collect();
-                        eprintln!("[EF-DBG] edge {} deg={} flag={} pbs={} {}", i, self.ds.is_edge_degenerated(i), self.ds.shapes[i].has_flag(), pbs.len(), desc.join(" "));
-                    }
-                }
-            }
         }
     }
 
@@ -2457,6 +2579,10 @@ impl PaveFiller {
                                     a_f_shifted2 = translate_surface(&a_f_shifted2, a_p1 - a_p2);
                                 }
                                 a_shift_value = a_shift_dist;
+                                if std::env::var("RCAD_MB_DEBUG").is_ok() {
+                                    eprintln!("[SHIFT] e1={} closed1={} e2={} closed2={} vtx={} pt=({:.3},{:.3},{:.3}) shift={:.6}",
+                                        n_e1, an_is_closed1, n_e2, an_is_closed2, a_vertex_index, a_vertex_point.x, a_vertex_point.y, a_vertex_point.z, a_shift_dist);
+                                }
                                 break 'outer;
                             }
                         }
@@ -2789,7 +2915,9 @@ impl PaveFiller {
             let mut to_rem: Vec<u64> = Vec::new();
             for &pb in &pb_in { if pb_on.contains(&pb) { to_rem.push(pb); } }
             let fi = self.ds.change_face_info(i);
-            for &r in &to_rem { fi.pave_blocks_in.swap_remove(&r); }
+            // OCCT RemoveFromIndex keeps the order of the remaining members —
+            // use shift_remove (order-preserving), not swap_remove.
+            for &r in &to_rem { fi.pave_blocks_in.shift_remove(&r); }
         }
     }
 
@@ -2812,7 +2940,9 @@ impl PaveFiller {
             }
             if !to_rem.is_empty() {
                 let fi = self.ds.change_face_info(idx);
-                for &r in &to_rem { fi.pave_blocks_on.swap_remove(&r); }
+                // OCCT RemoveFromIndex keeps the order of the remaining members —
+                // use shift_remove (order-preserving), not swap_remove.
+                for &r in &to_rem { fi.pave_blocks_on.shift_remove(&r); }
             }
         }
     }
@@ -3498,11 +3628,20 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             }
         }
         // OCCT L530-560: Make Common Blocks
-        // aMCBNewPB is NCollection_IndexedDataMap 鈥?iterate in insertion order.
-        for (_cb_key, pbs) in &a_mcb_new_pb {
-            if pbs.len() < 2 { continue; }
+        // aMCBNewPB is NCollection_IndexedDataMap — iterate in insertion order.
+        // OCCT UpdateCommonBlock (BOPDS_DS.cxx L611-653) creates a new common
+        // block for EVERY (n1,n2) pair group of the split blocks — there is no
+        // minimum-member-count gate; a single-member group still gets a fresh
+        // CommonBlock (SetPaveBlocks + SetCommonBlock), replacing the old one
+        // for those members.
+        for (cb_key, pbs) in &a_mcb_new_pb {
+            // OCCT L643-645: aCommonBlock->SetPaveBlocks(aLPBxN);
+            // aCommonBlock->SetFaces(theCommonBlock->Faces()) — the new
+            // common block keeps the faces of the old one.
+            let old_faces: Vec<usize> = self.ds.common_blocks.get(*cb_key)
+                .map(|cb| cb.faces().to_vec()).unwrap_or_default();
             // OCCT L566-571: aMInds is NCollection_IndexedDataMap<BOPDS_Pair,
-            // List<PB>> 鈥?insertion order of the aLPBN traversal.
+            // List<PB>> — insertion order of the aLPBN traversal.
             let mut a_minds: indexmap::IndexMap<(usize, usize), Vec<SharedPB>> = indexmap::IndexMap::new();
             for pb in pbs {
                 let (v1, v2) = { let r = pb.0.read().unwrap(); r.indices() };
@@ -3510,8 +3649,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 a_minds.entry(key).or_default().push(pb.clone());
             }
             for (_pair, group) in &a_minds {
-                if group.len() < 2 { continue; }
-                self.ds.add_common_block(group);
+                let new_cb = self.ds.add_common_block(group);
+                self.ds.common_blocks[new_cb].set_faces(old_faces.clone());
             }
         }
         // Init PBs for new SD vertices 鈥?OCCT L560: aMVerticesToInitPB is a
@@ -4765,6 +4904,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     if !self.my_non_destructive || cb_f.is_none() {
                         let mut it_found = false;
                         let mut found_e = usize::MAX;
+                        let mut found_pb: Option<SharedPB> = None;
                         if let Some(cb_idx) = cb_f {
                             // OCCT L436-445: find the edge with these vertices in the
                             //   common block whose PaveBlocks extent == 1
@@ -4777,16 +4917,22 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                 if self.ds.pave_blocks(e).len() == 1 {
                                     it_found = true;
                                     found_e = e;
+                                    found_pb = Some(pbx.clone());
                                     break;
                                 }
                             }
                         }
                         if it_found {
-                            // OCCT L446-455: the pave block is found 鈥?no split.
+                            // OCCT L446-455: the pave block is found — no split.
                             //   aCB->SetRealPaveBlock(it.Value()); aCB->SetEdge(nE);
                             //   ComputeToleranceOfCB + UpdateEdgeTolerance.
                             b_to_split = false;
                             if let Some(cb_idx) = cb_f {
+                                // OCCT L450: the found member becomes the CB's
+                                // real pave block (moved to the list front).
+                                if let Some(found) = found_pb {
+                                    self.ds.common_blocks[cb_idx].set_real_pave_block(&found);
+                                }
                                 self.ds.common_blocks[cb_idx].set_edge(found_e);
                                 let a_tol =
                                     Self::compute_tolerance_of_cb(cb_idx, &self.ds);
@@ -4911,7 +5057,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             };
             let Some(ref surf) = surf else { continue; };
 
-            // OCCT L619-631: PaveBlocksIn 鈥?pcurve by projection.
+            // OCCT L619-631: PaveBlocksIn — pcurve by projection.
             for &pb_ptr in fi.pave_blocks_in.iter() {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
                     let n_e = pb.0.read().unwrap().edge;
@@ -4919,7 +5065,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     self.build_pcurve_mpc(n_e, n_f1, surf, None);
                 }
             }
-            // OCCT L634-699: PaveBlocksOn 鈥?skip if pcurve exists; a CommonBlock
+            // OCCT L634-699: PaveBlocksOn — skip if pcurve exists; a CommonBlock
             // provides the pcurve-copy source (paired edge with a pcurve).
             for &pb_ptr in fi.pave_blocks_on.iter() {
                 if let Some(pb) = self.ds.pb_from_ptr(pb_ptr) {
@@ -4948,7 +5094,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         // OCCT L744-752: the section-edge MPC has SetFlag(true);
                         // in Perform, when the edge already has a pcurve on the
                         // face (attached by MakePCurve at section creation,
-                        // BOPAlgo_PaveFiller_6.cxx L1066-1072) it is kept 鈥?only
+                        // BOPAlgo_PaveFiller_6.cxx L1066-1072) it is kept — only
                         // UpdateVertices is called. Never overwrite it with a
                         // projection. Edges without a pcurve (null FirstCurve2d)
                         // are projected here, matching the MPC null-branch.
@@ -5004,11 +5150,13 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     };
                     eprintln!("[PC] MPC-copy e={} f={} src={} key={:?} {}", n_e, n_f, src_e, fkey, pd);
                 }
-                self.ds.mutate_shape_data(n_e, |ts| {
-                    if let rcad_kernel::topods::TShape::Edge(ed) = ts {
-                        ed.pcurves.insert(fkey, (pc, range[0], range[1]));
-                    }
-                });
+                // OCCT BOPAlgo_MPC::Perform (PaveFiller_7.cxx L239-249):
+                // AttachExistingPCurve — the pcurve is attached with
+                // BRep_Builder::UpdateEdge semantics (the edge's representation
+                // list gains the CurveOnSurface row, mirroring the
+                // update_edge_pcurve_shared method).
+                self.ds
+                    .update_edge_pcurve_shared(n_e, fkey, pc, range[0], range[1], 0.0);
                 // OCCT AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx L43-161):
                 // when the source edge is a seam on this face (IsClosed(aE2, aF)),
                 // UpdateClosedPCurve (L163-299) builds the second pcurve by
@@ -5018,20 +5166,37 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 // for the first face, and the WireSplitter's orientation-dependent
                 // u=2*PI/u=0 selection is lost on the second face.
                 if let Some((pc1, pc2)) = Self::closed_surface_pcurves(&self.ds, src_e, n_e, n_f) {
+                    // OCCT BRep_Builder::UpdateEdge(E, C1, C2, F)
+                    // (BRep_Builder.cxx L255-300): the two-curve overload first
+                    // REMOVES the existing representation on the same surface
+                    // (the single pcurve row added above — UpdateEdge(E, C, F)
+                    // on the temporary edge, copied by Transfert) and then
+                    // appends the CurveOnClosedSurface.  BRep_Tool::
+                    // CurveOnSurface of a FORWARD edge on the CS pair returns
+                    // PCurve1; rcad's pcurves map is the index for the same
+                    // observable value, so the row is re-pointed at PCurve1
+                    // (keeping it at the far-side attached pcurve would shadow
+                    // the pair and pin the FORWARD edge to u=2*PI).
                     self.ds.mutate_shape_data(n_e, |ts| {
                         if let rcad_kernel::topods::TShape::Edge(ed) = ts {
                             if !ed.representations.iter().any(|r| matches!(
                                 r,
                                 rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } if *face == fkey
                             )) {
+                                ed.representations
+                                    .retain(|r| match r {
+                                        rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. } => *face != fkey,
+                                        _ => true,
+                                    });
                                 ed.representations.push(
                                     rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
                                         face: fkey,
-                                        pcurve1: pc1,
+                                        pcurve1: pc1.clone(),
                                         pcurve2: pc2,
                                         range,
                                     },
                                 );
+                                ed.pcurves.insert(fkey, (pc1, range[0], range[1]));
                             }
                         }
                     });
@@ -5040,10 +5205,11 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 return;
             }
         }
-        // OCCT L248: BuildPCurveForEdgeOnFace 鈥?projection.
+        // OCCT L248: BuildPCurveForEdgeOnFace — projection.
         if let Some(curve) = self.ds.edge_curve(n_e) {
             let range = self.ds.edge_range(n_e);
-            if let Some(pc) = Self::pcurve_2d(&curve, surf, range) {
+            let uv = self.ds.face_actual_uv_bounds(n_f);
+            if let Some(pc) = Self::pcurve_2d(&curve, surf, range, uv) {
                 if std::env::var("RCAD_PCTRACE").is_ok() {
                     let pd = match &pc {
                         rcad_kernel::geom::Curve2d::Line(l) => format!("L o=({:.3},{:.3}) d=({:.3},{:.3})", l.origin.x, l.origin.y, l.direction.x, l.direction.y),
@@ -5063,11 +5229,12 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     crate::bop::algo::pave_filler_make_blocks::adjust_pcurve_on_face(
                         &pc, range[0], range[1], surf, uv, n_f, &self.ds)
                 };
-                self.ds.mutate_shape_data(n_e, |ts| {
-                    if let rcad_kernel::topods::TShape::Edge(ed) = ts {
-                        ed.pcurves.insert(fkey, (pc, range[0], range[1]));
-                    }
-                });
+                // OCCT BOPAlgo_MPC::Perform (PaveFiller_7.cxx L248): the
+                // projected pcurve is attached with BRep_Builder::UpdateEdge
+                // semantics — the edge's CurveRepresentation list gains the
+                // CurveOnSurface row (update_edge_pcurve_shared).
+                self.ds
+                    .update_edge_pcurve_shared(n_e, fkey, pc, range[0], range[1], 0.0);
                 self.ds.remap_shape_idx(n_e);
             }
         }
@@ -5278,7 +5445,9 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         n_f: usize,
     ) -> Option<(rcad_kernel::geom::Curve2d, rcad_kernel::geom::Curve2d)> {
         use rcad_kernel::geom::Curve2dEval;
-        // The source edge's CS rep on this face gives the two seam pcurves.
+        // As aEold is closed on aF, it is possible to retrieve the two
+        // p-curves: aC2DS1 — first p-curve, aC2DS2 — second p-curve
+        // (the source edge's CS rep on this face).
         let (fid, floc) = ds.face_key(n_f)?;
         let eloc = ds.shape(src_e).location;
         let fkey = (
@@ -5294,26 +5463,60 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
             })?,
             _ => return None,
         };
-        // Translation vector between the two source pcurves at mid-range.
-        let src_range = ds.edge_range(src_e);
-        let a_ts = (src_range[0] + src_range[1]) * 0.5;
-        let a_p1 = Curve2dEval::point_at(&pc1s, a_ts);
-        let a_p2 = Curve2dEval::point_at(&pc2s, a_ts);
-        let a_v = a_p2 - a_p1;
-        if a_v.length_squared() < rcad_kernel::core::precision::PCONFUSION {
-            return None;
-        }
-        // The destination's attached pcurve is the u=2*PI instance; translate
-        // it by the seam vector to get the u=0 twin.
+        // aTol = BRep_Tool::Tolerance(aEnew).
+        let a_tol = ds.edge_tolerance(dst_e);
+        // aC2DoldCT is the alone p-curve of aEnew that we've built.
         let (dst_pc, _, _) = Self::edge_pcurve_of(ds, dst_e, n_f)?;
-        let dst_pc2 = rcad_kernel::geom::translate_curve2d(&dst_pc, a_v);
-        // OCCT L275-291: order the two pcurves by the tangent direction —
-        // aV2D * aV2DS1 < 0 swaps (bRevOrder). The destination pcurve follows
-        // the source's first pcurve direction.
-        let dst_range = ds.edge_range(dst_e);
-        let a_t = (dst_range[0] + dst_range[1]) * 0.5;
-        let a_v2d = Curve2dEval::derivative_at(&dst_pc, a_t);
+        // aTS = IntermediatePoint(aTS1, aTS2) on the source edge's range.
+        let src_range = ds.edge_range(src_e);
+        let a_ts = crate::bop::int_tools::face_make_curve::intermediate_point(
+            src_range[0], src_range[1],
+        );
+        let a_p2ds1 = Curve2dEval::point_at(&pc1s, a_ts);
         let a_v2ds1 = Curve2dEval::derivative_at(&pc1s, a_ts);
+        let a_p2ds2 = Curve2dEval::point_at(&pc2s, a_ts);
+        // aV2DS12 — translation vector between the two source pcurves;
+        // Direction of closeness: U-closed or V-closed
+        // (aD2DS12 * DX2d, bUClosed flips when the dot is below aTol).
+        let a_v2ds12 = a_p2ds2 - a_p2ds1;
+        let a_sc_pr = {
+            let l = a_v2ds12.length();
+            if l > 0.0 { (a_v2ds12 / l).x } else { 0.0 }
+        };
+        let mut b_u_closed = true;
+        if a_sc_pr.abs() < a_tol {
+            b_u_closed = false;
+        }
+        let (a_us1, a_vs1) = (a_p2ds1.x, a_p2ds1.y);
+        let (a_us2, a_vs2) = (a_p2ds2.x, a_p2ds2.y);
+        // aP — some 3D-point on the seam edge of the surface: the surface
+        // value at the first source pcurve's point, projected onto the new
+        // edge's 3D curve (IntTools_Context::ProjPC, LowerDistanceParameter).
+        let a_s = ds.face_surface(n_f)?;
+        use rcad_kernel::geom::SurfaceEval;
+        let a_p = a_s.point_at(a_us1, a_vs1);
+        let a_c3d = ds.edge_curve(dst_e)?;
+        let (a_t, _) = crate::bop::closest_point_on_curve(&a_c3d, a_p);
+        // aC2D->D1(aT, aP2D, aV2D)
+        let a_p2d = Curve2dEval::point_at(&dst_pc, a_t);
+        let a_v2d = Curve2dEval::derivative_at(&dst_pc, a_t);
+        let (a_u, a_v) = (a_p2d.x, a_p2d.y);
+        // aV2DT = aV2DS12, reversed when the new pcurve's point at aT lies on
+        // the second source pcurve's side (V closed: |aV - aVS2|; U closed:
+        // |aU - aUS2|).
+        let mut a_v2dt = a_v2ds12;
+        if !b_u_closed {
+            if (a_v - a_vs2).abs() < a_tol {
+                a_v2dt = -a_v2dt;
+            }
+        } else {
+            if (a_u - a_us2).abs() < a_tol {
+                a_v2dt = -a_v2dt;
+            }
+        }
+        // Translate aC2DTnew.
+        let dst_pc2 = rcad_kernel::geom::translate_curve2d(&dst_pc, a_v2dt);
+        // Order the 2D curves: bRevOrder = (aV2D * aV2DS1 < 0).
         if a_v2d.dot(a_v2ds1) < 0.0 {
             Some((dst_pc2, dst_pc))
         } else {
@@ -5339,7 +5542,8 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
     /// Compute a 2D pcurve by projecting a 3D curve onto a surface.
     fn pcurve_2d(curve: &rcad_kernel::geom::Curve3,
                  surf: &rcad_kernel::geom::Surface3,
-                 range: [f64; 2]) -> Option<rcad_kernel::geom::Curve2d> {
+                 range: [f64; 2],
+                 uv_bounds: [f64; 4]) -> Option<rcad_kernel::geom::Curve2d> {
         use rcad_kernel::geom::CurveEval;
         use rcad_kernel::geom::SurfaceEval;
         // OCCT ProjLib::MakePCurveOfType (ProjLib.cxx L183-213) + the analytic
@@ -5351,7 +5555,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // analytic sphere projection used by the boolean pipeline — is
         // translated in face_make_curve::build_analytic_pcurve and yields the
         // same-parameter meridian line (u=const) for a circle on the sphere.
-        if let Some(pc) = crate::bop::int_tools::face_make_curve::build_analytic_pcurve(surf, curve, range[0], range[1]) {
+        if let Some(pc) = crate::bop::int_tools::face_make_curve::build_analytic_pcurve(surf, curve, range[0], range[1], uv_bounds, None) {
             return Some(pc);
         }
         if let (rcad_kernel::geom::Curve3::Circle(c), rcad_kernel::geom::Surface3::Sphere(sp)) = (curve, surf) {
@@ -5372,21 +5576,10 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 && (o.y - c.center.y).abs() <= tol
                 && (o.z - c.center.z).abs() <= tol;
             let is_iso_v = xc.dot(zs).abs() <= tol && yc.dot(zs).abs() <= tol;
-            // static gp_Pnt2d EvalPnt2d (L65-93): sphere params of a vector end.
+            // static gp_Pnt2d EvalPnt2d (ProjLib_Sphere.cxx L49-76): sphere
+            // params of a vector end.
             let eval_pnt2d = |p: glam::DVec3| -> glam::DVec2 {
-                let x = p.dot(xs);
-                let y = p.dot(ys);
-                let z = p.dot(zs);
-                let u = if x.abs() > rcad_kernel::PCONFUSION || y.abs() > rcad_kernel::PCONFUSION {
-                    let uu = y.atan2(x);
-                    // ElCLib::InPeriod(UU, 0., 2*PI)
-                    let uu = uu % std::f64::consts::TAU;
-                    if uu < 0.0 { uu + std::f64::consts::TAU } else { uu }
-                } else {
-                    0.0
-                };
-                let z = z.clamp(-1.0, 1.0);
-                glam::DVec2::new(u, z.asin())
+                crate::bop::int_tools::face_make_curve::projlib_sphere_eval_pnt2d(p, xs, ys, zs)
             };
             let mut p2d1 = eval_pnt2d(xc);
             let mut p2d2 = eval_pnt2d(yc);
@@ -5445,63 +5638,22 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 is_done = true;
             }
             if is_done {
-                // myLin = gp_Lin2d(P2d1, D2d) — a unit direction line in OCCT,
-                // which then re-parameterizes it with BRepLib::SameParameter /
-                // GeomLib::SameRange.  rcad has no SameParameter, so the
-                // same-parameter line is built directly: the slope is the UV
-                // increment per 3D parameter unit, point_at(t) = P2d1 + d*(t-t1).
-                let dt = range[1] - range[0];
-                if !dt.is_finite() || dt.abs() < 1e-30 {
+                // OCCT: myLin = gp_Lin2d(P2d1, D2d) — D2d is a unit gp_Dir2d
+                // and the line is evaluated at the RAW circle parameter (the
+                // value at parameter 0 is P2d1); no re-parameterization to the
+                // edge range happens.  ProjLib_ProjectedCurve::Perform (L419)
+                // then calls SetInBounds(myCurve->FirstParameter()).
+                let d = p2d2 - p2d1;
+                // gp_Dir2d raises on a zero vector (Standard_ConstructionError);
+                // BOPAlgo_MPC::Perform catches it and leaves the pcurve null.
+                if d.length_squared() <= 1e-24 {
                     return None;
                 }
-                let mut dir = (p2d2 - p2d1) / dt;
-                let mut origin = p2d1 - dir * range[0];
-                // OCCT ProjLib_Sphere::SetInBounds (ProjLib_Sphere.cxx L203-248),
-                // called from ProjLib_ProjectedCurve::Perform (L419) for the
-                // sphere: shift V into [-PI, PI], then mirror the line about the
-                // V=+-PI/2 axis (shifting U by PI) when the sampled point is
-                // beyond the pole, and finally place U into [0, 2*PI].
-                let u = range[0];
-                // ElCLib::InPeriod(Y, -M_PI, M_PI): wrap Y into [-PI, PI].
-                let y = origin.y + dir.y * u;
-                let new_y = crate::geomalgo::int_patch::cycy_common::in_period(y, -std::f64::consts::PI, std::f64::consts::PI);
-                origin.y += new_y - y;
-                let p = glam::DVec2::new(origin.x + dir.x * u, origin.y + dir.y * u);
-                let tol = 1.0e-7;
-                let dir2 = dir.normalize_or_zero();
-                // gp::DY2d() = (0, 1)
-                let dy2d = glam::DVec2::new(0.0, 1.0);
-                let (is_dy2d, is_opp_dy2d) = {
-                    let c1 = (dir2.x - dy2d.x).abs() <= tol && (dir2.y - dy2d.y).abs() <= tol;
-                    let c2 = (dir2.x + dy2d.x).abs() <= tol && (dir2.y + dy2d.y).abs() <= tol;
-                    (c1, c2)
-                };
-                let mut mirrored = false;
-                if (p.y - std::f64::consts::FRAC_PI_2 > tol)
-                    || ((p.y - std::f64::consts::FRAC_PI_2).abs() < tol && is_dy2d)
-                {
-                    // Axis = gp_Ax2d((0, PI/2), DX2d) — mirror about V = PI/2.
-                    origin.y = 2.0 * std::f64::consts::FRAC_PI_2 - origin.y;
-                    dir.y = -dir.y;
-                    mirrored = true;
-                } else if (p.y + std::f64::consts::FRAC_PI_2 < -tol)
-                    || ((p.y + std::f64::consts::FRAC_PI_2).abs() < tol && is_opp_dy2d)
-                {
-                    // Axis = gp_Ax2d((0, -PI/2), DX2d) — mirror about V = -PI/2.
-                    origin.y = -std::f64::consts::PI - origin.y;
-                    dir.y = -dir.y;
-                    mirrored = true;
-                }
-                if mirrored {
-                    origin.x += std::f64::consts::PI;
-                }
-                // Adjust U into [0, 2*PI] (SetInBounds tail, L245-247).
-                let x = origin.x + dir.x * u;
-                let new_x = crate::geomalgo::int_patch::cycy_common::in_period(x, 0.0, std::f64::consts::TAU);
-                origin.x += new_x - x;
-                return Some(rcad_kernel::geom::Curve2d::Line(
-                    rcad_kernel::geom::Line2d::new(origin, dir),
-                ));
+                let mut l = rcad_kernel::geom::Line2d::new(p2d1, d / d.length());
+                crate::bop::int_tools::face_make_curve::projlib_sphere_set_in_bounds(
+                    &mut l, range[0],
+                );
+                return Some(rcad_kernel::geom::Curve2d::Line(l));
             }
         }
         // OCCT ProjLib::MakePCurveOfType (BOPTools_AlgoTools2D.cxx L592): for
@@ -5863,7 +6015,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                 rcad_kernel::topods::TShape::Edge(ed) => {
                                     (ed.pcurves.clone(), ed.representations.clone())
                                 }
-                                _ => (std::collections::HashMap::new(), Vec::new()),
+                                _ => (indexmap::IndexMap::new(), Vec::new()),
                             }
                         };
                         // OCCT MakeSplitEdge1 (BOPAlgo_PaveFiller_8.cxx
@@ -5915,9 +6067,21 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                         // OCCT L222: aPB->SetEdge(nSp)
                         a_pb.0.write().unwrap().edge = n_sp;
                     } else {
-                        // OCCT L214-217: SetReference(-1); aLPB.Clear();
+                        // OCCT L214-217: SetReference(-1); aLPB.Clear() — aLPB
+                        // is the list handle fetched by ChangePaveBlocks above,
+                        // so the Clear addresses that recorded pool slot; it
+                        // must not go through ChangePaveBlocks again, which
+                        // would re-initialize the just-dropped reference
+                        // (BOPDS_DS.cxx L425-433).
+                        let n_slot = self.ds.shapes[an_ei].reference;
                         self.ds.change_shape_info(an_ei).reference = -1;
-                        self.ds.change_pave_blocks(an_ei).clear();
+                        if n_slot >= 0 {
+                            if let Some(a_lpb) =
+                                self.ds.change_pave_blocks_pool().get_mut(&(n_slot as usize))
+                            {
+                                a_lpb.clear();
+                            }
+                        }
                         break;
                     }
                 }
@@ -5942,7 +6106,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                     same_parameter: false,
                     same_range: false,
                     degenerated: true,
-                    pcurves: std::collections::HashMap::new(),
+                    pcurves: indexmap::IndexMap::new(),
                     representations: Vec::new(),
                     vertex_params: std::collections::HashMap::new(),
                     my_shapes: Vec::new(),

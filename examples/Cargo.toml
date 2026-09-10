@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 rcad-kernel = { path = "../libs/rcad-kernel" }
 rcad-modeling = { path = "../libs/rcad-modeling" }
-rcad-algorithms = { path = "../libs/rcad-algorithms" }
 rcad-step = { path = "../libs/rcad-step" }
 rcad-scene = { path = "../libs/rcad-scene" }
 rcad-render = { path = "../libs/rcad-render" }

@@ -4,7 +4,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Circle3, Curve2d, Curve3, Line2d, SphericalSurface, Surface3};
-use rcad_kernel::topods::{self, CurveRepresentation, Orientation, Shape};
+use rcad_kernel::topods::{self, CurveRepresentation, GeomAbsShape, Orientation, Shape, BRepBuilder};
 use rcad_kernel::BRep;
 
 const TAU: f64 = std::f64::consts::TAU;
@@ -123,6 +123,10 @@ impl MakeSphere {
                 pcurve2: Curve2d::Line(Line2d::new(DVec2::new(0.0, -TAU), DVec2::Y)),
                 range: [t_lo, t_hi],
             });
+        // OCCT BRepPrim_Builder::SetPCurve(E, F, L1, L2) (BRepPrim_Builder.cxx
+        // L107-118): after the closed pcurve pair UpdateEdge, the seam
+        // regularity -- myBuilder.Continuity(E, F, F, GeomAbs_CN).
+        BRepBuilder::new().continuity(&mut t, &e_seam, &face, &face, GeomAbsShape::CN);
         let shell = t.add_tshell(vec![face]);
         t.add_tsolid(vec![shell]);
         Ok(t)

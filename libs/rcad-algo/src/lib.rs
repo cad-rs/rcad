@@ -7,6 +7,15 @@ pub mod bop;
 pub mod geomalgo;
 pub mod topalgo;
 pub mod algo_ext;
+pub mod helix;
+pub mod hlr;
+pub mod fillet;
+pub mod brep_algo;
+pub mod brep_fill;
+pub mod brep_sweep;
+pub mod feat;
+pub mod offset;
+pub mod shhealing;
 
 // Re-export boolean operation API at top level
 pub use crate::bop::brep_algo_api::{boolean_op, boolean_op_with_retry, common, cut, fuse};
@@ -15,11 +24,11 @@ pub use crate::bop::algo::BooleanOpType;
 // Re-export compatibility helpers (legacy rcad-algorithms surface used by the
 // generated OCCT boolean grid tests).
 pub use crate::algo_ext::{
-    bool_ops_ext, brep_algo, brep_tools,
+    bool_ops_ext, brep_tools,
     count_edges, count_faces, count_shells, count_vertices, count_wires,
     extract_shells, extract_solids, extrude_polygon_solid, move_bspline2_point,
     move_bspline2_tangent, move_bspline3_point, move_bspline3_tangent, n_ary_partition,
-    make_fillet_edge, restrict_to_bspline, revolve_polygon_solid, total_edge_length,
+    restrict_to_bspline, revolve_polygon_solid, total_edge_length, make_fillet_edge,
     total_surface_area,
     total_volume,
 };

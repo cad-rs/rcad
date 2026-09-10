@@ -7,6 +7,7 @@
 
 use glam::{DVec2, DVec3};
 
+use crate::core::precision::{REAL_FIRST, REAL_LAST};
 use crate::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
 
 /// Status of a local property computation.
@@ -14,8 +15,18 @@ use crate::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval
 /// OCCT: `LProp_Status`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LPropStatus {
-    Defined,
+    /// OCCT `LProp_Undecided` (0).
     Undecided,
+    /// OCCT `LProp_Undefined` (1) — no significant derivative exists.
+    Undefined,
+    /// OCCT `LProp_Defined` (2).
+    Defined,
+    /// OCCT `LProp_Computed` (3).
+    Computed,
+    /// rcad-only (not in OCCT): the legacy concrete ClProps2d/ClProps3d
+    /// "no significant derivative" state; kept for those pre-existing
+    /// implementations. Appended last so the OCCT-ordered comparisons
+    /// (`>= Defined`) on the generic engine are unaffected.
     Zero,
 }
 
@@ -376,7 +387,9 @@ impl<'a> ClProps2d<'a> {
             // significant derivative is of higher order).
             let dom = self.curve.default_domain();
             let (inf, sup) = (dom[0], dom[1]);
-            let a_du = if sup.is_infinite() || inf.is_infinite() {
+            // OCCT LProp_CurveUtils.hxx L195:
+            // if ((anUsupremum >= RealLast()) || (anUinfimum <= RealFirst()))
+            let a_du = if sup >= REAL_LAST || inf <= REAL_FIRST {
                 0.0
             } else {
                 sup - inf
@@ -881,3 +894,8 @@ mod tests {
         assert!((gc - 1.0).abs() < 1e-7); // Unit sphere: K = 1
     }
 }
+
+pub mod cl_props_base;
+pub mod sl_props_base;
+pub use cl_props_base::{CLPropsCurve2d, ClPropsBase};
+pub use sl_props_base::{SLPropsSurface, SlPropsBase};

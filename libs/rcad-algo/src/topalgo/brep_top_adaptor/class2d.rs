@@ -33,6 +33,10 @@ fn transform_to_normalized(the_u: f64, the_u_min: f64, the_u_range: f64) -> f64 
 }
 
 /// OCCT CSLib_Class2d — low-level 2D point-in-polygon classifier.
+// Clone: the OCCT HLR MST map (NCollection_DataMap::Bind) copies the
+// BRepTopAdaptor_Tool value (a copy of two handles); the rcad equivalent
+// needs the whole tool chain clonable.
+#[derive(Clone)]
 pub struct Class2d {
     /// X coordinates (normalized), with the closing point appended at
     /// `points_count` (myPnts2dX).

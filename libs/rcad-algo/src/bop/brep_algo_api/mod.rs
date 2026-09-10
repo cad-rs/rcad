@@ -1,10 +1,12 @@
 use rcad_kernel::topo_shape::Shape;
 use crate::bop::algo::builder::{Builder, BooleanError, BooleanOpType};
 use crate::bop::algo::pave_filler::PaveFiller;
+use crate::bop::algo::section::BOPAlgoSection;
+use crate::bop::algo::section_attribute::SectionAttribute;
 use crate::bop::ds::DS;
 use rcad_kernel::core::message::{NoopProgress, ProgressScope};
 use rcad_kernel::topods::{TEdgeData, TFaceData, TShape, TShellData, TSolidData, TWireData};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 // 閳光偓閳光偓 BRepAlgoAPI_Algo 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
@@ -170,7 +172,83 @@ macro_rules! def_bool_op {
 def_bool_op!(FuseOp, Union);
 def_bool_op!(CommonOp, Intersection);
 def_bool_op!(CutOp, Cut);
-def_bool_op!(SectionOp, Section);
+
+// 閳光偓閳光偓 BRepAlgoAPI_Section 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+/// OCCT BRepAlgoAPI_Section — the true SECTION operation, driven by
+/// BOPAlgo_Section (BOPAlgo_Section.cxx). Replaces the former degraded path
+/// that mapped Section onto Cut.
+pub struct SectionOp {
+    pub algo: BuilderAlgo,
+    /// OCCT BRepAlgoAPI_Section::myApprox (Init, BRepAlgoAPI_Section.cxx
+    /// L146): default false.
+    pub my_approx: bool,
+    /// OCCT myComputePCurveOn1 (Init L147): default false.
+    pub my_compute_pcurve1: bool,
+    /// OCCT myComputePCurveOn2 (Init L148): default false.
+    pub my_compute_pcurve2: bool,
+}
+impl SectionOp {
+    pub fn new() -> Self {
+        // OCCT BRepAlgoAPI_Section::Init (L142-153): myApprox =
+        // myComputePCurve1 = myComputePCurve2 = false.
+        Self {
+            algo: BuilderAlgo::new(),
+            my_approx: false,
+            my_compute_pcurve1: false,
+            my_compute_pcurve2: false,
+        }
+    }
+    pub fn from_shapes(s1: Shape, s2: Shape) -> Self {
+        // OCCT BRepAlgoAPI_Section(Sh1, Sh2, PerformNow) :
+        // BRepAlgoAPI_BooleanOperation(Sh1, Sh2, BOPAlgo_SECTION):
+        // myArguments.Append(theS1); myTools.Append(theS2);
+        let mut s = Self::new();
+        s.algo.arguments = vec![s1];
+        s.algo.tools = vec![s2];
+        s
+    }
+    pub fn set_arguments(&mut self, args: Vec<Shape>) { self.algo.set_arguments(args); }
+    pub fn get_arguments(&self) -> &[Shape] { self.algo.get_arguments() }
+    pub fn set_run_parallel(&mut self, b: bool) { self.algo.set_run_parallel(b); }
+    pub fn get_run_parallel(&self) -> bool { self.algo.get_run_parallel() }
+    pub fn set_fuzzy_value(&mut self, v: f64) { self.algo.set_fuzzy_value(v); }
+    pub fn get_fuzzy_value(&self) -> f64 { self.algo.get_fuzzy_value() }
+    pub fn set_non_destructive(&mut self, b: bool) { self.algo.set_non_destructive(b); }
+    pub fn get_non_destructive(&self) -> bool { self.algo.get_non_destructive() }
+    pub fn set_glue(&mut self, g: i32) { self.algo.set_glue(g); }
+    pub fn get_glue(&self) -> i32 { self.algo.get_glue() }
+    pub fn set_check_inverted(&mut self, b: bool) { self.algo.set_check_inverted(b); }
+    pub fn get_check_inverted(&self) -> bool { self.algo.get_check_inverted() }
+    // OCCT BRepAlgoAPI_Section::Approximation (L171-174).
+    pub fn approximation(&mut self, b: bool) { self.my_approx = b; }
+    // OCCT BRepAlgoAPI_Section::ComputePCurveOn1 (L176-179).
+    pub fn compute_pcurve_on1(&mut self, b: bool) { self.my_compute_pcurve1 = b; }
+    // OCCT BRepAlgoAPI_Section::ComputePCurveOn2 (L181-184).
+    pub fn compute_pcurve_on2(&mut self, b: bool) { self.my_compute_pcurve2 = b; }
+    // OCCT BRepAlgoAPI_BuilderShape
+    pub fn build(&mut self) {
+        self.algo.bs.result = None; self.algo.bs.err = None;
+        match run_build_section_brep(&self.algo, self.my_approx, self.my_compute_pcurve1, self.my_compute_pcurve2)
+        {
+            Ok(brep) => {
+                // OCCT BOPAlgo_Section::myShape is the result compound.
+                let root = brep.tshapes.iter().enumerate().rev()
+                    .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Compound(_)))
+                    .map(|(i, ts)| Shape::from_parts(ts.clone(), i, 0, rcad_kernel::topods::Orientation::Forward));
+                match root {
+                    Some(s) => self.algo.bs.result = Some(s),
+                    None => self.algo.bs.err = Some(BooleanError::InvalidResult("no root shape")),
+                }
+            }
+            Err(e) => self.algo.bs.err = Some(e),
+        }
+    }
+    pub fn shape(&self) -> &Shape { self.algo.bs.shape() }
+}
+impl Algo for SectionOp {
+    fn is_done(&self) -> bool { self.algo.is_done() }
+    fn error(&self) -> Option<&BooleanError> { self.algo.error() }
+}
 
 // 閳光偓閳光偓 BRepAlgoAPI_Defeaturing 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 pub struct DefeaturingOp {
@@ -192,9 +270,29 @@ impl Algo for DefeaturingOp {
 pub struct SplitterOp { pub algo: BuilderAlgo }
 impl SplitterOp {
     pub fn new() -> Self { Self { algo: BuilderAlgo::new() } }
+    // OCCT BRepAlgoAPI_Splitter::SetArguments (objects) — myArguments.
     pub fn add_object(&mut self, s: Shape) { self.algo.arguments.push(s); }
-    pub fn add_tool(&mut self, s: Shape) { self.algo.arguments.push(s); }
-    pub fn build(&mut self) { self.algo.bs.result = self.algo.arguments.first().cloned(); }
+    // OCCT BRepAlgoAPI_Splitter::AddTool (tools) — myTools.
+    pub fn add_tool(&mut self, s: Shape) { self.algo.tools.push(s); }
+    // OCCT BRepAlgoAPI_Splitter::Build (BRepAlgoAPI_Splitter.cxx L35-76):
+    // aLArgs = myArguments + myTools for the intersection; the builder
+    // receives myArguments (objects) and myTools separately
+    // (BOPAlgo_Splitter::SetArguments/SetTools).
+    pub fn build(&mut self) {
+        self.algo.bs.result = None; self.algo.bs.err = None;
+        match run_build_splitter_brep(&self.algo) {
+            Ok(brep) => {
+                let root = brep.tshapes.iter().enumerate().rev()
+                    .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_) | rcad_kernel::topods::TShape::Shell(_)))
+                    .map(|(i, ts)| Shape::from_parts(ts.clone(), i, 0, rcad_kernel::topods::Orientation::Forward));
+                self.algo.bs.result = root;
+                if self.algo.bs.result.is_none() {
+                    self.algo.bs.err = Some(BooleanError::InvalidResult("no root shape"));
+                }
+            }
+            Err(e) => self.algo.bs.err = Some(e),
+        }
+    }
     pub fn shape(&self) -> &Shape { self.algo.bs.shape() }
 }
 impl Algo for SplitterOp {
@@ -295,50 +393,13 @@ fn remap_location_tree(
         TShape::Edge(ed) => {
             let first = remap_location_tree(&ed.first, map, cache);
             let last = remap_location_tree(&ed.last, map, cache);
-            let remap_ptr = |k: u64| -> u64 {
-                cache.get(&k).map(|a| std::sync::Arc::as_ptr(a) as u64).unwrap_or(k)
-            };
-            let pcurves = ed
-                .pcurves
-                .iter()
-                .map(|(&(fptr, floc), v)| ((remap_ptr(fptr), floc), v.clone()))
-                .collect();
-            let representations = ed
-                .representations
-                .iter()
-                .map(|r| match r {
-                    rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } => {
-                        rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
-                            face: (remap_ptr(face.0), face.1),
-                            pcurve: pcurve.clone(),
-                            range: *range,
-                        }
-                    }
-                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
-                        face,
-                        pcurve1,
-                        pcurve2,
-                        range,
-                    } => rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
-                        face: (remap_ptr(face.0), face.1),
-                        pcurve1: pcurve1.clone(),
-                        pcurve2: pcurve2.clone(),
-                        range: *range,
-                    },
-                    other => other.clone(),
-                })
-                .collect();
-            let vertex_params = ed
-                .vertex_params
-                .iter()
-                .map(|(&k, &v)| (remap_ptr(k), v))
-                .collect();
+            // Phase 1 only: clone identity-keyed maps verbatim. An edge's
+            // owning face is its ANCESTOR in this walk, so it is never in the
+            // cache yet at this point; keys are rewritten in a second pass
+            // (rewrite_identity_keys) once every pointer is final.
             TShape::Edge(TEdgeData {
                 first,
                 last,
-                pcurves,
-                representations,
-                vertex_params,
                 ..ed.clone()
             })
         }
@@ -415,28 +476,134 @@ fn remap_location_tree(
 /// (appending each entry and recording old-index 閳?new-index) and remap every
 /// returned shape's `location` to the merged table. Index 0 (identity) is
 /// shared; BRep location tables start at index 1.
+///
+/// `cache` is SHARED across every argument/tools call of one boolean
+/// operation: OCCT's BRepAlgoAPI_BooleanOperation::SetArguments/SetTools hold
+/// TopoDS_Shape handles, so a TShape shared between an argument and a tool
+/// (the BRepSweep prism of a face taken from the other argument) keeps ONE
+/// identity in the DS.  Remapping each BRep with a per-call cache would
+/// duplicate the shared TShape and break the vertex-count semantics
+/// (boptuc_simple ZP3: the prism's located vertices must stay identical to
+/// the cone's).
 fn brep_top_shapes_with_locations(
     brep: &rcad_kernel::BRep,
     global_locs: &mut Vec<glam::DAffine3>,
+    cache: &mut HashMap<u64, Arc<TShape>>,
 ) -> Vec<Shape> {
     let mut map: HashMap<u32, u32> = HashMap::new();
     for (i, loc) in brep.locations.iter().enumerate() {
         let old = (i + 1) as u32; // BRep table index (0 = identity)
-        let new = global_locs.len() as u32;
-        global_locs.push(*loc);
+        // OCCT TopLoc_Location items are deduplicated by transformation:
+        // identical Trsf matrices share one TopLoc_Datum3D item
+        // (TopLoc_Location::Location() hash/IsEqual), so two shapes built
+        // with the same translation resolve to the same table index. Merge
+        // only when the transform is absent from the global table.
+        let new = match global_locs.iter().position(|l| *l == *loc) {
+            Some(existing) => existing as u32,
+            None => {
+                global_locs.push(*loc);
+                (global_locs.len() - 1) as u32
+            }
+        };
         map.insert(old, new);
     }
-    if map.is_empty() {
-        // No located sub-shapes: keep the original TShape graph untouched
-        // (deep-copying would remap every TShape pointer and break the
-        // vertex_params/pcurve identity keys for no benefit).
-        return brep_top_shapes(brep);
-    }
-    let mut cache: HashMap<u64, Arc<TShape>> = HashMap::new();
-    brep_top_shapes(brep)
+    // Both BReps go through the same cache even when one has no located
+    // sub-shapes (an empty map remaps locations identically): the cache hit
+    // on a TShape shared with the other BRep returns the SAME remapped Arc,
+    // preserving the cross-argument TShape identity.
+    let tops: Vec<Shape> = brep_top_shapes(brep)
         .into_iter()
-        .map(|s| remap_location_tree(&s, &map, &mut cache))
-        .collect()
+        .map(|s| remap_location_tree(&s, &map, cache))
+        .collect();
+    // Second pass: all pointers are final now; rewrite every edge's identity
+    // keys against the complete cache (old ptr -> new Arc ptr).
+    rewrite_identity_keys(&tops, cache);
+    tops
+}
+
+/// Rewrite the face-pointer identity keys of every edge reachable from the
+/// rebuilt top shapes using the completed clone cache.  In-place on the shared
+/// Arcs; unknown owners keep their pointer.
+fn rewrite_identity_keys(tops: &[Shape], cache: &HashMap<u64, Arc<TShape>>) {
+    let mut visited: HashSet<u64> = HashSet::new();
+    let mut stack: Vec<Shape> = tops.to_vec();
+    while let Some(sh) = stack.pop() {
+        if !visited.insert(sh.ptr_id()) {
+            continue;
+        }
+        match &*sh.data {
+            TShape::Edge(ed) => {
+                let raw = Arc::as_ptr(&sh.data) as *mut TShape;
+                // SAFETY: single-threaded build; no other &TShape borrow is
+                // alive at this point.
+                unsafe {
+                    if let TShape::Edge(edm) = &mut *raw {
+                        edm.pcurves = ed
+                            .pcurves
+                            .iter()
+                            .map(|(&(p, l), v)| {
+                                let np =
+                                    cache.get(&p).map(|a| Arc::as_ptr(a) as u64).unwrap_or(p);
+                                ((np, l), v.clone())
+                            })
+                            .collect();
+                        edm.representations = ed
+                            .representations
+                            .iter()
+                            .map(|r| match r {
+                                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, pcurve, range } => {
+                                    rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                                        face: (
+                                            cache.get(&face.0).map(|a| Arc::as_ptr(a) as u64).unwrap_or(face.0),
+                                            face.1,
+                                        ),
+                                        pcurve: pcurve.clone(),
+                                        range: *range,
+                                    }
+                                }
+                                rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, range } => {
+                                    rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                                        face: (
+                                            cache.get(&face.0).map(|a| Arc::as_ptr(a) as u64).unwrap_or(face.0),
+                                            face.1,
+                                        ),
+                                        pcurve1: pcurve1.clone(),
+                                        pcurve2: pcurve2.clone(),
+                                        range: *range,
+                                    }
+                                }
+                                other => other.clone(),
+                            })
+                            .collect();
+                        edm.vertex_params = ed
+                            .vertex_params
+                            .iter()
+                            .map(|(&k, &v)| {
+                                let nk =
+                                    cache.get(&k).map(|a| Arc::as_ptr(a) as u64).unwrap_or(k);
+                                (nk, v)
+                            })
+                            .collect();
+                    }
+                }
+            }
+            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+            TShape::Face(fd) => {
+                stack.push(fd.outer_wire.clone());
+                stack.extend(fd.inner_wires.iter().cloned());
+                stack.extend(fd.internal_vertices.iter().cloned());
+            }
+            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
+            TShape::Solid(sd) => {
+                stack.extend(sd.shells.iter().cloned());
+                stack.extend(sd.internal_vertices.iter().cloned());
+                stack.extend(sd.internal_edges.iter().cloned());
+            }
+            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Compound(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Vertex(_) => {}
+        }
+    }
 }
 
 /// BRep-form build: run the full PaveFiller + Builder pipeline and return the
@@ -474,12 +641,122 @@ fn run_build_brep(algo: &BuilderAlgo, op_type: BooleanOpType) -> Result<rcad_ker
     builder.build().map_err(|_| BooleanError::InvalidResult("builder failed"))
 }
 
+/// BRep-form splitter build.
+/// OCCT BOPAlgo_Splitter::Perform (BOPAlgo_Splitter.cxx L54-93): aLS =
+/// myArguments (objects) + myTools (tools) combined into ONE PaveFiller, then
+/// PerformInternal -> BOPAlgo_Builder::PerformInternal1 (GF pipeline, no
+/// BuildShape).  BOPAlgo_Builder::BuildResult (BOPAlgo_Builder_1.cxx L130-168)
+/// iterates myArguments (objects only), so only the split parts of the
+/// OBJECTS enter the result; tool split parts are excluded.
+fn run_build_splitter_brep(algo: &BuilderAlgo) -> Result<rcad_kernel::BRep, BooleanError> {
+    // OCCT BRepAlgoAPI_Splitter::Build (BRepAlgoAPI_Splitter.cxx L42-46).
+    if algo.arguments.is_empty() || (algo.arguments.len() + algo.tools.len()) < 2 {
+        return Err(BooleanError::TooFewArguments);
+    }
+    // OCCT BOPAlgo_Splitter::Perform L64-77: aLS = myArguments + myTools.
+    let mut all_args = algo.arguments.clone();
+    all_args.extend(algo.tools.iter().cloned());
+    let mut filler = PaveFiller::new();
+    filler.set_arguments(all_args);
+    filler.ds_mut().set_locations(algo.locations.clone());
+    filler.set_fuzzy_value(algo.fuzzy_value);
+    let a_prog = NoopProgress;
+    let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+    filler.perform(&a_ps);
+    let fuzz = filler.fuzzy_value();
+    // builder borrows the DS from filler; both live in the same scope
+    let mut builder = Builder::new(filler.ds(), BooleanOpType::Union, fuzz);
+    // OCCT BRepAlgoAPI_Splitter::Build L71-72: myBuilder->SetArguments
+    // (objects); SetTools(tools).  rcad's DS deep-clones the inputs, so the
+    // builder's argument list must carry the DS-cloned shapes: the first
+    // n_objs entries of ds.arguments (objects), the rest are tools.
+    let n_objs = algo.arguments.len();
+    builder.my_arguments = filler.ds().arguments[..n_objs].to_vec();
+    builder.my_tools = filler.ds().arguments[n_objs..].to_vec();
+    builder.my_is_splitter = true;
+    builder.build().map_err(|_| BooleanError::InvalidResult("splitter failed"))
+}
+
+/// BRep-form SECTION build — the true BOPAlgo_Section pipeline (replaces the
+/// former degraded path that mapped Section onto Cut).
+///
+/// OCCT BRepAlgoAPI_BooleanOperation::Build (BRepAlgoAPI_BooleanOperation.cxx
+/// L177-184): aLArgs = myArguments + myTools -> IntersectShapes (the
+/// PaveFiller); then L199-200: myBuilder = new BOPAlgo_Section;
+/// myBuilder->SetArguments(myDSFiller->Arguments()) — BOPAlgo_Section
+/// inherits BOPAlgo_Builder and has no myTools: objects and tools form ONE
+/// argument list.
+fn run_build_section_brep(
+    algo: &BuilderAlgo,
+    my_approx: bool,
+    my_compute_pcurve1: bool,
+    my_compute_pcurve2: bool,
+) -> Result<rcad_kernel::BRep, BooleanError> {
+    if algo.arguments.is_empty() || algo.tools.is_empty() {
+        return Err(BooleanError::TooFewArguments);
+    }
+    let mut all_args = algo.arguments.clone();
+    all_args.extend(algo.tools.iter().cloned());
+    let mut filler = PaveFiller::new();
+    filler.set_arguments(all_args);
+    filler.ds_mut().set_locations(algo.locations.clone());
+    filler.set_fuzzy_value(algo.fuzzy_value);
+    // OCCT BRepAlgoAPI_Section::Init (BRepAlgoAPI_Section.cxx L143-152):
+    // myApprox = myComputePCurve1 = myComputePCurve2 = false (the caller
+    // flags override them); SetAttributes (L196-200):
+    // myDSFiller->SetSectionAttribute(BOPAlgo_SectionAttribute(myApprox,
+    // myComputePCurve1, myComputePCurve2)).
+    filler.my_section_attribute = SectionAttribute {
+        approximation: my_approx,
+        pcurve_on_s1: my_compute_pcurve1,
+        pcurve_on_s2: my_compute_pcurve2,
+        ..Default::default()
+    };
+    let a_prog = NoopProgress;
+    let a_ps = ProgressScope::new(&a_prog, "intersect", 100);
+    filler.perform(&a_ps);
+    let fuzz = filler.fuzzy_value();
+    // OCCT BRepAlgoAPI_BooleanOperation::Build L199-200: BOPAlgo_Section over
+    // the DS arguments (objects + tools as one list).
+    let mut a_section = BOPAlgoSection::new(filler.ds(), fuzz);
+    a_section.set_arguments(filler.ds().arguments.clone());
+    a_section.perform();
+    if a_section.has_errors() {
+        return Err(BooleanError::InvalidResult("section failed"));
+    }
+    a_section
+        .result_brep()
+        .ok_or(BooleanError::InvalidResult("no section result"))
+}
+
+/// OCCT shortcut: `BRepAlgoAPI_Splitter(objects, tools).Shape()`.
+/// BRep form: returns the compound of the split parts of the OBJECTS.
+pub fn splitter(
+    objects: &[rcad_kernel::BRep],
+    tools: &[rcad_kernel::BRep],
+) -> Result<rcad_kernel::BRep, BooleanError> {
+    let mut op = BuilderAlgo::new();
+    let mut global_locs = vec![glam::DAffine3::IDENTITY];
+    let mut cache = std::collections::HashMap::new();
+    for o in objects {
+        op.arguments.extend(brep_top_shapes_with_locations(o, &mut global_locs, &mut cache));
+    }
+    for t in tools {
+        op.tools.extend(brep_top_shapes_with_locations(t, &mut global_locs, &mut cache));
+    }
+    op.locations = global_locs;
+    run_build_splitter_brep(&op)
+}
+
 /// OCCT shortcut: `BRepAlgoAPI_Fuse(a, b).Shape()`.
 pub fn fuse(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
     let mut global_locs = vec![glam::DAffine3::IDENTITY];
-    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs);
-    op.tools = brep_top_shapes_with_locations(b, &mut global_locs);
+    // One shared clone cache across arguments+tools: OCCT keeps cross-argument
+    // TShape identity (boptuc_simple ZP3).
+    let mut cache = std::collections::HashMap::new();
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs, &mut cache);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs, &mut cache);
     op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Union)
 }
@@ -488,8 +765,9 @@ pub fn fuse(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel:
 pub fn common(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
     let mut global_locs = vec![glam::DAffine3::IDENTITY];
-    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs);
-    op.tools = brep_top_shapes_with_locations(b, &mut global_locs);
+    let mut cache = std::collections::HashMap::new();
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs, &mut cache);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs, &mut cache);
     op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Intersection)
 }
@@ -498,10 +776,24 @@ pub fn common(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kerne
 pub fn cut(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
     let mut op = BuilderAlgo::new();
     let mut global_locs = vec![glam::DAffine3::IDENTITY];
-    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs);
-    op.tools = brep_top_shapes_with_locations(b, &mut global_locs);
+    let mut cache = std::collections::HashMap::new();
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs, &mut cache);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs, &mut cache);
     op.locations = global_locs;
     run_build_brep(&op, BooleanOpType::Cut)
+}
+
+/// OCCT shortcut: `BRepAlgoAPI_Section(a, b).Shape()` — the true SECTION
+/// operation (BOPAlgo_Section::BuildSection); PCurve options take the
+/// BRepAlgoAPI_Section defaults (off).
+pub fn section(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
+    let mut op = BuilderAlgo::new();
+    let mut global_locs = vec![glam::DAffine3::IDENTITY];
+    let mut cache = std::collections::HashMap::new();
+    op.arguments = brep_top_shapes_with_locations(a, &mut global_locs, &mut cache);
+    op.tools = brep_top_shapes_with_locations(b, &mut global_locs, &mut cache);
+    op.locations = global_locs;
+    run_build_section_brep(&op, false, false, false)
 }
 
 /// OCCT shortcut: `BRepAlgoAPI_Cut21(a, b).Shape()` 閳?`b` minus `a`.
@@ -518,7 +810,7 @@ pub fn boolean_op(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRe
         BooleanOpType::Intersection => common(a, b),
         BooleanOpType::Cut => cut(a, b),
         BooleanOpType::Cut21 => cut21(a, b),
-        BooleanOpType::Section => cut(a, b),
+        BooleanOpType::Section => section(a, b),
         BooleanOpType::Unknown => Err(BooleanError::TooFewArguments),
     }
 }

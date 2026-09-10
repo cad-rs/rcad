@@ -124,6 +124,7 @@ pub fn make_cylindrical_surface(
         axis,
         radius,
         ref_dir,
+        y_dir: None,
     })
 }
 
@@ -147,6 +148,7 @@ pub fn make_cylindrical_surface_point(
         axis: cyl.axis,
         radius,
         ref_dir: cyl.ref_dir,
+        y_dir: cyl.y_dir,
     })
 }
 
@@ -335,6 +337,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 5.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let tc = make_trimmed_cylinder(&cyl, 0.0, 10.0).unwrap();
         assert!((tc.v_min - 0.0).abs() < 1e-12);

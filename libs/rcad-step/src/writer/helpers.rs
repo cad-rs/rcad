@@ -9,6 +9,10 @@ pub(super) struct OrientedEdgeExport {
     #[allow(dead_code)]
     pub(super) end: usize,
     pub(super) forward: bool,
+    /// Location index of the edge Shape in the BRep (BRep_Tool::Curve applies
+    /// it to the raw TShape curve — TopoDSToStep_MakeStepEdge transforms the
+    /// curve by CA.Trsf(), MakeStepEdge.cxx L199-200).
+    pub(super) location: u32,
 }
 
 // ── Topods-native variants (migration) ──
@@ -40,6 +44,7 @@ pub(super) fn oriented_face_edges_topods(
                 start,
                 end,
                 forward: sr.orientation.is_forward(),
+                location: sr.location,
             })
         })
         .collect()
@@ -487,6 +492,7 @@ pub(super) fn synthesize_plane_pcurve_for_edge_topods(
             Some(Curve2d::Ellipse(rcad_kernel::geom::Ellipse2d {
                 center,
                 major_dir: md,
+                minor_dir: glam::DVec2::new(-md.y, md.x),
                 major_radius: e.major_radius.max(1e-9),
                 minor_radius: e.minor_radius.max(1e-9),
             }))

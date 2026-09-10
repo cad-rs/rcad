@@ -91,6 +91,15 @@ pub struct Builder<'a> {
     // `nbshapes` without -t (same sub-shape with different location counts
     // once).  The evaluated positions are carried by the Location references.
     pub(crate) shape_remap: HashMap<u64, usize>,
+    // rcad-specific: surfaces of face TShapes built during this Builder run
+    // (draft faces, split areas). These are not DS-pool shapes, so pcurve-row
+    // owner resolution needs them alongside the DS face table.
+    pub(crate) my_built_face_surfaces: HashMap<u64, rcad_kernel::geom::Surface3>,
+    // OCCT BOPAlgo_Splitter (BOPAlgo_Splitter.cxx): the Splitter runs the GF
+    // pipeline (BOPAlgo_Builder::PerformInternal1) with myArguments = objects
+    // only (tools live in myTools and are excluded from the result), and it
+    // skips the BOP-specific BuildShape step (BuildRC/BuildSolid).
+    pub(crate) my_is_splitter: bool,
 }
 
 /// Stage snapshot: DS + result BRep counts at a Builder pipeline boundary.
@@ -279,45 +288,59 @@ fn face_edges(face: &Shape) -> Vec<Shape> {
 }
 
 /// All (point, tolerance) pairs of the boundary vertices of a shape.
-fn shape_vertices(s: &Shape) -> Vec<(DVec3, f64)> {    let mut out = Vec::new();
-    let mut stack: Vec<Shape> = vec![s.clone()];
-    while let Some(sh) = stack.pop() {
+pub(crate) fn shape_vertices(s: &Shape, locations: &[glam::DAffine3]) -> Vec<(DVec3, f64)> {
+    // OCCT TopExp_Explorer composes each parent TopLoc_Location into the
+    // sub-shape (TopoDS_Iterator.cxx L76-78, cumLoc); BRep_Tool::Pnt of the
+    // composed vertex returns the WORLD point. rcad carries the cumulative
+    // DS-location transform down the traversal and applies it to the stored
+    // point. The stored orientations are unused for geometry.
+    let resolve =
+        |idx: u32| locations.get(idx as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+    let mut out: Vec<(DVec3, f64)> = Vec::new();
+    let mut stack: Vec<(Shape, glam::DAffine3)> = vec![(s.clone(), glam::DAffine3::IDENTITY)];
+    while let Some((sh, parent_loc)) = stack.pop() {
+        let cum = parent_loc * resolve(sh.location);
         match &*sh.data {
-            TShape::Vertex(vd) => out.push((vd.point, vd.tolerance)),
+            TShape::Vertex(vd) => out.push((cum.transform_point3(vd.point), vd.tolerance)),
             TShape::Edge(ed) => {
-                stack.push(ed.first.clone());
-                stack.push(ed.last.clone());
+                stack.push((ed.first.clone(), cum));
+                stack.push((ed.last.clone(), cum));
             }
-            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned().map(|e| (e, cum))),
             TShape::Face(fd) => {
-                stack.push(fd.outer_wire.clone());
-                stack.extend(fd.inner_wires.iter().cloned());
+                stack.push((fd.outer_wire.clone(), cum));
+                stack.extend(fd.inner_wires.iter().cloned().map(|w| (w, cum)));
             }
-            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
-            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned()),
-            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned()),
-            TShape::Compound(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned().map(|f| (f, cum))),
+            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned().map(|f| (f, cum))),
+            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned().map(|f| (f, cum))),
+            TShape::Compound(cd) => stack.extend(cd.iter().cloned().map(|f| (f, cum))),
         }
     }
     out
 }
 
-/// All edge Shapes of a shape (faces -> wires -> edges).
-fn shape_edges(s: &Shape) -> Vec<Shape> {
-    let mut out = Vec::new();
-    let mut stack: Vec<Shape> = vec![s.clone()];
-    while let Some(sh) = stack.pop() {
+/// All edge Shapes of a shape (faces -> wires -> edges), each with the
+/// cumulative location transform from the traversal root (see
+/// [`shape_vertices`]).
+fn shape_edges(s: &Shape, locations: &[glam::DAffine3]) -> Vec<(Shape, glam::DAffine3)> {
+    let resolve =
+        |idx: u32| locations.get(idx as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+    let mut out: Vec<(Shape, glam::DAffine3)> = Vec::new();
+    let mut stack: Vec<(Shape, glam::DAffine3)> = vec![(s.clone(), glam::DAffine3::IDENTITY)];
+    while let Some((sh, parent_loc)) = stack.pop() {
+        let cum = parent_loc * resolve(sh.location);
         match &*sh.data {
-            TShape::Edge(_) => out.push(sh),
-            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned()),
+            TShape::Edge(_) => out.push((sh, cum)),
+            TShape::Wire(wd) => stack.extend(wd.edges.iter().cloned().map(|e| (e, cum))),
             TShape::Face(fd) => {
-                stack.push(fd.outer_wire.clone());
-                stack.extend(fd.inner_wires.iter().cloned());
+                stack.push((fd.outer_wire.clone(), cum));
+                stack.extend(fd.inner_wires.iter().cloned().map(|w| (w, cum)));
             }
-            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned()),
-            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned()),
-            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned()),
-            TShape::Compound(cd) => stack.extend(cd.iter().cloned()),
+            TShape::Shell(sd) => stack.extend(sd.faces.iter().cloned().map(|f| (f, cum))),
+            TShape::Solid(sd) => stack.extend(sd.shells.iter().cloned().map(|f| (f, cum))),
+            TShape::CompSolid(cd) => stack.extend(cd.iter().cloned().map(|f| (f, cum))),
+            TShape::Compound(cd) => stack.extend(cd.iter().cloned().map(|f| (f, cum))),
             TShape::Vertex(_) => {}
         }
     }
@@ -361,6 +384,20 @@ fn edge_data(edge: &Shape) -> Option<&TEdgeData> {
 /// face index can be located by matching the surface (OCCT BRep_Tool::IsClosed
 /// and BRep_Tool::CurveOnSurface match the face's surface handle; rcad stores
 /// pcurves keyed by the DS face index).
+/// Second pcurve-key component for a raw location number resolved against the
+/// DS location table (`pcurve_location_id` of the transform value; identity
+/// -> 0).
+fn pcurve_loc_component(ds: &DS, loc: u32) -> u32 {
+    // DS location table: slot 0 stores identity, real transforms start at
+    // index 1 (DS::new / brep_top_shapes_with_locations).
+    let tr = ds
+        .locations
+        .get(loc as usize)
+        .copied()
+        .unwrap_or(glam::DAffine3::IDENTITY);
+    rcad_kernel::topo::topods::pcurve_location_id(&tr)
+}
+
 fn surface_same(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3) -> bool {
     use rcad_kernel::geom::Surface3;
     const T: f64 = 1e-9;
@@ -406,18 +443,25 @@ fn edge_pcurve_on_face<'a>(
     let ed = edge_data(edge)?;
     let surf = face.as_face().and_then(|fd| fd.surface.as_ref())?;
     ed.pcurves
-        .get(&(face.ptr_id(), face.location))
+        .get(&(face.ptr_id(), pcurve_loc_component(ds, face.location)))
         .or_else(|| {
-            ed.pcurves.iter().find_map(|(k, v)| {
+            // OCCT BRep_Tool::CurveOnSurface walks the representation list;
+            // the pcurves map is an IndexMap whose insertion order is
+            // historical, so select the deterministic minimum key among the
+            // same-surface rows.
+            let mut best: Option<(&(u64, u32), &(rcad_kernel::geom::Curve2d, f64, f64))> = None;
+            for (k, v) in ed.pcurves.iter() {
                 if let Some(&fi) = ds.map_shape_index.get(k) {
                     if let Some(fs) = ds.face_surface(fi) {
                         if surface_same(surf, &fs) {
-                            return Some(v);
+                            if best.as_ref().map_or(true, |(bk, _)| k < *bk) {
+                                best = Some((k, v));
+                            }
                         }
                     }
                 }
-                None
-            })
+            }
+            best.map(|(_, v)| v)
         })
         .map(|(pc, _, _)| pc)
 }
@@ -957,10 +1001,17 @@ pub(crate) fn get_face_off(
         // OCCT L1063: aAngle = AngleWithRef(aDBF, aDBF2, aDTF).
         let mut a_angle = angle_with_ref(a_dbf1, a_dbf2, a_dtf);
         if std::env::var("RCAD_GFO_DEBUG").is_ok() {
-            let e_or = a_e2.orientation;
-            eprintln!("[GFO]{} e1_ori={:?} f1_ori={:?} a_e2_ori={:?} a_f2_ori={:?} aDTgt=({:.4},{:.4},{:.4}) aDTgt2=({:.4},{:.4},{:.4}) aAngle={:.6}",
+            let face_desc = |f: &Shape| {
+                let n = f.as_face().and_then(|fd| fd.surface.clone()).map(|sf| match sf {
+                    rcad_kernel::geom::Surface3::Plane(p) => format!("({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
+                    _ => "O".into(),
+                }).unwrap_or_else(|| "?".into());
+                format!("{}{}n={}", f.ptr_id() % 100000, if f.orientation == topods::Orientation::Reversed { "R" } else { "F" }, n)
+            };
+            eprintln!("[GFO]{} f1={} cand_f2={} f1_ori={:?} a_e2_ori={:?} a_f2_ori={:?} aDTgt=({:.4},{:.4},{:.4}) aDTgt2=({:.4},{:.4},{:.4}) aAngle={:.6}",
                 std::env::var("RCAD_GFO_SITE").unwrap_or_default(),
-                a_or, the_f1.orientation, e_or, a_f2.orientation,
+                face_desc(the_f1), face_desc(a_f2),
+                the_f1.orientation, a_e2.orientation, a_f2.orientation,
                 a_dtgt.x, a_dtgt.y, a_dtgt.z, a_dtgt2.x, a_dtgt2.y, a_dtgt2.z, a_angle);
         }
         // OCCT L1065-1082: near-zero angle handling.
@@ -1095,8 +1146,12 @@ fn is_internal_face(
             let a_f1 = &a_lf[0];
             let a_f2 = &a_lf[1];
             if std::env::var("RCAD_GFO_DEBUG").is_ok() {
-                eprintln!("[ISF] the_face_or={:?} e_ori={:?} f1_or={:?} f2_or={:?}",
-                    the_face.orientation, a_e.orientation, a_f1.orientation, a_f2.orientation);
+                let fb = shape_bbox(the_face, &ds.locations);
+                let eb = shape_bbox(&a_e, &ds.locations);
+                eprintln!(
+                    "[ISF] the_face_box={:?} edge_box={:?} the_face_or={:?} e_ori={:?} f1_or={:?} f2_or={:?}",
+                    fb, eb, the_face.orientation, a_e.orientation, a_f1.orientation, a_f2.orientation
+                );
             }
             i_ret = is_internal_face_core(the_face, &a_e, a_f1, a_f2, ds);
             if i_ret != 2 {
@@ -1144,6 +1199,17 @@ pub(crate) fn compute_state_face(the_face: &Shape, the_solid: &Shape, the_tol: f
                     the_solid,
                 );
             clsf.perform(p, the_tol);
+            if std::env::var("RCAD_GFO_DEBUG").is_ok() {
+                let sb = shape_bbox(the_solid, &ds.locations);
+                eprintln!(
+                    "[CSF] P=({:.3},{:.3},{:.3}) solid_bbox={:?} state={} (1=IN 2=ON 3=IN 4=OUT)",
+                    p.x,
+                    p.y,
+                    p.z,
+                    sb,
+                    clsf.my_state
+                );
+            }
             return clsf.my_state;
         }
     }
@@ -1284,11 +1350,14 @@ fn edge_midpoint(edge: &Shape) -> Option<DVec3> {
 /// Bounding box of a shape 鈥?vertices plus sampled edge-curve points
 /// (semantic equivalent of OCCT BRepBndLib::Add, which also covers curve
 /// extents beyond the boundary vertices).
-pub(crate) fn shape_bbox(s: &Shape) -> Option<(DVec3, DVec3)> {
+pub(crate) fn shape_bbox(s: &Shape, locations: &[glam::DAffine3]) -> Option<(DVec3, DVec3)> {
+    // OCCT BRepBndLib::Add computes the bounding box of the shape in WORLD
+    // coordinates (all locations of the location chain composed); the stored
+    // geometry of a located shape is transformed by the cumulative location.
     let mut min = DVec3::splat(f64::INFINITY);
     let mut max = DVec3::splat(f64::NEG_INFINITY);
     let mut any = false;
-    for (p, _tol) in shape_vertices(s) {
+    for (p, _tol) in shape_vertices(s, locations) {
         if !p.is_finite() {
             continue;
         }
@@ -1296,13 +1365,13 @@ pub(crate) fn shape_bbox(s: &Shape) -> Option<(DVec3, DVec3)> {
         max = max.max(p);
         any = true;
     }
-    for e in shape_edges(s) {
+    for (e, cum) in shape_edges(s, locations) {
         if let Some(ed) = edge_data(&e) {
             if let Some(curve) = &ed.curve {
                 let [t1, t2] = ed.range;
                 for k in 0..=8 {
                     let t = t1 + (t2 - t1) * (k as f64) / 8.0;
-                    let p = curve.point_at(t);
+                    let p = cum.transform_point3(curve.point_at(t));
                     if !p.is_finite() {
                         continue;
                     }
@@ -1468,6 +1537,8 @@ impl<'a> Builder<'a> {
             my_check_inverted: false,
             my_nb_shapes_arr: [0; 8],
             shape_remap: HashMap::new(),
+            my_built_face_surfaces: HashMap::new(),
+            my_is_splitter: false,
         }
     }
 
@@ -1619,6 +1690,12 @@ impl<'a> Builder<'a> {
         self.build_result(topods::ShapeType::Face);
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(4, "after_FillImagesFaces");
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let (v, e, f, sh, so) =
+                count_brep_entities(self.my_shape.as_ref().unwrap());
+            eprintln!("[RES] after_faces brep V={v} E={e} F={f} Sh={sh} So={so} images={} shapes_sd={}",
+                self.my_images.len(), self.my_shapes_sd.len());
+        }
 
         // OCCT L507-516: FillImagesContainers(SHELL) + BuildResult(SHELL)
         self.fill_images_containers(topods::ShapeType::Shell);
@@ -1626,6 +1703,11 @@ impl<'a> Builder<'a> {
         self.build_result(topods::ShapeType::Shell);
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(5, "after_BuildResultShell");
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let (v, e, f, sh, so) =
+                count_brep_entities(self.my_shape.as_ref().unwrap());
+            eprintln!("[RES] after_shell V={v} E={e} F={f} Sh={sh} So={so}");
+        }
 
         // OCCT L518-528: FillImagesSolids + BuildResult(SOLID)
         self.fill_images_solids();
@@ -1633,6 +1715,11 @@ impl<'a> Builder<'a> {
         self.build_result(topods::ShapeType::Solid);
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         snap!(6, "after_FillImagesSolids");
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let (v, e, f, sh, so) =
+                count_brep_entities(self.my_shape.as_ref().unwrap());
+            eprintln!("[RES] after_solids V={v} E={e} F={f} Sh={sh} So={so}");
+        }
         
 
         // OCCT L530-539: FillImagesContainers(COMPSOLID) + BuildResult(COMPSOLID)
@@ -1651,8 +1738,19 @@ impl<'a> Builder<'a> {
 
         // OCCT L575-580 (BOPAlgo_BOP.cxx): BuildShape - apply the boolean operation
         // result construction. Runs between the s08 dump and PrepareHistory.
-        self.build_shape();
-        if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        // OCCT BOPAlgo_Splitter::PerformInternal1 (BOPAlgo_Splitter.cxx L92,
+        // BOPAlgo_Builder::PerformInternal1) has NO BuildShape step: the
+        // splitter result is the compound of object images accumulated by the
+        // BuildResult calls above.
+        if !self.my_is_splitter {
+            self.build_shape();
+            if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
+        }
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let (v, e, f, sh, so) =
+                count_brep_entities(self.my_shape.as_ref().unwrap());
+            eprintln!("[RES] after_build_shape V={v} E={e} F={f} Sh={sh} So={so}");
+        }
         // OCCT L583-587 (BOPAlgo_BOP.cxx): PrepareHistory.
         self.prepare_history();
         if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
@@ -1688,7 +1786,153 @@ impl<'a> Builder<'a> {
         if brep.locations.first() == Some(&glam::DAffine3::IDENTITY) {
             brep.locations.remove(0);
         }
+        self.materialize_surface_shared_pcurves(&mut brep);
         Ok((brep, ()))
+    }
+
+    /// OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345-368) matches an
+    /// edge's representations by (surface handle, L.Predivided(E.Location())
+    /// BY VALUE) — the owning face TShape is NOT part of the match.  rcad
+    /// keys pcurve rows by the owning face pointer, so rows whose owner
+    /// stayed in the DS pool (original faces replaced by boolean images)
+    /// are unreachable from the result.  Mirror the OCCT outcome the same
+    /// way bridge_pcurves_for_built_faces does (surface value comparison
+    /// stands in for handle identity): make every row addressable under
+    /// each result-pool face sharing the owner's surface, location value
+    /// preserved.
+    fn materialize_surface_shared_pcurves(&self, brep: &mut topods::BRep) {
+        // Face surfaces by TShape pointer: result-pool faces plus DS faces
+        // (the row owners).
+        let mut face_surf: HashMap<u64, rcad_kernel::geom::Surface3> = HashMap::new();
+        for i in 0..self.ds.nb_shapes() {
+            if self.ds.shape_info(i).shape_type != topods::ShapeType::Face {
+                continue;
+            }
+            if let Some((fid, _)) = self.ds.face_key(i) {
+                if let Some(s) = self.ds.face_surface(i) {
+                    face_surf.insert(fid, s);
+                }
+            }
+        }
+        for ts in &brep.tshapes {
+            if let topods::TShape::Face(fd) = ts.as_ref() {
+                if let Some(s) = fd.surface.as_ref() {
+                    face_surf.insert(Arc::as_ptr(ts) as u64, s.clone());
+                }
+            }
+        }
+        // Pass A: rows to add per edge TShape (immutable snapshot).
+        // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L340-365) walks the
+        // edge's CurveRepresentation LIST (insertion order) and picks the FIRST
+        // representation whose surface matches the target face.  The source
+        // rows here are the pcurves of the edge keyed by their owner face;
+        // iterating face_surf (a HashMap) would pick an arbitrary source row
+        // when several owners share the target face's surface (split images of
+        // one cylinder), randomizing the materialized pcurve.  The
+        // representations list has the OCCT insertion order, so the source
+        // rows are taken from it (falling back to the pcurves map in their
+        // insertion order for edges whose representations are not maintained).
+        let mut additions: Vec<(u64, Vec<((u64, u32), (rcad_kernel::geom::Curve2d, f64, f64))>)> =
+            Vec::new();
+        for ts in &brep.tshapes {
+            let topods::TShape::Edge(ed) = ts.as_ref() else { continue };
+            let mut add: Vec<((u64, u32), (rcad_kernel::geom::Curve2d, f64, f64))> = Vec::new();
+            // Source rows in representation-list order, then pcurves order.
+            let mut src_rows: Vec<((u64, u32), (rcad_kernel::geom::Curve2d, f64, f64))> = Vec::new();
+            for r in &ed.representations {
+                if let rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                    face,
+                    pcurve,
+                    range,
+                } = r
+                {
+                    src_rows.push((*face, (pcurve.clone(), range[0], range[1])));
+                }
+            }
+            for row in &ed.pcurves {
+                if !src_rows.iter().any(|(k, _)| k == row.0) {
+                    src_rows.push((*row.0, row.1.clone()));
+                }
+            }
+            // The pcurves map is an IndexMap — its insertion order reflects the
+            // historical insertion sequence and is not a stable selection
+            // order.  Sort the supplemental rows by key so that a target key
+            // reachable from several same-surface source rows always receives
+            // the same (deterministic) pcurve.
+            src_rows.sort_by_key(|(k, _)| *k);
+            for ((optr, lhash), v) in src_rows {
+                let Some(osurf) = face_surf.get(&optr) else { continue };
+                for (fptr, fsurf) in &face_surf {
+                    if *fptr == optr || !rcad_kernel::topo::topods::surface_same(fsurf, osurf) {
+                        continue;
+                    }
+                    let k = (*fptr, lhash);
+                    if !ed.pcurves.contains_key(&k) {
+                        add.push((k, v.clone()));
+                    }
+                }
+            }
+            if !add.is_empty() {
+                additions.push((Arc::as_ptr(ts) as u64, add));
+            }
+        }
+        if additions.is_empty() {
+            return;
+        }
+        // Pass B: apply in place (single-threaded pipeline; the DS mutates
+        // shapes identically in mutate_shape_data).
+        for ts in &brep.tshapes {
+            let ep = Arc::as_ptr(ts) as u64;
+            let Some((_, add)) = additions.iter().find(|(p, _)| *p == ep) else { continue };
+            let raw = Arc::as_ptr(ts) as *mut topods::TShape;
+            // SAFETY: single-threaded build; no other borrow of this TShape
+            // is alive here (snapshot taken in pass A).
+            unsafe {
+                if let topods::TShape::Edge(ed) = &mut *raw {
+                    for (k, v) in add {
+                        ed.pcurves.entry(*k).or_insert_with(|| v.clone());
+                    }
+                }
+            }
+        }
+        // Pass C: drop rows keyed to faces outside the result pool.  OCCT
+        // keeps them (BRep_CurveOnSurface stores handle<Geom_Surface>, so the
+        // referenced surface stays alive; IsCurveOnSurface matches by surface
+        // handle identity (BRep_CurveOnSurface.cxx L65-67) — a stale row can
+        // never match a different face).  rcad keys rows by the raw face
+        // pointer: a row whose owner face is not part of the result would
+        // dangle when the DS is dropped and could alias a later allocation
+        // (L3 SA=18843 — cap circle edge resolved a dead lateral-face key to
+        // the result cap face).  Dropping them mirrors the OCCT observable
+        // behavior: the rows are unreachable from the result either way.
+        let face_ptrs: std::collections::HashSet<u64> = brep
+            .tshapes
+            .iter()
+            .filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_)))
+            .map(|ts| Arc::as_ptr(ts) as u64)
+            .collect();
+        for ts in &brep.tshapes {
+            if !matches!(ts.as_ref(), topods::TShape::Edge(_)) {
+                continue;
+            }
+            let raw = Arc::as_ptr(ts) as *mut topods::TShape;
+            // SAFETY: single-threaded build; no other borrow of this TShape
+            // is alive here.
+            unsafe {
+                if let topods::TShape::Edge(ed) = &mut *raw {
+                    ed.pcurves.retain(|&(p, _), _| face_ptrs.contains(&p));
+                    ed.representations.retain(|r| match r {
+                        topods::CurveRepresentation::CurveOnSurface {
+                            face: (p, _), ..
+                        }
+                        | topods::CurveRepresentation::CurveOnClosedSurface {
+                            face: (p, _), ..
+                        } => face_ptrs.contains(p),
+                        _ => true,
+                    });
+                }
+            }
+        }
     }
 
     // --- Pipeline stage stubs ---
@@ -1697,6 +1941,18 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Builder::CheckData (BOPAlgo_Builder.cxx L130-140).
     fn check_data(&self) -> Result<(), BooleanError> {
+        if self.my_is_splitter {
+            // OCCT BOPAlgo_Splitter::CheckData (BOPAlgo_Splitter.cxx L40-50):
+            // if (myArguments.IsEmpty() || (myArguments.Extent() + myTools.Extent()) < 2)
+            if self.my_arguments.is_empty()
+                || self.my_arguments.len() + self.my_tools.len() < 2
+            {
+                return Err(BooleanError::TooFewArguments);
+            }
+            // OCCT L49: CheckFiller();
+            self.check_filler();
+            return Ok(());
+        }
         // OCCT L132-137: if (myArguments.Extent() < 2) 鈫?AddError(TooFewArguments)
         if self.my_arguments.len() < 2 {
             return Err(BooleanError::TooFewArguments);
@@ -1715,7 +1971,7 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::Prepare (BOPAlgo_Builder.cxx L156-164).
-    fn prepare(&mut self) {
+    pub(crate) fn prepare(&mut self) {
         // OCCT L158-163: BRep_Builder aBB; MakeCompound(aC); myShape = aC;
         // rcad: topods::BRep is the equivalent of TopoDS_Compound for result.
         self.my_shape = Some(topods::BRep::new());
@@ -1730,7 +1986,7 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Builder::FillImagesVertices (BOPAlgo_Builder_1.cxx L40-67).
     /// Maps each SD vertex pair as myImages[source]->[target], myShapesSD, myOrigins.
-    fn fill_images_vertices(&mut self) {
+    pub(crate) fn fill_images_vertices(&mut self) {
         // OCCT L40-66: NCollection_DataMap<int, int>::Iterator aIt(myDS->ShapesSD());
         // rcad: DS::shapes_sd is HashMap<usize, usize> (source鈫扴D).
         let sd_pairs: Vec<(usize, usize)> = self.ds.shapes_sd
@@ -1754,7 +2010,7 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
     /// Maps source edges -> split images via pave-block real edge.
     /// Also handles CommonBlocks via myShapesSD.
-    fn fill_images_edges(&mut self) {
+    pub(crate) fn fill_images_edges(&mut self) {
         let aNbS = self.ds.nb_source_shapes();
         for i in 0..aNbS {
             let aSI = self.ds.shape_info(i);
@@ -1800,7 +2056,7 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::FillImagesContainers (BOPAlgo_Builder_1.cxx L172-193).
     /// Builds wire/shell/compsolid images from edge/face/solid images.
     /// For each source shape of theType, calls FillImagesContainer.
-    fn fill_images_containers(&mut self, the_type: topods::ShapeType) {
+    pub(crate) fn fill_images_containers(&mut self, the_type: topods::ShapeType) {
         let a_nb_s = self.ds.nb_source_shapes();
         for i in 0..a_nb_s {
             let a_si = self.ds.shape_info(i);
@@ -1990,7 +2246,7 @@ impl<'a> Builder<'a> {
     /// OCCT BOPAlgo_Builder::FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
     /// Splits faces using section edges.
     /// Calls BuildSplitFaces -> FillSameDomainFaces -> FillInternalVertices.
-    fn fill_images_faces(&mut self) {
+    pub(crate) fn fill_images_faces(&mut self) {
         // OCCT L218: BuildSplitFaces
         self.build_split_faces();
         if self.has_errors() { return; }
@@ -2009,12 +2265,6 @@ impl<'a> Builder<'a> {
     /// or alone vertices take the BuildDraftFace fast path.
     fn build_split_faces(&mut self) {
         let a_nb_s = self.ds.nb_source_shapes();
-        if std::env::var("RCAD_BS_DEBUG").is_ok() {
-            for ff in &self.ds.interf_ff {
-                eprintln!("[FF] f1={} f2={} n_curves={} tangent={}",
-                    ff.f1, ff.f2, ff.curves.len(), ff.tangent_faces);
-            }
-        }
         // aFacesIm: DS face index -> area shapes (OCCT IndexedDataMap<int,
         // List<Shape>>, Builder_2.cxx L256 鈥?insertion order, iterated at L535).
         let mut a_faces_im: IndexMap<usize, Vec<Shape>> = IndexMap::new();
@@ -2032,12 +2282,6 @@ impl<'a> Builder<'a> {
             }
             let a_f = self.brep_sr(i);
             let a_fi = self.ds.face_info(i).clone();
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[BSF-FI] face={} pb_in={} pb_on={} pb_sc={} v_in={} v_on={} v_sc={}",
-                    i, a_fi.pave_blocks_in.len(), a_fi.pave_blocks_on.len(),
-                    a_fi.pave_blocks_sc.len(), a_fi.vertices_in.len(),
-                    a_fi.vertices_on.len(), a_fi.vertices_sc.len());
-            }
 
             // OCCT L286-287: AloneVertices(i, aLIAV).
             let a_liav = self.alone_vertices(i);
@@ -2192,6 +2436,7 @@ impl<'a> Builder<'a> {
             }
 
             // OCCT L469-480: 1.2 In edges (forward + reversed).
+            let mut a_n_in_edges = 0usize;
             for &pb_key in &a_fi.pave_blocks_in {
                 if let Some(n_sp) = self.pb_edge_by_ptr(pb_key) {
                     let mut a_sp = self.brep_sr(n_sp);
@@ -2199,7 +2444,19 @@ impl<'a> Builder<'a> {
                     a_le.push(a_sp.clone());
                     a_sp.orientation = topods::Orientation::Reversed;
                     a_le.push(a_sp);
+                    a_n_in_edges += 1;
                 }
+            }
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                let n_on = a_fi.pave_blocks_on.len();
+                let n_sc = a_fi.pave_blocks_sc.len();
+                let n_pb_in = a_fi.pave_blocks_in.len();
+                let face_n = a_f.as_face().and_then(|fd| fd.surface.clone()).map(|sf| match sf {
+                    rcad_kernel::geom::Surface3::Plane(p) => format!("({:.2},{:.2},{:.2})", p.normal.x, p.normal.y, p.normal.z),
+                    _ => "O".into(),
+                }).unwrap_or_else(|| "?".into());
+                eprintln!("[BS-FACE] ds={} n={} pb_in={} pb_on={} pb_sc={} n_in_edges={} aLE={}",
+                    i, face_n, n_pb_in, n_on, n_sc, a_n_in_edges, a_le.len());
             }
             // OCCT L483-494: 1.3 Section edges (forward + reversed).
             // OCCT reads aPB->Edge() with no null-check 鈥?PostTreatFF always
@@ -2247,38 +2504,17 @@ impl<'a> Builder<'a> {
             // a face whose areas could not be built contributes nothing to the
             // result (build_draft_solid drops it). Skipping the bind would keep
             // the original face, which OCCT does not do.
-            if std::env::var("RCAD_BS_DEBUG").is_ok() {
-                eprintln!("[BSF-AREA] face={} n_areas={}", fi, a_bf.my_areas.len());
-                for ar in &a_bf.my_areas {
-                    let mut wins: Vec<String> = Vec::new();
-                    if let TShape::Face(fd) = &*ar.data {
-                        for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
-                            if let TShape::Wire(wd) = &*w.data {
-                                wins.push(format!("[{}]", wd.edges.iter().map(|e| format!("{}", e.ptr_id() % 100000)).collect::<Vec<_>>().join(",")));
-                            }
-                        }
-                    }
-                    eprintln!("[BSF-AREA]   area {} {}", ar.ptr_id() % 100000, wins.join(" "));
-                    if let TShape::Face(fd2) = &*ar.data {
-                        for w in std::iter::once(&fd2.outer_wire).chain(fd2.inner_wires.iter()) {
-                            if let TShape::Wire(wd) = &*w.data {
-                                for e in &wd.edges {
-                                    let ed = match &*e.data { TShape::Edge(ed) => ed, _ => continue };
-                                    let (pa, pb) = match (&*ed.first.data, &*ed.last.data) {
-                                        (TShape::Vertex(va), TShape::Vertex(vb)) => (va.point, vb.point),
-                                        _ => (DVec3::ZERO, DVec3::ZERO),
-                                    };
-                                    eprintln!("[BSF-AREA]     edge {} p=({:.2},{:.2},{:.2})-({:.2},{:.2},{:.2})",
-                                        e.ptr_id() % 100000, pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             a_faces_im.entry(*fi).or_default().extend(a_bf.my_areas);
         }
 
+        // Mirror OCCT BRep_Tool::CurveOnSurface surface-handle matching for
+        // faces rebuilt over the SAME surface as their source (BuilderFace
+        // areas and BuildDraftFace images): rows stored under the ORIGINAL
+        // face's pointer become addressable under each built area's pointer
+        // whenever the owning face shares the area's surface.  OCCT gets this
+        // for free because its representations compare Geom_Surface handles;
+        // rcad keys them by the face TShape pointer.
+        self.bridge_pcurves_for_built_faces(&a_faces_im);
         // OCCT L534-552: apply orientation and append areas to myImages.
         for (fi, a_lfr) in a_faces_im {
             let a_f = self.brep_sr(fi);
@@ -2293,6 +2529,110 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Bridge pcurve keys for newly built faces (draft images and split
+    /// areas).  OCCT BRep_Tool::CurveOnSurface(aE, aF) (BRep_Tool.cxx
+    /// L327-450) matches an edge's BRep_CurveOnSurface representation by
+    /// comparing its stored Geom_Surface handle with the face's surface, so a
+    /// face rebuilt over the same surface resolves the pre-existing pcurves of
+    /// its boundary edges without extra bookkeeping.  rcad addresses
+    /// representations by the owning face TShape pointer; mirror the OCCT
+    /// outcome by making every row whose owning face shares the built face's
+    /// surface addressable under the built face's key as well (the row's own
+    /// location component is copied verbatim).
+    fn bridge_pcurves_for_built_faces(&mut self, a_faces_im: &IndexMap<usize, Vec<Shape>>) {
+        for areas in a_faces_im.values() {
+            for a_ar in areas {
+                if let Some(s) = a_ar.as_face().and_then(|fd| fd.surface.clone()) {
+                    self.my_built_face_surfaces.insert(a_ar.ptr_id(), s);
+                }
+            }
+        }
+        let mut owner_surface: HashMap<u64, rcad_kernel::geom::Surface3> = HashMap::new();
+        for i in 0..self.ds.nb_shapes() {
+            if self.ds.shape_info(i).shape_type != topods::ShapeType::Face {
+                continue;
+            }
+            let Some((fid, _)) = self.ds.face_key(i) else { continue };
+            if let Some(s) = self.ds.face_surface(i) {
+                owner_surface.insert(fid, s);
+            }
+        }
+        for (fid, s) in &self.my_built_face_surfaces {
+            owner_surface.insert(*fid, s.clone());
+        }
+        for areas in a_faces_im.values() {
+            for a_ar in areas {
+                let Some(a_surf) = a_ar.as_face().and_then(|fd| fd.surface.clone()) else {
+                    continue;
+                };
+                let ar_key = (a_ar.ptr_id(), a_ar.location);
+                let TShape::Face(fd) = &*a_ar.data else { continue };
+                let mut dfe: Vec<Shape> = Vec::new();
+                for w in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {
+                    let TShape::Wire(wd) = &*w.data else { continue };
+                    dfe.extend(wd.edges.iter().cloned());
+                }
+                for e in dfe {
+                    let raw = Arc::as_ptr(&e.data) as *mut TShape;
+                    unsafe {
+                        if let TShape::Edge(ed) = &mut *raw {
+                            // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx
+                            // L340-365) iterates the edge's CurveRepresentation
+                            // LIST (insertion order) and returns the FIRST
+                            // representation whose surface matches — never a
+                            // hash map.  ed.pcurves is a HashMap: iterating it
+                            // picks an arbitrary row per process when several
+                            // pcurves share the same surface (split faces of one
+                            // cylinder), randomizing the bridged pcurve and
+                            // with it the split face's UV boundary.  Walk the
+                            // representations list (the same list OCCT walks)
+                            // instead.
+                            let row = ed
+                                .representations
+                                .iter()
+                                .find_map(|r| match r {
+                                    rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                                        face,
+                                        pcurve,
+                                        range,
+                                    } if owner_surface
+                                        .get(&face.0)
+                                        .map_or(false, |s| surface_same(&a_surf, s)) =>
+                                    {
+                                        Some((pcurve.clone(), range[0], range[1]))
+                                    }
+                                    _ => None,
+                                })
+                                .or_else(|| {
+                                    // Deterministic minimum-key selection among
+                                    // same-surface rows (the pcurves map is an
+                                    // IndexMap; its insertion order is
+                                    // historical, not a stable selection order).
+                                    let mut best_key: Option<(u64, u32)> = None;
+                                    let mut best: Option<&(rcad_kernel::geom::Curve2d, f64, f64)> = None;
+                                    for ((p, l), v) in ed.pcurves.iter() {
+                                        if owner_surface
+                                            .get(p)
+                                            .map_or(false, |s| surface_same(&a_surf, s))
+                                        {
+                                            let k = (*p, *l);
+                                            if best_key.map_or(true, |bk| k < bk) {
+                                                best_key = Some(k);
+                                                best = Some(v);
+                                            }
+                                        }
+                                    }
+                                    best.cloned()
+                                });
+                            if let Some(v) = row {
+                                ed.pcurves.entry(ar_key).or_insert(v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     /// OCCT BOPDS_DS::AloneVertices (BOPDS_DS.cxx L1028-1062).
     /// Vertices of the face not belonging to any boundary edge: endpoints of
     /// PaveBlocksIn/PaveBlocksSc plus VerticesIn/VerticesSc not already seen.
@@ -2700,7 +3040,7 @@ impl<'a> Builder<'a> {
     /// closed surface but is not yet marked closed: creates the second pcurve
     /// by translating the existing pcurve by one period, and stores both as a
     /// CurveOnClosedSurface representation.
-    fn do_split_seam_on_face(&self, a_split: &Shape, a_f: &Shape) -> bool {
+    pub(crate) fn do_split_seam_on_face(&self, a_split: &Shape, a_f: &Shape) -> bool {
         let mut b_is_left = false;
         let mut an_u_period = 0.0;
         let mut an_v_period = 0.0;
@@ -3067,8 +3407,20 @@ impl<'a> Builder<'a> {
             if is_stored {
                 continue;
             }
+            // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L337): the
+            // CurveOnPlane fallback projects the edge's 3D curve WITH the
+            // edge's location applied (BRep_Tool::Curve returns
+            // C3D->Transformed(L.Transformation())). A located edge (the
+            // prism's translated cap edge sharing the source TShape) otherwise
+            // projects at the SOURCE position instead of its own.
             let Some(curve) = a_e.as_edge().and_then(|ed| ed.curve.clone()) else {
                 continue;
+            };
+            let a_loc = self.ds.get_location(a_e.location);
+            let curve = if a_loc == glam::DAffine3::IDENTITY {
+                curve
+            } else {
+                rcad_kernel::geom::transform_curve(&curve, &a_loc)
             };
             let range = a_e.as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
             let Some(pc) = project_edge_on_plane(&curve, &pl, range) else {
@@ -3248,8 +3600,8 @@ impl<'a> Builder<'a> {
         // source surface, so each wire edge's pcurve written under the source
         // face key is copied to the draft face key (the shared-surface pcurve
         // is identical); an edge without a source pcurve keeps none.
-        let draft_key = (draft_face.ptr_id(), draft_face.location);
-        let src_key = (the_face.ptr_id(), the_face.location);
+        let draft_key = (draft_face.ptr_id(), pcurve_loc_component(&self.ds, draft_face.location));
+        let src_key = (the_face.ptr_id(), pcurve_loc_component(&self.ds, the_face.location));
         let mut dfe: Vec<Shape> = Vec::new();
         if let TShape::Face(fd) = &*draft_face.data {
             if let TShape::Wire(wd) = &*fd.outer_wire.data {
@@ -3376,8 +3728,9 @@ impl<'a> Builder<'a> {
 
         // OCCT L597-649: build face-to-parent solid map (with image propagation).
         // OCCT aFaceToParent (L593-594) is DataMap<Shape, Shape,
-        // TopTools_ShapeMapHasher> 鈥?key identity TShape + Location.
-        let mut a_face_to_parent: HashMap<(u64, u32), u64> = HashMap::new(); // face 鈫?solid
+        // TopTools_ShapeMapHasher> 鈥?keys AND values are TShape + Location
+        // identity (parent compare at L776 is IsSame = TShape + Location).
+        let mut a_face_to_parent: HashMap<(u64, u32), (u64, u32)> = HashMap::new(); // face 鈫?solid
         let a_nb_src = self.ds.nb_source_shapes();
         for i_src in 0..a_nb_src {
             let a_si = self.ds.shape_info(i_src);
@@ -3391,13 +3744,13 @@ impl<'a> Builder<'a> {
             for a_f in a_sf {
                 a_face_to_parent
                     .entry((a_f.ptr_id(), a_f.location))
-                    .or_insert(a_solid.ptr_id());
+                    .or_insert((a_solid.ptr_id(), a_solid.location));
             }
         }
         // OCCT L619-648: propagate the parent solid to the image faces.
         // OCCT L636: aPropagation is NCollection_DataMap<TopoDS_Shape, TopoDS_Shape,
         // TopTools_ShapeMapHasher> 鈥?bucket iteration order (L660-665).
-        let mut a_propagation: crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), u64> =
+        let mut a_propagation: crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), (u64, u32)> =
             crate::bop::algo::occt_map::OcctDataMapInt::new();
         // OCCT L640-655: iterate myImages 鈥?NCollection_DataMap bucket order.
         for (a_src, a_l_im) in self.my_images.iter() {
@@ -3439,7 +3792,8 @@ impl<'a> Builder<'a> {
         // IsEqual (L81-99) compares the expanded count first, then the
         // deduplicated TShape+Location set. rcad: (count, sorted unique
         // (ptr_id, location)).
-        let mut an_e_set_faces: IndexMap<(usize, Vec<(u64, u32)>), Vec<Shape>> = IndexMap::new();
+        // OCCT L690-694: map edge-sets -> list of faces, planar face fence.
+        let mut an_e_set_faces: IndexMap<(usize, Vec<(u64, u32)>), Vec<(usize, Shape)>> = IndexMap::new();
         let mut a_mf_planar: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
 
         // OCCT L697-741: for each face, compute edge set.
@@ -3487,7 +3841,7 @@ impl<'a> Builder<'a> {
                 if b_check_planar {
                     a_mf_planar.insert((f_piece.ptr_id(), f_piece.location));
                 }
-                an_e_set_faces.entry((count, edge_set)).or_default().push(f_piece.clone());
+                an_e_set_faces.entry((count, edge_set)).or_default().push((n_f, f_piece.clone()));
             }
         }
 
@@ -3500,11 +3854,11 @@ impl<'a> Builder<'a> {
         for (es_key, faces) in &an_e_set_faces {
             if faces.len() < 2 { continue; }
             for i1 in 0..faces.len() {
-                let f1 = &faces[i1];
+                let (n1, f1) = &faces[i1];
                 let parent1 = a_face_to_parent.get(&(f1.ptr_id(), f1.location)).copied();
                 let b_check_planar = a_mf_planar.contains(&(f1.ptr_id(), f1.location));
                 for i2 in (i1 + 1)..faces.len() {
-                    let f2 = &faces[i2];
+                    let (n2, f2) = &faces[i2];
                     let parent2 = a_face_to_parent.get(&(f2.ptr_id(), f2.location)).copied();
                     // OCCT L776-779: two faces of one solid cannot be SD.
                     if let (Some(p1), Some(p2)) = (parent1, parent2) {
@@ -3771,7 +4125,7 @@ impl<'a> Builder<'a> {
 
     /// OCCT BOPAlgo_Builder::FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
     /// Builds split solids: FillIn3DParts -> BuildSplitSolids -> FillInternalShapes.
-    fn fill_images_solids(&mut self) {
+    pub(crate) fn fill_images_solids(&mut self) {
         // OCCT L62-73: check all DS source shapes for SOLID type
         let a_nb_s = self.ds.nb_source_shapes();
         let mut has_solid = false;
@@ -4132,7 +4486,12 @@ impl<'a> Builder<'a> {
             let solid_bbox = a_shape_box_map
                 .get(&(a_sd.ptr_id(), a_sd.location))
                 .copied()
-                .or_else(|| shape_bbox(a_sd).map(|(a, b)| (a, b, 0.0)));
+                .or_else(|| shape_bbox(a_sd, &ds.locations).map(|(a, b)| (a, b, 0.0)));
+            if std::env::var("RCAD_BS_DEBUG").is_ok() {
+                let own: Vec<String> = faces.iter().enumerate().filter(|(_, f)| a_msf.contains(&(f.ptr_id(), f.location))).map(|(i, f)| format!("idx={} ptr={} loc={}", i, f.ptr_id() % 100000, f.location)).collect();
+                eprintln!("[F3D-OWN] solid_ptr={} n_own_faces={} own_in_faces_array=[{}]",
+                    a_sd.ptr_id() % 100000, a_msf.len(), own.join(","));
+            }
             let mut a_ivec: Vec<usize> = Vec::new();
             for (i, a_f) in faces.iter().enumerate() {
                 if a_msf.contains(&(a_f.ptr_id(), a_f.location)) {
@@ -4148,25 +4507,25 @@ impl<'a> Builder<'a> {
                     let face_bbox = a_shape_box_map
                         .get(&(a_f.ptr_id(), a_f.location))
                         .copied()
-                        .or_else(|| shape_bbox(a_f).map(|(a, b)| (a, b, 0.0)));
+                        .or_else(|| shape_bbox(a_f, &ds.locations).map(|(a, b)| (a, b, 0.0)));
                     if std::env::var("RCAD_BS_DEBUG").is_ok() && a_sd.shape_type() == topods::ShapeType::Solid {
                         let fb = face_bbox;
                         eprintln!("[F3D-BB] face_idx={} ds={} smin=({:.2},{:.2},{:.2}) smax=({:.2},{:.2},{:.2}) fmin={:?} fmax={:?}",
                             i, ds.index(&faces[i]), smin.x, smin.y, smin.z, smax.x, smax.y, smax.z,
                             fb.map(|b| b.0), fb.map(|b| b.1));
                     }
-                    let Some((fmin, fmax, _fgap)) = face_bbox else {
-                        continue;
-                    };
-                    if fmax.x < smin.x
-                        || fmin.x > smax.x
-                        || fmax.y < smin.y
-                        || fmin.y > smax.y
-                        || fmax.z < smin.z
-                        || fmin.z > smax.z
-                    {
-                        continue;
-                    }
+                let Some((fmin, fmax, _fgap)) = face_bbox else {
+                    continue;
+                };
+                if fmax.x < smin.x
+                    || fmin.x > smax.x
+                    || fmax.y < smin.y
+                    || fmin.y > smax.y
+                    || fmax.z < smin.z
+                    || fmin.z > smax.z
+                {
+                    continue;
+                }
                 }
                 a_ivec.push(i);
             }
@@ -4257,27 +4616,55 @@ impl<'a> Builder<'a> {
 
                 // OCCT L1467-1491: fast check that all block vertices interfere
                 // with the solid's bounding box; otherwise the block is out.
-                // myBoxS.IsOut(aBBV) 鈥?Bnd_Box::IsOut(Bnd_Box) adds both boxes'
+                // myBoxS.IsOut(aBBV) — Bnd_Box::IsOut(Bnd_Box) adds both boxes'
                 // gaps: vertex box gap = vertex tolerance, solid box gap = the
-                // DS box gap (BOPTools_AlgoTools.cxx L1503-1508).
+                // DS box gap (BOPTools_AlgoTools.cxx L1503-1508). OCCT's
+                // TopExp_Explorer composes the full location chain into the
+                // vertex (world point), so the world-space vertex is used here.
                 if let Some((smin, smax, sgap)) = solid_bbox {
                     let mut b_out = false;
-                    for &bfi in &a_lcb {
-                        for (p, gap) in shape_vertices(&faces[bfi]) {
-                            let egap = gap + sgap;
-                            if p.x - egap > smax.x
-                                || p.x + egap < smin.x
-                                || p.y - egap > smax.y
-                                || p.y + egap < smin.y
-                                || p.z - egap > smax.z
-                                || p.z + egap < smin.z
-                            {
-                                b_out = true;
-                                break;
+                    'blocks: for &bfi in &a_lcb {
+                        for e in face_edges(&faces[bfi]) {
+                            if let TShape::Edge(ed) = &*e.data {
+                                for vv in [&ed.first, &ed.last] {
+                                    let comp = crate::bop::algo::compose_edge_vertex_location(
+                                        e.location,
+                                        vv.location,
+                                        &ds.locations,
+                                    );
+                                    let m = ds.locations.get(comp as usize).copied().unwrap_or(
+                                        glam::DAffine3::IDENTITY,
+                                    );
+                                    let (vp, vtol) = match &*vv.data {
+                                        TShape::Vertex(vd) => (vd.point, vd.tolerance),
+                                        _ => continue,
+                                    };
+                                    let p = m.transform_point3(vp);
+                                    let egap = vtol + sgap;
+                                    if std::env::var("RCAD_GFO_DEBUG").is_ok() {
+                                        eprintln!(
+                                            "[F3D-WV] solid={:x} bfi={} vloc={} world=({:.3},{:.3},{:.3}) egap={:.9}",
+                                            a_sd.ptr_id() % 100000,
+                                            bfi,
+                                            vv.location,
+                                            p.x,
+                                            p.y,
+                                            p.z,
+                                            egap
+                                        );
+                                    }
+                                    if p.x - egap > smax.x
+                                        || p.x + egap < smin.x
+                                        || p.y - egap > smax.y
+                                        || p.y + egap < smin.y
+                                        || p.z - egap > smax.z
+                                        || p.z + egap < smin.z
+                                    {
+                                        b_out = true;
+                                        break 'blocks;
+                                    }
+                                }
                             }
-                        }
-                        if b_out {
-                            break;
                         }
                     }
                     if b_out {
@@ -4911,7 +5298,7 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::FillImagesCompounds (BOPAlgo_Builder_1.cxx L197-217).
-    fn fill_images_compounds(&mut self) {
+    pub(crate) fn fill_images_compounds(&mut self) {
         // OCCT L199-201: fence map + NbSourceShapes 鈥?TopTools_ShapeMapHasher.
         let mut a_mfp: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
         let a_nb_s = self.ds.nb_source_shapes();
@@ -4985,7 +5372,7 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::PrepareHistory (BOPAlgo_Builder_4.cxx L164-252).
-    fn prepare_history(&mut self) {
+    pub(crate) fn prepare_history(&mut self) {
         // OCCT L166-168: if (!HasHistory()) return;
         if !self.my_fill_history { return; }
 
@@ -5138,7 +5525,7 @@ impl<'a> Builder<'a> {
     }
 
     /// OCCT BOPAlgo_Builder::PostTreat (BOPAlgo_Builder.cxx L461-486).
-    fn post_treat(&mut self) {
+    pub(crate) fn post_treat(&mut self) {
         // OCCT L466-480: in non-destructive mode, collect source V/E/F shapes
         // into aMA (aMapToAvoid 鈥?tolerance of these shapes is not corrected).
         // rcad: non-destructive mode is not enabled for the boolean pipeline
@@ -5158,7 +5545,7 @@ impl<'a> Builder<'a> {
     // ====================================================================
 
     /// OCCT BOPAlgo_BOP::BuildShape (BOPAlgo_BOP.cxx L885-1107).
-    fn build_shape(&mut self) {
+    pub(crate) fn build_shape(&mut self) {
         // OCCT BOPAlgo_BOP::CheckData sets myDims from arguments/tools.
         self.compute_dims();
         // OCCT L889-911: for 3D+3D, if any argument solid is open, use the
@@ -5172,6 +5559,79 @@ impl<'a> Builder<'a> {
         }
         // OCCT L913-914: BuildRC.
         self.build_rc();
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[RES] after_build_rc rc_len={} my_shape_faces={}",
+                self.my_rc.len(),
+                self.my_shape.as_ref().map(|b| b.tshapes.iter().filter(|t| matches!(t.as_ref(), topods::TShape::Face(_))).count()).unwrap_or(0));
+            if let Some(brep) = self.my_shape.as_ref() {
+                for (rc_i, rc) in self.my_rc.iter().enumerate() {
+                    eprintln!("[RES-SOLID] rc[{}] type={:?} ptr={:+x} loc={}", rc_i, rc.shape_type(), rc.ptr_id() & 0xffff, rc.location);
+                    if let topods::TShape::Solid(sd) = &*rc.data {
+                        for (sh_i, sh) in sd.shells.iter().enumerate() {
+                            let (sh_type, mut faces): (String, Vec<topods::Shape>) = match &*sh.data {
+                                topods::TShape::Shell(w) => ("Shell".into(), w.faces.clone()),
+                                _ => ("?".into(), Vec::new()),
+                            };
+                            eprintln!("[RES-SOLID]   shell[{}] {} n_faces={} sh_loc={}", sh_i, sh_type, faces.len(), sh.location);
+                            for f in &faces {
+                                let (n_desc, wires_desc, bbox): (String, String, [f64; 6]) = match &*f.data {
+                                    topods::TShape::Face(fd) => {
+                                        let n = fd.surface.as_ref().map(|s| match s {
+                                            rcad_kernel::geom::Surface3::Plane(p) => format!("P({:.0},{:.0},{:.0})", p.normal.x, p.normal.y, p.normal.z),
+                                            _ => "C".into(),
+                                        }).unwrap_or_default();
+                                        let mut wires_desc = String::new();
+                                        let mut bb = [f64::INFINITY, f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+                                        let loc = self.ds.get_location(f.location);
+                                        let mut add_pt = |p: glam::DVec3, bb: &mut [f64; 6]| {
+                                            let w = loc.transform_point3(p);
+                                            bb[0] = bb[0].min(w.x); bb[1] = bb[1].min(w.y); bb[2] = bb[2].min(w.z);
+                                            bb[3] = bb[3].max(w.x); bb[4] = bb[4].max(w.y); bb[5] = bb[5].max(w.z);
+                                        };
+                                        let mut emit = |name: &str, w_sr: &topods::Shape, wires_desc: &mut String, bb: &mut [f64; 6]| {
+                                            if let topods::TShape::Wire(wd) = &*w_sr.data {
+                                                wires_desc.push_str(&format!(" {}{}[", name, wd.edges.len()));
+                                                for e in &wd.edges {
+                                                    if let topods::TShape::Edge(ed) = &*e.data {
+                                                        let eloc = loc
+                                                            * self.ds.get_location(e.location);
+                                                        for v in [&ed.first, &ed.last] {
+                                                            if let topods::TShape::Vertex(vd) = &*v.data {
+                                                                let vloc = eloc * self.ds.get_location(v.location);
+                                                                let p = vloc.transform_point3(vd.point);
+                                                                wires_desc.push_str(&format!("({:.0},{:.0},{:.0})", p.x, p.y, p.z));
+                                                            }
+                                                        }
+                                                        for v in [&ed.first, &ed.last] {
+                                                            if let topods::TShape::Vertex(vd) = &*v.data {
+                                                                let vloc = eloc * self.ds.get_location(v.location);
+                                                                add_pt(vloc.transform_point3(vd.point), bb);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                wires_desc.push_str("]");
+                                            }
+                                        };
+                                        emit("o", &fd.outer_wire, &mut wires_desc, &mut bb);
+                                        for w in &fd.inner_wires {
+                                            emit("i", w, &mut wires_desc, &mut bb);
+                                        }
+                                        (n, wires_desc, bb)
+                                    }
+                                    _ => ("?".into(), String::new(), [0.0; 6]),
+                                };
+                                eprintln!(
+                                    "[RES-SOLID]     face={:+x}@{} ori={:?} n={} bbox=({:.0},{:.0},{:.0})-({:.0},{:.0},{:.0}){}",
+                                    f.ptr_id() & 0xffff, f.location, f.orientation, n_desc,
+                                    bbox[0], bbox[1], bbox[2], bbox[3], bbox[4], bbox[5], wires_desc
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // OCCT L916-920: FUSE of 3D 鈫?BuildSolid.
         if self.my_operation == BooleanOpType::Union && self.my_dims[0] == 3 {
             self.build_solid();
@@ -5641,6 +6101,62 @@ impl<'a> Builder<'a> {
         let mut a_mu_sols: Vec<Shape> = Vec::new();
         let mut a_mu_fence: HashSet<(u64, u32)> = HashSet::new();
         a_mfs.clear();
+        if std::env::var("RCAD_SPLIT_DEBUG").is_ok() {
+            for (si, a_sx) in self.my_rc.iter().enumerate() {
+                eprintln!(
+                    "[BS-RC] rc[{}] type={:?} ptr={}",
+                    si,
+                    a_sx.shape_type(),
+                    a_sx.ptr_id() % 100000
+                );
+                for f in self.map_shapes_of_type(a_sx, topods::ShapeType::Face) {
+                    eprintln!(
+                        "[BS-RC]   face={} bbox={:?}",
+                        f.ptr_id() % 100000,
+                        shape_bbox(&f, &self.ds.locations)
+                    );
+                    if let TShape::Face(fd) = &*f.data {
+                        let sk = match &fd.surface {
+                            Some(rcad_kernel::geom::Surface3::Plane(p)) => format!(
+                                "plane n=({:.3},{:.3},{:.3})",
+                                p.normal.x, p.normal.y, p.normal.z
+                            ),
+                            Some(_) => "other".to_string(),
+                            None => "none".to_string(),
+                        };
+                        eprintln!(
+                            "[BS-RC]     surf={} n_inner={}",
+                            sk,
+                            fd.inner_wires.len()
+                        );
+                        for (wi, w) in
+                            std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()).enumerate()
+                        {
+                            if let TShape::Wire(wd) = &*w.data {
+                                for e in &wd.edges {
+                                    if let TShape::Edge(ed) = &*e.data {
+                                        for v in [&ed.first, &ed.last] {
+                                            if let TShape::Vertex(vd) = &*v.data {
+                                                eprintln!(
+                                                    "[BS-RC]       w{} e={} v=({:.2},{:.2},{:.2}) vloc={} eloc={}",
+                                                    wi,
+                                                    e.ptr_id() % 100000,
+                                                    vd.point.x,
+                                                    vd.point.y,
+                                                    vd.point.z,
+                                                    v.location,
+                                                    e.location
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for a_sx in &self.my_rc {
             if a_msa.contains(&(a_sx.ptr_id(), a_sx.location)) {
                 if !a_mt_sols.contains(&(a_sx.ptr_id(), a_sx.location)) {
@@ -5673,6 +6189,27 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let multi = a_mfs.values().filter(|s| s.1.len() > 1).count();
+            let mut desc: Vec<String> = Vec::new();
+            for (k, (f, sols)) in &a_mfs {
+                let st = f.as_face().and_then(|fd| fd.surface.as_ref()).map(|sf| match sf {
+                    rcad_kernel::geom::Surface3::Plane(_) => "P",
+                    rcad_kernel::geom::Surface3::Cylinder(_) => "C",
+                    _ => "O",
+                }).unwrap_or("?");
+                let n_e = match &*f.data {
+                    rcad_kernel::topods::TShape::Face(fd) => match &*fd.outer_wire.data {
+                        rcad_kernel::topods::TShape::Wire(wd) => wd.edges.len(),
+                        _ => 0,
+                    },
+                    _ => 0,
+                };
+                desc.push(format!("{}{}x{}@{}", st, n_e, sols.len(), k.1));
+            }
+            desc.sort();
+            eprintln!("[BS-MAP] a_mfs={} multi={} mu={} [{}]", a_mfs.len(), multi, a_mu_sols.len(), desc.join(" "));
+        }
         // OCCT L1227-1241: faces belonging to a single solid.
         let mut a_mef: HashMap<(u64, u32), Vec<(u64, u32)>> = HashMap::new();
         let mut a_sfs: Vec<Shape> = Vec::new();
@@ -5702,7 +6239,12 @@ impl<'a> Builder<'a> {
                             }
                         }
                     }
-                    eprintln!("[BS-FACES] face={} {}", f.ptr_id() % 100000, wins.join(" "));
+                    eprintln!(
+                        "[BS-FACES] face={} bbox={:?} {}",
+                        f.ptr_id() % 100000,
+                        shape_bbox(f, &self.ds.locations),
+                        wins.join(" ")
+                    );
                 }
             }
             let mut a_bs = crate::bop::algo::builder_solid::BuilderSolid::new(&self.ds);
@@ -5736,6 +6278,9 @@ impl<'a> Builder<'a> {
         // OCCT L1273-1279: add untouched solids.
         for a_sx in &a_dmsts {
             a_rc.push(a_sx.clone());
+        }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[BS-TAIL] a_rc={} a_dmsts={} a_lsc={}", a_rc.len(), a_dmsts.len(), a_lsc.len());
         }
         // OCCT L1281-1286: no compsolids in arguments 鈫?done.
         if a_lsc.is_empty() {
@@ -6241,7 +6786,7 @@ impl<'a> Builder<'a> {
     /// (or the argument itself if it has no images) to myShape, deduplicated by fence.
     /// When arguments are solids, the intermediate calls (VERTEX..SHELL, COMPOUND)
     /// are no-ops; only BuildResult(SOLID) adds shapes into the result compound.
-    fn build_result(&mut self, the_type: topods::ShapeType) {
+    pub(crate) fn build_result(&mut self, the_type: topods::ShapeType) {
         // OCCT L133: fence map 鈥?TopTools_ShapeMapHasher (TShape + Location).
         let mut a_m_fence: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
         // OCCT L136-167: iterate myArguments, filter by theType

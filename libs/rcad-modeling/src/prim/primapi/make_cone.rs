@@ -20,7 +20,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{
     Circle2d, Circle3, Curve2d, Curve3, ConicalSurface, Line2d, Line3, Plane, Surface3,
 };
-use rcad_kernel::topods::{self, CurveRepresentation, Orientation, Shape};
+use rcad_kernel::topods::{self, CurveRepresentation, GeomAbsShape, Orientation, Shape, BRepBuilder};
 use rcad_kernel::BRep;
 
 pub struct MakeCone {
@@ -169,6 +169,10 @@ impl MakeCone {
                 pcurve2: Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::Y)),
                 range: [0.0, seam_len],
             });
+        // OCCT BRepPrim_Builder::SetPCurve(E, F, L1, L2) (BRepPrim_Builder.cxx
+        // L107-118): after the closed pcurve pair UpdateEdge, the seam
+        // regularity -- myBuilder.Continuity(E, F, F, GeomAbs_CN).
+        BRepBuilder::new().continuity(&mut t, &e_seam, &f_lat, &f_lat, GeomAbsShape::CN);
         // OCCT BRepPrim_OneAxis::TopFace/BottomFace (L465-468/L506-509): cap
         // circle pcurves — gp_Circ2d((0,0), MeridianValue(V).X()).
         t.edge_mut_inplace(e_bot.clone()).pcurves.insert(

@@ -1335,10 +1335,7 @@ mod tests {
 
     #[test]
     fn line_bspline_endpoints() {
-        let line = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
+        let line = Line3::new(DVec3::ZERO, DVec3::X);
         let bs = line_to_bspline(&line);
         let p0 = bs.point_at(0.0);
         let p1 = bs.point_at(1.0);
@@ -1424,6 +1421,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 1.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let bs = cylinder_to_bspline(&cyl);
         // Sample several u values; all should be on the cylinder surface
@@ -1452,6 +1450,526 @@ mod tests {
             let p = bs.point_at(u, 0.5);
             let r = p.length();
             assert!((r - 1.0).abs() < 1e-9, "u={u}: radius={r}");
+        }
+    }
+}
+
+// ============================================================================
+// OCCT Convert / GeomConvert conic-to-BSpline conversions (kernel gap
+// completion for BlendFunc::GetMinimalWeights, Stage 1e).
+// Sources: Convert_ConicToBSplineCurve.cxx (TKMath/Convert, L155-620),
+// Convert_CircleToBSplineCurve.cxx (L47-167),
+// Convert_CosAndSinEvalFunction.hxx, GeomConvert.cxx (TKGeomBase,
+// BSplineCurveBuilder L58-95 + CurveToBSplineCurve L163-380).
+// ============================================================================
+
+/// OCCT Convert_ParameterisationType (TKMath/Convert,
+/// Convert_ParameterisationType.hxx L79-89).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConvertParameterisation {
+    TgtThetaOver2,
+    TgtThetaOver2_1,
+    TgtThetaOver2_2,
+    TgtThetaOver2_3,
+    TgtThetaOver2_4,
+    QuasiAngular,
+    RationalC1,
+    Polynomial,
+}
+
+/// Data computed by OCCT Convert_ConicToBSplineCurve (the base-class fields:
+/// myPoles 2d, myWeights, myKnots, myMults, myDegree, myIsPeriodic).
+pub struct ConvertConicToBspline {
+    pub poles_2d: Vec<DVec2>,
+    pub weights: Vec<f64>,
+    pub knots: Vec<f64>,
+    pub mults: Vec<i32>,
+    pub degree: i32,
+    pub is_periodic: bool,
+}
+
+/// OCCT PLib::NoDerivativeEvalPolynomial(U, Degree, Dimension, Stride,
+/// Polynom, Results) — evaluation of a Bernstein (polynomial) form without
+/// derivative request.
+fn no_derivative_eval_polynomial(u: f64, degree: i32, dimension: usize, coeffs: &[f64], results: &mut [f64]) {
+    // Bernstein basis evaluation: R(u) = sum_i C(Degree,i) (1-u)^(Degree-i) u^i * P_i.
+    for d in 0..dimension {
+        let mut acc = 0.0f64;
+        let uc = 1.0 - u;
+        for i in 0..=degree {
+            let binom = crate::math::plib::binomial(degree as usize, i as usize);
+            acc += binom * uc.powi(degree - i) * u.powi(i) * coeffs[(i as usize) * dimension + d];
+        }
+        results[d] = acc;
+    }
+}
+
+/// OCCT CosAndSinQuasiAngular (Convert_ConicToBSplineCurve.cxx L271-295) —
+/// evaluates the V(t), U(t) polynomial pair of the quasi-angular
+/// parameterisation at U/2 (rational approximation of cotan).
+fn cos_and_sin_quasi_angular(parameter: f64, eval_degree: i32, eval_poles: &[DVec2], result: &mut [f64; 2]) {
+    assert!(
+        eval_poles.len() == (eval_degree + 1) as usize,
+        "CosAndSinQuasiAngular: EvalPoles size mismatch"
+    );
+    let a_num_coords = (eval_degree + 1) * 2;
+    let mut a_coeffs = vec![0.0f64; a_num_coords as usize];
+    for (i, pole) in eval_poles.iter().enumerate() {
+        a_coeffs[i * 2] = pole.x;
+        a_coeffs[i * 2 + 1] = pole.y;
+    }
+    let param = parameter * 0.5;
+    no_derivative_eval_polynomial(param, eval_degree, 2, &a_coeffs, result);
+}
+
+/// OCCT CosAndSinRationalC1 (Convert_ConicToBSplineCurve.cxx L235-253) —
+/// evaluates the temp BSpline (degree 2, knots/mults) carrying U(t), V(t).
+fn cos_and_sin_rational_c1(
+    parameter: f64,
+    eval_degree: i32,
+    eval_poles: &[DVec2],
+    eval_knots: &[f64],
+    eval_mults: &[i32],
+    result: &mut [f64; 2],
+) {
+    // OCCT: BSplCLib::D0(Parameter, 0, EvalDegree, false, EvalPoles,
+    // NoWeights, EvalKnots, EvalMults, a_point).
+    let flat = crate::geom::BSplineCurve3::from_knots_mults(
+        eval_degree as usize,
+        eval_knots.to_vec(),
+        eval_mults.to_vec(),
+        eval_poles
+            .iter()
+            .map(|p| DVec3::new(p.x, p.y, 0.0))
+            .collect(),
+    );
+    let p = flat.point_at(parameter);
+    result[0] = p.x;
+    result[1] = p.y;
+}
+
+/// OCCT AlgorithmicCosAndSin (Convert_ConicToBSplineCurve.cxx L306-350) —
+/// builds the BSpline representation of an algorithmic description of the
+/// functions cos and sin.
+#[allow(clippy::too_many_arguments)]
+fn algorithmic_cos_and_sin(
+    degree: i32,
+    flat_knots: &[f64],
+    eval_degree: i32,
+    eval_poles: &[DVec2],
+    eval_knots: &[f64],
+    eval_mults: &[i32],
+    quasi_angular: bool,
+    cos_numerator: &mut [f64],
+    sin_numerator: &mut [f64],
+    denominator: &mut [f64],
+) {
+    let order = degree + 1;
+    let num_poles = flat_knots.len() as i32 - order;
+
+    assert!(
+        num_poles == cos_numerator.len() as i32
+            && num_poles == sin_numerator.len() as i32
+            && num_poles == denominator.len() as i32,
+        "Standard_ConstructionError: AlgorithmicCosAndSin"
+    );
+
+    let mut parameters = vec![0.0f64; num_poles as usize];
+    crate::math::bspl_lib::build_schoenberg_points(degree as usize, flat_knots, &mut parameters);
+
+    let mut poles_array = vec![0.0f64; (num_poles * 3) as usize];
+    let mut contact_order_array = vec![0i32; num_poles as usize];
+    let mut result = [0.0f64; 2];
+    for (ii, &param) in parameters.iter().enumerate() {
+        if quasi_angular {
+            cos_and_sin_quasi_angular(param, eval_degree, eval_poles, &mut result);
+        } else {
+            cos_and_sin_rational_c1(param, eval_degree, eval_poles, eval_knots, eval_mults, &mut result);
+        }
+        let base = ii * 3;
+        poles_array[base] = result[1] * result[1] - result[0] * result[0];
+        poles_array[base + 1] = 2.0 * result[1] * result[0];
+        poles_array[base + 2] = result[1] * result[1] + result[0] * result[0];
+    }
+    let pivot_index_problem =
+        crate::math::bspl_lib::interpolate(degree as usize, flat_knots, &parameters, &contact_order_array, 3, &mut poles_array);
+    let _ = pivot_index_problem;
+    for ii in 0..num_poles as usize {
+        let inverse = 1.0 / poles_array[ii * 3 + 2];
+        cos_numerator[ii] = poles_array[ii * 3] * inverse;
+        sin_numerator[ii] = poles_array[ii * 3 + 1] * inverse;
+        denominator[ii] = poles_array[ii * 3 + 2];
+    }
+}
+
+/// OCCT Convert_ConicToBSplineCurve::BuildCosAndSin(Parameterisation, UFirst,
+/// ULast, CosNumerator, SinNumerator, Denominator, Degree, Knots, Mults)
+/// (Convert_ConicToBSplineCurve.cxx L155-620).  The Polynomial branch is
+/// staged (not reachable from the blend consumers).
+#[allow(clippy::too_many_arguments)]
+fn build_cos_and_sin(
+    parameterisation: ConvertParameterisation,
+    u_first: f64,
+    u_last: f64,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>, i32, Vec<f64>, Vec<i32>) {
+    let pi = std::f64::consts::PI;
+    let delta = u_last - u_first;
+
+    let mut num_poles = 0i32;
+    let mut num_knots = 1i32;
+    let mut num_spans = 1i32;
+    let mut degree = 0i32;
+    let mut order = 0i32;
+    let mut tgt_theta_flag = 0i32;
+    let mut alpha = 0.0f64;
+
+    match parameterisation {
+        ConvertParameterisation::TgtThetaOver2 => {
+            num_spans = (1.2 * delta / pi).trunc() as i32 + 1;
+            tgt_theta_flag = 1;
+        }
+        ConvertParameterisation::TgtThetaOver2_1 => {
+            num_spans = 1;
+            if delta > 0.9999 * pi {
+                panic!("Standard_ConstructionError: BuildCosAndSin TgtThetaOver2_1");
+            }
+            tgt_theta_flag = 1;
+        }
+        ConvertParameterisation::TgtThetaOver2_2 => {
+            num_spans = 2;
+            if delta > 1.9999 * pi {
+                panic!("Standard_ConstructionError: BuildCosAndSin TgtThetaOver2_2");
+            }
+            tgt_theta_flag = 1;
+        }
+        ConvertParameterisation::TgtThetaOver2_3 => {
+            num_spans = 3;
+            tgt_theta_flag = 1;
+        }
+        ConvertParameterisation::TgtThetaOver2_4 => {
+            num_spans = 4;
+            tgt_theta_flag = 1;
+        }
+        ConvertParameterisation::QuasiAngular => {
+            num_poles = 7;
+            degree = 6;
+            num_spans = 1;
+            num_knots = 2;
+            order = degree + 1;
+            return build_cos_and_sin_alg(
+                parameterisation,
+                u_first,
+                u_last,
+                num_poles,
+                degree,
+                num_knots,
+                order,
+                true,
+            );
+        }
+        ConvertParameterisation::RationalC1 => {
+            degree = 4;
+            order = degree + 1;
+            num_poles = 8;
+            num_knots = 3;
+            num_spans = 2;
+            return build_cos_and_sin_alg(
+                parameterisation,
+                u_first,
+                u_last,
+                num_poles,
+                degree,
+                num_knots,
+                order,
+                false,
+            );
+        }
+        ConvertParameterisation::Polynomial => {
+            panic!(
+                "Staged: Convert BuildCosAndSin Polynomial branch (Convert_PolynomialCosAndSin.cxx L41-186)"
+            );
+        }
+    }
+    if tgt_theta_flag == 1 {
+        alpha = delta / (2.0 * num_spans as f64);
+        degree = 2;
+        num_poles = 2 * num_spans + 1;
+    }
+
+    let mut cos_numerator = vec![0.0f64; num_poles as usize];
+    let mut sin_numerator = vec![0.0f64; num_poles as usize];
+    let mut denominator = vec![0.0f64; num_poles as usize];
+    let mut knots = vec![0.0f64; (num_spans + 1) as usize];
+    let mut mults = vec![0i32; (num_spans + 1) as usize];
+
+    if tgt_theta_flag == 1 {
+        let mut param = u_first;
+        cos_numerator[0] = u_first.cos();
+        sin_numerator[0] = u_first.sin();
+        denominator[0] = 1.0;
+        knots[0] = param;
+        mults[0] = degree + 1;
+        let direct = alpha.cos();
+        let inverse = 1.0 / direct;
+        for ii in 1..=num_spans {
+            // OCCT indices are 1-based: CosNumerator(2*ii) / (2*ii+1) over
+            // arrays of num_poles = 2*num_spans+1 entries — shifted to
+            // 0-based (2*ii-1 / 2*ii) as in build_cos_and_sin_alg.
+            cos_numerator[(2 * ii - 1) as usize] = inverse * (param + alpha).cos();
+            sin_numerator[(2 * ii - 1) as usize] = inverse * (param + alpha).sin();
+            denominator[(2 * ii - 1) as usize] = direct;
+            cos_numerator[(2 * ii) as usize] = (param + 2.0 * alpha).cos();
+            sin_numerator[(2 * ii) as usize] = (param + 2.0 * alpha).sin();
+            denominator[(2 * ii) as usize] = 1.0;
+            knots[ii as usize] = param + 2.0 * alpha;
+            mults[ii as usize] = 2;
+            param += 2.0 * alpha;
+        }
+        mults[(num_spans + 1) as usize - 1] = degree + 1;
+    }
+
+    (cos_numerator, sin_numerator, denominator, degree, knots, mults)
+}
+
+/// The QuasiAngular / RationalC1 branch of BuildCosAndSin
+/// (Convert_ConicToBSplineCurve.cxx L508-590).
+#[allow(clippy::too_many_arguments)]
+fn build_cos_and_sin_alg(
+    parameterisation: ConvertParameterisation,
+    u_first: f64,
+    u_last: f64,
+    num_poles: i32,
+    degree: i32,
+    num_knots: i32,
+    order: i32,
+    quasi_angular: bool,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>, i32, Vec<f64>, Vec<i32>) {
+    let pi = std::f64::consts::PI;
+    let mut alpha = u_last - u_first;
+    alpha *= 0.5;
+    let beta = (u_last + u_first) * 0.5;
+    let cos_beta = beta.cos();
+    let sin_beta = beta.sin();
+    let num_flat_knots = (num_poles + order) as usize;
+
+    let mut flat_knots = vec![0.0f64; num_flat_knots];
+    for ii in 1..=order {
+        flat_knots[(ii - 1) as usize] = -alpha;
+        flat_knots[(ii + num_poles - 1) as usize] = alpha;
+    }
+    let mut knots = vec![0.0f64; num_knots as usize];
+    let mut mults = vec![0i32; num_knots as usize];
+    knots[0] = u_first;
+    knots[(num_knots - 1) as usize] = u_last;
+    mults[0] = order;
+    mults[(num_knots - 1) as usize] = order;
+
+    let temp_degree;
+    let mut temp_poles = vec![DVec2::ZERO; 4];
+    let mut temp_knots = vec![0.0f64; 3];
+    let mut temp_mults = vec![0i32; 3];
+
+    if quasi_angular {
+        // Convert_QuasiAngular (L508-548).
+        let alpha_2 = alpha * 0.5;
+        let mut p_param = -1.0 / (alpha_2 * alpha_2);
+        if alpha_2 < pi * 0.5 {
+            if alpha_2 < 1e-7 {
+                // Fixed degenerate case, when obtain 0 / 0 uncertainty.
+                p_param = -6.0 / 15.0;
+            } else {
+                let tan_alpha_2 = alpha_2.tan();
+                let mut value1 = 3.0 * (tan_alpha_2 - alpha_2);
+                value1 = alpha_2 / value1;
+                p_param += value1;
+            }
+        }
+        let q_param = (1.0 / 3.0) + p_param;
+
+        temp_degree = 3;
+        temp_poles[0].x = 0.0;
+        temp_poles[1].x = 1.0;
+        temp_poles[2].x = 0.0;
+        temp_poles[3].x = q_param;
+        temp_poles[0].y = 1.0;
+        temp_poles[1].y = 0.0;
+        temp_poles[2].y = p_param;
+        temp_poles[3].y = 0.0;
+    } else {
+        // Convert_RationalC1 (L549-584).
+        for ii in (order + 1)..=num_poles {
+            flat_knots[(ii - 1) as usize] = 0.0;
+        }
+        knots[1] = u_first + alpha;
+        mults[1] = degree - 1;
+        temp_degree = 2;
+        let alpha_2 = alpha * 0.5;
+        let alpha_4 = alpha * 0.25;
+        let tan_alpha_2 = alpha_2.tan();
+        let mut jj = 1i32;
+        for ii in 1..=2 {
+            temp_poles[(1 + ii) as usize].y = 1.0 + alpha_4 * tan_alpha_2;
+            temp_poles[(jj - 1) as usize].y = 1.0;
+            jj += 3;
+        }
+        temp_poles[0].x = -tan_alpha_2;
+        temp_poles[1].x = alpha_4 - tan_alpha_2;
+        temp_poles[2].x = -alpha_4 + tan_alpha_2;
+        temp_poles[3].x = tan_alpha_2;
+        temp_knots[0] = -alpha;
+        temp_knots[1] = 0.0;
+        temp_knots[2] = alpha;
+        temp_mults[0] = temp_degree + 1;
+        temp_mults[1] = 1;
+        temp_mults[2] = temp_degree + 1;
+    }
+
+    let mut cos_numerator = vec![0.0f64; num_poles as usize];
+    let mut sin_numerator = vec![0.0f64; num_poles as usize];
+    let mut denominator = vec![0.0f64; num_poles as usize];
+
+    algorithmic_cos_and_sin(
+        degree,
+        &flat_knots,
+        temp_degree,
+        &temp_poles,
+        &temp_knots,
+        &temp_mults,
+        quasi_angular,
+        &mut cos_numerator,
+        &mut sin_numerator,
+        &mut denominator,
+    );
+
+    for ii in 0..num_poles as usize {
+        let value1 = cos_beta * cos_numerator[ii] - sin_beta * sin_numerator[ii];
+        let value2 = sin_beta * cos_numerator[ii] + cos_beta * sin_numerator[ii];
+        cos_numerator[ii] = value1;
+        sin_numerator[ii] = value2;
+    }
+
+    (cos_numerator, sin_numerator, denominator, degree, knots, mults)
+}
+
+/// OCCT Convert_CircleToBSplineCurve(C, UFirst, ULast, Parameterisation)
+/// (Convert_CircleToBSplineCurve.cxx L109-167) — non-periodic arc of circle.
+#[allow(clippy::too_many_arguments)]
+pub fn convert_circle_arc_to_bspline(
+    circle: &crate::geom::Circle3,
+    u_first: f64,
+    u_last: f64,
+    parameterisation: ConvertParameterisation,
+) -> ConvertConicToBspline {
+    let pi = std::f64::consts::PI;
+    let delta = u_last - u_first;
+    let eps = 1e-9; // Precision::PConfusion()
+
+    if delta > (2.0 * pi + eps) || delta <= 0.0 {
+        panic!("Standard_DomainError: Convert_CircleToBSplineCurve");
+    }
+
+    let r = circle.radius;
+    let is_periodic = false;
+    let (cos_numerator, sin_numerator, weights, degree, knots, mults) =
+        build_cos_and_sin(parameterisation, u_first, u_last);
+
+    // Replace the bspline in the reference of the circle (L142-166): the
+    // 2d poles (R * cos, value * R * sin) are transformed by the circle
+    // frame.  For the rcad Circle3 the direct frame (x_dir, y_dir = normal
+    // x x_dir) matches OCCT value = +R.
+    let value = r;
+    let x_dir = circle.x_dir;
+    let y_dir = circle.y_dir;
+    let poles_2d = cos_numerator
+        .iter()
+        .zip(sin_numerator.iter())
+        .map(|(&c, &s)| DVec2::new(r * c, value * s))
+        .collect::<Vec<DVec2>>();
+    // 3d placement is applied by the caller (BSplineCurveBuilder):
+    let _ = (x_dir, y_dir);
+
+    ConvertConicToBspline {
+        poles_2d,
+        weights,
+        knots,
+        mults,
+        degree,
+        is_periodic,
+    }
+}
+
+/// OCCT GeomConvert::CurveToBSplineCurve(C, Parameterisation)
+/// (GeomConvert.cxx L163-380) restricted to the branches reachable from the
+/// blend pipeline (trimmed line and circle); the ellipse, hyperbola,
+/// parabola, bezier, bspline and offset branches are staged.
+pub fn geom_convert_curve_to_bspline_curve(
+    curve: &crate::geom::Curve3,
+    parameterisation: ConvertParameterisation,
+) -> crate::geom::BSplineCurve3 {
+    match curve {
+        crate::geom::Curve3::Trimmed(ctrim) => {
+            let curv = ctrim.basis_curve();
+            let u1 = ctrim.first;
+            let u2 = ctrim.last;
+
+            match curv {
+                crate::geom::Curve3::Line(_) => {
+                    // OCCT L200-214: two poles, knots = trim parameters.
+                    let pdeb = curv.point_at(u1);
+                    let pfin = curv.point_at(u2);
+                    crate::geom::BSplineCurve3 {
+                        degree: 1,
+                        knots: vec![u1, u1, u2, u2],
+                        control_points: vec![pdeb, pfin],
+                        weights: vec![1.0, 1.0],
+                        is_periodic: false,
+                    }
+                }
+                crate::geom::Curve3::Circle(the_conic) => {
+                    // OCCT L216-282 (circle).  The RationalC1 split path
+                    // (U2 - U1 >= 6 with GeomConvert_CompCurveToBSplineCurve)
+                    // is staged; the blend consumers pass
+                    // QuasiAngular / TgtThetaOver2_1 with MaxAng <= 2*PI/3.
+                    if parameterisation == ConvertParameterisation::RationalC1 && u2 - u1 >= 6.0 {
+                        panic!(
+                            "Staged: GeomConvert::CurveToBSplineCurve circle RationalC1 split path (GeomConvert.cxx L237-282)"
+                        );
+                    }
+                    let conv = convert_circle_arc_to_bspline(the_conic, u1, u2, parameterisation);
+                    // OCCT BSplineCurveBuilder (L58-95): place the 2d poles
+                    // in the conic plane: P = Loc + x * XDir + y * YDir.
+                    let x_dir = the_conic.x_dir;
+                    let y_dir = the_conic.y_dir;
+                    let control_points = conv
+                        .poles_2d
+                        .iter()
+                        .map(|p| the_conic.center + p.x * x_dir + p.y * y_dir)
+                        .collect();
+                    crate::geom::BSplineCurve3 {
+                        degree: conv.degree as usize,
+                        knots: crate::geom::BSplineCurve3::from_knots_mults(
+                            conv.degree as usize,
+                            conv.knots.clone(),
+                            conv.mults.clone(),
+                            vec![DVec3::ZERO; conv.poles_2d.len()],
+                        )
+                        .knots,
+                        control_points,
+                        weights: conv.weights.clone(),
+                        is_periodic: conv.is_periodic,
+                    }
+                }
+                _ => {
+                    panic!(
+                        "Staged: GeomConvert::CurveToBSplineCurve ellipse/hyperbola/parabola/bezier/bspline/offset branches (GeomConvert.cxx L283-380)"
+                    );
+                }
+            }
+        }
+        _ => {
+            panic!(
+                "Staged: GeomConvert::CurveToBSplineCurve non-trimmed input (GeomConvert.cxx L382+)"
+            );
         }
     }
 }

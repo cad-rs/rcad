@@ -86,9 +86,13 @@ pub struct POnSurface {
 /// Performs Newton refinement starting from `seed` to find a local minimum
 /// of the distance function. Returns None if the search fails to converge
 /// or the distance increases.
-pub fn extrema_locate_ext_pc(
+///
+/// The curve parameter is generic over [`CurveEval`] (OCCT works over the
+/// `Adaptor3d_Curve` hierarchy; `Curve3` is one concrete instance, the
+/// `Adaptor3d_CurveOnSurface` re-host another).
+pub fn extrema_locate_ext_pc<C: CurveEval>(
     point: DVec3,
-    curve: &Curve3,
+    curve: &C,
     seed: f64,
     uinf: f64,
     usup: f64,
@@ -1508,353 +1512,59 @@ pub fn extrema_curve_curve(c1: &Curve3, c2: &Curve3, n_samples: usize) -> CurveC
     CurveCurveExtrema { pairs: kept }
 }
 
-// =============================================================================
-// Extrema_ExtElC — line × elementary curve extrema (OCCT ExtElC 1:1)
-// =============================================================================
-
-use crate::geom::{Circle3, Ellipse3, Hyperbola3, Line3, Parabola3};
-
-/// Frame of an elementary curve: x2/y2/z2 orthonormal + location O2.
-struct ElCFrame {
-    x2: DVec3,
-    y2: DVec3,
-    z2: DVec3,
-    o2: DVec3,
-}
-
-impl ElCFrame {
-    fn circle(c: &Circle3) -> Self {
-        ElCFrame {
-            x2: c.x_dir.normalize_or_zero(),
-            y2: c.y_dir.normalize_or_zero(),
-            z2: c.normal.normalize_or_zero(),
-            o2: c.center,
+/// OCCT `Extrema_LocateExtCC(C1, C2, U1, U2)` — the local extremum of two
+/// curves refined by Newton from the seed parameters (Extrema_LocateExtCC
+/// does not perform a global search; it converges from the seeds).
+/// Returns `(par1, par2, point1, point2)` or None when the Newton walk
+/// leaves the curves' natural domains.
+pub fn extrema_locate_ext_cc(
+    c1: &Curve3,
+    c2: &Curve3,
+    seed1: f64,
+    seed2: f64,
+) -> Option<(f64, f64, DVec3, DVec3)> {
+    use crate::geom::CurveEval as _;
+    let dom1 = curve_domain(c1);
+    let dom2 = curve_domain(c2);
+    let (mut s, mut t) = (seed1.clamp(dom1[0], dom1[1]), seed2.clamp(dom2[0], dom2[1]));
+    let h = H_CC;
+    for _ in 0..MAX_ITER_CC {
+        let p1 = c1.point_at(s);
+        let p2 = c2.point_at(t);
+        let diff = p1 - p2;
+        let d1 = c1.derivative_at(s);
+        let d2 = c2.derivative_at(t);
+        // Gradient of |P1(s) - P2(t)|^2.
+        let g = [2.0 * diff.dot(d1), -2.0 * diff.dot(d2)];
+        if g[0].hypot(g[1]) < GRAD_TOL_CC {
+            break;
         }
-    }
-    fn ellipse(e: &Ellipse3) -> Self {
-        let x2 = e.major_dir.normalize_or_zero();
-        let z2 = e.normal.normalize_or_zero();
-        let y2 = z2.cross(x2).normalize_or_zero();
-        ElCFrame { x2, y2, z2, o2: e.center }
-    }
-    fn hyperbola(h: &Hyperbola3) -> Self {
-        let x2 = h.major_dir.normalize_or_zero();
-        let z2 = h.normal.normalize_or_zero();
-        let y2 = z2.cross(x2).normalize_or_zero();
-        ElCFrame { x2, y2, z2, o2: h.center }
-    }
-    fn parabola(p: &Parabola3) -> Self {
-        let x2 = p.axis_dir.normalize_or_zero();
-        let z2 = p.normal.normalize_or_zero();
-        let y2 = z2.cross(x2).normalize_or_zero();
-        ElCFrame { x2, y2, z2, o2: p.vertex }
-    }
-}
-
-/// Coordinates of the line in the conic frame (OCCT ExtElC: D and O2O1).
-struct LineInFrame {
-    dx: f64,
-    dy: f64,
-    dz: f64,
-    ox: f64,
-    oy: f64,
-    oz: f64,
-}
-
-fn line_in_frame(line: &Line3, f: &ElCFrame) -> LineInFrame {
-    let d = line.direction.normalize_or_zero();
-    let o2o1 = line.origin - f.o2;
-    LineInFrame {
-        dx: d.dot(f.x2),
-        dy: d.dot(f.y2),
-        dz: d.dot(f.z2),
-        ox: o2o1.dot(f.x2),
-        oy: o2o1.dot(f.y2),
-        oz: o2o1.dot(f.z2),
-    }
-}
-
-/// OCCT `RefineDir` (Extrema_ExtElC.cxx): re-normalize a direction after
-/// expressing it in a rotated frame.
-fn refine_dir(v: DVec3) -> DVec3 {
-    v.normalize_or_zero()
-}
-
-/// OCCT `Extrema_ExtElC(gp_Lin, gp_Circ)` (L471-623) + `PlanarLineCircleExtrema`
-/// (L361-439). Returns (distance, u1_on_line, u2_on_circle) interior extrema.
-pub fn line_circle_extrema(line: &Line3, circle: &Circle3) -> Vec<(f64, f64, f64)> {
-    let f = ElCFrame::circle(circle);
-    let lf = line_in_frame(line, &f);
-    let r = circle.radius;
-    // OCCT L365: if |aDirC.Dot(aDirL)| > Angular -> not planar, use 3D equation.
-    if lf.dz.abs() <= 1e-12 {
-        // PlanarLineCircleExtrema (L361-439): line parallel to circle plane.
-        // 2D line: point (ox, oy), direction (dx, dy) in the circle frame.
-        let plx = lf.ox;
-        let ply = lf.oy;
-        let dlx = lf.dx;
-        let dly = lf.dy;
-        let dl_sq = dlx * dlx + dly * dly;
-        if dl_sq < 1e-30 {
-            return vec![];
-        }
-        let dc = (plx * dly - ply * dlx).abs() / dl_sq.sqrt();
-        let h = lf.oz; // plane offset (constant since line ∥ plane)
-        let mut cands = Vec::new();
-        // ExtElC2d line-circle: closest pair is at the foot.
-        let t_foot = -(plx * dlx + ply * dly) / dl_sq;
-        let foot = (plx + t_foot * dlx, ply + t_foot * dly);
-        // IntAna2d_AnaIntersection (line-circle): intersections when dc <= R.
-        if dc <= r {
-            // 3D min distance = |h| at the intersection params.
-            let s = (r * r - dc * dc).max(0.0).sqrt() / dl_sq.sqrt();
-            for &sign in &[1.0, -1.0] {
-                let t = t_foot + sign * s;
-                let p2d = (plx + t * dlx, ply + t * dly);
-                let u2 = p2d.1.atan2(p2d.0);
-                cands.push((h.abs(), t, u2));
+        // Diagonal Hessian (positive terms of d^2/ds^2, d^2/dt^2).
+        let dd1 = (c1.derivative_at(s + h) - c1.derivative_at(s - h)) / (2.0 * h);
+        let dd2 = (c2.derivative_at(t + h) - c2.derivative_at(t - h)) / (2.0 * h);
+        let h11 = 2.0 * (d1.dot(d1) + diff.dot(dd1));
+        let h22 = 2.0 * (d2.dot(d2) - diff.dot(dd2));
+        let ds = -g[0] / (h11.abs().max(1e-30) * h11.signum());
+        let dt = -g[1] / (h22.abs().max(1e-30) * h22.signum());
+        let mut alpha = 1.0f64;
+        let f0 = diff.length_squared();
+        let (mut ns, mut nt) = (s, t);
+        for _ in 0..8 {
+            ns = (s + alpha * ds).clamp(dom1[0], dom1[1]);
+            nt = (t + alpha * dt).clamp(dom2[0], dom2[1]);
+            if (c1.point_at(ns) - c2.point_at(nt)).length_squared() < f0 {
+                break;
             }
-        } else {
-            let u2 = foot.1.atan2(foot.0);
-            let dist = (h * h + (dc - r) * (dc - r)).sqrt();
-            cands.push((dist, t_foot, u2));
+            alpha *= 0.5;
         }
-        cands
-    } else {
-        // Non-planar: trigonometric equation (OCCT L490-621).
-        let d = refine_dir(DVec3::new(lf.dx, lf.dy, lf.dz));
-        let o2o1 = DVec3::new(lf.ox, lf.oy, lf.oz);
-        let v = d * o2o1.dot(d) - o2o1;
-        // OCCT L556-585: coefficients (divided by R), zeroed at 1e-12.
-        let dx = lf.dx;
-        let dy = lf.dy;
-        let a5 = r * dx * dy;
-        let a1 = -2.0 * a5;
-        let a2 = 0.5 * r * (dx * dx - dy * dy);
-        let a3 = v.y;
-        let a4 = -v.x;
-        let mut coeff = [a1, a2, a3, a4, a5];
-        for c in coeff.iter_mut() {
-            if c.abs() <= 1e-12 {
-                *c = 0.0;
-            }
-        }
-        // ExtremaExtElC_TrigonometricRoots (L121-252) -> math_TrigonometricFunctionRoots.
-        let res = crate::math::root::trig_function_roots(coeff[0], coeff[1], coeff[2], coeff[3], coeff[4], 0.0, std::f64::consts::TAU);
-        if !res.done || res.infinite {
-            return vec![];
-        }
-        let d1 = line.direction.normalize_or_zero();
-        let mut cands = Vec::new();
-        for u2 in res.roots {
-            let p2 = circle.point_at(u2);
-            let u1 = (p2 - line.origin).dot(d1);
-            let p1 = line.point_at(u1);
-            let dist = (p1 - p2).length();
-            cands.push((dist, u1, u2));
-        }
-        cands
-    }
-}
-
-/// OCCT `Extrema_ExtElC(gp_Lin, gp_Elips)` (L627-753).
-pub fn line_ellipse_extrema(line: &Line3, ell: &Ellipse3) -> Vec<(f64, f64, f64)> {
-    let f = ElCFrame::ellipse(ell);
-    let lf = line_in_frame(line, &f);
-    let d = refine_dir(DVec3::new(lf.dx, lf.dy, lf.dz));
-    let o2o1 = DVec3::new(lf.ox, lf.oy, lf.oz);
-    let v = d * o2o1.dot(d) - o2o1;
-    let dx = lf.dx;
-    let dy = lf.dy;
-    let maj_r = ell.major_radius;
-    let min_r = ell.minor_radius;
-    let r2 = maj_r * maj_r;
-    let m2 = min_r * min_r;
-    // OCCT L690-719
-    let mut a5 = maj_r * min_r * dx * dy;
-    let mut a1 = -2.0 * a5;
-    let mut a2 = (r2 * dx * dx - m2 * dy * dy - r2 + m2) / 2.0;
-    let mut a3 = min_r * v.y;
-    let mut a4 = -maj_r * v.x;
-    for c in [&mut a1, &mut a2, &mut a3, &mut a4, &mut a5] {
-        if c.abs() <= 1e-12 {
-            *c = 0.0;
+        let step = (ns - s).hypot(nt - t);
+        s = ns;
+        t = nt;
+        if step < PARAM_TOL_CC {
+            break;
         }
     }
-    let res = crate::math::root::trig_function_roots(a1, a2, a3, a4, a5, 0.0, std::f64::consts::TAU);
-    if !res.done || res.infinite {
-        return vec![];
-    }
-    let d1 = line.direction.normalize_or_zero();
-    let mut cands = Vec::new();
-    for u2 in res.roots {
-        let p2 = ell.point_at(u2);
-        let u1 = (p2 - line.origin).dot(d1);
-        let p1 = line.point_at(u1);
-        cands.push(((p1 - p2).length(), u1, u2));
-    }
-    cands
-}
-
-/// OCCT `Extrema_ExtElC(gp_Lin, gp_Hypr)` (L757-858): quartic in v, u2 = ln(v).
-pub fn line_hyperbola_extrema(line: &Line3, hyp: &Hyperbola3) -> Vec<(f64, f64, f64)> {
-    let f = ElCFrame::hyperbola(hyp);
-    let lf = line_in_frame(line, &f);
-    let d = refine_dir(DVec3::new(lf.dx, lf.dy, lf.dz));
-    let o2o1 = DVec3::new(lf.ox, lf.oy, lf.oz);
-    let v_xyz = d * o2o1.dot(d) - o2o1;
-    let vx = v_xyz.x;
-    let vy = v_xyz.y;
-    let dx = lf.dx;
-    let dy = lf.dy;
-    let r_maj = hyp.semi_major;
-    let r_min = hyp.semi_minor;
-    // OCCT L823-830
-    let a = -2.0 * r_maj * r_min * dx * dy;
-    let b = -r_maj * r_maj * dx * dx - r_min * r_min * dy * dy + r_maj * r_maj + r_min * r_min;
-    let a1 = a + b;
-    let a2 = 2.0 * r_maj * vx + 2.0 * r_min * vy;
-    let a4 = -2.0 * r_maj * vx + 2.0 * r_min * vy;
-    let a5 = a - b;
-    // math_DirectPolynomialRoots (A1, A2, 0, A4, A5)
-    let roots_v = crate::math::math_poly::solve_quartic(a1, a2, 0.0, a4, a5);
-    let d1 = line.direction.normalize_or_zero();
-    let mut cands = Vec::new();
-    for v in roots_v {
-        if v > 0.0 {
-            let u2 = v.ln();
-            let p2 = hyp.point_at(u2);
-            let u1 = (p2 - line.origin).dot(d1);
-            let p1 = line.point_at(u1);
-            cands.push(((p1 - p2).length(), u1, u2));
-        }
-    }
-    cands
-}
-
-/// OCCT `Extrema_ExtElC(gp_Lin, gp_Parab)` (L862-951): cubic in y.
-pub fn line_parabola_extrema(line: &Line3, par: &Parabola3) -> Vec<(f64, f64, f64)> {
-    let f = ElCFrame::parabola(par);
-    let lf = line_in_frame(line, &f);
-    let d = refine_dir(DVec3::new(lf.dx, lf.dy, lf.dz));
-    let o2o1 = DVec3::new(lf.ox, lf.oy, lf.oz);
-    let v_xyz = d * o2o1.dot(d) - o2o1;
-    let dx = lf.dx;
-    let dy = lf.dy;
-    let p = par.focal_param;
-    // OCCT L923-927
-    let a1 = (1.0 - dx * dx) / (2.0 * p * p);
-    let a2 = -3.0 * dx * dy / (2.0 * p);
-    let a3 = 1.0 - dy * dy + v_xyz.x / p;
-    let a4 = v_xyz.y;
-    // math_DirectPolynomialRoots (A1, A2, A3, A4)
-    let roots_y = crate::math::math_poly::solve_cubic(a1, a2, a3, a4);
-    let d1 = line.direction.normalize_or_zero();
-    let mut cands = Vec::new();
-    for u2 in roots_y {
-        let p2 = par.point_at(u2);
-        let u1 = (p2 - line.origin).dot(d1);
-        let p1 = line.point_at(u1);
-        cands.push(((p1 - p2).length(), u1, u2));
-    }
-    cands
-}
-
-/// OCCT `Extrema_ExtElC(gp_Lin, gp_Lin)` (L268-357): interior closest pair.
-pub fn line_line_extrema(l1: &Line3, l2: &Line3) -> Vec<(f64, f64, f64)> {
-    let a_d1 = l1.direction.normalize_or_zero();
-    let a_d2 = l2.direction.normalize_or_zero();
-    let a_cos_a = a_d1.dot(a_d2);
-    let a_sq_sin_a = 1.0 - a_cos_a * a_cos_a;
-    let mut result = Vec::new();
-    if a_sq_sin_a < 1e-30 || a_d1.cross(a_d2).length() < 1e-12 {
-        // Parallel (OCCT L327-347): constant distance at any point of C1.
-        // mySqDist[0] = C2.SquareDistance(C1.Location()) — one solution.
-        let d = (l2.point_at(0.0) - l1.origin).length();
-        result.push((d, 0.0, 0.0));
-        return result;
-    }
-    // OCCT L333-336
-    let a_l1l2 = l2.origin - l1.origin;
-    let a_d1_l = a_d1.dot(a_l1l2);
-    let a_d2_l = a_d2.dot(a_l1l2);
-    let a_u1 = (a_d1_l - a_cos_a * a_d2_l) / a_sq_sin_a;
-    let a_u2 = (a_cos_a * a_d1_l - a_d2_l) / a_sq_sin_a;
-    let p1 = l1.point_at(a_u1);
-    let p2 = l2.point_at(a_u2);
-    result.push(((p1 - p2).length(), a_u1, a_u2));
-    result
-}
-
-// =============================================================================
-// Extrema_ExtCC — curve-curve extrema + range trimming (OCCT ExtCC 1:1)
-// =============================================================================
-
-/// OCCT `Extrema_ExtCC` trimmed square distances for the range corners
-/// (mydist11/12/21/22, OCCT L214-245).
-pub struct CornerDists {
-    pub dist11: f64,
-    pub dist12: f64,
-    pub dist21: f64,
-    pub dist22: f64,
-}
-
-/// OCCT `Extrema_ExtCC::Perform` (L177-317) + `PrepareResults` (L832-901)
-/// for a line and an elementary curve. Returns the interior extrema whose
-/// parameters fall inside the ranges, plus the corner distances.
-pub struct ExtCCResult {
-    /// Interior extrema (distance, u1, u2) already clipped to the ranges.
-    pub interior: Vec<(f64, f64, f64)>,
-    pub corners: CornerDists,
-}
-
-pub fn ext_cc_line_conic(
-    line: &Line3,
-    t1: f64,
-    t2: f64,
-    conic: &Curve3,
-    u1: f64,
-    u2: f64,
-) -> ExtCCResult {
-    // OCCT L214-245: corner distances from the 4 range endpoints.
-    let p1f = line.point_at(t1);
-    let p1l = line.point_at(t2);
-    let p2f = conic.point_at(u1);
-    let p2l = conic.point_at(u2);
-    let corners = CornerDists {
-        dist11: p1f.distance_squared(p2f),
-        dist12: p1f.distance_squared(p2l),
-        dist21: p1l.distance_squared(p2f),
-        dist22: p1l.distance_squared(p2l),
-    };
-    // OCCT L247-294: dispatch to ExtElC for line-conic.
-    let all = match conic {
-        Curve3::Circle(c) => line_circle_extrema(line, c),
-        Curve3::Ellipse(e) => line_ellipse_extrema(line, e),
-        Curve3::Hyperbola(h) => line_hyperbola_extrema(line, h),
-        Curve3::Parabola(p) => line_parabola_extrema(line, p),
-        _ => vec![],
-    };
-    // OCCT PrepareResults (L832-898): keep extrema whose parameters are in range.
-    let is_periodic = matches!(conic, Curve3::Circle(_) | Curve3::Ellipse(_));
-    let mut interior = Vec::new();
-    for (dist, u, u2c) in all {
-        // Periodic wrapping of the conic parameter (OCCT L869-876).
-        let u2w = if is_periodic {
-            let period = std::f64::consts::TAU;
-            let diff = u2c - u1;
-            u1 + diff - period * (diff / period).floor()
-        } else {
-            u2c
-        };
-        // OCCT L878-879: within ranges (RealEpsilon() margin).
-        if u >= t1 - f64::EPSILON && u <= t2 + f64::EPSILON
-            && u2w >= u1 - f64::EPSILON && u2w <= u2 + f64::EPSILON
-        {
-            interior.push((dist, u, u2w));
-        }
-    }
-    ExtCCResult { interior, corners }
+    Some((s, t, c1.point_at(s), c2.point_at(t)))
 }
 
 // =============================================================================
@@ -1887,7 +1597,7 @@ mod tests {
 
     #[test]
     fn project_onto_line_curve() {
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let line = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let q = DVec3::new(3.0, 4.0, 0.0);
         let r = closest_point_on_curve(&line, q, 32);
         let expected = DVec3::new(3.0, 0.0, 0.0);
@@ -1910,7 +1620,7 @@ mod tests {
     #[test]
     fn project_onto_line_curve_oblique() {
         let dir = DVec3::new(1.0, 1.0, 0.0).normalize();
-        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: dir });
+        let line = Curve3::Line(Line3::new(DVec3::ZERO, dir));
         let q = DVec3::new(0.0, 1.0, 2.0);
         let r = closest_point_on_curve(&line, q, 32);
         let t = q.dot(dir);
@@ -2012,68 +1722,107 @@ mod tests {
         }
     }
 
-    // ── Extrema_ExtElC (line × elementary curve) ────────────────────────────
+}
 
-    /// Min over the interior extrema (ignoring ranges).
-    fn min_interior(cands: &[(f64, f64, f64)]) -> f64 {
-        cands.iter().map(|&(d, _, _)| d).fold(f64::INFINITY, f64::min)
+impl ExtPC {
+    /// OCCT `Extrema_ExtPC(Point, Adaptor3d_Curve, TolC, Uinf, Usup)` with
+    /// an arbitrary point-evaluation adaptor (e.g. GeomFill_SnglrFunc used
+    /// as a curve): same grid + Newton search against `eval(u) -> point`.
+    /// The Newton derivative uses a central difference of `eval`, matching
+    /// the finite-difference default of `CurveEval::derivative_at`.
+    pub fn perform_fn(
+        &mut self,
+        point: DVec3,
+        eval: &dyn Fn(f64) -> DVec3,
+        uinf: f64,
+        usup: f64,
+    ) {
+        self.points.clear();
+        self.sq_dists.clear();
+
+        let (t_min, t_max) = (uinf, usup);
+        if (t_max - t_min).abs() < self.tol {
+            self.done = true;
+            return;
+        }
+
+        const N_GRID: usize = 51;
+        let mut candidates: Vec<(f64, f64)> = Vec::new();
+
+        for i in 0..=N_GRID {
+            let t = t_min + (t_max - t_min) * (i as f64) / (N_GRID as f64);
+            let p = eval(t);
+            let d2 = (p - point).length_squared();
+            if (i == 0 || d2 <= candidates.last().map(|&(_, ld)| ld).unwrap_or(f64::INFINITY))
+                && (i == N_GRID || {
+                    let next_t = t_min + (t_max - t_min) * ((i + 1) as f64) / (N_GRID as f64);
+                    let next_d2 = (eval(next_t) - point).length_squared();
+                    d2 <= next_d2
+                })
+            {
+                candidates.push((t, d2));
+            }
+        }
+
+        candidates.dedup_by(|a, b| (a.0 - b.0).abs() < (t_max - t_min) / (N_GRID as f64) * 0.5);
+
+        for &(t0, _) in &candidates {
+            // Newton on g(u) = (F(u) - P).F'(u) with a central difference.
+            let mut t = t0.clamp(t_min, t_max);
+            let h = 1e-7;
+            for _ in 0..20 {
+                let p = eval(t);
+                let dp = (eval(t + h) - eval(t - h)) / (2.0 * h);
+                let d = p - point;
+                let f = d.dot(dp);
+                let speed_sq = dp.length_squared();
+                if speed_sq < 1e-30 || f.abs() < self.tol {
+                    break;
+                }
+                let dpp = (eval(t + h) - 2.0 * eval(t) + eval(t - h)) / (h * h);
+                let denom = speed_sq + d.dot(dpp);
+                if denom.abs() < 1e-30 {
+                    break;
+                }
+                t = (t - f / denom).clamp(t_min, t_max);
+            }
+            let p = eval(t);
+            let d2 = (p - point).length_squared();
+            let is_dup = self.points.iter().any(|existing| {
+                let dt = (existing.param - t).abs();
+                let dp = (existing.point - p).length();
+                dt < self.tol && dp < self.tol * 10.0
+            });
+            if !is_dup {
+                self.points.push(POnCurve { param: t, point: p });
+                self.sq_dists.push(d2);
+            }
+        }
+
+        let mut indices: Vec<usize> = (0..self.points.len()).collect();
+        indices.sort_by(|&a, &b| self.sq_dists[a].partial_cmp(&self.sq_dists[b]).unwrap());
+        self.points = indices.iter().map(|&i| self.points[i].clone()).collect();
+        self.sq_dists = indices.iter().map(|&i| self.sq_dists[i]).collect();
+
+        self.done = true;
     }
 
-    #[test]
-    fn line_circle_far_away() {
-        // line y=5 (x-axis at z=0), circle radius 1 at origin -> min dist 4.
-        let l = Curve3::Line(crate::geom::Line3 { origin: DVec3::new(0.0, 5.0, 0.0), direction: DVec3::X });
-        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
-        let cands = match &c {
-            Curve3::Circle(cc) => line_circle_extrema(match &l { Curve3::Line(ll) => ll, _ => unreachable!() }, cc),
-            _ => unreachable!(),
+    /// Constructor form of [`ExtPC::perform_fn`]
+    /// (OCCT: `Initialize(Func, U1, U2, Tol)` + `Perform(Origin)`).
+    pub fn new_fn(
+        point: DVec3,
+        tol: f64,
+        uinf: f64,
+        usup: f64,
+        eval: &dyn Fn(f64) -> DVec3,
+    ) -> Self {
+        let mut ext = ExtPC {
+            done: false,
+            points: Vec::new(),
+            sq_dists: Vec::new(),
+            tol: tol.max(1e-12),
         };
-        let d = min_interior(&cands);
-        assert!((d - 4.0).abs() < 1e-6, "expected 4.0, got {d}");
-    }
-
-    #[test]
-    fn line_circle_intersecting() {
-        // line y=0.5 passes through circle radius 1 at origin -> min dist 0.
-        let l = Curve3::Line(crate::geom::Line3 { origin: DVec3::new(0.0, 0.5, 0.0), direction: DVec3::X });
-        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
-        let cands = match &c {
-            Curve3::Circle(cc) => line_circle_extrema(match &l { Curve3::Line(ll) => ll, _ => unreachable!() }, cc),
-            _ => unreachable!(),
-        };
-        let d = min_interior(&cands);
-        assert!(d < 1e-6, "expected 0, got {d}");
-    }
-
-    #[test]
-    fn line_circle_off_plane() {
-        // line z=3, x-axis; circle radius 1 at origin in xy-plane.
-        // Line is parallel to circle plane at offset 3 -> min dist = 3 (dc2d=0 <= R).
-        let l = Curve3::Line(crate::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-        // shift the circle to z=3 so the line is at offset -3
-        let c = Curve3::Circle(Circle3::new(DVec3::new(0.0, 0.0, 3.0), DVec3::Z, 1.0));
-        let cands = match &c {
-            Curve3::Circle(cc) => line_circle_extrema(match &l { Curve3::Line(ll) => ll, _ => unreachable!() }, cc),
-            _ => unreachable!(),
-        };
-        let d = min_interior(&cands);
-        assert!((d - 3.0).abs() < 1e-6, "expected 3.0, got {d}");
-    }
-
-    #[test]
-    fn line_ellipse_extrema_smoke() {
-        // line x=4 (direction +y); ellipse major 3 (x), minor 1 (y) at origin.
-        // Nearest ellipse point is (3, 0) -> dist 1.
-        let l = Curve3::Line(crate::geom::Line3 { origin: DVec3::new(4.0, 0.0, 0.0), direction: DVec3::Y });
-        let e = Curve3::Ellipse(crate::geom::Ellipse3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            major_radius: 3.0, minor_radius: 1.0,
-        });
-        let cands = match &e {
-            Curve3::Ellipse(ee) => line_ellipse_extrema(match &l { Curve3::Line(ll) => ll, _ => unreachable!() }, ee),
-            _ => unreachable!(),
-        };
-        let d = min_interior(&cands);
-        assert!((d - 1.0).abs() < 1e-6, "expected 1.0, got {d}");
+        ext.perform_fn(point, eval, uinf, usup);
+        ext
     }
 }

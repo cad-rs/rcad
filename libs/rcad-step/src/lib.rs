@@ -6893,6 +6893,7 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
             axis,
             radius: *radius,
             ref_dir: any_perpendicular(axis),
+            y_dir: None,
         }));
     }
 
@@ -7554,6 +7555,7 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
         return Some(Curve2d::Ellipse(Ellipse2d {
             center,
             major_dir,
+            minor_dir: glam::DVec2::new(-major_dir.y, major_dir.x),
             major_radius: *major,
             minor_radius: *minor,
         }));

@@ -420,6 +420,18 @@ pub struct CylindricalSurface {
     /// Reference direction for u=0 (perpendicular to axis).
     /// Preserved through rotation so UV mapping stays consistent.
     pub ref_dir: Vec3,
+    /// Optional explicit Y direction of the surface frame
+    /// (P(u,v) = O + R*(cos u*X + sin u*Y) + v*axis, u = atan2(P·Y, P·X)).
+    /// OCCT gp_Ax3 keeps the X/Y directions explicitly, and a swept lateral
+    /// face (BRepSweep_Translation::MakeEmptyFace + GeomAdaptor::
+    /// SurfaceOfLinearExtrusion::Cylinder with gp_Ax3::ZReverse — which
+    /// reverses ONLY the axis, gp_Ax3.hxx L131) carries the generating
+    /// circle's Y even when the axis is reversed — a left-handed frame whose
+    /// u equals the circle's parameter keeps the sweep pcurves consistent.
+    /// When None the right-handed Y = axis × ref_dir is used (the default for
+    /// all other constructions).
+    #[serde(default)]
+    pub y_dir: Option<Vec3>,
 }
 
 impl CylindricalSurface {
@@ -430,6 +442,7 @@ impl CylindricalSurface {
             axis: axis.normalize_or_zero(),
             radius: radius.abs(),
             ref_dir: any_perpendicular(axis),
+            y_dir: None,
         }
     }
 
@@ -440,7 +453,16 @@ impl CylindricalSurface {
             axis: axis.normalize_or_zero(),
             radius: radius.abs(),
             ref_dir: ref_dir.normalize_or_zero(),
+            y_dir: None,
         }
+    }
+
+    /// Effective Y direction of the surface frame: the explicit `y_dir` when
+    /// set (the left-handed swept-lateral frame), else axis × ref_dir.
+    pub fn y_axis(&self) -> Vec3 {
+        self.y_dir
+            .unwrap_or_else(|| self.axis.cross(self.ref_dir))
+            .normalize_or_zero()
     }
 }
 
@@ -1025,11 +1047,14 @@ impl Circle2d {
 /// an elliptical path on the parameter domain of an adjacent surface.
 ///
 /// Parametric form: `center + major_dir * a*cos(t) + minor_dir * b*sin(t)`
-/// where `minor_dir = rotate_ccw_90(major_dir)`.  Default domain: `[0, 2π]`.
+/// where `minor_dir` is the stored Y direction of the positioning 2D axis
+/// (OCCT gp_Ax22d keeps both directions; `gp_Elips2d::Reverse` negates the
+/// Y direction and keeps X).  Default domain: `[0, 2π]`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Ellipse2d {
     pub center: Point2,
     pub major_dir: Vec2,
+    pub minor_dir: Vec2,
     pub major_radius: f64,
     pub minor_radius: f64,
 }
@@ -1733,10 +1758,7 @@ pub trait SweptSurfaceEval: SurfaceEval {
 
 pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
     match curve {
-        Curve3::Line(l) => Curve3::Line(Line3 {
-            origin: loc.transform_point3(l.origin),
-            direction: loc.transform_vector3(l.direction),
-        }),
+        Curve3::Line(l) => Curve3::Line(Line3::new(loc.transform_point3(l.origin), loc.transform_vector3(l.direction))),
         Curve3::Circle(c) => {
             let center = loc.transform_point3(c.center);
             let normal = loc.transform_vector3(c.normal).normalize_or_zero();
@@ -1855,10 +1877,10 @@ pub fn reverse_curve2d(curve: &Curve2d) -> Curve2d {
             y_dir: -c.y_dir,
             ..*c
         }),
-        // Geom2d_Ellipse::Reverse: minor axis (implied by major_dir rotation
-        // sense) negated through the major axis flip.
+        // Geom2d_Ellipse::Reverse (gp_Elips2d::Reverse): the X (major)
+        // direction is kept, the stored Y direction is negated.
         Curve2d::Ellipse(e) => Curve2d::Ellipse(Ellipse2d {
-            major_dir: -e.major_dir,
+            minor_dir: -e.minor_dir,
             ..*e
         }),
         Curve2d::Parabola(p) => Curve2d::Parabola(Parabola2d {
@@ -2051,6 +2073,7 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
             axis: loc.transform_vector3(c.axis).normalize_or_zero(),
             radius: c.radius * loc.transform_vector3(c.axis).length().max(1e-12),
             ref_dir: loc.transform_vector3(c.ref_dir).normalize_or_zero(),
+            y_dir: c.y_dir.map(|y| loc.transform_vector3(y).normalize_or_zero()),
         }),
         Surface3::Sphere(s) => Surface3::Sphere(SphericalSurface {
             center: loc.transform_point3(s.center),
@@ -2088,6 +2111,7 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
     }
 }
 
+pub mod bspline_ops;
 pub mod eval;
 #[cfg(test)]
 pub mod tests;

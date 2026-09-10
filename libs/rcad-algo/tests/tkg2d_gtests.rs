@@ -206,6 +206,7 @@ mod geom2d_ellipse_tests {
         Curve2d::Ellipse(Ellipse2d {
             center: Point2::ZERO,
             major_dir: Vec2::X,
+            minor_dir: Vec2::Y,
             major_radius: 5.0,
             minor_radius: 3.0,
         })
@@ -408,7 +409,7 @@ mod api_intercurve_tests {
         inter.perform_lin_lin(&l1, &l2);
         assert!(inter.is_done());
         assert!(!inter.is_empty());
-        let d = inter.point(0).value().distance(Point2::new(0.0, 0.0));
+        let d = inter.point(1).value().distance(Point2::new(0.0, 0.0));
         assert!(d < 1e-6, "intersection at origin, got dist {d}");
     }
 }

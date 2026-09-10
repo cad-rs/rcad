@@ -151,18 +151,9 @@ impl QuadQuadGeo {
         // the PointOn2S parameters all assume the arc-length parameterization).
         let norm = |d: DVec3| d.normalize_or_zero();
         match num {
-            1 => Line3 {
-                origin: self.pt1,
-                direction: norm(self.dir1),
-            },
-            2 => Line3 {
-                origin: self.pt2,
-                direction: norm(self.dir2),
-            },
-            _ => Line3 {
-                origin: self.pt3,
-                direction: norm(self.dir3),
-            },
+            1 => Line3::new(self.pt1, norm(self.dir1)),
+            2 => Line3::new(self.pt2, norm(self.dir2)),
+            _ => Line3::new(self.pt3, norm(self.dir3)),
         }
     }
 

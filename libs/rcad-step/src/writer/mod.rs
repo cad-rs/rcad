@@ -1209,6 +1209,7 @@ impl Part21Writer {
                                 start,
                                 end,
                                 forward: sr.orientation.is_forward(),
+                                location: sr.location,
                             })
                         })
                         .collect();
@@ -1253,10 +1254,11 @@ impl Part21Writer {
         let mut edge_entries: Vec<(usize, usize, usize, u64, bool)> = Vec::new();
         for edge in &oriented_edges {
             let edge_curve = if seam_edge_indices.contains(&edge.edge_idx) {
-                self.write_seam_edge_curve_topods(edge.edge_idx, face_surface.clone())
+                self.write_seam_edge_curve_topods(
+                    edge.edge_idx, face_surface.clone(), edge.location)
             } else {
                 // write_edge_curve_by_index_topods handles pcurve seeding internally
-                self.write_edge_curve_by_index_topods(edge.edge_idx)
+                self.write_edge_curve_by_index_topods(edge.edge_idx, edge.location)
             };
             edge_entries.push((
                 edge.edge_idx,
@@ -1366,7 +1368,8 @@ impl Part21Writer {
 
             let mut inner_entries: Vec<(u64, bool)> = Vec::with_capacity(inner_oriented.len());
             for edge in inner_oriented {
-                let curve = self.write_edge_curve_by_index_topods(edge.edge_idx);
+                let curve =
+                    self.write_edge_curve_by_index_topods(edge.edge_idx, edge.location);
                 inner_entries.push((curve, edge.forward));
             }
             let mut inner_ids = Vec::with_capacity(inner_entries.len());
@@ -1387,7 +1390,15 @@ impl Part21Writer {
         &mut self,
         edge_idx: usize,
         face_surface: Option<Surface3>,
+        location: u32,
     ) -> u64 {
+        // The seam edge appears twice in the wire (FORWARD and REVERSED
+        // oriented edges of the same loop).  STEP represents both with a
+        // single EDGE_CURVE entity (the ORIENTED_EDGEs carry the sense), so
+        // reuse the entity written for the first occurrence.
+        if let Some(id) = self.seam_edge_curve_ids.get(&edge_idx) {
+            return *id;
+        }
         let ed = {
             let tbrep = self.tbrep();
             tbrep.tshapes.get(edge_idx).and_then(|ts| {
@@ -1399,7 +1410,7 @@ impl Part21Writer {
             })
         };
         let Some(ed) = ed else {
-            return self.write_edge_curve_by_index_topods(edge_idx);
+            return self.write_edge_curve_by_index_topods(edge_idx, location);
         };
 
         let start_pt = {
@@ -1657,7 +1668,9 @@ impl Part21Writer {
 
         let v0 = self.vertex_point_by_tshape_idx(ed.first.index);
         let v1 = self.vertex_point_by_tshape_idx(ed.last.index);
-        self.edge_curve("seam_edge", v0, v1, final_curve, true)
+        let id = self.edge_curve("seam_edge", v0, v1, final_curve, true);
+        self.seam_edge_curve_ids.insert(edge_idx, id);
+        id
     }
 
     fn write_surface(
@@ -1954,7 +1967,7 @@ impl Part21Writer {
 
     /// Topods-native version of write_edge_curve_by_index (WIP).
     /// Not yet wired into the call chain — all callers still use the old flat version.
-    fn write_edge_curve_by_index_topods(&mut self, edge_idx: usize) -> u64 {
+    fn write_edge_curve_by_index_topods(&mut self, edge_idx: usize, location: u32) -> u64 {
         if let Some(existing) = self.edge_curve_ids.get(&edge_idx) {
             return *existing;
         }
@@ -1981,9 +1994,18 @@ impl Part21Writer {
             self.edge_curve_ids.insert(edge_idx, ec);
             return ec;
         };
-        let v0 = self.vertex_point_by_tshape_idx(ed.first.index);
-        let v1 = self.vertex_point_by_tshape_idx(ed.last.index);
+        let mut v0 = self.vertex_point_by_tshape_idx(ed.first.index);
+        let mut v1 = self.vertex_point_by_tshape_idx(ed.last.index);
         let curve = ed.curve.clone();
+        // OCCT TopoDSToStep_MakeStepEdge.cxx L192-200: BRepAdaptor_Curve(aEdge)
+        // applies the edge's Location to the raw curve (C->Transform(CA.Trsf())).
+        // The vertices (world points) and the curve must share one frame.
+        let curve = if location == 0 {
+            curve
+        } else {
+            let loc = self.tbrep().get_location(location);
+            curve.map(|c| rcad_kernel::geom::transform_curve(&c, &loc))
+        };
         let start_pt = {
             let tbrep = self.tbrep();
             tbrep
@@ -2012,46 +2034,67 @@ impl Part21Writer {
                 })
                 .unwrap_or_default()
         };
-        let basis_curve = self.write_edge_curve_geometry_by_index_topods(edge_idx);
-        let mut same_sense = true;
-        if let Some((center, axis, major_dir)) = match curve {
-            Some(Curve3::Circle(c)) => Some((c.center, c.normal, glam::DVec3::ZERO)),
-            Some(Curve3::Ellipse(e)) => Some((e.center, e.normal, e.major_dir)),
+        let basis_curve = self.write_edge_curve_geometry_by_index_topods(edge_idx, location);
+        // OCCT TopoDSToStep_MakeStepEdge.cxx L345: same_sense is always true —
+        // the EDGE_CURVE vertices are the edge's first/last vertices (possibly
+        // swapped for periodic curves, see below) and the ORIENTED_EDGEs carry
+        // the per-wire directions.
+        let same_sense = true;
+        if let Some((center, axis, ref_dir, y_dir)) = match curve {
+            Some(Curve3::Circle(c)) => Some((c.center, c.normal, c.x_dir, Some(c.y_dir))),
+            Some(Curve3::Ellipse(e)) => Some((e.center, e.normal, e.major_dir, None)),
             _ => None,
         } {
-            let canon_axis = canonicalize_axis_sign(axis);
-            let ref_dir = if major_dir.length_squared() > 1e-30 {
-                let proj = major_dir - major_dir.dot(canon_axis) * canon_axis;
-                let len = proj.length();
-                if len > 1e-15 {
-                    proj / len
-                } else {
-                    canon_axis.cross(glam::DVec3::Y).normalize_or_zero()
-                }
-            } else if canon_axis.z.abs() > 0.999999 {
-                glam::DVec3::X
-            } else {
-                let helper = if canon_axis.y.abs() < 0.9 {
-                    glam::DVec3::Y
-                } else {
-                    glam::DVec3::X
-                };
-                canon_axis.cross(helper).normalize()
+            // OCCT GeomToStep_MakeAxis2Placement3d (GeomToStep_MakeCircle_gen.pxx
+            // L22): the curve's own frame (gp_Circ::Position — XDirection) is
+            // written to STEP, and the endpoint parameters used by the swap
+            // logic below must be computed in that same frame.
+            let ref_dir = (ref_dir - ref_dir.dot(axis) * axis).normalize_or_zero();
+            let perp = match y_dir {
+                Some(y) => (y - y.dot(axis) * axis).normalize_or_zero(),
+                None => axis.cross(ref_dir),
             };
-            let perp = canon_axis.cross(ref_dir);
             let d_start = start_pt - center;
             let d_end = end_pt - center;
             let theta_start = f64::atan2(d_start.dot(perp), d_start.dot(ref_dir));
             let theta_end = f64::atan2(d_end.dot(perp), d_end.dot(ref_dir));
             let theta_start = theta_start.rem_euclid(std::f64::consts::TAU);
             let theta_end = theta_end.rem_euclid(std::f64::consts::TAU);
-            let forward = if theta_end >= theta_start {
-                theta_end - theta_start
-            } else {
-                theta_end + std::f64::consts::TAU - theta_start
+            // OCCT TopoDSToStep_MakeStepEdge.cxx L206-233: for a periodic curve
+            // the edge range (dpar) and the range obtained from projecting the
+            // end vertices onto the curve (dU) must agree; when one of them is
+            // a small fragment (<= 0.1 period) and the other is the long way
+            // around (> 0.5 period) the vertices are swapped so that the STEP
+            // reader reconstructs the same arc.  same_sense is always true
+            // (OCCT L345) — the ORIENTED_EDGEs carry the directions.
+            let dpar = {
+                let tbrep = self.tbrep();
+                let r = tbrep
+                    .tshapes
+                    .get(edge_idx)
+                    .and_then(|ts| match &**ts {
+                        topods::TShape::Edge(e) => Some(e.range),
+                        _ => None,
+                    })
+                    .unwrap_or([theta_start, theta_end]);
+                r[1] - r[0]
             };
-            if forward > std::f64::consts::PI {
-                same_sense = false;
+            let dpar = if dpar <= 0.0 {
+                dpar + (dpar.abs() / std::f64::consts::TAU).ceil() * std::f64::consts::TAU
+            } else {
+                dpar
+            };
+            let mut du = theta_end - theta_start;
+            if du <= 0.0 {
+                du += (du.abs() / std::f64::consts::TAU).ceil() * std::f64::consts::TAU;
+            }
+            if (du > rcad_kernel::PCONFUSION && du <= 0.1 * std::f64::consts::TAU
+                && dpar > 0.5 * std::f64::consts::TAU)
+                || (dpar > rcad_kernel::PCONFUSION
+                    && dpar <= 0.1 * std::f64::consts::TAU
+                    && du > 0.5 * std::f64::consts::TAU)
+            {
+                std::mem::swap(&mut v0, &mut v1);
             }
         }
         let edge_curve = self.edge_curve("edge", v0, v1, basis_curve, same_sense);
@@ -2077,7 +2120,7 @@ impl Part21Writer {
 
     /// Topods variant: same logic as write_edge_curve_geometry_by_index but reads
     /// geometry data from self.tbrep() (topods::BRep) instead of flat BRep.
-    fn write_edge_curve_geometry_by_index_topods(&mut self, edge_idx: usize) -> u64 {
+    fn write_edge_curve_geometry_by_index_topods(&mut self, edge_idx: usize, location: u32) -> u64 {
         if let Some(existing) = self.edge_geometry_ids.get(&edge_idx) {
             return *existing;
         }
@@ -2131,6 +2174,12 @@ impl Part21Writer {
             };
 
             let source_curve = ed.curve.clone();
+            let source_curve = if location == 0 {
+                source_curve
+            } else {
+                let loc = self.tbrep().get_location(location);
+                source_curve.map(|c| rcad_kernel::geom::transform_curve(&c, &loc))
+            };
 
             // Build pcurves from the edge CurveRepresentations.
             // surface_idx in each PCurve is the face tshape index.
@@ -2591,7 +2640,7 @@ impl Part21Writer {
                 None
             }
         }) else {
-            return self.write_edge_curve_geometry_by_index_topods(edge_idx);
+            return self.write_edge_curve_geometry_by_index_topods(edge_idx, 0);
         };
         let start_point = tbrep
             .tshapes
@@ -2642,7 +2691,7 @@ impl Part21Writer {
         let delta = end_point - start_point;
         let length = delta.length();
         if length <= 1e-12 {
-            return self.write_edge_curve_geometry_by_index_topods(edge_idx);
+            return self.write_edge_curve_geometry_by_index_topods(edge_idx, 0);
         }
         let origin = self.cartesian_point("wire_origin", dvec3_to_array(start_point));
         let dir = self.direction("wire_dir", normalize(dvec3_to_array(delta)));
@@ -2841,9 +2890,17 @@ impl Part21Writer {
                 self.line("edge_line", origin, vec_id)
             }
             Curve3::Circle(circle) => {
-                let circle_normal = canonicalize_axis_sign(circle.normal);
-                let placement =
-                    self.axis2_from_origin_axis("circle_axis", circle.center, circle_normal);
+                // OCCT GeomToStep_MakeCircle (GeomToStep_MakeCircle_gen.pxx
+                // L22): the circle's own frame (gp_Circ::Position —
+                // XDirection) is written, so the STEP curve parameterization
+                // matches the in-memory curve and the STEP reader's endpoint
+                // projection reproduces the edge range.
+                let placement = self.axis2_from_origin_axis_ref(
+                    "circle_axis",
+                    circle.center,
+                    circle.normal,
+                    circle.x_dir,
+                );
                 self.circle("edge_circle", placement, circle.radius.max(1e-9))
             }
             Curve3::Ellipse(ellipse) => {

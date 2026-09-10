@@ -7,6 +7,10 @@
 //! - Ray picking
 //! - Nearest-face queries
 
+pub mod bounding_box;
+
+pub use bounding_box::Aabb;
+
 use glam::DVec3;
 
 use crate::geom::{Surface3, SurfaceEval};

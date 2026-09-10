@@ -53,6 +53,15 @@ impl MakeBox {
     }
 
     pub fn build(&self) -> Result<BRep, crate::BuildError> {
+        // OCCT BRepPrim_GWedge raises Standard_ConstructionError on
+        // non-finite extents; mirror that with an explicit error instead of
+        // building a NaN box.
+        if !self.dx.is_finite() || !self.dy.is_finite() || !self.dz.is_finite() {
+            return Err(crate::BuildError::NonFiniteValue("box dimensions"));
+        }
+        if !(self.pmin.x.is_finite() && self.pmin.y.is_finite() && self.pmin.z.is_finite()) {
+            return Err(crate::BuildError::NonFiniteValue("box origin"));
+        }
         let mut t = BRep::new();
         let rev = |sr: Shape| Shape { orientation: Orientation::Reversed, ..sr };
         // OCCT BRepPrim_GWedge vertex layout (Point(d1,d2,dd) table): each

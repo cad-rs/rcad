@@ -60,8 +60,9 @@ pub mod ocaf;
 // ============================================================================
 
 pub use core::precision::{
-    ANGULAR, APPROXIMATION, COMPUTATIONAL, CONFUSION, INFINITE_VALUE, INTERSECTION,
-    PCONFUSION, SQUARE_COMPUTATIONAL, SQUARE_CONFUSION, SQUARE_INTERSECTION,
+    ANGULAR, APPROXIMATION, BND_PRECISION_INFINITE, COMPUTATIONAL, CONFUSION, INFINITE_VALUE,
+    INTERSECTION, PCONFUSION, REAL_FIRST, REAL_LAST, SQUARE_COMPUTATIONAL, SQUARE_CONFUSION,
+    SQUARE_INTERSECTION,
     brep_same_parameter, edge_same_parameter,
     edge_same_range, edge_tolerance, face_domain, face_tolerance, finalize_tolerance_hierarchy,
     is_infinite_value, is_negative_infinite_value, is_positive_infinite_value, model_tolerance,

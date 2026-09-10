@@ -98,7 +98,8 @@ impl PathPoint {
     }
     /// OCCT Vertex().
     pub fn vertex(&self) -> DomainVertex {
-        self.vtx.unwrap_or(DomainVertex { u: 0.0, v: 0.0 })
+        self.vtx
+            .unwrap_or(DomainVertex { u: 0.0, v: 0.0, param: 0.0 })
     }
     /// OCCT Arc().
     pub fn arc(&self) -> &Curve2d {
@@ -342,18 +343,30 @@ fn nb_samples_on_arc(a: &Curve2d) -> i32 {
 }
 
 // =====================================================================
-// Domain (Adaptor3d_TopolTool equivalent for the FF UV rectangle)
+// Domain (Adaptor3d_TopolTool equivalent — the FF UV rectangle)
 // =====================================================================
 
 /// A corner of the UV domain rectangle (Adaptor3d_HVertex equivalent).
+///
+/// `param` is the vertex parameter on the current boundary arc (OCCT
+/// Adaptor3d_TopolTool::Initialize(C) L235-254: the arc's first/last
+/// parameters become the two HVertexes; BRepTopAdaptor_HVertex::Parameter
+/// would be BRep_Tool::Parameter(V, E, F)).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DomainVertex {
     pub u: f64,
     pub v: f64,
+    pub param: f64,
 }
 
-/// The domain of restriction of a surface: the corrected FF UV rectangle.
-/// Its boundary arcs are the four edges of the rectangle.
+/// The UV-rectangle domain of a surface — OCCT IntTools_TopolTool, i.e. the
+/// default Adaptor3d_TopolTool::Initialize(S) (Adaptor3d_TopolTool.cxx
+/// L57-209): the boundary arcs are the four edges of the rectangle, in the
+/// same order and with the same parameterization as OCCT's myRestr array:
+///   0: (0, Vinf) + X,  param u in [Uinf, Usup]
+///   1: (Usup, 0) + Y,  param v in [Vinf, Vsup]
+///   2: (0, Vsup) - X,  param t in [-Usup, -Uinf]  (reversed U)
+///   3: (Uinf, 0) - Y,  param t in [-Vsup, -Vinf]  (reversed V)
 pub struct Domain {
     u_min: f64,
     u_max: f64,
@@ -380,18 +393,9 @@ impl Domain {
         }
     }
 
-    /// OCCT TopolTool::Classify(P, Tol) (BRepTopAdaptor_TopolTool.cxx
-    /// L174-187) via BRepTopAdaptor_FClass2d::Perform (L525-684): classify a
-    /// 2D point against the face domain, returning IN/ON/OUT.  For the rcad
-    /// UV-rectangle domain this is rectangle inclusion with a tolerance band
-    /// around the boundary (IN strictly inside by more than Tol, OUT beyond
-    /// Tol, ON within Tol).
-    ///
-    /// OCCT additionally re-frames the point periodically before classifying
-    /// (RecadreOnPeriodic=true, L550-588); the rcad Domain is a plain UV
-    /// rectangle without surface periodicity, and FF special-point parameters
-    /// are already in the surface's natural range, so the periodic re-framing
-    /// is not represented here.
+    /// OCCT TopolTool::Classify(P, Tol) (Adaptor3d_TopolTool.cxx L280-298):
+    /// rectangle inclusion with a tolerance band around the boundary
+    /// (IN strictly inside by more than Tol, OUT beyond Tol, ON within Tol).
     pub fn classify(&self, u: f64, v: f64, tol: f64) -> rcad_kernel::topods::State {
         use rcad_kernel::topods::State;
         if u > self.u_min + tol
@@ -415,7 +419,7 @@ impl Domain {
     pub fn init(&mut self) {
         self.arc_idx = 0;
     }
-    /// OCCT TopolTool::More().
+    /// OCCT TopolTool::More() — the four boundary arcs.
     pub fn more(&self) -> bool {
         self.arc_idx < 4
     }
@@ -423,9 +427,9 @@ impl Domain {
     pub fn value(&self) -> Curve2d {
         let (o, d) = match self.arc_idx {
             0 => (DVec2::new(0.0, self.v_min), DVec2::new(1.0, 0.0)),
-            1 => (DVec2::new(0.0, self.v_max), DVec2::new(1.0, 0.0)),
-            2 => (DVec2::new(self.u_min, 0.0), DVec2::new(0.0, 1.0)),
-            _ => (DVec2::new(self.u_max, 0.0), DVec2::new(0.0, 1.0)),
+            1 => (DVec2::new(self.u_max, 0.0), DVec2::new(0.0, 1.0)),
+            2 => (DVec2::new(0.0, self.v_max), DVec2::new(-1.0, 0.0)),
+            _ => (DVec2::new(self.u_min, 0.0), DVec2::new(0.0, -1.0)),
         };
         Curve2d::Line(rcad_kernel::geom::Line2d { origin: o, direction: d })
     }
@@ -434,13 +438,15 @@ impl Domain {
         self.arc_idx += 1;
     }
 
-    /// OCCT IntPatch_HInterTool::Bounds(A, Ufirst, Ulast).
+    /// OCCT IntPatch_HInterTool::Bounds(A, Ufirst, Ulast) — the arc's own
+    /// parameter range (Adaptor2d_Line2d FirstParameter/LastParameter,
+    /// Adaptor3d_TopolTool.cxx L75-170: pinf/psup per restriction).
     pub fn bounds(&self, a: &Curve2d) -> (f64, f64) {
-        // Arc 0/1: V=const, U in [u_min,u_max]; Arc 2/3: U=const, V in [v_min,v_max].
-        if matches!(a, Curve2d::Line(l) if l.direction.y.abs() > 0.5) {
-            (self.v_min, self.v_max)
-        } else {
-            (self.u_min, self.u_max)
+        match self.arc_of(a) {
+            0 => (self.u_min, self.u_max),
+            1 => (self.v_min, self.v_max),
+            2 => (-self.u_max, -self.u_min),
+            _ => (-self.v_max, -self.v_min),
         }
     }
 
@@ -453,39 +459,42 @@ impl Domain {
     pub fn init_vertex_iterator(&mut self) {
         self.vtx_idx = 0;
     }
-    /// OCCT TopolTool::MoreVertex() — each arc has two endpoint corners.
+    /// OCCT TopolTool::MoreVertex() — each arc has two endpoint corners
+    /// (Adaptor3d_TopolTool::Initialize(C) L235-254: the arc's first/last
+    /// parameters become the two HVertexes).
     pub fn more_vertex(&self) -> bool {
         self.vtx_idx < 2
     }
-    /// OCCT TopolTool::Vertex().
+    /// OCCT TopolTool::Vertex() — the corner at the arc's first/last
+    /// parameter (Adaptor3d_TopolTool.cxx L245-253).
     pub fn vertex(&self) -> DomainVertex {
         match self.vtx_arc {
             0 => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_min, v: self.v_min }
+                    DomainVertex { u: self.u_min, v: self.v_min, param: self.u_min }
                 } else {
-                    DomainVertex { u: self.u_max, v: self.v_min }
+                    DomainVertex { u: self.u_max, v: self.v_min, param: self.u_max }
                 }
             }
             1 => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_min, v: self.v_max }
+                    DomainVertex { u: self.u_max, v: self.v_min, param: self.v_min }
                 } else {
-                    DomainVertex { u: self.u_max, v: self.v_max }
+                    DomainVertex { u: self.u_max, v: self.v_max, param: self.v_max }
                 }
             }
             2 => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_min, v: self.v_min }
+                    DomainVertex { u: self.u_max, v: self.v_max, param: -self.u_max }
                 } else {
-                    DomainVertex { u: self.u_min, v: self.v_max }
+                    DomainVertex { u: self.u_min, v: self.v_max, param: -self.u_min }
                 }
             }
             _ => {
                 if self.vtx_idx == 0 {
-                    DomainVertex { u: self.u_max, v: self.v_min }
+                    DomainVertex { u: self.u_min, v: self.v_max, param: -self.v_max }
                 } else {
-                    DomainVertex { u: self.u_max, v: self.v_max }
+                    DomainVertex { u: self.u_min, v: self.v_min, param: -self.v_min }
                 }
             }
         }
@@ -499,62 +508,67 @@ impl Domain {
         (v1.u - v2.u).abs() <= rcad_kernel::precision::CONFUSION
             && (v1.v - v2.v).abs() <= rcad_kernel::precision::CONFUSION
     }
-    /// OCCT TopolTool::Orientation(A) — orientation of a boundary arc in the
-    /// face.  rcad's domain is a rectangular UV patch; the boundary walk is
-    /// counter-clockwise (bottom, right, top, left).
-    pub fn orientation_arc(&self, a: &Curve2d) -> rcad_kernel::topods::Orientation {
+    /// OCCT TopolTool::Orientation(A) — Adaptor3d_TopolTool.cxx L606-609: the
+    /// base TopolTool reports every boundary arc FORWARD.
+    pub fn orientation_arc(&self, _a: &Curve2d) -> rcad_kernel::topods::Orientation {
         use rcad_kernel::topods::Orientation;
-        match self.arc_of(a) {
-            0 => Orientation::Forward,  // bottom: +U
-            1 => Orientation::Reversed, // top: -U in the CCW walk
-            2 => Orientation::Reversed, // left: -V in the CCW walk
-            _ => Orientation::Forward,  // right: +V
-        }
+        Orientation::Forward
     }
 
-    /// OCCT TopolTool::Orientation(V) — orientation of a boundary vertex.
+    /// OCCT TopolTool::Orientation(V) — Adaptor3d_TopolTool.cxx L611-614:
+    /// the vertex orientation stored in the HVertex (Adaptor3d_TopolTool.cxx
+    /// L245-253: FORWARD at the arc's first parameter, REVERSED at the last).
     pub fn orientation_vertex(&self, v: DomainVertex) -> rcad_kernel::topods::Orientation {
         use rcad_kernel::topods::Orientation;
-        let u_max = (v.u - self.u_max).abs() <= rcad_kernel::precision::CONFUSION;
-        let v_max = (v.v - self.v_max).abs() <= rcad_kernel::precision::CONFUSION;
-        if u_max && v_max || !u_max && !v_max {
+        // The corner at the arc's first parameter was created FORWARD
+        // (Adaptor3d_TopolTool.cxx L245-246), the other corner REVERSED.
+        let i = self.vtx_arc;
+        let first = match i {
+            0 => v.u == self.u_min,
+            1 => v.v == self.v_min,
+            2 => v.u == self.u_max,
+            _ => v.v == self.v_max,
+        };
+        if first {
             Orientation::Forward
         } else {
             Orientation::Reversed
         }
     }
 
-    /// OCCT IntPatch_HInterTool::Parameter(V, A).
+    /// OCCT IntPatch_HInterTool::Parameter(V, A) — the vertex parameter on the
+    /// arc (the arc parameter of the 2D corner point: u / v / -u / -v).
     pub fn parameter(&self, v: DomainVertex, a: &Curve2d) -> f64 {
-        if matches!(a, Curve2d::Line(l) if l.direction.y.abs() > 0.5) {
-            v.v
-        } else {
-            v.u
+        match self.arc_of(a) {
+            0 => v.u,
+            1 => v.v,
+            2 => -v.u,
+            _ => -v.v,
         }
     }
     /// OCCT IntPatch_HInterTool::Tolerance(V, A) — vertex resolution on the arc.
     ///
-    /// In the FF path the domain is a BRepTopAdaptor_TopolTool, so
-    /// V->Resolution(C) is BRepTopAdaptor_HVertex::Resolution (BRepTopAdaptor_
-    /// HVertex.cxx L47-...): a parametric resolution built from the BRep vertex
-    /// tolerance (~ Precision::Confusion).  The rcad UV-rectangle model has no
-    /// BRep vertex, so the point-confusion tolerance is used as its resolution.
+    /// In the FF path the domain is an IntTools_TopolTool (UV rectangle)
+    /// without BRep vertices, so the point-confusion tolerance is used as its
+    /// resolution.
     pub fn vertex_tolerance(&self, _v: DomainVertex, _a: &Curve2d) -> f64 {
         rcad_kernel::precision::CONFUSION
     }
-    /// The index of the arc matching `a`.
+    /// The index of the arc matching `a` (OCCT handle identity Arc() == A
+    /// recovered by structural match).
     fn arc_of(&self, a: &Curve2d) -> usize {
         if let Curve2d::Line(l) = a {
             if l.direction.y.abs() > 0.5 {
-                if (l.origin.y - self.v_min).abs() < (l.origin.y - self.v_max).abs() {
-                    2
+                // U=const arcs (1: right +V at Usup, 3: left -V at Uinf).
+                if (l.origin.x - self.u_max).abs() < (l.origin.x - self.u_min).abs() {
+                    1
                 } else {
                     3
                 }
-            } else if (l.origin.y - self.v_min).abs() < (l.origin.y - self.v_max).abs() {
+            } else if l.direction.x > 0.0 {
                 0
             } else {
-                1
+                2
             }
         } else {
             0
@@ -1377,55 +1391,86 @@ fn is_degenerated_quadric(quadric: &Quadric) -> bool {
     false
 }
 
+/// OCCT Precision::Angular() — tolerance of the 2D iso-direction tests in
+/// Adaptor3d_CurveOnSurface::EvalKPart.
+const EVAL_KPART_ANGULAR: f64 = 1.0e-12;
+
 /// Build the 3D curve (parameterized by the 2D arc parameter) of a boundary
-/// arc on a surface.  The boundary arcs of the FF domain are lines in UV
-/// space; on an analytic quadric their 3D image is a Line or a Circle.
+/// arc on a surface — OCCT Adaptor3d_CurveOnSurface::EvalKPart: the KPart
+/// canonic 3D curve whose Value(U) equals S->Value(A->Value(U)) (parameter
+/// U is the 2D arc's own parameter).  Arcs without a KPart return None and
+/// take the numeric FunctionAllRoots path (GeomAbs_OtherCurve in OCCT).
 pub fn curve_on_surface(
     a: &Curve2d,
     surf: &Surface3,
 ) -> Option<(rcad_kernel::geom::Curve3, CurveType3d)> {
-    let arc_along_u = matches!(a, Curve2d::Line(l) if l.direction.y.abs() <= 0.5);
-    match surf {
-        Surface3::Plane(p) => {
-            // P(t) = p.origin + u(t)*p.u_dir + v(t)*p.v_dir.
-            let (u0, v0) = a.point_at(0.0).into();
-            let o = p.origin + u0 * p.u_dir + v0 * p.v_dir;
-            let dir = if arc_along_u { p.u_dir } else { p.v_dir };
+    match (a, surf) {
+        // Plane: myType = the 2D curve type; Circle -> to3d, Line -> D1 form.
+        (Curve2d::Line(l), Surface3::Plane(p)) => {
+            let (o2x, o2y) = a.point_at(0.0).into();
+            let o = p.origin + o2x * p.u_dir + o2y * p.v_dir;
+            // OCCT: V.SetLinearForm(Duv.X(), D1U, Duv.Y(), D1V).
+            let dir = l.direction.x * p.u_dir + l.direction.y * p.v_dir;
             Some((
-                rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: dir }),
+                rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(o, dir)),
                 CurveType3d::Line,
             ))
         }
-        Surface3::Cylinder(c) => {
+        (Curve2d::Circle(c), Surface3::Plane(p)) => {
+            // OCCT EvalKPart: myCirc = to3d(mySurface->Plane(), myCurve->Circle())
+            // — the 2D circle mapped into the plane frame, parameter preserved.
+            let (cx, cy) = c.center.into();
+            let center = p.origin + cx * p.u_dir + cy * p.v_dir;
+            let x_dir = c.x_dir.x * p.u_dir + c.x_dir.y * p.v_dir;
+            let y_dir = c.y_dir.x * p.u_dir + c.y_dir.y * p.v_dir;
+            Some((
+                rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
+                    center,
+                    normal: p.normal,
+                    x_dir,
+                    y_dir,
+                    radius: c.radius,
+                }),
+                CurveType3d::Circle,
+            ))
+        }
+        (Curve2d::Line(l), Surface3::Cylinder(c)) => {
             let z = c.axis.normalize_or_zero();
             let x = c.ref_dir.normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
-            if arc_along_u {
-                // V = const -> circle at height V.
+            if l.direction.y.abs() <= EVAL_KPART_ANGULAR {
+                // Iso V: ElSLib::CylinderVIso(V) rotated to U = P.X() by the
+                // pcurve origin; opposite direction reverses the parameter.
                 let (u0, v0) = a.point_at(0.0).into();
                 let center = c.origin + v0 * z;
-                let radius = c.radius;
+                let ux = u0.cos() * x + u0.sin() * y;
+                let uy = -u0.sin() * x + u0.cos() * y;
+                let opposite = l.direction.x < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z,
-                        x_dir: x,
-                        y_dir: y,
-                        radius,
+                        normal: if opposite { -z } else { z },
+                        x_dir: ux,
+                        y_dir: if opposite { -uy } else { uy },
+                        radius: c.radius,
                     }),
                     CurveType3d::Circle,
                 ))
-            } else {
-                // U = const -> generatrix line.
+            } else if l.direction.x.abs() <= EVAL_KPART_ANGULAR {
+                // Iso U: ElSLib::CylinderUIso(U) translated by P.Y(); opposite
+                // direction reverses the line.
                 let (u0, v0) = a.point_at(0.0).into();
                 let o = c.origin + c.radius * (u0.cos() * x + u0.sin() * y) + v0 * z;
+                let dir = if l.direction.y < 0.0 { -z } else { z };
                 Some((
-                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: z }),
+                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(o, dir)),
                     CurveType3d::Line,
                 ))
+            } else {
+                None
             }
         }
-        Surface3::Cone(c) => {
+        (Curve2d::Line(l), Surface3::Cone(c)) => {
             let z = c.axis.normalize_or_zero();
             let x = c.ref_dir.normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
@@ -1436,52 +1481,62 @@ pub fn curve_on_surface(
             let apex = c.apex;
             let semi = c.half_angle_rad;
             let _ = y;
-            if arc_along_u {
-                // V = const -> circle at height V.
+            if l.direction.y.abs() <= EVAL_KPART_ANGULAR {
+                // Iso V: ElSLib::ConeVIso(V) rotated to U = P.X().
                 let (u0, v0) = a.point_at(0.0).into();
                 let r = c.radius + v0 * semi.sin();
                 let center = apex + v0 * semi.cos() * z;
+                let ux = u0.cos() * x + u0.sin() * y;
+                let uy = -u0.sin() * x + u0.cos() * y;
+                let opposite = l.direction.x < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z,
-                        x_dir: x,
-                        y_dir: y,
+                        normal: if opposite { -z } else { z },
+                        x_dir: ux,
+                        y_dir: if opposite { -uy } else { uy },
                         radius: r,
                     }),
                     CurveType3d::Circle,
                 ))
-            } else {
-                // U = const -> generatrix line.
+            } else if l.direction.x.abs() <= EVAL_KPART_ANGULAR {
+                // Iso U: ElSLib::ConeUIso(U) translated by P.Y().
                 let (u0, v0) = a.point_at(0.0).into();
-                let o = apex + (c.radius + v0 * semi.sin()) * (u0.cos() * x + u0.sin() * y)
-                    + v0 * semi.cos() * z;
-                let dir = semi.sin() * (u0.cos() * x + u0.sin() * y) + semi.cos() * z;
+                let radial = u0.cos() * x + u0.sin() * y;
+                let o = apex + (c.radius + v0 * semi.sin()) * radial + v0 * semi.cos() * z;
+                let gen_dir = semi.sin() * radial + semi.cos() * z;
+                let dir = if l.direction.y < 0.0 { -gen_dir } else { gen_dir };
                 Some((
-                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: o, direction: dir }),
+                    rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(o, dir)),
                     CurveType3d::Line,
                 ))
+            } else {
+                None
             }
         }
-        Surface3::Sphere(s) => {
+        (Curve2d::Line(l), Surface3::Sphere(s)) => {
+            // OCCT EvalKPart SphereVIso/SphereUIso branches.  The rcad frame
+            // keeps the historical rectangle-domain form (see the u-iso note
+            // below); rectangle-domain arcs carry a zero origin offset, so the
+            // ElSLib rotation by the pcurve origin is the identity there.
             let z = s.axis.normalize_or_zero();
             let x = s.ref_dir.normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
             let r = s.radius;
             let (u0, v0) = a.point_at(0.0).into();
-            if arc_along_u {
-                // V = const -> parallel circle.  The sphere parameterization
-                // P(u,v) = center + r*(sin(v)*radial + cos(v)*axis), so the
-                // V=v0 circle is centered at center + r*cos(v0)*axis with
-                // radius r*sin(v0).
+            if l.direction.y.abs() <= EVAL_KPART_ANGULAR {
+                // V = const -> parallel circle.
                 let center = s.center + r * v0.cos() * z;
                 let radius = (r * v0.sin()).abs();
+                let ux = u0.cos() * x + u0.sin() * y;
+                let uy = -u0.sin() * x + u0.cos() * y;
+                let opposite = l.direction.x < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z,
-                        x_dir: x,
-                        y_dir: y,
+                        normal: if opposite { -z } else { z },
+                        x_dir: ux,
+                        y_dir: if opposite { -uy } else { uy },
                         radius,
                     }),
                     CurveType3d::Circle,
@@ -1490,6 +1545,7 @@ pub fn curve_on_surface(
                 // U = const -> meridian circle through the poles: plane spanned
                 // by {axis, ux}, i.e. normal = z x ux, x_dir = z, y_dir = ux.
                 let ux = u0.cos() * x + u0.sin() * y;
+                let _ = y;
                 // OCCT Adaptor3d_CurveOnSurface::EvalKPart (Adaptor3d_CurveOnSurface.cxx
                 // L1657-1676) + ElSLib::SphereUIso (ElSLib.cxx L1738-1749): for a
                 // sphere Iso-U arc the 3D curve is the meridian circle with
@@ -1511,42 +1567,55 @@ pub fn curve_on_surface(
                 ))
             }
         }
-        Surface3::Torus(t) => {
+        (Curve2d::Line(l), Surface3::Torus(t)) => {
             let z = t.axis.normalize_or_zero();
             let x = rcad_kernel::geom::any_perpendicular(z).normalize_or_zero();
             let y = z.cross(x).normalize_or_zero();
-            let (u0, v0) = a.point_at(0.0).into();
-            if arc_along_u {
-                // V = const -> circle of radius R + r*cos(v).
+            if l.direction.y.abs() <= EVAL_KPART_ANGULAR {
+                // V = const: ElSLib::TorusVIso(V) rotated to U = P.X().
+                let (u0, v0) = a.point_at(0.0).into();
                 let center = t.center + (t.minor_radius * v0.sin()) * z;
                 let radius = t.major_radius + t.minor_radius * v0.cos();
+                let ux = u0.cos() * x + u0.sin() * y;
+                let uy = -u0.sin() * x + u0.cos() * y;
+                let opposite = l.direction.x < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z,
-                        x_dir: x,
-                        y_dir: y,
+                        normal: if opposite { -z } else { z },
+                        x_dir: ux,
+                        y_dir: if opposite { -uy } else { uy },
                         radius,
                     }),
                     CurveType3d::Circle,
                 ))
-            } else {
-                // U = const -> circle of radius r in the plane spanned by
-                // {axis, ux}, centered at center + R*ux (normal = z x ux).
+            } else if l.direction.x.abs() <= EVAL_KPART_ANGULAR {
+                // U = const: ElSLib::TorusUIso(U) rotated around its own axis by
+                // P.Y() (the v offset of the pcurve origin).
+                let (u0, v0) = a.point_at(0.0).into();
                 let ux = u0.cos() * x + u0.sin() * y;
                 let center = t.center + t.major_radius * ux;
+                // Base frame (x_dir = z, y_dir = ux) has circle parameter = V;
+                // rotate the frame by v0 so parameter 0 starts at the origin.
+                let xz = v0.cos() * z + v0.sin() * ux;
+                let yx = -v0.sin() * z + v0.cos() * ux;
+                let opposite = l.direction.y < 0.0;
                 Some((
                     rcad_kernel::geom::Curve3::Circle(rcad_kernel::geom::Circle3 {
                         center,
-                        normal: z.cross(ux).normalize_or_zero(),
-                        x_dir: z,
-                        y_dir: ux,
+                        normal: if opposite { ux.cross(z).normalize_or_zero() } else { z.cross(ux).normalize_or_zero() },
+                        x_dir: xz,
+                        y_dir: if opposite { -yx } else { yx },
                         radius: t.minor_radius,
                     }),
                     CurveType3d::Circle,
                 ))
+            } else {
+                None
             }
         }
+        // Non-iso 2D lines and non-planar 2D circles have no KPart
+        // (myType = GeomAbs_OtherCurve) -> the numeric path.
         _ => None,
     }
 }
@@ -1572,6 +1641,14 @@ pub fn curves_same(a: &Curve2d, b: &Curve2d) -> bool {
             && (l1.origin.y - l2.origin.y).abs() < rcad_kernel::precision::CONFUSION
             && (l1.direction.x - l2.direction.x).abs() < rcad_kernel::precision::CONFUSION
             && (l1.direction.y - l2.direction.y).abs() < rcad_kernel::precision::CONFUSION
+    } else if let (Curve2d::Circle(c1), Curve2d::Circle(c2)) = (a, b) {
+        (c1.center.x - c2.center.x).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.center.y - c2.center.y).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.radius - c2.radius).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.x_dir.x - c2.x_dir.x).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.x_dir.y - c2.x_dir.y).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.y_dir.x - c2.y_dir.x).abs() < rcad_kernel::precision::CONFUSION
+            && (c1.y_dir.y - c2.y_dir.y).abs() < rcad_kernel::precision::CONFUSION
     } else {
         false
     }

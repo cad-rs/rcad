@@ -526,10 +526,7 @@ pub fn intersect_plane_cylinder_intana(plane: &Plane, cyl: &CylindricalSurface) 
         }
         if (dist - cyl.radius).abs() < TOLERANCE_ABS {
             let tang_point = cyl.origin + plane.normal * (-axis_to_plane);
-            return PlnCylResult::TangentLine(Line3 {
-                origin: tang_point,
-                direction: cyl.axis,
-            });
+            return PlnCylResult::TangentLine(Line3::new(tang_point, cyl.axis));
         }
         let offset_dir = plane.normal.cross(cyl.axis).normalize();
         let half_chord = (cyl.radius * cyl.radius - dist * dist).sqrt();
@@ -539,14 +536,8 @@ pub fn intersect_plane_cylinder_intana(plane: &Plane, cyl: &CylindricalSurface) 
         let l2_origin = center_on_plane - offset_dir * half_chord;
 
         return PlnCylResult::TwoLines(
-            Line3 {
-                origin: l1_origin,
-                direction: cyl.axis,
-            },
-            Line3 {
-                origin: l2_origin,
-                direction: cyl.axis,
-            },
+            Line3::new(l1_origin, cyl.axis),
+            Line3::new(l2_origin, cyl.axis),
         );
     }
 
@@ -674,10 +665,7 @@ pub fn intersect_plane_cone_intana(plane: &Plane, cone: &ConicalSurface) -> PlnC
             // Tangent: single generator line
             let dir = plane_n.cross(axis_n).normalize();
             let gen_dir = (axis_n * half.cos() + dir * half.sin()).normalize();
-            return PlnConResult::SingleLine(Line3 {
-                origin: apex,
-                direction: gen_dir,
-            });
+            return PlnConResult::SingleLine(Line3::new(apex, gen_dir));
         }
 
         if angle_between < half {
@@ -694,14 +682,8 @@ pub fn intersect_plane_cone_intana(plane: &Plane, cone: &ConicalSurface) -> PlnC
             let d1 = (projected_axis * half.cos() + perp_in_plane * half.sin()).normalize();
             let d2 = (projected_axis * half.cos() - perp_in_plane * half.sin()).normalize();
             return PlnConResult::TwoLines(
-                Line3 {
-                    origin: apex,
-                    direction: d1,
-                },
-                Line3 {
-                    origin: apex,
-                    direction: d2,
-                },
+                Line3::new(apex, d1),
+                Line3::new(apex, d2),
             );
         }
 
@@ -933,10 +915,7 @@ fn intersect_parallel_cylinders(
         // External tangent - single line of contact (rare)
         // This would be a line, not a curve
         let contact_point = cyl1.origin + radial_vec.normalize() * r1;
-        return CylCylResult::SingleCurve(Curve3::Line(Line3 {
-            origin: contact_point,
-            direction: axis,
-        }));
+        return CylCylResult::SingleCurve(Curve3::Line(Line3::new(contact_point, axis)));
     }
 
     if dist_between_axes < (r1 - r2).abs() - TOLERANCE_ABS {
@@ -972,10 +951,7 @@ fn intersect_parallel_cylinders(
     if h_sq < TOLERANCE_ABS {
         // Single tangent line
         let contact = cyl1.origin + dir * x;
-        return CylCylResult::SingleCurve(Curve3::Line(Line3 {
-            origin: contact,
-            direction: axis,
-        }));
+        return CylCylResult::SingleCurve(Curve3::Line(Line3::new(contact, axis)));
     }
 
     let h = h_sq.sqrt();
@@ -985,14 +961,8 @@ fn intersect_parallel_cylinders(
     let p2 = cyl1.origin + dir * x - perp * h;
 
     CylCylResult::TwoCurves(
-        Curve3::Line(Line3 {
-            origin: p1,
-            direction: axis,
-        }),
-        Curve3::Line(Line3 {
-            origin: p2,
-            direction: axis,
-        }),
+        Curve3::Line(Line3::new(p1, axis)),
+        Curve3::Line(Line3::new(p2, axis)),
     )
 }
 
@@ -1284,7 +1254,7 @@ mod tests {
 
     #[test]
     fn test_intersect_line_plane_basic() {
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::Z };
+        let line = Line3::new(DVec3::ZERO, DVec3::Z);
         let plane = Plane::new(DVec3::new(0.0, 0.0, 5.0), DVec3::Z);
         let result = intersect_line_plane(&line, &plane);
         assert!(result.is_some());
@@ -1296,12 +1266,13 @@ mod tests {
     fn test_intersect_line_cylinder() {
         // Line along X through the cylinder axis; OCCT IntAna_IntConicQuad
         // returns the line parameter t, so the hits at x=+-1 are t=-1/+1.
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let line = Line3::new(DVec3::ZERO, DVec3::X);
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         let pts = intersect_line_cylinder(&line, &cyl);
         assert_eq!(pts.len(), 2);
@@ -1312,7 +1283,7 @@ mod tests {
     #[test]
     fn test_intersect_line_sphere() {
         // Line along X through the sphere center; t = +-1 at the surface.
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let line = Line3::new(DVec3::ZERO, DVec3::X);
         let sphere = SphericalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
@@ -1354,6 +1325,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 2.0,
             ref_dir: DVec3::X,
+            y_dir: None,
         };
         match intersect_plane_cylinder_intana(&plane, &cyl) {
             PlnCylResult::Circle(c) => {
@@ -1382,10 +1354,11 @@ mod tests {
 
     #[test]
     fn test_intersect_line_torus() {
-        let line = Line3 { origin: DVec3::new(-5.0, 0.0, 0.0), direction: DVec3::X };
+        let line = Line3::new(DVec3::new(-5.0, 0.0, 0.0), DVec3::X);
         let torus = ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: DVec3::X,
             major_radius: 3.0,
             minor_radius: 1.0,
         };

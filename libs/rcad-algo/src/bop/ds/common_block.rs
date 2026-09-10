@@ -43,22 +43,33 @@ impl CommonBlock {
     /// Add a `PaveBlock` with its associated face index.
     /// `AddPaveBlock(const Handle(BOPDS_PaveBlock)&, const int)`.
     ///
-    /// `pb` ?the specific PaveBlock handle.
-    /// `face_idx` ?face index in the DS that this PaveBlock belongs to.
-    ///
-    /// OCCT BOPDS_CommonBlock::AddPaveBlock inserts at the front of the list so
-    /// that `PaveBlock1()` returns the first-added block (the one on the real edge).
-    /// rcad: defers ordering to `sort_by_edge()` which is called after all blocks
-    /// are added, ensuring the real-edge PaveBlock comes first.
+    /// OCCT BOPDS_CommonBlock::AddPaveBlock (BOPDS_CommonBlock.cxx L39-56)
+    /// keeps the invariant that the block with the minimal original edge
+    /// index stays first, so `PaveBlock1()` always returns the member on
+    /// the smallest original edge.
     pub fn add_pave_block(&mut self, pb: SharedPB, face_idx: usize) {
-        self.myPaveBlocks.push((pb, face_idx));
+        if self.myPaveBlocks.is_empty() {
+            self.myPaveBlocks.push((pb, face_idx));
+            return;
+        }
+        let oe = pb.read().original_edge;
+        let first_oe = self.myPaveBlocks[0].0.read().original_edge;
+        if oe < first_oe {
+            self.myPaveBlocks.insert(0, (pb, face_idx));
+        } else {
+            self.myPaveBlocks.push((pb, face_idx));
+        }
     }
     /// Replace all `PaveBlock`/face pairs at once.
     /// `SetPaveBlocks(const BOPDS_ListOfPaveBlock&)`.
     ///
-    /// Each entry is `(pave_block, face_index)`.
+    /// OCCT's SetPaveBlocks routes every member through AddPaveBlock, so the
+    /// minimal-original-edge-first invariant is preserved.
     pub fn set_pave_blocks(&mut self, blocks: Vec<(SharedPB, usize)>) {
-        self.myPaveBlocks = blocks;
+        self.myPaveBlocks.clear();
+        for (pb, face_idx) in blocks {
+            self.add_pave_block(pb, face_idx);
+        }
     }
     /// Add a face index to this common block.
     /// `AddFace(const int)`.
@@ -95,6 +106,20 @@ impl CommonBlock {
     /// `PaveBlock1()`.
     pub fn pave_block1(&self) -> Option<SharedPB> {
         self.myPaveBlocks.first().map(|(pb, _)| pb.clone())
+    }
+    /// Move the given member block to the front of the list.
+    /// `SetRealPaveBlock(const Handle(BOPDS_PaveBlock)&)`
+    /// (BOPDS_CommonBlock.cxx L114-126).
+    pub fn set_real_pave_block(&mut self, the_pb: &SharedPB) {
+        let ptr = std::sync::Arc::as_ptr(&the_pb.0) as u64;
+        if let Some(pos) = self.myPaveBlocks.iter().position(|(p, _)| {
+            std::sync::Arc::as_ptr(&p.0) as u64 == ptr
+        }) {
+            if pos != 0 {
+                let member = self.myPaveBlocks.remove(pos);
+                self.myPaveBlocks.insert(0, member);
+            }
+        }
     }
     /// sort PaveBlocks so that the block on the real edge
     ///   (original_edge == myEdge) is first, matching OCCT's insertion order
@@ -186,5 +211,22 @@ impl CommonBlock {
 impl Default for CommonBlock {
     fn default() -> Self {
         Self::new()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_pave_block_keeps_min_original_edge_first() {
+        let mut cb = CommonBlock::new();
+        let pb62 = SharedPB::new(crate::bop::ds::pave::PaveBlock::new(62, crate::bop::ds::pave::Pave::new(56, 0.0), crate::bop::ds::pave::Pave::new(39, 1.0)));
+        let pb10 = SharedPB::new(crate::bop::ds::pave::PaveBlock::new(10, crate::bop::ds::pave::Pave::new(39, 0.0), crate::bop::ds::pave::Pave::new(56, 1.0)));
+        pb62.0.write().unwrap().original_edge = 62;
+        pb10.0.write().unwrap().original_edge = 10;
+        cb.add_pave_block(pb62.clone(), 0);
+        cb.add_pave_block(pb10.clone(), 0);
+        let first = cb.pave_block1().unwrap();
+        assert_eq!(first.0.read().unwrap().original_edge, 10);
     }
 }

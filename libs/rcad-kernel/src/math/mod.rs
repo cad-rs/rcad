@@ -1,11 +1,30 @@
 // OCCT Math* packages
+pub mod adv_approx;
 pub mod bnd;
 pub mod bspl;
+pub mod bspl_lib;
 pub mod bvh;
+pub mod convert_comp_polynomial_to_poles;
+pub mod convert_grid_polynomial_to_poles;
 pub mod direct_polynomial_roots;
 pub mod el;
+pub mod gauss_points;
+pub mod gauss_tables;
+pub mod gp;
+pub mod math_gauss;
+pub mod math_jacobi;
 pub mod math_poly;
 pub mod newton_function_root;
+pub mod trig_equation_function;
+pub mod math_recipes;
+pub mod math_householder;
+pub mod math_matrix;
+pub mod math_crout;
+pub mod math_uzawa;
+pub mod math_bfgs;
+pub mod function_set_root;
+pub mod p_lib_jacobi;
+pub mod p_lib_jacobi_data;
 pub mod plib;
 pub mod root;
 pub mod poly;
@@ -87,6 +106,23 @@ impl MatD {
     pub fn n_cols(&self) -> usize {
         self.m[0].len()
     }
+
+    /// OCCT math_Matrix::SetCol(Index, V) — replaces the column Index by the
+    /// vector V.
+    pub fn set_col(&mut self, index: usize, v: &VecD) {
+        for r in 1..=self.n_rows() {
+            self.set(r, index, v.get(r));
+        }
+    }
+
+    /// OCCT math_Matrix::Col(Index) — returns the column Index as a vector.
+    pub fn col(&self, index: usize) -> VecD {
+        let mut v = VecD::new(self.n_rows());
+        for r in 1..=self.n_rows() {
+            v.set(r, self.get(r, index));
+        }
+        v
+    }
 }
 
 /// OCCT math_IntegerVector: a 1-based int array.
@@ -108,6 +144,18 @@ impl IntVec {
     pub fn len(&self) -> usize {
         self.v.len()
     }
+}
+
+/// OCCT GeomAbs_Shape (TKG3d GeomAbs package) — continuity order.  Placed
+/// here because the TKMath approximation stack (PLib / AdvApprox) consumes
+/// it; re-exported for the algorithm crates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GeomAbsShape {
+    C0,
+    C1,
+    C2,
+    C3,
+    CN,
 }
 
 #[cfg(test)]

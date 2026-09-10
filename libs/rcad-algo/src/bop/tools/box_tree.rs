@@ -214,9 +214,12 @@ impl PairSelector {
             || tree.tree.min_point(na).z > tree.tree.max_point(nb).z || tree.tree.max_point(na).z < tree.tree.min_point(nb).z { return; }
         let a_leaf = tree.tree.is_outer(na); let b_leaf = tree.tree.is_outer(nb);
         if a_leaf && b_leaf {
+            // Every (primitive of na, primitive of nb) pair is distinct: the
+            // recursion visits each subtree pair exactly once, so no index
+            // dedup applies here (the Morton-sorted leaf ranges need not be
+            // ordered, and an `i >= j` skip would drop valid pairs).
             for i in tree.tree.beg_primitive(na) as usize..=tree.tree.end_primitive(na) as usize {
                 for j in tree.tree.beg_primitive(nb) as usize..=tree.tree.end_primitive(nb) as usize {
-                    if self.same && i >= j { continue; }
                     if tree.aabbs[i].intersects(&tree.aabbs[j]) { self.pairs.push((tree.indices[i], tree.indices[j])); }
                 }
             } return;
@@ -229,4 +232,68 @@ impl PairSelector {
 
     pub fn sort(&mut self) { self.pairs.sort_unstable_by_key(|&(a, b)| (a, b)); }
     pub fn pairs(&self) -> &[(usize, usize)] { &self.pairs }
+}
+
+#[cfg(test)]
+mod pair_selector_tests {
+    //! The self-pair yield must match the brute-force overlap scan for any
+    //! Morton ordering of the primitives (BOPTools_PairSelector contract).
+
+    use super::{Aabb, BoxTree, PairSelector};
+    use glam::DVec3;
+
+    #[test]
+    fn pair_yield_matches_brute_force() {
+        let mut tree = BoxTree::new();
+        tree.set_size(35);
+        let mut boxes: Vec<(f64, f64, f64)> = Vec::new();
+        for k in 0..30 {
+            let a = k as f64 * std::f64::consts::TAU / 30.0;
+            boxes.push((28.0 * a.cos(), 28.0 * a.sin(), 6.0));
+        }
+        boxes.push((2.0, 0.0, 5.0));
+        boxes.push((0.0, 3.0, 5.0));
+        boxes.push((30.0, 5.0, 4.0));
+        boxes.push((60.0, 60.0, 2.0));
+        boxes.push((15.0, 15.0, 1.0));
+        for (i, (cx, cy, r)) in boxes.iter().enumerate() {
+            tree.add(
+                i,
+                Aabb {
+                    min: DVec3::new(cx - r, cy - r, 0.0),
+                    max: DVec3::new(cx + r, cy + r, 0.0),
+                    gap: 0.0,
+                },
+            );
+        }
+        tree.build();
+        let mut selector = PairSelector::new();
+        selector.set_bvh_sets(&tree);
+        selector.set_same(true);
+        selector.select();
+        selector.sort();
+        let got = selector.pairs().to_vec();
+
+        let mut want: Vec<(usize, usize)> = Vec::new();
+        for i in 0..boxes.len() {
+            for j in (i + 1)..boxes.len() {
+                let (cx_i, cy_i, r_i) = boxes[i];
+                let (cx_j, cy_j, r_j) = boxes[j];
+                let dx = cx_i - cx_j;
+                let dy = cy_i - cy_j;
+                let rr = r_i + r_j;
+                if dx * dx + dy * dy <= rr * rr {
+                    want.push((i, j));
+                }
+            }
+        }
+        // The selector yields each unordered pair once, in arbitrary order.
+        let mut got: Vec<(usize, usize)> = got.iter().map(|&(a, b)| (a.min(b), a.max(b))).collect();
+        got.sort_unstable();
+        want.sort_unstable();
+        assert_eq!(got.len(), want.len(), "pair count mismatch");
+        for (g, w) in got.iter().zip(want.iter()) {
+            assert_eq!(g, w, "pair mismatch");
+        }
+    }
 }

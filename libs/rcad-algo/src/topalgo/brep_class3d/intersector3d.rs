@@ -38,7 +38,7 @@ impl Intersector3d {
                    face_idx: usize) {
         // Build a line curve for intersection
         let line_curve = rcad_kernel::geom::Curve3::Line(
-            rcad_kernel::geom::Line3 { origin: line_origin, direction: line_dir });
+            rcad_kernel::geom::Line3::new(line_origin, line_dir));
 
         // OCCT: BRepIntCurveSurface_Inter intersects curve with face
         // rcad: use BRepIntCurveSurface_Inter via topalgo::brep_int_curve_surface::inter

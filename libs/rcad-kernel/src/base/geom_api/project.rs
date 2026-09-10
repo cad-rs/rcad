@@ -151,7 +151,14 @@ pub fn closest_point_on_surface(
                 cyl.origin + cyl.axis * along + radial / radial_len * cyl.radius
             };
             let u_axis = cyl.ref_dir.normalize();
-            let v_axis = cyl.axis.cross(u_axis);
+            // OCCT ElSLib::CylinderParameters (ElSLib.cxx L1781-1789):
+            // atan2(P·YDirection, P·XDirection) — the gp_Ax3 YDirection of the
+            // cylinder's position, which for a ZReverse (left-handed) frame is
+            // the explicit Y (rcad `y_dir`), NOT axis × ref_dir. Using the
+            // default right-handed Y mirrors u for left-handed frames and
+            // mis-projects v-isoline pcurves (the mirrored u breaks the face
+            // polygon of the FClass2d classifier).
+            let v_axis = cyl.y_axis();
             // OCCT ElSLib::CylinderParameters: atan2(P·YDirection, P·XDirection)
             // on the raw offset vector (same rationale as the Cone branch).
             let theta = v.dot(v_axis).atan2(v.dot(u_axis));
@@ -354,7 +361,7 @@ mod tests {
     #[test]
     fn project_onto_cylinder() {
         let cyl = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Y, radius: 1.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO, axis: DVec3::Y, radius: 1.0, ref_dir: DVec3::X, y_dir: None,
         });
         let q = DVec3::new(3.0, 2.0, 0.0);
         let r = closest_point_on_surface(&cyl, q, 16);
@@ -365,7 +372,7 @@ mod tests {
     #[test]
     fn project_onto_torus() {
         let torus = Surface3::Torus(ToroidalSurface {
-            center: DVec3::ZERO, axis: DVec3::Y, major_radius: 3.0, minor_radius: 1.0,
+            center: DVec3::ZERO, axis: DVec3::Y, ref_dir: DVec3::X, major_radius: 3.0, minor_radius: 1.0,
         });
         let q = DVec3::new(10.0, 0.0, 0.0);
         let r = closest_point_on_surface(&torus, q, 16);
@@ -432,7 +439,7 @@ mod tests {
     #[test]
     fn project_onto_torus_surface() {
         let torus = Surface3::Torus(ToroidalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, major_radius: 3.0, minor_radius: 1.0,
+            center: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, major_radius: 3.0, minor_radius: 1.0,
         });
         let q = DVec3::new(0.0, 0.0, 0.0);
         let r = closest_point_on_surface(&torus, q, 16);
@@ -446,7 +453,7 @@ mod tests {
     #[test]
     fn project_onto_cylinder_interior() {
         let cyl = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X,
+            origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X, y_dir: None,
         });
         let q = DVec3::new(0.0, 0.0, 1.0);
         let r = closest_point_on_surface(&cyl, q, 16);

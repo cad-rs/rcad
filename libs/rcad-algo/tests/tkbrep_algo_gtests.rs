@@ -28,11 +28,42 @@ mod solid_classifier_tests {
         cls.state()
     }
 
-    const INSIDE: u8 = 1;  // Classification::In
-    const OUTSIDE: u8 = 2; // Classification::Out
-    const ON: u8 = 3;      // Classification::On
+    // TopAbs_State discriminant values (TopAbs_State.hxx L25-31):
+    // TopAbs_IN=0, TopAbs_OUT=1, TopAbs_ON=2, TopAbs_UNKNOWN=3.
+    const INSIDE: u8 = 0;  // TopAbs_IN
+    const OUTSIDE: u8 = 1; // TopAbs_OUT
+    const ON: u8 = 2;      // TopAbs_ON
 
     #[test] fn center_inside() { assert_eq!(point_state(0.5, 0.5, 0.5, 1e-6), INSIDE); }
     #[test] fn point_outside() { assert_eq!(point_state(10.0, 10.0, 10.0, 1e-6), OUTSIDE); }
     #[test] fn point_on_face() { assert_eq!(point_state(0.5, 0.5, 0.0, 0.1), ON); }
+
+    #[test]
+    fn point_inside_sphere() {
+        // BRepClass3d_SolidClassifierTest::PointInside_Sphere: the origin is
+        // inside a radius-10 sphere.
+        let brep = rcad_modeling::make_sphere_brep(DVec3::ZERO, 10.0).expect("sphere");
+        let solid_ref = brep
+            .tshapes
+            .iter()
+            .enumerate()
+            .find(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Solid(_)))
+            .map(|(i, _)| topods::Shape::new(brep.tshapes[i].clone(), 0, topods::Orientation::Forward))
+            .expect("solid");
+        let mut cls = SolidClassifier::new();
+        cls.load(&solid_ref);
+        cls.perform(DVec3::ZERO, 1e-6);
+        assert_eq!(cls.state(), INSIDE, "Origin should be inside the sphere");
+    }
+
+    #[test]
+    fn perform_infinite_point() {
+        // BRepClass3d_SolidClassifierTest::PerformInfinitePoint: an infinite
+        // point is outside the box.
+        let (brep, solid_ref) = make_unit_box_brep();
+        let mut cls = SolidClassifier::new();
+        cls.load(&solid_ref);
+        cls.perform_infinite_point(1e-6);
+        assert_eq!(cls.state(), OUTSIDE, "Infinite point should be outside the box");
+    }
 }

@@ -1,0 +1,84 @@
+//! OCCT TKFillet — modules named 1:1 after the OCCT TKFillet packages:
+//! `chfi2d*` (ChFi2d), `chfi_ds` (ChFiDS), `chfi3d*` (ChFi3d),
+//! `brep_fillet_api` (BRepFilletAPI).
+//!
+//! `fillet` holds the legacy `make_fillet_edge` compatibility helper
+//! (blend on a single edge) pending absorption into the aligned pipeline.
+
+pub mod brep_blend;
+pub mod brep_blend_curv_point_rad_inv;
+pub mod brep_blend_extremity;
+pub mod brep_blend_line;
+pub mod brep_blend_point_on_rst;
+pub mod brep_blend_func;
+pub mod brep_blend_func_chamfer;
+pub mod brep_blend_func_chamfer_b;
+pub mod brep_blend_func_chamfer_c;
+pub mod brep_blend_func_consrad;
+pub mod brep_blend_func_consrad_b;
+pub mod brep_blend_func_consrad_c;
+pub mod brep_blend_func_evolrad;
+pub mod brep_blend_func_evolrad_b;
+pub mod brep_blend_function;
+pub mod brep_blend_point;
+pub mod brep_blend_app_surf;
+pub mod brep_blend_cs_function;
+pub mod brep_blend_func_inv;
+pub mod brep_blend_rst_rst_function;
+pub mod brep_blend_rst_rst_line_builder;
+pub mod brep_blend_ruled;
+pub mod brep_blend_surf_rst_function;
+pub mod brep_blend_surf_rst_line_builder;
+pub mod brep_blend_surf_rst_line_builder_b;
+pub mod brep_blend_walking;
+pub mod brep_blend_walking_b;
+pub mod brep_fillet_api;
+pub mod chfi2d;
+pub mod chfi2d_ana_fillet_algo;
+pub mod chfi2d_builder;
+pub mod chfi2d_builder_0;
+pub mod chfi2d_chamfer_api;
+pub mod chfi2d_fillet_algo;
+pub mod chfi2d_fillet_api;
+pub mod chfi3d;
+pub mod chfi3d_geom_lib;
+pub mod chfi3d_perform;
+pub mod chfi3d_perform_elspine;
+pub mod chfi3d_builder_0;
+pub mod chfi3d_builder_2;
+pub mod chfi3d_builder_2b;
+pub mod chfi3d_builder_2c;
+pub mod chfi3d_builder_6;
+pub mod chfi3d_builder_6b;
+pub mod chfi3d_builder_cncrn;
+pub mod chfi3d_builder_cncrn_b;
+pub mod chfi3d_builder_chbuilder;
+pub mod chfi3d_builder_chbuilder_b;
+pub mod chfi3d_builder_0_filds;
+pub mod chfi3d_builder_c1;
+pub mod chfi3d_builder_c2;
+pub mod chfi3d_builder_c2_geomlib;
+pub mod chfi3d_builder_c2b;
+pub mod chfi3d_builder_c2c;
+pub mod chfi3d_filbuilder_c2;
+pub mod chfi3d_filbuilder_c3;
+pub mod chfi3d_builder_spkp;
+pub mod chfi3d_ds;
+pub mod chfi_ds;
+pub mod chfi_ds_spine;
+pub mod chfi_ds_stripe;
+pub mod chfi_ds_surfdata;
+pub mod chfi_kpart;
+pub mod chfi_kpart_ch;
+pub mod chfi_kpart_ch_plncyl;
+pub mod chfi_kpart_chasym;
+pub mod chfi_kpart_fil;
+pub mod chfi_kpart_gp;
+pub mod fillet;
+pub mod fillet_surf;
+pub mod hbuilder;
+pub mod hbuilder_face;
+pub mod topopebrep_tool_2d;
+pub mod topopebrep_tool_curve_tool;
+
+pub use fillet::make_fillet_edge;

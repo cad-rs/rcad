@@ -1060,7 +1060,7 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
      new_ed.last = { let mut s = ed.last.clone(); s.index = n; s };
     }
     // Remap pcurve keys (face ptr_id + location -> new face index)
-    let mut new_pcurves = std::collections::HashMap::new();
+    let mut new_pcurves = indexmap::IndexMap::new();
     for (&(ptr, loc), (c, t1, t2)) in &ed.pcurves {
      let old_idx = brep.index_by_ptr(ptr).unwrap_or(usize::MAX);
      let new_fi = global_remap.get(&old_idx).copied().unwrap_or(old_idx);

@@ -962,7 +962,7 @@ impl DS {
     fn init_shape(&mut self, idx: usize, s: &Shape) {
         self.shapes[idx].shape_type = s.shape_type();
         // OCCT: no dedup — closed edges need duplicate vertex entries.
-        let children = sub_shapes_of(s);
+        let children = sub_shapes_of(s, &mut self.locations);
         for child in children {
             let pk = (child.ptr_id(), child.location);
             let ci = match self.map_shape_index.get(&pk) {
@@ -1164,10 +1164,25 @@ impl DS {
             &[]
         }
     }
-    /// OCCT BOPDS_DS::ChangePaveBlocks — returns mutable ref to existing pave
-    /// blocks, creating the entry on demand (IndexedDataMap semantics).
+    /// OCCT BOPDS_DS::ChangePaveBlocks (BOPDS_DS.cxx L425-433) — the reference
+    /// of the shape is created lazily on first access; the returned list is the
+    /// pool slot addressed by that reference.
+    ///
+    ///   BOPDS_ShapeInfo& aShapeInfo = ChangeShapeInfo(theIndex);
+    ///   if (!aShapeInfo.HasReference()) { InitPaveBlocks(theIndex); }
+    ///   return myPaveBlocksPool(aShapeInfo.Reference());
+    ///
+    /// The lazy InitPaveBlocks is what registers the reference, so every caller
+    /// of ChangePaveBlocks is guaranteed a referenced (and therefore
+    /// image-bearing) edge. Skipping it left the shape unreferenced and hence
+    /// silently dropped by BOPAlgo_Builder::FillImagesEdges (BOPAlgo_Builder_1.cxx
+    /// L84-86).
     pub fn change_pave_blocks(&mut self, i: usize) -> &mut Vec<SharedPB> {
-        self.pave_blocks_pool.entry(i).or_default()
+        if !self.has_pave_blocks(i) {
+            self.init_pave_blocks(i);
+        }
+        let key = self.shapes[i].reference as usize;
+        self.pave_blocks_pool.entry(key).or_default()
     }
 
     /// Get vertex parameters on an edge (OCCT: BRep_Tool::Parameter).
@@ -1301,6 +1316,13 @@ impl DS {
             a_cb.add_pave_block(pb.clone(), 0); // face_idx = 0 placeholder
             pb.0.write().unwrap().common_block_idx = Some(self.common_blocks.len());
         }
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            let d: Vec<String> = a_cb.pave_blocks().iter().map(|(pb, _)| {
+                let r = pb.read();
+                format!("e{}oe{}", r.edge, r.original_edge)
+            }).collect();
+            eprintln!("[CB-TRACE] add_common_block n={} after_sort=[{}]", the_pbs.len(), d.join(","));
+        }
         let cb_idx = self.common_blocks.len();
         self.common_blocks.push(a_cb);
         for pb in the_pbs {
@@ -1308,6 +1330,19 @@ impl DS {
             self.map_pb_cb.insert(ptr, cb_idx);
         }
         cb_idx
+    }
+
+    /// TEMP probe: dump common block 0 members.
+    pub fn dump_cb0(&self, stage: &str) {
+        if std::env::var("RCAD_MB_DEBUG").is_ok() {
+            if let Some(cb) = self.common_blocks.get(0) {
+                let d: Vec<String> = cb.pave_blocks().iter().map(|(pb, _)| {
+                    let r = pb.read();
+                    format!("e{}oe{}v{}/{}", r.edge, r.original_edge, r.pave1.vertex_idx, r.pave2.vertex_idx)
+                }).collect();
+                eprintln!("[CB0] {} members=[{}]", stage, d.join(","));
+            }
+        }
     }
 
     // ================================================================    // Face info pool
@@ -1416,7 +1451,15 @@ impl DS {
                     }
                 } else {
                     for pb in self.edge_pave_blocks(ef.edge) {
-                        if let Some(cb_idx) = self.common_block(pb) {
+                        let cb_idx = self.common_block(pb);
+                        if std::env::var("RCAD_BS_DEBUG").is_ok() && the_index < 100 {
+                            let cb_faces = cb_idx.map(|ci| {
+                                self.common_blocks.get(ci).map(|cb| format!("{:?}", cb.faces())).unwrap_or_default()
+                            }).unwrap_or_default();
+                            eprintln!("[FII-EF] face={} ef.edge={} pb={} cb={:?} cbfaces={}",
+                                the_index, ef.edge, std::sync::Arc::as_ptr(&pb.0) as u64, cb_idx, cb_faces);
+                        }
+                        if let Some(cb_idx) = cb_idx {
                             if let Some(cb) = self.common_blocks.get(cb_idx) {
                                 if cb.faces().contains(&the_index) {
                                     if let Some(pb1) = cb.pave_block1() {
@@ -1430,6 +1473,10 @@ impl DS {
                     }
                 }
             }
+        }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() && the_index < 100 {
+            eprintln!("[FII] face={} pb_in_marks={} v_in_marks={}",
+                the_index, pb_marks.len(), vertex_marks.len());
         }
         let pfi = self.change_face_info(the_index);
         pfi.pave_blocks_in.clear();
@@ -1666,6 +1713,15 @@ impl DS {
     /// Must be called before ChangePaveBlocks (OCCT: Init → Change sequence).
     pub fn init_pave_blocks(&mut self, edge_idx: usize) {
         if self.has_pave_blocks(edge_idx) { return; }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let vp: Vec<String> = if self.shapes[edge_idx].shape_type == ShapeType::Edge {
+                self.shapes[edge_idx].sub_shapes.iter().filter_map(|&vi| {
+                    self.shapes.get(vi).and_then(|si| si.shape.as_vertex())
+                        .map(|vd| format!("({:.1},{:.1},{:.1})", vd.point.x, vd.point.y, vd.point.z))
+                }).collect()
+            } else { Vec::new() };
+            eprintln!("[IPB] edge_idx={} v=[{}]", edge_idx, vp.join(","));
+        }
         let spb = if self.shapes[edge_idx].shape_type == ShapeType::Edge
             && self.shapes[edge_idx].sub_shapes.len() >= 2
         {
@@ -1895,7 +1951,7 @@ impl DS {
         let mut a_sc =
             crate::topalgo::brep_class3d::solid_classifier::SolidClassifier::from_shape(a_solid);
         a_sc.perform_infinite_point(1e-7);
-        a_sc.state() == 3 // TopAbs_IN
+        a_sc.state() == 0 // TopAbs_IN
     }
 
     /// All edge Shapes of a face (outer + inner wires) with composed
@@ -2090,7 +2146,12 @@ impl DS {
             if self.shapes[a_face_index].shape_type != ShapeType::Face { continue; }
             a_face_count += 1;
 
-            let mut a_new_sub_shape_indices = HashSet::new();
+            // OCCT L1711: NCollection_Map<int> — iteration follows the
+            // deterministic bucket order (OcctMapInt), which fixes the order of
+            // the flattened sub-shape list below (RandomState HashSet made it
+            // per-process random and order-sensitive downstream).
+            let mut a_new_sub_shape_indices =
+                crate::bop::algo::occt_map::OcctMapInt::new_with_buckets(100);
             let shape = self.shapes[a_face_index].shape.clone();
 
             // OCCT L1715-1717: BRepBndLib::Add(aFace, aFaceBoundBox)
@@ -2146,10 +2207,10 @@ impl DS {
                     }
 
                     // OCCT L1735 + L1748-1752: Add edge + vertices to map
-                    a_new_sub_shape_indices.insert(ei);
+                    a_new_sub_shape_indices.add(ei);
                     for &vi in &self.shapes[ei].sub_shapes {
                         if vi < self.nb_shapes() {
-                            a_new_sub_shape_indices.insert(vi);
+                            a_new_sub_shape_indices.add(vi);
                         }
                     }
                 }
@@ -2160,13 +2221,14 @@ impl DS {
                 for iv in &fd.internal_vertices {
                     let pk = (iv.ptr_id(), iv.location);
                     if let Some(&i) = self.map_shape_index.get(&pk) {
-                        a_new_sub_shape_indices.insert(i);
+                        a_new_sub_shape_indices.add(i);
                     }
                 }
             }
 
             // OCCT L1767-1773: Replace wire indices with edge+vertex indices
-            self.shapes[a_face_index].sub_shapes = a_new_sub_shape_indices.into_iter().collect();
+            // (NCollection_Map bucket order — deterministic).
+            self.shapes[a_face_index].sub_shapes = a_new_sub_shape_indices.iter_keys().collect();
 
             if mn.x.is_finite() {
                 self.shapes[a_face_index].bbox = BndBox::from_corners(
@@ -2198,8 +2260,10 @@ impl DS {
                     a_solid_bound_box.1.x, a_solid_bound_box.1.y, a_solid_bound_box.1.z);
             }
 
-            // OCCT L1803-1804: map of sub-shape indices
-            let mut a_new_sub_shape_indices = HashSet::new();
+            // OCCT L1803-1804: map of sub-shape indices — NCollection_Map<int>
+            // (deterministic bucket order, OcctMapInt).
+            let mut a_new_sub_shape_indices =
+                crate::bop::algo::occt_map::OcctMapInt::new_with_buckets(100);
 
             // OCCT L1814-1839: iterate shells → faces → edges
             for &a_shell_index in &self.shapes[a_solid_index].sub_shapes.clone() {
@@ -2208,15 +2272,15 @@ impl DS {
                 for &a_face_index in &self.shapes[a_shell_index].sub_shapes {
                     if a_face_index >= self.nb_shapes() { continue; }
                     if self.shapes[a_face_index].shape_type != ShapeType::Face { continue; }
-                    a_new_sub_shape_indices.insert(a_face_index);
+                    a_new_sub_shape_indices.add(a_face_index);
                     for &an_edge_index in &self.shapes[a_face_index].sub_shapes {
-                        a_new_sub_shape_indices.insert(an_edge_index);
+                        a_new_sub_shape_indices.add(an_edge_index);
                     }
                 }
             }
 
             // OCCT L1841-1848: replace shell indices with face+edge indices
-            self.shapes[a_solid_index].sub_shapes = a_new_sub_shape_indices.into_iter().collect();
+            self.shapes[a_solid_index].sub_shapes = a_new_sub_shape_indices.iter_keys().collect();
         }
         a_solid_count
     }
@@ -2330,6 +2394,26 @@ impl DS {
         Some((sh.shape.ptr_id(), sh.shape.location))
     }
 
+    /// Face identity for PCURVE-KEY construction: the location component is
+    /// the value-hash (`pcurve_location_id`) of the face's transform, matching
+    /// what compose_face_edge_pcurve_location produces for unlocated edges.
+    /// Plain `face_key` keeps the raw location number for identity maps and
+    /// composer inputs.
+    pub fn pcurve_face_key(&self, i: usize) -> Option<(u64, u32)> {
+        let sh = self.shapes.get(i)?;
+        // DS location table: slot 0 stores identity, real transforms start at
+        // index 1 (DS::new / brep_top_shapes_with_locations).
+        let tr = self
+            .locations
+            .get(sh.shape.location as usize)
+            .copied()
+            .unwrap_or(glam::DAffine3::IDENTITY);
+        Some((
+            sh.shape.ptr_id(),
+            rcad_kernel::topo::topods::pcurve_location_id(&tr),
+        ))
+    }
+
     pub fn face_surface(&self, i: usize) -> Option<rcad_kernel::geom::Surface3> {
         self.shapes.get(i).and_then(|si| {
             if si.shape_type != ShapeType::Face { return None; }
@@ -2409,7 +2493,7 @@ impl DS {
             curve: Some(curve), range,
             first: v_first, last: v_last,
             tolerance: 0.0, same_parameter: true, same_range: true,
-            degenerated: false, pcurves: HashMap::new(),
+            degenerated: false, pcurves: indexmap::IndexMap::new(),
             representations: Vec::new(), vertex_params: HashMap::new(),
             my_shapes: Vec::new(), flags: 0,
         };
@@ -2541,9 +2625,9 @@ impl DS {
                     }).collect();
                     (pcurves, representations)
                 }
-                _ => (HashMap::new(), Vec::new()),
+                _ => (indexmap::IndexMap::new(), Vec::new()),
             },
-            _ => (HashMap::new(), Vec::new()),
+            _ => (indexmap::IndexMap::new(), Vec::new()),
         };
         // OCCT BOPTools_AlgoTools::MakeSplitEdge (BOPTools_AlgoTools_2.cxx
         // L145-146): E = aE.Oriented(TopAbs_FORWARD); E.EmptyCopy(); — the
@@ -2835,6 +2919,25 @@ impl DS {
         self.face_actual_uv_bounds(fi)
     }
 
+    /// The face's surface restricted to its UV rect — the analogue of the OCCT
+    /// face-restricted BRepAdaptor_Surface used by every projection entry
+    /// (ProjPS L257-260, MakePCurveOnFace, BuildPCurveForEdgeOnFace).  A
+    /// revolution face built over a line profile has an unbounded natural V
+    /// domain, so projections against the raw surface pay an unbounded-domain
+    /// grid per sample and can land outside the face.
+    pub fn face_restricted_surface(&self, fi: usize) -> Option<Surface3> {
+        let surf = self.face_surface(fi)?;
+        let uv = self.face_uv_boundary(fi);
+        if uv.iter().all(|b| b.is_finite()) {
+            Some(Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface {
+                basis: Box::new(surf),
+                trim: uv,
+            }))
+        } else {
+            Some(surf)
+        }
+    }
+
     /// OCCT BRep_Tool::UVBounds — the face's actual UV bounds computed by
     /// sampling the boundary edges' pcurves. rcad faces build pcurves
     /// incrementally (MakePCurves runs after VF/EF/FF), so the boundary edges'
@@ -3062,7 +3165,7 @@ fn remap_tshape_cached(ts: &TShape, map: &HashMap<(u64, u32), usize>, cache: &mu
     }
 }
 
-fn clone_shape_graph(s: &Shape, cache: &mut HashMap<u64, Arc<TShape>>) -> Shape {
+pub(crate) fn clone_shape_graph(s: &Shape, cache: &mut HashMap<u64, Arc<TShape>>) -> Shape {
     let ptr = s.ptr_id();
     if let Some(arc) = cache.get(&ptr) {
         return Shape {
@@ -3083,11 +3186,11 @@ fn clone_shape_graph(s: &Shape, cache: &mut HashMap<u64, Arc<TShape>>) -> Shape 
     }
 }
 
-fn clone_shapes(list: &[Shape], cache: &mut HashMap<u64, Arc<TShape>>) -> Vec<Shape> {
+pub(crate) fn clone_shapes(list: &[Shape], cache: &mut HashMap<u64, Arc<TShape>>) -> Vec<Shape> {
     list.iter().map(|s| clone_shape_graph(s, cache)).collect()
 }
 
-fn clone_tshape(ts: &TShape, cache: &mut HashMap<u64, Arc<TShape>>) -> TShape {
+pub(crate) fn clone_tshape(ts: &TShape, cache: &mut HashMap<u64, Arc<TShape>>) -> TShape {
     match ts {
         TShape::Vertex(vd) => TShape::Vertex(topods::TVertexData {
             my_shapes: clone_shapes(&vd.my_shapes, cache),
@@ -3128,26 +3231,40 @@ fn clone_tshape(ts: &TShape, cache: &mut HashMap<u64, Arc<TShape>>) -> TShape {
     }
 }
 
-fn sub_shapes_of(s: &Shape) -> Vec<Shape> {
+fn sub_shapes_of(s: &Shape, locations: &mut Vec<glam::DAffine3>) -> Vec<Shape> {
+    // OCCT TopLoc_Location composition (TopoDS_Iterator::Value, cumLoc=true,
+    // TopoDS_Iterator.cxx L76-78): the effective Location of a sub-shape is
+    // parent.Location * subshape.Location. The composed datum is created on
+    // demand (TopLoc_Location::Multiplied), registered in the table.
+    fn composed_loc(a: u32, b: u32, locations: &mut Vec<glam::DAffine3>) -> u32 {
+        if a == 0 { return b; }
+        if b == 0 { return a; }
+        let ta = locations.get(a as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+        let tb = locations.get(b as usize).copied().unwrap_or(glam::DAffine3::IDENTITY);
+        let composed = ta * tb;
+        match locations.iter().position(|l| *l == composed) {
+            Some(i) => i as u32,
+            None => { locations.push(composed); (locations.len() - 1) as u32 }
+        }
+    }
     // Preserve original BRep index so edge_vertex_params can look up vertex_params.
     let cp = |sr: &Shape| Shape::from_parts(sr.data.clone(), sr.index, sr.location, sr.orientation);
     match &*s.data {
         TShape::Vertex(_) => vec![],
         TShape::Edge(ed) => {
-            // OCCT TopoDS_Iterator(aE, cumLoc) composes the edge Location into
-            // the vertices (TopoDS_Iterator.cxx L76-78). A folded edge (same
-            // TShape + Location, e.g. the extruded cap of MakePrism) must
-            // register its located endpoint vertices, or the DS vertex
-            // adjacency (sub_shapes) never connects it to the sweep edges.
-            // Identity fast paths keep the exact index; a nested fold (both
-            // locations non-identity) has no table access here and falls back
-            // to the edge location — no such shape occurs in the test inputs.
-            let loc = s.location;
-            let vl = |v: &Shape| {
-                let vloc = if loc == 0 { v.location } else { loc };
-                Shape::from_parts(v.data.clone(), v.index, vloc, v.orientation)
-            };
-            vec![vl(&ed.first), vl(&ed.last)]
+            // OCCT TopoDS_Iterator(aE, cumLoc=true) composes the edge Location
+            // with the vertex's STORED Location: parent * child. Stored
+            // references are relative — TopoDS_Builder::Add pre-divides the
+            // child by the parent Location (TopoDS_Builder.cxx L88-92,
+            // aChild.Move(aLoc.Inverted())), so the composition restores the
+            // vertex's own Location. Using the edge location alone would
+            // double-apply it for pre-divided references (pave vertices built
+            // on located source edges by MakeSplitEdge/PushEdgeInherit).
+            let eloc = s.location;
+            let vlf = composed_loc(eloc, ed.first.location, locations);
+            let vll = composed_loc(eloc, ed.last.location, locations);
+            vec![Shape::from_parts(ed.first.data.clone(), ed.first.index, vlf, ed.first.orientation),
+                 Shape::from_parts(ed.last.data.clone(), ed.last.index, vll, ed.last.orientation)]
         }
         TShape::Wire(wd) => wd.edges.iter().map(cp).collect(),
         TShape::Face(fd) => {

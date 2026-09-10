@@ -202,6 +202,19 @@ impl SolidClassifier {
         }
     }
 
-    /// OCCT: State() — returns my_state (inherited from SClassifier).
-    pub fn state(&self) -> u8 { self.my_state }
+    /// OCCT: State() — BRepClass3d_SClassifier::State (SClassifier.cxx
+    /// L525-542): the internal myState (0=?, 1=Faulty, 2=ON, 3=IN, 4=OUT) is
+    /// mapped to TopAbs_State (IN=0, OUT=1, ON=2); any other state (error
+    /// during execution) is reported as TopAbs_OUT.
+    pub fn state(&self) -> u8 {
+        if self.my_state == 2 {
+            2 // TopAbs_ON
+        } else if self.my_state == 3 {
+            0 // TopAbs_IN
+        } else if self.my_state == 4 {
+            1 // TopAbs_OUT
+        } else {
+            1 // TopAbs_OUT — error during execution
+        }
+    }
 }

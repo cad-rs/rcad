@@ -90,7 +90,9 @@ impl ImpImpIntersection {
     // =====================================================================
     // OCCT L73-79: Perform(S1, D1, S2, D2, TolArc, TolTang, theIsReqToKeepRLine)
     // rcad: Surface3 instead of Adaptor3d_Surface; the UV domains D1/D2 (the
-    // corrected FF UV rectangles) replace the TopolTool.
+    // corrected FF UV rectangles) replace the TopolTool — OCCT IntTools_FaceFace
+    // creates IntTools_TopolTool (IntTools_FaceFace.cxx L475-476), the
+    // UV-rectangle domains, never the face-wire restriction form.
     // =====================================================================
     pub fn perform(
         &mut self,
@@ -315,11 +317,9 @@ impl ImpImpIntersection {
             return;
         }
 
-        // OCCT D1/D2 (Adaptor3d_TopolTool) — the corrected FF UV rectangles.
-        // OCCT passes the topol tools as function parameters (always valid);
-        // rcad creates the UV-rectangle domains up front.  They are used by
-        // PutPointsOnLine below and by the spnt classification after the
-        // isPostProcessingRequired block.
+        // OCCT D1/D2 (Adaptor3d_TopolTool) — the corrected FF UV rectangles
+        // (IntTools_TopolTool).  They are used by PutPointsOnLine below and by
+        // the spnt classification after the isPostProcessingRequired block.
         let mut d1 = super::so_on_bounds::Domain::new(uv1[0], uv1[1], uv1[2], uv1[3]);
         let mut d2 = super::so_on_bounds::Domain::new(uv2[0], uv2[1], uv2[2], uv2[3]);
 
@@ -1031,7 +1031,11 @@ pub(crate) fn process_bounds(
         }
     };
 
+    let dbg = std::env::var("RCAD_II_DEBUG").is_ok();
     let mut ptsol = make_vertex(ptf, 0.0, tol);
+    if dbg {
+        eprintln!("[II-VTX] glinelim procf={} procl={} first={:?} last={:?}", procf, procl, first, last);
+    }
     if !*procf && !*procl {
         if ptf.distance(ptl) <= tol {
             ptsol.multiple = true;

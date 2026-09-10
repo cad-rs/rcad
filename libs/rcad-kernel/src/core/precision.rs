@@ -78,6 +78,32 @@ pub fn is_negative_infinite_value(r: f64) -> bool {
     r <= -0.5 * INFINITE_VALUE
 }
 
+// ── RealFirst / RealLast (OCCT Standard_Real.hxx) ────────────────────────────
+
+/// Smallest (most negative) finite double.
+/// OCCT-aligned: RealFirst (Standard_Real.hxx L167-170) — `return -DBL_MAX;`.
+///
+/// Used as the "no bound yet" sentinel for maximum folds and as the lower end
+/// of an unbounded parameter range, matching Bnd_Box::SetVoid
+/// (Bnd_Box.hxx L103-110) and LProp_CurveUtils::ComputeTangent
+/// (LProp_CurveUtils.hxx L195).
+pub const REAL_FIRST: f64 = -f64::MAX;
+
+/// Largest finite double.
+/// OCCT-aligned: RealLast (Standard_Real.hxx L179-182) — `return DBL_MAX;`.
+///
+/// Counterpart of [`REAL_FIRST`]; see there for the sentinel usage sites.
+pub const REAL_LAST: f64 = f64::MAX;
+
+// ── Bnd_Box open-box read-back constant ──────────────────────────────────────
+
+/// Value returned by `Bnd_Box::GetXMin()`/`GetXMax()` (and the 2D counterpart)
+/// for an open side of a bounding box.
+/// OCCT-aligned: `THE_BND_PRECISION_INFINITE` (Bnd_Box.cxx L31, Bnd_Box2d.cxx
+/// L28) — a file-local anonymous-namespace constant, deliberately _not_
+/// `Precision::Infinite()` (2e100).
+pub const BND_PRECISION_INFINITE: f64 = 1e+100;
+
 // ── Parametric-space precision functions (OCCT Precision Parametric API) ──
 
 /// Convert a real-space precision to a parametric-space precision.

@@ -158,3 +158,207 @@ pub fn elslib_torus_value(
     let radial = u.cos() * x_ax + u.sin() * y_ax;
     center + (major_radius + minor_radius * v.cos()) * radial + minor_radius * v.sin() * axis
 }
+
+/// OCCT ElCLib::Parameter(const gp_Lin2d&, const gp_Pnt2d&) — the parameter
+/// of the 2D point on the 2D line: (P - Location)·Direction.
+pub fn elclib_line_parameter_2d(p: glam::DVec2, origin: glam::DVec2, direction: glam::DVec2) -> f64 {
+    (p - origin).dot(direction)
+}
+
+/// OCCT ElCLib::InPeriod (ElCLib.cxx L95-111) — the value of U in the
+/// periodic range [UFirst, ULast].
+pub fn in_period(u: f64, ufirst: f64, ulast: f64) -> f64 {
+    // In order to avoid FLT_Overflow exception.
+    if !u.is_finite() || !ufirst.is_finite() || !ulast.is_finite() {
+        return u;
+    }
+
+    let period = ulast - ufirst;
+
+    // OCCT: aPeriod < Epsilon(theULast), Epsilon(V) = relative machine eps.
+    if period < f64::EPSILON * ulast.abs() {
+        return u;
+    }
+
+    (ufirst).max(u + period * ((ufirst - u) / period).ceil())
+}
+
+// ============================================================================
+// ElSLib::Parameters — the inverse parameterisation (3D point -> UV)
+// (ElSLib.cxx L1547-1641).  The OCCT frames arrive via gp_Trsf
+// SetTransformation(gp_Ax3); here the caller supplies the frame axes
+// directly (local X = (P-O)·xDir, Y = (P-O)·yDir, Z = (P-O)·zDir).
+// ============================================================================
+
+const PIPI: f64 = std::f64::consts::PI + std::f64::consts::PI;
+/// OCCT ElSLib.cxx NEGATIVE_RESOLUTION = -Precision::Computational().
+const NEGATIVE_RESOLUTION: f64 = -f64::EPSILON;
+/// OCCT gp::Resolution().
+const GP_RESOLUTION: f64 = 1e-15;
+
+/// OCCT ElSLib.cxx normalizeAngle (L42-56) — normalize to [0, 2·PI],
+/// preserving the exact 2·PI seam value.
+fn normalize_angle(angle: &mut f64) {
+    while *angle < NEGATIVE_RESOLUTION {
+        *angle += PIPI;
+    }
+    while *angle > PIPI * (1.0 + GP_RESOLUTION) {
+        *angle -= PIPI;
+    }
+    if *angle < 0.0 {
+        *angle = 0.0;
+    }
+}
+
+/// OCCT ElSLib::PlaneParameters (ElSLib.cxx L1547-1556) — U and V are the
+/// local coordinates of P in the plane frame.
+pub fn elslib_plane_parameters(
+    p: DVec3,
+    origin: DVec3,
+    u_dir: DVec3,
+    v_dir: DVec3,
+) -> (f64, f64) {
+    let d = p - origin;
+    (d.dot(u_dir), d.dot(v_dir))
+}
+
+/// OCCT ElSLib::CylinderParameters (ElSLib.cxx L1558-1570) — U = atan2 of the
+/// local point, V = local axial coordinate.  The radius argument is unused in
+/// OCCT (kept for signature parity).
+pub fn elslib_cylinder_parameters(
+    p: DVec3,
+    origin: DVec3,
+    x_dir: DVec3,
+    y_dir: DVec3,
+    axis: DVec3,
+    _radius: f64,
+) -> (f64, f64) {
+    let d = p - origin;
+    let x = d.dot(x_dir);
+    let y = d.dot(y_dir);
+    let mut u = y.atan2(x);
+    normalize_angle(&mut u);
+    let v = d.dot(axis);
+    (u, v)
+}
+
+/// OCCT ElSLib::ConeParameters (ElSLib.cxx L1574-1613) — U from the local
+/// angle with the wrong-side-of-apex guards, V measured along the cone
+/// generatrix direction: V = sin(SAngle)·(x·cosU + y·sinU - R) +
+/// cos(SAngle)·z.
+pub fn elslib_cone_parameters(
+    p: DVec3,
+    origin: DVec3,
+    x_dir: DVec3,
+    y_dir: DVec3,
+    axis: DVec3,
+    radius: f64,
+    semi_angle: f64,
+) -> (f64, f64) {
+    let d = p - origin;
+    let x = d.dot(x_dir);
+    let y = d.dot(y_dir);
+    let z = d.dot(axis);
+
+    let mut u;
+    if x.abs() < GP_RESOLUTION && y.abs() < GP_RESOLUTION {
+        // The point is on the cone axis (apex).
+        u = 0.0;
+    } else if -radius > z * semi_angle.tan() {
+        // The point is at the wrong side of the apex.
+        u = (-y).atan2(-x);
+    } else {
+        u = y.atan2(x);
+    }
+    normalize_angle(&mut u);
+
+    let v = semi_angle.sin() * (x * u.cos() + y * u.sin() - radius) + semi_angle.cos() * z;
+    (u, v)
+}
+
+/// OCCT ElSLib::SphereParameters (ElSLib.cxx L1615-1641) — V = latitude from
+/// the local polar distance, U = longitude; degenerate on-axis points get
+/// V = ±PI/2 and U = 0.
+pub fn elslib_sphere_parameters(
+    p: DVec3,
+    center: DVec3,
+    x_dir: DVec3,
+    y_dir: DVec3,
+    axis: DVec3,
+) -> (f64, f64) {
+    let d = p - center;
+    let x = d.dot(x_dir);
+    let y = d.dot(y_dir);
+    let z = d.dot(axis);
+    let l = (x * x + y * y).sqrt();
+    if l < GP_RESOLUTION {
+        // Point on the Z axis of the sphere.
+        let v = if z > 0.0 {
+            std::f64::consts::FRAC_PI_2
+        } else {
+            -std::f64::consts::FRAC_PI_2
+        };
+        (0.0, v)
+    } else {
+        let v = (z / l).atan();
+        let mut u = y.atan2(x);
+        normalize_angle(&mut u);
+        (u, v)
+    }
+}
+
+/// OCCT ElSLib::TorusParameters (ElSLib.cxx L1646-1697) — U = the major angle
+/// around the torus axis (with the Major < Minor branch that flips the
+/// nearest side), V = the minor angle of the projected point.
+#[allow(clippy::many_single_char_names)]
+pub fn elslib_torus_parameters(
+    p: DVec3,
+    center: DVec3,
+    x_dir: DVec3,
+    y_dir: DVec3,
+    axis: DVec3,
+    major_radius: f64,
+    minor_radius: f64,
+) -> (f64, f64) {
+    let d = p - center;
+    let x = d.dot(x_dir);
+    let y = d.dot(y_dir);
+    let z = d.dot(axis);
+
+    // All that to process the case of Major < Minor.
+    let mut u = y.atan2(x);
+    if major_radius < minor_radius {
+        let cosu = u.cos();
+        let sinu = u.sin();
+        let z2 = z * z;
+        let min_r2 = minor_radius * minor_radius;
+        let rcosu = major_radius * cosu;
+        let rsinu = major_radius * sinu;
+        let xm = x - rcosu;
+        let ym = y - rsinu;
+        let xp = x + rcosu;
+        let yp = y + rsinu;
+        let d1 = xm * xm + ym * ym + z2 - min_r2;
+        let d2 = xp * xp + yp * yp + z2 - min_r2;
+        let ad1 = d1.abs();
+        let ad2 = d2.abs();
+        if ad2 < ad1 {
+            u += std::f64::consts::PI;
+        }
+    }
+    normalize_angle(&mut u);
+    let cosu = u.cos();
+    let sinu = u.sin();
+    // dx = (cosU, sinU, 0); V = dx.AngleWithRef(dP, dx ^ DZ) =
+    // atan2(z, cosU·(x - R·cosU) + sinU·y).
+    let dpx = x - major_radius * cosu;
+    let dpy = y - major_radius * sinu;
+    let a_mag = (dpx * dpx + dpy * dpy + z * z).sqrt();
+    let mut v = if a_mag <= GP_RESOLUTION {
+        0.0
+    } else {
+        (z).atan2(cosu * dpx + sinu * dpy)
+    };
+    normalize_angle(&mut v);
+    (u, v)
+}

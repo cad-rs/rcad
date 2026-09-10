@@ -15,6 +15,10 @@
 
 use crate::base::bnd_lib::curve2d_bounding_box;
 use crate::base::gprop::tri::face_flat_iter;
+use crate::core::precision::{
+    INFINITE_VALUE, REAL_FIRST, is_infinite_value, is_negative_infinite_value,
+    is_positive_infinite_value,
+};
 use crate::geom::{Curve2d, Curve2dEval, Surface3, SurfaceEval};
 use crate::topo::topo_shape::Shape;
 use crate::topo::topods::{self, BRepTool};
@@ -40,19 +44,41 @@ include!("gauss_tables.rs");
 ///   - Props.Add(G) (L254): the face area accumulates into the total mass.
 pub fn surface_area(brep: &topods::BRep) -> f64 {
     let mut mass = 0.0;
+    // OCCT L180: BRepGProp_Sinert G — one persistent integrator for the whole
+    // shape.  When a face's Load fails the Compute early return leaves G.dim
+    // at the previous face's converted mass (BRepGProp_Gauss.cxx L629-632),
+    // and Props.Add(G) (L254) adds that previous value again.
+    let mut prev_dim = 0.0f64;
     let faces = face_flat_iter(brep);
     for (fi, face) in &faces {
         // OCCT L226: IsNatRestr = (F.NbChildren() == 0) — the face carries no
         // wires (no outer wire edges and no inner wires).
         let is_nat_restr = face.outer_wire.edges.is_empty() && face.inner_wires.is_empty();
-        let a = face_surface_area_checkprops(brep, face, *fi, 1.0e-4, is_nat_restr);
-        // OCCT BRepGProp_Gauss::Compute (BRepGProp_Gauss.cxx L533-1099)
-        // integrates the surface patch mass = |dS| via the Green theorem
-        // boundary integral; the result follows the wire direction, so a face
-        // whose wires run the opposite way (e.g. the upper hemisphere after a
-        // boolean) yields a negative value.  Take the absolute value to match
-        // OCCT's positive per-face area.
-        mass += a.abs();
+        let a = match face_surface_area_checkprops(brep, face, *fi, 1.0e-4, is_nat_restr) {
+            Some(a) => {
+                prev_dim = a;
+                a
+            }
+            None => prev_dim,
+        };
+        if std::env::var("RCAD_SA_DEBUG").is_ok() {
+            let st = match brep.tshapes.get(*fi).map(|ts| ts.as_ref()) {
+                Some(topods::TShape::Face(fd)) => match fd.surface.as_ref() {
+                    Some(Surface3::Plane(_)) => "PLANE",
+                    Some(Surface3::Cylinder(_)) => "CYL",
+                    Some(Surface3::Cone(_)) => "CONE",
+                    Some(Surface3::BSpline(_)) => "BSP",
+                    Some(Surface3::Bezier(_)) => "BEZ",
+                    Some(_) => "OTHER",
+                    None => "NONE",
+                },
+                _ => "?",
+            };
+            eprintln!("[SA-FACE] fi={} {} area={:.6}", fi, st, a);
+        }
+        // L254: Props.Add(G) — the face's signed mass accumulates; OCCT does
+        // not take an absolute value per face.
+        mass += a;
     }
     mass
 }
@@ -70,7 +96,7 @@ pub fn face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize) -> f64 
 /// OCCT BRepGProp_Face::UIntegrationOrder/VIntegrationOrder (BRepGProp_Face.cxx
 /// L39-107): Gauss order for the face surface (GeomAbs type -> Nu/Nv,
 /// max(8, 2N)).
-fn surface_u_v_integration_order(surf: &Surface3) -> (usize, usize) {
+pub(crate) fn surface_u_v_integration_order(surf: &Surface3) -> (usize, usize) {
     let (nu, nv): (usize, usize) = match surf {
         Surface3::Plane(_) => (4, 4),
         Surface3::Bezier(b) => {
@@ -108,7 +134,7 @@ fn compressed_knot_count(knots: &[f64]) -> usize {
 
 /// OCCT BRepGProp_Face::IntegrationOrder (BRepGProp_Face.cxx L111-150):
 /// Gauss order for the boundary edge pcurve (GeomAbs type -> N, max(4, 2N)).
-fn curve_integration_order(c: &Curve2d) -> usize {
+pub(crate) fn curve_integration_order(c: &Curve2d) -> usize {
     let n = match c {
         Curve2d::Line(_) => 2,
         Curve2d::Circle(_) | Curve2d::Ellipse(_) | Curve2d::Hyperbola(_) | Curve2d::Parabola(_) => 9,
@@ -150,13 +176,17 @@ fn face_surface_area_gauss_natural(brep: &BRep, fi: usize) -> f64 {
     // BRepGProp_Face::Bounds (BRepGProp_Face.cxx L154-160): surface natural
     // parameter domain [u1,u2]x[v1,v2].
     let [lower_u, upper_u, lower_v, upper_v] = surf.default_domain();
-    // checkBounds (L418-429): an infinite bound switches + and * to AddInf /
-    // MultInf (L41-140).  With a ±INF bound, um/vm collapse to 0, u/v sample
-    // ±INF and the |N| term becomes NaN, which the convert guard (L472,
-    // |Mass| >= EPS_DIM is false for NaN) turns into mass 0.  A natural
-    // restriction face in the tested shapes is a closed bounded surface, so an
-    // unbounded natural domain yields 0 here, matching OCCT.
-    if !lower_u.is_finite() || !upper_u.is_finite() || !lower_v.is_finite() || !upper_v.is_finite()
+    // checkBounds (BRepGProp_Gauss.cxx L418-429): an infinite bound switches +
+    // and * to AddInf / MultInf (L41-140).  With an infinite bound, um/vm
+    // collapse to 0, u/v sample the infinite bound and the |N| term becomes
+    // NaN, which the convert guard (L472, |Mass| >= EPS_DIM is false for NaN)
+    // turns into mass 0.  A natural restriction face in the tested shapes is a
+    // closed bounded surface, so an unbounded natural domain yields 0 here,
+    // matching OCCT.
+    if is_infinite_value(lower_u)
+        || is_infinite_value(upper_u)
+        || is_infinite_value(lower_v)
+        || is_infinite_value(upper_v)
     {
         return 0.0;
     }
@@ -209,7 +239,7 @@ fn face_surface_area_gauss_natural(brep: &BRep, fi: usize) -> f64 {
 /// BRepGProp_Face::Bounds (BRepGProp_Face.cxx L154-160); BRepGProp_Gauss
 /// uses its UMin as the integration offset u1 (BRepGProp_Gauss.cxx L1135-1136,
 /// L1186-1187).
-fn face_uv_bounds(brep: &BRep, face: &Face, fi: usize, surf: &Surface3) -> [f64; 4] {
+pub(crate) fn face_uv_bounds(brep: &BRep, face: &Face, fi: usize, surf: &Surface3) -> [f64; 4] {
     // aS->Bounds (L191-192): surface natural parameter domain
     let [a_u_min, a_u_max, a_v_min, a_v_max] = surf.default_domain();
     // Bnd_Box2d aBox (L133) / aBoxS (L176): [u_min, u_max, v_min, v_max]
@@ -382,54 +412,16 @@ pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f6
         } else {
             (a0, b0)
         };
-        // IntegrationOrder (L1159-1161): the boundary pcurve Gauss order,
-        // raised to at least the face surface order.
+        // L1159-1161: NbCGaussgp_Pnts = max(min(IntegrationOrder, GPM),
+        // NbGaussgp_Pnts) — the boundary pcurve Gauss order, raised to at
+        // least the face surface order.
         let nb_c = curve_integration_order(&c).min(61).max(nb_gauss);
-        // The fixed-order Gauss rule of L1159 is exact on each knot span of a
-        // BSpline boundary pcurve (the C0 junctions of the OCCT
-        // GeomInt_WLApprox curve are integrand discontinuities): integrate
-        // per span with the (degree+1)-order rule.  The Green-theorem
-        // integral is the rcad boundary-area implementation (OCCT BRepGProp
-        // uses the same Green form for wire-carrying faces); per-span Gauss
-        // is its exact quadrature.
-        let mut ranges: Vec<(f64, f64)> = Vec::new();
-        match &c {
-            Curve2d::BSpline(bs) => {
-                for i in 1..bs.knots.len() {
-                    let (k0, k1) = (bs.knots[i - 1], bs.knots[i]);
-                    if k1 <= k0 {
-                        continue;
-                    }
-                    let (s0, s1) = if reversed {
-                        (c.reversed_parameter(k1), c.reversed_parameter(k0))
-                    } else {
-                        (k0, k1)
-                    };
-                    let l1 = s0.max(a);
-                    let l2 = s1.min(b);
-                    if l2 > l1 {
-                        ranges.push((l1, l2));
-                    }
-                }
-                if ranges.is_empty() {
-                    ranges.push((a, b));
-                }
-            }
-            _ => ranges.push((a, b)),
-        }
-        for (l1, l2) in ranges {
-            // Per span the curve is a single polynomial piece: (degree+1)
-            // Gauss points integrate it exactly.
-            let nb_c = match &c {
-                Curve2d::BSpline(bs) => 2 * (bs.degree + 1),
-                _ => curve_integration_order(&c),
-            }
-            .min(61)
-            .max(nb_gauss);
         let (cp, cw) = match occt_gauss(nb_c) {
             Some(v) => v,
             None => return 0.0,
         };
+        // L1168-1171: l1/l2 = the loaded pcurve First/LastParameter.
+        let (l1, l2) = (a, b);
         let lm = 0.5 * (l2 + l1);
         let lr = 0.5 * (l2 - l1);
 
@@ -445,10 +437,12 @@ pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f6
             };
             let v = puv.y;
             let u2 = puv.x;
-            // Dul = dv/dl * w_i (L1182-1185)
+            // Dul = dv/dl * w_i (L1185)
             let dul = vuv.y * cw[i];
+            // L1186-1187
             let um = 0.5 * (u2 + u1);
             let ur = 0.5 * (u2 - u1);
+            // L1189-1200: aLocal = sum_j ( |N(u_j, v)| * Dul * wV_j )
             let mut a_local = 0.0;
             for j in 0..nb_gauss {
                 let u = um + ur * spv[j];
@@ -459,15 +453,11 @@ pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f6
                 let n = du.cross(dv);
                 a_local += n.length() * a_weight;
             }
-            // L1202-1203: aLocal *= ur; aC += aLocal
+            // L1202: aLocal *= ur
             a_c_inertia += a_local * ur;
         }
         // L1206-1207: aC *= lr; anInertia += aC
         an_inertia += a_c_inertia * lr;
-            if std::env::var("RCAD_SA_DEBUG").is_ok() {
-                eprintln!("[SA-EDGE] f={} edge={} fwd={} span=[{:.4},{:.4}] nb_c={} contrib={:.6}", fi, we.idx, we.forward, l1, l2, nb_c, a_c_inertia * lr);
-            }
-        }
     }
     // convert (L1210, L467-490): |Mass| >= EPS_DIM(1e-30) → mass else 0
     if an_inertia.abs() >= 1e-30 { an_inertia } else { 0.0 }
@@ -481,7 +471,7 @@ pub fn face_surface_area_gauss_domain(brep: &BRep, face: &Face, fi: usize) -> f6
 
 // BRepGProp_Gauss.cxx L25-33.
 const EPS_PARAM: f64 = 1.0e-12;
-const EPS_DIM: f64 = 1.0e-30;
+pub(crate) const EPS_DIM: f64 = 1.0e-30;
 const ERROR_ALGEBR_RATIO: f64 = 2.0 / 3.0;
 const GPM: usize = 61; // math::GaussPointsMax() (math.cxx L25-28)
 const SUBS_POWER: i64 = 32;
@@ -552,7 +542,7 @@ impl Ovec {
     }
     fn max_index(&self) -> usize {
         let mut i = 0usize;
-        let mut x = f64::MIN;
+        let mut x = REAL_FIRST;
         for idx in 1..=self.upper {
             if self.data[idx] > x {
                 x = self.data[idx];
@@ -563,39 +553,54 @@ impl Ovec {
     }
 }
 
-// OCCT AddInf / MultInf (BRepGProp_Gauss.cxx L41-155): infinite-aware
-// arithmetic switched in by checkBounds (L418-429).
+// OCCT Add / AddInf / Mult / MultInf (BRepGProp_Gauss.cxx L36-155):
+// infinite-aware arithmetic switched in by checkBounds (L418-429).  The OCCT
+// predicates are Precision::IsPositiveInfinite / Precision::IsNegativeInfinite
+// returning Precision::Infinite() (Precision.hxx L357-371).
 fn add_inf(a: f64, b: f64) -> f64 {
-    if a == f64::INFINITY {
-        return if b == f64::NEG_INFINITY { 0.0 } else { f64::INFINITY };
+    if is_positive_infinite_value(a) {
+        if is_negative_infinite_value(b) {
+            return 0.0;
+        }
+        return INFINITE_VALUE;
     }
-    if b == f64::INFINITY {
-        return if a == f64::NEG_INFINITY { 0.0 } else { f64::INFINITY };
+    if is_positive_infinite_value(b) {
+        if is_negative_infinite_value(a) {
+            return 0.0;
+        }
+        return INFINITE_VALUE;
     }
-    if a == f64::NEG_INFINITY {
-        return if b == f64::INFINITY { 0.0 } else { f64::NEG_INFINITY };
+    if is_negative_infinite_value(a) {
+        if is_positive_infinite_value(b) {
+            return 0.0;
+        }
+        return -INFINITE_VALUE;
     }
-    if b == f64::NEG_INFINITY {
-        return if a == f64::INFINITY { 0.0 } else { f64::NEG_INFINITY };
+    if is_negative_infinite_value(b) {
+        if is_positive_infinite_value(a) {
+            return 0.0;
+        }
+        return -INFINITE_VALUE;
     }
     a + b
 }
 
 fn mult_inf(a: f64, b: f64) -> f64 {
     if a == 0.0 || b == 0.0 {
+        // strictly zero (without any tolerances)
         return 0.0;
     }
-    if a == f64::INFINITY {
-        return if b < 0.0 { f64::NEG_INFINITY } else { f64::INFINITY };
+    if is_positive_infinite_value(a) {
+        return if b < 0.0 { -INFINITE_VALUE } else { INFINITE_VALUE };
     }
-    if b == f64::INFINITY {
-        return if a < 0.0 { f64::NEG_INFINITY } else { f64::INFINITY };
+    if is_positive_infinite_value(b) {
+        return if a < 0.0 { -INFINITE_VALUE } else { INFINITE_VALUE };
     }
-    if a == f64::NEG_INFINITY {
-        return if b < 0.0 { f64::INFINITY } else { f64::NEG_INFINITY };
+    if is_negative_infinite_value(a) {
+        return if b < 0.0 { INFINITE_VALUE } else { -INFINITE_VALUE };
     }
-    if b == f64::NEG_INFINITY {
-        return if a < 0.0 { f64::INFINITY } else { f64::NEG_INFINITY };
+    if is_negative_infinite_value(b) {
+        return if a < 0.0 { INFINITE_VALUE } else { -INFINITE_VALUE };
     }
     a * b
 }
@@ -658,14 +663,16 @@ fn surf_u_knots(surf: &Surface3, u1: f64, u2: f64) -> Vec<f64> {
     }
 }
 
-// BRepGProp_Face::VKnots (L378-413).
-fn surf_v_knots(surf: &Surface3, v1: f64, v2: f64) -> Vec<f64> {
+// BRepGProp_Face::VKnots (L378-413).  For Plane/Cylinder/Cone the OCCT code
+// takes the surface FirstUParameter/LastUParameter (L385-386) — the U bounds,
+// not the V bounds.
+fn surf_v_knots(surf: &Surface3, u1: f64, u2: f64) -> Vec<f64> {
     match surf {
-        Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_) => vec![v1, v2],
+        Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_) => vec![u1, u2],
         Surface3::Sphere(_) => vec![-PI / 2.0, 0.0, PI / 2.0],
         Surface3::Torus(_) => vec![0.0, 2.0 * PI / 3.0, 4.0 * PI / 3.0, 2.0 * PI],
         Surface3::BSpline(b) => compressed_knots(&b.knots_v),
-        _ => vec![v1, v2],
+        _ => vec![u1, u2],
     }
 }
 
@@ -682,8 +689,15 @@ fn curve_l_int_subs(c: &Curve2d) -> i64 {
 }
 
 // BRepGProp_Face::LKnots (L500-534).  For a reversed edge the Load (L176-182)
-// reverses the pcurve; Geom2d_BSplineCurve::Reversed negates the knot vector
-// (ReversedParameter = -U), so the reversed curve's knots are -knots.
+// loads C->Reversed(); Geom2d_BSplineCurve::Reverse (BSplCLib::Reverse,
+// BSplCLib.cxx L802-830) mirrors the interior knots about the range center,
+// which leaves the ascending knot array unchanged, and
+// ReversedParameter(U) = FirstParameter + LastParameter - U
+// (Geom2d_BSplineCurve.cxx L700-703).  The rcad reversed emulation evaluates
+// the original curve at -t over the mirrored range [-b, -a]; mirroring the
+// knot set about 0 (negate + sort) splits the domain at the same geometric
+// points, so it is an equivalent reparameterization of the OCCT reversed
+// curve.
 fn curve_l_knots(c: &Curve2d, a: f64, b: f64, reversed: bool) -> Vec<f64> {
     match c {
         Curve2d::Line(_) => vec![a, b],
@@ -786,16 +800,47 @@ fn fill_interval_bounds(
 
 // OCCT BRep_Tool::CurveOnPlane (BRep_Tool.cxx L379-450): when an edge has no
 // stored pcurve on a planar face, project the edge's 3D curve onto the plane
-// along the plane normal.  For a line the projection is the linear map
+// along the plane normal.  The projection preserves the curve type
+// (ProjLib_Plane::Project): a circle projects to the SAME-PARAMETER 2D circle
+// (the center maps onto the plane frame, the in-plane axes of the circle give
+// the 2D image axes), a line maps to the 2D line
 //   (u, v) = ((p - O).U, (p - O).V)
-// on the plane frame; the 2D parameterization is the arc length of the
-// projection (the Green boundary integral is invariant to reparameterization).
+// on the plane frame; the 2D parameterization keeps the 3D parameter range
+// (the Green boundary integral is invariant to reparameterization).
 fn project_curve_on_plane(brep: &BRep, edge: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)> {
     use crate::geom::CurveEval;
     let surf = brep.face_surface_world(face)?;
     let (c3, r3) = brep.edge_curve_world(edge)?;
     let Surface3::Plane(pl) = surf else { return None };
     let o = pl.origin;
+    if let crate::geom::Curve3::Circle(c) = &c3 {
+        let d = c.center - o;
+        let c2 = glam::DVec2::new(d.dot(pl.u_dir), d.dot(pl.v_dir));
+        let vx = glam::DVec2::new(
+            c.radius * c.x_dir.dot(pl.u_dir),
+            c.radius * c.x_dir.dot(pl.v_dir),
+        );
+        let vy = glam::DVec2::new(
+            c.radius * c.y_dir.dot(pl.u_dir),
+            c.radius * c.y_dir.dot(pl.v_dir),
+        );
+        let lx = vx.length();
+        let ly = vy.length();
+        if lx > 1e-12
+            && ly > 1e-12
+            && vx.dot(vy).abs() < 1e-12 * lx * ly
+            && (lx - ly).abs() < 1e-9 * lx.max(1.0)
+        {
+            let c2d = Curve2d::Circle(crate::geom::Circle2d {
+                center: c2,
+                x_dir: vx / lx,
+                y_dir: vy / ly,
+                radius: (lx + ly) * 0.5,
+            });
+            return Some((c2d, r3[0], r3[1]));
+        }
+        return None;
+    }
     let p0 = c3.point_at(r3[0]);
     let p1 = c3.point_at(r3[1]);
     let (u0, v0) = ((p0 - o).dot(pl.u_dir), (p0 - o).dot(pl.v_dir));
@@ -871,7 +916,13 @@ fn project_curve_on_cylinder(brep: &BRep, edge: &Shape, face: &Shape) -> Option<
 /// BRepGProp_Gauss.cxx L533-1099).  Sinert mass only: the gravity center and
 /// inertia moments do not feed the mass or the Sinert error estimates, so
 /// they are omitted.
-fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f64, is_nat_restr: bool) -> f64 {
+fn face_surface_area_checkprops(
+    brep: &BRep,
+    face: &Face,
+    fi: usize,
+    the_eps: f64,
+    is_nat_restr: bool,
+) -> Option<f64> {
     let surf_idx = match brep.tshapes.get(fi).and_then(|ts| {
         if let topods::TShape::Face(fd) = &**ts {
             fd.surface.clone()
@@ -880,7 +931,9 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
         }
     }) {
         Some(s) => s,
-        None => return 0.0,
+        // No surface -> Load(F) leaves the context unready -> every edge Load
+        // fails -> the same early return as a failed edge Load (L629-632).
+        None => return None,
     };
     let surf = &surf_idx;
 
@@ -888,7 +941,15 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
     // (Restriction=true) UV domain = BRepTools::UVBounds.
     let [bu1, bu2, bv1, bv2] = face_uv_bounds(brep, face, fi, surf);
     // checkBounds (L418-429): infinite bounds switch add/mult to inf-aware.
-    let inf_bounds = !bu1.is_finite() || !bu2.is_finite() || !bv1.is_finite() || !bv2.is_finite();
+    // Precision::IsInfinite (Precision.hxx L350-353): |x| >= 1e100.
+    let inf_bounds = is_positive_infinite_value(bu1)
+        || is_negative_infinite_value(bu1)
+        || is_positive_infinite_value(bu2)
+        || is_negative_infinite_value(bu2)
+        || is_positive_infinite_value(bv1)
+        || is_negative_infinite_value(bv1)
+        || is_positive_infinite_value(bv2)
+        || is_negative_infinite_value(bv2);
     let add = |a: f64, b: f64| if inf_bounds { add_inf(a, b) } else { a + b };
     let mult = |a: f64, b: f64| if inf_bounds { mult_inf(a, b) } else { a * b };
 
@@ -901,14 +962,15 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
 
     // L609-615: the U Gauss orders depend only on the surface + epsilon
     let nb_u_gauss_0 = surf_s_int_order(surf, an_epsilon);
-    let nb_u_gauss_1 = real_to_int(ERROR_ALGEBR_RATIO * nb_u_gauss_0 as f64) as usize;
+    // L610: NbUGaussP[1] = RealToInt(ceil(ERROR_ALGEBR_RATIO * NbUGaussP[0]))
+    let nb_u_gauss_1 = real_to_int((ERROR_ALGEBR_RATIO * nb_u_gauss_0 as f64).ceil()) as usize;
     let (u_gauss_p0, u_gauss_w0) = match occt_gauss(nb_u_gauss_0) {
         Some(v) => v,
-        None => return 0.0,
+        None => return Some(0.0),
     };
     let (u_gauss_p1, u_gauss_w1) = match occt_gauss(nb_u_gauss_1) {
         Some(v) => v,
-        None => return 0.0,
+        None => return Some(0.0),
     };
 
     // L617-619
@@ -989,7 +1051,10 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
                         Some(v) => v.clone(),
                         None => match project_curve_on_plane(brep, &edge_shape, &face_shape).or_else(|| project_curve_on_cylinder(brep, &edge_shape, &face_shape)) {
                             Some(v) => v,
-                            None => return 0.0,
+                            // L629-632: Load fails -> Compute returns
+                            // Precision::Infinite() early; the caller re-adds
+                            // the previous face's converted mass.
+                            None => return None,
                         },
                     },
                 }
@@ -998,7 +1063,7 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
                     Some(v) => v.clone(),
                     None => match project_curve_on_plane(brep, &edge_shape, &face_shape).or_else(|| project_curve_on_cylinder(brep, &edge_shape, &face_shape)) {
                         Some(v) => v,
-                        None => return 0.0,
+                        None => return None,
                     },
                 }
             };
@@ -1015,21 +1080,21 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
             l2 = b;
             pcurve = Some((c, reversed));
         }
-        // L636
-        let nb_l_gauss_1 = real_to_int(ERROR_ALGEBR_RATIO * nb_l_gauss_0 as f64) as usize;
+        // L636: NbLGaussP[1] = RealToInt(ceil(ERROR_ALGEBR_RATIO * NbLGaussP[0]))
+        let nb_l_gauss_1 = real_to_int((ERROR_ALGEBR_RATIO * nb_l_gauss_0 as f64).ceil()) as usize;
         // L638-641
         let (l_gauss_p0, l_gauss_w0) = match occt_gauss(nb_l_gauss_0) {
             Some(v) => v,
-            None => return 0.0,
+            None => return Some(0.0),
         };
         let (l_gauss_p1, l_gauss_w1) = match occt_gauss(nb_l_gauss_1) {
             Some(v) => v,
-            None => return 0.0,
+            None => return Some(0.0),
         };
         // L643: aNbLSubs / LKnots
         let l_knots: Vec<f64> = match &pcurve {
             Some((c, reversed)) => curve_l_knots(c, l1, l2, *reversed),
-            None => surf_v_knots(surf, bv1, bv2),
+            None => surf_v_knots(surf, bu1, bu2),
         };
 
         // L658-661
@@ -1289,5 +1354,5 @@ fn face_surface_area_checkprops(brep: &BRep, face: &Face, fi: usize, the_eps: f6
     } else {
         0.0
     };
-    mass
+    Some(mass)
 }

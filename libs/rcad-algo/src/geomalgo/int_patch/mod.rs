@@ -24,6 +24,7 @@ pub mod w_line_tool;
 pub mod transitions;
 pub mod int_cs;
 pub mod int_conic_quad;
+pub mod int_lin_torus;
 pub mod so_on_bounds;
 pub mod restriction;
 pub mod elclib;
@@ -385,10 +386,7 @@ impl IntPatchLine {
         }
     }
     pub fn walking(pnts: Vec<WLinePnt>, wt: WLineType) -> Self {
-        let line = rcad_kernel::geom::Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
+        let line = rcad_kernel::geom::Line3::new(DVec3::ZERO, DVec3::X);
         Self {
             line_type: IntPatchIType::Walking,
             curve: Curve3::Line(line),

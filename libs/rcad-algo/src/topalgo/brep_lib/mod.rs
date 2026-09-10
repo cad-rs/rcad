@@ -5,3 +5,4 @@
 // Used by BOPTools_AlgoTools for SameParameter, FindValidRange, BoundingVertex.
 
 pub mod brep_lib;
+pub mod build_curves3d;

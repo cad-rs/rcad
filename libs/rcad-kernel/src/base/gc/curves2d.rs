@@ -205,6 +205,7 @@ pub fn make_ellipse2d(
     Ok(Ellipse2d {
         center,
         major_dir,
+        minor_dir: DVec2::new(-major_dir.y, major_dir.x),
         major_radius,
         minor_radius,
     })

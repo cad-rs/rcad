@@ -265,11 +265,47 @@ impl GInter {
         for &t in &roots {
             let pt = curve.point_at(t);
             // Param on the line: (P - O)·d (d is unit).
-            let param1 = (pt - line_origin).dot(line_dir);
-            let param1 = normalize_on_domain(param1, line_domain);
+            let param1 = normalize_on_domain((pt - line_origin).dot(line_dir), line_domain);
+            let mut param1 = param1;
             let param2 = t;
 
-            let pos1 = determine_position(line_domain, pt, param1);
+            // OCCT DomainIntersection (IntCurve_IntConicConic_1.cxx L641-714):
+            // the solution interval on the line is intersected with the line
+            // domain. A solution strictly below First-FirstTol or above
+            // Last+LastTol yields an empty interval and is dropped; a solution
+            // within tolerance of a domain endpoint is clamped to it with the
+            // Head/End position.
+            let mut pos1_override: Option<Position> = None;
+            if line_domain.has_first_point()
+                && param1 < line_domain.first_parameter() - line_domain.first_tolerance()
+            {
+                // Res1inf = 1; Res1sup = -1 — the empty interval: no point.
+                continue;
+            }
+            if line_domain.has_last_point()
+                && param1 > line_domain.last_parameter() + line_domain.last_tolerance()
+            {
+                continue;
+            }
+            if line_domain.has_first_point()
+                && param1 <= line_domain.first_parameter() + line_domain.first_tolerance()
+            {
+                // Res1inf = Domain.FirstParameter(); PosInf = IntRes2d_Head.
+                param1 = line_domain.first_parameter();
+                pos1_override = Some(Position::Head);
+            }
+            if line_domain.has_last_point()
+                && param1 >= line_domain.last_parameter() - line_domain.last_tolerance()
+            {
+                // Res1sup = Domain.LastParameter(); PosSup = IntRes2d_End.
+                param1 = line_domain.last_parameter();
+                pos1_override = Some(Position::End);
+            }
+
+            let pos1 = match pos1_override {
+                Some(pos) => pos,
+                None => determine_position(line_domain, pt, param1),
+            };
             let pos2 = determine_position(curve_domain, pt, param2);
 
             let tan1 = line_dir;

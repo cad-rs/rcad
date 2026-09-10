@@ -120,9 +120,10 @@ impl IntPatchIntersection {
     /// OCCT L1066-1372: Perform
     ///
     /// rcad adaptation:
-    ///   - Adaptor3d_Surface 鈫?&Surface3 (one parameter instead of surface+tool)
-    ///   - Adaptor3d_TopolTool 鈫?the corrected FF UV rectangles uv1/uv2
-    ///   - isGeomInt, theIsReqToKeepRLine, theIsReqToPostWLProc 鈫?default params
+    ///   - Adaptor3d_Surface → &Surface3 (one parameter instead of surface+tool)
+    ///   - Adaptor3d_TopolTool → the corrected FF UV rectangles uv1/uv2 (the
+    ///     IntTools_TopolTool rectangle domains, IntTools_FaceFace.cxx L475-476)
+    ///   - isGeomInt, theIsReqToKeepRLine, theIsReqToPostWLProc → default params
     pub fn perform(
         &mut self,
         s1: &Surface3,

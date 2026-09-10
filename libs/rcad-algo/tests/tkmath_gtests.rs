@@ -18,7 +18,7 @@ impl BoundingBox {
     fn add_box(&mut self, other: &Self) { self.min = self.min.min(other.min); self.max = self.max.max(other.max); }
     fn is_out_point(&self, p: DVec3) -> bool { p.x < self.min.x || p.x > self.max.x || p.y < self.min.y || p.y > self.max.y || p.z < self.min.z || p.z > self.max.z }
     fn is_out_box(&self, other: &Self) -> bool { self.max.x < other.min.x || self.min.x > other.max.x || self.max.y < other.min.y || self.min.y > other.max.y || self.max.z < other.min.z || self.min.z > other.max.z }
-    fn set_gap(&mut self, _g: f64) {}
+    fn set_gap(&mut self, g: f64) { self.min -= DVec3::splat(g); self.max += DVec3::splat(g); }
     fn contains(&self, p: DVec3) -> bool { !self.is_out_point(p) }
 }
 
@@ -63,7 +63,7 @@ mod bnd_box2d_tests {
 // =============================================================================
 mod bvh_box_tests {
     use super::*;
-    use rcad_algo::bop::tools::bvh::Aabb;
+    use rcad_kernel::math::bvh::Aabb;
     #[test] fn bvh_aabb_empty() { let a = Aabb::empty(); assert!(a.surface_area() == 0.0); }
     #[test] fn bvh_aabb_single_point() { let a = Aabb::from_points(&[DVec3::new(1.0, 2.0, 3.0)]); assert!((a.min - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-10); }
     #[test] fn bvh_aabb_two_points() { let a = Aabb::from_points(&[DVec3::ZERO, DVec3::new(10.0, 20.0, 30.0)]); assert!((a.center() - DVec3::new(5.0, 10.0, 15.0)).length() < 1e-10); }
@@ -91,6 +91,6 @@ mod geom_lib_tests {
     use rcad_kernel::nurbs_convert::{plane_to_bspline, cylinder_to_bspline, sphere_to_bspline};
     use rcad_kernel::geom::{Plane, CylindricalSurface, SphericalSurface};
     #[test] fn plane_to_bspline_surface() { let p = Plane::new(DVec3::ZERO, DVec3::Z); let bs = plane_to_bspline(&p); assert!(bs.control_points.len() > 0); }
-    #[test] fn cylinder_to_bspline_surface() { let c = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X }; let bs = cylinder_to_bspline(&c); assert!(bs.control_points.len() > 0); }
+    #[test] fn cylinder_to_bspline_surface() { let c = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X, y_dir: None }; let bs = cylinder_to_bspline(&c); assert!(bs.control_points.len() > 0); }
     #[test] fn sphere_to_bspline_surface() { let s = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: DVec3::X }; let bs = sphere_to_bspline(&s); assert!(bs.control_points.len() > 0); }
 }

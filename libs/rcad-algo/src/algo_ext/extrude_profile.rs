@@ -124,7 +124,13 @@ pub fn extrude_profile_solid(
     depth: f64,
 ) -> Result<topods::BRep, super::features::FeatureError> {
     let n = profile.len();
-    if n < 3 {
+    // OCCT BRepBuilderAPI_MakeWire accepts a single CLOSED circular edge (a
+    // full-circle `profile f c 60 360`) and BRepLib_MakeFace builds the disk;
+    // a straight-line-only profile needs the usual closed polygon.
+    let closed_arc_profile = n == 1
+        && matches!(profile[0], ProfileSegment::Arc { .. })
+        && (profile[0].p1() - profile[0].p0()).length() <= 1e-7 * profile[0].p0().length().max(1.0);
+    if n < 3 && !closed_arc_profile {
         return Err(super::features::FeatureError::InvalidInput("profile needs >= 3 segments"));
     }
     let dir = direction.normalize_or_zero();
@@ -134,6 +140,57 @@ pub fn extrude_profile_solid(
     if !depth.is_finite() || depth <= 0.0 {
         return Err(super::features::FeatureError::NonPositiveInput("depth"));
     }
+    // OCCT stores curve parameter ranges increasing; the traversal direction
+    // of a "clockwise" arc (`profile c -30 360`) is carried by the circle's
+    // axis sense, not by a decreasing range. Mirror y_dir and negate the
+    // parameters: point'(t) = center + r(cos t * x - sin t * y) visits the
+    // same points in the same order with the range increasing.
+    let profile_owned: Vec<ProfileSegment> = profile
+        .iter()
+        .map(|seg| match seg {
+            ProfileSegment::Arc { t0, t1, .. } if t1 < t0 => {
+                let mut seg = seg.clone();
+                if let ProfileSegment::Arc { y_dir, t0, t1, .. } = &mut seg {
+                    *y_dir = -*y_dir;
+                    *t0 = -*t0;
+                    *t1 = -*t1;
+                }
+                seg
+            }
+            _ => seg.clone(),
+        })
+        // Shift the parameter origin of every arc to its start point: the
+        // OCCT DRAW `circle` command form (the arc starts at parameter 0 and
+        // the circle's x_dir points from the center to the start point, e.g.
+        // `profile f1 c 60 360` starts at (0,0,0) with x_dir (0,-1,0)).  The
+        // sweep (BRepSweep_Translation / GeomAdaptor) and the boolean pipeline
+        // express every lateral-face parameter (seam pcurves, generating
+        // pcurves, AdjustToSeam section circles) in this parameterization, so
+        // an arc whose origin sits at the profile start keeps the UV spaces
+        // identical to OCCT's (seam at u = 0, section circles adjusted to the
+        // seam also start at u = 0).  Rotating the frame by t0 gives
+        // point'(t') = center + r(cos t' * x' + sin t' * y'), t' in
+        // [0, t1 - t0], with x' = cos(t0)*x + sin(t0)*y (the direction from
+        // the center to p0) and y' = -sin(t0)*x + cos(t0)*y.
+        .map(|seg| match seg {
+            ProfileSegment::Arc { t0, t1, .. } if t1 > t0 => {
+                let mut seg = seg.clone();
+                if let ProfileSegment::Arc { x_dir, y_dir, t0, t1, .. } = &mut seg {
+                    let x = x_dir.normalize_or_zero();
+                    let y = y_dir.normalize_or_zero();
+                    let (s0, c0) = t0.sin_cos();
+                    *x_dir = c0 * x + s0 * y;
+                    *y_dir = -s0 * x + c0 * y;
+                    *t1 = *t1 - *t0;
+                    *t0 = 0.0;
+                }
+                seg
+            }
+            _ => seg.clone(),
+        })
+        .collect();
+    let profile: &[ProfileSegment] = &profile_owned;
+    let n = profile.len();
     // Cap frame from OCCT BRepLib_FindSurface (BRepLib_FindSurface.cxx
     // L248-578), as used by BRepLib_MakeFace/BRepPrimAPI_MakePrism: origin =
     // weighted barycenter of the sampled profile points, normal = profile
@@ -169,6 +226,15 @@ pub fn extrude_profile_solid(
         if n_raw.length_squared() > 0.5 {
             break;
         }
+    }
+    if n_raw.length_squared() < 0.5 {
+        // A closed circular arc has a degenerate chord; its profile plane is
+        // the arc's own normal (BRepLib_FindSurface's least-squares plane of
+        // the sampled points coincides with the circle axis).
+        n_raw = match (&profile[0], closed_arc_profile) {
+            (ProfileSegment::Arc { normal, .. }, true) => *normal,
+            _ => DVec3::ZERO,
+        };
     }
     if n_raw.length_squared() < 0.5 {
         return Err(super::features::FeatureError::InvalidInput("profile segments are collinear"));
@@ -218,10 +284,7 @@ pub fn extrude_profile_solid(
             ProfileSegment::Line { p0, p1 } => {
                 let d = *p1 - *p0;
                 let len = d.length();
-                Some(Curve3::Line(Line3 {
-                    origin: *p0,
-                    direction: if len > TOLERANCE_LEN_MIN { d / len } else { DVec3::X },
-                }))
+                Some(Curve3::Line(Line3::new(*p0, if len > TOLERANCE_LEN_MIN { d / len } else { DVec3::X })))
             }
             ProfileSegment::Arc {
                 center,
@@ -266,10 +329,7 @@ pub fn extrude_profile_solid(
         let d = dir * depth;
         let len = d.length();
         e_ver.push(brep.add_tedge(
-            Some(Curve3::Line(Line3 {
-                origin: profile[i].p0(),
-                direction: if len > TOLERANCE_LEN_MIN { dir } else { DVec3::X },
-            })),
+            Some(Curve3::Line(Line3::new(profile[i].p0(), if len > TOLERANCE_LEN_MIN { dir } else { DVec3::X }))),
             v[i].clone(),
             rev_v(&ve[i]),
             [0.0, len],
@@ -319,24 +379,36 @@ pub fn extrude_profile_solid(
             }
             ProfileSegment::Arc {
                 center,
-                normal,
                 x_dir,
+                y_dir,
                 radius,
                 ..
             } => {
-                // Swept arc: cylinder through the arc center. OCCT
-                // GeomAdaptor_SurfaceOfLinearExtrusion::Cylinder() uses
-                // D = -sweep as the axis (the circle axis is parallel to the
-                // sweep, so ZReverse keeps the axis along D) and ZReverse
-                // (which flips X) applies iff D . Z < 0, i.e. dir . normal > 0.
-                let xd = x_dir.normalize_or_zero();
-                let zrev = dir.dot(normal.normalize_or_zero()) > 0.0;
-                let ref_dir = if zrev { -xd } else { xd };
+                // OCCT GeomAdaptor_SurfaceOfLinearExtrusion::Cylinder()
+                // (GeomAdaptor_SurfaceOfLinearExtrusion.cxx L375-387), called
+                // from BRepSweep_Translation::MakeEmptyFace
+                // (BRepSweep_Translation.cxx L238-252) with the adaptor
+                // direction D = -sweep (L238-239):
+                //   gp_Ax3 Ax3(C.Position());
+                //   if (myDirection.Dot(C.Axis().Direction()) < 0.) Ax3.ZReverse();
+                //   return gp_Cylinder(Ax3, C.Radius());
+                // gp_Ax3::ZReverse() reverses ONLY the Z axis (gp_Ax3.hxx
+                // L131); the X and Y directions are preserved.  The lateral
+                // cylinder therefore keeps the generating circle's own frame
+                // (x_dir, y_dir) — LEFT-handed when the axis is reversed —
+                // and its axis is the sweep direction reversed (the circle
+                // axis is parallel to the sweep for a planar profile).  The
+                // surface u then equals the circle parameter, which is what
+                // the sweep pcurves (SetGeneratingPCurve u = t,
+                // SetDirectingPCurve u = Parameter(V, E)) are written in
+                // (the profile arcs are reparameterized so the origin is the
+                // start point, the seam).
                 Surface3::Cylinder(CylindricalSurface {
                     origin: *center,
                     axis: -dir,
                     radius: *radius,
-                    ref_dir,
+                    ref_dir: x_dir.normalize_or_zero(),
+                    y_dir: Some(y_dir.normalize_or_zero()),
                 })
             }
         };
@@ -361,39 +433,132 @@ pub fn extrude_profile_solid(
         if let Surface3::Cylinder(cyl) = &surf {
             let fp = face.ptr_id();
             let to_uv = |p: DVec3| cyl.world_to_uv(p);
-            let pc_of = |p0: DVec3, p1: DVec3| -> Option<(Curve2d, f64, f64)> {
-                let uv0 = to_uv(p0);
-                let uv1 = to_uv(p1);
-                let d = uv1 - uv0;
+            let to_v = |p: DVec3| cyl.world_to_uv(p).y;
+            // pcurve through the surface-UV images of the two 3D endpoints.
+            // The U coordinates come from the SEGMENT PARAMETER FRAME —
+            // OCCT BRepSweep builds the lateral cylinder from the generating
+            // circle's own Ax2 (BRepSweep_Rotation/Translation: u = the circle
+            // parameter t; SetGeneratingPCurve L367-373 gives the line
+            // (0, v) + t*(1, 0); SetDirectingPCurve L395-420 gives
+            // u = BRep_Tool::Parameter(aGenV, aGenE)) — so a half-circle
+            // ending at t1 = 3*pi/2 keeps u = 3*pi/2 and does NOT wrap to
+            // -pi/2: atan2's (-pi, pi] branch would split the boundary
+            // polygon off the face's real UV region and flip the Green
+            // boundary-integral direction.
+            let pc_of = |u0: f64, u1: f64, p0: DVec3, p1: DVec3| -> Option<(Curve2d, f64, f64)> {
+                let v0 = to_v(p0);
+                let v1 = to_v(p1);
+                let d = DVec2::new(u1 - u0, v1 - v0);
                 let len = d.length();
                 if len < 1e-15 {
                     return None;
                 }
-                let c = Curve2d::Line(Line2d::new(uv0, d / len));
+                let c = Curve2d::Line(Line2d::new(DVec2::new(u0, v0), d / len));
                 Some((c, 0.0, len))
             };
             // Generating edges: the base profile edge (v = 0) and the located
-            // top copy (v = -depth).
-            if let Some((gp, t0p, t1p)) = pc_of(a, b) {
+            // top copy.  OCCT BRepSweep_Translation::SetGeneratingPCurve
+            // (BRepSweep_Translation.cxx L367-373): the top edge's pcurve sits
+            // at v = -myVec.Magnitude() (aDirV.Index() == 2), not at the
+            // bottom edge's v = 0 — the two lines are distinct.  A CLOSED
+            // generating edge (a full-circle `profile c 60 360`) has a
+            // degenerate chord: its pcurve is the full-period line in u at
+            // constant v (BRepSweep writes the periodic trace of the swept
+            // closed edge).
+            let a_b_len = (b - a).length();
+            let closed_gen = a_b_len <= 1e-7 * a.length().max(1.0);
+            // The closed generating edge keeps the arc's own parameter range
+            // [t0, t1]; its pcurve must satisfy u(t) = az(t) over THAT range,
+            // so the line origin absorbs the offset between the arc's
+            // parameter origin and the cylinder's azimuth (u = az0 - t0 + t).
+            let (t_seg0, t_seg1) = match &profile[i] {
+                ProfileSegment::Arc { t0, t1, .. } => (*t0, *t1),
+                ProfileSegment::Line { .. } => (0.0, a_b_len),
+            };
+            let gen_pc = |p: DVec3, q: DVec3| -> Option<(Curve2d, f64, f64)> {
+                pc_of(t_seg0, t_seg1, p, q).or_else(|| {
+                    if !closed_gen {
+                        return None;
+                    }
+                    let uv = to_uv(p);
+                    let az0 = if uv.x < 0.0 {
+                        uv.x + std::f64::consts::TAU
+                    } else {
+                        uv.x
+                    };
+                    Some((
+                        Curve2d::Line(Line2d::new(
+                            DVec2::new(az0 - t_seg0, uv.y),
+                            DVec2::new(1.0, 0.0),
+                        )),
+                        t_seg0,
+                        t_seg1,
+                    ))
+                })
+            };
+            if let Some((gp, t0p, t1p)) = gen_pc(a, b) {
                 let k0 = rcad_kernel::topo::topods::compose_pcurve_location(0, 0, &brep.locations);
                 brep.edge_mut_inplace(b_ed[i].clone())
                     .pcurves
                     .insert((fp, k0), (gp.clone(), t0p, t1p));
                 let k1 =
                     rcad_kernel::topo::topods::compose_pcurve_location(0, loc, &brep.locations);
-                brep.edge_mut_inplace(t_ed[i].clone())
-                    .pcurves
-                    .insert((fp, k1), (gp.clone(), t0p, t1p));
+                if let Some((gp_top, t0t, t1t)) = gen_pc(a + dir * depth, b + dir * depth) {
+                    brep.edge_mut_inplace(t_ed[i].clone())
+                        .pcurves
+                        .insert((fp, k1), (gp_top, t0t, t1t));
+                } else {
+                    brep.edge_mut_inplace(t_ed[i].clone())
+                        .pcurves
+                        .insert((fp, k1), (gp.clone(), t0p, t1p));
+                }
             }
             // Directing edges: the vertical sweep edges at the segment's
-            // endpoint azimuths.
+            // endpoint azimuths.  OCCT BRepSweep_Translation::SetDirectingPCurve
+            // (BRepSweep_Translation.cxx L321-420) runs per directing edge with
+            // u = BRep_Tool::Parameter(aGenV, aGenE) — each edge's OWN vertex
+            // azimuth — so the two vertical edges of one arc segment get
+            // DISTINCT pcurves (u0 and u1); a shared pcurve leaves the second
+            // edge's UV image on the wrong azimuth.
             let v0 = profile[i].p0();
             let v1 = v0 + dir * depth;
-            if let Some((dp, t0p, t1p)) = pc_of(v0, v1) {
-                for e in [e_ver[i].clone(), e_ver[j].clone()] {
-                    brep.edge_mut_inplace(e)
-                        .pcurves
-                        .insert((fp, 0), (dp.clone(), t0p, t1p));
+            if let Some((dp, t0p, t1p)) = pc_of(t_seg0, t_seg0, v0, v1) {
+                brep.edge_mut_inplace(e_ver[i].clone())
+                    .pcurves
+                    .insert((fp, 0), (dp.clone(), t0p, t1p));
+                let w0 = profile[i].p1();
+                let w1 = w0 + dir * depth;
+                let dp_end = pc_of(t_seg1, t_seg1, w0, w1);
+                if e_ver[i].ptr_id() != e_ver[j].ptr_id() {
+                    if let Some((dp1, t0p1, t1p1)) = dp_end {
+                        brep.edge_mut_inplace(e_ver[j].clone())
+                            .pcurves
+                            .insert((fp, 0), (dp1, t0p1, t1p1));
+                    }
+                } else {
+                    // A closed profile sweeps the directing edge twice in the
+                    // lateral wire (the same TShape, FORWARD and REVERSED): the
+                    // closed seam edge carries two pcurves one period apart —
+                    // OCCT BRepPrim_OneAxis::LateralFace (L434-438) /
+                    // make_cylinder form — pcurve1 at u=az (the FORWARD
+                    // instance, the west side of the UV region), pcurve2 at
+                    // u=az+2*pi (the REVERSED instance, the east side), as a
+                    // CurveOnClosedSurface representation keyed by the lateral
+                    // face.
+                    let dp2 = match &dp {
+                        Curve2d::Line(l) => Curve2d::Line(rcad_kernel::geom::Line2d {
+                            origin: glam::DVec2::new(l.origin.x + std::f64::consts::TAU, l.origin.y),
+                            direction: l.direction,
+                        }),
+                        other => other.clone(),
+                    };
+                    let e_seam = brep.edge_mut_inplace(e_ver[i].clone());
+                    e_seam.representations.push(rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                        face: (fp, 0),
+                        pcurve1: dp.clone(),
+                        pcurve2: dp2,
+                        range: [t0p, t1p],
+                    });
                 }
             }
         }

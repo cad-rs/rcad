@@ -1,5 +1,8 @@
 use crate::geom::{Curve2d, Curve3, Surface3, SurfaceEval};
-use crate::core::precision::{CONFUSION, parametric_default};
+use crate::core::precision::{
+    CONFUSION, REAL_FIRST, REAL_LAST, is_negative_infinite_value, is_positive_infinite_value,
+    parametric_default,
+};
 use crate::math::bspl::{
     bezier_curve_resolution, bezier_surface_resolution, bspline_curve_resolution,
     bspline_surface_resolution,
@@ -159,9 +162,25 @@ pub struct TVertexData {
 }
 
 /// OCCT BRep_CurveRepresentation �?how an edge lies on a face or in 3D.
+/// OCCT GeomAbs_Shape (TKG3d/GeomAbs/GeomAbs_Shape.hxx L47-56) — the
+/// continuity order with the OCCT enum ranking C0 < G1 < C1 < G2 < C2 < C3
+/// < CN (G1/G2 interleave the C-levels) used by the `rg >= GeomAbs_G1`
+/// comparisons of HLRBRep_ShapeToHLR::Load (cxx L130-131) and the
+/// BRep_Builder::Continuity storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum GeomAbsShape {
+    C0,
+    G1,
+    C1,
+    G2,
+    C2,
+    C3,
+    CN,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CurveRepresentation {
-    /// BRep_GCurve �?3D curve.
+    /// BRep_GCurve M-oM-?M-=?3D curve.
     Curve3D { curve: usize, location: u32 },
     /// BRep_CurveOnSurface �?pcurve on a face.
     CurveOnSurface {
@@ -176,6 +195,59 @@ pub enum CurveRepresentation {
         pcurve2: Curve2d,
         range: [f64; 2],
     },
+    /// OCCT BRep_CurveOn2Surfaces — the regularity of an edge lying on two
+    /// surfaces (BRep_CurveOn2Surfaces.hxx L1-77): surface1/surface2 with
+    /// location1/location2 (the base BRep_CurveRepresentation location is
+    /// location1) and the continuity.  The rcad surfaces travel as values
+    /// (the surface_same stand-in for the Geom_Surface handle identity).
+    CurveOn2Surfaces {
+        surface1: Surface3,
+        surface2: Surface3,
+        location1: u32,
+        location2: u32,
+        continuity: GeomAbsShape,
+    },
+}
+
+impl CurveRepresentation {
+    /// OCCT BRep_CurveRepresentation::IsRegularity() (BRep_CurveRepresentation.cxx
+    /// L60-64) — true only for the BRep_CurveOn2Surfaces kind (the base
+    /// returns false, BRep_CurveRepresentation.cxx L75-79).
+    pub fn is_regularity(&self) -> bool {
+        matches!(self, CurveRepresentation::CurveOn2Surfaces { .. })
+    }
+
+    /// OCCT BRep_CurveOn2Surfaces::IsRegularity(S1, S2, L1, L2)
+    /// (BRep_CurveOn2Surfaces.cxx L63-72): the (surface, location) pairs
+    /// match in either order.  The rcad surface comparison is surface_same
+    /// (the Geom_Surface handle identity stand-in).
+    pub fn is_regularity_on(
+        &self,
+        s1: &Surface3,
+        s2: &Surface3,
+        l1: u32,
+        l2: u32,
+    ) -> bool {
+        match self {
+            CurveRepresentation::CurveOn2Surfaces {
+                surface1,
+                surface2,
+                location1,
+                location2,
+                ..
+            } => {
+                (surface_same(surface1, s1)
+                    && surface_same(surface2, s2)
+                    && *location1 == l1
+                    && *location2 == l2)
+                    || (surface_same(surface1, s2)
+                        && surface_same(surface2, s1)
+                        && *location1 == l2
+                        && *location2 == l1)
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,8 +260,8 @@ pub struct TEdgeData {
     pub range: [f64; 2],
     #[serde(default)]
     pub degenerated: bool,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub pcurves: HashMap<(u64, u32), (Curve2d, f64, f64)>,
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub pcurves: indexmap::IndexMap<(u64, u32), (Curve2d, f64, f64)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub representations: Vec<CurveRepresentation>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -313,6 +385,77 @@ impl BRep {
         }
     }
 
+    /// OCCT BRep_Tool::CurveOnPlane (BRep_Tool.cxx L379-450): for a planar
+    /// surface, return the projection of the edge's 3D curve onto the plane
+    /// (the pcurve computed on the fly, never stored).  Reached from
+    /// [`BRepTool::curve_on_surface`] when no stored representation matches
+    /// (BRep_Tool.cxx L367-372).
+    ///
+    /// `surf` is the face's LOCAL surface (CurveOnSurface L308 fetches
+    /// `BRep_Tool::Surface(F, l)` without the location applied), `ed` the
+    /// edge TShape data (the BRep_TEdge read of L341).
+    fn curve_on_plane(
+        &self,
+        edge: &Shape,
+        face: &Shape,
+        surf: &Surface3,
+        ed: &TEdgeData,
+    ) -> Option<(Curve2d, f64, f64)> {
+        // L385: First = Last = 0. (rcad: the None return carries no range.)
+        // L388-398: check if the surface is planar — one
+        // Geom_RectangularTrimmedSurface level unwrapped to its basis.
+        let surf = match surf {
+            Surface3::Trimmed(ts) => ts.basis.as_ref(),
+            s => s,
+        };
+        // L400-404: not a plane -> null pcurve.
+        let Surface3::Plane(pl) = surf else {
+            return None;
+        };
+
+        // L406-415: check the existence of the 3d curve in the edge
+        // (BRep_Tool::Curve(E, aCurveLocation, f, l); rcad architecture note:
+        // the 3D curve representation carries no own location, so the curve
+        // location is the edge wrapper location).
+        let Some(c3d) = ed.curve.as_ref() else {
+            return None;
+        };
+        let mut f = ed.range[0];
+        let mut l = ed.range[1];
+
+        // L417: aCurveLocation = aCurveLocation.Predivided(L) — the curve
+        // expressed in the face-local frame (L^-1 * E.Location()).
+        let a_curve_location =
+            self.get_location(face.location).inverse() * self.get_location(edge.location);
+        // L418-419: First = f; Last = l (the raw 3D range, taken BEFORE the
+        // location rescale of L426-427).
+        let first = f;
+        let last = l;
+
+        // L421-428: transform the curve and update the parameters by the
+        // scale factor (Geom_Curve::TransformedParameter(P, T) =
+        // P / T.ScaleFactor()).  rcad architecture note: the location table
+        // stores DAffine3 with no separate gp_Trsf scale member; the scale
+        // factor is recovered as the image length of a unit axis (1 for the
+        // rigid locations the pipeline builds).
+        let c3d = if a_curve_location != glam::DAffine3::IDENTITY {
+            let scale = a_curve_location.transform_vector3(glam::DVec3::X).length();
+            f /= scale;
+            l /= scale;
+            crate::geom::transform_curve(c3d, &a_curve_location)
+        } else {
+            c3d.clone()
+        };
+
+        // L430-435: GeomProjLib::ProjectOnPlane of the trimmed curve along
+        // the plane normal (KeepParametrization = true); L437-441:
+        // ProjLib_ProjectedCurve + Geom2dAdaptor::MakeCurve; L443-447: the
+        // Geom2d_TrimmedCurve basis unwrap — the landed
+        // geom_proj_lib::project_on_plane::curve_on_plane translation.
+        crate::base::geom_proj_lib::project_on_plane::curve_on_plane(&c3d, [f, l], pl)
+            .map(|pc| (pc, first, last))
+    }
+
     /// OCCT BRep_Builder::UpdateEdge / BRep_Tool::CurveOnSurface
     /// (BRep_Builder.cxx L692, BRep_Tool.cxx L345): the pcurve of an edge on a
     /// face is keyed by `(face TShape, aLoc)` with
@@ -328,8 +471,14 @@ impl BRep {
         compose_pcurve_location(face_loc, edge_loc, &self.locations)
     }
 
+    /// Second pcurve-key component derived from a shape's OWN location value
+    /// (`pcurve_location_id` of the resolved transform; identity -> 0).
+    pub fn pcurve_loc_component(&self, r: Shape) -> u32 {
+        pcurve_location_id(&self.get_location(r.location))
+    }
 
-    /// Location VALUES (table numbers plus identity=0) used by every known
+
+    /// Location VALUES (as table numbers plus identity=0) used by every known
     /// wrapper of an edge TShape.  OCCT stores curve representations per
     /// TopoDS_Edge instance via L.Predivided(E.Location()) (BRep_Builder.cxx
     /// L660-700), so a TShape shared between unlocated and located wrappers
@@ -364,12 +513,29 @@ impl BRep {
         }
         out
     }
+    /// rcad legacy position-quantized vertex identity — NO OCCT
+    /// counterpart.  OCCT never dedups by position at vertex creation; the
+    /// quantized registry exists for the flows that do not yet carry the
+    /// OCCT handle-sharing (each one's alignment is tracked separately).
+    /// The OCCT `BRep_Builder::MakeVertex` translation is
+    /// [`BRep::add_tvertex_unique`].
     pub fn add_tvertex(&mut self, point: DVec3) -> Shape {
-        // OCCT-aligned: identity-based sharing �?same position �?same TShape::Vertex.
         let key = VertexKey::from(point);
         if let Some(sr) = self.vert_by_pos.get(&key) {
             return sr.clone();
         }
+        let sr = self.add_tvertex_unique(point);
+        self.vert_by_pos.insert(key, sr.clone());
+        sr
+    }
+
+    /// OCCT `BRep_Builder::MakeVertex(V, Point(P), Tol)` — always a new
+    /// TShape::Vertex (BRepLib_MakeVertex.cxx: `B.MakeVertex(V, Point(P),
+    /// Precision::Confusion())`).  Vertex sharing in OCCT comes from
+    /// explicitly re-using a vertex handle, never from a position lookup;
+    /// the OCCT-translated builders (BRepLib_MakeEdge's BRepLib_MakeVertex)
+    /// must therefore create fresh endpoints.
+    pub fn add_tvertex_unique(&mut self, point: DVec3) -> Shape {
         let index = self.tshapes.len();
         let tshape = Arc::new(TShape::Vertex(TVertexData {
             my_shapes: Vec::new(),
@@ -390,7 +556,6 @@ impl BRep {
             orientation: Orientation::Forward,
             location: 0,
         };
-        self.vert_by_pos.insert(key, sr.clone());
         sr
     }
 
@@ -451,7 +616,7 @@ impl BRep {
             last,
             range,
             degenerated: is_degenerated,
-            pcurves: HashMap::new(),
+            pcurves: indexmap::IndexMap::new(),
             representations: Vec::new(),
             vertex_params,
             tolerance: CONFUSION,
@@ -473,10 +638,57 @@ impl BRep {
     }
 
     pub fn add_twire(&mut self, edges: Vec<Shape>) -> Shape {
+        // OCCT finalizes every constructed wire with
+        // W.Closed(BRep_Tool::IsClosed(W)) (BRepPrim_Builder::CompleteWire
+        // L217-221, BRepSweep_NumLinearRegularSweep L370,
+        // BOPAlgo_WireSplitter::MakeWire lxx L88). IsClosed for TopAbs_WIRE
+        // (BRep_Tool.cxx L1730-1749): visit the edges' vertices (cumOri),
+        // skip INTERNAL/EXTERNAL vertices, remove each vertex from the map on
+        // the second visit; closed = hasBound && the map is empty.
+        let mut closed_map: std::collections::HashSet<(u64, u32)> =
+            std::collections::HashSet::new();
+        let mut has_bound = false;
+        for e in &edges {
+            let ed = match &*e.data {
+                TShape::Edge(ed) => ed,
+                _ => continue,
+            };
+            let rev = e.orientation == Orientation::Reversed;
+            for sv in [&ed.first, &ed.last] {
+                let vori = if rev {
+                    match sv.orientation {
+                        Orientation::Forward => Orientation::Reversed,
+                        Orientation::Reversed => Orientation::Forward,
+                        other => other,
+                    }
+                } else {
+                    sv.orientation
+                };
+                if matches!(vori, Orientation::Internal | Orientation::External) {
+                    continue;
+                }
+                has_bound = true;
+                // The composed (cumLoc) vertex location; writer wires keep the
+                // stored vertex locations at 0, so the edge location usually
+                // wins.
+                let vloc = if e.location == 0 {
+                    sv.location
+                } else {
+                    self.composed_location(e.location, sv.location)
+                };
+                if !closed_map.insert((sv.ptr_id(), vloc)) {
+                    closed_map.remove(&(sv.ptr_id(), vloc));
+                }
+            }
+        }
+        let mut flags = tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE;
+        if has_bound && closed_map.is_empty() {
+            flags |= tshape_flags::CLOSED;
+        }
         let index = self.tshapes.len();
         let tshape = Arc::new(TShape::Wire(TWireData {
             my_shapes: edges.clone(),
-            flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
+            flags,
             edges,
         }));
 
@@ -487,6 +699,26 @@ impl BRep {
             orientation: Orientation::Forward,
             location: 0,
         }
+    }
+
+    /// The location index of `a` composed with `b` (TopLoc_Location::Multiplied),
+    /// registered in the locations table when absent.
+    fn composed_location(&mut self, a: u32, b: u32) -> u32 {
+        if a == 0 {
+            return b;
+        }
+        if b == 0 {
+            return a;
+        }
+        let ta = self.get_location(a);
+        let tb = self.get_location(b);
+        let composed = ta * tb;
+        for (i, t) in self.locations.iter().enumerate() {
+            if *t == composed {
+                return (i + 1) as u32;
+            }
+        }
+        self.add_location(composed)
     }
 
     pub fn add_tface(
@@ -643,7 +875,7 @@ impl BRep {
             last,
             range,
             degenerated: false,
-            pcurves: HashMap::new(),
+            pcurves: indexmap::IndexMap::new(),
             representations: Vec::new(),
             vertex_params: HashMap::new(),
             tolerance: 0.0,
@@ -855,6 +1087,177 @@ impl BRep {
         before - self.tshapes.len()
     }
 
+    /// Import a shape tree into this BRep pool.  OCCT TopoDS handles are
+    /// pool-free; the rcad pool is the mutable backing store and every
+    /// index-based accessor (`edge_mut` / `tolerance` / ...) resolves
+    /// through `tshapes[index]`, so a tree whose handles were materialized
+    /// in another pool (or pool-free, index 0) must be materialized here
+    /// before index-based consumers may touch it (architecture A1/D6 note;
+    /// no OCCT counterpart — the OCCT form is the plain handle copy).
+    ///
+    /// Every TShape Arc of the tree that is not registered here gets a slot;
+    /// container data fields are rewritten to the imported child handles so
+    /// the returned tree carries pool-local indices end to end.  TShapes
+    /// already registered keep their Arc identity (shared, never cloned); a
+    /// container whose children were rewritten is re-registered as a new Arc
+    /// (the OCCT BRep_Builder::Add stores the child handle inside the parent
+    /// TShape the same way — the rewrite is that store, done in one pass).
+    pub fn import_shape_tree(&mut self, root: &Shape) -> Shape {
+        let mut registry: HashMap<u64, usize> = HashMap::new();
+        for (i, ts) in self.tshapes.iter().enumerate() {
+            registry.insert(Arc::as_ptr(ts) as u64, i);
+        }
+        let mut imported: HashMap<u64, Shape> = HashMap::new();
+        Self::import_node(self, root, &mut registry, &mut imported)
+    }
+
+    fn import_node(
+        brep: &mut BRep,
+        s: &Shape,
+        registry: &mut HashMap<u64, usize>,
+        imported: &mut HashMap<u64, Shape>,
+    ) -> Shape {
+        if s.ptr_id() == 0 {
+            return s.clone();
+        }
+        let pid = s.ptr_id();
+        if let Some(done) = imported.get(&pid) {
+            return done.clone();
+        }
+        // Collect the child handles of the container (the same fields the
+        // data-side walkers read).
+        let kids: Vec<Shape> = match &*s.data {
+            TShape::Vertex(v) => v.my_shapes.clone(),
+            TShape::Edge(e) => {
+                let mut k = e.my_shapes.clone();
+                k.push(e.first.clone());
+                k.push(e.last.clone());
+                k
+            }
+            TShape::Wire(w) => {
+                let mut k = w.my_shapes.clone();
+                k.extend(w.edges.iter().cloned());
+                k
+            }
+            TShape::Face(f) => {
+                let mut k = f.my_shapes.clone();
+                k.push(f.outer_wire.clone());
+                k.extend(f.inner_wires.iter().cloned());
+                k.extend(f.internal_vertices.iter().cloned());
+                k
+            }
+            TShape::Shell(sh) => {
+                let mut k = sh.my_shapes.clone();
+                k.extend(sh.faces.iter().cloned());
+                k
+            }
+            TShape::Solid(sd) => {
+                let mut k = sd.my_shapes.clone();
+                k.extend(sd.shells.iter().cloned());
+                k.extend(sd.internal_vertices.iter().cloned());
+                k.extend(sd.internal_edges.iter().cloned());
+                k
+            }
+            TShape::CompSolid(c) | TShape::Compound(c) => c.clone(),
+        };
+        let mut changed = false;
+        let new_kids: Vec<Shape> = kids
+            .iter()
+            .map(|k| {
+                let ni = Self::import_node(brep, k, registry, imported);
+                changed |= ni.ptr_id() != k.ptr_id() || ni.index != k.index;
+                ni
+            })
+            .collect();
+        // A node already registered in this pool with an unchanged child set
+        // keeps its slot and Arc identity.
+        if !changed {
+            if let Some(&idx) = registry.get(&pid) {
+                if idx < brep.tshapes.len() && Arc::ptr_eq(&brep.tshapes[idx], &s.data) {
+                    let out = Shape {
+                        data: brep.tshapes[idx].clone(),
+                        index: idx,
+                        location: s.location,
+                        orientation: s.orientation,
+                    };
+                    imported.insert(pid, out.clone());
+                    return out;
+                }
+            }
+        }
+        // Rewrite the container fields with the imported children (see the
+        // method doc for the BRep_Builder::Add analogy) and register the
+        // rewritten TShape.  The field groups are taken at the offsets the
+        // kid collection above used, per variant.
+        let data = match &*s.data {
+            TShape::Vertex(v) => {
+                let mut vd = v.clone();
+                let n = vd.my_shapes.len();
+                vd.my_shapes = new_kids[..n].to_vec();
+                TShape::Vertex(vd)
+            }
+            TShape::Edge(e) => {
+                let mut ed = e.clone();
+                let n = ed.my_shapes.len();
+                ed.my_shapes = new_kids[..n].to_vec();
+                ed.first = new_kids[n].clone();
+                ed.last = new_kids[n + 1].clone();
+                TShape::Edge(ed)
+            }
+            TShape::Wire(w) => {
+                let mut wd = w.clone();
+                let n = wd.my_shapes.len();
+                wd.my_shapes = new_kids[..n].to_vec();
+                wd.edges = new_kids[n..].to_vec();
+                TShape::Wire(wd)
+            }
+            TShape::Face(f) => {
+                let mut fd = f.clone();
+                let n_my = fd.my_shapes.len();
+                let n_iw = fd.inner_wires.len();
+                let n_iv = fd.internal_vertices.len();
+                let base = n_my;
+                fd.my_shapes = new_kids[..n_my].to_vec();
+                fd.outer_wire = new_kids[base].clone();
+                fd.inner_wires = new_kids[base + 1..base + 1 + n_iw].to_vec();
+                fd.internal_vertices = new_kids[base + 1 + n_iw..base + 1 + n_iw + n_iv].to_vec();
+                TShape::Face(fd)
+            }
+            TShape::Shell(sh) => {
+                let mut sd = sh.clone();
+                let n = sd.my_shapes.len();
+                sd.my_shapes = new_kids[..n].to_vec();
+                sd.faces = new_kids[n..].to_vec();
+                TShape::Shell(sd)
+            }
+            TShape::Solid(sd) => {
+                let mut sd = sd.clone();
+                let n_my = sd.my_shapes.len();
+                let n_sh = sd.shells.len();
+                let n_iv = sd.internal_vertices.len();
+                let n_ie = sd.internal_edges.len();
+                let base = n_my;
+                sd.my_shapes = new_kids[..n_my].to_vec();
+                sd.shells = new_kids[base..base + n_sh].to_vec();
+                sd.internal_vertices = new_kids[base + n_sh..base + n_sh + n_iv].to_vec();
+                sd.internal_edges = new_kids[base + n_sh + n_iv..base + n_sh + n_iv + n_ie].to_vec();
+                TShape::Solid(sd)
+            }
+            TShape::CompSolid(_) | TShape::Compound(_) => TShape::Compound(new_kids.clone()),
+        };
+        let index = brep.tshapes.len();
+        brep.tshapes.push(Arc::new(data));
+        registry.insert(Arc::as_ptr(&brep.tshapes[index]) as u64, index);
+        let out = Shape {
+            data: brep.tshapes[index].clone(),
+            index,
+            location: s.location,
+            orientation: s.orientation,
+        };
+        imported.insert(pid, out.clone());
+        out
+    }
+
     /// Apply an affine transform to all vertex positions, edge curves, and
     /// face surfaces in-place.  Equivalent to `rcad_kernel::BRep::apply_transform`.
     pub fn apply_transform(&mut self, mat: glam::DAffine3) {
@@ -935,6 +1338,7 @@ impl BRep {
                     c.origin = mat.transform_point3(c.origin);
                     c.axis = mat.transform_vector3(c.axis).normalize_or_zero();
                     c.ref_dir = mat.transform_vector3(c.ref_dir).normalize_or_zero();
+                    c.y_dir = c.y_dir.map(|y| mat.transform_vector3(y).normalize_or_zero());
                 }
                 Surface3::Sphere(s) => {
                     s.center = mat.transform_point3(s.center);
@@ -1041,6 +1445,26 @@ impl BRep {
                     if let Some(ref mut curve) = ed.curve {
                         xf_curve(curve, mat);
                     }
+                    // OCCT BRepTools_TrsfModification carries the edge
+                    // regularities through the transform: BRepTools_Modifier.cxx
+                    // L191-195 re-establishes M->Continuity(CurE, F1, F2, ...)
+                    // (TrsfModification.cxx L441-449 = the original
+                    // BRep_Tool::Continuity) on the transformed faces via
+                    // aBB.Continuity.  The rcad in-place transform is the
+                    // equivalent rebuild: the stored CurveOn2Surfaces surfaces
+                    // are absolute values and must be transformed with the
+                    // faces (BRep_Tool::Continuity(E, F1, F2) matches them by
+                    // value — a stale untransformed surface silently degrades
+                    // the seam regularity to C0).
+                    for cr in &mut ed.representations {
+                        if let CurveRepresentation::CurveOn2Surfaces {
+                            surface1, surface2, ..
+                        } = cr
+                        {
+                            xf_surface(surface1, mat);
+                            xf_surface(surface2, mat);
+                        }
+                    }
                 }
                 TShape::Face(fd) => {
                     if let Some(ref mut surface) = fd.surface {
@@ -1048,6 +1472,77 @@ impl BRep {
                     }
                 }
                 _ => {}
+            }
+        }
+        // OCCT BRepTools_TrsfModification (BRepTools_TrsfModification.cxx) for
+        // a non-unit scale: NewParameter re-parameterizes every vertex
+        // (C->TransformedParameter(P, T) — Geom_Line scales P by the scale
+        // factor), and the NewCurve2d + CurveOnPlane fallback re-projects the
+        // planar pcurves over the scaled 3D range.  The rcad equivalent scales
+        // the stored 3D edge range, the vertex parameters and the pcurve
+        // ranges by |scale|; the pcurve 2D curves themselves keep their
+        // parametric form (a straight planar pcurve from a to a + l*dir with
+        // l scaled covers the scaled physical span — identical to the OCCT
+        // projection result).
+        let scale = mat.transform_vector3(DVec3::X).length();
+        if (scale - 1.0).abs() > 1e-12 {
+            // OCCT ParametricTransformation for a uniform scaling: the 2D
+            // coordinates (relative to the surface origin) scale by |s|; the
+            // unit directions stay.  Mirrors the OCCT GeomLib::GTransform of
+            // the pcurve (NewCurve2d) and the CurveOnPlane projection result.
+            fn scale_curve2d(c: &mut Curve2d, s: f64) {
+                match c {
+                    Curve2d::Line(l) => l.origin *= s,
+                    Curve2d::Circle(cr) => {
+                        cr.center *= s;
+                        cr.radius *= s;
+                    }
+                    Curve2d::Ellipse(e) => {
+                        e.center *= s;
+                        e.major_radius *= s;
+                        e.minor_radius *= s;
+                    }
+                    Curve2d::BSpline(b) => {
+                        for p in b.control_points.iter_mut() {
+                            *p *= s;
+                        }
+                    }
+                    Curve2d::Bezier(b) => {
+                        for p in b.control_points.iter_mut() {
+                            *p *= s;
+                        }
+                    }
+                    Curve2d::Trimmed(t) => scale_curve2d(&mut t.curve, s),
+                    _ => {}
+                }
+            }
+            for ts in &self.tshapes {
+                let ptr = Arc::as_ptr(ts) as *mut TShape;
+                let ts = unsafe { &mut *ptr };
+                match ts {
+                    TShape::Edge(ed) => {
+                        ed.range[0] *= scale;
+                        ed.range[1] *= scale;
+                        for vp in ed.vertex_params.values_mut() {
+                            *vp *= scale;
+                        }
+                        for (_key, (c, f, l)) in ed.pcurves.iter_mut() {
+                            scale_curve2d(c, scale);
+                            *f *= scale;
+                            *l *= scale;
+                        }
+                    }
+                    TShape::Face(fd) => {
+                        // The uv_domain cache is a parameter-space box; it
+                        // scales with the surface parameterization.
+                        if let Some(d) = fd.uv_domain.as_mut() {
+                            for v in d.iter_mut() {
+                                *v *= scale;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         // Vertex positions changed; the position-keyed identity cache is stale.
@@ -1069,28 +1564,45 @@ impl BRep {
         }
     }
 
-    /// OCCT TopoDS_TShape::EmptyCopy �?create a new TShape of the same type
+    /// OCCT TopoDS_TShape::EmptyCopy - create a new TShape of the same type
     /// with no sub-shapes. Preserves flags. Returns the new TShape index.
+    ///
+    /// Per-type data copied mirrors the OCCT BRep_Txx::EmptyCopy overrides:
+    /// - TVertex (BRep_TVertex.cxx L44-49): Pnt + Tolerance only.
+    /// - TEdge (BRep_TEdge.cxx L48-73): Tolerance + curve representations
+    ///   (pcurves keep their ranges) + Degenerated/SameParameter/SameRange;
+    ///   vertices and vertex parameters are dropped.
+    /// - TFace (BRep_TFace.cxx L44-52): Surface + Location + Tolerance only
+    ///   (NaturalRestriction stays false, no sample-point caches).
     pub fn empty_copy(&mut self, r: Shape) -> Shape {
+        // OCCT TopoDS_Txx::EmptyCopy() (TopoDS_TEdge.cxx L24-27 et al.) builds
+        // `new TopoDS_Txx()` — the default constructor, whose flags are the
+        // DEFAULT set Free | Modified | Orientable (TopoDS_TShape.hxx L169).
+        // The source's frozen state (a shape attached to a parent) does not
+        // carry over; copying it would make B.Add raise TopoDS_FrozenShape on
+        // the fresh copy.
         let ts = &self.tshapes[r.index];
         let new = match &**ts {
             TShape::Vertex(vd) => Arc::new(TShape::Vertex(TVertexData {
                 my_shapes: Vec::new(),
-                flags: vd.flags,
+                flags: tshape_flags::DEFAULT,
                 point: vd.point,
                 tolerance: vd.tolerance,
                 points: Vec::new(),
             })),
             TShape::Edge(ed) => Arc::new(TShape::Edge(TEdgeData {
                 my_shapes: Vec::new(),
-                flags: ed.flags,
+                flags: tshape_flags::DEFAULT,
                 curve: ed.curve.clone(),
                 first: Shape::null(),
                 last: Shape::null(),
                 range: ed.range,
                 degenerated: ed.degenerated,
-                pcurves: HashMap::new(),
-                representations: Vec::new(),
+                // OCCT BRep_TEdge::EmptyCopy copies the curve representations
+                // (GCurve + CurveOn2Surfaces kinds, polygons dropped); rcad's
+                // pcurve map + representations vec is that same data.
+                pcurves: ed.pcurves.clone(),
+                representations: ed.representations.clone(),
                 vertex_params: HashMap::new(),
                 tolerance: ed.tolerance,
                 same_parameter: ed.same_parameter,
@@ -1098,30 +1610,32 @@ impl BRep {
             })),
             TShape::Wire(wd) => Arc::new(TShape::Wire(TWireData {
                 my_shapes: Vec::new(),
-                flags: wd.flags,
+                flags: tshape_flags::DEFAULT,
                 edges: Vec::new(),
             })),
             TShape::Face(fd) => Arc::new(TShape::Face(TFaceData {
                 my_shapes: Vec::new(),
-                flags: fd.flags,
+                flags: tshape_flags::DEFAULT,
                 surface: fd.surface.clone(),
                 surface_location: fd.surface_location,
                 outer_wire: Shape::null(),
                 inner_wires: Vec::new(),
-                sample_point: fd.sample_point,
-                uv_domain: fd.uv_domain,
+                sample_point: None,
+                uv_domain: None,
                 internal_vertices: Vec::new(),
                 tolerance: fd.tolerance,
-                natural_restriction: fd.natural_restriction,
+                // OCCT BRep_TFace::EmptyCopy copies Surface/Location/Tolerance
+                // only; NaturalRestriction stays at its default (false).
+                natural_restriction: false,
             })),
             TShape::Shell(sd) => Arc::new(TShape::Shell(TShellData {
                 my_shapes: Vec::new(),
-                flags: sd.flags,
+                flags: tshape_flags::DEFAULT,
                 faces: Vec::new(),
             })),
             TShape::Solid(sd) => Arc::new(TShape::Solid(TSolidData {
                 my_shapes: Vec::new(),
-                flags: sd.flags,
+                flags: tshape_flags::DEFAULT,
                 shells: Vec::new(),
                 internal_vertices: Vec::new(),
                 internal_edges: Vec::new(),
@@ -1138,6 +1652,15 @@ impl BRep {
             orientation: Orientation::Forward,
             location: 0,
         }
+    }
+
+    /// OCCT TopoDS_Shape::EmptyCopied (TopoDS_Shape.hxx L168-172): a new TShape
+    /// via TShape::EmptyCopy(), carrying the ORIGINAL Location and Orientation.
+    pub fn empty_copied(&mut self, r: &Shape) -> Shape {
+        let mut c = self.empty_copy(r.clone());
+        c.orientation = r.orientation;
+        c.location = r.location;
+        c
     }
 
     /// Count face TShapes in this BRep (for shifted-key pcurve lookup).
@@ -1326,35 +1849,59 @@ pub fn nb_faces(&self) -> usize {
         }
     }
 
-    /// Mutate a wire's data.
+    /// Mutate a wire's data in place, preserving Arc identity (the OCCT
+    /// BRep_Builder edits TShapes in place; `Arc::make_mut` would split the
+    /// identity whenever the wire is referenced by the arena plus another
+    /// container — the same contract as [`BRep::edge_mut_inplace`]).
     pub fn wire_mut(&mut self, r: Shape) -> &mut TWireData {
-        match Arc::make_mut(&mut self.tshapes[r.index]) {
-            TShape::Wire(w) => w,
-            _ => panic!("wire_mut: Shape {} is not a Wire", r.index),
+        // SAFETY: the caller holds &mut BRep (exclusive borrow of the tshape
+        // slot) and is building the shape sequentially; every other reference
+        // observes the change, matching the OCCT in-place builder semantics.
+        let ptr = Arc::as_ptr(&self.tshapes[r.index]) as *mut TShape;
+        unsafe {
+            match &mut *ptr {
+                TShape::Wire(w) => w,
+                _ => panic!("wire_mut: Shape {} is not a Wire", r.index),
+            }
         }
     }
 
-    /// Mutate a face's data.
+    /// Mutate a face's data in place, preserving Arc identity (see
+    /// [`BRep::wire_mut`]).
     pub fn face_mut(&mut self, r: Shape) -> &mut TFaceData {
-        match Arc::make_mut(&mut self.tshapes[r.index]) {
-            TShape::Face(f) => f,
-            _ => panic!("face_mut: Shape {} is not a Face", r.index),
+        // SAFETY: see wire_mut.
+        let ptr = Arc::as_ptr(&self.tshapes[r.index]) as *mut TShape;
+        unsafe {
+            match &mut *ptr {
+                TShape::Face(f) => f,
+                _ => panic!("face_mut: Shape {} is not a Face", r.index),
+            }
         }
     }
 
-    /// Mutate a shell's data.
+    /// Mutate a shell's data in place, preserving Arc identity (see
+    /// [`BRep::wire_mut`]).
     pub fn shell_mut(&mut self, r: Shape) -> &mut TShellData {
-        match Arc::make_mut(&mut self.tshapes[r.index]) {
-            TShape::Shell(s) => s,
-            _ => panic!("shell_mut: Shape {} is not a Shell", r.index),
+        // SAFETY: see wire_mut.
+        let ptr = Arc::as_ptr(&self.tshapes[r.index]) as *mut TShape;
+        unsafe {
+            match &mut *ptr {
+                TShape::Shell(s) => s,
+                _ => panic!("shell_mut: Shape {} is not a Shell", r.index),
+            }
         }
     }
 
-    /// Mutate a solid's data.
+    /// Mutate a solid's data in place, preserving Arc identity (see
+    /// [`BRep::wire_mut`]).
     pub fn solid_mut(&mut self, r: Shape) -> &mut TSolidData {
-        match Arc::make_mut(&mut self.tshapes[r.index]) {
-            TShape::Solid(s) => s,
-            _ => panic!("solid_mut: Shape {} is not a Solid", r.index),
+        // SAFETY: see wire_mut.
+        let ptr = Arc::as_ptr(&self.tshapes[r.index]) as *mut TShape;
+        unsafe {
+            match &mut *ptr {
+                TShape::Solid(s) => s,
+                _ => panic!("solid_mut: Shape {} is not a Solid", r.index),
+            }
         }
     }
 
@@ -1392,16 +1939,20 @@ pub fn nb_faces(&self) -> usize {
 
     /// Axis-aligned bounding box computed from all vertex positions.
     /// Returns `None` if the BRep has no vertices.
+    ///
+    /// The sentinels follow Bnd_Box::SetVoid (Bnd_Box.hxx L103-110):
+    /// Xmin = RealLast(), Xmax = -RealLast(); the "no vertex added" state is
+    /// then exactly `mn.x >= RealLast()`.
     pub fn bounding_box(&self) -> Option<[DVec3; 2]> {
-        let mut mn = DVec3::splat(f64::INFINITY);
-        let mut mx = DVec3::splat(f64::NEG_INFINITY);
+        let mut mn = DVec3::splat(REAL_LAST);
+        let mut mx = DVec3::splat(REAL_FIRST);
         for ts in &self.tshapes {
             if let TShape::Vertex(v) = ts.as_ref() {
                 mn = mn.min(v.point);
                 mx = mx.max(v.point);
             }
         }
-        if mn.x.is_infinite() {
+        if mn.x >= REAL_LAST {
             None
         } else {
             Some([mn, mx])
@@ -1426,17 +1977,216 @@ pub fn nb_faces(&self) -> usize {
     }
 
     /// Build a compound from multiple topods::BRep shapes.
+    ///
+    /// Each input BRep's top-level solids (falling back to shells/faces for
+    /// face-like inputs) are merged into the result with their FULL topology:
+    /// the TShape Arcs are SHARED (OCCT BRep_Builder::Add references the
+    /// source TShape, it never clones it — TopoDS_Builder.cxx L57-59) and
+    /// every internal Shape.index is re-pointed from the source array
+    /// position to the merged array position, in place on the shared TShape.
+    /// A compound of EMPTY solids (the previous implementation) lost all
+    /// sub-topology and made every later traversal (topology counts,
+    /// BRepGProp, further booleans) see zero faces/edges/vertices.
+    ///
+    /// The input BReps are assumed disjoint (each TShape Arc appears in one
+    /// input only, as with `n_ary_partition` cells); the per-input remap
+    /// re-points indices under that assumption (same single-ownership model
+    /// as compact_brep_face_subset).
     pub fn compound_from_shapes(shapes: &[BRep]) -> BRep {
         let mut t = BRep::new();
-        let mut refs = Vec::new();
-        for s in shapes {
-            let mut solid_refs = Vec::new();
-            for (ti, ts) in s.tshapes.iter().enumerate() {
-                if matches!(ts.as_ref(), TShape::Solid(_)) {
-                    solid_refs.push(t.add_tsolid(Vec::new()));
+        let mut refs: Vec<Shape> = Vec::new();
+        // Push a source TShape (by its array index) into `t`, sharing the Arc
+        // and recursing into sub-shapes first so their merged indices exist.
+        fn push(
+            brep: &BRep,
+            t: &mut BRep,
+            remap: &mut HashMap<usize, usize>,
+            src: usize,
+        ) -> Option<Shape> {
+            if src >= brep.tshapes.len() {
+                return None;
+            }
+            if let Some(&i) = remap.get(&src) {
+                return Some(Shape::from_parts(
+                    t.tshapes[i].clone(),
+                    i,
+                    0,
+                    Orientation::Forward,
+                ));
+            }
+            let idx = t.tshapes.len();
+            t.tshapes.push(brep.tshapes[src].clone());
+            remap.insert(src, idx);
+            let base = Shape::from_parts(
+                t.tshapes[idx].clone(),
+                idx,
+                0,
+                Orientation::Forward,
+            );
+            match &*brep.tshapes[src] {
+                TShape::Edge(ed) => {
+                    push(brep, t, remap, ed.first.index);
+                    push(brep, t, remap, ed.last.index);
+                }
+                TShape::Wire(wd) => {
+                    for e in &wd.edges {
+                        push(brep, t, remap, e.index);
+                    }
+                }
+                TShape::Face(fd) => {
+                    push(brep, t, remap, fd.outer_wire.index);
+                    for w in &fd.inner_wires {
+                        push(brep, t, remap, w.index);
+                    }
+                    for v in &fd.internal_vertices {
+                        push(brep, t, remap, v.index);
+                    }
+                }
+                TShape::Shell(sd) => {
+                    for f in &sd.faces {
+                        push(brep, t, remap, f.index);
+                    }
+                }
+                TShape::Solid(sd) => {
+                    for s in &sd.shells {
+                        push(brep, t, remap, s.index);
+                    }
+                    for v in &sd.internal_vertices {
+                        push(brep, t, remap, v.index);
+                    }
+                    for e in &sd.internal_edges {
+                        push(brep, t, remap, e.index);
+                    }
+                }
+                TShape::CompSolid(cs) => {
+                    for s in cs {
+                        push(brep, t, remap, s.index);
+                    }
+                }
+                TShape::Compound(c) => {
+                    for s in c {
+                        push(brep, t, remap, s.index);
+                    }
+                }
+                TShape::Vertex(_) => {}
+            }
+            // Re-point the shared TShape's internal reference indices from
+            // the source array positions to the merged array positions
+            // (single ownership: the input BReps are not read after the
+            // merge).
+            let raw = Arc::as_ptr(&brep.tshapes[src]) as *mut TShape;
+            unsafe {
+                match &mut *raw {
+                    TShape::Vertex(vd) => {
+                        for s in vd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                    }
+                    TShape::Edge(ed) => {
+                        for s in ed.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        if let Some(&i) = remap.get(&ed.first.index) {
+                            ed.first.index = i;
+                        }
+                        if let Some(&i) = remap.get(&ed.last.index) {
+                            ed.last.index = i;
+                        }
+                    }
+                    TShape::Wire(wd) => {
+                        for s in wd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        for e in wd.edges.iter_mut() {
+                            if let Some(&i) = remap.get(&e.index) {
+                                e.index = i;
+                            }
+                        }
+                    }
+                    TShape::Face(fd) => {
+                        for s in fd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        if let Some(&i) = remap.get(&fd.outer_wire.index) {
+                            fd.outer_wire.index = i;
+                        }
+                        for w in fd.inner_wires.iter_mut() {
+                            if let Some(&i) = remap.get(&w.index) {
+                                w.index = i;
+                            }
+                        }
+                        for v in fd.internal_vertices.iter_mut() {
+                            if let Some(&i) = remap.get(&v.index) {
+                                v.index = i;
+                            }
+                        }
+                    }
+                    TShape::Shell(sd) => {
+                        for s in sd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        for f in sd.faces.iter_mut() {
+                            if let Some(&i) = remap.get(&f.index) {
+                                f.index = i;
+                            }
+                        }
+                    }
+                    TShape::Solid(sd) => {
+                        for s in sd.my_shapes.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                        for s in sd.shells.iter_mut() {
+                            if let Some(&i) = remap.get(&s.index) {
+                                s.index = i;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
-            refs.extend(solid_refs);
+            Some(base)
+        }
+        for s in shapes {
+            // Top-level solids first; fall back to top-level containers for
+            // face-like inputs (a compound of planar faces, e.g. partition
+            // of a face object).
+            let mut tops: Vec<usize> = Vec::new();
+            for (ti, ts) in s.tshapes.iter().enumerate() {
+                if matches!(&**ts, TShape::Solid(_)) {
+                    tops.push(ti);
+                }
+            }
+            if tops.is_empty() {
+                for (ti, ts) in s.tshapes.iter().enumerate() {
+                    if matches!(
+                        &**ts,
+                        TShape::Shell(_)
+                            | TShape::Face(_)
+                            | TShape::CompSolid(_)
+                            | TShape::Compound(_)
+                    ) {
+                        tops.push(ti);
+                    }
+                }
+            }
+            let mut remap: HashMap<usize, usize> = HashMap::new();
+            for ti in tops {
+                if let Some(sh) = push(s, &mut t, &mut remap, ti) {
+                    refs.push(sh);
+                }
+            }
         }
         if !refs.is_empty() {
             t.add_tcompound(refs);
@@ -1473,7 +2223,7 @@ pub trait BRepTool {
     /// BRep_Tool::Parameter(aV, aE, aF) �?vertex parameter on edge's pcurve.
     fn parameter_on_edge(&self, vertex: &Shape, edge: &Shape, face: &Shape) -> Option<f64>;
     /// BRep_Tool::CurveOnSurface(aE, aF) �?pcurve of edge on face.
-    fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<&(Curve2d, f64, f64)>;
+    fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)>;
     /// BRep_Tool::Surface(aF) �?face surface (local coordinates, no Location applied).
     fn face_surface(&self, face: &Shape) -> Option<&Surface3>;
     /// BRep_Tool::Surface(aF) with Location applied �?returns world-coordinate surface.
@@ -1606,18 +2356,114 @@ impl BRepTool for BRep {
         self.edge(edge.clone()).vertex_params.get(&vertex.ptr_id()).copied()
     }
 
-    fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<&(Curve2d, f64, f64)> {
+    fn curve_on_surface(&self, edge: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)> {
+        // OCCT BRep_Tool.cxx L339 + L353-357: a closed (seam) edge occurrence
+        // with REVERSED orientation selects the SECOND pcurve of its
+        // BRep_CurveOnClosedSurface pair (PCurve2); FORWARD selects PCurve1.
+        // BRep_Tool::CurveOnSurface carries the rule, so every adaptor built
+        // on it (BRepAdaptor_Curve2d, the FClass2d polygon walk, ...) reads
+        // the seam side matching the wire traversal direction.
+        if edge.orientation == Orientation::Reversed && self.is_edge_closed_on_face(edge, face) {
+            if let Some(second) = self.curve_on_surface_second(edge, face) {
+                return Some(second);
+            }
+        }
         // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve of
         // an edge on a face is keyed by `aLoc = L.Predivided(E.Location())` —
         // the face location divided by the edge's location.  A located edge
         // (the translated top cap of a prism) therefore has its own pcurve
         // key, distinct from the base edge's.
         let key = (face.ptr_id(), compose_pcurve_location(face.location, edge.location, &self.locations));
-        self.edge(edge.clone()).pcurves.get(&key)
+        let ed = self.edge(edge.clone());
+        if let Some(hit) = ed.pcurves.get(&key) {
+            return Some(hit.clone());
+        }
+        // OCCT BRep_Tool.cxx L345-368: the edge's representations are matched
+        // by (surface handle, L.Predivided(E.Location()) BY VALUE) — not by
+        // the owning face TShape pointer.  A face rebuilt over the same
+        // surface (boolean images/areas) therefore resolves the
+        // representations stored under the original face's pointer.  rcad
+        // mirrors this by comparing the surface VALUE (surface_same stands in
+        // for Geom_Surface handle identity) and the location-value hash
+        // component.
+        let fsurf = match face.data.as_ref() {
+            TShape::Face(fd) => fd.surface.clone(),
+            _ => None,
+        };
+        let Some(fsurf) = fsurf else { return None };
+        // Face-surface lookup by TShape pointer (handle identity stand-in).
+        let face_surface_by_ptr = |ptr: u64| -> Option<crate::geom::Surface3> {
+            let ts = self
+                .tshapes
+                .iter()
+                .find(|ts| Arc::as_ptr(ts) as u64 == ptr)?;
+            match ts.as_ref() {
+                TShape::Face(fd) => fd.surface.clone(),
+                _ => None,
+            }
+        };
+        // OCCT iterates the edge's curve representations directly
+        // (BRep_Tool.cxx L350-367): cr->IsCurveOnSurface(S, loc) matches the
+        // SURFACE VALUE, and the matched BRep_GCurve supplies PCurve() (the
+        // first pcurve; a seam's CurveOnClosedSurface carries both).  The
+        // pcurves map above is rcad's fast index for the same data; this
+        // fallback walks the representations so an edge whose rows are keyed
+        // under another face TShape (boolean areas rebuilt over the same
+        // surface) still resolve.
+        for r in &ed.representations {
+            match r {
+                CurveRepresentation::CurveOnSurface { face: (fptr, lhash), pcurve, range } => {
+                    if *lhash != key.1 {
+                        continue;
+                    }
+                    if let Some(s) = face_surface_by_ptr(*fptr) {
+                        if surface_same(&s, &fsurf) {
+                            return Some((pcurve.clone(), range[0], range[1]));
+                        }
+                    }
+                }
+                CurveRepresentation::CurveOnClosedSurface { face: (fptr, lhash), pcurve1, range, .. } => {
+                    if *lhash != key.1 {
+                        continue;
+                    }
+                    if let Some(s) = face_surface_by_ptr(*fptr) {
+                        if surface_same(&s, &fsurf) {
+                            return Some((pcurve1.clone(), range[0], range[1]));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        // OCCT never walks a hash map here: BRep_Tool::CurveOnSurface iterates
+        // the edge's representation LIST (insertion order).  ed.pcurves is an
+        // IndexMap whose insertion order reflects the historical insertion
+        // sequence (not stable across equivalent builds), so pick the
+        // deterministic minimum key among the matching rows.
+        let mut best: Option<((u64, u32), (Curve2d, f64, f64))> = None;
+        for ((fptr, lhash), v) in ed.pcurves.iter() {
+            if *lhash != key.1 {
+                continue;
+            }
+            if let Some(s) = face_surface_by_ptr(*fptr) {
+                if surface_same(&s, &fsurf) {
+                    let k = (*fptr, *lhash);
+                    if best.as_ref().map_or(true, |(bk, _)| k < *bk) {
+                        best = Some((k, v.clone()));
+                    }
+                }
+            }
+        }
+        if let Some((_, v)) = best {
+            return Some(v);
+        }
+        // OCCT BRep_Tool.cxx L367-372: "Curve is not found. Try projection
+        // on plane" -> *theIsStored = false; CurveOnPlane(E, S, L, First, Last).
+        self.curve_on_plane(edge, face, &fsurf, ed)
     }
 
     fn is_edge_closed_on_face(&self, edge: &Shape, face: &Shape) -> bool {
-        let fkey = (face.ptr_id(), face.location);
+        let fkey = (face.ptr_id(), self.pcurve_loc_component(face.clone()));
         let ed = self.edge(edge.clone());
         ed.representations.iter().any(|r| matches!(r, CurveRepresentation::CurveOnClosedSurface { face: f, .. } if *f == fkey))
     }
@@ -1630,7 +2476,7 @@ impl BRepTool for BRep {
         // OCCT BRep_Tool::CurveOnSurface(aE, aF) second curve of a
         // BRep_CurveOnClosedSurface: no separate key, the second pcurve lives
         // in the same representation as the first one.
-        let fkey = (face.ptr_id(), face.location);
+        let fkey = (face.ptr_id(), self.pcurve_loc_component(face.clone()));
         let ed = self.edge(edge.clone());
         for r in &ed.representations {
             if let CurveRepresentation::CurveOnClosedSurface {
@@ -1642,6 +2488,41 @@ impl BRepTool for BRep {
             {
                 if *f == fkey {
                     return Some((pcurve2.clone(), range[0], range[1]));
+                }
+            }
+        }
+        // OCCT matches the representation by SURFACE VALUE
+        // (BRep_Tool.cxx L350-367: IsCurveOnClosedSurface() &&
+        // E.IsReversed() -> GC->PCurve2()); a face rebuilt over the same
+        // surface (boolean areas) resolves the representation stored under
+        // the original face's pointer.
+        let fsurf = match face.data.as_ref() {
+            TShape::Face(fd) => fd.surface.clone(),
+            _ => None,
+        };
+        let Some(fsurf) = fsurf else { return None };
+        for r in &ed.representations {
+            if let CurveRepresentation::CurveOnClosedSurface {
+                face: (fptr, lhash),
+                pcurve2,
+                range,
+                ..
+            } = r
+            {
+                if *lhash != fkey.1 {
+                    continue;
+                }
+                let ts = self
+                    .tshapes
+                    .iter()
+                    .find(|ts| Arc::as_ptr(ts) as u64 == *fptr);
+                let Some(ts) = ts else { continue };
+                if let TShape::Face(fd) = ts.as_ref() {
+                    if let Some(s) = fd.surface.as_ref() {
+                        if surface_same(s, &fsurf) {
+                            return Some((pcurve2.clone(), range[0], range[1]));
+                        }
+                    }
                 }
             }
         }
@@ -1942,6 +2823,16 @@ impl BRep {
             .count()
     }
 
+    /// Get the tshape index of the edge at the given edge number (0-based).
+    pub fn edge_tshape_index(&self, edge_num: usize) -> Option<usize> {
+        self.tshapes
+            .iter()
+            .enumerate()
+            .filter(|(_, ts)| matches!((&**ts).as_ref(), TShape::Edge(_)))
+            .nth(edge_num)
+            .map(|(idx, _)| idx)
+    }
+
     /// Count face TShapes.
     pub fn face_count(&self) -> usize {
         self.tshapes
@@ -2143,18 +3034,33 @@ impl BRep {
             Curve2d, Curve2dEval, CurveEval, Line2d, Surface3, SurfaceEval, any_perpendicular,
         };
         use glam::DVec2;
-        // Build edge �?faces map
-        let mut edge_faces: std::collections::HashMap<usize, Vec<usize>> =
+        // Build edge -> faces map.  OCCT BRepLib::SameParameter walks the
+        // LOCATED shape instances, so each (edge, face) pair carries the pair
+        // of location VALUES needed for the pcurve key
+        // L.Predivided(E.Location()) (BRep_Tool.cxx L345); the key component
+        // is computed from the transform values (identity -> 0).
+        let mut edge_faces: std::collections::HashMap<usize, Vec<(usize, u64, u32)>> =
             std::collections::HashMap::new();
         for (ti, ts) in self.tshapes.iter().enumerate() {
             if let TShape::Face(fd) = &**ts {
                 let process_wire =
-                    |sr: &Shape, map: &mut std::collections::HashMap<usize, Vec<usize>>| {
+                    |sr: &Shape,
+                     map: &mut std::collections::HashMap<usize, Vec<(usize, u64, u32)>>| {
                         if sr.index < self.tshapes.len() {
+                            let face_tr = self.get_location(sr.location);
                             if let TShape::Wire(wd) = &*self.tshapes[sr.index] {
                                 for esr in &wd.edges {
                                     if esr.index < self.tshapes.len() {
-                                        map.entry(esr.index).or_default().push(ti);
+                                        let edge_tr = self.get_location(esr.location);
+                                        let kid = pcurve_location_id(
+                                            &(face_tr * edge_tr.inverse()),
+                                        );
+                                        let entry =
+                                            (ti, Arc::as_ptr(&self.tshapes[ti]) as u64, kid);
+                                        let v = map.entry(esr.index).or_default();
+                                        if !v.contains(&entry) {
+                                            v.push(entry);
+                                        }
                                     }
                                 }
                             }
@@ -2180,7 +3086,7 @@ impl BRep {
             };
             let t_range = edge_data.range;
             let mut max_dev = 0.0f64;
-            for &fi in face_indices {
+            for &(fi, fptr, kid) in face_indices {
                 let face_data = match &*self.tshapes[fi] {
                     TShape::Face(fd) => fd.clone(),
                     _ => continue,
@@ -2188,8 +3094,9 @@ impl BRep {
                 let Some(ref surf) = face_data.surface else {
                     continue;
                 };
-                // Compute pcurve if missing (planar surfaces only)
-                let face_key = (Arc::as_ptr(&self.tshapes[fi]) as u64, 0u32);
+                // Compute pcurve if missing (planar surfaces only).  The key
+                // is the composed location VALUE id of this located pair.
+                let face_key = (fptr, kid);
                 let has_pcurve = edge_data.pcurves.contains_key(&face_key);
                 if !has_pcurve {
                     if let Surface3::Plane(p) = surf {
@@ -2393,12 +3300,12 @@ impl BRepBuilder {
         // OCCT BRep_Builder::UpdateEdge (BRep_Builder.cxx L692): the pcurve is
         // stored under `L.Predivided(E.Location())` — see curve_on_surface.
         let key = (face.ptr_id(), compose_pcurve_location(face.location, edge.location, &brep.locations));
-        brep.edge_mut(edge).pcurves.insert(key, (pc, t1, t2));
+        brep.edge_mut_inplace(edge).pcurves.insert(key, (pc, t1, t2));
     }
 
     /// OCCT BRep_Builder::UpdateEdge(aE, theTol) �?update edge tolerance.
     pub fn update_edge_tolerance(&mut self, brep: &mut BRep, edge: Shape, tol: f64) {
-        let ed = brep.edge_mut(edge);
+        let ed = brep.edge_mut_inplace(edge);
         ed.tolerance = ed.tolerance.max(tol);
     }
 
@@ -2411,20 +3318,30 @@ impl BRepBuilder {
         face: Shape,
         tol: f64,
     ) {
-        let ed = brep.edge_mut(edge);
+        // OCCT L660-700 + L330-370: one representation per wrapper location of
+        // the edge TShape, keyed by L.Predivided(E.Location()) BY VALUE.
+        let locs = brep.edge_wrapper_locations(&edge);
+        let mut fkeys: Vec<(u64, u32)> = Vec::with_capacity(locs.len());
+        for &el in &locs {
+            fkeys.push((
+                face.ptr_id(),
+                compose_pcurve_location(face.location, el, &brep.locations),
+            ));
+        }
         let (ta, tb) = pc_parameter_range(&pcurve);
-        ed.pcurves
-            .insert((face.ptr_id(), face.location), (pcurve.clone(), ta, tb));
-        ed.representations
-            .push(CurveRepresentation::CurveOnSurface {
-                face: (face.ptr_id(), face.location),
-                pcurve,
-                range: [ta, tb],
-            });
+        let ed = brep.edge_mut_inplace(edge);
+        for k in &fkeys {
+            ed.pcurves
+                .insert(*k, (pcurve.clone(), ta, tb));
+            ed.representations
+                .push(CurveRepresentation::CurveOnSurface {
+                    face: *k,
+                    pcurve: pcurve.clone(),
+                    range: [ta, tb],
+                });
+        }
         ed.tolerance = ed.tolerance.max(tol);
     }
-
-    /// OCCT BRep_Builder::UpdateEdge(aE, aC1, aC2, aF, theTol) — set two
     /// pcurves of an edge on the same face. The edge lies on the closing curve
     /// (seam) of a closed surface and carries a BRep_CurveOnClosedSurface
     /// representation (BRepPrim_OneAxis::LateralFace L434-438).
@@ -2445,21 +3362,83 @@ impl BRepBuilder {
         a_last: f64,
         tol: f64,
     ) {
-        let fkey = (face.ptr_id(), face.location);
-        let ed = brep.edge_mut(edge);
-        ed.pcurves
-            .insert(fkey, (pcurve1.clone(), a_first, a_last));
-        ed.representations
-            .push(CurveRepresentation::CurveOnClosedSurface {
-                face: fkey,
-                pcurve1,
-                pcurve2,
-                range: [a_first, a_last],
-            });
+        // Same per-wrapper-location variants as update_edge_pcurve.
+        let locs = brep.edge_wrapper_locations(&edge);
+        let mut fkeys: Vec<(u64, u32)> = Vec::with_capacity(locs.len());
+        for &el in &locs {
+            fkeys.push((
+                face.ptr_id(),
+                compose_pcurve_location(face.location, el, &brep.locations),
+            ));
+        }
+        let ed = brep.edge_mut_inplace(edge);
+        for k in &fkeys {
+            ed.pcurves
+                .insert(*k, (pcurve1.clone(), a_first, a_last));
+            ed.representations
+                .push(CurveRepresentation::CurveOnClosedSurface {
+                    face: *k,
+                    pcurve1: pcurve1.clone(),
+                    pcurve2: pcurve2.clone(),
+                    range: [a_first, a_last],
+                });
+        }
         ed.tolerance = ed.tolerance.max(tol);
     }
 
-    /// OCCT BRep_Builder::UpdateEdge(aE, aC3d) �?set 3D curve.
+    /// OCCT BRep_Builder::Continuity(E, F1, F2, C) (BRep_Builder.cxx
+    /// L1012-1021) -> Continuity(E, S1, S2, L1, L2, C) (L1025-1043): the
+    /// face surfaces with the locations `L.Predivided(E.Location())` (the
+    /// compose_pcurve_location stand-in) are stored through the UpdateCurves
+    /// regularity walk (static, BRep_Builder.cxx L376-405): an existing
+    /// matching BRep_CurveOn2Surfaces takes the continuity, otherwise a new
+    /// one is appended.
+    pub fn continuity(
+        &mut self,
+        brep: &mut BRep,
+        edge: &Shape,
+        f1: &Shape,
+        f2: &Shape,
+        c: GeomAbsShape,
+    ) {
+        // OCCT L1017-1019: S1 = Surface(F1, l1); S2 = Surface(F2, l2).
+        // (a missing rcad surface — the OCCT null handle — stores nothing.)
+        let (Some(s1), Some(s2)) = (
+            face_surface_value(brep, f1),
+            face_surface_value(brep, f2),
+        ) else {
+            return;
+        };
+        // OCCT L1037-1038: l1 = L1.Predivided(E.Location());
+        // l2 = L2.Predivided(E.Location());
+        let l1 = compose_pcurve_location(f1.location, edge.location, &brep.locations);
+        let l2 = compose_pcurve_location(f2.location, edge.location, &brep.locations);
+
+        // OCCT L1040: UpdateCurves(TE->ChangeCurves(), S1, S2, l1, l2, C)
+        // (static UpdateCurves, BRep_Builder.cxx L376-405).
+        let ed = brep.edge_mut_inplace(edge.clone());
+        for cr in ed.representations.iter_mut() {
+            // OCCT L387: cr->IsRegularity(S1, S2, L1, L2).
+            if cr.is_regularity_on(&s1, &s2, l1, l2) {
+                // OCCT L397-398: cr->Continuity(C).
+                if let CurveRepresentation::CurveOn2Surfaces { continuity, .. } = cr {
+                    *continuity = c;
+                }
+                return;
+            }
+        }
+        // OCCT L402-403: new BRep_CurveOn2Surfaces(S1, S2, L1, L2, C).
+        ed.representations
+            .push(CurveRepresentation::CurveOn2Surfaces {
+                surface1: s1,
+                surface2: s2,
+                location1: l1,
+                location2: l2,
+                continuity: c,
+            });
+    }
+
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC3d) — set 3D curve.
     pub fn update_edge_curve3d(
         &mut self,
         brep: &mut BRep,
@@ -2467,7 +3446,7 @@ impl BRepBuilder {
         curve: usize,
         location: u32,
     ) {
-        let ed = brep.edge_mut(edge);
+        let ed = brep.edge_mut_inplace(edge);
         ed.representations
             .push(CurveRepresentation::Curve3D { curve, location });
     }
@@ -2668,6 +3647,126 @@ impl BRepBuilder {
         sd.my_shapes.retain(|s| s.index != face.index);
     }
 
+    /// OCCT TopoDS_Builder::Add(aShape, aComponent) with an edge parent
+    /// (TopoDS_Builder.cxx L37-100) — the VERTEX-to-EDGE child append: the
+    /// relative orientation (the parent REVERSED reverses the child), then
+    /// `aTShape->myShapes.Append(aChild)`.  The rcad `first` / `last` fields
+    /// mirror the front/back of the OCCT myShapes list (the data
+    /// TopExp::FirstVertex / LastVertex read back).
+    ///
+    /// The relative-location adjustment (TopoDS_Builder.cxx L65-70) is the
+    /// identity no-op here: the DSFiller-built edges carry no locations.
+    pub fn add_to_edge(&mut self, brep: &mut BRep, edge: Shape, vertex: Shape) {
+        // aShape will be frozen when the Exception is raised (TopoDS_FrozenShape).
+        let ed_flags = brep.edge(edge.clone()).flags;
+        if ed_flags & tshape_flags::FREE == 0 {
+            panic!("TopoDS_FrozenShape: TopoDS_Builder::Add");
+        }
+        // aChild = aComponent; the relative orientation (TopAbs::Reverse =
+        // Compose(REVERSED, ...)).
+        let mut child = vertex;
+        if edge.orientation == Orientation::Reversed {
+            child.orientation = Orientation::Reversed.compose(child.orientation);
+        }
+        // Edge identity must be preserved: the DS holds Shape handles onto
+        // the same TShape (the edge_mut_inplace in-place edit contract).
+        let ed = brep.edge_mut_inplace(edge);
+        if ed.first.is_null() {
+            ed.first = child.clone();
+        }
+        ed.last = child.clone();
+        ed.my_shapes.push(child);
+        // aTShape->Modified(true).
+    }
+
+    /// OCCT TopoDS_Builder::Remove(aShape, aComponent) with an edge parent
+    /// (TopoDS_Builder.cxx L107-133) — the relative orientation/location of
+    /// aComponent, then the first `anIter.Value() == S` entry (IsEqual:
+    /// TShape + Location + Orientation) is removed from myShapes.  The
+    /// `first` / `last` mirrors are recomputed from the remaining list
+    /// (OCCT reads the front/back of myShapes instead).
+    pub fn remove_from_edge(&mut self, brep: &mut BRep, edge: Shape, vertex: Shape) {
+        // S = aComponent with the parent-relative orientation.
+        let mut s = vertex;
+        if edge.orientation == Orientation::Reversed {
+            s.orientation = Orientation::Reversed.compose(s.orientation);
+        }
+        let ed = brep.edge_mut_inplace(edge);
+        // The location adjustment is the identity no-op (no locations).
+        if let Some(pos) = ed.my_shapes.iter().position(|c| c.is_equal(&s)) {
+            ed.my_shapes.remove(pos);
+        }
+        ed.first = ed.my_shapes.first().cloned().unwrap_or_else(Shape::null);
+        ed.last = ed.my_shapes.last().cloned().unwrap_or_else(Shape::null);
+        // aTShape->Modified(true).
+    }
+
+    /// OCCT BRep_Builder::UpdateVertex(V, Par, E, Tol)
+    /// (BRep_Builder.cxx L1221-1313) — the vertex is searched among the
+    /// edge's stored children; the matched child's orientation selects the
+    /// update target: a FORWARD child sets the range First on every GCurve
+    /// representation, a REVERSED child the range Last, and an INTERNAL /
+    /// unmatched vertex gets the point-on-curve parameter (the rcad
+    /// vertex_params map).  The vertex tolerance is updated (max).
+    pub fn update_vertex_on_edge(&mut self, brep: &mut BRep, v: Shape, par: f64, e: Shape, tol: f64) {
+        // throw Standard_DomainError("BRep_Builder::Infinite parameter")
+        // (Precision::IsPositiveInfinite / IsNegativeInfinite).
+        if is_positive_infinite_value(par) || is_negative_infinite_value(par) {
+            panic!("Standard_DomainError: BRep_Builder::Infinite parameter");
+        }
+        // Search the vertex in the edge (TopoDS_Iterator itv(E.Oriented(
+        // TopAbs_FORWARD))) — ori = TopAbs_INTERNAL until matched.
+        let mut ori = Orientation::Internal;
+        let children = brep.edge(e.clone()).my_shapes.clone();
+        let degenerated = brep.edge(e.clone()).degenerated;
+        // if the edge has no vertices and is degenerated use the vertex
+        // orientation (RLE, june 94).
+        if children.is_empty() && degenerated {
+            ori = v.orientation;
+        }
+        for vcur in &children {
+            if v.is_same(vcur) {
+                ori = vcur.orientation;
+                if ori == v.orientation {
+                    break;
+                }
+            }
+        }
+        {
+            let ed = brep.edge_mut_inplace(e);
+            match ori {
+                Orientation::Forward => {
+                    // GC->First(Par) on every GCurve representation.
+                    ed.range[0] = par;
+                    for entry in ed.pcurves.values_mut() {
+                        entry.1 = par;
+                    }
+                }
+                Orientation::Reversed => {
+                    // GC->Last(Par) on every GCurve representation.
+                    ed.range[1] = par;
+                    for entry in ed.pcurves.values_mut() {
+                        entry.2 = par;
+                    }
+                }
+                _ => {
+                    // UpdatePoints(lpr, Par, ...) — the point-on-curve
+                    // parameter stored on the vertex's edge entry.
+                    let id = v.ptr_id();
+                    ed.vertex_params.insert(id, par);
+                }
+            }
+        }
+        // TV->UpdateTolerance(Tol) — the max-update; the no-op case skips
+        // the mutation (the rcad TShape Arc is shared and Arc::make_mut
+        // would split the identity).
+        let cur = brep.vertex_tolerance(&v);
+        if tol > cur {
+            brep.vertex_mut(v).tolerance = tol;
+        }
+        // TE->Modified(true).
+    }
+
     /// OCCT BRep_Builder::Transfert(aEin, aEout) �?copy 3D curve from one edge to another.
     /// Copies the Curve3D representation (first one found) from edge_in to edge_out.
     pub fn transfert_edge_curve(&mut self, brep: &mut BRep, edge_in: Shape, edge_out: Shape) {
@@ -2706,7 +3805,7 @@ impl BRepBuilder {
     /// OCCT BRep_Builder::Degenerated(aE, true) �?set degenerated flag AND clear 3D curve.
     /// OCCT removes the 3D curve when marking an edge as degenerated.
     pub fn set_edge_degenerated_with_clear(&mut self, brep: &mut BRep, edge: Shape, flag: bool) {
-        let ed = brep.edge_mut(edge);
+        let ed = brep.edge_mut_inplace(edge);
         ed.degenerated = flag;
         if flag {
             ed.curve = None;
@@ -2714,12 +3813,58 @@ impl BRepBuilder {
     }
 }
 
-/// Get the parameter range for a Curve2d (Trimmed �?stored range, Circle �?[0, 2蟺]).
+/// Get the parameter range for a Curve2d (Trimmed -> stored range, Circle -> [0, 2pi]).
 fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
     match curve {
         Curve2d::Trimmed(tc) => (tc.t_min, tc.t_max),
         Curve2d::Circle(_) => (0.0, std::f64::consts::TAU),
         _ => (0.0, 1.0),
+    }
+}
+
+/// The face surface value of a face Shape (OCCT BRep_Tool::Surface(F) —
+/// the TFace surface without the Location applied).  None for non-faces or
+/// surfaceless faces (the OCCT null handle has no rcad equivalent; the
+/// BRep_Builder::Continuity caller stores nothing in that case).
+pub fn face_surface_value(brep: &BRep, f: &Shape) -> Option<Surface3> {
+    match &*brep.tshapes[f.index] {
+        TShape::Face(fd) => fd.surface.clone(),
+        _ => None,
+    }
+}
+
+/// Value equality of surfaces at handle-comparison tolerance — the rcad
+/// stand-in for OCCT's Geom_Surface handle identity match
+/// (BRep_Tool.cxx L349: cr->Surface() == S).
+pub fn surface_same(a: &Surface3, b: &Surface3) -> bool {
+    const T: f64 = 1e-9;
+    let v = |x: glam::DVec3, y: glam::DVec3| (x - y).length() < T;
+    match (a, b) {
+        (Surface3::Plane(a), Surface3::Plane(b)) => {
+            v(a.origin, b.origin)
+                && v(a.normal, b.normal)
+                && v(a.u_dir, b.u_dir)
+                && v(a.v_dir, b.v_dir)
+        }
+        (Surface3::Cylinder(a), Surface3::Cylinder(b)) => {
+            v(a.origin, b.origin) && v(a.axis, b.axis) && (a.radius - b.radius).abs() < T
+        }
+        (Surface3::Sphere(a), Surface3::Sphere(b)) => {
+            v(a.center, b.center) && v(a.axis, b.axis) && (a.radius - b.radius).abs() < T
+        }
+        (Surface3::Cone(a), Surface3::Cone(b)) => {
+            v(a.apex, b.apex)
+                && v(a.axis, b.axis)
+                && (a.radius - b.radius).abs() < T
+                && (a.half_angle_rad - b.half_angle_rad).abs() < T
+        }
+        (Surface3::Torus(a), Surface3::Torus(b)) => {
+            v(a.center, b.center)
+                && v(a.axis, b.axis)
+                && (a.major_radius - b.major_radius).abs() < T
+                && (a.minor_radius - b.minor_radius).abs() < T
+        }
+        _ => false,
     }
 }
 
@@ -2737,24 +3882,94 @@ fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
 /// edge location index is used — the key still separates located edges from
 /// their base copies, which is the OCCT semantics that matters for the
 /// shared-TShape case.
-pub fn compose_pcurve_location(face_loc: u32, edge_loc: u32, locations: &[glam::DAffine3]) -> u32 {
-    if edge_loc == 0 {
-        return face_loc;
+/// OCCT compares the composed location BY VALUE (BRep_Tool.cxx L345).
+/// rcad stores the key second component as a stable hash of the composed
+/// transform VALUE (identity -> 0).
+pub fn pcurve_location_id(m: &glam::DAffine3) -> u32 {
+    if *m == glam::DAffine3::IDENTITY { return 0; }
+    let mut h: u64 = 0xcbf29ce484222325;
+    for axis in [m.x_axis, m.y_axis, m.z_axis] {
+        for f in axis.to_array() {
+            for b in f.to_bits().to_be_bytes() {
+                h ^= b as u64; h = h.wrapping_mul(0x100000001b3);
+            }
+        }
     }
-    let face_tr = locations
-        .get(face_loc as usize)
-        .copied()
-        .unwrap_or(glam::DAffine3::IDENTITY);
-    let edge_tr = locations
-        .get(edge_loc as usize)
-        .copied()
-        .unwrap_or(glam::DAffine3::IDENTITY);
-    let composed = face_tr * edge_tr.inverse();
-    locations
-        .iter()
-        .position(|l| *l == composed)
-        .map(|i| i as u32)
-        .unwrap_or(if face_loc == 0 { edge_loc } else { face_loc })
+    (h ^ (h >> 32)) as u32
+}
+pub fn compose_pcurve_location(face_loc: u32, edge_loc: u32, locations: &[glam::DAffine3]) -> u32 {
+    let tr = |idx: u32| -> glam::DAffine3 {
+        if idx == 0 { glam::DAffine3::IDENTITY }
+        else { locations.get((idx - 1) as usize).copied().unwrap_or(glam::DAffine3::IDENTITY) }
+    };
+    let composed = tr(face_loc) * tr(edge_loc).inverse();
+    pcurve_location_id(&composed)
+}
+
+/// OCCT BRep_Tool::CurveOnSurface(aE, aF, aFirst, aLast) (BRep_Tool.cxx
+/// L339-401) — the pool-free form: the pcurve representation walk is keyed
+/// by the owning-face pointer and the composed location instead of pool
+/// indices, so it resolves for shapes living in a different `BRep` pool
+/// than the caller's (the offset-engine EdgeAnalyse path).
+pub fn curve_on_surface_pool_free(the_e: &Shape, the_f: &Shape) -> Option<(Curve2d, f64, f64)> {
+    let fkey = (the_f.ptr_id(), the_f.location);
+    let ed = match the_e.data.as_ref() {
+        TShape::Edge(ed) => ed,
+        _ => return None,
+    };
+    // 1) The exact pcurves row (identity-location fast path).
+    if let Some(v) = ed.pcurves.get(&fkey) {
+        return Some(v.clone());
+    }
+    // 2) OCCT L350-367: iterate the edge's curve representations;
+    //    cr->IsCurveOnSurface(S, loc) matches the surface value and the
+    //    composed location.  Pool-free matching: the location component and
+    //    the stored owning-face pointer (surface-value equality is carried
+    //    by the pointer for the shapes of one tree).
+    let mut a_p1: Option<(Curve2d, f64, f64)> = None;
+    let mut a_p2: Option<(Curve2d, f64, f64)> = None;
+    for rep in &ed.representations {
+        match rep {
+            CurveRepresentation::CurveOnSurface {
+                face: (fptr, lhash),
+                pcurve,
+                range,
+            } => {
+                if *fptr == fkey.0 {
+                    a_p1 = Some((pcurve.clone(), range[0], range[1]));
+                }
+            }
+            CurveRepresentation::CurveOnClosedSurface {
+                face: (fptr, lhash),
+                pcurve1,
+                pcurve2,
+                range,
+            } => {
+                if *fptr == fkey.0 {
+                    a_p1 = Some((pcurve1.clone(), range[0], range[1]));
+                    a_p2 = Some((pcurve2.clone(), range[0], range[1]));
+                }
+            }
+            _ => {}
+        }
+    }
+    // OCCT L353-357: a seam occurrence with a REVERSED edge selects PCurve2.
+    if the_e.orientation == Orientation::Reversed {
+        if let Some(p2) = a_p2 {
+            return Some(p2);
+        }
+    }
+    if let Some(p1) = a_p1 {
+        return Some(p1);
+    }
+    // 3) Fall back to the location-only match over the pcurves rows.
+    for ((fptr, lhash), v) in ed.pcurves.iter() {
+        if *lhash == fkey.1 {
+            return Some(v.clone());
+        }
+        let _ = fptr;
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -2823,6 +4038,79 @@ impl ShapeType {
 mod tests {
     use super::*;
     use crate::geom::*;
+
+    /// BRep::import_shape_tree anchor: a pool-free tree (the BuilderSolid
+    /// product form, index 0) is materialized into the target pool with
+    /// pool-local indices end to end, Arc identity is preserved for nodes
+    /// already registered, and the imported handles resolve through the
+    /// index-based accessors.
+    #[test]
+    fn test_import_shape_tree_materializes_pool_free_tree() {
+        let mut src = BRep::new();
+        // Build a minimal face tree in the source pool: v1, v2, edge, wire,
+        // face.
+        let v1 = src.add_tvertex_unique(DVec3::new(0.0, 0.0, 0.0));
+        let v2 = src.add_tvertex_unique(DVec3::new(1.0, 0.0, 0.0));
+        let e = src.add_tedge(None, v1.clone(), v2.clone(), [0.0, 1.0]);
+        let w = BRepBuilder::new().build_wire(&mut src, vec![e.clone()]);
+        let f = BRepBuilder::new().make_face(&mut src, None, w.clone());
+
+        // Simulate the pool-free BuilderSolid product: a fresh Shell Arc
+        // (index 0) wrapping the source face handle (foreign index).
+        let shell = Shape::new(
+            Arc::new(TShape::Shell(TShellData {
+                my_shapes: vec![f.clone()],
+                flags: tshape_flags::CLOSED,
+                faces: vec![f.clone()],
+            })),
+            0,
+            Orientation::Forward,
+        );
+        let solid = Shape::new(
+            Arc::new(TShape::Solid(TSolidData {
+                my_shapes: vec![shell.clone()],
+                flags: tshape_flags::CLOSED,
+                shells: vec![shell.clone()],
+                internal_vertices: Vec::new(),
+                internal_edges: Vec::new(),
+            })),
+            0,
+            Orientation::Forward,
+        );
+
+        // Import into an empty target pool.
+        let mut dst = BRep::new();
+        let imported = dst.import_shape_tree(&solid);
+        assert_eq!(imported.index, 6, "children first: v0,v1,e,w,f,shell,solid");
+
+        // The whole tree resolves through pool-local indices: walk to the
+        // edge via solid -> shell -> face -> wire -> edges and mutate it
+        // (the former "edge_mut: Shape N is not an Edge" defect).
+        let sd = imported.as_solid().expect("solid");
+        let sh = &sd.shells[0];
+        assert_eq!(sh.index, 5, "shell registered before the solid");
+        let wire = match sh.data.as_ref() {
+            TShape::Shell(shd) => match shd.faces[0].data.as_ref() {
+                TShape::Face(fd) => fd.outer_wire.clone(),
+                _ => panic!("face expected"),
+            },
+            _ => panic!("shell expected"),
+        };
+        let edge = match wire.data.as_ref() {
+            TShape::Wire(wd) => wd.edges[0].clone(),
+            _ => panic!("wire expected"),
+        };
+        assert_eq!(edge.index, 2, "vertices, then edge, wire, face, shell, solid");
+        let ed = dst.edge_mut(edge.clone());
+        ed.tolerance = 1.0e-4;
+        assert_eq!(dst.tolerance(&edge), 1.0e-4, "imported edge is mutable");
+
+        // NOTE: re-importing the SAME source tree re-rewrites containers
+        // whose internal handles still reference unregistered source Arcs
+        // (non-idempotent by design — the pipeline imports a BuilderSolid
+        // product exactly once and then consumes the returned tree).
+        assert_eq!(dst.tshapes.len(), 7, "one materialization, no residue");
+    }
 
     #[test]
     fn test_orientation_values() {
@@ -3205,16 +4493,66 @@ mod tests {
         assert!(brep.shell(shell.clone()).faces.is_empty());
     }
 
+    /// OCCT anchor: the edge-children builders used by the HLRTopoBRep
+    /// DSFiller — TopoDS_Builder::Add/Remove on an edge and
+    /// BRep_Builder::UpdateVertex(V, Par, E, Tol) (a FORWARD child updates
+    /// the range First, a REVERSED child the range Last).
+    #[test]
+    fn test_builder_edge_vertex_add_remove_update() {
+        let mut brep = BRep::new();
+        let mut bld = BRepBuilder::new();
+        let v0 = brep.add_tvertex(DVec3::ZERO);
+        let v1 = brep.add_tvertex(DVec3::X);
+
+        // An EmptyCopy edge carries no vertices: Add(V0) then Add(V1)
+        // rebuild myShapes / first / last.
+        let e = {
+            let full = bld.add_edge(
+                &mut brep,
+                Some(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X))),
+                v0.clone(),
+                {
+                    // OCCT BRep_Builder::Add(E, V) stores the end vertex
+                    // REVERSED on the edge.
+                    let mut vr = v1.clone();
+                    vr.orientation = Orientation::Reversed;
+                    vr
+                },
+                [0.0, 1.0],
+            );
+            brep.empty_copy(full)
+        };
+        assert!(brep.edge(e.clone()).my_shapes.is_empty());
+        bld.add_to_edge(&mut brep, e.clone(), v0.clone());
+        let mut v1r = v1.clone();
+        v1r.orientation = Orientation::Reversed;
+        bld.add_to_edge(&mut brep, e.clone(), v1r.clone());
+        assert_eq!(brep.edge(e.clone()).my_shapes.len(), 2);
+        assert!(brep.first_vertex(&e).is_same(&v0));
+        assert!(brep.last_vertex(&e).is_same(&v1));
+
+        // UpdateVertex with the FORWARD child moves the range First; with
+        // the REVERSED child the range Last.
+        bld.update_vertex_on_edge(&mut brep, v0.clone(), 0.25, e.clone(), 1e-7);
+        assert_eq!(brep.edge_range(&e)[0], 0.25);
+        bld.update_vertex_on_edge(&mut brep, v1.clone(), 0.75, e.clone(), 1e-7);
+        assert_eq!(brep.edge_range(&e), [0.25, 0.75]);
+
+        // Remove(V0) drops the matching (IsEqual) child and mirrors
+        // first/last from the remaining list.
+        bld.remove_from_edge(&mut brep, e.clone(), v0.clone());
+        assert_eq!(brep.edge(e.clone()).my_shapes.len(), 1);
+        assert!(brep.first_vertex(&e).is_same(&v1));
+        assert!(brep.last_vertex(&e).is_same(&v1));
+    }
+
     #[test]
     fn test_builder_transfert_edge_curve() {
         let mut brep = BRep::new();
         let mut bld = BRepBuilder::new();
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let e_in = bld.add_edge(&mut brep, Some(curve.clone()), v0, v1, [0.0, 1.0]);
 
         // Use different vertices so add_tedge creates a distinct edge (dedup by vertex pair)
@@ -3238,14 +4576,16 @@ mod tests {
         let v1 = brep.add_tvertex(DVec3::X);
         let e = bld.add_edge(&mut brep, None, v0.clone(), v1.clone(), [0.0, 1.0]);
         bld.set_vertex_param(&mut brep, e.clone(), v0.clone(), 0.5);
-        assert_eq!(brep.edge(e.clone()).vertex_params.get(&(v0.index as u64)), Some(&0.5));
+        // Vertex parameters are keyed by the vertex TShape handle (ptr_id),
+        // matching OCCT BRep_TEdge::myParameters and add_tedge's inserts.
+        assert_eq!(brep.edge(e.clone()).vertex_params.get(&v0.ptr_id()), Some(&0.5));
 
         // Transfer from v0 on e to v_new on a new edge
         let v_new = brep.add_tvertex(DVec3::new(2.0, 0.0, 0.0));
         let e_new = bld.add_edge(&mut brep, None, v_new.clone(), v1.clone(), [0.0, 1.0]);
-        assert!(brep.edge(e_new.clone()).vertex_params.get(&(v_new.index as u64)).is_none());
+        assert!(brep.edge(e_new.clone()).vertex_params.get(&v_new.ptr_id()).is_none());
         bld.transfert_vertex_param(&mut brep, e.clone(), v0.clone(), e_new.clone(), v_new.clone());
-        assert_eq!(brep.edge(e_new.clone()).vertex_params.get(&(v_new.index as u64)), Some(&0.5));
+        assert_eq!(brep.edge(e_new.clone()).vertex_params.get(&v_new.ptr_id()), Some(&0.5));
     }
 
     #[test]
@@ -3254,10 +4594,7 @@ mod tests {
         let mut bld = BRepBuilder::new();
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
-        let curve = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let curve = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         let e = bld.add_edge(&mut brep, Some(curve), v0, v1, [0.0, 1.0]);
         assert!(!brep.edge(e.clone()).degenerated);
         assert!(brep.edge(e.clone()).curve.is_some());

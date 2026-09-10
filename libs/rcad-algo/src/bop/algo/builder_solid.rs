@@ -69,12 +69,30 @@ impl<'a> BuilderSolid<'a> {
         // OCCT L106: PerformShapesToAvoid
         self.perform_shapes_to_avoid();
         if self.has_errors() { return; }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!(
+                "[DBG-BSA] nInput={} nAvoid={}",
+                self.my_shapes.len(),
+                self.my_shapes_to_avoid.len()
+            );
+        }
         // OCCT L112: PerformLoops — group faces into shells
         self.perform_loops();
         if self.has_errors() { return; }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            let counts: Vec<usize> = self
+                .my_loops
+                .iter()
+                .map(|l| l.len())
+                .collect();
+            eprintln!("[DBG-BSL] nLoops={} counts={:?}", self.my_loops.len(), counts);
+        }
         // OCCT L118: PerformAreas — classify shells, build solids
         self.perform_areas();
         if self.has_errors() { return; }
+        if std::env::var("RCAD_BS_DEBUG").is_ok() {
+            eprintln!("[DBG-BSAR] nAreas={}", self.my_solids.len());
+        }
         // OCCT L124: PerformInternalShapes
         self.perform_internal_shapes();
     }
@@ -363,11 +381,11 @@ impl<'a> BuilderSolid<'a> {
         }
         let mut hole_boxes: Vec<Option<(DVec3, DVec3)>> = Vec::new();
         for shell_shape in &hole_shell_shapes {
-            hole_boxes.push(crate::bop::algo::builder::shape_bbox(shell_shape));
+            hole_boxes.push(crate::bop::algo::builder::shape_bbox(shell_shape, &self.ds.locations));
         }
         let mut a_hole_solid: HashMap<(u64, u32), usize> = HashMap::new();
         for (si, solid) in new_solids.iter().enumerate() {
-            let solid_box = crate::bop::algo::builder::shape_bbox(solid);
+            let solid_box = crate::bop::algo::builder::shape_bbox(solid, &self.ds.locations);
             for (hi, hs) in hole_shells.iter().enumerate() {
                 // OCCT L506-509: BVH pre-filter — skip holes whose box does
                 // not interfere with the solid's box (IsInside would be OUT).
@@ -457,7 +475,7 @@ impl<'a> BuilderSolid<'a> {
         let shell = Shape::new(Arc::new(shell_tshape), 0, Orientation::Forward);
         let mut clsf = SolidClassifier::from_shape_with_locations(&shell, locations);
         clsf.perform_infinite_point(f64::MIN_POSITIVE); // OCCT ::RealSmall() = DBL_MIN
-        clsf.state() == 3 // TopAbs_IN
+        clsf.state() == 0 // TopAbs_IN
     }
 
     /// OCCT IsInside (BuilderSolid.cxx L835-860) — classify the first face of
@@ -468,7 +486,7 @@ impl<'a> BuilderSolid<'a> {
             // the solid; State() == IN means the solid is a hole in space.
             let mut clsf = SolidClassifier::from_shape(solid);
             clsf.perform_infinite_point(f64::MIN_POSITIVE); // OCCT ::RealSmall()
-            return clsf.state() == 3; // TopAbs_IN
+            return clsf.state() == 0; // TopAbs_IN
         };
         Self::compute_state_on_solid(a_f, solid, ds) == 3 // TopAbs_IN
     }

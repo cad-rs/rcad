@@ -14,31 +14,87 @@ use rcad_kernel::math::root::FunctionValue;
 
 use super::surf_function::SurfFunction;
 
+/// OCCT math_FunctionSetWithDerivatives — the 2-variable / 1-equation
+/// interface consumed by math_FunctionSetRoot.  The template parameter of
+/// the OCCT solver maps to this trait; both the IntPatch SurfFunction and
+/// the Contap SurfFunction implement it.
+pub trait FunctionSetWithDerivatives2 {
+    /// OCCT Value(X, F).
+    fn value(&mut self, x: &[f64; 2]) -> Option<f64>;
+    /// OCCT Values(X, F, D).
+    fn values(&mut self, x: &[f64; 2]) -> Option<(f64, [f64; 2])>;
+    /// OCCT Tolerance().
+    fn tolerance(&self) -> f64;
+    /// OCCT GetStateNumber().
+    fn get_state_number(&mut self) -> i32 {
+        0
+    }
+}
+
+/// The IntPatch instantiation (IntPatch_SurfFunction).
+impl FunctionSetWithDerivatives2 for SurfFunction {
+    fn value(&mut self, x: &[f64; 2]) -> Option<f64> {
+        SurfFunction::value(self, x)
+    }
+    fn values(&mut self, x: &[f64; 2]) -> Option<(f64, [f64; 2])> {
+        SurfFunction::values(self, x)
+    }
+    fn tolerance(&self) -> f64 {
+        SurfFunction::tolerance(self)
+    }
+    fn get_state_number(&mut self) -> i32 {
+        SurfFunction::get_state_number(self)
+    }
+}
+
 const EPS: f64 = 1e-32;
 const EPS2: f64 = 1e-64;
 const EPS_SQRT: f64 = 1e-16;
 const PROGRES: f64 = 0.005;
 
+/// OCCT Standard_Real.hxx Epsilon(V) (L242-246) — the distance from V to the
+/// next representable value away from zero.
+fn epsilon(v: f64) -> f64 {
+    let na = f64::from_bits(v.to_bits() + 1);
+    if v >= 0.0 {
+        na - v
+    } else {
+        v - na
+    }
+}
+
+/// OCCT math_FunctionSetRoot::IsSolutionReached (hxx L69-79) — the solution
+/// is reached when the last step satisfies |Delta(i)| <= Tol(i) for every
+/// unknown.
+fn is_solution_reached(delta: &[f64; 2], tol: &[f64; 2]) -> bool {
+    for i in 0..delta.len() {
+        if delta[i].abs() > tol[i] {
+            return false;
+        }
+    }
+    true
+}
+
 /// A 1-D restriction of the function along a direction, used by the line
 /// search / minimization (OCCT MyDirFunction, math_FunctionSetRoot.cxx L70-195).
 /// `f` is a raw pointer, mirroring the OCCT `void* F` (the function is owned
 /// by the caller, alive for the whole Perform).
-struct DirFunction {
+struct DirFunction<F: ?Sized> {
     p0: [f64; 2],
     dir: [f64; 2],
     p: [f64; 2],
     fv: [f64; 1],
-    f: *mut SurfFunction,
+    f: *mut F,
 }
 
-impl DirFunction {
-    fn new(f: &mut SurfFunction) -> Self {
+impl<F: ?Sized + FunctionSetWithDerivatives2> DirFunction<F> {
+    fn new(f: &mut F) -> Self {
         DirFunction {
             p0: [0.0; 2],
             dir: [0.0; 2],
             p: [0.0; 2],
             fv: [0.0],
-            f: f as *mut SurfFunction,
+            f: f as *mut F,
         }
     }
 
@@ -57,7 +113,7 @@ impl DirFunction {
         f2: &mut f64,
         gnr1: &mut f64,
     ) -> bool {
-        let func = unsafe { &mut *self.f };
+        let func: &mut F = unsafe { &mut *self.f };
         let Some((val, d)) = func.values(&sol) else {
             return false;
         };
@@ -76,7 +132,7 @@ impl DirFunction {
     }
 }
 
-impl FunctionValue for DirFunction {
+impl<F: ?Sized + FunctionSetWithDerivatives2> FunctionValue for DirFunction<F> {
     /// OCCT MyDirFunction::Value(x, fval) (L120-150): F along the direction.
     fn value(&mut self, x: f64) -> Option<f64> {
         for i in 0..2 {
@@ -95,14 +151,14 @@ impl FunctionValue for DirFunction {
 
 /// OCCT MinimizeDirection (math_FunctionSetRoot.cxx L198-264) — minimization
 /// from three points P0, P1, P2.  `delta` is updated to `tsol * (P1 - P0)`.
-fn minimize_direction_3(
+fn minimize_direction_3<F: ?Sized + FunctionSetWithDerivatives2>(
     p0: &[f64; 2],
     p1: &[f64; 2],
     p2: &[f64; 2],
     f1: f64,
     delta: &mut [f64; 2],
     tol: &[f64; 2],
-    f: &mut DirFunction,
+    f: &mut DirFunction<F>,
 ) -> bool {
     // (1) Evaluation d'une tolerance parametrique 1D.
     let mut tol1d = 2.1f64;
@@ -154,7 +210,7 @@ fn minimize_direction_3(
 /// OCCT MinimizeDirection (math_FunctionSetRoot.cxx L266-436) — minimization
 /// from two points and a derivative.  `dir` is updated to `tsol * dir`.
 #[allow(clippy::too_many_arguments)]
-fn minimize_direction_2(
+fn minimize_direction_2<F: ?Sized + FunctionSetWithDerivatives2>(
     p: &[f64; 2],
     dir: &mut [f64; 2],
     p_value: f64,
@@ -162,7 +218,7 @@ fn minimize_direction_2(
     gradient: &[f64; 2],
     d_gradient: &[f64; 2],
     tol: &[f64; 2],
-    f: &mut DirFunction,
+    f: &mut DirFunction<F>,
 ) -> bool {
     if !p_value.is_finite() || !p_dir_value.is_finite() {
         return false;
@@ -355,6 +411,73 @@ fn search_direction(
     }
 }
 
+/// OCCT SearchDirection (math_FunctionSetRoot.cxx L534-620) — the
+/// constrained overload: the Newton system is solved over the free unknowns
+/// only (the constrained ones stay fixed on the bound); the gradient
+/// fallback keeps the same structure.
+fn search_direction_constrained(
+    df: &[[f64; 2]; 1],
+    gh: &[f64; 2],
+    ff: &[f64; 1],
+    constraints: &[i32; 2],
+    change_direction: bool,
+    inv_length_max: &[f64; 2],
+    direction: &mut [f64; 2],
+    dy: &mut f64,
+) {
+    let ninc = 2;
+    let cons = constraints.iter().filter(|c| **c != 0).count();
+    if cons == 0 {
+        search_direction(df, gh, ff, change_direction, inv_length_max, direction, dy);
+        return;
+    }
+    if cons == ninc {
+        // There is nothing left to do.
+        *direction = [0.0; 2];
+        *dy = 0.0;
+        return;
+    }
+    // (1) General case: define a sub-problem over the free unknowns.
+    let mut df2 = [[0.0f64; 2]; 1];
+    let mut my_gh = [0.0f64; 2];
+    let mut my_direction = [0.0f64; 2];
+    let mut my_inv_length_max = [0.0f64; 2];
+    let mut k = 0usize;
+    for (i, cst) in constraints.iter().enumerate() {
+        if *cst == 0 {
+            my_gh[k] = gh[i];
+            my_inv_length_max[k] = inv_length_max[i];
+            my_direction[k] = direction[i];
+            df2[0][k] = df[0][i];
+            k += 1;
+        }
+    }
+    // (2) Solve it.
+    search_direction(
+        &df2,
+        &my_gh,
+        ff,
+        change_direction,
+        &my_inv_length_max,
+        &mut my_direction,
+        dy,
+    );
+    // (3) Interpret: rebuild the full Direction.
+    let mut k = 0usize;
+    for (i, cst) in constraints.iter().enumerate() {
+        if *cst == 0 {
+            if !change_direction {
+                direction[i] = my_direction[k];
+            } else {
+                direction[i] = -gh[i];
+            }
+            k += 1;
+        } else {
+            direction[i] = 0.0;
+        }
+    }
+}
+
 /// OCCT Bounds (math_FunctionSetRoot.cxx L623-705).
 #[allow(clippy::too_many_arguments)]
 fn bounds(
@@ -428,7 +551,7 @@ pub struct FunctionSetRoot {
 
 impl FunctionSetRoot {
     /// OCCT math_FunctionSetRoot(F, Tolerance, NbIterations = 100).
-    pub fn new(_f: &mut SurfFunction, tol: [f64; 2]) -> Self {
+    pub fn new<F: ?Sized + FunctionSetWithDerivatives2>(_f: &mut F, tol: [f64; 2]) -> Self {
         FunctionSetRoot {
             done: false,
             sol: [0.0; 2],
@@ -444,9 +567,9 @@ impl FunctionSetRoot {
     }
 
     /// OCCT Perform(F, StartingPoint, InfBound, SupBound) (L796-1100).
-    pub fn perform(
+    pub fn perform<F: ?Sized + FunctionSetWithDerivatives2>(
         &mut self,
-        f: &mut SurfFunction,
+        f: &mut F,
         starting_point: [f64; 2],
         inf_bound: [f64; 2],
         sup_bound: [f64; 2],
@@ -490,12 +613,16 @@ impl FunctionSetRoot {
             return;
         }
         let mut ambda2 = gnr1;
-        let mut save0 = f2.max(EPS_SQRT);
-        let _a_tol_func = f.tolerance();
+        // OCCT: Save(0) = std::max(F2, EpsSqrt) — the rank-0 history used by
+        // the accelerator test (Save is the member array of the OCCT class,
+        // filled at Save(Kount) = F2 at each loop pass).
+        let mut save = vec![0.0f64; self.itermax as usize + 1];
+        save[0] = f2.max(EPS_SQRT);
+        // OCCT: double aTol_Func = Epsilon(F2) (Standard_Real.hxx L242-246).
+        let a_tol_func = epsilon(f2);
 
         if f2 <= EPS || gnr1 <= EPS2 {
             self.done = false;
-            let _ = &mut save0;
             self.done = true;
             self.state = f.get_state_number();
             return;
@@ -503,6 +630,7 @@ impl FunctionSetRoot {
 
         let mut ambda: f64;
         let mut previous_minimum: f64;
+        let mut old_gr: f64;
         let mut old_f: f64;
         let mut sol_save = [0.0; 2];
         let mut previous_solution = [0.0; 2];
@@ -515,10 +643,11 @@ impl FunctionSetRoot {
         let mut dy = 0.0f64;
 
         let mut kount = 0;
+        let mut dbg_hist: Vec<(i32, f64, f64, bool)> = Vec::new();
         while kount < self.itermax {
             kount += 1;
             previous_minimum = f2;
-            old_f = gnr1;
+            old_gr = gnr1;
             previous_solution = self.sol;
             sol_save = self.sol;
 
@@ -612,22 +741,8 @@ impl FunctionSetRoot {
                                 good = false;
                                 if descente_iter == 0 {
                                     // C'est le premier pas qui flanche, on fait
-                                    // une interpolation.
-                                    descente_iter += 1;
-                                    good = minimize_direction_3(
-                                        &previous_solution,
-                                        &sol_save,
-                                        &self.sol,
-                                        old_f,
-                                        &mut delta,
-                                        &self.tol,
-                                        &mut f_dir,
-                                    );
-                                } else if change_direction
-                                    || descente_iter > 1
-                                    || old_f > previous_minimum
-                                {
-                                    // La progression a ete utile, on minimise.
+                                    // une interpolation. (OCCT L1024: the 2-point
+                                    // + derivative MinimizeDirection variant.)
                                     descente_iter += 1;
                                     good = minimize_direction_2(
                                         &sol_save,
@@ -636,6 +751,23 @@ impl FunctionSetRoot {
                                         f2,
                                         &dh_save,
                                         &gh,
+                                        &self.tol,
+                                        &mut f_dir,
+                                    );
+                                } else if change_direction
+                                    || descente_iter > 1
+                                    || old_f > previous_minimum
+                                {
+                                    // La progression a ete utile, on minimise.
+                                    // (OCCT L1030: the 3-point MinimizeDirection
+                                    // variant.)
+                                    descente_iter += 1;
+                                    good = minimize_direction_3(
+                                        &previous_solution,
+                                        &sol_save,
+                                        &self.sol,
+                                        old_f,
+                                        &mut delta,
                                         &self.tol,
                                         &mut f_dir,
                                     );
@@ -700,13 +832,15 @@ impl FunctionSetRoot {
                         // On essaye de progresser sur le bord.
                         sol_save = self.sol;
                         old_f = f2;
-                        // Conditional SearchDirection uses constraints; for the
-                        // 1-eq case with a fixed unknown the step is zero on it.
+                        // Conditional SearchDirection (OCCT L1118) uses the
+                        // constraints: the Newton system is solved over the
+                        // free unknowns only.
                         let mut cond_dir = change_direction;
-                        search_direction(
+                        search_direction_constrained(
                             &df,
                             &gh,
                             &ff,
+                            &constraints,
                             cond_dir,
                             &inv_length_max,
                             &mut dh,
@@ -827,9 +961,110 @@ impl FunctionSetRoot {
                                 }
                             }
                         }
+                        dy = gh[0] * dh[0] + gh[1] * dh[1];
                     }
                 }
             }
+            // (the `if sort || (f2 / previous_minimum > PROGRES)` guard closes
+            // here — OCCT cxx L1266 — the stop tests below run on EVERY
+            // iteration.)
+
+            // ---------------------------------------------
+            //  on passe aux tests d'ARRET (OCCT L1292-1390)
+            // ---------------------------------------------
+            save[kount as usize] = f2;
+                // Est ce la solution ?
+                let verif;
+                if change_direction {
+                    verif = true;
+                    // Gradient : Il faut eviter de boucler
+                } else {
+                    if kount > 1 {
+                        // Pour accelerer les cas quasi-quadratique
+                        verif =
+                            save[(kount - 1) as usize] < 1.0e-4 * save[(kount - 2) as usize];
+                    } else {
+                        verif = f2 < 1.0e-6 * save[0]; // Pour les cas dejas solutions
+                    }
+                }
+                if verif {
+                    for i in 0..ninc {
+                        delta[i] = previous_solution[i] - self.sol[i];
+                    }
+
+                    if is_solution_reached(&delta, &self.tol) {
+                        if previous_minimum < f2 {
+                            self.sol = sol_save;
+                        }
+                        self.done = false;
+                        let _ = f.value(&self.sol); // update F before GetStateNumber
+                        self.done = true;
+                        self.state = f.get_state_number();
+                        return;
+                    }
+                }
+                // fin du test solution
+
+                // Analyse de la progression...
+                // comparison of current minimum and previous minimum
+                if (f2 - previous_minimum) <= a_tol_func {
+                    if kount > 5 {
+                        // L'historique est il bon ?
+                        if f2 >= 0.95 * save[(kount - 5) as usize] {
+                            if !change_direction {
+                                change_direction = true;
+                            } else {
+                                self.done = false;
+                                let _ = f.value(&self.sol); // update F before GetStateNumber
+                                self.done = true;
+                                self.state = f.get_state_number();
+                                return; //  si un gain inf a 5% on sort
+                            }
+                        } else {
+                            change_direction = false; // If yes we restart
+                        }
+                    } else {
+                        change_direction = false; // No history, we continue
+                    }
+                    // If the gradient does not decrease sufficiently with
+                    // Newton, we try the gradient method unless f decreases
+                    // (as strange as it may seem, with NEWTON the gradient of
+                    // f can increase while f decreases: in this case we must
+                    // keep NEWTON)
+                    if (gnr1 > 0.9 * old_gr) && (f2 > 0.5 * previous_minimum) {
+                        change_direction = true;
+                    }
+
+                    // If we don't decide to change strategy, we verify
+                    // if not already done
+                    if (!change_direction) && (!verif) {
+                        for i in 0..ninc {
+                            delta[i] = previous_solution[i] - self.sol[i];
+                        }
+                        if is_solution_reached(&delta, &self.tol) {
+                            self.done = false;
+                            let _ = f.value(&self.sol); // update F before GetStateNumber
+                            self.done = true;
+                            self.state = f.get_state_number();
+                            return;
+                        }
+                    }
+                } else { // Cas de regression
+                    if !change_direction {
+                        // On passe au gradient
+                        change_direction = true;
+                        self.sol = previous_solution;
+                        if !f_dir.value_vec(self.sol, &mut ff, &mut df, &mut gh, &mut f2, &mut gnr1)
+                        {
+                            self.done = false;
+                            self.state = f.get_state_number();
+                            return;
+                        }
+                    } else {
+                        self.state = f.get_state_number();
+                        return; // y a plus d'issues
+                    }
+                }
         }
         self.done = false;
         self.state = f.get_state_number();

@@ -12,8 +12,11 @@
 // rcad: the boolean DS represents an edge as Curve3 + parameter range, so the
 // edge-edge distance is a function of two curve segments.
 
+use glam::DVec3;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_cc::ExtremaExtCC;
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
-use rcad_kernel::base::extrema::{ext_cc_line_conic, line_line_extrema};
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{Curve3, CurveEval};
 
 /// OCCT BRepExtrema_DistShapeShape(edge1, edge2, Extrema_ExtFlag_MIN).Value()
@@ -27,57 +30,56 @@ pub fn min_distance_edge_segments(
     u1: f64,
     u2: f64,
 ) -> f64 {
+    // OCCT: BRepAdaptor_Curve C1(edge1)/C2(edge2) with the edge ranges.
+    let a_c1 = GeomCurveAdaptor::with_range(c1.clone(), t1, t2);
+    let a_c2 = GeomCurveAdaptor::with_range(c2.clone(), u1, u2);
+    let a_tool1 = CurveToolHandle::for_curve3(c1, &a_c1, &a_c1);
+    let a_tool2 = CurveToolHandle::for_curve3(c2, &a_c2, &a_c2);
+
+    // OCCT: Extrema_ExtCC ExtCC(C1, C2, U1, U2, V1, V2, TolC1, TolC2)
+    // (ExtCC.cxx L177-317). The analytical ExtElC branches run for a line
+    // against an elementary curve (cxx L247-294), the general branch
+    // otherwise; PrepareResults clips to the ranges (cxx L832-901).
+    let an_ext_cc = ExtremaExtCC::new_curves_ranged(
+        &a_tool1, &a_tool2, t1, t2, u1, u2, 1.0e-10, 1.0e-10,
+    );
+
     let mut best = f64::INFINITY;
 
-    // OCCT Extrema_ExtCC dispatch (L247-294): line-conic handled analytically
-    // by Extrema_ExtElC. Normalize so a Line comes first.
-    let (line, conic, lt1, lt2, cu1, cu2) = match (c1, c2) {
-        (Curve3::Line(l), c2) => (l, c2, t1, t2, u1, u2),
-        (c1, Curve3::Line(l)) => (l, c1, u1, u2, t1, t2),
-        (Curve3::Line(a), Curve3::Line(b)) => {
-            // Line-Line (OCCT ExtElC L268-357): interior closest pair + vertices.
-            for (d, tp, up) in line_line_extrema(a, b) {
-                if tp >= t1 - f64::EPSILON && tp <= t2 + f64::EPSILON
-                    && up >= u1 - f64::EPSILON && up <= u2 + f64::EPSILON
-                {
-                    best = best.min(d);
-                }
-            }
-            for &te in &[t1, t2] {
-                best = best.min(closest_point_on_curve_range(c2, a.point_at(te), u1, u2, 64).distance);
-            }
-            for &ue in &[u1, u2] {
-                best = best.min(closest_point_on_curve_range(c1, b.point_at(ue), t1, t2, 64).distance);
-            }
-            return best;
+    // OCCT Extrema_ExtCC::NbExt() / SquareDistance(i) (cxx L351-358 / L340-347).
+    if an_ext_cc.is_done() {
+        let a_nb_ext = an_ext_cc.nb_ext();
+        for an_idx in 1..=a_nb_ext {
+            best = best.min(an_ext_cc.square_distance(an_idx));
         }
-        // Both non-line: not reachable from the IntTools_EdgeEdge fast-reject
-        // (its condition guarantees one curve is a Line). Fall back to the
-        // sampling curve-curve extrema.
-        _ => return rcad_kernel::base::extrema::extrema_curve_curve(c1, c2, 64).min_distance(),
-    };
-
-    // OCCT Extrema_ExtCC for line-conic: interior extrema in range + corners.
-    let cc = ext_cc_line_conic(line, lt1, lt2, conic, cu1, cu2);
-    for (d, _, _) in &cc.interior {
-        best = best.min(*d);
     }
-    // OCCT TrimmedSquareDistances (mydist11/12/21/22, L375-393).
-    best = best.min(cc.corners.dist11.sqrt());
-    best = best.min(cc.corners.dist12.sqrt());
-    best = best.min(cc.corners.dist21.sqrt());
-    best = best.min(cc.corners.dist22.sqrt());
+    // OCCT Extrema_ExtCC::TrimmedSquareDistances (mydist11/12/21/22,
+    // cxx L375-393).
+    let (a_d11, a_d12, a_d21, a_d22, _, _, _, _) = an_ext_cc.trimmed_square_distances();
+    best = best.min(a_d11);
+    best = best.min(a_d12);
+    best = best.min(a_d21);
+    best = best.min(a_d22);
 
-    // OCCT vertex sub-shapes of the edges: endpoint of one edge to the other
-    // edge's curve (ExtPC / ExtPElC).
-    for &te in &[lt1, lt2] {
-        let p = line.point_at(te);
-        best = best.min(closest_point_on_curve_range(conic, p, cu1, cu2, 64).distance);
+    // OCCT BRepExtrema_DistShapeShape: the edge vertex sub-shapes — endpoint of
+    // one edge to the other edge's curve (ExtPC / ExtPElC).
+    for &te in &[t1, t2] {
+        let p = c1.point_at(te);
+        let a_d = closest_point_on_curve_range(c2, p, u1, u2, 64).distance;
+        best = best.min(a_d * a_d);
     }
-    for &ue in &[cu1, cu2] {
-        let p = conic.point_at(ue);
-        best = best.min(closest_point_on_curve_range(&Curve3::Line(*line), p, lt1, lt2, 64).distance);
+    for &ue in &[u1, u2] {
+        let p = c2.point_at(ue);
+        let a_d = closest_point_on_curve_range(c1, p, t1, t2, 64).distance;
+        best = best.min(a_d * a_d);
     }
 
-    best
+    best.sqrt()
+}
+
+/// OCCT BRepExtrema_DistShapeShape(edge, vertex).Value() — the minimum 3D
+/// distance from the curve segment [t1, t2] to the point (ExtP / ExtPC
+/// clipped to the range, BRepExtrema_DistShapeShape.cxx Perform(Edge, Vertex)).
+pub fn min_distance_edge_vertex(c: &Curve3, t1: f64, t2: f64, p: DVec3) -> f64 {
+    closest_point_on_curve_range(c, p, t1, t2, 64).distance
 }

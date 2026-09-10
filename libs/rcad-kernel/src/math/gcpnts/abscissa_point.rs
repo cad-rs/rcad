@@ -136,10 +136,7 @@ mod tests {
 
     #[test]
     fn line_arc_length_analytic() {
-        let c = Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        });
+        let c = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
         assert!(approx_eq(arc_length(&c, 0.0, 5.0), 5.0, TOL));
         assert!(approx_eq(arc_length(&c, -2.0, 3.0), 5.0, TOL));
         assert!(approx_eq(arc_length(&c, 5.0, 0.0), -5.0, TOL)); // signed

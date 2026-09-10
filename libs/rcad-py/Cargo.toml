@@ -14,7 +14,6 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39", "generate-import-lib"] }
 rcad-kernel = { path = "../rcad-kernel" }
 rcad-modeling = { path = "../rcad-modeling" }
-rcad-algorithms = { path = "../rcad-algorithms" }
 rcad-step = { path = "../rcad-step" }
 rcad-history = { path = "../../../libs/rcad-history" }
 rcad-features = { path = "../../../libs/rcad-features" }

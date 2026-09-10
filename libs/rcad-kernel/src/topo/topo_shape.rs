@@ -125,7 +125,11 @@ impl Shape {
     pub fn ptr_id(&self) -> u64 { Arc::as_ptr(&self.data) as u64 }
 
     /// OCCT TopoDS_Shape::IsNull -- true if this is a null/uninitialized shape.
-    pub fn is_null(&self) -> bool { self.index == usize::MAX && self.ptr_id() == 0 }
+    ///
+    /// rcad marks null/synthetic shapes by `index == usize::MAX`; the Arc
+    /// handle of `Shape::null()` always has a non-zero address, so testing
+    /// the pointer would never fire.
+    pub fn is_null(&self) -> bool { self.index == usize::MAX }
 
     /// OCCT TopoDS_Shape::IsSame -- same TShape (ignores Location and Orientation).
     pub fn is_same(&self, other: &Shape) -> bool {

@@ -1,0 +1,65 @@
+//! OCCT TKOffset — modules named 1:1 after the OCCT TKOffset packages:
+//! `brep_offset_*` (BRepOffset), `brep_offset_api_*` (BRepOffsetAPI),
+//! `bi_tgte_*` (BiTgte), `draft_*` (Draft).  Stage 2 per the port plan.
+//!
+//! Source: $OCCT_SRC/src/ModelingAlgorithms/TKOffset/
+
+pub mod brep_offset_make_simple_offset;
+pub mod bi_tgte_blended;
+pub mod bi_tgte_contact;
+pub mod bi_tgte_curve_on_edge;
+pub mod bi_tgte_curve_on_vertex;
+pub mod brep_offset_inter2d;
+pub mod brep_offset_inter2d_b;
+pub mod brep_offset_inter3d;
+pub mod brep_offset_make_offset;
+pub mod brep_offset_make_offset_b;
+pub mod brep_offset_make_offset_c;
+pub mod brep_offset_make_offset_d;
+pub mod brep_offset_make_offset_e;
+pub mod brep_offset_make_offset_loops;
+pub mod brep_offset_offset;
+pub mod brep_offset_surface;
+pub mod brep_offset_tool;
+pub mod brep_offset_tool_b;
+pub mod brep_offset_tool_iso;
+pub mod brep_offset_tool_c;
+pub mod brep_offset_tool_d;
+pub mod draft_modification;
+pub mod draft_modification_1;
+pub mod draft_modification_1_b;
+pub mod draft_modification_1_c;
+pub mod draft;
+pub mod draft_edge_info;
+pub mod draft_error_status;
+pub mod draft_face_info;
+pub mod draft_vertex_info;
+pub mod brep_offset_offset_b;
+pub mod brep_offset_api_draft_angle;
+pub mod brep_offset_api_draft_angle_b;
+pub mod brep_offset_api_find_contigous_edges;
+pub mod brep_offset_api_make_draft;
+pub mod brep_offset_api_make_evolved;
+pub mod brep_offset_api_make_filling;
+pub mod brep_offset_api_make_offset;
+pub mod brep_offset_api_make_offset_shape;
+pub mod brep_offset_api_make_pipe;
+pub mod brep_offset_api_make_pipe_shell;
+pub mod brep_offset_api_make_thick_solid;
+pub mod brep_offset_api_middle_path;
+pub mod brep_offset_api_middle_path_b;
+pub mod brep_offset_api_normal_projection;
+pub mod brep_offset_api_thru_sections;
+pub mod brep_offset_api_thru_sections_b;
+pub mod brep_offset_api_thru_sections_c;
+pub mod brep_offset_make_offset_1;
+pub mod brep_offset_make_offset_1_b;
+pub mod brep_offset_make_offset_1_c;
+pub mod brep_offset_make_offset_1_d;
+pub mod brep_offset_make_offset_1_e;
+pub mod brep_offset_make_offset_1_f;
+pub mod brep_offset_make_offset_1_g;
+pub mod brep_offset_make_offset_1_h;
+pub mod brep_offset_make_offset_1_i;
+pub mod brep_offset_make_offset_1_j;
+pub mod brep_offset_analyse;

@@ -666,10 +666,7 @@ fn aline(
     let d = curvsol.domain();
     let mut line = IntPatchLine::analytic(
         IntPatchIType::Analytic,
-        Curve3::Line(Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        }),
+        Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X)),
         [d[0], d[1]],
     );
     line.a_curve = Some(curvsol);
@@ -1319,8 +1316,8 @@ pub fn int_coco(
                     (Situation::Outside, Situation::Outside)
                 } else {
                     // Use distance from ptbid to each cone axis.
-                    let a_l_ax1 = Line3 { origin: apex1, direction: co1.axis_dir() };
-                    let a_l_ax2 = Line3 { origin: apex2, direction: co2.axis_dir() };
+                    let a_l_ax1 = Line3::new(apex1, co1.axis_dir());
+                    let a_l_ax2 = Line3::new(apex2, co2.axis_dir());
                     let a_r1 = point_line_distance(ptbid, &a_l_ax1);
                     let a_r2 = point_line_distance(ptbid, &a_l_ax2);
                     if a_r1 > a_r2 {
@@ -1514,10 +1511,7 @@ pub fn int_coco(
     // OCCT L9147-9172: common generatrix through the apexes.
     if inter.has_common_gen() {
         let a_p_char = inter.p_char();
-        let linsol = Line3 {
-            origin: apex1,
-            direction: (apex2 - apex1).normalize_or_zero(),
-        };
+        let linsol = Line3::new(apex1, (apex2 - apex1).normalize_or_zero());
         let mut glig = gline_line(linsol, true, TypeTrans::Undecided, TypeTrans::Undecided);
         let (u1, v1) = quad1.parameters(a_p_char);
         let (u2, v2) = quad2.parameters(a_p_char);
