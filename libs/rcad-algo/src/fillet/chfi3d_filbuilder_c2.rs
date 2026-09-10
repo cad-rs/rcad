@@ -772,6 +772,18 @@ pub fn perform_two_corner(fb: &mut ChFi3dBuilder, index: usize) {
     // bevel
     //------ (OCCT L458-514)
     let mut done = false;
+    // q2 narrowing record (2026-09-10, probes cleared): at the failing
+    // multi-edge vertex the gates are ang1=pi/2 (no tangent exit),
+    // cp1/cp2 both on_arc with yapiv=false (different pivot arcs),
+    // stat1=OnSame / stat2=AllSame -> neither c1biseau (AllSame) nor
+    // c1rotule (OnSame+OnSame) fires; the OCCT-verbatim gates here
+    // (L364-367/L449-455) then fall to the !c1biseau && !done
+    // reconstruction tail, which — in OCCT too — leaves done=false and
+    // the compute loop marks the vertex bad.  OCCT passing q2 therefore
+    // implies the spine Status values differ upstream: the divergence
+    // lives in the tangent-region status walk (OCCT ChFi3d_Builder_1.cxx
+    // L780-1000 CurSt/SetFirstStatus/SetLastStatus chain, translated at
+    // chfi3d.rs L2273-2708), not in this file.
     if c1biseau {
         // OCCT L469: done = PerformTwoCornerbyInter(Index).  OCCT reads the
         // same myDS reference; the rcad take/put-back hands the DS over for

@@ -14,13 +14,25 @@
 //! - [`free_bounds::ShapeAnalysisFreeBounds`]: OCCT ShapeAnalysis_FreeBounds (W1-5)
 
 pub mod analysis;
+pub mod box_bnd_tree;
+pub mod canonical_recognition;
+pub mod check_small_face;
 pub mod curve;
 pub mod edge;
+pub mod free_bound_data;
 pub mod free_bounds;
+pub mod free_bounds_properties;
+pub mod geom;
+pub mod shell;
+pub mod shape_contents;
+pub mod shape_tolerance;
 pub mod surface;
+pub mod transfer_parameters;
+pub mod transfer_parameters_proj;
 pub mod wire;
 pub mod wire_checks;
 pub mod wire_order;
+pub mod wire_vertex;
 
 pub use curve::ShapeAnalysisCurve;
 pub use edge::ShapeAnalysisEdge;
