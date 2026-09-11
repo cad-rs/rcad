@@ -365,15 +365,17 @@ pub(crate) fn exact_bound(
     // Here we assume that D2d != (0, 0).
     let (ru1, ru2, rv1, rv2);
     if d2d.x.abs() < GP_RESOLUTION {
-        ru1 = f64::INFINITY; // OCCT Precision::Infinite()
-        ru2 = f64::INFINITY;
+        // OCCT ProjLib_CompProjectedCurve.cxx L331-332: RU1 = RU2 = Precision::Infinite().
+        ru1 = rcad_kernel::core::precision::INFINITE_VALUE;
+        ru2 = rcad_kernel::core::precision::INFINITE_VALUE;
         rv1 = v0 - first_v;
         rv2 = last_v - v0;
     } else if d2d.y.abs() < GP_RESOLUTION {
+        // OCCT ProjLib_CompProjectedCurve.cxx L340-341: RV1 = RV2 = Precision::Infinite().
         ru1 = u0 - first_u;
         ru2 = last_u - u0;
-        rv1 = f64::INFINITY;
-        rv2 = f64::INFINITY;
+        rv1 = rcad_kernel::core::precision::INFINITE_VALUE;
+        rv2 = rcad_kernel::core::precision::INFINITE_VALUE;
     } else {
         ru1 = DVec2::new(u0, v0).distance(DVec2::new(first_u, v0 + (first_u - u0) * d2d.y / d2d.x));
         ru2 = DVec2::new(u0, v0).distance(DVec2::new(last_u, v0 + (last_u - u0) * d2d.y / d2d.x));

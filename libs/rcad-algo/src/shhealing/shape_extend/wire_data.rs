@@ -22,6 +22,7 @@ use crate::brep_algo::tool::top_exp_vertices_wire;
 use crate::shhealing::shape_build::brep_tool::{
     builder_add, iter_subshapes, set_flag_inplace, shape_is_null,
 };
+use crate::topalgo::brep_lib::make_wire::BRepLibMakeWire;
 use rcad_kernel::topods::{
     BRep, BRepBuilder, BRepTool, Orientation, Shape, ShapeType, TShape, tshape_flags,
 };
@@ -663,19 +664,27 @@ impl WireData {
     /// OCCT WireAPIMake() (cxx L689-711): makes TopoDS_Wire using
     /// BRepBuilderAPI_MakeWire, which merges geometrically coincident
     /// vertices and can disturb the correct order of edges in the wire.  If
-    /// the builder fails, a null shape is returned.
+    /// the builder fails, a null shape is returned.  The real
+    /// BRepLib_MakeWire body runs in a self-contained working BRep — the
+    /// OCCT MakeWire owns its builder (BRepLib_MakeWire.cxx L132: a local
+    /// BRep_Builder B), so the produced wire TShape graph is self-contained.
     pub fn wire_api_make(&self) -> Shape {
-        let mut mw = BRepBuilderAPIMakeWire::new();
+        let mut brep = BRep::default();
+        let mut bb = BRepBuilder::new();
+        let mut mw = BRepLibMakeWire::new();
         let nb = self.nb_edges();
         for i in 1..=nb {
-            mw.add(&self.edge(i));
+            // OCCT L694: MW.Add(Edge(i)).
+            mw.add_edge(&mut brep, &mut bb, &self.edge(i));
         }
         if self.my_manifold_mode {
             let nb = self.nb_nonmanifold_edges();
             for i in 1..=nb {
-                mw.add(&self.nonmanifold_edge(i));
+                // OCCT L697-699: MW.Add(NonmanifoldEdge(i)).
+                mw.add_edge(&mut brep, &mut bb, &self.nonmanifold_edge(i));
             }
         }
+        // OCCT L703-708.
         let mut w = Shape::null();
         if mw.is_done() {
             w = mw.wire();
@@ -782,40 +791,5 @@ impl BRepToolsWireExplorer {
     /// OCCT Next().
     fn next(&mut self) {
         self.my_index += 1;
-    }
-}
-
-/// GAP carrier for OCCT BRepBuilderAPI_MakeWire (TKTopAlgo) — Add stores the
-/// edge list; IsDone() is false so the callers take the OCCT not-done exit
-/// (WireAPIMake returns the null wire).  GAP: closes with the
-/// BRepBuilderAPI batch (the same pending-classification as the
-/// BRepLibMakeWire carrier in brep_algo/normal_projection.rs).
-#[allow(dead_code)]
-struct BRepBuilderAPIMakeWire {
-    my_edges: Vec<Shape>,
-}
-
-#[allow(dead_code)]
-impl BRepBuilderAPIMakeWire {
-    /// OCCT BRepBuilderAPI_MakeWire().
-    fn new() -> Self {
-        BRepBuilderAPIMakeWire {
-            my_edges: Vec::new(),
-        }
-    }
-
-    /// OCCT BRepBuilderAPI_MakeWire::Add(edge).
-    fn add(&mut self, edge: &Shape) {
-        self.my_edges.push(edge.clone());
-    }
-
-    /// OCCT BRepBuilderAPI_MakeWire::IsDone() — pending (false).
-    fn is_done(&self) -> bool {
-        false
-    }
-
-    /// OCCT BRepBuilderAPI_MakeWire::Wire() — pending (null).
-    fn wire(&self) -> Shape {
-        Shape::null()
     }
 }

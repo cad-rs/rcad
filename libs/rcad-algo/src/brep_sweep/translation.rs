@@ -24,6 +24,7 @@ use super::tool_rehost::{
     geom_adaptor_surface_get_type, geom_curve_transformed, geom_line,
     GeomAdaptorSurfaceOfLinearExtrusion, GeomAbsSurfaceType,
 };
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use super::trsf::{self, BRepSweepTrsfSlots, TrsfData};
 use super::BRepSweepBuilder;
 
@@ -188,7 +189,7 @@ impl NumLinearRegularSweepSlots for BRepSweepTranslation {
         if self.core.my_dir_shape_tool.type_of(a_dir_s) == ShapeType::Edge {
             // OCCT L230-232: C = BRep_Tool::Curve(Edge(aGenS), L, First,
             // Last); toler = Tolerance(Edge(aGenS)).
-            let (c0, _first, _last) =
+            let (c0, first, last) =
                 brep_tool_curve(a_gen_s).expect("BRep_Tool::Curve");
             toler = brep_tool_tolerance(a_gen_s);
             // OCCT L234-237: Tr = L.Transformation(); C = C->Copy();
@@ -199,8 +200,10 @@ impl NumLinearRegularSweepSlots for BRepSweepTranslation {
             let d = -self.my_vec;
             if self.my_canonize {
                 // OCCT L243-244: HC = GeomAdaptor_Curve(C, First, Last);
-                // AS = GeomAdaptor_SurfaceOfLinearExtrusion(HC, D).
-                let as_extr = GeomAdaptorSurfaceOfLinearExtrusion::load(&c, d);
+                // AS = GeomAdaptor_SurfaceOfLinearExtrusion(HC, D) — the
+                // loaded curve adaptor (its load unwraps the trimmed basis).
+                let hc = GeomCurveAdaptor::with_range(c.clone(), first, last);
+                let as_extr = GeomAdaptorSurfaceOfLinearExtrusion::load(&hc, d);
                 match as_extr.get_type() {
                     GeomAbsSurfaceType::Plane => {
                         // OCCT L248-249: S = new Geom_Plane(AS.Plane()).

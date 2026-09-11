@@ -23,7 +23,9 @@
 //   L214-251): rcad has no shared TopExp module yet and the existing
 //   shhealing `topexp_explorer` helper carries no ToAvoid support.
 
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor;
 use rcad_kernel::topods::{tshape_flags, BRep, BRepBuilder, Orientation, Shape, ShapeType};
 use glam::DVec3;
 
@@ -577,14 +579,19 @@ impl OutLiner {
                                 break;
                             } else {
                                 // OCCT L194: // Try to project one point
-                                // OCCT L195: Extrema_ExtPC anExt(P, aC);
-                                let an_ext = ExtPC::new(
-                                    p,
-                                    a_c.curve(),
-                                    EXTREMA_2ARG_TOLF,
+                                // OCCT L195: Extrema_ExtPC anExt(P, aC) —
+                                // the real kernel body over the
+                                // BRepAdaptor_Curve (the edge-range
+                                // adaptor, TolF 1.0e-10).
+                                let a_curve3 = a_c.curve();
+                                let a_ba_adaptor = GeomCurveAdaptor::with_range(
+                                    a_curve3.clone(),
                                     a_c.first_parameter(),
                                     a_c.last_parameter(),
                                 );
+                                let a_ba_tool =
+                                    CurveToolHandle::for_curve3(a_curve3, &a_ba_adaptor, &a_ba_adaptor);
+                                let an_ext = ExtremaExtPC::new_point_curve(p, &a_ba_tool, EXTREMA_2ARG_TOLF);
                                 // OCCT L196: if (anExt.IsDone())
                                 if an_ext.is_done() {
                                     // OCCT L198: int aNe = anExt.NbExt();

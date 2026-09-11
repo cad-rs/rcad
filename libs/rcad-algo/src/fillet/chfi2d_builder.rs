@@ -26,7 +26,9 @@
 use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::core::precision::{ANGULAR, CONFUSION, PCONFUSION};
 use rcad_kernel::geom::{Circle2d, Curve2d, Curve3, CurveEval as _, Surface3, SurfaceEval as _};
 use rcad_kernel::topo::topo_shape::Shape;
@@ -185,7 +187,11 @@ pub(crate) fn elclib_adjust_periodic(
     u1: &mut f64,
     u2: &mut f64,
 ) {
-    if u_first.is_infinite() || u_last.is_infinite() {
+    // OCCT ElCLib.cxx L121: Precision::IsInfinite(UFirst) || Precision::IsInfinite(ULast)
+    // (Precision.hxx L350-353).
+    if rcad_kernel::precision::is_infinite_value(u_first)
+        || rcad_kernel::precision::is_infinite_value(u_last)
+    {
         *u1 = u_first;
         *u2 = u_last;
         return;
@@ -226,32 +232,42 @@ pub(crate) fn brep_lib_make_edge_init_vertices(
     let cf = domain[0];
     let cl = domain[1];
     let project = |brep: &BRep, v: &Shape| -> Option<f64> {
-        // OCCT Project(C, V, p) (BRepLib_MakeEdge.cxx L73-117):
-        // Extrema_ExtPC(P, ACOS) with the nearest-square-distance pick.
+        // OCCT Project(C, V, p) (BRepLib_MakeEdge.cxx L73-117).
         let p = brep.vertex_position(v);
         let eps2 = brep.vertex_tolerance(v);
         let eps2 = eps2 * eps2;
-        let ext = ExtPC::new(p, c, CONFUSION, cf, cl);
-        if !ext.is_done() {
-            return None;
+        // OCCT L78: GeomAdaptor_Curve GAC(C); L80-93: the endpoint
+        // shortcut — the closer endpoint wins when within Eps2.
+        let p1 = c.point_at(cf);
+        let p2 = c.point_at(cl);
+        let d1 = p1.distance_squared(p);
+        let d2 = p2.distance_squared(p);
+        if d1 < d2 && d1 <= eps2 {
+            return Some(cf);
+        } else if d2 < d1 && d2 <= eps2 {
+            return Some(cl);
         }
-        let mut index: usize = 0;
-        let mut dist2 = f64::MAX;
-        for i in 1..=ext.nb_ext() {
-            let d2 = ext.square_distance(i);
-            if d2 < dist2 {
-                index = i;
-                dist2 = d2;
+        // OCCT L95: Extrema_ExtPC extrema(P, GAC) — the two-arg ctor over
+        // the full domain, the default theTolF is 1.0e-10.
+        let a_adaptor = GeomCurveAdaptor::new(c.clone());
+        let a_tool = CurveToolHandle::for_curve3(c, &a_adaptor, &a_adaptor);
+        let extrema = ExtremaExtPC::new_point_curve(p, &a_tool, 1.0e-10);
+        // OCCT L96-113: the nearest-extremum pick, accepted only when its
+        // square distance is within Eps2.
+        if extrema.is_done() {
+            let mut index: usize = 0;
+            let mut dist2 = f64::MAX; // RealLast()
+            for i in 1..=extrema.nb_ext() {
+                let dist2min = extrema.square_distance(i);
+                if dist2min < dist2 {
+                    index = i;
+                    dist2 = dist2min;
+                }
+            }
+            if index != 0 && dist2 <= eps2 {
+                return Some(extrema.point(index).param);
             }
         }
-        if index != 0 {
-            let poc = ext.point(index);
-            // OCCT: P.SquareDistance(POC.Value()) <= Precision::SquareConfusion()
-            if p.distance_squared(poc.point) <= PCONFUSION * PCONFUSION {
-                return Some(poc.param);
-            }
-        }
-        let _ = eps2;
         None
     };
     let p1 = match project(brep, vv1) {

@@ -1506,7 +1506,8 @@ fn geom2d_curve_transform(pcurve: &Curve2d, trans: &GpTrsf2d) -> Curve2d {
 fn geom2d_transformed_parameter(pcurve: &Curve2d, u: f64, trans: &GpTrsf2d) -> f64 {
     let is_line = matches!(pcurve, Curve2d::Line(_));
     if is_line {
-        if u.is_infinite() {
+        // OCCT Geom2d_Line.cxx L246-252: Precision::IsInfinite(U) passthrough.
+        if rcad_kernel::precision::is_infinite_value(u) {
             return u;
         }
         return u * trans.scale_factor().abs();
@@ -1817,7 +1818,11 @@ fn make_pcurve_edge(
 /// OCCT ElCLib::AdjustPeriodic(UFirst, ULast, Preci, U1, U2)
 /// (ElCLib.cxx L115-150).
 fn elclib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u2: &mut f64) {
-    if u_first.is_infinite() || u_last.is_infinite() {
+    // OCCT ElCLib.cxx L121: Precision::IsInfinite(UFirst) || Precision::IsInfinite(ULast)
+    // (Precision.hxx L350-353).
+    if rcad_kernel::precision::is_infinite_value(u_first)
+        || rcad_kernel::precision::is_infinite_value(u_last)
+    {
         return;
     }
 

@@ -244,12 +244,35 @@ pub(super) fn brep_gprop_linear_properties(_the_s: &Shape) -> GPropGProps {
     panic!("GAP: BRepGProp::LinearProperties (TKTopAlgo/BRepGProp not translated)");
 }
 
-/// OCCT BRepLib::BuildCurve3d(E, Tol) — GAP (the MakeCurve3d walk is not
-/// translated; the MakeSimpleOffset module carries the same GAP for
-/// BuildCurves3d).
-pub(super) fn brep_lib_build_curve3d(the_e: &Shape, the_tol: f64) {
-    let _ = (the_e, the_tol);
-    panic!("GAP: BRepLib::BuildCurve3d (TKTopAlgo/BRepTools not translated)");
+/// OCCT BRepLib::BuildCurve3d(AnEdge, Tolerance) (TKTopAlgo/BRepLib,
+/// BRepLib.cxx L301-456; BRepLib.hxx L90-94 defaults Continuity=GeomAbs_C1,
+/// MaxDegree=14, MaxSegment=0) — the real arena-form body lives in
+/// crate::topalgo::brep_lib::brep_lib::BRepLib::build_curve3d (E3-Q batch 3;
+/// the brep_offset_make_offset.rs re-host brep_lib_build_curve3d_edge is
+/// already wired to it).  This offset re-host keeps the (E, Tol) call form
+/// of BRepOffset_Inter2d.cxx L453-454 / L752-753 and BRepOffset_Offset.cxx
+/// L1517/L1524/L1645 over the pool-free offset edges (architecture
+/// differences #19/#22: the offset module carries Arc<TShape> handles while
+/// the arena body needs a &mut BRep, and the OCCT L335-356 plane-support
+/// search needs the owning-face surface, which the rcad pcurve map does not
+/// carry).
+///
+/// The translated prefix is the OCCT L318-325 early return (an edge that
+/// already has a 3d curve is left untouched).  The continuation
+/// (CheckSameRange/SameRange L327-333, the plane-support search L335-356,
+/// GeomLib::To3d L362, GeomLib::BuildCurve3d L421-430) stays the GAP of the
+/// untranslated TKGeomBase/GeomLib leaves; the OCCT failure outcome is
+/// preserved — no 3d curve is attached and the function reports false (the
+/// OCCT null-handle returns false at L363-366 and L436-439), so the callers
+/// proceed exactly as on the OCCT failure path.
+pub(super) fn brep_lib_build_curve3d(the_e: &Shape, the_tol: f64) -> bool {
+    let _ = the_tol;
+    // OCCT L318-325: if the edge has a 3d curve, return true (nothing to do).
+    if crate::brep_algo::tool::brep_tool_curve(the_e).is_some() {
+        return true;
+    }
+    // OCCT L327-456 — GAP: GeomLib::To3d / GeomLib::BuildCurve3d (see above).
+    false
 }
 
 /// OCCT BRepTools::Update(S) (BRepTools.cxx) — GAP no-op re-host (the

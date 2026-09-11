@@ -9,6 +9,7 @@ use rcad_kernel::base::convert::ConvertParameterisation;
 use rcad_kernel::core::precision::p_confusion;
 use rcad_kernel::geom::{Circle3, CurveEval as _, SurfaceEval as _};
 use rcad_kernel::math::math_gauss::MathGauss;
+use rcad_kernel::math::math_svd::MathSvd;
 use rcad_kernel::math::{MatD, VecD};
 
 use crate::geomalgo::geomfill::geom_fill::{get_circle, get_circle_d1, get_circle_d2};
@@ -1106,7 +1107,6 @@ impl<'a> BlendFuncEvolRad<'a> {
     /// (BlendFunc_EvolRad.cxx L1458-1634) — used for the first and last
     /// section.
     #[allow(clippy::too_many_arguments)]
-    #[allow(unreachable_code)] // the math_SVD fallback is a pending kernel gap
     pub fn section_d1(
         &mut self,
         p: &BlendPoint,
@@ -1184,8 +1184,26 @@ impl<'a> BlendFuncEvolRad<'a> {
             // OCCT L1503-1511: math_SVD SingRS(DEDX);
             // if (SingRS.IsDone()) { SingRS.Solve(-DEDT, secmember, 1.e-6);
             //                        istgt = false; }
-            // GAP (plan 0.6): math_SVD is pending in rcad-kernel; the OCCT
-            // !IsDone() path (istgt stays true) is preserved.
+            let mut a = MatD::new(4, 4);
+            for r in 1..=4 {
+                for c in 1..=4 {
+                    a.set(r, c, self.dedx[r - 1][c - 1]);
+                }
+            }
+            let mut sing_rs = MathSvd::new(&a);
+            if sing_rs.is_done() {
+                // OCCT: B = -DEDT, X = secmember (distinct vectors).
+                let mut b = VecD::new(4);
+                let mut x = VecD::new(4);
+                for i in 1..=4 {
+                    b.set(i, -self.dedt[i - 1]);
+                }
+                sing_rs.solve(&b, &mut x, 1.0e-6);
+                for i in 1..=4 {
+                    secmember[i - 1] = x.get(i);
+                }
+                istgt = false;
+            }
         }
 
         if !istgt {
@@ -1319,7 +1337,6 @@ impl<'a> BlendFuncEvolRad<'a> {
     /// Weights, DWeights, D2Weights) (BlendFunc_EvolRad.cxx L1638-2019) —
     /// used for the first and last section.
     #[allow(clippy::too_many_arguments)]
-    #[allow(unreachable_code)] // the math_SVD fallback is a pending kernel gap
     pub fn section_d2(
         &mut self,
         p: &BlendPoint,
@@ -1431,8 +1448,44 @@ impl<'a> BlendFuncEvolRad<'a> {
             //   D2EDX2.Multiply(sol, D2DXdSdt);
             //   Vbis = -(D2EDT2 + (2 * D2EDXDT + D2DXdSdt) * sol);
             //   SingRS.Solve(Vbis, secmember, 1.e-6); istgt = false; }
-            // GAP (plan 0.6): math_SVD is pending in rcad-kernel; the OCCT
-            // !IsDone() path (istgt stays true) is preserved.
+            let mut a = MatD::new(4, 4);
+            for r in 1..=4 {
+                for c in 1..=4 {
+                    a.set(r, c, self.dedx[r - 1][c - 1]);
+                }
+            }
+            let mut sing_rs = MathSvd::new(&a);
+            if sing_rs.is_done() {
+                let mut b = VecD::new(4);
+                let mut solv = VecD::new(4);
+                for i in 1..=4 {
+                    b.set(i, -self.dedt[i - 1]);
+                    solv.set(i, sol[i - 1]);
+                }
+                sing_rs.solve(&b, &mut solv, 1.0e-6);
+                for i in 1..=4 {
+                    sol[i - 1] = solv.get(i);
+                }
+                // OCCT: D2EDX2.Multiply(sol, D2DXdSdt).
+                self.d2edx2.multiply(&sol, &mut d2dxdsdt);
+                // OCCT: Vbis = -(D2EDT2 + (2 * D2EDXDT + D2DXdSdt) * sol).
+                let mut vbis = VecD::new(4);
+                for i in 1..=4 {
+                    let mut somme = 0.0;
+                    for j in 1..=4 {
+                        somme +=
+                            (2.0 * self.d2edxdt[i - 1][j - 1] + d2dxdsdt[i - 1][j - 1])
+                                * sol[j - 1];
+                    }
+                    vbis.set(i, -(self.d2edt2[i - 1] + somme));
+                }
+                let mut sec = VecD::new(4);
+                sing_rs.solve(&vbis, &mut sec, 1.0e-6);
+                for i in 1..=4 {
+                    secmember[i - 1] = sec.get(i);
+                }
+                istgt = false;
+            }
         }
 
         if !istgt {

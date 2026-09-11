@@ -1294,10 +1294,13 @@ pub struct ExtremaExtCS {
 impl ExtremaExtCS {
     pub fn new() -> Self {
         ExtremaExtCS {
-            u_min: f64::NEG_INFINITY,
-            u_max: f64::INFINITY,
-            v_min: f64::NEG_INFINITY,
-            v_max: f64::INFINITY,
+            // OCCT Extrema_ExtCS::Initialize(S, TolC, TolS) takes the range
+            // from the surface adaptor; unbounded sides carry
+            // Precision::Infinite() (Precision.hxx L350-353).
+            u_min: -rcad_kernel::core::precision::INFINITE_VALUE,
+            u_max: rcad_kernel::core::precision::INFINITE_VALUE,
+            v_min: -rcad_kernel::core::precision::INFINITE_VALUE,
+            v_max: rcad_kernel::core::precision::INFINITE_VALUE,
             tol_c: precision_pconfusion(),
             tol_s: precision_pconfusion(),
             surface: None,
@@ -1311,10 +1314,11 @@ impl ExtremaExtCS {
     // OCCT L1: Initialize(surface, tolC, tolS) — full UV range from surface adaptor
     pub fn initialize(&mut self, surface: &Surface3, tol_c: f64, tol_s: f64) {
         self.surface = Some(surface.clone());
-        self.u_min = f64::NEG_INFINITY;
-        self.u_max = f64::INFINITY;
-        self.v_min = f64::NEG_INFINITY;
-        self.v_max = f64::INFINITY;
+        // Unbounded sides carry Precision::Infinite() (Precision.hxx L350-353).
+        self.u_min = -rcad_kernel::core::precision::INFINITE_VALUE;
+        self.u_max = rcad_kernel::core::precision::INFINITE_VALUE;
+        self.v_min = -rcad_kernel::core::precision::INFINITE_VALUE;
+        self.v_max = rcad_kernel::core::precision::INFINITE_VALUE;
         self.tol_c = tol_c;
         self.tol_s = tol_s;
     }

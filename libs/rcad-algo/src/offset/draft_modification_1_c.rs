@@ -8,8 +8,10 @@
 //!         Draft_Modification_1.cxx L826-1775
 
 use glam::DVec3;
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
 use rcad_kernel::base::geom_api::project_on_surf::ProjectPointOnSurf;
+use rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{Circle3, Curve3, CurveEval, Plane, Surface3};
 
 use rcad_kernel::precision::{CONFUSION, PCONFUSION, SQUARE_CONFUSION};
@@ -28,7 +30,7 @@ use super::draft_modification::DraftModification;
 use super::draft_modification_1::dir_is_parallel;
 use super::draft_modification_1_b::{
     choose, elclib_circle_parameter, geom_curve2d_reverse, geom_curve_reverse, gp_circ_translate,
-    parameter, smart_parameter, trimmed_square_distances, ExtremaExtCS,
+    parameter, smart_parameter, ExtremaExtCS,
     GeomAPIProjectPointOnCurve, GeomConvertCompCurveToBSplineCurve, GeomIntIntSS,
 };
 
@@ -223,11 +225,16 @@ impl DraftModification {
                             let mut dist2_min = f64::MAX;
                             imin = 0;
                             for i in 1..=i2s.nb_lines() {
-                                // OCCT L990-991.
+                                // OCCT L990-991: TheCurve.Load(i2s.Line(i));
+                                // Extrema_ExtPC myExtPC(pfv, TheCurve) — the
+                                // two-arg ctor over the full domain, the
+                                // default theTolF is 1.0e-10.
                                 let the_curve = i2s.line(i);
                                 let dom = the_curve.default_domain();
-                                let my_ext_pc =
-                                    ExtPC::new(pfv, &the_curve, CONFUSION, dom[0], dom[1]);
+                                let a_adaptor = GeomCurveAdaptor::new(the_curve.clone());
+                                let a_tool =
+                                    CurveToolHandle::for_curve3(&the_curve, &a_adaptor, &a_adaptor);
+                                let my_ext_pc = ExtremaExtPC::new_point_curve(pfv, &a_tool, 1.0e-10);
 
                                 let mut locpmin = 0.0f64;
                                 if my_ext_pc.is_done() {
@@ -354,9 +361,10 @@ impl DraftModification {
                                             }
                                         }
                                     } else if my_ext_pc.nb_ext() < 1 {
-                                        // OCCT L1099-1114.
+                                        // OCCT L1099-1114:
+                                        // myExtPC.TrimmedSquareDistances(dist1_2, dist2_2, p1b, p2b).
                                         let (dist1_2, dist2_2, _p1b, _p2b) =
-                                            trimmed_square_distances(&my_ext_pc, &the_curve, pfv);
+                                            my_ext_pc.trimmed_square_distances();
                                         if dist1_2 < dist2_2 {
                                             dist2_min = dist1_2;
                                             locpmin = dom[0]; // TheCurve.FirstParameter()
@@ -543,17 +551,21 @@ impl DraftModification {
                             }
                             let mut newc = Curve3::BSpline(concat.bspline_curve());
 
-                            // OCCT L1292-1306.
-                            let dom = newc.default_domain();
-                            let my_ext_pc = ExtPC::new(pfv, &newc, CONFUSION, dom[0], dom[1]);
+                            // OCCT L1292-1306: TheCurve.Load(newC);
+                            // Extrema_ExtPC myExtPC(pfv, TheCurve) — the
+                            // two-arg ctor, the default theTolF 1.0e-10.
+                            let a_adaptor = GeomCurveAdaptor::new(newc.clone());
+                            let a_tool = CurveToolHandle::for_curve3(&newc, &a_adaptor, &a_adaptor);
+                            let my_ext_pc = ExtremaExtPC::new_point_curve(pfv, &a_tool, 1.0e-10);
                             let mut dist2_min = f64::MAX;
                             for i in 1..=my_ext_pc.nb_ext() {
-                                // OCCT: if (myExtPC.IsMin(i)) — the rcad ExtPC
-                                // stores minima only.
-                                let dist2 = my_ext_pc.square_distance(i);
-                                if dist2 < dist2_min {
-                                    dist2_min = dist2;
-                                    pmin = my_ext_pc.point(i).param;
+                                // OCCT L1297: if (myExtPC.IsMin(i)).
+                                if my_ext_pc.is_min(i) {
+                                    let dist2 = my_ext_pc.square_distance(i);
+                                    if dist2 < dist2_min {
+                                        dist2_min = dist2;
+                                        pmin = my_ext_pc.point(i).param;
+                                    }
                                 }
                             }
                             // OCCT L1307-1313.

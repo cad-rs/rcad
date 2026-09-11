@@ -474,10 +474,13 @@ impl PaveFiller {
                     self.put_ef_paves_on_curve(&a_vc_indices, j, &a_mi, &a_mv_ef,
                                                &mut a_mv_tol, &mut a_dm_vlv);
                 }
-                // OCCT L828-843: PutBoundPaveOnCurve when the curve has bounds.
+                // OCCT L828-843: PutBoundPaveOnCurve when the curve has bounds
+                // (IntTools_Curve::HasBounds — !Precision::IsInfinite on both
+                // ends, Precision.hxx L350-353).
                 let has_bounds = {
                     let ic = &self.ds.intersection_curves[cid];
-                    ic.t_range[0].is_finite() && ic.t_range[1].is_finite()
+                    !rcad_kernel::precision::is_infinite_value(ic.t_range[0])
+                        && !rcad_kernel::precision::is_infinite_value(ic.t_range[1])
                 };
                 if has_bounds {
                     a_lbv.clear();
@@ -1602,8 +1605,14 @@ impl PaveFiller {
     fn put_closing_pave_on_curve(&mut self, cid: usize) {
         if cid >= self.ds.intersection_curves.len() { return; }
         let a_ic = self.ds.intersection_curves[cid].clone();
-        // OCCT L3503-3514: check 3d curve and bounds.
-        if !(a_ic.t_range[0].is_finite() && a_ic.t_range[1].is_finite()) { return; }
+        // OCCT L3503-3514: check 3d curve and bounds
+        // (IntTools_Curve::HasBounds — bounded when neither end is
+        // Precision::Infinite; return when NOT bounded).
+        if rcad_kernel::precision::is_infinite_value(a_ic.t_range[0])
+            || rcad_kernel::precision::is_infinite_value(a_ic.t_range[1])
+        {
+            return;
+        }
         let a_t = a_ic.t_range;
         let a_p = [a_ic.curve.point_at(a_t[0]), a_ic.curve.point_at(a_t[1])];
         let a_pb = match a_ic.pave_blocks.first() {

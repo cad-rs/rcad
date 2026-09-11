@@ -18,7 +18,6 @@
 use glam::DVec3;
 use rcad_kernel::geom::{CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::math::bnd::BndBox;
-use rcad_kernel::precision::INFINITE_VALUE;
 
 /// OCCT IntCurveSurface_PolyhedronUtils THE_MIN_EDGE_LENGTH_SQUARED.
 const MIN_EDGE_LENGTH_SQUARED: f64 = 1e-15;
@@ -72,12 +71,12 @@ pub struct ThePolygonOfHInter {
 impl ThePolygonOfHInter {
     /// OCCT IntCurveSurface_ThePolygonOfHInter(Curve, NbPnt) — the parameter
     /// range is the curve's natural domain (the OCCT Geom_Line endpoints are
-    /// ±Precision::Infinite()).
+    /// ±Precision::Infinite(); the kernel domain carries the same values
+    /// natively, so no IEEE mapping is needed).
     pub fn new(curve: &dyn CurveEval, nb_pnt: usize) -> Self {
         let nb = if nb_pnt < 5 { 5 } else { nb_pnt };
         let [a, b] = curve.default_domain();
-        let binf = if a.is_infinite() { -INFINITE_VALUE } else { a };
-        let bsup = if b.is_infinite() { INFINITE_VALUE } else { b };
+        let (binf, bsup) = (a, b);
         let mut poly = ThePolygonOfHInter {
             bnd: BndBox::new(),
             deflection: 0.0,

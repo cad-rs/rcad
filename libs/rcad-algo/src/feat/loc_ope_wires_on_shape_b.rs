@@ -19,10 +19,10 @@
 //    fclass2d::FClass2d over FaceShapeSource (the rcad FClass2d is the
 //    IntTools_FClass2d-equivalent classifier built from a bare face —
 //    shape_source.rs; bop/int_tools/edge_face.rs precedent).
-// 9. ShapeConstruct_ProjectCurveOnSurface (TKShHealing) is not translated
-//    yet; re-hosted below with Perform failing (leaving the pcurve null) so
-//    PutPCurve takes the OCCT null-curve early return (cxx L800-803).
-//    GAP: closes with the TKShHealing batch.
+// 9. ShapeConstruct_ProjectCurveOnSurface (TKShHealing) — the real
+//    translation (shhealing::shape_construct::ProjectCurveOnSurface) is used
+//    at the PutPCurve call site (cxx L794-803); the former always-failing
+//    stand-in is deleted (Rule 4).
 // 10. GeomProjLib::Curve2d (TKTopAlgo) is not translated yet; the PutPCurves
 //    call sites keep the OCCT structure and take the null-curve exit. Note:
 //    OCCT L1227 dereferences the result without a null check on the seam
@@ -250,7 +250,7 @@ fn translated_c2d(c: &Curve2d, dx: f64, dy: f64) -> Curve2d {
 /// OCCT BRepTools::UVBounds(F, Umin, Umax, Vmin, Vmax) — the union of the 2D
 /// boxes of the face's edge pcurves (the AddUVBounds/BndLib_Add2dCurve
 /// vehicle; returns [umin, umax, vmin, vmax]).
-fn brep_tools_uv_bounds(face: &Shape) -> Option<[f64; 4]> {
+pub(crate) fn brep_tools_uv_bounds(face: &Shape) -> Option<[f64; 4]> {
     let mut a_box = BndBox2d::new();
     for edg in explorer(face, ShapeType::Edge, ShapeType::Shape) {
         if let Some((c2d, f, l)) = brep_tool_curve_on_surface(&edg, face) {
@@ -262,53 +262,8 @@ fn brep_tools_uv_bounds(face: &Shape) -> Option<[f64; 4]> {
 }
 
 // ---------------------------------------------------------------------------
-// Re-hosted pending translations (arch. diffs. #9/#10/#11/#12).
+// Re-hosted pending translations (arch. diffs. #10/#11/#12).
 // ---------------------------------------------------------------------------
-
-/// OCCT ShapeConstruct_ProjectCurveOnSurface — pending TKShHealing
-/// translation (architecture difference #9). Init stores the surface; Perform
-/// fails (leaves the pcurve null) so the caller takes the OCCT null path.
-pub(crate) struct ShapeConstructProjectCurveOnSurface {
-    my_surf: Option<Surface3>, // OCCT: mySurf
-    my_tol: f64,               // OCCT: myTol
-}
-
-impl Default for ShapeConstructProjectCurveOnSurface {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ShapeConstructProjectCurveOnSurface {
-    pub fn new() -> Self {
-        ShapeConstructProjectCurveOnSurface {
-            my_surf: None,
-            my_tol: 0.0,
-        }
-    }
-
-    /// OCCT ShapeConstruct_ProjectCurveOnSurface::Init(S, Tol2d).
-    pub fn init(&mut self, the_s: Option<Surface3>, the_tol: f64) {
-        self.my_surf = the_s;
-        self.my_tol = the_tol;
-    }
-
-    /// OCCT Perform(C, First, Last, C2d, TolFirst, TolLast) — GAP (arch.
-    /// diff. #9): the TKShHealing projection algorithm is not translated;
-    /// C2d stays null (the OCCT failure output) and the caller returns.
-    pub fn perform(
-        &mut self,
-        _the_c: &Curve3,
-        _the_first: f64,
-        _the_last: f64,
-        the_c2d: &mut Option<Curve2d>,
-        _the_tol_first: f64,
-        _the_tol_last: f64,
-    ) -> bool {
-        *the_c2d = None;
-        false
-    }
-}
 
 /// OCCT GeomProjLib::Curve2d(C, S, Umin, Umax, Vmin, Vmax, Tol2d) — pending
 /// TKTopAlgo translation (architecture difference #10): returns None (the
@@ -819,11 +774,14 @@ pub(crate) fn put_pcurve(the_edg: &mut Shape, the_fac: &Shape) {
         tol_last = brep_tool_tolerance(vv);
     }
 
-    // OCCT L794-799: the projection tool (architecture difference #9).
+    // OCCT L794-799: the projection tool (ShapeConstruct_ProjectCurveOnSurface
+    // — the real TKShHealing translation, shhealing::shape_construct::
+    // ProjectCurveOnSurface).
     let tol2d = rcad_kernel::precision::CONFUSION;
     let mut c2d_opt: Option<Curve2d> = None;
-    let mut a_tool_proj = ShapeConstructProjectCurveOnSurface::new();
-    a_tool_proj.init(Some(s.clone()), tol2d);
+    let mut a_tool_proj =
+        crate::shhealing::shape_construct::project_curve_on_surface::ProjectCurveOnSurface::new();
+    a_tool_proj.init(s.clone(), tol2d);
     a_tool_proj.perform(&c, f, l, &mut c2d_opt, tol_first, tol_last);
     let Some(mut c2d) = c2d_opt else {
         // OCCT L800-803: the null-curve return.

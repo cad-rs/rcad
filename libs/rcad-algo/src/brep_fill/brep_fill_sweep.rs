@@ -57,8 +57,10 @@ pub use crate::brep_fill::brep_fill_pipe_shell_b::BRepFillTransitionStyle;
 
 /// OCCT ElSLib + Geom_BSplineSurface::UIso over the rcad Surface3 — the
 /// u-varying iso curve at `u`.  The Offset / remaining variants keep the
-/// OCCT failure path (kernel GAP).
-pub(super) fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {    match surf {
+/// OCCT failure path (kernel GAP).  `pub(crate)`: Geom_Surface::UIso is a
+/// public Geom-level operation; SplitSurf (ChFi3d_FilBuilder.cxx L2291-2292)
+/// consumes it over the stored blend surface.
+pub(crate) fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {    match surf {
         // ElSLib::PlaneUIso (ElSLib.cxx): line through P(u, 0) along the V
         // direction.
         Surface3::Plane(pl) => Curve3::Line(Line3 {

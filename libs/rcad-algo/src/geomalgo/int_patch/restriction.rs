@@ -16,6 +16,9 @@
 //     sequence is Vec<PathPoint> from so_on_bounds.rs.
 
 use glam::{DVec2, DVec3};
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3};
 
 use super::so_on_bounds::{Domain, PathPoint};
@@ -1527,8 +1530,9 @@ pub fn process_segments(
 
 /// OCCT SquareDistance (L1897-1931) — distance from a GLine to a point.  For
 /// the Line/Circle types the analytic quadric distance is used; for the other
-/// curve types (Ellipse/Parabola/Hyperbola) OCCT runs Extrema_ExtPC (rcad:
-/// base::extrema::ExtPC) over the curve's parameter range.
+/// curve types (Ellipse/Parabola/Hyperbola) OCCT runs Extrema_ExtPC
+/// (rcad: base::extrema_ext_pc::ExtremaExtPC) over the curve's parameter
+/// range.
 fn square_distance_gline(line: &IntPatchLine, p: DVec3) -> f64 {
     match &line.curve {
         Curve3::Line(l) => {
@@ -1544,11 +1548,30 @@ fn square_distance_gline(line: &IntPatchLine, p: DVec3) -> f64 {
             pp.distance_squared(p)
         }
         _ => {
-            // OCCT IsRLineGood L1978-1983: anExtr is initialized with the
-            // GLine curve's FirstParameter/LastParameter.
-            let d = line.curve.default_domain();
-            let ext = rcad_kernel::base::extrema::ExtPC::new(p, &line.curve, 1e-7, d[0], d[1]);
+            // OCCT L1967-1980: the GLine curve is a Geom_Ellipse /
+            // Geom_Parabola / Geom_Hyperbola; other GLine types leave
+            // aCurv null and anExtr uninitialized.
+            let a_curv = match &line.curve {
+                Curve3::Ellipse(_) | Curve3::Parabola(_) | Curve3::Hyperbola(_) => {
+                    Some(&line.curve)
+                }
+                _ => None,
+            };
+            let Some(a_curv) = a_curv else {
+                // Lines are not overlapped — RealLast().
+                return f64::MAX;
+            };
+            // OCCT L1981-1984: anUinf/anUsup = the curve natural domain;
+            // anAC.Load(aCurv, anUinf, anUsup);
+            // anExtr.Initialize(anAC, anUinf, anUsup) — the default theTolF
+            // is 1.0e-10. OCCT L1908: theExtr.Perform(theP).
+            let d = a_curv.default_domain();
+            let a_adaptor = GeomCurveAdaptor::new(a_curv.clone());
+            let a_tool = CurveToolHandle::for_curve3(a_curv, &a_adaptor, &a_adaptor);
+            let mut ext = ExtremaExtPC::new_point_curve_ranged(p, &a_tool, d[0], d[1], 1.0e-10);
+            // OCCT L1909-1927.
             if !ext.is_done() || ext.nb_ext() == 0 {
+                // Lines are not overlapped — RealLast().
                 return f64::MAX;
             }
             let mut sq = ext.square_distance(1);

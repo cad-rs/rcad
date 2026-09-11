@@ -710,7 +710,11 @@ impl<'a> FaceAdaptor<'a> {
         let dom = surf.default_domain();
         let u = (dom[0] + dom[1]) * 0.5;
         let v = (dom[2] + dom[3]) * 0.5;
-        if u.is_finite() && v.is_finite() {
+        // Bounded-domain test via Precision::IsInfinite (Precision.hxx
+        // L350-353): unbounded domains sum to 0 but stay OCCT-infinite.
+        if !rcad_kernel::core::precision::is_infinite_value(u)
+            && !rcad_kernel::core::precision::is_infinite_value(v)
+        {
             surf.normal_at(u, v)
         } else {
             DVec3::Z

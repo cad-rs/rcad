@@ -64,11 +64,11 @@
 // 9. IntAna_QuadQuadGeo(Pln, Pln, tol) — the plane-plane case is
 //    rcad_kernel base::int_ana::intersect_plane_plane_intana (PlnPlnResult;
 //    TypeInter()==IntAna_Line maps to PlnPlnResult::Line).
-// 10. Extrema_ExtPC — rcad_kernel base::extrema::ExtPC; the OCCT default
-//     constructor runs over the adaptor parameter range with
-//     Precision::Confusion(). TrimmedSquareDistances (the square distances
-//     at FirstParameter/LastParameter) is re-hosted below
-//     (ext_trimmed_square_distances).
+// 10. Extrema_ExtPC — the real kernel engine ExtremaExtPC
+//     (rcad_kernel base::extrema_ext_pc); the OCCT two-arg constructor
+//     myExtPC(pv, TheCurve) runs over the adaptor full parameter range with
+//     the default theTolF 1.0e-10, and TrimmedSquareDistances is the
+//     engine's own trimmed_square_distances().
 // 11. BRepGProp::SurfaceProperties(NewFace, GP) — GAP: the rcad gprop
 //     vehicle computes whole-pool areas; the single-Shape-face overload is
 //     deferred (brep_gprop_surface_properties_mass returns 0.0), so the
@@ -95,7 +95,9 @@ use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
 use crate::fillet::chfi3d_builder_0::{brep_tool_parameter, topexp_vertices};
 use glam::DVec3;
 use indexmap::IndexMap;
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{Curve2d, Curve3, CurveEval, Line3, Plane, Surface3};
 use rcad_kernel::math::gp::Ax1;
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
@@ -287,25 +289,6 @@ pub(crate) fn gp_pln_rotated(p: &Plane, the_axe: &Ax1, the_theta: f64) -> Plane 
         v_dir: rot(p.v_dir),
     }
 }
-
-/// OCCT Extrema_ExtPC::TrimmedSquareDistances(DistMin, Dist, PB1, PB2) —
-/// the square distances from the constructor point to the curve points of
-/// parameter FirstParameter / LastParameter (architecture difference #10).
-pub(crate) fn ext_trimmed_square_distances(
-    the_p: DVec3,
-    the_curve: &Curve3,
-) -> (f64, f64, DVec3, DVec3) {
-    let dom = the_curve.default_domain();
-    let p1 = the_curve.point_at(dom[0]);
-    let p2 = the_curve.point_at(dom[1]);
-    (
-        (the_p - p1).length_squared(),
-        (the_p - p2).length_squared(),
-        p1,
-        p2,
-    )
-}
-
 
 /// OCCT BRepGProp::SurfaceProperties(NewFace, GP) over the single-face
 /// shape — GAP: the rcad gprop vehicle computes whole-pool areas
@@ -1001,15 +984,23 @@ impl LocOpeSplitDrafts {
                         for i in 1..=i2s.nb_lines() {
                             let crv = i2s.line(i).expect("GeomInt_IntSS::Line");
                             // OCCT L632-633: TheCurve.Load(i2s.Line(i));
-                            // Extrema_ExtPC myExtPC(pv, TheCurve).
+                            // Extrema_ExtPC myExtPC(pv, TheCurve) — the
+                            // two-arg ctor over the full domain, the default
+                            // theTolF is 1.0e-10.
                             let dom = crv.default_domain();
-                            let my_ext_pc = ExtPC::new(pv, &crv, CONFUSION, dom[0], dom[1]);
+                            let a_adaptor = GeomCurveAdaptor::new(crv.clone());
+                            let a_tool =
+                                CurveToolHandle::for_curve3(&crv, &a_adaptor, &a_adaptor);
+                            let my_ext_pc =
+                                ExtremaExtPC::new_point_curve(pv, &a_tool, 1.0e-10);
 
                             if my_ext_pc.is_done() {
                                 // OCCT L637-639.
                                 let mut thepmin = dom[0]; // TheCurve.FirstParameter()
+                                // OCCT L638: myExtPC.TrimmedSquareDistances(
+                                // Dist2Min, Dist2, p1b, p2b).
                                 let (d2min0, d2last, _p1b, _p2b) =
-                                    ext_trimmed_square_distances(pv, &crv);
+                                    my_ext_pc.trimmed_square_distances();
                                 dist2_min = d2min0;
                                 dist2 = d2last;
                                 if dist2 < dist2_min {

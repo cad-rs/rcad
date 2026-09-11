@@ -69,14 +69,22 @@ use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
 
 /// OCCT BRepBuilderAPI_MakeFace(W) — the wire-form face maker (the
 /// BRepLibMakeFace carrier form of brep_offset_make_simple_offset.rs).
+/// GAP status: OCCT 8.0 has no BRepLib_MakeFaceWire class; the wire form is
+/// BRepBuilderAPI_MakeFace(W) -> BRepLib_MakeFace::Init(W, OnlyPlane)
+/// (TKTopAlgo/BRepLib/BRepLib_MakeFace.cxx, the wire-Init overload).  The
+/// real body belongs to the topalgo brep_lib MakeFace/MakeWire sibling
+/// batch (topalgo/brep_lib/); until that batch lands, IsDone() = false
+/// carries the OCCT failure path of this call site
+/// (BRepOffsetAPI_ThruSections::CreateSmoothed).
 pub(crate) struct BRepLibMakeFaceWire {
     my_face: Shape, // OCCT: myFace
 }
 
 impl BRepLibMakeFaceWire {
     /// OCCT BRepBuilderAPI_MakeFace::BRepBuilderAPI_MakeFace(W) — GAP: the
-    /// wire face maker is not translated; IsDone() = false carries the OCCT
-    /// failure path.
+    /// wire face maker (BRepLib_MakeFace::Init(W, OnlyPlane)) is not
+    /// translated yet (the topalgo brep_lib sibling batch); IsDone() =
+    /// false carries the OCCT failure path.
     pub(crate) fn from_wire(_the_w: &Shape) -> Self {
         BRepLibMakeFaceWire {
             my_face: Shape::null(),

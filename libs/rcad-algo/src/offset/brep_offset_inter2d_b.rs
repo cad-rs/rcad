@@ -67,7 +67,8 @@ fn precision_is_infinite(r: f64) -> bool {
 /// of ExtentEdge see it as a settable parameter bound).
 fn curve2d_first_parameter(the_c: &Curve2d) -> f64 {
     let f = the_c.default_domain()[0];
-    if f == f64::NEG_INFINITY {
+    // OCCT Precision::IsNegativeInfinite (Precision.hxx L364-367).
+    if rcad_kernel::precision::is_negative_infinite_value(f) {
         -precision_infinite()
     } else {
         f
@@ -77,7 +78,8 @@ fn curve2d_first_parameter(the_c: &Curve2d) -> f64 {
 /// See [`curve2d_first_parameter`].
 fn curve2d_last_parameter(the_c: &Curve2d) -> f64 {
     let l = the_c.default_domain()[1];
-    if l == f64::INFINITY {
+    // OCCT Precision::IsPositiveInfinite (Precision.hxx L357-360).
+    if rcad_kernel::precision::is_positive_infinite_value(l) {
         precision_infinite()
     } else {
         l
@@ -89,7 +91,8 @@ fn curve2d_last_parameter(the_c: &Curve2d) -> f64 {
 /// (Geom_Line.cxx; Geom_BoundedCurve does not apply).
 fn curve3_first_parameter(the_c: &Curve3) -> f64 {
     let f = the_c.default_domain()[0];
-    if f == f64::NEG_INFINITY {
+    // OCCT Precision::IsNegativeInfinite (Precision.hxx L364-367).
+    if rcad_kernel::precision::is_negative_infinite_value(f) {
         -precision_infinite()
     } else {
         f
@@ -99,7 +102,8 @@ fn curve3_first_parameter(the_c: &Curve3) -> f64 {
 /// See [`curve3_first_parameter`].
 fn curve3_last_parameter(the_c: &Curve3) -> f64 {
     let l = the_c.default_domain()[1];
-    if l == f64::INFINITY {
+    // OCCT Precision::IsPositiveInfinite (Precision.hxx L357-360).
+    if rcad_kernel::precision::is_positive_infinite_value(l) {
         precision_infinite()
     } else {
         l
@@ -108,26 +112,27 @@ fn curve3_last_parameter(the_c: &Curve3) -> f64 {
 
 /// OCCT Geom_Surface::Bounds — the unbounded sides are
 /// +/-Precision::Infinite() (e.g. Geom_ConicalSurface.cxx L207-214:
-/// V1 = -Precision::Infinite(); V2 = Precision::Infinite()).
+/// V1 = -Precision::Infinite(); V2 = Precision::Infinite()). The side tests
+/// use the OCCT sign-specific predicates (Precision.hxx L357-367).
 fn surface_bounds_occt(the_s: &Surface3) -> [f64; 4] {
     let b = the_s.default_domain();
     [
-        if b[0] == f64::NEG_INFINITY {
+        if rcad_kernel::precision::is_negative_infinite_value(b[0]) {
             -precision_infinite()
         } else {
             b[0]
         },
-        if b[1] == f64::INFINITY {
+        if rcad_kernel::precision::is_positive_infinite_value(b[1]) {
             precision_infinite()
         } else {
             b[1]
         },
-        if b[2] == f64::NEG_INFINITY {
+        if rcad_kernel::precision::is_negative_infinite_value(b[2]) {
             -precision_infinite()
         } else {
             b[2]
         },
-        if b[3] == f64::INFINITY {
+        if rcad_kernel::precision::is_positive_infinite_value(b[3]) {
             precision_infinite()
         } else {
             b[3]

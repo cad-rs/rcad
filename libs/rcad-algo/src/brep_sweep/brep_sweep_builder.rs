@@ -433,8 +433,12 @@ impl BRepSweepBRepBuilder {
         e: &Shape,
         tol: f64,
     ) {
-        // OCCT L1224-1227: the infinite-parameter DomainError.
-        if par.is_infinite() {
+        // OCCT L1224-1227: the infinite-parameter DomainError
+        // (Precision::IsPositiveInfinite / IsNegativeInfinite,
+        // Precision.hxx L357-367).
+        if rcad_kernel::precision::is_positive_infinite_value(par)
+            || rcad_kernel::precision::is_negative_infinite_value(par)
+        {
             panic!("Standard_DomainError: BRep_Builder::Infinite parameter");
         }
         // OCCT L1237: L = E.Location().Predivided(V.Location()) — identity.

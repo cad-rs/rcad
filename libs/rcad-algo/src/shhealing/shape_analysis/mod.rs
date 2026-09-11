@@ -308,13 +308,17 @@ pub fn check_uv_consistency(surf: &Surface3, tolerance: f64) -> Vec<UvInconsiste
     let (u0, u1) = (domain[0], domain[1]);
     let (v0, v1) = (domain[2], domain[3]);
 
-    // Handle infinite domains
-    let (u0, u1) = if u0.is_infinite() || u1.is_infinite() {
+    // Handle infinite domains (Precision::IsInfinite, Precision.hxx L350-353)
+    let (u0, u1) = if rcad_kernel::precision::is_infinite_value(u0)
+        || rcad_kernel::precision::is_infinite_value(u1)
+    {
         (-10.0, 10.0)
     } else {
         (u0, u1)
     };
-    let (v0, v1) = if v0.is_infinite() || v1.is_infinite() {
+    let (v0, v1) = if rcad_kernel::precision::is_infinite_value(v0)
+        || rcad_kernel::precision::is_infinite_value(v1)
+    {
         (-10.0, 10.0)
     } else {
         (v0, v1)
@@ -515,8 +519,12 @@ fn check_bounds_degeneracy(surf: &Surface3) -> bool {
     let domain = surf.default_domain();
     let [u0, u1, v0, v1] = domain;
 
-    // Handle infinite domains
-    if u0.is_infinite() || u1.is_infinite() || v0.is_infinite() || v1.is_infinite() {
+    // Handle infinite domains (Precision::IsInfinite, Precision.hxx L350-353)
+    if rcad_kernel::precision::is_infinite_value(u0)
+        || rcad_kernel::precision::is_infinite_value(u1)
+        || rcad_kernel::precision::is_infinite_value(v0)
+        || rcad_kernel::precision::is_infinite_value(v1)
+    {
         return false;
     }
 
@@ -592,8 +600,12 @@ fn check_surface_orientation(surf: &Surface3) -> bool {
     // at opposite boundaries
     let [u0, u1, v0, v1] = domain;
 
-    // Handle infinite domains
-    if u0.is_infinite() || u1.is_infinite() || v0.is_infinite() || v1.is_infinite() {
+    // Handle infinite domains (Precision::IsInfinite, Precision.hxx L350-353)
+    if rcad_kernel::precision::is_infinite_value(u0)
+        || rcad_kernel::precision::is_infinite_value(u1)
+        || rcad_kernel::precision::is_infinite_value(v0)
+        || rcad_kernel::precision::is_infinite_value(v1)
+    {
         return true;
     }
 
@@ -700,8 +712,10 @@ fn is_curve_periodic(curve: &Curve3) -> bool {
 fn check_curve_closed(curve: &Curve3) -> bool {
     let domain = curve.default_domain();
 
-    // Handle infinite domains
-    if domain[0].is_infinite() || domain[1].is_infinite() {
+    // Handle infinite domains (Precision::IsInfinite, Precision.hxx L350-353)
+    if rcad_kernel::precision::is_infinite_value(domain[0])
+        || rcad_kernel::precision::is_infinite_value(domain[1])
+    {
         return false;
     }
 
@@ -716,8 +730,10 @@ fn detect_curve_self_intersections(curve: &Curve3, n_samples: usize) -> Vec<Curv
     let mut intersections = Vec::new();
     let domain = curve.default_domain();
 
-    // Handle infinite domains
-    let (t0, t1) = if domain[0].is_infinite() || domain[1].is_infinite() {
+    // Handle infinite domains (Precision::IsInfinite, Precision.hxx L350-353)
+    let (t0, t1) = if rcad_kernel::precision::is_infinite_value(domain[0])
+        || rcad_kernel::precision::is_infinite_value(domain[1])
+    {
         return intersections; // Can't detect self-intersection on infinite domain
     } else {
         (domain[0], domain[1])
@@ -838,8 +854,10 @@ fn determine_curve_continuity(curve: &Curve3) -> ContinuityLevel {
 fn compute_curve_length(curve: &Curve3, n_samples: usize) -> f64 {
     let domain = curve.default_domain();
 
-    // Handle infinite domains
-    let (t0, t1) = if domain[0].is_infinite() || domain[1].is_infinite() {
+    // Handle infinite domains (Precision::IsInfinite, Precision.hxx L350-353)
+    let (t0, t1) = if rcad_kernel::precision::is_infinite_value(domain[0])
+        || rcad_kernel::precision::is_infinite_value(domain[1])
+    {
         return f64::INFINITY;
     } else {
         (domain[0], domain[1])

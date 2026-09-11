@@ -12,6 +12,11 @@ use crate::topalgo::brep_class3d::solid_classifier::SolidClassifier;
 use crate::topalgo::brep_class3d::solid_explorer::SolidExplorer;
 use crate::topalgo::brep_top_adaptor::fclass2d::{FClass2d, State};
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval, Curve2dEval};
+use rcad_kernel::base::extrema_curve_tool::{CurveToolHandle, ExtremaCurveTool};
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::extrema_locate_ext_pc::LocateExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
+use rcad_kernel::base::proj_lib::CurveType;
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use rcad_kernel::topods::{ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
@@ -61,7 +66,13 @@ impl ProjectOnSurface {
         // an unbounded natural V domain, so projecting on the raw surface
         // costs an unbounded-domain grid per query. Restrict the domain here.
         use rcad_kernel::geom::SurfaceEval;
-        let restricted = if uv_bounds.iter().all(|b| b.is_finite()) {
+        // OCCT Precision::IsInfinite (Precision.hxx L350-353): the unbounded
+        // sides carry Precision::Infinite() (2e100, IEEE-finite), so the
+        // bounded-rect test uses the precision predicate.
+        let restricted = if uv_bounds
+            .iter()
+            .all(|b| !rcad_kernel::precision::is_infinite_value(*b))
+        {
             Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface {
                 basis: Box::new(surf.clone()),
                 trim: uv_bounds,
@@ -778,15 +789,28 @@ impl IntToolsContext {
         a_t: &mut f64,
         a_domain: [f64; 2],
     ) -> bool {
-        // OCCT L788-809: tolerance sum depending on the curve type.
+        // OCCT L796-797: GeomAdaptor_Curve aGAC(aC3D);
+        //                 GeomAbs_CurveType aType = aGAC.GetType();
+        let a_gac_adaptor = GeomCurveAdaptor::new(a_curve.clone());
+        let a_gac = CurveToolHandle::for_curve3(a_curve, &a_gac_adaptor, &a_gac_adaptor);
+        let a_type = a_gac.get_type();
+        // OCCT L798-813: tolerance sum depending on the curve type.
         let [a_first, a_last] = a_domain;
         let mut a_tol_sum = a_tol_v + a_tol_c;
-        let is_spline = matches!(a_curve, Curve3::BSpline(_) | Curve3::Bezier(_));
-        a_tol_sum = 2.0 * a_tol_sum;
-        if a_tol_sum < if is_spline { 1.0e-5 } else { 1.0e-6 } {
-            a_tol_sum = if is_spline { 1.0e-5 } else { 1.0e-6 };
+        if a_type == CurveType::BSpline || a_type == CurveType::Bezier {
+            a_tol_sum = 2.0 * a_tol_sum;
+            if a_tol_sum < 1.0e-5 {
+                a_tol_sum = 1.0e-5;
+            }
+        } else {
+            a_tol_sum = 2.0 * a_tol_sum; // xft
+            if a_tol_sum < 1.0e-6 {
+                a_tol_sum = 1.0e-6;
+            }
         }
-        let is_inf = |v: f64| v.is_infinite();
+        // OCCT IntTools_Context.cxx L818/L875: Precision::IsInfinite(aFirst/aLast).
+        let is_inf =
+            |v: f64| rcad_kernel::precision::is_infinite_value(v);
         // OCCT L814-874: checking extremities first.
         let mut b_first_valid = false;
         let mut a_first_dist = f64::INFINITY;
@@ -797,46 +821,43 @@ impl IntToolsContext {
                 b_first_valid = true;
                 *a_t = a_first;
                 if a_first_dist > a_tol_v {
-                    // OCCT L829: Extrema_LocateExtPC(aPv, aGAC, aFirst, 1.e-10)
-                    if let Some(poc) = rcad_kernel::base::extrema::extrema_locate_ext_pc(
-                        a_pv, a_curve, a_first, a_first, a_last, 1e-10,
-                    ) {
-                        // OCCT L836-840: validate local result
-                        let mid = (a_last + a_first) * 0.5;
-                        if (poc.param > mid)
-                            || (a_pv.distance(poc.point) > a_tol_sum)
-                            || (a_pc_first.distance(poc.point) < rcad_kernel::CONFUSION)
+                    // OCCT L829-831: Extrema_LocateExtPC anExt(aPv, aGAC,
+                    // aFirst, 1.e-10); if (anExt.IsDone()).
+                    let an_ext = LocateExtPC::new_point_curve_seed(a_pv, &a_gac, a_first, 1.0e-10);
+                    if an_ext.is_done() {
+                        // OCCT L832-841.
+                        let a_poncurve = an_ext.point();
+                        *a_t = a_poncurve.param;
+                        if (*a_t > (a_last + a_first) * 0.5)
+                            || (a_pv.distance(a_poncurve.point) > a_tol_sum)
+                            || (a_pc_first.distance(a_poncurve.point) < rcad_kernel::CONFUSION)
                         {
                             *a_t = a_first;
-                        } else {
-                            *a_t = poc.param;
                         }
                     } else {
-                        // OCCT L842-870: Extrema_LocateExtPC failed -> global fallback (Extrema_ExtPC)
-                        let ext = rcad_kernel::base::extrema::ExtPC::new(
-                            a_pv, a_curve, 1e-10, a_first, a_last,
-                        );
-                        if ext.is_done() {
-                            let mut a_min_dist = f64::INFINITY;
-                            let mut a_min_idx = None;
-                            for i in 1..=ext.nb_ext() {
-                                let sq_d = ext.square_distance(i);
-                                if sq_d < a_min_dist {
-                                    a_min_dist = sq_d;
-                                    a_min_idx = Some(i);
+                        // OCCT L843-870: local search may fail — the
+                        // Extrema_ExtPC anExt2(aPv, aGAC, 1.e-10) fallback.
+                        let an_ext2 = ExtremaExtPC::new_point_curve(a_pv, &a_gac, 1.0e-10);
+                        let mut a_min_dist = f64::MAX; // RealLast()
+                        let mut a_min_idx: i32 = -1;
+                        if an_ext2.is_done() {
+                            for an_idx in 1..=an_ext2.nb_ext() {
+                                if an_ext2.is_min(an_idx)
+                                    && an_ext2.square_distance(an_idx) < a_min_dist
+                                {
+                                    a_min_dist = an_ext2.square_distance(an_idx);
+                                    a_min_idx = an_idx as i32;
                                 }
                             }
-                            if let Some(idx) = a_min_idx {
-                                let poc = ext.point(idx);
-                                let mid = (a_last + a_first) * 0.5;
-                                if (poc.param > mid)
-                                    || (a_pv.distance(poc.point) > a_tol_sum)
-                                    || (a_pc_first.distance(poc.point) < rcad_kernel::CONFUSION)
-                                {
-                                    *a_t = a_first;
-                                } else {
-                                    *a_t = poc.param;
-                                }
+                        }
+                        if a_min_idx != -1 {
+                            let a_poncurve = an_ext2.point(a_min_idx as usize);
+                            *a_t = a_poncurve.param;
+                            if (*a_t > (a_last + a_first) * 0.5)
+                                || (a_pv.distance(a_poncurve.point) > a_tol_sum)
+                                || (a_pc_first.distance(a_poncurve.point) < rcad_kernel::CONFUSION)
+                            {
+                                *a_t = a_first;
                             }
                         }
                     }
@@ -853,46 +874,43 @@ impl IntToolsContext {
             if a_dist < a_tol_sum {
                 *a_t = a_last;
                 if a_dist > a_tol_v {
-                    // OCCT L890: Extrema_LocateExtPC(aPv, aGAC, aLast, 1.e-10)
-                    if let Some(poc) = rcad_kernel::base::extrema::extrema_locate_ext_pc(
-                        a_pv, a_curve, a_last, a_first, a_last, 1e-10,
-                    ) {
-                        // OCCT L897-901: validate local result
-                        let mid = (a_last + a_first) * 0.5;
-                        if (poc.param < mid)
-                            || (a_pv.distance(poc.point) > a_tol_sum)
-                            || (a_pc_last.distance(poc.point) < rcad_kernel::CONFUSION)
+                    // OCCT L890-892: Extrema_LocateExtPC anExt(aPv, aGAC,
+                    // aLast, 1.e-10); if (anExt.IsDone()).
+                    let an_ext = LocateExtPC::new_point_curve_seed(a_pv, &a_gac, a_last, 1.0e-10);
+                    if an_ext.is_done() {
+                        // OCCT L897-906.
+                        let a_poncurve = an_ext.point();
+                        *a_t = a_poncurve.param;
+                        if (*a_t < (a_last + a_first) * 0.5)
+                            || (a_pv.distance(a_poncurve.point) > a_tol_sum)
+                            || (a_pc_last.distance(a_poncurve.point) < rcad_kernel::CONFUSION)
                         {
                             *a_t = a_last;
-                        } else {
-                            *a_t = poc.param;
                         }
                     } else {
-                        // OCCT L905-931: Extrema_LocateExtPC failed -> global fallback (Extrema_ExtPC)
-                        let ext = rcad_kernel::base::extrema::ExtPC::new(
-                            a_pv, a_curve, 1e-10, a_first, a_last,
-                        );
-                        if ext.is_done() {
-                            let mut a_min_dist = f64::INFINITY;
-                            let mut a_min_idx = None;
-                            for i in 1..=ext.nb_ext() {
-                                let sq_d = ext.square_distance(i);
-                                if sq_d < a_min_dist {
-                                    a_min_dist = sq_d;
-                                    a_min_idx = Some(i);
+                        // OCCT L908-931: local search may fail — the
+                        // Extrema_ExtPC anExt2(aPv, aGAC, 1.e-10) fallback.
+                        let an_ext2 = ExtremaExtPC::new_point_curve(a_pv, &a_gac, 1.0e-10);
+                        let mut a_min_dist = f64::MAX; // RealLast()
+                        let mut a_min_idx: i32 = -1;
+                        if an_ext2.is_done() {
+                            for an_idx in 1..=an_ext2.nb_ext() {
+                                if an_ext2.is_min(an_idx)
+                                    && an_ext2.square_distance(an_idx) < a_min_dist
+                                {
+                                    a_min_dist = an_ext2.square_distance(an_idx);
+                                    a_min_idx = an_idx as i32;
                                 }
                             }
-                            if let Some(idx) = a_min_idx {
-                                let poc = ext.point(idx);
-                                let mid = (a_last + a_first) * 0.5;
-                                if (poc.param < mid)
-                                    || (a_pv.distance(poc.point) > a_tol_sum)
-                                    || (a_pc_last.distance(poc.point) < rcad_kernel::CONFUSION)
-                                {
-                                    *a_t = a_last;
-                                } else {
-                                    *a_t = poc.param;
-                                }
+                        }
+                        if a_min_idx != -1 {
+                            let a_poncurve = an_ext2.point(a_min_idx as usize);
+                            *a_t = a_poncurve.param;
+                            if (*a_t < (a_last + a_first) * 0.5)
+                                || (a_pv.distance(a_poncurve.point) > a_tol_sum)
+                                || (a_pc_last.distance(a_poncurve.point) < rcad_kernel::CONFUSION)
+                            {
+                                *a_t = a_last;
                             }
                         }
                     }

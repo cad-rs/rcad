@@ -21,13 +21,15 @@
 //! Pure-math re-hosts: ElCLib::Parameter overloads (ElCLib.cxx L1192-1273),
 //! Standard_Real Epsilon, gp::NormalizeAngle, gp_Dir::AngleWithRef, the
 //! gp_Trsf rotation and the Geom/GP transformed variants (the OCCT
-//! transformations applied through the rcad analytic types), and
-//! Extrema_ExtPC::TrimmedSquareDistances.
+//! transformations applied through the rcad analytic types).
 
 use glam::{DVec2, DVec3};
 use super::draft_modification::ShapeIndexedMap;
-use rcad_kernel::base::extrema::{ExtPC, ExtPC2d};
+use rcad_kernel::base::extrema::ExtPC2d;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
 use rcad_kernel::base::geom_proj_lib as geom_proj_lib;
+use rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor;
 use rcad_kernel::base::int_ana::{
     intersect_line_plane, intersect_plane_cone_intana, intersect_plane_cylinder_intana,
     intersect_plane_plane_intana, PlnConResult, PlnCylResult, PlnPlnResult,
@@ -806,26 +808,6 @@ fn bspline2_reversed(b: &rcad_kernel::geom::BSplineCurve2) -> rcad_kernel::geom:
     }
 }
 
-/// OCCT Extrema_ExtPC::TrimmedSquareDistances(dist1_2, dist2_2, p1b, p2b)
-/// (Extrema_ExtPC.cxx) — the square distances of the query point to the
-/// trimmed bound points (the loc_ope_split_drafts.rs re-host form; the rcad
-/// ExtPC carries the query point only at construction).
-pub(crate) fn trimmed_square_distances(
-    _the_ext: &ExtPC,
-    the_c: &Curve3,
-    the_p: DVec3,
-) -> (f64, f64, DVec3, DVec3) {
-    let dom = the_c.default_domain();
-    let p1b = the_c.point_at(dom[0]);
-    let p2b = the_c.point_at(dom[1]);
-    (
-        p1b.distance_squared(the_p),
-        p2b.distance_squared(the_p),
-        p1b,
-        p2b,
-    )
-}
-
 /// OCCT GeomAPI_ProjectPointOnCurve (GeomAPI_ProjectPointOnCurve.hxx) — the
 /// nearest projection of a point on a curve, carried over Extrema_ExtPC.
 pub(crate) struct GeomAPIProjectPointOnCurve {
@@ -834,13 +816,19 @@ pub(crate) struct GeomAPIProjectPointOnCurve {
 }
 
 impl GeomAPIProjectPointOnCurve {
-    /// OCCT GeomAPI_ProjectPointOnCurve(P, C).
+    /// OCCT GeomAPI_ProjectPointOnCurve(P, C) -> Init(P, Curve)
+    /// (GeomAPI_ProjectPointOnCurve.cxx L51-81: myC.Load(Curve);
+    /// myExtPC.Initialize(myC, myC.FirstParameter(), myC.LastParameter());
+    /// myExtPC.Perform(P) — the default theTolF is 1.0e-10; the
+    /// lower-distance scan fills myIndex).
     pub(crate) fn new(the_p: DVec3, the_c: &Curve3) -> Self {
         let dom = the_c.default_domain();
-        let ext = ExtPC::new(the_p, the_c, CONFUSION, dom[0], dom[1]);
+        // OCCT L53: myC.Load(Curve) — the GeomAdaptor_Curve full-range load.
+        let a_adaptor = GeomCurveAdaptor::new(the_c.clone());
+        let a_tool = CurveToolHandle::for_curve3(the_c, &a_adaptor, &a_adaptor);
+        let ext = ExtremaExtPC::new_point_curve(the_p, &a_tool, 1.0e-10);
         if ext.is_done() && ext.nb_ext() >= 1 {
-            // OCCT: the extrema are sorted by increasing distance; the rcad
-            // ExtPC needs the minimum scan.
+            // OCCT L67-88: the lower-distance scan fills myIndex.
             let (mut best, mut best_d) = (1usize, ext.square_distance(1));
             for i in 2..=ext.nb_ext() {
                 let d = ext.square_distance(i);
@@ -1059,9 +1047,12 @@ pub(crate) fn parameter(the_c: &Curve3, the_p: DVec3, done: &mut i32) -> f64 {
         // OCCT L2219-2268: the generic branch.
         _ => {
             // OCCT L2221-2222: GeomAdaptor_Curve TheCurve(C);
-            // Extrema_ExtPC myExtPC(P, TheCurve);
+            // Extrema_ExtPC myExtPC(P, TheCurve) — the two-arg ctor over the
+            // full domain, the default theTolF is 1.0e-10.
             let dom = the_c.default_domain();
-            let my_ext_pc = ExtPC::new(the_p, the_c, CONFUSION, dom[0], dom[1]);
+            let a_adaptor = GeomCurveAdaptor::new(the_c.clone());
+            let a_tool = CurveToolHandle::for_curve3(the_c, &a_adaptor, &a_adaptor);
+            let my_ext_pc = ExtremaExtPC::new_point_curve(the_p, &a_tool, 1.0e-10);
             // OCCT L2223-2226.
             if !my_ext_pc.is_done() {
                 panic!("Standard_Failure: Draft_Modification_1::Parameter: ExtremaPC not done.");
@@ -1079,9 +1070,9 @@ pub(crate) fn parameter(the_c: &Curve3, the_p: DVec3, done: &mut i32) -> f64 {
                 }
                 param = my_ext_pc.point(jmin).param;
             } else {
-                // OCCT L2242-2257.
-                let (dist1_2, dist2_2, _p1b, _p2b) =
-                    trimmed_square_distances(&my_ext_pc, the_c, the_p);
+                // OCCT L2242-2257: myExtPC.TrimmedSquareDistances(dist1_2,
+                // dist2_2, p1b, p2b).
+                let (dist1_2, dist2_2, _p1b, _p2b) = my_ext_pc.trimmed_square_distances();
                 if dist1_2 < dist2_2 {
                     *done = -1;
                     param = dom[0];

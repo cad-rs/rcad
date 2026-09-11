@@ -16,12 +16,16 @@
 //!    `Adaptor3dCurveOnSurface`).
 //! 3. `GeomAdaptor_Curve(C, u1, u2)` + `Load(C, u1, u2)` -> the immutable
 //!    re-host re-construction (the rcad adaptor is a value).
-//! 4. `Extrema_ExtPC(P, C)` -> the kernel `ExtPC` over the adaptor's
-//!    concrete curve (`extrema_curve()`); for `Adaptor3d_CurveOnSurface`
-//!    (no concrete curve) the GAP below applies and the OCCT `!IsDone()`
-//!    fallback (ProjectOnSegments + Extrema_LocateExtPC, which is
-//!    CurveEval-generic) stays reachable. `Extrema_ExtPC::IsMin(i)` -> the
-//!    kernel ExtPC stores minima only (the IsMin filter is implicit).
+//! 4. `Extrema_ExtPC(P, C)` / `Extrema_LocateExtPC(P, C, U0, Umin, Usup,
+//!    TolF)` -> the kernel real `base::extrema_ext_pc::ExtremaExtPC` /
+//!    `base::extrema_locate_ext_pc::LocateExtPC` over the kernel
+//!    adaptor-stack tool (`GeomCurveAdaptor` / `CurveOnSurface` seen through
+//!    the `CurveToolHandle` view — the concrete adaptor instance the OCCT
+//!    ctors receive); for the re-host carrying no routed parts (the
+//!    `CurveOnPlane` stand-in) the GAP below applies and the OCCT
+//!    `!IsDone()` fallback (ProjectOnSegments, the `Project` call of
+//!    NextProject) stays reachable. `Extrema_ExtPC::IsMin(i)` -> the kernel
+//!    ExtremaExtPC carries the minima (the IsMin filter of ProjectAct).
 //! 5. `ElCLib` -> the kernel `math::el` + `geomalgo::int_patch::elclib`
 //!    re-hosts; `ElCLib::AdjustPeriodic` -> the local re-host below (the
 //!    kernel topo/brep_lib/make_edge2d.rs precedent).
@@ -38,16 +42,21 @@
 //!    the ProjectAct conic arms panic with the GAP anchor (the OCCT raise
 //!    propagates out of the switch the same way).
 
+use std::sync::Arc;
+
 use glam::{DVec2, DVec3};
-use rcad_kernel::base::extrema::ExtPC;
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval};
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::extrema_locate_ext_pc::LocateExtPC;
+use rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor;
+use rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor;
+use rcad_kernel::base::proj_lib::{CurveOnSurface, Geom2dCurveAdaptor};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3};
 use rcad_kernel::math::bnd::BndBox2d;
 use rcad_kernel::precision::{is_infinite_value, CONFUSION, INFINITE_VALUE, PCONFUSION};
 
 use crate::geomalgo::geom2d_int::{curve2d_type_of, Curve2dAdaptor, Curve2dType};
-use crate::topalgo::brep_lib_validate_edge::{
-    Adaptor3dCurveOnSurface, ExtremaLocateExtPC, GeomAdaptorCurve,
-};
+use crate::topalgo::brep_lib_validate_edge::{Adaptor3dCurveOnSurface, GeomAdaptorCurve};
 
 // OCCT Standard_Real.hxx L176-179 / L182-185.
 const REAL_LAST: f64 = f64::MAX;
@@ -94,6 +103,13 @@ pub trait Adaptor3dCurve: CurveEval {
     /// Bezier() — the underlying curve value when the adaptor wraps one
     /// (None = the Standard_NoSuchObject raise, bridge #8).
     fn curve3d(&self) -> Option<Curve3>;
+    /// The (pcurve, surface) pair of the `Adaptor3d_CurveOnSurface`
+    /// instance — the concrete adaptor shape the OCCT Extrema ctors receive
+    /// (bridge #4 tool routing below). The default None keeps the
+    /// `GeomAdaptor_Curve`-like re-hosts on the `curve3d()` route.
+    fn curve_on_surface_parts(&self) -> Option<(Curve2d, Surface3)> {
+        None
+    }
 }
 
 impl Adaptor3dCurve for GeomAdaptorCurve {
@@ -180,6 +196,9 @@ impl Adaptor3dCurve for Adaptor3dCurveOnSurface {
         // is untranslated; the OCCT Standard_NoSuchObject path is kept.
         None
     }
+    fn curve_on_surface_parts(&self) -> Option<(Curve2d, Surface3)> {
+        Some(self.curve_on_surface_values())
+    }
 }
 
 impl Adaptor3dCurveOnSurface {
@@ -187,6 +206,50 @@ impl Adaptor3dCurveOnSurface {
     /// type; the value accessor models the myCurve handle).
     fn pcurve_ref(&self) -> Curve2d {
         self.curve_on_surface_values().0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Extrema tool routing over the local Adaptor3dCurve re-hosts (bridge #4)
+// ---------------------------------------------------------------------------
+
+/// The kernel adaptor-stack instance the OCCT `Extrema_ExtPC` /
+/// `Extrema_LocateExtPC` ctors receive for the `Adaptor3d_Curve&` argument.
+/// Architecture glue: the kernel adaptor owns its curve values, and the
+/// declaration order (backing, then the `CurveToolHandle` view, then the
+/// Extrema object borrowing it) models the OCCT stack scoping of
+/// `GeomAdaptor_Curve` / `Adaptor3d_CurveOnSurface`.
+enum AdaptorCurveBacking {
+    /// The GeomAdaptor_Curve instance (`curve3d()` route).
+    Curve(GeomCurveAdaptor),
+    /// The Adaptor3d_CurveOnSurface instance (`curve_on_surface_parts()`
+    /// route).
+    OnSurface(CurveOnSurface),
+}
+
+/// OCCT: the Extrema ctors take the `Adaptor3d_Curve&` itself — the
+/// `Extrema_CurveTool` statics dispatch on it. The rcad routing builds the
+/// matching kernel adaptor instance: `GeomAdaptor_Curve(C, First, Last)`
+/// for the `curve3d()` re-hosts, `Adaptor3d_CurveOnSurface` over
+/// `Geom2dAdaptor_Curve(C, First, Last)` + `GeomAdaptor_Surface(S)` for the
+/// curve-on-surface re-host. None keeps the bridge #4 GAP exit (the
+/// re-host carries no routed parts).
+fn adaptor_curve_backing<C: Adaptor3dCurve>(the_curve: &C) -> Option<AdaptorCurveBacking> {
+    let u_min = Adaptor3dCurve::first_parameter(the_curve);
+    let u_max = Adaptor3dCurve::last_parameter(the_curve);
+    if let Some(c3) = the_curve.curve3d() {
+        // The GeomAdaptor_Curve instance.
+        Some(AdaptorCurveBacking::Curve(GeomCurveAdaptor::with_range(
+            c3, u_min, u_max,
+        )))
+    } else if let Some((c2d, surface)) = the_curve.curve_on_surface_parts() {
+        // The Adaptor3d_CurveOnSurface instance.
+        Some(AdaptorCurveBacking::OnSurface(CurveOnSurface::new(
+            Arc::new(Geom2dCurveAdaptor::with_range(c2d, u_min, u_max)),
+            Arc::new(GeomSurfaceAdaptor::new(surface)),
+        )))
+    } else {
+        None
     }
 }
 
@@ -416,30 +479,27 @@ impl ShapeAnalysisCurve {
         *the_proj_param = 0.0;
         // OCC_CATCH_SIGNALS (bridge #8): the OCCT try/catch -> the OK=false
         // exit is preserved at the GAP site below.
-        // Extrema_ExtPC aCurveExtrema(thePoint, theCurve);
-        let a_curve_extrema = match the_curve.curve3d() {
-            Some(c3) => {
-                // Extrema_GGExtPC Initialize: mytolerance =
-                // C.Resolution(Precision::Confusion()), range = [First, Last].
-                let tol = the_curve.resolution(CONFUSION);
-                Some(ExtPC::new(
-                    the_point,
-                    &c3,
-                    tol,
-                    the_curve.first_parameter(),
-                    the_curve.last_parameter(),
-                ))
+        // Extrema_ExtPC aCurveExtrema(thePoint, theCurve) (cxx L277) — the
+        // two-arg ctor over the adaptor, the default theTolF is 1.0e-10.
+        let a_backing = adaptor_curve_backing(the_curve);
+        let a_ext_pc_tool = match a_backing.as_ref() {
+            Some(AdaptorCurveBacking::Curve(a_gac)) => {
+                Some(CurveToolHandle::for_curve3(&a_gac.curve, a_gac, a_gac))
+            }
+            Some(AdaptorCurveBacking::OnSurface(a_cos)) => {
+                Some(CurveToolHandle::with_geom(a_cos, a_cos))
             }
             None => {
-                // GAP (bridge #4): Extrema_ExtPC over
-                // Adaptor3d_CurveOnSurface (the adaptor D1 evaluator chain)
-                // is untranslated in the kernel; the OCCT
-                // `!IsDone() -> OK=false` exit is preserved and the
-                // ProjectOnSegments/Extrema_LocateExtPC fallback below
-                // (CurveEval-generic) stays reachable.
+                // GAP (bridge #4): the re-host carries no routed parts (the
+                // CurveOnPlane stand-in); the OCCT `!IsDone() -> OK=false`
+                // exit is preserved and the ProjectOnSegments /
+                // Extrema_LocateExtPC fallback below stays reachable.
                 None
             }
         };
+        let a_curve_extrema = a_ext_pc_tool
+            .as_ref()
+            .map(|a_tool| ExtremaExtPC::new_point_curve(the_point, a_tool, 1.0e-10));
         let mut a_min_extrema_distance = REAL_LAST;
         let mut a_min_extrema_index = 0usize;
         if let Some(a_curve_extrema) = a_curve_extrema.as_ref() {
@@ -618,24 +678,34 @@ impl ShapeAnalysisCurve {
                         return a_proj_distance;
                     }
 
-                    let mut a_projector = ExtremaLocateExtPC::new();
-                    let tol = the_curve.resolution(CONFUSION);
-                    a_projector.initialize(the_curve, u_min, u_max, tol);
-                    a_projector.perform(
-                        the_point,
-                        the_curve,
-                        *the_proj_param, // U0
-                        u_min,
-                        u_max,
-                        the_tolerance, // TolU
-                    );
-                    if a_projector.is_done() {
-                        // OCCT: aProjector.Point().Parameter() / .Value().
-                        *the_proj_param = a_projector.param_of_point();
-                        *the_proj_point = a_projector.point();
-                        let a_dist_newton = the_point.distance(*the_proj_point);
-                        if a_dist_newton < a_mod_min {
-                            return a_dist_newton;
+                    // OCCT L421-426: Extrema_LocateExtPC aProjector(thePoint,
+                    // theCurve, theProjParam /*U0*/, uMin, uMax,
+                    // theTolerance /*TolU*/).
+                    if let Some(a_backing) = adaptor_curve_backing(the_curve) {
+                        let a_projector_tool = match &a_backing {
+                            AdaptorCurveBacking::Curve(a_gac) => {
+                                CurveToolHandle::for_curve3(&a_gac.curve, a_gac, a_gac)
+                            }
+                            AdaptorCurveBacking::OnSurface(a_cos) => {
+                                CurveToolHandle::with_geom(a_cos, a_cos)
+                            }
+                        };
+                        let a_projector = LocateExtPC::new_point_curve_seed_ranged(
+                            the_point,
+                            &a_projector_tool,
+                            *the_proj_param, // U0
+                            u_min,
+                            u_max,
+                            the_tolerance, // TolU
+                        );
+                        // OCCT L427-434.
+                        if a_projector.is_done() {
+                            *the_proj_param = a_projector.point().param;
+                            *the_proj_point = a_projector.point().point;
+                            let a_dist_newton = the_point.distance(*the_proj_point);
+                            if a_dist_newton < a_mod_min {
+                                return a_dist_newton;
+                            }
                         }
                     }
 
@@ -761,15 +831,29 @@ impl ShapeAnalysisCurve {
         let u_min = c3d.first_parameter();
         let u_max = c3d.last_parameter();
 
-        let mut a_projector = ExtremaLocateExtPC::new();
-        let tol = c3d.resolution(CONFUSION);
-        a_projector.initialize(c3d, u_min, u_max, tol);
-        a_projector.perform(p3d, c3d, param_prev, u_min, u_max, preci);
-        if a_projector.is_done() {
-            // OCCT: param = aProjector.Point().Parameter().
-            *param = a_projector.param_of_point();
-            *proj = a_projector.point();
-            return p3d.distance(*proj);
+        // OCCT L571: Extrema_LocateExtPC aProjector(P3D, C3D, paramPrev
+        // /*U0*/, uMin, uMax, preci /*TolU*/).
+        if let Some(a_backing) = adaptor_curve_backing(c3d) {
+            let a_projector_tool = match &a_backing {
+                AdaptorCurveBacking::Curve(a_gac) => {
+                    CurveToolHandle::for_curve3(&a_gac.curve, a_gac, a_gac)
+                }
+                AdaptorCurveBacking::OnSurface(a_cos) => CurveToolHandle::with_geom(a_cos, a_cos),
+            };
+            let a_projector = LocateExtPC::new_point_curve_seed_ranged(
+                p3d,
+                &a_projector_tool,
+                param_prev, // U0
+                u_min,
+                u_max,
+                preci, // TolU
+            );
+            // OCCT L572-576.
+            if a_projector.is_done() {
+                *param = a_projector.point().param;
+                *proj = a_projector.point().point;
+                return p3d.distance(*proj);
+            }
         }
         self.project_adaptor(c3d, p3d, preci, proj, param, false)
     }

@@ -313,11 +313,13 @@ impl MathTrigFunctionRoots {
     fn perform(&mut self, a: f64, b: f64, c: f64, d: f64, e: f64, inf_bound: f64, sup_bound: f64) {
         let eps = 1.5e-12;
         let depi = TWO_PI;
-        let (my_borne_inf, delta, modv) = if inf_bound <= f64::NEG_INFINITY && sup_bound >= f64::INFINITY {
+        // OCCT math_TrigonometricFunctionRoots.cxx L96-108: the unbounded-side
+        // tests compare against RealFirst()/RealLast() (+/-f64::MAX).
+        let (my_borne_inf, delta, modv) = if inf_bound <= -f64::MAX && sup_bound >= f64::MAX {
             (0.0, depi, 0.0)
-        } else if sup_bound >= f64::INFINITY {
+        } else if sup_bound >= f64::MAX {
             (inf_bound, depi, inf_bound / depi)
-        } else if inf_bound <= f64::NEG_INFINITY {
+        } else if inf_bound <= -f64::MAX {
             (sup_bound - depi, depi, (sup_bound - depi) / depi)
         } else {
             let mut delta = sup_bound - inf_bound;
@@ -870,13 +872,16 @@ impl IntAnaCurve {
         self.my_last_parameter = the_last;
     }
 
-    /// OCCT IntAna_Curve::IsFirstOpen (IntAna_Curve.hxx L89) — the domain is
-    /// bounded (firstbounded=true) by default in the IntXX flow.
+    /// OCCT IntAna_Curve::IsFirstOpen (IntAna_Curve.cxx L251-254) returns the
+    /// firstbounded flag.  rcad encodes the flag in the bound value: an open
+    /// side carries an infinite parameter, a bounded side a finite one (all
+    /// IntQuadQuad curves are built with finite bounds, so the accessor is
+    /// false exactly when OCCT's flag is false).
     pub fn is_first_open(&self) -> bool {
         !self.my_first_parameter.is_finite()
     }
 
-    /// OCCT IntAna_Curve::IsLastOpen (IntAna_Curve.hxx L92).
+    /// OCCT IntAna_Curve::IsLastOpen (IntAna_Curve.cxx L258-261).
     pub fn is_last_open(&self) -> bool {
         !self.my_last_parameter.is_finite()
     }

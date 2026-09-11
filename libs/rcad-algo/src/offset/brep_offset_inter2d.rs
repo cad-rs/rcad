@@ -56,7 +56,9 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use indexmap::IndexMap;
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{
     Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3, TrimmedCurve2,
 };
@@ -231,10 +233,19 @@ impl BRepAdaptorCurve {
 }
 
 /// OCCT GeomAPI_ProjectPointOnCurve re-host (architecture difference #30) —
-/// the ExtPC vehicle with the OCCT Init/Perform/NbPoints/LowerDistance
-/// surface kept.
+/// the OCCT Init/Perform/NbPoints/LowerDistance surface kept. OCCT keeps
+/// `Extrema_ExtPC myExtPC` as a member over the `GeomAdaptor_Curve myC`
+/// member; the real kernel ExtremaExtPC borrows the curve tool for its
+/// lifetime, so the re-host snapshots the Perform results — exactly the
+/// values the OCCT queries read (GeomAPI_ProjectPointOnCurve.cxx L58-89 /
+/// L135-160).
 pub struct GeomAPIProjectPointOnCurve {
-    my_ext_pc: Option<ExtPC>,
+    /// OCCT myIsDone — myExtPC.IsDone() && (myExtPC.NbExt() > 0).
+    my_is_done: bool,
+    /// OCCT myExtPC.SquareDistance(i) after Perform.
+    my_sq_dist: Vec<f64>,
+    /// OCCT myExtPC.Point(i).Parameter() after Perform.
+    my_params: Vec<f64>,
     my_curve: Option<Curve3>,
     my_range: (f64, f64),
 }
@@ -244,74 +255,115 @@ impl GeomAPIProjectPointOnCurve {
     /// constructor).
     pub fn new() -> Self {
         GeomAPIProjectPointOnCurve {
-            my_ext_pc: None,
+            my_is_done: false,
+            my_sq_dist: Vec::new(),
+            my_params: Vec::new(),
             my_curve: None,
             my_range: (0.0, 0.0),
         }
     }
 
-    /// OCCT Init(C, T1, T2) — the curve + range form.
+    /// OCCT Init(C, T1, T2) — the curve + range form (cxx L123-131:
+    /// myC.Load(Curve, Umin, Usup); myExtPC.Initialize(myC, Umin, Usup);
+    /// myIsDone = false).
     pub fn init_curve(&mut self, the_c: &Curve3, the_t1: f64, the_t2: f64) {
         self.my_curve = Some(the_c.clone());
         self.my_range = (the_t1, the_t2);
-        self.my_ext_pc = None;
+        self.my_is_done = false;
+        self.my_sq_dist.clear();
+        self.my_params.clear();
     }
 
-    /// OCCT Perform(P).
+    /// OCCT Perform(P) (cxx L135-160) — myExtPC.Perform(P) over the
+    /// initialized (range, the default theTolF 1.0e-10) state, then the
+    /// IsDone/NbExt gate.
     pub fn perform(&mut self, the_p: DVec3) {
         let c = self.my_curve.as_ref().expect("Init(C, T1, T2) first");
-        self.my_ext_pc = Some(ExtPC::new(
+        // OCCT L90: myC.Load(Curve, Umin, Usup) — the GeomAdaptor_Curve
+        // range window.
+        let a_adaptor = GeomCurveAdaptor::with_range(c.clone(), self.my_range.0, self.my_range.1);
+        let a_tool = CurveToolHandle::for_curve3(c, &a_adaptor, &a_adaptor);
+        let my_ext_pc = ExtremaExtPC::new_point_curve_ranged(
             the_p,
-            c,
-            rcad_kernel::precision::CONFUSION,
+            &a_tool,
             self.my_range.0,
             self.my_range.1,
-        ));
+            1.0e-10,
+        );
+        self.my_is_done = my_ext_pc.is_done() && my_ext_pc.nb_ext() > 0;
+        self.my_sq_dist = if self.my_is_done {
+            (1..=my_ext_pc.nb_ext())
+                .map(|i| my_ext_pc.square_distance(i))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        self.my_params = if self.my_is_done {
+            (1..=my_ext_pc.nb_ext())
+                .map(|i| my_ext_pc.point(i).param)
+                .collect()
+        } else {
+            Vec::new()
+        };
     }
 
     /// OCCT Init(P, C) — the point-curve form (performs immediately).
     pub fn init_point_curve(the_p: DVec3, the_c: &Curve3) -> Self {
-        let dom = the_c.default_domain();
+        // OCCT Init(P, Curve) (cxx L51-81): myC.Load(Curve) — the full
+        // range; myExtPC.Initialize(myC, myC.FirstParameter(),
+        // myC.LastParameter()); myExtPC.Perform(P).
+        let a_adaptor = GeomCurveAdaptor::new(the_c.clone());
+        let a_tool = CurveToolHandle::for_curve3(the_c, &a_adaptor, &a_adaptor);
+        let my_ext_pc = ExtremaExtPC::new_point_curve(the_p, &a_tool, 1.0e-10);
+        let my_is_done = my_ext_pc.is_done() && my_ext_pc.nb_ext() > 0;
+        let my_sq_dist = if my_is_done {
+            (1..=my_ext_pc.nb_ext())
+                .map(|i| my_ext_pc.square_distance(i))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let my_params = if my_is_done {
+            (1..=my_ext_pc.nb_ext())
+                .map(|i| my_ext_pc.point(i).param)
+                .collect()
+        } else {
+            Vec::new()
+        };
         GeomAPIProjectPointOnCurve {
-            my_ext_pc: Some(ExtPC::new(
-                the_p,
-                the_c,
-                rcad_kernel::precision::CONFUSION,
-                dom[0],
-                dom[1],
-            )),
+            my_is_done,
+            my_sq_dist,
+            my_params,
             my_curve: None,
             my_range: (0.0, 0.0),
         }
     }
     /// OCCT NbPoints().
     pub fn nb_points(&self) -> usize {
-        match &self.my_ext_pc {
-            Some(e) if e.is_done() => e.nb_ext(),
-            _ => 0,
+        if self.my_is_done {
+            self.my_sq_dist.len()
+        } else {
+            0
         }
     }
 
     /// OCCT LowerDistance() — sqrt of the minimal square distance.
     pub fn lower_distance(&self) -> f64 {
-        let e = self.my_ext_pc.as_ref().expect("Perform first");
         let mut dmin = f64::MAX;
-        for i in 1..=e.nb_ext() {
-            dmin = dmin.min(e.square_distance(i));
+        for d in &self.my_sq_dist {
+            dmin = dmin.min(*d);
         }
         dmin.sqrt()
     }
 
     /// OCCT LowerDistanceParameter() — the parameter at the minimal distance.
     pub fn lower_distance_parameter(&self) -> f64 {
-        let e = self.my_ext_pc.as_ref().expect("Perform first");
         let mut dmin = f64::MAX;
         let mut tmin = 0.0;
-        for i in 1..=e.nb_ext() {
-            let d = e.square_distance(i);
-            if d < dmin {
-                dmin = d;
-                tmin = e.point(i).param;
+        for (i, d) in self.my_sq_dist.iter().enumerate() {
+            if *d < dmin {
+                dmin = *d;
+                tmin = self.my_params[i];
             }
         }
         tmin
@@ -390,7 +442,11 @@ impl Geom2dIntGInter {
     ) {
         let natural = |c: &Curve2d, tol: f64| -> Res2dDomain {
             let dom = c.default_domain();
-            if dom[0].is_finite() && dom[1].is_finite() {
+            // Bounded-domain test via Precision::IsInfinite
+            // (Precision.hxx L350-353): unbounded curves carry 2e100.
+            if !rcad_kernel::precision::is_infinite_value(dom[0])
+                && !rcad_kernel::precision::is_infinite_value(dom[1])
+            {
                 Res2dDomain::bounded(
                     c.point_at(dom[0]),
                     dom[0],
@@ -1162,9 +1218,11 @@ pub(super) fn edge_inter(
         for i in 1..=res_points.len() {
             let a_t1 = res_params_on_e1[i - 1];
             let a_t2 = res_params_on_e2[i - 1];
-            // OCCT L506-512: the infinite-parameter rejection (the
-            // OCCT_DEBUG print block is compiled out).
-            if a_t1.is_infinite() || a_t2.is_infinite() {
+            // OCCT L506-512: the infinite-parameter rejection
+            // (BRepOffset_Inter2d.cxx L506: Precision::IsInfinite(aT1/aT2)).
+            if rcad_kernel::precision::is_infinite_value(a_t1)
+                || rcad_kernel::precision::is_infinite_value(a_t2)
+            {
                 continue;
             }
 
@@ -1437,8 +1495,11 @@ pub(super) fn ref_edge_inter(
     for i in 1..=res_points.len() {
         let a_t1 = res_params_on_e1[i - 1];
         let a_t2 = res_params_on_e2[i - 1];
-        // OCCT L826-832.
-        if a_t1.is_infinite() || a_t2.is_infinite() {
+        // OCCT L826-832 (BRepOffset_Inter2d.cxx L826:
+        // Precision::IsInfinite(aT1/aT2)).
+        if rcad_kernel::precision::is_infinite_value(a_t1)
+            || rcad_kernel::precision::is_infinite_value(a_t2)
+        {
             continue;
         }
 

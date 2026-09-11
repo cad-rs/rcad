@@ -1079,8 +1079,8 @@ impl ChFi3dFilBuilder {
         }
     }
 
-    /// OCCT ChFi3d_FilBuilder.cxx L402-435 (Simulate) — the stripe walk is
-    /// real; PerformSetOfSurf(simul=true) is pending.
+    /// OCCT ChFi3d_FilBuilder.cxx L402-435 (Simulate) — the stripe walk over
+    /// PerformSetOfSurf(itel.ChangeValue(), true).
     pub fn simulate(&mut self, ic: usize) {
         for i in 0..self.base.my_list_stripe.len() {
             if i + 1 == ic {
@@ -1438,7 +1438,10 @@ pub fn correct_2d_point(f: &Shape, p2d: &mut glam::DVec2) {
     // those families are not translated yet).
     let coeff = 0.01;
     let [u1, u2, v1, v2] = surf.default_domain();
-    if u1.is_finite() && u2.is_finite() {
+    // OCCT ChFi3d.cxx L667/679: !(Precision::IsInfinite(u1) || Precision::IsInfinite(u2)).
+    if !(rcad_kernel::precision::is_infinite_value(u1)
+        || rcad_kernel::precision::is_infinite_value(u2))
+    {
         let eps = (coeff * (u2 - u1)).max(super::chfi3d_builder_0::P_CONFUSION);
         if (p2d.x - u1).abs() < eps {
             p2d.x = u1 + eps;
@@ -1447,7 +1450,10 @@ pub fn correct_2d_point(f: &Shape, p2d: &mut glam::DVec2) {
             p2d.x = u2 - eps;
         }
     }
-    if v1.is_finite() && v2.is_finite() {
+    // OCCT ChFi3d.cxx L679: the same guard on the V bounds.
+    if !(rcad_kernel::precision::is_infinite_value(v1)
+        || rcad_kernel::precision::is_infinite_value(v2))
+    {
         let eps = (coeff * (v2 - v1)).max(super::chfi3d_builder_0::P_CONFUSION);
         if (p2d.y - v1).abs() < eps {
             p2d.y = v1 + eps;
@@ -2895,8 +2901,10 @@ impl super::chfi_ds::ChFiDSElSpine {
             vertices_with_tangents: Vec::new(),
             period: 0.0,
             periodic: false,
-            pfirstsav: f64::INFINITY,
-            plastsav: f64::INFINITY,
+            // OCCT ChFiDS_ElSpine.cxx L42-43: pfirstsav/plastsav ctor defaults
+            // are Precision::Infinite().
+            pfirstsav: rcad_kernel::core::precision::INFINITE_VALUE,
+            plastsav: rcad_kernel::core::precision::INFINITE_VALUE,
             next: None,
             previous: None,
         }

@@ -45,8 +45,17 @@ fn elclib_line_parameter(loc: DVec3, dir: DVec3, p: DVec3) -> f64 {
 
 /// OCCT GeomAPI::To2d(C, P) (GeomAPI.cxx): projects the curve on the
 /// plane (GeomProjLib::Curve2d). rcad: geom_proj_lib::curve_on_plane.
+/// The line domain uses the OCCT Geom_Line unbounded parameters
+/// (Geom_Line.cxx L137/144: -/+ Precision::Infinite()).
 pub(crate) fn geom_api_to_2d(l: &Line3, pl: &Plane) -> Option<Curve2d> {
-    curve_on_plane(&Curve3::Line(*l), [f64::NEG_INFINITY, f64::INFINITY], pl)
+    curve_on_plane(
+        &Curve3::Line(*l),
+        [
+            -rcad_kernel::core::precision::INFINITE_VALUE,
+            rcad_kernel::core::precision::INFINITE_VALUE,
+        ],
+        pl,
+    )
 }
 
 /// OCCT ChFi2d_Builder_0.cxx L702-797 — ComputePoint(V, E, D, Param).

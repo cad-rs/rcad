@@ -143,8 +143,9 @@ impl TrihedronLaw for Fixed {
     /// OCCT Intervals (L102-107).
     fn intervals(&self, t: &mut Vec<f64>, _s: GeomAbsShape) {
         let n = t.len();
-        t[0] = f64::NEG_INFINITY;
-        t[n - 1] = f64::INFINITY;
+        // OCCT GeomFill_Fixed.cxx L104-105: -/+ Precision::Infinite().
+        t[0] = -rcad_kernel::core::precision::INFINITE_VALUE;
+        t[n - 1] = rcad_kernel::core::precision::INFINITE_VALUE;
     }
 
     /// OCCT GetAverageLaw (L108-114).

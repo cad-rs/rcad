@@ -27,7 +27,11 @@
 //! reads geometry from the TopoDS handle graph.
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::base::extrema::{extrema_locate_ext_pc, ExtPC, ExtPS};
+use rcad_kernel::base::extrema::ExtPS;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::extrema_locate_ext_pc::LocateExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _, Surface3, SurfaceEval as _};
 use rcad_kernel::topo::topods::BRepTool as _;
@@ -557,14 +561,12 @@ fn curve_resolution(c: &rcad_kernel::geom::Curve3, tol3d: f64) -> f64 {
 
 /// OCCT ChFi3d_Builder_2.cxx L318-369 — Projection.
 pub(crate) fn projection(
-    pext: &mut Option<ExtPC>,
+    pext: &mut Option<ExtremaExtPC<'_>>,
     p: DVec3,
     c: &rcad_kernel::geom::Curve3,
     w: &mut f64,
     tol: f64,
 ) -> bool {
-    use rcad_kernel::geom::CurveEval as _;
-    let d = c.default_domain();
     let mut dist2 = c.point_at(*w).distance_squared(p);
 
     // It is checked if it is not already a solution
@@ -575,10 +577,16 @@ pub(crate) fn projection(
     let mut ok = false;
 
     // On essai une resolution initialise
-    if let Some(poc) = extrema_locate_ext_pc(p, c, *w, d[0], d[1], tol / 10.0) {
-        let daux2 = c.point_at(poc.param).distance_squared(p);
+    // OCCT L338: Extrema_LocateExtPC ext(P, C, W, Tol / 10) — the four-arg
+    // ctor runs Initialize over the full curve range then Perform(P, W).
+    let a_adaptor = GeomCurveAdaptor::new(c.clone());
+    let a_tool = CurveToolHandle::for_curve3(c, &a_adaptor, &a_adaptor);
+    let ext = LocateExtPC::new_point_curve_seed(p, &a_tool, *w, tol / 10.0);
+    if ext.is_done() {
+        // OCCT L340-350.
+        let daux2 = c.point_at(ext.point().param).distance_squared(p);
         if daux2 < dist2 {
-            *w = poc.param;
+            *w = ext.point().param;
             dist2 = daux2;
             ok = true;
             if dist2 < tol * tol {
@@ -588,8 +596,9 @@ pub(crate) fn projection(
     }
 
     // Global resolution
+    // OCCT L355-369: PExt.Perform(P); the nearest extremum wins.
     if let Some(pext) = pext {
-        pext.perform(p, c, d[0], d[1]);
+        pext.perform(p);
         if pext.is_done() {
             for ii in 1..=pext.nb_ext() {
                 if pext.square_distance(ii) < dist2 {
@@ -1007,10 +1016,28 @@ impl super::chfi3d::ChFi3dBuilder {
         let mut choix = 0i32;
         let mut sol_dep = [0.0f64; 4];
         let mut pc: Option<rcad_kernel::geom::Curve2d>;
-        // OCCT L936-940: Extrema_ExtPC PExt; PExt.Initialize(els, First,
-        // Last, Confusion) — deferred construction; the pending ElSpine
-        // curve (adaptor_curve() == None) keeps PExt empty.
-        let mut pext: Option<ExtPC> = None;
+        // OCCT L936-940: Extrema_ExtPC PExt; PExt.Initialize(els,
+        // Spine->FirstParameter(1), Spine->LastParameter(nbed),
+        // Precision::Confusion()) — deferred construction; the pending
+        // ElSpine curve (adaptor_curve() == None) keeps PExt empty.
+        let els_curve = els.adaptor_curve();
+        let els_adaptor = els_curve
+            .as_ref()
+            .map(|c| GeomCurveAdaptor::new(c.clone()));
+        let els_tool = els_curve
+            .as_ref()
+            .zip(els_adaptor.as_ref())
+            .map(|(c, ad)| CurveToolHandle::for_curve3(c, ad, ad));
+        let mut pext = els_tool.as_ref().map(|tool| {
+            let mut e = ExtremaExtPC::new();
+            e.initialize(
+                tool,
+                spine.base().first_parameter_of(1),
+                spine.base().last_parameter_of(nbed),
+                CONFUSION,
+            );
+            e
+        });
         let (mut pos1, mut pos2) = (TopAbsState::Unknown, TopAbsState::Unknown);
         nbessai = 0;
         while nbessai <= nbessaimax {

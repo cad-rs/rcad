@@ -775,7 +775,11 @@ impl ApproxCurveOnSurface {
             let mut a_v2_param = a_f2d.y.max(a_l2d.y);
             if a_v2_param < v1 - self.my_tol || a_v1_param > v2 + self.my_tol {
                 return false;
-            } else if v1.is_infinite() || v2.is_infinite() {
+            // OCCT Approx_CurveOnSurface.cxx L717:
+            // Precision::IsInfinite(V1) || Precision::IsInfinite(V2).
+            } else if rcad_kernel::precision::is_infinite_value(v1)
+                || rcad_kernel::precision::is_infinite_value(v2)
+            {
                 if (a_v2_param - a_v1_param).abs() < p_confusion() {
                     return false;
                 }
@@ -804,7 +808,11 @@ impl ApproxCurveOnSurface {
             let mut a_u2_param = a_f2d.x.max(a_l2d.x);
             if a_u2_param < u1 - self.my_tol || a_u1_param > u2 + self.my_tol {
                 return false;
-            } else if u1.is_infinite() || u2.is_infinite() {
+            // OCCT Approx_CurveOnSurface.cxx L749:
+            // Precision::IsInfinite(U1) || Precision::IsInfinite(U2).
+            } else if rcad_kernel::precision::is_infinite_value(u1)
+                || rcad_kernel::precision::is_infinite_value(u2)
+            {
                 if (a_u2_param - a_u1_param).abs() < p_confusion() {
                     return false;
                 }

@@ -6,12 +6,13 @@
 //! re-hosted here (not GAP carriers) so the sweep engine runs end-to-end.
 //! The owning-package batches can re-home them later.
 
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{
     transform_curve, Circle2d, Circle3, ConicalSurface, Curve2d, Curve3, CurveEval,
     CylindricalSurface, Line2d, Line3, Plane, RevolutionSurface, SphericalSurface, Surface3,
     ToroidalSurface, TrimmedCurve3,
 };
-use rcad_kernel::precision::{ANGULAR, CONFUSION};
+use rcad_kernel::precision::{ANGULAR, CONFUSION, is_infinite_value, is_negative_infinite_value, is_positive_infinite_value};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{tshape_flags, Orientation, ShapeType, TShape};
 use std::collections::HashSet;
@@ -265,7 +266,9 @@ pub fn brep_tools_is_really_closed(e: &Shape, f: &Shape) -> bool {
 /// (ElCLib.cxx AdjustPeriodic): both values are folded into the periodic
 /// range, U1 before U2, preserving their relative order.
 pub fn elclib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u2: &mut f64) {
-    if u_first.is_infinite() || u_last.is_infinite() {
+    // OCCT ElCLib.cxx L122-128: Precision::IsInfinite(UFirst/ULast) guard
+    // (Precision.hxx L350-353).
+    if is_infinite_value(u_first) || is_infinite_value(u_last) {
         *u1 = u_first;
         *u2 = u_last;
         return;
@@ -356,128 +359,116 @@ pub fn curve_type(c: &Curve3) -> GeomAbsCurveType {
     }
 }
 
-/// gp_Lin of the basis curve — the location point.
-pub fn line_location(c: &Curve3) -> glam::DVec3 {
-    match c {
-        Curve3::Line(l) => l.origin,
-        _ => panic!("line_location: not a Line"),
-    }
-}
-
-/// gp_Lin of the basis curve — the direction.
-pub fn line_direction(c: &Curve3) -> glam::DVec3 {
-    match c {
-        Curve3::Line(l) => l.direction,
-        _ => panic!("line_direction: not a Line"),
-    }
-}
-
-/// ElCLib::Value(1., Line) — the point at parameter 1 of the basis line.
-fn line_value(u: f64, c: &Curve3) -> glam::DVec3 {
-    match c {
-        Curve3::Line(l) => l.origin + u * l.direction,
-        _ => panic!("line_value: not a Line"),
-    }
-}
-
 /// Distance of a point from a gp_Lin (Location, Direction).
 fn line_point_distance(loc: glam::DVec3, dir: glam::DVec3, p: glam::DVec3) -> f64 {
     let v = p - loc;
     (v - v.dot(dir) * dir).length()
 }
 
-/// (center, axis normal, x direction, radius) of the basis circle
-/// (gp_Circ::Location / Axis / XAxis / Radius).
-fn circle_frame(c: &Curve3) -> (glam::DVec3, glam::DVec3, glam::DVec3, f64) {
-    match c {
-        Curve3::Circle(ci) => (ci.center, ci.normal, ci.x_dir, ci.radius),
-        _ => panic!("circle_frame: not a Circle"),
-    }
-}
-
-/// The circle axis direction (gp_Circ::Axis().Direction()).
-fn circle_axis_direction(c: &Curve3) -> glam::DVec3 {
-    circle_frame(c).1
-}
-
 // ---------------------------------------------------------------------------
 // GeomAdaptor_SurfaceOfLinearExtrusion re-host (TKG3d/GeomAdaptor,
-// GeomAdaptor_SurfaceOfLinearExtrusion.cxx) — Load (L72-108), GetType
-// (L269-334), Plane (L336-372), Cylinder (L374-389).
+// GeomAdaptor_SurfaceOfLinearExtrusion.cxx) — Load (L90-113), GetType
+// (L269-328), Plane (L332-371), Cylinder (L375-387).
 // ---------------------------------------------------------------------------
 
-/// OCCT GeomAdaptor_SurfaceOfLinearExtrusion (the consumed subset).
+/// OCCT GeomAdaptor_SurfaceOfLinearExtrusion (the consumed subset).  OCCT
+/// `Handle(Adaptor3d_Curve) myBasisCurve` is a loaded `GeomAdaptor_Curve`
+/// (the callers construct it as `GeomAdaptor_Curve(C, First, Last)` —
+/// BRepSweep_Translation.cxx L243) whose `load` unwraps a Geom_TrimmedCurve
+/// to its basis (GeomAdaptor_Curve.cxx L252-255); the rcad equivalent is the
+/// kernel GeomCurveAdaptor carrying the same unwrap and the loaded range.
 pub struct GeomAdaptorSurfaceOfLinearExtrusion {
-    my_basis_curve: Curve3,
+    /// OCCT myBasisCurve.
+    my_basis_curve: GeomCurveAdaptor,
+    /// OCCT myDirection — the (normalized) extrusion direction.
     my_direction: glam::DVec3,
-    my_ufirst: f64,
-    my_ulast: f64,
 }
 
 impl GeomAdaptorSurfaceOfLinearExtrusion {
-    /// OCCT Load(C, D): the basis curve, the (normalized) extrusion
-    /// direction, and the curve parameter range.
-    pub fn load(the_curve: &Curve3, the_dir: glam::DVec3) -> Self {
-        let domain = the_curve.default_domain();
+    /// OCCT GeomAdaptor_SurfaceOfLinearExtrusion(C, V) — Load(C); Load(V)
+    /// (cxx L90-113).
+    pub fn load(the_curve: &GeomCurveAdaptor, the_dir: glam::DVec3) -> Self {
         GeomAdaptorSurfaceOfLinearExtrusion {
             my_basis_curve: the_curve.clone(),
             my_direction: the_dir.normalize_or_zero(),
-            my_ufirst: domain[0],
-            my_ulast: domain[1],
         }
     }
 
     /// OCCT GeomAdaptor_SurfaceOfLinearExtrusion::GetType()
-    /// (GeomAdaptor_SurfaceOfLinearExtrusion.cxx L269-334): the basis-curve
+    /// (GeomAdaptor_SurfaceOfLinearExtrusion.cxx L269-328): the basis-curve
     /// type decides the canonization.
     pub fn get_type(&self) -> GeomAbsSurfaceType {
-        match curve_type(&self.my_basis_curve) {
+        match self.my_basis_curve.my_type_curve {
             GeomAbsCurveType::Line => {
-                let d = line_direction(&self.my_basis_curve);
+                // OCCT L274-281: D = myBasisCurve->Line().Direction().
+                let d = self.my_basis_curve.line().direction;
                 if !gp_dir_is_parallel(self.my_direction, d, ANGULAR) {
                     return GeomAbsSurfaceType::Plane;
                 }
             }
             GeomAbsCurveType::Circle => {
-                let d = circle_axis_direction(&self.my_basis_curve);
+                // OCCT L283-294: D = myBasisCurve->Circle().Axis().Direction().
+                let d = self.my_basis_curve.circle().normal;
                 if gp_dir_is_parallel(self.my_direction, d, ANGULAR) {
                     return GeomAbsSurfaceType::Cylinder;
                 } else if gp_dir_is_normal(self.my_direction, d, ANGULAR) {
                     return GeomAbsSurfaceType::Plane;
                 }
             }
-            GeomAbsCurveType::Ellipse | GeomAbsCurveType::Parabola | GeomAbsCurveType::Hyperbola => {
-                // OCCT: the conic axis direction checked with IsNormal -> the
-                // Plane canonization.  The rcad conic encodings carry no axis
-                // normal (architecture difference), so the branch falls
-                // through to SurfaceOfExtrusion.
+            GeomAbsCurveType::Ellipse => {
+                // OCCT L296-303: D = myBasisCurve->Ellipse().Axis().Direction().
+                let d = self.my_basis_curve.ellipse().normal;
+                if gp_dir_is_normal(self.my_direction, d, ANGULAR) {
+                    return GeomAbsSurfaceType::Plane;
+                }
+            }
+            GeomAbsCurveType::Parabola => {
+                // OCCT L305-312: D = myBasisCurve->Parabola().Axis().Direction().
+                let d = self.my_basis_curve.parabola().normal;
+                if gp_dir_is_normal(self.my_direction, d, ANGULAR) {
+                    return GeomAbsSurfaceType::Plane;
+                }
+            }
+            GeomAbsCurveType::Hyperbola => {
+                // OCCT L314-321: D = myBasisCurve->Hyperbola().Axis().Direction().
+                let d = self.my_basis_curve.hyperbola().normal;
+                if gp_dir_is_normal(self.my_direction, d, ANGULAR) {
+                    return GeomAbsSurfaceType::Plane;
+                }
             }
             _ => {}
         }
         GeomAbsSurfaceType::SurfaceOfExtrusion
     }
 
-    /// OCCT GeomAdaptor_SurfaceOfLinearExtrusion::Plane() (L336-372): the
-    /// plane frame built from a sampled D1 point/normal search.
+    /// OCCT GeomAdaptor_SurfaceOfLinearExtrusion::Plane() (L332-371): the
+    /// plane frame built from a sampled D1 point/normal search over the
+    /// loaded basis-curve parameter range (FirstParameter/LastParameter).
     pub fn plane(&self) -> Plane {
         let mut p = glam::DVec3::ZERO;
         let mut d1u = glam::DVec3::ZERO;
         let mut new_z = glam::DVec3::ZERO;
-        let mut u_first = self.my_ufirst;
-        let mut u_last = self.my_ulast;
-        if u_first == f64::NEG_INFINITY && u_last.is_infinite() {
+        // OCCT L339-340: UFirst = myBasisCurve->FirstParameter();
+        // ULast = myBasisCurve->LastParameter() — the loaded range.
+        let mut u_first = self.my_basis_curve.first;
+        let mut u_last = self.my_basis_curve.last;
+        // OCCT L341-352: Precision::IsNegativeInfinite(UFirst) /
+        // Precision::IsPositiveInfinite(ULast) gates (Precision.hxx L357-367).
+        if is_negative_infinite_value(u_first) && is_positive_infinite_value(u_last) {
             u_first = -100.0;
             u_last = 100.0;
-        } else if u_first == f64::NEG_INFINITY {
+        } else if is_negative_infinite_value(u_first) {
             u_first = u_last - 200.0;
-        } else if u_last.is_infinite() {
+        } else if is_positive_infinite_value(u_last) {
             u_last = u_first + 200.0;
         }
         let deltau = (u_last - u_first) / 20.0;
         for i in 1..=21 {
             let prm = u_first + (i - 1) as f64 * deltau;
-            p = self.my_basis_curve.point_at(prm);
-            d1u = self.my_basis_curve.derivative_at(prm);
+            // OCCT L358: myBasisCurve->D1(prm, P, D1u).
+            let (pp, dd) = self.my_basis_curve.d1_at(prm);
+            p = pp;
+            d1u = dd;
             new_z = d1u.normalize_or_zero().cross(self.my_direction);
             if new_z.length() > 1.0e-12 {
                 break;
@@ -505,10 +496,13 @@ impl GeomAdaptorSurfaceOfLinearExtrusion {
         }
     }
 
-    /// OCCT GeomAdaptor_SurfaceOfLinearExtrusion::Cylinder() (L374-389): the
-    /// circle frame with the axis sign aligned to the extrusion direction.
+    /// OCCT GeomAdaptor_SurfaceOfLinearExtrusion::Cylinder() (L375-387): the
+    /// basis circle frame with the axis sign aligned to the extrusion
+    /// direction.
     pub fn cylinder(&self) -> CylindricalSurface {
-        let (center, normal, x_dir, radius) = circle_frame(&self.my_basis_curve);
+        // OCCT L380: gp_Circ C = myBasisCurve->Circle().
+        let c = self.my_basis_curve.circle();
+        let (center, normal, x_dir, radius) = (c.center, c.normal, c.x_dir, c.radius);
         // OCCT gp_Cylinder(Ax3, R): the frame Y = axis x X at construction;
         // the ZReverse below flips ONLY the axis (the Y is preserved, the
         // left-handed swept-lateral frame).
@@ -537,15 +531,22 @@ impl GeomAdaptorSurfaceOfLinearExtrusion {
 
 // ---------------------------------------------------------------------------
 // GeomAdaptor_SurfaceOfRevolution re-host (TKG3d/GeomAdaptor,
-// GeomAdaptor_SurfaceOfRevolution.cxx) — Load (L107-187), GetType (L189-310),
-// Plane (L312-337), Cylinder (L339-352), Cone (L354-380), Sphere (L382-395),
-// Torus (L397-408).
+// GeomAdaptor_SurfaceOfRevolution.cxx) — Load (L89-199), GetType (L370-468),
+// Plane (L472-489), Cylinder (L493-501), Cone (L505-527), Sphere (L531-540),
+// Torus (L544-552).
 // ---------------------------------------------------------------------------
 
-/// OCCT GeomAdaptor_SurfaceOfRevolution (the consumed subset).  myAxeRev is
-/// the gp_Ax3 frame (Location, Direction, XDirection, YDirection).
+/// OCCT GeomAdaptor_SurfaceOfRevolution (the consumed subset).  OCCT
+/// `Handle(Adaptor3d_Curve) myBasisCurve` is a loaded `GeomAdaptor_Curve`
+/// (the callers construct it as `GeomAdaptor_Curve(); HC->Load(C, First,
+/// Last)` — BRepSweep_Rotation.cxx L333-334) whose `load` unwraps a
+/// Geom_TrimmedCurve to its basis (GeomAdaptor_Curve.cxx L252-255); the rcad
+/// equivalent is the kernel GeomCurveAdaptor carrying the same unwrap and
+/// the loaded range.  myAxeRev is the gp_Ax3 frame (Location, Direction,
+/// XDirection, YDirection).
 pub struct GeomAdaptorSurfaceOfRevolution {
-    my_basis_curve: Curve3,
+    /// OCCT myBasisCurve.
+    my_basis_curve: GeomCurveAdaptor,
     /// OCCT myAxis — the loaded revolution axis (gp_Ax1: Location, Direction).
     my_axis: (glam::DVec3, glam::DVec3),
     /// OCCT myAxeRev — the gp_Ax3 frame (Location, Direction, XDir, YDir).
@@ -553,9 +554,9 @@ pub struct GeomAdaptorSurfaceOfRevolution {
 }
 
 impl GeomAdaptorSurfaceOfRevolution {
-    /// OCCT GeomAdaptor_SurfaceOfRevolution::Load(C, V) (cxx L107-187): the
+    /// OCCT GeomAdaptor_SurfaceOfRevolution::Load(C, V) (cxx L89-199): the
     /// meridian curve, the axis, and the myAxeRev frame determination.
-    pub fn load(the_curve: &Curve3, axis_loc: glam::DVec3, axis_dir: glam::DVec3) -> Self {
+    pub fn load(the_curve: &GeomCurveAdaptor, axis_loc: glam::DVec3, axis_dir: glam::DVec3) -> Self {
         // The OCCT fresh adaptor carries the default gp_Ax3 frame; Load
         // recomputes it.  TheGetType call inside Load (the Cone case) reads
         // the frame as-is at that point — the same literal order.
@@ -575,18 +576,21 @@ impl GeomAdaptorSurfaceOfRevolution {
 
     /// OCCT Value(u, v) — the meridian point at parameter v rotated by the
     /// angle u about the axis; only the u = 0 form is consumed (the unrotated
-    /// meridian point).
+    /// meridian point).  The basis-curve evaluation reads through the loaded
+    /// adaptor (`myBasisCurve->Value(v)`).
     fn value00(&self, v: f64) -> glam::DVec3 {
-        self.my_basis_curve.point_at(v)
+        self.my_basis_curve.value_at(v)
     }
 
-    /// OCCT Load(const gp_Ax1& V) (cxx L116-187) — the myAxeRev frame.
+    /// OCCT Load(const gp_Ax1& V) (cxx L100-199) — the myAxeRev frame.
     fn load_axis(&mut self) {
         let mut o = self.my_axis.0;
         let mut oz = self.my_axis.1;
         let mut yrev = false;
-        if curve_type(&self.my_basis_curve) == GeomAbsCurveType::Line {
-            if line_direction(&self.my_basis_curve).dot(oz) < 0.0 {
+        // OCCT L119-126: if (myBasisCurve->GetType() == GeomAbs_Line)
+        //   if ((myBasisCurve->Line().Direction()).Dot(Oz) < 0.) { yrev; Oz.Reverse(); }
+        if self.my_basis_curve.my_type_curve == GeomAbsCurveType::Line {
+            if self.my_basis_curve.line().direction.dot(oz) < 0.0 {
                 yrev = true;
                 oz = -oz;
             }
@@ -594,21 +598,30 @@ impl GeomAdaptorSurfaceOfRevolution {
 
         let p: glam::DVec3;
         let q: glam::DVec3;
-        if curve_type(&self.my_basis_curve) == GeomAbsCurveType::Circle {
-            p = circle_frame(&self.my_basis_curve).0;
+        // OCCT L128-155.
+        if self.my_basis_curve.my_type_curve == GeomAbsCurveType::Circle {
+            // OCCT L130: Q = P = (myBasisCurve->Circle()).Location().
+            p = self.my_basis_curve.circle().center;
             q = p;
         } else {
-            let first = self.my_basis_curve.default_domain()[0];
+            // OCCT L134: First = myBasisCurve->FirstParameter() — the loaded
+            // range bound of the adaptor.
+            let first = self.my_basis_curve.first;
             p = self.value00(0.0); // which does not mean much
             if self.get_type() == GeomAbsSurfaceType::Cone {
                 if line_point_distance(self.my_axis.0, self.my_axis.1, p) <= CONFUSION {
-                    q = line_value(1.0, &self.my_basis_curve);
+                    // OCCT L140: Q = ElCLib::Value(1., myBasisCurve->Line()).
+                    let l = self.my_basis_curve.line();
+                    q = l.origin + l.direction;
                 } else {
                     q = p;
                 }
-            } else if first.is_infinite() {
+            // OCCT GeomAdaptor_SurfaceOfRevolution.cxx L147:
+            // Precision::IsInfinite(First).
+            } else if is_infinite_value(first) {
                 q = p;
             } else {
+                // OCCT L153: Q = Value(0., First).
                 q = self.value00(first);
             }
         }
@@ -620,15 +633,15 @@ impl GeomAdaptorSurfaceOfRevolution {
         if line_point_distance(self.my_axis.0, dz, q) > CONFUSION {
             ox = (q - o).normalize_or_zero();
         } else {
-            let first = self.my_basis_curve.default_domain()[0];
-            let last = self.my_basis_curve.default_domain()[1];
+            // OCCT L165-166: First/Last = myBasisCurve->FirstParameter() /
+            // LastParameter() — the loaded range.
+            let first = self.my_basis_curve.first;
+            let last = self.my_basis_curve.last;
             let mut ratio = 1;
             let mut dist;
             let mut pp;
             loop {
-                pp = self
-                    .my_basis_curve
-                    .point_at(first + (last - first) / ratio as f64);
+                pp = self.my_basis_curve.value_at(first + (last - first) / ratio as f64);
                 dist = line_point_distance(self.my_axis.0, dz, pp);
                 ratio += 1;
                 if !(dist < CONFUSION && ratio < 100) {
@@ -652,8 +665,9 @@ impl GeomAdaptorSurfaceOfRevolution {
             // OCCT: myAxeRev.YReverse() — the Y direction flips.
             vy = -vy;
             self.my_axe_rev.3 = vy;
-        } else if curve_type(&self.my_basis_curve) == GeomAbsCurveType::Circle {
-            let dc = circle_axis_direction(&self.my_basis_curve);
+        } else if self.my_basis_curve.my_type_curve == GeomAbsCurveType::Circle {
+            // OCCT L193: DC = (myBasisCurve->Circle()).Axis().Direction().
+            let dc = self.my_basis_curve.circle().normal;
             if ox.cross(oz).dot(dc) < 0.0 {
                 // OCCT: myAxeRev.ZReverse() — the direction flips; the X and
                 // Y directions are kept (gp_Ax3.hxx L131).
@@ -662,16 +676,17 @@ impl GeomAdaptorSurfaceOfRevolution {
         }
     }
 
-    /// OCCT GeomAdaptor_SurfaceOfRevolution::GetType() (cxx L189-310).
+    /// OCCT GeomAdaptor_SurfaceOfRevolution::GetType() (cxx L370-468).
     pub fn get_type(&self) -> GeomAbsSurfaceType {
         let tol_conf = CONFUSION;
         let tol_ang = ANGULAR;
         let tol_cone_semi_ang = CONFUSION;
 
-        match curve_type(&self.my_basis_curve) {
+        match self.my_basis_curve.my_type_curve {
             GeomAbsCurveType::Line => {
-                let axe_loc = line_location(&self.my_basis_curve);
-                let axe_dir = line_direction(&self.my_basis_curve);
+                // OCCT L379: gp_Ax1 Axe = myBasisCurve->Line().Position().
+                let l = self.my_basis_curve.line();
+                let (axe_loc, axe_dir) = (l.origin, l.direction);
                 if gp_dir_is_parallel(self.my_axis.1, axe_dir, tol_ang) {
                     let p = self.value00(0.0);
                     let axe_rev = self.my_axe_rev;
@@ -682,12 +697,16 @@ impl GeomAdaptorSurfaceOfRevolution {
                 } else if gp_dir_is_normal(self.my_axis.1, axe_dir, tol_ang) {
                     return GeomAbsSurfaceType::Plane;
                 } else {
-                    let dom = self.my_basis_curve.default_domain();
-                    let (uf, ul) = (dom[0], dom[1]);
-                    let istrim = uf.is_finite() && ul.is_finite();
+                    // OCCT L396-398: uf/ul = myBasisCurve->FirstParameter() /
+                    // LastParameter() — the loaded range.
+                    let uf = self.my_basis_curve.first;
+                    let ul = self.my_basis_curve.last;
+                    // OCCT GeomAdaptor_SurfaceOfRevolution.cxx L398:
+                    // istrim = !Precision::IsInfinite(uf) && !Precision::IsInfinite(ul).
+                    let istrim = !is_infinite_value(uf) && !is_infinite_value(ul);
                     if istrim {
-                        let pf = self.my_basis_curve.point_at(uf);
-                        let pl = self.my_basis_curve.point_at(ul);
+                        let pf = self.my_basis_curve.value_at(uf);
+                        let pl = self.my_basis_curve.value_at(ul);
                         let len = pf.distance(pl);
                         // Compute the distance projected onto the axis.
                         let vlin = pl - pf;
@@ -704,6 +723,8 @@ impl GeomAdaptorSurfaceOfRevolution {
                             return GeomAbsSurfaceType::Plane;
                         }
                     }
+                    // OCCT L422: gp_Vec V(myAxis.Location(),
+                    // myBasisCurve->Line().Location()).
                     let v = axe_loc - self.my_axis.0;
                     let w = axe_dir;
                     let axis_dir = self.my_axis.1;
@@ -717,7 +738,9 @@ impl GeomAdaptorSurfaceOfRevolution {
                 }
             }
             GeomAbsCurveType::Circle => {
-                let (center, normal, _x_dir, radius) = circle_frame(&self.my_basis_curve);
+                // OCCT L439-441: gp_Circ C = myBasisCurve->Circle().
+                let c = self.my_basis_curve.circle();
+                let (center, normal, _x_dir, radius) = (c.center, c.normal, c.x_dir, c.radius);
                 let a_r = radius;
                 // OCCT: C.Position().IsCoplanar(myAxis, TolConf, TolAng)
                 // (gp_Ax2.hxx L593-607): |circleNormal . (axisLoc - center)|
@@ -742,7 +765,7 @@ impl GeomAdaptorSurfaceOfRevolution {
         GeomAbsSurfaceType::SurfaceOfRevolution
     }
 
-    /// OCCT GeomAdaptor_SurfaceOfRevolution::Plane() (cxx L312-337).
+    /// OCCT GeomAdaptor_SurfaceOfRevolution::Plane() (cxx L472-489).
     pub fn plane(&self) -> Plane {
         let (loc, dir, mut x_dir, y_dir) = self.my_axe_rev;
         let a_pon_curve = self.value00(0.0);
@@ -750,7 +773,8 @@ impl GeomAdaptorSurfaceOfRevolution {
         let p = self.my_axis.0 + a_dot * self.my_axis.1;
         // OCCT: Axe.SetLocation(P).
         let _ = loc;
-        if x_dir.dot(line_direction(&self.my_basis_curve)) >= -CONFUSION {
+        // OCCT L483: Axe.XDirection().Dot(myBasisCurve->Line().Direction()).
+        if x_dir.dot(self.my_basis_curve.line().direction) >= -CONFUSION {
             // OCCT: Axe.XReverse() (gp_Ax3.hxx L125 — vxdir.Reverse()).
             x_dir = -x_dir;
         }
@@ -762,7 +786,7 @@ impl GeomAdaptorSurfaceOfRevolution {
         }
     }
 
-    /// OCCT GeomAdaptor_SurfaceOfRevolution::Cylinder() (cxx L339-352).
+    /// OCCT GeomAdaptor_SurfaceOfRevolution::Cylinder() (cxx L493-501).
     pub fn cylinder(&self) -> CylindricalSurface {
         let p = self.value00(0.0);
         let axe_rev = self.my_axe_rev;
@@ -776,10 +800,11 @@ impl GeomAdaptorSurfaceOfRevolution {
         }
     }
 
-    /// OCCT GeomAdaptor_SurfaceOfRevolution::Cone() (cxx L354-380).
+    /// OCCT GeomAdaptor_SurfaceOfRevolution::Cone() (cxx L505-527).
     pub fn cone(&self) -> ConicalSurface {
         let axe_rev = self.my_axe_rev;
-        let ldir = line_direction(&self.my_basis_curve);
+        // OCCT L510: gp_Dir ldir = (myBasisCurve->Line()).Direction().
+        let ldir = self.my_basis_curve.line().direction;
         let mut angle = dir_angle(axe_rev.1, ldir);
         let p0 = self.value00(0.0);
         let r = axe_rev.0.distance(p0);
@@ -805,9 +830,10 @@ impl GeomAdaptorSurfaceOfRevolution {
         }
     }
 
-    /// OCCT GeomAdaptor_SurfaceOfRevolution::Sphere() (cxx L382-395).
+    /// OCCT GeomAdaptor_SurfaceOfRevolution::Sphere() (cxx L531-540).
     pub fn sphere(&self) -> SphericalSurface {
-        let (center, _normal, _x_dir, radius) = circle_frame(&self.my_basis_curve);
+        let c = self.my_basis_curve.circle();
+        let (center, _normal, _x_dir, radius) = (c.center, c.normal, c.x_dir, c.radius);
         let axe_rev = self.my_axe_rev;
         SphericalSurface {
             center,
@@ -817,10 +843,11 @@ impl GeomAdaptorSurfaceOfRevolution {
         }
     }
 
-    /// OCCT GeomAdaptor_SurfaceOfRevolution::Torus() (cxx L397-408).
+    /// OCCT GeomAdaptor_SurfaceOfRevolution::Torus() (cxx L544-552).
     pub fn torus(&self) -> ToroidalSurface {
-        let (center, _normal, _x_dir, radius) = circle_frame(&self.my_basis_curve);
-        let major_radius = line_point_distance(self.my_axis.0, self.my_axis.1, center);
+        let c = self.my_basis_curve.circle();
+        let (_center, _normal, _x_dir, radius) = (c.center, c.normal, c.x_dir, c.radius);
+        let major_radius = line_point_distance(self.my_axis.0, self.my_axis.1, c.center);
         let axe_rev = self.my_axe_rev;
         ToroidalSurface {
             center: axe_rev.0,
@@ -831,11 +858,13 @@ impl GeomAdaptorSurfaceOfRevolution {
         }
     }
 
-    /// OCCT `new Geom_SurfaceOfRevolution(C, myAxe)` — the swept surface
-    /// value for the non-canonized case.
-    pub fn surface_value(&self) -> Surface3 {
+    /// OCCT `new Geom_SurfaceOfRevolution(C, myAxe)`
+    /// (BRepSweep_Rotation.cxx L363-366) — the swept surface value over the
+    /// trimmed generator curve C kept at the caller (NOT the unwrapped basis
+    /// of the adaptor).
+    pub fn surface_value(&self, the_curve: Curve3) -> Surface3 {
         Surface3::Revolution(RevolutionSurface {
-            profile: Box::new(self.my_basis_curve.clone()),
+            profile: Box::new(the_curve),
             axis_origin: self.my_axis.0,
             axis_dir: self.my_axis.1,
         })

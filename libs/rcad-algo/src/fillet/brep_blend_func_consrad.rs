@@ -12,8 +12,9 @@
 //! plus an accessor; `math_Vector`/`math_Matrix` map to `[f64; 4]` /
 //! `Vec<Vec<f64>>` (OCCT D(i, j) -> d[i - 1][j - 1]); `BlendFunc_Tensor`
 //! maps to [`BlendFuncTensor`]; `gp_Circ` maps to the kernel [`Circle3`].
-//! Pending kernel dependencies (marked GAP, plan 0.6): math_SVD and
-//! GeomFill::GetCircle.
+//! math_SVD is available (`rcad_kernel::math::math_svd::MathSvd`) and used
+//! by the IsSolution second-chance solver; GeomFill::GetCircle is translated
+//! in geomalgo::geomfill::geom_fill.
 
 use glam::{DVec2, DVec3};
 
@@ -23,6 +24,7 @@ use rcad_kernel::geom::{Circle3, Curve2d, Curve3, CurveEval as _, Surface3, Surf
 use rcad_kernel::math::function_set_root::FunctionSetWithDerivatives;
 use rcad_kernel::math::gp::Ax1;
 use rcad_kernel::math::math_gauss::MathGauss;
+use rcad_kernel::math::math_svd::MathSvd;
 use rcad_kernel::math::{GeomAbsShape, MatD, VecD};
 
 use super::brep_blend_func::{
@@ -174,13 +176,6 @@ pub(crate) fn geomfill_get_tolerance(
     // OCCT: Dist = CtoBspl->Pole(1).Distance(CtoBspl->Pole(2)) + SpatialTol.
     let dist = ctobspl.control_points[0].distance(ctobspl.control_points[1]) + spatial_tol;
     dist * angular_tol / 2.0
-}
-
-/// GAP (plan 0.6): GeomFill::GetCircle (TKGeomAlgo/GeomFill/GeomFill.cxx
-/// L350-1900, five overloads) is a pending dependency of the ConstRad
-/// sections; it needs its own GeomFill alignment batch.
-pub(crate) fn geomfill_get_circle_pending() -> ! {
-    unimplemented!("GeomFill::GetCircle pending in rcad (plan 0.6 kernel gap)")
 }
 
 /// OCCT normalizeAngle (ElCLib.cxx L43-72) — normalize angle to [0, 2*PI]
@@ -524,7 +519,6 @@ impl<'a> BlendFuncConstRad<'a> {
     }
 
     /// OCCT IsSolution(Sol, Tol) (BlendFunc_ConstRad.cxx L832-963).
-    #[allow(unreachable_code)] // the math_SVD fallback is a pending kernel gap
     pub fn is_solution(&mut self, sol: &[f64], tol: f64) -> bool {
         let ok;
 
@@ -599,11 +593,39 @@ impl<'a> BlendFuncConstRad<'a> {
 
             if self.istangent {
                 // OCCT L880-897: math_SVD SingRS(DEDX); if (SingRS.IsDone()) {
-                // SingRS.Solve(-DEDT, solution, 1.e-6); controle = ...; }.
-                // GAP (plan 0.6): rcad-kernel exposes no public math_SVD yet
-                // (only private svd helpers in function_set_root.rs); the SVD
-                // fallback is pending kernel support and keeps the tangency
-                // state like the OCCT !IsDone() path.
+                // SingRS.Solve(-DEDT, solution, 1.e-6); istangent = false;
+                // controle = DEDT.Added(DEDX.Multiplied(solution)); if any
+                // |controle| > tolerances: istangent = true; }
+                let mut sing_rs = MathSvd::new(&a);
+                if sing_rs.is_done() {
+                    let mut b = VecD::new(4);
+                    let mut sol = VecD::new(4);
+                    for i in 1..=4 {
+                        b.set(i, -self.dedt[i - 1]);
+                        sol.set(i, solution[i - 1]);
+                    }
+                    sing_rs.solve(&b, &mut sol, 1.0e-6);
+                    for i in 1..=4 {
+                        solution[i - 1] = sol.get(i);
+                    }
+                    self.istangent = false;
+                    // OCCT: controle = DEDT.Added(DEDX.Multiplied(solution));
+                    let mut controle = [0.0f64; 4];
+                    for i in 1..=4 {
+                        let mut somme = 0.0;
+                        for j in 1..=4 {
+                            somme += self.dedx[i - 1][j - 1] * solution[j - 1];
+                        }
+                        controle[i - 1] = self.dedt[i - 1] + somme;
+                    }
+                    if controle[0].abs() > tolerances[0]
+                        || controle[1].abs() > tolerances[1]
+                        || controle[2].abs() > tolerances[2]
+                        || controle[3].abs() > tolerances[3]
+                    {
+                        self.istangent = true;
+                    }
+                }
             }
 
             if !self.istangent {

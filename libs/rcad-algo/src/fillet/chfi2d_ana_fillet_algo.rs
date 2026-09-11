@@ -35,9 +35,12 @@ use rcad_kernel::core::precision::is_negative_infinite_value;
 use rcad_kernel::core::precision::is_positive_infinite_value;
 use rcad_kernel::math::el::elslib_plane_value;
 use rcad_kernel::geom::CurveEval as _;
-use rcad_kernel::geom::{Circle2d, Circle3, Curve3, Line2d, Plane, Surface3, TrimmedCurve3};
+use rcad_kernel::geom::{Circle2d, Circle3, Curve3, Line2d, Plane, TrimmedCurve3};
 use rcad_kernel::topo::topods::BRepTool as _;
-use rcad_kernel::topo::topods::{BRep, Orientation, Shape};
+use rcad_kernel::topo::topods::{BRep, BRepBuilder, Orientation, Shape};
+
+use crate::topalgo::brep_lib::make_face::BRepLibMakeFace;
+use crate::topalgo::brep_lib::make_wire::BRepLibMakeWire;
 
 // =========================================================================
 // gp primitives missing from rcad (OCCT anchors inline).
@@ -248,35 +251,8 @@ impl BRepAdaptorCurve {
 }
 
 // =========================================================================
-// BRepBuilderAPI / ShapeAnalysis stand-ins (architecture differences).
+// ShapeAnalysis stand-in (architecture difference).
 // =========================================================================
-
-/// OCCT BRepBuilderAPI_MakeWire stand-in: rcad builds the wire directly on
-/// the BRep pool (BRep::add_twire, the BRepPrim_Builder path). OCCT
-/// MakeWire additionally checks connectivity and reports IsDone; rcad
-/// returns None only when a member is not an edge TShape.
-fn brepbuilderapi_make_wire(brep: &mut BRep, edges: Vec<Shape>) -> Option<Shape> {
-    for e in &edges {
-        if e.as_edge().is_none() {
-            return None;
-        }
-    }
-    Some(brep.add_twire(edges))
-}
-
-/// OCCT BRepBuilderAPI_MakeFace(const gp_Pln&) stand-in: an infinite planar
-/// face (natural restriction, no wires). IsDone is always true in OCCT.
-fn brepbuilderapi_make_face_plane(brep: &mut BRep, plane: &Plane) -> Option<Shape> {
-    Some(brep.add_tface(
-        Some(Surface3::Plane(plane.clone())),
-        Shape::null(),
-        Vec::new(),
-        None,
-        None,
-        Vec::new(),
-        true,
-    ))
-}
 
 /// OCCT ShapeAnalysis_Wire(W, F, Preci).CheckSelfIntersection().
 ///
@@ -335,7 +311,10 @@ fn breplib_make_edge_project(brep: &BRep, curve: &Curve3, v: &Shape, p: &mut f64
 /// (ElCLib.cxx): adjusts U1 into [UFirst, ULast] and U2 = U1 + adjusted
 /// (U2 - U1) so that U2 > U1 within the period.
 fn elclib_adjust_periodic(ufirst: f64, ulast: f64, preci: f64, u1: &mut f64, u2: &mut f64) {
-    if !ufirst.is_finite() || !ulast.is_finite() {
+    // OCCT ElCLib.cxx L121: Precision::IsInfinite(UFirst) || Precision::IsInfinite(ULast).
+    if rcad_kernel::precision::is_infinite_value(ufirst)
+        || rcad_kernel::precision::is_infinite_value(ulast)
+    {
         *u1 = ufirst;
         *u2 = ulast;
         return;
@@ -829,24 +808,24 @@ impl ChFi2dAnaFilletAlgo {
             is2nd_reversed = true;
         }
 
-        // Make a wire (BRepBuilderAPI_MakeWire mkWire).
-        let mut mk_wire_edges: Vec<Shape> = Vec::new();
+        // Make a wire (BRepBuilderAPI_MakeWire mkWire, cxx L302-310).
+        let mut mk_wire = BRepLibMakeWire::new();
+        let mut bb = BRepBuilder::new();
         if is1st_reversed {
-            mk_wire_edges.push(topods_reversed(the_edge1));
+            mk_wire.add_edge(&mut self.my_brep, &mut bb, &topods_reversed(the_edge1));
         } else {
-            mk_wire_edges.push(the_edge1.clone());
+            mk_wire.add_edge(&mut self.my_brep, &mut bb, the_edge1);
         }
         if is2nd_reversed {
-            mk_wire_edges.push(topods_reversed(the_edge2));
+            mk_wire.add_edge(&mut self.my_brep, &mut bb, &topods_reversed(the_edge2));
         } else {
-            mk_wire_edges.push(the_edge2.clone());
+            mk_wire.add_edge(&mut self.my_brep, &mut bb, the_edge2);
         }
-        let mk_wire = brepbuilderapi_make_wire(&mut self.my_brep, mk_wire_edges);
-        let w = match mk_wire {
-            Some(w) => w,
-            // throw Standard_Failure("Can't make a wire.")
-            None => panic!("Can't make a wire."),
-        };
+        // cxx L321: throw Standard_Failure("Can't make a wire.").
+        if !mk_wire.is_done() {
+            panic!("Can't make a wire.");
+        }
+        let w = mk_wire.wire();
 
         self.init_wire(&w, the_plane);
     }
@@ -873,11 +852,24 @@ impl ChFi2dAnaFilletAlgo {
         // Check arcs on self-intersection.
         let mut is_cut = false;
         if !self.segment1 || !self.segment2 {
-            let mk_wire =
-                brepbuilderapi_make_wire(&mut self.my_brep, vec![self.e1.clone(), self.e2.clone()]);
-            if let Some(w) = mk_wire {
-                let mk_face = brepbuilderapi_make_face_plane(&mut self.my_brep, &self.plane);
-                if let Some(f) = mk_face {
+            // cxx L349: BRepBuilderAPI_MakeWire mkWire(e1, e2).
+            let mut bb = BRepBuilder::new();
+            let mk_wire = BRepLibMakeWire::new_with_two_edges(
+                &mut self.my_brep,
+                &mut bb,
+                &self.e1,
+                &self.e2,
+            );
+            // cxx L350.
+            if mk_wire.is_done() {
+                // cxx L352: const TopoDS_Wire& W = mkWire.Wire().
+                let w = mk_wire.wire();
+                // cxx L353: BRepBuilderAPI_MakeFace mkFace(plane).
+                let mk_face = BRepLibMakeFace::new_with_plane(&mut self.my_brep, &mut bb, &self.plane);
+                // cxx L354.
+                if mk_face.is_done() {
+                    // cxx L356: const TopoDS_Face& F = mkFace.Face().
+                    let f = mk_face.face();
                     if shape_analysis_wire_check_self_intersection(&self.my_brep, &w, &f, CONFUSION)
                     {
                         // Cut the edges at the point of intersection.

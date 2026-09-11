@@ -15,16 +15,25 @@
 //! 3. `BRepCheck::PrecCurve/PrecSurface` (BRepCheck.cxx L70-127) -> the
 //!    re-hosts below; they match the rcad `Curve3`/`Surface3` enums directly
 //!    (the OCCT `Adaptor3d_Curve::GetType()` dispatch).
-//! 4. `Extrema_LocateExtPC` (TKGeomBase) -> the kernel
-//!    `extrema_locate_ext_pc` (generic over the `CurveEval` adaptor trait)
-//!    wrapped in the [`ExtremaLocateExtPC`] Initialize/Perform contract below.
+//! 4. `Extrema_LocateExtPC` (TKGeomBase) -> the kernel real
+//!    `rcad_kernel::base::extrema_locate_ext_pc::LocateExtPC`
+//!    (Extrema_GLocateExtPC.hxx L54-381 + Extrema_GenLocateExtPC.hxx L44-168)
+//!    over the kernel adaptor-stack tools (`GeomCurveAdaptor` /
+//!    `CurveOnSurface` seen through `CurveToolHandle`) — the OCCT
+//!    `Extrema_LocateExtPC::Initialize(*myReferenceCurve, ...)` adaptor
+//!    arguments.
 //! 5. `GeomLib_CheckCurveOnSurface` (TKGeomBase) is not translated yet; the
 //!    existing GAP carrier `geomalgo::geom_lib_check_curve_on_surface` is
 //!    called so `processExact` preserves the OCCT failure path (IsDone()
 //!    false from the panic-free construction; Perform panics — plan §0.6).
 //!    GAP: closes with the TKGeomBase GeomLib batch.
 
-use rcad_kernel::base::extrema::POnCurve;
+use std::sync::Arc;
+
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_locate_ext_pc::LocateExtPC;
+use rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor;
+use rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
 
 use crate::geomalgo::geom_lib_check_curve_on_surface::GeomLibCheckCurveOnSurface;
@@ -390,105 +399,6 @@ pub fn brep_check_prec_surface(the_surface: &GeomAdaptorSurface) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
-// Extrema_LocateExtPC re-host (architecture bridge #4)
-// ---------------------------------------------------------------------------
-
-/// OCCT Extrema_LocateExtPC (TKGeomBase) — the local Point-to-Curve extremum
-/// from a seed parameter, with the OCCT Initialize/Perform/IsDone/
-/// SquareDistance contract over the kernel `extrema_locate_ext_pc` Newton
-/// search (the CurveEval-generic form).
-#[derive(Debug, Clone)]
-pub struct ExtremaLocateExtPC {
-    /// OCCT myInit (the Initialize call was made).
-    my_init: bool,
-    /// OCCT myIsDone (the Perform call succeeded).
-    my_is_done: bool,
-    /// OCCT mySqDist (the square distance at the solution).
-    my_sq_dist: f64,
-    /// OCCT myPoint (the solution point on the curve).
-    my_point: glam::DVec3,
-    /// OCCT myPoint.Parameter().
-    my_param: f64,
-}
-
-impl ExtremaLocateExtPC {
-    /// OCCT Extrema_LocateExtPC::Extrema_LocateExtPC() — the default state
-    /// (not done).
-    pub fn new() -> Self {
-        ExtremaLocateExtPC {
-            my_init: false,
-            my_is_done: false,
-            my_sq_dist: 0.0,
-            my_point: glam::DVec3::ZERO,
-            my_param: 0.0,
-        }
-    }
-
-    /// OCCT Initialize(C, U1, U2, Tol) — stores the search domain; the
-    /// kernel Newton search consumes it in Perform.
-    pub fn initialize<C: CurveEval>(&mut self, _the_c: &C, _the_u1: f64, _the_u2: f64, _the_tol: f64) {
-        self.my_init = true;
-    }
-
-    /// OCCT Perform(P, U0) — the local search from the seed U0.
-    pub fn perform<C: CurveEval>(
-        &mut self,
-        the_p: glam::DVec3,
-        the_curve: &C,
-        the_u0: f64,
-        the_u1: f64,
-        the_u2: f64,
-        the_tol: f64,
-    ) {
-        let _ = self.my_init;
-        match rcad_kernel::base::extrema::extrema_locate_ext_pc(
-            the_p,
-            the_curve,
-            the_u0,
-            the_u1,
-            the_u2,
-            the_tol,
-        ) {
-            Some(POnCurve { param, point }) => {
-                self.my_is_done = true;
-                self.my_point = point;
-                self.my_param = param;
-                self.my_sq_dist = (point - the_p).length_squared();
-            }
-            None => {
-                self.my_is_done = false;
-            }
-        }
-    }
-
-    /// OCCT IsDone().
-    pub fn is_done(&self) -> bool {
-        self.my_is_done
-    }
-
-    /// OCCT SquareDistance().
-    pub fn square_distance(&self) -> f64 {
-        self.my_sq_dist
-    }
-
-    /// OCCT Point().Parameter() — the parameter of the solution point.
-    pub fn param_of_point(&self) -> f64 {
-        self.my_param
-    }
-
-    /// OCCT Point().
-    pub fn point(&self) -> glam::DVec3 {
-        self.my_point
-    }
-}
-
-impl Default for ExtremaLocateExtPC {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ---------------------------------------------------------------------------
 // BRepLib_ValidateEdge
 // ---------------------------------------------------------------------------
 
@@ -690,16 +600,55 @@ impl BRepLibValidateEdge {
 
             let a_reference_resolution = self.my_reference_curve.resolution(rcad_kernel::CONFUSION);
             let an_other_resolution = self.my_other_curve.resolution(rcad_kernel::CONFUSION);
-            let mut a_reference_extrema = ExtremaLocateExtPC::new();
-            let mut an_other_extrema = ExtremaLocateExtPC::new();
+            // OCCT L169-173: Extrema_LocateExtPC aReferenceExtrema;
+            // aReferenceExtrema.Initialize(*myReferenceCurve,
+            //                              aReferenceFirstParam,
+            //                              aReferenceLastParam,
+            //                              myReferenceCurve->Resolution(
+            //                                Precision::Confusion()));
+            // The Initialize arguments are the member adaptors themselves.
+            let a_reference_curve3 = self.my_reference_curve.curve3_clone();
+            let a_reference_adaptor = GeomCurveAdaptor::with_range(
+                a_reference_curve3.clone(),
+                a_reference_first_param,
+                a_reference_last_param,
+            );
+            let a_reference_tool = CurveToolHandle::for_curve3(
+                &a_reference_curve3,
+                &a_reference_adaptor,
+                &a_reference_adaptor,
+            );
+            // OCCT L174-177: anOtherExtrema.Initialize(*myOtherCurve,
+            //                              anOtherFirstParam,
+            //                              anOtherLastParam,
+            //                              myOtherCurve->Resolution(
+            //                                Precision::Confusion()));
+            let (an_other_curve2d, an_other_surface) =
+                self.my_other_curve.curve_on_surface_values();
+            let an_other_curve2d_adaptor = rcad_kernel::base::proj_lib::Geom2dCurveAdaptor::with_range(
+                an_other_curve2d,
+                an_other_first_param,
+                an_other_last_param,
+            );
+            let an_other_surface_adaptor = GeomSurfaceAdaptor::new(an_other_surface);
+            let an_other_curve_on_surface = rcad_kernel::base::proj_lib::CurveOnSurface::new(
+                Arc::new(an_other_curve2d_adaptor),
+                Arc::new(an_other_surface_adaptor),
+            );
+            let an_other_tool = CurveToolHandle::with_geom(
+                &an_other_curve_on_surface,
+                &an_other_curve_on_surface,
+            );
+            let mut a_reference_extrema = LocateExtPC::new();
+            let mut an_other_extrema = LocateExtPC::new();
             a_reference_extrema.initialize(
-                &self.my_reference_curve,
+                &a_reference_tool,
                 a_reference_first_param,
                 a_reference_last_param,
                 a_reference_resolution,
             );
             an_other_extrema.initialize(
-                &self.my_other_curve,
+                &an_other_tool,
                 an_other_first_param,
                 an_other_last_param,
                 an_other_resolution,
@@ -717,14 +666,9 @@ impl BRepLibValidateEdge {
                     / a_control_points_number as f64;
                 let an_other_extrema_point = self.my_other_curve.value(an_other_param);
 
-                a_reference_extrema.perform(
-                    an_other_extrema_point,
-                    &self.my_reference_curve,
-                    a_reference_param,
-                    a_reference_first_param,
-                    a_reference_last_param,
-                    a_reference_resolution,
-                );
+                // OCCT L188: aReferenceExtrema.Perform(anOtherExtremaPoint,
+                //                                      aReferenceParam).
+                a_reference_extrema.perform(an_other_extrema_point, a_reference_param);
                 if a_reference_extrema.is_done() {
                     if a_reference_extrema.square_distance() > a_max_square_distance {
                         a_max_square_distance = a_reference_extrema.square_distance();
@@ -741,14 +685,9 @@ impl BRepLibValidateEdge {
                     return;
                 }
 
-                an_other_extrema.perform(
-                    a_reference_extrema_point,
-                    &self.my_other_curve,
-                    an_other_param,
-                    an_other_first_param,
-                    an_other_last_param,
-                    an_other_resolution,
-                );
+                // OCCT L208: anOtherExtrema.Perform(aReferenceExtremaPoint,
+                //                                   anOtherParam).
+                an_other_extrema.perform(a_reference_extrema_point, an_other_param);
                 if an_other_extrema.is_done() {
                     if an_other_extrema.square_distance() > a_max_square_distance {
                         a_max_square_distance = an_other_extrema.square_distance();

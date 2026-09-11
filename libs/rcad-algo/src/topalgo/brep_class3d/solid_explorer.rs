@@ -661,7 +661,11 @@ impl SolidExplorer {
         // OCCT L93-167: edge walk — a point on a boundary edge moved into the
         // face interior along the rotated edge tangent.
         for (pc, range, ori) in &f.boundary {
-            if !range[0].is_finite() || !range[1].is_finite() {
+            // Unbounded-range skip via Precision::IsInfinite
+            // (Precision.hxx L350-353).
+            if rcad_kernel::precision::is_infinite_value(range[0])
+                || rcad_kernel::precision::is_infinite_value(range[1])
+            {
                 continue;
             }
             let t = range[0] + (range[1] - range[0]) * param;
@@ -755,8 +759,21 @@ impl SolidExplorer {
     pub(crate) fn face_bound_normal(&self, fi: usize, _param: f64) -> Option<DVec3> {
         let f = self.face_surfaces.get(fi)?;
         let (u1, v1, u2, v2) = face_uv_bounds(f);
-        let u = if u1.is_finite() && u2.is_finite() { (u1 + u2) * 0.5 } else { 0.0 };
-        let v = if v1.is_finite() && v2.is_finite() { (v1 + v2) * 0.5 } else { 0.0 };
+        // Bounded-domain test via Precision::IsInfinite (Precision.hxx L350-353).
+        let u = if !rcad_kernel::precision::is_infinite_value(u1)
+            && !rcad_kernel::precision::is_infinite_value(u2)
+        {
+            (u1 + u2) * 0.5
+        } else {
+            0.0
+        };
+        let v = if !rcad_kernel::precision::is_infinite_value(v1)
+            && !rcad_kernel::precision::is_infinite_value(v2)
+        {
+            (v1 + v2) * 0.5
+        } else {
+            0.0
+        };
         Self::face_outward_normal_at(f, u, v)
     }
 
@@ -779,7 +796,11 @@ impl SolidExplorer {
             return None;
         }
         let (u1, v1, u2, v2) = face_uv_bounds(f);
-        if !(u1.is_finite() && v1.is_finite() && u2.is_finite() && v2.is_finite()) {
+        if !(rcad_kernel::precision::is_infinite_value(u1)
+            || rcad_kernel::precision::is_infinite_value(v1)
+            || rcad_kernel::precision::is_infinite_value(u2)
+            || rcad_kernel::precision::is_infinite_value(v2))
+        {
             return None;
         }
         if (u2 - u1).abs() < CONFUSION || (v2 - v1).abs() < CONFUSION {
@@ -1854,19 +1875,20 @@ fn face_uv_bounds(f: &ExplorerFace) -> (f64, f64, f64, f64) {
 }
 
 /// OCCT IsInfiniteUV (SolidExplorer.cxx L454-467): bit flags for infinite UV
-/// bounds (1 = U1, 2 = V1, 4 = U2, 8 = V2).
+/// bounds (1 = U1, 2 = V1, 4 = U2, 8 = V2); the tests use
+/// Precision::IsInfinite (Precision.hxx L350-353).
 fn is_infinite_uv(u1: f64, v1: f64, u2: f64, v2: f64) -> i32 {
     let mut val = 0;
-    if !u1.is_finite() {
+    if rcad_kernel::precision::is_infinite_value(u1) {
         val |= 1;
     }
-    if !v1.is_finite() {
+    if rcad_kernel::precision::is_infinite_value(v1) {
         val |= 2;
     }
-    if !u2.is_finite() {
+    if rcad_kernel::precision::is_infinite_value(u2) {
         val |= 4;
     }
-    if !v2.is_finite() {
+    if rcad_kernel::precision::is_infinite_value(v2) {
         val |= 8;
     }
     val

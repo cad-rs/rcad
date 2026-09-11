@@ -5,8 +5,11 @@
 // Content: the re-hosted BRepFeat package statics (ParametricMinMax /
 // IsInside / FaceUntil / Tool — BRepFeat.cxx), the BRepAlgo::IsValid gap
 // marker (BRepAlgo_1.cxx L39-43), the BRepAlgoAPI_Cut vehicle (CutVehicle)
-// and the result-pool helpers (pool_top_shapes / builder_result_shape). The
-// architecture-difference numbering of the parent module header applies.
+// and the result-pool helpers (pool_top_shapes / builder_result_shape).
+// IsInside is the full 1:1 body (BRepFeat.cxx L337-520: IsIn /
+// PutInBoundsU / PutInBoundsV / IsInside over the topalgo FClass2d +
+// GCPnts_QuasiUniformDeflection + GeomProjLib::Curve2d bodies).
+// The architecture-difference numbering of the parent module header applies.
 
 use crate::bop::algo::builder::BooleanOpType;
 use crate::bop::algo::pave_filler::PaveFiller;
@@ -14,11 +17,14 @@ use crate::bop::history::BRepToolsHistory;
 use crate::feat::brep_feat_builder::{explorer, BRepFeatBuilder, OcctShapeMap};
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
 use crate::feat::loc_ope_cs_intersector::LocOpeCSIntersector;
-use rcad_kernel::geom::{Curve3, CurveEval, Surface3, TrimmedSurface};
-use rcad_kernel::precision::CONFUSION;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
+use rcad_kernel::Curve2dEval;
+use rcad_kernel::geom::{Curve2d, Curve3, CurveEval, Surface3, SurfaceEval, TrimmedSurface};
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, TShape};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{Orientation, ShapeType};
+use rcad_kernel::topods::{Orientation, ShapeType, State};
 
 /// OCCT NECHANTBARYC (BRepFeat.cxx L57).
 pub(crate) const NECHANTBARYC: i32 = 11;
@@ -270,10 +276,19 @@ pub fn brep_feat_parametric_min_max(
         flag = false;
     }
     //
-    // OCCT L245-254: theMap + the per-edge sampler (the Initialize/Perform
-    // pair of Extrema_ExtPC collapses into the rcad constructor, which
-    // carries no separate Initialize).
+    // OCCT L245-254: theMap; GeomAdaptor_Curve TheCurve(CC); the default
+    // Extrema_ExtPC and its Initialize(TheCurve, CC->FirstParameter(),
+    // CC->LastParameter()) — the default theTolF is 1.0e-10.
     let mut the_map = OcctShapeMap::new();
+    let a_adaptor = GeomCurveAdaptor::new(the_cc.clone());
+    let a_tool = CurveToolHandle::for_curve3(the_cc, &a_adaptor, &a_adaptor);
+    let mut extpc = ExtremaExtPC::new();
+    extpc.initialize(
+        &a_tool,
+        the_cc.default_domain()[0],
+        the_cc.default_domain()[1],
+        1.0e-10,
+    );
     let mut prbmin = f64::MAX;
     let mut prbmax = f64::MIN;
     for edg in explorer(the_s, ShapeType::Edge, ShapeType::Shape) {
@@ -287,14 +302,9 @@ pub fn brep_feat_parametric_min_max(
             for i in 1..NECHANTBARYC {
                 let prm = ((NECHANTBARYC - i) as f64 * f + i as f64 * l) / NECHANTBARYC as f64;
                 let pone = c.point_at(prm);
-                // OCCT L273: extpc.Perform(pone).
-                let extpc = rcad_kernel::base::extrema::ExtPC::new(
-                    pone,
-                    the_cc,
-                    CONFUSION,
-                    the_cc.default_domain()[0],
-                    the_cc.default_domain()[1],
-                );
+                // OCCT L271-273: gp_Pnt pone = C->Value(prm);
+                // extpc.Perform(pone) — the projection on CC.
+                extpc.perform(pone);
                 if extpc.is_done() && extpc.nb_ext() >= 1 {
                     let mut dist2_min = extpc.square_distance(1);
                     let mut kmin = 1usize;
@@ -322,13 +332,8 @@ pub fn brep_feat_parametric_min_max(
             continue;
         }
         let pone = brep_tool_pnt(&vtx);
-        let extpc = rcad_kernel::base::extrema::ExtPC::new(
-            pone,
-            the_cc,
-            CONFUSION,
-            the_cc.default_domain()[0],
-            the_cc.default_domain()[1],
-        );
+        // OCCT L309-311: extpc.Perform(pone) — the projection on CC.
+        extpc.perform(pone);
         if extpc.is_done() && extpc.nb_ext() >= 1 {
             let mut dist2_min = extpc.square_distance(1);
             let mut kmin = 1usize;
@@ -355,10 +360,21 @@ pub fn brep_feat_parametric_min_max(
 /// "parametric" barycentre of the shape S on the curve CC (consumed by the
 /// SensOfPrism/SensOfRevol statics of the form-feature subclasses, 3b).
 pub fn brep_feat_parametric_barycenter(the_s: &Shape, the_cc: &Curve3) -> f64 {
-    // OCCT L121-130: theMap; extpc over [FirstParameter, LastParameter].
+    // OCCT L121-130: theMap; GeomAdaptor_Curve TheCurve(CC); the default
+    // Extrema_ExtPC and its Initialize(TheCurve, CC->FirstParameter(),
+    // CC->LastParameter()) — the default theTolF is 1.0e-10.
     let mut the_map = OcctShapeMap::new();
     let mut nbp = 0i32;
     let mut parbar = 0f64;
+    let a_adaptor = GeomCurveAdaptor::new(the_cc.clone());
+    let a_tool = CurveToolHandle::for_curve3(the_cc, &a_adaptor, &a_adaptor);
+    let mut extpc = ExtremaExtPC::new();
+    extpc.initialize(
+        &a_tool,
+        the_cc.default_domain()[0],
+        the_cc.default_domain()[1],
+        1.0e-10,
+    );
     for edg in explorer(the_s, ShapeType::Edge, ShapeType::Shape) {
         // OCCT L134-138.
         if !map_add(&mut the_map, &edg) {
@@ -373,14 +389,9 @@ pub fn brep_feat_parametric_barycenter(the_s: &Shape, the_cc: &Curve3) -> f64 {
             for i in 1..NECHANTBARYC {
                 let prm = ((NECHANTBARYC - i) as f64 * f + i as f64 * l) / NECHANTBARYC as f64;
                 let pone = c.point_at(prm);
-                // OCCT L148: extpc.Perform(pone) — projection on CC.
-                let extpc = rcad_kernel::base::extrema::ExtPC::new(
-                    pone,
-                    the_cc,
-                    CONFUSION,
-                    the_cc.default_domain()[0],
-                    the_cc.default_domain()[1],
-                );
+                // OCCT L146-148: gp_Pnt pone = C->Value(prm);
+                // extpc.Perform(pone) — the projection on CC.
+                extpc.perform(pone);
                 if extpc.is_done() && extpc.nb_ext() >= 1 {
                     let mut dist2_min = extpc.square_distance(1);
                     let mut kmin = 1usize;
@@ -405,13 +416,8 @@ pub fn brep_feat_parametric_barycenter(the_s: &Shape, the_cc: &Curve3) -> f64 {
             continue;
         }
         let pone = brep_tool_pnt(&vtx);
-        let extpc = rcad_kernel::base::extrema::ExtPC::new(
-            pone,
-            the_cc,
-            CONFUSION,
-            the_cc.default_domain()[0],
-            the_cc.default_domain()[1],
-        );
+        // OCCT L183-185: extpc.Perform(pone) — the projection on CC.
+        extpc.perform(pone);
         if extpc.is_done() && extpc.nb_ext() >= 1 {
             let mut dist2_min = extpc.square_distance(1);
             for k in 2..=extpc.nb_ext() {
@@ -428,15 +434,220 @@ pub fn brep_feat_parametric_barycenter(the_s: &Shape, the_cc: &Curve3) -> f64 {
     parbar
 }
 
-/// OCCT BRepFeat::IsInside(F1, F2) (BRepFeat.cxx L467-520) — GAP
-/// (architecture difference #4): the body needs BRepTopAdaptor_FClass2d +
-/// GCPnts_QuasiUniformDeflection + GeomProjLib::Curve2d over
-/// BRepTools::UVBounds; the classifier is not translated yet. The OCCT
-/// structure: every edge of F1 is sampled (QuasiUniformDeflection at
-/// 100*Confusion) and classified on F2 (forward-oriented); a single OUT
-/// sample rejects.
-pub fn brep_feat_is_inside(_the_f1: &Shape, _the_f2: &Shape) -> bool {
-    panic!("GAP(BRepFeat_Form): BRepFeat::IsInside needs BRepTopAdaptor_FClass2d + GCPnts_QuasiUniformDeflection (pending translation)");
+/// OCCT Geom_Surface::UPeriod() — the U period of the elementary periodic
+/// surfaces (pure-math re-host over the rcad surface value).
+fn surface_u_period(s: &Surface3) -> f64 {
+    use std::f64::consts::TAU;
+    match s {
+        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) | Surface3::Torus(_) => TAU,
+        _ => 0.0,
+    }
+}
+
+/// OCCT Geom_SphericalSurface/ToroidalSurface::VPeriod (2*PI sphere,
+/// 2*minorRadius torus; pure-math re-host).
+fn surface_v_period(s: &Surface3) -> f64 {
+    use std::f64::consts::TAU;
+    match s {
+        Surface3::Sphere(_) => TAU,
+        Surface3::Torus(t) => 2.0 * t.minor_radius,
+        _ => 0.0,
+    }
+}
+
+/// OCCT static IsIn(FC, AC) (BRepFeat.cxx L337-351): every deflection sample
+/// of the pcurve is classified on F2; a single OUT sample rejects.
+fn brep_feat_is_in(
+    fc: &crate::topalgo::brep_top_adaptor::fclass2d::FClass2d,
+    src: &crate::topalgo::shape_source::FaceShapeSource,
+    c2d: &Curve2d,
+    f1: f64,
+    l1: f64,
+) -> bool {
+    // OCCT L339: Def = 100 * Precision::Confusion().
+    let def = 100.0 * rcad_kernel::precision::CONFUSION;
+    // OCCT L340: GCPnts_QuasiUniformDeflection QU(AC, Def) — the adaptor
+    // carries the (f1, l1) range.
+    let q_u = crate::topalgo::gcpnts::QuasiUniformDeflection::new(c2d, def, f1, l1);
+    for i in 1..=q_u.nb_points() {
+        // OCCT L344: P = AC.Value(QU.Parameter(i)).
+        let p = c2d.point_at(q_u.parameter(i));
+        // OCCT L345: FC.Perform(P, false) == TopAbs_OUT.
+        if fc.perform(src, p, false) == State::Out {
+            return false;
+        }
+    }
+    true
+}
+
+/// OCCT static PutInBoundsU (BRepFeat.cxx L361-407) — recadre la courbe 2d
+/// dans les bounds de la face (U direction).
+fn put_in_bounds_u(
+    umin: f64,
+    umax: f64,
+    eps: f64,
+    period: f64,
+    f: f64,
+    l: f64,
+    c2d: &mut Curve2d,
+) {
+    let pf = c2d.point_at(f);
+    let pl = c2d.point_at(l);
+    let pm = c2d.point_at(0.34 * f + 0.66 * l);
+    let mut min_c = pf.x.min(pl.x);
+    min_c = min_c.min(pm.x);
+    let mut max_c = pf.x.max(pl.x);
+    max_c = max_c.max(pm.x);
+    let mut du = 0.0;
+    if min_c < umin - eps {
+        du = (((umin - min_c) / period) as i32 as f64 + 1.0) * period;
+    }
+    if min_c > umax + eps {
+        du = -(((min_c - umax) / period) as i32 as f64 + 1.0) * period;
+    }
+    if du != 0.0 {
+        // OCCT: C2d->Translate(gp_Vec2d(du, 0.)).
+        *c2d = rcad_kernel::geom::translate_curve2d(c2d, glam::DVec2::new(du, 0.0));
+        min_c += du;
+        max_c += du;
+    }
+    // Ajuste au mieux la courbe dans le domaine.
+    if max_c > umax + 100.0 * eps {
+        let d1 = max_c - umax;
+        let d2 = umin - min_c + period;
+        if d2 < d1 {
+            du = -period;
+        }
+        if du != 0.0 {
+            *c2d = rcad_kernel::geom::translate_curve2d(c2d, glam::DVec2::new(du, 0.0));
+        }
+    }
+}
+
+/// OCCT static PutInBoundsV (BRepFeat.cxx L417-463) — the V-direction twin
+/// of PutInBoundsU.
+fn put_in_bounds_v(
+    vmin: f64,
+    vmax: f64,
+    eps: f64,
+    period: f64,
+    f: f64,
+    l: f64,
+    c2d: &mut Curve2d,
+) {
+    let pf = c2d.point_at(f);
+    let pl = c2d.point_at(l);
+    let pm = c2d.point_at(0.34 * f + 0.66 * l);
+    let mut min_c = pf.y.min(pl.y);
+    min_c = min_c.min(pm.y);
+    let mut max_c = pf.y.max(pl.y);
+    max_c = max_c.max(pm.y);
+    let mut dv = 0.0;
+    if min_c < vmin - eps {
+        dv = (((vmin - min_c) / period) as i32 as f64 + 1.0) * period;
+    }
+    if min_c > vmax + eps {
+        dv = -(((min_c - vmax) / period) as i32 as f64 + 1.0) * period;
+    }
+    if dv != 0.0 {
+        // OCCT: C2d->Translate(gp_Vec2d(0., dv)).
+        *c2d = rcad_kernel::geom::translate_curve2d(c2d, glam::DVec2::new(0.0, dv));
+        min_c += dv;
+        max_c += dv;
+    }
+    // Ajuste au mieux la courbe dans le domaine.
+    if max_c > vmax + 100.0 * eps {
+        let d1 = max_c - vmax;
+        let d2 = vmin - min_c + period;
+        if d2 < d1 {
+            dv = -period;
+        }
+        if dv != 0.0 {
+            *c2d = rcad_kernel::geom::translate_curve2d(c2d, glam::DVec2::new(0.0, dv));
+        }
+    }
+}
+
+/// OCCT BRepFeat::IsInside(F1, F2) (BRepFeat.cxx L467-520): every edge of F1
+/// is projected on F2's surface (GeomProjLib::Curve2d), re-fitted into the
+/// surface bounds for the periodic directions (PutInBoundsU/V) and sampled
+/// (QuasiUniformDeflection at 100*Confusion) against the forward-oriented
+/// F2 classifier (BRepTopAdaptor_FClass2d); a single OUT sample rejects.
+pub fn brep_feat_is_inside(the_f1: &Shape, the_f2: &Shape) -> bool {
+    // OCCT L475: S = BRep_Tool::Surface(F2).
+    let Some(s) = brep_tool_surface(the_f2) else {
+        // OCCT dereferences the null surface handle (S->IsUPeriodic()).
+        panic!("Standard_NoSuchObject: BRepFeat::IsInside - null face surface");
+    };
+    // OCCT L477: BRepTools::UVBounds(F2, umin, umax, vmin, vmax).
+    let Some(bounds) = crate::feat::loc_ope_wires_on_shape_b::brep_tools_uv_bounds(the_f2)
+    else {
+        panic!("Standard_NoSuchObject: BRepFeat::IsInside - empty UV bounds");
+    };
+    let (umin, umax, vmin, vmax) = (bounds[0], bounds[1], bounds[2], bounds[3]);
+    // OCCT L479-489: the periodic flags.
+    let (mut flagu, mut flagv) = (0i32, 0i32);
+    let (mut uperiod, mut vperiod) = (0.0f64, 0.0f64);
+    if s.is_u_periodic() {
+        flagu = 1;
+        uperiod = surface_u_period(&s);
+    }
+    if s.is_v_periodic() {
+        flagv = 1;
+        vperiod = surface_v_period(&s);
+    }
+    // OCCT L490-491: BRepTopAdaptor_FClass2d FC(F2.Oriented(FORWARD),
+    // Precision::Confusion()).
+    let mut f2_forward = the_f2.clone();
+    f2_forward.orientation = Orientation::Forward;
+    let locations = [glam::DAffine3::IDENTITY];
+    let src = crate::topalgo::shape_source::FaceShapeSource::new(
+        &f2_forward,
+        s.clone(),
+        &locations,
+    );
+    let fc = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new(
+        &src,
+        0,
+        rcad_kernel::precision::CONFUSION,
+    );
+    // OCCT L494-518: the F1 edge loop.
+    for exp in explorer(the_f1, ShapeType::Edge, ShapeType::Shape) {
+        let Some((c0, f1, l1)) = crate::feat::loc_ope_wires_on_shape_b::brep_tool_curve(&exp)
+        else {
+            // OCCT: a null 3D curve makes GeomProjLib::Curve2d return a null
+            // handle and Geom2dAdaptor_Curve AC(null) fails on Value — the
+            // rcad curve engine has no null curve value; the edge is skipped
+            // (documented arch. diff.).
+            continue;
+        };
+        // OCCT L498: C = GeomProjLib::Curve2d(C0, f1, l1, S).
+        let Some(mut c) =
+            rcad_kernel::base::geom_proj_lib::curve2d_simple(&c0, f1, l1, &s)
+        else {
+            // OCCT: the null pcurve handle would fail the adaptor; the rcad
+            // Option is the failure outcome — treated as OUT (the sample
+            // cannot be classified inside).
+            return false;
+        };
+        // OCCT L500-512: the periodic re-fitting.
+        if flagu == 1 || flagv == 1 {
+            let eps = crate::feat::loc_ope_wires_on_shape_b::brep_tool_tolerance(&exp);
+            // OCCT L503: BRep_Tool::Range(E, f1, l1) — the same range.
+            let _ = crate::feat::loc_ope_wires_on_shape_b::brep_tool_range(&exp);
+            if flagu == 1 {
+                put_in_bounds_u(umin, umax, eps, uperiod, f1, l1, &mut c);
+            }
+            if flagv == 1 {
+                put_in_bounds_v(vmin, vmax, eps, vperiod, f1, l1, &mut c);
+            }
+        }
+        // OCCT L513-517: Geom2dAdaptor_Curve AC(C, f1, l1); IsIn(FC, AC).
+        if !brep_feat_is_in(&fc, &src, &c, f1, l1) {
+            return false;
+        }
+    }
+    true
 }
 
 /// OCCT BRepAlgo::IsValid(S) (BRepAlgo_1.cxx L39-43) — GAP (architecture

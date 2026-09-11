@@ -1103,16 +1103,18 @@ fn treat_circle_parts(
     arr.extend_from_slice(&params);
     arr.push(params[0] + two_pi);
 
-    // OCCT L697: RejectDuplicates -- mark coincident params with RealLast.
+    // OCCT L697: RejectDuplicates -- mark coincident params with RealLast
+    // (GeomInt_LineConstructor.cxx L940-976: aPrmi == RealLast() guards and
+    // SetParameter(RealLast()) rejections).
     for i in 0..arr.len().saturating_sub(2) {
         let prm_i = arr[i];
-        if !prm_i.is_finite() {
+        if prm_i == rcad_kernel::core::precision::REAL_LAST {
             continue;
         }
         for j in (i + 1)..arr.len().saturating_sub(1) {
             let prm_j = arr[j];
             if prm_j - prm_i < a_tol_pc {
-                arr[j] = f64::INFINITY; // RealLast
+                arr[j] = rcad_kernel::core::precision::REAL_LAST;
             } else {
                 break;
             }
@@ -1121,11 +1123,11 @@ fn treat_circle_parts(
     let a_max_prm = *arr.last().unwrap();
     for i in (1..arr.len().saturating_sub(1)).rev() {
         let prm_i = arr[i];
-        if !prm_i.is_finite() {
+        if prm_i == rcad_kernel::core::precision::REAL_LAST {
             continue;
         }
         if a_max_prm - prm_i < a_tol_pc {
-            arr[i] = f64::INFINITY;
+            arr[i] = rcad_kernel::core::precision::REAL_LAST;
         } else {
             break;
         }
@@ -1138,7 +1140,8 @@ fn treat_circle_parts(
     for i in 0..arr.len().saturating_sub(1) {
         let t1 = arr[i];
         let t2 = arr[i + 1];
-        if t2 == f64::INFINITY {
+        // OCCT GeomInt_LineConstructor.cxx L709: if (aT2 == RealLast()) break.
+        if t2 == rcad_kernel::core::precision::REAL_LAST {
             break;
         }
         let t_mid = (t1 + t2) * 0.5;

@@ -397,21 +397,22 @@ impl ExtremaGenExtCS {
         self.tol2 = tol2;
 
         // OCCT L226-244: infinite bounds are restricted to MaxParamVal (and to
-        // HyperbolaLimit for hyperbola-based surfaces).
+        // HyperbolaLimit for hyperbola-based surfaces); the tests use
+        // Precision::IsInfinite (Precision.hxx L350-353).
         let vmaxpar = match surface {
             Surface3::Revolution(_) => HYPERBOLA_LIMIT,
             _ => MAX_PARAM_VAL,
         };
-        if self.umax.is_infinite() {
+        if rcad_kernel::precision::is_infinite_value(self.umax) {
             self.umax = MAX_PARAM_VAL;
         }
-        if self.umin.is_infinite() {
+        if rcad_kernel::precision::is_infinite_value(self.umin) {
             self.umin = -MAX_PARAM_VAL;
         }
-        if self.vmax.is_infinite() {
+        if rcad_kernel::precision::is_infinite_value(self.vmax) {
             self.vmax = vmaxpar;
         }
-        if self.vmin.is_infinite() {
+        if rcad_kernel::precision::is_infinite_value(self.vmin) {
             self.vmin = -vmaxpar;
         }
     }

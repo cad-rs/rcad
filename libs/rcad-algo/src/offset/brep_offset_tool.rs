@@ -955,6 +955,20 @@ pub fn find_common_shapes_of_type(
 /// GeomInt_IntSS is not translated (architecture difference #27); the
 /// carrier keeps the OCCT structure and takes the OCCT !IsDone() path
 /// (empty result lists) until the GeomInt batch closes.
+///
+/// E3-T audit findings for the closing batch: the GeomIntIntSS in
+/// feat/loc_ope_split_drafts_b.rs is a deferred-body stub (IsDone stays
+/// false — NOT a real body); the translated GeomInt survivors live in
+/// bop/int_tools/face_make_curve.rs (GeomInt_LineConstructor /
+/// BuildPCurves / TreatRLine / MakeBSpline, the IntTools_FaceFace::MakeCurve
+/// support) and geomalgo/int_patch (IntPatch_Intersection + the ImpImp /
+/// CyCy machinery).  A 1:1 GeomInt_IntSS still needs: the driver
+/// (GeomInt_IntSS.cxx L38-175, incl. IntPatch_Intersection::PrepareSurfaces
+/// and DefineUVMaxStep, both unported), MakeCurve (GeomInt_IntSS_1.cxx
+/// L275-1096), the BuildPCurves pair (L1172-1330), TreatRLine (L1098-1168)
+/// and TrimILineOnSurfBoundaries (L1333-1502); the WLine approximation
+/// branch additionally needs GeomInt_WLApprox / AppBlend_AppSurf (staged —
+/// OCCT failure path preserved when the line is dropped).
 pub fn pipe_inter(f1: &Shape, f2: &Shape, l1: &mut Vec<Shape>, l2: &mut Vec<Shape>, side: State) {
     // OCCT L754-757: CI; O1, O2; L1.Clear(); L2.Clear().
     l1.clear();
@@ -986,7 +1000,10 @@ pub fn pipe_inter(f1: &Shape, f2: &Shape, l1: &mut Vec<Shape>, l2: &mut Vec<Shap
 /// OCCT BRepOffset_Tool::InterOrExtent(F1, F2, L1, L2, Side) (cxx
 /// L2010-2068) — the GeomInt_IntSS intersection after the trimmed-plane
 /// basis collapse.  GAP leaf: GeomInt_IntSS (architecture difference #27);
-/// the OCCT !IsDone() path is taken (empty result lists).
+/// the OCCT !IsDone() path is taken (empty result lists).  E3-T audit: this
+/// function currently has zero call sites in the tree (the live GeomInt_IntSS
+/// consumer is pipe_inter); the closing-batch notes on pipe_inter apply
+/// here unchanged.
 pub fn inter_or_extent(f1: &Shape, f2: &Shape, l1: &mut Vec<Shape>, l2: &mut Vec<Shape>, side: State) {
     // OCCT L2017-2020: CI; O1, O2; L1.Clear(); L2.Clear().
     l1.clear();

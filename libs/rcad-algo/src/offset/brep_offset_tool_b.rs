@@ -18,7 +18,10 @@
 // == `pDS->Shape(nSect)`).
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::base::extrema::{ExtPC, ExtPC2d};
+use rcad_kernel::base::extrema::ExtPC2d;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3, SurfaceEval};
 use rcad_kernel::topo::topods::{Orientation, State, TShape};
 use rcad_kernel::topo_shape::Shape;
@@ -77,14 +80,6 @@ fn has_curve_on_surface(e: &Shape, f: &Shape) -> bool {
 /// the periodic-shift only; annotated per plan §0.6).
 fn adjust_pcurve_on_face_gap(pcurve: &Curve2d) -> Curve2d {
     pcurve.clone()
-}
-
-/// OCCT Extrema_ExtPC(P, C) over the trimmed edge view — the rcad
-/// base::extrema::ExtPC re-host (1-indexed accessors preserved).
-fn extrema_ext_pc(p: DVec3, c: &Curve3, f: f64, l: f64) -> ExtPC {
-    let mut e = ExtPC::new(p, c, rcad_kernel::precision::CONFUSION, f, l);
-    e.perform(p, c, f, l);
-    e
 }
 
 // ---------------------------------------------------------------------------
@@ -351,8 +346,12 @@ pub fn inter3d(
                     let a_mid_pnt_on_edge = CurveEval::point_at(&c, 0.5 * (fe + le));
                     let ref_to_mid = a_mid_pnt_on_edge - a_ref_pnt;
 
-                    // OCCT L1652: Extrema_ExtPC aProjector(aRefPnt, aBAcurve).
-                    let a_projector = extrema_ext_pc(a_ref_pnt, &c, fe, le);
+                    // OCCT L1647-1652: BRepAdaptor_Curve aBAcurve(anEdge);
+                    // Extrema_ExtPC aProjector(aRefPnt, aBAcurve) — the real
+                    // kernel body over the edge-range adaptor (TolF 1.0e-10).
+                    let a_ba_adaptor = GeomCurveAdaptor::with_range(c.clone(), fe, le);
+                    let a_ba_tool = CurveToolHandle::for_curve3(&c, &a_ba_adaptor, &a_ba_adaptor);
+                    let a_projector = ExtremaExtPC::new_point_curve(a_ref_pnt, &a_ba_tool, 1.0e-10);
                     if a_projector.is_done() {
                         let mut imin = 0usize;
                         let mut min_sq_dist = f64::INFINITY;
@@ -889,9 +888,12 @@ pub(crate) fn project_vertex_on_edge(v: &mut Shape, e: &Shape, tol_conf: f64) ->
             }
         }
     }
-    // OCCT L2198-2216: the Extrema_ExtPC projection.
+    // OCCT L2198-2216: the Extrema_ExtPC projection — Extrema_ExtPC Proj(P, C)
+    // over the edge-range adaptor (TolF 1.0e-10, the real kernel body).
     if !found {
-        let proj = extrema_ext_pc(p, &c, f, l);
+        let a_proj_adaptor = GeomCurveAdaptor::with_range(c.clone(), f, l);
+        let a_proj_tool = CurveToolHandle::for_curve3(&c, &a_proj_adaptor, &a_proj_adaptor);
+        let proj = ExtremaExtPC::new_point_curve(p, &a_proj_tool, 1.0e-10);
         if proj.is_done() && proj.nb_ext() > 0 {
             let mut dist2_min = proj.square_distance(1);
             u = proj.point(1).param;

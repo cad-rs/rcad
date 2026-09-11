@@ -15,7 +15,8 @@
 //!     (`Adaptor3d_CurveOnSurface::Value` = the surface image of the 2d
 //!     point), and on other face kinds the HInter keeps its documented
 //!     not-done path (the OCCT polyhedron branch over the same image).
-//!   - `Extrema_ExtPC(P, C, Tol)` -> `rcad_kernel::base::extrema::ExtPC`.
+//!   - `Extrema_ExtPC(P, C, Tol)` -> the real kernel engine
+//!     `rcad_kernel::base::extrema_ext_pc::ExtremaExtPC`.
 //!   - `GeomLib::ExtendCurveToPoint` -> the translated body in
 //!     `chfi3d_geom_lib` (BSpline poles; the OCCT body concatenates a
 //!     GeomConvert_CompCurveToBSplineCurve, so the extension narrows to the
@@ -24,7 +25,9 @@
 use std::sync::Arc;
 
 use glam::DVec2;
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{
     BezierCurve3, BSplineCurve3, Circle3, Curve2d, Curve2dEval as _, Curve3, CurveEval as _,
     Ellipse3, Hyperbola3, Line3, Parabola3, Surface3, SurfaceEval as _,
@@ -495,8 +498,9 @@ impl ChFi3dBuilder {
             }
             // OCCT L264/L266-267: cad.Load(C1); Extrema_ExtPC ext(CP2.Point(),
             // cad, 1.e-4); parCP2 = ext.Point(1).Parameter().
-            let domain = c1.default_domain();
-            let ext = ExtPC::new(cp2.point(), &c1, 1.0e-4, domain[0], domain[1]);
+            let a_adaptor = GeomCurveAdaptor::new(c1.clone());
+            let a_tool = CurveToolHandle::for_curve3(&c1, &a_adaptor, &a_adaptor);
+            let ext = ExtremaExtPC::new_point_curve(cp2.point(), &a_tool, 1.0e-4);
             parcp2 = ext.point(1).param;
         }
     }

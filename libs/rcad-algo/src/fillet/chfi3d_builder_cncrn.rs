@@ -12,24 +12,42 @@
 //!   - OCCT-form carriers for the TKGeomAlgo / TKTopAlgo classes the corner
 //!     pipeline calls whose rcad translations have not landed yet
 //!     (FairCurve_Batten, BRepAlgo_NormalProjection, Extrema_ExtCC/ExtPC,
-//!     Geom2dInt_GInter, GeomLib::BuildCurve3d, GeomPlate_MakeApprox,
-//!     GeomPlate_PlateG0Criterion, BndLib_Add2dCurve, BRepAdaptor_Curve,
-//!     Adaptor3d_CurveOnSurface, the GeomPlate_BuildPlateSurface curve
-//!     path).
+//!     Geom2dInt_GInter, GeomLib::BuildCurve3d, BndLib_Add2dCurve,
+//!     BRepAdaptor_Curve, Adaptor3d_CurveOnSurface).  The GeomPlate block
+//!     (BuildPlateSurface / CurveConstraint / MakeApprox / PlateG0Criterion)
+//!     is switched onto the real geomalgo::geomplate bodies: the local
+//!     Adaptor3dCurveOnSurface(Geom2dAdaptorCurve, GeomAdaptorSurface) pair
+//!     is bridged at construction onto the kernel
+//!     CurveOnSurface(Curve2dHandle, SurfaceHandle) and the real
+//!     CurveConstraint / BuildPlateSurface / MakeApprox chain runs.
 //!
 //! `PerformMoreThreeCorner` (L1237-3927) lives in
 //! `chfi3d_builder_cncrn_b.rs` (file-size rule).
+
+use std::sync::{Arc, Mutex};
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::base::extrema::POnCurve;
 use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
 use rcad_kernel::base::extrema_ext_cc::ExtremaExtCC;
 use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
-use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
+use rcad_kernel::base::proj_lib::adaptor::{
+    Curve2dHandle, CurveOnSurface, Geom2dCurveAdaptor, SurfaceHandle,
+};
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::{GeomCurveAdaptor, GeomSurfaceAdaptor};
 use rcad_kernel::geom::Curve2d;
 use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _, SurfaceEval as _};
+use rcad_kernel::math::GeomAbsShape as MathGeomAbsShape;
 use rcad_kernel::topo::topods::BRepTool as _;
 use rcad_kernel::topods::{self, GeomAbsShape, Orientation, Shape, ShapeType};
+
+use crate::geomalgo::geomplate::plate_g0_criterion::{
+    AdvApp2VarCriterionRepartition, AdvApp2VarCriterionType, PlateG0Criterion,
+};
+use crate::geomalgo::geomplate::{
+    BuildPlateSurface, CurveBoundary, CurveConstraint as GeomPlateCurveConstraintReal,
+    GeomPlateSurface, MakeApprox,
+};
 
 use crate::brep_algo::normal_projection::BRepAlgoNormalProjection;
 use super::chfi3d::topabs_reverse;
@@ -864,70 +882,130 @@ impl Geom2dIntGInter {
     }
 }
 
-/// OCCT GeomPlate_PlateG0Criterion — pending TKGeomAlgo translation.
+/// OCCT GeomPlate_PlateG0Criterion — the real criterion
+/// (geomalgo::geomplate::PlateG0Criterion, GeomPlate_PlateG0Criterion.cxx
+/// L23-124) is constructed inside [`GeomPlateMakeApprox::new`] from the
+/// Disc2dContour / Disc3dContour sequences, mirroring the OCCT call site
+/// ChFi3d_Builder_CnCrn.cxx L3519.
 #[derive(Default)]
 pub struct GeomPlatePlateG0Criterion;
 
-/// OCCT GeomPlate_Surface — carrier over the surface payload pending the
-/// GeomPlate module wiring used here.
+/// The Disc2dContour / Disc3dContour sequences shared between the builder
+/// and the surface carrier.  The OCCT call site fills the same
+/// NCollection_Sequence objects through the Disc calls and feeds them to
+/// the GeomPlate_PlateG0Criterion construction (ChFi3d_Builder_CnCrn.cxx
+/// L3515-3519); the shared cell carries that identity across the carrier
+/// API boundary.
+#[derive(Default, Clone)]
+pub(crate) struct GeomPlateDiscState {
+    pub(crate) s2d: Vec<DVec2>,
+    pub(crate) s3d: Vec<DVec3>,
+}
+
+/// OCCT GeomPlate_Surface — the carrier over the real
+/// geomalgo::geomplate::GeomPlateSurface payload (the plate evaluation
+/// surface produced by GeomPlate_BuildPlateSurface::Perform).
 pub struct GeomPlateSurfaceCarrier {
-    #[allow(dead_code)]
-    pub surface: rcad_kernel::geom::Surface3,
+    /// OCCT: the GeomPlate_Surface handle.
+    pub plate: GeomPlateSurface,
+    /// The disc sequences shared with the builder (see
+    /// [`GeomPlateDiscState`]).
+    pub(crate) disc: Arc<Mutex<GeomPlateDiscState>>,
+    /// OCCT: the PSurf.G0Error() value snapshot read at Surface() time.
+    pub(crate) g0_error: f64,
 }
 
-/// OCCT GeomPlate_MakeApprox — pending TKGeomAlgo translation; Surface()
-/// reports null until the MakeApprox chain lands.
-#[derive(Default)]
-pub struct GeomPlateMakeApprox;
+/// OCCT GeomPlate_MakeApprox — the real body
+/// (geomalgo/geomplate/make_approx.rs, GeomPlate_MakeApprox.cxx L269-558):
+/// the plate surface is converted into a BSpline surface through the
+/// AdvApp2Var approximation.
+pub struct GeomPlateMakeApprox {
+    /// OCCT: handle(Geom_BSplineSurface) mySurface.
+    surface: Option<rcad_kernel::geom::Surface3>,
+    /// OCCT: double myAppError.
+    app_error: f64,
+    /// OCCT: double myCritError.
+    crit_error: f64,
+}
 
-#[allow(dead_code)]
 impl GeomPlateMakeApprox {
-    /// OCCT GeomPlate_MakeApprox::GeomPlate_MakeApprox(SurfPlate,
-    /// Criterion, Tol3d, Nbmax, Degmax).
+    /// OCCT GeomPlate_MakeApprox::GeomPlate_MakeApprox(SurfPlate, Criterion,
+    /// Tol3d, Nbmax, Degmax) (GeomPlate_MakeApprox.cxx L269-335) — the OCCT
+    /// default arguments Continuity = GeomAbs_C0, EnlargeCoeff = 1.3.  The
+    /// OCCT call site (ChFi3d_Builder_CnCrn.cxx L3516-3520) constructs the
+    /// criterion immediately before this call from the disc sequences and
+    /// `seuil = max(tolapp, 10 * PSurf.G0Error())`; the same construction
+    /// runs here from the carrier disc state.
     pub fn new(
-        _plate: &GeomPlateSurfaceCarrier,
+        plate: &GeomPlateSurfaceCarrier,
         _criterion: &GeomPlatePlateG0Criterion,
-        _tol3d: f64,
-        _nbmax: i32,
-        _degmax: i32,
+        tol3d: f64,
+        nbmax: i32,
+        degmax: i32,
     ) -> Self {
-        GeomPlateMakeApprox
+        // seuil = std::max(tolapp, 10 * PSurf.G0Error());   (CnCrn L3518)
+        let seuil = tol3d.max(10.0 * plate.g0_error);
+        let disc = plate.disc.lock().expect("disc lock").clone();
+        // GeomPlate_PlateG0Criterion critere(S2d, S3d, seuil); (CnCrn L3519;
+        // default args Type = Absolute, Repart = Regular)
+        let critere = PlateG0Criterion::new(
+            &disc.s2d,
+            &disc.s3d,
+            seuil,
+            AdvApp2VarCriterionType::Absolute,
+            AdvApp2VarCriterionRepartition::Regular,
+        );
+        // GeomPlate_MakeApprox Mapp(gpPlate, critere, tolapp, nbcarreau,
+        // degmax);   (CnCrn L3520)
+        let mapp = MakeApprox::new_with_criterion(
+            &plate.plate,
+            &critere,
+            tol3d,
+            nbmax,
+            degmax,
+            MathGeomAbsShape::C0,
+            1.3,
+        );
+        GeomPlateMakeApprox {
+            surface: mapp
+                .surface()
+                .map(|s| rcad_kernel::geom::Surface3::BSpline(s.clone())),
+            app_error: mapp.approx_error(),
+            crit_error: mapp.criterion_error(),
+        }
     }
+    /// OCCT GeomPlate_MakeApprox::Surface() (GeomPlate_MakeApprox.cxx
+    /// L541-544).
     pub fn surface(&self) -> Option<rcad_kernel::geom::Surface3> {
-        None
+        self.surface.clone()
     }
+    /// OCCT GeomPlate_MakeApprox::ApproxError() (L548-551).
     pub fn approx_error(&self) -> f64 {
-        0.0
+        self.app_error
     }
+    /// OCCT GeomPlate_MakeApprox::CriterionError() (L555-558).
     pub fn criterion_error(&self) -> f64 {
-        0.0
+        self.crit_error
     }
 }
 
-/// OCCT GeomPlate_CurveConstraint — the curve constraint carrier (curve-on-
-/// surface + constraint order + point count + tolerances).
+/// OCCT GeomPlate_CurveConstraint — the curve constraint (curve-on-surface
+/// + constraint order + point count + tolerances).  The real body is
+/// geomalgo::geomplate::CurveConstraint (GeomPlate_CurveConstraint.cxx); the
+/// cncrn local Adaptor3dCurveOnSurface(Geom2dAdaptorCurve,
+/// GeomAdaptorSurface) pair is bridged at construction onto the kernel
+/// CurveOnSurface(Curve2dHandle, SurfaceHandle) the real body consumes.
 pub struct GeomPlateCurveConstraint {
-    /// OCCT: Handle(Adaptor3d_CurveOnSurface) myCurve.
-    #[allow(dead_code)]
-    pub my_curve: Adaptor3dCurveOnSurface,
-    /// OCCT: int myOrder.
-    #[allow(dead_code)]
-    pub my_order: i32,
-    /// OCCT: int myNbPoints.
-    #[allow(dead_code)]
-    pub my_nb_points: i32,
-    /// OCCT: double myTolCurve / myTolAng / myTolCurv.
-    #[allow(dead_code)]
-    pub my_tol_curve: f64,
-    #[allow(dead_code)]
-    pub my_tol_ang: f64,
-    #[allow(dead_code)]
-    pub my_tol_curv: f64,
+    /// OCCT: handle(GeomPlate_CurveConstraint).
+    pub(crate) inner: GeomPlateCurveConstraintReal,
 }
 
 impl GeomPlateCurveConstraint {
     /// OCCT GeomPlate_CurveConstraint::CurveConstraint(ConstraintCurve,
-    /// Order, NbPoints, TolDist, TolAng, TolCurv).
+    /// Order, NbPoints, TolDist, TolAng, TolCurv)
+    /// (GeomPlate_CurveConstraint.cxx L59-115) — the down_cast of the
+    /// boundary onto Adaptor3d_CurveOnSurface always succeeds in the CnCrn
+    /// anchor (CurveBoundary::OnSurface).
     pub fn new(
         constraint_curve: Adaptor3dCurveOnSurface,
         order: i32,
@@ -936,49 +1014,60 @@ impl GeomPlateCurveConstraint {
         tol_ang: f64,
         tol_curv: f64,
     ) -> Self {
+        // Type bridge: the cncrn Geom2dAdaptorCurve -> the kernel
+        // Geom2dCurveAdaptor (Curve2dHandle).  A null pcurve raises the
+        // OCCT Standard_NullObject of the Load.
+        let Adaptor3dCurveOnSurface { pcurve, surf } = constraint_curve;
+        let Geom2dAdaptorCurve { curve, first, last } = pcurve;
+        let c2d: Curve2dHandle = Arc::new(Geom2dCurveAdaptor::with_range(
+            match curve {
+                Some(c) => c,
+                None => panic!("Standard_NullObject: Geom2dAdaptor_Curve::Load"),
+            },
+            first,
+            last,
+        ));
+        // The cncrn GeomAdaptorSurface -> the kernel GeomSurfaceAdaptor —
+        // the Load form follows the local bounds_set flag (the OCCT
+        // Load(S) / Load(S, U1, U2, V1, V2) pair).
+        let mut gs = GeomSurfaceAdaptor::empty();
+        if surf.bounds_set {
+            gs.load_with_window(surf.surface, surf.ufirst, surf.ulast, surf.vfirst, surf.vlast);
+        } else {
+            gs.load(surf.surface);
+        }
+        let surf_handle: SurfaceHandle = Arc::new(gs);
+        // HCons = new Adaptor3d_CurveOnSurface(CurvOnS).
+        let cons = Arc::new(CurveOnSurface::new(c2d, surf_handle));
         GeomPlateCurveConstraint {
-            my_curve: constraint_curve,
-            my_order: order,
-            my_nb_points: nb_points,
-            my_tol_curve: tol_dist,
-            my_tol_ang: tol_ang,
-            my_tol_curv: tol_curv,
+            inner: GeomPlateCurveConstraintReal::new(
+                CurveBoundary::OnSurface(cons),
+                order,
+                nb_points,
+                tol_dist,
+                tol_ang,
+                tol_curv,
+            ),
         }
     }
 }
 
-/// OCCT GeomPlate_BuildPlateSurface — the curve-constraint path used by
-/// ChFi3d_Builder_CnCrn.cxx.  The rcad geomplate module covers the
-/// anchor-out-of-scope point-constraint path (geomplate/build_plate_surface.rs
-/// notes the curve path as not ported); this carrier keeps the OCCT call
-/// surface (Add / Perform / IsDone / Surface / Curves2d / Disc2dContour /
-/// Disc3dContour / G0Error) until the geomplate curve path lands.
+/// OCCT GeomPlate_BuildPlateSurface — the real body
+/// (geomalgo/geomplate/build_plate_surface.rs + its `b` continuation,
+/// GeomPlate_BuildPlateSurface.cxx L80-2782).  The ChFi3d_Builder_CnCrn.cxx
+/// curve-constraint path runs the real Perform / IsDone / Surface /
+/// Curves2d / Disc2dContour / Disc3dContour / G0Error chain.
 pub struct GeomPlateBuildPlateSurface {
-    #[allow(dead_code)]
-    degree: i32,
-    #[allow(dead_code)]
-    nbcurvpnt: i32,
-    #[allow(dead_code)]
-    nbiter: i32,
-    #[allow(dead_code)]
-    tol2d: f64,
-    #[allow(dead_code)]
-    tolapp3d: f64,
-    #[allow(dead_code)]
-    angular: f64,
-    /// OCCT: myLinCont — the added CurveConstraints.
-    #[allow(dead_code)]
-    pub my_lin_cont: Vec<GeomPlateCurveConstraint>,
-    /// OCCT: myCurves2d — the 2d constraint curves after Perform.
-    my_curves2d: Vec<rcad_kernel::geom::Curve2d>,
-    done: bool,
-    surface: Option<rcad_kernel::geom::Surface3>,
-    g0_error: f64,
+    /// OCCT: the GeomPlate_BuildPlateSurface body.
+    inner: BuildPlateSurface,
+    /// The disc sequences shared with the surface carrier (see
+    /// [`GeomPlateDiscState`]).
+    disc: Arc<Mutex<GeomPlateDiscState>>,
 }
 
 impl GeomPlateBuildPlateSurface {
     /// OCCT ctor with degree (GeomPlate_BuildPlateSurface.cxx L186-217;
-    /// OCCT defaults TolCurv=0.1, Anisotropie=false).
+    /// OCCT default arguments TolCurv = 0.1, Anisotropie = false).
     pub fn new(
         degree: i32,
         nbcurvpnt: i32,
@@ -988,67 +1077,66 @@ impl GeomPlateBuildPlateSurface {
         tolang: f64,
     ) -> Self {
         GeomPlateBuildPlateSurface {
-            degree,
-            nbcurvpnt,
-            nbiter,
-            tol2d,
-            tolapp3d: tol3d,
-            angular: tolang,
-            my_lin_cont: Vec::new(),
-            my_curves2d: Vec::new(),
-            done: false,
-            surface: None,
-            g0_error: 0.0,
+            inner: BuildPlateSurface::new(
+                degree, nbcurvpnt, nbiter, tol2d, tol3d, tolang, 0.1, false,
+            ),
+            disc: Arc::new(Mutex::new(GeomPlateDiscState::default())),
         }
     }
 
-    /// OCCT GeomPlate_BuildPlateSurface::Add(Cont).
-    #[allow(dead_code)]
+    /// OCCT GeomPlate_BuildPlateSurface::Add(Cont)
+    /// (GeomPlate_BuildPlateSurface.cxx L429-435).
     pub fn add(&mut self, cont: GeomPlateCurveConstraint) {
-        self.my_lin_cont.push(cont);
+        self.inner.add_curve_constraint(cont.inner);
     }
 
-    /// OCCT GeomPlate_BuildPlateSurface::Perform() — pending the geomplate
-    /// curve path; the rcad carrier marks not-done so the OCCT partial-
-    /// result branch of PerformMoreThreeCorner (L3893-3926) runs.
+    /// OCCT GeomPlate_BuildPlateSurface::Perform()
+    /// (GeomPlate_BuildPlateSurface.cxx L438-746).
     pub fn perform(&mut self) {
-        self.done = false;
+        self.inner.perform();
     }
 
     /// OCCT GeomPlate_BuildPlateSurface::IsDone().
     pub fn is_done(&self) -> bool {
-        self.done
+        self.inner.is_done()
     }
 
     /// OCCT GeomPlate_BuildPlateSurface::Surface().
     pub fn surface(&self) -> Option<GeomPlateSurfaceCarrier> {
-        self.surface
-            .as_ref()
-            .map(|s| GeomPlateSurfaceCarrier { surface: s.clone() })
+        self.inner.surface().map(|s| GeomPlateSurfaceCarrier {
+            plate: s.clone(),
+            disc: self.disc.clone(),
+            g0_error: self.inner.g0_error(),
+        })
     }
 
     /// OCCT GeomPlate_BuildPlateSurface::Curves2d() — the HArray1 of the 2d
     /// constraint curves; OCCT indexing is 1-based.
-    #[allow(dead_code)]
-    pub fn curves2d_value(&self, i: i32) -> Option<rcad_kernel::geom::Curve2d> {
-        self.my_curves2d.get((i - 1) as usize).cloned()
+    pub fn curves2d_value(&self, i: i32) -> Option<Curve2d> {
+        self.inner
+            .curves2d()
+            .into_iter()
+            .nth((i - 1) as usize)
+            .flatten()
     }
 
     /// OCCT GeomPlate_BuildPlateSurface::Disc2dContour(NbIsos, Sequence2d)
-    /// — pending.
+    /// (GeomPlate_BuildPlateSurface.cxx L871-1019).
     pub fn disc2d_contour(&self, _nb_isos: i32, seq: &mut Vec<DVec2>) {
-        seq.clear();
+        self.inner.disc2d_contour(seq);
+        self.disc.lock().expect("disc lock").s2d = seq.clone();
     }
 
     /// OCCT GeomPlate_BuildPlateSurface::Disc3dContour(NbIsos, Order,
-    /// Sequence3d) — pending.
-    pub fn disc3d_contour(&self, _nb_isos: i32, _order: i32, seq: &mut Vec<DVec3>) {
-        seq.clear();
+    /// Sequence3d) (GeomPlate_BuildPlateSurface.cxx L1024-1163).
+    pub fn disc3d_contour(&self, _nb_isos: i32, order: i32, seq: &mut Vec<DVec3>) {
+        self.inner.disc3d_contour(order, seq);
+        self.disc.lock().expect("disc lock").s3d = seq.clone();
     }
 
     /// OCCT GeomPlate_BuildPlateSurface::G0Error().
     pub fn g0_error(&self) -> f64 {
-        self.g0_error
+        self.inner.g0_error()
     }
 }
 

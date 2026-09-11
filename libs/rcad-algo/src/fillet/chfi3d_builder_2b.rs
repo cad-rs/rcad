@@ -13,13 +13,20 @@
 //!   - PerformSetOfSurf   (OCCT L3882-3900) -> perform_set_of_surf
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::base::extrema::extrema_locate_ext_pc;
-use rcad_kernel::geom::{Curve2dEval as _, Surface3};
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
+use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _, Surface3};
 use rcad_kernel::topo::topods::Shape;
 
 use super::chfi3d::next_side;
 use super::chfi3d_builder_0::{chfi3d_enlarge_box_dstr, chfi3d_enlarge_box_edge_faces, chfi3d_reparam_pcurv, BndBox, BRepAdaptorSurface};
 use super::chfi3d_builder_2::{chfi3d_build_plane, BRepAdaptorCurve2d, BRepTopAdaptorTopolTool};
+use super::chfi3d_builder_cncrn::chfi3d_int_traces;
+use super::chfi3d_filbuilder_c2::{
+    chfi3d_build_pc_3d, chfi3d_mkbound_c2d_tangents, chfi3d_mkbound_pcurve,
+    chfi3d_mkbound_surface_two_points,
+};
+use rcad_kernel::base::extrema_locate_ext_pc::LocateExtPC;
 use super::chfi3d_builder_2c::{chfi3d_purge, insert_after, insert_before, remove_sd};
 use super::chfi_ds::{
     elclib_in_period, ChFiDS_ChamfMode, ChFiDS_ErrorStatus, ChFiDS_State, ChFiDSSurfData,
@@ -80,110 +87,48 @@ impl GeomFillConstrainedFilling {
 // =========================================================================
 
 // =========================================================================
-// OCCT ChFi3d_Builder_0.cxx ChFi3d_MKBound overloads (used by
-// PerformSetOfKGen L3468/L3485/L3490/L3583) — pending TKGeomAlgo
-// translation; the GeomFill_Boundary carriers are returned empty.
+// OCCT ChFi3d_Builder_0.cxx mkbound / IntTraces / CompleteData family used
+// by PerformSetOfKGen (L3442/L3468/L3485/L3490/L3583-3584/L3606/L3622):
+// the real bodies live at their OCCT homes — the ChFi3d_mkbound overloads
+// and ChFi3d_BuildPCurve in chfi3d_filbuilder_c2.rs (Builder_0.cxx
+// L1750-1857 / L1866-1967), ChFi3d_IntTraces in chfi3d_builder_cncrn.rs
+// (Builder_0.cxx L1234-1447), the CompleteData Surfcoin overload on
+// ChFi3dBuilder in chfi3d_builder_6.rs (Builder_6.cxx L395-505).  Only the
+// 3d-tangent mkbound overload is translated here (no other rcad home).
 // =========================================================================
 
-/// OCCT ChFi3d_mkbound(S, PC, Pref, P1, V1, Pref2, P2, V2, tapp, tg2d) —
-/// the 2d-tangent variant.
-#[allow(clippy::too_many_arguments)]
-fn chfi3d_mkbound_c2d_tangents(
-    _s: &BRepAdaptorSurface,
-    _pc: &mut Option<rcad_kernel::geom::Curve2d>,
-    _pref: i32,
-    _p1: DVec2,
-    _v1: DVec2,
-    _pref2: i32,
-    _p2: DVec2,
-    _v2: DVec2,
-    _tapp: f64,
-    _tg2d: f64,
-) -> GeomFillBoundary {
-    GeomFillBoundary
-}
-
-/// OCCT ChFi3d_mkbound(S, PC, Pref, P1, V1, Pref2, P2, V2, tapp, tg3d) —
-/// the 3d-tangent variant.
+/// OCCT ChFi3d_Builder_0.cxx L1773-1795 — ChFi3d_mkbound (Adaptor3d_Surface
+/// + 3d-tangent pair overload): the tangents are reversed per sens, the
+/// pcurve is built through the gp_Vec ChFi3d_BuildPCurve (default
+/// redresse = false, Builder_0.hxx L232-238) and the pcurve mkbound
+/// overload closes the chain.
 #[allow(clippy::too_many_arguments)]
 fn chfi3d_mkbound_3d_tangents(
-    _s: &BRepAdaptorSurface,
-    _pc: &mut Option<rcad_kernel::geom::Curve2d>,
-    _pref: i32,
-    _p1: DVec2,
-    _v1: DVec3,
-    _pref2: i32,
-    _p2: DVec2,
-    _v2: DVec3,
-    _tapp: f64,
-    _tg3d: f64,
+    surf: &BRepAdaptorSurface,
+    curv: &mut Option<rcad_kernel::geom::Curve2d>,
+    sens1: i32,
+    p1: DVec2,
+    v1: DVec3,
+    sens2: i32,
+    p2: DVec2,
+    v2: DVec3,
+    t3d: f64,
+    ta: f64,
 ) -> GeomFillBoundary {
-    GeomFillBoundary
-}
-
-/// OCCT ChFi3d_mkbound(S, PC, tapp, tg2d) — the simple iso-boundary variant.
-fn chfi3d_mkbound_simple(
-    _s: &BRepAdaptorSurface,
-    _pc: &mut Option<rcad_kernel::geom::Curve2d>,
-    _tapp: f64,
-    _tg2d: f64,
-) -> GeomFillBoundary {
-    GeomFillBoundary
-}
-
-/// OCCT ChFi3d_mkbound(S, P1, P2, tapp, tg2d) — the two-point surface
-/// boundary variant.
-fn chfi3d_mkbound_two_points(
-    _s: &Surface3,
-    _p1: DVec2,
-    _p2: DVec2,
-    _tapp: f64,
-    _tg2d: f64,
-) -> GeomFillBoundary {
-    GeomFillBoundary
-}
-
-/// OCCT ChFi3d_Builder_0.cxx ChFi3d_IntTraces — pending translation; the
-/// OCCT failure path (traces do not intersect) is reported.  See the
-/// PerformSetOfKGen reprocessing block for the call-site shape.
-#[allow(clippy::too_many_arguments)]
-fn chfi3d_int_traces_pending(
-    _prevsd: &ChFiDSSurfData,
-    _prevpar: f64,
-    _nprevpar: &mut f64,
-    _pref1: i32,
-    _precs: i32,
-    _nextsd: &ChFiDSSurfData,
-    _nextpar: f64,
-    _nnextpar: &mut f64,
-    _nref1: i32,
-    _nrefs: i32,
-    _p2d: &mut DVec2,
-    _isref: bool,
-    _precaution: bool,
-) -> bool {
-    false
-}
-
-/// OCCT ChFi3d_Builder::CompleteData (declared in ChFi3d_Builder.hxx,
-/// defined outside Builder_2.cxx) — pending owning translation; the OCCT
-/// failure path (Standard_False) is reported.
-#[allow(clippy::too_many_arguments)]
-fn complete_data_pending(
-    _cursd: &ChFiDSSurfData,
-    _newsurf: &Surface3,
-    _s1: &BRepAdaptorSurface,
-    _pc1: &Option<rcad_kernel::geom::Curve2d>,
-    _s2: &BRepAdaptorSurface,
-    _pc2: &Option<rcad_kernel::geom::Curve2d>,
-    _face_orientation: rcad_kernel::topo::topods::Orientation,
-    _b1: bool,
-    _b2: bool,
-    _b3: bool,
-    _b4: bool,
-    _b5: bool,
-) -> bool {
-    false
+    // OCCT L1776-1783: v1/v2 reversed per sens.
+    let mut v1 = v1;
+    if sens1 == 1 {
+        v1 = -v1;
+    }
+    let mut v2 = v2;
+    if sens2 == 1 {
+        v2 = -v2;
+    }
+    // OCCT L1784: curv = ChFi3d_BuildPCurve(Surf, p1, v1, p2, v2) — the
+    // gp_Vec overload with the default redresse = false.
+    *curv = Some(chfi3d_build_pc_3d(surf, p1, v1, p2, v2, false));
+    // OCCT L1785: return ChFi3d_mkbound(Surf, curv, t3d, ta).
+    chfi3d_mkbound_pcurve(surf, curv.as_ref(), t3d, ta)
 }
 
 impl super::chfi3d::ChFi3dBuilder {
@@ -1026,8 +971,11 @@ impl super::chfi3d::ChFi3dBuilder {
                         };
                         let mut nprevpar1 = 0.0f64;
                         let mut nnextpar1 = 0.0f64;
-                        let mut p2d = DVec2::ZERO;
-                        if chfi3d_int_traces_pending(
+                        // OCCT L3448: gp_Pnt2d p2d — the const reference
+                        // input of ChFi3d_IntTraces (Check2dDistance is
+                        // false in this call).
+                        let p2d = DVec2::ZERO;
+                        if chfi3d_int_traces(
                             &prevsd.as_ref().unwrap().read().expect("surfdata lock"),
                             prevpar1,
                             &mut nprevpar1,
@@ -1038,7 +986,7 @@ impl super::chfi3d::ChFi3dBuilder {
                             &mut nnextpar1,
                             1,
                             -1,
-                            &mut p2d,
+                            p2d,
                             false,
                             true,
                         ) {
@@ -1090,13 +1038,16 @@ impl super::chfi3d::ChFi3dBuilder {
                                 dstr.curve(ng.interference_on_s1().lineindex).curve.clone(),
                             )
                         };
-                        let _ = (c3dprev1, c3dnext1);
                         // OCCT L3478-3479: c3dprev1->D1(prevpar1, Pdeb1,
                         // Vdeb1) / c3dnext1->D1(nextpar1, Pfin1, Vfin1) —
-                        // the DS curve handles are nullable until the
-                        // walking stage fills them; the pending tangent
-                        // queries stand in as zero vectors.
-                        let (vdeb1_3d, vfin1_3d) = (DVec3::ZERO, DVec3::ZERO); // pending c3d
+                        // a null DS curve dereferences exactly where OCCT
+                        // dereferences the null handle (the 3d points are
+                        // discarded by the mkbound overload).
+                        let (vdeb1_3d, vfin1_3d) = {
+                            let cp = c3dprev1.as_ref().expect("DS curve");
+                            let cn = c3dnext1.as_ref().expect("DS curve");
+                            (cp.derivative_at(prevpar1), cn.derivative_at(nextpar1))
+                        };
                         let (pardeb1, parfin1) = {
                             let g = cursd.read().expect("surfdata lock");
                             (
@@ -1122,7 +1073,9 @@ impl super::chfi3d::ChFi3dBuilder {
                         );
                     }
                 } else {
-                    bon1 = chfi3d_mkbound_simple(&s1, &mut pc1, self.tolapp3d, 2.0e-4);
+                    // OCCT L3490 — Bon1 = ChFi3d_mkbound(S1, PC1, tolapp3d,
+                    // 2.e-4): the pcurve overload (isfreeboundary = false).
+                    bon1 = chfi3d_mkbound_pcurve(&s1, pc1.as_ref(), self.tolapp3d, 2.0e-4);
                 }
                 if tw2 {
                     if !yaprevon2 || !yanexton2 {
@@ -1151,8 +1104,11 @@ impl super::chfi3d::ChFi3dBuilder {
                         };
                         let mut nprevpar2 = 0.0f64;
                         let mut nnextpar2 = 0.0f64;
-                        let mut p2d = DVec2::ZERO;
-                        if chfi3d_int_traces_pending(
+                        // OCCT L3518: gp_Pnt2d p2d — the const reference
+                        // input of ChFi3d_IntTraces (Check2dDistance is
+                        // false in this call).
+                        let p2d = DVec2::ZERO;
+                        if chfi3d_int_traces(
                             &prevsd.as_ref().unwrap().read().expect("surfdata lock"),
                             prevpar2,
                             &mut nprevpar2,
@@ -1163,7 +1119,7 @@ impl super::chfi3d::ChFi3dBuilder {
                             &mut nnextpar2,
                             2,
                             -1,
-                            &mut p2d,
+                            p2d,
                             false,
                             true,
                         ) {
@@ -1215,10 +1171,15 @@ impl super::chfi3d::ChFi3dBuilder {
                                 dstr.curve(ng.interference_on_s2().lineindex).curve.clone(),
                             )
                         };
-                        let _ = (c3dprev2, c3dnext2);
-                        // OCCT L3549-3550: c3dprev2->D1 / c3dnext2->D1 —
-                        // pending DS curve handles (see the tw1 twin).
-                        let (vdeb2_3d, vfin2_3d) = (DVec3::ZERO, DVec3::ZERO); // pending c3d
+                        // OCCT L3551-3552: c3dprev2->D1(prevpar2, Pdeb2,
+                        // Vdeb2) / c3dnext2->D1(nextpar2, Pfin2, Vfin2) —
+                        // a null DS curve dereferences exactly where OCCT
+                        // dereferences the null handle (see the tw1 twin).
+                        let (vdeb2_3d, vfin2_3d) = {
+                            let cp = c3dprev2.as_ref().expect("DS curve");
+                            let cn = c3dnext2.as_ref().expect("DS curve");
+                            (cp.derivative_at(prevpar2), cn.derivative_at(nextpar2))
+                        };
                         let (pardeb2, parfin2) = {
                             let g = cursd.read().expect("surfdata lock");
                             (
@@ -1244,7 +1205,9 @@ impl super::chfi3d::ChFi3dBuilder {
                         );
                     }
                 } else {
-                    bon2 = chfi3d_mkbound_simple(&s2, &mut pc2, self.tolapp3d, 2.0e-4);
+                    // OCCT L3561 — Bon2 = ChFi3d_mkbound(S2, PC2, tolapp3d,
+                    // 2.e-4): the pcurve overload (isfreeboundary = false).
+                    bon2 = chfi3d_mkbound_pcurve(&s2, pc2.as_ref(), self.tolapp3d, 2.0e-4);
                 }
                 // The parameters of neighbor traces are updated, so
                 // straight lines uv are pulled.
@@ -1276,8 +1239,11 @@ impl super::chfi3d::ChFi3dBuilder {
                             .unwrap_or(DVec2::ZERO),
                     )
                 };
-                bdeb = chfi3d_mkbound_two_points(&sprev, pdebs1, pdebs2, self.tolapp3d, 2.0e-4);
-                bfin = chfi3d_mkbound_two_points(&snext, pfins1, pfins2, self.tolapp3d, 2.0e-4);
+                // OCCT L3583-3584 — Bdeb/Bfin = ChFi3d_mkbound(sprev/snext,
+                // pdebs/pfins, tolapp3d, 2.e-4): the Geom_Surface two-point
+                // overload.
+                bdeb = chfi3d_mkbound_surface_two_points(&sprev, pdebs1, pdebs2, self.tolapp3d, 2.0e-4);
+                bfin = chfi3d_mkbound_surface_two_points(&snext, pfins1, pfins2, self.tolapp3d, 2.0e-4);
 
                 let mut fil = GeomFillConstrainedFilling::new(11, 20);
                 if pointuon1 {
@@ -1623,20 +1589,21 @@ impl super::chfi3d::ChFi3dBuilder {
                             wi = elclib_in_period(wi, wf2, wf2 + period);
                         }
                         let pv = spine.base_mut().value_at(wi);
-                        // OCCT L3825: Extrema_LocateExtPC(pv, *curhels, wi,
-                        // 1.e-8) — the ElSpine curve machinery is pending
-                        // (adaptor_curve() == None).
+                        // OCCT L3825-3829: Extrema_LocateExtPC ext(pv,
+                        // *curhels, wi, 1.e-8) — the four-arg ctor runs
+                        // Initialize over the full curve range then
+                        // Perform(pv, wi). The ElSpine curve machinery is
+                        // pending (adaptor_curve() == None keeps the OCCT
+                        // not-done path: wv(i) stays wi).
                         wv[(i - if_) as usize] = wi;
                         if let Some(c) = curhels.adaptor_curve() {
-                            if let Some(poc) = extrema_locate_ext_pc(
-                                pv,
-                                &c,
-                                wi,
-                                f64::NEG_INFINITY,
-                                f64::INFINITY,
-                                1.0e-8,
-                            ) {
-                                wv[(i - if_) as usize] = poc.param;
+                            let a_adaptor = GeomCurveAdaptor::new(c.clone());
+                            let a_tool =
+                                CurveToolHandle::for_curve3(&c, &a_adaptor, &a_adaptor);
+                            let ext =
+                                LocateExtPC::new_point_curve_seed(pv, &a_tool, wi, 1.0e-8);
+                            if ext.is_done() {
+                                wv[(i - if_) as usize] = ext.point().param;
                             }
                         }
                         i += 1;

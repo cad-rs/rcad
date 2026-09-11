@@ -307,17 +307,21 @@ pub fn edge_box(curve: &Curve3, range: [f64; 2], tol: f64) -> BndBox {
     let mut b = BndBox::new();
     let t1 = range[0];
     let t2 = range[1];
-    if t1.is_finite() && t2.is_finite() {
+    // Bounded-range test via Precision::IsInfinite (Precision.hxx L350-353):
+    // unbounded ranges carry 2e100, which is IEEE-finite.
+    if !rcad_kernel::precision::is_infinite_value(t1)
+        && !rcad_kernel::precision::is_infinite_value(t2)
+    {
         for k in 0..=16 {
             let t = t1 + (t2 - t1) * (k as f64) / 16.0;
             b.add_point(curve.point_at(t));
         }
-    } else if t1.is_finite() {
+    } else if !rcad_kernel::precision::is_infinite_value(t1) {
         for k in 0..=16 {
             let t = t1 + k as f64;
             b.add_point(curve.point_at(t));
         }
-    } else if t2.is_finite() {
+    } else if !rcad_kernel::precision::is_infinite_value(t2) {
         for k in 0..=16 {
             let t = t2 - k as f64;
             b.add_point(curve.point_at(t));

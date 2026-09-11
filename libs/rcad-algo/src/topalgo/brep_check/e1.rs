@@ -81,17 +81,26 @@ pub fn analyze_surface_uv_consistency(brep: &rcad_kernel::BRep, tolerance: f64) 
     let actual_bounds = [u_min, u_max, v_min, v_max];
     let mut violation = 0.0_f64;
 
-    if expected_bounds[0].is_finite() && u_min < expected_bounds[0] - tolerance {
+    // Bounded-bound test via Precision::IsInfinite (Precision.hxx L350-353).
+    if !rcad_kernel::precision::is_infinite_value(expected_bounds[0])
+        && u_min < expected_bounds[0] - tolerance
+    {
      violation = violation.max(expected_bounds[0] - u_min);
     }
-    if expected_bounds[1].is_finite() && u_max > expected_bounds[1] + tolerance {
+    if !rcad_kernel::precision::is_infinite_value(expected_bounds[1])
+        && u_max > expected_bounds[1] + tolerance
+    {
      violation = violation.max(u_max - expected_bounds[1]);
     }
-    if expected_bounds[2].is_finite() && v_min < expected_bounds[2] - tolerance {
+    if !rcad_kernel::precision::is_infinite_value(expected_bounds[2])
+        && v_min < expected_bounds[2] - tolerance
+    {
      violation = violation.max(expected_bounds[2] - v_min);
     }
-    if expected_bounds[3].is_finite() && v_max > expected_bounds[3] + tolerance {
-     violation = violation.max(v_max - expected_bounds[3]);
+    if !rcad_kernel::precision::is_infinite_value(expected_bounds[3])
+        && v_max > expected_bounds[3] + tolerance
+    {
+     violation = violation.max(u_max - expected_bounds[3]);
     }
 
     if violation > tolerance {

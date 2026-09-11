@@ -17,6 +17,8 @@ use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, ShapeType};
 
 use super::num_linear_regular_sweep::{NumLinearRegularSweepCore, NumLinearRegularSweepSlots};
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
+
 use super::sweep_num_shape::SweepNumShape;
 use super::tool_rehost::{
     brep_tool_curve_on_surface_seam, brep_tool_degenerated, brep_tools_is_really_closed,
@@ -226,8 +228,10 @@ impl NumLinearRegularSweepSlots for BRepSweepRotation {
             // no-op in this pipeline (arch. diff. #1).
             let c = geom_trimmed_curve(c0, first, last);
             // OCCT L333-335: HC = GeomAdaptor_Curve(); HC->Load(C, First,
-            // Last); AS = GeomAdaptor_SurfaceOfRevolution(HC, myAxe).
-            let as_rev = GeomAdaptorSurfaceOfRevolution::load(&c, self.my_axe.0, self.my_axe.1);
+            // Last); AS = GeomAdaptor_SurfaceOfRevolution(HC, myAxe) — the
+            // loaded curve adaptor (its load unwraps the trimmed basis).
+            let hc = GeomCurveAdaptor::with_range(c.clone(), first, last);
+            let as_rev = GeomAdaptorSurfaceOfRevolution::load(&hc, self.my_axe.0, self.my_axe.1);
             match as_rev.get_type() {
                 GeomAbsSurfaceType::Plane => {
                     // OCCT L338-341: S = new Geom_Plane(AS.Plane()).
@@ -250,8 +254,9 @@ impl NumLinearRegularSweepSlots for BRepSweepRotation {
                     s = Surface3::Torus(as_rev.torus());
                 }
                 _ => {
-                    // OCCT L363-366: S = Geom_SurfaceOfRevolution(C, myAxe).
-                    s = as_rev.surface_value();
+                    // OCCT L363-366: S = Geom_SurfaceOfRevolution(C, myAxe) —
+                    // the trimmed generator curve C.
+                    s = as_rev.surface_value(c.clone());
                 }
             }
         } else {

@@ -797,7 +797,9 @@ fn is_out_of_domain(box_s1: &[f64; 4], box_s2: &[f64; 4], p_on2s: &WLinePnt, arr
 /// in the period interval.
 fn in_period(par: f64, min: f64, max: f64) -> f64 {
     let period = max - min;
-    if period <= 0.0 || period.is_infinite() {
+    // OCCT ElCLib.cxx L95-106: Precision::IsInfinite guard (Precision.hxx
+    // L350-353) against FLT_Overflow.
+    if period <= 0.0 || rcad_kernel::precision::is_infinite_value(period) {
         return par;
     }
     let mut p = (par - min) % period;

@@ -1636,8 +1636,10 @@ impl BRepOffsetMakeOffset {
                     let (u1, u2, v1, v2) = (bounds[0], bounds[1], bounds[2], bounds[3]);
                     let um;
                     let vm;
-                    let is_inf1 = u1.is_infinite();
-                    let is_inf2 = u2.is_infinite();
+                    // OCCT BRepOffset_MakeOffset.cxx L5475:
+                    // isInf1 = Precision::IsInfinite(u1), isInf2 = ... (u2).
+                    let is_inf1 = rcad_kernel::precision::is_infinite_value(u1);
+                    let is_inf2 = rcad_kernel::precision::is_infinite_value(u2);
                     if !is_inf1 && !is_inf2 {
                         um = (u1 + u2) / 2.;
                     } else if is_inf1 && !is_inf2 {
@@ -1648,8 +1650,10 @@ impl BRepOffsetMakeOffset {
                         // isInf1 && isInf2
                         um = 0.;
                     }
-                    let is_inf1 = v1.is_infinite();
-                    let is_inf2 = v2.is_infinite();
+                    // OCCT BRepOffset_MakeOffset.cxx L5492:
+                    // isInf1 = Precision::IsInfinite(v1), isInf2 = ... (v2).
+                    let is_inf1 = rcad_kernel::precision::is_infinite_value(v1);
+                    let is_inf2 = rcad_kernel::precision::is_infinite_value(v2);
                     if !is_inf1 && !is_inf2 {
                         vm = (v1 + v2) / 2.;
                     } else if is_inf1 && !is_inf2 {

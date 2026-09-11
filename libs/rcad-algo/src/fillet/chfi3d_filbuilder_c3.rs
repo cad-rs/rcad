@@ -969,8 +969,10 @@ pub fn perform_three_corner(
                 vertices_with_tangents: Vec::new(),
                 period: 0.0,
                 periodic: false,
-                pfirstsav: f64::INFINITY,
-                plastsav: f64::INFINITY,
+                // OCCT ChFiDS_ElSpine.cxx L42-43: pfirstsav/plastsav ctor
+                // defaults are Precision::Infinite().
+                pfirstsav: rcad_kernel::core::precision::INFINITE_VALUE,
+                plastsav: rcad_kernel::core::precision::INFINITE_VALUE,
                 next: None,
                 previous: None,
             }));

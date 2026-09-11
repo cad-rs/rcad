@@ -70,10 +70,10 @@
 //    IntCurve_IntConicConic / Geom2dInt_GInter (TKGeomBase — not translated)
 //    and stop at the GAP marker with the OCCT structure documented.
 // 4. GeomAPI_ProjectPointOnCurve is re-hosted below as
-//    GeomAPIProjectPointOnCurve over rcad ExtPC (the Initialize+Perform pair
-//    of the OCCT constructor collapses into the rcad constructor — same
-//    reduction as ParametricMinMax); Distance(N) =
-//    sqrt(SquareDistance(N)) (GeomAPI_ProjectPointOnCurve.cxx L204-210).
+//    GeomAPIProjectPointOnCurve over the real ExtremaExtPC engine (the OCCT
+//    Init body: myExtPC.Initialize(myC, First, Last) + myExtPC.Perform(P),
+//    GeomAPI_ProjectPointOnCurve.cxx L58-89); Distance(N) =
+//    sqrt(SquareDistance(N)) (GeomAPI_ProjectPointOnCurve.cxx L199-207).
 // 5. BRepTopAdaptor_FClass2d(fac, tol) + Perform(uv, true) is re-hosted below
 //    as brep_top_adaptor_fclass2d_perform on the rcad IntTools_FClass2d
 //    vehicle (topalgo::brep_top_adaptor::fclass2d) over the standalone
@@ -137,9 +137,11 @@ use crate::topalgo::brep_class3d::solid_classifier::SolidClassifier;
 use crate::topalgo::brep_top_adaptor::fclass2d::FClass2d;
 use crate::topalgo::shape_source::FaceShapeSource;
 use glam::{DAffine3, DQuat, DVec2, DVec3};
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
 use rcad_kernel::base::geom_proj_lib::curve2d_auto;
 use rcad_kernel::base::int_ana2d::AnaIntersection2d;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{
     Curve2d, Curve3, CurveEval, Ellipse3, Line3, Plane, Surface3, TrimmedCurve3,
 };
@@ -479,36 +481,84 @@ impl Geom2dAPIInterCurveCurve {
     }
 }
 
-/// OCCT GeomAPI_ProjectPointOnCurve re-host (architecture difference #4) —
-/// the Initialize(C, First, Last) + Perform(P) pair collapses into the rcad
-/// ExtPC constructor.
+/// OCCT GeomAPI_ProjectPointOnCurve re-host (architecture difference #4).
+/// OCCT keeps `Extrema_ExtPC myExtPC` as a member and serves NbPoints /
+/// Distance from it after Init; the real ExtremaExtPC borrows the curve tool
+/// for its lifetime, so the re-host snapshots the Init results — exactly the
+/// values the OCCT queries read (GeomAPI_ProjectPointOnCurve.cxx L58-89:
+/// myC.Load(Curve); myExtPC.Initialize(myC, myC.FirstParameter(),
+/// myC.LastParameter()); myExtPC.Perform(P); the lower-distance scan fills
+/// myIndex).
 pub(crate) struct GeomAPIProjectPointOnCurve {
-    my_ext_pc: ExtPC,
+    /// OCCT myIsDone — IsDone() && (NbExt() > 0) after Perform (cxx L71).
+    my_is_done: bool,
+    /// OCCT myExtPC.NbExt() after Perform.
+    my_nb_ext: usize,
+    /// OCCT myIndex (cxx L74-88) — the lower-distance index (1-based); read
+    /// by LowerDistance/NearestPoint, which this re-host does not expose.
+    #[allow(dead_code)]
+    my_index: i32,
+    /// OCCT myExtPC.SquareDistance(i) after Perform.
+    my_sq_dist: Vec<f64>,
 }
 
 impl GeomAPIProjectPointOnCurve {
-    /// OCCT GeomAPI_ProjectPointOnCurve(P, Curve) (the .cxx Init body).
+    /// OCCT GeomAPI_ProjectPointOnCurve(P, Curve) (the .cxx ctor L43-47) ->
+    /// Init(P, Curve) (the .cxx L58-89).
     pub(crate) fn new(the_p: DVec3, the_curve: &Curve3) -> Self {
-        let dom = the_curve.default_domain();
+        // OCCT L59: myC.Load(Curve) — the GeomAdaptor_Curve full-range load.
+        let a_adaptor = GeomCurveAdaptor::new(the_curve.clone());
+        let a_tool = CurveToolHandle::for_curve3(the_curve, &a_adaptor, &a_adaptor);
+        // OCCT L63-65: myExtPC.Initialize(myC, myC.FirstParameter(),
+        // myC.LastParameter()); myExtPC.Perform(P) — the default theTolF is
+        // 1.0e-10.
+        let my_ext_pc = ExtremaExtPC::new_point_curve(the_p, &a_tool, 1.0e-10);
+        // OCCT L67: myIsDone = myExtPC.IsDone() && (myExtPC.NbExt() > 0).
+        let my_is_done = my_ext_pc.is_done() && my_ext_pc.nb_ext() > 0;
+        let my_nb_ext = if my_is_done {
+            my_ext_pc.nb_ext()
+        } else {
+            0
+        };
+        // OCCT L69-88: the lower-distance scan fills myIndex.
+        let mut my_index = 1i32;
+        if my_is_done {
+            let mut dist2_min = my_ext_pc.square_distance(1);
+            for i in 2..=my_ext_pc.nb_ext() {
+                let dist2 = my_ext_pc.square_distance(i);
+                if dist2 < dist2_min {
+                    dist2_min = dist2;
+                    my_index = i as i32;
+                }
+            }
+        }
+        let my_sq_dist = if my_is_done {
+            (1..=my_ext_pc.nb_ext())
+                .map(|i| my_ext_pc.square_distance(i))
+                .collect()
+        } else {
+            Vec::new()
+        };
         GeomAPIProjectPointOnCurve {
-            my_ext_pc: ExtPC::new(the_p, the_curve, rcad_kernel::precision::CONFUSION, dom[0], dom[1]),
+            my_is_done,
+            my_nb_ext,
+            my_index,
+            my_sq_dist,
         }
     }
 
-    /// OCCT NbPoints() — the ExtPC extrema count when done (the .cxx
-    /// L161-172).
+    /// OCCT NbPoints() (the .cxx L141-152) — myExtPC.NbExt() when done.
     pub(crate) fn nb_points(&self) -> i32 {
-        if self.my_ext_pc.is_done() {
-            self.my_ext_pc.nb_ext() as i32
+        if self.my_is_done {
+            self.my_nb_ext as i32
         } else {
             0
         }
     }
 
-    /// OCCT Distance(Index) — sqrt(SquareDistance(Index)) (the .cxx
-    /// L204-210).
+    /// OCCT Distance(Index) (the .cxx L199-207) — sqrt(SquareDistance(Index)).
     pub(crate) fn distance(&self, the_index: i32) -> f64 {
-        self.my_ext_pc.square_distance(the_index as usize).sqrt()
+        self.my_sq_dist[(the_index - 1) as usize].sqrt()
     }
 }
 

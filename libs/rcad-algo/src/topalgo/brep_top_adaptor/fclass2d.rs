@@ -839,10 +839,11 @@ impl FClass2d {
             v1: 0.0,
             u2: 0.0,
             v2: 0.0,
-            u_min: f64::INFINITY,
-            u_max: f64::NEG_INFINITY,
-            v_min: f64::INFINITY,
-            v_max: f64::NEG_INFINITY,
+            // OCCT IntTools_FClass2d.cxx L111-112: RealLast / -RealLast seeds.
+            u_min: rcad_kernel::precision::REAL_LAST,
+            u_max: rcad_kernel::precision::REAL_FIRST,
+            v_min: rcad_kernel::precision::REAL_LAST,
+            v_max: rcad_kernel::precision::REAL_FIRST,
             my_is_hole: true,
             has_pcurves: true,
             uv_polygons: Vec::new(),
@@ -862,12 +863,13 @@ impl FClass2d {
         &self.uv_polygons
     }
 
-    /// OCCT IntTools_FClass2d::PerformInfinitePoint.
+    /// OCCT IntTools_FClass2d::PerformInfinitePoint (IntTools_FClass2d.cxx
+    /// L625-632): the void-bounds sentinel compares against RealLast().
     pub fn perform_infinite_point(&self, ds: &dyn ShapeSource) -> State {
-        if self.u_max == f64::NEG_INFINITY
-            || self.v_max == f64::NEG_INFINITY
-            || self.u_min == f64::INFINITY
-            || self.v_min == f64::INFINITY
+        if self.u_max == rcad_kernel::precision::REAL_FIRST
+            || self.v_max == rcad_kernel::precision::REAL_FIRST
+            || self.u_min == rcad_kernel::precision::REAL_LAST
+            || self.v_min == rcad_kernel::precision::REAL_LAST
         {
             return State::In;
         }
@@ -899,10 +901,12 @@ impl FClass2d {
         let a_pr_cf = CONFUSION;
         let a_pr_cf2 = a_pr_cf * a_pr_cf;
 
-        self.u_min = f64::INFINITY; // RealLast
-        self.v_min = f64::INFINITY;
-        self.u_max = f64::NEG_INFINITY;
-        self.v_max = f64::NEG_INFINITY;
+        // OCCT IntTools_FClass2d.cxx L111-112: Umin = Vmin = RealLast();
+        // Umax = Vmax = -Umin.
+        self.u_min = rcad_kernel::precision::REAL_LAST;
+        self.v_min = rcad_kernel::precision::REAL_LAST;
+        self.u_max = rcad_kernel::precision::REAL_FIRST;
+        self.v_max = rcad_kernel::precision::REAL_FIRST;
         let mut bad_wire = 0i32;
 
         let surf = ds.face_surface(a_face);

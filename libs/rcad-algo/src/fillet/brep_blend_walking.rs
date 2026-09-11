@@ -866,12 +866,12 @@ pub(crate) fn elspine_vertex_with_tangent(_hguide: &Curve3, ind: i32) -> (DVec3,
 /// default is Precision::Infinite() (ChFiDS_ElSpine.cxx L37-45); the saved
 /// values are set only by the pending SetOrigin machinery.
 pub(crate) fn elspine_get_saved_first_parameter(_hguide: &Curve3) -> f64 {
-    f64::INFINITY
+    rcad_kernel::core::precision::INFINITE_VALUE
 }
 
 /// See elspine_get_saved_first_parameter.
 pub(crate) fn elspine_get_saved_last_parameter(_hguide: &Curve3) -> f64 {
-    f64::INFINITY
+    rcad_kernel::core::precision::INFINITE_VALUE
 }
 
 // =========================================================================

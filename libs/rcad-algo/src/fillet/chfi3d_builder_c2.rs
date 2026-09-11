@@ -32,6 +32,9 @@
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{
     BSplineSurface, BezierSurface, Curve2dEval as _, Curve3, CurveEval as _, Surface3,
     SurfaceEval as _,
@@ -202,23 +205,21 @@ pub(crate) fn c3d_last(c: &Curve3) -> f64 {
     c.default_domain()[1]
 }
 
-/// OCCT Extrema_ExtPC(P, Cad, tol).Point(1).Parameter() — the first
-/// extremum parameter.  rcad stand-in: dense sampling nearest point (the
-/// consuming branch is only reached through the IntSS-pcurve GAP).
-fn extrema_ext_pc_first_parameter(c: &Curve3, p: DVec3, _tol: f64) -> Option<f64> {
-    let [f0, l0] = c.default_domain();
-    let n = 64usize;
-    let mut best = f0;
-    let mut bestd = f64::MAX;
-    for i in 0..=n {
-        let t = f0 + (l0 - f0) * (i as f64) / (n as f64);
-        let d = c.point_at(t).distance(p);
-        if d < bestd {
-            bestd = d;
-            best = t;
-        }
+/// OCCT ChFi3d_Builder_C1.cxx L3373/L3391: Extrema_ExtPC ext(pext, cad,
+/// tolpt); par1 = ext.Point(1).Parameter() — the first extremum parameter
+/// over the loaded (cad) curve; Point(1) raises StdFail_NotDone when the
+/// extrema were not found, mirrored by the None return the call sites
+/// expect() on.
+fn extrema_ext_pc_first_parameter(c: &Curve3, p: DVec3, tol: f64) -> Option<f64> {
+    // OCCT L3372: cad.Load(csau) — the GeomAdaptor_Curve full-range load.
+    let a_adaptor = GeomCurveAdaptor::new(c.clone());
+    let a_tool = CurveToolHandle::for_curve3(c, &a_adaptor, &a_adaptor);
+    let ext = ExtremaExtPC::new_point_curve(p, &a_tool, tol);
+    if ext.is_done() && ext.nb_ext() >= 1 {
+        Some(ext.point(1).param)
+    } else {
+        None
     }
-    Some(best)
 }
 
 pub fn perform_intersection_at_end(this: &mut ChFi3dBuilder, index: usize) {

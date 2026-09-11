@@ -19,6 +19,7 @@ use rcad_kernel::geom::{Curve3, CurveEval as _, Curve2d, Curve2dEval as _, Surfa
 use rcad_kernel::math::function_set_root::FunctionSetWithDerivatives;
 use rcad_kernel::math::gp::Lin;
 use rcad_kernel::math::math_gauss::MathGauss;
+use rcad_kernel::math::math_svd::MathSvd;
 use rcad_kernel::math::{GeomAbsShape, MatD, VecD};
 
 use super::brep_blend_func::blend_func_next_shape;
@@ -113,7 +114,6 @@ impl<'a> BlendFuncChAsym<'a> {
     }
 
     /// OCCT IsSolution(Sol, Tol) (BlendFunc_ChAsym.cxx L113-206).
-    #[allow(unreachable_code)] // the math_SVD fallback is a pending kernel gap
     pub fn is_solution(&mut self, sol: &[f64], tol: f64) -> bool {
         // OCCT: math_Vector valsol(1, 4), secmember(1, 4);
         //       math_Matrix gradsol(1, 4, 1, 4);
@@ -205,12 +205,25 @@ impl<'a> BlendFuncChAsym<'a> {
                 self.istangent = false;
             } else {
                 // OCCT L177-188: math_SVD SingRS(gradsol); if
-                // (SingRS.IsDone()) { SingRS.Solve(DEDT, secmember, 1.e-6); }.
-                // GAP (plan 0.6): rcad-kernel exposes no public math_SVD yet
-                // (only private svd helpers in function_set_root.rs); the SVD
-                // fallback is pending kernel support and reports a tangency
-                // point like the OCCT !IsDone() path.
-                self.istangent = true;
+                // (SingRS.IsDone()) { math_Vector DEDT(1, 4);
+                // DEDT = secmember; SingRS.Solve(DEDT, secmember, 1.e-6);
+                // istangent = false; } else { istangent = true; }
+                let mut sing_rs = MathSvd::new(&a);
+                if sing_rs.is_done() {
+                    let mut dedt = VecD::new(4);
+                    let mut sol = VecD::new(4);
+                    for i in 1..=4 {
+                        dedt.set(i, secmember[i - 1]);
+                        sol.set(i, secmember[i - 1]);
+                    }
+                    sing_rs.solve(&dedt, &mut sol, 1.0e-6);
+                    for i in 1..=4 {
+                        secmember[i - 1] = sol.get(i);
+                    }
+                    self.istangent = false;
+                } else {
+                    self.istangent = true;
+                }
             }
 
             if !self.istangent {
@@ -630,7 +643,6 @@ impl<'a> BlendFuncChAsym<'a> {
     /// OCCT Section(P, Poles, DPoles, Poles2d, DPoles2d, Weights, DWeights)
     /// (BlendFunc_ChAsym.cxx L609-723) — used for the first and last section.
     #[allow(clippy::too_many_arguments)]
-    #[allow(unreachable_code)] // the math_SVD fallback is a pending kernel gap
     pub fn section_d1(
         &mut self,
         p: &BlendPoint,
@@ -740,9 +752,26 @@ impl<'a> BlendFuncChAsym<'a> {
             }
             self.istangent = false;
         } else {
-            // OCCT L687-698: math_SVD fallback — see IsSolution for the GAP
-            // note (plan 0.6, math_SVD pending in rcad-kernel).
-            self.istangent = true;
+            // OCCT L687-698: math_SVD SingRS(gradsol); if
+            // (SingRS.IsDone()) { math_Vector DEDT(1, 4); DEDT = secmember;
+            // SingRS.Solve(DEDT, secmember, 1.e-6); istangent = false; }
+            // else { istangent = true; }
+            let mut sing_rs = MathSvd::new(&a);
+            if sing_rs.is_done() {
+                let mut dedt = VecD::new(4);
+                let mut sol = VecD::new(4);
+                for i in 1..=4 {
+                    dedt.set(i, secmember[i - 1]);
+                    sol.set(i, secmember[i - 1]);
+                }
+                sing_rs.solve(&dedt, &mut sol, 1.0e-6);
+                for i in 1..=4 {
+                    secmember[i - 1] = sol.get(i);
+                }
+                self.istangent = false;
+            } else {
+                self.istangent = true;
+            }
         }
 
         if !self.istangent {

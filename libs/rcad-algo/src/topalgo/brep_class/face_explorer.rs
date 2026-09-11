@@ -51,10 +51,12 @@ impl FaceExplorer {
             cur_edge_par: PROBING_START,
             current_wire: 0,
             current_edge: 0,
-            u_min: f64::INFINITY,
-            u_max: f64::NEG_INFINITY,
-            v_min: f64::INFINITY,
-            v_max: f64::NEG_INFINITY,
+            // OCCT BRepClass_FaceExplorer.cxx L42-45: myUMin = Precision::Infinite(),
+            // myUMax = -Precision::Infinite(), ... ctor seeds.
+            u_min: rcad_kernel::core::precision::INFINITE_VALUE,
+            u_max: -rcad_kernel::core::precision::INFINITE_VALUE,
+            v_min: rcad_kernel::core::precision::INFINITE_VALUE,
+            v_max: -rcad_kernel::core::precision::INFINITE_VALUE,
             bounds_computed: false,
             max_tolerance: 0.1,
             use_bnd_box: false,
@@ -111,16 +113,18 @@ impl FaceExplorer {
             self.compute_face_bounds(ds);
         }
         if self.u_min > self.u_max
-            || self.u_min.is_infinite()
-            || self.u_max.is_infinite()
-            || self.v_min.is_infinite()
-            || self.v_max.is_infinite()
+            // OCCT L74-75: Precision::IsInfinite(myUMin/myUMax/myVMin/myVMax).
+            || rcad_kernel::core::precision::is_infinite_value(self.u_min)
+            || rcad_kernel::core::precision::is_infinite_value(self.u_max)
+            || rcad_kernel::core::precision::is_infinite_value(self.v_min)
+            || rcad_kernel::core::precision::is_infinite_value(self.v_max)
         {
             return point;
         }
         let a_center = DVec2::new((self.u_min + self.u_max) * 0.5, (self.v_min + self.v_max) * 0.5);
         let a_distance = a_center.distance(point);
-        if a_distance.is_infinite() {
+        // OCCT L82: Precision::IsInfinite(aDistance).
+        if rcad_kernel::core::precision::is_infinite_value(a_distance) {
             return DVec2::new(
                 self.u_min - (self.u_max - self.u_min),
                 self.v_min - (self.v_max - self.v_min),
@@ -196,15 +200,17 @@ impl FaceExplorer {
                 continue;
             };
 
-            // OCCT L150-166: infinite-range normalization.
-            if a_f_par.is_infinite() && a_f_par.is_sign_negative() {
-                if a_l_par.is_infinite() && a_l_par.is_sign_positive() {
+            // OCCT L150-166: infinite-range normalization
+            // (Precision::IsNegativeInfinite / IsPositiveInfinite,
+            // Precision.hxx L357-367).
+            if rcad_kernel::precision::is_negative_infinite_value(a_f_par) {
+                if rcad_kernel::precision::is_positive_infinite_value(a_l_par) {
                     a_f_par = -1.0;
                     a_l_par = 1.0;
                 } else {
                     a_f_par = a_l_par - 1.0;
                 }
-            } else if a_l_par.is_infinite() && a_l_par.is_sign_positive() {
+            } else if rcad_kernel::precision::is_positive_infinite_value(a_l_par) {
                 a_l_par = a_f_par + 1.0;
             }
 

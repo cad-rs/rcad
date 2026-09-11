@@ -499,28 +499,12 @@ fn brep_tools_add_uv_bounds_face(the_brep: &BRep, a_ff: &Shape, a_b: &mut BndBox
             Some(s) => s,
             None => return,
         };
+        // OCCT L150-151: aSurf->Bounds(UMin, UMax, VMin, VMax) — the OCCT
+        // infinite surfaces report +/-Precision::Infinite() (Geom_Plane.cxx
+        // L181-184); the kernel domains carry the same OCCT values natively.
         let (u_min, u_max, v_min, v_max) = {
             let d = a_surf.default_domain();
-            // OCCT L150-151: aSurf->Bounds(UMin, UMax, VMin, VMax) — the OCCT
-            // infinite surfaces (Geom_Plane::Bounds L181-184) return finite
-            // Precision::Infinite() magnitudes (2e100); the rcad
-            // default_domain carries true infinities, so map to the OCCT
-            // finite form (architecture difference #61).
-            fn to_occt_infinite(v: f64) -> f64 {
-                if v == f64::INFINITY {
-                    rcad_kernel::core::precision::INFINITE_VALUE
-                } else if v == f64::NEG_INFINITY {
-                    -rcad_kernel::core::precision::INFINITE_VALUE
-                } else {
-                    v
-                }
-            }
-            (
-                to_occt_infinite(d[0]),
-                to_occt_infinite(d[1]),
-                to_occt_infinite(d[2]),
-                to_occt_infinite(d[3]),
-            )
+            (d[0], d[1], d[2], d[3])
         };
         a_box.update(u_min, v_min, u_max, v_max);
     }
@@ -1048,11 +1032,14 @@ pub(crate) fn find_parameter(v: &Shape, e: &Shape, u: &mut f64) -> bool {
                         // Closed curves RLE 16 june 94
                         if let Some((c, f, l)) = &c3d {
                             let _ = curve; // identity: the same-pool index form
-                            if f.is_infinite() && *f < 0. {
+                            // OCCT BRep_Tool.cxx L1425-1436:
+                            // Precision::IsNegativeInfinite(f) /
+                            // Precision::IsPositiveInfinite(l).
+                            if rcad_kernel::precision::is_negative_infinite_value(*f) {
                                 *u = *parameter;
                                 return true;
                             }
-                            if l.is_infinite() && *l > 0. {
+                            if rcad_kernel::precision::is_positive_infinite_value(*l) {
                                 *u = *parameter;
                                 return true;
                             }

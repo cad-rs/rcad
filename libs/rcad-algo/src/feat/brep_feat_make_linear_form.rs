@@ -56,12 +56,14 @@ use crate::feat::brep_feat_rib_slot::{
 use crate::feat::brep_feat_status::{BRepFeatPerfSelection, BRepFeatStatusError};
 use crate::feat::loc_ope_linear_form::LocOpeLinearForm;
 use glam::DVec3;
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{Plane, Surface3, TrimmedSurface};
-use rcad_kernel::precision::CONFUSION;
+use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, TShape};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::ShapeType;
+use rcad_kernel::topods::{Orientation, ShapeType};
 use rcad_kernel::CurveEval;
 use std::collections::HashMap;
 
@@ -138,10 +140,36 @@ impl BRepExtremaExtCF {
     }
 }
 
-/// OCCT BRepPrimAPI_MakeBox(P1, P2).Solid() carrier (architecture
-/// difference #4).
-fn brep_prim_make_box(_p1: DVec3, _p2: DVec3) -> Shape {
-    Shape::null()
+/// OCCT BRepPrimAPI_MakeBox(P1, P2).Solid() (BRepPrimAPI_MakeBox.cxx L78-86):
+/// myWedge = BRepPrim_Wedge(gp_Ax2(pmin(P1, P2), gp_Dir(Z), gp_Dir(X)),
+/// Abs(P2.X()-P1.X()), Abs(P2.Y()-P1.Y()), Abs(P2.Z()-P1.Z())) — the
+/// axis-aligned box solid between the two corners.  The rcad leaf re-host
+/// consumes the modeling MakeBox pool builder and reads the root Solid from
+/// the pool (the TKPrim BRepPrimAPI batch can re-home it).
+fn brep_prim_make_box(p1: DVec3, p2: DVec3) -> Shape {
+    // OCCT pmin(P1, P2).
+    let pmin = DVec3::new(p1.x.min(p2.x), p1.y.min(p2.y), p1.z.min(p2.z));
+    let brep = rcad_modeling::make_box_brep(
+        pmin,
+        glam::DVec3::X,
+        glam::DVec3::Y,
+        (p2.x - p1.x).abs(),
+        (p2.y - p1.y).abs(),
+        (p2.z - p1.z).abs(),
+    )
+    .unwrap_or_else(|_| BRep::new());
+    // OCCT Solid().
+    brep.tshapes
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, ts)| match ts.as_ref() {
+            TShape::Solid(_) => {
+                Some(Shape::from_parts(ts.clone(), i, 0, Orientation::Forward))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(Shape::null)
 }
 
 /// OCCT BRepLib_MakeFace(Pln, U1, U2, V1, V2) — the face on the plane with
@@ -1197,11 +1225,30 @@ impl BRepFeatMakeLinearForm {
             // OCCT L1149-1204.
             for ex in explorer(&current_face, ShapeType::Edge, ShapeType::Shape) {
                 let rfe = ex;
-                // OCCT L1152: BRepExtrema_ExtPC projF(Vprevious, rfe).
+                // OCCT L1152: BRepExtrema_ExtPC projF(Vprevious, rfe) — the
+                // wrapper ctor is Initialize(E) + Perform(V)
+                // (BRepExtrema_ExtPC.cxx L30-33); a non-geometric edge leaves
+                // the wrapper not-done (the rcad continue skips the same
+                // block the OCCT !IsDone() gate skips).
                 let Some((c, f, l)) = brep_tool_curve(&rfe) else {
                     continue;
                 };
-                let proj_f = ExtPC::new(brep_tool_pnt(&v_previous), &c, CONFUSION, f, l);
+                // OCCT BRepExtrema_ExtPC::Initialize (cxx L35-47): myHC = new
+                // BRepAdaptor_Curve(E); Tol = min(BRep_Tool::Tolerance(E),
+                // Precision::Confusion()); Tol = max(myHC->Resolution(Tol),
+                // Precision::PConfusion()); BRep_Tool::Range(E, U1, U2).
+                let a_adaptor = GeomCurveAdaptor::new(c.clone());
+                let mut a_tol = brep_tool_tolerance(&rfe).min(CONFUSION);
+                a_tol = a_adaptor.resolution(a_tol).max(PCONFUSION);
+                let a_tool = CurveToolHandle::for_curve3(&c, &a_adaptor, &a_adaptor);
+                // OCCT cxx L50-56: BRep_Tool::Pnt(V); myExtPC.Perform(P).
+                let proj_f = ExtremaExtPC::new_point_curve_ranged(
+                    brep_tool_pnt(&v_previous),
+                    &a_tool,
+                    f,
+                    l,
+                    a_tol,
+                );
                 if proj_f.is_done() && proj_f.nb_ext() >= 1 {
                     let mut dist2min = f64::MAX; // OCCT: RealLast()
                     let mut index = 0usize;

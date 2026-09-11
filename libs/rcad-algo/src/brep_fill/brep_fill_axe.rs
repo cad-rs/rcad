@@ -37,8 +37,9 @@ use super::offset_wire_b::{brep_tool_surface, edge_vertices, explored_children};
 // single 1:1 body lives in crate::topalgo::brep_lib_find_surface.
 use crate::topalgo::brep_lib_find_surface::BRepLibFindSurface;
 
-/// OCCT Precision::Infinite().
-const INFINITE: f64 = f64::INFINITY;
+/// OCCT Precision::Infinite() (Precision.hxx L350-353) = 2e100.
+/// Used by BRepFill::Axe (BRepFill.cxx L726 DistMin, L844 Dist).
+const INFINITE: f64 = rcad_kernel::core::precision::INFINITE_VALUE;
 
 // ---------------------------------------------------------------------------
 // GAP carriers (plan §0.6)

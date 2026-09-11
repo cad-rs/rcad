@@ -13,12 +13,13 @@
 
 use crate::feat::loc_ope_split_drafts::{
     brep_tool_curve_on_surface, brep_tool_pnt, brep_tool_range, brep_tool_surface,
-    brep_tool_tolerance, builder_add_face_wire, ext_trimmed_square_distances,
-    geom_rectangular_trimmed_basis_surface, gp_pln_axis, gp_pln_direct, gp_pln_rotated,
-    shape_key, top_abs_reverse, with_orientation,
+    brep_tool_tolerance, builder_add_face_wire, geom_rectangular_trimmed_basis_surface,
+    gp_pln_axis, gp_pln_direct, gp_pln_rotated, shape_key, top_abs_reverse, with_orientation,
 };
 use glam::{DVec2, DVec3};
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{
     Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Line3, Plane, Surface3, SurfaceEval,
 };
@@ -343,15 +344,19 @@ pub(crate) fn new_edge(
     while i <= nb_lines {
         let crv = i2s.line(i).expect("GeomInt_IntSS::Line");
         // OCCT L1762-1763: TheCurve.Load(i2s.Line(i)); Extrema_ExtPC
-        // myExtPC(pvf, TheCurve).
+        // myExtPC(pvf, TheCurve) — the two-arg ctor over the full domain,
+        // the default theTolF is 1.0e-10.
         let dom = crv.default_domain();
-        let mut my_ext_pc = ExtPC::new(pvf, &crv, CONFUSION, dom[0], dom[1]);
+        let a_adaptor = GeomCurveAdaptor::new(crv.clone());
+        let a_tool = CurveToolHandle::for_curve3(&crv, &a_adaptor, &a_adaptor);
+        let mut my_ext_pc = ExtremaExtPC::new_point_curve(pvf, &a_tool, 1.0e-10);
 
         if my_ext_pc.is_done() {
             // OCCT L1767-1769.
             let mut thepmin = dom[0]; // TheCurve.FirstParameter()
-            let (d2first, d2last, _p1b, _p2b) =
-                ext_trimmed_square_distances(pvf, &crv);
+            // OCCT L1768: myExtPC.TrimmedSquareDistances(Dist2Min, Dist2,
+            // p1b, p2b).
+            let (d2first, d2last, _p1b, _p2b) = my_ext_pc.trimmed_square_distances();
             let mut dist2_min = d2first;
             let mut dist2 = d2last;
             // OCCT L1770-1774.
@@ -372,22 +377,24 @@ pub(crate) fn new_edge(
             if dist2_min <= SQUARE_CONFUSION {
                 prmf = thepmin;
                 // OCCT L1788: myExtPC.Perform(pvl).
-                let dom2 = crv.default_domain();
-                my_ext_pc.perform(pvl, &crv, dom2[0], dom2[1]);
+                my_ext_pc.perform(pvl);
                 if my_ext_pc.is_done() {
                     // OCCT L1791-1796.
-                    let mut thepmin = dom2[1];
-                    let (d2last2, d2first2, _p1b2, _p2b2) =
-                        ext_trimmed_square_distances(pvl, &crv);
-                    let mut dist2_min2 = d2last2;
-                    let mut dist22 = d2first2;
-                    // OCCT: TrimmedSquareDistances(Dist2, Dist2Min, ...) —
-                    // the FIRST output is Dist2 and the SECOND is Dist2Min;
-                    // the test `Dist2 < Dist2Min` compares the LAST-point
-                    // distance against the FIRST-point distance.
+                    let mut thepmin = dom[1];
+                    // OCCT L1789: myExtPC.TrimmedSquareDistances(Dist2,
+                    // Dist2Min, p1b, p2b) — the first output lands in the
+                    // Dist2 variable (the FIRST endpoint square distance),
+                    // the second in Dist2Min (the LAST endpoint).
+                    let (d2_out, d2min_out, _p1b2, _p2b2) =
+                        my_ext_pc.trimmed_square_distances();
+                    let mut dist2_min2 = d2min_out;
+                    let mut dist22 = d2_out;
+                    // OCCT: `if (Dist2 < Dist2Min && !TheCurve.IsClosed())`
+                    // compares the FIRST endpoint square distance against the
+                    // LAST one.
                     if dist22 < dist2_min2 && !crv.is_closed() {
                         dist2_min2 = dist22;
-                        thepmin = dom2[0];
+                        thepmin = dom[0];
                     }
                     // OCCT L1798-1806.
                     for k in 1..=my_ext_pc.nb_ext() {

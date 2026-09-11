@@ -9,10 +9,11 @@
 //! - OCCT Perform overloads map to `perform_confusion` (Perform(Tol)),
 //!   `perform_with_path` (Perform(Path, Tol)) and `perform_at`
 //!   (Perform(ParamOnPath, Tol)).
-//! - `Extrema_ExtPC myExt` maps to the kernel [`ExtPC`] (the OCCT
-//!   Initialize+Perform pair becomes one construction at each Perform site;
-//!   TrimmedSquareDistances is recomputed from the query point — the same
-//!   two endpoint distances).
+//! - `Extrema_ExtPC myExt` maps to the kernel real body
+//!   [`ExtremaExtPC`]: the OCCT Initialize (cxx L375-379) + Perform pair is
+//!   replayed at each Perform site over the same range (the OCCT member
+//!   aliases the section adaptor, which the rcad local section owner
+//!   forbids).  TrimmedSquareDistances is read through the real-body API.
 //! - GAP carriers: `ExtCCGap` (OCCT Extrema_ExtCC over two bounded curves —
 //!   the general curve-curve extremum is not translated) and the shared
 //!   [`IntCurveSurfaceHInter`] plane-curve intersection carrier (staged
@@ -26,9 +27,11 @@ use std::rc::Rc;
 use glam::{DAffine3, DVec3};
 
 use rcad_kernel::base::bnd_lib::curve_bounding_box_range;
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::{CurveToolHandle, ExtremaCurveTool};
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
 use rcad_kernel::base::geom_lib::axe_of_inertia;
 use rcad_kernel::base::geom_lprop::CLProps;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::core::precision::{CONFUSION, PCONFUSION, SQUARE_CONFUSION};
 use rcad_kernel::geom::{transform_curve, Curve3, CurveEval, Surface3};
 use rcad_kernel::math::gp::{Ax1, Ax2, Ax3};
@@ -167,21 +170,19 @@ fn gp_vec_angle(v1: DVec3, v2: DVec3) -> f64 {
 }
 
 /// OCCT static DistMini (L115-152) — examine an extrema to update <Dist> &
-/// <Param>.  Architecture: the OCCT TrimmedSquareDistances values are
-/// recomputed from the query point (the same two endpoint square distances).
-fn dist_mini(ext: &ExtPC, c: &Curve3, query: DVec3, dist: &mut f64, param: &mut f64) {
-    let mut dist2_var = f64::MAX;
+/// <Param>.
+fn dist_mini(ext: &ExtremaExtPC, c: &dyn ExtremaCurveTool, dist: &mut f64, param: &mut f64) {
+    let mut dist2_var = f64::MAX; // RealLast()
 
-    // OCCT: Ext.TrimmedSquareDistances(dist1, dist2, P1, P2).
-    let dist1 = query.distance_squared(c.point_at(curve_first_parameter(c)));
-    let dist2 = query.distance_squared(c.point_at(curve_last_parameter(c)));
+    // OCCT L125: Ext.TrimmedSquareDistances(dist1, dist2, P1, P2).
+    let (dist1, dist2, _p1, _p2) = ext.trimmed_square_distances();
     if (dist1 < dist2_var) || (dist2 < dist2_var) {
         if dist1 < dist2 {
             dist2_var = dist1;
-            *param = curve_first_parameter(c);
+            *param = c.first_parameter();
         } else {
             dist2_var = dist2;
-            *param = curve_last_parameter(c);
+            *param = c.last_parameter();
         }
     }
 
@@ -194,6 +195,26 @@ fn dist_mini(ext: &ExtPC, c: &Curve3, query: DVec3, dist: &mut f64, param: &mut 
         }
     }
     *dist = dist2_var.sqrt();
+}
+
+/// OCCT myExt.Initialize(myAdpSection, myAdpSection.FirstParameter(),
+/// myAdpSection.LastParameter(), Precision::Confusion()) (cxx L375-379)
+/// followed by myExt.Perform(P) (cxx L426 and the other Perform sites).
+///
+/// Architecture: the OCCT myExt member (hxx L95) aliases the section adaptor
+/// for the SectionPlacement lifetime; the rcad section is a local `Curve3`,
+/// so the Initialize+Perform pair is replayed at each Perform site over a
+/// caller-built curve-tool view.
+fn ext_initialize_perform<'a>(the_tool: &'a CurveToolHandle, the_p: DVec3) -> ExtremaExtPC<'a> {
+    let mut an_ext = ExtremaExtPC::new();
+    an_ext.initialize(
+        the_tool,
+        the_tool.first_parameter(),
+        the_tool.last_parameter(),
+        CONFUSION,
+    );
+    an_ext.perform(the_p);
+    an_ext
 }
 
 /// OCCT Geom_BSplineCurve::LocateU(U, Tolerance, I1, I2) over the rcad knot
@@ -306,8 +327,6 @@ pub struct SectionPlacement {
     dist: f64,
     /// OCCT double AngleMax.
     angle_max: f64,
-    /// OCCT Extrema_ExtPC myExt (the last Perform result).
-    my_ext: Option<ExtPC>,
     /// OCCT bool myIsPoint.
     my_is_point: bool,
     /// OCCT gp_Pnt myPoint.
@@ -331,7 +350,6 @@ impl SectionPlacement {
             path_param: 0.0,
             dist: f64::MAX, // RealLast()
             angle_max: 0.0,
-            my_ext: None,
             my_is_point: false,
             my_point: DVec3::ZERO,
         };
@@ -525,9 +543,10 @@ impl SectionPlacement {
             }
         }
 
-        // OCCT: myExt.Initialize(myAdpSection, First, Last, Confusion) — the
-        // rcad ExtPC is constructed at each Perform site (the same range).
-        place.my_ext = None;
+        // OCCT L375-379: myExt.Initialize(myAdpSection,
+        // myAdpSection.FirstParameter(), myAdpSection.LastParameter(),
+        // Precision::Confusion()) — replayed at each Perform site by
+        // [`ext_initialize_perform`] over the same range.
 
         place
     }
@@ -547,7 +566,6 @@ impl SectionPlacement {
             path_param: 0.0,
             dist: f64::MAX, // RealLast()
             angle_max: 0.0,
-            my_ext: None,
             my_is_point: true,
             my_point: point,
         };
@@ -559,18 +577,6 @@ impl SectionPlacement {
     /// OCCT SetLocation (L384-387).
     pub fn set_location(&mut self, l: Rc<RefCell<dyn LocationLaw>>) {
         self.my_law = l;
-    }
-
-    /// OCCT myExt.Perform(PonPath) over the stored section range.
-    fn ext_perform(&mut self, p: DVec3) -> Option<ExtPC> {
-        let section = self.my_adp_section.clone()?;
-        Some(ExtPC::new(
-            p,
-            &section,
-            CONFUSION,
-            curve_first_parameter(&section),
-            curve_last_parameter(&section),
-        ))
     }
 
     /// OCCT Perform(Tol) (L391-396).
@@ -612,19 +618,25 @@ impl SectionPlacement {
             pon_path = p;
             let adp = self.my_adp_section.as_ref().expect("null section").clone();
             let adp = &adp;
+            // OCCT: the GeomAdaptor view of myAdpSection the Extrema_ExtPC
+            // consumes (myExt was Initialized with it at cxx L375-379).
+            let a_section_adaptor = GeomCurveAdaptor::new(adp.clone());
+            let a_section_tool =
+                CurveToolHandle::for_curve3(adp, &a_section_adaptor, &a_section_adaptor);
             pon_sec = adp.point_at(self.sec_param);
             self.dist = pon_path.distance(pon_sec);
             if self.dist > tol {
                 // On Cherche un meilleur point sur la section.
-                if let Some(ext) = self.ext_perform(pon_path) {
-                    if ext.is_done() {
-                        let mut d = self.dist;
-                        let mut sp = self.sec_param;
-                        dist_mini(&ext, adp, pon_path, &mut d, &mut sp);
-                        self.dist = d;
-                        self.sec_param = sp;
-                        pon_sec = adp.point_at(self.sec_param);
-                    }
+                // OCCT L739-742: myExt.Perform(PonPath); if (myExt.IsDone())
+                // DistMini(myExt, myAdpSection, Dist, SecParam).
+                let ext = ext_initialize_perform(&a_section_tool, pon_path);
+                if ext.is_done() {
+                    let mut d = self.dist;
+                    let mut sp = self.sec_param;
+                    dist_mini(&ext, &a_section_tool, &mut d, &mut sp);
+                    self.dist = d;
+                    self.sec_param = sp;
+                    pon_sec = adp.point_at(self.sec_param);
                 }
             }
             self.angle_max = eval_angle(v_ref, dp1);
@@ -647,17 +659,14 @@ impl SectionPlacement {
         let mut dist_center = INFINITE;
 
         if self.my_is_point {
-            let section = path.clone();
-            let projector = ExtPC::new(
-                self.my_point,
-                &section,
-                CONFUSION,
-                curve_first_parameter(&section),
-                curve_last_parameter(&section),
-            );
+            // OCCT L412: Extrema_ExtPC Projector(myPoint, *Path,
+            // Precision::Confusion()) — the full-range construction over Path.
+            let a_path_adaptor = GeomCurveAdaptor::new(path.clone());
+            let a_path_tool = CurveToolHandle::for_curve3(&path, &a_path_adaptor, &a_path_adaptor);
+            let projector = ExtremaExtPC::new_point_curve(self.my_point, &a_path_tool, CONFUSION);
             let mut d = self.dist;
             let mut pp = self.path_param;
-            dist_mini(&projector, &path, self.my_point, &mut d, &mut pp);
+            dist_mini(&projector, &a_path_tool, &mut d, &mut pp);
             self.dist = d;
             self.path_param = pp;
             self.angle_max = PI / 2.0;
@@ -676,19 +685,25 @@ impl SectionPlacement {
             tangente(&path, self.path_param, &mut pon_path, &mut dp1);
             let adp = self.my_adp_section.as_ref().expect("null section").clone();
             let adp = &adp;
+            // OCCT: the GeomAdaptor view of myAdpSection the Extrema_ExtPC
+            // consumes (myExt was Initialized with it at cxx L375-379).
+            let a_section_adaptor = GeomCurveAdaptor::new(adp.clone());
+            let a_section_tool =
+                CurveToolHandle::for_curve3(adp, &a_section_adaptor, &a_section_adaptor);
             pon_sec = adp.point_at(self.sec_param);
             self.dist = pon_path.distance(pon_sec);
             if self.dist > tol {
                 // On Cherche un meilleur point sur la section.
-                if let Some(ext) = self.ext_perform(pon_path) {
-                    if ext.is_done() {
-                        let mut d = self.dist;
-                        let mut sp = self.sec_param;
-                        dist_mini(&ext, adp, pon_path, &mut d, &mut sp);
-                        self.dist = d;
-                        self.sec_param = sp;
-                        pon_sec = adp.point_at(self.sec_param);
-                    }
+                // OCCT L426-429: myExt.Perform(PonPath); if (myExt.IsDone())
+                // DistMini(myExt, myAdpSection, Dist, SecParam).
+                let ext = ext_initialize_perform(&a_section_tool, pon_path);
+                if ext.is_done() {
+                    let mut d = self.dist;
+                    let mut sp = self.sec_param;
+                    dist_mini(&ext, &a_section_tool, &mut d, &mut sp);
+                    self.dist = d;
+                    self.sec_param = sp;
+                    pon_sec = adp.point_at(self.sec_param);
                 }
             }
             self.angle_max = eval_angle(v_ref, dp1);
@@ -769,15 +784,16 @@ impl SectionPlacement {
                         self.dist = pon_path.distance(pon_sec);
                         if self.dist > tol {
                             // On Cherche un meilleur point sur la section.
-                            if let Some(ext) = self.ext_perform(pon_path) {
-                                if ext.is_done() {
-                                    let mut d = self.dist;
-                                    let mut sp = self.sec_param;
-                                    dist_mini(&ext, adp, pon_path, &mut d, &mut sp);
-                                    self.dist = d;
-                                    self.sec_param = sp;
-                                    pon_sec = adp.point_at(self.sec_param);
-                                }
+                            // OCCT L514-517: myExt.Perform(PonPath);
+                            // if (myExt.IsDone()) DistMini(...).
+                            let ext = ext_initialize_perform(&a_section_tool, pon_path);
+                            if ext.is_done() {
+                                let mut d = self.dist;
+                                let mut sp = self.sec_param;
+                                dist_mini(&ext, &a_section_tool, &mut d, &mut sp);
+                                self.dist = d;
+                                self.sec_param = sp;
+                                pon_sec = adp.point_at(self.sec_param);
                             }
                         }
                         self.angle_max = eval_angle(v_ref, dp1);
@@ -789,17 +805,18 @@ impl SectionPlacement {
             // Cas General.
             if !self.isplan {
                 // (2.1) Distance avec les extremites ...
-                if let Some(ext) = self.ext_perform(pon_path) {
-                    if ext.is_done() {
-                        let mut d = self.dist;
-                        let mut sp = self.sec_param;
-                        dist_mini(&ext, adp, pon_path, &mut d, &mut sp);
-                        distaux = d;
-                        taux = sp;
-                        if distaux < self.dist {
-                            self.dist = distaux;
-                            self.sec_param = taux;
-                        }
+                // OCCT L607-610: myExt.Perform(PonPath); if (myExt.IsDone())
+                // DistMini(myExt, myAdpSection, distaux, taux).
+                let ext = ext_initialize_perform(&a_section_tool, pon_path);
+                if ext.is_done() {
+                    let mut d = self.dist;
+                    let mut sp = self.sec_param;
+                    dist_mini(&ext, &a_section_tool, &mut d, &mut sp);
+                    distaux = d;
+                    taux = sp;
+                    if distaux < self.dist {
+                        self.dist = distaux;
+                        self.sec_param = taux;
                     }
                 }
                 trouve = self.dist <= tol;
@@ -807,21 +824,21 @@ impl SectionPlacement {
                     let mut plast = DVec3::ZERO;
                     tangente(&path, curve_last_parameter(&path), &mut plast, &mut dp1);
                     let alpha = eval_angle(v_ref, dp1);
-                    if let Some(ext) = self.ext_perform(plast) {
+                    // OCCT L639-643: myExt.Perform(P); if (myExt.IsDone())
+                    // DistMini(myExt, myAdpSection, distaux, taux).
+                    let ext = ext_initialize_perform(&a_section_tool, plast);
+                    if ext.is_done() {
                         if ext.is_done() {
-                            if ext.is_done() {
-                                let mut d = self.dist;
-                                let mut sp = self.sec_param;
-                                dist_mini(&ext, adp, plast, &mut d, &mut sp);
-                                distaux = d;
-                                taux = sp;
-                                if self.choix(distaux, alpha) {
-                                    self.dist = distaux;
-                                    self.sec_param = taux;
-                                    self.angle_max = alpha;
-                                    pon_path = plast;
-                                    self.path_param = curve_last_parameter(&path);
-                                }
+                            let mut d = self.dist;
+                            let mut sp = self.sec_param;
+                            dist_mini(&ext, &a_section_tool, &mut d, &mut sp);
+                            distaux = d;
+                            taux = sp;
+                            if self.choix(distaux, alpha) {                                self.dist = distaux;
+                                self.sec_param = taux;
+                                self.angle_max = alpha;
+                                pon_path = plast;
+                                self.path_param = curve_last_parameter(&path);
                             }
                         }
                     }
@@ -861,25 +878,28 @@ impl SectionPlacement {
                     if !trouve {
                         // Si l'on a toujours rien, on essai une distance
                         // point/path c'est la derniere chance.
-                        // OCCT: PExt.Initialize(*Path, First, Last, Confusion)
-                        // + Perform(PonSec).
-                        if let Some(pext) = self.ext_perform(pon_sec) {
-                            if pext.is_done() {
-                                // modified for OCC13595: DistMini(PExt, *Path, ...).
-                                let mut d = self.dist;
-                                let mut sp = self.sec_param;
-                                dist_mini(&pext, &path, pon_sec, &mut d, &mut sp);
-                                distaux = d;
-                                taux = sp;
-                                let mut pp = DVec3::ZERO;
-                                tangente(&path, taux, &mut pp, &mut dp1);
-                                let alpha = eval_angle(v_ref, dp1);
-                                if self.choix(distaux, alpha) {
-                                    self.dist = distaux;
-                                    pon_path = pp;
-                                    self.angle_max = alpha;
-                                    self.path_param = taux;
-                                }
+                        // OCCT L667-673: Extrema_ExtPC PExt;
+                        // PExt.Initialize(*Path, First, Last, Confusion);
+                        // PExt.Perform(PonSec).
+                        let a_path_adaptor = GeomCurveAdaptor::new(path.clone());
+                        let a_path_tool =
+                            CurveToolHandle::for_curve3(&path, &a_path_adaptor, &a_path_adaptor);
+                        let pext = ext_initialize_perform(&a_path_tool, pon_sec);
+                        if pext.is_done() {
+                            // modified for OCC13595: DistMini(PExt, *Path, ...).
+                            let mut d = self.dist;
+                            let mut sp = self.sec_param;
+                            dist_mini(&pext, &a_path_tool, &mut d, &mut sp);
+                            distaux = d;
+                            taux = sp;
+                            let mut pp = DVec3::ZERO;
+                            tangente(&path, taux, &mut pp, &mut dp1);
+                            let alpha = eval_angle(v_ref, dp1);
+                            if self.choix(distaux, alpha) {
+                                self.dist = distaux;
+                                pon_path = pp;
+                                self.angle_max = alpha;
+                                self.path_param = taux;
                             }
                         }
                     }

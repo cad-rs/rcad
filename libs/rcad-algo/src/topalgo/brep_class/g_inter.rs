@@ -222,7 +222,11 @@ impl GInter {
         }
 
         let (t_min, t_max) = (curve_domain.first_parameter(), curve_domain.last_parameter());
-        if !t_min.is_finite() || !t_max.is_finite() {
+        // Unbounded-domain test via Precision::IsInfinite (Precision.hxx
+        // L350-353).
+        if rcad_kernel::precision::is_infinite_value(t_min)
+            || rcad_kernel::precision::is_infinite_value(t_max)
+        {
             self.done = true;
             return;
         }

@@ -171,11 +171,16 @@ pub(super) fn is_equal_real(v1: f64, v2: f64) -> bool {
 }
 
 /// The 2d parameter bounds stored with a pcurve (the OCCT GCurve
-/// First/Last of the representation).
+/// First/Last of the representation). The unbounded-curve fallback mirrors
+/// the OCCT Geom2d_Line parameters (Geom2d_Line.cxx L142-151:
+/// -/+ Precision::Infinite()).
 pub(super) fn curve2d_param_bounds(pc: &Curve2d) -> (f64, f64) {
     match pc {
         Curve2d::Trimmed(t) => (t.t_min, t.t_max),
-        _ => (f64::NEG_INFINITY, f64::INFINITY),
+        _ => (
+            -rcad_kernel::core::precision::INFINITE_VALUE,
+            rcad_kernel::core::precision::INFINITE_VALUE,
+        ),
     }
 }
 

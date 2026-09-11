@@ -1454,16 +1454,24 @@ fn geom2d_convert_curve_to_bspline(_c: &Curve2d) -> Option<rcad_kernel::geom::BS
     None
 }
 
-/// OCCT `GeomAPI_ProjectPointOnCurve` re-host (the landed `Extrema_ExtPC`):
-/// projects the point onto the curve restricted to the domain and returns
-/// the closest parameter (the OCCT Init/NbPoints/Parameter walk collapses to
-/// the same minimal-distance parameter).
+/// OCCT `GeomAPI_ProjectPointOnCurve` re-host (the real kernel
+/// `Extrema_ExtPC`): projects the point onto the curve restricted to the
+/// domain and returns the closest parameter (the OCCT Init/NbPoints/Parameter
+/// walk collapses to the same minimal-distance parameter).
 fn project_point_on_curve(c: &Curve3, p: DVec3, uinf: f64, usup: f64, default_u: f64) -> f64 {
-    let ex = rcad_kernel::base::extrema::ExtPC::new(p, c, 0.0, uinf, usup);
+    // OCCT GeomAPI_ProjectPointOnCurve.cxx L123-160: myC.Load(Curve, Umin,
+    // Usup); myExtPC.Initialize(myC, Umin, Usup); myExtPC.Perform(P) — the
+    // default theTolF is 1.0e-10.
+    use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+    use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+    use rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor;
+    let a_adaptor = GeomCurveAdaptor::with_range(c.clone(), uinf, usup);
+    let a_tool = CurveToolHandle::for_curve3(c, &a_adaptor, &a_adaptor);
+    let ex = ExtremaExtPC::new_point_curve_ranged(p, &a_tool, uinf, usup, 1.0e-10);
     if ex.nb_ext() > 0 {
-        let mut best = 0usize;
-        let mut bestd = f64::INFINITY;
-        for i in 0..ex.nb_ext() {
+        let mut best = 1usize;
+        let mut bestd = ex.square_distance(1);
+        for i in 2..=ex.nb_ext() {
             let d = ex.square_distance(i);
             if d < bestd {
                 bestd = d;

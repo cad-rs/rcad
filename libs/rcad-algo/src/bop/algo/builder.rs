@@ -494,12 +494,18 @@ fn get_normal_to_face_on_edge(edge: &Shape, face: &Shape, a_t: f64, ds: &DS) -> 
     // evaluate the surface normal at the domain center.  For planar faces this
     // equals the OCCT GetNormalToFaceOnEdge result (the normal is constant).
     let dom = surf.default_domain();
-    let u = if dom[0].is_finite() && dom[1].is_finite() {
+    // Bounded-domain test via Precision::IsInfinite (Precision.hxx L350-353):
+    // the unbounded sides carry 2e100, which is IEEE-finite.
+    let u = if !rcad_kernel::precision::is_infinite_value(dom[0])
+        && !rcad_kernel::precision::is_infinite_value(dom[1])
+    {
         0.5 * (dom[0] + dom[1])
     } else {
         0.0
     };
-    let v = if dom[2].is_finite() && dom[3].is_finite() {
+    let v = if !rcad_kernel::precision::is_infinite_value(dom[2])
+        && !rcad_kernel::precision::is_infinite_value(dom[3])
+    {
         0.5 * (dom[2] + dom[3])
     } else {
         0.0
@@ -751,10 +757,15 @@ fn get_approx_normal_to_face_on_edge(
         // planes, cylinders 鈥?keep the domain center inside).
         None => {
             let dom = surf.default_domain();
-            let u_in =
-                dom[0].is_finite() && dom[1].is_finite() && a_px2d.x >= dom[0] && a_px2d.x <= dom[1];
-            let v_in =
-                dom[2].is_finite() && dom[3].is_finite() && a_px2d.y >= dom[2] && a_px2d.y <= dom[3];
+            // Bounded-domain test via Precision::IsInfinite (Precision.hxx L350-353).
+            let u_in = !rcad_kernel::precision::is_infinite_value(dom[0])
+                && !rcad_kernel::precision::is_infinite_value(dom[1])
+                && a_px2d.x >= dom[0]
+                && a_px2d.x <= dom[1];
+            let v_in = !rcad_kernel::precision::is_infinite_value(dom[2])
+                && !rcad_kernel::precision::is_infinite_value(dom[3])
+                && a_px2d.y >= dom[2]
+                && a_px2d.y <= dom[3];
             u_in && v_in
         }
     };
@@ -776,12 +787,18 @@ fn get_approx_normal_to_face_on_edge(
             None => {
                 // Synthetic face: surface-domain center (convex faces keep it inside).
                 let dom = surf.default_domain();
-                let u = if dom[0].is_finite() && dom[1].is_finite() {
+                // Bounded-domain test via Precision::IsInfinite
+                // (Precision.hxx L350-353).
+                let u = if !rcad_kernel::precision::is_infinite_value(dom[0])
+                    && !rcad_kernel::precision::is_infinite_value(dom[1])
+                {
                     0.5 * (dom[0] + dom[1])
                 } else {
                     0.0
                 };
-                let v = if dom[2].is_finite() && dom[3].is_finite() {
+                let v = if !rcad_kernel::precision::is_infinite_value(dom[2])
+                    && !rcad_kernel::precision::is_infinite_value(dom[3])
+                {
                     0.5 * (dom[2] + dom[3])
                 } else {
                     0.0
@@ -2753,12 +2770,15 @@ impl<'a> Builder<'a> {
             // OCCT L2716-2733: GeomAbs_SurfaceOfExtrusion falls through to
             // GeomAbs_Cylinder when its u range is finite.
             Surface3::LinearExtrusion(_) | Surface3::Cylinder(_) => {
+                // OCCT GeomLib.cxx L2717: Precision::IsInfinite(u1) || Precision::IsInfinite(u2).
                 if matches!(basis, Surface3::LinearExtrusion(_))
-                    && (u1.is_infinite() || u2.is_infinite())
+                    && (rcad_kernel::precision::is_infinite_value(u1)
+                        || rcad_kernel::precision::is_infinite_value(u2))
                 {
                     return (false, false);
                 }
-                if v1.is_infinite() {
+                // OCCT GeomLib.cxx L2725: Precision::IsInfinite(v1).
+                if rcad_kernel::precision::is_infinite_value(v1) {
                     v1 = 0.0;
                 }
                 let p1 = basis.point_at(u1, v1);
@@ -2768,7 +2788,10 @@ impl<'a> Builder<'a> {
             // OCCT L2734-2755: GeomAbs_Cone.
             Surface3::Cone(c) => {
                 // find v with maximal distance from axis
-                if !(v1.is_infinite() || v2.is_infinite()) {
+                // OCCT GeomLib.cxx L2736: !(Precision::IsInfinite(v1) || Precision::IsInfinite(v2)).
+                if !(rcad_kernel::precision::is_infinite_value(v1)
+                    || rcad_kernel::precision::is_infinite_value(v2))
+                {
                     let an_apex = c.apex_point();
                     let p1 = basis.point_at(u1, v1);
                     let p2 = basis.point_at(u1, v2);
@@ -2816,18 +2839,20 @@ impl<'a> Builder<'a> {
             // GeomAbs_OffsetSurface / GeomAbs_OtherSurface 鈥?23-point sampling.
             _ => {
                 let mut nbp = 23;
-                if v1.is_infinite() {
+                // OCCT GeomLib.cxx L2798/L2802: Precision::IsInfinite(v1/v2) clamps.
+                if rcad_kernel::precision::is_infinite_value(v1) {
                     v1 = v1.signum();
                 }
-                if v2.is_infinite() {
+                if rcad_kernel::precision::is_infinite_value(v2) {
                     v2 = v2.signum();
                 }
                 // SurfaceOfRevolution keeps its u range; Offset/Other clamp it.
+                // OCCT GeomLib.cxx L2809/L2813: Precision::IsInfinite(u1/u2) clamps.
                 if !matches!(basis, Surface3::Revolution(_)) {
-                    if u1.is_infinite() {
+                    if rcad_kernel::precision::is_infinite_value(u1) {
                         u1 = u1.signum();
                     }
-                    if u2.is_infinite() {
+                    if rcad_kernel::precision::is_infinite_value(u2) {
                         u2 = u2.signum();
                     }
                 }

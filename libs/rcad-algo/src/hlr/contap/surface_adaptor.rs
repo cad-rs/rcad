@@ -165,21 +165,23 @@ impl GeomSurfaceAdapter {
     }
 }
 
-/// OCCT RealFirst() = -DBL_MAX (Standard_Real.hxx); ±infinite kernel bounds
-/// are reported in that style so the exact `== RealFirst()` comparisons of
-/// OCCT (Contap_HContTool.cxx L136-162) work unchanged.
+/// OCCT RealFirst() = -DBL_MAX (Standard_Real.hxx L167-170); infinite kernel
+/// bounds (Precision::Infinite(), 2e100) are detected with the OCCT
+/// IsNegativeInfinite predicate (Precision.hxx L364-367) and reported in
+/// RealFirst style so the exact `== RealFirst()` comparisons of OCCT
+/// (Contap_HContTool.cxx L136-162) work unchanged.
 fn occt_real_first(r: f64) -> f64 {
-    if r == f64::NEG_INFINITY {
-        f64::MIN
+    if rcad_kernel::precision::is_negative_infinite_value(r) {
+        rcad_kernel::precision::REAL_FIRST
     } else {
         r
     }
 }
 
-/// OCCT RealLast() = DBL_MAX.
+/// OCCT RealLast() = DBL_MAX (Standard_Real.hxx L179-182); see occt_real_first.
 fn occt_real_last(r: f64) -> f64 {
-    if r == f64::INFINITY {
-        f64::MAX
+    if rcad_kernel::precision::is_positive_infinite_value(r) {
+        rcad_kernel::precision::REAL_LAST
     } else {
         r
     }

@@ -5,15 +5,54 @@
 
 use glam::{DVec2, DVec3};
 
+use rcad_kernel::base::convert::ConvertParameterisation;
 use rcad_kernel::core::precision::p_confusion;
 use rcad_kernel::geom::{Circle3, CurveEval as _, SurfaceEval as _};
 use rcad_kernel::math::math_gauss::MathGauss;
+use rcad_kernel::math::math_svd::MathSvd;
 use rcad_kernel::math::{MatD, VecD};
+
+use crate::geomalgo::geomfill::geom_fill::{get_circle, get_circle_d1, get_circle_d2};
 
 use super::brep_blend_func::{blend_func_compute_dnormal, blend_func_compute_normal};
 use super::brep_blend_func_consrad::EPS;
-use super::brep_blend_func_consrad::{geomfill_get_circle_pending, BlendFuncConstRad};
+use super::brep_blend_func_consrad::BlendFuncConstRad;
 use super::brep_blend_point::BlendPoint;
+
+/// Architecture mapping: OCCT consumes GeomFill's
+/// `Convert_ParameterisationType` through both BlendFunc and GeomFill; the
+/// rcad kernel exposes the same enumeration as
+/// [`ConvertParameterisation`].  This is the identity mapping between the
+/// two rcad spellings of the OCCT enum (pattern of
+/// brep_blend_func_evolrad_b::tconv).
+fn tconv(t_conv: super::brep_blend_func::ConvertParameterisationType) -> ConvertParameterisation {
+    match t_conv {
+        super::brep_blend_func::ConvertParameterisationType::TgtThetaOver2 => {
+            ConvertParameterisation::TgtThetaOver2
+        }
+        super::brep_blend_func::ConvertParameterisationType::TgtThetaOver2_1 => {
+            ConvertParameterisation::TgtThetaOver2_1
+        }
+        super::brep_blend_func::ConvertParameterisationType::TgtThetaOver2_2 => {
+            ConvertParameterisation::TgtThetaOver2_2
+        }
+        super::brep_blend_func::ConvertParameterisationType::TgtThetaOver2_3 => {
+            ConvertParameterisation::TgtThetaOver2_3
+        }
+        super::brep_blend_func::ConvertParameterisationType::TgtThetaOver2_4 => {
+            ConvertParameterisation::TgtThetaOver2_4
+        }
+        super::brep_blend_func::ConvertParameterisationType::QuasiAngular => {
+            ConvertParameterisation::QuasiAngular
+        }
+        super::brep_blend_func::ConvertParameterisationType::RationalC1 => {
+            ConvertParameterisation::RationalC1
+        }
+        super::brep_blend_func::ConvertParameterisationType::Polynomial => {
+            ConvertParameterisation::Polynomial
+        }
+    }
+}
 
 impl<'a> BlendFuncConstRad<'a> {
     /// OCCT ComputeValues(X, Order, ByParam, Param)
@@ -911,15 +950,24 @@ impl<'a> BlendFuncConstRad<'a> {
 
         // OCCT L1350: GeomFill::GetCircle(myTConv, ns1, ns2, np, pts1, pts2,
         // std::abs(ray1), Center, Poles, Weights).
-        let _ = (ns1, ns2, np, center);
-        geomfill_get_circle_pending();
+        get_circle(
+            tconv(self.my_t_conv),
+            ns1,
+            ns2,
+            np,
+            self.pts1,
+            self.pts2,
+            self.ray1.abs(),
+            center,
+            poles,
+            weigths,
+        );
     }
 
     /// OCCT Section(P, Poles, DPoles, Poles2d, DPoles2d, Weights, DWeights)
     /// (BlendFunc_ConstRad.cxx L1355-1524) — used for the first and last
     /// section.
     #[allow(clippy::too_many_arguments)]
-    #[allow(unreachable_code)] // the math_SVD / GetCircle fallbacks are pending
     pub fn section_d1(
         &mut self,
         p: &BlendPoint,
@@ -996,7 +1044,26 @@ impl<'a> BlendFuncConstRad<'a> {
         if istgt {
             // OCCT L1400-1408: math_SVD SingRS(DEDX); if (SingRS.IsDone()) {
             // SingRS.Solve(-DEDT, secmember, 1.e-6); istgt = false; }.
-            // GAP (plan 0.6): math_SVD pending in rcad-kernel — see IsSolution.
+            let mut a = MatD::new(4, 4);
+            for r in 1..=4 {
+                for c in 1..=4 {
+                    a.set(r, c, self.dedx[r - 1][c - 1]);
+                }
+            }
+            let mut sing_rs = MathSvd::new(&a);
+            if sing_rs.is_done() {
+                // OCCT: B = -DEDT, X = secmember (distinct vectors).
+                let mut b = VecD::new(4);
+                let mut x = VecD::new(4);
+                for i in 1..=4 {
+                    b.set(i, -self.dedt[i - 1]);
+                }
+                sing_rs.solve(&b, &mut x, 1.0e-6);
+                for i in 1..=4 {
+                    secmember[i - 1] = x.get(i);
+                }
+                istgt = false;
+            }
         }
 
         if !istgt {
@@ -1085,13 +1152,43 @@ impl<'a> BlendFuncConstRad<'a> {
             // OCCT L1499-1517: GeomFill::GetCircle(myTConv, ns1, ns2, dnorm1w,
             // dnorm2w, np, dnp, pts1, pts2, tg1, tg2, std::abs(ray1), 0,
             // Center, tgc, Poles, DPoles, Weights, DWeights).
-            let _ = (ns1, ns2, dnorm1w, dnorm2w, np, dnp, center, tgc);
-            geomfill_get_circle_pending()
+            get_circle_d1(
+                tconv(self.my_t_conv),
+                ns1,
+                ns2,
+                dnorm1w,
+                dnorm2w,
+                np,
+                dnp,
+                self.pts1,
+                self.pts2,
+                self.tg1,
+                self.tg2,
+                self.ray1.abs(),
+                0.0,
+                center,
+                tgc,
+                poles,
+                d_poles,
+                weigths,
+                d_weigths,
+            )
         } else {
             // OCCT L1521: GeomFill::GetCircle(myTConv, ns1, ns2, np, pts1,
             // pts2, std::abs(ray1), Center, Poles, Weights).
-            let _ = (ns1, ns2, np, center);
-            geomfill_get_circle_pending()
+            get_circle(
+                tconv(self.my_t_conv),
+                ns1,
+                ns2,
+                np,
+                self.pts1,
+                self.pts2,
+                self.ray1.abs(),
+                center,
+                poles,
+                weigths,
+            );
+            false
         }
     }
 
@@ -1099,13 +1196,12 @@ impl<'a> BlendFuncConstRad<'a> {
     /// Weights, DWeights, D2Weights) (BlendFunc_ConstRad.cxx L1528-1903) —
     /// used for the first and last section.
     #[allow(clippy::too_many_arguments)]
-    #[allow(unreachable_code)] // the math_SVD / GetCircle fallbacks are pending
     pub fn section_d2(
         &mut self,
         p: &BlendPoint,
         poles: &mut [DVec3],
         d_poles: &mut [DVec3],
-        _d2_poles: &mut [DVec3],
+        d2_poles: &mut [DVec3],
         poles_2d: &mut [DVec2],
         d_poles_2d: &mut [DVec2],
         d2_poles_2d: &mut [DVec2],
@@ -1211,7 +1307,43 @@ impl<'a> BlendFuncConstRad<'a> {
             // D2EDX2.Multiply(sol, D2DXdSdt);
             // Vbis = -(D2EDT2 + (2 * D2EDXDT + D2DXdSdt) * sol);
             // SingRS.Solve(Vbis, secmember, 1.e-6); istgt = false; }.
-            // GAP (plan 0.6): math_SVD pending in rcad-kernel — see IsSolution.
+            let mut a = MatD::new(4, 4);
+            for r in 1..=4 {
+                for c in 1..=4 {
+                    a.set(r, c, self.dedx[r - 1][c - 1]);
+                }
+            }
+            let mut sing_rs = MathSvd::new(&a);
+            if sing_rs.is_done() {
+                let mut b = VecD::new(4);
+                let mut solv = VecD::new(4);
+                for i in 1..=4 {
+                    b.set(i, -self.dedt[i - 1]);
+                    solv.set(i, sol[i - 1]);
+                }
+                sing_rs.solve(&b, &mut solv, 1.0e-6);
+                for i in 1..=4 {
+                    sol[i - 1] = solv.get(i);
+                }
+                // OCCT: D2EDX2.Multiply(sol, D2DXdSdt).
+                self.d2edx2.multiply(&sol, &mut d2dxdsdt);
+                // OCCT: Vbis = -(D2EDT2 + (2 * D2EDXDT + D2DXdSdt) * sol).
+                let mut vbis = VecD::new(4);
+                for i in 1..=4 {
+                    let mut somme = 0.0;
+                    for j in 1..=4 {
+                        somme += (2.0 * self.d2edxdt[i - 1][j - 1] + d2dxdsdt[i - 1][j - 1])
+                            * sol[j - 1];
+                    }
+                    vbis.set(i, -(self.d2edt2[i - 1] + somme));
+                }
+                let mut sec = VecD::new(4);
+                sing_rs.solve(&vbis, &mut sec, 1.0e-6);
+                for i in 1..=4 {
+                    secmember[i - 1] = sec.get(i);
+                }
+                istgt = false;
+            }
         }
 
         if !istgt {
@@ -1352,13 +1484,52 @@ impl<'a> BlendFuncConstRad<'a> {
             // dnorm2w, d2norm1w, d2norm2w, np, dnp, d2np, pts1, pts2, tg1, tg2,
             // dtg1, dtg2, std::abs(ray1), 0, 0, Center, tgc, dtgc, Poles,
             // DPoles, D2Poles, Weights, DWeights, D2Weights).
-            let _ = (ns1, ns2, dnorm1w, dnorm2w, d2norm1w, d2norm2w, np, dnp, d2np, center, tgc, dtgc);
-            geomfill_get_circle_pending()
+            get_circle_d2(
+                tconv(self.my_t_conv),
+                ns1,
+                ns2,
+                dnorm1w,
+                dnorm2w,
+                d2norm1w,
+                d2norm2w,
+                np,
+                dnp,
+                d2np,
+                self.pts1,
+                self.pts2,
+                self.tg1,
+                self.tg2,
+                dtg1,
+                dtg2,
+                self.ray1.abs(),
+                0.0,
+                0.0,
+                center,
+                tgc,
+                dtgc,
+                poles,
+                d_poles,
+                d2_poles,
+                weigths,
+                d_weigths,
+                d2_weigths,
+            )
         } else {
             // OCCT L1891-1900: GeomFill::GetCircle(myTConv, ns1, ns2, nplan,
             // pts1, pts2, std::abs(ray1), Center, Poles, Weights).
-            let _ = (ns1, ns2, self.nplan, center);
-            geomfill_get_circle_pending()
+            get_circle(
+                tconv(self.my_t_conv),
+                ns1,
+                ns2,
+                self.nplan,
+                self.pts1,
+                self.pts2,
+                self.ray1.abs(),
+                center,
+                poles,
+                weigths,
+            );
+            false
         }
     }
 }

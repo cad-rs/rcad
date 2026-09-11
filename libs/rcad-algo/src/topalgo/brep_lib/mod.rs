@@ -6,3 +6,5 @@
 
 pub mod brep_lib;
 pub mod build_curves3d;
+pub mod make_face;
+pub mod make_wire;

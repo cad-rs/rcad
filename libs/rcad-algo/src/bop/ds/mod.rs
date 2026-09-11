@@ -2928,7 +2928,10 @@ impl DS {
     pub fn face_restricted_surface(&self, fi: usize) -> Option<Surface3> {
         let surf = self.face_surface(fi)?;
         let uv = self.face_uv_boundary(fi);
-        if uv.iter().all(|b| b.is_finite()) {
+        // OCCT Precision::IsInfinite (Precision.hxx L350-353): an unbounded
+        // side carries Precision::Infinite(), which is IEEE-finite (2e100),
+        // so the bounded-rect test must use the precision predicate.
+        if uv.iter().all(|b| !rcad_kernel::core::precision::is_infinite_value(*b)) {
             Some(Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface {
                 basis: Box::new(surf),
                 trim: uv,
@@ -2944,12 +2947,20 @@ impl DS {
     /// 3D curves are projected onto the face surface instead (each sample point
     /// is on the surface, so projection recovers the UV parameter).
     pub fn face_actual_uv_bounds(&self, fi: usize) -> [f64; 4] {
+        // Unbounded fallback: the OCCT natural domain of an analytic surface
+        // uses Precision::Infinite() (Geom_Plane.cxx L181-184 convention).
+        let no_bounds = [
+            -rcad_kernel::core::precision::INFINITE_VALUE,
+            rcad_kernel::core::precision::INFINITE_VALUE,
+            -rcad_kernel::core::precision::INFINITE_VALUE,
+            rcad_kernel::core::precision::INFINITE_VALUE,
+        ];
         let Some(surf) = self.face_surface(fi) else {
-            return [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY];
+            return no_bounds;
         };
         let face_data = match &*self.shapes[fi].shape.data {
             TShape::Face(fd) => fd,
-            _ => return [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY],
+            _ => return no_bounds,
         };
         // OCCT IntTools_Context::UVBounds L1029-1040: for a natural-restriction
         // face BRepAdaptor_Surface returns the surface natural domain, NOT the
@@ -3010,7 +3021,7 @@ impl DS {
             }
         }
         if !any {
-            return [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY];
+            return no_bounds;
         }
         // OCCT BRepTools::AddUVBounds (BRepTools.cxx L202-281) keeps the
         // boundary pcurve box as-is for a U-periodic surface — the edge

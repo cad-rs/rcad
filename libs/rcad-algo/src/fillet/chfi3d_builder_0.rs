@@ -631,18 +631,47 @@ pub enum GeomAbsSurfaceType {
 }
 
 /// Natural (underlying) bounds and periodicity per OCCT Geom_* analytic
-/// surfaces (Geom_CylindricalSurface::Bounds(0, 2PI, -inf, +inf) etc.).
+/// surfaces. Unbounded sides use Precision::Infinite() (2e100):
+/// Geom_Plane.cxx L181-184, Geom_CylindricalSurface.cxx L162-163,
+/// Geom_ConicalSurface.cxx L212-213.
 fn surface_natural_bounds(s: &Surface3) -> ([f64; 4], bool, bool, f64, f64) {
     match s {
         Surface3::Plane(_) => (
-            [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY],
+            [
+                -rcad_kernel::core::precision::INFINITE_VALUE,
+                rcad_kernel::core::precision::INFINITE_VALUE,
+                -rcad_kernel::core::precision::INFINITE_VALUE,
+                rcad_kernel::core::precision::INFINITE_VALUE,
+            ],
             false,
             false,
             0.0,
             0.0,
         ),
-        Surface3::Cylinder(_) => ([0.0, 2.0 * std::f64::consts::PI, f64::NEG_INFINITY, f64::INFINITY], true, false, 2.0 * std::f64::consts::PI, 0.0),
-        Surface3::Cone(_) => ([0.0, 2.0 * std::f64::consts::PI, f64::NEG_INFINITY, f64::INFINITY], true, false, 2.0 * std::f64::consts::PI, 0.0),
+        Surface3::Cylinder(_) => (
+            [
+                0.0,
+                2.0 * std::f64::consts::PI,
+                -rcad_kernel::core::precision::INFINITE_VALUE,
+                rcad_kernel::core::precision::INFINITE_VALUE,
+            ],
+            true,
+            false,
+            2.0 * std::f64::consts::PI,
+            0.0,
+        ),
+        Surface3::Cone(_) => (
+            [
+                0.0,
+                2.0 * std::f64::consts::PI,
+                -rcad_kernel::core::precision::INFINITE_VALUE,
+                rcad_kernel::core::precision::INFINITE_VALUE,
+            ],
+            true,
+            false,
+            2.0 * std::f64::consts::PI,
+            0.0,
+        ),
         Surface3::Sphere(_) => (
             [0.0, 2.0 * std::f64::consts::PI, -0.5 * std::f64::consts::PI, 0.5 * std::f64::consts::PI],
             true,

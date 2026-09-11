@@ -27,7 +27,10 @@ use rcad_kernel::math::function_set_root::{FunctionSetRoot, FunctionSetWithDeriv
 use rcad_kernel::core::precision::{CONFUSION, PCONFUSION};
 
 use crate::geomalgo::int_patch::transitions::{make_transition, Transition};
-use rcad_kernel::base::extrema::{ExtPC, ExtPS};
+use rcad_kernel::base::extrema::ExtPS;
+use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 
 use super::brep_blend::BlendStatus;
 use super::brep_blend_extremity::BRepBlendExtremity;
@@ -1308,7 +1311,9 @@ impl BRepBlendWalking<'_> {
                         saved_params[0] = elspine_get_saved_first_parameter(self.hguide);
                         saved_params[1] = elspine_get_saved_last_parameter(self.hguide);
                         for ind in 0..2 {
-                            if !saved_params[ind].is_infinite() {
+                            // OCCT BRepBlend_Walking.cxx L2198:
+                            // !Precision::IsInfinite(SavedParams[ind]).
+                            if !rcad_kernel::precision::is_infinite_value(saved_params[ind]) {
                                 // Check the original first and last parameters
                                 // of guide curve for equality to found
                                 // parameter <param>:
@@ -1331,7 +1336,8 @@ impl BRepBlendWalking<'_> {
                                 }
                             }
                         }
-                        let mut the_param = f64::INFINITY; // Precision::Infinite()
+                        // OCCT Precision::Infinite() (Precision.hxx L350-353).
+                        let mut the_param = rcad_kernel::core::precision::INFINITE_VALUE;
                         // Choose the closest parameter
                         if same_dirs[0] && same_dirs[1] {
                             the_param = if (self.param - saved_params[0]).abs()
@@ -1366,7 +1372,9 @@ impl BRepBlendWalking<'_> {
                             the_param = new_param;
                         }
 
-                        if !the_param.is_infinite() {
+                        // OCCT BRepBlend_Walking.cxx L2259:
+                        // !Precision::IsInfinite(theParam).
+                        if !rcad_kernel::precision::is_infinite_value(the_param) {
                             self.param = the_param;
                         }
                     } else if recad1 {
@@ -1799,11 +1807,12 @@ impl BRepBlendWalking<'_> {
         for k in 0..2 {
             let p2d_on_end = hcurve2d_tool_value(&topol_tool_value(domain_of_rst), ends[k]);
             let pnt_on_end = hsurface_tool_value(surf_of_rst, p2d_on_end.x, p2d_on_end.y);
-            // OCCT: Extrema_ExtPC projoncurv(PntOnEnd, theElSpine); — the
-            // rcad ExtPC carries the explicit tolerance and domain of the
-            // OCCT Adaptor3d_Curve defaults.
-            let domain = self.hguide.default_domain();
-            let projoncurv = ExtPC::new(pnt_on_end, self.hguide, PCONFUSION, domain[0], domain[1]);
+            // OCCT L2643: Extrema_ExtPC projoncurv(PntOnEnd, theElSpine) —
+            // the two-arg ctor runs Initialize over the full adaptor range
+            // with the default theTolF 1.0e-10, then Perform(PntOnEnd).
+            let a_adaptor = GeomCurveAdaptor::new(self.hguide.clone());
+            let a_tool = CurveToolHandle::for_curve3(self.hguide, &a_adaptor, &a_adaptor);
+            let projoncurv = ExtremaExtPC::new_point_curve(pnt_on_end, &a_tool, 1.0e-10);
             if !projoncurv.is_done() {
                 continue;
             }

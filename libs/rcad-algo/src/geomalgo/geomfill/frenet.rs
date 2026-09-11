@@ -4,18 +4,23 @@
 //! Architecture mappings: `Adaptor3d_Curve` -> rcad `Curve3`; the trimmed
 //! law curve (`myTrimmed`, a `GeomAdaptor` on a `Geom_TrimmedCurve` with
 //! Adjust=False) is a `Curve3::Trimmed` evaluated at unchanged parameters.
-//! `Extrema_ExtPC` on the SnglrFunc-as-curve -> rcad `ExtPC::new_fn` with
-//! the SnglrFunc evaluation closure.
+//! `Extrema_ExtPC` on the SnglrFunc-as-curve -> the kernel real body
+//! `ExtremaExtPC` over the file-local [`SnglrFuncCurveTool`] view (OCCT
+//! passes the `GeomFill_SnglrFunc` adaptor to `Extrema_ExtPC::Initialize`
+//! directly, GeomFill_Frenet.cxx L206).
 
 use std::f64::consts::PI;
 
 use glam::DVec3;
 
-use rcad_kernel::base::extrema::ExtPC;
+use rcad_kernel::base::extrema_curve_tool::ExtremaCurveTool;
+use rcad_kernel::base::extrema_ext_pc::{BSplineView, ExtremaExtPC, ExtPCurveTool};
 use rcad_kernel::base::geom_lib::fuse_intervals;
+use rcad_kernel::base::proj_lib::CurveType;
 use rcad_kernel::geom::{Curve3, CurveEval, TrimmedCurve3};
 use rcad_kernel::math::gp::Ax2;
 use rcad_kernel::math::GeomAbsShape;
+use rcad_kernel::precision::parametric_default;
 
 use super::sngrl_func::SnglrFunc;
 use super::trihedron_law::{curve_first_parameter, curve_last_parameter, TrihedronLaw, TrihedronLawBase};
@@ -116,6 +121,144 @@ pub(crate) fn curve_intervals(c: &Curve3, s: GeomAbsShape) -> Vec<f64> {
             out
         }
         _ => vec![curve_first_parameter(c), curve_last_parameter(c)],
+    }
+}
+
+/// OCCT `GeomFill_SnglrFunc` seen through the `Adaptor3d_Curve` interface the
+/// OCCT `Extrema_ExtPC::Initialize(Func, ...)` consumes (GeomFill_Frenet.cxx
+/// L206; Extrema_ExtPC.hxx L113): the rcad [`SnglrFunc`] is that auxiliary
+/// curve, and this view carries the `ExtremaCurveTool`/`ExtPCurveTool`
+/// queries `Extrema_GGExtPC` forwards to the adaptor.
+///
+/// Query mapping (GeomFill_SnglrFunc.cxx): FirstParameter/LastParameter
+/// (L43-51) and the evaluations EvalD0/D1/D2/DN (L93-152) forward to the
+/// SnglrFunc; NbIntervals/Intervals (L53-91) upgrade the continuity
+/// (C0 -> C2, C1 -> C3, >= C2 -> CN) before forwarding to the base curve;
+/// Resolution (L135-138) is Precision::Parametric(R3d); GetType (L140-142)
+/// is GeomAbs_OtherCurve.  The analytic downcasts (Line/Circle/...) are not
+/// overridden by SnglrFunc — OCCT raises Standard_NoSuchObject there.
+struct SnglrFuncCurveTool<'a> {
+    /// The `GeomFill_SnglrFunc` object.
+    the_func: &'a SnglrFunc,
+    /// The base curve `Func` wraps (`myHCurve`) — the interval/periodicity
+    /// forwards.
+    the_curve: &'a Curve3,
+}
+
+/// OCCT GeomFill_SnglrFunc::NbIntervals/Intervals continuity upgrade
+/// (cxx L55-65).
+fn snglr_func_upgraded_shape(s: GeomAbsShape) -> GeomAbsShape {
+    match s {
+        GeomAbsShape::C0 => GeomAbsShape::C2,
+        GeomAbsShape::C1 => GeomAbsShape::C3,
+        _ => GeomAbsShape::CN,
+    }
+}
+
+impl ExtremaCurveTool for SnglrFuncCurveTool<'_> {
+    fn first_parameter(&self) -> f64 {
+        self.the_func.first_parameter()
+    }
+
+    fn last_parameter(&self) -> f64 {
+        self.the_func.last_parameter()
+    }
+
+    fn continuity(&self) -> GeomAbsShape {
+        // OCCT SnglrFunc does not override Continuity — the Adaptor3d_Curve
+        // default GeomAbs_C0.
+        GeomAbsShape::C0
+    }
+
+    fn nb_intervals(&self, s: GeomAbsShape) -> i32 {
+        curve_nb_intervals(self.the_curve, snglr_func_upgraded_shape(s)) as i32
+    }
+
+    fn intervals(&self, s: GeomAbsShape) -> Vec<f64> {
+        curve_intervals(self.the_curve, snglr_func_upgraded_shape(s))
+    }
+
+    fn is_periodic(&self) -> bool {
+        // OCCT cxx L82-85: forwards to myHCurve->IsPeriodic().
+        match self.the_curve {
+            Curve3::BSpline(bs) => bs.is_periodic,
+            _ => false,
+        }
+    }
+
+    fn period(&self) -> f64 {
+        // OCCT cxx L87-90: forwards to myHCurve->Period().
+        if self.is_periodic() {
+            curve_last_parameter(self.the_curve) - curve_first_parameter(self.the_curve)
+        } else {
+            0.0
+        }
+    }
+
+    fn resolution(&self, r3d: f64) -> f64 {
+        // OCCT cxx L135-138: Precision::Parametric(R3D).
+        parametric_default(r3d)
+    }
+
+    fn get_type(&self) -> CurveType {
+        // OCCT cxx L140-142.
+        CurveType::Other
+    }
+
+    fn is_closed(&self) -> bool {
+        // OCCT SnglrFunc does not override IsClosed; the Frenet fill curves
+        // are open adaptors.
+        false
+    }
+
+    fn value(&self, u: f64) -> DVec3 {
+        // OCCT cxx L93-97 (EvalD0): (D1 x D2) * ratio.
+        self.the_func.eval_d0(u)
+    }
+
+    fn d1(&self, u: f64) -> (DVec3, DVec3) {
+        // OCCT cxx L99-105 (EvalD1).
+        self.the_func.eval_d1(u)
+    }
+
+    fn d2(&self, u: f64) -> (DVec3, DVec3, DVec3) {
+        // OCCT cxx L107-116 (EvalD2).
+        self.the_func.eval_d2(u)
+    }
+
+    fn dn(&self, u: f64, n: i32) -> DVec3 {
+        // OCCT cxx L120-133 (EvalDN): orders 1..3, higher orders raise.
+        self.the_func.dn(u, n.max(1) as usize)
+    }
+
+    fn line(&self) -> rcad_kernel::geom::Line3 {
+        panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::Line")
+    }
+
+    fn circle(&self) -> rcad_kernel::geom::Circle3 {
+        panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::Circle")
+    }
+
+    fn ellipse(&self) -> rcad_kernel::geom::Ellipse3 {
+        panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::Ellipse")
+    }
+
+    fn hyperbola(&self) -> rcad_kernel::geom::Hyperbola3 {
+        panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::Hyperbola")
+    }
+
+    fn parabola(&self) -> rcad_kernel::geom::Parabola3 {
+        panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::Parabola")
+    }
+}
+
+impl ExtPCurveTool for SnglrFuncCurveTool<'_> {
+    fn bezier_nb_poles(&self) -> usize {
+        panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::Bezier")
+    }
+
+    fn bspline(&self) -> BSplineView {
+        panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::BSpline")
     }
 }
 
@@ -241,14 +384,17 @@ impl Frenet {
         for i in 1..=nb_int_c2 {
             if !is_lin[i - 1] && !is_const[i - 1] {
                 func.set_ratio(1.0 / ave_func[i - 1]); // Normalization
-                let value = |u: f64| func.eval_d0(u);
-                let ext = ExtPC::new_fn(
-                    origin,
-                    TOL_F,
-                    my_c2_disc[i - 1],
-                    my_c2_disc[i],
-                    &value,
-                );
+                // OCCT L206-208: Ext.Initialize(Func, myC2Disc->Value(i),
+                // myC2Disc->Value(i + 1), TolF); Ext.Perform(Origin).
+                // (The OCCT `Extrema_ExtPC Ext` object declared at L200 is
+                // re-hosted per interval: Initialize resets the same state.)
+                let a_view = SnglrFuncCurveTool {
+                    the_func: &func,
+                    the_curve: &curve,
+                };
+                let mut ext = ExtremaExtPC::new();
+                ext.initialize(&a_view, my_c2_disc[i - 1], my_c2_disc[i], TOL_F);
+                ext.perform(origin);
                 if ext.is_done() && ext.nb_ext() != 0 {
                     for j in 1..=ext.nb_ext() {
                         let value2 = ext.square_distance(j);
@@ -281,8 +427,15 @@ impl Frenet {
                 func.set_ratio(1.0 / ave_func[i]);
                 for j in 0..local.len() - 1 {
                     if local[j + 1] - local[j] > PTOL {
-                        let value = |u: f64| func.eval_d0(u);
-                        let ext = ExtPC::new_fn(origin, TOL_F, local[j], local[j + 1], &value);
+                        // OCCT L283-285: Ext.Initialize(Func, SeqArray[i](j),
+                        // SeqArray[i](j + 1), TolF); Ext.Perform(Origin).
+                        let a_view = SnglrFuncCurveTool {
+                            the_func: &func,
+                            the_curve: &curve,
+                        };
+                        let mut ext = ExtremaExtPC::new();
+                        ext.initialize(&a_view, local[j], local[j + 1], TOL_F);
+                        ext.perform(origin);
                         if ext.is_done() {
                             for k in 1..=ext.nb_ext() {
                                 let value2 = ext.square_distance(k);

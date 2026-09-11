@@ -687,15 +687,20 @@ pub fn perform_face_face_planes(
         (Surface3::Plane(a), Surface3::Plane(b)) => (a, b),
         _ => return (false, Vec::new()),
     };
-    let (_plane_done, _tangent, mut curves) =
+    let (_plane_done, tangent, mut curves) =
         perform_planes(p1, uv1, p2, uv2, tol_f1, tol_f2, tol_tang);
-    // OCCT L420-436: the pcurve swap-back after a SortTypes reversal.
-    if b_reverse {
-        for a_ic in curves.iter_mut() {
-            std::mem::swap(&mut a_ic.pcurve1, &mut a_ic.pcurve2);
+    // OCCT L418: myIsDone = true.
+    // OCCT L420-436: if (!myTangentFaces) { const int NbLinPP =
+    //   mySeqOfCurve.Length(); if (NbLinPP && bReverse) { the pcurve
+    //   swap-back after a SortTypes reversal. } }
+    if !tangent {
+        let nb_lin_pp = curves.len();
+        if nb_lin_pp != 0 && b_reverse {
+            for a_ic in curves.iter_mut() {
+                std::mem::swap(&mut a_ic.pcurve1, &mut a_ic.pcurve2);
+            }
         }
     }
-    // OCCT L418: myIsDone = true.
     (true, curves)
 }
 

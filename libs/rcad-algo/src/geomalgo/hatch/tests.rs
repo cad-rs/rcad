@@ -421,7 +421,14 @@ fn hatching_points_and_domains() {
     h.clr_points();
     assert!(!h.trim_done() && !h.trim_failed());
 
-    // ChangeCurve / curve accessors.  A plain line spans the infinite domain.
+    // ChangeCurve / curve accessors.  A plain line spans the infinite domain
+    // (Geom2d_Line.cxx L142-151: -/+ Precision::Infinite()).
     h.change_curve();
-    assert_eq!(h.curve().default_domain(), [f64::NEG_INFINITY, f64::INFINITY]);
+    assert_eq!(
+        h.curve().default_domain(),
+        [
+            -rcad_kernel::core::precision::INFINITE_VALUE,
+            rcad_kernel::core::precision::INFINITE_VALUE
+        ]
+    );
 }
