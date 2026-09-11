@@ -888,6 +888,30 @@ libs/rcad-algo/src/
   - **stash 归因法**：`git stash -u → 跑测试 → git stash pop` 是区分"既有失败 vs 本轮回归"的最快手段（本轮两次使用，各 ~2 分钟）。
   - **CutVehicle 面级结果的语义要分两层看**：root 挑选启发式（last Solid/Shell）只决定"有结果时取哪个"，而本轮实测是**池本身为空**——先确认产出层（BuildShape/BuildResult）再怀疑挑选层，避免修错层。
 
+### E3-W 追加 12：并行批——featlf 墙链三连破（面级 BOP 三处 1:1 修复，Geom2dInt 墙被顺带跳过）+ BRepCheck_Analyzer 全家桶移植 + Extrema_ExtCC2d 链真身；featlf 12 例全程跑通，停在新层次「布尔分割面的有效性质量」
+
+- **开场门槛（逐字复测，均为实测）**：lib **412/0/0** · kernel **681/0** · pavefiller **26/26** · builder_stage **76/76** + smoke **1/1** · 八网格 **8/8 全绿**。
+- **主线（承追加 11 队列第 1 项）：沿 a3 的 Common(BndBox, plane_face) 逐层破墙，四层推进（提交 `4dfe09ac` + `04e1b5b3`）**：
+  1. **墙 1（决定性根因）：FF 候选 0 对**（`[FF] n_pairs=0`）——面参数（`Trimmed(Plane)` 窗口面、无边界 wire）的 `surface_bounding_box` 落入 `_ => None` ⇒ bbox VOID ⇒ 不进 PaveFiller BB 树。**修复（1:1）**：kernel `base/bnd_lib::surface_bounding_box` 增 `Trimmed(Plane)` 分支 = `GeomBndLib_Plane::Box(UMin,UMax,VMin,VMax,Tol)`（hxx **L52-74**，UV 窗四角点 `elslib_plane_value`；无穷窗的 `TreatInfinitePlane` 开边盒 rcad 有限盒不可表示，保持 None 并注记）。实测：**n_pairs 0→4**，FF 分割发生（plane face 2 images），`rc_len=1`。
+  2. **墙 2：CutVehicle root 挑选只认 Solid/Shell** ⇒ 面级结果取不到。**修复**：`brep_feat_form_2.rs` 两处（with_operation/with_args_tools）root 挑选加"无容器时回退最后一张结果 Face"（OCCT `BOPAlgo_BOP::BuildShape` **L1092** 结果 compound 无容器、成员平铺语义）。
+  3. **墙 3：plane×plane FF 截面边是 BSpline 而 OCCT 是 Geom_Line**——tool 面的 stored surface 是 `Trimmed(Plane)`，`FaceFace::perform` 的 match 把它当"other"送进 IntPatch+近似（t=[26,68] 弧长参数化特征）。**修复（1:1）**：`face_face.rs::perform` 顶部按 `GeomAdaptor_Surface::Load`（cxx **L423-431**）语义递归解包 RectangularTrimmed → 基面（rcad Trimmed 不重参数化、trim 范围经 `face_actual_uv_bounds` 走 UV 窗，解包即 adaptor 视图）。实测：**四条 FF 曲线全变 Line**（[-3.5,1.5]/[-1.25,3.75]），To2d 产出 Line2d ⇒ **Geom2dInt_GInter 墙（追加 11 立卡的"下轮入口"）被顺带跳过**——line/line 走既有解析臂即可。
+  4. **墙 4：`brep_algo_is_valid` GAP 接通真身**（见并行批 A）：`brep_feat_form_2.rs` 按 OCCT `BRepAlgo::IsValid`（BRepAlgo_1.cxx **L39-43**，默认 GeomControls=true）接线 `BRepCheckAnalyzer`；bare Shape 经**保索引 scratch 池**（子形状 wrapper 携带原池索引，空洞置 null 占位——紧凑 DFS 序会让 `tshapes[child.index]` 取错 TShape，本轮踩过）喂入。
+- **并行批 A：BRepCheck_Analyzer 全家桶 1:1 移植落地**（8 个新文件 6,355 行：analyzer 709 + result 587 + vertex 250 + edge 901 + wire 1724 + face 975 + shell 868 + solid 341；`BRepCheck_Status` 38 值全集；mod.rs 仅 1 行注册）：Analyzer Init/Put/Perform（ParallelAnalyzer functor 逐形状体）/IsValid/ValidSub（Analyzer.cxx L352-539）+ 六个 Result 子类全 pass 结构（各文件头有逐函数行号锚点）。**GAP 三处（中性、不伪造，模块头有清单）**：Wire SelfIntersect / Face Intersect 的 `Geom2dInt_GInter` 通用臂（结构守卫保留）、pcurve 参考曲线的 Edge 几何控制（BRepLibValidateEdge 只收 GeomAdaptorCurve）、Vertex 点表示句柄身份。单测 3 例（box 有效/变换后有效/wire 子检查 API）全过（algo lib 412→**415**）。
+- **并行批 B：Extrema_ExtCC2d 链真身落地**（5 个新文件 ~2,700 行：curve2d_tool 46 + ext_p_elc2d 454 + ext_elc2d 703 + gen_ext_cc2d 611 + ext_cc2d 854；ExtCC2d.cxx L34-685 全 25 臂；kernel lib 681→**688**）。**重要翻案**：**OCCT 没有 `Extrema_ExtCF` 类**——`BRepExtrema_ExtCF`（TKTopAlgo 拓扑包装）的内核引擎是 **`Extrema_ExtCS`，rcad 早已翻译**（`extrema_ext_cs.rs` 767 行真解析体）——追加 11 队列第 3 项的"Extrema_ExtCF 真身"实为伪缺口，feat 载体切换配方已写入交接（ExtremaExtCS::initialize_range/perform + tol 语义，见 agent 报告与 `extrema_ext_cc2d.rs` 的 extcf_regression 测试组）。GAP 两处（ExtPC2d 并行验证块、2D AbscissaPoint 长度）按 OCCT not-done 语义保留。
+- **featlf 新状态（实测）：全部 12 个 sliding 用例（a3,b1-b3,b5-b7,c5,c6,d7-d9）的 init 管线全程跑通**（Common/BndFace/ExtremeFaces/SlidingProfile 全部走过，rcad 侧零 panic），停在最外层断言 `assert!(feat.rib_slot.is_done())`——`NoFaceProf`（profile_ok=false）。**根因是新层次的真发现**：rcad 面级 boolean 分割出的 profile face 被（正确的）analyzer 判为无效——`[LF-VALID]` 探针（已删）显示 `Edge InvalidPointOnCurve ×3` + `Face NotClosed` + `Face UnorientableShape`，即分割边的顶点-曲线一致性/面 wire 闭合性/朝向不满足 BRepCheck 判据。**这不是分析器误报的假设（结构 1:1、GAP 中性），而是 rcad boolean 输出质量的真实缺陷**（OCCT 同操作输出有效面）。**下轮入口**：① 逐 status 追 MakeSplitEdges/MakePCurves 的边-顶点参数与容差赋值（InvalidPointOnCurve 最优先，它决定面闭合与朝向的下游判定）；② OCCT 侧 `occt_bool_runner` 同型用例对拍 BRepCheck_Analyzer 的状态表（OCCT DLL 带 BRepCheck，插桩可 dump）。
+- **门槛（终测，全部实测）**：lib **415/0/0**（412+3）· kernel **688/0**（681+7）· pavefiller **26/26** · builder_stage **76/76** + smoke **1/1** · tktopalgo_gtests **35 通过/1 失败不变**（loft VIso GAP，基线即有）· 八网格 **8/8 全绿逐字不变** · 探针残留 = **0**。
+- **下轮队列（按优先级）**：
+  1. **featlf 新靶子：boolean 分割面有效性**（上条 ①②：InvalidPointOnCurve 链 + OCCT 对拍）。这是 featlf 12 例 + featprism/featrevol/featrf 的共同下游（`brep_algo_is_valid` 已是真身，它们全部吃到真判定）。
+  2. **feat 载体切真身**：`BRepExtremaExtPF/BRepExtremaExtCF` 载体按并行批 B 的配方切 `ExtremaExtCS`（brep_feat_make_linear_form.rs 头注差异 #3；featrf Rad/Sliding 同理）。
+  3. `Geom2dInt_GInter` 通用 2D 求交批（同时解锁 analyzer 的 Wire SelfIntersect / Face Intersect GAP 臂——一石二鸟）。
+  4. offset 域（GeomAPI_ProjectPointOnCurve 真身 + ExtentEdge 面盒延伸 + GeomInt_IntSS 专批）；blend a1 上游 ChFiKPart_ComputeData::Compute；a1/TKOffset TrimEdges。
+  5. analyzer 收尾（pcurve 参考曲线的 BRepLibValidateEdge 泛化、Vertex 点表示身份映射）；StepWriter seam；prism 迁移；`tools/occt-test-gen/tests/` 清理。
+- **本轮固化/强化的坑（勿重复）**：
+  - **scratch 池必须保索引**：bare Shape 的子形状 wrapper 携带原池 index，紧凑 DFS 序 scratch 会让一切 `tshapes[index]` 访问错位（"Shape 3 is not an Edge"即此）——空洞用 null 占位、按原 index 归位。
+  - **Trimmed 包装面在 FF 的类型分派**：`Surface3::Trimmed` 会让 plane×plane 走"other"臂产出 BSpline 截面线——任何按 surface type 分派的消费点都要先做 GeomAdaptor 语义的解包（与 E3-U featrevol 的 Trimmed 曲线未解包同族，第二次踩）。
+  - **"队列项"先核实真身存在性**：`Extrema_ExtCF` 在 OCCT 根本不存在（BRepExtrema_ExtCF 的引擎是 Extrema_ExtCS 且已翻译）——立卡前 grep OCCT 源码确认类名，避免伪缺口占用队列。
+  - **无 wire 的 `BRepLib_MakeFace(Pln,u,v)` 面的 bbox 唯一来源是曲面 UV 窗分支**——`surface_bounding_box` 缺分支 = VOID 盒 = 静默退出 BB 树，症状是"候选对为 0"而非显式错误；凡"零候选/空结果"先查 bbox。
+
 
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 

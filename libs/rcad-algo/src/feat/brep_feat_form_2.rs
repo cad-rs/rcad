@@ -650,11 +650,86 @@ pub fn brep_feat_is_inside(the_f1: &Shape, the_f2: &Shape) -> bool {
     true
 }
 
-/// OCCT BRepAlgo::IsValid(S) (BRepAlgo_1.cxx L39-43) — GAP (architecture
-/// difference #5): BRepCheck_Analyzer on a standalone rcad Shape is pending
-/// (rcad's brep_check works on a BRep pool).
-pub(crate) fn brep_algo_is_valid(_the_s: &Shape) -> bool {
-    panic!("GAP(BRepFeat_Form): BRepAlgo::IsValid needs BRepCheck_Analyzer on a standalone Shape (pending translation)");
+/// OCCT BRepAlgo::IsValid(S) (BRepAlgo_1.cxx L39-43):
+/// `BRepCheck_Analyzer ana(S); return ana.IsValid();` — the default ctor
+/// enables GeomControls.  The feat callers pass bare Shapes whose TShapes
+/// live in caller-owned pools, while the analyzer consumes a BRep pool: the
+/// shape subgraph is collected into a scratch pool that PRESERVES the
+/// original TShape indices (the child Shape wrappers carry their pool
+/// indices), unused slots holding a null placeholder.
+pub(crate) fn brep_algo_is_valid(the_s: &Shape) -> bool {
+    let mut pairs: Vec<(usize, std::sync::Arc<TShape>)> = Vec::new();
+    let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    collect_subgraph_indexed(the_s, &mut pairs, &mut visited);
+    let size = pairs.iter().map(|(i, _)| *i + 1).max().unwrap_or(0);
+    let mut scratch = rcad_kernel::topods::BRep::new();
+    scratch.tshapes = vec![Shape::null().data; size];
+    for (i, ts) in pairs {
+        scratch.tshapes[i] = ts;
+    }
+    let root = Shape::from_parts(the_s.data.clone(), the_s.index, the_s.location, the_s.orientation);
+    let ana = crate::topalgo::brep_check::brep_check_analyzer::BRepCheckAnalyzer::new(
+        &scratch,
+        &root,
+        true,
+    );
+    let ok = ana.is_valid(&scratch, &root);
+    ok
+}
+
+/// The subgraph walk of brep_builderapi_transform::collect_subgraph, keeping
+/// the original pool index alongside each TShape handle.
+fn collect_subgraph_indexed(
+    s: &Shape,
+    out: &mut Vec<(usize, std::sync::Arc<TShape>)>,
+    visited: &mut std::collections::HashSet<u64>,
+) {
+    if s.is_null() || !visited.insert(s.ptr_id()) {
+        return;
+    }
+    out.push((s.index, s.data.clone()));
+    match s.data.as_ref() {
+        TShape::Vertex(_) => {}
+        TShape::Edge(ed) => {
+            collect_subgraph_indexed(&ed.first, out, visited);
+            collect_subgraph_indexed(&ed.last, out, visited);
+        }
+        TShape::Wire(wd) => {
+            for e in &wd.edges {
+                collect_subgraph_indexed(e, out, visited);
+            }
+        }
+        TShape::Face(fd) => {
+            collect_subgraph_indexed(&fd.outer_wire, out, visited);
+            for w in &fd.inner_wires {
+                collect_subgraph_indexed(w, out, visited);
+            }
+            for v in &fd.internal_vertices {
+                collect_subgraph_indexed(v, out, visited);
+            }
+        }
+        TShape::Shell(sd) => {
+            for f in &sd.faces {
+                collect_subgraph_indexed(f, out, visited);
+            }
+        }
+        TShape::Solid(sd) => {
+            for sh in &sd.shells {
+                collect_subgraph_indexed(sh, out, visited);
+            }
+            for e in &sd.internal_edges {
+                collect_subgraph_indexed(e, out, visited);
+            }
+            for v in &sd.internal_vertices {
+                collect_subgraph_indexed(v, out, visited);
+            }
+        }
+        TShape::CompSolid(children) | TShape::Compound(children) => {
+            for c in children {
+                collect_subgraph_indexed(c, out, visited);
+            }
+        }
+    }
 }
 
 /// OCCT BRepFeat::FaceUntil(Sbase, FUntil) (BRepFeat.cxx L524-638) —

@@ -134,7 +134,7 @@ fn trsf_modification_extras(arcs: &[Arc<TShape>], trsf: &Trsf) {
 /// Read-only DFS over the shape graph collecting the reachable TShape
 /// handles (TShape identity by Arc pointer, OCCT TopTools_ShapeMapHasher
 /// semantics).  Container children and the edge vertex links are followed.
-fn collect_subgraph(
+pub(crate) fn collect_subgraph(
     s: &Shape,
     arcs: &mut Vec<Arc<TShape>>,
     visited: &mut HashSet<u64>,

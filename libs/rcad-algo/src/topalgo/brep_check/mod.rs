@@ -41,6 +41,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
 use rcad_kernel::topods::{self, Orientation, Shape, TShape};
+pub mod brep_check_analyzer;
 
 // ---- Backward-compat BRep navigation helpers ----
 // These let analysis functions navigate topods::BRep using flat indices.
