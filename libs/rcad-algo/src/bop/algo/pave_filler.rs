@@ -1984,8 +1984,15 @@ impl PaveFiller {
             drop(a_fi);
             let a_tol_e = self.ds.edge_tolerance(n_e);
             let a_tol_f = self.ds.face_tolerance(n_f);
-            // OCCT L246: PB list
-            let a_lpb: Vec<SharedPB> = self.ds.edge_pave_blocks(n_e).to_vec();
+            // OCCT L246: PB list — BOPAlgo_PaveFiller_5.cxx L245:
+            //   NCollection_List<handle<BOPDS_PaveBlock>>& aLPB =
+            //     myDS->ChangePaveBlocks(nE);
+            // ChangePaveBlocks LAZY-INITIALIZES the edge's pave block
+            // (BOPDS_DS.cxx L425-433: InitPaveBlocks on first access), so an
+            // edge with no prior VV/VE/EE activity still gets its initial PB
+            // and participates in the EF stage (g6: the revolution faces'
+            // closed boundary circles).
+            let a_lpb: Vec<SharedPB> = self.ds.change_pave_blocks(n_e).clone();
             if a_lpb.is_empty() {
                 continue;
             }

@@ -36,6 +36,7 @@ pub mod cycy_boundaries;
 pub mod cycy_walking;
 pub mod curve_surface;
 pub mod imp_prm;
+pub mod rst_int;
 
 pub use imp_imp_intersection::ImpImpIntersection;
 pub use intersection::IntPatchIntersection;
@@ -140,6 +141,11 @@ pub struct IntPatchVertex {
     /// between the intersection line and the arc on surface 1/2 (set by SetArc).
     pub transition_on_s1: transitions::TypeTrans,
     pub transition_on_s2: transitions::TypeTrans,
+    /// OCCT IntPatch_Point VertexOnS1/S2 handles (Adaptor3d_HVertex) — the
+    /// domain vertex identity as (restriction arc index, endpoint index)
+    /// within the rectangular RectDomain (rst_int.rs).
+    pub vtx_on_s1: Option<(u16, u16)>,
+    pub vtx_on_s2: Option<(u16, u16)>,
 }
 
 impl Default for IntPatchVertex {
@@ -166,6 +172,8 @@ impl Default for IntPatchVertex {
             transition_line_arc2: transitions::TypeTrans::Undecided,
             transition_on_s1: transitions::TypeTrans::Undecided,
             transition_on_s2: transitions::TypeTrans::Undecided,
+            vtx_on_s1: None,
+            vtx_on_s2: None,
         }
     }
 }

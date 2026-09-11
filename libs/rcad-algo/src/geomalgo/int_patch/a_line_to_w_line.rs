@@ -629,6 +629,8 @@ impl ALineToWLine {
                     transition_line_arc2: a_vtx.transition_line_arc2,
                     transition_on_s1: a_vtx.transition_on_s1,
                     transition_on_s2: a_vtx.transition_on_s2,
+                    vtx_on_s1: None,
+                    vtx_on_s2: None,
                 });
             }
 

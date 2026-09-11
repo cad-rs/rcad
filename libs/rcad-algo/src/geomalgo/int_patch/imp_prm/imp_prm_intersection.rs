@@ -1438,12 +1438,37 @@ impl ImpPrmIntersection {
             }
         }
 
-        // On traite les restrictions de la surface implicite: remove short
-        // lines (<= 2 coincident points) and move Walking lines to the end.
-        // OCCT IntPatch_ImpPrmIntersection.cxx L1770-1808.
+        // On traite les restrictions de la surface implicite.
+        // OCCT IntPatch_ImpPrmIntersection.cxx L1763-1808: for each line,
+        // PutVertexOnLine places the vertices on the IMPLICIT surface's
+        // domain restrictions (Surf1 with OnFirst=true when !reversed, else
+        // Surf2 with OnFirst=false), then short lines (<= 2 coincident
+        // points) are removed and Walking lines are moved to the end.
         let mut a_nb_lin = self.slin.len();
         let mut i: isize = 0;
         while (i as usize) < a_nb_lin {
+            // OCCT L1768-1774.
+            if !reversed {
+                super::super::rst_int::put_vertex_on_line(
+                    &mut self.slin[i as usize],
+                    s1,
+                    uv1,
+                    s2,
+                    uv2,
+                    true,
+                    tol_tang,
+                );
+            } else {
+                super::super::rst_int::put_vertex_on_line(
+                    &mut self.slin[i as usize],
+                    s2,
+                    uv2,
+                    s1,
+                    uv1,
+                    false,
+                    tol_tang,
+                );
+            }
             let is_wline = self.slin[i as usize].is_wline();
             let a_cond = if is_wline {
                 let n = self.slin[i as usize].wline_pnts.len();

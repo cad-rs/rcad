@@ -1703,6 +1703,8 @@ fn add_vertex_int(line: &mut IntPatchLine, v: super::special_points::PatchPoint)
             transition_line_arc2: v.transition_line_arc2,
             transition_on_s1: v.transition_on_s1,
             transition_on_s2: v.transition_on_s2,
+            vtx_on_s1: None,
+            vtx_on_s2: None,
         });
     }
 }

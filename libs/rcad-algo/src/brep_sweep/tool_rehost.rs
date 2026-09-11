@@ -796,7 +796,15 @@ impl GeomAdaptorSurfaceOfRevolution {
             axis: axe_rev.1,
             radius: r,
             ref_dir: axe_rev.2,
-            y_dir: None,
+            // OCCT gp_Cylinder carries the full gp_Ax3: the YDirection is the
+            // one computed at construction (before Load's YReverse for a
+            // basis line opposed to the axis, GeomAdaptor_SurfaceOfRevolution
+            // L191-194) and is therefore NOT Z-cross-X of the stored frame —
+            // a left-handed frame whose u keeps the swept circles'
+            // parameterization (BRepSweep_Rotation::SetDirectingPCurve writes
+            // the boundary-circle pcurve as (t, par), which ComputeTolerance
+            // then verifies against this very parameterization).
+            y_dir: Some(axe_rev.3),
         }
     }
 

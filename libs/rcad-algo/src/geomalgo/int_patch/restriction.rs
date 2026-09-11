@@ -148,6 +148,8 @@ fn patch_point_to_vertex(pp: &super::special_points::PatchPoint) -> IntPatchVert
         transition_line_arc2: pp.transition_line_arc2,
         transition_on_s1: pp.transition_on_s1,
         transition_on_s2: pp.transition_on_s2,
+        vtx_on_s1: None,
+        vtx_on_s2: None,
     }
 }
 
