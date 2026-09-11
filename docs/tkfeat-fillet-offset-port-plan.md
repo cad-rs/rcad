@@ -776,6 +776,25 @@ libs/rcad-algo/src/
     1. **`BuilderFace` 对回转面产出 0 areas**（g6 的直接缺口）：从 `PerformLoops` 切入——查该面的边集（原边界边 + 由 On 面块产生的新截面边）在回转面上能否闭合成 wire；重点核对**新截面边在回转面上的 pcurve**（`make_restriction_curves` 写入的 `pcurve1 = arc`）是否随 `FillImagesEdges` 落到 split edge 的面键上（键为 `L.Predivided(E.Location())`，见追加 6 的 pcurve 键坑）。可用 `[BF2]`/`[BSF]` 同型探针（本次已删）快速回看。
     2. E3-V 队列第 3 项照旧（feat/offset/blend 各域）；StepWriter 周期面 seam 保真度；随手迁移与清理项照旧。
 
+- **E3-W 追加 8：g6 攻坚第三波——落在 `WireSplitter` 的环闭合：回转面单环 UV 面积为 0/负 ⇒ `IsHole`=true ⇒ 0 areas**
+  - **定位链（全部实测，逐层下钻）**：
+    1. `BuildSplitFaces` 的 `[BSF]` 探针：`face=43 in=0 on=4 sc=1 alone=1`、`face=53 in=0 on=4 sc=1 alone=1` ⇒ 回转面**未被 OCCT L293-296 的跳过条件跳过**，ON/Sc 面块（RLine 曲线贡献）确实建立。
+    2. `perform_loops` 的 `[WS-OUT]` 探针：两回转面**都产出 1 条 wire**（`face=43 [5]`、`face=53 [3]`）⇒ 失败不在环的构建"完全失败"，而在**环的几何/分类**。
+    3. `perform_areas` 的 `[AREA]` 探针：`face=43 loop n_edges=5 is_hole=true`、`face=53 loop n_edges=3 is_hole=true` ⇒ **单环被判成洞 ⇒ 无 growth face ⇒ areas=0**（`[BF2] revolution face split -> areas=0` ×2），与"结果里没有回转面"完全一致。
+  - **OCCT 规则（已核，rcad 侧该分支是 1:1 的）**：`IntTools_FClass2d::Init`（`IntTools_FClass2d.cxx` L101 + L556-563）——`myIsHole` 初值 `true`；对每条 wire 求其 **UV 多边形有符号面积 `aS`**（`Poly::PolygonProperties`）：`aS > 0 ⇒ myIsHole = false`（growth，`TabOrien=1`），`aS < 0 ⇒ myIsHole = true`（hole，`TabOrien=0`），`|aS| < Precision::SquareConfusion() ⇒ BadWire`。`BOPAlgo_BuilderFace.cxx` L441-446 即 `bIsGrowth = !aClsf.IsHole()`。**rcad 已按原样实现**（`fclass2d.rs` 的 `a_s_raw_positive` 赋值与 `my_is_hole` 分支），且**刻意用归一化前的原始符号**（该处注释已说明；同处的 `is_outer` 角色归一化只作用于 `TabOrien`，不影响 `IsHole`）。⇒ **分类代码没问题，喂进去的 `aS` 是错的**。
+  - **实测到的错误输入（本轮 `[FC2D]`/`[FC2DSPARSE]` 探针）**：
+    - `face=53` 的环：`npts=238 a_s = 0.000000`（**精确 0**）。稀疏多边形为
+      `(6.283,3.142) (4.772,3.142) (3.261,3.142) (1.750,3.142) (0.239,3.142) (1.273,3.142) (2.784,3.142) (4.295,3.142) (5.806,3.142) (6.283,3.659) (6.283,4.414) (6.283,5.170) (6.283,5.925)`
+      ⇒ 沿 `v=π` 从 `u=2π` 走到 `u≈0`，**再原路退回** `u≈0 → 2π`（净面积 0），最后沿 `u=2π` 的 seam 上行。**UV 矩形只有两条边被走到（v=π 来回 + u=2π），v=2π 那条边整条缺席** ⇒ 环在 UV 上是退化的"来回细条"。
+    - `face=43` 的环：5 条边、`a_s` 为**负**（非零）⇒ 同样判 hole。**对照**：盒面 `face=32` 的同型环 `a_s=993.67`（≈20×50）与 `face=2` 的 6 边外环 `a_s=4000`（=40×100）都为正、分类正确；`face=2` 的退化 1 边环 `a_s=-0.000000` 判 hole 也是正确的。
+    - **注意**：参考结果的 SoR 面本就是 **5 边面**（`FaceSig SURFACE_OF_REVOLUTION (5e): ref=2`），rcad 的 `face=43` 恰好也是 5 边 ⇒ 43 的环**边数对但走向/取 pcurve 有误**；`face=53` 是 **3 边**（少一条，缺 v=2π 边）⇒ 两者都需修。
+  - **`split_into_wires` 的输入（`[WS-IN]` face=53，5 条边）**：`v=π` 整圆（`o=(0,3.142) d=(1,0)`）、`v=2π` 圆被切成两段（`t=(0,1.176)` 与 `t=(1.176,6.283)`）、以及 seam 的闭对（同一 `edge_ptr` 两条 pcurve：`u=2π` 与 `u=0`，各 `v∈[3.142,6.283]`）。⇒ 输入齐备，**是 WireSplitter 只把其中 3 条装进了环，且走向令 v=π 被来回穿两次**。**下轮入口：`bop/algo/wire_splitter.rs` 在回转面（含 seam 闭对 + 周期 UV）上的环路装配与 `edge_pcurve_on_face` 的 seam 侧选择**（`CurveOnClosedSurface` 的 pcurve1/pcurve2 由边的朝向选取，`builder_face.rs::edge_pcurve_on_face` L850+ 已实现该规则——需核对周期面下 `u=0` 与 `u=2π` 的相位与走向）。
+  - **门槛**：本轮**纯探针，无代码改动**（探针已全部删除，工作树回到 `08dcf225` 之后的干净状态）；八网格门槛维持追加 7 的实测值 **375/378/379/373/12/102/83/109+1**，lib **412/0/0** · kernel **678/0**。
+  - **下轮队列（依追加 8 更正，按优先级）**：
+    1. **`WireSplitter` 在回转面周期 UV + seam 闭对上的环路装配**（g6 的直接缺口）：从 `face=53` 少一条 `v=2π` 边、且 `v=π` 被来回穿两次切入；核对 seam 边在环里出现两次时其两条 pcurve（`u=0` / `u=2π`）是否分别被正确选用，以及周期面上的 `AdjustPeriodic`（OCCT `BOPAlgo_WireSplitter` / `BOPTools_AlgoTools2D`）是否到位。
+    2. `face=43` 的 5 边环走向（`a_s<0`）——同一处的走向/相位问题。
+    3. E3-V 队列第 3 项照旧（feat/offset/blend）；StepWriter 周期面 seam 保真度；随手迁移与清理项照旧。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 - **开场三步**：① 通读本档 §0 → §9 E3-S/E3-U/E3-V → AGENTS.md（**铁律：非 TKBool 模块的代码与修复一律严格 1:1 翻译对齐——逐行语句对照 + 函数计数等式 + OCCT 行号锚点 + 禁载体/禁等价替换/禁运行时凑结果；GAP 载体仅限外部未翻依赖并保留 OCCT 失败路径；架构差异必须先消灭再对齐**）→ ShHealing 两份；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 **412/0/0**（kernel **677/0**、builder_stage 76 + smoke 1、pavefiller 26、**boolean 八网格**：bopfuse 371/4 · bopcommon 374/4 · bopcut 379/0 · boptuc 369/4 · splitter 10/2（失败集 ze7-ze9/zf1 + a2/b2）+ bfuse_simple 102/102 · bcommon_simple 83/83 · bcut_simple 109/109 **（必须 `-Exclude "g6"`，见下）**）；③ 从下方队列取项开工。
