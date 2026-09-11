@@ -20,6 +20,7 @@
 pub mod brep_sweep_builder;
 pub mod brep_sweep_iterator;
 pub mod brep_sweep_tool;
+pub mod make_revol;
 pub mod num_linear_regular_sweep;
 pub mod prism;
 pub mod revol;

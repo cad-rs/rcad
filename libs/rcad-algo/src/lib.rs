@@ -33,6 +33,9 @@ pub use crate::algo_ext::{
     total_volume,
 };
 pub use crate::algo_ext::extrude_profile::{extrude_profile_solid, ProfileSegment};
+// OCCT `BRepPrimAPI_MakeRevol` over an arc-bearing planar meridian (the
+// analytic counterpart of the polygon-only `revolve_polygon_solid`).
+pub use crate::brep_sweep::make_revol::revolve_profile_solid;
 
 // Re-export healing chain (STEP export needs it; legacy rcad-algorithms surface).
 pub use crate::algo_ext::healing::{HealingMode, HealingOptions, HealingReport, analyze_and_heal};
