@@ -14,15 +14,44 @@
 //!   - ExtremaPC_SearchMode_Test.cxx (Extrema_ExtPC Min/Max search modes)
 
 use glam::DVec3;
+use rcad_kernel::base::extrema_curve_tool::{CurveToolHandle, ExtremaCurveTool};
+use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
+use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::*;
 
 const TOL: f64 = 1e-7;
 
-/// Point-curve distance helper (OCCT Extrema_ExtPC).
+/// Point-curve distance helper (OCCT Extrema_ExtPC) — the real kernel body
+/// (base::extrema_ext_pc, the `Extrema_ExtPC(P, C, TolF)` full-range form)
+/// over the curve's default domain.  The minimum is taken over the endpoint
+/// candidates (`TrimmedSquareDistances`) and the interior extrema
+/// (`NbExt` / `SquareDistance` / `Point`), the read shape of the OCCT
+/// consumers (e.g. IntTools_Context DistMini).
 /// Returns (distance, curve parameter at the nearest point).
 fn distance_point_curve(pt: DVec3, curve: &Curve3) -> (f64, f64) {
-    let proj = rcad_kernel::base::extrema::closest_point_on_curve(curve, pt, 64);
-    (proj.distance, proj.param)
+    let a_adaptor = GeomCurveAdaptor::new(curve.clone());
+    let a_tool = CurveToolHandle::for_curve3(curve, &a_adaptor, &a_adaptor);
+    let an_ext = ExtremaExtPC::new_point_curve(pt, &a_tool, 1.0e-10);
+    let (dist1, dist2, _p1, _p2) = an_ext.trimmed_square_distances();
+    let mut best = f64::MAX; // RealLast()
+    let mut best_t = 0.0;
+    if dist1 < best {
+        best = dist1;
+        best_t = a_tool.first_parameter();
+    }
+    if dist2 < best {
+        best = dist2;
+        best_t = a_tool.last_parameter();
+    }
+    if an_ext.is_done() {
+        for i in 1..=an_ext.nb_ext() {
+            if an_ext.square_distance(i) < best {
+                best = an_ext.square_distance(i);
+                best_t = an_ext.point(i).param;
+            }
+        }
+    }
+    (best.sqrt(), best_t)
 }
 
 // =============================================================================
