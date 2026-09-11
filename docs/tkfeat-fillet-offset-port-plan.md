@@ -739,6 +739,8 @@ libs/rcad-algo/src/
   3. **新增**：StepWriter 对周期面 seam / `CurveOnClosedSurface` 的写出保真度（rev2 9 vs 8 条 EDGE_CURVE）。
   4. 随手迁移余项与清理项照旧（`algo_ext/features.rs` + `extrude_profile.rs` 的 prism 构造 → `rcad-modeling/prim/primapi/`；`rcad-kernel/src/math/gprop/` 死目录；`face_classifier.rs` 的 `[FC]` eprintln；`normal_projection.rs` 的 BRepLibMakeWire 载体切 A2 真身；`rcad/temp/regress-e3167` 894MB；根仓库 `tools/occt-test-gen/tests/…` 历史遗留跟踪文件）；`RCAD_FF_DEBUG=1` 现成的 FF 交线打印是本队列第 1 项的主力仪器。
 
+- **提交链尾（本轮，追加 5）**：rcad `main` = **`a0063fe6`**（**本轮尾**：SplitShell 接线 `BRepTools_Quilt` + `make_revol.rs` 陈旧 GAP 注释删除 + E3-W 追加 5）← `29f1d875`（docs：E3-W 交接对齐）← `0ca1833e`（`revolve_profile_solid` 1:1 入口）；根仓库 = **`77645cd`**（**本轮尾**：生成器 `revol` 分支改发 `revolve_profile_solid` + rcad 指针 sync）← `411d37c`（sync）← `96dea57`（生成器四修）← `3852636`。rcad 工作树干净（仅 `temp/` 未跟踪）；根仓库 `tools/occt-hlr-runner/build/**` 的改动是既有构建产物（非本轮，未纳入提交）。**根仓库 `77645cd` 按用户长期要求未推送；rcad `a0063fe6` 本轮亦未推送**（如需推送请先确认）。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 - **开场三步**：① 通读本档 §0 → §9 E3-S/E3-U/E3-V → AGENTS.md（**铁律：非 TKBool 模块的代码与修复一律严格 1:1 翻译对齐——逐行语句对照 + 函数计数等式 + OCCT 行号锚点 + 禁载体/禁等价替换/禁运行时凑结果；GAP 载体仅限外部未翻依赖并保留 OCCT 失败路径；架构差异必须先消灭再对齐**）→ ShHealing 两份；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 **412/0/0**（kernel **677/0**、builder_stage 76 + smoke 1、pavefiller 26、**boolean 八网格**：bopfuse 371/4 · bopcommon 374/4 · bopcut 379/0 · boptuc 369/4 · splitter 10/2（失败集 ze7-ze9/zf1 + a2/b2）+ bfuse_simple 102/102 · bcommon_simple 83/83 · bcut_simple 109/109 **（必须 `-Exclude "g6"`，见下）**）；③ 从下方队列取项开工。
