@@ -884,13 +884,30 @@ impl FaceFace {
         }
     }
 
-    /// OCCT IntTools_FaceFace::Perform — compute intersection.
+    /// OCCT GeomAdaptor_Surface::Load (GeomAdaptor_Surface.cxx L423-431): a
+    /// Geom_RectangularTrimmedSurface loads as its basis surface recursively
+    /// (the trim range becomes the adaptor first/last bounds).
+    fn unwrap_trimmed_surface(s: Surface3) -> Surface3 {
+        match s {
+            Surface3::Trimmed(t) => Self::unwrap_trimmed_surface(*t.basis),
+            other => other,
+        }
+    }
+
+/// OCCT IntTools_FaceFace::Perform — compute intersection.
     pub fn perform(&mut self, ds: &crate::bop::ds::DS) {
         self.curves.clear();
         self.lines.clear();
         self.tangent_faces = false;
-        let s1 = self.surf1.clone();
-        let s2 = self.surf2.clone();
+        // OCCT IntTools_FaceFace::Perform L330-362 loads the faces' surfaces
+        // into GeomAdaptor_Surface; the adaptor load (GeomAdaptor_Surface.cxx
+        // L423-431) unwraps a Geom_RectangularTrimmedSurface into its BASIS
+        // surface recursively.  rcad's TrimmedSurface does not reparameterize
+        // (point_at forwards to the basis), and the trim range rides through
+        // the face UV bounds (face_actual_uv_bounds falls back to the trimmed
+        // default domain), so unwrapping here reproduces the adaptor view.
+        let s1 = Self::unwrap_trimmed_surface(self.surf1.clone());
+        let s2 = Self::unwrap_trimmed_surface(self.surf2.clone());
         // OCCT BOPAlgo_FaceFace::Perform (BOPAlgo_PaveFiller_6.cxx L180-235):
         // if the combined box of the two faces is far from the origin, move
         // both faces to the origin to increase the accuracy of intersection;
