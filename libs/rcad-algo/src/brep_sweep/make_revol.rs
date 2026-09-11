@@ -97,13 +97,11 @@ pub fn revolve_profile_solid(
     // closes its wire and builds a face by default), so the generator handed to
     // BRepSweep_Revol is a Face and the lateral faces come from its edges.
     //
-    // GAP: for a Face generator `BRepSweep_Rotation::SplitShell`
+    // For a Face generator `BRepSweep_Rotation::SplitShell`
     // (BRepSweep_Rotation.cxx L797-802) runs `BRepTools_Quilt Q; Q.Add(S);
-    // Q.Shells();` — BRepTools_Quilt (TKBRep, 590 lines cxx + 96 hxx) is not
-    // translated yet, so the sweep raises there.  Translating it is the single
-    // remaining step for the analytic revolution; do NOT route around it (the
-    // wire-generator sweep yields the same lateral faces, but that is an
-    // equivalent-substitution, which the alignment rules forbid).
+    // Q.Shells();` — BRepTools_Quilt is translated in
+    // crate::topalgo::brep_tools_quilt and wired into SplitShell, so the
+    // genuine OCCT flow runs here.
     let plane = meridian_plane(segments);
     let wire = brep.add_twire(edges);
     let face = brep.add_tface(Some(plane), wire, vec![], None, None, vec![], false);

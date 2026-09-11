@@ -32,6 +32,8 @@ use crate::brep_algo::tool::{
     brep_tool_curve, brep_tool_parameter, brep_tool_pnt, brep_tool_surface, brep_tool_tolerance,
     explorer,
 };
+// OCCT BRepTools_Quilt (TKBRep/BRepTools), consumed by SplitShell (cxx L797-802).
+use crate::topalgo::brep_tools_quilt::BRepToolsQuilt;
 
 /// The axis pair (OCCT gp_Ax1: Location, Direction).
 pub type GpAx1 = (glam::DVec3, glam::DVec3);
@@ -760,16 +762,15 @@ impl NumLinearRegularSweepSlots for BRepSweepRotation {
         }
     }
 
-    /// OCCT BRepSweep_Rotation::SplitShell (cxx L797-802).
-    ///
-    /// GAP: BRepTools_Quilt (TKBRep/BRepTools — not translated; the
-    /// BRepTools_Modifier/Quilt/TrsfModification batch owns it, see the port
-    /// plan §E1 new-schedule item 4).  OCCT anchor: cxx L799-801 (Q.Add(
-    /// aNewShape); return Q.Shells()) — the OCCT failure path (an exception
-    /// on quilt-free construction) is preserved by the panic.
+    /// OCCT BRepSweep_Rotation::SplitShell (cxx L797-802):
+    /// `BRepTools_Quilt Q; Q.Add(aNewShape); return Q.Shells();`.
     fn split_shell(&self, a_new_shape: &Shape) -> Shape {
-        let _ = a_new_shape;
-        panic!("GAP: BRepTools_Quilt (TKBRep/BRepTools not translated) — BRepSweep_Rotation::SplitShell, OCCT BRepSweep_Rotation.cxx L797-802");
+        // OCCT cxx L799: BRepTools_Quilt Q.
+        let mut q = BRepToolsQuilt::new();
+        // OCCT cxx L800: Q.Add(aNewShape).
+        q.add(a_new_shape);
+        // OCCT cxx L801: return Q.Shells().
+        q.shells()
     }
 
     /// OCCT BRepSweep_Rotation::HasShape (cxx L806-848).
