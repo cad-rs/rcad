@@ -760,6 +760,22 @@ libs/rcad-algo/src/
     2. **`AdvApprox_ApproxAFunction` 通用逼近的无界递归/超慢**（`libs/rcad-kernel/src/math/adv_approx/`）：输入 = `Approx_CurveOnSurface` 对一个 half-circle iso 弧（半径 10）的逼近；症状 = 2MB 栈溢出、256MB 栈下 763s。修好它即可让 `TreatRLine` 走回 OCCT 原路（进而可去掉 `iso_line_analytic_curve3` 这条替身），且解锁所有非 iso 的 RLine。
     3. E3-V 队列第 3 项照旧（feat/offset/blend 各域）；StepWriter 周期面 seam 保真度；随手迁移与清理项照旧。
 
+- **E3-W 追加 7：g6 攻坚第二波——`Geom2dAdaptor_Curve::Trim` 嵌套钳位 bug（AdvApprox 崩溃根因）1:1 修复 + 回到 OCCT 原路**
+  - **根因（1:1 偏差，本轮最有价值的一条）**：OCCT `Geom2dAdaptor_Curve::Trim(First, Last, Tol)`（`Geom2dAdaptor_Curve.cxx` L577-584）是
+    `return new Geom2dAdaptor_Curve(myCurve, First, Last)` —— **复用同一条基曲线**，区间只存在 `myFirst/myLast` 里，**不包成 `Geom2d_TrimmedCurve`**。
+    rcad 的 `Geom2dCurveAdaptor::trim` 却把当前曲线**再包一层** `Curve2d::Trimmed`，而 `TrimmedCurve2::point_at` 会 `clamp` 到自身区间 ⇒ **多次 trim 会层层嵌套钳位**：前一次的区间会把之后所有求值截断成常数。
+  - **后果（为何 AdvApprox 看起来"无界递归/超慢"）**：`OrderedApprox` 路径**每个候选区间都会重新 trim 一次**。于是第一次切分之后的每个区间都求值错误——实测该弧的 `SimpleApprox` 误差在 `[0.196350, 0.392699]` 上高达 **5.65e-2**，且**每次二分只减半**（正常应 ~2⁻⁹），因此二分一路切到 `max_segments = 1000`：**763s**，默认 2MB 栈下直接 **has overflowed its stack**。**这不是"递归 bug"，是 trim 语义 bug。**
+  - **修复（1:1）**：`Geom2dCurveAdaptor::trim` 改为 OCCT 形式 —— `curve: self.curve.clone()` + 新的 `first/last`，不再包 `Trimmed`。**实测**：同一个 `Approx_CurveOnSurface`（half-circle iso 弧、r=10、tol=1e-7）从"栈溢出/763s"变为 **1.84ms、5 段、err3d = 3.19e-8、done=true**。
+  - **连带（回到 OCCT 原路）**：引擎可用后，`make_restriction_curves` **无条件**走 `GeomInt_IntSS::TreatRLine`（`GeomInt_IntSS_1.cxx` L1139-1159）的 `Approx_CurveOnSurface(anAHC2d, aGAHS, tf, tl, Precision::Confusion())` + `Perform(1000, 8, GeomAbs_C1, true, false)` + `HasResult()`；追加 6 引入的 `iso_line_analytic_curve3` **替身已删除**（不再是等价替换）。g6 用时 **0.17s**。
+  - **g6 位移（实测）**：**8F/17E/10V → 9F/23E/18V**，其中 **顶点数 18 与参考完全相等**；首次出现**圆柱结果面**（CYLINDRICAL_SURFACE 0 → 1）。SA **68065.57 → 38998.24**（参考 41187.4）。参考为 10F（6 PLANE + 2 CYL + 2 SoR）/27E/18V。
+  - **缺口再定界（本轮实测，比追加 6 更深一层）**：
+    1. 回转面**并非被 `BuildSplitFaces` 跳过**：`[BSF]` 探针显示 `face=43 in=0 on=4 sc=1 alone=1`、`face=53 in=0 on=4 sc=1 alone=1`（对照：盒面 `face=2 on=3 sc=2`，`face=12/22/26` 因无块被跳过——正常）。即 RLine 曲线**确实**为回转面建立了 On/Sc 面块。
+    2. 但 `BuilderFace::perform` 在**两张回转面上产出的 areas = 0**（`[BF2] revolution face split -> areas=0` ×2）。⇒ **缺口在 `PerformLoops`/`PerformAreas` 对回转面的处理**（最可能是新截面边在回转面上的 **pcurve**），不在 paving、不在 FF、不在 Skip 判定。
+  - **门槛（本轮逐字复测，均为实测；exe mtime 21:05-21:08 本次编译产物）**：lib **412/0/0** · kernel **678/0** · 八网格 **bopfuse 375/375 · bopcommon 378/378 · bopcut 379/379 · boptuc 373/373 · splitter 12/12 · bfuse_simple 102/102 · bcommon_simple 83/83 · bcut_simple 109/110（唯一失败仍是 g6）**——与 AGENTS.md §网格回归基线逐字一致，**本轮零回归**（注：`Geom2dAdaptor_Curve::Trim` 是核心适配器，八网格全量复测确认无位移）。
+  - **下轮队列（依追加 7 更正，按优先级）**：
+    1. **`BuilderFace` 对回转面产出 0 areas**（g6 的直接缺口）：从 `PerformLoops` 切入——查该面的边集（原边界边 + 由 On 面块产生的新截面边）在回转面上能否闭合成 wire；重点核对**新截面边在回转面上的 pcurve**（`make_restriction_curves` 写入的 `pcurve1 = arc`）是否随 `FillImagesEdges` 落到 split edge 的面键上（键为 `L.Predivided(E.Location())`，见追加 6 的 pcurve 键坑）。可用 `[BF2]`/`[BSF]` 同型探针（本次已删）快速回看。
+    2. E3-V 队列第 3 项照旧（feat/offset/blend 各域）；StepWriter 周期面 seam 保真度；随手迁移与清理项照旧。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 - **开场三步**：① 通读本档 §0 → §9 E3-S/E3-U/E3-V → AGENTS.md（**铁律：非 TKBool 模块的代码与修复一律严格 1:1 翻译对齐——逐行语句对照 + 函数计数等式 + OCCT 行号锚点 + 禁载体/禁等价替换/禁运行时凑结果；GAP 载体仅限外部未翻依赖并保留 OCCT 失败路径；架构差异必须先消灭再对齐**）→ ShHealing 两份；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 **412/0/0**（kernel **677/0**、builder_stage 76 + smoke 1、pavefiller 26、**boolean 八网格**：bopfuse 371/4 · bopcommon 374/4 · bopcut 379/0 · boptuc 369/4 · splitter 10/2（失败集 ze7-ze9/zf1 + a2/b2）+ bfuse_simple 102/102 · bcommon_simple 83/83 · bcut_simple 109/109 **（必须 `-Exclude "g6"`，见下）**）；③ 从下方队列取项开工。
