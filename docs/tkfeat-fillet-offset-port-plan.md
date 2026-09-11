@@ -796,12 +796,37 @@ libs/rcad-algo/src/
     - **注意**：参考结果的 SoR 面本就是 **5 边面**（`FaceSig SURFACE_OF_REVOLUTION (5e): ref=2`），rcad 的 `face=43` 恰好也是 5 边 ⇒ 43 的环**边数对但走向/取 pcurve 有误**；`face=53` 是 **3 边**（少一条，缺 v=2π 边）⇒ 两者都需修。
   - **`split_into_wires` 的输入（`[WS-IN]` face=53，5 条边）**：`v=π` 整圆（`o=(0,3.142) d=(1,0)`）、`v=2π` 圆被切成两段（`t=(0,1.176)` 与 `t=(1.176,6.283)`）、以及 seam 的闭对（同一 `edge_ptr` 两条 pcurve：`u=2π` 与 `u=0`，各 `v∈[3.142,6.283]`）。⇒ 输入齐备，**是 WireSplitter 只把其中 3 条装进了环，且走向令 v=π 被来回穿两次**。**下轮入口：`bop/algo/wire_splitter.rs` 在回转面（含 seam 闭对 + 周期 UV）上的环路装配与 `edge_pcurve_on_face` 的 seam 侧选择**（`CurveOnClosedSurface` 的 pcurve1/pcurve2 由边的朝向选取，`builder_face.rs::edge_pcurve_on_face` L850+ 已实现该规则——需核对周期面下 `u=0` 与 `u=2π` 的相位与走向）。
   - **门槛**：本轮**纯探针，无代码改动**（探针已全部删除，工作树回到 `08dcf225` 之后的干净状态）；八网格门槛维持追加 7 的实测值 **375/378/379/373/12/102/83/109+1**，lib **412/0/0** · kernel **678/0**。
-  - **下轮队列（依追加 8 更正，按优先级）**：
-    1. **`WireSplitter` 在回转面周期 UV + seam 闭对上的环路装配**（g6 的直接缺口）：从 `face=53` 少一条 `v=2π` 边、且 `v=π` 被来回穿两次切入；核对 seam 边在环里出现两次时其两条 pcurve（`u=0` / `u=2π`）是否分别被正确选用，以及周期面上的 `AdjustPeriodic`（OCCT `BOPAlgo_WireSplitter` / `BOPTools_AlgoTools2D`）是否到位。
-    2. `face=43` 的 5 边环走向（`a_s<0`）——同一处的走向/相位问题。
-    3. E3-V 队列第 3 项照旧（feat/offset/blend）；StepWriter 周期面 seam 保真度；随手迁移与清理项照旧。
+  - **下轮队列（依追加 9 更正，按优先级；追加 8 的原"队列第 1 项"= `WireSplitter` 已证伪，见追加 9）**：
+    1. **回转面只剩 1 个环 / `mySmartMap` 只有 3 个顶点（OCCT 5）**（g6 现在的直接缺口）：从 `BuildSplitFaces` 给回转面（`ds=43/53`，`pb_on=4 pb_sc=1`）的 `aLE` 只有 6 项、OCCT 是 10 项切入，按 OCCT `BOPAlgo_Builder_2.cxx L362-494` 的 1.1（边界边 + 其 `myImages`）/1.2（In 边）/1.3（Sc 边）三条来源逐项核对——重点是 **x=0 / z=0 平面与回转面的两条交线（OCCT `E_f`/`E_g`）为何进不了 `aLE`**，以及被它们切开的两段下圆（OCCT `bottom-D`/`bottom-E`）为何没有出现。**探针配方**：rcad 侧 `[BS-Ale]`（本轮已删，可从追加 9 的描述快速重建），OCCT 侧 `[OCCT-WS]` + 新增的 `occt_bool_runner bcut_simple G6` 用例。
+    2. E3-V 队列第 3 项照旧（feat/offset/blend）；StepWriter 周期面 seam 保真度；随手迁移与清理项照旧。
   - **提交链尾（追加 6/7/8 三轮，2026-09-11）**：rcad `main` = `4f26677f`（docs：追加 8）← `68620e0a`（docs：追加 7）← **`08dcf225`**（**本轮核心 / 追加 7**：`Geom2dAdaptor_Curve::Trim` 去嵌套钳位 —— 修好 AdvApprox 通用逼近 + `make_restriction_curves` 回到 OCCT `TreatRLine` 原路、删除替身）← `946fff42`（docs：追加 6）← `42885369`（**追加 6 / 4 个 1:1 修复**：QuasiAngular 幂基求值、`Geom_Surface::UIso/VIso`、isoline 精确 BSDF 转换、RLine 3D 曲线）← `b2c1dfb6` ← `398e14c8` ← **`a0063fe6`**（追加 5：`SplitShell` 接线 `BRepTools_Quilt`）← `29f1d875` ← `0ca1833e`；根仓库 = `2c0ca3a`（rcad 指针 sync，含追加 8）← `243542b` ← `06d8929` ← `7773b89` ← `77645cd`（**追加 5 生成器**：满转含弧 `revol` 改发 `revolve_profile_solid`）← `411d37c` ← `96dea57` ← `3852636`。**rcad 工作树干净（仅 `temp/` 未跟踪）**；两仓库**均未推送**（用户长期要求；如需推送请先确认）。
   - **本轮踩过并已固化的坑（勿重复）**：① `tests/occt/target/` 是历史遗留旧 exe 目录，真产物在**根仓库** `target/debug/deps/`；② `run_grid.ps1` 在**根仓库** `output/`，且 shell cwd 会被重置 ⇒ 用绝对路径；③ `output/` 是 gitignored 临时目录；④ `builder.rs`/`builder_face.rs` 里 `RCAD_MB_DEBUG`/`RCAD_AREA_DEBUG`/`RCAD_WS_DEBUG` 是既有探针，可直接复用；⑤ `Geom2dAdaptor_Curve::Trim` 与 `AdvApprox` 已修好，**不要**再把"通用逼近慢/栈溢出"当成递归 bug（追加 7 已定案）。
+
+### E3-W 追加 9：队列第 1 项落地——`WireSplitter` 是**受害者不是元凶**；真因 = RLine 的"另一面 pcurve"参数化错位 ⇒ 曲线容差 23.33 ⇒ 微块误判 ⇒ 顶点容差污染 ⇒ 回转面环退化（1:1 修复已落地，八网格零回归）
+
+- **队列第 1 项（`WireSplitter` 在回转面周期 seam 上的环装配）结论：方向错误。** 本轮用**双侧插桩对拍**（OCCT 侧给 `BOPAlgo_WireSplitter_1.cxx` 加 `[OCCT-WS]` 探针、经 `tools/occt-bool-runner` 新增的 **G6 用例** 跑真 DRAW 几何；rcad 侧同型 `[RCAD-WS]` 探针），逐项比对 `SplitBlock` 的输入边表 / `mySmartMap` / `Path` 走线 / `LOOP`，得到：
+  - OCCT 的两张回转面 `SplitBlock`：`aNb=5` 个顶点、**各产出 2 个 5 边环**（同一面被 x=0 与 z=0 平面切出的两条交线分成两个区域），输入边表 10 项 = 上圆两段 + seam 两份 + E_f 两份 + E_g 两份 + 下圆两段。
+  - rcad 修复前：`aNb=2`（顶点只剩 2 个）、face=43 出 1 个 5 边环（`a_s<0`）、face=53 出 1 个 **3 边环**（`v=π` 被来回穿两次、`a_s` 恰为 0）。**`WireSplitter` 的 Walk/Angle/ClockWiseAngle 逐行实现与 OCCT 一致**——它拿到的顶点集本身已被摧毁。
+  - 决定性证据：rcad 的**原始 TShape 顶点**就是 `(40,70,40) tol=2e1` / `(40,20,40) tol=2e1`（`rawF/rawL` 探针），即**两条子午弧的圆心 + 2R 容差**，而不是 `(50,70,40)/(30,70,40)`。回转面 seam 的两端被合并成同一个点，环自然走不通。
+- **真因链（全部实测，逐层剥开）**：
+  1. **输入几何无罪**：`revolve_profile_solid` 出来的 `rev2` 顶点正确（4 个角点 `tol=1e-7`，`[REV]` 探针）。
+  2. **RLine 的 3D 逼近无罪**：`Approx_CurveOnSurface` 四条 RLine 均 `done=true`、`err3d = 3.19e-8`（与追加 7 实测一致）。
+  3. **有罪的是"另一面上的 pcurve"**：`build_projected_pcurve`（`bop/int_tools/face_make_curve.rs`）对"曲线落在平面内"这一情形**没有 OCCT 的 `ProjLib_Plane::Project` 分支**，退化到自造的 `Curve2d::Line{origin=uv(tf), direction=(uv(tl)-uv(tf))/(tl-tf)}` 兜底——而 rcad 的 `Line2d` 求值是 `origin + t*direction`，**tf≠0 时整个 pcurve 相位错位**（本 case 的 RLine 参数区间恰为 `(-π,0)`、`(π,2π)` 等）。
+  4. **容差被这个错位 pcurve 污染**：`IntTools_Tools::ComputeTolerance` 等参求 3D 曲线与 pcurve-回贴曲面的偏差，rdac 的 `compute_tol_reached_3d` 得到 **23.33**（`[MICRO-BLK] tolR3D=2.333090e1`），而正确值应 ~3e-8。
+  5. **微块误判**：该容差进入 `ShrunkRange::find_valid_range` 的"顶点球"半径（`aTolV1 = max(Tol(V1), Tol(E))`），半圆整段落在球内 ⇒ `find_nearest_valid_point` 返回 false ⇒ `MakeBlocks` 把这两条子午弧的块判成 **micro block**（OCCT `PaveFiller_6.cxx L932-960`）。
+  6. **顶点容差污染**：`PostTreatFF` 的 micro-PB 分支（rcad `pave_filler_make_blocks.rs` ↔ OCCT `PaveFiller_6.cxx L1324-1359`）对 4 个子午角点各置 `tol = 1e-7 + 20/2 = 10`（`[SVTO]` 探针）。
+  7. **子 PaveFiller 的 VV 误合并**：`PostTreatFF` 内嵌子 PF 的 `PerformVV` 里 `ComputeVV` 现在看到两角点 `tolSum=20 ≥ 相距 20` ⇒ 判定干涉 ⇒ `MakeSDVertices` 合并成**中点 + max 容差** = `(40,70,40) tol=20` / `(40,20,40) tol=20`（`[PUSHV]` 栈回溯直达 `make_sd_vertices`）。
+  8. **后果**：这两枚伪顶点替换掉回转面边界上的真顶点 ⇒ `BuildSplitFaces` 给回转面的边集里丢掉了真正的截面边 E_f/E_g、混进一条与 seam 重合的"子午弧"截面边 ⇒ `WireSplitter` 只剩 2 个顶点 ⇒ 环退化 ⇒ `IsHole=true` ⇒ `areas=0` ⇒ 结果里没有回转面。
+- **本轮 1:1 修复（唯一改动，2 个文件）**：
+  1. `libs/rcad-kernel/src/base/proj_lib/mod.rs`：新增 `PlaneProjector::project_bspline` —— 对应 OCCT `ProjLib_Plane::Project(Handle(Geom_Curve))` 的**平面内曲线**分支：把控制点经平面帧映射成 2D 控制点，knots/degree/weights **原样保留**（因此 2D 与 3D **同参数**），走已有 `Projector::set_bspline`。
+  2. `libs/rcad-algo/src/bop/int_tools/face_make_curve.rs`：`build_projected_pcurve` 在原有分支**之前**加 OCCT `GeomInt_IntSS::BuildPCurves`（`GeomInt_IntSS_1.cxx L1175-1186`）的 `GeomProjLib::Curve2d` 语义分支——3D 曲线为 BSpline、另一面为 Plane 且曲线确实落在该平面内（`bspline_lies_in_plane`，9 点采样的 `Precision::Confusion` 面距测试）时，走新的精确平面投影。**原有 analytic 快路与兜底路径原样保留**（只在精确分支不适用时才走到）。
+- **实测效果（修复后，探针已全部删除）**：真因链**整段消失**——`[MICRO-BLK]`/`[SVTO]`/`[PUSHV]` 命中数 **0**；回转面 `mySmartMap` 顶点数 **2 → 3**、face=53 的环 **3 边 → 5 边**（"`v=π` 来回穿两次"的退化环消失）；测试内 VERTEX 断言 **14 → 16**（参考 18）。**八网格零回归**：bopfuse 375/375 · bopcommon 378/378 · bopcut 379/379 · boptuc 373/373 · splitter 12/12 · bfuse_simple 102/102 · bcommon_simple 83/83 · bcut_simple 109/110（唯一失败仍 g6）；lib 412/0/0 · kernel 678/0。
+- **g6 剩余缺口（下一批的直接靶子，已比追加 8 更深一层）**：回转面的 `mySmartMap` 仍只 **3** 个顶点（OCCT 5），且**仍只产出 1 个环**（OCCT 每面 2 个）。即：x=0 / z=0 平面与回转面的两条交线（OCCT 的 `E_f`/`E_g`，BSpline）**仍未落进回转面的 `aLE`**——本轮只解决了"伪顶点摧毁顶点集"，尚未解决"真截面边未进面块"。下一批入口：`BuildSplitFaces` 里回转面（`ds=43/53`，`pb_on=4 pb_sc=1`）为何只拿到 6 项而 OCCT 是 10 项（对照 OCCT `BOPAlgo_Builder_2.cxx L362-494` 的 1.1/1.2/1.3 三条边来源），重点核对 **`myImages`（边界边的像）是否包含被 x=0/z=0 交线切开的两段**，以及 `E_f`/`E_g` 究竟应走 In 边还是 Sc 边。
+- **本轮固化/强化的坑（勿重复）**：
+  - **"某函数的输出不对"之前，先证明它的输入是对的。** 追加 8 把入口定在 `WireSplitter`，是因为它拿到的顶点集看起来"齐备"（`[WS-IN]` 5 条边、pcurve 都在）；但 `SplitBlock` 的**顶点身份**（`mySmartMap` 的键）才是环装配的地基。**顶点 TShape 的 `point`/`tolerance` 必须单独打印核对**——只看边表与 pcurve 会漏掉整条真因链。
+  - **`mySmartMap` 的 `aNb`（顶点数）是最省事的一致性指标**：OCCT 5 vs rcad 2（修复前）/3（修复后），一眼定位。
+  - **对拍基建本轮新增（可复用）**：`tools/occt-bool-runner/cases/bcut_simple.hpp` 新增 **G6 用例**（`box 100×100×40 − revolve(2 线 + 2 弧, 轴 (0,0,50) dir Y, 360°)`，checkprops 41187.4）——OCCT 侧从此可以脱离 DRAWEXE（debug 版无 Draw 模块）跑真 g6 几何；配合 OCCT 源里的 `[OCCT-WS]` 探针（本轮已用后 `git checkout` 还原）+ rcad 侧 `[RCAD-WS]` 同型输出即可逐项 diff。
+  - `RCAD_MICRO_DBG` 这类"带原因串的早退探针"（把每个 `return true` 换成 `micro_trace(..., "<原因>")`）比事后猜分支快得多。
 
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 

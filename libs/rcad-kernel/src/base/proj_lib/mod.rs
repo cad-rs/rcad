@@ -11,8 +11,8 @@
 use glam::{DVec2, DVec3};
 
 use crate::geom::{
-    Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse3, Hyperbola3, Line3,
-    Parabola3, Plane, SphericalSurface, Surface3, ToroidalSurface,
+    BSplineCurve2, BSplineCurve3, Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface,
+    Ellipse3, Hyperbola3, Line3, Parabola3, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
 
 // OCCT ProjLib package additions (TKGeomBase/ProjLib).
@@ -373,6 +373,29 @@ impl PlaneProjector {
                 minor_radius: circle.radius * y_len,
             });
         }
+        self.projector.done();
+    }
+
+    /// Project a 3D B-spline curve lying in the plane → 2D B-spline.
+    ///
+    /// OCCT: `ProjLib_Plane::Project(Handle(Geom_Curve))` when the curve lies
+    /// in the plane: the poles are mapped through the plane frame and the
+    /// knots/degree/multiplicities are KEPT, so the 2D curve carries the same
+    /// parameterization as the 3D one (GeomProjLib::Curve2d's contract, which
+    /// GeomInt_IntSS::BuildPCurves relies on when it evaluates the 3D and the
+    /// 2D curve at the same parameter).
+    pub fn project_bspline(&mut self, curve: &BSplineCurve3) {
+        let control_points: Vec<DVec2> = curve
+            .control_points
+            .iter()
+            .map(|p| self.to_uv(*p))
+            .collect();
+        self.projector.set_bspline(Curve2d::BSpline(BSplineCurve2 {
+            degree: curve.degree,
+            knots: curve.knots.clone(),
+            control_points,
+            weights: curve.weights.clone(),
+        }));
         self.projector.done();
     }
 

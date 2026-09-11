@@ -877,6 +877,27 @@ pub(crate) fn build_analytic_pcurve(
 /// the exact 2D image on the plane is a circle with the same parameterization
 /// (the plane's orthonormal UV frame preserves the circle frame).  Other cases
 /// fall back to the small-range branch (a line through the endpoint UVs).
+/// Does the B-spline segment on [tf, tl] lie in `pl` (within Precision::Confusion)?
+/// ProjLib_Plane::Project maps the poles through the plane frame, which is the
+/// exact 3D→2D image only for a curve contained in the plane.
+fn bspline_lies_in_plane(
+    b: &rcad_kernel::geom::BSplineCurve3,
+    tf: f64,
+    tl: f64,
+    pl: &rcad_kernel::geom::Plane,
+) -> bool {
+    use rcad_kernel::geom::CurveEval;
+    let c = Curve3::BSpline(b.clone());
+    for i in 0..=8 {
+        let t = tf + (tl - tf) * (i as f64) / 8.0;
+        let d = (c.point_at(t) - pl.origin).dot(pl.normal);
+        if d.abs() > rcad_kernel::CONFUSION {
+            return false;
+        }
+    }
+    true
+}
+
 fn build_projected_pcurve(
     other_surf: &Surface3,
     curve3: &Curve3,
@@ -885,6 +906,23 @@ fn build_projected_pcurve(
     _n: usize,
     uv_bounds: [f64; 4],
 ) -> Option<Curve2d> {
+    // OCCT GeomInt_IntSS::BuildPCurves (GeomInt_IntSS_1.cxx L1175-1186):
+    //   theCurve2d = GeomProjLib::Curve2d(theCurve, theFirst, theLast,
+    //                                     theSurface, u1, u2, v1, v2, theTol);
+    // For a B-spline curve LYING IN a plane this resolves to
+    // ProjLib_Plane::Project, which maps the poles through the plane frame and
+    // keeps the knots/degree — the 2D curve is SAME-PARAMETER with the 3D one.
+    // That matters downstream: IntTools_Tools::ComputeTolerance evaluates the
+    // 3D curve and its pcurve at the SAME parameter and takes the deviation as
+    // the curve tolerance, so a mis-parameterized pcurve inflates the
+    // tolerance of the whole section curve.
+    if let (Curve3::BSpline(b), Surface3::Plane(pl)) = (curve3, other_surf) {
+        if bspline_lies_in_plane(b, tf, tl, pl) {
+            let mut proj = rcad_kernel::base::proj_lib::PlaneProjector::with_plane(pl);
+            proj.project_bspline(b);
+            return Some(proj.projector().to_curve2d());
+        }
+    }
     if let Some(c) = build_analytic_pcurve(other_surf, curve3, tf, tl, uv_bounds, None) {
         return Some(c);
     }
@@ -902,8 +940,7 @@ fn build_projected_pcurve(
     }))
 }
 
-/// Classify a WLine point on a surface using its precomputed UV.
-/// OCCT GeomInt_LineConstructor WLine path: classify with the constructor
+/// Classify a WLine point on a surface using its precomputed UV./// OCCT GeomInt_LineConstructor WLine path: classify with the constructor
 /// tolerance `Tol = Precision::PConfusion() * 35.0` (L118).
 fn in_uv_rect_adjusted(surf: &Surface3, rect: [f64; 4], _p3d: DVec3, u: f64, v: f64) -> bool {
     let adj = adjust_periodic_uv(surf, DVec2::new(u, v), rect);
