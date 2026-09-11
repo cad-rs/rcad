@@ -13,6 +13,7 @@
 
 use glam::DVec3;
 
+use crate::core::precision::is_infinite_value;
 use crate::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use crate::base::extrema::ExtPS;
 
@@ -75,7 +76,9 @@ impl IntCS {
         // For unbounded curves (e.g. Line), fall back to a finite range so
         // sampling and Newton clamping are well-defined. Matches curve_domain
         // in base::extrema.
-        let (t_min, t_max) = if !dom[0].is_finite() || !dom[1].is_finite() {
+        // OCCT Precision::IsInfinite (Precision.hxx L350-353): the unbounded
+        // domain sentinels are +/-Precision::Infinite() = +/-2e100.
+        let (t_min, t_max) = if is_infinite_value(dom[0]) || is_infinite_value(dom[1]) {
             (-1e6, 1e6)
         } else {
             (dom[0], dom[1])
@@ -91,7 +94,7 @@ impl IntCS {
         // For unbounded surfaces (e.g. Plane), fall back to a finite range so
         // ExtPS / signed-distance evaluation are well-defined.
         let (sf_u0, sf_u1, sf_v0, sf_v1) =
-            if !surf_dom[0].is_finite() || !surf_dom[1].is_finite() || !surf_dom[2].is_finite() || !surf_dom[3].is_finite()
+            if is_infinite_value(surf_dom[0]) || is_infinite_value(surf_dom[1]) || is_infinite_value(surf_dom[2]) || is_infinite_value(surf_dom[3])
             {
                 (-1e6, 1e6, -1e6, 1e6)
             } else {

@@ -1438,7 +1438,10 @@ pub trait CurveEval {
         (fm2 - 8.0 * fm1 + 8.0 * fp1 - fp2) / (12.0 * h)
     }
     /// Natural parameter domain `[t_min, t_max]`.
-    /// Lines use `[NEG_INFINITY, INFINITY]`; circles/ellipses use `[0, 2π]`.
+    /// Unbounded producers (line / parabola / hyperbola) return
+    /// `±Precision::Infinite()` (±2e100, OCCT Geom_Line.cxx L137/L144,
+    /// Geom_Parabola.cxx L114/L128, Geom_Hyperbola.cxx L94/L101); circles and
+    /// ellipses use `[0, 2π]`.
     fn default_domain(&self) -> [f64; 2];
 
     /// OCCT-aligned: IsClosed — true for periodic curves where start == end (circle, ellipse).
@@ -2048,7 +2051,13 @@ fn curve_to_bspline_2d(c: &Curve2d) -> Option<BSplineCurve2> {
                 Curve2d::Trimmed(tc) => [tc.t_min, tc.t_max],
                 _ => c.default_domain(),
             };
-            if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < 1e-30 {
+            // OCCT Precision::IsInfinite (Precision.hxx L350-353): the
+            // unbounded domains (Line2d/Parabola2d/Hyperbola2d =
+            // +/-2e100) cannot be sampled as finite ranges.
+            if crate::core::precision::is_infinite_value(t0)
+                || crate::core::precision::is_infinite_value(t1)
+                || (t1 - t0).abs() < 1e-30
+            {
                 return None;
             }
             let n = 23usize;

@@ -9,3 +9,4 @@ output/
 pipeline_dumps/
 target_b/
 target_*/
+.mimosa/

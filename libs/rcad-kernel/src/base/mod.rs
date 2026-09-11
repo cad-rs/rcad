@@ -30,6 +30,7 @@ pub mod extrema_ext_p_elc;
 pub mod extrema_ext_pc;
 pub mod extrema_func_ext_pc;
 pub mod extrema_gen_ext_pc;
+pub mod extrema_locate_ext_pc;
 pub mod extrema_gp;
 pub mod lprop;
 pub mod proj_lib;

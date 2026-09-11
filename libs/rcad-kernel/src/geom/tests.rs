@@ -1061,10 +1061,12 @@ mod eval_tests {
 
     #[test]
     fn line3_default_domain_infinite() {
+        // OCCT Geom_Line.cxx L137/144: FirstParameter = -Precision::Infinite(),
+        // LastParameter = +Precision::Infinite() (2e100, IEEE-finite).
         let line = Line3::new(DVec3::ZERO, DVec3::X);
         let [t0, t1] = line.default_domain();
-        assert!(t0.is_infinite() && t0.is_sign_negative());
-        assert!(t1.is_infinite() && t1.is_sign_positive());
+        assert_eq!(t0, -crate::core::precision::INFINITE_VALUE);
+        assert_eq!(t1, crate::core::precision::INFINITE_VALUE);
     }
 
     // ── Circle ─────────────────────────────────────────────────────────

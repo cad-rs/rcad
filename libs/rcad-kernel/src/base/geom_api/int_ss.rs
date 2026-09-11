@@ -15,6 +15,7 @@
 
 use glam::DVec3;
 
+use crate::core::precision::is_infinite_value;
 use crate::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 
 const TOL: f64 = 1e-7;
@@ -67,14 +68,16 @@ impl IntSS {
 
         // For unbounded surfaces (e.g. Plane), fall back to a finite range so
         // the sampling grid below is well-defined.
+        // OCCT Precision::IsInfinite (Precision.hxx L350-353): the unbounded
+        // domain sentinels are +/-Precision::Infinite() = +/-2e100.
         let (u1_min, u1_max, v1_min, v1_max) =
-            if dom1[0].is_finite() && dom1[1].is_finite() && dom1[2].is_finite() && dom1[3].is_finite() {
+            if !is_infinite_value(dom1[0]) && !is_infinite_value(dom1[1]) && !is_infinite_value(dom1[2]) && !is_infinite_value(dom1[3]) {
                 (dom1[0], dom1[1], dom1[2], dom1[3])
             } else {
                 (-1e6, 1e6, -1e6, 1e6)
             };
         let (u2_min, u2_max, v2_min, v2_max) =
-            if dom2[0].is_finite() && dom2[1].is_finite() && dom2[2].is_finite() && dom2[3].is_finite() {
+            if !is_infinite_value(dom2[0]) && !is_infinite_value(dom2[1]) && !is_infinite_value(dom2[2]) && !is_infinite_value(dom2[3]) {
                 (dom2[0], dom2[1], dom2[2], dom2[3])
             } else {
                 (-1e6, 1e6, -1e6, 1e6)

@@ -455,9 +455,11 @@ impl GeomCurveAdaptor {
     /// OCCT GeomAdaptor_Curve::IsClosed (GeomAdaptor_Curve.cxx L576-585).
     pub fn is_closed(&self) -> bool {
         // OCCT L578: !Precision::IsPositiveInfinite(myLast) &&
-        // !Precision::IsNegativeInfinite(myFirst) — the IEEE infinity
-        // encoding (see the Precision::Infinite coordination note).
-        if self.last != f64::INFINITY && self.first != f64::NEG_INFINITY {
+        // !Precision::IsNegativeInfinite(myFirst) (Precision.hxx L357-367,
+        // threshold 0.5 * Precision::Infinite()).
+        if !precision::is_positive_infinite_value(self.last)
+            && !precision::is_negative_infinite_value(self.first)
+        {
             let pd = self.value_at(self.first);
             let pf = self.value_at(self.last);
             return pd.distance(pf) <= precision::CONFUSION;

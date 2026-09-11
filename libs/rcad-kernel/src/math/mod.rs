@@ -17,6 +17,7 @@ pub mod math_poly;
 pub mod newton_function_root;
 pub mod trig_equation_function;
 pub mod math_recipes;
+pub mod math_svd;
 pub mod math_householder;
 pub mod math_matrix;
 pub mod math_crout;

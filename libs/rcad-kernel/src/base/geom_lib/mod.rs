@@ -7,6 +7,7 @@
 
 use glam::{DVec2, DVec3};
 
+use crate::core::precision::is_infinite_value;
 use crate::geom::{Curve2dEval, Curve3, CurveEval, Plane, Surface3, SurfaceEval};
 use crate::math::gp::Ax2;
 use crate::math::math_jacobi::MathJacobi;
@@ -38,7 +39,7 @@ impl Tool {
         let t_min = domain[0];
         let t_max = domain[1];
 
-        if !t_min.is_finite() || !t_max.is_finite() {
+        if is_infinite_value(t_min) || is_infinite_value(t_max) {
             // Infinite domain (line): sample at a few candidate points
             let candidates = [
                 Tool::param_at_dist(curve, point, 0.0),
@@ -104,7 +105,7 @@ impl Tool {
         let domain = surface.default_domain();
         let (u_min, u_max, v_min, v_max) = (domain[0], domain[1], domain[2], domain[3]);
 
-        if !u_min.is_finite() || !v_min.is_finite() {
+        if is_infinite_value(u_min) || is_infinite_value(v_min) {
             // Infinite domain: sample near the closest point estimate
             let (u0, v0) = Tool::estimate_uv(surface, point);
             return Tool::refine_uv(surface, point, u0, v0, u_min, u_max, v_min, v_max, max_dist);
@@ -226,7 +227,7 @@ impl Tool {
         let t_min = domain[0];
         let t_max = domain[1];
 
-        if !t_min.is_finite() || !t_max.is_finite() {
+        if is_infinite_value(t_min) || is_infinite_value(t_max) {
             let t = Tool::param_at_dist_2d(curve, point, 0.0);
             let d = (curve.point_at(t) - point).length();
             return if d < max_dist { Some(t) } else { None };
@@ -328,7 +329,7 @@ impl IsPlanarSurface {
                 // For other surface types, sample the surface and check planarity
                 let domain = surface.default_domain();
                 let (u_min, u_max, v_min, v_max) = (domain[0], domain[1], domain[2], domain[3]);
-                if !u_min.is_finite() || !v_min.is_finite() {
+                if is_infinite_value(u_min) || is_infinite_value(v_min) {
                     return result;
                 }
 
@@ -474,7 +475,8 @@ impl CheckCurveOnSurface {
         let domain = curve_3d.default_domain();
         // For unbounded curves (e.g. Line), fall back to a finite range so
         // sampling is well-defined.
-        let (t_min, t_max) = if !domain[0].is_finite() || !domain[1].is_finite() {
+        // OCCT Precision::IsInfinite (Precision.hxx L350-353).
+        let (t_min, t_max) = if is_infinite_value(domain[0]) || is_infinite_value(domain[1]) {
             (-1e6, 1e6)
         } else {
             (domain[0], domain[1])

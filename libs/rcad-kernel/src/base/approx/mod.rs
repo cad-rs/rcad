@@ -5,6 +5,7 @@
 //! Approximates curves and surfaces to BSpline within a given tolerance.
 //! Also provides multi-line parallel approximation (AppParCurves).
 
+use crate::core::precision::is_infinite_value;
 use crate::geom::{BSplineCurve3, BSplineSurface, Curve3, CurveEval, Surface3, SurfaceEval};
 use glam::DVec3;
 
@@ -20,7 +21,9 @@ pub fn approx_curve(curve: &Curve3, tol: f64) -> Option<BSplineCurve3> {
     // For unbounded curves (e.g. Line, Parabola), fall back to a finite
     // range so sampling is well-defined. Matches rcad-algorithms
     // approx_curve_to_bspline behavior.
-    let (t_min, t_max) = if !t_min.is_finite() || !t_max.is_finite() {
+    // OCCT Precision::IsInfinite (Precision.hxx L350-353): the unbounded
+    // domain sentinels are +/-Precision::Infinite() = +/-2e100.
+    let (t_min, t_max) = if is_infinite_value(t_min) || is_infinite_value(t_max) {
         (-10.0, 10.0)
     } else {
         (t_min, t_max)
@@ -108,7 +111,9 @@ pub fn approx_curve(curve: &Curve3, tol: f64) -> Option<BSplineCurve3> {
 pub fn approx_surface(surface: &Surface3, tol: f64) -> Option<BSplineSurface> {
     let dom = surface.default_domain();
     let (u_min, u_max, v_min, v_max) = (dom[0], dom[1], dom[2], dom[3]);
-    if !u_min.is_finite() || !v_min.is_finite() {
+    // OCCT Precision::IsInfinite (Precision.hxx L350-353): unbounded
+    // surface domains carry +/-Precision::Infinite() = +/-2e100.
+    if is_infinite_value(u_min) || is_infinite_value(v_min) {
         return None;
     }
 

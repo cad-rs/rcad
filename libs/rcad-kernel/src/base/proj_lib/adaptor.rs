@@ -106,9 +106,41 @@ pub trait Adaptor2dCurve2d {
         panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Period")
     }
     /// OCCT Adaptor2d_Curve2d::Resolution(R3d) — the base class raises
-    /// Standard_NoSuchObject (Adaptor2d_Curve2d.hxx L124).
+    /// Standard_NotImplemented (Adaptor2d_Curve2d.cxx L136-140); the
+    /// Geom2dAdaptor_Curve override is the per-type dispatch
+    /// (Geom2dAdaptor_Curve.cxx L1186-1226).
     fn resolution(&self, _r3d: f64) -> f64 {
         panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Resolution")
+    }
+    /// OCCT Adaptor2d_Curve2d::NbIntervals(S) — the base class raises
+    /// Standard_NotImplemented (Adaptor2d_Curve2d.cxx L64-68).
+    fn nb_intervals(&self, _s: GeomAbsShape) -> usize {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::NbIntervals")
+    }
+    /// OCCT Adaptor2d_Curve2d::Intervals(T, S) — the base class raises
+    /// Standard_NotImplemented (Adaptor2d_Curve2d.cxx L72-77).
+    fn intervals(&self, _s: GeomAbsShape) -> Vec<f64> {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Intervals")
+    }
+    /// OCCT Adaptor2d_Curve2d::Circle() — the gp_Circ2d payload; the base
+    /// class raises Standard_NotImplemented (Adaptor2d_Curve2d.cxx L188-192).
+    fn circle(&self) -> crate::geom::Circle2d {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Circle")
+    }
+    /// OCCT Adaptor2d_Curve2d::Ellipse() — the gp_Elips2d payload; the base
+    /// class raises Standard_NotImplemented (Adaptor2d_Curve2d.cxx L195-199).
+    fn ellipse(&self) -> crate::geom::Ellipse2d {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Ellipse")
+    }
+    /// OCCT Adaptor2d_Curve2d::Hyperbola() — the gp_Hypr2d payload; the base
+    /// class raises Standard_NotImplemented (Adaptor2d_Curve2d.cxx L202-206).
+    fn hyperbola(&self) -> crate::geom::Hyperbola2d {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Hyperbola")
+    }
+    /// OCCT Adaptor2d_Curve2d::Parabola() — the gp_Parab2d payload; the base
+    /// class raises Standard_NotImplemented (Adaptor2d_Curve2d.cxx L209-213).
+    fn parabola(&self) -> crate::geom::Parabola2d {
+        panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Parabola")
     }
 }
 
@@ -458,12 +490,40 @@ impl Adaptor2dCurve2d for Geom2dCurveAdaptor {
         )
     }
 
-    /// OCCT Geom2dAdaptor_Curve::Continuity() — CN for the elementary kinds
-    /// (matching the codebase-wide encoding of non-composite rcad curves);
-    /// the OCCT BSpline LocalContinuity walk and the Offset basis-continuity
-    /// shift are staged.
+    /// OCCT Geom2dAdaptor_Curve::Continuity()
+    /// (Geom2dAdaptor_Curve.cxx L368-399): LocalContinuity for the BSpline
+    /// kind, the shifted basis continuity for the offset kind, CN for the
+    /// elementary kinds.
     fn continuity(&self) -> GeomAbsShape {
-        GeomAbsShape::CN
+        use crate::geom::Curve2d;
+        match self.curve.inner() {
+            // OCCT L370-373: LocalContinuity(myFirst, myLast).
+            Curve2d::BSpline(_) => self.local_continuity(self.first, self.last),
+            Curve2d::Offset(_) => {
+                // OCCT L374-392: the basis continuity shifted down by one
+                // degree (Geom2d_OffsetCurve::GetBasisCurveContinuity); the
+                // rcad basis carries the Geom2d elementary default (CN), so
+                // the shifted value stays CN — the OCCT shift arms kept in
+                // shape below.
+                let base = GeomAbsShape::CN;
+                match base {
+                    GeomAbsShape::CN => GeomAbsShape::CN,
+                    GeomAbsShape::C3 => GeomAbsShape::C2,
+                    GeomAbsShape::C2 => GeomAbsShape::C1,
+                    GeomAbsShape::C1 => GeomAbsShape::C0,
+                    _ => panic!("Standard_NoSuchObject: Geom2dAdaptor_Curve::Continuity"),
+                }
+            }
+            // OCCT L394-397: the OtherCurve kind raises.
+            Curve2d::CircleInvolute(_)
+            | Curve2d::ArchimedeanSpiral(_)
+            | Curve2d::LogarithmicSpiral(_)
+            | Curve2d::SineWave(_) => {
+                panic!("Standard_NoSuchObject: Geom2dAdaptor_Curve::Continuity")
+            }
+            // OCCT L399: the elementary kinds answer CN.
+            _ => GeomAbsShape::CN,
+        }
     }
 
     /// OCCT GetType() — of the basis curve (looking through Trimmed).
@@ -510,14 +570,16 @@ impl Adaptor2dCurve2d for Geom2dCurveAdaptor {
     }
 
     /// OCCT Geom2dAdaptor_Curve::IsClosed (Geom2dAdaptor_Curve.cxx
-    /// L588-602): the endpoint-distance test on the restricted domain.  The
-    /// OCCT Precision::IsPositiveInfinite / IsNegativeInfinite guards ride
-    /// the IEEE infinity encoding (see the Precision::Infinite coordination
-    /// batch note in docs).
+    /// L588-600): the endpoint-distance test on the restricted domain.
+    /// OCCT L590: !Precision::IsPositiveInfinite(myLast) &&
+    /// !Precision::IsNegativeInfinite(myFirst) (Precision.hxx L357-367,
+    /// threshold 0.5 * Precision::Infinite()).
     fn is_closed(&self) -> bool {
         let last = self.last;
         let first = self.first;
-        if last != f64::INFINITY && first != f64::NEG_INFINITY {
+        if !precision::is_positive_infinite_value(last)
+            && !precision::is_negative_infinite_value(first)
+        {
             let pd = self.value(first);
             let pf = self.value(last);
             return (pf - pd).length() <= precision::CONFUSION;
@@ -592,6 +654,272 @@ impl Adaptor2dCurve2d for Geom2dCurveAdaptor {
             _ => precision::parametric_default(ruv),
         }
     }
+
+    /// OCCT Geom2dAdaptor_Curve::Circle() (Geom2dAdaptor_Curve.cxx
+    /// L1237-1243) — the gp_Circ2d payload; raises on a type mismatch.
+    fn circle(&self) -> crate::geom::Circle2d {
+        match self.curve.inner() {
+            crate::geom::Curve2d::Circle(c) => *c,
+            _ => panic!("Standard_NoSuchObject: Geom2dAdaptor_Curve::Circle() - curve is not a Circle"),
+        }
+    }
+
+    /// OCCT Geom2dAdaptor_Curve::Ellipse() (Geom2dAdaptor_Curve.cxx
+    /// L1246-1252) — the gp_Elips2d payload.
+    fn ellipse(&self) -> crate::geom::Ellipse2d {
+        match self.curve.inner() {
+            crate::geom::Curve2d::Ellipse(e) => *e,
+            _ => panic!("Standard_NoSuchObject: Geom2dAdaptor_Curve::Ellipse() - curve is not an Ellipse"),
+        }
+    }
+
+    /// OCCT Geom2dAdaptor_Curve::Hyperbola() (Geom2dAdaptor_Curve.cxx
+    /// L1255-1261) — the gp_Hypr2d payload.
+    fn hyperbola(&self) -> crate::geom::Hyperbola2d {
+        match self.curve.inner() {
+            crate::geom::Curve2d::Hyperbola(h) => *h,
+            _ => panic!("Standard_NoSuchObject: Geom2dAdaptor_Curve::Hyperbola() - curve is not an Hyperbola"),
+        }
+    }
+
+    /// OCCT Geom2dAdaptor_Curve::Parabola() (Geom2dAdaptor_Curve.cxx
+    /// L1264-1270) — the gp_Parab2d payload.
+    fn parabola(&self) -> crate::geom::Parabola2d {
+        match self.curve.inner() {
+            crate::geom::Curve2d::Parabola(p) => *p,
+            _ => panic!("Standard_NoSuchObject: Geom2dAdaptor_Curve::Parabola() - curve is not a Parabola"),
+        }
+    }
+
+    /// OCCT Geom2dAdaptor_Curve::NbIntervals(S)
+    /// (Geom2dAdaptor_Curve.cxx L409-486).
+    fn nb_intervals(&self, s: GeomAbsShape) -> usize {
+        use crate::geom::Curve2d;
+        let inner = self.curve.inner();
+        if let Curve2d::BSpline(a_bspline) = inner {
+            // OCCT L414-417.
+            if (!bspline_is_periodic(a_bspline) && s <= self.continuity()) || s == GeomAbsShape::C0 {
+                return 1;
+            }
+
+            // OCCT L419-438.
+            let a_degree = a_bspline.degree;
+            let a_cont = match s {
+                GeomAbsShape::C1 => 1,
+                GeomAbsShape::C2 => 2,
+                GeomAbsShape::C3 => 3,
+                GeomAbsShape::CN => a_degree as i32,
+                // OCCT L437: the G1/G2 arms raise Standard_DomainError
+                // (the rcad GeomAbsShape carries no G kinds).
+                _ => panic!("Standard_DomainError: Geom2dAdaptor_Curve::NbIntervals()"),
+            };
+
+            // OCCT L440.
+            let an_eps = self
+                .resolution(precision::CONFUSION)
+                .min(precision::p_confusion());
+
+            // OCCT L442-450: BSplCLib::Intervals with the null output array
+            // returns the count; the rcad helper returns count + 1 entries.
+            let (tk, tm) = knots_mults_of(&a_bspline.knots);
+            let out = crate::math::bspl_lib::intervals(
+                &tk,
+                &tm,
+                a_degree,
+                bspline_is_periodic(a_bspline),
+                a_cont,
+                self.first,
+                self.last,
+                an_eps,
+            );
+            out.len() - 1
+        } else if let Curve2d::Offset(an_offset) = inner {
+            // OCCT L453-480.
+            let base_s = match s {
+                // OCCT L459-462: the G1/G2 arms raise Standard_DomainError.
+                GeomAbsShape::C0 => GeomAbsShape::C1,
+                GeomAbsShape::C1 => GeomAbsShape::C2,
+                GeomAbsShape::C2 => GeomAbsShape::C3,
+                _ => GeomAbsShape::CN,
+            };
+            let an_adaptor = Geom2dCurveAdaptor::new((*an_offset.basis).clone());
+            an_adaptor.nb_intervals(base_s)
+        } else {
+            // OCCT L482-485.
+            1
+        }
+    }
+
+    /// OCCT Geom2dAdaptor_Curve::Intervals(T, S)
+    /// (Geom2dAdaptor_Curve.cxx L490-570).
+    fn intervals(&self, s: GeomAbsShape) -> Vec<f64> {
+        use crate::geom::Curve2d;
+        let inner = self.curve.inner();
+        if let Curve2d::BSpline(a_bspline) = inner {
+            // OCCT L495-500.
+            if (!bspline_is_periodic(a_bspline) && s <= self.continuity()) || s == GeomAbsShape::C0 {
+                return vec![self.first, self.last];
+            }
+
+            // OCCT L502-521.
+            let a_degree = a_bspline.degree;
+            let a_cont = match s {
+                GeomAbsShape::C1 => 1,
+                GeomAbsShape::C2 => 2,
+                GeomAbsShape::C3 => 3,
+                GeomAbsShape::CN => a_degree as i32,
+                _ => panic!("Standard_DomainError: Geom2dAdaptor_Curve::Intervals()"),
+            };
+
+            // OCCT L523.
+            let an_eps = self
+                .resolution(precision::CONFUSION)
+                .min(precision::p_confusion());
+
+            // OCCT L525-533.
+            let (tk, tm) = knots_mults_of(&a_bspline.knots);
+            crate::math::bspl_lib::intervals(
+                &tk,
+                &tm,
+                a_degree,
+                bspline_is_periodic(a_bspline),
+                a_cont,
+                self.first,
+                self.last,
+                an_eps,
+            )
+        } else if let Curve2d::Offset(an_offset) = inner {
+            // OCCT L534-563.
+            let base_s = match s {
+                GeomAbsShape::C0 => GeomAbsShape::C1,
+                GeomAbsShape::C1 => GeomAbsShape::C2,
+                GeomAbsShape::C2 => GeomAbsShape::C3,
+                _ => GeomAbsShape::CN,
+            };
+            let an_adaptor = Geom2dCurveAdaptor::new((*an_offset.basis).clone());
+            // OCCT L578-580: anAdaptor.Intervals(T, BaseS) with the range
+            // boundaries rewritten from the restricted window.
+            let my_nb_intervals = an_adaptor.nb_intervals(base_s);
+            let mut t = an_adaptor.intervals(base_s);
+            t[0] = self.first;
+            t[my_nb_intervals] = self.last;
+            t
+        } else {
+            // OCCT L565-569.
+            vec![self.first, self.last]
+        }
+    }
+}
+
+/// The (Knots, Multiplicities) pair of an rcad flat knot vector
+/// (run-length compression; OCCT stores the pair directly).
+fn knots_mults_of(flat: &[f64]) -> (Vec<f64>, Vec<i32>) {
+    let mut knots: Vec<f64> = Vec::new();
+    let mut mults: Vec<i32> = Vec::new();
+    for &k in flat {
+        match knots.last() {
+            Some(&last) if last == k => {
+                let n = mults.len();
+                mults[n - 1] += 1;
+            }
+            _ => {
+                knots.push(k);
+                mults.push(1);
+            }
+        }
+    }
+    (knots, mults)
+}
+
+/// OCCT Geom2d_BSplineCurve::IsPeriodic() in the rcad encoding — the rcad 2D
+/// BSpline payload carries a clamped flat knot vector without a periodicity
+/// flag, so the adaptor answers false (architecture mapping).
+fn bspline_is_periodic(_b: &crate::geom::BSplineCurve2) -> bool {
+    false
+}
+
+impl Geom2dCurveAdaptor {
+    /// OCCT Geom2dAdaptor_Curve::LocalContinuity(U1, U2)
+    /// (Geom2dAdaptor_Curve.cxx L145-227) — the BSpline continuity between
+    /// two parameters: C(degree - max knot multiplicity in (U1, U2)).
+    fn local_continuity(&self, u1: f64, u2: f64) -> GeomAbsShape {
+        let crate::geom::Curve2d::BSpline(a_bspline) = self.curve.inner() else {
+            // OCCT L147: Standard_NoSuchObject_Raise_if.
+            panic!("Standard_NoSuchObject: Geom2dAdaptor_Curve::LocalContinuity");
+        };
+        let (tk, tm) = knots_mults_of(&a_bspline.knots);
+        let nb = tk.len() as i32; // OCCT L149: aBSpline->NbKnots().
+        let mut index1 = 0i32;
+        let mut index2 = 0i32;
+        let mut new_first = 0.0f64;
+        let mut new_last = 0.0f64;
+        // OCCT L155-172: BSplCLib::LocateParameter for U1 and U2.
+        crate::math::bspl_lib::locate_parameter_knots_mults(
+            a_bspline.degree,
+            &tk,
+            &tm,
+            u1,
+            bspline_is_periodic(a_bspline),
+            1,
+            nb,
+            &mut index1,
+            &mut new_first,
+        );
+        crate::math::bspl_lib::locate_parameter_knots_mults(
+            a_bspline.degree,
+            &tk,
+            &tm,
+            u2,
+            bspline_is_periodic(a_bspline),
+            1,
+            nb,
+            &mut index2,
+            &mut new_last,
+        );
+        let a_periodic = bspline_is_periodic(a_bspline);
+        // OCCT L173-179.
+        if (new_first - crate::math::bspl_lib::at(&tk, index1 + 1)).abs() < precision::p_confusion()
+        {
+            if index1 < nb {
+                index1 += 1;
+            }
+        }
+        // OCCT L180-183.
+        if (new_last - crate::math::bspl_lib::at(&tk, index2)).abs() < precision::p_confusion() {
+            index2 -= 1;
+        }
+        let mut mult_max;
+        // OCCT L185-189: beware of periodic curves.
+        if a_periodic && index1 == nb {
+            index1 = 1;
+        }
+
+        // OCCT L191-206.
+        if (index2 - index1 <= 0) && !a_periodic {
+            mult_max = 100; // CN between 2 consecutive nodes
+        } else {
+            mult_max = crate::math::bspl_lib::ati(&tm, index1 + 1);
+            for i in index1 + 1..=index2 {
+                let m = crate::math::bspl_lib::ati(&tm, i);
+                if m > mult_max {
+                    mult_max = m;
+                }
+            }
+            mult_max = a_bspline.degree as i32 - mult_max;
+        }
+        // OCCT L207-226.
+        if mult_max <= 0 {
+            GeomAbsShape::C0
+        } else if mult_max == 1 {
+            GeomAbsShape::C1
+        } else if mult_max == 2 {
+            GeomAbsShape::C2
+        } else if mult_max == 3 {
+            GeomAbsShape::C3
+        } else {
+            GeomAbsShape::CN
+        }
+    }
 }
 
 /// GeomAbs_CurveType of a kernel `Curve2d` kind (the Geom2dAdaptor_Curve type
@@ -624,20 +952,200 @@ pub fn is_surf_g1(_s: &dyn Adaptor3dSurface, _along_u: bool, _angle_tol: f64) ->
 }
 
 // ---------------------------------------------------------------------------
+// Adaptor3d_Surface geometry payloads — the kernel_surface() routing
+// ---------------------------------------------------------------------------
+
+// The OCCT virtual payload accessors (Adaptor3d_Surface.cxx L210-243: Plane /
+// Cylinder / Cone / Sphere / Torus, each raising Standard_NoSuchObject on the
+// base class) cannot ride the [`Adaptor3dSurface`] trait as methods: the
+// companion `Adaptor3dSurfaceGeom` subtrait already declares the same names
+// and the trait-object receivers would turn ambiguous.  The free functions
+// below keep the same encoding as the other HSurfaceTool one-liners (direct
+// routing through the `kernel_surface()` bridge); a missing or mismatched
+// payload preserves the OCCT raise.
+
+/// OCCT Adaptor3d_Surface::Plane() — the gp_Pln payload
+/// (Adaptor3d_Surface.cxx L210-215).
+pub fn surface_plane(s: &dyn Adaptor3dSurface) -> crate::geom::Plane {
+    match s.kernel_surface() {
+        Some(crate::geom::Surface3::Plane(g)) => *g,
+        _ => panic!("Standard_NoSuchObject: Adaptor3d_Surface::Plane"),
+    }
+}
+
+/// OCCT Adaptor3d_Surface::Cylinder() — the gp_Cylinder payload
+/// (Adaptor3d_Surface.cxx L217-222).
+pub fn surface_cylinder(s: &dyn Adaptor3dSurface) -> crate::geom::CylindricalSurface {
+    match s.kernel_surface() {
+        Some(crate::geom::Surface3::Cylinder(g)) => *g,
+        _ => panic!("Standard_NoSuchObject: Adaptor3d_Surface::Cylinder"),
+    }
+}
+
+/// OCCT Adaptor3d_Surface::Cone() — the gp_Cone payload
+/// (Adaptor3d_Surface.cxx L224-229).
+pub fn surface_cone(s: &dyn Adaptor3dSurface) -> crate::geom::ConicalSurface {
+    match s.kernel_surface() {
+        Some(crate::geom::Surface3::Cone(g)) => *g,
+        _ => panic!("Standard_NoSuchObject: Adaptor3d_Surface::Cone"),
+    }
+}
+
+/// OCCT Adaptor3d_Surface::Sphere() — the gp_Sphere payload
+/// (Adaptor3d_Surface.cxx L231-236).
+pub fn surface_sphere(s: &dyn Adaptor3dSurface) -> crate::geom::SphericalSurface {
+    match s.kernel_surface() {
+        Some(crate::geom::Surface3::Sphere(g)) => *g,
+        _ => panic!("Standard_NoSuchObject: Adaptor3d_Surface::Sphere"),
+    }
+}
+
+/// OCCT Adaptor3d_Surface::Torus() — the gp_Torus payload
+/// (Adaptor3d_Surface.cxx L238-243).
+pub fn surface_torus(s: &dyn Adaptor3dSurface) -> crate::geom::ToroidalSurface {
+    match s.kernel_surface() {
+        Some(crate::geom::Surface3::Torus(g)) => *g,
+        _ => panic!("Standard_NoSuchObject: Adaptor3d_Surface::Torus"),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Adaptor3d_CurveOnSurface — the 3D curve-on-surface adaptor
 // ---------------------------------------------------------------------------
+
+// The file-static `to3d` set of Adaptor3d_CurveOnSurface.cxx L57-98: the
+// plane lift of the 2D gp payloads (Pnt2d / Vec2d / Ax22d / Circ2d / Elips2d
+// / Hypr2d / Parab2d).
+
+/// OCCT Adaptor3d_CurveOnSurface.cxx L57-60: `to3d(Pl, P)` —
+/// ElSLib::Value(P.X(), P.Y(), Pl).
+fn to3d_pnt(pl: &crate::geom::Plane, p: DVec2) -> DVec3 {
+    crate::math::el::elslib_plane_value(p.x, p.y, pl.origin, pl.u_dir, pl.v_dir)
+}
+
+/// OCCT Adaptor3d_CurveOnSurface.cxx L62-70: `to3d(Pl, V)` —
+/// V = XDirection*V.X + YDirection*V.Y.
+fn to3d_vec(pl: &crate::geom::Plane, v: DVec2) -> DVec3 {
+    let vx = pl.u_dir * v.x;
+    let vy = pl.v_dir * v.y;
+    vx + vy
+}
+
+/// OCCT Adaptor3d_CurveOnSurface.cxx L72-78: `to3d(Pl, A)` —
+/// gp_Ax2(P, VX.Crossed(VY), VX); the gp_Ax2 3-arg constructor
+/// (gp_Ax2.hxx L73-80) orthogonalizes the X direction and derives Y.
+fn to3d_ax22d(
+    pl: &crate::geom::Plane,
+    location: DVec2,
+    x_dir: DVec2,
+    y_dir: DVec2,
+) -> super::elslib_iso::Ax2View {
+    let p = to3d_pnt(pl, location);
+    let vx = to3d_vec(pl, x_dir);
+    let vy = to3d_vec(pl, y_dir);
+    let n = vx.cross(vy).normalize_or_zero();
+    super::elslib_iso::Ax2View {
+        location: p,
+        direction: n,
+        // OCCT: vxdir.CrossCross(Vx, N) = N ^ (Vx ^ N).
+        x_direction: n.cross(vx.cross(n)).normalize_or_zero(),
+    }
+}
+
+/// OCCT Adaptor3d_CurveOnSurface.cxx L80-83: `to3d(Pl, C)` —
+/// gp_Circ(to3d(Pl, C.Axis()), C.Radius()).
+fn to3d_circ(pl: &crate::geom::Plane, c: crate::geom::Circle2d) -> Circle3 {
+    super::elslib_iso::circ_from_ax2(&to3d_ax22d(pl, c.center, c.x_dir, c.y_dir), c.radius)
+}
+
+/// OCCT Adaptor3d_CurveOnSurface.cxx L85-88: `to3d(Pl, E)` —
+/// gp_Elips(to3d(Pl, E.Axis()), E.MajorRadius(), E.MinorRadius()).
+fn to3d_elips(pl: &crate::geom::Plane, e: crate::geom::Ellipse2d) -> Ellipse3 {
+    let axes = to3d_ax22d(pl, e.center, e.major_dir, e.minor_dir);
+    Ellipse3 {
+        center: axes.location,
+        normal: axes.direction,
+        major_dir: axes.x_direction,
+        major_radius: e.major_radius,
+        minor_radius: e.minor_radius,
+    }
+}
+
+/// OCCT Adaptor3d_CurveOnSurface.cxx L90-93: `to3d(Pl, H)` —
+/// gp_Hypr(to3d(Pl, H.Axis()), H.MajorRadius(), H.MinorRadius()).  The rcad
+/// Hyperbola2d carries no explicit minor direction, so the Ax22d Y direction
+/// uses the codebase conic convention (-major_dir.y, major_dir.x).
+fn to3d_hypr(pl: &crate::geom::Plane, h: crate::geom::Hyperbola2d) -> Hyperbola3 {
+    let y_dir = DVec2::new(-h.major_dir.y, h.major_dir.x);
+    let axes = to3d_ax22d(pl, h.center, h.major_dir, y_dir);
+    Hyperbola3 {
+        center: axes.location,
+        normal: axes.direction,
+        major_dir: axes.x_direction,
+        semi_major: h.semi_major,
+        semi_minor: h.semi_minor,
+    }
+}
+
+/// OCCT Adaptor3d_CurveOnSurface.cxx L95-98: `to3d(Pl, P)` —
+/// gp_Parab(to3d(Pl, P.Axis()), P.Focal()).
+fn to3d_parab(pl: &crate::geom::Plane, p: crate::geom::Parabola2d) -> Parabola3 {
+    let axes = to3d_ax22d(pl, p.origin, p.axis_dir, DVec2::new(-p.axis_dir.y, p.axis_dir.x));
+    Parabola3 {
+        vertex: axes.location,
+        normal: axes.direction,
+        axis_dir: axes.x_direction,
+        focal_param: p.focal_param,
+    }
+}
+
+// OCCT Adaptor3d_CurveOnSurface.cxx L1008-1041 — the static interval helper.
+
+/// OCCT static AddIntervals (Adaptor3d_CurveOnSurface.cxx L1008-1041):
+/// appends the roots of the equation to the sorted sequence of parameters
+/// along the curve, keeping it sorted and avoiding repetitions (within
+/// tolerance theTol).
+fn add_intervals(the_parameters: &mut Vec<f64>, the_roots: &crate::math::root::FunctionRoots, the_tol: f64) {
+    if !the_roots.is_done() || the_roots.is_all_null() {
+        return;
+    }
+
+    let nsol = the_roots.nb_solutions();
+    for i in 1..=nsol {
+        let param = the_roots.value(i);
+        if param - the_parameters[0] < the_tol {
+            // skip param if equal to or less than theParameters(1)
+            continue;
+        }
+        for j in 2..=the_parameters.len() {
+            let a_delta = the_parameters[j - 1] - param;
+            if a_delta > the_tol {
+                the_parameters.insert(j - 1, param);
+                break;
+            } else if a_delta >= -the_tol {
+                // param == theParameters(j) within Tol
+                break;
+            }
+        }
+    }
+}
 
 /// OCCT Adaptor3d_CurveOnSurface (TKG3d) — a 3D curve defined as the image of
 /// a 2D curve on a surface.
 ///
 /// The evaluation members are the OCCT definition: the curve point is the
 /// surface evaluated at the 2D curve point, and the derivatives chain by the
-/// chain rule (Adaptor3d_CurveOnSurface.cxx Value/D1/D2).
+/// chain rule (Adaptor3d_CurveOnSurface.cxx Value/D1/D2).  The Load pair
+/// derives the analytic kind through EvalKPart
+/// (Adaptor3d_CurveOnSurface.cxx L1552-1732) and caches the Line / Circle
+/// payloads.
 ///
-/// GAP (staged): the interval machinery (NbIntervals/Intervals, which walks
-/// the basis-curve and surface discontinuities) and the trimming support are
-/// not translated; [`Adaptor3dCurve::nb_intervals`] reports a single interval
-/// and [`Adaptor3dCurve::trim`] panics until the body lands.
+/// GAP (staged): the trimming support keeps the constructor-based encoding
+/// (Load(mySurface) + Load(myCurve->Trim(...)), L1133-1141 — behaviour
+/// equal), and Load(C) does not run EvalFirstLastSurf (L1736-1829): its
+/// myFirstSurf / myLastSurf results feed only the boundary branches of the
+/// OCCT EvalD1/D2/D3 (L1212-1341) which the rcad evaluation encoding does
+/// not carry.
 pub struct CurveOnSurface {
     /// OCCT: const handle(Adaptor2d_Curve2d) my2dCurve.
     pub my2d_curve: Curve2dHandle,
@@ -645,22 +1153,37 @@ pub struct CurveOnSurface {
     pub my_surface: SurfaceHandle,
     /// OCCT: GeomAbs_CurveType myType — set by the Load/EvalKPart pair; the
     /// constructor default is GeomAbs_OtherCurve
-    /// (Adaptor3d_CurveOnSurface.cxx L873-876).  GAP (staged): the EvalKPart
-    /// refinement (Adaptor3d_CurveOnSurface.cxx L1553-1830) is not
-    /// translated, so the type keeps the constructor value.
+    /// (Adaptor3d_CurveOnSurface.cxx L890-897).
     pub my_type: CurveType,
+    /// OCCT: gp_Circ myCirc — the analytic payload cached by EvalKPart
+    /// (read through Circle(), L1390-1396); None models the non-circle state
+    /// (the raise fires on the myType guard before the payload is read).
+    pub my_circ: Option<Circle3>,
+    /// OCCT: gp_Lin myLin — the analytic payload cached by EvalKPart (read
+    /// through Line(), L1381-1387).
+    pub my_lin: Option<Line3>,
+    /// OCCT: GeomAbs_Shape myIntCont + handle(NCollection_HSequence<double>)
+    /// myIntervals — the interval cache of NbIntervals (L1045-1115); the
+    /// OCCT const_cast write maps to the mutex.
+    my_intervals: std::sync::Mutex<Option<(GeomAbsShape, Vec<f64>)>>,
 }
 
 impl CurveOnSurface {
-    /// OCCT Adaptor3d_CurveOnSurface(C2D, S) (Adaptor3d_CurveOnSurface.cxx
-    /// L881-889): myType = GeomAbs_OtherCurve, myIntCont = GeomAbs_CN,
+    /// OCCT Adaptor3d_CurveOnSurface(C, S) (Adaptor3d_CurveOnSurface.cxx
+    /// L890-897): myType = GeomAbs_OtherCurve, myIntCont = GeomAbs_CN,
     /// Load(S), Load(C).
     pub fn new(the2d_curve: Curve2dHandle, the_surface: SurfaceHandle) -> Self {
-        CurveOnSurface {
+        let mut cos = CurveOnSurface {
             my2d_curve: the2d_curve,
             my_surface: the_surface,
             my_type: CurveType::Other,
-        }
+            my_circ: None,
+            my_lin: None,
+            my_intervals: std::sync::Mutex::new(None),
+        };
+        cos.load_surface();
+        cos.load_curve();
+        cos
     }
 
     /// OCCT GetCurve() — the 2D basis curve.
@@ -671,6 +1194,226 @@ impl CurveOnSurface {
     /// OCCT GetSurface() — the surface.
     pub fn get_surface(&self) -> &SurfaceHandle {
         &self.my_surface
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Load(S)
+    /// (Adaptor3d_CurveOnSurface.cxx L932-939).
+    pub fn load_surface(&mut self) {
+        // OCCT: mySurface = S; if (!myCurve.IsNull()) EvalKPart(); — the rcad
+        // curve handle is non-optional.
+        self.eval_k_part();
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::Load(C)
+    /// (Adaptor3d_CurveOnSurface.cxx L943-964).
+    pub fn load_curve(&mut self) {
+        // OCCT: myCurve = C; if (mySurface.IsNull()) return; — the rcad
+        // surface handle is non-optional.
+
+        self.eval_k_part();
+
+        let mut s_type = self.my_surface.get_type();
+        if s_type == GeomAbsSurfaceType::OffsetSurface {
+            s_type = self.my_surface.basis_surface().get_type();
+        }
+
+        // OCCT L959-963: for the BSpline / extrusion / revolution surfaces
+        // the Load runs EvalFirstLastSurf (L1736-1829) — GAP (staged), see
+        // the struct docs; the branch is preserved as the recorded no-op.
+        let _ = s_type;
+    }
+
+    /// OCCT Adaptor3d_CurveOnSurface::EvalKPart
+    /// (Adaptor3d_CurveOnSurface.cxx L1552-1732) — derives the curve type and
+    /// fills the analytic payloads for the plane-based and isoparametric
+    /// line-on-quadric cases.
+    pub fn eval_k_part(&mut self) {
+        use super::elslib_iso::{
+            circ_rotated, circ_with_direction_reversed, dir2d_is_opposite, dir2d_is_parallel,
+            elslib_cone_u_iso, elslib_cone_v_iso, elslib_cylinder_u_iso, elslib_cylinder_v_iso,
+            elslib_sphere_u_iso, elslib_sphere_v_iso, elslib_torus_u_iso, elslib_torus_v_iso,
+            Ax3View,
+        };
+
+        // OCCT L1554.
+        self.my_type = CurveType::Other;
+
+        let s_ty = self.my_surface.get_type();
+        let c_ty = self.my2d_curve.get_type();
+        // OCCT L1558-1577: the plane branch.
+        if s_ty == GeomAbsSurfaceType::Plane {
+            self.my_type = c_ty;
+            if self.my_type == CurveType::Circle {
+                // OCCT L1563: myCirc = to3d(mySurface->Plane(), myCurve->Circle()).
+                let pl = surface_plane(&*self.my_surface);
+                let c2d = self.my2d_curve.circle();
+                self.my_circ = Some(to3d_circ(&pl, c2d));
+            } else if self.my_type == CurveType::Line {
+                // OCCT L1565-1576.
+                let (p_uv, d_uv) = self.my2d_curve.d1(0.0);
+                let (p, d1u, d1v) = self.my_surface.d1(p_uv.x, p_uv.y);
+                // OCCT: V.SetLinearForm(Duv.X(), D1U, Duv.Y(), D1V).
+                let v = d1u * d_uv.x + d1v * d_uv.y;
+                self.my_lin = Some(Line3::new(p, v));
+            }
+        } else if c_ty == CurveType::Line {
+            // OCCT L1580-1582: gp_Dir2d D = myCurve->Line().Direction().
+            let d = self.my2d_curve.line().direction;
+            if dir2d_is_parallel(d, DVec2::X, precision::ANGULAR) {
+                // OCCT L1584: Iso V.
+                match s_ty {
+                    GeomAbsSurfaceType::Sphere => {
+                        // OCCT L1585-1604.
+                        let p = self.my2d_curve.line().origin;
+                        if ((p.y.abs() - std::f64::consts::FRAC_PI_2).abs())
+                            >= precision::p_confusion()
+                        {
+                            self.my_type = CurveType::Circle;
+                            let sph = surface_sphere(&*self.my_surface);
+                            let axis = Ax3View::from_axes(sph.center, sph.axis, sph.ref_dir);
+                            let mut a_circ = elslib_sphere_v_iso(&axis, sph.radius, p.y);
+                            // OCCT: DRev = Axis.XDirection().Crossed(Axis.YDirection());
+                            //       AxeRev(Axis.Location(), DRev); myCirc.Rotate(AxeRev, P.X()).
+                            let d_rev = axis.x_direction.cross(axis.y_direction);
+                            a_circ = circ_rotated(&a_circ, axis.location, d_rev, p.x);
+                            if dir2d_is_opposite(d, DVec2::X, precision::ANGULAR) {
+                                a_circ = circ_with_direction_reversed(&a_circ);
+                            }
+                            self.my_circ = Some(a_circ);
+                        }
+                    }
+                    GeomAbsSurfaceType::Cylinder => {
+                        // OCCT L1605-1621.
+                        self.my_type = CurveType::Circle;
+                        let cyl = surface_cylinder(&*self.my_surface);
+                        let p = self.my2d_curve.line().origin;
+                        let axis = ax3_view_of_cylinder(&cyl);
+                        let mut a_circ = elslib_cylinder_v_iso(&axis, cyl.radius, p.y);
+                        let d_rev = axis.x_direction.cross(axis.y_direction);
+                        a_circ = circ_rotated(&a_circ, axis.location, d_rev, p.x);
+                        if dir2d_is_opposite(d, DVec2::X, precision::ANGULAR) {
+                            a_circ = circ_with_direction_reversed(&a_circ);
+                        }
+                        self.my_circ = Some(a_circ);
+                    }
+                    GeomAbsSurfaceType::Cone => {
+                        // OCCT L1622-1638.
+                        self.my_type = CurveType::Circle;
+                        let cone = surface_cone(&*self.my_surface);
+                        let p = self.my2d_curve.line().origin;
+                        let axis = Ax3View::from_axes(cone.apex, cone.axis, cone.ref_dir);
+                        let mut a_circ =
+                            elslib_cone_v_iso(&axis, cone.radius, cone.half_angle_rad, p.y);
+                        let d_rev = axis.x_direction.cross(axis.y_direction);
+                        a_circ = circ_rotated(&a_circ, axis.location, d_rev, p.x);
+                        if dir2d_is_opposite(d, DVec2::X, precision::ANGULAR) {
+                            a_circ = circ_with_direction_reversed(&a_circ);
+                        }
+                        self.my_circ = Some(a_circ);
+                    }
+                    GeomAbsSurfaceType::Torus => {
+                        // OCCT L1639-1655.
+                        self.my_type = CurveType::Circle;
+                        let tore = surface_torus(&*self.my_surface);
+                        let p = self.my2d_curve.line().origin;
+                        let axis = Ax3View::from_axes(tore.center, tore.axis, tore.ref_dir);
+                        let mut a_circ =
+                            elslib_torus_v_iso(&axis, tore.major_radius, tore.minor_radius, p.y);
+                        let d_rev = axis.x_direction.cross(axis.y_direction);
+                        a_circ = circ_rotated(&a_circ, axis.location, d_rev, p.x);
+                        if dir2d_is_opposite(d, DVec2::X, precision::ANGULAR) {
+                            a_circ = circ_with_direction_reversed(&a_circ);
+                        }
+                        self.my_circ = Some(a_circ);
+                    }
+                    _ => {}
+                }
+            } else if dir2d_is_parallel(d, DVec2::Y, precision::ANGULAR) {
+                // OCCT L1657: Iso U.
+                match s_ty {
+                    GeomAbsSurfaceType::Sphere => {
+                        // OCCT L1659-1684.
+                        self.my_type = CurveType::Circle;
+                        let sph = surface_sphere(&*self.my_surface);
+                        let p = self.my2d_curve.line().origin;
+                        let axis = Ax3View::from_axes(sph.center, sph.axis, sph.ref_dir);
+                        // OCCT L1666: compute the iso 0.
+                        let mut a_circ = elslib_sphere_u_iso(&axis, sph.radius, 0.0);
+                        // OCCT L1669-1671: same-parametrization (circle
+                        // rotation - Y offset); DRev = Axis.XDirection()
+                        // .Crossed(Axis.Direction()).
+                        let d_rev = axis.x_direction.cross(axis.direction);
+                        a_circ = circ_rotated(&a_circ, axis.location, d_rev, p.y);
+                        // OCCT L1674-1676: transform to iso U (= P.X());
+                        // DRev = Axis.XDirection().Crossed(Axis.YDirection()).
+                        let d_rev = axis.x_direction.cross(axis.y_direction);
+                        a_circ = circ_rotated(&a_circ, axis.location, d_rev, p.x);
+                        if dir2d_is_opposite(d, DVec2::Y, precision::ANGULAR) {
+                            a_circ = circ_with_direction_reversed(&a_circ);
+                        }
+                        self.my_circ = Some(a_circ);
+                    }
+                    GeomAbsSurfaceType::Cylinder => {
+                        // OCCT L1685-1698.
+                        self.my_type = CurveType::Line;
+                        let cyl = surface_cylinder(&*self.my_surface);
+                        let p = self.my2d_curve.line().origin;
+                        let axis = ax3_view_of_cylinder(&cyl);
+                        let mut a_lin = elslib_cylinder_u_iso(&axis, cyl.radius, p.x);
+                        // OCCT: Tr(myLin.Direction()); Tr.Multiply(P.Y());
+                        //       myLin.Translate(Tr).
+                        a_lin.origin += a_lin.direction * p.y;
+                        if dir2d_is_opposite(d, DVec2::Y, precision::ANGULAR) {
+                            // OCCT: myLin.Reverse().
+                            a_lin.direction = -a_lin.direction;
+                        }
+                        self.my_lin = Some(a_lin);
+                    }
+                    GeomAbsSurfaceType::Cone => {
+                        // OCCT L1699-1712.
+                        self.my_type = CurveType::Line;
+                        let cone = surface_cone(&*self.my_surface);
+                        let p = self.my2d_curve.line().origin;
+                        let axis = Ax3View::from_axes(cone.apex, cone.axis, cone.ref_dir);
+                        let mut a_lin =
+                            elslib_cone_u_iso(&axis, cone.radius, cone.half_angle_rad, p.x);
+                        a_lin.origin += a_lin.direction * p.y;
+                        if dir2d_is_opposite(d, DVec2::Y, precision::ANGULAR) {
+                            a_lin.direction = -a_lin.direction;
+                        }
+                        self.my_lin = Some(a_lin);
+                    }
+                    GeomAbsSurfaceType::Torus => {
+                        // OCCT L1713-1728.
+                        self.my_type = CurveType::Circle;
+                        let tore = surface_torus(&*self.my_surface);
+                        let p = self.my2d_curve.line().origin;
+                        let axis = Ax3View::from_axes(tore.center, tore.axis, tore.ref_dir);
+                        let a_circ =
+                            elslib_torus_u_iso(&axis, tore.major_radius, tore.minor_radius, p.x);
+                        // OCCT L1720: myCirc.Rotate(myCirc.Axis(), P.Y()) —
+                        // the circle's own axis (Location = center,
+                        // Direction = normal).
+                        let mut a_circ = circ_rotated(&a_circ, a_circ.center, a_circ.normal, p.y);
+                        if dir2d_is_opposite(d, DVec2::Y, precision::ANGULAR) {
+                            a_circ = circ_with_direction_reversed(&a_circ);
+                        }
+                        self.my_circ = Some(a_circ);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// The gp_Ax3 frame view of a cylinder payload — the explicit-Y (possibly
+/// left-handed) swept-lateral frame is honored (see
+/// `CylindricalSurface::y_dir`).
+fn ax3_view_of_cylinder(cyl: &crate::geom::CylindricalSurface) -> super::elslib_iso::Ax3View {
+    match cyl.y_dir {
+        Some(y) => super::elslib_iso::Ax3View::with_y_dir(cyl.origin, cyl.axis, cyl.ref_dir, y),
+        None => super::elslib_iso::Ax3View::from_axes(cyl.origin, cyl.axis, cyl.ref_dir),
     }
 }
 
@@ -735,21 +1478,106 @@ impl Adaptor3dCurve for CurveOnSurface {
         }
     }
 
-    /// GAP (staged): Adaptor3d_CurveOnSurface::NbIntervals — reports a single
-    /// interval.
-    fn nb_intervals(&self, _s: GeomAbsShape) -> usize {
-        1
+    /// OCCT Adaptor3d_CurveOnSurface::NbIntervals(S)
+    /// (Adaptor3d_CurveOnSurface.cxx L1045-1115): the cached sequence for the
+    /// recorded continuity, else the sorted union of the curve intervals and
+    /// the surface-discontinuity crossings (the Adaptor3d_InterFunc +
+    /// math_FunctionRoots solve).
+    fn nb_intervals(&self, s: GeomAbsShape) -> usize {
+        // OCCT L1047-1050.
+        {
+            let cached = self.my_intervals.lock().unwrap();
+            if let Some((cached_cont, cached_intervals)) = cached.as_ref() {
+                if *cached_cont == s {
+                    return cached_intervals.len() - 1;
+                }
+            }
+        }
+
+        let nu = self.my_surface.nb_u_intervals(s);
+        let nv = self.my_surface.nb_v_intervals(s);
+        let nc = self.my2d_curve.nb_intervals(s);
+
+        // OCCT L1058-1061: the TabU / TabV / TabC arrays — the rcad
+        // Intervals() calls return the filled arrays directly.
+        let nb_sample: i32 = 20;
+        let tdeb = self.my2d_curve.first_parameter();
+        let tfin = self.my2d_curve.last_parameter();
+
+        // OCCT L1068: myCurve->Intervals(TabC, S).
+        let tab_c = self.my2d_curve.intervals(s);
+
+        let tol = precision::p_confusion() / 10.0; // OCCT L1070.
+
+        // OCCT L1072-1079: the sorted sequence of parameters defining
+        // continuity intervals; started with own intervals of curve and
+        // completed by additional points coming from surface
+        // discontinuities.
+        let mut a_intervals: Vec<f64> = Vec::with_capacity(nc + 1);
+        for i in 1..=nc + 1 {
+            a_intervals.push(tab_c[i - 1]);
+        }
+
+        // OCCT L1081-1091.
+        if nu > 1 {
+            let tab_u = self.my_surface.u_intervals(s);
+            for iu in 2..=nu {
+                let u = tab_u[iu - 1];
+                let mut func =
+                    super::adaptor3d_interfunc::Adaptor3dInterFunc::new(self.my2d_curve.clone(), u, 1);
+                let resol = crate::math::root::FunctionRoots::new(
+                    &mut func, tdeb, tfin, nb_sample, tol, tol, tol, 0.0,
+                );
+                add_intervals(&mut a_intervals, &resol, tol);
+            }
+        }
+        // OCCT L1092-1102.
+        if nv > 1 {
+            let tab_v = self.my_surface.v_intervals(s);
+            for iv in 2..=nv {
+                let v = tab_v[iv - 1];
+                let mut func =
+                    super::adaptor3d_interfunc::Adaptor3dInterFunc::new(self.my2d_curve.clone(), v, 2);
+                let resol = crate::math::root::FunctionRoots::new(
+                    &mut func, tdeb, tfin, nb_sample, tol, tol, tol, 0.0,
+                );
+                add_intervals(&mut a_intervals, &resol, tol);
+            }
+        }
+
+        // OCCT L1104-1110: for case intervals==1 and first point == last
+        // point SequenceOfReal contains only one value, therefore it is
+        // necessary to add second value into aIntervals which will be equal
+        // first value.
+        if a_intervals.len() == 1 {
+            let v = a_intervals[0];
+            a_intervals.push(v);
+        }
+
+        // OCCT L1112-1114: the const_cast cache write.
+        let n = a_intervals.len() - 1;
+        *self.my_intervals.lock().unwrap() = Some((s, a_intervals));
+        n
     }
 
-    /// GAP (staged): Adaptor3d_CurveOnSurface::Intervals — reports the whole
-    /// domain as a single interval.
-    fn intervals(&self, _s: GeomAbsShape) -> Vec<f64> {
-        vec![self.first_parameter(), self.last_parameter()]
+    /// OCCT Adaptor3d_CurveOnSurface::Intervals(T, S)
+    /// (Adaptor3d_CurveOnSurface.cxx L1119-1129): the cached sequence of
+    /// NbIntervals(S) + 1 bounds.  The OCCT Standard_ASSERT_RAISE on the
+    /// caller buffer length has no counterpart in the Vec-returning rcad
+    /// encoding (the returned sequence IS the filled array).
+    fn intervals(&self, s: GeomAbsShape) -> Vec<f64> {
+        self.nb_intervals(s); // OCCT L1121.
+        let cached = self.my_intervals.lock().unwrap();
+        match cached.as_ref() {
+            Some((_, v)) => v.clone(),
+            None => unreachable!("Adaptor3d_CurveOnSurface::Intervals: NbIntervals must cache"),
+        }
     }
 
-    /// GAP (staged): Adaptor3d_CurveOnSurface::Trim — the OCCT body
-    /// (Adaptor3d_CurveOnSurface.cxx L1133-1141) rebuilds the adaptor with
-    /// Load(mySurface) + Load(myCurve->Trim(First, Last, Tol)).
+    /// OCCT Adaptor3d_CurveOnSurface::Trim
+    /// (Adaptor3d_CurveOnSurface.cxx L1133-1141): the rebuilt adaptor runs
+    /// Load(mySurface) + Load(myCurve->Trim(First, Last, Tol)) — the rcad
+    /// constructor performs the same Load pair.
     fn trim(&self, first: f64, last: f64, tol: f64) -> Arc<dyn Adaptor3dCurve> {
         let hcs = CurveOnSurface::new(self.my2d_curve.trim(first, last, tol), self.my_surface.clone());
         Arc::new(hcs)
@@ -802,30 +1630,40 @@ impl Adaptor3dCurveGeom for CurveOnSurface {
     /// cached by EvalKPart; the Standard_NoSuchObject raise fires when
     /// myType != GeomAbs_Line.
     fn line(&self) -> Line3 {
-        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Line(): curve is not a line")
+        if self.my_type != CurveType::Line {
+            panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Line(): curve is not a line");
+        }
+        self.my_lin.expect("EvalKPart must cache myLin for GeomAbs_Line")
     }
 
     /// OCCT Adaptor3d_CurveOnSurface::Circle (L1390-1396) — the myCirc
     /// payload cached by EvalKPart; raises when myType != GeomAbs_Circle.
     fn circle(&self) -> Circle3 {
-        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Line(): curve is not a circle")
+        if self.my_type != CurveType::Circle {
+            panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Line(): curve is not a circle");
+        }
+        self.my_circ.expect("EvalKPart must cache myCirc for GeomAbs_Circle")
     }
 
     /// OCCT Adaptor3d_CurveOnSurface::Ellipse (L1399-1403) —
-    /// to3d(mySurface->Plane(), myCurve->Ellipse()); unreachable with the
-    /// staged EvalKPart (see the struct docs).
+    /// to3d(mySurface->Plane(), myCurve->Ellipse()).
     fn ellipse(&self) -> Ellipse3 {
-        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Ellipse")
+        let pl = surface_plane(&*self.my_surface);
+        to3d_elips(&pl, self.my2d_curve.ellipse())
     }
 
-    /// OCCT Adaptor3d_CurveOnSurface::Hyperbola (L1406-1410) — see Ellipse.
+    /// OCCT Adaptor3d_CurveOnSurface::Hyperbola (L1406-1410) —
+    /// to3d(mySurface->Plane(), myCurve->Hyperbola()).
     fn hyperbola(&self) -> Hyperbola3 {
-        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Hyperbola")
+        let pl = surface_plane(&*self.my_surface);
+        to3d_hypr(&pl, self.my2d_curve.hyperbola())
     }
 
-    /// OCCT Adaptor3d_CurveOnSurface::Parabola (L1413-1417) — see Ellipse.
+    /// OCCT Adaptor3d_CurveOnSurface::Parabola (L1413-1417) —
+    /// to3d(mySurface->Plane(), myCurve->Parabola()).
     fn parabola(&self) -> Parabola3 {
-        panic!("Standard_NoSuchObject: Adaptor3d_CurveOnSurface::Parabola")
+        let pl = surface_plane(&*self.my_surface);
+        to3d_parab(&pl, self.my2d_curve.parabola())
     }
 
     /// OCCT Adaptor3d_CurveOnSurface::Trim — see the Adaptor3dCurve trim.

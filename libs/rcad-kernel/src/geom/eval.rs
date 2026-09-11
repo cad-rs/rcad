@@ -1,3 +1,4 @@
+use crate::core::precision::{INFINITE_VALUE, is_infinite_value};
 use crate::geom::*;
 use std::f64::consts::PI;
 
@@ -199,7 +200,9 @@ impl CurveEval for Line3 {
         0.0
     }
     fn default_domain(&self) -> [f64; 2] {
-        [f64::NEG_INFINITY, f64::INFINITY]
+        // OCCT Geom_Line::FirstParameter/LastParameter (Geom_Line.cxx L137/L144):
+        // -Precision::Infinite() / Precision::Infinite().
+        [-INFINITE_VALUE, INFINITE_VALUE]
     }
     fn reversed_parameter(&self, t: f64) -> f64 {
         -t
@@ -299,7 +302,10 @@ impl CurveEval for Hyperbola3 {
         self.semi_major * t.sinh() * self.major_dir + self.semi_minor * t.cosh() * minor_dir
     }
     fn default_domain(&self) -> [f64; 2] {
-        [-1e4, 1e4] // unbounded; caller trims as needed
+        // OCCT Geom_Hyperbola::FirstParameter/LastParameter
+        // (Geom_Hyperbola.cxx L94/L101): -Precision::Infinite() /
+        // Precision::Infinite().
+        [-INFINITE_VALUE, INFINITE_VALUE]
     }
 }
 
@@ -320,7 +326,10 @@ impl CurveEval for Parabola3 {
         (t / self.focal_param) * self.axis_dir + dir_perp
     }
     fn default_domain(&self) -> [f64; 2] {
-        [-1e4, 1e4] // unbounded
+        // OCCT Geom_Parabola::FirstParameter/LastParameter
+        // (Geom_Parabola.cxx L114/L128): -Precision::Infinite() /
+        // Precision::Infinite().
+        [-INFINITE_VALUE, INFINITE_VALUE]
     }
 }
 
@@ -557,11 +566,12 @@ impl SurfaceEval for Plane {
         self.normal
     }
     fn default_domain(&self) -> [f64; 4] {
+        // OCCT Geom_Plane::Bounds (Geom_Plane.cxx L181-184): +/-Precision::Infinite().
         [
-            f64::NEG_INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::INFINITY,
+            -INFINITE_VALUE,
+            INFINITE_VALUE,
+            -INFINITE_VALUE,
+            INFINITE_VALUE,
         ]
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
@@ -597,7 +607,9 @@ impl SurfaceEval for CylindricalSurface {
         (u.cos() * x_ax + u.sin() * y_ax).normalize()
     }
     fn default_domain(&self) -> [f64; 4] {
-        [0.0, 2.0 * PI, f64::NEG_INFINITY, f64::INFINITY]
+        // OCCT Geom_CylindricalSurface::Bounds
+        // (Geom_CylindricalSurface.cxx L162-163): V = +/-Precision::Infinite().
+        [0.0, 2.0 * PI, -INFINITE_VALUE, INFINITE_VALUE]
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
         let x_ax = self.ref_dir.normalize_or_zero();
@@ -773,7 +785,9 @@ impl SurfaceEval for ConicalSurface {
         (radial * half.cos() - axis * half.sin()).normalize()
     }
     fn default_domain(&self) -> [f64; 4] {
-        [0.0, 2.0 * PI, 0.0, f64::INFINITY]
+        // OCCT Geom_ConicalSurface::Bounds (Geom_ConicalSurface.cxx L212-213):
+        // V1 = -Precision::Infinite() (NOT 0), V2 = Precision::Infinite().
+        [0.0, 2.0 * PI, -INFINITE_VALUE, INFINITE_VALUE]
     }
     fn is_u_closed(&self) -> bool {
         true
@@ -969,8 +983,11 @@ impl SurfaceEval for LinearExtrusionSurface {
         n.normalize()
     }
     fn default_domain(&self) -> [f64; 4] {
+        // OCCT Geom_SurfaceOfLinearExtrusion::Bounds
+        // (Geom_SurfaceOfLinearExtrusion.cxx L142-145): V = +/-Infinite(),
+        // U = basis curve parameters.
         let [t1, t2] = self.profile.default_domain();
-        [t1, t2, f64::NEG_INFINITY, f64::INFINITY]
+        [t1, t2, -INFINITE_VALUE, INFINITE_VALUE]
     }
 }
 
@@ -1373,7 +1390,9 @@ impl Surface3 {
 
 fn remap_unit_to_curve_domain(curve: &Curve3, t: f64) -> f64 {
     let [t0, t1] = curve.default_domain();
-    if !t0.is_finite() || !t1.is_finite() {
+    // OCCT Precision::IsInfinite (Precision.hxx L350-353): an unbounded
+    // domain leaves the unit parameter untouched.
+    if is_infinite_value(t0) || is_infinite_value(t1) {
         return t;
     }
     t0 + (t1 - t0) * t
@@ -2255,6 +2274,12 @@ impl Curve2dEval for Line2d {
     fn reversed_parameter(&self, t: f64) -> f64 {
         -t
     }
+    fn default_domain(&self) -> [f64; 2] {
+        // OCCT Geom2d_Line::FirstParameter/LastParameter
+        // (Geom2d_Line.cxx L144/L151): -Precision::Infinite() /
+        // Precision::Infinite().
+        [-INFINITE_VALUE, INFINITE_VALUE]
+    }
 }
 
 impl Curve2dEval for Circle2d {
@@ -2329,6 +2354,12 @@ impl Curve2dEval for Parabola2d {
     fn tangent_at(&self, t: f64) -> DVec2 {
         self.derivative_at(t).normalize_or_zero()
     }
+    fn default_domain(&self) -> [f64; 2] {
+        // OCCT Geom2d_Parabola::FirstParameter/LastParameter
+        // (Geom2d_Parabola.cxx L130/L137): -Precision::Infinite() /
+        // Precision::Infinite().
+        [-INFINITE_VALUE, INFINITE_VALUE]
+    }
 }
 
 impl Curve2dEval for Hyperbola2d {
@@ -2344,6 +2375,12 @@ impl Curve2dEval for Hyperbola2d {
     }
     fn tangent_at(&self, t: f64) -> DVec2 {
         self.derivative_at(t).normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        // OCCT Geom2d_Hyperbola::FirstParameter/LastParameter
+        // (Geom2d_Hyperbola.cxx L147/L154): -Precision::Infinite() /
+        // Precision::Infinite().
+        [-INFINITE_VALUE, INFINITE_VALUE]
     }
 }
 
@@ -2498,10 +2535,15 @@ impl Curve2dEval for Curve2d {
     fn default_domain(&self) -> [f64; 2] {
         match self {
             Curve2d::Trimmed(tc) => [tc.t_min, tc.t_max],
-            Curve2d::Line(_) => [f64::NEG_INFINITY, f64::INFINITY],
+            // OCCT virtual dispatch: Geom2d_Line / Geom2d_Parabola /
+            // Geom2d_Hyperbola FirstParameter/LastParameter return
+            // -/+Precision::Infinite() (Geom2d_Line.cxx L144/L151,
+            // Geom2d_Parabola.cxx L130/L137, Geom2d_Hyperbola.cxx L147/L154).
+            Curve2d::Line(c) => c.default_domain(),
             Curve2d::Circle(_) => [0.0, 2.0 * PI],
             Curve2d::Ellipse(_) => [0.0, 2.0 * PI],
-            Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => [f64::NEG_INFINITY, f64::INFINITY],
+            Curve2d::Parabola(c) => c.default_domain(),
+            Curve2d::Hyperbola(c) => c.default_domain(),
             Curve2d::CircleInvolute(_) => [0.0, 10.0],
             Curve2d::ArchimedeanSpiral(_) => [0.0, 6.0 * PI],
             Curve2d::LogarithmicSpiral(_) => [0.0, 4.0 * PI],

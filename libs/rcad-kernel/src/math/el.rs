@@ -6,6 +6,7 @@
 //! OCCT source: src/FoundationClasses/TKMath/ElCLib/ElCLib.cxx
 //!             src/FoundationClasses/TKMath/ElSLib/ElSLib.cxx
 
+use crate::core::precision::is_infinite_value;
 use glam::DVec3;
 use std::f64::consts::PI;
 
@@ -168,8 +169,12 @@ pub fn elclib_line_parameter_2d(p: glam::DVec2, origin: glam::DVec2, direction: 
 /// OCCT ElCLib::InPeriod (ElCLib.cxx L95-111) — the value of U in the
 /// periodic range [UFirst, ULast].
 pub fn in_period(u: f64, ufirst: f64, ulast: f64) -> f64 {
-    // In order to avoid FLT_Overflow exception.
-    if !u.is_finite() || !ufirst.is_finite() || !ulast.is_finite() {
+    // OCCT L101-105: Precision::IsInfinite on all three arguments — "In
+    // order to avoid FLT_Overflow exception".  IsInfinite is the ±1e100
+    // threshold (Precision.hxx L350-355), not the IEEE finiteness test, so
+    // the ±Precision::Infinite() domain sentinels returned by the unbounded
+    // curve producers take the early return exactly like OCCT.
+    if is_infinite_value(u) || is_infinite_value(ufirst) || is_infinite_value(ulast) {
         return u;
     }
 

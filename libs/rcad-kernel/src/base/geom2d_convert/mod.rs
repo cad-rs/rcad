@@ -5,7 +5,15 @@
 //! Parallel to GeomConvert but for 2D parameter-space curves (Geom2d_*).
 //! Provides BSpline↔Bezier conversion and curve composition.
 
+use crate::core::precision::is_infinite_value;
 use crate::geom::{BSplineCurve2, Curve2d};
+
+/// OCCT Precision::IsInfinite — shared domain-unboundedness test for the
+/// convert entry points (Precision.hxx L350-353: |R| >= 0.5 * Infinite(),
+/// and the unbounded domains carry +/-2e100).
+fn domain_is_unbounded(dom: &[f64; 2]) -> bool {
+    is_infinite_value(dom[0]) || is_infinite_value(dom[1])
+}
 
 pub mod bspline_curve;
 pub mod bspline_curve_to_bezier_curve;
@@ -31,7 +39,7 @@ pub fn compose_curves_to_bspline(curves: &[Curve2d]) -> Option<BSplineCurve2> {
     let mut all_pts = Vec::new();
     for c in curves {
         let dom = c.default_domain();
-        if !dom[0].is_finite() || !dom[1].is_finite() {
+        if domain_is_unbounded(&dom) {
             return None;
         }
         let n = 8.max(2);
@@ -52,7 +60,7 @@ pub fn compose_curves_to_bspline(curves: &[Curve2d]) -> Option<BSplineCurve2> {
 pub fn approx_curve_to_bspline(curve: &Curve2d, tol: f64) -> Option<BSplineCurve2> {
     use crate::geom::Curve2dEval;
     let dom = curve.default_domain();
-    if !dom[0].is_finite() || !dom[1].is_finite() {
+    if domain_is_unbounded(&dom) {
         return None;
     }
     let range = dom[1] - dom[0];

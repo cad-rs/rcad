@@ -7,6 +7,7 @@
 //! refinement. Used for approximation and display.
 
 use glam::DVec3;
+use crate::core::precision::is_infinite_value;
 use crate::geom::{Curve3, CurveEval};
 
 /// Generate uniformly-spaced points along a curve.
@@ -19,7 +20,9 @@ pub fn uniform_points(curve: &Curve3, n: usize) -> Vec<(f64, DVec3)> {
     }
     // For unbounded curves (e.g. Line), fall back to a finite range so
     // sampling is well-defined. Matches approx_curve behavior.
-    let (t_min, t_max) = if !dom[0].is_finite() || !dom[1].is_finite() {
+    // OCCT Precision::IsInfinite (Precision.hxx L350-353): the unbounded
+    // domain sentinels are +/-Precision::Infinite() = +/-2e100.
+    let (t_min, t_max) = if is_infinite_value(dom[0]) || is_infinite_value(dom[1]) {
         (-10.0, 10.0)
     } else {
         (dom[0], dom[1])

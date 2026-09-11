@@ -15,7 +15,11 @@
 //! Template-parameter mapping: `TheCurve1` / `TheCurve2` (Adaptor3d_Curve) and
 //! `TheCurveTool1` / `TheCurveTool2` (Extrema_CurveTool, the static facade over
 //! that curve) both map to the `ExtremaCurveTool` trait; `ThePOnC` maps to
-//! `POnCurve`; `TheExtPC` maps to `crate::base::extrema::ExtPC`.
+//! `POnCurve`; `TheExtPC` maps to
+//! `crate::base::extrema_ext_pc::ExtremaExtPC` over the file-local
+//! [`ProjPOnCCurveTool`] view (OCCT `Extrema_ExtPC.hxx` L31-38 instantiates
+//! `TheExtPC` over the very same `Adaptor3d_Curve`/`Extrema_CurveTool` pair
+//! this unit stores).
 //!
 //! rcad note: OCCT lets `aFunc` (the objective) and `aFinder` (the solver)
 //! coexist because `math_GlobOptMin` holds a raw pointer; Rust forbids the
@@ -25,9 +29,9 @@
 use glam::DVec2;
 use glam::DVec3;
 
-use crate::base::extrema::ExtPC;
 use crate::base::extrema::POnCurve;
 use crate::base::extrema_curve_tool::ExtremaCurveTool;
+use crate::base::extrema_ext_pc::{BSplineView, ExtremaExtPC, ExtPCurveTool};
 use crate::base::extrema_glob_opt_func_cc::GlobOptFuncCCC2;
 use crate::base::extrema_math_glob_opt_min::{MathGlobOptMin, MathMultiVarFunc};
 use crate::base::extrema_math_opt::{CellFilter, CellFilterAction};
@@ -178,22 +182,131 @@ impl GGenCcPointsInspector {
     }
 }
 
-/// OCCT Extrema_GGenExtCC_ProjPOnC(theP, theProjTool) (hxx L248-263).
+/// The rcad view of `TheCurve`/`TheCurveTool` over the curve handle this
+/// translation unit stores: OCCT `Extrema_ExtPC` is
+/// `Extrema_GGExtPC<Adaptor3d_Curve, Extrema_CurveTool, ...>`
+/// (Extrema_ExtPC.hxx L31-38), so `anExtPC.Initialize(C1, ...)` consumes the
+/// very `Adaptor3d_Curve` the GGenExtCC holds — the same object flows through.
 ///
-/// The rcad `ExtPC` takes the projection range per `Perform`, so the range the
-/// OCCT `Extrema_ExtPC::Initialize` fixed is passed through.
-fn ggen_ext_cc_proj_p_on_c<F>(
-    the_p: DVec3,
-    the_proj_tool: &mut ExtPC,
-    eval: &F,
-    uinf: f64,
-    usup: f64,
-) -> f64
-where
-    F: Fn(f64) -> DVec3,
-{
+/// Architecture glue: the rcad `GenExtCC` curve storage is `&dyn
+/// ExtremaCurveTool` (the trait-object the `ExtremaExtCC` layer hands over),
+/// while `ExtremaExtPC` consumes `&dyn ExtPCurveTool` (`ExtremaCurveTool`
+/// extended with the Extrema_CurveTool.hxx L128-141 Bezier/BSpline statics).
+/// The view forwards every `ExtremaCurveTool` query; the Bezier/BSpline
+/// statics cannot cross the `ExtremaCurveTool` trait-object boundary — they
+/// raise Standard_NotImplemented at this layer (the interface request recorded
+/// in `extrema_curve_tool.rs`; `Extrema_CurveTool` itself answers them from
+/// the adaptor downcasts).
+struct ProjPOnCCurveTool<'a> {
+    /// OCCT `const TheCurve& myC[2]` element (hxx L124) seen through the
+    /// `Extrema_CurveTool` facade.
+    the_c: &'a dyn ExtremaCurveTool,
+}
+
+impl ProjPOnCCurveTool<'_> {
+    /// OCCT `TheCurveTool::Bezier(theC)` (hxx L136) — the adaptor downcast the
+    /// rcad facade does not carry.
+    fn standard_no_such_object() -> ! {
+        panic!(
+            "Standard_NotImplemented: Extrema_CurveTool Bezier/BSpline statics \
+             are not reachable through the ExtremaCurveTool trait object \
+             (Extrema_GGenExtCC.hxx L771 TheExtPC view)"
+        )
+    }
+}
+
+impl ExtremaCurveTool for ProjPOnCCurveTool<'_> {
+    fn first_parameter(&self) -> f64 {
+        self.the_c.first_parameter()
+    }
+
+    fn last_parameter(&self) -> f64 {
+        self.the_c.last_parameter()
+    }
+
+    fn continuity(&self) -> GeomAbsShape {
+        self.the_c.continuity()
+    }
+
+    fn nb_intervals(&self, s: GeomAbsShape) -> i32 {
+        self.the_c.nb_intervals(s)
+    }
+
+    fn intervals(&self, s: GeomAbsShape) -> Vec<f64> {
+        self.the_c.intervals(s)
+    }
+
+    fn is_periodic(&self) -> bool {
+        self.the_c.is_periodic()
+    }
+
+    fn period(&self) -> f64 {
+        self.the_c.period()
+    }
+
+    fn resolution(&self, r3d: f64) -> f64 {
+        self.the_c.resolution(r3d)
+    }
+
+    fn get_type(&self) -> CurveType {
+        self.the_c.get_type()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.the_c.is_closed()
+    }
+
+    fn value(&self, u: f64) -> DVec3 {
+        self.the_c.value(u)
+    }
+
+    fn d1(&self, u: f64) -> (DVec3, DVec3) {
+        self.the_c.d1(u)
+    }
+
+    fn d2(&self, u: f64) -> (DVec3, DVec3, DVec3) {
+        self.the_c.d2(u)
+    }
+
+    fn dn(&self, u: f64, n: i32) -> DVec3 {
+        self.the_c.dn(u, n)
+    }
+
+    fn line(&self) -> crate::geom::Line3 {
+        self.the_c.line()
+    }
+
+    fn circle(&self) -> crate::geom::Circle3 {
+        self.the_c.circle()
+    }
+
+    fn ellipse(&self) -> crate::geom::Ellipse3 {
+        self.the_c.ellipse()
+    }
+
+    fn hyperbola(&self) -> crate::geom::Hyperbola3 {
+        self.the_c.hyperbola()
+    }
+
+    fn parabola(&self) -> crate::geom::Parabola3 {
+        self.the_c.parabola()
+    }
+}
+
+impl ExtPCurveTool for ProjPOnCCurveTool<'_> {
+    fn bezier_nb_poles(&self) -> usize {
+        Self::standard_no_such_object()
+    }
+
+    fn bspline(&self) -> BSplineView {
+        Self::standard_no_such_object()
+    }
+}
+
+/// OCCT Extrema_GGenExtCC_ProjPOnC(theP, theProjTool) (hxx L248-263).
+fn ggen_ext_cc_proj_p_on_c(the_p: DVec3, the_proj_tool: &mut ExtremaExtPC) -> f64 {
     let mut a_dist = REAL_LAST;
-    the_proj_tool.perform_fn(the_p, eval, uinf, usup);
+    the_proj_tool.perform(the_p);
     if the_proj_tool.is_done() && the_proj_tool.nb_ext() > 0 {
         for i in 1..=the_proj_tool.nb_ext() {
             let a_d = the_proj_tool.square_distance(i);
@@ -635,40 +748,37 @@ impl<'a> GenExtCC<'a> {
                 },
             ];
 
-            // OCCT: TheExtPC anExtPC1, anExtPC2 with Initialize(C, Low, Upp).
-            let mut an_ext_pc1 = ExtPC::new_fn(
-                DVec3::ZERO,
-                self.my_curve_min_tol,
+            // OCCT L770-773: TheExtPC anExtPC1, anExtPC2;
+            //       anExtPC1.Initialize(C1, myLowBorder(1), myUppBorder(1));
+            //       anExtPC2.Initialize(C2, myLowBorder(2), myUppBorder(2)).
+            let a_view1 = ProjPOnCCurveTool { the_c: c1 };
+            let a_view2 = ProjPOnCCurveTool { the_c: c2 };
+            let mut an_ext_pc1 = ExtremaExtPC::new();
+            let mut an_ext_pc2 = ExtremaExtPC::new();
+            // The trailing 1.0e-10 is the OCCT Initialize theTolF default
+            // (Extrema_GGExtPC.hxx L113).
+            an_ext_pc1.initialize(
+                &a_view1,
                 self.my_low_border.get(1),
                 self.my_upp_border.get(1),
-                &|u| c1.value(u),
+                1.0e-10,
             );
-            let mut an_ext_pc2 = ExtPC::new_fn(
-                DVec3::ZERO,
-                self.my_curve_min_tol,
+            an_ext_pc2.initialize(
+                &a_view2,
                 self.my_low_border.get(2),
                 self.my_upp_border.get(2),
-                &|u| c2.value(u),
+                1.0e-10,
             );
 
             for i_t in 0..2 {
                 if !is_parallel {
                     break;
                 }
-                let a_dist1 = ggen_ext_cc_proj_p_on_c(
-                    c1.value(a_t1[i_t]),
-                    &mut an_ext_pc2,
-                    &|u| c2.value(u),
-                    self.my_low_border.get(2),
-                    self.my_upp_border.get(2),
-                );
-                let a_dist2 = ggen_ext_cc_proj_p_on_c(
-                    c2.value(a_t2[i_t]),
-                    &mut an_ext_pc1,
-                    &|u| c1.value(u),
-                    self.my_low_border.get(1),
-                    self.my_upp_border.get(1),
-                );
+                // OCCT L776-779: Extrema_GGenExtCC_ProjPOnC(C1.Value(aT1[iT]),
+                // anExtPC2) / Extrema_GGenExtCC_ProjPOnC(C2.Value(aT2[iT]),
+                // anExtPC1).
+                let a_dist1 = ggen_ext_cc_proj_p_on_c(c1.value(a_t1[i_t]), &mut an_ext_pc2);
+                let a_dist2 = ggen_ext_cc_proj_p_on_c(c2.value(a_t2[i_t]), &mut an_ext_pc1);
                 is_parallel = (a_dist1.min(a_dist2) - a_f * a_f).abs() < CONFUSION;
             }
         }

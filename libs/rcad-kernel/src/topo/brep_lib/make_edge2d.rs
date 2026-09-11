@@ -955,12 +955,13 @@ mod tests {
         let mut m = MakeEdge2d::new(&mut brep);
         m.init_vertices(&c, &va, &Shape::null());
         assert!(m.is_done());
-        // p1 = 2 (the projection), p2 = +inf: the edge carries one vertex and
-        // the [2, +inf] range.
+        // p1 = 2 (the projection), p2 = +Precision::Infinite() (the
+        // Geom2d_Line LastParameter, Geom2d_Line.cxx L144-151): the edge
+        // carries one vertex and the [2, +Infinite] range.
         let e_tmp = m.edge();
         let ed = edge_data!(e_tmp);
         assert_eq!(ed.range[0], 2.0);
-        assert_eq!(ed.range[1], f64::INFINITY);
+        assert_eq!(ed.range[1], crate::core::precision::INFINITE_VALUE);
     }
 }
 
