@@ -657,7 +657,7 @@ impl ApproxCurveOnSurface {
 
     /// OCCT Approx_CurveOnSurface::isIsoLine (cxx L591-675) — checks whether
     /// the 2d curve is a horizontal or vertical isoline.
-    fn is_iso_line(
+    pub(crate) fn is_iso_line(
         the_c2d: &dyn Adaptor2dCurve2d,
         the_is_u: &mut bool,
         the_param: &mut f64,
@@ -898,21 +898,170 @@ fn surface_rectangular_trimmed(
     panic!("GAP: Geom_RectangularTrimmedSurface not translated")
 }
 
-/// OCCT Geom_Surface::UIso (cxx L735).
-fn surface_u_iso(_surf: &Surface3, _param: f64) -> Curve3 {
-    panic!("GAP: Geom_Surface::UIso not translated")
+/// OCCT Geom_Surface::UIso — the virtual dispatch of the concrete surface
+/// classes: Geom_Plane / Geom_CylindricalSurface / Geom_ConicalSurface /
+/// Geom_SphericalSurface / Geom_ToroidalSurface (all via the ElSLib
+/// constructors) and Geom_SurfaceOfRevolution (cxx L372-379: a rotated copy of
+/// the basis curve).
+pub(crate) fn surface_u_iso(surf: &Surface3, param: f64) -> Curve3 {
+    use rcad_kernel::base::proj_lib::elslib_iso as el;
+    match surf {
+        Surface3::Plane(p) => Curve3::Line(el::elslib_plane_u_iso(
+            &el::Ax3View::from_axes(p.origin, p.normal, p.u_dir),
+            param,
+        )),
+        Surface3::Cylinder(c) => Curve3::Line(el::elslib_cylinder_u_iso(
+            &el::Ax3View::from_axes(c.origin, c.axis, c.ref_dir),
+            c.radius,
+            param,
+        )),
+        Surface3::Cone(c) => Curve3::Line(el::elslib_cone_u_iso(
+            &el::Ax3View::from_axes(c.apex, c.axis, c.ref_dir),
+            c.radius,
+            c.half_angle_rad,
+            param,
+        )),
+        Surface3::Sphere(s) => Curve3::Circle(el::elslib_sphere_u_iso(
+            &el::Ax3View::from_axes(s.center, s.axis, s.ref_dir),
+            s.radius,
+            param,
+        )),
+        Surface3::Torus(t) => Curve3::Circle(el::elslib_torus_u_iso(
+            &el::Ax3View::from_axes(t.center, t.axis, t.ref_dir),
+            t.major_radius,
+            t.minor_radius,
+            param,
+        )),
+        // OCCT Geom_SurfaceOfRevolution::UIso (cxx L372-379):
+        //   C = basisCurve->Copy(); C->Rotate(Ax1(loc, direction), U); return C.
+        Surface3::Revolution(r) => rotate_curve_about_axis(
+            &r.profile,
+            r.axis_origin,
+            r.axis_dir,
+            param,
+        ),
+        _ => panic!("GAP: Geom_Surface::UIso not translated for this surface type"),
+    }
 }
 
-/// OCCT Geom_Surface::VIso (cxx L767).
-fn surface_v_iso(_surf: &Surface3, _param: f64) -> Curve3 {
-    panic!("GAP: Geom_Surface::VIso not translated")
+/// OCCT Geom_Surface::VIso — the same virtual dispatch, the V-isoparametric
+/// counterpart (Geom_SurfaceOfRevolution::VIso cxx L383-410: the parallel
+/// circle of the basis point through the axis).
+pub(crate) fn surface_v_iso(surf: &Surface3, param: f64) -> Curve3 {
+    use rcad_kernel::base::proj_lib::elslib_iso as el;
+    match surf {
+        Surface3::Plane(p) => Curve3::Line(el::elslib_plane_v_iso(
+            &el::Ax3View::from_axes(p.origin, p.normal, p.u_dir),
+            param,
+        )),
+        Surface3::Cylinder(c) => Curve3::Circle(el::elslib_cylinder_v_iso(
+            &el::Ax3View::from_axes(c.origin, c.axis, c.ref_dir),
+            c.radius,
+            param,
+        )),
+        Surface3::Cone(c) => Curve3::Circle(el::elslib_cone_v_iso(
+            &el::Ax3View::from_axes(c.apex, c.axis, c.ref_dir),
+            c.radius,
+            c.half_angle_rad,
+            param,
+        )),
+        Surface3::Sphere(s) => Curve3::Circle(el::elslib_sphere_v_iso(
+            &el::Ax3View::from_axes(s.center, s.axis, s.ref_dir),
+            s.radius,
+            param,
+        )),
+        Surface3::Torus(t) => Curve3::Circle(el::elslib_torus_v_iso(
+            &el::Ax3View::from_axes(t.center, t.axis, t.ref_dir),
+            t.major_radius,
+            t.minor_radius,
+            param,
+        )),
+        // OCCT Geom_SurfaceOfRevolution::VIso (cxx L383-410): the circle of the
+        // basis point at V about the axis.  Rad = distance from the axis; the
+        // circle frame is gp_Ax2(C, direction, D) where C is the projection of
+        // the basis point onto the axis and D the unit vector from C to it.
+        Surface3::Revolution(r) => {
+            let pc = r.profile.point_at(param);
+            let d = pc - r.axis_origin;
+            let rad = (d - r.axis_dir * d.dot(r.axis_dir)).length();
+            let c = r.axis_origin + r.axis_dir * d.dot(r.axis_dir);
+            let radial = pc - c;
+            let (normal, x_dir) = if rad > rcad_kernel::precision::CONFUSION {
+                (r.axis_dir, radial.normalize_or_zero())
+            } else {
+                // OCCT: Rep = gp_Ax2(C, direction) — the zero-radius case uses
+                // the frame's default X direction.
+                let x = rcad_kernel::geom::any_perpendicular(r.axis_dir);
+                (r.axis_dir, x)
+            };
+            Curve3::Circle(rcad_kernel::geom::Circle3 {
+                center: c,
+                normal,
+                x_dir,
+                y_dir: normal.cross(x_dir).normalize_or_zero(),
+                radius: rad,
+            })
+        }
+        _ => panic!("GAP: Geom_Surface::VIso not translated for this surface type"),
+    }
 }
 
-/// OCCT GeomConvert::CurveToBSplineCurve(C, Convert_QuasiAngular).
+/// OCCT Geom_Geometry::Rotate (Geom_Geometry.cxx L47-55) applied to a curve:
+/// the per-type `Rotate(Ax1, Ang)` overrides.  The rotation is a rigid motion
+/// so a TrimmedCurve rotates its basis and keeps its parameter range
+/// (Geom_TrimmedCurve::Transform).
+fn rotate_curve_about_axis(
+    curve: &Curve3,
+    axis_loc: DVec3,
+    axis_dir: DVec3,
+    angle: f64,
+) -> Curve3 {
+    let axis_dir = axis_dir.normalize_or_zero();
+    let trsf = glam::DAffine3::from_translation(axis_loc)
+        * glam::DAffine3::from_axis_angle(axis_dir, angle)
+        * glam::DAffine3::from_translation(-axis_loc);
+    match curve {
+        Curve3::Trimmed(t) => Curve3::Trimmed(rcad_kernel::geom::TrimmedCurve3::new(
+            rotate_curve_about_axis(&t.curve, axis_loc, axis_dir, angle),
+            t.first,
+            t.last,
+        )),
+        other => rcad_kernel::geom::transform_curve(other, &trsf),
+    }
+}
+
+/// OCCT GeomConvert::CurveToBSplineCurve(C, Convert_QuasiAngular)
+/// (GeomConvert.cxx L157-209).
 ///
-/// Architecture difference: the kernel converter is sampling-based; the exact
-/// GeomConvert analytical conversion is staged in the kernel.
+/// The kernel's exact conversion has landed the Trimmed(Line) and
+/// Trimmed(Circle) arms (GeomConvert.cxx L200-282).  The isoline path only
+/// ever converts `Geom_TrimmedCurve`s here (BuildC3dOnIsoLine L735-739 wraps
+/// `aSurf->UIso/VIso` in a trimmed curve), and the rcad TrimmedCurve3
+/// `map_param` is the identity, so the outermost trim supplies the domain and
+/// an inner trim is inert.  Inputs outside the landed arms keep the kernel's
+/// sampling conversion (the pre-existing stand-in for the staged arms).
 fn geom_convert_curve_to_bspline(c: &Curve3) -> BSplineCurve3 {
+    if let Curve3::Trimmed(tc) = c {
+        let mut basis = tc.basis_curve();
+        let mut depth = 0;
+        while let Curve3::Trimmed(inner) = basis {
+            basis = inner.basis_curve();
+            depth += 1;
+            if depth > 8 {
+                break;
+            }
+        }
+        if matches!(basis, Curve3::Line(_) | Curve3::Circle(_)) {
+            return rcad_kernel::base::convert::geom_convert_curve_to_bspline_curve(
+                &Curve3::Trimmed(rcad_kernel::geom::TrimmedCurve3::new(
+                    basis.clone(),
+                    tc.first,
+                    tc.last,
+                )),
+                rcad_kernel::base::convert::ConvertParameterisation::QuasiAngular,
+            );
+        }
+    }
     rcad_kernel::base::convert::curve_to_bspline(c, 23)
 }
 

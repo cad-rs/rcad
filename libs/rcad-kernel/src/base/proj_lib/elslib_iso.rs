@@ -311,6 +311,20 @@ fn cone_d1(u: f64, v: f64, pos: &Ax3View, radius: f64, s_angle: f64) -> (DVec3, 
 // The U-iso constructors (ElSLib.cxx L1716-1766)
 // ---------------------------------------------------------------------------
 
+/// OCCT ElSLib::PlaneUIso(Pos, U) (ElSLib.cxx L1705-1712): a line through the
+/// plane location along YDirection, translated by U * XDirection.
+pub fn elslib_plane_u_iso(pos: &Ax3View, u: f64) -> Line3 {
+    let origin = pos.location + u * pos.x_direction;
+    Line3::new(origin, pos.y_direction)
+}
+
+/// OCCT ElSLib::PlaneVIso(Pos, V) (ElSLib.cxx L1770-1777): a line through the
+/// plane location along XDirection, translated by V * YDirection.
+pub fn elslib_plane_v_iso(pos: &Ax3View, v: f64) -> Line3 {
+    let origin = pos.location + v * pos.y_direction;
+    Line3::new(origin, pos.x_direction)
+}
+
 /// OCCT ElSLib::CylinderUIso(Pos, Radius, U) (ElSLib.cxx L1716-1723).
 pub fn elslib_cylinder_u_iso(pos: &Ax3View, radius: f64, u: f64) -> Line3 {
     let (p, dv) = cylinder_d1(u, 0.0, pos, radius);

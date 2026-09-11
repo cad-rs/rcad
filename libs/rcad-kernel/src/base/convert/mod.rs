@@ -1331,6 +1331,46 @@ mod tests {
         (a - b).length() < tol
     }
 
+    /// The QuasiAngular circle-arc conversion keeps the angle parameterization
+    /// (OCCT Convert_CircleToBSplineCurve): the rational form evaluates on the
+    /// circle at the arc's own parameter.  The quasi-angular approximation is
+    /// only accurate to ~1e-5 rad, so the band below is in that order — this
+    /// test guards against the gross parameterization errors (a Bernstein
+    /// evaluation of the power-basis coefficients shifted the arc by ~0.5 rad).
+    #[test]
+    fn quasi_angular_circle_arc_keeps_angle_parameterization() {
+        let circle = Circle3 {
+            center: DVec3::new(40.0, 70.0, 40.0),
+            normal: DVec3::Z,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+            radius: 10.0,
+        };
+        let bs = geom_convert_curve_to_bspline_curve(
+            &Curve3::Trimmed(crate::geom::TrimmedCurve3::new(
+                Curve3::Circle(circle),
+                0.0,
+                std::f64::consts::PI,
+            )),
+            ConvertParameterisation::QuasiAngular,
+        );
+        assert!(
+            (bs.first_parameter() - 0.0).abs() < 1e-12
+                && (bs.last_parameter() - std::f64::consts::PI).abs() < 1e-12,
+            "arc parameter range must be the trim range"
+        );
+        for k in 0..=8 {
+            let t = std::f64::consts::PI * k as f64 / 8.0;
+            let got = crate::geom::CurveEval::point_at(&bs, t);
+            let want = circle.center + 10.0 * (t.cos() * DVec3::X + t.sin() * DVec3::Y);
+            assert!(
+                (got - want).length() < 1e-3,
+                "arc point at t={t} off by {}",
+                (got - want).length()
+            );
+        }
+    }
+
     // ── Curve tests ──────────────────────────────────────────────────────────
 
     #[test]
@@ -1488,22 +1528,6 @@ pub struct ConvertConicToBspline {
     pub is_periodic: bool,
 }
 
-/// OCCT PLib::NoDerivativeEvalPolynomial(U, Degree, Dimension, Stride,
-/// Polynom, Results) — evaluation of a Bernstein (polynomial) form without
-/// derivative request.
-fn no_derivative_eval_polynomial(u: f64, degree: i32, dimension: usize, coeffs: &[f64], results: &mut [f64]) {
-    // Bernstein basis evaluation: R(u) = sum_i C(Degree,i) (1-u)^(Degree-i) u^i * P_i.
-    for d in 0..dimension {
-        let mut acc = 0.0f64;
-        let uc = 1.0 - u;
-        for i in 0..=degree {
-            let binom = crate::math::plib::binomial(degree as usize, i as usize);
-            acc += binom * uc.powi(degree - i) * u.powi(i) * coeffs[(i as usize) * dimension + d];
-        }
-        results[d] = acc;
-    }
-}
-
 /// OCCT CosAndSinQuasiAngular (Convert_ConicToBSplineCurve.cxx L271-295) —
 /// evaluates the V(t), U(t) polynomial pair of the quasi-angular
 /// parameterisation at U/2 (rational approximation of cotan).
@@ -1518,8 +1542,19 @@ fn cos_and_sin_quasi_angular(parameter: f64, eval_degree: i32, eval_poles: &[DVe
         a_coeffs[i * 2] = pole.x;
         a_coeffs[i * 2 + 1] = pole.y;
     }
+    // OCCT: PLib::NoDerivativeEvalPolynomial(param, EvalDegree, 2,
+    // EvalDegree << 1, aCoeffs(0), Result[0]) — the power-basis Horner over
+    // the pole coordinates, with the highest-degree coefficient at
+    // EvalDegree * Dimension.
     let param = parameter * 0.5;
-    no_derivative_eval_polynomial(param, eval_degree, 2, &a_coeffs, result);
+    crate::math::plib::no_derivative_eval_polynomial_flat(
+        param,
+        eval_degree,
+        2,
+        eval_degree << 1,
+        &a_coeffs,
+        result,
+    );
 }
 
 /// OCCT CosAndSinRationalC1 (Convert_ConicToBSplineCurve.cxx L235-253) —
