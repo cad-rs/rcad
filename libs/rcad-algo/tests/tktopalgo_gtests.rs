@@ -16,7 +16,7 @@
 //!   BRepBuilderAPI_MakeFace_Test.cxx — plane / bounded plane / bounded
 //!     cylinder / from-wire faces (SameParameter pcurves).
 //!   BRepBuilderAPI_Transform_Test.cxx — translate/rotate/scale/mirror/
-//!     validity via rcad_modeling::transform_brep.
+//!     validity via rcad_algo::topalgo::brep_builderapi_transform.
 //!   BRepExtrema_DistShapeShape_Test.cxx — BUC60870 edge-to-vertex distance,
 //!     null-3D-curve robustness.
 //!   BRepBuilderAPI_Copy_Test.cxx — deep/shallow copy via
@@ -526,7 +526,10 @@ mod make_face_tests {
 mod transform_tests {
     use super::*;
     use rcad_kernel::math::gp::{Trsf, TrsfForm};
-    use rcad_modeling::{make_box_brep, transform_brep};
+    // BRepBuilderAPI_Transform lives at topalgo/brep_builderapi_transform
+    // (TKTopAlgo); make_box_brep stays the TKPrim modeling re-host.
+    use rcad_algo::topalgo::brep_builderapi_transform::transform_brep;
+    use rcad_modeling::make_box_brep;
 
     /// 10x10x10 box from the origin (BRepPrimAPI_MakeBox(10,10,10)).
     fn unit_box() -> rcad_kernel::topods::BRep {

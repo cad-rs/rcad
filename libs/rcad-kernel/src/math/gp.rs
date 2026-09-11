@@ -287,6 +287,41 @@ pub struct Trsf {
 /// (Standard_Real.hxx L132-134).
 pub const GP_RESOLUTION: f64 = f64::MIN_POSITIVE;
 
+/// OCCT gp_Mat::SetRotation(theAxis, theAng) — gp_Mat.cxx L122-159.
+/// Rodrigues' rotation formula: R = I + sin(theta)K + (1-cos(theta))K^2,
+/// where K is the skew-symmetric matrix of the normalized axis.
+fn mat_set_rotation(matrix: &mut [[f64; 3]; 3], axis: DVec3, ang: f64) {
+    let a_v = axis.normalize_or_zero(); // OCCT L126: theAxis.Normalized().
+
+    let a = a_v.x; // OCCT L128.
+    let b = a_v.y; // OCCT L129.
+    let c = a_v.z; // OCCT L130.
+
+    let a_cos = ang.cos(); // OCCT L133.
+    let a_sin = ang.sin(); // OCCT L134.
+    let a_om_cos = 1.0 - a_cos; // OCCT L135: one minus cosine.
+
+    let a2 = a * a; // OCCT L138-143: precomputed terms.
+    let b2 = b * b;
+    let c2 = c * c;
+    let ab = a * b;
+    let ac = a * c;
+    let bc = b * c;
+
+    // OCCT L148-158: R = I + sin(theta)K + (1-cos(theta))K^2.
+    matrix[0][0] = 1.0 + a_om_cos * (-(b2 + c2));
+    matrix[0][1] = a_om_cos * ab - a_sin * c;
+    matrix[0][2] = a_om_cos * ac + a_sin * b;
+
+    matrix[1][0] = a_om_cos * ab + a_sin * c;
+    matrix[1][1] = 1.0 + a_om_cos * (-(a2 + c2));
+    matrix[1][2] = a_om_cos * bc - a_sin * a;
+
+    matrix[2][0] = a_om_cos * ac - a_sin * b;
+    matrix[2][1] = a_om_cos * bc + a_sin * a;
+    matrix[2][2] = 1.0 + a_om_cos * (-(a2 + b2));
+}
+
 impl Trsf {
     /// OCCT gp_Trsf default constructor (gp_Trsf.hxx L379-385):
     /// scale = 1, shape = gp_Identity, identity matrix, zero location.
@@ -301,6 +336,24 @@ impl Trsf {
             scale: 1.0,
             form: TrsfForm::Identity,
         }
+    }
+
+    /// OCCT gp_Trsf::SetRotation(A1, Ang) — gp_Trsf.cxx L90-101.
+    pub fn set_rotation(&mut self, ax1: &Ax1, ang: f64) {
+        self.form = TrsfForm::Rotation; // OCCT L92: shape = gp_Rotation.
+        self.scale = 1.0; // OCCT L93: scale = 1.
+        self.loc = ax1.location; // OCCT L94: loc = A1.Location().XYZ().
+        // OCCT L95: matrix.SetRotation(A1.Direction().XYZ(), Ang).
+        mat_set_rotation(&mut self.matrix, ax1.direction, ang);
+        self.loc = -self.loc; // OCCT L96: loc.Reverse().
+        // OCCT L97: loc.Multiply(matrix) — row-vector times matrix, in place.
+        let l = self.loc;
+        self.loc = DVec3::new(
+            l.x * self.matrix[0][0] + l.y * self.matrix[1][0] + l.z * self.matrix[2][0],
+            l.x * self.matrix[0][1] + l.y * self.matrix[1][1] + l.z * self.matrix[2][1],
+            l.x * self.matrix[0][2] + l.y * self.matrix[1][2] + l.z * self.matrix[2][2],
+        );
+        self.loc += ax1.location; // OCCT L98: loc.Add(A1.Location().XYZ()).
     }
 
     /// OCCT gp_Trsf::SetDisplacement(FromA1, ToA2) — gp_Trsf.cxx L218-240,
@@ -405,6 +458,18 @@ impl Trsf {
         }
     }
 
+    /// OCCT gp_Trsf::SetTranslation(V) — gp_Trsf.hxx L400-406.
+    pub fn set_translation(&mut self, v: DVec3) {
+        self.form = TrsfForm::Translation; // OCCT L402: shape = gp_Translation.
+        self.scale = 1.0; // OCCT L403: scale = 1.
+        self.matrix = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]; // OCCT L404: matrix.SetIdentity().
+        self.loc = v; // OCCT L405: loc = theV.XYZ().
+    }
+
     /// OCCT gp_Trsf::SetTranslationPart(V) — gp_Trsf.cxx L244-281.
     pub fn set_translation_part(&mut self, v: DVec3) {
         self.loc = v;
@@ -428,6 +493,11 @@ impl Trsf {
                 }
             }
         }
+    }
+
+    /// OCCT gp_Trsf::IsNegative() — gp_Trsf.hxx L218: scale < 0.0.
+    pub fn is_negative(&self) -> bool {
+        self.scale < 0.0
     }
 
     /// OCCT gp_Trsf::SetScaleFactor(S) — gp_Trsf.cxx L284-330.
@@ -654,5 +724,55 @@ impl Trsf {
             ),
         ) * self.scale;
         glam::DAffine3::from_mat3_translation(m, self.loc)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OCCT gp_Trsf::SetRotation(Z axis, PI/2) applied to (10,0,0) is
+    /// (0,10,0): the axis location stays fixed and the rotation matrix is
+    /// the Rodrigues form.
+    #[test]
+    fn set_rotation_about_z_axis() {
+        let mut t = Trsf::identity();
+        let axis = Ax1::new(DVec3::ZERO, DVec3::Z);
+        t.set_rotation(&axis, std::f64::consts::FRAC_PI_2);
+        assert_eq!(t.form, TrsfForm::Rotation);
+        assert_eq!(t.scale, 1.0);
+        let p = t.apply(DVec3::new(10.0, 0.0, 0.0));
+        let expected = DVec3::new(0.0, 10.0, 0.0);
+        assert!(
+            (p - expected).length() < 1e-12,
+            "rotation moved the point to {p:?}"
+        );
+    }
+
+    /// OCCT gp_Trsf::SetRotation(A1, Ang) with a non-origin axis: the axis
+    /// location is invariant (gp_Trsf.cxx L94-98 location handling).
+    #[test]
+    fn set_rotation_keeps_axis_location_invariant() {
+        let mut t = Trsf::identity();
+        let axis = Ax1::new(DVec3::new(1.0, 1.0, 0.0), DVec3::Z);
+        t.set_rotation(&axis, std::f64::consts::PI);
+        let p = t.apply(DVec3::new(1.0, 1.0, 5.0));
+        let expected = DVec3::new(1.0, 1.0, 5.0);
+        assert!(
+            (p - expected).length() < 1e-12,
+            "a point on the axis must stay fixed, got {p:?}"
+        );
+    }
+
+    /// OCCT gp_Trsf::SetTranslation(V) — identity matrix, translation form.
+    #[test]
+    fn set_translation_moves_points() {
+        let mut t = Trsf::identity();
+        t.set_translation(DVec3::new(3.0, -4.0, 5.0));
+        assert_eq!(t.form, TrsfForm::Translation);
+        assert_eq!(t.scale, 1.0);
+        assert_eq!(t.matrix, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        let p = t.apply(DVec3::new(1.0, 1.0, 1.0));
+        assert_eq!(p, DVec3::new(4.0, -3.0, 6.0));
     }
 }

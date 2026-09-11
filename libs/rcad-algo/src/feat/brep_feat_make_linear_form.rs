@@ -26,13 +26,14 @@
 //    NbExt() = 0 / not-done, so the OCCT guards drive Sliding = false /
 //    result = false into the no-sliding branches (the MakeCylindricalHole
 //    arch.-difference #1 model).
-// 4. BRepPrimAPI_MakeBox (Init, cxx L208-209) is not translated (the same
-//    gap as the brep_prim_make_box carrier of
-//    brep_feat_make_revolution_form.rs); the carrier returns the null
-//    solid.
+// 4. BRepPrimAPI_MakeBox (Init, cxx L208-209) is the leaf re-host below
+//    (brep_prim_make_box): the modeling MakeBox pool builder + the root
+//    Solid read (the TKPrim BRepPrimAPI batch can re-home it).
 // 5. BRepBuilderAPI_Transform (Init, cxx L189-194, the centred-rib
-//    translation branch) stops at the GAP panic (the shape-transform engine
-//    is pending — the BRepTools_Modifier carrier model of loc_ope_prism.rs).
+//    translation branch) is the topalgo/brep_builderapi_transform port; the
+//    rigid translation takes the OCCT Perform "Moved" branch, materialised
+//    on the wire TShapes because the feat BRep_Tool re-hosts read geometry
+//    flat (arch. difference #1 of brep_algo/tool.rs).
 // 6. gp_Vec::IsEqual / gp_Vec::Angle are the small analytic carriers below.
 // 7. BRepTools_WireExplorer maps to the wire edge list (the same reduction
 //    as in brep_feat_make_revolution_form.rs).
@@ -60,6 +61,7 @@ use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
 use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
 use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{Plane, Surface3, TrimmedSurface};
+use rcad_kernel::math::gp::Trsf;
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, TShape};
 use rcad_kernel::topo_shape::Shape;
@@ -366,15 +368,30 @@ impl BRepFeatMakeLinearForm {
             }
         } else {
             // Rib is centre in the middle of translation
-            // OCCT L186-194 (architecture difference #5).
+            // OCCT L186: DirTranslation = (Direc + Direc1) * 0.5.
             let dir_translation = (direc + direc1) * 0.5;
-            panic!(
-                "GAP(BRepFeat_MakeLinearForm): BRepBuilderAPI_Transform (the centred-rib translation branch, cxx L186-194, needs the shape-transform engine)"
+            // OCCT L187-188: gp_Trsf T; T.SetTranslation(DirTranslation).
+            let mut t = Trsf::identity();
+            t.set_translation(dir_translation);
+            // OCCT L189-191: BRepBuilderAPI_Transform trf(T);
+            // trf.Perform(myWire); myWire = TopoDS::Wire(trf.Shape()).
+            // A rigid translation takes the Perform "Moved" branch (cxx L58-63:
+            // the transform rides on the result location).  rcad arch.
+            // difference #1 (the feat BRep_Tool re-hosts read TShape geometry
+            // flat, see the module header #5) makes the located-but-
+            // untransformed wire unobservable, so the transformation is
+            // materialised on the wire's TShapes with TShape identity
+            // preserved (in-place mutation = the Moved same-handle model).
+            crate::topalgo::brep_builderapi_transform::perform_shape(
+                &self.rib_slot.my_wire,
+                &t,
             );
-            #[allow(unreachable_code)]
-            {
-                let _ = dir_translation;
-            }
+            // OCCT L192-193: myDir = Direc - DirTranslation;
+            //                 myDir1 = Direc1 - DirTranslation.
+            self.my_dir = direc - dir_translation;
+            self.my_dir1 = direc1 - dir_translation;
+            // OCCT L194: myPln->Transform(T) — gp_Pln::Transform.
+            self.my_pln.transform(&t);
         }
 
         // ---Calculate bounding box

@@ -20,6 +20,7 @@ pub mod bisector;          // Bisector (2d bisector curves — MAT2d feed)
 pub mod mat;               // MAT (MAT graph — consumed by MAT2d)
 pub mod gcpnts;             // GCPnts (QuasiUniformDeflection)
 pub mod brep_copy;          // BRepBuilderAPI_Copy
+pub mod brep_builderapi_transform; // BRepBuilderAPI_Transform + BRepTools_TrsfModification
 pub mod thru_sections;      // BRepOffsetAPI_ThruSections (loft — BRepFill port pending)
 pub mod brep_tools_substitution;
 pub mod brep_tools_quilt;

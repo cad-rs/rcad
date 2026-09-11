@@ -46,7 +46,6 @@ pub mod arc_length;
 pub mod fit;
 pub mod math_utils;
 pub mod projection;
-pub mod properties;
 
 // =============================================================================
 // math_Vector / math_Matrix / math_IntegerVector — 1:1 of the OCCT TKMath

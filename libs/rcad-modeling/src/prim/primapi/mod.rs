@@ -18,7 +18,6 @@ pub mod make_half_space;
 pub mod make_edge;
 pub mod make_wire;
 pub mod make_face;
-pub mod transform;
 pub mod make_polygon;
 
 pub use make_box::{MakeBox, box_brep, make_box_brep};
@@ -39,5 +38,4 @@ pub use make_face::{
     make_face_cylinder_bounds_brep, make_face_from_wire_brep, make_face_plane_brep,
     make_face_plane_bounds_brep,
 };
-pub use transform::transform_brep;
 pub use make_polygon::MakePolygon;

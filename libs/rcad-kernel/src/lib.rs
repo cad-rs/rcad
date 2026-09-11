@@ -135,11 +135,11 @@ pub use math::projection::{
     closest_point_on_surface, closest_point_on_surface_near, make_pcurve_on_surface,
 };
 
-pub use math::properties::{
+pub use base::gprop::{
     InertiaTensor, centroid, face_surface_area, face_triangles_pub, inertia_tensor,
     point_in_spherical_polygon_3d_pub, signed_volume, surface_area, volume,
 };
-pub use math::properties::face_flat_iter;
+pub use base::gprop::face_flat_iter;
 
 // ============================================================================
 // Re-exports from base (TKGeomBase)

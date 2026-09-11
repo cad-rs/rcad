@@ -410,6 +410,17 @@ impl Plane {
             v_dir,
         }
     }
+
+    /// OCCT gp_Pln::Transform(theT) — gp_Pln.hxx L274:
+    /// `myPosition.Transform(theT)` = gp_Ax3::Transform (gp_Ax3.hxx L306-311)
+    /// — the Location point, the X direction and the Y direction are all
+    /// transformed (the main direction follows as the axis transform).
+    pub fn transform(&mut self, trsf: &crate::math::gp::Trsf) {
+        self.origin = trsf.apply(self.origin); // gp_Ax3: axis location.
+        self.normal = trsf.transform_dir(self.normal); // gp_Ax3: axis direction.
+        self.u_dir = trsf.transform_dir(self.u_dir); // gp_Ax3: vxdir.
+        self.v_dir = trsf.transform_dir(self.v_dir); // gp_Ax3: vydir.
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
