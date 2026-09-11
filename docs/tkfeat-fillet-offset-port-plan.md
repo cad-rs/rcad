@@ -855,6 +855,40 @@ libs/rcad-algo/src/
   - **OCCT 的"懒初始化"必须 1:1**：`Change*` 系列访问器（ChangePaveBlocks/ChangeFaceInfo）带初始化副作用，换成只读访问器会让"从未被触碰的形状"（如孤立闭合圆）静默跳过整个阶段。
   - **OCCT 源码对拍是最快的定界手段**：本轮 TKPrim/TKBO 双侧插桩 + `occt_bool_runner bcut_simple G6`（上一轮新增）三次往返即定界三处缺口；每次 OCCT 重编后必须 `cp -f .../bind/*.dll tools/occt-bool-runner/build/Debug/` 并 `grep -ac <探针串> TKPrim.dll` 验证。
 
+### E3-W 追加 11：E3-V 队列第 3 项第一横切——feat 域 Transform 链 1:1 落地（kernel Trsf::set_rotation/set_translation + BRepBuilderAPI_Transform 真身 + 居中肋 GAP 接通），featlf 8 例越过 GAP 撞上"面级 BOP"新墙（已定界）；零回归
+
+- **开场门槛（本轮逐字复测，均为实测）**：lib **412/0/0** · kernel **678/0**（+ 本轮新增 3 个 gp 单测 = **681/0**）· pavefiller_stage **26/26** · builder_stage **76/76** + smoke **1/1** · 八网格 **8/8 全绿（bopfuse 375 · bopcommon 378 · bopcut 379 · boptuc 373 · splitter 12 · bfuse 102 · bcommon 83 · bcut 110）**。
+- **本轮 1:1 落地（按 OCCT 行号锚点）**：
+  1. **kernel `math/gp.rs`**：`Trsf::set_rotation(Ax1, Ang)`（gp_Trsf.cxx **L90-101**，含 loc.Reverse / loc.Multiply(matrix) 的行向量序）、私有 `mat_set_rotation`（gp_Mat.cxx **L122-159**，Rodrigues 形式 R = I + sinθK + (1−cosθ)K²，逐语句）、`Trsf::set_translation(V)`（gp_Trsf.hxx **L400-406**：shape=gp_Translation、scale=1、matrix=Identity）、`Trsf::is_negative()`（gp_Trsf.hxx **L218**）。**+3 回归单测**（绕 Z 轴旋转、非原点轴不动点、平移），kernel lib 678 → **681**。
+  2. **kernel `geom/mod.rs`**：`Plane::transform(Trsf)`（gp_Pln.hxx **L274** → gp_Ax3.hxx **L306-311**：Location/X 方向/Y 方向/主方向全变换，**不**重算 v_dir 叉积——与 `apply_transform` 的 Plane 臂有意不同，后者是既有等价路径）。
+  3. **新文件 `libs/rcad-algo/src/topalgo/brep_builderapi_transform.rs`**（TKTopAlgo BRepBuilderAPI_Transform + TKBRep BRepTools_TrsfModification 附加步骤）：
+     - `Perform` 分支判定 1:1（cxx **L48-49**）：`myUseModif = copyGeom || IsNegative() || |abs(ScaleFactor)−1| > ScalePrec`（TopLoc_Location.hxx **L157** = 1e-14）。
+     - TrsfModification 附加步骤：容差 ×|scale|（NewSurface cxx **L79-80** / NewCurve **L283-284** / NewPoint **L304-305**，无条件 `Tol *=`）；RevFace（NewSurface cxx **L82** `RevFace = IsNegative()` + Rebuild cxx **L264-267** ResOr=REVERSED + **L644** 赋值——RevWires 恒 false（cxx **L81**），故只赋面 wrapper 朝向、不动子形状）。
+     - **架构适配注记（模块头）**：OCCT 刚体分支走 `Moved`（位置承载，cxx **L58-63**），但 rcad feat 域的 BRep_Tool 重宿主**平读 TShape 几何**（brep_algo/tool.rs 架构差异 #1），located-but-untransformed 的形状不可观测 ⇒ 两分支均把变换物化到 TShape 几何（可观测几何 = OCCT located 几何），分支判定仍精确门控附加步骤。每 TShape 几何变换复用 kernel `BRep::apply_transform`（其注释自带 range/顶点参数/pcurve 重参数化的 OCCT 锚点）；子图入口 `perform_shape` = 只读 DFS 收集 Arc + 临时 scratch 池跑同一变换（零复制、保 TShape 身份 = Moved 同句柄语义）。
+  4. **feat 接线**：`brep_feat_make_linear_form.rs` 居中肋分支由 GAP panic 改为 OCCT **L186-194** 逐语句——`T.set_translation(DirTranslation)` + `perform_shape(myWire, &T)` + `myDir/myDir1 −= DirTranslation` + `myPln.transform(T)`。头注差异 #4/#5 同步更正（#4：`brep_prim_make_box` 早已是建模 MakeBox 真身；#5：Transform 已是真身 + Moved 物化说明）。
+  5. **载体删除（Rule 4）**：`rcad-modeling/src/prim/primapi/transform.rs`（`apply_transform(to_daffine3)` 等价替身）**删除**，primapi/mod.rs + lib.rs 再导出移除；`tktopalgo_gtests.rs` Transform 组（translate/rotate/scale/mirror/validity 5 测）改指 `rcad_algo::topalgo::brep_builderapi_transform::transform_brep`，全过。
+  6. **清理项（队列照旧）**：`rcad-kernel/src/math/gprop/` **死目录删除**（6 文件；活体是 `base::gprop`，全部消费点走 `rcad_kernel::base::gprop::…`）；`math/properties.rs` 陈旧转发 shim 一并删除（其文档自称转发 math::gprop、实际转发 base::gprop；rcad-py/bench 消费的是**顶层** `rcad_kernel::properties`，不受影响），lib.rs 再导出切 `base::gprop`；`face_classifier.rs` 遗留 `[FC]` eprintln 探针 ×2 删除（RCAD_FC_DEBUG 门控，分类热路径）。
+- **实测效果（featlf 15 通过 / 15 失败——通过数不变，失败层前移）**：
+  - 8 个居中肋用例（a3/b2/b3/b5/b6/d7/d8/d9）从 `brep_feat_make_linear_form.rs:371` 的 GAP panic **前移**至与 b1/b7/c5 相同的 `brep_feat_rib_slot_b.rs:1870`（BndFace 首 wire 取空）。Transform 链本身工作正常。
+  - **新墙定界（`RCAD_LF_DBG` 探针实测，探针已删）**：BndFace = `Common(BndBox, plane_face)`（OCCT cxx L215）；探针显示 `bnd_box` 6 面正常，而 `CutVehicle::with_operation(…, Intersection)` 的 `build_with_history_topods` 返回 **Ok 但结果池 0 shapes** ⇒ root=None ⇒ plane_sect null ⇒ BndFace 空 ⇒ first_wire_of panic。**这不是 root 挑选启发式的问题，是面级 BOP 没有产出结果形状**：rcad Builder 的结果装配按 Solid 过滤（BuildResult/BuildSolid 线），OCCT 对应的是 `BOPAlgo_BOP::BuildShape`（BOPAlgo_BOP.cxx **L871-1095**）的**通用分支**——按参数维度收集容器 images + `MakeConnexityBlocks` 装配结果（仅 FUSE+dims=3 才走 BuildSolid）。**下轮入口 = 译该通用分支**（featlf sliding 全部 12 例 + featrf/featrevol 的同类 Common 依赖它）。
+  - featprism **0/6**、featrevol **0/45**、featrf **0/5** 与 E3-U 基线一致（历史 0 通过网格，无回归可言）。
+- **既有失败归因（`git stash -u` 回基线树复跑验证，均与本轮无关，但与文档"全绿"口径不符，需单独立卡）**：
+  - `tktopalgo_gtests::thru_sections_tests::occ10006_loft_and_fusion`——基线树上即 panic 于 `approx_curve_on_surface.rs:1005`（`Geom_Surface::VIso` 对该面型未翻译的 GAP panic）。
+  - `tkg3d_gtests` 3 例（`plane_default_domain_open` / `cylinder_default_domain` / `plane_default_domain_infinite`）——基线树上即失败（default-domain 口径）。
+  - 即：docs/occt-tests.md §GTests 的"531 通过全绿"在交接基线树上已不成立（本轮实测 538 通过 / 4 失败 / 0 ignore 过滤口径），**"全绿"断言必须现场复跑而非照抄文档**。
+- **门槛（本轮终测，全部实测）**：lib **412/0/0** · kernel **681/0**（678 + 3 新增 gp 单测）· pavefiller_stage **26/26** · builder_stage **76/76** + smoke **1/1** · 八网格 **8/8 全绿逐字不变**（Transform 改动 + FC 探针删除后复测）· 探针残留 `git diff | grep "+.*eprintln"` = **0**。
+- **下轮队列（按优先级）**：
+  1. **featlf sliding 新墙：面级 BOP 结果装配**——`BOPAlgo_BOP::BuildShape`（cxx L871-1095）通用分支 1:1 翻译（容器 images 收集 + MakeConnexityBlocks + 非固态结果装配），解 featlf 12 例 + featrf/featrevol 同类依赖。
+  2. **BRepCheck_Analyzer（独立 Shape）移植**——featprism 终判 GAP：`brep_feat_form_2.rs:656` `brep_algo_is_valid` 仍 panic（BRepFeat_Form::GlobalPerform 的 IsNeeded 检查路径）。
+  3. **Geom2dAPI_ExtCC2d / Extrema_ExtCF 真身**（featrf Rad/Sliding 守卫，brep_feat_make_linear_form.rs 头注差异 #3 的载体切真身）。
+  4. offset 域（GeomAPI_ProjectPointOnCurve 真身 + ExtentEdge 面盒延伸 + GeomInt_IntSS 专批 ~1,860 行）；blend a1 上游 ChFiKPart_ComputeData::Compute；a1/TKOffset TrimEdges。
+  5. rst_int.rs Restriction 分支（IntPatch_HInterTool::Project）；StepWriter 周期面 seam 保真度；prism 构造迁移至 primapi；`tools/occt-test-gen/tests/` 遗留跟踪文件清理。
+- **本轮固化/强化的坑（勿重复）**：
+  - **"全绿"基线口径漂移**：tkg3d/ThruSections 的 4 个 GTest 失败在交接基线树上就存在——照抄文档的通过数不可靠，开场基线复核必须包含 gtest 文件实跑。
+  - **stash 归因法**：`git stash -u → 跑测试 → git stash pop` 是区分"既有失败 vs 本轮回归"的最快手段（本轮两次使用，各 ~2 分钟）。
+  - **CutVehicle 面级结果的语义要分两层看**：root 挑选启发式（last Solid/Shell）只决定"有结果时取哪个"，而本轮实测是**池本身为空**——先确认产出层（BuildShape/BuildResult）再怀疑挑选层，避免修错层。
+
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 - **开场三步**：① 通读本档 §0 → §9 E3-S/E3-U/E3-V → AGENTS.md（**铁律：非 TKBool 模块的代码与修复一律严格 1:1 翻译对齐——逐行语句对照 + 函数计数等式 + OCCT 行号锚点 + 禁载体/禁等价替换/禁运行时凑结果；GAP 载体仅限外部未翻依赖并保留 OCCT 失败路径；架构差异必须先消灭再对齐**）→ ShHealing 两份；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 **412/0/0**（kernel **677/0**、builder_stage 76 + smoke 1、pavefiller 26、**boolean 八网格**：bopfuse 371/4 · bopcommon 374/4 · bopcut 379/0 · boptuc 369/4 · splitter 10/2（失败集 ze7-ze9/zf1 + a2/b2）+ bfuse_simple 102/102 · bcommon_simple 83/83 · bcut_simple 109/109 **（必须 `-Exclude "g6"`，见下）**）；③ 从下方队列取项开工。
