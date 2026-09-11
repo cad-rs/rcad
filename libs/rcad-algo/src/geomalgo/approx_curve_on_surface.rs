@@ -657,7 +657,7 @@ impl ApproxCurveOnSurface {
 
     /// OCCT Approx_CurveOnSurface::isIsoLine (cxx L591-675) — checks whether
     /// the 2d curve is a horizontal or vertical isoline.
-    pub(crate) fn is_iso_line(
+    fn is_iso_line(
         the_c2d: &dyn Adaptor2dCurve2d,
         the_is_u: &mut bool,
         the_param: &mut f64,
@@ -903,7 +903,7 @@ fn surface_rectangular_trimmed(
 /// Geom_SphericalSurface / Geom_ToroidalSurface (all via the ElSLib
 /// constructors) and Geom_SurfaceOfRevolution (cxx L372-379: a rotated copy of
 /// the basis curve).
-pub(crate) fn surface_u_iso(surf: &Surface3, param: f64) -> Curve3 {
+fn surface_u_iso(surf: &Surface3, param: f64) -> Curve3 {
     use rcad_kernel::base::proj_lib::elslib_iso as el;
     match surf {
         Surface3::Plane(p) => Curve3::Line(el::elslib_plane_u_iso(
@@ -947,7 +947,7 @@ pub(crate) fn surface_u_iso(surf: &Surface3, param: f64) -> Curve3 {
 /// OCCT Geom_Surface::VIso — the same virtual dispatch, the V-isoparametric
 /// counterpart (Geom_SurfaceOfRevolution::VIso cxx L383-410: the parallel
 /// circle of the basis point through the axis).
-pub(crate) fn surface_v_iso(surf: &Surface3, param: f64) -> Curve3 {
+fn surface_v_iso(surf: &Surface3, param: f64) -> Curve3 {
     use rcad_kernel::base::proj_lib::elslib_iso as el;
     match surf {
         Surface3::Plane(p) => Curve3::Line(el::elslib_plane_v_iso(

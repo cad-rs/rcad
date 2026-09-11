@@ -340,89 +340,6 @@ fn point_in_uv_poly(p: DVec2, poly: &[DVec2]) -> bool {
 /// The 3D curve is the arc lifted to the arc's surface; the pcurve on the
 /// other surface is built by projecting the 3D curve.  The curve is then
 /// trimmed to the two faces' UV rectangles.
-/// The exact 3D image of an iso-line arc on its surface, rebased onto the 2D
-/// arc's own parameter (OCCT Geom_Surface::UIso/VIso + the TreatRLine
-/// trimming — see the note at the call site).
-///
-/// `theC2d` is an iso line, so its parameter maps affinely to the surface
-/// parameter that varies (`v(t) = a + b * t`).  The iso curve
-/// `Geom_Surface::UIso(u0)` / `VIso(v0)` is parameterized by that same
-/// parameter, so the 3D curve is the iso curve with that affine map folded
-/// into its frame.
-fn iso_line_analytic_curve3(
-    c2d: &Curve2d,
-    surf: &Surface3,
-    first: f64,
-    last: f64,
-) -> Option<(Curve3, f64)> {
-    use crate::geomalgo::approx_curve_on_surface::ApproxCurveOnSurface;
-    use rcad_kernel::base::proj_lib::adaptor::{Adaptor2dCurve2d, Geom2dCurveAdaptor};
-    let adaptor = Geom2dCurveAdaptor::new(c2d.clone());
-    let mut is_u = false;
-    let mut param = 0.0f64;
-    let mut is_forward = false;
-    let iso_ok = ApproxCurveOnSurface::is_iso_line(&adaptor as &dyn Adaptor2dCurve2d, &mut is_u, &mut param, &mut is_forward);
-    if !iso_ok {
-        return None;
-    }
-    // The 2D line's varying coordinate maps affinely to the surface parameter:
-    // value(t) = a + b * t.
-    let Curve2d::Line(l) = c2d else { return None };
-    let (a, b) = if is_u {
-        (l.origin.y, l.direction.y)
-    } else {
-        (l.origin.x, l.direction.x)
-    };
-    if b.abs() <= 1e-12 {
-        return None;
-    }
-    let iso = if is_u {
-        crate::geomalgo::approx_curve_on_surface::surface_u_iso(surf, param)
-    } else {
-        crate::geomalgo::approx_curve_on_surface::surface_v_iso(surf, param)
-    };
-    // The rcad TrimmedCurve3 `map_param` is the identity, so a trim carries no
-    // extra geometry; the parameterization is rebased onto the 2D arc below.
-    let iso = match &iso {
-        Curve3::Trimmed(t) => t.basis_curve().clone(),
-        other => other.clone(),
-    };
-    // Fold value(t) = a + b * t into the iso curve's frame.
-    let rebased = match iso {
-        Curve3::Circle(c) => {
-            let x = c.x_dir;
-            let y = c.y_dir;
-            let (xa, ya) = if b > 0.0 {
-                (
-                    a.cos() * x + a.sin() * y,
-                    -a.sin() * x + a.cos() * y,
-                )
-            } else {
-                (
-                    a.cos() * x + a.sin() * y,
-                    a.sin() * x - a.cos() * y,
-                )
-            };
-            Curve3::Circle(rcad_kernel::geom::Circle3 {
-                center: c.center,
-                normal: c.normal,
-                x_dir: xa,
-                y_dir: ya,
-                radius: c.radius,
-            })
-        }
-        Curve3::Line(l) => Curve3::Line(Line3::new(
-            l.origin + a * l.direction,
-            b.signum() * l.direction,
-        )),
-        _ => return None,
-    };
-    Some((
-        Curve3::Trimmed(rcad_kernel::geom::TrimmedCurve3::new(rebased, first, last)),
-        CONFUSION,
-    ))
-}
-
 fn make_restriction_curves(
     surf1: &Surface3,
     uv1: [f64; 4],
@@ -468,35 +385,33 @@ fn make_restriction_curves(
     //   Approx_CurveOnSurface anApp(anAHC2d, aGAHS, tf, tl, Precision::Confusion());
     //   anApp.Perform(aMaxSeg, aMaxDeg, GeomAbs_C1, true, false);
     // gated by HasResult().
-    //
-    // rcad note: the engine behind that call is not usable on this input yet
-    // (the AdvApprox general path recurses without bound, see the port plan
-    // E3-W addendum 6), so the 3D curve is taken from the EXACT analytic iso
-    // image instead: for an iso-line arc the image of the 2D curve on its
-    // surface is exactly `Geom_Surface::UIso/VIso`, whose rcad translation
-    // produces the same curve OCCT approximates (within the quasi-angular
-    // conversion's own accuracy).  Its parameterization is rebased onto the
-    // 2D arc's parameter so the two agree point-for-point.
-    let curve3: Curve3;
-    let tol_reached: f64;
-    if let Some((c, tol)) = iso_line_analytic_curve3(arc, arc_surf, tf, tl) {
-        curve3 = c;
-        tol_reached = tol;
-    } else {
-        // OCCT: 3D curve = approximation of the curve on the arc surface
-        // (Approx_CurveOnSurface).  rcad: the 3D image of the UV-line arc on
-        // the analytic quadric is exact (line or circle), built with the same
-        // parameterization as the 2D arc.
-        let (c, _ctype) =
-            match crate::geomalgo::int_patch::so_on_bounds::curve_on_surface(arc, arc_surf) {
-                Some(c) => c,
-                None => {
-                    return out;
-                }
-            };
-        curve3 = c;
-        tol_reached = CONFUSION;
+    let c2d_handle: rcad_kernel::base::proj_lib::adaptor::Curve2dHandle =
+        std::sync::Arc::new(rcad_kernel::base::proj_lib::adaptor::Geom2dCurveAdaptor::new(
+            arc.clone(),
+        ));
+    let surf_handle: rcad_kernel::base::proj_lib::adaptor::SurfaceHandle =
+        std::sync::Arc::new(
+            rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor::new(
+                arc_surf.clone(),
+            ),
+        );
+    // aMaxDeg = 8, aMaxSeg = 1000 (GeomInt_IntSS_1.cxx L1145-1146).
+    let mut an_app = crate::geomalgo::approx_curve_on_surface::ApproxCurveOnSurface::new(
+        c2d_handle,
+        surf_handle,
+        tf,
+        tl,
+        CONFUSION,
+    );
+    an_app.perform(1000, 8, rcad_kernel::math::GeomAbsShape::C1, true, false);
+    if !an_app.has_result() {
+        return out;
     }
+    let Some(c3d) = an_app.curve3d() else {
+        return out;
+    };
+    let curve3 = Curve3::BSpline(c3d);
+    let tol_reached = an_app.max_error3d();
 
     // OCCT TreatRLine L1157-1166: pcurve on the other surface via
     // GeomInt_IntSS::BuildPCurves.  rcad: build the other pcurve by sampling

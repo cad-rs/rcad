@@ -555,15 +555,15 @@ impl Adaptor2dCurve2d for Geom2dCurveAdaptor {
         }
     }
 
-    /// OCCT Geom2dAdaptor_Curve::Trim(First, Last, Tol) — restricts the
-    /// parameter range (the Geom2d_TrimmedCurve-like restriction).
+    /// OCCT Geom2dAdaptor_Curve::Trim(First, Last, Tol) (Geom2dAdaptor_Curve.cxx
+    /// L577-584): `return new Geom2dAdaptor_Curve(myCurve, First, Last)` — a new
+    /// adaptor over the SAME basis curve with the restricted range.  The range
+    /// lives in myFirst/myLast; it is NOT wrapped into a Geom2d_TrimmedCurve
+    /// (which clamps on evaluation, so successive trims would nest clamps and
+    /// saturate the parameter — the OrderedApprox path trims once per interval).
     fn trim(&self, first_param: f64, last_param: f64, _tol: f64) -> Arc<dyn Adaptor2dCurve2d> {
         Arc::new(Geom2dCurveAdaptor {
-            curve: crate::geom::Curve2d::Trimmed(crate::geom::TrimmedCurve2 {
-                curve: Box::new(self.curve.clone()),
-                t_min: first_param,
-                t_max: last_param,
-            }),
+            curve: self.curve.clone(),
             first: first_param,
             last: last_param,
         })
