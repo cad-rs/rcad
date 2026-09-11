@@ -910,7 +910,11 @@ impl CutVehicle {
         match a_builder.build_with_history_topods() {
             Ok((brep, _)) => {
                 // The root result shape (the run_build convention: the last
-                // Solid/Shell TShape of the pool).
+                // Solid/Shell TShape of the pool).  A face-level BOP result
+                // (e.g. BRepAlgoAPI_Common(Solid, Face) — BOPAlgo_BOP::
+                // BuildShape L1092 result compound) has no container: the
+                // compound members are the result faces, carried flat in the
+                // rcad pool, so fall back to the last result Face.
                 let root = brep
                     .tshapes
                     .iter()
@@ -921,6 +925,11 @@ impl CutVehicle {
                             ts.as_ref(),
                             TShape::Solid(_) | TShape::Shell(_)
                         )
+                    })
+                    .or_else(|| {
+                        brep.tshapes.iter().enumerate().rev().find(|(_, ts)| {
+                            matches!(ts.as_ref(), TShape::Face(_))
+                        })
                     })
                     .map(|(i, ts)| {
                         Shape::from_parts(
@@ -976,6 +985,8 @@ impl CutVehicle {
         a_builder.my_fill_history = true;
         match a_builder.build_with_history_topods() {
             Ok((brep, _)) => {
+                // The root result shape — the Solid/Shell convention with the
+                // face-level fallback (see with_operation).
                 let root = brep
                     .tshapes
                     .iter()
@@ -986,6 +997,11 @@ impl CutVehicle {
                             ts.as_ref(),
                             TShape::Solid(_) | TShape::Shell(_)
                         )
+                    })
+                    .or_else(|| {
+                        brep.tshapes.iter().enumerate().rev().find(|(_, ts)| {
+                            matches!(ts.as_ref(), TShape::Face(_))
+                        })
                     })
                     .map(|(i, ts)| {
                         Shape::from_parts(

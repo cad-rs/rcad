@@ -798,6 +798,37 @@ pub fn surface_bounding_box(
                 None
             }
         }
+        Surface3::Trimmed(t) => match t.basis.as_ref() {
+            // OCCT GeomBndLib_Plane::Box(UMin, UMax, VMin, VMax, theTol)
+            // (GeomBndLib_Plane.hxx L52-74): the four UV-window corner points
+            // via ElSLib::Value; the caller enlarges by the face tolerance.
+            // A face built as BRepLib_MakeFace(Pln, u1,u2,v1,v2) carries no
+            // boundary wire, so this branch is its only box source — a VOID
+            // box here kept the face out of the PaveFiller BB tree (zero FF
+            // candidate pairs for face arguments).
+            Surface3::Plane(p) => {
+                let (u1, u2, v1, v2) = (t.trim[0], t.trim[1], t.trim[2], t.trim[3]);
+                // OCCT L61-66 dispatches infinite windows to
+                // TreatInfinitePlane (hxx L125-169), which OPENS box sides —
+                // a shape the rcad finite ShapeInfo box cannot represent, so
+                // keep that case unrepresentable (None).
+                if is_infinite_value(u1)
+                    || is_infinite_value(u2)
+                    || is_infinite_value(v1)
+                    || is_infinite_value(v2)
+                {
+                    return None;
+                }
+                let c1 = crate::math::el::elslib_plane_value(u1, v1, p.origin, p.u_dir, p.v_dir);
+                let c2 = crate::math::el::elslib_plane_value(u1, v2, p.origin, p.u_dir, p.v_dir);
+                let c3 = crate::math::el::elslib_plane_value(u2, v1, p.origin, p.u_dir, p.v_dir);
+                let c4 = crate::math::el::elslib_plane_value(u2, v2, p.origin, p.u_dir, p.v_dir);
+                let mn = c1.min(c2).min(c3).min(c4);
+                let mx = c1.max(c2).max(c3).max(c4);
+                Some([mn, mx])
+            }
+            _ => None,
+        },
         _ => None,
     }
 }

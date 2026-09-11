@@ -115,6 +115,17 @@ fn try_project_direct(curve: &Curve3, surface: &Surface3, _first: f64, _last: f6
             proj.project_ellipse(e);
             Some(proj.projector().to_curve2d())
         }
+        // OCCT ProjLib_Plane::Project(Handle(Geom_BezierCurve)/
+        // Handle(Geom_BSplineCurve)) (ProjLib_Plane.cxx): a B-spline lying in
+        // the plane projects by the exact pole mapping (control points
+        // through the plane frame, knots/degree/weights kept — 2D and 3D
+        // share the parameterization).  The projection is unconditional,
+        // matching OCCT.
+        (Curve3::BSpline(b), Surface3::Plane(p)) => {
+            let mut proj = proj_lib::PlaneProjector::with_plane(p);
+            proj.project_bspline(b);
+            Some(proj.projector().to_curve2d())
+        }
         (Curve3::Line(l), Surface3::Cylinder(c)) => {
             let mut proj = proj_lib::CylinderProjector::with_cylinder(c);
             proj.project_line(l);
