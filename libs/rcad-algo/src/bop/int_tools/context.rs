@@ -250,6 +250,10 @@ pub struct IntToolsContext {
     proj_ps_cache: HashMap<usize, ProjectOnSurface>,
     // OCCT: mySurfAdaptorMap — maps face → BRepAdaptor_Surface*
     surf_adapt_cache: HashMap<usize, SurfaceAdaptor>,
+    // OCCT: myFClass2dMap — maps face → IntTools_FClass2d* (created on first
+    // use, see `fclass2d`). Without this cache every classification rebuilt
+    // the 2D face classifier.
+    fclass2d_cache: HashMap<usize, FClass2d>,
     // rcad: cached UV bounds per face (OCCT: UVBounds computed on demand)
     uv_bounds_cache: HashMap<usize, [f64; 4]>,
 }
@@ -260,6 +264,7 @@ impl IntToolsContext {
         IntToolsContext {
             proj_ps_cache: HashMap::new(),
             surf_adapt_cache: HashMap::new(),
+            fclass2d_cache: HashMap::new(),
             uv_bounds_cache: HashMap::new(),
         }
     }
@@ -268,7 +273,19 @@ impl IntToolsContext {
     pub fn clear(&mut self) {
         self.proj_ps_cache.clear();
         self.surf_adapt_cache.clear();
+        self.fclass2d_cache.clear();
         self.uv_bounds_cache.clear();
+    }
+
+    /// OCCT IntTools_Context::FClass2d (IntTools_Context.cxx L225-242) — the
+    /// per-face IntTools_FClass2d classifier, constructed on first use with
+    /// aTolF = BRep_Tool::Tolerance(aF) and cached in myFClass2dMap.
+    fn fclass2d(&mut self, ds: &DS, fi: usize) -> &mut FClass2d {
+        if !self.fclass2d_cache.contains_key(&fi) {
+            let c = FClass2d::new(ds, fi, Self::classifier_tol(ds, fi));
+            self.fclass2d_cache.insert(fi, c);
+        }
+        self.fclass2d_cache.get_mut(&fi).unwrap()
     }
 
     // ====================================================================
@@ -468,7 +485,6 @@ impl IntToolsContext {
         let d_t = (a_t2 - a_t1) / a_nb_seg as f64;
         let mut is_classified = false;
         let mut i_cnt: usize = 0;
-        let class2d = FClass2d::new(ds, n_f, Self::classifier_tol(ds, n_f));
         for i in 0..=a_nb_seg {
             let a_t = a_t1 + (i as f64) * d_t;
             let a_p = curve.point_at(a_t);
@@ -500,7 +516,7 @@ impl IntToolsContext {
             if is_classified && (i != a_nb_seg) {
                 continue;
             }
-            let state = class2d.perform(ds, glam::DVec2::new(a_u, a_v), true);
+            let state = self.fclass2d(ds, n_f).perform(ds, glam::DVec2::new(a_u, a_v), true);
             if state == State::Out {
                 return false;
             }
@@ -514,7 +530,7 @@ impl IntToolsContext {
 
     /// OCCT IntTools_BeanFaceIntersector::ComputeLinePlane (L820-906).
     fn compute_line_plane_ef(
-        &self, curve: &Curve3, surf: &Surface3, n_f: usize, ds: &DS,
+        &mut self, curve: &Curve3, surf: &Surface3, n_f: usize, ds: &DS,
         a_t1: f64, a_t2: f64, a_criteria: f64, bean_tol: f64, face_tol: f64,
     ) -> (Vec<(f64, f64, bool)>, f64) {
         let t_ang = 1e-9;
@@ -1093,9 +1109,8 @@ impl IntToolsContext {
     /// OCCT uses IntTools_FClass2d (IntTools_FClass2d.hxx) which builds a
     /// per-wire UV polygon of the face boundary and classifies with
     /// CSLib_Class2d. Excludes ON points (`aState != TopAbs_OUT && != ON`).
-    pub fn is_point_in_face(&self, ds: &DS, fi: usize, uv: DVec2) -> bool {
-        let class2d = FClass2d::new(ds, fi, Self::classifier_tol(ds, fi));
-        let state = class2d.perform(ds, uv, true);
+    pub fn is_point_in_face(&mut self, ds: &DS, fi: usize, uv: DVec2) -> bool {
+        let state = self.fclass2d(ds, fi).perform(ds, uv, true);
         state != State::Out && state != State::On
     }
 
@@ -1103,9 +1118,8 @@ impl IntToolsContext {
     /// `aState != TopAbs_OUT` — boundary (ON) points are considered inside.
     /// Used by EF's IsProjectable (IsValidPointForFace), unlike IsPointInFace
     /// (used by VF) which excludes ON points.
-    pub fn is_point_in_on_face(&self, ds: &DS, fi: usize, uv: DVec2) -> bool {
-        let class2d = FClass2d::new(ds, fi, Self::classifier_tol(ds, fi));
-        let state = class2d.perform(ds, uv, true);
+    pub fn is_point_in_on_face(&mut self, ds: &DS, fi: usize, uv: DVec2) -> bool {
+        let state = self.fclass2d(ds, fi).perform(ds, uv, true);
         state != State::Out
     }
 
