@@ -36,8 +36,8 @@ pub use adaptor::{
 };
 pub use adaptor3d_interfunc::Adaptor3dInterFunc;
 pub use brep_adaptor::{
-    brep_tools_add_uv_bounds, brep_tools_uv_bounds, location_transformation, BRepAdaptorCurve,
-    BRepAdaptorSurface,
+    brep_tools_add_uv_bounds, brep_tools_add_uv_bounds_curve_box, brep_tools_uv_bounds,
+    face_edge_shapes, location_transformation, BRepAdaptorCurve, BRepAdaptorSurface,
 };
 pub use geom_adaptor_curve::{Adaptor3dCurveGeom, GeomCurveAdaptor};
 pub use geom_adaptor_surface::{Adaptor3dSurfaceGeom, GeomSurfaceAdaptor};

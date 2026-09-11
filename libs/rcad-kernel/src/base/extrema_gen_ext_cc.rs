@@ -190,29 +190,14 @@ impl GGenCcPointsInspector {
 ///
 /// Architecture glue: the rcad `GenExtCC` curve storage is `&dyn
 /// ExtremaCurveTool` (the trait-object the `ExtremaExtCC` layer hands over),
-/// while `ExtremaExtPC` consumes `&dyn ExtPCurveTool` (`ExtremaCurveTool`
-/// extended with the Extrema_CurveTool.hxx L128-141 Bezier/BSpline statics).
-/// The view forwards every `ExtremaCurveTool` query; the Bezier/BSpline
-/// statics cannot cross the `ExtremaCurveTool` trait-object boundary — they
-/// raise Standard_NotImplemented at this layer (the interface request recorded
-/// in `extrema_curve_tool.rs`; `Extrema_CurveTool` itself answers them from
-/// the adaptor downcasts).
+/// while `ExtremaExtPC` consumes `&dyn ExtPCurveTool`.  Both now name the same
+/// `Extrema_CurveTool` static set — including the `Bezier`/`BSpline` statics of
+/// Extrema_CurveTool.hxx L136-141 — so this view forwards every query, exactly
+/// as OCCT's single tool struct does.
 struct ProjPOnCCurveTool<'a> {
     /// OCCT `const TheCurve& myC[2]` element (hxx L124) seen through the
     /// `Extrema_CurveTool` facade.
     the_c: &'a dyn ExtremaCurveTool,
-}
-
-impl ProjPOnCCurveTool<'_> {
-    /// OCCT `TheCurveTool::Bezier(theC)` (hxx L136) — the adaptor downcast the
-    /// rcad facade does not carry.
-    fn standard_no_such_object() -> ! {
-        panic!(
-            "Standard_NotImplemented: Extrema_CurveTool Bezier/BSpline statics \
-             are not reachable through the ExtremaCurveTool trait object \
-             (Extrema_GGenExtCC.hxx L771 TheExtPC view)"
-        )
-    }
 }
 
 impl ExtremaCurveTool for ProjPOnCCurveTool<'_> {
@@ -291,15 +276,17 @@ impl ExtremaCurveTool for ProjPOnCCurveTool<'_> {
     fn parabola(&self) -> crate::geom::Parabola3 {
         self.the_c.parabola()
     }
-}
 
-impl ExtPCurveTool for ProjPOnCCurveTool<'_> {
+    /// OCCT `Extrema_CurveTool::Bezier(theC)` (hxx L136) — forwarded to the
+    /// curve the GGenExtCC holds, as OCCT's single tool struct does.
     fn bezier_nb_poles(&self) -> usize {
-        Self::standard_no_such_object()
+        self.the_c.bezier_nb_poles()
     }
 
+    /// OCCT `Extrema_CurveTool::BSpline(theC)` (hxx L138) — forwarded to the
+    /// curve the GGenExtCC holds.
     fn bspline(&self) -> BSplineView {
-        Self::standard_no_such_object()
+        self.the_c.bspline()
     }
 }
 

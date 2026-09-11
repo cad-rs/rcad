@@ -1,11 +1,12 @@
 //! Polygon feature helpers (extrude / revolve) for the OCCT grid tests.
 //!
 //! Migrated from the legacy `rcad-algorithms::features` module; only the
-//! functions the generated DRAW tests use. `revolve` uses the local
-//! [`super::revolve::revolve_polygon`] (the old `rcad_modeling::revolve` was
-//! removed with the legacy builder API).
+//! functions the generated DRAW tests use. The revolve core lives in its OCCT
+//! toolkit home (`rcad-modeling::prim::primapi::make_revol`, the
+//! `BRepPrimAPI_MakeRevol` builder); the `algo_ext::revolve` alias keeps the
+//! legacy path working.
 
-use crate::algo_ext::revolve::revolve_polygon;
+use rcad_modeling::prim::primapi::make_revol::revolve_polygon;
 use crate::algo_ext::tolerance::{TOLERANCE_LEN_MIN, TOLERANCE_VEC_SQ_MIN};
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};

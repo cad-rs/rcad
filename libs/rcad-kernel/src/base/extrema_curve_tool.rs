@@ -27,6 +27,7 @@
 
 use glam::DVec3;
 
+use crate::base::extrema_ext_pc::BSplineView;
 use crate::base::proj_lib::adaptor::Adaptor3dCurve;
 use crate::base::proj_lib::proj_lib_projected_curve::Adaptor3dCurveGeom;
 use crate::base::proj_lib::CurveType;
@@ -87,6 +88,15 @@ pub trait ExtremaCurveTool {
     fn hyperbola(&self) -> Hyperbola3;
     /// OCCT Extrema_CurveTool::Parabola (hxx L126).
     fn parabola(&self) -> Parabola3;
+    /// OCCT `Extrema_CurveTool::Bezier(theC)` (hxx L136) — the
+    /// `Geom_BezierCurve` pole count `Extrema_GGExtPC::Perform` samples with
+    /// (`mysample = TheCurveTool::Bezier(aCurve)->NbPoles() * 2`,
+    /// Extrema_GGExtPC.hxx L184-186).
+    fn bezier_nb_poles(&self) -> usize;
+    /// OCCT `Extrema_CurveTool::BSpline(theC)` (hxx L138) — the
+    /// `Geom_BSplineCurve` knot/degree view `Extrema_GGExtPC::Perform` walks
+    /// (Extrema_GGExtPC.hxx L190-192).
+    fn bspline(&self) -> BSplineView;
     /// OCCT `GCPnts_AbscissaPoint::Length(C)` (CPnts_AbscissaPoint.cxx
     /// L103-106) — the arc length of the adaptor over its whole domain.
     ///
@@ -300,6 +310,41 @@ impl ExtremaCurveTool for CurveToolHandle<'_> {
 
     fn parabola(&self) -> Parabola3 {
         self.geom.expect("Extrema_CurveTool: Parabola() on a non-parabola adaptor").parabola()
+    }
+
+    /// OCCT `Extrema_CurveTool::Bezier(theC)` (hxx L136) — `theC.Bezier()`,
+    /// i.e. `Adaptor3d_Curve::Bezier()`, which raises
+    /// `Standard_NoSuchObject` for a non-Bezier adaptor.
+    fn bezier_nb_poles(&self) -> usize {
+        match self.curve3 {
+            Some(crate::geom::Curve3::Bezier(b)) => b.control_points.len(),
+            _ => panic!("Standard_NoSuchObject: Extrema_CurveTool::Bezier on a non-bezier adaptor"),
+        }
+    }
+
+    /// OCCT `Extrema_CurveTool::BSpline(theC)` (hxx L138) — `theC.BSpline()`,
+    /// i.e. `Adaptor3d_Curve::BSpline()`, which raises
+    /// `Standard_NoSuchObject` for a non-BSpline adaptor.
+    fn bspline(&self) -> BSplineView {
+        match self.curve3 {
+            Some(crate::geom::Curve3::BSpline(bs)) => {
+                // Reduced knot view out of the flat (multiplicity-expanded)
+                // vector; see the BSplineView architecture-glue note.
+                let mut knots = vec![bs.knots[0]];
+                for &k in &bs.knots[1..] {
+                    if (k - knots[knots.len() - 1]).abs() > 1e-12 {
+                        knots.push(k);
+                    }
+                }
+                BSplineView {
+                    first_u_knot_index: 1,
+                    last_u_knot_index: knots.len(),
+                    knots,
+                    degree: bs.degree,
+                }
+            }
+            _ => panic!("Standard_NoSuchObject: Extrema_CurveTool::BSpline on a non-bspline adaptor"),
+        }
     }
 }
 

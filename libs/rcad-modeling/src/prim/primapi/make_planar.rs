@@ -56,8 +56,33 @@ pub fn make_planar_rect_brep(
     let e2 = brep.add_tedge(Some(line(c2, c3)), v2.clone(), rev(v3.clone()), [0.0, (c3 - c2).length()]);
     let e3 = brep.add_tedge(Some(line(c3, c0)), v3.clone(), rev(v0.clone()), [0.0, (c0 - c3).length()]);
 
-    let wire = brep.add_twire(vec![e0, e1, e2, e3]);
-    brep.add_tface(Some(surface), wire, vec![], None, None, vec![], false);
+    let wire = brep.add_twire(vec![e0.clone(), e1.clone(), e2.clone(), e3.clone()]);
+    let face = brep.add_tface(Some(surface), wire, vec![], None, None, vec![], false);
+
+    // OCCT BRepLib_MakeFace.cxx L250: BRepLib::SameParameter(theFace, ...) —
+    // every edge of the new face receives its 2D curve on the face's plane.
+    // The 2D curve of a straight 3D edge on a plane is the projection of its
+    // endpoints into the plane frame (ElSLib::PlaneParameters), i.e. the 2D
+    // line the forced SameParameter pass produces for this configuration.
+    let (plane_u, plane_v) = match &*face.data {
+        rcad_kernel::topods::TShape::Face(fd) => match fd.surface.as_ref() {
+            Some(Surface3::Plane(p)) => (p.u_dir, p.v_dir),
+            _ => (u_axis, v_axis),
+        },
+        _ => (u_axis, v_axis),
+    };
+    let face_key = (face.ptr_id(), face.location);
+    for (p0, p1, e) in [(c0, c1, e0), (c1, c2, e1), (c2, c3, e2), (c3, c0, e3)] {
+        let uv0 = DVec2::new((p0 - origin).dot(plane_u), (p0 - origin).dot(plane_v));
+        let uv1 = DVec2::new((p1 - origin).dot(plane_u), (p1 - origin).dot(plane_v));
+        let d = uv1 - uv0;
+        let length = d.length();
+        let dir2d = if length > 0.0 { d / length } else { DVec2::X };
+        brep.edge_mut_inplace(e).pcurves.insert(
+            face_key,
+            (Curve2d::Line(Line2d::new(uv0, dir2d)), 0.0, length),
+        );
+    }
     Ok(brep)
 }
 

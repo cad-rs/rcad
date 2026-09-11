@@ -22,7 +22,7 @@
 | `rcad-kernel` | TKMath + TKG2d + TKG3d + TKGeomBase + TKBRep(基础) | 几何内核：`src/geom`(Geom/Geom2d 曲线曲面)、`src/base`(TKGeomBase 各包)、`src/topo`(TopoDS/BRep/TopExp)、`src/math`(TKMath: math_*、Bnd)、`src/core`(Precision/gp 常量) |
 | `rcad-brep` | TKBRep | `adaptor.rs`↔BRepAdaptor、`graph`↔BRepGraph、`lprop.rs`↔BRepLProp、`tools`↔BRepTools |
 | `rcad-algo` | ModelingAlgorithms 各算法 toolkit | 详见第 2、3 节 |
-| `rcad-modeling` | TKPrim + BRepBuilderAPI 级构造 | `make_cylinder/cone/box/sphere`↔BRepPrimAPI、`prism_face_solid_brep`↔BRepSweep 平移棱柱 |
+| `rcad-modeling` | TKPrim + BRepBuilderAPI 级构造 | `make_cylinder/cone/box/sphere/torus`↔BRepPrimAPI_Make*、`make_revol`↔BRepPrimAPI_MakeRevol（BRepSweep_Revol/Rotation）、`make_prism`/`prism_face_solid_brep`↔BRepSweep 平移棱柱 |
 | `rcad-step` / `rcad-iges` | TKDESTEP / TKDEIGES | 数据交换 |
 | `rcad-scene` / `rcad-render` / `rcad-xmesh 相关显示` | — | 自有实现，不映射 |
 
@@ -80,7 +80,8 @@
 
 与 OCCT toolkit 有明确对应关系的模块已迁入各自模块目录
 （`healing`/`shape_analysis`/`shape_custom` → `shhealing`、`fillet` → `fillet`、
-`brep_check` → `topalgo`），`algo_ext::` 旧路径经再导出保持可用：
+`brep_check` → `topalgo`、`revolve` → `rcad-modeling/prim/primapi/make_revol.rs`
+即 TKPrim `BRepPrimAPI_MakeRevol`），`algo_ext::` 旧路径经再导出保持可用：
 
 | rcad | OCCT 对应 | 状态 |
 |---|---|---|
@@ -88,7 +89,7 @@
 | `topalgo/brep_check/` | `BRepCheck`（TKTopAlgo） | ◐ |
 | `fillet/fillet.rs` | 自有单边 blend 兼容层（TKFillet 主体未移植） | — |
 | `algo_ext/brep_repair/` | 自有修复链（无 1:1 OCCT 对应；融合了 ShapeFix 思路） | — |
-| `algo_ext/bool_ops_ext.rs`、`brep_algo.rs`、`brep_tools.rs`、`topods_ext.rs`、`tolerance.rs`、`geom_populate.rs`、`bspline_edit.rs`、`features.rs`、`revolve.rs`、`extrude_profile.rs` | 自有扩展/遗留 API（生成测试的兼容层） | — |
+| `algo_ext/bool_ops_ext.rs`、`brep_algo.rs`、`brep_tools.rs`、`topods_ext.rs`、`tolerance.rs`、`geom_populate.rs`、`bspline_edit.rs`、`features.rs`、`extrude_profile.rs` | 自有扩展/遗留 API（生成测试的兼容层）。**注意：`features.rs` / `extrude_profile.rs` 的 prism 构造属 TKPrim `BRepPrimAPI_MakePrism`，待随手迁往 `rcad-modeling/prim/primapi/`** | — |
 
 ## 3. 新增空占位目录 ↔ OCCT（待开工，即本次新增）
 

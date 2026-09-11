@@ -1,17 +1,22 @@
-//! Revolve a closed planar polygon around an axis into a solid (topods).
+//! Revolve a closed planar polygon around an axis into a solid.
 //!
-//! Replaces the legacy `rcad_modeling::revolve` (removed with the old builder
-//! API). For a full turn the lateral faces are exact analytic surfaces
-//! (Plane/Cylinder/Cone) matching OCCT `BRepPrimAPI_MakeRevol` output
-//! (BRepSweep_Revol structure: one face per non-axis profile edge, shared
-//! closed circle edges at each swept vertex, seam = the profile edge itself).
-//! A partial sweep falls back to generic `RevolutionSurface` faces.
-//! The polygon must lie in a plane containing the axis (the OCCT `revol`
-//! usage).
+//! OCCT correspondence: `BRepPrimAPI_MakeRevol` over `BRepSweep_Revol` /
+//! `BRepSweep_Rotation` (TKPrim).  For a full turn the lateral faces are exact
+//! analytic surfaces (Plane/Cylinder/Cone) matching the OCCT sweep structure:
+//! one face per non-axis profile edge, shared closed circle edges at each
+//! swept vertex, seam = the profile edge itself.  A partial sweep uses
+//! Plane/Cylinder/Cone laterals with a `RevolutionSurface` fallback for skew
+//! lines, plus two planar caps.  The polygon must lie in a plane containing
+//! the axis (the OCCT `revol` usage).
+//!
+//! Every face's boundary edges receive the 2D pcurves the OCCT sweep stores
+//! (`BRepSweep_Rotation::SetGeneratingPCurve` / `SetDirectingPCurve`,
+//! BRepSweep_Rotation.cxx L408-630) — the boolean pipeline reads a face's UV
+//! rectangle from them via `BRepTools::UVBounds`.
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{
-    Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Line2d, Line3, Plane,
+    Circle2d, Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Line2d, Line3, Plane,
     RevolutionSurface, Surface3,
 };
 use rcad_kernel::topods::{self, CurveRepresentation, Orientation};
@@ -240,7 +245,21 @@ pub fn revolve_polygon_full_turn(
                 } else {
                     brep.add_twire(vec![rev(&outer_edge)])
                 };
-                faces.push(brep.add_tface(Some(plane), wire, vec![], None, None, vec![], false));
+                let face = brep.add_tface(Some(plane), wire, vec![], None, None, vec![], false);
+                // OCCT BRepSweep_Rotation::SetDirectingPCurve, GeomAbs_Plane
+                // arm (BRepSweep_Rotation.cxx L538-550): the swept vertex
+                // traces a Geom2d_Circle centred at the 2D origin with
+                // radius R = |genV - plane.Location()| and X direction
+                // ElSLib::PlaneParameters(genV) (normalised by gp_Dir2d).
+                for k in [i, j] {
+                    let Some(arc) = circ[k].clone() else { continue };
+                    let pcurve = plane_swept_circle_pcurve(
+                        centers[i], u_dir, v_dir, profile_verts[k],
+                    );
+                    let key = (face.ptr_id(), brep.compose_pcurve_location(face.location, arc.location));
+                    brep.edge_mut_inplace(arc).pcurves.insert(key, (pcurve, 0.0, std::f64::consts::TAU));
+                }
+                faces.push(face);
             } else {
                 // Annulus: the swept face of a radial profile edge. OCCT
                 // BRepSweep_Revol (K1 runner dump: outer=[r20 F], inner=[r25 R]
@@ -253,7 +272,7 @@ pub fn revolve_polygon_full_turn(
                 // r25cyl bottom rim F) so the shell is traversable.
                 let outer_wire = brep.add_twire(vec![circ[i].clone().unwrap()]);
                 let inner_wire = brep.add_twire(vec![rev(&circ[j].clone().unwrap())]);
-                faces.push(brep.add_tface(
+                let face = brep.add_tface(
                     Some(plane),
                     outer_wire,
                     vec![inner_wire],
@@ -261,7 +280,18 @@ pub fn revolve_polygon_full_turn(
                     None,
                     vec![],
                     false,
-                ));
+                );
+                // OCCT BRepSweep_Rotation::SetDirectingPCurve, GeomAbs_Plane
+                // arm (BRepSweep_Rotation.cxx L538-550) — see the disk case.
+                for k in [i, j] {
+                    let Some(arc) = circ[k].clone() else { continue };
+                    let pcurve = plane_swept_circle_pcurve(
+                        centers[i], u_dir, v_dir, profile_verts[k],
+                    );
+                    let key = (face.ptr_id(), brep.compose_pcurve_location(face.location, arc.location));
+                    brep.edge_mut_inplace(arc).pcurves.insert(key, (pcurve, 0.0, std::f64::consts::TAU));
+                }
+                faces.push(face);
             }
         } else if d_axis > 1.0 - 1e-9 && ri > EPS && rj > EPS {
             // Edge parallel to the axis: swept surface is a cylinder.
@@ -303,7 +333,7 @@ pub fn revolve_polygon_full_turn(
             };
             brep.edge_mut_inplace(seam_lo.clone()).pcurves.insert(lat_key, (pc1.clone(), 0.0, seam_len));
             brep.edge_mut_inplace(seam_lo.clone()).representations
-                .push(rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                .push(CurveRepresentation::CurveOnClosedSurface {
                     face: lat_key,
                     pcurve1: pc1,
                     pcurve2: pc2,
@@ -363,7 +393,7 @@ pub fn revolve_polygon_full_turn(
             };
             brep.edge_mut_inplace(seam_lo.clone()).pcurves.insert(lat_key, (pc1.clone(), 0.0, seam_len));
             brep.edge_mut_inplace(seam_lo.clone()).representations
-                .push(rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
+                .push(CurveRepresentation::CurveOnClosedSurface {
                     face: lat_key,
                     pcurve1: pc1,
                     pcurve2: pc2,
@@ -414,7 +444,25 @@ pub fn revolve_polygon_full_turn(
                 seam_lo.clone(),
                 rev(&seam_lo),
             ]);
-            faces.push(brep.add_tface(Some(surface), wire, vec![], None, None, vec![], false));
+            let face = brep.add_tface(Some(surface), wire, vec![], None, None, vec![], false);
+            // OCCT BRepSweep_Rotation: a Geom_SurfaceOfRevolution face keeps
+            // the generating (seam) and directing (swept vertex) pcurves —
+            // SetGeneratingPCurve default arm (BRepSweep_Rotation.cxx
+            // L504-515) and SetDirectingPCurve default arm (L617-623).  u is
+            // the azimuth, v the meridian parameter, which for this surface
+            // is the profile-edge parameter: 0 at profile vertex i, the edge
+            // length at vertex j.
+            let seam_len = (profile_verts[j] - profile_verts[i]).length();
+            set_sweep_arc_pcurves(
+                &mut brep,
+                &face,
+                [(circ[i].clone(), 0.0), (circ[j].clone(), seam_len)],
+                std::f64::consts::TAU,
+            );
+            set_closed_sweep_seam(
+                &mut brep, &face, &seam_lo, 0.0, seam_len, std::f64::consts::TAU,
+            );
+            faces.push(face);
         }
     }
 
@@ -546,7 +594,15 @@ pub fn revolve_polygon_partial(
             with_l1(&prof_i),
         ]);
 
-        let surface = if hits_axis && d_perp > 1.0 - 1e-9 {
+        let seam_len = (profile_verts[j] - profile_verts[i]).length();
+        // OCCT BRepSweep_Rotation::SetDirectingPCurve default arm L617-623 /
+        // SetGeneratingPCurve default arm L504-515: on a partial sweep the two
+        // profile copies are distinct edges and each owns a single pcurve (the
+        // surface is not closed across the wrap).  v is the meridian parameter
+        // measured from profile vertex i: the profile parameter for a
+        // Geom_SurfaceOfRevolution, the axis offset for a cylinder, the slant
+        // for a cone.
+        let (surface, v_end, plane_frame) = if hits_axis && d_perp > 1.0 - 1e-9 {
             // Radial edge: partial planar sector. Right-handed normal (v =
             // normal × u); the outward edge's frame gives u × v = -dir, so the
             // stored normal must be u × v (see revolve_polygon_full_turn).
@@ -557,21 +613,29 @@ pub fn revolve_polygon_partial(
             } else {
                 dir.cross(u_dir).normalize()
             };
-            Surface3::Plane(Plane {
-                origin: centers[i],
-                normal: u_dir.cross(v_dir).normalize(),
-                u_dir,
-                v_dir,
-            })
+            (
+                Surface3::Plane(Plane {
+                    origin: centers[i],
+                    normal: u_dir.cross(v_dir).normalize(),
+                    u_dir,
+                    v_dir,
+                }),
+                seam_len,
+                Some((centers[i], u_dir, v_dir)),
+            )
         } else if d_axis > 1.0 - 1e-9 && ri > EPS && rj > EPS {
             // Edge parallel to the axis: partial cylinder.
-            Surface3::Cylinder(CylindricalSurface {
-                origin: centers[i],
-                axis: dir,
-                radius: ri,
-                ref_dir: (profile_verts[i] - centers[i]) / ri,
-                y_dir: None,
-            })
+            (
+                Surface3::Cylinder(CylindricalSurface {
+                    origin: centers[i],
+                    axis: dir,
+                    radius: ri,
+                    ref_dir: (profile_verts[i] - centers[i]) / ri,
+                    y_dir: None,
+                }),
+                (centers[j] - centers[i]).dot(dir),
+                None,
+            )
         } else if hits_axis && ri > EPS && rj > EPS {
             // Diagonal through the axis: partial cone.
             let dz = (centers[j] - centers[i]).length();
@@ -581,22 +645,63 @@ pub fn revolve_polygon_partial(
             } else {
                 0.0
             };
-            Surface3::Cone(ConicalSurface {
-                apex: centers[i],
-                axis: dir,
-                radius: ri,
-                half_angle_rad: half_angle,
-                ref_dir: (profile_verts[i] - centers[i]) / ri,
-            })
+            (
+                Surface3::Cone(ConicalSurface {
+                    apex: centers[i],
+                    axis: dir,
+                    radius: ri,
+                    half_angle_rad: half_angle,
+                    ref_dir: (profile_verts[i] - centers[i]) / ri,
+                }),
+                seam_len,
+                None,
+            )
         } else {
             // Skew line: general revolution surface.
-            Surface3::Revolution(RevolutionSurface {
-                profile: Box::new(Curve3::Line(Line3::new(profile_verts[i], d_n))),
-                axis_origin,
-                axis_dir: dir,
-            })
+            (
+                Surface3::Revolution(RevolutionSurface {
+                    profile: Box::new(Curve3::Line(Line3::new(profile_verts[i], d_n))),
+                    axis_origin,
+                    axis_dir: dir,
+                }),
+                seam_len,
+                None,
+            )
         };
-        faces.push(brep.add_tface(Some(surface), wire, vec![], None, None, vec![], false));
+        let face = brep.add_tface(Some(surface), wire, vec![], None, None, vec![], false);
+        match plane_frame {
+            Some((origin, u_dir, v_dir)) => {
+                // BRepSweep_Rotation::SetDirectingPCurve, GeomAbs_Plane arm
+                // (L538-550) — the plane sector's arcs are 2D circles.
+                for k in [i, j] {
+                    if radii[k] <= EPS {
+                        continue;
+                    }
+                    let Some(arc) = arcs[k].clone() else { continue };
+                    let pcurve =
+                        plane_swept_circle_pcurve(origin, u_dir, v_dir, profile_verts[k]);
+                    let key = (
+                        face.ptr_id(),
+                        brep.compose_pcurve_location(face.location, arc.location),
+                    );
+                    brep.edge_mut_inplace(arc).pcurves.insert(key, (pcurve, 0.0, angle));
+                }
+            }
+            None => {
+                set_sweep_arc_pcurves(
+                    &mut brep,
+                    &face,
+                    [
+                        (if radii[i] > EPS { arcs[i].clone() } else { None }, 0.0),
+                        (if radii[j] > EPS { arcs[j].clone() } else { None }, v_end),
+                    ],
+                    angle,
+                );
+                set_sweep_seam_pcurve(&mut brep, &face, &rev(&prof_i), 0.0, 0.0, v_end);
+                set_sweep_seam_pcurve(&mut brep, &face, &with_l1(&prof_i), angle, 0.0, v_end);
+            }
+        }
+        faces.push(face);
     }
 
     // Caps: the profile polygon at u=0 (forward) and at u=angle (reversed,
@@ -635,4 +740,120 @@ pub fn revolve_polygon_partial(
     let shell = brep.add_tshell(faces);
     brep.add_tsolid(vec![shell]);
     Ok(brep)
+}
+
+/// OCCT `BRepSweep_Rotation::SetDirectingPCurve`, `GeomAbs_Plane` arm
+/// (BRepSweep_Rotation.cxx L538-550): a swept vertex on a planar face traces
+/// a `Geom2d_Circle` centred at the 2D origin with radius
+/// `R = |genV - plane.Location()|` and X direction `ElSLib::PlaneParameters`
+/// of the vertex (normalised by `gp_Dir2d`).
+fn plane_swept_circle_pcurve(
+    plane_origin: DVec3,
+    u_dir: DVec3,
+    v_dir: DVec3,
+    gen_v: DVec3,
+) -> Curve2d {
+    let rel = gen_v - plane_origin;
+    let radius = rel.length();
+    let uv = DVec2::new(rel.dot(u_dir), rel.dot(v_dir));
+    let x_dir = if radius > 0.0 { uv / radius } else { DVec2::X };
+    Curve2d::Circle(Circle2d {
+        center: DVec2::ZERO,
+        x_dir,
+        y_dir: DVec2::Y,
+        radius,
+    })
+}
+
+/// OCCT `BRepSweep_Rotation::SetDirectingPCurve` (BRepSweep_Rotation.cxx
+/// L617-623): each swept-vertex (directing) edge of a swept lateral face is
+/// the V-isoline `v = par`, running `u = 0 .. umax`.
+fn set_sweep_arc_pcurves(
+    brep: &mut topods::BRep,
+    f: &topods::Shape,
+    arcs: [(Option<topods::Shape>, f64); 2],
+    umax: f64,
+) {
+    for (arc, v) in arcs {
+        let Some(arc) = arc else { continue };
+        let key = (
+            f.ptr_id(),
+            brep.compose_pcurve_location(f.location, arc.location),
+        );
+        brep.edge_mut_inplace(arc).pcurves.insert(
+            key,
+            (
+                Curve2d::Line(Line2d::new(DVec2::new(0.0, v), DVec2::X)),
+                0.0,
+                umax,
+            ),
+        );
+    }
+}
+
+/// OCCT `BRepSweep_Rotation::SetGeneratingPCurve` (BRepSweep_Rotation.cxx
+/// L504-515, default arm): one seam (generating) occurrence of a swept
+/// lateral face is the U-isoline `u = u_const`, running `v = v_start .. v_end`
+/// along the profile edge.  `gp_Lin2d` is parameterised by arc length, so the
+/// stored range is the meridian span.
+fn set_sweep_seam_pcurve(
+    brep: &mut topods::BRep,
+    f: &topods::Shape,
+    seam: &topods::Shape,
+    u_const: f64,
+    v_start: f64,
+    v_end: f64,
+) {
+    let sign = if v_end >= v_start { 1.0 } else { -1.0 };
+    let span = (v_end - v_start).abs();
+    let key = (
+        f.ptr_id(),
+        brep.compose_pcurve_location(f.location, seam.location),
+    );
+    let pcurve = Curve2d::Line(Line2d::new(
+        DVec2::new(u_const, v_start),
+        DVec2::new(0.0, sign),
+    ));
+    brep.edge_mut_inplace(seam.clone())
+        .pcurves
+        .insert(key, (pcurve, 0.0, span));
+}
+
+/// The closed-seam form of [`set_sweep_seam_pcurve`] for a full revolution:
+/// the seam lies on the face twice (it is traversed on both sides of the
+/// wrap), so OCCT stores the pair `(u = umax FORWARD, u = 0 REVERSED)` as a
+/// `BRep_CurveOnClosedSurface` (BRepPrim_OneAxis::LateralFace L434-438).
+fn set_closed_sweep_seam(
+    brep: &mut topods::BRep,
+    f: &topods::Shape,
+    seam: &topods::Shape,
+    v_start: f64,
+    v_end: f64,
+    umax: f64,
+) {
+    let sign = if v_end >= v_start { 1.0 } else { -1.0 };
+    let span = (v_end - v_start).abs();
+    let key = (
+        f.ptr_id(),
+        brep.compose_pcurve_location(f.location, seam.location),
+    );
+    let pc1 = Curve2d::Line(Line2d::new(
+        DVec2::new(umax, v_start),
+        DVec2::new(0.0, sign),
+    ));
+    let pc2 = Curve2d::Line(Line2d::new(
+        DVec2::new(0.0, v_start),
+        DVec2::new(0.0, sign),
+    ));
+    brep.edge_mut_inplace(seam.clone())
+        .pcurves
+        .insert(key, (pc1.clone(), 0.0, span));
+    brep.edge_mut_inplace(seam.clone())
+        .representations
+        .push(CurveRepresentation::CurveOnClosedSurface {
+            face: key,
+            pcurve1: pc1,
+            pcurve2: pc2,
+            range: [0.0, span],
+        });
 }

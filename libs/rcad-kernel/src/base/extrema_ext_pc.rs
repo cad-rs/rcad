@@ -33,21 +33,14 @@ use crate::core::precision::{
 };
 use crate::math::GeomAbsShape;
 
-/// OCCT Extrema_CurveTool statics over `TheCurve` that the existing rcad
-/// `ExtremaCurveTool` facade does not carry (Extrema_CurveTool.hxx L128-141:
-/// Degree / IsRational / NbPoles / NbKnots / Bezier / BSpline).  Only the
-/// queries `Extrema_GGExtPC::Perform` consumes are carried: `Bezier()` ->
-/// `NbPoles()` (hxx L185) and the `BSpline()` knot/degree view
-/// (hxx L191-194, L231).
-pub trait ExtPCurveTool: ExtremaCurveTool {
-    /// OCCT Extrema_CurveTool::Bezier (hxx L136) ->
-    /// Geom_BezierCurve::NbPoles().
-    fn bezier_nb_poles(&self) -> usize;
+/// OCCT `Extrema_CurveTool` (hxx L38-142) is a SINGLE tool struct: every
+/// static the `Extrema_GGExtPC` / `Extrema_GGenExtCC` bodies call lives on it,
+/// including the `Bezier` / `BSpline` downcasts of hxx L136-141.  rcad carries
+/// them all on [`ExtremaCurveTool`]; this trait marks the `Extrema_ExtPC`
+/// instantiation sites — it is the trait-object type `ExtremaExtPC` stores.
+pub trait ExtPCurveTool: ExtremaCurveTool {}
 
-    /// OCCT Extrema_CurveTool::BSpline (hxx L138) — the knot/degree view
-    /// (`FirstUKnotIndex` / `LastUKnotIndex` / `Knots()` / `Degree()`).
-    fn bspline(&self) -> BSplineView;
-}
+impl<T: ExtremaCurveTool + ?Sized> ExtPCurveTool for T {}
 
 /// OCCT `Geom_BSplineCurve` knot/degree view (Extrema_GGExtPC.hxx L191-194,
 /// L231): `FirstUKnotIndex()` / `LastUKnotIndex()` / `Knots()` / `Degree()`.
@@ -67,37 +60,6 @@ pub struct BSplineView {
     pub last_u_knot_index: usize,
     /// OCCT Geom_BSplineCurve::Degree().
     pub degree: usize,
-}
-
-impl ExtPCurveTool for CurveToolHandle<'_> {
-    fn bezier_nb_poles(&self) -> usize {
-        match self.curve3 {
-            Some(crate::geom::Curve3::Bezier(b)) => b.control_points.len(),
-            _ => panic!("Extrema_CurveTool: Bezier() on a non-bezier adaptor"),
-        }
-    }
-
-    fn bspline(&self) -> BSplineView {
-        match self.curve3 {
-            Some(crate::geom::Curve3::BSpline(bs)) => {
-                // Reduced knot view out of the flat (multiplicity-expanded)
-                // vector; see the BSplineView architecture-glue note.
-                let mut knots = vec![bs.knots[0]];
-                for &k in &bs.knots[1..] {
-                    if (k - knots[knots.len() - 1]).abs() > 1e-12 {
-                        knots.push(k);
-                    }
-                }
-                BSplineView {
-                    first_u_knot_index: 1,
-                    last_u_knot_index: knots.len(),
-                    knots,
-                    degree: bs.degree,
-                }
-            }
-            _ => panic!("Extrema_CurveTool: BSpline() on a non-bspline adaptor"),
-        }
-    }
 }
 
 /// OCCT Extrema_CurveTool::DeflCurvIntervals (Extrema_CurveTool.cxx L41-91)

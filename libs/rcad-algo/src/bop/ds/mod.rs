@@ -40,7 +40,7 @@ use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::base::bnd_lib::surface_bounding_box;
 use rcad_kernel::curve_bounding_box;
 use rcad_kernel::curve_bounding_box_range;
-use rcad_kernel::math::bnd::BndBox;
+use rcad_kernel::math::bnd::{BndBox, BndBox2d};
 use rcad_kernel::CurveEval;
 use rcad_kernel::topology;
 use rcad_kernel::{is_negative_infinite_value, is_positive_infinite_value};
@@ -2941,103 +2941,84 @@ impl DS {
         }
     }
 
-    /// OCCT BRep_Tool::UVBounds — the face's actual UV bounds computed by
-    /// sampling the boundary edges' pcurves. rcad faces build pcurves
-    /// incrementally (MakePCurves runs after VF/EF/FF), so the boundary edges'
-    /// 3D curves are projected onto the face surface instead (each sample point
-    /// is on the surface, so projection recovers the UV parameter).
+    /// OCCT `BRepTools::UVBounds(F, UMin, UMax, VMin, VMax)` (BRepTools.cxx
+    /// L64-77): the face's boundary-pcurve rectangle, falling back to the
+    /// surface's natural `Bounds` only when no boundary pcurve exists.
+    ///
+    /// OCCT reaches it from the boolean pipeline via
+    /// `IntTools_Context::UVBounds` -> `BRepAdaptor_Surface(theFace, true)`
+    /// (IntTools_Context.cxx L1029-1040, BRepAdaptor_Surface.cxx L56-81,
+    /// `SurfaceAdaptor` L327-339), whose parameter domain IS this answer.
     pub fn face_actual_uv_bounds(&self, fi: usize) -> [f64; 4] {
-        // Unbounded fallback: the OCCT natural domain of an analytic surface
-        // uses Precision::Infinite() (Geom_Plane.cxx L181-184 convention).
-        let no_bounds = [
-            -rcad_kernel::core::precision::INFINITE_VALUE,
-            rcad_kernel::core::precision::INFINITE_VALUE,
-            -rcad_kernel::core::precision::INFINITE_VALUE,
-            rcad_kernel::core::precision::INFINITE_VALUE,
-        ];
-        let Some(surf) = self.face_surface(fi) else {
-            return no_bounds;
-        };
-        let face_data = match &*self.shapes[fi].shape.data {
-            TShape::Face(fd) => fd,
-            _ => return no_bounds,
-        };
-        // OCCT IntTools_Context::UVBounds L1029-1040: for a natural-restriction
-        // face BRepAdaptor_Surface returns the surface natural domain, NOT the
-        // boundary-sampled rect.  Sampling the boundary of a closed face (e.g. a
-        // sphere's seam) yields a degenerate V range and breaks the FF domain
-        // classification.
-        //
-        // rcad note: the rcad primitives mark the lateral cylinder face as
-        // natural-restriction even though it is trimmed by its caps, so the
-        // override is restricted to genuinely closed surfaces (sphere/torus),
-        // whose boundary never restricts the UV domain.
-        if face_data.natural_restriction
-            && matches!(surf, Surface3::Sphere(_) | Surface3::Torus(_))
-        {
-            use rcad_kernel::geom::SurfaceEval;
-            return surf.default_domain();
+        // OCCT L66: Bnd_Box2d B; AddUVBounds(F, B).
+        let mut b = BndBox2d::new();
+        self.add_uv_bounds(fi, &mut b);
+        // OCCT L67-73: if (!B.IsVoid()) B.Get(...) else the zero answer.
+        match b.get() {
+            Some((u_min, v_min, u_max, v_max)) => [u_min, u_max, v_min, v_max],
+            None => [0.0, 0.0, 0.0, 0.0],
         }
-        let mut umin = f64::INFINITY;
-        let mut umax = f64::NEG_INFINITY;
-        let mut vmin = f64::INFINITY;
-        let mut vmax = f64::NEG_INFINITY;
-        let wire_shapes: Vec<Shape> = std::iter::once(face_data.outer_wire.clone())
-            .chain(face_data.inner_wires.iter().cloned())
-            .collect();
-        let mut any = false;
-        for ws in &wire_shapes {
-            let Some(&wi) = self.map_shape_index.get(&(ws.ptr_id(), ws.location)) else { continue };
-            if wi >= self.nb_shapes() || self.shapes[wi].shape_type != ShapeType::Wire {
+    }
+
+    /// OCCT `BRepTools::AddUVBounds(const TopoDS_Face& FF, Bnd_Box2d& B)`
+    /// (BRepTools.cxx L123-158), driven from the DS shape pool.
+    ///
+    /// The per-edge body (L170-362) is shared with the `BRep` form through
+    /// the kernel's `brep_tools_add_uv_bounds_curve_box`; only the two
+    /// `BRep_Tool` lookups differ, and the DS answers them itself —
+    /// `CurveOnSurface` through the DS-keyed lookup (the DS `Shape`s carry
+    /// pool-local indices, so a `BRep`-indexed lookup does not apply) and
+    /// `Surface` straight off the shape.
+    fn add_uv_bounds(&self, fi: usize, b: &mut BndBox2d) {
+        // OCCT L125-126: F = FF; F.Orientation(TopAbs_FORWARD).
+        let mut f = self.shapes[fi].shape.clone();
+        f.orientation = Orientation::Forward;
+        // OCCT L128: TopExp_Explorer ex(F, TopAbs_EDGE).
+        // OCCT L132-136: fill the box for the given face.
+        let mut a_box = BndBox2d::new();
+        for e in rcad_kernel::base::proj_lib::face_edge_shapes(&f) {
+            // OCCT L179: aC2D = BRep_Tool::CurveOnSurface(aE, aF, aT1, aT2).
+            let Some((c2d, a_t1, a_t2)) =
+                crate::bop::algo::builder_face::edge_pcurve_on_face(&e, fi, self)
+            else {
+                // OCCT L180-182: null pcurve -> this edge contributes nothing.
                 continue;
-            }
-            let wire_edge_shapes = match &*self.shapes[wi].shape.data {
-                TShape::Wire(w) => w.edges.clone(),
-                _ => Vec::new(),
             };
-            for eshape in &wire_edge_shapes {
-                let Some(&ei) = self.map_shape_index.get(&(eshape.ptr_id(), eshape.location)) else { continue };
-                if ei >= self.nb_shapes() {
-                    continue;
-                }
-                let edge_data = match &*self.shapes[ei].shape.data {
-                    TShape::Edge(ed) => ed,
-                    _ => continue,
-                };
-                let Some(c3d) = edge_data.curve.clone() else { continue };
-                let t0 = edge_data.range[0];
-                let t1 = edge_data.range[1];
-                const NS: usize = 8;
-                for k in 0..=NS {
-                    let t = t0 + (t1 - t0) * (k as f64 / NS as f64);
-                    let p = c3d.point_at(t);
-                    let (uv, _) = crate::bop::closest_point_on_surface(&surf, p);
-                    umin = umin.min(uv.x);
-                    umax = umax.max(uv.x);
-                    vmin = vmin.min(uv.y);
-                    vmax = vmax.max(uv.y);
-                    any = true;
-                }
-            }
+            // OCCT L191: aS = BRep_Tool::Surface(aF, aLoc).
+            let Some(a_s) = Self::shape_face_surface(&f) else {
+                continue;
+            };
+            // OCCT L185-360: the data-source independent remainder.
+            let a_box_s = rcad_kernel::base::proj_lib::brep_tools_add_uv_bounds_curve_box(
+                &c2d, a_t1, a_t2, &a_s,
+            );
+            // OCCT L360: aB.Add(aBoxS) — here accumulated per face.
+            a_box.add_box(&a_box_s);
         }
-        if !any {
-            return no_bounds;
+        // OCCT L139-154: an empty box (face without edges or without pcurves)
+        // takes the surface's natural bounds.
+        if a_box.is_void() {
+            // OCCT L142-146: aSurf = BRep_Tool::Surface(F, L); null -> return.
+            let Some(a_surf) = Self::shape_face_surface(&f) else {
+                return;
+            };
+            // OCCT L148: aSurf->Bounds(UMin, UMax, VMin, VMax).
+            let [u_min, u_max, v_min, v_max] =
+                rcad_kernel::geom::SurfaceEval::default_domain(&a_surf);
+            // OCCT L150: aBox.Update(UMin, VMin, UMax, VMax).
+            a_box.update(u_min, v_min, u_max, v_max);
         }
-        // OCCT BRepTools::AddUVBounds (BRepTools.cxx L202-281) keeps the
-        // boundary pcurve box as-is for a U-periodic surface — the edge
-        // pcurves span the full period, so the U domain of a periodic face
-        // (cylinder/cone side, sphere, torus) is always the whole period.
-        // Sampling the 3D boundary instead wraps seam-side points across 2*PI
-        // (atan2 of a ~-0 Y component returns 2*PI) and shrinks the U domain
-        // to a sub-period, which makes ProjPS wrap valid projections onto the
-        // wrong side of the seam (box x cylinder rotated: EF intersection at
-        // the seam-side cap circle was projected to the far side and dropped).
-        use rcad_kernel::geom::SurfaceEval;
-        if rcad_kernel::geom::SurfaceEval::is_u_periodic(&surf) {
-            umin = 0.0;
-            umax = std::f64::consts::TAU;
+        // OCCT L156: B.Add(aBox).
+        b.add_box(&a_box);
+    }
+
+    /// OCCT `BRep_Tool::Surface(aF)` (BRep_Tool.cxx L102-115) read straight
+    /// off the shape, without a pool-indexed lookup.
+    fn shape_face_surface(f: &Shape) -> Option<Surface3> {
+        match f.data.as_ref() {
+            TShape::Face(fd) => fd.surface.clone(),
+            _ => None,
         }
-        [umin, umax, vmin, vmax]
     }
 
     /// Inner boundary of a face (wire inner loops).

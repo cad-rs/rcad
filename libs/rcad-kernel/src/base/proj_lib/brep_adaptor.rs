@@ -121,8 +121,6 @@ pub fn brep_tools_add_uv_bounds(brep: &BRep, ff: &Shape, b: &mut BndBox2d) {
 /// OCCT `BRepTools::AddUVBounds(const TopoDS_Face& aF, const TopoDS_Edge&
 /// aE, Bnd_Box2d& aB)` (BRepTools.cxx L170-362).
 fn brep_tools_add_uv_bounds_edge(brep: &BRep, a_f: &Shape, a_e: &Shape, a_b: &mut BndBox2d) {
-    // OCCT L173-176: the scalars and the scratch boxes.
-    let mut a_box_s = BndBox2d::new();
     //
     // OCCT L179: aC2D = BRep_Tool::CurveOnSurface(aE, aF, aT1, aT2).
     let Some((c2d, a_t1, a_t2)) = brep.curve_on_surface(a_e, a_f) else {
@@ -130,22 +128,43 @@ fn brep_tools_add_uv_bounds_edge(brep: &BRep, a_f: &Shape, a_e: &Shape, a_b: &mu
         return;
     };
     //
-    // OCCT L185: BndLib_Add2dCurve::Add(aC2D, aT1, aT2, 0., aBoxC) followed
-    // by L186-188 `if (!aBoxC.IsVoid()) aBoxC.Get(...)` — the kernel
-    // curve2d_bounding_box answers the box directly.
-    let a_box_c = crate::curve2d_bounding_box(&c2d, a_t1, a_t2, 0.0);
-    let (mut a_x_min, mut a_y_min, mut a_x_max, mut a_y_max) =
-        (a_box_c[0], a_box_c[2], a_box_c[1], a_box_c[3]);
-    //
     // OCCT L191: aS = BRep_Tool::Surface(aF, aLoc).
     let Some(a_s) = brep.face_surface(a_f) else {
         return;
     };
+    // OCCT L185-360 (the rest of the body) is data-source independent.
+    let a_box_s = brep_tools_add_uv_bounds_curve_box(&c2d, a_t1, a_t2, a_s);
+    // OCCT L360: aB.Add(aBoxS).
+    a_b.add_box(&a_box_s);
+}
+
+/// The data-source independent remainder of `BRepTools::AddUVBounds(aF, aE,
+/// aB)` (BRepTools.cxx L185-360): the 2D box of the edge pcurve, clamped to
+/// the face's UV domain by the U (L203-299) and V (L302-355) periodicity
+/// rules.  OCCT obtains `c2d` from `BRep_Tool::CurveOnSurface` and `a_s` from
+/// `BRep_Tool::Surface`; those two lookups are the only steps that depend on
+/// which shape pool the face lives in, so callers supply their results.
+pub fn brep_tools_add_uv_bounds_curve_box(
+    c2d: &Curve2d,
+    a_t1: f64,
+    a_t2: f64,
+    a_s: &Surface3,
+) -> BndBox2d {
+    // OCCT L173-176: the scalars and the scratch boxes.
+    let mut a_box_s = BndBox2d::new();
+    //
+    // OCCT L185: BndLib_Add2dCurve::Add(aC2D, aT1, aT2, 0., aBoxC) followed
+    // by L186-188 `if (!aBoxC.IsVoid()) aBoxC.Get(...)` — the kernel
+    // curve2d_bounding_box answers the box directly.
+    let a_box_c = crate::curve2d_bounding_box(c2d, a_t1, a_t2, 0.0);
+    let (mut a_x_min, mut a_y_min, mut a_x_max, mut a_y_max) =
+        (a_box_c[0], a_box_c[2], a_box_c[1], a_box_c[3]);
+    //
     // OCCT L192: aS->Bounds(aUmin, aUmax, aVmin, aVmax).
     let [a_umin, a_umax, a_vmin, a_vmax] = SurfaceEval::default_domain(a_s);
 
     // OCCT L194-200: unwrap one Geom_RectangularTrimmedSurface level.
-    let a_s = match a_s {
+    let a_s: &Surface3 = match a_s {
         Surface3::Trimmed(t) => t.basis.as_ref(),
         s => s,
     };
@@ -292,12 +311,11 @@ fn brep_tools_add_uv_bounds_edge(brep: &BRep, a_f: &Shape, a_e: &Shape, a_b: &mu
 
     // OCCT L358: aBoxS.Update(aXmin, aYmin, aXmax, aYmax).
     a_box_s.update(a_x_min, a_y_min, a_x_max, a_y_max);
-    // OCCT L360: aB.Add(aBoxS).
-    a_b.add_box(&a_box_s);
+    a_box_s
 }
 
 /// The OCCT `TopExp_Explorer(F, TopAbs_EDGE)` walk over the face wires.
-fn face_edge_shapes(f: &Shape) -> Vec<Shape> {
+pub fn face_edge_shapes(f: &Shape) -> Vec<Shape> {
     let mut out = Vec::new();
     if let TShape::Face(fd) = f.data.as_ref() {
         for wire in std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter()) {

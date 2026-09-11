@@ -250,13 +250,16 @@ impl ExtremaCurveTool for SnglrFuncCurveTool<'_> {
     fn parabola(&self) -> rcad_kernel::geom::Parabola3 {
         panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::Parabola")
     }
-}
 
-impl ExtPCurveTool for SnglrFuncCurveTool<'_> {
+    /// OCCT `Extrema_CurveTool::Bezier(theC)` (hxx L136) — `theC.Bezier()`,
+    /// which raises `Standard_NoSuchObject` for the SnglrFunc adaptor (its
+    /// type is `GeomAbs_OtherCurve`; SnglrFunc overrides no Bezier query).
     fn bezier_nb_poles(&self) -> usize {
         panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::Bezier")
     }
 
+    /// OCCT `Extrema_CurveTool::BSpline(theC)` (hxx L138) — `theC.BSpline()`,
+    /// which raises `Standard_NoSuchObject` for the SnglrFunc adaptor.
     fn bspline(&self) -> BSplineView {
         panic!("Standard_NoSuchObject: GeomFill_SnglrFunc::BSpline")
     }

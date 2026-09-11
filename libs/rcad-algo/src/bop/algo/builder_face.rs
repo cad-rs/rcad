@@ -844,7 +844,10 @@ fn make_internal_wires(edges: &[Shape], locations: &[glam::DAffine3]) -> Vec<Sha
 /// OCCT BRep_Tool::CurveOnSurface(aE, aF) — the edge's pcurve on the face,
 /// keyed by the face's TShape identity (ptr_id, location, with the
 /// DS-canonical fallback).
-fn edge_pcurve_on_face(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f64)> {
+///
+/// `pub(crate)`: shared with `DS::face_actual_uv_bounds`, which drives
+/// `BRepTools::AddUVBounds` from the DS shape pool.
+pub(crate) fn edge_pcurve_on_face(e: &Shape, face_index: usize, ds: &DS) -> Option<(Curve2d, f64, f64)> {
     // OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345): the pcurve key
     // location is L.Predivided(E.Location()).
     let (fid, floc) = ds.face_key(face_index)?;
