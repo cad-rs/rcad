@@ -1087,6 +1087,9 @@ pub(crate) struct CutVehicle {
     my_shape: Option<Shape>,
     // BRepAlgoAPI_Algo::myHistory.
     my_history: BRepToolsHistory,
+    // The DS's original-argument -> cloned-shape translation, captured from the
+    // PaveFiller this vehicle ran over (see CutVehicle::ds_keyed).
+    my_arg_shapes: std::collections::HashMap<u64, Shape>,
 }
 
 impl CutVehicle {
@@ -1104,6 +1107,7 @@ impl CutVehicle {
         let mut vehicle = CutVehicle {
             my_shape: None,
             my_history: BRepToolsHistory::new(),
+            my_arg_shapes: std::collections::HashMap::new(),
         };
         // BOPAlgo_BOP::Perform on the rcad vehicle (brep_algo_api::run_build
         // model): a fresh PaveFiller over [S1, S2], a method-scoped Builder.
@@ -1124,36 +1128,43 @@ impl CutVehicle {
         a_builder.my_fill_history = true;
         match a_builder.build_with_history_topods() {
             Ok((brep, _)) => {
-                // The root result shape (the run_build convention: the last
-                // Solid/Shell TShape of the pool).  A face-level BOP result
-                // (e.g. BRepAlgoAPI_Common(Solid, Face) — BOPAlgo_BOP::
-                // BuildShape L1092 result compound) has no container: the
-                // compound members are the result faces, carried flat in the
-                // rcad pool, so fall back to the last result Face.
-                let root = brep
-                    .tshapes
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find(|(_, ts)| {
-                        matches!(
-                            ts.as_ref(),
-                            TShape::Solid(_) | TShape::Shell(_)
-                        )
-                    })
-                    .or_else(|| {
-                        brep.tshapes.iter().enumerate().rev().find(|(_, ts)| {
-                            matches!(ts.as_ref(), TShape::Face(_))
+                // OCCT BRepAlgoAPI_BuilderAlgo::Build (cxx L157):
+                // `myShape = myBuilder->Shape()` — i.e. BOPAlgo_BOP's
+                // `myShape = aResult`, the Compound of EVERY result container
+                // (BOPAlgo_BOP.cxx L1042-1050 / L1106).  Using the builder's
+                // recorded compound root is what makes the pieces of a
+                // multi-piece boolean result reachable through Shape() — the
+                // form-feature gluing (LocOpe_Gluer::Bind) looks its faces up
+                // against this shape, so a single-container shortcut would hide
+                // the other pieces' faces.
+                // Fallback for a face-level BOP result (BRepAlgoAPI_Common
+                // (Solid, Face)) whose members are carried flat in the pool.
+                let root = a_builder.my_result_root.clone().or_else(|| {
+                    brep
+                        .tshapes
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, ts)| {
+                            matches!(
+                                ts.as_ref(),
+                                TShape::Solid(_) | TShape::Shell(_)
+                            )
                         })
-                    })
-                    .map(|(i, ts)| {
-                        Shape::from_parts(
-                            ts.clone(),
-                            i,
-                            0,
-                            rcad_kernel::topods::Orientation::Forward,
-                        )
-                    });
+                        .or_else(|| {
+                            brep.tshapes.iter().enumerate().rev().find(|(_, ts)| {
+                                matches!(ts.as_ref(), TShape::Face(_))
+                            })
+                        })
+                        .map(|(i, ts)| {
+                            Shape::from_parts(
+                                ts.clone(),
+                                i,
+                                0,
+                                rcad_kernel::topods::Orientation::Forward,
+                            )
+                        })
+                });
                 vehicle.my_shape = root;
             }
             Err(_) => {
@@ -1164,6 +1175,7 @@ impl CutVehicle {
             .my_history
             .take()
             .unwrap_or_else(BRepToolsHistory::new);
+        vehicle.my_arg_shapes = a_builder.ds.argument_shapes.clone();
         vehicle
     }
 
@@ -1180,6 +1192,7 @@ impl CutVehicle {
         let mut vehicle = CutVehicle {
             my_shape: None,
             my_history: BRepToolsHistory::new(),
+            my_arg_shapes: std::collections::HashMap::new(),
         };
         // BOPAlgo_BOP with N arguments + N tools on the rcad vehicle.
         let mut all_args = arguments;
@@ -1200,32 +1213,35 @@ impl CutVehicle {
         a_builder.my_fill_history = true;
         match a_builder.build_with_history_topods() {
             Ok((brep, _)) => {
-                // The root result shape — the Solid/Shell convention with the
+                // The root result shape — the builder's aResult Compound
+                // (OCCT BRepAlgoAPI_BuilderAlgo::Build L157), with the
                 // face-level fallback (see with_operation).
-                let root = brep
-                    .tshapes
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find(|(_, ts)| {
-                        matches!(
-                            ts.as_ref(),
-                            TShape::Solid(_) | TShape::Shell(_)
-                        )
-                    })
-                    .or_else(|| {
-                        brep.tshapes.iter().enumerate().rev().find(|(_, ts)| {
-                            matches!(ts.as_ref(), TShape::Face(_))
+                let root = a_builder.my_result_root.clone().or_else(|| {
+                    brep
+                        .tshapes
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, ts)| {
+                            matches!(
+                                ts.as_ref(),
+                                TShape::Solid(_) | TShape::Shell(_)
+                            )
                         })
-                    })
-                    .map(|(i, ts)| {
-                        Shape::from_parts(
-                            ts.clone(),
-                            i,
-                            0,
-                            rcad_kernel::topods::Orientation::Forward,
-                        )
-                    });
+                        .or_else(|| {
+                            brep.tshapes.iter().enumerate().rev().find(|(_, ts)| {
+                                matches!(ts.as_ref(), TShape::Face(_))
+                            })
+                        })
+                        .map(|(i, ts)| {
+                            Shape::from_parts(
+                                ts.clone(),
+                                i,
+                                0,
+                                rcad_kernel::topods::Orientation::Forward,
+                            )
+                        })
+                });
                 vehicle.my_shape = root;
             }
             Err(_) => {
@@ -1236,6 +1252,7 @@ impl CutVehicle {
             .my_history
             .take()
             .unwrap_or_else(BRepToolsHistory::new);
+        vehicle.my_arg_shapes = a_builder.ds.argument_shapes.clone();
         vehicle
     }
 
@@ -1247,13 +1264,28 @@ impl CutVehicle {
     /// OCCT BRepAlgoAPI_BuilderAlgo::Modified(theS) (BuilderAlgo.cxx
     /// L203-210) — the history list; returned by value (rcad history API).
     pub(crate) fn modified(&self, the_s: &Shape) -> Vec<Shape> {
-        self.my_history.modified(the_s)
+        self.my_history.modified(&self.ds_keyed(the_s))
+    }
+
+    /// OCCT: BRepAlgoAPI's history is keyed by the argument shapes as the
+    /// CALLER passed them, because OCCT's DS keeps the arguments by handle.
+    /// rcad's primary DS deep-clones the arguments (DS::clone_arguments) so
+    /// in-place edits never leak into the caller's Brep, and its documented
+    /// contract is that a consumer holding an ORIGINAL argument shape
+    /// translates it through the DS's original->cloned map before touching
+    /// DS-keyed data (`DS::argument_shapes`).  Shapes that are not arguments
+    /// (already a result shape) translate to themselves.
+    fn ds_keyed(&self, the_s: &Shape) -> Shape {
+        self.my_arg_shapes
+            .get(&the_s.ptr_id())
+            .cloned()
+            .unwrap_or_else(|| the_s.clone())
     }
 
     /// OCCT BRepAlgoAPI_BuilderAlgo::IsDeleted(theS) (BuilderAlgo.cxx
     /// L228-231) — the history IsRemoved.
     pub(crate) fn is_deleted(&self, the_s: &Shape) -> bool {
-        self.my_history.is_removed(the_s)
+        self.my_history.is_removed(&self.ds_keyed(the_s))
     }
 }
 

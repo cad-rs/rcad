@@ -630,6 +630,11 @@ pub struct DS {
     /// `myImages` by an argument shape must translate the original ptr_id
     /// through this map first.
     pub argument_remap: HashMap<u64, u64>,
+    /// The same translation as Shapes (original argument TShape ptr_id -> the
+    /// cloned TShape). Filled by `clone_arguments_private`; consumed by the
+    /// BRepAlgoAPI-level wrappers (e.g. the CutVehicle history lookups) so a
+    /// caller holding an ORIGINAL argument shape reaches the DS-keyed data.
+    pub argument_shapes: HashMap<u64, Shape>,
     /// Merged TopLoc_Location table (index 0 = identity). Input shapes carry a
     /// `location` index into their own BRep's table; the entry points
     /// (`brep_top_shapes_with_locations`) merge all input tables here and
@@ -655,6 +660,7 @@ impl DS {
             intersection_curves: Vec::new(),
             clone_arguments: true,
             argument_remap: HashMap::new(),
+            argument_shapes: HashMap::new(),
             locations: vec![glam::DAffine3::IDENTITY],
         }
     }
@@ -735,6 +741,22 @@ impl DS {
         let mut remap: HashMap<u64, u64> = HashMap::new();
         for (&old_ptr, new_arc) in &cache {
             remap.insert(old_ptr, std::sync::Arc::as_ptr(new_arc) as u64);
+        }
+        // Publish the same translation as SHAPES (original ptr_id -> cloned
+        // TShape), so API-level consumers that hold an ORIGINAL argument shape
+        // can address the DS-keyed data (history, myImages) without rebuilding
+        // the graph — the contract documented on `argument_remap`.
+        self.argument_shapes.clear();
+        for (&old_ptr, new_arc) in &cache {
+            self.argument_shapes.insert(
+                old_ptr,
+                Shape::from_parts(
+                    new_arc.clone(),
+                    usize::MAX,
+                    0,
+                    rcad_kernel::topods::Orientation::Forward,
+                ),
+            );
         }
         self.argument_remap = remap.clone();
         let mut walk = |s: &mut Shape| {

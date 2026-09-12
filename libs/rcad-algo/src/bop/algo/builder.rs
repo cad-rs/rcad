@@ -91,6 +91,14 @@ pub struct Builder<'a> {
     // `nbshapes` without -t (same sub-shape with different location counts
     // once).  The evaluated positions are carried by the Location references.
     pub(crate) shape_remap: HashMap<u64, usize>,
+    // OCCT BOPAlgo_BOP::myShape = aResult (BOPAlgo_BOP.cxx L1106 BuildShape /
+    // L1270 BuildSolid) — aCompound carrying EVERY result container (and the
+    // non-container result shapes appended after it, L1082-1104).  rcad's
+    // `my_shape` is the flat result pool, so the compound root is recorded
+    // here for the BRepAlgoAPI-level consumers: `BRepAlgoAPI_Cut::Shape()`
+    // must expose all result pieces, exactly as BRepAlgoAPI_BuilderAlgo
+    // does `myShape = myBuilder->Shape()` (BRepAlgoAPI_BuilderAlgo.cxx L157).
+    pub(crate) my_result_root: Option<Shape>,
     // rcad-specific: surfaces of face TShapes built during this Builder run
     // (draft faces, split areas). These are not DS-pool shapes, so pcurve-row
     // owner resolution needs them alongside the DS face table.
@@ -1554,6 +1562,7 @@ impl<'a> Builder<'a> {
             my_check_inverted: false,
             my_nb_shapes_arr: [0; 8],
             shape_remap: HashMap::new(),
+            my_result_root: None,
             my_built_face_surfaces: HashMap::new(),
             my_is_splitter: false,
         }
@@ -6354,10 +6363,31 @@ impl<'a> Builder<'a> {
         if let Some(brep) = self.my_shape.as_mut() {
             brep.locations = self.ds.locations.clone();
         }
+        // OCCT L1042-1050 / L1270-1272: myShape = aResult — the Compound that
+        // holds every container (and, for BuildShape, the non-container result
+        // shapes appended at L1082-1104).  Added to the result pool like any
+        // other result shape (BRep_Builder::Add(aResult, aS)), so the root gets
+        // a valid pool index: the pool-external convention (index ==
+        // usize::MAX) would make every `Shape::is_null()` test on the root read
+        // TRUE (the null placeholder shares that index), which is the failure
+        // mode recorded as pitfall 0① in the E3-W handover.
+        let a_root = Shape {
+            data: std::sync::Arc::new(TShape::Compound(shapes.clone())),
+            index: usize::MAX,
+            location: 0,
+            orientation: topods::Orientation::Forward,
+        };
         self.shape_remap.clear();
         for s in shapes {
             self.add_shape_to_result(&s);
         }
+        let a_root_idx = self.push_shape_recursive(&a_root);
+        self.my_result_root = Some(Shape::from_parts(
+            a_root.data.clone(),
+            a_root_idx,
+            0,
+            topods::Orientation::Forward,
+        ));
     }
 
     /// OCCT TopExp::MapShapes(aS, aType, aMap) 鈥?collect all sub-shapes of a type.
