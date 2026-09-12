@@ -174,6 +174,8 @@ pub fn approx_surface(surface: &Surface3, tol: f64) -> Option<BSplineSurface> {
         knots_v,
         control_points: ctrl,
         weights: vec![],
+        is_periodic_u: false,
+        is_periodic_v: false,
     })
 }
 

@@ -666,6 +666,8 @@ fn ruled_surface(c1: &Curve3, r1: [f64; 2], c2: &Curve3, r2: [f64; 2]) -> Option
         knots_v: vec![0.0, 0.0, 1.0, 1.0],
         control_points,
         weights,
+        is_periodic_u: false,
+        is_periodic_v: false,
     }))
 }
 

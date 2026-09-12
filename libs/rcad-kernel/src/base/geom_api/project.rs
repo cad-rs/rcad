@@ -416,6 +416,8 @@ mod tests {
                 vec![DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
             ],
             weights: vec![vec![1.0; 2]; 2],
+            is_periodic_u: false,
+            is_periodic_v: false,
         });
         let q = DVec3::new(0.5, 0.5, 5.0);
         let r = closest_point_on_surface(&surf, q, 8);

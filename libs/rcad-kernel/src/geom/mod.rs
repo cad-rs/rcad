@@ -691,6 +691,76 @@ pub struct BSplineSurface {
     pub control_points: Vec<Vec<DVec3>>,
     /// Weight grid [u_index][v_index]; 1.0 for non-rational.
     pub weights: Vec<Vec<f64>>,
+    /// OCCT Geom_BSplineSurface::IsUPeriodic() — the caller-declared
+    /// constructor argument myUPeriodic (Geom_BSplineSurface.cxx ctor
+    /// L230-249, CheckSurfaceData).
+    #[serde(default)]
+    pub is_periodic_u: bool,
+    /// OCCT Geom_BSplineSurface::IsVPeriodic() — myVPeriodic.
+    #[serde(default)]
+    pub is_periodic_v: bool,
+}
+
+impl BSplineSurface {
+    /// OCCT static Rational (Geom_BSplineSurface.cxx L110-138) — the V
+    /// direction flag: set when two vertically adjacent weights differ by
+    /// more than Epsilon(x) (the nextafter ULP, Standard_Real.hxx L242-246).
+    /// OCCT derives myVRational at construction from the weight grid; the
+    /// rcad surface is an immutable value, so the same derivation evaluates
+    /// on read.
+    pub fn is_rational_v(&self) -> bool {
+        let w = &self.weights;
+        for j in 0..w.first().map(|r| r.len()).unwrap_or(0) {
+            for i in 0..w.len().saturating_sub(1) {
+                let a = w[i][j];
+                let b = w.get(i + 1).and_then(|r| r.get(j)).copied().unwrap_or(a);
+                if (a - b).abs() > standard_epsilon(a) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// OCCT static Rational (Geom_BSplineSurface.cxx L126-137) — the U
+    /// direction counterpart over horizontally adjacent weights.
+    pub fn is_rational_u(&self) -> bool {
+        let w = &self.weights;
+        for (i, row) in w.iter().enumerate() {
+            for j in 0..row.len().saturating_sub(1) {
+                let a = row[j];
+                let b = row.get(j + 1).copied().unwrap_or(a);
+                if (a - b).abs() > standard_epsilon(a) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// OCCT Epsilon(theValue) (Standard_Real.hxx L242-246) — the ULP of `x`
+/// via nextafter toward the infinity of the same sign.
+fn standard_epsilon(x: f64) -> f64 {
+    if x >= 0.0 {
+        next_after(x, f64::INFINITY) - x
+    } else {
+        x - next_after(x, f64::NEG_INFINITY)
+    }
+}
+
+/// OCCT std::nextafter — the nearest representable double in the direction
+/// of `to` (bit-level construction; stable Rust has no nextafter).
+fn next_after(x: f64, to: f64) -> f64 {
+    if x.is_nan() || to.is_nan() || x == to {
+        return x;
+    }
+    if x == 0.0 {
+        return if to > 0.0 { f64::from_bits(1) } else { -f64::from_bits(1) };
+    }
+    let bits = x.to_bits();
+    let next_bits = if (to > x) == (x > 0.0) { bits + 1 } else { bits - 1 };
+    f64::from_bits(next_bits)
 }
 
 /// Returns `true` if the BSpline surface is planar (degree ≤ 1 in both directions
@@ -2126,6 +2196,8 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
                 .map(|row| row.iter().map(|&p| loc.transform_point3(p)).collect())
                 .collect(),
             weights: bs.weights.clone(),
+            is_periodic_u: bs.is_periodic_u,
+            is_periodic_v: bs.is_periodic_v,
         }),
         other => other.clone(),
     }

@@ -657,6 +657,8 @@ impl GeomFillGenerator {
             knots_v: vec![0.0, 0.0, 1.0, 1.0],
             control_points: poles,
             weights,
+            is_periodic_u: false,
+            is_periodic_v: false,
         });
     }
 

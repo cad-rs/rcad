@@ -149,6 +149,8 @@ impl GeomBSplineSurface {
                 knots_v,
                 control_points: the_poles.clone(),
                 weights: the_weights.clone(),
+                is_periodic_u: false,
+                is_periodic_v: false,
             },
         }
     }

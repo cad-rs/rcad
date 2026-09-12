@@ -1576,11 +1576,42 @@ mod eval_tests {
                 vec![DVec3::new(10.0, 0.0, 0.0), DVec3::new(10.0, 10.0, 0.0)],
             ],
             weights: vec![vec![1.0; 2]; 2],
+            is_periodic_u: false,
+            is_periodic_v: false,
         };
         // Degree 1 surface = bilinear, should interpolate corners
         assert!((surf.point_at(0.0, 0.0) - DVec3::ZERO).length() < 1e-10);
         assert!((surf.point_at(1.0, 1.0) - DVec3::new(10.0, 10.0, 0.0)).length() < 1e-10);
         assert!((surf.point_at(0.5, 0.5) - DVec3::new(5.0, 5.0, 0.0)).length() < 1e-10);
+    }
+
+    /// OCCT static Rational (Geom_BSplineSurface.cxx L110-138): adjacent
+    /// weights compared by the nextafter ULP.  A uniform non-unit weight
+    /// grid (all 2.0) is NOT rational; a grid with one varying weight is.
+    #[test]
+    fn bspline_surface_rational_flags() {
+        let mk = |weights: Vec<Vec<f64>>| BSplineSurface {
+            degree_u: 2,
+            degree_v: 2,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: vec![vec![DVec3::ZERO; 3]; 3],
+            weights,
+            is_periodic_u: false,
+            is_periodic_v: false,
+        };
+        let uniform_unit = mk(vec![vec![1.0; 3]; 3]);
+        assert!(!uniform_unit.is_rational_u());
+        assert!(!uniform_unit.is_rational_v());
+        // OCCT: all weights 2.0 — adjacent weights are equal ⇒ NOT rational.
+        let uniform_two = mk(vec![vec![2.0; 3]; 3]);
+        assert!(!uniform_two.is_rational_u());
+        assert!(!uniform_two.is_rational_v());
+        // One varying weight ⇒ rational in the varying direction.
+        let mut varying = mk(vec![vec![1.0; 3]; 3]);
+        varying.weights[1][1] = 0.5;
+        assert!(varying.is_rational_u());
+        assert!(varying.is_rational_v());
     }
 
     // ── Surface3 dispatch verification ───────────────────────────────────

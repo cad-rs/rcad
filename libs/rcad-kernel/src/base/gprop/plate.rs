@@ -94,6 +94,8 @@ pub fn build_plate_surface(constraints: &[DVec3], n_u: usize, n_v: usize) -> Opt
         knots_u, knots_v,
         control_points: cp,
         weights: vec![vec![1.0; n_u]; n_v],
+        is_periodic_u: false,
+        is_periodic_v: false,
     }))
 }
 

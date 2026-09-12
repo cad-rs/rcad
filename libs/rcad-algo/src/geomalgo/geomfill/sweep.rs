@@ -774,6 +774,8 @@ impl Sweep {
                 knots_v: flat_v,
                 control_points: poles,
                 weights,
+                is_periodic_u: is_u_periodic,
+                is_periodic_v: false,
             };
             self.my_surface = Some(Surface3::BSpline(bs.clone()));
             self.s_error = approx.max_error_on_surf();

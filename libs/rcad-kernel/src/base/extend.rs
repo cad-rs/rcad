@@ -354,6 +354,8 @@ pub fn insert_knot_u_once(surface: &BSplineSurface, t: f64) -> BSplineSurface {
         knots_v: surface.knots_v.clone(),
         control_points: ctrl,
         weights: wts,
+        is_periodic_u: surface.is_periodic_u,
+        is_periodic_v: surface.is_periodic_v,
     }
 }
 
@@ -390,6 +392,8 @@ pub fn insert_knot_v_once(surface: &BSplineSurface, t: f64) -> BSplineSurface {
         knots_v: knots_v_out.expect("knots_v"),
         control_points: ctrl,
         weights: wts,
+        is_periodic_u: surface.is_periodic_u,
+        is_periodic_v: surface.is_periodic_v,
     }
 }
 
@@ -923,6 +927,8 @@ mod tests {
                 vec![DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
             ],
             weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+            is_periodic_u: false,
+            is_periodic_v: false,
         };
         let extended = extend_bspline_surface(&bs, SurfaceBoundary::UMax, 0.0);
         assert_eq!(

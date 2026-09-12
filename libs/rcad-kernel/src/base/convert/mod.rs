@@ -246,6 +246,8 @@ pub fn plane_to_bspline_domain(
         knots_v: vec![0.0, 0.0, 1.0, 1.0],
         control_points: vec![vec![p00, p01], vec![p10, p11]],
         weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+        is_periodic_u: false,
+        is_periodic_v: false,
     }
 }
 
@@ -284,6 +286,8 @@ pub fn cylinder_to_bspline_range(cyl: &CylindricalSurface, v0: f64, v1: f64) -> 
         knots_v: vec![0.0, 0.0, 1.0, 1.0],
         control_points,
         weights,
+        is_periodic_u: false,
+        is_periodic_v: false,
     }
 }
 
@@ -351,6 +355,8 @@ pub fn sphere_to_bspline(sphere: &SphericalSurface) -> BSplineSurface {
         knots_v,
         control_points: transposed_ctrl,
         weights: transposed_w,
+        is_periodic_u: false,
+        is_periodic_v: false,
     }
 }
 
@@ -378,6 +384,8 @@ pub fn bezier_surface_to_bspline(bezier: &BezierSurface) -> BSplineSurface {
         knots_v,
         control_points: bezier.control_points.clone(),
         weights: bezier.weights.clone(),
+        is_periodic_u: false,
+        is_periodic_v: false,
     }
 }
 
@@ -428,6 +436,8 @@ fn sample_surface_to_bspline(surface: &Surface3, n_u: usize, n_v: usize) -> BSpl
         knots_v,
         control_points: ctrl,
         weights: w,
+        is_periodic_u: false,
+        is_periodic_v: false,
     }
 }
 

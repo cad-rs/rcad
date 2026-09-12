@@ -1885,6 +1885,7 @@ mod tkdata_tkgeombase_tests {
             control_points: poles, weights: vec![vec![1.0; 3]; 3],
             knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             degree_u: 2, degree_v: 2,
+            is_periodic_u: false, is_periodic_v: false,
         });
         check_surface_bbox(&s, &[], DVec3::new(0.0, 0.0, 0.0), DVec3::new(20.0, 20.0, 5.0));
     }

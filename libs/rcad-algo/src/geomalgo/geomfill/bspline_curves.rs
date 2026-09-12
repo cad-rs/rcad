@@ -399,6 +399,8 @@ impl BSplineCurves {
             knots_v: expand_knots(&v_knots, &v_mults),
             control_points: caro.poles().clone(),
             weights,
+            is_periodic_u: false,
+            is_periodic_v: false,
         });
     }
 
@@ -495,6 +497,8 @@ impl BSplineCurves {
                 knots_v: expand_knots(&v_knots, &v_mults),
                 control_points: poles,
                 weights,
+                is_periodic_u: false,
+                is_periodic_v: false,
             });
         } else {
             let eps = CONFUSION;
@@ -549,6 +553,8 @@ impl BSplineCurves {
                 knots_v: expand_knots(&v_knots, &v_mults),
                 control_points: caro.poles().clone(),
                 weights,
+                is_periodic_u: false,
+                is_periodic_v: false,
             });
         }
     }

@@ -525,6 +525,8 @@ fn parse_surface(c: &mut Cursor<'_>) -> Result<Surface3, OcctBrepError> {
                 knots_v: expand_knots(&parse_bspline_knot_line(c, kv)?),
                 control_points: grid,
                 weights: wg,
+                is_periodic_u: false,
+                is_periodic_v: false,
             }))
         }
         "10" => {

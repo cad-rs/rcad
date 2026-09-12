@@ -689,6 +689,8 @@ mod tkg3d_geom_bspline_surface_tests {
             knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             degree_u: 2,
             degree_v: 2,
+            is_periodic_u: false,
+            is_periodic_v: false,
         })
     }
 
@@ -738,6 +740,8 @@ mod tkg3d_geom_bspline_surface_tests {
             knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             degree_u: 2,
             degree_v: 2,
+            is_periodic_u: false,
+            is_periodic_v: false,
         };
         assert_eq!(bsp.degree_u, 2);
         assert_eq!(bsp.degree_v, 2);
@@ -765,6 +769,8 @@ mod tkg3d_geom_bspline_surface_tests {
             knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             degree_u: 2,
             degree_v: 2,
+            is_periodic_u: false,
+            is_periodic_v: false,
         });
         let m = s.point_at(0.5, 0.5);
         assert!(m.is_finite());
@@ -1511,6 +1517,8 @@ mod tkg3d_grid_eval_surface_tests {
             knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             degree_u: 2,
             degree_v: 2,
+            is_periodic_u: false,
+            is_periodic_v: false,
         });
         for i in 0..=3 {
             let u = i as f64 / 3.0;

@@ -942,22 +942,28 @@ fn surface_u_iso(surf: &Surface3, param: f64) -> Curve3 {
         ),
         // OCCT Geom_BSplineSurface::UIso (Geom_BSplineSurface_1.cxx L598-635):
         // BSplSLib::Iso on the U direction; the result curve's knots and
-        // degree are the V direction's.
+        // degree are the V direction's (and its periodicity myVPeriodic).
         Surface3::BSpline(b) => {
+            let weights = if b.is_rational_u() || b.is_rational_v() {
+                Some(b.weights.as_slice())
+            } else {
+                None
+            };
             let (cpoles, cweights) = bspl_lib::bspl_slib_iso(
                 param,
                 true,
                 b.degree_u,
                 &b.knots_u,
                 &b.control_points,
-                &b.weights,
+                weights,
+                b.is_periodic_u,
             );
             Curve3::BSpline(BSplineCurve3 {
                 degree: b.degree_v,
                 knots: b.knots_v.clone(),
                 control_points: cpoles,
                 weights: cweights,
-                is_periodic: false,
+                is_periodic: b.is_periodic_v,
             })
         }
         _ => panic!("GAP: Geom_Surface::UIso not translated for this surface type"),
@@ -998,22 +1004,28 @@ fn surface_v_iso(surf: &Surface3, param: f64) -> Curve3 {
         )),
         // OCCT Geom_BSplineSurface::VIso (Geom_BSplineSurface_1.cxx L775-812):
         // BSplSLib::Iso on the V direction; the result curve's knots and
-        // degree are the U direction's.
+        // degree are the U direction's (and its periodicity myUPeriodic).
         Surface3::BSpline(b) => {
+            let weights = if b.is_rational_u() || b.is_rational_v() {
+                Some(b.weights.as_slice())
+            } else {
+                None
+            };
             let (cpoles, cweights) = bspl_lib::bspl_slib_iso(
                 param,
                 false,
                 b.degree_v,
                 &b.knots_v,
                 &b.control_points,
-                &b.weights,
+                weights,
+                b.is_periodic_v,
             );
             Curve3::BSpline(BSplineCurve3 {
                 degree: b.degree_u,
                 knots: b.knots_u.clone(),
                 control_points: cpoles,
                 weights: cweights,
-                is_periodic: false,
+                is_periodic: b.is_periodic_u,
             })
         }
         // OCCT Geom_SurfaceOfRevolution::VIso (cxx L383-410): the circle of the

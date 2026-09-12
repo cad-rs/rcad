@@ -629,6 +629,8 @@ fn make_bspline_surface(
         knots_v: expand(v_knots, v_mults),
         control_points: poles.to_vec(),
         weights: weights.to_vec(),
+        is_periodic_u: false,
+        is_periodic_v: false,
     }
 }
 

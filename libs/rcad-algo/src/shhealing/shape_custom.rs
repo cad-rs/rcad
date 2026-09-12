@@ -611,6 +611,8 @@ fn fit_surface_to_grid(
         knots_v: build_clamped_knots(n_v, degree_v),
         control_points,
         weights,
+        is_periodic_u: false,
+        is_periodic_v: false,
     })
 }
 
@@ -962,6 +964,8 @@ pub fn surface_to_bspline_from_face(
                     knots_v: build_clamped_knots(n_v, b.degree_v.min(3)),
                     control_points: ctrl,
                     weights: w,
+                    is_periodic_u: false,
+                    is_periodic_v: false,
                 }
             } else {
                 b.clone()
@@ -982,6 +986,8 @@ pub fn surface_to_bspline_from_face(
                     knots_v: vec![0.0, 0.0, 1.0, 1.0],
                     control_points: vec![vec![pts[0], pts[1]], vec![pts[2], pts[3]]],
                     weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+                    is_periodic_u: false,
+                    is_periodic_v: false,
                 }
             } else {
                 plane_to_bspline(p)
@@ -1005,6 +1011,8 @@ fn fallback_bspline_surface() -> BSplineSurface {
             vec![DVec3::X, DVec3::X + DVec3::Y],
         ],
         weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+        is_periodic_u: false,
+        is_periodic_v: false,
     }
 }
 

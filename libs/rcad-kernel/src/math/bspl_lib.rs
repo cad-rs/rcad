@@ -2072,12 +2072,12 @@ pub fn pole_index(degree: usize, index: i32, periodic: bool, mults: &[i32]) -> i
 /// direction, evaluated per pole row/column through the de Boor scheme
 /// (`BSplCLib::Eval` on the local (Degree+1) window).
 ///
-/// The rcad `BSplineSurface` stores multiplicity-expanded (flat) knot
-/// vectors, which is OCCT's `Mults == NoMults()` form; the weights travel
-/// with the grid (1.0 for non-rational), so the rational arm follows the
-/// OCCT `Weights != null` path with dim = 4.  `periodic` is false — the
-/// rcad surface model carries no periodic flag.  Returns the curve poles
-/// and their weights (all 1.0 for the non-rational case).
+/// `weights` mirrors the OCCT `Weights` pointer: `Some(grid)` is the
+/// rational arm (dim = 4), `None` is `BSplSLib::NoWeights()` (dim = 3).
+/// `periodic` is the ISO direction's `myUPeriodic`/`myVPeriodic` constructor
+/// flag.  The rcad `BSplineSurface` stores multiplicity-expanded (flat) knot
+/// vectors, which is OCCT's `Mults == NoMults()` form.  Returns the curve
+/// poles and their weights (all 1.0 for the non-rational case).
 #[allow(clippy::too_many_arguments)]
 pub fn bspl_slib_iso(
     param: f64,
@@ -2085,14 +2085,13 @@ pub fn bspl_slib_iso(
     degree: usize,
     flat_knots: &[f64],
     poles: &[Vec<DVec3>],
-    weights: &[Vec<f64>],
+    weights: Option<&[Vec<f64>]>,
+    periodic: bool,
 ) -> (Vec<DVec3>, Vec<f64>) {
     let mut index = 0i32; // OCCT L1628.
     let mut u = param; // OCCT L1629.
     // OCCT L1630-1631: rational = Weights != null; dim = rational ? 4 : 3.
-    let rational = weights
-        .iter()
-        .any(|row| row.iter().any(|w| *w != 1.0));
+    let rational = weights.is_some();
     let dim: usize = if rational { 4 } else { 3 };
 
     // OCCT L1636: LocateParameter(Degree, Knots, Mults=null, u, Periodic,
@@ -2104,7 +2103,7 @@ pub fn bspl_slib_iso(
         degree,
         flat_knots,
         u,
-        false,
+        periodic,
         first,
         last,
         &mut index,
@@ -2113,7 +2112,7 @@ pub fn bspl_slib_iso(
     // OCCT L1637: BuildKnots(Degree, index, Periodic, Knots, Mults, locknots1)
     // — the 2*Degree local knot window.
     let mut locknots1 = vec![0.0f64; 2 * degree];
-    build_knots_local(degree, index, false, flat_knots, None, &mut locknots1);
+    build_knots_local(degree, index, periodic, flat_knots, None, &mut locknots1);
     // OCCT L1638-1641: the Mults == null branch: index -= Knots.Lower() + Degree.
     index -= 1 + degree as i32;
 
@@ -2133,6 +2132,19 @@ pub fn bspl_slib_iso(
     // into the flat locpoles array (rational: pre-multiply the coordinates
     // by the weight, dim = 4).
     let window_cols = l2;
+    let empty_weights: Vec<Vec<f64>> = Vec::new();
+    let weights_ref = weights.unwrap_or(&empty_weights);
+    let weight_at = |i: usize, j: usize| -> f64 {
+        if rational {
+            if is_u {
+                weights_ref.get(i).and_then(|r| r.get(j)).copied().unwrap_or(1.0)
+            } else {
+                weights_ref.get(j).and_then(|r| r.get(i)).copied().unwrap_or(1.0)
+            }
+        } else {
+            1.0
+        }
+    };
     let mut locpoles = vec![0.0f64; (degree + 1) * window_cols * dim];
     let mut pole_index_row = index;
     for i in 0..=(degree) {
@@ -2143,15 +2155,9 @@ pub fn bspl_slib_iso(
         let row = pole_index_row as usize;
         for j in 0..window_cols {
             let (p, w) = if is_u {
-                (
-                    poles[row][j],
-                    weights.get(row).and_then(|r| r.get(j)).copied().unwrap_or(1.0),
-                )
+                (poles[row][j], weight_at(row, j))
             } else {
-                (
-                    poles[j][row],
-                    weights.get(j).and_then(|r| r.get(row)).copied().unwrap_or(1.0),
-                )
+                (poles[j][row], weight_at(j, row))
             };
             let base = (i * window_cols + j) * dim;
             if rational {

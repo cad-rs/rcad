@@ -588,6 +588,8 @@ pub(crate) fn geom_lib_extend_surf_by_length(
                 },
                 control_points: bez.control_points.clone(),
                 weights: bez.weights.clone(),
+                is_periodic_u: false,
+                is_periodic_v: false,
             }
         }
         _ => return false,
@@ -898,6 +900,8 @@ pub(crate) fn geom_lib_extend_surf_by_length(
         knots_v: vflat,
         control_points: grid,
         weights: wgrid,
+        is_periodic_u: false,
+        is_periodic_v: false,
     });
     true
 }

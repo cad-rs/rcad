@@ -1306,6 +1306,8 @@ impl ApproxAFunc2Var {
                 knots_v: v_flat,
                 control_points: cvp.poles().clone(),
                 weights: vec![vec![1.0f64; nb_v]; nb_u],
+                is_periodic_u: false,
+                is_periodic_v: false,
             };
             if let Some(arr) = self.my_surfaces.as_mut() {
                 arr[(ssp - 1) as usize] = Some(surface);

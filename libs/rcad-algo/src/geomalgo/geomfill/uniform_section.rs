@@ -146,6 +146,8 @@ impl UniformSection {
             knots_v: flat_knots_v,
             control_points,
             weights,
+            is_periodic_u: my_curve.is_periodic,
+            is_periodic_v: false,
         })
     }
 }

@@ -443,19 +443,8 @@ fn totalsurf(
         knots_v: expand_knots(&an_approx.surf_v_knots(), &vmults),
         control_points: poles,
         weights,
-    }
-    .with_periodic_flags(uperiodic, vperiodic, &mut nup, &mut nvp)
-}
-
-/// The rcad BSplineSurface carries no periodic flags (see the geomfill
-/// nsections.rs header note); the OCCT ctor arguments are consumed here.
-trait PeriodicFlags {
-    fn with_periodic_flags(self, uperiodic: bool, vperiodic: bool, nup: &mut usize, nvp: &mut usize) -> BSplineSurface;
-}
-impl PeriodicFlags for BSplineSurface {
-    fn with_periodic_flags(self, uperiodic: bool, vperiodic: bool, nup: &mut usize, nvp: &mut usize) -> BSplineSurface {
-        let _ = (uperiodic, vperiodic, nup, nvp);
-        self
+        is_periodic_u: uperiodic,
+        is_periodic_v: vperiodic,
     }
 }
 

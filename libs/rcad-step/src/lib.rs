@@ -6415,6 +6415,8 @@ fn build_bspline_surface_from_data(
         knots_v: expanded_v,
         control_points,
         weights,
+        is_periodic_u: false,
+        is_periodic_v: false,
     }))
 }
 

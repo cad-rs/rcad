@@ -284,6 +284,8 @@ mod tests {
                 vec![DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
             ],
             weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+            is_periodic_u: false,
+            is_periodic_v: false,
         });
         let (k1, k2) = principal_curvatures(&s, 0.5, 0.5);
         assert!(k1.abs() < 1e-4, "k1 = {k1}");

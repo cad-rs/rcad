@@ -952,6 +952,8 @@ impl Pipe {
                         knots_v: flat_v,
                         control_points: app.surf_poles(),
                         weights: app.surf_weights(),
+                        is_periodic_u: false,
+                        is_periodic_v: false,
                     }));
                     self.my_error = app.max_error_on_surf();
                     self.my_status = PipeError::PipeOk;
@@ -1214,6 +1216,8 @@ impl Pipe {
                 knots_v: flat_v,
                 control_points: app.surf_poles(),
                 weights: app.surf_weights(),
+                is_periodic_u: false,
+                is_periodic_v: false,
             }));
             let mut t2d = 0.0;
             let mut my_error = 0.0;
