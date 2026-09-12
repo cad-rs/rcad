@@ -1,21 +1,40 @@
 # E3-W 交接：三域（TKFeat / TKFillet / TKOffset）翻译推进 —— 2026-09-12
 
-> **一句话**：本轮把 tkfeat 的 featlf sliding 流从"卡 GAP"推进到"整条 init 管线端到端跑通"，
-> 并落地两个并行翻译批（BRepCheck_Analyzer 全家桶 + Extrema_ExtCC2d 链）、四个面级 BOP 1:1 修复、
-> 两个数据模型对齐（BSplineSurface 四标志、IntTools_FaceFace Trimmed 解包）。
-> 八网格与全部门槛**零回归**。下一轮三域各有明确入口（§4）。
+> **一句话（追加 14 后**重写**）**：tkfeat featlf 的 profile 有效性**五连破**——`is_done` 门
+> **0/12 → 11/12 越过**、全部 kernel panic 清零；五处 1:1 修复 = 边顶点 tag 不变量（`add_tedge`
+> 收口）+ `direct_children` 不再改写标签 + `BRepLib_MakeEdge::Init` 的 reordonate/周期分支 +
+> `BRepLib_MakeFace(Pln,W,true)` 的 `CheckInside` + `BRepLib_MakeFace(W)` 的 `FindSurface` 曲面探测；
+> 另落**跨池子图重编号**（`renumbered_pool` / `adopt_subgraph_into`）消除 rcad 池 index 别名。
+> 八网格与全部门槛**零回归**。下一轮的墙已全部是**下游**（§4.1：`FalseSide ×7` / `NoExtFace ×3` /
+> `BRepTools_Modifier::Perform` GAP / draft GAP）。
 
 ## 0. 新 session 一句话提示词（直接粘贴）
 
-> 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本轮交接：门槛实测值/提交链/三域队列/配方/坑）
-> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–13（权威脉络）；
+> 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值/提交链/三域队列/配方/坑）
+> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–14（权威脉络）；
 > 先 `cd rcad` 跑 6 条门槛（见 §1）确认 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && bash output/run_eight_grids.sh` 确认**八网格 8/8**；
-> 然后按 §4 队列开工（第 1 项 = tkfeat featlf 布尔分割面有效性攻坚；第 2 项 = Geom2dInt_GInter 通用批；
-> 第 3 项 = tkoffset GeomAPI_ProjectPointOnCurve / ExtentEdge / GeomInt_IntSS；第 4 项 = tkfillet a1 上游
-> `ChFiKPart_ComputeData::Compute`）。全程严格 1:1 逐行对照（OCCT 行号锚点、禁载体/禁等价替换/禁凑结果），
+> 然后按 §4 队列开工（第 1 项 = `BRepFeat_MakeLinearForm::Propagate` 的 `FalseSide`（7 例，最大一块）；
+> 第 2 项 = 追加 13 批次 2 的 `Geom2dInt_GInter` 通用批；第 3 项 = tkoffset 三件；
+> 第 4 项 = tkfillet a1 上游）。全程严格 1:1 逐行对照（OCCT 行号锚点、禁载体/禁等价替换/禁凑结果），
 > 每 Edit 后 `cargo check`，探针即用即清（提交前 `git diff | grep "+.*eprintln"` = 0），
-> 完成后更新 §E3-W 追加 13 并提交两仓库（**按长期要求均不推送**）。
+> 完成后更新 §E3-W 追加 15 并提交两仓库（**按长期要求均不推送**）。
+
+## 0.1 追加 14 本轮落地（2026-09-12，rcad `3bf6858f` / `cc38f690` / `7dfa5884`，均未推送）
+
+| 修复 | 位置 | OCCT 锚点 | 消除的症状 |
+|------|------|-----------|-----------|
+| 边顶点 **tag 不变量** | `kernel/topo/topods.rs::add_tedge` | `BRepLib_MakeEdge.cxx L771-772` + `BRepPrim_Builder.cxx L143-155` + `TopExp.cxx L214-252` | `Edge InvalidPointOnCurve`、wire `NotClosed` |
+| `direct_children` 不改写标签 | `topalgo/brep_check/brep_check_result.rs` | `TopoDS_Iterator(E)` 语义 | `orv` 落错参数（analyzer 误报） |
+| `MakeEdge::Init` reordonate | `feat/brep_feat_rib_slot.rs::reorder_edge_endpoints` | `BRepLib_MakeEdge.cxx L603-651` | 顶点与 range 错位 |
+| `MakeFace(Pln,W,true)` 的 `CheckInside` | `feat/brep_feat_rib_slot_b.rs`（+ `..make_revolution_form.rs`） | `BRepLib_MakeFace.cxx L262-272 / L905-924` | `Face BadOrientationOfSubshape` |
+| `MakeFace(W)` 曲面探测 | `feat/brep_feat_rib_slot_b.rs::make_face_wire` | `BRepLib_MakeFace.cxx L189-262` | 无曲面面 ⇒ `NoSurface`（7 例 `NoFaceProf`） |
+| **跨池子图重编号** | `feat/brep_feat_form_2.rs::renumbered_pool` / `adopt_subgraph_into` | 架构差异（OCCT 按指针携带图） | `Shape N is not a Face/Edge`（12 例 panic） |
+
+**效果**：featlf 真实断言 15 例中 `is_done` 门通过 11（此前 0）；kernel panic 0（此前 12）。
+**剩余失败全部在下游**：`FalseSide ×7`、`NoExtFace ×3`、`NoFaceProf ×1`、
+`BRepTools_Modifier::Perform` GAP（a3）、`draft_modification_1_b.rs:1269` GAP（b4）、
+off-chain 的 Draft（depouille）e4/e5。
 
 ## 1. 门槛（本轮终测，全部实测；2026-09-12）
 
@@ -49,7 +68,7 @@
 | mkface_after_extsurf_and_offset | **32/32** | 全绿 |
 | blend_simple | **0/11** | 全败（a1/a3/q1 早期待过的三例现亦败，与 E3-U 记档一致，非本轮回归） |
 | blend_complex | **0/2** | 全败 |
-| feat_featlf | **0/15** | 全败；其中 **12 例 sliding 已跑通整条 init 管线**（§4.1） |
+| feat_featlf | **0/15** | 全败；`is_done` 门**11/15 已越过**（追加 14），**kernel panic 清零**，剩余全部为下游墙（§4.1） |
 | feat_featprism / featrf | **0/6** / **0/5** | 全败 |
 | feat_featrevol | **0/45** | 全败 |
 | offset_shape_type_a / _i / _i_c | **0/1** / **0/12** / **0/19** | 全败 |
@@ -91,26 +110,28 @@ rcad `main`：`a4a4b0de` ← `8b5a7b26` ← `6b6c7089` ← `04e1b5b3` ← `4dfe0
 
 ## 4. 下一轮队列（三域，按优先级）
 
-### 4.1 tkfeat —— 第 1 优先级：featlf 布尔分割面有效性
+### 4.1 tkfeat —— 第 1 优先级：featlf 下游墙（**追加 14 后重写**）
 
-**现状（本轮实测）**：featlf 12 个 sliding 用例（a3,b1-b3,b5-b7,c5,c6,d7-d9）**整条 init 管线零 panic 跑通**
-（Common → BndFace → ExtremeFaces → SlidingProfile 全过），统一停在最外层
-`assert!(feat.rib_slot.is_done())`，错误码 `NoFaceProf`（profile_ok=false）。
+**现状（追加 14 实测）**：featlf 真实断言 15 例中 **`is_done` 门通过 11**（追加 13 时 0），
+**kernel panic 清零**（追加 13 时 12 例 panic 于 `topods.rs` 的池别名）。
+profile 有效性问题（`InvalidPointOnCurve` / `NotClosed` / `UnorientableShape` / `NoSurface`）
+**已全部关闭**——见 §0.1 六条修复。剩余失败**全部在下游**：
 
-**根因（已定界到判据）**：`brep_algo_is_valid`（= `BRepAlgo::IsValid`，BRepAlgo_1.cxx L39-43）已切真身，
-而**（正确的）analyzer 判 rcad 布尔分割出的 profile face 无效**。临时探针（已删）实测状态表：
-`Edge InvalidPointOnCurve ×3` + `Face NotClosed` + `Face UnorientableShape`。
-**这不是分析器误报**（结构 1:1、GAP 中性），是 rcad boolean 输出质量的真实缺陷（OCCT 同操作输出有效面）。
+| 墙 | 例数 | 入口 |
+|----|------|------|
+| `FalseSide` | **7** | `BRepFeat_MakeLinearForm::Propagate`（cxx **L1035-1330**；rcad `brep_feat_make_linear_form.rs:1131`）。内部 `BRepAlgoAPI_Section sect(fac, CurrentFace, false)` + `Approximation(true)` + `Build()`，再沿 section 边判 `FirstOK/LastOK` |
+| `NoExtFace` | **3** | `BRepFeat_RibSlot::ExtremeFaces`（cxx **L747-1319**）：`ChoiceOfFaces` / `LocOpe_CSIntersector` 路径 |
+| `NoFaceProf` | **1** | 仍是一处 `profile_ok=false`（`brep_feat_rib_slot_b.rs` 的 6 个返回点之一，用 `RCAD_FEAT_DEBUG` 式临时探针定位即可） |
+| `BRepTools_Modifier::Perform` GAP | **1**（a3） | `feat/loc_ope_prism.rs:93`（消费 = `LocOpeLinearForm::int_perf` / `perform_trans`） |
+| `draft_modification_1_b.rs:1269` GAP | **1**（b4） | tkoffset Draft 前沿 |
+| Draft（depouille）断言 | **2**（e4/e5） | off-chain，属 tkoffset Draft |
 
-**攻坚入口（按序）**：
-1. **InvalidPointOnCurve 链**（决定面闭合/朝向的下游判定）——追 `MakeSplitEdges` / `MakePCurves` 阶段
-   写出的**边-顶点参数**（`edge.vertex_params`）与**容差**是否满足 analyzer 的
-   `BRepCheck_Edge::InContext`（`brep_check_edge.rs`，锚点 BRepCheck_Edge.cxx L263-555）的
-   SameParameter/SameRange 闸门与 pcurve 走查。起手用 `RCAD_BS_DEBUG=1`（既有探针，pave_filler/builder 内）
-   看 split edge 的顶点参数分布。
-2. **OCCT 对拍**：用 `occt_bool_runner`（§5 配方 3）跑同型用例，在 OCCT 侧 dump `BRepCheck_Analyzer`
-   的 status 表（OCCT DLL 自带 BRepCheck，插桩可 dump），逐用例对齐"哪条边报了哪个 status"。
-3. 该靶子同时是 **featprism(0/6) / featrevol(0/45) / featrf(0/5)** 的共同下游——它们现已全部吃到真有效判定。
+**上一轮（追加 13）的根因记录已被追加 14 修正**：`Edge InvalidPointOnCurve ×3` +
+`Face NotClosed` + `Face UnorientableShape` 的**共同上游是 rcad 边顶点 tag 约定不统一**，
+**不是**布尔输出几何质量——布尔分割面本身健康。
+
+**该靶子的下游关联**：**featprism(0/6) / featrevol(0/45) / featrf(0/5)** 共享同一条
+RibSlot/Form 链，profile 修好后它们的失败点也随之下移。
 
 ### 4.2 通用依赖：Geom2dInt_GInter 通用 2D 求交批（一石二鸟）
 
@@ -205,8 +226,19 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
 1. **"零候选/空结果"先查 bbox**：无 wire 的 `BRepLib_MakeFace(Pln,u,v)` 面的**唯一** bbox 来源是曲面 UV 窗分支
    （`GeomBndLib_Plane::Box`）；缺分支 ⇒ VOID 盒 ⇒ **静默退出 FF 的 BB 树**（症状是"候选对为 0"而非显式报错）。
    本轮 featlf 的第一个决定性根因。
-2. **scratch 池必须保索引**：bare `Shape` 的子形状 wrapper 携带**原池 index**，紧凑 DFS 序 scratch 会让所有
-   `tshapes[index]` 访问错位（症状：`Shape N is not an Edge`）——空洞用 null 占位、按原 index 归位。
+2. **scratch 池必须**重编号**（追加 14 修正本条）**：`Shape::index` **只在创建它的 pool 内有效**；
+   把多个 pool 拼装出来的子图按原 index 塞进 scratch 池 ⇒ **等值 index 别名到无关 TShape**
+   （症状：`Shape 14 is not a Face` / `Shape 3 is not an Edge`）。正确做法见
+   `feat/brep_feat_form_2.rs::renumbered_pool`：**后序 DFS**（子图是 DAG，pre-order 不是拓扑序，会在
+   `children are built before their parent` 上 panic）+ 每 TShape 恰好一个 Arc + 子引用**同时**改
+   **槽位与 `data` 句柄**（只改槽位无效——`child_occurrences` 从 `s.data` 读子件，缺口会"下沉一层"）。
+   `Shape::null()`（`index == usize::MAX`）必须在收集阶段就跳过。
+2b. **边顶点 tag 是 rcad 的隐性数据模型约定（追加 14）**：`TEdgeData.first/last` 的**语义由 `orientation`
+   标签决定，不由槽位顺序决定**——OCCT 侧 `BRepLib_MakeEdge::Init`（低→高，F/R）与
+   `BRepPrim_Builder::AddEdgeVertex`（高→低，R/F）**槽位顺序相反、标签一致**，
+   而 `TopExp::Vertices(E,V1,V2,CumOri)` 与 analyzer、WireExplorer **只认标签**。
+   任何"first 就是低参数顶点"的位置假设都会在另一类来源的边上翻车。**收口点 = `add_tedge`**
+   （用 `vertex_params` 派生标签），新写边构造器时不要绕过它。
 3. **Trimmed 包装面在按 surface-type 分派处必须解包**（`GeomAdaptor_Surface::Load` cxx L423-431 语义）：
    否则 plane×plane 会落进"other"臂产出**采样 BSpline 截面**（t=[26,68] 弧长参数化特征）而非精确 Geom_Line。
    与 E3-U 的 Trimmed 曲线未解包同族，**第二次踩**。
@@ -225,17 +257,27 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
 10. **源码一律走 Edit/Write 工具**：`Bash` 直写 `libs/**/*.rs` 与 OCCT 源会被 Mimosa 钩子拦（`sed -i` 亦拦）。
 11. **`cargo check --workspace` 会因 `rcad-constraints` / `rcad-render` 的既有破损报错**——按 crate 检查
     （`-p rcad-kernel/rcad-algo/rcad-step/rcad-modeling`）。
-12. **`Shape::null()` 的 `index == usize::MAX`**：把它当池索引会 panic；scratch 池建 `size` 时用
-    `pairs.iter().map(|(i,_)| *i+1).max()` 而非 `arcs.len()`。
+12. **`Shape::null()` 的 `index == usize::MAX`**：把它当池索引会 panic；重编号时在收集阶段按 `is_null()` 跳过。
+13. **`BRepLib_MakeFace` 有**三个**形态，别串**（追加 14）：`(Pln, W, Inside)` 需要 `CheckInside` 尾巴
+    （L267-270）；`(W)` 需要 `FindSurface` 曲面探测（L189-262）；`(S, U1,U2,V1,V2)` 是矩形窗。rcad 此前把
+    `(W)` 翻成了"无曲面面"⇒ `BRepCheck_Face::Minimum` 的 `NoSurface`。
+14. **`add_tedge` 的 `vertex_params` 是位置匹配**（`d0 <= d1`）：闭合/退化曲线上两个顶点会都落到 `range[0]`，
+    这时标签派生退化为"两面都 FORWARD"——与 OCCT 的 closed-edge 分支（V1 与 V2 同一点）语义一致，不是缺陷。
 
 ## 7. 资产位置（本轮新增/更新）
 
 | 资产 | 路径 |
 |------|------|
+| 边顶点 tag 不变量（一处收口） | `libs/rcad-kernel/src/topo/topods.rs::add_tedge`（追加 14） |
+| 边子顶点不再改写标签 | `libs/rcad-algo/src/topalgo/brep_check/brep_check_result.rs::direct_children`（追加 14） |
+| `BRepLib_MakeEdge::Init` reordonate/周期 | `libs/rcad-algo/src/feat/brep_feat_rib_slot.rs::reorder_edge_endpoints`（追加 14） |
+| `BRepLib_MakeFace` 的 `CheckInside` | `libs/rcad-algo/src/feat/brep_feat_rib_slot_b.rs::check_inside`（追加 14；`..make_revolution_form.rs` 同用） |
+| `BRepLib_MakeFace(W)` 曲面探测 | `libs/rcad-algo/src/feat/brep_feat_rib_slot_b.rs::make_face_wire`（追加 14） |
+| 跨池子图重编号 + 收养 | `libs/rcad-algo/src/feat/brep_feat_form_2.rs::{renumbered_pool, adopt_subgraph_into}`（追加 14） |
 | BRepBuilderAPI_Transform + TrsfModification 附加步骤 | `libs/rcad-algo/src/topalgo/brep_builderapi_transform.rs`（新） |
 | BRepCheck_Analyzer 全家桶（8 文件 6,355 行） | `libs/rcad-algo/src/topalgo/brep_check/{brep_check_analyzer,brep_check_result,brep_check_vertex,brep_check_edge,brep_check_wire,brep_check_face,brep_check_shell,brep_check_solid}.rs`（新） |
 | Extrema_ExtCC2d 链（5 文件 ~2,700 行） | `libs/rcad-kernel/src/base/{extrema_curve2d_tool,extrema_ext_p_elc2d,extrema_ext_elc2d,extrema_gen_ext_cc2d,extrema_ext_cc2d}.rs`（新） |
-| `BRepAlgo::IsValid` 真身 + 保索引 scratch | `libs/rcad-algo/src/feat/brep_feat_form_2.rs::brep_algo_is_valid` + `collect_subgraph_indexed` |
+| `BRepAlgo::IsValid` 真身 | `libs/rcad-algo/src/feat/brep_feat_form_2.rs::brep_algo_is_valid` |
 | `BSplSLib::Iso`（flat-knots + in-place 角切割） | `libs/rcad-kernel/src/math/bspl_lib.rs::bspl_slib_iso` |
 | `Geom_BSplineSurface::UIso/VIso` 臂 | `libs/rcad-algo/src/geomalgo/approx_curve_on_surface.rs::surface_u_iso/surface_v_iso` |
 | `BSplineSurface` 四标志 + Rational 访问器 | `libs/rcad-kernel/src/geom/mod.rs`（`is_periodic_u/v` 字段 + `is_rational_u/v()` + `standard_epsilon`/`next_after`） |
@@ -243,6 +285,6 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
 | `Trimmed(Plane)` 盒 | `libs/rcad-kernel/src/base/bnd_lib/mod.rs::surface_bounding_box` |
 | featlf 居中肋接线 | `libs/rcad-algo/src/feat/brep_feat_make_linear_form.rs`（L186-194 处） |
 | 既有可复用探针 | `RCAD_BS_DEBUG`（builder/pave_filler 的 build_rc/结果装配）、`RCAD_FF_DEBUG`（FF 配对+曲线类型）、`RCAD_MB_DEBUG`（MakeBlocks 移位）、`RCAD_WS_DEBUG`（WireSplitter）、`RCAD_SPLIT_DEBUG`（CUT 结果） |
-| 权威长档 | `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–13 |
+| 权威长档 | `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–14 |
 | 模块归属表 | `rcad/docs/module-map.md` §2/§3（`feat/`↔TKFeat、`fillet/`↔TKFillet、`offset/`↔TKOffset） |
 | 重复实现审计 | `tools/occt-impl-audit/audit.py`（`uv run python tools/occt-impl-audit/audit.py .`）→ `docs/occt-impl-audit.md`（域风险排序：fillet 31 · feat 25 · offset 7） |
