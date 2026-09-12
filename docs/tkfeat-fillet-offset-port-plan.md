@@ -996,6 +996,35 @@ libs/rcad-algo/src/
   OCCT 侧两者都是**死存储**、从无读取，故不影响行为，纯洁癖项）。
 
 
+### E3-W 追加 15：tkfeat featrf 主线——`featrf_a1` **不终止清零**（根因是 `while(!FirstOK)` 里一处**非 1:1 的语句**，不是数值）+ 顺带破掉后面三道墙（`BRepBuilderAPI_Transform` 载体真身化 / 滑动 profile 面的 outer wire / 子形状枚举的空占位）；八网格与六门槛**零回归**（2026-09-12）
+
+- **开场**：6 条门槛实测 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**、八网格 **8/8**（375·378·379·373·12·102·83·110），与追加 14 记档**逐字一致（零漂移）**。
+- **本轮 rcad 提交**（均未推送）：见交接 `e3w-handover-tkfeat-fillet-offset.md` §0.1/§0.3。
+- **第 0 项（追加 14 §0.2 记为"最急"）：`featrf_a1` 的不终止。根因不是 `cc` 重建 / `theLastPnt` 推进 / `myTol` 判据的数值，而是一处 OCCT 根本没有的语句**：
+  - OCCT `BRepFeat_MakeRevolutionForm::Init` 的 `while (!FirstOK)`（cxx **L734-853**）：`fp`/`lp` 在 **L746-747 算一次**；`sens==2` 分支里 `cc->Reverse()`（**L761**）之后**不重算**；L765/L770 的 `lp.Distance(myFirstPnt)` / `fp.Distance(myFirstPnt)` 用的因此是**反转前**的 fp（段的**远端**——这正是 "另一端是否落在 myFirstPnt" 的判据）。
+  - rcad 在 `cc = geom_curve_reversed(&cc)` **之后**又补了三行重算（原 L999-1004：`let rdom = cc.default_domain(); fp = cc.point_at(rdom[0]); lp = cc.point_at(rdom[1]);`）——fp 被换成反转后的**近端**（≈ `theLastPnt`），于是 `sens==2` 的边**永远无法**置 `FirstOK`；`while` 转而在环上打转（`LastOK` 每轮为真 ⇒ `it.Initialize(myListOfEdges)` 每轮回卷）⇒ **永不收敛**（实测 `it_idx` 0→1→0→0…、`counter1` 单调递增，与探针记录吻合）。
+  - **修复 = 删掉这三行**（AGENTS.md 铁律的收口：OCCT 没有的语句，rcad 不许有；"等价替换"在回卷循环里必然致命）。实测：a1 从"挂死"变为 **0.7s** 内推进到下一道墙。
+- **同一条链上的三道后续墙（逐个真身化，全部带 OCCT 锚点）**：
+  1. **`BRepBuilderAPI_Transform` 载体真身化**（Perform cxx **L1204-1205 / L1245**）。`brep_feat_make_revolution_form.rs` 里原是一个 `panic!("GAP(...): the shape rotation engine is pending translation")` 载体（架构差异 #6），改为调用**追加 13 已落地的真身** `topalgo::brep_builderapi_transform`；并在该模块新增 **`perform_shape_once(shape, trsf, done)`**——OCCT 这一段只建**一个** `gp_Trsf T`（L1202-1204），却把它喂给**两次** `trsf.Perform`（L1205 `myPbase`、L1245 `mySkface`），而 Init **L1107-1108** 在滑动路径下 `mySkface = myPbase = Prof`（**同一个面**）：rcad 的就地物化若不幂等，同一个 TShape 会被**转两次**（本 case 恰好命中 = 双重旋转）。`done` 集合 = "本 trsf 已物化过的 TShape"，与 OCCT "每个结果各自持一个 location、TShape 本身不变" 的**可观测**语义等价。`perform_shape`（既有消费者 `brep_feat_make_linear_form.rs:385`）保持原语义，内部改为空 `done` 调用新函数。
+  2. **滑动 profile 面的 outer wire**（Init cxx **L912-921**）。OCCT：`BB.MakeFace(f, myPln, 0.); w.Closed(BRep_Tool::IsClosed(w)); BB.Add(f, w);`——空面被 `Add` 的**第一条** wire 即 outer wire。rcad 用的是 `make_face(..., Shape::null())` + `fb.add_to_face(...)`，而 `add_to_face` 是**inner-wire 加法器** ⇒ 面的 `outer_wire` 槽留成 **NULL 占位**（一个 **Vertex**）、真 wire 落进 `inner_wires`。后果链：`sub_shapes(Face)` 把这个 null 占位也当子形状产出 ⇒ 扫掠迭代器把它当成"生成顶点"（`BRepSweep_NumLinearRegularSweep` cxx L148-172 的 `subGenSType == VERTEX` 臂）⇒ `BRep_Tool::Parameters(V, F)`（BRep_Tool.cxx L1661-1703）在该面上找不到这条顶点 ⇒ **`Standard_NoSuchObject`**。修复 = 按 OCCT 形式让 W 直接进 outer-wire 槽（`make_face(pool, Some(plane), w)`，注释写明 `add_to_face` 是 inner 形式）。
+  3. **子形状枚举不得产出空占位**（`brep_algo/tool.rs::sub_shapes`，即 TopoDS_Iterator 的 re-host）。OCCT `TopoDS_Iterator`（TopoDS_Iterator.cxx L28-51）走 `TopoDS_TShape::myShapes`，其中**只有** `BRep_Builder::Add` 追加过的形状；无边界 wire 的面（OCCT `BRepLib_MakeFace(F, S)` / `MakeFace(F, S, Tol)` = natural restriction）子形状**为空**。rcad 用 `outer_wire` 槽表示"第一条 wire"，无边界时该槽是 null 占位 ⇒ 必须**不产出**。⚠ **判据不能是 `Shape::is_null()`**——**池外 builder 形状的 `index` 也是 `usize::MAX`**（`brep_sweep/prism.rs` 测试注释已记同一坑），必须判**子形状类型**（`TShape::Wire`）。配套把 `BRepSweepBRepBuilder::add` 的 Face 分支按子形状类型分派（wire → outer/inner_wires、vertex → internal_vertices），使"顶点落进 wire 槽"这一状态不再产生。
+  - **该修复的回归风险已实测关闭**：`sub_shapes` 是 explorer 的底座，第一版用 `is_null()` 判据时**打破了 `brep_sweep::prism` 的单测**（池外 face/wire 全被判空 ⇒ 侧面全丢，6 面→2 面）；改成**类型判据**后 lib 恢复 415/0/0，八网格逐字不变。
+- **实测（featrf 网格 = 生成器合并产物 `generated_occt_boolean_feat_featrf`）**：真实断言 **5 例**，`0/5` 状态不变但**全部在 2s 内失败、无挂死**（历史：a1 挂死）。**a1 是推进最深的一例**：init 通过、`IsDone()` 真、`perform()` 走完 Transform 分支与 `LocOpe_RevolutionForm` 扫掠，停在**结果装配**墙——`surface area: expected 109.511, got 0` ⇒ `BRepFeat_RibSlot::LFPerform` 产出**空结果**（下一道墙）。**a4/a5/a7/a9** 仍停在 init 的 `assert!(is_done)`（各自的 NoFaceProf / NoSlidingProfile 面）。
+- **★ 两处测试/资产卫生问题（本轮发现，需单独立卡）**：
+  1. **featrf 的参考拓扑断言一直被静默跳过**：测试找的是 `tests/occt/step_reference/occt_boolean_featrf_a1.json`（实测**不存在**），而生成器实际写的是 **`occt_boolean_feat_featrf_a1.json`**（多一个 `feat_` 前缀）⇒ `ref_path.exists()` 恒假 ⇒ 整个 featrf 网格**从未校验**过 V/E/F/S。owner = `occt-test-gen` 的 grid 命名（`--group feat --grid featrf` 的产物名 vs 参考生成器的 `{group}_{grid}` 名）。A1 的参考值（供后续核验）：**V10 / E17 / F9 / SHELL1 / SOLID1**、PLANE 5 + CYLINDRICAL 3 + CONICAL 1、面积 **109.511**。
+  2. **已提交的遗留探针**：`brep_sweep/num_linear_regular_sweep.rs:284` 有一行 `eprintln!("[ENTRY] shape(i=…,j=…) built=…")`（来自提交 `ddc8d551`）——任何跑扫掠的测试都刷屏；属"探针即用即清"的漏网项，待清。
+- **下一轮队列（交接 §4 的更新，按优先级）**：
+  1. **【新】`BRepFeat_RibSlot::LFPerform` 的结果装配**（`featrf_a1` 的直接下一墙）：OCCT RibSlot.cxx 的 LFPerform（rib_slot.lf_perform()）在本 case 产出空结果；入口 = `rib_slot.lf_perform()` → `myGShape/myMap/myGluedF` 的装配路径，与 OCCT 逐行对照。**同时**：featrf a4/a5/a7/a9 的 init `is_done` 假（各自的面）可一并分流。
+  2. **`FalseSide ×5`（featlf b3/c5/d7/d8/d9）——`BOPAlgo_Section` 对共面面片对的输出**（追加 14 定界：b3 的 section 返回 `nedges=0`，见交接 §4.1）。入口 = `run_build_section_brep` → `bop/algo/section.rs::build_section`（= `BOPAlgo_Section::BuildSection` cxx **L169-**）。
+  3. **`NoExtFace ×3`（featlf b5/b6/b7）**：`BRepFeat_RibSlot::ExtremeFaces`（cxx L747-1319）。
+  4. **`NoFaceProf ×3`（featlf b1/b2/c6）**：`brep_feat_rib_slot_b.rs` 的 6 个 `profile_ok=false` 返回点逐点区分。
+  5. **追加 13 批次 2/3/4 原样保留**：`Geom2dInt_GInter` 通用批 / tkoffset 三件 / tkfillet a1 上游。
+- **本轮新坑（追加进交接 §6）**：
+  1. **`Shape::is_null()` 不能当作"槽位为空"的判据**：rcad 的 null 形状按 `index == usize::MAX` 判定，而**池外 builder 构造的形状**（`BRepSweepBRepBuilder::{make_face,make_wire,make_vertex}` 等）`index` 也是 `usize::MAX` ⇒ 合法形状被判为 null。判"槽位有没有子形状"必须看**子形状类型**（本轮 `sub_shapes(Face)` 用 `TShape::Wire`）。
+  2. **同一个 `gp_Trsf` 的多次 `Perform` 在 rcad 的就地物化下必须去重**：OCCT 的 `BRepBuilderAPI_Transform` 把运动挂在**结果 location** 上、TShape 不变，因此同一 TShape 出现在两个结果里各转一次；rcad 就地改 TShape ⇒ 第二次必须跳过（否则双重变换）。凡"一个 trsf 多次 Perform"的 OCCT 现场都要用 `perform_shape_once`。
+  3. **"对拍数值"之前先做"语句级对拍"**：本轮 `featrf_a1` 的不终止**不是**浮点/容差问题，而是一处 OCCT 没有的**重算语句**（追加 14 的探针已经把范围收窄到"cc 重建 / theLastPnt 推进 / myTol 判据的数值"，方向仍然错了一格）。**`while(!FirstOK)` 这类带回卷的链式循环对任何多余语句都极其敏感**——凡在循环体内看到 OCCT 没有的赋值，先删再过。
+  4. **面形状的子形状枚举必须与 `BRep_Builder::Add` 的语义对齐**：OCCT 的 face 把 wire 与 internal vertex 放在**同一个** `myShapes` 列表里（TopoDS_Iterator 按此枚举），rcad 用三个类型化槽表示；两套表示必须在**生产者**（`add`）与**消费者**（`sub_shapes`）两侧同时对齐，否则会出现"顶点占 wire 槽/空占位被当子形状"这类只在扫掠路径才炸的隐患。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 - **开场三步**：① 通读本档 §0 → §9 E3-S/E3-U/E3-V → AGENTS.md（**铁律：非 TKBool 模块的代码与修复一律严格 1:1 翻译对齐——逐行语句对照 + 函数计数等式 + OCCT 行号锚点 + 禁载体/禁等价替换/禁运行时凑结果；GAP 载体仅限外部未翻依赖并保留 OCCT 失败路径；架构差异必须先消灭再对齐**）→ ShHealing 两份；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 **412/0/0**（kernel **677/0**、builder_stage 76 + smoke 1、pavefiller 26、**boolean 八网格**：bopfuse 371/4 · bopcommon 374/4 · bopcut 379/0 · boptuc 369/4 · splitter 10/2（失败集 ze7-ze9/zf1 + a2/b2）+ bfuse_simple 102/102 · bcommon_simple 83/83 · bcut_simple 109/109 **（必须 `-Exclude "g6"`，见下）**）；③ 从下方队列取项开工。
