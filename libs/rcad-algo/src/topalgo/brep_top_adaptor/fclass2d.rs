@@ -490,6 +490,55 @@ pub(crate) fn order_wire_edges(
     result
 }
 
+/// OCCT `BRepTools_WireExplorer` over a wire's stored edge list: the edge
+/// occurrences of `wire_edges` reordered into the traversal order (the
+/// connectivity walk of `order_wire_edges`), which is what every OCCT
+/// consumer of the explorer observes. `ds` must expose the face (index
+/// `face_idx`) and the wire edges; the index mapping uses
+/// `ShapeSource::map_shape_index` (1-based over the source edge list).
+///
+/// The stored order of `TWireData::edges` is NOT the traversal order: a wire
+/// produced by a boolean (e.g. the BndFace wire consumed by
+/// BRepFeat_RibSlot::SlidingProfile) keeps the storage order of the BOP
+/// result, so a consumer that walks the stored list descends a different
+/// branch than OCCT. Edges the explorer cannot reach are dropped, exactly as
+/// the OCCT enumeration stops.
+pub(crate) fn wire_explorer_order(
+    ds: &dyn ShapeSource,
+    face_idx: usize,
+    wire_edges: &[Shape],
+) -> Vec<Shape> {
+    let input: Vec<(usize, Orientation)> = wire_edges
+        .iter()
+        .map(|e| {
+            let idx = ds.map_shape_index(e.ptr_id(), e.location).unwrap_or(0);
+            (idx, e.orientation)
+        })
+        .collect();
+    let ordered = order_wire_edges(ds, face_idx, &input);
+    // Map the (source index, orientation) pairs back to the wire occurrences
+    // (first unused match).
+    let mut used = vec![false; wire_edges.len()];
+    let mut out = Vec::with_capacity(wire_edges.len());
+    for (idx, ori) in ordered {
+        let mut found = None;
+        for (k, e) in wire_edges.iter().enumerate() {
+            if !used[k]
+                && e.orientation == ori
+                && ds.map_shape_index(e.ptr_id(), e.location) == Some(idx)
+            {
+                found = Some(k);
+                break;
+            }
+        }
+        if let Some(k) = found {
+            used[k] = true;
+            out.push(wire_edges[k].clone());
+        }
+    }
+    out
+}
+
 /// OCCT GeomAdaptor_Surface::UResolution (GeomAdaptor_Surface.cxx L1818-1896):
 /// the parameter increment in U producing a 3D displacement R3d.
 fn surface_u_resolution(surf: &Surface3, r3d: f64) -> f64 {

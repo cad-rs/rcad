@@ -932,7 +932,29 @@ impl BRepFeatRibSlot {
             let mut last_pnt = DVec3::ZERO;
             // OCCT L1525-1529: the first wire of BndFace.
             let bnd_wire = first_wire_of(bnd_face);
-            let bnd_edges = wire_explorer_edges(&bnd_wire);
+            let bnd_wire_edges = wire_explorer_edges(&bnd_wire);
+            // OCCT BRepTools_WireExplorer explo(BndWire) (cxx L1567-1569): the
+            // enumeration is the CONNECTIVITY walk, not the stored edge list.
+            // The BndFace wire comes from the boolean Common, whose storage
+            // order differs from the traversal order — verified against OCCT
+            // on featrf_a1: storage BW[0..3] = z-/x+/z+/x-, traversal from
+            // BW[0] = z- -> x- -> z+ -> x+. Walking the stored list descends
+            // BW[1] (the edge carrying BndEdge1) instead of BW[0], so the
+            // profile wire gains the two extra boundary edges and comes out
+            // self-intersecting.
+            let bnd_edges = match brep_tool_surface(bnd_face) {
+                Some(surf) => {
+                    let locations = [glam::DAffine3::IDENTITY];
+                    let src =
+                        crate::topalgo::shape_source::FaceShapeSource::new(bnd_face, surf, &locations);
+                    crate::topalgo::brep_top_adaptor::fclass2d::wire_explorer_order(
+                        &src,
+                        0,
+                        &bnd_wire_edges,
+                    )
+                }
+                None => bnd_wire_edges,
+            };
             // OCCT L1530-1569.
             for e in &bnd_edges {
                 let (c, first, last) = match brep_tool_curve(e) {
@@ -973,7 +995,7 @@ impl BRepFeatRibSlot {
             }
 
             // OCCT L1571-1579.
-            if bnd_edge1.is_null() || bnd_edge2.is_null() {
+            if bnd_edge1.is_null() || bnd_edge2.is_null() {
 
                 profile_ok = false;
                 return profile_ok;
@@ -1113,7 +1135,7 @@ impl BRepFeatRibSlot {
         let fac = make_face_plane_wire(&mut f, &mut pool, my_pln, &wire);
 
         // OCCT L1736-1744.
-        if !brep_algo_is_valid(&fac) {
+        if !brep_algo_is_valid(&fac) {
 
             profile_ok = false;
             return profile_ok;
@@ -1151,7 +1173,7 @@ impl BRepFeatRibSlot {
         }
 
         // OCCT L1776-1785.
-        if !brep_algo_is_valid(prof) {
+        if !brep_algo_is_valid(prof) {
 
             profile_ok = false;
             return profile_ok;
@@ -1371,7 +1393,7 @@ impl BRepFeatRibSlot {
             }
 
             // OCCT L1982-1990.
-            if bnd_edge1.is_null() || bnd_edge2.is_null() {
+            if bnd_edge1.is_null() || bnd_edge2.is_null() {
 
                 profile_ok = false;
                 return profile_ok;
@@ -1878,7 +1900,7 @@ impl BRepFeatRibSlot {
         let fac = make_face_plane_wire(&mut fa, &mut pool, my_pln, &w);
 
         // OCCT L2622-2630.
-        if !brep_algo_is_valid(&fac) {
+        if !brep_algo_is_valid(&fac) {
 
             profile_ok = false;
             return profile_ok;
@@ -1912,7 +1934,7 @@ impl BRepFeatRibSlot {
         }
 
         // OCCT L2658-2667.
-        if !brep_algo_is_valid(prof) {
+        if !brep_algo_is_valid(prof) {
 
             profile_ok = false;
             return profile_ok;

@@ -102,6 +102,20 @@ impl Adaptor3dSurfaceBasis<BRepBasisCurve> for BRepBasisSurface {
     }
 }
 
+/// OCCT `GeomAdaptor_Curve::load` (GeomAdaptor_Curve.cxx L239-255): a
+/// `Geom_TrimmedCurve` is loaded through its BASIS curve — the loaded range
+/// stays the trimmed `[UFirst, ULast]`, but every analytic accessor (`Line` /
+/// `Circle` / `Ellipse` / `Bezier` / `BSpline` / ...) answers from the basis,
+/// exactly as `GetType()` does (see [`curve_type_of`]). Without the unwrapping
+/// the accessor raises `Standard_NoSuchObject` on a trimmed line instead of
+/// returning the basis line as OCCT does.
+fn basis_curve_of(c: &Curve3) -> &Curve3 {
+    match c {
+        Curve3::Trimmed(t) => basis_curve_of(&t.curve),
+        _ => c,
+    }
+}
+
 /// The rcad `Curve3` classification (OCCT GeomAbs_CurveType).
 fn curve_type_of(c: &Curve3) -> CurveType {
     match c {
@@ -213,43 +227,43 @@ impl HCurveTool for BRepAdaptorCurveTool {
         curve_type_of(c.curve())
     }
     fn line(c: &BRepAdaptorCurve) -> Line3 {
-        match c.curve() {
+        match basis_curve_of(c.curve()) {
             Curve3::Line(l) => *l,
             _ => panic!("Standard_NoSuchObject: BRepAdaptorCurveTool::Line"),
         }
     }
     fn circle(c: &BRepAdaptorCurve) -> Circle3 {
-        match c.curve() {
+        match basis_curve_of(c.curve()) {
             Curve3::Circle(c2) => *c2,
             _ => panic!("Standard_NoSuchObject: BRepAdaptorCurveTool::Circle"),
         }
     }
     fn ellipse(c: &BRepAdaptorCurve) -> Ellipse3 {
-        match c.curve() {
+        match basis_curve_of(c.curve()) {
             Curve3::Ellipse(e) => *e,
             _ => panic!("Standard_NoSuchObject: BRepAdaptorCurveTool::Ellipse"),
         }
     }
     fn hyperbola(c: &BRepAdaptorCurve) -> Hyperbola3 {
-        match c.curve() {
+        match basis_curve_of(c.curve()) {
             Curve3::Hyperbola(h) => *h,
             _ => panic!("Standard_NoSuchObject: BRepAdaptorCurveTool::Hyperbola"),
         }
     }
     fn parabola(c: &BRepAdaptorCurve) -> Parabola3 {
-        match c.curve() {
+        match basis_curve_of(c.curve()) {
             Curve3::Parabola(p) => *p,
             _ => panic!("Standard_NoSuchObject: BRepAdaptorCurveTool::Parabola"),
         }
     }
     fn bezier(c: &BRepAdaptorCurve) -> &BezierCurve3 {
-        match c.curve() {
+        match basis_curve_of(c.curve()) {
             Curve3::Bezier(b) => b,
             _ => panic!("Standard_NoSuchObject: BRepAdaptorCurveTool::Bezier"),
         }
     }
     fn bspline(c: &BRepAdaptorCurve) -> &BSplineCurve3 {
-        match c.curve() {
+        match basis_curve_of(c.curve()) {
             Curve3::BSpline(b) => b,
             _ => panic!("Standard_NoSuchObject: BRepAdaptorCurveTool::BSpline"),
         }

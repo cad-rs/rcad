@@ -304,8 +304,17 @@ impl BoundSortBox {
     }
 
     /// OCCT getBoundingVoxels(theBox) — cxx L556-596: voxel indices of the
-    /// box min/max corners, clamped into the grid (`static_cast<int>`
-    /// truncation kept).
+    /// box min/max corners, clamped into the grid.
+    ///
+    /// The C++ expression is `std::clamp(static_cast<int>(v) - 1, 0,
+    /// myResolution - 1)`. The `static_cast<int>` of an out-of-range double
+    /// saturates to INT_MIN/INT_MAX, and the `- 1` / `+ 1` are plain C++ int
+    /// operations (they wrap; the clamp then discards the wrapped value). A
+    /// box that reaches the grid from an unbounded segment (the sampled
+    /// polygon of an infinite line, e.g. the ±Infinite y of an axis-aligned
+    /// segment) therefore produces exactly this saturation, so the Rust
+    /// arithmetic must be the wrapping one to keep the same result instead of
+    /// panicking on overflow.
     fn get_bounding_voxels(&self, the_box: &BndBox) -> [i32; 6] {
         // Start point of the voxel grid (cxx L559).  Note: `unwrap` mirrors
         // the OCCT CornerMin() on a non-void enclosing box.
@@ -316,18 +325,17 @@ impl BoundSortBox {
         };
 
         let clamp_res = |v: i32| -> i32 { v.clamp(0, self.my_resolution - 1) };
-        let a_x_min_index =
-            clamp_res(((a_x_min - a_grid_start.x) * self.my_coeff_x) as i32 - 1);
-        let a_y_min_index =
-            clamp_res(((a_y_min - a_grid_start.y) * self.my_coeff_y) as i32 - 1);
-        let a_z_min_index =
-            clamp_res(((a_z_min - a_grid_start.z) * self.my_coeff_z) as i32 - 1);
-        let a_x_max_index =
-            clamp_res(((a_x_max - a_grid_start.x) * self.my_coeff_x) as i32 + 1);
-        let a_y_max_index =
-            clamp_res(((a_y_max - a_grid_start.y) * self.my_coeff_y) as i32 + 1);
-        let a_z_max_index =
-            clamp_res(((a_z_max - a_grid_start.z) * self.my_coeff_z) as i32 + 1);
+        // The C++ shape is `clamp((int)v - 1, 0, res - 1)`: the `- 1`/`+ 1`
+        // sits INSIDE the clamp argument and is a plain C++ int operation.
+        let idx_min = |v: f64| clamp_res((v as i32).wrapping_sub(1));
+        let idx_max = |v: f64| clamp_res((v as i32).wrapping_add(1));
+        let a_x_min_index = idx_min((a_x_min - a_grid_start.x) * self.my_coeff_x);
+        let a_y_min_index = idx_min((a_y_min - a_grid_start.y) * self.my_coeff_y);
+        let a_z_min_index = idx_min((a_z_min - a_grid_start.z) * self.my_coeff_z);
+        let a_x_max_index = idx_max((a_x_max - a_grid_start.x) * self.my_coeff_x);
+        let a_y_max_index = idx_max((a_y_max - a_grid_start.y) * self.my_coeff_y);
+        let a_z_max_index = idx_max((a_z_max - a_grid_start.z) * self.my_coeff_z);
+
 
         [a_x_min_index, a_y_min_index, a_z_min_index, a_x_max_index, a_y_max_index, a_z_max_index]
     }
