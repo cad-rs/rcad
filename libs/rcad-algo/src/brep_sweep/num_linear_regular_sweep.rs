@@ -281,7 +281,6 @@ pub trait NumLinearRegularSweepSlots {
     fn shape(&mut self, a_gen_s: &Shape, a_dir_s: &SweepNumShape) -> Shape {
         let i_gen_s = self.core_ref().my_gen_shape_tool.index(a_gen_s);
         let i_dir_s = self.core_ref().my_dir_shape_tool.index(a_dir_s);
-        eprintln!("[ENTRY] shape(i={},j={}) built={}", i_gen_s, i_dir_s, self.core_ref().my_built_shapes.get(i_gen_s, i_dir_s));
         if !*self.core_ref().my_built_shapes.get(i_gen_s, i_dir_s) {
             // OCCT L105-111: the newShape / bGenS / cGenS / subGenS /
             // subsubGenS / bDirS / subDirS / It / Kt / Lt / Or / Pr locals

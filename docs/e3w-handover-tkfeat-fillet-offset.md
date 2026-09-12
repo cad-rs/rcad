@@ -95,7 +95,9 @@ off-chain 的 Draft（depouille）e4/e5。
 1. **featrf 的参考拓扑断言一直被静默跳过**：测试找 `step_reference/occt_boolean_featrf_a1.json`（**不存在**），
    生成器实际写的是 **`occt_boolean_feat_featrf_a1.json`**（多 `feat_` 前缀）⇒ `exists()` 恒假 ⇒ 该网格**从未校验** V/E/F/S。
    owner = `occt-test-gen` 的 grid 命名。A1 参考值：**V10/E17/F9/SHELL1/SOLID1**、PLANE 5 + CYL 3 + CONICAL 1、面积 **109.511**。
-2. **已提交的遗留探针**：`brep_sweep/num_linear_regular_sweep.rs:284` 的 `eprintln!("[ENTRY] …")`（来自 `ddc8d551`）——跑扫掠的测试都会刷屏，待清。
+2. **`[ENTRY]` 遗留探针已清（追加 15 补记 3）**：`brep_sweep/num_linear_regular_sweep.rs:284` 那行无门控的 `eprintln!("[ENTRY] …")`（来自 `ddc8d551`）已删除。
+   ⚠ 复核结论（追加 15 补记 3）：`bop/**` 里的 `[EF-DBG]`/`[EF-EDGE]`/`[EF-CB]`（56 处）**是 env 门控的可复用探针**（实测跑 boolean 用例命中 0 次），
+   **不是垃圾、勿删**——"源码里有 eprintln"必须先跑一次确认是否真的打印再动手。
 
 ## 1. 门槛（本轮终测，全部实测；2026-09-12）
 
