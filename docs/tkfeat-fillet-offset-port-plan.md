@@ -1159,6 +1159,17 @@ libs/rcad-algo/src/
 - **⇒ TKFillet 下一手（唯一）**：定位该无界 pcurve 的**附着点**（起点：`ChFi3d_ProjectPCurv` 的返回 / `hbuilder_face::add_intersection_edges` 之外的生产者；追加 16 记录"probe 显示它挂在**不属于 7 张结果面**的 face 指针上"），修好后 `fillet` 面的 `uv_domain` 才会闭合、面积才会回到有限值。**上一条队列（端盖弧 range + `reverse_curve`）就此关闭。**
 - **验收**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（重编 exe 后）；域网格**逐格通过数不变**（blend_simple 11 · blend_complex 2 · fillet2d 10 + 2 · mkface_after_offset 4 · mkface_after_extsurf 32 · feat 各格同前 · offset_shape_type_i 12 · offset_faces_type_i 8 · thrusection 26）；探针 = 0。
 
+### E3-W 追加 17 补记 3（2026-09-12：TKOffset 第 1 项定界**证据化**——panic 链与首个池外调用点，含可复用的既有模板）
+
+- **本轮只做定界（无代码落地）**，目的是把追加 16 §4.6 TKOffset 第 1 项从"记档"变成"可直取的任务书"。
+- **实测（本轮复现）**：`offset_shape_type_i` 的 4 例 **a3/a4/d2/d3** 全部在 `rcad-kernel/src/topo/topods.rs:1799` panic，消息 **`index out of bounds: the len is 16 but the index is 18446744073709551615`**（= `usize::MAX`，即**池外**形状）。
+- **完整调用链（RUST_BACKTRACE 实测）**：
+  `BRepOffsetAPIMakeOffsetShape::perform_by_join` → `BRepOffsetMakeOffset::make_offset_shape` → **`encode_regularity`**（`offset/brep_offset_make_offset_e.rs:992`，OCCT `BRepOffset_MakeOffset.cxx` L3962-4165）→ `brep_lib_build_curve3d_edge`（`offset/brep_offset_make_offset.rs:278`，= OCCT `BRepLib::BuildCurve3d(OE, myTol)`）→ `topalgo/brep_lib/brep_lib::BRepLib::build_curve3d` → **`brep_tool_curve(the_brep, an_edge)`**（`build_curves3d.rs:677`，= `BRep_Tool::Curve(E,L,f,l)`）→ `BRep::edge_curve_world` → `BRep::edge` → 越界。
+- **★ 首个池外调用点是 `brep_tool_curve`**（`build_curve3d` 进入后第一件事，OCCT L318-325 的"边已有 3D 曲线就直接返回"检查）——**不是**写回路径。⇒ 修法应从"把 `brep_tool_curve` 的读取池外化"起步，再逐个人工确认后续池依赖（`brep_tool_curve_on_surface_index` / `same_range` / `check_same_range` / 写回）。
+- **★ 模板已在库（勿新造）**：kernel `topods::curve_on_surface_pool_free(&Shape, &Shape)`（`topods.rs:3955`）就是为**同一批 offset 池外形状**写的池外适配器（其文档明写 "so it resolves for shapes living in a different `BRep` pool than the caller's (the offset-engine EdgeAnalyse path)"）。按 `BRep_Tool::Curve(E,L,f,l)` 再加一个同族池外读取（读 `the_e.data` 的 `TEdgeData.curve` + range，即 `edge_curve_world` 去掉池与 location 应用的部分）即可，**不要**在 offset 里另写一份。
+- **与第 2 项的关系（顺序不变）**：第 2 项（`BRepTools_Quilt::builder_make_shell` / `brep_algo/face_restrictor.rs` 产物**入池**）是**根**（同 4 例的根，且会让下游 `result_brep()` 的拓扑计数正确）；第 1 项是**安全网**。两项都做，但**先做第 1 项**（改动局部、可立即用 a3/a4/d2/d3 复验），再做第 2 项（牵涉拓扑计数，需全套域网格复测）。
+- **验收**：六门槛 + 八网格 + `offset_shape_type_i` 在树复测（本补记无代码改动，故逐格不变：12 占位通过 / 12 真实失败，其中 a3/a4/d2/d3 的 panic 点如上）。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
