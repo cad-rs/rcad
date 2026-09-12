@@ -27,7 +27,7 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0 当前状态速览（追加 18 收尾，2026-09-12；**rcad 顶尖 = 本交接文件所在提交**（写就时 `eab2a7c9`，其父 `05ddd5e1`）/ 根 `030caf6`，**均已推送**）
+### 0.0 当前状态速览（追加 18 收尾，2026-09-12；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `21a56c72`）/ 根 `030caf6`，**均已推送**）
 
 - **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**逐格通过数不变**：`fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · `feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrevol` **1/45**（a5）· `feat_featrf` 0/5 · `blend_simple` 0/11 · `blend_complex` 0/2 · `offset_shape_type_a/_i` 0/1 · 0/12 · `offset_faces_type_i` 0/8 · `draft_angle` 0/49 · `thrusection_specific` 0/26。
 - **★ 工作模式（用户指令，本 session 起生效）**：**先完成代码的等价实现（近乎 1:1 的翻译），代码基本译完再开始调试/修测试**。⇒ 队列里**先取"翻译/接线"项**，取"调试/定界"项前先确认没有未译的 body 挡在前面。
