@@ -342,7 +342,19 @@ pub(crate) fn sub_shapes(sh: &Shape) -> Vec<Shape> {
         TShape::Face(fd) => {
             let mut out =
                 Vec::with_capacity(1 + fd.inner_wires.len() + fd.internal_vertices.len());
-            out.push(composed(&fd.outer_wire));
+            // OCCT BRep_TFace owns no children: TopoDS_Iterator walks
+            // TopoDS_TShape::myShapes, which holds exactly what
+            // BRep_Builder::Add appended (the wires and the internal
+            // vertices).  rcad splits those into typed slots, so only the
+            // slots that actually hold a child are yielded.  A face built
+            // without a boundary wire (OCCT BRepLib_MakeFace(F, S) /
+            // MakeFace(F, S, Tol) — a natural restriction) carries the NULL
+            // placeholder in outer_wire, which is a Vertex, NOT a wire; and
+            // because pool-free builder shapes also carry index == usize::MAX
+            // (see Shape::is_null), the test has to be on the child type.
+            if matches!(fd.outer_wire.data.as_ref(), TShape::Wire(_)) {
+                out.push(composed(&fd.outer_wire));
+            }
             out.extend(fd.inner_wires.iter().map(composed));
             out.extend(fd.internal_vertices.iter().map(composed));
             out

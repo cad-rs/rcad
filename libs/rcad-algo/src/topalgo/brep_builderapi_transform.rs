@@ -60,14 +60,36 @@ pub fn transform_brep(brep: &mut BRep, trsf: &Trsf) {
 /// place, preserving TShape identity — the shared-handle semantics of both
 /// the OCCT rebuild and `Moved`).
 pub fn perform_shape(shape: &Shape, trsf: &Trsf) {
+    let mut done: HashSet<u64> = HashSet::new();
+    perform_shape_once(shape, trsf, &mut done);
+}
+
+/// `perform_shape` for callers that drive SEVERAL Perform with the same
+/// gp_Trsf — BRepFeat_MakeRevolutionForm::Perform (cxx L1204-1205 and L1245)
+/// issues one `BRepBuilderAPI_Transform trsf(T)` and performs it on myPbase
+/// and then on mySkface (the two are the SAME face on the sliding path, Init
+/// cxx L1107-1108 `mySkface = myPbase = Prof`).
+///
+/// In OCCT each Perform builds an independent located wrapper, so a TShape
+/// shared by both inputs is seen once-transformed in each result.  rcad
+/// materialises the motion on the TShapes themselves, which would apply it a
+/// second time to a shared TShape, so every TShape already materialised for
+/// this trsf is skipped (identical observable geometry, no double motion).
+/// `done` is the set of TShape Arc ids already materialised.
+pub fn perform_shape_once(shape: &Shape, trsf: &Trsf, done: &mut HashSet<u64>) {
     // OCCT Perform cxx L48-49.
     let my_use_modif =
         trsf.is_negative() || ((trsf.scale.abs() - 1.0).abs() > SCALE_PREC);
 
-    // Collect the reachable TShape handles (read-only walk over the graph).
+    // Collect the reachable TShape handles (read-only walk over the graph),
+    // keeping only those this trsf has not materialised yet.
     let mut arcs: Vec<Arc<TShape>> = Vec::new();
     let mut visited: HashSet<u64> = HashSet::new();
     collect_subgraph(shape, &mut arcs, &mut visited);
+    arcs.retain(|a| !done.contains(&(Arc::as_ptr(a) as u64)));
+    if arcs.is_empty() {
+        return;
+    }
 
     // Geometry materialisation on the collected handles.  A scratch pool over
     // the same Arcs lets BRep::apply_transform drive its (already
@@ -81,6 +103,10 @@ pub fn perform_shape(shape: &Shape, trsf: &Trsf) {
     // OCCT Perform cxx L50-57 (myUseModif): the TrsfModification extras.
     if my_use_modif {
         trsf_modification_extras(&arcs, trsf);
+    }
+
+    for a in &arcs {
+        done.insert(Arc::as_ptr(a) as u64);
     }
 }
 

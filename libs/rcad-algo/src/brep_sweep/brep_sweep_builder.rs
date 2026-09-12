@@ -384,13 +384,22 @@ impl BRepSweepBRepBuilder {
                 wd.my_shapes.push(a_child);
             }
             ShapeType::Face => {
-                // OCCT BRep_Builder::Add(F, W): the first wire is the outer
-                // wire, the following ones are inner wires.
+                // OCCT BRep_Builder::Add(F, W) / Add(F, V): the face's child
+                // list is type-agnostic (TopoDS_Iterator yields every entry),
+                // the first WIRE being the outer wire; rcad's typed slots need
+                // the dispatch, otherwise a vertex child would take (or land
+                // beside) the wire slot.
                 let fd = face_data_mut(a_shape);
-                if fd.outer_wire.is_null() {
-                    fd.outer_wire = a_child.clone();
-                } else {
-                    fd.inner_wires.push(a_child.clone());
+                match a_child.shape_type() {
+                    ShapeType::Wire => {
+                        if fd.outer_wire.is_null() {
+                            fd.outer_wire = a_child.clone();
+                        } else {
+                            fd.inner_wires.push(a_child.clone());
+                        }
+                    }
+                    ShapeType::Vertex => fd.internal_vertices.push(a_child.clone()),
+                    _ => {}
                 }
                 fd.my_shapes.push(a_child);
             }

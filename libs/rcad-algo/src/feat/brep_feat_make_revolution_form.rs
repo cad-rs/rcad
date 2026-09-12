@@ -33,10 +33,11 @@
 //    the same gap as the BRepPrim_Cylinder carrier of
 //    brep_feat_make_cylindrical_hole.rs); the carrier returns the null
 //    solid.
-// 6. BRepBuilderAPI_Transform (Perform, cxx L1204-1206) — the myAngle2 != 0
-//    rotation branch; the shape-transform engine is pending (the same gap
-//    as the BRepTools_Modifier carrier of loc_ope_prism.rs) and stops at
-//    the GAP panic at its spot.
+// 6. BRepBuilderAPI_Transform (Perform, cxx L1204-1205 / L1245) — the
+//    myAngle2 != 0 rotation branch is the real topalgo carrier
+//    (topalgo::brep_builderapi_transform::perform_shape; the feat TShape-flat
+//    read path forces the located OCCT result to be materialised, see that
+//    module's header).
 // 7. gp_Circ / gp_Ax2 / gp_Pnt::Rotated / gp_Pln::Translated / Geom_Plane::D0
 //    are small analytic carriers below over the rcad geom types.
 // 8. BRepTools_WireExplorer maps to the wire edge list (the same reduction
@@ -70,7 +71,7 @@ use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::geom::{
     Circle3, Curve2d, Curve3, Line3, Plane, Surface3, TrimmedCurve3, TrimmedSurface,
 };
-use rcad_kernel::math::gp::Ax1;
+use rcad_kernel::math::gp::{Ax1, Trsf};
 use rcad_kernel::precision::{CONFUSION, PCONFUSION};
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, TShape};
 use rcad_kernel::topo_shape::Shape;
@@ -267,11 +268,25 @@ fn make_face_plane_wire(
     fac
 }
 
-/// OCCT BRepBuilderAPI_Transform(T).Perform(S, false) carrier (architecture
-/// difference #6).
-fn brep_builder_api_transform(the_shape: &Shape, _the_trsf_rot: (DVec3, DVec3, f64)) -> Shape {
-    let _ = the_shape;
-    panic!("GAP(BRepFeat_MakeRevolutionForm): BRepBuilderAPI_Transform (the shape rotation engine is pending translation)");
+/// OCCT BRepBuilderAPI_Transform(T) + Perform(S, false) carrier — the
+/// myAngle2 != 0 rotation branch of Perform (cxx L1204-1205 / L1245).
+fn brep_builder_api_transform(
+    the_shape: &Shape,
+    the_trsf: &Trsf,
+    the_done: &mut std::collections::HashSet<u64>,
+) -> Shape {
+    // OCCT L1204-1205: `BRepBuilderAPI_Transform trsf(T); trsf.Perform(myPbase,
+    // false);`.  copyGeom=false with a pure rotation leaves OCCT's myUseModif
+    // false, so the motion rides on the result location and `trsf.Shape()`
+    // keeps the SAME TShapes — the myLFMap/mySlface re-attribution at cxx
+    // L1207-1243 walks myPbase and the transformed face in lockstep and
+    // matches them with TopoDS_Shape::IsSame.  rcad materialises the motion on
+    // the shared TShapes (the module header of topalgo::
+    // brep_builderapi_transform: the feat BRep_Tool re-hosts read TShape
+    // geometry flat), which preserves that TopoDS identity.  Both Performs of
+    // this branch share one T, so the materialisation is deduplicated.
+    crate::topalgo::brep_builderapi_transform::perform_shape_once(the_shape, the_trsf, the_done);
+    the_shape.clone()
 }
 
 /// OCCT BRepFeat_MakeRevolutionForm — describes functions to build
@@ -983,8 +998,8 @@ impl BRepFeatMakeRevolutionForm {
                     cc = crate::feat::brep_feat_rib_slot::geom_curve_reversed(&cc);
                 }
                 let dom = cc.default_domain();
-                let mut fp = cc.point_at(dom[0]);
-                let mut lp = cc.point_at(dom[1]);
+                let fp = cc.point_at(dom[0]);
+                let lp = cc.point_at(dom[1]);
                 let mut dist = fp.distance(the_last_pnt);
                 // OCCT L748-763.
                 if dist <= self.my_tol {
@@ -995,12 +1010,13 @@ impl BRepFeatMakeRevolutionForm {
                     if dist <= self.my_tol {
                         sens = 2;
                         last_ok = true;
-                        // OCCT L761: cc->Reverse().
-                        let rev = crate::feat::brep_feat_rib_slot::geom_curve_reversed(&cc);
-                        cc = rev;
-                        let rdom = cc.default_domain();
-                        fp = cc.point_at(rdom[0]);
-                        lp = cc.point_at(rdom[1]);
+                        // OCCT L761: cc->Reverse(). Note OCCT does NOT recompute
+                        // fp/lp here (L746-747 keep their pre-reversal values),
+                        // and L770 tests that pre-reversal fp -- the far end of the
+                        // segment -- against myFirstPnt. Recomputing them after the
+                        // reversal would test the near end (== theLastPnt) instead,
+                        // making FirstOK unreachable on every sens==2 edge.
+                        cc = crate::feat::brep_feat_rib_slot::geom_curve_reversed(&cc);
                     }
                 }
                 // OCCT L764-774.
@@ -1115,15 +1131,23 @@ impl BRepFeatMakeRevolutionForm {
         if sliding {
             let mut f_pool = BRep::new();
             let mut fb = BRepBuilder::new();
+            // OCCT L914: BB.MakeFace(f, myPln, 0.) then L915
+            // `w.Closed(BRep_Tool::IsClosed(w))` then L916 `BB.Add(f, w)`.
+            // OCCT's Add(F, W) appends to the face's single child list, whose
+            // first wire is the outer wire (BRepTools::OuterWire); an empty
+            // face therefore takes W as its OUTER wire.  rcad's
+            // `add_to_face` is the inner-wire adder, so W enters through
+            // make_face's outer-wire slot (adding it as an inner wire leaves
+            // the face without an outer wire, which the sweep then iterates
+            // as a bogus vertex child).
             let f = fb.make_face(
                 &mut f_pool,
                 Some(Surface3::Plane(self.my_pln)),
-                Shape::null(),
+                w.clone(),
             );
-            // OCCT L916: w.Closed(BRep_Tool::IsClosed(w)).
+            // OCCT L915: w.Closed(BRep_Tool::IsClosed(w)).
             let closed = brep_tool_is_closed(&w);
             let _ = closed;
-            fb.add_to_face(&mut f_pool, f.clone(), w.clone());
             self.rib_slot.my_skface = f.clone();
             self.rib_slot.my_pbase = self.rib_slot.my_skface.clone();
             self.rib_slot.my_suntil = Shape::null();
@@ -1391,13 +1415,17 @@ impl BRepFeatMakeRevolutionForm {
             break;
         }
 
-        // OCCT L1200-1249 (architecture difference #6: the rotation branch
-        // carries the transform GAP).
+        // OCCT L1200-1249 (the myAngle2 != 0 rotation branch).
         if self.my_angle2 != 0.0 {
-            let pbase_trsf = brep_builder_api_transform(
-                &self.rib_slot.my_pbase,
-                (self.my_axe.location, self.my_axe.direction, -self.my_angle2),
-            );
+            // OCCT L1202-1204: gp_Trsf T; T.SetRotation(myAxe, -myAngle2);
+            //                   BRepBuilderAPI_Transform trsf(T);
+            let mut t = Trsf::identity();
+            t.set_rotation(&self.my_axe, -self.my_angle2);
+            // OCCT L1204-1248 drives one `trsf(T)` through both Performs, so the
+            // materialisation is deduplicated across the two calls.
+            let mut trsf_done: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            let pbase_trsf =
+                brep_builder_api_transform(&self.rib_slot.my_pbase, &t, &mut trsf_done);
             // OCCT L1207-1243: the myLFMap/mySlface re-attribution.
             let lf_keys: Vec<(u64, u32)> = self.rib_slot.my_lfmap.keys().copied().collect();
             for key in lf_keys {
@@ -1443,11 +1471,10 @@ impl BRepFeatMakeRevolutionForm {
                 }
             }
             self.rib_slot.my_pbase = pbase_trsf.clone();
-            // OCCT L1245-1248.
-            let skface_trsf = brep_builder_api_transform(
-                &self.rib_slot.my_skface,
-                (self.my_axe.location, self.my_axe.direction, -self.my_angle2),
-            );
+            // OCCT L1245-1248: trsf.Perform(mySkface, false);
+            //                   mySkface = TopoDS::Face(trsf.Shape());
+            let skface_trsf =
+                brep_builder_api_transform(&self.rib_slot.my_skface, &t, &mut trsf_done);
             self.rib_slot.my_skface = skface_trsf;
         }
 
