@@ -157,9 +157,13 @@ done
 
 ## 3. 提交链与落地内容（**三轮**：追加 13 / 追加 14 / **追加 15 = 本轮**；均未推送）
 
-**追加 15（本轮，2026-09-12）**——rcad `main`：**本交接文件所在提交**（docs：追加 15 + 本交接）
-← `d280a867`（code：`featrf_a1` 链四处修复）← `e161078a`（= 追加 14 链尾）。
-根 `main`：**对应的 rcad pointer sync 提交**（`sync: rcad pointer (<本交接所在 rcad 提交> …)`，根 main 当时的顶尖）← `1686ccd`（= 追加 14 链尾）。**两仓库均未推送。**
+**追加 15（本轮，2026-09-12）**——rcad `main`（**自上而下 = 新到旧**）：**本交接文件所在提交**（docs：补记 3 并行推进轮 + §3/§4/§6 同步）
+← `e7af4f95`（feat：`Geom2dAPIInterCurveCurve` 的 GAP 臂接真身 `Geom2dInt_GInter`）
+← `fb4c8d94`（offset+geomalgo：`GeomAPI_ProjectPointOnCurve` / `GeomAPI::To2d/To3d` / `GeomLib::ExtendCurveToPoint` 真身 + `ExtentEdge` 真尾 + 4 处重复载体删除）
+← `6f4b499a`（topalgo：`BRepCheck_Wire::SelfIntersect` / `BRepCheck_Face::Intersect` 真跑 2D 求交器 + 伪成功重复本体替换）
+← `c9537dd0`（docs：补记 2 —— `featrf_a1` 根因链打到 OCCT 真值）
+← `24ea2f77`（docs：追加 15 + 本交接）← `d280a867`（code：`featrf_a1` 链四处修复）← `e161078a`（= 追加 14 链尾）。
+根 `main`：**对应的 rcad pointer sync 提交**（`sync: rcad pointer (E3-W addendum 15 …)`，含 feat 对拍资产 `cases/featrf.hpp`）← `1686ccd`（= 追加 14 链尾）。**两仓库均未推送。**
 
 **追加 14（本轮）**——rcad `main`：**本交接文件所在提交** ← `3cf8d81d` ← `26031d47` ← `3422a867` ← `7dfa5884` ← `cc38f690` ← `3bf6858f` ← `2d01a7f9`（= 追加 13 链尾）
 根 `main`：**对应的 rcad pointer sync 提交** ← `3d1c389` ← `6a08885` ← `38451b3`（= 追加 13 链尾）
@@ -191,7 +195,12 @@ rcad `main`：`a4a4b0de` ← `8b5a7b26` ← `6b6c7089` ← `04e1b5b3` ← `4dfe0
 
 ### 4.0 追加 15 后的队列重排（2026-09-12，**从这一节往下取**）
 
-**已完成（追加 15）**：原第 0 项 = `featrf_a1` 不终止 ⇒ **清零**（见 §0.3）；顺带清掉同链三道墙。
+**已完成（追加 15 同 session 的并行推进轮，见 port-plan 追加 15 补记 3）**：原第 3 项（`Geom2dInt_GInter` 通用批）
+⇒ **引擎 + 两个 analyzer 消费点落地**（并删掉一处"伪成功"重复本体）；原第 4 项的第 1/2 条（`GeomAPI_ProjectPointOnCurve` 真身 +
+`ExtentEdge` 真尾，含新译 `GeomAPI::To2d/To3d`、`GeomLib::ExtendCurveToPoint`）
+⇒ **落地并删掉 4 处重复载体**；feat 侧 `Geom2dAPIInterCurveCurve` 的 GAP 臂 ⇒ **接真身**（feat 网格逐字不变 = 潜在路径真身化）。
+**仍开且已再定界**：原第 2 项（`NoExtFace ×3`）⇒ 定界到 **`IntCurvesFace_Intersector::Perform` 欠计数**（b5 实测 `NbPoints(1)=1`，OCCT 需 ≥2）。
+
 **新增第 0 项（最急，a1 的直接下一墙）**：
 
 0. **`BRepFeat_RibSlot::LFPerform` 的结果装配**（`featrf_a1`）——**追加 15 补记 2 已把根因链打通到"要两批活"**（探针已清，权威记录见 port-plan 追加 15 补记 2）：
@@ -217,7 +226,7 @@ profile 有效性问题（`InvalidPointOnCurve` / `NotClosed` / `UnorientableSha
 | 墙 | 例数 | 入口 |
 |----|------|------|
 | `FalseSide` | **5**（b3/c5/d7/d8/d9） | **根因已定界到"section 0 边"**（本轮探针实测）：`Propagate` 的 `BRepAlgoAPI_Section(fac, CurrentFace, approximation=true)` 在 **b3 返回 `nedges=0`**（Compound 在、无边），而 a3 的同类 section **有 1 条边且判定完全正确**。⇒ 墙在 **`BOPAlgo_Section` 对共面面片对的输出**，不在 `Propagate`。入口 = `bop/brep_algo_api/mod.rs::SectionOp` → `run_build_section_brep` → `BOPAlgo_Section.cxx`（重点：FF 重叠面片对） |
-| `NoExtFace` | **3**（b5/b6/b7） | `BRepFeat_RibSlot::ExtremeFaces`（cxx **L747-1319**）：`ChoiceOfFaces` / `LocOpe_CSIntersector` 路径 |
+| `NoExtFace` | **3**（b5/b6/b7） | `BRepFeat_RibSlot::ExtremeFaces`（cxx **L747-1319**）；**追加 15 补记 3 已再定界**：b5 走**单边分支**的"少于 2 个交点"退出（OCCT **L1052-1060**），上游判据 = **L1008** 的 `ASI.IsDone() && ASI.NbPoints(1) >= 2`，实测 rcad **`NbPoints(1)=1`** ⇒ 根源在 **`IntCurvesFace_Intersector::Perform`（TKTopAlgo）欠计数**，不在 `ExtremeFaces`/`LocOpe_CSIntersector`（后两者与 OCCT 逐句一致）。下一手 = 对该类插桩 + featlf b5 对拍 |
 | `NoFaceProf` | **3**（b1/b2/c6） | `brep_feat_rib_slot_b.rs` 的 6 个 `profile_ok=false` 返回点之一（临时探针逐个区分） |
 | `BRepTools_Modifier::Perform` GAP | **1**（a3） | `feat/loc_ope_prism.rs:93`（消费 = `LocOpeLinearForm::int_perf` / `perform_trans`） |
 | `draft_modification_1_b.rs:1269` GAP | **1**（b4） | tkoffset Draft 前沿 |
