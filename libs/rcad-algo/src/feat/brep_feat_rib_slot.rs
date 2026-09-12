@@ -459,12 +459,15 @@ pub(crate) struct Geom2dAPIInterCurveCurve {
 }
 
 impl Geom2dAPIInterCurveCurve {
-    /// OCCT Geom2dAPI_InterCurveCurve(C1, C2, Tol). The line/line case is
-    /// the IntAna2d analytic intersection (rcad AnaIntersection2d); the
-    /// general conic/BSpline cases need IntCurve_IntConicConic /
-    /// Geom2dInt_GInter (TKGeomBase — not translated): GAP.
-    pub(crate) fn new(the_c1: &Curve2d, _the_c2: &Curve2d, _the_tol: f64) -> Self {
-        let my_points = match (the_c1, _the_c2) {
+    /// OCCT Geom2dAPI_InterCurveCurve(C1, C2, Tol) = Init(C1, C2, Tol)
+    /// (Geom2dAPI_InterCurveCurve.cxx L38-43 -> L47-71): the line/line pair is
+    /// the IntAna2d analytic intersection (rcad AnaIntersection2d), every other
+    /// pair goes through the general intersector Geom2dInt_GInter — whose one
+    /// real rcad body is `geomalgo::inter_cc::InterCurveCurve` (the
+    /// IntCurve_IntCurveCurveGen instantiation, Geom2dInt_GInter_0.cxx, which
+    /// dispatches IntCurve_IntConicConic / IntCurve_IntConicCurve internally).
+    pub(crate) fn new(the_c1: &Curve2d, the_c2: &Curve2d, the_tol: f64) -> Self {
+        let my_points = match (the_c1, the_c2) {
             (Curve2d::Line(l1), Curve2d::Line(l2)) => {
                 let mut a_int = AnaIntersection2d::new();
                 a_int.perform_lin_lin(l1, l2);
@@ -474,9 +477,18 @@ impl Geom2dAPIInterCurveCurve {
                 }
                 pts
             }
-            _ => panic!(
-                "GAP(BRepFeat_RibSlot): Geom2dAPI_InterCurveCurve needs IntCurve_IntConicConic / Geom2dInt_GInter (pending translation)"
-            ),
+            _ => {
+                let a_icc = crate::geomalgo::inter_cc::InterCurveCurve::new_curves(
+                    Some(the_c1),
+                    Some(the_c2),
+                    the_tol,
+                );
+                let mut pts = Vec::new();
+                for n in 1..=a_icc.nb_points() {
+                    pts.push(a_icc.point(n));
+                }
+                pts
+            }
         };
         Geom2dAPIInterCurveCurve { my_points }
     }
