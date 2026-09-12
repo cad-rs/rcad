@@ -378,11 +378,11 @@ RibSlot/Form 链，profile 修好后它们的失败点也随之下移。
 3. **b6/b7**：`PtOnEdgeVertex`（`brep_feat_rib_slot_b.rs:1110-1115`）同一个 `my_sbase` 问题；D2 **已修**（追加 17 又补了 `basis_curve_of`），复测。
 4. 其余既有队列（`NoFaceProf ×3`、`BRepTools_Modifier::Perform` GAP、`draft_modification_1_b.rs:1269` GAP）见 §4.1。
 
-**TKFillet（`fillet/**`）—— 已把 a1 推进到"拓扑全等、面积差 3.7%"，只剩一个几何缺陷**
-1. **fillet 端盖圆弧 range `[π, 2.5π]`（270°）应为 90°**（参考 STEP E7/E9 range `[4.712389, 6.283185]`）：残差 `59527.9 − 57328.76 = 2199.115 = 700π` 已被逐面精确对上（每端盖 100π + fillet 面 500π；后者的 uv_domain 为 None ⇒ 无界 ⇒ checkprops 只报 0）。现场 = `chfi3d_builder_0.rs::chfi3d_compute_curves`（OCCT `ChFi3d_Builder_0.cxx` L3694-4294，Cylinder×Plane 圆分支 L3789-3854，含 `ElCLib::AdjustPeriodic` L3830 与 `Geom_TrimmedCurve` L3854）：结构已逐行一致，问题出在 `Vint.Dot(Vref) < 0` 的**镜像步未生效**。
-2. **必须同批落的喂入缺陷**：`chfi3d_builder_0.rs::reverse_curve` 对 `Curve3::Circle` **只翻 `normal`、保留 `y_dir`** ⇒ 参数上是 **no-op**；OCCT `Geom_Conic::Reverse()`（Geom_Conic.cxx L23-28 → `gp_Ax2::SetDirection`）**保 XDirection、翻 YDirection**。**单独落它会把 a1 面积推成 −2e100**（实测），所以两条必须一起落。
-3. 另有一处**无界来源未定位**：某 fillet 面边界线的 pcurve 仍带自然 `Line2d ±2e100` range，且**不是** `hbuilder_face::add_intersection_edges`（已修）产生的——probe 显示它挂在**不属于 7 张结果面**的 face 指针上 ⇒ 需先定位该附着点，fillet 面的 `uv_domain` 才会闭合。
-4. `ChFiDS_CommonPoint::SetArc` 旧记档（"rcad 只调 6 次"）**未经运行时复核**，静态 grep 有 ≥15 个调用点 ⇒ 先做运行时计数再立卡。
+**TKFillet（`fillet/**`）—— 端盖弧 range 与 `reverse_curve` **已结案**，接力项只剩"无界 pcurve 附着点"**
+1. **已完成（追加 17 补记 2，1:1 落地 + 实测）**：`chfi3d_compute_curves` 的端盖弧 range 由 **270°（`[π, 2.5π]`）** 修正为 **90°（`[0.5π, π]`，与 OCCT 一致）**。真因**不是**追加 16 记的"`Vint.Dot(Vref) < 0` 镜像步未生效"（探针实测 `dot=−100`，镜像一直生效），而是 **`elclib_parameter_circle` 的 `atan2` 实参写反**（OCCT `ElCLib::CircleParameter` = `AngleWithRef` ⇒ `atan2(v·YDir, v·XDir)`；rcad 写成 `atan2(v·X, v·Y)` ⇒ 整体偏 π/2）。同批落地 `reverse_curve` 的 Circle `y_dir` 翻号（`gp_Ax2::SetDirection` **真身** **L548-571** 通用分支：X 保留、Y 翻号）。**两条必须同批**。
+2. **★ 接力项（唯一，也是当前 a1 的门）**：**定位无界 pcurve 的附着点**。两条修复落地后 a1 面积由 57328.76 变 **−2e100**（无界），失败断言行不变（L113）、拓扑仍全过 —— 原因就是追加 16 §4.6 第 3 条那个**未定位**的无界来源（某边界线 pcurve 带自然 `Line2d ±2e100` 域，挂在**不属于 7 张结果面**的 face 指针上）。起点建议：`ChFi3d_ProjectPCurv` 的返回值 / `hbuilder_face` 之外的生产者。修好后 `fillet` 面 `uv_domain` 闭合 ⇒ 面积回到有限值。**只做这一项就能把 TKFillet 从"拓扑全等、面积差"推进到面积断言。**
+3. `ChFiDS_CommonPoint::SetArc` 旧记档（"rcad 只调 6 次"）**未经运行时复核**，静态 grep 有 ≥15 个调用点 ⇒ 先做运行时计数再立卡。
+4. blend 断言余项（q4/q2/p9/q7/a2/a4/p8/x1/g9）见 §4.3，逐例失败映射与基线**逐字相同**（stash A/B 实测）。
 
 **TKOffset（`offset/**`）—— 本轮定界完成，按下面顺序做（每条都带 OCCT 锚点）**
 1. **`BRepLib::build_curve3d` 支持池外边**（或在池内注册）：`encode_regularity` 调它时 `my_offset_shape` 的 face/edge 全是池外（`index == usize::MAX`）⇒ `BRep::edge()` 越界 panic（4 例：`shape_type_i` a3/a4/d2/d3）。OCCT 无池（`BRepLib.cxx` L301-456）。

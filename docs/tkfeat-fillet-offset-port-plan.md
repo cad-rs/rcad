@@ -1143,6 +1143,22 @@ libs/rcad-algo/src/
 - **★ 墙已下移一层（新定界）**：rcad `theGlue.Perform()` 之后 **`IsDone=false`**（OCCT **`IsDone=1` / `resultFaces=9`**）。OCCT `LocOpe_Gluer::Perform` 的 `myDone` 来自 `myDone = theGen.IsDone()`（`LocOpe_Gluer.cxx` **L230**，`theGen` = **`LocOpe_Generator`**）⇒ **下一手 = `LocOpe_Generator::Perform`（`feat/loc_ope_generator.rs` / `loc_ope_generator_b.rs`）的 `IsDone` 真因**（不达 ⇒ `myRes` 未设 ⇒ a1 结果为空、面积 0）。⇒ 交接 §4.6 的 TKFeat 队列第 0 项更新为 `LocOpe_Generator::Perform`。
 - **验收**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（重编 exe 后）；域网格**逐格不变**（blend_simple 11 · blend_complex 2 · fillet2d 10 + 2 · mkface_after_offset 4 · mkface_after_extsurf 32 · feat_featlf 15 · feat_featprism 6 · feat_featrevol 46 · feat_featrf 5 · offset_shape_type_i 12 · offset_faces_type_i 8 · thrusection 26 —— 均为"占位通过"数，真实断言数见 §0.0 口径）；`git diff | grep -c "+.*eprintln"` = 0。
 
+### E3-W 追加 17 补记 2（2026-09-12：TKFillet 端盖弧 range **结案** —— 真因是**圆参数取反**的 `atan2` 实参顺序，不是"镜像步未生效"；两条 1:1 修复同批落地）
+
+- **★ 追加 16 的假设被实测推翻**：`chfi3d_builder_0.rs::chfi3d_compute_curves` 的 `Vint.Dot(Vref) < 0` 镜像步**一直生效**（探针实测 `dot = −100 < 0` ⇒ 走镜像分支）。真因在**更上游**：`elclib_parameter_circle` 的实参顺序写反了。
+  - **OCCT 真身**：`ElCLib::CircleParameter(Pos, P)`（`ElCLib.cxx` **L1199-1222**）= `Pos.XDirection().AngleWithRef(aVProj, Pos.Direction())` ⇒ **`atan2(v·YDir, v·XDir)`**（从 X 量到 Y），再 `normalizeAngle` 归一（**L56-72**）。
+  - **rcad 原写法**：`u.dot(x_dir).atan2(u.dot(y_dir))` = **atan2(v·X, v·Y)** ⇒ 返回 `π/2 − U`，**每个下游弧参数整体偏四分之一圈**。同文件 `loc_ope_find_edges.rs::elclib_parameter_circle` 一直是正确形式（`atan2(d·y, d·x)`）——**同族两处不一致**，fillet 侧写反。
+  - **修**：`elclib_parameter_circle` 改 `atan2(v·y_dir, v·x_dir)` + `normalize_angle_elclib`（复用同族既有 `chfi_kpart_gp::normalize_angle_elclib`，不新增第 10 份拷贝）；`elclib_parameter_ellipse` 按 `ElCLib::EllipseParameter`（**L1226-1252**）逐句重写（`Om = NX*X + NY*(MajR/MinR)*Y`，`Teta = X.AngleWithRef(Om, Normal)`）。
+- **实测（blend_simple_a1，探针已清）**：圆 `C=(10,0,10) n=(0,1,0) x=(0,0,1) y=(1,0,0) R=10`，`pdeb=(0,0,10)`、`pfin=(10,0,0)`。
+  - 修前：`udeb0=π, ufin0=−π/2` → 镜像后 `(π, 2.5π)` = **270° 弧**（与追加 16 记档一致）。
+  - 修后：`udeb0=1.5π(=4.712389), ufin0=π` → 镜像后 `(0.5π, π)` = **90° 弧** ✓；且**逐点核对端点**：反向曲线的 `P'(0.5π)` = `C + R(0−1·y)` = `(0,0,10)` = `pdeb` ✓、`P'(π)` = `C − R·x` = `(10,0,0)` = `pfin` ✓。
+- **同批的第二条 1:1 修复（必须同批，追加 16 已预警）**：`chfi3d_builder_0.rs::reverse_curve` 对 `Curve3::Circle` 原本只翻 `normal`、保留 `y_dir` ⇒ 参数上 **no-op**。按 `gp_Ax2::SetDirection` **真身**（`gp_Ax2.hxx` **L548-571**，`V=−N` 且 `V·X=0` ⇒ 走通用分支）：
+  `vxdir = V.CrossCrossed(vxdir, V)`、`vydir = V.Crossed(vxdir)` ⇒ **X 保留、Y 翻号**（`P'(t)=P(−t)`，真正的参数反转）。椭圆的 `Y` 在 rcad 由 `normal × major_dir` 派生 ⇒ **只翻 normal 即正确**（与 OCCT 一致），保持不动。
+- **★ 诚实记档（结果变差，属"链路未闭合"而非回退）**：两条修复落地后 `blend_simple_a1` 面积由 **57328.76**（基线，偏差 3.7%）变为 **−2e100**（无界面），失败断言行不变（测试 **L113**）、拓扑断言仍全过。原因 = 追加 16 §4.6 **TKFillet 第 3 条已立档但未定位**的无界来源（某条边界线 pcurve 带自然 `Line2d ±2e100` 域，且挂在**不属于 7 张结果面**的 face 指针上）——弧参数改正后该缺陷**首个暴露**。`blend_simple` 11 例的**失败映射（逐例 file:line）与基线逐字相同**（stash A/B 实测），`blend_complex` 亦然。
+  - **另一条对照（说明两条修复各自的作用）**：只落参数修复、不落 `reverse_curve` ⇒ 面积 **58042.92**（比基线 57328.76 更接近 OCCT 59527.9），但该弧起点错（`P(0.5π)=(20,0,10)` ≠ `pdeb`）⇒ **不可取**（形式正确优先，AGENTS.md 阶段 1 口径）。
+- **⇒ TKFillet 下一手（唯一）**：定位该无界 pcurve 的**附着点**（起点：`ChFi3d_ProjectPCurv` 的返回 / `hbuilder_face::add_intersection_edges` 之外的生产者；追加 16 记录"probe 显示它挂在**不属于 7 张结果面**的 face 指针上"），修好后 `fillet` 面的 `uv_domain` 才会闭合、面积才会回到有限值。**上一条队列（端盖弧 range + `reverse_curve`）就此关闭。**
+- **验收**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（重编 exe 后）；域网格**逐格通过数不变**（blend_simple 11 · blend_complex 2 · fillet2d 10 + 2 · mkface_after_offset 4 · mkface_after_extsurf 32 · feat 各格同前 · offset_shape_type_i 12 · offset_faces_type_i 8 · thrusection 26）；探针 = 0。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 

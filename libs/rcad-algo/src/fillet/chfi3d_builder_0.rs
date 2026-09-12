@@ -1672,18 +1672,42 @@ pub fn elclib_line_value(u: f64, l: &rcad_kernel::geom::Line3) -> DVec3 {
     l.origin + l.direction * u
 }
 
-/// OCCT ElCLib::Parameter(C, P) — the angle of the projected point.
+/// OCCT ElCLib::CircleParameter(Pos, P) (ElCLib.cxx L1199-1222) — the angle
+/// of the point projected on the circle plane, `Pos.XDirection().AngleWithRef
+/// (aVProj, Pos.Direction())`, i.e. `atan2(v.YDir, v.XDir)`, then
+/// `normalizeAngle` into [0, 2*PI].
+///
+/// NOTE the argument order: the angle is measured FROM XDirection TOWARDS
+/// YDirection (`atan2(dot(v, Y), dot(v, X))`). The previous form
+/// (`atan2(dot(v, X), dot(v, Y))`) returned `PI/2 - U`, which shifted every
+/// downstream fillet arc parameter by a quarter turn (ChFi3d_Builder_0
+/// ComputeCurves Cylinder x Plane circle branch).
 pub fn elclib_parameter_circle(c: &rcad_kernel::geom::Circle3, p: DVec3) -> f64 {
     let d = p - c.center;
     let u = d - d.dot(c.normal) * c.normal;
-    u.dot(c.x_dir).atan2(u.dot(c.y_dir))
+    let mut teta = u.dot(c.y_dir).atan2(u.dot(c.x_dir));
+    crate::fillet::chfi_kpart_gp::normalize_angle_elclib(&mut teta);
+    teta
 }
 
-/// OCCT ElCLib::Parameter(E, P).
+/// OCCT ElCLib::EllipseParameter(Pos, MajorRadius, MinorRadius, P)
+/// (ElCLib.cxx L1226-1252): `Om = NX*X + NY*(MajorRadius/MinorRadius)*Y`,
+/// `Teta = X.AngleWithRef(Om, Direction)` — the same from-X-towards-Y
+/// convention as the circle overload, then `normalizeAngle`.
 pub fn elclib_parameter_ellipse(e: &rcad_kernel::geom::Ellipse3, p: DVec3) -> f64 {
     let d = p - e.center;
-    let u = d - d.dot(e.normal) * e.normal;
-    u.dot(e.major_dir).atan2(e.normal.cross(e.major_dir).dot(u))
+    let x_axis = e.major_dir;
+    let y_axis = e.normal.cross(e.major_dir);
+    let nx = d.dot(x_axis);
+    let ny = d.dot(y_axis);
+    if nx.abs() <= 1e-15 && ny.abs() <= 1e-15 {
+        // OCCT: P is on the axis of the ellipse.
+        return 0.0;
+    }
+    let om = x_axis * nx + y_axis * (ny * (e.major_radius / e.minor_radius));
+    let mut teta = om.dot(y_axis).atan2(om.dot(x_axis));
+    crate::fillet::chfi_kpart_gp::normalize_angle_elclib(&mut teta);
+    teta
 }
 
 /// OCCT ElCLib::D1(U, C, P, V) — the derivative of a circle.
@@ -1699,6 +1723,20 @@ pub fn ellipse_d1(e: &rcad_kernel::geom::Ellipse3, u: f64) -> DVec3 {
 
 /// OCCT Geom_Line::Reverse / Geom_Circle::Reverse / Geom_Ellipse::Reverse
 /// (the parameterization is flipped in place).
+/// OCCT `Geom_Curve::Reverse()` for the analytic curves.
+///
+/// For a conic, OCCT calls `Geom_Conic::Reverse()` (Geom_Conic.cxx L23-28):
+/// `Vz = pos.Direction(); Vz.Reverse(); pos.SetDirection(Vz);`.
+/// `gp_Ax2::SetDirection` (gp_Ax2.hxx L548-571) takes the general branch when
+/// the new direction is not (anti)parallel to the current XDirection — the
+/// case for `V = -N`, since `V . X == 0`:
+///   `vxdir = V.CrossCrossed(vxdir, V)` = `V ^ (X_prev ^ V)` and
+///   `vydir = V.Crossed(vxdir)` = `V ^ newX`.
+/// With V = -N that evaluates to `newX = X` (KEPT) and `newY = -Y` (FLIPPED),
+/// so `P'(t) = P(-t)`: a genuine parameter reversal, not a no-op. The rcad
+/// form below must flip `y_dir` for the Circle (whose frame carries an
+/// explicit Y) — without it the mirrored parameter range of
+/// ChFi3d_Builder_0 ComputeCurves would re-evaluate the SAME points.
 pub fn reverse_curve(c: &rcad_kernel::geom::Curve3) -> rcad_kernel::geom::Curve3 {
     match c {
         rcad_kernel::geom::Curve3::Line(l) => {
@@ -1709,11 +1747,14 @@ pub fn reverse_curve(c: &rcad_kernel::geom::Curve3) -> rcad_kernel::geom::Curve3
                 center: ci.center,
                 normal: -ci.normal,
                 x_dir: ci.x_dir,
-                y_dir: ci.y_dir,
+                y_dir: -ci.y_dir,
                 radius: ci.radius,
             })
         }
         rcad_kernel::geom::Curve3::Ellipse(e) => {
+            // The rcad Ellipse3 derives its Y direction as `normal ^
+            // major_dir`, so flipping the normal alone already flips the
+            // effective Y direction — the same result `SetDirection` gives.
             rcad_kernel::geom::Curve3::Ellipse(rcad_kernel::geom::Ellipse3 {
                 center: e.center,
                 normal: -e.normal,
