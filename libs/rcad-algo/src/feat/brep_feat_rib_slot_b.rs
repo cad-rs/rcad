@@ -108,10 +108,47 @@ fn reverse_orientation(o: rcad_kernel::topods::Orientation) -> rcad_kernel::topo
     }
 }
 
-/// OCCT BRepLib_MakeFace(w) — the face carried by the wire alone (no
-/// surface).
+/// OCCT BRepLib_MakeFace(const TopoDS_Wire& W, const bool OnlyPlane = false)
+/// (BRepLib_MakeFace.cxx L189-262) — the face carrying the surface FOUND
+/// through the wire, not a surface-less face:
+///
+/// ```text
+///   BRepLib_FindSurface FS(W, -1, OnlyPlane, true);
+///   if (!FS.Found()) { myError = BRepLib_NotPlanar; return; }
+///   double tol = std::max(1.2 * FS.ToleranceReached(), FS.Tolerance());
+///   B.MakeFace(F, FS.Surface(), FS.Location(), tol);
+///   B.Add(F, W);
+/// ```
+///
+/// With `OnlyPlane == false` the wire is added unchanged (the degenerate-edge
+/// filtering of cxx L209-260 belongs to the `OnlyPlane == true` arm).
+/// BRepFeat_RibSlot relies on this: NoSlidingProfile cxx L2643 and
+/// SlidingProfile cxx L1764 both call `BRepLib_MakeFace ff(ww)` on the
+/// boolean-cut wire and assert `BRepAlgo::IsValid` on the result.
 fn make_face_wire(the_b: &mut BRepBuilder, the_pool: &mut BRep, the_wire: &Shape) -> Shape {
-    the_b.make_face(the_pool, None, the_wire.clone())
+    // The wire reaches here from the CutVehicle result pool (OCCT carries the
+    // TShape graph by pointer, rcad's `Shape::index` is pool-local), so adopt
+    // its subgraph into `the_pool` before any pool-based lookup happens.
+    let the_wire = &crate::feat::brep_feat_form_2::adopt_subgraph_into(the_pool, the_wire);
+    // BRepLib_FindSurface FS(W, -1, OnlyPlane = false, OnlyClosed = true).
+    let mut fs =
+        crate::topalgo::brep_lib_find_surface::BRepLibFindSurface::new_closed(
+            the_pool, the_wire, -1.0, false, true,
+        );
+    if !fs.found() {
+        // OCCT: myError = BRepLib_NotPlanar; the shape stays null.
+        return Shape::null();
+    }
+    // OCCT L204: tol = max(1.2 * ToleranceReached(), Tolerance()).
+    let tol = (1.2 * fs.tolerance_reached()).max(fs.tolerance());
+    let surface = fs.surface();
+    let location = fs.location();
+    // OCCT L206: B.MakeFace(F, FS.Surface(), FS.Location(), tol); L262: B.Add(F, W).
+    let fac = the_b.make_face(the_pool, surface, the_wire.clone());
+    let fd = the_pool.face_mut(fac.clone());
+    fd.surface_location = location;
+    fd.tolerance = tol;
+    fac
 }
 
 /// OCCT w.Closed(BRep_Tool::IsClosed(w)) — the flag is SET to the value
@@ -936,7 +973,7 @@ impl BRepFeatRibSlot {
             }
 
             // OCCT L1571-1579.
-            if bnd_edge1.is_null() || bnd_edge2.is_null() {
+            if bnd_edge1.is_null() || bnd_edge2.is_null() {
 
                 profile_ok = false;
                 return profile_ok;
@@ -1076,7 +1113,7 @@ impl BRepFeatRibSlot {
         let fac = make_face_plane_wire(&mut f, &mut pool, my_pln, &wire);
 
         // OCCT L1736-1744.
-        if !brep_algo_is_valid(&fac) {
+        if !brep_algo_is_valid(&fac) {
 
             profile_ok = false;
             return profile_ok;
@@ -1114,7 +1151,7 @@ impl BRepFeatRibSlot {
         }
 
         // OCCT L1776-1785.
-        if !brep_algo_is_valid(prof) {
+        if !brep_algo_is_valid(prof) {
 
             profile_ok = false;
             return profile_ok;
@@ -1334,7 +1371,7 @@ impl BRepFeatRibSlot {
             }
 
             // OCCT L1982-1990.
-            if bnd_edge1.is_null() || bnd_edge2.is_null() {
+            if bnd_edge1.is_null() || bnd_edge2.is_null() {
 
                 profile_ok = false;
                 return profile_ok;
@@ -1841,7 +1878,7 @@ impl BRepFeatRibSlot {
         let fac = make_face_plane_wire(&mut fa, &mut pool, my_pln, &w);
 
         // OCCT L2622-2630.
-        if !brep_algo_is_valid(&fac) {
+        if !brep_algo_is_valid(&fac) {
 
             profile_ok = false;
             return profile_ok;
@@ -1875,7 +1912,7 @@ impl BRepFeatRibSlot {
         }
 
         // OCCT L2658-2667.
-        if !brep_algo_is_valid(prof) {
+        if !brep_algo_is_valid(prof) {
 
             profile_ok = false;
             return profile_ok;

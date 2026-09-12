@@ -677,29 +677,10 @@ pub fn brep_feat_is_inside(the_f1: &Shape, the_f2: &Shape) -> bool {
 /// shared by several parents), so only post-order guarantees that a node is
 /// laid down after every child it references.
 pub(crate) fn brep_algo_is_valid(the_s: &Shape) -> bool {
-    let mut order: Vec<Shape> = Vec::new();
-    let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    collect_subgraph_indexed(the_s, &mut order, &mut visited);
-    // ptr_id -> scratch slot.
-    let remap: std::collections::HashMap<u64, usize> = order
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (s.ptr_id(), i))
-        .collect();
-    // Children first (post-order), each node laid down exactly once.
-    let mut final_arcs: Vec<Option<std::sync::Arc<TShape>>> = vec![None; order.len()];
-    for i in 0..order.len() {
-        let mut ts = (*order[i].data).clone();
-        remap_tshape_children(&mut ts, &remap, &final_arcs);
-        final_arcs[i] = Some(std::sync::Arc::new(ts));
-    }
-    let root_index = order.len() - 1; // the root closes the post-order walk
-    let mut scratch = rcad_kernel::topods::BRep::new();
-    scratch.tshapes = final_arcs
-        .into_iter()
-        .map(|a| a.expect("every slot is built by the post-order pass"))
-        .collect();
-    let mut root = Shape::from_parts(
+    let Some((scratch, root_index)) = renumbered_pool(the_s, 0) else {
+        return false;
+    };
+    let root = Shape::from_parts(
         scratch.tshapes[root_index].clone(),
         root_index,
         the_s.location,
@@ -714,6 +695,62 @@ pub(crate) fn brep_algo_is_valid(the_s: &Shape) -> bool {
     ok
 }
 
+/// Append the subgraph of `s` to `pool` under fresh, collision-free indices
+/// and return the adopted root shape.
+///
+/// Used wherever rcad must place a shape into a pool that is not the one it
+/// was created in (the `make_face_wire` / BRepLib_FindSurface path, where the
+/// boolean-cut wire comes from the CutVehicle pool while the profile face is
+/// built in the profile pool). The renumbering is the one `brep_algo_is_valid`
+/// describes.
+pub(crate) fn adopt_subgraph_into(pool: &mut rcad_kernel::topods::BRep, s: &Shape) -> Shape {
+    let base = pool.tshapes.len();
+    let Some((sub, root_index)) = renumbered_pool(s, base) else {
+        return Shape::null();
+    };
+    pool.tshapes.extend(sub.tshapes);
+    Shape::from_parts(
+        pool.tshapes[root_index].clone(),
+        root_index,
+        s.location,
+        s.orientation,
+    )
+}
+
+/// The subgraph of `s` renumbered into a standalone pool, every child
+/// reference re-pointed at `offset + slot`. Returns `None` for a null root.
+fn renumbered_pool(
+    s: &Shape,
+    offset: usize,
+) -> Option<(rcad_kernel::topods::BRep, usize)> {
+    let mut order: Vec<Shape> = Vec::new();
+    let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    collect_subgraph_indexed(s, &mut order, &mut visited);
+    if order.is_empty() {
+        return None;
+    }
+    // ptr_id -> scratch slot.
+    let remap: std::collections::HashMap<u64, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.ptr_id(), offset + i))
+        .collect();
+    // Children first (post-order), each node laid down exactly once.
+    let mut final_arcs: Vec<Option<std::sync::Arc<TShape>>> = vec![None; order.len()];
+    for i in 0..order.len() {
+        let mut ts = (*order[i].data).clone();
+        remap_tshape_children(&mut ts, &remap, &final_arcs, offset);
+        final_arcs[i] = Some(std::sync::Arc::new(ts));
+    }
+    let root_index = offset + order.len() - 1; // the root closes the post-order walk
+    let mut scratch = rcad_kernel::topods::BRep::new();
+    scratch.tshapes = final_arcs
+        .into_iter()
+        .map(|a| a.expect("every slot is built by the post-order pass"))
+        .collect();
+    Some((scratch, root_index))
+}
+
 /// Re-point every child reference of `ts` at its scratch slot (the pool
 /// renumbering of `brep_algo_is_valid`). References whose TShape is not in
 /// the scratch pool (a null child) are left untouched.
@@ -721,11 +758,13 @@ fn remap_tshape_children(
     ts: &mut TShape,
     remap: &std::collections::HashMap<u64, usize>,
     final_arcs: &[Option<std::sync::Arc<TShape>>],
+    offset: usize,
 ) {
     let fix = |s: &mut Shape| {
         if let Some(&i) = remap.get(&s.ptr_id()) {
             s.index = i;
-            s.data = final_arcs[i]
+            let slot = i - offset;
+            s.data = final_arcs[slot]
                 .as_ref()
                 .expect("children are built before their parent")
                 .clone();
