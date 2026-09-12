@@ -652,22 +652,59 @@ pub fn brep_feat_is_inside(the_f1: &Shape, the_f2: &Shape) -> bool {
 
 /// OCCT BRepAlgo::IsValid(S) (BRepAlgo_1.cxx L39-43):
 /// `BRepCheck_Analyzer ana(S); return ana.IsValid();` — the default ctor
-/// enables GeomControls.  The feat callers pass bare Shapes whose TShapes
-/// live in caller-owned pools, while the analyzer consumes a BRep pool: the
-/// shape subgraph is collected into a scratch pool that PRESERVES the
-/// original TShape indices (the child Shape wrappers carry their pool
-/// indices), unused slots holding a null placeholder.
+/// enables GeomControls.
+///
+/// Architecture difference: OCCT's `TopoDS_Shape` carries its `TShape` graph
+/// by pointer, so a shape assembled from several `BRep_Builder` scopes is
+/// still one coherent graph. The rcad `BRep` is a flat pool and a `Shape`'s
+/// `index` field is only meaningful inside the pool it was created in — the
+/// feat callers routinely mix shapes from several pools (the profile pool,
+/// the BndFace/CutVehicle result pool, cloned input-wire edges), so equal
+/// indices can belong to different TShapes. A scratch pool naively keyed by
+/// the source indices therefore aliases unrelated TShapes and makes the
+/// analyzer read the wrong shape ("Shape N is not a Face").
+///
+/// The subgraph is therefore collected into a scratch pool under FRESH
+/// contiguous indices, and every copied TShape has its child reference
+/// re-pointed at the scratch slot AND the scratch `TShape` handle (a bare
+/// index re-point would leave `data` on the source pool and re-open the
+/// collision one level deeper). Identity inside the analyzer is still by
+/// `TShape` pointer (`ShapeKey::of`), so the renumbering is transparent to
+/// every consumer of the scratch pool — the shapes simply all belong to the
+/// scratch pool now.
+///
+/// The walk is a POST-order DFS: a sub-graph is a DAG (a sub-shape can be
+/// shared by several parents), so only post-order guarantees that a node is
+/// laid down after every child it references.
 pub(crate) fn brep_algo_is_valid(the_s: &Shape) -> bool {
-    let mut pairs: Vec<(usize, std::sync::Arc<TShape>)> = Vec::new();
+    let mut order: Vec<Shape> = Vec::new();
     let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    collect_subgraph_indexed(the_s, &mut pairs, &mut visited);
-    let size = pairs.iter().map(|(i, _)| *i + 1).max().unwrap_or(0);
-    let mut scratch = rcad_kernel::topods::BRep::new();
-    scratch.tshapes = vec![Shape::null().data; size];
-    for (i, ts) in pairs {
-        scratch.tshapes[i] = ts;
+    collect_subgraph_indexed(the_s, &mut order, &mut visited);
+    // ptr_id -> scratch slot.
+    let remap: std::collections::HashMap<u64, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.ptr_id(), i))
+        .collect();
+    // Children first (post-order), each node laid down exactly once.
+    let mut final_arcs: Vec<Option<std::sync::Arc<TShape>>> = vec![None; order.len()];
+    for i in 0..order.len() {
+        let mut ts = (*order[i].data).clone();
+        remap_tshape_children(&mut ts, &remap, &final_arcs);
+        final_arcs[i] = Some(std::sync::Arc::new(ts));
     }
-    let root = Shape::from_parts(the_s.data.clone(), the_s.index, the_s.location, the_s.orientation);
+    let root_index = order.len() - 1; // the root closes the post-order walk
+    let mut scratch = rcad_kernel::topods::BRep::new();
+    scratch.tshapes = final_arcs
+        .into_iter()
+        .map(|a| a.expect("every slot is built by the post-order pass"))
+        .collect();
+    let mut root = Shape::from_parts(
+        scratch.tshapes[root_index].clone(),
+        root_index,
+        the_s.location,
+        the_s.orientation,
+    );
     let ana = crate::topalgo::brep_check::brep_check_analyzer::BRepCheckAnalyzer::new(
         &scratch,
         &root,
@@ -677,17 +714,69 @@ pub(crate) fn brep_algo_is_valid(the_s: &Shape) -> bool {
     ok
 }
 
-/// The subgraph walk of brep_builderapi_transform::collect_subgraph, keeping
-/// the original pool index alongside each TShape handle.
+/// Re-point every child reference of `ts` at its scratch slot (the pool
+/// renumbering of `brep_algo_is_valid`). References whose TShape is not in
+/// the scratch pool (a null child) are left untouched.
+fn remap_tshape_children(
+    ts: &mut TShape,
+    remap: &std::collections::HashMap<u64, usize>,
+    final_arcs: &[Option<std::sync::Arc<TShape>>],
+) {
+    let fix = |s: &mut Shape| {
+        if let Some(&i) = remap.get(&s.ptr_id()) {
+            s.index = i;
+            s.data = final_arcs[i]
+                .as_ref()
+                .expect("children are built before their parent")
+                .clone();
+        }
+    };
+    match ts {
+        TShape::Vertex(vd) => {
+            vd.my_shapes.iter_mut().for_each(fix);
+        }
+        TShape::Edge(ed) => {
+            ed.my_shapes.iter_mut().for_each(fix);
+            fix(&mut ed.first);
+            fix(&mut ed.last);
+        }
+        TShape::Wire(wd) => {
+            wd.my_shapes.iter_mut().for_each(fix);
+            wd.edges.iter_mut().for_each(fix);
+        }
+        TShape::Face(fd) => {
+            fd.my_shapes.iter_mut().for_each(fix);
+            fix(&mut fd.outer_wire);
+            fd.inner_wires.iter_mut().for_each(fix);
+            fd.internal_vertices.iter_mut().for_each(fix);
+        }
+        TShape::Shell(sd) => {
+            sd.my_shapes.iter_mut().for_each(fix);
+            sd.faces.iter_mut().for_each(fix);
+        }
+        TShape::Solid(sd) => {
+            sd.my_shapes.iter_mut().for_each(fix);
+            sd.shells.iter_mut().for_each(fix);
+            sd.internal_edges.iter_mut().for_each(fix);
+            sd.internal_vertices.iter_mut().for_each(fix);
+        }
+        TShape::CompSolid(children) | TShape::Compound(children) => {
+            children.iter_mut().for_each(fix);
+        }
+    }
+}
+
+/// The subgraph walk of brep_builderapi_transform::collect_subgraph — the
+/// POST-order dfs of the distinct sub-shapes (deduplicated by TShape
+/// pointer), so a node is always emitted after every child it references.
 fn collect_subgraph_indexed(
     s: &Shape,
-    out: &mut Vec<(usize, std::sync::Arc<TShape>)>,
+    out: &mut Vec<Shape>,
     visited: &mut std::collections::HashSet<u64>,
 ) {
     if s.is_null() || !visited.insert(s.ptr_id()) {
         return;
     }
-    out.push((s.index, s.data.clone()));
     match s.data.as_ref() {
         TShape::Vertex(_) => {}
         TShape::Edge(ed) => {
@@ -730,6 +819,8 @@ fn collect_subgraph_indexed(
             }
         }
     }
+    // POST-order: the node is emitted once all of its children are.
+    out.push(s.clone());
 }
 
 /// OCCT BRepFeat::FaceUntil(Sbase, FUntil) (BRepFeat.cxx L524-638) —
