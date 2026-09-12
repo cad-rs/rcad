@@ -1170,6 +1170,25 @@ libs/rcad-algo/src/
 - **与第 2 项的关系（顺序不变）**：第 2 项（`BRepTools_Quilt::builder_make_shell` / `brep_algo/face_restrictor.rs` 产物**入池**）是**根**（同 4 例的根，且会让下游 `result_brep()` 的拓扑计数正确）；第 1 项是**安全网**。两项都做，但**先做第 1 项**（改动局部、可立即用 a3/a4/d2/d3 复验），再做第 2 项（牵涉拓扑计数，需全套域网格复测）。
 - **验收**：六门槛 + 八网格 + `offset_shape_type_i` 在树复测（本补记无代码改动，故逐格不变：12 占位通过 / 12 真实失败，其中 a3/a4/d2/d3 的 panic 点如上）。
 
+### E3-W 追加 18（2026-09-12：**翻译补全轮**（先译后调）—— 五处 GAP 真身落地 + 三处重复实现删除；offset 域 6 例离开库内 panic）
+
+- **口径转变（用户指令）**：本轮起**先重点完成等价实现（1:1 翻译）**，代码基本译完再开始调试/修测试。因此本轮只做"把缺的body译出来 + 把重复实现收敛到真身"，**不针对性修测试数值**。
+- **落地清单（均为 OCCT 行号锚定的 1:1 翻译或收敛）**：
+  1. **`GeomLib::SameRange` 真身**（`GeomLib.cxx` **L842-970**）：body 落在 kernel `geom::same_range_2d`（此前已有，但**签名缺 `Tolerance` 首参**、缺 **L902-907 的 `PConfusion` 守卫**、缺 **L924-969 的 periodic/非 periodic 分段分支**、且用**内联线性 knot 映射**代替 `BSplCLib::Reparametrize`）。本轮补齐四项：签名按 OCCT 变为 `(tolerance, curve, FirstOnCurve, LastOnCurve, RequestedFirst, RequestedLast)`；守卫与分段分支照搬；knot 重参数化改调**既有真身** `math::bspl_lib::reparametrize`（同 OCCT 的累加顺序）。**消费者同步**：`bop/algo/pave_filler.rs`（TKBO 侧，`aTolPPC = Precision::PConfusion()` = 1e-9，**此前硬编码 1e-7 属失真**，本轮按 OCCT 传参）；`geomalgo/geom_lib_same_range.rs::same_range` 由 GAP panic 改为**委托真身**（无第二份）；`shhealing/shape_fix/edge.rs` 的**第三份** stand-in（原"返回输入曲线不变"的待译载体）改名 `geom_lib_same_range` 并委托真身（ShapeFix_Edge.cxx **L418/L447** 两个消费点）。
+  2. **`BRepCheck_Edge::Tolerance` 真身**（`BRepCheck_Edge.cxx` **L598-707**）：落在 `topalgo/brep_check/brep_check_edge.rs::BRepCheckEdge::tolerance`（NCONTROL=23 采样、表示收集含 **L636-641 的槽位搬迁**、三维/首 pcurve 用 `myShape.Location()*cr->Location()` 而**缝 pcurve 只用 `cr->Location()`**（L669）、`Precision::IsInfinite` 逐坐标短路、收尾 `sqrt(max)*1.05`）。`HCurveAdaptor` 补 `value(U)`（= OCCT `Adaptor3d_Curve::Value`）。**两处消费者收敛**：`offset/brep_offset_make_offset.rs`（GAP panic → 委托，并给 `update_tolerance` 串入 `&BRep`）、`brep_fill/brep_fill_sweep_b.rs` 的**重复载体**（原用 `GeomLib_CheckCurveOnSurface` 近似采样，与本函数语义不同 → 删除并委托真身）。
+  3. **`BRepCheck_Vertex::Tolerance` 真身**（`BRepCheck_Vertex.cxx` **L343-383**）：`topalgo/brep_check/brep_check_vertex.rs::BRepCheckVertex::tolerance`（平方容差起步、按点表示加宽、收尾 **`sqrt(Tol*1.05)`** —— 与 Edge 版的 `sqrt(max)*1.05` **不同**，照搬）。注明的架构差异：rcad 的 `PointRepresentation` 只有 `PointOnCurve`/`PointOnSurface` 两型（OCCT 的 `PointOnCurveOnSurface` 与表示级 Location 未建模）。
+  4. **`ElCLib::To3d` 全集**（`ElCLib.cxx` **L1339-1440**）：kernel `math/el.rs` 新增 `elclib_to3d_{pnt,vec,ax22d,line,circle,ellipse,hyperbola,parabola}`（`Ax22d` 经 3 参 `gp_Ax2(P, VX×VY, VX)` 构造；圆锥曲线 Y 由 `N^X` 派生；Hyperbola/Parabola 的 2D Y 用库内既有约定 `(-y, x)` 并注明）。
+  5. **`GeomLib::To3d` 真身**（`GeomLib.cxx` **L559-675**）：`geomalgo/geom_lib.rs::to_3d(&Ax2, &Curve2d)` —— Trimmed 递归再裁剪（L565-573）、Offset 递归重建（L574-581）、Bezier/BSpline 逐极点 `ElCLib::To3d`（L582-636）、五类解析曲线帧提升（L637-671）、其余 `Standard_NotImplemented`（L672-674）。BSpline 的 `is_periodic` 由**既有** `math::bspl::bspline_is_periodic` 从 knot 结构导出（rcad `BSplineCurve2` 无周期标志，已在注释注明）。**接线**：`topalgo/brep_lib/build_curves3d.rs` 的 `geom_lib_to_3d` GAP → 委托真身（`GpAx2 → Ax2`），于是 **`BRepLib::build_curve3d` 的 cxx L362 平面分支不再撞 GAP**。
+- **★ 实测：失败层深度推进（offset 域，逐例 file:line；口径见追加 16 坑 21）**：
+  - `offset_shape_type_i`：**e1/e2** `geom_lib_same_range.rs:26` → **e1/e2/e3/e4/e6/e7 全部落到测试断言**（758/870/948/1060/1171/1283）——即**6 例离开库内 panic**（此前 e1/e2 死在 SameRange、e3/e4 死在 Edge Tolerance）。剩余库内 panic 仅 **a1/a2**（`brep_offset_inter2d.rs:1057`）与 **a3/a4/d2/d3**（`topods.rs:1799` 池外，即 §4.6 TKOffset 第 1 项）。
+  - `offset_shape_type_a`：**a4** `build_curves3d.rs:991`（`GeomLib::To3d` GAP）→ `brep_offset_make_offset_c.rs:52`（下一层）。
+  - 其余域与八网格**逐格通过数不变**。
+- **⇒ 下一批翻译项（依赖已实测，勿再摸）**：
+  1. **`GeomLib::BuildCurve3d` 的剩余分支**（`GeomLib.cxx` **L1051+**）：平面分支现已可用 `to_3d` 实现；iso 分支需 **`GeomLib::isIsoLine` / `buildC3dOnIsoLine`**（注意：`geomalgo/approx_curve_on_surface.rs` 里的同名函数是 **`Approx_CurveOnSurface`** 的静态副本，OCCT 本身有两份，勿混用）；尾部需要 `AdvApprox_ApproxAFunction`（**已在库**，brep_fill_sweep.rs / approx_curve_on_surface.rs 在用）与 **`GeomLib_CurveOnSurfaceEvaluator`**（**缺**，需新译，~40 行）。
+  2. **`GeomLib::ExtendSurfByLength`**（`GeomLib.cxx` **L1485+**，`geomalgo/geom_lib_same_range.rs` 内仍是 GAP；消费点 `offset/brep_offset_tool_c.rs:617/683`）。
+  3. **池外架构项**（§4.6 TKOffset 第 1/2 项）：`offset_shape_type_i` 的 a3/a4/d2/d3 与 `BRepLib::build_curve3d` 的 `brep_tool_curve` 首读同源 —— 按既有模板 `topods::curve_on_surface_pool_free` 补 `BRep_Tool::Curve` 的池外读取，并/或把 `BRepTools_Quilt`/`FaceRestrictor` 产物**入池**（后者是根，改完须跑全套域网格）。
+- **验收**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（重编 exe 后）；域网格**逐格通过数不变**；探针 = 0。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 

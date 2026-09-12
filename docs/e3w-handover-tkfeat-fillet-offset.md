@@ -22,12 +22,24 @@
 > （提交前 `git diff | grep -c "+.*eprintln"` = 0）；每批做完跑**六门槛 + 八网格 + 该域网格**，
 > 更新 `docs/tkfeat-fillet-offset-port-plan.md` 的 §E3-W 追加，并提交**两仓库**（rcad + 根仓库指针）。
 
-### 0.0 当前状态速览（追加 17 收尾，2026-09-12）
+### 0.0 当前状态速览（追加 18 收尾，2026-09-12）
 
-- **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**逐格不变**：`fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · `feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrevol` **1/45**（a5）· `feat_featrf` 0/5 · `blend_simple` 0/11 · `blend_complex` 0/2 · `offset_shape_type_a/_i` 0/1 · 0/12 · `offset_faces_type_i` 0/8 · `draft_angle` 0/49 · `thrusection_specific` 0/26。
-- **本轮实质进展（TKFeat 域 D3 结案）**：`featrf_a1` 的 **init 首次通过**（`ExtremeFaces` → `SlidingProfile` → `Propagate` 全程与 OCCT 逐值一致），失败层由 **init 断言（生成测试 L77）深化到面积断言（L866）**；`feat_featlf` **8 例**离开被修的 `Line` 访问器 panic（a3 深入 `loc_ope_prism.rs:93`，其余落到各自断言）。三处 1:1 修复见 §0.5。
-- **★ 下一个墙（已定界到函数）**：`LFPerform` 的粘合判定——rcad `collage=false ope=Invalid glued_f=1 ⇒ the_ope=2`（回落构造器路径 ⇒ 空结果 / 面积 0），OCCT `glue IsDone=1 ope=FUSE resultFaces=9`。再下层：`BRepFeat::IsInside(glface,fac)` 在 **rcad 侧的分类器之前**就返回 false，因为 `geom_proj_lib::curve2d_simple` **对 `Curve3::Trimmed` 返回 None**（OCCT `GeomProjLib::Curve2d` 经 `GeomAdaptor_Curve` **载入基曲线**后投影成功）⇒ **下一批第 1 项 = `curve2d`/`curve2d_simple` 的 `Trimmed` 解包**（与 D2、本次 `basis_curve_of` 同族，第三次踩）。
-- **三域下一步（详见 §4.6）**：**TKFeat** = ① `curve2d`/`curve2d_simple` 解包 `Trimmed`（→ a1 粘合路径）→ ② `Propagate` 的 `BOPAlgo_Section` 共面 FF（`FalseSide` 根因）→ ③ `featprism` 结果根（先判定"结果池缺根 vs 生成器 helper 取错"）；**TKFillet** = fillet 端盖弧 range `[π,2.5π]` vs 参考 90°（残差 `700π`），**必须与 `chfi3d_builder_0.rs::reverse_curve` 的 Circle 修复同批落**；**TKOffset** = 按 §4.4 的 6 条顺序（`BRepLib::build_curve3d` 支持池外边 → `BRepTools_Quilt`/`FaceRestrictor` 产物入池 → 回绕链 trimmed 面 → `BRepCheck_Edge::Tolerance` → `GeomLib` 两件 → pcurve 附着）。
+- **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**逐格通过数不变**：`fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · `feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrevol` **1/45**（a5）· `feat_featrf` 0/5 · `blend_simple` 0/11 · `blend_complex` 0/2 · `offset_shape_type_a/_i` 0/1 · 0/12 · `offset_faces_type_i` 0/8 · `draft_angle` 0/49 · `thrusection_specific` 0/26。
+- **★ 本轮口径（用户指令）**：**先完成代码的等价实现（1:1 翻译），代码基本译完再调试/修测试**。本轮据此只做"译出缺失 body + 收敛重复实现"，**不做针对性测试修补**。
+- **本轮实质进展（翻译补全轮，追加 18）**：**5 处 GAP 真身落地**（`GeomLib::SameRange` / `BRepCheck_Edge::Tolerance` / `BRepCheck_Vertex::Tolerance` / `ElCLib::To3d` 全集 / `GeomLib::To3d`）+ **3 处重复实现删除**（见 §0.6）；**offset 域 6 例（e1/e2/e3/e4/e6/e7）离开库内 panic 落到测试断言**，a4 由 To3d GAP 推进到下一层（见 §4.6 TKOffset 第 0 项）。
+- **三域下一步（详见 §4.6）**：**TKFeat** = ① `LocOpe_Generator::Perform` 的 `IsDone`（a1 粘合路径的下一墙）→ ② `Propagate` 的 `BOPAlgo_Section` 共面 FF（`FalseSide` 根因）→ ③ `featprism` 结果根；**TKFillet** = 定位"无界 pcurve 附着点"（a1 面积 −2e100 的门）；**TKOffset** = ① `GeomLib::BuildCurve3d` 剩余分支（iso 静态 + `GeomLib_CurveOnSurfaceEvaluator`）→ ② `GeomLib::ExtendSurfByLength` → ③ 池外架构项（`BRep_Tool::Curve` 池外读取 / Quilt 产物入池）。
+
+### 0.6 追加 18 本轮落地（翻译补全轮，2026-09-12）
+
+| 真身（OCCT 锚点） | rcad 落位 | 收敛掉的重复/载体 |
+|------|-----------|-----------|
+| `GeomLib::SameRange`（`GeomLib.cxx` **L842-970**） | kernel `geom::same_range_2d`（补 `Tolerance` 首参 + L902-907 守卫 + L924-969 periodic 分段 + 改调 `bspl_lib::reparametrize`） | `geomalgo/geom_lib_same_range.rs` 的 GAP → 委托；`shhealing/shape_fix/edge.rs` 的"返回输入不变"stand-in → 委托（ShapeFix_Edge.cxx L418/L447） |
+| `BRepCheck_Edge::Tolerance`（`BRepCheck_Edge.cxx` **L598-707**） | `topalgo/brep_check/brep_check_edge.rs::BRepCheckEdge::tolerance`（含 L636-641 槽位搬迁、L669 缝 pcurve 的 location 只用 `cr->Location()`、`sqrt(max)*1.05`） | `offset/brep_offset_make_offset.rs` 的 GAP → 委托（`update_tolerance` 串入 `&BRep`）；`brep_fill_sweep_b.rs` 的 `CheckCurveOnSurface` 近似载体 → **删除并委托** |
+| `BRepCheck_Vertex::Tolerance`（`BRepCheck_Vertex.cxx` **L343-383**） | `topalgo/brep_check/brep_check_vertex.rs::BRepCheckVertex::tolerance`（收尾 **`sqrt(Tol*1.05)`**，与 Edge 版不同） | `offset/brep_offset_make_offset.rs` 的 GAP → 委托 |
+| `ElCLib::To3d` 全集（`ElCLib.cxx` **L1339-1440**） | kernel `math/el.rs` 的 `elclib_to3d_*`（8 个：pnt/vec/ax22d/line/circle/ellipse/hyperbola/parabola） | — |
+| `GeomLib::To3d`（`GeomLib.cxx` **L559-675**） | `geomalgo/geom_lib.rs::to_3d`（Trimmed 递归 / Offset 重建 / Bezier+BSpline 极点提升 / 五类解析帧提升 / `Standard_NotImplemented`） | `topalgo/brep_lib/build_curves3d.rs::geom_lib_to_3d` 的 GAP → 委托（⇒ `BRepLib::build_curve3d` 的 cxx L362 平面分支可用） |
+
+**关键提醒**：`geomalgo/approx_curve_on_surface.rs` 里的 `is_iso_line`/`build_c3d_on_iso_line` 是 **`Approx_CurveOnSurface` 的静态副本**（OCCT 自身也有两份），`GeomLib::BuildCurve3d` 要用的是 **`GeomLib` 自己的**静态——立卡/翻译前先分清，否则会把两份混成一份。
 
 ### 0.5 追加 17 本轮落地（2026-09-12，rcad 提交链见 §3）
 
@@ -384,7 +396,9 @@ RibSlot/Form 链，profile 修好后它们的失败点也随之下移。
 3. `ChFiDS_CommonPoint::SetArc` 旧记档（"rcad 只调 6 次"）**未经运行时复核**，静态 grep 有 ≥15 个调用点 ⇒ 先做运行时计数再立卡。
 4. blend 断言余项（q4/q2/p9/q7/a2/a4/p8/x1/g9）见 §4.3，逐例失败映射与基线**逐字相同**（stash A/B 实测）。
 
-**TKOffset（`offset/**`）—— 本轮**只做定界证据化**（无代码落地），按下面顺序做（每条都带 OCCT 锚点）**
+**TKOffset（`offset/**`）—— 第 1 项已证据化；翻译补全轮（追加 18）已落地 5 处真身，**6 例离开库内 panic****
+0. **★ 翻译补全轮已落地（追加 18，本轮）**：`GeomLib::SameRange` / `BRepCheck_Edge::Tolerance` / `BRepCheck_Vertex::Tolerance` / `ElCLib::To3d` 全集 / `GeomLib::To3d` 五个真身落地，并**删除三处重复实现**（`shhealing/shape_fix/edge.rs` 的 SameRange stand-in、`brep_fill_sweep_b.rs` 的 Tolerance 近似载体、`geomalgo/geom_lib_same_range.rs` 的 GAP）。**offset 域实测**：`offset_shape_type_i` 的 **e1/e2/e3/e4/e6/e7 全部落到测试断言**（此前 e1/e2 死 `geom_lib_same_range.rs`、e3/e4 死 Edge Tolerance）；`offset_shape_type_a` 的 **a4** 由 `GeomLib::To3d` GAP 推进到 `brep_offset_make_offset_c.rs:52`。**剩余库内 panic = a1/a2（`brep_offset_inter2d.rs:1057`）与 a3/a4/d2/d3（池外，见下）**。
+0b. **下一批翻译项（依赖已实测）**：① **`GeomLib::BuildCurve3d` 剩余分支**（`GeomLib.cxx` L1051+）——平面分支可用 `to_3d`，iso 分支要用 **`GeomLib::isIsoLine`/`buildC3dOnIsoLine`**（**勿**混用 `geomalgo/approx_curve_on_surface.rs` 里的 `Approx_CurveOnSurface` 同名静态副本），尾部需 `AdvApprox_ApproxAFunction`（**已在库**）+ **`GeomLib_CurveOnSurfaceEvaluator`（缺，~40 行）**；② **`GeomLib::ExtendSurfByLength`**（`GeomLib.cxx` L1485+，消费点 `brep_offset_tool_c.rs:617/683`）。
 1. **★ 第 1 项（已证据化到函数行，可直接开工）**：`BRepLib::build_curve3d` 的**首个池外调用点是 `brep_tool_curve`**（不是写回路径）。
    实测链：`make_offset_shape` → `encode_regularity`（`brep_offset_make_offset_e.rs:992`）→ `brep_lib_build_curve3d_edge`（`brep_offset_make_offset.rs:278`）→ `BRepLib::build_curve3d` → **`brep_tool_curve(the_brep, an_edge)`（`build_curves3d.rs:677`）** → `BRep::edge_curve_world` → `BRep::edge`（`topods.rs:1799`）→ **`index out of bounds: the len is 16 but the index is 18446744073709551615`**（池外 `usize::MAX`）；4 例 = `offset_shape_type_i` **a3/a4/d2/d3**。
    **模板已在库**：kernel `topods::curve_on_surface_pool_free(&Shape,&Shape)`（`topods.rs:3955`）就是为同一批 offset 池外形状写的池外适配器 ⇒ 按 `BRep_Tool::Curve(E,L,f,l)` 再加一个同族池外读取（读 `the_e.data` 的 `TEdgeData.curve` + range），**不要**在 offset 里另写一份；然后逐个确认后续池依赖（`brep_tool_curve_on_surface_index` / `same_range` / `check_same_range` / 写回）。
