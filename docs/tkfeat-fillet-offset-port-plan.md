@@ -219,10 +219,10 @@ libs/rcad-algo/src/
 - [x] 1a ChFi2d（4,645）热身（Session 2 完成：7 文件 ~6,970 行；锚点单测留作阶段 2 资产；fillet2d 网格验收延至 4.1 生成器接入；已知缺口 = geom2d_gcc Circ2d2TanRad line×line/line×circle 分支 panic、ShapeAnalysis CheckSelfIntersection stub、BuildCurves3d no-op、ProjectPointOnCurve 私有桥）
 - [x] 1b ChFiDS 盘点补全（Session 2 完成：盘点表 + 3 新文件 633 行 + 20+ 方法补齐；NOT-IN-OCCT 5 项已标注待裁决；Law 机制 pending → 1e；Spine.prepare partial/Stripe.Reset 残缺/ElSpine 字段级 → 后续对齐）
 - [x] 1c ChFiKPart 标准例族（Session 2 完成：14/14 cxx 全翻，6 文件 5,795 行含 gp 支撑原语 940 行；缺口 = ProjLib_ProjectedCurve 缺（Sphere 非 iso 轮廓角 panic）、face U range 缺省回退 (0,2π)——已标注）
-- [ ] 1d DS 交互 BOPDS 重映射落地（0.4 映射表驱动；PointIterator/InterferenceIterator 等老 DS 迭代器 → BOPDS 等价实现，不再翻译）
+- [x] 1d DS 交互 BOPDS 重映射落地（**2026-09-12 对账勾选：已由 0.4 承接**——`topopebrepds.rs` 已退役（全库仅 `chfi3d_ds.rs:34` 头注释引用）、老 DS 迭代器 `PointIterator`/`InterferenceIterator`/`CurveExplorer` **仅存注释零活调用**、`chfi3d_ds.rs` 门面 30.8 KB 在位。此条原为 0.4 的落地分项，重复记于 Stage 1，现关闭）
 - [x] 1e BRepBlend/Blend/BlendFunc（Session 2 三批完成：批1 盘点+Law 闭合+Blend 核心；批2 traits+Extremity/PointOnRst/Line+kernel 缺口 5/5 补齐（GeomAdaptor/BSplCLib/GeomConvert/CSLib 全套带锚点）；批3 Walking 全主体 L143-2769 + AppSurf 家族 + Chamfer/ConstRad 全族 10 类型 + 双 LineBuilder 全函数体（含 OCCT L1545 字面 bug 保留）。余项 GAP 标注：Approx_SweepApproximation::perform、math_SVD 回退分支、GeomFill::GetCircle（独立批）、BlendSurfRstFunction::Pnt2dOnRst 与 BlendRstRstFunction::Decroch 两 trait 缺口（消费点站位））
 - [x] 1f ChFi3d 主体（36,532）——**两批完**（第一批：Builder_2 4,534 行 / CnCrn 5,668 行 / Builder_6 3,013 行 / ChBuilder 2,081 行，含 OCCT L3280 笔误 bug-compatible 保留与 10 个 Builder_0 缺失 helper 重宿主；第二批：chfi3d_perform.rs Perform 流（HBuilder 重建/同参数/SimulKPart/Sect/SetRegul + HBuilder 7 方法面）+ chfi_ds simul 槽 + SurfRst/RstRst 两 trait 缺口闭合 + W1-W10 主代理接线）。**余项（1g/审查期）**：builder_0 helper 迁回去重、1b NOT-IN-OCCT 清单审查、MapIndSo SHELL 缺口、IndexPointInDS UpdateVertex 缺口、HBuilder 7 方法 TKBO 本体（= 1g）
-- [ ] 1g HBuilder 门面 7 方法 TKBO 接线（hbuilder.rs；语义锚 = BOPAlgo_Builder/Splitter 等价路径，方法头标注 OCCT 行号 + D6 裁决 + TKBO 锚点）
+- [x] 1g HBuilder 门面 7 方法 TKBO 接线（**2026-09-12 对账：本条与 Stage 3 内的 1g 条目重复；以 Stage 3 的已勾条目为准**——Session 2 第五轮 hbuilder.rs 19→651 行，Perform 的 BuildVertices/BuildEdges/BuildFaces 三段 + merge_solid 驱动 rcad Splitter 管线 + 六表。语义锚 = BOPAlgo_Builder/Splitter 等价路径，方法头带 OCCT 行号 + D6 裁决 + TKBO 锚点）
 - [x] 1h BRepFilletAPI 门面 + FilletSurf（Session 2 第六轮：brep_fillet_api.rs 830→1,117 行——MakeFillet 6 处补缺含 W10 sect 接线、MakeChamfer 7 处、MakeFillet2d 整类 24 方法（委托 chfi2d_builder）；fillet_surf.rs 1,306 行全包（InternalBuilder+Builder 门面+全访问器，5 项 GAP 标注：PerformElSpine、ConstRad 的 BlendFunction 接线、ElSpine 近似曲线、Continuity 读回、IntPlanEdge）。blend 10 + chamfer 13 网格 + GTests 2 验收随 Stage 4）
 
 **Stage 2 TKOffset**
@@ -913,6 +913,25 @@ libs/rcad-algo/src/
   - **Trimmed 包装面在 FF 的类型分派**：`Surface3::Trimmed` 会让 plane×plane 走"other"臂产出 BSpline 截面线——任何按 surface type 分派的消费点都要先做 GeomAdaptor 语义的解包（与 E3-U featrevol 的 Trimmed 曲线未解包同族，第二次踩）。
   - **"队列项"先核实真身存在性**：`Extrema_ExtCF` 在 OCCT 根本不存在（BRepExtrema_ExtCF 的引擎是 Extrema_ExtCS 且已翻译）——立卡前 grep OCCT 源码确认类名，避免伪缺口占用队列。
   - **无 wire 的 `BRepLib_MakeFace(Pln,u,v)` 面的 bbox 唯一来源是曲面 UV 窗分支**——`surface_bounding_box` 缺分支 = VOID 盒 = 静默退出 BB 树，症状是"候选对为 0"而非显式错误；凡"零候选/空结果"先查 bbox。
+
+### E3-W 追加 13：三域推进的本轮落地 + **§7 勾选表对账（Stage 0–3 全部关闭）** + 下一轮四批计划（2026-09-12）
+
+- **本轮落地（5 批，rcad `f4fa8168`→`a4a4b0de` 7 提交 / 根 `360eef7`→`4f5306f` 4 提交，均未推送）**：
+  ① **feat Transform 链 1:1**（kernel `Trsf::set_rotation/set_translation/is_negative` + Plane::transform；新 `topalgo/brep_builderapi_transform.rs` = Perform 分支判定 + TrsfModification 附加步骤；featlf 居中肋 GAP 接通）；
+  ② **面级 BOP 三修复**（`bnd_lib` 的 `Trimmed(Plane)` 盒 = `GeomBndLib_Plane::Box`；`CutVehicle` 面级 root 回退；`try_project_direct` 的 (BSpline,Plane) 臂）；
+  ③ **`IntTools_FaceFace` 解包 RectangularTrimmed**（= `GeomAdaptor_Surface::Load` L423-431）；
+  ④ **并行批** BRepCheck_Analyzer 全家桶（8 文件 6,355 行）+ Extrema_ExtCC2d 链（5 文件 ~2,700 行）+ `brep_algo_is_valid` 真身（保索引 scratch 池）；
+  ⑤ **`Geom_BSplineSurface::UIso/VIso` 真身**（+ `BSplSLib::Iso` 与 **`BSplCLib::Eval` in-place 角切割 L865-870 重载**）修 tktopalgo 既有失败 + **`BSplineSurface` 补 OCCT 四标志**（periodic 存储 + rational = static `Rational` L110-138 访问器）。
+- **门槛（本轮终测，实测）**：lib **415/0/0** · kernel **689/0** · **tktopalgo 36/36**（原 35/1）· pavefiller **26/26** · builder_stage **76/76** + smoke **1/1** · 八网格 **8/8** 逐字不变。仍挂（off-gate，待立卡）：`tkg3d_gtests` 3 例 default-domain。
+- **域网格实测（口径修正：`*_geometry_loads` 是恒过占位，只数真实断言）**：fillet2d **10/10 + 2/2** ✓ · mkface_after_offset **4/4** ✓ · mkface_after_extsurf **32/32** ✓；blend_simple 0/11 · blend_complex 0/2 · featlf 0/15 · featprism 0/6 · featrevol 0/45 · featrf 0/5 · offset a/i/i_c/faces_i 0/1·0/12·0/19·0/8 · draft_angle 0/49 · thrusection_specific 0/26。
+- **★ §7 勾选表对账（本轮新增的文档卫生动作）**：发现并修正两处会误导新 session 的陈旧项——① **1g 重复**（Stage 1 未勾 + Stage 3 已勾，以已勾为准）；② **1d 与已勾的 0.4 语义重叠**（实测 `topopebrepds.rs` 已退役、老 DS 迭代器仅存注释 ⇒ 1d 已被 0.4 承接，勾选关闭）。
+  **对账结论：§7 已无未勾的翻译项——Stage 0–3 全部落地，剩余仅 `4.3 step-topo-diff 逐用例对齐转绿` 与 `4.4 收尾`。** 即下一轮的推进力来自本节队列，收敛目标正是 **4.3 的"域网格转绿"**。
+- **下一轮四批计划（详见 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`；产出写回本档）**：
+  1. **【主线】tkfeat：featlf 布尔分割面有效性**（通往 4.3 第一关）——12 例 sliding 已整条 init 管线零 panic 跑通，统一停在 `is_done`/`NoFaceProf`；根因 =（正确的）analyzer 判 rcad 布尔分割面无效（实测 `Edge InvalidPointOnCurve ×3` + `Face NotClosed` + `Face UnorientableShape`）。入口 = 追 `MakeSplitEdges`/`MakePCurves` 的 `edge.vertex_params` 与容差，对照 `BRepCheck_Edge::InContext`（L263-555）；OCCT 侧用 `occt_bool_runner` dump analyzer status 表逐边对齐。
+  2. **【并行】`Geom2dInt_GInter` 通用 2D 求交批**（一石二鸟）：清 `brep_feat_rib_slot.rs:466` 的非 line/line 臂，同时激活 analyzer 的 `Wire::SelfIntersect` / `Face::Intersect` GAP 臂；模板 = `chfi3d_builder_c2c.rs` 的 cncrn re-host。
+  3. **【并行】tkoffset 三件**：`GeomAPI_ProjectPointOnCurve` 真身（解 `trim_edge` 的 FindParameter 回退，锚 `make_offset_d.rs:609`）+ `ExtentEdge` 面盒延伸（`brep_offset_inter2d.rs`）+ `GeomInt_IntSS` 专批（~1,860 行；⚠ `loc_ope_split_drafts_b.rs:595` 的"真身"实为 deferred stub，从零翻译）。
+  4. **【并行】tkfillet a1 上游**：优先查 `SimulSurf`/`PerformSurf` 的 **44 处 pending-leaf stand-in**（`chfi3d_builder_2.rs:840/869`、`chfi3d_builder_2b.rs:76`，**0 调用者**，E3-Q 判为 a1 极可能根源）+ `ChFiKPart_ComputeData::Compute`（cxx **L94-106**）的 SD 构造与支撑面 pcurve。
+- **本轮新坑（完整 12 条见交接文档 §6，此处记最贵的 4 条）**：① **"零候选/空结果"先查 bbox**（无 wire 面的 UV 窗分支是唯一来源，缺分支即静默退树）；② **scratch 池必须保索引**（`Shape::null()` 的 index=usize::MAX 不是池索引，紧凑 DFS 序会让 `tshapes[index]` 全错位）；③ **Trimmed 包装面在按 surface-type 分派处必须先解包**（否则 plane×plane 出采样 BSpline 截面——第二次踩同族坑）；④ **`BSplCLib::Eval` 有两个重载**（`Iso` 用 L865 in-place 角切割，不是 L3640 基函数版；误用会索引越界）。
 
 
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
