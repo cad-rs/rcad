@@ -5,8 +5,10 @@
 //!   `rcad_kernel::geom::same_range_2d`; this module is the OCCT-signature
 //!   entry point (Tolerance first, `NewCurvePtr` out-parameter) used by the
 //!   BRepFill/offset callers, so a single implementation serves both.
-//! - ExtendSurfByLength (GeomLib.cxx L1485+) — extends a bounded surface
-//!   along an iso (consumed by BuildShell cxx L2334/L2341).
+//! - ExtendSurfByLength (GeomLib.cxx L1485-1972) — extends a bounded surface
+//!   along an iso (consumed by BuildShell cxx L2334/L2341). The 1:1 body is
+//!   `fillet::chfi3d_builder_c2_geomlib::geom_lib_extend_surf_by_length`;
+//!   this module is the OCCT-signature value-semantics entry point.
 
 use rcad_kernel::geom::{Curve2d, Surface3};
 
@@ -41,17 +43,29 @@ pub fn same_range(
     }
 }
 
-/// OCCT GeomLib::ExtendSurfByLength(BoundedSurface, Length, Contour,
-/// InU, After) (GeomLib.cxx L1485+).
+/// OCCT GeomLib::ExtendSurfByLength(BoundedSurface, Length, Continuity,
+/// InU, After) (GeomLib.cxx L1485-1972).
+///
+/// OCCT takes the surface by handle and extends it in place; rcad's value
+/// semantics return the (possibly extended) surface. The 1:1 body is
+/// `fillet::chfi3d_builder_c2_geomlib::geom_lib_extend_surf_by_length` (the
+/// same OCCT static, first translated for the fillet BuildShell callers), so
+/// a single implementation serves both; when it reports false the surface is
+/// left exactly as OCCT leaves it.
 pub fn extend_surf_by_length(
-    _surface: &Surface3,
-    _length: f64,
-    _contour: i32,
-    _in_u: bool,
-    _after: bool,
+    surface: &Surface3,
+    length: f64,
+    continuity: i32,
+    in_u: bool,
+    after: bool,
 ) -> Surface3 {
-    panic!(
-        "GAP: GeomLib::ExtendSurfByLength (TKGeomBase/GeomLib.cxx L1485+) is \
-         not translated — see file header (plan section 0.6)"
+    let mut extended = surface.clone();
+    crate::fillet::chfi3d_builder_c2_geomlib::geom_lib_extend_surf_by_length(
+        &mut extended,
+        length,
+        continuity,
+        in_u,
+        after,
     );
+    extended
 }
