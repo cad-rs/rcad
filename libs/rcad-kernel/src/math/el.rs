@@ -166,6 +166,117 @@ pub fn elclib_line_parameter_2d(p: glam::DVec2, origin: glam::DVec2, direction: 
     (p - origin).dot(direction)
 }
 
+// ---------------------------------------------------------------------------
+// OCCT ElCLib::To3d (ElCLib.cxx L1339-1440) — the 2D payloads lifted into the
+// 3D frame of a gp_Ax2 (passed as the kernel `Ax2`; its y_direction is the
+// `N ^ X` derived by the 3-argument gp_Ax2 constructor).
+// ---------------------------------------------------------------------------
+
+/// OCCT ElCLib::To3d(const gp_Ax2&, const gp_Pnt2d&) (ElCLib.cxx L1339-1346):
+/// `Vxy = XDirection*P.X + YDirection*P.Y + Location`.
+pub fn elclib_to3d_pnt(pos: &crate::math::gp::Ax2, p: glam::DVec2) -> DVec3 {
+    pos.x_direction * p.x + pos.y_direction * p.y + pos.location
+}
+
+/// OCCT ElCLib::To3d(const gp_Ax2&, const gp_Vec2d&) (ElCLib.cxx L1360-1370).
+pub fn elclib_to3d_vec(pos: &crate::math::gp::Ax2, v: glam::DVec2) -> DVec3 {
+    let vx = pos.x_direction * v.x;
+    let vy = pos.y_direction * v.y;
+    vx + vy
+}
+
+/// OCCT ElCLib::To3d(const gp_Ax2&, const gp_Ax22d&) (ElCLib.cxx L1381-1388):
+/// `gp_Ax2(P, VX.Crossed(VY), VX)` — the 3-argument gp_Ax2 constructor
+/// re-orthogonalizes VX against the new main direction and derives Y.
+pub fn elclib_to3d_ax22d(
+    pos: &crate::math::gp::Ax2,
+    location: glam::DVec2,
+    x_dir: glam::DVec2,
+    y_dir: glam::DVec2,
+) -> crate::math::gp::Ax2 {
+    let p = elclib_to3d_pnt(pos, location);
+    let vx = elclib_to3d_vec(pos, x_dir);
+    let vy = elclib_to3d_vec(pos, y_dir);
+    crate::math::gp::Ax2::new(p, vx.cross(vy), vx)
+}
+
+/// OCCT ElCLib::To3d(const gp_Ax2&, const gp_Lin2d&) (ElCLib.cxx L1391-1394).
+pub fn elclib_to3d_line(
+    pos: &crate::math::gp::Ax2,
+    origin: glam::DVec2,
+    direction: glam::DVec2,
+) -> crate::geom::Line3 {
+    crate::geom::Line3::new(elclib_to3d_pnt(pos, origin), elclib_to3d_vec(pos, direction))
+}
+
+/// OCCT ElCLib::To3d(const gp_Ax2&, const gp_Circ2d&) (ElCLib.cxx L1396-1399):
+/// `gp_Circ(To3d(Pos, C.Axis()), C.Radius())`.
+pub fn elclib_to3d_circle(
+    pos: &crate::math::gp::Ax2,
+    c: &crate::geom::Circle2d,
+) -> crate::geom::Circle3 {
+    let ax = elclib_to3d_ax22d(pos, c.center, c.x_dir, c.y_dir);
+    crate::geom::Circle3 {
+        center: ax.location,
+        normal: ax.direction,
+        x_dir: ax.x_direction,
+        // gp_Circ keeps the Ax2 the 3-argument constructor built: Y = N ^ X.
+        y_dir: ax.direction.cross(ax.x_direction),
+        radius: c.radius,
+    }
+}
+
+/// OCCT ElCLib::To3d(const gp_Ax2&, const gp_Elips2d&) (ElCLib.cxx L1401-1404).
+pub fn elclib_to3d_ellipse(
+    pos: &crate::math::gp::Ax2,
+    e: &crate::geom::Ellipse2d,
+) -> crate::geom::Ellipse3 {
+    let ax = elclib_to3d_ax22d(pos, e.center, e.major_dir, e.minor_dir);
+    crate::geom::Ellipse3 {
+        center: ax.location,
+        normal: ax.direction,
+        major_dir: ax.x_direction,
+        major_radius: e.major_radius,
+        minor_radius: e.minor_radius,
+    }
+}
+
+/// OCCT ElCLib::To3d(const gp_Ax2&, const gp_Hypr2d&) (ElCLib.cxx L1406-1410):
+/// `gp_Hypr(To3d(Pos, H.Axis()), H.MajorRadius(), H.MinorRadius())`. The
+/// rcad `Hyperbola2d` carries no minor direction, so the Ax22d Y direction
+/// uses the codebase conic convention (-major.y, major.x).
+pub fn elclib_to3d_hyperbola(
+    pos: &crate::math::gp::Ax2,
+    h: &crate::geom::Hyperbola2d,
+) -> crate::geom::Hyperbola3 {
+    let y_dir = glam::DVec2::new(-h.major_dir.y, h.major_dir.x);
+    let ax = elclib_to3d_ax22d(pos, h.center, h.major_dir, y_dir);
+    crate::geom::Hyperbola3 {
+        center: ax.location,
+        normal: ax.direction,
+        major_dir: ax.x_direction,
+        semi_major: h.semi_major,
+        semi_minor: h.semi_minor,
+    }
+}
+
+/// OCCT ElCLib::To3d(const gp_Ax2&, const gp_Parab2d&) (ElCLib.cxx L1412-1415):
+/// `gp_Parab(To3d(Pos, Prb.Axis()), Prb.Focal())`. Same convention note as
+/// the hyperbola overload.
+pub fn elclib_to3d_parabola(
+    pos: &crate::math::gp::Ax2,
+    p: &crate::geom::Parabola2d,
+) -> crate::geom::Parabola3 {
+    let y_dir = glam::DVec2::new(-p.axis_dir.y, p.axis_dir.x);
+    let ax = elclib_to3d_ax22d(pos, p.origin, p.axis_dir, y_dir);
+    crate::geom::Parabola3 {
+        vertex: ax.location,
+        normal: ax.direction,
+        axis_dir: ax.x_direction,
+        focal_param: p.focal_param,
+    }
+}
+
 /// OCCT ElCLib::InPeriod (ElCLib.cxx L95-111) — the value of U in the
 /// periodic range [UFirst, ULast].
 pub fn in_period(u: f64, ufirst: f64, ulast: f64) -> f64 {

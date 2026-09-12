@@ -580,16 +580,22 @@ impl BRepCheckAnalyzer {
     }
 }
 
-/// OCCT BRepCheck_Edge(E)::Tolerance() — GAP leaf (architecture difference
-/// #49): the edge validity tolerance.
-pub(crate) fn brep_check_edge_tolerance(_e: &Shape) -> f64 {
-    panic!("GAP: BRepCheck_Edge::Tolerance (TKTopAlgo/BRepCheck not translated)");
+/// OCCT BRepCheck_Edge(E)::Tolerance() (BRepCheck_Edge.cxx L598-707) — the
+/// edge validity tolerance. The 1:1 body is
+/// `topalgo::brep_check::brep_check_edge::BRepCheckEdge::tolerance`; this is
+/// the OCCT-signature entry point (`BRepCheck_Edge Check(E);
+/// Check.Tolerance()`).
+pub(crate) fn brep_check_edge_tolerance(the_brep: &BRep, e: &Shape) -> f64 {
+    crate::topalgo::brep_check::brep_check_analyzer::BRepCheckEdge::new(the_brep, e)
+        .tolerance(the_brep)
 }
 
-/// OCCT BRepCheck_Vertex(V)::Tolerance() — GAP leaf (architecture
-/// difference #49): the vertex validity tolerance.
-pub(crate) fn brep_check_vertex_tolerance(_v: &Shape) -> f64 {
-    panic!("GAP: BRepCheck_Vertex::Tolerance (TKTopAlgo/BRepCheck not translated)");
+/// OCCT BRepCheck_Vertex(V)::Tolerance() (BRepCheck_Vertex.cxx L343-383) —
+/// the vertex validity tolerance. The 1:1 body is
+/// `topalgo::brep_check::brep_check_analyzer::BRepCheckVertex::tolerance`.
+pub(crate) fn brep_check_vertex_tolerance(the_brep: &BRep, v: &Shape) -> f64 {
+    crate::topalgo::brep_check::brep_check_analyzer::BRepCheckVertex::new(the_brep, v)
+        .tolerance(the_brep)
 }
 
 /// OCCT BRepGProp::VolumeProperties(S, VProps, OnlyClosed) + GProp_GProps::

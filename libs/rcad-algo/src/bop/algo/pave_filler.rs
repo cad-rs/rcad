@@ -5432,7 +5432,15 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
         // L92: aCE1 = Curve(aE1, aT11, aT12)
         let [a_t11, a_t12] = ds.edge_range(dst_e);
         // L94: GeomLib::SameRange(aTolPPC, aC2DT, aT21, aT22, aT11, aT12, aC2DT)
-        let out = rcad_kernel::geom::same_range_2d(a_c2dt, a_t21, a_t22, a_t11, a_t12);
+        // (L93: aTolPPC = Precision::PConfusion()).
+        let out = rcad_kernel::geom::same_range_2d(
+            rcad_kernel::PCONFUSION,
+            a_c2dt,
+            a_t21,
+            a_t22,
+            a_t11,
+            a_t12,
+        );
         if std::env::var("RCAD_PCTRACE").is_ok() {
             let kind = |c: &rcad_kernel::geom::Curve2d| match c {
                 rcad_kernel::geom::Curve2d::Line(_) => "L",

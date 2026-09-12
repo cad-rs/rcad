@@ -430,3 +430,97 @@ pub fn extend_curve_to_point(
             .expect("GeomConvert_CompCurveToBSplineCurve::BSplineCurve (null)"),
     );
 }
+
+// ---------------------------------------------------------------------------
+// OCCT GeomLib::To3d (GeomLib.cxx L559-675) — lift a 2D curve into the 3D
+// frame of a gp_Ax2. The analytic overloads delegate to the kernel
+// `ElCLib::To3d` set of `rcad_kernel::math::el`.
+// ---------------------------------------------------------------------------
+
+/// OCCT `GeomLib::To3d(const gp_Ax2& Position, const Handle(Geom2d_Curve)&)`
+/// (GeomLib.cxx L559-675).
+///
+/// TrimmedCurve: recurse into the basis and re-trim (L565-573);
+/// OffsetCurve: recurse and rebuild `Geom_OffsetCurve(CC, Offset,
+/// Position.Direction())` (L574-581); Bezier / BSpline: map the poles through
+/// `ElCLib::To3d` keeping the weights / knots / degree (L582-636); Line /
+/// Circle / Ellipse / Parabola / Hyperbola: the `ElCLib::To3d` frame lift
+/// (L637-671). Any other type raises `Standard_NotImplemented` in OCCT
+/// (L672-674).
+///
+/// Architecture difference: the rcad `BSplineCurve2` carries no periodicity
+/// flag, so the 3D `is_periodic` is derived from the knot structure (the same
+/// predicate `rcad_kernel::math::bspl::bspline_is_periodic` uses for the OCCT
+/// accessor).
+pub fn to_3d(position: &rcad_kernel::math::gp::Ax2, curve2d: &rcad_kernel::geom::Curve2d) -> Option<Curve3> {
+    use rcad_kernel::math::el::{
+        elclib_to3d_circle, elclib_to3d_ellipse, elclib_to3d_hyperbola, elclib_to3d_line,
+        elclib_to3d_parabola, elclib_to3d_pnt,
+    };
+    use rcad_kernel::geom::Curve2d as C2d;
+    match curve2d {
+        // L565-573: TrimmedCurve — recurse, then re-trim.
+        C2d::Trimmed(tc) => {
+            let cc = to_3d(position, &tc.curve)?;
+            Some(Curve3::Trimmed(rcad_kernel::geom::TrimmedCurve3::new(
+                cc,
+                tc.t_min,
+                tc.t_max,
+            )))
+        }
+        // L574-581: OffsetCurve.
+        C2d::Offset(co) => {
+            let cc = to_3d(position, &co.basis)?;
+            Some(Curve3::Offset(rcad_kernel::geom::OffsetCurve3 {
+                basis: Box::new(cc),
+                offset_distance: co.offset_distance,
+                offset_dir: position.direction,
+            }))
+        }
+        // L582-601: BezierCurve — pole mapping, weights kept.
+        C2d::Bezier(b) => {
+            let poles: Vec<DVec3> = b
+                .control_points
+                .iter()
+                .map(|p| elclib_to3d_pnt(position, *p))
+                .collect();
+            Some(Curve3::Bezier(BezierCurve3 {
+                control_points: poles,
+                weights: b.weights.clone(),
+            }))
+        }
+        // L603-636: BSplineCurve — pole mapping; degree / knots / weights are
+        // carried by the rcad BSplineCurve2 storage (the flat knot vector
+        // expands the OCCT multiplicities).
+        C2d::BSpline(b) => {
+            let poles: Vec<DVec3> = b
+                .control_points
+                .iter()
+                .map(|p| elclib_to3d_pnt(position, *p))
+                .collect();
+            Some(Curve3::BSpline(rcad_kernel::geom::BSplineCurve3 {
+                degree: b.degree,
+                knots: b.knots.clone(),
+                control_points: poles,
+                weights: b.weights.clone(),
+                is_periodic: rcad_kernel::math::bspl::bspline_is_periodic(&b.knots, b.degree),
+            }))
+        }
+        // L637-643: Line2d.
+        C2d::Line(l) => Some(Curve3::Line(elclib_to3d_line(
+            position,
+            l.origin,
+            l.direction,
+        ))),
+        // L644-651: Circle2d.
+        C2d::Circle(c) => Some(Curve3::Circle(elclib_to3d_circle(position, c))),
+        // L652-659: Ellipse2d.
+        C2d::Ellipse(e) => Some(Curve3::Ellipse(elclib_to3d_ellipse(position, e))),
+        // L660-666: Parabola2d.
+        C2d::Parabola(p) => Some(Curve3::Parabola(elclib_to3d_parabola(position, p))),
+        // L667-671: Hyperbola2d.
+        C2d::Hyperbola(h) => Some(Curve3::Hyperbola(elclib_to3d_hyperbola(position, h))),
+        // L672-674: throw Standard_NotImplemented().
+        _ => panic!("Standard_NotImplemented: GeomLib::To3d (GeomLib.cxx L672-674)"),
+    }
+}

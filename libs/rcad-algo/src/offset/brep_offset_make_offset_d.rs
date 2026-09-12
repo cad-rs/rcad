@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use glam::DVec3;
 use rcad_kernel::geom::{CurveEval, Curve3, Surface3};
-use rcad_kernel::topo::topods::{Orientation, ShapeType, TShape};
+use rcad_kernel::topo::topods::{BRep, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 
 use super::brep_offset_inter2d_b::BRepOffsetInter2d;
@@ -113,6 +113,7 @@ fn gp_pln_square_distance(the_plane: &rcad_kernel::geom::Plane, p: DVec3) -> f64
 
 /// OCCT UpdateTolerance (cxx L4196-4302).
 pub(crate) fn update_tolerance(
+    the_brep: &BRep,
     s: &mut Shape,
     faces: &OcctIndexedShapeMap,
     the_init_shape: &Shape,
@@ -172,8 +173,10 @@ pub(crate) fn update_tolerance(
                 // OCCT L4277: E.Locked(false).
                 set_locked(&mut e, false);
                 // OCCT L4278-4279: BRepCheck_Edge EdgeCorrector(E); Tol =
-                // EdgeCorrector.Tolerance() (GAP leaf, arch. diff. #49).
-                tol = brep_check_edge_tolerance(&e);
+                // EdgeCorrector.Tolerance().
+                tol = super::brep_offset_make_offset::brep_check_edge_tolerance(
+                    the_brep, &e,
+                );
                 if tol > a_curr_tol {
                     update_edge_tolerance_host(&mut e, tol);
                     is_updated = true;
@@ -197,7 +200,7 @@ pub(crate) fn update_tolerance(
                         // (TV->ChangePoints()).Clear() — the rcad
                         // TShape::Vertex make_mut edits (arch. diff. #22).
                         set_vertex_tolerance(&mut v, 0.);
-                        let vertex_tol = brep_check_vertex_tolerance(&v);
+                        let vertex_tol = brep_check_vertex_tolerance(the_brep, &v);
                         update_vertex_tolerance_host(&mut v, vertex_tol);
                         clear_vertex_points(&mut v);
                     }

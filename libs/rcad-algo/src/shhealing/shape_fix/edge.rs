@@ -421,24 +421,27 @@ fn geom2d_bezier_segment_gap(bezier: &Curve2d, _u1: f64, _u2: f64) -> Curve2d {
     bezier.clone()
 }
 
-/// GAP: OCCT GeomLib::SameRange(Tolerance, CurvePtr, FirstOnCurve,
-/// LastOnCurve, RequestedFirst, RequestedLast, NewCurvePtr)
-/// (TKGeomBase/GeomLib/GeomLib.cxx L842-967) — reparametrizes/segments the
-/// pcurve onto the requested range (line translation, conic rotation, or the
-/// Geom2dConvert::CurveToBSplineCurve + BSplCLib::Reparametrize walk).
-/// Pending the TKGeomBase GeomLib/Geom2dConvert batch (the geomalgo
-/// `geom_lib_same_range.rs` GAP carries the same anchor); the GAP returns
-/// the input curve unchanged (documented deviation source: no
-/// reparametrization).
-fn geom_lib_same_range_gap(
-    _tolerance: f64,
+/// OCCT GeomLib::SameRange(Tolerance, CurvePtr, FirstOnCurve, LastOnCurve,
+/// RequestedFirst, RequestedLast, NewCurvePtr) (GeomLib.cxx L842-970) — the
+/// 1:1 body is the kernel `rcad_kernel::geom::same_range_2d`; this is the
+/// OCCT-signature entry point consumed by TempSameRange (ShapeFix_Edge.cxx
+/// L418/L447).
+fn geom_lib_same_range(
+    tolerance: f64,
     curve2d: &Curve2d,
-    _first_on_curve: f64,
-    _last_on_curve: f64,
-    _requested_first: f64,
-    _requested_last: f64,
+    first_on_curve: f64,
+    last_on_curve: f64,
+    requested_first: f64,
+    requested_last: f64,
 ) -> Curve2d {
-    curve2d.clone()
+    crate::geomalgo::geom_lib_same_range::same_range(
+        tolerance,
+        curve2d,
+        first_on_curve,
+        last_on_curve,
+        requested_first,
+        requested_last,
+    )
 }
 
 /// OCCT static TempSameRange (ShapeFix_Edge.cxx L329-464) — a copy of
@@ -563,7 +566,7 @@ fn temp_same_range(brep: &mut BRep, an_edge: &Shape, tolerance: f64) {
                     // L418-424: GeomLib::SameRange(Tolerance, Curve2dPtr,
                     // oldFirstCurve1, oldLastCurve1, current_first,
                     // current_last, NewCurve2dPtr).
-                    let new_curve2d_ptr = geom_lib_same_range_gap(
+                    let new_curve2d_ptr = geom_lib_same_range(
                         tolerance,
                         &c2d,
                         old_first_curve1,
@@ -592,7 +595,7 @@ fn temp_same_range(brep: &mut BRep, an_edge: &Shape, tolerance: f64) {
                     }
 
                     // L447-453: GeomLib::SameRange(..., NewCurve2dPtr2).
-                    let new_curve2d_ptr2 = geom_lib_same_range_gap(
+                    let new_curve2d_ptr2 = geom_lib_same_range(
                         tolerance,
                         &c2d2,
                         old_first_curve2,

@@ -53,6 +53,61 @@ impl BRepCheckVertex {
         }
     }
 
+    /// OCCT BRepCheck_Vertex::Tolerance() (Vertex.cxx L343-383).
+    ///
+    /// Starts from the stored vertex tolerance squared, then widens it to the
+    /// largest squared gap between the vertex point and the position given by
+    /// its point representations; the result is `sqrt(Tol * 1.05)` (note this
+    /// OCCT margin scheme differs from BRepCheck_Edge::Tolerance, which is
+    /// `sqrt(max) * 1.05`).
+    ///
+    /// Architecture difference: rcad's `PointRepresentation` carries the
+    /// PointOnCurve / PointOnSurface kinds only — OCCT's PointOnCurveOnSurface
+    /// kind and the per-representation Location are not modelled, so those
+    /// representations contribute nothing here.
+    pub fn tolerance(&self, brep: &BRep) -> f64 {
+        let my_shape = self.base.my_shape.clone();
+        let Some(vd) = my_shape.as_vertex() else {
+            return 0.0;
+        };
+        let prep = vd.point;
+        // L349-350: Tol = BRep_Tool::Tolerance(V); Tol *= Tol.
+        let mut tol = vd.tolerance;
+        tol *= tol;
+        // L352-354: Controlp starts at the vertex point.
+        let mut controlp = prep;
+        for pr in &vd.points {
+            match pr {
+                rcad_kernel::topods::PointRepresentation::PointOnCurve {
+                    curve, parameter, ..
+                } => {
+                    // L359-365: IsPointOnCurve, non-null curve.
+                    if let Some(TShape::Edge(ed)) = brep.tshapes.get(*curve).map(|ts| ts.as_ref()) {
+                        if let Some(c) = &ed.curve {
+                            controlp = CurveEval::point_at(c, *parameter);
+                        }
+                    }
+                }
+                rcad_kernel::topods::PointRepresentation::PointOnSurface { face, u, v, .. } => {
+                    // L366-370: IsPointOnCurveOnSurface — the pcurve value
+                    // evaluated on the surface.
+                    if let Some(TShape::Face(fd)) = brep.tshapes.get(*face).map(|ts| ts.as_ref()) {
+                        if let Some(s) = &fd.surface {
+                            controlp = rcad_kernel::geom::SurfaceEval::point_at(s, *u, *v);
+                        }
+                    }
+                }
+            }
+            // L374-378: the squared gap against the vertex point.
+            let d2 = prep.distance_squared(controlp);
+            if d2 > tol {
+                tol = d2;
+            }
+        }
+        // L382.
+        (tol * 1.05).sqrt()
+    }
+
     /// OCCT BRepCheck_Vertex::InContext (Vertex.cxx L66-285).
     pub fn in_context(&mut self, brep: &BRep, s: &Shape) {
         // OCCT L68-83: bound check under the (parallel) lock.

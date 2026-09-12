@@ -2019,9 +2019,16 @@ pub fn reverse_curve2d(curve: &Curve2d) -> Curve2d {
 /// geometry.  Line: translation by dU*D (L864-871); Circle: rotation (L872-889);
 /// TrimmedCurve: recurse into the basis and re-trim (L890-901); other types:
 /// CurveToBSplineCurve + BSplCLib::Reparametrize (L908-922, L924-969).
-pub fn same_range_2d(c: Curve2d, x1: f64, x2: f64, y1: f64, y2: f64) -> Option<Curve2d> {
+pub fn same_range_2d(
+    tolerance: f64,
+    c: Curve2d,
+    x1: f64,
+    x2: f64,
+    y1: f64,
+    y2: f64,
+) -> Option<Curve2d> {
     use crate::geom::Curve2dEval;
-    let tol = 1e-7;
+    let tol = tolerance;
     // L854-859: ranges already equal -> the curve itself.
     if (x2 - y2).abs() <= tol && (x1 - y1).abs() <= tol {
         return Some(c);
@@ -2045,63 +2052,67 @@ pub fn same_range_2d(c: Curve2d, x1: f64, x2: f64, y1: f64, y2: f64) -> Option<C
             }
             // L890-901: recurse into the basis, re-trim to [Y1,Y2].
             Curve2d::Trimmed(tc) => {
-                let b = same_range_2d(*tc.curve, x1, x2, y1, y2)?;
+                let b = same_range_2d(tolerance, *tc.curve, x1, x2, y1, y2)?;
                 Some(Curve2d::Trimmed(TrimmedCurve2 {
                     curve: Box::new(b),
                     t_min: y1,
                     t_max: y2,
                 }))
             }
-            // L908-922: TrimmedCurve(X1,X2) -> BSpline -> Reparametrize knots.
+            // L902-922: guarded conversion — TrimmedCurve(X1,X2) -> BSpline ->
+            // BSplCLib::Reparametrize(RequestedFirst, RequestedLast, Knots).
             other => {
-                let tc = Curve2d::Trimmed(TrimmedCurve2 {
-                    curve: Box::new(other),
-                    t_min: x1,
-                    t_max: x2,
-                });
-                let mut bs = curve_to_bspline_2d(&tc)?;
-                let k0 = bs.knots.first().copied().unwrap_or(0.0);
-                let k1 = bs.knots.last().copied().unwrap_or(1.0);
-                if (k1 - k0).abs() > 1e-30 {
-                    bs.knots = bs
-                        .knots
-                        .iter()
-                        .map(|k| y1 + (y2 - y1) * (k - k0) / (k1 - k0))
-                        .collect();
+                if (x2 - x1).abs() > crate::core::precision::PCONFUSION
+                    || (y2 + y1).abs() > crate::core::precision::PCONFUSION
+                {
+                    let tc = Curve2d::Trimmed(TrimmedCurve2 {
+                        curve: Box::new(other),
+                        t_min: x1,
+                        t_max: x2,
+                    });
+                    let mut bs = curve_to_bspline_2d(&tc)?;
+                    crate::math::bspl_lib::reparametrize(y1, y2, &mut bs.knots);
+                    return Some(Curve2d::BSpline(bs));
                 }
-                Some(Curve2d::BSpline(bs))
+                // OCCT leaves NewCurvePtr untouched (the caller's null
+                // handle) when both parametric extents are below PConfusion.
+                None
             }
         }
     } else {
-        // L924-969: segment the curve, then BSpline + Reparametrize.
-        let tc = {
-            let [f0, f1] = c.default_domain();
+        // L924-969: segment the curve, then BSpline + Reparametrize. The
+        // PERIODIC basis keeps the requested bounds (any parameter is valid);
+        // a non-periodic basis clips them to its own domain.
+        let a_c_check_periodic = {
+            let basis: &Curve2d = match &c {
+                Curve2d::Trimmed(tc) => &tc.curve,
+                other => other,
+            };
+            basis.is_periodic()
+        };
+        let [f0, f1] = c.default_domain();
+        let (t_min, t_max) = if a_c_check_periodic {
+            if (x2 - x1).abs() > crate::core::precision::PCONFUSION {
+                (x1, x2)
+            } else {
+                (f0, f1)
+            }
+        } else {
             let u_deb = f0.max(x1);
             let u_fin = f1.min(x2);
-            if (u_fin - u_deb).abs() > tol {
-                Curve2d::Trimmed(TrimmedCurve2 {
-                    curve: Box::new(c),
-                    t_min: u_deb,
-                    t_max: u_fin,
-                })
+            if (u_fin - u_deb).abs() > crate::core::precision::PCONFUSION {
+                (u_deb, u_fin)
             } else {
-                Curve2d::Trimmed(TrimmedCurve2 {
-                    curve: Box::new(c),
-                    t_min: f0,
-                    t_max: f1,
-                })
+                (f0, f1)
             }
         };
+        let tc = Curve2d::Trimmed(TrimmedCurve2 {
+            curve: Box::new(c),
+            t_min,
+            t_max,
+        });
         let mut bs = curve_to_bspline_2d(&tc)?;
-        let k0 = bs.knots.first().copied().unwrap_or(0.0);
-        let k1 = bs.knots.last().copied().unwrap_or(1.0);
-        if (k1 - k0).abs() > 1e-30 {
-            bs.knots = bs
-                .knots
-                .iter()
-                .map(|k| y1 + (y2 - y1) * (k - k0) / (k1 - k0))
-                .collect();
-        }
+        crate::math::bspl_lib::reparametrize(y1, y2, &mut bs.knots);
         Some(Curve2d::BSpline(bs))
     }
 }

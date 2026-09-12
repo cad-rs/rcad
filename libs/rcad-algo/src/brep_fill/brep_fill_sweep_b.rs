@@ -768,7 +768,7 @@ pub(super) fn update_edge_on_plane(brep: &mut BRep, f: &Shape, e: &Shape, _bb: &
     // BB.UpdateEdge(E, C2d, S, Loc, Tol);
     update_edge_pcurve_on_surf(brep, e, &c2d, &s, 0, tol);
     // BRepCheck_Edge Check(E); Tol = std::max(Tol, Check.Tolerance());
-    tol = tol.max(brep_check_edge_tolerance(brep, e, &c2d, &s));
+    tol = tol.max(brep_check_edge_tolerance(brep, e));
     // BB.UpdateEdge(E, Tol);
     BRepBuilder::new().update_edge_tolerance(brep, e.clone(), tol);
     // TopoDS_Vertex V; Tol *= 1.01;
@@ -787,22 +787,14 @@ pub(super) fn update_edge_on_plane(brep: &mut BRep, f: &Shape, e: &Shape, _bb: &
     }
 }
 
-/// OCCT BRepCheck_Edge::Tolerance (BRepCheck_Edge.cxx) — the max deviation
-/// between the 3d curve and the pcurve representation; carried through the
-/// kernel sampling carrier of GeomLib_CheckCurveOnSurface (plan section 0.6).
-fn brep_check_edge_tolerance(brep: &BRep, e: &Shape, pc: &Curve2d, s: &Surface3) -> f64 {
-    let _ = brep;
-    let ed = brep.edge(e.clone());
-    if let Some(c3d) = &ed.curve {
-        let (tf, tl) = curve2d_param_bounds(pc);
-        let mut check = rcad_kernel::base::geom_lib::CheckCurveOnSurface::with_curve(c3d, 0.0);
-        check.perform(c3d, pc, s);
-        if check.is_done() {
-            let _ = (tf, tl);
-            return check.max_distance();
-        }
-    }
-    0.0
+/// OCCT `BRepCheck_Edge Check(E); Tol = std::max(Tol, Check.Tolerance());`
+/// (BRepCheck_Edge.cxx L598-707) — the 1:1 body is
+/// `topalgo::brep_check::brep_check_analyzer::BRepCheckEdge::tolerance`,
+/// which walks the edge's own representations (the pcurve written by the
+/// preceding `UpdateEdge(E, C2d, S, Loc, Tol)` is one of them).
+fn brep_check_edge_tolerance(brep: &BRep, e: &Shape) -> f64 {
+    crate::topalgo::brep_check::brep_check_analyzer::BRepCheckEdge::new(brep, e)
+        .tolerance(brep)
 }
 
 // ---------------------------------------------------------------------------

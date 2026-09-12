@@ -981,14 +981,25 @@ fn builder_same_range(the_brep: &mut BRep, the_e: &Shape, the_b: bool) {
 }
 
 // ---------------------------------------------------------------------------
-// GeomLib GAP carriers (TKGeomBase/GeomLib) — the translated bodies do not
-// exist yet; the OCCT failure paths are preserved (the null handles make
-// BuildCurve3d return false at the OCCT null checks L363 and L436).
+// GeomLib (TKGeomBase/GeomLib): To3d is translated
+// (`geomalgo::geom_lib::to_3d`). BuildCurve3d's plane branch (cxx L1091-1114)
+// delegates to it through `geom_lib_to_3d`, so the OCC L363 null check no
+// longer trips on the GAP; the remaining branches are still carriers whose
+// OCCT failure paths are preserved (the null handles make BuildCurve3d return
+// false at the OCCT null checks L363 and L436).
 // ---------------------------------------------------------------------------
 
-/// OCCT GeomLib::To3d(Axes, Ptr2d) (GeomLib.cxx To3d) — GAP carrier.
-fn geom_lib_to_3d(_the_axes: &GpAx2, _the_ptr2d: &Curve2d) -> Option<Curve3> {
-    panic!("GAP: GeomLib::To3d (TKGeomBase/GeomLib not translated)")
+/// OCCT GeomLib::To3d(Axes, Ptr2d) (GeomLib.cxx L559-675) — the 1:1 body is
+/// `geomalgo::geom_lib::to_3d`; this is the OCCT-signature entry point over
+/// the local gp_Ax2 view (the rcad `Ax2` derives its Y direction as `N ^ X`,
+/// the same construction the OCCT body relies on).
+fn geom_lib_to_3d(the_axes: &GpAx2, the_ptr2d: &Curve2d) -> Option<Curve3> {
+    let ax = rcad_kernel::math::gp::Ax2::new(
+        the_axes.location,
+        the_axes.direction,
+        the_axes.x_direction,
+    );
+    crate::geomalgo::geom_lib::to_3d(&ax, the_ptr2d)
 }
 
 /// OCCT GeomLib::BuildCurve3d(Tolerance, CurveOnSurface, First, Last,

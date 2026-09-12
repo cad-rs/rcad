@@ -246,6 +246,7 @@ impl BRepOffsetMakeOffset {
             if self.my_thickening {
                 let mut my_offset_shape = self.my_offset_shape.clone();
                 super::brep_offset_make_offset_d::update_tolerance(
+                    &self.my_brep,
                     &mut my_offset_shape,
                     &self.my_faces,
                     &self.my_shape,
@@ -255,6 +256,7 @@ impl BRepOffsetMakeOffset {
                 let a_dummy = Shape::null();
                 let mut my_offset_shape = self.my_offset_shape.clone();
                 super::brep_offset_make_offset_d::update_tolerance(
+                    &self.my_brep,
                     &mut my_offset_shape,
                     &self.my_faces,
                     &a_dummy,

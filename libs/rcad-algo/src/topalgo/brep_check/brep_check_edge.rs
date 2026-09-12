@@ -52,6 +52,14 @@ impl HCurveAdaptor {
             HCurveAdaptor::OnSurface(c) => c.last_parameter(),
         }
     }
+
+    /// OCCT Adaptor3d_Curve::Value(U).
+    pub fn value(&self, the_u: f64) -> glam::DVec3 {
+        match self {
+            HCurveAdaptor::Curve3d(c) => c.value(the_u),
+            HCurveAdaptor::OnSurface(c) => c.value(the_u),
+        }
+    }
 }
 
 /// The three BRepLib_ValidateEdge call sites in InContext(FACE).
@@ -322,6 +330,134 @@ impl BRepCheckEdge {
             // OCCT L257.
             self.base.my_min = true;
         }
+    }
+
+    /// OCCT BRepCheck_Edge::Tolerance() (Edge.cxx L598-707).
+    ///
+    /// Collects every representation of the edge as a 3D-samplable adaptor
+    /// (the 3D curve, the pcurves, the seam pcurves), samples NCONTROL
+    /// parameters along [First, Last] and returns the maximal representation
+    /// gap with the OCCT 5% margin. An edge carrying at most one
+    /// representation yields `Precision::Confusion()`; an infinite sampled
+    /// coordinate yields `Precision::Infinite()`.
+    ///
+    /// The OCCT location composition is preserved: the 3D-curve and the first
+    /// pcurve use `myShape.Location() * cr->Location()`, while the seam
+    /// pcurve uses `cr->Location()` alone (Edge.cxx L669).
+    pub fn tolerance(&self, brep: &BRep) -> f64 {
+        use rcad_kernel::core::precision::{is_infinite_value, CONFUSION, INFINITE_VALUE};
+        let my_shape = self.base.my_shape.clone();
+        // L601-604: nbRep = TE->Curves().Extent(); <= 1 -> Confusion().
+        let reps = edge_curve_reps(brep, &my_shape);
+        let mut nb_rep = reps.len() as i32;
+        if nb_rep <= 1 {
+            return CONFUSION;
+        }
+        // L606-614: First / Last (myHCurve when loaded, else the edge range).
+        let (first, last) = match &self.my_h_curve {
+            Some(h) => (h.first_parameter(), h.last_parameter()),
+            None => match my_shape.as_edge() {
+                Some(ed) => (ed.range[0], ed.range[1]),
+                None => (0.0, 1.0),
+            },
+        };
+        // L616-618: NCollection_Array1(1, nbRep*2) — 1-based slots.
+        let mut the_rep: Vec<Option<HCurveAdaptor>> = vec![None; (nb_rep * 2) as usize + 1];
+        let degenerated = my_shape.as_edge().map(|ed| ed.degenerated).unwrap_or(false);
+        let mut i_rep: i32 = 1;
+        // L620-683: the representation walk.
+        for cr in &reps {
+            match cr {
+                EdgeCurveRep::Curve3D { curve, location } if !degenerated => {
+                    // L631-642: Loc = myShape.Location() * cr->Location().
+                    let loc = location_matrix(brep, my_shape.location, *location);
+                    let c3d = transform_curve(curve, &loc);
+                    let gac = GeomAdaptorCurve::new(c3d, first, last);
+                    // The OCCT slot dance (L636-641): a later 3D curve moves
+                    // the previous slot-1 adaptor into its own slot and takes
+                    // slot 1 (the reference the sampling loop reads).
+                    let mut it = i_rep;
+                    if i_rep > 1 {
+                        the_rep[i_rep as usize] = the_rep[1].clone();
+                        it = 1;
+                    }
+                    the_rep[it as usize] = Some(HCurveAdaptor::Curve3d(gac));
+                    i_rep += 1;
+                }
+                EdgeCurveRep::CurveOnSurface { pcurve, location, .. }
+                | EdgeCurveRep::CurveOnClosedSurface { pcurve1: pcurve, location, .. } => {
+                    let Some(sref) = self.resolve_cref_surface(brep, cr) else {
+                        // The owning face is not in this pool — the adaptor
+                        // cannot be built (the OCCT else accounting).
+                        nb_rep -= 1;
+                        continue;
+                    };
+                    // L643-661: Sref transformed by myShape.Location() * cr->Location().
+                    let loc = location_matrix(brep, my_shape.location, *location);
+                    let sref = transform_surface(&sref, &loc);
+                    let ghpc = Geom2dAdaptorCurve::new(pcurve.clone(), first, last);
+                    let gahs = GeomAdaptorSurface::new(sref);
+                    the_rep[i_rep as usize] =
+                        Some(HCurveAdaptor::OnSurface(Adaptor3dCurveOnSurface::new(ghpc, gahs)));
+                    i_rep += 1;
+                    // L662-672: the seam pcurve2 — surface transformed by
+                    // cr->Location() ALONE.
+                    if let EdgeCurveRep::CurveOnClosedSurface { pcurve2, .. } = cr {
+                        let Some(sref2) = self.resolve_cref_surface(brep, cr) else {
+                            nb_rep -= 1;
+                            continue;
+                        };
+                        let loc2 = location_matrix(brep, 0, *location);
+                        let sref2 = transform_surface(&sref2, &loc2);
+                        let ghpc2 = Geom2dAdaptorCurve::new(pcurve2.clone(), first, last);
+                        let gahs2 = GeomAdaptorSurface::new(sref2);
+                        the_rep[i_rep as usize] =
+                            Some(HCurveAdaptor::OnSurface(Adaptor3dCurveOnSurface::new(ghpc2, gahs2)));
+                        i_rep += 1;
+                        nb_rep += 1;
+                    }
+                }
+                _ => {
+                    // L680-682: neither a usable 3D curve nor a curve on
+                    // surface (degenerated 3D curve, regularity, unresolved).
+                    nb_rep -= 1;
+                }
+            }
+        }
+        // L674-702: the NCONTROL samples; the reference is slot 1.
+        let mut tol_cal = 0.0f64;
+        for i in 0..NCONTROL {
+            let prm = ((NCONTROL - 1 - i) as f64 * first + i as f64 * last)
+                / (NCONTROL - 1) as f64;
+            let Some(reference) = the_rep[1].as_ref() else {
+                return INFINITE_VALUE;
+            };
+            let center = reference.value(prm);
+            if is_infinite_value(center.x)
+                || is_infinite_value(center.y)
+                || is_infinite_value(center.z)
+            {
+                return INFINITE_VALUE;
+            }
+            for i_rep2 in 2..=nb_rep {
+                let Some(other) = the_rep[i_rep2 as usize].as_ref() else {
+                    continue;
+                };
+                let other_p = other.value(prm);
+                if is_infinite_value(other_p.x)
+                    || is_infinite_value(other_p.y)
+                    || is_infinite_value(other_p.z)
+                {
+                    return INFINITE_VALUE;
+                }
+                let dist2 = center.distance_squared(other_p);
+                if dist2 > tol_cal {
+                    tol_cal = dist2;
+                }
+            }
+        }
+        // L705-706: the 5% margin.
+        tol_cal.sqrt() * 1.05
     }
 
     /// The surface value of the reference pcurve representation (OCCT
