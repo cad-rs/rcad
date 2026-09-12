@@ -940,6 +940,26 @@ fn surface_u_iso(surf: &Surface3, param: f64) -> Curve3 {
             r.axis_dir,
             param,
         ),
+        // OCCT Geom_BSplineSurface::UIso (Geom_BSplineSurface_1.cxx L598-635):
+        // BSplSLib::Iso on the U direction; the result curve's knots and
+        // degree are the V direction's.
+        Surface3::BSpline(b) => {
+            let (cpoles, cweights) = bspl_lib::bspl_slib_iso(
+                param,
+                true,
+                b.degree_u,
+                &b.knots_u,
+                &b.control_points,
+                &b.weights,
+            );
+            Curve3::BSpline(BSplineCurve3 {
+                degree: b.degree_v,
+                knots: b.knots_v.clone(),
+                control_points: cpoles,
+                weights: cweights,
+                is_periodic: false,
+            })
+        }
         _ => panic!("GAP: Geom_Surface::UIso not translated for this surface type"),
     }
 }
@@ -976,6 +996,26 @@ fn surface_v_iso(surf: &Surface3, param: f64) -> Curve3 {
             t.minor_radius,
             param,
         )),
+        // OCCT Geom_BSplineSurface::VIso (Geom_BSplineSurface_1.cxx L775-812):
+        // BSplSLib::Iso on the V direction; the result curve's knots and
+        // degree are the U direction's.
+        Surface3::BSpline(b) => {
+            let (cpoles, cweights) = bspl_lib::bspl_slib_iso(
+                param,
+                false,
+                b.degree_v,
+                &b.knots_v,
+                &b.control_points,
+                &b.weights,
+            );
+            Curve3::BSpline(BSplineCurve3 {
+                degree: b.degree_u,
+                knots: b.knots_u.clone(),
+                control_points: cpoles,
+                weights: cweights,
+                is_periodic: false,
+            })
+        }
         // OCCT Geom_SurfaceOfRevolution::VIso (cxx L383-410): the circle of the
         // basis point at V about the axis.  Rad = distance from the axis; the
         // circle frame is gp_Ax2(C, direction, D) where C is the projection of

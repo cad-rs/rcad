@@ -2067,6 +2067,162 @@ pub fn pole_index(degree: usize, index: i32, periodic: bool, mults: &[i32]) -> i
     pindex
 }
 
+/// OCCT BSplSLib::Iso (BSplSLib.cxx L1617-1740) — the poles of the
+/// isoparametric curve at `param` along the U direction (`is_u`) or the V
+/// direction, evaluated per pole row/column through the de Boor scheme
+/// (`BSplCLib::Eval` on the local (Degree+1) window).
+///
+/// The rcad `BSplineSurface` stores multiplicity-expanded (flat) knot
+/// vectors, which is OCCT's `Mults == NoMults()` form; the weights travel
+/// with the grid (1.0 for non-rational), so the rational arm follows the
+/// OCCT `Weights != null` path with dim = 4.  `periodic` is false — the
+/// rcad surface model carries no periodic flag.  Returns the curve poles
+/// and their weights (all 1.0 for the non-rational case).
+#[allow(clippy::too_many_arguments)]
+pub fn bspl_slib_iso(
+    param: f64,
+    is_u: bool,
+    degree: usize,
+    flat_knots: &[f64],
+    poles: &[Vec<DVec3>],
+    weights: &[Vec<f64>],
+) -> (Vec<DVec3>, Vec<f64>) {
+    let mut index = 0i32; // OCCT L1628.
+    let mut u = param; // OCCT L1629.
+    // OCCT L1630-1631: rational = Weights != null; dim = rational ? 4 : 3.
+    let rational = weights
+        .iter()
+        .any(|row| row.iter().any(|w| *w != 1.0));
+    let dim: usize = if rational { 4 } else { 3 };
+
+    // OCCT L1636: LocateParameter(Degree, Knots, Mults=null, u, Periodic,
+    // index, u) — the flat form: first = Knots.Lower() + Degree,
+    // last = Knots.Upper() - Degree (BSplCLib.cxx L343-346).
+    let first = 1i32 + degree as i32;
+    let last = flat_knots.len() as i32 - degree as i32;
+    locate_parameter_flat(
+        degree,
+        flat_knots,
+        u,
+        false,
+        first,
+        last,
+        &mut index,
+        &mut u,
+    );
+    // OCCT L1637: BuildKnots(Degree, index, Periodic, Knots, Mults, locknots1)
+    // — the 2*Degree local knot window.
+    let mut locknots1 = vec![0.0f64; 2 * degree];
+    build_knots_local(degree, index, false, flat_knots, None, &mut locknots1);
+    // OCCT L1638-1641: the Mults == null branch: index -= Knots.Lower() + Degree.
+    index -= 1 + degree as i32;
+
+    // OCCT L1652-1665: f1/l1 (the ISO direction pole span) and f2/l2 (the
+    // curve direction pole span).  The rcad grids are 0-based, so the spans
+    // are 0..count-1 and the OCCT Lower() offsets applied at the copy loops
+    // become +0.
+    let pole_rows = poles.len();
+    let pole_cols = poles.first().map(|r| r.len()).unwrap_or(0);
+    let (l1, l2) = if is_u {
+        (pole_rows, pole_cols)
+    } else {
+        (pole_cols, pole_rows)
+    };
+
+    // OCCT L1667-1699: copy the local (Degree+1) x (l2-f2+1) pole window
+    // into the flat locpoles array (rational: pre-multiply the coordinates
+    // by the weight, dim = 4).
+    let window_cols = l2;
+    let mut locpoles = vec![0.0f64; (degree + 1) * window_cols * dim];
+    let mut pole_index_row = index;
+    for i in 0..=(degree) {
+        // OCCT L1695-1698: the periodic wrap `if (index > l1) index = f1`.
+        if pole_index_row >= l1 as i32 {
+            pole_index_row = 0;
+        }
+        let row = pole_index_row as usize;
+        for j in 0..window_cols {
+            let (p, w) = if is_u {
+                (
+                    poles[row][j],
+                    weights.get(row).and_then(|r| r.get(j)).copied().unwrap_or(1.0),
+                )
+            } else {
+                (
+                    poles[j][row],
+                    weights.get(j).and_then(|r| r.get(row)).copied().unwrap_or(1.0),
+                )
+            };
+            let base = (i * window_cols + j) * dim;
+            if rational {
+                locpoles[base] = p.x * w;
+                locpoles[base + 1] = p.y * w;
+                locpoles[base + 2] = p.z * w;
+                locpoles[base + 3] = w;
+            } else {
+                locpoles[base] = p.x;
+                locpoles[base + 1] = p.y;
+                locpoles[base + 2] = p.z;
+            }
+        }
+        pole_index_row += 1;
+    }
+
+    // OCCT L1702: Eval(u, Degree, locknots1, (l2-f2+1)*dim, locpoles) — the
+    // IN-PLACE de Boor corner cutting (BSplCLib.cxx L865-870): every pass
+    // combines consecutive pole rows (new = X*row_i + Y*row_{i+1} with
+    // X = (knots[Dpi]-u)/(knots[Dpi]-knots[Sti])), reducing the (Degree+1)
+    // window to the single evaluated row.
+    let d = degree as i32;
+    let dm1 = d - 1;
+    let mut dms = d + 1;
+    let mut step: i32 = -1;
+    let span = window_cols * dim;
+    while step < dm1 {
+        dms -= 1;
+        let mut dpi = dm1;
+        let mut sti = step;
+        let mut i = 0i32;
+        while i < dms {
+            dpi += 1;
+            sti += 1;
+            let x =
+                (locknots1[dpi as usize] - u) / (locknots1[dpi as usize] - locknots1[sti as usize]);
+            let y = 1.0 - x;
+            let p0 = i as usize * span;
+            let p1 = (i + 1) as usize * span;
+            for k in 0..span {
+                locpoles[p0 + k] = locpoles[p0 + k] * x + y * locpoles[p1 + k];
+            }
+            i += 1;
+        }
+        step += 1;
+    }
+
+    // OCCT L1705-1724: collect CPoles (and CWeights) from the evaluated row.
+    let mut cpoles = Vec::with_capacity(window_cols);
+    let mut cweights = vec![1.0f64; window_cols];
+    for i in 0..window_cols {
+        let base = i * dim;
+        if rational {
+            let w = locpoles[base + 3];
+            cweights[i] = w;
+            cpoles.push(DVec3::new(
+                locpoles[base] / w,
+                locpoles[base + 1] / w,
+                locpoles[base + 2] / w,
+            ));
+        } else {
+            cpoles.push(DVec3::new(
+                locpoles[base],
+                locpoles[base + 1],
+                locpoles[base + 2],
+            ));
+        }
+    }
+    (cpoles, cweights)
+}
+
 /// OCCT BSplCLib::PrepareInsertKnots (BSplCLib.cxx L1849-2024).  `add_mults
 /// == None` means `addflat` (insert each added knot once).  On success
 /// `nb_poles` / `nb_knots` hold the new curve sizes.
