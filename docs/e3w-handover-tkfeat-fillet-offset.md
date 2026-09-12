@@ -26,9 +26,12 @@
 > 每 Edit 后 `cargo check`；**跑非门槛网格一律加 `timeout`**（见 §6 坑 16）；探针即用即清
 > （提交前 `git diff | grep -c "+.*eprintln"` = 0）；完成后更新 §E3-W 追加 15 并提交两仓库（**均不推送**）。
 
-> **⚠ 追加 15 对本节第 1–2 条的覆盖（2026-09-12）**：本节原"第 0 项 = 用 `occt_bool_runner` 逐轮对拍 `init` 的 `while(!FirstOK)`"
-> **已完成，且结论翻案**——差异**不在数值**，在**一处 OCCT 没有的重算语句**（见 §0.3）。原第 1–4 项顺延；
-> **新第 0 项 = `BRepFeat_RibSlot::LFPerform` 的结果装配**（见 §4.0）。其余铁律与操作协议（§5 / §6）不变。
+> **★★ 追加 15 收尾态（2026-09-12 尾，本交接的权威入口）**：本节原"第 0 项 = 用 `occt_bool_runner` 对拍 `init` 的 `while(!FirstOK)`"
+> **已完成且结论翻案**——差异**不在数值**，在一处 OCCT 没有的**重算语句**（见 §0.3）；原第 1–4 项**已推进**：
+> 第 3 项（2D 求交批）与第 4 项第 1/2 条（tkoffset 两件）**已交付并提交**，第 2 项（`NoExtFace`）**已定界**到 `IntCurvesFace_Intersector`（见 §4.0/§4.1）。
+> **新 session 请按此顺序开工**：① **先验收 §0.4 的两个在飞批次**（`GeomInt_IntSS` 批 + `LocOpe_Gluer::Perform` 批）——提交或**按域整批回退**；
+> ② 再做 **§4.0 第 0a 项**（BOP 历史镜像同一性，`featrf_a1` 的另一半）；③ 然后 §4.0 第 1 项（共面 FF，配 OCCT 对拍）、第 2 项（`IntCurvesFace_Intersector`）、第 3/4 项。
+> 铁律与操作协议（§5 配方 / §6 坑）不变；**八网格 + 六门槛每批必跑**。
 
 ## 0.1 追加 14 本轮落地（2026-09-12，rcad `3bf6858f` / `cc38f690` / `7dfa5884`，均未推送）
 
@@ -99,6 +102,29 @@ off-chain 的 Draft（depouille）e4/e5。
    ⚠ 复核结论（追加 15 补记 3）：`bop/**` 里的 `[EF-DBG]`/`[EF-EDGE]`/`[EF-CB]`（56 处）**是 env 门控的可复用探针**（实测跑 boolean 用例命中 0 次），
    **不是垃圾、勿删**——"源码里有 eprintln"必须先跑一次确认是否真的打印再动手。
 
+## 0.4 ★★ 本 session 结束时**仍在飞的两个批次**（新 session **第一件事**：验收 → 提交或回退）
+
+**⚠ 当前工作树有未提交的在飞改动**，两个子工作流域不相交、**均未提交**，**不可当成"已验证"**：
+
+| 批次 | 允许改的域 | 目标 | 隔离 target | 状态 |
+|------|-----------|------|-------------|------|
+| **A. `GeomInt_IntSS` + `IntSS_1`** | `libs/rcad-algo/src/geomalgo/**` + 每 mod.rs 1 行 | 队列第 4 项第 3 条（~1,939 行）。新文件 `geomalgo/geom_int_int_ss.rs`、`geom_int_int_ss_1.rs`、`geom_int_line_constructor.rs`；OCCT `GeomInt_IntSS.cxx` L24-227（Perform×2/InternalPerform/Line/Boundary/Pnt2d/HasLineOnS1/S2/LineOnS1/S2）+ `GeomInt_IntSS_1.cxx`（`IntSS_1::MakeCurve` L275-1096 / TreatRLine L1098-1168 / BuildPCurves L1172-1304 / TrimILine / MakeBSpline L1452-1469 / MakeBSpline2d L1473-1502 / PrepareSurfaces / DefineUVMaxStep） | `rcad/target_a15_r3a` | **在飞** |
+| **B. `LocOpe_Gluer::Perform` 链** | `libs/rcad-algo/src/feat/**` + 每 mod.rs 1 行 | 队列第 0 项的 **(b) 半**：`feat/loc_ope_gluer.rs` 的 **DEFERRED** `Perform`（cxx L156-334）+ `AddEdges`（cxx L471-556）真身；依赖 `LocOpe_WiresOnShape`（~1,623 行）、`LocOpe_Spliter`、`LocOpe_Generator`、`LocOpe::TgtFaces`、`BRepExtrema_ExtPF`；消费点 = `BRepFeat_RibSlot::lf_perform` 的粘合段 | `rcad/target_a15_r3b` | **在飞** |
+
+**验收/提交配方（顺序固定，勿跳步）：**
+1. `cd rcad && git status --short` 看清在飞改动。**禁 `git add -A`**（会把 `temp/`、别 session 的 stash-无关文件混进来）；只按**文件域显式 `git add`**。
+2. `cargo check -p rcad-kernel && cargo check -p rcad-algo` —— **必须零 error**。若报错在"你没动过的文件"里，等 ~90s 重试（另一批次可能正在写）。
+3. 六门槛（§1 的 6 条命令）+ **八网格**（先 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests` 重编 exe，再 `bash output/run_eight_grids.sh`）。**任何一批都要跑**，因为两批都改 `rcad-algo` 的公共库。
+4. 抽查 1:1 形式：**函数计数等式**（OCCT 函数数 = rcad 函数数）+ 每个函数头有 `// OCCT <file> Lx-y` 锚点 + 注释全英文 + 单文件 **<2000 行** + `git diff | grep -c "+.*eprintln"` **= 0**。
+5. 全绿 → **按域逐批提交**（本轮惯例：一个工作流一个 commit，信息写清函数计数等式/锚点/门槛数字/未译清单）；最后 `git add rcad` 同步根仓库指针（信息里写清 rcad 提交号）；**两仓库均不推送**。
+6. **不合格**（编译不过 / 门槛红 / 形式抽查不达标）→ 按批次**整域回退**（`git checkout -- <该批次的文件>`），把原因写进 port-plan §E3-W 补记，**不要半留**。
+
+**在飞批次的两条已知边界（别误判）**：
+- 批次 A 的**消费点**（`feat/loc_ope_split_drafts*.rs`）**不在它的域内**：即使 A 交付，`GeomInt_IntSS` 仍**没有在役调用者**，别把"没有可观测变化"当成失败。
+- 批次 B **单独不足以让 `featrf_a1` 通过**：a1 还缺 (a) 半（BOP 历史的镜像同一性，见 §4.0 第 **0a** 项）。B 做完后 a1 的失败点应仍是"结果空"（因为 `theGlue.is_done()` 之前就已因 `ope=Invalid` 提前回落构造器路径——**除非 (a) 也修了**）。
+
+**⚠ 换行坑（会毁掉 review）**：`feat/brep_feat_rib_slot*.rs` 等文件的 blob **混有 CR**，用 Edit 工具改它们可能产出**整文件换行差异**（实测 3,946 行）。发现"整文件 diff"就 `git checkout -- <file>` 回退，把改动放进**新文件**；确实必须在原文件改时，在提交信息里单列一句"含 EOL 归一化"。（纯 LF blob 的文件——如 `feat/brep_feat_make_revolution_form.rs`、`bop/**`、`geomalgo/**` 多数——不受影响。）
+
 ## 1. 门槛（本轮终测，全部实测；2026-09-12）
 
 | 基线 | 值 | 命令 |
@@ -159,13 +185,15 @@ done
 
 ## 3. 提交链与落地内容（**三轮**：追加 13 / 追加 14 / **追加 15 = 本轮**；均未推送）
 
-**追加 15（本轮，2026-09-12）**——rcad `main`（**自上而下 = 新到旧**）：**本交接文件所在提交**（docs：补记 3 并行推进轮 + §3/§4/§6 同步）
+**追加 15（本轮，2026-09-12）**——rcad `main`（**自上而下 = 新到旧**）：`3fa09a6a`（sweep+docs：删 `[ENTRY]` 探针 + 探针审计纠正）
+← `4276bacb`（docs：补记 3 并行推进轮）
 ← `e7af4f95`（feat：`Geom2dAPIInterCurveCurve` 的 GAP 臂接真身 `Geom2dInt_GInter`）
 ← `fb4c8d94`（offset+geomalgo：`GeomAPI_ProjectPointOnCurve` / `GeomAPI::To2d/To3d` / `GeomLib::ExtendCurveToPoint` 真身 + `ExtentEdge` 真尾 + 4 处重复载体删除）
 ← `6f4b499a`（topalgo：`BRepCheck_Wire::SelfIntersect` / `BRepCheck_Face::Intersect` 真跑 2D 求交器 + 伪成功重复本体替换）
 ← `c9537dd0`（docs：补记 2 —— `featrf_a1` 根因链打到 OCCT 真值）
 ← `24ea2f77`（docs：追加 15 + 本交接）← `d280a867`（code：`featrf_a1` 链四处修复）← `e161078a`（= 追加 14 链尾）。
-根 `main`：**对应的 rcad pointer sync 提交**（`sync: rcad pointer (E3-W addendum 15 …)`，含 feat 对拍资产 `cases/featrf.hpp`）← `1686ccd`（= 追加 14 链尾）。**两仓库均未推送。**
+**⚠ 注意**：上述是**已提交**的链尾；工作树里还有 §0.4 的**两个在飞批次**（未提交）。
+根 `main`：`bfa7c39`（pointer → `3fa09a6a`）← `976e225` ← `7dde224`（含 feat 对拍资产 `cases/featrf.hpp`）← `1686ccd`（= 追加 14 链尾）。**两仓库均未推送。**
 
 **追加 14（本轮）**——rcad `main`：**本交接文件所在提交** ← `3cf8d81d` ← `26031d47` ← `3422a867` ← `7dfa5884` ← `cc38f690` ← `3bf6858f` ← `2d01a7f9`（= 追加 13 链尾）
 根 `main`：**对应的 rcad pointer sync 提交** ← `3d1c389` ← `6a08885` ← `38451b3`（= 追加 13 链尾）
@@ -197,20 +225,20 @@ rcad `main`：`a4a4b0de` ← `8b5a7b26` ← `6b6c7089` ← `04e1b5b3` ← `4dfe0
 
 ### 4.0 追加 15 后的队列重排（2026-09-12，**从这一节往下取**）
 
-**已完成（追加 15 同 session 的并行推进轮，见 port-plan 追加 15 补记 3）**：原第 3 项（`Geom2dInt_GInter` 通用批）
-⇒ **引擎 + 两个 analyzer 消费点落地**（并删掉一处"伪成功"重复本体）；原第 4 项的第 1/2 条（`GeomAPI_ProjectPointOnCurve` 真身 +
-`ExtentEdge` 真尾，含新译 `GeomAPI::To2d/To3d`、`GeomLib::ExtendCurveToPoint`）
-⇒ **落地并删掉 4 处重复载体**；feat 侧 `Geom2dAPIInterCurveCurve` 的 GAP 臂 ⇒ **接真身**（feat 网格逐字不变 = 潜在路径真身化）。
-**仍开且已再定界**：原第 2 项（`NoExtFace ×3`）⇒ 定界到 **`IntCurvesFace_Intersector::Perform` 欠计数**（b5 实测 `NbPoints(1)=1`，OCCT 需 ≥2）。
+**第 0 项 = 先验收 §0.4 的两个在飞批次**（提交或回退），再把下面按序推进。
 
-**新增第 0 项（最急，a1 的直接下一墙）**：
+**已完成（追加 15 同 session，三段）**：① `featrf_a1` 不终止 **清零**（根因 = `while(!FirstOK)` 里一处 OCCT 没有的 `fp`/`lp` 重算，**不是数值**）+ 同链三道墙（Transform 载体真身化、滑动 profile 面的 outer wire、子形状枚举空占位）；② 原第 3 项（`Geom2dInt_GInter` 通用批）⇒ **引擎 + 两个 analyzer 消费点落地**（并删掉一处"伪成功"重复本体），feat 侧 GAP 臂接真身（潜在路径真身化，feat 网格逐字不变）；③ 原第 4 项第 1/2 条（`GeomAPI_ProjectPointOnCurve` 真身 + `ExtendEdge` 真尾，含新译 `GeomAPI::To2d/To3d`、`GeomLib::ExtendCurveToPoint`）⇒ **落地并删掉 4 处重复载体**（offset 网格逐格零移动）。
+**两个新定界（都有实测）**：原第 0 项的下一墙 = **两批活**（BOP 历史镜像同一性 + `LocOpe_Gluer::Perform`）；原第 2 项（`NoExtFace ×3`）= **`IntCurvesFace_Intersector::Perform` 欠计数**（b5 实测 `NbPoints(1)=1`，OCCT 需 ≥2）。
 
-0. **`BRepFeat_RibSlot::LFPerform` 的结果装配**（`featrf_a1`）——**追加 15 补记 2 已把根因链打通到"要两批活"**（探针已清，权威记录见 port-plan 追加 15 补记 2）：
+**新第 0 项（最急，a1 的直接下一墙；两批活）**：
+
+0. **`BRepFeat_RibSlot::LFPerform` 的结果装配**（`featrf_a1`）——**追加 15 补记 2 已把根因链打通到"要两批活"**（探针已清，权威记录见 port-plan 追加 15 补记 2/4）：
    - OCCT 真值：`OpeType()=LocOpe_FUSE` ⇒ `theOpe=1` ⇒ **走粘合路径** ⇒ `myShape = theGlue.ResultingShape()`（F=9 / area 109.511）。
    - rcad：**一次 bind 都没发生**（`glued_f` 的 key 不在 `myGShape` 里）⇒ `ope` 停在 `Invalid` ⇒ 回落构造器路径 ⇒ 空结果。
-   - 再往下一层：`CutVehicle::modified(fac)` 在 rcad 返回**空**（OCCT 返回 **1 个镜像且该镜像在结果里**），因为 `bop/algo/builder.rs::prepare_history` 要求镜像 TShape 命中 `shape_remap`，而实测源面是 `n_imgs=2 imgs(ptr,in_remap)=[(x,false),(y,false)]` / `n_imgs=0` ⇒ **同一性链断了**。
-   - **⇒ 下一批必须做两件事**：(a) **BOP 历史的镜像同一性**（`bop/algo/builder*.rs`，核心代码，单独评审 + 八网格逐格复测）；(b) **`LocOpe_Gluer::Perform` 真身**（`feat/loc_ope_gluer.rs`，当前 **DEFERRED 空体**；依赖 `LocOpe_WiresOnShape` ~1623 行 + `LocOpe_Spliter` + `LocOpe_Generator` + `LocOpe::TgtFaces`）。**只做 (a) 不够**：Perform 空体会让 `is_done()=false` 再次回落构造器路径。
-   - **对拍通道已建好（可复用）**：`tools/occt-bool-runner/cases/featrf.hpp` + `output/build_tkfeat.bat` / `build_runner_feat.bat`；跑法（含 DLL 遮蔽检查）见 port-plan 追加 15 补记 2。
+   - 再往下一层：`CutVehicle::modified(fac)` 在 rcad 返回**空**（OCCT 同一探针读 **`fac_in_cut_shape=0 n_mod=1 mod_in_cut_shape=1`**，即 OCCT 也是副本、但历史里有 1 个镜像**且该镜像就在结果里**）。
+   - 最深层（实测）：rcad 的 `bop/algo/builder.rs::prepare_history` 只在"镜像 TShape 命中 `shape_remap`"时记 `Modified`；实测该 Cut 的源面为 **`n_imgs=2 imgs(ptr,in_remap)=[(x,false),(y,false)]`** 或 **`n_imgs=0`** ⇒ **一个都没进历史** ⇒ 同一性链断。**入口 = `fill_images_faces` 填 `my_images` 的点 / `shape_remap` 的构建点（`push_shape_recursive`/`build_result`），先证"镜像 ptr ∉ remap"是构造期就错还是查表期错。**
+   - **两批活**：(a) **BOP 历史的镜像同一性**（`bop/algo/builder*.rs`，**核心代码，单独评审 + 八网格逐格复测**）——**新第 0a 项，本 session 未动**；(b) **`LocOpe_Gluer::Perform` 真身** —— **本 session 已作为 §0.4 批次 B 在飞**。**只做任一半都不足以让 a1 通过。**
+   - **对拍通道已建好（可复用）**：`tools/occt-bool-runner/cases/featrf.hpp` + `output/build_tkfeat.bat` / `build_runner_feat.bat`；跑法（含 **DLL 遮蔽检查**）见 port-plan 追加 15 补记 2。
 
 **原第 1–4 项原样保留**（见 §4.1–§4.4 正文），其中第 1 项 = `BOPAlgo_Section` 对共面面片对的输出（`FalseSide ×5` 根因）——
 **本轮已把它再定界一层**（探针已清，详见 §4.1 的补记）：b3 实测 `sc_pb=0 sc_v=0` + DS 的 FF 记录 `curves=0 points=0`，
@@ -426,5 +454,6 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
 | 既有可复用探针 | `RCAD_BS_DEBUG`（builder/pave_filler 的 build_rc/结果装配）、`RCAD_FF_DEBUG`（FF 配对+曲线类型）、`RCAD_MB_DEBUG`（MakeBlocks 移位）、`RCAD_WS_DEBUG`（WireSplitter）、`RCAD_SPLIT_DEBUG`（CUT 结果） |
 | 权威长档 | `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–15（含补记 1/2） |
 | **feat 对拍通道（追加 15 新增）** | `tools/occt-bool-runner/cases/featrf.hpp`（featrf A1 ground-truth driver）+ `main.cpp` 注册 + `CMakeLists.txt` 的 `TKFeat TKOffset`；脚本 `output/build_tkfeat.bat`（增量编/装 TKFeat Debug）、`output/build_runner_feat.bat`（编 runner）；跑法含 **DLL 遮蔽检查**（`grep -ac <探针串> TKFeat.dll` 必须 >0） |
+| **在飞批次的隔离 target（可删）** | `rcad/target_a15_r3a`（批次 A `GeomInt_IntSS`）、`rcad/target_a15_r3b`（批次 B `LocOpe_Gluer`）；上一轮的 `rcad/target_a15_g2d` / `rcad/target_a15_offset` 亦可删 |
 | 模块归属表 | `rcad/docs/module-map.md` §2/§3（`feat/`↔TKFeat、`fillet/`↔TKFillet、`offset/`↔TKOffset） |
 | 重复实现审计 | `tools/occt-impl-audit/audit.py`（`uv run python tools/occt-impl-audit/audit.py .`）→ `docs/occt-impl-audit.md`（域风险排序：fillet 31 · feat 25 · offset 7） |
