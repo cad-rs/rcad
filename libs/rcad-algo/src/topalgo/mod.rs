@@ -27,3 +27,4 @@ pub mod brep_tools_quilt;
 pub mod brep_lib_find_surface;
 pub mod brep_lib_validate_edge;
 pub mod brep_lib_encode_regularity;
+pub mod int_curves_face_intersector; // IntCurvesFace (Intersector/ShapeIntersector)

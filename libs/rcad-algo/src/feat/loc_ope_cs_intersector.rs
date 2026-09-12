@@ -8,165 +8,42 @@
 // OCCT inheritance chain: none (standalone value class).
 //
 // Architecture differences (referenced from the affected functions):
-// 1. IntCurvesFace_Intersector (TKTopAlgo) — the per-face line/curve
-//    intersector with UV classification is not translated yet; rcad carries
-//    the reduced curve-surface intersection vehicle
-//    topalgo::brep_int_curve_surface::Inter (UV-domain containment, In
-//    transition only). It is re-hosted below as IntCurvesFaceIntersector
-//    with the OCCT accessor surface (NbPnt/Pnt/WParameter/UParameter/
-//    VParameter/Transition); the reduced semantics are a GAP to close when
-//    the full IntCurvesFace translation lands.
+// 1. IntCurvesFace_Intersector (TKTopAlgo) — the real 1:1 translation lives
+//    in topalgo::int_curves_face_intersector and is re-exported below under
+//    the OCCT name (the two in-domain consumers,
+//    feat::loc_ope_curve_shape_intersector and feat::brep_feat_rib_slot_b,
+//    reach it through this path).
 // 2. OCCT myPoints is a void* to an array of NCollection_Sequence; rcad is
-//    Vec<Vec<LocOpePntFace>> ( Destroy() clears it; the OCCT delete[] runs
+//    Vec<Vec<LocOpePntFace>> (Destroy() clears it; the OCCT delete[] runs
 //    in the destructor — the Rust drop is the destructor equivalent).
 // 3. OCCT LocalizeBefore(I, FromInd, Tol, ...) calls the static
 //    LocBefore with the int FromInd implicitly converted to double (only
 //    the double overload exists — cxx L294-315 against L38-43/L381-438);
 //    the conversion is kept explicit in the translation.
-// 4. TopExp_Explorer is feat::brep_feat_builder::explorer (same crate).
+// 4. TopExp_Explorer is brep_algo::tool::explorer (same crate).
+// 5. `HC->Load(Scur(i))` of cxx L167-171 is the BRepAdaptorCurve::new
+//    construction inside IntCurvesFaceIntersector::perform_curve.
 //
 // first consumer: BRepFeat_MakeCylindricalHole (3a) — Perform(BRepFeat) uses
 // LocOpe_CSIntersector over the cylinder axis; BRepFeat_Form family (3b).
 
-use crate::feat::brep_feat_builder::explorer;
+use crate::brep_algo::tool::explorer;
 use crate::feat::loc_ope_pnt_face::LocOpePntFace;
-use rcad_kernel::geom::{ Circle3, Curve3, Line3, Surface3 };
+use rcad_kernel::geom::{ Circle3, Curve3 };
 use rcad_kernel::math::gp::Lin;
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{ Orientation, ShapeType, TShape };
-use rcad_kernel::SurfaceEval;
+use rcad_kernel::topods::{ Orientation, ShapeType };
 
-// OCCT IntCurveSurface_TransitionOnCurve — carried by the rcad intersector.
+// OCCT IntCurveSurface_TransitionOnCurve — the type carried by the real
+// IntCurvesFace_Intersector translation (topalgo::int_curves_face_intersector
+// returns the rcad copy currently shared with
+// topalgo::brep_int_curve_surface::inter).
 use crate::topalgo::brep_int_curve_surface::inter::TransitionOnCurve;
 
-/// OCCT IntCurvesFace_Intersector re-host (architecture difference #1) —
-/// intersects one face with a line or a curve over a parameter interval.
-pub(crate) struct IntCurvesFaceIntersector {
-    my_face: Shape,                       // OCCT: myFace
-    my_uvw_bounds: [f64; 4],              // face UV domain (rcad vehicle input)
-    my_points: Vec<InterPointRecord>,     // OCCT: myPntPoints sequence
-}
-
-/// One intersection record of the re-hosted intersector.
-pub(crate) struct InterPointRecord {
-    pub pnt: glam::DVec3,
-    pub w: f64,
-    pub u: f64,
-    pub v: f64,
-    pub transition: TransitionOnCurve,
-}
-
-impl IntCurvesFaceIntersector {
-    /// OCCT IntCurvesFace_Intersector(F, Tol) — loads the face.
-    pub(crate) fn new(the_face: &Shape, _the_tol: f64) -> Self {
-        let uv = face_uv_domain(the_face);
-        IntCurvesFaceIntersector {
-            my_face: the_face.clone(),
-            my_uvw_bounds: uv.unwrap_or([0.0, 0.0, 0.0, 0.0]),
-            my_points: Vec::new(),
-        }
-    }
-
-    /// OCCT IntCurvesFace_Intersector::Perform(L, PInf, PSup) — line overload.
-    pub(crate) fn perform_lin(&mut self, the_lin: &Lin, p_inf: f64, p_sup: f64) {
-        let curve = Curve3::Line(Line3 {
-            origin: the_lin.pos,
-            direction: the_lin.dir,
-        });
-        self.perform_curve(&curve, p_inf, p_sup);
-    }
-
-    /// OCCT IntCurvesFace_Intersector::Perform(HC, PInf, PSup) — curve
-    /// overload over the [PInf, PSup] parameter interval.
-    pub(crate) fn perform_curve(&mut self, the_curve: &Curve3, p_inf: f64, p_sup: f64) {
-        self.my_points.clear();
-        // rcad vehicle: topalgo::brep_int_curve_surface::Inter (arch. diff. #1).
-        let Some(surface) = face_surface_world(&self.my_face) else {
-            return;
-        };
-        let mut the_int = crate::topalgo::brep_int_curve_surface::inter::Inter::new();
-        the_int.load(&self.my_face, rcad_kernel::precision::CONFUSION);
-        the_int.init_curve(
-            the_curve,
-            &surface,
-            self.my_uvw_bounds[0],
-            self.my_uvw_bounds[1],
-            self.my_uvw_bounds[2],
-            self.my_uvw_bounds[3],
-        );
-        while the_int.more() {
-            the_int.next();
-            let w = the_int.current_w();
-            // OCCT Perform restricts the curve parameter to [PInf, PSup].
-            if w < p_inf || w > p_sup {
-                continue;
-            }
-            self.my_points.push(InterPointRecord {
-                pnt: the_int.current_point(),
-                w,
-                u: the_int.current_u(),
-                v: the_int.current_v(),
-                transition: the_int.current_transition(),
-            });
-        }
-    }
-
-    /// OCCT IntCurvesFace_Intersector::IsDone().
-    pub(crate) fn is_done(&self) -> bool {
-        true
-    }
-
-    /// OCCT IntCurvesFace_Intersector::NbPnt().
-    pub(crate) fn nb_pnt(&self) -> i32 {
-        self.my_points.len() as i32
-    }
-
-    /// OCCT IntCurvesFace_Intersector::Pnt(j) — 1-based.
-    pub(crate) fn pnt(&self, j: i32) -> glam::DVec3 {
-        self.my_points[(j - 1) as usize].pnt
-    }
-
-    /// OCCT IntCurvesFace_Intersector::WParameter(j) — 1-based.
-    pub(crate) fn w_parameter(&self, j: i32) -> f64 {
-        self.my_points[(j - 1) as usize].w
-    }
-
-    /// OCCT IntCurvesFace_Intersector::UParameter(j) — 1-based.
-    pub(crate) fn u_parameter(&self, j: i32) -> f64 {
-        self.my_points[(j - 1) as usize].u
-    }
-
-    /// OCCT IntCurvesFace_Intersector::VParameter(j) — 1-based.
-    pub(crate) fn v_parameter(&self, j: i32) -> f64 {
-        self.my_points[(j - 1) as usize].v
-    }
-
-    /// OCCT IntCurvesFace_Intersector::Transition(j) — 1-based.
-    pub(crate) fn transition(&self, j: i32) -> TransitionOnCurve {
-        self.my_points[(j - 1) as usize].transition
-    }
-}
-
-/// OCCT BRep_Tool::Surface(F) with location applied (identity on standalone
-/// feat shapes — loc_ope_find_edges.rs architecture difference #1).
-fn face_surface_world(face: &Shape) -> Option<Surface3> {
-    match face.data.as_ref() {
-        TShape::Face(fd) => fd.surface.clone(),
-        _ => None,
-    }
-}
-
-/// Face UV domain (BRepAdaptor_Surface::FirstUParameter/... vehicle).
-fn face_uv_domain(face: &Shape) -> Option<[f64; 4]> {
-    match face.data.as_ref() {
-        TShape::Face(fd) => match (&fd.uv_domain, &fd.surface) {
-            (Some(d), _) => Some(*d),
-            (None, Some(s)) => Some(s.default_domain()),
-            (None, None) => None,
-        },
-        _ => None,
-    }
-}
+/// OCCT IntCurvesFace_Intersector — the real 1:1 translation, re-exported
+/// under the OCCT name for the rcad consumers that reach it through this
+/// module path (architecture difference #1).
+pub(crate) use crate::topalgo::int_curves_face_intersector::IntCurvesFaceIntersector;
 
 /// OCCT LocOpe_CSIntersector (LocOpe_CSIntersector.hxx L36-151).
 pub struct LocOpeCSIntersector {
