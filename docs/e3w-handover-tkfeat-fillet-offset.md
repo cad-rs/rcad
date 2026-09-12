@@ -1,12 +1,12 @@
 # E3-W 交接：三域（TKFeat / TKFillet / TKOffset）翻译推进 —— 2026-09-12
 
-> **一句话（追加 14 后**重写**）**：tkfeat featlf 的 profile 有效性**五连破**——`is_done` 门
-> **0/12 → 11/12 越过**、全部 kernel panic 清零；五处 1:1 修复 = 边顶点 tag 不变量（`add_tedge`
-> 收口）+ `direct_children` 不再改写标签 + `BRepLib_MakeEdge::Init` 的 reordonate/周期分支 +
-> `BRepLib_MakeFace(Pln,W,true)` 的 `CheckInside` + `BRepLib_MakeFace(W)` 的 `FindSurface` 曲面探测；
-> 另落**跨池子图重编号**（`renumbered_pool` / `adopt_subgraph_into`）消除 rcad 池 index 别名。
-> 八网格与全部门槛**零回归**。下一轮的墙已全部是**下游**（§4.1：`FalseSide ×5` / `NoExtFace ×3` /
-> `BRepTools_Modifier::Perform` GAP / draft GAP）。
+> **一句话（追加 14 收尾态）**：tkfeat featlf 的 profile 有效性**五连破**——追加 13 记的"布尔分割面无效"
+> **被翻案**（真因是 rcad 边顶点 tag 约定不统一，不是布尔输出质量）；`is_done` 门 **0/12 → 11/15 越过**、
+> **全部 kernel panic 清零**。落地 **7 处 1:1 修复**（边顶点 tag 不变量 / `direct_children` 不改标签 /
+> `MakeEdge::Init` reordonate+周期 / `MakeFace(Pln,W,true)` 的 `CheckInside` / `MakeFace(W)` 的 `FindSurface` /
+> `Curve3::reversed_parameter` 10 变体分发 / `Geom_TrimmedCurve::Reverse` 与 `cc->Reverse()` 字面翻译）
+> \+ **1 处架构修复**（跨池子图重编号 `renumbered_pool` / `adopt_subgraph_into`，消除 rcad 池 index 别名）。
+> 八网格与六门槛**全程零回归**。剩余墙全在**下游**，且**新增一处最急的非终止**（`featrf_a1`，见 §0.2）。
 
 ## 0. 新 session 一句话提示词（直接粘贴）
 
@@ -41,6 +41,32 @@
 **剩余失败全部在下游**：`FalseSide ×5`、`NoExtFace ×3`、`NoFaceProf ×3`、
 `BRepTools_Modifier::Perform` GAP（a3）、`draft_modification_1_b.rs:1269` GAP（b4）、
 off-chain 的 Draft（depouille）e4/e5。
+
+## 0.2 追加 14 补记：`Geom_Curve::ReversedParameter` 链（同 session，**含一处新增的非终止待办**）
+
+**修复（1:1，OCCT 锚点齐）**：
+- `impl CurveEval for Curve3` **未覆盖 `reversed_parameter`** ⇒ 落 trait 默认**恒等**。OCCT 的
+  `Geom_Curve::ReversedParameter` 是逐类型虚函数：`Geom_Line` → `-U`（Geom_Line.cxx **L163**）、
+  `Geom_Circle`/`Geom_Ellipse` → `2π−U`（Geom_Circle.cxx **L184**、Geom_Ellipse.cxx **L199**）、
+  `Geom_TrimmedCurve` → 委托基曲线（Geom_TrimmedCurve.cxx **L88-91**）。**rcad 已有多个消费者一直拿到恒等值**
+  （`brep_fill_section_law.rs:267` 的 `reversed_parameter_of`、`chfi3d_perform_elspine.rs:1069`、
+  `brep_fill/generator.rs:914`、`pave_filler.rs:5415`）。已补分发（`kernel/src/geom/eval.rs`）。
+- `geom_curve_reversed` 的 `Trimmed` 臂原来只做 `(basis_reversed, t.last, t.first)` 槽位互换、
+  **不套 `ReversedParameter`** ⇒ 修剪区间反向（`first > last`）⇒ `extrema.rs` 数值回退臂
+  `f64::clamp(t0,t1)` panic（`min = 0.0, max = -1.0`，featrf_a1）。按
+  `Geom_TrimmedCurve::Reverse`（cxx **L78-84**）修正。
+- `BRepFeat_MakeRevolutionForm::init` 里 cxx **L741-744** 的 `cc->Reverse()` 改为**字面翻译**
+  （原实现是"换基曲线但保留 `[f,l]`"的近似——属 AGENTS.md 禁止的"等价替换"）。
+
+**★ 新增待办（下一 session 第一优先，比 `FalseSide` 更紧急）：`featrf_a1` 从不终止**
+（复现：`cd /c/Users/lilu/works/rcad-pro && timeout 120 cargo test -q -p occt-generated-tests --test generated_occt_boolean_featrf feat_featrf_a1::`）。
+上条修正把 a1 从 clamp panic 推到 `while (!FirstOK)` 循环（OCCT cxx **L724-853**）**空转**。
+临时探针实测（已清）：`it_idx` 序列 `0 → 1 → 0 → 0 → …`、`counter1` 单调递增、`last_ok` 每轮为真
+⇒ 触发 `it.Initialize(myListOfEdges)` 回卷 ⇒ 永不收敛；`first_ok` 恒假。
+**下一手 = OCCT 侧逐轮对拍**（§5 配方 3：`occt_bool_runner` + 在 `BRepFeat_MakeRevolutionForm.cxx` L724-853
+插桩打 `it`/`LastOK`/`FirstOK`/`theLastPnt` 轨迹）。rcad 的循环结构与 OCCT 逐行一致，
+差异只可能在 `cc` 重建 / `theLastPnt` 推进 / `myTol` 判据的**数值**上。
+另记一处**无害命名偏差**：OCCT L824 `theFEdge = edg;`，rcad 写作 `the_l_edge = edg;`——OCCT 侧两者皆死存储，不影响行为。
 
 ## 1. 门槛（本轮终测，全部实测；2026-09-12）
 
@@ -102,8 +128,8 @@ done
 
 ## 3. 提交链与落地内容（**两轮**：追加 13 = 上一轮，追加 14 = 本轮 2026-09-12；均未推送）
 
-**追加 14（本轮）**——rcad `main`：`26031d47` ← `3422a867` ← `7dfa5884` ← `cc38f690` ← `3bf6858f` ← `2d01a7f9`（= 追加 13 链尾）
-根 `main`：`3d1c389` ← `6a08885` ← `38451b3`（= 追加 13 链尾）
+**追加 14（本轮）**——rcad `main`：**本交接文件所在提交** ← `3cf8d81d` ← `26031d47` ← `3422a867` ← `7dfa5884` ← `cc38f690` ← `3bf6858f` ← `2d01a7f9`（= 追加 13 链尾）
+根 `main`：**对应的 rcad pointer sync 提交** ← `3d1c389` ← `6a08885` ← `38451b3`（= 追加 13 链尾）
 
 | 提交 | 内容 |
 |------|------|
@@ -113,32 +139,6 @@ done
 | `3422a867` | docs：追加 14 + 本交接重写 |
 | `26031d47` | docs+libs：把 `FalseSide` 根因（**section 0 边**）钉进追加 14/交接队列；探针清理 |
 | （本 session 尾批，见 §0.2） | **`Geom_Curve::ReversedParameter` 链 1:1**：`Curve3::reversed_parameter` 补齐 10 变体分发（此前落 trait 默认**恒等**）+ `geom_curve_reversed` 的 `Trimmed` 臂按 `Geom_TrimmedCurve::Reverse`（cxx L78-84）套 `ReversedParameter` + `BRepFeat_MakeRevolutionForm::init` 的 `cc->Reverse()`（cxx L741-744）按字面翻译 |
-
-## 0.2 追加 14 补记：`Geom_Curve::ReversedParameter` 链（同 session，**含一处新增的非终止待办**）
-
-**修复（1:1，OCCT 锚点齐）**：
-- `impl CurveEval for Curve3` **未覆盖 `reversed_parameter`** ⇒ 落 trait 默认**恒等**。OCCT 的
-  `Geom_Curve::ReversedParameter` 是逐类型虚函数：`Geom_Line` → `-U`（Geom_Line.cxx **L163**）、
-  `Geom_Circle`/`Geom_Ellipse` → `2π−U`（Geom_Circle.cxx **L184**、Geom_Ellipse.cxx **L199**）、
-  `Geom_TrimmedCurve` → 委托基曲线（Geom_TrimmedCurve.cxx **L88-91**）。**rcad 已有多个消费者一直拿到恒等值**
-  （`brep_fill_section_law.rs:267` 的 `reversed_parameter_of`、`chfi3d_perform_elspine.rs:1069`、
-  `brep_fill/generator.rs:914`、`pave_filler.rs:5415`）。已补分发（`kernel/src/geom/eval.rs`）。
-- `geom_curve_reversed` 的 `Trimmed` 臂原来只做 `(basis_reversed, t.last, t.first)` 槽位互换、
-  **不套 `ReversedParameter`** ⇒ 修剪区间反向（`first > last`）⇒ `extrema.rs` 数值回退臂
-  `f64::clamp(t0,t1)` panic（`min = 0.0, max = -1.0`，featrf_a1）。按
-  `Geom_TrimmedCurve::Reverse`（cxx **L78-84**）修正。
-- `BRepFeat_MakeRevolutionForm::init` 里 cxx **L741-744** 的 `cc->Reverse()` 改为**字面翻译**
-  （原实现是"换基曲线但保留 `[f,l]`"的近似——属 AGENTS.md 禁止的"等价替换"）。
-
-**★ 新增待办（下一 session 第一优先，比 `FalseSide` 更紧急）：`featrf_a1` 从不终止**
-（复现：`cd /c/Users/lilu/works/rcad-pro && timeout 120 cargo test -q -p occt-generated-tests --test generated_occt_boolean_featrf feat_featrf_a1::`）。
-上条修正把 a1 从 clamp panic 推到 `while (!FirstOK)` 循环（OCCT cxx **L724-853**）**空转**。
-临时探针实测（已清）：`it_idx` 序列 `0 → 1 → 0 → 0 → …`、`counter1` 单调递增、`last_ok` 每轮为真
-⇒ 触发 `it.Initialize(myListOfEdges)` 回卷 ⇒ 永不收敛；`first_ok` 恒假。
-**下一手 = OCCT 侧逐轮对拍**（§5 配方 3：`occt_bool_runner` + 在 `BRepFeat_MakeRevolutionForm.cxx` L724-853
-插桩打 `it`/`LastOK`/`FirstOK`/`theLastPnt` 轨迹）。rcad 的循环结构与 OCCT 逐行一致，
-差异只可能在 `cc` 重建 / `theLastPnt` 推进 / `myTol` 判据的**数值**上。
-另记一处**无害命名偏差**：OCCT L824 `theFEdge = edg;`，rcad 写作 `the_l_edge = edg;`——OCCT 侧两者皆死存储，不影响行为。
 
 **追加 13（上一轮）**——rcad 7 提交 / 根 4 提交：
 
