@@ -1203,6 +1203,18 @@ libs/rcad-algo/src/
 - **实测**：`draft_angle` 的库内 panic 由 **28 → 25**（`approx_int.rs` 两处与 `brep_offset_api_draft_angle.rs:83` 各一例离开 panic 链），通过数不变（0/49）；六门槛 + 八网格 + 全域网格**零回归**。
 - **教训（并入坑 22 同族）**：把 OCCT 的 `int` 字段搬成 Rust 的 `usize` 不只是风格问题——**有符号中间值的语义会丢失**（此处 `nbp - 5` 的负值是设计的一部分）。搬运字段类型前先读 OCCT 声明；`usize` 只适用于"永不参与可能为负的算术"的计数。
 
+### E3-W 追加 18 补记 2（2026-09-12：域网格剩余 panic 的**分类**（GAP 桩 vs 状态断言 vs 池外）+ 两处"真身已在库但未接线"）
+
+- **做法**：把域网格（offset_* / blend_* / feat_* / draft_angle / thrusection）实测到的**库内 panic 逐条分类**，区分"翻译缺口"与"运行状态问题"，避免把状态问题当翻译任务立卡。
+- **分类结论**：
+  1. **池外架构**（`topods.rs:1799`，`offset_shape_type_i` a3/a4/d2/d3；feat 若干）= §4.6 TKOffset 第 1/2 项，**不是**缺翻译。
+  2. **状态断言**（`draft_modification_1_b.rs:1213` / `_1_c.rs:868` 的 `expect("… null Geometry")`；`brep_offset_inter2d.rs:1057` 的 `EdgeInter: E2 carries no pcurve`；`brep_algo/image.rs:159` 的 `BRepAlgo_Image::FirstImageFrom`）= **上游状态不对导致 OCCT 同处也会 raise**，属调试项（用户口径：译完再调）。
+  3. **真缺翻译**（本轮已清）：`GeomLib::SameRange` / `BRepCheck_Edge|Vertex::Tolerance` / `ElCLib::To3d` / `GeomLib::To3d`（追加 18）、`Approx_ComputeLine` 的 `int` 语义（补记 1）。
+  4. **★ "真身已在库但未接线" 两例**（最便宜的一类，下批首选）：
+     - `geomalgo/geomplate/build_plate_surface.rs:1003` 的 `unimplemented!("ProjLib_HCompProjectedCurve … not registered in the build yet")`——**翻译本身已在库**（`geomalgo/proj_lib_h_comp_projected_curve.rs` + `_b.rs`，已在 `mod.rs:59` 注册，含 `new_tol3d` / `bounds` / `nb_curves` / `is_single_pnt` / `is_u_iso` 等完整 API），只是**消费者没接线**。OCCT 现场 = `GeomPlate_BuildPlateSurface.cxx` **L1746-1802**（"Comparing metrics of curves and projected curves"，~45 行）：构造 `ProjLib_HCompProjectedCurve(hsur, Curve, myTol3d, myTol3d)` → `Adaptor3d_CurveOnSurface AProj(ProjCurve, hsur)` → 逐参数 `D1` 比模长算 `Ratio`，越界即 `myIsLinear=false`。⚠ **难点在 `Adaptor3d_CurveOnSurface` 与"以通用 `Adaptor3d_Curve` 为底"的组合语义**（rcad 既有的 `Adaptor3dCurveOnSurface::new` 收的是 2D 曲线载体），落线前先核实该组合的 `D1` 口径——**不要用"直接用 ProjCurve 的 D1 近似"蒙**。
+     - `geomalgo/geom_lib_same_range.rs::extend_surf_by_length`（**本轮已接线**）：真身在 `fillet/chfi3d_builder_c2_geomlib.rs::geom_lib_extend_surf_by_length`，GAP 载体已改为委托（消费点 `offset/brep_offset_tool_c.rs:617/683`、`brep_fill_sweep_c.rs:362/374`）。
+- **教训（并入坑 7 "注释说缺 ≠ 真缺"）**：`unimplemented!` / `panic!("GAP…")` 的**文案也会过期**——本轮两例（ExtendSurfByLength、ProjLib_HCompProjectedCurve）都是"文件头的 mid-integration 注释写着没接"、而真身早已在库。**立卡前先按函数名 grep 一遍全库**，再决定是"翻译"还是"接线"。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
