@@ -975,17 +975,12 @@ impl BRepFeatMakeRevolutionForm {
                 };
                 let mut cc = Curve3::Trimmed(TrimmedCurve3::new(ccc, f, l));
                 if edg.orientation == rcad_kernel::topods::Orientation::Reversed {
-                    // OCCT L743: cc->Reverse().
-                    cc = Curve3::Trimmed(TrimmedCurve3::new(
-                        crate::feat::brep_feat_rib_slot::geom_curve_reversed(
-                            match &cc {
-                                Curve3::Trimmed(t) => &t.curve,
-                                _ => unreachable!(),
-                            },
-                        ),
-                        f,
-                        l,
-                    ));
+                    // OCCT L741-744: `new Geom_TrimmedCurve(ccc, f, l)` then
+                    // `if (edg.Orientation() == TopAbs_REVERSED) cc->Reverse();`
+                    // — the FULL Geom_TrimmedCurve::Reverse (the trim bounds map
+                    // through the basis's ReversedParameter, see
+                    // geom_curve_reversed), not a basis swap that keeps [f, l].
+                    cc = crate::feat::brep_feat_rib_slot::geom_curve_reversed(&cc);
                 }
                 let dom = cc.default_domain();
                 let mut fp = cc.point_at(dom[0]);

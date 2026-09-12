@@ -968,6 +968,32 @@ libs/rcad-algo/src/
   6. **追加 13 的批次 2/3/4 原样保留未动**（`Geom2dInt_GInter` 通用批 / tkoffset 三件 / tkfillet a1 上游）
      ——本轮全部预算投入批次 1 主线，见交接文档 §4 队列。
 - **本轮新坑（追加进交接 §6）**：① **"边顶点标签"是 rcad 的隐性数据模型约定**：槽位顺序**不是**语义，`Tag` 才是；任何按"first 就是低参数顶点"写的位置假设都会在 GWedge/harness 来源的边上翻车（反之亦然）。`add_tedge` 是唯一的收口点。② **只重编号 index 不重指向 `data` 无效**：`child_occurrences` 从 `s.data` 读子件，池外句柄会把碰撞"下沉一层"。③ **子图重编号必须用后序**：pre-order 在 DAG（共享子件）上不构成拓扑序，`children are built before their parent` 会 panic。④ **`Shape::null()` 的 `index == usize::MAX`** 在重编号里必须跳过（`collect_subgraph_indexed` 已按 `is_null()` 过滤）。
+- **追加 14 补记（同 session 稍后，`Geom_Curve::ReversedParameter` 链）**：本轮额外发现并修掉一处**同族的 1:1 缺口**——
+  `CurveEval::reversed_parameter` 在 `impl CurveEval for Curve3` 里**没有分发**（落到 trait 默认的**恒等**！），
+  而 OCCT 的 `Geom_Curve::ReversedParameter` 是**逐类型虚函数**（`Geom_Line` → `-U`（Geom_Line.cxx L163）、
+  `Geom_Circle`/`Geom_Ellipse` → `2π−U`（Geom_Circle.cxx L184 / Geom_Ellipse.cxx L199）、
+  `Geom_TrimmedCurve` → 委托基曲线（Geom_TrimmedCurve.cxx L88-91））。**rcad 侧已有多处消费者**
+  （`brep_fill_section_law::reversed_parameter_of`、`chfi3d_perform_elspine`、`generator.rs`、
+  `pave_filler.rs:5415`）一直在拿恒等值。已补 `Curve3::reversed_parameter` 分发（10 个变体）。
+  连带修掉 **`geom_curve_reversed` 的 `Trimmed` 臂**：原来只做 `(basis_reversed, t.last, t.first)` 的槽位互换、
+  **不套 `ReversedParameter`**，而 OCCT `Geom_TrimmedCurve::Reverse`（cxx **L78-84**）是
+  `U1 = basis->ReversedParameter(uTrim2); U2 = basis->ReversedParameter(uTrim1); basis->Reverse(); SetTrim(U1,U2,...)`。
+  症状 = 修剪区间反向（`first > last`）⇒ `f64::clamp(t0,t1)` 在 `extrema.rs` 数值回退臂 panic
+  （`min = 0.0, max = -1.0`，featrf_a1）。同时把 `BRepFeat_MakeRevolutionForm::init` 里
+  cxx L741-744 的 `cc->Reverse()` **按字面翻译**（原实现是"换基曲线但保留 [f,l]"的近似，等价替换）。
+  **八网格与六门槛均零回归**（该组改动全在域内 + kernel 分发）。
+- **★ 新增待办（下一 session 第一优先，比 `FalseSide` 更紧急）：`featrf_a1` 由 panic 变为**不终止****。
+  上条修正把 a1 从"clamp panic"推进到 `BRepFeat_MakeRevolutionForm::init` 的
+  `while (!FirstOK)` 循环（cxx **L724-853**；rcad `brep_feat_make_revolution_form.rs` 同段）**空转**。
+  实测（临时探针，已清）：`it_idx` 序列 `0 → 1 → 0 → 0 → …`，`counter1` 单调递增，
+  `last_ok` 每轮为真 ⇒ 触发 `it.Initialize(myListOfEdges)` 回卷 ⇒ **永不收敛**；
+  `first_ok` 恒为假（`sens==1 && lp≈myFirstPnt`（或 `sens==2 && fp≈myFirstPnt`）始终不成立）。
+  复现：`cd /c/Users/lilu/works/rcad-pro && timeout 120 cargo test -q -p occt-generated-tests --test generated_occt_boolean_featrf feat_featrf_a1::`。
+  **下一手**：按 §5 配方 3 用 `occt_bool_runner` + OCCT 侧插桩（`BRepFeat_MakeRevolutionForm.cxx` L724-853
+  打 `it`/`LastOK`/`FirstOK`/`theLastPnt` 轨迹）做**逐轮对拍**——rcad 的循环结构与 OCCT 逐行一致，
+  差异只可能在 `cc` 的重建/`theLastPnt` 推进/`myTol` 判据的**数值**上，属于"必须对拍才能定界"的类型。
+  另记一处**无害的命名偏差**（OCCT L824 是 `theFEdge = edg;`，rcad 写成 `the_l_edge = edg;`；
+  OCCT 侧两者都是**死存储**、从无读取，故不影响行为，纯洁癖项）。
 
 
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）

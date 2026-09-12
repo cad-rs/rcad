@@ -398,8 +398,19 @@ pub(crate) fn geom_curve_reversed(the_c: &Curve3) -> Curve3 {
             })
         }
         Curve3::Trimmed(t) => {
+            // OCCT Geom_TrimmedCurve::Reverse (Geom_TrimmedCurve.cxx L78-84):
+            //   double U1 = basisCurve->ReversedParameter(uTrim2);
+            //   double U2 = basisCurve->ReversedParameter(uTrim1);
+            //   basisCurve->Reverse();
+            //   SetTrim(U1, U2, true, false);
+            // The trim bounds are mapped through the BASIS's ReversedParameter
+            // BEFORE the basis is reversed — a plain swap of uTrim1/uTrim2
+            // leaves the interval reversed (first > last) whenever
+            // ReversedParameter is not the identity (Line, Circle, Ellipse ...).
+            let u1 = t.curve.reversed_parameter(t.last);
+            let u2 = t.curve.reversed_parameter(t.first);
             let basis = geom_curve_reversed(&t.curve);
-            Curve3::Trimmed(TrimmedCurve3::new(basis, t.last, t.first))
+            Curve3::Trimmed(TrimmedCurve3::new(basis, u1, u2))
         }
         Curve3::Hyperbola(h) => {
             let normal = -h.normal;

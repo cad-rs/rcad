@@ -553,6 +553,28 @@ impl CurveEval for Curve3 {
             Curve3::Trimmed(tc) => tc.default_domain(),
         }
     }
+    /// OCCT `Geom_Curve::ReversedParameter` (Geom_Curve.hxx L87, overridden per
+    /// concrete curve): the parameter of the same point on the reversed curve.
+    /// `Geom_Line::ReversedParameter(U) = -U` (Geom_Line.cxx L163),
+    /// `Geom_Circle`/`Geom_Ellipse` = `2*PI - U` (Geom_Circle.cxx L184,
+    /// Geom_Ellipse.cxx L199), `Geom_TrimmedCurve` delegates to its basis
+    /// (Geom_TrimmedCurve.cxx L88-91), `Geom_BSplineCurve` = `UFirst + ULast - U`
+    /// (with the reversed parameter range for a periodic curve).
+    fn reversed_parameter(&self, t: f64) -> f64 {
+        match self {
+            Curve3::Line(c) => c.reversed_parameter(t),
+            Curve3::Circle(c) => c.reversed_parameter(t),
+            Curve3::Ellipse(c) => c.reversed_parameter(t),
+            Curve3::BSpline(c) => c.reversed_parameter(t),
+            Curve3::Bezier(c) => c.reversed_parameter(t),
+            Curve3::Offset(c) => c.reversed_parameter(t),
+            Curve3::Hyperbola(c) => c.reversed_parameter(t),
+            Curve3::Parabola(c) => c.reversed_parameter(t),
+            Curve3::CircularHelix(c) => c.reversed_parameter(t),
+            Curve3::SineWave(c) => c.reversed_parameter(t),
+            Curve3::Trimmed(tc) => tc.reversed_parameter(t),
+        }
+    }
 }
 
 // --- SurfaceEval implementations ---
