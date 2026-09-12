@@ -112,6 +112,13 @@ fn curve_type_of(c: &Curve3) -> CurveType {
         Curve3::Parabola(_) => CurveType::Parabola,
         Curve3::Bezier(_) => CurveType::Bezier,
         Curve3::BSpline(_) => CurveType::BSpline,
+        // OCCT GeomAdaptor_Curve::Load unwraps a Geom_TrimmedCurve and loads
+        // its BASIS curve recursively (GeomAdaptor_Curve.cxx L250-254): the
+        // loaded range stays the trimmed [UFirst, ULast], but the dynamic type
+        // — and hence `GetType()` — is the basis curve's.  A trimmed line must
+        // therefore report Line, not Other; the latter routes the pair through
+        // the general interference path instead of the exact conic branch.
+        Curve3::Trimmed(t) => curve_type_of(&t.curve),
         _ => CurveType::Other,
     }
 }

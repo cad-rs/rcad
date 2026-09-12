@@ -299,6 +299,18 @@ impl FClass2dTopol {
             let mut ancien_pnt3d_initialise = false;
 
             // OCCT BRepTools_WireExplorer(Wire, Face) — the reordered edges.
+            // OCCT iterates the wire with TopoDS_Iterator(wire, cumOri = true),
+            // whose updateCurrentShape() sets
+            // `myShape.Orientation(TopAbs::Compose(myOrientation, myShape.Orientation()))`
+            // (TopoDS_Iterator.cxx L72-80) — so the explorer hands out the WIRE
+            // orientation composed with the EDGE orientation, and every
+            // downstream use (vertex traversal, BRep_Tool::CurveOnSurface's
+            // seam selection, the boundary polygon winding) sees the composed
+            // value.  On a REVERSED wire carrying REVERSED edges the raw edge
+            // orientation is the opposite of OCCT's, which inverts the polygon
+            // winding and therefore TabOrien / the inside-outside answer
+            // (BRepTopAdaptor_FClass2d.cxx L445).
+            let wire_ori = wire.orientation;
             let raw_edges: Vec<(usize, Orientation)> = match &*wire.data {
                 TShape::Wire(wd) => wd
                     .edges
@@ -308,7 +320,7 @@ impl FClass2dTopol {
                             source
                                 .map_shape_index(e.ptr_id(), e.location)
                                 .unwrap_or(0),
-                            e.orientation,
+                            wire_ori.compose(e.orientation),
                         )
                     })
                     .collect(),
