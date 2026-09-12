@@ -1136,6 +1136,13 @@ libs/rcad-algo/src/
 - **⚠ 提交卫生（坑：EOL）**：`feat/brep_feat_rib_slot_b.rs` 的 blob 是**混合行尾（CRLF + 裸 CR）**，Edit 工具写出统一 CRLF ⇒ `git diff --stat` 显示 4156 行整文件差异；**`git diff --ignore-cr-at-eol` 只显示本次的 36 行**（已核：无 deletions、无意外内容变化）。该文件必须改（`sliding_profile` 体内），故接受 EOL 归一化并在此记档。
 - **本轮新增坑（追加进交接 §6）**：见交接 22/23/24（`clamp(x-1) ≠ clamp(x)-1` 的 C++ 表达式形状 / `GeomAdaptor_Curve::load` 的基曲线语义要贯穿**全部**访问器而不只是 `GetType` / 对拍资产跨 session 复用 `RCAD_WS_PROBE` 通道的成本极低）。
 
+### E3-W 追加 17 补记 1（2026-09-12：`curve2d` 的 `Trimmed` 解包落地 —— a1 的粘合路径**打通**，墙下移到 `LocOpe_Gluer` → `LocOpe_Generator`）
+
+- **修**：`rcad-kernel/src/base/geom_proj_lib/mod.rs::curve2d` 入口处按 `GeomAdaptor_Curve::load`（`GeomAdaptor_Curve.cxx` **L239-255**）语义解包 `Curve3::Trimmed` → 基曲线（**区间仍是被裁的 `[first,last]`**，OCCT 正是一样地把 `[UFirst,ULast]` 原样传给基曲线的载入）。**+12 行、无其它改动**（第一版只在 `try_project_direct` 之外加解析臂不够——真身在**入口归一化**）。同族第三次：D2（只修 `curve_type_of`）→ 追加 17（补 6 个解析访问器 `basis_curve_of`）→ 本条（`curve2d`）。
+- **实测（探针已清）**：`featrf_a1` 的 `BRepFeat::IsInside(glface, fac)` 从**分类器之前返回 false** 变为正常采样分类（`IsIn` 全 `On`）⇒ `LFPerform` 的粘合判定位由 `collage=false ope=Invalid` 变为 **`collage=true ope=Fuse`**（与 OCCT `Collage=1 ope=FUSE` **一致**）⇒ `theOpe=1` **进入 OCCT 的粘合路径**（此前回落 `theOpe=2` 构造器路径）。
+- **★ 墙已下移一层（新定界）**：rcad `theGlue.Perform()` 之后 **`IsDone=false`**（OCCT **`IsDone=1` / `resultFaces=9`**）。OCCT `LocOpe_Gluer::Perform` 的 `myDone` 来自 `myDone = theGen.IsDone()`（`LocOpe_Gluer.cxx` **L230**，`theGen` = **`LocOpe_Generator`**）⇒ **下一手 = `LocOpe_Generator::Perform`（`feat/loc_ope_generator.rs` / `loc_ope_generator_b.rs`）的 `IsDone` 真因**（不达 ⇒ `myRes` 未设 ⇒ a1 结果为空、面积 0）。⇒ 交接 §4.6 的 TKFeat 队列第 0 项更新为 `LocOpe_Generator::Perform`。
+- **验收**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（重编 exe 后）；域网格**逐格不变**（blend_simple 11 · blend_complex 2 · fillet2d 10 + 2 · mkface_after_offset 4 · mkface_after_extsurf 32 · feat_featlf 15 · feat_featprism 6 · feat_featrevol 46 · feat_featrf 5 · offset_shape_type_i 12 · offset_faces_type_i 8 · thrusection 26 —— 均为"占位通过"数，真实断言数见 §0.0 口径）；`git diff | grep -c "+.*eprintln"` = 0。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 

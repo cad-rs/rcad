@@ -36,6 +36,18 @@ pub fn curve2d(
 ) -> Option<Curve2d> {
     let tol = TOL_DEFAULT;
 
+    // OCCT GeomProjLib::Curve2d builds `GeomAdaptor_Curve(C, First, Last)`,
+    // and GeomAdaptor_Curve::load (GeomAdaptor_Curve.cxx L239-255) loads a
+    // Geom_TrimmedCurve through its BASIS curve (`Load(BasisCurve, UFirst,
+    // ULast)`): the projected curve is the basis over the SAME [first, last]
+    // range. Without the unwrapping the analytic projector did not match and
+    // the sampling fallback gave up, so a trimmed line failed to project at
+    // all (BRepFeat::IsInside -> collage=false -> theOpe=2 on featrf_a1).
+    let curve: &Curve3 = match curve {
+        Curve3::Trimmed(t) => &t.curve,
+        other => other,
+    };
+
     // OCCT: try direct ProjLib projector first
     if let Some(pc) = try_project_direct(curve, surface, first, last) {
         return Some(pc);
