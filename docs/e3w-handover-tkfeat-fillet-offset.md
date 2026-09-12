@@ -201,7 +201,11 @@ rcad `main`：`a4a4b0de` ← `8b5a7b26` ← `6b6c7089` ← `04e1b5b3` ← `4dfe0
    **注意**：该网格的参考拓扑断言当前被静默跳过（§0.3 卫生问题 1）——修生成器命名前，必须先手写/对齐
    `step_reference` 里的 **`occt_boolean_feat_featrf_a1.json`** 才能拿到 V/E/F/S 判据。
 
-**原第 1–4 项原样保留**（见 §4.1–§4.4 正文），其中第 1 项 = `BOPAlgo_Section` 对共面面片对的输出（`FalseSide ×5` 根因）。
+**原第 1–4 项原样保留**（见 §4.1–§4.4 正文），其中第 1 项 = `BOPAlgo_Section` 对共面面片对的输出（`FalseSide ×5` 根因）——
+**本轮已把它再定界一层**（探针已清，详见 §4.1 的补记）：b3 实测 `sc_pb=0 sc_v=0` + DS 的 FF 记录 `curves=0 points=0`，
+⇒ 墙**不在** `build_section`（它逐字取 `PaveBlocksSc`，而该集合的唯一生产者是 FF 曲线），而在**共面/同曲面面片对的 FF 分支**；
+**下一手必须是 OCCT 侧对拍**（§5 配方 3：`BOPAlgo_PaveFiller` 的 FF 段 / `IntTools_FaceFace` 同曲面分支插桩，跑 featlf b3），
+先拿"OCCT 在该对上产出了什么"（曲线 / SD / 公共边 PB）再改 rcad。
 
 ### 4.1 tkfeat —— 第 1 优先级：featlf 下游墙（**追加 14 后重写**）
 

@@ -1025,6 +1025,12 @@ libs/rcad-algo/src/
   3. **"对拍数值"之前先做"语句级对拍"**：本轮 `featrf_a1` 的不终止**不是**浮点/容差问题，而是一处 OCCT 没有的**重算语句**（追加 14 的探针已经把范围收窄到"cc 重建 / theLastPnt 推进 / myTol 判据的数值"，方向仍然错了一格）。**`while(!FirstOK)` 这类带回卷的链式循环对任何多余语句都极其敏感**——凡在循环体内看到 OCCT 没有的赋值，先删再过。
   4. **面形状的子形状枚举必须与 `BRep_Builder::Add` 的语义对齐**：OCCT 的 face 把 wire 与 internal vertex 放在**同一个** `myShapes` 列表里（TopoDS_Iterator 按此枚举），rcad 用三个类型化槽表示；两套表示必须在**生产者**（`add`）与**消费者**（`sub_shapes`）两侧同时对齐，否则会出现"顶点占 wire 槽/空占位被当子形状"这类只在扫掠路径才炸的隐患。
 
+- **追加 15 补记（同 session，`FalseSide` 定界的**下一层**）**：队列第 1 项（`BOPAlgo_Section` 对共面面片对的输出）本轮做了**一轮定界探针**（已清），结论把入口从 `build_section` **上移了一层**：
+  - 实测（featlf **b3**，探针加在 `bop/algo/section.rs::build_section` 出口）：`faces=2 sc_pb=0 sc_v=0 in_on_pb=2 result_edges=0`，且 DS 的 FF 记录为 **`f1=0 f2=14 curves=0 points=0 tangent=false`**。
+  - 解读：共面面片对**确实进了 FF**，但**曲线 0 条**；而 `build_section` 的 SC 边**唯一**来自 `aFI.PaveBlocksSc()`，其**唯一**生产者是 FF 曲线（OCCT `ChangePaveBlocksSc().Add(aPB)`，rcad 已在 `pave_filler_make_blocks.rs:2808` 1:1 落地）⇒ **rcad 的 `build_section` 无辜**，墙在**共面（同曲面）面片对的 FF 分支**：OCCT 该分支要么产出"公共边界"曲线、要么走 SD（same-domain）通道，rcad 两者都没有量（`curves=0 / points=0`，`tangent=false`）。
+  - **下一手（必须对拍，勿猜）**：按 §5 配方 3 在 **OCCT 侧**对 `BOPAlgo_PaveFiller` 的 FF 段 / `IntTools_FaceFace` 的**同曲面分支**插桩，跑 **featlf b3**，先拿到"OCCT 在该共面对上到底产出了什么（曲线 / SD 记录 / 公共边 pave block / 顶点）"，再回 rcad 按 OCCT 形式补齐——这是**下一层的唯一权威入口**。
+  - 另：`SectionOp` 的调用方（`feat/brep_feat_make_linear_form.rs::Propagate`）本身与 OCCT 逐行一致（a3 的同类 section 产出 1 条边且判定完全正确），故**不要**先动 `Propagate`。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 - **开场三步**：① 通读本档 §0 → §9 E3-S/E3-U/E3-V → AGENTS.md（**铁律：非 TKBool 模块的代码与修复一律严格 1:1 翻译对齐——逐行语句对照 + 函数计数等式 + OCCT 行号锚点 + 禁载体/禁等价替换/禁运行时凑结果；GAP 载体仅限外部未翻依赖并保留 OCCT 失败路径；架构差异必须先消灭再对齐**）→ ShHealing 两份；② `cd rcad && cargo test -p rcad-algo --lib` 确认基线 **412/0/0**（kernel **677/0**、builder_stage 76 + smoke 1、pavefiller 26、**boolean 八网格**：bopfuse 371/4 · bopcommon 374/4 · bopcut 379/0 · boptuc 369/4 · splitter 10/2（失败集 ze7-ze9/zf1 + a2/b2）+ bfuse_simple 102/102 · bcommon_simple 83/83 · bcut_simple 109/109 **（必须 `-Exclude "g6"`，见下）**）；③ 从下方队列取项开工。
