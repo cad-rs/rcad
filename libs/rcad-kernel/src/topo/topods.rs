@@ -604,6 +604,35 @@ impl BRep {
             }
             vp
         };
+        // OCCT edge storage invariant: the vertex sitting at the curve's First
+        // parameter is stored with the composed orientation FORWARD and the
+        // one at the Last parameter with REVERSED. That is the tagging
+        // `BRepLib_MakeEdge::Init` forces (BRepLib_MakeEdge.cxx L771-772:
+        // `V1.Orientation(TopAbs_FORWARD); V2.Orientation(TopAbs_REVERSED);`)
+        // and the one `BRepPrim_Builder::AddEdgeVertex` applies through its
+        // `direct` flag (BRepPrim_Builder.cxx L143-155) — the slot ORDER of
+        // the stored pair is producer-owned (MakeEdge stores low-then-high,
+        // GWedge high-then-low) but the tags are not. Every consumer keys on
+        // them: `TopExp::Vertices(E, V1, V2, CumOri)` (TopExp.cxx L214-252)
+        // selects V1 as the composed-FORWARD child and V2 as the
+        // composed-REVERSED one, and BRepCheck_Vertex::InContext (Edge.cxx
+        // L142-202) tests that V1 lies at `GC->First()` and V2 at
+        // `GC->Last()`. The `vertex_params` map computed above carries
+        // exactly that vertex-to-parameter assignment.
+        let (mut first, mut last) = (first, last);
+        if let Some(&pf) = vertex_params.get(&first.ptr_id()) {
+            let first_at_low = (pf - range[0]).abs() <= (pf - range[1]).abs();
+            first.orientation = if first_at_low {
+                Orientation::Forward
+            } else {
+                Orientation::Reversed
+            };
+            last.orientation = if first_at_low {
+                Orientation::Reversed
+            } else {
+                Orientation::Forward
+            };
+        }
         // OCCT BRep_Tool::Degenerated: an edge whose two vertices coincide and
         // which carries no geometric curve (e.g. the sphere apex edges) is
         // degenerated. The DS then skips it in FillShrunkData (no pave blocks).

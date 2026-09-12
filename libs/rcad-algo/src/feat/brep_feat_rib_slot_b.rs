@@ -15,11 +15,11 @@
 use crate::feat::brep_feat_form_2::{brep_algo_is_valid, CutVehicle};
 use crate::feat::brep_feat_rib_slot::{
     brep_top_adaptor_fclass2d_perform, brep_tool_curve, brep_tool_degenerated,
-    brep_tool_is_closed, brep_tool_pnt, brep_tool_tolerance, data_map_bind, data_map_change_find,
-    data_map_is_bound, geom_api_to_2d, geom_curve_reversed, geom_line_parts, make_edge_c_p_p,
-    make_edge_c_v_v, make_edge_p_p, make_edge_v_v, make_vertex, map_add, shape_is_same, shape_key,
-    top_exp_first_vertex, top_exp_last_vertex, BRepFeatRibSlot, Geom2dAPIInterCurveCurve,
-    GeomAPIProjectPointOnCurve,
+    brep_tool_is_closed, brep_tool_pnt, brep_tool_surface, brep_tool_tolerance, data_map_bind,
+    data_map_change_find, data_map_is_bound, geom_api_to_2d, geom_curve_reversed, geom_line_parts,
+    make_edge_c_p_p, make_edge_c_v_v, make_edge_p_p, make_edge_v_v, make_vertex, map_add,
+    shape_is_same, shape_key, top_exp_first_vertex, top_exp_last_vertex, BRepFeatRibSlot,
+    Geom2dAPIInterCurveCurve, GeomAPIProjectPointOnCurve,
 };
 use crate::feat::loc_ope_cs_intersector::{IntCurvesFaceIntersector, LocOpeCSIntersector};
 use crate::feat::loc_ope_find_edges::elclib_parameter_lin;
@@ -53,16 +53,59 @@ fn wire_explorer_edges(the_wire: &Shape) -> Vec<Shape> {
     }
 }
 
-/// OCCT BRepLib_MakeFace myPln->Pln() + wire (BRepLib_MakeFace.cxx: the face
-/// on the plane limited by the wire; the Inside flag is the constructor
-/// default handling of the wire orientation).
+/// OCCT BRepLib_MakeFace myPln->Pln() + wire (BRepLib_MakeFace.cxx L262-272:
+/// `Init(Pl, false, Confusion); Add(W); if (Inside && BRep_Tool::IsClosed(W))
+/// CheckInside();`). The caller always passes Inside = true
+/// (BRepFeat_RibSlot.cxx L1733 `BRepLib_MakeFace f(myPln->Pln(), WW, true)`).
 fn make_face_plane_wire(
     the_b: &mut BRepBuilder,
     the_pool: &mut BRep,
     the_pln: &Plane,
     the_wire: &Shape,
 ) -> Shape {
-    the_b.make_face(the_pool, Some(Surface3::Plane(*the_pln)), the_wire.clone())
+    let fac = the_b.make_face(the_pool, Some(Surface3::Plane(*the_pln)), the_wire.clone());
+    // OCCT L267-270.
+    if brep_tool_is_closed(the_wire) {
+        check_inside(the_pool, &fac);
+    }
+    fac
+}
+
+/// OCCT BRepLib_MakeFace::CheckInside (BRepLib_MakeFace.cxx L905-924):
+/// "Reverses the current face if not a bounded area" — when the infinite
+/// point classifies IN, `myShape` is replaced by an `EmptyCopied` face whose
+/// children are added REVERSED. `BRep_TFace::EmptyCopy` (BRep_TFace.cxx
+/// L36-43) copies the Surface/Location/Tolerance and no children, so the net
+/// effect is that every wire of the face is reversed and the surface kept.
+pub(crate) fn check_inside(the_pool: &mut BRep, the_fac: &Shape) {
+    let Some(surf) = brep_tool_surface(the_fac) else {
+        return;
+    };
+    let locations = [glam::DAffine3::IDENTITY];
+    let src = crate::topalgo::shape_source::FaceShapeSource::new(the_fac, surf, &locations);
+    // BRepTopAdaptor_FClass2d FClass(F, 0.).
+    let a_cl = crate::topalgo::brep_top_adaptor::fclass2d::FClass2d::new(&src, 0, 0.0);
+    if a_cl.perform_infinite_point(&src) != rcad_kernel::topods::State::In {
+        return;
+    }
+    // B.Add(S, it.Value().Reversed()) for every child (the wires).
+    let fd = the_pool.face_mut(the_fac.clone());
+    fd.outer_wire.orientation = reverse_orientation(fd.outer_wire.orientation);
+    for w in fd.inner_wires.iter_mut() {
+        w.orientation = reverse_orientation(w.orientation);
+    }
+}
+
+/// OCCT TopAbs::Reverse(O) — FORWARD <-> REVERSED, INTERNAL <-> EXTERNAL
+/// (TopAbs.cxx L36-52).
+fn reverse_orientation(o: rcad_kernel::topods::Orientation) -> rcad_kernel::topods::Orientation {
+    use rcad_kernel::topods::Orientation;
+    match o {
+        Orientation::Forward => Orientation::Reversed,
+        Orientation::Reversed => Orientation::Forward,
+        Orientation::Internal => Orientation::External,
+        Orientation::External => Orientation::Internal,
+    }
 }
 
 /// OCCT BRepLib_MakeFace(w) — the face carried by the wire alone (no
@@ -894,6 +937,7 @@ impl BRepFeatRibSlot {
 
             // OCCT L1571-1579.
             if bnd_edge1.is_null() || bnd_edge2.is_null() {
+
                 profile_ok = false;
                 return profile_ok;
             }
@@ -1033,6 +1077,7 @@ impl BRepFeatRibSlot {
 
         // OCCT L1736-1744.
         if !brep_algo_is_valid(&fac) {
+
             profile_ok = false;
             return profile_ok;
         }
@@ -1070,6 +1115,7 @@ impl BRepFeatRibSlot {
 
         // OCCT L1776-1785.
         if !brep_algo_is_valid(prof) {
+
             profile_ok = false;
             return profile_ok;
         }
@@ -1289,6 +1335,7 @@ impl BRepFeatRibSlot {
 
             // OCCT L1982-1990.
             if bnd_edge1.is_null() || bnd_edge2.is_null() {
+
                 profile_ok = false;
                 return profile_ok;
             }
@@ -1795,6 +1842,7 @@ impl BRepFeatRibSlot {
 
         // OCCT L2622-2630.
         if !brep_algo_is_valid(&fac) {
+
             profile_ok = false;
             return profile_ok;
         }
@@ -1828,6 +1876,7 @@ impl BRepFeatRibSlot {
 
         // OCCT L2658-2667.
         if !brep_algo_is_valid(prof) {
+
             profile_ok = false;
             return profile_ok;
         }

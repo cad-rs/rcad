@@ -220,19 +220,21 @@ fn direct_children(s: &Shape) -> Option<Vec<Shape>> {
     match &*s.data {
         TShape::Vertex(v) => Some(v.my_shapes.clone()),
         TShape::Edge(e) => {
-            // OCCT storage invariant (BRepLib_MakeEdge / BRep_Builder::
-            // UpdateEdge): the canonical FIRST vertex is stored FORWARD and
-            // sits at the curve's First parameter; the canonical LAST is
-            // REVERSED at the Last parameter. rcad primitives store the
-            // mirror image (the stored first vertex at range[1], tagged
-            // REVERSED), so the OCCT roles are restored here by swapping the
-            // tags — every composed vertex occurrence downstream then follows
-            // the OCCT semantics.
-            let mut first = e.first.clone();
-            first.orientation = Orientation::Reversed;
-            let mut last = e.last.clone();
-            last.orientation = Orientation::Forward;
-            Some(vec![first, last])
+            // OCCT `TopoDS_Iterator(E)` enumerates the edge's stored vertex
+            // list in storage order with each vertex's OWN orientation — the
+            // order and the tags are producer-owned and both are legitimate:
+            // `BRepLib_MakeEdge::Init` (BRepLib_MakeEdge.cxx L771-772) stores
+            // V1 first (low parameter, FORWARD) then V2 (high parameter,
+            // REVERSED), while `BRepPrim_Builder::AddEdgeVertex`
+            // (BRepPrim_Builder.cxx L143-155, direct=false) stores the HIGH
+            // parameter vertex first with the REVERSED tag. The OCCT readers
+            // key on the TAGS, not on the slot order — `TopExp::Vertices(E,
+            // V1, V2, CumOri)` (TopExp.cxx L214-252) takes V1 = the
+            // composed-FORWARD child and V2 = the composed-REVERSED one. The
+            // rcad `TEdgeData` carries the same storage pair in
+            // `first`/`last` with the same producer-owned tags, so the
+            // children are exposed as stored (composed below).
+            Some(vec![e.first.clone(), e.last.clone()])
         }
         TShape::Wire(w) => Some(w.edges.clone()),
         TShape::Face(f) => {

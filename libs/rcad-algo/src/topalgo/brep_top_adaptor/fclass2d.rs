@@ -644,6 +644,17 @@ fn edge_vertices_of(
 
 /// The two vertex (key, orientation) pairs of edge `i` with the edge location
 /// composed (TopoDS_Iterator cumLoc).
+///
+/// OCCT `BRep_TEdge` stores the edge's child pair with the composed
+/// orientations FORWARD (the vertex at the curve's First parameter) and
+/// REVERSED (the one at the Last parameter) — `BRepLib_MakeEdge::Init`
+/// (BRepLib_MakeEdge.cxx L771-772) and `BRepPrim_Builder::AddEdgeVertex`
+/// (BRepPrim_Builder.cxx L143-155) both establish that tagging, only the
+/// storage ORDER differs between them. `TopExp::Vertices(E, V1, V2, CumOri)`
+/// (TopExp.cxx L214-252) keys on the tags: V1 = the composed-FORWARD child,
+/// V2 = the composed-REVERSED one. The rcad `TEdgeData` carries the same
+/// pair in `first`/`last` with the same tags, so the pair's own
+/// `orientation` fields are the composed child orientations.
 fn edge_vertex_keys(
     ds: &dyn ShapeSource,
     i: usize,

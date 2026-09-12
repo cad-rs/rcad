@@ -391,7 +391,13 @@ fn standard_epsilon(the_value: f64) -> f64 {
 
 /// OCCT ElCLib::AdjustPeriodic (ElCLib.cxx L115-149): sets U1 into
 /// [UFirst, ULast] and U2 into [U1, U1+period] by adding/subtracting the period.
-fn el_clib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u2: &mut f64) {
+pub(crate) fn el_clib_adjust_periodic(
+    u_first: f64,
+    u_last: f64,
+    preci: f64,
+    u1: &mut f64,
+    u2: &mut f64,
+) {
     // OCCT ElCLib.cxx L121: Precision::IsInfinite(UFirst) || Precision::IsInfinite(ULast).
     if rcad_kernel::precision::is_infinite_value(u_first)
         || rcad_kernel::precision::is_infinite_value(u_last)

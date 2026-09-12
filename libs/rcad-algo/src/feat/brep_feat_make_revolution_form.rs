@@ -58,6 +58,7 @@ use crate::feat::brep_feat_rib_slot::{
     top_exp_first_vertex, top_exp_last_vertex, BRepFeatRibSlot, Geom2dAPIInterCurveCurve,
     GeomAPIProjectPointOnCurve,
 };
+use crate::feat::brep_feat_rib_slot_b::check_inside;
 use crate::feat::brep_feat_status::{BRepFeatPerfSelection, BRepFeatStatusError};
 use crate::feat::loc_ope_cs_intersector::LocOpeCSIntersector;
 use crate::feat::loc_ope_revolution_form::LocOpeRevolutionForm;
@@ -249,14 +250,21 @@ fn make_face_pln_bounds(
 }
 
 /// OCCT BRepLib_MakeFace(Pln, wire, Inside) — the face on the plane limited
-/// by the wire.
+/// by the wire (BRepLib_MakeFace.cxx L262-272: the `Add(W)` followed by the
+/// `if (Inside && BRep_Tool::IsClosed(W)) CheckInside();` tail; the callers
+/// pass Inside = true).
 fn make_face_plane_wire(
     the_b: &mut BRepBuilder,
     the_pool: &mut BRep,
     the_pln: &Plane,
     the_wire: &Shape,
 ) -> Shape {
-    the_b.make_face(the_pool, Some(Surface3::Plane(*the_pln)), the_wire.clone())
+    let fac = the_b.make_face(the_pool, Some(Surface3::Plane(*the_pln)), the_wire.clone());
+    // OCCT L267-270.
+    if brep_tool_is_closed(the_wire) {
+        check_inside(the_pool, &fac);
+    }
+    fac
 }
 
 /// OCCT BRepBuilderAPI_Transform(T).Perform(S, false) carrier (architecture

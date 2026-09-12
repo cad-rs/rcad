@@ -601,6 +601,60 @@ pub(crate) fn make_edge_cl(the_brep: &mut BRep, the_c: &Curve3, the_f: f64, the_
     the_brep.add_tedge(Some(the_c.clone()), v1, v2, [the_f, the_l])
 }
 
+/// OCCT BRepLib_MakeEdge::Init(C, V1, V2) (BRepLib_MakeEdge.cxx L575-651): the
+/// vertex order, the parameter range and the vertex tags of the edge.
+///
+/// OCCT first reorders the endpoints so that the FIRST vertex of the edge is
+/// the one at the smaller parameter — the `reordonate` block L636-651 swaps
+/// both the vertices and p1/p2 when `p1 >= p2`; a periodic curve instead keeps
+/// the vertex order and only adjusts the parameters into the period
+/// (L628-634).  Then L771-772 tags the stored pair
+/// (`V1.Orientation(TopAbs_FORWARD); V2.Orientation(TopAbs_REVERSED);`)
+/// before `B.Add(E, V1); B.Add(E, V2); B.Range(E, p1, p2)` — the
+/// `add_tedge(first, last, range)` call.  The tags are the load-bearing part:
+/// `TopExp::Vertices(E, V1, V2, CumOri)` (TopExp.cxx L214-252) picks V1 as the
+/// composed-FORWARD child and V2 as the composed-REVERSED one, and every
+/// downstream reader (the analyzer's vertex-on-curve control, the
+/// BRepTools_WireExplorer re-host) keys on them.
+fn reorder_edge_endpoints(
+    the_c: &Curve3,
+    the_v1: &Shape,
+    the_v2: &Shape,
+    par1: f64,
+    par2: f64,
+) -> (Shape, Shape, [f64; 2]) {
+    let (mut p1, mut p2) = (par1, par2);
+    let (mut v1, mut v2);
+    if the_c.is_periodic() {
+        // OCCT L628-634: ElCLib::AdjustPeriodic(cf, cl, epsilon, p1, p2).
+        let dom = the_c.default_domain();
+        crate::bop::algo::pave_filler::el_clib_adjust_periodic(
+            dom[0],
+            dom[1],
+            rcad_kernel::PCONFUSION,
+            &mut p1,
+            &mut p2,
+        );
+        v1 = the_v1.clone();
+        v2 = the_v2.clone();
+    } else if p1 < p2 {
+        // OCCT L638-642.
+        v1 = the_v1.clone();
+        v2 = the_v2.clone();
+    } else {
+        // OCCT L643-650: reordonate — V2 = VV1; V1 = VV2; swap(p1, p2).
+        let x = p1;
+        p1 = p2;
+        p2 = x;
+        v1 = the_v2.clone();
+        v2 = the_v1.clone();
+    }
+    // OCCT L771-772.
+    v1.orientation = Orientation::Forward;
+    v2.orientation = Orientation::Reversed;
+    (v1, v2, [p1, p2])
+}
+
 /// OCCT BRepLib_MakeEdge(C, P1, P2): the vertex parameters come from the
 /// projection of the points on C (BRepLib_MakeEdge.cxx — the
 /// GeomAPI_ProjectPointOnCurve computation); the rcad add_tedge recomputes
@@ -631,7 +685,8 @@ pub(crate) fn make_edge_c_p_p(
     .param;
     let v1 = the_brep.add_tvertex(the_p1);
     let v2 = the_brep.add_tvertex(the_p2);
-    the_brep.add_tedge(Some(the_c.clone()), v1, v2, [par1, par2])
+    let (first, last, range) = reorder_edge_endpoints(the_c, &v1, &v2, par1, par2);
+    the_brep.add_tedge(Some(the_c.clone()), first, last, range)
 }
 
 /// OCCT BRepLib_MakeEdge(V1, V2): the linear edge between two points
@@ -669,7 +724,8 @@ pub(crate) fn make_edge_c_v_v(
         the_c, p2, dom[0], dom[1], 64,
     )
     .param;
-    the_brep.add_tedge(Some(the_c.clone()), the_v1.clone(), the_v2.clone(), [par1, par2])
+    let (first, last, range) = reorder_edge_endpoints(the_c, the_v1, the_v2, par1, par2);
+    the_brep.add_tedge(Some(the_c.clone()), first, last, range)
 }
 
 /// OCCT BRepLib_MakeVertex(P) — a fresh vertex (the pool constructor).
