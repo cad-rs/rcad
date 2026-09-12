@@ -247,7 +247,7 @@ fn explore_rec(sh: &Shape, to_find: ShapeType, to_avoid: ShapeType, out: &mut Ve
 
 /// OCCT TopExp::MapShapes (TopExp.cxx L35-45): explore S for T and add every
 /// found shape into M.
-fn map_shapes(s: &Shape, t: ShapeType, m: &mut OcctShapeMap) {
+pub(crate) fn map_shapes(s: &Shape, t: ShapeType, m: &mut OcctShapeMap) {
     for x in explorer(s, t, ShapeType::Shape) {
         map_add(m, &x);
     }

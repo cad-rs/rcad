@@ -20,14 +20,7 @@
 //   BRepFeat_Gluer::myGluer                -> my_gluer (LocOpeGluer)
 //
 // Architecture differences (referenced from the affected functions):
-// 1. LocOpe_Gluer::Perform (LocOpe_Gluer.cxx L156-334) is a deferred
-//    translation (needs LocOpe_WiresOnShape / LocOpe_Spliter /
-//    LocOpe_Generator / LocOpe::TgtFaces — see the loc_ope_gluer.rs header).
-//    The myGluer.Perform() call of Build is carried at its spot as the
-//    marked gap; with the deferred Perform the myDone stays false and the
-//    OCCT NotDone() branch is the one taken (same guarded-skip model as the
-//    BOPAlgo_BOP::Perform step of BRepFeat_MakeCylindricalHole).
-// 2. The function static `NCollection_List<TopoDS_Shape> LIM` of Modified
+// 1. The function static `NCollection_List<TopoDS_Shape> LIM` of Modified
 //    (cxx L60) is carried as the my_lim field (the OCCT static is process
 //    wide and always empty; the Rust carrier is a per-object empty list,
 //    same vehicle as LocOpeGluer::my_null_list).
@@ -133,8 +126,8 @@ impl BRepFeatGluer {
 
     /// OCCT BRepFeat_Gluer::Build (cxx L24-36).
     pub fn build(&mut self) {
-        // OCCT cxx L26: myGluer.Perform(); — deferred dependency (architecture
-        // difference #1); with it myDone stays false below.
+        // OCCT cxx L26: myGluer.Perform().
+        self.my_gluer.perform();
         // OCCT cxx L27: if (myGluer.IsDone()).
         if self.my_gluer.is_done() {
             self.done();

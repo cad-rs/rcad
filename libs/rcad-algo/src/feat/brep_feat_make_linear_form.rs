@@ -80,21 +80,44 @@ fn wire_edges(the_wire: &Shape) -> Vec<Shape> {
 
 /// OCCT BRepExtrema_ExtPF(ve, fac) carrier (architecture difference #3) —
 /// IsDone() = false keeps the OCCT guard structure.
-struct BRepExtremaExtPFCarrier;
+pub(crate) struct BRepExtremaExtPFCarrier;
 
 impl BRepExtremaExtPFCarrier {
     fn new(_the_ve: &Shape, _the_fac: &Shape) -> Self {
         BRepExtremaExtPFCarrier
     }
-    fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         false
     }
     #[allow(dead_code)]
     fn point(&self, _n: i32) -> DVec3 {
         DVec3::ZERO
     }
-    #[allow(dead_code)]
-    fn perform(&mut self, _the_ve: &Shape, _the_fac: &Shape) {}
+    pub(crate) fn perform(&mut self, _the_ve: &Shape, _the_fac: &Shape) {}
+}
+
+impl BRepExtremaExtPFCarrier {
+    /// OCCT BRepExtrema_ExtPF() (BRepExtrema_ExtPF.hxx L44) — the default
+    /// constructor of the Initialize(TheFace) + Perform(Vertex, Face) call
+    /// pattern (the LocOpe_Gluer::AddEdges site).
+    pub(crate) fn new_default() -> Self {
+        BRepExtremaExtPFCarrier
+    }
+
+    /// OCCT BRepExtrema_ExtPF::Initialize(TheFace) (cxx L42-64).
+    pub(crate) fn initialize(&mut self, _the_face: &Shape) {}
+
+    /// OCCT BRepExtrema_ExtPF::NbExt() (hxx L57) — the carrier reports the
+    /// not-done count (mySqDist stays cleared, the OCCT early-out of cxx
+    /// L74-77 / L82).
+    pub(crate) fn nb_ext(&self) -> i32 {
+        0
+    }
+
+    /// OCCT BRepExtrema_ExtPF::SquareDistance(N) (hxx L53).
+    pub(crate) fn square_distance(&self, _n: i32) -> f64 {
+        0.0
+    }
 }
 
 /// Shape identity key (TopTools_ShapeMapHasher: TShape + Location,

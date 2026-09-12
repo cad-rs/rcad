@@ -991,10 +991,8 @@ impl BRepFeatRibSlot {
 
         // --- gluing is always applicable (OCCT L190-210) ---
         if the_ope == 1 {
-            // OCCT L192: theGlue.Perform() — deferred dependency
-            // (loc_ope_gluer.rs Perform note): the call is carried at its
-            // spot; with the deferred body myGluer stays not-done and the
-            // OCCT else branch below is the one taken.
+            // OCCT L192: theGlue.Perform().
+            the_glue.perform();
             if the_glue.is_done() {
                 // OCCT L195.
                 self.update_descendants_gluer(&the_glue);
