@@ -5,7 +5,7 @@
 > 收口）+ `direct_children` 不再改写标签 + `BRepLib_MakeEdge::Init` 的 reordonate/周期分支 +
 > `BRepLib_MakeFace(Pln,W,true)` 的 `CheckInside` + `BRepLib_MakeFace(W)` 的 `FindSurface` 曲面探测；
 > 另落**跨池子图重编号**（`renumbered_pool` / `adopt_subgraph_into`）消除 rcad 池 index 别名。
-> 八网格与全部门槛**零回归**。下一轮的墙已全部是**下游**（§4.1：`FalseSide ×7` / `NoExtFace ×3` /
+> 八网格与全部门槛**零回归**。下一轮的墙已全部是**下游**（§4.1：`FalseSide ×5` / `NoExtFace ×3` /
 > `BRepTools_Modifier::Perform` GAP / draft GAP）。
 
 ## 0. 新 session 一句话提示词（直接粘贴）
@@ -14,9 +14,9 @@
 > 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–14（权威脉络）；
 > 先 `cd rcad` 跑 6 条门槛（见 §1）确认 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && bash output/run_eight_grids.sh` 确认**八网格 8/8**；
-> 然后按 §4 队列开工（第 1 项 = `BRepFeat_MakeLinearForm::Propagate` 的 `FalseSide`（7 例，最大一块）；
-> 第 2 项 = 追加 13 批次 2 的 `Geom2dInt_GInter` 通用批；第 3 项 = tkoffset 三件；
-> 第 4 项 = tkfillet a1 上游）。全程严格 1:1 逐行对照（OCCT 行号锚点、禁载体/禁等价替换/禁凑结果），
+> 然后按 §4 队列开工（第 1 项 = `BOPAlgo_Section` 对共面面片对的输出——`FalseSide ×5` 的根因，见 §4.1；
+> 第 2 项 = `BRepFeat_RibSlot::ExtremeFaces`（`NoExtFace ×3`）；第 3 项 = 追加 13 批次 2 的
+> `Geom2dInt_GInter` 通用批；第 4 项 = tkoffset 三件 / tkfillet a1 上游）。全程严格 1:1 逐行对照（OCCT 行号锚点、禁载体/禁等价替换/禁凑结果），
 > 每 Edit 后 `cargo check`，探针即用即清（提交前 `git diff | grep "+.*eprintln"` = 0），
 > 完成后更新 §E3-W 追加 15 并提交两仓库（**按长期要求均不推送**）。
 
@@ -32,7 +32,7 @@
 | **跨池子图重编号** | `feat/brep_feat_form_2.rs::renumbered_pool` / `adopt_subgraph_into` | 架构差异（OCCT 按指针携带图） | `Shape N is not a Face/Edge`（12 例 panic） |
 
 **效果**：featlf 真实断言 15 例中 `is_done` 门通过 11（此前 0）；kernel panic 0（此前 12）。
-**剩余失败全部在下游**：`FalseSide ×7`、`NoExtFace ×3`、`NoFaceProf ×1`、
+**剩余失败全部在下游**：`FalseSide ×5`、`NoExtFace ×3`、`NoFaceProf ×3`、
 `BRepTools_Modifier::Perform` GAP（a3）、`draft_modification_1_b.rs:1269` GAP（b4）、
 off-chain 的 Draft（depouille）e4/e5。
 
@@ -119,9 +119,9 @@ profile 有效性问题（`InvalidPointOnCurve` / `NotClosed` / `UnorientableSha
 
 | 墙 | 例数 | 入口 |
 |----|------|------|
-| `FalseSide` | **7** | `BRepFeat_MakeLinearForm::Propagate`（cxx **L1035-1330**；rcad `brep_feat_make_linear_form.rs:1131`）。内部 `BRepAlgoAPI_Section sect(fac, CurrentFace, false)` + `Approximation(true)` + `Build()`，再沿 section 边判 `FirstOK/LastOK` |
-| `NoExtFace` | **3** | `BRepFeat_RibSlot::ExtremeFaces`（cxx **L747-1319**）：`ChoiceOfFaces` / `LocOpe_CSIntersector` 路径 |
-| `NoFaceProf` | **1** | 仍是一处 `profile_ok=false`（`brep_feat_rib_slot_b.rs` 的 6 个返回点之一，用 `RCAD_FEAT_DEBUG` 式临时探针定位即可） |
+| `FalseSide` | **5**（b3/c5/d7/d8/d9） | **根因已定界到"section 0 边"**（本轮探针实测）：`Propagate` 的 `BRepAlgoAPI_Section(fac, CurrentFace, approximation=true)` 在 **b3 返回 `nedges=0`**（Compound 在、无边），而 a3 的同类 section **有 1 条边且判定完全正确**。⇒ 墙在 **`BOPAlgo_Section` 对共面面片对的输出**，不在 `Propagate`。入口 = `bop/brep_algo_api/mod.rs::SectionOp` → `run_build_section_brep` → `BOPAlgo_Section.cxx`（重点：FF 重叠面片对） |
+| `NoExtFace` | **3**（b5/b6/b7） | `BRepFeat_RibSlot::ExtremeFaces`（cxx **L747-1319**）：`ChoiceOfFaces` / `LocOpe_CSIntersector` 路径 |
+| `NoFaceProf` | **3**（b1/b2/c6） | `brep_feat_rib_slot_b.rs` 的 6 个 `profile_ok=false` 返回点之一（临时探针逐个区分） |
 | `BRepTools_Modifier::Perform` GAP | **1**（a3） | `feat/loc_ope_prism.rs:93`（消费 = `LocOpeLinearForm::int_perf` / `perform_trans`） |
 | `draft_modification_1_b.rs:1269` GAP | **1**（b4） | tkoffset Draft 前沿 |
 | Draft（depouille）断言 | **2**（e4/e5） | off-chain，属 tkoffset Draft |

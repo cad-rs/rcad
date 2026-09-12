@@ -948,11 +948,25 @@ libs/rcad-algo/src/
 - **跨池子图重编号（本轮顺带落地的架构修复，两处提交）**：`BRepAlgo::IsValid`/`BRepLib_FindSurface` 的入参由**多个 pool 拼装**（profile pool、BndFace/CutVehicle 结果 pool、被 clone 的输入 wire 边）。OCCT 的 `TopoDS_Shape` 按指针携带 TShape 图、天然自洽；rcad 的 `BRep` 是平铺 pool、`Shape::index` **只在创建它的 pool 内有效**，等值 index 会**别名到无关 TShape**（症状：`Shape 14 is not a Face`／`Shape 3 is not an Edge`，本轮 12/15 用例）。修复 = `renumbered_pool`：把子图**后序 DFS**（子图是 DAG，只有后序保证"父在子之后落位"）重编号进新 pool，每个 TShape 恰好一个 Arc，子引用**同时**改槽位与 `data` 句柄（只改槽位会留下一层深的池外句柄，本轮踩过）。抽出的 `adopt_subgraph_into(pool, s)` 供 `make_face_wire` 在 `FindSurface` 前把 cut wire 收养进 profile pool。
 - **实测结果（feat_featlf 网格，真实断言 15 例）**：`is_done` 门**从 0/12 越过 11/12**；**kernel panic 清零**（此前 12 例 panic 于 `topods.rs` 的池别名）。剩余 15 失败全部是**下游真墙**（非本层缺陷）：`FalseSide ×7`（`BRepFeat_MakeLinearForm::Propagate`）、`NoExtFace ×3`（`ExtremeFaces`）、`NoFaceProf ×1`、`BRepTools_Modifier::Perform` GAP（`loc_ope_prism.rs:93`，a3）、`draft_modification_1_b.rs:1269` GAP（b4）、以及**off-chain 的 Draft（depouille）2 例**（e4/e5，属 tkoffset Draft 前沿）。
 - **新一轮队列（下一 session 从上往下取）**：
-  1. **`FalseSide ×7`（最高优先，最大的一块）**：`BRepFeat_MakeLinearForm::Propagate`（cxx **L1035-1330**）——`BRepAlgoAPI_Section sect(fac, CurrentFace, false)` + `sect.Approximation(true)` + `Build()`，然后沿 section 边判 `FirstOK/LastOK`（首末顶点是否落在 `Firstpnt/Lastpnt` 容差内）。rcad 侧同名函数在 `brep_feat_make_linear_form.rs:1131`。入口 = 逐段对照该函数与 OCCT（尤其 `BRepAlgoAPI_Section` 的 Approximation 开关与 section 结果边集）。
-  2. **`NoExtFace ×3`**：`BRepFeat_RibSlot::ExtremeFaces`（cxx **L747-1319**）——`ChoiceOfFaces` / `LocOpe_CSIntersector` 路径。
-  3. **`BRepTools_Modifier::Perform` 真身**（`feat/loc_ope_prism.rs:93` GAP）——a3 的下一道墙，消费点 `LocOpeLinearForm::int_perf`/`perform_trans`。同族消费者见 `LocOpe_Prism`/`Revol`/`Pipe`/`SplitShape`。
-  4. **`draft_modification_1_b.rs:1269` GAP**（b4）——tkoffset Draft 前沿。
-  5. **追加 13 的批次 2/3/4 原样保留未动**（`Geom2dInt_GInter` 通用批 / tkoffset 三件 / tkfillet a1 上游）——本轮全部预算投入批次 1 主线，见交接文档 §4 队列。
+  1. **`FalseSide ×5`（b3/c5/d7/d8/d9；最高优先，最大的一块）——根因已定界到"section 0 边"**：
+     `BRepFeat_MakeLinearForm::Propagate`（cxx **L1035-1120**）用
+     `BRepAlgoAPI_Section sect(fac, CurrentFace, false)` + `Approximation(true)` + `Build()`，
+     再沿 section 边找"两端点落在 `Firstpnt`/`Lastpnt` 容差内"的那条；**找不到 ⇒ `falseside=false`**。
+     **本轮探针实测（已清）**：a3 的 section **有 1 条边且判定完全正确**（`d_f1=0`、`d_l2=5.5e-17 ≤ t=1.5e-7`
+     ⇒ `FirstOK`+`LastOK`），而 **b3 的 section 返回 `nedges=0`**（Compound 结果存在但**无边**）。
+     ⇒ 墙不在 `Propagate`，在 **`BRepAlgoAPI_Section` / `BOPAlgo_Section` 对共面（co-planar）面片对的输出**
+     （b3 的 profile face 与 `SliList.First()` 面共面）。入口 = `bop/brep_algo_api/mod.rs::SectionOp`
+     → `run_build_section_brep` → `BOPAlgo_Section`，与 OCCT `BOPAlgo_Section.cxx` 逐行对照，
+     特别是共面/重叠面片对（FF 重叠产生边而非点）的分支。**这是下一轮的第一优先级。**
+  2. **`NoExtFace ×3`（b5/b6/b7）**：`BRepFeat_RibSlot::ExtremeFaces`（cxx **L747-1319**）——
+     `ChoiceOfFaces` / `LocOpe_CSIntersector` 路径。
+  3. **`NoFaceProf ×3`（b1/b2/c6）**：`profile_ok=false` 的 6 个返回点之一（`brep_feat_rib_slot_b.rs`），
+     用 `RCAD_FEAT_DEBUG` 式临时探针逐个区分即可（本轮追加 14 已把其中 7 例的 `S6` 类消灭）。
+  4. **`BRepTools_Modifier::Perform` 真身**（`feat/loc_ope_prism.rs:93` GAP）——a3 的下一道墙，
+     消费点 `LocOpeLinearForm::int_perf`/`perform_trans`。同族消费者见 `LocOpe_Prism`/`Revol`/`Pipe`/`SplitShape`。
+  5. **`draft_modification_1_b.rs:1269` GAP**（b4）——tkoffset Draft 前沿。
+  6. **追加 13 的批次 2/3/4 原样保留未动**（`Geom2dInt_GInter` 通用批 / tkoffset 三件 / tkfillet a1 上游）
+     ——本轮全部预算投入批次 1 主线，见交接文档 §4 队列。
 - **本轮新坑（追加进交接 §6）**：① **"边顶点标签"是 rcad 的隐性数据模型约定**：槽位顺序**不是**语义，`Tag` 才是；任何按"first 就是低参数顶点"写的位置假设都会在 GWedge/harness 来源的边上翻车（反之亦然）。`add_tedge` 是唯一的收口点。② **只重编号 index 不重指向 `data` 无效**：`child_occurrences` 从 `s.data` 读子件，池外句柄会把碰撞"下沉一层"。③ **子图重编号必须用后序**：pre-order 在 DAG（共享子件）上不构成拓扑序，`children are built before their parent` 会 panic。④ **`Shape::null()` 的 `index == usize::MAX`** 在重编号里必须跳过（`collect_subgraph_indexed` 已按 `is_null()` 过滤）。
 
 
