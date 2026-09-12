@@ -3607,11 +3607,23 @@ impl BRepBuilder {
     }
 
     /// Add a shape to an existing compound.
+    ///
+    /// OCCT BRep_Builder::Add(Comp, S) mutates the compound TShape IN PLACE
+    /// through the handle (TopoDS_Builder/BRep_Builder semantics): every
+    /// TopoDS_Shape copy sharing the TShape observes the addition.  rcad
+    /// mirrors that with an in-place shared mutation (the same shared-mutation
+    /// model as the result-building index re-pointing): Arc::make_mut would
+    /// clone the TShape whenever a caller-local Shape handle aliases it, and
+    /// the caller's handle would then keep observing the stale empty compound.
     pub fn add_to_compound(&self, brep: &mut BRep, compound: Shape, shape: Shape) {
-        let ts = Arc::make_mut(&mut brep.tshapes[compound.index]);
-        match ts {
-            TShape::Compound(shapes) => shapes.push(shape),
-            _ => panic!("add_to_compound: shape is not a Compound"),
+        let raw = Arc::as_ptr(&brep.tshapes[compound.index]) as *mut TShape;
+        // SAFETY: single-threaded build; the compound TShape is mutated in
+        // place exactly as BRep_Builder::Add mutates the shared TShape.
+        unsafe {
+            match &mut *raw {
+                TShape::Compound(shapes) => shapes.push(shape),
+                _ => panic!("add_to_compound: shape is not a Compound"),
+            }
         }
     }
 
