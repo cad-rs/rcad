@@ -204,55 +204,17 @@ impl GeomFillNSections {
 
 // =========================================================================
 // TKGeomAlgo: Geom2dAPI_InterCurveCurve
+//
+// The OCCT class has ONE real body in the library —
+// `crate::geomalgo::inter_cc::InterCurveCurve` (Geom2dAPI_InterCurveCurve.cxx
+// L31-210 + .lxx), driven by the real `Geom2dInt_GInter`
+// (`crate::geomalgo::geom2d_int::GInter`).  The former fabricated-result stub
+// (npoints = 4 for ellipse/ellipse, points on an invented circle) is removed:
+// two real bodies for one OCCT class are not allowed, and a fabricated result
+// is not OCCT's failure path.
 // =========================================================================
 
-#[derive(Debug, Clone)]
-pub struct Geom2dAPIInterCurveCurve {
-    npoints: usize,
-}
-
-impl Geom2dAPIInterCurveCurve {
-    pub fn new() -> Self {
-        Geom2dAPIInterCurveCurve { npoints: 0 }
-    }
-
-    pub fn with_curves(
-        c1: &rcad_kernel::geom::Curve2d,
-        c2: &rcad_kernel::geom::Curve2d,
-        _tol: f64,
-    ) -> Self {
-        let mut inter = Geom2dAPIInterCurveCurve { npoints: 0 };
-        inter.init(c1, c2, _tol);
-        inter
-    }
-
-    pub fn init(
-        &mut self,
-        c1: &rcad_kernel::geom::Curve2d,
-        c2: &rcad_kernel::geom::Curve2d,
-        _tol: f64,
-    ) {
-        let is_ellipse_ellipse = matches!(c1, rcad_kernel::geom::Curve2d::Ellipse(_))
-            && matches!(c2, rcad_kernel::geom::Curve2d::Ellipse(_));
-        self.npoints = if is_ellipse_ellipse { 4 } else { 0 };
-    }
-
-    pub fn nb_points(&self) -> usize {
-        self.npoints
-    }
-
-    pub fn point(&self, index: usize) -> DVec2 {
-        assert!(index >= 1 && index <= self.npoints, "Standard_OutOfRange");
-        let angle = std::f64::consts::PI * (index as f64) / (self.npoints as f64 + 1.0);
-        DVec2::new(angle.cos() * 2.0, angle.sin())
-    }
-}
-
-impl Default for Geom2dAPIInterCurveCurve {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub use crate::geomalgo::inter_cc::InterCurveCurve as Geom2dAPIInterCurveCurve;
 
 // =========================================================================
 // TKGeomAlgo: GeomAPI_PointsToBSpline (3D)

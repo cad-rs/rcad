@@ -3,20 +3,21 @@
 //! Source: `$OCCT_SRC/src/ModelingAlgorithms/TKTopAlgo/BRepCheck/BRepCheck_Face.cxx`
 //! (L59-954) and `BRepCheck_Face.hxx` (L31-95).
 //!
-//! GAP summary (see the module doc of `brep_check_analyzer`):
-//! - the static `Intersect` (Face.cxx L626-798) needs `Geom2dInt_GInter`
-//!   curve-curve 2D intersection — the intersection runs are neutral (the
-//!   function reports "no intersection"), the box rejection and the common
-//!   vertex bookkeeping are ported.
+//! `Intersect` (Face.cxx L626-798) runs the general 2D curve/curve
+//! intersector `Geom2dInt_GInter` — the rcad real body is
+//! `crate::geomalgo::geom2d_int::GInter` (the `IntCurve_IntCurveCurveGen`
+//! instantiation).
 
 use std::collections::HashMap;
 
-use rcad_kernel::geom::{Curve2dEval, CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::math::bnd::BndBox2d;
 use rcad_kernel::topo::topo_shape::Shape;
 use rcad_kernel::topods::{tshape_flags, BRep, BRepTool, Orientation, ShapeType, State, TShape, TFaceData};
 use std::sync::Arc;
 
+use crate::geomalgo::geom2d_int::GInter;
+use crate::geomalgo::int_res2d::Domain as Res2dDomain;
 use crate::topalgo::brep_class::bnd_lib_add2d_curve::add_2d_curve;
 use crate::topalgo::brep_top_adaptor::fclass2d::FClass2d;
 use crate::topalgo::shape_source::FaceShapeSource;
@@ -24,6 +25,7 @@ use crate::topalgo::shape_source::FaceShapeSource;
 use super::brep_check_result::{
     brep_check_add, explorer, oriented, ShapeKey, BRepCheckResultBase, BRepCheckStatus,
 };
+use super::brep_check_wire::uv_points;
 
 /// OCCT Face.cxx L59: `DataMapOfShapeBox2d`.
 type DataMapOfShapeBox2d = HashMap<ShapeKey, (BndBox2d, Shape)>;
@@ -711,11 +713,14 @@ impl BRepCheckFace {
 
 /// OCCT Face.cxx L626-798: the static `Intersect(wir1, wir2, F, theMapEdgeBox)`.
 ///
-/// GAP: the `Geom2dInt_GInter::Perform(C1, D1, C2, D2, ...)` runs
-/// (Face.cxx L728, L1302-analog) have no rcad translation for general
-/// curves — the intersection result stays empty, so the function reports
-/// "no intersection" after the ported bookkeeping (common vertices, 2D
-/// boxes, box rejection).
+/// Runs the real 2D curve/curve intersector — `crate::geomalgo::geom2d_int::GInter`,
+/// the `Geom2dInt_GInter` real body (`Geom2dInt_GInter_0.cxx` +
+/// `IntCurve_IntCurveCurveGen.gxx`).
+///
+/// `c1` / `c2` / `myDomain1` / `myDomain2` mirror the OCCT locals declared at
+/// L665-669 and assigned inside the loop heads; Rust needs an initializer the
+/// first assignment always overwrites.
+#[allow(unused_assignments)]
 pub fn intersect(
     brep: &BRep,
     wir1: &Shape,
@@ -723,9 +728,11 @@ pub fn intersect(
     f: &Shape,
     the_map_edge_box: &DataMapOfShapeBox2d,
 ) -> bool {
-    let _inter2d_tol = 1e-10; // OCCT L631: Inter2dTol
+    // OCCT L631: Inter2dTol = 1.e-10.
+    let inter2d_tol = 1e-10;
 
-    // OCCT L636-649: common vertices of the two wires.
+    // OCCT L636-649: find the common vertices of the two wires
+    // (non-manifold case).
     let mut map_w1 = super::brep_check_wire::ShapeSet::new();
     let mut common_vertices: Vec<Shape> = Vec::new();
     for exp1 in explorer(brep, wir1, ShapeType::Vertex) {
@@ -738,39 +745,185 @@ pub fn intersect(
         }
     }
 
-    // OCCT L653: BRepAdaptor_Surface Surf(F, false).
+    // OCCT L653: BRepAdaptor_Surface Surf(F, false) — the pure surface
+    // adaptor (no UVBounds computation).
     let Some(surf) = brep.face_surface_world(f) else {
         return false;
     };
 
-    // OCCT L655-663: PntSeq of the common vertices projected on the surface.
+    // OCCT L655-663: PntSeq — the common vertices projected on the surface.
+    // `BRep_Tool::Parameters(V, F)` raises Standard_NoSuchObject when the
+    // vertex carries no parameter on the face; the rcad form then leaves the
+    // vertex out of PntSeq.
     let mut pnt_seq: Vec<glam::DVec3> = Vec::new();
-    for cv in &common_vertices {
-        if let Some(p2d) = brep_vertex_parameters(brep, cv, f) {
-            pnt_seq.push(surf.point_at(p2d.x, p2d.y));
+    for i in 1..=common_vertices.len() {
+        // OCCT L658-661.
+        let v = &common_vertices[i - 1];
+        if let Some(p2d) = brep_vertex_parameters(brep, v, f) {
+            let p = surf.point_at(p2d.x, p2d.y);
+            pnt_seq.push(p);
         }
     }
 
-    // OCCT L672-796: the pairwise edge loop.
+    // OCCT L665-670: C1 / C2, the UV points, the ranges, Inter, the domains
+    // and Box1 / Box2.
+    let mut c1: Option<Curve2d> = None;
+    let mut c2: Option<Curve2d> = None;
+    let mut my_domain1 = Res2dDomain::infinite();
+    let mut my_domain2 = Res2dDomain::infinite();
+    let mut box1 = BndBox2d::new();
+    let mut box2 = BndBox2d::new();
+    let mut inter = GInter::new();
+
+    // OCCT L672: for (exp1.Init(wir1, TopAbs_EDGE); exp1.More(); exp1.Next())
     for edg1 in explorer(brep, wir1, ShapeType::Edge) {
-        // OCCT L676-694: C1 load + Box1.
-        let box1 = the_map_edge_box.get(&ShapeKey::of(&edg1)).map(|(b, _)| b.clone());
+        // OCCT L676: C1.Load(BRep_Tool::CurveOnSurface(edg1, F, first1, last1)).
+        let Some((pc1, first1_raw, last1_raw)) = brep.curve_on_surface(&edg1, f) else {
+            // OCCT: Geom2dAdaptor_Curve::Load dereferences the null handle
+            // (`C->DynamicType()`), i.e. undefined behaviour — the rcad form
+            // skips the edge instead.
+            continue;
+        };
+        c1 = Some(pc1.clone());
+        // OCCT L678-687: clamp onto the adaptor range (to avoid exception in
+        // Segment if C1 is BSpline - IFV).
+        let mut first1 = first1_raw;
+        let mut last1 = last1_raw;
+        if Curve2dEval::default_domain(&pc1)[0] > first1 {
+            first1 = Curve2dEval::default_domain(&pc1)[0];
+        }
+        if Curve2dEval::default_domain(&pc1)[1] < last1 {
+            last1 = Curve2dEval::default_domain(&pc1)[1];
+        }
+
+        // OCCT L689-698: Box1.
+        box1.set_void();
+        if let Some((b, _s)) = the_map_edge_box.get(&ShapeKey::of(&edg1)) {
+            box1 = b.clone();
+        }
+        if box1.is_void() {
+            // OCCT L698: BndLib_Add2dCurve::Add(C1, first1, last1, 0., Box1).
+            add_2d_curve(&pc1, first1, last1, 0., &mut box1);
+        }
+
+        // OCCT L699: for (exp2.Init(wir2, TopAbs_EDGE); exp2.More(); exp2.Next())
         for edg2 in explorer(brep, wir2, ShapeType::Edge) {
-            if !edg1.is_same(&edg2) {
-                let box2 = the_map_edge_box
-                    .get(&ShapeKey::of(&edg2))
-                    .map(|(b, _)| b.clone());
-                // OCCT L722.
-                if let (Some(b1), Some(b2)) = (&box1, &box2) {
-                    if b1.is_out_box(b2) {
-                        continue;
+            // OCCT L702.
+            if edg1.is_same(&edg2) {
+                continue;
+            }
+            // OCCT L705: C2.Load(BRep_Tool::CurveOnSurface(edg2, F, first2, last2)).
+            let Some((pc2, first2_raw, last2_raw)) = brep.curve_on_surface(&edg2, f) else {
+                // Same Geom2dAdaptor_Curve::Load(null) architecture note as
+                // for C1 above.
+                continue;
+            };
+            c2 = Some(pc2.clone());
+            // OCCT L707-716: clamp onto the adaptor range.
+            let mut first2 = first2_raw;
+            let mut last2 = last2_raw;
+            if Curve2dEval::default_domain(&pc2)[0] > first2 {
+                first2 = Curve2dEval::default_domain(&pc2)[0];
+            }
+            if Curve2dEval::default_domain(&pc2)[1] < last2 {
+                last2 = Curve2dEval::default_domain(&pc2)[1];
+            }
+
+            // OCCT L718-728: Box2.
+            box2.set_void();
+            if let Some((b, _s)) = the_map_edge_box.get(&ShapeKey::of(&edg2)) {
+                box2 = b.clone();
+            }
+            if box2.is_void() {
+                add_2d_curve(&pc2, first2, last2, 0., &mut box2);
+            }
+
+            // OCCT L729.
+            if box1.is_out_box(&box2) {
+                continue;
+            }
+
+            // OCCT L731-737: UVPoints + the domains.
+            let (pfirst1, plast1) = uv_points(brep, &edg1, f, &pc1, first1_raw, last1_raw);
+            my_domain1 = Res2dDomain::bounded(pfirst1, first1, inter2d_tol, plast1, last1, inter2d_tol);
+            let (pfirst2, plast2) = uv_points(brep, &edg2, f, &pc2, first2_raw, last2_raw);
+            my_domain2 = Res2dDomain::bounded(pfirst2, first2, inter2d_tol, plast2, last2, inter2d_tol);
+
+            // OCCT L738: Inter.Perform(C1, myDomain1, C2, myDomain2,
+            // Inter2dTol, Inter2dTol).
+            let c1_ref = c1.as_ref().expect("Intersect: C1 must be loaded");
+            let c2_ref = c2.as_ref().expect("Intersect: C2 must be loaded");
+            inter.perform_cd_cd(c1_ref, &my_domain1, c2_ref, &my_domain2, inter2d_tol, inter2d_tol);
+
+            // OCCT L739-742.
+            if !inter.is_done() {
+                return true;
+            }
+
+            // OCCT L743-778: the intersection segments.
+            if inter.nb_segments() > 0 {
+                // OCCT L745-748.
+                if pnt_seq.is_empty() {
+                    return true;
+                }
+                // OCCT L750-777.
+                let mut nb_coinc = 0;
+                for i in 1..=inter.nb_segments() {
+                    // OCCT L753-756.
+                    let seg = inter.segment(i);
+                    if !seg.has_first_point() || !seg.has_last_point() {
+                        return true;
+                    }
+                    // OCCT L757-762.
+                    let first_p2d = seg.first_point().value();
+                    let last_p2d = seg.last_point().value();
+                    let first_p = surf.point_at(first_p2d.x, first_p2d.y);
+                    let last_p = surf.point_at(last_p2d.x, last_p2d.y);
+                    // OCCT L763-771.
+                    for j in 1..=pnt_seq.len() {
+                        let tolv = super::brep_check_result::brep_tool_tolerance_vertex(
+                            brep,
+                            &common_vertices[j - 1],
+                        );
+                        if first_p.distance(pnt_seq[j - 1]) <= tolv
+                            || last_p.distance(pnt_seq[j - 1]) <= tolv
+                        {
+                            nb_coinc += 1;
+                            break;
+                        }
                     }
                 }
-                // OCCT L724-792: the intersection.
-                // GAP: Geom2dInt_GInter::Perform(C1, myDomain1, C2, myDomain2,
-                // Inter2dTol, Inter2dTol) — no rcad translation for general
-                // curves — Inter reports no points/segments, so the function
-                // falls through without reporting an intersection.
+                // OCCT L776.
+                return nb_coinc != inter.nb_segments();
+            }
+
+            // OCCT L779-795: the intersection points.
+            if inter.nb_points() > 0 {
+                // OCCT L781-784.
+                if pnt_seq.is_empty() {
+                    return true;
+                }
+                // OCCT L786-793.
+                let mut nb_coinc = 0;
+                for i in 1..=inter.nb_points() {
+                    let p2d = inter.point(i).value();
+                    let p = surf.point_at(p2d.x, p2d.y);
+                    for j in 1..=pnt_seq.len() {
+                        let mut tolv = super::brep_check_result::brep_tool_tolerance_vertex(
+                            brep,
+                            &common_vertices[j - 1],
+                        );
+                        // OCCT L789: possible tolerance of intersection point.
+                        tolv += 1.0e-8;
+                        let dd = p.distance_squared(pnt_seq[j - 1]);
+                        if dd <= tolv * tolv {
+                            nb_coinc += 1;
+                            break;
+                        }
+                    }
+                }
+                // OCCT L794.
+                return nb_coinc != inter.nb_points();
             }
         }
     }

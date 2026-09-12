@@ -53,6 +53,8 @@ pub mod brep_check_vertex;
 pub mod brep_check_edge;
 #[path = "brep_check_wire.rs"]
 pub mod brep_check_wire;
+#[path = "brep_check_wire_self_intersect.rs"]
+pub mod brep_check_wire_self_intersect;
 #[path = "brep_check_face.rs"]
 pub mod brep_check_face;
 #[path = "brep_check_shell.rs"]

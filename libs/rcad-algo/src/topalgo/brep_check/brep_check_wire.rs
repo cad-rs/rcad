@@ -3,27 +3,22 @@
 //! Source: `$OCCT_SRC/src/ModelingAlgorithms/TKTopAlgo/BRepCheck/BRepCheck_Wire.cxx`
 //! (L69-2176) and `BRepCheck_Wire.hxx` (L34-122).
 //!
-//! GAP summary (see the module doc of `brep_check_analyzer`):
-//! - `SelfIntersect` (Wire.cxx L1074-1742) needs `Geom2dInt_GInter`
-//!   curve-curve 2D intersection (self-intersection of one pcurve and pairs
-//!   of pcurves). The rcad `GInter` translation covers the line-vs-curve
-//!   case only, so the intersection runs are neutral (no status set); the
-//!   surrounding structure (edge collection, pcurve/table setup, bounding-box
-//!   rejection, the NoCurveOnSurface / InvalidRange guards) is ported.
+//! `SelfIntersect` (Wire.cxx L1074-1742) runs the general 2D curve/curve
+//! intersector `Geom2dInt_GInter` — the rcad real body is
+//! `crate::geomalgo::geom2d_int::GInter` (the `IntCurve_IntCurveCurveGen`
+//! instantiation, `Geom2dInt_GInter_0.cxx` + `IntCurve_IntCurveCurveGen.gxx`).
 
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, SurfaceEval};
 use rcad_kernel::topo::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, BRepTool, Orientation, ShapeType, TShape};
-use rcad_kernel::math::bnd::BndBox2d;
 use std::collections::{HashMap, HashSet};
 
-use crate::topalgo::brep_class::bnd_lib_add2d_curve::add_2d_curve;
 use crate::topalgo::shape_source::FaceShapeSource;
 
 use super::brep_check_result::{
-    brep_check_add, brep_tool_tolerance_vertex, explorer,
-    iterator_subshapes, oriented, ShapeKey, BRepCheckResultBase, BRepCheckStatus,
+    brep_check_add, brep_tool_tolerance_vertex, explorer, oriented, ShapeKey,
+    BRepCheckResultBase, BRepCheckStatus,
 };
 
 /// OCCT Wire.cxx L95-98: `IsOriented(S)`.
@@ -1037,168 +1032,6 @@ impl BRepCheckWire {
         the_ostat
     }
 
-    /// OCCT BRepCheck_Wire::SelfIntersect (Wire.cxx L1074-1742).
-    ///
-    /// GAP: the `Geom2dInt_GInter` curve-curve intersection runs
-    /// (self-intersection L1172, pairwise L1302) have no rcad translation
-    /// with general curve input — the intersection result stays empty and
-    /// the surrounding checks run neutrally (no status set); the structural
-    /// guards (EmptyWire, NoCurveOnSurface, InvalidRange, box rejection,
-    /// same-edge rejection) are ported.
-    pub fn self_intersect(
-        &mut self,
-        brep: &BRep,
-        f: &Shape,
-        ret_e1: &mut Shape,
-        ret_e2: &mut Shape,
-        update: bool,
-    ) -> BRepCheckStatus {
-        let my_shape = self.base.my_shape.clone();
-        let _ = ret_e2;
-        // OCCT L1101-1105.
-        let _tolint = 1e-10;
-        // OCCT L1104-1105: HS = BRepAdaptor_Surface(F, false).
-        let hs = face_surface_adaptor(brep, f);
-        // OCCT L1107-1115: EMap over the direct wire children.
-        let mut e_map = ShapeSet::new();
-        for it1 in iterator_subshapes(brep, &my_shape) {
-            if it1.shape_type() == ShapeType::Edge {
-                e_map.add(&it1);
-            }
-        }
-        let nbedges = e_map.extent();
-        if nbedges == 0 {
-            // OCCT L1116-1123.
-            if update {
-                let lst = self
-                    .base
-                    .my_map
-                    .find_mut(&my_shape)
-                    .expect("SelfIntersect: myShape must be bound");
-                brep_check_add(lst, BRepCheckStatus::EmptyWire);
-            }
-            return BRepCheckStatus::EmptyWire;
-        }
-
-        // OCCT L1125-1127: tabDom / tabCur / boxes.
-        let mut tab_cur: Vec<Option<(Curve2d, f64, f64)>> = vec![None; nbedges];
-        let mut tab_dom_first: Vec<Option<DVec2>> = vec![None; nbedges];
-        let mut tab_dom_last: Vec<Option<DVec2>> = vec![None; nbedges];
-        let mut boxes: Vec<BndBox2d> = (0..nbedges).map(|_| BndBox2d::new()).collect();
-
-        for i in 0..nbedges {
-            let e1 = e_map.items()[i].clone();
-            if i == 0 {
-                // OCCT L1134-1163.
-                let pcu = brep.curve_on_surface(&e1, f);
-                let Some((pcu, mut first1, mut last1)) = pcu else {
-                    // OCCT L1135-1144.
-                    *ret_e1 = e1;
-                    if update {
-                        let lst = self
-                            .base
-                            .my_map
-                            .find_mut(&my_shape)
-                            .expect("SelfIntersect: myShape must be bound");
-                        brep_check_add(lst, BRepCheckStatus::SelfIntersectingWire);
-                    }
-                    return BRepCheckStatus::SelfIntersectingWire;
-                };
-                // OCCT L1146-1158: the periodic guard on the adaptor range.
-                if !Curve2dEval::is_periodic(&pcu) {
-                    let dom = Curve2dEval::default_domain(&pcu);
-                    if dom[0] > first1 {
-                        first1 = dom[0];
-                    }
-                    if dom[1] < last1 {
-                        last1 = dom[1];
-                    }
-                }
-                // OCCT L1160-1161.
-                let uv = uv_points(&brep, &e1, f, &pcu, first1, last1);
-                tab_dom_first[0] = Some(uv.0);
-                tab_dom_last[0] = Some(uv.1);
-                tab_cur[0] = Some((pcu.clone(), first1, last1));
-                // OCCT L1163.
-                add_2d_curve(&pcu, first1, last1, rcad_kernel::precision::PCONFUSION, &mut boxes[0]);
-            }
-
-            // OCCT L1171-1172: Inter.Perform(C1, myDomain1, tolint, tolint) —
-            // self-intersection of C1.
-            // GAP: Geom2dInt_GInter::Perform(C, D, TolConf, Tol) — no rcad
-            // translation for general curves — the result stays empty.
-
-            // OCCT L1242-1302: the pairwise setup for j > i.
-            for j in (i + 1)..nbedges {
-                let e2 = e_map.items()[j].clone();
-                if i == 0 {
-                    // OCCT L1247-1281.
-                    let pc2 = brep.curve_on_surface(&e2, f);
-                    match pc2 {
-                        Some((c2, mut first2, mut last2)) if last2 > first2 => {
-                            if !Curve2dEval::is_periodic(&c2) {
-                                let dom = Curve2dEval::default_domain(&c2);
-                                if dom[0] > first2 {
-                                    first2 = dom[0];
-                                }
-                                if dom[1] < last2 {
-                                    last2 = dom[1];
-                                }
-                            }
-                            let uv = uv_points(&brep, &e2, f, &c2, first2, last2);
-                            tab_dom_first[j] = Some(uv.0);
-                            tab_dom_last[j] = Some(uv.1);
-                            tab_cur[j] = Some((c2.clone(), first2, last2));
-                            add_2d_curve(
-                                &c2,
-                                first2,
-                                last2,
-                                rcad_kernel::precision::PCONFUSION,
-                                &mut boxes[j],
-                            );
-                        }
-                        Some((c2, _f2, _l2)) => {
-                            // OCCT L1269-1281: last2 <= first2 → InvalidRange;
-                            // null curve → NoCurveOnSurface.
-                            let _ = c2;
-                            return BRepCheckStatus::InvalidRange;
-                        }
-                        None => {
-                            return BRepCheckStatus::NoCurveOnSurface;
-                        }
-                    }
-                }
-
-                // OCCT L1288-1296: box rejection and same-edge rejection.
-                if boxes[i].is_out_box(&boxes[j]) {
-                    continue;
-                }
-                if e1.is_same(&e2) {
-                    continue;
-                }
-
-                // OCCT L1302: Inter.Perform(C1, myDomain1, C2, tabDom[j-1],
-                // tolint, tolint).
-                // GAP: Geom2dInt_GInter::Perform(C1, D1, C2, D2, ...) — no
-                // rcad translation for general curves — the intersection
-                // points/segments stay empty and the point/segment loops
-                // (L1335-1730) do not run.
-                let _ = hs;
-            }
-        }
-
-        // OCCT L1736-1741.
-        if update {
-            let lst = self
-                .base
-                .my_map
-                .find_mut(&my_shape)
-                .expect("SelfIntersect: myShape must be bound");
-            brep_check_add(lst, BRepCheckStatus::NoError);
-        }
-        BRepCheckStatus::NoError
-    }
-
     /// OCCT BRepCheck_Wire::SetStatus (Wire.cxx L1746-1749).
     pub fn set_status(&mut self, the_status: BRepCheckStatus) {
         let lst = self
@@ -1227,7 +1060,7 @@ impl BRepCheckWire {
 
 /// `BRep_Tool::UVPoints(E, F, PF, PL)` — the pcurve values at the (adjusted)
 /// parameter range ends.
-fn uv_points(
+pub(crate) fn uv_points(
     brep: &BRep,
     e: &Shape,
     f: &Shape,
@@ -1243,7 +1076,7 @@ fn uv_points(
 
 /// `BRepAdaptor_Surface(theFace, false)` — the face surface value in world
 /// coordinates.
-fn face_surface_adaptor(brep: &BRep, face: &Shape) -> Option<rcad_kernel::geom::Surface3> {
+pub(crate) fn face_surface_adaptor(brep: &BRep, face: &Shape) -> Option<rcad_kernel::geom::Surface3> {
     brep.face_surface_world(face)
 }
 
@@ -1403,7 +1236,7 @@ pub fn propagate(map_ve: &IndexedShapeMap, edg: &Shape, map_e: &mut ShapeSet) {
 /// The vertex sub-shapes of an edge (the OCCT TopExp_Explorer over
 /// TopAbs_VERTEX — for an edge this is exactly its two stored vertices,
 /// enumerated with the TopoDS_Iterator composition).
-fn explorer_of_edge_vertices(edge: &Shape) -> Vec<Shape> {
+pub(crate) fn explorer_of_edge_vertices(edge: &Shape) -> Vec<Shape> {
     super::brep_check_result::child_occurrences(edge)
 }
 
