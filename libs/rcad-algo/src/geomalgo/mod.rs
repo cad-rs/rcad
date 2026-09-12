@@ -76,3 +76,6 @@ pub mod geom_lib_same_range;
 pub mod geom_api_project_point_on_curve; // GeomAPI_ProjectPointOnCurve (TKGeomAlgo/GeomAPI)
 pub mod geom_api; // GeomAPI::To2d / GeomAPI::To3d (TKGeomAlgo/GeomAPI)
 pub mod geom_lib; // GeomLib::ExtendCurveToPoint + the static ComputeLambda (TKGeomBase/GeomLib)
+pub mod geom_int_line_constructor; // GeomInt_LineConstructor (TKGeomAlgo/GeomInt)
+pub mod geom_int_int_ss; // GeomInt_IntSS (TKGeomAlgo/GeomInt)
+pub mod geom_int_int_ss_1; // GeomInt_IntSS engine: MakeCurve/TreatRLine/BuildPCurves/TrimILine (GeomInt_IntSS_1.cxx)

@@ -398,6 +398,35 @@ impl IntPatchIntersection {
         // rcad: currently a no-op 鈥?marching in intss/ produces clean polylines
     }
 
+    /// OCCT L2002-2035: Perform(S1, D1, S2, D2, U1, V1, U2, V2, TolArc, TolTang)
+    /// — the intersection with a starting point.
+    ///
+    /// OCCT sets myIsStartPnt / myU1Start / myV1Start / myU2Start / myV2Start
+    /// (L2013-2027) and then runs the same body as the main Perform (the
+    /// GeomParamPerfom arm consumes the seed, L1918-1928); the rcad translation
+    /// stores the same members and delegates to the landed body.
+    #[allow(clippy::too_many_arguments)]
+    pub fn perform_with_start(
+        &mut self,
+        s1: &Surface3,
+        s2: &Surface3,
+        uv1: [f64; 4],
+        uv2: [f64; 4],
+        u1: f64,
+        v1: f64,
+        u2: f64,
+        v2: f64,
+        tol_arc: f64,
+        tol_tang: f64,
+    ) {
+        self.my_is_start_pnt = true;
+        self.my_u1_start = u1;
+        self.my_v1_start = v1;
+        self.my_u2_start = u2;
+        self.my_v2_start = v2;
+        self.perform(s1, s2, uv1, uv2, tol_arc, tol_tang);
+    }
+
     // =========================================================================
     // OCCT L139-170: Accessors
     // =========================================================================
