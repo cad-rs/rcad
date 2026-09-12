@@ -14,7 +14,7 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3};
 
 use rcad_kernel::base::proj_lib::adaptor::{
-    Adaptor3dCurve, Curve2dHandle, CurveHandle, CurveOnSurface, SurfaceHandle,
+    Adaptor2dCurve2d, Adaptor3dCurve, Curve2dHandle, CurveHandle, CurveOnSurface, SurfaceHandle,
 };
 use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomSurfaceAdaptor;
 use rcad_kernel::base::proj_lib::CurveType;
@@ -23,12 +23,14 @@ use rcad_kernel::geom::{Curve2d, Surface3, SurfaceEval};
 use rcad_kernel::Curve2dEval;
 use rcad_kernel::math::GeomAbsShape;
 
+use crate::geomalgo::approx_curve_on_surface::ApproxCurveOnSurface;
 use crate::geomalgo::gcpnts_abscissa_point::gcpnts_length_2d_range;
 use crate::geomalgo::gcpnts_curve::{GCPntsCurve, GCPntsCurve2d};
 use crate::geomalgo::geom2d_int::{Curve2dAdaptor, GInter};
 use crate::geomalgo::law::law_function::LawFunction;
 use crate::geomalgo::law::law_interpol::LawInterpol;
 use crate::geomalgo::plate::{FreeGtoCConstraint, GtoCConstraint, PinpointConstraint, PlateD1, PlateD2};
+use crate::geomalgo::proj_lib_h_comp_projected_curve::CompProjectedCurve;
 
 use super::{vec2d_angle, BuildPlateSurface};
 
@@ -43,18 +45,65 @@ impl BuildPlateSurface {
 
         // occ::handle<ProjLib_HCompProjectedCurve> HProjector =
         //     new ProjLib_HCompProjectedCurve(hsur, Curv, myTol3d / 10, myTol3d / 10);
-        //
-        // GAP leaf: ProjLib_CompProjectedCurve lives in the
-        // geomalgo/proj_lib_h_comp_projected_curve pair, which is not
-        // registered in the build yet (mid-integration); the anchor
-        // preserves the dependency failure path.  The rest of the OCCT body
-        // (single-pnt Bezier fallback, the Approx_CurveOnSurface call with
-        // MaxSeg = 20 + NbIntervals(GeomAbs_C3), MaxDegree = 10,
-        // Continuity = GeomAbs_C1) lands together with it.
-        let _ = (&hsur, curv);
-        unimplemented!(
-            "ProjLib_HCompProjectedCurve (GeomPlate ProjectCurve) is not registered in the build yet"
+        let h_projector = CompProjectedCurve::new(
+            hsur.clone(),
+            curv.clone(),
+            self.my_tol3d / 10.0,
+            self.my_tol3d / 10.0,
         );
+
+        // double UdebCheck, UfinCheck, ProjUdeb, ProjUfin;
+        // UdebCheck = Curv->FirstParameter();
+        // UfinCheck = Curv->LastParameter();
+        // HProjector->Bounds(1, ProjUdeb, ProjUfin);
+        let udeb_check = curv.first_parameter();
+        let ufin_check = curv.last_parameter();
+        let mut proj_udeb = 0.0f64;
+        let mut proj_ufin = 0.0f64;
+        h_projector.bounds(1, &mut proj_udeb, &mut proj_ufin);
+
+        if h_projector.nb_curves() != 1
+            || (udeb_check - proj_udeb).abs() > p_confusion()
+            || (ufin_check - proj_ufin).abs() > p_confusion()
+        {
+            let mut p2d = DVec2::ZERO;
+            if h_projector.is_single_pnt(1, &mut p2d) {
+                // solution in a point
+                // NCollection_Array1<gp_Pnt2d> poles(1, 2); poles.Init(P2d);
+                // Curve2d = new (Geom2d_BezierCurve)(poles);
+                Some(Curve2d::Bezier(rcad_kernel::geom::BezierCurve2 {
+                    control_points: vec![p2d, p2d],
+                    weights: vec![1.0, 1.0],
+                }))
+            } else {
+                // Curve2d.Nullify(); // No continuous solution
+                None
+            }
+        } else {
+            // GeomAbs_Shape Continuity = GeomAbs_C1;
+            // int MaxDegree = 10, MaxSeg;
+            let continuity = GeomAbsShape::C1;
+            let max_degree = 10i32;
+            let mut udeb = 0.0f64;
+            let mut ufin = 0.0f64;
+            h_projector.bounds(1, &mut udeb, &mut ufin);
+
+            // MaxSeg = 20 + HProjector->NbIntervals(GeomAbs_C3);
+            let max_seg = 20 + h_projector.nb_intervals(GeomAbsShape::C3) as i32;
+            // Approx_CurveOnSurface appr(HProjector, hsur, Udeb, Ufin, myTol3d);
+            // appr.Perform(MaxSeg, MaxDegree, Continuity, false, true);
+            let mut appr = ApproxCurveOnSurface::new(
+                Arc::new(h_projector) as Curve2dHandle,
+                hsur,
+                udeb,
+                ufin,
+                self.my_tol3d,
+            );
+            appr.perform(max_seg, max_degree, continuity, false, true);
+
+            // Curve2d = appr.Curve2d();
+            appr.curve2d()
+        }
     }
 
     /// OCCT ProjectedCurve (L307-349) — the projection of a curve on the
@@ -67,14 +116,37 @@ impl BuildPlateSurface {
 
         // occ::handle<ProjLib_HCompProjectedCurve> HProjector =
         //     new ProjLib_HCompProjectedCurve(hsur, Curv, myTolU / 10, myTolV / 10);
-        //
-        // GAP leaf: same ProjLib_CompProjectedCurve dependency as
-        // ProjectCurve (unregistered mid-integration); the OCCT
-        // NbCurves/Bounds/Trim flow lands together with it.
-        let _ = (&hsur, curv);
-        unimplemented!(
-            "ProjLib_HCompProjectedCurve (GeomPlate ProjectedCurve) is not registered in the build yet"
+        let h_projector = CompProjectedCurve::new(
+            hsur,
+            curv.clone(),
+            self.my_tolu / 10.0,
+            self.my_tolv / 10.0,
         );
+        if h_projector.nb_curves() != 1 {
+            // HProjector.Nullify(); // No continuous solution
+            None
+        } else {
+            // double First1, Last1, First2, Last2;
+            // First1 = Curv->FirstParameter();
+            // Last1  = Curv->LastParameter();
+            // HProjector->Bounds(1, First2, Last2);
+            let first1 = curv.first_parameter();
+            let last1 = curv.last_parameter();
+            let mut first2 = 0.0f64;
+            let mut last2 = 0.0f64;
+            h_projector.bounds(1, &mut first2, &mut last2);
+
+            if (first1 - first2).abs() <= self.my_tolu.max(self.my_tolv)
+                && (last1 - last2).abs() <= self.my_tolu.max(self.my_tolv)
+            {
+                // HProjector = occ::down_cast<ProjLib_HCompProjectedCurve>(
+                //     HProjector->Trim(First2, Last2, Precision::PConfusion()));
+                Some(h_projector.trim(first2, last2, p_confusion()))
+            } else {
+                // HProjector.Nullify(); // No continuous solution
+                None
+            }
+        }
     }
 
     /// OCCT CourbeJointive (L1349-1445) — creates a chain of curves to

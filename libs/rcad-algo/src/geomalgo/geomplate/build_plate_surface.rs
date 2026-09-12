@@ -60,6 +60,7 @@ use super::surface::GeomPlateSurface;
 use crate::geomalgo::plate::{
     FreeGtoCConstraint, GtoCConstraint, PinpointConstraint, Plate, PlateD1, PlateD2,
 };
+use crate::geomalgo::proj_lib_h_comp_projected_curve::CompProjectedCurve;
 
 #[path = "build_plate_surface_b.rs"]
 pub(crate) mod b;
@@ -994,15 +995,37 @@ impl BuildPlateSurface {
                 let curve = self.my_lin_cont[i - 1].curve3d().expect("Curve3d");
                 // occ::handle<ProjLib_HCompProjectedCurve> ProjCurve =
                 //     new ProjLib_HCompProjectedCurve(hsur, Curve, myTol3d, myTol3d);
-                //
-                // GAP leaf: ProjLib_CompProjectedCurve lives in the
-                // geomalgo/proj_lib_h_comp_projected_curve pair, which is not
-                // registered in the build yet (mid-integration); the anchor
-                // preserves the dependency failure path until it lands.
-                let _ = (&hsur, &curve, nb_point, uif, first_par, r1, r2, &mut ratio);
-                unimplemented!(
-                    "ProjLib_HCompProjectedCurve (GeomPlate ComputeSurfInit metrics comparison) is not registered in the build yet"
+                let proj_curve = CompProjectedCurve::new(
+                    hsur.clone(),
+                    curve.clone(),
+                    self.my_tol3d,
+                    self.my_tol3d,
                 );
+                // Adaptor3d_CurveOnSurface AProj(ProjCurve, hsur).
+                let a_proj = CurveOnSurface::new(Arc::new(proj_curve), hsur.clone());
+
+                for j in 1..nb_point {
+                    // OCCT L1778: the inner loop guard is
+                    // `j < NbPoint && myIsLinear`.
+                    if !self.my_is_linear {
+                        break;
+                    }
+                    let inter = first_par + (j as f64) * uif;
+                    let (_p, der_c) = curve.d1(inter);
+                    let (_p, der_cproj) = a_proj.d1(inter);
+
+                    let a1 = der_c.length();
+                    let a2 = der_cproj.length();
+                    if a2 <= 1.0e-20 {
+                        ratio = 1.0e20;
+                    } else {
+                        ratio = a1 / a2;
+                    }
+                    if ratio > r1 || ratio < r2 {
+                        self.my_is_linear = false;
+                        break;
+                    }
+                } // for (int j = 1; j < NbPoint && myIsLinear; j++)
             }
             let _ = ratio;
         } // comparing metrics of curves and projected curves
