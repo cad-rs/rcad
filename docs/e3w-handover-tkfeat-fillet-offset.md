@@ -1,19 +1,20 @@
 # E3-W 交接：三域（TKFeat / TKFillet / TKOffset）翻译推进 —— 2026-09-12
 
-> **一句话（追加 14 收尾态）**：tkfeat featlf 的 profile 有效性**五连破**——追加 13 记的"布尔分割面无效"
-> **被翻案**（真因是 rcad 边顶点 tag 约定不统一，不是布尔输出质量）；`is_done` 门 **0/12 → 11/15 越过**、
-> **全部 kernel panic 清零**。落地 **7 处 1:1 修复**（边顶点 tag 不变量 / `direct_children` 不改标签 /
-> `MakeEdge::Init` reordonate+周期 / `MakeFace(Pln,W,true)` 的 `CheckInside` / `MakeFace(W)` 的 `FindSurface` /
-> `Curve3::reversed_parameter` 10 变体分发 / `Geom_TrimmedCurve::Reverse` 与 `cc->Reverse()` 字面翻译）
-> \+ **1 处架构修复**（跨池子图重编号 `renumbered_pool` / `adopt_subgraph_into`，消除 rcad 池 index 别名）。
-> 八网格与六门槛**全程零回归**。剩余墙全在**下游**，且**新增一处最急的非终止**（`featrf_a1`，见 §0.2）。
+> **一句话（追加 17 收尾态）**：**D3 结案，且结在"预定靶子的前一层"**——`ExtremeFaces` 的忠实选择**一直是对的**
+> （与 OCCT 的 First/Last 面型、顶点、`PtOn*`/`On*Face` 逐项相同），真因是 `SlidingProfile` 用**存储序**走 BndFace 的
+> wire 而 OCCT 的 `BRepTools_WireExplorer` 用**连通序**（两侧**存储序完全相同**，差的只是载体语义）⇒ rcad 的 profile
+> wire 7 条且自交（`Wire#0=[SelfIntersectingWire]` ⇒ `Face#15=[UnorientableShape]`）vs OCCT 5 条 ⇒
+> `BRepAlgo::IsValid=false` ⇒ `NoFaceProf`。落地 **3 处 1:1 修复**（新 `fclass2d::wire_explorer_order` 复用既有
+> WireExplorer 真身 + `BoundSortBox` 的 C++ int 语义 + `hinter_adaptor` 解析访问器解包 `Trimmed`）。
+> **`featrf_a1` init 首次通过**（失败层由 init 深化到面积断言），`feat_featlf` **8 例**离开被修的 `Line` 访问器 panic
+> （stash A/B 实测）。六门槛与八网格**全程零回归**。
 
-## 0. 新 session 一句话提示词（直接粘贴 —— 追加 16 收尾态，2026-09-12）
+## 0. 新 session 一句话提示词（直接粘贴 —— 追加 17 收尾态，2026-09-12）
 
-> 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 21 条坑）
-> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–16（权威脉络，**追加 16 是当前状态**）；
+> 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 24 条坑）
+> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–17（权威脉络，**追加 17 是当前状态**）；
 > 先 `cd rcad` 跑 6 条门槛确认 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**，
-> 再 `cd /c/Users/lilu/works/rcad-pro && bash output/run_eight_grids.sh` 确认**八网格 8/8**，
+> 再 `cd /c/Users/lilu/works/rcad-pro && bash output/run_eight_grids.sh`（**先 `cargo test --no-run -p occt-generated-tests` 重编 exe**）确认**八网格 8/8**，
 > 然后**按 §4.6 的三域队列继续推进等价实现**——**大部分代码严格 1:1 翻译**（逐行语句对照 + OCCT 行号锚点 +
 > 禁载体/禁等价替换/禁凑结果 + 架构差异先消灭再对齐）；**涉及布尔层的代码，直接复用已对齐的 `bop/**`（TKBO）
 > 实现，不要重写第二份**（`BRepAlgoAPI_*` 包装层按 OCCT 形式接线到 `bop/**` 的既有真身）。
@@ -21,12 +22,22 @@
 > （提交前 `git diff | grep -c "+.*eprintln"` = 0）；每批做完跑**六门槛 + 八网格 + 该域网格**，
 > 更新 `docs/tkfeat-fillet-offset-port-plan.md` 的 §E3-W 追加，并提交**两仓库**（rcad + 根仓库指针）。
 
-### 0.0 当前状态速览（追加 16 收尾，rcad `193da129` / 根 `d23c335`，**均已推送**）
+### 0.0 当前状态速览（追加 17 收尾，2026-09-12）
 
-- **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110）——全部批次在树时复测。
-- **域网格现状（真实断言通过数）**：`fillet2d_fillet2d` 10/10 ✓ · `fillet2d_chamfer2d` 2/2 ✓ · `mkface_after_offset` 4/4 ✓ · `mkface_after_extsurf_and_offset` 32/32 ✓；`feat_featlf` **0/15** · `feat_featrf` **0/5** · `feat_featprism` **0/6** · `feat_featrevol` **1/45**（a5）· `blend_simple` **0/11** · `blend_complex` **0/2** · `offset_shape_type_a/_i/_i_c` **0/1 · 0/12 · 0/19** · `offset_faces_type_i` **0/8** · `draft_angle` **0/49** · `thrusection_specific` **0/26**。
-- **本轮实质进展**：`featrf_a1` 的 Cut 走完全程（0a 收尾）；**`blend_simple_a1` 拓扑首次与 OCCT 完全一致**（7F/15E/10V + CLOSED_SHELL），面积 30671.24 → 57328.76（OCCT 59527.9）；`IntCurvesFace_Intersector` 真身落地（874 行、20=20 无桩）；D1/D2 两处真缺陷修复；TKOffset 全面定界（6 条域外任务书）。
-- **三域下一步（详见 §4.6）**：**TKFeat** = ① `SlidingProfile`/`Propagate` 适配忠实 `ExtremeFaces` 选择（D3）→ ② featprism 结果根（先判定"结果池缺根 vs 生成器 `root_shape` 取错"）→ ③ 复测 b6（D2 已修）；**TKFillet** = fillet 端盖弧 range `[π,2.5π]` vs 参考 90°（残差 `700π`），**必须与 `chfi3d_builder_0.rs::reverse_curve` 的 Circle 修复同批落**；**TKOffset** = 按 §4.4 的 6 条顺序（`BRepLib::build_curve3d` 支持池外边 → `BRepTools_Quilt`/`FaceRestrictor` 产物入池 → 回绕链 trimmed 面 → `BRepCheck_Edge::Tolerance` → `GeomLib` 两件 → pcurve 附着）。
+- **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**逐格不变**：`fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · `feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrevol` **1/45**（a5）· `feat_featrf` 0/5 · `blend_simple` 0/11 · `blend_complex` 0/2 · `offset_shape_type_a/_i` 0/1 · 0/12 · `offset_faces_type_i` 0/8 · `draft_angle` 0/49 · `thrusection_specific` 0/26。
+- **本轮实质进展（TKFeat 域 D3 结案）**：`featrf_a1` 的 **init 首次通过**（`ExtremeFaces` → `SlidingProfile` → `Propagate` 全程与 OCCT 逐值一致），失败层由 **init 断言（生成测试 L77）深化到面积断言（L866）**；`feat_featlf` **8 例**离开被修的 `Line` 访问器 panic（a3 深入 `loc_ope_prism.rs:93`，其余落到各自断言）。三处 1:1 修复见 §0.5。
+- **★ 下一个墙（已定界到函数）**：`LFPerform` 的粘合判定——rcad `collage=false ope=Invalid glued_f=1 ⇒ the_ope=2`（回落构造器路径 ⇒ 空结果 / 面积 0），OCCT `glue IsDone=1 ope=FUSE resultFaces=9`。再下层：`BRepFeat::IsInside(glface,fac)` 在 **rcad 侧的分类器之前**就返回 false，因为 `geom_proj_lib::curve2d_simple` **对 `Curve3::Trimmed` 返回 None**（OCCT `GeomProjLib::Curve2d` 经 `GeomAdaptor_Curve` **载入基曲线**后投影成功）⇒ **下一批第 1 项 = `curve2d`/`curve2d_simple` 的 `Trimmed` 解包**（与 D2、本次 `basis_curve_of` 同族，第三次踩）。
+- **三域下一步（详见 §4.6）**：**TKFeat** = ① `curve2d`/`curve2d_simple` 解包 `Trimmed`（→ a1 粘合路径）→ ② `Propagate` 的 `BOPAlgo_Section` 共面 FF（`FalseSide` 根因）→ ③ `featprism` 结果根（先判定"结果池缺根 vs 生成器 helper 取错"）；**TKFillet** = fillet 端盖弧 range `[π,2.5π]` vs 参考 90°（残差 `700π`），**必须与 `chfi3d_builder_0.rs::reverse_curve` 的 Circle 修复同批落**；**TKOffset** = 按 §4.4 的 6 条顺序（`BRepLib::build_curve3d` 支持池外边 → `BRepTools_Quilt`/`FaceRestrictor` 产物入池 → 回绕链 trimmed 面 → `BRepCheck_Edge::Tolerance` → `GeomLib` 两件 → pcurve 附着）。
+
+### 0.5 追加 17 本轮落地（2026-09-12，rcad 提交链见 §3）
+
+| 修复 | 位置 | OCCT 锚点 | 消除的症状 |
+|------|------|-----------|-----------|
+| **BndWire 走位改用真 WireExplorer 连通序**（D3 真因） | `topalgo/brep_top_adaptor/fclass2d.rs::wire_explorer_order`（新）+ `feat/brep_feat_rib_slot_b.rs::sliding_profile` 调用点 | `BRepFeat_RibSlot::SlidingProfile` **L1567-1569**（`BRepTools_WireExplorer explo(BndWire)`）+ `BRepTools_WireExplorer.cxx` L121-705（既有真身 `order_wire_edges`） | `featrf_a1` init 失败（profile wire 7 条自交 ⇒ `UnorientableShape` ⇒ `NoFaceProf`）；修后 5 条与 OCCT 逐项相同 |
+| **`BoundSortBox::get_bounding_voxels` 的 C++ int 语义** | `rcad-kernel/src/math/bnd/bound_sort_box.rs` | `Bnd_BoundSortBox.cxx` **L577-590**（`std::clamp(static_cast<int>(v) - 1, 0, myResolution - 1)`：饱和 + int 回绕 + clamp 吃掉） | 无界段盒（`(-2,-1e100,5)-(-2,0,5)`，`IntCurvesFace_Intersector` 对无限直线采样）⇒ `subtract with overflow` panic |
+| **解析访问器解包 `Trimmed`**（D2 的补完） | `bop/int_tools/hinter_adaptor.rs::{basis_curve_of(新), line, circle, ellipse, hyperbola, parabola, bezier, bspline}` | `GeomAdaptor_Curve::load` **L239-255**（`Load(BasisCurve, UFirst, ULast)` ⇒ `myCurveData` 全部来自基曲线） | `feat_featlf` **8 例**（a3/b3/b6/b7/c5/d7/d8/d9）死在 `hinter_adaptor.rs:218` 的 `Standard_NoSuchObject: Line`（`GetType()` 报 Line 而 `line()` 按原始变体匹配） |
+
+**对拍通道（本次全程复用，成本极低）**：OCCT 侧 `RCAD_WS_PROBE` 门控探针 → `output/build_tkfeat.bat` → 拷 `TKFeat.dll` 到 `tools/occt-bool-runner/build/Debug/`（`grep -ac WS-PROBE <dll>` 必须 > 0，防 DLL 遮蔽）→ `occt_bool_runner feat_featrf A1`。**featrf_a1 的 OCCT 真值已落档**（见 port-plan 追加 17）。用完 `git checkout --` 还原 OCCT 源并重建干净 DLL。
 
 ### 0.0.1 必读的两条硬约束（本轮血的教训）
 
@@ -187,9 +198,17 @@ done
 ```
 （`PASS = 恒过的 geometry_loads 占位数`；**FAIL 才是真实断言失败数**。）
 
-## 3. 提交链与落地内容（**四轮**：追加 13 / 14 / 15 / **追加 16 = 本轮**；**两仓库本轮已推送**）
+## 3. 提交链与落地内容（**五轮**：追加 13 / 14 / 15 / 16 / **追加 17 = 本轮**）
 
-**追加 16（本轮，2026-09-12；rcad `main` 顶尖 `193da129`，根 `main` 顶尖 `d23c335`，均已推送）**
+**追加 17（本轮，2026-09-12）** — rcad `main`（自上而下 = 新到旧）：
+`<docs>（docs：追加 17 —— D3 结案 + 两处真缺陷 + 下一墙定界）`
+← `<code>（feat+topalgo+kernel：BndWire 真 WireExplorer 连通序（D3 真因，含 `brep_feat_rib_slot_b.rs` 的 EOL 归一化）
++ `BoundSortBox` C++ int 语义 + `hinter_adaptor` 解析访问器解包 `Trimmed`）`
+← `193da129`（= 追加 16 链尾，已推送）。
+**本轮验证（全部在树）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（**重编 exe 后**）；
+域网格逐格不变（清单见 §0.0）；探针 = 0（rcad 与 OCCT 两侧都已清）。
+
+**追加 16（上一轮，2026-09-12；rcad `main` 顶尖 `193da129`，根 `main` 顶尖 `d23c335`，均已推送）**
 — rcad `main`（自上而下 = 新到旧）：
 `193da129`（docs：追加 16 —— IntCurvesFace 轮结论 + D1/D2 + D3 任务书）
 ← `fe6b2750`（topalgo+bop：**D1** `fclass2d_topol` 的 wire 朝向复合（`TopoDS_Iterator` cumOri）+ **D2** `hinter_adaptor::curve_type_of` 的 Trimmed→基曲线）
@@ -352,10 +371,11 @@ RibSlot/Form 链，profile 修好后它们的失败点也随之下移。
 **工作方式（连续两轮验证有效，继续沿用）**：主代理做**关键路径**，同时派**文件域不相交**的子代理并行推进三域；子代理各自 `CARGO_TARGET_DIR`、**只 check/门槛、不提交、不改 docs**；主代理**统一评审批量提交 + 跑八网格**。任务书必须点明：① 该批的 OCCT 清单与落位；② **不该碰的邻域**；③ 已知边界；④ 换行坑。**验收必须比对"失败层深度"**（见坑 21）。
 
 **TKFeat（`feat/**` + `topalgo/int_curves_face_intersector.rs`）**
-1. **D3（第一优先）**：`BRepFeat_RibSlot::SlidingProfile` / `Propagate`（`feat/brep_feat_rib_slot_b.rs`）在 **OCCT 忠实的 `ExtremeFaces` 选择**下不成立 ⇒ `featrf_a1` 的 init 在同一断言停下。**先对拍 OCCT**（§5 配方 3：`featrf.hpp` 通道 + `BRepFeat_RibSlot.cxx` L1008/L1052-1060 与 `SlidingProfile` L1571-1785 插桩），拿到 OCCT 在该处的真实 first/last 面选择与 `SlidingProfile` 结果，再按形式补齐。**注**：D1（`fclass2d_topol` 朝向复合）已修，OCCT 的 `ASI.NbPoints(1)` 应为 2、`LineFirst/LineLast` 应为 `0/8`（`BRepFeat_MakeRevolutionForm.cxx` L138-145）——先确认这一点是否已成立。
-2. **featprism 结果根**（`NoExtFace ×3` 的真因，④ 已证伪"欠计数"假说）：OCCT 侧 `nbshapes r` = **11 面 SOLID**（V12/E20/W12/F11/SHELL1/SOLID1），rcad 侧 `root_shape`（生成测试 helper，取 `r.tshapes` 里 index 最大的 Solid|Shell）拿到 **3 面 Shell**。**先判定两条完全不同的修法**：是**结果池缺根**（`feat/brep_feat_make_prism.rs` / `loc_ope_*.rs` / `brep_feat_form*.rs` / `brep_feat_rib_slot*.rs`）还是**生成器 helper 取错**（`tools/occt-test-gen`）——判定依据 = 直接从结果 BRep 数出顶层 Solid 的面数是否等于 11。
-3. **b6/b7**：`PtOnEdgeVertex`（`brep_feat_rib_slot_b.rs:1110-1115`）同一个 `my_sbase` 问题；D2（`hinter_adaptor::curve_type_of` 的 Trimmed→basis）**已修**，复测。
-4. 其余既有队列（`FalseSide ×5` 共面 FF、`NoFaceProf ×3`、`BRepTools_Modifier::Perform` GAP、`draft_modification_1_b.rs:1269` GAP）见 §4.1。
+0. **★ 第 0 项（最急，a1 的直接下一墙，已定界到函数）**：`geom_proj_lib::curve2d` / `curve2d_simple` **对 `Curve3::Trimmed` 必须解包基曲线**。实测链：`LFPerform` 的粘合判定 `BRepFeat::IsInside(glface, fac)`（`brep_feat_form_2.rs::brep_feat_is_inside`）在 rcad 侧**分类器之前**返回 false —— `curve2d_simple(&c0, f1, l1, &s)` 返回 `None`（曲线为 `Trimmed`、区间 `(0,0.99999…)`），而 OCCT `GeomProjLib::Curve2d(C0,f1,l1,S)` 经 `GeomAdaptor_Curve(C0,f1,l1)` **载入基曲线**后投影成功。修法 = 与本次 `hinter_adaptor::basis_curve_of` 同族的解包（**同族第三次**：D2 只修 `curve_type_of`、本次补 6 个解析访问器、下一步是 `curve2d`）。修好后预期：`collage=1` → `theGlue.Bind` 命中 → `ope=FUSE` → `myShape = theGlue.ResultingShape()`（OCCT 9 面 / 面积 109.511）。（**对拍资产现成**：OCCT 侧探针位置与真值见 port-plan 追加 17。）
+1. **`Propagate` 的 `BOPAlgo_Section` 共面 FF**（`FalseSide ×5` 根因，追加 15 已定界）：`build_section` 逐字取 `PaveBlocksSc`，而该集合的唯一生产者是 **FF 曲线**；b3 实测 `sc_pb=0 sc_v=0` + DS 的 FF 记录 `curves=0 points=0` ⇒ 墙在**共面/同曲面面片对的 FF 分支**。**下一手必须是 OCCT 侧对拍**（在 `BOPAlgo_PaveFiller` 的 FF 段 / `IntTools_FaceFace` 同曲面分支插桩，跑 featlf b3），先拿"OCCT 在该对上产出了什么"再改 rcad。
+2. **featprism 结果根**（`NoExtFace ×3` 的真因，④ 已证伪"欠计数"假说）：OCCT 侧 `nbshapes r` = **11 面 SOLID**（V12/E20/W12/F11/SHELL1/SOLID1），rcad 侧 `root_shape`（生成测试 helper）拿到 **3 面 Shell**。**先判定两条完全不同的修法**：是**结果池缺根**（`feat/brep_feat_make_prism.rs` / `loc_ope_*.rs` / `brep_feat_form*.rs` / `brep_feat_rib_slot*.rs`）还是**生成器 helper 取错**（`tools/occt-test-gen`）——判定依据 = 直接从结果 BRep 数出顶层 Solid 的面数是否等于 11。
+3. **b6/b7**：`PtOnEdgeVertex`（`brep_feat_rib_slot_b.rs:1110-1115`）同一个 `my_sbase` 问题；D2 **已修**（本次又补了 `basis_curve_of`），复测。
+4. 其余既有队列（`NoFaceProf ×3`、`BRepTools_Modifier::Perform` GAP、`draft_modification_1_b.rs:1269` GAP）见 §4.1。
 
 **TKFillet（`fillet/**`）—— 已把 a1 推进到"拓扑全等、面积差 3.7%"，只剩一个几何缺陷**
 1. **fillet 端盖圆弧 range `[π, 2.5π]`（270°）应为 90°**（参考 STEP E7/E9 range `[4.712389, 6.283185]`）：残差 `59527.9 − 57328.76 = 2199.115 = 700π` 已被逐面精确对上（每端盖 100π + fillet 面 500π；后者的 uv_domain 为 None ⇒ 无界 ⇒ checkprops 只报 0）。现场 = `chfi3d_builder_0.rs::chfi3d_compute_curves`（OCCT `ChFi3d_Builder_0.cxx` L3694-4294，Cylinder×Plane 圆分支 L3789-3854，含 `ElCLib::AdjustPeriodic` L3830 与 `Geom_TrimmedCurve` L3854）：结构已逐行一致，问题出在 `Vint.Dot(Vref) < 0` 的**镜像步未生效**。
@@ -515,6 +535,28 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
     面积断言（L866）**退到** init 断言（L77），而六门槛 / 八网格 / 三域网格的**通过数完全不变** ⇒ 按通过数自检**完全不可见**。
     另外：**主代理做 A/B 归因前先 `git status` + `grep` 确认被测路径是否正被子代理改写**（本轮两次 A/B 都被在飞改动掩盖，
     差点把自己的修复判成回退）。
+22. **（追加 17）把 C++ 表达式搬进 Rust 时，先看**括号在哪**——`std::clamp(static_cast<int>(v) - 1, 0, res-1)` 是
+    `clamp(x-1)`，不是 `clamp(x)-1`**：`Bnd_BoundSortBox.cxx` L577-590 的越界输入（无限直线的采样段盒）会让
+    `static_cast<int>` 饱和到 `INT_MIN`、`- 1` 在 x86 上回绕成 `INT_MAX`，最后**被 clamp 吃掉**；rcad 逐字翻译会
+    debug 下 panic，首版把 `- 1` 挪到 clamp 外则立刻产出 `[-1,…]` 的越界索引（症状是 `VoxelGrid::add_box` 索引 panic，
+    极易误判成"网格分辨率不一致"）。正确形式 = `clamp_res((v as i32).wrapping_sub(1))`。**同族**：C++ 的 `int` 算术在
+    Rust 里是 `wrapping_*`（debug 默认 panic），搬运表达式时必须逐算子核对。
+23. **（追加 17）`GeomAdaptor_Curve::load` 的"载入基曲线"语义必须贯穿**全部**访问器，不能只修 `GetType()`**：
+    OCCT `Load`（L239-255）对 `Geom_TrimmedCurve` **递归载入基曲线**（区间仍是被裁的那个），所以 `Line()` / `Circle()` /
+    `Ellipse()` / `Bezier()` / `BSpline()` 与 `GetType()` **同源**。追加 16 的 D2 只修了 `curve_type_of`，于是
+    `GetType()` 报 `Line` 而 `line()` 按**原始变体**匹配 ⇒ `Standard_NoSuchObject` panic，**8 例 featlf 死在这里**。
+    ⇒ 凡"把某类型归一化到另一形态"的翻译，**同一族的每个访问器都要过一遍**；`curve2d`/`curve2d_simple` 是**同一族的第三个**
+    （见 §4.6 第 0 项）。
+24. **（追加 17）对拍通道是**资产**不是一次性开销**：`RCAD_WS_PROBE` 门控 + `build_<TK>.bat` + 拷 DLL + 遮蔽检查
+    （`grep -ac WS-PROBE <dll>` > 0）这套流程在追加 15/16/17 之间**零成本复用**，本轮三处修复全部由它一次定位（含
+    OCCT 真值 `SlidingProfile ProfileOK=1 nWireEdges=5`、`LFPerform glue IsDone=1 ope=FUSE resultFaces=9`）。
+    **用完必须 `git checkout --` 还原 OCCT 源并重建干净 DLL**（本轮已做：`grep -ac WS-PROBE` = 0），否则下一个 session 会
+    在"OCCT 输出里为什么有旧探针行"上浪费时间。
+25. **（追加 17）`wire_explorer_edges` 这类"载体"取的是**存储序**，而 OCCT 的 `BRepTools_WireExplorer` 走**连通序**——
+    两者在**布尔产出的 wire 上必然不同**（OCCT 自己的 `BW[0..3]` 存储序就不是连通序）**：任何"按 wire 顺序推进"的算法
+    （`SlidingProfile` 的 BndEdge 环走、`LocOpe_*` 的 wire 环）都必须用真 WireExplorer（rcad 真身 =
+    `fclass2d::order_wire_edges` + 本次的 `wire_explorer_order` 包装），**不能**直接遍历 `TWireData::edges`。
+    症状极具迷惑性：wire 会多出几条边并出现**对角线**（`make_edge(LastPnt, pp)` 把绕远路的端点连起来）。
 
 ## 7. 资产位置（本轮新增/更新）
 
