@@ -33,6 +33,17 @@
 > ② 再做 **§4.0 第 0a 项**（BOP 历史镜像同一性，`featrf_a1` 的另一半）；③ 然后 §4.0 第 1 项（共面 FF，配 OCCT 对拍）、第 2 项（`IntCurvesFace_Intersector`）、第 3/4 项。
 > 铁律与操作协议（§5 配方 / §6 坑）不变；**八网格 + 六门槛每批必跑**。
 
+> **★★ 追加 15 补记 5 收尾态（2026-09-12，本交接的最新权威入口）**：开场六门槛与八网格**零漂移**；**§0.4 的拆分已做完并提交**（`8c052537`，
+> `geom_int_int_ss_1.rs` 2368→1736 + 新兄弟 `geom_int_int_ss_1_curves.rs` 665）；**第 0a 项已实质推进**——`featrf_a1` 的 Cut **首次真正切分**
+> （primitive 被切成 3 个 solid），靠 **4 处 1:1 修复 / 2 个提交**（`ce5f01dd` kernel `add_to_compound` 穿句柄就地变异；`8cd348f2` algo
+> FaceUntil 真 `MakeFace(str,Tol)` + `MakeFace` 首条 wire 进 outer 槽 + `Geom_Surface::UIso/VIso` 的 Plane 臂）。**阻塞点已收敛到唯一一处**：
+> `CutVehicle::with_operation` 的**根形状口径**取「池里最后一个 Solid/Shell」，而 OCCT 是 `myShape = aResult`（**全结果 compound**）⇒
+> 另两块切片的 face 不在 `myGShape` ⇒ `Bind(Face,Face)` 零调用 ⇒ `ope=Invalid` ⇒ 回落构造器 ⇒ 空结果。
+> **新 session 请按此顺序开工**：① 先跑六门槛与八网格确认零漂移；② 做 **0a 的最后一步 = `CutVehicle` 返回 `a_result` 的 compound**
+> （核心代码，改它要跑全套域网格；`set_shape_from_shapes` 目前把容器平铺进池、丢了 compound 语义）；
+> ③ 然后排队列第 1 项（共面 FF，配 OCCT 对拍）、第 2 项（`IntCurvesFace_Intersector`）、第 3/4 项。
+> 铁律与操作协议（§5 配方 / §6 坑，**本轮新增坑 17：`Arc::make_mut` 不能用于 re-host OCCT 的穿句柄就地变异语义**）不变；**八网格 + 六门槛每批必跑**。
+
 ## 0.1 追加 14 本轮落地（2026-09-12，rcad `3bf6858f` / `cc38f690` / `7dfa5884`，均未推送）
 
 | 修复 | 位置 | OCCT 锚点 | 消除的症状 |
@@ -115,9 +126,8 @@ off-chain 的 Draft（depouille）e4/e5。
 1. **`LocOpe_Gluer::Perform` 的"DEPRECATED/待译"注释是**过期**的**：`LocOpe_WiresOnShape`（745+1515 行）、`LocOpe_GluedShape`、`LocOpe_Spliter`(1286)、`LocOpe_Generator`(1259)、`LocOpe::TgtFaces`（`loc_ope.rs:322`）**早已在库**——只有 `BRepExtrema_ExtPF` 真缺且它**惰性**。⇒ **教训：文件头的 DEFERRED 注释会过期；动手前先 grep 依赖是否已在库**（与 E3-W 追加 5 的 `BRepTools_Quilt` 教训同族）。
 2. **`featrf_a1` 现在只剩**一个**阻塞点**：探针实测 `glued_f=2 the_ope=1 ope=Invalid collage=true` 且**零条 gluer 日志** ⇒ `LocOpe_Gluer::Perform` **根本没被进入**（没有一次 `Bind(Face,Face)` 成功——`glued_f` 的 key 不在 `myGShape` 里）。⇒ **粘合那一半已完成，剩下的是 §4.0 第 0a 项（BOP 历史镜像同一性）**。
 
-**新 session 唯一要在本页做的收尾活（先做再往下推进）**：`geomalgo/geom_int_int_ss_1.rs` **2368 行 > 2000 行上限**（AGENTS.md Rule 5）。
-逐字可执行的拆分：把**连续块 L567-1212**（`make_b_spline` … `param_on_s2`：MakeBSpline/2d + 两个 `BuildPCurves` + `TrimILineOnSurfBoundaries` + `TreatRLine` + `param_on_s1/2`）
-**原样**移入兄弟文件 `geomalgo/geom_int_int_ss_1_curves.rs`（+ `mod.rs` 1 行）⇒ `_1.rs` ≈1722、兄弟 ≈700；移完跑 `cargo check -p rcad-algo` + 六门槛 + `git diff | grep -c "+.*eprintln"`=0，单独提交。
+**新 session 唯一要在本页做的收尾活（先做再往下推进）**：**已完成**（`8c052537`，见 §0 补记 5 收尾态与 port-plan 追加 15 补记 5）——
+`geomalgo/geom_int_int_ss_1.rs` 已拆为 **1736 + 665 行**两文件（`geom_int_int_ss_1_curves.rs`），验收六门槛 + 八网格全绿、探针 = 0。
 
 **（本轮已作废的）验收/提交配方留档**（本轮实际执行过一遍，有效）：`git status` 看清在飞改动 → **禁 `git add -A`**、按域显式 add → `cargo check -p rcad-kernel`/`-p rcad-algo` 零 error → 六门槛 + **重编 exe 后**八网格 → 形式抽查（计数等式 + OCCT 行号锚点 + 英文注释 + 单文件 <2000 行 + 探针计数 = 0）→ 按域逐批提交 + 同步根仓库指针（**不推送**）→ 不合格则按域整批 `git checkout --` 回退并把原因写进 §E3-W。
 
@@ -246,6 +256,17 @@ rcad `main`：`a4a4b0de` ← `8b5a7b26` ← `6b6c7089` ← `04e1b5b3` ← `4dfe0
 ⇒ 墙**不在** `build_section`（它逐字取 `PaveBlocksSc`，而该集合的唯一生产者是 FF 曲线），而在**共面/同曲面面片对的 FF 分支**；
 **下一手必须是 OCCT 侧对拍**（§5 配方 3：`BOPAlgo_PaveFiller` 的 FF 段 / `IntTools_FaceFace` 同曲面分支插桩，跑 featlf b3），
 先拿"OCCT 在该对上产出了什么"（曲线 / SD / 公共边 PB）再改 rcad。
+
+**★ 追加 15 补记 5 对第 0 项/0a 的更新（2026-09-12，本 session）**：0a 的**上游**已打通——
+`featrf_a1` 的 Cut **首次真正切分**（4 处 1:1 修复，见 port-plan 补记 5 / 提交 `ce5f01dd` + `8cd348f2`）。
+**(b) `LocOpe_Gluer::Perform` 真身**上轮已交付；**(a)** 的**入口换了**：不再是 `prepare_history` 的镜像同一性，
+而是 **`CutVehicle::with_operation` 的根形状口径**（`feat/brep_feat_form_2.rs`）——
+rcad 取「池里**最后一个** Solid/Shell TShape」当 `my_shape`，OCCT `BOPAlgo_BOP::BuildShape` L1106 是
+`myShape = aResult` = **全部结果容器的 compound**。实测链（探针已清）：Cut 现在把 primitive 切成 3 个 solid，
+但 `glued_f` 的 key 落在**另外两块**的 face 上 ⇒ `LocOpe_Gluer::Bind(Face,Face)` **零调用**（`[HIST-BIND]` 零行）
+⇒ `ope=Invalid` ⇒ 回落构造器路径 ⇒ 空结果（`surface area ... got 0`）。
+**下一手 = 让 CutVehicle 返回 `a_result` 的 compound**（`set_shape_from_shapes` 当前把容器平铺进池、丢了 compound 语义）；
+CutVehicle 被 prism/revol/d_prism/pipe 共用 ⇒ **改它必须跑全套域网格复测**，属核心代码单独评审。
 
 ### 4.1 tkfeat —— 第 1 优先级：featlf 下游墙（**追加 14 后重写**）
 
@@ -434,6 +455,18 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
 16. **域网格"失败"有三层**：panic < assert < **不终止**。最后一层最贵（烧掉 timeout 才暴露，且
     `RCAD_TEST_TIMEOUT_SECS` 只在 `run_grid.ps1` 侧生效，`cargo test` 直跑会一直挂着）。
     跑非门槛网格时**一律加 `timeout`**（如 `timeout 120 cargo test …`）。当前已知不终止 1 例：`featrf_a1`。
+17. **（追加 15 补记 5，最贵）`Arc::make_mut` 不能用来 re-host OCCT 的"穿句柄就地变异"语义**。OCCT 的
+    `BRep_Builder::Add` 一族（`Add(Shape,Shape)` / `Add(F,W)` / `Add(Solid,Shell)` / `Add(Compound,S)`）
+    都是**就地改 TShape、所有拷贝的句柄立即可见**；rcad 若用 `Arc::make_mut`，**只要调用方还留着同一
+    TShape 的 Shape 句柄，它就会被克隆**，调用方的句柄此后永远看着**旧的那份**。症状极具迷惑性：
+    **所有构造语句都执行过了**，但容器/面/壳**看上去是空的**——本轮 `LocOpe_BuildShape` 的 compound
+    （`C` 空 ⇒ `Nbedges=0` ⇒ `BRepFeat::Tool` 返回 null solid）与 `BRepLib_MakeFace::Init` 的面
+    （wire 全落 `inner_wires`、`outer_wire` 留空占位）都是这一类。**正确做法** = `Arc::as_ptr(&pool.tshapes[idx])
+    as *mut TShape` 就地变异（与结果构建期的索引重指向同一套共享变异模型，单线程管线安全）。
+    判"槽位有没有东西"仍按坑 0① 看**子形状类型**，不看 `is_null()`。
+18. **ff（FaceFace）产出 0 曲线时，先量 `raw_lines()` 再怀疑求交**：`has_intersection()` 是 **MakeCurve 域裁剪之后**
+    的结果，而 `raw_lines()` 是裁剪之前。本轮 8 对候选"0 曲线"实际是 **raw 1–2 条、被 `part_in_face_hole` 全部丢弃**；
+    若只看 `has_intersection` 会误判成"求交器不支持该面型"。
 
 ## 7. 资产位置（本轮新增/更新）
 
