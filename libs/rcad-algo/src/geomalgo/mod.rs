@@ -79,3 +79,4 @@ pub mod geom_lib; // GeomLib::ExtendCurveToPoint + the static ComputeLambda (TKG
 pub mod geom_int_line_constructor; // GeomInt_LineConstructor (TKGeomAlgo/GeomInt)
 pub mod geom_int_int_ss; // GeomInt_IntSS (TKGeomAlgo/GeomInt)
 pub mod geom_int_int_ss_1; // GeomInt_IntSS engine: MakeCurve/TreatRLine/BuildPCurves/TrimILine (GeomInt_IntSS_1.cxx)
+pub mod geom_int_int_ss_1_curves; // 2000-line split of geom_int_int_ss_1: MakeBSpline/BuildPCurves/TrimILine/TreatRLine group
