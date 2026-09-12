@@ -321,8 +321,11 @@ impl BRepApproxApprox {
         &mut self,
         tol3d: f64,
         tol2d: f64,
-        deg_min: usize,
-        deg_max: usize,
+        // OCCT BRepApprox_Approx::SetParameters (hxx L103-111) takes
+        // `const int DegMin / DegMax`; the signed type is kept because the
+        // degrees flow into GeomInt_WLApprox's `int` degree fields.
+        deg_min: i32,
+        deg_max: i32,
         nb_iter_max: i32,
         nb_pnt_max: usize,
         approx_with_tangency: bool,

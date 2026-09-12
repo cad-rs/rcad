@@ -1556,10 +1556,10 @@ fn make_part_curve(
 
 /// OCCT IntTools_FaceFace::ApproxParameters (IntTools_FaceFace.cxx
 /// L2736-2783): degree and iteration parameters of the WLine approximation.
-fn approx_parameters_for(surf1: &Surface3, surf2: &Surface3) -> (usize, usize, i32) {
+fn approx_parameters_for(surf1: &Surface3, surf2: &Surface3) -> (i32, i32, i32) {
     let mut i_nb_iter = 0i32;
-    let mut i_deg_min = 4usize;
-    let mut i_deg_max = 8usize;
+    let mut i_deg_min = 4i32;
+    let mut i_deg_max = 8i32;
     // Cylinder/Torus.
     let cyl_rad = match (surf1, surf2) {
         (Surface3::Cylinder(c), Surface3::Torus(t)) => Some((c.radius, t.minor_radius)),

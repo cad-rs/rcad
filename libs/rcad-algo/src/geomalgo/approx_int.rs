@@ -1432,8 +1432,8 @@ pub struct WLineApprox {
     pub my_with_tangency: bool,
     pub my_tol3d: f64,
     pub my_tol2d: f64,
-    pub my_deg_min: usize,
-    pub my_deg_max: usize,
+    pub my_deg_min: i32,
+    pub my_deg_max: i32,
     pub my_nb_iter_max: i32,
     pub my_tol_reached3d: f64,
     pub my_tol_reached2d: f64,
@@ -1487,8 +1487,8 @@ impl WLineApprox {
         &mut self,
         tol3d: f64,
         tol2d: f64,
-        deg_min: usize,
-        deg_max: usize,
+        deg_min: i32,
+        deg_max: i32,
         nb_iter_max: i32,
         nb_pnt_max: usize,
         approx_with_tangency: bool,
@@ -1815,8 +1815,13 @@ impl WLineApprox {
 }
 
 pub struct ComputeLine {
-    pub mydegremin: usize,
-    pub mydegremax: usize,
+    // OCCT Approx_ComputeLine.hxx: `int mydegremin; int mydegremax;` — the
+    // signed C++ domain matters: `Compute` assigns `Mdegmax = nbp - 5` for
+    // short point ranges, which is legitimately NEGATIVE in OCCT (the degree
+    // loop then runs empty and the L1350 clamp lifts it back to mydegremin).
+    // A usize model underflows there instead.
+    pub mydegremin: i32,
+    pub mydegremax: i32,
     pub mytol3d: f64,
     pub mytol2d: f64,
     pub par: ApproxParamType,
@@ -1844,8 +1849,8 @@ pub struct ComputeLine {
 impl ComputeLine {
     /// OCCT Approx_ComputeLine constructor (L779-802) + Init (L1692-1709).
     pub fn new(
-        degreemin: usize,
-        degreemax: usize,
+        degreemin: i32,
+        degreemax: i32,
         tolerance3d: f64,
         tolerance2d: f64,
         nb_iterations: i32,
@@ -1887,8 +1892,8 @@ impl ComputeLine {
     /// OCCT Init (L1692-1709).
     pub fn init(
         &mut self,
-        degreemin: usize,
-        degreemax: usize,
+        degreemin: i32,
+        degreemax: i32,
         tolerance3d: f64,
         tolerance2d: f64,
         nb_iterations: i32,
@@ -2118,7 +2123,9 @@ impl ComputeLine {
         indbad: &mut usize,
     ) -> bool {
         *indbad = 0;
-        let nbp = lpt - fpt + 1;
+        // OCCT: `int nbp = lpt - fpt + 1;` — signed, because `Mdegmax =
+        // nbp - 5` below is legitimately negative for short point ranges.
+        let nbp = lpt as i32 - fpt as i32 + 1;
         let par_sav = para.clone();
         let mut m_degmax = self.mydegremax;
         if nbp < m_degmax + 5 && self.mycut {
@@ -2137,7 +2144,10 @@ impl ComputeLine {
                 lpt,
                 &self.myconstraints,
                 para,
-                deg,
+                // OCCT passes the loop's `int deg`; the rcad Gradient
+                // signature takes usize and the loop body only runs for
+                // deg >= 0.
+                deg as usize,
                 self.mytol3d,
                 self.mytol2d,
                 self.myitermax,
@@ -2209,7 +2219,9 @@ impl ComputeLine {
         if nbp == 2 {
             // Linear interpolation poles (OCCT L1494-1642).
             let deg = self.mydegremin;
-            let mut my_scu = MultiCurve::new(deg + 1, nb_p3d, nb_p2d);
+            // OCCT: AppParCurves_MultiCurve(deg + 1) / SetValue(i, mp) — the
+            // rcad MultiCurve indexes are usize (OCCT int); deg >= 0 here.
+            let mut my_scu = MultiCurve::new(deg as usize + 1, nb_p3d, nb_p2d);
             let p1 = ml.value_p3d(myfirstpt);
             let p2 = ml.value_p3d(mylastpt);
             let p2d1 = ml.value_p2d(myfirstpt);
@@ -2229,8 +2241,8 @@ impl ComputeLine {
                 mp2.p2d[j] = p2d2[j];
             }
             my_scu.set_value(1, mp1);
-            my_scu.set_value(deg + 1, mp2);
-            for i in 2..=deg {
+            my_scu.set_value(deg as usize + 1, mp2);
+            for i in 2..=deg as usize {
                 let t = (i - 1) as f64 / deg as f64;
                 let mut mp = MultiPoint::new(nb_p3d, nb_p2d);
                 for j in 0..nb_p3d {
@@ -2320,7 +2332,7 @@ impl ComputeLine {
                             return;
                         }
                     } else {
-                        let nbp = mylastpt - myfirstpt + 1;
+                        let nbp = mylastpt as i32 - myfirstpt as i32 + 1;
                         let my_status = ml.what_status();
                         if my_status == ApproxStatus::NoPointsAdded && nbp <= self.mydegremax + 1 {
                             let interpol = self.compute_curve(ml, myfirstpt, mylastpt);
@@ -2337,7 +2349,7 @@ impl ComputeLine {
                 }
                 go_up = false;
             }
-            let nbp = mylastpt - myfirstpt + 1;
+            let nbp = mylastpt as i32 - myfirstpt as i32 + 1;
             let my_status = ml.what_status();
             if nbp <= self.mydegremax + 5 {
                 go_up = false;
@@ -2347,7 +2359,7 @@ impl ComputeLine {
                     // parameterization switches to IsoParametric (L996) and the
                     // part is re-fitted (L997-1103).
                     go_up = true;
-                    let an_other_line1 = ml.make_ml_between(myfirstpt, mylastpt, nbp - 1);
+                    let an_other_line1 = ml.make_ml_between(myfirstpt, mylastpt, (nbp - 1) as usize);
                     let nbpdsotherligne: i64 = match &an_other_line1 {
                         Some(l) => l.first_point() as i64 - l.last_point() as i64,
                         None => 0,

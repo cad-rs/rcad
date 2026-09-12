@@ -543,8 +543,8 @@ pub(crate) fn insert_face(
 
                                     // int dmin = 4, dmax = 8, niter = 0;
                                     // bool tg = false;
-                                    let dmin: usize = 4;
-                                    let dmax: usize = 8;
+                                    let dmin: i32 = 4;
+                                    let dmax: i32 = 8;
                                     let niter: i32 = 0;
                                     let tg = false;
                                     let mut approx = BRepApproxApprox::new();

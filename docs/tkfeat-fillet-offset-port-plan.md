@@ -1189,6 +1189,20 @@ libs/rcad-algo/src/
   3. **池外架构项**（§4.6 TKOffset 第 1/2 项）：`offset_shape_type_i` 的 a3/a4/d2/d3 与 `BRepLib::build_curve3d` 的 `brep_tool_curve` 首读同源 —— 按既有模板 `topods::curve_on_surface_pool_free` 补 `BRep_Tool::Curve` 的池外读取，并/或把 `BRepTools_Quilt`/`FaceRestrictor` 产物**入池**（后者是根，改完须跑全套域网格）。
 - **验收**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（重编 exe 后）；域网格**逐格通过数不变**；探针 = 0。
 
+### E3-W 追加 18 补记 1（2026-09-12：OCCT `int` 度数字段的**数据模型对齐** —— `Approx_ComputeLine` 的 `mydegremin/mydegremax` 由 usize 改 i32）
+
+- **症状**：`draft_angle` / feat 等多例在 `geomalgo/approx_int.rs` panic `attempt to subtract with overflow`（`m_degmax = nbp - 5`，nbp<5 时 usize 下溢）。
+- **OCCT 真身**：`Approx_ComputeLine.gxx` **L1336** `int nbp = lpt - fpt + 1;`、**L1344-1350** `int Mdegmax = mydegremax; if (nbp < Mdegmax + 5 && mycut) { Mdegmax = nbp - 5; } if (Mdegmax < mydegremin) { Mdegmax = mydegremin; }` —— 即 **`nbp - 5` 允许为负**（短点段），**紧跟着的下一个 `if` 就把它 clamp 回 `mydegremin`**，所以负值不会外泄。rcad 用 `usize` 建模 ⇒ 下溢 panic，**且语义也不同**（usize 无法表达负的中间值）。
+- **落地（数据模型对齐，非打补丁）**：
+  - `ComputeLine::{mydegremin,mydegremax}` → **`i32`**（OCCT `int`），`new`/`init` 形参同步；
+  - `GeomInt_WLApprox::{myDegMin,myDegMax}` → **`i32`**（`GeomInt_WLApprox.hxx` **L160-161** 是 `int`），`set_parameters` 形参同步；
+  - `BRepApprox_Approx::SetParameters` 的 `deg_min/deg_max` → **`i32`**（`BRepApprox_Approx.hxx` **L103-111** 是 `const int`），`hlr/topo_brep/ds_filler.rs` 的 `dmin/dmax` 局部量同步；
+  - `IntTools_FaceFace` 侧 `approx_parameters_for`（`IntTools_FaceFace.cxx` **L2736-2783** 的 `ApproxParameters`）→ **`i32`**；
+  - 两处 `let nbp = lpt - fpt + 1;` → `lpt as i32 - fpt as i32 + 1`（照搬 OCCT 的 `int`）；
+  - rcad 侧以 `usize` 为索引的 API 边界（`Gradient::new(deg)` / `MultiCurve::new(deg+1)` / `set_value(i)` / `make_ml_between(..., nbp-1)`）用 `as usize` 显式转换并注明（循环体保证 `deg >= 0`、`nbp >= 1`）。
+- **实测**：`draft_angle` 的库内 panic 由 **28 → 25**（`approx_int.rs` 两处与 `brep_offset_api_draft_angle.rs:83` 各一例离开 panic 链），通过数不变（0/49）；六门槛 + 八网格 + 全域网格**零回归**。
+- **教训（并入坑 22 同族）**：把 OCCT 的 `int` 字段搬成 Rust 的 `usize` 不只是风格问题——**有符号中间值的语义会丢失**（此处 `nbp - 5` 的负值是设计的一部分）。搬运字段类型前先读 OCCT 声明；`usize` 只适用于"永不参与可能为负的算术"的计数。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
