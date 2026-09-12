@@ -1003,11 +1003,21 @@ pub(crate) fn brep_feat_face_until(the_sbase: &Shape, the_f_until: &mut Shape) {
             return;
         }
     };
-    // OCCT L637: FUntil = BRepLib_MakeFace(str, Precision::Confusion()).
+    // OCCT L637: FUntil = BRepLib_MakeFace(str, Precision::Confusion()) —
+    // the (Surface, TolDegen) form builds the face WITH its natural-bound
+    // boundary wire (BRepLib_MakeFace::Init: four iso edges + corner
+    // vertices, cxx L563-848); a wire-less face breaks the downstream
+    // LocOpe_BuildShape (its theMapEF counts the edges of the faces).
     if let Some(str) = str_opt {
         let mut pool = BRep::new();
         let mut b = BRepBuilder::new();
-        *the_f_until = b.make_face(&mut pool, Some(Surface3::Trimmed(str)), Shape::null());
+        let mf = crate::topalgo::brep_lib::make_face::BRepLibMakeFace::new_with_surface_tol(
+            &mut pool,
+            &mut b,
+            &Surface3::Trimmed(str),
+            rcad_kernel::precision::CONFUSION,
+        );
+        *the_f_until = mf.face();
     }
 }
 

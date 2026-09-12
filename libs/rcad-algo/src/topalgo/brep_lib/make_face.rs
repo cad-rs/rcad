@@ -26,11 +26,11 @@ use rcad_kernel::core::precision::{
     CONFUSION,
 };
 use rcad_kernel::geom::{
-    BSplineCurve3, BezierCurve3, Circle3, Curve2d, Curve3, Line2d, Surface3, SurfaceEval,
+    BSplineCurve3, BezierCurve3, Circle3, Curve2d, Curve3, Line2d, Line3, Surface3, SurfaceEval,
     TrimmedSurface,
 };
 use rcad_kernel::topods::State;
-use rcad_kernel::topo::topods::{BRep, BRepBuilder, Orientation, Shape};
+use rcad_kernel::topo::topods::{BRep, BRepBuilder, Orientation, Shape, TShape};
 
 use glam::DVec2;
 
@@ -845,19 +845,19 @@ impl BRepLibMakeFace {
             // L811-821: two wires in u.
             let w = bb.make_wire(brep);
             bb.add_to_wire(brep, w.clone(), e_umin.clone());
-            bb.add_to_face(brep, f.clone(), w);
+            add_face_wire(brep, bb, &f, &w);
             let w = bb.make_wire(brep);
             bb.add_to_wire(brep, w.clone(), e_umax.clone());
-            bb.add_to_face(brep, f.clone(), w);
+            add_face_wire(brep, bb, &f, &w);
             set_shape_closed(brep, &f, uclosed);
         } else if umininf && umaxinf && !vmininf && !vmaxinf {
             // L823-833: two wires in v.
             let w = bb.make_wire(brep);
             bb.add_to_wire(brep, w.clone(), e_vmin.clone());
-            bb.add_to_face(brep, f.clone(), w);
+            add_face_wire(brep, bb, &f, &w);
             let w = bb.make_wire(brep);
             bb.add_to_wire(brep, w.clone(), e_vmax.clone());
-            bb.add_to_face(brep, f.clone(), w);
+            add_face_wire(brep, bb, &f, &w);
             set_shape_closed(brep, &f, vclosed);
         } else if !umininf || !umaxinf || !vmininf || !vmaxinf {
             // L835-858: one wire.
@@ -874,7 +874,7 @@ impl BRepLibMakeFace {
             if !vmaxinf {
                 bb.add_to_wire(brep, w.clone(), e_vmax.clone());
             }
-            bb.add_to_face(brep, f.clone(), w.clone());
+            add_face_wire(brep, bb, &f, &w);
             set_shape_closed(brep, &w, !umininf && !umaxinf && !vmininf && !vmaxinf);
             set_shape_closed(brep, &f, uclosed && vclosed);
         }
@@ -893,12 +893,7 @@ impl BRepLibMakeFace {
     /// OCCT BRepLib_MakeFace::Add(const TopoDS_Wire& W) (L873-879).
     pub fn add_wire(&mut self, brep: &mut BRep, bb: &mut BRepBuilder, w: &Shape) {
         // L875-876: BRep_Builder B; B.Add(myShape, W).
-        let has_outer = !brep.face(self.my_shape.clone()).outer_wire.is_null();
-        if has_outer {
-            bb.add_to_face(brep, self.my_shape.clone(), w.clone());
-        } else {
-            brep.face_mut(self.my_shape.clone()).outer_wire = w.clone();
-        }
+        add_face_wire(brep, bb, &self.my_shape.clone(), w);
         // L877: B.NaturalRestriction(TopoDS::Face(myShape), false).
         brep.face_mut(self.my_shape.clone()).natural_restriction = false;
         // L878: Done().
@@ -972,6 +967,30 @@ impl BRepLibMakeFace {
 }
 
 // =========================================================================
+// OCCT `BRep_Builder::Add(TopoDS_Face, TopoDS_Wire)` — the module-level
+// helper shared by BRepLib_MakeFace::Add and the Init natural-bound assembly.
+// =========================================================================
+
+/// OCCT `BRep_Builder::Add(TopoDS_Face, TopoDS_Wire)` semantics: the FIRST
+/// wire added to a face becomes its outer wire, later wires are inner wires;
+/// both are appended to the face's sub-shape list (TopoDS_Iterator
+/// enumerates them in insertion order — BRep_Builder.cxx / TopoDS_Builder).
+/// The slot test uses the sub-shape TYPE: a face created without a wire
+/// carries the null placeholder (a Vertex) in its outer-wire slot, whose
+/// `Shape::index` is also usize::MAX for pool-external builders — judging by
+/// `is_null()` would misclassify them.
+fn add_face_wire(brep: &mut BRep, bb: &mut BRepBuilder, f: &Shape, w: &Shape) {
+    let has_outer = matches!(&*brep.face(f.clone()).outer_wire.data, TShape::Wire(_));
+    if has_outer {
+        bb.add_to_face(brep, f.clone(), w.clone());
+    } else {
+        let fd = brep.face_mut(f.clone());
+        fd.outer_wire = w.clone();
+        fd.my_shapes.push(w.clone());
+    }
+}
+
+// =========================================================================
 // OCCT ElCLib::AdjustPeriodic (ElCLib.cxx L115-146) — local pure-math
 // helper (the kernel copy is pub(crate) to the kernel crate).
 // =========================================================================
@@ -999,18 +1018,31 @@ fn elclib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u
     }
 }
 
-/// OCCT Geom_Surface::UIso — GAP leaf: the kernel surface package has no
-/// iso-curve extraction yet (the E3-T kernel gap, blend-surface UIso note);
-/// the call keeps the OCCT anchor (BRepLib_MakeFace.cxx L575/L580) and
-/// raises until the kernel leaf lands.
-fn surface_u_iso(_s: &Surface3, _u: f64) -> Curve3 {
-    unimplemented!("GAP: Geom_Surface::UIso pending (TKGeomBase/Geom)");
+/// OCCT Geom_Surface::UIso — the Geom_Plane arm (Geom_Plane.cxx L96-100):
+/// `Geom_Line(ElSLib::PlaneUIso(pos, U))`, i.e. the line through the plane
+/// point at (U, 0) along the V direction (ElSLib.cxx PlaneUIso).
+/// `Surface3::Trimmed` mirrors Geom_RectangularTrimmedSurface::UIso, which
+/// delegates to the basis iso; the trimmed span rides on the edge Range the
+/// caller sets (BRepLib_MakeFace.cxx L706/L737).  The other surface types
+/// keep the OCCT-failure GAP (the E3-T kernel gap, blend-surface UIso note).
+fn surface_u_iso(s: &Surface3, u: f64) -> Curve3 {
+    match s {
+        Surface3::Plane(p) => Curve3::Line(Line3::new(p.origin + u * p.u_dir, p.v_dir)),
+        Surface3::Trimmed(t) => surface_u_iso(t.basis.as_ref(), u),
+        _ => unimplemented!("GAP: Geom_Surface::UIso pending (TKGeomBase/Geom)"),
+    }
 }
 
-/// OCCT Geom_Surface::VIso — GAP leaf (BRepLib_MakeFace.cxx L585/L590), see
-/// [`surface_u_iso`].
-fn surface_v_iso(_s: &Surface3, _v: f64) -> Curve3 {
-    unimplemented!("GAP: Geom_Surface::VIso pending (TKGeomBase/Geom)");
+/// OCCT Geom_Surface::VIso — the Geom_Plane arm (Geom_Plane.cxx L103-107):
+/// `Geom_Line(ElSLib::PlaneVIso(pos, V))`, the line through (0, V) along the
+/// U direction.  See [`surface_u_iso`] for the Trimmed delegation and the
+/// remaining GAP.
+fn surface_v_iso(s: &Surface3, v: f64) -> Curve3 {
+    match s {
+        Surface3::Plane(p) => Curve3::Line(Line3::new(p.origin + v * p.v_dir, p.u_dir)),
+        Surface3::Trimmed(t) => surface_v_iso(t.basis.as_ref(), v),
+        _ => unimplemented!("GAP: Geom_Surface::VIso pending (TKGeomBase/Geom)"),
+    }
 }
 
 /// OCCT BRepLib::UpdateTolerances(myShape) (BRepLib.cxx) — GAP leaf recorded
