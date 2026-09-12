@@ -36,6 +36,7 @@ use crate::brep_algo::as_des::BRepAlgoAsDes;
 use crate::brep_algo::image::BRepAlgoImage;
 use crate::brep_algo::tool as bat;
 use crate::brep_algo::tool::{brep_tool_pnt, shape_key};
+use crate::geomalgo::geom_api_project_point_on_curve::GeomAPIProjectPointOnCurve;
 use crate::feat::loc_ope_wires_on_shape_b::{
     brep_tool_curve, brep_tool_degenerated, brep_tool_range, brep_tool_tolerance,
 };
@@ -641,18 +642,16 @@ pub(crate) fn trim_edge(
                     Some(x) => x,
                     None => {
                         // OCCT L4965: theCurve = BRep_Tool::Curve(NE, f, l) —
-                        // the null-curve case keeps the projector path with a
-                        // null curve (the rcad GeomAPI carrier panics on the
-                        // (P, null C) form).
+                        // a null curve reaches GeomAPI_ProjectPointOnCurve
+                        // (null-handle dereference in OCCT).  rcad has no null
+                        // Geom_Curve value, so the impossible-source state
+                        // exits here.
                         return false;
                     }
                 };
                 let the_point = brep_tool_pnt(&v).unwrap_or(DVec3::ZERO);
-                let mut projector =
-                    super::brep_offset_make_offset::GeomAPIProjectPointOnCurve::new(
-                        the_point,
-                        &_the_curve,
-                    );
+                let projector =
+                    GeomAPIProjectPointOnCurve::new_point_curve(the_point, &_the_curve);
                 if projector.nb_points() == 0 {
                     return false;
                 }

@@ -746,30 +746,6 @@ pub(crate) fn bop_algo_tools_make_split_edge(
     source_edge.orientation = ne.orientation;
 }
 
-/// OCCT GeomAPI_ProjectPointOnCurve (TKTopAlgo/GeomAPI; the (P, C) form) —
-/// GAP carrier (architecture difference #52; the brep_offset_offset.rs #12
-/// precedent).
-pub(crate) struct GeomAPIProjectPointOnCurve;
-
-impl GeomAPIProjectPointOnCurve {
-    /// OCCT GeomAPI_ProjectPointOnCurve::GeomAPI_ProjectPointOnCurve(P, C).
-    pub fn new(_p: DVec3, _c: &Curve3) -> Self {
-        GeomAPIProjectPointOnCurve
-    }
-
-    /// OCCT GeomAPI_ProjectPointOnCurve::NbPoints().
-    pub fn nb_points(&self) -> i32 {
-        panic!("GAP: GeomAPI_ProjectPointOnCurve::NbPoints (TKTopAlgo/GeomAPI not translated)");
-    }
-
-    /// OCCT GeomAPI_ProjectPointOnCurve::LowerDistanceParameter().
-    pub fn lower_distance_parameter(&self) -> f64 {
-        panic!(
-            "GAP: GeomAPI_ProjectPointOnCurve::LowerDistanceParameter (TKTopAlgo/GeomAPI not translated)"
-        );
-    }
-}
-
 /// OCCT GeomLib::BuildCurve3d(Tol, ConS, FirstPar, LastPar, C3d,
 /// MaxDeviation, AverageDeviation) (the Adaptor3d_CurveOnSurface form) —
 /// GAP leaf (architecture difference #52; the inter2d.rs #29 form).

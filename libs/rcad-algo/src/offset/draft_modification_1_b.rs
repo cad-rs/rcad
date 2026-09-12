@@ -54,6 +54,7 @@ use super::draft_modification::{brep_tool_continuity, brep_tool_pnt};
 use super::draft_vertex_info::DraftVertexInfo;
 
 use crate::brep_algo::tool::{brep_tool_curve, brep_tool_tolerance, explorer};
+use crate::geomalgo::geom_api_project_point_on_curve::GeomAPIProjectPointOnCurve;
 
 // ===========================================================================
 // Reduced-kernel carriers (GAP annotations live in the module header).
@@ -805,63 +806,6 @@ fn bspline2_reversed(b: &rcad_kernel::geom::BSplineCurve2) -> rcad_kernel::geom:
         knots,
         control_points,
         weights,
-    }
-}
-
-/// OCCT GeomAPI_ProjectPointOnCurve (GeomAPI_ProjectPointOnCurve.hxx) — the
-/// nearest projection of a point on a curve, carried over Extrema_ExtPC.
-pub(crate) struct GeomAPIProjectPointOnCurve {
-    my_nearest: DVec3,   // OCCT: the nearest point output
-    my_nearest_par: f64, // the parameter of the nearest point
-}
-
-impl GeomAPIProjectPointOnCurve {
-    /// OCCT GeomAPI_ProjectPointOnCurve(P, C) -> Init(P, Curve)
-    /// (GeomAPI_ProjectPointOnCurve.cxx L51-81: myC.Load(Curve);
-    /// myExtPC.Initialize(myC, myC.FirstParameter(), myC.LastParameter());
-    /// myExtPC.Perform(P) — the default theTolF is 1.0e-10; the
-    /// lower-distance scan fills myIndex).
-    pub(crate) fn new(the_p: DVec3, the_c: &Curve3) -> Self {
-        let dom = the_c.default_domain();
-        // OCCT L53: myC.Load(Curve) — the GeomAdaptor_Curve full-range load.
-        let a_adaptor = GeomCurveAdaptor::new(the_c.clone());
-        let a_tool = CurveToolHandle::for_curve3(the_c, &a_adaptor, &a_adaptor);
-        let ext = ExtremaExtPC::new_point_curve(the_p, &a_tool, 1.0e-10);
-        if ext.is_done() && ext.nb_ext() >= 1 {
-            // OCCT L67-88: the lower-distance scan fills myIndex.
-            let (mut best, mut best_d) = (1usize, ext.square_distance(1));
-            for i in 2..=ext.nb_ext() {
-                let d = ext.square_distance(i);
-                if d < best_d {
-                    best_d = d;
-                    best = i;
-                }
-            }
-            GeomAPIProjectPointOnCurve {
-                my_nearest: ext.point(best).point,
-                my_nearest_par: ext.point(best).param,
-            }
-        } else {
-            // The OCCT NotDone state dereferences the null solution; the
-            // rcad carrier keeps the query point (never consumed when
-            // not-done, matching the OCCT guard order).
-            GeomAPIProjectPointOnCurve {
-                my_nearest: the_p,
-                my_nearest_par: dom[0],
-            }
-        }
-    }
-
-    /// OCCT GeomAPI_ProjectPointOnCurve::NearestPoint().
-    pub(crate) fn nearest_point(&self) -> DVec3 {
-        self.my_nearest
-    }
-
-    /// OCCT GeomAPI_ProjectPointOnCurve::Parameter(i) — the parameter of the
-    /// nearest point.
-    #[allow(dead_code)]
-    pub(crate) fn parameter(&self) -> f64 {
-        self.my_nearest_par
     }
 }
 

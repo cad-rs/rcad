@@ -22,7 +22,9 @@ use rcad_kernel::base::extrema::ExtPC2d;
 use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
 use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
 use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3, SurfaceEval};
+use rcad_kernel::geom::{
+    Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Plane, Surface3, SurfaceEval,
+};
 use rcad_kernel::topo::topods::{Orientation, State, TShape};
 use rcad_kernel::topo_shape::Shape;
 
@@ -756,10 +758,11 @@ pub fn try_project(
 // ---------------------------------------------------------------------------
 
 /// OCCT static ExtentEdge(F, EF, E, NE) (cxx L2072-2157) — the tangential
-/// extension of E to the F surface bounds; GAP leaves: GeomAPI::To3d/To2d
-/// and GeomLib::ExtendCurveToPoint are not translated (architecture
-/// difference #24); the carriers keep the OCCT structure and the panic
-/// annotation fires only for the non-analytic edge path.
+/// extension of E to the F surface bounds, then the new edge built on the
+/// extended 2D curve.  The dependencies are the translated ones:
+/// `GeomAPI::To3d` / `GeomAPI::To2d`
+/// (`crate::geomalgo::geom_api`) and `GeomLib::ExtendCurveToPoint`
+/// (`crate::geomalgo::geom_lib`).
 pub(crate) fn extent_edge_tool(f: &Shape, ef: &Shape, e: &Shape, ne: &mut Shape) {
     // OCCT L2077-2081: CE = BRepAdaptor_Curve(E); Type; aLocalEdge =
     // E.EmptyCopied(); NE = TopoDS::Edge(aLocalEdge).
@@ -832,20 +835,42 @@ pub(crate) fn extent_edge_tool(f: &Shape, ef: &Shape, e: &Shape, ne: &mut Shape)
     tang = tang * tmin;
     let pl2d = DVec2::new(p.x + tang.x, p.y + tang.y);
 
-    // OCCT L2135-2143: CC = GeomAPI::To3d(C2d, XOY); the BoundedCurve
-    // downcast — GAP leaves (architecture difference #24).
-    let _ = (&pf2d, &pl2d, DVec3::ZERO);
-    let ext_c = geom_api_to3d(&c2d); // GAP carrier (panics; annotated)
-    let _ = &ext_c;
+    // OCCT L2135: CC = GeomAPI::To3d(C2d, gp_Pln(gp::XOY())).
+    let a_xoy = Plane::new(DVec3::ZERO, DVec3::Z);
+    let cc = crate::geomalgo::geom_api::to3d(&c2d, &a_xoy);
+    // OCCT L2137-2138: PF/PL — the 2D tangent targets lifted to z = 0.
+    let pf = DVec3::new(pf2d.x, pf2d.y, 0.);
+    let pl = DVec3::new(pl2d.x, pl2d.y, 0.);
 
-    // OCCT L2145-2146: GeomLib::ExtendCurveToPoint(ExtC, PF/PL, 1, ...)
-    // — GAP (the ExtendSurfByLength batch).
-    // OCCT L2148: CNE2d = GeomAPI::To2d(ExtC, XOY) — GAP.
-    // Construction de la nouvelle arrete;
-    // OCCT L2151-2156: B.MakeEdge(NE); B.UpdateEdge(NE, CNE2d, EF, tol);
-    // B.Range(NE, ...); NE.Orientation(E.Orientation()) — behind the GAP
-    // panics above.
-    unreachable!("GeomLib::ExtendCurveToPoint / GeomAPI::To2d GAP path");
+    // OCCT L2140-2143: occ::down_cast<Geom_BoundedCurve>(CC); if
+    // (ExtC.IsNull()) return; — the rcad Geom_BoundedCurve instantiations.
+    if !matches!(cc, Curve3::BSpline(_) | Curve3::Bezier(_) | Curve3::Trimmed(_)) {
+        return;
+    }
+    let mut ext_c = cc;
+
+    // OCCT L2145-2146: GeomLib::ExtendCurveToPoint(ExtC, PF, 1, false);
+    // GeomLib::ExtendCurveToPoint(ExtC, PL, 1, true);
+    crate::geomalgo::geom_lib::extend_curve_to_point(&mut ext_c, pf, 1, false);
+    crate::geomalgo::geom_lib::extend_curve_to_point(&mut ext_c, pl, 1, true);
+
+    // OCCT L2148: CNE2d = GeomAPI::To2d(ExtC, gp_Pln(gp::XOY())).
+    // The rcad None is the null result handle of GeomAPI::To2d (GeomAPI.cxx
+    // L46-49); OCCT then dereferences it at L2152 (`B.Range(NE,
+    // CNE2d->FirstParameter(), ...)`), which the expect below reports.
+    let cne2d = crate::geomalgo::geom_api::to2d(&ext_c, &a_xoy)
+        .expect("GeomAPI::To2d null result (OCCT L2152 null dereference)");
+
+    // Construction de la nouvelle arrete (OCCT L2150-2156).
+    // B.MakeEdge(NE);
+    *ne = bat::builder_make_edge();
+    // B.UpdateEdge(NE, CNE2d, EF, BRep_Tool::Tolerance(E));
+    bat::builder_update_edge_pcurve(ne, &cne2d, ef, brep_tool_tolerance(e));
+    // B.Range(NE, CNE2d->FirstParameter(), CNE2d->LastParameter());
+    let a_cne_dom = Curve2dEval::default_domain(&cne2d);
+    bat::builder_range_edge(ne, a_cne_dom[0], a_cne_dom[1]);
+    // NE.Orientation(E.Orientation());
+    ne.orientation = e.orientation;
 }
 
 // ---------------------------------------------------------------------------
@@ -1363,14 +1388,6 @@ pub(crate) fn geom_proj_lib_curve2d(_c3d: &Curve3, _f: f64, _l: f64, _surf: &Sur
     panic!("GAP: GeomProjLib::Curve2d (TKTopAlgo not translated)");
 }
 
-/// OCCT GeomAPI::To3d(C2d, gp_Pln(gp::XOY())) (TKTopAlgo/GeomAPI) — GAP
-/// carrier (architecture difference #24).
-pub(crate) fn geom_api_to3d(_c2d: &Curve2d) -> Curve3 {
-    panic!("GAP: GeomAPI::To3d (TKTopAlgo not translated)");
-}
-
-/// OCCT GeomAPI::To2d(C3d, gp_Pln(gp::XOY())) (TKTopAlgo/GeomAPI) — GAP
-/// carrier (architecture difference #24).
-pub(crate) fn geom_api_to2d(_c3d: &Curve3) -> Option<Curve2d> {
-    panic!("GAP: GeomAPI::To2d (TKTopAlgo not translated)");
-}
+// OCCT GeomAPI::To3d / GeomAPI::To2d (TKGeomAlgo/GeomAPI) live in their OCCT
+// toolkit home now: `crate::geomalgo::geom_api::{to3d, to2d}`.  The former
+// GAP carriers of this module are deleted.

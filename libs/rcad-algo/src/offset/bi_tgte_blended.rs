@@ -498,10 +498,9 @@ fn k_part_curve_3d(edge: &Shape, curve: &Curve2d, surf: &Surface3, the_brep: &mu
         }
     } else {
         // Case Plane
-        // OCCT L375: C3d = GeomAPI::To3d(Curve, S.Plane()) — GAP leaf
-        // (arch. diff. #28).
+        // OCCT L375: C3d = GeomAPI::To3d(Curve, S.Plane()).
         if let Surface3::Plane(pl) = surf {
-            let c3d = geom_api_to_3d(curve, pl);
+            let c3d = crate::geomalgo::geom_api::to3d(curve, pl);
             // OCCT L376: TheBuilder.UpdateEdge(Edge, C3d, Loc, Tol).
             update_edge_curve3d_gap(edge, &c3d, loc, tol);
         }
@@ -513,10 +512,8 @@ fn k_part_curve_3d(edge: &Shape, curve: &Curve2d, surf: &Surface3, the_brep: &mu
 /// brep_offset_offset.rs update_edge_curve3d_gap).
 fn update_edge_curve3d_gap(_the_e: &Shape, _the_c: &Curve3, _the_loc: u32, _the_tol: f64) {}
 
-/// OCCT GeomAPI::To3d(Curve, Plane) — GAP leaf (arch. diff. #28).
-fn geom_api_to_3d(_the_curve: &Curve2d, _the_plane: &rcad_kernel::geom::Plane) -> Curve3 {
-    panic!("GAP: GeomAPI::To3d (TKTopAlgo/GeomAPI not translated)");
-}
+// OCCT GeomAPI::To3d lives in its OCCT toolkit home now:
+// `crate::geomalgo::geom_api::to3d`.
 
 // --- KPartCurve3d GAP leaves (architecture difference #28; the same leaf
 // --- family as the #20 stand-ins of brep_offset_offset.rs) ---

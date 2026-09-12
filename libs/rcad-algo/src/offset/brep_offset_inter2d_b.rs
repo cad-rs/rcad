@@ -27,6 +27,7 @@ use crate::brep_algo::tool::{
     explorer, oriented, shape_key, top_abs_reverse, ShapeKey,
 };
 use crate::feat::loc_ope_wires_on_shape_b::brep_tool_degenerated;
+use crate::geomalgo::geom_api_project_point_on_curve::GeomAPIProjectPointOnCurve;
 
 use super::brep_offset_inter2d::*;
 use super::brep_offset_offset_b::BRepOffsetOffset;
@@ -416,7 +417,7 @@ impl BRepOffsetInter2d {
                     if !precision_is_infinite(first_par_on_pc) {
                         let p2d1 = min_pc.point_at(first_par_on_pc);
                         let p1 = min_surf.point_at(p2d1.x, p2d1.y);
-                        let projector = GeomAPIProjectPointOnCurve::init_point_curve(p1, c3d_ref);
+                        let projector = GeomAPIProjectPointOnCurve::new_point_curve(p1, c3d_ref);
                         if projector.nb_points() > 0 {
                             f = projector.lower_distance_parameter();
                         }
@@ -424,7 +425,7 @@ impl BRepOffsetInter2d {
                     if !precision_is_infinite(last_par_on_pc) {
                         let p2d2 = min_pc.point_at(last_par_on_pc);
                         let p2 = min_surf.point_at(p2d2.x, p2d2.y);
-                        let projector = GeomAPIProjectPointOnCurve::init_point_curve(p2, c3d_ref);
+                        let projector = GeomAPIProjectPointOnCurve::new_point_curve(p2, c3d_ref);
                         if projector.nb_points() > 0 {
                             l = projector.lower_distance_parameter();
                         }

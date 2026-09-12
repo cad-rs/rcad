@@ -73,3 +73,6 @@ pub mod approx_same_parameter;
 pub mod geom_lib_check_curve_on_surface;
 pub mod geom_lib_is_planar_surface;
 pub mod geom_lib_same_range;
+pub mod geom_api_project_point_on_curve; // GeomAPI_ProjectPointOnCurve (TKGeomAlgo/GeomAPI)
+pub mod geom_api; // GeomAPI::To2d / GeomAPI::To3d (TKGeomAlgo/GeomAPI)
+pub mod geom_lib; // GeomLib::ExtendCurveToPoint + the static ComputeLambda (TKGeomBase/GeomLib)

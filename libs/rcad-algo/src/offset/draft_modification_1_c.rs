@@ -30,9 +30,9 @@ use super::draft_modification::DraftModification;
 use super::draft_modification_1::dir_is_parallel;
 use super::draft_modification_1_b::{
     choose, elclib_circle_parameter, geom_curve2d_reverse, geom_curve_reverse, gp_circ_translate,
-    parameter, smart_parameter, ExtremaExtCS,
-    GeomAPIProjectPointOnCurve, GeomConvertCompCurveToBSplineCurve, GeomIntIntSS,
+    parameter, smart_parameter, ExtremaExtCS, GeomConvertCompCurveToBSplineCurve, GeomIntIntSS,
 };
+use crate::geomalgo::geom_api_project_point_on_curve::GeomAPIProjectPointOnCurve;
 
 impl DraftModification {
     /// OCCT Perform L826-1443 — "Calculate new edges".  The OCCT null-handle
@@ -723,7 +723,7 @@ impl DraftModification {
                         .expect("null Geometry (Edg1)");
                     // OCCT L1471-1472: the projection of the original point on
                     // the new curve (patch).
-                    let projector = GeomAPIProjectPointOnCurve::new(vtori, &einf1_geom);
+                    let projector = GeomAPIProjectPointOnCurve::new_point_curve(vtori, &einf1_geom);
                     let mut pvt = projector.nearest_point();
                     // OCCT L1484.
                     let dion = pvt.distance_squared(vtori);
