@@ -17,7 +17,9 @@ use rcad_kernel::topo::topods::{Orientation, Shape};
 use rcad_kernel::topods;
 
 use super::chfi3d::TopOpeBRepDSHDataStructure;
-use super::chfi_kpart_gp::{surface3_ax3, surface3_d0, surface3_d1};
+use super::chfi_kpart_gp::{
+    dir_angle, surface3_ax3, surface3_d0, surface3_d1, GpAx3, GpCylindricalSurface,
+};
 use super::chfi_ds::{ChFiDSSpineHandle, ChFiDSSurfData};
 use super::chfi3d_ds::{TopOpeBRepDSCurve, TopOpeBRepDSSurface};
 
@@ -161,58 +163,52 @@ pub fn chfi_kpart_index_surface_in_ds(s: Surface3, dstr: &mut TopOpeBRepDSHDataS
 }
 
 // =========================================================================
-// OCCT ElCLib / ElSLib analytic kernels used by FilPlnPln.
+// OCCT ElCLib / ElSLib analytic kernels used by FilPlnPln — the real bodies
+// live in chfi_kpart_gp (the OCCT TKFillet/ChFiKPart/ChFiKPart_ComputeData_Gp
+// helpers).  They are re-hosted here so the case functions keep the OCCT
+// call spelling while there is exactly one formulation of each kernel.
 // =========================================================================
 
-/// OCCT ElCLib::Value(U, L) — point at parameter U on a line.
+/// OCCT ElCLib::Value(U, L) — point at parameter U on a line
+/// (ElCLib.cxx L1185-1188: Loc + U * Dir).
 pub fn elclib_line_value(u: f64, line: &Line3) -> DVec3 {
-    line.origin + line.direction * u
+    crate::fillet::chfi_kpart_gp::elclib_line_d1(u, line.origin, line.direction).0
 }
 
 /// OCCT ElCLib::Parameter(L, P) — parameter of the projection of P on a
-/// line.
+/// line (ElCLib.cxx L1191-1194).
 pub fn elclib_line_parameter(line: &Line3, p: DVec3) -> f64 {
-    (p - line.origin).dot(line.direction)
+    crate::fillet::chfi_kpart_gp::elclib_line_parameter(line.origin, line.direction, p)
 }
 
-/// OCCT ElSLib::PlaneParameters(Pos, P, u, v) — UV of P in the plane frame.
-/// rcad Plane carries origin+normal; the gp_Ax3 X/Y directions are derived
-/// deterministically (x = any perpendicular of the normal, y = n ^ x).
-pub fn elslib_plane_parameters(plane: &Plane, p: DVec3) -> DVec2 {
-    let xdir = plane.u_dir.normalize();
-    let ydir = plane.v_dir.normalize();
-    let d = p - plane.origin;
-    DVec2::new(d.dot(xdir), d.dot(ydir))
+/// OCCT ElSLib::PlaneParameters(Pos, P, u, v) — UV of P in the plane frame
+/// (ElSLib.cxx L1547-1554).  The plane frame is the Pl1.Position() gp_Ax3.
+pub fn elslib_plane_parameters(pos: &GpAx3, p: DVec3) -> DVec2 {
+    let (u, v) = crate::fillet::chfi_kpart_gp::elslib_plane_parameters(pos, p);
+    DVec2::new(u, v)
 }
 
 /// OCCT ElSLib::CylinderD1(u, v, Pos, R, P, du, dv) — point and first
-/// derivatives on a cylinder with the frame (x, y = axis ^ x, axis).
+/// derivatives on the cylinder carried by the full gp_Ax3 Pos
+/// (ElSLib.cxx L732-753).  The frame (not a recomputed right-handed one)
+/// is what OCCT uses, so a YReverse'd left-handed frame propagates.
 pub fn elslib_cylinder_d1(
     u: f64,
     v: f64,
-    origin: DVec3,
-    xdir: DVec3,
-    axis: DVec3,
+    pos: &GpAx3,
     radius: f64,
 ) -> (DVec3, DVec3, DVec3) {
-    let ydir = axis.cross(xdir).normalize();
-    let p = origin + (xdir * (radius * u.cos())) + (ydir * (radius * u.sin())) + (axis * v);
-    let du = (xdir * (-u.sin())) + (ydir * u.cos());
-    (p, du * radius, dv_of(axis))
-}
-
-fn dv_of(axis: DVec3) -> DVec3 {
-    axis
+    crate::fillet::chfi_kpart_gp::elslib_cylinder_d1(u, v, pos, radius)
 }
 
 // =========================================================================
 // OCCT ChFiKPart_ComputeData.cxx L51-641 — ChFiKPart_ComputeData::Compute.
 //
-// The fillet branch is translated for the analytic combinations; the
-// Plane/Cylinder, Plane/Cone, Sphere and Rotule combinations
-// (ChFiKPart_ComputeData_FilPlnCyl.cxx L42-599, FilPlnCon.cxx, Sphere.cxx,
-// Rotule.cxx) and the chamfer branch (ChPlnPln/ChPlnCyl/ChPlnCon/
-// ChAsymPln*) are pending translations and report the OCCT failure path.
+// The fillet branch dispatches over the analytic support combinations into
+// ChFiKPart_ComputeData_FilPlnPln.cxx (L42-174) and
+// ChFiKPart_ComputeData_FilPlnCyl.cxx / FilPlnCon.cxx (chfi_kpart_fil.rs);
+// the chamfer branch into ChFiKPart_ComputeData_ChPln*.cxx /
+// ChAsymPln*.cxx / Sphere.cxx / Rotule.cxx.
 // =========================================================================
 pub fn compute_data_compute(
     brep: &topods::BRep,
@@ -602,67 +598,78 @@ pub fn make_fillet_plane_plane_lin(
     of1: Orientation,
 ) -> bool {
     // calcul du cylindre
-    // OCCT: D1 = Pos1.XDirection().Crossed(Pos1.YDirection()) — the plane
-    // normal; rcad Plane stores the normal directly.
-    let mut d1 = pl1.normal.normalize();
+    // OCCT L55-57: gp_Ax3 Pos1 = Pl1.Position(); D1 = Pos1.XDirection() ^
+    // Pos1.YDirection(); if (Or1 == TopAbs_REVERSED) D1.Reverse().
+    let pos1 = GpAx3 {
+        location: pl1.origin,
+        vxdir: pl1.u_dir,
+        vydir: pl1.v_dir,
+        vzdir: pl1.normal,
+    };
+    let mut d1 = pos1.vxdir.cross(pos1.vydir);
     if or1 == Orientation::Reversed {
         d1 = -d1;
     }
-    let mut d2 = pl2.normal.normalize();
+    // OCCT L61-63: the same for Pos2 / D2.
+    let pos2 = GpAx3 {
+        location: pl2.origin,
+        vxdir: pl2.u_dir,
+        vydir: pl2.v_dir,
+        vzdir: pl2.normal,
+    };
+    let mut d2 = pos2.vxdir.cross(pos2.vydir);
     if or2 == Orientation::Reversed {
         d2 = -d2;
     }
 
-    // OCCT: IntAna_QuadQuadGeo LInt(Pl1, Pl2, Angular, Confusion).
+    // OCCT L67: IntAna_QuadQuadGeo LInt(Pl1, Pl2, Angular, Confusion).
     let lint = rcad_kernel::base::int_ana::intersect_plane_plane_intana(pl1, pl2);
     let pv;
     match &lint {
         rcad_kernel::base::int_ana::PlnPlnResult::Line(lint_line) => {
-            // On met l origine du cylindre au point de depart fourni sur la
-            // ligne guide: ElCLib::Value(Parameter(LIntLine, ElCLib::Value(First, Spine)), LIntLine).
+            // OCCT L71-74: On met l origine du cylindre au point de depart
+            // fourni sur la ligne guide:
+            // Pv = ElCLib::Value(ElCLib::Parameter(LInt.Line(1),
+            //                     ElCLib::Value(First, Spine)), LInt.Line(1));
             let p0 = elclib_line_value(first, spine);
             let par = elclib_line_parameter(lint_line, p0);
             pv = elclib_line_value(par, lint_line);
         }
+        // OCCT L75-78: the LInt not-done path returns false.
         _ => return false,
     }
 
+    // OCCT L79-85.
     let axis_cylinder = spine.direction.normalize();
-    let ang = {
-        let dot = d1.dot(d2).clamp(-1.0, 1.0);
-        dot.acos()
-    };
-    let v = d1 + d2;
-    let sdir = v.normalize();
+    let ang = dir_angle(d1, d2);
+    let sdir = (d1 + d2).normalize();
     let fac = radius / (ang / 2.0).cos();
     let c = pv + sdir * fac;
+    // OCCT L86-91: gp_Dir xdir = D1.Reversed(); gp_Ax3 CylAx3(C,
+    // AxisCylinder, xdir); if (CylAx3.YDirection().Dot(D2) >= 0.)
+    // CylAx3.YReverse().
     let xdir = -d1;
-    // OCCT: gp_Ax3 CylAx3(C, AxisCylinder, xdir); if (YDirection().Dot(D2) >= 0) YReverse.
-    let mut ydir = axis_cylinder.cross(xdir).normalize();
-    if ydir.dot(d2) >= 0.0 {
-        ydir = -ydir;
+    let mut cyl_ax3 = GpAx3::new(c, axis_cylinder, xdir);
+    if cyl_ax3.y_direction().dot(d2) >= 0.0 {
+        cyl_ax3.y_reverse();
     }
-    let gcyl = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
-        origin: c,
-        axis: axis_cylinder,
-        radius,
-        ref_dir: xdir,
-        y_dir: Some(ydir),
-    });
+    // OCCT L92-93: new Geom_CylindricalSurface(CylAx3, Radius) indexed in DS.
+    let gcyl = GpCylindricalSurface::new(cyl_ax3, radius).to_surface3();
     let surf_index = chfi_kpart_index_surface_in_ds(gcyl.clone(), dstr);
     data.change_surf(surf_index);
 
     // On regarde si l orientation du cylindre est la meme que celle des faces.
-    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L99: ElSLib::CylinderD1(0., 0.,
-    // CylAx3, Radius, P, deru, derv) — P is the tangency point on face 1.
-    let (p_tang1, deru, derv) = elslib_cylinder_d1(0.0, 0.0, c, xdir, axis_cylinder, radius);
+    // OCCT L99-115: ElSLib::CylinderD1(0., 0., CylAx3, Radius, P, deru, derv)
+    // — P is the tangency point on face 1 and the frame is CylAx3 (the
+    // possibly YReverse'd one).
+    let (p_tang1, deru, derv) = elslib_cylinder_d1(0.0, 0.0, &cyl_ax3, radius);
     let norcyl = deru.cross(derv).normalize();
-    let norpl = pl1.normal.normalize();
+    let norpl = pos1.vxdir.cross(pos1.vydir);
     let mut norface = norpl;
     if of1 == Orientation::Reversed {
         norface = -norface;
     }
-    let toreverse = norcyl.dot(norface) <= 0.0;
+    let mut toreverse = norcyl.dot(norface) <= 0.0;
     *data.change_orientation() = if toreverse {
         Orientation::Reversed
     } else {
@@ -671,30 +678,34 @@ pub fn make_fillet_plane_plane_lin(
 
     // On charge les FaceInterferences avec les pcurves et courbes 3d.
     // La face 1.
-    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L121: ElSLib::PlaneParameters(Pos1, P, u, v)
-    // — the face-1 pcurve passes through the tangency point P (L99), not Pv.
-    let mut p2dpln = elslib_plane_parameters(pl1, p_tang1);
-    let dir2dpln = DVec2::new(axis_cylinder.dot(xdir_of(pl1)), axis_cylinder.dot(ydir_of(pl1)));
-    let mut lin2dpln = (p2dpln, dir2dpln);
-    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L126: gp_Lin linPln(P, AxisCylinder).
-    let linpln = (p_tang1, axis_cylinder);
-    let lin2dcyl = DVec2::new(0.0, 0.0);
-    let trans;
-    let mut toreverse2 = norcyl.dot(norpl) <= 0.0;
-    if toreverse2 {
-        trans = Orientation::Reversed;
-    } else {
-        trans = Orientation::Forward;
-    }
+    // OCCT L119-122: ElSLib::PlaneParameters(Pos1, P, u, v).
+    let p2dpln1 = elslib_plane_parameters(&pos1, p_tang1);
+    // OCCT L123-124: dir2dPln = gp_Dir2d(AxisCylinder.Dot(Pos1.XDirection()),
+    // AxisCylinder.Dot(Pos1.YDirection())).
+    let dir2dpln1 = DVec2::new(
+        axis_cylinder.dot(pos1.vxdir),
+        axis_cylinder.dot(pos1.vydir),
+    )
+    .normalize();
+    // OCCT L125-127: GLin2dPln1 / GLinPln1.
     let glin2dpln1 = rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
-        origin: lin2dpln.0,
-        direction: lin2dpln.1,
+        origin: p2dpln1,
+        direction: dir2dpln1,
     });
-    let glinpln1 = Curve3::Line(Line3::new(linpln.0, linpln.1));
+    let glinpln1 = Curve3::Line(Line3::new(p_tang1, axis_cylinder));
+    // OCCT L128-129: gp_Lin2d lin2dCyl(gp_Pnt2d(0., 0.), gp::DY2d()).
     let glin2dcyl1 = rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
-        origin: lin2dcyl,
+        origin: DVec2::new(0.0, 0.0),
         direction: DVec2::new(0.0, 1.0),
     });
+    // OCCT L131-139.
+    toreverse = norcyl.dot(norpl) <= 0.0;
+    let trans = if toreverse {
+        Orientation::Reversed
+    } else {
+        Orientation::Forward
+    };
+    // OCCT L140-143.
     data.change_interference_on_s1().set_interference(
         chfi_kpart_index_curve_in_ds(glinpln1, dstr),
         trans,
@@ -703,49 +714,48 @@ pub fn make_fillet_plane_plane_lin(
     );
 
     // La face 2.
-    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L146: ElSLib::CylinderD1(Ang, 0.,
-    // CylAx3, Radius, P, deru, derv) — P is recomputed at the face-2 tangency.
-    let (p_tang2, deru, derv) = elslib_cylinder_d1(ang, 0.0, c, xdir, axis_cylinder, radius);
+    // OCCT L146-149: ElSLib::CylinderD1(Ang, 0., CylAx3, Radius, P, deru,
+    // derv); norcyl / norpl recomputed; toreverse = norcyl.Dot(norpl) <= 0.
+    let (p_tang2, deru, derv) = elslib_cylinder_d1(ang, 0.0, &cyl_ax3, radius);
     let norcyl = deru.cross(derv).normalize();
-    let norpl2 = pl2.normal.normalize();
-    toreverse2 = norcyl.dot(norpl2) <= 0.0;
-    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L150: ElSLib::PlaneParameters(Pos2, P, u, v).
-    p2dpln = elslib_plane_parameters(pl2, p_tang2);
-    lin2dpln = (
-        p2dpln,
-        DVec2::new(axis_cylinder.dot(xdir_of(pl2)), axis_cylinder.dot(ydir_of(pl2))),
-    );
+    let norpl2 = pos2.vxdir.cross(pos2.vydir);
+    toreverse = norcyl.dot(norpl2) <= 0.0;
+    // OCCT L150: ElSLib::PlaneParameters(Pos2, P, u, v).
+    let p2dpln2 = elslib_plane_parameters(&pos2, p_tang2);
+    // OCCT L152: dir2dPln.SetCoord(AxisCylinder.Dot(Pos2.XDirection()),
+    // AxisCylinder.Dot(Pos2.YDirection())).
+    let dir2dpln2 = DVec2::new(
+        axis_cylinder.dot(pos2.vxdir),
+        axis_cylinder.dot(pos2.vydir),
+    )
+    .normalize();
+    // OCCT L153-155: lin2dPln.SetLocation/SetDirection then GLin2dPln2.
     let glin2dpln2 = rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
-        origin: lin2dpln.0,
-        direction: lin2dpln.1,
+        origin: p2dpln2,
+        direction: dir2dpln2,
     });
-    // OCCT ChFiKPart_ComputeData_FilPlnPln.cxx L156: linPln.SetLocation(P).
+    // OCCT L156-158: linPln.SetLocation(P); linPln.SetDirection(AxisCylinder).
     let glinpln2 = Curve3::Line(Line3::new(p_tang2, axis_cylinder));
+    // OCCT L159-160: lin2dCyl.SetLocation(gp_Pnt2d(Ang, 0.)).
     let glin2dcyl2 = rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
         origin: DVec2::new(ang, 0.0),
         direction: DVec2::new(0.0, 1.0),
     });
-    let trans2 = if toreverse2 {
+    // OCCT L161-168.
+    let trans2 = if toreverse {
         Orientation::Forward
     } else {
         Orientation::Reversed
     };
+    // OCCT L169-172.
     data.change_interference_on_s2().set_interference(
         chfi_kpart_index_curve_in_ds(glinpln2, dstr),
         trans2,
         Some(glin2dpln2),
         Some(glin2dcyl2),
     );
+    // OCCT L173: return true.
     true
-}
-
-fn xdir_of(plane: &Plane) -> DVec3 {
-    plane.u_dir.normalize()
-}
-
-fn ydir_of(plane: &Plane) -> DVec3 {
-    let x = xdir_of(plane);
-    plane.normal.cross(x).normalize()
 }
 
 // =========================================================================

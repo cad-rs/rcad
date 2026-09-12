@@ -60,7 +60,7 @@ mod classify;
 
 use std::sync::Arc;
 
-use rcad_kernel::core::precision::CONFUSION;
+use rcad_kernel::core::precision::{is_infinite_value, CONFUSION};
 use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _};
 use rcad_kernel::topods::{BRep, BRepBuilder, BRepTool as _, Orientation, Shape, ShapeType, TShape};
 
@@ -1008,9 +1008,25 @@ impl TopOpeBRepBuildHBuilder {
                 if let Some(pc) = fcurve.pcurve.clone() {
                     let key_loc = brep.compose_pcurve_location(a_face.location, an_edge.location);
                     let key = (a_face.ptr_id(), key_loc);
-                    let [t1, t2] = pc.default_domain();
+                    // OCCT BRep_Builder.cxx UpdateCurves (L104-167, reached
+                    // through TopOpeBRepDS_BuildTool::PCurve L1188-1239 ->
+                    // BRep_Builder::UpdateEdge E,C,S,L,Tol L655-671): the new
+                    // pcurve representation starts from the 2D curve's own
+                    // range (COS->Range) and then INHERITS the range of the
+                    // edge's 3D-curve representation (GC->Range for the
+                    // IsCurve3D entry) whenever that range is finite.  Only
+                    // an edge with no 3D curve keeps the 2D natural range.
+                    let [mut a_f, mut a_l] = pc.default_domain();
                     let ed = brep.edge_mut_inplace(an_edge.clone());
-                    ed.pcurves.insert(key, (pc, t1, t2));
+                    if ed.curve.is_some() {
+                        if !is_infinite_value(ed.range[0]) {
+                            a_f = ed.range[0];
+                        }
+                        if !is_infinite_value(ed.range[1]) {
+                            a_l = ed.range[1];
+                        }
+                    }
+                    ed.pcurves.insert(key, (pc, a_f, a_l));
                 }
                 // WES.AddStartElement(anEdge).
                 wes.add_start_element(brep, &an_edge);

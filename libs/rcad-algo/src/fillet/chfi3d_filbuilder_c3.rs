@@ -44,7 +44,7 @@ use super::chfi3d_builder_cncrn::chfi3d_is_in_front;
 use super::chfi3d_builder_6b::{elspine_guide_curve, ChFiDSElSpineHandle};
 use super::chfi3d_ds::{TopOpeBRepDSCurve, TopOpeBRepDSHDataStructure};
 use super::chfi_ds::{ChFiDSElSpine, ChFiDSStripe, SharedStripe};
-use super::chfi_kpart_gp::{elslib_torus_d1, GpAx3};
+use super::chfi_kpart_gp::{elslib_cylinder_d1, elslib_torus_d1, GpAx3};
 use super::brep_blend_func_consrad::{BlendFuncConstRad, BlendFuncConstRadInv};
 use super::brep_blend_line::BRepBlendLine;
 
@@ -227,14 +227,13 @@ pub(crate) fn chfi3d_extr_spine_carac(
         // OCCT L788-793: the cylinder branch; V = D1V.
         Surface3::Cylinder(cyl) => {
             *out_r = cyl.radius;
-            let (_pbid, _vbid, v) = super::chfi_kpart::elslib_cylinder_d1(
-                pp.x,
-                pp.y,
-                cyl.origin,
-                cyl.ref_dir,
-                cyl.axis,
-                cyl.radius,
-            );
+            let ax3 = GpAx3 {
+                location: cyl.origin,
+                vxdir: cyl.ref_dir,
+                vydir: cyl.y_axis(),
+                vzdir: cyl.axis,
+            };
+            let (_pbid, _vbid, v) = elslib_cylinder_d1(pp.x, pp.y, &ax3, cyl.radius);
             *out_v = v;
         }
         // OCCT L794-799: the torus branch; V = D1U.
