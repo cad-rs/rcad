@@ -194,12 +194,12 @@ rcad `main`：`a4a4b0de` ← `8b5a7b26` ← `6b6c7089` ← `04e1b5b3` ← `4dfe0
 **已完成（追加 15）**：原第 0 项 = `featrf_a1` 不终止 ⇒ **清零**（见 §0.3）；顺带清掉同链三道墙。
 **新增第 0 项（最急，a1 的直接下一墙）**：
 
-0. **`BRepFeat_RibSlot::LFPerform` 的结果装配**（`featrf_a1`）：init/`perform` 骨架已全通，停在
-   `surface area: expected 109.511, got 0` ⇒ 结果为空。入口 = `feat/brep_feat_rib_slot.rs::lf_perform()`
-   → `my_gs_hape / my_map / my_glued_f` 的装配路径，与 OCCT `BRepFeat_RibSlot::LFPerform` 逐行对照。
-   **顺带**：`featrf` 的 a4/a5/a7/a9 停在 init 的 `is_done`（各自的 `NoFaceProf`/`NoSlidingProfile` 面），可分头取证。
-   **注意**：该网格的参考拓扑断言当前被静默跳过（§0.3 卫生问题 1）——修生成器命名前，必须先手写/对齐
-   `step_reference` 里的 **`occt_boolean_feat_featrf_a1.json`** 才能拿到 V/E/F/S 判据。
+0. **`BRepFeat_RibSlot::LFPerform` 的结果装配**（`featrf_a1`）——**追加 15 补记 2 已把根因链打通到"要两批活"**（探针已清，权威记录见 port-plan 追加 15 补记 2）：
+   - OCCT 真值：`OpeType()=LocOpe_FUSE` ⇒ `theOpe=1` ⇒ **走粘合路径** ⇒ `myShape = theGlue.ResultingShape()`（F=9 / area 109.511）。
+   - rcad：**一次 bind 都没发生**（`glued_f` 的 key 不在 `myGShape` 里）⇒ `ope` 停在 `Invalid` ⇒ 回落构造器路径 ⇒ 空结果。
+   - 再往下一层：`CutVehicle::modified(fac)` 在 rcad 返回**空**（OCCT 返回 **1 个镜像且该镜像在结果里**），因为 `bop/algo/builder.rs::prepare_history` 要求镜像 TShape 命中 `shape_remap`，而实测源面是 `n_imgs=2 imgs(ptr,in_remap)=[(x,false),(y,false)]` / `n_imgs=0` ⇒ **同一性链断了**。
+   - **⇒ 下一批必须做两件事**：(a) **BOP 历史的镜像同一性**（`bop/algo/builder*.rs`，核心代码，单独评审 + 八网格逐格复测）；(b) **`LocOpe_Gluer::Perform` 真身**（`feat/loc_ope_gluer.rs`，当前 **DEFERRED 空体**；依赖 `LocOpe_WiresOnShape` ~1623 行 + `LocOpe_Spliter` + `LocOpe_Generator` + `LocOpe::TgtFaces`）。**只做 (a) 不够**：Perform 空体会让 `is_done()=false` 再次回落构造器路径。
+   - **对拍通道已建好（可复用）**：`tools/occt-bool-runner/cases/featrf.hpp` + `output/build_tkfeat.bat` / `build_runner_feat.bat`；跑法（含 DLL 遮蔽检查）见 port-plan 追加 15 补记 2。
 
 **原第 1–4 项原样保留**（见 §4.1–§4.4 正文），其中第 1 项 = `BOPAlgo_Section` 对共面面片对的输出（`FalseSide ×5` 根因）——
 **本轮已把它再定界一层**（探针已清，详见 §4.1 的补记）：b3 实测 `sc_pb=0 sc_v=0` + DS 的 FF 记录 `curves=0 points=0`，
@@ -333,6 +333,12 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
    ④ **face 的子形状枚举必须与 `BRep_Builder::Add` 的语义两侧对齐**：OCCT 把 wire 与 internal vertex 放在**同一个** `myShapes`
    列表里（TopoDS_Iterator 按此枚举），rcad 用三个类型化槽表示；**生产者**（`brep_sweep_builder::add`）与**消费者**
    （`brep_algo/tool.rs::sub_shapes`）必须同时对齐，否则"顶点占 wire 槽 / 空占位被子形状枚举吃掉"这类隐患只在扫掠路径才炸。
+   ⑤ **对拍时别拿两边枚举的"名字"直接比**：OCCT `LocOpe_Operation` 从 **0** 起（`FUSE=0, CUT=1, INVALID=2`），C++ 探针 `(int)ope`
+   打出的 **0 是 FUSE**，而 rcad 侧打印的是 Rust enum 的 `Debug` 名 —— 本轮差点把"OCCT 走粘合、rcad 走构造器"这个**决定性结论**读反。
+   对拍输出一律换成人可读名或统一映射（本轮 `[FEAT] glue ope=0 Collage=1` → 0=FUSE 是靠查 `LocOpe_Operation.hxx` 才定性的）。
+   ⑥ **feat 域的对拍通道先建再用**：`occt_bool_runner` 原先只有 boolean 用例，feat 用例要自己加（`cases/featrf.hpp` 模式：
+   DRAW 参数映射写在文件头 + `TKFeat/TKOffset` 进 `OCCT_LIBS`），配 `output/build_tkfeat.bat`/`build_runner_feat.bat`；
+   **一次建好，后面对拍零成本**——本轮 featrf 的根因链（3 层）全靠它一次性拿到 OCCT 真值。
 
 1. **"零候选/空结果"先查 bbox**：无 wire 的 `BRepLib_MakeFace(Pln,u,v)` 面的**唯一** bbox 来源是曲面 UV 窗分支
    （`GeomBndLib_Plane::Box`）；缺分支 ⇒ VOID 盒 ⇒ **静默退出 FF 的 BB 树**（症状是"候选对为 0"而非显式报错）。
@@ -407,6 +413,7 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
 | `Trimmed(Plane)` 盒 | `libs/rcad-kernel/src/base/bnd_lib/mod.rs::surface_bounding_box` |
 | featlf 居中肋接线 | `libs/rcad-algo/src/feat/brep_feat_make_linear_form.rs`（L186-194 处） |
 | 既有可复用探针 | `RCAD_BS_DEBUG`（builder/pave_filler 的 build_rc/结果装配）、`RCAD_FF_DEBUG`（FF 配对+曲线类型）、`RCAD_MB_DEBUG`（MakeBlocks 移位）、`RCAD_WS_DEBUG`（WireSplitter）、`RCAD_SPLIT_DEBUG`（CUT 结果） |
-| 权威长档 | `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–14 |
+| 权威长档 | `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–15（含补记 1/2） |
+| **feat 对拍通道（追加 15 新增）** | `tools/occt-bool-runner/cases/featrf.hpp`（featrf A1 ground-truth driver）+ `main.cpp` 注册 + `CMakeLists.txt` 的 `TKFeat TKOffset`；脚本 `output/build_tkfeat.bat`（增量编/装 TKFeat Debug）、`output/build_runner_feat.bat`（编 runner）；跑法含 **DLL 遮蔽检查**（`grep -ac <探针串> TKFeat.dll` 必须 >0） |
 | 模块归属表 | `rcad/docs/module-map.md` §2/§3（`feat/`↔TKFeat、`fillet/`↔TKFillet、`offset/`↔TKOffset） |
 | 重复实现审计 | `tools/occt-impl-audit/audit.py`（`uv run python tools/occt-impl-audit/audit.py .`）→ `docs/occt-impl-audit.md`（域风险排序：fillet 31 · feat 25 · offset 7） |
