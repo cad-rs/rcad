@@ -2002,19 +2002,56 @@ impl SurfaceEval for BSplineSurface {
         // Step 3: rational de Boor in v
         crate::math::bspl::de_boor(self.degree_v, &self.knots_v, &v_pts, &v_wts, v)
     }
+    /// OCCT `Geom_BSplineSurface::EvalD1` (Geom_BSplineSurface_1.cxx L146-190)
+    /// — `BSplSLib::D1` over the flat knot sequences (`Mults == NoMults`).
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let rational = self.is_rational_u() || self.is_rational_v();
+        let weights: Option<&[Vec<f64>]> = if rational { Some(&self.weights) } else { None };
+        crate::geom::eval_b::bspl_slib_d1(
+            u,
+            v,
+            0,
+            0,
+            self.degree_u as i32,
+            self.degree_v as i32,
+            self.is_rational_u(),
+            self.is_rational_v(),
+            self.is_periodic_u,
+            self.is_periodic_v,
+            &self.control_points,
+            weights,
+            &self.knots_u,
+            &self.knots_v,
+        )
+    }
+    /// OCCT `Geom_BSplineSurface::EvalD2` (Geom_BSplineSurface_1.cxx L191-238)
+    /// — `BSplSLib::D2`, in the rcad `SurfaceEval::derivatives2` order
+    /// `(P, dP/du, dP/dv, d2P/du2, d2P/dudv, d2P/dv2)`.
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        let rational = self.is_rational_u() || self.is_rational_v();
+        let weights: Option<&[Vec<f64>]> = if rational { Some(&self.weights) } else { None };
+        crate::geom::eval_b::bspl_slib_d2(
+            u,
+            v,
+            0,
+            0,
+            self.degree_u as i32,
+            self.degree_v as i32,
+            self.is_rational_u(),
+            self.is_rational_v(),
+            self.is_periodic_u,
+            self.is_periodic_v,
+            &self.control_points,
+            weights,
+            &self.knots_u,
+            &self.knots_v,
+        )
+    }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-5;
-        let [_u0, u1, _v0, v1] = self.default_domain();
-        let du = if u + eps <= u1 {
-            self.point_at(u + eps, v) - self.point_at(u, v)
-        } else {
-            self.point_at(u, v) - self.point_at(u - eps, v)
-        };
-        let dv = if v + eps <= v1 {
-            self.point_at(u, v + eps) - self.point_at(u, v)
-        } else {
-            self.point_at(u, v) - self.point_at(u, v - eps)
-        };
+        // The unit normal from the analytic first partials (`dP/du ^ dP/dv`);
+        // the previous one-sided finite difference is gone now that the
+        // analytic `Geom_BSplineSurface::EvalD1` body lives here.
+        let (_p, du, dv) = self.derivatives(u, v);
         let n = du.cross(dv);
         let len = n.length();
         if len < 1e-15 { DVec3::Z } else { n / len }
@@ -2114,30 +2151,28 @@ impl CurveEval for BezierCurve3 {
 }
 
 impl SurfaceEval for BezierSurface {
+    /// OCCT `Geom_BezierSurface::EvalD0` (Geom_BezierSurface.cxx L1416-1466) —
+    /// the rational tensor evaluation `P = N(u, v) / W(u, v)` of `BSplSLib::D0`
+    /// (via `PrepareEval` + `BSplCLib::Eval`), NOT the per-column rational
+    /// u-then-unit-weight-v scheme this method used before (that scheme equals
+    /// the tensor evaluation only when every V-column shares one weight
+    /// polynomial `W_j(u)`).
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let n_u = self.control_points.len();
-        if n_u == 0 {
-            return DVec3::ZERO;
-        }
-        let n_v = self.control_points[0].len();
-        if n_v == 0 {
-            return DVec3::ZERO;
-        }
-        // Apply de Casteljau in u for each v-column, producing n_v intermediate points
-        let row_points: Vec<DVec3> = (0..n_v)
-            .map(|j| {
-                let col_pts: Vec<DVec3> = (0..n_u).map(|i| self.control_points[i][j]).collect();
-                let col_wts: Vec<f64> = (0..n_u).map(|i| self.weights[i][j]).collect();
-                de_casteljau_3d(&col_pts, &col_wts, u)
-            })
-            .collect();
-        let unit_wts = vec![1.0; n_v];
-        de_casteljau_3d(&row_points, &unit_wts, v)
+        bezier_surface_d0(self, u, v)
     }
+    /// OCCT `Geom_BezierSurface::EvalD1` (Geom_BezierSurface.cxx L1470-1524).
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        bezier_surface_d1(self, u, v)
+    }
+    /// OCCT `Geom_BezierSurface::EvalD2` (Geom_BezierSurface.cxx L1528-1590).
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        bezier_surface_d2(self, u, v)
+    }
+    /// The unit normal from the analytic first partials (`dP/du ^ dP/dv`);
+    /// OCCT has no `Normal()` on `Geom_BezierSurface` (callers of
+    /// `Geom_Surface::D1` build the normal the same way).
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-5;
-        let du = (self.point_at(u + eps, v) - self.point_at(u - eps, v)) / (2.0 * eps);
-        let dv = (self.point_at(u, v + eps) - self.point_at(u, v - eps)) / (2.0 * eps);
+        let (_p, du, dv) = self.derivatives(u, v);
         let n = du.cross(dv);
         let len = n.length();
         if len < 1e-15 { DVec3::Z } else { n / len }
@@ -3384,77 +3419,217 @@ fn bspline_surface_v_resolution(bs: &BSplineSurface, tolerance_3d: f64) -> f64 {
     }
 }
 
-/// OCCT Geom_BSplineSurface::DN(U, V, Nu, Nv) — tensor evaluation: the U
-/// derivative poles are obtained by evaluating each V-curve at (u, Nu), then
-/// the result is evaluated at (v, Nv) with rational reduction.
-fn bspline_surface_dn(bs: &BSplineSurface, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
-    let dim = 4usize; // homogeneous evaluation
-    let nu_len = bs.control_points.len();
-    let nv_len = if nu_len > 0 { bs.control_points[0].len() } else { 0 };
-
-    // Step 1: evaluate the U derivative at u for every V pole index j.
-    let mut hom = Vec::with_capacity(nv_len * dim);
-    for j in 0..nv_len {
-        let mut poles_flat = Vec::with_capacity(nu_len * dim);
-        let mut weights_flat = Vec::with_capacity(nu_len);
-        for i in 0..nu_len {
-            let p = bs.control_points[i][j];
-            let w = if !bs.weights.is_empty() {
-                bs.weights[i][j]
-            } else {
-                1.0
-            };
-            poles_flat.extend([p.x * w, p.y * w, p.z * w, w]);
-            weights_flat.push(1.0);
-        }
-        let mut poles_res = vec![0.0f64; dim];
-        let mut weights_res = vec![0.0f64; 1];
-        let mut extrap = [1i32, 1];
-        crate::math::bspl_lib::eval_homogeneous(
-            u,
-            false,
-            nu,
-            &mut extrap,
-            bs.degree_u,
-            &bs.knots_u,
-            dim,
-            &poles_flat,
-            &weights_flat,
-            &mut poles_res,
-            &mut weights_res,
-        );
-        hom.extend_from_slice(&poles_res);
-    }
-
-    // Step 2: evaluate the V derivative at v of the curve carrying the
-    // homogeneous U-derivative poles.
-    let mut poles_res = vec![0.0f64; dim];
-    let mut weights_res = vec![0.0f64; 1];
-    let ones = vec![1.0f64; nv_len];
-    let mut extrap = [1i32, 1];
-    crate::math::bspl_lib::eval_homogeneous(
+/// OCCT `Geom_BSplineSurface::EvalDN` (Geom_BSplineSurface_1.cxx L279-313) —
+/// `BSplSLib::DN(U, V, Nu, Nv, 0, 0, myPoles, Weights(), myUFlatKnots,
+/// myVFlatKnots, NoMults, NoMults, myUDeg, myVDeg, myURational, myVRational,
+/// myUPeriodic, myVPeriodic, Vn)`.
+///
+/// `Weights()` (Geom_BSplineSurface_1.cxx L914-921) is the OCCT null pointer
+/// exactly when the surface is non-rational — mirrored by the `Option` below,
+/// which [`crate::geom::eval_b::bspl_slib_dn`] forwards to `PrepareEval`.
+pub(crate) fn bspline_surface_dn(bs: &BSplineSurface, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
+    let rational = bs.is_rational_u() || bs.is_rational_v();
+    let weights: Option<&[Vec<f64>]> = if rational { Some(&bs.weights) } else { None };
+    crate::geom::eval_b::bspl_slib_dn(
+        u,
         v,
-        false,
+        nu,
         nv,
-        &mut extrap,
-        bs.degree_v,
+        // OCCT L296-297: UIndex = VIndex = 0 (the LocateParameter arms).
+        0,
+        0,
+        bs.degree_u as i32,
+        bs.degree_v as i32,
+        bs.is_rational_u(),
+        bs.is_rational_v(),
+        bs.is_periodic_u,
+        bs.is_periodic_v,
+        &bs.control_points,
+        weights,
+        &bs.knots_u,
         &bs.knots_v,
-        dim,
-        &hom,
-        &ones,
-        &mut poles_res,
-        &mut weights_res,
-    );
+    )
+}
 
-    // Rational reduction of the homogeneous derivatives.
-    let mut ders = vec![0.0f64; (nv + 1) as usize * dim];
-    for k in 0..dim {
-        ders[k] = poles_res[k];
+/// The rcad marshalling of the OCCT `Geom_BezierSurface` evaluation frame
+/// shared by `EvalD0` / `EvalD1` / `EvalD2` / `EvalDN` (Geom_BezierSurface.cxx
+/// L1416-1724):
+///   - `UDegree = myPoles.ColLength() - 1` (`NbUPoles() - 1`),
+///     `VDegree = myPoles.RowLength() - 1` (`NbVPoles() - 1`);
+///   - `UIndex = VIndex = 0` and `UPer = VPer = false`;
+///   - `UKnots() == VKnots()` are the compact `{0, 1}` form with
+///     `UMultiplicities() == VMultiplicities() == {Degree+1, Degree+1}`, which
+///     the rcad re-host carries as the equivalent clamped flat sequence (see
+///     [`crate::geom::eval_b`]);
+///   - `Weights()` is `&myWeights` for a rational Bezier and
+///     `BSplSLib::NoWeights()` otherwise.
+struct BezierCallFrame {
+    u_degree: i32,
+    v_degree: i32,
+    rational_u: bool,
+    rational_v: bool,
+    knots_u: Vec<f64>,
+    knots_v: Vec<f64>,
+}
+
+impl BezierCallFrame {
+    fn new(bez: &BezierSurface) -> Self {
+        let u_degree = bez.control_points.len().saturating_sub(1) as i32;
+        let v_degree = bez
+            .control_points
+            .first()
+            .map(|row| row.len())
+            .unwrap_or(0)
+            .saturating_sub(1) as i32;
+        BezierCallFrame {
+            u_degree,
+            v_degree,
+            rational_u: bezier_is_rational_u(bez),
+            rational_v: bezier_is_rational_v(bez),
+            knots_u: crate::geom::eval_b::bezier_flat_knots(u_degree as usize),
+            knots_v: crate::geom::eval_b::bezier_flat_knots(v_degree as usize),
+        }
     }
-    let mut wders = vec![0.0f64; (nv + 1) as usize];
-    wders[0] = weights_res[0];
-    crate::math::bspl_lib::rational_derivatives_inplace(nv, 3, &mut ders, &mut wders);
-    DVec3::new(ders[0], ders[1], ders[2])
+
+    fn weights<'a>(&self, bez: &'a BezierSurface) -> Option<&'a [Vec<f64>]> {
+        if self.rational_u || self.rational_v {
+            Some(&bez.weights)
+        } else {
+            None
+        }
+    }
+}
+
+/// OCCT `Geom_BezierSurface::EvalD0` (Geom_BezierSurface.cxx L1416-1466) —
+/// `BSplSLib::D0(U, V, 1, 1, myPoles, Weights(), UKnots(), UKnots(),
+/// &UMultiplicities(), &VMultiplicities(), ColLength - 1, RowLength - 1,
+/// myURational, myVRational, false, false, P)`.
+pub(crate) fn bezier_surface_d0(bez: &BezierSurface, u: f64, v: f64) -> DVec3 {
+    let f = BezierCallFrame::new(bez);
+    crate::geom::eval_b::bspl_slib_d0(
+        u,
+        v,
+        0,
+        0,
+        f.u_degree,
+        f.v_degree,
+        f.rational_u,
+        f.rational_v,
+        false,
+        false,
+        &bez.control_points,
+        f.weights(bez),
+        &f.knots_u,
+        &f.knots_v,
+    )
+}
+
+/// OCCT `Geom_BezierSurface::EvalD1` (Geom_BezierSurface.cxx L1470-1524) —
+/// `BSplSLib::D1` with the [`BezierCallFrame`] arguments.
+pub(crate) fn bezier_surface_d1(bez: &BezierSurface, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+    let f = BezierCallFrame::new(bez);
+    crate::geom::eval_b::bspl_slib_d1(
+        u,
+        v,
+        0,
+        0,
+        f.u_degree,
+        f.v_degree,
+        f.rational_u,
+        f.rational_v,
+        false,
+        false,
+        &bez.control_points,
+        f.weights(bez),
+        &f.knots_u,
+        &f.knots_v,
+    )
+}
+
+/// OCCT `Geom_BezierSurface::EvalD2` (Geom_BezierSurface.cxx L1528-1590) —
+/// `BSplSLib::D2` with the [`BezierCallFrame`] arguments, returned in the
+/// rcad `SurfaceEval::derivatives2` order `(P, dP/du, dP/dv, d2P/du2,
+/// d2P/dudv, d2P/dv2)`.
+pub(crate) fn bezier_surface_d2(
+    bez: &BezierSurface,
+    u: f64,
+    v: f64,
+) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+    let f = BezierCallFrame::new(bez);
+    crate::geom::eval_b::bspl_slib_d2(
+        u,
+        v,
+        0,
+        0,
+        f.u_degree,
+        f.v_degree,
+        f.rational_u,
+        f.rational_v,
+        false,
+        false,
+        &bez.control_points,
+        f.weights(bez),
+        &f.knots_u,
+        &f.knots_v,
+    )
+}
+
+/// OCCT `Geom_BezierSurface::EvalDN` (Geom_BezierSurface.cxx L1666-1724) —
+/// `BSplSLib::DN(U, V, Nu, Nv, 0, 0, myPoles, Weights(), UKnots(), UKnots(),
+/// &UMultiplicities(), &VMultiplicities(), ColLength - 1, RowLength - 1,
+/// myURational, myVRational, false, false, Derivative)`.
+pub(crate) fn bezier_surface_dn(bez: &BezierSurface, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
+    let f = BezierCallFrame::new(bez);
+    crate::geom::eval_b::bspl_slib_dn(
+        u,
+        v,
+        nu,
+        nv,
+        0,
+        0,
+        f.u_degree,
+        f.v_degree,
+        f.rational_u,
+        f.rational_v,
+        // OCCT L1697-1698: the Bezier is never periodic.
+        false,
+        false,
+        &bez.control_points,
+        f.weights(bez),
+        &f.knots_u,
+        &f.knots_v,
+    )
+}
+
+/// OCCT `Geom_BezierSurface::EvalD0` derivation of `myURational`
+/// (Geom_BezierSurface.cxx L458-469): `myURational` is set when two weights of
+/// the same V-row differ by more than `Epsilon(abs(w))` of the left one.
+fn bezier_is_rational_u(bez: &BezierSurface) -> bool {
+    for row in &bez.weights {
+        for j in 0..row.len().saturating_sub(1) {
+            if (row[j] - row[j + 1]).abs() > standard_epsilon(row[j].abs()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// OCCT `Geom_BezierSurface::EvalD1` derivation of `myVRational`
+/// (Geom_BezierSurface.cxx L446-457): the V direction counterpart over the
+/// weights of each U-column.
+fn bezier_is_rational_v(bez: &BezierSurface) -> bool {
+    let n_u = bez.weights.len();
+    let n_v = bez.weights.first().map(|r| r.len()).unwrap_or(0);
+    for j in 0..n_v {
+        for i in 0..n_u.saturating_sub(1) {
+            let w = bez.weights[i][j];
+            if (w - bez.weights[i + 1][j]).abs() > standard_epsilon(w.abs()) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 impl Surface3 {
@@ -3564,9 +3739,10 @@ impl Surface3 {
 
     /// OCCT GeomAdaptor_Surface::DN(U, V, Nu, Nv)
     /// (GeomAdaptor_Surface.cxx L1690-1815) — dispatch to the per-type
-    /// derivative.  Analytic types use ElSLib::DN forms; BSpline uses the
-    /// tensor evaluation (Geom_BSplineSurface::DN via BSplCLib::Eval);
-    /// remaining types are staged.
+    /// derivative: ElSLib::DN forms for the quadrics, Geom_BSplineSurface::
+    /// EvalDN / Geom_BezierSurface::EvalDN (both `BSplSLib::DN`) for the
+    /// polynomial kinds (the OCCT arms at L1731-1752 and, via the default arm
+    /// at L1807-1813, L1796-1805); remaining types are staged.
     pub fn dn(&self, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
         match self {
             Surface3::Plane(p) => plane_dn(p.u_dir, p.v_dir, nu, nv),
@@ -3603,11 +3779,277 @@ impl Surface3 {
                 )
             }
             Surface3::BSpline(bs) => bspline_surface_dn(bs, u, v, nu, nv),
+            Surface3::Bezier(bez) => bezier_surface_dn(bez, u, v, nu, nv),
             _ => {
                 panic!(
-                    "GeomAdaptor_Surface::DN: surface type staged (OCCT L1740-1815 extrusion/revolution/offset/bezier branches)"
+                    "GAP: GeomAdaptor_Surface::DN (GeomAdaptor_Surface.cxx L1690-1815): the \
+                     rcad GeomAdaptor_Surface DN engine covers ElSLib surfaces \
+                     (L1796-1805), Geom_BSplineSurface (L1731-1752) and Geom_BezierSurface \
+                     (L1807-1813; Geom_BezierSurface::EvalDN); the extrusion (L1754, \
+                     Geom_ExtrusionUtils::DN), revolution (L1768, Geom_RevolutionUtils::DN), \
+                     offset (L1782) and the remaining Geom_Surface::EvalDN implementations \
+                     are staged"
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod derivative_tests {
+    use super::*;
+
+    /// A rational BSpline patch: degree 2 in U, degree 1 in V, with a weight
+    /// grid that makes both directions rational.
+    fn rational_bspline_patch() -> BSplineSurface {
+        BSplineSurface {
+            degree_u: 2,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 1.0)],
+                vec![DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 1.0)],
+                vec![DVec3::new(3.0, 0.0, 0.0), DVec3::new(3.0, 0.0, 1.0)],
+            ],
+            weights: vec![vec![1.0, 1.0], vec![3.0, 3.0], vec![1.0, 1.0]],
+            is_periodic_u: false,
+            is_periodic_v: false,
+        }
+    }
+
+    /// The non-rational counterpart of [`rational_bspline_patch`] (all weights
+    /// equal, so `PrepareEval` keeps the `dim = 3` branch).
+    fn plain_bspline_patch() -> BSplineSurface {
+        BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0)],
+                vec![DVec3::new(2.0, 0.0, 0.0), DVec3::new(2.0, 1.0, 0.0)],
+            ],
+            weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+            is_periodic_u: false,
+            is_periodic_v: false,
+        }
+    }
+
+    /// Regression for the derivative-buffer defect: the buffers of
+    /// `bspline_surface_dn` were sized for a single pole while the homogeneous
+    /// evaluation writes `n + 1` poles, so any first-order `dn` on a BSpline
+    /// surface indexed out of bounds (panic).
+    #[test]
+    fn bspline_surface_dn_first_order_no_panic() {
+        let s = Surface3::BSpline(rational_bspline_patch());
+        let d = s.dn(1.0, 0.5, 1, 0);
+        assert!(d.x.is_finite() && d.y.is_finite() && d.z.is_finite(), "d={d:?}");
+        assert!(d.length() > 0.0, "d={d:?}");
+        let d = s.dn(1.0, 0.5, 0, 1);
+        assert!(d.x.is_finite() && d.y.is_finite() && d.z.is_finite(), "d={d:?}");
+    }
+
+    /// The non-rational arm of the same defect (dim = 3 buffers).
+    #[test]
+    fn bspline_surface_dn_plain_first_order_no_panic() {
+        let s = Surface3::BSpline(plain_bspline_patch());
+        let d = s.dn(0.5, 0.5, 1, 0);
+        assert!(d.x.is_finite() && d.y.is_finite() && d.z.is_finite(), "d={d:?}");
+        assert!((d - DVec3::new(2.0, 0.0, 0.0)).length() < 1e-12, "d={d:?}");
+        let d = s.dn(0.5, 0.5, 0, 1);
+        assert!((d - DVec3::new(0.0, 1.0, 0.0)).length() < 1e-12, "d={d:?}");
+    }
+
+    /// Second order terms (including the mixed one) must be finite for a
+    /// rational patch.
+    #[test]
+    fn bspline_surface_dn_second_order_finite() {
+        let s = Surface3::BSpline(rational_bspline_patch());
+        for (nu, nv) in [(2, 0), (1, 1), (0, 1)] {
+            let d = s.dn(1.0, 0.5, nu, nv);
+            assert!(d.x.is_finite() && d.y.is_finite() && d.z.is_finite(), "d={d:?}");
+        }
+    }
+
+    /// The rational quarter circle in the XY plane as a degree-2 Bezier, with
+    /// the arc extruded along Z (degree 1 in V): `S(u, v) = (cos(theta),
+    /// sin(theta), v)` with `theta = u * pi / 2`.  All analytic derivatives
+    /// below follow from that closed form, so this checks the rational
+    /// machinery of `BSplSLib::DN` / `BSplSLib::D0` against exact values.
+    ///
+    /// The U weights are `{1, sqrt(2)/2, 1}` (the classic NURBS circle) and
+    /// each weight is repeated over V, so the weight grid is
+    /// `[w_i, w_i]` — V-constant columns.
+    fn rational_arc_patch_control_points() -> (Vec<Vec<DVec3>>, Vec<Vec<f64>>) {
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let pts = vec![
+            vec![DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 1.0)],
+            vec![DVec3::new(1.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 1.0)],
+            vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(0.0, 1.0, 1.0)],
+        ];
+        let weights = vec![vec![1.0, 1.0], vec![s, s], vec![1.0, 1.0]];
+        (pts, weights)
+    }
+
+    fn rational_arc_bspline_patch() -> BSplineSurface {
+        let (control_points, weights) = rational_arc_patch_control_points();
+        BSplineSurface {
+            degree_u: 2,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points,
+            weights,
+            is_periodic_u: false,
+            is_periodic_v: false,
+        }
+    }
+
+    fn rational_arc_bezier_patch() -> BezierSurface {
+        let (control_points, weights) = rational_arc_patch_control_points();
+        BezierSurface { control_points, weights }
+    }
+
+    /// The exact arc values of the rational quadratic Bezier `N(u)/W(u)` with
+    /// poles `{(1,0), (1,1), (0,1)}` and weights `{1, sqrt(2)/2, 1}` (the unit
+    /// quarter circle), derived HERE from the Bernstein polynomials and the
+    /// quotient rule `f = N/W`, `f' = (N' - f W') / W`,
+    /// `f'' = (N'' - 2 f' W' - f W'') / W`.
+    ///
+    /// This is an independent oracle: it does not go through `PrepareEval` /
+    /// `BSplCLib::Bohm` / `BSplSLib::RationalDerivative`.  NOTE the arc is NOT
+    /// parameterised as `theta = u * pi / 2` — the rational quadratic has its
+    /// own (non-uniform) parameterisation, e.g. `dP/du(0) = (0, sqrt(2), 0)`
+    /// rather than `(0, pi/2, 0)`.
+    fn rational_arc_exact(u: f64) -> (DVec3, DVec3, DVec3) {
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let b = [(1.0 - u) * (1.0 - u), 2.0 * u * (1.0 - u), u * u];
+        let db = [-2.0 * (1.0 - u), 2.0 - 4.0 * u, 2.0 * u];
+        let ddb = [2.0, -4.0, 2.0];
+        let pts = [
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
+        ];
+        let w = [1.0, s, 1.0];
+        let mut n = DVec3::ZERO;
+        let mut dn = DVec3::ZERO;
+        let mut ddn = DVec3::ZERO;
+        let (mut wn, mut dwn, mut ddwn) = (0.0f64, 0.0f64, 0.0f64);
+        for i in 0..3 {
+            n += w[i] * b[i] * pts[i];
+            dn += w[i] * db[i] * pts[i];
+            ddn += w[i] * ddb[i] * pts[i];
+            wn += w[i] * b[i];
+            dwn += w[i] * db[i];
+            ddwn += w[i] * ddb[i];
+        }
+        let f = n / wn;
+        let df = (dn - f * dwn) / wn;
+        let ddf = (ddn - 2.0 * df * dwn - f * ddwn) / wn;
+        (f, df, ddf)
+    }
+
+    #[test]
+    fn rational_bspline_surface_exact_derivatives() {
+        let s = Surface3::BSpline(rational_arc_bspline_patch());
+        for u in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let (f, df, _ddf) = rational_arc_exact(u);
+            let (p, du, dv) = s.derivatives(u, 0.5);
+            assert!((p - (f + DVec3::Z * 0.5)).length() < 1e-12, "u={u} p={p:?}");
+            assert!((du - df).length() < 1e-12, "u={u} du={du:?} want={df:?}");
+            assert!((dv - DVec3::Z).length() < 1e-12, "u={u} dv={dv:?}");
+        }
+    }
+
+    #[test]
+    fn rational_bspline_surface_exact_dn_second_order() {
+        let s = Surface3::BSpline(rational_arc_bspline_patch());
+        for u in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let (_f, df, ddf) = rational_arc_exact(u);
+            let d1u = s.dn(u, 0.5, 1, 0);
+            assert!((d1u - df).length() < 1e-12, "u={u} d1u={d1u:?} want={df:?}");
+            let d2u = s.dn(u, 0.5, 2, 0);
+            assert!(
+                (d2u - ddf).length() < 1e-12,
+                "u={u} d2u={d2u:?} want={ddf:?}"
+            );
+            // The mixed derivative vanishes: the V direction is a straight
+            // line and the U weights do not depend on V.
+            let duv = s.dn(u, 0.5, 1, 1);
+            assert!(duv.length() < 1e-12, "u={u} duv={duv:?}");
+        }
+    }
+
+    /// The Bezier arms must agree with the same closed form analytically (OCCT
+    /// `Geom_BezierSurface::EvalD0/D1/D2`, all `BSplSLib::D0/D1/D2`).
+    #[test]
+    fn bezier_surface_exact_derivatives() {
+        let bez = rational_arc_bezier_patch();
+        for u in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let (f, df, ddf) = rational_arc_exact(u);
+            let p = bez.point_at(u, 0.5);
+            assert!((p - (f + DVec3::Z * 0.5)).length() < 1e-12, "u={u} p={p:?}");
+
+            let (p2, du, dv) = bez.derivatives(u, 0.5);
+            assert!((p2 - (f + DVec3::Z * 0.5)).length() < 1e-12);
+            assert!((du - df).length() < 1e-12, "u={u} du={du:?} want={df:?}");
+            assert!((dv - DVec3::Z).length() < 1e-12, "u={u} dv={dv:?}");
+
+            let (_p3, _du3, _dv3, duu, duv, dvv) = bez.derivatives2(u, 0.5);
+            assert!(
+                (duu - ddf).length() < 1e-12,
+                "u={u} duu={duu:?} want={ddf:?}"
+            );
+            assert!(duv.length() < 1e-12, "u={u} duv={duv:?}");
+            assert!(dvv.length() < 1e-12, "u={u} dvv={dvv:?}");
+        }
+        // The `Surface3::dn` Bezier arm is the same leaf.
+        let s = Surface3::Bezier(rational_arc_bezier_patch());
+        let (_f, df, ddf) = rational_arc_exact(0.5);
+        let d = s.dn(0.5, 0.5, 1, 0);
+        assert!((d - df).length() < 1e-12, "d={d:?} want={df:?}");
+        let d = s.dn(0.5, 0.5, 2, 0);
+        assert!((d - ddf).length() < 1e-12, "d={d:?} want={ddf:?}");
+    }
+
+    /// `Geom_BezierSurface::EvalD0` is the rational TENSOR evaluation
+    /// `N(u, v) / W(u, v)` (`BSplSLib::D0`), not the per-column rational
+    /// u-evaluation followed by a unit-weight V-combine that this module used
+    /// before: the two differ as soon as the weights vary in both directions.
+    /// Here every weight is 1 except the centre one (`w[1][1] = 2`), so the
+    /// tensor evaluation gives `(1, 1, 0)`, while the older scheme gave
+    /// `(0.75, 1, 0)`.
+    #[test]
+    fn bezier_rational_point_is_the_tensor_evaluation() {
+        let mut control_points = Vec::new();
+        for i in 0..3 {
+            let mut row = Vec::new();
+            for j in 0..3 {
+                row.push(DVec3::new(i as f64, j as f64, 0.0));
+            }
+            control_points.push(row);
+        }
+        let mut weights = vec![vec![1.0; 3]; 3];
+        weights[1][1] = 2.0;
+        let bez = BezierSurface { control_points, weights };
+        let p = bez.point_at(0.5, 0.5);
+        assert!((p - DVec3::new(1.0, 1.0, 0.0)).length() < 1e-12, "p={p:?}");
+        // The same value must come out of the `Surface3` DN arm at (0, 0) --
+        // no, at the point itself: `dn(0, 0)` is outside the OCCT contract, so
+        // compare against the rational D0 of the BSpline form instead.
+        let bs = BSplineSurface {
+            degree_u: 2,
+            degree_v: 2,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: bez.control_points.clone(),
+            weights: bez.weights.clone(),
+            is_periodic_u: false,
+            is_periodic_v: false,
+        };
+        let p_bs = Surface3::BSpline(bs).point_at(0.5, 0.5);
+        assert!((p_bs - p).length() < 1e-12, "p_bs={p_bs:?}");
     }
 }

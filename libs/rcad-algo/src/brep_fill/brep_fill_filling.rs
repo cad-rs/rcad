@@ -34,7 +34,7 @@ use glam::DVec3;
 
 use rcad_kernel::base::geom_api::project_on_surf::ProjectPointOnSurf;
 use rcad_kernel::core::precision::CONFUSION;
-use rcad_kernel::geom::{Curve2d, Surface3};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3};
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, GeomAbsShape, Orientation, Shape, TShape};
 
 use crate::brep_fill::generator::{shape_key, shape_oriented, top_exp_vertices, ShapeKey};
@@ -1139,10 +1139,20 @@ fn make_edge_pcurve(brep: &mut BRep, c2d: Curve2d, v1: &Shape, v2: &Shape) -> Sh
     v1_fwd.orientation = Orientation::Forward;
     let mut v2_rev = v2.clone();
     v2_rev.orientation = Orientation::Reversed;
-    // Geom2d_BezierCurve: FirstParameter = 0, LastParameter = 1.
-    let e = brep.add_tedge(None, v1_fwd, v2_rev, [0.0, 1.0]);
+    // OCCT BRepLib_MakeEdge(Line2d, CurSurface, FirstVtx, LastVtx)
+    // (BRepLib_MakeEdge.cxx L878-888 -> L907-1082): B.MakeEdge(E) then
+    // B.UpdateEdge(E, C, S, TopLoc_Location(), preci) seeds the fresh edge's
+    // CurveOnSurface representation with the 2D curve's own range
+    // (BRep_Builder.cxx L104-167 UpdateCurves — the new edge has no Curve3D
+    // representation, so f/l stay -/+Precision::Infinite() at L112 and the
+    // L154-162 override does not fire), then B.Range(E, p1, p2) sets the
+    // representation range to the projected vertex parameters.  For this call
+    // the two vertices are the curve's own ends, so p1/p2 are the 2D curve's
+    // FirstParameter/LastParameter.
+    let [ta, tb] = c2d.default_domain();
+    let e = brep.add_tedge(None, v1_fwd, v2_rev, [ta, tb]);
     let ed = brep.edge_mut_inplace(e.clone());
-    ed.pcurves.insert((0u64, 0u32), (c2d, 0.0, 1.0));
+    ed.pcurves.insert((0u64, 0u32), (c2d, ta, tb));
     e
 }
 
@@ -1165,7 +1175,15 @@ fn brep_tool_surface_of_edge(brep: &BRep, e: &Shape) -> Option<Surface3> {
 /// registered under the key (0, 0), see make_edge_pcurve).
 fn update_edge_pcurve_standalone(brep: &mut BRep, e: &Shape, pcurve: Curve2d, tol: f64) {
     let ed = brep.edge_mut_inplace(e.clone());
-    ed.pcurves.insert((0u64, 0u32), (pcurve, 0.0, 1.0));
+    // OCCT BRep_Builder.cxx L104-167 (UpdateCurves, reached through
+    // BRep_Builder::UpdateEdge(E, C2d, S, L, Tol) L655-671, called from
+    // BRepFill_Filling.cxx L768).  NewEdge is `anEdge.EmptyCopied()`
+    // (BRepFill_Filling.cxx L733), so its curve representation list is empty:
+    // there is no Curve3D entry (f/l stay -/+Precision::Infinite() at L112)
+    // and the new CurveOnSurface keeps the 2D curve's own range (L151-153)
+    // with no finite 3D override.
+    let [ta, tb] = pcurve.default_domain();
+    ed.pcurves.insert((0u64, 0u32), (pcurve, ta, tb));
     ed.tolerance = ed.tolerance.max(tol);
 }
 

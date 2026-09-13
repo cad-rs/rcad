@@ -91,8 +91,8 @@ impl OsculatingInfo {
 
 /// OCCT `Geom_Surface::EvalDN(U, V, Nu, Nv)` over the rcad surface value —
 /// the exact per-type kernel derivative of the `GeomAdaptor_Surface::DN`
-/// engine (ElSLib::DN for the quadrics, [`bspl_slib_dn`] for the polynomial
-/// kind).
+/// engine (ElSLib::DN for the quadrics, `BSplSLib::DN` for the polynomial
+/// kinds, i.e. `Geom_BSplineSurface::EvalDN` and `Geom_BezierSurface::EvalDN`).
 pub fn eval_dn(the_s: &Surface3, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
     match the_s {
         Surface3::Plane(_)
@@ -101,82 +101,28 @@ pub fn eval_dn(the_s: &Surface3, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
         | Surface3::Sphere(_)
         | Surface3::Torus(_) => the_s.dn(u, v, nu, nv),
         Surface3::BSpline(bs) => bspl_slib_dn(bs, u, v, nu, nv),
+        Surface3::Bezier(bez) => crate::geom::eval::bezier_surface_dn(bez, u, v, nu, nv),
         _ => panic!(
             "GAP: Geom_Surface::EvalDN (TKG3d/Geom) is not translated for this surface type \
-             (the rcad GeomAdaptor_Surface DN engine covers ElSLib surfaces and \
-             Geom_BSplineSurface only) — Geom_OffsetSurfaceUtils::ComputeDerivatives"
+             (the rcad GeomAdaptor_Surface DN engine covers the ElSLib surfaces, \
+             Geom_BSplineSurface and Geom_BezierSurface) — \
+             Geom_OffsetSurfaceUtils::ComputeDerivatives"
         ),
     }
 }
 
-/// OCCT BSplSLib::DN (BSplSLib.cxx L1519-1605) — the (Nu, Nv) derivative of a
-/// BSpline surface at (U, V), the engine of `Geom_BSplineSurface::EvalDN`.
+/// OCCT `Geom_BSplineSurface::EvalDN` (Geom_BSplineSurface_1.cxx L279-313) —
+/// the (Nu, Nv) derivative of a BSpline surface at (U, V).
 ///
-/// Faithful for the non-rational branch: `PrepareEval` (the shared
-/// `math/bspl_lib.rs`-family re-host of
-/// [`super::osculating_surface`]) + the two `BSplCLib::Bohm` passes + the
-/// `(n1 * (d2 + 1) + n2)` pole extraction.
-///
-/// The rational branch of OCCT DN calls
-/// `BSplSLib::RationalDerivative(UDegree, VDegree, Nu, Nv, Poles, Results,
-/// false)` (BSplSLib.cxx L87-300), which is NOT translated in rcad: the
-/// rational branch keeps the GAP panic.
-///
-/// Note: `rcad-kernel/src/geom/eval.rs::bspline_surface_dn` is a re-host of
-/// the same leaf whose derivative-result buffers are sized for a single pole
-/// (`PolesResult`/`WeightsResult` of length `dim`), so `eval_homogeneous`
-/// overruns them for Nu >= 1 ("index out of bounds"); the derivative does not
-/// exist there and this translation is used instead.
+/// Delegates to the single faithful translation of its engine,
+/// `BSplSLib::DN` (BSplSLib.cxx L1519-1605), in [`crate::geom::eval_b`], which
+/// carries the whole OCCT chain (`PrepareEval` + the two `BSplCLib::Bohm`
+/// passes + the `(n1 * (d2 + 1) + n2)` pole extraction, and
+/// `BSplSLib::RationalDerivative` for the rational branch).  An earlier
+/// revision of this file kept a second, rational-less copy of the same body
+/// here.
 fn bspl_slib_dn(bs: &BSplineSurface, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
-    let u_deg = bs.degree_u as i32;
-    let v_deg = bs.degree_v as i32;
-    let u_rat = bs.is_rational_u();
-    let v_rat = bs.is_rational_v();
-    // OCCT: UIndex = VIndex = 0 (the LocateParameter arm of PrepareEval).
-    let pe = super::osculating_surface::prepare_eval(
-        u,
-        v,
-        0,
-        0,
-        u_deg,
-        v_deg,
-        u_rat,
-        v_rat,
-        bs.is_periodic_u,
-        bs.is_periodic_v,
-        &bs.control_points,
-        Some(&bs.weights),
-        &bs.knots_u,
-        &bs.knots_v,
-    );
-    let dim: usize = if pe.rational { 4 } else { 3 };
-    let u_first = pe.flag_u_or_v;
-    let d1 = pe.d1;
-    let d2 = pe.d2;
-    let n1 = if u_first { nu } else { nv };
-    let n2 = if u_first { nv } else { nu };
-
-    if !pe.rational && (nu > u_deg || nv > v_deg) {
-        return DVec3::ZERO;
-    }
-
-    let mut poles = pe.dc.poles;
-    let row = dim * (d2 + 1) as usize;
-    super::osculating_surface::bspl_clib_bohm(pe.u1, d1, n1, &pe.dc.knots1, row, &mut poles);
-    for k in 0..=n1.min(d1) {
-        let off = (k * dim as i32 * (d2 + 1)) as usize;
-        let end = off + row;
-        super::osculating_surface::bspl_clib_bohm(pe.u2, d2, n2, &pe.dc.knots2, dim, &mut poles[off..end]);
-    }
-
-    if pe.rational {
-        panic!(
-            "GAP: BSplSLib::RationalDerivative (TKM/BSplSLib) is not translated — the rational \
-             branch of BSplSLib::DN / Geom_BSplineSurface::EvalDN"
-        );
-    }
-    let idx = ((n1 * (d2 + 1) + n2) * dim as i32) as usize;
-    DVec3::new(poles[idx], poles[idx + 1], poles[idx + 2])
+    crate::geom::eval::bspline_surface_dn(bs, u, v, nu, nv)
 }
 
 /// OCCT `Geom_Surface::EvalD1(U, V)` over the rcad surface value.
@@ -1373,4 +1319,96 @@ pub fn offset_payload_osculating(of: &OffsetSurface) -> Option<OsculatingSurface
     let (a_checking_surf, _offset_value) =
         offset_basis_and_value(of.basis.as_ref(), of.offset_distance);
     offset_surface_osculating(&a_checking_surf)
+}
+
+#[cfg(test)]
+mod eval_tests {
+    use super::*;
+    use crate::geom::BezierSurface;
+
+    /// The unit quarter circle as a degree-2 rational Bezier: poles
+    /// `{(1,0), (1,1), (0,1)}`, weights `{1, sqrt(2)/2, 1}`, extruded along Z
+    /// (degree 1, unit weights) so that `S(u, v) = (X(u), Y(u), v)`.
+    ///
+    /// The exact derivatives at `u = 0` follow from the quotient rule on
+    /// `N(u)/W(u)` over the Bernstein polynomials:
+    ///   `P(0) = (1, 0)`, `P'(0) = (0, sqrt(2))`,
+    ///   `P''(0) = (-2, -2 + 2*sqrt(2))`.
+    fn arc_patches() -> (BSplineSurface, BezierSurface) {
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let control_points = vec![
+            vec![DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 1.0)],
+            vec![DVec3::new(1.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 1.0)],
+            vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(0.0, 1.0, 1.0)],
+        ];
+        let weights = vec![vec![1.0, 1.0], vec![s, s], vec![1.0, 1.0]];
+        let bs = BSplineSurface {
+            degree_u: 2,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: control_points.clone(),
+            weights: weights.clone(),
+            is_periodic_u: false,
+            is_periodic_v: false,
+        };
+        (bs, BezierSurface { control_points, weights })
+    }
+
+    /// `Geom_Surface::EvalDN` over a rational BSpline basis — the branch that
+    /// used to panic with the `BSplSLib::RationalDerivative` GAP.
+    #[test]
+    fn eval_dn_rational_bspline_basis() {
+        let (bs, _bez) = arc_patches();
+        let s = Surface3::BSpline(bs);
+        let d1u = eval_dn(&s, 0.0, 0.5, 1, 0);
+        assert!(
+            (d1u - DVec3::new(0.0, std::f64::consts::SQRT_2, 0.0)).length() < 1e-12,
+            "d1u={d1u:?}"
+        );
+        let d1v = eval_dn(&s, 0.0, 0.5, 0, 1);
+        assert!((d1v - DVec3::Z).length() < 1e-12, "d1v={d1v:?}");
+        let d2u = eval_dn(&s, 0.0, 0.5, 2, 0);
+        let want = DVec3::new(-2.0, -2.0 + 2.0 * std::f64::consts::SQRT_2, 0.0);
+        assert!((d2u - want).length() < 1e-12, "d2u={d2u:?} want={want:?}");
+        let d2uv = eval_dn(&s, 0.0, 0.5, 1, 1);
+        assert!(d2uv.length() < 1e-12, "d2uv={d2uv:?}");
+        let d2v = eval_dn(&s, 0.0, 0.5, 0, 2);
+        assert!(d2v.length() < 1e-12, "d2v={d2v:?}");
+    }
+
+    /// `Geom_Surface::EvalDN` over a rational Bezier basis
+    /// (`Geom_BezierSurface::EvalDN`) and its agreement with the BSpline form
+    /// of the same surface.
+    #[test]
+    fn eval_dn_rational_bezier_basis() {
+        let (bs, bez) = arc_patches();
+        let s_bs = Surface3::BSpline(bs);
+        let s_bez = Surface3::Bezier(bez);
+        for (nu, nv) in [(1, 0), (0, 1), (2, 0), (1, 1)] {
+            let a = eval_dn(&s_bs, 0.25, 0.5, nu, nv);
+            let b = eval_dn(&s_bez, 0.25, 0.5, nu, nv);
+            assert!((a - b).length() < 1e-12, "({nu},{nv}) bs={a:?} bez={b:?}");
+        }
+    }
+
+    /// `Geom_Surface::EvalD2` and `EvalD1` on the rational kinds — the
+    /// derivative tables `ComputeDerivatives` fills.
+    #[test]
+    fn eval_d1_d2_rational_basis() {
+        let (bs, bez) = arc_patches();
+        for s in [Surface3::BSpline(bs), Surface3::Bezier(bez)] {
+            let d1 = eval_d1(&s, 0.0, 0.5);
+            assert!((d1.point - DVec3::new(1.0, 0.0, 0.5)).length() < 1e-12);
+            assert!(
+                (d1.d1u - DVec3::new(0.0, std::f64::consts::SQRT_2, 0.0)).length() < 1e-12,
+                "d1u={:?}",
+                d1.d1u
+            );
+            let d2 = eval_d2(&s, 0.0, 0.5);
+            assert!((d2.3 - eval_dn(&s, 0.0, 0.5, 2, 0)).length() < 1e-12);
+            assert!((d2.4 - eval_dn(&s, 0.0, 0.5, 1, 1)).length() < 1e-12);
+            assert!((d2.5 - eval_dn(&s, 0.0, 0.5, 0, 2)).length() < 1e-12);
+        }
+    }
 }

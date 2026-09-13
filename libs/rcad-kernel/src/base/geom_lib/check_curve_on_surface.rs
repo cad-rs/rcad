@@ -149,20 +149,6 @@ fn nb_default_threads_to_launch() -> usize {
 /// and the same surface — the evaluation and the `EvalKPart` cache are
 /// recomputed identically.
 ///
-/// Note: the kernel `CurveOnSurface` does not override
-/// `Adaptor3d_Curve::ShallowCopy`, whose default raises
-/// `Standard_NotImplemented` (Adaptor3d_Curve.cxx L38-42).  The override
-/// belongs to `base/proj_lib/adaptor.rs`; until it lands there, the launcher
-/// arm of `Perform` reaches it through this function so the parallel and the
-/// sequential arms stay behaviourally identical.
-fn curve_on_surface_shallow_copy(the_curve_on_surface: &Arc<CurveOnSurface>) -> CurveHandle {
-    let a_copy = CurveOnSurface::new(
-        Arc::clone(&the_curve_on_surface.my2d_curve),
-        Arc::clone(&the_curve_on_surface.my_surface),
-    );
-    Arc::new(a_copy)
-}
-
 /// OCCT `gp_Pnt::SquareDistance` (gp_Pnt.cxx) — the squared modulus of the
 /// difference.
 fn square_distance(the_p1: DVec3, the_p2: DVec3) -> f64 {
@@ -967,7 +953,7 @@ impl GeomLibCheckCurveOnSurface {
         for _an_i in 0..a_nb_threads {
             if a_nb_threads > 1 {
                 a_curve_array.push(my_curve.shallow_copy());
-                a_curve_on_surface_array.push(curve_on_surface_shallow_copy(the_curve_on_surface));
+                a_curve_on_surface_array.push(the_curve_on_surface.shallow_copy());
             } else {
                 // OCCT: static_cast<const occ::handle(Adaptor3d_Curve)&>(myCurve)
                 // and the handle copy of theCurveOnSurface — the same objects,

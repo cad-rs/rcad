@@ -4243,14 +4243,14 @@ impl<'a> Builder<'a> {
         }
         if !b_is_left {
             if a_sc_pr < 0.0 {
-                self.ds.update_edge_closed_surface(sp_idx, face_key, a_c2, a_c1, a, b, a_tol);
+                self.ds.update_edge_closed_surface(sp_idx, face_key, a_c2, a_c1, a_tol);
             } else {
-                self.ds.update_edge_closed_surface(sp_idx, face_key, a_c1, a_c2, a, b, a_tol);
+                self.ds.update_edge_closed_surface(sp_idx, face_key, a_c1, a_c2, a_tol);
             }
         } else if a_sc_pr < 0.0 {
-            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c1, a_c2, a, b, a_tol);
+            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c1, a_c2, a_tol);
         } else {
-            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c2, a_c1, a, b, a_tol);
+            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c2, a_c1, a_tol);
         }
         true
     }
@@ -4414,9 +4414,9 @@ impl<'a> Builder<'a> {
             return false;
         }
         if (a_dist1 < a_dist2) == (a_dot > 0.0) {
-            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c1, a_c2, a_ts1, a_ts2, a_tol);
+            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c1, a_c2, a_tol);
         } else {
-            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c2, a_c1, a_ts1, a_ts2, a_tol);
+            self.ds.update_edge_closed_surface(sp_idx, face_key, a_c2, a_c1, a_tol);
         }
         true
     }
@@ -4472,7 +4472,7 @@ impl<'a> Builder<'a> {
             }
             let a_tol = a_e.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
             self.ds
-                .update_edge_pcurve_shared(e_idx, e_key, pc, range[0], range[1], a_tol);
+                .update_edge_pcurve_shared(e_idx, e_key, pc, a_tol);
         }
     }
 

@@ -12,7 +12,7 @@
 //! - Locations are identity in this pipeline (feat arch. diff. #1): the
 //!   OCCT "apply loc.Transformation()" branches are no-ops.
 
-use rcad_kernel::geom::{Curve2d, Curve3, Surface3};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{tshape_flags, Orientation, ShapeType, TShape};
 use std::collections::HashMap;
@@ -650,8 +650,16 @@ pub(crate) fn builder_update_vertex_point_tol(
     }
 }
 
-/// OCCT BRep_Builder::UpdateEdge(E, C2d, F, Tol) — bind the pcurve on the
-/// face (the pcurve range is the edge 3D range).
+/// OCCT BRep_Builder::UpdateEdge(E, C2d, F, Tol) (BRep_Builder.lxx L92-98 ->
+/// UpdateEdge(E, C2d, S, L, Tol) BRep_Builder.cxx L655-671) — bind the pcurve
+/// on the face.  The stored range follows UpdateCurves' two-step rule
+/// (BRep_Builder.cxx L104-167): the representation is seeded with the 2D
+/// curve's own range (L151-153, the `new BRep_CurveOnSurface(C, S, L)`
+/// constructor -> `COS->Range(aFCur, aLCur)`) and is then OVERWRITTEN by the
+/// range of the edge's Curve3D representation whenever that range is finite
+/// (L116-129 `GC->Range(f, l)` on the IsCurve3D entry with the L112
+/// -/+Precision::Infinite() seed, then L154-162 `if (!Precision::IsInfinite(f))
+/// aFCur = f;`).  The OCCT overload carries no f/l arguments.
 pub(crate) fn builder_update_edge_pcurve(
     the_e: &mut Shape,
     the_c2d: &Curve2d,
@@ -660,8 +668,16 @@ pub(crate) fn builder_update_edge_pcurve(
 ) {
     let key = shape_key(the_f);
     if let TShape::Edge(ed) = Arc::make_mut(&mut the_e.data) {
-        let (f0, l0) = (ed.range[0], ed.range[1]);
-        ed.pcurves.insert(key, (the_c2d.clone(), f0, l0));
+        let [mut a_f, mut a_l] = the_c2d.default_domain();
+        if ed.curve.is_some() {
+            if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
+                a_f = ed.range[0];
+            }
+            if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
+                a_l = ed.range[1];
+            }
+        }
+        ed.pcurves.insert(key, (the_c2d.clone(), a_f, a_l));
         ed.tolerance = ed.tolerance.max(the_tol);
     }
 }

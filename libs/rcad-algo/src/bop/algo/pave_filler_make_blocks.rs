@@ -688,7 +688,25 @@ impl PaveFiller {
                         self.ds.mutate_shape_data(n_e, |ts| {
                             if let topods::TShape::Edge(ed) = ts {
                                 if let Some(k) = fk1 {
-                                    ed.pcurves.insert(k, (a_c2d, a_t1, a_t2));
+                                    // OCCT BRep_Builder.cxx L104-167 (UpdateCurves,
+                                    // reached through BOPTools_AlgoTools::MakePCurve
+                                    // L1657-1725 -> `aBB.UpdateEdge(aE, aC2DA, aFFWD,
+                                    // aTolE)`): the stored range is seeded with the
+                                    // 2D curve's own range (L151-153) and is then
+                                    // OVERWRITTEN by the edge's Curve3D
+                                    // representation range whenever that is finite
+                                    // (L116-129, L154-162).  The OCCT overload
+                                    // takes no f/l arguments.
+                                    let [mut a_f, mut a_l] = a_c2d.default_domain();
+                                    if ed.curve.is_some() {
+                                        if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
+                                            a_f = ed.range[0];
+                                        }
+                                        if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
+                                            a_l = ed.range[1];
+                                        }
+                                    }
+                                    ed.pcurves.insert(k, (a_c2d, a_f, a_l));
                                 }
                             }
                         });
@@ -706,7 +724,25 @@ impl PaveFiller {
                         self.ds.mutate_shape_data(n_e, |ts| {
                             if let topods::TShape::Edge(ed) = ts {
                                 if let Some(k) = fk2 {
-                                    ed.pcurves.insert(k, (a_c2d, a_t1, a_t2));
+                                    // OCCT BRep_Builder.cxx L104-167 (UpdateCurves,
+                                    // reached through BOPTools_AlgoTools::MakePCurve
+                                    // L1657-1725 -> `aBB.UpdateEdge(aE, aC2DA, aFFWD,
+                                    // aTolE)`): the stored range is seeded with the
+                                    // 2D curve's own range (L151-153) and is then
+                                    // OVERWRITTEN by the edge's Curve3D
+                                    // representation range whenever that is finite
+                                    // (L116-129, L154-162).  The OCCT overload
+                                    // takes no f/l arguments.
+                                    let [mut a_f, mut a_l] = a_c2d.default_domain();
+                                    if ed.curve.is_some() {
+                                        if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
+                                            a_f = ed.range[0];
+                                        }
+                                        if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
+                                            a_l = ed.range[1];
+                                        }
+                                    }
+                                    ed.pcurves.insert(k, (a_c2d, a_f, a_l));
                                 }
                             }
                         });

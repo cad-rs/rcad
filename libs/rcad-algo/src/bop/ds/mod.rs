@@ -34,7 +34,7 @@ fn empty_vertex_data() -> rcad_kernel::topods::TVertexData {
     }
 }
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve2d, Curve3, Surface3};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3};
 use rcad_kernel::topods::{self, CurveRepresentation, Orientation, ShapeType, TShape, TVertexData};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::base::bnd_lib::surface_bounding_box;
@@ -1075,14 +1075,22 @@ impl DS {
     /// Takes `&self`: OCCT edits the edge TShape in place during the Builder
     /// (which borrows the DS immutably); the pipeline is single-threaded and the
     /// caller must not hold a `&TShape` borrow across the call.
+    ///
+    /// The stored range follows UpdateCurves' two-step rule (BRep_Builder.cxx
+    /// L251-308, the two-pcurve overload): the representation is seeded with
+    /// C1's own range (L286-289 the `new BRep_CurveOnClosedSurface(C1, C2, S,
+    /// L, GeomAbs_C0)` constructor -> `COS->Range(aFCur, aLCur)`) and is then
+    /// OVERWRITTEN by the range of the edge's Curve3D representation whenever
+    /// that range is finite (L265-277 `GC->Range(f, l)` on the IsCurve3D entry
+    /// with the L261 -/+Precision::Infinite() seed, then L290-298
+    /// `if (!Precision::IsInfinite(f)) aFCur = f;`).  The OCCT overload takes
+    /// no f/l arguments.
     pub fn update_edge_closed_surface(
         &self,
         edge_idx: usize,
         face_key: (u64, u32),
         pcurve1: Curve2d,
         pcurve2: Curve2d,
-        a_first: f64,
-        a_last: f64,
         tol: f64,
     ) {
         if edge_idx >= self.shapes.len() {
@@ -1094,6 +1102,15 @@ impl DS {
         // Arc is alive inside the closure (the caller passes owned pcurves).
         unsafe {
             if let TShape::Edge(ed) = &mut *ptr {
+                let [mut a_first, mut a_last] = pcurve1.default_domain();
+                if ed.curve.is_some() {
+                    if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
+                        a_first = ed.range[0];
+                    }
+                    if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
+                        a_last = ed.range[1];
+                    }
+                }
                 ed.pcurves.insert(face_key, (pcurve1.clone(), a_first, a_last));
                 ed.representations
                     .push(CurveRepresentation::CurveOnClosedSurface {
@@ -1107,18 +1124,26 @@ impl DS {
         }
     }
 
-    /// OCCT BRep_Builder::UpdateEdge(aE, aC2d, aF, theTol) — attach a single
-    /// pcurve of an edge on a face (BRep_CurveOnSurface). `face_key` is the
-    /// face's TShape identity (ptr_id, location), matching the key the
-    /// input-shape pcurves use. Works with `&self` (single-threaded in-place
-    /// TShape edit).
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC2d, aF, theTol) (BRep_Builder.lxx
+    /// L92-98 -> BRep_Builder.cxx L655-671) — attach a single pcurve of an edge
+    /// on a face (BRep_CurveOnSurface). `face_key` is the face's TShape identity
+    /// (ptr_id, location), matching the key the input-shape pcurves use. Works
+    /// with `&self` (single-threaded in-place TShape edit).
+    ///
+    /// The stored range follows UpdateCurves' two-step rule (BRep_Builder.cxx
+    /// L104-167): the representation is seeded with the 2D curve's own range
+    /// (L151-153, the `new BRep_CurveOnSurface(C, S, L)` constructor ->
+    /// `COS->Range(aFCur, aLCur)`) and is then OVERWRITTEN by the range of the
+    /// edge's Curve3D representation whenever that range is finite (L116-129
+    /// `GC->Range(f, l)` on the IsCurve3D entry with the L112
+    /// -/+Precision::Infinite() seed, then L154-162
+    /// `if (!Precision::IsInfinite(f)) aFCur = f;`).  The OCCT overload takes
+    /// no f/l arguments.
     pub fn update_edge_pcurve_shared(
         &self,
         edge_idx: usize,
         face_key: (u64, u32),
         pcurve: Curve2d,
-        a_first: f64,
-        a_last: f64,
         tol: f64,
     ) {
         if edge_idx >= self.shapes.len() {
@@ -1130,6 +1155,15 @@ impl DS {
         // &TShape borrow is alive inside the closure.
         unsafe {
             if let TShape::Edge(ed) = &mut *ptr {
+                let [mut a_first, mut a_last] = pcurve.default_domain();
+                if ed.curve.is_some() {
+                    if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
+                        a_first = ed.range[0];
+                    }
+                    if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
+                        a_last = ed.range[1];
+                    }
+                }
                 ed.pcurves.insert(face_key, (pcurve.clone(), a_first, a_last));
                 ed.representations
                     .push(CurveRepresentation::CurveOnSurface {

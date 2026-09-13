@@ -1433,6 +1433,19 @@ fn ax3_view_of_cylinder(cyl: &crate::geom::CylindricalSurface) -> super::elslib_
 }
 
 impl Adaptor3dCurve for CurveOnSurface {
+    /// OCCT Adaptor3d_CurveOnSurface::ShallowCopy (Adaptor3d_CurveOnSurface.cxx
+    /// L901-925): `new Adaptor3d_CurveOnSurface(myConSurf)` — a new adaptor
+    /// over the same 2D-curve and surface handles, so the evaluation and the
+    /// `EvalKPart` cache are recomputed identically.  Without this override
+    /// the inherited default raises `Standard_NotImplemented`
+    /// (Adaptor3d_Curve.cxx L38-42).
+    fn shallow_copy(&self) -> Arc<dyn Adaptor3dCurve> {
+        Arc::new(CurveOnSurface::new(
+            Arc::clone(&self.my2d_curve),
+            Arc::clone(&self.my_surface),
+        ))
+    }
+
     /// OCCT Adaptor3d_CurveOnSurface::FirstParameter.
     fn first_parameter(&self) -> f64 {
         self.my2d_curve.first_parameter()

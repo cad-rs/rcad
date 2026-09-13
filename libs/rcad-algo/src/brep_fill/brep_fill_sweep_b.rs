@@ -229,8 +229,25 @@ pub(super) fn update_edge_pcurve_on_surf(
 ) {
     let f = intern_surface_face(brep, s);
     let key = (f.ptr_id(), loc);
-    let (ta, tb) = curve2d_param_bounds(c2d);
     let ed = brep.edge_mut_inplace(e.clone());
+    // OCCT BRep_Builder.cxx L104-167 (UpdateCurves, reached through
+    // BRep_Builder::UpdateEdge(E, C2d, S, L, Tol) L655-671): the new
+    // BRep_CurveOnSurface representation is seeded with the 2D curve's own
+    // range (L151-153: the `new BRep_CurveOnSurface(C, S, L)` constructor ->
+    // `COS->Range(aFCur, aLCur)`) and is then OVERWRITTEN by the range of the
+    // edge's Curve3D representation whenever that range is finite (L116-129
+    // `GC->Range(f, l)` on the IsCurve3D entry, seeded to
+    // -/+Precision::Infinite() at L112, then L154-162
+    // `if (!Precision::IsInfinite(f)) aFCur = f;`).
+    let [mut ta, mut tb] = c2d.default_domain();
+    if ed.curve.is_some() {
+        if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
+            ta = ed.range[0];
+        }
+        if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
+            tb = ed.range[1];
+        }
+    }
     ed.pcurves.insert(key, (c2d.clone(), ta, tb));
     ed.representations
         .push(rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface {
@@ -254,8 +271,25 @@ pub(super) fn update_edge_pcurve2_on_surf(
 ) {
     let f = intern_surface_face(brep, s);
     let key = (f.ptr_id(), loc);
-    let (ta, tb) = curve2d_param_bounds(c2d1);
     let ed = brep.edge_mut_inplace(e.clone());
+    // OCCT BRep_Builder.cxx L251-308 (the two-pcurve UpdateCurves, reached
+    // through BRep_Builder::UpdateEdge(E, C1, C2, S, L, Tol) L704-741): the
+    // BRep_CurveOnClosedSurface representation is seeded with C1's own range
+    // (L286-289 `new BRep_CurveOnClosedSurface(C1, C2, S, L, GeomAbs_C0)` ->
+    // `COS->Range(aFCur, aLCur)`, i.e. the first pcurve's parameters) and is
+    // then OVERWRITTEN by the range of the edge's Curve3D representation
+    // whenever that range is finite (L265-277 `GC->Range(f, l)` on the
+    // IsCurve3D entry, seeded to -/+Precision::Infinite() at L261, then
+    // L290-298 `if (!Precision::IsInfinite(f)) aFCur = f;`).
+    let [mut ta, mut tb] = c2d1.default_domain();
+    if ed.curve.is_some() {
+        if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
+            ta = ed.range[0];
+        }
+        if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
+            tb = ed.range[1];
+        }
+    }
     ed.pcurves.insert(key, (c2d1.clone(), ta, tb));
     ed.representations
         .push(rcad_kernel::topo::topods::CurveRepresentation::CurveOnClosedSurface {

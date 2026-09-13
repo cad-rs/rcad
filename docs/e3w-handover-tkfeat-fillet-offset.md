@@ -27,6 +27,24 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
+### 0.0g 追加 31 收尾态（2026-09-13；**最新** —— 翻译优先轮第三批）
+
+- **门槛与网格（全部在树实测）**：六门槛 **427/0/0 · 701/0 · 36/36 · 26/26 · 76/76 · 1/1**（⚠ `rcad-kernel --lib` 691 → **701**）**；八网格 8/8**（375/378/379/373/12/102/83/110）—— **本批改了 `bop/**` 布尔核心，八网格仍零回归**；**15 个域网格与追加 30 基线逐项相同**。
+- **本轮三批**：
+  1. **曲面导数层补全（两个真缺陷）**：`bspline_surface_dn` 的**索引越界**（任何 BSpline `Surface3::dn(1,0)` panic）**不是放大缓冲而是换引擎** —— 改为 `Geom_BSplineSurface::EvalDN` 的 1:1（`BSplSLib::DN` L1519-1605）；`BSplSLib::RationalDerivative`（2D，L87-300）落地；新建 `geom/eval_b.rs`（388 行）= `BSplSLib::D0/D1/D2/DN`；Bezier `EvalD0–DN` 全部走解析体。**★ 并修掉 `BezierSurface::point_at` 的有理求值缺陷**（原按「逐 V 列有理 u 求值 + 单位权 V 组合」，不是张量有理求值；权重除 `w[1][1]=2` 全 1 时改前 `(0.75,1,0)`、改后 `(1,1,0)`）。**★ 从 OCCT 捞回的关键细节**：`D1/D2/D3` 省略末实参 ⇒ `All` 默认 **true**（有理表偏移 +6/+3、+9/+3/+18/+6/+12），只有 `DN` 传 `false`。+10 单测（解析精确值 + 独立商法则 oracle）。
+  2. **`UpdateCurves` 两步规则 10+ 站点对齐**（`brep_fill_sweep_b.rs` 两处优先站点 · `brep_algo/tool.rs` · `bop/ds/mod.rs` 两处**删掉 OCCT 本就没有的形参** · `bop/algo/builder.rs` 调用点 · `pave_filler.rs` · `pave_filler_make_blocks.rs` ×2 · `brep_fill_filling.rs` ×2）。一处审计后判正确未改（`brep_fill_evolved_d.rs:179`）。
+     **★ 新立最高价值翻译批**：**kernel 侧 `BRepBuilder::update_edge_pcurve`（`topods.rs:3342`）+ `update_edge_pcurve_closed`（`:3383`）仍未对齐，是 55 个调用点的漏斗**（`brep_sweep/**`、`feat/loc_ope_generator.rs`、`feat/loc_ope_split_drafts*`、`shhealing/**` 8 文件、`topalgo/brep_lib/make_face.rs` 8 处、`hlr/topo_brep/ds_filler.rs`）。正确体已散在 **6 处**（子代理拒绝加第 7 份）⇒ **下一轮应把它收敛成一份 canonical 并把两个 kernel 方法再宿主上去**。
+  3. **两处接线（主代理）**：`offset/draft_modification.rs::brep_tools_eval_and_update_tol` 由硬编码 `ct_is_done=false / error_status=2` 改为真调 `GeomLibCheckCurveOnSurface`（按 `BRepTools.cxx` L1276-1333）；`Adaptor3d_CurveOnSurface::ShallowCopy` 由临时自由函数**归位**为 `base/proj_lib/adaptor.rs` 的 trait override。
+- **★ 方法学（第四次同一结论，且本批给出了更强证据）**：本批改了 `bop/**` 布尔核心（pcurve 区间口径）、换了导数引擎、修了 `point_at` 缺陷、把 `EvalAndUpdateTol` 从假值变真值 —— **15 个域网格 + 八网格全部零可见翻转**。
+  ⇒ 八网格的**拓扑断言对 pcurve 区间口径不敏感** ⇒ 最高优先队列项现在是：**为 pcurve 区间补定向断言**（不是加拓扑用例），并与 OCCT 参考值对拍。现有定向单测只验证自洽性。
+- **⏭ 下一轮队列（按序）**：
+  1. **★ pcurve 区间的定向断言 + 与 OCCT 参考对拍**（最高优先，第四次）。
+  2. **★ kernel `UpdateEdge` 再宿主对齐 + 6 处正确体收敛成一份**（最高价值翻译批，55 调用点）。
+  3. **`Surface3::dn` 余留面型**：Offset（**体已在** `offset_surface_eval_d1`，只差接进 `SurfaceEval for OffsetSurface` —— 最便宜）· LinearExtrusion · Ellipsoid · Helicoid · Revolution（需 `Geom_RevolutionUtils`）。
+  4. **`brep_algo/tool.rs::builder_range_edge`** 未传播到 `ed.pcurves`。
+  5. **`mySn` 的构造**（TKFeat，`feat_featrf` 前墙）。
+  6. 追加 30 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · BSpline VIso 两处内嵌副本 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
+
 ### 0.0f 追加 30 收尾态（2026-09-13；**最新** —— 翻译优先轮第二批）
 
 - **门槛与网格（全部在树实测）**：六门槛 **427/0/0 · 691/0 · 36/36 · 26/26 · 76/76 · 1/1**（⚠ 基线：rcad-algo 422 → **427**，rcad-kernel 688 → **691**）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**15 个域网格与追加 29 基线逐项相同**（零回归）。

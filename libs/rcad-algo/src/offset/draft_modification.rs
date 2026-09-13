@@ -275,16 +275,42 @@ pub(crate) fn brep_tools_eval_and_update_tol(
         last = last.min(dom2[1]);
     }
 
-    // OCCT L1276-1283: GeomLib_CheckCurveOnSurface CT(...); CT.Perform(...)
-    // — GAP: the TKTopAlgo/GeomLib checker is not translated; the carrier
-    // stays not-done with the OCCT ErrorStatus 2 so the tail takes the OCCT
-    // sampling branch for periodic curves and keeps newtol = 0 otherwise.
-    let ct_is_done = false;
-    let ct_error_status = 2;
-    if ct_is_done {
-        // OCCT L1285-1287: newtol = CT.MaxDistance(); — unreachable until the
-        // GeomLib_CheckCurveOnSurface translation lands.
-    } else if ct_error_status == 3 || (ct_error_status == 2 && (per3 || per2)) {
+    // OCCT L1276-1283: the check curve-on-surface trip.
+    //   GeomAdaptor_Curve aGeomAdaptorCurve(C3d, first, last);
+    //   Geom2dAdaptor_Curve aGeom2dAdaptorCurve(C2d, first, last);
+    //   GeomAdaptor_Surface aGeomAdaptorSurface(S);
+    //   Adaptor3d_CurveOnSurface anAdaptor(aGeom2dAdaptorCurve, aGeomAdaptorSurface);
+    //   GeomLib_CheckCurveOnSurface CT(aGeomAdaptorCurve);
+    //   CT.Perform(anAdaptor);
+    // The OCCT default ctor leaves myIsParallel true and myTolRange at
+    // Precision::PConfusion(); BRepTools::EvalAndUpdateTol does not call
+    // SetParallel.
+    let a_curve_handle: rcad_kernel::base::proj_lib::proj_lib_projected_curve_b::GeomCurveHandle =
+        std::sync::Arc::new(rcad_kernel::base::proj_lib::GeomCurveAdaptor::with_range(
+            the_c3d.clone(),
+            first,
+            last,
+        ));
+    let a_curve_on_surface = std::sync::Arc::new(rcad_kernel::base::proj_lib::CurveOnSurface::new(
+        std::sync::Arc::new(rcad_kernel::base::proj_lib::Geom2dCurveAdaptor::with_range(
+            the_c2d.clone(),
+            first,
+            last,
+        )),
+        std::sync::Arc::new(rcad_kernel::base::proj_lib::GeomSurfaceAdaptor::new(
+            the_s.clone(),
+        )),
+    ));
+    let mut ct = rcad_kernel::base::geom_lib::GeomLibCheckCurveOnSurface::with_curve(
+        &a_curve_handle,
+        rcad_kernel::PCONFUSION,
+    );
+    ct.perform(&a_curve_on_surface);
+    // OCCT L1284-1333.
+    if ct.is_done() {
+        // OCCT L1285-1287: newtol = CT.MaxDistance();
+        newtol = ct.max_distance();
+    } else if ct.error_status() == 3 || (ct.error_status() == 2 && (per3 || per2)) {
         // OCCT L1291-1332: the by-sample estimate.
         let nbint = 22;
         let mut dt = (last - first) / nbint as f64;

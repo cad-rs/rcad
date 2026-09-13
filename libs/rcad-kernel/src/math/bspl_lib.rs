@@ -1039,6 +1039,205 @@ pub fn rational_derivatives_inplace(
     }
 }
 
+/// OCCT BSplSLib::RationalDerivative (BSplSLib.cxx L87-300) — the
+/// tensor-product rational quotient rule used by `BSplSLib::D1` / `D2` / `D3`
+/// / `DN`.  From the homogeneous numerator derivatives and the denominator
+/// derivatives of the `(UDeg+1) x (VDeg+1)` block it produces
+///
+/// ```text
+///   (N,M)         1          (          (N,M)      SUM     (N)(M)  (p,q)  (N-p,M-q) )
+///  f       = ------------    (  Numerator      -  SUM     ( )( ) f     Denominator       )
+///            Denominator(0,0)(                 p<N q<M   (p)(q)                        )
+/// ```
+///
+/// This is the 2D sibling of [`rational_derivatives_inplace`] (OCCT
+/// `PLib::RationalDerivatives`, the 1D form used by the curve consumers); it
+/// is NOT a re-parameterisation of it — the double sum runs over both
+/// derivative indices.
+///
+/// `h_derivatives` is the OCCT caller's `dc.poles`: the homogeneous derivative
+/// block in the `BSplSLib::DN` layout, i.e. `(i * (VDeg + 1) + j) * 4 + k`
+/// over the `(UDeg+1) x (VDeg+1)` grid (the `M4 = (VDeg + 1) << 2` row stride
+/// of OCCT L149 fixes the element stride at 4).
+///
+/// `r_derivatives` is the OCCT `RDers` out-parameter: with `all == false` only
+/// the requested `(N, M)` triple is written into `r_derivatives[0..3]`; with
+/// `all == true` the full `(N+1) * (M+1) * 3` rational table is written.
+pub fn bspl_slib_rational_derivative(
+    u_deg: i32,
+    v_deg: i32,
+    n: i32,
+    m: i32,
+    h_derivatives: &[f64],
+    r_derivatives: &mut [f64],
+    all: bool,
+) {
+    // OCCT L145-150.
+    let m1 = m + 1;
+    let n1 = n + 1;
+    let ii_count = n1 * m1;
+    let m3 = (m1 << 1) + m1;
+    let m4 = (v_deg + 1) << 2;
+
+    // OCCT L151-154: `StoreDerivatives` (the `All == false` accumulator),
+    // `StoreW` (the denominator block) and `HomogeneousArray`.
+    let mut store_derivatives = vec![0.0f64; if all { 0 } else { (ii_count * 3) as usize }];
+    let mut store_w = vec![0.0f64; ii_count as usize];
+    let homogeneous_array = h_derivatives;
+    let denominator = 1.0e0 / homogeneous_array[3];
+
+    // OCCT L160-176.
+    let min_n = if u_deg < n { u_deg } else { n };
+    let min_m = if v_deg < m { v_deg } else { m };
+    let min_n1 = min_n + 1;
+    let min_m1 = min_m + 1;
+
+    // OCCT L157/L152: `RArray` (the rational accumulator) and its target.
+    {
+        let r_array: &mut [f64] = if all {
+            r_derivatives
+        } else {
+            &mut store_derivatives
+        };
+
+        // OCCT L158-204: copy the homogeneous derivatives of the
+        // `MinN1 x MinM1` sub-block into `RArray`/`StoreW`, zero-filling the
+        // rest of the `N1 x M1` table.
+        let mut index_u = 0i32;
+        let mut index_u1 = 0i32;
+        let mut ii_m1 = -m1;
+        for _ii in 0..min_n1 {
+            ii_m1 += m1;
+            let mut index_v = index_u;
+            let mut index_v1 = index_u1;
+            let mut index_w = ii_m1;
+
+            for _jj in 0..min_m1 {
+                r_array[index_v as usize] = homogeneous_array[index_v1 as usize];
+                index_v += 1;
+                index_v1 += 1;
+                r_array[index_v as usize] = homogeneous_array[index_v1 as usize];
+                index_v += 1;
+                index_v1 += 1;
+                r_array[index_v as usize] = homogeneous_array[index_v1 as usize];
+                index_v += 1;
+                index_v1 += 1;
+                store_w[index_w as usize] = homogeneous_array[index_v1 as usize];
+                index_v1 += 1;
+                index_w += 1;
+            }
+
+            for _jj in min_m1..m1 {
+                r_array[index_v as usize] = 0.0;
+                index_v += 1;
+                r_array[index_v as usize] = 0.0;
+                index_v += 1;
+                r_array[index_v as usize] = 0.0;
+                index_v += 1;
+                store_w[index_w as usize] = 0.0;
+                index_w += 1;
+            }
+            index_u1 += m4;
+            index_u += m3;
+        }
+
+        // OCCT L205-218: zero the rows `MinN1 .. N1`.
+        let mut index_v = min_n1 * m3;
+        let mut index_w = min_n1 * m1;
+        for _ii in min_n1..n1 {
+            for _jj in 0..m1 {
+                r_array[index_v as usize] = 0.0;
+                index_v += 1;
+                r_array[index_v as usize] = 0.0;
+                index_v += 1;
+                r_array[index_v as usize] = 0.0;
+                index_v += 1;
+                store_w[index_w as usize] = 0.0;
+                index_w += 1;
+            }
+        }
+
+        // OCCT L220-287: the double (p, q) sum.
+        let mut ii_m1 = -m1;
+        let mut ii_m3 = -m3;
+        for ii in 0..=n {
+            ii_m1 += m1;
+            ii_m3 += m3;
+            let mut index1 = ii_m3 - 3;
+            let mut jj_m1 = ii_m1;
+
+            for jj in 0..=m {
+                jj_m1 += 1;
+                let mut pp_m1 = -m1;
+                let mut pp_m3 = -m3;
+                index1 += 3;
+
+                // pp < ii: `a_pq = C(ii,p) * C(jj,q)`.
+                for pp in 0..ii {
+                    pp_m1 += m1;
+                    pp_m3 += m3;
+                    let mut index = pp_m3;
+                    let mut index2 = jj_m1 - pp_m1;
+                    let pip = crate::math::plib::binomial(ii as usize, pp as usize);
+
+                    for qq in 0..=jj {
+                        index2 -= 1;
+                        let pjq = pip
+                            * crate::math::plib::binomial(jj as usize, qq as usize)
+                            * store_w[index2 as usize];
+                        r_array[index1 as usize] -= pjq * r_array[index as usize];
+                        index += 1;
+                        index1 += 1;
+                        r_array[index1 as usize] -= pjq * r_array[index as usize];
+                        index += 1;
+                        index1 += 1;
+                        r_array[index1 as usize] -= pjq * r_array[index as usize];
+                        index += 1;
+                        index1 -= 2;
+                    }
+                }
+
+                // pp == ii: `Pii = C(ii, ii)` and index = ii_m3.
+                let mut index = ii_m3;
+                let mut index2 = jj + 1;
+                let pii = crate::math::plib::binomial(ii as usize, ii as usize);
+
+                for qq in 0..jj {
+                    index2 -= 1;
+                    let pjq = pii
+                        * crate::math::plib::binomial(jj as usize, qq as usize)
+                        * store_w[index2 as usize];
+                    r_array[index1 as usize] -= pjq * r_array[index as usize];
+                    index += 1;
+                    index1 += 1;
+                    r_array[index1 as usize] -= pjq * r_array[index as usize];
+                    index += 1;
+                    index1 += 1;
+                    r_array[index1 as usize] -= pjq * r_array[index as usize];
+                    index += 1;
+                    index1 -= 2;
+                }
+
+                r_array[index1 as usize] *= denominator;
+                index1 += 1;
+                r_array[index1 as usize] *= denominator;
+                index1 += 1;
+                r_array[index1 as usize] *= denominator;
+                index1 -= 2;
+            }
+        }
+    }
+
+    // OCCT L288-298: with `All == false` only the requested `(N, M)` triple is
+    // copied out of the local accumulator.
+    if !all {
+        let index = (n * m1 + m) * 3;
+        r_derivatives[0] = store_derivatives[index as usize];
+        r_derivatives[1] = store_derivatives[index as usize + 1];
+        r_derivatives[2] = store_derivatives[index as usize + 2];
+    }
+}
+
 /// OCCT BSplCLib::MovePointAndTangent (BSplCLib_2.cxx L567-864) — moves the
 /// curve so that it passes through `delta` (offset from the current point)
 /// with derivative `delta_derivatives` at U, disturbing only the poles in
@@ -2067,6 +2266,45 @@ pub fn pole_index(degree: usize, index: i32, periodic: bool, mults: &[i32]) -> i
     pindex
 }
 
+/// OCCT BSplCLib::Eval (BSplCLib.cxx L865-1006) — the IN-PLACE de Boor corner
+/// cutting over a flat pole array with element stride `dimension`, on the
+/// 0-based local knot window `knots` of `2*Degree` entries.
+///
+/// Every pass combines consecutive pole rows
+/// `new = X*row_i + Y*row_{i+1}` with
+/// `X = (knots[Dpi] - U) / (knots[Dpi] - knots[Sti])`, reducing the
+/// `Degree + 1` rows of `poles` to the single evaluated row at `poles[0]`.
+///
+/// OCCT hoists the `Dimension` 1..4 bodies into cases 1-4; the `default` body
+/// (L979-1004) is the same algorithm for an arbitrary stride, which is the
+/// body transcribed here (identical pointer arithmetic; this is also the
+/// overload `BSplSLib::Iso`/`BSplSLib::D0` call, not the basis-function
+/// overload of L3640).
+pub fn bspl_clib_eval_inplace(u: f64, degree: i32, knots: &[f64], dimension: usize, poles: &mut [f64]) {
+    let dm1 = degree - 1;
+    let mut dms = degree + 1;
+    let mut step = -1i32;
+    while step < dm1 {
+        dms -= 1;
+        let mut dpi = dm1;
+        let mut sti = step;
+        let mut i = 0i32;
+        while i < dms {
+            dpi += 1;
+            sti += 1;
+            let x = (knots[dpi as usize] - u) / (knots[dpi as usize] - knots[sti as usize]);
+            let y = 1.0 - x;
+            let p0 = i as usize * dimension;
+            let p1 = p0 + dimension;
+            for k in 0..dimension {
+                poles[p0 + k] = poles[p0 + k] * x + y * poles[p1 + k];
+            }
+            i += 1;
+        }
+        step += 1;
+    }
+}
+
 /// OCCT BSplSLib::Iso (BSplSLib.cxx L1617-1740) — the poles of the
 /// isoparametric curve at `param` along the U direction (`is_u`) or the V
 /// direction, evaluated per pole row/column through the de Boor scheme
@@ -2177,35 +2415,8 @@ pub fn bspl_slib_iso(
     }
 
     // OCCT L1702: Eval(u, Degree, locknots1, (l2-f2+1)*dim, locpoles) — the
-    // IN-PLACE de Boor corner cutting (BSplCLib.cxx L865-870): every pass
-    // combines consecutive pole rows (new = X*row_i + Y*row_{i+1} with
-    // X = (knots[Dpi]-u)/(knots[Dpi]-knots[Sti])), reducing the (Degree+1)
-    // window to the single evaluated row.
-    let d = degree as i32;
-    let dm1 = d - 1;
-    let mut dms = d + 1;
-    let mut step: i32 = -1;
-    let span = window_cols * dim;
-    while step < dm1 {
-        dms -= 1;
-        let mut dpi = dm1;
-        let mut sti = step;
-        let mut i = 0i32;
-        while i < dms {
-            dpi += 1;
-            sti += 1;
-            let x =
-                (locknots1[dpi as usize] - u) / (locknots1[dpi as usize] - locknots1[sti as usize]);
-            let y = 1.0 - x;
-            let p0 = i as usize * span;
-            let p1 = (i + 1) as usize * span;
-            for k in 0..span {
-                locpoles[p0 + k] = locpoles[p0 + k] * x + y * locpoles[p1 + k];
-            }
-            i += 1;
-        }
-        step += 1;
-    }
+    // IN-PLACE de Boor corner cutting (BSplCLib.cxx L865-1006).
+    bspl_clib_eval_inplace(u, degree as i32, &locknots1, window_cols * dim, &mut locpoles);
 
     // OCCT L1705-1724: collect CPoles (and CWeights) from the evaluated row.
     let mut cpoles = Vec::with_capacity(window_cols);

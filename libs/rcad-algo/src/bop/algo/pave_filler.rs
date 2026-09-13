@@ -3087,15 +3087,35 @@ impl PaveFiller {
             if bpc.is_to_update() {
                 let ei = bpc.edge_idx();
                 let fi = bpc.face_idx();
-                let range = self.ds.shape(ei).as_edge().map(|ed| ed.range).unwrap_or([0.0, 0.0]);
                 if let Some(pc) = bpc.pcurve().cloned() {
                     // OCCT BOPAlgo_BPC / BRepLib::BuildPCurveForEdgeOnPlane: the
                     // pcurve follows the edge's 3D curve parameter direction
                     // (BRep_Tool::Curve + Range), independent of the stored
                     // vertex order. No reversal.
-                    let (pc, f, l) = (pc, range[0], range[1]);
-                    // OCCT BRep_Builder::UpdateEdge (BRep_Builder.cxx L692) 鈥?
-                    // the pcurve is stored under (face TShape, L.Predivided(E.Location())).
+                    //
+                    // OCCT BRep_Builder.cxx L104-167 (UpdateCurves, reached
+                    // through BRepLib::BuildPCurveForEdgeOnPlane ->
+                    // BRep_Builder::UpdateEdge(E, C2d, F, Tol)): the stored range
+                    // is seeded with the 2D curve's own range (L151-153) and is
+                    // then OVERWRITTEN by the edge's Curve3D representation range
+                    // whenever that range is finite (L116-129 GC->Range on the
+                    // IsCurve3D entry with the L112 -/+Precision::Infinite()
+                    // seed, then L154-162 `if (!Precision::IsInfinite(f))
+                    // aFCur = f;`).  The OCCT overload takes no f/l arguments.
+                    let [mut f, mut l] = pc.default_domain();
+                    if let Some(ed) = self.ds.shape(ei).as_edge() {
+                        if ed.curve.is_some() {
+                            if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
+                                f = ed.range[0];
+                            }
+                            if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
+                                l = ed.range[1];
+                            }
+                        }
+                    }
+                    // OCCT BRep_Builder::UpdateEdge(E, C2d, S, L, Tol)
+                    // (BRep_Builder.cxx L655-671) — the pcurve is stored under
+                    // (face TShape, L.Predivided(E.Location())).
                     let key = self.pcurve_key_for(ei, fi); // EXPERIMENT: composed key
                     if std::env::var("RCAD_PCTRACE").is_ok() {
                         let pd = match &pc {
@@ -5176,7 +5196,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 // list gains the CurveOnSurface row, mirroring the
                 // update_edge_pcurve_shared method).
                 self.ds
-                    .update_edge_pcurve_shared(n_e, fkey, pc, range[0], range[1], 0.0);
+                    .update_edge_pcurve_shared(n_e, fkey, pc, 0.0);
                 // OCCT AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx L43-161):
                 // when the source edge is a seam on this face (IsClosed(aE2, aF)),
                 // UpdateClosedPCurve (L163-299) builds the second pcurve by
@@ -5208,15 +5228,36 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                                         rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. } => *face != fkey,
                                         _ => true,
                                     });
+                                // OCCT BRep_Builder.cxx L251-308 (the two-pcurve
+                                // UpdateCurves, reached through
+                                // UpdateEdge(E, C1, C2, F) BRep_Builder.lxx
+                                // L103-111 and UpdateClosedPCurve
+                                // BOPTools_AlgoTools2D_1.cxx L288-295): the
+                                // representation is seeded with C1's own range
+                                // (L286-289) and is then OVERWRITTEN by the
+                                // edge's Curve3D representation range whenever
+                                // that range is finite (L265-277 GC->Range on
+                                // the IsCurve3D entry with the L261
+                                // -/+Precision::Infinite() seed, then L290-298
+                                // `if (!Precision::IsInfinite(f)) aFCur = f;`).
+                                let [mut a_f, mut a_l] = pc1.default_domain();
+                                if ed.curve.is_some() {
+                                    if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
+                                        a_f = ed.range[0];
+                                    }
+                                    if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
+                                        a_l = ed.range[1];
+                                    }
+                                }
                                 ed.representations.push(
                                     rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
                                         face: fkey,
                                         pcurve1: pc1.clone(),
                                         pcurve2: pc2,
-                                        range,
+                                        range: [a_f, a_l],
                                     },
                                 );
-                                ed.pcurves.insert(fkey, (pc1, range[0], range[1]));
+                                ed.pcurves.insert(fkey, (pc1, a_f, a_l));
                             }
                         }
                     });
@@ -5254,7 +5295,7 @@ fn fill_shrunk_data(&mut self, a_type1: ShapeType, a_type2: ShapeType) {
                 // semantics — the edge's CurveRepresentation list gains the
                 // CurveOnSurface row (update_edge_pcurve_shared).
                 self.ds
-                    .update_edge_pcurve_shared(n_e, fkey, pc, range[0], range[1], 0.0);
+                    .update_edge_pcurve_shared(n_e, fkey, pc, 0.0);
                 self.ds.remap_shape_idx(n_e);
             }
         }

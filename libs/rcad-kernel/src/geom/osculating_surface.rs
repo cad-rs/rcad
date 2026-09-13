@@ -249,12 +249,9 @@ fn distinct_knot_count(flat: &[f64]) -> i32 {
 
 /// OCCT `Geom_Surface::D1(U, V, P, D1U, D1V)` over the rcad surface value —
 /// the ElSLib::DN arms for the quadrics and the `Geom_BSplineSurface::EvalDN`
-/// (`BSplSLib::DN`) re-host for the polynomial kinds
-/// ([`crate::geom::offset_surface_utils::eval_dn`]).
-///
-/// Note: `rcad-kernel/src/geom/eval.rs::bspline_surface_dn` (the leaf behind
-/// `Surface3::dn`) sizes its derivative-result buffers for a single pole, so
-/// `Surface3::dn` overruns them for Nu >= 1; this body does not use it.
+/// / `Geom_BezierSurface::EvalDN` (`BSplSLib::DN`) arms for the polynomial
+/// kinds ([`crate::geom::offset_surface_utils::eval_dn`], i.e.
+/// [`crate::geom::eval_b`]).
 pub(crate) fn surface_d1(the_s: &Surface3, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
     match the_s {
         // The exact per-type D1 of the rcad GeomAdaptor_Surface DN engine
@@ -268,16 +265,18 @@ pub(crate) fn surface_d1(the_s: &Surface3, u: f64, v: f64) -> (DVec3, DVec3, DVe
             the_s.dn(u, v, 1, 0),
             the_s.dn(u, v, 0, 1),
         ),
-        // Geom_BSplineSurface::EvalDN (BSplSLib::DN).
-        Surface3::BSpline(_) => (
+        // Geom_BSplineSurface::EvalDN / Geom_BezierSurface::EvalDN
+        // (BSplSLib::DN).
+        Surface3::BSpline(_) | Surface3::Bezier(_) => (
             SurfaceEval::point_at(the_s, u, v),
             crate::geom::offset_surface_utils::eval_dn(the_s, u, v, 1, 0),
             crate::geom::offset_surface_utils::eval_dn(the_s, u, v, 0, 1),
         ),
         _ => panic!(
             "GAP: Geom_Surface::EvalD1 (TKG3d/Geom) is not translated for this surface \
-             type (the rcad GeomAdaptor_Surface DN engine covers ElSLib surfaces and \
-             Geom_BSplineSurface only) — Geom_OsculatingSurface::isQPunctual"
+             type (the rcad GeomAdaptor_Surface DN engine covers the ElSLib surfaces, \
+             Geom_BSplineSurface and Geom_BezierSurface) — \
+             Geom_OsculatingSurface::isQPunctual"
         ),
     }
 }
