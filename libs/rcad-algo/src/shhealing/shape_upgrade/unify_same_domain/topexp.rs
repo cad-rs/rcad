@@ -7,6 +7,7 @@
 //! members UnifySameDomain actually consumes are carried.
 
 use rcad_kernel::geom::{transform_curve, Curve3, CurveEval, Surface3};
+use rcad_kernel::topo::topods::{curve_pool_free, shape_is_in_pool};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, BRepTool, Orientation, ShapeType, TShape};
 
@@ -236,7 +237,19 @@ pub fn brep_tool_surface_loc(brep: &BRep, f: &Shape) -> (Option<Surface3>, u32) 
 
 /// OCCT BRep_Tool::Curve(E, L, First, Last) (BRep_Tool.cxx L121-160): the
 /// LOCAL curve with its location and range.
+///
+/// A pool-outside edge (its `index` is not a slot of `brep`) takes the
+/// pool-free read `curve_pool_free` (rcad-kernel topods.rs); a valid index
+/// keeps the pool walk unchanged.
 pub fn brep_tool_curve_loc(brep: &BRep, e: &Shape) -> (Option<Curve3>, u32, [f64; 2]) {
+    if !shape_is_in_pool(brep, e) {
+        // OCCT BRep_Tool::Curve(E, L, f, l) miss leaves First = Last = 0
+        // (BRep_Tool.cxx L193-195).
+        return match curve_pool_free(e) {
+            Some((c, f, l)) => (Some(c), e.location, [f, l]),
+            None => (None, e.location, [0.0, 0.0]),
+        };
+    }
     match &*brep.tshapes[e.index] {
         TShape::Edge(ed) => (ed.curve.clone(), e.location, ed.range),
         _ => (None, 0, [0.0, 0.0]),
@@ -263,7 +276,17 @@ pub fn brep_tool_curve(brep: &BRep, e: &Shape) -> Option<(Curve3, f64, f64)> {
 
 /// OCCT BRep_Tool::Range(E, First, Last) (BRep_Tool.cxx L845-858) — the raw
 /// 3D range of the edge.
+///
+/// A pool-outside edge (its `index` is not a slot of `brep`) reads the range
+/// from its own TShape through `curve_pool_free` (rcad-kernel topods.rs,
+/// which maps the edge 3d range onto the BRep_Curve3D First/Last).
 pub fn brep_tool_range(brep: &BRep, e: &Shape) -> [f64; 2] {
+    if !shape_is_in_pool(brep, e) {
+        return match curve_pool_free(e) {
+            Some((_, f, l)) => [f, l],
+            None => [0.0, 0.0],
+        };
+    }
     match &*brep.tshapes[e.index] {
         TShape::Edge(ed) => ed.range,
         _ => [0.0, 0.0],

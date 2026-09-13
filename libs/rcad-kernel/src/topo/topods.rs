@@ -4013,6 +4013,49 @@ pub fn curve_on_surface_pool_free(the_e: &Shape, the_f: &Shape) -> Option<(Curve
     None
 }
 
+/// rcad pool test (architecture difference, the rcad pool model of
+/// `BRep::tshapes`): true when the shape's `index` is a slot of `brep`.  A
+/// shape built through `Shape::new` (topo_shape.rs L93-95 — the offset-engine
+/// shapes) carries `index == usize::MAX` and belongs to no pool; the pool-free
+/// readers below resolve it from its own TShape instead of `BRep::tshapes`.
+pub fn shape_is_in_pool(brep: &BRep, r: &Shape) -> bool {
+    r.index < brep.tshapes.len()
+}
+
+/// OCCT BRep_Tool::Curve(E, L, First, Last) (BRep_Tool.cxx L172-196) — the
+/// pool-free form: the 3d-curve read goes through `the_e.data` (the OCCT
+/// BRep_TEdge read of L178) instead of `BRep::tshapes[the_e.index]`, so it
+/// resolves for an edge that lives outside the caller's pool (the
+/// offset-engine EncodeRegularity path calls BRepLib::BuildCurve3d on the
+/// edges of a shape assembled in another arena).
+///
+/// OCCT L181-192 walks the representation list for the `IsCurve3D` kind and
+/// returns that curve plus `GC->Range(First, Last)`; a miss leaves
+/// `First = Last = 0` and returns the null handle (the rcad `None`,
+/// L193-195).  The rcad encoding keeps the BRep_Curve3D payload in the
+/// `TEdgeData::curve` slot and its First/Last in `TEdgeData::range` (the
+/// `CurveRepresentation::Curve3D` variant carries no range slot — see
+/// `gcurve_range` in topalgo/brep_lib/build_curves3d.rs).
+///
+/// Limitation: the OCCT out-parameter `L = E.Location() * GC->Location()`
+/// (L187) cannot be applied pool-free.  rcad stores TopLoc_Location as a u32
+/// index into the OWNING BRep's `locations` table (`BRep::get_location`), and
+/// a pool-outside shape does not carry that table, so the composed transform
+/// is unreachable from here.  The returned curve is therefore in the edge's
+/// local frame and the location out-parameter stays `the_e.location`, to be
+/// resolved by the caller against the pool that owns the shape.
+pub fn curve_pool_free(the_e: &Shape) -> Option<(Curve3, f64, f64)> {
+    let ed = match the_e.data.as_ref() {
+        TShape::Edge(ed) => ed,
+        _ => return None,
+    };
+    // OCCT L184-190: the IsCurve3D representation supplies the curve and its
+    // range.  The rcad representation carries no location slot (arch.
+    // difference): the edge Shape carries the location index.
+    let a_c = ed.curve.clone()?;
+    Some((a_c, ed.range[0], ed.range[1]))
+}
+
 // ---------------------------------------------------------------------------
 // ShapeType helpers
 // ---------------------------------------------------------------------------
