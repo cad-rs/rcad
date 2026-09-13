@@ -35,7 +35,11 @@ use std::rc::Rc;
 
 use glam::DVec3;
 
-use rcad_kernel::geom::{CurveEval, BSplineSurface, Circle3, Curve3, Ellipse3, Line3, Surface3, TrimmedCurve3};
+use rcad_kernel::geom::{
+    BezierCurve3, BezierSurface, BSplineSurface, Circle3, Curve3, CurveEval, Ellipse3, Line3,
+    Surface3, TrimmedCurve3,
+};
+use rcad_kernel::math::bspl_lib::bspl_slib_iso;
 use rcad_kernel::math::gp::GP_RESOLUTION;
 use rcad_kernel::math::GeomAbsShape;
 use rcad_kernel::topo::topods::{surface_adaptor_basis_and_bounds, BRep, BRepBuilder, Shape};
@@ -55,11 +59,14 @@ pub use crate::brep_fill::brep_fill_pipe_shell_b::BRepFillTransitionStyle;
 // UIso / VIso re-hosts (OCCT Geom_Surface::UIso / VIso dispatch)
 // ---------------------------------------------------------------------------
 
-/// OCCT ElSLib + Geom_BSplineSurface::UIso over the rcad Surface3 — the
-/// u-varying iso curve at `u`.  The Offset / remaining variants keep the
-/// OCCT failure path (kernel GAP).  `pub(crate)`: Geom_Surface::UIso is a
-/// public Geom-level operation; SplitSurf (ChFi3d_FilBuilder.cxx L2291-2292)
-/// consumes it over the stored blend surface.
+/// OCCT ElSLib + Geom_BSplineSurface::UIso + Geom_BezierSurface::UIso over the
+/// rcad Surface3 — the u-varying iso curve at `u`.  The Offset variant keeps
+/// the OCCT failure path (the missing OCCT dependency is named at the arm),
+/// and the rcad-only variants (Ellipsoid / Helicoid / Pipe / Ruled / Coons /
+/// TriBezier — no Geom_Surface override exists in TKG3d/Geom) land on the
+/// catch-all.  `pub(crate)`: Geom_Surface::UIso is a public Geom-level
+/// operation; SplitSurf (ChFi3d_FilBuilder.cxx L2291-2292) consumes it over
+/// the stored blend surface.
 pub(crate) fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {    match surf {
         // ElSLib::PlaneUIso (ElSLib.cxx): line through P(u, 0) along the V
         // direction.
@@ -119,6 +126,8 @@ pub(crate) fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {    match surf {
         // Geom_BSplineSurface::UIso: the poles of the iso are the
         // homogeneous De Boor evaluation of the u basis per V column.
         Surface3::BSpline(bs) => Curve3::BSpline(bspline_surface_uiso(bs, u)),
+        // OCCT Geom_BezierSurface::UIso (Geom_BezierSurface.cxx L1769-1810).
+        Surface3::Bezier(bz) => bezier_surface_uiso(bz, u),
         // OCCT Geom_SurfaceOfLinearExtrusion::UIso
         // (Geom_SurfaceOfLinearExtrusion.cxx L275-281): the ruling line
         // (basisCurve->Value(U), direction).
@@ -148,14 +157,31 @@ pub(crate) fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {    match surf {
                 c
             }
         }
-        // OCCT Geom_OffsetSurface::UIso (Geom_OffsetSurface.cxx L601-655)
-        // approximates the offset iso through AdvApprox_ApproxAFunction and
-        // the Geom_OffsetSurface_UIsoEvaluator — the AdvApprox evaluator
-        // wiring is a kernel GAP (plan §0.6).
+        // OCCT Geom_OffsetSurface::UIso (Geom_OffsetSurface.cxx L601-655):
+        //   directRepSurface(*this) -> the GeomEval_RepSurfaceDesc eval
+        //     representation (L83-95) — rcad's OffsetSurface carries no such
+        //     member, so the branch is always null and the equivalent-surface
+        //     delegation is unreachable (architecture difference);
+        //   the GeomAbs_SurfaceOfExtrusion basis arm (L606-624) is
+        //     translatable (surface_uiso + D1 + curve3_translated, and
+        //     AdvApprox IS present in rcad as rcad_kernel::math::adv_approx);
+        //   the general arm (L625-654) needs Geom_OffsetSurface_UIsoEvaluator
+        //     (L574-592), whose derivative request calls
+        //     Geom_OffsetSurface::D1 -> Geom_OffsetSurfaceUtils::EvaluateD1
+        //     with Geom_OsculatingSurface.  rcad has no OsculatingSurface and
+        //     `impl SurfaceEval for OffsetSurface` (rcad-kernel/src/geom/
+        //     eval.rs L2266-2279) leaves `derivatives` at the trait's
+        //     finite-difference default; AdvApprox_SimpleApprox::Perform calls
+        //     the evaluator with derive = 1 for the C1 Hermite constraints, so
+        //     wiring it would feed an approximated D1 — a fake alignment.
         Surface3::Offset(_) => panic!(
-            "GAP: Geom_OffsetSurface::UIso (TKG3d/Geom, AdvApprox evaluator \
-             wiring) — BRepFill_Sweep::BuildWire"
+            "GAP: Geom_OffsetSurface::UIso (TKG3d/Geom) needs \
+             Geom_OffsetSurfaceUtils::EvaluateD1 + Geom_OsculatingSurface \
+             (rcad OffsetSurface has no analytic D1) — BRepFill_Sweep::BuildWire"
         ),
+        // Ellipsoid / Helicoid / Pipe / Ruled / Coons / TriBezier: rcad-only
+        // Surface3 variants with no Geom_Surface override in TKG3d/Geom, so
+        // there is no OCCT body to translate (the OCCT-faithful failure path).
         _ => panic!(
             "GAP: Geom_*Surface::UIso (TKMath/TKG3d kernel re-host) is not \
              translated for this surface type — BRepFill_Sweep::BuildWire"
@@ -171,10 +197,12 @@ fn basis_v_bounds_of(surf: &Surface3) -> (f64, f64) {
     (d[2], d[3])
 }
 
-/// OCCT ElSLib + Geom_BSplineSurface::VIso over the rcad Surface3 — the
-/// v-varying iso curve at `v`.  Same GAP note as [`surface_uiso`].
-/// `pub(crate)`: Geom_Surface::VIso is a public Geom-level operation
-/// (ChFi3d_ComputeArete, ChFi3d_Builder_0.cxx L2044).
+/// OCCT ElSLib + Geom_BSplineSurface::VIso + Geom_BezierSurface::VIso over the
+/// rcad Surface3 — the v-varying iso curve at `v`.  Same GAP note as
+/// [`surface_uiso`] (the Offset arm names its missing OCCT dependency; the
+/// rcad-only variants hit the catch-all).  `pub(crate)`: Geom_Surface::VIso is
+/// a public Geom-level operation (ChFi3d_ComputeArete, ChFi3d_Builder_0.cxx
+/// L2044).
 pub(crate) fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
     match surf {
         // ElSLib::PlaneVIso: line through P(0, v) along the U direction.
@@ -218,6 +246,8 @@ pub(crate) fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
         }),
         // Geom_BSplineSurface::VIso.
         Surface3::BSpline(bs) => Curve3::BSpline(bspline_surface_viso_full(bs, v)),
+        // OCCT Geom_BezierSurface::VIso (Geom_BezierSurface.cxx L1821-1863).
+        Surface3::Bezier(bz) => bezier_surface_viso(bz, v),
         // OCCT Geom_SurfaceOfLinearExtrusion::VIso
         // (Geom_SurfaceOfLinearExtrusion.cxx L285-291): the basis curve
         // translated by V*direction (Vdir.Multiply(V); basis->Translated).
@@ -272,12 +302,18 @@ pub(crate) fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
                 c
             }
         }
-        // OCCT Geom_OffsetSurface::VIso (Geom_OffsetSurface.cxx L657-706) —
-        // the same AdvApprox GAP as UIso.
+        // OCCT Geom_OffsetSurface::VIso (Geom_OffsetSurface.cxx L657-706):
+        // the directRepSurface delegation (L659-660) is unreachable in rcad
+        // (no eval representation member) and the general arm (L662-686) has
+        // the same Geom_OffsetSurfaceUtils::EvaluateD1 /
+        // Geom_OsculatingSurface dependency as UIso (there is no extrusion
+        // special case here).
         Surface3::Offset(_) => panic!(
-            "GAP: Geom_OffsetSurface::VIso (TKG3d/Geom, AdvApprox evaluator \
-             wiring) — BRepFill_Sweep::BuildWire"
+            "GAP: Geom_OffsetSurface::VIso (TKG3d/Geom) needs \
+             Geom_OffsetSurfaceUtils::EvaluateD1 + Geom_OsculatingSurface \
+             (rcad OffsetSurface has no analytic D1) — BRepFill_Sweep::BuildWire"
         ),
+        // Same rcad-only variants as the UIso catch-all (no OCCT override).
         _ => panic!(
             "GAP: Geom_*Surface::VIso (TKMath/TKG3d kernel re-host) is not \
              translated for this surface type — BRepFill_Sweep::BuildWire"
@@ -423,6 +459,185 @@ fn bspline_surface_viso_full(surf: &BSplineSurface, v: f64) -> rcad_kernel::geom
         control_points: poles,
         weights,
         is_periodic: false,
+    }
+}
+
+/// OCCT Epsilon(theValue) (Standard_Real.hxx L242-246) — the ULP of
+/// `theValue` toward the infinity of the same sign.
+fn epsilon_of(the_value: f64) -> f64 {
+    if the_value >= 0.0 {
+        the_value.next_up() - the_value
+    } else {
+        the_value - the_value.next_down()
+    }
+}
+
+/// OCCT static Rational(Weights, Urational, Vrational)
+/// (Geom_BezierSurface.cxx L66-96) — the weight-variation flags of a surface
+/// weight grid.  OCCT derives them once in the constructor; the rcad
+/// `BezierSurface` is an immutable value, so the same derivation evaluates on
+/// read.  The names are OCCT's verbatim: `Vrational` is set when two weights
+/// adjacent along the first (U) pole index differ, `Urational` when two
+/// weights adjacent along the second (V) pole index differ.
+fn bezier_surface_rational(weights: &[Vec<f64>]) -> (bool, bool) {
+    let nb_cols = weights.first().map(|row| row.len()).unwrap_or(0);
+    // OCCT L68-80: Vrational over the column loop J, comparing
+    // Weights(I, J) with Weights(I + 1, J).
+    let mut v_rational = false;
+    'v_cols: for jj in 0..nb_cols {
+        for ii in 0..weights.len().saturating_sub(1) {
+            let w = weights[ii][jj];
+            let w_next = weights[ii + 1][jj];
+            if (w - w_next).abs() > epsilon_of(w.abs()) {
+                v_rational = true;
+                break 'v_cols;
+            }
+        }
+    }
+    // OCCT L82-96: Urational over the row loop I, comparing Weights(I, J)
+    // with Weights(I, J + 1).
+    let mut u_rational = false;
+    'u_rows: for row in weights.iter() {
+        for jj in 0..row.len().saturating_sub(1) {
+            let w = row[jj];
+            let w_next = row[jj + 1];
+            if (w - w_next).abs() > epsilon_of(w.abs()) {
+                u_rational = true;
+                break 'u_rows;
+            }
+        }
+    }
+    (u_rational, v_rational)
+}
+
+/// OCCT `Geom_BezierSurface::UKnotSequence()` / `VKnotSequence()`
+/// (Geom_BezierSurface.cxx L2167-2193) — the multiplicity-expanded form of
+/// the implicit Bezier knot vector, `BSplCLib::FlatBezierKnots(degree)` =
+/// `[0; degree + 1] ++ [1; degree + 1]`.
+fn bezier_flat_knots(degree: usize) -> Vec<f64> {
+    std::iter::repeat_n(0.0, degree + 1)
+        .chain(std::iter::repeat_n(1.0, degree + 1))
+        .collect()
+}
+
+/// OCCT Geom_BezierSurface::UIso (Geom_BezierSurface.cxx L1769-1810) — the
+/// iso curve at u: BSplSLib::Iso over the U direction, wrapped in a
+/// `Geom_BezierCurve` of `myPoles.RowLength()` poles.
+///
+/// Architecture difference: the OCCT call passes the implicit Bezier knot
+/// vector as the pair `UKnots()` = [0, 1] and `&UMultiplicities()` =
+/// [nbU, nbU]; the rcad [`bspl_slib_iso`] takes the flat form (`Mults ==
+/// BSplCLib::NoMults()`), so the equivalent `UKnotSequence()` is passed with
+/// the same degree `(myPoles.ColLength() - 1)` and `Periodic = false` (the
+/// same note as the Geom_BSplineSurface::UIso arm, which passes
+/// `myUFlatKnots` + `myUDeg`).
+fn bezier_surface_uiso(surf: &BezierSurface, u: f64) -> Curve3 {
+    // OCCT L1771-1773: VCurvePoles(1, myPoles.RowLength()) and the degree
+    // (myPoles.ColLength() - 1).
+    let degree = surf.control_points.len() - 1;
+    let (my_u_rational, my_v_rational) = bezier_surface_rational(&surf.weights);
+    if my_u_rational || my_v_rational {
+        // OCCT L1775-1785: BSplSLib::Iso(U, true, myPoles, &myWeights,
+        // UKnots(), &UMultiplicities(), degree, false, VCurvePoles,
+        // &VCurveWeights).
+        let (v_curve_poles, v_curve_weights) = bspl_slib_iso(
+            u,
+            true,
+            degree,
+            &bezier_flat_knots(degree),
+            &surf.control_points,
+            Some(&surf.weights),
+            false,
+        );
+        if my_u_rational {
+            // OCCT L1786: new Geom_BezierCurve(VCurvePoles, VCurveWeights).
+            Curve3::Bezier(BezierCurve3 {
+                control_points: v_curve_poles,
+                weights: v_curve_weights,
+            })
+        } else {
+            // OCCT L1790: new Geom_BezierCurve(VCurvePoles) — non-rational.
+            let nb_poles = v_curve_poles.len();
+            Curve3::Bezier(BezierCurve3 {
+                control_points: v_curve_poles,
+                weights: vec![1.0; nb_poles],
+            })
+        }
+    } else {
+        // OCCT L1795-1803: BSplSLib::Iso with BSplSLib::NoWeights() and
+        // PLib::NoWeights(); new Geom_BezierCurve(VCurvePoles).
+        let (v_curve_poles, _) = bspl_slib_iso(
+            u,
+            true,
+            degree,
+            &bezier_flat_knots(degree),
+            &surf.control_points,
+            None,
+            false,
+        );
+        let nb_poles = v_curve_poles.len();
+        Curve3::Bezier(BezierCurve3 {
+            control_points: v_curve_poles,
+            weights: vec![1.0; nb_poles],
+        })
+    }
+}
+
+/// OCCT Geom_BezierSurface::VIso (Geom_BezierSurface.cxx L1821-1863) — the
+/// v-isoparametric counterpart of [`bezier_surface_uiso`]: BSplSLib::Iso over
+/// the V direction with the degree `(myPoles.RowLength() - 1)` and the
+/// `&VMultiplicities()` implicit knot vector, wrapped in a `Geom_BezierCurve`
+/// of `myPoles.ColLength()` poles.
+fn bezier_surface_viso(surf: &BezierSurface, v: f64) -> Curve3 {
+    // OCCT L1823-1824: VCurvePoles(1, myPoles.ColLength()) and the degree
+    // (myPoles.RowLength() - 1).
+    let nb_u_poles = surf.control_points.first().map(|row| row.len()).unwrap_or(0);
+    let degree = nb_u_poles - 1;
+    let (my_u_rational, my_v_rational) = bezier_surface_rational(&surf.weights);
+    if my_v_rational || my_u_rational {
+        // OCCT L1825-1837: BSplSLib::Iso(V, false, myPoles, &myWeights,
+        // UKnots(), &VMultiplicities(), degree, false, VCurvePoles,
+        // &VCurveWeights).
+        let (v_curve_poles, v_curve_weights) = bspl_slib_iso(
+            v,
+            false,
+            degree,
+            &bezier_flat_knots(degree),
+            &surf.control_points,
+            Some(&surf.weights),
+            false,
+        );
+        if my_v_rational {
+            // OCCT L1838: new Geom_BezierCurve(VCurvePoles, VCurveWeights).
+            Curve3::Bezier(BezierCurve3 {
+                control_points: v_curve_poles,
+                weights: v_curve_weights,
+            })
+        } else {
+            // OCCT L1842: new Geom_BezierCurve(VCurvePoles) — non-rational.
+            let nb_poles = v_curve_poles.len();
+            Curve3::Bezier(BezierCurve3 {
+                control_points: v_curve_poles,
+                weights: vec![1.0; nb_poles],
+            })
+        }
+    } else {
+        // OCCT L1847-1855: BSplSLib::Iso with BSplSLib::NoWeights() and
+        // PLib::NoWeights(); new Geom_BezierCurve(VCurvePoles).
+        let (v_curve_poles, _) = bspl_slib_iso(
+            v,
+            false,
+            degree,
+            &bezier_flat_knots(degree),
+            &surf.control_points,
+            None,
+            false,
+        );
+        let nb_poles = v_curve_poles.len();
+        Curve3::Bezier(BezierCurve3 {
+            control_points: v_curve_poles,
+            weights: vec![1.0; nb_poles],
+        })
     }
 }
 
@@ -1072,3 +1287,149 @@ const _: f64 = GP_RESOLUTION;
 use crate::brep_fill::brep_fill_pipe_shell_b::ShapeToArray2Map as _PartBShapeToArray2Map;
 #[allow(dead_code)]
 fn _part_b_type_guards(_t: Option<TrimmedCurve3>, _s: Option<HashSet<ShapeKey>>) {}
+
+#[cfg(test)]
+mod bezier_surface_iso_tests {
+    //! Regression guard for the Geom_BezierSurface::UIso / VIso arms: the iso
+    //! curve must reproduce the surface evaluation at the fixed parameter.
+
+    use super::*;
+    use rcad_kernel::geom::SurfaceEval;
+
+    /// A 3 x 3 (degree 2 x 2) Bezier surface; `weights` selects the arm.
+    fn sample_surface(weights: Vec<Vec<f64>>) -> BezierSurface {
+        BezierSurface {
+            control_points: vec![
+                vec![
+                    DVec3::new(0.0, 0.0, 0.0),
+                    DVec3::new(0.0, 1.0, 0.5),
+                    DVec3::new(0.0, 2.0, 0.0),
+                ],
+                vec![
+                    DVec3::new(1.0, 0.0, 1.0),
+                    DVec3::new(1.0, 1.0, 1.5),
+                    DVec3::new(1.0, 2.0, 1.0),
+                ],
+                vec![
+                    DVec3::new(2.0, 0.0, 0.0),
+                    DVec3::new(2.0, 1.0, 0.5),
+                    DVec3::new(2.0, 2.0, 0.0),
+                ],
+            ],
+            weights,
+        }
+    }
+
+    fn check_iso(iso: &Curve3, surf: &Surface3, fixed: f64, is_u: bool) {
+        for jj in 0..=8 {
+            let t = jj as f64 / 8.0;
+            let p_iso = iso.point_at(t);
+            let p_surf = if is_u {
+                surf.point_at(fixed, t)
+            } else {
+                surf.point_at(t, fixed)
+            };
+            assert!(
+                (p_iso - p_surf).length() < 1e-12,
+                "t={t} iso={p_iso:?} surf={p_surf:?}"
+            );
+        }
+    }
+
+    /// The degree-2 Bernstein basis.
+    fn bern2(t: f64) -> [f64; 3] {
+        [(1.0 - t) * (1.0 - t), 2.0 * t * (1.0 - t), t * t]
+    }
+
+    /// An independent rational tensor-product Bezier reference,
+    /// `sum_ij B_i(u) B_j(v) w_ij P_ij / sum_ij B_i(u) B_j(v) w_ij` — pole and
+    /// weight read at the same indices, as OCCT's `Poles(i, j)` /
+    /// `Weights(i, j)` in `BSplSLib::Iso` (BSplSLib.cxx L1678-1681).
+    fn rational_reference(surf: &BezierSurface, u: f64, v: f64) -> DVec3 {
+        let bu = bern2(u);
+        let bv = bern2(v);
+        let mut acc = DVec3::ZERO;
+        let mut den = 0.0;
+        for i in 0..3 {
+            for j in 0..3 {
+                let w = bu[i] * bv[j] * surf.weights[i][j];
+                acc += w * surf.control_points[i][j];
+                den += w;
+            }
+        }
+        acc / den
+    }
+
+    /// Check an iso curve against the rational reference along the varying
+    /// direction (`is_u` = the UIso arm, fixed `u`).
+    fn check_iso_against(iso: &Curve3, surf: &BezierSurface, fixed: f64, is_u: bool) {
+        for jj in 0..=8 {
+            let t = jj as f64 / 8.0;
+            let p_iso = iso.point_at(t);
+            let p_ref = if is_u {
+                rational_reference(surf, fixed, t)
+            } else {
+                rational_reference(surf, t, fixed)
+            };
+            assert!(
+                (p_iso - p_ref).length() < 1e-12,
+                "t={t} iso={p_iso:?} ref={p_ref:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_rational_uiso_and_viso_follow_the_surface() {
+        let surf = Surface3::Bezier(sample_surface(vec![vec![1.0; 3]; 3]));
+        let iso = surface_uiso(&surf, 0.3);
+        let Curve3::Bezier(curve) = &iso else {
+            panic!("UIso of a Bezier surface must be a Geom_BezierCurve")
+        };
+        // myPoles.RowLength() = the number of V poles.
+        assert_eq!(curve.control_points.len(), 3);
+        check_iso(&iso, &surf, 0.3, true);
+
+        let iso = surface_viso(&surf, 0.7);
+        let Curve3::Bezier(curve) = &iso else {
+            panic!("VIso of a Bezier surface must be a Geom_BezierCurve")
+        };
+        // myPoles.ColLength() = the number of U poles.
+        assert_eq!(curve.control_points.len(), 3);
+        check_iso(&iso, &surf, 0.7, false);
+    }
+
+    #[test]
+    fn u_rational_uiso_is_a_rational_bezier_curve() {
+        // myURational: the weights vary along the second (V) pole index.
+        let weights: Vec<Vec<f64>> = (0..3).map(|_| vec![1.0, 1.5, 3.0]).collect();
+        let surf = sample_surface(weights);
+        let iso = surface_uiso(&Surface3::Bezier(surf.clone()), 0.25);
+        let Curve3::Bezier(curve) = &iso else {
+            panic!("UIso of a Bezier surface must be a Geom_BezierCurve")
+        };
+        assert_eq!(curve.control_points.len(), 3);
+        assert!(curve.weights.iter().any(|w| *w != 1.0));
+        check_iso_against(&iso, &surf, 0.25, true);
+    }
+
+    /// The VIso rational arm pairs each pole with its weight at identical
+    /// indices, as OCCT BSplSLib::Iso does: `Poles(j, index)` and
+    /// `(*Weights)(j, index)` (BSplSLib.cxx L1678-1681).  The shared kernel
+    /// helper `bspl_slib_iso` (rcad-kernel/src/math/bspl_lib.rs) originally
+    /// read the weight grid transposed in its `is_u == false` branch; that
+    /// was fixed to the plain `Weights(i, j)` accessor, so this test now
+    /// guards the pairing.
+    #[test]
+    fn v_rational_viso_is_a_rational_bezier_curve() {
+        // myVRational: the weights vary along the first (U) pole index.
+        let weights: Vec<Vec<f64>> = vec![vec![1.0; 3], vec![1.5; 3], vec![3.0; 3]];
+        let surf = sample_surface(weights);
+        let iso = surface_viso(&Surface3::Bezier(surf.clone()), 0.4);
+        let Curve3::Bezier(curve) = &iso else {
+            panic!("VIso of a Bezier surface must be a Geom_BezierCurve")
+        };
+        assert_eq!(curve.control_points.len(), 3);
+        assert!(curve.weights.iter().any(|w| *w != 1.0));
+        check_iso_against(&iso, &surf, 0.4, false);
+    }
+}

@@ -27,6 +27,25 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
+### 0.0d 追加 28 收尾态（2026-09-13；**最新，读这一节 + port-plan 追加 28 即可开工**）
+
+- **门槛与网格（全部在树实测）**：六门槛 **418/0/0**（⚠ **基线已由 415 升到 418** = 本批新增 3 个 `brep_fill_sweep` 单测，含转正的那个）**· 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110，重编 exe 后）；**15 个域网格与追加 27 基线逐项相同**（零回归，`blend_simple` a1 保持通过）。
+- **本轮四批**：
+  1. **★ TKFeat：`LocOpe_SplitShape` 全类译全**（4 个新文件 ~3473 行：`feat/loc_ope_split_shape{,_b}.rs` + **两个此前缺失的 OCCT 类** `topalgo/brep_tools_wire_explorer.rs`(885) 与 `topalgo/brep_lib_make_wire.rs`(512)）；`loc_ope_spliter.rs` 的 stub 整体删除。
+     **效果 = 失败点换层**：`feat_featrf_a1` 由"测试断言 L866 面积 0"变为 **`feat/loc_ope_glued_shape.rs:193` 的 `Standard_ConstructionError`** ⇒ spliter 报 done、generator 跑起来、gluer 走到 OCCT 的 `OrientedFaces()`。
+     **新墙已定性**：该 panic 是 **OCCT 自己的 throw 的 1:1**（`LocOpe_GluedShape.cxx` **L106-108**）⇒ **`mySn` 非闭合**（`myGShape` 的一张 4 边粘合面有一条边只有 1 个祖先面）⇒ **下一手 = `mySn` 构造（`LocOpe_Revol` / `BRepFeat_MakeRevolutionForm`）**。
+     ⚠ **勿误读**：坑 16 的 `panic < assert` 是按**发现成本**排序，不是质量排序。本轮是"静默空结果 → OCCT 自己的显式错误"，方向正确（禁静默错几何），但**不是通过数提升**。
+  2. **`Geom_BezierSurface::UIso/VIso` 两臂完成**（OCCT `Geom_BezierSurface.cxx` L1769-1810 / L1821-1863；含 `NCollection_Array2` 的 `RowLength()==NbColumns()` 反直觉命名这个坑）。**`Offset` 臂有意保留 GAP**，缺件已定位：`Geom_OffsetSurfaceUtils::EvaluateD1` + `Geom_OsculatingSurface`（rcad 无）+ `GeomEval_RepSurfaceDesc`。`AdvApprox` 虽在库，但其 `SimpleApprox::Perform` 用 `derive=1` 喂**近似 D1** ⇒ 明确不接。
+  3. **★ kernel 缺陷（跨域，对拍 OCCT 实证后修复）**：`bspl_slib_iso`（`rcad-kernel/src/math/bspl_lib.rs`）的 `weight_at` 在 `is_u == false` 支读**转置**权重。OCCT `BSplSLib.cxx` **L1678-1681** 为 `P = IsU ? Poles(index,j) : Poles(j,index)` / `w = IsU ? (*Weights)(index,j) : (*Weights)(j,index)` ⇒ **极点与权重同一对索引**；两个调用点已排好实参，故访问器两向都应是朴素 `Weights(i,j)`。已修。**影响面 = 全部有理 BSpline/Bezier 的 VIso**；子代理因它 `#[ignore]` 的新测试已转正。
+  4. **TKFillet：`ChFi3d_CheckSameParameter` 1:1**（OCCT `ChFi3d_Builder_0.cxx` L1565-1596 的 45 采样循环全译）+ **`ChFi3d_SameParameter` 真跑检查**（旧实现是 `*tolreached = tol3d` 的空体）。**修正步 `Approx_SameParameter` 保留为显式 GAP** —— 其真身仍是骨架（`geomalgo/approx_same_parameter.rs::new` = GAP panic，992 行 cxx 未译）。签名改回 OCCT 的 `-> bool`。
+     **实测：新 panic 路径在 15 个域网格上未被触发** ⇒ 属**潜伏口径修正**，非行为翻转（旧空体给的 `tolreached` 口径不对但下游分支恰好未受影响）。
+- **⏭ 下一轮队列（按序）**：
+  1. **`mySn` 的构造**（TKFeat，`feat_featrf` 的直接前墙，已定界到 `LocOpe_Revol` / `BRepFeat_MakeRevolutionForm`）。
+  2. **`Approx_SameParameter` 全类**（TKGeomBase/Approx，992 行）—— `chfi3d_same_parameter` 修正步的真缺口。
+  3. **`UIso/VIso` 重复收敛**（E3-Q 用户定规）：库中至少 **5 份**，唯一真身 = `brep_fill/brep_fill_sweep.rs::{surface_uiso,surface_viso}`；收敛后 offset/fillet 各域**白得 Bezier 臂**。
+  4. **`Geom_Surface::UIso/VIso` 的 `Offset` 臂**（前置 = `Geom_OffsetSurfaceUtils::EvaluateD1` + `Geom_OsculatingSurface`）。
+  5. 追加 27 队列余项不变（TKOffset 10 处 `UpdateCurves` 同族缺陷优先 · TKOffset 池外读取链复核 · blend 剩余十例 · `split_edge.rs:1392` 另一半 · `hbuilder.rs` pcurve 键 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 …）。
+
 ### 0.0c 追加 27 收尾态（2026-09-13；**读这一节即可开工**，权威脉络见 port-plan 追加 27）
 
 - **门槛与网格（全部在树实测，含本轮三批）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110，重编 exe 后）；**15 个域网格的真实断言数与追加 25/26 基线逐项相同**（`blend_simple` **1 过/10 败**，`a1` 保持通过；`draft_angle` 1/48；`feat_featrevol` 1/44；`fillet2d_fillet2d` 5/0；`mkface_after_offset` 2/0；`mkface_after_extsurf_and_offset` 16/0；其余 0/N——后四者的余数是 `*_geometry_loads` 恒过占位）。

@@ -351,18 +351,68 @@ pub fn chfi3d_compute_pcurv_2pt(
     }
 }
 
-/// OCCT ChFi3d_Builder_0.cxx ChFi3d_SameParameter — the pcurve
-/// same-parameter verification/correction against the surface.  Pending:
-/// the identity keeps the 2-point parameterization (exact for the axis-
-/// aligned pcurves produced above on analytic surfaces).
-pub fn chfi3d_same_parameter(
-    _c3d: &rcad_kernel::geom::Curve3,
-    _pcurv: &mut rcad_kernel::geom::Curve2d,
-    _s: &rcad_kernel::geom::Surface3,
-    _tol3d: f64,
+/// OCCT ChFi3d_Builder_0.cxx L1565-1596 — ChFi3d_CheckSameParameter: the
+/// a-posteriori same-parameter check on 45 samples.  `tolreached` receives
+/// twice the largest sample deviation, floored at Precision::Confusion().
+pub fn chfi3d_check_same_parameter(
+    c3d: &rcad_kernel::geom::Curve3,
+    pcurv: &rcad_kernel::geom::Curve2d,
+    s: &rcad_kernel::geom::Surface3,
+    tol3d: f64,
     tolreached: &mut f64,
-) {
-    *tolreached = _tol3d;
+) -> bool {
+    use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _, SurfaceEval as _};
+    // OCCT L1571-1575.
+    *tolreached = 0.0;
+    let d = c3d.default_domain();
+    let f = d[0];
+    let l = d[1];
+    let nbp: usize = 45;
+    let step = 1.0 / (nbp - 1) as f64;
+    for i in 0..nbp {
+        // OCCT L1578-1585.
+        let mut t = step * i as f64;
+        t = (1.0 - t) * f + t * l;
+        let uv = pcurv.point_at(t);
+        let p_s = s.point_at(uv.x, uv.y);
+        let p_c = c3d.point_at(t);
+        let d2 = (p_s - p_c).length_squared();
+        *tolreached = (*tolreached).max(d2);
+    }
+    // OCCT L1587-1595.
+    *tolreached = tolreached.sqrt();
+    if *tolreached > tol3d {
+        *tolreached *= 2.0;
+        return false;
+    }
+    *tolreached *= 2.0;
+    *tolreached = (*tolreached).max(P_CONFUSION);
+    true
+}
+
+/// OCCT ChFi3d_Builder_0.cxx L1602-1623 — ChFi3d_SameParameter: the
+/// same-parameter verification, with the Approx_SameParameter
+/// reparameterisation as the correction step.
+pub fn chfi3d_same_parameter(
+    c3d: &rcad_kernel::geom::Curve3,
+    pcurv: &mut rcad_kernel::geom::Curve2d,
+    s: &rcad_kernel::geom::Surface3,
+    tol3d: f64,
+    tolreached: &mut f64,
+) -> bool {
+    // OCCT L1608-1611.
+    if chfi3d_check_same_parameter(c3d, pcurv, s, tol3d, tolreached) {
+        return true;
+    }
+    // OCCT L1612-1621: Approx_SameParameter sp(C3d, Pcurv, S, tol3d); the
+    // correction step rebuilds the pcurve, so it cannot be skipped silently
+    // — the class body is a pending translation (Approx/Approx_SameParameter
+    // .cxx, 992 lines).
+    panic!(
+        "GAP: Approx_SameParameter (TKGeomBase/Approx, \
+         Approx_SameParameter.cxx L44-58 + Compute) is not translated — \
+         ChFi3d_SameParameter correction step"
+    );
 }
 
 // =========================================================================

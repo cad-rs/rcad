@@ -46,6 +46,7 @@
 
 use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_builder::{explorer, sub_shapes};
+use crate::feat::loc_ope_split_shape::LocOpeSplitShape;
 use crate::feat::loc_ope_build_wires::LocOpeBuildWires;
 use crate::feat::loc_ope_wires_on_shape::{top_exp_vertices, LocOpeWiresOnShape};
 use glam::DVec3;
@@ -276,110 +277,6 @@ impl BRepToolsSubstitution {
             panic!("Standard_NoSuchObject");
         }
         self.my_map.get(&shape_key(the_s)).cloned().unwrap_or_default()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// LocOpe_SplitShape re-host (architecture difference #3 — the splitting core
-// is deferred; see the header).
-// ---------------------------------------------------------------------------
-
-/// OCCT LocOpe_SplitShape (LocOpe_SplitShape.hxx L36-86) — the member set is
-/// carried 1:1; the trivial members are translated, the splitting core is
-/// deferred (GAP, arch. diff. #3).
-pub struct LocOpeSplitShape {
-    my_done: bool,                         // OCCT: myDone
-    my_shape: Shape,                       // OCCT: myShape
-    my_map: HashMap<ShapeKey, Vec<Shape>>, // OCCT: myMap
-    my_dbl_e: ShapeSet,                    // OCCT: myDblE
-    // OCCT: myLeft — written only by the deferred LeftOf/AddOpenWire/
-    // AddClosedWire bodies (arch. diff. #3).
-    #[allow(dead_code)]
-    my_left: Vec<Shape>,
-}
-
-impl LocOpeSplitShape {
-    /// OCCT LocOpe_SplitShape::LocOpe_SplitShape() (lxx).
-    pub fn new() -> Self {
-        LocOpeSplitShape {
-            my_done: false,
-            my_shape: Shape::null(),
-            my_map: HashMap::new(),
-            my_dbl_e: ShapeSet::new(),
-            my_left: Vec::new(),
-        }
-    }
-
-    /// OCCT LocOpe_SplitShape::LocOpe_SplitShape(S) (lxx) — = Init(S).
-    pub fn with_shape(the_s: &Shape) -> Self {
-        let mut s = LocOpeSplitShape::new();
-        s.init(the_s);
-        s
-    }
-
-    /// OCCT LocOpe_SplitShape::Init(S) (cxx L94-101).
-    pub fn init(&mut self, the_s: &Shape) {
-        self.my_done = false;
-        self.my_shape = the_s.clone();
-        self.my_dbl_e.clear();
-        self.my_map.clear();
-        let my_shape = self.my_shape.clone();
-        self.put(&my_shape);
-    }
-
-    /// OCCT LocOpe_SplitShape::Shape() (lxx).
-    pub fn shape(&self) -> &Shape {
-        &self.my_shape
-    }
-
-    /// OCCT LocOpe_SplitShape::Put(S) (cxx L1355-1373).
-    fn put(&mut self, the_s: &Shape) {
-        if !self.my_map.contains_key(&shape_key(the_s)) {
-            self.my_map.insert(shape_key(the_s), Vec::new());
-            if the_s.shape_type() != ShapeType::Vertex {
-                for it in sub_shapes(the_s) {
-                    self.put(&it);
-                }
-            } else {
-                self.my_map
-                    .get_mut(&shape_key(the_s))
-                    .expect("entry")
-                    .push(the_s.clone());
-            }
-        }
-    }
-
-    /// OCCT LocOpe_SplitShape::DescendantShapes(S) (cxx L1337-1352) — the
-    /// structure is kept: the !myDone gate runs Rebuild(myShape), whose body
-    /// is the deferred splitting core (arch. diff. #3); until that lands the
-    /// map carries the Put bindings only.
-    pub fn descendant_shapes(&mut self, the_s: &Shape) -> Vec<Shape> {
-        if !self.my_done {
-            // OCCT L1341: Rebuild(myShape) — deferred (GAP).
-            self.my_done = true;
-        }
-        // OCCT L1350: return myMap(S).
-        self.my_map
-            .get(&shape_key(the_s))
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// OCCT LocOpe_SplitShape::Add(V, P, E) — DEFERRED (GAP, arch. diff. #3).
-    pub fn add_vertex_on_edge(&mut self, _the_v: &Shape, _the_p: f64, _the_e: &Shape) {
-        // deferred: the LocOpe_SplitShape splitting core (cxx L17-1776).
-    }
-
-    /// OCCT LocOpe_SplitShape::Add(W, F) — DEFERRED (GAP, arch. diff. #3);
-    /// the OCCT bool return stays false (the failure output) until then.
-    pub fn add_wire_on_face(&mut self, _the_w: &Shape, _the_f: &Shape) -> bool {
-        false
-    }
-
-    /// OCCT LocOpe_SplitShape::Add(Lwires, F) — DEFERRED (GAP, arch.
-    /// diff. #3); the OCCT bool return stays false until then.
-    pub fn add_wires_on_face(&mut self, _the_lwires: &[Shape], _the_f: &Shape) -> bool {
-        false
     }
 }
 

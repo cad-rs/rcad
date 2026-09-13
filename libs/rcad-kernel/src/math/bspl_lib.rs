@@ -2135,12 +2135,14 @@ pub fn bspl_slib_iso(
     let empty_weights: Vec<Vec<f64>> = Vec::new();
     let weights_ref = weights.unwrap_or(&empty_weights);
     let weight_at = |i: usize, j: usize| -> f64 {
+        // OCCT L1678-1681: the pole and its weight are read at the *same*
+        // indices — `P = IsU ? Poles(index, j) : Poles(j, index)` and
+        // `w = IsU ? (*Weights)(index, j) : (*Weights)(j, index)`.  The two
+        // call sites below already order the arguments to match their pole
+        // read, so this accessor is the plain `Weights(i, j)` for both
+        // directions of the iso.
         if rational {
-            if is_u {
-                weights_ref.get(i).and_then(|r| r.get(j)).copied().unwrap_or(1.0)
-            } else {
-                weights_ref.get(j).and_then(|r| r.get(i)).copied().unwrap_or(1.0)
-            }
+            weights_ref.get(i).and_then(|r| r.get(j)).copied().unwrap_or(1.0)
         } else {
             1.0
         }

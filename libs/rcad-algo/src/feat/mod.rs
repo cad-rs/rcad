@@ -41,6 +41,8 @@ pub mod loc_ope_revolution_form;
 pub mod loc_ope;
 pub mod loc_ope_split_drafts;
 pub mod loc_ope_split_drafts_b;
+pub mod loc_ope_split_shape;
+pub mod loc_ope_split_shape_b;
 pub mod loc_ope_spliter;
 pub mod loc_ope_wires_on_shape;
 pub mod loc_ope_wires_on_shape_b;

@@ -285,7 +285,7 @@ fn geom_proj_lib_curve2d(
 /// topalgo::brep_lib_validate_edge; the OCCT NbControl default is 23,
 /// ShapeAnalysis_Edge.hxx). Returns true when maxdev exceeds the edge
 /// tolerance (the DONE1 status OCCT reports).
-fn shape_analysis_edge_check_same_parameter(
+pub(crate) fn shape_analysis_edge_check_same_parameter(
     the_edge: &Shape,
     the_face: &Shape,
     the_maxdev: &mut f64,
