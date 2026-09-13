@@ -10,10 +10,10 @@
 > 另有两条"旧笔记会过期"（坑 29/30）：**架构难点要回查 OCCT 基类**、**`GetType()` 常量返回决定分支**。
 > （前三轮：**追加 18** = 翻译补全轮；**追加 17** = D3 结案 + `featrf_a1` init 首次通过；**追加 16** = 0a 收尾 / a1 拓扑全等 / TKOffset 定界。）
 
-## 0. 新 session 一句话提示词（直接粘贴 —— 追加 21 收尾态，2026-09-13）
+## 0. 新 session 一句话提示词（直接粘贴 —— 追加 22 收尾态，2026-09-13）
 
 > 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 坑清单）
-> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–21（权威脉络，**追加 21 是当前状态**）；
+> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–22（权威脉络，**追加 22 是当前状态**）；
 > 先 `cd rcad` 跑 6 条门槛确认 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests`（**重编 exe，否则八网格会拿旧产物误判**）
 > 后 `bash output/run_eight_grids.sh` 确认**八网格 8/8**；
@@ -27,11 +27,11 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0 当前状态速览（追加 21 收尾，2026-09-13；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `a374a286`）/ 根仓库指针 = 本文件所在提交，**均已推送**）
+### 0.0 当前状态速览（追加 22 收尾，2026-09-13；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `b8711d80`）/ 根仓库指针 = 本文件所在提交，**均已推送**）
 
 - **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**真实断言通过数**：`draft_angle` **1/49（`b3`，★ 本轮域内首个真实通过）** · `feat_featrevol` **1/45（`a5`）** · `fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · 其余 0（`feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrf` 0/5 · `blend_simple` 0/11 · `blend_complex` 0/2 · `offset_shape_type_a` 0/1 · `offset_shape_type_i` 0/12 · `offset_faces_type_i` 0/8 · `thrusection_specific` 0/26）。
 - **★ 工作模式（用户指令，追加 18 起生效）**：**先完成代码的等价实现（近乎 1:1 的翻译），代码基本译完再开始调试/修测试**。⇒ 队列里**先取"翻译/接线"项**，取"调试/定界"项前先确认没有未译的 body 挡在前面。
-- **本轮已落地（9 批，见 §0.7）**：geomplate 的 ProjLib 三处接线 · 池外 `BRep_Tool::Curve` · `GeomLib::BuildCurve3d` 家族 · 池外读取续链 · blend 侧两处字面翻译 · `BRepTools_Modifier` 家族（翻译 + **feat/offset 两域接线**）· `Geom_Surface::UIso/VIso` 唯一真身。
+- **本轮已落地（12 批，见 §0.7）**：geomplate 的 ProjLib 三处接线 · 池外 `BRep_Tool::Curve` · `GeomLib::BuildCurve3d` 家族 · 池外读取续链 · blend 侧两处字面翻译 · `BRepTools_Modifier` 家族（翻译 + feat/offset 两域接线）· `Geom_Surface::UIso/VIso` 唯一真身 · **TKBool/TKBO 复用三批**（brep_fill 布尔 API 接线 / `BRepAlgo_Loop` 归位 / `BRepOffset_SimpleOffset` 1:1 + MakerVolume 接线）。
 - **★ 域网格实测失败地图（下一轮的对照基线；口径 = 逐例 file:line）**：
   - `offset_shape_type_i`：a1/a2 → `brep_offset_inter2d.rs:1060`（`EdgeInter: E2 carries no pcurve`，OCCT 同处也 raise ⇒ **状态**）；**a3/a4/d2/d3 → 已离开库内，落到测试断言（310/422/534/646）** —— 批次 2 + 补记 1 的直接收益，**该网格池外 panic 已清零**；e1/e2/e3/e4/e6/e7 → 测试断言（758/870/948/1060/1171/1283）。
   - `offset_shape_type_a`：a4 → `brep_algo/image.rs:159`（本轮由 `brep_offset_make_offset_c.rs:52` 推到这里）。
@@ -48,15 +48,17 @@
     ⇒ **报地图要连跑 ≥3 次、报集合与分裂比例**；**归因必须换树复测**；并**新立卡**：核对 offset/几何管线的容器选用与遍历序（这是**潜在的行为差异**，不只是报数问题）。
 - **三域下一步（详见 §4.6）**：**TKOffset** = ① 池外读取**续链**（`check_same_range` / `gcurve_range` / `brep_tool_curve_on_surface_index` / `brep_tool_range_on_surface` / `brep_tool_degenerated` / `brep_tool_tolerance` 收敛到受守卫的 edge-data 读取；**写回侧池外无池可变，需另法，勿硬凑**）→ ② `BRepTools_Quilt`/`FaceRestrictor` **产物入池**（根；入池后整条池读链一次解开，且拓扑计数随之正确；**牵涉拓扑计数 ⇒ 全套复测**）；**TKFillet** = 接力项 A 的"无界 pcurve 附着点"（a1 面积 −2e100 的门，本轮未触及）+ blend a2/p8/p9 的新墙（状态类）；**TKFeat** = `LocOpe_Generator::Perform` 的 `IsDone`（a1 粘合路径下一墙）。
 
-### 0.7 追加 19–21 本轮落地（**翻译/接线轮**，2026-09-13；九批，rcad 提交链见 §3）
+### 0.7 追加 19–22 本轮落地（**翻译/接线轮**，2026-09-13；十二批，rcad 提交链见 §3）
 
-> **★ 追加 21 收尾态 = 当前状态**（并行**接线**轮）：批次 C `BRepTools_Modifier` 的 **feat 域消费者接线**（`ffed3791`）、批次 D **offset 域消费者接线**（`a374a286`）。
-> **★ 本域第一个真实断言通过**：`draft_angle` **49/49 → 50 passed / 48 failed**（`draft_angle_b3` 离开失败地图并**通过**），库内 panic **28 → 27**；
-> `feat_featlf` **a3 深入一层**（GAP → `brep_sweep/tool_rehost.rs:1144`）。
-> （追加 20 收尾态：批次 A `BRepTools_Modifier` 家族落地 `a1490588`（消费者当时未接线）、批次 B `Geom_Surface::UIso/VIso` 唯一真身 `745a63aa`；并把"哈希序"**量化为报告假象**。）
+> **★ 追加 22 收尾态 = 当前状态**（**TKBool/TKBO 复用轮**，用户指令："遇到 TKBool 功能模块用 TKBO 的功能实现"）：
+> 批次 E `brep_fill` 布尔 API → 真 TKBO 体（`f3556fea`，**并删掉一个遮蔽真身的 `BRepToolsHistory` 重复**）· 批次 F `feat` 的本地 `BRepAlgoLoop` → 真 `brep_algo/loop.rs`（`507ca574`，**其"未移植"注释是过期的**）· 批次 G `BRepOffset_SimpleOffset` 1:1 译完 + `BOPAlgo_MakerVolume` → 真身（`b8711d80`）。
+> **本轮为"潜伏缺口清除轮"：无通过数变化**（这些载体在测量网格上不可达），价值在**把三处 TKBool/TKBO 重复/桩收敛到真身**；并产出**四条证据化的新立卡**（见 §4.6 第 1-5 项，其中 `BRep_Tool::Tolerance` 的**六份重复 + 五份缺下限**与 `bop/**` 的 **OCCT 公共 facade 补齐**最重要）。
 
 | 批次 | 提交 | 内容 | 实测 |
 |------|------|------|------|
+| **G（追加 22）** | `b8711d80` | **offset**：`BRepOffset_SimpleOffset` 1:1（`BRepOffset_SimpleOffset.cxx` L1-427，六个 override 的 GAP panic 清零）+ `BOPAlgo_MakerVolume` 桩 → `bop/algo/maker_volume.rs` | 域网格不变；⚠ **该 mapper 无测试覆盖**（唯一调用者无调用者）⇒ 形式对齐、运行时未验证；`MakerVolume` 无 `Modified(S)` ⇒ `UpdateHistory` no-op（已立卡） |
+| **F（追加 22）** | `507ca574` | **feat**：`feat/loc_ope_generator_b.rs` 的本地 `BRepAlgoLoop`（头注"NOT YET PORTED"）→ 真身 `brep_algo/loop.rs` | feat 四网格失败层**完全不动**（无案例走到该路径）⇒ 属潜伏 `unimplemented!()` 清除 |
+| **E（追加 22）** | `f3556fea` | **brep_fill**：删三个布尔桩 + 两个偏译枚举 + **一个遮蔽真身的 `BRepToolsHistory` 重复**；七处调用点接真 TKBO 体（arch diff #7/#8/#9 已记档） | 八网格 8/8 零回归 |
 | **D（追加 21）** | `a374a286` | **offset 域接线**：删两个本地 `BRepToolsModifier` 载体（draft_angle / make_simple_offset），改用真身；新增 `impl BRepToolsModification for DraftModification`（六个 override **委托**既有 inherent 方法 ⇒ 一个引擎） | **`draft_angle` 49/49 → 50/48（`b3` 通过）**；库内 panic **28 → 27**；其余域网格不变 |
 | **C（追加 21）** | `ffed3791` | **feat 域接线**：删 `loc_ope_prism.rs` 的本地载体 + 本地 `BRepToolsTrsfModification`，四个 `int_perf` 改用真身；`brep_fill_evolved_c.rs` 改用 OCCT **两参构造** `BRepTools_Modifier(S,M)` | `feat_featlf` **a3 深入一层**；featprism/featrevol/featrf 不变 |
 | **A（追加 20）** | `a1490588` | **`BRepTools_Modifier` + `BRepTools_Modification` 1:1 翻译**（新 `topalgo/brep_tools_modification.rs` + `brep_tools_modifier.rs`，共 ~2,170 行；**不接线消费者**） | 无在役消费者 ⇒ 无可观测变化属预期 |
@@ -264,9 +266,20 @@ done
 ```
 （`PASS = 恒过的 geometry_loads 占位数`；**FAIL 才是真实断言失败数**。）
 
-## 3. 提交链与落地内容（**九轮**：追加 13…19 / 20 / **追加 21 = 本轮**）
+## 3. 提交链与落地内容（**十轮**：追加 13…20 / 21 / **追加 22 = 本轮**）
 
-**追加 21（本轮，2026-09-13；rcad `main` 顶尖 `a374a286`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
+**追加 22（本轮，2026-09-13；rcad `main` 顶尖 `b8711d80`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
+— rcad `main`（自上而下 = 新到旧）：
+`b8711d80`（**核心 G**：offset —— `BRepOffset_SimpleOffset` 1:1（cxx L1-427，六个 override 的 GAP panic 清零）+ `BOPAlgo_MakerVolume` 桩 → 真 TKBO 体）
+← `507ca574`（**核心 F**：feat —— 本地 `BRepAlgoLoop`（头注"NOT YET PORTED"**已过期**）→ 真身 `brep_algo/loop.rs`）
+← `f3556fea`（**核心 E**：brep_fill —— 三个布尔桩 + 两个偏译枚举 + **一个遮蔽真身的 `BRepToolsHistory` 重复**全部删除，七处调用点接真 TKBO 体；arch diff #7/#8/#9 记档）
+← `517eab4a`（= 追加 21 链尾）。
+根 `main`：本轮 pointer sync（`rcad` 指针 → `b8711d80`）← `6dd53db` ← `24ec0c3`。
+**本轮验证（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（**重编 exe 后**）；
+**域网格与追加 21 基线逐例对拍：九个网格逐字节相同**（含 `draft_angle` 仍 50/48、`b3` 未回归），唯一差异是已知不稳定的 `offset_shape_type_a` a4；探针 = 0。
+**本轮性质**：**潜伏缺口清除轮**（无通过数变化——这些载体在测量网格上不可达），产出**五条证据化的新立卡**（§4.6 第 1-5 项）。
+
+**追加 21（上一轮，2026-09-13；rcad `main` 顶尖 `517eab4a`，根 `main` 顶尖 `6dd53db`，均已推送）**
 — rcad `main`（自上而下 = 新到旧）：
 `a374a286`（**核心 D**：offset 域接线 —— 删两个本地 `BRepToolsModifier` 载体 + `impl BRepToolsModification for DraftModification`；**`draft_angle_b3` 通过**，库内 panic 28 → 27）
 ← `ffed3791`（**核心 C**：feat 域接线 —— 删 `loc_ope_prism.rs` 本地载体 + 本地 `BRepToolsTrsfModification`，四个 `int_perf` 与 `brep_fill_evolved_c.rs` 改用真身；`feat_featlf` a3 深入一层）

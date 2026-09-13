@@ -1359,6 +1359,38 @@ libs/rcad-algo/src/
   3. `Geom_Surface::UIso/VIso` 的 `Bezier` / `Offset` / `LinearExtrusion` 三臂（追加 20 遗留）+ `geom_convert_curve_to_bspline` 两份收敛。
   4. 既有队列不变：TKOffset 第 2 项（入池，根）· TKFeat 第 0 项（`LocOpe_Generator::Perform` 的 `IsDone`）· TKFillet 接力项 A（无界 pcurve）· `chfi3d_builder_2b.rs:583`（a3/a4/q4/q7 汇合墙，上游状态类）。
 
+### E3-W 追加 22（2026-09-13：**TKBool/TKBO 复用轮**（用户指令："遇到 TKBool 功能模块用 TKBO 的功能实现"）—— 三域并行：brep_fill 的布尔 API 接线 / feat 的 `BRepAlgo_Loop` 归位 / offset 的 `BRepOffset_SimpleOffset` 1:1）
+
+- **组织方式**：主代理做关键路径 + 三个**文件域不相交**的子代理并行（`brep_fill/**` / `feat/**` / `offset/**`），各自 `CARGO_TARGET_DIR`、只 check/门槛/跑该域网格、不提交、不改 docs。
+- **批次 1（rcad `f3556fea`，brep_fill）：`BRepFill_Draft` 的布尔 API 接到**已对齐的 TKBO 真身****。
+  删除 `BOPAlgoPaveFiller` / `BRepAlgoAPISection` / `BOPAlgoBuilder` 三个**unit-struct 桩**（每个方法都是 GAP panic）+ 两个**局部偏译枚举** `BOPAlgoOperation`/`BOPAlgoGlue`（换用真 `BooleanOpType`/`GlueEnum`）+ **一个**局部 `BRepToolsHistory`**（其 `clear`/`merge`/`modified` **遮蔽**了真 `bop::history::BRepToolsHistory`，会产生 E0255/E0592 —— 属**危险重复**，已删）。
+  七处调用点改接真身（保持 `BRepFill_Draft.cxx` 行锚）：**L588-597** → `bop::algo::pave_filler::PaveFiller`；**L599-600** → `bop::brep_algo_api::SectionOp`（经 `run_build_section_brep`）；**L691-694 / L710 / L757 / L779** → `bop::algo::builder::Builder`（经文件尾三个 driver，其中 `builder_build_bop_states` 按 `BOPAlgo_Builder.hxx` **L214-249** 的 OCCT 自带状态表映射）；**L749-757** 粘合器 → `PaveFiller` + `Builder`(`GlueShift`)；六处 history → `bop::history::BRepToolsHistory`。
+  **⚠ 三处偏差已按 house style 记档为架构差异 #7/#8/#9（均因真 `bop` 类尚未暴露 OCCT 公共 facade）**：#7 `SectionOp` 无**带 filler 的构造**（OCCT `BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller&)` 会置 `myIsIntersectionNeeded=false`）⇒ 以"同两参重跑求交 + 显式传 OCCT 从 filler 默认继承的 section attribute"顶替；#8 rcad `Builder` 在构造时绑定 filler 的 DS 且 `build()` 一趟跑完 Builder 趟 + BuildShape ⇒ 每个 OCCT `BuildBOP` 映射为一个"同 DS 的新 Builder"（OCCT `BOPAlgo_Builder` 自身不带 operation，新 builder 的 UNKNOWN operation 即其代表）；#9 `BRepTools_History::Merge(aLO, aBuilder)`（cxx **L746**）**无 rcad 对应体**（OCCT 形式是 `BRepTools_History(theArguments, theAlgo)` 模板构造，hxx **L104-140**）⇒ **该语句不执行**，已在调用点注明。
+- **批次 2（rcad `507ca574`，feat）：`BRepAlgo_Loop` 的"未移植"注释是**过期**的**。
+  `feat/loc_ope_generator_b.rs` 的本地 `BRepAlgoLoop`（头注写"NOT YET PORTED (architecture difference #6)"、`perform`/`wires_to_faces` 是 `unimplemented!()`）**真身早已在 `brep_algo/loop.rs`** ⇒ 删本地副本（Rule 4），`LocOpeGenerator::Perform`（`LocOpe_Generator.cxx` **L1074-1079**：Init/AddConstEdges/Perform/WiresToFaces/NewFaces）改指真身，语句序不变。
+  **唯一适配点（无 shim）**：`new_faces()` 返 `&[Shape]`（OCCT 返 `const NCollection_List<TopoDS_Shape>&`），后续两个 `myModShapes.Bind` 按值存 ⇒ 本地取 `.to_vec()`。
+  **发现未修（报告）**：`feat/loc_ope_pipe.rs` 的 `BRepFillPipe` 桩 vs 真身 `brep_fill/brep_fill_pipe.rs` —— **API 不对齐**（载体 2 参 `new(spine, profile)` 返 `Option<Shape>`；真身 5 参 OCCT 形式返 `Shape`），且 `offset/brep_offset_api_make_pipe.rs` 正导入该载体 ⇒ **跨域**改动，归其属主。
+- **批次 3（rcad `b8711d80`，offset）：`BRepOffset_SimpleOffset` 1:1 译完 + `BOPAlgo_MakerVolume` 接到真身**。
+  ① `BRepOffset_SimpleOffset`（`BRepOffset_SimpleOffset.cxx` **L1-427**、hxx **L44-190**）六个 `BRepToolsModification` override 的 GAP panic **全部清零**：`NewSurface` L51-72 / `NewCurve` L76-93 / `NewPoint` L97-110 / `NewCurve2d` L114-132 / `NewParameter` L136-151 / `Continuity` L155-164，加四个 data filler（L168-202 / L206-233 / L237-314 / L318-427）与三个记录类（hxx L147-167）。OCCT 的怪癖照搬（`FillEdgeData` 偏差环里 `aF/aL` 出参复用含 `BRep_Tool::Curve` 之后的死存储、`tol*1.001`）。**依赖全部落在既有真身**（`BRepOffset::Surface`/`CollapseSingularities`、`ShapeBuild_Edge::MakeEdge`、`BRepLib::BuildCurves3d(E,Tol)`、`BRepLib_ValidateEdge`）。
+  ⚠ **诚实记档**：该 mapper **当前无任何测试覆盖**（唯一调用者 `BRepOffsetAPI_MakeOffsetShape::perform_by_simple` 无调用者，用到它的 OCCT DRAW 用例不在生成语料里）⇒ **形式对齐但运行时未验证**。
+  ② `BOPAlgo_MakerVolume` unit-struct 桩删除，`build_shells_complete_inter` 的三个 `aMV1/2/3` 改用 `bop::algo::maker_volume::MakerVolume`（OCCT 锚 L5071-5086 / L5159-5171 / L5214-5225）；两处调用点适配（`set_arguments` 收 `Vec`、`shape()` 返 `Option<&Shape>`）。
+  **报告的真缺口（`bop/**` 侧）**：`MakerVolume` **无 `Modified(S)`** —— OCCT 在 `MakerVolume.cxx` **L131-149** 填了 `myImages`，但它们活在 `perform_internal1` 的局部 `Builder` 里且被丢弃 ⇒ `update_history` 只能经既有 `BuilderRef` 载体取 OCCT 空表 ⇒ **MakerVolume 结果的 `UpdateHistory` 是 no-op**。**与 #8 同根**（都要 `bop/**` 暴露 images/history 读面）。
+- **验收（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，重编 exe 后）；
+  **域网格与追加 21 基线逐例对拍**：`offset_shape_type_i` / `offset_faces_type_i` / `blend_simple` / `blend_complex` / `draft_angle` / `feat_featlf` / `feat_featprism` / `feat_featrf` / `thrusection_specific` **逐字节相同**（`draft_angle` 仍 **50/48**，`b3` 未回归），唯一差异是**已知不稳定**的 `offset_shape_type_a` a4 在其两点间翻转（坑 33）；探针 = 0。
+  ⇒ **本轮为"潜伏缺口清除轮"**：无通过数变化（这些载体在测量网格上本就不可达），价值在**把三处 TKBool/TKBO 重复/桩收敛到真身 + 把一处过期注释证伪**。
+- **⇒ 下一批队列（本轮新增的高优先项，全部已证据化）**：
+  1. **★ 给 `bop/**` 补 OCCT 公共 facade，以消灭架构差异 #7/#8/#9 与 MakerVolume 的 no-op**：
+     (a) `BOPAlgo_Builder::{PerformWithFiller, BuildBOP, Clear}` + **history 读面**（`IsDeleted/Modified/Generated`，"取 key 集合"式）——**一次解掉 #8 与 MakerVolume 两处**；
+     (b) `BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller&)` 带 filler 构造（置 `myIsIntersectionNeeded=false`）——解 #7；
+     (c) `BRepTools_History(theArguments, theAlgo)` 构造（或等价的 key 集合过滤）——解 #9。⚠ **动 `bop/**` ⇒ 必须跑八网格 + 全域网格复测**。
+  2. **★ `BRep_Tool::Tolerance` 的**六份重复 re-host** 与**缺失的下限**（本轮实测证据）**：OCCT 对 **Vertex/Edge/Face 三者都做 `Precision::Confusion` 下限**（`BRep_Tool.cxx` **L1316-1327 / L881-893 / L139-148**）；rcad 现状 = `brep_algo/tool.rs:85` **只对 Edge 做了下限**，而 `feat/loc_ope_wires_on_shape_b.rs:73`、`feat/brep_feat_rib_slot.rs:237`、`feat/brep_feat_make_d_prism.rs:92`、`brep_fill/brep_fill_evolved.rs:432`、`brep_fill/offset_wire_b.rs:299` **五份都没有下限**。
+     处理：**先合成一份含三臂下限的真身**（放 `brep_algo/tool.rs`，逐臂标 OCCT 锚），再把其余五份改为委托/删除。⚠ **`brep_tool_tolerance(` 全库有 **398 处调用点**、且多份被跨文件 import**（如 `offset/*` 从 `feat/loc_ope_wires_on_shape_b.rs` 导入）⇒ 属**中型重构**，需单独一批 + 全套复测；本轮只取证未动。
+     现实影响：**多数潜伏**（rcad 构造边/面时多写 `CONFUSION`，此时下限是 no-op），但存储容差小于 1e-7 的形状会与 OCCT 分叉。
+  3. **`feat/loc_ope_pipe.rs::BRepFillPipe`** → 真身 `brep_fill/brep_fill_pipe.rs`（跨 `feat`/`offset` 两域，API 不对齐，需按 OCCT `BRepFill_Pipe` 形式统一签名）。
+  4. **`BRepExtremaDistShapeShape` 载体**（`brep_fill/brep_fill_draft.rs`，真身在 `topalgo/brep_extrema/dist_shape_shape.rs`）与 `BRepExtremaExtCF` ×2（`feat/brep_feat_make_linear_form.rs:153`、`brep_feat_make_revolution_form.rs:190`）、`GeomIntIntSS` 重复（`feat/loc_ope_split_drafts_b.rs:595`）—— 同族收敛。
+  5. **`brep_tool_curve_on_surface` 缺 `BRep_Tool::CurveOnPlane` 投影回退**（`feat/loc_ope_wires_on_shape_b.rs:120-128` vs OCCT `BRep_Tool.cxx` **L327-373**）⇒ 平面面上的边会走 null/退化路径而 OCCT 会投影。
+  6. 既有队列不变：TKOffset 第 2 项（入池，根）· TKFeat 第 0 项（`LocOpe_Generator::Perform` 的 `IsDone`）· TKFillet 接力项 A（无界 pcurve）· `chfi3d_builder_2b.rs:583`（a3/a4/q4/q7 汇合墙）· `builder_set_degenerated` 的 `Arc::make_mut` fork 风险。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
