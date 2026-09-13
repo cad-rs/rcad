@@ -24,8 +24,8 @@ use rcad_kernel::base::proj_lib::adaptor::{Curve2dHandle, CurveOnSurface, Surfac
 use rcad_kernel::base::proj_lib::{CurveType, Geom2dCurveAdaptor, GeomSurfaceAdaptor};
 use rcad_kernel::geom::{Curve2d, Curve3, Plane, Surface3};
 use rcad_kernel::topo::topods::{
-    curve_pool_free, shape_is_in_pool, surface_same, BRep, BRepTool, CurveRepresentation,
-    GeomAbsShape, ShapeType, TShape,
+    curve_pool_free, edge_data_pool_free, shape_is_in_pool, surface_same, BRep, BRepTool,
+    CurveRepresentation, GeomAbsShape, ShapeType, TEdgeData, TShape,
 };
 use rcad_kernel::topo_shape::Shape;
 
@@ -50,7 +50,7 @@ impl BRepLib {
         let mut current_last: f64 = 0.0;
         // OCCT L153-154: the iterator over the edge curve representations
         // (the rcad representations list in insertion order).
-        let a_ed = the_brep.edge(an_edge.clone());
+        let a_ed = edge_data(the_brep, an_edge);
         for a_cr in a_ed.representations.iter() {
             // OCCT L160: while (IsSameRange && an_Iterator.More()).
             if !is_same_range {
@@ -112,13 +112,13 @@ impl BRepLib {
             first_time_in = false;
         }
         // OCCT L205: while (an_Iterator.More()).
-        let a_len = the_brep.edge(an_edge.clone()).representations.len();
+        let a_len = edge_data(the_brep, an_edge).representations.len();
         let mut an_iterator = 0usize;
         while an_iterator < a_len {
             // OCCT L207-208: down_cast<BRep_GCurve>(an_Iterator.Value())
             // with the null check — the BRep_CurveOn2Surfaces regularity is
             // skipped.
-            let a_cr = the_brep.edge(an_edge.clone()).representations[an_iterator].clone();
+            let a_cr = edge_data(the_brep, an_edge).representations[an_iterator].clone();
             if gcurve_is_geometric(&a_cr) {
                 // OCCT L210: has_closed_curve = has_curve = false.
                 has_closed_curve = false;
@@ -599,6 +599,20 @@ fn brep_tool_curve(the_brep: &BRep, the_e: &Shape) -> Option<(Curve3, u32, f64, 
     Some((a_c, the_e.location, a_range[0], a_range[1]))
 }
 
+/// The guarded edge-data read (architecture difference, the rcad pool model):
+/// `BRep::edge` (the `BRep::tshapes` walk) for an in-pool edge, the pool-free
+/// `edge_data_pool_free` (topods.rs) for the offset-engine edges that live
+/// outside `the_brep`'s pool.  OCCT has a single representation and no pool,
+/// so the split has no OCCT counterpart; the OCCT null-dereference of an
+/// unresolvable edge is the `expect`.
+fn edge_data<'a>(the_brep: &'a BRep, the_e: &'a Shape) -> &'a TEdgeData {
+    if shape_is_in_pool(the_brep, the_e) {
+        the_brep.edge(the_e.clone())
+    } else {
+        edge_data_pool_free(the_e).expect("BRep_Tool: edge without a TEdgeData")
+    }
+}
+
 /// The out-parameter group of the indexed OCCT
 /// BRep_Tool::CurveOnSurface(E, C, S, L, f, l, Index).
 struct CurveOnSurfaceData {
@@ -638,7 +652,7 @@ fn brep_tool_curve_on_surface_index(
     // OCCT L484: int i = 0.
     let mut a_i: i32 = 0;
     // OCCT L486-488: the representation list walk.
-    let a_ed = the_brep.edge(the_e.clone());
+    let a_ed = edge_data(the_brep, the_e);
     for a_cr in a_ed.representations.iter() {
         if gcurve_is_curve_on_surface(a_cr) {
             // OCCT L492: ++i.
@@ -686,7 +700,7 @@ fn brep_tool_curve_on_surface_index(
 /// representation except for the seam pair stored inside one
 /// closed-surface representation, so the surface value identifies it.
 fn brep_tool_range_on_surface(the_brep: &BRep, the_e: &Shape, the_s: &Surface3) -> (u32, f64, f64) {
-    let a_ed = the_brep.edge(the_e.clone());
+    let a_ed = edge_data(the_brep, the_e);
     for a_cr in a_ed.representations.iter() {
         if gcurve_is_curve_on_surface(a_cr) {
             if let Some(a_rep_surf) = gcurve_surface(the_brep, a_cr) {
@@ -707,7 +721,7 @@ fn brep_tool_range_on_surface(the_brep: &BRep, the_e: &Shape, the_s: &Surface3) 
 /// range of the first geometric representation (the non-null 3d curve, or
 /// the first curve on surface); zeros when the edge carries none.
 fn brep_tool_range_3d(the_brep: &BRep, the_e: &Shape) -> (f64, f64) {
-    let a_ed = the_brep.edge(the_e.clone());
+    let a_ed = edge_data(the_brep, the_e);
     for a_cr in a_ed.representations.iter() {
         match a_cr {
             // OCCT L940-949: IsCurve3D with a non-null curve — the rcad
@@ -732,13 +746,13 @@ fn brep_tool_range_3d(the_brep: &BRep, the_e: &Shape) -> (f64, f64) {
 
 /// OCCT BRep_Tool::Degenerated(E) — the degenerated flag of the edge.
 fn brep_tool_degenerated(the_brep: &BRep, the_e: &Shape) -> bool {
-    the_brep.edge(the_e.clone()).degenerated
+    edge_data(the_brep, the_e).degenerated
 }
 
 /// OCCT BRep_Tool::Tolerance(E) (BRep_Tool.cxx L886-898) — the edge
 /// tolerance clamped at Precision::Confusion.
 fn brep_tool_tolerance(the_brep: &BRep, the_e: &Shape) -> f64 {
-    let a_p = the_brep.edge(the_e.clone()).tolerance;
+    let a_p = edge_data(the_brep, the_e).tolerance;
     if a_p > rcad_kernel::precision::CONFUSION {
         a_p
     } else {
@@ -781,7 +795,7 @@ fn gcurve_is_geometric(a_cr: &CurveRepresentation) -> bool {
 fn gcurve_range(the_brep: &BRep, the_e: &Shape, a_cr: &CurveRepresentation) -> Option<(f64, f64)> {
     match a_cr {
         CurveRepresentation::Curve3D { .. } => {
-            let a_ed = the_brep.edge(the_e.clone());
+            let a_ed = edge_data(the_brep, the_e);
             Some((a_ed.range[0], a_ed.range[1]))
         }
         CurveRepresentation::CurveOnSurface { range, .. } => Some((range[0], range[1])),

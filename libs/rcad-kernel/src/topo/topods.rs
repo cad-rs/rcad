@@ -4056,6 +4056,24 @@ pub fn curve_pool_free(the_e: &Shape) -> Option<(Curve3, f64, f64)> {
     Some((a_c, ed.range[0], ed.range[1]))
 }
 
+/// rcad pool-free edge TShape read (architecture difference, the same rcad
+/// pool model as `curve_pool_free`): resolves the `TEdgeData` from the edge's
+/// own TShape instead of `BRep::tshapes[the_e.index]`, so the OCCT
+/// `BRep_Tool`-level reads (the BRep_CurveRepresentation walks behind
+/// `BRep_Tool::Curve` / `BRep_Tool::Range` / `BRep_Tool::Degenerated` /
+/// `BRep_Tool::Tolerance`, BRep_Tool.cxx) also resolve for an edge that lives
+/// outside the caller's pool (the offset-engine EncodeRegularity path).
+///
+/// OCCT has a single representation (a pointer-carrying `TopoDS_TShape`) and
+/// no pool, so this guard has no OCCT counterpart; it is the rcad bridge for
+/// the `shape_is_in_pool` split used by the callers.
+pub fn edge_data_pool_free(the_e: &Shape) -> Option<&TEdgeData> {
+    match the_e.data.as_ref() {
+        TShape::Edge(ed) => Some(ed),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ShapeType helpers
 // ---------------------------------------------------------------------------
