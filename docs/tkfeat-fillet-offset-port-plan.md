@@ -1470,6 +1470,25 @@ libs/rcad-algo/src/
   4. `hbuilder.rs` 的 pcurve 键 `L.Predivided(E.Location())` 口径（上条报告 ②；对有位置的边是潜伏差异）。
   5. 既有队列不变：`rcad-kernel` 的 `precision` 族下限、过期锚点批量勘误（5 处）、`builder.rs`/`pave_filler.rs` 拆分、TKOffset 入池（根）、TKFeat `LocOpe_Generator::Perform` 的 `IsDone`、`builder_set_degenerated` 的 fork 风险、`BRepFill_Pipe` 收敛、`BRepExtrema*`/`GeomIntIntSS` 重复、`brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退。
 
+### E3-W 追加 26（2026-09-13：**pcurve 区间写入的全量清点**（a1 的通用教训落地）—— fillet 域修一处、另报 10 处跨域缺陷；kernel `precision.rs` 的容差下限口径补齐）
+
+- **批次 A（rcad `9851ef6d`）：`UpdateCurves` 两步规则的**全站点清点** + fillet 域修复**。
+  **先确证 OCCT 形式**：`BRep_Builder::UpdateEdge(E, C2D, F, Tol)` **确实存在**（`BRep_Builder.hxx` **L152-155** + `.lxx` **L92-98**，**不收 f/l 参数**，尽管前一轮曾有怀疑），其链路到 **`UpdateCurves`（`BRep_Builder.cxx` L104-167）**：**二维曲线自身区间播种**（**L151-153**）+ **有限 3D 区间覆盖**（**L116-129** 取 `GC->Range`、**L154-162** `if (!Precision::IsInfinite(f)) aFCur = f;`）。
+  **修复**：`fillet/hbuilder_face/classify.rs::bb_update_edge_pcurve` 原样存调用方给的 `f2/l2`（而那只是 `WireEdgeClassifier` 的 `par` 探针值，`WireEdgeClassifier.cxx` L449-451/L490-492）⇒ 改为按规则播种+覆盖，并**删掉两个死参数**（OCCT 重载本就没有），三处调用点改传曲线；旧注释引的 `BRep_Builder.cxx L1133-1173` 实为 `BRep_Builder::Range`（**另一函数**）。
+  **行为中性已实证**：**临时回退该编辑重编重跑**，四个网格（`blend_simple` 12/10、`blend_complex` 2/2、`fillet2d_fillet2d` 10/10、`fillet2d_chamfer2d` 2/2）**与不改完全相同** —— 预期结果：有有限 3D 区间时两步规则就归结为该 3D 区间，而调用方给的本就是它。
+  **fillet 域全站点判定**：`hbuilder.rs:471` 与 `hbuilder_face.rs:1029` **已对齐**（此前两次修复）；本处**已修**；`hbuilder_face/split_edge.rs:1392` **形式仍缺**（漏 `myBuilder.Range(E2,f,l)` —— `Merge.cxx` L541 → `BRep_Builder.cxx` L1102-1126 会把**每个**表示的区间都设为源边的 3D 区间），**未改**：另一半要求副本自身 `TEdgeData::range` 等于源区间，而 rcad 的该字段是**片段的序向裁剪跨度**（可为 `[0.8, 0.0]`）属内核级约定、超出本批文件域；探针证明该处 pcurve 半边本就与 OCCT 一致；`fillet.rs:1500-1509` 是自创的 legacy `make_fillet_edge`（无 OCCT 对应），`chfi3d_ds.rs:307` 是 `TopOpeBRepDS_Curve::SetRange`（DS 级、非 BRep 表示写入）——**均不属本规则**。
+  **★ 报告未改的跨域缺陷（10 处，同一缺陷类）**：`brep_fill/brep_fill_sweep_b.rs:234/:259`（区间取二维自身 bounds ⇒ `Line2d` 即 ±2e100，**无有限覆盖** = hbuilder.rs 同类）；`brep_algo/tool.rs:664`（只有 3D 覆盖，**无有限性守卫、无二维播种**）；`bop/ds/mod.rs:1097/:1133`（调用方给区间）；`bop/algo/pave_filler.rs:3110` 与 `pave_filler_make_blocks.rs:691/:709`；`brep_fill/brep_fill_filling.rs:1145/:1168`（standalone-surface 键下写字面 `(0,1)`）；`brep_fill/brep_fill_evolved_d.rs:179`（未与 OCCT 核对）。
+- **批次 B（rcad `f9e71d7e`）：kernel `precision.rs` 的容差下限口径**。`vtol/etol/ftol` 原本**有下限但比的是 `p > 0.0`**（存了 `(0,1e-7]` 会原样返回）⇒ 改为 `p > CONFUSION`，逐臂标 OCCT 锚（`BRep_Tool.cxx` L1314-1333 / L881-894 / L137-150）。
+  **先识别再改**：读 OCCT 体 + 看消费者（`algo_ext/tolerance.rs` 以 `kernel_{vertex,edge,face}_tolerance` 再导出、用法正是 `Tol(v/e/f)`）确认它们**确属** Tolerance 家族 —— 这也是**必须重跑八网格**的原因（布尔自适应容差链消费它们）；实测**八网格未动**。
+  **核对后不改**：`model_tolerance` 是 OCCT `BRep_Tool::MaxTolerance`（L1792-1820，**另一函数**；其累加器初值 `CONFUSION` vs OCCT `0.0` 对非空形状**同值**）；`finalize_tolerance_hierarchy` 与 `set_/update_` 系列是写者、无 OCCT 对应；`step_export_uncertainty` 是 STEP 写出值。
+- **验收（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**；
+  **十个域网格与追加 25 基线逐字节相同**（`blend_simple` 仍 **12/10**、`a1` 保持通过）；探针 = 0。
+- **⇒ 下一批队列**：
+  1. **★ 上表 10 处同族缺陷的修复**（按域切片：`brep_fill/**` 3 处 + `brep_algo/tool.rs:664` + `bop/**` 3 处 + `brep_fill/brep_fill_evolved_d.rs`）—— 其中 **`brep_fill_sweep_b.rs` 两处是与 hbuilder.rs 完全同型的缺陷**（很可能同样在影响某例面积），**优先**。
+  2. `fillet/hbuilder_face/split_edge.rs:1392` 的另一半（需内核级 `TEdgeData::range` 序向裁剪跨度约定的对齐；⚠ 动内核 ⇒ 八网格 + 全域复测）。
+  3. `hbuilder.rs` 的 pcurve 键用 `L.Predivided(E.Location())`（追加 25 报告 ②；对有位置的边是潜伏差异）。
+  4. 既有队列不变：blend 剩余十例（`chfi3d_builder_2b.rs:583` ×4 汇合墙 / `proj_lib_h_comp_projected_curve.rs:449` ×3 / 其余断言）· `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点批量勘误 · `builder.rs`/`pave_filler.rs` 拆分 · TKOffset 入池（根）· TKFeat `LocOpe_Generator::Perform` 的 `IsDone` · `builder_set_degenerated` 的 fork 风险。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
