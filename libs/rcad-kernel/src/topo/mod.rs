@@ -1,6 +1,8 @@
 pub mod topology;
 pub mod topo_shape;
 pub mod topods;
+// OCCT BRep_Tool::Tolerance canonical body (TKBRep/BRep/BRep_Tool.cxx).
+pub mod brep_tool;
 pub mod topo_query;
 pub mod topo_simplify;
 pub mod brep_graph;

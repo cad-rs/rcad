@@ -22,6 +22,7 @@ use std::sync::Arc;
 use crate::math::bnd::BndBox2d;
 use crate::math::gp::Trsf;
 use crate::math::GeomAbsShape;
+use crate::topo::brep_tool::brep_tool_tolerance;
 use crate::topo::topods::{BRep, BRepTool as _, Orientation, Shape, TShape};
 
 use super::adaptor::{
@@ -60,15 +61,10 @@ pub fn location_transformation(brep: &BRep, s: &Shape) -> Trsf {
     t
 }
 
-/// OCCT `BRep_Tool::Tolerance(S)` — the TShape tolerance read.
-pub fn brep_tool_tolerance(s: &Shape) -> f64 {
-    match s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
-    }
-}
+// OCCT `BRep_Tool::Tolerance(S)` now has a single kernel-local definition,
+// [`crate::topo::brep_tool::brep_tool_tolerance`] (re-exported from the
+// BRep_Tool home `crate::topo::topods`); the duplicate that used to live here
+// was deleted.
 
 // =========================================================================
 // OCCT BRepTools::UVBounds (BRepTools.cxx L64-158 + the per-edge body
@@ -400,9 +396,11 @@ impl BRepAdaptorSurface {
         &self.my_face
     }
 
-    /// OCCT Tolerance() (cxx L177-180): BRep_Tool::Tolerance(myFace).
+    /// OCCT BRepAdaptor_Surface::Tolerance (cxx L92-95):
+    /// `return BRep_Tool::Tolerance(myFace);` — i.e. the plain BRep_Tool
+    /// floor, delegated to the kernel canonical reader.
     pub fn tolerance(&self) -> f64 {
-        brep_tool_tolerance(&self.my_face)
+        brep_tool_tolerance(self.my_face.data.as_ref())
     }
 }
 
@@ -535,9 +533,11 @@ impl BRepAdaptorCurve {
         &self.my_edge
     }
 
-    /// OCCT Tolerance() (cxx L246-249): BRep_Tool::Tolerance(myEdge).
+    /// OCCT BRepAdaptor_Curve::Tolerance (cxx L146-149):
+    /// `return BRep_Tool::Tolerance(myEdge);` — i.e. the plain BRep_Tool
+    /// floor, delegated to the kernel canonical reader.
     pub fn tolerance(&self) -> f64 {
-        brep_tool_tolerance(&self.my_edge)
+        brep_tool_tolerance(self.my_edge.data.as_ref())
     }
 
     /// OCCT Trim(First, Last, Tol) (cxx L253-276): the copy-and-restore

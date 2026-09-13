@@ -2228,6 +2228,11 @@ pub fn nb_faces(&self) -> usize {
 // BRepTool trait �?OCCT BRep_Tool free-function equivalents
 // ---------------------------------------------------------------------------
 
+/// OCCT `BRep_Tool::Tolerance` — the canonical body lives in
+/// [`crate::topo::brep_tool`] and is re-exported here so the BRep_Tool family
+/// stays addressable from the module that hosts the trait.
+pub use crate::topo::brep_tool::brep_tool_tolerance;
+
 /// OCCT BRep_Tool equivalent: parameter/tolerance/pcurve queries on a BRep.
 ///
 /// In OCCT these are free functions (`BRep_Tool::Parameter(aV, aE, aF)` etc.).
@@ -2349,7 +2354,7 @@ impl BRepTool for BRep {
     }
 
     fn vertex_tolerance(&self, v: &Shape) -> f64 {
-        self.vertex(v.clone()).tolerance
+        brep_tool_tolerance(&self.tshapes[v.index])
     }
 
     fn is_edge_degenerated(&self, e: &Shape) -> bool {
@@ -2599,12 +2604,7 @@ impl BRepTool for BRep {
     }
 
     fn tolerance(&self, s: &Shape) -> f64 {
-        match &*self.tshapes[s.index] {
-            TShape::Vertex(vd) => vd.tolerance,
-            TShape::Edge(ed) => ed.tolerance,
-            TShape::Face(fd) => fd.tolerance,
-            _ => 0.0,
-        }
+        brep_tool_tolerance(&self.tshapes[s.index])
     }
 
     fn shape_type(&self, s: &Shape) -> ShapeType {
