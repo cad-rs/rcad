@@ -1419,6 +1419,35 @@ libs/rcad-algo/src/
   4. `brep_check_result.rs:578` 的过期锚点勘误。
   5. 既有队列不变：TKOffset 第 2 项（入池，根）· TKFeat 第 0 项（`LocOpe_Generator::Perform` 的 `IsDone`）· TKFillet 接力项 A（无界 pcurve）· `chfi3d_builder_2b.rs:583`（四例汇合墙）· `builder_set_degenerated` 的 `Arc::make_mut` fork 风险 · `feat/loc_ope_pipe.rs::BRepFillPipe` · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退。
 
+### E3-W 追加 24（2026-09-13：**把"用 TKBO 的功能实现"做到底** —— 架构差异 #8/#9 消灭（`BRepFill_Draft::Fuse` 现为字面 OCCT 语句序）；`BRep_Tool::Tolerance` 的重复由 ~30 份收敛到 **3 份**，并**修掉一处潜伏的 face/vertex 混用**）
+
+- **组织方式**：主代理做关键路径 + 三个**文件域不相交**的子代理并行（#8/#9 = `bop/**`+`brep_fill/**`；容差切片 A = `feat/**`+`fillet/**`+`hlr/**`；切片 B = `shhealing/**`+`topalgo/**`+`rcad-kernel/**`）。
+- **批次 A（rcad `7d725b00`）：架构差异 #8/#9 消灭**。
+  **#8 的真障碍是 glue**：`Builder::perform_with_filler` 会**从 filler 复制** `my_glue`，而 rcad 的 filler 只能表达 `GlueFull`/`GlueOff` ⇒ cxx L749-753 的 `aGluer.SetGlue(BOPAlgo_GlueShift)` 无忠实形态。解法的三处要点：
+  ① **OCCT 的枚举版 `SetGlue` 不在 `BOPAlgo_Options`**（该类根本没有 Glue），而在 `BOPAlgo_PaveFiller`（hxx **L152-153**、cxx **L107-110**）与 `BOPAlgo_Builder`（hxx **L122-126**）⇒ 按真实声明位置补；
+  ② 旧的 `set_glue(enable: bool, tolerance: f64)` **对应不到任何 OCCT 重载**（它把 `SetGlue` 与 `SetFuzzyValue` 混在了一起）且**零调用者** ⇒ 按 Rule 4 删除；
+  ③ 粘合器的 filler 现在**在 perform 之前** `set_glue(GlueShift)`，glue 因此真正到达求交；`MakerVolume` 的 `pPF->SetGlue(myGlue)` 亦改为字面 `p_pf.set_glue(self.my_glue)`。
+  随后删掉四个本地 driver（`builder_from_filler`/`builder_build_bop`/`builder_build_bop_states`/`builder_shape`）：**Builder 趟现在只跑一次**（`add_argument` → `perform_with_filler` → `has_errors`），每个 `BuildBOP` 经 facade 的 `build_bop`/`build_bop_states` **复用同一遍的 images** —— 此前每个 `BuildBOP` 都新造 Builder、把同一条管线**重跑并重新分割 DS**，所以这是**行为纠正**而非仅形式变化。
+  **#9** 现在**真的执行**且**不再静默为空**：rcad 的 DS 深拷贝参数 ⇒ 先用新 helper `ds_argument_list` 经 `ds.argument_remap → map_shape_index → shape(idx)` 翻译（与既有 `builder_modified`、`Builder::set_tools` 同一手法），使 `from_algorithm` 走的就是 OCCT 走的那张图，Builder 的（DS 键）history 读面因此对得上。
+  ⚠ **诚实记档**：`BRepFill_Draft::Fuse` **当前从测试不可达**（`brep_fill_pipe::BRepFillSweep`/`BRepFillDraftLaw` 是 panic 的 GAP 载体，`brep_offset_api_make_draft` 另有载体）⇒ **本轮两处消灭均无网格暴露**，属形式对齐。
+- **批次 B（rcad `a2116505`）：feat/fillet/hlr 八份容差 re-host 收敛 + **修掉一处潜伏缺陷****。
+  八份全部并入唯一样本 `brep_algo/tool.rs::brep_tool_tolerance`（三臂带 `Precision::Confusion` 下限），其中三处 import 藏在**分组 `use` 的折行**上、只靠编译器才找得到。
+  **★ 真实缺陷**：`feat/loc_ope_pipe.rs` 的本地 reader **只有 Vertex 臂**，而调用点（`LocOpe_Pipe.cxx` **L237**：`B.MakeFace(NewFace, P, BRep_Tool::Tolerance(FaceRef))`）传的是 **Face** ⇒ **静默返回 0.0**（OCCT 用该值当新面的容差）。收敛后补上 Face 臂与下限，缺陷消除。
+  另：删 `hlr/topo_brep/face_iso_liner.rs` 的 re-host 时带走一个**过期锚点**（它把 `Tolerance(S)` 记作 `BRep_Tool.cxx L212-239`，而那在 OCCT 里是 `Curve(E,First,Last)` + `IsGeometric`）。
+- **批次 C（rcad `cbba7f55`）：shhealing/topalgo 再收敛 13 份**（27 文件，+68/−171）：`shape_analysis/*` 六份、`shape_fix/{split_common_vertex, wire/mod}`、`topalgo/brep_lib_find_surface.rs`、`topalgo/brep_lib/build_curves3d.rs`，以及 `topalgo/brep_check/brep_check_result.rs` 的**三个 per-kind helper**（`_edge`/`_vertex`/`_face`）合并到一份三臂体上（15 处调用点、6 个文件重指，含 `super::brep_check_result::` 全限定路径）。两份带 `&BRep` 首参的改重指调用点而非加壳（其中 `build_curves3d.rs` 的体读 `edge_data(brep,e).tolerance`，即形状自身 TShape 的同一 `TEdgeData`）。
+  **repo 级结果：`brep_tool_tolerance` 定义由约 30 份降到 3 份**（唯一样本 + `brep_fill/offset_wire_b.rs` 的带注释 2 参壳 + `rcad-kernel` 一份）。
+  **报告不改（会反转 crate 分层）**：`rcad-kernel` 有两份无下限的读者**不能**委托 algo 侧——`base/proj_lib/brep_adaptor.rs` 的（`BRepAdaptor_Surface/Curve::Tolerance`，`BRepAdaptor_Surface.cxx` L177-180 / `BRepAdaptor_Curve.cxx` L246-249）与 `topo/topods.rs` 的 `BRepTool::tolerance`。**需内核侧决策**（内核本地唯一样本，或把下限并入 `BRepTool::tolerance`）⇒ 已立卡。
+  锚点：`brep_check_result.rs` 的过期锚随函数删除一起消失（`BRep_Tool.cxx L896-910` 是 `SameParameter` 区段）；修正 `topalgo/brep_lib/build_curves3d.rs` 两处**确证有误**的区间（`BRep_Tool::Curve` 的 `L410-452`（实为 `CurveOnPlane`）→ **L172-196**；带索引 `CurveOnSurface` 的 `L476-534` → **L488-538**）；**另发现未改**（需按移动过的修订号重新推导）：该文件带索引 pcurve 的**逐步行注释**，以及 `topalgo/brep_tools_modifier.rs` 的 `SameParameter`/`SameRange`/`NaturalRestriction`、`topalgo/brep_tools_modification.rs` 的 `Surface`/`Curve`。
+- **验收（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，重编 exe 后）；
+  **十个域网格逐例失败地图与追加 23 基线逐字节相同**（`draft_angle` 仍 50/48、`b3` 未回归），唯一差异是**已知不稳定**的 `offset_shape_type_a` a4 在其两点间翻转；探针 = 0。本轮 42 文件、**+247/−411（净 −164 行）**。
+- **⇒ 下一批队列（前三条为本轮新增且已证据化）**：
+  1. **★ `rcad-kernel` 的两份无下限容差读者**（`base/proj_lib/brep_adaptor.rs`、`topo/topods.rs::BRepTool::tolerance`）：**内核侧**决策（内核本地唯一样本 or 并入 `BRepTool::tolerance` 加下限）——**不要在 kernel 里 import algo**。
+  2. **★ 过期锚点批量勘误**：`topalgo/brep_lib/build_curves3d.rs` 的带索引 pcurve 逐步行注释；`topalgo/brep_tools_modifier.rs` 三处；`topalgo/brep_tools_modification.rs` 两处。**纯注释修正、零行为风险**，适合与别的批次搭车。
+  3. **`bop/algo/builder.rs`（8026 行）与 `bop/algo/pave_filler.rs`（6256 行）的拆分**（<2000 行规范；按 OCCT 的 `BOPAlgo_Builder` / `BOPAlgo_BuilderShape` / `BOPAlgo_Tools` / `BOPAlgo_PaveFiller` 划界拆子模块，父文件只留 re-export）。⚠ 动核心 ⇒ 八网格 + 全域复测。
+  4. **`BRepFill_Draft::Fuse` 仍然从测试不可达** ⇒ 想让本轮 #8/#9 的消灭获得网格暴露，需先补 `BRepFill_Pipe`/`BRepFill_DraftLaw`/`BRepOffsetAPI_MakeDraft` 的载体（见第 5 条）。
+  5. `feat/loc_ope_pipe.rs::BRepFillPipe` → 真身 `brep_fill/brep_fill_pipe.rs`（跨 `feat`/`brep_fill`/`offset` 三域，API 不对齐：载体 2 参返 `Option<Shape>`、真身 5 参返 `Shape`）。
+  6. 既有队列不变：TKOffset 第 2 项（入池，根）· TKFeat 第 0 项（`LocOpe_Generator::Perform` 的 `IsDone`）· TKFillet 接力项 A（无界 pcurve）· `chfi3d_builder_2b.rs:583`（四例汇合墙）· `builder_set_degenerated` 的 `Arc::make_mut` fork 风险 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 

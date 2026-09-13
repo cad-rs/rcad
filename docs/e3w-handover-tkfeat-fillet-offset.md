@@ -10,10 +10,10 @@
 > 另有两条"旧笔记会过期"（坑 29/30）：**架构难点要回查 OCCT 基类**、**`GetType()` 常量返回决定分支**。
 > （前三轮：**追加 18** = 翻译补全轮；**追加 17** = D3 结案 + `featrf_a1` init 首次通过；**追加 16** = 0a 收尾 / a1 拓扑全等 / TKOffset 定界。）
 
-## 0. 新 session 一句话提示词（直接粘贴 —— 追加 23 收尾态，2026-09-13）
+## 0. 新 session 一句话提示词（直接粘贴 —— 追加 24 收尾态，2026-09-13）
 
 > 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 坑清单）
-> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–23（权威脉络，**追加 23 是当前状态**）；
+> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–24（权威脉络，**追加 24 是当前状态**）；
 > 先 `cd rcad` 跑 6 条门槛确认 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests`（**重编 exe，否则八网格会拿旧产物误判**）
 > 后 `bash output/run_eight_grids.sh` 确认**八网格 8/8**；
@@ -27,7 +27,7 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0 当前状态速览（追加 23 收尾，2026-09-13；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `90375e64`）/ 根仓库指针 = 本文件所在提交，**均已推送**）
+### 0.0 当前状态速览（追加 24 收尾，2026-09-13；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `7d725b00`）/ 根仓库指针 = 本文件所在提交，**均已推送**）
 
 - **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**真实断言通过数**：`draft_angle` **1/49（`b3`，★ 本轮域内首个真实通过）** · `feat_featrevol` **1/45（`a5`）** · `fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · 其余 0（`feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrf` 0/5 · `blend_simple` 0/11 · `blend_complex` 0/2 · `offset_shape_type_a` 0/1 · `offset_shape_type_i` 0/12 · `offset_faces_type_i` 0/8 · `thrusection_specific` 0/26）。
 - **★ 工作模式（用户指令，追加 18 起生效）**：**先完成代码的等价实现（近乎 1:1 的翻译），代码基本译完再开始调试/修测试**。⇒ 队列里**先取"翻译/接线"项**，取"调试/定界"项前先确认没有未译的 body 挡在前面。
@@ -48,7 +48,7 @@
     ⇒ **报地图要连跑 ≥3 次、报集合与分裂比例**；**归因必须换树复测**；并**新立卡**：核对 offset/几何管线的容器选用与遍历序（这是**潜在的行为差异**，不只是报数问题）。
 - **三域下一步（详见 §4.6）**：**TKOffset** = ① 池外读取**续链**（`check_same_range` / `gcurve_range` / `brep_tool_curve_on_surface_index` / `brep_tool_range_on_surface` / `brep_tool_degenerated` / `brep_tool_tolerance` 收敛到受守卫的 edge-data 读取；**写回侧池外无池可变，需另法，勿硬凑**）→ ② `BRepTools_Quilt`/`FaceRestrictor` **产物入池**（根；入池后整条池读链一次解开，且拓扑计数随之正确；**牵涉拓扑计数 ⇒ 全套复测**）；**TKFillet** = 接力项 A 的"无界 pcurve 附着点"（a1 面积 −2e100 的门，本轮未触及）+ blend a2/p8/p9 的新墙（状态类）；**TKFeat** = `LocOpe_Generator::Perform` 的 `IsDone`（a1 粘合路径下一墙）。
 
-### 0.7 追加 19–23 本轮落地（**翻译/接线轮**，2026-09-13；十五批，rcad 提交链见 §3）
+### 0.7 追加 19–24 本轮落地（**翻译/接线轮**，2026-09-13；十八批，rcad 提交链见 §3）
 
 > **★ 追加 23 收尾态 = 当前状态**（**给真 TKBO 体补 OCCT 公共 facade** 轮）：
 > 批次 H `bop/**` **补 OCCT 公共 facade**（`82383294`：`BOPAlgo_Builder::{add_argument, perform_with_filler, perform_internal1, build_bop, build_bop_states, clear}` + **history 读面** + `BRepAlgoAPI_BuilderAlgo` 带 filler 形态 + `BRepTools_History::from_algorithm/merge_algorithm` + **MakerVolume 的 images 不再被丢弃**）·
@@ -59,6 +59,9 @@
 
 | 批次 | 提交 | 内容 | 实测 |
 |------|------|------|------|
+| **M（追加 24）** | `7d725b00` | **`bop/**`+`brep_fill`**：架构差异 **#8/#9 消灭** —— 枚举版 `SetGlue` 补在 `BOPalgo_PaveFiller`/`BOPalgo_Builder`（**不在** `BOPalgo_Options`），旧的 bool `set_glue`（无 OCCT 重载、零调用者）删除；**Builder 趟改为只跑一次**（BuildBOP 复用 images，此前每个都重跑并重分割 DS = 行为纠正）；#9 经 `ds.argument_remap` 后**真的执行且不再静默为空** | 六门槛 + 八网格基线；⚠ **`BRepFill_Draft::Fuse` 从测试不可达** ⇒ 两处消灭**无网格暴露** |
+| **L（追加 24）** | `a2116505` | **容差切片 A**：feat/fillet/hlr **八份** re-host 收敛并入唯一样本；**并修掉一处潜伏缺陷** —— `feat/loc_ope_pipe.rs` 的 reader **只有 Vertex 臂**却接 **Face**（`LocOpe_Pipe.cxx` L237）⇒ **静默返回 0.0** | 四域网格 3×3 一致 |
+| **K（追加 24）** | `cbba7f55` | **容差切片 B**：shhealing/topalgo **13 份**收敛（27 文件，+68/−171），含 `brep_check_result.rs` 三个 per-kind helper 合并 ⇒ **repo 级 `brep_tool_tolerance` 定义由 ~30 份降到 3 份** | 六门槛 + 八网格基线 |
 | **J（追加 23）** | `90375e64` | **brep_fill**：`BRepAlgoAPI_Section(Sol1, Sol2, aPF)` 改用 `SectionOp::from_shapes_with_filler` + `build_with_filler` ⇒ **架构差异 #7 消灭** | 十域地图**逐字节相同**（零回退） |
 | **I（追加 23）** | `8ad5f981` | **容差**：`brep_algo/tool.rs::brep_tool_tolerance` 成为**三臂带 `Precision::Confusion` 下限**的唯一样本，删 5 份重复并改 import 行 | 六门槛 + 八网格基线；★ **尚存 24 份重复**（队列第 2 项） |
 | **H（追加 23）** | `82383294` | **`bop/**` 补 OCCT 公共 facade**：Builder 的 `add_argument`/`perform_with_filler`/`perform_internal1`/`build_bop`/`build_bop_states`/`clear` + `BOPAlgo_BuilderShape` 的 history 读面 + `BRepAlgoAPI_BuilderAlgo` 带 filler 形态 + `BRepTools_History` 模板构造（trait 承载）+ MakerVolume 持有并暴露 images | 八网格 8/8 零回归；新路径用**一次性集成测试**端到端验过（用后已删） |
@@ -272,9 +275,20 @@ done
 ```
 （`PASS = 恒过的 geometry_loads 占位数`；**FAIL 才是真实断言失败数**。）
 
-## 3. 提交链与落地内容（**十一轮**：追加 13…21 / 22 / **追加 23 = 本轮**）
+## 3. 提交链与落地内容（**十二轮**：追加 13…22 / 23 / **追加 24 = 本轮**）
 
-**追加 23（本轮，2026-09-13；rcad `main` 顶尖 `90375e64`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
+**追加 24（本轮，2026-09-13；rcad `main` 顶尖 `7d725b00`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
+— rcad `main`（自上而下 = 新到旧）：
+`7d725b00`（**核心 M**：架构差异 **#8/#9 消灭** —— 枚举版 `SetGlue` 补在 `BOPAlgo_PaveFiller`(hxx L152-153/cxx L107-110)/`BOPAlgo_Builder`(hxx L122-126)，旧 bool `set_glue`（无 OCCT 重载、零调用者）删除；**Builder 趟只跑一次**（BuildBOP 复用 images，此前每个都重跑并重分割 DS）；#9 经 `ds.argument_remap` 后真的执行）
+← `cbba7f55`（**核心 K**：shhealing/topalgo **13 份**容差 re-host 收敛，27 文件 +68/−171；repo 级定义 **~30 → 3 份**）
+← `a2116505`（**核心 L**：feat/fillet/hlr **八份**收敛 + **修掉 `loc_ope_pipe.rs` 的 face/vertex 混用**（静默返回 0.0））
+← `8a60b90b`（= 追加 23 链尾）。
+根 `main`：本轮 pointer sync（`rcad` 指针 → `7d725b00`）← `21197ed` ← `410bfca`。
+**本轮验证（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（**重编 exe 后**）；
+**十个域网格逐例失败地图与追加 23 基线逐字节相同**（唯一差异是已知不稳定的 `offset_shape_type_a` a4）；探针 = 0；42 文件、**+247/−411（净 −164 行）**。
+**本轮新立卡 3 条**（§4.6 第 1-3 项）：`rcad-kernel` 两份无下限容差读者的**内核侧决策** · **过期锚点批量勘误**（5 处，纯注释）· `builder.rs` 8026 行与 `pave_filler.rs` 6256 行的**拆分**。
+
+**追加 23（上一轮，2026-09-13；rcad `main` 顶尖 `8a60b90b`，根 `main` 顶尖 `21197ed`，均已推送）**
 — rcad `main`（自上而下 = 新到旧）：
 `90375e64`（**核心 J**：brep_fill —— 新 facade 的第一个消费者，`BRepAlgoAPI_Section(Sol1,Sol2,aPF)` 改用 `SectionOp::from_shapes_with_filler` + `build_with_filler` ⇒ **架构差异 #7 消灭**）
 ← `8ad5f981`（**核心 I**：`BRep_Tool::Tolerance` 收敛为**三臂带下限的唯一样本**，删 5 份重复；★ 另发现尚存 **24 份**）
