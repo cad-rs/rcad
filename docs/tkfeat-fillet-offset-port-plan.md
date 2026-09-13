@@ -1448,6 +1448,28 @@ libs/rcad-algo/src/
   5. `feat/loc_ope_pipe.rs::BRepFillPipe` → 真身 `brep_fill/brep_fill_pipe.rs`（跨 `feat`/`brep_fill`/`offset` 三域，API 不对齐：载体 2 参返 `Option<Shape>`、真身 5 参返 `Shape`）。
   6. 既有队列不变：TKOffset 第 2 项（入池，根）· TKFeat 第 0 项（`LocOpe_Generator::Perform` 的 `IsDone`）· TKFillet 接力项 A（无界 pcurve）· `chfi3d_builder_2b.rs:583`（四例汇合墙）· `builder_set_degenerated` 的 `Arc::make_mut` fork 风险 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退。
 
+### E3-W 追加 25（2026-09-13：**`blend_simple_a1` 通过** —— TKFillet 接力项 A（无界 pcurve）结案，本域**第一个测试断言的修复**；kernel 侧容差真身补齐）
+
+- **批次 A（rcad `f8e9728d`）：`blend_simple_a1` 从 −2e100 到 59527.876，**测试通过****。
+  该例的**拓扑早就与 OCCT 全等**，失败在几何：面积算成 **−2e100**（无界）。**生产者定位于** `fillet/hbuilder.rs::build_faces` 的 pcurve 写入尾（对应 `BuildFaces.cxx` **L86** `myBuildTool.PCurve(aFace, anEdge, CDS, PC)` → `TopOpeBRepDS_BuildTool::PCurve` → `SetThePCurve` → `BRep_Builder::UpdateEdge` → **`BRep_Builder::UpdateCurves`（`BRep_Builder.cxx` L104-167）**）。
+  **OCCT 的 `UpdateCurves` 是两步区间规则**：pcurve 表示先由**二维曲线自身区间**播种（**L153-156**：`new BRep_CurveOnSurface(C,S,L)` → `PC->FirstParameter()/LastParameter()`），随后**只要边的 Curve3D 表示区间有限就被它覆盖**（**L120-124** 取 `GC->Range(f,l)`、**L157-165** `if (!Precision::IsInfinite(f)) aFCur = f;`）。**rcad 只实现了前半**，于是 `Line2d` 的自然域（`±Precision::Infinite()` = `±2e100`）被原样存入。
+  **探针证据（修复前，写入点）**：`edge c3d=true 3drange=[0.0, 100.0] -> [-2e100, 2e100]` —— **有限的 3D 区间就在手边而没有被应用**，正是 OCCT 的覆盖分支。该 pcurve 落在结果的 **CYL 圆角面**（其自身两条直边界线）上；`BRepGProp_Gauss` 随即用 `[-2e100, 2e100]` 域、`face_uv_bounds` 返回该二维盒。
+  **修复 = 在本处复现 `UpdateCurves` 的区间规则**；且这与**同族的另一个消费点已经落地的规则完全相同**（`fillet/hbuilder_face.rs:1019-1029`，提交 `0263c85d`）—— **`hbuilder.rs` 是被漏掉的第二处**。无 clamp、无阈值、无 case 特判。
+  **实测**：逐面 `RCAD_SA_DEBUG` 的 CYL 面 **−2e100 → 1570.796327**（= 50π，四分之一圆柱 r=10 h=100）；总面积 **59527.875959** vs OCCT `checkprops` **59527.9**（精确 59527.876）；测试（含其前的拓扑断言）**通过**；`step-topo-diff` 对参考 STEP 为 **"topology fully matches"**；`blend_simple` **11/11 → 12 passed / 10 failed**，**失败地图 diff 恰好一行**（a1 消失）、其余十例不变；`blend_complex` 与两个 `fillet2d` 网格不变。
+  **报告未改（同族但属**另一个 OCCT 函数**、且不在 a1 路径上）**：① `fillet/hbuilder_face/classify.rs:1329` 的 `bb_update_edge_pcurve` 原样存调用方给的 `f2/l2`（其调用方来自 `FC2D_CurveOnSurface`，探针在 a1 上从未命中）——OCCT **没有** `UpdateEdge(E,C2D,F,Tol)` 这个重载；② `hbuilder.rs` 以 `(f.ptr_id(), f.location)` 作键，而 `BRep_Builder::UpdateEdge` 用 `L.Predivided(E.Location())` —— 对单位置边（a1 情形）等价，**对有位置的边是潜伏差异**。
+- **批次 B（rcad `0de47019`）：kernel 侧容差真身**。上一轮把 algo 侧收敛到唯一样本后，**kernel 仍有两份无下限读者**，且**不能**委托 algo 侧（会反转 crate 分层）⇒ 补 **kernel 本地唯一样本**：
+  新 `kernel/src/topo/brep_tool.rs::brep_tool_tolerance(&TShape)`（三臂带下限 + `_ => 0.0`，逐臂标 OCCT 锚）；`base/proj_lib/brep_adaptor.rs` 的那份**删除**（两处调用点改指；并**读源码确认**两者确属同一 OCCT 函数：`BRepAdaptor_Surface.cxx` **L92-95** 与 `BRepAdaptor_Curve.cxx` **L146-149** 都是字面 `return BRep_Tool::Tolerance(...)`，其旧注释锚 `L177-180`/`L246-249` **是错的**，已更正）；`topo/topods.rs::BRepTool::tolerance` 改为委托，**顺带发现并收编第三个同族成员** `BRepTool::vertex_tolerance`。
+  ⚠ **一条要记的设计点**：该样本收 `&TShape` 而非 `&Shape` —— 两个家族在 rcad 编码里**必须读不同的存储**：`BRepTool` 实现于 `BRep`、必须读**池槽** `BRep::tshapes[Shape::index]`（所有变异器改的就是它；`BRep::edge_mut` 做 `Arc::make_mut`，调用方的 `Shape::data` 可能是**过期快照**），而 `BRepAdaptor_*` 只持 `Shape` 句柄、读 `Shape::data`。**首版把池读者也改成读 `Shape::data`，立刻打破** `topo::topods::tests::test_import_shape_tree_materializes_pool_free_tree`（688/1）**，改回池槽后 689/0。**
+  **报告未改**：`core/precision.rs` 的 `vtol/etol/ftol`（L178-203，另经 `kernel_{vertex,edge,face}_tolerance` 再导出）**确有下限，但比的是 `p > 0.0` 而非 `p > CONFUSION`** ⇒ 存了 `0 < p <= 1e-7` 时会原样返回、而 OCCT 返回 `Confusion`。它是**唯一另一个近族读者**；改它**会动布尔自适应容差链**，故只立卡不并入。
+- **验收（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，重编 exe 后）；
+  **十个域网格与追加 24 基线对拍**：唯一差异 = **`blend_simple_a1` 从失败地图消失**，其余**逐字节相同**；探针 = 0（本例用过 4 个临时探针，均已删除）。
+- **⇒ 下一批队列（前两条为本轮新增）**：
+  1. **★ 同族的第二类"区间未覆盖"**：按 `UpdateCurves` 的两步规则**复审所有直接写 pcurve 区间的位置**（`hbuilder_face/classify.rs:1329` 的 `bb_update_edge_pcurve`、以及任何 `pcurves.insert(...)` 直写）——**用 OCCT 的规则**（二维播种 + 有限 3D 覆盖）逐点核对，而不是逐例打补丁。这可能同样解开 `blend_simple` 其余十例中的若干。
+  2. **★ `core/precision.rs` 的 `vtol/etol/ftol` 下限口径**（`p > 0.0` → `p > CONFUSION`）：**牵动布尔自适应容差链** ⇒ 单独一批 + 八网格/全域复测。
+  3. **`blend_simple` 剩余十例的新地图**（本轮实测）：`chfi3d_builder_2b.rs:583` ×4（a3/a4/q4/q7，OCCT `Standard_Failure` 的忠实复现 ⇒ 上游状态）、`proj_lib_h_comp_projected_curve.rs:449` ×3（a2/p8/p9 的 `D0` 域错误）、测试断言 L963（q1）、`base/convert/mod.rs:2008`（x1）、`chfi3d_builder_c1.rs:1162`（q2）。
+  4. `hbuilder.rs` 的 pcurve 键 `L.Predivided(E.Location())` 口径（上条报告 ②；对有位置的边是潜伏差异）。
+  5. 既有队列不变：`rcad-kernel` 的 `precision` 族下限、过期锚点批量勘误（5 处）、`builder.rs`/`pave_filler.rs` 拆分、TKOffset 入池（根）、TKFeat `LocOpe_Generator::Perform` 的 `IsDone`、`builder_set_degenerated` 的 fork 风险、`BRepFill_Pipe` 收敛、`BRepExtrema*`/`GeomIntIntSS` 重复、`brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 

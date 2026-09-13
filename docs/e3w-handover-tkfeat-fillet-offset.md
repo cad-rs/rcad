@@ -10,10 +10,10 @@
 > 另有两条"旧笔记会过期"（坑 29/30）：**架构难点要回查 OCCT 基类**、**`GetType()` 常量返回决定分支**。
 > （前三轮：**追加 18** = 翻译补全轮；**追加 17** = D3 结案 + `featrf_a1` init 首次通过；**追加 16** = 0a 收尾 / a1 拓扑全等 / TKOffset 定界。）
 
-## 0. 新 session 一句话提示词（直接粘贴 —— 追加 24 收尾态，2026-09-13）
+## 0. 新 session 一句话提示词（直接粘贴 —— 追加 25 收尾态，2026-09-13）
 
 > 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 坑清单）
-> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–24（权威脉络，**追加 24 是当前状态**）；
+> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–25（权威脉络，**追加 25 是当前状态**）；
 > 先 `cd rcad` 跑 6 条门槛确认 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests`（**重编 exe，否则八网格会拿旧产物误判**）
 > 后 `bash output/run_eight_grids.sh` 确认**八网格 8/8**；
@@ -27,9 +27,9 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0 当前状态速览（追加 24 收尾，2026-09-13；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `7d725b00`）/ 根仓库指针 = 本文件所在提交，**均已推送**）
+### 0.0 当前状态速览（追加 25 收尾，2026-09-13；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `0de47019`）/ 根仓库指针 = 本文件所在提交，**均已推送**）
 
-- **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**真实断言通过数**：`draft_angle` **1/49（`b3`，★ 本轮域内首个真实通过）** · `feat_featrevol` **1/45（`a5`）** · `fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · 其余 0（`feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrf` 0/5 · `blend_simple` 0/11 · `blend_complex` 0/2 · `offset_shape_type_a` 0/1 · `offset_shape_type_i` 0/12 · `offset_faces_type_i` 0/8 · `thrusection_specific` 0/26）。
+- **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**真实断言通过数**：`draft_angle` **1/49（`b3`，★ 本轮域内首个真实通过）** · `feat_featrevol` **1/45（`a5`）** · `blend_simple` **1/11（`a1`，★ 追加 25 的修复）** · `fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · 其余 0（`feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrf` 0/5 · `blend_complex` 0/2 · `offset_shape_type_a` 0/1 · `offset_shape_type_i` 0/12 · `offset_faces_type_i` 0/8 · `thrusection_specific` 0/26）。
 - **★ 工作模式（用户指令，追加 18 起生效）**：**先完成代码的等价实现（近乎 1:1 的翻译），代码基本译完再开始调试/修测试**。⇒ 队列里**先取"翻译/接线"项**，取"调试/定界"项前先确认没有未译的 body 挡在前面。
 - **本轮已落地（12 批，见 §0.7）**：geomplate 的 ProjLib 三处接线 · 池外 `BRep_Tool::Curve` · `GeomLib::BuildCurve3d` 家族 · 池外读取续链 · blend 侧两处字面翻译 · `BRepTools_Modifier` 家族（翻译 + feat/offset 两域接线）· `Geom_Surface::UIso/VIso` 唯一真身 · **TKBool/TKBO 复用三批**（brep_fill 布尔 API 接线 / `BRepAlgo_Loop` 归位 / `BRepOffset_SimpleOffset` 1:1 + MakerVolume 接线）。
 - **★ 域网格实测失败地图（下一轮的对照基线；口径 = 逐例 file:line）**：
@@ -48,9 +48,17 @@
     ⇒ **报地图要连跑 ≥3 次、报集合与分裂比例**；**归因必须换树复测**；并**新立卡**：核对 offset/几何管线的容器选用与遍历序（这是**潜在的行为差异**，不只是报数问题）。
 - **三域下一步（详见 §4.6）**：**TKOffset** = ① 池外读取**续链**（`check_same_range` / `gcurve_range` / `brep_tool_curve_on_surface_index` / `brep_tool_range_on_surface` / `brep_tool_degenerated` / `brep_tool_tolerance` 收敛到受守卫的 edge-data 读取；**写回侧池外无池可变，需另法，勿硬凑**）→ ② `BRepTools_Quilt`/`FaceRestrictor` **产物入池**（根；入池后整条池读链一次解开，且拓扑计数随之正确；**牵涉拓扑计数 ⇒ 全套复测**）；**TKFillet** = 接力项 A 的"无界 pcurve 附着点"（a1 面积 −2e100 的门，本轮未触及）+ blend a2/p8/p9 的新墙（状态类）；**TKFeat** = `LocOpe_Generator::Perform` 的 `IsDone`（a1 粘合路径下一墙）。
 
-### 0.7 追加 19–24 本轮落地（**翻译/接线轮**，2026-09-13；十八批，rcad 提交链见 §3）
+### 0.7 追加 19–25 本轮落地（**翻译/接线 + 首例测试修复**，2026-09-13；二十批，rcad 提交链见 §3）
 
-> **★ 追加 23 收尾态 = 当前状态**（**给真 TKBO 体补 OCCT 公共 facade** 轮）：
+> **★ 追加 25 收尾态 = 当前状态**（**首例测试断言修复** + kernel 容差补齐）：
+> 批次 O **`blend_simple_a1` 通过**（`f8e9728d`）—— 无界 pcurve 结案：`fillet/hbuilder.rs::build_faces` 的 pcurve 写入只做了 `BRep_Builder::UpdateCurves` 的**前半**（二维曲线区间播种），**漏了"有限 3D 区间覆盖"**（`BRep_Builder.cxx` **L157-165**）；
+> 批次 N **kernel 侧容差真身**（`0de47019`：新 `kernel/src/topo/brep_tool.rs`，删 `brep_adaptor.rs` 的无下限副本，`BRepTool::{tolerance,vertex_tolerance}` 改委托）。
+> **★ 域网格首次出现真实断言翻转**：`blend_simple` **11/11 → 12 passed / 10 failed**，**失败地图 diff 恰好一行**（a1 消失）。
+> **本轮最值钱的通用教训**：OCCT 的 `BRep_Builder::UpdateCurves` 是**两步区间规则**（二维播种 + **有限 3D 覆盖**），rcad 只落了前半；
+> 且**同族第二处**（`hbuilder_face.rs:1019-1029`）**早已修过**，`hbuilder.rs` 是被漏掉的那一处
+> ⇒ **凡"写 pcurve 区间"的位置都要按这条规则逐点核对**（已列为队列第 1 项）。
+
+> **（上一状态，追加 23）给真 TKBO 体补 OCCT 公共 facade 轮**：
 > 批次 H `bop/**` **补 OCCT 公共 facade**（`82383294`：`BOPAlgo_Builder::{add_argument, perform_with_filler, perform_internal1, build_bop, build_bop_states, clear}` + **history 读面** + `BRepAlgoAPI_BuilderAlgo` 带 filler 形态 + `BRepTools_History::from_algorithm/merge_algorithm` + **MakerVolume 的 images 不再被丢弃**）·
 > 批次 I **`BRep_Tool::Tolerance` 收敛出带下限的唯一真身**（`8ad5f981`，删 5 份重复；★ **另发现尚存 24 份重复**）·
 > 批次 J **brep_fill 的 #7 偏差消灭**（`90375e64`，新 facade 的第一个消费者）。
@@ -62,6 +70,8 @@
 | **M（追加 24）** | `7d725b00` | **`bop/**`+`brep_fill`**：架构差异 **#8/#9 消灭** —— 枚举版 `SetGlue` 补在 `BOPalgo_PaveFiller`/`BOPalgo_Builder`（**不在** `BOPalgo_Options`），旧的 bool `set_glue`（无 OCCT 重载、零调用者）删除；**Builder 趟改为只跑一次**（BuildBOP 复用 images，此前每个都重跑并重分割 DS = 行为纠正）；#9 经 `ds.argument_remap` 后**真的执行且不再静默为空** | 六门槛 + 八网格基线；⚠ **`BRepFill_Draft::Fuse` 从测试不可达** ⇒ 两处消灭**无网格暴露** |
 | **L（追加 24）** | `a2116505` | **容差切片 A**：feat/fillet/hlr **八份** re-host 收敛并入唯一样本；**并修掉一处潜伏缺陷** —— `feat/loc_ope_pipe.rs` 的 reader **只有 Vertex 臂**却接 **Face**（`LocOpe_Pipe.cxx` L237）⇒ **静默返回 0.0** | 四域网格 3×3 一致 |
 | **K（追加 24）** | `cbba7f55` | **容差切片 B**：shhealing/topalgo **13 份**收敛（27 文件，+68/−171），含 `brep_check_result.rs` 三个 per-kind helper 合并 ⇒ **repo 级 `brep_tool_tolerance` 定义由 ~30 份降到 3 份** | 六门槛 + 八网格基线 |
+| **O（追加 25）** | `f8e9728d` | **fillet**：**`blend_simple_a1` 通过** —— `hbuilder.rs::build_faces` 的 pcurve 写入补上 `BRep_Builder::UpdateCurves` 的**第二步**（有限 3D 区间覆盖，`BRep_Builder.cxx` L157-165）；同族第二处（`hbuilder_face.rs:1019-1029`）此前已修，`hbuilder.rs` 是被漏掉的那处 | **`blend_simple` 11/11 → 12 passed / 10 failed**；面积 **59527.876** vs OCCT 59527.9；`step-topo-diff` fully matches；**失败地图 diff 恰好一行** |
+| **N（追加 25）** | `0de47019` | **kernel**：新 `kernel/src/topo/brep_tool.rs::brep_tool_tolerance(&TShape)`（三臂带 `Confusion` 下限），删 `brep_adaptor.rs` 的无下限副本，`BRepTool::{tolerance, vertex_tolerance}` 改委托；校正两处错锚（`BRepAdaptor_*::Tolerance` 实在 L92-95/L146-149） | 六门槛 + 八网格基线；⚠ **设计点**：池读者必须读**池槽**（首版改读 `Shape::data` 当场打破 kernel 单测 688/1，改回即 689/0） |
 | **J（追加 23）** | `90375e64` | **brep_fill**：`BRepAlgoAPI_Section(Sol1, Sol2, aPF)` 改用 `SectionOp::from_shapes_with_filler` + `build_with_filler` ⇒ **架构差异 #7 消灭** | 十域地图**逐字节相同**（零回退） |
 | **I（追加 23）** | `8ad5f981` | **容差**：`brep_algo/tool.rs::brep_tool_tolerance` 成为**三臂带 `Precision::Confusion` 下限**的唯一样本，删 5 份重复并改 import 行 | 六门槛 + 八网格基线；★ **尚存 24 份重复**（队列第 2 项） |
 | **H（追加 23）** | `82383294` | **`bop/**` 补 OCCT 公共 facade**：Builder 的 `add_argument`/`perform_with_filler`/`perform_internal1`/`build_bop`/`build_bop_states`/`clear` + `BOPAlgo_BuilderShape` 的 history 读面 + `BRepAlgoAPI_BuilderAlgo` 带 filler 形态 + `BRepTools_History` 模板构造（trait 承载）+ MakerVolume 持有并暴露 images | 八网格 8/8 零回归；新路径用**一次性集成测试**端到端验过（用后已删） |
@@ -244,7 +254,7 @@ off-chain 的 Draft（depouille）e4/e5。
 | fillet2d_chamfer2d | **2/2** | 全绿 |
 | mkface_after_offset | **4/4** | 全绿 |
 | mkface_after_extsurf_and_offset | **32/32** | 全绿 |
-| blend_simple | **0/11** | 全败（a1/a3/q1 早期待过的三例现亦败，与 E3-U 记档一致，非本轮回归） |
+| blend_simple | **1/11** | **追加 25 起 `a1` 通过**（无界 pcurve 修复，面积 59527.876 vs OCCT 59527.9）⇒ 该域**首次出现真实断言翻转**；其余十例见 §1 的逐例地图 |
 | blend_complex | **0/2** | 全败 |
 | feat_featlf | **0/15** | 全败；`is_done` 门**11/15 已越过**（追加 14），**kernel panic 清零**，剩余全部为下游墙（§4.1） |
 | feat_featprism / featrf | **0/6** / **0/5** | 全败 |
@@ -275,9 +285,19 @@ done
 ```
 （`PASS = 恒过的 geometry_loads 占位数`；**FAIL 才是真实断言失败数**。）
 
-## 3. 提交链与落地内容（**十二轮**：追加 13…22 / 23 / **追加 24 = 本轮**）
+## 3. 提交链与落地内容（**十三轮**：追加 13…23 / 24 / **追加 25 = 本轮**）
 
-**追加 24（本轮，2026-09-13；rcad `main` 顶尖 `7d725b00`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
+**追加 25（本轮，2026-09-13；rcad `main` 顶尖 `0de47019`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
+— rcad `main`（自上而下 = 新到旧）：
+`0de47019`（**核心 N**：kernel 侧容差真身 `kernel/src/topo/brep_tool.rs`，删 `brep_adaptor.rs` 的无下限副本，`BRepTool::{tolerance,vertex_tolerance}` 改委托）
+← `f8e9728d`（**核心 O**：**`blend_simple_a1` 通过** —— `hbuilder.rs::build_faces` 补上 `BRep_Builder::UpdateCurves` 的**有限 3D 区间覆盖**步；面积 **59527.876** vs OCCT 59527.9）
+← `fb8449c8`（= 追加 24 链尾）。
+根 `main`：本轮 pointer sync（`rcad` 指针 → `0de47019`）← `6054bfb`。
+**本轮验证（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（**重编 exe 后**）；
+**十个域网格与追加 24 基线对拍，唯一差异 = `blend_simple_a1` 从失败地图消失**（`blend_simple` 11/11 → **12/10**），其余逐字节相同；探针 = 0。
+**★ 本轮是"先译后调"路线在 TKFillet 域的第一次完整兑现**：形式对齐（补上 OCCT 的第二步区间规则）+ 同族第二处的既有先例 ⇒ 测试断言自然达标，且**无需任何数值调参**。
+
+**追加 24（上一轮，2026-09-13；rcad `main` 顶尖 `fb8449c8`，根 `main` 顶尖 `6054bfb`，均已推送）**
 — rcad `main`（自上而下 = 新到旧）：
 `7d725b00`（**核心 M**：架构差异 **#8/#9 消灭** —— 枚举版 `SetGlue` 补在 `BOPAlgo_PaveFiller`(hxx L152-153/cxx L107-110)/`BOPAlgo_Builder`(hxx L122-126)，旧 bool `set_glue`（无 OCCT 重载、零调用者）删除；**Builder 趟只跑一次**（BuildBOP 复用 images，此前每个都重跑并重分割 DS）；#9 经 `ds.argument_remap` 后真的执行）
 ← `cbba7f55`（**核心 K**：shhealing/topalgo **13 份**容差 re-host 收敛，27 文件 +68/−171；repo 级定义 **~30 → 3 份**）
