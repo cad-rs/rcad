@@ -53,9 +53,9 @@ use crate::shhealing::shape_fix::split_tool::{
     brep_loc_transform, brep_tool_curve_loc, brep_tool_range, brep_tool_surface,
     brep_tool_surface_loc, brep_tools_update_edge,
 };
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_fix::wire::{
-    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter, brep_tool_tolerance,
-    shape_oriented,
+    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter, shape_oriented,
 };
 
 /// OCCT `NCollection_DataMap<TopoDS_Shape, Bnd_Box2d, TopTools_ShapeMapHasher>`

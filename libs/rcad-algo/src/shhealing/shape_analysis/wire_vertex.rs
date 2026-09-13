@@ -27,6 +27,7 @@ use rcad_kernel::topods::{BRep, TShape};
 
 use super::curve::ShapeAnalysisCurve;
 use super::edge::ShapeAnalysisEdge;
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_extend::wire_data::WireData;
 
 /// OCCT BRep_Tool::Pnt(V).
@@ -34,14 +35,6 @@ fn brep_tool_pnt(v: &Shape) -> DVec3 {
     match v.data.as_ref() {
         TShape::Vertex(vd) => vd.point,
         _ => DVec3::ZERO,
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(V).
-fn brep_tool_tolerance(v: &Shape) -> f64 {
-    match v.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        _ => 0.0,
     }
 }
 

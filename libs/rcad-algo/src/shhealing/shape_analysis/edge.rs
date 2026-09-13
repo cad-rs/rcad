@@ -46,6 +46,7 @@ use rcad_kernel::topods::{
 };
 use rcad_kernel::BRep;
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_extend::status::{decode_status, encode_status, ShapeExtendStatus};
 use crate::topalgo::brep_lib_validate_edge::{
     Adaptor3dCurveOnSurface, BRepLibValidateEdge, Geom2dAdaptorCurve, GeomAdaptorCurve,
@@ -294,16 +295,6 @@ fn brep_tool_pnt(brep: &BRep, vtx: &Shape) -> DVec3 {
     match vtx.data.as_ref() {
         TShape::Vertex(vd) => brep.get_location(vtx.location).transform_point3(vd.point),
         _ => DVec3::ZERO,
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(shape) - vertex/edge/face tolerance.
-fn brep_tool_tolerance(_brep: &BRep, the_s: &Shape) -> f64 {
-    match the_s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
     }
 }
 
@@ -923,8 +914,8 @@ impl ShapeAnalysisEdge {
             return false;
         }
 
-        let preci1 = brep_tool_tolerance(brep, &a_first_vert);
-        let preci2 = brep_tool_tolerance(brep, &a_last_vert);
+        let preci1 = brep_tool_tolerance(&a_first_vert);
+        let preci2 = brep_tool_tolerance(&a_last_vert);
 
         let p2d1 = c2d.point_at(f2d);
         let p2d2 = c2d.point_at(l2d);
@@ -1002,7 +993,7 @@ impl ShapeAnalysisEdge {
             // szv#4:S4163:12Mar99 optimized
             if p1v.distance(p13d)
                 > (if preci < 0.0 {
-                    brep_tool_tolerance(brep, &v1)
+                    brep_tool_tolerance(&v1)
                 } else {
                     preci
                 })
@@ -1017,7 +1008,7 @@ impl ShapeAnalysisEdge {
             // szv#4:S4163:12Mar99 optimized
             if p2v.distance(p23d)
                 > (if preci < 0.0 {
-                    brep_tool_tolerance(brep, &v2)
+                    brep_tool_tolerance(&v2)
                 } else {
                     preci
                 })
@@ -1088,7 +1079,7 @@ impl ShapeAnalysisEdge {
             // szv#4:S4163:12Mar99 optimized
             if p1v.distance(p12d)
                 > (if preci < 0.0 {
-                    brep_tool_tolerance(brep, &v1)
+                    brep_tool_tolerance(&v1)
                 } else {
                     preci
                 })
@@ -1107,7 +1098,7 @@ impl ShapeAnalysisEdge {
             // szv#4:S4163:12Mar99 optimized
             if p2v.distance(p22d)
                 > (if preci < 0.0 {
-                    brep_tool_tolerance(brep, &v2)
+                    brep_tool_tolerance(&v2)
                 } else {
                     preci
                 })
@@ -1142,8 +1133,8 @@ impl ShapeAnalysisEdge {
             return status;
         }
 
-        let old1 = brep_tool_tolerance(brep, &v1);
-        let old2 = brep_tool_tolerance(brep, &v2);
+        let old1 = brep_tool_tolerance(&v1);
+        let old2 = brep_tool_tolerance(&v2);
         let pnt1 = brep_tool_pnt(brep, &v1);
         let pnt2 = brep_tool_pnt(brep, &v2);
 
@@ -1228,7 +1219,7 @@ impl ShapeAnalysisEdge {
 
         //: o8 abv 19 Feb 99: CTS18541.stp #18559: coeff 1.0001 added
         // szv 18 Aug 99: edge tolerance is taken in consideration
-        let tole = brep_tool_tolerance(brep, edge);
+        let tole = brep_tool_tolerance(edge);
         *toler1 = (1.0000001 * toler1.sqrt()).max(tole);
         *toler2 = (1.0000001 * toler2.sqrt()).max(tole);
         if *toler1 > old1 {

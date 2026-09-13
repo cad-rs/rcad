@@ -47,6 +47,7 @@ use rcad_kernel::precision::CONFUSION;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, Orientation, ShapeType, TShape};
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_analysis::curve::ShapeAnalysisCurve;
 use crate::shhealing::shape_analysis::wire::ShapeAnalysisWire;
 use crate::shhealing::shape_analysis::wire_order::ShapeAnalysisWireOrder;
@@ -77,16 +78,6 @@ fn brep_tool_pnt(vtx: &Shape) -> DVec3 {
     match vtx.data.as_ref() {
         TShape::Vertex(vd) => vd.point,
         _ => DVec3::ZERO,
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(shape).
-fn brep_tool_tolerance(the_s: &Shape) -> f64 {
-    match the_s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
     }
 }
 

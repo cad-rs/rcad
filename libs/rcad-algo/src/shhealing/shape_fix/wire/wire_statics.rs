@@ -46,7 +46,8 @@ use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
 use crate::shhealing::shape_extend::wire_data::WireData;
 use crate::shhealing::shape_fix::edge::ShapeFixEdge;
 use crate::shhealing::shape_fix::wire::fix_api::brep_face_surface_loc;
-use crate::shhealing::shape_fix::wire::{brep_tool_tolerance, REAL_LAST};
+use crate::brep_algo::tool::brep_tool_tolerance;
+use crate::shhealing::shape_fix::wire::REAL_LAST;
 
 /// OCCT `Geom_Curve::Period()` (Geom_Curve.cxx) — the period is the span of
 /// the natural parameter domain of the periodic basis curve.

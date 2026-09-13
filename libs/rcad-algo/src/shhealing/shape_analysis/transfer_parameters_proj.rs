@@ -54,7 +54,7 @@ use rcad_kernel::topods::{
     PointRepresentation, TShape,
 };
 
-use crate::brep_algo::tool::empty_copied;
+use crate::brep_algo::tool::{brep_tool_tolerance, empty_copied};
 use crate::shhealing::shape_analysis::curve::ShapeAnalysisCurve;
 use crate::shhealing::shape_analysis::edge::ShapeAnalysisEdge;
 use crate::shhealing::shape_analysis::surface::ShapeAnalysisSurface;
@@ -102,16 +102,6 @@ fn brep_tool_surface_loc(fac: &Shape) -> (Option<Surface3>, u32) {
     match fac.data.as_ref() {
         TShape::Face(fd) => (fd.surface.clone(), fac.location),
         _ => (None, 0),
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(shape).
-fn brep_tool_tolerance(the_s: &Shape) -> f64 {
-    match the_s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
     }
 }
 

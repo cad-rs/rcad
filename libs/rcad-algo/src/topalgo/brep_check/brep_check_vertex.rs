@@ -13,9 +13,9 @@ use rcad_kernel::geom::CurveEval;
 use rcad_kernel::topo::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, Orientation, ShapeType, TShape};
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use super::brep_check_result::{
-    brep_check_add, brep_tool_tolerance_edge, brep_tool_tolerance_face,
-    brep_tool_tolerance_vertex, location_matrix, BRepCheckResultBase, BRepCheckStatus,
+    brep_check_add, location_matrix, BRepCheckResultBase, BRepCheckStatus,
 };
 
 /// OCCT BRepCheck_Vertex (Vertex.hxx L28-56).
@@ -193,8 +193,8 @@ impl BRepCheckVertex {
                 let vfind = vfind.unwrap_or_else(|| self.base.my_shape.clone());
                 let orv = vfind.orientation;
 
-                let mut tol = brep_tool_tolerance_vertex(brep, &self.base.my_shape);
-                tol = tol.max(brep_tool_tolerance_edge(brep, s)); // to check
+                let mut tol = brep_tool_tolerance(&self.base.my_shape);
+                tol = tol.max(brep_tool_tolerance(s)); // to check
                 tol *= tol;
 
                 // OCCT L149-242: the walk over the edge curve representations.
@@ -274,8 +274,8 @@ impl BRepCheckVertex {
                     * brep.get_location(self.base.my_shape.location).inverse();
 
                 #[allow(unused_assignments)]
-                let mut tol = brep_tool_tolerance_vertex(brep, &self.base.my_shape);
-                tol = tol.max(brep_tool_tolerance_face(brep, s)); // to check
+                let mut tol = brep_tool_tolerance(&self.base.my_shape);
+                tol = tol.max(brep_tool_tolerance(s)); // to check
                 tol *= tol;
                 let _ = tol;
 

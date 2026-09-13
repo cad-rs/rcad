@@ -36,6 +36,8 @@ use rcad_kernel::topo::topods::{BRep, BRepBuilder, Orientation, ShapeType, State
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, Surface3, SurfaceEval};
 
+use crate::brep_algo::tool::brep_tool_tolerance;
+
 // OCCT Standard_Real.hxx L146-151 (RealSmall) and gp.hxx L59-60:
 // gp::Resolution() = RealSmall() = DBL_MIN.
 const REAL_SMALL: f64 = f64::MIN_POSITIVE;
@@ -45,15 +47,6 @@ const REAL_LAST: f64 = f64::MAX;
 // ---------------------------------------------------------------------------
 // BRep_Tool / TopoDS re-hosts (architecture bridges #1-#3)
 // ---------------------------------------------------------------------------
-
-/// OCCT BRep_Tool::Tolerance(E).
-fn brep_tool_tolerance(the_shape: &Shape) -> f64 {
-    match the_shape.data.as_ref() {
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Vertex(vd) => vd.tolerance,
-        _ => 0.0,
-    }
-}
 
 /// OCCT TopoDS_Shape::IsSame(S): same TShape and same Location.
 fn shape_is_same(a: &Shape, b: &Shape) -> bool {

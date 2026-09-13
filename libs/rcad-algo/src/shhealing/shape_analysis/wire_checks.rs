@@ -16,8 +16,9 @@ use rcad_kernel::topo_shape::Shape;
 use super::analysis;
 use super::curve::ShapeAnalysisCurve;
 use super::edge::ShapeAnalysisEdge;
+use crate::brep_algo::tool::brep_tool_tolerance;
 use super::wire::{
-    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter, brep_tool_tolerance,
+    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter,
     brep_tools_compare, ShapeAnalysisWire,
 };
 use crate::shhealing::shape_extend::status::{encode_status, ShapeExtendStatus};

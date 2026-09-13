@@ -34,7 +34,8 @@ use crate::shhealing::shape_fix::face_a::{
     is_surface_uv_infinite, is_surface_uv_periodic, occt_is_same, shapes_is_same, WireListMap,
 };
 use crate::shhealing::shape_fix::root::ShapeFixRoot;
-use crate::shhealing::shape_fix::wire::{brep_tool_degenerated, brep_tool_pnt, brep_tool_tolerance};
+use crate::brep_algo::tool::brep_tool_tolerance;
+use crate::shhealing::shape_fix::wire::{brep_tool_degenerated, brep_tool_pnt};
 use crate::topalgo::brep_top_adaptor::fclass2d_topol::FClass2dTopol;
 
 use super::face_a::ShapeFixFace;

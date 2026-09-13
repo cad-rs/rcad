@@ -22,6 +22,7 @@ use crate::topalgo::brep_class::bnd_lib_add2d_curve::add_2d_curve;
 use crate::topalgo::brep_top_adaptor::fclass2d::FClass2d;
 use crate::topalgo::shape_source::FaceShapeSource;
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use super::brep_check_result::{
     brep_check_add, explorer, oriented, ShapeKey, BRepCheckResultBase, BRepCheckStatus,
 };
@@ -881,10 +882,7 @@ pub fn intersect(
                     let last_p = surf.point_at(last_p2d.x, last_p2d.y);
                     // OCCT L763-771.
                     for j in 1..=pnt_seq.len() {
-                        let tolv = super::brep_check_result::brep_tool_tolerance_vertex(
-                            brep,
-                            &common_vertices[j - 1],
-                        );
+                        let tolv = brep_tool_tolerance(&common_vertices[j - 1]);
                         if first_p.distance(pnt_seq[j - 1]) <= tolv
                             || last_p.distance(pnt_seq[j - 1]) <= tolv
                         {
@@ -909,10 +907,7 @@ pub fn intersect(
                     let p2d = inter.point(i).value();
                     let p = surf.point_at(p2d.x, p2d.y);
                     for j in 1..=pnt_seq.len() {
-                        let mut tolv = super::brep_check_result::brep_tool_tolerance_vertex(
-                            brep,
-                            &common_vertices[j - 1],
-                        );
+                        let mut tolv = brep_tool_tolerance(&common_vertices[j - 1]);
                         // OCCT L789: possible tolerance of intersection point.
                         tolv += 1.0e-8;
                         let dd = p.distance_squared(pnt_seq[j - 1]);

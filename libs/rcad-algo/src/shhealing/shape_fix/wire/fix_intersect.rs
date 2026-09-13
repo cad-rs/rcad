@@ -17,8 +17,9 @@ use crate::shhealing::shape_fix::split_tool::ShapeFixSplitTool;
 use crate::shhealing::shape_fix::wire::wire_statics::{
     compute_local_deviation, param_on_first, param_on_second, pcurve_range_on_face,
 };
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_fix::wire::{
-    brep_tool_pnt, brep_tool_same_parameter, brep_tool_tolerance, REAL_LAST,
+    brep_tool_pnt, brep_tool_same_parameter, REAL_LAST,
     ShapeFixWire,
 };
 

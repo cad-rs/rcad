@@ -16,8 +16,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::topalgo::shape_source::FaceShapeSource;
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use super::brep_check_result::{
-    brep_check_add, brep_tool_tolerance_vertex, explorer, oriented, ShapeKey,
+    brep_check_add, explorer, oriented, ShapeKey,
     BRepCheckResultBase, BRepCheckStatus,
 };
 
@@ -693,8 +694,8 @@ impl BRepCheckWire {
         let current_vertex = chain_endpoints(brep, &ordered)
             .map(|(_start, head)| head)
             .unwrap_or_else(|| a_first_vertex.clone());
-        let a_tol3d = brep_tool_tolerance_vertex(brep, &a_first_vertex)
-            .max(brep_tool_tolerance_vertex(brep, &current_vertex));
+        let a_tol3d = brep_tool_tolerance(&a_first_vertex)
+            .max(brep_tool_tolerance(&current_vertex));
 
         let a_pnt_ref = brep.vertex_position(&a_first_vertex);
         let a_pnt = brep.vertex_position(&current_vertex);
@@ -1263,7 +1264,7 @@ pub fn choix_uv(
     // OCCT L1851-1862: remove theEdge occurrences.
     the_lof_shape.retain(|s| !the_edge.is_same(s));
 
-    let a_tol3d = brep_tool_tolerance_vertex(brep, the_vertex);
+    let a_tol3d = brep_tool_tolerance(the_vertex);
 
     let mut an_index: i32 = 0;
     let mut an_ind_min: i32 = 0;
@@ -1515,7 +1516,7 @@ pub fn is_closed_2d_for_periodic_face(
     let Some(a_face_surface) = face_surface_adaptor(brep, the_face) else {
         return true;
     };
-    let a_tol = brep_tool_tolerance_vertex(brep, the_vertex);
+    let a_tol = brep_tool_tolerance(the_vertex);
     let a_uresol = a_face_surface.u_resolution(a_tol);
     let a_vresol = a_face_surface.v_resolution(a_tol);
     let a_vicinity = (a_uresol * a_uresol + a_vresol * a_vresol).sqrt();

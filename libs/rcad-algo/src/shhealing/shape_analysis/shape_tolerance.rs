@@ -16,19 +16,10 @@
 use std::collections::HashSet;
 
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{BRep, ShapeType, TShape};
+use rcad_kernel::topods::{BRep, ShapeType};
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_build::brep_tool::topexp_explorer;
-
-/// OCCT BRep_Tool::Tolerance(S) — the vertex/edge/face tolerance.
-fn brep_tool_tolerance(the_s: &Shape) -> f64 {
-    match the_s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
-    }
-}
 
 /// OCCT static AddTol (cxx L32-65): accumulates one tolerance into the
 /// running (nbt, cmin, cmoy, cmax) aggregates.

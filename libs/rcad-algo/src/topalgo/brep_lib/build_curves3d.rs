@@ -30,6 +30,7 @@ use rcad_kernel::topo::topods::{
 use rcad_kernel::topo_shape::Shape;
 
 use crate::brep_algo::tool as bat;
+use crate::brep_algo::tool::brep_tool_tolerance;
 use rcad_kernel::base::proj_lib::GeomAbsSurfaceType;
 
 use super::brep_lib::BRepLib;
@@ -393,7 +394,7 @@ impl BRepLib {
                 );
                 // OCCT L431: BRep_Builder B (the pool is the builder arena).
                 // OCCT L432: tolerance = BRep_Tool::Tolerance(AnEdge).
-                tolerance_local = brep_tool_tolerance(the_brep, an_edge);
+                tolerance_local = brep_tool_tolerance(an_edge);
                 // OCCT L433-435: max_deviation = std::max(tolerance, Tolerance).
                 max_deviation = tolerance_local.max(tolerance);
                 // OCCT L436-439: if (NewCurvePtr.IsNull()) return false.
@@ -580,7 +581,7 @@ fn plane_position_ax2(the_plane: &Plane) -> GpAx2 {
 // BRep_Tool re-hosts (TKBRep/BRep/BRep_Tool.cxx).
 // ---------------------------------------------------------------------------
 
-/// OCCT BRep_Tool::Curve(E, L, f, l) (BRep_Tool.cxx L410-452) — the 3d
+/// OCCT BRep_Tool::Curve(E, L, f, l) (BRep_Tool.cxx L172-196) — the 3d
 /// curve with the location transformation applied (the rcad
 /// BRepTool::edge_curve_world re-host) and its range; the location out is
 /// the edge's own (the rcad curve slot carries no location — arch.
@@ -629,7 +630,7 @@ struct CurveOnSurfaceData {
 }
 
 /// OCCT BRep_Tool::CurveOnSurface(E, C, S, L, f, l, Index)
-/// (BRep_Tool.cxx L476-534) — the indexed pcurve: the representation list
+/// (BRep_Tool.cxx L488-538) — the indexed pcurve: the representation list
 /// is walked counting one slot per pcurve (two for a closed-surface
 /// representation); on a miss every output stays null/zero.
 fn brep_tool_curve_on_surface_index(
@@ -747,17 +748,6 @@ fn brep_tool_range_3d(the_brep: &BRep, the_e: &Shape) -> (f64, f64) {
 /// OCCT BRep_Tool::Degenerated(E) — the degenerated flag of the edge.
 fn brep_tool_degenerated(the_brep: &BRep, the_e: &Shape) -> bool {
     edge_data(the_brep, the_e).degenerated
-}
-
-/// OCCT BRep_Tool::Tolerance(E) (BRep_Tool.cxx L886-898) — the edge
-/// tolerance clamped at Precision::Confusion.
-fn brep_tool_tolerance(the_brep: &BRep, the_e: &Shape) -> f64 {
-    let a_p = edge_data(the_brep, the_e).tolerance;
-    if a_p > rcad_kernel::precision::CONFUSION {
-        a_p
-    } else {
-        rcad_kernel::precision::CONFUSION
-    }
 }
 
 // ---------------------------------------------------------------------------

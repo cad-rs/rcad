@@ -573,26 +573,3 @@ impl StatusMap {
         &self.entries
     }
 }
-
-/// OCCT BRep_Tool::Tolerance(E) (BRep_Tool.cxx L896-910) — the edge
-/// tolerance floored at Precision::Confusion().
-pub fn brep_tool_tolerance_edge(_brep: &BRep, e: &Shape) -> f64 {
-    let p = e.as_edge().map(|ed| ed.tolerance).unwrap_or(0.0);
-    let p_min = rcad_kernel::CONFUSION;
-    if p > p_min {
-        p
-    } else {
-        p_min
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(V) — the raw vertex tolerance.
-pub fn brep_tool_tolerance_vertex(_brep: &BRep, v: &Shape) -> f64 {
-    v.as_vertex().map(|vd| vd.tolerance).unwrap_or(0.0)
-}
-
-/// OCCT BRep_Tool::Tolerance(F) — the raw face tolerance.
-pub fn brep_tool_tolerance_face(brep: &BRep, f: &Shape) -> f64 {
-    let _ = brep;
-    f.as_face().map(|fd| fd.tolerance).unwrap_or(0.0)
-}

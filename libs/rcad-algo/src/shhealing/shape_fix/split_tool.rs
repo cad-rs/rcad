@@ -35,9 +35,9 @@ use crate::shhealing::shape_build::edge::ShapeBuildEdge;
 use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
 use crate::shhealing::shape_extend::wire_data::WireData;
 use crate::shhealing::shape_fix::edge::ShapeFixEdge;
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_fix::wire::{
-    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter, brep_tool_tolerance,
-    shape_oriented,
+    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter, shape_oriented,
 };
 
 // ---------------------------------------------------------------------------

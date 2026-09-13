@@ -28,8 +28,9 @@ use crate::shhealing::shape_fix::wire::wire_statics::{
     pcurve_range_on_face, remove_loop, remove_loop_split, try_bending_pcurve,
     update_edge_uv_points,
 };
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_fix::wire::{
-    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter, brep_tool_tolerance,
+    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter,
     shape_free, shape_oriented, REAL_LAST, ShapeFixWire,
 };
 

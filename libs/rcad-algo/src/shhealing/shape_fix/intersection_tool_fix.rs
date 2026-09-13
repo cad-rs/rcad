@@ -24,9 +24,9 @@ use crate::shhealing::shape_fix::intersection_tool::{
 };
 use crate::shhealing::shape_fix::intersection_tool::ShapeFixIntersectionTool;
 use crate::shhealing::shape_fix::split_tool::{brep_loc_transform, brep_tool_surface};
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_fix::wire::{
-    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter, brep_tool_tolerance,
-    shape_oriented,
+    brep_tool_degenerated, brep_tool_pnt, brep_tool_same_parameter, shape_oriented,
 };
 
 impl ShapeFixIntersectionTool {

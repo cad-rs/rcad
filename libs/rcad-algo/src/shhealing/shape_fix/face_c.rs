@@ -46,8 +46,9 @@ use crate::shhealing::shape_fix::intersection_tool::ShapeFixIntersectionTool;
 use crate::shhealing::shape_fix::split_tool::{
     brep_tool_surface_loc, topexp_vertices, ShapeFixSplitTool,
 };
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_fix::wire::{
-    brep_tool_degenerated, brep_tool_tolerance, shape_oriented, ShapeFixWire,
+    brep_tool_degenerated, shape_oriented, ShapeFixWire,
 };
 use crate::topalgo::brep_top_adaptor::fclass2d_topol::FClass2dTopol;
 

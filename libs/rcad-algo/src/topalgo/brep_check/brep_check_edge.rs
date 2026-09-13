@@ -16,8 +16,9 @@ use crate::topalgo::brep_lib_validate_edge::{
     BRepLibValidateEdge,
 };
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use super::brep_check_result::{
-    brep_check_add, brep_tool_tolerance_edge, edge_curve_reps, explorer, location_matrix,
+    brep_check_add, edge_curve_reps, explorer, location_matrix,
     EdgeCurveRep, BRepCheckResultBase, BRepCheckStatus,
 };
 
@@ -489,7 +490,7 @@ impl BRepCheckEdge {
         let my_shape = self.base.my_shape.clone();
         // OCCT L284-285: TE + Tol.
         let ed_data = my_shape.as_edge();
-        let tol = brep_tool_tolerance_edge(brep, &my_shape);
+        let tol = brep_tool_tolerance(&my_shape);
 
         let styp = s.shape_type();
         // OCCT L289-301: look for myShape among the sub-edges of S.

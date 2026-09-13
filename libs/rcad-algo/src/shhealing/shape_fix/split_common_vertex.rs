@@ -27,6 +27,7 @@ use rcad_kernel::precision::CONFUSION;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, BRepBuilder, ShapeType, TShape};
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::shhealing::shape_analysis::edge::ShapeAnalysisEdge;
 use crate::shhealing::shape_build::brep_tool::{iter_subshapes, topexp_explorer};
 use crate::shhealing::shape_build::edge::ShapeBuildEdge;
@@ -41,14 +42,6 @@ fn brep_tool_pnt(v: &Shape) -> DVec3 {
     match v.data.as_ref() {
         TShape::Vertex(vd) => vd.point,
         _ => DVec3::ZERO,
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(V).
-fn brep_tool_tolerance(v: &Shape) -> f64 {
-    match v.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        _ => 0.0,
     }
 }
 

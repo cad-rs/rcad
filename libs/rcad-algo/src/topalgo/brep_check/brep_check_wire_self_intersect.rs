@@ -18,8 +18,9 @@ use crate::geomalgo::geom2d_int::{elclib2d, Curve2dAdaptor, GInter};
 use crate::geomalgo::int_res2d::{Domain as Res2dDomain, Position};
 use crate::topalgo::brep_class::bnd_lib_add2d_curve::add_2d_curve;
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use super::brep_check_result::{
-    brep_check_add, brep_tool_tolerance_vertex, iterator_subshapes, BRepCheckStatus,
+    brep_check_add, iterator_subshapes, BRepCheckStatus,
 };
 use super::brep_check_wire::{
     explorer_of_edge_vertices, face_surface_adaptor, uv_points, BRepCheckWire, ShapeSet,
@@ -232,7 +233,7 @@ impl BRepCheckWire {
                         // OCCT L1187-1196: TopExp_Explorer ExplVtx(E1, VERTEX).
                         for vtt in explorer_of_edge_vertices(&e1) {
                             let p3dvtt = brep.vertex_position(&vtt);
-                            let tolvtt = brep_tool_tolerance_vertex(brep, &vtt);
+                            let tolvtt = brep_tool_tolerance(&vtt);
                             let tolvtt = tolvtt * tolvtt;
                             let p3dvtt_distance_p3d = p3dvtt.distance_squared(p3d);
                             if p3dvtt_distance_p3d <= tolvtt {
@@ -413,7 +414,7 @@ impl BRepCheckWire {
                         // OCCT L1387-1402: the common-vertex tolerance test.
                         for vtt in common_vertices.iter() {
                             let p3dvtt = brep.vertex_position(vtt);
-                            tolvtt = brep_tool_tolerance_vertex(brep, vtt);
+                            tolvtt = brep_tool_tolerance(vtt);
                             tolvtt = 1.1 * tolvtt;
                             tolvtt = tolvtt * tolvtt;
                             let p3dvtt_distance_p3d = p3dvtt.distance_squared(p3d);
@@ -669,7 +670,7 @@ impl BRepCheckWire {
                             // OCCT L1701-1717.
                             for vtt in common_vertices.iter() {
                                 let p3dvtt = brep.vertex_position(vtt);
-                                let mut tolvtt = brep_tool_tolerance_vertex(brep, vtt);
+                                let mut tolvtt = brep_tool_tolerance(vtt);
                                 tolvtt = 1.1 * tolvtt;
                                 tolvtt = tolvtt * tolvtt;
                                 let p3dvtt_distance_p3d = p3dvtt.distance_squared(p3d);

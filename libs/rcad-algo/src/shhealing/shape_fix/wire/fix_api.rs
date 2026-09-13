@@ -21,7 +21,8 @@ use crate::shhealing::shape_extend::status::{encode_status, ShapeExtendStatus};
 use crate::shhealing::shape_extend::wire_data::WireData;
 use crate::shhealing::shape_fix::root::ShapeFixRoot;
 use crate::shhealing::shape_fix::shape_fix::MessageProgressRange;
-use crate::shhealing::shape_fix::wire::{brep_tool_pnt, brep_tool_same_parameter, brep_tool_tolerance, ShapeFixWire};
+use crate::brep_algo::tool::brep_tool_tolerance;
+use crate::shhealing::shape_fix::wire::{brep_tool_pnt, brep_tool_same_parameter, ShapeFixWire};
 
 impl ShapeFixWire {
     // OCCT ShapeFix_Wire.cxx L297-483 — Perform.

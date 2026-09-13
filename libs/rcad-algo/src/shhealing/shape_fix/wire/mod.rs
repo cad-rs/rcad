@@ -109,15 +109,6 @@ pub(crate) fn brep_tool_pnt(v: &Shape) -> DVec3 {
     }
 }
 
-/// OCCT BRep_Tool::Tolerance(shape).
-pub(crate) fn brep_tool_tolerance(s: &Shape) -> f64 {
-    match s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        _ => 0.0,
-    }
-}
-
 /// OCCT BRep_Tool::Degenerated(E).
 pub(crate) fn brep_tool_degenerated(e: &Shape) -> bool {
     match e.data.as_ref() {

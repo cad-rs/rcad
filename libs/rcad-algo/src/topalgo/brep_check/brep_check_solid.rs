@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use crate::topalgo::brep_class3d::solid_classifier::SolidClassifier;
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use super::brep_check_result::{
-    brep_check_add, brep_tool_tolerance_edge, explorer, iterator_subshapes,
+    brep_check_add, explorer, iterator_subshapes,
     BRepCheckResultBase, BRepCheckStatus,
 };
 use super::brep_check_wire::ShapeSet;
@@ -103,7 +104,7 @@ impl BRepCheckToolSolid {
                     // edge location applies on read).
                     self.my_pnt = a_c3d.point_at(a_t);
                     // OCCT L139: myPntTol = BRep_Tool::Tolerance(aE).
-                    self.my_pnt_tol = brep_tool_tolerance_edge(brep, &a_e);
+                    self.my_pnt_tol = brep_tool_tolerance(&a_e);
                     break;
                 }
             }
