@@ -401,38 +401,45 @@ pub fn chfi3d_compute_arete(
     tol2d: f64,
     iflag: i32,
 ) -> (Option<rcad_kernel::geom::Curve3>, rcad_kernel::geom::Curve2d, f64, f64, f64) {
-    use rcad_kernel::geom::{Curve2d, Curve3, Line2d};
+    use rcad_kernel::geom::{
+        Curve2d, Curve2dEval as _, Curve3, CurveEval as _, Line2d,
+    };
     let mut c3d: Option<Curve3> = None;
     let pcurv;
     let mut pardeb = 0.0;
     let mut parfin = 0.0;
-    let tolreached;
+    // OCCT L2000: tolreached = tol3d.
+    let mut tolreached = tol3d;
 
     if (uv1.x - uv2.x).abs() <= tol2d {
         // iso u
         if iflag == 0 {
+            // OCCT L2008-2034.
             pardeb = uv1.y;
             parfin = uv2.y;
-            // OCCT: C3d = Surf->UIso(UV1.X()) — the u-isocurve of the
-            // surface at u = UV1.X(); rcad resolves the iso curve per
-            // surface kind.
-            let reversed = pardeb > parfin;
-            if reversed {
-                std::mem::swap(&mut pardeb, &mut parfin);
+            // OCCT L2011: C3d = Surf->UIso(UV1.X()) — every concrete
+            // Geom_Surface overrides UIso.
+            c3d = Some(crate::brep_fill::brep_fill_sweep::surface_uiso(surf, uv1.x));
+            if pardeb > parfin {
+                // OCCT L2013-2018: Pardeb/Parfin = C3d->ReversedParameter(...)
+                // then C3d->Reverse().  The reversed-parameter form, not a
+                // positional swap (pit 15).
+                let c = c3d.as_ref().expect("OCCT C3d is the surface iso curve");
+                pardeb = c.reversed_parameter(pardeb);
+                parfin = c.reversed_parameter(parfin);
+                c3d = Some(reverse_curve(c));
             }
-            match surf {
-                rcad_kernel::geom::Surface3::Cylinder(c) => {
-                    let iso = cylinder_v_iso(c.origin, c.ref_dir, c.axis, c.radius, uv1.x);
-                    c3d = Some(Curve3::Circle(iso));
+            // OCCT L2019-2031: the Geom_TrimmedCurve unwrap; a periodic basis
+            // folds the range back with ElCLib::AdjustPeriodic.
+            if let Some(Curve3::Trimmed(tc)) = c3d.clone() {
+                let basis = tc.basis_curve().clone();
+                if basis.is_periodic() {
+                    let d = basis.default_domain();
+                    rcad_kernel::math::el::elclib_adjust_periodic(
+                        d[0], d[1], tol2d, &mut pardeb, &mut parfin,
+                    );
                 }
-                _ => {
-                    // pending: u-iso of non-cylindrical surfaces.
-                }
-            }
-            if reversed {
-                // OCCT reverses the curve; rcad records the range as
-                // (Pardeb, Parfin) with Pardeb > Parfin dropped by the
-                // swap above, so nothing more is needed here.
+                c3d = Some(basis);
             }
         }
         if iflag != 1 {
@@ -455,20 +462,28 @@ pub fn chfi3d_compute_arete(
     } else if (uv1.y - uv2.y).abs() <= tol2d {
         // iso v
         if iflag == 0 {
+            // OCCT L2041-2067.
             pardeb = uv1.x;
             parfin = uv2.x;
-            let reversed = pardeb > parfin;
-            if reversed {
-                std::mem::swap(&mut pardeb, &mut parfin);
+            // OCCT L2044: C3d = Surf->VIso(UV1.Y()).
+            c3d = Some(crate::brep_fill::brep_fill_sweep::surface_viso(surf, uv1.y));
+            if pardeb > parfin {
+                // OCCT L2046-2051: the reversed-parameter form (pit 15).
+                let c = c3d.as_ref().expect("OCCT C3d is the surface iso curve");
+                pardeb = c.reversed_parameter(pardeb);
+                parfin = c.reversed_parameter(parfin);
+                c3d = Some(reverse_curve(c));
             }
-            match surf {
-                rcad_kernel::geom::Surface3::Cylinder(c) => {
-                    let iso = cylinder_v_iso(c.origin, c.ref_dir, c.axis, c.radius, uv1.y);
-                    c3d = Some(Curve3::Circle(iso));
+            // OCCT L2052-2064: the Geom_TrimmedCurve unwrap + AdjustPeriodic.
+            if let Some(Curve3::Trimmed(tc)) = c3d.clone() {
+                let basis = tc.basis_curve().clone();
+                if basis.is_periodic() {
+                    let d = basis.default_domain();
+                    rcad_kernel::math::el::elclib_adjust_periodic(
+                        d[0], d[1], tol2d, &mut pardeb, &mut parfin,
+                    );
                 }
-                _ => {
-                    // pending: v-iso of non-cylindrical surfaces.
-                }
+                c3d = Some(basis);
             }
         }
         if iflag != 1 {
@@ -487,21 +502,109 @@ pub fn chfi3d_compute_arete(
             tolreached = tol3d;
         }
     } else if iflag == 0 {
-        // OCCT L2036-2058: straight-line pcurve when a vertex is involved
-        // or the points are not on arcs; otherwise the tangent-matched
-        // BuildPCurve with the in-surface a-posteriori check — pending.
-        pcurv = Curve2d::Bezier(rcad_kernel::geom::BezierCurve2 {
-            control_points: vec![uv1, uv2],
-            weights: vec![1.0, 1.0],
-        });
-        tolreached = tol3d;
-        let _ = (p1, p2, brep);
+        // OCCT L2084-2139.
+        if p1.is_vertex() || p2.is_vertex() || !p1.is_on_arc() || !p2.is_on_arc() {
+            // OCCT L2087-2095: "A straight line is constructed to avoid arc
+            // and tangent" — the 2-pole Bezier through UV1, UV2.
+            pcurv = Curve2d::Bezier(rcad_kernel::geom::BezierCurve2 {
+                control_points: vec![uv1, uv2],
+                weights: vec![1.0, 1.0],
+            });
+        } else {
+            // OCCT L2098-2106: the arc tangents through BRepAdaptor_Curve::D1
+            // and the 3D-tangent ChFi3d_BuildPCurve.
+            let c1 = rcad_kernel::base::proj_lib::brep_adaptor::BRepAdaptorCurve::with_edge(
+                brep,
+                p1.arc(),
+            );
+            let (_, vv1) = c1.d1(p1.parameter_on_arc());
+            let c2 = rcad_kernel::base::proj_lib::brep_adaptor::BRepAdaptorCurve::with_edge(
+                brep,
+                p2.arc(),
+            );
+            let (_, vv2) = c2.d1(p2.parameter_on_arc());
+            let hs = BRepAdaptorSurface::initialize_surface(surf.clone());
+            let mut pc = super::chfi3d_filbuilder_c2::chfi3d_build_pc_3d(
+                &hs, uv1, vv1, uv2, vv2, true,
+            );
+            // OCCT L2107-2128: the a-posteriori in-surface check — a curve
+            // that leaves the (gapped) surface box is replaced by the
+            // straight UV1-UV2 line, "non regarding the tangency with
+            // neighboring arcs".
+            let mut bs = rcad_kernel::math::bnd::BndBox2d::new();
+            let d = <Surface3 as rcad_kernel::geom::SurfaceEval>::default_domain(surf);
+            bs.update(d[0], d[2], d[1], d[3]);
+            bs.set_gap(P_CONFUSION);
+            let mut a_in = true;
+            let poles: Vec<glam::DVec2> = match &pc {
+                Curve2d::Bezier(bz) => bz.control_points.clone(),
+                _ => Vec::new(),
+            };
+            for ii in 0..4usize {
+                if !a_in || ii >= poles.len() {
+                    break;
+                }
+                if bs.is_out_point(poles[ii]) {
+                    a_in = false;
+                    pc = Curve2d::Bezier(rcad_kernel::geom::BezierCurve2 {
+                        control_points: vec![uv1, uv2],
+                        weights: vec![1.0, 1.0],
+                    });
+                }
+            }
+            pcurv = pc;
+        }
+        // OCCT L2130-2138.
+        let dd = pcurv.default_domain();
+        let acurv =
+            super::chfi3d_builder_cncrn::Geom2dAdaptorCurve::load(pcurv.clone(), dd[0], dd[1]);
+        let cs = super::chfi3d_builder_cncrn::Adaptor3dCurveOnSurface::new(
+            acurv,
+            GeomAdaptorSurface::new(surf.clone()),
+        );
+        pardeb = cs.first_parameter();
+        parfin = cs.last_parameter();
+        // OCCT L2137-2138: GeomLib::BuildCurve3d(tol3d, Cs, Pardeb, Parfin,
+        // C3d, tolreached, avtol) — the 6th/7th arguments are
+        // MaxDeviation/AverageDeviation (GeomLib.hxx L85-94).
+        let mut avtol = 0.0;
+        let mut new_curve: Option<Curve3> = None;
+        super::chfi3d_builder_cncrn::geom_lib_build_curve3d(
+            tol3d,
+            &cs,
+            pardeb,
+            parfin,
+            &mut new_curve,
+            &mut tolreached,
+            &mut avtol,
+        );
+        c3d = new_curve;
+        let _ = (p1, p2);
     } else {
-        // OCCT: hs->Load(Surf); hc->Load(C3d, Pardeb, Parfin);
-        // ChFi3d_ProjectPCurv(...) — pending.
-        pcurv = chfi3d_compute_pcurv_2pt(uv1, uv2, pardeb, parfin, false);
-        tolreached = tol3d;
-        let _ = (brep, p1, p2);
+        // OCCT L2140-2152: hs->Load(Surf); hc->Load(C3d, Pardeb, Parfin);
+        // ChFi3d_ProjectPCurv(hc, hs, Pcurv, tol3d, tolreached); then the
+        // pcurve start point is aligned onto UV1.
+        //
+        // C3d is the out-parameter of this function and no branch above sets
+        // it when IFlag != 0, so OCCT loads a null curve into hc here;
+        // ProjLib's GetType() then answers GeomAbs_OtherCurve and the
+        // ChFi3d_ProjectPCurv switch throws Standard_NotImplemented.
+        let c = c3d
+            .as_ref()
+            .expect("Standard_NotImplemented: echec approximation de la pcurve ");
+        let hs = GeomAdaptorSurface::new(surf.clone());
+        let (pc, tr) = chfi3d_project_pcurv(c, &hs, tol3d)
+            .expect("Standard_NotImplemented: echec approximation de la pcurve ");
+        tolreached = tr;
+        // OCCT L2146-2151: gp_Pnt2d p2d = Pcurv->Value(Pardeb);
+        // if (!UV1.IsEqual(p2d, Precision::PConfusion())) {
+        //   gp_Vec2d v2d(p2d, UV1); Pcurv->Translate(v2d); }
+        let p2d = pc.point_at(pardeb);
+        pcurv = if (uv1 - p2d).length() > P_CONFUSION {
+            rcad_kernel::geom::translate_curve2d(&pc, uv1 - p2d)
+        } else {
+            pc
+        };
     }
     (c3d, pcurv, pardeb, parfin, tolreached)
 }
@@ -1921,9 +2024,13 @@ pub fn chfi3d_compute_curves(
         }
         if !c1line {
             // OCCT L3830: ElCLib::AdjustPeriodic(0, 2PI, Angular, Udeb, Ufin).
-            let (au, bu) = elclib_adjust_periodic(0.0, 2.0 * std::f64::consts::PI, ANGULAR, udeb, ufin);
-            udeb = au;
-            ufin = bu;
+            rcad_kernel::math::el::elclib_adjust_periodic(
+                0.0,
+                2.0 * std::f64::consts::PI,
+                ANGULAR,
+                &mut udeb,
+                &mut ufin,
+            );
         }
 
         // OCCT L3834-3857: ProjectPCurv on S1/S2 with the cylinder pcurve
@@ -1985,30 +2092,6 @@ pub fn chfi3d_compute_curves(
         // failure path.
         None
     }
-}
-
-/// OCCT ElCLib::AdjustPeriodic(UFirst, ULast, Eps, U1, U2) — brings (U1, U2)
-/// into the period with U2 > U1.
-pub fn elclib_adjust_periodic(
-    ufirst: f64,
-    ulast: f64,
-    _eps: f64,
-    u1: f64,
-    u2: f64,
-) -> (f64, f64) {
-    let period = ulast - ufirst;
-    let mut a1 = u1;
-    let mut a2 = u2;
-    while a1 < ufirst {
-        a1 += period;
-    }
-    while a1 >= ulast {
-        a1 -= period;
-    }
-    while a2 <= a1 {
-        a2 += period;
-    }
-    (a1, a2)
 }
 
 /// OCCT L3835-3845 / L3846-3857: when the projected pcurve start point

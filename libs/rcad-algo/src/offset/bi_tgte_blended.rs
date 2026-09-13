@@ -1575,11 +1575,11 @@ impl BiTgteBlend {
         for i in 1..=nb_faces {
             let center_line = self.center_at(i);
             let face = self.my_map_sf[&center_line].face();
-            glue.add(&face);
+            glue.add(&mut self.my_brep, &face);
         }
 
         // OCCT L1219: Shells = Glue.Shells().
-        let shells = glue.shells();
+        let shells = glue.shells(&mut self.my_brep);
 
         // Reorder Map myCenters.
         // The method is brutal and unpolished,

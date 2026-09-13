@@ -3688,6 +3688,29 @@ impl BRepBuilder {
         sd.my_shapes.retain(|s| s.index != face.index);
     }
 
+    /// Remove a shape from a compound (OCCT BRep_Builder::Remove /
+    /// TopoDS_Builder::Remove, TopoDS_Builder.cxx L106-135: the first child
+    /// equal to the component is dropped in place).  The sibling of
+    /// [`Self::add_to_compound`] — the BRepTools_Quilt::Shells() shell fusion
+    /// removes the absorbed shell from the result compound.
+    pub fn remove_from_compound(&mut self, brep: &mut BRep, compound: Shape, shape: Shape) {
+        let raw = Arc::as_ptr(&brep.tshapes[compound.index]) as *mut TShape;
+        // SAFETY: single-threaded build; the compound TShape is edited in
+        // place exactly as BRep_Builder::Remove edits the shared TShape.
+        unsafe {
+            match &mut *raw {
+                TShape::Compound(shapes) => {
+                    if let Some(pos) =
+                        shapes.iter().position(|s| s.index == shape.index && s.orientation == shape.orientation)
+                    {
+                        shapes.remove(pos);
+                    }
+                }
+                _ => panic!("remove_from_compound: shape is not a Compound"),
+            }
+        }
+    }
+
     /// OCCT TopoDS_Builder::Add(aShape, aComponent) with an edge parent
     /// (TopoDS_Builder.cxx L37-100) — the VERTEX-to-EDGE child append: the
     /// relative orientation (the parent REVERSED reverses the child), then

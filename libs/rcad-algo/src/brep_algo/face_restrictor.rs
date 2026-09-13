@@ -13,20 +13,85 @@
 //! 3. TopOpeBRepBuild_WireToFace::MakeFaces runs over the D6-adjudicated TKBO
 //!    equivalent (BOPAlgo_BuilderFace on a local BOPDS) — see the struct
 //!    comment.
-//! 4. BRep_Builder edits are in-place Arc::make_mut mutations (tool.rs);
-//!    OCCT TShape sharing makes them visible through every handle, rcad
-//!    mutates the owning copy.
+//! 4. BRep_Builder edits go through the owning pool (the leading `brep`
+//!    argument — the topalgo/brep_tools_substitution.rs convention), so every
+//!    face this tool builds (and the areas it receives from the
+//!    WireToFace engine) is a slot of the caller's pool instead of a pool-free
+//!    shape (`Shape::index == usize::MAX` reads back as null — pit 19); OCCT
+//!    TShape sharing makes an in-place edit visible through every handle, rcad
+//!    edits the pool slot.
+
+use std::sync::Arc;
 
 use crate::brep_algo::tool::{
     brep_tool_curve_on_surface, brep_tool_first_curve_on_surface, brep_tool_surface,
-    builder_add_face_wire, builder_update_edge_pcurve, empty_copied,
     explorer, reversed, shape_is_closed, shape_key, top_exp_vertices_wire, ShapeKey,
 };
-use rcad_kernel::geom::{Curve2dEval, Curve3, Surface3, TrimmedCurve3};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3, TrimmedCurve3};
 use rcad_kernel::precision::{CONFUSION, INFINITE_VALUE, PCONFUSION};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{Orientation, ShapeType, State};
+use rcad_kernel::topods::{BRep, Orientation, ShapeType, State};
 use std::collections::HashMap;
+
+/// rcad pool test (the quilt bridge): true when `r` resolves to its own TShape
+/// inside `brep` — the index must be a slot AND carry the same Arc.
+fn pool_owns_shape(brep: &BRep, r: &Shape) -> bool {
+    r.index < brep.tshapes.len() && Arc::ptr_eq(&brep.tshapes[r.index], &r.data)
+}
+
+/// The OCCT handle semantics over the rcad pool: the shape itself when it is a
+/// slot of `brep`, otherwise the same tree materialized into the pool
+/// (`BRep::import_shape_tree`).
+fn pool_shape(brep: &mut BRep, r: &Shape) -> Shape {
+    if pool_owns_shape(brep, r) {
+        r.clone()
+    } else {
+        brep.import_shape_tree(r)
+    }
+}
+
+/// OCCT TopoDS_Shape::EmptyCopied over the owning pool (the fresh TShape is a
+/// slot of `brep`).
+fn builder_empty_copied(brep: &mut BRep, r: &Shape) -> Shape {
+    let r = pool_shape(brep, r);
+    brep.empty_copied(&r)
+}
+
+/// OCCT BRep_Builder::Add(F, W) — the first wire is the outer wire, the
+/// following ones are inner wires (BRep_Builder.cxx Add Face branch; the
+/// pool form of tool.rs::builder_add_face_wire).
+fn builder_add_face_wire(brep: &mut BRep, the_f: &Shape, the_w: &Shape) {
+    let fd = brep.face_mut(the_f.clone());
+    if fd.outer_wire.is_null() {
+        fd.outer_wire = the_w.clone();
+    } else {
+        fd.inner_wires.push(the_w.clone());
+    }
+}
+
+/// OCCT BRep_Builder::UpdateEdge(E, C2d, F, Tol) — the pcurve bind (tool.rs::
+/// builder_update_edge_pcurve in its pool form: an edge that is a slot of the
+/// pool is edited in place, so the wire holding it observes the pcurve).
+fn builder_update_edge_pcurve(
+    brep: &mut BRep,
+    the_e: &mut Shape,
+    the_c2d: &Curve2d,
+    the_f: &Shape,
+    the_tol: f64,
+) {
+    if pool_owns_shape(brep, the_e) {
+        let (f0, l0) = {
+            let range = brep.edge(the_e.clone()).range;
+            (range[0], range[1])
+        };
+        let ed = brep.edge_mut_inplace(the_e.clone());
+        ed.pcurves
+            .insert(shape_key(the_f), (the_c2d.clone(), f0, l0));
+        ed.tolerance = ed.tolerance.max(the_tol);
+    } else {
+        crate::brep_algo::tool::builder_update_edge_pcurve(the_e, the_c2d, the_f, the_tol);
+    }
+}
 
 /// OCCT BRepAlgo_FaceRestrictor (BRepAlgo_FaceRestrictor.hxx L36-92) —
 /// builds all the faces limited with a set of non jointing and planars
@@ -95,9 +160,9 @@ impl BRepAlgoFaceRestrictor {
 
     /// OCCT BRepAlgo_FaceRestrictor::Perform() (cxx L109-179) — evaluates
     /// all the faces limited by the set of wires.
-    pub fn perform(&mut self) {
+    pub fn perform(&mut self, brep: &mut BRep) {
         if self.my_correction {
-            self.perform_with_correction();
+            self.perform_with_correction(brep);
             return;
         }
 
@@ -131,14 +196,14 @@ impl BRepAlgoFaceRestrictor {
                     // no pcurve on the reference surface (OCCT L148-171).
                     if self.mode_proj {
                         // Projection of the 3D curve on surface.
-                        if !proj_curve_3d(&mut e, &s, &self.my_face) {
+                        if !proj_curve_3d(brep, &mut e, &s, &self.my_face) {
                             return;
                         }
                     } else {
                         // return the first pcurve glued on <S>.
-                        let ya_pcurve = change_pcurve(&mut e, &s, &self.my_face);
+                        let ya_pcurve = change_pcurve(brep, &mut e, &s, &self.my_face);
                         if !ya_pcurve {
-                            if !proj_curve_3d(&mut e, &s, &self.my_face) {
+                            if !proj_curve_3d(brep, &mut e, &s, &self.my_face) {
                                 return;
                             }
                         }
@@ -148,7 +213,7 @@ impl BRepAlgoFaceRestrictor {
             wtf.add_wire(w);
         }
 
-        wtf.make_faces(&self.my_face, &mut self.faces);
+        wtf.make_faces(brep, &self.my_face, &mut self.faces);
 
         self.my_done = true;
     }
@@ -177,16 +242,16 @@ impl BRepAlgoFaceRestrictor {
 
     /// OCCT BRepAlgo_FaceRestrictor::PerformWithCorrection() (cxx L370-454)
     /// — evaluates all the faces limited by the set of wires.
-    fn perform_with_correction(&mut self) {
+    fn perform_with_correction(&mut self, brep: &mut BRep) {
         self.my_done = false;
         //---------------------------------------------------------
         // Reorientation of all closed wires to the left (OCCT L376-396).
         //---------------------------------------------------------
         for i in 0..self.wires.len() {
             let w = &mut self.wires[i]; // TopoDS::Wire(it.ChangeValue())
-            let mut nf = empty_copied(&self.my_face);
+            let mut nf = builder_empty_copied(brep, &self.my_face);
             nf.orientation = Orientation::Forward;
-            builder_add_face_wire(&mut nf, w);
+            builder_add_face_wire(brep, &nf, w);
 
             if is_closed(w) {
                 let Some(surf) = brep_tool_surface(&nf) else {
@@ -218,9 +283,9 @@ impl BRepAlgoFaceRestrictor {
                 let Some(surf) = brep_tool_surface(&self.my_face) else {
                     continue;
                 };
-                let mut nf = empty_copied(&self.my_face);
+                let mut nf = builder_empty_copied(brep, &self.my_face);
                 nf.orientation = Orientation::Forward;
-                builder_add_face_wire(&mut nf, &w1);
+                builder_add_face_wire(brep, &nf, &w1);
 
                 let src = crate::topalgo::shape_source::FaceShapeSource::new(
                     &nf,
@@ -256,14 +321,15 @@ impl BRepAlgoFaceRestrictor {
             if !self.key_is_in.contains_key(&shape_key(w))
                 || self.key_is_in.get(&shape_key(w)).map_or(true, |l| l.is_empty())
             {
-                let mut new_face = empty_copied(&self.my_face);
+                let mut new_face = builder_empty_copied(brep, &self.my_face);
                 new_face.orientation = Orientation::Forward;
-                builder_add_face_wire(&mut new_face, w);
+                builder_add_face_wire(brep, &new_face, w);
                 self.faces.push(new_face.clone());
                 //--------------------------------------------
                 // Construction of a face by exterior wire (OCCT L447-451).
                 //--------------------------------------------
                 build_face_in(
+                    brep,
                     &mut new_face,
                     w,
                     &mut self.key_contains,
@@ -318,7 +384,7 @@ impl TopOpeBRepBuildWireToFace {
     /// TKBO path is BOPAlgo_BuilderFace on the reference face with the wires'
     /// edges as the section-edge set (rcad bop/algo/builder_face.rs — the
     /// same engine the boolean FaceSplit path consumes).
-    pub fn make_faces(&mut self, f: &Shape, lf: &mut Vec<Shape>) {
+    pub fn make_faces(&mut self, brep: &mut BRep, f: &Shape, lf: &mut Vec<Shape>) {
         lf.clear();
 
         // OCCT L55-58: TopOpeBRepBuild_WireEdgeSet wes(F); wes.AddShape(W)
@@ -345,7 +411,12 @@ impl TopOpeBRepBuildWireToFace {
         bf.my_face_index = Some(face_index);
         bf.my_edges = edges;
         bf.perform();
-        lf.extend(bf.my_areas);
+        // The BuilderFace areas are pool-free (Shape::new, BuilderFace.cxx
+        // L456-465); the OCCT handle carries its TShape, so the rcad products
+        // are materialized into the owning pool (the rcad pool bridge).
+        for a_face in bf.my_areas {
+            lf.push(pool_shape(brep, &a_face));
+        }
     }
 }
 
@@ -357,12 +428,12 @@ impl TopOpeBRepBuildWireToFace {
 /// shape, so the binding goes through the reference face theFace (the
 /// surface carrier of this pipeline — architecture difference, the
 /// Geom_Surface handle identity maps to the face shape key).
-fn change_pcurve(e: &mut Shape, s: &Surface3, the_face: &Shape) -> bool {
+fn change_pcurve(brep: &mut BRep, e: &mut Shape, s: &Surface3, the_face: &Shape) -> bool {
     let c2 = brep_tool_first_curve_on_surface(e);
     let _ = s;
     match &c2 {
         Some((c2d, _, _)) => {
-            builder_update_edge_pcurve(e, c2d, the_face, CONFUSION);
+            builder_update_edge_pcurve(brep, e, c2d, the_face, CONFUSION);
         }
         None => {}
     }
@@ -375,7 +446,7 @@ fn change_pcurve(e: &mut Shape, s: &Surface3, the_face: &Shape) -> bool {
 /// BRep_Builder::UpdateEdge; the rcad pcurve map is keyed by the face shape,
 /// so the binding goes through the reference face theFace (architecture
 /// difference, same as change_pcurve).
-fn proj_curve_3d(e: &mut Shape, s: &Surface3, the_face: &Shape) -> bool {
+fn proj_curve_3d(brep: &mut BRep, e: &mut Shape, s: &Surface3, the_face: &Shape) -> bool {
     // OCCT L92: C = BRep_Tool::Curve(E, LE, f, l).
     let Some((c, f, l)) = crate::brep_algo::tool::brep_tool_curve(e) else {
         return false;
@@ -390,7 +461,7 @@ fn proj_curve_3d(e: &mut Shape, s: &Surface3, the_face: &Shape) -> bool {
         // ignored on use); rcad reports the null binding the same way.
         return true;
     };
-    builder_update_edge_pcurve(e, &c2, the_face, CONFUSION);
+    builder_update_edge_pcurve(brep, e, &c2, the_face, CONFUSION);
     true
 }
 
@@ -478,6 +549,7 @@ fn store(
 
 /// OCCT static BuildFaceIn (cxx L292-366).
 fn build_face_in(
+    brep: &mut BRep,
     f: &mut Shape,
     w: &Shape,
     key_contains: &mut HashMap<ShapeKey, Vec<Shape>>,
@@ -524,15 +596,31 @@ fn build_face_in(
             if orientation == Orientation::Forward {
                 let nwi = reversed(wi);
                 // OCCT L349-351: NWI.Reverse() — TopAbs::Reverse of WI.
-                builder_add_face_wire(f, &nwi);
-                build_face_in(f, wi, key_contains, key_is_in, Orientation::Reversed, faces);
+                builder_add_face_wire(brep, f, &nwi);
+                build_face_in(
+                    brep,
+                    f,
+                    wi,
+                    key_contains,
+                    key_is_in,
+                    Orientation::Reversed,
+                    faces,
+                );
             } else {
                 // OCCT L357-362: NF = TopoDS::Face(Faces.First().EmptyCopied()).
                 let first = faces.first().expect("Faces.First()").clone();
-                let mut nf = empty_copied(&first);
-                builder_add_face_wire(&mut nf, wi);
+                let mut nf = builder_empty_copied(brep, &first);
+                builder_add_face_wire(brep, &nf, wi);
                 faces.push(nf.clone());
-                build_face_in(&mut nf, wi, key_contains, key_is_in, Orientation::Forward, faces);
+                build_face_in(
+                    brep,
+                    &mut nf,
+                    wi,
+                    key_contains,
+                    key_is_in,
+                    Orientation::Forward,
+                    faces,
+                );
             }
         }
     }

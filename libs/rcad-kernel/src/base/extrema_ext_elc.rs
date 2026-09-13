@@ -318,7 +318,8 @@ pub(crate) fn elclib_in_period(u: f64, u_first: f64, u_last: f64) -> f64 {
     crate::math::el::in_period(u, u_first, u_last)
 }
 
-/// OCCT ElCLib::AdjustPeriodic (ElCLib.cxx L115-149).
+/// OCCT ElCLib::AdjustPeriodic (ElCLib.cxx L115-149) — delegates to the
+/// canonical `math::el` body.
 pub(crate) fn elclib_adjust_periodic(
     u_first: f64,
     u_last: f64,
@@ -326,25 +327,7 @@ pub(crate) fn elclib_adjust_periodic(
     u1: &mut f64,
     u2: &mut f64,
 ) {
-    if is_infinite_value(u_first) || is_infinite_value(u_last) {
-        *u1 = u_first;
-        *u2 = u_last;
-        return;
-    }
-    let a_period = u_last - u_first;
-    if a_period < epsilon_of(u_last) {
-        *u1 = u_first;
-        *u2 = u_last;
-        return;
-    }
-    *u1 -= ((*u1 - u_first) / a_period).floor() * a_period;
-    if u_last - *u1 < preci {
-        *u1 -= a_period;
-    }
-    *u2 -= ((*u2 - *u1) / a_period).floor() * a_period;
-    if *u2 - *u1 < preci {
-        *u2 += a_period;
-    }
+    crate::math::el::elclib_adjust_periodic(u_first, u_last, preci, u1, u2)
 }
 
 /// OCCT Epsilon(theValue) (Precision.hxx) —

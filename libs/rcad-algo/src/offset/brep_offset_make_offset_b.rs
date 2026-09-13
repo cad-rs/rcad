@@ -318,7 +318,7 @@ impl BRepOffsetMakeOffset {
             let mut glue = BRepToolsQuilt::new();
             for exp in bat::explorer(&self.my_shape, ShapeType::Face, ShapeType::Shape) {
                 nb_f += 1;
-                glue.add(&exp);
+                glue.add(&mut self.my_brep, &exp);
             }
             let mut ya_result = false;
             if !super::brep_offset_make_offset::offset_shape_is_null(&self.my_offset_shape) {
@@ -326,7 +326,7 @@ impl BRepOffsetMakeOffset {
                     bat::explorer(&self.my_offset_shape, ShapeType::Face, ShapeType::Shape)
                 {
                     ya_result = true;
-                    glue.add(&bat::reversed(&exp));
+                    glue.add(&mut self.my_brep, &bat::reversed(&exp));
                 }
             }
 
@@ -336,7 +336,7 @@ impl BRepOffsetMakeOffset {
                 return;
             }
 
-            self.my_offset_shape = glue.shells();
+            self.my_offset_shape = glue.shells(&mut self.my_brep);
             for exp in
                 bat::explorer(&self.my_offset_shape, ShapeType::Shell, ShapeType::Shape)
             {

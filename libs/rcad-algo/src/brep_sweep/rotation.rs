@@ -14,7 +14,7 @@
 use rcad_kernel::geom::{Curve2d, Curve3, CurveEval, Surface3};
 use rcad_kernel::precision::{p_confusion, CONFUSION, ANGULAR};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{Orientation, ShapeType};
+use rcad_kernel::topods::{BRep, Orientation, ShapeType};
 
 use super::num_linear_regular_sweep::{NumLinearRegularSweepCore, NumLinearRegularSweepSlots};
 use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
@@ -765,12 +765,17 @@ impl NumLinearRegularSweepSlots for BRepSweepRotation {
     /// OCCT BRepSweep_Rotation::SplitShell (cxx L797-802):
     /// `BRepTools_Quilt Q; Q.Add(aNewShape); return Q.Shells();`.
     fn split_shell(&self, a_new_shape: &Shape) -> Shape {
+        // The owning pool is the rcad architecture bridge; the sweep path
+        // consumers walk the returned compound by its TShape children (the
+        // pool-free BRepSweepBRepBuilder carriers), so the arena is local to
+        // the call (the OCCT form carries the TShape in the handle).
+        let mut a_brep = BRep::new();
         // OCCT cxx L799: BRepTools_Quilt Q.
         let mut q = BRepToolsQuilt::new();
         // OCCT cxx L800: Q.Add(aNewShape).
-        q.add(a_new_shape);
+        q.add(&mut a_brep, a_new_shape);
         // OCCT cxx L801: return Q.Shells().
-        q.shells()
+        q.shells(&mut a_brep)
     }
 
     /// OCCT BRepSweep_Rotation::HasShape (cxx L806-848).

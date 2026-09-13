@@ -173,7 +173,9 @@ fn basis_v_bounds_of(surf: &Surface3) -> (f64, f64) {
 
 /// OCCT ElSLib + Geom_BSplineSurface::VIso over the rcad Surface3 — the
 /// v-varying iso curve at `v`.  Same GAP note as [`surface_uiso`].
-pub(super) fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
+/// `pub(crate)`: Geom_Surface::VIso is a public Geom-level operation
+/// (ChFi3d_ComputeArete, ChFi3d_Builder_0.cxx L2044).
+pub(crate) fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
     match surf {
         // ElSLib::PlaneVIso: line through P(0, v) along the U direction.
         Surface3::Plane(pl) => Curve3::Line(Line3 {

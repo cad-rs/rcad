@@ -10,7 +10,6 @@ use std::sync::{Arc, RwLock};
 use glam::DVec2;
 use rcad_kernel::geom::{Curve2d, Line2d, TrimmedCurve2};
 
-use crate::fillet::chfi3d_builder_0::elclib_adjust_periodic;
 use crate::geomalgo::geom2d_int::{curve2d_type_of, Curve2dAdaptor, Curve2dType, GInter};
 use crate::geomalgo::int_res2d::Domain;
 use crate::topalgo::bisector::bisector::GeomAbsJoinType;
@@ -754,15 +753,13 @@ impl Mat2dTool2d {
                 if curve.inner().is_periodic() {
                     // OCCT L596: ElCLib::AdjustPeriodic(0., 2*M_PI, Eps,
                     // ParamMin, ParamMax).
-                    let (a1, a2) = elclib_adjust_periodic(
+                    rcad_kernel::math::el::elclib_adjust_periodic(
                         0.0,
                         2.0 * std::f64::consts::PI,
                         eps,
-                        param_min,
-                        param_max,
+                        &mut param_min,
+                        &mut param_max,
                     );
-                    param_min = a1;
-                    param_max = a2;
                 }
             }
             //---------------------------------------------------------------------

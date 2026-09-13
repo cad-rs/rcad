@@ -526,7 +526,7 @@ fn build_domains(
         }
     }
     // OCCT L273-279.
-    fr.perform();
+    fr.perform(brep);
     if !fr.is_done() {
         // OCCT L275-277.
         panic!("BRepOffsetAPI_MakeOffset : Build Domains");

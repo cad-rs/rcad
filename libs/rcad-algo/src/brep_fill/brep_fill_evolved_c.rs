@@ -187,7 +187,7 @@ impl BRepFillEvolved {
             let lt = self.my_locations.intern(t);
             let a_local_shape = location_shape_moved(&mut self.my_locations, &self.my_spine, lt);
             fr.init(&a_local_shape, false, false);
-            fr.perform();
+            fr.perform(&mut paral_brep);
 
             // OCCT L1388-1412: for (; FR.More(); FR.Next()).
             while fr.more() {
@@ -552,6 +552,7 @@ impl BRepFillEvolved {
     /// OCCT BRepFill_Evolved::Add(Vevo, Prof, Glue) (L1844-1955).
     pub(super) fn add(
         &mut self,
+        brep: &mut BRep,
         vevo: &mut BRepFillEvolved,
         prof: &Shape,
         glue: &mut BRepToolsQuilt,
@@ -606,7 +607,7 @@ impl BRepFillEvolved {
                 }
             }
         }
-        glue.add(vevo.shape());
+        glue.add(brep, vevo.shape());
 
         //----------------------------------------------------------
         // Add map of elements generate in Vevo in myMap.
@@ -757,7 +758,7 @@ impl BRepFillEvolved {
     // -------------------------------------------------------------------
 
     /// OCCT BRepFill_Evolved::AddTopAndBottom(Glue) (L2078-2222).
-    pub(super) fn add_top_and_bottom(&mut self, glue: &mut BRepToolsQuilt) {
+    pub(super) fn add_top_and_bottom(&mut self, brep: &mut BRep, glue: &mut BRepToolsQuilt) {
         //  return first and last vertex of the profile.
         // OCCT L2081-2086.
         let (v0, v1) = top_exp_vertices(&self.my_profile.clone());
@@ -871,7 +872,7 @@ impl BRepFillEvolved {
 
             for an_iter_l_value in &l {
                 j += 1;
-                glue.add(an_iter_l_value);
+                glue.add(brep, an_iter_l_value);
                 if j == 1 && i == 0 {
                     self.my_top = an_iter_l_value.clone();
                 }

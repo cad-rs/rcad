@@ -299,6 +299,39 @@ pub fn in_period(u: f64, ufirst: f64, ulast: f64) -> f64 {
     (ufirst).max(u + period * ((ufirst - u) / period).ceil())
 }
 
+/// OCCT ElCLib::AdjustPeriodic (ElCLib.cxx L115-149) — brings (U1, U2) into
+/// the periodic range [UFirst, ULast], keeping U2 after U1.
+///
+/// The single canonical body of the operation; the former
+/// `base::extrema_ext_elc` copy delegates here.
+pub fn elclib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u2: &mut f64) {
+    // OCCT L120-125: Precision::IsInfinite on the range.
+    if is_infinite_value(u_first) || is_infinite_value(u_last) {
+        *u1 = u_first;
+        *u2 = u_last;
+        return;
+    }
+
+    let a_period = u_last - u_first;
+
+    // OCCT L129-135: aPeriod < Epsilon(ULast) — "In order to avoid
+    // FLT_Overflow exception (test bugs moddata_1 bug22757)".
+    if a_period < crate::base::extrema_ext_elc::epsilon_of(u_last) {
+        *u1 = u_first;
+        *u2 = u_last;
+        return;
+    }
+
+    *u1 -= ((*u1 - u_first) / a_period).floor() * a_period;
+    if u_last - *u1 < preci {
+        *u1 -= a_period;
+    }
+    *u2 -= ((*u2 - *u1) / a_period).floor() * a_period;
+    if *u2 - *u1 < preci {
+        *u2 += a_period;
+    }
+}
+
 // ============================================================================
 // ElSLib::Parameters — the inverse parameterisation (3D point -> UV)
 // (ElSLib.cxx L1547-1641).  The OCCT frames arrive via gp_Trsf

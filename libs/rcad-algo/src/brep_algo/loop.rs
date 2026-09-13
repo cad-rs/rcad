@@ -479,6 +479,10 @@ impl BRepAlgoLoop {
     /// the wires result.
     pub fn wires_to_faces(&mut self) {
         if !self.my_new_wires.is_empty() {
+            // The owning pool is the rcad architecture bridge (the OCCT form
+            // carries the TShape in the handle): the restrictor products are
+            // registered in the arena of this call instead of being pool-free.
+            let mut a_brep = rcad_kernel::topo::topods::BRep::new();
             let mut fr = BRepAlgoFaceRestrictor::new();
             let a_local_s = oriented(&self.my_face, Orientation::Forward);
             fr.init(&a_local_s, false, false);
@@ -486,7 +490,7 @@ impl BRepAlgoLoop {
                 fr.add(it);
             }
 
-            fr.perform();
+            fr.perform(&mut a_brep);
 
             if fr.is_done() {
                 let ori_f = self.my_face.orientation;

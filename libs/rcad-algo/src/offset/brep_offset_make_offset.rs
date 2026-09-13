@@ -1180,10 +1180,14 @@ pub(crate) fn remove_corks(s: &mut Shape, faces: &mut OcctIndexedShapeMap) {
 
 /// OCCT IsConnectedShell (cxx L742-753).
 pub(crate) fn is_connected_shell(s: &Shape) -> bool {
+    // The owning pool is the rcad architecture bridge; this query only counts
+    // the shells of the quilt compound, so the pool is the local arena of the
+    // call (the OCCT form carries the TShape in the handle and needs no pool).
+    let mut a_brep = BRep::new();
     let mut glue = BRepToolsQuilt::new();
-    glue.add(s);
+    glue.add(&mut a_brep, s);
 
-    let ss = glue.shells();
+    let ss = glue.shells(&mut a_brep);
     let mut explo = bat::explorer(&ss, ShapeType::Shell, ShapeType::Shape).into_iter();
     explo.next();
     explo.next().is_none()

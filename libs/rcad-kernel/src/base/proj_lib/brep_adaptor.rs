@@ -533,6 +533,22 @@ impl BRepAdaptorCurve {
         &self.my_edge
     }
 
+    /// OCCT BRepAdaptor_Curve's inherited `Value/D0` (the Adaptor3d_Curve
+    /// interface, documented as inherited in BRepAdaptor_Curve.hxx L93): the
+    /// point is evaluated through the base GeomAdaptor_TransformedCurve, i.e.
+    /// `GeomAdaptor_TransformedCurve::EvalD0` (geom_adaptor_transformed_curve
+    /// L246/L310).
+    pub fn d0(&self, u: f64) -> glam::DVec3 {
+        self.transformed.value_at(u)
+    }
+
+    /// OCCT BRepAdaptor_Curve's inherited `D1` (BRepAdaptor_Curve.hxx L93):
+    /// `GeomAdaptor_TransformedCurve::EvalD1` — the point and first derivative
+    /// with the edge location already composed into the adaptor.
+    pub fn d1(&self, u: f64) -> (glam::DVec3, glam::DVec3) {
+        self.transformed.d1_at(u)
+    }
+
     /// OCCT BRepAdaptor_Curve::Tolerance (cxx L146-149):
     /// `return BRep_Tool::Tolerance(myEdge);` — i.e. the plain BRep_Tool
     /// floor, delegated to the kernel canonical reader.

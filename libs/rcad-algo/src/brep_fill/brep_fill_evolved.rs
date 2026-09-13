@@ -57,7 +57,7 @@ use std::sync::Arc;
 use glam::{DAffine3, DVec3};
 
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{Orientation, ShapeType, TShape};
+use rcad_kernel::topods::{BRep, Orientation, ShapeType, TShape};
 
 use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::brep_fill::brep_fill_pipe::top_exp_vertices;
@@ -808,6 +808,11 @@ impl BRepFillEvolved {
 
         // OCCT L422-423.
         let mut glue = BRepToolsQuilt::new();
+        // The owning pool of the quilt products is the rcad architecture
+        // bridge (bridge 3 of the quilt): this path keeps one arena for the
+        // whole perform, so the shells/compound of `Glue.Shells()` (L526-527)
+        // are pool-registered.
+        let mut glue_brep = BRep::new();
         let mut c_side;
 
         //---------------------------------
@@ -837,7 +842,7 @@ impl BRepFillEvolved {
                 } else if c_side == 3 {
                     vevo.vertical_perform(&work_spine.clone(), &sp, &locus, &mut link, join);
                 }
-                cut_vevo.add(&mut vevo, &sp, &mut glue);
+                cut_vevo.add(&mut glue_brep, &mut vevo, &sp, &mut glue);
             }
         }
 
@@ -886,14 +891,14 @@ impl BRepFillEvolved {
                     } else if c_side == 6 {
                         vevo.vertical_perform(&face.clone(), &sp, &locus, &mut link, join);
                     }
-                    cut_vevo.add(&mut vevo, &sp, &mut glue);
+                    cut_vevo.add(&mut glue_brep, &mut vevo, &sp, &mut glue);
                 }
             }
         }
 
         // OCCT L510-513.
         if solid {
-            cut_vevo.add_top_and_bottom(&mut glue);
+            cut_vevo.add_top_and_bottom(&mut glue_brep, &mut glue);
         }
 
         //-------------------------------------------------------------------------
@@ -910,7 +915,7 @@ impl BRepFillEvolved {
         //-----------------------------------------------------------------
         // OCCT L526-527.
         let scv = cut_vevo.change_shape();
-        *scv = glue.shells();
+        *scv = glue.shells(&mut glue_brep);
 
         //------------------------------------------------------------------------
         // Transfer of the map of generated elements and of the shape of Cutvevo

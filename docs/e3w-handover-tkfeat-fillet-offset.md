@@ -27,6 +27,23 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
+### 0.0c 追加 27 收尾态（2026-09-13；**读这一节即可开工**，权威脉络见 port-plan 追加 27）
+
+- **门槛与网格（全部在树实测，含本轮三批）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110，重编 exe 后）；**15 个域网格的真实断言数与追加 25/26 基线逐项相同**（`blend_simple` **1 过/10 败**，`a1` 保持通过；`draft_angle` 1/48；`feat_featrevol` 1/44；`fillet2d_fillet2d` 5/0；`mkface_after_offset` 2/0；`mkface_after_extsurf_and_offset` 16/0；其余 0/N——后四者的余数是 `*_geometry_loads` 恒过占位）。
+- **本轮三批（全部"翻译/接线"类 ⇒ 通过数不变是预期，关键指标是零回归）**：
+  1. **TKOffset 入池（原队列第 2 项 = 根）已落地**：`BRepTools_Quilt` + `BRepAlgo_FaceRestrictor` 产物**入池**（13 文件 / 9 调用点随之改签名；`BRepBuilder::remove_from_compound` 新增）。设计判定：quilt **改收前导 `brep: &mut BRep`**、不自持池（自持池会让产物按原 index 别名到消费者池里 = 坑 2，比现状更糟）。`shell_registry` 镜像整体删除（池槽位**就是** OCCT 共享 TShape）。
+  2. **TKFillet `ChFi3d_ComputeArete` 的四个 stand-in 分支全部 1:1 译全**：iso u/v（原只支持圆柱 + 用**位置互换**代替 `ReversedParameter`+`Reverse`，**正是坑 15 禁的手写互换**）→ 接线 `surface_uiso/surface_viso` 真身；`IFlag==0` 非 iso（原丢 `pardeb/parfin` 与 `C3d`）→ `BRepAdaptor_Curve::D1` + `ChFi3d_BuildPCurve` + Bnd_Box2d 事后检查 + `GeomLib::BuildCurve3d`；`else` → 接线**早已在库**的 `chfi3d_project_pcurv` + UV1 对齐；并补上 OCCT L2000 的 `tolreached = tol3d;`。顺带把 `ElCLib::AdjustPeriodic` 收敛成 **`rcad_kernel::math::el::elclib_adjust_periodic` 唯一真身**（fillet 那份是 `while` 循环简化版、kernel 那份是 `pub(crate)`，双双删除）。
+  3. **TKFeat 队列第 0 项被实测推翻并改判**（见下）。
+- **★ TKFeat 第 0 项改判（最重要的结论，覆盖 §4.6 TKFeat 0 的旧表述）**：探针实测失败点是 **`LocOpe_Gluer::Perform` 的第二个 early-out `!the_split.is_done()`**（`loc_ope_gluer.rs:545`），**`LocOpe_Generator::Perform` 根本没被进入**——旧表述"查 `LocOpe_Generator::Perform` 为何不达"是错的。真缺口 = **`LocOpe_SplitShape` 是 stub 类**（`feat/loc_ope_spliter.rs:287-384`；OCCT `LocOpe_SplitShape.cxx` 1776 行，约 **1,340 行未译**，grep 全库 0 命中 ⇒ **真身不在库**）。**分类 = 功能缺失，且属"翻译/接线"** ⇒ 是下一轮首选。
+- **⏭ 下一轮队列（按序，取代 §4.6 里被覆盖的项）**：
+  1. **翻译 `LocOpe_SplitShape` 全类**（TKFeat；`feat_featrf_a1` 的直接前墙）。
+  2. **补 `Geom_Surface::UIso/VIso` 的 Bezier / Offset 臂**（本轮因批次 2 提级；`bspl_slib_iso` 已是 `BSplSLib::Iso` 的 1:1，Bezier 只缺隐式 knot/mult 描述）。
+  3. **`ChFi3d_SameParameter` 仍是无体 stand-in**（`chfi3d_builder_0.rs:358-366`）—— 新立卡，`chfi3d_compute_arete` 之后同族的下一个翻译点。
+  4. TKOffset 追加 26 第 1 项的 10 处 `UpdateCurves` 两步规则同族缺陷（`brep_fill_sweep_b.rs:234/:259` 优先）。
+  5. TKOffset 池外读取链**复核**（入池后 `curve_pool_free`/`edge_data_pool_free` 等守卫应已无活路径；勿重复立卡）。
+  6. 其余既有队列不变（blend 剩余十例 · `split_edge.rs:1392` 另一半 · `hbuilder.rs` pcurve 键 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 …）。
+- **⚠ 本轮引入、已量化、实测未触发的新风险**：批次 2 把**所有**面型导流到 `surface_uiso/surface_viso`，其对 **Bezier / Offset / 及 rcad 独有变体（Ellipsoid/Helicoid/Pipe/Ruled/Coons/TriBezier）** 仍是 GAP `panic!`；改动前这些面型是**静默留空**。15 个域网格无新增失败 ⇒ 本批保留，但补臂列为队列第 2 项（**保留 OCCT 失败路径的 GAP 优于静默错几何**）。
+
 ### 0.0 当前状态速览（追加 25 收尾，2026-09-13；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `0de47019`）/ 根仓库指针 = 本文件所在提交，**均已推送**）
 
 - **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**真实断言通过数**：`draft_angle` **1/49（`b3`，★ 本轮域内首个真实通过）** · `feat_featrevol` **1/45（`a5`）** · `blend_simple` **1/11（`a1`，★ 追加 25 的修复）** · `fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · 其余 0（`feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrf` 0/5 · `blend_complex` 0/2 · `offset_shape_type_a` 0/1 · `offset_shape_type_i` 0/12 · `offset_faces_type_i` 0/8 · `thrusection_specific` 0/26）。
@@ -573,6 +590,9 @@ RibSlot/Form 链，profile 修好后它们的失败点也随之下移。
 7. **补 `Geom_Surface::UIso/VIso` 的 `Bezier` / `Offset` / `LinearExtrusion` 三臂**（OCCT 确有其 override ⇒ 真缺口；三臂之外的面型是 rcad 独有变体、OCCT 无对应）。另：`geom_convert_curve_to_bspline` 的两份重复应收敛（`GeomConvert::CurveToBSplineCurve` 只有一个 OCCT 实现）。
 8. **哈希序（已量化降级，见坑 33）**：**不是**高优先级行为差异；只按热点核对，不搞全局容器替换。
 
+> **★ 追加 27 更新（2026-09-13，勿按本节的 0 项取活）**：下面**第 0 项已改判**——实测失败点是 `LocOpe_Gluer::Perform` 的 `!the_split.is_done()`（`loc_ope_gluer.rs:545`），`LocOpe_Generator::Perform` **未被进入**；
+> 真缺口 = **`LocOpe_SplitShape` 是 stub 类**（`feat/loc_ope_spliter.rs:287-384` ↔ OCCT `LocOpe_SplitShape.cxx` 1776 行，约 1,340 行未译，真身不在库）⇒ 下一手 = **翻译该全类**。详见 §0.0c 与 port-plan 追加 27。
+
 **TKFeat（`feat/**` + `topalgo/int_curves_face_intersector.rs`）**
 0. **★ 第 0 项（最急，a1 的直接下一墙，已定界到函数）**：**`LocOpe_Generator::Perform` 的 `IsDone`**（`feat/loc_ope_generator.rs` / `loc_ope_generator_b.rs`）。
    `geom_proj_lib::curve2d` 的 `Trimmed` 解包**已落地**（追加 17 补记 1）：`BRepFeat::IsInside` 恢复正常分类 ⇒ `LFPerform` 的粘合判定 `collage=true ope=Fuse`（与 OCCT 一致）⇒ 进入 `theOpe=1` 的粘合路径。**新墙**：`theGlue.Perform()` 后 rcad **`IsDone=false`** vs OCCT **`IsDone=1` / `resultFaces=9`**（面积 109.511）。OCCT 的 `myDone` 来自 `myDone = theGen.IsDone()`（`LocOpe_Gluer.cxx` **L230**，`theGen` = `LocOpe_Generator`）⇒ **下一手 = 查 `LocOpe_Generator::Perform` 为何不达**（对拍通道现成：`RCAD_WS_PROBE` + `output/build_tkfeat.bat`；OCCT 侧插桩点在 `LocOpe_Generator.cxx` 的 `Perform` / `myDone` 赋值处）。
@@ -580,6 +600,9 @@ RibSlot/Form 链，profile 修好后它们的失败点也随之下移。
 2. **featprism 结果根**（`NoExtFace ×3` 的真因，④ 已证伪"欠计数"假说）：OCCT 侧 `nbshapes r` = **11 面 SOLID**（V12/E20/W12/F11/SHELL1/SOLID1），rcad 侧 `root_shape`（生成测试 helper）拿到 **3 面 Shell**。**先判定两条完全不同的修法**：是**结果池缺根**（`feat/brep_feat_make_prism.rs` / `loc_ope_*.rs` / `brep_feat_form*.rs` / `brep_feat_rib_slot*.rs`）还是**生成器 helper 取错**（`tools/occt-test-gen`）——判定依据 = 直接从结果 BRep 数出顶层 Solid 的面数是否等于 11。
 3. **b6/b7**：`PtOnEdgeVertex`（`brep_feat_rib_slot_b.rs:1110-1115`）同一个 `my_sbase` 问题；D2 **已修**（追加 17 又补了 `basis_curve_of`），复测。
 4. 其余既有队列（`NoFaceProf ×3`、`BRepTools_Modifier::Perform` GAP）见 §4.1；feat 侧实测失败地图见 §0.0。
+
+> **★ 追加 27 更新（2026-09-13）**：`ChFi3d_ComputeArete`（OCCT `ChFi3d_Builder_0.cxx` L1984-2180）的**四个 stand-in 分支已全部 1:1 译全**——iso u/v 接线 `surface_uiso/surface_viso` 真身（并消灭了手写位置互换，坑 15）；`IFlag==0` 非 iso 补全 `ChFi3d_BuildPCurve` + Bnd_Box2d 事后检查 + `GeomLib::BuildCurve3d`（原实现丢 `pardeb/parfin` 与 `C3d`）；`else` 接线早已在库的 `chfi3d_project_pcurv`；补 OCCT L2000 的 `tolreached = tol3d;`。
+> `ElCLib::AdjustPeriodic` 收敛为 `rcad_kernel::math::el::elclib_adjust_periodic` **唯一真身**（旧 fillet 简化版 + kernel `pub(crate)` 版双删）。**接力项 = ① `ChFi3d_SameParameter`（仍是无体 stand-in，`chfi3d_builder_0.rs:358-366`）② 补 `UIso/VIso` 的 Bezier/Offset 臂 ③ 既有 blend 剩余失败点。**
 
 **TKFillet（`fillet/**`）—— 端盖弧 range 与 `reverse_curve` **已结案**；**接力项 B（blend 侧 ProjLib 接线）已由追加 19 落地**；接力项 = ① 无界 pcurve（a1 的门）② blend 剩余失败点**
 
@@ -593,6 +616,10 @@ RibSlot/Form 链，profile 修好后它们的失败点也随之下移。
 4. **blend 其余失败点（本轮实测，逐例）**：a3/a4 → `chfi3d_builder_2b.rs:583`；q1 → 测试断言 L963；q2 → `chfi3d_builder_c1.rs:1162`；q4 → `geom/bspline_ops.rs:329`；q7 → `brep_blend_walking.rs:143`；x1 → `base/convert/mod.rs:2008`（按用户口径，先译后调 ⇒ 这些先当"待分类"，别急着按断言修）。
 5. `ChFiDS_CommonPoint::SetArc` 旧记档（"rcad 只调 6 次"）**未经运行时复核**，静态 grep 有 ≥15 个调用点 ⇒ 先做运行时计数再立卡。
 
+
+> **★ 追加 27 更新（2026-09-13）**：本节**第 2 项（入池，根）已落地**——`BRepTools_Quilt` + `BRepAlgo_FaceRestrictor` 产物入池（13 文件 / 9 调用点改签名；新增 `BRepBuilder::remove_from_compound`；`shell_registry` 镜像删除，池槽位即 OCCT 共享 TShape）。
+> 设计判定：quilt **改收前导 `brep: &mut BRep`**、不自持池（自持池 ⇒ 产物按原 index 别名到消费者池 = 坑 2，比现状更糟）。
+> **⇒ 接力项改为**：① 池外读取链**复核**（入池后 `curve_pool_free`/`edge_data_pool_free`/`build_curves3d.rs::edge_data` 等守卫应已无活路径，**勿重复立卡**）；② 第 1 项的"写回侧"随"池外无池可变"一并消失；③ 追加 26 第 1 项的 10 处 `UpdateCurves` 同族缺陷（`brep_fill_sweep_b.rs:234/:259` 优先）。
 
 **TKOffset（`offset/**`）—— ★ 追加 19 后：第 1 项前段（池外读取）与第 3 项（`GeomLib::BuildCurve3d`）**已落地**；接力项 = ① 第 2 项（入池，根）② 池外读取续链（读侧）③ 回绕/附着两簇**
 

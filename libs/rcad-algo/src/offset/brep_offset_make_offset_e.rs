@@ -840,11 +840,14 @@ impl BRepOffsetMakeOffset {
         }
         //
         if !b_done {
+            // The owning pool is the rcad architecture bridge: the quilt
+            // products (the shells and the result compound of myOffsetShape)
+            // are slots of myBrep instead of pool-free shapes.
             let mut glue = BRepToolsQuilt::new();
             for a_it_ls in &a_lsf {
-                glue.add(a_it_ls);
+                glue.add(&mut self.my_brep, a_it_ls);
             }
-            self.my_offset_shape = glue.shells();
+            self.my_offset_shape = glue.shells(&mut self.my_brep);
         }
         //
         // Set correct value for closed flag

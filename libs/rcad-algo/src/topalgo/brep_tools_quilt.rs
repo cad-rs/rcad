@@ -15,26 +15,34 @@
 //!    and unspecified; the rcad order is the insertion order).
 //! 2. `TopTools_ShapeMapHasher` -> `brep_algo::tool::shape_key` (TShape ptr
 //!    + Location, orientation ignored).
-//! 3. `BRep_Builder` -> the brep_algo::tool in-place `Arc::make_mut`
-//!    re-hosts (the no-pool Arc TShape form; the thru_sections_b.rs L412
-//!    precedent for the shell forms).
+//! 3. `BRep_Builder` -> the `BRep` pool + its in-place mutators, with the
+//!    owning pool as the leading `brep` argument (the
+//!    topalgo/brep_tools_substitution.rs convention "the owning pool is the
+//!    leading `brep` argument"; the brep_offset_api_thru_sections_b.rs L422
+//!    in-pool form of the shell maker).  Every TShape this tool creates (the
+//!    copies, wires, faces, the shells and the result compound) is a slot of
+//!    the caller's pool, so the products are pool-registered instead of
+//!    pool-free (`Shape::index == usize::MAX` reads back as null through
+//!    `Shape::is_null()` and panics the pool readers — pit 19).
+//!    A source shape that is not a slot of `brep` is materialized first
+//!    (`BRep::import_shape_tree`, the cross-arena bridge) so every product
+//!    resolves through the pool.
 //! 4. `TopoDS_Iterator(S, cumOri = false)` -> `sub_shapes(&oriented(s,
 //!    Forward))` (compose with FORWARD is the identity; the rcad sub_shapes
 //!    always composes the parent orientation, the OCCT default cumOri = true
 //!    maps to the plain `sub_shapes(s)`).
-//! 5. Shells() handle aliasing: OCCT `SH` / `M(E)` / `MF(F)` / the result
-//!    compound alias the live shell TShape handles, and `TopoDS_Shape::IsSame`
-//!    identity follows the handle.  The rcad `Arc::make_mut` fork model would
-//!    strand those aliases (stale face lists / broken IsSame) on the first
-//!    in-place shell mutation, so the shells live in a local registry and the
-//!    `SH` / `M` / `MF` / result slots reference it by index (the
-//!    brep_offset_make_offset.rs arch. diff. #39 aliasing-bridge style).
+//! 5. Shell handles: OCCT `SH` / `M(E)` / `MF(F)` / the result compound alias
+//!    the live shell TShape handles, and every copy observes an in-place
+//!    `BRep_Builder` edit.  The rcad pool slot + the Shape's Arc is that shared
+//!    TShape, so the shells are carried as ordinary pool-registered Shapes and
+//!    the former local `shell_registry` mirror (and its index reference) is
+//!    gone — the pool is the registry.
 
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use rcad_kernel::geom::Curve2dEval;
-use rcad_kernel::topo::topods::{tshape_flags, Orientation, ShapeType, TShape, TShellData};
+use rcad_kernel::geom::{Curve2d, Curve2dEval};
+use rcad_kernel::topo::topods::{tshape_flags, BRep, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 
 use crate::brep_algo::tool as bat;
@@ -42,6 +50,10 @@ use crate::brep_algo::tool as bat;
 /// OCCT NCollection_IndexedDataMap / DataMap of (shape -> shape) keyed by
 /// TopTools_ShapeMapHasher; the payload is (key shape, item).
 type BoundsMap = IndexMap<bat::ShapeKey, (Shape, Shape)>;
+
+/// OCCT NCollection_DataMap<TopoDS_Shape, TopoDS_Shape> — the M / MF maps of
+/// Shells(): key shape -> the oriented shell handle.
+type ShellMap = IndexMap<bat::ShapeKey, (Shape, Shape)>;
 
 /// OCCT NCollection_Map of shapes (insertion-ordered set carrier).
 type ShapeSet = IndexMap<bat::ShapeKey, Shape>;
@@ -57,77 +69,195 @@ fn set_contains(s: &ShapeSet, sh: &Shape) -> bool {
     s.contains_key(&bat::shape_key(sh))
 }
 
-/// The Shells() shell wrapper — the OCCT `TopoDS_Shell SH` handle plus its
-/// TopoDS_Shape orientation field, carried as a registry index (bridge 5).
-#[derive(Clone)]
-struct QuiltShellRef {
-    shell: usize,
-    orientation: Orientation,
+/// OCCT NCollection_DataMap::Bind of a shape -> shell wrapper — replaces the
+/// value when the key exists (IndexMap::insert keeps the insertion position).
+/// The OCCT value is the oriented shell handle (`M(E)` / `MF(F)` return a
+/// `TopoDS_Shape`), so the rcad item is the oriented shell Shape.
+fn shell_map_bind(m: &mut ShellMap, k: &Shape, shell: &Shape) {
+    m.insert(bat::shape_key(k), (k.clone(), shell.clone()));
 }
 
-/// OCCT NCollection_DataMap::Bind of a shell wrapper — replaces the value
-/// when the key exists (IndexMap::insert keeps the insertion position).
-fn shell_map_bind(
-    m: &mut IndexMap<bat::ShapeKey, (Shape, QuiltShellRef)>,
-    k: &Shape,
-    shell: usize,
-    orientation: Orientation,
-) {
-    m.insert(
-        bat::shape_key(k),
-        (
-            k.clone(),
-            QuiltShellRef {
-                shell,
-                orientation,
-            },
-        ),
+// ---------------------------------------------------------------------------
+// The pool bridge and the BRep_Builder carriers over the owning pool.
+// ---------------------------------------------------------------------------
+
+/// rcad pool test (architecture difference): true when `r` resolves to its own
+/// TShape inside `brep` — the index must be a slot AND carry the same Arc.  A
+/// shape built in another arena can carry an in-range index that aliases an
+/// unrelated TShape (pit 2), and a pool-free shape carries usize::MAX.
+fn pool_owns_shape(brep: &BRep, r: &Shape) -> bool {
+    r.index < brep.tshapes.len() && Arc::ptr_eq(&brep.tshapes[r.index], &r.data)
+}
+
+/// The OCCT handle semantics (the TopoDS_Shape carries its TShape) over the
+/// rcad pool: the shape itself when it is a slot of `brep`, otherwise the
+/// same tree materialized into the pool (`BRep::import_shape_tree`).
+fn pool_shape(brep: &mut BRep, r: &Shape) -> Shape {
+    if pool_owns_shape(brep, r) {
+        r.clone()
+    } else {
+        brep.import_shape_tree(r)
+    }
+}
+
+/// OCCT TopoDS_Shape::EmptyCopied over the owning pool — the fresh TShape is a
+/// slot of `brep` (`BRep::empty_copy`), so the copy is pool-registered.
+fn builder_empty_copied(brep: &mut BRep, r: &Shape) -> Shape {
+    let r = pool_shape(brep, r);
+    brep.empty_copied(&r)
+}
+
+/// OCCT BRep_Builder::MakeShell() — the in-pool form (the
+/// brep_offset_api_thru_sections_b.rs L422 helper).
+fn builder_make_shell(brep: &mut BRep) -> Shape {
+    brep.add_tshell(vec![])
+}
+
+/// OCCT BRep_Builder::MakeWire(W).
+fn builder_make_wire(brep: &mut BRep) -> Shape {
+    brep.add_twire(vec![])
+}
+
+/// OCCT BRep_Builder::MakeCompound(C).
+fn builder_make_compound(brep: &mut BRep) -> Shape {
+    brep.add_tcompound(vec![])
+}
+
+/// OCCT BRep_Builder::Add(Compound, S) — the in-place compound edit (the
+/// BRep::add_to_compound sibling; every handle of the compound observes the
+/// added child, as BRep_Builder::Add does).
+fn builder_add_compound_shape(brep: &mut BRep, the_c: &Shape, the_s: &Shape) {
+    rcad_kernel::topo::topods::BRepBuilder::new().add_to_compound(
+        brep,
+        the_c.clone(),
+        the_s.clone(),
     );
 }
 
-/// OCCT BRep_Builder::MakeShell() — the thru_sections_b.rs L412 form without
-/// the pool (the no-pool Arc TShape).
-fn builder_make_shell() -> Shape {
-    Shape {
-        data: Arc::new(TShape::Shell(TShellData {
-            my_shapes: Vec::new(),
-            flags: tshape_flags::DEFAULT,
-            faces: Vec::new(),
-        })),
-        index: usize::MAX,
-        location: 0,
-        orientation: Orientation::Forward,
+/// OCCT BRep_Builder::Remove(Compound, S) (TopoDS_Builder.cxx L106-135).
+fn builder_remove_compound_shape(brep: &mut BRep, the_c: &Shape, the_s: &Shape) {
+    rcad_kernel::topo::topods::BRepBuilder::new().remove_from_compound(
+        brep,
+        the_c.clone(),
+        the_s.clone(),
+    );
+}
+
+/// OCCT BRep_Builder::Add(Shell, Face) — the in-place shell edit through the
+/// pool slot (the BRep::shell_mut identity contract; Arc::make_mut would
+/// strand the face on a fork).  The OCCT call sites pass the FORWARD-oriented
+/// parent (arefShape), so the stored child orientation is the child's own
+/// (TopoDS_Builder::Add composes Reverse(parent.Ori) into the child; FORWARD
+/// is the identity).
+fn builder_add_shell_face(brep: &mut BRep, the_shell: &Shape, the_face: &Shape) {
+    let sd = brep.shell_mut(the_shell.clone());
+    sd.faces.push(the_face.clone());
+    sd.my_shapes.push(the_face.clone());
+}
+
+/// OCCT BRep_Builder::Add(W, E) — the in-place wire edit (see
+/// [`builder_add_shell_face`]).
+fn builder_add_wire_edge(brep: &mut BRep, the_w: &Shape, the_e: &Shape) {
+    let wd = brep.wire_mut(the_w.clone());
+    wd.edges.push(the_e.clone());
+}
+
+/// OCCT BRep_Builder::Add(F, W) — the first wire is the outer wire, the
+/// following ones are inner wires (BRep_Builder.cxx Add Face branch;
+/// tool.rs::builder_add_face_wire in its pool form).
+fn builder_add_face_wire(brep: &mut BRep, the_f: &Shape, the_w: &Shape) {
+    let fd = brep.face_mut(the_f.clone());
+    if fd.outer_wire.is_null() {
+        fd.outer_wire = the_w.clone();
+    } else {
+        fd.inner_wires.push(the_w.clone());
     }
 }
 
-/// OCCT BRep_Builder::Add(Shell, Face) — the thru_sections_b.rs L417 form.
-/// The OCCT call sites pass the FORWARD-oriented parent (arefShape), so the
-/// stored child orientation is the child's own (TopoDS_Builder::Add composes
-/// Reverse(parent.Ori) into the child; FORWARD is the identity).
-fn builder_add_shell_face(the_shell: &mut Shape, the_face: &Shape) {
-    if let TShape::Shell(sd) = Arc::make_mut(&mut the_shell.data) {
-        sd.faces.push(the_face.clone());
-        sd.my_shapes.push(the_face.clone());
+/// OCCT BRep_Builder::Add(E, V) — attach the vertex by orientation
+/// (FORWARD -> first, REVERSED -> last; tool.rs::builder_add_edge_vertex in
+/// its pool form).
+fn builder_add_edge_vertex(brep: &mut BRep, the_e: &Shape, the_v: &Shape) {
+    let ed = brep.edge_mut_inplace(the_e.clone());
+    match the_v.orientation {
+        Orientation::Reversed => ed.last = the_v.clone(),
+        _ => ed.first = the_v.clone(),
     }
 }
 
-/// OCCT TopoDS_Shape::Orientable(theIsOrientable) — the ORIENTABLE flag
-/// write on the shape's own TShape (the bat::builder_set_closed form).
-fn builder_set_orientable(the_s: &mut Shape, flag: bool) {
-    let ts = Arc::make_mut(&mut the_s.data);
-    let flags = match ts {
-        TShape::Vertex(v) => &mut v.flags,
-        TShape::Edge(e) => &mut e.flags,
-        TShape::Wire(w) => &mut w.flags,
-        TShape::Face(f) => &mut f.flags,
-        TShape::Shell(sh) => &mut sh.flags,
-        TShape::Solid(so) => &mut so.flags,
+/// OCCT BRep_Builder::UpdateEdge(E, C2d, F, Tol) — bind the pcurve on the face
+/// (the pcurve range is the edge 3D range).  The OCCT shared-TShape edit goes
+/// through the pool slot, so `myBounds.FindFromKey(E)` observes it (no fork
+/// write-back); a source edge assembled outside the pool keeps the Arc form
+/// (the shape travels in the caller's handle).
+fn builder_update_edge_pcurve(
+    brep: &mut BRep,
+    the_e: &mut Shape,
+    the_c2d: &Curve2d,
+    the_f: &Shape,
+    the_tol: f64,
+) {
+    if pool_owns_shape(brep, the_e) {
+        let (f0, l0) = bat::brep_tool_range(the_e);
+        let ed = brep.edge_mut_inplace(the_e.clone());
+        ed.pcurves.insert(bat::shape_key(the_f), (the_c2d.clone(), f0, l0));
+        ed.tolerance = ed.tolerance.max(the_tol);
+    } else {
+        bat::builder_update_edge_pcurve(the_e, the_c2d, the_f, the_tol);
+    }
+}
+
+/// OCCT BRep_Builder::Range(E, First, Last).
+fn builder_range_edge(brep: &mut BRep, the_e: &mut Shape, the_first: f64, the_last: f64) {
+    if pool_owns_shape(brep, the_e) {
+        brep.edge_mut_inplace(the_e.clone()).range = [the_first, the_last];
+    } else {
+        bat::builder_range_edge(the_e, the_first, the_last);
+    }
+}
+
+/// OCCT BRep_Builder::Range(E, F, First, Last) — the pcurve range of the edge
+/// on the face (BRep_Builder.cxx Range CurveOnSurface branch).
+fn builder_range_edge_on_face(
+    brep: &mut BRep,
+    the_e: &mut Shape,
+    the_f: &Shape,
+    the_first: f64,
+    the_last: f64,
+) {
+    let key = bat::shape_key(the_f);
+    if pool_owns_shape(brep, the_e) {
+        let ed = brep.edge_mut_inplace(the_e.clone());
+        if let Some(entry) = ed.pcurves.get_mut(&key) {
+            entry.1 = the_first;
+            entry.2 = the_last;
+        }
+    } else {
+        bat::builder_range_edge_on_face(the_e, the_f, the_first, the_last);
+    }
+}
+
+/// A per-kind shape-flag write through the pool slot (OCCT
+/// TopoDS_Shape::Closed / BRep_Builder::Free / TopoDS_Shape::Orientable —
+/// tool.rs::builder_set_closed / builder_set_free / builder_set_orientable in
+/// their pool form).  The Shells() call sites pass the shells this tool just
+/// created, so the target is always a slot of `brep`; a shape from outside the
+/// pool is materialized first (`pool_shape`) rather than aliased by index.
+fn builder_set_flag(brep: &mut BRep, the_s: &Shape, flag: u16, on: bool) {
+    let the_s = pool_shape(brep, the_s);
+    let flags = match &*the_s.data {
+        TShape::Vertex(_) => &mut brep.vertex_mut(the_s.clone()).flags,
+        TShape::Edge(_) => &mut brep.edge_mut_inplace(the_s.clone()).flags,
+        TShape::Wire(_) => &mut brep.wire_mut(the_s.clone()).flags,
+        TShape::Face(_) => &mut brep.face_mut(the_s.clone()).flags,
+        TShape::Shell(_) => &mut brep.shell_mut(the_s.clone()).flags,
+        TShape::Solid(_) => &mut brep.solid_mut(the_s.clone()).flags,
         TShape::CompSolid(_) | TShape::Compound(_) => return,
     };
-    if flag {
-        *flags |= tshape_flags::ORIENTABLE;
+    if on {
+        *flags |= flag;
     } else {
-        *flags &= !tshape_flags::ORIENTABLE;
+        *flags &= !flag;
     }
 }
 
@@ -173,10 +303,10 @@ impl BRepToolsQuilt {
     }
 
     /// OCCT CopyShape (BRepTools_Quilt.cxx L65-93).
-    fn copy_shape(e: &Shape, my_bounds: &mut BoundsMap) {
+    fn copy_shape(brep: &mut BRep, e: &Shape, my_bounds: &mut BoundsMap) {
         // OCCT L69-71: TopoDS_Edge NE = E; NE.EmptyCopy();
         // NE.Orientation(TopAbs_FORWARD).
-        let mut ne = bat::empty_copied(e);
+        let mut ne = builder_empty_copied(brep, e);
         ne.orientation = Orientation::Forward;
         // add the edges
         // OCCT L74-75: TopoDS_Iterator itv; itv.Initialize(E, false) —
@@ -185,14 +315,14 @@ impl BRepToolsQuilt {
         for v in &itv {
             if my_bounds.contains_key(&bat::shape_key(v)) {
                 let bound = my_bounds.get(&bat::shape_key(v)).unwrap().1.clone();
-                bat::builder_add_edge_vertex(&mut ne, &bat::oriented(&bound, v.orientation));
+                builder_add_edge_vertex(brep, &ne, &bat::oriented(&bound, v.orientation));
             } else {
-                bat::builder_add_edge_vertex(&mut ne, v);
+                builder_add_edge_vertex(brep, &ne, v);
             }
         }
         // set the 3d range (OCCT L88-91)
         let (f, l) = bat::brep_tool_range(e);
-        bat::builder_range_edge(&mut ne, f, l);
+        builder_range_edge(brep, &mut ne, f, l);
         // OCCT L92: myBounds.Add(E, NE.Oriented(TopAbs_FORWARD))
         let key = bat::shape_key(e);
         my_bounds
@@ -201,7 +331,7 @@ impl BRepToolsQuilt {
     }
 
     /// OCCT BRepTools_Quilt::Add(S) (BRepTools_Quilt.cxx L114-283).
-    pub fn add(&mut self, s: &Shape) {
+    pub fn add(&mut self, brep: &mut BRep, s: &Shape) {
         // Binds all the faces of S
         //  - to the face itself if it is not copied
         //  - to the copy if it is copied
@@ -250,7 +380,7 @@ impl BRepToolsQuilt {
                         if copy_edge {
                             // copy of an edge
                             copy_face = true;
-                            Self::copy_shape(&e, &mut self.my_bounds);
+                            Self::copy_shape(brep, &e, &mut self.my_bounds);
                         }
                     }
                 }
@@ -261,7 +391,7 @@ impl BRepToolsQuilt {
 
             if copy_face {
                 // copy of a face (OCCT L217-220)
-                nf = bat::empty_copied(&f);
+                nf = builder_empty_copied(brep, &f);
                 nf.orientation = Orientation::Forward;
 
                 // OCCT L222: for (TopoDS_Iterator itw(F, false); ...) — cumOri = false
@@ -271,7 +401,7 @@ impl BRepToolsQuilt {
                     let w = itw_v;
 
                     // OCCT L226-227: TopoDS_Wire NW; B.MakeWire(NW);
-                    let mut nw = bat::builder_make_wire();
+                    let mut nw = builder_make_wire(brep);
                     // OCCT L228: TopoDS_Iterator ite(W, false) — cumOri = false
                     let ite = bat::sub_shapes(&bat::oriented(w, Orientation::Forward));
                     let mut u_first = 0.0;
@@ -285,9 +415,12 @@ impl BRepToolsQuilt {
                         if self.my_bounds.contains_key(&bat::shape_key(&e)) {
                             // OCCT L239: const TopoDS_Edge& NE =
                             // TopoDS::Edge(myBounds.FindFromKey(E)); the OCCT
-                            // handle aliases the map item and UpdateEdge
-                            // mutates it in place; the rcad fork is written
-                            // back to the map slot below (bridge 1).
+                            // handle aliases the map item, so UpdateEdge / Range
+                            // edit the shared TShape the map holds — the rcad
+                            // pool slot when the item is a slot of the pool.
+                            // The write-back below keeps the map item in step
+                            // for a source edge assembled outside the pool (the
+                            // Arc form of the two range helpers).
                             let ekey = bat::shape_key(&e);
                             let mut ne = self.my_bounds.get(&ekey).unwrap().1.clone();
                             // pcurve.
@@ -299,7 +432,8 @@ impl BRepToolsQuilt {
                                     .expect("BRep_Tool::CurveOnSurface null");
                                 u_first = cf;
                                 u_last = cl;
-                                bat::builder_update_edge_pcurve(
+                                builder_update_edge_pcurve(
+                                    brep,
                                     &mut ne,
                                     &c2d,
                                     &f,
@@ -318,7 +452,8 @@ impl BRepToolsQuilt {
                                 u_first = cf;
                                 u_last = cl;
                                 let nce = rcad_kernel::geom::reverse_curve2d(&ce);
-                                bat::builder_update_edge_pcurve(
+                                builder_update_edge_pcurve(
+                                    brep,
                                     &mut ne,
                                     &nce,
                                     &f,
@@ -329,19 +464,19 @@ impl BRepToolsQuilt {
                                 u_last = ce.reversed_parameter(tmp);
                             }
                             // pcurve range (OCCT L265)
-                            bat::builder_range_edge_on_face(&mut ne, &f, u_first, u_last);
-                            // the UpdateEdge / Range write-back (bridge 1)
+                            builder_range_edge_on_face(brep, &mut ne, &f, u_first, u_last);
+                            // the UpdateEdge / Range write-back (bridge 3)
                             self.my_bounds.get_mut(&ekey).unwrap().1 = ne.clone();
                             // OCCT L267: B.Add(NW, NE.Oriented(OE));
-                            bat::builder_add_wire_edge(&mut nw, &bat::oriented(&ne, oe));
+                            builder_add_wire_edge(brep, &nw, &bat::oriented(&ne, oe));
                         } else {
                             // OCCT L271: B.Add(NW, E);
-                            bat::builder_add_wire_edge(&mut nw, &e);
+                            builder_add_wire_edge(brep, &nw, &e);
                         }
                     }
                     // OCCT L274-275
                     nw.orientation = w.orientation;
-                    bat::builder_add_face_wire(&mut nf, &nw);
+                    builder_add_face_wire(brep, &nf, &nw);
                 }
                 // OCCT L277
                 nf.orientation = f.orientation;
@@ -427,7 +562,7 @@ impl BRepToolsQuilt {
 
     /// OCCT BRepTools_Quilt::Shells() (BRepTools_Quilt.cxx L371-590) —
     /// returns a Compound of shells made from the current set of faces.
-    pub fn shells(&self) -> Shape {
+    pub fn shells(&self, brep: &mut BRep) -> Shape {
         // Outline of the algorithm
         //
         // In the map M we bind the free edges to their shells
@@ -444,18 +579,14 @@ impl BRepToolsQuilt {
         // In the Map MF the Shell is bound with the relative orientation of F
         // in the shell
 
-        // OCCT L389: NCollection_DataMap M, MF — the registry-index carrier
-        // (bridge 5).
-        let mut m: IndexMap<bat::ShapeKey, (Shape, QuiltShellRef)> = IndexMap::new();
-        let mut mf: IndexMap<bat::ShapeKey, (Shape, QuiltShellRef)> = IndexMap::new();
+        // OCCT L389: NCollection_DataMap M, MF — the value is the oriented
+        // shell handle (bridge 5: the pool slot IS the shared TShape).
+        let mut m: ShellMap = IndexMap::new();
+        let mut mf: ShellMap = IndexMap::new();
         // OCCT L390-393: BRep_Builder B; TopoDS_Compound result;
-        // B.MakeCompound(result); — the rcad mirror lists (bridge 5): the
-        // OCCT compound is mutated live (B.Add at L442 / B.Remove at L524);
-        // the rcad assembly reproduces the same final content order
-        // (surviving shells in creation order, then the other shapes).
-        let mut shell_registry: Vec<Shape> = Vec::new();
-        let mut result_shells: Vec<usize> = Vec::new();
-        let mut result_other: Vec<Shape> = Vec::new();
+        // B.MakeCompound(result); — the compound is a pool slot, edited live by
+        // B.Add (L442 / L492 / L586) and B.Remove (L524).
+        let result = builder_make_compound(brep);
 
         // OCCT L395-396: MapOtherShape / EdgesFaces (gka)
         let mut map_other_shape: ShapeSet = IndexMap::new();
@@ -473,7 +604,7 @@ impl BRepToolsQuilt {
                 }
 
                 // OCCT L413-414: TopoDS_Shell SH (null); TopAbs_Orientation NewO;
-                let mut sh: Option<QuiltShellRef> = None;
+                let mut sh: Option<Shape> = None;
                 let mut new_o = Orientation::Forward;
 
                 // OCCT L416-435: TopExp_Explorer itf1(Shape, TopAbs_EDGE)
@@ -488,7 +619,7 @@ impl BRepToolsQuilt {
                         } else {
                             new_o = shape.orientation;
                         }
-                        shell_map_bind(&mut mf, &shape, sh.shell, new_o);
+                        shell_map_bind(&mut mf, &shape, &bat::oriented(sh, new_o));
                         break;
                     }
                 }
@@ -498,33 +629,26 @@ impl BRepToolsQuilt {
                     // Create a new shell, closed. Add it to the result.
                     // OCCT L440-443: B.MakeShell(SH); SH.Closed(true);
                     // B.Add(result, SH);
-                    let mut shs = builder_make_shell();
-                    bat::builder_set_closed(&mut shs, true);
-                    shell_registry.push(shs);
-                    let id = shell_registry.len() - 1;
-                    sh = Some(QuiltShellRef {
-                        shell: id,
-                        orientation: Orientation::Forward,
-                    });
-                    result_shells.push(id);
+                    let shs = builder_make_shell(brep);
+                    builder_set_flag(brep, &shs, tshape_flags::CLOSED, true);
+                    // OCCT L442: B.Add(result, SH).
+                    builder_add_compound_shape(brep, &result, &shs);
+                    sh = Some(shs);
                     let sh = sh.as_ref().unwrap();
                     // OCCT L443: MF.Bind(Shape, SH.Oriented(Shape.Orientation()));
-                    shell_map_bind(&mut mf, &shape, sh.shell, shape.orientation);
+                    shell_map_bind(&mut mf, &shape, &bat::oriented(sh, shape.orientation));
                 }
 
-                let sh = sh.as_ref().unwrap();
+                let sh = sh.clone().unwrap();
 
                 // Add the face to the shell (OCCT L446-450): SH.Free(true);
                 // arefShape = SH.Oriented(TopAbs_FORWARD);
                 // B.Add(arefShape, Shape.Oriented(MF(Shape).Orientation()));
                 // — the FORWARD parent stores the face with its own
-                // orientation (bridge: builder_add_shell_face).
-                bat::builder_set_free(&mut shell_registry[sh.shell], true);
+                // orientation.
+                builder_set_flag(brep, &sh, tshape_flags::FREE, true);
                 let mf_shape_ori = mf.get(&bat::shape_key(&shape)).unwrap().1.orientation;
-                builder_add_shell_face(
-                    &mut shell_registry[sh.shell],
-                    &bat::oriented(&shape, mf_shape_ori),
-                );
+                builder_add_shell_face(brep, &sh, &bat::oriented(&shape, mf_shape_ori));
 
                 // OCCT L452: TopExp_Explorer itf(Shape.Oriented(TopAbs_FORWARD),
                 // TopAbs_EDGE)
@@ -539,7 +663,7 @@ impl BRepToolsQuilt {
                     if let Some((_, old_shell)) = m.get(&bat::shape_key(e)).cloned() {
                         // OCCT L460-461: const TopoDS_Shape oldShell = M(E);
                         // if (!oldShell.IsSame(SH))
-                        if old_shell.shell != sh.shell {
+                        if !old_shell.is_same(&sh) {
                             // Fuse the old shell with the new one
                             // Compare the orientation of E in SH and in oldshell.
                             // OCCT L465-471
@@ -557,11 +681,7 @@ impl BRepToolsQuilt {
                             // OCCT L475: for (TopoDS_Iterator its(oldShell)) —
                             // cumOri = true: the faces carry the oldShell
                             // wrapper orientation composed in.
-                            let old_shell_shape = bat::oriented(
-                                &shell_registry[old_shell.shell],
-                                old_shell.orientation,
-                            );
-                            for fo in bat::sub_shapes(&old_shell_shape) {
+                            for fo in bat::sub_shapes(&old_shell) {
                                 // OCCT L477: const TopoDS_Face Fo = TopoDS::Face(its.Value());
                                 // update the orientation of Fo in SH.
                                 // OCCT L479-487
@@ -574,20 +694,21 @@ impl BRepToolsQuilt {
                                 };
 
                                 // OCCT L489: MF.Bind(Fo, SH.Oriented(NewOFo));
-                                shell_map_bind(&mut mf, &fo, sh.shell, new_o_fo);
+                                shell_map_bind(
+                                    &mut mf,
+                                    &fo,
+                                    &bat::oriented(&sh, new_o_fo),
+                                );
                                 // OCCT L491-492: arefShapeFo = SH.Oriented(FORWARD);
                                 // B.Add(arefShapeFo, Fo.Oriented(NewOFo));
-                                builder_add_shell_face(
-                                    &mut shell_registry[sh.shell],
-                                    &bat::oriented(&fo, new_o_fo),
-                                );
+                                builder_add_shell_face(brep, &sh, &bat::oriented(&fo, new_o_fo));
                             }
                             // Rebind the free edges of the old shell to the new shell
                             // gka BUG 6491 (OCCT L494-522): TopExp_Explorer
                             // aexp(SH, TopAbs_EDGE) — the SH wrapper
                             // orientation composes in.
                             let aexp = bat::explorer(
-                                &bat::oriented(&shell_registry[sh.shell], sh.orientation),
+                                &bat::oriented(&sh, sh.orientation),
                                 ShapeType::Edge,
                                 ShapeType::Shape,
                             );
@@ -596,7 +717,7 @@ impl BRepToolsQuilt {
                                     continue;
                                 }
                                 let a_s = m.get(&bat::shape_key(ae)).unwrap().1.clone();
-                                if a_s.shell == old_shell.shell {
+                                if a_s.is_same(&old_shell) {
                                     // update the orientation of free edges in SH.
                                     // OCCT L510-518
                                     let new_o2 = if rev {
@@ -606,11 +727,12 @@ impl BRepToolsQuilt {
                                     };
 
                                     // OCCT L520: M.Bind(ae, SH.Oriented(NewO));
-                                    shell_map_bind(&mut m, ae, sh.shell, new_o2);
+                                    shell_map_bind(&mut m, ae, &bat::oriented(&sh, new_o2));
                                 }
                             }
                             // remove the old shell from the result (OCCT L524)
-                            result_shells.retain(|&id| id != old_shell.shell);
+                            let a_remove = bat::oriented(&old_shell, Orientation::Forward);
+                            builder_remove_compound_shape(brep, &result, &a_remove);
                         }
                         // Test if SH is always orientable. (OCCT L526-536)
                         let mut an_orien = e.orientation;
@@ -622,7 +744,7 @@ impl BRepToolsQuilt {
 
                         if m.get(&bat::shape_key(e)).unwrap().1.orientation == an_orien {
                             // OCCT L535: SH.Orientable(false);
-                            builder_set_orientable(&mut shell_registry[sh.shell], false);
+                            builder_set_flag(brep, &sh, tshape_flags::ORIENTABLE, false);
                         }
 
                         // remove the edge from M (no more a free edge) (OCCT L539)
@@ -638,24 +760,22 @@ impl BRepToolsQuilt {
                         // OCCT L548: if (!E.IsNull()) — the rcad explorer
                         // never yields null shapes.
                         // OCCT L550: M.Bind(E, SH.Oriented(NewO));
-                        shell_map_bind(&mut m, e, sh.shell, new_o2);
+                        shell_map_bind(&mut m, e, &bat::oriented(&sh, new_o2));
                     }
                 }
 
                 // freeze the shell (OCCT L560)
-                bat::builder_set_free(&mut shell_registry[sh.shell], false);
+                builder_set_flag(brep, &sh, tshape_flags::FREE, false);
             } else {
                 // OCCT L564: MapOtherShape.Add(Shape);
                 set_add(&mut map_other_shape, &shape);
             }
         }
 
-        // Unclose all shells having free edges (OCCT L570-577): the OCCT
-        // S.Closed(false) mutates the shell TShape aliased by the result
-        // compound; the rcad write goes through the registry slots the
-        // compound is assembled from (bridge 5).
+        // Unclose all shells having free edges (OCCT L570-577): S.Closed(false)
+        // edits the shell TShape the result compound aliases (the pool slot).
         for (_, (_, shref)) in m.iter() {
-            bat::builder_set_closed(&mut shell_registry[shref.shell], false);
+            builder_set_flag(brep, shref, tshape_flags::CLOSED, false);
         }
 
         // gka version for free edges (OCCT L579-588)
@@ -665,19 +785,11 @@ impl BRepToolsQuilt {
             {
                 let a_sh = self.my_bounds.get(&bat::shape_key(key_shape)).unwrap().1.clone();
                 // OCCT L586: B.Add(result, aSh);
-                result_other.push(a_sh);
+                builder_add_compound_shape(brep, &result, &a_sh);
             }
         }
 
-        // OCCT L589: return result; — the deferred compound assembly
-        // (bridge 5).
-        let mut result = bat::builder_make_compound();
-        for id in &result_shells {
-            bat::builder_add_compound_shape(&mut result, &shell_registry[*id]);
-        }
-        for s in &result_other {
-            bat::builder_add_compound_shape(&mut result, s);
-        }
+        // OCCT L589: return result;
         result
     }
 }

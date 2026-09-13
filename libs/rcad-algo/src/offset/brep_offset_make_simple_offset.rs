@@ -1441,10 +1441,12 @@ impl BRepOffsetMakeSimpleOffset {
 
         // Create result shell.
         // OCCT L479-481: BRepTools_Quilt aQuilt; aQuilt.Add(aResCompound);
-        // aShells = aQuilt.Shells().
+        // aShells = aQuilt.Shells().  The owning pool is the rcad architecture
+        // bridge (the quilt products are slots of myBrep, so the reads below —
+        // the shell loop, the MakeSolid of L503-506 — resolve through it).
         let mut a_quilt = BRepToolsQuilt::new();
-        a_quilt.add(&a_res_compound);
-        let a_shells = a_quilt.shells();
+        a_quilt.add(&mut self.my_brep, &a_res_compound);
+        let a_shells = a_quilt.shells(&mut self.my_brep);
 
         let mut a_res_shell = Shape::null();
         for a_shell in explorer(&a_shells, ShapeType::Shell, ShapeType::Shape) {
