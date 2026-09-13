@@ -744,10 +744,14 @@ impl PaveFiller {
         self.my_increased_ss.clear();
         // Note: myDS is borrowed (not owned), so not deleted.
     }
-    pub fn set_glue(&mut self, enable: bool, tolerance: f64) {
-        self.my_glue = if enable { GlueEnum::GlueFull } else { GlueEnum::GlueOff };
-        self.my_fuzzy_value = tolerance;
+    /// OCCT BOPAlgo_PaveFiller::SetGlue (BOPAlgo_PaveFiller.cxx L107-110 /
+    /// BOPAlgo_PaveFiller.hxx L152-153): myGlue = theGlue.
+    pub fn set_glue(&mut self, the_glue: GlueEnum) {
+        self.my_glue = the_glue;
     }
+    /// OCCT BOPAlgo_PaveFiller::Glue (BOPAlgo_PaveFiller.cxx L114-117 /
+    /// BOPAlgo_PaveFiller.hxx L155-156).
+    pub fn glue(&self) -> GlueEnum { self.my_glue }
     pub fn fuzzy_value(&self) -> f64 { self.my_fuzzy_value }
     /// OCCT BOPAlgo_Options::SetFuzzyValue (BOPAlgo_Options.cxx L107):
     /// myFuzzyValue = max(theFuzz, Precision::Confusion()).

@@ -41,24 +41,32 @@
 //!    skips IntersectShapes, and the section attribute is inherited from the
 //!    filler defaults).  See the call site.
 //! 8. BOPAlgo_Builder AddArgument / PerformWithFiller / BuildBOP (cxx
-//!    L691-787) -> crate::bop::algo::builder::Builder.  OCCT runs the
-//!    Builder pass in PerformWithFiller (no operation) and only the BuildShape
-//!    step in BuildBOP, over the images kept from that pass; the rcad Builder
-//!    binds the filler's DS at construction and runs
-//!    BOPAlgo_BOP::PerformInternal1 (Builder pass + BuildShape) in one
-//!    build() call, so each BuildBOP maps onto a fresh Builder over the same
-//!    DS (the drivers at the end of the file).  OCCT's BOPAlgo_Builder owns
-//!    no operation at all (BOPAlgo_BOP does), which the UNKNOWN operation of
-//!    the fresh builder stands for.
-//! 9. BRepTools_History::Merge(aLO, aBuilder) (cxx L746) has no rcad body:
-//!    OCCT's form is the BRepTools_History(theArguments, theAlgo) template
-//!    constructor (BRepTools_History.hxx L104-140), which walks the
-//!    sub-shapes of theArgs and copies the algorithm's IsDeleted / Modified
-//!    / Generated relations.  The rcad BRepToolsHistory keeps its maps
-//!    privately and the Builder exposes no such read surface, so the
-//!    statement stays unexecuted (documented at the call site).  The
-//!    remaining history operations use the real bop::history::BRepToolsHistory
-//!    methods (Clear / Merge / Modified), which are translated.
+//!    L691-787) -> crate::bop::algo::builder::Builder.  The call sites are the
+//!    literal OCCT statement sequence: Builder::new over the filler's DS
+//!    (OCCT binds myDS = myPaveFiller->PDS() in PerformInternal1), the
+//!    BOPAlgo_BuilderShape::myFillHistory(true) constructor default
+//!    (BOPAlgo_BuilderShape.hxx L122) set explicitly, AddArgument x2,
+//!    PerformWithFiller, then BuildBOP / BuildBOP(states) on the SAME builder
+//!    — the Builder pass runs once and its images are what the BuildBOP calls
+//!    consume, exactly as in OCCT.  The operation stays UNKNOWN: OCCT
+//!    BOPAlgo_Builder owns no myOperation (that is BOPAlgo_BOP), and BuildBOP
+//!    takes the operation / states as parameters.  The gluer's
+//!    BOPAlgo_Builder::Perform (cxx L749-753) creates its own PaveFiller over
+//!    its arguments, so the rcad form spells out that sequence — the filler is
+//!    a local whose SetGlue(BOPAlgo_GlueShift) runs BEFORE its Perform, and the
+//!    builder then runs PerformWithFiller over it (PerformWithFiller copies
+//!    myGlue back from the filler, BOPAlgo_Builder.cxx L205).
+//! 9. BRepTools_History::Merge(aLO, aBuilder) (cxx L746) -> bop::history
+//!    BRepToolsHistory::merge_algorithm over the DS identities of aLO.  OCCT's
+//!    form is the BRepTools_History(theArguments, theAlgo) template
+//!    constructor (BRepTools_History.hxx L99-132, L212-217), which walks the
+//!    sub-shapes of aLO and copies the algorithm's IsDeleted / Modified /
+//!    Generated relations (the rcad Builder exposes them through the
+//!    HistoryAlgo trait).  The rcad DS deep-clones the arguments, so aLO is
+//!    translated through ds.argument_remap first (the builder_modified /
+//!    Builder::set_tools precedent) — without it the walk would visit the
+//!    caller's argument graph, whose TShapes the builder's history is not
+//!    keyed by, and the merge would silently contribute nothing.
 //!
 //! first consumer: BRepOffsetAPI_MakeDraft (the 2e translation; the GAP
 //! carrier there is rewired to this module).
@@ -1130,7 +1138,23 @@ impl BRepFillDraft {
 
         // OCCT L691-694: BOPAlgo_Builder aBuilder; aBuilder.AddArgument(Sol1);
         // aBuilder.AddArgument(Sol2); aBuilder.PerformWithFiller(aPF).
-        let mut a_builder = builder_from_filler(&a_pf);
+        //
+        // Architecture difference #8 (rcad data model): the rcad Builder
+        // binds the filler's DS at construction (OCCT binds
+        // myDS = myPaveFiller->PDS() inside PerformInternal1,
+        // BOPAlgo_Builder.cxx L313-315), and it does not inherit
+        // BOPAlgo_BuilderShape::myFillHistory(true) (BOPAlgo_BuilderShape.hxx
+        // L122) from the base-class constructor, so the flag is set here.
+        // PerformWithFiller runs the Builder pass over the supplied filler
+        // once; the BuildBOP calls below reuse the images it left, which is
+        // what OCCT does.  The UNKNOWN operation stands for BOPAlgo_Builder
+        // owning no operation at all (BOPAlgo_BOP owns it); BuildBOP carries
+        // the operation as a parameter.
+        let mut a_builder = Builder::new(a_pf.ds(), BooleanOpType::Unknown, a_pf.fuzzy_value());
+        a_builder.set_to_fill_history(true);
+        a_builder.add_argument(sol1.clone());
+        a_builder.add_argument(sol2.clone());
+        a_builder.perform_with_filler(&a_pf);
         // OCCT L695-698: if (aBuilder.HasErrors()) { return false; }
         if a_builder.has_errors() {
             return false;
@@ -1149,11 +1173,16 @@ impl BRepFillDraft {
             let a_lo = vec![sol1.clone()];
             let a_lt = vec![sol2.clone()];
             // OCCT L710: aBuilder.BuildBOP(aLO, aLT, BOPAlgo_CUT, range).
-            a_builder = builder_build_bop(a_builder, &a_lo, &a_lt, BooleanOpType::Cut);
+            a_builder.build_bop(&a_lo, &a_lt, BooleanOpType::Cut);
             if !a_builder.has_errors() {
                 // OCCT L714-741: the closest cut solid.
                 let mut a_cut_min = Shape::null();
-                let an_exp_s = explored(&builder_shape(&a_builder), ShapeType::Solid);
+                // OCCT L715: TopExp_Explorer anExpS(aBuilder.Shape(),
+                // TopAbs_SOLID) — Shape() is the Builder's result root.
+                let an_exp_s = explored(
+                    &a_builder.shape_root().cloned().unwrap_or_else(Shape::null),
+                    ShapeType::Solid,
+                );
                 let mut an_exp_s_iter = an_exp_s.into_iter();
                 if let Some(first_solid) = an_exp_s_iter.next() {
                     a_cut_min = first_solid.clone();
@@ -1181,49 +1210,75 @@ impl BRepFillDraft {
                     // OCCT L746: aHistory->Merge(aLO, aBuilder) — save the
                     // history for the first argument only.
                     //
-                    // GAP (architecture difference #9): the rcad
-                    // BRepToolsHistory (bop::history) has no
-                    // Merge(theArguments, theAlgo) form.  OCCT's is the
-                    // BRepTools_History(theArguments, theAlgo) template
-                    // constructor (BRepTools_History.hxx L104-140): it walks
-                    // the sub-shapes of theArgs and copies the algorithm's
-                    // IsDeleted / Modified / Generated relations.  The rcad
-                    // history stores its maps privately and the Builder has no
-                    // IsDeleted / Modified / Generated read surface, so no
-                    // substitute is applied — merging the unrestricted Builder
-                    // history would add the second argument's relations too.
-                    //
+                    // BRepTools_History::Merge(theArguments, theAlgo)
+                    // (BRepTools_History.hxx L212-217) is
+                    // Merge(BRepTools_History(theArguments, theAlgo)), and the
+                    // constructor (L99-132) walks TopExp::MapShapes(aLO) and
+                    // copies the algorithm's IsDeleted / Modified / Generated
+                    // relations.  OCCT's DS holds the arguments by reference,
+                    // so aLO's TShapes ARE the algo's ones; the rcad DS
+                    // deep-clones them (DS::argument_remap, architecture
+                    // difference #9), so aLO is translated into the DS
+                    // identities first — the same translation builder_modified
+                    // (brep_offset_make_offset_1.rs) and Builder::set_tools
+                    // apply.  Without it the walk would visit the caller's
+                    // argument graph and the merge would contribute nothing.
+                    let a_lo_history = ds_argument_list(a_builder.ds, &a_lo);
+                    a_history.merge_algorithm(&a_lo_history, &a_builder);
+
                     // OCCT L749-753: BOPAlgo_Builder aGluer;
                     // aGluer.AddArgument(aCutMin); aGluer.AddArgument(Sol2);
                     // aGluer.SetGlue(BOPAlgo_GlueShift); aGluer.Perform().
                     //
-                    // BOPAlgo_Builder::Perform creates its OWN PaveFiller over
-                    // myArguments (BRepAlgoAPI_BuilderAlgo model), so aCutMin
-                    // and Sol2 are intersected from scratch; its Builder pass
-                    // runs in the BuildBOP driver below, which carries my_glue
-                    // over to the fresh Builder.
+                    // OCCT BOPAlgo_Builder::Perform (BOPAlgo_Builder.cxx
+                    // L167-194) creates its own PaveFiller over myArguments,
+                    // hands it myGlue (L187: pPF->SetGlue(myGlue)), runs it
+                    // (L190) and then PerformInternal (L192-193).  The
+                    // rcad Builder cannot own the filler (it borrows the DS),
+                    // so the sequence is spelled out here: the filler is a
+                    // local, the glue is set on it BEFORE Perform so the
+                    // intersection pass sees GlueShift, and the builder is
+                    // bound to its DS and runs the Builder pass once through
+                    // PerformWithFiller (which copies myGlue back from the
+                    // filler, BOPAlgo_Builder.cxx L205).
                     let mut a_gluer_pf = PaveFiller::new();
                     a_gluer_pf.set_arguments(vec![a_cut_min.clone(), sol2.clone()]);
-                    let a_gluer_ps = ProgressScope::new(&a_prog, "BOPAlgo_Builder", 1);
+                    // OCCT L752 (aGluer.SetGlue) reaches the intersection here:
+                    // the filler the gluer's Perform creates carries the glue
+                    // into its own pass (BOPAlgo_Builder.cxx L187).
+                    a_gluer_pf.set_glue(GlueEnum::GlueShift);
+                    let a_gluer_ps =
+                        ProgressScope::new(&a_prog, "Performing General Fuse operation", 1);
                     a_gluer_pf.perform(&a_gluer_ps);
-                    let mut a_gluer = builder_from_filler(&a_gluer_pf);
-                    // OCCT BOPAlgo_Builder::SetGlue.
-                    a_gluer.my_glue = GlueEnum::GlueShift;
+                    let mut a_gluer = Builder::new(
+                        a_gluer_pf.ds(),
+                        BooleanOpType::Unknown,
+                        a_gluer_pf.fuzzy_value(),
+                    );
+                    a_gluer.set_to_fill_history(true);
+                    a_gluer.add_argument(a_cut_min.clone());
+                    a_gluer.add_argument(sol2.clone());
+                    // OCCT L752: aGluer.SetGlue(BOPAlgo_GlueShift) — the
+                    // gluer's own myGlue (BOPAlgo_Builder.hxx L123) and, since
+                    // rcad performs the pass over an explicit filler, the same
+                    // value on that filler (PerformWithFiller reads myGlue back
+                    // from the filler, BOPAlgo_Builder.cxx L205).
+                    a_gluer.set_glue(GlueEnum::GlueShift);
+                    a_gluer.perform_with_filler(&a_gluer_pf);
 
                     let a_lo = vec![a_cut_min.clone()];
                     // OCCT L757: aGluer.BuildBOP(aLO, State1, aLT, State2,
                     // range).
-                    a_gluer =
-                        builder_build_bop_states(a_gluer, &a_lo, state1, &a_lt, state2);
+                    a_gluer.build_bop_states(&a_lo, state1, &a_lt, state2);
 
                     if !a_gluer.has_errors() {
                         // OCCT L761-763: aHistory->Merge(aGluer.History());
                         // result = aGluer.Shape().
-                        if let Some(gluer_history) = a_gluer.my_history.as_ref() {
-                            a_history.merge(gluer_history);
-                        }
+                        a_history.merge(
+                            a_gluer.history().expect("aGluer.History()"),
+                        );
 
-                        result = builder_shape(&a_gluer);
+                        result = a_gluer.shape_root().cloned().unwrap_or_else(Shape::null);
                         let solids = explored(&result, ShapeType::Solid);
                         is_single_op_needed = solids.is_empty();
                     }
@@ -1239,17 +1294,15 @@ impl BRepFillDraft {
             let a_lt = vec![sol2.clone()];
 
             // OCCT L779: aBuilder.BuildBOP(aLO, State1, aLT, State2, range).
-            a_builder = builder_build_bop_states(a_builder, &a_lo, state1, &a_lt, state2);
+            a_builder.build_bop_states(&a_lo, state1, &a_lt, state2);
             if a_builder.has_errors() {
                 return false;
             }
 
             // OCCT L785-786: aHistory->Merge(aBuilder.History());
             // result = aBuilder.Shape().
-            if let Some(builder_history) = a_builder.my_history.as_ref() {
-                a_history.merge(builder_history);
-            }
-            result = builder_shape(&a_builder);
+            a_history.merge(a_builder.history().expect("aBuilder.History()"));
+            result = a_builder.shape_root().cloned().unwrap_or_else(Shape::null);
         }
 
         // OCCT L789-801.
@@ -1427,112 +1480,39 @@ impl BRepFillDraft {
 }
 
 // ---------------------------------------------------------------------------
-// BOPAlgo (TKBO) delegation drivers
-//
-// The OCCT BRepFill_Draft::Fuse (cxx L538-823) drives the public boolean API:
-// BOPAlgo_PaveFiller, BRepAlgoAPI_Section(S1, S2, Filler) and BOPAlgo_Builder
-// (AddArgument / PerformWithFiller / BuildBOP).  All three delegate to the
-// landed TKBO bodies (crate::bop); the drivers below carry only the rcad
-// architecture differences of the data model (numbered in the file header).
-// ---------------------------------------------------------------------------
-
-/// OCCT BOPAlgo_Builder::AddArgument (BOPAlgo_Builder.cxx L103-109) +
-/// BOPAlgo_Builder::PerformWithFiller (BOPAlgo_Builder.cxx L198-210).
-///
-/// Architecture difference #8: the rcad Builder binds the filler's DS at
-/// construction (Builder::new — the OCCT BOPAlgo_BOP::PerformInternal1
-/// L425-429 binding: myPaveFiller = &theFiller; myDS = PaveFiller->PDS())
-/// where OCCT hands the filler to PerformWithFiller; the AddArgument pair maps
-/// onto the filler's DS argument list, and the Builder pass runs in the
-/// build() call of the BuildBOP driver below.
-///
-/// The operation stays UNKNOWN — OCCT BOPAlgo_Builder has no myOperation (it
-/// is BOPAlgo_BOP that owns it); the BuildBOP driver sets it.
-fn builder_from_filler(the_pf: &PaveFiller) -> Builder<'_> {
-    let mut a_builder = Builder::new(the_pf.ds(), BooleanOpType::Unknown, the_pf.fuzzy_value());
-    // OCCT BOPAlgo_Builder::AddArgument: myArguments.Append(theShape) under
-    // the myMapFence dedup — the DS argument list is that same shape list.
-    a_builder.my_arguments = the_pf.ds().arguments.clone();
-    // OCCT BOPAlgo_BuilderShape::BOPAlgo_BuilderShape() (BOPAlgo_BuilderShape
-    // .hxx L122): myFillHistory(true).  The rcad Builder defaults to false and
-    // History() below reads it.
-    a_builder.my_fill_history = true;
-    a_builder
-}
-
-/// OCCT BOPAlgo_BuilderShape::Shape() — the result root shape.
-///
-/// Architecture difference: the rcad Builder result is a BRep pool, so the
-/// root is the compound recorded by its BuildShape (BOPAlgo_BOP::myShape =
-/// aResult); the feat::brep_feat_form_2::CutVehicle::shape model.
-fn builder_shape(the_builder: &Builder<'_>) -> Shape {
-    the_builder.my_result_root.clone().unwrap_or_else(Shape::null)
-}
-
-/// OCCT BOPAlgo_Builder::BuildBOP(theObjects, theTools, theOperation,
-/// theRange) (BOPAlgo_Builder.hxx L214-249) — the rcad driver form.
-///
-/// Architecture difference #8: OCCT keeps the Builder-pass images (myImages /
-/// myInParts) between PerformWithFiller and BuildBOP, so BuildBOP only re-runs
-/// BOPAlgo_BOP::BuildShape with the given face groups.  The rcad Builder runs
-/// BOPAlgo_BOP::PerformInternal1 (Builder pass + BuildShape) in one build()
-/// call and keeps no per-operation reset (BOPAlgo_Builder::Clear is not
-/// translated), so the operation form is expressed as a fresh Builder over the
-/// SAME DS: the DS is shared, so the images it recomputes are the ones the
-/// OCCT BuildBOP would have reused.  The glue and the history knob of the
-/// incoming builder are carried over (both are set before Perform in OCCT).
-fn builder_build_bop<'a>(
-    the_builder: Builder<'a>,
-    the_objects: &[Shape],
-    the_tools: &[Shape],
-    the_operation: BooleanOpType,
-) -> Builder<'a> {
-    let mut a_builder = Builder::new(
-        the_builder.ds,
-        the_operation,
-        the_builder.my_fuzzy_value,
-    );
-    // OCCT BOPAlgo_BOP::CheckData / SetArguments: myDS->Arguments() =
-    // myArguments ++ myTools.  The tools are the tail of the DS argument list
-    // (the brep_algo_api::run_build model); theObjects is the remaining head,
-    // so the list is implied.
-    a_builder.my_arguments = the_builder.ds.arguments.clone();
-    let a_nb_args = a_builder.my_arguments.len();
-    a_builder.my_tools =
-        a_builder.my_arguments[a_nb_args.saturating_sub(the_tools.len())..].to_vec();
-    a_builder.my_fill_history = the_builder.my_fill_history;
-    a_builder.my_glue = the_builder.my_glue;
-    let _ = the_objects;
-    let _ = a_builder.build();
-    a_builder
-}
-
-/// OCCT BOPAlgo_Builder::BuildBOP(theObjects, theObjState, theTools,
-/// theToolsState, theRange) (BOPAlgo_Builder.cxx L479-...) — the state form.
-///
-/// rcad keeps the operation form of the same face selection, so the states map
-/// back onto BOPAlgo_Operation with the table OCCT itself uses for the
-/// operation-to-states conversion (BOPAlgo_Builder.hxx L214-249):
-/// COMMON = (IN, IN), FUSE = (OUT, OUT), CUT = (OUT, IN), CUT21 = (IN, OUT).
-fn builder_build_bop_states<'a>(
-    the_builder: Builder<'a>,
-    the_objects: &[Shape],
-    the_obj_state: u8,
-    the_tools: &[Shape],
-    the_tools_state: u8,
-) -> Builder<'a> {
-    let a_operation = match (the_obj_state == TOPABS_IN, the_tools_state == TOPABS_IN) {
-        (false, false) => BooleanOpType::Union,
-        (true, true) => BooleanOpType::Intersection,
-        (false, true) => BooleanOpType::Cut,
-        (true, false) => BooleanOpType::Cut21,
-    };
-    builder_build_bop(the_builder, the_objects, the_tools, a_operation)
-}
-
-// ---------------------------------------------------------------------------
 // Small local helpers
 // ---------------------------------------------------------------------------
+
+/// OCCT BRepTools_History::Merge(theArguments, theAlgo) over the DS identities
+/// of the given argument list — the rcad translation of `aLO` for the
+/// BRepTools_History template constructor (BRepTools_History.hxx L99-132).
+///
+/// OCCT's BOPDS_DS holds the arguments by reference, so `aLO`'s TShapes are
+/// the ones the algorithm's history is keyed by.  The rcad DS deep-clones the
+/// argument graph (`DS::clone_arguments_private`), so an argument shape must be
+/// translated through `ds.argument_remap` before it reaches the history walk —
+/// the translation `builder_modified` (brep_offset_make_offset_1.rs) and
+/// `Builder::set_tools` apply.  The returned shapes carry the DS TShape
+/// identities, so the walk (`BRepToolsHistory::from_algorithm` ->
+/// `map_shapes`) visits the cloned sub-shape graph, which is the deep copy of
+/// the argument graph OCCT would walk.
+fn ds_argument_list(the_ds: &crate::bop::ds::DS, the_shapes: &[Shape]) -> Vec<Shape> {
+    the_shapes
+        .iter()
+        .map(|s| {
+            let a_orig = s.ptr_id();
+            match the_ds.argument_remap.get(&a_orig) {
+                Some(&a_new) if a_new != a_orig => {
+                    match the_ds.map_shape_index.get(&(a_new, s.location)) {
+                        Some(&a_idx) => the_ds.shape(a_idx).clone(),
+                        None => s.clone(),
+                    }
+                }
+                _ => s.clone(),
+            }
+        })
+        .collect()
+}
 
 /// OCCT BRep_Tool::CurveOnSurface(E, C, S, L, f, l, Index) — the indexed
 /// form (Index = 2 selects the second pcurve representation; the surface

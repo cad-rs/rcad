@@ -257,9 +257,8 @@ impl MakerVolume {
         // OCCT L91: pPF->SetNonDestructive(myNonDestructive);
         // Interface gap: rcad PaveFiller's non-destructive flag is internal.
         // OCCT L92: pPF->SetGlue(myGlue);
-        // Interface gap: rcad PaveFiller::set_glue has a different signature
-        // (bool + tolerance) and is not called here to avoid inventing
-        // semantics. OCCT L93: pPF->SetUseOBB(myUseOBB); — rcad has no OBB.
+        p_pf.set_glue(self.my_glue);
+        // OCCT L93: pPF->SetUseOBB(myUseOBB); — rcad has no OBB.
         //
         // OCCT L94: pPF->Perform(aPS.Next(anInterPart));
         let a_ps = ProgressScope::new(&a_prog, "intersect", 100);

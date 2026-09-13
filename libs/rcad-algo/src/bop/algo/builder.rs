@@ -1681,6 +1681,20 @@ impl<'a> Builder<'a> {
         self.my_fill_history = the_hist_flag;
     }
 
+    /// OCCT BOPAlgo_Builder::SetGlue (BOPAlgo_Builder.hxx L122-123):
+    ///   myGlue = theGlue;
+    /// The value is pushed into the filler by BOPAlgo_Builder::Perform
+    /// (BOPAlgo_Builder.cxx L187) and read back from the filler by
+    /// PerformWithFiller (L205).
+    pub fn set_glue(&mut self, the_glue: GlueEnum) {
+        self.my_glue = the_glue;
+    }
+
+    /// OCCT BOPAlgo_Builder::Glue (BOPAlgo_Builder.hxx L125-126).
+    pub fn glue(&self) -> GlueEnum {
+        self.my_glue
+    }
+
     /// OCCT BOPAlgo_BuilderShape::HasHistory (BOPAlgo_BuilderShape.hxx L117).
     pub fn has_history(&self) -> bool {
         self.my_fill_history
