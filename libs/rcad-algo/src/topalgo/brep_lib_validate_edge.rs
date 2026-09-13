@@ -22,21 +22,20 @@
 //!    `CurveOnSurface` seen through `CurveToolHandle`) — the OCCT
 //!    `Extrema_LocateExtPC::Initialize(*myReferenceCurve, ...)` adaptor
 //!    arguments.
-//! 5. `GeomLib_CheckCurveOnSurface` (TKGeomBase) is not translated yet; the
-//!    existing GAP carrier `geomalgo::geom_lib_check_curve_on_surface` is
-//!    called so `processExact` preserves the OCCT failure path (IsDone()
-//!    false from the panic-free construction; Perform panics — plan §0.6).
-//!    GAP: closes with the TKGeomBase GeomLib batch.
+//! 5. `GeomLib_CheckCurveOnSurface` (TKGeomBase) is the kernel translation
+//!    `rcad_kernel::base::geom_lib::GeomLibCheckCurveOnSurface` (the OCCT
+//!    hxx/cxx port with the OCCT line anchors); `processExact` feeds it the
+//!    `handle(Adaptor3d_Curve)` / `handle(Adaptor3d_CurveOnSurface)` pair in
+//!    the rcad handle encodings (bridges #1 / #2).
 
 use std::sync::Arc;
 
 use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
 use rcad_kernel::base::extrema_locate_ext_pc::LocateExtPC;
+use rcad_kernel::base::geom_lib::GeomLibCheckCurveOnSurface;
 use rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor;
 use rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
-
-use crate::geomalgo::geom_lib_check_curve_on_surface::GeomLibCheckCurveOnSurface;
 
 // ---------------------------------------------------------------------------
 // Standard_Real re-hosts (pure math)
@@ -271,8 +270,9 @@ impl Adaptor3dCurveOnSurface {
         &self.my_surface
     }
 
-    /// The underlying (curve2d, surface) values (bridge #5: the GAP-carrier
-    /// GeomLib_CheckCurveOnSurface consumer signature).
+    /// The underlying (curve2d, surface) values — the parts the kernel
+    /// `CurveOnSurface` (the rcad `handle(Adaptor3d_CurveOnSurface)` encoding)
+    /// is rebuilt from.
     pub fn curve_on_surface_values(&self) -> (Curve2d, Surface3) {
         (
             self.my_curve.curve2d_clone(),
@@ -711,13 +711,42 @@ impl BRepLibValidateEdge {
     /// OCCT processExact() (cxx L234-244) — calculating through
     /// GeomLib_CheckCurveOnSurface.
     fn process_exact(&mut self) {
-        // Bridge #5: the GAP-carrier GeomLibCheckCurveOnSurface consumes the
-        // underlying (Curve3) and (Curve2d, Surface3) values.
-        let (a_curve2d, a_surface) = self.my_other_curve.curve_on_surface_values();
-        let mut a_check_curve_on_surface =
-            GeomLibCheckCurveOnSurface::new(&self.my_reference_curve.curve3_clone());
+        // OCCT L236: GeomLib_CheckCurveOnSurface aCheckCurveOnSurface(myReferenceCurve);
+        // myReferenceCurve is the `GeomAdaptor_Curve(C, f, l)` handle; the
+        // rcad encoding of that handle is a `GeomCurveAdaptor` over the
+        // reference curve (bridge #1).
+        let a_reference_curve: rcad_kernel::base::proj_lib::proj_lib_projected_curve_b::GeomCurveHandle =
+            Arc::new(GeomCurveAdaptor::with_range(
+                self.my_reference_curve.curve3_clone(),
+                self.my_reference_curve.first_parameter(),
+                self.my_reference_curve.last_parameter(),
+            ));
+        let mut a_check_curve_on_surface = GeomLibCheckCurveOnSurface::with_curve(
+            &a_reference_curve,
+            rcad_kernel::PCONFUSION,
+        );
+
+        // OCCT L237: aCheckCurveOnSurface.SetParallel(myIsMultiThread);
         a_check_curve_on_surface.set_parallel(self.my_is_multi_thread);
-        a_check_curve_on_surface.perform(&(a_curve2d, a_surface));
+
+        // OCCT L238: aCheckCurveOnSurface.Perform(myOtherCurve); — myOtherCurve
+        // is the `handle(Adaptor3d_CurveOnSurface)`; the rcad encoding of that
+        // handle is the kernel `CurveOnSurface` over the same
+        // `Geom2dAdaptor_Curve + GeomAdaptor_Surface` pair (bridge #2).
+        let (an_other_curve2d, an_other_surface) = self.my_other_curve.curve_on_surface_values();
+        let an_other_curve_on_surface = Arc::new(
+            rcad_kernel::base::proj_lib::CurveOnSurface::new(
+                Arc::new(rcad_kernel::base::proj_lib::Geom2dCurveAdaptor::with_range(
+                    an_other_curve2d,
+                    self.my_other_curve.first_parameter(),
+                    self.my_other_curve.last_parameter(),
+                )),
+                Arc::new(GeomSurfaceAdaptor::new(an_other_surface)),
+            ),
+        );
+        a_check_curve_on_surface.perform(&an_other_curve_on_surface);
+
+        // OCCT L239-243.
         self.my_is_done = a_check_curve_on_surface.is_done();
         if self.my_is_done {
             self.my_calculated_distance = a_check_curve_on_surface.max_distance();

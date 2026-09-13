@@ -2216,5 +2216,8 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
 
 pub mod bspline_ops;
 pub mod eval;
+pub mod extrusion_utils;
+pub mod offset_surface_utils;
+pub mod osculating_surface;
 #[cfg(test)]
 pub mod tests;

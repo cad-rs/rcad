@@ -1589,6 +1589,38 @@ libs/rcad-algo/src/
   5. 追加 28 队列余项不变（TKOffset 10 处 `UpdateCurves` 同族缺陷优先 · TKOffset 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点批量勘误）。
 - **资产位置（本轮新增）**：`Approx_SameParameter` = `geomalgo/approx_same_parameter.rs`（1465 行）；canonical iso 真身的基本面型臂 = `brep_fill/brep_fill_sweep.rs::{surface_uiso,surface_viso}`（委派到 `rcad-kernel/src/base/proj_lib/elslib_iso.rs`）；新回归测试 = `brep_fill/brep_fill_sweep.rs::tests::elementary_surface_isos_follow_the_occt_wrappers`。
 
+### E3-W 追加 30（2026-09-13：**翻译优先轮（第二批）** —— `GeomLib_CheckCurveOnSurface`（774 行）与 `Geom_OsculatingSurface`（839 行）+ `Geom_OffsetSurfaceUtils` 全部落地，canonical `UIso/VIso` 的 **`Offset` 臂打通**；两处 GAP/替身被真身取代；八网格与全部域网格**零回归**）
+
+- **组织方式**：主代理做验收与整合；两个子代理并行（文件域不相交）。**连续第七轮有效。**
+- **★ 批次 1（子代理）：`GeomLib_CheckCurveOnSurface` 真身落地（OCCT `GeomLib_CheckCurveOnSurface.cxx` 774 行）**。
+  **落位判定（按 module-map，与"API 更像就选谁"的直觉相反）**：幸存者 = **新建 `rcad-kernel/src/base/geom_lib/check_curve_on_surface.rs`（1561 行）**。理由：`docs/module-map.md` L22 把 `rcad-kernel` 对应到 **TKMath+TKG2d+TKG3d+TKGeomBase**（`src/base` = TKGeomBase 各包），而 `GeomLib_CheckCurveOnSurface` 正在 `src/ModelingData/TKGeomBase/GeomLib/`；`geomalgo/` 对应的是 **TKGeomAlgo**（不含 GeomLib）。且 rcad-algo **本来就**从 `rcad_kernel::base::geom_lib` 引入 `inertia`/`axe_of_inertia`/`fuse_intervals`/`IsPlanarSurface` —— 放在 geomalgo 会反向 crate 依赖。
+  **逐成员**：`TargetFunc`（`math_MultipleVarFunctionWithHessian`）L52-206 · `Local` L210-283 · 两个 ctor/`Init` L287-331 · `Perform` L335-426（含 ε=1e-3、nbParticles=3、两次 `FillSubIntervals`、线程划分、`sqrt(abs())`）· `FillSubIntervals` L430-640（3D/2D 结点表 + `±PConfusion` 谓词的合并走查）· `PSO_Perform` L644-694 · `MinComputing` L698-774（PSO + `math_NewtonMinimum` + 小范围重试）。
+  **★ 一处关键正确性发现**：OCCT 8.0.0 的 `Geom_BSplineCurve::Knots()` 返回**去重结点**（`myKnots`），而 `KnotSequence()` 才是扁平向量；rcad 的 `BSplineCurve3/2` 存的是扁平向量 ⇒ 该文件把拆分再宿主（`knots_mults()` / `bspline2_knots_mults` + `IsPeriodic` 推导 + 两个 uknot-index 访问器）。**若天真地把 `knots` 当作 `Knots()` 移植，每遇到重复结点就会多出一个边界**。
+  **删掉两份旧实现**（Rule 4，不留禁用版）：`geomalgo/geom_lib_check_curve_on_surface.rs`（GAP 载体 + `geomalgo/mod.rs` 注销）与 kernel 的 **257 采样替身** `base/geom_lib/mod.rs::CheckCurveOnSurface`（连其单测）。消费点重定向：`brep_fill_sweep_b.rs::check_same_parameter_exact` 与 `topalgo/brep_lib_validate_edge.rs::process_exact`。
+  **未译（精确缺件）**：`math_PSO::Perform(theSteps,...)`（4 参重载，不在本路径）· `OSD_ThreadPool`（rcad 无线程池 ⇒ 顺序编码，结果等价）· `Adaptor3d_CurveOnSurface::ShallowCopy`（kernel 的 `CurveOnSurface` 未实现该 override ⇒ 暂在本文件内再宿主，**建议移入 `adaptor.rs`**）。
+  **新立卡（子代理发现，均在其文件域外）**：`bop/int_tools/extrema_gen_ext_cs.rs` 里有一份**过期的 PSO 栈副本**（RNG 种子 hi=`0x9E3779B9`/lo=`0x12345678`，而 OCCT 8.0.0 是 `SetSeed(seed=1)` ⇒ hi=1, lo=`0x49616E43`）⇒ `Extrema_GenExtCS` 今天跑的随机序列与 OCCT **不同**；`offset/draft_modification.rs:276-289` 仍硬编码 `ct_is_done=false; ct_error_status=2;`（注释写"等 GeomLib_CheckCurveOnSurface 译完才可达"—— **现在可达了**，需按 `BRepTools.cxx` L1277-1288 接线）。
+- **★ 批次 2（子代理）：`Geom_OsculatingSurface`（839 行）+ `Geom_OffsetSurfaceUtils` 落地 ⇒ canonical `UIso/VIso` 的 `Offset` 臂打通**。
+  **新建三文件**：`rcad-kernel/src/geom/osculating_surface.rs`（1586 行，`Geom_OsculatingSurface` 全类 + 其 OCCT 下层叶子 `BSplSLib::PrepareEval`/`BuildCache`、`BSplCLib::Bohm`/`BuildKnots`、`PLib::Trimming/UTrimming/VTrimming` 的再宿主）· `rcad-kernel/src/geom/offset_surface_utils.rs`（1380 行，`Geom_OffsetSurfaceUtils` 全类：`EvaluateD0/D1`、`ComputeDerivatives`、`ComputeDNormalU/V`、`CalculateD0/D1`、`ShiftPoint`、`ReplaceDerivative` + `CSLib::DNNUV` 两数组版）· `rcad-kernel/src/geom/extrusion_utils.rs`（86 行，`Geom_ExtrusionUtils` + `Geom_SurfaceOfLinearExtrusion::EvalD0/D1`）。另 `BSplSLib::DN`（非有理分支）→ `bspl_slib_dn`。
+  **canonical 侧**：`brep_fill/brep_fill_sweep.rs` 的 `surface_uiso`/`surface_viso` **`Surface3::Offset` 臂**按 `Geom_OffsetSurface::UIso` L601-655 / `VIso` L657-688 逐句落地，含两个 evaluator 类（L505-597）与 AdvApprox 尾部。+5 测试。
+  **现在可用**：`directRepSurface` 快路径（等价面 ⇒ 直接走该面的 iso，对 plane/cylinder/cone/sphere/torus 底与 `offset==0` 精确）· `GeomAbs_SurfaceOfExtrusion` 分支 · 一般 AdvApprox 臂（**基本曲面 + 非有理 BSpline 底**，含奇异点路径：osculating 面 + `ComputeDerivatives`）。
+  **★ AdvApprox 接线现在是否忠实：是。** `AdvApprox_SimpleApprox::Perform` 的 `derive=1` 现在到达 `Geom_OffsetSurfaceUtils::EvaluateD1`，它用**真解析** D1/D2（`ElSLib::DN`、`BSplSLib::DN`）与奇异点的真 `Geom_OsculatingSurface` —— **不再喂近似/差分导数**给 Hermite 约束（这正是上一轮拒绝接线的理由，现已解除）。
+  **仍 GAP（精确缺件）**：`BSplSLib::RationalDerivative`（**有理** BSpline 底的 evaluator 路径）· `Geom_Surface::EvalD1/D2/D3/DN` 对 **Bezier**/Revolution/Offset/Ruled/Coons/Pipe/Ellipsoid/Helicoid/TriBezier 底（其中 Bezier 尤其值钱：`Geom_BezierSurface::D1` 无 rcad 翻译，且 `is_q_punctual` 对 Bezier 底需要它）。
+  **架构说明**：OCCT 的 `myEvalRep`（`GeomEval_RepSurfaceDesc::Full`）无法在 rcad 的 `OffsetSurface` payload 里表示（只有 `basis` + `offset_distance`），改为按需用 `offset_equivalent_surface`（= `Surface()`）重算 —— 这正是 `SetBasisSurface` 存进它的东西；`ClearEvalRepresentation()` 的三种状态在 rcad 无对应。
+  **新立卡（子代理发现）**：`rcad-kernel/src/geom/eval.rs::bspline_surface_dn`（L3390-3459，`Surface3::dn` 的叶子）把导数缓冲按**单极点**尺寸分配（`vec![0.0; dim]`）而 `eval_homogeneous` 写 `n+1` 个极点 ⇒ **`Nu ≥ 1` 时索引越界 panic**（任何 BSpline `Surface3::dn(1,0)` 都会撞），且从不除以有理权重和 —— 新模块用 `bspl_slib_dn` 绕开；`base/proj_lib/geom_adaptor_surface.rs::dn_at`（L435-444）在 `(1,0)`/`(0,1)` 之外是 `NotImplemented`；`geom/eval.rs` 的 `SurfaceEval for OffsetSurface` 仍走旧的差分体而没用新的 `EvaluateD0/D1`。
+- **验收（全部在树实测，含本批两项）**：六门槛 **427/0/0**（`rcad-algo --lib` 422 → 427 = 本批新增 5 个 Offset iso 测试）**· 691/0**（`rcad-kernel --lib` 688 → 691 = 3 个 CheckCurveOnSurface 测试）**· 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110，重编 exe 后）。
+  **15 个域网格与追加 29 基线逐项相同**（`blend_simple` 1/10 且 `a1` 保持通过；`draft_angle` 1/48；`feat_featrevol` 1/44；其余 0/N 与 2/0、16/0、5/0、1/0 同前）。
+  ⇒ **本批规模是本域迄今最大的一轮实际翻译量（两个子代理合计新增约 4,600 行）**，且**又是零可见翻转** —— 与追加 29 的结论一致：**域网格覆盖不到这些路径**（`Approx_SameParameter`/`CheckCurveOnSurface`/`Offset` iso 臂都不是现有 15 个域网格的必经之路）。**追加 29 立的"触发用例缺口"卡因此升为最高优先。** 探针 = 0。
+- **⇒ 追加 30 后的队列**：
+  1. **★ 触发用例缺口（升为最高优先）**：本轮与上轮的修复（`Approx_SameParameter`、`CheckCurveOnSurface`、`Offset` iso 臂、基本面型 iso 臂）**全部缺少能区分的用例**。做法：先用探针统计现有域网格里哪些例真走到这些路径；再补定向单测（`CheckCurveOnSurface` 已自带 3 个；`Offset` iso 臂已自带 5 个；但**与 OCCT 参考值对拍**的用例仍缺）。
+  2. **`bspline_surface_dn` 的索引越界缺陷**（`geom/eval.rs` L3390-3459）—— 新立卡，影响任何 BSpline `Surface3::dn(1,0)`。
+  3. **`bop/int_tools/extrema_gen_ext_cs.rs` 的过期 PSO 栈**（RNG 种子与 OCCT 8.0.0 不同）—— 新立卡。
+  4. **`offset/draft_modification.rs:276-289` 的 `EvalAndUpdateTol` 接线**（前置 `GeomLib_CheckCurveOnSurface` **已满足**）。
+  5. **`BSplSLib::RationalDerivative`** + **`Geom_BezierSurface::D1`**（`Offset` evaluator 的有理/Bezier 底的下一步）。
+  6. **`Adaptor3d_CurveOnSurface::ShallowCopy` 移入 `base/proj_lib/adaptor.rs`**（现临时在 check_curve_on_surface.rs 内）。
+  7. **`mySn` 的构造**（TKFeat，`feat_featrf` 直接前墙）。
+  8. 追加 29 余项不变（BSpline VIso 两处内嵌副本 · TKOffset 10 处 `UpdateCurves` 同族缺陷 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
+- **资产位置（本轮新增）**：`GeomLib_CheckCurveOnSurface` 真身 = `rcad-kernel/src/base/geom_lib/check_curve_on_surface.rs`；`Geom_OsculatingSurface` = `rcad-kernel/src/geom/osculating_surface.rs`；`Geom_OffsetSurfaceUtils` = `rcad-kernel/src/geom/offset_surface_utils.rs`；`Geom_ExtrusionUtils` = `rcad-kernel/src/geom/extrusion_utils.rs`；`BSplSLib::DN` 非有理 = `bspl_slib_dn`；`Offset` iso 臂 = `brep_fill/brep_fill_sweep.rs` 的 Offset 分支 + `GeomOffsetSurface{UIso,VIso}Evaluator`。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 

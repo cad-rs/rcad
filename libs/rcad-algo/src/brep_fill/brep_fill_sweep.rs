@@ -35,15 +35,24 @@ use std::rc::Rc;
 
 use glam::DVec3;
 
+use rcad_kernel::base::proj_lib::adaptor::{Adaptor3dSurface, GeomAbsSurfaceType};
+use rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor;
+use rcad_kernel::geom::extrusion_utils;
+use rcad_kernel::geom::offset_surface_utils::{
+    offset_basis_and_value, offset_equivalent_surface, offset_surface_eval_d0,
+    offset_surface_eval_d1, offset_surface_osculating,
+};
+use rcad_kernel::geom::osculating_surface::OsculatingSurface;
 use rcad_kernel::geom::{
-    BezierCurve3, BezierSurface, BSplineSurface, Circle3, Curve3, CurveEval, Ellipse3, Line3,
-    Surface3, TrimmedCurve3,
+    BezierCurve3, BezierSurface, BSplineCurve3, BSplineSurface, Circle3, Curve3, CurveEval, Ellipse3,
+    Line3, Surface3, TrimmedCurve3,
 };
 use rcad_kernel::base::proj_lib::elslib_iso::{
     elslib_cone_u_iso, elslib_cone_v_iso, elslib_cylinder_u_iso, elslib_cylinder_v_iso,
     elslib_plane_u_iso, elslib_plane_v_iso, elslib_sphere_u_iso, elslib_sphere_v_iso,
     elslib_torus_u_iso, elslib_torus_v_iso, Ax3View,
 };
+use rcad_kernel::math::adv_approx::{ApproxAFunction, EvaluatorFunction};
 use rcad_kernel::math::bspl_lib::bspl_slib_iso;
 use rcad_kernel::math::gp::GP_RESOLUTION;
 use rcad_kernel::math::GeomAbsShape;
@@ -159,28 +168,97 @@ pub(crate) fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {
                 c
             }
         }
-        // OCCT Geom_OffsetSurface::UIso (Geom_OffsetSurface.cxx L601-655):
-        //   directRepSurface(*this) -> the GeomEval_RepSurfaceDesc eval
-        //     representation (L83-95) — rcad's OffsetSurface carries no such
-        //     member, so the branch is always null and the equivalent-surface
-        //     delegation is unreachable (architecture difference);
-        //   the GeomAbs_SurfaceOfExtrusion basis arm (L606-624) is
-        //     translatable (surface_uiso + D1 + curve3_translated, and
-        //     AdvApprox IS present in rcad as rcad_kernel::math::adv_approx);
-        //   the general arm (L625-654) needs Geom_OffsetSurface_UIsoEvaluator
-        //     (L574-592), whose derivative request calls
-        //     Geom_OffsetSurface::D1 -> Geom_OffsetSurfaceUtils::EvaluateD1
-        //     with Geom_OsculatingSurface.  rcad has no OsculatingSurface and
-        //     `impl SurfaceEval for OffsetSurface` (rcad-kernel/src/geom/
-        //     eval.rs L2266-2279) leaves `derivatives` at the trait's
-        //     finite-difference default; AdvApprox_SimpleApprox::Perform calls
-        //     the evaluator with derive = 1 for the C1 Hermite constraints, so
-        //     wiring it would feed an approximated D1 — a fake alignment.
-        Surface3::Offset(_) => panic!(
-            "GAP: Geom_OffsetSurface::UIso (TKG3d/Geom) needs \
-             Geom_OffsetSurfaceUtils::EvaluateD1 + Geom_OsculatingSurface \
-             (rcad OffsetSurface has no analytic D1) — BRepFill_Sweep::BuildWire"
-        ),
+        // OCCT Geom_OffsetSurface::UIso (Geom_OffsetSurface.cxx L601-655).
+        Surface3::Offset(of) => {
+            // L603-604: `const handle(Geom_Surface) anEquivSurface =
+            // directRepSurface(*this)` — the eval representation that
+            // SetBasisSurface sets to makeFullSurfaceRep(Surface())
+            // (L255-256).  The rcad OffsetSurface payload carries no eval
+            // representation member, so the equivalent surface is recomputed
+            // on demand (offset_equivalent_surface = Geom_OffsetSurface::
+            // Surface(), L867-993).
+            let an_equiv_surface =
+                offset_equivalent_surface(of.basis.as_ref(), of.offset_distance);
+            match an_equiv_surface {
+                // L652: `return anEquivSurface->UIso(UU);`.
+                Some(an_equiv) => surface_uiso(&an_equiv, u),
+                None => {
+                    // OCCT SetBasisSurface L246-253 keeps `basisSurf` as the
+                    // (possibly re-wrapped) trimmed basis; the rcad value
+                    // model uses the unwrapped basis of the
+                    // offset_basis_and_value unwrap, whose evaluation the
+                    // kernel Geom_Surface leaf accepts.
+                    let (basis, offset_value) =
+                        offset_basis_and_value(of.basis.as_ref(), of.offset_distance);
+                    // L606: `GeomAdaptor_Surface aGAsurf(basisSurf);`.
+                    let a_ga_surf = GeomSurfaceAdaptor::new(basis.clone());
+                    if a_ga_surf.get_type() == GeomAbsSurfaceType::SurfaceOfExtrusion {
+                        // L609: `handle(Geom_Curve) aL = basisSurf->UIso(UU);`.
+                        let a_l = surface_uiso(&basis, u);
+                        // L612-613: `basisSurf->D1(UU, 0., aP, aD1U, aD1V);`.
+                        let a_d1 = extrusion_utils::surface_eval_d1(&basis, u, 0.0);
+                        // L614: `gp_Vec aDir = aD1U.Crossed(aD1V);`.
+                        let a_dir = a_d1.d1u.cross(a_d1.d1v);
+                        // L615-618: `if (aDir.SquareMagnitude() <
+                        // gp::Resolution()) return aL;`.
+                        if a_dir.length_squared() < GP_RESOLUTION {
+                            return a_l;
+                        }
+                        // L619-620: `aDir.Normalize(); aDir *= offsetValue;`.
+                        let a_dir = a_dir.normalize() * offset_value;
+                        // L622: `aL->Translate(aDir); return aL;`.
+                        return curve3_translated(&a_l, a_dir);
+                    }
+
+                    // L625-635: the general approximation arm.
+                    let num1 = 0;
+                    let num2 = 0;
+                    let num3 = 1;
+                    // T3 = HArray1<double>(1, Num3) with
+                    // T3->Init(Precision::Approximation()).
+                    let t3 = [rcad_kernel::core::precision::APPROXIMATION];
+                    // Bounds(U1, U2, V1, V2) — Geom_OffsetSurface::Bounds
+                    // (L313-316) delegates to basisSurf.
+                    let bounds = rcad_kernel::geom::SurfaceEval::default_domain(&basis);
+                    let (_u1, _u2, v1, v2) = (bounds[0], bounds[1], bounds[2], bounds[3]);
+                    let cont = GeomAbsShape::C1;
+                    let max_seg = 100;
+                    let max_deg = 14;
+
+                    // L633: `Geom_OffsetSurface_UIsoEvaluator ev(*this, UU);`.
+                    let mut ev = GeomOffsetSurfaceUIsoEvaluator {
+                        basis,
+                        offset: offset_value,
+                        osc: offset_surface_osculating(of.basis.as_ref()),
+                        my_iso_par: u,
+                    };
+                    // L634-635: the AdvApprox_ApproxAFunction ctor + Perform
+                    // over [V1, V2].
+                    let approx = ApproxAFunction::new(
+                        num1,
+                        num2,
+                        num3,
+                        None,
+                        None,
+                        Some(&t3),
+                        v1,
+                        v2,
+                        cont,
+                        max_deg,
+                        max_seg,
+                        &mut ev,
+                    );
+                    // L637: Standard_ConstructionError_Raise_if(!Approx
+                    // .IsDone(), " Geom_OffsetSurface : UIso").
+                    assert!(
+                        approx.is_done(),
+                        "Standard_ConstructionError: Geom_OffsetSurface : UIso"
+                    );
+                    // L639-650: the Geom_BSplineCurve of the approximation.
+                    approx_to_bspline_curve(&approx)
+                }
+            }
+        }
         // Ellipsoid / Helicoid / Pipe / Ruled / Coons / TriBezier: rcad-only
         // Surface3 variants with no Geom_Surface override in TKG3d/Geom, so
         // there is no OCCT body to translate (the OCCT-faithful failure path).
@@ -308,23 +386,193 @@ pub(crate) fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
                 c
             }
         }
-        // OCCT Geom_OffsetSurface::VIso (Geom_OffsetSurface.cxx L657-706):
-        // the directRepSurface delegation (L659-660) is unreachable in rcad
-        // (no eval representation member) and the general arm (L662-686) has
-        // the same Geom_OffsetSurfaceUtils::EvaluateD1 /
-        // Geom_OsculatingSurface dependency as UIso (there is no extrusion
-        // special case here).
-        Surface3::Offset(_) => panic!(
-            "GAP: Geom_OffsetSurface::VIso (TKG3d/Geom) needs \
-             Geom_OffsetSurfaceUtils::EvaluateD1 + Geom_OsculatingSurface \
-             (rcad OffsetSurface has no analytic D1) — BRepFill_Sweep::BuildWire"
-        ),
+        // OCCT Geom_OffsetSurface::VIso (Geom_OffsetSurface.cxx L657-688).
+        Surface3::Offset(of) => {
+            // L659-660: `directRepSurface(*this)` — see the UIso arm for the
+            // rcad recomputation of the eval representation.
+            let an_equiv_surface =
+                offset_equivalent_surface(of.basis.as_ref(), of.offset_distance);
+            match an_equiv_surface {
+                // L687: `return anEquivSurface->VIso(VV);`.
+                Some(an_equiv) => surface_viso(&an_equiv, v),
+                None => {
+                    // There is no extrusion special case on this arm.
+                    let (basis, offset_value) =
+                        offset_basis_and_value(of.basis.as_ref(), of.offset_distance);
+                    // L662-672: the general approximation arm.
+                    let num1 = 0;
+                    let num2 = 0;
+                    let num3 = 1;
+                    let t3 = [rcad_kernel::core::precision::APPROXIMATION];
+                    let bounds = rcad_kernel::geom::SurfaceEval::default_domain(&basis);
+                    let (u1, u2, _v1, _v2) = (bounds[0], bounds[1], bounds[2], bounds[3]);
+                    let cont = GeomAbsShape::C1;
+                    let max_seg = 100;
+                    let max_deg = 14;
+
+                    // L670: `Geom_OffsetSurface_VIsoEvaluator ev(*this, VV);`.
+                    let mut ev = GeomOffsetSurfaceVIsoEvaluator {
+                        basis,
+                        offset: offset_value,
+                        osc: offset_surface_osculating(of.basis.as_ref()),
+                        my_iso_par: v,
+                    };
+                    // L671-672: the AdvApprox_ApproxAFunction ctor + Perform
+                    // over [U1, U2].
+                    let approx = ApproxAFunction::new(
+                        num1,
+                        num2,
+                        num3,
+                        None,
+                        None,
+                        Some(&t3),
+                        u1,
+                        u2,
+                        cont,
+                        max_deg,
+                        max_seg,
+                        &mut ev,
+                    );
+                    // L674: Standard_ConstructionError_Raise_if(!Approx
+                    // .IsDone(), " Geom_OffsetSurface : VIso").
+                    assert!(
+                        approx.is_done(),
+                        "Standard_ConstructionError: Geom_OffsetSurface : VIso"
+                    );
+                    // L676-685: the Geom_BSplineCurve of the approximation.
+                    approx_to_bspline_curve(&approx)
+                }
+            }
+        }
         // Same rcad-only variants as the UIso catch-all (no OCCT override).
         _ => panic!(
             "GAP: Geom_*Surface::VIso (TKMath/TKG3d kernel re-host) is not \
              translated for this surface type — BRepFill_Sweep::BuildWire"
         ),
     }
+}
+
+/// OCCT Geom_OffsetSurface_UIsoEvaluator (Geom_OffsetSurface.cxx L505-550) —
+/// `mySurface` is the Geom_OffsetSurface itself; the rcad re-host carries the
+/// value payload of that surface (its basis, the accumulated offset value and
+/// the `myOscSurf` member rebuilt by [`offset_surface_osculating`]), and the
+/// `Value` / `D1` calls route to the kernel `Geom_OffsetSurface::EvalD0` /
+/// `EvalD1` re-hosts.
+struct GeomOffsetSurfaceUIsoEvaluator {
+    basis: Surface3,
+    offset: f64,
+    osc: Option<OsculatingSurface>,
+    my_iso_par: f64,
+}
+
+impl EvaluatorFunction for GeomOffsetSurfaceUIsoEvaluator {
+    /// OCCT Geom_OffsetSurface_UIsoEvaluator::Evaluate (cxx L526-550).
+    fn evaluate(
+        &mut self,
+        _start_end: &[f64; 2],
+        parameter: f64,
+        derivative_request: i32,
+        result: &mut [f64],
+    ) -> i32 {
+        if derivative_request == 0 {
+            // OCCT: `P = mySurface.Value(myIsoPar, *Parameter);`.
+            let p = offset_surface_eval_d0(
+                &self.basis,
+                self.offset,
+                self.osc.as_ref(),
+                self.my_iso_par,
+                parameter,
+            )
+            .expect("Geom_UndefinedValue: Geom_OffsetSurface::EvalD0");
+            result[0] = p.x;
+            result[1] = p.y;
+            result[2] = p.z;
+        } else {
+            // OCCT: `mySurface.D1(myIsoPar, *Parameter, P, DU, DV);` — the
+            // derivative request answers DV.
+            let d1 = offset_surface_eval_d1(
+                &self.basis,
+                self.offset,
+                self.osc.as_ref(),
+                self.my_iso_par,
+                parameter,
+            )
+            .expect("Geom_UndefinedDerivative: Geom_OffsetSurface::EvalD1");
+            result[0] = d1.d1v.x;
+            result[1] = d1.d1v.y;
+            result[2] = d1.d1v.z;
+        }
+        0
+    }
+}
+
+/// OCCT Geom_OffsetSurface_VIsoEvaluator (Geom_OffsetSurface.cxx L552-597).
+struct GeomOffsetSurfaceVIsoEvaluator {
+    basis: Surface3,
+    offset: f64,
+    osc: Option<OsculatingSurface>,
+    my_iso_par: f64,
+}
+
+impl EvaluatorFunction for GeomOffsetSurfaceVIsoEvaluator {
+    /// OCCT Geom_OffsetSurface_VIsoEvaluator::Evaluate (cxx L573-597).
+    fn evaluate(
+        &mut self,
+        _start_end: &[f64; 2],
+        parameter: f64,
+        derivative_request: i32,
+        result: &mut [f64],
+    ) -> i32 {
+        if derivative_request == 0 {
+            // OCCT: `P = mySurface.Value(*Parameter, myIsoPar);`.
+            let p = offset_surface_eval_d0(
+                &self.basis,
+                self.offset,
+                self.osc.as_ref(),
+                parameter,
+                self.my_iso_par,
+            )
+            .expect("Geom_UndefinedValue: Geom_OffsetSurface::EvalD0");
+            result[0] = p.x;
+            result[1] = p.y;
+            result[2] = p.z;
+        } else {
+            // OCCT: `mySurface.D1(*Parameter, myIsoPar, P, DU, DV);` — the
+            // derivative request answers DU.
+            let d1 = offset_surface_eval_d1(
+                &self.basis,
+                self.offset,
+                self.osc.as_ref(),
+                parameter,
+                self.my_iso_par,
+            )
+            .expect("Geom_UndefinedDerivative: Geom_OffsetSurface::EvalD1");
+            result[0] = d1.d1u.x;
+            result[1] = d1.d1u.y;
+            result[2] = d1.d1u.z;
+        }
+        0
+    }
+}
+
+/// OCCT Geom_OffsetSurface::UIso / VIso tail (cxx L639-650 / L676-685) — the
+/// `AdvApprox_ApproxAFunction` result converted to the `Geom_BSplineCurve`
+/// `new Geom_BSplineCurve(Poles, Knots, Mults, Approx.Degree())`.
+fn approx_to_bspline_curve(approx: &ApproxAFunction) -> Curve3 {
+    let degree = approx.degree().max(0) as usize;
+    let knots = approx.knots_vec().to_vec();
+    let mults = approx.multiplicities_vec().to_vec();
+    // OCCT: `Approx.Poles(1, Poles)` — the 3D subspace #1.
+    let poles = approx.poles_flat(1);
+    let control_points: Vec<DVec3> = (0..poles.len() / 3)
+        .map(|i| DVec3::new(poles[3 * i], poles[3 * i + 1], poles[3 * i + 2]))
+        .collect();
+    Curve3::BSpline(BSplineCurve3::from_knots_mults(
+        degree,
+        knots,
+        mults,
+        control_points,
+    ))
 }
 
 /// OCCT gp_GTrsf-based `Geom_Curve::Translated(T)` over the rcad Curve3 —
@@ -1540,5 +1788,188 @@ mod bezier_surface_iso_tests {
         assert_eq!(curve.control_points.len(), 3);
         assert!(curve.weights.iter().any(|w| *w != 1.0));
         check_iso_against(&iso, &surf, 0.4, false);
+    }
+}
+
+#[cfg(test)]
+mod offset_surface_iso_tests {
+    //! Regression guard for the Geom_OffsetSurface::UIso / VIso arms
+    //! (Geom_OffsetSurface.cxx L601-688): the equivalent-surface fast path
+    //! (`directRepSurface` -> `Geom_OffsetSurface::Surface()`), the
+    //! `GeomAbs_SurfaceOfExtrusion` branch and the general AdvApprox arm
+    //! driven by `Geom_OffsetSurfaceUtils::EvaluateD0/D1`.
+
+    use super::*;
+    use rcad_kernel::geom::{OffsetSurface, Plane, SphericalSurface};
+    use rcad_kernel::geom::SurfaceEval as _;
+
+    /// Pointwise comparison of an iso curve against the offset surface value
+    /// at the fixed parameter.
+    fn check_offset_iso(iso: &Curve3, off: &Surface3, fixed: f64, is_u: bool) {
+        for jj in 0..=8 {
+            let t = jj as f64 / 8.0;
+            let p_iso = iso.point_at(t);
+            let p_ref = if is_u {
+                off.point_at(fixed, t)
+            } else {
+                off.point_at(t, fixed)
+            };
+            assert!(
+                (p_iso - p_ref).length() < 1e-7,
+                "t={t} iso={p_iso:?} ref={p_ref:?}"
+            );
+        }
+    }
+
+    /// A plane basis: `Surface()` yields the plane translated by
+    /// `offsetValue * normal`, so both iso arms delegate to
+    /// `Geom_Plane::UIso` / `VIso` (Geom_OffsetSurface.cxx L900-907 + L652).
+    #[test]
+    fn offset_of_plane_delegates_to_the_translated_plane_iso() {
+        let base = Surface3::Plane(Plane {
+            origin: DVec3::new(1.0, 2.0, 3.0),
+            normal: DVec3::Z,
+            u_dir: DVec3::X,
+            v_dir: DVec3::Y,
+        });
+        let off = Surface3::Offset(OffsetSurface {
+            basis: Box::new(base),
+            offset_distance: 3.0,
+        });
+
+        let uiso = surface_uiso(&off, 0.4);
+        let Curve3::Line(l) = &uiso else {
+            panic!("Geom_Plane::UIso is a Geom_Line")
+        };
+        assert!((l.origin - DVec3::new(1.4, 2.0, 6.0)).length() < 1e-12);
+        assert!((l.direction - DVec3::Y).length() < 1e-12);
+        check_offset_iso(&uiso, &off, 0.4, true);
+
+        let viso = surface_viso(&off, 0.7);
+        let Curve3::Line(lv) = &viso else {
+            panic!("Geom_Plane::VIso is a Geom_Line")
+        };
+        assert!((lv.origin - DVec3::new(1.0, 2.7, 6.0)).length() < 1e-12);
+        assert!((lv.direction - DVec3::X).length() < 1e-12);
+        check_offset_iso(&viso, &off, 0.7, false);
+    }
+
+    /// A zero offset returns the basis surface itself
+    /// (Geom_OffsetSurface.cxx L870-873).
+    #[test]
+    fn zero_offset_delegates_to_the_basis_surface_iso() {
+        let base = Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(1.0, 2.0, 3.0),
+            axis: DVec3::Z,
+            radius: 2.5,
+            ref_dir: DVec3::X,
+        });
+        let off = Surface3::Offset(OffsetSurface {
+            basis: Box::new(base.clone()),
+            offset_distance: 0.0,
+        });
+        let uiso = surface_uiso(&off, 0.4);
+        let uiso_base = surface_uiso(&base, 0.4);
+        for jj in 0..=8 {
+            let t = jj as f64 / 8.0;
+            assert!((uiso.point_at(t) - uiso_base.point_at(t)).length() < 1e-12);
+        }
+    }
+
+    /// A cylinder basis: `Surface()` yields the cylinder of radius
+    /// `R + aSign * offsetValue` (Geom_OffsetSurface.cxx L908-925), so the
+    /// VIso is the parallel circle of the offset radius.
+    #[test]
+    fn offset_of_cylinder_viso_is_the_offset_parallel_circle() {
+        use rcad_kernel::geom::CylindricalSurface;
+        let base = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::new(1.0, 2.0, 3.0),
+            axis: DVec3::Z,
+            radius: 2.5,
+            ref_dir: DVec3::X,
+            y_dir: None,
+        });
+        let off = Surface3::Offset(OffsetSurface {
+            basis: Box::new(base),
+            offset_distance: 2.0,
+        });
+
+        let viso = surface_viso(&off, 0.7);
+        let Curve3::Circle(c) = &viso else {
+            panic!("Geom_CylindricalSurface::VIso is a Geom_Circle")
+        };
+        assert!((c.radius - 4.5).abs() < 1e-12);
+        check_offset_iso(&viso, &off, 0.7, false);
+
+        let uiso = surface_uiso(&off, 0.4);
+        assert!(matches!(uiso, Curve3::Line(_)));
+        check_offset_iso(&uiso, &off, 0.4, true);
+    }
+
+    /// An extrusion basis takes the `GeomAbs_SurfaceOfExtrusion` arm
+    /// (Geom_OffsetSurface.cxx L606-624): the ruling is translated by
+    /// `offsetValue * normalized(D1U ^ D1V)`.
+    #[test]
+    fn offset_of_extrusion_uiso_translates_the_ruling() {
+        use rcad_kernel::geom::LinearExtrusionSurface;
+        let profile = Curve3::Circle(Circle3 {
+            center: DVec3::new(1.0, 2.0, 3.0),
+            normal: DVec3::Z,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
+            radius: 2.0,
+        });
+        let off = Surface3::Offset(OffsetSurface {
+            basis: Box::new(Surface3::LinearExtrusion(LinearExtrusionSurface {
+                profile: Box::new(profile),
+                direction: DVec3::Z,
+            })),
+            offset_distance: 1.5,
+        });
+
+        let uiso = surface_uiso(&off, 0.0);
+        let Curve3::Line(l) = &uiso else {
+            panic!("the extrusion UIso arm returns the basis ruling line")
+        };
+        // C(0) = (3, 2, 3) and the radial direction at u = 0 is +X.
+        assert!((l.origin - DVec3::new(4.5, 2.0, 3.0)).length() < 1e-12);
+        assert!((l.direction - DVec3::Z).length() < 1e-12);
+        check_offset_iso(&uiso, &off, 0.0, true);
+    }
+
+    /// A BSpline basis has no canonical equivalent surface, so the iso arms
+    /// run the general `Geom_OffsetSurface_UIsoEvaluator` / AdvApprox body
+    /// (Geom_OffsetSurface.cxx L625-654) whose Value/D1 calls route through
+    /// `Geom_OffsetSurfaceUtils::EvaluateD0/EvaluateD1`.
+    #[test]
+    fn offset_of_bspline_basis_runs_the_approximation_arm() {
+        let patch = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0)],
+                vec![DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+            is_periodic_u: false,
+            is_periodic_v: false,
+        };
+        let off = Surface3::Offset(OffsetSurface {
+            basis: Box::new(Surface3::BSpline(patch)),
+            offset_distance: 0.5,
+        });
+
+        let uiso = surface_uiso(&off, 0.3);
+        assert!(
+            matches!(uiso, Curve3::BSpline(_)),
+            "the approximation arm returns a Geom_BSplineCurve"
+        );
+        check_offset_iso(&uiso, &off, 0.3, true);
+
+        let viso = surface_viso(&off, 0.7);
+        assert!(matches!(viso, Curve3::BSpline(_)));
+        check_offset_iso(&viso, &off, 0.7, false);
     }
 }

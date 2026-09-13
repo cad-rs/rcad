@@ -5,6 +5,10 @@
 
 #![allow(clippy::manual_clamp)]
 
+pub mod check_curve_on_surface;
+
+pub use check_curve_on_surface::GeomLibCheckCurveOnSurface;
+
 use glam::{DVec2, DVec3};
 
 use crate::core::precision::is_infinite_value;
@@ -427,125 +431,6 @@ fn fit_plane_to_points(pts: &[DVec3], tol: f64) -> Option<Plane> {
 }
 
 // ============================================================================
-// GeomLib_CheckCurveOnSurface
-// ============================================================================
-
-/// Compute the max distance between a 3D curve and its 2D representation on a surface.
-///
-/// OCCT: `GeomLib_CheckCurveOnSurface`.
-pub struct CheckCurveOnSurface {
-    max_distance: f64,
-    max_parameter: f64,
-    error_status: i32,
-    tol_range: f64,
-}
-
-impl CheckCurveOnSurface {
-    /// Default constructor.
-    ///
-    /// OCCT: default constructor.
-    pub fn new() -> Self {
-        CheckCurveOnSurface {
-            max_distance: 0.0,
-            max_parameter: 0.0,
-            error_status: 1,
-            tol_range: TOL_PCONF,
-        }
-    }
-
-    /// Constructor with curve data.
-    ///
-    /// OCCT: `CheckCurveOnSurface(Curve, TolRange)`.
-    pub fn with_curve(_curve: &Curve3, tol_range: f64) -> Self {
-        CheckCurveOnSurface {
-            max_distance: 0.0,
-            max_parameter: 0.0,
-            error_status: 0,
-            tol_range: if tol_range <= 0.0 { TOL_PCONF } else { tol_range },
-        }
-    }
-
-    /// Perform the check: compute max distance between `curve_3d` and
-    /// the surface evaluation of its pcurve parametrization.
-    ///
-    /// OCCT: `Perform(CurveOnSurface)`.
-    /// `curve_3d` is the 3D curve, `curve_2d` is the pcurve on `surface`.
-    /// Samples the curve and finds the maximum 3D deviation.
-    pub fn perform(&mut self, curve_3d: &Curve3, curve_2d: &crate::geom::Curve2d, surface: &Surface3) {
-        let domain = curve_3d.default_domain();
-        // For unbounded curves (e.g. Line), fall back to a finite range so
-        // sampling is well-defined.
-        // OCCT Precision::IsInfinite (Precision.hxx L350-353).
-        let (t_min, t_max) = if is_infinite_value(domain[0]) || is_infinite_value(domain[1]) {
-            (-1e6, 1e6)
-        } else {
-            (domain[0], domain[1])
-        };
-
-        let range = t_max - t_min;
-        if range < self.tol_range {
-            self.error_status = 2;
-            return;
-        }
-
-        const N_SAMPLES: usize = 257;
-        let mut max_d = 0.0;
-        let mut max_t = t_min;
-
-        for i in 0..=N_SAMPLES {
-            let t = t_min + range * (i as f64) / (N_SAMPLES as f64);
-            let p3d = curve_3d.point_at(t);
-            let p2d = curve_2d.point_at(t);
-            let psurf = surface.point_at(p2d.x, p2d.y);
-            let d = (p3d - psurf).length();
-            if d > max_d {
-                max_d = d;
-                max_t = t;
-            }
-        }
-
-        self.max_distance = max_d;
-        self.max_parameter = max_t;
-        self.error_status = 0;
-    }
-
-    /// Returns true if the max distance has been found.
-    ///
-    /// OCCT: `IsDone()`.
-    pub fn is_done(&self) -> bool {
-        self.error_status == 0
-    }
-
-    /// Returns the error status:
-    /// 0 = OK, 1 = null curve/surface, 2 = invalid range, 3 = calculation error.
-    ///
-    /// OCCT: `ErrorStatus()`.
-    pub fn error_status(&self) -> i32 {
-        self.error_status
-    }
-
-    /// Returns the max distance.
-    ///
-    /// OCCT: `MaxDistance()`.
-    pub fn max_distance(&self) -> f64 {
-        self.max_distance
-    }
-
-    /// Returns the parameter at which max distance occurs.
-    ///
-    /// OCCT: `MaxParameter()`.
-    pub fn max_parameter(&self) -> f64 {
-        self.max_parameter
-    }
-}
-
-impl Default for CheckCurveOnSurface {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ============================================================================
 // GeomLib::Inertia / GeomLib::AxeOfInertia
 // ============================================================================
 
@@ -717,17 +602,6 @@ mod tests {
         let (u, v) = uv.unwrap();
         assert!((u - 3.0).abs() < 1e-6);
         assert!((v - 4.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_check_curve_on_surface() {
-        let line = Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X));
-        let pcurve = Curve2d::Line(Line2d::new(DVec2::ZERO, DVec2::X));
-        let plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
-        let mut check = CheckCurveOnSurface::new();
-        check.perform(&line, &pcurve, &plane);
-        assert!(check.is_done());
-        assert!(check.max_distance() < 1e-10);
     }
 }
 

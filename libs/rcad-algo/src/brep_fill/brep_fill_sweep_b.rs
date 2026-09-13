@@ -488,13 +488,34 @@ pub(super) fn check_same_parameter_exact(
     tolreached: &mut f64,
 ) -> bool {
     let _ = (c3d_first, c3d_last);
-    // GeomLib_CheckCurveOnSurface aCheckCurveOnSurface(C3d);
+    // GeomLib_CheckCurveOnSurface aCheckCurveOnSurface(C3d); — C3d is the
+    // `handle(Adaptor3d_Curve)` handed in by SameParameter
+    // (Approx_SameParameter::Curve3d()); its rcad encoding is a
+    // GeomCurveAdaptor over the curve (the adaptor range is the curve domain).
+    let a_curve_handle: rcad_kernel::base::proj_lib::proj_lib_projected_curve_b::GeomCurveHandle =
+        std::sync::Arc::new(rcad_kernel::base::proj_lib::GeomCurveAdaptor::new(c3d.clone()));
     let mut a_check_curve_on_surface =
-        crate::geomalgo::geom_lib_check_curve_on_surface::GeomLibCheckCurveOnSurface::new(c3d);
+        rcad_kernel::base::geom_lib::GeomLibCheckCurveOnSurface::with_curve(
+            &a_curve_handle,
+            rcad_kernel::PCONFUSION,
+        );
     // aCheckCurveOnSurface.SetParallel(false);
     a_check_curve_on_surface.set_parallel(false);
-    // aCheckCurveOnSurface.Perform(curveOnSurface);
-    a_check_curve_on_surface.perform(curve_on_surface);
+    // aCheckCurveOnSurface.Perform(curveOnSurface); — curveOnSurface is the
+    // `handle(Adaptor3d_CurveOnSurface)` handed in by SameParameter
+    // (Approx_SameParameter::CurveOnSurface()); its rcad encoding is the
+    // kernel CurveOnSurface over the same (pcurve, surface) pair.
+    let a_curve_on_surface = std::sync::Arc::new(
+        rcad_kernel::base::proj_lib::CurveOnSurface::new(
+            std::sync::Arc::new(rcad_kernel::base::proj_lib::Geom2dCurveAdaptor::new(
+                curve_on_surface.0.clone(),
+            )),
+            std::sync::Arc::new(rcad_kernel::base::proj_lib::GeomSurfaceAdaptor::new(
+                curve_on_surface.1.clone(),
+            )),
+        ),
+    );
+    a_check_curve_on_surface.perform(&a_curve_on_surface);
 
     // tolreached = aCheckCurveOnSurface.MaxDistance();
     *tolreached = a_check_curve_on_surface.max_distance();
