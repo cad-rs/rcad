@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 
-use rcad_kernel::core::precision::CONFUSION;
+use rcad_kernel::core::precision::{is_infinite_value, CONFUSION};
 use rcad_kernel::geom::Curve2dEval as _;
 use rcad_kernel::geom::CurveEval as _;
 use rcad_kernel::topo::topods::{self, BRep, BRepBuilder, BRepTool as _, Orientation, Shape};
@@ -440,10 +440,35 @@ impl TopOpeBRepBuildHBuilder {
                         .find(|(pid, _)| *pid == e.ptr_id())
                         .and_then(|(_, pc)| pc.clone());
                     if let Some(pc) = pc {
-                        let [t1, t2] = pc.default_domain();
-                        brep.edge_mut_inplace(e.clone())
-                            .pcurves
-                            .insert((f.ptr_id(), f.location), (pc, t1, t2));
+                        // BuildFaces.cxx L86: myBuildTool.PCurve(aFace,
+                        // anEdge, CDS, PC) -> TopOpeBRepDS_BuildTool::PCurve
+                        // (TopOpeBRepDS_BuildTool.cxx L1243-1288) ->
+                        // TopOpeBRepDS_SetThePCurve (L1149-1184) ->
+                        // BRep_Builder::UpdateEdge -> UpdateCurves
+                        // (BRep_Builder.cxx L104-167).  The stored range starts
+                        // from the 2D curve's own range (BRep_Builder.cxx
+                        // L153-156: COS = new BRep_CurveOnSurface(C, S, L) =>
+                        // PC->FirstParameter()/LastParameter()) and is then
+                        // OVERWRITTEN by the edge's 3D-curve representation
+                        // range whenever that is finite (L120-124 GC->Range(f,
+                        // l) for the IsCurve3D entry, seeded to
+                        // -/+Precision::Infinite() at L118, then L157-165
+                        // `if (!Precision::IsInfinite(f)) aFCur = f;`).  Only
+                        // an edge with no 3D curve keeps the 2D natural range —
+                        // for a Line2d pcurve that natural range is
+                        // -/+Precision::Infinite(), which would leave the
+                        // fillet face's UV box unbounded.
+                        let [mut a_f, mut a_l] = pc.default_domain();
+                        let edp = brep.edge_mut_inplace(e.clone());
+                        if edp.curve.is_some() {
+                            if !is_infinite_value(edp.range[0]) {
+                                a_f = edp.range[0];
+                            }
+                            if !is_infinite_value(edp.range[1]) {
+                                a_l = edp.range[1];
+                            }
+                        }
+                        edp.pcurves.insert((f.ptr_id(), f.location), (pc, a_f, a_l));
                     }
                 }
                 faces.push(f);
