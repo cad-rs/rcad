@@ -1242,6 +1242,16 @@ libs/rcad-algo/src/
   3. **TKFillet 接力项 A**：`blend_simple_a1` 的**无界 pcurve 附着点**（面积 −2e100 的门），仍未被本轮触及。
   4. **blend a2/p8/p9 的新墙**（`proj_lib_h_comp_projected_curve.rs:449` 的 `D0` `Standard_DomainError`）属**状态类**，按用户口径排在翻译/接线项之后。
 
+### E3-W 追加 19 补记 1（2026-09-13：池外读取**续链**收敛 —— `offset_shape_type_i` 的池外 panic **清零**）
+
+- **批次 2 的下一帧**：`brep_tool_curve` 打通后，`BRepLib::build_curve3d` 的墙下移到 **`BRepLib::check_same_range`**（`build_curves3d.rs` 的 `the_brep.edge(...)` 是**池索引读**）。这是"同一 `topods.rs:1799` 行号、不同调用帧"的典型（见追加 19 正文与坑 28）。
+- **做法（4 处一起，rcad `fe297616`）**：
+  1. kernel `topods.rs` 新增 **`edge_data_pool_free(the_e)`**（紧随 `curve_pool_free`）—— 从边自身的 TShape 解析 `TEdgeData`，覆盖 OCCT `BRep_Tool` 层的各次 `BRep_CurveRepresentation` 走查（`BRep_Tool::Curve` / `Range` / `Degenerated` / `Tolerance`）；
+  2. `build_curves3d.rs` 新增**受守卫的 `edge_data(the_brep, the_e)`**（池内走 `BRep::edge`，池外走上面的池外读；OCCT 的"不可解析边的解引用"映射为 `expect`），并把该链上**十处** `the_brep.edge(...)` 全部收敛过去：`check_same_range`、`same_range`、`gcurve_range`，以及 `brep_tool_curve_on_surface_index` / `brep_tool_range_on_surface` / `brep_tool_degenerated` / `brep_tool_tolerance` 四个 re-host。
+  **池内行为逐位不变**（守卫对有效索引仍走池）。
+- **实测（全部在树）**：`offset_shape_type_i` **a3/a4/d2/d3 完全离开库内** —— 此前 panic 于 `topods.rs:1799`，现在落到测试断言 **L310/422/534/646**。加上 a1/a2 本就处于"OCCT 同处也 raise"的状态，**该网格的池外 panic 已清零**。通过数不变（翻译优先阶段的预期）；六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（重编 exe 后）；探针 = 0。
+- **⇒ 更新后的 TKOffset 队列**：第 1 项（池外读取）**读侧已收敛**，其"写回侧池外无池可变"的顾虑**在本网格未触发**（`check_same_range` 为真时跳过 `same_range`，写回路径未被走到）——但**只要某个 case 需要 `same_range` 就会撞上**，届时按坑 17 的 `Shape::data` 就地变异另做，**不要**在池外形状上假装能走 `edge_mut_inplace`。**下一手仍是第 2 项（Quilt/FaceRestrictor 产物入池）= 根**：入池后读/写两侧一次解开，且 `result_brep()` 拓扑计数随之正确（**牵涉拓扑计数 ⇒ 全套复测**）。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
