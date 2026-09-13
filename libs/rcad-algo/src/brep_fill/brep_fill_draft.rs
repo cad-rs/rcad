@@ -34,14 +34,12 @@
 //!    HasErrors().  The Message_ProgressRange default is carried by the
 //!    rcad NoopProgress scope (the brep_offset_make_offset_1_* precedent).
 //! 7. BRepAlgoAPI_Section(S1, S2, aPF) (cxx L599) -> crate::bop
-//!    ::brep_algo_api::SectionOp.  The rcad facade has no filler-carrying
-//!    constructor: OCCT BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller&)
-//!    sets myIsIntersectionNeeded = false so that Build binds the supplied
-//!    filler and skips IntersectShapes, while SectionOp always re-runs the
-//!    intersection.  The same two arguments yield the same DS, so the
-//!    section is unchanged, but the section attribute the OCCT call inherits
-//!    from the filler defaults has to be passed explicitly (see the call
-//!    site).
+//!    ::brep_algo_api::SectionOp.  The filler-carrying form is now literal:
+//!    SectionOp::from_shapes_with_filler + build_with_filler carry the OCCT
+//!    BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller&) semantics
+//!    (myIsIntersectionNeeded = false: the Build binds the supplied filler and
+//!    skips IntersectShapes, and the section attribute is inherited from the
+//!    filler defaults).  See the call site.
 //! 8. BOPAlgo_Builder AddArgument / PerformWithFiller / BuildBOP (cxx
 //!    L691-787) -> crate::bop::algo::builder::Builder.  OCCT runs the
 //!    Builder pass in PerformWithFiller (no operation) and only the BuildShape
@@ -1035,23 +1033,19 @@ impl BRepFillDraft {
         // OCCT L599-600: BRepAlgoAPI_Section aSec(Sol1, Sol2, aPF);
         // const TopoDS_Shape& aSection = aSec.Shape();
         //
-        // Architecture difference #7: the rcad BRepAlgoAPI_Section facade
-        // (bop::brep_algo_api::SectionOp) has no filler-carrying constructor —
-        // OCCT BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller&) sets
-        // myIsIntersectionNeeded = false so that Build skips IntersectShapes
-        // and binds the supplied filler (BRepAlgoAPI_BooleanOperation.cxx
-        // L174-201).  The intersection is therefore re-run over the same two
-        // arguments (the same DS, hence the same section), and the section
-        // attribute OCCT inherits from the filler defaults
-        // (BOPAlgo_SectionAttribute.hxx L24-38: Approximation / PCurveOnS1 /
-        // PCurveOnS2 all true) is passed explicitly — the
+        // The filler-carrying form of OCCT BRepAlgoAPI_Section(Sol1, Sol2,
+        // aPF) is the SectionOp::from_shapes_with_filler / build_with_filler
+        // pair: BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller&) sets
+        // myIsIntersectionNeeded = false, so the Build binds the supplied
+        // filler and skips IntersectShapes
+        // (BRepAlgoAPI_BooleanOperation.cxx L174-201), and the section runs
+        // over the filler's arguments with the section attribute inherited
+        // from the filler defaults (BOPAlgo_SectionAttribute.hxx L24-38:
+        // Approximation / PCurveOnS1 / PCurveOnS2 all true — the
         // BRep_Tool::CurveOnSurface(aSEMin, ..., 2) read below needs the
-        // PCurveOnS2 representation.
-        let mut a_sec = SectionOp::from_shapes(sol1.clone(), sol2.clone());
-        a_sec.approximation(true);
-        a_sec.compute_pcurve_on1(true);
-        a_sec.compute_pcurve_on2(true);
-        a_sec.build();
+        // PCurveOnS2 representation).
+        let mut a_sec = SectionOp::from_shapes_with_filler(sol1.clone(), sol2.clone());
+        a_sec.build_with_filler(&a_pf);
         // OCCT BRepAlgoAPI_BuilderShape::Shape() — the null shape when the
         // build did not complete (the explorer below then finds no edge).
         let a_section = a_sec.algo.bs.result.clone().unwrap_or_else(Shape::null);
