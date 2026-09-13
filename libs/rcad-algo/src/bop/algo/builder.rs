@@ -4,7 +4,7 @@
 // Flattened into one Rust struct because Rust has no C++ inheritance.
 
 pub use crate::bop::algo::BooleanOpType;
-use crate::bop::algo::{GlueEnum, Report};
+use crate::bop::algo::{Alert, GlueEnum, Report};
 use crate::bop::algo::builder_face::BuilderFace;
 use crate::bop::ds::DS;
 use crate::bop::ds::pave::SharedPB;
@@ -108,6 +108,18 @@ pub struct Builder<'a> {
     // only (tools live in myTools and are excluded from the result), and it
     // skips the BOP-specific BuildShape step (BuildRC/BuildSolid).
     pub(crate) my_is_splitter: bool,
+    // OCCT BOPAlgo_Builder::PerformInternal1 (BOPAlgo_Builder.cxx L310-446)
+    // has no BuildShape step: the step belongs to BOPAlgo_BOP alone
+    // (BOPAlgo_BOP.cxx L531-536).  rcad flattens BOPAlgo_Builder and
+    // BOPAlgo_BOP into this one struct, so the Builder class form of the
+    // shared pipeline is selected by this flag (the splitter has its own,
+    // `my_is_splitter`).  Together they mean "this object is a
+    // BOPAlgo_Builder-derived algorithm, not a BOPAlgo_BOP".
+    pub(crate) my_is_builder_only: bool,
+    // OCCT BOPAlgo_Options::myUseOBB (BOPAlgo_Options.hxx L233) — read by
+    // BOPAlgo_Builder::PerformWithFiller L206.  rcad has no OBB usage flag:
+    // SetUseOBB is not translated, so the value stays at the OCCT default.
+    pub(crate) my_use_obb: bool,
 }
 
 /// Stage snapshot: DS + result BRep counts at a Builder pipeline boundary.
@@ -199,6 +211,74 @@ fn collect_solid_faces(s: &Shape) -> Vec<Shape> {
         }
     }
     result
+}
+
+/// OCCT TopAbs_State — TopAbs_IN (TopAbs_State.hxx L26).
+/// Values match the rcad state encoding used by
+/// BOPTools_AlgoTools::ComputeStateByOnePoint (0 = IN, 1 = OUT, 2 = ON,
+/// 3 = UNKNOWN).
+pub(crate) const TOPABS_IN: u8 = 0;
+/// OCCT TopAbs_State — TopAbs_OUT (TopAbs_State.hxx L27).
+pub(crate) const TOPABS_OUT: u8 = 1;
+/// OCCT TopAbs_State — TopAbs_UNKNOWN (TopAbs_State.hxx L29).
+pub(crate) const TOPABS_UNKNOWN: u8 = 3;
+
+/// OCCT NCollection_IndexedMap::Add (NCollection_IndexedMap.hxx) — append when
+/// absent; the map keeps the insertion order and the key of the DEFAULT hasher
+/// form is TShape + Location + Orientation (TopoDS_Shape::IsEqual).
+fn indexed_map_add(
+    the_map: &mut indexmap::IndexMap<(u64, u32, topods::Orientation), Shape>,
+    the_shape: &Shape,
+) {
+    the_map
+        .entry((the_shape.ptr_id(), the_shape.location, the_shape.orientation))
+        .or_insert_with(|| the_shape.clone());
+}
+
+/// OCCT TopoDS_Shape::Reversed() — a copy with the reversed orientation.
+fn reversed_shape(the_shape: &Shape) -> Shape {
+    let mut a_reversed = the_shape.clone();
+    a_reversed.orientation = flip_orientation(a_reversed.orientation);
+    a_reversed
+}
+
+/// OCCT TopExp_Explorer(theShape, TopAbs_SOLID) — the shape itself when it is
+/// a SOLID (TopExp_Explorer.cxx L114-119: the root is Current() while the
+/// stack is empty), otherwise every direct or nested SOLID. A found shape is
+/// not explored further (L144-152: only the more complex containers are pushed
+/// on the stack).
+fn explore_solids(the_shape: &Shape) -> Vec<Shape> {
+    /// The recursive walk of TopExp_Explorer::Next.
+    fn walk(the_shape: &Shape, the_result: &mut Vec<Shape>) {
+        if the_shape.shape_type() == topods::ShapeType::Solid {
+            the_result.push(the_shape.clone());
+            return;
+        }
+        // OCCT `isMoreComplex(ty, toFind)` — descend only into the containers
+        // that may hold a solid.
+        let a_type = the_shape.shape_type();
+        if a_type != topods::ShapeType::CompSolid && a_type != topods::ShapeType::Compound {
+            return;
+        }
+        for a_sub in Builder::shape_sub_shapes_static(the_shape) {
+            walk(&a_sub, the_result);
+        }
+    }
+    let mut a_result: Vec<Shape> = Vec::new();
+    walk(the_shape, &mut a_result);
+    a_result
+}
+
+/// OCCT TopExp_Explorer(theBlock, TopAbs_FACE) over a connexity block.
+/// rcad's MakeConnexityBlocks returns a block as the list of its faces (OCCT
+/// wraps them in a compound member first, BOPAlgo_Builder.cxx L796-810), so
+/// the exploration yields the faces of the list in their order.
+fn collect_block_faces(the_block: &[Shape]) -> Vec<Shape> {
+    the_block
+        .iter()
+        .filter(|a_s| a_s.shape_type() == topods::ShapeType::Face)
+        .cloned()
+        .collect()
 }
 
 /// OCCT TopAbs::Reverse (TopAbs.hxx L64-75) 鈥?flips the orientation.
@@ -1565,12 +1645,45 @@ impl<'a> Builder<'a> {
             my_result_root: None,
             my_built_face_surfaces: HashMap::new(),
             my_is_splitter: false,
+            my_is_builder_only: false,
+            my_use_obb: false,
         }
     }
 
     /// OCCT BOPAlgo_Algo::SetArguments.
     pub fn set_arguments(&mut self, args: Vec<Shape>) {
         self.my_arguments = args;
+    }
+
+    /// OCCT BOPAlgo_Builder::AddArgument (BOPAlgo_Builder.cxx L103-109):
+    ///   if (myMapFence.Add(theShape)) myArguments.Append(theShape);
+    /// Architecture note: rcad's myMapFence keys the arguments by TShape
+    /// pointer (see the field), so the OCCT TShape + Location uniqueness test
+    /// is carried by the pointer alone.
+    pub fn add_argument(&mut self, the_shape: Shape) {
+        if self.my_map_fence.insert(the_shape.ptr_id()) {
+            self.my_arguments.push(the_shape);
+        }
+    }
+
+    /// OCCT BOPAlgo_Builder::SetArguments (BOPAlgo_Builder.cxx L113-125):
+    ///   myArguments.Clear(); for every shape AddArgument(aS);
+    pub fn set_arguments_with_fence(&mut self, the_shapes: &[Shape]) {
+        self.my_arguments.clear();
+        for a_s in the_shapes {
+            self.add_argument(a_s.clone());
+        }
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::SetToFillHistory (BOPAlgo_BuilderShape.hxx
+    /// L114).
+    pub fn set_to_fill_history(&mut self, the_hist_flag: bool) {
+        self.my_fill_history = the_hist_flag;
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::HasHistory (BOPAlgo_BuilderShape.hxx L117).
+    pub fn has_history(&self) -> bool {
+        self.my_fill_history
     }
 
     /// OCCT BOPAlgo_BOP::SetTools.
@@ -1768,7 +1881,7 @@ impl<'a> Builder<'a> {
         // BOPAlgo_Builder::PerformInternal1) has NO BuildShape step: the
         // splitter result is the compound of object images accumulated by the
         // BuildResult calls above.
-        if !self.my_is_splitter {
+        if !self.my_is_splitter && !self.my_is_builder_only {
             self.build_shape();
             if self.has_errors() { return Ok((partial(&self.my_shape), snapshots)); }
         }
@@ -1816,6 +1929,885 @@ impl<'a> Builder<'a> {
         Ok((brep, ()))
     }
 
+    // ====================================================================
+    // OCCT BOPAlgo_Builder decomposed entry points:
+    //   Clear          BOPAlgo_Builder.cxx L90-99
+    //   PerformWithFiller  L198-208   (Builder pass, no operation)
+    //   PerformInternal    L212-227
+    //   PerformInternal1   L310-446   (the General Fuse pass)
+    //   BuildBOP           L479-885   + the operation table of
+    //                      BOPAlgo_Builder.hxx L214-249
+    // and the BOPAlgo_BuilderShape history read surface
+    // (BOPAlgo_BuilderShape.hxx L50-110).
+    // ====================================================================
+
+    /// OCCT BOPAlgo_Builder::Clear (BOPAlgo_Builder.cxx L90-99).
+    pub fn clear(&mut self) {
+        // OCCT L92: BOPAlgo_BuilderShape::Clear() — BOPAlgo_BuilderShape.hxx
+        // L135-140: myHistory.Nullify(); myMapShape.Clear().
+        self.my_shape = None;
+        self.my_history = None;
+        self.shape_remap.clear();
+        self.my_result_root = None;
+        // OCCT L93-98: myArguments / myMapFence / myImages / myShapesSD /
+        // myOrigins / myInParts Clear().
+        self.my_arguments.clear();
+        self.my_map_fence.clear();
+        self.my_images.clear();
+        self.my_shapes_sd.clear();
+        self.my_origins.clear();
+        self.my_in_parts.clear();
+    }
+
+    /// OCCT BOPAlgo_Builder::PerformWithFiller (BOPAlgo_Builder.cxx L198-208):
+    /// performs the Builder pass with a prepared filler — no intersection is
+    /// computed and no operation is applied; the images (myImages / myInParts /
+    /// myShapesSD) stay in the object for a following BuildBOP.
+    pub fn perform_with_filler(&mut self, the_filler: &crate::bop::algo::pave_filler::PaveFiller) {
+        // OCCT L201: GetReport()->Clear();
+        self.my_report.clear();
+        // OCCT L202: myEntryPoint = 0;
+        self.my_entry_point = 0;
+        // OCCT L203: myNonDestructive = theFiller.NonDestructive();
+        self.my_non_destructive = the_filler.my_non_destructive;
+        // OCCT L204: myFuzzyValue = theFiller.FuzzyValue();
+        self.my_fuzzy_value = the_filler.fuzzy_value();
+        // OCCT L205: myGlue = theFiller.Glue();
+        self.my_glue = the_filler.my_glue;
+        // OCCT L206: myUseOBB = theFiller.UseOBB();
+        // rcad has no OBB flag (SetUseOBB is not translated), so the value
+        // stays at the OCCT default (BOPAlgo_Options::myUseOBB = false).
+        self.my_use_obb = false;
+        // OCCT L207: PerformInternal(theFiller, theRange);
+        self.perform_internal(the_filler);
+    }
+
+    /// OCCT BOPAlgo_Builder::PerformInternal (BOPAlgo_Builder.cxx L212-227).
+    ///
+    /// Architecture difference: OCCT wraps PerformInternal1 in
+    /// `try { OCC_CATCH_SIGNALS ... } catch (Standard_Failure const&)
+    /// { AddError(new BOPAlgo_AlertBuilderFailed); }` (L217-226). A Rust panic
+    /// is not caught here, so only the OCCT success path is carried; the
+    /// AlertBuilderFailed path is unreachable in rcad (no exception model).
+    fn perform_internal(&mut self, the_filler: &crate::bop::algo::pave_filler::PaveFiller) {
+        // OCCT L215: GetReport()->Clear();
+        self.my_report.clear();
+        // OCCT L220: PerformInternal1(theFiller, theRange);
+        self.perform_internal1(the_filler);
+    }
+
+    /// OCCT BOPAlgo_Builder::PerformInternal1 (BOPAlgo_Builder.cxx L310-446) —
+    /// the General Fuse pass: CheckData, Prepare, the eight
+    /// FillImages/BuildResult pairs, PrepareHistory and PostTreat.  There is no
+    /// BuildShape step (that step belongs to BOPAlgo_BOP alone,
+    /// BOPAlgo_BOP.cxx L531-536); myShape is the compound of the split parts
+    /// and myImages / myInParts / myShapesSD are left for a following BuildBOP.
+    pub fn perform_internal1(&mut self, the_filler: &crate::bop::algo::pave_filler::PaveFiller) {
+        // OCCT L313-317: myPaveFiller = &theFiller; myDS = myPaveFiller->PDS();
+        // myContext = ...; myFuzzyValue = myPaveFiller->FuzzyValue();
+        // myNonDestructive = myPaveFiller->NonDestructive();
+        // rcad: the DS is bound at construction (Builder::new) and the two
+        // option fields are copied here.
+        self.my_fuzzy_value = the_filler.fuzzy_value();
+        self.my_non_destructive = the_filler.my_non_destructive;
+        // OCCT L319-446: the shared pipeline, run in its BOPAlgo_Builder form
+        // (no BuildShape between BuildResult(COMPOUND) and PrepareHistory).
+        self.my_is_builder_only = true;
+        let a_outcome = self.build_with_history_stage_by_stage();
+        self.my_is_builder_only = false;
+        // OCCT CheckData adds its alert to myReport (L134) and every stage
+        // exits on HasErrors(); rcad's check_data reports the same conditions
+        // through the BooleanError result.
+        match a_outcome {
+            Ok(_) => {}
+            Err(BooleanError::TooFewArguments) => {
+                self.my_report.add_error(Alert::TooFewArguments);
+            }
+            Err(BooleanError::NoFiller) => {
+                self.my_report.add_error(Alert::NoFiller);
+            }
+            Err(_) => {}
+        }
+    }
+
+    // --------------------------------------------------------------------
+    // BOPAlgo_BuilderShape history read surface
+    // (BOPAlgo_BuilderShape.hxx L50-110)
+    // --------------------------------------------------------------------
+
+    /// OCCT BOPAlgo_BuilderShape::Modified (BOPAlgo_BuilderShape.hxx L52-58).
+    pub fn modified(&self, the_s: &Shape) -> Vec<Shape> {
+        // OCCT L54-55: if (myFillHistory && myHistory)
+        // return myHistory->Modified(theS);
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.modified(the_s);
+            }
+        }
+        // OCCT L56-57: myHistShapes.Clear(); return myHistShapes; — the
+        // auxiliary empty list.
+        Vec::new()
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::Generated (BOPAlgo_BuilderShape.hxx L61-67).
+    pub fn generated(&self, the_s: &Shape) -> Vec<Shape> {
+        // OCCT L63-64: if (myFillHistory && myHistory)
+        // return myHistory->Generated(theS);
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.generated(the_s);
+            }
+        }
+        // OCCT L65-66: myHistShapes.Clear(); return myHistShapes;
+        Vec::new()
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::IsDeleted (BOPAlgo_BuilderShape.hxx L72-75).
+    pub fn is_deleted(&self, the_s: &Shape) -> bool {
+        // OCCT L74: return (myFillHistory && myHistory ?
+        // myHistory->IsRemoved(theS) : false);
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.is_removed(the_s);
+            }
+        }
+        false
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::HasModified (BOPAlgo_BuilderShape.hxx L78-81).
+    pub fn has_modified(&self) -> bool {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.has_modified();
+            }
+        }
+        false
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::HasGenerated (BOPAlgo_BuilderShape.hxx
+    /// L84-87).
+    pub fn has_generated(&self) -> bool {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.has_generated();
+            }
+        }
+        false
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::HasDeleted (BOPAlgo_BuilderShape.hxx L90).
+    pub fn has_deleted(&self) -> bool {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.has_removed();
+            }
+        }
+        false
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::History (BOPAlgo_BuilderShape.hxx L93-110).
+    pub fn history(&mut self) -> Option<&crate::bop::history::BRepToolsHistory> {
+        // OCCT L95-105: if (myFillHistory) { if (myHistory.IsNull())
+        // myHistory = new BRepTools_History; return myHistory; } — an
+        // algorithm that exited before filling the history returns the empty
+        // History instead of NULL.
+        if self.my_fill_history {
+            if self.my_history.is_none() {
+                self.my_history = Some(crate::bop::history::BRepToolsHistory::new());
+            }
+            return self.my_history.as_ref();
+        }
+        // OCCT L109: return nullptr;
+        None
+    }
+
+    /// OCCT BOPAlgo_Builder::Images (BOPAlgo_Builder.hxx L284-288) — the map
+    /// of images of the sub-shapes of the arguments.
+    pub fn images(&self) -> &crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), Vec<Shape>> {
+        &self.my_images
+    }
+
+    /// OCCT BOPAlgo_Builder::Origins (BOPAlgo_Builder.hxx L291-295).
+    pub fn origins(&self) -> &HashMap<(u64, u32), Vec<Shape>> {
+        &self.my_origins
+    }
+
+    /// OCCT BOPAlgo_Builder::ShapesSD (BOPAlgo_Builder.hxx L299-302).
+    pub fn shapes_sd(&self) -> &HashMap<(u64, u32), Shape> {
+        &self.my_shapes_sd
+    }
+
+    /// OCCT BOPAlgo_Builder::Arguments (BOPAlgo_Builder.hxx L106).
+    pub fn arguments(&self) -> &[Shape] {
+        &self.my_arguments
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::Shape (BOPAlgo_BuilderShape.hxx L48).
+    pub fn shape_root(&self) -> Option<&Shape> {
+        self.my_result_root.as_ref()
+    }
+    // --------------------------------------------------------------------
+    // OCCT BOPAlgo_Builder::BuildBOP (BOPAlgo_Builder.cxx L479-885)
+    // --------------------------------------------------------------------
+
+    /// OCCT BOPAlgo_Builder::BuildBOP(theObjects, theTools, theOperation,
+    /// theRange, theReport) (BOPAlgo_Builder.hxx L214-249) — the operation
+    /// form: the operation is converted into the states of the two groups
+    /// exactly as the OCCT table does, and the state form is called.
+    pub fn build_bop(
+        &mut self,
+        the_objects: &[Shape],
+        the_tools: &[Shape],
+        the_operation: BooleanOpType,
+    ) {
+        // OCCT BOPAlgo_Builder.hxx L220-248: the operation -> state table.
+        let (an_obj_state, a_tools_state) = match the_operation {
+            // OCCT L223-227: BOPAlgo_COMMON -> (TopAbs_IN, TopAbs_IN).
+            BooleanOpType::Intersection => (TOPABS_IN, TOPABS_IN),
+            // OCCT L228-232: BOPAlgo_FUSE -> (TopAbs_OUT, TopAbs_OUT).
+            BooleanOpType::Union => (TOPABS_OUT, TOPABS_OUT),
+            // OCCT L233-237: BOPAlgo_CUT -> (TopAbs_OUT, TopAbs_IN).
+            BooleanOpType::Cut => (TOPABS_OUT, TOPABS_IN),
+            // OCCT L238-242: BOPAlgo_CUT21 -> (TopAbs_IN, TopABS_OUT).
+            BooleanOpType::Cut21 => (TOPABS_IN, TOPABS_OUT),
+            // OCCT L243-247: default -> (TopAbs_UNKNOWN, TopAbs_UNKNOWN).
+            _ => (TOPABS_UNKNOWN, TOPABS_UNKNOWN),
+        };
+        // OCCT L249: BuildBOP(theObjects, anObjState, theTools, aToolsState,
+        // theRange, theReport);
+        self.build_bop_states(the_objects, an_obj_state, the_tools, a_tools_state);
+    }
+
+    /// OCCT BOPAlgo_Builder::BuildBOP(theObjects, theObjState, theTools,
+    /// theToolsState, theRange, theReport) (BOPAlgo_Builder.cxx L479-885) —
+    /// builds the result shape according to the given states for the objects
+    /// and tools, basing on the splits kept from the Builder pass.
+    ///
+    /// Architecture differences (the rcad data model):
+    /// - the two `NCollection_IndexedMap<TopoDS_Shape>` maps (the DEFAULT
+    ///   hasher: TopoDS_Shape::IsEqual = TShape + Location + ORIENTATION) are
+    ///   IndexMap<(ptr, location, orientation), Shape> (insertion order, Add
+    ///   keeps the first);
+    /// - the `TopTools_ShapeMapHasher` maps (TShape + Location) are
+    ///   HashSet<(ptr, location)>;
+    /// - the `aReport` parameter (L492) is not carried: the rcad Builder owns
+    ///   the single report OCCT's default call uses;
+    /// - `BOPAlgo_Tools::FillInternals` is a Builder-associated function here
+    ///   because it needs the ComputeStateByOnePoint / MakeConnexityBlocks
+    ///   helpers of this module (see `Builder::fill_internals`).
+    pub fn build_bop_states(
+        &mut self,
+        the_objects: &[Shape],
+        the_obj_state: u8,
+        the_tools: &[Shape],
+        the_tools_state: u8,
+    ) {
+        // OCCT L486-489: if (HasErrors()) return;
+        if self.has_errors() {
+            return;
+        }
+
+        // OCCT L494-498: if (myArguments.IsEmpty() || myShape.IsNull())
+        // aReport->AddAlert(Message_Fail, new BOPAlgo_AlertBuilderFailed());
+        if self.my_arguments.is_empty() || self.my_shape.is_none() {
+            self.my_report.add_error(Alert::BuilderFailed);
+            return;
+        }
+        // OCCT L500-505: the states must be TopAbs_IN or TopAbs_OUT.
+        if (the_obj_state != TOPABS_IN && the_obj_state != TOPABS_OUT)
+            || (the_tools_state != TOPABS_IN && the_tools_state != TOPABS_OUT)
+        {
+            self.my_report.add_error(Alert::BOPNotSet);
+            return;
+        }
+
+        // OCCT L508-514: at least one of the groups must be non-empty.
+        let has_objects = !the_objects.is_empty();
+        let has_tools = !the_tools.is_empty();
+        if !has_objects && !has_tools {
+            self.my_report.add_error(Alert::TooFewArguments);
+            return;
+        }
+
+        // OCCT L516-550: check that all the given shapes are from the
+        // arguments and are solids or collections of solids.
+        for i in 0..2 {
+            let a_list: &[Shape] = if i == 0 { the_objects } else { the_tools };
+            for a_s in a_list {
+                // OCCT L525-529: if (myDS->Index(aS) < 0) ->
+                // BOPAlgo_AlertUnknownShape(aS).
+                if self.ds.index(a_s) < 0 {
+                    self.my_report.add_error(Alert::UnknownShape(a_s.clone()));
+                    return;
+                }
+                // OCCT L532-548: a non-solid is decomposed by
+                // BOPTools_AlgoTools::TreatCompound; every part must be a
+                // SOLID or a COMPSOLID.
+                if a_s.shape_type() != topods::ShapeType::Solid {
+                    let mut a_ls: Vec<Shape> = Vec::new();
+                    // OCCT L535: aMFence — TopTools_ShapeMapHasher.
+                    let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
+                    for a_sx in crate::bop::tools::algo_tools::treat_compound(a_s) {
+                        if a_m_fence.insert((a_sx.ptr_id(), a_sx.location)) {
+                            a_ls.push(a_sx);
+                        }
+                    }
+                    for a_sx in &a_ls {
+                        let a_type = a_sx.shape_type();
+                        if a_type != topods::ShapeType::Solid
+                            && a_type != topods::ShapeType::CompSolid
+                        {
+                            self.my_report
+                                .add_error(Alert::UnsupportedType(a_s.clone()));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // OCCT L552-563: the classification of the faces relatively the solids
+        // was made during the solids splitting; the results are in myInParts,
+        // which connects a solid with its IN faces from the other arguments.
+        // All the faces not contained in the IN list are considered OUT.
+        //
+        // OCCT L559: NCollection_IndexedMap<TopoDS_Shape> aMObjFacesOri,
+        // aMToolFacesOri — the DEFAULT hasher (orientation-sensitive).
+        let mut a_m_obj_faces_ori: IndexMap<(u64, u32, Orientation), Shape> = IndexMap::new();
+        let mut a_m_tool_faces_ori: IndexMap<(u64, u32, Orientation), Shape> = IndexMap::new();
+        // OCCT L561: NCollection_IndexedMap<TopoDS_Shape,
+        // TopTools_ShapeMapHasher> aMObjFaces, aMToolFaces.
+        let mut a_m_obj_faces: HashSet<(u64, u32)> = HashSet::new();
+        let mut a_m_tool_faces: HashSet<(u64, u32)> = HashSet::new();
+        // OCCT L563: NCollection_Map<TopoDS_Shape, TopTools_ShapeMapHasher>
+        // anINObjects, anINTools.
+        let mut an_in_objects: HashSet<(u64, u32)> = HashSet::new();
+        let mut an_in_tools: HashSet<(u64, u32)> = HashSet::new();
+
+        // OCCT L565-629.
+        for i in 0..2 {
+            let a_list: &[Shape] = if i == 0 { the_objects } else { the_tools };
+            for a_shape in a_list {
+                // OCCT L575-576: TopExp_Explorer expS(aShape, TopAbs_SOLID).
+                let a_solids: Vec<Shape> = explore_solids(a_shape);
+                for a_s in &a_solids {
+                    // OCCT L579-580: TopExp_Explorer expF(aS, TopAbs_FACE).
+                    for a_f in collect_solid_faces(a_s) {
+                        // OCCT L583-586: only FORWARD/REVERSED faces.
+                        if a_f.orientation != Orientation::Forward
+                            && a_f.orientation != Orientation::Reversed
+                        {
+                            continue;
+                        }
+                        // OCCT L587-607: the images of the face (or the face
+                        // itself), reversed when IsSplitToReverse.
+                        match self.my_images.get((a_f.ptr_id(), a_f.location)) {
+                            Some(a_lf_im) => {
+                                let a_lf_im = a_lf_im.clone();
+                                for a_f_im_ref in a_lf_im {
+                                    let b_to_reverse = crate::bop::tools::algo_tools::is_split_to_reverse_face(
+                                        &a_f_im_ref,
+                                        &a_f,
+                                        self.ds,
+                                    )
+                                    .0;
+                                    let a_f_im = if b_to_reverse {
+                                        let mut a_f_im = a_f_im_ref.clone();
+                                        a_f_im.orientation = flip_orientation(a_f_im.orientation);
+                                        a_f_im
+                                    } else {
+                                        a_f_im_ref
+                                    };
+                                    let a_map_ori = if i == 0 {
+                                        &mut a_m_obj_faces_ori
+                                    } else {
+                                        &mut a_m_tool_faces_ori
+                                    };
+                                    indexed_map_add(a_map_ori, &a_f_im);
+                                    let a_map = if i == 0 {
+                                        &mut a_m_obj_faces
+                                    } else {
+                                        &mut a_m_tool_faces
+                                    };
+                                    a_map.insert((a_f_im.ptr_id(), a_f_im.location));
+                                }
+                            }
+                            None => {
+                                let a_map_ori = if i == 0 {
+                                    &mut a_m_obj_faces_ori
+                                } else {
+                                    &mut a_m_tool_faces_ori
+                                };
+                                indexed_map_add(a_map_ori, &a_f);
+                                let a_map = if i == 0 {
+                                    &mut a_m_obj_faces
+                                } else {
+                                    &mut a_m_tool_faces
+                                };
+                                a_map.insert((a_f.ptr_id(), a_f.location));
+                            }
+                        }
+                    }
+                    // OCCT L615-626: copy the list of IN faces into a map.
+                    if let Some(a_lf_in) = self.my_in_parts.get(&(a_s.ptr_id(), a_s.location)) {
+                        let an_in_map = if i == 0 {
+                            &mut an_in_objects
+                        } else {
+                            &mut an_in_tools
+                        };
+                        for a_f_in in a_lf_in {
+                            an_in_map.insert((a_f_in.ptr_id(), a_f_in.location));
+                        }
+                    }
+                }
+            }
+        }
+
+        // OCCT L631-634: the final set of faces depends on the given states.
+        let is_objects_in = the_obj_state == TOPABS_IN;
+        let is_tools_in = the_tools_state == TOPABS_IN;
+        // OCCT L637-638: bAvoidIN, bAvoidINforBoth.
+        let b_avoid_in = !is_objects_in && !is_tools_in;
+        let b_avoid_in_for_both = is_objects_in != is_tools_in;
+        // OCCT L641: isSameOriNeeded.
+        let is_same_ori_needed = the_obj_state == the_tools_state;
+        // OCCT L643-648: the resulting faces and the fence maps.
+        let mut a_m_res_faces_ori: IndexMap<(u64, u32, Orientation), Shape> = IndexMap::new();
+        let mut a_m_res_faces_fence: HashSet<(u64, u32)> = HashSet::new();
+        let mut a_m_fence: HashSet<(u64, u32)> = HashSet::new();
+        let mut a_m_f_to_avoid: HashSet<(u64, u32)> = HashSet::new();
+        // OCCT L648: NCollection_Map<TopoDS_Shape> aMFenceOri — the DEFAULT
+        // hasher, orientation-sensitive.
+        let mut a_m_fence_ori: HashSet<(u64, u32, Orientation)> = HashSet::new();
+
+        // OCCT L650-737: select the faces which participate in the building of
+        // the resulting solids.
+        for i in 0..2 {
+            let a_map: IndexMap<(u64, u32, Orientation), Shape> = if i == 0 {
+                a_m_obj_faces_ori.clone()
+            } else {
+                a_m_tool_faces_ori.clone()
+            };
+            let an_opposite_map: &HashSet<(u64, u32)> =
+                if i == 0 { &a_m_tool_faces } else { &a_m_obj_faces };
+            let an_in_map: &HashSet<(u64, u32)> =
+                if i == 0 { &an_in_objects } else { &an_in_tools };
+            let an_opposite_in_map: &HashSet<(u64, u32)> =
+                if i == 0 { &an_in_tools } else { &an_in_objects };
+            let b_take_in = if i == 0 { is_objects_in } else { is_tools_in };
+
+            // OCCT L661-662: const int aNbF = aMap.Extent();
+            let a_nb_f = a_map.len();
+            for j in 0..a_nb_f {
+                // OCCT L664: const TopoDS_Shape& aFIm = aMap(j);
+                let a_f_im = match a_map.get_index(j) {
+                    Some((_, a_f)) => a_f.clone(),
+                    None => continue,
+                };
+                let a_key = (a_f_im.ptr_id(), a_f_im.location);
+                let a_key_ori = (a_f_im.ptr_id(), a_f_im.location, a_f_im.orientation);
+
+                // OCCT L666-667.
+                let is_in = an_in_map.contains(&a_key);
+                let is_in_opposite = an_opposite_in_map.contains(&a_key);
+
+                // OCCT L669-673: filtering for FUSE — avoid any IN faces.
+                if b_avoid_in && (is_in || is_in_opposite) {
+                    continue;
+                }
+
+                // OCCT L675-679: filtering for CUT — avoid faces IN for both
+                // groups.
+                if b_avoid_in_for_both && is_in && is_in_opposite {
+                    continue;
+                }
+
+                // OCCT L681-713: treatment of the SD faces.
+                if !a_m_fence.insert(a_key) {
+                    if !an_opposite_map.contains(&a_key) {
+                        // OCCT L685-690: the face belongs to only one group.
+                        if b_take_in != is_same_ori_needed {
+                            a_m_f_to_avoid.insert(a_key);
+                        }
+                    } else {
+                        // OCCT L692-711: the face belongs to both groups; its
+                        // orientation decides.
+                        let is_same_ori = !a_m_fence_ori.insert(a_key_ori);
+                        if is_same_ori_needed == is_same_ori {
+                            // OCCT L697-704: take the shape without
+                            // classification.
+                            if a_m_res_faces_fence.insert(a_key) {
+                                indexed_map_add(&mut a_m_res_faces_ori, &a_f_im);
+                            }
+                        } else {
+                            // OCCT L705-708: remove the face.
+                            a_m_f_to_avoid.insert(a_key);
+                        }
+                        continue;
+                    }
+                }
+                // OCCT L714-717: if (!aMFenceOri.Add(aFIm)) continue;
+                if !a_m_fence_ori.insert(a_key_ori) {
+                    continue;
+                }
+
+                // OCCT L719-735.
+                if b_take_in == is_in_opposite {
+                    if is_in {
+                        indexed_map_add(&mut a_m_res_faces_ori, &a_f_im);
+                        indexed_map_add(&mut a_m_res_faces_ori, &reversed_shape(&a_f_im));
+                    } else if b_take_in && !is_same_ori_needed {
+                        indexed_map_add(&mut a_m_res_faces_ori, &reversed_shape(&a_f_im));
+                    } else {
+                        indexed_map_add(&mut a_m_res_faces_ori, &a_f_im);
+                    }
+                    a_m_res_faces_fence.insert(a_key);
+                }
+            }
+        }
+
+        // OCCT L739-749: remove the faces which have to be avoided.
+        let mut a_res_faces: Vec<Shape> = Vec::new();
+        let a_nb_rf = a_m_res_faces_ori.len();
+        for i in 0..a_nb_rf {
+            let a_rf = match a_m_res_faces_ori.get_index(i) {
+                Some((_, a_f)) => a_f.clone(),
+                None => continue,
+            };
+            if !a_m_f_to_avoid.contains(&(a_rf.ptr_id(), a_rf.location)) {
+                a_res_faces.push(a_rf);
+            }
+        }
+
+        // OCCT L753-759: try to build closed solids from the faces.
+        // OCCT BOPAlgo_BuilderSolid aBS; aBS.SetShapes(aResFaces);
+        // aBS.SetRunParallel(myRunParallel); aBS.SetContext(myContext);
+        // aBS.SetFuzzyValue(myFuzzyValue); aBS.Perform(...).
+        // rcad's BuilderSolid owns its context and carries no parallel/fuzzy
+        // options (interface gaps of builder_solid.rs).
+        let mut a_bs = crate::bop::algo::builder_solid::BuilderSolid::new(self.ds);
+        a_bs.my_shapes = a_res_faces.clone();
+        a_bs.perform();
+
+        // OCCT L761-762: the resulting solids.
+        let mut a_res_solids: Vec<Shape> = Vec::new();
+
+        // OCCT L764: aMFence.Clear();
+        a_m_fence.clear();
+        if !a_bs.has_errors() {
+            // OCCT L766-789: add the solids into the resulting list.
+            for a_solid in a_bs.my_solids.clone() {
+                // OCCT L772-787: the solid must contain at least one face from
+                // either of the objects or the tools.
+                let mut b_found = false;
+                for a_f in collect_solid_faces(&a_solid) {
+                    let a_key_ori = (a_f.ptr_id(), a_f.location, a_f.orientation);
+                    if a_m_obj_faces_ori.contains_key(&a_key_ori)
+                        || a_m_tool_faces_ori.contains_key(&a_key_ori)
+                    {
+                        b_found = true;
+                        break;
+                    }
+                }
+                if b_found {
+                    a_res_solids.push(a_solid.clone());
+                    // OCCT L786: TopExp::MapShapes(aSolid, aMFence);
+                    self.add_all_sub_shapes(&a_solid, &mut a_m_fence);
+                }
+            }
+        } else {
+            // OCCT L790-793: return;
+            return;
+        }
+
+        // OCCT L795-806: collect the unused faces.
+        let mut an_un_used_faces: Vec<Shape> = Vec::new();
+        for a_f in &a_res_faces {
+            // OCCT L802: if (aMFence.Add(itLF.Value()))
+            if a_m_fence.insert((a_f.ptr_id(), a_f.location)) {
+                an_un_used_faces.push(a_f.clone());
+            }
+        }
+
+        // OCCT L808-810: BOPTools_AlgoTools::MakeConnexityBlocks(anUnUsedFaces,
+        // TopAbs_EDGE, TopAbs_FACE, aLCB);
+        let mut a_lcb: Vec<Vec<Shape>> = Vec::new();
+        Self::make_connexity_blocks_shapes(
+            &an_un_used_faces,
+            topods::ShapeType::Edge,
+            topods::ShapeType::Face,
+            &mut a_lcb,
+        );
+
+        // OCCT L812-833: build a solid from each block.
+        for a_cb in &a_lcb {
+            // OCCT L817-818: TopoDS_Shell aShell; aBB.MakeShell(aShell);
+            let mut a_faces: Vec<Shape> = Vec::new();
+            // OCCT L820-824: TopExp_Explorer anExpF(aCB, TopAbs_FACE);
+            // aBB.Add(aShell, anExpF.Current());
+            for a_f in collect_block_faces(a_cb) {
+                a_faces.push(a_f);
+            }
+            let mut a_shell =
+                Self::build_container_of_type(topods::ShapeType::Shell, &a_faces);
+            // OCCT L826: BOPTools_AlgoTools::OrientFacesOnShell(aShell);
+            Self::orient_faces_on_shell(&mut a_shell);
+            // OCCT L828-830: TopoDS_Solid aSolid; aBB.MakeSolid(aSolid);
+            // aBB.Add(aSolid, aShell);
+            let a_solid = Shape::new(
+                std::sync::Arc::new(TShape::Solid(TSolidData {
+                    my_shapes: vec![],
+                    flags: tshape_flags::DEFAULT,
+                    shells: vec![a_shell],
+                    internal_vertices: vec![],
+                    internal_edges: vec![],
+                })),
+                0,
+                Orientation::Forward,
+            );
+            // OCCT L832: aResSolids.Append(aSolid);
+            a_res_solids.push(a_solid);
+        }
+
+        // OCCT L835-871: fill the solids with the internal parts coming with
+        // the solids.
+        if !b_avoid_in {
+            let mut an_in_parts: Vec<Shape> = Vec::new();
+            for i in 0..2 {
+                let a_list: &[Shape] = if i == 0 { the_objects } else { the_tools };
+                for a_shape in a_list {
+                    // OCCT L845-846: TopExp_Explorer expS(aShape, TopAbs_SOLID).
+                    let a_solids: Vec<Shape> = explore_solids(a_shape);
+                    for a_s in &a_solids {
+                        // OCCT L849-865: TopoDS_Iterator it(aS) — the direct
+                        // sub-shapes of the solid; an INTERNAL one (or a
+                        // container of INTERNAL ones) is an in-part.
+                        for a_s_int in Self::shape_sub_shapes_static(a_s) {
+                            if a_s_int.orientation == Orientation::Internal {
+                                an_in_parts.push(a_s_int);
+                            } else {
+                                let a_subs = Self::shape_sub_shapes_static(&a_s_int);
+                                if let Some(a_first) = a_subs.first() {
+                                    if a_first.orientation == Orientation::Internal {
+                                        an_in_parts.push(a_s_int);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // OCCT L870: BOPAlgo_Tools::FillInternals(aResSolids, anInParts,
+            // myImages, myContext);
+            Self::fill_internals(&mut a_res_solids, &an_in_parts, &self.my_images, self.ds);
+        }
+
+        // OCCT L873-881: combine the solids into a compound.
+        // OCCT L883: myShape = aResult;
+        self.set_shape_from_shapes(a_res_solids);
+        // OCCT L884: PrepareHistory(aPS.Next());
+        self.prepare_history();
+    }
+
+    /// OCCT BOPAlgo_Tools::FillInternals (BOPAlgo_Tools.cxx L1751-1908).
+    ///
+    /// Hosted next to the Builder helpers it needs: ComputeStateByOnePoint
+    /// (BOPTools_AlgoTools.cxx L623-656) and MakeConnexityBlocks
+    /// (BOPTools_AlgoTools.cxx L187-256) are associated functions of this
+    /// module.
+    ///
+    /// Architecture difference: OCCT adds the internal EDGE/VERTEX parts with
+    /// `BRep_Builder().Add(aSd, aPart)` and the internal SHELLS (built from the
+    /// IN faces) the same way; rcad's TSolidData stores the parts in dedicated
+    /// fields, so the shell case pushes onto `shells` (the INTERNAL face
+    /// orientation carries the "internal" mark) and the V/E cases go through
+    /// the existing solid_add_shape helper.
+    fn fill_internals(
+        the_solids: &mut [Shape],
+        the_parts: &[Shape],
+        the_images: &crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), Vec<Shape>>,
+        ds: &DS,
+    ) {
+        // OCCT L1760-1763: if (theSolids.IsEmpty() || theParts.IsEmpty()) return;
+        if the_solids.is_empty() || the_parts.is_empty() {
+            return;
+        }
+
+        // OCCT L1765-1775: map the solids' own sub-shapes to avoid their
+        // classification (aMSSolids — TopTools_ShapeMapHasher).
+        let mut a_ms_solids: HashSet<(u64, u32)> = HashSet::new();
+        for a_solid in the_solids.iter() {
+            if a_solid.shape_type() == topods::ShapeType::Solid {
+                for a_type in [
+                    topods::ShapeType::Vertex,
+                    topods::ShapeType::Edge,
+                    topods::ShapeType::Face,
+                ] {
+                    let mut a_subs: Vec<Shape> = Vec::new();
+                    Self::collect_sub_shapes_of_type_static(a_solid, a_type, &mut a_subs);
+                    for a_sub in a_subs {
+                        a_ms_solids.insert((a_sub.ptr_id(), a_sub.location));
+                    }
+                }
+            }
+        }
+
+        // OCCT L1777-1809: extract the BRep elements from the given parts and
+        // check them for possible splits.
+        let mut a_l_parts_input: Vec<Shape> = the_parts.to_vec();
+        let mut a_l_parts: Vec<Shape> = Vec::new();
+        let mut i_in = 0usize;
+        while i_in < a_l_parts_input.len() {
+            let a_part = a_l_parts_input[i_in].clone();
+            i_in += 1;
+            match a_part.shape_type() {
+                topods::ShapeType::Vertex
+                | topods::ShapeType::Edge
+                | topods::ShapeType::Face => {
+                    // OCCT L1789-1806: the parts with images use the images.
+                    match the_images.get((a_part.ptr_id(), a_part.location)) {
+                        Some(a_l_im) => {
+                            for a_part_im in a_l_im.clone() {
+                                if !a_ms_solids.contains(&(a_part_im.ptr_id(), a_part_im.location))
+                                {
+                                    a_l_parts.push(a_part_im);
+                                }
+                            }
+                        }
+                        None => {
+                            if !a_ms_solids.contains(&(a_part.ptr_id(), a_part.location)) {
+                                a_l_parts.push(a_part);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // OCCT L1804-1806: default — TopoDS_Iterator(aPart) append.
+                    for a_sub in Self::shape_sub_shapes_static(&a_part) {
+                        a_l_parts_input.push(a_sub);
+                    }
+                }
+            }
+        }
+
+        // OCCT L1811-1856: classify the parts relatively the solids; the IN
+        // edges and vertices go into the solids at once, the IN faces are
+        // collected for the shell creation.
+        let mut an_in_faces: IndexMap<(u64, u32), (Shape, Vec<Shape>)> = IndexMap::new();
+        for i_solid in 0..the_solids.len() {
+            let a_solid = the_solids[i_solid].clone();
+            if a_solid.shape_type() != topods::ShapeType::Solid {
+                continue;
+            }
+            let mut j = 0usize;
+            while j < a_l_parts.len() {
+                let a_part = a_l_parts[j].clone();
+                // OCCT L1833-1835: ComputeStateByOnePoint(aPart, aSd,
+                // Precision::Confusion(), theContext).
+                let a_state = Self::compute_state_by_one_point(
+                    &a_part,
+                    &a_solid,
+                    PCONFUSION,
+                    ds,
+                );
+                if a_state == TOPABS_IN {
+                    if a_part.shape_type() == topods::ShapeType::Face {
+                        // OCCT L1838-1844.
+                        let a_sd_key = (a_solid.ptr_id(), a_solid.location);
+                        let entry = an_in_faces
+                            .entry(a_sd_key)
+                            .or_insert_with(|| (a_solid.clone(), Vec::new()));
+                        entry.1.push(a_part);
+                    } else {
+                        // OCCT L1846-1849: aPart.Orientation(TopAbs_INTERNAL);
+                        // BRep_Builder().Add(aSd, aPart);
+                        let mut a_part_int = a_part.clone();
+                        a_part_int.orientation = Orientation::Internal;
+                        Self::solid_add_shape(&mut the_solids[i_solid], &a_part_int);
+                    }
+                    // OCCT L1850: aLParts.Remove(itLP);
+                    a_l_parts.remove(j);
+                } else {
+                    // OCCT L1852-1854: itLP.Next();
+                    j += 1;
+                }
+            }
+        }
+
+        // OCCT L1858-1905: make the shells from the IN faces and put them into
+        // the solids.
+        let a_nb_in = an_in_faces.len();
+        for k in 0..a_nb_in {
+            let (a_sd_key, a_faces) = match an_in_faces.get_index(k) {
+                Some((a_key, (a_sd, a_lf))) => (*a_key, (a_sd.clone(), a_lf.clone())),
+                None => continue,
+            };
+            // OCCT L1862-1868: a compound of the faces.
+            let mut a_cf: Vec<Shape> = Vec::new();
+            for a_f in &a_faces.1 {
+                a_cf.push(a_f.clone());
+            }
+            // OCCT L1871-1873: BOPTools_AlgoTools::MakeConnexityBlocks(aCF,
+            // TopAbs_EDGE, TopAbs_FACE, aLCB);
+            let mut a_lcb: Vec<Vec<Shape>> = Vec::new();
+            Self::make_connexity_blocks_shapes(
+                &a_cf,
+                topods::ShapeType::Edge,
+                topods::ShapeType::Face,
+                &mut a_lcb,
+            );
+            // OCCT L1875-1904: build a shell from each block.
+            for a_cb in &a_lcb {
+                let mut a_shell_faces: Vec<Shape> = Vec::new();
+                // OCCT L1885-1896: TopExp_Explorer expF(aCB, TopAbs_FACE);
+                // aFInt.Orientation(TopAbs_INTERNAL); BRep_Builder().Add(aShell,
+                // aFInt);
+                for a_f in collect_block_faces(a_cb) {
+                    let mut a_f_int = a_f.clone();
+                    a_f_int.orientation = Orientation::Internal;
+                    a_shell_faces.push(a_f_int);
+                }
+                let a_shell =
+                    Self::build_container_of_type(topods::ShapeType::Shell, &a_shell_faces);
+                // OCCT L1902: BRep_Builder().Add(aSd, aShell);
+                for a_solid in the_solids.iter_mut() {
+                    if (a_solid.ptr_id(), a_solid.location) == a_sd_key {
+                        let ts = std::sync::Arc::make_mut(&mut a_solid.data);
+                        if let TShape::Solid(sd) = ts {
+                            sd.shells.push(a_shell.clone());
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// OCCT history read surface of the algorithm (the `TheAlgo&` type parameter
+/// of the BRepTools_History template constructor / Merge template,
+/// BRepTools_History.hxx L99-132 and L212-217) — BOPAlgo_BuilderShape's
+/// IsDeleted / Modified / Generated over the real BOPAlgo_Builder body, so a
+/// `BRepTools_History(theArguments, theAlgo)` over a Builder is addressable.
+impl<'a> crate::bop::history::HistoryAlgo for Builder<'a> {
+    /// OCCT BOPAlgo_BuilderShape::IsDeleted (BOPAlgo_BuilderShape.hxx L72-75).
+    fn is_deleted(&self, the_s: &Shape) -> bool {
+        Builder::is_deleted(self, the_s)
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::Modified (BOPAlgo_BuilderShape.hxx L52-58).
+    fn modified(&self, the_s: &Shape) -> Vec<Shape> {
+        Builder::modified(self, the_s)
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::Generated (BOPAlgo_BuilderShape.hxx L61-67).
+    fn generated(&self, the_s: &Shape) -> Vec<Shape> {
+        Builder::generated(self, the_s)
+    }
+}
+
+impl<'a> Builder<'a> {
     /// OCCT BRep_Tool::CurveOnSurface (BRep_Tool.cxx L345-368) matches an
     /// edge's representations by (surface handle, L.Predivided(E.Location())
     /// BY VALUE) — the owning face TShape is NOT part of the match.  rcad
@@ -5279,7 +6271,7 @@ impl<'a> Builder<'a> {
     }
 
     /// Static version of shape_sub_shapes for use in non-&self methods.
-    fn shape_sub_shapes_static(s: &Shape) -> Vec<Shape> {
+    pub(crate) fn shape_sub_shapes_static(s: &Shape) -> Vec<Shape> {
         match &*s.data {
             TShape::Vertex(_) => vec![],
             TShape::Edge(ed) => {
@@ -6356,7 +7348,7 @@ impl<'a> Builder<'a> {
 
     /// Replace my_shape with a fresh compound built from the given shapes.
     /// OCCT: BRep_Builder().Add(aCompound, aS) for each result shape.
-    fn set_shape_from_shapes(&mut self, shapes: Vec<Shape>) {
+    pub(crate) fn set_shape_from_shapes(&mut self, shapes: Vec<Shape>) {
         self.my_shape = Some(topods::BRep::new());
         // Mirror the DS locations pool (TShape-internal Location indices are
         // DS indices; see prepare).

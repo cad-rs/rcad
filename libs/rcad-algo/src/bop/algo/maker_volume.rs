@@ -71,6 +71,17 @@ pub struct MakerVolume {
     my_non_destructive: bool,    // BOPAlgo_Options::myNonDestructive
     my_glue: GlueEnum,           // BOPAlgo_Options::myGlue
     my_use_obb: bool,            // BOPAlgo_Options::myUseOBB
+    // --- BOPAlgo_Builder state inherited by the MakerVolume ---
+    // The MakerVolume derives from BOPAlgo_Builder, so the image tables filled
+    // by the inherited FillImages steps (BOPAlgo_MakerVolume.cxx L131-149) are
+    // the MakerVolume's own members and stay addressable after Perform.  rcad
+    // runs those steps on the composed `Builder` (see the struct note), so the
+    // tables are copied out of it at the end of the pass.
+    my_images: crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), Vec<Shape>>, // BOPAlgo_Builder::myImages
+    my_origins: HashMap<(u64, u32), Vec<Shape>>,   // BOPAlgo_Builder::myOrigins
+    my_shapes_sd: HashMap<(u64, u32), Shape>,      // BOPAlgo_Builder::myShapesSD
+    my_in_parts: HashMap<(u64, u32), Vec<Shape>>,  // BOPAlgo_Builder::myInParts
+    my_history: Option<crate::bop::history::BRepToolsHistory>, // BOPAlgo_BuilderShape::myHistory
     // OCCT: BOPAlgo_MakerVolume::myPaveFiller (raw pointer, L56/L62/L96).
     // rcad owns it; it lends its DS to the composed Builder during perform().
     my_pave_filler: Option<PaveFiller>,
@@ -87,7 +98,11 @@ impl MakerVolume {
             // BOPAlgo_Options: myFuzzyValue(Precision::Confusion()).
             my_fuzzy_value: rcad_kernel::precision::CONFUSION,
             my_shape: None,
-            my_fill_history: false,
+            // OCCT BOPAlgo_BuilderShape::BOPAlgo_BuilderShape
+            // (BOPAlgo_BuilderShape.hxx L121-123): myFillHistory(true).  The
+            // BOPAlgo_MakerVolume constructors (BOPAlgo_MakerVolume.lxx L20-33)
+            // do not disable it.
+            my_fill_history: true,
             my_arguments: Vec::new(),
             my_entry_point: 0,
             my_intersect: true,
@@ -98,6 +113,11 @@ impl MakerVolume {
             my_non_destructive: false,
             my_glue: GlueEnum::GlueOff,
             my_use_obb: false,
+            my_images: crate::bop::algo::occt_map::OcctDataMapInt::new(),
+            my_origins: HashMap::new(),
+            my_shapes_sd: HashMap::new(),
+            my_in_parts: HashMap::new(),
+            my_history: None,
             my_pave_filler: None,
         }
     }
@@ -269,6 +289,12 @@ impl MakerVolume {
         // the filler's DS.
         let ds: &DS = the_filler.ds();
         let mut builder = Builder::new(ds, BooleanOpType::Unknown, self.my_fuzzy_value);
+        // The MakerVolume derives from BOPAlgo_Builder, so the inherited
+        // BOPAlgo_Options / BOPAlgo_BuilderShape members are shared with the
+        // composed Builder which runs the inherited steps: the history knob is
+        // carried over for the PrepareHistory call of BOPAlgo_MakerVolume.cxx
+        // L186 (BOPAlgo_Builder_4.cxx L166-168 reads myFillHistory).
+        builder.my_fill_history = self.my_fill_history;
         //
         // OCCT L111: CheckData
         self.check_data();
@@ -331,10 +357,23 @@ impl MakerVolume {
         self.build_shape(&a_lsr);
         //
         // OCCT L186: PrepareHistory(...);
-        self.prepare_history();
+        self.prepare_history(&mut builder, &a_lsr);
         if self.has_errors() {
             return;
         }
+        // OCCT: the inherited BOPAlgo_Builder members myImages / myOrigins /
+        // myShapesSD / myInParts live in the MakerVolume itself (its base
+        // class), so the tables the pass produced on the composed Builder are
+        // moved into this object for the post-perform queries
+        // (Images() / Origins() / Modified()); the same for the history tool.
+        self.my_images = std::mem::replace(
+            &mut builder.my_images,
+            crate::bop::algo::occt_map::OcctDataMapInt::new(),
+        );
+        self.my_origins = std::mem::take(&mut builder.my_origins);
+        self.my_shapes_sd = std::mem::take(&mut builder.my_shapes_sd);
+        self.my_in_parts = std::mem::take(&mut builder.my_in_parts);
+        self.my_history = builder.my_history.take();
         //
         // OCCT L193: PostTreat(...);
         self.post_treat();
@@ -608,16 +647,94 @@ impl MakerVolume {
 
     /// OCCT BOPAlgo_BuilderShape::PrepareHistory, called at
     /// BOPAlgo_MakerVolume.cxx L186.
-    fn prepare_history(&mut self) {
-        // OCCT BOPAlgo_BuilderShape.cxx L166-168:
-        // if (!HasHistory()) return; — the default myFillHistory is FALSE.
-        // Interface gap: the history part of PrepareHistory (myOrigins /
-        // myImages -> BRepTools_History, needed by BRepOffset's UpdateHistory)
-        // is not translated in rcad; Builder::prepare_history is private and
-        // works on the topods::BRep result pool of builder.rs.
+    ///
+    /// OCCT BOPAlgo_Builder::PrepareHistory (BOPAlgo_Builder_4.cxx L164-252)
+    /// walks the DS source shapes, maps the result shape
+    /// (TopExp::MapShapes(myShape, myMapShape), L174-176) and records the
+    /// splits contained in the result as Modified, the intersection elements
+    /// as Generated and the shapes absent from the result as Deleted.  The
+    /// MakerVolume runs no BuildResult step, so its result membership comes
+    /// from the compound built by BuildShape: the composed Builder result pool
+    /// is set from the built solids and Builder::prepare_history fills the
+    /// history exactly as the OCCT base-class method does.
+    fn prepare_history(&mut self, builder: &mut Builder, the_lsr: &[Shape]) {
+        // OCCT BOPAlgo_BuilderShape.cxx L166-168: if (!HasHistory()) return;
         if !self.my_fill_history {
             return;
         }
+        // OCCT BOPAlgo_Builder_4.cxx L174-176: TopExp::MapShapes(myShape,
+        // myMapShape) — the rcad result membership is Builder::shape_remap,
+        // filled by set_shape_from_shapes for the built solids.
+        builder.set_shape_from_shapes(the_lsr.to_vec());
+        // OCCT BOPAlgo_Builder_4.cxx L178-252.
+        builder.prepare_history();
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::Modified (BOPAlgo_BuilderShape.hxx L52-58)
+    /// over the MakerVolume history.
+    pub fn modified(&self, the_s: &Shape) -> Vec<Shape> {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.modified(the_s);
+            }
+        }
+        Vec::new()
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::Generated (BOPAlgo_BuilderShape.hxx L61-67).
+    pub fn generated(&self, the_s: &Shape) -> Vec<Shape> {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.generated(the_s);
+            }
+        }
+        Vec::new()
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::IsDeleted (BOPAlgo_BuilderShape.hxx L72-75).
+    pub fn is_deleted(&self, the_s: &Shape) -> bool {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.is_removed(the_s);
+            }
+        }
+        false
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::History (BOPAlgo_BuilderShape.hxx L93-110).
+    pub fn history(&mut self) -> Option<&crate::bop::history::BRepToolsHistory> {
+        // OCCT L95-105: the lazy "history not filled yet" initialisation.
+        if self.my_fill_history {
+            if self.my_history.is_none() {
+                self.my_history = Some(crate::bop::history::BRepToolsHistory::new());
+            }
+            return self.my_history.as_ref();
+        }
+        // OCCT L109: return nullptr;
+        None
+    }
+
+    /// OCCT BOPAlgo_Builder::Images (BOPAlgo_Builder.hxx L284-288) — the images
+    /// of the sub-shapes of the arguments, filled by the inherited FillImages
+    /// steps at BOPAlgo_MakerVolume.cxx L131-149 (and consumed by CollectFaces
+    /// at L233-249).
+    pub fn images(&self) -> &crate::bop::algo::occt_map::OcctDataMapInt<(u64, u32), Vec<Shape>> {
+        &self.my_images
+    }
+
+    /// OCCT BOPAlgo_Builder::Origins (BOPAlgo_Builder.hxx L291-295).
+    pub fn origins(&self) -> &HashMap<(u64, u32), Vec<Shape>> {
+        &self.my_origins
+    }
+
+    /// OCCT BOPAlgo_Builder::ShapesSD (BOPAlgo_Builder.hxx L299-302).
+    pub fn shapes_sd(&self) -> &HashMap<(u64, u32), Shape> {
+        &self.my_shapes_sd
+    }
+
+    /// OCCT BOPAlgo_Builder::Arguments (BOPAlgo_Builder.hxx L106).
+    pub fn arguments(&self) -> &[Shape] {
+        &self.my_arguments
     }
 
     /// OCCT BOPAlgo_Algo::PostTreat, called at BOPAlgo_MakerVolume.cxx L193
@@ -635,6 +752,27 @@ impl MakerVolume {
             crate::bop::tools::algo_tools::correct_tolerances(&mut a_brep, &a_ma, 0.05);
             crate::bop::tools::algo_tools::correct_shape_tolerances(&mut a_brep, &a_ma);
         }
+    }
+}
+
+/// OCCT history read surface of the MakerVolume (the `TheAlgo&` type parameter
+/// of the BRepTools_History template constructor / Merge template,
+/// BRepTools_History.hxx L99-132 and L212-217) — BOPAlgo_BuilderShape's
+/// IsDeleted / Modified / Generated over the real BOPAlgo_MakerVolume body.
+impl crate::bop::history::HistoryAlgo for MakerVolume {
+    /// OCCT BOPAlgo_BuilderShape::IsDeleted (BOPAlgo_BuilderShape.hxx L72-75).
+    fn is_deleted(&self, the_s: &Shape) -> bool {
+        MakerVolume::is_deleted(self, the_s)
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::Modified (BOPAlgo_BuilderShape.hxx L52-58).
+    fn modified(&self, the_s: &Shape) -> Vec<Shape> {
+        MakerVolume::modified(self, the_s)
+    }
+
+    /// OCCT BOPAlgo_BuilderShape::Generated (BOPAlgo_BuilderShape.hxx L61-67).
+    fn generated(&self, the_s: &Shape) -> Vec<Shape> {
+        MakerVolume::generated(self, the_s)
     }
 }
 

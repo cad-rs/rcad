@@ -47,6 +47,18 @@ pub struct BuilderAlgo {
     pub glue: i32,
     pub check_inverted: bool,
     pub use_bvh: bool,
+    /// OCCT BRepAlgoAPI_BuilderAlgo::myIsIntersectionNeeded
+    /// (BRepAlgoAPI_BuilderAlgo.hxx L233): TRUE for the empty constructor,
+    /// FALSE for the BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller&) form
+    /// (BRepAlgoAPI_BuilderAlgo.cxx L30, L43). When FALSE, IntersectShapes
+    /// returns at once (L110-113) and the Build steps bind the supplied filler.
+    pub my_is_intersection_needed: bool,
+    /// OCCT BRepAlgoAPI_BuilderAlgo::myFillHistory
+    /// (BRepAlgoAPI_BuilderAlgo.hxx L230): TRUE by default (L29).
+    pub my_fill_history: bool,
+    /// OCCT BRepAlgoAPI_BuilderAlgo::myHistory (hxx L239) — the general
+    /// history tool of the operation (BRepAlgoAPI_Algo::myHistory).
+    pub my_history: Option<crate::bop::history::BRepToolsHistory>,
 }
 impl BuilderAlgo {
     pub fn new() -> Self {
@@ -60,6 +72,9 @@ impl BuilderAlgo {
             // myFuzzyValue(Precision::Confusion()) — 1e-7 default.
             fuzzy_value: rcad_kernel::precision::CONFUSION,
             non_destructive: false, glue: 0, check_inverted: true, use_bvh: false,
+            my_is_intersection_needed: true,
+            my_fill_history: true,
+            my_history: None,
         }
     }
     pub fn set_run_parallel(&mut self, b: bool) { self.run_parallel = b; }
@@ -80,10 +95,195 @@ impl BuilderAlgo {
     pub fn get_glue(&self) -> i32 { self.glue }
     pub fn set_check_inverted(&mut self, b: bool) { self.check_inverted = b; }
     pub fn get_check_inverted(&self) -> bool { self.check_inverted }
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo::SetToFillHistory (BRepAlgoAPI_BuilderAlgo
+    /// .hxx L185).
+    pub fn set_to_fill_history(&mut self, b: bool) { self.my_fill_history = b; }
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo::HasHistory (BRepAlgoAPI_BuilderAlgo.hxx
+    /// L188).
+    pub fn has_history(&self) -> bool { self.my_fill_history }
+
+    // ------------------------------------------------------------------
+    // OCCT BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller&) + Build
+    // (BRepAlgoAPI_BuilderAlgo.cxx L38-47, L81-101, L107-134, L138-164)
+    // ------------------------------------------------------------------
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller& thePF)
+    /// (BRepAlgoAPI_BuilderAlgo.cxx L38-47):
+    ///   myNonDestructive(false), myGlue(BOPAlgo_GlueOff),
+    ///   myCheckInverted(true), myFillHistory(true),
+    ///   myIsIntersectionNeeded(false), myBuilder(nullptr),
+    ///   myDSFiller = (BOPAlgo_PaveFiller*)&aPF.
+    ///
+    /// Architecture difference: a Rust value type cannot hold the borrowed
+    /// filler, so the filler is handed to [`BuilderAlgo::build_with_filler`]
+    /// (the Build step that consumes it) and this constructor carries the
+    /// constructor's flag assignment (myIsIntersectionNeeded = false).
+    pub fn new_with_filler() -> Self {
+        let mut a_builder = Self::new();
+        a_builder.my_is_intersection_needed = false;
+        a_builder
+    }
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo::Build (BRepAlgoAPI_BuilderAlgo.cxx
+    /// L81-101) over the supplied filler: IntersectShapes returns immediately
+    /// (L110-113 — myIsIntersectionNeeded is false), the BOPAlgo_Builder is
+    /// created over myArguments (L96-98) and BuildResult (L138-164) binds the
+    /// filler through myBuilder->PerformWithFiller(*myDSFiller) — the Builder
+    /// pass of BOPAlgo_Builder::PerformInternal1, with NO BuildShape step.
+    pub fn build_with_filler(&mut self, the_pf: &PaveFiller) {
+        // OCCT L84: NotDone();
+        self.bs.result = None;
+        self.bs.err = None;
+        // OCCT L86: Clear(); — BRepAlgoAPI_BuilderAlgo.cxx L58-77:
+        // myHistory.Nullify().
+        self.my_history = None;
+        // OCCT L95-96: myBuilder = new BOPAlgo_Builder(myAllocator);
+        // The rcad Builder borrows the DS of the supplied filler — the same
+        // binding BOPAlgo_Builder::PerformInternal1 does (L313-315).
+        let mut a_builder = Builder::new(
+            the_pf.ds(),
+            BooleanOpType::Unknown,
+            the_pf.fuzzy_value(),
+        );
+        // OCCT L98: myBuilder->SetArguments(myArguments);
+        // OCCT BOPAlgo_Builder::SetArguments (BOPAlgo_Builder.cxx L113-125)
+        // appends under the myMapFence; myArguments is the DS argument list
+        // (its constructor form has no myTools).
+        a_builder.my_arguments = the_pf.ds().arguments.clone();
+        // OCCT L141-144: SetRunParallel / SetCheckInverted / SetToFillHistory.
+        a_builder.my_run_parallel = self.run_parallel;
+        a_builder.my_check_inverted = self.check_inverted;
+        a_builder.my_fill_history = self.my_fill_history;
+        // OCCT L146: myBuilder->PerformWithFiller(*myDSFiller, theRange);
+        a_builder.perform_with_filler(the_pf);
+        // OCCT L148: GetReport()->Merge(myBuilder->GetReport());
+        // rcad carries the builder's report in the Builder; the rcad
+        // BuilderAlgo has no report of its own (interface gap of this facade).
+        // OCCT L150-153: if (myBuilder->HasErrors()) return;
+        if a_builder.has_errors() {
+            self.bs.err = Some(BooleanError::InvalidResult("builder failed"));
+            return;
+        }
+        // OCCT L155: Done();
+        // OCCT L157: myShape = myBuilder->Shape();
+        self.bs.result = Some(builder_pass_root(&a_builder));
+        // OCCT L159-163: if (myFillHistory) { myHistory = new
+        // BRepTools_History; myHistory->Merge(myBuilder->History()); }
+        if self.my_fill_history {
+            let mut a_history = crate::bop::history::BRepToolsHistory::new();
+            if let Some(a_builder_history) = a_builder.history() {
+                a_history.merge(a_builder_history);
+            }
+            self.my_history = Some(a_history);
+        }
+    }
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo::Modified (BRepAlgoAPI_BuilderAlgo.cxx
+    /// L204-212).
+    pub fn modified(&self, the_s: &Shape) -> Vec<Shape> {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.modified(the_s);
+            }
+        }
+        Vec::new()
+    }
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo::Generated (BRepAlgoAPI_BuilderAlgo.cxx
+    /// L216-224).
+    pub fn generated(&self, the_s: &Shape) -> Vec<Shape> {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.generated(the_s);
+            }
+        }
+        Vec::new()
+    }
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo::IsDeleted (BRepAlgoAPI_BuilderAlgo.cxx
+    /// L228-231).
+    pub fn is_deleted(&self, the_s: &Shape) -> bool {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.is_removed(the_s);
+            }
+        }
+        false
+    }
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo::HasModified (BRepAlgoAPI_BuilderAlgo.cxx
+    /// L235-238).
+    pub fn has_modified(&self) -> bool {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.has_modified();
+            }
+        }
+        false
+    }
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo::HasGenerated (BRepAlgoAPI_BuilderAlgo.cxx
+    /// L242-245).
+    pub fn has_generated(&self) -> bool {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.has_generated();
+            }
+        }
+        false
+    }
+
+    /// OCCT BRepAlgoAPI_BuilderAlgo::HasDeleted (BRepAlgoAPI_BuilderAlgo.cxx
+    /// L249-252).
+    pub fn has_deleted(&self) -> bool {
+        if self.my_fill_history {
+            if let Some(a_history) = &self.my_history {
+                return a_history.has_removed();
+            }
+        }
+        false
+    }
 }
 impl Algo for BuilderAlgo {
     fn is_done(&self) -> bool { self.bs.is_done() }
     fn error(&self) -> Option<&BooleanError> { self.bs.error() }
+}
+
+/// OCCT history read surface of the rcad BRepAlgoAPI_BuilderAlgo facade (the
+/// `TheAlgo&` type parameter of the BRepTools_History template constructor /
+/// Merge template, BRepTools_History.hxx L99-132, L212-217).
+impl crate::bop::history::HistoryAlgo for BuilderAlgo {
+    fn is_deleted(&self, the_s: &Shape) -> bool {
+        BuilderAlgo::is_deleted(self, the_s)
+    }
+
+    fn modified(&self, the_s: &Shape) -> Vec<Shape> {
+        BuilderAlgo::modified(self, the_s)
+    }
+
+    fn generated(&self, the_s: &Shape) -> Vec<Shape> {
+        BuilderAlgo::generated(self, the_s)
+    }
+}
+
+/// OCCT BOPAlgo_BuilderShape::Shape() for the Builder pass — the compound made
+/// by Prepare (BOPAlgo_Builder.cxx L156-164) and filled by the BuildResult
+/// steps (BOPAlgo_Builder_1.cxx L130-168), i.e. the splits of all arguments.
+///
+/// Architecture difference: the rcad Builder keeps a flat BRep pool instead of
+/// the compound, so the root is rebuilt from the pool's top-level shapes — the
+/// shapes no other pool shape references, in pool (= OCCT Add) order.
+fn builder_pass_root(the_builder: &Builder) -> Shape {
+    let Some(brep) = the_builder.my_shape.as_ref() else {
+        return Shape::null();
+    };
+    Shape::new(
+        Arc::new(TShape::Compound(brep_top_shapes(brep))),
+        0,
+        rcad_kernel::topods::Orientation::Forward,
+    )
 }
 
 // 閳光偓閳光偓 BooleanOperation 閳?base for Fuse/Common/Cut/Section 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
@@ -206,6 +406,53 @@ impl SectionOp {
         s.algo.arguments = vec![s1];
         s.algo.tools = vec![s2];
         s
+    }
+
+    /// OCCT BRepAlgoAPI_Section(S1, S2, thePF) — the filler-carrying section
+    /// (BRepAlgoAPI_Section.hxx L52 + BRepAlgoAPI_BooleanOperation.cxx
+    /// L111-118) which delegates to BRepAlgoAPI_BuilderAlgo(thePF)
+    /// (BRepAlgoAPI_BuilderAlgo.cxx L38-47): myIsIntersectionNeeded = false,
+    /// so Build() skips IntersectShapes (L110-113) and builds the section over
+    /// the DS the supplied filler already computed
+    /// (BRepAlgoAPI_BooleanOperation.cxx L199-200: myBuilder = new
+    /// BOPAlgo_Section(myAllocator); myBuilder->SetArguments(
+    /// myDSFiller->Arguments())).
+    ///
+    /// Architecture difference: the borrowed filler cannot be stored in the
+    /// value type, so it is handed to [`SectionOp::build_with_filler`].
+    pub fn from_shapes_with_filler(s1: Shape, s2: Shape) -> Self {
+        let mut s = Self::from_shapes(s1, s2);
+        s.algo.my_is_intersection_needed = false;
+        s
+    }
+
+    /// OCCT BRepAlgoAPI_Section::Build over a supplied filler — the common
+    /// BRepAlgoAPI_BuilderAlgo::Build (BRepAlgoAPI_BuilderAlgo.cxx L81-101)
+    /// with myIsIntersectionNeeded = false and, for BOPAlgo_SECTION, the
+    /// builder created over myDSFiller->Arguments()
+    /// (BRepAlgoAPI_BooleanOperation.cxx L199-200).
+    pub fn build_with_filler(&mut self, the_pf: &PaveFiller) {
+        // OCCT BRepAlgoAPI_BuilderAlgo::Build L84-86: NotDone(); Clear();
+        self.algo.bs.result = None;
+        self.algo.bs.err = None;
+        self.algo.my_history = None;
+        // OCCT BRepAlgoAPI_BooleanOperation::Build L174-193: with
+        // myIsIntersectionNeeded = false the intersection step is skipped —
+        // IntersectShapes returns at once (BRepAlgoAPI_BuilderAlgo.cxx
+        // L110-113) and the filler's DS is the one already computed.
+        match run_build_section_brep_with_filler(&self.algo, the_pf) {
+            Ok(brep) => {
+                // OCCT BOPAlgo_Section::myShape is the result compound.
+                let root = brep.tshapes.iter().enumerate().rev()
+                    .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Compound(_)))
+                    .map(|(i, ts)| Shape::from_parts(ts.clone(), i, 0, rcad_kernel::topods::Orientation::Forward));
+                match root {
+                    Some(s) => self.algo.bs.result = Some(s),
+                    None => self.algo.bs.err = Some(BooleanError::InvalidResult("no root shape")),
+                }
+            }
+            Err(e) => self.algo.bs.err = Some(e),
+        }
     }
     pub fn set_arguments(&mut self, args: Vec<Shape>) { self.algo.set_arguments(args); }
     pub fn get_arguments(&self) -> &[Shape] { self.algo.get_arguments() }
@@ -720,6 +967,43 @@ fn run_build_section_brep(
     // the DS arguments (objects + tools as one list).
     let mut a_section = BOPAlgoSection::new(filler.ds(), fuzz);
     a_section.set_arguments(filler.ds().arguments.clone());
+    a_section.perform();
+    if a_section.has_errors() {
+        return Err(BooleanError::InvalidResult("section failed"));
+    }
+    a_section
+        .result_brep()
+        .ok_or(BooleanError::InvalidResult("no section result"))
+}
+
+/// BRep-form SECTION build over a supplied filler — the
+/// BRepAlgoAPI_BuilderAlgo(const BOPAlgo_PaveFiller&) form of the section
+/// pipeline (BRepAlgoAPI_BuilderAlgo.cxx L38-47: myIsIntersectionNeeded =
+/// false; L107-113: IntersectShapes returns immediately).
+///
+/// OCCT BRepAlgoAPI_BooleanOperation::Build L199-200:
+///   myBuilder = new BOPAlgo_Section(myAllocator);
+///   myBuilder->SetArguments(myDSFiller->Arguments());
+/// BOPAlgo_Section inherits BOPAlgo_Builder and has no myTools: the objects and
+/// the tools form ONE argument list — the filler's argument list.
+///
+/// The section attribute is NOT re-applied: the filler was performed by the
+/// caller with its own attribute (the OCCT SetAttributes step belongs to
+/// IntersectShapes, which is skipped here).
+fn run_build_section_brep_with_filler(
+    algo: &BuilderAlgo,
+    the_pf: &PaveFiller,
+) -> Result<rcad_kernel::BRep, BooleanError> {
+    let _ = algo;
+    // OCCT BOPAlgo_Section::CheckData requires at least one argument
+    // (BOPAlgo_Builder::CheckData, BOPAlgo_Builder.cxx L130-140 with the
+    // Section form of BOPAlgo_Section::CheckData).
+    if the_pf.ds().arguments.is_empty() {
+        return Err(BooleanError::TooFewArguments);
+    }
+    let fuzz = the_pf.fuzzy_value();
+    let mut a_section = BOPAlgoSection::new(the_pf.ds(), fuzz);
+    a_section.set_arguments(the_pf.ds().arguments.clone());
     a_section.perform();
     if a_section.has_errors() {
         return Err(BooleanError::InvalidResult("section failed"));

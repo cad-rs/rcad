@@ -15,6 +15,32 @@ pub fn is_supported_type(s: &Shape) -> bool {
     }
 }
 
+/// OCCT history read surface of an algorithm — IsDeleted(theS) / Modified(theS)
+/// / Generated(theS) — as consumed by the BRepTools_History template
+/// constructor and the Merge template (BRepTools_History.hxx L99-132,
+/// L212-217).
+///
+/// OCCT carries it as the `template <class TheAlgo>` type parameter
+/// (theAlgo.IsDeleted / theAlgo.Modified / theAlgo.Generated). Rust has no
+/// class templates, so the same three methods are carried by this trait and
+/// the constructor takes `&dyn HistoryAlgo` — the call sites name exactly the
+/// algorithms OCCT instantiates the template with (BOPAlgo_Builder /
+/// BOPAlgo_MakerVolume through their BOPAlgo_BuilderShape base,
+/// BRepAlgoAPI_BuilderAlgo).
+pub trait HistoryAlgo {
+    /// OCCT theAlgo.IsDeleted(aS) — BOPAlgo_BuilderShape::IsDeleted
+    /// (BOPAlgo_BuilderShape.hxx L72-75).
+    fn is_deleted(&self, the_s: &Shape) -> bool;
+
+    /// OCCT theAlgo.Modified(aS) — BOPAlgo_BuilderShape::Modified
+    /// (BOPAlgo_BuilderShape.hxx L52-58).
+    fn modified(&self, the_s: &Shape) -> Vec<Shape>;
+
+    /// OCCT theAlgo.Generated(aS) — BOPAlgo_BuilderShape::Generated
+    /// (BOPAlgo_BuilderShape.hxx L61-67).
+    fn generated(&self, the_s: &Shape) -> Vec<Shape>;
+}
+
 /// OCCT BRepTools_History::TRelationType (BRepTools_History.hxx L136-141):
 /// the types of the historical relations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +75,61 @@ impl BRepToolsHistory {
 
     fn key(s: &Shape) -> (u64, u32) {
         (s.ptr_id(), s.location)
+    }
+
+    /// OCCT BRepTools_History::BRepTools_History(const NCollection_List
+    /// <TopoDS_Shape>& theArguments, TheAlgo& theAlgo) (BRepTools_History.hxx
+    /// L99-132) — the history of one algorithm over the given arguments.
+    ///
+    /// Rust has no class template, so the algorithm is taken through the
+    /// [`HistoryAlgo`] trait carrying OCCT's IsDeleted / Modified / Generated.
+    pub fn from_algorithm(the_arguments: &[Shape], the_algo: &dyn HistoryAlgo) -> Self {
+        // OCCT L103-109: map all argument shapes to save them in history —
+        // TopExp::MapShapes of every non-null argument into an
+        // NCollection_IndexedMap (pre-order depth-first, deduplicated by
+        // TShape + Location).
+        let mut an_args_map: Vec<Shape> = Vec::new();
+        let mut a_seen: HashSet<(u64, u32)> = HashSet::new();
+        for a_arg in the_arguments {
+            // OCCT L107: if (!aIt.Value().IsNull()) TopExp::MapShapes(...)
+            if a_arg.is_null() {
+                continue;
+            }
+            map_shapes(a_arg, &mut an_args_map, &mut a_seen);
+        }
+
+        // OCCT L112-131: copy the history for all supported shapes.
+        let mut a_history = Self::new();
+        for a_s in &an_args_map {
+            // OCCT L116-117: if (!IsSupportedType(aS)) continue;
+            if !is_supported_type(a_s) {
+                continue;
+            }
+
+            // OCCT L119-120: if (theAlgo.IsDeleted(aS)) Remove(aS);
+            if the_algo.is_deleted(a_s) {
+                a_history.remove(a_s);
+            }
+
+            // OCCT L122-125: Modified — for (aIt.Initialize(aModified) ...)
+            // AddModified(aS, aIt.Value());
+            for a_m in the_algo.modified(a_s) {
+                a_history.add_modified(a_s, &a_m);
+            }
+
+            // OCCT L127-130: Generated — AddGenerated(aS, aIt.Value());
+            for a_g in the_algo.generated(a_s) {
+                a_history.add_generated(a_s, &a_g);
+            }
+        }
+        a_history
+    }
+
+    /// OCCT BRepTools_History::Merge(const NCollection_List<TopoDS_Shape>&
+    /// theArguments, TheAlgo& theAlgo) (BRepTools_History.hxx L212-217):
+    ///   Merge(BRepTools_History(theArguments, theAlgo));
+    pub fn merge_algorithm(&mut self, the_arguments: &[Shape], the_algo: &dyn HistoryAlgo) {
+        self.merge(&Self::from_algorithm(the_arguments, the_algo));
     }
 
     /// OCCT BRepTools_History::AddGenerated (BRepTools_History.cxx L48-67).
@@ -111,17 +192,17 @@ impl BRepToolsHistory {
     }
 
     /// OCCT BRepTools_History::HasGenerated (BRepTools_History.hxx L192).
-    fn has_generated(&self) -> bool {
+    pub fn has_generated(&self) -> bool {
         !self.my_shape_to_generated.is_empty()
     }
 
     /// OCCT BRepTools_History::HasModified (BRepTools_History.hxx L195).
-    fn has_modified(&self) -> bool {
+    pub fn has_modified(&self) -> bool {
         !self.my_shape_to_modified.is_empty()
     }
 
     /// OCCT BRepTools_History::HasRemoved (BRepTools_History.hxx L198).
-    fn has_removed(&self) -> bool {
+    pub fn has_removed(&self) -> bool {
         !self.my_removed.is_empty()
     }
 
@@ -307,5 +388,27 @@ impl BRepToolsHistory {
             TShape::Solid(_) => Some("solid"),
             _ => None,
         }
+    }
+}
+
+/// OCCT TopExp::MapShapes(const TopoDS_Shape& S, NCollection_IndexedMap<...>&
+/// M) (TopExp.cxx L49-61):
+///   M.Add(S);
+///   TopoDS_Iterator It(S, cumOri, cumLoc);
+///   for (; It.More(); It.Next()) MapShapes(It.Value(), M);
+/// A pre-order depth-first walk; the IndexedMap deduplicates by TShape +
+/// Location (TopTools_ShapeMapHasher), and an already-mapped shape is still
+/// traversed (the Add result is not tested), so `a_seen` gates only the push.
+///
+/// The direct sub-shapes come from the shared Builder walk
+/// (Builder::shape_sub_shapes_static), which mirrors TopoDS_Iterator of the
+/// rcad TShape: an edge's vertices carry the composed edge Location, the
+/// other children carry the Location indices of the rcad data model.
+fn map_shapes(the_shape: &Shape, the_map: &mut Vec<Shape>, a_seen: &mut HashSet<(u64, u32)>) {
+    if a_seen.insert((the_shape.ptr_id(), the_shape.location)) {
+        the_map.push(the_shape.clone());
+    }
+    for a_sub in crate::bop::algo::builder::Builder::shape_sub_shapes_static(the_shape) {
+        map_shapes(&a_sub, the_map, a_seen);
     }
 }

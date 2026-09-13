@@ -203,4 +203,13 @@ pub enum Alert {
     /// BOPAlgo_AlertUnableToMakeClosedEdgeOnFace — a seam (closed-surface) edge
     /// could not be split on the face. Carries the (face, split edge) shapes.
     UnableToMakeClosedEdgeOnFace(Vec<rcad_kernel::topo_shape::Shape>),
+    /// BOPAlgo_AlertBuilderFailed — the Builder pass has not been performed yet
+    /// or has failed (BOPAlgo_Builder.cxx L496, raised by BuildBOP).
+    BuilderFailed,
+    /// BOPAlgo_AlertUnknownShape — the shape is unknown for the operation
+    /// (BOPAlgo_Builder.cxx L527).
+    UnknownShape(rcad_kernel::topo_shape::Shape),
+    /// BOPAlgo_AlertUnsupportedType — a shape of unsupported type is given to
+    /// the operation (BOPAlgo_Builder.cxx L544).
+    UnsupportedType(rcad_kernel::topo_shape::Shape),
 }
