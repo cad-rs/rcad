@@ -1215,6 +1215,33 @@ libs/rcad-algo/src/
      - `geomalgo/geom_lib_same_range.rs::extend_surf_by_length`（**本轮已接线**）：真身在 `fillet/chfi3d_builder_c2_geomlib.rs::geom_lib_extend_surf_by_length`，GAP 载体已改为委托（消费点 `offset/brep_offset_tool_c.rs:617/683`、`brep_fill_sweep_c.rs:362/374`）。
 - **教训（并入坑 7 "注释说缺 ≠ 真缺"）**：`unimplemented!` / `panic!("GAP…")` 的**文案也会过期**——本轮两例（ExtendSurfByLength、ProjLib_HCompProjectedCurve）都是"文件头的 mid-integration 注释写着没接"、而真身早已在库。**立卡前先按函数名 grep 一遍全库**，再决定是"翻译"还是"接线"。
 
+### E3-W 追加 19（2026-09-13：三批翻译/接线落地 —— geomplate 的 ProjLib 三处接线 + 池外 `BRep_Tool::Curve` + `GeomLib::BuildCurve3d` 家族；六门槛与八网格零回归）
+
+- **口径**：延续追加 18 的"先译后调"——本轮只做翻译/接线，**不针对性修测试数值**；每批以**失败层深度**（坑 21）而非通过数验收。
+- **批次 1（rcad `d7beea3c`）：`ProjLib_HCompProjectedCurve` 在 `GeomPlate_BuildPlateSurface` 的三处接线**（§4.6 TKFillet 接力项 B 的前半）。
+  真身（`geomalgo/proj_lib_h_comp_projected_curve.rs::CompProjectedCurve`，=`ProjLib_CompProjectedCurve`：`typedef ProjLib_HCompProjectedCurve`）与配套的 `Adaptor3d_CurveOnSurface` 真身（kernel `base/proj_lib/adaptor.rs::CurveOnSurface`）**早已在库**，缺的只是消费者。三处按 OCCT 字面翻译：
+  1. **ComputeSurfInit 的 metrics 比较**（`GeomPlate_BuildPlateSurface.cxx` **L1746-1802**）：`ProjCurve = new ProjLib_HCompProjectedCurve(hsur, Curve, myTol3d, myTol3d)` + `Adaptor3d_CurveOnSurface AProj(ProjCurve, hsur)` + 内层 `j < NbPoint && myIsLinear` 的 `|DerC| / |DerCproj|` 与 `R1=2 / R2=0.6`、`A2 <= 1e-20 ⇒ Ratio = 1e20`。
+  2. **ProjectCurve**（cxx **L254-303**）：`NbCurves`/`Bounds`/`PConfusion` 守卫 + `IsSinglePnt` 的**两极点 `Geom2d_BezierCurve`** 回退 + `Approx_CurveOnSurface`（`MaxSeg = 20 + NbIntervals(GeomAbs_C3)`、`MaxDegree = 10`、`GeomAbs_C1`、`only3d=false, only2d=true`）。
+  3. **ProjectedCurve**（cxx **L307-349**）：`NbCurves`/`Bounds` 与 `max(myTolU, myTolV)` 守卫 + `Trim(First2, Last2, PConfusion())`。
+  ⚠ **三处必须同批**：metrics 比较一旦生效，A2/P8/P9 族的 `myIsLinear` 会变 false，进入的非线性回退**正好调用 ProjectCurve**（rcad 原实现留在 `unimplemented!`）。
+  ⚠ 追加 18 记的"难点在 `Adaptor3d_CurveOnSurface` 以通用 `Adaptor3d_Curve` 为底"**经查不成立**：`ProjLib_CompProjectedCurve` 的基类是 **`Adaptor2d_Curve2d`**（`ProjLib_CompProjectedCurve.hxx` **L37**），所以 `AProj` 走的是 `Adaptor3d_CurveOnSurface(Handle(Adaptor2d_Curve2d), Handle(Adaptor3d_Surface))` 这一支（`Adaptor3d_CurveOnSurface.hxx` **L43-44**），即 kernel `CurveOnSurface` 既有的 2D 载体口径，**无需新架构**。
+  **实测**：`blend_simple` a2/p8/p9 由 `geomplate/build_plate_surface.rs:1003` 的 GAP panic 推进到 `proj_lib_h_comp_projected_curve.rs:449`（`D0` 的 `Standard_DomainError`：投影搜索未产出覆盖查询参数的区间）。**该处 OCCT 同函数同断言**，属**运行状态**项（投影区间结构），留待调试阶段，**不是缺翻译**。
+- **批次 2（rcad `830eb2c2`）：池外 `BRep_Tool::Curve`**（§4.6 TKOffset 第 1 项）。按既有模板 `topods.rs::curve_on_surface_pool_free` 加同族的 `curve_pool_free(the_e)`（= OCCT `BRep_Tool::Curve(E, L, First, Last)`，**BRep_Tool.cxx L172-196**；L181-192 的 representation 走查 + `GC->Range(First, Last)`，未命中即 L193-195 的 null）与 `shape_is_in_pool(brep, r)`；`topalgo/brep_lib/build_curves3d.rs::brep_tool_curve`、`shhealing/.../unify_same_domain/topexp.rs::{brep_tool_curve_loc, brep_tool_range}` 改为**池外走池读、索引有效仍走池**（池内行为逐位不变）。
+  **已记档的限制**：OCCT 出参 `L = E.Location() * GC->Location()`（L187）**无法池外求值**——rcad 的 `TopLoc_Location` 是**属主 BRep 的 `locations` 表索引**，池外形状不带该表；返回曲线因此是边局部坐标系，位置由调用方按属主池解析。
+  ⚠ **锚点勘误**：本档与源码旧注释引的 `BRep_Tool.cxx L410-452` 实为 **`BRep_Tool::CurveOnPlane`**；`Curve` 本体是 **L172-196**。
+  **实测（backtrace 取证）**：`offset_shape_type_i` a3/a4/d2/d3 **此前死在 `brep_tool_curve`，现在通过该读取、向下一帧死在 `BRepLib::check_same_range`**。⇒ **同一 `topods.rs:1799` 行号的失败地图看不出这一层推进**，必须看 backtrace（坑 21 的加强版，见坑 28）。
+- **批次 3（rcad `e841e805`）：`GeomLib::BuildCurve3d` 家族 1:1 翻译 + 四处载体收敛**（§4.6 TKOffset 第 3 项）。
+  新增：kernel `math/adv_approx/pref_and_rec.rs`（`AdvApprox_PrefAndRec`，cxx **L22-75** + hxx L33-59，实现既有 `Cutting`）；kernel `approx_a_function.rs` 的**13 参构造 `with_cut_tool(...)`**（cxx **L631-656**，`new(...)` 改委托 `DichoCutting`，既有调用者零改动）+ OCCT `Perform` 尾部的**子空间存储**（cxx **L798-945**：1D 块、`dim_index = index` / `index += …` 偏移、2D 块 `dim_index = index + myNumSubSpaces[1]`——此前 `dim_index` 恒为 0 且只有 3D 块）；kernel `Adaptor2dCurve2d::kernel_curve2d()`（`Geom2dAdaptor_Curve` 覆盖，= 2D 侧的 `down_cast<Geom2dAdaptor_Curve>` 桥，与既有 `kernel_surface()` 同形）；`geomalgo/geom_lib.rs` 的 `GeomLib_CurveOnSurfaceEvaluator`（cxx **L974-1050**，首次调用惰性 `Trim`，因为 OCCT 故意传 `First-1. / Last+1.`）与 `GeomLib::build_curve3d`（cxx **L1051-1163**）；新文件 `geomalgo/geom_lib_iso_line.rs`（`GeomLib::isIsoLine` **L2991-3078** + `buildC3dOnIsoLine` **L3079-3235**）与 `geomalgo/geom_lib_make_curve_from_approx.rs`（`GeomLib_MakeCurvefromApprox`，cxx **L29-203**）。
+  ⚠ **必须分清两份同名静态**：`approx_curve_on_surface.rs` 的 `is_iso_line`/`build_c3d_on_iso_line` 是 **`Approx_CurveOnSurface` 自己的**副本（OCCT 本身也是两份），GeomLib 要用的是**自己那份**——本轮新译，且**未改动** `approx_curve_on_surface.rs`。
+  收敛：`topalgo/brep_lib/build_curves3d.rs`（panic → kernel `CurveOnSurface` + `geom_lib::build_curve3d`，本地 `Geom2dAdaptorCurve`/`GeomAdaptorSurface`/`Adaptor3dCurveOnSurface` 三个 re-host 删除）、`offset/brep_offset_inter2d.rs`（panic → OCCT 签名委托入口，本地 `Adaptor3dCurveOnSurface` 删除）、`fillet/chfi3d_builder_cncrn.rs`（"空曲线"stand-in → 经既有 `to_kernel()` 桥委托，**不**把 fillet 局部载体改写成第二份 `Adaptor3d_CurveOnSurface`）。
+  **实测**：`offset_shape_type_a` a4 由 `brep_offset_make_offset_c.rs:52` 推进到 `brep_algo/image.rs:159`；`draft_angle` 库内 panic **25 → 20**（12 × `draft_modification_1_b.rs:1213` + 4 × `_1_c.rs:868` + 2 × `make_revol.rs:583` + 2 个新层次点）。
+- **验收（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**）；探针 = 0；域网格逐格**通过数不变**（失败层深度见上）。
+- **⇒ 下一批（§4.6 更新后的队列）**：
+  1. **TKOffset 第 1 项的续链（读侧）**：`BRepLib::build_curve3d` 的下一帧是 `check_same_range`（`build_curves3d.rs` 的 `the_brep.edge(...)` 池读）⇒ 按同一 `shape_is_in_pool` 守卫把它与 `gcurve_range`/`brep_tool_curve_on_surface_index`/`brep_tool_range_on_surface`/`brep_tool_degenerated`/`brep_tool_tolerance` 一起收敛到一个**受守卫的 edge-data 读取**。⚠ 写回侧（`builder_*` / `edge_mut_inplace`）**池外无池可变**，需另法（`Shape::data` 就地变异，坑 17），**不要**硬凑。
+  2. **TKOffset 第 2 项（根）**：`BRepTools_Quilt::builder_make_shell` / `brep_algo/face_restrictor.rs` 的**产物入池** —— 一旦入池，上面整条池读链一次性解开，且 `result_brep()` 的拓扑计数随之正确。**牵涉拓扑计数 ⇒ 改完全套复测**。
+  3. **TKFillet 接力项 A**：`blend_simple_a1` 的**无界 pcurve 附着点**（面积 −2e100 的门），仍未被本轮触及。
+  4. **blend a2/p8/p9 的新墙**（`proj_lib_h_comp_projected_curve.rs:449` 的 `D0` `Standard_DomainError`）属**状态类**，按用户口径排在翻译/接线项之后。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
