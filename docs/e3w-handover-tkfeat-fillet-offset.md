@@ -40,8 +40,11 @@
   - `feat_featrf`：a1 → 测试断言 **L866**（面积 0）；a4/a5/a7/a9 → 测试断言（**未劣化**）。
   - `feat_featlf`（15 例）：全部为测试断言（本轮实测**库内 panic 已清零**，与追加 18 记的 3 例库内 panic 相比又前进一层）。
   - `feat_featrevol`：44 例全为测试断言 + a5 通过（1/45）。
-  - `offset_shape_type_a`：见上一条（待归因）。
-  - `draft_angle`（49 例）：库内 panic **28 = 17 × `draft_modification_1_b.rs` + 6 × `_1_c.rs` + 2 × `make_revol.rs` + 2 × `approx_int.rs` + 1 × `brep_offset_api_draft_angle.rs`**（**★ 逐项实测；本 session 五个批次后该构成三次实测完全一致**）。⚠ **追加 18 记档为 25**，且其注记说 `approx_int.rs`×2 与 `brep_offset_api_draft_angle.rs`×1 是**刚在追加 18 里离开 panic 链的** ⇒ 这 3 例"回来了"，**待归因**（见追加 19 补记 2 与坑 31）。<br>**⚠ 勘误**：追加 19 正文的"25 → 20"**是错的**（从被 `head -80` 截断的清单里数出来的，见坑 31）。
+  - `offset_shape_type_a`：a4 → **不稳定**：`brep_offset_make_offset_c.rs:52`（**GAP**：`BRepAdaptor_Curve(E)` 的 curve-on-surface 3D 回退未译）或 `brep_algo/image.rs:159`，**同 exe 连跑 5 次为 3:2 分裂**（见坑 33）。注：`image.rs:159` **不是缺陷**——OCCT 自己的 `BRepAlgo_Image::Root` L168 就抛那句复制粘贴的 `FirstImageFrom`。
+  - `draft_angle`（49 例）：库内 panic **28 = 17 × `draft_modification_1_b.rs` + 6 × `_1_c.rs` + 2 × `make_revol.rs` + 2 × `approx_int.rs` + 1 × `brep_offset_api_draft_angle.rs`**（其余 21 例测试断言）。**★ 在 `33ad8514`（追加 18 收尾树）上实测同样是 28 且构成逐项相同** ⇒ **本 session 五个批次对 `draft_angle` 零影响**；交接档旧记的"25"是**过期货**（见坑 7、补记 3）。
+  - ⚠ **失败地图本身不稳定（★ 本轮最重要的方法学发现，见坑 33）**：同一棵树、同一份 exe，**连跑 5 次可以给出不同的"第一个失败点"**（实测 `offset_shape_type_a` a4 为 `image.rs:159` ×3 与 `brep_offset_make_offset_c.rs:52` ×2）。
+    根源是 rcad 大量遍历 `std::collections::HashMap`/`HashSet`（**每进程随机哈希种子**）；OCCT 的 `NCollection_Sequence`/`IndexedDataMap` 是插入序确定的。
+    ⇒ **报地图要连跑 ≥3 次、报集合与分裂比例**；**归因必须换树复测**；并**新立卡**：核对 offset/几何管线的容器选用与遍历序（这是**潜在的行为差异**，不只是报数问题）。
 - **三域下一步（详见 §4.6）**：**TKOffset** = ① 池外读取**续链**（`check_same_range` / `gcurve_range` / `brep_tool_curve_on_surface_index` / `brep_tool_range_on_surface` / `brep_tool_degenerated` / `brep_tool_tolerance` 收敛到受守卫的 edge-data 读取；**写回侧池外无池可变，需另法，勿硬凑**）→ ② `BRepTools_Quilt`/`FaceRestrictor` **产物入池**（根；入池后整条池读链一次解开，且拓扑计数随之正确；**牵涉拓扑计数 ⇒ 全套复测**）；**TKFillet** = 接力项 A 的"无界 pcurve 附着点"（a1 面积 −2e100 的门，本轮未触及）+ blend a2/p8/p9 的新墙（状态类）；**TKFeat** = `LocOpe_Generator::Perform` 的 `IsDone`（a1 粘合路径下一墙）。
 
 ### 0.7 追加 19 本轮落地（**翻译/接线轮**，2026-09-13；五批，rcad 提交链见 §3）
@@ -227,7 +230,7 @@ off-chain 的 Draft（depouille）e4/e5。
 | feat_featrevol | **1/45**（a5 **已通过**，2026-09-12 尾实测；其余 44 败） | 追加 15 尾修正：旧记档"0/45"**已过期**——`feat_featrevol_a5` 的真实断言**现在通过**（作者已用 path-scoped `git stash` + 重编证明**不是**批次 B 带来的；最可能来自本 session 早期的**扫掠子形状/面构造**修复，未逐条归因）。**未逐格复核，仅此一条已确认** |
 | offset_shape_type_a / _i / _i_c | **0/1** / **0/12** / **0/19** | 全败（**逐例失败地图见 §0.0**；追加 19 后 `_i` 的 a3/a4/d2/d3 池外帧前进一层，`_a` 的 a4 推进到 `brep_algo/image.rs:159`） |
 | offset_faces_type_i | **0/8** | 全败 |
-| draft_angle | **0/49** | 全败（**追加 19 实测库内 panic 20** = 12 × `draft_modification_1_b.rs:1213` + 4 × `_1_c.rs:868` + 2 × `make_revol.rs:583` + 2 个新层次点 `brep_offset_api_draft_angle.rs:83` / `approx_int.rs:1071`；其余测试断言。追加 18 前为 28，追加 18 后 25） |
+| draft_angle | **0/49** | 全败（**追加 19 实测库内 panic 28 = 17 × `draft_modification_1_b.rs` + 6 × `_1_c.rs` + 2 × `make_revol.rs` + 2 × `approx_int.rs` + 1 × `brep_offset_api_draft_angle.rs`**；其余 21 例测试断言。**该数字在追加 18 收尾树上实测也是 28 且构成相同** ⇒ 交接档旧记的 25/20 均为过期货，以本条为准） |
 | thrusection_specific | **0/26** | 全败（thrusection 另见 §4.4） |
 
 > **★ 口径提醒（追加 18 强化）**：**通过数不变 ≠ 无进展**。本轮所有批次都**没有**翻转任何网格的通过数，但把 6 例 offset + 3 例 draft 从"库内 panic"推到"测试断言"（失败层深度前进）。
@@ -265,7 +268,10 @@ done
 根 `main`：本轮 pointer sync（`rcad` 指针 → `e841e805`）← `7528964` ← `030caf6`（追加 18）。
 **本轮验证（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（**重编 exe 后**）；
 域网格逐格通过数不变（失败层深度见 §0.7 / 追加 19）；探针 = 0。
-**本轮新坑 28/29/30** 见 §6 尾（同 helper 行号掩盖层推进 / 旧笔记的"架构难点"会过期 / `GetType()` 常量返回决定分支）。
+**本轮新坑 28/29/30/31/32/33** 见 §6 尾（同一 helper 行号掩盖层推进 / 旧笔记的"架构难点"会过期 / `GetType()` 常量返回决定分支 /
+**截断清单数数** / 换树复测归因 / **★ 失败地图默认不稳定（HashMap 哈希序）**）。
+**★ 本轮的两次自纠**：追加 19 正文的"`draft_angle` 25 → 20"与补记 2 的"两处待归因"**都已撤销**——
+前者是截断清单数数（坑 31），后者经**换树复测 + 同树 5 次复跑**证明是**测量假象**（坑 32/33）。**以追加 19 补记 3 为准。**
 
 **追加 18（上一轮，2026-09-12；rcad `main` 顶尖 `05ddd5e1`，根 `main` 顶尖 `030caf6`，均已推送）**
 — rcad `main`（自上而下 = 新到旧）：
@@ -468,7 +474,10 @@ RibSlot/Form 链，profile 修好后它们的失败点也随之下移。
 2. **TKOffset 第 1 项写回侧（残留）**：见上表"写回侧"一行；只在某 case 真触发 `same_range` 时才需要，**先等第 2 项（入池）**——入池后它自然消失。
 3. **TKFeat 第 0 项**：`LocOpe_Generator::Perform` 的 `IsDone`（a1 的直接下一墙，见下）。
 4. **TKFillet 接力项 A**：`blend_simple_a1` 的**无界 pcurve 附着点**（面积 −2e100 的门）；本轮未触及，仍是 TKFillet 唯一"翻译/定界缺口"。
-5. **调试类（按用户口径排在翻译/接线项之后）**：blend a2/p8/p9 的 `D0` 域错误；`offset_shape_type_i` a1/a2 的 `EdgeInter: E2 carries no pcurve`；`draft_angle` 的 20 例库内 panic（12 + 4 + 2 同 OCCT 亦 raise 的状态类）。
+5. **调试类（按用户口径排在翻译/接线项之后）**：blend a2/p8/p9 的 `D0` 域错误；`offset_shape_type_i` a1/a2 的 `EdgeInter: E2 carries no pcurve`；`draft_angle` 的 28 例库内 panic（**在追加 18 收尾树上同样存在**，同 OCCT 亦 raise 的状态类）。
+6. **★ 新立卡（潜在行为差异，优先级高；见坑 33）**：**核对 offset/几何管线的容器选用与遍历序** —— rcad 大量遍历 `HashMap`/`HashSet`（每进程随机哈希序），而 OCCT 的 `NCollection_Sequence`/`IndexedDataMap`/`DataMap` 是**插入序确定**的。
+   凡"多解/多候选取第一个"的路径都可能**随进程漂移**（本轮 `offset_shape_type_a` a4 的失败点 3:2 分裂只是其可观测症状）。做法：先按 OCCT 的容器类型逐点核对，再决定换有序容器或按插入序快照。
+7. **★ 新立卡（重复实现，尚未动手；见 §7 表）**：`Geom_Surface::UIso/VIso` 在 OCCT 是**单一虚函数**，而 rcad 有**两份不完整的翻译**（`approx_curve_on_surface.rs` 与 `geom_lib_iso_line.rs`，各缺对方有的臂）⇒ 应合成一份**含并集**的真身再各自委托。
 
 **TKFeat（`feat/**` + `topalgo/int_curves_face_intersector.rs`）**
 0. **★ 第 0 项（最急，a1 的直接下一墙，已定界到函数）**：**`LocOpe_Generator::Perform` 的 `IsDone`**（`feat/loc_ope_generator.rs` / `loc_ope_generator_b.rs`）。
@@ -715,12 +724,20 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
     另：**同一批次的"树内实测"要做两次以上**（本轮批次 1 后、3 后、5 后各一次）——只测一次容易把**基线漂移**当成自己的功劳。
     与坑 7 / 坑 8 同族，但这条是**操作纪律**而非环境问题。
 
-32. **（追加 19）怀疑"是不是我改坏的"时，**先看有没有更便宜的判据**，再决定要不要 worktree 复测**：
-    本轮两处**待归因**（`draft_angle` 的 3 例重新进入库内 panic、`offset_shape_type_a` a4 退回 GAP）都不是靠推理能定的——
-    推理给出的两条候选（批次 1 的 geomplate 接线让 `myIsLinear` 变 false；批次 3 的 `GeomLib::BuildCurve3d` 不再提前返回）
-    **都需要在上一轮树上实测**。**决定性手段**：`git worktree add <dir> <上一轮 tip>`（独立目录 + 独立 `CARGO_TARGET_DIR`），
-    在同一输入上跑同一张失败地图。**在拿到那张图之前，文档里只能写"待归因"，不能写结论**——
-    本轮正文先误报了"推进"，再用勘误修（坑 31），就是没有守住这条。
+32. **（追加 19）怀疑"是不是我改坏的"时，**先跑同树 5 次**，再决定要不要换树复测**（原写法已由坑 33 取代，见下）。
+    本轮两处"疑似回归"最后都是**测量假象**：一处是记档漂移，一处是**同一份 exe 的运行间分裂**。
+    **决定性的两个廉价手段**：① **同树复跑**（同一 exe 连跑 5 次，成本≈0）；② **换树复测**（`git checkout -b tmp <上一轮 tip>` + 根仓库重编 + `git checkout main` + 删临时分支）。
+    **在拿到那两样之前，文档里只能写"待归因"，不能写结论**——本轮正文先误报"推进"，再用两次勘误修（坑 31/33），就是没有守住这条。
+
+33. **（追加 19，最贵的方法学坑）rcad 的逐例失败地图**默认不稳定**，根源是 `std::collections::HashMap`/`HashSet` 的**每进程随机哈希种子**：
+    **同一棵树、同一份已编译的 exe，连跑 5 次可以给出不同的"第一个失败点"**（本 session 实测 `offset_shape_type_a` a4：
+    `brep_algo/image.rs:159` ×3 vs `brep_offset_make_offset_c.rs:52` ×2）。**这不止影响报数**——凡"多解/多候选取第一个"的
+    路径，rcad 的行为本身就随进程漂移，而 OCCT 的 `NCollection_Sequence`/`IndexedDataMap` 是**插入序确定**的。
+    **做法**：① 失败地图**连跑 ≥3 次**，出现过多个点就报**集合** + 分裂比例，不要报单点；
+    ②**归因必须换树复测**（`git checkout -b tmp <上一轮 tip>` → 根仓库重编 → 跑同一张图 → `git checkout main` + 删分支），
+    不能拿两次单跑的差异当因果；③ 同树复跑成本≈0，**没有任何理由省这一步**；
+    ④ **新增待立卡（潜在行为差异，不只是报数问题）**：核对 offset/几何管线里的容器选用与遍历序（至少 `encode_regularity` 的形状集合、
+    `brep_algo/image.rs`），凡 OCCT 用插入序容器的地方，rcad 不能落在哈希序上。
 
 ## 7. 资产位置（本轮新增/更新）
 
