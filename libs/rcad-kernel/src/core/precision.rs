@@ -5,7 +5,9 @@
 //!
 //! Tolerances are stored on individual TShapes (TVertexData.tolerance,
 //! TEdgeData.tolerance, TFaceData.tolerance), matching OCCT's per-entity model.
-//! When absent or zero the functions fall back to the `CONFUSION` constant.
+//! The readers implement OCCT `BRep_Tool::Tolerance`, which floors the stored
+//! value at `Precision::Confusion()`.  The kernel canonical reader with the
+//! same body is `crate::topo::brep_tool::brep_tool_tolerance`.
 
 use crate::topo::topods;
 
@@ -174,28 +176,37 @@ pub fn p_approximation_with_tangent(t: f64) -> f64 {
 
 // ── Per-shape tolerance helpers (topods::BRep) ─────────────────────────────
 
-/// Vertex tolerance from a TShape vertex.
+/// BRep_Tool::Tolerance(const TopoDS_Vertex&) — BRep_Tool.cxx L1314-1333.
+/// OCCT: `p = TVert->Tolerance(); pMin = Precision::Confusion();
+/// if (p > pMin) return p; else return pMin;`
 fn vtol(vd: &topods::TVertexData) -> f64 {
-    if vd.tolerance > 0.0 {
-        vd.tolerance
+    let p = vd.tolerance;
+    if p > CONFUSION {
+        p
     } else {
         CONFUSION
     }
 }
 
-/// Edge tolerance from a TShape edge.
+/// BRep_Tool::Tolerance(const TopoDS_Edge&) — BRep_Tool.cxx L881-894.
+/// OCCT: `p = TEdge->Tolerance(); pMin = Precision::Confusion();
+/// if (p > pMin) return p; else return pMin;`
 fn etol(ed: &topods::TEdgeData) -> f64 {
-    if ed.tolerance > 0.0 {
-        ed.tolerance
+    let p = ed.tolerance;
+    if p > CONFUSION {
+        p
     } else {
         CONFUSION
     }
 }
 
-/// Face tolerance from a TShape face.
+/// BRep_Tool::Tolerance(const TopoDS_Face&) — BRep_Tool.cxx L137-150.
+/// OCCT: `p = TFace->Tolerance(); pMin = Precision::Confusion();
+/// if (p > pMin) return p; else return pMin;`
 fn ftol(fd: &topods::TFaceData) -> f64 {
-    if fd.tolerance > 0.0 {
-        fd.tolerance
+    let p = fd.tolerance;
+    if p > CONFUSION {
+        p
     } else {
         CONFUSION
     }
