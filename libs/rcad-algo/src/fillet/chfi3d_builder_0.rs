@@ -404,15 +404,27 @@ pub fn chfi3d_same_parameter(
     if chfi3d_check_same_parameter(c3d, pcurv, s, tol3d, tolreached) {
         return true;
     }
-    // OCCT L1612-1621: Approx_SameParameter sp(C3d, Pcurv, S, tol3d); the
-    // correction step rebuilds the pcurve, so it cannot be skipped silently
-    // — the class body is a pending translation (Approx/Approx_SameParameter
-    // .cxx, 992 lines).
-    panic!(
-        "GAP: Approx_SameParameter (TKGeomBase/Approx, \
-         Approx_SameParameter.cxx L44-58 + Compute) is not translated — \
-         ChFi3d_SameParameter correction step"
+    // OCCT L1612-1621.
+    // Approx_SameParameter sp(C3d, Pcurv, S, tol3d);
+    // if (sp.IsDone() && !sp.IsSameParameter()) { Pcurv = sp.Curve2d(); }
+    // else if (!sp.IsDone() && !sp.IsSameParameter()) { return false; }
+    // tolreached = sp.TolReached();
+    // return true;
+    //
+    // Architecture note: the OCCT C3d / S adaptor handles map to the rcad
+    // kernel values plus the 3d curve parameter window (the GeomAdaptor_Curve
+    // encoding).
+    let [c3d_first, c3d_last] = c3d.default_domain();
+    let sp = crate::geomalgo::approx_same_parameter::ApproxSameParameter::new(
+        c3d, c3d_first, c3d_last, pcurv, s, tol3d,
     );
+    if sp.is_done() && !sp.is_same_parameter() {
+        *pcurv = sp.curve2d();
+    } else if !sp.is_done() && !sp.is_same_parameter() {
+        return false;
+    }
+    *tolreached = sp.tol_reached();
+    true
 }
 
 // =========================================================================

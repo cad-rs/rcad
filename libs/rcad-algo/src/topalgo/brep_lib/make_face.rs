@@ -14,19 +14,16 @@
 //!   tol, WithPCurve)` (the shape-level statics) -> GAP leaves recorded as
 //!   no-ops (the shape-level forms are pending; the edge-level SameParameter
 //!   home is brep_lib.rs).
-//! - `Geom_Surface::UIso/VIso` -> GAP leaf raising exactly where OCCT calls
-//!   the untranslated kernel iso extraction (BRepLib_MakeFace.cxx
-//!   L575/L580/L585/L590); the bounded-surface edge assembly below stays 1:1
-//!   and becomes reachable when the kernel leaf lands.  The consumer anchor
-//!   MakeFace(gp_Pln) passes through the all-infinite flags and never
-//!   reaches the iso calls.
+//! - `Geom_Surface::UIso/VIso` -> the canonical
+//!   `brep_fill::brep_fill_sweep::{surface_uiso, surface_viso}` body, called
+//!   at the OCCT sites (BRepLib_MakeFace.cxx L575/L580/L585/L590).
 
 use rcad_kernel::core::precision::{
     is_infinite_value, is_negative_infinite_value, is_positive_infinite_value, COMPUTATIONAL,
     CONFUSION,
 };
 use rcad_kernel::geom::{
-    BSplineCurve3, BezierCurve3, Circle3, Curve2d, Curve3, Line2d, Line3, Surface3, SurfaceEval,
+    BSplineCurve3, BezierCurve3, Circle3, Curve2d, Curve3, Line2d, Surface3, SurfaceEval,
     TrimmedSurface,
 };
 use rcad_kernel::topods::State;
@@ -34,6 +31,7 @@ use rcad_kernel::topo::topods::{BRep, BRepBuilder, Orientation, Shape, TShape};
 
 use glam::DVec2;
 
+use crate::brep_fill::brep_fill_sweep::{surface_uiso, surface_viso};
 use crate::topalgo::brep_lib::make_wire::{
     builder_add_edge_vertex, set_shape_closed, shape_closed, wire_edges,
 };
@@ -544,28 +542,28 @@ impl BRepLibMakeFace {
 
         if !umininf {
             // L575-576.
-            c_umin = Some(surface_u_iso(&s, u_min));
+            c_umin = Some(surface_uiso(&s, u_min));
             d_umin = Self::is_degenerated(c_umin.as_ref(), max_tol, &mut umin_tol);
         } else {
             d_umin = false;
         }
         if !umaxinf {
             // L580-581.
-            c_umax = Some(surface_u_iso(&s, u_max));
+            c_umax = Some(surface_uiso(&s, u_max));
             d_umax = Self::is_degenerated(c_umax.as_ref(), max_tol, &mut umax_tol);
         } else {
             d_umax = false;
         }
         if !vmininf {
             // L585-586.
-            c_vmin = Some(surface_v_iso(&s, v_min));
+            c_vmin = Some(surface_viso(&s, v_min));
             d_vmin = Self::is_degenerated(c_vmin.as_ref(), max_tol, &mut vmin_tol);
         } else {
             d_vmin = false;
         }
         if !vmaxinf {
             // L590-591.
-            c_vmax = Some(surface_v_iso(&s, v_max));
+            c_vmax = Some(surface_viso(&s, v_max));
             d_vmax = Self::is_degenerated(c_vmax.as_ref(), max_tol, &mut vmax_tol);
         } else {
             d_vmax = false;
@@ -1015,33 +1013,6 @@ fn elclib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u
     *u2 -= ((*u2 - *u1) / a_period).floor() * a_period;
     if *u2 - *u1 < preci {
         *u2 += a_period;
-    }
-}
-
-/// OCCT Geom_Surface::UIso — the Geom_Plane arm (Geom_Plane.cxx L96-100):
-/// `Geom_Line(ElSLib::PlaneUIso(pos, U))`, i.e. the line through the plane
-/// point at (U, 0) along the V direction (ElSLib.cxx PlaneUIso).
-/// `Surface3::Trimmed` mirrors Geom_RectangularTrimmedSurface::UIso, which
-/// delegates to the basis iso; the trimmed span rides on the edge Range the
-/// caller sets (BRepLib_MakeFace.cxx L706/L737).  The other surface types
-/// keep the OCCT-failure GAP (the E3-T kernel gap, blend-surface UIso note).
-fn surface_u_iso(s: &Surface3, u: f64) -> Curve3 {
-    match s {
-        Surface3::Plane(p) => Curve3::Line(Line3::new(p.origin + u * p.u_dir, p.v_dir)),
-        Surface3::Trimmed(t) => surface_u_iso(t.basis.as_ref(), u),
-        _ => unimplemented!("GAP: Geom_Surface::UIso pending (TKGeomBase/Geom)"),
-    }
-}
-
-/// OCCT Geom_Surface::VIso — the Geom_Plane arm (Geom_Plane.cxx L103-107):
-/// `Geom_Line(ElSLib::PlaneVIso(pos, V))`, the line through (0, V) along the
-/// U direction.  See [`surface_u_iso`] for the Trimmed delegation and the
-/// remaining GAP.
-fn surface_v_iso(s: &Surface3, v: f64) -> Curve3 {
-    match s {
-        Surface3::Plane(p) => Curve3::Line(Line3::new(p.origin + v * p.v_dir, p.u_dir)),
-        Surface3::Trimmed(t) => surface_v_iso(t.basis.as_ref(), v),
-        _ => unimplemented!("GAP: Geom_Surface::VIso pending (TKGeomBase/Geom)"),
     }
 }
 

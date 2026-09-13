@@ -30,6 +30,11 @@ use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::geom::{Curve3, CurveEval, Plane, Surface3, SurfaceEval};
 use rcad_kernel::math::GeomAbsShape;
 
+// OCCT Geom_Surface::UIso / VIso — the canonical body (the local GAP leaves
+// surface_of_revolution_u_iso / surface_of_extrusion_v_iso were deleted in the
+// duplicate-implementation convergence).
+use crate::brep_fill::brep_fill_sweep::{surface_uiso, surface_viso};
+
 // OCCT gp.hxx L59-60 / Standard_Real.hxx L146-151:
 // gp::Resolution() = RealSmall() = DBL_MIN.
 const GP_RESOLUTION: f64 = f64::MIN_POSITIVE;
@@ -62,9 +67,10 @@ fn surface_bounds4(the_s: &Surface3) -> (f64, f64, f64, f64) {
 ///
 /// GAP leaf (arch. diff. #52): the GeomAbs_BSplineSurface case builds the
 /// V-iso basis curve at the first V knot and feeds
-/// GeomAdaptor_Curve::NbIntervals — the Geom_BSplineSurface::VIso
-/// construction is not translated (the brep_offset_offset_b.rs
-/// surface_u_iso_gap precedent), so the case keeps the OCCT failure path.
+/// GeomAdaptor_Curve::NbIntervals — the case body itself is not translated
+/// (the Geom_BSplineSurface::VIso statement it needs is available as
+/// `brep_fill::brep_fill_sweep::surface_viso`), so the case keeps the OCCT
+/// failure path.
 fn nb_u_intervals(s: &Surface3, cont: GeomAbsShape) -> usize {
     match s {
         Surface3::BSpline(_) => {
@@ -293,7 +299,7 @@ impl GeomLibIsPlanarSurface {
                     my_plan = Plane::with_axes(p, dir, du);
                     // OCCT L199-201: C = S->UIso(Umin);
                     // IsPlan = Controle(C, myPlan, Tol);
-                    let c = surface_of_revolution_u_iso(s, umin);
+                    let c = surface_uiso(s, umin);
                     is_plan = controle_curve(&c, &my_plan, tol);
                 } else {
                     // OCCT L203-206
@@ -339,7 +345,7 @@ impl GeomLibIsPlanarSurface {
                     my_plan = Plane::with_axes(p, dn, du);
                     // OCCT L239-241: C = S->VIso((Vmin + Vmax) / 2);
                     // IsPlan = Controle(C, myPlan, Tol);
-                    let c = surface_of_extrusion_v_iso(s, (vmin + vmax) / 2.0);
+                    let c = surface_viso(s, (vmin + vmax) / 2.0);
                     is_plan = controle_curve(&c, &my_plan, tol);
                 } else {
                     // OCCT L243-246
@@ -395,19 +401,3 @@ impl GeomLibIsPlanarSurface {
     }
 }
 
-/// OCCT Geom_SurfaceOfRevolution::UIso(U) (Geom_SurfaceOfRevolution.cxx) —
-/// GAP leaf (arch. diff. #52; the brep_offset_offset_b.rs surface_u_iso_gap
-/// precedent): the iso-curve construction is not translated; the OCCT
-/// failure path is kept.
-fn surface_of_revolution_u_iso(the_s: &Surface3, the_u: f64) -> Curve3 {
-    let _ = (the_s, the_u);
-    panic!("GAP: Geom_SurfaceOfRevolution::UIso (iso-curve construction not translated)");
-}
-
-/// OCCT Geom_SurfaceOfLinearExtrusion::VIso(V)
-/// (Geom_SurfaceOfLinearExtrusion.cxx) — GAP leaf (arch. diff. #52; the
-/// brep_offset_offset_b.rs surface_v_iso_gap precedent).
-fn surface_of_extrusion_v_iso(the_s: &Surface3, the_v: f64) -> Curve3 {
-    let _ = (the_s, the_v);
-    panic!("GAP: Geom_SurfaceOfLinearExtrusion::VIso (iso-curve construction not translated)");
-}

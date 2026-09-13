@@ -37,7 +37,9 @@ use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::math::el::elslib_cone_parameters;
 
 use crate::brep_algo::tool as bat;
-use super::brep_offset_tool_iso::{surface_uiso, surface_viso};
+// OCCT Geom_Surface::UIso / VIso — the canonical body (the local copy in
+// brep_offset_tool_iso.rs was deleted).
+use crate::brep_fill::brep_fill_sweep::{surface_uiso, surface_viso};
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_wires_on_shape_b::{
     brep_tool_curve_on_surface, brep_tool_degenerated, brep_tool_range, brep_tool_tolerance,

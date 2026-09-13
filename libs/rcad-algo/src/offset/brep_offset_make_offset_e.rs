@@ -40,6 +40,7 @@ use super::brep_offset_tool_c::deboucle3d;
 use crate::brep_algo::as_des::BRepAlgoAsDes;
 use crate::brep_algo::image::BRepAlgoImage;
 use crate::brep_algo::tool as bat;
+use crate::brep_fill::brep_fill_sweep::surface_uiso;
 use crate::brep_fill::offset_wire::GeomAbsJoinType;
 use crate::brep_algo::tool::{brep_tool_pnt, shape_key};
 use crate::feat::loc_ope_wires_on_shape_b::{
@@ -571,7 +572,7 @@ impl BRepOffsetMakeOffset {
                             // OCCT L3570-3572: BSplC34 = theSurf->UIso(Uf);
                             // BB.UpdateEdge(E3, BSplC34, Tol);
                             // BB.Range(E3, Vf, Vl).
-                            let bspl_c34 = surface_u_iso(&the_surf_gen, uf);
+                            let bspl_c34 = surface_uiso(&the_surf_gen, uf);
                             update_edge_3d_host(&mut e3, &bspl_c34, PRECISION_CONFUSION);
                             bat::builder_range_edge(&mut e3, vf, vl);
                         } else {
@@ -593,10 +594,10 @@ impl BRepOffsetMakeOffset {
                                 PRECISION_CONFUSION,
                             );
                             bb_range_edge_on_surface(&mut e4, vf, vl);
-                            let bspl_c3 = surface_u_iso(&the_surf_gen, uon_v2);
+                            let bspl_c3 = surface_uiso(&the_surf_gen, uon_v2);
                             update_edge_3d_host(&mut e3, &bspl_c3, PRECISION_CONFUSION);
                             bat::builder_range_edge(&mut e3, vf, vl); // only for 3d curve
-                            let bspl_c4 = surface_u_iso(&the_surf_gen, uon_v1);
+                            let bspl_c4 = surface_uiso(&the_surf_gen, uon_v1);
                             update_edge_3d_host(&mut e4, &bspl_c4, PRECISION_CONFUSION);
                             bat::builder_range_edge(&mut e4, vf, vl); // only for 3d curve
                         }
@@ -1781,12 +1782,6 @@ fn update_edge_tolerance_host_e(the_e: &mut Shape, the_tol: f64) {
     if let TShape::Edge(ed) = Arc::make_mut(&mut the_e.data) {
         ed.tolerance = ed.tolerance.max(the_tol);
     }
-}
-
-/// OCCT Geom_Surface::UIso(U) — GAP leaf (architecture difference #58: the
-/// surface iso-construction is not translated).
-fn surface_u_iso(_the_s: &Surface3, _the_u: f64) -> Curve3 {
-    panic!("GAP: Geom_Surface::UIso (TKMath/Geom not translated)");
 }
 
 /// OCCT BRep_Tool::Parameters(V, F) (BRep_Tool.cxx L1661-1703) — the vertex

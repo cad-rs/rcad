@@ -39,6 +39,11 @@ use rcad_kernel::geom::{
     BezierCurve3, BezierSurface, BSplineSurface, Circle3, Curve3, CurveEval, Ellipse3, Line3,
     Surface3, TrimmedCurve3,
 };
+use rcad_kernel::base::proj_lib::elslib_iso::{
+    elslib_cone_u_iso, elslib_cone_v_iso, elslib_cylinder_u_iso, elslib_cylinder_v_iso,
+    elslib_plane_u_iso, elslib_plane_v_iso, elslib_sphere_u_iso, elslib_sphere_v_iso,
+    elslib_torus_u_iso, elslib_torus_v_iso, Ax3View,
+};
 use rcad_kernel::math::bspl_lib::bspl_slib_iso;
 use rcad_kernel::math::gp::GP_RESOLUTION;
 use rcad_kernel::math::GeomAbsShape;
@@ -67,62 +72,59 @@ pub use crate::brep_fill::brep_fill_pipe_shell_b::BRepFillTransitionStyle;
 /// catch-all.  `pub(crate)`: Geom_Surface::UIso is a public Geom-level
 /// operation; SplitSurf (ChFi3d_FilBuilder.cxx L2291-2292) consumes it over
 /// the stored blend surface.
-pub(crate) fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {    match surf {
-        // ElSLib::PlaneUIso (ElSLib.cxx): line through P(u, 0) along the V
-        // direction.
-        Surface3::Plane(pl) => Curve3::Line(Line3 {
-            origin: pl.origin + pl.u_dir * u,
-            direction: pl.normal.cross(pl.u_dir).normalize_or_zero(),
-        }),
-        // ElSLib::CylinderUIso: circle (Loc, axis, R).
-        Surface3::Cylinder(cy) => Curve3::Circle(Circle3 {
-            center: cy.origin,
-            normal: cy.axis,
-            x_dir: cy.ref_dir,
-            y_dir: cy.axis.cross(cy.ref_dir).normalize_or_zero(),
-            radius: cy.radius,
-        }),
-        // ElSLib::SphereUIso: the meridian great circle of longitude u.
+pub(crate) fn surface_uiso(surf: &Surface3, u: f64) -> Curve3 {
+    // OCCT Geom_*::UIso are thin wrappers over the ElSLib U-iso constructors
+    // (Geom_Plane.cxx L261-265, Geom_CylindricalSurface.cxx L294-298,
+    // Geom_SphericalSurface.cxx L292-297, Geom_ConicalSurface.cxx L337-341,
+    // Geom_ToroidalSurface.cxx L305-309).  Delegate to the single kernel
+    // ElSLib translation (`base/proj_lib/elslib_iso.rs`) instead of
+    // re-deriving the frames here.
+    let ax3 = |location: DVec3, direction: DVec3, x_direction: DVec3| {
+        Ax3View::from_axes(location, direction, x_direction)
+    };
+    match surf {
+        // Geom_Plane::UIso = ElSLib::PlaneUIso.
+        Surface3::Plane(pl) => Curve3::Line(elslib_plane_u_iso(
+            &ax3(pl.origin, pl.normal, pl.u_dir),
+            u,
+        )),
+        // Geom_CylindricalSurface::UIso = ElSLib::CylinderUIso: the ruling
+        // line at longitude U, anchored at P(U, 0) with direction
+        // ConeD1/CylinderD1's DV (= the axis).
+        Surface3::Cylinder(cy) => {
+            let pos = match cy.y_dir {
+                Some(y) => Ax3View::with_y_dir(cy.origin, cy.axis, cy.ref_dir, y),
+                None => ax3(cy.origin, cy.axis, cy.ref_dir),
+            };
+            Curve3::Line(elslib_cylinder_u_iso(&pos, cy.radius, u))
+        }
+        // Geom_SphericalSurface::UIso = ElSLib::SphereUIso wrapped in
+        // Geom_TrimmedCurve(GC, -M_PI/2, M_PI/2) so that the iso is
+        // parameterised by latitude.
         Surface3::Sphere(sp) => {
-            let x = sp.ref_dir;
-            let y = sp.axis.cross(sp.ref_dir).normalize_or_zero();
-            let normal = (x * u.cos() + y * u.sin()).normalize_or_zero();
-            Curve3::Circle(Circle3 {
-                center: sp.center,
-                normal,
-                x_dir: sp.axis,
-                y_dir: normal.cross(sp.axis).normalize_or_zero(),
-                radius: sp.radius,
+            let circ = elslib_sphere_u_iso(&ax3(sp.center, sp.axis, sp.ref_dir), sp.radius, u);
+            Curve3::Trimmed(TrimmedCurve3 {
+                curve: Box::new(Curve3::Circle(circ)),
+                first: -0.5 * std::f64::consts::PI,
+                last: 0.5 * std::f64::consts::PI,
             })
         }
-        // Geom_ConicalSurface::UIso: the ruling line at longitude u (the
-        // fixed-u iso varies v along the ruling; P(u0, v) = apex_true
-        // + v*(cos(a) * axis + sin(a) * radial(u0))).
-        Surface3::Cone(co) => {
-            let a = co.half_angle_rad;
-            let apex = co.apex - (co.radius / a.tan()) * co.axis;
-            let x = co.ref_dir;
-            let y = co.axis.cross(co.ref_dir).normalize_or_zero();
-            let radial = (x * u.cos() + y * u.sin()).normalize_or_zero();
-            Curve3::Line(Line3 {
-                origin: apex,
-                direction: (co.axis * a.cos() + radial * a.sin()).normalize_or_zero(),
-            })
-        }
-        // ElSLib::TorusUIso (the geomfill/sweep.rs re-host): the minor
-        // circle at longitude u.
-        Surface3::Torus(to) => {
-            let x = to.ref_dir;
-            let y = to.axis.cross(to.ref_dir).normalize_or_zero();
-            let radial = (x * u.cos() + y * u.sin()).normalize_or_zero();
-            Curve3::Circle(Circle3 {
-                center: to.center + radial * to.major_radius,
-                normal: radial,
-                x_dir: to.axis,
-                y_dir: radial.cross(to.axis).normalize_or_zero(),
-                radius: to.minor_radius,
-            })
-        }
+        // Geom_ConicalSurface::UIso = ElSLib::ConeUIso: the ruling line at
+        // longitude U.  The rcad payload's `apex` is the reference-circle
+        // centre (= OCCT `pos.Location()`); `apex_point()` is the true apex.
+        Surface3::Cone(co) => Curve3::Line(elslib_cone_u_iso(
+            &ax3(co.apex, co.axis, co.ref_dir),
+            co.radius,
+            co.half_angle_rad,
+            u,
+        )),
+        // Geom_ToroidalSurface::UIso = ElSLib::TorusUIso.
+        Surface3::Torus(to) => Curve3::Circle(elslib_torus_u_iso(
+            &ax3(to.center, to.axis, to.ref_dir),
+            to.major_radius,
+            to.minor_radius,
+            u,
+        )),
         // Geom_BSplineSurface::UIso: the poles of the iso are the
         // homogeneous De Boor evaluation of the u basis per V column.
         Surface3::BSpline(bs) => Curve3::BSpline(bspline_surface_uiso(bs, u)),
@@ -204,46 +206,50 @@ fn basis_v_bounds_of(surf: &Surface3) -> (f64, f64) {
 /// a public Geom-level operation (ChFi3d_ComputeArete, ChFi3d_Builder_0.cxx
 /// L2044).
 pub(crate) fn surface_viso(surf: &Surface3, v: f64) -> Curve3 {
+    // The same delegation to the kernel ElSLib V-iso bodies as
+    // [`surface_uiso`] (Geom_Plane.cxx L269-273, Geom_CylindricalSurface.cxx
+    // L302-306, Geom_SphericalSurface.cxx L301-305, Geom_ConicalSurface.cxx
+    // L345-349, Geom_ToroidalSurface.cxx L314-318).
     match surf {
-        // ElSLib::PlaneVIso: line through P(0, v) along the U direction.
-        Surface3::Plane(pl) => Curve3::Line(Line3 {
-            origin: pl.origin + pl.normal.cross(pl.u_dir) * v,
-            direction: pl.u_dir,
-        }),
-        // ElSLib::CylinderVIso: the ruling line at longitude 0, height v.
-        Surface3::Cylinder(cy) => Curve3::Line(Line3 {
-            origin: cy.origin + cy.axis * v,
-            direction: cy.axis,
-        }),
-        // ElSLib::SphereVIso: the parallel circle at latitude v.
-        Surface3::Sphere(sp) => Curve3::Circle(Circle3 {
-            center: sp.center + sp.axis * (sp.radius * v.cos()),
-            normal: sp.axis,
-            x_dir: sp.ref_dir,
-            y_dir: sp.axis.cross(sp.ref_dir).normalize_or_zero(),
-            radius: sp.radius * v.sin(),
-        }),
-        // ElSLib::ConeVIso: the parallel circle at parameter v.
-        Surface3::Cone(co) => {
-            let a = co.half_angle_rad;
-            let apex = co.apex - (co.radius / a.tan()) * co.axis;
-            let center = apex + v * a.cos() * co.axis;
-            Curve3::Circle(Circle3 {
-                center,
-                normal: co.axis,
-                x_dir: co.ref_dir,
-                y_dir: co.axis.cross(co.ref_dir).normalize_or_zero(),
-                radius: v * a.sin(),
-            })
+        // Geom_Plane::VIso = ElSLib::PlaneVIso: the line through P(0, V)
+        // along the X direction.
+        Surface3::Plane(pl) => Curve3::Line(elslib_plane_v_iso(
+            &Ax3View::from_axes(pl.origin, pl.normal, pl.u_dir),
+            v,
+        )),
+        // Geom_CylindricalSurface::VIso = ElSLib::CylinderVIso: the circle
+        // of radius R on the frame Pos.Ax2(), translated by V along the axis.
+        Surface3::Cylinder(cy) => {
+            let pos = match cy.y_dir {
+                Some(y) => Ax3View::with_y_dir(cy.origin, cy.axis, cy.ref_dir, y),
+                None => Ax3View::from_axes(cy.origin, cy.axis, cy.ref_dir),
+            };
+            Curve3::Circle(elslib_cylinder_v_iso(&pos, cy.radius, v))
         }
-        // ElSLib::TorusVIso: the major circle at parameter v.
-        Surface3::Torus(to) => Curve3::Circle(Circle3 {
-            center: to.center + to.axis * (to.minor_radius * v.sin()),
-            normal: to.axis,
-            x_dir: to.ref_dir,
-            y_dir: to.axis.cross(to.ref_dir).normalize_or_zero(),
-            radius: to.major_radius + to.minor_radius * v.cos(),
-        }),
+        // Geom_SphericalSurface::VIso = ElSLib::SphereVIso: the parallel at
+        // latitude V — the centre is lifted by R*sin(V) and the radius is
+        // R*cos(V) (with the OCCT #23170 negative-radius direction flip).
+        Surface3::Sphere(sp) => Curve3::Circle(elslib_sphere_v_iso(
+            &Ax3View::from_axes(sp.center, sp.axis, sp.ref_dir),
+            sp.radius,
+            v,
+        )),
+        // Geom_ConicalSurface::VIso = ElSLib::ConeVIso: the parallel circle
+        // Radius + V*sin(SAngle) at height V*cos(SAngle) above the
+        // reference circle.
+        Surface3::Cone(co) => Curve3::Circle(elslib_cone_v_iso(
+            &Ax3View::from_axes(co.apex, co.axis, co.ref_dir),
+            co.radius,
+            co.half_angle_rad,
+            v,
+        )),
+        // Geom_ToroidalSurface::VIso = ElSLib::TorusVIso.
+        Surface3::Torus(to) => Curve3::Circle(elslib_torus_v_iso(
+            &Ax3View::from_axes(to.center, to.axis, to.ref_dir),
+            to.major_radius,
+            to.minor_radius,
+            v,
+        )),
         // Geom_BSplineSurface::VIso.
         Surface3::BSpline(bs) => Curve3::BSpline(bspline_surface_viso_full(bs, v)),
         // OCCT Geom_BezierSurface::VIso (Geom_BezierSurface.cxx L1821-1863).
@@ -1376,6 +1382,109 @@ mod bezier_surface_iso_tests {
                 "t={t} iso={p_iso:?} ref={p_ref:?}"
             );
         }
+    }
+
+    /// The elementary-surface arms must follow `Geom_*Surface::UIso/VIso`,
+    /// which are thin wrappers over the ElSLib iso constructors.  The
+    /// surface kind of each iso also matters: a cylinder's U-iso is a LINE
+    /// (the ruling) and its V-iso is a CIRCLE, and a sphere's U-iso is the
+    /// meridian circle wrapped in a `Geom_TrimmedCurve(-M_PI/2, M_PI/2)`
+    /// (Geom_SphericalSurface.cxx L292-297).
+    #[test]
+    fn elementary_surface_isos_follow_the_occt_wrappers() {
+        use rcad_kernel::geom::{ConicalSurface, CylindricalSurface, Plane, SphericalSurface};
+        use rcad_kernel::geom::ToroidalSurface;
+
+        let axis = DVec3::Z;
+        let x = DVec3::X;
+
+        let cases: Vec<(Surface3, f64, f64)> = vec![
+            (
+                Surface3::Plane(Plane {
+                    origin: DVec3::new(1.0, 2.0, 3.0),
+                    normal: axis,
+                    u_dir: x,
+                    v_dir: axis.cross(x),
+                }),
+                0.4,
+                0.7,
+            ),
+            (
+                Surface3::Cylinder(CylindricalSurface {
+                    origin: DVec3::new(1.0, 2.0, 3.0),
+                    axis,
+                    radius: 2.5,
+                    ref_dir: x,
+                    y_dir: None,
+                }),
+                0.4,
+                0.7,
+            ),
+            (
+                Surface3::Sphere(SphericalSurface {
+                    center: DVec3::new(1.0, 2.0, 3.0),
+                    axis,
+                    radius: 2.5,
+                    ref_dir: x,
+                }),
+                0.4,
+                0.5,
+            ),
+            (
+                Surface3::Cone(ConicalSurface::new_with_ref_dir(
+                    DVec3::new(1.0, 2.0, 3.0),
+                    axis,
+                    2.5,
+                    0.4,
+                    x,
+                )),
+                0.4,
+                0.5,
+            ),
+            (
+                Surface3::Torus(ToroidalSurface {
+                    center: DVec3::new(1.0, 2.0, 3.0),
+                    axis,
+                    ref_dir: x,
+                    major_radius: 5.0,
+                    minor_radius: 1.5,
+                }),
+                0.4,
+                0.5,
+            ),
+        ];
+
+        for (surf, u, v) in cases {
+            let uiso = surface_uiso(&surf, u);
+            check_iso(&uiso, &surf, u, true);
+            let viso = surface_viso(&surf, v);
+            check_iso(&viso, &surf, v, false);
+        }
+
+        // The cylinder U-iso is the ruling LINE and the V-iso is a CIRCLE
+        // (Geom_CylindricalSurface.cxx L294-306); the two used to be swapped.
+        let cy = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::new(1.0, 2.0, 3.0),
+            axis,
+            radius: 2.5,
+            ref_dir: x,
+            y_dir: None,
+        });
+        assert!(matches!(surface_uiso(&cy, 0.4), Curve3::Line(_)));
+        assert!(matches!(surface_viso(&cy, 0.7), Curve3::Circle(_)));
+
+        // The sphere U-iso carries the OCCT TrimmedCurve latitude clamp.
+        let sp = Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(1.0, 2.0, 3.0),
+            axis,
+            radius: 2.5,
+            ref_dir: x,
+        });
+        let Curve3::Trimmed(t) = surface_uiso(&sp, 0.4) else {
+            panic!("Geom_SphericalSurface::UIso is a Geom_TrimmedCurve")
+        };
+        assert!((t.first + 0.5 * std::f64::consts::PI).abs() < 1e-12);
+        assert!((t.last - 0.5 * std::f64::consts::PI).abs() < 1e-12);
     }
 
     #[test]

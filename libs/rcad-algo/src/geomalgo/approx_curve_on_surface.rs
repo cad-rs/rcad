@@ -14,10 +14,10 @@
 // - AdvApprox_ApproxAFunction / AdvApprox_DichoCutting /
 //   AdvApprox_EvaluatorFunction -> rcad_kernel::math::adv_approx.
 //
-// The isoline path uses the single `Geom_Surface::UIso` / `VIso` +
-// `Geom_RectangularTrimmedSurface` translation in
-// `crate::geomalgo::geom_surface_iso` (shared with
-// `GeomLib::buildC3dOnIsoLine`).
+// The isoline path uses the canonical `Geom_Surface::UIso` / `VIso` body
+// `crate::brep_fill::brep_fill_sweep::{surface_uiso, surface_viso}` (shared
+// with `GeomLib::buildC3dOnIsoLine`); the `Geom_RectangularTrimmedSurface`
+// construction stays in `crate::geomalgo::geom_surface_iso`.
 
 use std::sync::Arc;
 
@@ -38,7 +38,8 @@ use rcad_kernel::math::adv_approx::{
 use rcad_kernel::math::bspl_lib;
 use rcad_kernel::math::GeomAbsShape;
 
-use crate::geomalgo::geom_surface_iso::{surface_rectangular_trimmed, surface_u_iso, surface_v_iso};
+use crate::brep_fill::brep_fill_sweep::{surface_uiso, surface_viso};
+use crate::geomalgo::geom_surface_iso::surface_rectangular_trimmed;
 
 // ---------------------------------------------------------------------------
 // Approx_CurveOnSurface_Eval (cxx L46-142)
@@ -813,7 +814,7 @@ impl ApproxCurveOnSurface {
             // OCCT L735-739: aC3d = aSurf->UIso(theParam);
             // if (isToTrim) aC3d = new Geom_TrimmedCurve(aC3d, aV1Param,
             // aV2Param).
-            let iso = surface_u_iso(&a_surf, the_param);
+            let iso = surface_uiso(&a_surf, the_param);
             a_c3d = if is_to_trim {
                 Curve3::Trimmed(TrimmedCurve3::new(iso, a_v1_param, a_v2_param))
             } else {
@@ -846,7 +847,7 @@ impl ApproxCurveOnSurface {
             // OCCT L767-771: aC3d = aSurf->VIso(theParam);
             // if (isToTrim) aC3d = new Geom_TrimmedCurve(aC3d, aU1Param,
             // aU2Param).
-            let iso = surface_v_iso(&a_surf, the_param);
+            let iso = surface_viso(&a_surf, the_param);
             a_c3d = if is_to_trim {
                 Curve3::Trimmed(TrimmedCurve3::new(iso, a_u1_param, a_u2_param))
             } else {

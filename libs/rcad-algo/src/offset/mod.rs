@@ -22,7 +22,6 @@ pub mod brep_offset_offset;
 pub mod brep_offset_surface;
 pub mod brep_offset_tool;
 pub mod brep_offset_tool_b;
-pub mod brep_offset_tool_iso;
 pub mod brep_offset_tool_c;
 pub mod brep_offset_tool_d;
 pub mod draft_modification;

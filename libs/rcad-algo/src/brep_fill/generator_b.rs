@@ -12,10 +12,13 @@ use rcad_kernel::topo::topods::{tshape_flags, BRep, Orientation, Shape, ShapeTyp
 
 use super::generator::{
     create_k_part, create_new_edge, curve_first_last, curve_reversed, detect_k_part, is_edge_closed,
-    is_same_parameter, is_same_range, make_edge, surface_bounds, surface_uiiso, shape_key, shape_reversed,
+    is_same_parameter, is_same_range, make_edge, surface_bounds, shape_key, shape_reversed,
     shape_oriented, top_exp_vertices, top_exp_wire_vertices, bezier2, bind_pcurve, bind_seam_pcurves,
     BRepFillGenerator, BRepFillThruSectionErrorStatus, GeomFillGenerator, ShapeKey,
 };
+// OCCT Geom_Surface::UIso — the canonical body (the local surface_uiiso copy
+// in generator.rs was deleted in the duplicate-implementation convergence).
+use crate::brep_fill::brep_fill_sweep::surface_uiso;
 use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
 
 /// OCCT Precision::Confusion().
@@ -366,7 +369,7 @@ impl BRepFillGenerator {
                     } else {
                         let cc: Curve3 = if itype == 0 {
                             // general case : Edge3 corresponds to iso U=f1
-                            surface_uiiso(&surf_ref, f1)
+                            surface_uiso(&surf_ref, f1)
                         } else {
                             // particular case : it is required to calculate the curve 3d
                             let p1 = brep.vertex(v1f.clone()).point;
@@ -412,7 +415,7 @@ impl BRepFillGenerator {
                     } else {
                         let cc: Curve3 = if itype == 0 {
                             // general case : Edge4 corresponds to iso U=l1
-                            surface_uiiso(&surf_ref, l1)
+                            surface_uiso(&surf_ref, l1)
                         } else {
                             let p1 = brep.vertex(v1l.clone()).point;
                             let p2 = brep.vertex(v2l.clone()).point;

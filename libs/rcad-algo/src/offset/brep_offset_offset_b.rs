@@ -15,6 +15,7 @@ use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3, SurfaceEval, Tri
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, Orientation, ShapeType};
 use rcad_kernel::topo_shape::Shape;
 
+use crate::brep_fill::brep_fill_sweep::{surface_uiso, surface_viso};
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_generator_b::brep_tools_uv_bounds;
 use crate::feat::loc_ope_wires_on_shape::{brep_tool_pnt, shape_key};
@@ -334,7 +335,7 @@ impl BRepOffsetOffset {
                     // TheSurf->DynamicType() == STANDARD_TYPE(Geom_OffsetSurface)
                     // OCCT L635-805.
                     if umin_degen {
-                        let uiso = surface_u_iso_gap(&the_surf, uf1);
+                        let uiso = surface_uiso(&the_surf, uf1);
                         if brep_offset_tool_gabarit(&uiso) > tol_apex {
                             let basis_surf = offset_basis(&the_surf);
                             let papex = basis_surf.point_at(uf1, vf1);
@@ -367,7 +368,7 @@ impl BRepOffsetOffset {
                                 let (_u1, _u2, _v1, _v2) = surface_bounds4(&the_surf);
                                 min_apex = the_surf.point_at(_u1, vf1);
                             } else {
-                                let viso = surface_v_iso_gap(&the_surf, vf1);
+                                let viso = surface_viso(&the_surf, vf1);
                                 let projector = GeomApiProjectPointOnCurve::new(pint1, &viso);
                                 let new_first_u = projector.lower_distance_parameter();
                                 the_surf = Surface3::Trimmed(TrimmedSurface::new(
@@ -379,7 +380,7 @@ impl BRepOffsetOffset {
                         }
                     } // end of if (UminDegen)
                     if umax_degen {
-                        let uiso = surface_u_iso_gap(&the_surf, uf2);
+                        let uiso = surface_uiso(&the_surf, uf2);
                         if brep_offset_tool_gabarit(&uiso) > tol_apex {
                             let basis_surf = offset_basis(&the_surf);
                             let papex = basis_surf.point_at(uf2, vf1);
@@ -410,7 +411,7 @@ impl BRepOffsetOffset {
                                 let (_u1, u2, _v1, _v2) = surface_bounds4(&the_surf);
                                 max_apex = the_surf.point_at(u2, vf1);
                             } else {
-                                let viso = surface_v_iso_gap(&the_surf, vf1);
+                                let viso = surface_viso(&the_surf, vf1);
                                 let projector = GeomApiProjectPointOnCurve::new(pint1, &viso);
                                 let new_last_u = projector.lower_distance_parameter();
                                 the_surf = Surface3::Trimmed(TrimmedSurface::new(
@@ -422,7 +423,7 @@ impl BRepOffsetOffset {
                         }
                     } // end of if (UmaxDegen)
                     if vmin_degen {
-                        let viso = surface_v_iso_gap(&the_surf, vf1);
+                        let viso = surface_viso(&the_surf, vf1);
                         if brep_offset_tool_gabarit(&viso) > tol_apex {
                             let basis_surf = offset_basis(&the_surf);
                             let papex = basis_surf.point_at(uf1, vf1);
@@ -453,7 +454,7 @@ impl BRepOffsetOffset {
                                 let (_u1, _u2, _v1, v1) = surface_bounds4(&the_surf);
                                 min_apex = the_surf.point_at(uf1, v1);
                             } else {
-                                let uiso = surface_u_iso_gap(&the_surf, uf1);
+                                let uiso = surface_uiso(&the_surf, uf1);
                                 let projector = GeomApiProjectPointOnCurve::new(pint1, &uiso);
                                 let new_first_v = projector.lower_distance_parameter();
                                 the_surf = Surface3::Trimmed(TrimmedSurface::new(
@@ -465,7 +466,7 @@ impl BRepOffsetOffset {
                         }
                     } // end of if (VminDegen)
                     if vmax_degen {
-                        let viso = surface_v_iso_gap(&the_surf, vf2);
+                        let viso = surface_viso(&the_surf, vf2);
                         if brep_offset_tool_gabarit(&viso) > tol_apex {
                             let basis_surf = offset_basis(&the_surf);
                             let papex = basis_surf.point_at(uf1, vf2);
@@ -496,7 +497,7 @@ impl BRepOffsetOffset {
                                 let (_u1, _u2, _v1, v2) = surface_bounds4(&the_surf);
                                 max_apex = the_surf.point_at(uf1, v2);
                             } else {
-                                let uiso = surface_u_iso_gap(&the_surf, uf1);
+                                let uiso = surface_uiso(&the_surf, uf1);
                                 let projector = GeomApiProjectPointOnCurve::new(pint1, &uiso);
                                 let new_last_v = projector.lower_distance_parameter();
                                 the_surf = Surface3::Trimmed(TrimmedSurface::new(
@@ -980,14 +981,14 @@ impl BRepOffsetOffset {
             u1 = f1;
             u2 = l1;
             if !c1is3d {
-                c1 = Some(surface_v_iso_gap(&s, f2));
+                c1 = Some(surface_viso(&s, f2));
             }
         } else {
             pc = line2d_y(f1, 0.0);
             u1 = f2;
             u2 = l2;
             if !c1is3d {
-                c1 = Some(surface_u_iso_gap(&s, f1));
+                c1 = Some(surface_uiso(&s, f1));
             }
         }
 
@@ -1033,14 +1034,14 @@ impl BRepOffsetOffset {
             u1 = f1;
             u2 = l1;
             if !c2is3d {
-                c2 = Some(surface_v_iso_gap(&s, l2));
+                c2 = Some(surface_viso(&s, l2));
             }
         } else {
             pc = line2d_y(l1, 0.0);
             u1 = f2;
             u2 = l2;
             if !c2is3d {
-                c2 = Some(surface_u_iso_gap(&s, l1));
+                c2 = Some(surface_uiso(&s, l1));
             }
         }
 
@@ -1628,18 +1629,6 @@ fn line2d_y(x: f64, y: f64) -> Curve2d {
 fn surface_bounds4(the_s: &Surface3) -> (f64, f64, f64, f64) {
     let [u1, u2, v1, v2] = the_s.default_domain();
     (u1, u2, v1, v2)
-}
-
-/// OCCT Geom_Surface::UIso(U) — GAP (arch. diff. #20 vehicle).
-fn surface_u_iso_gap(the_s: &Surface3, the_u: f64) -> Curve3 {
-    let _ = (the_s, the_u);
-    panic!("GAP: Geom_Surface::UIso (iso-curve construction not translated)");
-}
-
-/// OCCT Geom_Surface::VIso(V) — GAP.
-fn surface_v_iso_gap(the_s: &Surface3, the_v: f64) -> Curve3 {
-    let _ = (the_s, the_v);
-    panic!("GAP: Geom_Surface::VIso (iso-curve construction not translated)");
 }
 
 /// OCCT occ::down_cast<Geom_OffsetSurface>(TheSurf)->BasisSurface().

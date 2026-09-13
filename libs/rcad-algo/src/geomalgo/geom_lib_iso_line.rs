@@ -25,9 +25,10 @@
 //! the both-trimmed `Geom_RectangularTrimmedSurface`
 //! (Geom_RectangularTrimmedSurface.cxx L67-112 sets `isutrimmed = true` and
 //! `isvtrimmed = true`), so the UIso/VIso on it apply the complementary trim
-//! (Geom_RectangularTrimmedSurface.cxx L444-478).  Both are the single
-//! translation in `geomalgo::geom_surface_iso`, shared with
-//! `Approx_CurveOnSurface::buildC3dOnIsoLine`.
+//! (Geom_RectangularTrimmedSurface.cxx L444-478).  The UIso/VIso body is the
+//! canonical `brep_fill::brep_fill_sweep::{surface_uiso, surface_viso}`,
+//! shared with `Approx_CurveOnSurface::buildC3dOnIsoLine`; the trimmed
+//! construction is `geomalgo::geom_surface_iso::surface_rectangular_trimmed`.
 
 use glam::DVec2;
 
@@ -38,7 +39,8 @@ use rcad_kernel::core::precision::{p_confusion, ANGULAR, CONFUSION};
 use rcad_kernel::geom::{BSplineCurve3, Curve3, CurveEval, Surface3, SurfaceEval, TrimmedCurve3};
 use rcad_kernel::math::bspl_lib;
 
-use crate::geomalgo::geom_surface_iso::{surface_rectangular_trimmed, surface_u_iso, surface_v_iso};
+use crate::brep_fill::brep_fill_sweep::{surface_uiso, surface_viso};
+use crate::geomalgo::geom_surface_iso::surface_rectangular_trimmed;
 
 /// OCCT GeomLib::isIsoLine(theC2D, theIsU, theParam, theIsForward)
 /// (GeomLib.cxx L2991-3078).
@@ -184,7 +186,7 @@ pub fn build_c3d_on_iso_line(
         }
         // OCCT L3126-3130: aC3d = aSurf->UIso(theParam); if (isToTrim) aC3d =
         // new Geom_TrimmedCurve(aC3d, aV1Param, aV2Param).
-        let iso = surface_u_iso(&a_surf, the_param);
+        let iso = surface_uiso(&a_surf, the_param);
         a_c3d = if is_to_trim {
             Curve3::Trimmed(TrimmedCurve3::new(iso, a_v1_param, a_v2_param))
         } else {
@@ -215,7 +217,7 @@ pub fn build_c3d_on_iso_line(
         }
         // OCCT L3166-3170: aC3d = aSurf->VIso(theParam); if (isToTrim) aC3d =
         // new Geom_TrimmedCurve(aC3d, aU1Param, aU2Param).
-        let iso = surface_v_iso(&a_surf, the_param);
+        let iso = surface_viso(&a_surf, the_param);
         a_c3d = if is_to_trim {
             Curve3::Trimmed(TrimmedCurve3::new(iso, a_u1_param, a_u2_param))
         } else {

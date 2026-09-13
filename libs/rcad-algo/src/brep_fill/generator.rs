@@ -33,7 +33,7 @@ use std::sync::Arc;
 use rcad_kernel::core::precision::{CONFUSION, INFINITE_VALUE, PCONFUSION};
 use rcad_kernel::geom::{
     BezierCurve2, BezierCurve3, Circle3, ConicalSurface, Curve2d, Curve3, CurveEval, CylindricalSurface,
-    Line2d, Line3, Surface3, SurfaceEval, TrimmedCurve3, TrimmedSurface, BSplineCurve3, BSplineSurface,
+    Line2d, Line3, Surface3, TrimmedCurve3, TrimmedSurface, BSplineCurve3, BSplineSurface,
 };
 use rcad_kernel::topo::topods::{tshape_flags, BRep, Orientation, Shape, ShapeType, TShape};
 
@@ -779,37 +779,6 @@ pub(super) fn surface_bounds(s: &Surface3) -> (f64, f64, f64, f64) {
     }
 }
 
-/// OCCT Geom_Surface::UIso(u) for the ruled BSpline surface — the V-running
-/// isoline at `u` (a degree-1 V-curve through a pole column).
-pub(super) fn surface_uiiso(s: &Surface3, u: f64) -> Curve3 {
-    if let Surface3::BSpline(b) = s {
-        let d = b.degree_u;
-        let last_col = b.control_points.len() - 1;
-        let idx = if (u - b.knots_u[d]).abs() <= (u - b.knots_u[b.knots_u.len() - d - 1]).abs() {
-            0
-        } else {
-            last_col
-        };
-        let col: Vec<DVec3> = b.control_points[idx].clone();
-        let wcol: Vec<f64> = b.weights[idx].clone();
-        return Curve3::BSpline(BSplineCurve3 {
-            degree: b.degree_v,
-            knots: b.knots_v.clone(),
-            control_points: col,
-            weights: wcol,
-            is_periodic: false,
-        });
-    }
-    // KPart surfaces take the Bezier branch at the call sites; this fallback
-    // is never reached for IType == 0.
-    Curve3::BSpline(BSplineCurve3 {
-        degree: 1,
-        knots: vec![0.0, 0.0, 1.0, 1.0],
-        control_points: vec![s.point_at(u, 0.0), s.point_at(u, 1.0)],
-        weights: vec![1.0, 1.0],
-        is_periodic: false,
-    })
-}
 
 /// Geom2d_BezierCurve through two poles (KPart pcurves).
 pub(super) fn bezier2(p0: [f64; 2], p1: [f64; 2]) -> Curve2d {

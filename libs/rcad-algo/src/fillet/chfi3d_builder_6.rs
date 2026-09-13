@@ -52,6 +52,9 @@ use super::chfi3d::{topabs_compose, topabs_reverse, ChFi3dBuilder};
 use super::chfi3d_builder_0::{brep_tool_parameter, chfi3d_same_parameter, topexp_vertices, BRepAdaptorSurface};
 use super::chfi_ds::{ChFiDS_CommonPoint, ChFiDSMap, ChFiDSSurfData};
 use super::chfi3d_ds::{TopOpeBRepDSCurve, TopOpeBRepDSSurface};
+// OCCT Geom_Surface::UIso / VIso — the canonical body (the local copies were
+// deleted in the duplicate-implementation convergence).
+use crate::brep_fill::brep_fill_sweep::{surface_uiso, surface_viso};
 use crate::topalgo::adaptor3d::hvertex::HVertex;
 
 /// OCCT IntSurf_TypeTrans (IntSurf_TypeTrans.hxx) — rcad carrier.
@@ -539,66 +542,6 @@ fn geom_surface_bounds(s: &rcad_kernel::geom::Surface3) -> (f64, f64, f64, f64) 
     (b[0], b[1], b[2], b[3])
 }
 
-/// OCCT Geom_Surface::VIso(V) for the surfaces reaching the Surfcoin path
-/// (plane; cylinder anchor kept from chfi3d_builder_0::cylinder_v_iso).
-fn surface_v_iso(s: &rcad_kernel::geom::Surface3, v: f64) -> Option<Curve3> {
-    use rcad_kernel::geom::Surface3;
-    match s {
-        Surface3::Plane(p) => {
-            // OCCT Geom_Plane::VIso — the u-line at v.
-            let (pt, du, _) = p.derivatives(0.0, v);
-            Some(Curve3::Line(rcad_kernel::geom::Line3::new(pt, du.normalize())))
-        }
-        Surface3::Cylinder(_) => {
-            // OCCT Geom_CylindricalSurface::VIso — circle at height v.
-            let circle = super::chfi3d_builder_0::cylinder_v_iso(
-                cyl_origin(s),
-                cyl_xdir(s),
-                cyl_axis(s),
-                cyl_radius(s),
-                v,
-            );
-            Some(Curve3::Circle(circle))
-        }
-        _ => None,
-    }
-}
-
-fn cyl_origin(s: &rcad_kernel::geom::Surface3) -> DVec3 {
-    match s {
-        rcad_kernel::geom::Surface3::Cylinder(c) => c.origin,
-        _ => DVec3::ZERO,
-    }
-}
-
-fn cyl_xdir(s: &rcad_kernel::geom::Surface3) -> DVec3 {
-    match s {
-        rcad_kernel::geom::Surface3::Cylinder(c) => c.ref_dir,
-        _ => DVec3::ZERO,
-    }
-}
-
-fn cyl_axis(s: &rcad_kernel::geom::Surface3) -> DVec3 {
-    match s {
-        rcad_kernel::geom::Surface3::Cylinder(c) => c.axis,
-        _ => DVec3::ZERO,
-    }
-}
-
-fn cyl_radius(s: &rcad_kernel::geom::Surface3) -> f64 {
-    match s {
-        rcad_kernel::geom::Surface3::Cylinder(c) => c.radius,
-        _ => 0.0,
-    }
-}
-
-/// OCCT Geom_BSplineSurface::UIso(U) — pending the AppSurf batch (the
-/// BSpline approximation surfaces are produced there); returns None which
-/// the DS curve keeps null.
-fn surface_u_iso_bspline(_s: &rcad_kernel::geom::BSplineSurface, _u: f64) -> Option<Curve3> {
-    None
-}
-
 /// OCCT Geom_BSplineSurface ctor from (poles, weights, UKnots, VKnots,
 /// UMults, VMults, UDeg, VDeg) mapped onto the rcad expanded-knots
 /// BSplineSurface (knot expansion per BSplCLib::BuildKnots).
@@ -713,7 +656,8 @@ impl ChFi3dBuilder {
         // calculate curves side S1
         let mut crv3d1: Option<Curve3> = None;
         if pc1.is_some() {
-            crv3d1 = surface_v_iso(surfcoin, v_first);
+            // OCCT: Crv3d1 = Surf->VIso(VFirst).
+            crv3d1 = Some(surface_viso(surfcoin, v_first));
         }
         let pd1 = DVec2::new(u_first, v_first);
         let pf1 = DVec2::new(u_last, v_first);
@@ -762,7 +706,8 @@ impl ChFi3dBuilder {
         // calculate curves side S2
         let mut crv3d2: Option<Curve3> = None;
         if pc2.is_some() {
-            crv3d2 = surface_v_iso(surfcoin, v_last);
+            // OCCT: Crv3d2 = Surf->VIso(VLast).
+            crv3d2 = Some(surface_viso(surfcoin, v_last));
         }
         let pd2 = DVec2::new(u_first, v_last);
         let pf2 = DVec2::new(u_last, v_last);
@@ -1038,7 +983,7 @@ impl ChFi3dBuilder {
 
         // The SurfData is filled in what concerns S1,
         // OCCT: Crv3d1 = Surf->UIso(Uon1)
-        let crv3d1 = surface_u_iso_bspline(&surf, uon1);
+        let crv3d1 = Some(surface_uiso(&surf3, uon1));
         let pori1 = DVec2::new(uon1, 0.0);
         let lfil1 = rcad_kernel::geom::Line2d {
             origin: pori1,
@@ -1134,7 +1079,7 @@ impl ChFi3dBuilder {
 
         // SurfData is filled in what concerns S2,
         // OCCT: Crv3d2 = Surf->UIso(Uon2)
-        let crv3d2 = surface_u_iso_bspline(&surf, uon2);
+        let crv3d2 = Some(surface_uiso(&surf3, uon2));
         let pori2 = DVec2::new(uon2, 0.0);
         let lfil2 = rcad_kernel::geom::Line2d {
             origin: pori2,

@@ -27,6 +27,25 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
+### 0.0e 追加 29 收尾态（2026-09-13；**最新** —— 翻译优先轮）
+
+- **门槛与网格（全部在树实测）**：六门槛 **422/0/0**（⚠ 基线 418 → **422**）**· 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110）；**15 个域网格与追加 28 基线逐项相同**（零回归）。
+- **本轮三批**：
+  1. **`Approx_SameParameter` 全类译全**（992 行 cxx → 1465 行；原来是 `new` 即 GAP 的骨架）。`chfi3d_same_parameter` 的修正步换成 OCCT L1612-1621 的字面语句序，GAP 消除。+3 单测。
+  2. **`UIso/VIso` 重复收敛**：删 **9** 处重复（含清单外 grep 出的 4 处，其中 `brep_fill/generator.rs::surface_uiiso` **忽略 `u`** 是真缺陷），消费点全部重定向到 canonical 真身。判非重复而保留的 2 处已立卡。
+  3. **★★ 收敛暴露并修掉 canonical 真身的**基本面型臂**缺陷**：`brep_fill/brep_fill_sweep.rs::{surface_uiso,surface_viso}` 的 **Cylinder U/V-iso 互换**（U-iso 应是母线 **Line**、V-iso 应是 **Circle**）、**Sphere UIso 帧错（经线差 90°）且缺 `Trimmed(−π/2, π/2)` 包裹**、**Sphere VIso 的 sin/cos 互换**、**Cone VIso 漏 `Radius +`**。修法 = 委派到 kernel 已 1:1 的 `elslib_iso.rs`（OCCT 这些函数本就是 `ElSLib` 的薄包装）。
+     **为何长期潜伏**：该文件单测**只覆盖 Bezier**。已补 `elementary_surface_isos_follow_the_occt_wrappers`（5 面型 × U/V-iso 共 10 条，9 点几何对拍 + 类型断言）。
+     ⚠ **连带承认**：追加 27 把 fillet 的 iso 分支导流到这两个函数，因此**圆柱 iso-v 在追加 27 之后拿到错曲线**（旧代码用的 `cylinder_v_iso` 是对的）；八网格/域网格当时未捕获。本轮修 canonical 即一并修好，且受益面是**所有** canonical 消费者（brep_fill sweep / fillet `SplitSurf`+`ComputeArete` / offset `EnlargeGeometry`）。
+- **★ 本轮最重要的方法学发现**：**连续两轮"潜伏缺口清除"在 15 个域网格上零可见翻转**（本轮改了基本面型 iso 的真实行为、删了 9 处重复、让 `chfi3d_same_parameter` 真跑，全都没翻）。
+  ⇒ **结论：域网格的覆盖不足以验证这类修复**。**新立卡（队列第 1 项）**：为基本面型 iso / `Approx_SameParameter` / `SameParameter` 找或造**能区分**的用例（先用探针统计现有域网格里到底哪些例真走到这些路径）。
+  ⇒ 也再次印证：**"通过数不变"不能当作"没进展"**，反之"零回归"也不能当作"改动被验证过"。
+- **⏭ 下一轮队列（按序）**：
+  1. **★ 触发用例缺口**（本轮新立，高优先）：为基本面型 iso 臂 / `Approx_SameParameter` / `chfi3d_same_parameter` 补能区分的用例（定向单测或探针定位）。
+  2. **`mySn` 的构造**（TKFeat，`feat_featrf` 直接前墙，已定界到 `LocOpe_Revol` / `BRepFeat_MakeRevolutionForm`）。
+  3. **`UIso/VIso` 的 `Offset` 臂**：前置 `Geom_OffsetSurfaceUtils::EvaluateD1` + `Geom_OsculatingSurface`（839 行）+ `GeomEval_RepSurfaceDesc`。
+  4. **BSpline VIso 两处内嵌副本**（`brep_fill_nsections.rs:1027` / `geomfill/nsections.rs:280`；`de_boor_homo` 近似 vs 真身精确 `BSplSLib::Iso`）。
+  5. 追加 28 余项不变（TKOffset 10 处 `UpdateCurves` 同族缺陷优先 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
+
 ### 0.0d 追加 28 收尾态（2026-09-13；**最新，读这一节 + port-plan 追加 28 即可开工**）
 
 - **门槛与网格（全部在树实测）**：六门槛 **418/0/0**（⚠ **基线已由 415 升到 418** = 本批新增 3 个 `brep_fill_sweep` 单测，含转正的那个）**· 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110，重编 exe 后）；**15 个域网格与追加 27 基线逐项相同**（零回归，`blend_simple` a1 保持通过）。

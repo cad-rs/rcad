@@ -55,6 +55,7 @@ use rcad_kernel::geom::{
 use rcad_kernel::topo::topods::{tshape_flags, BRep, BRepBuilder, GeomAbsShape, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 
+use crate::brep_fill::brep_fill_sweep::surface_uiso;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
 use crate::feat::loc_ope_wires_on_shape::{brep_tool_pnt, shape_key, top_exp_vertices};
@@ -983,13 +984,6 @@ fn surface_bounds(the_s: &Surface3) -> (f64, f64, f64, f64) {
     (u1, u2, v1, v2)
 }
 
-/// OCCT Geom_Surface::UIso(U) — GAP: the iso-curve construction has no rcad
-/// translation yet (the kernel iso sampling is private to base/convert).
-fn surface_u_iso(the_s: &Surface3, the_u: f64) -> Curve3 {
-    let _ = (the_s, the_u);
-    panic!("GAP: Geom_Surface::UIso (iso-curve construction not translated)");
-}
-
 // ---------------------------------------------------------------------------
 // OCCT statics (BRepOffset_MakeSimpleOffset.cxx).
 // ---------------------------------------------------------------------------
@@ -1633,7 +1627,7 @@ impl BRepOffsetMakeSimpleOffset {
                 update_edge_pcurves_on_surface(&a_wall1, &a_line2d, &a_line2d2, &the_surf, loc);
                 // OCCT L641-642: BSplC34 = theSurf->UIso(Uf);
                 // aBB.UpdateEdge(aWall1, BSplC34, Precision::Confusion()).
-                let bspl_c34 = surface_u_iso(&the_surf, uf);
+                let bspl_c34 = surface_uiso(&the_surf, uf);
                 update_edge_curve3d_gap(&a_wall1, &bspl_c34);
                 // OCCT L643: aBB.Range(aWall1, Vf, Vl).
                 a_bb.set_edge_range(&mut self.my_brep, a_wall1.clone(), vf, vl);
@@ -1654,10 +1648,10 @@ impl BRepOffsetMakeSimpleOffset {
                 // Vl, true); BSplC4 = theSurf->UIso(UonV1);
                 // aBB.UpdateEdge(aWall2, BSplC4, ...); aBB.Range(aWall2, Vf,
                 // Vl, true).
-                let bspl_c3 = surface_u_iso(&the_surf, u_on_v2);
+                let bspl_c3 = surface_uiso(&the_surf, u_on_v2);
                 update_edge_curve3d_gap(&a_wall1, &bspl_c3);
                 set_edge_range3d_gap(&a_wall1, vf, vl); // only for 3d curve
-                let bspl_c4 = surface_u_iso(&the_surf, u_on_v1);
+                let bspl_c4 = surface_uiso(&the_surf, u_on_v1);
                 update_edge_curve3d_gap(&a_wall2, &bspl_c4);
                 set_edge_range3d_gap(&a_wall2, vf, vl); // only for 3d curve
             }
