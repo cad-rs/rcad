@@ -35,14 +35,16 @@
   - `offset_shape_type_i`：a1/a2 → `brep_offset_inter2d.rs:1060`（`EdgeInter: E2 carries no pcurve`，OCCT 同处也 raise ⇒ **状态**）；**a3/a4/d2/d3 → 已离开库内，落到测试断言（310/422/534/646）** —— 批次 2 + 补记 1 的直接收益，**该网格池外 panic 已清零**；e1/e2/e3/e4/e6/e7 → 测试断言（758/870/948/1060/1171/1283）。
   - `offset_shape_type_a`：a4 → `brep_algo/image.rs:159`（本轮由 `brep_offset_make_offset_c.rs:52` 推到这里）。
   - `offset_faces_type_i`：a1/a2 → `brep_offset_inter2d.rs:1060`；a5/a6/g1/g2/g6/g7 → 测试断言。
-  - `blend_simple`（11 例）：a1 → 测试断言 **L113**（面积，门 = 无界 pcurve）；**a2/p8/p9 → `proj_lib_h_comp_projected_curve.rs:449`**（本轮由 `geomplate/build_plate_surface.rs:1003` 的 GAP panic 推进到这里；`D0` 的 `Standard_DomainError` ⇒ **状态**类）；a3/a4 → `chfi3d_builder_2b.rs:583`；q1 → 测试断言 L963；q2 → `chfi3d_builder_c1.rs:1162`；q4 → `geom/bspline_ops.rs:329`；q7 → `brep_blend_walking.rs:143`；x1 → `base/convert/mod.rs:2008`。
+  - `blend_simple`（11 例）：a1 → 测试断言 **L113**（面积，门 = 无界 pcurve）；a2/p8/p9 → `proj_lib_h_comp_projected_curve.rs:449`（`D0` 的 `Standard_DomainError` ⇒ **状态**类）；**a3/a4/q4/q7 → 四例汇合在 `chfi3d_builder_2b.rs:583`**（q4 与 q7 由批次 5 深入两层汇合到这里 ⇒ **该处是本域下一堵最值得优先对齐的墙**）；q1 → 测试断言 L963；q2 → `chfi3d_builder_c1.rs:1162`；x1 → `base/convert/mod.rs:2008`。
+  - `offset_shape_type_a`：a4 → `brep_offset_make_offset_c.rs:52`（**GAP**：`BRepAdaptor_Curve(E)` 的 curve-on-surface 3D 回退未译）。⚠ **待归因**：批次 3 曾把它推到 `brep_algo/image.rs:159`，批次 4/5 之后**退回**到这里（见追加 19 补记 2；`image.rs:159` 本身**不是缺陷**——OCCT 自己的 `BRepAlgo_Image::Root` L168 就抛那句复制粘贴的 `FirstImageFrom`）。
   - `feat_featrf`：a1 → 测试断言 **L866**（面积 0）；a4/a5/a7/a9 → 测试断言（**未劣化**）。
   - `feat_featlf`（15 例）：全部为测试断言（本轮实测**库内 panic 已清零**，与追加 18 记的 3 例库内 panic 相比又前进一层）。
   - `feat_featrevol`：44 例全为测试断言 + a5 通过（1/45）。
-  - `draft_angle`（49 例）：库内 panic **20 = 12 × `draft_modification_1_b.rs:1213` + 4 × `_1_c.rs:868` + 2 × `make_revol.rs:583` + 2 × 新层次点**（`brep_offset_api_draft_angle.rs:83`、`approx_int.rs:1071`）；**追加 18 为 25** ⇒ 本轮 5 例离开库内 panic。
+  - `offset_shape_type_a`：见上一条（待归因）。
+  - `draft_angle`（49 例）：库内 panic **28 = 17 × `draft_modification_1_b.rs` + 6 × `_1_c.rs` + 2 × `make_revol.rs` + 2 × `approx_int.rs` + 1 × `brep_offset_api_draft_angle.rs`**（**★ 逐项实测；本 session 五个批次后该构成三次实测完全一致**）。⚠ **追加 18 记档为 25**，且其注记说 `approx_int.rs`×2 与 `brep_offset_api_draft_angle.rs`×1 是**刚在追加 18 里离开 panic 链的** ⇒ 这 3 例"回来了"，**待归因**（见追加 19 补记 2 与坑 31）。<br>**⚠ 勘误**：追加 19 正文的"25 → 20"**是错的**（从被 `head -80` 截断的清单里数出来的，见坑 31）。
 - **三域下一步（详见 §4.6）**：**TKOffset** = ① 池外读取**续链**（`check_same_range` / `gcurve_range` / `brep_tool_curve_on_surface_index` / `brep_tool_range_on_surface` / `brep_tool_degenerated` / `brep_tool_tolerance` 收敛到受守卫的 edge-data 读取；**写回侧池外无池可变，需另法，勿硬凑**）→ ② `BRepTools_Quilt`/`FaceRestrictor` **产物入池**（根；入池后整条池读链一次解开，且拓扑计数随之正确；**牵涉拓扑计数 ⇒ 全套复测**）；**TKFillet** = 接力项 A 的"无界 pcurve 附着点"（a1 面积 −2e100 的门，本轮未触及）+ blend a2/p8/p9 的新墙（状态类）；**TKFeat** = `LocOpe_Generator::Perform` 的 `IsDone`（a1 粘合路径下一墙）。
 
-### 0.7 追加 19 本轮落地（**翻译/接线轮**，2026-09-13；四批，rcad 提交链见 §3）
+### 0.7 追加 19 本轮落地（**翻译/接线轮**，2026-09-13；五批，rcad 提交链见 §3）
 
 | 批次 | 提交 | 内容 | 实测（失败层深度） |
 |------|------|------|--------------------|
@@ -50,6 +52,7 @@
 | 2 | `830eb2c2` | **池外 `BRep_Tool::Curve`**：`topods.rs` 新增 `curve_pool_free`（OCCT **BRep_Tool.cxx L172-196**）+ `shape_is_in_pool`；`build_curves3d.rs::brep_tool_curve` 与 `topexp.rs::{brep_tool_curve_loc,brep_tool_range}` 按守卫分流 | `offset_shape_type_i` **a3/a4/d2/d3** 由 `brep_tool_curve` 内推进到 `BRepLib::check_same_range`（backtrace 取证） |
 | 3 | `e841e805` | **`GeomLib::BuildCurve3d` 家族 1:1**（新增 `AdvApprox_PrefAndRec`、`ApproxAFunction::with_cut_tool` + 子空间存储、`kernel_curve2d` 桥、`GeomLib_CurveOnSurfaceEvaluator`、`build_curve3d`、`isIsoLine`/`buildC3dOnIsoLine`、`GeomLib_MakeCurvefromApprox`）+ **四处 GAP 载体收敛** | `offset_shape_type_a` **a4** 推进到 `brep_algo/image.rs:159`；`draft_angle` 库内 panic **25 → 20** |
 | 4 | `fe297616` | **池外读取续链**：kernel `edge_data_pool_free` + `build_curves3d.rs::edge_data` 守卫访问器，该链上**十处**池索引读（`check_same_range`/`same_range`/`gcurve_range` + 四个 `brep_tool_*` re-host）全部收敛 | `offset_shape_type_i` **a3/a4/d2/d3 离开库内**（→ 测试断言 310/422/534/646）⇒ **该网格池外 panic 清零** |
+| 5 | `d7587fdb` | **blend 侧两处字面翻译缺陷**：`bsplclib_resolution` 的有符号 `ii - Deg1` clamp（OCCT `BSplCLib.cxx` L4481-4490，原 usize 下溢）+ `add_singular_point` 的 **1-based `jalons.Value(jj)`** 读取（OCCT `BRepBlend_Walking.cxx` L160，原越界） | `blend_simple` **q4/q7 双双深入两层**并与 a3/a4 **汇合到 `chfi3d_builder_2b.rs:583`** |
 
 **三条关键提醒（本轮实测）**：
 1. **追加 18 记的"`Adaptor3d_CurveOnSurface` 以通用 `Adaptor3d_Curve` 为底"是不成立的**：`ProjLib_CompProjectedCurve` 的基类是 **`Adaptor2d_Curve2d`**（hxx **L37**），`AProj` 走的就是 kernel `CurveOnSurface` 既有的 2D 载体口径 —— **不要**因为旧笔记没落这条线。
@@ -250,9 +253,11 @@ done
 
 ## 3. 提交链与落地内容（**七轮**：追加 13 / 14 / 15 / 16 / 17 / 18 / **追加 19 = 本轮**）
 
-**追加 19（本轮，2026-09-13；rcad `main` 顶尖 `fe297616`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
+**追加 19（本轮，2026-09-13；rcad `main` 顶尖 `d7587fdb`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
 — rcad `main`（自上而下 = 新到旧）：
-`fe297616`（**核心 4**：池外读取续链 —— kernel `edge_data_pool_free` + `build_curves3d.rs::edge_data` 守卫，十处池索引读收敛；`offset_shape_type_i` 池外 panic 清零）
+`d7587fdb`（**核心 5**：blend 侧两处字面翻译缺陷 —— `bsplclib_resolution` 的有符号 `ii - Deg1` clamp（OCCT `BSplCLib.cxx` L4481-4490）+ `add_singular_point` 的 1-based `jalons.Value(jj)` 读取（OCCT `BRepBlend_Walking.cxx` L160））
+← `ab0f7c9f`（docs：追加 19 补记 1）
+← `fe297616`（**核心 4**：池外读取续链 —— kernel `edge_data_pool_free` + `build_curves3d.rs::edge_data` 守卫，十处池索引读收敛；`offset_shape_type_i` 池外 panic 清零）
 ← `e841e805`（**核心 3**：`GeomLib::BuildCurve3d` 家族 1:1 + 四处 GAP 载体收敛 —— `AdvApprox_PrefAndRec`、`ApproxAFunction::with_cut_tool` + 1D/2D 子空间存储、`kernel_curve2d` 桥、`GeomLib_CurveOnSurfaceEvaluator`、`GeomLib::isIsoLine`/`buildC3dOnIsoLine`、`GeomLib_MakeCurvefromApprox`）
 ← `830eb2c2`（**核心 2**：池外 `BRep_Tool::Curve` —— `topods.rs::curve_pool_free` + `shape_is_in_pool`，`brep_tool_curve`/`brep_tool_curve_loc`/`brep_tool_range` 按守卫分流）
 ← `d7beea3c`（**核心 1**：`ProjLib_HCompProjectedCurve` 在 `GeomPlate_BuildPlateSurface` 三处接线）
@@ -702,12 +707,29 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
     `EvalD1` 因此**恒走通用链**（`myCurve->D1` + `mySurface->D1` + `SetLinearForm`）——kernel `CurveOnSurface::d1` 正是这条。
     **不要**为了"看起来更全"给这个消费点补 Line/Circle 分支；OCCT 在这里根本不走。
 
+31. **（追加 19，最便宜也最容易自欺）不要从**被截断/分页**的失败地图清单里数数**：
+    追加 19 正文的"`draft_angle` 库内 panic 25 → 20"就是**用一个 `| head -80` 截断的清单**数出来的（列表尾部被切掉，少算了 8 行），
+    实测是 **28**，且本 session 五个批次**三次实测构成完全一致** ⇒ 那个"推进 5 例"的结论**是假的**。
+    **做法**：一律 `sed -n '/^--- <grid>/,/^--- <next>/p'` 取**完整**分区后再 `grep -c` / `sort | uniq -c`；
+    报数前把**分区总行数**与"通过数 + 失败数"对账（`draft_angle`：28 库内 + 21 断言 = 49）。
+    另：**同一批次的"树内实测"要做两次以上**（本轮批次 1 后、3 后、5 后各一次）——只测一次容易把**基线漂移**当成自己的功劳。
+    与坑 7 / 坑 8 同族，但这条是**操作纪律**而非环境问题。
+
+32. **（追加 19）怀疑"是不是我改坏的"时，**先看有没有更便宜的判据**，再决定要不要 worktree 复测**：
+    本轮两处**待归因**（`draft_angle` 的 3 例重新进入库内 panic、`offset_shape_type_a` a4 退回 GAP）都不是靠推理能定的——
+    推理给出的两条候选（批次 1 的 geomplate 接线让 `myIsLinear` 变 false；批次 3 的 `GeomLib::BuildCurve3d` 不再提前返回）
+    **都需要在上一轮树上实测**。**决定性手段**：`git worktree add <dir> <上一轮 tip>`（独立目录 + 独立 `CARGO_TARGET_DIR`），
+    在同一输入上跑同一张失败地图。**在拿到那张图之前，文档里只能写"待归因"，不能写结论**——
+    本轮正文先误报了"推进"，再用勘误修（坑 31），就是没有守住这条。
+
 ## 7. 资产位置（本轮新增/更新）
 
 | 资产 | 路径 |
 |------|------|
 | **追加 19 新增**：`ProjLib_HCompProjectedCurve` 三处接线（metrics 比较 / ProjectCurve / ProjectedCurve） | `libs/rcad-algo/src/geomalgo/geomplate/build_plate_surface.rs`（metrics / 非线性回退）+ `build_plate_surface_b.rs::{project_curve, projected_curve}`；真身 `geomalgo/proj_lib_h_comp_projected_curve.rs` + kernel `base/proj_lib/adaptor.rs::CurveOnSurface` |
-| **追加 19 新增**：池外 `BRep_Tool::Curve`（`curve_pool_free` + `shape_is_in_pool`） | `libs/rcad-kernel/src/topo/topods.rs`（紧随 `curve_on_surface_pool_free`）；消费点 `topalgo/brep_lib/build_curves3d.rs::brep_tool_curve`、`shhealing/shape_upgrade/unify_same_domain/topexp.rs::{brep_tool_curve_loc, brep_tool_range}` |
+| **追加 19 新增**：池外 `BRep_Tool::Curve`（`curve_pool_free` + `shape_is_in_pool`）与**续链** `edge_data_pool_free` | `libs/rcad-kernel/src/topo/topods.rs`（紧随 `curve_on_surface_pool_free`）；消费点 `topalgo/brep_lib/build_curves3d.rs::{brep_tool_curve, edge_data}`、`shhealing/shape_upgrade/unify_same_domain/topexp.rs::{brep_tool_curve_loc, brep_tool_range}` |
+| **追加 19 新增**：blend 链两处 1:1 修复 | `libs/rcad-kernel/src/geom/bspline_ops.rs::bsplclib_resolution`（有符号 clamp）、`libs/rcad-algo/src/fillet/brep_blend_walking.rs::add_singular_point`（1-based 读取） |
+| **★ 追加 19 待立卡（重复实现，尚未动手）**：`Geom_Surface::UIso/VIso` 的 rcad **两份**分发 | `geomalgo/approx_curve_on_surface.rs::surface_{u,v}_iso`（Plane/Cylinder/Cone/Sphere/Torus/Revolution/BSpline）与 `geomalgo/geom_lib_iso_line.rs::surface_{u,v}_iso`（Trimmed/Plane/Cylinder/Cone/Sphere/Torus/BSpline）。**OCCT 里 `Geom_Surface::UIso/VIso` 是单一虚函数**（各曲面类 override），**不是** `isIsoLine`/`buildC3dOnIsoLine` 那种"OCCT 自己也有两份"的静态 ⇒ rcad 这两份是**同一 OCCT 函数的两个不完整翻译**（各缺对方有的臂），应先合成**一份含并集**的真身再各自委托 |
 | **追加 19 新增**：`GeomLib::BuildCurve3d` 家族 | `libs/rcad-algo/src/geomalgo/geom_lib.rs::build_curve3d` + `geom_lib_iso_line.rs`（`is_iso_line` / `build_c3d_on_iso_line`）+ `geom_lib_make_curve_from_approx.rs`；kernel `math/adv_approx/pref_and_rec.rs`、`approx_a_function.rs::with_cut_tool`、`base/proj_lib/adaptor.rs::kernel_curve2d` |
 | **追加 18 新增**：`GeomLib::SameRange` 真身（含 `Tolerance` 首参/守卫/periodic 分段） | `libs/rcad-kernel/src/geom/mod.rs::same_range_2d`；OCCT 签名入口 `libs/rcad-algo/src/geomalgo/geom_lib_same_range.rs::same_range` |
 | **追加 18 新增**：`BRepCheck_Edge::Tolerance` / `BRepCheck_Vertex::Tolerance` 真身 | `libs/rcad-algo/src/topalgo/brep_check/brep_check_edge.rs::BRepCheckEdge::tolerance` / `brep_check_vertex.rs::BRepCheckVertex::tolerance`（`HCurveAdaptor::value` 新） |

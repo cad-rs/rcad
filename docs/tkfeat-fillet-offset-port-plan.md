@@ -1252,6 +1252,35 @@ libs/rcad-algo/src/
 - **实测（全部在树）**：`offset_shape_type_i` **a3/a4/d2/d3 完全离开库内** —— 此前 panic 于 `topods.rs:1799`，现在落到测试断言 **L310/422/534/646**。加上 a1/a2 本就处于"OCCT 同处也 raise"的状态，**该网格的池外 panic 已清零**。通过数不变（翻译优先阶段的预期）；六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（重编 exe 后）；探针 = 0。
 - **⇒ 更新后的 TKOffset 队列**：第 1 项（池外读取）**读侧已收敛**，其"写回侧池外无池可变"的顾虑**在本网格未触发**（`check_same_range` 为真时跳过 `same_range`，写回路径未被走到）——但**只要某个 case 需要 `same_range` 就会撞上**，届时按坑 17 的 `Shape::data` 就地变异另做，**不要**在池外形状上假装能走 `edge_mut_inplace`。**下一手仍是第 2 项（Quilt/FaceRestrictor 产物入池）= 根**：入池后读/写两侧一次解开，且 `result_brep()` 拓扑计数随之正确（**牵涉拓扑计数 ⇒ 全套复测**）。
 
+### E3-W 追加 19 补记 2（2026-09-13：blend 侧两处 1:1 修复 + **一处实测数勘误** + 两处**待归因**项）
+
+- **批次 5（rcad `d7587fdb`）：blend 失败地图暴露的两处**字面翻译**缺陷**：
+  1. **kernel `geom/bspline_ops.rs::bsplclib_resolution`（OCCT `BSplCLib.cxx` L4481-4490）**：OCCT 是
+     `Standard_Integer lower = ii - Deg1; if (lower < 0) lower = 0;` —— **有符号中间值在 clamp 前就是负的**（前几轮必然如此）。
+     rcad 写成 `(ii - deg1).max(0)`（usize）⇒ debug 下 `attempt to subtract with overflow`（`blend_simple q4`）。
+     现按 OCCT 用 `i32` 承载该减法 + `if` clamp（循环下标在边界处转换）。**与追加 18 补记 1 / 坑 27 同族：有符号中间值是设计的一部分。**
+  2. **`fillet/brep_blend_walking.rs::add_singular_point`（OCCT `BRepBlend_Walking.cxx` L148-167）**：
+     `jalons` 是 **1-based `NCollection_Sequence`**，`ti = jalons.Value(jj).Parameter()`（**L160**）在 rcad 必须读 `jalons[jj - 1]`；
+     原实现直接 `self.jalons[jj]` ⇒ 走到 `jj == Length()` 就**越界**（`blend_simple q7`，`brep_blend_walking.rs:143`）。
+     `InsertAfter`/`InsertBefore` 的偏移**本来就是对的**，只有读取点错一格。
+  **实测**：`blend_simple` **q4 与 q7 双双离开原 panic 点**，并与 a3/a4 **汇合到同一堵墙** `chfi3d_builder_2b.rs:583`（一batch 深入两层）。
+- **⚠ 实测数勘误（重要，勿沿用旧数）**：追加 19 正文写的"`draft_angle` 库内 panic **25 → 20**"**是错的** ——
+  那个"20"来自**被 `head -80` 截断**的失败地图清单（列表尾部被切掉）。**逐项实测（两种量法一致）**：
+  `draft_angle` 库内 panic **28 = 17 × `draft_modification_1_b.rs` + 6 × `draft_modification_1_c.rs` + 2 × `make_revol.rs` + 2 × `approx_int.rs` + 1 × `brep_offset_api_draft_angle.rs`**，
+  且该构成在批次 1 之后、批次 3 之后、批次 5 之后**三次实测完全相同** ⇒ **本 session 的五个批次都没有改变 `draft_angle` 的失败层**。
+  真正的差异在**本 session 起点（追加 18 收尾树）与追加 19 树之间**：追加 18 记档为 **25**（= 17 + 6 + 2，其余 24 例为测试断言），
+  而追加 18 的同条注记又说 `approx_int.rs` 两处与 `brep_offset_api_draft_angle.rs` 一处**是在追加 18 里刚离开 panic 链的**。
+  ⇒ **这两处（3 例）"回来了"**。**待归因，不在此处猜**（见下）。
+- **两处待归因项（下一 session 的第一件事；都需要在**上一轮树**上复测）**：
+  1. **`draft_angle` 的 `approx_int.rs` ×2 + `brep_offset_api_draft_angle.rs:83` ×1 重新进入库内 panic**。
+     注意 `brep_offset_api_draft_angle.rs:83` 是**GAP**（`BRepTools_Modifier::Perform`，TKTopAlgo/BRepTools 未译）；
+     追加 18 说这 3 例"离开 panic 链"，而 GAP panic 是**终态**（除非调用方变化）⇒ 要么是**调用方变了**（本 session 的批次把它推进了这条函数），
+     要么**追加 18 的记档口径不同**。**决定性测试**：`git worktree add` 在 `33ad8514`（追加 18 收尾）上独立构建，跑 `draft_angle` 取同一张地图。
+  2. **`offset_shape_type_a` a4 由 `brep_algo/image.rs:159` 退回 `brep_offset_make_offset_c.rs:52`**（后者是 **GAP**：
+     `BRepAdaptor_Curve(E)` 的"curve-on-surface 3D 回退"未译）。同样用上面的 worktree 法定位是在批次 3/4/5 的哪一步动的。
+     （**顺带**：`brep_algo/image.rs:159` **不是缺陷** —— OCCT 自己的 `BRepAlgo_Image::Root` 就在 **L168** 抛 `" BRepAlgo_Image::FirstImageFrom"`（复制粘贴遗留），rcad 属忠实照搬。）
+- **下一批（blend 侧，翻译类，已定界）**：`chfi3d_builder_2b.rs:583` 现在是 **a3/a4/q4/q7 四例的汇合墙** ⇒ 它是本域**最值得优先翻译/对齐**的下一个函数（先按 OCCT 源码核对该处的形式对齐）。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
