@@ -19,10 +19,10 @@
 //    through the OCCT constructor/accessor surface (the former GAP panic
 //    carrier is removed).
 // 3. BRepTools_Modifier + BRepTools_TrsfModification (TKTopAlgo/BRepTools)
-//    — the myIsTrans branch vehicle; the BRepToolsModifier /
-//    BRepToolsTrsfModification carriers below carry the same GAP (they are
-//    shared with loc_ope_revol / loc_ope_linear_form /
-//    loc_ope_revolution_form).
+//    — the myIsTrans branch vehicle, imported from the topalgo translations
+//    (topalgo::brep_tools_modifier / topalgo::brep_tools_modification); the
+//    OCCT `BRepTools_Modifier Modif;` default constructor is the rcad
+//    `new(false)` (myMutableInput = false).
 // 4. gp_Trsf::SetTranslation maps to Trsf::identity() +
 //    set_translation_part (rcad_kernel::math::gp).
 // 5. NCollection_Sequence<gp_Pnt> is Vec<DVec3>; NCollection_Sequence<
@@ -39,6 +39,8 @@ use crate::brep_sweep::BRepSweepPrism;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
+use crate::topalgo::brep_tools_modification::BRepToolsTrsfModification;
+use crate::topalgo::brep_tools_modifier::BRepToolsModifier;
 use glam::DVec3;
 use indexmap::IndexMap;
 use rcad_kernel::geom::{ Curve3, Line3, TrimmedCurve3 };
@@ -46,59 +48,6 @@ use rcad_kernel::math::gp::{ Ax1, Trsf };
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::ShapeType;
 use std::collections::HashMap;
-
-/// OCCT BRepTools_TrsfModification (BRepTools_TrsfModification.hxx) — the
-/// gp_Trsf carrier (architecture difference #3; GAP: no rcad translation of
-/// the BRepTools modification framework yet).
-pub(crate) struct BRepToolsTrsfModification {
-    my_trsf: Trsf,
-}
-
-impl BRepToolsTrsfModification {
-    /// OCCT BRepTools_TrsfModification(T).
-    pub(crate) fn new(t: Trsf) -> Self {
-        BRepToolsTrsfModification { my_trsf: t }
-    }
-
-    /// OCCT BRepTools_TrsfModification::Trsf() — the carried transformation.
-    pub(crate) fn trsf(&self) -> &Trsf {
-        &self.my_trsf
-    }
-}
-
-/// OCCT BRepTools_Modifier (BRepTools_Modifier.hxx) — the shape rebuild
-/// vehicle of the myIsTrans branches (architecture difference #3; GAP: the
-/// Perform/ModifiedShape engine has no rcad translation yet — the GAP panic
-/// is the §0.6 annotation; Init keeps the OCCT storage form).
-pub(crate) struct BRepToolsModifier {
-    my_shape: Shape, // OCCT: myShape
-}
-
-impl BRepToolsModifier {
-    /// OCCT BRepTools_Modifier::BRepTools_Modifier().
-    pub(crate) fn new() -> Self {
-        BRepToolsModifier {
-            my_shape: Shape::null(),
-        }
-    }
-
-    /// OCCT BRepTools_Modifier::Init(S).
-    pub(crate) fn init(&mut self, the_shape: &Shape) {
-        self.my_shape = the_shape.clone();
-    }
-
-    /// OCCT BRepTools_Modifier::Perform(M).
-    pub(crate) fn perform(&mut self, m: &BRepToolsTrsfModification) {
-        let _ = m;
-        panic!("GAP: BRepTools_Modifier::Perform (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_Modifier::ModifiedShape(S).
-    pub(crate) fn modified_shape(&self, the_shape: &Shape) -> Shape {
-        let _ = the_shape;
-        panic!("GAP: BRepTools_Modifier::ModifiedShape (TKTopAlgo/BRepTools not translated)");
-    }
-}
 
 /// Shape identity key (TopTools_ShapeMapHasher: TShape + Location,
 /// orientation ignored).
@@ -209,17 +158,19 @@ impl LocOpePrism {
 
     /// OCCT LocOpe_Prism::IntPerf() (cxx L108-227).
     fn int_perf(&mut self) {
-        // OCCT cxx L110-111.
+        // OCCT cxx L110-111: TopoDS_Shape theBase = myBase;
+        // BRepTools_Modifier Modif; (the OCCT default constructor is the
+        // theMutableInput = false form).
         let mut the_base = self.my_base.clone();
-        let mut modif = BRepToolsModifier::new();
+        let mut modif = BRepToolsModifier::new(false);
         if self.my_is_trans {
             // OCCT cxx L114-115 (arch. diff. #4).
             let mut t = Trsf::identity();
             t.set_translation_part(self.my_tra);
             // OCCT cxx L116-119 (arch. diff. #3).
-            let modbase = BRepToolsTrsfModification::new(t);
+            let mut modbase = BRepToolsTrsfModification::new(t);
             modif.init(&the_base);
-            modif.perform(&modbase);
+            modif.perform(&mut modbase);
             the_base = modif.modified_shape(&the_base);
         }
 

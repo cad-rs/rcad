@@ -17,8 +17,10 @@
 // 2. BRepSweep_Prism — the sweep engine is the crate::brep_sweep
 //    translation (BRepSweepPrism); the former loc_ope_prism.rs GAP carrier
 //    is removed.
-// 3. BRepTools_Modifier + BRepTools_TrsfModification — re-hosted in
-//    loc_ope_prism.rs (pub(crate), same GAP).
+// 3. BRepTools_Modifier + BRepTools_TrsfModification — imported from the
+//    topalgo translations (topalgo::brep_tools_modifier /
+//    topalgo::brep_tools_modification); the OCCT `BRepTools_Modifier Modif;`
+//    default constructor is the rcad `new(false)`.
 // 4. gp_Trsf::SetTranslation maps to Trsf::identity() +
 //    set_translation_part.
 // 5. gp_Pnt -> glam::DVec3 (myPnt1/myPnt2 are stored but never read by the
@@ -30,7 +32,8 @@ use crate::brep_sweep::BRepSweepPrism;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
-use crate::feat::loc_ope_prism::{ BRepToolsModifier, BRepToolsTrsfModification };
+use crate::topalgo::brep_tools_modification::BRepToolsTrsfModification;
+use crate::topalgo::brep_tools_modifier::BRepToolsModifier;
 use glam::DVec3;
 use indexmap::IndexMap;
 use rcad_kernel::math::gp::Trsf;
@@ -155,18 +158,20 @@ impl LocOpeLinearForm {
 
     /// OCCT LocOpe_LinearForm::IntPerf() (cxx L91-212).
     fn int_perf(&mut self) {
-        // OCCT cxx L93-94.
+        // OCCT cxx L93-94: TopoDS_Shape theBase = myBase;
+        // BRepTools_Modifier Modif; (the OCCT default constructor is the
+        // theMutableInput = false form).
         let mut the_base = self.my_base.clone();
-        let mut modif = BRepToolsModifier::new();
+        let mut modif = BRepToolsModifier::new(false);
 
         if self.my_is_trans {
             // OCCT cxx L98-99 (arch. diff. #4).
             let mut t = Trsf::identity();
             t.set_translation_part(self.my_tra);
             // OCCT cxx L100-103 (arch. diff. #3).
-            let modbase = BRepToolsTrsfModification::new(t);
+            let mut modbase = BRepToolsTrsfModification::new(t);
             modif.init(&the_base);
-            modif.perform(&modbase);
+            modif.perform(&mut modbase);
             the_base = modif.modified_shape(&the_base);
         }
 

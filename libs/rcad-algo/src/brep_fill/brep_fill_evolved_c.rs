@@ -47,8 +47,9 @@ use crate::brep_fill::brep_fill_pipe::{top_exp_vertices, BRepFillPipe, GeomFillT
 use crate::brep_fill::brep_fill_trim_edge_tool::GeomAbsJoinType;
 use crate::brep_fill::generator::{shape_key, shape_oriented, shape_reversed, ShapeKey};
 use crate::brep_fill::offset_wire::BRepFillOffsetWire;
-use crate::feat::loc_ope_prism::{BRepToolsModifier, BRepToolsTrsfModification};
 use crate::topalgo::brep_class3d::solid_classifier::SolidClassifier;
+use crate::topalgo::brep_tools_modification::BRepToolsTrsfModification;
+use crate::topalgo::brep_tools_modifier::BRepToolsModifier;
 // OCCT BRepTools_Quilt (TKBRep/BRepTools/BRepTools_Quilt.hxx / .cxx) — the
 // single 1:1 body lives in crate::topalgo::brep_tools_quilt; the local
 // BRepToolsQuiltCarrier GAP stand-in was retired.
@@ -946,14 +947,13 @@ impl BRepFillEvolved {
 
         // Copy of the profile to avoid the accumulation of
         // locations on the Edges of myProfile!
-        // OCCT L2287-2290: TrsfMod = new
+        // OCCT L2287-2288: TrsfMod = new
         // BRepTools_TrsfModification(gp_Trsf()); Modif =
-        // BRepTools_Modifier(DummyProf, TrsfMod) — the two-step ctor/init
-        // form of the feat carrier.
-        let trsf_mod = BRepToolsTrsfModification::new(rcad_kernel::math::gp::Trsf::identity());
-        let mut modif = BRepToolsModifier::new();
-        modif.init(&dummy_prof);
-        modif.perform(&trsf_mod);
+        // BRepTools_Modifier(DummyProf, TrsfMod) — the OCCT two-argument
+        // constructor (Init + Perform of BRepTools_Modifier.cxx L71-79).
+        let mut trsf_mod = BRepToolsTrsfModification::new(rcad_kernel::math::gp::Trsf::identity());
+        let modif = BRepToolsModifier::with_shape_and_modification(&dummy_prof, &mut trsf_mod);
+        // OCCT L2290: GenProf = TopoDS::Wire(Modif.ModifiedShape(DummyProf)).
         let gen_prof = modif.modified_shape(&dummy_prof);
 
         // OCCT L2292: Pipe = BRepFill_Pipe(BRepLib_MakeWire(SE), GenProf).

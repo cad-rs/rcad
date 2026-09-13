@@ -16,12 +16,14 @@
 //    crate::brep_sweep translation (BRepSweepRevol); IntPerf consumes it
 //    through the OCCT constructor/accessor surface (the former GAP panic
 //    carrier is removed), shared with loc_ope_revolution_form.rs.
-// 3. BRepTools_Modifier + BRepTools_TrsfModification — re-hosted in
-//    loc_ope_prism.rs (pub(crate), same GAP).
+// 3. BRepTools_Modifier + BRepTools_TrsfModification — imported from the
+//    topalgo translations (topalgo::brep_tools_modifier /
+//    topalgo::brep_tools_modification); the OCCT `BRepTools_Modifier Modif;`
+//    default constructor is the rcad `new(false)`.
 // 4. gp_Trsf::SetRotation(Ax, Ang) has no rcad constructor (rcad Trsf
 //    carries only translation/scale/displacement forms) — the
 //    trsf_set_rotation helper below carries the GAP panic; it feeds the
-//    BRepTools_TrsfModification carrier, itself a GAP.
+//    BRepTools_TrsfModification form.
 // 5. gp_Circ -> geom::Circle3; the OCCT default gp_Circ CAX carrier is the
 //    zeroed Circle3 (gp_circ_default) — only read after FindCircle
 //    succeeds.
@@ -37,7 +39,8 @@ use crate::brep_sweep::BRepSweepRevol;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
-use crate::feat::loc_ope_prism::{ BRepToolsModifier, BRepToolsTrsfModification };
+use crate::topalgo::brep_tools_modification::BRepToolsTrsfModification;
+use crate::topalgo::brep_tools_modifier::BRepToolsModifier;
 use glam::DVec3;
 use indexmap::IndexMap;
 use rcad_kernel::geom::{ Circle3, Curve3 };
@@ -174,17 +177,19 @@ impl LocOpeRevol {
 
     /// OCCT LocOpe_Revol::IntPerf() (cxx L94-213).
     fn int_perf(&mut self) {
-        // OCCT cxx L96-97.
+        // OCCT cxx L96-97: TopoDS_Shape theBase = myBase;
+        // BRepTools_Modifier Modif; (the OCCT default constructor is the
+        // theMutableInput = false form).
         let mut the_base = self.my_base.clone();
-        let mut modif = BRepToolsModifier::new();
+        let mut modif = BRepToolsModifier::new(false);
         if self.my_is_trans {
             // OCCT cxx L100-101 (arch. diff. #4).
             let mut t = Trsf::identity();
             trsf_set_rotation(&mut t, &self.my_axis, self.my_ang_tra);
             // OCCT cxx L102-105 (arch. diff. #3).
-            let modbase = BRepToolsTrsfModification::new(t);
+            let mut modbase = BRepToolsTrsfModification::new(t);
             modif.init(&the_base);
-            modif.perform(&modbase);
+            modif.perform(&mut modbase);
             the_base = modif.modified_shape(&the_base);
         }
 
