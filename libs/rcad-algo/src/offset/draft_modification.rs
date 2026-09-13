@@ -6,11 +6,13 @@
 //!         Draft_Modification.hxx / Draft_Modification.cxx
 //!
 //! OCCT inheritance chain (hxx L47): Draft_Modification -> BRepTools_Modification.
-//! The rcad BRepTools_Modification interface (TKTopAlgo/BRepTools) is not a
-//! trait yet — the six override methods keep the OCCT virtual surface as
-//! plain methods here (the BRepOffset_SimpleOffset GAP-carrier precedent in
-//! offset/brep_offset_make_simple_offset.rs).  First consumer:
-//! BRepOffsetAPI_DraftAngle (Stage 2e).
+//! The rcad BRepTools_Modification interface (topalgo/brep_tools_modification.rs)
+//! is implemented for this class by the `impl BRepToolsModification` block at
+//! the end of this file: the six OCCT overrides (hxx L115-176) are the
+//! inherent methods of the impl block above and the trait methods delegate to
+//! them (the OCCT virtual surface is the trait's, the bodies are the
+//! overrides).  Consumer: BRepTools_Modifier via BRepOffsetAPI_DraftAngle
+//! (Stage 2e).
 //!
 //! Architecture differences:
 //! 1. NCollection_IndexedDataMap<TopoDS_Face/Edge/Vertex, Info,
@@ -46,6 +48,7 @@ pub(crate) use crate::brep_algo::tool::{
     brep_tool_surface, brep_tool_tolerance, builder_range_edge, explorer, top_exp_vertices_raw,
 };
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
+use crate::topalgo::brep_tools_modification::BRepToolsModification;
 
 use super::draft_edge_info::DraftEdgeInfo;
 use super::draft_error_status::DraftErrorStatus;
@@ -988,3 +991,82 @@ impl DraftModification {
 // InternalAdd / Propagate / Perform / NewSurface(S, ...) / NewCurve(C, ...) —
 // live in the sibling submodules offset/draft_modification_1.rs and
 // offset/draft_modification_1_b.rs (the single-file <2000-line rule).
+
+// ---------------------------------------------------------------------------
+// OCCT Draft_Modification -> BRepTools_Modification (hxx L47).
+// ---------------------------------------------------------------------------
+
+/// The OCCT virtual overrides of Draft_Modification (hxx L115-176) mapped onto
+/// the landed BRepTools_Modification interface: the trait methods ARE the OCCT
+/// overrides and their bodies are the inherent methods above (one engine, the
+/// Draft_Modification.cxx implementations).  Draft_Modification overrides
+/// exactly six virtuals — NewTriangulation / NewPolygon /
+/// NewPolygonOnTriangulation keep the interface defaults
+/// (BRepTools_Modification.cxx L24-38, `return false`).
+impl BRepToolsModification for DraftModification {
+    /// OCCT Draft_Modification::NewSurface (cxx L228-256).
+    fn new_surface(
+        &mut self,
+        the_f: &Shape,
+        the_s: &mut Option<Surface3>,
+        the_l: &mut u32,
+        the_tol: &mut f64,
+        the_rev_wires: &mut bool,
+        the_rev_face: &mut bool,
+    ) -> bool {
+        DraftModification::new_surface(self, the_f, the_s, the_l, the_tol, the_rev_wires, the_rev_face)
+    }
+
+    /// OCCT Draft_Modification::NewCurve (cxx L260-287).
+    fn new_curve(
+        &mut self,
+        the_e: &Shape,
+        the_c: &mut Option<Curve3>,
+        the_l: &mut u32,
+        the_tol: &mut f64,
+    ) -> bool {
+        DraftModification::new_curve(self, the_e, the_c, the_l, the_tol)
+    }
+
+    /// OCCT Draft_Modification::NewPoint (cxx L291-306).
+    fn new_point(&mut self, the_v: &Shape, the_p: &mut DVec3, the_tol: &mut f64) -> bool {
+        DraftModification::new_point(self, the_v, the_p, the_tol)
+    }
+
+    /// OCCT Draft_Modification::NewCurve2d (cxx L310-427).
+    fn new_curve2d(
+        &mut self,
+        the_e: &Shape,
+        the_f: &Shape,
+        the_new_e: &mut Shape,
+        the_new_f: &Shape,
+        the_c: &mut Option<Curve2d>,
+        the_tol: &mut f64,
+    ) -> bool {
+        DraftModification::new_curve2d(self, the_e, the_f, the_new_e, the_new_f, the_c, the_tol)
+    }
+
+    /// OCCT Draft_Modification::NewParameter (cxx L431-498).
+    fn new_parameter(
+        &mut self,
+        the_v: &Shape,
+        the_e: &Shape,
+        the_p: &mut f64,
+        the_tol: &mut f64,
+    ) -> bool {
+        DraftModification::new_parameter(self, the_v, the_e, the_p, the_tol)
+    }
+
+    /// OCCT Draft_Modification::Continuity (cxx L502-510).
+    fn continuity(
+        &mut self,
+        the_e: &Shape,
+        the_f1: &Shape,
+        the_f2: &Shape,
+        the_new_e: &Shape,
+        the_new_f1: &Shape,
+        the_new_f2: &Shape,
+    ) -> GeomAbsShape {
+        DraftModification::continuity(self, the_e, the_f1, the_f2, the_new_e, the_new_f1, the_new_f2)
+    }
+}

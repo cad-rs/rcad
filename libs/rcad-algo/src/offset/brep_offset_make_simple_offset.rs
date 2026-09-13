@@ -12,10 +12,13 @@
 //    NCollection_DataMap<TopoDS_Vertex, TopoDS_Edge> (myMapVE) -> HashMap
 //    keyed by (TShape ptr, Location) — the TopTools_ShapeMapHasher identity
 //    (orientation ignored), the same map form as feat/loc_ope_wires_on_shape.
-// 2. BRepTools_Modifier + BRepOffset_SimpleOffset (TKOffset/BRepOffset) — the
-//    rebuild engine; the BRepToolsModifier / BRepOffsetSimpleOffset carriers
-//    below keep the OCCT constructor/accessor surface with GAP panics (port
-//    plan §0.6).  Everything around the engine calls is translated 1:1.
+// 2. BRepTools_Modifier (TKTopAlgo/BRepTools) is the real class of
+//    topalgo/brep_tools_modifier.rs; BRepOffset_SimpleOffset (TKOffset/BRepOffset)
+//    — the rebuild engine's mapper — is the interface implementor below: the
+//    six OCCT overrides are the BRepTools_Modification methods, whose
+//    computations have no rcad translation yet (the GAP panics are the port
+//    plan §0.6 annotation; the class body is untranslated).  Everything around
+//    the engine calls is translated 1:1.
 // 3. ShapeAnalysis_FreeBounds (TKShHealing), BRepTools_Quilt (TKTopAlgo),
 //    ShapeFix_Edge::FixSameParameter (TKShHealing), GeomFill_Generator
 //    (TKGeomAlgo) and the planar BRepLib_MakeFace(W, OnlyPlane) constructor
@@ -55,6 +58,8 @@ use crate::feat::loc_ope_wires_on_shape_b::{
     brep_tool_surface, brep_tool_tolerance, ShapeKey,
 };
 use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
+use crate::topalgo::brep_tools_modification::BRepToolsModification;
+use crate::topalgo::brep_tools_modifier::BRepToolsModifier;
 
 // ---------------------------------------------------------------------------
 // OCCT BRepOffsetSimple_Status (hxx L30-38).
@@ -72,15 +77,16 @@ pub enum BRepOffsetSimpleStatus {
 }
 
 // ---------------------------------------------------------------------------
-// GAP carriers (architecture differences #2/#3).
+// OCCT BRepTools_Modifier + BRepOffset_SimpleOffset (architecture difference
+// #2; the GAP carriers of section 0.6).
 // ---------------------------------------------------------------------------
 
 /// OCCT BRepOffset_SimpleOffset (BRepOffset_SimpleOffset.hxx L44-192;
 /// BRepOffset_SimpleOffset.cxx L1-427) — the BRepTools_Modification mapper of
 /// the simple offset algorithm (architecture difference #2; GAP: the
-/// NewSurface/NewCurve/NewPoint/NewCurve2d/NewParameter computations have no
-/// rcad translation yet — the GAP panics are the §0.6 annotation; the
-/// constructor keeps the OCCT storage form).
+/// NewSurface/NewCurve/NewPoint/NewCurve2d/NewParameter/Continuity
+/// computations have no rcad translation yet — the GAP panics are the §0.6
+/// annotation; the constructor keeps the OCCT storage form).
 pub struct BRepOffsetSimpleOffset {
     my_input_shape: Shape, // OCCT: myInputShape
     my_offset_value: f64,  // OCCT: myOffsetValue
@@ -97,103 +103,86 @@ impl BRepOffsetSimpleOffset {
             my_tolerance: the_tolerance,
         }
     }
+}
 
-    /// OCCT BRepOffset_SimpleOffset::NewSurface — GAP.
-    pub fn new_surface(&self, the_f: &Shape) -> Option<(Surface3, f64, bool, bool)> {
-        let _ = the_f;
+/// OCCT BRepOffset_SimpleOffset -> BRepTools_Modification (hxx L43:
+/// `class BRepOffset_SimpleOffset : public BRepTools_Modification`).  The six
+/// OCCT overrides (hxx L68-127) are the BRepTools_Modification methods; the
+/// class body has no rcad translation, so every override is the GAP panic of
+/// section 0.6 (the same untranslated computation as before).
+impl BRepToolsModification for BRepOffsetSimpleOffset {
+    /// OCCT BRepOffset_SimpleOffset::NewSurface (hxx L68-73) — GAP.
+    fn new_surface(
+        &mut self,
+        the_f: &Shape,
+        the_s: &mut Option<Surface3>,
+        the_l: &mut u32,
+        the_tol: &mut f64,
+        the_rev_wires: &mut bool,
+        the_rev_face: &mut bool,
+    ) -> bool {
+        let _ = (the_f, the_s, the_l, the_tol, the_rev_wires, the_rev_face);
         panic!("GAP: BRepOffset_SimpleOffset::NewSurface (BRepOffset_SimpleOffset not translated)");
     }
 
-    /// OCCT BRepOffset_SimpleOffset::NewCurve — GAP.
-    pub fn new_curve(&self, the_e: &Shape) -> Option<(Curve3, f64, bool)> {
-        let _ = the_e;
+    /// OCCT BRepOffset_SimpleOffset::NewCurve (hxx L81-84) — GAP.
+    fn new_curve(
+        &mut self,
+        the_e: &Shape,
+        the_c: &mut Option<Curve3>,
+        the_l: &mut u32,
+        the_tol: &mut f64,
+    ) -> bool {
+        let _ = (the_e, the_c, the_l, the_tol);
         panic!("GAP: BRepOffset_SimpleOffset::NewCurve (BRepOffset_SimpleOffset not translated)");
     }
 
-    /// OCCT BRepOffset_SimpleOffset::NewPoint — GAP.
-    pub fn new_point(&self, the_v: &Shape) -> Option<(DVec3, f64)> {
-        let _ = the_v;
+    /// OCCT BRepOffset_SimpleOffset::NewPoint (hxx L91) — GAP.
+    fn new_point(&mut self, the_v: &Shape, the_p: &mut DVec3, the_tol: &mut f64) -> bool {
+        let _ = (the_v, the_p, the_tol);
         panic!("GAP: BRepOffset_SimpleOffset::NewPoint (BRepOffset_SimpleOffset not translated)");
     }
 
-    /// OCCT BRepOffset_SimpleOffset::NewCurve2d — GAP.
-    pub fn new_curve2d(
-        &self,
+    /// OCCT BRepOffset_SimpleOffset::NewCurve2d (hxx L99-106) — GAP.
+    fn new_curve2d(
+        &mut self,
         the_e: &Shape,
         the_f: &Shape,
-        the_new_e: &Shape,
+        the_new_e: &mut Shape,
         the_new_f: &Shape,
-    ) -> Option<(Curve2d, f64)> {
-        let _ = (the_e, the_f, the_new_e, the_new_f);
+        the_c: &mut Option<Curve2d>,
+        the_tol: &mut f64,
+    ) -> bool {
+        let _ = (the_e, the_f, the_new_e, the_new_f, the_c, the_tol);
         panic!("GAP: BRepOffset_SimpleOffset::NewCurve2d (BRepOffset_SimpleOffset not translated)");
     }
 
-    /// OCCT BRepOffset_SimpleOffset::NewParameter — GAP.
-    pub fn new_parameter(&self, the_v: &Shape, the_e: &Shape) -> Option<(f64, f64)> {
-        let _ = (the_v, the_e);
+    /// OCCT BRepOffset_SimpleOffset::NewParameter (hxx L111-116) — GAP.
+    fn new_parameter(
+        &mut self,
+        the_v: &Shape,
+        the_e: &Shape,
+        the_p: &mut f64,
+        the_tol: &mut f64,
+    ) -> bool {
+        let _ = (the_v, the_e, the_p, the_tol);
         panic!(
             "GAP: BRepOffset_SimpleOffset::NewParameter (BRepOffset_SimpleOffset not translated)"
         );
     }
 
-    /// OCCT BRepOffset_SimpleOffset::Continuity — GAP.
-    pub fn continuity(&self, the_e: &Shape, the_f1: &Shape, the_f2: &Shape) -> GeomAbsShape {
-        let _ = (the_e, the_f1, the_f2);
+    /// OCCT BRepOffset_SimpleOffset::Continuity (hxx L122-127) — GAP.
+    fn continuity(
+        &mut self,
+        the_e: &Shape,
+        the_f1: &Shape,
+        the_f2: &Shape,
+        the_new_e: &Shape,
+        the_new_f1: &Shape,
+        the_new_f2: &Shape,
+    ) -> GeomAbsShape {
+        let _ = (the_e, the_f1, the_f2, the_new_e, the_new_f1, the_new_f2);
         panic!("GAP: BRepOffset_SimpleOffset::Continuity (BRepOffset_SimpleOffset not translated)");
-    }
-}
-
-/// OCCT BRepTools_Modifier (TKTopAlgo/BRepTools, BRepTools_Modifier.hxx) —
-/// the shape rebuild vehicle driven by a BRepTools_Modification (architecture
-/// difference #2; GAP: the Perform/ModifiedShape engine has no rcad
-/// translation yet — the GAP panics are the §0.6 annotation; Init keeps the
-/// OCCT storage form; the loc_ope_prism.rs precedent carries the same GAP for
-/// the BRepTools_TrsfModification specialization).
-///
-/// The carrier owns the BRep pool of the produced shapes (architecture
-/// difference #4): OCCT BRep_Builder edits TShapes in the global arena, rcad
-/// needs the pool handle for the same edits.
-pub struct BRepToolsModifier {
-    my_shape: Shape,  // OCCT: myShape
-    my_brep: BRep,    // rcad arena stand-in (arch. diff. #4)
-    my_is_done: bool, // OCCT: myIsDone
-}
-
-impl BRepToolsModifier {
-    /// OCCT BRepTools_Modifier::BRepTools_Modifier().
-    pub fn new() -> Self {
-        BRepToolsModifier {
-            my_shape: Shape::null(),
-            my_brep: BRep::new(),
-            my_is_done: false,
-        }
-    }
-
-    /// OCCT BRepTools_Modifier::Init(S).
-    pub fn init(&mut self, the_shape: &Shape) {
-        self.my_shape = the_shape.clone();
-    }
-
-    /// OCCT BRepTools_Modifier::Perform(M) — GAP.
-    pub fn perform(&mut self, the_m: &BRepOffsetSimpleOffset) {
-        let _ = the_m;
-        panic!("GAP: BRepTools_Modifier::Perform (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_Modifier::IsDone().
-    pub fn is_done(&self) -> bool {
-        self.my_is_done
-    }
-
-    /// OCCT BRepTools_Modifier::ModifiedShape(S) — GAP.
-    pub fn modified_shape(&self, the_shape: &Shape) -> Shape {
-        let _ = the_shape;
-        panic!("GAP: BRepTools_Modifier::ModifiedShape (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// The rcad arena stand-in of the produced shapes (arch. diff. #4).
-    pub fn brep_pool_mut(&mut self) -> &mut BRep {
-        &mut self.my_brep
     }
 }
 
@@ -634,7 +623,7 @@ impl BRepOffsetMakeSimpleOffset {
             my_error: BRepOffsetSimpleStatus::Ok,
             my_is_done: false,
             my_map_ve: HashMap::new(),
-            my_builder: BRepToolsModifier::new(),
+            my_builder: BRepToolsModifier::new(false),
             my_re_shape: ShapeBuildReShape::new(),
             my_brep: BRep::new(),
             my_res_shape: Shape::null(),
@@ -772,13 +761,17 @@ impl BRepOffsetMakeSimpleOffset {
             self.compute_max_angle();
         }
 
+        // OCCT L172: myBuilder.Init(myInputShape).
         self.my_builder.init(&self.my_input_shape);
-        let a_mapper = BRepOffsetSimpleOffset::new(
+        // OCCT L173-174: occ::handle<BRepOffset_SimpleOffset> aMapper = new
+        // BRepOffset_SimpleOffset(myInputShape, myOffsetValue, myTolerance).
+        let mut a_mapper = BRepOffsetSimpleOffset::new(
             &self.my_input_shape,
             self.my_offset_value,
             self.my_tolerance,
         );
-        self.my_builder.perform(&a_mapper);
+        // OCCT L175: myBuilder.Perform(aMapper).
+        self.my_builder.perform(&mut a_mapper);
 
         if !self.my_builder.is_done() {
             self.my_error = BRepOffsetSimpleStatus::ErrorOffsetComputation;
@@ -788,18 +781,21 @@ impl BRepOffsetMakeSimpleOffset {
         self.my_res_shape = self.my_builder.modified_shape(&self.my_input_shape);
 
         // Fix degeneracy. Degenerated edge should be mapped to the degenerated.
-        // OCCT L186-199: BRep_Builder aBB; the rcad edit goes through the
-        // modifier arena (arch. diff. #4).
-        let mut a_bb = BRepBuilder::new();
+        // OCCT L186-199: BRep_Builder aBB; — the rcad carrier of the
+        // BRep_Builder::Degenerated call is
+        // brep_algo::tool::builder_set_degenerated (the rebuilt shapes of
+        // BRepTools_Modifier are pool-free, so the pool-addressed BRepBuilder
+        // API cannot reach them — arch. diff. #4).
         let an_exp_se = explorer(&self.my_input_shape, ShapeType::Edge, ShapeType::Shape);
         for a_curr_edge in &an_exp_se {
             if !brep_tool_degenerated(a_curr_edge) {
                 continue;
             }
 
-            let an_edge = self.my_builder.modified_shape(a_curr_edge);
+            // OCCT L197: const TopoDS_Edge& anEdge = TopoDS::Edge(myBuilder.ModifiedShape(aCurrEdge));
+            let mut an_edge = self.my_builder.modified_shape(a_curr_edge);
             // OCCT L198: aBB.Degenerated(anEdge, true).
-            a_bb.set_edge_degenerated(self.my_builder.brep_pool_mut(), an_edge, true);
+            crate::brep_algo::tool::builder_set_degenerated(&mut an_edge, true);
         }
 
         // Restore walls for solid.

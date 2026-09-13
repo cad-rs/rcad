@@ -26,11 +26,10 @@
 //!    Draft_Modification down-cast target -> Option<DraftModification> (the
 //!    landed offset/draft_modification.rs translation); the OCCT
 //!    down_cast sites are direct field accesses.
-//! 4. BRepTools_Modifier myModifier (TKTopAlgo/BRepTools) has no rcad
-//!    translation of its Perform/ModifiedShape engine yet — the
-//!    BRepToolsModifierForDraft carrier below keeps the OCCT method surface
-//!    with GAP panics (port plan section 0.6); every facade body around the
-//!    engine calls is translated 1:1.
+//! 4. BRepTools_Modifier myModifier (TKBRep/BRepTools, landed in
+//!    topalgo/brep_tools_modifier.rs) is the real rebuild engine; the
+//!    Draft_Modification down-cast target implements the real
+//!    BRepTools_Modification interface (offset/draft_modification.rs).
 //! 5. gp_Dir -> DVec3; gp_Pln -> rcad_kernel::geom::Plane.
 
 use std::collections::HashMap;
@@ -45,55 +44,10 @@ use glam::DVec3;
 use crate::offset::draft_error_status::DraftErrorStatus;
 use crate::offset::draft_modification::DraftModification;
 use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
-
-// ---------------------------------------------------------------------------
-// GAP carrier (architecture difference #4).
-// ---------------------------------------------------------------------------
-
-/// OCCT BRepTools_Modifier (TKTopAlgo/BRepTools, BRepTools_Modifier.hxx L44+)
-/// — the shape rebuild vehicle driven by a BRepTools_Modification
-/// (architecture difference #4; GAP: the Perform/ModifiedShape engine has no
-/// rcad translation yet — the GAP panics are the section 0.6 annotation;
-/// Init keeps the OCCT storage form; the BRepToolsModifier carrier of
-/// brep_offset_make_simple_offset.rs is the same-shape precedent typed to
-/// BRepOffset_SimpleOffset).
-pub struct BRepToolsModifierForDraft {
-    my_shape: Shape,  // OCCT: myShape
-    my_is_done: bool, // OCCT: myIsDone
-}
-
-impl BRepToolsModifierForDraft {
-    /// OCCT BRepTools_Modifier::BRepTools_Modifier(S) (hxx L50).
-    pub fn new(the_s: &Shape) -> Self {
-        BRepToolsModifierForDraft {
-            my_shape: the_s.clone(),
-            my_is_done: false,
-        }
-    }
-
-    /// OCCT BRepTools_Modifier::Init(S).
-    pub fn init(&mut self, the_s: &Shape) {
-        self.my_shape = the_s.clone();
-        self.my_is_done = false;
-    }
-
-    /// OCCT BRepTools_Modifier::Perform(M) — GAP.
-    pub fn perform(&mut self, the_m: &DraftModification) {
-        let _ = the_m;
-        panic!("GAP: BRepTools_Modifier::Perform (TKTopAlgo/BRepTools not translated)")
-    }
-
-    /// OCCT BRepTools_Modifier::IsDone().
-    pub fn is_done(&self) -> bool {
-        self.my_is_done
-    }
-
-    /// OCCT BRepTools_Modifier::ModifiedShape(S) — GAP.
-    pub fn modified_shape(&self, the_s: &Shape) -> Shape {
-        let _ = the_s;
-        panic!("GAP: BRepTools_Modifier::ModifiedShape (TKTopAlgo/BRepTools not translated)")
-    }
-}
+// OCCT BRepTools_Modifier (TKBRep/BRepTools) — the shape rebuild vehicle
+// driven by a BRepTools_Modification (the myModifier member of
+// BRepBuilderAPI_ModifyShape.hxx L93; architecture difference #4).
+use crate::topalgo::brep_tools_modifier::BRepToolsModifier;
 
 /// OCCT BRepOffsetAPI_DraftAngle (hxx L60-205).
 pub struct BRepOffsetAPIDraftAngle {
@@ -103,7 +57,7 @@ pub struct BRepOffsetAPIDraftAngle {
     my_generated: Vec<Shape>, // OCCT: myGenerated (NCollection_List)
     // OCCT BRepBuilderAPI_ModifyShape members.
     pub(crate) my_initial_shape: Shape, // OCCT: myInitialShape
-    my_modifier: BRepToolsModifierForDraft, // OCCT: myModifier
+    my_modifier: BRepToolsModifier, // OCCT: myModifier
     // The rcad arena stand-in consumed by the ReShape engine (architecture
     // difference #2).
     pub(crate) my_brep: BRep, // rcad pool (arch. diff. #4)
@@ -127,7 +81,7 @@ impl BRepOffsetAPIDraftAngle {
             my_shape: Shape::null(),
             my_generated: Vec::new(),
             my_initial_shape: Shape::null(),
-            my_modifier: BRepToolsModifierForDraft::new(&Shape::null()),
+            my_modifier: BRepToolsModifier::new(false),
             my_brep: BRep::new(),
             my_modification: None,
             my_vtx_to_replace: HashMap::new(),
@@ -154,7 +108,7 @@ impl BRepOffsetAPIDraftAngle {
         }
         // OCCT L37: myModifier.Perform(myModification).
         self.my_modifier
-            .perform(self.my_modification.as_ref().unwrap());
+            .perform(self.my_modification.as_mut().unwrap());
         // OCCT L38-45.
         if self.my_modifier.is_done() {
             // OCCT L40-41: Done(); myShape = myModifier.ModifiedShape(...).
