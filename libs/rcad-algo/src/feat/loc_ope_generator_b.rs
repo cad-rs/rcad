@@ -79,16 +79,6 @@ pub(crate) fn brep_tool_pnt(vtx: &Shape) -> DVec3 {
     }
 }
 
-/// OCCT BRep_Tool::Tolerance(shape) — the vertex/edge/face tolerance.
-pub(crate) fn brep_tool_tolerance(s: &Shape) -> f64 {
-    match s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
-    }
-}
-
 /// OCCT BRep_Tool::Degenerated(edg).
 pub(crate) fn brep_tool_degenerated(edg: &Shape) -> bool {
     match edg.data.as_ref() {

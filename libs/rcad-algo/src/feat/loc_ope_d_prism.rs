@@ -46,6 +46,7 @@
 //
 // first consumer: BRepFeat_MakeDPrism (3b).
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
@@ -104,14 +105,6 @@ fn brep_tool_surface(face: &Shape) -> Surface3 {
     match face.data.as_ref() {
         TShape::Face(fd) => fd.surface.clone().expect("Standard_NoSuchObject"),
         _ => panic!("Standard_NoSuchObject"),
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(face).
-fn brep_tool_tolerance(face: &Shape) -> f64 {
-    match face.data.as_ref() {
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
     }
 }
 

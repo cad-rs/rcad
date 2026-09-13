@@ -46,6 +46,7 @@ use rcad_kernel::topo::topods::{Orientation, Shape};
 use super::chfi3d_builder_0::topexp_common_vertex;
 use super::chfi3d_geom_lib::{geom_lib_adjust_extremity, geom_lib_extend_curve_to_point};
 use super::chfi_ds::{ChFiDSElSpine, ChFiDSSpineHandle};
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::geomalgo::gtests_stubs::GeomAbsShape as ChFiDSGeomAbsShape;
 
 // =========================================================================
@@ -1088,11 +1089,6 @@ fn brep_tool_curve(e: &Shape) -> (Curve3, f64, f64) {
         ed.range[0],
         ed.range[1],
     )
-}
-
-// OCCT BRep_Tool::Tolerance(V).
-fn brep_tool_tolerance(v: &Shape) -> f64 {
-    v.as_vertex().map(|vd| vd.tolerance).unwrap_or(0.0)
 }
 
 // OCCT BRepAdaptor_Curve::Resolution(R3d) -> GeomAdaptor_Curve::Resolution.

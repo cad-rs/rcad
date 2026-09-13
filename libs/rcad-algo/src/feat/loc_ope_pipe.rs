@@ -54,6 +54,7 @@
 //
 // first consumer: BRepFeat_Pipe / the pipe feature path (Stage 3c).
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_builder::explorer;
 use glam::DVec3;
 use indexmap::IndexMap;
@@ -91,13 +92,15 @@ fn brep_tool_surface(fac: &Shape) -> Option<Surface3> {
     }
 }
 
-/// OCCT BRep_Tool::Tolerance(vtx).
-fn brep_tool_tolerance(vtx: &Shape) -> f64 {
-    match vtx.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        _ => 0.0,
-    }
-}
+/// OCCT BRep_Tool::Tolerance(shape).
+///
+/// The reader is the single OCCT-faithful body imported from
+/// crate::brep_algo::tool (see the `use` above).  The former local copy carried
+/// only the Vertex arm, so the caller at LocOpe_Pipe.cxx L237
+/// (`B.MakeFace(NewFace, P, BRep_Tool::Tolerance(FaceRef))`) passed a FACE into
+/// a vertex-only matcher and silently got 0.0 instead of the face tolerance;
+/// the imported body handles all three kinds and applies the
+/// Precision::Confusion floor.
 
 /// OCCT BRep_Tool::Pnt(vtx).
 fn brep_tool_pnt(vtx: &Shape) -> DVec3 {

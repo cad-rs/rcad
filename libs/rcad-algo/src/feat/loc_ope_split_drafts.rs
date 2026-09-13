@@ -89,6 +89,7 @@
 use crate::bop::int_tools::bean_face_intersector::{
     BRepAdaptorCurve, BRepAdaptorSurface, IntCurveSurfaceHInter,
 };
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::brep_feat_split_shape::{LocOpeSpliter, LocOpeWiresOnShape};
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
@@ -186,16 +187,6 @@ pub(crate) fn brep_tool_pnt(vtx: &Shape) -> DVec3 {
     match vtx.data.as_ref() {
         TShape::Vertex(vd) => vd.point,
         _ => DVec3::ZERO,
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(shape) — vertex/edge/face tolerance.
-pub(crate) fn brep_tool_tolerance(the_shape: &Shape) -> f64 {
-    match the_shape.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
     }
 }
 

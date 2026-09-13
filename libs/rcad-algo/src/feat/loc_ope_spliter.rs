@@ -44,6 +44,7 @@
 //    raises -> panics with the same names (loc_ope_cs_intersector.rs
 //    convention).
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_builder::{explorer, sub_shapes};
 use crate::feat::loc_ope_build_wires::LocOpeBuildWires;
 use crate::feat::loc_ope_wires_on_shape::{top_exp_vertices, LocOpeWiresOnShape};
@@ -1116,15 +1117,6 @@ fn brep_tool_pnt(vtx: &Shape) -> Option<DVec3> {
     match vtx.data.as_ref() {
         TShape::Vertex(vd) => Some(vd.point),
         _ => None,
-    }
-}
-
-fn brep_tool_tolerance(s: &Shape) -> f64 {
-    match s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
     }
 }
 

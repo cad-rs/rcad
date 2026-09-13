@@ -60,12 +60,13 @@
 // LocOpe_Generator with a LocOpe_GeneratedShape operand.
 
 use crate::brep_algo::r#loop::BRepAlgoLoop;
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_builder::{ explorer, sub_shapes };
 use crate::feat::loc_ope_generated_shape::LocOpeGeneratedShape;
 use crate::feat::loc_ope_generator_b::{
     basis_curve, basis_surface, brep_tool_curve, brep_tool_curve_on_surface,
     brep_tool_degenerated, brep_tool_parameter, brep_tool_range, brep_tool_surface,
-    brep_tool_tolerance, brep_tool_uv_points, brep_tools_is_really_closed,
+    brep_tool_uv_points, brep_tools_is_really_closed,
     brep_tools_uv_bounds, geomproj_lib_curve2d, new_parameter, shape_key,
     shape_reversed, standard_epsilon, tofuse_edge_edge, tofuse_edge_face_vertex,
     tofuse_face_face, top_abs_reverse, top_exp_vertices, with_orientation,

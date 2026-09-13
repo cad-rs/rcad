@@ -28,6 +28,7 @@ use rcad_kernel::geom::{
 use rcad_kernel::precision::{is_negative_infinite_value, is_positive_infinite_value, PCONFUSION};
 use rcad_kernel::topods::{tshape_flags, Orientation, Shape, TEdgeData, TShape, TVertexData};
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::geomalgo::geom2d_int::Curve2dAdaptor;
 use crate::geomalgo::hatch::hatcher::Hatcher;
 use crate::geomalgo::hatch::intersector::HatchIntersector;
@@ -615,18 +616,6 @@ fn face_surface(f: &Shape) -> Option<&Surface3> {
     match &*f.data {
         TShape::Face(fd) => fd.surface.as_ref(),
         _ => None,
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(S) (BRep_Tool.cxx L212-239) — the TShape
-/// tolerance; raises for the non V/E/F kinds (the neutral Shape::null carries
-/// a Vertex TShape and reads 0).
-fn brep_tool_tolerance(s: &Shape) -> f64 {
-    match &*s.data {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => panic!("Standard_NoSuchObject: BRep_Tool::Tolerance"),
     }
 }
 

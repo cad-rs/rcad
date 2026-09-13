@@ -35,6 +35,7 @@
 // LocOpe_Gluer::Perform (cxx L227) build the resulting shape through
 // LocOpe_BuildShape.
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_builder::explorer;
 use indexmap::IndexMap;
 use rcad_kernel::topo::topods::{ tshape_flags, BRep, BRepBuilder, TShape };
@@ -72,14 +73,6 @@ fn brep_tool_pnt(vtx: &Shape) -> glam::DVec3 {
     match vtx.data.as_ref() {
         TShape::Vertex(vd) => vd.point,
         _ => glam::DVec3::ZERO,
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(vtx).
-fn brep_tool_tolerance(vtx: &Shape) -> f64 {
-    match vtx.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        _ => 0.0,
     }
 }
 

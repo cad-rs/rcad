@@ -33,6 +33,7 @@
 // BRepFeat_MakeDPrism use LocOpe_FindEdges to match profile edges with
 // support edges.
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_builder::explorer;
 use glam::DVec3;
 use rcad_kernel::geom::{BSplineCurve3, Curve3};
@@ -82,14 +83,6 @@ pub(crate) fn brep_tool_curve(edg: &Shape) -> Option<(Curve3, f64, f64)> {
             Some((c.clone(), ed.range[0], ed.range[1]))
         }
         _ => None,
-    }
-}
-
-/// OCCT BRep_Tool::Tolerance(edg) (BRep_Tool.cxx).
-pub(crate) fn brep_tool_tolerance(edg: &Shape) -> f64 {
-    match edg.data.as_ref() {
-        TShape::Edge(ed) => ed.tolerance,
-        _ => 0.0,
     }
 }
 

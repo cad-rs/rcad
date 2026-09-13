@@ -11,9 +11,10 @@
 // 1:1 translation; the architecture differences are numbered in the
 // loc_ope_split_drafts.rs header.
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::loc_ope_split_drafts::{
     brep_tool_curve_on_surface, brep_tool_pnt, brep_tool_range, brep_tool_surface,
-    brep_tool_tolerance, builder_add_face_wire, geom_rectangular_trimmed_basis_surface,
+    builder_add_face_wire, geom_rectangular_trimmed_basis_surface,
     gp_pln_axis, gp_pln_direct, gp_pln_rotated, shape_key, top_abs_reverse, with_orientation,
 };
 use glam::{DVec2, DVec3};
