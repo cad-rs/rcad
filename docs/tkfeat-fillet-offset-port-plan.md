@@ -1336,6 +1336,29 @@ libs/rcad-algo/src/
   3. **`geom_convert_curve_to_bspline` 的两份重复**（批次 B 记档：`GeomConvert::CurveToBSplineCurve` 只有一个 OCCT 实现，两份略有差异 ⇒ 收敛）。
   4. 既有队列不变：TKOffset 第 2 项（入池，根）、TKFeat 第 0 项（`LocOpe_Generator::Perform` 的 `IsDone`）、TKFillet 接力项 A（无界 pcurve）。
 
+### E3-W 追加 21（2026-09-13：`BRepTools_Modifier` **消费者接线**（feat / offset 两域并行）—— **`draft_angle` 拿到域内第一个真实断言的通过**）
+
+- **组织方式**：延续追加 20 —— 主代理做关键路径 + 两个**文件域不相交**的子代理并行（`feat/**`+`brep_fill_evolved_c.rs` / `offset/**`），各自 `CARGO_TARGET_DIR`、只 check/门槛/跑该域网格、不提交、不改 docs；主代理统一验收 + 八网格 + 映射对拍 + 提交。
+- **批次 1（rcad `ffed3791`，feat 域）**：删除 `feat/loc_ope_prism.rs` 的本地 `BRepToolsModifier`（含 Perform/ModifiedShape 的 GAP panic）与本地 `BRepToolsTrsfModification` 载体（其 `trsf()` 无调用者）；
+  `LocOpePrism::int_perf`、`LocOpeLinearForm::int_perf`、`LocOpeRevol::int_perf`、`LocOpeRevolutionForm::int_perf` 四处改用真身（各按 OCCT 锚点 `LocOpe_Prism.cxx` L110-120 / `LocOpe_LinearForm.cxx` L93-103 / `LocOpe_Revol.cxx` L96-105 / `LocOpe_RevolutionForm.cxx` L69-78 的 `Init(S)` → `Perform(M)` → `ModifiedShape` 三步）；
+  `brep_fill/brep_fill_evolved_c.rs` 的 profile 拷贝改用 **OCCT 两参构造** `BRepTools_Modifier(DummyProf, TrsfMod)`（`BRepFill_Evolved.cxx` L2287-2290 = `BRepTools_Modifier.cxx` L71-79 的 Put+Perform）——原三步写法在该处**不是** OCCT 形式。
+  `BRepToolsModifier::new(false)` = OCCT 默认构造（hxx **L48**，`theMutableInput=false`）。**本域无本地实现者结构**：`myIsTrans` 的载体**就是** `BRepTools_TrsfModification`，真身已带唯一 `impl BRepToolsModification` ⇒ 未引入第二个引擎。
+  **实测**：`feat_featlf` **a3 离开 GAP 深入一层**（`feat/loc_ope_prism.rs:93` → `brep_sweep/tool_rehost.rs:1144`）；featprism / featrevol / featrf 映射不变。
+- **批次 2（rcad `a374a286`，offset 域）**：同样删掉 `brep_offset_api_draft_angle.rs` 的 `BRepToolsModifierForDraft` 与 `brep_offset_make_simple_offset.rs` 的第二个本地 `BRepToolsModifier`（连同其私有 arena + `brep_pool_mut()`），两处 `my_builder`/`my_modifier` 改用真身（`BRepBuilderAPI_ModifyShape.cxx` L31-53 / `BRepOffset_MakeSimpleOffset` hxx L161、L172-183 的语句序保持）；
+  新增 `impl BRepToolsModification for DraftModification`（`Draft_Modification` hxx **L115-176** 的六个 override **委托到既有 inherent 方法** ⇒ 仍是**一个引擎**；三个网格虚函数保持接口默认体，与 OCCT 一致）。
+  **★★ 实测（三次连跑一致）**：`draft_angle` 由 **49/49 → 50 passed / 48 failed** —— **`draft_angle_b3`（零角度 draft）完全离开失败地图**，现在走完 `is_done` + 拓扑 + 面积断言并**通过**。这是 **draft 域的第一个真实断言通过**。库内 panic 亦 **28 → 27**（`brep_offset_api_draft_angle.rs` 那处 GAP 消失）。其余 offset 网格与 blend_* 不变。
+- **报告但不强做（两处，已记档）**：
+  1. `BRepOffset_MakeSimpleOffset::Perform` 的 OCCT **L197-198** `aBB.Degenerated(anEdge, true)` 现走**既有** `brep_algo::tool::builder_set_degenerated` 载体 —— 因为真身重建出的形状是**池外**的（`index == usize::MAX`），`BRep::edge_mut` 会越界。
+     ⚠ **该载体用 `Arc::make_mut`，若 map 仍别名该边 TShape，标志会落在 fork 上**（坑 17 家族）；就地变异形态私有于 `topalgo/brep_tools_modifier.rs`（本批冻结）⇒ **留作待办**（真要修时把就地写入公开或改走池内形态）。
+  2. `BRepOffsetSimpleOffset` 的方法相对 OCCT 虚函数**签名被削减过**，故 trait impl 恢复了 OCCT 签名并保留**同样的 GAP panic**（`BRepOffset_SimpleOffset.cxx` L1-427 仍未译），**没有**发明出参赋值；被削减的死方法已删除。
+- **验收（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，重编 exe 后）；
+  **域网格映射与追加 20 基线逐例对拍**：`offset_shape_type_i` / `offset_faces_type_i` / `blend_simple` / `blend_complex` / `feat_featprism` / `feat_featrf` **逐字节相同**；变化只有三处且**全为正向** = `draft_angle_b3` **消失（通过）**、`feat_featlf` a3 **深入一层**、`offset_shape_type_a` a4 在**已知不稳定**的两个点间翻转（坑 33）；探针 = 0。
+- **⇒ 下一批队列**：
+  1. **`builder_set_degenerated` 的 `Arc::make_mut` fork 风险**（上条 1；牵涉 `BRepOffset_MakeSimpleOffset` 的健壮性，可单独立卡）。
+  2. **`BRepOffsetSimpleOffset` 类体翻译**（`BRepOffset_SimpleOffset.cxx` L1-427；现只有接口与 GAP panic）。
+  3. `Geom_Surface::UIso/VIso` 的 `Bezier` / `Offset` / `LinearExtrusion` 三臂（追加 20 遗留）+ `geom_convert_curve_to_bspline` 两份收敛。
+  4. 既有队列不变：TKOffset 第 2 项（入池，根）· TKFeat 第 0 项（`LocOpe_Generator::Perform` 的 `IsDone`）· TKFillet 接力项 A（无界 pcurve）· `chfi3d_builder_2b.rs:583`（a3/a4/q4/q7 汇合墙，上游状态类）。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
