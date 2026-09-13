@@ -122,6 +122,7 @@
 //     rebuild (builder_result_shape — the same reduction as
 //     brep_feat_form.rs GlobalPerform L1220-1228).
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_builder::{explorer, BRepFeatBuilder, OcctShapeMap};
 use crate::feat::brep_feat_form_2::{
     brep_feat_is_inside, builder_result_shape, CutVehicle,
@@ -233,15 +234,8 @@ pub(crate) fn brep_tool_pnt(vtx: &Shape) -> DVec3 {
     }
 }
 
-/// OCCT BRep_Tool::Tolerance(shape) — the per-type tolerance carrier.
-pub(crate) fn brep_tool_tolerance(the_s: &Shape) -> f64 {
-    match the_s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
-    }
-}
+/// OCCT BRep_Tool::Tolerance — the single 1:1 body is
+/// crate::brep_algo::tool::brep_tool_tolerance (imported above).
 
 /// OCCT BRep_Tool::Degenerated(edg).
 pub(crate) fn brep_tool_degenerated(edg: &Shape) -> bool {

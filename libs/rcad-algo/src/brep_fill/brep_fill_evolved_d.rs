@@ -37,8 +37,9 @@ use crate::brep_algo::tool::{
     brep_tool_curve, brep_tool_curve_on_surface, builder_add_edge_vertex, builder_range_edge,
     builder_set_degenerated, empty_copied, explorer,
 };
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::brep_fill::brep_fill_evolved::{
-    brep_fill_confusion, brep_tool_degenerated, brep_tool_pnt, brep_tool_tolerance,
+    brep_fill_confusion, brep_tool_degenerated, brep_tool_pnt,
     builder_make_vertex, edge_vertices, node_distance, node_infinite, wire_edges,
     DataMapOfShapeItem, LocationTable, MapNodeVertex,
 };

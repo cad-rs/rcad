@@ -295,14 +295,17 @@ pub(super) fn brep_tool_curve_on_surface(brep: &BRep, e: &Shape, f: &Shape) -> O
     ed.pcurves.get(&fkey).map(|(c, a, b)| (c.clone(), *a, *b))
 }
 
-/// OCCT BRep_Tool::Tolerance (vertex / edge / face).
-pub(super) fn brep_tool_tolerance(brep: &BRep, s: &Shape) -> f64 {
-    match s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
-    }
+/// OCCT BRep_Tool::Tolerance (vertex BRep_Tool.cxx L1314-1333 / edge
+/// L881-895 / face L137-149) — the single 1:1 body lives in
+/// crate::brep_algo::tool::brep_tool_tolerance.  This is a thin delegating
+/// wrapper, not a re-implementation: it only adapts the call convention.
+/// The brep_fill callers (offset_wire.rs L459/L793/L910/L958/L983) pass the
+/// BRep explicitly (architecture difference: rcad carries the BRep
+/// container as an argument instead of a global DS) and offset_wire.rs is
+/// outside this change's file scope, so the leading &BRep argument is kept
+/// and ignored.
+pub(super) fn brep_tool_tolerance(_brep: &BRep, s: &Shape) -> f64 {
+    crate::brep_algo::tool::brep_tool_tolerance(s)
 }
 
 /// OCCT BRep_Tool::Pnt.

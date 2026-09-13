@@ -31,7 +31,8 @@ use rcad_kernel::topo_shape::Shape;
 use crate::bop::algo::pave_filler::PaveFiller;
 use crate::brep_algo::tool as bat;
 use crate::topalgo::shape_source::ShapeSource as _;
-use crate::feat::loc_ope_wires_on_shape_b::{brep_tool_curve_on_surface, brep_tool_tolerance};
+use crate::feat::loc_ope_wires_on_shape_b::brep_tool_curve_on_surface;
+use crate::brep_algo::tool::brep_tool_tolerance;
 
 use super::brep_offset_tool::*;
 use super::brep_offset_tool_d::{perform_planes, update_vertex_tolerances};

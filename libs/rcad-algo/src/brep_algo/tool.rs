@@ -80,20 +80,51 @@ pub(crate) fn shape_is_equal_opt(s: &Shape, o: &Option<Shape>) -> bool {
 // BRep_Tool re-hosts.
 // ---------------------------------------------------------------------------
 
-/// OCCT BRep_Tool::Tolerance(shape) — vertex/face tolerance read directly;
-/// the edge overload clamps at Precision::Confusion (BRep_Tool.cxx L886-898).
+/// OCCT BRep_Tool::Tolerance — the three shape-kind overloads, each of
+/// which floors the stored tolerance at Precision::Confusion():
+///   - BRep_Tool::Tolerance(const TopoDS_Vertex& V)  BRep_Tool.cxx L1314-1333
+///   - BRep_Tool::Tolerance(const TopoDS_Edge& E)    BRep_Tool.cxx L881-895
+///   - BRep_Tool::Tolerance(const TopoDS_Face& F)    BRep_Tool.cxx L137-149
+/// All three bodies are identical: p = TE->Tolerance(); pMin =
+/// Precision::Confusion(); if (p > pMin) return p; else return pMin.
+/// OCCT has no generic BRep_Tool::Tolerance(const TopoDS_Shape&)
+/// dispatcher (BRep_Tool.hxx declares only the three overloads at
+/// L87/L256/L345), so the match over the shape kind is the rcad stand-in
+/// for the C++ overload resolution.  The OCCT vertex body throws
+/// Standard_NullObject when the TVertex is null; the rcad TShape::Vertex
+/// payload is non-nullable, so that branch has no counterpart.
 pub(crate) fn brep_tool_tolerance(s: &Shape) -> f64 {
+    // OCCT `constexpr double pMin = Precision::Confusion();`
+    const P_MIN: f64 = rcad_kernel::precision::CONFUSION;
     match s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => {
-            let p = ed.tolerance;
-            if p > rcad_kernel::precision::CONFUSION {
+        // OCCT BRep_Tool.cxx L1314-1333.
+        TShape::Vertex(vd) => {
+            let p = vd.tolerance;
+            if p > P_MIN {
                 p
             } else {
-                rcad_kernel::precision::CONFUSION
+                P_MIN
             }
         }
-        TShape::Face(fd) => fd.tolerance,
+        // OCCT BRep_Tool.cxx L881-895.
+        TShape::Edge(ed) => {
+            let p = ed.tolerance;
+            if p > P_MIN {
+                p
+            } else {
+                P_MIN
+            }
+        }
+        // OCCT BRep_Tool.cxx L137-149.
+        TShape::Face(fd) => {
+            let p = fd.tolerance;
+            if p > P_MIN {
+                p
+            } else {
+                P_MIN
+            }
+        }
+        // No OCCT overload exists for wire/shell/solid/compound.
         _ => 0.0,
     }
 }

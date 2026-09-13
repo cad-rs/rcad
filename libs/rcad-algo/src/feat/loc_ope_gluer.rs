@@ -57,7 +57,7 @@ use crate::feat::loc_ope_generator::LocOpeGenerator;
 use crate::feat::loc_ope_glued_shape::LocOpeGluedShape;
 use crate::feat::loc_ope_spliter::LocOpeSpliter;
 use crate::feat::loc_ope_wires_on_shape::LocOpeWiresOnShape;
-use crate::feat::loc_ope_wires_on_shape_b::brep_tool_tolerance;
+use crate::brep_algo::tool::brep_tool_tolerance;
 use indexmap::IndexMap;
 use rcad_kernel::geom::{ Curve2d, Surface3 };
 use rcad_kernel::SurfaceEval;

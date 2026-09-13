@@ -33,11 +33,12 @@ use crate::brep_algo::tool::{
 // single 1:1 body lives in crate::topalgo::brep_lib_find_surface; the
 // brep_fill_axe GAP carrier was retired.
 use crate::topalgo::brep_lib_find_surface::BRepLibFindSurface;
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::brep_fill::brep_fill_evolved::{
     builder_add_compound_shape, builder_add_face_wire, builder_add_solid_shell,
     builder_add_wire_edge, builder_make_compound, builder_make_face_surface, builder_make_solid,
     builder_make_wire, brep_fill_confusion, brep_lib_build_curves3d, brep_lib_same_parameter,
-    brep_tool_degenerated, brep_tool_pnt, brep_tool_surface, brep_tool_tolerance, edge_vertices,
+    brep_tool_degenerated, brep_tool_pnt, brep_tool_surface, edge_vertices,
     location_shape_moved, location_shape_set, wire_edges, BRepFillEvolved,
     BRepMAT2dBisectingLocusCarrier, BRepMAT2dLinkTopoBiloCarrier, BRepSweepPrismCarrier,
     BRepSweepRevolCarrier, DataMapOfShapeItem, DataMapOfShapeListOfShape,

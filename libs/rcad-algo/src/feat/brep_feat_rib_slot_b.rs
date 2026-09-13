@@ -13,9 +13,10 @@
 // geom_curve_reversed / gp_Dir comparisons — live in the parent file).
 
 use crate::feat::brep_feat_form_2::{brep_algo_is_valid, CutVehicle};
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_rib_slot::{
     brep_top_adaptor_fclass2d_perform, brep_tool_curve, brep_tool_degenerated,
-    brep_tool_is_closed, brep_tool_pnt, brep_tool_surface, brep_tool_tolerance, data_map_bind,
+    brep_tool_is_closed, brep_tool_pnt, brep_tool_surface, data_map_bind,
     data_map_change_find, data_map_is_bound, geom_api_to_2d, geom_curve_reversed, geom_line_parts,
     make_edge_c_p_p, make_edge_c_v_v, make_edge_p_p, make_edge_v_v, make_vertex, map_add,
     shape_is_same, shape_key, top_exp_first_vertex, top_exp_last_vertex, BRepFeatRibSlot,

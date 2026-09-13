@@ -59,6 +59,7 @@ use glam::{DAffine3, DVec3};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{Orientation, ShapeType, TShape};
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::brep_fill::brep_fill_pipe::top_exp_vertices;
 use crate::brep_fill::brep_fill_trim_edge_tool::GeomAbsJoinType;
 use crate::brep_fill::generator::{shape_key, shape_oriented, shape_reversed, ShapeKey};
@@ -428,15 +429,9 @@ pub(super) fn brep_tool_surface(f: &Shape) -> Option<rcad_kernel::geom::Surface3
     }
 }
 
-/// OCCT BRep_Tool::Tolerance(F / V / E).
-pub(super) fn brep_tool_tolerance(s: &Shape) -> f64 {
-    match s.data.as_ref() {
-        TShape::Face(fd) => fd.tolerance,
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        _ => 0.0,
-    }
-}
+/// OCCT BRep_Tool::Tolerance (vertex L1314-1333 / edge L881-895 / face
+/// L137-149) — the single 1:1 body is
+/// crate::brep_algo::tool::brep_tool_tolerance (imported above).
 
 /// OCCT BRep_Builder::MakeCompound(C).
 pub(super) fn builder_make_compound() -> Shape {

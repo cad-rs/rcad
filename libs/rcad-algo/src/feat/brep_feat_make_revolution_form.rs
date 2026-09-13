@@ -53,9 +53,10 @@ use crate::feat::brep_feat_builder::explorer;
 use crate::feat::brep_feat_form_2::{
     brep_algo_is_valid, brep_feat_face_until, brep_feat_tool, CutVehicle,
 };
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_rib_slot::{
     brep_tool_curve, brep_tool_is_closed, brep_tool_pnt, brep_tool_surface,
-    brep_tool_tolerance, geom_api_to_2d, make_edge_c_v_v, make_vertex,
+    geom_api_to_2d, make_edge_c_v_v, make_vertex,
     top_exp_first_vertex, top_exp_last_vertex, BRepFeatRibSlot, Geom2dAPIInterCurveCurve,
     GeomAPIProjectPointOnCurve,
 };

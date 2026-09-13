@@ -48,9 +48,10 @@ use crate::bop::algo::builder::BooleanOpType;
 use crate::bop::brep_algo_api::SectionOp;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::brep_feat_form_2::{brep_feat_tool, CutVehicle};
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::feat::brep_feat_rib_slot::{
     brep_tool_curve, brep_tool_is_closed, brep_tool_pnt, brep_tool_surface,
-    brep_tool_tolerance, make_edge_c_v_v, make_edge_p_p, make_vertex,
+    make_edge_c_v_v, make_edge_p_p, make_vertex,
     top_exp_first_vertex, top_exp_last_vertex, BRepFeatRibSlot,
     Geom2dAPIInterCurveCurve, GeomAPIProjectPointOnCurve,
 };

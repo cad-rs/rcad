@@ -69,15 +69,14 @@ pub(crate) type ShapeKey = (u64, u32);
 // BRep_Tool re-hosts (loc_ope_find_edges.rs / loc_ope_gluer.rs precedents).
 // ---------------------------------------------------------------------------
 
-/// OCCT BRep_Tool::Tolerance(shape) — vertex/edge/face tolerance.
-pub(crate) fn brep_tool_tolerance(s: &Shape) -> f64 {
-    match s.data.as_ref() {
-        TShape::Vertex(vd) => vd.tolerance,
-        TShape::Edge(ed) => ed.tolerance,
-        TShape::Face(fd) => fd.tolerance,
-        _ => 0.0,
-    }
-}
+/// OCCT BRep_Tool::Tolerance (vertex L1314-1333 / edge L881-895 / face
+/// L137-149) — the single 1:1 body lives in crate::brep_algo::tool.
+/// Re-exported here because callers spell the fully-qualified path
+/// `crate::feat::loc_ope_wires_on_shape_b::brep_tool_tolerance`
+/// (brep_feat_form_2.rs L635) and `super::loc_ope_wires_on_shape_b::*`
+/// (loc_ope_wires_on_shape.rs L59), neither of which can be re-pointed
+/// without editing a non-import line.
+pub(crate) use crate::brep_algo::tool::brep_tool_tolerance;
 
 /// OCCT BRep_Tool::Degenerated(E).
 pub(crate) fn brep_tool_degenerated(edg: &Shape) -> bool {

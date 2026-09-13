@@ -38,7 +38,7 @@ use crate::brep_algo::as_des::BRepAlgoAsDes;
 use crate::brep_algo::image::BRepAlgoImage;
 use crate::brep_algo::tool as bat;
 use crate::brep_fill::offset_wire::GeomAbsJoinType;
-use crate::feat::loc_ope_wires_on_shape_b::brep_tool_tolerance;
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::brep_algo::tool::shape_key;
 use crate::fillet::chfi_ds::ChFiDS_TypeOfConcavity;
 

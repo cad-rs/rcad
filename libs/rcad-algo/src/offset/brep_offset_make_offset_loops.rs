@@ -20,7 +20,7 @@ use crate::brep_algo::as_des::BRepAlgoAsDes;
 use crate::brep_algo::image::BRepAlgoImage;
 use crate::brep_algo::r#loop::BRepAlgoLoop;
 use crate::brep_algo::tool as bat;
-use crate::feat::loc_ope_wires_on_shape_b::brep_tool_tolerance;
+use crate::brep_algo::tool::brep_tool_tolerance;
 
 /// OCCT BRepOffset_MakeLoops (TKOffset/BRepOffset/BRepOffset_MakeLoops.hxx
 /// L33-77) — the loop builder of MakeLoops / MakeFaces (architecture

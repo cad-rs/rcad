@@ -34,6 +34,7 @@
 //    the Arc-shared TShape is not mutated through the handle) and
 //    BRepLib::SameParameter (the topalgo BRepLib stub).
 
+use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::bop::algo::builder::BooleanOpType;
 use crate::feat::brep_feat_builder::{explorer, BRepFeatBuilder};
 use crate::feat::brep_feat_form::{global_perform, BRepFeatForm, BRepFeatFormSlots};
@@ -88,13 +89,8 @@ fn brep_tool_degenerated(edg: &Shape) -> bool {
     }
 }
 
-/// OCCT BRep_Tool::Tolerance(edg).
-fn brep_tool_tolerance(edg: &Shape) -> f64 {
-    match edg.data.as_ref() {
-        TShape::Edge(ed) => ed.tolerance,
-        _ => 0.0,
-    }
-}
+/// OCCT BRep_Tool::Tolerance — the single 1:1 body is
+/// crate::brep_algo::tool::brep_tool_tolerance (imported above).
 
 /// OCCT TopExp::Vertices(E, V1, V2) — the two vertices of the edge.
 fn top_exp_vertices(the_e: &Shape) -> (Shape, Shape) {
