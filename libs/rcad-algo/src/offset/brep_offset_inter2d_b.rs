@@ -14,6 +14,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
+use rcad_kernel::base::proj_lib::adaptor::{Curve2dHandle, CurveOnSurface, SurfaceHandle};
+use rcad_kernel::base::proj_lib::{Geom2dCurveAdaptor, GeomSurfaceAdaptor};
 use rcad_kernel::geom::{
     Curve2d, Curve2dEval, Curve3, CurveEval, Line3, Surface3, SurfaceEval, TrimmedCurve3,
 };
@@ -475,16 +477,36 @@ impl BRepOffsetInter2d {
                         }
                     }
                 } else {
-                    // OCCT L1503-1524: the Adaptor3d_CurveOnSurface +
-                    // GeomLib::BuildCurve3d — GAP (architecture difference
-                    // #29).
-                    let con_s = Adaptor3dCurveOnSurface::new(min_pc, &min_surf);
-                    let _continuity = GeomAbsShape::C1; // OCCT GeomAbs_C1.
-                    let _max_degree = 14i32;
-                    let _max_segment = evaluate_max_segment(&con_s);
+                    // OCCT L1503-1524: Geom2dAdaptor_Curve AC2d(MinPC,
+                    // FirstParOnPC, LastParOnPC); GeomAdaptor_Surface
+                    // GAsurf(MinSurf); the two handles; Adaptor3d_CurveOnSurface
+                    // ConS(HC2d, HSurf); then GeomLib::BuildCurve3d with
+                    // Continuity = GeomAbs_C1, MaxDegree = 14 and
+                    // MaxSegment = evaluateMaxSegment(ConS).
+                    let hc2d: Curve2dHandle = Arc::new(Geom2dCurveAdaptor::with_range(
+                        min_pc.clone(),
+                        first_par_on_pc,
+                        last_par_on_pc,
+                    ));
+                    let hsurf: SurfaceHandle = Arc::new(GeomSurfaceAdaptor::new(min_surf.clone()));
+                    let con_s = CurveOnSurface::new(hc2d, hsurf);
+                    let continuity = rcad_kernel::math::GeomAbsShape::C1; // OCCT GeomAbs_C1.
+                    let max_degree = 14i32;
+                    let max_segment = evaluate_max_segment(&con_s);
                     // OCCT L1510: double /*max_deviation,*/ average_deviation;
                     let mut average_deviation = 0.;
-                    geom_lib_build_curve3d(&mut c3d, &mut max_deviation, &mut average_deviation);
+                    geom_lib_build_curve3d(
+                        rcad_kernel::precision::CONFUSION,
+                        &con_s,
+                        first_par_on_pc,
+                        last_par_on_pc,
+                        &mut c3d,
+                        &mut max_deviation,
+                        &mut average_deviation,
+                        continuity,
+                        max_degree,
+                        max_segment,
+                    );
                 }
                 // OCCT L1525: BB.UpdateEdge(NE, C3d, max_deviation).
                 builder_update_edge_curve(ne, c3d.clone(), max_deviation);

@@ -12,8 +12,12 @@
 //!   - OCCT-form carriers for the TKGeomAlgo / TKTopAlgo classes the corner
 //!     pipeline calls whose rcad translations have not landed yet
 //!     (FairCurve_Batten, BRepAlgo_NormalProjection, Extrema_ExtCC/ExtPC,
-//!     Geom2dInt_GInter, GeomLib::BuildCurve3d, BndLib_Add2dCurve,
-//!     BRepAdaptor_Curve, Adaptor3d_CurveOnSurface).  The GeomPlate block
+//!     Geom2dInt_GInter, BndLib_Add2dCurve, BRepAdaptor_Curve).  The
+//!     GeomLib::BuildCurve3d entry point below delegates to the landed
+//!     `geomalgo::geom_lib::build_curve3d`; the local
+//!     Adaptor3d_CurveOnSurface carrier is bridged to the kernel
+//!     CurveOnSurface (the same bridge the GeomPlate block applies).  The
+//!     GeomPlate block
 //!     (BuildPlateSurface / CurveConstraint / MakeApprox / PlateG0Criterion)
 //!     is switched onto the real geomalgo::geomplate bodies: the local
 //!     Adaptor3dCurveOnSurface(Geom2dAdaptorCurve, GeomAdaptorSurface) pair
@@ -616,6 +620,38 @@ impl Adaptor3dCurveOnSurface {
         let uv = self.pcurve.value(u);
         self.surf.value(uv.x, uv.y)
     }
+
+    /// The kernel Adaptor3d_CurveOnSurface over this (pcurve, surface) pair —
+    /// the same type bridge `GeomPlateCurveConstraint::new` applies at
+    /// construction.  A null pcurve raises the OCCT
+    /// Standard_NullObject of the Geom2dAdaptor_Curve::Load.
+    pub(crate) fn to_kernel(&self) -> CurveOnSurface {
+        let c2d: Curve2dHandle = Arc::new(Geom2dCurveAdaptor::with_range(
+            match &self.pcurve.curve {
+                Some(c) => c.clone(),
+                None => panic!("Standard_NullObject: Geom2dAdaptor_Curve::Load"),
+            },
+            self.pcurve.first_parameter(),
+            self.pcurve.last_parameter(),
+        ));
+        // The cncrn GeomAdaptorSurface -> the kernel GeomSurfaceAdaptor — the
+        // Load form follows the local bounds_set flag (the OCCT Load(S) /
+        // Load(S, U1, U2, V1, V2) pair).
+        let mut gs = GeomSurfaceAdaptor::empty();
+        if self.surf.bounds_set {
+            gs.load_with_window(
+                self.surf.surface.clone(),
+                self.surf.ufirst,
+                self.surf.ulast,
+                self.surf.vfirst,
+                self.surf.vlast,
+            );
+        } else {
+            gs.load(self.surf.surface.clone());
+        }
+        let surf_handle: SurfaceHandle = Arc::new(gs);
+        CurveOnSurface::new(c2d, surf_handle)
+    }
 }
 
 /// OCCT FairCurve_AnalysisCode — pending translation (FairCurve module).
@@ -1141,22 +1177,36 @@ impl GeomPlateBuildPlateSurface {
 }
 
 /// OCCT GeomLib::BuildCurve3d(Tolerance, CurvOnSurf, First, Last, Curve3d,
-/// Maxdev, AvDev) — pending TKTopAlgo translation; the carrier leaves the
-/// 3d curve null (OCCT TopOpeBRepDS_Curve carries a nullable curve) with
-/// zero deviation until the approximation lands.
+/// Maxdev, AvDev) — the 1:1 body is `geomalgo::geom_lib::build_curve3d`; this
+/// is the OCCT-signature entry point of the ChFi3d_Builder_CnCrn.cxx L2751 /
+/// L3176 call sites, whose argument type is the cncrn
+/// `Adaptor3dCurveOnSurface` pair bridged onto the kernel
+/// Adaptor3d_CurveOnSurface (the same bridge `GeomPlateCurveConstraint::new`
+/// applies).  The omitted OCCT arguments take their GeomLib.hxx defaults
+/// (Continuity = GeomAbs_C1, MaxDegree = 14, MaxSegment = 0).
 #[allow(clippy::too_many_arguments)]
 pub fn geom_lib_build_curve3d(
-    _tolerance: f64,
-    _curv_on_surf: &Adaptor3dCurveOnSurface,
-    _first: f64,
-    _last: f64,
+    tolerance: f64,
+    curv_on_surf: &Adaptor3dCurveOnSurface,
+    first: f64,
+    last: f64,
     curve3d: &mut Option<rcad_kernel::geom::Curve3>,
     maxdev: &mut f64,
     av_dev: &mut f64,
 ) {
-    *curve3d = None;
-    *maxdev = 0.0;
-    *av_dev = 0.0;
+    let con_s = curv_on_surf.to_kernel();
+    crate::geomalgo::geom_lib::build_curve3d(
+        tolerance,
+        &con_s,
+        first,
+        last,
+        curve3d,
+        maxdev,
+        av_dev,
+        rcad_kernel::math::GeomAbsShape::C1,
+        14,
+        0,
+    );
 }
 
 /// OCCT PLib::HermiteCoefficients(0, 1, 1, 1, MatCoefs) — the 4x4 power-

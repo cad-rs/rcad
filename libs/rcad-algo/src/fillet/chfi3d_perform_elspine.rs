@@ -865,9 +865,10 @@ pub(crate) fn geom_convert_c0_bspline_to_c1_bspline_curve(
 // OCCT TKTopAlgo/BRepLib/BRepLib.cxx L301-456 — BuildCurve3d(AnEdge,
 // Tolerance, Continuity, MaxDegree, MaxSegment).  "if the edge has a 3d
 // curve returns true" (L319-325).  The pcurve reconstruction branches
-// (L330-454) route through GeomLib::BuildCurve3d — GAP: pending the
-// TKTopAlgo/GeomLib approximation batch; OCCT returns false when the 3d
-// curve cannot be produced (L363-366 / L436-439 / L452).
+// (L330-454) route through GeomLib::BuildCurve3d — the GeomLib body has
+// landed (`geomalgo::geom_lib::build_curve3d`); this BRepLib-level carrier is
+// still a stand-in and returns false when the 3d curve cannot be produced
+// (L363-366 / L436-439 / L452).
 // =========================================================================
 pub(crate) fn brep_lib_build_curve3d(an_edge: &mut Shape) -> bool {
     an_edge

@@ -142,6 +142,15 @@ pub trait Adaptor2dCurve2d {
     fn parabola(&self) -> crate::geom::Parabola2d {
         panic!("Standard_NotImplemented: Adaptor2d_Curve2d::Parabola")
     }
+    /// The kernel curve when the adaptor wraps one — the routing bridge for
+    /// the `occ::down_cast<Geom2dAdaptor_Curve>` of the GeomLib / Approx
+    /// consumers (the same shape as
+    /// [`Adaptor3dSurface::kernel_surface`]): Some when the adaptor is a
+    /// `Geom2dAdaptor_Curve` over a kernel `Curve2d`, None when the OCCT
+    /// down-cast would leave a null handle.
+    fn kernel_curve2d(&self) -> Option<&crate::geom::Curve2d> {
+        None
+    }
 }
 
 /// OCCT `occ::handle<Adaptor2d_Curve2d>` — shared ownership.
@@ -529,6 +538,12 @@ impl Adaptor2dCurve2d for Geom2dCurveAdaptor {
     /// OCCT GetType() — of the basis curve (looking through Trimmed).
     fn get_type(&self) -> CurveType {
         curve2d_type_of(self.curve.inner())
+    }
+
+    /// The kernel `Geom2d_Curve` wrapped by this `Geom2dAdaptor_Curve` — the
+    /// `Curve()` accessor of the GeomLib / Approx down-cast sites.
+    fn kernel_curve2d(&self) -> Option<&crate::geom::Curve2d> {
+        Some(&self.curve)
     }
 
     /// OCCT Line() — valid when GetType() == Line.

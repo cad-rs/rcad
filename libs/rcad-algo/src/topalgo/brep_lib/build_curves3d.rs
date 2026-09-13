@@ -18,15 +18,19 @@
 // rcad Shape.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
-use rcad_kernel::geom::{BSplineCurve2, BSplineSurface, Curve2d, Curve3, Plane, Surface3};
+use rcad_kernel::base::proj_lib::adaptor::{Curve2dHandle, CurveOnSurface, SurfaceHandle};
+use rcad_kernel::base::proj_lib::{CurveType, Geom2dCurveAdaptor, GeomSurfaceAdaptor};
+use rcad_kernel::geom::{Curve2d, Curve3, Plane, Surface3};
 use rcad_kernel::topo::topods::{
-    surface_same, BRep, BRepTool, CurveRepresentation, GeomAbsShape, ShapeType, TShape,
+    curve_pool_free, shape_is_in_pool, surface_same, BRep, BRepTool, CurveRepresentation,
+    GeomAbsShape, ShapeType, TShape,
 };
 use rcad_kernel::topo_shape::Shape;
 
 use crate::brep_algo::tool as bat;
-use crate::geomalgo::int_patch::{classify_surface_type, GeomAbsSurfaceType};
+use rcad_kernel::base::proj_lib::GeomAbsSurfaceType;
 
 use super::brep_lib::BRepLib;
 
@@ -346,26 +350,36 @@ impl BRepLib {
                 curve2d_ptr = curve2d_array[0].clone();
                 surface_ptr = surface_array[0].clone();
 
-                // OCCT L411-417: the pcurve/surface adaptors and the
-                // Adaptor3d_CurveOnSurface over their handles (the rcad
-                // value clones stand for the OCCT handle constructions).
-                let an_adaptor3d_curve2d = Geom2dAdaptorCurve::new(curve2d_ptr.clone(), f, l_par);
-                let an_adaptor3d_surface = GeomAdaptorSurface::new(surface_ptr.clone());
-                let an_adaptor3d_curve2d_ptr = an_adaptor3d_curve2d.clone();
-                let an_adaptor3d_surface_ptr = an_adaptor3d_surface.clone();
-                let curve_on_surface = Adaptor3dCurveOnSurface::new(
-                    &an_adaptor3d_curve2d_ptr,
-                    &an_adaptor3d_surface_ptr,
+                // OCCT L411-417: Geom2dAdaptor_Curve AnAdaptor3dCurve2d(
+                // Curve2dPtr, f, l); GeomAdaptor_Surface AnAdaptor3dSurface(
+                // SurfacePtr); the two handles; Adaptor3d_CurveOnSurface
+                // CurveOnSurface(AnAdaptor3dCurve2dPtr, AnAdaptor3dSurfacePtr).
+                // The rcad handles are the kernel Geom2dAdaptor_Curve /
+                // GeomAdaptor_Surface over the pcurve and the surface (the
+                // OCCT null handle of a missing pcurve is the OCCT crash).
+                let a_c2d = curve2d_ptr
+                    .clone()
+                    .expect("Adaptor3d_CurveOnSurface: null pcurve (BRepLib.cxx L406-417)");
+                let a_surf = surface_ptr
+                    .clone()
+                    .expect("Adaptor3d_CurveOnSurface: null surface (BRepLib.cxx L406-417)");
+                let an_adaptor3d_curve2d_ptr: Curve2dHandle =
+                    Arc::new(Geom2dCurveAdaptor::with_range(a_c2d, f, l_par));
+                let an_adaptor3d_surface_ptr: SurfaceHandle =
+                    Arc::new(GeomSurfaceAdaptor::new(a_surf));
+                let curve_on_surface = CurveOnSurface::new(
+                    an_adaptor3d_curve2d_ptr,
+                    an_adaptor3d_surface_ptr,
                 );
 
                 // OCCT L419: handle<Geom_Curve> NewCurvePtr.
                 let mut new_curve_ptr: Option<Curve3> = None;
 
-                // OCCT L421-430: GeomLib::BuildCurve3d — GAP carrier (the
-                // AdvApprox approximation of GeomLib.cxx is not translated;
-                // the OCCT failure path is preserved: the null NewCurvePtr
-                // makes BuildCurve3d return false).
-                geom_lib_build_curve3d(
+                // OCCT L421-430: GeomLib::BuildCurve3d(Tolerance,
+                // CurveOnSurface, f, l, NewCurvePtr, max_deviation,
+                // average_deviation, Continuity, MaxDegree,
+                // evaluateMaxSegment(MaxSegment, CurveOnSurface)).
+                crate::geomalgo::geom_lib::build_curve3d(
                     tolerance,
                     &curve_on_surface,
                     f,
@@ -373,7 +387,7 @@ impl BRepLib {
                     &mut new_curve_ptr,
                     &mut max_deviation,
                     &mut average_deviation,
-                    continuity,
+                    approx_continuity(continuity),
                     max_degree,
                     evaluate_max_segment(max_segment, &curve_on_surface),
                 );
@@ -458,11 +472,33 @@ impl BRepLib {
 // OCCT file statics.
 // ---------------------------------------------------------------------------
 
+/// The rcad `GeomAbs_Shape` split (architecture difference): the BRepLib
+/// signature carries the topods `GeomAbs_Shape` (with the G1/G2 interleaves)
+/// while the approximation engine takes the math `GeomAbs_Shape` (without
+/// them).  The OCCT normalize step of Approx_CurveOnSurface.cxx L373-385
+/// (GeomAbs_G1 -> GeomAbs_C1, GeomAbs_G2 -> GeomAbs_C2) is the mapping the
+/// approximation path applies; every other level maps one-to-one.
+fn approx_continuity(
+    c: rcad_kernel::topo::topods::GeomAbsShape,
+) -> rcad_kernel::math::GeomAbsShape {
+    use rcad_kernel::math::GeomAbsShape as M;
+    use rcad_kernel::topo::topods::GeomAbsShape as T;
+    match c {
+        T::C0 => M::C0,
+        T::G1 => M::C1,
+        T::C1 => M::C1,
+        T::G2 => M::C2,
+        T::C2 => M::C2,
+        T::C3 => M::C3,
+        T::CN => M::CN,
+    }
+}
+
 // OCCT BRepLib.cxx L273-297
 /// OCCT static evaluateMaxSegment(aMaxSegment, aCurveOnSurface) — returns
 /// MaxSegment to pass in approximation, if MaxSegment==0 provided: 30 plus
 /// the largest knot count of the B-spline surface/curve under the adaptor.
-fn evaluate_max_segment(a_max_segment: i32, a_curve_on_surface: &Adaptor3dCurveOnSurface) -> i32 {
+fn evaluate_max_segment(a_max_segment: i32, a_curve_on_surface: &CurveOnSurface) -> i32 {
     // OCCT L276-279.
     if a_max_segment != 0 {
         return a_max_segment;
@@ -476,15 +512,14 @@ fn evaluate_max_segment(a_max_segment: i32, a_curve_on_surface: &Adaptor3dCurveO
     let mut a_nb_c2d_knots: f64 = 0.0;
     // OCCT L286-290: BSpline surface -> max(NbUKnots, NbVKnots).
     if a_surf.get_type() == GeomAbsSurfaceType::BSplineSurface {
-        if let Some(a_bspline) = a_surf.bspline() {
-            // The rcad knot vectors carry the multiplicities expanded; the
-            // OCCT NbUKnots()/NbVKnots() count the distinct knots.
-            a_nb_s_knots =
-                distinct_knots(&a_bspline.knots_u).max(distinct_knots(&a_bspline.knots_v)) as f64;
-        }
+        let a_bspline = a_surf.bspline();
+        // The rcad knot vectors carry the multiplicities expanded; the
+        // OCCT NbUKnots()/NbVKnots() count the distinct knots.
+        a_nb_s_knots =
+            distinct_knots(&a_bspline.knots_u).max(distinct_knots(&a_bspline.knots_v)) as f64;
     }
     // OCCT L291-294: BSpline 2d curve -> NbKnots.
-    if a_curv2d.get_type() == GeomAbsCurveType::BSplineCurve {
+    if a_curv2d.get_type() == CurveType::BSpline {
         if let Some(a_bspline) = a_curv2d.bspline() {
             a_nb_c2d_knots = distinct_knots(&a_bspline.knots) as f64;
         }
@@ -509,137 +544,13 @@ fn distinct_knots(knots: &[f64]) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Adaptor re-hosts (TKG3d).  The OCCT adaptors wrap handles and carry
-// First/Last; the rcad re-hosts wrap the value geometry (None plays the
-// null handle) and read the type/knots from the variants.
+// Adaptor re-hosts (TKG3d).  The former local Geom2dAdaptor_Curve /
+// GeomAdaptor_Surface / Adaptor3d_CurveOnSurface carriers were deleted
+// (Rule 4): the kernel already carries those classes
+// (rcad_kernel::base::proj_lib::{Geom2dCurveAdaptor, GeomSurfaceAdaptor,
+// CurveOnSurface}), and the GeomLib::BuildCurve3d consumers now take the
+// kernel Adaptor3d_CurveOnSurface directly.
 // ---------------------------------------------------------------------------
-
-/// OCCT GeomAbs_CurveType (TKG3d/GeomAbs/GeomAbs_CurveType.hxx L23-31).
-/// The canonical nine-variant enum lives in rcad_kernel::math; the former
-/// local copy was deleted (Rule 4).
-use rcad_kernel::math::GeomAbsCurveType;
-
-/// OCCT Geom2dAdaptor_Curve(Curve2d, First, Last) (TKG3d/Geom2dAdaptor) —
-/// the pcurve adaptor (a null handle plays None; the trimmed curve is
-/// flattened to its basis at the Load, Geom2dAdaptor.cxx).
-#[derive(Clone)]
-struct Geom2dAdaptorCurve {
-    my_curve: Option<Curve2d>,
-    my_first: f64,
-    my_last: f64,
-}
-
-impl Geom2dAdaptorCurve {
-    // OCCT Geom2dAdaptor_Curve::Load(C, U1, U2).
-    fn new(the_curve: Option<Curve2d>, the_first: f64, the_last: f64) -> Self {
-        Geom2dAdaptorCurve {
-            my_curve: the_curve,
-            my_first: the_first,
-            my_last: the_last,
-        }
-    }
-
-    /// OCCT Geom2dAdaptor_Curve::GetType() — the basis-curve type (the
-    /// trimmed curve is stripped at the Load).
-    fn get_type(&self) -> GeomAbsCurveType {
-        match &self.my_curve {
-            Some(Curve2d::Line(_)) => GeomAbsCurveType::Line,
-            Some(Curve2d::Circle(_)) => GeomAbsCurveType::Circle,
-            Some(Curve2d::Ellipse(_)) => GeomAbsCurveType::Ellipse,
-            Some(Curve2d::Hyperbola(_)) => GeomAbsCurveType::Hyperbola,
-            Some(Curve2d::Parabola(_)) => GeomAbsCurveType::Parabola,
-            Some(Curve2d::Bezier(_)) => GeomAbsCurveType::BezierCurve,
-            Some(Curve2d::BSpline(_)) => GeomAbsCurveType::BSplineCurve,
-            Some(Curve2d::Offset(_)) => GeomAbsCurveType::OffsetCurve,
-            Some(Curve2d::Trimmed(a_tc)) => match a_tc.curve.as_ref() {
-                Curve2d::BSpline(_) => GeomAbsCurveType::BSplineCurve,
-                _ => GeomAbsCurveType::OtherCurve,
-            },
-            _ => GeomAbsCurveType::OtherCurve,
-        }
-    }
-
-    /// OCCT Geom2dAdaptor_Curve::BSpline() — the B-spline handle (the
-    /// trimmed curve is stripped to its basis).
-    fn bspline(&self) -> Option<&BSplineCurve2> {
-        match &self.my_curve {
-            Some(Curve2d::BSpline(a_bs)) => Some(a_bs),
-            Some(Curve2d::Trimmed(a_tc)) => match a_tc.curve.as_ref() {
-                Curve2d::BSpline(a_bs) => Some(a_bs),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-}
-
-/// OCCT GeomAdaptor_Surface(Surface) (TKG3d/GeomAdaptor) — the surface
-/// adaptor (a null handle plays None; the rectangular trimmed surface is
-/// stripped to its basis at the Load, GeomAdaptor_Surface.cxx L423-425 —
-/// the same rule as geom_adaptor_surface_get_type of brep_lib.rs).
-#[derive(Clone)]
-struct GeomAdaptorSurface {
-    my_surface: Option<Surface3>,
-}
-
-impl GeomAdaptorSurface {
-    // OCCT GeomAdaptor_Surface::Load(S).
-    fn new(the_surface: Option<Surface3>) -> Self {
-        GeomAdaptorSurface {
-            my_surface: the_surface,
-        }
-    }
-
-    /// OCCT GeomAdaptor_Surface::GetType().
-    fn get_type(&self) -> GeomAbsSurfaceType {
-        match &self.my_surface {
-            Some(Surface3::Trimmed(a_ts)) => classify_surface_type(&a_ts.basis),
-            Some(a_s) => classify_surface_type(a_s),
-            None => GeomAbsSurfaceType::OtherSurface,
-        }
-    }
-
-    /// OCCT Adaptor3d_Surface::BSpline() — the B-spline handle (the
-    /// trimmed surface is stripped to its basis).
-    fn bspline(&self) -> Option<&BSplineSurface> {
-        match &self.my_surface {
-            Some(Surface3::BSpline(a_bs)) => Some(a_bs),
-            Some(Surface3::Trimmed(a_ts)) => match a_ts.basis.as_ref() {
-                Surface3::BSpline(a_bs) => Some(a_bs),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-}
-
-/// OCCT Adaptor3d_CurveOnSurface(Curve2d, Surf) (TKG3d) — the pcurve-on-
-/// surface adaptor over the two handles.
-#[derive(Clone)]
-struct Adaptor3dCurveOnSurface {
-    my_curve2d: Geom2dAdaptorCurve,
-    my_surface: GeomAdaptorSurface,
-}
-
-impl Adaptor3dCurveOnSurface {
-    // OCCT Adaptor3d_CurveOnSurface::Load(Curve2d, Surf).
-    fn new(the_curve2d: &Geom2dAdaptorCurve, the_surface: &GeomAdaptorSurface) -> Self {
-        Adaptor3dCurveOnSurface {
-            my_curve2d: the_curve2d.clone(),
-            my_surface: the_surface.clone(),
-        }
-    }
-
-    /// OCCT Adaptor3d_CurveOnSurface::GetCurve().
-    fn get_curve(&self) -> &Geom2dAdaptorCurve {
-        &self.my_curve2d
-    }
-
-    /// OCCT Adaptor3d_CurveOnSurface::GetSurface().
-    fn get_surface(&self) -> &GeomAdaptorSurface {
-        &self.my_surface
-    }
-}
 
 /// OCCT gp_Ax2 (TKMath/gp) — the right-handed axis system (location + main
 /// direction + X direction) produced by gp_Ax3::Ax2().
@@ -674,7 +585,16 @@ fn plane_position_ax2(the_plane: &Plane) -> GpAx2 {
 /// BRepTool::edge_curve_world re-host) and its range; the location out is
 /// the edge's own (the rcad curve slot carries no location — arch.
 /// difference).
+///
+/// A pool-outside edge (its `index` is not a slot of `the_brep` — the
+/// offset-engine EncodeRegularity path) takes the pool-free read
+/// `curve_pool_free` (topods.rs), which reads the edge TShape directly; a
+/// valid index keeps the pool walk unchanged.
 fn brep_tool_curve(the_brep: &BRep, the_e: &Shape) -> Option<(Curve3, u32, f64, f64)> {
+    if !shape_is_in_pool(the_brep, the_e) {
+        let (a_c, a_f, a_l) = curve_pool_free(the_e)?;
+        return Some((a_c, the_e.location, a_f, a_l));
+    }
     let (a_c, a_range) = the_brep.edge_curve_world(the_e)?;
     Some((a_c, the_e.location, a_range[0], a_range[1]))
 }
@@ -1000,23 +920,4 @@ fn geom_lib_to_3d(the_axes: &GpAx2, the_ptr2d: &Curve2d) -> Option<Curve3> {
         the_axes.x_direction,
     );
     crate::geomalgo::geom_lib::to_3d(&ax, the_ptr2d)
-}
-
-/// OCCT GeomLib::BuildCurve3d(Tolerance, CurveOnSurface, First, Last,
-/// Curve3d, Maxdev, AvDev, Continuity, MaxDegree, MaxSegment)
-/// (GeomLib.cxx BuildCurve3d) — GAP carrier.
-#[allow(clippy::too_many_arguments)]
-fn geom_lib_build_curve3d(
-    _the_tolerance: f64,
-    _the_curve_on_surface: &Adaptor3dCurveOnSurface,
-    _the_first: f64,
-    _the_last: f64,
-    _the_curve3d: &mut Option<Curve3>,
-    _the_maxdev: &mut f64,
-    _the_avdev: &mut f64,
-    _the_continuity: GeomAbsShape,
-    _the_max_degree: i32,
-    _the_max_segment: i32,
-) {
-    panic!("GAP: GeomLib::BuildCurve3d (TKGeomBase/GeomLib not translated)")
 }

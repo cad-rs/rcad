@@ -412,12 +412,23 @@ pub struct ApproxAFunction {
     poles3d_ncols: usize,
     max_error_3d: Vec<f64>,
     average_error_3d: Vec<f64>,
+    /// OCCT: handle(NCollection_HArray2<double>) my1DPoles — [pole][ss].
+    poles1d: Vec<Vec<f64>>,
+    /// OCCT: handle(NCollection_HArray2<gp_Pnt2d>) my2DPoles — [pole][ss*2].
+    poles2d: Vec<Vec<f64>>,
+    /// OCCT: handle(NCollection_HArray1<double>) my1DMaxError.
+    max_error_1d: Vec<f64>,
+    /// OCCT: handle(NCollection_HArray1<double>) my1DAverageError.
+    average_error_1d: Vec<f64>,
+    /// OCCT: handle(NCollection_HArray1<double>) my2DMaxError.
+    max_error_2d: Vec<f64>,
+    /// OCCT: handle(NCollection_HArray1<double>) my2DAverageError.
+    average_error_2d: Vec<f64>,
 }
 
 impl ApproxAFunction {
     /// OCCT AdvApprox_ApproxAFunction ctor with the default dichotomy
-    /// cutting, followed by Perform.  Only the 3D-subspace configuration used
-    /// by the helix pipeline is stored (Num1DSS = 0, Num2DSS = 0).
+    /// cutting (cxx L600-625), followed by Perform.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         num1dss: i32,
@@ -432,6 +443,45 @@ impl ApproxAFunction {
         max_deg: i32,
         max_seg: i32,
         func: &mut dyn EvaluatorFunction,
+    ) -> Self {
+        // OCCT: AdvApprox_DichoCutting Cut; Perform(Num1DSS, Num2DSS,
+        // Num3DSS, Cut).
+        let cut = super::cutting::DichoCutting;
+        Self::with_cut_tool(
+            num1dss,
+            num2dss,
+            num3dss,
+            one_d_tol,
+            two_d_tol,
+            three_d_tol,
+            first,
+            last,
+            continuity,
+            max_deg,
+            max_seg,
+            func,
+            &cut,
+        )
+    }
+
+    /// OCCT AdvApprox_ApproxAFunction ctor with a user method of cutting
+    /// (cxx L631-656): the 13-argument form, followed by
+    /// `Perform(Num1DSS, Num2DSS, Num3DSS, CutTool)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_cut_tool(
+        num1dss: i32,
+        num2dss: i32,
+        num3dss: i32,
+        one_d_tol: Option<&[f64]>,
+        two_d_tol: Option<&[f64]>,
+        three_d_tol: Option<&[f64]>,
+        first: f64,
+        last: f64,
+        continuity: GeomAbsShape,
+        max_deg: i32,
+        max_seg: i32,
+        func: &mut dyn EvaluatorFunction,
+        cut_tool: &dyn Cutting,
     ) -> Self {
         let mut this = ApproxAFunction {
             num_sub_spaces: [num1dss, num2dss, num3dss],
@@ -449,8 +499,13 @@ impl ApproxAFunction {
             poles3d_ncols: 0,
             max_error_3d: Vec::new(),
             average_error_3d: Vec::new(),
+            poles1d: Vec::new(),
+            poles2d: Vec::new(),
+            max_error_1d: Vec::new(),
+            average_error_1d: Vec::new(),
+            max_error_2d: Vec::new(),
+            average_error_2d: Vec::new(),
         };
-        let mut cut = super::cutting::DichoCutting;
         this.perform(
             num1dss,
             num2dss,
@@ -459,7 +514,7 @@ impl ApproxAFunction {
             two_d_tol,
             three_d_tol,
             func,
-            &cut,
+            cut_tool,
         );
         this
     }
@@ -598,7 +653,83 @@ impl ApproxAFunction {
                 self.knots = a_converter.knots_vec();
                 self.mults = a_converter.multiplicities_vec();
                 self.degree = a_converter.degree() as i32;
-                let dim_index = 0usize; // no 1D/2D subspaces stored
+                // OCCT L918: index = 0.
+                let mut index = 0usize;
+                // OCCT L919-884 (1D block): my1DPoles / my1DMaxError /
+                // my1DAverageError.
+                if self.num_sub_spaces[0] > 0 {
+                    let nss = self.num_sub_spaces[0] as usize;
+                    self.poles1d = vec![vec![0.0f64; nss]; nb_poles_rows];
+                    self.max_error_1d = vec![0.0f64; nss];
+                    self.average_error_1d = vec![0.0f64; nss];
+                    for ii in 0..nb_poles_rows {
+                        for jj in 0..nss {
+                            self.poles1d[ii][jj] = poles[ii * total_dimension + jj];
+                        }
+                    }
+                    for jj in 0..nss {
+                        let mut error_value = 0.0f64;
+                        for ii in 0..num_curves as usize {
+                            let local_index = ii * total_num_ss;
+                            error_value = error_max[local_index + jj].max(error_value);
+                        }
+                        self.max_error_1d[jj] = error_value;
+                    }
+                    for jj in 0..nss {
+                        let mut error_value = 0.0f64;
+                        for ii in 0..num_curves as usize {
+                            let local_index = ii * total_num_ss;
+                            error_value += average_error[local_index + jj];
+                        }
+                        error_value /= num_curves as f64;
+                        self.average_error_1d[jj] = error_value;
+                    }
+                    // OCCT L847: index += myNumSubSpaces[0].
+                    index += self.num_sub_spaces[0] as usize;
+                }
+
+                // OCCT L849: dim_index = index (for the case where there is no 2D).
+                let mut dim_index = index;
+
+                // OCCT L851-897 (2D block).
+                if self.num_sub_spaces[1] > 0 {
+                    let nss = self.num_sub_spaces[1] as usize;
+                    self.poles2d = vec![vec![0.0f64; nss * 2]; nb_poles_rows];
+                    self.max_error_2d = vec![0.0f64; nss];
+                    self.average_error_2d = vec![0.0f64; nss];
+                    for ii in 0..nb_poles_rows {
+                        for jj in 0..nss {
+                            let local_index = index + jj * 2;
+                            for kk in 0..2 {
+                                self.poles2d[ii][jj * 2 + kk] =
+                                    poles[ii * total_dimension + local_index + kk];
+                            }
+                        }
+                    }
+                    for jj in 0..nss {
+                        let mut error_value = 0.0f64;
+                        for ii in 0..num_curves as usize {
+                            let local_index = ii * total_num_ss + index;
+                            error_value = error_max[local_index + jj].max(error_value);
+                        }
+                        self.max_error_2d[jj] = error_value;
+                    }
+                    for jj in 0..nss {
+                        let mut error_value = 0.0f64;
+                        for ii in 0..num_curves as usize {
+                            let local_index = ii * total_num_ss + index;
+                            error_value += average_error[local_index + jj];
+                        }
+                        error_value /= num_curves as f64;
+                        self.average_error_2d[jj] = error_value;
+                    }
+                    // OCCT L895-897: index += myNumSubSpaces[1]; for poles the
+                    // offset must be doubled: dim_index = index + myNumSubSpaces[1].
+                    index += self.num_sub_spaces[1] as usize;
+                    dim_index = index + self.num_sub_spaces[1] as usize;
+                }
+
+                // OCCT L899-944 (3D block).
                 if self.num_sub_spaces[2] > 0 {
                     let nss = self.num_sub_spaces[2] as usize;
                     self.poles3d = vec![vec![0.0f64; nss * 3]; nb_poles_rows];
@@ -617,7 +748,7 @@ impl ApproxAFunction {
                     for jj in 0..nss {
                         let mut error_value = 0.0f64;
                         for ii in 0..num_curves as usize {
-                            let local_index = ii * total_num_ss;
+                            let local_index = ii * total_num_ss + index;
                             error_value = error_max[local_index + jj].max(error_value);
                         }
                         self.max_error_3d[jj] = error_value;
@@ -625,7 +756,7 @@ impl ApproxAFunction {
                     for jj in 0..nss {
                         let mut error_value = 0.0f64;
                         for ii in 0..num_curves as usize {
-                            let local_index = ii * total_num_ss;
+                            let local_index = ii * total_num_ss + index;
                             error_value += average_error[local_index + jj];
                         }
                         error_value /= num_curves as f64;
@@ -660,6 +791,22 @@ impl ApproxAFunction {
         0
     }
 
+    /// OCCT AdvApprox_ApproxAFunction::NumSubSpaces(D) — D in 1..=3:
+    /// NumSubSpaces(1) = myNumSubSpaces[0], (2) = [1], (3) = [2].
+    pub fn num_sub_spaces_of(&self, d: usize) -> usize {
+        match d {
+            1 => self.num_sub_spaces[0] as usize,
+            2 => self.num_sub_spaces[1] as usize,
+            3 => self.num_sub_spaces[2] as usize,
+            _ => panic!("Standard_OutOfRange: AdvApprox_ApproxAFunction::NumSubSpaces"),
+        }
+    }
+
+    /// OCCT AdvApprox_ApproxAFunction::NbKnots.
+    pub fn nb_knots(&self) -> usize {
+        self.mults.len()
+    }
+
     /// The 3D poles of subspace `index` (1-based) as a flat
     /// [pole][coord] array (row-major), matching OCCT Poles(Index, P).
     pub fn poles_flat(&self, index: usize) -> Vec<f64> {
@@ -667,6 +814,26 @@ impl ApproxAFunction {
         for (ii, row) in self.poles3d.iter().enumerate() {
             let o = (index - 1) * 3;
             out[ii * 3..ii * 3 + 3].copy_from_slice(&row[o..o + 3]);
+        }
+        out
+    }
+
+    /// The 1D poles of subspace `index` (1-based) as a flat [pole] array,
+    /// matching OCCT Poles1d(Index, P).
+    pub fn poles1d_flat(&self, index: usize) -> Vec<f64> {
+        self.poles1d
+            .iter()
+            .map(|row| row[index - 1])
+            .collect()
+    }
+
+    /// The 2D poles of subspace `index` (1-based) as a flat
+    /// [pole][coord] array (row-major), matching OCCT Poles2d(Index, P).
+    pub fn poles2d_flat(&self, index: usize) -> Vec<f64> {
+        let mut out = vec![0.0f64; self.poles2d.len() * 2];
+        for (ii, row) in self.poles2d.iter().enumerate() {
+            let o = (index - 1) * 2;
+            out[ii * 2..ii * 2 + 2].copy_from_slice(&row[o..o + 2]);
         }
         out
     }
@@ -686,17 +853,26 @@ impl ApproxAFunction {
         &self.mults
     }
 
-    /// OCCT AdvApprox_ApproxAFunction::MaxError(D, Index) — only the 3D
-    /// subspace is populated (D == 3).
+    /// OCCT AdvApprox_ApproxAFunction::MaxError(D, Index) — D selects the
+    /// subspace dimension (1 = 1D, 2 = 2D, 3 = 3D).
     pub fn max_error_at(&self, d: usize, index: usize) -> f64 {
-        assert!(d == 3, "AdvApprox: only 3D subspace errors are stored");
-        self.max_error_3d[index - 1]
+        match d {
+            1 => self.max_error_1d[index - 1],
+            2 => self.max_error_2d[index - 1],
+            3 => self.max_error_3d[index - 1],
+            _ => panic!("Standard_OutOfRange: AdvApprox_ApproxAFunction::MaxError"),
+        }
     }
 
-    /// OCCT AdvApprox_ApproxAFunction::AverageError(D, Index) — 3D subspace.
+    /// OCCT AdvApprox_ApproxAFunction::AverageError(D, Index) — D selects the
+    /// subspace dimension (1 = 1D, 2 = 2D, 3 = 3D).
     pub fn average_error_at(&self, d: usize, index: usize) -> f64 {
-        assert!(d == 3, "AdvApprox: only 3D subspace errors are stored");
-        self.average_error_3d[index - 1]
+        match d {
+            1 => self.average_error_1d[index - 1],
+            2 => self.average_error_2d[index - 1],
+            3 => self.average_error_3d[index - 1],
+            _ => panic!("Standard_OutOfRange: AdvApprox_ApproxAFunction::AverageError"),
+        }
     }
 
     /// The poles matrix row-major as (nb_poles x dimension) rows of xyz

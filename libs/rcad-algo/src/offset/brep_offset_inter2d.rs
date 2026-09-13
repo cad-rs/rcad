@@ -32,7 +32,10 @@
 //     (the incremental Add + BSplineCurve forms) — GAP carriers below.
 // 28. GeomProjLib::Curve2d(C, f, l, S) — GAP leaf (the
 //     loc_ope_wires_on_shape_b.rs precedent).
-// 29. GeomLib::BuildCurve3d — GAP leaf.
+// 29. GeomLib::BuildCurve3d — translated: the
+//     `geomalgo::geom_lib::build_curve3d` body over the kernel
+//     Adaptor3d_CurveOnSurface; the entry point below keeps the OCCT
+//     signature of this call site.
 // 30. GeomAPI_ProjectPointOnCurve — the real class (1:1 over the kernel
 //     Extrema_ExtPC translation) in its OCCT toolkit home,
 //     `crate::geomalgo::geom_api_project_point_on_curve`.
@@ -56,6 +59,7 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use indexmap::IndexMap;
+use rcad_kernel::base::proj_lib::adaptor::CurveOnSurface;
 use rcad_kernel::geom::{
     Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3, TrimmedCurve2,
 };
@@ -116,14 +120,35 @@ pub fn geom_proj_lib_curve2d(_the_c: &Curve3, _the_f: f64, _the_l: f64, _the_s: 
 }
 
 /// OCCT GeomLib::BuildCurve3d(Tol, ConS, f, l, C3d, MaxDeviation,
-/// AverageDeviation, Continuity, MaxDegree, MaxSegment) — GAP leaf
-/// (architecture difference #29).
+/// AverageDeviation, Continuity, MaxDegree, MaxSegment) (GeomLib.cxx
+/// L1051-1163) — the 1:1 body is `geomalgo::geom_lib::build_curve3d`; this is
+/// the OCCT-signature entry point of the BRepOffset_Inter2d.cxx L1514-1523
+/// call site (the `Adaptor3d_CurveOnSurface` form).
+#[allow(clippy::too_many_arguments)]
 pub fn geom_lib_build_curve3d(
-    _the_c3d: &mut Option<Curve3>,
-    _the_max_deviation: &mut f64,
-    _the_average_deviation: &mut f64,
+    the_tolerance: f64,
+    the_cons: &CurveOnSurface,
+    the_first: f64,
+    the_last: f64,
+    the_c3d: &mut Option<Curve3>,
+    the_max_deviation: &mut f64,
+    the_average_deviation: &mut f64,
+    the_continuity: rcad_kernel::math::GeomAbsShape,
+    the_max_degree: i32,
+    the_max_segment: i32,
 ) {
-    panic!("GAP: GeomLib::BuildCurve3d (TKTopAlgo/GeomLib not translated)");
+    crate::geomalgo::geom_lib::build_curve3d(
+        the_tolerance,
+        the_cons,
+        the_first,
+        the_last,
+        the_c3d,
+        the_max_deviation,
+        the_average_deviation,
+        the_continuity,
+        the_max_degree,
+        the_max_segment,
+    );
 }
 
 /// OCCT Geom2dConvert_CompCurveToBSplineCurve (TKGeomBase/Geom2dConvert) —
@@ -400,32 +425,10 @@ impl Default for BRepToolsWireExplorer {
     }
 }
 
-/// OCCT Adaptor3d_CurveOnSurface re-host — the (pcurve, surface) pair carried
-/// for evaluateMaxSegment / GeomLib::BuildCurve3d.
-pub struct Adaptor3dCurveOnSurface {
-    my_surface: Surface3,
-    my_curve: Curve2d,
-}
-
-impl Adaptor3dCurveOnSurface {
-    /// OCCT Adaptor3d_CurveOnSurface(HC2d, HSurf).
-    pub fn new(the_curve: &Curve2d, the_surface: &Surface3) -> Self {
-        Adaptor3dCurveOnSurface {
-            my_surface: the_surface.clone(),
-            my_curve: the_curve.clone(),
-        }
-    }
-
-    /// OCCT GetSurface().
-    pub fn get_surface(&self) -> &Surface3 {
-        &self.my_surface
-    }
-
-    /// OCCT GetCurve().
-    pub fn get_curve(&self) -> &Curve2d {
-        &self.my_curve
-    }
-}
+/// OCCT Adaptor3d_CurveOnSurface(HC2d, HSurf) (TKG3d) — the pcurve-on-surface
+/// adaptor consumed by evaluateMaxSegment / GeomLib::BuildCurve3d is the
+/// kernel `CurveOnSurface` (the real Adaptor3d_CurveOnSurface); the former
+/// local re-host was deleted (Rule 4).
 
 /// OCCT BRep_CurveRepresentation::Surface() (architecture difference #32):
 /// the rcad representation carries the face key (TShape pointer + location)
@@ -1539,22 +1542,28 @@ pub(super) fn ref_edge_inter(
 
 /// OCCT evaluateMaxSegment(aCurveOnSurface) (BRepOffset_Inter2d.cxx
 /// L1078-1096) — the MaxSegment to pass in approximation.
-pub(super) fn evaluate_max_segment(a_curve_on_surface: &Adaptor3dCurveOnSurface) -> i32 {
+pub(super) fn evaluate_max_segment(a_curve_on_surface: &CurveOnSurface) -> i32 {
+    use rcad_kernel::base::proj_lib::adaptor::Adaptor3dSurface;
+    use rcad_kernel::base::proj_lib::CurveType;
+
     let a_surf = a_curve_on_surface.get_surface();
     let a_curv2d = a_curve_on_surface.get_curve();
 
     // OCCT L1083-1089: the surface knot counts (the rcad expanded knot
     // vectors map to the distinct-knot count).
     let mut a_nb_s_knots = 0.0f64;
-    if let Surface3::BSpline(a_bspline) = a_surf {
+    if a_surf.get_type() == rcad_kernel::base::proj_lib::GeomAbsSurfaceType::BSplineSurface {
+        let a_bspline = a_surf.bspline();
         let nb_u = distinct_knots_1d(&a_bspline.knots_u) as f64;
         let nb_v = distinct_knots_1d(&a_bspline.knots_v) as f64;
         a_nb_s_knots = nb_u.max(nb_v);
     }
     // OCCT L1090-1093: the pcurve knot count.
     let mut a_nb_c2d_knots = 0.0f64;
-    if let Curve2d::BSpline(a_bspline) = a_curv2d {
-        a_nb_c2d_knots = distinct_knots_1d(&a_bspline.knots) as f64;
+    if a_curv2d.get_type() == CurveType::BSpline {
+        if let Some(a_bspline) = a_curv2d.bspline() {
+            a_nb_c2d_knots = distinct_knots_1d(&a_bspline.knots) as f64;
+        }
     }
     // OCCT L1094-1095.
     (30.0 + a_nb_s_knots.max(a_nb_c2d_knots)) as i32

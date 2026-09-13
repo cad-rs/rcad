@@ -4,6 +4,7 @@
 //! - `AdvApprox_EvaluatorFunction.hxx` -> [`EvaluatorFunction`] trait
 //! - `AdvApprox_Cutting.hxx` + `AdvApprox_DichoCutting` -> [`Cutting`] /
 //!   [`DichoCutting`]
+//! - `AdvApprox_PrefAndRec.cxx` -> [`PrefAndRec`]
 //! - `AdvApprox_SimpleApprox.cxx` -> [`SimpleApprox`]
 //! - `AdvApprox_ApproxAFunction.cxx` -> [`ApproxAFunction`] (including the
 //!   static `PrepareConvert` and `Approximation` routines)
@@ -16,11 +17,13 @@
 mod approx_a_function;
 mod cutting;
 mod evaluator_function;
+mod pref_and_rec;
 mod simple_approx;
 
 pub use approx_a_function::{approximation, ApproxAFunction};
 pub use cutting::{Cutting, DichoCutting};
 pub use evaluator_function::EvaluatorFunction;
+pub use pref_and_rec::PrefAndRec;
 pub use simple_approx::SimpleApprox;
 
 use super::GeomAbsShape;

@@ -1,6 +1,10 @@
 //! OCCT GeomLib statics (TKGeomBase/GeomLib) — the 1:1 translation of
 //! `GeomLib::ExtendCurveToPoint` (GeomLib.cxx L1269-1410) and of the file
-//! static `ComputeLambda` (GeomLib.cxx L126-253) that it calls.
+//! static `ComputeLambda` (GeomLib.cxx L126-253) that it calls, of
+//! `GeomLib::To3d` (GeomLib.cxx L559-675) and of the curve-on-surface
+//! approximation entry point `GeomLib::BuildCurve3d` (GeomLib.cxx L1051-1163)
+//! with its evaluator `GeomLib_CurveOnSurfaceEvaluator` (GeomLib.cxx
+//! L974-1050).
 //!
 //! `ExtendCurveToPoint(Curve, Point, Continuity, After)` extends the bounded
 //! curve to `Point` with a degree-(Continuity+2) Bezier segment built from
@@ -12,6 +16,15 @@
 //! instantiations, and `CurveEval::{point_at, derivative_at, derivative2_at,
 //! derivative3_at}` are the OCCT `Geom_Curve::D3(U, P, D1, D2, D3)` virtual
 //! dispatch.
+//!
+//! `BuildCurve3d` takes rcad's kernel `CurveOnSurface` (the real
+//! `Adaptor3d_CurveOnSurface`) as the input adaptor; the two OCCT down-casts
+//! to `GeomAdaptor_Surface` / `Geom2dAdaptor_Curve` ride the
+//! `kernel_surface` / `kernel_curve2d` bridges, and the null-handle outcome of
+//! a failed down-cast is their `None`.  The isoline branch
+//! (`isIsoLine` / `buildC3dOnIsoLine`) and the result builder
+//! (`GeomLib_MakeCurvefromApprox`) are the sibling translations
+//! `geomalgo::geom_lib_iso_line` / `geomalgo::geom_lib_make_curve_from_approx`.
 //!
 //! The re-used translations (outside this module's OCCT class):
 //! - `GeomConvert_CompCurveToBSplineCurve` (TKGeomBase/GeomConvert):
@@ -31,19 +44,27 @@
 //! linearly — the OCCT fallback (keep Lambda when no better extremum is
 //! found) is preserved.
 
+use std::sync::Arc;
+
 use glam::DVec3;
 use rcad_kernel::base::convert::ConvertParameterisation;
-use rcad_kernel::geom::{BezierCurve3, Curve3, CurveEval};
+use rcad_kernel::base::proj_lib::adaptor::{Adaptor3dCurve, Curve2dHandle, CurveOnSurface};
+use rcad_kernel::core::precision::p_confusion;
+use rcad_kernel::geom::{BezierCurve3, Curve2d, Curve3, CurveEval, Surface3};
+use rcad_kernel::math::adv_approx::{ApproxAFunction, EvaluatorFunction, PrefAndRec};
 use rcad_kernel::math::gauss_points::{gauss_points, gauss_weights};
 use rcad_kernel::math::math_matrix::{Matrix, Vector};
 use rcad_kernel::math::plib::{eval_polynomial_flat, no_derivative_eval_polynomial_flat};
 use rcad_kernel::math::root::function_all_roots::{
     FunctionAllRoots, FunctionSample, FunctionValue, FunctionWithDerivative,
 };
+use rcad_kernel::math::GeomAbsShape;
 use rcad_kernel::math::VecD;
 
 use crate::fillet::chfi3d_geom_lib::{plib_coefficients_poles_dim3, plib_hermite_coefficients};
 use crate::fillet::chfi3d_perform_elspine::GeomConvertCompCurveToBSplineCurve;
+use crate::geomalgo::geom_lib_iso_line::{build_c3d_on_iso_line, is_iso_line};
+use crate::geomalgo::geom_lib_make_curve_from_approx::GeomLibMakeCurvefromApprox;
 
 /// OCCT GeomLib_PolyFunc (GeomLib.hxx L54-90) — the polynomial whose roots
 /// the extremum refinement of ComputeLambda searches: the rcad
@@ -522,5 +543,232 @@ pub fn to_3d(position: &rcad_kernel::math::gp::Ax2, curve2d: &rcad_kernel::geom:
         C2d::Hyperbola(h) => Some(Curve3::Hyperbola(elclib_to3d_hyperbola(position, h))),
         // L672-674: throw Standard_NotImplemented().
         _ => panic!("Standard_NotImplemented: GeomLib::To3d (GeomLib.cxx L672-674)"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OCCT GeomLib_CurveOnSurfaceEvaluator (GeomLib.cxx L974-1050)
+// ---------------------------------------------------------------------------
+
+/// OCCT GeomLib_CurveOnSurfaceEvaluator (GeomLib.cxx L976-999) — the
+/// `AdvApprox_EvaluatorFunction` over an `Adaptor3d_CurveOnSurface` restricted
+/// to the current [First, Last].
+///
+/// The OCCT class holds `Adaptor3d_CurveOnSurface& CurveOnSurface` (a
+/// reference; the rcad translation keeps the same borrow) plus the cached
+/// `handle(Adaptor3d_Curve) TrimCurve` and the current `FirstParam` /
+/// `LastParam`.
+pub struct GeomLibCurveOnSurfaceEvaluator<'a> {
+    /// OCCT: Adaptor3d_CurveOnSurface& CurveOnSurface.
+    curve_on_surface: &'a CurveOnSurface,
+    /// OCCT: double FirstParam.
+    first_param: f64,
+    /// OCCT: double LastParam.
+    last_param: f64,
+    /// OCCT: handle(Adaptor3d_Curve) TrimCurve.
+    trim_curve: Option<Arc<dyn Adaptor3dCurve>>,
+}
+
+impl<'a> GeomLibCurveOnSurfaceEvaluator<'a> {
+    /// OCCT ctor (GeomLib.cxx L979-986).
+    pub fn new(curve_on_surface: &'a CurveOnSurface, the_first: f64, the_last: f64) -> Self {
+        GeomLibCurveOnSurfaceEvaluator {
+            curve_on_surface,
+            first_param: the_first,
+            last_param: the_last,
+            trim_curve: None,
+        }
+    }
+}
+
+impl EvaluatorFunction for GeomLibCurveOnSurfaceEvaluator<'_> {
+    /// OCCT GeomLib_CurveOnSurfaceEvaluator::Evaluate (GeomLib.cxx L1001-1050).
+    fn evaluate(
+        &mut self,
+        start_end: &[f64; 2],
+        parameter: f64,
+        derivative_request: i32,
+        result: &mut [f64],
+    ) -> i32 {
+        // Handle left / right positioning (cxx L1007-1014).
+        if start_end[0] != self.first_param || start_end[1] != self.last_param {
+            // OCCT: TrimCurve = CurveOnSurface.Trim(DebutFin[0], DebutFin[1],
+            // Precision::PConfusion()).
+            self.trim_curve = Some(self.curve_on_surface.trim(
+                start_end[0],
+                start_end[1],
+                p_confusion(),
+            ));
+            self.first_param = start_end[0];
+            self.last_param = start_end[1];
+        }
+
+        // Positioning (cxx L1016-1043).
+        let trim_curve = self.trim_curve.as_ref().expect(
+            "Standard_NullObject: GeomLib_CurveOnSurfaceEvaluator TrimCurve",
+        );
+        if derivative_request == 0 {
+            let point = trim_curve.value(parameter);
+            for ii in 0..3 {
+                result[ii] = point[ii];
+            }
+        }
+        if derivative_request == 1 {
+            let (_point, vector) = trim_curve.d1(parameter);
+            for ii in 0..3 {
+                result[ii] = vector[ii];
+            }
+        }
+        if derivative_request == 2 {
+            // OCCT: TrimCurve->D2((*Parameter), Point, VecBis, Vector) — the
+            // second derivative argument order of Adaptor3d_Curve::D2.
+            let (_point, _vec_bis, vector) = trim_curve.d2(parameter);
+            for ii in 0..3 {
+                result[ii] = vector[ii];
+            }
+        }
+        // ReturnCode[0] = 0 (cxx L1045).
+        0
+    }
+}
+
+/// OCCT GeomLib::BuildCurve3d(Tolerance, Curve, FirstParameter, LastParameter,
+/// NewCurvePtr, MaxDeviation, AverageDeviation, Continuity, MaxDegree,
+/// MaxSegment) (GeomLib.cxx L1051-1163).
+///
+/// `Curve` is rcad's kernel `CurveOnSurface` — the real
+/// `Adaptor3d_CurveOnSurface`.  `new_curve_ptr` is the OCCT `NewCurvePtr`
+/// out-parameter: a null handle on every OCCT failure path (the failed
+/// down-casts, the failed isoline construction, and the no-result
+/// approximation).
+#[allow(clippy::too_many_arguments)]
+pub fn build_curve3d(
+    tolerance: f64,
+    curve: &CurveOnSurface,
+    first_parameter: f64,
+    last_parameter: f64,
+    new_curve_ptr: &mut Option<Curve3>,
+    max_deviation: &mut f64,
+    average_deviation: &mut f64,
+    continuity: GeomAbsShape,
+    max_degree: i32,
+    max_segment: i32,
+) {
+    // OCCT L1064-1065.
+    *max_deviation = 0.0e0;
+    *average_deviation = 0.0e0;
+
+    // OCCT L1066-1070: the two down-casts.  The rcad bridges model the OCCT
+    // null-handle outcome of a failed down-cast as `None`.
+    let geom_adaptor_surface_ptr: Option<&Surface3> = curve.get_surface().kernel_surface();
+    let geom_adaptor_curve_ptr: Option<&Curve2d> = curve.get_curve().kernel_curve2d();
+
+    if let (Some(geom2d_curve), Some(geom_surface)) =
+        (geom_adaptor_curve_ptr, geom_adaptor_surface_ptr)
+    {
+        // OCCT L1076-1090: the Geom_RectangularTrimmedSurface unwrap and the
+        // Geom_Plane detection.
+        let p: Option<&rcad_kernel::geom::Plane> = match geom_surface {
+            Surface3::Trimmed(rt) => match rt.basis.as_ref() {
+                Surface3::Plane(a_plane) => Some(a_plane),
+                _ => None,
+            },
+            Surface3::Plane(a_plane) => Some(a_plane),
+            _ => None,
+        };
+
+        if let Some(a_plane) = p {
+            // OCCT L1094-1098: compute the 3d curve.
+            let axes = rcad_kernel::math::gp::Ax2::new(
+                a_plane.origin,
+                a_plane.normal,
+                a_plane.u_dir,
+            );
+            *new_curve_ptr = to_3d(&axes, geom2d_curve);
+            return;
+        }
+
+        // OCCT L1100-1101: TrimmedC2D = geom_adaptor_curve_ptr->Trim(
+        // FirstParameter, LastParameter, Precision::PConfusion()).
+        let trimmed_c2d: Curve2dHandle =
+            curve
+                .get_curve()
+                .trim(first_parameter, last_parameter, p_confusion());
+
+        let mut is_u = false;
+        let mut a_param = 0.0f64;
+        let mut is_forward = false;
+        if is_iso_line(trimmed_c2d.as_ref(), &mut is_u, &mut a_param, &mut is_forward) {
+            // OCCT L1105-1113: NewCurvePtr = buildC3dOnIsoLine(TrimmedC2D,
+            // geom_adaptor_surface_ptr, FirstParameter, LastParameter,
+            // Tolerance, isU, aParam, isForward).
+            let built = build_c3d_on_iso_line(
+                trimmed_c2d.as_ref(),
+                curve.get_surface().as_ref(),
+                first_parameter,
+                last_parameter,
+                tolerance,
+                is_u,
+                a_param,
+                is_forward,
+            );
+            if let Some(a_c3d) = built {
+                *new_curve_ptr = Some(a_c3d);
+                return;
+            }
+        }
+    }
+
+    //
+    // Entree
+    //
+    // OCCT L1118-1121: Tolerance1DPtr / Tolerance2DPtr stay null, Tolerance3DPtr
+    // is the single 3D tolerance.
+    let tolerance3d: Vec<f64> = vec![tolerance];
+
+    // Search for discontinuities (OCCT L1123-1130).
+    let _nb_interval_c2 = curve.nb_intervals(GeomAbsShape::C2);
+    let param_de_decoupe_c2: Vec<f64> = curve.intervals(GeomAbsShape::C2);
+
+    let _nb_interval_c3 = curve.nb_intervals(GeomAbsShape::C3);
+    let param_de_decoupe_c3: Vec<f64> = curve.intervals(GeomAbsShape::C3);
+
+    // Note extension of the parametric range.
+    // To force Trim on first evaluator call.
+    // OCCT L1132-1134.
+    let mut ev = GeomLibCurveOnSurfaceEvaluator::new(
+        curve,
+        first_parameter - 1.0,
+        last_parameter + 1.0,
+    );
+
+    // Approximation with preferential cutting (OCCT L1136-1149).
+    let preferentiel =
+        PrefAndRec::with_default_weight(&param_de_decoupe_c2, &param_de_decoupe_c3);
+    let an_approximator = ApproxAFunction::with_cut_tool(
+        0,
+        0,
+        1,
+        None,
+        None,
+        Some(&tolerance3d),
+        first_parameter,
+        last_parameter,
+        continuity,
+        max_degree,
+        max_segment,
+        &mut ev,
+        &preferentiel,
+    );
+
+    if an_approximator.has_result() {
+        // OCCT L1153-1161.
+        let a_curve_builder = GeomLibMakeCurvefromApprox::new(&an_approximator);
+
+        let a_curve_ptr = a_curve_builder.curve(1);
+        // Return the approximation results.
+        *max_deviation = an_approximator.max_error_at(3, 1);
+        *average_deviation = an_approximator.average_error_at(3, 1);
+        *new_curve_ptr = a_curve_ptr.map(Curve3::BSpline);
     }
 }
