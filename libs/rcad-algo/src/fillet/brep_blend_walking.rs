@@ -140,7 +140,10 @@ impl<'a> BRepBlendWalking<'a> {
             let mut ii = 1usize;
             while ii <= self.jalons.len() && tp > ti {
                 jj = ii;
-                ti = self.jalons[jj].parameter();
+                // OCCT L160: ti = jalons.Value(jj).Parameter() — jj is the
+                // NCollection_Sequence 1-based index, so the rcad Vec read is
+                // jj - 1 (the guard keeps jj <= Length()).
+                ti = self.jalons[jj - 1].parameter();
                 ii += 1;
             }
             if tp > ti {

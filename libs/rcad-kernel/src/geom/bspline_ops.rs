@@ -326,11 +326,23 @@ impl BSplineCurve3 {
                 let wg_ii_index = wg[ii_index];
                 let wg_ii_minus = wg[ii_minus];
                 let inverse = 1.0 / (fk[ii + degree] - fk[ii]);
-                let lower = (ii - deg1).max(0);
-                let upper = (deg2 + ii).min(num_poles);
+                // OCCT L4481-4490: Standard_Integer lower = ii - Deg1;
+                // if (lower < 0) lower = 0; upper = Deg2 + ii;
+                // if (upper > num_poles) upper = num_poles.  The intermediate
+                // `ii - Deg1` is deliberately signed and may be negative
+                // before the clamp, so the subtraction is carried in i32 (the
+                // OCCT Standard_Integer); a usize intermediate would underflow.
+                let mut lower = ii as i32 - deg1 as i32;
+                if lower < 0 {
+                    lower = 0;
+                }
+                let mut upper = deg2 as i32 + ii as i32;
+                if upper > num_poles as i32 {
+                    upper = num_poles as i32;
+                }
 
                 for jj in lower..upper {
-                    let jj_index = jj % num_poles_occt;
+                    let jj_index = (jj % num_poles_occt as i32) as usize;
                     let mut value = 0.0f64;
                     for kk in 0..3 {
                         let pa_jj = self.control_points[jj_index][kk];
