@@ -44,6 +44,7 @@ use std::sync::Arc;
 
 use glam::{DAffine3, DVec2, DVec3};
 
+use rcad_kernel::core::precision::is_infinite_value;
 use rcad_kernel::geom::{Curve2d, Curve2dEval as _, CurveEval as _, Line2d};
 use rcad_kernel::topods::{BRep, BRepTool as _, Orientation, Shape, ShapeType, State, TShape};
 
@@ -1311,22 +1312,43 @@ pub(crate) fn fc2d_curve_on_surface(
     c2d.map(|c2d| (c2d, f2, l2, tolpc))
 }
 
-/// OCCT BB.UpdateEdge(E, C2D, F, tol) (BRep_Builder.cxx L1133-1173) — the
-/// pcurve is stored under the face-key the kernel pcurve map uses; the
-/// edge tolerance is raised to `tol` (the UpdateEdge max-tolerance rule).
+/// OCCT BB.UpdateEdge(E, C2D, F, tol) (BRep_Builder.lxx L92-98 ->
+/// BRep_Builder.cxx L655-672 `UpdateEdge(E, C, S, L, Tol)` ->
+/// BRep_Builder.cxx UpdateCurves L104-167) — the pcurve is stored under
+/// the face-key the kernel pcurve map uses; the edge tolerance is raised
+/// to `tol` (the UpdateEdge max-tolerance rule).
+///
+/// The stored range follows UpdateCurves' two-step rule: the representation
+/// is seeded from the 2D curve's own range (L151-153, the
+/// `new BRep_CurveOnSurface(C, S, L)` constructor -> `COS->Range(aFCur,
+/// aLCur)`) and is then OVERWRITTEN by the range of the edge's
+/// Curve3D representation whenever that range is finite (L116-129
+/// `GC->Range(f, l)` on the IsCurve3D entry with the L112
+/// `-/+Precision::Infinite()` seed, then L154-162
+/// `if (!Precision::IsInfinite(f)) aFCur = f;`).  The OCCT overload carries
+/// no f/l arguments — the `f2`/`l2` out-parameters of FC2D_CurveOnSurface
+/// feed only the caller's own probes (WireEdgeClassifier.cxx ResetElement
+/// L449-451 / CompareElement L490-492), never the UpdateEdge call.
 pub(crate) fn bb_update_edge_pcurve(
     brep: &mut BRep,
     e: &Shape,
     f: &Shape,
     c2d: &Curve2d,
-    f2: f64,
-    l2: f64,
     tol: f64,
 ) {
     let key_loc = brep.compose_pcurve_location(f.location, e.location);
     let key = (f.ptr_id(), key_loc);
     let ed = brep.edge_mut_inplace(e.clone());
-    ed.pcurves.insert(key, (c2d.clone(), f2, l2));
+    let [mut a_f, mut a_l] = c2d.default_domain();
+    if ed.curve.is_some() {
+        if !is_infinite_value(ed.range[0]) {
+            a_f = ed.range[0];
+        }
+        if !is_infinite_value(ed.range[1]) {
+            a_l = ed.range[1];
+        }
+    }
+    ed.pcurves.insert(key, (c2d.clone(), a_f, a_l));
     if ed.tolerance < tol {
         ed.tolerance = tol;
     }
@@ -1543,9 +1565,10 @@ impl<'a> WireEdgeClassifier<'a> {
                 // WireEdgeClassifier.cxx L195-203: C2D =
                 // FC2D_CurveOnSurface(E, F, f, l, tolpc); if (!C2D.IsNull())
                 // BB.UpdateEdge(E, C2D, F, max(tolpc, tolE)).
-                if let Some((c2d, f2, l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f1_shape, false) {
+                if let Some((c2d, _f2, _l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f1_shape, false)
+                {
                     let tol = tolpc.max(tol_e);
-                    bb_update_edge_pcurve(brep, &e, &f, &c2d, f2, l2, tol);
+                    bb_update_edge_pcurve(brep, &e, &f, &c2d, tol);
                 }
             }
             // BB.Add(W, E).
@@ -1724,10 +1747,10 @@ impl<'a> WireEdgeClassifier<'a> {
         if !haspc {
             // jyl980406+
             // bool trim3d = true; C2D = FC2D_CurveOnSurface(E,F,f2,l2,tolpc,trim3d);
-            if let Some((c2d, f2, l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f, true) {
+            if let Some((c2d, _f2, _l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f, true) {
                 let tol_e = brep.tolerance(&e); // jyl980406+
                 let tol = tol_e.max(tolpc); // jyl980406+
-                bb_update_edge_pcurve(brep, &e, &f, &c2d, f2, l2, tol); // jyl980406+
+                bb_update_edge_pcurve(brep, &e, &f, &c2d, tol); // jyl980406+
             }
         }
 
@@ -1756,10 +1779,10 @@ impl<'a> WireEdgeClassifier<'a> {
         let haspc = fc2d_has_curve_on_surface(brep, &e, &f); // jyl980402+
         if !haspc {
             // jyl980402+
-            if let Some((c2d, f2, l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f, true) {
+            if let Some((c2d, _f2, _l2, tolpc)) = fc2d_curve_on_surface(brep, &e, &f, true) {
                 let tol_e = brep.tolerance(&e); // jyl980402+
                 let tol = tol_e.max(tolpc); // jyl980402+
-                bb_update_edge_pcurve(brep, &e, &f, &c2d, f2, l2, tol); // jyl980402+
+                bb_update_edge_pcurve(brep, &e, &f, &c2d, tol); // jyl980402+
             }
         }
 
