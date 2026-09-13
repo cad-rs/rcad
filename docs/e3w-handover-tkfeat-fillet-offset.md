@@ -9,10 +9,10 @@
 > **★ 本轮有三条"旧笔记/旧注释会过期"的硬教训**（坑 28/29/30）：**同一 helper 行号会掩盖层推进（必须看 backtrace）**、**旧笔记的"架构难点"要回查 OCCT 基类**、**`GetType()` 常量返回决定分支**。
 > （前三轮：**追加 18** = 翻译补全轮（五处真身 + 三处重复删除 + `int` 数据模型对齐）；**追加 17** = D3 结案 + `featrf_a1` init 首次通过；**追加 16** = 0a 收尾 / a1 拓扑全等 / TKOffset 定界。）
 
-## 0. 新 session 一句话提示词（直接粘贴 —— 追加 19 收尾态，2026-09-13）
+## 0. 新 session 一句话提示词（直接粘贴 —— 追加 20 收尾态，2026-09-13）
 
 > 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 坑清单）
-> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–19（权威脉络，**追加 19 是当前状态**）；
+> 与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–20（权威脉络，**追加 20 是当前状态**）；
 > 先 `cd rcad` 跑 6 条门槛确认 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests`（**重编 exe，否则八网格会拿旧产物误判**）
 > 后 `bash output/run_eight_grids.sh` 确认**八网格 8/8**；
@@ -26,11 +26,11 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0 当前状态速览（追加 19 收尾，2026-09-13；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `e841e805`）/ 根仓库指针 = 本文件所在提交，**均已推送**）
+### 0.0 当前状态速览（追加 20 收尾，2026-09-13；**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log -1 --oneline` 即得；写就时基线为 `745a63aa`）/ 根仓库指针 = 本文件所在提交，**均已推送**）
 
 - **门槛与网格**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，**重编 exe 后**实测）。域网格**逐格通过数不变**：`fillet2d_fillet2d` 10/10 · `fillet2d_chamfer2d` 2/2 · `mkface_after_offset` 4/4 · `mkface_after_extsurf_and_offset` 32/32 · `feat_featlf` 0/15 · `feat_featprism` 0/6 · `feat_featrevol` **1/45**（a5）· `feat_featrf` 0/5 · `blend_simple` 0/11 · `blend_complex` 0/2 · `offset_shape_type_a/_i` 0/1 · 0/12 · `offset_faces_type_i` 0/8 · `draft_angle` 0/49 · `thrusection_specific` 0/26。
 - **★ 工作模式（用户指令，追加 18 起生效）**：**先完成代码的等价实现（近乎 1:1 的翻译），代码基本译完再开始调试/修测试**。⇒ 队列里**先取"翻译/接线"项**，取"调试/定界"项前先确认没有未译的 body 挡在前面。
-- **本轮已落地（4 批，见 §0.7）**：geomplate 的 ProjLib 三处接线（`d7beea3c`）· 池外 `BRep_Tool::Curve`（`830eb2c2`）· `GeomLib::BuildCurve3d` 家族 + 四处载体收敛（`e841e805`）· **池外读取续链收敛（`fe297616`：`offset_shape_type_i` 池外 panic 清零）**。
+- **本轮已落地（7 批，见 §0.7）**：geomplate 的 ProjLib 三处接线 · 池外 `BRep_Tool::Curve` · `GeomLib::BuildCurve3d` 家族 · 池外读取续链 · blend 侧两处字面翻译 · **`BRepTools_Modifier` 家族（未接线）** · **`Geom_Surface::UIso/VIso` 唯一真身**。
 - **★ 域网格实测失败地图（下一轮的对照基线；口径 = 逐例 file:line）**：
   - `offset_shape_type_i`：a1/a2 → `brep_offset_inter2d.rs:1060`（`EdgeInter: E2 carries no pcurve`，OCCT 同处也 raise ⇒ **状态**）；**a3/a4/d2/d3 → 已离开库内，落到测试断言（310/422/534/646）** —— 批次 2 + 补记 1 的直接收益，**该网格池外 panic 已清零**；e1/e2/e3/e4/e6/e7 → 测试断言（758/870/948/1060/1171/1283）。
   - `offset_shape_type_a`：a4 → `brep_algo/image.rs:159`（本轮由 `brep_offset_make_offset_c.rs:52` 推到这里）。
@@ -47,13 +47,19 @@
     ⇒ **报地图要连跑 ≥3 次、报集合与分裂比例**；**归因必须换树复测**；并**新立卡**：核对 offset/几何管线的容器选用与遍历序（这是**潜在的行为差异**，不只是报数问题）。
 - **三域下一步（详见 §4.6）**：**TKOffset** = ① 池外读取**续链**（`check_same_range` / `gcurve_range` / `brep_tool_curve_on_surface_index` / `brep_tool_range_on_surface` / `brep_tool_degenerated` / `brep_tool_tolerance` 收敛到受守卫的 edge-data 读取；**写回侧池外无池可变，需另法，勿硬凑**）→ ② `BRepTools_Quilt`/`FaceRestrictor` **产物入池**（根；入池后整条池读链一次解开，且拓扑计数随之正确；**牵涉拓扑计数 ⇒ 全套复测**）；**TKFillet** = 接力项 A 的"无界 pcurve 附着点"（a1 面积 −2e100 的门，本轮未触及）+ blend a2/p8/p9 的新墙（状态类）；**TKFeat** = `LocOpe_Generator::Perform` 的 `IsDone`（a1 粘合路径下一墙）。
 
-### 0.7 追加 19 本轮落地（**翻译/接线轮**，2026-09-13；五批，rcad 提交链见 §3）
+### 0.7 追加 19–20 本轮落地（**翻译/接线轮**，2026-09-13；七批，rcad 提交链见 §3）
 
-| 批次 | 提交 | 内容 | 实测（失败层深度） |
-|------|------|------|--------------------|
-| 1 | `d7beea3c` | **`ProjLib_HCompProjectedCurve` 在 `GeomPlate_BuildPlateSurface` 三处接线**（metrics 比较 cxx L1746-1802 / ProjectCurve L254-303 / ProjectedCurve L307-349）——真身与 `Adaptor3d_CurveOnSurface` 真身早已在库 | `blend_simple` **a2/p8/p9** 由 GAP panic 推进到 `proj_lib_h_comp_projected_curve.rs:449` |
+> **★ 追加 20 收尾态 = 当前状态**（并行轮）：批次 A `BRepTools_Modifier` 家族落地（`a1490588`，**消费者未接线**）、
+> 批次 B `Geom_Surface::UIso/VIso` 合成唯一真身 + 关掉 `Approx_CurveOnSurface` 的两个 GAP（`745a63aa`）；
+> 并把"哈希序"从**疑似行为差异**降级为**已量化的报告假象**（11 网格 × 3 次连跑 172 例中仅 1 例失败点不稳定；48 个全绿在域用例 × 5 次零抖动）。
+
+| 批次 | 提交 | 内容 | 实测 |
+|------|------|------|------|
+| **A（追加 20）** | `a1490588` | **`BRepTools_Modifier` + `BRepTools_Modification` 1:1 翻译**（新 `topalgo/brep_tools_modification.rs` + `brep_tools_modifier.rs`，共 ~2,170 行；**不接线消费者**） | 无在役消费者 ⇒ 无可观测变化属预期；六个 GAP 载体已清点待接线 |
+| **B（追加 20）** | `745a63aa` | **`Geom_Surface::UIso/VIso` 八臂并集唯一真身**（新 `geomalgo/geom_surface_iso.rs`）+ 关掉 `approx_curve_on_surface.rs` 的 `AdvApprox_PrefAndRec` / 1D 子空间 GAP | 域网格**逐例失败地图与基线逐字节相同**（无回退）；顺带修一处保真缺陷（Sphere UIso 缺 `Geom_TrimmedCurve` 包装） |
+| 1（追加 19） | `d7beea3c` | **`ProjLib_HCompProjectedCurve` 在 `GeomPlate_BuildPlateSurface` 三处接线**（metrics 比较 cxx L1746-1802 / ProjectCurve L254-303 / ProjectedCurve L307-349）——真身与 `Adaptor3d_CurveOnSurface` 真身早已在库 | `blend_simple` **a2/p8/p9** 由 GAP panic 推进到 `proj_lib_h_comp_projected_curve.rs:449` |
 | 2 | `830eb2c2` | **池外 `BRep_Tool::Curve`**：`topods.rs` 新增 `curve_pool_free`（OCCT **BRep_Tool.cxx L172-196**）+ `shape_is_in_pool`；`build_curves3d.rs::brep_tool_curve` 与 `topexp.rs::{brep_tool_curve_loc,brep_tool_range}` 按守卫分流 | `offset_shape_type_i` **a3/a4/d2/d3** 由 `brep_tool_curve` 内推进到 `BRepLib::check_same_range`（backtrace 取证） |
-| 3 | `e841e805` | **`GeomLib::BuildCurve3d` 家族 1:1**（新增 `AdvApprox_PrefAndRec`、`ApproxAFunction::with_cut_tool` + 子空间存储、`kernel_curve2d` 桥、`GeomLib_CurveOnSurfaceEvaluator`、`build_curve3d`、`isIsoLine`/`buildC3dOnIsoLine`、`GeomLib_MakeCurvefromApprox`）+ **四处 GAP 载体收敛** | `offset_shape_type_a` **a4** 推进到 `brep_algo/image.rs:159`；`draft_angle` 库内 panic **25 → 20** |
+| 3 | `e841e805` | **`GeomLib::BuildCurve3d` 家族 1:1**（新增 `ApproxAFunction::with_cut_tool` + 子空间存储、`kernel_curve2d` 桥、`GeomLib_CurveOnSurfaceEvaluator`、`build_curve3d`、`isIsoLine`/`buildC3dOnIsoLine`、`GeomLib_MakeCurvefromApprox`）+ **四处 GAP 载体收敛** | `offset_shape_type_a` **a4** 推进到 `brep_algo/image.rs:159`（⚠ 该例失败点不稳定，见坑 33）；`draft_angle` **零影响**（旧记"25 → 20"已撤销，正确数字 = **28**，见补记 3） |
 | 4 | `fe297616` | **池外读取续链**：kernel `edge_data_pool_free` + `build_curves3d.rs::edge_data` 守卫访问器，该链上**十处**池索引读（`check_same_range`/`same_range`/`gcurve_range` + 四个 `brep_tool_*` re-host）全部收敛 | `offset_shape_type_i` **a3/a4/d2/d3 离开库内**（→ 测试断言 310/422/534/646）⇒ **该网格池外 panic 清零** |
 | 5 | `d7587fdb` | **blend 侧两处字面翻译缺陷**：`bsplclib_resolution` 的有符号 `ii - Deg1` clamp（OCCT `BSplCLib.cxx` L4481-4490，原 usize 下溢）+ `add_singular_point` 的 **1-based `jalons.Value(jj)`** 读取（OCCT `BRepBlend_Walking.cxx` L160，原越界） | `blend_simple` **q4/q7 双双深入两层**并与 a3/a4 **汇合到 `chfi3d_builder_2b.rs:583`** |
 
@@ -254,9 +260,19 @@ done
 ```
 （`PASS = 恒过的 geometry_loads 占位数`；**FAIL 才是真实断言失败数**。）
 
-## 3. 提交链与落地内容（**七轮**：追加 13 / 14 / 15 / 16 / 17 / 18 / **追加 19 = 本轮**）
+## 3. 提交链与落地内容（**八轮**：追加 13 / 14 / 15 / 16 / 17 / 18 / 19 / **追加 20 = 本轮**）
 
-**追加 19（本轮，2026-09-13；rcad `main` 顶尖 `d7587fdb`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
+**追加 20（本轮，2026-09-13；rcad `main` 顶尖 `745a63aa`，根 `main` 顶尖 = 本文件所在指针 sync，均已推送）**
+— rcad `main`（自上而下 = 新到旧）：
+`745a63aa`（**核心 B**：`Geom_Surface::UIso/VIso` 八臂并集唯一真身 `geomalgo/geom_surface_iso.rs` + 关掉 `approx_curve_on_surface.rs` 的 `AdvApprox_PrefAndRec` / 1D 子空间 GAP）
+← `a1490588`（**核心 A**：`BRepTools_Modifier` + `BRepTools_Modification` 1:1 翻译，~2,170 行，**消费者未接线**）
+← `11027474`（= 追加 19 链尾）。
+根 `main`：本轮 pointer sync（`rcad` 指针 → `745a63aa`）← `9190c73` ← `e61aafd`（追加 19）。
+**本轮验证（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（**重编 exe 后**）；
+**域网格逐例失败地图与追加 19 基线逐字节相同**（唯一差异是那 1 例已知不稳定）⇒ 两批**无失败层回退**；探针 = 0。
+**★ 本轮最重要产出**：把"哈希序"**量化**（172 失败例 ×3 次连跑中仅 1 例失败点不稳定；48 个全绿在域用例 ×5 次零抖动）⇒ **降级为潜在隐患，不做重构**（见坑 33 与本轮正文）。
+
+**追加 19（上一轮，2026-09-13；rcad `main` 顶尖 `11027474`，根 `main` 顶尖 `9190c73`，均已推送）**
 — rcad `main`（自上而下 = 新到旧）：
 `d7587fdb`（**核心 5**：blend 侧两处字面翻译缺陷 —— `bsplclib_resolution` 的有符号 `ii - Deg1` clamp（OCCT `BSplCLib.cxx` L4481-4490）+ `add_singular_point` 的 1-based `jalons.Value(jj)` 读取（OCCT `BRepBlend_Walking.cxx` L160））
 ← `ab0f7c9f`（docs：追加 19 补记 1）
@@ -475,9 +491,11 @@ RibSlot/Form 链，profile 修好后它们的失败点也随之下移。
 3. **TKFeat 第 0 项**：`LocOpe_Generator::Perform` 的 `IsDone`（a1 的直接下一墙，见下）。
 4. **TKFillet 接力项 A**：`blend_simple_a1` 的**无界 pcurve 附着点**（面积 −2e100 的门）；本轮未触及，仍是 TKFillet 唯一"翻译/定界缺口"。
 5. **调试类（按用户口径排在翻译/接线项之后）**：blend a2/p8/p9 的 `D0` 域错误；`offset_shape_type_i` a1/a2 的 `EdgeInter: E2 carries no pcurve`；`draft_angle` 的 28 例库内 panic（**在追加 18 收尾树上同样存在**，同 OCCT 亦 raise 的状态类）。
-6. **★ 新立卡（潜在行为差异，优先级高；见坑 33）**：**核对 offset/几何管线的容器选用与遍历序** —— rcad 大量遍历 `HashMap`/`HashSet`（每进程随机哈希序），而 OCCT 的 `NCollection_Sequence`/`IndexedDataMap`/`DataMap` 是**插入序确定**的。
-   凡"多解/多候选取第一个"的路径都可能**随进程漂移**（本轮 `offset_shape_type_a` a4 的失败点 3:2 分裂只是其可观测症状）。做法：先按 OCCT 的容器类型逐点核对，再决定换有序容器或按插入序快照。
-7. **★ 新立卡（重复实现，尚未动手；见 §7 表）**：`Geom_Surface::UIso/VIso` 在 OCCT 是**单一虚函数**，而 rcad 有**两份不完整的翻译**（`approx_curve_on_surface.rs` 与 `geom_lib_iso_line.rs`，各缺对方有的臂）⇒ 应合成一份**含并集**的真身再各自委托。
+6. **★ 接线 `BRepTools_Modifier` 的六个消费者（追加 20 批次 A 的下一半；纯接线、收益直接）**：真身已在 `topalgo/brep_tools_modifier.rs` + `brep_tools_modification.rs`。
+   待收敛的 GAP 载体：`feat/loc_ope_prism.rs:93,99`（featprism）、`offset/brep_offset_api_draft_angle.rs:83,94`（`draft_angle` 的 3 例库内 panic 之一）、`offset/brep_offset_make_simple_offset.rs:180,191`。
+   ⚠ 消费者分布在 `feat/**`、`offset/**`、`brep_fill/**` **三个域** ⇒ **按域分批 + 每批跑该域网格**；`TrsfModification::NewCurve2d` 的 `|scale| != 1` 分支与网格分支仍是真缺口（先别当接线做）。
+7. **★ 补 `Geom_Surface::UIso/VIso` 的 `Bezier` / `Offset` / `LinearExtrusion` 三臂**（OCCT 确有其 override ⇒ 真缺口；三臂之外的面型是 rcad 独有变体、OCCT 无对应）。另：`geom_convert_curve_to_bspline` 的两份重复应收敛（`GeomConvert::CurveToBSplineCurve` 只有一个 OCCT 实现）。
+8. **哈希序（已降级，见坑 33）**：**不是**高优先级行为差异；只按热点核对，不搞全局容器替换。
 
 **TKFeat（`feat/**` + `topalgo/int_curves_face_intersector.rs`）**
 0. **★ 第 0 项（最急，a1 的直接下一墙，已定界到函数）**：**`LocOpe_Generator::Perform` 的 `IsDone`**（`feat/loc_ope_generator.rs` / `loc_ope_generator_b.rs`）。
@@ -736,8 +754,11 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
     **做法**：① 失败地图**连跑 ≥3 次**，出现过多个点就报**集合** + 分裂比例，不要报单点；
     ②**归因必须换树复测**（`git checkout -b tmp <上一轮 tip>` → 根仓库重编 → 跑同一张图 → `git checkout main` + 删分支），
     不能拿两次单跑的差异当因果；③ 同树复跑成本≈0，**没有任何理由省这一步**；
-    ④ **新增待立卡（潜在行为差异，不只是报数问题）**：核对 offset/几何管线里的容器选用与遍历序（至少 `encode_regularity` 的形状集合、
-    `brep_algo/image.rs`），凡 OCCT 用插入序容器的地方，rcad 不能落在哈希序上。
+    ④ **★ 已量化（追加 20 收尾，据此降级）**：对 **11 个域网格 × 3 次连跑 = 172 个失败用例**统计"逐例失败点集合"，**只有 1 例**
+    （`offset_shape_type_a` 的 a4）出现过两个失败点，**其余 171 例三次完全一致**；且 **4 个在域全绿网格的 48 例 × 5 次连跑零抖动**、
+    八网格 ~8 次全跑计数一致。⇒ **哈希序今天只表现为"某一例先报哪个失败点"，没有任何证据表明它改变过**结果**。**
+    **它是潜在隐患（OCCT 用插入序容器，长期值得对齐），但不是"高优先级行为差异"，更不要为此做大规模容器替换重构**——
+    先按 OCCT 的容器类型在**具体热点**上核对，不搞全局换代。
 
 ## 7. 资产位置（本轮新增/更新）
 
@@ -745,8 +766,11 @@ OCCT_SRC="C:/Users/lilu/works/OCCT" cargo run -q -p occt-test-gen -- --batch-boo
 |------|------|
 | **追加 19 新增**：`ProjLib_HCompProjectedCurve` 三处接线（metrics 比较 / ProjectCurve / ProjectedCurve） | `libs/rcad-algo/src/geomalgo/geomplate/build_plate_surface.rs`（metrics / 非线性回退）+ `build_plate_surface_b.rs::{project_curve, projected_curve}`；真身 `geomalgo/proj_lib_h_comp_projected_curve.rs` + kernel `base/proj_lib/adaptor.rs::CurveOnSurface` |
 | **追加 19 新增**：池外 `BRep_Tool::Curve`（`curve_pool_free` + `shape_is_in_pool`）与**续链** `edge_data_pool_free` | `libs/rcad-kernel/src/topo/topods.rs`（紧随 `curve_on_surface_pool_free`）；消费点 `topalgo/brep_lib/build_curves3d.rs::{brep_tool_curve, edge_data}`、`shhealing/shape_upgrade/unify_same_domain/topexp.rs::{brep_tool_curve_loc, brep_tool_range}` |
+| **追加 20 新增**：`BRepTools_Modifier` + `BRepTools_Modification` 真身（~2,170 行；**消费者未接线**） | `libs/rcad-algo/src/topalgo/brep_tools_modifier.rs`（驱动体）+ `brep_tools_modification.rs`（接口 + `TrsfModification`） |
+| **追加 20 新增**：`Geom_Surface::UIso/VIso` **唯一真身**（八臂并集） | `libs/rcad-algo/src/geomalgo/geom_surface_iso.rs`；消费者 `approx_curve_on_surface.rs` / `geom_lib_iso_line.rs` 改为委托（本地副本已删） |
+| **追加 20 新增**：确定性测量脚本（可复用） | `output/determinism_check.sh`（域网格 ×3 次连跑 → 逐例失败点集合，报告多成员用例）；原始地图在 `output/determinism_maps/` |
 | **追加 19 新增**：blend 链两处 1:1 修复 | `libs/rcad-kernel/src/geom/bspline_ops.rs::bsplclib_resolution`（有符号 clamp）、`libs/rcad-algo/src/fillet/brep_blend_walking.rs::add_singular_point`（1-based 读取） |
-| **★ 追加 19 待立卡（重复实现，尚未动手）**：`Geom_Surface::UIso/VIso` 的 rcad **两份**分发 | `geomalgo/approx_curve_on_surface.rs::surface_{u,v}_iso`（Plane/Cylinder/Cone/Sphere/Torus/Revolution/BSpline）与 `geomalgo/geom_lib_iso_line.rs::surface_{u,v}_iso`（Trimmed/Plane/Cylinder/Cone/Sphere/Torus/BSpline）。**OCCT 里 `Geom_Surface::UIso/VIso` 是单一虚函数**（各曲面类 override），**不是** `isIsoLine`/`buildC3dOnIsoLine` 那种"OCCT 自己也有两份"的静态 ⇒ rcad 这两份是**同一 OCCT 函数的两个不完整翻译**（各缺对方有的臂），应先合成**一份含并集**的真身再各自委托 |
+| **★ 追加 19 立卡 → 追加 20 已完成**：`Geom_Surface::UIso/VIso` 原为 rcad **两份**偏译 | **已合并为唯一真身** `geomalgo/geom_surface_iso.rs`（八臂并集），两个消费者改为委托（原卡：OCCT 里 `UIso/VIso` 是**单一虚函数**，不是 `isIsoLine`/`buildC3dOnIsoLine` 那种"OCCT 自己也有两份"的静态）。仍缺 `Bezier`/`Offset`/`LinearExtrusion` 三臂 |
 | **追加 19 新增**：`GeomLib::BuildCurve3d` 家族 | `libs/rcad-algo/src/geomalgo/geom_lib.rs::build_curve3d` + `geom_lib_iso_line.rs`（`is_iso_line` / `build_c3d_on_iso_line`）+ `geom_lib_make_curve_from_approx.rs`；kernel `math/adv_approx/pref_and_rec.rs`、`approx_a_function.rs::with_cut_tool`、`base/proj_lib/adaptor.rs::kernel_curve2d` |
 | **追加 18 新增**：`GeomLib::SameRange` 真身（含 `Tolerance` 首参/守卫/periodic 分段） | `libs/rcad-kernel/src/geom/mod.rs::same_range_2d`；OCCT 签名入口 `libs/rcad-algo/src/geomalgo/geom_lib_same_range.rs::same_range` |
 | **追加 18 新增**：`BRepCheck_Edge::Tolerance` / `BRepCheck_Vertex::Tolerance` 真身 | `libs/rcad-algo/src/topalgo/brep_check/brep_check_edge.rs::BRepCheckEdge::tolerance` / `brep_check_vertex.rs::BRepCheckVertex::tolerance`（`HCurveAdaptor::value` 新） |

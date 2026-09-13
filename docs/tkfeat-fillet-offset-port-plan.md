@@ -1308,6 +1308,34 @@ libs/rcad-algo/src/
   `brep_algo/image.rs`、以及所有"第一个失败点会变"的用例背后那批集合）。做法：先按 OCCT 的容器类型（`NCollection_Sequence` /
   `IndexedDataMap` / `DataMap`）核对 rcad 侧的选用，再看是否该换成有序容器或按插入序快照。
 
+### E3-W 追加 20（2026-09-13：**并行翻译轮** —— `BRepTools_Modifier` 家族落地 + `Geom_Surface::UIso/VIso` 合成唯一真身；并把"哈希序"从**疑似行为差异**降级为**已量化的报告假象**）
+
+- **组织方式**：主代理做关键路径 + 两个**文件域不相交**的子代理并行（`topalgo/**` / `geomalgo/**`），各自 `CARGO_TARGET_DIR`、只 check/门槛、不提交、不改 docs；主代理统一评审批量提交 + 跑八网格。
+- **批次 A（rcad `a1490588`）：`BRepTools_Modifier` + `BRepTools_Modification` 1:1 翻译**（此前只有 GAP 载体）。
+  新增 `topalgo/brep_tools_modification.rs`（`BRepTools_Modification.hxx` **L58-142** 九个虚函数含三个 OCCT 默认体；`BRepTools_TrsfModification` hxx **L35-148** / cxx **L43-449**：`NewSurface` L65-92、`NewCurve` L275-297、`NewPoint` L301-309、`NewParameter` L413-437、`Continuity` L441-449）
+  与 `topalgo/brep_tools_modifier.rs`（驱动体逐语句：三个 ctor、`Init` L83-88、`Perform` L96-207（祖先图 + 四趟填充 + 根朝向块 L138-152 + 连续性环 L154-199）、`Put` L211-222、`Rebuild` L226-649（两支 `MakeFace`/`MakeEdge` 新几何分支、逐形状递归 L343-369、`EmptyCopied` 拷贝 L375-380、`B.Add` 块 L382-395、pcurve/isClosed/共面块 L397-587 含 `UpdateVertex` 点环 L511-545、边-点分支 L590-630、标志 L632-644）、`CreateNewVertices` L651-678、`FillNewCurveInfo` L680-703、`FillNewSurfaceInfo` L705-762、`CreateOtherVertices` L764-832、`SetShapeFlags` L834-842、`IsMutableInput`/`SetMutableInput` L844-852、`.lxx` L21-35 访问器）。
+  **保留 OCCT 失败路径、不做近似**：`TrsfModification::NewCurve2d` 的 `|scale| != 1` 分支（`Geom_Surface::ParametricTransformation` + `GeomLib::GTransform` 未译）与全部网格分支（rcad 既无 `TFaceData` 上的 `Poly_Triangulation`、也无 `TEdgeData` 上的多边形表示）。
+  两处**架构降级沿用既有约定**（`draft_modification.rs` 架构差异 #4）：u32 location-id 载体使 `topLoc.Predivided` 与位置重合成成为恒等；`Message_ProgressScope` 无 rcad 对应物。
+  **本批不接线消费者**：六个仍持 `panic!("GAP: BRepTools_Modifier::Perform …")` 的载体已清点（`feat/loc_ope_prism.rs:93,99`、`offset/brep_offset_api_draft_angle.rs:83,94`、`offset/brep_offset_make_simple_offset.rs:180,191`，另有导入/实例化点 `feat/loc_ope_linear_form.rs`、`loc_ope_revol.rs`、`loc_ope_revolution_form.rs`、`brep_fill/brep_fill_evolved_c.rs`）。
+- **批次 B（rcad `745a63aa`）：`Geom_Surface::UIso/VIso` 合成唯一真身 + 关掉 `Approx_CurveOnSurface` 自己的两个 GAP**。
+  `Geom_Surface::UIso/VIso` 在 OCCT 是**单一虚函数**（各曲面类 override，`Geom_RectangularTrimmedSurface` 再加互补裁剪），而 rcad 有**两份各缺对方之臂**的偏译 ⇒ 合并为 `geomalgo/geom_surface_iso.rs`（**八臂并集**：Trimmed/Plane/Cylinder/Cone/Sphere/Torus/Revolution/BSpline，逐臂 OCCT 锚点），两个消费者改为委托。
+  ⚠ **合并在过程中抓到一处保真缺陷**：OCCT `Geom_SphericalSurface::UIso` 返回的是 `Geom_TrimmedCurve(circle, -π/2, π/2)`（**L294-296**），**此前两份都没有这层包装** ⇒ 已补。
+  ⚠ **必须保留的"两份"**：`isIsoLine`/`buildC3dOnIsoLine` 的**两份**是 OCCT 自己就有的（`GeomLib` 与 `Approx_CurveOnSurface` 各一份），**不合并**。
+  仍缺译（OCCT 失败路径保留、现在只有一处）：`Bezier`/`Offset`/`LinearExtrusion`（OCCT 确有其 override ⇒ 真缺口）；`Ellipsoid`/`Helicoid`/`Pipe`/`Ruled`/`Coons`/`TriBezier` 是 rcad 独有的 `Surface3` 变体、OCCT 无对应 override。
+  同批关掉 `approx_curve_on_surface.rs` 两处 `AdvApprox_PrefAndRec` panic（按 `hxx` **L34-36** 的参数序：C1 臂 `(CutPnts_C1, CutPnts_C2)`、C2 臂 `(CutPnts_C2, CutPnts_C3)`，经上一批新增的 `ApproxAFunction::with_cut_tool` 真正交给逼近器；`AdvApprox_Cutting*`/`delete` 映射为 owned `Box<dyn Cutting>`）与 1D 子空间解包（逐字翻译 `Approx_CurveOnSurface.cxx` **L537-550**）。
+- **★ 主代理的关键路径：把"哈希序"问题**量化**（这是本轮最有价值的方法学产出）**：
+  1. **报告面**：对 **11 个域网格 × 3 次连跑 = 172 个失败用例**统计"逐例失败点集合"，**只有 1 例**（`offset_shape_type_a` 的 a4）出现过两个失败点（`brep_algo/image.rs:159` ↔ `brep_offset_make_offset_c.rs:52`），**其余 171 例三次完全一致**。
+  2. **结果面**：4 个**在域且全绿**的网格（`fillet2d_fillet2d` 10、`fillet2d_chamfer2d` 2、`mkface_after_offset` 4、`mkface_after_extsurf_and_offset` 32）**各连跑 5 次，48 例零抖动**；八网格本 session 亦 ~8 次全跑全绿且计数一致。
+  ⇒ **结论（更正补记 3 的定级）**：哈希序今天**只表现为"某一例先报哪个失败点"**，**没有**任何证据表明它改变过**结果**；它是**潜在隐患**（OCCT 用插入序容器，rcad 落在随机哈希序上，长期值得对齐），**但不应按"高优先级行为差异"立卡**，也**不要**为此做大规模容器替换重构。
+  **方法纪律**：失败地图**连跑 ≥3 次**报集合（本轮 172 例中仅 1 例需要这样报）；**归因必须换树复测**（坑 32/33）。
+- **验收（全部在树实测）**：六门槛 **415/0/0 · 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；八网格 **8/8**（375·378·379·373·12·102·83·110，重编 exe 后）；
+  **域网格逐例失败地图与上一批基线逐字节相同**（唯一差异就是上面那 1 例已知不稳定），即**两批均无失败层回退**；探针 = 0。
+- **⇒ 下一批队列（更新后）**：
+  1. **接线 `BRepTools_Modifier` 的六个消费者**（批次 A 的下一半，纯接线，收益直接：解 `feat/loc_ope_prism.rs:93`（featprism）、`offset/brep_offset_api_draft_angle.rs:83`（`draft_angle` 的 3 例库内 panic 之一）、`brep_offset_make_simple_offset.rs`）。⚠ 消费者分布在 `feat/**`、`offset/**`、`brep_fill/**` 三个域 ⇒ **按域分批 + 每批跑该域网格**。
+  2. **补 `Geom_Surface::UIso/VIso` 的 `Bezier`/`Offset`/`LinearExtrusion` 三臂**（真缺口，OCCT 有 override）。
+  3. **`geom_convert_curve_to_bspline` 的两份重复**（批次 B 记档：`GeomConvert::CurveToBSplineCurve` 只有一个 OCCT 实现，两份略有差异 ⇒ 收敛）。
+  4. 既有队列不变：TKOffset 第 2 项（入池，根）、TKFeat 第 0 项（`LocOpe_Generator::Perform` 的 `IsDone`）、TKFillet 接力项 A（无界 pcurve）。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 
