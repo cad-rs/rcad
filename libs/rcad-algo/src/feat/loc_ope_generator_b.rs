@@ -339,61 +339,6 @@ pub(crate) fn standard_epsilon(the_value: f64) -> f64 {
     }
 }
 
-/// OCCT BRepAlgo_Loop (TKBool/BRepAlgo/BRepAlgo_Loop.hxx L27-115) — NOT YET
-/// PORTED (architecture difference #6).  Only the interface consumed by
-/// LocOpe_Generator::Perform (cxx L1074-1079: Init / AddConstEdges /
-/// Perform / WiresToFaces / NewFaces) is declared; the bodies are the
-/// pending BRepAlgo port (BRepAlgo_Loop.cxx L1-1151, its own package —
-/// ruling D3 "per-class port" applies there).
-pub struct BRepAlgoLoop {
-    my_face: Option<Shape>,     // OCCT: myFace
-    my_const_edges: Vec<Shape>, // OCCT: myConstEdges
-    my_new_faces: Vec<Shape>,   // OCCT: myNewFaces
-}
-
-impl Default for BRepAlgoLoop {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl BRepAlgoLoop {
-    /// OCCT BRepAlgo_Loop::BRepAlgo_Loop() (hxx L46).
-    pub fn new() -> Self {
-        BRepAlgoLoop {
-            my_face: None,
-            my_const_edges: Vec::new(),
-            my_new_faces: Vec::new(),
-        }
-    }
-
-    /// OCCT BRepAlgo_Loop::Init(F) (hxx L52).
-    pub fn init(&mut self, the_f: &Shape) {
-        self.my_face = Some(the_f.clone());
-    }
-
-    /// OCCT BRepAlgo_Loop::AddConstEdges(L) (hxx L56; the CheckShared
-    /// default argument is true).
-    pub fn add_const_edges(&mut self, the_list: &[Shape]) {
-        self.my_const_edges.extend_from_slice(the_list);
-    }
-
-    /// OCCT BRepAlgo_Loop::Perform() (BRepAlgo_Loop.cxx L88-200).
-    pub fn perform(&mut self) {
-        unimplemented!("BRepAlgo_Loop port pending (architecture difference #6)");
-    }
-
-    /// OCCT BRepAlgo_Loop::WiresToFaces() (BRepAlgo_Loop.cxx L202-262).
-    pub fn wires_to_faces(&mut self) {
-        unimplemented!("BRepAlgo_Loop port pending (architecture difference #6)");
-    }
-
-    /// OCCT BRepAlgo_Loop::NewFaces() (hxx L96).
-    pub fn new_faces(&self) -> Vec<Shape> {
-        self.my_new_faces.clone()
-    }
-}
-
 /// OCCT GeomProjLib::Curve2d(C, f, l, S, tol) re-host over
 /// rcad_kernel::base::geom_proj_lib::curve2d (the surface natural domain is
 /// supplied the way the OCCT 5-argument overload obtains it internally).

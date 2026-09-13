@@ -43,10 +43,10 @@
 //    (BRepTools.cxx L1204-1220), GeomProjLib::Curve2d and the gp/ElCLib
 //    statics are re-hosted in loc_ope_generator_b.rs (arch. diffs #4-#6
 //    there).
-// 6. BRepAlgo_Loop (TKBool, consumed at cxx L1074-1079) is NOT yet ported —
-//    BRepAlgoLoop in loc_ope_generator_b.rs carries the consumed interface
-//    with unimplemented bodies (the pending BRepAlgo port; the class is
-//    1151 lines of its own package).
+// 6. BRepAlgo_Loop (TKBool, consumed at cxx L1074-1079) is used directly:
+//    the 1:1 port of BRepAlgo_Loop.cxx L57-1151 lives in
+//    crate::brep_algo::r#loop::BRepAlgoLoop (same package directory as the
+//    OCCT class), so no local re-declaration is kept here.
 // 7. The OCCT dead locals `outw` / `newwire` (cxx L443; the MakeWire call
 //    at L692 is commented out in the source) are not translated (same rule
 //    as loc_ope_build_shape.rs arch. diff. #6).
@@ -59,6 +59,7 @@
 // first consumer: BRepFeat_Form family (3b) — BRepFeat_Form::Perform uses
 // LocOpe_Generator with a LocOpe_GeneratedShape operand.
 
+use crate::brep_algo::r#loop::BRepAlgoLoop;
 use crate::feat::brep_feat_builder::{ explorer, sub_shapes };
 use crate::feat::loc_ope_generated_shape::LocOpeGeneratedShape;
 use crate::feat::loc_ope_generator_b::{
@@ -68,7 +69,6 @@ use crate::feat::loc_ope_generator_b::{
     brep_tools_uv_bounds, geomproj_lib_curve2d, new_parameter, shape_key,
     shape_reversed, standard_epsilon, tofuse_edge_edge, tofuse_edge_face_vertex,
     tofuse_face_face, top_abs_reverse, top_exp_vertices, with_orientation,
-    BRepAlgoLoop,
 };
 use glam::{ DVec2, DVec3 };
 use indexmap::IndexMap;
@@ -1070,15 +1070,20 @@ impl LocOpeGenerator {
                 }
             }
 
-            // OCCT cxx L1072-1089: BRepAlgo_Loop (architecture difference
-            // #6 — the port is pending; the interface is consumed 1:1).
+            // OCCT cxx L1072-1089: BRepAlgo_Loop.  The 1:1 port of
+            // BRepAlgo_Loop.cxx L57-1151 lives in
+            // crate::brep_algo::r#loop::BRepAlgoLoop; the statements below
+            // are the OCCT Init / AddConstEdges / Perform / WiresToFaces /
+            // NewFaces sequence (NewFaces() hands back the OCCT const
+            // reference, copied here because the two myModShapes binds store
+            // the list by value).
             if !listofedg.is_empty() {
                 let mut loop_ = BRepAlgoLoop::new();
                 loop_.init(&newface);
                 loop_.add_const_edges(&listofedg);
                 loop_.perform();
                 loop_.wires_to_faces();
-                let listoffaces = loop_.new_faces();
+                let listoffaces: Vec<Shape> = loop_.new_faces().to_vec();
                 to_remove.insert(shape_key(&fac));
                 my_mod_shapes.insert(shape_key(&fac), listoffaces.clone());
                 for s in &gen_list {
