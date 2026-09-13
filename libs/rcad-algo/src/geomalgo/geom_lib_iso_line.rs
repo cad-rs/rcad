@@ -25,7 +25,9 @@
 //! the both-trimmed `Geom_RectangularTrimmedSurface`
 //! (Geom_RectangularTrimmedSurface.cxx L67-112 sets `isutrimmed = true` and
 //! `isvtrimmed = true`), so the UIso/VIso on it apply the complementary trim
-//! (Geom_RectangularTrimmedSurface.cxx L444-478).
+//! (Geom_RectangularTrimmedSurface.cxx L444-478).  Both are the single
+//! translation in `geomalgo::geom_surface_iso`, shared with
+//! `Approx_CurveOnSurface::buildC3dOnIsoLine`.
 
 use glam::DVec2;
 
@@ -33,10 +35,10 @@ use rcad_kernel::base::proj_lib::adaptor::{Adaptor2dCurve2d, Adaptor3dSurface};
 use rcad_kernel::base::proj_lib::CurveType;
 use rcad_kernel::base::convert::{ConvertParameterisation, geom_convert_curve_to_bspline_curve};
 use rcad_kernel::core::precision::{p_confusion, ANGULAR, CONFUSION};
-use rcad_kernel::geom::{
-    BSplineCurve3, Curve3, CurveEval, Surface3, SurfaceEval, TrimmedCurve3, TrimmedSurface,
-};
+use rcad_kernel::geom::{BSplineCurve3, Curve3, CurveEval, Surface3, SurfaceEval, TrimmedCurve3};
 use rcad_kernel::math::bspl_lib;
+
+use crate::geomalgo::geom_surface_iso::{surface_rectangular_trimmed, surface_u_iso, surface_v_iso};
 
 /// OCCT GeomLib::isIsoLine(theC2D, theIsU, theParam, theIsForward)
 /// (GeomLib.cxx L2991-3078).
@@ -270,157 +272,6 @@ pub fn build_c3d_on_iso_line(
     }
 
     Some(Curve3::BSpline(a_curve3d))
-}
-
-// ---------------------------------------------------------------------------
-// Geom_Surface virtual dispatch support (the UIso / VIso / rectangular-trim
-// constructions the GeomLib static calls).
-// ---------------------------------------------------------------------------
-
-/// OCCT Geom_RectangularTrimmedSurface(S, U1, U2, V1, V2, USense, VSense)
-/// (Geom_RectangularTrimmedSurface.cxx L67-112) — the nested trimmed basis is
-/// killed and the resulting surface carries `isutrimmed = isvtrimmed = true`.
-fn surface_rectangular_trimmed(surf: &Surface3, u1: f64, u2: f64, v1: f64, v2: f64) -> Surface3 {
-    // OCCT: kill trimmed basis surfaces.
-    let basis = match surf {
-        Surface3::Trimmed(t) => (*t.basis).clone(),
-        other => other.clone(),
-    };
-    Surface3::Trimmed(TrimmedSurface::new(basis, u1, u2, v1, v2))
-}
-
-/// OCCT Geom_Surface::UIso (the per-type overrides) + the
-/// Geom_RectangularTrimmedSurface::UIso complementary-V-trim
-/// (Geom_RectangularTrimmedSurface.cxx L444-459).
-fn surface_u_iso(surf: &Surface3, param: f64) -> Curve3 {
-    use rcad_kernel::base::proj_lib::elslib_iso as el;
-    match surf {
-        Surface3::Trimmed(t) => {
-            // OCCT L447-458: C = basisSurf->UIso(U); if (isvtrimmed) return
-            // new Geom_TrimmedCurve(C, vtrim1, vtrim2, true).
-            let c = surface_u_iso(&t.basis, param);
-            Curve3::Trimmed(TrimmedCurve3::new(c, t.trim[2], t.trim[3]))
-        }
-        Surface3::Plane(p) => Curve3::Line(el::elslib_plane_u_iso(
-            &el::Ax3View::from_axes(p.origin, p.normal, p.u_dir),
-            param,
-        )),
-        Surface3::Cylinder(c) => Curve3::Line(el::elslib_cylinder_u_iso(
-            &el::Ax3View::from_axes(c.origin, c.axis, c.ref_dir),
-            c.radius,
-            param,
-        )),
-        Surface3::Cone(c) => Curve3::Line(el::elslib_cone_u_iso(
-            &el::Ax3View::from_axes(c.apex, c.axis, c.ref_dir),
-            c.radius,
-            c.half_angle_rad,
-            param,
-        )),
-        Surface3::Sphere(s) => Curve3::Circle(el::elslib_sphere_u_iso(
-            &el::Ax3View::from_axes(s.center, s.axis, s.ref_dir),
-            s.radius,
-            param,
-        )),
-        Surface3::Torus(t) => Curve3::Circle(el::elslib_torus_u_iso(
-            &el::Ax3View::from_axes(t.center, t.axis, t.ref_dir),
-            t.major_radius,
-            t.minor_radius,
-            param,
-        )),
-        // OCCT Geom_BSplineSurface::UIso (Geom_BSplineSurface_1.cxx L598-635):
-        // BSplSLib::Iso on the U direction; the result curve's knots and
-        // degree are the V direction's (and its periodicity myVPeriodic).
-        Surface3::BSpline(b) => {
-            let weights = if b.is_rational_u() || b.is_rational_v() {
-                Some(b.weights.as_slice())
-            } else {
-                None
-            };
-            let (cpoles, cweights) = bspl_lib::bspl_slib_iso(
-                param,
-                true,
-                b.degree_u,
-                &b.knots_u,
-                &b.control_points,
-                weights,
-                b.is_periodic_u,
-            );
-            Curve3::BSpline(BSplineCurve3 {
-                degree: b.degree_v,
-                knots: b.knots_v.clone(),
-                control_points: cpoles,
-                weights: cweights,
-                is_periodic: b.is_periodic_v,
-            })
-        }
-        _ => panic!("GAP: Geom_Surface::UIso not translated for this surface type"),
-    }
-}
-
-/// OCCT Geom_Surface::VIso (the per-type overrides) + the
-/// Geom_RectangularTrimmedSurface::VIso complementary-U-trim
-/// (Geom_RectangularTrimmedSurface.cxx L463-478).
-fn surface_v_iso(surf: &Surface3, param: f64) -> Curve3 {
-    use rcad_kernel::base::proj_lib::elslib_iso as el;
-    match surf {
-        Surface3::Trimmed(t) => {
-            // OCCT L466-477: C = basisSurf->VIso(V); if (isutrimmed) return
-            // new Geom_TrimmedCurve(C, utrim1, utrim2, true).
-            let c = surface_v_iso(&t.basis, param);
-            Curve3::Trimmed(TrimmedCurve3::new(c, t.trim[0], t.trim[1]))
-        }
-        Surface3::Plane(p) => Curve3::Line(el::elslib_plane_v_iso(
-            &el::Ax3View::from_axes(p.origin, p.normal, p.u_dir),
-            param,
-        )),
-        Surface3::Cylinder(c) => Curve3::Circle(el::elslib_cylinder_v_iso(
-            &el::Ax3View::from_axes(c.origin, c.axis, c.ref_dir),
-            c.radius,
-            param,
-        )),
-        Surface3::Cone(c) => Curve3::Circle(el::elslib_cone_v_iso(
-            &el::Ax3View::from_axes(c.apex, c.axis, c.ref_dir),
-            c.radius,
-            c.half_angle_rad,
-            param,
-        )),
-        Surface3::Sphere(s) => Curve3::Circle(el::elslib_sphere_v_iso(
-            &el::Ax3View::from_axes(s.center, s.axis, s.ref_dir),
-            s.radius,
-            param,
-        )),
-        Surface3::Torus(t) => Curve3::Circle(el::elslib_torus_v_iso(
-            &el::Ax3View::from_axes(t.center, t.axis, t.ref_dir),
-            t.major_radius,
-            t.minor_radius,
-            param,
-        )),
-        // OCCT Geom_BSplineSurface::VIso (Geom_BSplineSurface_1.cxx L775-812).
-        Surface3::BSpline(b) => {
-            let weights = if b.is_rational_u() || b.is_rational_v() {
-                Some(b.weights.as_slice())
-            } else {
-                None
-            };
-            let (cpoles, cweights) = bspl_lib::bspl_slib_iso(
-                param,
-                false,
-                b.degree_v,
-                &b.knots_v,
-                &b.control_points,
-                weights,
-                b.is_periodic_v,
-            );
-            Curve3::BSpline(BSplineCurve3 {
-                degree: b.degree_u,
-                knots: b.knots_u.clone(),
-                control_points: cpoles,
-                weights: cweights,
-                is_periodic: b.is_periodic_u,
-            })
-        }
-        _ => panic!("GAP: Geom_Surface::VIso not translated for this surface type"),
-    }
 }
 
 /// OCCT GeomConvert::CurveToBSplineCurve(C, Convert_QuasiAngular)

@@ -78,6 +78,7 @@ pub mod geom_api; // GeomAPI::To2d / GeomAPI::To3d (TKGeomAlgo/GeomAPI)
 pub mod geom_lib; // GeomLib::ExtendCurveToPoint + the static ComputeLambda (TKGeomBase/GeomLib)
 pub mod geom_lib_make_curve_from_approx; // GeomLib_MakeCurvefromApprox (TKGeomBase/GeomLib)
 pub mod geom_lib_iso_line; // GeomLib::isIsoLine + GeomLib::buildC3dOnIsoLine (TKGeomBase/GeomLib)
+pub mod geom_surface_iso; // Geom_Surface::UIso/VIso virtual dispatch + Geom_RectangularTrimmedSurface (TKG3d/Geom) — single translation shared by the isoline consumers
 pub mod geom_int_line_constructor; // GeomInt_LineConstructor (TKGeomAlgo/GeomInt)
 pub mod geom_int_int_ss; // GeomInt_IntSS (TKGeomAlgo/GeomInt)
 pub mod geom_int_int_ss_1; // GeomInt_IntSS engine: MakeCurve/TreatRLine/BuildPCurves/TrimILine (GeomInt_IntSS_1.cxx)

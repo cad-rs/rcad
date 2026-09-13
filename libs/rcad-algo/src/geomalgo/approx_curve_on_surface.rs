@@ -14,17 +14,10 @@
 // - AdvApprox_ApproxAFunction / AdvApprox_DichoCutting /
 //   AdvApprox_EvaluatorFunction -> rcad_kernel::math::adv_approx.
 //
-// GAP (staged, kernel adv_approx): AdvApprox_PrefAndRec and the
-// cut-tool-parameterized ApproxAFunction constructor are not translated —
-// the OCCT CutTool selection below keeps the OCCT form and the PrefAndRec
-// branches panic until the kernel closes the gap; ApproxAFunction::new runs
-// Perform with its internal dichotomy cutting.
-// GAP (staged, kernel adv_approx): the 1D subspace results (Poles1d,
-// MaxError(1, N)) are not stored by the kernel ApproxAFunction, so the 2D
-// result extraction of Perform panics (the !theOnly3d arm).
-// GAP (staged, kernel geom): Geom_Surface::UIso/VIso and
-// Geom_RectangularTrimmedSurface are not translated, so the
-// buildC3dOnIsoLine isoline extraction panics at its first GAP leaf.
+// The isoline path uses the single `Geom_Surface::UIso` / `VIso` +
+// `Geom_RectangularTrimmedSurface` translation in
+// `crate::geomalgo::geom_surface_iso` (shared with
+// `GeomLib::buildC3dOnIsoLine`).
 
 use std::sync::Arc;
 
@@ -35,11 +28,17 @@ use rcad_kernel::base::proj_lib::adaptor::{
 };
 use rcad_kernel::base::proj_lib::CurveType;
 use rcad_kernel::core::precision::{p_confusion, ANGULAR, CONFUSION};
-use rcad_kernel::geom::{Curve2d, Curve3, CurveEval, Surface3, SurfaceEval, BSplineCurve3, TrimmedCurve3};
+use rcad_kernel::geom::{
+    BSplineCurve2, Curve2d, Curve3, CurveEval, Surface3, SurfaceEval, BSplineCurve3, TrimmedCurve3,
+};
 use rcad_kernel::base::proj_lib::adaptor::GeomAbsSurfaceType;
-use rcad_kernel::math::adv_approx::{ApproxAFunction, Cutting, DichoCutting, EvaluatorFunction};
+use rcad_kernel::math::adv_approx::{
+    ApproxAFunction, Cutting, DichoCutting, EvaluatorFunction, PrefAndRec,
+};
 use rcad_kernel::math::bspl_lib;
 use rcad_kernel::math::GeomAbsShape;
+
+use crate::geomalgo::geom_surface_iso::{surface_rectangular_trimmed, surface_u_iso, surface_v_iso};
 
 // ---------------------------------------------------------------------------
 // Approx_CurveOnSurface_Eval (cxx L46-142)
@@ -485,28 +484,16 @@ impl ApproxCurveOnSurface {
             three_d_tol = vec![self.my_tol / 2.0];
         }
 
-        // OCCT L472-500: the cutting tool selection.
-        if a_continuity <= self.my_c2d.continuity()
+        // OCCT L472-500: the cutting tool selection.  OCCT holds
+        // `AdvApprox_Cutting* CutTool` and deletes it after the
+        // AdvApprox_ApproxAFunction construction; the owned box is the same
+        // lifetime (dropped at the end of this scope).
+        let cut_tool: Box<dyn Cutting> = if a_continuity <= self.my_c2d.continuity()
             && a_continuity <= self.my_surf.u_continuity()
             && a_continuity <= self.my_surf.v_continuity()
         {
             // OCCT: CutTool = new AdvApprox_DichoCutting();
-            let cut_tool = DichoCutting;
-            self.run_approxa_function(
-                &cut_tool,
-                num1dss,
-                num2dss,
-                num3dss,
-                &one_d_tol,
-                &two_d_tol_nul,
-                &three_d_tol,
-                a_continuity,
-                the_max_degree,
-                the_max_segments,
-                the_only3d,
-                the_only2d,
-                eval_ptr,
-            );
+            Box::new(DichoCutting)
         } else if a_continuity == GeomAbsShape::C1 {
             // OCCT L479-489: NbIntervals/Intervals C1 + C2, then
             // CutTool = new AdvApprox_PrefAndRec(CutPnts_C1, CutPnts_C2).
@@ -516,8 +503,8 @@ impl ApproxCurveOnSurface {
             let nb_interv_c2 = hcons.nb_intervals(GeomAbsShape::C2);
             let mut cut_pnts_c2: Vec<f64> = hcons.intervals(GeomAbsShape::C2);
             cut_pnts_c2.resize(nb_interv_c2 + 1, 0.0);
-            let _ = (cut_pnts_c1, cut_pnts_c2);
-            panic!("GAP: AdvApprox_PrefAndRec not translated");
+
+            Box::new(PrefAndRec::with_default_weight(&cut_pnts_c1, &cut_pnts_c2))
         } else {
             // OCCT L491-499: NbIntervals/Intervals C2 + C3, then
             // CutTool = new AdvApprox_PrefAndRec(CutPnts_C2, CutPnts_C3).
@@ -527,21 +514,33 @@ impl ApproxCurveOnSurface {
             let nb_interv_c3 = hcons.nb_intervals(GeomAbsShape::C3);
             let mut cut_pnts_c3: Vec<f64> = hcons.intervals(GeomAbsShape::C3);
             cut_pnts_c3.resize(nb_interv_c3 + 1, 0.0);
-            let _ = (cut_pnts_c2, cut_pnts_c3);
-            panic!("GAP: AdvApprox_PrefAndRec not translated");
-        }
+
+            Box::new(PrefAndRec::with_default_weight(&cut_pnts_c2, &cut_pnts_c3))
+        };
+
+        self.run_approxa_function(
+            cut_tool.as_ref(),
+            num1dss,
+            num2dss,
+            num3dss,
+            &one_d_tol,
+            &two_d_tol_nul,
+            &three_d_tol,
+            a_continuity,
+            the_max_degree,
+            the_max_segments,
+            the_only3d,
+            the_only2d,
+            eval_ptr,
+        );
     }
 
     /// The OCCT L502-551 tail of Perform: construct the
     /// AdvApprox_ApproxAFunction and unpack its result.
-    ///
-    /// GAP (staged): the OCCT constructor receives `*CutTool`; the kernel
-    /// ApproxAFunction runs its internal dichotomy cutting, so the selected
-    /// tool is carried here for form until the kernel constructor lands.
     #[allow(clippy::too_many_arguments)]
     fn run_approxa_function(
         &mut self,
-        _cut_tool: &dyn Cutting,
+        cut_tool: &dyn Cutting,
         num1dss: i32,
         num2dss: i32,
         num3dss: i32,
@@ -555,8 +554,10 @@ impl ApproxCurveOnSurface {
         the_only2d: bool,
         eval_ptr: &mut dyn EvaluatorFunction,
     ) {
-        // OCCT L502-514.
-        let a_approx = ApproxAFunction::new(
+        // OCCT L502-514: AdvApprox_ApproxAFunction aApprox(Num1DSS, Num2DSS,
+        // Num3DSS, OneDTol, TwoDTolNul, ThreeDTol, myFirst, myLast,
+        // aContinuity, theMaxDegree, theMaxSegments, *EvalPtr, *CutTool).
+        let a_approx = ApproxAFunction::with_cut_tool(
             num1dss,
             num2dss,
             num3dss,
@@ -569,6 +570,7 @@ impl ApproxCurveOnSurface {
             the_max_degree,
             the_max_segments,
             eval_ptr,
+            cut_tool,
         );
 
         // OCCT L516: delete CutTool (RAII here).
@@ -613,9 +615,23 @@ impl ApproxCurveOnSurface {
                 // OCCT L537-550: Poles1dU/Poles1dV extraction, the
                 // Geom2d_BSplineCurve construction and
                 // myError2dU = MaxError(1, 1); myError2dV = MaxError(1, 2).
-                // GAP: the kernel ApproxAFunction stores no 1D subspace
-                // poles/errors (staged in rcad-kernel math/adv_approx).
-                panic!("GAP: AdvApprox_ApproxAFunction 1D subspace storage (Poles1d / MaxError(1,N)) not translated");
+                let poles_1du = a_approx.poles1d_flat(1);
+                let poles_1dv = a_approx.poles1d_flat(2);
+                let poles2d: Vec<DVec2> = (0..a_nb_poles)
+                    .map(|i| DVec2::new(poles_1du[i], poles_1dv[i]))
+                    .collect();
+                self.my_curve2d = Some(Curve2d::BSpline(BSplineCurve2 {
+                    degree: degree as usize,
+                    // Architecture difference: rcad BSplineCurve2 stores the
+                    // full (multiplicity-expanded) knot vector; OCCT passes
+                    // the distinct knots + multiplicities to the constructor.
+                    knots: full_knots(&knots, &mults),
+                    control_points: poles2d,
+                    weights: vec![1.0; a_nb_poles],
+                }));
+
+                self.my_error2d_u = a_approx.max_error_at(1, 1);
+                self.my_error2d_v = a_approx.max_error_at(1, 2);
             }
         }
     }
@@ -880,205 +896,6 @@ impl ApproxCurveOnSurface {
         // Target tolerance is not obtained. This situation happens for
         // isolines on the sphere (cxx L808-812).
         self.my_error3d <= self.my_tol
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GAP leaves of the isoline path (staged in the kernel geom package)
-// ---------------------------------------------------------------------------
-
-/// OCCT Geom_RectangularTrimmedSurface construction (cxx L723 / L755).
-fn surface_rectangular_trimmed(
-    _surf: &Surface3,
-    _u1: f64,
-    _u2: f64,
-    _v1: f64,
-    _v2: f64,
-) -> Surface3 {
-    panic!("GAP: Geom_RectangularTrimmedSurface not translated")
-}
-
-/// OCCT Geom_Surface::UIso — the virtual dispatch of the concrete surface
-/// classes: Geom_Plane / Geom_CylindricalSurface / Geom_ConicalSurface /
-/// Geom_SphericalSurface / Geom_ToroidalSurface (all via the ElSLib
-/// constructors) and Geom_SurfaceOfRevolution (cxx L372-379: a rotated copy of
-/// the basis curve).
-fn surface_u_iso(surf: &Surface3, param: f64) -> Curve3 {
-    use rcad_kernel::base::proj_lib::elslib_iso as el;
-    match surf {
-        Surface3::Plane(p) => Curve3::Line(el::elslib_plane_u_iso(
-            &el::Ax3View::from_axes(p.origin, p.normal, p.u_dir),
-            param,
-        )),
-        Surface3::Cylinder(c) => Curve3::Line(el::elslib_cylinder_u_iso(
-            &el::Ax3View::from_axes(c.origin, c.axis, c.ref_dir),
-            c.radius,
-            param,
-        )),
-        Surface3::Cone(c) => Curve3::Line(el::elslib_cone_u_iso(
-            &el::Ax3View::from_axes(c.apex, c.axis, c.ref_dir),
-            c.radius,
-            c.half_angle_rad,
-            param,
-        )),
-        Surface3::Sphere(s) => Curve3::Circle(el::elslib_sphere_u_iso(
-            &el::Ax3View::from_axes(s.center, s.axis, s.ref_dir),
-            s.radius,
-            param,
-        )),
-        Surface3::Torus(t) => Curve3::Circle(el::elslib_torus_u_iso(
-            &el::Ax3View::from_axes(t.center, t.axis, t.ref_dir),
-            t.major_radius,
-            t.minor_radius,
-            param,
-        )),
-        // OCCT Geom_SurfaceOfRevolution::UIso (cxx L372-379):
-        //   C = basisCurve->Copy(); C->Rotate(Ax1(loc, direction), U); return C.
-        Surface3::Revolution(r) => rotate_curve_about_axis(
-            &r.profile,
-            r.axis_origin,
-            r.axis_dir,
-            param,
-        ),
-        // OCCT Geom_BSplineSurface::UIso (Geom_BSplineSurface_1.cxx L598-635):
-        // BSplSLib::Iso on the U direction; the result curve's knots and
-        // degree are the V direction's (and its periodicity myVPeriodic).
-        Surface3::BSpline(b) => {
-            let weights = if b.is_rational_u() || b.is_rational_v() {
-                Some(b.weights.as_slice())
-            } else {
-                None
-            };
-            let (cpoles, cweights) = bspl_lib::bspl_slib_iso(
-                param,
-                true,
-                b.degree_u,
-                &b.knots_u,
-                &b.control_points,
-                weights,
-                b.is_periodic_u,
-            );
-            Curve3::BSpline(BSplineCurve3 {
-                degree: b.degree_v,
-                knots: b.knots_v.clone(),
-                control_points: cpoles,
-                weights: cweights,
-                is_periodic: b.is_periodic_v,
-            })
-        }
-        _ => panic!("GAP: Geom_Surface::UIso not translated for this surface type"),
-    }
-}
-
-/// OCCT Geom_Surface::VIso — the same virtual dispatch, the V-isoparametric
-/// counterpart (Geom_SurfaceOfRevolution::VIso cxx L383-410: the parallel
-/// circle of the basis point through the axis).
-fn surface_v_iso(surf: &Surface3, param: f64) -> Curve3 {
-    use rcad_kernel::base::proj_lib::elslib_iso as el;
-    match surf {
-        Surface3::Plane(p) => Curve3::Line(el::elslib_plane_v_iso(
-            &el::Ax3View::from_axes(p.origin, p.normal, p.u_dir),
-            param,
-        )),
-        Surface3::Cylinder(c) => Curve3::Circle(el::elslib_cylinder_v_iso(
-            &el::Ax3View::from_axes(c.origin, c.axis, c.ref_dir),
-            c.radius,
-            param,
-        )),
-        Surface3::Cone(c) => Curve3::Circle(el::elslib_cone_v_iso(
-            &el::Ax3View::from_axes(c.apex, c.axis, c.ref_dir),
-            c.radius,
-            c.half_angle_rad,
-            param,
-        )),
-        Surface3::Sphere(s) => Curve3::Circle(el::elslib_sphere_v_iso(
-            &el::Ax3View::from_axes(s.center, s.axis, s.ref_dir),
-            s.radius,
-            param,
-        )),
-        Surface3::Torus(t) => Curve3::Circle(el::elslib_torus_v_iso(
-            &el::Ax3View::from_axes(t.center, t.axis, t.ref_dir),
-            t.major_radius,
-            t.minor_radius,
-            param,
-        )),
-        // OCCT Geom_BSplineSurface::VIso (Geom_BSplineSurface_1.cxx L775-812):
-        // BSplSLib::Iso on the V direction; the result curve's knots and
-        // degree are the U direction's (and its periodicity myUPeriodic).
-        Surface3::BSpline(b) => {
-            let weights = if b.is_rational_u() || b.is_rational_v() {
-                Some(b.weights.as_slice())
-            } else {
-                None
-            };
-            let (cpoles, cweights) = bspl_lib::bspl_slib_iso(
-                param,
-                false,
-                b.degree_v,
-                &b.knots_v,
-                &b.control_points,
-                weights,
-                b.is_periodic_v,
-            );
-            Curve3::BSpline(BSplineCurve3 {
-                degree: b.degree_u,
-                knots: b.knots_u.clone(),
-                control_points: cpoles,
-                weights: cweights,
-                is_periodic: b.is_periodic_u,
-            })
-        }
-        // OCCT Geom_SurfaceOfRevolution::VIso (cxx L383-410): the circle of the
-        // basis point at V about the axis.  Rad = distance from the axis; the
-        // circle frame is gp_Ax2(C, direction, D) where C is the projection of
-        // the basis point onto the axis and D the unit vector from C to it.
-        Surface3::Revolution(r) => {
-            let pc = r.profile.point_at(param);
-            let d = pc - r.axis_origin;
-            let rad = (d - r.axis_dir * d.dot(r.axis_dir)).length();
-            let c = r.axis_origin + r.axis_dir * d.dot(r.axis_dir);
-            let radial = pc - c;
-            let (normal, x_dir) = if rad > rcad_kernel::precision::CONFUSION {
-                (r.axis_dir, radial.normalize_or_zero())
-            } else {
-                // OCCT: Rep = gp_Ax2(C, direction) — the zero-radius case uses
-                // the frame's default X direction.
-                let x = rcad_kernel::geom::any_perpendicular(r.axis_dir);
-                (r.axis_dir, x)
-            };
-            Curve3::Circle(rcad_kernel::geom::Circle3 {
-                center: c,
-                normal,
-                x_dir,
-                y_dir: normal.cross(x_dir).normalize_or_zero(),
-                radius: rad,
-            })
-        }
-        _ => panic!("GAP: Geom_Surface::VIso not translated for this surface type"),
-    }
-}
-
-/// OCCT Geom_Geometry::Rotate (Geom_Geometry.cxx L47-55) applied to a curve:
-/// the per-type `Rotate(Ax1, Ang)` overrides.  The rotation is a rigid motion
-/// so a TrimmedCurve rotates its basis and keeps its parameter range
-/// (Geom_TrimmedCurve::Transform).
-fn rotate_curve_about_axis(
-    curve: &Curve3,
-    axis_loc: DVec3,
-    axis_dir: DVec3,
-    angle: f64,
-) -> Curve3 {
-    let axis_dir = axis_dir.normalize_or_zero();
-    let trsf = glam::DAffine3::from_translation(axis_loc)
-        * glam::DAffine3::from_axis_angle(axis_dir, angle)
-        * glam::DAffine3::from_translation(-axis_loc);
-    match curve {
-        Curve3::Trimmed(t) => Curve3::Trimmed(rcad_kernel::geom::TrimmedCurve3::new(
-            rotate_curve_about_axis(&t.curve, axis_loc, axis_dir, angle),
-            t.first,
-            t.last,
-        )),
-        other => rcad_kernel::geom::transform_curve(other, &trsf),
     }
 }
 
