@@ -83,7 +83,7 @@
 //     not by a TopoDS_Shape, so the carrier keeps the OCCT zero-mass failure
 //     path until the TopoDS form lands).
 // 52. BRepLib_FindSurface / GeomFill_Generator /
-//     IntTools_FClass2d / BOPAlgo_MakerVolume / BOPTools_AlgoTools::
+//     IntTools_FClass2d / BOPTools_AlgoTools::
 //     MakeSplitEdge (the TopoDS form; the rcad bop::tools carrier is the
 //     BOPDS-index form) / GeomAPI_ProjectPointOnCurve (the (P, C) form) /
 //     GeomLib::BuildCurve3d (the Adaptor3d_CurveOnSurface form) /
@@ -93,7 +93,10 @@
 //     keeps the OCCT call form and the failure path at its call site.
 //     (GeomLib_IsPlanarSurface left this list: the real body of
 //     crate::geomalgo::geom_lib_is_planar_surface is re-exported below; its
-//     remaining iso-curve GAP leaves live in that unit.)
+//     remaining iso-curve GAP leaves live in that unit.
+//     BOPAlgo_MakerVolume left this list: the real body of
+//     crate::bop::algo::maker_volume is re-exported below under the OCCT name;
+//     the BuildShellsCompleteInter / UpdateHistory call sites use it.)
 // 53. gp_Vec / gp_Pnt / gp_Dir arithmetic -> DVec3; gp_Circ / gp_Cone /
 //     gp_Pln / gp_Sphere / gp_Ax1..3 -> the rcad_kernel::geom carriers
 //     (Circle3 / ConicalSurface / Plane / SphericalSurface; the Ax3
@@ -643,41 +646,13 @@ impl GeomFillGenerator {
 // crate::bop::int_tools::int_tools_fclass2d (the C.3 carrier switch; the
 // local panic carrier is deleted).
 
-/// OCCT BOPAlgo_MakerVolume (TKBO/BOPAlgo) — GAP carrier (architecture
-/// difference #52): the MakeVolume engine of BuildShellsCompleteInter.
-pub(crate) struct BOPAlgoMakerVolume;
-
-impl BOPAlgoMakerVolume {
-    /// OCCT BOPAlgo_Options::SetArguments(theLS).
-    pub fn set_arguments(&mut self, _ls: &[Shape]) {}
-
-    /// OCCT BOPAlgo_Options::SetIntersect(flag).
-    pub fn set_intersect(&mut self, _flag: bool) {}
-
-    /// OCCT BOPAlgo_MakerVolume::SetAvoidInternalShapes(flag).
-    pub fn set_avoid_internal_shapes(&mut self, _flag: bool) {}
-
-    /// OCCT BOPAlgo_Options::Perform(theRange).
-    pub fn perform(&mut self) {
-        panic!("GAP: BOPAlgo_MakerVolume::Perform (TKBO/BOPAlgo not translated)");
-    }
-
-    /// OCCT BOPAlgo_Options::HasErrors().
-    pub fn has_errors(&self) -> bool {
-        panic!("GAP: BOPAlgo_MakerVolume::HasErrors (TKBO/BOPAlgo not translated)");
-    }
-
-    /// OCCT BOPAlgo_Builder::Modified(S) — the history hook of
-    /// UpdateHistory.
-    pub fn modified(&self, _s: &Shape) -> Vec<Shape> {
-        panic!("GAP: BOPAlgo_Builder::Modified (TKBO/BOPAlgo not translated)");
-    }
-
-    /// OCCT BOPAlgo_Options::Shape().
-    pub fn shape(&self) -> Shape {
-        panic!("GAP: BOPAlgo_MakerVolume::Shape (TKBO/BOPAlgo not translated)");
-    }
-}
+// OCCT BOPAlgo_MakerVolume (TKBO/BOPAlgo) — the real body lives in
+// crate::bop::algo::maker_volume::MakerVolume (the local GAP carrier is
+// deleted; BuildShellsCompleteInter / UpdateHistory in
+// brep_offset_make_offset_d.rs call the real type through the OCCT call
+// structure).  The `BOPAlgo_Builder&`-typed history query of the OCCT
+// UpdateHistory is the BuilderRef carrier of brep_offset_make_offset_1.rs
+// (architecture difference #49).
 
 /// OCCT TopoDS_Shape::IsNull() for the myOffsetShape carrier — true when the
 /// shape carries no real TShape.  The rcad pool-free builder products (arena
@@ -1633,18 +1608,4 @@ pub(crate) fn indexed_shape_map_remove_key(m: &mut OcctIndexedShapeMap, k: &Shap
 /// call sites keep the OCCT BRep_Tool::IsClosed form).
 pub(crate) fn brep_tool_is_closed(the_s: &Shape) -> bool {
     bat::shape_is_closed(the_s)
-}
-
-/// OCCT BOPAlgo_MakerVolume (TKBO/BOPAlgo) constructor — the GAP carrier
-/// default form.
-impl BOPAlgoMakerVolume {
-    pub fn new() -> Self {
-        BOPAlgoMakerVolume
-    }
-}
-
-impl Default for BOPAlgoMakerVolume {
-    fn default() -> Self {
-        Self::new()
-    }
 }

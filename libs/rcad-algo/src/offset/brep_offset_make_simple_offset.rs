@@ -15,10 +15,15 @@
 // 2. BRepTools_Modifier (TKTopAlgo/BRepTools) is the real class of
 //    topalgo/brep_tools_modifier.rs; BRepOffset_SimpleOffset (TKOffset/BRepOffset)
 //    — the rebuild engine's mapper — is the interface implementor below: the
-//    six OCCT overrides are the BRepTools_Modification methods, whose
-//    computations have no rcad translation yet (the GAP panics are the port
-//    plan §0.6 annotation; the class body is untranslated).  Everything around
-//    the engine calls is translated 1:1.
+//    six OCCT overrides are the BRepTools_Modification methods, translated 1:1
+//    here, together with the FillOffsetData / FillFaceData / FillEdgeData /
+//    FillVertexData construction (cxx L168-427).  Everything around the engine
+//    calls is translated 1:1.
+// 2.1 The OCCT NCollection_DataMap<TopoDS_Face|Edge|Vertex, *Data> with
+//    TopTools_ShapeMapHasher maps to HashMap<(TShape ptr, Location), *Data>
+//    (the hasher ignores the orientation, so the key is shape_key).
+// 2.2 occ::handle<Geom_Curve|Geom_Surface|Geom2d_Curve> members map to
+//    Option<...> (None = the OCCT null handle).
 // 3. ShapeAnalysis_FreeBounds (TKShHealing), BRepTools_Quilt (TKTopAlgo),
 //    ShapeFix_Edge::FixSameParameter (TKShHealing), GeomFill_Generator
 //    (TKGeomAlgo) and the planar BRepLib_MakeFace(W, OnlyPlane) constructor
@@ -45,19 +50,26 @@ use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{
-    Curve2d, Curve2dEval, Curve3, Line2d, Surface3, SurfaceEval, TrimmedCurve3,
+    Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Surface3, SurfaceEval, TrimmedCurve3,
 };
 use rcad_kernel::topo::topods::{tshape_flags, BRep, BRepBuilder, GeomAbsShape, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
-use crate::feat::loc_ope_wires_on_shape::{shape_key, top_exp_vertices};
+use crate::feat::loc_ope_wires_on_shape::{brep_tool_pnt, shape_key, top_exp_vertices};
 use crate::feat::loc_ope_wires_on_shape_b::{
-    brep_tool_curve_on_surface, brep_tool_degenerated, brep_tool_range,
-    brep_tool_surface, brep_tool_tolerance, ShapeKey,
+    brep_tool_curve, brep_tool_curve_on_surface, brep_tool_degenerated, brep_tool_parameter,
+    brep_tool_range, brep_tool_surface, brep_tool_tolerance, ShapeKey,
 };
+use crate::offset::brep_offset_offset::BRepOffsetStatus;
+use crate::offset::brep_offset_surface::{brep_offset_surface, collapse_singularities};
+use crate::shhealing::shape_build::edge::ShapeBuildEdge;
 use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
+use crate::topalgo::brep_lib_validate_edge::{
+    Adaptor3dCurveOnSurface, BRepLibValidateEdge, Geom2dAdaptorCurve, GeomAdaptorCurve,
+    GeomAdaptorSurface,
+};
 use crate::topalgo::brep_tools_modification::BRepToolsModification;
 use crate::topalgo::brep_tools_modifier::BRepToolsModifier;
 
@@ -78,40 +90,532 @@ pub enum BRepOffsetSimpleStatus {
 
 // ---------------------------------------------------------------------------
 // OCCT BRepTools_Modifier + BRepOffset_SimpleOffset (architecture difference
-// #2; the GAP carriers of section 0.6).
+// #2).
 // ---------------------------------------------------------------------------
 
-/// OCCT BRepOffset_SimpleOffset (BRepOffset_SimpleOffset.hxx L44-192;
+/// OCCT NewFaceData (BRepOffset_SimpleOffset.hxx L147-154).
+struct NewFaceData {
+    /// OCCT: myOffsetS.
+    my_offset_s: Option<Surface3>,
+    /// OCCT: myL.
+    my_l: u32,
+    /// OCCT: myTol.
+    my_tol: f64,
+    /// OCCT: myRevWires.
+    my_rev_wires: bool,
+    /// OCCT: myRevFace.
+    my_rev_face: bool,
+}
+
+/// OCCT NewEdgeData (BRepOffset_SimpleOffset.hxx L156-161).
+struct NewEdgeData {
+    /// OCCT: myOffsetC (Resulting curve).
+    my_offset_c: Option<Curve3>,
+    /// OCCT: myL.
+    my_l: u32,
+    /// OCCT: myTol.
+    my_tol: f64,
+}
+
+/// OCCT NewVertexData (BRepOffset_SimpleOffset.hxx L163-167).
+struct NewVertexData {
+    /// OCCT: myP.
+    my_p: DVec3,
+    /// OCCT: myTol.
+    my_tol: f64,
+}
+
+/// OCCT BRepOffset_SimpleOffset (BRepOffset_SimpleOffset.hxx L44-190;
 /// BRepOffset_SimpleOffset.cxx L1-427) — the BRepTools_Modification mapper of
-/// the simple offset algorithm (architecture difference #2; GAP: the
-/// NewSurface/NewCurve/NewPoint/NewCurve2d/NewParameter/Continuity
-/// computations have no rcad translation yet — the GAP panics are the §0.6
-/// annotation; the constructor keeps the OCCT storage form).
+/// the simple offset algorithm (architecture difference #2).
 pub struct BRepOffsetSimpleOffset {
-    my_input_shape: Shape, // OCCT: myInputShape
-    my_offset_value: f64,  // OCCT: myOffsetValue
-    my_tolerance: f64,     // OCCT: myTolerance
+    /// OCCT: myFaceInfo (hxx L177) — Map of faces to new faces information.
+    my_face_info: HashMap<ShapeKey, NewFaceData>,
+    /// OCCT: myEdgeInfo (hxx L180) — Map of edges to new edges information.
+    my_edge_info: HashMap<ShapeKey, NewEdgeData>,
+    /// OCCT: myVertexInfo (hxx L183) — Map of vertices to new vertices
+    /// information.
+    my_vertex_info: HashMap<ShapeKey, NewVertexData>,
+    /// OCCT: myOffsetValue (hxx L186) — Offset value.
+    my_offset_value: f64,
+    /// OCCT: myTolerance (hxx L189) — Tolerance.
+    my_tolerance: f64,
+    /// The rcad arena stand-in for the BRep_Builder locals of FillEdgeData
+    /// (architecture difference #4).
+    my_brep: BRep,
 }
 
 impl BRepOffsetSimpleOffset {
     /// OCCT BRepOffset_SimpleOffset::BRepOffset_SimpleOffset(theInputShape,
-    /// theOffsetValue, theTolerance) (BRepOffset_SimpleOffset.cxx L58-66).
+    /// theOffsetValue, theTolerance) (BRepOffset_SimpleOffset.cxx L40-47).
     pub fn new(the_input_shape: &Shape, the_offset_value: f64, the_tolerance: f64) -> Self {
-        BRepOffsetSimpleOffset {
-            my_input_shape: the_input_shape.clone(),
+        // OCCT L43-44: myOffsetValue(theOffsetValue), myTolerance(theTolerance).
+        let mut a_mapper = BRepOffsetSimpleOffset {
+            my_face_info: HashMap::new(),
+            my_edge_info: HashMap::new(),
+            my_vertex_info: HashMap::new(),
             my_offset_value: the_offset_value,
             my_tolerance: the_tolerance,
+            my_brep: BRep::new(),
+        };
+        // OCCT L46: FillOffsetData(theInputShape);
+        a_mapper.fill_offset_data(the_input_shape);
+        a_mapper
+    }
+
+    /// OCCT BRepOffset_SimpleOffset::FillOffsetData (cxx L168-202) — Fills
+    /// offset data.
+    fn fill_offset_data(&mut self, the_shape: &Shape) {
+        // Clears old data.
+        // OCCT L171-173: myFaceInfo.Clear(); myEdgeInfo.Clear();
+        // myVertexInfo.Clear();
+        self.my_face_info.clear();
+        self.my_edge_info.clear();
+        self.my_vertex_info.clear();
+
+        // Faces loop. Compute offset surface for each face.
+        // OCCT L176-181: TopExp_Explorer anExpSF(theShape, TopAbs_FACE);
+        for a_curr_face in explorer(the_shape, ShapeType::Face, ShapeType::Shape) {
+            // OCCT L179-180: const TopoDS_Face& aCurrFace =
+            // TopoDS::Face(anExpSF.Current()); FillFaceData(aCurrFace);
+            self.fill_face_data(&a_curr_face);
         }
+
+        // Iterate over edges to compute 3d curve.
+        // OCCT L184-186: NCollection_IndexedDataMap<...> aEdgeFaceMap;
+        // TopExp::MapShapesAndAncestors(theShape, TopAbs_EDGE, TopAbs_FACE,
+        // aEdgeFaceMap);
+        let mut a_edge_face_map: indexmap::IndexMap<ShapeKey, (Shape, Vec<Shape>)> =
+            indexmap::IndexMap::new();
+        map_shapes_and_ancestors(
+            the_shape,
+            ShapeType::Edge,
+            ShapeType::Face,
+            &mut a_edge_face_map,
+        );
+        // OCCT L187-191: for (int anIdx = 1; anIdx <= aEdgeFaceMap.Length();
+        // ++anIdx).
+        for an_idx in 1..=a_edge_face_map.len() {
+            // OCCT L189: const TopoDS_Edge& aCurrEdge =
+            // TopoDS::Edge(aEdgeFaceMap.FindKey(anIdx));
+            let a_curr_edge = a_edge_face_map
+                .get_index(an_idx - 1)
+                .expect("indexed data map index")
+                .1
+                 .0
+                .clone();
+            self.fill_edge_data(&a_curr_edge, &a_edge_face_map, an_idx);
+        }
+
+        // Iterate over vertices to compute new vertex.
+        // OCCT L194-196.
+        let mut a_vertex_edge_map: indexmap::IndexMap<ShapeKey, (Shape, Vec<Shape>)> =
+            indexmap::IndexMap::new();
+        map_shapes_and_ancestors(
+            the_shape,
+            ShapeType::Vertex,
+            ShapeType::Edge,
+            &mut a_vertex_edge_map,
+        );
+        // OCCT L197-201.
+        for an_idx in 1..=a_vertex_edge_map.len() {
+            // OCCT L199: const TopoDS_Vertex& aCurrVertex =
+            // TopoDS::Vertex(aVertexEdgeMap.FindKey(anIdx));
+            let a_curr_vertex = a_vertex_edge_map
+                .get_index(an_idx - 1)
+                .expect("indexed data map index")
+                .1
+                 .0
+                .clone();
+            self.fill_vertex_data(&a_curr_vertex, &a_vertex_edge_map, an_idx);
+        }
+    }
+
+    /// OCCT BRepOffset_SimpleOffset::FillFaceData (cxx L206-233) — Method to
+    /// fill new face data for single face.
+    fn fill_face_data(&mut self, the_face: &Shape) {
+        // OCCT L208-211: NewFaceData aNFD; aNFD.myRevWires = false;
+        // aNFD.myRevFace = false; aNFD.myTol = BRep_Tool::Tolerance(theFace);
+        let mut a_nfd = NewFaceData {
+            my_offset_s: None,
+            my_l: 0,
+            my_tol: brep_tool_tolerance(the_face),
+            my_rev_wires: false,
+            my_rev_face: false,
+        };
+
+        // Create offset surface.
+
+        // Any existing transformation is applied to the surface.
+        // New face will have null transformation.
+        // OCCT L217: occ::handle<Geom_Surface> aS = BRep_Tool::Surface(theFace);
+        let a_s = brep_tool_surface(the_face)
+            .expect("BRep_Tool::Surface: the face carries no surface");
+        // OCCT L218: aS = BRepOffset::CollapseSingularities(aS, theFace,
+        // myTolerance);
+        let a_s = collapse_singularities(&a_s, the_face, self.my_tolerance);
+
+        // Take into account face orientation.
+        // OCCT L221-225.
+        let a_mult = if the_face.orientation == Orientation::Reversed {
+            -1.0
+        } else {
+            1.0
+        };
+
+        // OCCT L227-228: BRepOffset_Status aStatus; aNFD.myOffsetS =
+        // BRepOffset::Surface(aS, aMult * myOffsetValue, aStatus, true);
+        let mut a_status = BRepOffsetStatus::Good;
+        a_nfd.my_offset_s = Some(brep_offset_surface(
+            &a_s,
+            a_mult * self.my_offset_value,
+            &mut a_status,
+            true,
+        ));
+        // OCCT L229: aNFD.myL = TopLoc_Location(); // Null transformation.
+        a_nfd.my_l = 0;
+
+        // Save offset surface in map.
+        // OCCT L232: myFaceInfo.Bind(theFace, aNFD);
+        self.my_face_info.insert(shape_key(the_face), a_nfd);
+    }
+
+    /// OCCT BRepOffset_SimpleOffset::FillEdgeData (cxx L237-314) — Method to
+    /// fill new edge data for single edge.
+    ///
+    /// The `unused_assignments` allowance covers the OCCT aF/aL out-parameters:
+    /// `BRep_Tool::Curve(aNewEdge, aNED.myL, aF, aL)` stores the 3d-curve
+    /// range, which the very first `BRep_Tool::CurveOnSurface(theEdge,
+    /// aCurFace, aF, aL)` of the loop below overwrites (the OCCT dead store is
+    /// kept for form).
+    #[allow(unused_assignments)]
+    fn fill_edge_data(
+        &mut self,
+        the_edge: &Shape,
+        the_edge_face_map: &indexmap::IndexMap<ShapeKey, (Shape, Vec<Shape>)>,
+        the_idx: usize,
+    ) {
+        // OCCT L244: const NCollection_List<TopoDS_Shape>& aFacesList =
+        // theEdgeFaceMap(theIdx);
+        let a_faces_list = indexed_data_map_value(the_edge_face_map, the_idx);
+
+        if a_faces_list.is_empty() {
+            return; // Free edges are skipped.
+        }
+
+        // Get offset surface.
+        // OCCT L252: const TopoDS_Face& aCurrFace = TopoDS::Face(aFacesList.First());
+        let a_curr_face = a_faces_list[0].clone();
+
+        // OCCT L254-257: if (!myFaceInfo.IsBound(aCurrFace)) return;
+        let Some(a_nfd) = self.my_face_info.get(&shape_key(&a_curr_face)) else {
+            return;
+        };
+
+        // No need to deal with transformation - it is applied in fill faces
+        // data method.
+        // OCCT L260-261.
+        let an_offset_surf = a_nfd.my_offset_s.clone();
+
+        // Compute offset 3d curve.
+        // OCCT L264-265: double aF, aL; occ::handle<Geom2d_Curve> aC2d =
+        // BRep_Tool::CurveOnSurface(theEdge, aCurrFace, aF, aL);
+        let a_c2d = brep_tool_curve_on_surface(the_edge, &a_curr_face);
+        let (mut a_f, mut a_l) = match &a_c2d {
+            Some((_, f, l)) => (*f, *l),
+            None => (0.0, 0.0),
+        };
+
+        // OCCT L267-268: BRepBuilderAPI_MakeEdge anEdgeMaker(aC2d,
+        // anOffsetSurf, aF, aL); TopoDS_Edge aNewEdge = anEdgeMaker.Edge();
+        // The rcad carrier of that maker is the ShapeBuild_Edge::MakeEdge(E,
+        // pcurve, S, L, p1, p2) wrapper (ShapeBuild_Edge.cxx L851-881, whose
+        // body is exactly `BRepBuilderAPI_MakeEdge ME(pcurve, S, p1, p2); E =
+        // ME.Edge();`); the not-done maker yields the null edge, which the
+        // rcad form carries as Shape::null() (architecture difference #5).
+        let mut a_new_edge = Shape::null();
+        if let (Some((a_c2d, _a_f, _a_l)), Some(an_offset_surf)) = (&a_c2d, &an_offset_surf) {
+            let a_shape_build_edge = ShapeBuildEdge;
+            // OCCT: the maker's TopLoc_Location default is identity (0).
+            a_shape_build_edge.make_edge_pcurve_surface_loc_params(
+                &mut self.my_brep,
+                &mut a_new_edge,
+                a_c2d,
+                an_offset_surf,
+                0,
+                a_f,
+                a_l,
+            );
+        }
+
+        // Compute max tolerance. Vertex tolerance usage is taken from existing
+        // offset computation algorithm. This piece of code significantly
+        // influences resulting performance.
+        // OCCT L272: double aTol = BRep_Tool::MaxTolerance(theEdge, TopAbs_VERTEX);
+        let a_tol = brep_tool_max_tolerance(the_edge, ShapeType::Vertex);
+        // OCCT L273: BRepLib::BuildCurves3d(aNewEdge, aTol);
+        crate::topalgo::brep_lib::brep_lib::BRepLib::build_curves3d_tol(
+            &mut self.my_brep,
+            &a_new_edge,
+            a_tol,
+        );
+
+        // OCCT L275-276: NewEdgeData aNED; aNED.myOffsetC =
+        // BRep_Tool::Curve(aNewEdge, aNED.myL, aF, aL);
+        let mut a_ned = NewEdgeData {
+            my_offset_c: None,
+            my_l: 0,
+            my_tol: 0.0,
+        };
+        match brep_tool_curve(&a_new_edge) {
+            Some((a_offset_c, a_curve_f, a_curve_l)) => {
+                a_ned.my_offset_c = Some(a_offset_c);
+                // OCCT: L = E.Location() * GC->Location().
+                a_ned.my_l = a_new_edge.location;
+                a_f = a_curve_f;
+                a_l = a_curve_l;
+            }
+            None => {
+                // OCCT: L.Identity(); First = Last = 0.;
+                a_ned.my_l = 0;
+                a_f = 0.0;
+                a_l = 0.0;
+            }
+        }
+
+        // Iterate over adjacent faces for the current edge and compute max
+        // deviation.
+        // OCCT L279-281: double anEdgeTol = 0.0; NCollection_List<...>::Iterator
+        // anIter(aFacesList); for (; !aNED.myOffsetC.IsNull() && anIter.More();
+        // anIter.Next())
+        let mut an_edge_tol = 0.0f64;
+        let mut an_iter = 0usize;
+        while a_ned.my_offset_c.is_some() && an_iter < a_faces_list.len() {
+            // OCCT L283: const TopoDS_Face& aCurFace = TopoDS::Face(anIter.Value());
+            let a_cur_face = a_faces_list[an_iter].clone();
+            // OCCT anIter.Next() — placed right after the value read so that
+            // the `continue` paths below match the OCCT for-loop increment.
+            an_iter += 1;
+
+            // OCCT L285-288: if (!myFaceInfo.IsBound(aCurFace)) continue;
+            let Some(a_cur_nfd) = self.my_face_info.get(&shape_key(&a_cur_face)) else {
+                continue;
+            };
+
+            // Create offset curve on surface.
+            // OCCT L291: const occ::handle<Geom2d_Curve> aC2dNew =
+            // BRep_Tool::CurveOnSurface(theEdge, aCurFace, aF, aL);
+            // The OCCT out-parameters aF/aL are re-assigned here and feed the
+            // adaptors below (the Curve(aNewEdge, ...) range from above is
+            // overwritten on every iteration).
+            let a_c2d_new = match brep_tool_curve_on_surface(the_edge, &a_cur_face) {
+                Some((a_c, a_pcurve_f, a_pcurve_l)) => {
+                    a_f = a_pcurve_f;
+                    a_l = a_pcurve_l;
+                    a_c
+                }
+                // OCCT reaches this only through the BRep_Tool::CurveOnPlane
+                // fallback; the rcad re-host carries no fallback (arch. diff.
+                // #1 of loc_ope_wires_on_shape_b), so the iteration is skipped.
+                None => continue,
+            };
+            // OCCT L292: const occ::handle<Adaptor2d_Curve2d> aHCurve2d =
+            // new Geom2dAdaptor_Curve(aC2dNew, aF, aL);
+            let a_h_curve2d = Geom2dAdaptorCurve::new(a_c2d_new, a_f, a_l);
+            // OCCT L293-294: const occ::handle<Adaptor3d_Surface> aHSurface =
+            // new GeomAdaptor_Surface(myFaceInfo.Find(aCurFace).myOffsetS);
+            let a_h_surface = GeomAdaptorSurface::new(
+                a_cur_nfd
+                    .my_offset_s
+                    .clone()
+                    .expect("BRepOffset_SimpleOffset: the face carries an offset surface"),
+            );
+            // OCCT L295-296: const occ::handle<Adaptor3d_CurveOnSurface>
+            // aCurveOnSurf = new Adaptor3d_CurveOnSurface(aHCurve2d, aHSurface);
+            let a_curve_on_surf = Adaptor3dCurveOnSurface::new(a_h_curve2d, a_h_surface);
+
+            // Extract 3d-curve (it is not null).
+            // OCCT L299: const occ::handle<Adaptor3d_Curve> aCurve3d =
+            // new GeomAdaptor_Curve(aNED.myOffsetC, aF, aL);
+            let a_curve3d = match &a_ned.my_offset_c {
+                Some(a_offset_c) => GeomAdaptorCurve::new(a_offset_c.clone(), a_f, a_l),
+                // The loop condition guarantees a non-null myOffsetC.
+                None => break,
+            };
+
+            // It is necessary to compute maximal deviation (tolerance).
+            // OCCT L302-308.
+            let mut a_validate_edge = BRepLibValidateEdge::new(a_curve3d, a_curve_on_surf, true);
+            a_validate_edge.process();
+            if a_validate_edge.is_done() {
+                let a_max_tol1 = a_validate_edge.get_max_distance();
+                an_edge_tol = an_edge_tol.max(a_max_tol1);
+            }
+        }
+        // OCCT L310: aNED.myTol = std::max(BRep_Tool::Tolerance(aNewEdge),
+        // anEdgeTol);
+        a_ned.my_tol = brep_tool_tolerance(&a_new_edge).max(an_edge_tol);
+
+        // Save computed 3d curve in map.
+        // OCCT L313: myEdgeInfo.Bind(theEdge, aNED);
+        self.my_edge_info.insert(shape_key(the_edge), a_ned);
+    }
+
+    /// OCCT BRepOffset_SimpleOffset::FillVertexData (cxx L318-427) — Method to
+    /// fill new vertex data for single vertex.
+    fn fill_vertex_data(
+        &mut self,
+        the_vertex: &Shape,
+        the_vertex_edge_map: &indexmap::IndexMap<ShapeKey, (Shape, Vec<Shape>)>,
+        the_idx: usize,
+    ) {
+        // Algorithm:
+        // Find adjacent edges for the given vertex.
+        // Find corresponding end on the each adjacent edge.
+        // Get offset points for founded end.
+        // Set result vertex position as barycenter of founded points.
+
+        // OCCT L331: gp_Pnt aCurrPnt = BRep_Tool::Pnt(theVertex);
+        let a_curr_pnt = brep_tool_pnt(the_vertex).unwrap_or(DVec3::ZERO);
+
+        // OCCT L333: const NCollection_List<TopoDS_Shape>& aEdgesList =
+        // theVertexEdgeMap(theIdx);
+        let a_edges_list = indexed_data_map_value(the_vertex_edge_map, the_idx);
+
+        if a_edges_list.is_empty() {
+            return; // Free verices are skipped.
+        }
+
+        // Array to store offset points.
+        // OCCT L341: NCollection_DynamicArray<gp_Pnt> anOffsetPointVec;
+        let mut an_offset_point_vec: Vec<DVec3> = Vec::new();
+
+        // OCCT L343: double aMaxEdgeTol = 0.0;
+        let mut a_max_edge_tol = 0.0f64;
+
+        // Iterate over adjacent edges.
+        // OCCT L346-347: NCollection_List<...>::Iterator anIterEdges(aEdgesList);
+        // for (; anIterEdges.More(); anIterEdges.Next())
+        for a_curr_edge in a_edges_list.iter() {
+            // OCCT L351-354: if (!myEdgeInfo.IsBound(aCurrEdge)) continue;
+            if !self.my_edge_info.contains_key(&shape_key(a_curr_edge)) {
+                continue; // Skip shared edges with wrong orientation.
+            }
+
+            // Find the closest bound.
+            // OCCT L357-358: double aF, aL; occ::handle<Geom_Curve> aC3d =
+            // BRep_Tool::Curve(aCurrEdge, aF, aL);
+            // Protection from degenerated edges.
+            // OCCT L361-364: if (aC3d.IsNull()) continue;
+            let (a_c3d, a_f, a_l) = match brep_tool_curve(a_curr_edge) {
+                Some((a_c3d, a_f, a_l)) => (a_c3d, a_f, a_l),
+                None => continue,
+            };
+
+            // OCCT L366-367: const gp_Pnt aPntF = aC3d->Value(aF); aPntL =
+            // aC3d->Value(aL);
+            let a_pnt_f = CurveEval::point_at(&a_c3d, a_f);
+            let a_pnt_l = CurveEval::point_at(&a_c3d, a_l);
+
+            // OCCT L369-370.
+            let a_sq_dist_f = a_pnt_f.distance_squared(a_curr_pnt);
+            let a_sq_dist_l = a_pnt_l.distance_squared(a_curr_pnt);
+
+            // OCCT L372-378: double aMinParam = aF, aMaxParam = aL; if
+            // (aSqDistL < aSqDistF) { aMinParam = aL; aMaxParam = aF; }
+            let (a_min_param, a_max_param) = if a_sq_dist_l < a_sq_dist_f {
+                // Square distance to last point is closer.
+                (a_l, a_f)
+            } else {
+                (a_f, a_l)
+            };
+
+            // Compute point on offset edge.
+            // OCCT L381-384.
+            let a_ned = self
+                .my_edge_info
+                .get(&shape_key(a_curr_edge))
+                .expect("bound above");
+            let an_offset_curve = a_ned.my_offset_c.clone();
+            let an_offset_point = match &an_offset_curve {
+                Some(a_offset_c) => CurveEval::point_at(a_offset_c, a_min_param),
+                // OCCT dereferences the handle unconditionally; the rcad null
+                // handle path skips the edge (architecture difference #2.2).
+                None => continue,
+            };
+            an_offset_point_vec.push(an_offset_point);
+
+            // Handle situation when edge is closed.
+            // OCCT L386-393.
+            let (a_v1, a_v2) = top_exp_vertices_shape(a_curr_edge);
+            if a_v1.is_same(&a_v2) {
+                let an_offset_point_last = match &an_offset_curve {
+                    Some(a_offset_c) => CurveEval::point_at(a_offset_c, a_max_param),
+                    None => continue,
+                };
+                an_offset_point_vec.push(an_offset_point_last);
+            }
+
+            // OCCT L395: aMaxEdgeTol = std::max(aMaxEdgeTol, aNED.myTol);
+            a_max_edge_tol = a_max_edge_tol.max(a_ned.my_tol);
+        }
+
+        // NCollection_DynamicArray starts from 0 by default.
+        // It's better to use lower() and upper() in this case instead of direct
+        // indexes range.
+        // OCCT L400-405.
+        let mut a_center = DVec3::ZERO;
+        for an_offset_point in &an_offset_point_vec {
+            a_center += *an_offset_point;
+        }
+        a_center /= an_offset_point_vec.len() as f64;
+
+        // Compute max distance.
+        // OCCT L408-416.
+        let mut a_sq_max_dist = 0.0f64;
+        for an_offset_point in &an_offset_point_vec {
+            let a_sq_dist = a_center.distance_squared(*an_offset_point);
+            if a_sq_dist > a_sq_max_dist {
+                a_sq_max_dist = a_sq_dist;
+            }
+        }
+
+        // OCCT L418: const double aResTol = std::max(aMaxEdgeTol,
+        // std::sqrt(aSqMaxDist));
+        let a_res_tol = a_max_edge_tol.max(a_sq_max_dist.sqrt());
+
+        // OCCT L420: const double aMultCoeff = 1.001; // Avoid tolernace problems.
+        let a_mult_coeff = 1.001;
+        let a_nvd = NewVertexData {
+            my_p: a_center,
+            my_tol: a_res_tol * a_mult_coeff,
+        };
+
+        // Save computed vertex info.
+        // OCCT L426: myVertexInfo.Bind(theVertex, aNVD);
+        self.my_vertex_info.insert(shape_key(the_vertex), a_nvd);
     }
 }
 
-/// OCCT BRepOffset_SimpleOffset -> BRepTools_Modification (hxx L43:
+/// OCCT NCollection_IndexedDataMap::operator()(theIdx) — the 1-based value
+/// read (the OCCT map indexes run 1..Length()).
+fn indexed_data_map_value(
+    the_map: &indexmap::IndexMap<ShapeKey, (Shape, Vec<Shape>)>,
+    the_idx: usize,
+) -> &[Shape] {
+    the_map
+        .get_index(the_idx - 1)
+        .expect("indexed data map index")
+        .1
+         .1
+        .as_slice()
+}
+
+/// OCCT BRepOffset_SimpleOffset -> BRepTools_Modification (hxx L44:
 /// `class BRepOffset_SimpleOffset : public BRepTools_Modification`).  The six
-/// OCCT overrides (hxx L68-127) are the BRepTools_Modification methods; the
-/// class body has no rcad translation, so every override is the GAP panic of
-/// section 0.6 (the same untranslated computation as before).
+/// OCCT overrides (hxx L68-127) are the BRepTools_Modification methods.
 impl BRepToolsModification for BRepOffsetSimpleOffset {
-    /// OCCT BRepOffset_SimpleOffset::NewSurface (hxx L68-73) — GAP.
+    /// OCCT BRepOffset_SimpleOffset::NewSurface (cxx L51-72).
     fn new_surface(
         &mut self,
         the_f: &Shape,
@@ -121,11 +625,25 @@ impl BRepToolsModification for BRepOffsetSimpleOffset {
         the_rev_wires: &mut bool,
         the_rev_face: &mut bool,
     ) -> bool {
-        let _ = (the_f, the_s, the_l, the_tol, the_rev_wires, the_rev_face);
-        panic!("GAP: BRepOffset_SimpleOffset::NewSurface (BRepOffset_SimpleOffset not translated)");
+        // OCCT L58-61: if (!myFaceInfo.IsBound(F)) return false;
+        let Some(a_nfd) = self.my_face_info.get(&shape_key(the_f)) else {
+            return false;
+        };
+
+        // OCCT L63-69: const NewFaceData& aNFD = myFaceInfo.Find(F); S =
+        // aNFD.myOffsetS; L = aNFD.myL; Tol = aNFD.myTol; RevWires =
+        // aNFD.myRevWires; RevFace = aNFD.myRevFace;
+        *the_s = a_nfd.my_offset_s.clone();
+        *the_l = a_nfd.my_l;
+        *the_tol = a_nfd.my_tol;
+        *the_rev_wires = a_nfd.my_rev_wires;
+        *the_rev_face = a_nfd.my_rev_face;
+
+        // OCCT L71: return true;
+        true
     }
 
-    /// OCCT BRepOffset_SimpleOffset::NewCurve (hxx L81-84) — GAP.
+    /// OCCT BRepOffset_SimpleOffset::NewCurve (cxx L76-93).
     fn new_curve(
         &mut self,
         the_e: &Shape,
@@ -133,31 +651,63 @@ impl BRepToolsModification for BRepOffsetSimpleOffset {
         the_l: &mut u32,
         the_tol: &mut f64,
     ) -> bool {
-        let _ = (the_e, the_c, the_l, the_tol);
-        panic!("GAP: BRepOffset_SimpleOffset::NewCurve (BRepOffset_SimpleOffset not translated)");
+        // OCCT L81-84: if (!myEdgeInfo.IsBound(E)) return false;
+        let Some(a_ned) = self.my_edge_info.get(&shape_key(the_e)) else {
+            return false;
+        };
+
+        // OCCT L86-90: C = aNED.myOffsetC; L = aNED.myL; Tol = aNED.myTol;
+        *the_c = a_ned.my_offset_c.clone();
+        *the_l = a_ned.my_l;
+        *the_tol = a_ned.my_tol;
+
+        // OCCT L92: return true;
+        true
     }
 
-    /// OCCT BRepOffset_SimpleOffset::NewPoint (hxx L91) — GAP.
+    /// OCCT BRepOffset_SimpleOffset::NewPoint (cxx L97-110).
     fn new_point(&mut self, the_v: &Shape, the_p: &mut DVec3, the_tol: &mut f64) -> bool {
-        let _ = (the_v, the_p, the_tol);
-        panic!("GAP: BRepOffset_SimpleOffset::NewPoint (BRepOffset_SimpleOffset not translated)");
+        // OCCT L99-102: if (!myVertexInfo.IsBound(V)) return false;
+        let Some(a_nvd) = self.my_vertex_info.get(&shape_key(the_v)) else {
+            return false;
+        };
+
+        // OCCT L104-107: const NewVertexData& aNVD = myVertexInfo.Find(V); P =
+        // aNVD.myP; Tol = aNVD.myTol;
+        *the_p = a_nvd.my_p;
+        *the_tol = a_nvd.my_tol;
+
+        // OCCT L109: return true;
+        true
     }
 
-    /// OCCT BRepOffset_SimpleOffset::NewCurve2d (hxx L99-106) — GAP.
+    /// OCCT BRepOffset_SimpleOffset::NewCurve2d (cxx L114-132).
     fn new_curve2d(
         &mut self,
         the_e: &Shape,
         the_f: &Shape,
-        the_new_e: &mut Shape,
-        the_new_f: &Shape,
+        _the_new_e: &mut Shape,
+        _the_new_f: &Shape,
         the_c: &mut Option<Curve2d>,
         the_tol: &mut f64,
     ) -> bool {
-        let _ = (the_e, the_f, the_new_e, the_new_f, the_c, the_tol);
-        panic!("GAP: BRepOffset_SimpleOffset::NewCurve2d (BRepOffset_SimpleOffset not translated)");
+        // Use original pcurve.
+        // OCCT L122-124: double aF, aL; C = BRep_Tool::CurveOnSurface(E, F,
+        // aF, aL); Tol = BRep_Tool::Tolerance(E);
+        *the_c = brep_tool_curve_on_surface(the_e, the_f).map(|(a_c2d, _a_f, _a_l)| a_c2d);
+        *the_tol = brep_tool_tolerance(the_e);
+
+        // OCCT L126-129: if (myEdgeInfo.IsBound(E)) Tol =
+        // myEdgeInfo.Find(E).myTol;
+        if let Some(a_ned) = self.my_edge_info.get(&shape_key(the_e)) {
+            *the_tol = a_ned.my_tol;
+        }
+
+        // OCCT L131: return true;
+        true
     }
 
-    /// OCCT BRepOffset_SimpleOffset::NewParameter (hxx L111-116) — GAP.
+    /// OCCT BRepOffset_SimpleOffset::NewParameter (cxx L136-151).
     fn new_parameter(
         &mut self,
         the_v: &Shape,
@@ -165,24 +715,35 @@ impl BRepToolsModification for BRepOffsetSimpleOffset {
         the_p: &mut f64,
         the_tol: &mut f64,
     ) -> bool {
-        let _ = (the_v, the_e, the_p, the_tol);
-        panic!(
-            "GAP: BRepOffset_SimpleOffset::NewParameter (BRepOffset_SimpleOffset not translated)"
-        );
+        // Use original parameter.
+        // OCCT L142-143: P = BRep_Tool::Parameter(V, E); Tol =
+        // BRep_Tool::Tolerance(V);
+        *the_p = brep_tool_parameter(the_v, the_e);
+        *the_tol = brep_tool_tolerance(the_v);
+
+        // OCCT L145-148: if (myVertexInfo.IsBound(V)) Tol =
+        // myVertexInfo.Find(V).myTol;
+        if let Some(a_nvd) = self.my_vertex_info.get(&shape_key(the_v)) {
+            *the_tol = a_nvd.my_tol;
+        }
+
+        // OCCT L150: return true;
+        true
     }
 
-    /// OCCT BRepOffset_SimpleOffset::Continuity (hxx L122-127) — GAP.
+    /// OCCT BRepOffset_SimpleOffset::Continuity (cxx L155-164).
     fn continuity(
         &mut self,
         the_e: &Shape,
         the_f1: &Shape,
         the_f2: &Shape,
-        the_new_e: &Shape,
-        the_new_f1: &Shape,
-        the_new_f2: &Shape,
+        _the_new_e: &Shape,
+        _the_new_f1: &Shape,
+        _the_new_f2: &Shape,
     ) -> GeomAbsShape {
-        let _ = (the_e, the_f1, the_f2, the_new_e, the_new_f1, the_new_f2);
-        panic!("GAP: BRepOffset_SimpleOffset::Continuity (BRepOffset_SimpleOffset not translated)");
+        // Compute result using original continuity.
+        // OCCT L163: return BRep_Tool::Continuity(E, F1, F2);
+        brep_tool_continuity(the_e, the_f1, the_f2)
     }
 }
 

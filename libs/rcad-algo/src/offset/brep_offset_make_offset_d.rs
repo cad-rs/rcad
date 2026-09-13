@@ -20,11 +20,12 @@ use rcad_kernel::topo::topods::{BRep, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 
 use super::brep_offset_inter2d_b::BRepOffsetInter2d;
+use super::brep_offset_make_offset_1::BuilderRef;
 use super::brep_offset_make_offset::{
     brep_check_edge_tolerance, brep_check_vertex_tolerance, brep_gprop_volume_properties,
     brep_lib_same_parameter_3, brep_tools_is_really_closed, bop_algo_tools_make_split_edge,
     find_parameter, top_exp_vertices_cum_ori, BRepOffset_Error,
-    BOPAlgoMakerVolume, DataMapOfShapeListOfShape, DataMapOfShapeShape,
+    DataMapOfShapeListOfShape, DataMapOfShapeShape,
     IndexedDataMapOfShapeListOfShape, MapSF,
 };
 use super::brep_offset_tool::{
@@ -36,6 +37,7 @@ use crate::brep_algo::as_des::BRepAlgoAsDes;
 use crate::brep_algo::image::BRepAlgoImage;
 use crate::brep_algo::tool as bat;
 use crate::brep_algo::tool::{brep_tool_pnt, shape_key};
+use crate::bop::algo::maker_volume::MakerVolume; // OCCT: BOPAlgo_MakerVolume
 use crate::geomalgo::geom_api_project_point_on_curve::GeomAPIProjectPointOnCurve;
 use crate::feat::loc_ope_wires_on_shape_b::{
     brep_tool_curve, brep_tool_degenerated, brep_tool_range, brep_tool_tolerance,
@@ -420,9 +422,14 @@ fn shape_is_free(the_s: &Shape) -> bool {
 }
 
 /// OCCT UpdateHistory (cxx L4649-4672).
+///
+/// The OCCT `BOPAlgo_Builder& theGF` parameter takes the BOPAlgo_MakerVolume
+/// of BuildShellsCompleteInter; the rcad MakerVolume is a separate struct, so
+/// the parameter is the BuilderRef carrier of brep_offset_make_offset_1.rs
+/// (architecture difference #49).
 pub(crate) fn update_history(
     the_lf: &[Shape],
-    the_gf: &BOPAlgoMakerVolume,
+    the_gf: &BuilderRef<'_>,
     the_image: &mut BRepAlgoImage,
 ) {
     for a_it in the_lf {
@@ -736,8 +743,9 @@ pub(crate) fn build_shells_complete_inter(
     the_shells: &mut Shape,
 ) -> bool {
     // make solids
-    let mut a_mv1 = super::brep_offset_make_offset::BOPAlgoMakerVolume::new();
-    a_mv1.set_arguments(the_lf);
+    // OCCT L5071: BOPAlgo_MakerVolume aMV1;
+    let mut a_mv1 = MakerVolume::new();
+    a_mv1.set_arguments(the_lf.to_vec());
     // we need to intersect the faces to process the tangential faces
     a_mv1.set_intersect(true);
     a_mv1.set_avoid_internal_shapes(true);
@@ -748,9 +756,14 @@ pub(crate) fn build_shells_complete_inter(
         return b_done;
     }
     //
-    update_history(the_lf, &a_mv1, the_image);
+    update_history(
+        the_lf,
+        &super::brep_offset_make_offset_1::BuilderRef::MakerVolume(&a_mv1),
+        the_image,
+    );
     //
-    let a_result1 = a_mv1.shape();
+    // OCCT L5086: const TopoDS_Shape& aResult1 = aMV1.Shape();
+    let a_result1 = a_mv1.shape().cloned().unwrap_or_else(Shape::null);
     if a_result1.shape_type() == ShapeType::Solid {
         // result is the alone solid, nothing to do
         return get_sub_shapes(&a_result1, ShapeType::Shell, the_shells);
@@ -811,8 +824,9 @@ pub(crate) fn build_shells_complete_inter(
     }
     //
     // make solids from the new list
-    let mut a_mv2 = super::brep_offset_make_offset::BOPAlgoMakerVolume::new();
-    a_mv2.set_arguments(&a_lf);
+    // OCCT L5159: BOPAlgo_MakerVolume aMV2;
+    let mut a_mv2 = MakerVolume::new();
+    a_mv2.set_arguments(a_lf.clone());
     // no need to intersect this time
     a_mv2.set_intersect(false);
     a_mv2.set_avoid_internal_shapes(true);
@@ -822,7 +836,8 @@ pub(crate) fn build_shells_complete_inter(
         return b_done;
     }
     //
-    let a_result2 = a_mv2.shape();
+    // OCCT L5171: const TopoDS_Shape& aResult2 = aMV2.Shape();
+    let a_result2 = a_mv2.shape().cloned().unwrap_or_else(Shape::null);
     if a_result2.shape_type() == ShapeType::Solid {
         return get_sub_shapes(&a_result2, ShapeType::Shell, the_shells);
     }
@@ -866,8 +881,9 @@ pub(crate) fn build_shells_complete_inter(
     }
     //
     // make solid from most outer faces with correct normal direction
-    let mut a_mv3 = super::brep_offset_make_offset::BOPAlgoMakerVolume::new();
-    a_mv3.set_arguments(&a_lf);
+    // OCCT L5214: BOPAlgo_MakerVolume aMV3;
+    let mut a_mv3 = MakerVolume::new();
+    a_mv3.set_arguments(a_lf.clone());
     a_mv3.set_intersect(false);
     a_mv3.set_avoid_internal_shapes(true);
     a_mv3.perform();
@@ -876,7 +892,8 @@ pub(crate) fn build_shells_complete_inter(
         return b_done;
     }
     //
-    let a_result3 = a_mv3.shape();
+    // OCCT L5225: const TopoDS_Shape& aResult3 = aMV3.Shape();
+    let a_result3 = a_mv3.shape().cloned().unwrap_or_else(Shape::null);
     get_sub_shapes(&a_result3, ShapeType::Shell, the_shells)
 }
 
