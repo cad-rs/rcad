@@ -49,43 +49,11 @@ use super::chfi_ds::{ChFiDSElSpine, ChFiDSSpineHandle};
 use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::geomalgo::gtests_stubs::GeomAbsShape as ChFiDSGeomAbsShape;
 
-// =========================================================================
 // OCCT Standard_Real.hxx L242-248 — Epsilon(theValue): one ULP toward the
-// same-sign infinity.
-// =========================================================================
-fn epsilon(the_value: f64) -> f64 {
-    if the_value >= 0.0 {
-        next_after_up(the_value) - the_value
-    } else {
-        the_value - next_after_down(the_value)
-    }
-}
-
-fn next_after_up(x: f64) -> f64 {
-    if x == 0.0 || x.is_nan() {
-        // OCCT std::nextafter(0, +Inf) is the smallest positive SUBNORMAL
-        // (5e-324), not MIN_POSITIVE (2.2e-308) — a factor of 4.5e16.
-        return f64::from_bits(1);
-    }
-    let bits = x.to_bits();
-    if x > 0.0 {
-        f64::from_bits(bits + 1)
-    } else {
-        f64::from_bits(bits - 1)
-    }
-}
-
-fn next_after_down(x: f64) -> f64 {
-    if x == 0.0 {
-        return -f64::from_bits(1);
-    }
-    let bits = x.to_bits();
-    if x > 0.0 {
-        f64::from_bits(bits - 1)
-    } else {
-        f64::from_bits(bits + 1)
-    }
-}
+// same-sign infinity.  The kernel keeps the single canonical definition
+// (`epsilon_of`, `base::extrema_ext_elc`); the re-export keeps the
+// historical local name for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as epsilon;
 
 // =========================================================================
 // Geom_BSplineCurve accessors over the rcad flat-knot BSplineCurve3.

@@ -488,16 +488,12 @@ fn fill_points(
     }
 }
 
-/// OCCT Standard_Real.hxx L240-247: Epsilon(theValue).
-fn standard_real_epsilon(the_value: f64) -> f64 {
-    if the_value >= 0.0 {
-        let a_next = f64::from_bits(the_value.to_bits() + 1);
-        a_next - the_value
-    } else {
-        let a_prev = f64::from_bits(the_value.to_bits() - 1);
-        the_value - a_prev
-    }
-}
+// OCCT Standard_Real.hxx L242-248: Epsilon(theValue) — one ULP toward the
+// same-sign infinity (consumed at BRepLib_FindSurface.cxx L499/L548).  The
+// kernel keeps the single canonical definition (`epsilon_of`,
+// `base::extrema_ext_elc`); the re-export keeps the historical local name
+// for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as standard_real_epsilon;
 
 // ---------------------------------------------------------------------------
 // BRepAdaptor_Curve re-host (architecture bridge #5)

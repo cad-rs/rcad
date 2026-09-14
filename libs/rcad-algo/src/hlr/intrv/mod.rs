@@ -22,43 +22,12 @@ pub enum Position {
     After,
 }
 
-/// OCCT Standard::Epsilon(theValue) — Standard_Real.hxx L239-246: the
+/// OCCT Standard::Epsilon(theValue) — Standard_Real.hxx L242-248: the
 /// absolute difference between the value and its nearest neighbour in the
-/// direction of infinity with the same sign.
-pub fn epsilon(the_value: f64) -> f64 {
-    if the_value >= 0.0 {
-        next_after(the_value, f64::MAX) - the_value
-    } else {
-        the_value - next_after(the_value, -f64::MAX)
-    }
-}
-
-/// `std::nextafter` (not yet stable in Rust std) — the representable value
-/// adjacent to `x` in the direction of `to`.
-fn next_after(x: f64, to: f64) -> f64 {
-    if x.is_nan() || to.is_nan() {
-        return f64::NAN;
-    }
-    if x == to {
-        return x;
-    }
-    if x == 0.0 {
-        // OCCT std::nextafter(0, +Inf) is the smallest positive SUBNORMAL
-        // (5e-324), not MIN_POSITIVE (2.2e-308) — a factor of 4.5e16.
-        return if to > 0.0 {
-            f64::from_bits(1)
-        } else {
-            -f64::from_bits(1)
-        };
-    }
-    let bits = x.to_bits();
-    let next = if (to > x) == (x > 0.0) {
-        bits + 1
-    } else {
-        bits - 1
-    };
-    f64::from_bits(next)
-}
+/// direction of infinity with the same sign.  The kernel keeps the single
+/// canonical definition (`epsilon_of`, `base::extrema_ext_elc`); this
+/// re-export keeps the historical `intrv::epsilon` name for the call sites.
+pub use rcad_kernel::base::extrema_ext_elc::epsilon_of as epsilon;
 
 /// OCCT Standard::RealFirst() (Standard_Real.hxx L170-173).
 pub const REAL_FIRST: f64 = -f64::MAX;

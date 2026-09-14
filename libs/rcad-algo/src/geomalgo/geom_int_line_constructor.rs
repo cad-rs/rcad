@@ -1166,27 +1166,8 @@ fn reject_duplicates(the_vtx_arr: &mut [GeomIntVertex]) {
     }
 }
 
-/// OCCT `Epsilon(theValue)` (Standard_Real.hxx L242-246) — the ULP of
-/// `theValue` toward the infinity of the same sign.
-fn standard_epsilon(x: f64) -> f64 {
-    if x >= 0.0 {
-        next_after(x, f64::INFINITY) - x
-    } else {
-        x - next_after(x, f64::NEG_INFINITY)
-    }
-}
-
-/// OCCT `std::nextafter` — bit-level construction (see the kernel twin).
-fn next_after(x: f64, to: f64) -> f64 {
-    if x.is_nan() || to.is_nan() || x == to {
-        return x;
-    }
-    if x == 0.0 {
-        return if to > 0.0 { f64::from_bits(1) } else { -f64::from_bits(1) };
-    }
-    if (to > x) == (x > 0.0) {
-        f64::from_bits(x.to_bits() + 1)
-    } else {
-        f64::from_bits(x.to_bits() - 1)
-    }
-}
+// OCCT `Epsilon(theValue)` (Standard_Real.hxx L242-248) — the ULP of
+// `theValue` toward the infinity of the same sign.  The kernel keeps the
+// single canonical definition (`epsilon_of`, `base::extrema_ext_elc`); the
+// re-export keeps the historical local name for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as standard_epsilon;

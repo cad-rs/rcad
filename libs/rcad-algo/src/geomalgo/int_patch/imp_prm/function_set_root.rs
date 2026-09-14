@@ -52,16 +52,12 @@ const EPS2: f64 = 1e-64;
 const EPS_SQRT: f64 = 1e-16;
 const PROGRES: f64 = 0.005;
 
-/// OCCT Standard_Real.hxx Epsilon(V) (L242-246) — the distance from V to the
-/// next representable value away from zero.
-fn epsilon(v: f64) -> f64 {
-    let na = f64::from_bits(v.to_bits() + 1);
-    if v >= 0.0 {
-        na - v
-    } else {
-        v - na
-    }
-}
+// OCCT Standard_Real.hxx Epsilon(V) (L242-248) — the distance from V to the
+// next representable value toward the same-sign infinity (consumed at
+// math_FunctionSetRoot.cxx L873).  The kernel keeps the single canonical
+// definition (`epsilon_of`, `base::extrema_ext_elc`); the re-export keeps
+// the historical local name for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as epsilon;
 
 /// OCCT math_FunctionSetRoot::IsSolutionReached (hxx L69-79) — the solution
 /// is reached when the last step satisfies |Delta(i)| <= Tol(i) for every

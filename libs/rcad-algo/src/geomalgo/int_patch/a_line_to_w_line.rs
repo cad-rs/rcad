@@ -20,15 +20,12 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 use rcad_kernel::precision::CONFUSION;
 
-/// OCCT `Epsilon(theValue)` (Standard_Real.hxx L242-245): the distance from
-/// theValue to the next representable double in the direction of ±∞.
-pub(crate) fn occt_epsilon(the_value: f64) -> f64 {
-    if the_value >= 0.0 {
-        the_value.next_up() - the_value
-    } else {
-        the_value - the_value.next_down()
-    }
-}
+// OCCT `Epsilon(theValue)` (Standard_Real.hxx L242-248): the distance from
+// theValue to the next representable double in the direction of ±∞.  The
+// kernel keeps the single canonical definition (`epsilon_of`,
+// `base::extrema_ext_elc`); this re-export keeps the historical local name
+// for the call sites.
+pub(crate) use rcad_kernel::base::extrema_ext_elc::epsilon_of as occt_epsilon;
 
 /// OCCT IntPatch_ALineToWLine.
 pub struct ALineToWLine {

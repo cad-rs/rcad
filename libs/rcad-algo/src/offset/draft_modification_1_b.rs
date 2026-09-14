@@ -485,15 +485,12 @@ impl GeomConvertCompCurveToBSplineCurve {
 // Pure-math re-hosts.
 // ===========================================================================
 
-/// OCCT Standard_Real Epsilon(theValue) (Standard_Real.hxx L238-247) — the
-/// distance to the nearest representable double.
-pub(crate) fn standard_real_epsilon(the_value: f64) -> f64 {
-    if the_value == 0.0 {
-        f64::EPSILON
-    } else {
-        f64::EPSILON * the_value.abs()
-    }
-}
+// OCCT Standard_Real Epsilon(theValue) (Standard_Real.hxx L242-248) — one
+// ULP toward the same-sign infinity (consumed at Draft_Modification_1.cxx
+// L2198/2206).  The kernel keeps the single canonical definition
+// (`epsilon_of`, `base::extrema_ext_elc`); the re-export keeps the
+// historical local name for the call sites.
+pub(crate) use rcad_kernel::base::extrema_ext_elc::epsilon_of as standard_real_epsilon;
 
 /// OCCT gp::NormalizeAngle(A) (gp.hxx) — the single-step normalization to
 /// (-PI, PI].

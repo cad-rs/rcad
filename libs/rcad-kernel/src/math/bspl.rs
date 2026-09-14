@@ -464,17 +464,13 @@ pub fn segment_bspline_curve(
 // BSplSLib::Resolution — max derivative bound and parametric resolution
 // ══════════════════════════════════════════════════════════════════════════
 
-/// OCCT `Standard_Real::Epsilon` (Standard_Real.hxx L242-246): the absolute
-/// difference between `x` and the next representable double of the same sign
-/// (one ULP). Used as the weight-variation threshold in `Rational()`.
-#[inline]
-fn occt_epsilon(x: f64) -> f64 {
-    if x >= 0.0 {
-        x.next_up() - x
-    } else {
-        x - x.next_down()
-    }
-}
+// OCCT `Standard_Real::Epsilon` (Standard_Real.hxx L242-248): the absolute
+// difference between `x` and the next representable double of the same sign
+// (one ULP). Used as the weight-variation threshold in `Rational()`.  The
+// kernel keeps the single canonical definition (`epsilon_of`,
+// `base::extrema_ext_elc`); the re-export keeps the historical local name
+// for the call sites.
+use crate::base::extrema_ext_elc::epsilon_of as occt_epsilon;
 
 /// OCCT `Rational()` weight-variation detection (Geom_BSplineSurface.cxx
 /// L110-138 / Geom_BezierSurface.cxx L443-469). Returns `(URational,

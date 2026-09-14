@@ -330,26 +330,53 @@ pub(crate) fn elclib_adjust_periodic(
     crate::math::el::elclib_adjust_periodic(u_first, u_last, preci, u1, u2)
 }
 
-/// OCCT `Epsilon(const double theValue)` (Standard_Real.hxx L242-246): the
+/// OCCT `Epsilon(const double theValue)` (Standard_Real.hxx L242-248): the
 /// absolute difference between `the_value` and the nearest double in the
 /// direction of infinity with the same sign (the smallest positive double when
 /// the value is 0).  This is the expression `ElCLib::AdjustPeriodic` uses at
-/// `ElCLib.cxx` L130.
+/// `ElCLib.cxx` L130 and the `Intrv_Interval` constructors consume.
 ///
 /// An earlier version of this function claimed to be `Precision::Epsilon` with
 /// the formula `Max(Abs(v), RealSmall()) * RealEpsilon()`.  Both halves were
 /// wrong: `Precision.hxx` has no `Epsilon`, and that expression differs from
-/// OCCT's by up to a factor of 2 inside a binade.
+/// OCCT's by up to a factor of 2 inside a binade.  A bare bit-increment body
+/// also deviated at the edges: `std::nextafter(x, RealLast())` returns
+/// `RealLast()` itself when `x` equals it, so `Epsilon(RealFirst()) ==
+/// Epsilon(RealLast()) == 0` (the `Intrv_Interval()` default tolerances,
+/// Intrv_Interval.cxx L39-40), and for `x = +inf` it returns `RealLast()`
+/// where the bit increment produces NaN.
 pub fn epsilon_of(the_value: f64) -> f64 {
-    // For a non-negative value `bits + 1` is the next double toward +inf; for a
-    // negative value it is the next one toward -inf, which is the direction
-    // OCCT's nextafter picks there too.
-    let next = f64::from_bits(the_value.to_bits() + 1);
     if the_value >= 0.0 {
-        next - the_value
+        next_after(the_value, crate::precision::REAL_LAST) - the_value
     } else {
-        the_value - next
+        the_value - next_after(the_value, crate::precision::REAL_FIRST)
     }
+}
+
+/// OCCT `std::nextafter` (the deprecated `Standard::NextAfter` wrapper,
+/// Standard_Real.hxx L111-119) — the next representable value in the direction
+/// of `to`, spelled through the bit representation (the std intrinsic is not
+/// available on this toolchain).
+pub(crate) fn next_after(x: f64, to: f64) -> f64 {
+    if x.is_nan() || to.is_nan() || x == to {
+        return x;
+    }
+    if x == 0.0 {
+        // std::nextafter(0, +Inf) is the smallest positive SUBNORMAL
+        // (5e-324), not MIN_POSITIVE (2.2e-308) — a factor of 4.5e16.
+        return if to > 0.0 {
+            f64::from_bits(1)
+        } else {
+            -f64::from_bits(1)
+        };
+    }
+    let bits = x.to_bits();
+    let next = if (to > x) == (x > 0.0) {
+        bits + 1
+    } else {
+        bits - 1
+    };
+    f64::from_bits(next)
 }
 
 // =============================================================================
@@ -1238,6 +1265,23 @@ mod tests {
         // Negative values step toward -inf, and the gap is positive.
         assert!(epsilon_of(-1.5) > 0.0);
         assert_eq!(epsilon_of(-1.5), -1.5 - f64::from_bits((-1.5f64).to_bits() + 1));
+    }
+
+    /// The edge inputs behave like OCCT's `std::nextafter(x, RealLast())`
+    /// spelling, not like a bare bit increment: `x == RealLast()` returns
+    /// `x` itself (so `Epsilon(RealFirst/RealLast) == 0` — the
+    /// `Intrv_Interval()` default tolerances, Intrv_Interval.cxx L39-40),
+    /// `x = +inf` steps DOWN to `RealLast()` so the gap is `RealLast() -
+    /// inf = -inf`, and `-0.0 >= 0.0` in OCCT's ternary steps to the
+    /// smallest POSITIVE subnormal.
+    #[test]
+    fn epsilon_of_matches_nextafter_at_the_range_edges() {
+        assert_eq!(epsilon_of(crate::precision::REAL_LAST), 0.0);
+        assert_eq!(epsilon_of(crate::precision::REAL_FIRST), 0.0);
+        assert_eq!(epsilon_of(f64::INFINITY), f64::NEG_INFINITY);
+        assert_eq!(epsilon_of(f64::NEG_INFINITY), f64::NEG_INFINITY);
+        assert_eq!(epsilon_of(-0.0), 5e-324);
+        assert!(epsilon_of(f64::NAN).is_nan());
     }
 
     /// The minimum over the extrema the class reports — the OCCT accessor

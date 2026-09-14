@@ -311,23 +311,11 @@ fn normalize_angle(the_angle: &mut f64) {
     }
 }
 
-/// OCCT Epsilon(theValue) (Standard_Real.hxx L242-246) — one ULP of the
-/// value (architecture difference #6); f64::next_after is spelled through
-/// the bit representation (the std intrinsic is not available on this
-/// toolchain).
-pub(crate) fn standard_epsilon(the_value: f64) -> f64 {
-    if the_value >= 0.0 {
-        let bits = the_value.to_bits();
-        let next = if bits == f64::INFINITY.to_bits() {
-            the_value
-        } else {
-            f64::from_bits(bits + 1)
-        };
-        next - the_value
-    } else {
-        the_value - f64::from_bits(the_value.to_bits() - 1)
-    }
-}
+// OCCT Epsilon(theValue) (Standard_Real.hxx L242-248) — one ULP of the
+// value.  The kernel keeps the single canonical definition (`epsilon_of`,
+// `base::extrema_ext_elc`); the re-export keeps the historical local name
+// for the call sites (both files).
+pub(crate) use rcad_kernel::base::extrema_ext_elc::epsilon_of as standard_epsilon;
 
 /// OCCT GeomProjLib::Curve2d(C, f, l, S, tol) re-host over
 /// rcad_kernel::base::geom_proj_lib::curve2d (the surface natural domain is

@@ -44,21 +44,13 @@ use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, Surfa
 /// OCCT Standard_Real.hxx L176-179: RealEpsilon() = DBL_EPSILON.
 const REAL_EPSILON: f64 = f64::EPSILON;
 
-/// OCCT Standard_Real.hxx L240-247: Epsilon(theValue) - the absolute value of
-/// the difference between theValue and the nearest representable value chosen
-/// in the direction of infinity with the same sign; for 0 the minimal
-/// positive representable value.
-fn standard_real_epsilon(the_value: f64) -> f64 {
-    // std::nextafter is stable only through the standard library's float
-    // methods; the equivalent next-representable step is one ULP.
-    if the_value >= 0.0 {
-        let a_next = f64::from_bits(the_value.to_bits() + 1);
-        a_next - the_value
-    } else {
-        let a_prev = f64::from_bits(the_value.to_bits() - 1);
-        the_value - a_prev
-    }
-}
+// OCCT Standard_Real.hxx L242-248: Epsilon(theValue) - the absolute value of
+// the difference between theValue and the nearest representable value chosen
+// in the direction of infinity with the same sign; for 0 the minimal
+// positive representable value.  The kernel keeps the single canonical
+// definition (`epsilon_of`, `base::extrema_ext_elc`); the re-export keeps
+// the historical local name for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as standard_real_epsilon;
 
 // ---------------------------------------------------------------------------
 // GeomAdaptor_Curve re-host (architecture bridge #1)

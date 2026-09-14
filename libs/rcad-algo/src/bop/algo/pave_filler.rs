@@ -293,13 +293,12 @@ pub(crate) fn find_valid_range_params(
     true
 }
 
-// OCCT Epsilon(double) (Standard_Real.hxx L242-245): the distance from the
+// OCCT Epsilon(double) (Standard_Real.hxx L242-248): the distance from the
 // value to the next representable double (nextafter), used by BRepLib_1.cxx
-// L201 (FindValidRange anEps).
-fn epsilon(par: f64) -> f64 {
-    let eps = crate::geomalgo::int_patch::a_line_to_w_line::occt_epsilon(par);
-    eps
-}
+// L201 (FindValidRange anEps).  The kernel keeps the single canonical
+// definition (`epsilon_of`, `base::extrema_ext_elc`); the re-export keeps
+// the historical local name for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as epsilon;
 
 /// OCCT GeomAdaptor_Curve::Resolution(R3D) (GeomAdaptor_Curve.cxx L1116-1149)
 /// — the parameter step for the 3D tolerance R3D, per curve type. The adaptor

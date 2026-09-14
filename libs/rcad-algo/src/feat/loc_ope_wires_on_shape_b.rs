@@ -154,15 +154,12 @@ pub(crate) fn brep_tool_range_on_face(edg: &Shape, face: &Shape) -> Option<(f64,
 // Pure-math re-hosts (arch. diffs. #4/#6/#13).
 // ---------------------------------------------------------------------------
 
-/// OCCT Epsilon(theValue) (Standard_Real.hxx L238-247) — the distance to the
-/// nearest representable double (pure-math re-host, arch. diff. #13).
-fn epsilon(the_value: f64) -> f64 {
-    if the_value == 0.0 {
-        std::f64::EPSILON
-    } else {
-        std::f64::EPSILON * the_value.abs()
-    }
-}
+// OCCT Epsilon(theValue) (Standard_Real.hxx L242-248) — the distance to the
+// nearest representable double toward the same-sign infinity (consumed at
+// LocOpe_WiresOnShape.cxx L1147/1234/...).  The kernel keeps the single
+// canonical definition (`epsilon_of`, `base::extrema_ext_elc`); the
+// re-export keeps the historical local name for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as epsilon;
 
 /// OCCT ShapeAnalysis::AdjustByPeriod(Val, ToVal, Period)
 /// (ShapeAnalysis.cxx L44-59).

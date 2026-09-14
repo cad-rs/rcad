@@ -682,20 +682,13 @@ fn point_to_line_dist_sq(p: DVec3, l: &rcad_kernel::geom::Line3) -> f64 {
     (v - dir * v.dot(dir)).length_squared()
 }
 
-/// OCCT Standard Epsilon(x) (Standard_Real.hxx L242-246): the gap between
-/// x and the next representable double towards RealLast() (= DBL_MAX).
-/// The input here is always non-negative (abs of a parameter).
-fn standard_epsilon(the_value: f64) -> f64 {
-    if the_value == 0.0 {
-        // nextafter(0., RealLast()) — the smallest positive double
-        f64::from_bits(1)
-    } else if the_value.is_infinite() {
-        0.0
-    } else {
-        let next = f64::from_bits(the_value.to_bits() + 1);
-        next - the_value
-    }
-}
+// OCCT Standard Epsilon(x) (Standard_Real.hxx L242-248): the gap between
+// x and the next representable double towards RealLast() (= DBL_MAX).
+// The input here is always non-negative (abs of a parameter).  The kernel
+// keeps the single canonical definition (`epsilon_of`,
+// `base::extrema_ext_elc`); the re-export keeps the historical local name
+// for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as standard_epsilon;
 
 /// OCCT IntTools_Tools::ComputeIntRange (IntTools_Tools.cxx L783-).
 fn compute_int_range(the_tol1: f64, the_tol2: f64, the_angle: f64) -> f64 {

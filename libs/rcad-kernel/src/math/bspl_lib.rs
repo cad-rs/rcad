@@ -18,6 +18,7 @@
 //! slice access).  `BandMatrix` stands in for the band-shaped `math_Matrix`.
 
 use super::plib::eval_polynomial_flat;
+use crate::base::extrema_ext_elc::{epsilon_of, next_after};
 use glam::{DVec2, DVec3};
 
 /// OCCT BSplCLib::FirstUKnotIndex(Degree, Mults) over (knots, mults) arrays.
@@ -66,12 +67,6 @@ pub fn set_at(arr: &mut [f64], i: i32, v: f64) {
 #[inline]
 pub fn set_ati(arr: &mut [i32], i: i32, v: i32) {
     arr[(i - 1) as usize] = v;
-}
-
-/// OCCT Epsilon(1.) — relative machine epsilon.
-#[inline]
-fn epsilon() -> f64 {
-    f64::EPSILON
 }
 
 /// OCCT RealSmall().
@@ -268,7 +263,8 @@ pub fn locate_parameter_main(
     hunt(knots, *new_u, knot_index);
 
     let k_upper = knots.len() as i32;
-    let eps = epsilon() * at(knots, k_upper).abs().min(u.abs());
+    // OCCT L263: const double Eps = Epsilon(min(|Knots(KUpper)|, |U|)).
+    let eps = epsilon_of(at(knots, k_upper).abs().min(u.abs()));
 
     if *knot_index < k_upper {
         let mut val = *new_u - at(knots, *knot_index + 1);
@@ -1740,7 +1736,8 @@ pub fn insert_knots(
 
     for kn in 1..=add_knots.len() as i32 {
         let u = at(add_knots, kn);
-        let mut eps = tolerance.max(epsilon() * u.abs());
+        // OCCT L2125: Eps = std::max(Tolerance, Epsilon(u)).
+        let mut eps = tolerance.max(epsilon_of(u));
 
         // find the position in the old knots and copy to the new knots.
         while curk < knots_upper && at(knots, curk + 1) - u <= eps {
@@ -2506,7 +2503,8 @@ pub fn prepare_insert_knots(
         }
         oldau = au;
 
-        eps = tolerance.max(epsilon() * au.abs());
+        // OCCT L1911: Eps = std::max(Tolerance, Epsilon(au)).
+        eps = tolerance.max(epsilon_of(au));
 
         while k < knots_upper && at(knots, k + 1) - au <= eps {
             k += 1;
@@ -2716,7 +2714,8 @@ fn knot_form(knots: &[f64], from_k1: i32, to_k2: i32) -> KnotFormDist {
     let mut a_ui = at(knots, from_k1).abs();
     let mut a_uj = at(knots, from_k1 + 1).abs();
     let mut a_du0 = (a_uj - a_ui).abs();
-    let mut an_eps = epsilon() * a_ui + epsilon() * a_uj + epsilon() * a_du0;
+    // OCCT L614: anEps = Epsilon(aUi) + Epsilon(aUj) + Epsilon(aDU0).
+    let mut an_eps = epsilon_of(a_ui) + epsilon_of(a_uj) + epsilon_of(a_du0);
 
     for i in (from_k1 + 1)..to_k2 {
         a_ui = at(knots, i).abs();
@@ -2728,7 +2727,8 @@ fn knot_form(knots: &[f64], from_k1: i32, to_k2: i32) -> KnotFormDist {
         }
 
         a_du0 = a_du1;
-        an_eps = epsilon() * a_ui + epsilon() * a_uj + epsilon() * a_du0;
+        // OCCT L628: anEps = Epsilon(aUi) + Epsilon(aUj) + Epsilon(aDU0).
+        an_eps = epsilon_of(a_ui) + epsilon_of(a_uj) + epsilon_of(a_du0);
     }
 
     KnotFormDist::Uniform
@@ -2860,10 +2860,11 @@ pub fn reparametrize(u1: f64, u2: f64, knots: &mut [f64]) {
             set_at(knots, i, v);
 
             // for CheckCurveData
-            let eps = epsilon() * at(knots, i - 1).abs();
+            // OCCT L789-794: Eps = Epsilon(|Knots(i-1)|);
+            // Knots(i) = nextafter(Knots(i-1) + Eps, RealLast()).
+            let eps = epsilon_of(at(knots, i - 1).abs());
             if at(knots, i) - at(knots, i - 1) <= eps {
-                // OCCT: nextafter(Knots(i-1) + Eps, RealLast()).
-                let v = (at(knots, i - 1) + eps).next_up();
+                let v = next_after(at(knots, i - 1) + eps, crate::precision::REAL_LAST);
                 set_at(knots, i, v);
             }
 

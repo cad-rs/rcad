@@ -115,19 +115,11 @@ fn shape_map_add(shape_map: &mut Vec<Shape>, s: &Shape) -> bool {
     }
 }
 
-/// OCCT Standard_Real.hxx Epsilon(V) (L242-246): the distance to the next
-/// representable value away from zero (nextafter toward RealLast for
-/// V >= 0, toward RealFirst for V < 0).  For V = RealFirst / RealLast the
-/// result overflows to +infinity (the (float) cast keeps it).
-fn epsilon(v: f64) -> f64 {
-    // the IEEE bit-increment walks away from zero on both signs.
-    let na = f64::from_bits(v.to_bits() + 1);
-    if v >= 0.0 {
-        na - v
-    } else {
-        v - na
-    }
-}
+// OCCT Standard_Real.hxx Epsilon(V) (L242-248): the distance to the next
+// representable value toward the same-sign infinity.  The kernel keeps the
+// single canonical definition (`epsilon_of`, `base::extrema_ext_elc`); the
+// re-export keeps the historical local name for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as epsilon;
 
 /// OCCT BRep_Tool::Continuity(E, F1, F2) (BRep_Tool.cxx L1180-1188) ->
 /// Continuity(E, S1, S2, L1, L2) (BRep_Tool.cxx L1223-1246) — the regularity

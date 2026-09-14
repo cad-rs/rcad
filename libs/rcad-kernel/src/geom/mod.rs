@@ -739,29 +739,11 @@ impl BSplineSurface {
     }
 }
 
-/// OCCT Epsilon(theValue) (Standard_Real.hxx L242-246) — the ULP of `x`
-/// via nextafter toward the infinity of the same sign.
-fn standard_epsilon(x: f64) -> f64 {
-    if x >= 0.0 {
-        next_after(x, f64::INFINITY) - x
-    } else {
-        x - next_after(x, f64::NEG_INFINITY)
-    }
-}
-
-/// OCCT std::nextafter — the nearest representable double in the direction
-/// of `to` (bit-level construction; stable Rust has no nextafter).
-fn next_after(x: f64, to: f64) -> f64 {
-    if x.is_nan() || to.is_nan() || x == to {
-        return x;
-    }
-    if x == 0.0 {
-        return if to > 0.0 { f64::from_bits(1) } else { -f64::from_bits(1) };
-    }
-    let bits = x.to_bits();
-    let next_bits = if (to > x) == (x > 0.0) { bits + 1 } else { bits - 1 };
-    f64::from_bits(next_bits)
-}
+// OCCT Epsilon(theValue) (Standard_Real.hxx L242-248) — the ULP of `x`
+// via nextafter toward the infinity of the same sign.  `epsilon_of` in
+// `base::extrema_ext_elc` is the single canonical definition; this
+// re-export keeps the historical local name for the call sites.
+use crate::base::extrema_ext_elc::epsilon_of as standard_epsilon;
 
 /// Returns `true` if the BSpline surface is planar (degree ≤ 1 in both directions
 /// and all control points lie within `tol` of a single plane).

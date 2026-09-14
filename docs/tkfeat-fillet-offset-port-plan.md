@@ -1902,6 +1902,38 @@ libs/rcad-algo/src/
   6. 追加 37 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · 池外读取链复核 · blend 剩余十例 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · 过期锚点勘误）。
 - **资产位置（本轮新增）**：OCCT gtest 移植 = `rcad-kernel/src/math/el.rs::tests`（`adjust_periodic_matches_the_occt_gtest`、`adjust_periodic_passes_an_infinite_range_through`、`adjust_periodic_copies_a_zero_length_range_through`）；`epsilon_of` canonical = `rcad-kernel/src/base/extrema_ext_elc.rs`（现为 `pub`）；误标翻译 = `bop/int_tools/bean_face_intersector.rs`；#3 canonical = `geomalgo/geom_int_line_constructor.rs::adjust_periodic_pair`。
 
+### E3-W 追加 39（2026-09-14：**epsilon 同族全库收敛（16 份本地体 → kernel canonical）+ canonical 第三轮修正为 OCCT 精确 nextafter 体**（极端输入偏离，`Intrv_Interval` 默认容差差点被污染成 +inf）+ `bspl_lib` 6 处 `Epsilon(1.)*x` 公式偏离修复 + 队列 3 对拍收口；八网格与全部域网格**零回归**）
+
+- **组织方式**：主代理单线（先普查、再修 canonical、再逐文件收敛、每 Edit 后 `cargo check`）。**连续第十六轮有效。**
+- **★ 批次 1（canonical 第三轮修正——"canonical 不等于已对齐"第三次应验）**：追加 37/38 修好的 `epsilon_of`（位递增 `from_bits(bits+1)`）在**极端输入上偏离 OCCT**（`Standard_Real.hxx` L242-248 的 `std::nextafter(x, RealLast()/RealFirst())`）：
+  - `x == ±RealLast/RealFirst`：C nextafter 的 **x==y → 返回 y** ⇒ OCCT 给 `Epsilon(±RealLast) == 0`；位递增给 `±inf`。
+  - `x = ±inf`：OCCT `nextafter(inf, RealLast) = RealLast` ⇒ `Epsilon(inf) = RealLast - inf = -inf`；位递增给 **NaN**。
+  - `x = -0.0`：OCCT 三元式取 `>= 0.0` 臂 ⇒ `+5e-324`；位递增给 `-5e-324`。
+  - **负载性发现**：`hlr/intrv::Interval::new()` 恰好把 `epsilon(±RealFirst/±RealLast)` 用作**默认容差**（`Intrv_Interval.cxx` L39-40，OCCT 给 `(float)0.0`）——若先收敛后修 canonical，HLR 区间容差会从 0 变 **+inf**（`Position()` 全体失真）。⇒ **先修 canonical、再收敛副本是硬顺序**。
+  - **落地**：`epsilon_of` 重写为 OCCT 原文三元式 + kernel 新增 `pub(crate) next_after`（C 语义：NaN→x、x==to→x、0→±次正规、位方向判据）；唯一消费者 `elclib_adjust_periodic` 的守卫不受影响（inf 在其前被 `is_infinite_value` 早退）。
+  - **判别性测试** `epsilon_of_matches_nextafter_at_the_range_edges`（6 断言）+ **扰动实证**（临时改回位递增 ⇒ 只有它 FAILED）。
+  - **"测试失败先怀疑测试"再 +1**：第一版期望值写成 `epsilon_of(+inf) == -RealLast`——真值是 **`-inf`**（`RealLast() - inf` 的 IEEE 有限减无穷）。期望值必须从 OCCT 公式逐项推演，不能"我以为"。
+- **★ 批次 2（同族普查 + 全库收敛）**：先按 `nextafter` 文本 grep 普查得 17 文件；收敛完毕后按**名无关模式** `fn (epsilon|standard_epsilon|standard_real_epsilon|occt_epsilon|epsilon_of)\(` 终检**又抓到 6 份漏网**（`next_up()/位递增` 拼写，文本里没有 "next_after"）——**坑 28/追加 33 第四次应验**。共收敛 **16 份本地体**（`use ...::epsilon_of as <原名>` re-export 模式，调用点零改动）：
+  - 队列点名的 4 份：`hlr/intrv/mod.rs`（pub re-export `epsilon`）、`fillet/chfi3d_perform_elspine.rs`、`geomalgo/geom_int_line_constructor.rs`（队列 2 站点 1）、`kernel/geom/mod.rs`（队列 2 站点 2）。
+  - 普查扩大的 12 份：`hlr/brep/shape_to_hlr.rs`、`bop/algo/pave_filler.rs`（shim 改直连 kernel）、`geomalgo/int_patch/a_line_to_w_line.rs`（`occt_epsilon`）、`bop/int_tools/edge_edge.rs`、`feat/loc_ope_generator_b.rs`（pub(crate)，跨文件消费于 `loc_ope_generator.rs`）、`topalgo/brep_lib_validate_edge.rs`、`kernel/math/bspl.rs`（`Rational()` 阈值）、`feat/loc_ope_wires_on_shape_b.rs`、`geomalgo/int_patch/imp_prm/function_set_root.rs`、`shhealing/shape_analysis/transfer_parameters_proj.rs`、`offset/draft_modification_1_b.rs`、`topalgo/brep_lib_find_surface.rs`。
+  - **每站点回源核验 OCCT 调用方**（全部确认 Standard Epsilon ULP 形式）：`LocOpe_WiresOnShape.cxx` L1147/1234+ · `math_FunctionSetRoot.cxx` **L873** `Epsilon(F2)` · `ShapeAnalysis_TransferParametersProj.cxx` **L333/356** · `Draft_Modification_1.cxx` **L2198/2206** `Epsilon(2π)` · `BRepLib_FindSurface.cxx` **L499/548** · `GeomInt_LineTool.cxx` **L332/386**（rcad 侧 `_included = true` 是"IntPatchLine 存闭区间"的架构注记，分支静态死但表达式照收敛）。
+  - **其中 3 份是公式真偏离**（自称 OCCT `Epsilon`、实为 `f64::EPSILON*v` 相对式——追加 37 canonical 同款病）：`loc_ope_wires_on_shape_b`（活跃调用点 10+）、`transfer_parameters_proj`（`last_parameter` 处阈值差 ~25%）、`draft_modification_1_b`（`Epsilon(2π)` 处差 ~1.57 倍）。
+  - 判无关：`core/color.rs::epsilon()`（颜色匹配容差，非 OCCT Standard Epsilon）、`int_conic_conic_circ_circ.rs` 的 `next_after`（直接取值用途，对应 OCCT 原文调用 nextafter）、`fclass2d_topol.rs::safe_increment`（OCCT `safeIncrement`，另一函数）。
+- **★ 批次 3（`bspl_lib.rs` 6 处同族公式偏离——`Epsilon(1.)*x` ≠ `Epsilon(x)`）**：无参助手 `epsilon()`（= `f64::EPSILON`）被当作 `Epsilon(1.) * v` 相对式使用，**仅 v 为 2 的幂时与 OCCT 相等**。逐站点对照 `BSplCLib.cxx` 修复：
+  - L271 → OCCT **L263** `Epsilon(min(|Knots(KUpper)|, |U|))`；L1743 → **L2125** `max(Tolerance, Epsilon(u))`（并删非 OCCT 的 `.abs()`）；L2509 → **L1911** `max(Tolerance, Epsilon(au))`（删 `.abs()`）；L2719/2731 → **L614/628** `Epsilon(aUi)+Epsilon(aUj)+Epsilon(aDU0)`（实参已 abs）；L2863 → **L789** `Epsilon(|Knots(i-1)|)` + `nextafter(Knots+Eps, RealLast)` 拼写统一到 kernel `next_after`。无参 `epsilon()` 助手删除（Rule 4）。
+- **★ 批次 4（队列 3 对拍收口）**：16 域网格逐格与基线相同（占位通过数逐格对上：`feat_featrevol` 46=1真+45占位、`draft_angle` 50=1真+49占位、`feat_featlf` 15占位+15真败等）。`feat_featlf` a3 失败层抽查 = `brep_sweep/tool_rehost.rs:1117` **`Standard_Failure: Courbes non jointives`**（忠实 OCCT 异常路径 = 上游几何分歧），**不在**追加 38 批次 3 的爆炸半径链（GeomIntLineConstructor→IntSS→SplitDrafts）上 ⇒ 行为变化对该链失败层无影响。`loc_ope_split_drafts*.rs` **无直测**（0 个 `#[test]`）——记档。
+- **验收（四批合并后一次实测）**：六门槛 **450/0/0 · 737/0 · 36/36 · 26/26 · 76/76 · 1/1**（kernel 736 → **737** = 1 个新边缘测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）**零回归**；**16 个域网格与基线逐项相同**。探针 = 0（`git diff | grep -c "+.*eprintln"` = 0）；扰动实验已还原；净删 114 行（+159/−273，18 文件）。超 2000 行文件（`pave_filler.rs`/`geom/mod.rs`/`bspl_lib.rs`）均为存量、拆分卡在队列。
+- **★ 方法学（第十二轮"零可见翻转"）**：批次 2 的 3 份公式修正与批次 3 的 6 处 BSpline 阈值修正**都是真实阈值变化**（最高 ~1.57 倍）——八网格与 16 个域网格**全部零可见**（这些比较点在既有用例里都不在阈值边缘）。canonical 修正是潜在险情排除（`Intrv_Interval` 路径在 HLR 域、不在两套网格里）。
+  **★ 两条教训强化**：① **名无关终检必须做两遍**（先按实现拼写 grep、收敛完再按函数名 grep 兜底）——本轮第二遍抓到 6 份漏网；② **canonical 的边缘语义必须对照 C 标准库语义逐输入推演**（x==y / ±inf / ±0.0 / NaN 四类），"有限输入上等价"不等于"函数等价"。
+- **⇒ 追加 39 后的队列**：
+  1. **`epsilon_of` 消费者阈值抽查**（可选，追加 38 队列 5 顺延）：`Intf_InterferencePolygon2d`、`GeomInt_IntSS_1` 等分支判据——公式已统一，抽查其比较方向/操作数与 OCCT 逐站点一致。
+  2. **`loc_ope_split_drafts` 直测**（新立，便宜）：0 个 `#[test]`，其链上 `adjust_periodic_pair`（eps 1e-7→0.0）与 bean_face_intersector 的行为变化目前只有域网格计数兜底。
+  3. **`tkgeom_algo_gtests::geom_fill_corrected_frenet_tests::endless_loop_prevention` 的既有 panic**（追加 38 队列 4 顺延）：`GCPnts_TangentialDeflection is not available in rcad-kernel`（`base/extrema_ext_pc.rs:119`）⇒ kernel 占位符缺口。
+  4. **`Intrv_Interval` 判别性测试**（新立）：默认容差 `Epsilon(±RealFirst/Last) == 0` 已由 canonical 边缘测试钉住，但 `intrv::Interval::new()` 消费点本身无断言；补 2 行防回归。
+  5. **`REAL_FIRST/REAL_LAST` 常量收敛**（新立，低优）：`hlr/intrv/mod.rs` L64-67 与 `kernel/precision.rs` L92-98 重复定义（值相同）；本轮只收敛了函数族，常量族照 E3-Q 队列 7 规则可再收敛。
+  6. 追加 38 余项不变（`endless_loop_prevention` 见 3 · `extrema_gen_ext_cs.rs` 过期 PSO 栈 · 池外读取链复核 · blend 剩余十例 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · 过期锚点勘误）。
+- **资产位置（本轮新增）**：canonical = `rcad-kernel/src/base/extrema_ext_elc.rs`（`epsilon_of` pub + `next_after` pub(crate)）；16 份 re-export 站点与 bspl_lib 6 站点见批次 2/3 清单；域网格对拍脚本 = `rcad/temp/run_domain_grids.sh`。
+
 ### E3-V. g6 根因定界 + FClass2d 1:1 修复落地时点（2026-09-11——已由 E3-W 取代，存档；其正文仍为队列与成果的完整记录）
 
 

@@ -121,14 +121,12 @@ fn brep_tool_same_parameter(e: &Shape) -> bool {
     }
 }
 
-/// OCCT Standard_Real.hxx Epsilon(Value) — Value * DBL_EPSILON (signed).
-fn epsilon(v: f64) -> f64 {
-    if v >= 0.0 {
-        f64::EPSILON * v
-    } else {
-        -f64::EPSILON * v
-    }
-}
+// OCCT Standard_Real.hxx Epsilon(Value) (L242-248) — one ULP toward the
+// same-sign infinity (consumed at ShapeAnalysis_TransferParametersProj.cxx
+// L333/L356).  The kernel keeps the single canonical definition
+// (`epsilon_of`, `base::extrema_ext_elc`); the re-export keeps the
+// historical local name for the call sites.
+use rcad_kernel::base::extrema_ext_elc::epsilon_of as epsilon;
 
 /// OCCT Precision::IsInfinite.
 fn precision_is_infinite(r: f64) -> bool {

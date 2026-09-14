@@ -1,6 +1,13 @@
 # E3-W 交接：三域（TKFeat / TKFillet / TKOffset）翻译推进 —— 2026-09-12
 
-> **一句话（追加 38 收尾态，2026-09-14 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**。本轮三线并行（测试移植 + 收敛 + 误标修复）：**① 移植 OCCT 自带的 `AdjustPeriodic` gtest**（canonical 体的唯一 ground truth，此前 rcad 对它零测试）· **② `epsilon_of` 复制族收敛**（**前提被推翻**）· **③ `bean_face_intersector` 的 `AdjustPeriodic` 误标**（确认为真，按 OCCT 1:1 翻译）+ 两处返回 `MIN_POSITIVE` 的 `epsilon` 修正。
+> **一句话（追加 39 收尾态，2026-09-14 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**。本轮单线（epsilon 同族全库收敛 + canonical 第三轮修正 + 队列 3 对拍）：**① canonical `epsilon_of` 修正为 OCCT 精确 nextafter 体**（位递增体在 x==±RealLast ⇒ OCCT 给 **0**、±inf ⇒ **-inf**、-0.0 ⇒ **+5e-324** 三类边缘偏离；`hlr/intrv::Interval::new()` 恰好用 `epsilon(±RealFirst/Last)` 作默认容差，先收敛后修 canonical 会把 HLR 区间容差从 0 污染成 +inf ⇒ **先修 canonical 再收敛是硬顺序**）· **② 16 份本地 Epsilon 副本全库收敛到 kernel canonical**（队列点名的 4 份 + 名无关终检兜底再抓 6 份漏网 + 普查扩大 6 份；每站点回源核验 OCCT 调用方；其中 3 份是 `f64::EPSILON*v` 相对式**公式真偏离**）· **③ `bspl_lib.rs` 6 处 `Epsilon(1.)*x` 公式偏离修复**（`Epsilon(1.)*x` ≠ `Epsilon(x)`，仅 x 为 2 的幂时相等；两处还多了非 OCCT 的 `.abs()`）· **④ 队列 3 对拍收口**（16 域网格逐格同基线；`feat_featlf` a3 失败层 = `tool_rehost.rs:1117` "Courbes non jointives"，不在 bean_face 爆炸半径链上；`loc_ope_split_drafts` 无直测——记档）。
+> **门槛（当前基线）**：**450/0/0 · 737/0 · 36/36 · 26/26 · 76/76 · 1/1**（kernel 736 → **737** = 1 个 canonical 边缘判别测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。
+> **★★ 本轮最值钱的发现：canonical 的边缘语义必须对照 C 标准库逐输入推演。** "有限输入上等价"不等于"函数等价"——位递增体在全部正常输入（含追加 38 的 gtest 与判别性测试）上与 OCCT **逐位相同**，却在 x==y/±inf/-0.0 四类边缘上偏离，而**唯一的现役消费者恰好把这些边缘值当输入**（`Intrv_Interval` 默认容差 = `(float)Epsilon(±RealFirst/RealLast)` = OCCT 的 0.0）。另：**"测试失败先怀疑测试"再 +1**——canonical 边缘测试第一版期望值 `epsilon_of(+inf) == -RealLast` 写错，真值是 `-inf`（`RealLast() - inf` 的 IEEE 有限减无穷）。
+> **★ 第二条：名无关终检必须做两遍。** 先按实现拼写 grep（`nextafter`）普查得 17 文件；收敛完按函数名模式 `fn (epsilon|standard_epsilon|...)\(` 终检**又抓到 6 份漏网**（`next_up()`/位递增拼写，文本里没有 "next_after"）——坑 28/追加 33 第四次应验。共收敛 **16 份**，其中 3 份是 `f64::EPSILON*v` 相对式**公式真偏离**（自称 OCCT Epsilon、实为别的公式，阈值差 25%~57%）。
+> **★ 第三条（零可见翻转第十二轮）**：9 处真实阈值修正（最高 ~1.57 倍）在八网格与 16 个域网格**全部零可见**——这些比较点在既有用例里都不在阈值边缘；canonical 修正是**潜在险情排除**（险情路径在 HLR 域、两套网格都照不到）⇒ "判别性单测是唯一验收手段"第十三次重申。
+> （历史：追加 21–38 收尾态见下方存档块；追加 38 = OCCT `AdjustPeriodic` gtest 移植 + `epsilon_of` 复制族首收敛 + `bean_face_intersector` 误标翻译；追加 37 = `Ax3` 平行分支 + `Init` 的 location + `AdjustPeriodic` 收敛；追加 36 = `gp_Trsf2d` 全类 + 判别性单测；追加 35 = BSpline iso 精确化 + `CurveOnPlane`。）
+
+> **（存档）一句话（追加 38 收尾态，2026-09-14 —— 已被追加 39 取代）**：**工作口径仍是"先译后调"**。本轮三线并行（测试移植 + 收敛 + 误标修复）：**① 移植 OCCT 自带的 `AdjustPeriodic` gtest**（canonical 体的唯一 ground truth，此前 rcad 对它零测试）· **② `epsilon_of` 复制族收敛**（**前提被推翻**）· **③ `bean_face_intersector` 的 `AdjustPeriodic` 误标**（确认为真，按 OCCT 1:1 翻译）+ 两处返回 `MIN_POSITIVE` 的 `epsilon` 修正。
 > **门槛（当前基线）**：**450/0/0 · 736/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 451 → **450** = 删掉的自失效测试；kernel 733 → **736** = 3 个新测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。
 > **★★ 本轮最值钱的发现：OCCT 自带的测试并不覆盖它自己的守卫。** 把 `Epsilon(ULast)` 那行守卫**整个禁用**，OCCT 那五个用例**照样全过** —— 而该守卫正是 `epsilon_of`（追加 37 刚修的那个公式）的**唯一消费者**，此前**零覆盖**。补的判别性测试用**零长度区间**（无守卫 ⇒ 除以 0 ⇒ **NaN**）；我第一版用"周期很小但不为零" **不判别**（wrap 恰好落回同样的值，守卫禁用下仍通过）。⇒ **移植 OCCT 自带测试 ≠ 覆盖完整，必须自己扰动一遍。**
 > **★★ 第二条：前提推翻是"好消息型"。** 记档说"同一个错误公式被复制到多处"，实测 **HEAD 里每一份副本的公式本来就是对的** —— 错误公式**只存在于 canonical 体本身**（追加 37 刚修的那个）。⇒ **"多处复制了同一错误"必须先逐份核验再动手**，否则会去"修"一批本来正确的代码。
@@ -67,22 +74,24 @@
 > 另有两条"旧笔记会过期"（坑 29/30）：**架构难点要回查 OCCT 基类**、**`GetType()` 常量返回决定分支**。
 > （前三轮：**追加 18** = 翻译补全轮；**追加 17** = D3 结案 + `featrf_a1` init 首次通过；**追加 16** = 0a 收尾 / a1 拓扑全等 / TKOffset 定界。）
 
-## 0. 新 session 一句话提示词（直接粘贴 —— 追加 38 收尾态，2026-09-14）
+## 0. 新 session 一句话提示词（直接粘贴 —— 追加 39 收尾态，2026-09-14）
 
 > 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 坑清单；
-> **先读顶部"追加 38 收尾态"一行 + §0.0n**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–38
-> （权威脉络，**追加 38 是当前状态**）；
-> 先 `cd rcad` 跑 6 条门槛确认 **450/0/0 · 736/0 · 36/36 · 26/26 · 76/76 · 1/1**，
+> **先读顶部"追加 39 收尾态"一行 + §0.0o**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–39
+> （权威脉络，**追加 39 是当前状态**）；
+> 先 `cd rcad` 跑 6 条门槛确认 **450/0/0 · 737/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests`（**重编 exe，否则八网格会拿旧产物误判**）
 > 后 `bash output/run_eight_grids.sh` 确认**八网格 8/8**（375/378/379/373/12/102/83/110）；
-> 然后**按 §0.0n 的队列继续"先译后调"**——**先只做 1:1 翻译/接线**（逐行语句对照 + OCCT 行号锚点 +
+> 然后**按 §0.0o 的队列继续"先译后调"**——**先只做 1:1 翻译/接线**（逐行语句对照 + OCCT 行号锚点 +
 > 禁载体/禁等价替换/禁凑结果 + 架构差异先消灭再对齐），**代码基本译完前不针对性修测试数值**；
 > **涉及布尔层的代码直接复用已对齐的 `bop/**`（TKBO）实现、不要重写第二份**（`BRepAlgoAPI_*` 包装层按 OCCT 形式接线到既有真身）；
 > **立卡前先按 OCCT 函数名 grep 全库**（`panic!("GAP…")`/`unimplemented!` 的文案会过期，多例真身其实早已在库）；
 > **失败层深度自检必须看 backtrace 而不是失败地图行号**（追加 19 实测：同一 `topods.rs:1799` 背后换了调用帧，行号完全看不出推进 —— 见坑 28）；
-> **★ 改内核几何/容差/区间类代码必须跑八网格**：追加 29–38 证明 15 个域网格对这类修正**近乎不敏感**，
+> **★ 改内核几何/容差/区间类代码必须跑八网格**：追加 29–39 证明 16 个域网格对这类修正**近乎不敏感**，
 > **唯一的探测器是八网格**（追加 32 的 `bcut_simple_g6` 就是靠它抓到的；回归时先 `git stash -- <可疑目录>` 二分）；
-> ⚠ 但追加 33 给出了**边界**：**唯一调用点落在退化配置上**时，真实内核缺陷连八网格也抓不到（第六轮"零可见翻转"即此）。
+> ⚠ 但追加 33 给出了**边界**：**唯一调用点落在退化配置上**时，真实内核缺陷连八网格也抓不到（第六轮"零可见翻转"即此）；
+> ⚠ 追加 39 再给一条：**阈值比较类修正若既有用例都不在阈值边缘，八网格也照不到**（9 处真实阈值修正零可见）——
+> 唯一兜底是**判别性单测 + 扰动实证**。
 > **★ 数值不等价时先看"自洽对"**：差分导数与 `point_at` 按构造自洽 ⇒ 「旧 `point_at`+差分 = OCCT 参考」而
 > 「新 `point_at`+差分 ≠ 参考」即可**立刻**判定**新体**有误，无需通读代码（追加 32 定位内核缺陷的关键手法）；
 > **★ 手写矩阵约定必查左右乘**：根因是 `gp_XYZ::Multiply(gp_Mat)` 的语义（`<me> = theMatrix * <me>`）被写成转置；
@@ -93,15 +102,20 @@
 > 在扰动下依然通过**（归一化抵消了正缩放，只有 `scale = ±3` 里的**负值**经末尾取反才暴露），**不扰动就得不到真判别性**；
 > **★ 别把"注释说缺"当成"真缺"**（追加 34 第三次应验）：`Trimmed` 的 `EvalDN` 一直在 OCCT 里（`Geom_RectangularTrimmedSurface.cxx` L419-429），
 > 记档却写了"无对应" —— 动手前先 grep OCCT 真身，见坑 7 / 追加 32 的 `EmptyCopy`；
-> **★★ 动手前先验证"记档与任务前提"本身**（追加 35 升为硬规矩，**与"判别性必须实证"并列**；追加 36/37 各再证一次）：追加 37 三次翻车 ——
+> **★★ 动手前先验证"记档与任务前提"本身**（追加 35 升为硬规矩，**与"判别性必须实证"并列**；追加 36/37/39 各再证一次）：追加 37 三次翻车 ——
 > `AdjustPeriodic` 的记档**位置**写错（在 `fillet/**` 不在 `bop/**`）；`bop/**` 那两处**根本不是同一个 OCCT 函数**（OCCT 有**四个**同名者，
 > 判"是否同一个"必须逐站点判）；**canonical `epsilon_of` 的公式与锚点都错**（自称 `Precision.hxx::Epsilon`，而该头文件没有它，
 > OCCT 的 `Epsilon(double)` 是 **nextafter 间隙**，`Standard_Real.hxx` L242-246）。**"canonical"两个字不等于"已对齐"** —— 必须回源；
+> **追加 39 第三次应验**：修好的 canonical 仍是位递增体，在 x==±RealLast（OCCT 给 0）/±inf（给 -inf）/-0.0（给 +5e-324）边缘偏离，
+> 而 `Intrv_Interval` 默认容差恰好吃这些值（OCCT 给 0.0，位递增给 +inf）——**先修 canonical 再收敛副本，顺序错了会污染消费者**；
 > 派子代理时务必把"若前提不成立就停下来报告"写进任务书；
+> **★ canonical/数学函数的边缘语义必须对照 C 标准库逐输入推演**（追加 39 新立）：x==y / ±inf / ±0.0 / NaN 四类逐个过
+> （C nextafter：x==y 返回 y；`nextafter(inf, RealLast)` 下行到 RealLast），"有限输入上等价"不等于"函数等价"；
 > **★ 代数自洽 ≠ 几何正确**（追加 35 新立）：组合律断言（`A.multiplied(B) == A(B(P))`）**抓不到矩阵转置**（对同一个错矩阵自洽），
 > 只有断言**独立几何量**（Rodrigues / Householder / 绕心旋转 / 投影）的测试能抓 —— **两类断言都要留，不可互相替代**；
-> **反过来，测试失败先怀疑测试**：追加 35 一例的期望值算错（误以为 `set_scale` 保留矩阵，OCCT 实际 `matrix.SetIdentity()`），代码是对的；
-> **追加 36 一轮内出现三处**（全部"代码对、期望错"）⇒ 这条**升为常规动作**，且**期望值只能来自 OCCT 公式或独立几何定义，不能来自"我以为"**；
+> **反过来，测试失败先怀疑测试**：追加 35 一例的期望值算错（误以为 `set_scale` 保留矩阵，OCCT 实际 `matrix.SetIdentity()`），
+> **追加 36 一轮内出现三处**，**追加 39 边缘测试期望值又写错一次**（`epsilon_of(+inf)` 真值是 `-inf`，不是 `-RealLast`——
+> IEEE 有限减无穷）⇒ 这条**升为常规动作**，且**期望值只能来自 OCCT 公式或独立几何定义逐项推演，不能来自"我以为"**；
 > **★ 遇到 OCCT 自身的怪癖，钉 OCCT 行为而不是钉"数学上对的性质"**（追加 36 三例，最容易帮倒忙）：`gp_Trsf2d::Invert()` 对
 > `gp_PntMirror` **不是**数学逆（只反 offset，3D `gp_Trsf::Invert` 一样，`gp_Trsf.cxx` L406-409）；`SetValues` 的 `M.Divide(s)`
 > 经公开 API **不可观测**（后续 `Orthogonalize` 抵消）⇒ 如实记"不可观测"、不假装覆盖；`SetTranslationPart` 从 `gp_Rotation`
@@ -110,15 +124,41 @@
 > `Epsilon(ULast)` 守卫**（禁掉守卫五个用例照样全过），而该守卫是那条公式的**唯一消费者**。移植值得做，**移植完必须自己扰动一遍**；
 > 判别性输入的挑选同样要实证 —— 追加 38 第一版用"周期很小但不为零"**不判别**（wrap 恰好落回同值），只有**零长度区间**（除以 0 ⇒ NaN）才判别；
 > **★ "多处复制了同一错误"要先逐份核验**（追加 38）：记档说错误公式被复制到多处，实测**每一份副本都是对的**、错误只在 canonical 体一处 ——
-> 若不复核就会去"修"一批本来正确的代码（**好消息型推翻**，同样省下了白工）；
+> 若不复核就会去"修"一批本来就对的代码（**好消息型推翻**，同样省下了白工）。**追加 39 的镜像教训**：另一些站点则**真是**复制病
+> （3 份 `f64::EPSILON*v` 相对式 + bspl_lib 6 处 `Epsilon(1.)*x`）——**先逐份核验、再决定修不修**，两个方向都会翻车；
 > **★ 清点同族站点不要按变量名 grep**（追加 33 新立）：用名无关模式
-> `is_infinite_value\([A-Za-z_0-9]*\.range\[` 才不漏 —— `fillet/hbuilder.rs` 的 `edp.range` 就漏过了一整轮清点（与坑 28 同族）；
+> `is_infinite_value\([A-Za-z_0-9]*\.range\[` 才不漏 —— `fillet/hbuilder.rs` 的 `edp.range` 就漏过了一整轮清点（与坑 28 同族）。
+> **追加 39 第四次应验 + 升级为"终检兜底"**：按实现拼写 grep（`nextafter`）普查后，收敛完按函数名模式
+> `fn (epsilon|standard_epsilon|standard_real_epsilon|occt_epsilon|epsilon_of)\(` 终检**又抓到 6 份漏网**（`next_up()` 拼写）——
+> **普查和终检要用两个不同的名无关模式各跑一遍**；
+> **★ 收敛重复体到 canonical 之前，先证明 canonical 本身逐输入等价于 OCCT**（追加 39 新立）：否则收敛会把 canonical 的缺陷
+> 扇形污染到全部消费者（`Intrv_Interval` 默认容差 0→+inf 即险情实例）；
 > 每 Edit 后 `cargo check -p rcad-algo`；**跑非门槛网格一律加 `timeout`**（§6 坑 16）；探针即用即清
 > （提交前 `git diff | grep -c "+.*eprintln"` = 0，OCCT 侧探针用后 `git checkout --` 还原 + 重建 DLL）；
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0n 追加 38 收尾态（2026-09-14；**最新** —— 三线并行：OCCT gtest 移植 + `epsilon_of` 复制族收敛（前提推翻）+ `bean_face_intersector` 误标翻译）
+### 0.0o 追加 39 收尾态（2026-09-14；**最新** —— 单线：epsilon 同族全库收敛（16 份）+ canonical 第三轮修正（OCCT 精确 nextafter 体）+ `bspl_lib` 6 处公式偏离 + 队列 3 对拍收口）
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
+> 追加 39 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **450/0/0 · 737/0 · 36/36 · 26/26 · 76/76 · 1/1**（kernel 736 → **737** = 1 个 canonical 边缘判别测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。合并后一次实测；探针 = 0；扰动实验已还原；净删 114 行（18 文件 +159/−273）。
+- **★ 批次 1（canonical 第三轮修正）**：追加 37/38 修好的 `epsilon_of`（位递增）在四类边缘输入上偏离 OCCT（`Standard_Real.hxx` L242-248）：`x==±RealFirst/RealLast` ⇒ OCCT **0**（C nextafter 的 x==y→返回 y）、位递增给 ±inf；`x=±inf` ⇒ OCCT **-inf**（`nextafter(inf,RealLast)=RealLast`，`RealLast-inf=-inf`）、位递增给 NaN；`x=-0.0` ⇒ OCCT **+5e-324**（三元式取 `>=0.0` 臂）、位递增给 -5e-324；NaN 双方一致。**负载性发现**：`hlr/intrv::Interval::new()` 用 `epsilon(±RealFirst/Last)` 作默认容差（`Intrv_Interval.cxx` L39-40，OCCT 给 `(float)0.0`）——先收敛后修会把 HLR 区间容差从 0 污染成 +inf ⇒ **先修 canonical 再收敛是硬顺序**。落地：OCCT 原文三元式 + kernel `pub(crate) next_after`（C 语义全分支）；唯一消费者 `elclib_adjust_periodic` 守卫不受影响（inf 被其前 `is_infinite_value` 早退）。判别性测试 `epsilon_of_matches_nextafter_at_the_range_edges`（6 断言）+ 扰动实证（改回位递增 ⇒ 只有它 FAILED）。**期望值写错过一次**（`epsilon_of(+inf)` 真值 `-inf`，非 `-RealLast`）——"测试失败先怀疑测试"再 +1。
+- **★ 批次 2（16 份本地体全库收敛）**：队列点名 4 份（`hlr/intrv`、`fillet/chfi3d_perform_elspine`、`geomalgo/geom_int_line_constructor`、`kernel/geom/mod.rs`——后两份即队列 2 的判定：**两份 `standard_epsilon` 就是同一个 OCCT 表达式**（`GeomInt_LineTool.cxx` L332/386 的 `Epsilon(firstp/lastp)`；rcad 侧 `_included=true` 是"IntPatchLine 存闭区间"架构注记、分支静态死））+ 名无关终检兜底抓到 6 份漏网（`next_up`/位递增拼写）+ 普查扩大 6 份。全部 `use ...::epsilon_of as <原名>` re-export 模式（调用点零改动）。**每站点回源核验**：`LocOpe_WiresOnShape.cxx` L1147/1234+ · `math_FunctionSetRoot.cxx` L873 · `ShapeAnalysis_TransferParametersProj.cxx` L333/356 · `Draft_Modification_1.cxx` L2198/2206 · `BRepLib_FindSurface.cxx` L499/548。**3 份公式真偏离**（自称 OCCT Epsilon、实为 `f64::EPSILON*v` 相对式）：`loc_ope_wires_on_shape_b`（10+ 活跃调用点）、`transfer_parameters_proj`（~25% 阈值差）、`draft_modification_1_b`（`Epsilon(2π)` 处 ~1.57 倍）。判无关：`color.rs::epsilon()`、`int_conic_conic_circ_circ` 的 `next_after`（取值用途）、`fclass2d_topol::safe_increment`（OCCT safeIncrement）。
+- **★ 批次 3（`bspl_lib.rs` 6 处 `Epsilon(1.)*x` 公式偏离）**：无参 `epsilon()` 助手（= `f64::EPSILON`）被当相对式用，**仅 x 为 2 的幂时与 OCCT `Epsilon(x)` 相等**。逐站点修复：L271→OCCT L263 `Epsilon(min(|K|,|U|))`；L1743→L2125 与 L2509→L1911 `max(Tolerance, Epsilon(u/au))`（并删非 OCCT 的 `.abs()`）；L2719/2731→L614/628 三项和；L2863→L789 `Epsilon(|Knots|)` + nextafter 拼写统一 kernel `next_after`。助手删除（Rule 4）。
+- **★ 批次 4（队列 3 对拍收口）**：16 域网格逐格同基线（`feat_featrevol` 46=1真+45占位等逐格对上）；`feat_featlf` a3 失败层 = `brep_sweep/tool_rehost.rs:1117` `Standard_Failure: Courbes non jointives`（忠实 OCCT 异常 = 上游几何分歧），**不在**追加 38 批次 3 的爆炸半径链上；`loc_ope_split_drafts*.rs` **无直测**（0 `#[test]`）——记档。
+- **★ 方法学（第十二轮"零可见翻转"）**：9 处真实阈值修正（最高 ~1.57 倍）在两套网格全部零可见（比较点都不在阈值边缘）；canonical 修正是**潜在险情排除**（险情路径在 HLR 域、网格照不到）⇒ 判别性单测是唯一验收手段（第十三次重申）。**两条新规矩**：① **普查与终检用两个不同名无关模式各跑一遍**（实现拼写 grep + 函数名 grep 兜底）；② **收敛前先证明 canonical 逐输入等价 OCCT**（x==y/±inf/±0.0/NaN 四类推演），否则收敛会把 canonical 缺陷扇形污染到全部消费者。
+- **⏭ 下一轮队列（按序）**：
+  1. **canonical `epsilon_of` 消费者阈值抽查**（追加 38 队列 5 顺延）：`Intf_InterferencePolygon2d`、`GeomInt_IntSS_1` 等分支判据的比较方向/操作数逐站点核验。
+  2. **`loc_ope_split_drafts` 直测**（新立，便宜）：0 个 `#[test]`，链上 `adjust_periodic_pair`（eps 1e-7→0.0）与 bean_face 的行为变化目前只有域网格计数兜底。
+  3. **`tkgeom_algo_gtests::...::endless_loop_prevention` 既有 panic**（追加 38 队列 4 顺延）：`GCPnts_TangentialDeflection is not available in rcad-kernel`（`base/extrema_ext_pc.rs:119`）。
+  4. **`intrv::Interval::new()` 消费点判别性测试**（新立，2 行）：默认容差 `Epsilon(±RealFirst/Last)==0` 已由 canonical 边缘测试钉住，消费点本身无断言。
+  5. **`REAL_FIRST/REAL_LAST` 常量收敛**（新立，低优）：`hlr/intrv/mod.rs` L64-67 与 `kernel/precision.rs` L92-98 重复（值相同）。
+  6. 追加 38 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · 池外读取链复核 · blend 剩余十例 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · 过期锚点勘误）。
+- **复测脚本**：`rcad/temp/run_gates.sh` · `rcad/temp/run_domain_grids.sh` · `rcad/temp/validate_round5.sh`。
+
+### 0.0n 追加 38 收尾态（2026-09-14；**已被追加 39 取代 —— 见 §0.0o** —— 三线并行：OCCT gtest 移植 + `epsilon_of` 复制族收敛（前提推翻）+ `bean_face_intersector` 误标翻译）
 
 > **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
 > 追加 38 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
