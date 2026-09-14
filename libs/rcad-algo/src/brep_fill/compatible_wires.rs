@@ -44,8 +44,9 @@ pub(super) const TOL_CONFUSION: f64 = CONFUSION;
 pub(super) const TOL_ANGULAR: f64 = rcad_kernel::core::precision::ANGULAR;
 /// OCCT gp::Resolution().
 pub(super) const GP_RESOLUTION: f64 = 2.2250738585072014e-308; // DBL_MIN, as in OCCT gp::Resolution
-/// OCCT RealLast().
-pub(super) const REAL_LAST: f64 = f64::MAX;
+/// OCCT RealLast() — the canonical kernel constant (re-exported at
+/// pub(super) visibility for compatible_wires_b).
+pub(super) use rcad_kernel::core::precision::REAL_LAST;
 
 /// OCCT GeomAbs_Shape rank for the `<=` / `>=` comparisons (GeomAbs_ ordering
 /// C0 < G1 < C1 < G2 < C2 < C3 < CN).

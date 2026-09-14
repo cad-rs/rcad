@@ -40,6 +40,11 @@ use crate::geom::{
 };
 use crate::math::fit::interpolate_points;
 
+pub mod comp_curve_to_bspline_3d;
+pub use comp_curve_to_bspline_3d::{
+    curve_to_bspline_curve_3d, GeomConvertCompCurveToBSplineCurve,
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Curve conversions
 // ─────────────────────────────────────────────────────────────────────────────

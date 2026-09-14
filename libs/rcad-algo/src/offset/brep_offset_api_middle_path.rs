@@ -24,8 +24,9 @@
 //!    GeomAPI_Interpolate (TKGeomAlgo — the kernel carries the fn-form
 //!    interpolate_points only, no tangent-Load class form) — GAP.  The
 //!    BRepGProp::SurfaceProperties / LinearProperties calls feed
-//!    Properties.CentreOfMass() (cxx L875-890) — GAP (the kernel gprop
-//!    re-hosts carry the mass only, no GProp_GProps COM).  GeomLib::
+//!    Properties.CentreOfMass() (cxx L875-890) — rewired to the kernel
+//!    GProp_GProps real body (base::gprop::props; architecture difference
+//!    #3 closed for BRepGProp).  GeomLib::
 //!    Inertia — rewired to the kernel base::geom_lib::inertia real body.
 //!    BRepLib::BuildCurve3d — the arena-form real body
 //!    (topalgo::brep_lib::BRepLib::build_curve3d) needs the &mut BRep
@@ -111,36 +112,23 @@ impl BRepExtremaDistShapeShape {
     }
 }
 
-/// OCCT GProp_GProps (TKMath/GProp_GProps) — the properties carrier of the
-/// BRepGProp GAP.
-pub struct GPropGProps {
-    my_centre: DVec3, // OCCT: myG
-}
-
-impl GPropGProps {
-    /// OCCT GProp_GProps::CentreOfMass().
-    pub fn centre_of_mass(&self) -> DVec3 {
-        self.my_centre
-    }
-}
-
-/// OCCT BRepGProp (TKTopAlgo/BRepGProp) — the shape properties driver
-/// (architecture difference #3; GAP): the calls of cxx L875-890 fill
-/// GProp_GProps and read Properties.CentreOfMass(), while the kernel
-/// base::gprop re-hosts carry only the mass (base::gprop::surface::
-/// surface_area f64 / base::gprop::linear::linear_properties f64) — no
-/// GProp_GProps centre of mass.
+/// OCCT BRepGProp (TKTopAlgo/BRepGProp) — the shape properties driver.
+/// Architecture difference #3 (the BRepGProp GAP) is closed: the calls of
+/// cxx L875-890 fill the kernel GProp_GProps real body
+/// (base::gprop::props::GProps) and read Properties.CentreOfMass().
 pub struct BRepGProp;
 
 impl BRepGProp {
-    /// OCCT BRepGProp::SurfaceProperties(S, Props) — GAP (see above).
-    pub fn surface_properties(_the_s: &Shape) -> GPropGProps {
-        panic!("GAP: BRepGProp::SurfaceProperties (TKTopAlgo/BRepGProp not translated)")
+    /// OCCT BRepGProp::SurfaceProperties(S, Props) (BRepGProp.cxx L267-279 —
+    /// the SkipShared = false / UseTriangulation = false defaults).
+    pub fn surface_properties(the_s: &Shape) -> rcad_kernel::base::gprop::props::GProps {
+        rcad_kernel::base::gprop::props::surface_properties(the_s, false)
     }
 
-    /// OCCT BRepGProp::LinearProperties(S, Props) — GAP (see above).
-    pub fn linear_properties(_the_s: &Shape) -> GPropGProps {
-        panic!("GAP: BRepGProp::LinearProperties (TKTopAlgo/BRepGProp not translated)")
+    /// OCCT BRepGProp::LinearProperties(S, Props) (BRepGProp.cxx L121-165 —
+    /// the SkipShared = false / UseTriangulation = false defaults).
+    pub fn linear_properties(the_s: &Shape) -> rcad_kernel::base::gprop::props::GProps {
+        rcad_kernel::base::gprop::props::linear_properties(the_s, false)
     }
 }
 

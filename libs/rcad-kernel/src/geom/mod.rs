@@ -2197,6 +2197,7 @@ pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
 }
 
 pub mod bspline_ops;
+pub mod bspline_surface_ops;
 pub mod curve_dn;
 pub mod eval;
 pub mod eval_b;

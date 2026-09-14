@@ -44,6 +44,7 @@ pub mod app_par_curves; // AppParCurves (Bernstein/SplineFunction + LeastSquare 
 pub mod app_par_curves_bsp; // AppParCurves BSP variants (BSpFunction + BSpGradient gxx)
 pub mod brep_approx; // BRepApprox (TheMultiLineOfApprox + LineTool + SurfaceTool + ApproxLine)
 pub mod bspl_compute_line; // Approx_BSplComputeLine.gxx == AppDef_BSplineCompute
+pub mod app_def_compute; // Approx_ComputeLine.gxx == AppDef_Compute
 pub mod gcc_ana;      // GccAna (analytic 2D constraint solvers: Circ2d3Tan Apollonius)
 pub mod approx_int;  // ApproxInt_KnotTools + ApproxInt_Approx (WLApprox) chain
 pub mod brep_approx_prm_prm; // BRepApprox PrmPrm chain: ThePrmPrmSvSurfacesOfApprox (ApproxInt_PrmPrmSvSurfaces.gxx) + TheInt2S (IntImp_Int2S.gxx) + TheFunctionOfTheInt2S (IntImp_ZerParFunc.gxx)

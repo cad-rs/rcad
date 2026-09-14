@@ -203,11 +203,14 @@ pub struct Vector {
 }
 
 impl Vector {
-    /// OCCT math_Vector(I1, I2).
+    /// OCCT math_Vector(I1, I2) — math_VectorBase.lxx L36-50: the OCCT
+    /// constructor accepts `I2 == I1 - 1` as a length-0 array (the
+    /// degenerate empty-vector path the AppParCurves_LeastSquare gxx
+    /// produces for Neq == 0); only a strictly inverted range raises.
     pub fn new(i1: i32, i2: i32) -> Self {
-        assert!(i2 >= i1, "math_Vector: bad range");
+        assert!(i2 >= i1 - 1, "math_Vector: bad range");
         Vector {
-            data: VecD::new((i2 - i1 + 1) as usize),
+            data: VecD::new((i2 - i1 + 1).max(0) as usize),
             lower: i1,
         }
     }

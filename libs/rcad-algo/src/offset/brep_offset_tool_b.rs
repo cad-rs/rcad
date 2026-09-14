@@ -1247,40 +1247,66 @@ fn general_2d_intersects_gap(_c1: &Option<Curve2d>, _c2: &Option<Curve2d>, _tol:
 // ---------------------------------------------------------------------------
 
 /// OCCT Geom2dConvert_CompCurveToBSplineCurve (TKGeomBase/Geom2dConvert) —
-/// GAP carrier (architecture difference #24).
-pub(crate) struct Geom2dConvertCompCurveToBSplineCurve;
+/// the kernel engine
+/// (`rcad_kernel::base::geom2d_convert::Geom2dConvertCompCurveToBSplineCurve`)
+/// re-hosted over the rcad `Curve2d` enum.  The parameterisation is the OCCT
+/// constructor default (BRepOffset_Tool.cxx L1145 call site).
+pub(crate) struct Geom2dConvertCompCurveToBSplineCurve {
+    inner: rcad_kernel::base::geom2d_convert::Geom2dConvertCompCurveToBSplineCurve,
+}
 
 impl Geom2dConvertCompCurveToBSplineCurve {
-    /// OCCT Geom2dConvert_CompCurveToBSplineCurve(BasisCurve).
-    pub fn new(_basis_curve: &Curve2d) -> Self {
-        panic!("GAP: Geom2dConvert_CompCurveToBSplineCurve (TKGeomBase not translated)");
+    /// OCCT Geom2dConvert_CompCurveToBSplineCurve(BasisCurve) — the
+    /// Convert_TgtThetaOver2 default.
+    pub fn new(basis_curve: &Curve2d) -> Self {
+        Geom2dConvertCompCurveToBSplineCurve {
+            inner: rcad_kernel::base::geom2d_convert::Geom2dConvertCompCurveToBSplineCurve::with_basis_curve(
+                basis_curve,
+                rcad_kernel::base::convert::ConvertParameterisation::TgtThetaOver2,
+            ),
+        }
     }
     /// OCCT Geom2dConvert_CompCurveToBSplineCurve::Add(Curve, Tol, After).
-    pub fn add(&mut self, _curve: &Curve2d, _tol: f64, _after: bool) -> bool {
-        panic!("GAP: Geom2dConvert_CompCurveToBSplineCurve::Add");
+    pub fn add(&mut self, curve: &Curve2d, tol: f64, after: bool) -> bool {
+        self.inner.add_after(curve, tol, after)
     }
     /// OCCT Geom2dConvert_CompCurveToBSplineCurve::BSplineCurve().
     pub fn bspline_curve(&self) -> Option<Curve2d> {
-        panic!("GAP: Geom2dConvert_CompCurveToBSplineCurve::BSplineCurve");
+        self.inner
+            .bspline_curve()
+            .map(Curve2d::BSpline)
     }
 }
 
-/// OCCT GeomConvert_CompCurveToBSplineCurve (TKGeomBase/GeomConvert) — GAP
-/// carrier (architecture difference #24).
-pub(crate) struct GeomConvertCompCurveToBSplineCurve;
+/// OCCT GeomConvert_CompCurveToBSplineCurve (TKGeomBase/GeomConvert) —
+/// the kernel engine
+/// (`rcad_kernel::base::convert::GeomConvertCompCurveToBSplineCurve`)
+/// re-hosted over the rcad `Curve3` enum.  The parameterisation is the OCCT
+/// constructor default (BRepOffset_Tool.cxx L1216 call site).
+pub(crate) struct GeomConvertCompCurveToBSplineCurve {
+    inner: rcad_kernel::base::convert::GeomConvertCompCurveToBSplineCurve,
+}
 
 impl GeomConvertCompCurveToBSplineCurve {
-    /// OCCT GeomConvert_CompCurveToBSplineCurve(BasisCurve).
-    pub fn new(_basis_curve: &Curve3) -> Self {
-        panic!("GAP: GeomConvert_CompCurveToBSplineCurve (TKGeomBase not translated)");
+    /// OCCT GeomConvert_CompCurveToBSplineCurve(BasisCurve) — the
+    /// Convert_TgtThetaOver2 default.
+    pub fn new(basis_curve: &Curve3) -> Self {
+        GeomConvertCompCurveToBSplineCurve {
+            inner: rcad_kernel::base::convert::GeomConvertCompCurveToBSplineCurve::with_basis_curve(
+                basis_curve,
+                rcad_kernel::base::convert::ConvertParameterisation::TgtThetaOver2,
+            ),
+        }
     }
     /// OCCT GeomConvert_CompCurveToBSplineCurve::Add(Curve, Tol, After).
-    pub fn add(&mut self, _curve: &Curve3, _tol: f64, _after: bool) -> bool {
-        panic!("GAP: GeomConvert_CompCurveToBSplineCurve::Add");
+    pub fn add(&mut self, curve: &Curve3, tol: f64, after: bool) -> bool {
+        self.inner.add_after(curve, tol, after)
     }
     /// OCCT GeomConvert_CompCurveToBSplineCurve::BSplineCurve().
     pub fn bspline_curve(&self) -> Option<Curve3> {
-        panic!("GAP: GeomConvert_CompCurveToBSplineCurve::BSplineCurve");
+        self.inner
+            .bspline_curve()
+            .map(Curve3::BSpline)
     }
 }
 

@@ -29,11 +29,9 @@ pub enum Position {
 /// re-export keeps the historical `intrv::epsilon` name for the call sites.
 pub use rcad_kernel::base::extrema_ext_elc::epsilon_of as epsilon;
 
-/// OCCT Standard::RealFirst() (Standard_Real.hxx L170-173).
-pub const REAL_FIRST: f64 = -f64::MAX;
-
-/// OCCT Standard::RealLast() (Standard_Real.hxx L181-184).
-pub const REAL_LAST: f64 = f64::MAX;
+/// OCCT Standard::RealFirst() (Standard_Real.hxx L170-173) — the canonical
+/// kernel constants (core::precision); the local duplicates were retired.
+pub use rcad_kernel::core::precision::{REAL_FIRST, REAL_LAST};
 
 /// OCCT Intrv_Interval — a real interval with independent start/end
 /// tolerances (Intrv_Interval.hxx L37-188 + .cxx L35-151 + .lxx L14-325).

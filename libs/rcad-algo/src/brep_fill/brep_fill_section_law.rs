@@ -267,43 +267,53 @@ pub(super) fn reversed_parameter_of(c: &Curve3, u: f64) -> f64 {
     c.reversed_parameter(u)
 }
 
-/// GAP carrier: OCCT GeomConvert_CompCurveToBSplineCurve (TKGeomBase /
-/// GeomConvert) — the 5-argument Add(NewCurve, Tol, After, IgnoreWarning,
-/// NumRound) form consumed by BRepFill_ShapeLaw::ConcatenedLaw (cxx L392/395)
-/// and BRepFill_NSections::totalsurf.  Not translated; all sites keep the
-/// OCCT failure path.
-pub(super) struct CompCurveToBSpline;
+/// OCCT GeomConvert_CompCurveToBSplineCurve (TKGeomBase / GeomConvert) —
+/// the kernel engine
+/// (`rcad_kernel::base::convert::GeomConvertCompCurveToBSplineCurve`)
+/// re-hosted over the rcad `Curve3` enum.  The 5-argument Add form is the
+/// BRepFill_ShapeLaw::ConcatenedLaw call shape (ShapeLaw.cxx L384:
+/// `Concat.Add(TC, epsV, true, false, 20)` = After, WithRatio, MinM) and the
+/// BRepFill_NSections form (NSections.cxx L209: `..., true, false, 1`).
+pub(super) struct CompCurveToBSpline {
+    inner: rcad_kernel::base::convert::GeomConvertCompCurveToBSplineCurve,
+}
 
 impl CompCurveToBSpline {
-    /// OCCT GeomConvert_CompCurveToBSplineCurve(BasisCurve).
-    pub fn new(_basis_curve: &Curve3) -> Self {
-        panic!(
-            "GAP: GeomConvert_CompCurveToBSplineCurve (TKGeomBase/GeomConvert) \
-             is not translated — BRepFill ShapeLaw/NSections concatenation"
-        )
+    /// OCCT GeomConvert_CompCurveToBSplineCurve(BasisCurve) — the
+    /// Convert_TgtThetaOver2 constructor default (ShapeLaw.cxx L377).
+    pub fn new(basis_curve: &Curve3) -> Self {
+        CompCurveToBSpline {
+            inner: rcad_kernel::base::convert::GeomConvertCompCurveToBSplineCurve::with_basis_curve(
+                basis_curve,
+                rcad_kernel::base::convert::ConvertParameterisation::TgtThetaOver2,
+            ),
+        }
     }
 
-    /// OCCT Add(NewCurve, Tol, After, IgnoreWarning, NumRound).
+    /// OCCT Add(NewCurve, Tolerance, After, WithRatio, MinM) — the rcad call
+    /// sites pass the OCCT argument tuple verbatim (the previous
+    /// "IgnoreWarning, NumRound" labels were the old API names of
+    /// WithRatio/MinM).
     #[allow(clippy::too_many_arguments)]
     pub fn add(
         &mut self,
-        _new_curve: &Curve3,
-        _tol: f64,
-        _after: bool,
-        _ignore_warning: bool,
-        _num_round: i32,
+        new_curve: &Curve3,
+        tol: f64,
+        after: bool,
+        with_ratio: bool,
+        min_m: i32,
     ) -> bool {
-        panic!(
-            "GAP: GeomConvert_CompCurveToBSplineCurve::Add (TKGeomBase) \
-             is not translated — BRepFill ShapeLaw/NSections concatenation"
-        )
+        self.inner.add_full(new_curve, tol, after, with_ratio, min_m)
     }
 
-    /// OCCT BSplineCurve().
+    /// OCCT BSplineCurve() — the handle is non-null on the success path
+    /// (every call site Adds before reading; the rcad Curve3 enum has no
+    /// null form).
     pub fn bspline_curve(&self) -> Curve3 {
-        panic!(
-            "GAP: GeomConvert_CompCurveToBSplineCurve::BSplineCurve (TKGeomBase) \
-             is not translated — BRepFill ShapeLaw/NSections concatenation"
+        Curve3::BSpline(
+            self.inner
+                .bspline_curve()
+                .expect("GeomConvert_CompCurveToBSplineCurve::BSplineCurve after Add"),
         )
     }
 }

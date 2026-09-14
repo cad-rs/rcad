@@ -31,6 +31,7 @@ use rcad_kernel::geom::{
     TrimmedCurve3,
 };
 use rcad_kernel::math::bnd::BndBox2d;
+use rcad_kernel::base::gcpnts::abscissa_point::arc_length;
 use rcad_kernel::topo::topods::{Orientation, ShapeType, State, TShape};
 use rcad_kernel::topo_shape::Shape;
 
@@ -40,6 +41,7 @@ use crate::brep_algo::tool as bat;
 // OCCT Geom_Surface::UIso / VIso — the canonical body (the local copy in
 // brep_offset_tool_iso.rs was deleted).
 use crate::brep_fill::brep_fill_sweep::{surface_uiso, surface_viso};
+use crate::geomalgo::geom_lib_same_range::extend_surf_by_length;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_wires_on_shape_b::{
     brep_tool_curve_on_surface, brep_tool_degenerated, brep_tool_range, brep_tool_tolerance,
@@ -564,6 +566,12 @@ fn enlarge_geometry(
     // OCCT L3012-3108: the SurfaceOfLinearExtrusion / SurfaceOfRevolution
     // branch.
     if matches!(s, Surface3::LinearExtrusion(_) | Surface3::Revolution(_)) {
+        // OCCT L3015-3021: du/dv defaults, the iso handles, the local
+        // S->Bounds(u1, u2, v1, v2) read.
+        let mut du_first = 0.0f64;
+        let mut du_last = 0.0f64;
+        let mut dv_first = 0.0f64;
+        let mut dv_last = 0.0f64;
         let mut enlarge_u = the_global_enlarge_u;
         let mut enlarge_v = true;
         let mut enlarge_ufirst = enlarge_u;
@@ -574,49 +582,108 @@ fn enlarge_geometry(
             let d = s.default_domain();
             (d[0], d[1], d[2], d[3])
         };
+        // OCCT L3022-3028: the infinite-U window form.
         if precision_is_infinite(su1) || precision_is_infinite(su2) {
-            let du_first = uf2 - uf1;
-            let du_last = uf2 - uf1;
+            du_first = uf2 - uf1;
+            du_last = uf2 - uf1;
             su1 = uf1 - du_first;
             su2 = uf2 + du_last;
             enlarge_u = false;
         } else if s.is_u_closed() {
+            // OCCT L3029-3032.
             enlarge_u = false;
         } else {
-            // OCCT L3035-3050: the viso Gabarit probes — GAP leaves (the
-            // iso-curve construction; annotated above).
-            let viso_gap = surface_viso(s, vf1);
-            let _du_default = gcpnts_length_gap(&viso_gap) * coeff;
-            let _ = (&mut enlarge_ufirst, &mut enlarge_ulast);
+            // OCCT L3035-3049: the viso length + the uiso Gabarit probes.
+            let viso = surface_viso(s, vf1);
+            let [viso_f, viso_l] = viso.default_domain();
+            let du_default = arc_length(&viso, viso_f, viso_l) * coeff;
+            du_first = if the_len_before_ufirst == -1.0 {
+                du_default
+            } else {
+                the_len_before_ufirst
+            };
+            du_last = if the_len_after_ulast == -1.0 {
+                du_default
+            } else {
+                the_len_after_ulast
+            };
+            let uiso1 = surface_uiso(s, uf1);
+            let uiso2 = surface_uiso(s, uf2);
+            if gabarit(&uiso1) <= tol_apex {
+                enlarge_ufirst = false;
+            }
+            if gabarit(&uiso2) <= tol_apex {
+                enlarge_ulast = false;
+            }
         }
+        // OCCT L3051-3056: the infinite-V window form.
         if precision_is_infinite(sv1) || precision_is_infinite(sv2) {
-            let dv_first = vf2 - vf1;
-            let dv_last = vf2 - vf1;
+            dv_first = vf2 - vf1;
+            dv_last = vf2 - vf1;
             sv1 = vf1 - dv_first;
             sv2 = vf2 + dv_last;
             enlarge_v = false;
         } else if s.is_v_closed() {
+            // OCCT L3058-3061.
             enlarge_v = false;
         } else {
-            // OCCT L3064-3080: the uiso/viso Gabarit probes — GAP leaves.
-            let uiso_gap = surface_uiso(s, uf1);
-            let _dv_default = gcpnts_length_gap(&uiso_gap) * coeff;
-            let viso1_gap = surface_viso(s, vf1);
-            let viso2_gap = surface_viso(s, vf2);
-            if gabarit(&viso1_gap) <= tol_apex {
+            // OCCT L3064-3080: the uiso length + the viso Gabarit probes.
+            let uiso = surface_uiso(s, uf1);
+            let [uiso_f, uiso_l] = uiso.default_domain();
+            let dv_default = arc_length(&uiso, uiso_f, uiso_l) * coeff;
+            dv_first = if the_len_before_vfirst == -1.0 {
+                dv_default
+            } else {
+                the_len_before_vfirst
+            };
+            dv_last = if the_len_after_vlast == -1.0 {
+                dv_default
+            } else {
+                the_len_after_vlast
+            };
+            let viso1 = surface_viso(s, vf1);
+            let viso2 = surface_viso(s, vf2);
+            if gabarit(&viso1) <= tol_apex {
                 enlarge_vfirst = false;
                 *is_v1degen = true;
             }
-            if gabarit(&viso2_gap) <= tol_apex {
+            if gabarit(&viso2) <= tol_apex {
                 enlarge_vlast = false;
                 *is_v2degen = true;
             }
         }
-        // OCCT L3082-3107: the ExtendSurfByLength forms — GAP leaves (the
-        // GeomLib batch); the OCCT Bounds write closes the branch.
-        let _ = (enlarge_u, enlarge_v, enlarge_ufirst, enlarge_ulast, enlarge_vfirst, enlarge_vlast);
-        let _ = (the_len_before_ufirst, the_len_after_ulast, the_len_before_vfirst, the_len_after_vlast);
-        panic!("GAP: GeomLib::ExtendSurfByLength (TKTopAlgo/GeomLib not translated)");
+        // OCCT L3082: aSurf = new Geom_RectangularTrimmedSurface(S, u1, u2,
+        // v1, v2) over the local window.
+        let mut a_surf =
+            Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface::new(s.clone(), su1, su2, sv1, sv2));
+        // OCCT L3083-3093.
+        if enlarge_u {
+            if enlarge_ufirst && du_first != 0.0 {
+                a_surf = extend_surf_by_length(&a_surf, du_first, 1, true, false);
+            }
+            if enlarge_ulast && du_last != 0.0 {
+                a_surf = extend_surf_by_length(&a_surf, du_last, 1, true, true);
+            }
+        }
+        // OCCT L3094-3104.
+        if enlarge_v {
+            if enlarge_vfirst && dv_first != 0.0 {
+                a_surf = extend_surf_by_length(&a_surf, dv_first, 1, false, false);
+            }
+            if enlarge_vlast && dv_last != 0.0 {
+                a_surf = extend_surf_by_length(&a_surf, dv_last, 1, false, true);
+            }
+        }
+        // OCCT L3105-3107: S = aSurf; S->Bounds(U1, U2, V1, V2);
+        // SurfaceChange = true.
+        *s = a_surf;
+        let d = s.default_domain();
+        *u1 = d[0];
+        *u2 = d[1];
+        *v1 = d[2];
+        *v2 = d[3];
+        surface_change = true;
+        return surface_change;
     }
     // OCCT L3109-3210: the Bezier/BSpline branch.
     if matches!(s, Surface3::Bezier(_) | Surface3::BSpline(_)) {
@@ -658,9 +725,26 @@ fn enlarge_geometry(
         }
 
         let _ = (gabarit_uiso1, gabarit_uiso2);
+        // OCCT L3128: du_first/du_last/dv_first/dv_last.
+        let mut du_first = 0.0f64;
+        let mut du_last = 0.0f64;
+        let mut dv_first = 0.0f64;
+        let mut dv_last = 0.0f64;
         if enlarge_u {
-            let _du_default = gcpnts_length_gap(&viso1_gap) * coeff;
-            let _ = (duf, the_len_before_ufirst, the_len_after_ulast);
+            // OCCT L3149-3163: gac.Load(viso1); the Length form; the uiso
+            // Gabarit flag writes.
+            let [viso_f, viso_l] = viso1_gap.default_domain();
+            let du_default = arc_length(&viso1_gap, viso_f, viso_l) * coeff;
+            du_first = if the_len_before_ufirst == -1.0 {
+                du_default
+            } else {
+                the_len_before_ufirst
+            };
+            du_last = if the_len_after_ulast == -1.0 {
+                du_default
+            } else {
+                the_len_after_ulast
+            };
             if gabarit_uiso1 <= tol_apex {
                 enlarge_ufirst = false;
             }
@@ -669,8 +753,20 @@ fn enlarge_geometry(
             }
         }
         if enlarge_v {
-            let _dv_default = gcpnts_length_gap(&uiso1_gap) * coeff;
-            let _ = (dvf, the_len_before_vfirst, the_len_after_vlast);
+            // OCCT L3165-3181: gac.Load(uiso1); the Length form; the viso
+            // Gabarit flag writes.
+            let [uiso_f, uiso_l] = uiso1_gap.default_domain();
+            let dv_default = arc_length(&uiso1_gap, uiso_f, uiso_l) * coeff;
+            dv_first = if the_len_before_vfirst == -1.0 {
+                dv_default
+            } else {
+                the_len_before_vfirst
+            };
+            dv_last = if the_len_after_vlast == -1.0 {
+                dv_default
+            } else {
+                the_len_after_vlast
+            };
             if gabarit_viso1 <= tol_apex {
                 enlarge_vfirst = false;
                 *is_v1degen = true;
@@ -680,9 +776,36 @@ fn enlarge_geometry(
                 *is_v2degen = true;
             }
         }
-        // OCCT L3183-3209: the ExtendSurfByLength forms — GAP leaf.
-        let _ = (enlarge_u, enlarge_v, enlarge_ufirst, enlarge_ulast, enlarge_vfirst, enlarge_vlast);
-        panic!("GAP: GeomLib::ExtendSurfByLength (TKTopAlgo/GeomLib not translated)");
+        // OCCT L3183: aSurf = down_cast<Geom_BoundedSurface>(S) — the rcad
+        // surface value is the bounded surface itself.
+        let mut a_surf = s.clone();
+        // OCCT L3184-3194.
+        if enlarge_u {
+            if enlarge_ufirst && uf1 - *u1 < duf && du_first != 0.0 {
+                a_surf = extend_surf_by_length(&a_surf, du_first, 1, true, false);
+            }
+            if enlarge_ulast && *u2 - uf2 < duf && du_last != 0.0 {
+                a_surf = extend_surf_by_length(&a_surf, du_last, 1, true, true);
+            }
+        }
+        // OCCT L3195-3205.
+        if enlarge_v {
+            if enlarge_vfirst && vf1 - *v1 < dvf && dv_first != 0.0 {
+                a_surf = extend_surf_by_length(&a_surf, dv_first, 1, false, false);
+            }
+            if enlarge_vlast && *v2 - vf2 < dvf && dv_last != 0.0 {
+                a_surf = extend_surf_by_length(&a_surf, dv_last, 1, false, true);
+            }
+        }
+        // OCCT L3206-3209: S = aSurf; S->Bounds(U1, U2, V1, V2);
+        // SurfaceChange = true.
+        *s = a_surf;
+        let d = s.default_domain();
+        *u1 = d[0];
+        *u2 = d[1];
+        *v1 = d[2];
+        *v2 = d[3];
+        surface_change = true;
     }
     // OCCT L3211-3220: the remaining types — the bounds clamp.
     let (uu1, uu2, vv1, vv2) = {
@@ -697,11 +820,9 @@ fn enlarge_geometry(
     surface_change
 }
 
-/// OCCT GCPnts_AbscissaPoint::Length(C) — GAP carrier (architecture
-/// difference #24).
-fn gcpnts_length_gap(_c: &Curve3) -> f64 {
-    panic!("GAP: GCPnts_AbscissaPoint::Length (TKGeomAlgo not translated)");
-}
+// OCCT GCPnts_AbscissaPoint::Length(C) — the real body is the kernel
+// translation (`base/gcpnts/abscissa_point.rs::arc_length` over the curve's
+// own domain; architecture difference #24 retired).
 
 // ---------------------------------------------------------------------------
 // OCCT static UpdatePCurves (cxx L3230-3263).

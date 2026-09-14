@@ -90,8 +90,8 @@ use super::brep_fill_pipe_shell_b::{
 const PIPE_OK: PipeError = PipeError::PipeOk;
 /// OCCT GeomFill_PipeNotOk.
 const PIPE_NOT_OK: PipeError = PipeError::PipeNotOk;
-/// OCCT RealLast().
-const REAL_LAST: f64 = f64::MAX;
+/// OCCT RealLast() — the canonical kernel constant.
+use rcad_kernel::core::precision::REAL_LAST;
 
 // ===========================================================================
 // File statics (BRepFill_PipeShell.cxx L87-220)

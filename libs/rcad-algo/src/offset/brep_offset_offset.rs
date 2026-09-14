@@ -45,9 +45,9 @@
 //     BRepOffset_Offset.cxx L1597-1599 cannot hand it the pool — the
 //     architecture difference #19 boundary).
 // 17. BRepGProp::LinearProperties + GProp_GProps::CentreOfMass
-//     (TKTopAlgo/BRepGProp) — GAP carrier (the kernel base::gprop linear
-//     re-host carries only the total length, while the call of
-//     BRepOffset_Offset.cxx L1601-1604 consumes the centre of mass).
+//     (TKTopAlgo/BRepGProp) — rewired to the kernel GProp_GProps real body
+//     (base::gprop::props::linear_properties; the BRepGProp_Cinert edge
+//     integration accumulated into GProp_GProps) — GAP closed.
 // 18. GeomAdaptor_Surface/Geom2dAdaptor_Curve GetType() -> the rcad Surface3
 //     / Curve2d variant matches (the same stand-in as the fillet
 //     chfi3d_builder_0.rs surface_type_of).
@@ -304,19 +304,24 @@ impl ShapeFixShape {
     }
 }
 
-/// OCCT GProp_GProps (TKMath/GProp) + BRepGProp::LinearProperties — GAP
-/// carrier (architecture difference #17).
+/// OCCT GProp_GProps::CentreOfMass() read-view consumed by
+/// BRepOffset_Offset.cxx L1601-1604 (BaryCenter).  Filled by the kernel
+/// GProp_GProps real body (base::gprop::props::GProps — architecture
+/// difference #17 closed); the pool-free (E, Tol) re-host keeps the field
+/// form the offset_b call site reads.
 pub struct GPropGProps {
-    pub centre_of_mass: DVec3, // OCCT: CentreOfMass
+    pub centre_of_mass: DVec3, // OCCT: CentreOfMass()
 }
 
-/// OCCT BRepGProp::LinearProperties(S, VProps) — GAP (architecture
-/// difference #17): the kernel base::gprop::linear::linear_properties
-/// re-host returns only the total length, while the call of
-/// BRepOffset_Offset.cxx L1601-1604 consumes
-/// GlobalProps.CentreOfMass() (no GProp_GProps COM in the re-host).
-pub(super) fn brep_gprop_linear_properties(_the_s: &Shape) -> GPropGProps {
-    panic!("GAP: BRepGProp::LinearProperties (TKTopAlgo/BRepGProp not translated)");
+/// OCCT BRepGProp::LinearProperties(S, VProps) (BRepGProp.cxx L121-165,
+/// the SkipShared = false default) — rewired to the kernel real body: the
+/// BRepGProp_Cinert edge integration accumulated into GProp_GProps, then
+/// the CentreOfMass() read of BRepOffset_Offset.cxx L1603.
+pub(super) fn brep_gprop_linear_properties(the_s: &Shape) -> GPropGProps {
+    let global_props = rcad_kernel::base::gprop::props::linear_properties(the_s, false);
+    GPropGProps {
+        centre_of_mass: global_props.centre_of_mass(),
+    }
 }
 
 /// OCCT BRepLib::BuildCurve3d(AnEdge, Tolerance) (TKTopAlgo/BRepLib,

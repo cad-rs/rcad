@@ -51,8 +51,8 @@ use crate::topalgo::brep_top_adaptor::fclass2d_topol::geom2dint_nb_samples;
 use crate::topalgo::gcpnts::QuasiUniformDeflection;
 use crate::topalgo::shape_source::{FaceShapeSource, ShapeSource};
 
-/// OCCT RealLast() for double.
-const REAL_LAST: f64 = f64::MAX;
+/// OCCT RealLast() for double — the canonical kernel constant.
+use rcad_kernel::core::precision::REAL_LAST;
 
 // OCCT GeomInt::AdjustPeriodic (GeomInt.cxx L21-48) lives in the canonical
 // `crate::geomalgo::geom_int_line_constructor::geom_int_adjust_periodic` body;

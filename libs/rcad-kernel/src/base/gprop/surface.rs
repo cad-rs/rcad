@@ -557,7 +557,7 @@ impl Ovec {
 // infinite-aware arithmetic switched in by checkBounds (L418-429).  The OCCT
 // predicates are Precision::IsPositiveInfinite / Precision::IsNegativeInfinite
 // returning Precision::Infinite() (Precision.hxx L357-371).
-fn add_inf(a: f64, b: f64) -> f64 {
+pub(crate) fn add_inf(a: f64, b: f64) -> f64 {
     if is_positive_infinite_value(a) {
         if is_negative_infinite_value(b) {
             return 0.0;
@@ -585,7 +585,7 @@ fn add_inf(a: f64, b: f64) -> f64 {
     a + b
 }
 
-fn mult_inf(a: f64, b: f64) -> f64 {
+pub(crate) fn mult_inf(a: f64, b: f64) -> f64 {
     if a == 0.0 || b == 0.0 {
         // strictly zero (without any tolerances)
         return 0.0;

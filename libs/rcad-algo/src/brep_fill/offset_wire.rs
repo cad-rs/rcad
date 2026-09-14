@@ -53,8 +53,8 @@ pub(super) const TOL_CONFUSION: f64 = CONFUSION;
 pub(super) const TOL_PCONFUSION: f64 = PCONFUSION;
 /// OCCT gp::Resolution().
 const GP_RESOLUTION: f64 = 2.2250738585072014e-308;
-/// OCCT RealLast().
-const REAL_LAST: f64 = f64::MAX;
+/// OCCT RealLast() — the canonical kernel constant.
+use rcad_kernel::core::precision::REAL_LAST;
 
 /// OCCT GeomAbs_JoinType (GeomAbs_JoinType.hxx).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

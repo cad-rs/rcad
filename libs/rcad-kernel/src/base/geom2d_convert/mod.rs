@@ -17,9 +17,14 @@ fn domain_is_unbounded(dom: &[f64; 2]) -> bool {
 
 pub mod bspline_curve;
 pub mod bspline_curve_to_bezier_curve;
+pub mod comp_curve_to_bspline_2d;
 
 pub use bspline_curve::Geom2dBSplineCurve;
 pub use bspline_curve_to_bezier_curve::BSplineCurveToBezierCurve;
+pub use comp_curve_to_bspline_2d::{
+    curve_to_bspline_curve_2d, split_bspline_curve_2d, split_bspline_curve_2d_knots,
+    Geom2dConvertCompCurveToBSplineCurve,
+};
 
 /// Compose multiple 2D curves into a single BSpline.
 ///

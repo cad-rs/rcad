@@ -13,9 +13,10 @@
 //!    keep the OCCT form over the landed rcad BSplineSurface data (the full
 //!    knot vector is the knots x mults expansion); the used
 //!    Geom_BSplineSurface methods (LocateU/UKnot/VKnot/Segment/Bounds/VIso/
-//!    UIso and the knot-index accessors) are the TKGeomBase GAP leaves —
-//!    they sit behind the TotalSurf null-surface exit that the AppSurf GAP
-//!    keeps open (the OCCT failure path).
+//!    UIso and the knot-index accessors) are translated in the kernel
+//!    geom/bspline_surface_ops.rs module (the TKGeomBase surface-level
+//!    bodies); they sit behind the TotalSurf null-surface exit that the
+//!    AppSurf GAP keeps open (the OCCT failure path).
 //! 2. GeomFill_SectionGenerator -> the GeomFillProfiler carrier of
 //!    brep_fill/generator.rs (AddCurve/Perform); GeomFill_Line and
 //!    GeomFill_AppSurf -> the local carriers below (the approximation
@@ -109,8 +110,8 @@ impl BRepLibMakeFaceWire {
 /// OCCT Geom_BSplineSurface (TKGeomBase/Geom_BSplineSurface.hxx) — the
 /// TotalSurf result carrier.  The constructor keeps the OCCT
 /// (poles, weights, uknots, vknots, umults, vmults, udeg, vdeg) form over
-/// the rcad BSplineSurface data; the used surface methods are the
-/// Geom_BSplineSurface GAP leaves (see the module header).
+/// the rcad BSplineSurface data; the used surface methods delegate to the
+/// kernel geom/bspline_surface_ops.rs translations (see the module header).
 pub struct GeomBSplineSurface {
     pub(crate) my_surface: BSplineSurface, // the rcad data carrier
 }
@@ -168,49 +169,66 @@ impl GeomBSplineSurface {
         false
     }
 
-    /// OCCT Geom_BSplineSurface::LocateU(U, Eps, I1, I2) — GAP.
-    pub(crate) fn locate_u(&self, _the_u: f64, _the_eps: f64, _i1: &mut i32, _i2: &mut i32) {
-        panic!("GAP: Geom_BSplineSurface::LocateU (TKGeomBase not translated)")
+    /// OCCT Geom_BSplineSurface::LocateU(U, Eps, I1, I2) — the hxx default
+    /// form (WithKnotRepetition = false); the body is the kernel
+    /// BSplineSurface::locate_u (geom/bspline_surface_ops.rs,
+    /// Geom_BSplineSurface_1.cxx L1464-1514).
+    pub(crate) fn locate_u(&self, the_u: f64, the_eps: f64, i1: &mut i32, i2: &mut i32) {
+        self.my_surface.locate_u(the_u, the_eps, i1, i2);
     }
 
-    /// OCCT Geom_BSplineSurface::UKnot(I) — GAP.
-    pub(crate) fn u_knot(&self, _the_i: i32) -> f64 {
-        panic!("GAP: Geom_BSplineSurface::UKnot (TKGeomBase not translated)")
+    /// OCCT Geom_BSplineSurface::UKnot(I) (Geom_BSplineSurface_1.cxx
+    /// L686-690) — the kernel body over the derived compressed knots.
+    pub(crate) fn u_knot(&self, the_i: i32) -> f64 {
+        self.my_surface.u_knot(the_i)
     }
 
-    /// OCCT Geom_BSplineSurface::VKnot(I) — GAP.
-    pub(crate) fn v_knot(&self, _the_i: i32) -> f64 {
-        panic!("GAP: Geom_BSplineSurface::VKnot (TKGeomBase not translated)")
+    /// OCCT Geom_BSplineSurface::VKnot(I) (Geom_BSplineSurface_1.cxx
+    /// L694-698) — the kernel body over the derived compressed knots.
+    pub(crate) fn v_knot(&self, the_i: i32) -> f64 {
+        self.my_surface.v_knot(the_i)
     }
 
-    /// OCCT Geom_BSplineSurface::FirstVKnotIndex() — GAP.
+    /// OCCT Geom_BSplineSurface::FirstVKnotIndex() (Geom_BSplineSurface_1.cxx
+    /// L1422-1432) — the kernel body.
     pub(crate) fn first_v_knot_index(&self) -> i32 {
-        panic!("GAP: Geom_BSplineSurface::FirstVKnotIndex (TKGeomBase not translated)")
+        self.my_surface.first_v_knot_index()
     }
 
-    /// OCCT Geom_BSplineSurface::LastVKnotIndex() — GAP.
+    /// OCCT Geom_BSplineSurface::LastVKnotIndex() (Geom_BSplineSurface_1.cxx
+    /// L1450-1460) — the kernel body.
     pub(crate) fn last_v_knot_index(&self) -> i32 {
-        panic!("GAP: Geom_BSplineSurface::LastVKnotIndex (TKGeomBase not translated)")
+        self.my_surface.last_v_knot_index()
     }
 
-    /// OCCT Geom_BSplineSurface::Segment(U1, U2, V1, V2) — GAP.
-    pub(crate) fn segment(&mut self, _u1: f64, _u2: f64, _v1: f64, _v2: f64) {
-        panic!("GAP: Geom_BSplineSurface::Segment (TKGeomBase not translated)")
+    /// OCCT Geom_BSplineSurface::Segment(U1, U2, V1, V2) — the hxx default
+    /// tolerance form; the body is the kernel BSplineSurface::segment
+    /// (geom/bspline_surface_ops.rs, Geom_BSplineSurface.cxx L548-876).
+    pub(crate) fn segment(&mut self, u1: f64, u2: f64, v1: f64, v2: f64) {
+        self.my_surface.segment(u1, u2, v1, v2);
     }
 
-    /// OCCT Geom_BSplineSurface::Bounds(U1, U2, V1, V2) — GAP.
-    pub(crate) fn bounds(&self, _u1: &mut f64, _u2: &mut f64, _v1: &mut f64, _v2: &mut f64) {
-        panic!("GAP: Geom_BSplineSurface::Bounds (TKGeomBase not translated)")
+    /// OCCT Geom_BSplineSurface::Bounds(U1, U2, V1, V2)
+    /// (Geom_BSplineSurface_1.cxx L1771-1777) — the kernel body over the
+    /// flat knot mirrors.
+    pub(crate) fn bounds(&self, u1: &mut f64, u2: &mut f64, v1: &mut f64, v2: &mut f64) {
+        let (a_u1, a_u2, a_v1, a_v2) = self.my_surface.bounds();
+        *u1 = a_u1;
+        *u2 = a_u2;
+        *v1 = a_v1;
+        *v2 = a_v2;
     }
 
-    /// OCCT Geom_BSplineSurface::VIso(V) — GAP.
-    pub(crate) fn v_iso(&self, _the_v: f64) -> Curve3 {
-        panic!("GAP: Geom_BSplineSurface::VIso (TKGeomBase not translated)")
+    /// OCCT Geom_BSplineSurface::VIso(V) (Geom_BSplineSurface_1.cxx L775-812)
+    /// — the kernel BSplSLib::Iso V arm (bspl_lib::bspl_slib_iso).
+    pub(crate) fn v_iso(&self, the_v: f64) -> Curve3 {
+        Curve3::BSpline(self.my_surface.v_iso(the_v))
     }
 
-    /// OCCT Geom_BSplineSurface::UIso(U) — GAP.
-    pub(crate) fn u_iso(&self, _the_u: f64) -> Curve3 {
-        panic!("GAP: Geom_BSplineSurface::UIso (TKGeomBase not translated)")
+    /// OCCT Geom_BSplineSurface::UIso(U) (Geom_BSplineSurface_1.cxx L598-635)
+    /// — the kernel BSplSLib::Iso U arm (bspl_lib::bspl_slib_iso).
+    pub(crate) fn u_iso(&self, the_u: f64) -> Curve3 {
+        Curve3::BSpline(self.my_surface.u_iso(the_u))
     }
 }
 

@@ -301,16 +301,33 @@ impl GeomFillBoundary {
 }
 
 /// OCCT Geom2dConvert::CurveToBSplineCurve (TKGeomBase/Geom2dConvert.cxx
-/// L181-380) — GAP leaf (outside TKFillet, pending).  The panic marks the
-/// carrier boundary on the pcpivot-is-not-a-bspline branch (C2 L641-648).
-pub(crate) fn geom2d_convert_curve_to_bspline_curve(_trc: &Curve2d) -> Curve2d {
-    panic!("GAP: Geom2dConvert::CurveToBSplineCurve pending (TKGeomBase/Geom2dConvert.cxx L181-380)");
+/// L181-449) — the kernel per-type exact conversion
+/// (`curve_to_bspline_curve_2d`); the parameterisation is the OCCT default
+/// (ChFi3d_FilBuilder_C2.cxx L647 calls the single-argument form).
+pub(crate) fn geom2d_convert_curve_to_bspline_curve(trc: &Curve2d) -> Curve2d {
+    Curve2d::BSpline(
+        rcad_kernel::base::geom2d_convert::curve_to_bspline_curve_2d(
+            trc,
+            rcad_kernel::base::convert::ConvertParameterisation::TgtThetaOver2,
+        ),
+    )
 }
 
 /// OCCT Geom2dConvert::SplitBSplineCurve (TKGeomBase/Geom2dConvert.cxx
-/// L102/L146) — GAP leaf (outside TKFillet, pending).
-pub(crate) fn geom2d_convert_split_bspline_curve(_bspl: &Curve2d, _u1: f64, _u2: f64, _tol: f64) -> Curve2d {
-    panic!("GAP: Geom2dConvert::SplitBSplineCurve pending (TKGeomBase/Geom2dConvert.cxx L102-176)");
+/// L146-177) — the parameter form (ChFi3d_FilBuilder_C2.cxx L652-656 calls
+/// it with (FromU1, ToU2, tol2d); tol2d is the unused ParametricTolerance
+/// argument of the OCCT body, L151).
+pub(crate) fn geom2d_convert_split_bspline_curve(bspl: &Curve2d, u1: f64, u2: f64, tol: f64) -> Curve2d {
+    match bspl {
+        // OCCT L652: down_cast<Geom2d_BSplineCurve>(pcpivot.Curve()).
+        Curve2d::BSpline(bs) => Curve2d::BSpline(
+            rcad_kernel::base::geom2d_convert::split_bspline_curve_2d(bs, u1, u2, tol, true),
+        ),
+        _ => panic!(
+            "Standard_NullObject: ChFi3d_FilBuilder_C2 L652 down_cast<Geom2d_BSplineCurve> \
+             — the pcurve is not a BSpline"
+        ),
+    }
 }
 
 /// OCCT BRepAdaptor_Surface::IsUClosed() — GAP leaf (the rcad adaptor in

@@ -152,45 +152,82 @@ pub fn geom_lib_build_curve3d(
 }
 
 /// OCCT Geom2dConvert_CompCurveToBSplineCurve (TKGeomBase/Geom2dConvert) —
-/// GAP carrier (architecture difference #27): the incremental
-/// Add(Segment, Tol) + BSplineCurve() engine.
-pub struct Geom2dConvertCompCurveToBSplineCurve;
+/// the kernel engine
+/// (`rcad_kernel::base::geom2d_convert::Geom2dConvertCompCurveToBSplineCurve`)
+/// re-hosted over the rcad `Curve2d` enum.  The parameterisation follows the
+/// BRepOffset_Inter2d.cxx L1154 call site
+/// (`aCompCurve(aTrCurve, Convert_RationalC1)`).
+pub struct Geom2dConvertCompCurveToBSplineCurve {
+    inner: rcad_kernel::base::geom2d_convert::Geom2dConvertCompCurveToBSplineCurve,
+}
 
 impl Geom2dConvertCompCurveToBSplineCurve {
-    /// OCCT Geom2dConvert_CompCurveToBSplineCurve(BasisCurve, Convert).
-    pub fn new(_the_basis: &Curve2d) -> Self {
-        panic!("GAP: Geom2dConvert_CompCurveToBSplineCurve (TKGeomBase/Geom2dConvert not translated)");
+    /// OCCT Geom2dConvert_CompCurveToBSplineCurve(BasisCurve, Convert)
+    /// (BRepOffset_Inter2d.cxx L1154: Convert_RationalC1).
+    pub fn new(the_basis: &Curve2d) -> Self {
+        Geom2dConvertCompCurveToBSplineCurve {
+            inner: rcad_kernel::base::geom2d_convert::Geom2dConvertCompCurveToBSplineCurve::with_basis_curve(
+                the_basis,
+                rcad_kernel::base::convert::ConvertParameterisation::RationalC1,
+            ),
+        }
     }
 
-    /// OCCT Add(NewCurve, Tol) — appends the segment with C1 continuity.
-    pub fn add(&mut self, _the_new_curve: &Curve2d, _the_tol: f64) -> bool {
-        panic!("GAP: Geom2dConvert_CompCurveToBSplineCurve::Add");
+    /// OCCT Add(NewCurve, Tol) — appends the segment with C1 continuity
+    /// (After = false, the OCCT default).
+    pub fn add(&mut self, the_new_curve: &Curve2d, the_tol: f64) -> bool {
+        self.inner.add(the_new_curve, the_tol)
     }
 
-    /// OCCT BSplineCurve().
+    /// OCCT BSplineCurve() — the handle is non-null on the success path
+    /// (every call site Adds before reading; the rcad Curve2d enum has no
+    /// null form).
     pub fn bspline_curve(&self) -> Curve2d {
-        panic!("GAP: Geom2dConvert_CompCurveToBSplineCurve::BSplineCurve");
+        Curve2d::BSpline(
+            self.inner
+                .bspline_curve()
+                .expect("Geom2dConvert_CompCurveToBSplineCurve::BSplineCurve after Add"),
+        )
     }
 }
 
-/// OCCT GeomConvert_CompCurveToBSplineCurve (TKGeomBase/GeomConvert) — GAP
-/// carrier (architecture difference #27).
-pub struct GeomConvertCompCurveToBSplineCurve;
+/// OCCT GeomConvert_CompCurveToBSplineCurve (TKGeomBase/GeomConvert) —
+/// the kernel engine
+/// (`rcad_kernel::base::convert::GeomConvertCompCurveToBSplineCurve`)
+/// re-hosted over the rcad `Curve3` enum.  The parameterisation is the OCCT
+/// constructor default (BRepOffset_Inter2d.cxx L1623 /
+/// BRepFill_SectionPlacement.cxx L131 call sites).
+pub struct GeomConvertCompCurveToBSplineCurve {
+    inner: rcad_kernel::base::convert::GeomConvertCompCurveToBSplineCurve,
+}
 
 impl GeomConvertCompCurveToBSplineCurve {
-    /// OCCT GeomConvert_CompCurveToBSplineCurve(BasisCurve, Convert).
-    pub fn new(_the_basis: &Curve3) -> Self {
-        panic!("GAP: GeomConvert_CompCurveToBSplineCurve (TKGeomBase/GeomConvert not translated)");
+    /// OCCT GeomConvert_CompCurveToBSplineCurve(BasisCurve) — the
+    /// Convert_TgtThetaOver2 default.
+    pub fn new(the_basis: &Curve3) -> Self {
+        GeomConvertCompCurveToBSplineCurve {
+            inner: rcad_kernel::base::convert::GeomConvertCompCurveToBSplineCurve::with_basis_curve(
+                the_basis,
+                rcad_kernel::base::convert::ConvertParameterisation::TgtThetaOver2,
+            ),
+        }
     }
 
-    /// OCCT Add(NewCurve, Tol).
-    pub fn add(&mut self, _the_new_curve: &Curve3, _the_tol: f64) -> bool {
-        panic!("GAP: GeomConvert_CompCurveToBSplineCurve::Add");
+    /// OCCT Add(NewCurve, Tol) — After = false, WithRatio = true, MinM = 0
+    /// (the OCCT defaults).
+    pub fn add(&mut self, the_new_curve: &Curve3, the_tol: f64) -> bool {
+        self.inner.add(the_new_curve, the_tol)
     }
 
-    /// OCCT BSplineCurve().
+    /// OCCT BSplineCurve() — the handle is non-null on the success path
+    /// (every call site Adds before reading; the rcad Curve3 enum has no
+    /// null form).
     pub fn bspline_curve(&self) -> Curve3 {
-        panic!("GAP: GeomConvert_CompCurveToBSplineCurve::BSplineCurve");
+        Curve3::BSpline(
+            self.inner
+                .bspline_curve()
+                .expect("GeomConvert_CompCurveToBSplineCurve::BSplineCurve after Add"),
+        )
     }
 }
 

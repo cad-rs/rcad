@@ -62,8 +62,9 @@ use super::brep_blend_walking::{
 /// (used by InternalPerform for the guide deflection test).
 const COS_REF_3D: f64 = 0.88;
 
-/// OCCT `RealLast()` — the sentinel for "no candidate found".
-const REAL_LAST: f64 = f64::MAX;
+/// OCCT `RealLast()` — the sentinel for "no candidate found"; the canonical
+/// kernel constant.
+use rcad_kernel::core::precision::REAL_LAST;
 
 impl BRepBlendWalking<'_> {
     /// OCCT TestArret(Function, State, TestDefl, TestSolu, TestLengthStep)

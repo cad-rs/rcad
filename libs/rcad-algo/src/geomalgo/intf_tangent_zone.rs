@@ -6,9 +6,8 @@
 use super::intf::IntfSectionPoint;
 
 /// OCCT Intrv-style bounds helpers from Standard (Intf_TangentZone.cxx
-/// L28-29 use RealLast/RealFirst).
-const REAL_LAST: f64 = f64::MAX;
-const REAL_FIRST: f64 = -f64::MAX;
+/// L28-29 use RealLast/RealFirst) — the canonical kernel constants.
+use rcad_kernel::core::precision::{REAL_FIRST, REAL_LAST};
 
 /// OCCT Intf_TangentZone — a zone of tangence between polygons or
 /// polyhedra, as a sequence of intersection points plus the parameter

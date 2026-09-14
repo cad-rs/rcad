@@ -5,38 +5,59 @@
 //!         BRepFill_Pipe.cxx (L1-1221).
 //!
 //! Architecture differences (referenced from the affected functions):
-//! 1. The sweep engine stack (BRepFill_Sweep, BRepFill_ShapeLaw,
-//!    BRepFill_Edge3DLaw / BRepFill_LocationLaw,
-//!    BRepFill_SectionPlacement, GeomFill_CurveAndTrihedron,
-//!    GeomFill_DiscreteTrihedron, ShapeUpgrade_RemoveLocations,
-//!    BRepBuilderAPI_Transform) is not translated yet — the OCCT-class-named
-//!    GAP carriers below keep the call form (plan D3; the GeomFill trihedron
-//!    laws themselves are the landed/parallel geomalgo::geomfill batch).
-//! 2. NCollection_HArray2<TopoDS_Shape> -> the local [`ShapeArray2`]
+//! 1. The location/section law stack (BRepFill_LocationLaw,
+//!    BRepFill_Edge3DLaw, BRepFill_ShapeLaw, BRepFill_SectionPlacement) is
+//!    the real 1:1 translation (the brep_fill_location_law /
+//!    brep_fill_edge3d_law / brep_fill_shape_law /
+//!    brep_fill_section_placement files); `myLoc` is the
+//!    `handle(BRepFill_LocationLaw)` slot of the hxx (L124) mapped to
+//!    `Rc<RefCell<dyn BRepFillLocationLawOps>>`.
+//! 2. The remaining sweep-engine GAP carriers keep the OCCT call form:
+//!    BRepFill_Sweep, ShapeUpgrade_RemoveLocations,
+//!    BRepBuilderAPI_Transform (copy form) and
+//!    UpdateTolFromTopOrBottomPCurve (Adaptor3d_CurveOnSurface).
+//! 3. NCollection_HArray2<TopoDS_Shape> -> the local [`ShapeArray2`]
 //!    (1-based row/col indexing as in OCCT).
-//! 3. NCollection_Map / NCollection_DataMap keyed by TopTools_ShapeMapHasher
+//! 4. NCollection_Map / NCollection_DataMap keyed by TopTools_ShapeMapHasher
 //!    -> HashMap keyed by (TShape ptr, location) identity
 //!    ([`ShapeKey`], orientation ignored).
-//! 4. TopoDS_Iterator -> [`topods_iterator`] (the direct children in
+//! 5. TopoDS_Iterator -> [`topods_iterator`] (the direct children in
 //!    stored order); TopExp_Explorer over edges of wires ->
 //!    [`brep_tools_wire_explorer`] (the BRepTools_WireExplorer reduction
 //!    used by the offset pipeline).
-//! 5. gp_Trsf -> glam::DAffine3; TopLoc_Location composition is carried by
+//! 6. gp_Trsf -> glam::DAffine3; TopLoc_Location composition is carried by
 //!    the DAffine3 values (the rcad location pool is BRep-bound; see the
 //!    Perform note).
-//! 6. GeomFill_Trihedron / GeomAbs_Shape / GeomFill_ApproxStyle /
+//! 7. GeomFill_Trihedron / GeomAbs_Shape / GeomFill_ApproxStyle /
 //!    BRepFill_TransitionStyle are the local enums (the per-file enum
 //!    precedent of brep_offset_api_make_pipe.rs).
+//! 8. The rcad BRep pool: the engine owns an arena (`my_brep`) over which
+//!    the spine/profile TShape graphs are adopted at their source flat
+//!    indices (`brep_from_shape`, the topo_builder.rs glue) — the OCCT
+//!    model carries no pool and has no counterpart statement.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use glam::{DAffine3, DMat3, DVec3};
 
 use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::geom::{Curve3, TrimmedCurve3};
+use rcad_kernel::topo::topo_builder::brep_from_shape;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, BRepBuilder, Orientation, ShapeType, TShape, tshape_flags};
+
+use crate::brep_fill::brep_fill_edge3d_law::BRepFillEdge3DLaw;
+use crate::brep_fill::brep_fill_section_placement::BRepFillSectionPlacement;
+use crate::brep_fill::brep_fill_shape_law::BRepFillShapeLaw;
+
+// OCCT BRepFill_LocationLaw is the real 1:1 translation
+// (brep_fill_location_law.rs); the former local stub struct of this file is
+// deleted.  The name is re-exported for the remaining placeholder consumers
+// (brep_fill_draft.rs upcast_law carrier).
+pub use crate::brep_fill::brep_fill_location_law::{BRepFillLocationLaw, BRepFillLocationLawOps};
 
 use crate::brep_fill::generator::ShapeKey;
 
@@ -134,89 +155,9 @@ use crate::geomalgo::geomfill::gp_mat::GpMat;
 use crate::geomalgo::geomfill::location_law::LocationLaw;
 use crate::geomalgo::geomfill::trihedron_law::TrihedronLaw;
 
-/// GAP: BRepFill_LocationLaw (TKBool/BRepFill) — the spine location law
-/// (BRepFill_Edge3DLaw result); not translated (plan D3).
-pub struct BRepFillLocationLaw {
-    /// OCCT: mySpine carried by the law.
-    #[allow(dead_code)]
-    my_spine: Shape,
-}
-
-impl BRepFillLocationLaw {
-    /// OCCT BRepFill_LocationLaw::NbLaw().
-    pub fn nb_law(&self) -> usize {
-        panic!("GAP: BRepFill_LocationLaw (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT BRepFill_LocationLaw::Edge(ii).
-    pub fn edge(&self, _ii: usize) -> Shape {
-        panic!("GAP: BRepFill_LocationLaw (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT BRepFill_LocationLaw::Vertex(ii).
-    pub fn vertex(&self, _ii: usize) -> Shape {
-        panic!("GAP: BRepFill_LocationLaw (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT BRepFill_LocationLaw::Law(ii) — the GeomFill location law.
-    pub fn law(&self, _ii: usize) -> &GeomFillCurveAndTrihedron {
-        panic!("GAP: BRepFill_LocationLaw (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT BRepFill_LocationLaw::IsClosed().
-    pub fn is_closed(&self) -> bool {
-        panic!("GAP: BRepFill_LocationLaw (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT BRepFill_LocationLaw::TransformInG0Law().
-    pub fn transform_in_g0_law(&mut self) {
-        panic!("GAP: BRepFill_LocationLaw (TKBool/BRepFill not translated) — see file header")
-    }
-}
-
-/// GAP: BRepFill_Edge3DLaw (TKBool/BRepFill) — the edge 3D law constructor.
-pub struct BRepFillEdge3DLaw;
-
-impl BRepFillEdge3DLaw {
-    /// OCCT new BRepFill_Edge3DLaw(Spine, Law).
-    pub fn new(the_spine: &Shape, _the_law: &GeomFillCurveAndTrihedron) -> BRepFillLocationLaw {
-        BRepFillLocationLaw {
-            my_spine: the_spine.clone(),
-        }
-    }
-}
-
-/// GAP: BRepFill_ShapeLaw (TKBool/BRepFill) — the section law.
-pub struct BRepFillShapeLaw;
-
-impl BRepFillShapeLaw {
-    /// OCCT new BRepFill_ShapeLaw(Vertex).
-    pub fn new(_the_vertex: &Shape) -> BRepFillShapeLaw {
-        panic!("GAP: BRepFill_ShapeLaw (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT new BRepFill_ShapeLaw(Wire, Skip) / (Wire).
-    pub fn new_with_wire(_the_wire: &Shape, _skip: bool) -> BRepFillShapeLaw {
-        panic!("GAP: BRepFill_ShapeLaw (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT BRepFill_ShapeLaw::NbLaw().
-    pub fn nb_law(&self) -> usize {
-        panic!("GAP: BRepFill_ShapeLaw (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT BRepFill_ShapeLaw::Edge(ii).
-    pub fn edge(&self, _ii: usize) -> Shape {
-        panic!("GAP: BRepFill_ShapeLaw (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT BRepFill_ShapeLaw::Vertex(ii, Tol).
-    pub fn vertex(&self, _ii: usize, _tol: f64) -> Shape {
-        panic!("GAP: BRepFill_ShapeLaw (TKBool/BRepFill not translated) — see file header")
-    }
-}
-
 /// GAP: BRepFill_SectionLaw (TKBool/BRepFill) — the section law base class
 /// (BRepFill_ShapeLaw derives from it); not translated (plan D3).
 pub struct BRepFillSectionLaw;
-
-/// OCCT handle up-cast Handle(BRepFill_ShapeLaw) -> Handle(BRepFill_SectionLaw).
-impl From<BRepFillShapeLaw> for BRepFillSectionLaw {
-    fn from(_: BRepFillShapeLaw) -> Self {
-        BRepFillSectionLaw
-    }
-}
 
 /// GAP: BRepFill_Sweep (TKBool/BRepFill) — the sweep engine; not translated
 /// (plan D3).  The constructor and the Build/Shape/SubShape/Sections/
@@ -291,20 +232,6 @@ impl BRepFillSweep {
     /// OCCT BRepFill_Sweep::Tape(Ind) (BRepFill_Sweep.hxx).
     pub fn tape(&self, _ind: usize) -> Shape {
         panic!("GAP: BRepFill_Sweep (TKBool/BRepFill not translated) — see file header")
-    }
-}
-
-/// GAP: BRepFill_SectionPlacement (TKBool/BRepFill).
-pub struct BRepFillSectionPlacement;
-
-impl BRepFillSectionPlacement {
-    /// OCCT new BRepFill_SectionPlacement(Law, Section).
-    pub fn new(_the_law: &BRepFillLocationLaw, _the_section: &Shape) -> Self {
-        panic!("GAP: BRepFill_SectionPlacement (TKBool/BRepFill not translated) — see file header")
-    }
-    /// OCCT BRepFill_SectionPlacement::Transformation().
-    pub fn transformation(&self) -> DAffine3 {
-        panic!("GAP: BRepFill_SectionPlacement (TKBool/BRepFill not translated) — see file header")
     }
 }
 
@@ -518,7 +445,18 @@ pub struct BRepFillPipe {
     my_profile: Shape, // OCCT: myProfile
     my_shape: Shape,   // OCCT: myShape
     my_trsf: DAffine3, // OCCT: myTrsf (gp_Trsf)
-    my_loc: Option<BRepFillLocationLaw>, // OCCT: myLoc (None = null handle)
+    my_loc: Option<Rc<RefCell<dyn BRepFillLocationLawOps>>>, // OCCT: myLoc (hxx L124, handle<BRepFill_LocationLaw>; None = null handle)
+    /// The rcad pool arena (architecture difference: the rcad BRep pool).
+    /// OCCT has no pool — a TopoDS_Shape carries its own TShape handle — so
+    /// the OCCT model needs no counterpart for this member.  The rcad
+    /// BRep_Tool accessors (`BRep_Tool::Degenerated / Curve / Tolerance` of
+    /// the law constructors and of BRepFill_SectionPlacement) resolve shapes
+    /// through the owning pool (rcad-kernel topo_builder.rs header); the
+    /// engine adopts the reachable TShape graph of the spine and the profile
+    /// at their source flat indices in Perform (the Arc is SHARED, so the
+    /// shape identity the callers hold is preserved — the
+    /// `brep_from_shape` glue).
+    my_brep: BRep,
     my_sections: Option<ShapeArray2>,    // OCCT: mySections
     my_faces: Option<ShapeArray2>,       // OCCT: myFaces
     my_edges: Option<ShapeArray2>,       // OCCT: myEdges
@@ -580,6 +518,7 @@ impl BRepFillPipe {
             my_shape: Shape::null(),
             my_trsf: DAffine3::IDENTITY,
             my_loc: None,
+            my_brep: BRep::new(),
             my_sections: None,
             my_faces: None,
             my_edges: None,
@@ -638,6 +577,7 @@ impl BRepFillPipe {
             my_shape: Shape::null(),
             my_trsf: DAffine3::IDENTITY,
             my_loc: None,
+            my_brep: BRep::new(),
             my_sections: None,
             my_faces: None,
             my_edges: None,
@@ -673,6 +613,22 @@ impl BRepFillPipe {
         self.my_spine = the_spine.clone();
         self.my_profile = the_profile.clone();
 
+        // Architecture difference (the rcad BRep pool): the law constructors
+        // and the BRepFill_SectionPlacement reads resolve shapes through the
+        // owning pool (rcad-kernel topo_builder.rs header).  The reachable
+        // TShape graph of the spine and the profile is adopted at their
+        // source flat indices; the Arc is shared, so the shape identity the
+        // callers hold is preserved.  A Shape carries no back reference to
+        // its pool, so the identity locations table is carried over (the
+        // OCCT counterpart is empty — no statement exists).
+        let both = Shape::from_parts(
+            Arc::new(TShape::Compound(vec![the_spine.clone(), the_profile.clone()])),
+            0,
+            0,
+            Orientation::Forward,
+        );
+        self.my_brep = brep_from_shape(&both, &[]);
+
         // OCCT L205.
         self.define_real_segmax();
 
@@ -689,20 +645,46 @@ impl BRepFillPipe {
             }
             _ => None,
         };
-        // OCCT L225-231.  The OCCT ctor takes the possibly-null TLaw handle;
-        // the rcad Box has no null state (the ctor guard above restricts
-        // myMode to the three switch kinds).
-        let loc = GeomFillCurveAndTrihedron::new(t_law.expect("null TLaw"));
-        self.my_loc = Some(BRepFillEdge3DLaw::new(the_spine, &loc));
-        let my_loc = self.my_loc.as_ref().expect("myLoc");
-        if my_loc.nb_law() == 0 {
-            return; // Degenerated case
+        // OCCT L225: Loc = new GeomFill_CurveAndTrihedron(TLaw).
+        let loc = Rc::new(RefCell::new(GeomFillCurveAndTrihedron::new(
+            t_law.expect("null TLaw"),
+        )));
+        // OCCT L226: myLoc = new BRepFill_Edge3DLaw(mySpine, Loc).
+        self.my_loc = Some(Rc::new(RefCell::new(BRepFillEdge3DLaw::new(
+            &self.my_brep,
+            the_spine,
+            loc,
+        ))) as Rc<RefCell<dyn BRepFillLocationLawOps>>);
+        // OCCT L227-230: if (myLoc->NbLaw() == 0) return — Degenerated case.
+        if self
+            .my_loc
+            .as_ref()
+            .expect("myLoc")
+            .borrow()
+            .base()
+            .nb_law()
+            == 0
+        {
+            return;
         }
+        // OCCT L231: myLoc->TransformInG0Law() — Set into continuity.
+        self.my_loc
+            .as_ref()
+            .expect("myLoc")
+            .borrow_mut()
+            .base_mut()
+            .transform_in_g0_law(&self.my_brep);
 
-        // OCCT L233-234.
+        // OCCT L233-234: BRepFill_SectionPlacement Place(myLoc, Profile);
+        // myTrsf = Place.Transformation() — the two-argument constructor
+        // defaults WithContact = false, WithCorrection = false
+        // (BRepFill_SectionPlacement.cxx L64-74).
         let place = BRepFillSectionPlacement::new(
-            self.my_loc.as_ref().expect("myLoc"),
+            &mut self.my_brep,
+            self.my_loc.as_ref().expect("myLoc").clone(),
             the_profile,
+            false,
+            false,
         );
         self.my_trsf = place.transformation();
 
@@ -719,14 +701,13 @@ impl BRepFillPipe {
 
         // OCCT L242-265: construct First && Last Shape — the law frame at
         // the first parameter.
-        let my_loc = self.my_loc.as_ref().expect("myLoc");
-        let law1 = my_loc.law(1);
+        let law1 = self.my_loc.as_ref().expect("myLoc").borrow().base().law(1);
         let mut m = GpMat::identity();
         let mut v = DVec3::ZERO;
         let mut first = 0.0;
         let mut last = 0.0;
-        law1.get_domain(&mut first, &mut last);
-        law1.d0(first, &mut m, &mut v);
+        law1.borrow().get_domain(&mut first, &mut last);
+        law1.borrow().d0(first, &mut m, &mut v);
         // OCCT fila.SetValues(M(1, 1), ..., V.Z()).
         let mut fila = fila_set_values(&m, v);
 
@@ -747,21 +728,33 @@ impl BRepFillPipe {
         self.my_first = rem_loc.get_result();
 
         // OCCT L278-293: the law frame at the last parameter.
-        let nb_law = self.my_loc.as_ref().expect("myLoc").nb_law();
-        let my_loc = self.my_loc.as_ref().expect("myLoc");
-        let law_n = my_loc.law(nb_law);
+        let nb_law = self.my_loc.as_ref().expect("myLoc").borrow().base().nb_law();
+        let law_n = self
+            .my_loc
+            .as_ref()
+            .expect("myLoc")
+            .borrow()
+            .base()
+            .law(nb_law);
         let mut m = GpMat::identity();
         let mut v = DVec3::ZERO;
-        law_n.get_domain(&mut first, &mut last);
-        law_n.d0(last, &mut m, &mut v);
+        law_n.borrow().get_domain(&mut first, &mut last);
+        law_n.borrow().d0(last, &mut m, &mut v);
         // OCCT fila.SetValues(M(1, 1), ..., V.Z()).
         let mut fila = fila_set_values(&m, v);
 
         // OCCT L293-307.
         fila = self.my_trsf * fila;
         let loc_last = fila;
-        let my_loc = self.my_loc.as_ref().expect("myLoc");
-        if !my_loc.is_closed() || loc_last != loc_first {
+        if !self
+            .my_loc
+            .as_ref()
+            .expect("myLoc")
+            .borrow()
+            .base()
+            .is_closed(&self.my_brep)
+            || loc_last != loc_first
+        {
             let mut my_last = self.my_profile.clone();
             if loc_last != DAffine3::IDENTITY {
                 // OCCT L301: myLast = BRepBuilderAPI_Transform(myProfile,
@@ -841,10 +834,20 @@ impl BRepFillPipe {
         }
 
         // OCCT L396-407: search if ESpine is an edge of mySpine.
-        let nb_law = self.my_loc.as_ref().expect("myLoc").nb_law();
+        let nb_law = self.my_loc.as_ref().expect("myLoc").borrow().base().nb_law();
         let mut ispin = 0;
         for ii in 1..=nb_law {
-            if ispin == 0 && e_spine.is_same(&self.my_loc.as_ref().expect("myLoc").edge(ii)) {
+            if ispin == 0
+                && e_spine.is_same(
+                    &self
+                        .my_loc
+                        .as_ref()
+                        .expect("myLoc")
+                        .borrow()
+                        .base()
+                        .edge(ii),
+                )
+            {
                 ispin = ii;
             }
         }
@@ -872,10 +875,20 @@ impl BRepFillPipe {
         }
 
         // OCCT L433-444: search if ESpine is an edge of mySpine.
-        let nb_law = self.my_loc.as_ref().expect("myLoc").nb_law();
+        let nb_law = self.my_loc.as_ref().expect("myLoc").borrow().base().nb_law();
         let mut ispin = 0;
         for ii in 1..=nb_law {
-            if ispin == 0 && e_spine.is_same(&self.my_loc.as_ref().expect("myLoc").edge(ii)) {
+            if ispin == 0
+                && e_spine.is_same(
+                    &self
+                        .my_loc
+                        .as_ref()
+                        .expect("myLoc")
+                        .borrow()
+                        .base()
+                        .edge(ii),
+                )
+            {
                 ispin = ii;
             }
         }
@@ -893,10 +906,20 @@ impl BRepFillPipe {
     /// OCCT BRepFill_Pipe::Section(VSpine) (cxx L457-493).
     pub fn section(&self, v_spine: &Shape) -> Shape {
         // OCCT L471-482: search the vertex among the spine vertices.
-        let nb = self.my_loc.as_ref().expect("myLoc").nb_law() + 1;
+        let nb = self.my_loc.as_ref().expect("myLoc").borrow().base().nb_law() + 1;
         let mut ispin = 0;
         for ii in 1..=nb {
-            if ispin == 0 && v_spine.is_same(&self.my_loc.as_ref().expect("myLoc").vertex(ii)) {
+            if ispin == 0
+                && v_spine.is_same(
+                    &self
+                        .my_loc
+                        .as_ref()
+                        .expect("myLoc")
+                        .borrow()
+                        .base()
+                        .vertex(&self.my_brep, ii),
+                )
+            {
                 ispin = ii;
             }
         }
@@ -909,7 +932,11 @@ impl BRepFillPipe {
         let b = BRepBuilder::new();
         let mut comp = pool.add_tcompound(Vec::new());
         for ii in 1..=self.my_sections.as_ref().expect("mySections").col_length() {
-            let s = self.my_sections.as_ref().expect("mySections").value(ii, ispin);
+            let s = self
+                .my_sections
+                .as_ref()
+                .expect("mySections")
+                .value(ii, ispin as usize);
             add_to_compound(&mut pool, &b, &mut comp, &s);
         }
 
@@ -921,19 +948,27 @@ impl BRepFillPipe {
         // OCCT L502-505: P = Point; P.Transform(myTrsf).
         let p = self.my_trsf.transform_point3(point);
 
-        // OCCT L507-508.
+        // OCCT L507: VertexSection = BRepLib_MakeVertex(P).
         let mut pool = BRep::new();
         let vertex_section = pool.add_tvertex_unique(p);
-        let section = BRepFillShapeLaw::new(&vertex_section);
-        let _ = &section;
+        // OCCT L508: Section = new BRepFill_ShapeLaw(VertexSection) — the
+        // Vertex constructor, Build defaults to true (BRepFill_ShapeLaw.hxx).
+        let section = BRepFillShapeLaw::new_vertex(&pool, &vertex_section, true);
 
-        // OCCT L511-520: sweeping.
+        // OCCT L511: BRepFill_Sweep MkSw(Section, myLoc, true) — the sweep
+        // engine stays the placeholder carrier (plan D3); the Section /
+        // myLoc handles keep the OCCT call form (the BRepFill_SectionLaw
+        // placeholder is the Handle up-cast slot, the brep_fill_draft.rs
+        // precedent).
         let mut mk_sw = BRepFillSweep::new(
-            section.into(),
-            self.my_loc.as_ref().expect("myLoc"),
+            BRepFillSectionLaw,
+            self.my_loc.as_ref().expect("myLoc").borrow().base(),
             true,
         );
+        // OCCT L512.
         mk_sw.set_force_approx_c1(self.my_force_approx_c1);
+        let _ = &section;
+        // OCCT L513-520: sweeping.
         mk_sw.build(
             &mut self.my_reversed_edges,
             &mut self.my_tapes,
@@ -1069,12 +1104,14 @@ impl BRepFillPipe {
         } else {
             // OCCT L674-702: TheS is a VERTEX — sweep the section.
             if the_s.shape_type() == ShapeType::Vertex {
-                let section = BRepFillShapeLaw::new(&the_s);
+                // OCCT L675: Section = new BRepFill_ShapeLaw(
+                // TopoDS::Vertex(TheS)) — Build defaults to true.
+                let section = BRepFillShapeLaw::new_vertex(&self.my_brep, &the_s, true);
                 let _ = &section;
                 // OCCT L677: BRepFill_Sweep MkSw(Section, myLoc, true).
                 let mut mk_sw = BRepFillSweep::new(
-                    section.into(),
-                    self.my_loc.as_ref().expect("myLoc"),
+                    BRepFillSectionLaw,
+                    self.my_loc.as_ref().expect("myLoc").borrow().base(),
                     true,
                 );
                 mk_sw.set_force_approx_c1(self.my_force_approx_c1);
@@ -1105,13 +1142,15 @@ impl BRepFillPipe {
 
             // OCCT L704-790: TheS is a WIRE — sweep with bounds.
             if the_s.shape_type() == ShapeType::Wire {
-                let section = BRepFillShapeLaw::new_with_wire(&the_s, true);
+                // OCCT L705: Section = new BRepFill_ShapeLaw(
+                // TopoDS::Wire(TheS)) — Build defaults to true.
+                let section = BRepFillShapeLaw::new(&self.my_brep, &the_s, true);
                 let _ = &section;
                 // OCCT L707-709: BRepFill_Sweep MkSw(Section, myLoc, true);
                 // MkSw.SetBounds(TheFirst, TheLast).
                 let mut mk_sw = BRepFillSweep::new(
-                    section.into(),
-                    self.my_loc.as_ref().expect("myLoc"),
+                    BRepFillSectionLaw,
+                    self.my_loc.as_ref().expect("myLoc").borrow().base(),
                     true,
                 );
                 mk_sw.set_bounds(&the_first, &the_last);
@@ -1255,17 +1294,18 @@ impl BRepFillPipe {
                 }
             }
             ShapeType::Wire => {
-                // OCCT L877-889.
-                let section = BRepFillShapeLaw::new_with_wire(s, false);
-                let nb_law = section.nb_law();
+                // OCCT L879-889: Section = new BRepFill_ShapeLaw(
+                // TopoDS::Wire(S), false); NbLaw; the Edge(ii) walk.
+                let section = BRepFillShapeLaw::new(&self.my_brep, s, false);
+                let nb_law = section.base.nb_law();
                 let mut ii = 1;
                 while ii <= nb_law && result == 0 {
                     if e.is_same(&section.edge(ii)) {
-                        result = *initial_length + ii as i32;
+                        result = *initial_length + ii;
                     }
                     ii += 1;
                 }
-                *initial_length += nb_law as i32;
+                *initial_length += nb_law;
             }
             ShapeType::Face | ShapeType::Shell | ShapeType::Compound => {
                 // OCCT L892-900.
@@ -1287,7 +1327,11 @@ impl BRepFillPipe {
     }
 
     /// OCCT BRepFill_Pipe::FindVertex(S, V, InitialLength) (cxx L918-991).
-    fn find_vertex(&self, s: &Shape, v: &Shape, initial_length: &mut i32) -> i32 {
+    /// OCCT declares the method const; the rcad form takes `&mut self` — the
+    /// real BRepFill_ShapeLaw::Vertex resolves the shape through the engine
+    /// pool by `&mut BRep` (the barycentric-update slot of
+    /// BRepFill_ShapeLaw.cxx L281) — the mechanical accommodation.
+    fn find_vertex(&mut self, s: &Shape, v: &Shape, initial_length: &mut i32) -> i32 {
         let mut result = 0;
 
         match s.shape_type() {
@@ -1315,11 +1359,15 @@ impl BRepFillPipe {
                 // OCCT L957-969: ii = InitialLength + 1 is captured before
                 // the InitialLength increment.
                 let mut ii = *initial_length + 1;
-                let section = BRepFillShapeLaw::new_with_wire(s, false);
-                *initial_length += section.nb_law() as i32 + 1;
+                // OCCT L959: Section = new BRepFill_ShapeLaw(
+                // TopoDS::Wire(S), false).
+                let section = BRepFillShapeLaw::new(&self.my_brep, s, false);
+                // OCCT L960: InitialLength += Section->NbLaw() + 1.
+                *initial_length += section.base.nb_law() + 1;
 
                 while ii <= *initial_length && result == 0 {
-                    if v.is_same(&section.vertex(ii as usize, 0.0)) {
+                    // OCCT L963: V.IsSame(Section->Vertex(ii, 0.)).
+                    if v.is_same(&section.vertex(&mut self.my_brep, ii, 0.0)) {
                         result = ii;
                     }
                     ii += 1;
