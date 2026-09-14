@@ -946,8 +946,14 @@ pub fn geom_int_adjust_periodic(
 }
 
 /// OCCT GeomInt_LineConstructor.cxx L737-816: the file-static AdjustPeriodic
-/// over the two adaptor surfaces.
-fn adjust_periodic_pair(
+/// over the two adaptor surfaces.  This is the canonical body of that file
+/// static; `bop::int_tools::face_make_curve` reaches it with both handles bound
+/// to the same face surface.
+///
+/// Every call below leaves `theEps` at the declared default: the OCCT wrapper
+/// passes only the six leading arguments, so `GeomInt::AdjustPeriodic` uses
+/// `theEps = 0.0` (GeomInt.hxx L41).
+pub(crate) fn adjust_periodic_pair(
     my_hs1: &GeomSurfaceAdapter,
     my_hs2: &GeomSurfaceAdapter,
     u1: f64,
@@ -984,7 +990,7 @@ fn adjust_periodic_pair(
         let f = my_hs1.first_u_parameter();
         let l = my_hs1.last_u_parameter();
         let mut new_u = 0.0;
-        geom_int_adjust_periodic(u1, f, l, lmf, &mut new_u, &mut du, PCONFUSION);
+        geom_int_adjust_periodic(u1, f, l, lmf, &mut new_u, &mut du, 0.0);
         u1 = new_u;
     }
     if my_hs1_is_v_periodic {
@@ -992,7 +998,7 @@ fn adjust_periodic_pair(
         let f = my_hs1.first_v_parameter();
         let l = my_hs1.last_v_parameter();
         let mut new_v = 0.0;
-        geom_int_adjust_periodic(v1, f, l, lmf, &mut new_v, &mut dv, PCONFUSION);
+        geom_int_adjust_periodic(v1, f, l, lmf, &mut new_v, &mut dv, 0.0);
         v1 = new_v;
     }
     if my_hs2_is_u_periodic {
@@ -1000,7 +1006,7 @@ fn adjust_periodic_pair(
         let f = my_hs2.first_u_parameter();
         let l = my_hs2.last_u_parameter();
         let mut new_u = 0.0;
-        geom_int_adjust_periodic(u2, f, l, lmf, &mut new_u, &mut du, PCONFUSION);
+        geom_int_adjust_periodic(u2, f, l, lmf, &mut new_u, &mut du, 0.0);
         u2 = new_u;
     }
     if my_hs2_is_v_periodic {
@@ -1008,7 +1014,7 @@ fn adjust_periodic_pair(
         let f = my_hs2.first_v_parameter();
         let l = my_hs2.last_v_parameter();
         let mut new_v = 0.0;
-        geom_int_adjust_periodic(v2, f, l, lmf, &mut new_v, &mut dv, PCONFUSION);
+        geom_int_adjust_periodic(v2, f, l, lmf, &mut new_v, &mut dv, 0.0);
         v2 = new_v;
     }
     let _ = (du, dv);

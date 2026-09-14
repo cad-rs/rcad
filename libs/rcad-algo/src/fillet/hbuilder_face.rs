@@ -60,7 +60,7 @@ mod classify;
 
 use std::sync::Arc;
 
-use rcad_kernel::core::precision::{is_infinite_value, CONFUSION};
+use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _};
 use rcad_kernel::topods::{BRep, BRepBuilder, BRepTool as _, Orientation, Shape, ShapeType, TShape};
 
@@ -1016,16 +1016,14 @@ impl TopOpeBRepBuildHBuilder {
                     // edge's 3D-curve representation (GC->Range for the
                     // IsCurve3D entry) whenever that range is finite.  Only
                     // an edge with no 3D curve keeps the 2D natural range.
-                    let [mut a_f, mut a_l] = pc.default_domain();
                     let ed = brep.edge_mut_inplace(an_edge.clone());
-                    if ed.curve.is_some() {
-                        if !is_infinite_value(ed.range[0]) {
-                            a_f = ed.range[0];
-                        }
-                        if !is_infinite_value(ed.range[1]) {
-                            a_l = ed.range[1];
-                        }
-                    }
+                    // OCCT BRep_Builder.cxx L104-167 (UpdateCurves,
+                    // reached through BRep_Builder::UpdateEdge(E, C2d, F,
+                    // Tol) L655-671): the two-step interval rule - the
+                    // canonical body lives in
+                    // rcad_kernel::topods::update_curves_range.
+                    let [a_f, a_l] =
+                        rcad_kernel::topods::update_curves_range(pc.default_domain(), ed);
                     ed.pcurves.insert(key, (pc, a_f, a_l));
                 }
                 // WES.AddStartElement(anEdge).

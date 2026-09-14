@@ -17,9 +17,10 @@
 //!   the batch-1 SectionGenerator carrier) and `GeomFill_AppSurf`
 //!   (TKGeomAlgo/AppBlend, the staged AppBlend gap) are GAP carriers in
 //!   [`totalsurf`] — the sites keep the OCCT failure path.
-//! - `Geom_BSplineSurface::VIso` maps to the local
-//!   [`bspline_surface_viso`] re-host (the homogeneous De Boor evaluation of
-//!   the opposite-direction basis, the geomfill/nsections.rs precedent).
+//! - `BSplineSurface()->VIso(Param)` is the Geom_Surface::VIso virtual call
+//!   (BRepFill_NSections.cxx L679/L687/L780/L872); it maps to the single
+//!   canonical dispatch `crate::brep_fill::brep_fill_sweep::surface_viso`
+//!   (OCCT Geom_BSplineSurface::VIso -> BSplSLib::Iso).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,7 +29,7 @@ use glam::DVec3;
 
 use rcad_kernel::base::convert::curve_to_bspline;
 use rcad_kernel::core::precision::{CONFUSION, PCONFUSION};
-use rcad_kernel::geom::{CurveEval, BSplineCurve3, BSplineSurface, Curve3, TrimmedCurve3};
+use rcad_kernel::geom::{CurveEval, BSplineCurve3, BSplineSurface, Curve3, Surface3, TrimmedCurve3};
 use rcad_kernel::topo::topods::GeomAbsShape;
 use rcad_kernel::math::bspl_lib::reparametrize;
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, Orientation, Shape};
@@ -38,6 +39,7 @@ use crate::brep_fill::brep_fill_section_law::{
     WireExplorerState,
 };
 use crate::brep_fill::compatible_wires::wire_edges;
+use crate::brep_fill::brep_fill_sweep::surface_viso;
 use crate::brep_fill::generator::top_exp_vertices;
 use crate::geomalgo::geomfill::line::Line;
 use crate::geomalgo::geomfill::nsections::NSections;
@@ -783,7 +785,7 @@ impl BRepFillNSections {
             let loi = self.base.my_laws[(index - 1) as usize].clone();
             let surf = loi.borrow().bspline_surface().cloned();
             if let Some(surf) = surf {
-                let curve = Curve3::BSpline(bspline_surface_viso(&surf, param));
+                let curve = surface_viso(&Surface3::BSpline(surf), param);
                 let first = curve_first_parameter(&curve);
                 let p = curve.point_at(first);
                 b.update_vertex_point(brep, v.clone(), p, CONFUSION);
@@ -794,7 +796,7 @@ impl BRepFillNSections {
             let loi = self.base.my_laws[(index - 2) as usize].clone();
             let surf = loi.borrow().bspline_surface().cloned();
             if let Some(surf) = surf {
-                let curve = Curve3::BSpline(bspline_surface_viso(&surf, param));
+                let curve = surface_viso(&Surface3::BSpline(surf), param);
                 let last = curve_last_parameter(&curve);
                 let p = curve.point_at(last);
                 b.update_vertex_point(brep, v.clone(), p, CONFUSION);
@@ -845,7 +847,7 @@ impl BRepFillNSections {
         let mut n_compo: Vec<Curve3> = Vec::new();
         for jj in 1..=self.my_shapes.len() {
             // NCompo.Append(mySurface->VIso(myParams(jj)));
-            n_compo.push(Curve3::BSpline(bspline_surface_viso(surface, self.my_params[jj - 1])));
+            n_compo.push(surface_viso(&Surface3::BSpline(surface.clone()), self.my_params[jj - 1]));
         }
         let law = NSections::new_with_reference(
             n_compo,
@@ -930,7 +932,7 @@ impl BRepFillNSections {
             let loi = self.base.my_laws[ii - 1].clone();
             let surf = loi.borrow().bspline_surface().map(|s| s.clone());
             let Some(surf) = surf else { continue };
-            let curve = Curve3::BSpline(bspline_surface_viso(&surf, v_param));
+            let curve = surface_viso(&Surface3::BSpline(surf), v_param);
             let first = curve_first_parameter(&curve);
             let last = curve_last_parameter(&curve);
             // TopoDS_Edge E = BRepLib_MakeEdge(Curve, first, last);
@@ -1019,37 +1021,6 @@ fn rank_of(c: GeomAbsShape) -> i32 {
 /// The last-vertex tolerance read (BRep_Tool::Tolerance(ComV)).
 fn brep_vertex_tolerance(brep: &BRep, v: &Shape) -> f64 {
     brep.vertex(v.clone()).tolerance
-}
-
-/// OCCT Geom_BSplineSurface::VIso(V) — the u-varying iso curve at V (the
-/// homogeneous De Boor evaluation of the opposite-direction basis, the
-/// geomfill/nsections.rs precedent).
-fn bspline_surface_viso(surf: &BSplineSurface, v: f64) -> BSplineCurve3 {
-    use rcad_kernel::math::bspl::de_boor_homo;
-    let rational = surf
-        .weights
-        .iter()
-        .any(|row| row.iter().any(|&w| w != 1.0));
-    let nb_u = surf.control_points.len();
-    let nb_v = surf.control_points.first().map(|r| r.len()).unwrap_or(0);
-    let mut poles = Vec::with_capacity(nb_u);
-    let mut weights = Vec::with_capacity(nb_u);
-    for ii in 0..nb_u {
-        let column: Vec<DVec3> = (0..nb_v).map(|jj| surf.control_points[ii][jj]).collect();
-        let column_w: Vec<f64> = (0..nb_v)
-            .map(|jj| if rational { surf.weights[ii][jj] } else { 1.0 })
-            .collect();
-        let h = de_boor_homo(surf.degree_v, &surf.knots_v, &column, &column_w, v);
-        weights.push(h[3]);
-        poles.push(DVec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]));
-    }
-    BSplineCurve3 {
-        degree: surf.degree_u,
-        knots: surf.knots_u.clone(),
-        control_points: poles,
-        weights,
-        is_periodic: false,
-    }
 }
 
 /// OCCT Geom_BSplineSurface::IncreaseDegree in the V direction — degree

@@ -307,35 +307,9 @@ fn breplib_make_edge_project(brep: &BRep, curve: &Curve3, v: &Shape, p: &mut f64
     false
 }
 
-/// OCCT ElCLib::AdjustPeriodic(UFirst, ULast, Preci, U1, U2)
-/// (ElCLib.cxx): adjusts U1 into [UFirst, ULast] and U2 = U1 + adjusted
-/// (U2 - U1) so that U2 > U1 within the period.
-fn elclib_adjust_periodic(ufirst: f64, ulast: f64, preci: f64, u1: &mut f64, u2: &mut f64) {
-    // OCCT ElCLib.cxx L121: Precision::IsInfinite(UFirst) || Precision::IsInfinite(ULast).
-    if rcad_kernel::precision::is_infinite_value(ufirst)
-        || rcad_kernel::precision::is_infinite_value(ulast)
-    {
-        *u1 = ufirst;
-        *u2 = ulast;
-        return;
-    }
-
-    let period = ulast - ufirst;
-    if period < ulast.abs() * f64::EPSILON {
-        *u1 = ufirst;
-        *u2 = ulast;
-        return;
-    }
-
-    *u1 -= ((*u1 - ufirst) / period).floor() * period;
-    if ulast - *u1 < preci {
-        *u1 -= period;
-    }
-    *u2 -= ((*u2 - *u1) / period).floor() * period;
-    if *u2 - *u1 < preci {
-        *u2 += period;
-    }
-}
+// OCCT ElCLib::AdjustPeriodic (ElCLib.cxx L115-149) is hosted by the one
+// canonical body `rcad_kernel::math::el::elclib_adjust_periodic`; the former
+// local copy here was converged onto it (see the call site below).
 
 /// OCCT BRepLib_MakeEdge::Init(C, VV1, VV2, pp1, pp2) — "this one really
 /// makes the job" (BRepLib_MakeEdge.cxx L602-789): kill trimmed curves,
@@ -371,7 +345,7 @@ fn breplib_make_edge_build(
 
     let (mut v1, mut v2) = if periodic {
         // Adjust in period.
-        elclib_adjust_periodic(cf, cl, epsilon, &mut p1, &mut p2);
+        rcad_kernel::math::el::elclib_adjust_periodic(cf, cl, epsilon, &mut p1, &mut p2);
         (vv1.cloned(), vv2.cloned())
     } else {
         // Reordonate.

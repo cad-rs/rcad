@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 
-use rcad_kernel::core::precision::{is_infinite_value, CONFUSION};
+use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::geom::Curve2dEval as _;
 use rcad_kernel::geom::CurveEval as _;
 use rcad_kernel::topo::topods::{self, BRep, BRepBuilder, BRepTool as _, Orientation, Shape};
@@ -458,16 +458,14 @@ impl TopOpeBRepBuildHBuilder {
                         // for a Line2d pcurve that natural range is
                         // -/+Precision::Infinite(), which would leave the
                         // fillet face's UV box unbounded.
-                        let [mut a_f, mut a_l] = pc.default_domain();
                         let edp = brep.edge_mut_inplace(e.clone());
-                        if edp.curve.is_some() {
-                            if !is_infinite_value(edp.range[0]) {
-                                a_f = edp.range[0];
-                            }
-                            if !is_infinite_value(edp.range[1]) {
-                                a_l = edp.range[1];
-                            }
-                        }
+                        // OCCT BRep_Builder.cxx L104-167 (UpdateCurves,
+                        // reached through BRep_Builder::UpdateEdge(E, C2d, F,
+                        // Tol) L655-671): the two-step interval rule - the
+                        // canonical body lives in
+                        // rcad_kernel::topods::update_curves_range.
+                        let [a_f, a_l] =
+                            rcad_kernel::topods::update_curves_range(pc.default_domain(), edp);
                         edp.pcurves.insert((f.ptr_id(), f.location), (pc, a_f, a_l));
                     }
                 }

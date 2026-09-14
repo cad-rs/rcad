@@ -18,8 +18,10 @@
 
 use crate::bop::ds::DS;
 use crate::bop::int_tools::face_face::IntersectionCurve;
+use crate::geomalgo::geom_int_line_constructor::adjust_periodic_pair;
 use crate::geomalgo::int_patch::{IntPatchIType, IntPatchLine, IntPatchVertex, WLinePnt, WLineType};
 use crate::geomalgo::int_surf::quadric::Quadric;
+use crate::hlr::contap::surface_adaptor::GeomSurfaceAdapter;
 use glam::{DVec2, DVec3};
 use rcad_kernel::base::geom_api::project::closest_point_on_curve_range;
 use rcad_kernel::geom::{
@@ -1757,38 +1759,16 @@ fn classify_point(surf: &Surface3, rect: [f64; 4], p3d: DVec3, tol: f64) -> bool
 
 /// OCCT GeomInt_LineConstructor::AdjustPeriodic (L737-816): for periodic
 /// directions (cylinder/cone/sphere U, torus U+V) shift into the face rectangle.
+///
+/// The canonical body is `geomalgo::geom_int_line_constructor::adjust_periodic_pair`;
+/// this shim only supplies the two `GeomAdaptor_Surface` handles OCCT's form
+/// takes, both bound to the same face surface restricted to `rect`.  The myHS2
+/// half of the OCCT static re-adjusts the already adjusted values, which is a
+/// no-op, so the first pair of the result is the whole answer.
 fn adjust_periodic_uv(surf: &Surface3, uv: DVec2, rect: [f64; 4]) -> DVec2 {
-    let two_pi = std::f64::consts::TAU;
-    let (u_lo, u_hi) = if rect[0] <= rect[1] { (rect[0], rect[1]) } else { (rect[1], rect[0]) };
-    let (v_lo, v_hi) = if rect[2] <= rect[3] { (rect[2], rect[3]) } else { (rect[3], rect[2]) };
-    let (is_u_per, is_v_per) = match surf {
-        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) => (true, false),
-        Surface3::Torus(_) => (true, true),
-        _ => (false, false),
-    };
-    let mut u = uv.x;
-    let mut v = uv.y;
-    if is_u_per {
-        u = adjust_periodic(u, u_lo, u_hi, two_pi);
-    }
-    if is_v_per {
-        v = adjust_periodic(v, v_lo, v_hi, two_pi);
-    }
+    let a_hs = GeomSurfaceAdapter::with_domain(surf.clone(), rect);
+    let (u, v, _u2, _v2) = adjust_periodic_pair(&a_hs, &a_hs, uv.x, uv.y, uv.x, uv.y);
     DVec2::new(u, v)
-}
-
-/// OCCT GeomInt::AdjustPeriodic (GeomInt.cxx L21-48).
-fn adjust_periodic(par: f64, par_min: f64, par_max: f64, period: f64) -> f64 {
-    let eps = 1e-9;
-    let b_min = par_min - par > eps;
-    let b_max = par - par_max > eps;
-    if b_min || b_max {
-        let dp = if b_min { par_max - par } else { par_min - par };
-        let nb_per = (dp / period).trunc();
-        par + nb_per * period
-    } else {
-        par
-    }
 }
 
 /// OCCT TopolTool::Classify on a natural-restriction face: the UV domain is the

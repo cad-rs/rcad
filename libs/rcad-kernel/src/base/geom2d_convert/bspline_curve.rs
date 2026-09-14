@@ -16,6 +16,7 @@
 
 use glam::DVec2;
 
+use crate::base::extrema_ext_elc::epsilon_of;
 use crate::geom::BSplineCurve2;
 use crate::math::bspl_lib::{
     knot_analysis, knot_sequence, knot_sequence_length, nb_poles, GeomAbsKnotDistribution,
@@ -45,17 +46,6 @@ pub struct Geom2dBSplineCurve {
     my_rational: bool,
     my_knot_set: GeomAbsKnotDistribution,
     my_smooth: SmoothShape,
-}
-
-/// OCCT Epsilon(Value) (Standard_Real.hxx L242-246) — distance to the nearest
-/// double in the direction of infinity with the same sign.
-#[inline]
-fn epsilon_of(value: f64) -> f64 {
-    if value >= 0.0 {
-        value.next_up() - value
-    } else {
-        value - value.next_down()
-    }
 }
 
 /// OCCT BSplCLib::UnitWeights(N).

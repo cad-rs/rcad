@@ -44,7 +44,6 @@ use std::sync::Arc;
 
 use glam::{DAffine3, DVec2, DVec3};
 
-use rcad_kernel::core::precision::is_infinite_value;
 use rcad_kernel::geom::{Curve2d, Curve2dEval as _, CurveEval as _, Line2d};
 use rcad_kernel::topods::{BRep, BRepTool as _, Orientation, Shape, ShapeType, State, TShape};
 
@@ -1339,15 +1338,11 @@ pub(crate) fn bb_update_edge_pcurve(
     let key_loc = brep.compose_pcurve_location(f.location, e.location);
     let key = (f.ptr_id(), key_loc);
     let ed = brep.edge_mut_inplace(e.clone());
-    let [mut a_f, mut a_l] = c2d.default_domain();
-    if ed.curve.is_some() {
-        if !is_infinite_value(ed.range[0]) {
-            a_f = ed.range[0];
-        }
-        if !is_infinite_value(ed.range[1]) {
-            a_l = ed.range[1];
-        }
-    }
+    // OCCT BRep_Builder.cxx L104-167 (UpdateCurves, reached through
+    // BRep_Builder::UpdateEdge(E, C2d, F, Tol) L655-671): the two-step
+    // interval rule - the canonical body lives in
+    // rcad_kernel::topods::update_curves_range.
+    let [a_f, a_l] = rcad_kernel::topods::update_curves_range(c2d.default_domain(), ed);
     ed.pcurves.insert(key, (c2d.clone(), a_f, a_l));
     if ed.tolerance < tol {
         ed.tolerance = tol;

@@ -29,10 +29,18 @@
 //!   - `BSplSLib_DataContainer::ders` (`double ders[48]`) is the local
 //!     derivative table; here it is a stack-free `Vec<f64>` sized
 //!     `(N+1) * (M+1) * 3` for the `All == true` calls;
-//!   - `Geom_UndefinedDerivative` throws (Geom_BSplineSurface_1.cxx L281-284,
-//!     Geom_BezierSurface.cxx L1674-1677: `Nu + Nv < 1 || Nu < 0 || Nv < 0`)
-//!     have no rcad counterpart — the rcad `Surface3::dn` API is infallible,
-//!     so the guard is not reproduced;
+//!   - `Geom_UndefinedDerivative` (`Nu + Nv < 1 || Nu < 0 || Nv < 0`) belongs
+//!     to the `Geom_*` WRAPPERS, not to the `BSplSLib` leaves re-hosted here:
+//!     `BSplSLib::DN` (BSplSLib.cxx L1519) carries no order check at all.
+//!     The rcad wrappers DO reproduce the throw, as an assert carrying the same
+//!     message (the `Trimmed` arm in `eval.rs`, plus `extrusion_utils.rs`,
+//!     `revolution_utils.rs`, `eval_c.rs`, `curve_dn.rs`).  An earlier version
+//!     of this note claimed the guard "has no rcad counterpart ... is not
+//!     reproduced" — that was false.  OCCT also places the guard on OPPOSITE
+//!     sides of the eval-rep short circuit: `Geom_BSplineSurface::EvalDN`
+//!     (Geom_BSplineSurface_1.cxx L279-285) checks BEFORE it, while
+//!     `Geom_BezierSurface::EvalDN` (Geom_BezierSurface.cxx L1674-1677) checks
+//!     AFTER — so a shared guard must not be hoisted above both;
 //!   - `Geom_BezierSurface` hands `BSplSLib` the COMPACT knot form
 //!     (`UKnots()` = {0, 1}, `UMultiplicities()` = {Degree+1, Degree+1},
 //!     Geom_BezierSurface.cxx L2098-2160).  The rcad

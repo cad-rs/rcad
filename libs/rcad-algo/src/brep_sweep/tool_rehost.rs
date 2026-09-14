@@ -259,37 +259,10 @@ pub fn brep_tools_is_really_closed(e: &Shape, f: &Shape) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// ElCLib::AdjustPeriodic (ElCLib.cxx).
+// ElCLib::AdjustPeriodic (ElCLib.cxx L115-149) is hosted by the single
+// canonical body `rcad_kernel::math::el::elclib_adjust_periodic`; the local
+// copy that used to sit here was converged onto it (see `rotation.rs`).
 // ---------------------------------------------------------------------------
-
-/// OCCT ElCLib::AdjustPeriodic(UFirst, ULast, Preci, U1, U2)
-/// (ElCLib.cxx AdjustPeriodic): both values are folded into the periodic
-/// range, U1 before U2, preserving their relative order.
-pub fn elclib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u2: &mut f64) {
-    // OCCT ElCLib.cxx L122-128: Precision::IsInfinite(UFirst/ULast) guard
-    // (Precision.hxx L350-353).
-    if is_infinite_value(u_first) || is_infinite_value(u_last) {
-        *u1 = u_first;
-        *u2 = u_last;
-        return;
-    }
-    let a_period = u_last - u_first;
-    if a_period < f64::EPSILON * u_last.abs() {
-        // In order to avoid FLT_Overflow exception (test bugs moddata_1
-        // bug22757).
-        *u1 = u_first;
-        *u2 = u_last;
-        return;
-    }
-    *u1 -= ((*u1 - u_first) / a_period).floor() * a_period;
-    if u_last - *u1 < preci {
-        *u1 -= a_period;
-    }
-    *u2 -= ((*u2 - *u1) / a_period).floor() * a_period;
-    if *u2 - *u1 < preci {
-        *u2 += a_period;
-    }
-}
 
 // ---------------------------------------------------------------------------
 // GeomAdaptor_Surface (the generic adaptor over a concrete surface value) —

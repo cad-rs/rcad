@@ -12,6 +12,7 @@
 // degenerate branch (Extrema_ExtElC2d.cxx L170-219).
 
 use glam::DVec2;
+use rcad_kernel::base::extrema_ext_elc::epsilon_of;
 use rcad_kernel::geom::{Ellipse2d, Line2d};
 use rcad_kernel::precision::INFINITE_VALUE;
 
@@ -24,16 +25,6 @@ use super::int_imp_par_gen::determine_position;
 use super::int_res2d::{
     Domain as Res2dDomain, IntersectionPoint, IntersectionSegment, Position, Transition,
 };
-
-/// OCCT Epsilon(Value) (Standard_Real.hxx L241-246) — the absolute value of
-/// the difference between Value and its nearest representable neighbor.
-fn epsilon_of(value: f64) -> f64 {
-    if value >= 0.0 {
-        value.next_up() - value
-    } else {
-        value - value.next_down()
-    }
-}
 
 /// OCCT gp_Elips2d::YAxis().Direction() — the major direction rotated +90
 /// degrees (rcad's Ellipse2d derives the minor direction from major_dir).

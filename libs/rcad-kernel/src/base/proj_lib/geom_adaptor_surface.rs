@@ -34,6 +34,7 @@ use super::geom_adaptor_curve::{Adaptor3dCurveGeom, GeomCurveAdaptor};
 use super::proj_lib_projected_curve::TWO_PI;
 use super::CurveType;
 use crate::core::precision;
+use crate::geom::eval::bspline_surface_dn;
 use crate::geom::{
     ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, SurfaceEval,
     ToroidalSurface,
@@ -429,18 +430,101 @@ impl GeomSurfaceAdaptor {
         )
     }
 
-    /// OCCT GeomAdaptor_Surface::EvalDN (L1697-1814).  Orders 1/2 answer the
-    /// D1/D2 partials (the OCCT DN of those orders); the higher orders ride
-    /// the untranslated ElSLib::DN / BSplCLib DN leaf (recorded leaf gap).
+    /// OCCT GeomAdaptor_Surface::EvalDN (L1697-1814) — the myTolU/myTolV
+    /// boundary snap (L1706-1727) followed by the mySurfaceType switch:
+    /// Geom_BSplineSurface::EvalDN / LocalDN (L1731-1752),
+    /// Geom_ExtrusionUtils::DN (L1754-1766), Geom_RevolutionUtils::DN
+    /// (L1768-1780), the file-static `offsetDN` (L1782-1794), the ElSLib::DN
+    /// forms of the five quadrics (L1796-1805), and the `break` of the Bezier /
+    /// `OtherSurface` kinds (L1807-1810) into the `mySurface->EvalDN` tail
+    /// (L1813).
+    ///
+    /// Architecture differences (module header L17-25): the `hasEvalRep` short
+    /// circuits and the `IfUVBound` span locator are C++-internal performance
+    /// state — OCCT's `LocalDN` and `EvalDN` evaluate the same value — and the
+    /// `SurfaceDataVariant` payloads ride the `Surface3` variants, so every arm
+    /// delegates to the rcad re-host of its OCCT leaf:
+    /// [`bspline_surface_dn`] (BSplSLib::DN), the extrusion / revolution /
+    /// offset DN re-hosts, and [`Surface3::dn`] for the ElSLib quadric family
+    /// and the `mySurface->EvalDN` tail.
+    ///
+    /// Leaf gap: the tail panics for the rcad-only Ruled / Coons / Pipe /
+    /// TriBezier kinds, which have no OCCT `Geom_Surface::EvalDN` counterpart
+    /// (the recorded [`Surface3::dn`] gap).
     pub fn dn_at(&self, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
+        // OCCT L1702-1727: the USide/VSide boundary snap.  USide/VSide only
+        // pick between the BSpline LocalDN span and the global EvalDN
+        // (L1737-1750), which is not observable; the snapped (u, v) is what
+        // every non-`hasEvalRep` arm evaluates at.
         let (u, v) = self.snapped_uv(u, v);
-        if nu == 1 && nv == 0 {
-            return self.d1_at(u, v).1;
+        match self.my_surface_type {
+            // OCCT L1731-1752: aBSpl->EvalDN(u, v, Nu, Nv) / aBSpl->LocalDN.
+            GeomAbsSurfaceType::BSplineSurface => {
+                let Surface3::BSpline(a_bspl) = &self.surface else {
+                    unreachable!()
+                };
+                // OCCT L1739 / L1745 / L1749.
+                return bspline_surface_dn(a_bspl, u, v, nu, nv);
+            }
+            // OCCT L1754-1766: Geom_ExtrusionUtils::DN(u, *BasisCurve,
+            // Direction, Nu, Nv, aDN), and the L1763 throw on `false`.
+            GeomAbsSurfaceType::SurfaceOfExtrusion => {
+                let Surface3::LinearExtrusion(an_ext_data) = &self.surface else {
+                    unreachable!()
+                };
+                return crate::geom::extrusion_utils::linear_extrusion_eval_dn(
+                    an_ext_data,
+                    u,
+                    v,
+                    nu,
+                    nv,
+                );
+            }
+            // OCCT L1768-1780: Geom_RevolutionUtils::DN(u, v, *BasisCurve,
+            // Axis, Nu, Nv, aDN), and the L1777 throw on `false`.
+            GeomAbsSurfaceType::SurfaceOfRevolution => {
+                let Surface3::Revolution(a_rev_data) = &self.surface else {
+                    unreachable!()
+                };
+                return crate::geom::revolution_utils::revolution_eval_dn(a_rev_data, u, v, nu, nv);
+            }
+            // OCCT L1782-1794: the file-static `offsetDN` — the equivalent
+            // canonical surface adaptor's EvalDN when it exists, else
+            // Geom_OffsetSurfaceUtils::EvaluateDN — and the L1791 throw on
+            // `false`.  The rcad re-host is the `Geom_OffsetSurface::EvalDN`
+            // translation, which carries the same equivalent-surface short
+            // circuit (GeomEval_RepUtils::TryEvalSurfaceDN) and the same
+            // EvaluateDN tail.
+            GeomAbsSurfaceType::OffsetSurface => {
+                let Surface3::Offset(an_off_data) = &self.surface else {
+                    unreachable!()
+                };
+                return crate::geom::offset_surface_utils::offset_payload_eval_dn(
+                    an_off_data,
+                    u,
+                    v,
+                    nu,
+                    nv,
+                );
+            }
+            // OCCT L1796-1805: ElSLib::DN over the quadric payloads — the rcad
+            // `Surface3::dn` routes these five kinds to the ElSLib::DN forms
+            // (geom/eval.rs plane_dn / cylinder_dn / cone_dn / sphere_dn /
+            // torus_dn, i.e. ElSLib.cxx PlaneDN L169-180 / ConeDN L182-215 /
+            // CylinderDN L217-265 / SphereDN L267-365 / TorusDN L367-500).
+            GeomAbsSurfaceType::Plane
+            | GeomAbsSurfaceType::Cylinder
+            | GeomAbsSurfaceType::Cone
+            | GeomAbsSurfaceType::Sphere
+            | GeomAbsSurfaceType::Torus => return self.surface.dn(u, v, nu, nv),
+            // OCCT L1807-1810: `case GeomAbs_BezierSurface: case
+            // GeomAbs_OtherSurface: default: break;`
+            GeomAbsSurfaceType::BezierSurface | GeomAbsSurfaceType::OtherSurface => {}
         }
-        if nu == 0 && nv == 1 {
-            return self.d1_at(u, v).2;
-        }
-        panic!("Standard_NotImplemented: GeomAdaptor_Surface::EvalDN ({nu},{nv})")
+        // OCCT L1813: return mySurface->EvalDN(u, v, Nu, Nv) — Geom_BezierSurface,
+        // the GeomEval ellipsoid / circular helicoid (both `GeomAbs_OtherSurface`)
+        // and the remaining kinds of the rcad `Surface3` union.
+        self.surface.dn(u, v, nu, nv)
     }
 
     // ---------------------------------------------------------------------
@@ -1536,5 +1620,48 @@ impl Adaptor3dSurfaceGeom for GeomSurfaceAdaptor {
 
     fn axe_of_revolution(&self) -> (DVec3, DVec3) {
         self.axe_of_revolution()
+    }
+}
+
+#[cfg(test)]
+mod dn_tests {
+    use super::*;
+
+    /// OCCT GeomAdaptor_Surface::EvalDN Plane arm (L1797): `ElSLib::DN(U, V,
+    /// gp_Pln, Nu, Nv)` = `ElSLib::PlaneDN` (ElSLib.cxx L169-180), which answers
+    /// `Pos.XDirection()` for (1, 0), `Pos.YDirection()` for (0, 1) and the zero
+    /// vector for every other order.
+    #[test]
+    fn dn_at_plane_el_slib_plane_dn() {
+        let plane = Plane::new(DVec3::ZERO, DVec3::Z);
+        let adaptor = GeomSurfaceAdaptor::new(Surface3::Plane(plane));
+        assert_eq!(adaptor.dn_at(1.0, 0.5, 1, 0), plane.u_dir);
+        assert_eq!(adaptor.dn_at(1.0, 0.5, 0, 1), plane.v_dir);
+        assert_eq!(adaptor.dn_at(1.0, 0.5, 2, 0), DVec3::ZERO);
+        assert_eq!(adaptor.dn_at(1.0, 0.5, 3, 0), DVec3::ZERO);
+        assert_eq!(adaptor.dn_at(1.0, 0.5, 1, 1), DVec3::ZERO);
+    }
+
+    /// OCCT GeomAdaptor_Surface::EvalDN Cylinder arm (L1799): `ElSLib::DN(U, V,
+    /// gp_Cylinder, Nu, Nv)` = `ElSLib::CylinderDN` (ElSLib.cxx L217-265).  With
+    /// `Xdir` / `Ydir` the `gp_Ax3` frame axes of the cylinder and `Radius = 2`,
+    /// the `Nv == 0` arm answers, in the (Xdir, Ydir) frame,
+    /// `(Nu+3) % 4 == 0: (-R sin U, R cos U)`, `(Nu+6) % 4 == 0:
+    /// (-R cos U, -R sin U)`, `(Nu+5) % 4 == 0: (R sin U, -R cos U)` -- at
+    /// `U = 0` exactly the `+2 Y`, `-2 X`, `-2 Y` vectors below.  The
+    /// `Nv == 1, Nu == 0` arm answers the axis direction; every other order
+    /// answers the zero vector.
+    #[test]
+    fn dn_at_cylinder_el_slib_cylinder_dn() {
+        let radius = 2.0;
+        let cylinder =
+            CylindricalSurface::new_with_ref_dir(DVec3::ZERO, DVec3::Z, radius, DVec3::X);
+        let y_dir = cylinder.y_axis();
+        let adaptor = GeomSurfaceAdaptor::new(Surface3::Cylinder(cylinder));
+        assert_eq!(adaptor.dn_at(0.0, 0.0, 1, 0), y_dir * radius);
+        assert_eq!(adaptor.dn_at(0.0, 0.0, 2, 0), DVec3::X * -radius);
+        assert_eq!(adaptor.dn_at(0.0, 0.0, 3, 0), y_dir * -radius);
+        assert_eq!(adaptor.dn_at(0.0, 0.0, 0, 1), DVec3::Z);
+        assert_eq!(adaptor.dn_at(0.0, 0.0, 0, 2), DVec3::ZERO);
     }
 }

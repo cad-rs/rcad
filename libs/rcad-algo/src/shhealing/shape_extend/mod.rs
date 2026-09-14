@@ -8,6 +8,7 @@ pub mod explorer;
 pub mod msg;
 pub mod msg_registrator;
 pub mod status;
+pub mod trsf2d;
 pub mod wire_data;
 
 #[cfg(test)]
@@ -22,4 +23,5 @@ pub use msg_registrator::MsgRegistrator;
 pub use status::{
     ShapeExtendParametrisation, ShapeExtendStatus, decode_status, encode_status, init,
 };
+pub use trsf2d::{Trsf2d, TrsfForm};
 pub use wire_data::WireData;

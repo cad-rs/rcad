@@ -36,6 +36,7 @@
 
 use glam::{DVec2, DVec3};
 
+use rcad_kernel::base::extrema_ext_elc::epsilon_of;
 use rcad_kernel::geom::{
     BSplineCurve3, Curve2d, Curve2dEval, Curve3, CurveEval, Plane, Surface3, TrimmedCurve2,
     TrimmedCurve3,
@@ -341,15 +342,6 @@ fn adjust_u_periodic(a_s: &GeomSurfaceAdapter, a_c2d: &mut Option<Curve2d>) {
         // gp_Vec2d aV2D(dU, 0.); aC2D->Translate(aV2D);
         let translated = rcad_kernel::geom::translate_curve2d(c2d, DVec2::new(d_u, 0.));
         *a_c2d = Some(translated);
-    }
-}
-
-/// OCCT `Epsilon(theValue)` (Standard_Real.hxx L242-246).
-pub(super) fn epsilon_of(x: f64) -> f64 {
-    if x >= 0.0 {
-        next_after(x, f64::INFINITY) - x
-    } else {
-        x - next_after(x, f64::NEG_INFINITY)
     }
 }
 

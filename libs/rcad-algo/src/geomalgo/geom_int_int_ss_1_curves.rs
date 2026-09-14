@@ -4,14 +4,17 @@
 //!
 //! Split out of `geom_int_int_ss_1.rs` verbatim (the 2000-line file limit,
 //! AGENTS.md Rule 5) and registered as a sibling module in `geomalgo/mod.rs`.
-//! The seven file-local helpers this half calls back into
-//! (`epsilon_of`, `curve2d_first_parameter`, `curve2d_last_parameter`,
+//! The five file-local helpers this half calls back into
+//! (`curve2d_first_parameter`, `curve2d_last_parameter`,
 //! `parameters_of_nearest_point_on_surface`, `intersect_curve_and_boundary`,
 //! `is_degenerated`) stay in `geom_int_int_ss_1.rs` and are widened to
-//! `pub(super)` for this import only — bodies unchanged.
+//! `pub(super)` for this import only — bodies unchanged.  `epsilon_of`
+//! (OCCT `Epsilon(theValue)`, Standard_Real.hxx L242-246) comes from the
+//! kernel's single definition instead.
 
 use glam::{DVec2, DVec3};
 
+use rcad_kernel::base::extrema_ext_elc::epsilon_of;
 use rcad_kernel::base::geom_proj_lib;
 use rcad_kernel::geom::{
     BSplineCurve2, BSplineCurve3, Curve2d, Curve2dEval, Curve3, CurveEval, SurfaceEval,
@@ -22,8 +25,8 @@ use rcad_kernel::math::bspl_lib::reparametrize;
 use rcad_kernel::precision::{is_infinite_value, CONFUSION, PCONFUSION};
 
 use super::geom_int_int_ss_1::{
-    curve2d_first_parameter, curve2d_last_parameter, epsilon_of, intersect_curve_and_boundary,
-    is_degenerated, parameters_of_nearest_point_on_surface,
+    curve2d_first_parameter, curve2d_last_parameter, intersect_curve_and_boundary, is_degenerated,
+    parameters_of_nearest_point_on_surface,
 };
 use crate::geomalgo::int_patch::IntPatchLine;
 use crate::hlr::contap::surface_adaptor::GeomSurfaceAdapter;

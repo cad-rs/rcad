@@ -20,11 +20,12 @@ use rcad_kernel::base::gcpnts::abscissa_point::arc_length;
 use rcad_kernel::math::bspl_lib::{
     increase_degree as bspl_increase_degree, intervals as bspl_intervals,
 };
-use rcad_kernel::math::bspl::de_boor_homo;
 use rcad_kernel::math::bspl_lib::eval_flat;
 use rcad_kernel::math::gp::Trsf;
 use rcad_kernel::math::GeomAbsShape;
-use rcad_kernel::geom::{BSplineCurve3, BSplineSurface, Circle3, Curve3, CurveEval, SurfaceEval};
+use rcad_kernel::geom::{BSplineSurface, Circle3, Curve3, CurveEval, Surface3, SurfaceEval};
+
+use crate::brep_fill::brep_fill_sweep::surface_viso;
 
 use super::section_law::SectionLaw;
 
@@ -275,32 +276,6 @@ impl NSections {
     pub fn set_surface(&mut self, ref_surf: BSplineSurface) {
         self.my_ref_surf = Some(ref_surf);
     }
-
-    /// OCCT D0 helper — the V-iso curve of the surface at `v`.
-    fn v_iso(&self, v: f64) -> BSplineCurve3 {
-        let surf = self.my_surface.as_ref().unwrap();
-        let rational = surf.weights.iter().any(|row| row.iter().any(|&w| w != 1.0));
-        let nb_u = surf.control_points.len();
-        let nb_v = surf.control_points[0].len();
-        let mut poles = Vec::with_capacity(nb_u);
-        let mut weights = Vec::with_capacity(nb_u);
-        for ii in 0..nb_u {
-            let column: Vec<DVec3> = (0..nb_v).map(|jj| surf.control_points[ii][jj]).collect();
-            let column_w: Vec<f64> = (0..nb_v)
-                .map(|jj| if rational { surf.weights[ii][jj] } else { 1.0 })
-                .collect();
-            let h = de_boor_homo(surf.degree_v, &surf.knots_v, &column, &column_w, v);
-            weights.push(h[3]);
-            poles.push(DVec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]));
-        }
-        BSplineCurve3 {
-            degree: surf.degree_u,
-            knots: surf.knots_u.clone(),
-            control_points: poles,
-            weights,
-            is_periodic: false,
-        }
-    }
 }
 
 fn flat_knots_u(surf: &BSplineSurface) -> Vec<f64> {
@@ -388,13 +363,18 @@ impl SectionLaw for NSections {
         let Some(surface) = &self.my_surface else {
             return false;
         };
-        let iso = self.v_iso(v);
+        // OCCT L287: `occ::down_cast<Geom_BSplineCurve>(mySurface->VIso(V,
+        // false))` — the Geom_Surface::VIso virtual call, i.e. the single
+        // canonical dispatch (Geom_BSplineSurface::VIso -> BSplSLib::Iso).
+        let iso = surface_viso(&Surface3::BSpline(surface.clone()), v);
+        let Curve3::BSpline(iso) = iso else {
+            panic!("Geom_BSplineSurface::VIso yields a Geom_BSplineCurve")
+        };
         let l = poles.len();
         for ii in 0..l {
             poles[ii] = iso.control_points[ii];
             weights[ii] = iso.weights[ii];
         }
-        let _ = surface;
         true
     }
 

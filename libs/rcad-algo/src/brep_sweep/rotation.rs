@@ -388,7 +388,7 @@ impl NumLinearRegularSweepSlots for BRepSweepRotation {
                 // OCCT L473-482: the uLeft/uRight AdjustPeriodic pair.
                 if a_dir_v.index() == 2 {
                     let mut u_left = u - self.my_ang;
-                    super::tool_rehost::elclib_adjust_periodic(
+                    rcad_kernel::math::el::elclib_adjust_periodic(
                         -std::f64::consts::PI,
                         std::f64::consts::PI,
                         p_confusion(),
@@ -397,7 +397,7 @@ impl NumLinearRegularSweepSlots for BRepSweepRotation {
                     );
                 } else {
                     let mut u_right = u + self.my_ang;
-                    super::tool_rehost::elclib_adjust_periodic(
+                    rcad_kernel::math::el::elclib_adjust_periodic(
                         -std::f64::consts::PI,
                         std::f64::consts::PI,
                         p_confusion(),
@@ -574,7 +574,7 @@ impl NumLinearRegularSweepSlots for BRepSweepRotation {
                 }
                 // OCCT L598: ElCLib::AdjustPeriodic(0., 2 * M_PI, PConfusion(),
                 // v1, v2).
-                super::tool_rehost::elclib_adjust_periodic(
+                rcad_kernel::math::el::elclib_adjust_periodic(
                     0.0,
                     2.0 * std::f64::consts::PI,
                     p_confusion(),
@@ -585,7 +585,7 @@ impl NumLinearRegularSweepSlots for BRepSweepRotation {
                 // u2 = u1 + myAng; AdjustPeriodic(-M_PI, M_PI, PConfusion(),
                 // u1, u2).
                 u2 = u1 + self.my_ang;
-                super::tool_rehost::elclib_adjust_periodic(
+                rcad_kernel::math::el::elclib_adjust_periodic(
                     -std::f64::consts::PI,
                     std::f64::consts::PI,
                     p_confusion(),

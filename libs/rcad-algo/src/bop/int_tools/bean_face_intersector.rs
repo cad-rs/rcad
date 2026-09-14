@@ -2,6 +2,11 @@
 // OCCT IntTools_BeanFaceIntersector.hxx L1-L215
 // OCCT IntTools_BeanFaceIntersector.cxx L1-L2639
 
+use crate::geomalgo::geom_int_line_constructor::geom_int_adjust_periodic;
+// OCCT `Epsilon(theValue)` (Standard_Real.hxx L242-246) — the nextafter gap.
+// The kernel keeps the single canonical definition (`epsilon_of`,
+// `base::extrema_ext_elc`) and re-exports it under this public alias.
+use rcad_kernel::math::direct_polynomial_roots::epsilon as occt_epsilon;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::precision::{ANGULAR, CONFUSION, PCONFUSION, is_infinite_value};
@@ -1914,21 +1919,6 @@ fn compute_int_range(bean_tol: f64, face_tol: f64, angle: f64) -> f64 {
 }
 
 // ============================================================================
-// Periodic parameter adjustment (GeomInt::AdjustPeriodic)
-// ============================================================================
-fn adjust_periodic(par: f64, first: f64, last: f64, period: f64) -> (f64, bool) {
-    let tol = period * 1e-12;
-    let mut aNewPar = par;
-    if aNewPar < first - tol {
-        aNewPar += period * ((first - aNewPar) / period).ceil();
-    } else if aNewPar > last + tol {
-        aNewPar -= period * ((aNewPar - last) / period).ceil();
-    }
-    let ok = aNewPar >= first - tol && aNewPar <= last + tol;
-    (aNewPar, ok)
-}
-
-// ============================================================================
 // ElCLib::InPeriod
 // ============================================================================
 fn inclib_in_period(par: f64, first: f64, period: f64) -> f64 {
@@ -3268,34 +3258,50 @@ impl BeanFaceIntersector {
                         if u_is_not_valid {
                             b_u_corrected = false;
                             solution_is_valid = false;
+                            // OCCT IntTools_BeanFaceIntersector.cxx L607-624:
+                            // the bool returned by GeomInt::AdjustPeriodic is
+                            // discarded — the solution is accepted whenever the
+                            // surface is U-periodic.
                             if self.my_surface.is_u_periodic() {
-                                let (a_new_u, ok) = adjust_periodic(
+                                let a_u_period = self.my_surface.u_period();
+                                let a_eps = occt_epsilon(a_u_period);
+                                let mut a_new_u = 0.0;
+                                let mut du = 0.0;
+                                geom_int_adjust_periodic(
                                     u,
                                     self.my_u_min_parameter,
                                     self.my_u_max_parameter,
-                                    self.my_surface.u_period(),
+                                    a_u_period,
+                                    &mut a_new_u,
+                                    &mut du,
+                                    a_eps,
                                 );
-                                if ok {
-                                    solution_is_valid = true;
-                                    b_u_corrected = true;
-                                    u = a_new_u;
-                                }
+                                solution_is_valid = true;
+                                b_u_corrected = true;
+                                u = a_new_u;
                             }
                         }
 
                         if b_u_corrected && v_is_not_valid {
                             solution_is_valid = false;
+                            // OCCT IntTools_BeanFaceIntersector.cxx L631-647:
+                            // the returned bool is discarded (see above).
                             if self.my_surface.is_v_periodic() {
-                                let (a_new_v, ok) = adjust_periodic(
+                                let a_v_period = self.my_surface.v_period();
+                                let a_eps = occt_epsilon(a_v_period);
+                                let mut a_new_v = 0.0;
+                                let mut dv = 0.0;
+                                geom_int_adjust_periodic(
                                     v,
                                     self.my_v_min_parameter,
                                     self.my_v_max_parameter,
-                                    self.my_surface.v_period(),
+                                    a_v_period,
+                                    &mut a_new_v,
+                                    &mut dv,
+                                    a_eps,
                                 );
-                                if ok {
-                                    solution_is_valid = true;
-                                    v = a_new_v;
-                                }
+                                solution_is_valid = true;
+                                v = a_new_v;
                             }
                         }
                     }
@@ -5082,14 +5088,6 @@ mod tests {
         let r = compute_int_range(1e-7, 1e-7, 0.0);
         assert!(r > 0.0);
         assert!(r < 1.0);
-    }
-
-    // ── adjust_periodic helper ──────────────────────────────────────────────
-    #[test]
-    fn test_adjust_periodic() {
-        let (val, ok) = adjust_periodic(3.0, 0.0, 2.0 * PI, 2.0 * PI);
-        assert!(ok);
-        assert!((val - 3.0).abs() < 1e-10 || (val - (3.0 - 2.0 * PI)).abs() < 1e-10);
     }
 
     // ── inclib_in_period helper ─────────────────────────────────────────────

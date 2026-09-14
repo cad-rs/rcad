@@ -1102,15 +1102,8 @@ impl DS {
         // Arc is alive inside the closure (the caller passes owned pcurves).
         unsafe {
             if let TShape::Edge(ed) = &mut *ptr {
-                let [mut a_first, mut a_last] = pcurve1.default_domain();
-                if ed.curve.is_some() {
-                    if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
-                        a_first = ed.range[0];
-                    }
-                    if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
-                        a_last = ed.range[1];
-                    }
-                }
+                let [a_first, a_last] =
+                    rcad_kernel::topods::update_curves_range(pcurve1.default_domain(), ed);
                 ed.pcurves.insert(face_key, (pcurve1.clone(), a_first, a_last));
                 ed.representations
                     .push(CurveRepresentation::CurveOnClosedSurface {
@@ -1155,15 +1148,8 @@ impl DS {
         // &TShape borrow is alive inside the closure.
         unsafe {
             if let TShape::Edge(ed) = &mut *ptr {
-                let [mut a_first, mut a_last] = pcurve.default_domain();
-                if ed.curve.is_some() {
-                    if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
-                        a_first = ed.range[0];
-                    }
-                    if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
-                        a_last = ed.range[1];
-                    }
-                }
+                let [a_first, a_last] =
+                    rcad_kernel::topods::update_curves_range(pcurve.default_domain(), ed);
                 ed.pcurves.insert(face_key, (pcurve.clone(), a_first, a_last));
                 ed.representations
                     .push(CurveRepresentation::CurveOnSurface {

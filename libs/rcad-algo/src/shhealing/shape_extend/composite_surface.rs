@@ -14,10 +14,12 @@
 //!   `default_domain` = Bounds).
 //! - `gp_Trsf` -> `glam::DAffine3` (the `transform_surface` kernel bridge).
 //!
-//! GAP carrier: `gp_Trsf2d` (TKMath) lives at the bottom of this file and is
-//! only exercised by [`ShapeExtendCompositeSurface::global_to_local_transformation`].
+//! Local `gp_Trsf2d` carrier (TKMath): the transformation returned by
+//! [`ShapeExtendCompositeSurface::global_to_local_transformation`]; it lives
+//! in the sibling `trsf2d` module and is re-exported here.
 
 use super::status::ShapeExtendParametrisation;
+use super::trsf2d::{Trsf2d, TrsfForm};
 use rcad_kernel::geom::{transform_surface, Surface3, SurfaceEval};
 use rcad_kernel::{CONFUSION, PCONFUSION};
 use glam::{DVec2, DVec3};
@@ -741,123 +743,4 @@ fn limit_value(par: f64) -> f64 {
 fn get_limited_bounds(surf: &Surface3) -> [f64; 4] {
     let [u1, u2, v1, v2] = surf.default_domain();
     [limit_value(u1), limit_value(u2), limit_value(v1), limit_value(v2)]
-}
-
-/// OCCT gp_TrsfForm (gp_Trsf.hxx) — the subset of forms the gp_Trsf2d GAP
-/// carrier distinguishes (Identity, Translation, Scale, CompoundTrsf);
-/// other forms are reported as Other and are pending the TKMath 2D batch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrsfForm {
-    Identity,
-    Translation,
-    Scale,
-    CompoundTrsf,
-    Other,
-}
-
-/// GAP carrier for OCCT `gp_Trsf2d` (TKMath, `gp_Trsf.hxx` / `gp_Trsf.cxx`):
-/// a 2D transformation with a separate scale factor and form tag, following
-/// the gp_Trsf member layout (scale, shape, matrix, loc).  Only the forms
-/// exercised by
-/// [`ShapeExtendCompositeSurface::global_to_local_transformation`]
-/// (Identity / Translation / Scale and their products) are carried; the
-/// general 2D transformation set is pending the TKMath batch.
-///
-/// Point transformation follows gp_Trsf::Transformed: `P' = matrix * P *
-/// scale + loc`.
-#[derive(Debug, Clone, Copy)]
-pub struct Trsf2d {
-    /// Row-major 2x2 matrix (WITHOUT the scale folded in, like OCCT).
-    matrix: [[f64; 2]; 2],
-    /// Translation part.
-    loc: DVec2,
-    /// gp_Trsf scale factor.
-    scale: f64,
-    /// gp_TrsfForm tag.
-    form: TrsfForm,
-}
-
-impl Default for Trsf2d {
-    /// OCCT gp_Trsf2d default constructor: scale = 1, gp_Identity, identity
-    /// matrix, zero location.
-    fn default() -> Self {
-        Trsf2d {
-            matrix: [[1.0, 0.0], [0.0, 1.0]],
-            loc: DVec2::ZERO,
-            scale: 1.0,
-            form: TrsfForm::Identity,
-        }
-    }
-}
-
-impl Trsf2d {
-    /// OCCT gp_Trsf::SetTranslation(gp_Vec) (gp_Trsf.cxx): scale = 1,
-    /// identity matrix, translation part = V, form = gp_Translation.
-    pub fn set_translation(&mut self, v: DVec2) {
-        self.matrix = [[1.0, 0.0], [0.0, 1.0]];
-        self.loc = v;
-        self.scale = 1.0;
-        self.form = TrsfForm::Translation;
-    }
-
-    /// OCCT gp_Trsf::SetScale(gp_Pnt, S) (gp_Trsf.cxx L159-168): scale = S,
-    /// identity matrix, loc = P * (1 - S), form = gp_Scale (with the
-    /// Standard_ConstructionError raise for |S| <= Resolution kept as a
-    /// panic).
-    pub fn set_scale(&mut self, p: DVec2, s: f64) {
-        self.form = TrsfForm::Scale;
-        self.scale = s;
-        self.loc = p;
-        assert!(self.scale.abs() > f64::MIN_POSITIVE, "gp_Trsf::SetScaleFactor");
-        self.matrix = [[1.0, 0.0], [0.0, 1.0]];
-        self.loc *= 1.0 - s;
-    }
-
-    /// OCCT gp_Trsf::Form().
-    pub fn form(&self) -> TrsfForm {
-        self.form
-    }
-
-    /// OCCT gp_Trsf::Multiplied(T) restricted to the (Identity | Scale) x
-    /// (Identity | Translation | Scale) combinations
-    /// (gp_Trsf.cxx L430-530 branches): `A * B` applies B first, then A.
-    pub fn multiplied(&self, t: &Trsf2d) -> Trsf2d {
-        let mut res = *self;
-        if t.form == TrsfForm::Identity {
-            // OCCT L432-434: T identity -> this unchanged.
-        } else if res.form == TrsfForm::Identity {
-            // OCCT L435-441: this identity -> copy T.
-            res.form = t.form;
-            res.scale = t.scale;
-            res.loc = t.loc;
-            res.matrix = t.matrix;
-        } else if res.form == TrsfForm::Scale && t.form == TrsfForm::Translation {
-            // OCCT L501-509: (Scale || PntMirror) && T Translation:
-            // Tloc = T.loc * scale; loc += Tloc.
-            let tloc = t.loc * res.scale;
-            res.loc += tloc;
-        } else if res.form == TrsfForm::Scale && t.form == TrsfForm::Scale {
-            // OCCT L475-479: Scale && Scale: loc += T.loc * scale;
-            // scale = scale * T.scale.
-            let tloc = t.loc * res.scale;
-            res.loc += tloc;
-            res.scale = res.scale * t.scale;
-        } else {
-            // General forms pending the TKMath 2D batch.
-            res.form = TrsfForm::CompoundTrsf;
-            let tloc = t.loc * res.scale;
-            res.loc += tloc;
-            res.scale = res.scale * t.scale;
-        }
-        res
-    }
-
-    /// OCCT gp_Trsf2d::Transformed(P): `P' = matrix * P * scale + loc`.
-    pub fn transformed(&self, p: DVec2) -> DVec2 {
-        let m = self.matrix;
-        DVec2::new(
-            (m[0][0] * p.x + m[0][1] * p.y) * self.scale + self.loc.x,
-            (m[1][0] * p.x + m[1][1] * p.y) * self.scale + self.loc.y,
-        )
-    }
 }

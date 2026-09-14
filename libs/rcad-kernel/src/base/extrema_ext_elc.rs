@@ -330,10 +330,26 @@ pub(crate) fn elclib_adjust_periodic(
     crate::math::el::elclib_adjust_periodic(u_first, u_last, preci, u1, u2)
 }
 
-/// OCCT Epsilon(theValue) (Precision.hxx) —
-/// `Max(Abs(theValue), RealSmall()) * RealEpsilon()`.
-pub(crate) fn epsilon_of(the_value: f64) -> f64 {
-    the_value.abs().max(2.2250738585072014e-308) * f64::EPSILON
+/// OCCT `Epsilon(const double theValue)` (Standard_Real.hxx L242-246): the
+/// absolute difference between `the_value` and the nearest double in the
+/// direction of infinity with the same sign (the smallest positive double when
+/// the value is 0).  This is the expression `ElCLib::AdjustPeriodic` uses at
+/// `ElCLib.cxx` L130.
+///
+/// An earlier version of this function claimed to be `Precision::Epsilon` with
+/// the formula `Max(Abs(v), RealSmall()) * RealEpsilon()`.  Both halves were
+/// wrong: `Precision.hxx` has no `Epsilon`, and that expression differs from
+/// OCCT's by up to a factor of 2 inside a binade.
+pub fn epsilon_of(the_value: f64) -> f64 {
+    // For a non-negative value `bits + 1` is the next double toward +inf; for a
+    // negative value it is the next one toward -inf, which is the direction
+    // OCCT's nextafter picks there too.
+    let next = f64::from_bits(the_value.to_bits() + 1);
+    if the_value >= 0.0 {
+        next - the_value
+    } else {
+        the_value - next
+    }
 }
 
 // =============================================================================
@@ -1204,6 +1220,25 @@ impl Default for ExtremaExtElC {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// OCCT `Epsilon(const double)` (Standard_Real.hxx L242-246) is the
+    /// nextafter gap, NOT `Max(Abs(v), RealSmall()) * RealEpsilon()`: at 1.5 the
+    /// former is one ulp (2.220446049250313e-16) while the latter would give
+    /// 3.33e-16 — the discriminating value.
+    #[test]
+    fn epsilon_of_is_the_nextafter_gap() {
+        assert_eq!(epsilon_of(1.0), f64::EPSILON);
+        assert_eq!(epsilon_of(1.5), f64::from_bits(1.5f64.to_bits() + 1) - 1.5);
+        assert!(
+            (epsilon_of(1.5) - 1.5 * f64::EPSILON).abs() > 1e-16,
+            "the scaled-RealEpsilon formula must not be reproduced"
+        );
+        // A zero value yields the smallest positive subnormal.
+        assert_eq!(epsilon_of(0.0), 5e-324);
+        // Negative values step toward -inf, and the gap is positive.
+        assert!(epsilon_of(-1.5) > 0.0);
+        assert_eq!(epsilon_of(-1.5), -1.5 - f64::from_bits((-1.5f64).to_bits() + 1));
+    }
 
     /// The minimum over the extrema the class reports — the OCCT accessor
     /// sequence `IsDone() / NbExt() / SquareDistance(i)`.

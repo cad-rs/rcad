@@ -35,6 +35,7 @@ use std::rc::Rc;
 
 use glam::DVec3;
 
+use rcad_kernel::base::extrema_ext_elc::epsilon_of;
 use rcad_kernel::base::proj_lib::adaptor::{Adaptor3dSurface, GeomAbsSurfaceType};
 use rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor;
 use rcad_kernel::geom::extrusion_utils;
@@ -661,68 +662,80 @@ fn curve3_rotated_about_axis(c: &Curve3, origin: DVec3, direction: DVec3, angle:
     }
 }
 
-/// OCCT Geom_BSplineSurface::UIso — the iso poles are the homogeneous De
-/// Boor evaluation of the u basis per V column (the nsections.rs
-/// bspline_surface_viso precedent, transposed).
+/// OCCT Geom_BSplineSurface::UIso (Geom_BSplineSurface_1.cxx L598-630) — the
+/// v-varying iso curve at `u`: `BSplSLib::Iso` over the U direction
+/// (BSplSLib.cxx L1617-1740, the rcad [`bspl_slib_iso`] re-host) wrapped in a
+/// `Geom_BSplineCurve` carrying the opposite (V) knot vector.
 fn bspline_surface_uiso(surf: &BSplineSurface, u: f64) -> rcad_kernel::geom::BSplineCurve3 {
-    use rcad_kernel::math::bspl::de_boor_homo;
-    let rational = surf.weights.iter().any(|row| row.iter().any(|&w| w != 1.0));
-    let nb_u = surf.control_points.len();
-    let nb_v = surf.control_points.first().map(|r| r.len()).unwrap_or(0);
-    let mut poles = Vec::with_capacity(nb_v);
-    let mut weights = Vec::with_capacity(nb_v);
-    for jj in 0..nb_v {
-        let row: Vec<DVec3> = (0..nb_u).map(|ii| surf.control_points[ii][jj]).collect();
-        let row_w: Vec<f64> = (0..nb_u)
-            .map(|ii| if rational { surf.weights[ii][jj] } else { 1.0 })
-            .collect();
-        let h = de_boor_homo(surf.degree_u, &surf.knots_u, &row, &row_w, u);
-        weights.push(h[3]);
-        poles.push(DVec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]));
-    }
-    rcad_kernel::geom::BSplineCurve3 {
+    // OCCT L602: `if (myURational || myVRational)` selects `Weights()`,
+    // otherwise `BSplSLib::NoWeights()`.  The rcad surface derives the two
+    // constructor flags on read (`BSplineSurface::is_rational_u/v`).
+    let weights = if surf.is_rational_u() || surf.is_rational_v() {
+        Some(surf.weights.as_slice())
+    } else {
+        None
+    };
+    // OCCT L605-609: BSplSLib::Iso(U, true, myPoles, Weights(), myUFlatKnots,
+    // BSplCLib::NoMults(), myUDeg, myUPeriodic, cpoles, &cweights).  The rcad
+    // surface stores the multiplicity-expanded knot vector, which is the
+    // `Mults == NoMults()` form.
+    let (cpoles, cweights) = bspl_slib_iso(
+        u,
+        true,
+        surf.degree_u,
+        &surf.knots_u,
+        &surf.control_points,
+        weights,
+        surf.is_periodic_u,
+    );
+    // OCCT L610: `new Geom_BSplineCurve(cpoles, cweights, myVKnots, myVMults,
+    // myVDeg, myVPeriodic)` — the iso curve runs along V, so it carries the V
+    // knot vector and the V periodic flag.  The non-rational arm (L617)
+    // omits the weights; the rcad BSplineCurve3 always carries the weights
+    // vector, and bspl_slib_iso returns 1.0 for every pole in that arm.
+    BSplineCurve3 {
         degree: surf.degree_v,
         knots: surf.knots_v.clone(),
-        control_points: poles,
-        weights,
-        is_periodic: false,
+        control_points: cpoles,
+        weights: cweights,
+        is_periodic: surf.is_periodic_v,
     }
 }
 
-/// OCCT Geom_BSplineSurface::VIso (same form as the BRepFill_NSections
-/// iso re-host).
+/// OCCT Geom_BSplineSurface::VIso (Geom_BSplineSurface_1.cxx L775-807) — the
+/// u-varying iso curve at `v`: `BSplSLib::Iso` over the V direction
+/// (BSplSLib.cxx L1617-1740, the rcad [`bspl_slib_iso`] re-host) wrapped in a
+/// `Geom_BSplineCurve` carrying the opposite (U) knot vector.  The OCCT
+/// consumers call this through `Geom_Surface::VIso` (BRepFill_NSections.cxx
+/// L679/L687/L780/L872, GeomFill_NSections.cxx L300).
 fn bspline_surface_viso_full(surf: &BSplineSurface, v: f64) -> rcad_kernel::geom::BSplineCurve3 {
-    use rcad_kernel::math::bspl::de_boor_homo;
-    let rational = surf.weights.iter().any(|row| row.iter().any(|&w| w != 1.0));
-    let nb_u = surf.control_points.len();
-    let nb_v = surf.control_points.first().map(|r| r.len()).unwrap_or(0);
-    let mut poles = Vec::with_capacity(nb_u);
-    let mut weights = Vec::with_capacity(nb_u);
-    for ii in 0..nb_u {
-        let column: Vec<DVec3> = (0..nb_v).map(|jj| surf.control_points[ii][jj]).collect();
-        let column_w: Vec<f64> = (0..nb_v)
-            .map(|jj| if rational { surf.weights[ii][jj] } else { 1.0 })
-            .collect();
-        let h = de_boor_homo(surf.degree_v, &surf.knots_v, &column, &column_w, v);
-        weights.push(h[3]);
-        poles.push(DVec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]));
-    }
-    rcad_kernel::geom::BSplineCurve3 {
+    // OCCT L779: `if (myURational || myVRational)` selects `Weights()`,
+    // otherwise `BSplSLib::NoWeights()`.
+    let weights = if surf.is_rational_u() || surf.is_rational_v() {
+        Some(surf.weights.as_slice())
+    } else {
+        None
+    };
+    // OCCT L782-786: BSplSLib::Iso(V, false, myPoles, Weights(), myVFlatKnots,
+    // BSplCLib::NoMults(), myVDeg, myVPeriodic, cpoles, &cweights).
+    let (cpoles, cweights) = bspl_slib_iso(
+        v,
+        false,
+        surf.degree_v,
+        &surf.knots_v,
+        &surf.control_points,
+        weights,
+        surf.is_periodic_v,
+    );
+    // OCCT L787: `new Geom_BSplineCurve(cpoles, cweights, myUKnots, myUMults,
+    // myUDeg, myUPeriodic)` — the iso curve runs along U, so it carries the U
+    // knot vector and the U periodic flag.
+    BSplineCurve3 {
         degree: surf.degree_u,
         knots: surf.knots_u.clone(),
-        control_points: poles,
-        weights,
-        is_periodic: false,
-    }
-}
-
-/// OCCT Epsilon(theValue) (Standard_Real.hxx L242-246) — the ULP of
-/// `theValue` toward the infinity of the same sign.
-fn epsilon_of(the_value: f64) -> f64 {
-    if the_value >= 0.0 {
-        the_value.next_up() - the_value
-    } else {
-        the_value - the_value.next_down()
+        control_points: cpoles,
+        weights: cweights,
+        is_periodic: surf.is_periodic_u,
     }
 }
 
@@ -1792,184 +1805,9 @@ mod bezier_surface_iso_tests {
 }
 
 #[cfg(test)]
-mod offset_surface_iso_tests {
-    //! Regression guard for the Geom_OffsetSurface::UIso / VIso arms
-    //! (Geom_OffsetSurface.cxx L601-688): the equivalent-surface fast path
-    //! (`directRepSurface` -> `Geom_OffsetSurface::Surface()`), the
-    //! `GeomAbs_SurfaceOfExtrusion` branch and the general AdvApprox arm
-    //! driven by `Geom_OffsetSurfaceUtils::EvaluateD0/D1`.
+#[path = "brep_fill_sweep_offset_iso_tests.rs"]
+mod offset_surface_iso_tests;
 
-    use super::*;
-    use rcad_kernel::geom::{OffsetSurface, Plane, SphericalSurface};
-    use rcad_kernel::geom::SurfaceEval as _;
-
-    /// Pointwise comparison of an iso curve against the offset surface value
-    /// at the fixed parameter.
-    fn check_offset_iso(iso: &Curve3, off: &Surface3, fixed: f64, is_u: bool) {
-        for jj in 0..=8 {
-            let t = jj as f64 / 8.0;
-            let p_iso = iso.point_at(t);
-            let p_ref = if is_u {
-                off.point_at(fixed, t)
-            } else {
-                off.point_at(t, fixed)
-            };
-            assert!(
-                (p_iso - p_ref).length() < 1e-7,
-                "t={t} iso={p_iso:?} ref={p_ref:?}"
-            );
-        }
-    }
-
-    /// A plane basis: `Surface()` yields the plane translated by
-    /// `offsetValue * normal`, so both iso arms delegate to
-    /// `Geom_Plane::UIso` / `VIso` (Geom_OffsetSurface.cxx L900-907 + L652).
-    #[test]
-    fn offset_of_plane_delegates_to_the_translated_plane_iso() {
-        let base = Surface3::Plane(Plane {
-            origin: DVec3::new(1.0, 2.0, 3.0),
-            normal: DVec3::Z,
-            u_dir: DVec3::X,
-            v_dir: DVec3::Y,
-        });
-        let off = Surface3::Offset(OffsetSurface {
-            basis: Box::new(base),
-            offset_distance: 3.0,
-        });
-
-        let uiso = surface_uiso(&off, 0.4);
-        let Curve3::Line(l) = &uiso else {
-            panic!("Geom_Plane::UIso is a Geom_Line")
-        };
-        assert!((l.origin - DVec3::new(1.4, 2.0, 6.0)).length() < 1e-12);
-        assert!((l.direction - DVec3::Y).length() < 1e-12);
-        check_offset_iso(&uiso, &off, 0.4, true);
-
-        let viso = surface_viso(&off, 0.7);
-        let Curve3::Line(lv) = &viso else {
-            panic!("Geom_Plane::VIso is a Geom_Line")
-        };
-        assert!((lv.origin - DVec3::new(1.0, 2.7, 6.0)).length() < 1e-12);
-        assert!((lv.direction - DVec3::X).length() < 1e-12);
-        check_offset_iso(&viso, &off, 0.7, false);
-    }
-
-    /// A zero offset returns the basis surface itself
-    /// (Geom_OffsetSurface.cxx L870-873).
-    #[test]
-    fn zero_offset_delegates_to_the_basis_surface_iso() {
-        let base = Surface3::Sphere(SphericalSurface {
-            center: DVec3::new(1.0, 2.0, 3.0),
-            axis: DVec3::Z,
-            radius: 2.5,
-            ref_dir: DVec3::X,
-        });
-        let off = Surface3::Offset(OffsetSurface {
-            basis: Box::new(base.clone()),
-            offset_distance: 0.0,
-        });
-        let uiso = surface_uiso(&off, 0.4);
-        let uiso_base = surface_uiso(&base, 0.4);
-        for jj in 0..=8 {
-            let t = jj as f64 / 8.0;
-            assert!((uiso.point_at(t) - uiso_base.point_at(t)).length() < 1e-12);
-        }
-    }
-
-    /// A cylinder basis: `Surface()` yields the cylinder of radius
-    /// `R + aSign * offsetValue` (Geom_OffsetSurface.cxx L908-925), so the
-    /// VIso is the parallel circle of the offset radius.
-    #[test]
-    fn offset_of_cylinder_viso_is_the_offset_parallel_circle() {
-        use rcad_kernel::geom::CylindricalSurface;
-        let base = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::new(1.0, 2.0, 3.0),
-            axis: DVec3::Z,
-            radius: 2.5,
-            ref_dir: DVec3::X,
-            y_dir: None,
-        });
-        let off = Surface3::Offset(OffsetSurface {
-            basis: Box::new(base),
-            offset_distance: 2.0,
-        });
-
-        let viso = surface_viso(&off, 0.7);
-        let Curve3::Circle(c) = &viso else {
-            panic!("Geom_CylindricalSurface::VIso is a Geom_Circle")
-        };
-        assert!((c.radius - 4.5).abs() < 1e-12);
-        check_offset_iso(&viso, &off, 0.7, false);
-
-        let uiso = surface_uiso(&off, 0.4);
-        assert!(matches!(uiso, Curve3::Line(_)));
-        check_offset_iso(&uiso, &off, 0.4, true);
-    }
-
-    /// An extrusion basis takes the `GeomAbs_SurfaceOfExtrusion` arm
-    /// (Geom_OffsetSurface.cxx L606-624): the ruling is translated by
-    /// `offsetValue * normalized(D1U ^ D1V)`.
-    #[test]
-    fn offset_of_extrusion_uiso_translates_the_ruling() {
-        use rcad_kernel::geom::LinearExtrusionSurface;
-        let profile = Curve3::Circle(Circle3 {
-            center: DVec3::new(1.0, 2.0, 3.0),
-            normal: DVec3::Z,
-            x_dir: DVec3::X,
-            y_dir: DVec3::Y,
-            radius: 2.0,
-        });
-        let off = Surface3::Offset(OffsetSurface {
-            basis: Box::new(Surface3::LinearExtrusion(LinearExtrusionSurface {
-                profile: Box::new(profile),
-                direction: DVec3::Z,
-            })),
-            offset_distance: 1.5,
-        });
-
-        let uiso = surface_uiso(&off, 0.0);
-        let Curve3::Line(l) = &uiso else {
-            panic!("the extrusion UIso arm returns the basis ruling line")
-        };
-        // C(0) = (3, 2, 3) and the radial direction at u = 0 is +X.
-        assert!((l.origin - DVec3::new(4.5, 2.0, 3.0)).length() < 1e-12);
-        assert!((l.direction - DVec3::Z).length() < 1e-12);
-        check_offset_iso(&uiso, &off, 0.0, true);
-    }
-
-    /// A BSpline basis has no canonical equivalent surface, so the iso arms
-    /// run the general `Geom_OffsetSurface_UIsoEvaluator` / AdvApprox body
-    /// (Geom_OffsetSurface.cxx L625-654) whose Value/D1 calls route through
-    /// `Geom_OffsetSurfaceUtils::EvaluateD0/EvaluateD1`.
-    #[test]
-    fn offset_of_bspline_basis_runs_the_approximation_arm() {
-        let patch = BSplineSurface {
-            degree_u: 1,
-            degree_v: 1,
-            knots_u: vec![0.0, 0.0, 1.0, 1.0],
-            knots_v: vec![0.0, 0.0, 1.0, 1.0],
-            control_points: vec![
-                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0)],
-                vec![DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
-            ],
-            weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
-            is_periodic_u: false,
-            is_periodic_v: false,
-        };
-        let off = Surface3::Offset(OffsetSurface {
-            basis: Box::new(Surface3::BSpline(patch)),
-            offset_distance: 0.5,
-        });
-
-        let uiso = surface_uiso(&off, 0.3);
-        assert!(
-            matches!(uiso, Curve3::BSpline(_)),
-            "the approximation arm returns a Geom_BSplineCurve"
-        );
-        check_offset_iso(&uiso, &off, 0.3, true);
-
-        let viso = surface_viso(&off, 0.7);
-        assert!(matches!(viso, Curve3::BSpline(_)));
-        check_offset_iso(&viso, &off, 0.7, false);
-    }
-}
+#[cfg(test)]
+#[path = "brep_fill_sweep_iso_tests.rs"]
+mod bspline_surface_iso_tests;

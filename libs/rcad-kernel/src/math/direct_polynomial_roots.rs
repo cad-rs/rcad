@@ -6,15 +6,12 @@
 //   - math_DirectPolynomialRoots.cxx (whole file)
 //   - Standard_Real.hxx L132-246 (RealSmall/RealEpsilon/Epsilon)
 
-/// OCCT Standard_Real.hxx Epsilon(Value) — the gap to the next representable
-/// double in the direction of the value's sign.
-pub fn epsilon(value: f64) -> f64 {
-    if value >= 0.0 {
-        value.next_up() - value
-    } else {
-        value - value.next_down()
-    }
-}
+/// OCCT Standard_Real.hxx L242-246 `Epsilon(const double)` — re-exported from
+/// the single canonical definition in
+/// [`crate::base::extrema_ext_elc::epsilon_of`] (previously a private copy).
+/// Consumed here by `math_DirectPolynomialRoots.cxx` L364:
+/// `aMaxCoeff = Epsilon(100.0 * aMaxCoeff)`.
+pub use crate::base::extrema_ext_elc::epsilon_of as epsilon;
 
 /// OCCT math_DirectPolynomialRoots.hxx — the direct (analytic) polynomial
 /// root solver.  `value(i)` is 1-based like OCCT's Value(Index).

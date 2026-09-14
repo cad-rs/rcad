@@ -39,6 +39,7 @@ use rcad_kernel::topods::{BRep, BRepTool, Orientation, State, TShape};
 use rcad_kernel::{CONFUSION, SQUARE_CONFUSION};
 
 use crate::geomalgo::geom2d_int::Curve2dAdaptor;
+use crate::geomalgo::geom_int_line_constructor::geom_int_adjust_periodic;
 use crate::geomalgo::int_patch::GeomAbsSurfaceType;
 use crate::topalgo::brep_adaptor::curve2d::BRepCurve2d;
 use crate::topalgo::brep_adaptor::surface::BRepAdaptorSurface;
@@ -53,33 +54,9 @@ use crate::topalgo::shape_source::{FaceShapeSource, ShapeSource};
 /// OCCT RealLast() for double.
 const REAL_LAST: f64 = f64::MAX;
 
-/// OCCT GeomInt::AdjustPeriodic (GeomInt.cxx L21-48) — translate a parameter
-/// by whole periods so it lands inside [theParMin, theParMax]. Returns
-/// `(theNewPar, theOffset)`.
-fn adjust_periodic(
-    the_par: f64,
-    the_par_min: f64,
-    the_par_max: f64,
-    the_period: f64,
-) -> (f64, f64) {
-    let the_offset;
-    let mut the_new_par = the_par;
-    let b_min = the_par_min - the_par > 0.0;
-    let b_max = the_par - the_par_max > 0.0;
-    if b_min || b_max {
-        let dp = if b_min {
-            the_par_max - the_par
-        } else {
-            the_par_min - the_par
-        };
-        let a_nb_per = (dp / the_period).trunc(); // modf() integer part
-        the_offset = a_nb_per * the_period;
-        the_new_par += the_offset;
-    } else {
-        the_offset = 0.0;
-    }
-    (the_new_par, the_offset)
-}
+// OCCT GeomInt::AdjustPeriodic (GeomInt.cxx L21-48) lives in the canonical
+// `crate::geomalgo::geom_int_line_constructor::geom_int_adjust_periodic` body;
+// the former local copy (`adjust_periodic`) was converged onto it.
 
 /// OCCT Poly::PolygonProperties (Poly.hxx L165-196) — signed area and
 /// perimeter of a 2D polygon. Area is negative when bypassed clockwise.
@@ -905,13 +882,19 @@ impl IntToolsFClass2d {
         // OCCT L666-678.
         if recadre_on_periodic {
             if is_u_per {
-                let (new_uu, _du) = adjust_periodic(uu, self.umin, self.umax, uperiod);
+                let mut new_uu = 0.0;
+                let mut du = 0.0;
+                geom_int_adjust_periodic(uu, self.umin, self.umax, uperiod, &mut new_uu, &mut du, 0.0);
                 uu = new_uu;
+                let _ = du;
             } // if (IsUPer) {
             //
             if is_v_per {
-                let (new_vv, _dv) = adjust_periodic(vv, self.vmin, self.vmax, vperiod);
+                let mut new_vv = 0.0;
+                let mut dv = 0.0;
+                geom_int_adjust_periodic(vv, self.vmin, self.vmax, vperiod, &mut new_vv, &mut dv, 0.0);
                 vv = new_vv;
+                let _ = dv;
             } // if (IsVPer) {
         }
         //
@@ -1062,13 +1045,19 @@ impl IntToolsFClass2d {
         // OCCT L833-845.
         if recadre_on_periodic {
             if is_u_per {
-                let (new_uu, _du) = adjust_periodic(uu, self.umin, self.umax, uperiod);
+                let mut new_uu = 0.0;
+                let mut du = 0.0;
+                geom_int_adjust_periodic(uu, self.umin, self.umax, uperiod, &mut new_uu, &mut du, 0.0);
                 uu = new_uu;
+                let _ = du;
             } // if (IsUPer) {
             //
             if is_v_per {
-                let (new_vv, _dv) = adjust_periodic(vv, self.vmin, self.vmax, vperiod);
+                let mut new_vv = 0.0;
+                let mut dv = 0.0;
+                geom_int_adjust_periodic(vv, self.vmin, self.vmax, vperiod, &mut new_vv, &mut dv, 0.0);
                 vv = new_vv;
+                let _ = dv;
             } // if (IsVPer) {
         }
         //

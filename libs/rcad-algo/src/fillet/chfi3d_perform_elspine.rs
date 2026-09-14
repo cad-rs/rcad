@@ -63,7 +63,9 @@ fn epsilon(the_value: f64) -> f64 {
 
 fn next_after_up(x: f64) -> f64 {
     if x == 0.0 || x.is_nan() {
-        return f64::MIN_POSITIVE;
+        // OCCT std::nextafter(0, +Inf) is the smallest positive SUBNORMAL
+        // (5e-324), not MIN_POSITIVE (2.2e-308) — a factor of 4.5e16.
+        return f64::from_bits(1);
     }
     let bits = x.to_bits();
     if x > 0.0 {
@@ -75,7 +77,7 @@ fn next_after_up(x: f64) -> f64 {
 
 fn next_after_down(x: f64) -> f64 {
     if x == 0.0 {
-        return -f64::MIN_POSITIVE;
+        return -f64::from_bits(1);
     }
     let bits = x.to_bits();
     if x > 0.0 {

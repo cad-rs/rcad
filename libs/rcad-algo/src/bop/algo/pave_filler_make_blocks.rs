@@ -44,6 +44,7 @@ use crate::bop::algo::pave_filler::PaveFiller;
 use crate::bop::ds::common_block::CommonBlock;
 use crate::bop::ds::pave::{Pave, PaveBlock, SharedPB};
 use crate::bop::int_tools::face_face::IntersectionCurve;
+use crate::geomalgo::geom_int_line_constructor::geom_int_adjust_periodic;
 use glam::{DVec2, DVec3};
 use indexmap::{IndexMap, IndexSet};
 use rcad_kernel::geom::{Curve2d, Surface3};
@@ -97,16 +98,12 @@ pub(crate) fn adjust_pcurve_on_face(
         } else if (u2 - umin - a_u_period).abs() < a_delta {
             u2 = umin + a_u_period;
         }
-        // GeomInt::AdjustPeriodic (GeomInt.cxx L21-47): shift u2 into
-        // [UMin, UMax] by a whole number of periods.
-        let b_min = umin - u2 > 0.0;
-        let b_max = u2 - umax > 0.0;
-        if b_min || b_max {
-            let dp = if b_min { umax - u2 } else { umin - u2 };
-            let nb_per = (dp / a_u_period).trunc();
-            du = nb_per * a_u_period;
-            u2 += du;
-        }
+        // OCCT BOPTools_AlgoTools2D.cxx L290:
+        // GeomInt::AdjustPeriodic(u2, UMin, UMax, aUPeriod, u2, du, 0.) -- the
+        // explicit theEps of that call site is 0.
+        let mut new_u2 = 0.0;
+        geom_int_adjust_periodic(u2, umin, umax, a_u_period, &mut new_u2, &mut du, 0.0);
+        u2 = new_u2;
         // OCCT L292-313: Cylinder-only check when du == 0.
         if du == 0.0 {
             if let Surface3::Cylinder(c) = surf {
@@ -691,21 +688,13 @@ impl PaveFiller {
                                     // OCCT BRep_Builder.cxx L104-167 (UpdateCurves,
                                     // reached through BOPTools_AlgoTools::MakePCurve
                                     // L1657-1725 -> `aBB.UpdateEdge(aE, aC2DA, aFFWD,
-                                    // aTolE)`): the stored range is seeded with the
-                                    // 2D curve's own range (L151-153) and is then
-                                    // OVERWRITTEN by the edge's Curve3D
-                                    // representation range whenever that is finite
-                                    // (L116-129, L154-162).  The OCCT overload
-                                    // takes no f/l arguments.
-                                    let [mut a_f, mut a_l] = a_c2d.default_domain();
-                                    if ed.curve.is_some() {
-                                        if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
-                                            a_f = ed.range[0];
-                                        }
-                                        if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
-                                            a_l = ed.range[1];
-                                        }
-                                    }
+                                    // aTolE)`): the two-step interval rule - the
+                                    // canonical body lives in
+                                    // rcad_kernel::topods::update_curves_range.
+                                    let [a_f, a_l] = rcad_kernel::topods::update_curves_range(
+                                        a_c2d.default_domain(),
+                                        ed,
+                                    );
                                     ed.pcurves.insert(k, (a_c2d, a_f, a_l));
                                 }
                             }
@@ -727,21 +716,13 @@ impl PaveFiller {
                                     // OCCT BRep_Builder.cxx L104-167 (UpdateCurves,
                                     // reached through BOPTools_AlgoTools::MakePCurve
                                     // L1657-1725 -> `aBB.UpdateEdge(aE, aC2DA, aFFWD,
-                                    // aTolE)`): the stored range is seeded with the
-                                    // 2D curve's own range (L151-153) and is then
-                                    // OVERWRITTEN by the edge's Curve3D
-                                    // representation range whenever that is finite
-                                    // (L116-129, L154-162).  The OCCT overload
-                                    // takes no f/l arguments.
-                                    let [mut a_f, mut a_l] = a_c2d.default_domain();
-                                    if ed.curve.is_some() {
-                                        if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
-                                            a_f = ed.range[0];
-                                        }
-                                        if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
-                                            a_l = ed.range[1];
-                                        }
-                                    }
+                                    // aTolE)`): the two-step interval rule - the
+                                    // canonical body lives in
+                                    // rcad_kernel::topods::update_curves_range.
+                                    let [a_f, a_l] = rcad_kernel::topods::update_curves_range(
+                                        a_c2d.default_domain(),
+                                        ed,
+                                    );
                                     ed.pcurves.insert(k, (a_c2d, a_f, a_l));
                                 }
                             }

@@ -178,41 +178,9 @@ fn gp_vec2d_is_opposite(a: DVec2, b: DVec2, angular_tolerance: f64) -> bool {
     std::f64::consts::PI - an_ang <= angular_tolerance
 }
 
-/// OCCT ElCLib::AdjustPeriodic(UFirst, ULast, Preci, U1, U2)
-/// (ElCLib.cxx L115-151).
-pub(crate) fn elclib_adjust_periodic(
-    u_first: f64,
-    u_last: f64,
-    preci: f64,
-    u1: &mut f64,
-    u2: &mut f64,
-) {
-    // OCCT ElCLib.cxx L121: Precision::IsInfinite(UFirst) || Precision::IsInfinite(ULast)
-    // (Precision.hxx L350-353).
-    if rcad_kernel::precision::is_infinite_value(u_first)
-        || rcad_kernel::precision::is_infinite_value(u_last)
-    {
-        *u1 = u_first;
-        *u2 = u_last;
-        return;
-    }
-    let a_period = u_last - u_first;
-    if a_period < u_last.abs() * f64::EPSILON {
-        // In order to avoid FLT_Overflow exception
-        // (test bugs moddata_1 bug22757)
-        *u1 = u_first;
-        *u2 = u_last;
-        return;
-    }
-    *u1 -= ((*u1 - u_first) / a_period).floor() * a_period;
-    if u_last - *u1 < preci {
-        *u1 -= a_period;
-    }
-    *u2 -= ((*u2 - *u1) / a_period).floor() * a_period;
-    if *u2 - *u1 < preci {
-        *u2 += a_period;
-    }
-}
+// OCCT ElCLib::AdjustPeriodic (ElCLib.cxx L115-149) is hosted by the one
+// canonical body `rcad_kernel::math::el::elclib_adjust_periodic`; the former
+// local copy here was converged onto it (see the call sites below).
 
 /// OCCT BRepLib_MakeEdge::Init(C, V1, V2) + Edge() (BRepLib_MakeEdge.cxx
 /// L543-567): projects the vertex points onto the curve (Project
@@ -316,7 +284,7 @@ pub(crate) fn brep_lib_make_edge_init_range(
     let (mut v1, mut v2) = (vv1.clone(), vv2.clone());
     if periodic {
         // OCCT L629-635: adjust in period.
-        elclib_adjust_periodic(cf, cl, epsilon, &mut p1, &mut p2);
+        rcad_kernel::math::el::elclib_adjust_periodic(cf, cl, epsilon, &mut p1, &mut p2);
     } else {
         // OCCT L640-651: reordonate.
         if p1 < p2 {
@@ -1720,7 +1688,13 @@ impl ChFi2dBuilder {
         // OCCT L1191-1194: if (U1 > Vv1 && U1 > 2. * M_PI)
         //   ElCLib::AdjustPeriodic(0., 2. * M_PI, Precision::Confusion(), U1, Vv1);
         if u1 > vv1 && u1 > 2.0 * std::f64::consts::PI {
-            elclib_adjust_periodic(0.0, 2.0 * std::f64::consts::PI, CONFUSION, &mut u1, &mut vv1);
+            rcad_kernel::math::el::elclib_adjust_periodic(
+                0.0,
+                2.0 * std::f64::consts::PI,
+                CONFUSION,
+                &mut u1,
+                &mut vv1,
+            );
         } // if (U1 ...
         // OCCT L1195-1203:
         if (o1 == Orientation::Forward && oe1 == Orientation::Forward)

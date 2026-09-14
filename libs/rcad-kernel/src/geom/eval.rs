@@ -3804,16 +3804,17 @@ impl Surface3 {
     }
 
     /// OCCT GeomAdaptor_Surface::DN(U, V, Nu, Nv)
-    /// (GeomAdaptor_Surface.cxx L1690-1815) — dispatch to the per-type
+    /// (GeomAdaptor_Surface.cxx L1697-1814) — dispatch to the per-type
     /// derivative: ElSLib::DN forms for the quadrics (L1796-1805),
     /// Geom_BSplineSurface::EvalDN / Geom_BezierSurface::EvalDN (both
     /// `BSplSLib::DN`) for the polynomial kinds (L1731-1752 /
-    /// L1807-1813), Geom_OffsetSurface (L1782), the swept surfaces
+    /// L1807-1813), the offset adaptor's DN (L1782-1794), the swept surfaces
     /// (L1754 / L1768) and — through the default arm at L1807-1813 — the
-    /// `GeomEval` ellipsoid / circular helicoid.  The rcad-only
-    /// Ruled / Coons / Pipe / TriBezier kinds (and the `Trimmed` wrapper) have
-    /// no OCCT `Geom_Surface::EvalDN` counterpart / translation and raise the
-    /// explicit gap below.
+    /// `GeomEval` ellipsoid / circular helicoid.  The `Trimmed` wrapper is the
+    /// `Geom_RectangularTrimmedSurface::EvalDN` delegation to the basis
+    /// surface (Geom_RectangularTrimmedSurface.cxx L419-429).  The rcad-only
+    /// Ruled / Coons / Pipe / TriBezier kinds have no OCCT
+    /// `Geom_Surface::EvalDN` counterpart and raise the explicit gap below.
     pub fn dn(&self, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
         match self {
             Surface3::Plane(p) => plane_dn(p.u_dir, p.v_dir, nu, nv),
@@ -3862,14 +3863,27 @@ impl Surface3 {
             Surface3::Revolution(rev) => {
                 crate::geom::revolution_utils::revolution_eval_dn(rev, u, v, nu, nv)
             }
+            // OCCT Geom_RectangularTrimmedSurface::EvalDN
+            // (Geom_RectangularTrimmedSurface.cxx L419-429).
+            Surface3::Trimmed(t) => {
+                // OCCT L424-427: if (Nu + Nv < 1 || Nu < 0 || Nv < 0) throw
+                // Geom_UndefinedDerivative.
+                assert!(
+                    nu + nv >= 1 && nu >= 0 && nv >= 0,
+                    "Geom_UndefinedDerivative: Geom_RectangularTrimmedSurface::EvalDN"
+                );
+                // OCCT L428: return basisSurf->EvalDN(U, V, Nu, Nv).
+                t.basis.dn(u, v, nu, nv)
+            }
             _ => {
                 panic!(
-                    "GAP: GeomAdaptor_Surface::DN (GeomAdaptor_Surface.cxx L1690-1815): the \
+                    "GAP: GeomAdaptor_Surface::DN (GeomAdaptor_Surface.cxx L1697-1814): the \
                      rcad GeomAdaptor_Surface DN engine covers ElSLib surfaces \
                      (L1796-1805), Geom_BSplineSurface (L1731-1752), Geom_BezierSurface \
-                     (L1807-1813; Geom_BezierSurface::EvalDN), Geom_OffsetSurface (L1782), \
-                     the extrusion (L1754), the revolution (L1768) and the GeomEval \
-                     ellipsoid / circular helicoid (the L1807-1813 default arm); the \
+                     (L1807-1813; Geom_BezierSurface::EvalDN), the offset adaptor DN \
+                     (L1782-1794), the extrusion (L1754), the revolution (L1768), the \
+                     GeomEval ellipsoid / circular helicoid (the L1807-1813 default arm) \
+                     and Geom_RectangularTrimmedSurface (the Trimmed arm above); the \
                      rcad-only Ruled / Coons / Pipe / TriBezier kinds have no OCCT \
                      Geom_Surface::EvalDN counterpart"
                 );
@@ -3953,6 +3967,25 @@ mod derivative_tests {
             let d = s.dn(1.0, 0.5, nu, nv);
             assert!(d.x.is_finite() && d.y.is_finite() && d.z.is_finite(), "d={d:?}");
         }
+    }
+
+    /// OCCT Geom_RectangularTrimmedSurface::EvalDN
+    /// (Geom_RectangularTrimmedSurface.cxx L419-429): the range guard, then
+    /// `basisSurf->EvalDN(U, V, Nu, Nv)` forwarded unchanged.  On a plane
+    /// basis the forwarded value is the `ElSLib::PlaneDN` result (ElSLib.cxx
+    /// L169-180): `Pos.XDirection()` for (1, 0), `Pos.YDirection()` for (0, 1)
+    /// and zero for every other order.  Both expected vectors are read off the
+    /// basis plane payload, so the assertion covers the delegation rather than
+    /// the gp_Ax3 construction.
+    #[test]
+    fn trimmed_surface_dn_delegates_to_basis() {
+        let plane = Plane::new(DVec3::ZERO, DVec3::Z);
+        let trimmed =
+            Surface3::Trimmed(TrimmedSurface::new(Surface3::Plane(plane), 0.5, 1.5, 0.5, 1.5));
+        assert_eq!(trimmed.dn(1.0, 0.75, 1, 0), plane.u_dir);
+        assert_eq!(trimmed.dn(1.0, 0.75, 0, 1), plane.v_dir);
+        assert_eq!(trimmed.dn(1.0, 0.75, 2, 0), DVec3::ZERO);
+        assert_eq!(trimmed.dn(1.0, 0.75, 1, 1), DVec3::ZERO);
     }
 
     /// The rational quarter circle in the XY plane as a degree-2 Bezier, with

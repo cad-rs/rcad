@@ -1,6 +1,55 @@
 # E3-W 交接：三域（TKFeat / TKFillet / TKOffset）翻译推进 —— 2026-09-12
 
-> **一句话（追加 32 收尾态，2026-09-13 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**（先 1:1 译全 body、把重复载体收敛到真身，代码基本译完再回头调试）。
+> **一句话（追加 38 收尾态，2026-09-14 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**。本轮三线并行（测试移植 + 收敛 + 误标修复）：**① 移植 OCCT 自带的 `AdjustPeriodic` gtest**（canonical 体的唯一 ground truth，此前 rcad 对它零测试）· **② `epsilon_of` 复制族收敛**（**前提被推翻**）· **③ `bean_face_intersector` 的 `AdjustPeriodic` 误标**（确认为真，按 OCCT 1:1 翻译）+ 两处返回 `MIN_POSITIVE` 的 `epsilon` 修正。
+> **门槛（当前基线）**：**450/0/0 · 736/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 451 → **450** = 删掉的自失效测试；kernel 733 → **736** = 3 个新测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。
+> **★★ 本轮最值钱的发现：OCCT 自带的测试并不覆盖它自己的守卫。** 把 `Epsilon(ULast)` 那行守卫**整个禁用**，OCCT 那五个用例**照样全过** —— 而该守卫正是 `epsilon_of`（追加 37 刚修的那个公式）的**唯一消费者**，此前**零覆盖**。补的判别性测试用**零长度区间**（无守卫 ⇒ 除以 0 ⇒ **NaN**）；我第一版用"周期很小但不为零" **不判别**（wrap 恰好落回同样的值，守卫禁用下仍通过）。⇒ **移植 OCCT 自带测试 ≠ 覆盖完整，必须自己扰动一遍。**
+> **★★ 第二条：前提推翻是"好消息型"。** 记档说"同一个错误公式被复制到多处"，实测 **HEAD 里每一份副本的公式本来就是对的** —— 错误公式**只存在于 canonical 体本身**（追加 37 刚修的那个）。⇒ **"多处复制了同一错误"必须先逐份核验再动手**，否则会去"修"一批本来正确的代码。
+> **★ 真实的翻译缺口（批次 3）**：`bean_face_intersector` 里那个 `AdjustPeriodic` 是自创重写（`1e-12*period` 容差 + `ceil` 夹取 + 自创 `ok` 门），OCCT 是"无条件 `solutionIsValid = true` 并忽略返回值"⇒ 已 1:1 翻译。**三处实质变化**：修剪柱面（UV 窗口窄于周期）上原本被丢弃的交点现在保留；守卫 eps 6.28e-12 → 8.88e-16；平移公式 `ceil` → `modf/trunc`。
+> **★ 方法学（第十一轮"零可见翻转"）**：批次 3 改变了接受集合与下游 UV 值（爆炸半径 `LocOpe_SplitDrafts`）、批次 4 改了两个容差 helper 的零行为 —— 八网格与 16 个域网格**全部零可见**。
+> （历史：追加 21–37 收尾态见下方存档块；追加 37 = `Ax3` 平行分支 + `Init` 的 location + `AdjustPeriodic` 收敛与 `epsilon_of` 修正；追加 36 = `gp_Trsf2d` 全类 + 判别性单测；追加 35 = BSpline iso 精确化 + `CurveOnPlane`。）
+
+> **（存档）一句话（追加 37 收尾态，2026-09-14 —— 已被追加 38 取代）**：**工作口径仍是"先译后调"**。本轮三线并行（内核翻译补全 + 收敛 + 勘误）：**① `Ax3` 补回 OCCT 的两个平行分支**，并把 `direct()` 从存储字段改回**推导式**（删掉陈旧 `sense` 模型）· **② `Init` 的 `my_location` 补齐**（追加 36 报出的更大缺口，记录为真）· **③ `AdjustPeriodic` 收敛**（**记档位置写错**：那份在 `fillet/**` 不在 `bop/**`，且 OCCT 有**四个**同名函数）+ **canonical `epsilon_of` 公式 1:1 修正**。
+> **门槛（当前基线）**：**451/0/0 · 733/0 · 36/36 · 26/26 · 76/76 · 1/1**（kernel 728 → **733**）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。
+> **★★ 本轮最值钱的产出仍是"三次回源核验救了命"**：① `AdjustPeriodic` 的记档**位置**写错（在 fillet 不在 bop）；② `bop/**` 那两处**根本不是同一个 OCCT 函数**（OCCT 有四个同名 `AdjustPeriodic`，判"是否同一个"必须逐站点判）；③ **canonical `epsilon_of` 的公式与锚点都是错的** —— 它自称 `Precision.hxx` 的 `Epsilon`、公式 `Max(|v|, RealSmall()) * RealEpsilon()`，而 `Precision.hxx` **没有** `Epsilon`，OCCT 唯一的 `Epsilon(double)` 是 **nextafter 间隙**（`Standard_Real.hxx` L242-246）。⇒ 与追加 35/36 合起来，**"canonical / 记档"必须逐条回源核验**已是本域的**常态动作**。
+> **★ 真正的翻译缺口（本轮批次 1）**：`Ax3::set_direction` / `set_x_direction` **各缺一个平行分支** —— 给定方向与主方向（或当前 X）(反)平行时 `V ^ (X ^ V)` 退化为零，OCCT 改为**重贴轴标签**，rcad 旧版却代入**零向量** ⇒ 产出**退化框架**；`direct()` 也从存储字段改回 OCCT 的**推导式**（`(vxdir ^ vydir)·N > 0`）。
+> **★ 方法学（第十轮"零可见翻转"）**：内核形态学（`direct()` 由存储改推导）、`Init` 的 location、`AdjustPeriodic` 收敛、`epsilon_of` 公式 —— 八网格与 16 个域网格**全部零可见**。
+> （历史：追加 21–36 收尾态见下方存档块；追加 36 = `gp_Trsf2d` 全类 + `gp.rs` 判别性单测 + 拆文件与 location 勘误；追加 35 = `gp_Trsf2d` 译完 + BSpline iso 精确化 + `CurveOnPlane`；追加 34 = 判别性单测 + `Trsf2d` 两缺陷 + `Trimmed`/`dn_at`。）
+
+> **（存档）一句话（追加 36 收尾态，2026-09-14 —— 已被追加 37 取代）**：**工作口径仍是"先译后调"**。本轮三线并行（翻译 + 合规 + 勘误）：**① `gp_Trsf2d` 全类译完**（余下 10 函数 + `Power`，载体抽为独立模块 `trsf2d.rs`）· **② `gp.rs` 判别性单测补齐**（12 → 17，含 3 次扰动实证）· **③ `brep_fill_sweep.rs` 拆回 2000 行内 + location 比对勘误**（记档为真，已修）。
+> **门槛（当前基线）**：**451/0/0 · 728/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 438 → **451**、kernel 723 → **728**）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。**改动文件全部 ≤ 2000 行**。
+> **★★ 本轮最有价值的产出是三条"OCCT 自身怪癖"的如实记档**（都容易被人"顺手修正"成与 OCCT 不一致）：**（a）`gp_Trsf2d::Invert()` 对 `gp_PntMirror` 不是数学逆** —— 只反 offset，中心对称绕 `c` 变成绕 `-c`（`t_inv(t(p)) == p - 4c`），**3D 的 `gp_Trsf::Invert` 完全一样**（`gp_Trsf.cxx` L406-409）⇒ 这是 OCCT 的怪癖，**测试要钉 OCCT 行为、不要钉"往返等于原值"**；**（b）`SetValues` 的 `M.Divide(s)` 经公开 API 不可观测**（后续 `Orthogonalize` 归一化把正因子精确抵消）⇒ **如实记为不可观测，不假装覆盖**；**（c）`SetTranslationPart` 从 `gp_Rotation` 出发得到 `CompoundTrsf`**（cxx L113-116 的 catch-all）。
+> **★ 新形态的问题：本轮出现三处"测试写错"**（我两处 + 子代理一处），**全部是"代码对、期望值错"**（`value(3,3)` 误算成 0；`SetTranslationPart` 的标签；`Invert` 对 PntMirror 的非逆）。⇒ **"测试失败先怀疑测试"升为常规动作**，且**期望值必须来自 OCCT 公式或独立几何定义，不能来自"我以为"**（已写入 §0）。
+> **★ 两条卡的结局**：`gp.rs` 的 `Trsf` 助手**已全部有判别性测试 ⇒ 关闭**（下一步把同一手法用到其他内核助手）；**`mySn` 卡证伪 ⇒ 关闭**（`mySn` 只在 `LocOpe_Gluer` 且 rcad 侧已完整；`feat_featrf` 的真实前墙是 `loc_ope_glued_shape.rs:193` 的 `Standard_ConstructionError`，属**调试/状态类**而非翻译缺口）。
+> **★ 方法学（第九轮"零可见翻转"）**：`Trsf2d` 全类、location 比对、守卫勘误在八网格与 16 个域网格上**全部零可见**。
+> （历史：追加 21–35 收尾态见下方存档块；追加 35 = `gp_Trsf2d` 译完 + BSpline iso 收敛到精确体 + `CurveOnPlane`；追加 34 = 判别性单测 + `Trsf2d` 两缺陷 + `Trimmed`/`dn_at`；追加 33 = `UpdateEdge` 全库收敛 + 两个内核缺陷。）
+
+> **（存档）一句话（追加 35 收尾态，2026-09-14 —— 已被追加 36 取代）**：**工作口径仍是"先译后调"**。本轮按你的指令**三线并行且全取翻译/收敛类**：**① `gp_Trsf2d` 载体译完**（`TrsfForm` 补真实 2D 形态 + `Multiply` **全 15 分支** 1:1）· **② BSpline `UIso/VIso` 的三份 de Boor 近似收敛到精确 `BSplSLib::Iso`** · **③ `CurveOnPlane` 回退补齐**（记档为真）。
+> **★★ 本轮最有价值的产出是"两次推翻前提"**：**（a）** 队列说 `TrsfForm` 缺"四个"变体 —— 实际 `gp_Trsf2d` **没有 `Ax2Mirror`**（点对称/线对称才是 2D 的），只缺**三个**；**（b）** 批次 2 的任务前提"canonical 体已是精确翻译、两份副本是近似"**只有一半为真** —— 所谓 canonical 体**自己就是第三份 de Boor 近似**。子代理因任务书里"禁止收敛到另一份近似"这一条而先读了 OCCT，**否则就会把两份近似合并成一份近似：看起来收敛了、实际什么都没修**。⇒ **动手前必须验证记档与任务前提**（本轮升为与"判别性必须实证"并列的硬规矩）。
+> **门槛（当前基线）**：**438/0/0 · 723/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 430 → **438**）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。
+> **★ 本轮量出的真实行为差异**（此前一直错着）：BSpline iso 在**参数域外**旧体夹到边界极、精确体按请求**外推**（实例极差 **0.894**）；**权重全为 2.0 的均匀有理面**旧判据不是 OCCT 的 `Rational()`（权重留 2.0 vs 写 1.0）；**周期面**旧体完全没有周期处理且硬编码 `is_periodic: false`（当前潜伏）。
+> **★ 方法学（第八轮"零可见翻转"，连"改了分支走向"也不可见）**：批次 3 把一条分支从"返回 `None`"改成"投影返回"，批次 2 换掉整条求值公式 —— 八网格与 16 个域网格**依然全部零变化**。
+> **★ 可复用手法（本轮新增一条）**：**代数自洽 ≠ 几何正确** —— 组合律测试（`A.multiplied(B) == A(B(P))`）**抓不到**矩阵转置（它对同一个错矩阵自洽），只有断言独立几何量的测试能抓；**两类断言都要留**（另有"测试失败先怀疑测试"一例：我写的 `value` 断言误以为 `set_scale` 保留矩阵，实际 OCCT 会 `matrix.SetIdentity()`）。
+> （历史：追加 21–34 收尾态见下方存档块；追加 34 = 判别性单测 + `Trsf2d` 两缺陷 + `Trimmed`/`dn_at`；追加 33 = `UpdateEdge` 全库收敛 + 两个内核缺陷；追加 32 = `set_rotation` 转置修复。）
+
+> **（存档）一句话（追加 34 收尾态，2026-09-14 —— 已被追加 35 取代）**：**工作口径仍是"先译后调"**（先 1:1 译全 body、把重复载体收敛到真身，代码基本译完再回头调试）。
+> 本轮（追加 34）**三线并行，做队列第 1、2、4 项**：**① `gp.rs` 判别性单测补齐（4 → 12 个，含 5 次扰动实证）** · **② `composite_surface.rs` 的本地 `Trsf2d` 审计 —— 再抓 2 个同族缺陷（其中一个可达）** · **③ `Trimmed` 的 `dn` 臂 + `GeomAdaptor_Surface::dn_at` 全阶（记档的"无 OCCT 对应"被推翻，panic 清零）**。另把缺失的 `Trsf::SetTransformation(FromA1,ToA2)` 重载译全。
+> **★ 本轮最值钱的发现（动摇了一次"测试已覆盖"的判断）**：`transform_vec`（`VectorialPart`，含 scale）与 `transform_dir`（`HVectorialPart`，原始 matrix）这对配对的**第一版测试在扰动下仍然通过 —— 根本不具判别性**。原因是 `transform_dir` 末尾的**归一化抵消了正缩放**，只有**负缩放**经 `scale<0` 的反转才暴露（双重取反）。改成同时跑 `scale = ±3` 后才失败。⇒ **不写扰动实验就会留下"看似覆盖、实则恒真"的假回归测试**。
+> **门槛（当前基线）**：**430/0/0 · 723/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 427 → **430**、kernel 714 → **723**，全是新测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与追加 32 基线逐项相同**。
+> **★ 方法学（第七轮"零可见翻转"，本轮形态最极端）**：`dn_at` 从**一个 panic** 变成**真的算值**、`set_scale` 从**一次 abort** 变成**返回退化变换** —— 八网格与 16 个域网格**依然全部零变化**。前几轮还能解释成"改了但没走到"，本轮是**把不可达路径变成可达**仍然零翻转 ⇒ **两套网格合起来的"覆盖率"对本域进展几乎无分辨力，"判别性单测"应当作唯一验收手段**（第七次重申，且口径已从"补用例"改为"补判别性单测 + 扰动实证"）。
+> **★ 可复用手法（本轮新增两条）**：**① 判别性必须用扰动实证**（改回旧形 → 确认目标测试 FAILED → 还原；"我推导过它会失败"不算数 —— 本轮同一轮里手工推导与"看起来该失败"各错过一次）；**② "注释说缺 ≠ 真缺"第三次应验**（`Trimmed` 的 `EvalDN` 一直在 OCCT 里，记档却写了"无对应"）。
+> （历史：追加 21–33 收尾态见下方存档块；追加 33 = `UpdateEdge` 全库收敛 + `set_displacement`/`multiplied` 两个内核缺陷；追加 32 = `set_rotation` 转置修复；追加 25 = `blend_simple_a1` 通过；追加 28 = `LocOpe_SplitShape` 全类；追加 30 = `Geom_OsculatingSurface`。）
+
+> **（存档）一句话（追加 33 收尾态，2026-09-14 —— 已被追加 34 取代）**：**工作口径仍是"先译后调"**（先 1:1 译全 body、把重复载体收敛到真身，代码基本译完再回头调试）。
+> 本轮（追加 33）**把追加 32 队列的第 2、3 项一次做完**：`UpdateEdge` 家族**全库收敛完毕**（**9 个站点**改走唯一真身 `topods::update_curves_range`，含**审计清单外的 `fillet/hbuilder.rs`**）+ `gp.rs` 矩阵约定**全量审计**（813 行全读、**32 项判 ALIGNED**）。
+> **★ 本轮最重要的产出：再挖出并修掉 2 个同类内核缺陷** —— **`Trsf::set_displacement` 的两处转置乘**（`gp_Trsf.cxx` L218-240）与 **`Trsf::multiplied` 漏乘 `scale`**（`gp_Trsf.cxx` L544-559）。两处都**潜伏**（唯一调用点恰好落在退化配置上），已补**判别性**回归测试。
+> **门槛（当前基线）**：**427/0/0 · 714/0 · 36/36 · 26/26 · 76/76 · 1/1**（kernel 712 → **714** = 两个新测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格的真实断言数与追加 32 基线逐项相同**。
+> **★ 方法学（第六轮同一结论，本轮证据最硬）**：本轮修的是**真实内核缺陷**，却在八网格与 16 个域网格上**全部零可见** —— 因为**唯一调用点恰好都落在缺陷的退化配置上**（`Ax3::new()` = 零位置 + 单位姿态；`sweep_section_generator` = scale 1）。
+> ⇒ **"触发用例缺口"卡应改写为"补判别性单测"**：这类错误的暴露条件可精确刻画（**轴位置、角度是否对称、缩放值、FromA1 姿态**四个变量），一条 20 行单测即可永久钉死，比新造几何用例便宜得多。
+> **★ 本轮最值钱的手法**：**判别性必须实证，不能靠推导自证** —— 修复后把公式**临时改回旧形**跑一遍，确认新测试真的 FAILED 再还原（本轮两个新测试双双 FAILED，其余四个仍 ok）。
+> **★ 第二条手法**：**清点同族站点时不要按变量名 grep** —— `fillet/hbuilder.rs` 用 `edp.range` 做变量名，直接漏过追加 32 的清点；改用名无关模式 `is_infinite_value\([A-Za-z_0-9]*\.range\[`（**与坑 28 同族，同一处栽了第二次**）。
+> （历史：追加 21–32 收尾态见下方存档块；追加 32 = `set_rotation` 转置修复 + `UpdateEdge` 首次收敛；追加 25 = `blend_simple_a1` 通过；追加 28 = `LocOpe_SplitShape` 全类；追加 30 = `Geom_OsculatingSurface`。）
+
+> **（存档）一句话（追加 32 收尾态，2026-09-13 —— 已被追加 33 取代）**：**工作口径仍是"先译后调"**（先 1:1 译全 body、把重复载体收敛到真身，代码基本译完再回头调试）。
 > 本轮（追加 29–32）**四批、纯翻译为主**：`Approx_SameParameter`（992 行）· `UIso/VIso` 重复收敛（删 9 处 + 修 canonical 真身的基本面型臂缺陷）· `GeomLib_CheckCurveOnSurface`（774 行）· `Geom_OsculatingSurface`（839 行）+ `Geom_OffsetSurfaceUtils` ⇒ **canonical `UIso/VIso` 的 `Offset` 臂打通** · 曲面导数层补全（`BSplSLib::RationalDerivative`/`D0–DN`/Bezier `EvalD0–DN`，修掉 `bspline_surface_dn` 越界与 `BezierSurface::point_at` 有理求值缺陷）· `UpdateEdge` 家族收敛成唯一真身 · `Surface3::dn` 余留五面型补全。
 > **★ 最重要的产出是修掉一个真正的 kernel 缺陷**：**`gp_Trsf::SetRotation` 的 `loc` 用了转置矩阵**（OCCT `gp_XYZ::Multiply(const gp_Mat&)` = `<me> = theMatrix * <me>`，`gp_XYZ.hxx` L308-309）⇒ **任何「轴不过原点」的旋转此前都错**；由 `bcut_simple_g6` 回归（面积 41187.4 → 61953.63，拓扑全过）逼出，见 §0.0h 的定位链。
 > **门槛（当前基线）**：**427/0/0 · 712/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110）；**15 个域网格的真实断言数与基线逐项相同**。
@@ -18,31 +67,261 @@
 > 另有两条"旧笔记会过期"（坑 29/30）：**架构难点要回查 OCCT 基类**、**`GetType()` 常量返回决定分支**。
 > （前三轮：**追加 18** = 翻译补全轮；**追加 17** = D3 结案 + `featrf_a1` init 首次通过；**追加 16** = 0a 收尾 / a1 拓扑全等 / TKOffset 定界。）
 
-## 0. 新 session 一句话提示词（直接粘贴 —— 追加 32 收尾态，2026-09-13）
+## 0. 新 session 一句话提示词（直接粘贴 —— 追加 38 收尾态，2026-09-14）
 
 > 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 坑清单；
-> **先读顶部"追加 32 收尾态"一行 + §0.0h**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–32
-> （权威脉络，**追加 32 是当前状态**）；
-> 先 `cd rcad` 跑 6 条门槛确认 **427/0/0 · 712/0 · 36/36 · 26/26 · 76/76 · 1/1**，
+> **先读顶部"追加 38 收尾态"一行 + §0.0n**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–38
+> （权威脉络，**追加 38 是当前状态**）；
+> 先 `cd rcad` 跑 6 条门槛确认 **450/0/0 · 736/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests`（**重编 exe，否则八网格会拿旧产物误判**）
 > 后 `bash output/run_eight_grids.sh` 确认**八网格 8/8**（375/378/379/373/12/102/83/110）；
-> 然后**按 §0.0h 的队列继续"先译后调"**——**先只做 1:1 翻译/接线**（逐行语句对照 + OCCT 行号锚点 +
+> 然后**按 §0.0n 的队列继续"先译后调"**——**先只做 1:1 翻译/接线**（逐行语句对照 + OCCT 行号锚点 +
 > 禁载体/禁等价替换/禁凑结果 + 架构差异先消灭再对齐），**代码基本译完前不针对性修测试数值**；
 > **涉及布尔层的代码直接复用已对齐的 `bop/**`（TKBO）实现、不要重写第二份**（`BRepAlgoAPI_*` 包装层按 OCCT 形式接线到既有真身）；
 > **立卡前先按 OCCT 函数名 grep 全库**（`panic!("GAP…")`/`unimplemented!` 的文案会过期，多例真身其实早已在库）；
 > **失败层深度自检必须看 backtrace 而不是失败地图行号**（追加 19 实测：同一 `topods.rs:1799` 背后换了调用帧，行号完全看不出推进 —— 见坑 28）；
-> **★ 改内核几何/容差/区间类代码必须跑八网格**：追加 29–32 证明 15 个域网格对这类修正**近乎不敏感**，
-> **唯一的探测器是八网格**（本轮 `bcut_simple_g6` 就是靠它抓到的；回归时先 `git stash -- <可疑目录>` 二分）；
+> **★ 改内核几何/容差/区间类代码必须跑八网格**：追加 29–33 证明 15 个域网格对这类修正**近乎不敏感**，
+> **唯一的探测器是八网格**（追加 32 的 `bcut_simple_g6` 就是靠它抓到的；回归时先 `git stash -- <可疑目录>` 二分）；
+> ⚠ 但追加 33 给出了**边界**：**唯一调用点落在退化配置上**时，真实内核缺陷连八网格也抓不到（第六轮"零可见翻转"即此）。
 > **★ 数值不等价时先看"自洽对"**：差分导数与 `point_at` 按构造自洽 ⇒ 「旧 `point_at`+差分 = OCCT 参考」而
-> 「新 `point_at`+差分 ≠ 参考」即可**立刻**判定**新体**有误，无需通读代码（本轮 30 分钟定位内核缺陷的关键手法）；
-> **★ 手写矩阵约定必查左右乘**：本轮根因是 `gp_XYZ::Multiply(gp_Mat)` 的语义（`<me> = theMatrix * <me>`）被写成转置；
-> 这类错误在"轴过原点"或"对称角"用例下**完全不可见**，写/改任何 `Trsf`/`Mat` 助手时逐句对 OCCT；
+> 「新 `point_at`+差分 ≠ 参考」即可**立刻**判定**新体**有误，无需通读代码（追加 32 定位内核缺陷的关键手法）；
+> **★ 手写矩阵约定必查左右乘**：根因是 `gp_XYZ::Multiply(gp_Mat)` 的语义（`<me> = theMatrix * <me>`）被写成转置；
+> 这类错误在"轴过原点"/"对称角"/"scale = 1"/"FromA1 单位姿态"下**完全不可见**，写/改任何 `Trsf`/`Mat` 助手时逐句对 OCCT
+> （追加 33 又抓到**两处**同族：`set_displacement` 两处转置乘、`multiplied` 漏乘 `scale`）；
+> **★ 判别性单测必须实证**（追加 33 新立，追加 34 升为硬规矩）：修完把公式**临时改回旧形**跑一遍，确认新测试真的 FAILED 再还原 ——
+> 「我推导过它一定会失败」不算数：追加 33 手工推导先错过一次，**追加 34 更狠 —— `transform_vec`/`transform_dir` 的第一版测试
+> 在扰动下依然通过**（归一化抵消了正缩放，只有 `scale = ±3` 里的**负值**经末尾取反才暴露），**不扰动就得不到真判别性**；
+> **★ 别把"注释说缺"当成"真缺"**（追加 34 第三次应验）：`Trimmed` 的 `EvalDN` 一直在 OCCT 里（`Geom_RectangularTrimmedSurface.cxx` L419-429），
+> 记档却写了"无对应" —— 动手前先 grep OCCT 真身，见坑 7 / 追加 32 的 `EmptyCopy`；
+> **★★ 动手前先验证"记档与任务前提"本身**（追加 35 升为硬规矩，**与"判别性必须实证"并列**；追加 36/37 各再证一次）：追加 37 三次翻车 ——
+> `AdjustPeriodic` 的记档**位置**写错（在 `fillet/**` 不在 `bop/**`）；`bop/**` 那两处**根本不是同一个 OCCT 函数**（OCCT 有**四个**同名者，
+> 判"是否同一个"必须逐站点判）；**canonical `epsilon_of` 的公式与锚点都错**（自称 `Precision.hxx::Epsilon`，而该头文件没有它，
+> OCCT 的 `Epsilon(double)` 是 **nextafter 间隙**，`Standard_Real.hxx` L242-246）。**"canonical"两个字不等于"已对齐"** —— 必须回源；
+> 派子代理时务必把"若前提不成立就停下来报告"写进任务书；
+> 队列说 `TrsfForm` 缺"四个"变体（实际 2D 无 `Ax2Mirror`，只缺三个）；更要命的是"收敛到 canonical 精确体"的**前提本身为假**
+> （所谓 canonical 体**自己就是第三份近似**）。**若照前提执行，会把两份近似合并成一份近似：看起来收敛了、实际什么都没修。**
+> 派子代理时务必把"若前提不成立就停下来报告"写进任务书；
+> **★ 代数自洽 ≠ 几何正确**（追加 35 新立）：组合律断言（`A.multiplied(B) == A(B(P))`）**抓不到矩阵转置**（对同一个错矩阵自洽），
+> 只有断言**独立几何量**（Rodrigues / Householder / 绕心旋转 / 投影）的测试能抓 —— **两类断言都要留，不可互相替代**；
+> **反过来，测试失败先怀疑测试**：追加 35 一例的期望值算错（误以为 `set_scale` 保留矩阵，OCCT 实际 `matrix.SetIdentity()`），代码是对的；
+> **追加 36 一轮内出现三处**（全部"代码对、期望错"）⇒ 这条**升为常规动作**，且**期望值只能来自 OCCT 公式或独立几何定义，不能来自"我以为"**；
+> **★ 遇到 OCCT 自身的怪癖，钉 OCCT 行为而不是钉"数学上对的性质"**（追加 36 三例，最容易帮倒忙）：`gp_Trsf2d::Invert()` 对
+> `gp_PntMirror` **不是**数学逆（只反 offset，3D `gp_Trsf::Invert` 一样，`gp_Trsf.cxx` L406-409）；`SetValues` 的 `M.Divide(s)`
+> 经公开 API **不可观测**（后续 `Orthogonalize` 抵消）⇒ 如实记"不可观测"、不假装覆盖；`SetTranslationPart` 从 `gp_Rotation`
+> 出发得到 `CompoundTrsf`（cxx L113-116 的 catch-all）。**若照"数学直觉"去写断言或去"修正"实现，反而会与 OCCT 分叉**；
+> **★ 移植了 OCCT 自带测试 ≠ 覆盖完整**（追加 38 新立）：OCCT 自己的 `TEST(ElclibTests, AdjustPeriodic)` **五个用例都不覆盖它自己的
+> `Epsilon(ULast)` 守卫**（禁掉守卫五个用例照样全过），而该守卫是那条公式的**唯一消费者**。移植值得做，**移植完必须自己扰动一遍**；
+> 判别性输入的挑选同样要实证 —— 追加 38 第一版用"周期很小但不为零"**不判别**（wrap 恰好落回同值），只有**零长度区间**（除以 0 ⇒ NaN）才判别；
+> **★ "多处复制了同一错误"要先逐份核验**（追加 38）：记档说错误公式被复制到多处，实测**每一份副本都是对的**、错误只在 canonical 体一处 ——
+> 若不复核就会去"修"一批本来正确的代码（**好消息型推翻**，同样省下了白工）；
+> **★ 清点同族站点不要按变量名 grep**（追加 33 新立）：用名无关模式
+> `is_infinite_value\([A-Za-z_0-9]*\.range\[` 才不漏 —— `fillet/hbuilder.rs` 的 `edp.range` 就漏过了一整轮清点（与坑 28 同族）；
 > 每 Edit 后 `cargo check -p rcad-algo`；**跑非门槛网格一律加 `timeout`**（§6 坑 16）；探针即用即清
 > （提交前 `git diff | grep -c "+.*eprintln"` = 0，OCCT 侧探针用后 `git checkout --` 还原 + 重建 DLL）；
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0h 追加 32 收尾态（2026-09-13；**最新** —— 翻译优先轮第四批 + 一次回归的从根修复）
+### 0.0n 追加 38 收尾态（2026-09-14；**最新** —— 三线并行：OCCT gtest 移植 + `epsilon_of` 复制族收敛（前提推翻）+ `bean_face_intersector` 误标翻译）
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
+> 追加 38 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **450/0/0 · 736/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 451 → **450**、kernel 733 → **736**）；**八网格 8/8**；**16 个域网格与基线逐项相同**。合并后一次实测；探针 = 0；扰动实验全部还原。
+- **★ 批次 1（主代理）：移植 OCCT 自己的 `AdjustPeriodic` 测试，并发现它的覆盖缺口**（`rcad-kernel/src/math/el.rs`）。
+  OCCT `GTests/ElCLib_Test.cxx` **L83-124** 五个用例**逐字移植**（同实参同期望值，`Precision::Confusion()` ↔ `precision::CONFUSION`）+ 无限区间一例。此前 rcad 对 canonical 体**零测试**。
+  **★ 缺口**：这五个用例**完全不覆盖 `Epsilon(ULast)` 守卫** —— 把守卫**整个禁用**，五个用例**照样全过**；而该守卫是 `epsilon_of`（追加 37 刚修的公式）的**唯一消费者** ⇒ 此前**零覆盖**。
+  **补判别性测试**：**零长度区间**（`u_first == u_last`）是唯一能暴露守卫的输入 —— 无守卫时 `a_period == 0.0` 作除数 ⇒ **NaN**。
+  **★ 并实证了一个"不判别"的反例**：第一版用"周期很小但不为零"（跨 binade）**在守卫禁用下仍通过**（wrap 恰好落回同值）⇒ 只有零长度判别。
+- **★ 批次 2（子代理）：`epsilon_of` 复制族收敛 —— 前提被推翻**。
+  **记档"同一错误公式被复制到多处"是错的**：HEAD 里**每份副本的公式本来都对**（四种写法数值相同）。错误公式**只在 canonical 体一处**（即追加 37 修掉的那个）⇒ 收敛是**严格数值无操作**。
+  **仍落地的结构收敛**：canonical 扩为 `pub fn epsilon_of` · **删 6 份本地体**、调用点指向 kernel · `direct_polynomial_roots.rs` 的 `epsilon` 保留为 **re-export**（消费者在 `topalgo/**`，超出该子代理范围）。
+  **★ canonical 修正的实际影响**：旧公式在 `10.0` 给 `2.22e-15`、OCCT 给 `1.78e-15`，而 `10.0` 正是 `adjust_u_periodic` 的比较值 ⇒ **一条分支判据上曾有 25% 的阈值误差**，现已消除。
+  **另报 4 份清单外副本（未改）**：两份 `standard_epsilon`（公式正确）；两份 `epsilon` **偏离 OCCT**（见批次 4）。
+- **★ 批次 3（子代理）：`bean_face_intersector` 的 `AdjustPeriodic` 误标 —— 确认为真，1:1 翻译**。
+  OCCT `IntTools_BeanFaceIntersector.cxx` **L599-649**：L612 `aEps = Epsilon(aUPeriod)`、L614-620 调 #2、**L621-623 无条件** `solutionIsValid = true; bUCorrected = true; U = aNewU;`，**忽略返回值**（V 块 L638 同理）。旧 rcad 是自创重写（`1e-12*period` + `ceil` 夹取 + 自创 `ok` 门）。
+  **三处实质行为变化**：① **移除 rcad 独有的拒绝** —— UV 窗口**窄于周期**的 U 周期面（**半圆柱这类修剪柱面**）旧码**丢掉**窗口外的交点、OCCT 保留（带平移 U）；② 守卫 eps `6.28e-12` → `Epsilon(period)` ≈ `8.88e-16`；③ 平移 `ceil` → `modf/trunc`（恰为周期整数倍且越界时**差一个周期**）。
+  **Job 2**：`adjust_periodic_pair` 判为 **#3** 的 1:1 形态 ⇒ 定为 canonical（`pub(crate)`），**四处 eps `PCONFUSION`(1e-7) → `0.0`**（OCCT 用声明默认）—— **真实行为偏离**：越界 ≤1e-7 的参数此前**不平移**、现在平移一整周期（同点，UV 差 2π）。`face_make_curve.rs` 的 `adjust_periodic_uv` 收成三行 shim。
+  **爆炸半径**：`GeomIntLineConstructor` → `GeomIntIntSS` → `feat/loc_ope_split_drafts*.rs`，**不在布尔网格路径上**。algo 451 → 450（删的就是它那个主体已消失的测试）。
+- **★ 批次 4（主代理）：两处返回 `MIN_POSITIVE` 的 `epsilon` 修正**。
+  `hlr/intrv/mod.rs:45` 与 `fillet/chfi3d_perform_elspine.rs:65/79`：OCCT 的 `nextafter(0,+Inf)` 是**最小正次正规数 5e-324**，二者却给 `MIN_POSITIVE`(2.2e-308) —— **差 4.5e16 倍**。已改为 `f64::from_bits(1)`（负向取负）。两个 helper 的文档都自称 OCCT `Epsilon`，属"自称对齐、实际偏离"同类。
+- **★ 方法学（第十一轮"零可见翻转"）**：批次 3 **改变了接受集合**与下游 UV 值、批次 4 改了两个容差 helper 的零行为 —— 八网格与 16 个域网格**全部零可见**。
+  **★ 两条新教训**：① **移植 OCCT 自带测试 ≠ 覆盖完整**（必须自己扰动）；② **"多处复制了同一错误"要先逐份核验**（本轮是**好消息型**推翻，没有代码被污染）。
+- **⏭ 下一轮队列（按序）**：
+  1. **两处 `epsilon` 收敛到 kernel canonical**（新立）：`hlr/intrv/mod.rs`、`fillet/chfi3d_perform_elspine.rs` —— 公式已对齐，但仍是两份本地实现。
+  2. **两份 `standard_epsilon`**（`geomalgo/geom_int_line_constructor.rs:1165`、`kernel/src/geom/mod.rs:743`）：公式正确，**是否同一个 OCCT 表达式**待判。
+  3. **`bean_face_intersector` 的行为变化需域网格之外的对拍**：爆炸半径在 `LocOpe_SplitDrafts` ⇒ 核对该链失败层深度（`feat_featlf`/`feat_featrf` + `loc_ope_split_drafts` 直测）。
+  4. **`tkgeom_algo_gtests::geom_fill_corrected_frenet_tests::endless_loop_prevention` 既有 panic**（子代理报出，与本轮无关）：`GCPnts_TangentialDeflection is not available in rcad-kernel`（`base/extrema_ext_pc.rs:119`）。
+  5. **canonical `epsilon_of` 的消费者阈值抽查**（可选）：`Intf_InterferencePolygon2d`、`GeomInt_IntSS_1` 等分支判据。
+  6. 追加 37 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · 池外读取链复核 · blend 剩余十例 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · 过期锚点勘误）。
+- **复测脚本**：`rcad/temp/run_gates.sh` · `rcad/temp/run_domain_grids.sh` · `rcad/temp/validate_round5.sh`。
+
+### 0.0m 追加 37 收尾态（2026-09-14；**已被追加 38 取代 —— 见 §0.0n** —— 三线并行：`Ax3` 补回平行分支 + `Init` 的 `my_location` + `AdjustPeriodic` 收敛与 `epsilon_of` 修正）
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
+> 追加 37 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **451/0/0 · 733/0 · 36/36 · 26/26 · 76/76 · 1/1**（kernel 728 → **733**）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。三线 + 批次 4 **合并后一次实测**；探针 = 0；扰动实验全部还原；改动文件全部 ≤ 2000 行。
+- **★ 批次 1（主代理）：`Ax3` 形态学补全 —— 本轮真正的翻译缺口**（`rcad-kernel/src/math/gp.rs`）。
+  **缺口**：`Ax3::set_direction`（`gp_Ax3.hxx` **L506-534**）与 `set_x_direction`（**L540-570**）**各缺一个平行分支**。给定方向与主方向（或当前 X）**(反)平行**时 `theV ^ (vxdir ^ theV)` 退化为零，OCCT 改为**重贴轴标签**：
+  `set_direction`：`aDot>0` ⇒ `vxdir ← old vydir, vydir ← old axis`（L511-515）；`aDot<0` ⇒ 仅 `vxdir ← old axis`（L516-519）。
+  `set_x_direction`：`aDot>0` ⇒ `axis ← old vxdir, vydir = -vydir`（L545-549）；`aDot<0` ⇒ 仅 `axis ← old vxdir`（L550-553）。
+  **rcad 旧版代入零向量 ⇒ 产出退化框架**（单位性/正交性全破坏）。判据 `1-|aDot| <= Precision::Angular()` ↔ rcad `precision::ANGULAR`。
+  **同时**把 `direct()` 从存储字段改为 OCCT 的**推导式**（`gp_Ax3.hxx` **L208**：`(vxdir ^ vydir)·axis.Direction() > 0`），删除只被构造函数置 `true` 的 `sense` 字段（追加 33 审计点名的"陈旧模型"）。
+  **4 个新测试（gp 17 → 21）+ 3 次扰动实证**（关平行分支 ⇒ 两个平行测试失败；`direct()` 恒真 ⇒ 间接框架测试失败），**每个扰动只杀自己的目标**。
+- **★ 批次 2（子代理）：`Init` 的 `my_location`（追加 36 报出）—— 记档为真，已修**。
+  OCCT `BRepLib_FindSurface.cxx` **L289** 把 `myLocation` 传作 index 重载**出参**，`BRep_Tool.cxx` **L528** 赋 `L = E.Location() * GC->Location()`，消费于 L296/L337/L620；miss 是 `L.Identity()`（L534-537）。rcad 丢弃出参 ⇒ `my_location` 恒 0，L673 的 `loc_j == self.my_location` 拿 pcurve 哈希比一个**从不更新**的值。
+  **落地**：私有 index 重载返回 OCCT 组合后的 location，用**边包装 location** 表达（rcad 把 pcurve 存在边的局部框架）——**与孪生再宿主 `build_curves3d.rs:677-678` 的既有替换一致**，未新造规则；miss 返回 0。旁证：`fs.location()` 写进面的曲面放置（`make_face.rs:180`、`brep_feat_rib_slot_b.rs:146`），对应 `BRepLib_MakeFace.cxx:206` ⇒ 必须是**绝对 location**。
+- **★ 批次 3（子代理）：`AdjustPeriodic` 收敛 —— 记档"位置"写错**。
+  **记档说残留两份在 `bop/**`；实际在 `fillet/chfi2d_ana_fillet_algo.rs` 与 `fillet/chfi2d_builder.rs`**（追加 29/30 正文本来就写着 fillet，是后续引用把位置串错）；而 `bop/**` 那两处**不是同一个 OCCT 函数**。
+  **OCCT 有四个同名 `AdjustPeriodic`**：**#1** `ElCLib::AdjustPeriodic`（`ElCLib.cxx` **L115-149**）· **#2** `GeomInt::AdjustPeriodic`（`GeomInt.cxx` **L21-48**，`theEps` 默认 **0.0**，返回 bool）· **#3** `GeomInt_LineConstructor.cxx` 文件静态包装（L737-816）· **#4** `GeomInt_LineTool.cxx:128`。判"是否同一个"**必须逐站点判**。
+  **收敛**：#1 → kernel `elclib_adjust_periodic`（**删 4 份 / 改 7 个调用点**）；#2 → `geomalgo::geom_int_line_constructor::geom_int_adjust_periodic`（**删 3 份 / 改 7 个调用点**），并按各 OCCT caller 传的 eps 设定，其中 `face_make_curve.rs` **1e-9 → 0.0**（1e-9 不是任何 OCCT caller 传的值）。
+  **四份 #1 的守卫差异（如实记档）**：kernel 用 `epsilon_of(u_last)`（OCCT 的参数 / 非 OCCT 的公式）· bop 用 `standard_epsilon(a_period)`（OCCT 的公式 / **参数错** ⇒ 溢出守卫对小周期不触发）· fillet ×2 与 `tool_rehost` 用 `|ulast|*DBL_EPSILON`（≈kernel）⇒ **收敛到 kernel 体**（守卫行为与 OCCT 一致），bop 体因参数错被否决。
+  **未改并记档**：`bean_face_intersector.rs:1919` **标错**（自创 ceil 夹取 + `ok` 门，收敛会**改变管线控制流** ⇒ 需独立卡）；`adjust_periodic_uv` 是 #3，又被 `geomalgo` 的 `adjust_periodic_pair` 重复（后者传 `PCONFUSION`，OCCT 传 0.0）。
+  **★ 并推翻一条文档断言**：kernel `el.rs` 称 canonical 体"含 `Epsilon(theULast)`"，而 `epsilon_of` 自称 `Precision.hxx::Epsilon`、公式 `Max(|v|,RealSmall())*RealEpsilon()` —— **两半都错**。
+- **★ 批次 4（主代理）：canonical `epsilon_of` 1:1 修正**（`rcad-kernel/src/base/extrema_ext_elc.rs`）。
+  按 OCCT 的 **nextafter 间隙**重写（`f64::from_bits(bits ± 1)`），锚点/文档一并改正；**1 个判别性测试**（`epsilon_of(1.5)` 必须是**一 ulp** = 2.220446049250313e-16，旧公式给 3.33e-16 即判别点）+ 扰动实证。
+  **数值影响**：同一 binade 内旧式与 OCCT 最多差 **2 倍**；`1.0` 等 2 的幂处**完全相同**；只对**次正规**输入真正咬合。
+- **★ 方法学（第十轮"零可见翻转"）**：内核形态学（`direct()` 存储→推导）、`Init` 的 location、`AdjustPeriodic` 收敛、`epsilon_of` 公式 —— 八网格与 16 个域网格**全部零可见**。
+  **★ 本轮三次"回源核验救命"**（位置错 / 不同函数 / canonical 公式错）⇒ 与追加 35/36 合并，**"canonical / 记档必须逐条回源核验"已是常态动作**。
+- **⏭ 下一轮队列（按序）**：
+  1. **`epsilon_of` 复制族收敛**（新立）：仓库里还有 **~7 份本地 `epsilon_of`**（`brep_fill_sweep.rs:743`、`geom_int_int_ss_1.rs:348`、`intf_interference_polygon2d.rs:24`、`int_conic_conic_lin_ells.rs:30`、`law_bspline.rs:29`、`geom2d_convert/bspline_curve.rs:53` 等），**每份都可能复制了同一错误公式** ⇒ 逐份对 OCCT 锚点核验后再合并到 kernel 真身。
+  2. **`bean_face_intersector.rs:1919` 的 `AdjustPeriodic` 误标**（新立）：收敛会改变管线控制流（当前 rcad 拒绝 OCCT 接受的解）⇒ 需独立评估。
+  3. **`adjust_periodic_uv`(#3) 与其重复 `adjust_periodic_pair`**（新立，便宜）。
+  4. **移植 OCCT `ElCLib_Test.cxx:83` 的 `TEST(ElclibTests, AdjustPeriodic)`（5 断言）**守护 canonical 体。
+  5. **其余内核助手的判别性测试**：`gp.rs` 的 `Trsf` 助手卡已关（21 测试）；同一手法继续扫 `Lin::*`、`Ax2::from_direction` 的分支树。
+  6. 追加 36 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · 池外读取链复核 · blend 剩余十例 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · 过期锚点勘误）。
+- **复测脚本**：`rcad/temp/run_gates.sh` · `rcad/temp/run_domain_grids.sh` · `rcad/temp/validate_round5.sh`。
+
+### 0.0l 追加 36 收尾态（2026-09-14；**已被追加 37 取代 —— 见 §0.0m** —— 三线并行：`gp_Trsf2d` 全类译完（抽模块）+ `gp.rs` 判别性单测 + 超长文件拆分与 location 勘误）
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
+> 追加 36 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **451/0/0 · 728/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 438 → **451**；kernel 723 → **728**）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。三线**合并后一次实测**；探针 = 0；扰动实验全部还原；**改动文件全部 ≤ 2000 行**。
+- **★ 批次 1（主代理）：`gp.rs` 判别性单测补齐 + `eval_b.rs` 守卫政策勘误**。
+  **5 个新测试（12 → 17）**：`vectorial_part_folds_in_the_scale` · `value_folds_in_the_scale_and_reads_the_location` · `is_negative_reads_the_scale_not_the_form` · `set_translation_part_follows_the_occt_form_transitions` · `set_scale_factor_follows_the_occt_form_transitions`（12 例表驱动）。
+  **3 次扰动实证**：`is_negative` 改读 `form` ⇒ 只有它失败；`vectorial_part` 忘记乘 scale ⇒ 它 + 消费者 `transform_vec` 一起失败（正确归因）；`set_translation_part` 的 `_` 臂改成无条件 `CompoundTrsf` ⇒ 只有它失败 —— 判别性正落在「**Rotation + 零位移应保持 `gp_Rotation`**」（OCCT L264-280 的 `if (!loc_null)`）。
+  **`eval_b.rs` 勘误**：该模块头注称 `Geom_UndefinedDerivative` 守卫"无 rcad 对应、故不复现"——**假的**。`BSplSLib::DN`（本模块再宿主的**叶子**，`BSplSLib.cxx` L1519）确实无阶数检查，但守卫属 `Geom_*` **包装层**，rcad **确实复现了**（`eval.rs` Trimmed 臂 / `extrusion_utils.rs` / `revolution_utils.rs` / `eval_c.rs` / `curve_dn.rs`）。**并记下**：OCCT 把守卫放在 eval-rep 短路的**两侧**（`Geom_BSplineSurface::EvalDN` L279-285 在**前**、`Geom_BezierSurface::EvalDN` L1674-1677 在**后**）⇒ **不能把共享守卫提到两者之上**。
+- **★ 批次 2（子代理）：`gp_Trsf2d` 全类译完 + 抽模块**。
+  译全余下 **10 函数 + `Power`**（全部逐语句 + OCCT 行号）：`SetTransformation(Ax2d,Ax2d)`（cxx L48-70）· `SetTransformation(Ax2d)`（L72-84）· `SetTranslationPart`（L86-117）· `SetScaleFactor`（L120-196，3 外层 × 6 内层标签迁移）· `VectorialPart`（L198-214，含对角分支）· `RotationPart`（L216-219）· `Invert`（L221-251，4 分支含 2 raise）· `Power`（L384-548）· `PreMultiply`（L550-671，15 分支）· `SetValues`（L676-710）· `Orthogonalize`（L721-749）；新助手 `mat2_transpose`（`gp_Mat2d.hxx` L394-399）、`gp_xy_normalize`（`gp_XY.hxx` L410-417）。
+  因加测试会越 2000 行，**整个载体字节级抽到新模块** `shhealing/shape_extend/trsf2d.rs`（1631 行），`composite_surface.rs` 1866 → **746**；`mod.rs` 声明并 re-export，**旧路径仍可解析**。
+  **13 新测试（`trsf2d` 模块 22）+ 12 次判别性扰动实验**（注入错形 ⇒ 目标 FAILED ⇒ 还原，文件 md5 复原）。
+  **★ 三条如实记档的 OCCT 怪癖**：**（a）`Invert()` 对 `gp_PntMirror` 不是数学逆**（cxx L231-234 只反 offset ⇒ `t_inv(t(p)) == p - 4c`；**3D `gp_Trsf::Invert` 完全相同**，`gp_Trsf.cxx` L406-409）⇒ 翻译与之对齐、**测试钉 OCCT 行为**；**（b）`SetValues` 的 `M.Divide(s)`（cxx L701）经公开 API 不可观测**（`s = sqrt(|det|)>0`，随后 `Orthogonalize` 归一化精确抵消）⇒ **如实记"不可观测"，不假装覆盖**；**（c）`SetTranslationPart` 从 `gp_Rotation` 出发得到 `CompoundTrsf`**（cxx L113-116 catch-all）。
+  另记：`VectorialPart` 对角专用分支与 `Orthogonalize` 行 pass 经公开 setter 不可达/不可单独观测（已注明）。
+- **★ 批次 3（子代理）：超长文件拆分 + location 比对勘误（记档为真）**。
+  **`brep_fill_sweep.rs` 2072 → 1822 行**：把 `bspline_surface_iso_tests`（追加 35 新增）与相邻 `offset_surface_iso_tests` 整体移到兄弟文件（71 + 179 行），按既有 `#[path]` 约定声明；**测试名与全路径逐字节不变**、**测试数 438 → 438 不变**、生产代码零改动。
+  **location 勘误为真**：OCCT `BRep_Tool.cxx` **L350** `const TopLoc_Location loc = L.Predivided(E.Location());`，存进表示的也是同一 predivided 值（`BRep_Builder.cxx` L645/L692），`IsCurveOnSurface` 按**相等**比（`BRep_CurveOnSurface.cxx` L59-63）⇒ 调用方须先把**原始 `L`** 除以边 location。rcad 的 `_stored` 却拿 `key.1`（predivided 哈希）比**原始** `the_location`（**两个量不同**）；同族 `shhealing/shape_analysis/edge.rs:131` 才正确。已对齐（位置亦照 OCCT L350 提到 rep 循环之前）。**行为影响**：identity location 边不变；**loc 边旧代码永远匹配不上**、改后能匹配 ⇒ 严格更接近 OCCT。
+  **⚠ 另报一处更大的相邻缺口（未改，见队列第 1 项）**：同文件 `Init`（L651）**丢弃** index 重载的 location 出参、从不赋 `self.my_location`（恒 0），而 OCCT 设 `myLocation = E.Location() * GC->Location()`（`BRep_Tool.cxx` L528）。
+- **★ 方法学（第九轮"零可见翻转"）**：本轮全部改动在八网格与 16 个域网格上**零可见**。
+  **★ 新形态问题：一轮内三处"测试写错"**（我两处 + 子代理一处），**全部"代码对、期望错"** ⇒ **"测试失败先怀疑测试"升为常规动作**，且**期望值只能来自 OCCT 公式或独立几何定义**。
+- **⏭ 下一轮队列（按序）**：
+  1. **`brep_lib_find_surface.rs` 的 `Init` 丢弃 location 出参 + `my_location` 恒 0**（新立，**比已修的那处更大**）：OCCT `BRep_Tool.cxx` L528 / `BRepLib_FindSurface.cxx` L289/L337。
+  2. **`gp.rs` 的 `Trsf` 助手卡关闭**（15 助手 × 17 测试已全覆盖）⇒ 把同一手法（写测试 → 扰动 → 确认 FAILED → 还原 + 独立几何量断言）用到**其他无测试的内核助手**：`Ax2::from_direction` 的分支树、`Lin::*`、`Ax3::set_x_direction` 等。
+  3. **`Trsf2d` 的三处"不可观测语句"如实留档**（`SetValues` 的 `M.Divide(s)`、`VectorialPart` 对角分支、`Orthogonalize` 行 pass）：**不要假装覆盖**。
+  4. **`mySn` 卡证伪 ⇒ 关闭**：`mySn` 只存在于 `LocOpe_Gluer`（全 TKFeat grep 唯一）且 rcad 侧已完整；下一墙在 `feat/loc_ope_glued_shape.rs:193`（OCCT `LocOpe_GluedShape.cxx` L106-110 的"边面祖先数 != 2"），属**调试/状态类**。
+  5. **`geom/eval_b.rs` 勘误卡关闭**（本轮已改完）。
+  6. 追加 33 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · 过期锚点勘误）。
+- **复测脚本**：`rcad/temp/run_gates.sh` · `rcad/temp/run_domain_grids.sh` · `rcad/temp/validate_round5.sh`。
+
+### 0.0k 追加 35 收尾态（2026-09-14；**已被追加 36 取代 —— 见 §0.0l** —— 三线并行、全翻译类：`gp_Trsf2d` 译完 + BSpline iso 收敛到精确体 + `CurveOnPlane` 回退）
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
+> 追加 35 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **438/0/0 · 723/0 · 36/36 · 26/26 · 76/76 · 1/1**（rcad-algo 430 → **438**；kernel 不变）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。三线**合并后一次实测**；探针 = 0。
+- **★ 批次 1（主代理）：`gp_Trsf2d` 载体译完**（`shhealing/shape_extend/composite_surface.rs`）。
+  **① 记档纠错**：队列写"缺 `Rotation/PntMirror/Ax1Mirror/Ax2Mirror` **四个**"—— **错**。`gp_Trsf2d` 的形态集无 `Ax2Mirror`（双面对称只在 3D；2D 是点对称 `PntMirror` 与线对称 `Ax1Mirror`），**只缺三个**。
+  **② 新译**（逐语句 + OCCT 行号入注释）：`set_rotation(P,Ang)`（hxx **L246-257**）、`set_mirror_pnt(P)`（hxx **L259-266**）、`set_mirror_ax2d`（cxx **L31-46**）、`value(r,c)`（hxx **L301-314**）。
+  **③ `multiplied` 重写为 `gp_Trsf2d::Multiply` 全 15 分支 1:1**（cxx **L253-384**）：旧体只实现 4 条、其余塌成 `CompoundTrsf`；现在分支顺序、每支的 `Tloc`/`scale`/`matrix` 组合与 **form 标签**全跟随 C++（L282 双点对称 ⇒ `Translation`、L288 双线对称 ⇒ `Rotation`、L323 `shape = T.shape`）。两个矩阵助手：`mat2_mul_xy` = `gp_XY::Multiply(gp_Mat2d)` = **矩阵左乘**（`gp_XY.hxx` **L401-406**）；`mat2_mul` = `gp_Mat2d::Multiply` = `this*theOther`（`gp_Mat2d.hxx` **L326-334**）。
+  **④ 6 个新测试 + 2 次扰动实证**（扰动 ⇒ 只有目标测试失败）。**组合律测试**（`A.multiplied(B)` == `A(B(P))`，5 形态 × 25 组合 × 2 点）一条断言覆盖 15 分支的代数。
+  **★ 测试侧两条教训**：**（a）测试失败先怀疑测试** —— 我的 `value` 期望值算错（误以为 `set_scale` 保留矩阵，OCCT hxx L270-277 实际 `matrix.SetIdentity()`），**代码是对的**；**（b）代数自洽 ≠ 几何正确** —— 转置 `set_rotation` 矩阵后组合律测试**不失败**（对同一错矩阵自洽），只有断言独立几何量的测试失败 ⇒ **两类断言都要留**。
+- **★★ 批次 2（子代理）：BSpline `UIso/VIso` 收敛 —— 推翻任务前提**。
+  **前提只有一半为真**：任务书假设"canonical 体精确、两份副本近似"，实测**canonical 体自己就是第三份 de Boor 近似**。子代理因任务书禁止"收敛到另一份近似"而**先读 OCCT 再动手**，否则会把两份近似合并成一份、**看起来收敛实际没修**。
+  **落地**：canonical 臂改接**精确** `bspl_slib_iso`（`BSplSLib::Iso` 1:1，`BSplSLib.cxx` **L1617-1740**），逐语句对齐 `Geom_BSplineSurface::UIso`（`Geom_BSplineSurface_1.cxx` **L598-630**）/`VIso`（**L775-807**），含 `Rational()` 选权、`NoMults()` 扁平节点、**逆向**的节点/次数/周期传递；删掉两份副本（`brep_fill_nsections.rs:1027`、`geomfill/nsections.rs:280`），5 个调用点改接，三文件 `de_boor_homo` **grep = 0**。
+  **★ 量出的真实行为差异（此前一直错着）**：① **域外参数**（V=1.4 于 [0,1] 面）旧体夹到边界极 `(0,1,2)`、精确体**外推** `(0,1.4,2.8)`，**极差 0.894**；② **权重全 2.0 的均匀有理面**旧判据 `any weight != 1.0` **不是** OCCT 的 `Rational()`（权重留 2.0 vs 写 1.0）；③ **周期面**旧体无任何周期处理且硬编码 `is_periodic: false`（潜伏：树里无周期面）。域内非周期两者数学等价（三次 max 极差 3.1e-16）。
+- **★ 批次 3（子代理）：`CurveOnPlane` 回退 —— 记档为真，已补齐**。
+  **字形容易误读**：`CurveOnPlane` 是**函数**（`BRep_Tool::CurveOnPlane`，`BRep_Tool.cxx` **L379-450**），**不是**表示类 —— `BRep_CurveOnPlane` 类**在本 OCCT 树里不存在**。它是 `BRep_Tool::CurveOnSurface(E,S,L,First,Last,theIsStored)`（L327-373）的尾巴，由 **L367-372 `// Curve is not found. Try projection on plane`** 进入（投影得到、**不存**）。
+  **缺口在 topalgo 再宿主**：`topalgo/brep_lib_find_surface.rs:118` 未命中返回 `None`，OCCT 则投影返回；唯一调用者 `is_2d_connected`（镜像 `BRepLib_FindSurface::Is2DConnected`，L76-99）把 `None` 变 `false` ⇒ **与 OCCT 走不同分支**。已补回退 + 新 `brep_tool_curve_on_plane`（1:1 `BRep_Tool.cxx` L379-450：`Geom_RectangularTrimmedSurface` 基面解包、3D 曲线存在性、`aCurveLocation.Predivided(L)` + 缩放重算参数、复用既有投影）。
+  **已核对"不是缺口"**：kernel `BRepTool::curve_on_surface`（`topods.rs:2408`）**早有**回退（`topods.rs:2509-2511`）；`build_curves3d.rs:636` 的 `..._index` **正确地没有**回退（OCCT index 重载也没有）。
+  **⚠ 另报相邻不一致（未改，见队列第 2 项）**：topalgo `_stored` 拿**原始** `the_location` 比对存哈希，而 OCCT（`BRep_Tool.cxx:345`）与同族 `shhealing/shape_analysis/edge.rs:124` 比 `L.Predivided(E.Location())`。
+- **★ 方法学（第八轮"零可见翻转"，本轮连"分支走向改变"也不可见）**：批次 3 把一条分支从"返回 `None`"改成"投影返回"、批次 2 换掉整条求值公式 —— 八网格与 16 个域网格**依然全部零变化**。
+- **⏭ 下一轮队列（按序）**：
+  1. **`brep_fill_sweep.rs` 拆出测试模块**（新立，合规类）：本轮 +75 行测试后该文件 **2072 行**，越过 2000 行红线。
+  2. **`brep_lib_find_surface.rs` 的 `_stored` location 口径勘误**（新立，便宜）：与 OCCT 及同族不一致。
+  3. **`gp.rs` 判别性单测继续**（最高优先，第八次）：仍零测试的 `vectorial_part` / `value` / `is_negative` / `set_translation_part` / `set_scale_factor`；**标准动作 = 写测试 → 扰动 → 确认 FAILED → 还原**，且**同时保留"代数自洽"与"独立几何量"两类断言**。
+  4. **`Trsf2d` 余下的 2D 批**（按需）：`Invert` / `Power` / `PreMultiply` / `Orthogonalize` / `SetValues` / `SetTransformation(Ax2d)` / `SetScaleFactor` / `SetTranslationPart`（`gp_Trsf2d.cxx` 还剩 L86-252、L384-749）。
+  5. **`geom/eval_b.rs` 守卫政策勘误**（追加 34 立卡，仍在）。
+  6. **`mySn` 的构造**（TKFeat，`feat_featrf` 直接前墙）。
+  7. 追加 33 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · 过期锚点勘误）。
+- **复测脚本**：`rcad/temp/run_gates.sh` · `rcad/temp/run_domain_grids.sh` · `rcad/temp/validate_round5.sh`。
+
+### 0.0j 追加 34 收尾态（2026-09-14；**已被追加 35 取代 —— 见 §0.0k** —— 三线并行：`gp.rs` 判别性单测（4→12）+ `Trsf2d` 审计（再抓 2 缺陷）+ `Trimmed`/`dn_at` 补全）
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
+> 追加 34 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **430/0/0 · 723/0 · 36/36 · 26/26 · 76/76 · 1/1**（rcad-algo 427 → **430**；rcad-kernel 714 → **723**；增量全是新测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与追加 32 基线逐项相同**。三线**合并后一次实测**；探针 = 0，扰动实验全部还原。
+- **★ 批次 1（主代理）：`gp.rs` 判别性单测补齐（队列第 1 项）+ 新译一个缺失重载（队列第 3 项）**。
+  **测试 4 → 12**。新增：`transform_vec_folds_in_scale_while_transform_dir_does_not` · `apply_scales_the_matrix_term_only` · `invert_round_trips_scale_rotation_and_translation` · `set_transformation_ax3_maps_its_frame_to_the_standard_frame` · `to_daffine3_agrees_with_apply` · `set_transformation_from_to_changes_between_frames`（另有追加 33 的两个内核缺陷测试）。
+  **★ 5 次扰动实验实证判别性**（改回旧形 ⇒ 目标测试 FAILED ⇒ 还原；每次**只有**目标测试失败）。
+  **★★ 本轮最值钱的意外（P1）**：`transform_vec`（用 `VectorialPart()`，含 scale）与 `transform_dir`（用 `HVectorialPart()`，原始 matrix）这对**第一版测试在扰动下仍然通过 —— 根本不具判别性**。原因：`transform_dir` 末尾的**归一化抵消了正缩放**，只有**负缩放**经 `scale < 0` 的反转才暴露（错体先被 `3R` 缩放、归一化后又被末尾取反 = 双重取反抵消）。测试改为**同时跑 `scale = ±3`** 后 P1 才失败。⇒ **不做扰动实验就会留下"看似覆盖配对、实则恒真"的假回归测试。**
+  **新译 `Trsf::set_transformation_from_to`**（OCCT `gp_Trsf::SetTransformation(FromA1,ToA2)`，`gp_Trsf.cxx` **L172-194**）—— **与 `set_displacement` 是两条不同路径**：前者**换坐标**，后者**搬框架**；OCCT 明说两者 vectorial part **互为逆**（`gp_Trsf.hxx` **L136-137**）。
+  **三处逐字差异（写反就错）**：① 这里 `gp_Mat MA1` **不 Transpose**（`SetDisplacement` 里有）；② `MA1loc.Multiply(matrix)` 乘的是 **`matrix` 而不是 `MA1`**；③ `gp_XYZ::Multiply(const gp_Mat&)` = `<me> = theMatrix * <me>`（`gp_XYZ.hxx` **L308-309**），两处都是**矩阵左乘**。测试用**独立推导**（同一世界点投影到两个框架）断言 + `FromA1 == ToA2 ⇒ 恒等` 的退化检查；扰动 P5（改用 `SetDisplacement` 的转置约定）⇒ 目标测试 FAILED。
+- **★ 批次 2（子代理）：`shhealing/shape_extend/composite_surface.rs` 本地 `Trsf2d` 审计（队列第 2 项）**。
+  对象是**本地** `Trsf2d`（L758-891，`gp_Trsf2d` 的简化 GAP 载体，**不是** `rcad-kernel::math::gp`）；唯一生产/消费点是 `ShapeExtend_CompositeSurface::GlobalToLocalTransformation`（`ShapeExtend_CompositeSurface.cxx` L369-393，构造 `Trsf = Scale * Shift`）。
+  **9 项审计：7 ALIGNED / 2 DEFECT**：
+  1. **`multiplied` 的 catch-all**（`gp_Trsf2d.cxx` **L365-381**）：旧体 `tloc = t.loc * res.scale` 既**漏了矩阵因子**（OCCT `Tloc = matrix * T.loc`，左乘，`gp_XY.hxx` L401-406）又**整条 `matrix.Multiply(T.matrix)` 没做**。反例：`self={matrix=[[1,2],[3,5]],loc=0,scale=2}`、`t={matrix=[[2,0],[0,3]],loc=(1,1),scale=1}` ⇒ OCCT `(10,28)`，旧 rcad `(4,8)`。**与追加 33 的两个 gp 缺陷同族。**
+  2. **`set_scale` 里一个 OCCT 没有的 raise**：`assert!(scale.abs() > f64::MIN_POSITIVE)` 出自 **3D** 的 `gp_Trsf.cxx` L164-165，**2D 类不 raise**（`gp_Trsf2d.hxx` L270-277），语句顺序也不同。**★ 而且可达**：唯一调用点的 `scalev = (v2-v1)/(…)` 在 V 跨度为零的 patch 上就是 **0** ⇒ OCCT 返回退化变换，rcad 直接 abort。**"自创的守卫"与"缺失的步骤"同为缺陷**（对准禁忌"不自创方法"）。
+  **判 UNCERTAIN 且未改（如实记档）**：`Translation∘Translation`/`Translation∘Scale` 的 form 标签与 OCCT 特例不同（rcad 恒 `CompoundTrsf`），**无数值影响**；另记 `TrsfForm` 缺 `Rotation/PntMirror/Ax1Mirror/Ax2Mirror` 四个变体 ⇒ catch-all 保留 GAP 注释。3 个新测试 + 3 次扰动实验。
+- **★ 批次 3（子代理）：`Trimmed` 的 `dn` 臂 + `dn_at` 全阶（队列第 4 项）**。
+  **★ 先推翻记档**：`Surface3::dn` 的注释断称「`Trimmed` 包装**没有** OCCT `Geom_Surface::EvalDN` 对应」—— **假的**。OCCT `Geom_RectangularTrimmedSurface::EvalDN` 确实存在（**L419-429**，`final`），体就是「范围守卫 + `basisSurf->EvalDN(U,V,Nu,Nv)`」。**"注释说缺 ≠ 真缺"第三次应验。**
+  已加 `Trimmed` 臂（含 OCCT 自己的 `Nu+Nv<1 || Nu<0 || Nv<0` throw）。**注意**：该守卫属各 `Geom_Surface::EvalDN`，**`GeomAdaptor_Surface::EvalDN` 本身没有** ⇒ `dn_at` 不加守卫（逐字对齐的结果，不是遗漏）。
+  `dn_at`（`geom_adaptor_surface.rs:435`）从「只支持 `(1,0)`/`(0,1)`、其余 **panic**」扩到 **OCCT 全分支**（`GeomAdaptor_Surface.cxx` **L1697-1814**）：边界 snap → `mySurfaceType` switch（BSpline / extrusion / revolution / offset / 五个二次曲面 → `ElSLib::DN`；Bezier+Other 的 `break` → `mySurface->EvalDN` 尾）。**panic 清零**，只剩 rcad 独有的 Ruled/Coons/Pipe/TriBezier 保留 GAP（OCCT 无对应类）。**叶子全部复用既有真身**，未新写数学。
+  `geom_adaptor_transformed_surface.rs:437` **判为无需改动**（OCCT 对应 `GeomAdaptor_TransformedSurface::EvalDN` L306-316 就是 identity 分支 + `transform_vec`，rcad 已逐行等价，自动继承扩宽覆盖）。3 个新测试，期望值由 OCCT 公式独立给出；柱面用例专门打**此前必然 panic 的阶数**。
+  **⚠ 跨文件不一致（另报，未改，见队列第 2 项）**：`geom/eval_b.rs` L32-35 把「`Geom_UndefinedDerivative` 守卫无 rcad 对应」写成**政策**，但 `Surface3::dn` 的兄弟臂**已经都在 assert** ⇒ 政策文与现状矛盾。
+- **★ 方法学（第七轮"零可见翻转"，本轮形态最极端）**：`dn_at` 从**一个 panic** 变成**真的算值**、`set_scale` 从**一次 abort** 变成**返回退化变换** —— 八网格与 16 个域网格**依然全部零变化**。前几轮尚可解释为"改了但没走到"，本轮是**把不可达路径变成可达**仍零翻转 ⇒ **两套网格合起来的覆盖率对本域进展几乎无分辨力，"判别性单测"是唯一验收手段**（第七次重申）。
+- **⏭ 下一轮队列（按序）**：
+  1. **★ 判别性单测继续**（最高优先，第七次）：`gp.rs` 仍零测试的 `vectorial_part` / `value` / `is_negative` / `set_translation_part` / `set_scale_factor` 及 `multiplied` 的特例分支。**标准动作 = 写测试 → 扰动实现 → 确认目标测试 FAILED → 还原。**
+  2. **`geom/eval_b.rs` 守卫政策勘误**（新立，便宜）：与 `Surface3::dn` 兄弟臂现状矛盾，择一统一 + 两处互相引用。
+  3. **`TrsfForm` 补四个缺失变体**（新立）：`Trsf2d` 的 catch-all 因此只有 General 分支；要覆盖 `Rotation/PntMirror/Ax1Mirror/Ax2Mirror` 需先补枚举。
+  4. **`Trsf2d` 补 `matrix` 公开 setter / `SetValues`**：子代理的测试不得不直接构造结构体字面量 ⇒ 2D 载体尚未译完（TKMath 2D 批）。
+  5. **`mySn` 的构造**（TKFeat，`feat_featrf` 直接前墙）。
+  6. 追加 33 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · BSpline VIso 两处内嵌副本 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
+- **复测脚本**：`rcad/temp/run_gates.sh` · `rcad/temp/run_domain_grids.sh` · `rcad/temp/validate_round5.sh`（门槛 + 重编 + 八网格 + 域网格一次跑完）。
+
+### 0.0i 追加 33 收尾态（2026-09-14；**已被追加 34 取代 —— 见 §0.0j** —— 队列表末两项：`UpdateEdge` 全库收敛完毕 + `gp.rs` 矩阵约定全量审计（再挖出 2 个内核缺陷））
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
+> 追加 33 的成对 hash 按 §0.0h 同格式追加到该列表。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **427/0/0 · 714/0 · 36/36 · 26/26 · 76/76 · 1/1**（kernel 712 → **714** = 两个判别性回归测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与追加 32 基线逐项相同**。
+- **★ 批次 1（主代理）：`UpdateEdge` 家族**全库收敛完毕**（追加 32 队列第 3 项）**。
+  **9 个站点**改走唯一真身 `rcad_kernel::topods::update_curves_range`（`topods.rs:3929`）：`fillet/hbuilder_face/classify.rs::bb_update_edge_pcurve`（本域最后一处手搓体）· `fillet/hbuilder_face.rs` · **`fillet/hbuilder.rs:464`（★ 审计清单外的第 9 处）** · `bop/algo/pave_filler.rs` ×2 · `bop/algo/pave_filler_make_blocks.rs` ×2 · `bop/ds/mod.rs` ×2。
+  **漏网原因**：追加 32 的清点是按 `ed.range` / `the_edge.range` 这类**字面变量名** grep 的，而该站点用的是 **`edp.range`** ⇒ 直接漏过。**改用名无关模式** `is_infinite_value\([A-Za-z_0-9]*\.range\[` 后，全库只剩 canonical 体内两行。**这与坑 28（"不要从截断清单数数"）同族 —— 同一处栽了第二次。**
+  三个文件里 `is_infinite_value` 随之成为**死导入并删除**（`hbuilder_face.rs`/`hbuilder.rs` 保留同行的 `CONFUSION`）。6 文件 **+54/−111（净 −57 行）**，探针 = 0。
+- **★ 批次 2（子代理，只读）：`gp.rs` 矩阵约定全量审计（813 行全读）**。
+  **32 项判 ALIGNED**，含最易写反的配对：`transform_vec` 必须用 **`VectorialPart()`（含 scale）**、`transform_dir` 必须用 **`HVectorialPart()`（原始 matrix）** —— rcad **两处都取对**（互换即双重取反缺陷）。`invert` 里的 `M^T·loc` **合法**（OCCT 本身先就地转置），与 `set_rotation` 的误用被审计**明确区分**。
+  **★ 查出 2 个同类 DEFECT**：
+  1. **`Trsf::set_displacement`（`gp.rs:365-433`）两处转置乘** —— `MA1loc.Multiply(MA1)` 与 `MA1loc.Multiply(matrix)` 语义都是**矩阵左乘**（`gp_Trsf.cxx` L218-240），rcad 按行向量右乘写（= `MA1ᵀ L`、`Mᵀ MA1loc`）⇒ 平移项错。**FromA1 为零位置+单位姿态时两项错值都被乘 0**，而唯一调用点正是 `Ax3::new()`。
+  2. **`Trsf::multiplied`（`gp.rs:620-644`）漏乘 `scale`** —— OCCT general 分支（`gp_Trsf.cxx` **L544-559**）为 `Tloc = matrix * T.loc; if (scale != 1.0) Tloc *= scale;`，rcad 少了 `scale` ⇒ `A(B(p))` 在 `A` 含非单位缩放时少缩放一次平移。唯一调用点（`sweep_section_generator.rs:478,482`）**scale 全为 1**。
+  **根因侧观察**：本轮之前 `gp.rs` **只有 4 个测试**（3 × `set_rotation` + 1 × `set_translation`），`set_displacement`/`multiplied`/`transform_*`/`invert` **零测试** —— 与追加 32 同构：**不是没对齐，是没断言**。
+  另记**结构性缺口（非缺陷）**：`PreMultiply`/`Power`/`Orthogonalize`/`SetTransformation(FromA1,ToA2)`/`SetValues`/`SetScale`/`SetMirror` 无 rcad 对应。
+- **★ 批次 3（主代理）：两处修复 + 判别性测试（实证判别性）**。
+  修复照 OCCT：`set_displacement` 两处改**矩阵左乘**；`multiplied` 补 `if (scale != 1.0) Tloc *= scale`。
+  新增测试：`gp::tests::set_displacement_carries_from_frame_onto_to_frame`（**FromA1 既移位又倾斜 + ToA2 绕 Z 转 90°**；断言定义性不变量 `F(FromA1.Location()) == ToA2.Location()` 与三条轴向映射）· `gp::tests::multiplied_scales_the_left_translation`（**scale 3 × 平移**；断言 `A(B(p)) = 3p + (3,6,9)`）。
+  **★ 判别性已实证**：把公式**临时改回旧形**再跑 ⇒ **两个新测试双双 FAILED、其余四个仍 ok**；还原后 **6/6 通过**。故二者是回归测试而非恒真断言。
+- **★ 方法学（第六轮"零可见翻转"，本轮证据最硬）**：本轮修的是**真实内核缺陷**，但在八网格与 16 个域网格上**全部零可见**，因为**唯一调用点恰好都落在缺陷的退化配置上**。
+  ⇒ **"触发用例缺口"卡改写为"补判别性单测"**：暴露条件可精确刻画（**轴位置 / 角度是否对称 / 缩放值 / FromA1 姿态**），一条 20 行单测即可永久钉死，比新造几何用例便宜得多。**优先覆盖 `gp.rs` 里仍零测试的 `apply`/`invert`/`transform_vec`/`transform_dir`/`set_transformation_ax3`。**
+- **⏭ 下一轮队列（按序）**：
+  1. **★ 补判别性单测**（最高优先，第六次重申；口径已由"新用例"改为"判别性单测"）：范式 = 上文四个变量；先扫 `gp.rs` 零测试的助手。
+  2. **`shhealing/shape_extend/composite_surface.rs` 的本地 `Trsf2d` 同类审计**（新立，未审）：其 `multiplied`（L410）同样把 scale 与 translation 组合 ⇒ 潜在同族。**注意它是本地类型，不是 `rcad-kernel::math::gp`。**
+  3. **`gp.rs` 结构性缺口补译**（按需）：`SetTransformation(FromA1,ToA2)`（`gp_Trsf.cxx` L172-194，与 `set_displacement` 是**两条不同路径**）· `PreMultiply`（L713）· `Power` · `Orthogonalize` · `SetMirror`/`SetScale`/`SetValues`。
+  4. **`Surface3::dn` 的 `Trimmed` 臂**（便宜）+ `geom_adaptor_surface.rs::dn_at` 全阶。
+  5. **`mySn` 的构造**（TKFeat，`feat_featrf` 前墙）。
+  6. 追加 32 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · BSpline VIso 两处内嵌副本 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
+- **复测脚本（本轮新增，可复用）**：`rcad/temp/run_gates.sh`（六门槛）· `rcad/temp/run_domain_grids.sh`（16 域网格）· `rcad/temp/validate_round5.sh`（门槛 + 重编 + 八网格 + 域网格一次跑完）。
+
+### 0.0h 追加 32 收尾态（2026-09-13；**已被追加 33 取代 —— 见 §0.0i** —— 翻译优先轮第四批 + 一次回归的从根修复）
 
 > **提交链**：**rcad 顶尖 = 本交接文件所在提交**（用 `cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
 > 逐轮（rcad × 根）：`783b0713 × 4a4fa29`（追加 32 代码）· `b651f36b × 102d130`（追加 31）· `c01540da × 34a225d`（追加 30）·
@@ -55,7 +334,7 @@
   **发现路径**：子代理接入解析 `Geom_SurfaceOfRevolution::EvalD0`（走 `Trsf`）后，八网格 `bcut_simple` 由 110/0 **回归**为 109/1（`g6` 面积 41187.4 → 61953.63，**拓扑全过只有面积错**）。`git stash -- libs/rcad-kernel/src/geom/` ⇒ g6 通过 ⇒ 定位到该批次；组内二分后**关键判读**是「差分导数与 `point_at` 恒自洽 ⇒ 旧 `point_at`+差分 = 41187.4 正确、新 `point_at`+差分 = 72764.7 错误 ⇒ **新解析体不等价**」；再用临时单测把 `revolution_eval_d0` 与 Rodrigues 式直接对拍，得 `diff = (38.94, 0, 0)`（**纯平移项偏移**）⇒ 追到 `set_rotation`。修正后临时测试 **`diff = 0`**，g6 通过且**批次 2 的解析体全部保留**。
   **为何长期潜伏**：旧 `RevolutionSurface::point_at` 是手搓 Rodrigues、**绕过了 `Trsf`**，掩盖了内核缺陷；既有的 `set_rotation_keeps_axis_location_invariant` 用 **π 旋转**，而 `M(π)` 对称 ⇒ `M^T L == M L`，**该测试原理上抓不到**。已补判别性测试 `set_rotation_about_off_origin_axis_matches_rodrigues`。
 - **本轮另外三批**：
-  1. **`UpdateEdge` 家族收敛成唯一真身** `rcad_kernel::topods::update_curves_range`（`topods.rs:3919`；缺陷前身 `pc_parameter_range` 删除）：两个 kernel 方法再宿主（`update_edge_pcurve_closed` **删掉 OCCT 本就没有的形参**）、**16 个调用点**随之改、另收敛 **7 处**散手副本（含审计清单外的 `brep_sweep/brep_sweep_builder.rs`）；`brep_algo/tool.rs::builder_range_edge` **修好**（OCCT 会把区间写到**每一个**表示）；`brep_fill_filling.rs` 修掉一个真缺陷（`BRep_TEdge::EmptyCopy` **会**拷 curve 表示，故有限 3D 覆盖必须生效）。
+  1. **`UpdateEdge` 家族收敛成唯一真身** `rcad_kernel::topods::update_curves_range`（`topods.rs:3929`；缺陷前身 `pc_parameter_range` 删除）：两个 kernel 方法再宿主（`update_edge_pcurve_closed` **删掉 OCCT 本就没有的形参**）、**16 个调用点**随之改、另收敛 **7 处**散手副本（含审计清单外的 `brep_sweep/brep_sweep_builder.rs`）；`brep_algo/tool.rs::builder_range_edge` **修好**（OCCT 会把区间写到**每一个**表示）；`brep_fill_filling.rs` 修掉一个真缺陷（`BRep_TEdge::EmptyCopy` **会**拷 curve 表示，故有限 3D 覆盖必须生效）。
   2. **`Surface3::dn` 余留五面型补全**（Offset / LinearExtrusion / Ellipsoid / Helicoid / Revolution，全部解析体）：新增 `geom/{eval_c,revolution_utils,curve_dn,offset_surface_utils_b}.rs`。**Ellipsoid 的参数化差异（OCCT 纬度 vs rcad 余纬）已显式转换并双锚点记档**，未用等价替换糊过去。Ruled/Coons/Pipe/TriBezier **确认无 OCCT 对应**（枚举了全部 `Geom_Surface` 子类与 `GeomEval_*`），保留 GAP。
   3. **两处接线（主代理）**：`EvalAndUpdateTol` 真调 `GeomLibCheckCurveOnSurface`；`CurveOnSurface::ShallowCopy` 归位为 trait override。
 - **★ 方法学（本批给出了与前三批不同的证据）**：本轮的**内核修复是真实行为修正**（所有轴不过原点的旋转），但在域网格上仍**零可见翻转**。
@@ -68,7 +347,7 @@
   5. **`mySn` 的构造**（TKFeat，`feat_featrf` 前墙）。
   6. 追加 31 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · BSpline VIso 两处内嵌副本 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
 
-### 0.0g 追加 31 收尾态（2026-09-13；**最新** —— 翻译优先轮第三批）
+### 0.0g 追加 31 收尾态（2026-09-13；**已被追加 32 取代 —— 见 §0.0h** —— 翻译优先轮第三批）
 
 - **门槛与网格（全部在树实测）**：六门槛 **427/0/0 · 701/0 · 36/36 · 26/26 · 76/76 · 1/1**（⚠ `rcad-kernel --lib` 691 → **701**）**；八网格 8/8**（375/378/379/373/12/102/83/110）—— **本批改了 `bop/**` 布尔核心，八网格仍零回归**；**15 个域网格与追加 30 基线逐项相同**。
 - **本轮三批**：
@@ -86,7 +365,7 @@
   5. **`mySn` 的构造**（TKFeat，`feat_featrf` 前墙）。
   6. 追加 30 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · BSpline VIso 两处内嵌副本 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
 
-### 0.0f 追加 30 收尾态（2026-09-13；**最新** —— 翻译优先轮第二批）
+### 0.0f 追加 30 收尾态（2026-09-13；**已被追加 32 取代 —— 见 §0.0h** —— 翻译优先轮第二批）
 
 - **门槛与网格（全部在树实测）**：六门槛 **427/0/0 · 691/0 · 36/36 · 26/26 · 76/76 · 1/1**（⚠ 基线：rcad-algo 422 → **427**，rcad-kernel 688 → **691**）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**15 个域网格与追加 29 基线逐项相同**（零回归）。
 - **本轮两批（本域迄今最大单轮翻译量，子代理合计新增约 4,600 行）**：
@@ -107,7 +386,7 @@
   7. **`mySn` 的构造**（TKFeat，`feat_featrf` 直接前墙）。
   8. 追加 29 余项不变（BSpline VIso 两处内嵌副本 · TKOffset 10 处 `UpdateCurves` 同族缺陷 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
 
-### 0.0e 追加 29 收尾态（2026-09-13；**最新** —— 翻译优先轮）
+### 0.0e 追加 29 收尾态（2026-09-13；**已被追加 32 取代 —— 见 §0.0h** —— 翻译优先轮）
 
 - **门槛与网格（全部在树实测）**：六门槛 **422/0/0**（⚠ 基线 418 → **422**）**· 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110）；**15 个域网格与追加 28 基线逐项相同**（零回归）。
 - **本轮三批**：
@@ -126,7 +405,7 @@
   4. **BSpline VIso 两处内嵌副本**（`brep_fill_nsections.rs:1027` / `geomfill/nsections.rs:280`；`de_boor_homo` 近似 vs 真身精确 `BSplSLib::Iso`）。
   5. 追加 28 余项不变（TKOffset 10 处 `UpdateCurves` 同族缺陷优先 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
 
-### 0.0d 追加 28 收尾态（2026-09-13；**最新，读这一节 + port-plan 追加 28 即可开工**）
+### 0.0d 追加 28 收尾态（2026-09-13；**已被追加 32 取代 —— 见 §0.0h**）
 
 - **门槛与网格（全部在树实测）**：六门槛 **418/0/0**（⚠ **基线已由 415 升到 418** = 本批新增 3 个 `brep_fill_sweep` 单测，含转正的那个）**· 689/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110，重编 exe 后）；**15 个域网格与追加 27 基线逐项相同**（零回归，`blend_simple` a1 保持通过）。
 - **本轮四批**：

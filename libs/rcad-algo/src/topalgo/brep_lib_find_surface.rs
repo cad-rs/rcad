@@ -70,8 +70,14 @@ fn face_surface_by_ptr(brep: &BRep, fptr: u64) -> Option<Surface3> {
 
 /// OCCT BRep_Tool::CurveOnSurface(E, C, S, L, f, l, I) — the index overload:
 /// the I-th curve-on-surface representation of the edge; C is its pcurve and
-/// (S, L) the paired surface + representation location.  Bridge #3: the
-/// representation location is the pcurve-key hash (face-ptr, loc).
+/// (S, L) the paired surface and the composed location L =
+/// E.Location() * GC->Location() (BRep_Tool.cxx L528).  Bridge #3: the rcad
+/// pcurves live in the edge's local frame, so the composed location is the
+/// edge wrapper location (the locations-table index) - the
+/// topalgo/brep_lib/build_curves3d.rs twin re-host of this same overload
+/// returns the same quantity.  The stored representation location
+/// (L.Predivided(E.Location()), the pcurve-key hash) is the value the
+/// (surface, location) overload matches; it is not this out-parameter.
 fn brep_tool_curve_on_surface_index(
     brep: &BRep,
     the_edge: &Shape,
@@ -106,15 +112,22 @@ fn brep_tool_curve_on_surface_index(
         k += 1;
         if k == the_i {
             let s = face_surface_by_ptr(brep, key.0);
-            return (Some(pc.clone()), s, key.1, range[0], range[1]);
+            // OCCT BRep_Tool.cxx L527-528: S = GC->Surface();
+            // L = E.Location() * GC->Location().  Bridge #3: the rcad pcurve
+            // is stored in the edge's local frame, so the composed location
+            // is the edge wrapper location (the same substitution as the
+            // topalgo/brep_lib/build_curves3d.rs re-host of this overload).
+            return (Some(pc.clone()), s, the_edge.location, range[0], range[1]);
         }
     }
     (None, None, 0, 0.0, 0.0)
 }
 
-/// OCCT BRep_Tool::CurveOnSurface(E, S, L, f, l) — the stored (surface,
-/// location) overload: matches the edge's curve representations by surface
-/// value + location (the shape_analysis/edge.rs on-face matching model).
+/// OCCT BRep_Tool::CurveOnSurface(E, S, L, f, l) (BRep_Tool.cxx L327-373) —
+/// the (surface, location) overload: the edge's curve representations are
+/// matched by surface value + location (the shape_analysis/edge.rs on-face
+/// matching model), and when none matches the overload continues into the
+/// CurveOnPlane projection (BRep_Tool.cxx L367-372).
 fn brep_tool_curve_on_surface_stored(
     brep: &BRep,
     the_edge: &Shape,
@@ -125,6 +138,19 @@ fn brep_tool_curve_on_surface_stored(
         TShape::Edge(ed) => &ed.representations,
         _ => return None,
     };
+    // OCCT BRep_Tool.cxx L350: `const TopLoc_Location loc =
+    // L.Predivided(E.Location());` — the stored BRep_GCurve location is that
+    // same predivided value (BRep_Builder.cxx L645/L692: `const TopLoc_Location
+    // l = L.Predivided(E.Location());`), and cr->IsCurveOnSurface(S, loc)
+    // compares it by equality (BRep_CurveOnSurface.cxx L59-63).  Bridge #2/#5:
+    // the predivided value is the composed pcurve-location hash, so the raw
+    // `the_location` argument must be divided by the edge location before the
+    // match (the shape_analysis/edge.rs L131 model).
+    let loc = rcad_kernel::topods::compose_pcurve_location(
+        the_location,
+        the_edge.location,
+        &brep.locations,
+    );
     for r in reps {
         let (key, pc, range) = match r {
             rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
@@ -142,14 +168,88 @@ fn brep_tool_curve_on_surface_stored(
         };
         let s = face_surface_by_ptr(brep, key.0);
         let matched = match s.as_ref() {
-            Some(s) => rcad_kernel::topods::surface_same(s, the_surface) && key.1 == the_location,
+            Some(s) => rcad_kernel::topods::surface_same(s, the_surface) && key.1 == loc,
             None => false,
         };
         if matched {
             return Some((pc.clone(), range[0], range[1]));
         }
     }
-    None
+    // OCCT BRep_Tool.cxx L367-372: "Curve is not found. Try projection on
+    // plane" -> CurveOnPlane(E, S, L, First, Last).  (theIsStored is false
+    // here; the rcad return carries no storage flag.)
+    brep_tool_curve_on_plane(brep, the_edge, the_surface, the_location)
+}
+
+/// OCCT BRep_Tool::CurveOnPlane (BRep_Tool.cxx L379-450): for a planar
+/// surface, project the edge's 3D curve onto the plane and return the
+/// pcurve in the plane's (u, v) parameter space.  OCCT computes this
+/// pcurve on the fly and never stores it — BRep_TEdge has no
+/// curve-on-plane representation kind (the rcad
+/// rcad_kernel::topods::CurveRepresentation enum mirrors that: Curve3D,
+/// CurveOnSurface, CurveOnClosedSurface, CurveOn2Surfaces only).
+fn brep_tool_curve_on_plane(
+    brep: &BRep,
+    the_edge: &Shape,
+    the_surface: &Surface3,
+    the_location: u32,
+) -> Option<(rcad_kernel::geom::Curve2d, f64, f64)> {
+    // OCCT L385: First = Last = 0. (rcad: the None return carries no range.)
+    // OCCT L388-398: check if the surface is planar — one
+    // Geom_RectangularTrimmedSurface level unwrapped to its basis surface.
+    let surf = match the_surface {
+        Surface3::Trimmed(ts) => ts.basis.as_ref(),
+        s => s,
+    };
+    // OCCT L400-404: not a plane -> null pcurve.
+    let Surface3::Plane(pl) = surf else {
+        return None;
+    };
+
+    // OCCT L406-415: check the existence of the 3d curve in the edge
+    // (BRep_Tool::Curve(E, aCurveLocation, f, l); rcad architecture note:
+    // the 3D curve representation carries no own location, so the curve
+    // location is the edge wrapper location).
+    let ed = match the_edge.data.as_ref() {
+        TShape::Edge(ed) => ed,
+        _ => return None,
+    };
+    let Some(c3d) = ed.curve.as_ref() else {
+        return None;
+    };
+    let mut f = ed.range[0];
+    let mut l = ed.range[1];
+
+    // OCCT L417: aCurveLocation = aCurveLocation.Predivided(L) — the curve
+    // expressed in the face-local frame (L^-1 * E.Location()).
+    let a_curve_location =
+        brep.get_location(the_location).inverse() * brep.get_location(the_edge.location);
+    // OCCT L418-419: First = f; Last = l (the raw 3D range, taken BEFORE the
+    // location rescale of L426-427).
+    let first = f;
+    let last = l;
+
+    // OCCT L421-428: transform the curve and update the parameters by the
+    // scale factor (Geom_Curve::TransformedParameter(P, T) =
+    // P / T.ScaleFactor()).  rcad architecture note: the location table
+    // stores DAffine3 with no separate gp_Trsf scale member; the scale
+    // factor is recovered as the image length of a unit axis (1 for the
+    // rigid locations the pipeline builds).
+    let c3d = if a_curve_location != glam::DAffine3::IDENTITY {
+        let scale = a_curve_location.transform_vector3(glam::DVec3::X).length();
+        f /= scale;
+        l /= scale;
+        rcad_kernel::geom::transform_curve(c3d, &a_curve_location)
+    } else {
+        c3d.clone()
+    };
+
+    // OCCT L430-435: GeomProjLib::ProjectOnPlane of the trimmed curve along
+    // the plane normal (KeepParametrization = true); L437-441:
+    // ProjLib_ProjectedCurve + Geom2dAdaptor::MakeCurve; L443-447: the
+    // Geom2d_TrimmedCurve basis unwrap.
+    rcad_kernel::base::geom_proj_lib::project_on_plane::curve_on_plane(&c3d, [f, l], pl)
+        .map(|pc| (pc, first, last))
 }
 
 /// OCCT TopExp::FirstVertex(E, CumOri = true) — the orientation-composed
@@ -572,8 +672,13 @@ impl BRepLibFindSurface {
         // iterate on the surfaces of the first edge (OCCT L286-342)
         loop {
             i += 1;
-            let (a_pc, ss, _loc, _f, _l) = brep_tool_curve_on_surface_index(brep, &e, i);
+            // OCCT L289: BRep_Tool::CurveOnSurface(E, PC, mySurface,
+            // myLocation, f, l, i) - the location out-parameter initializes
+            // myLocation (BRep_Tool.cxx L528: L = E.Location() * GC->Location();
+            // the null-surface exit of the overload is L.Identity(), rcad 0).
+            let (a_pc, ss, l_loc, _f, _l) = brep_tool_curve_on_surface_index(brep, &e, i);
             self.my_surface = ss;
+            self.my_location = l_loc;
             let _ = a_pc;
             if self.my_surface.is_none() {
                 break;

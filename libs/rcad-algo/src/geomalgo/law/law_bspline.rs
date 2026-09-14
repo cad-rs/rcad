@@ -10,6 +10,7 @@
 //! Geom2dBSplineCurve port.  The static SetPoles/GetPoles/CheckCurveData/
 //! KnotAnalysis/Rational helpers are ported at module level.
 
+use rcad_kernel::base::extrema_ext_elc::epsilon_of;
 use rcad_kernel::math::bspl_lib as bspl;
 use rcad_kernel::math::bspl_lib::{at, ati, GeomAbsKnotDistribution};
 
@@ -23,15 +24,6 @@ pub enum SmoothShape {
     C2,
     C3,
     CN,
-}
-
-/// OCCT Epsilon(V) — the distance from V to the next representable double.
-fn epsilon_of(value: f64) -> f64 {
-    if value >= 0.0 {
-        value.next_up() - value
-    } else {
-        value - value.next_down()
-    }
 }
 
 /// OCCT static SetPoles (Law_BSpline.cxx L38-50): flatten (poles, weights)

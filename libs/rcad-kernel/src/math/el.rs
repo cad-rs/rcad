@@ -511,3 +511,99 @@ pub fn elslib_torus_parameters(
     normalize_angle(&mut v);
     (u, v)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OCCT's own `TEST(ElclibTests, AdjustPeriodic)`
+    /// (`FoundationClasses/TKMath/GTests/ElCLib_Test.cxx` L83-124) ported
+    /// verbatim: the same five cases, the same arguments and the same expected
+    /// values, with `Precision::Confusion()` = `precision::CONFUSION`.
+    ///
+    /// These are the only ground-truth assertions the canonical body has, so
+    /// they are the guard for any future change to it (including its
+    /// `Epsilon(ULast)` guard).
+    #[test]
+    fn adjust_periodic_matches_the_occt_gtest() {
+        let pi2 = 2.0 * std::f64::consts::PI;
+        let preci = crate::core::precision::CONFUSION;
+        let mut u1;
+        let mut u2;
+
+        // Case 1: both within range, no adjustment needed.
+        u1 = 0.5;
+        u2 = 0.7;
+        elclib_adjust_periodic(0.0, pi2, preci, &mut u1, &mut u2);
+        assert!((u1 - 0.5).abs() < preci, "U1 = {u1}");
+        assert!((u2 - 0.7).abs() < preci, "U2 = {u2}");
+
+        // Case 2: U2 outside the range -> adjusted to U1 + period.
+        u1 = 0.5;
+        u2 = 0.5 + pi2 + 0.2;
+        elclib_adjust_periodic(0.0, pi2, preci, &mut u1, &mut u2);
+        assert!((u1 - 0.5).abs() < preci, "U1 = {u1}");
+        assert!((u2 - 0.7).abs() < preci, "U2 = {u2}");
+
+        // Case 3: both outside the range but within the same period.
+        u1 = 0.5 + pi2;
+        u2 = 0.7 + pi2;
+        elclib_adjust_periodic(0.0, pi2, preci, &mut u1, &mut u2);
+        assert!((u1 - 0.5).abs() < preci, "U1 = {u1}");
+        assert!((u2 - 0.7).abs() < preci, "U2 = {u2}");
+
+        // Case 4: negative U1.
+        u1 = -0.5;
+        u2 = 0.7;
+        elclib_adjust_periodic(0.0, pi2, preci, &mut u1, &mut u2);
+        assert!((u1 - (pi2 - 0.5)).abs() < preci, "U1 = {u1}");
+        assert!((u2 - (0.7 + pi2)).abs() < preci, "U2 = {u2}");
+
+        // Case 5: U2 very close to U1 -> a whole period is added to U2.
+        u1 = 1.0;
+        u2 = 1.0 + 0.5 * preci;
+        elclib_adjust_periodic(0.0, pi2, preci, &mut u1, &mut u2);
+        assert!((u1 - 1.0).abs() < preci, "U1 = {u1}");
+        assert!((u2 - (1.0 + pi2)).abs() < preci, "U2 = {u2}");
+    }
+
+    /// OCCT `ElCLib.cxx` L120-125: an infinite range is copied through
+    /// untouched (the guard that precedes the `Epsilon(ULast)` one).
+    #[test]
+    fn adjust_periodic_passes_an_infinite_range_through() {
+        let mut u1 = 3.25;
+        let mut u2 = 7.5;
+        elclib_adjust_periodic(0.0, f64::INFINITY, 1e-7, &mut u1, &mut u2);
+        assert_eq!(u1, 0.0);
+        assert_eq!(u2, f64::INFINITY);
+    }
+
+    /// OCCT `ElCLib.cxx` L129-135: `aPeriod < Epsilon(ULast)` — the degenerate
+    /// range is copied through rather than wrapped (its comment: "In order to
+    /// avoid FLT_Overflow exception").
+    ///
+    /// This guard is the sole consumer of `Epsilon(ULast)` in the body, and
+    /// **OCCT's own `AdjustPeriodic` gtest does not cover it** (disabling the
+    /// guard entirely leaves all five of its cases passing) — so this test is
+    /// its only coverage.
+    ///
+    /// A zero-length range is the input that makes the guard observable: without
+    /// it the wrap divides by `aPeriod == 0.0`, so `U1` and `U2` become NaN
+    /// instead of being copied through.  A merely small period does NOT expose
+    /// it — the wrap happens to land on the same values.
+    #[test]
+    fn adjust_periodic_copies_a_zero_length_range_through() {
+        let u_first = 1.0_f64;
+        let u_last = 1.0_f64;
+        assert!(
+            u_last - u_first < crate::base::extrema_ext_elc::epsilon_of(u_last),
+            "the range must be below Epsilon(ULast)"
+        );
+        let mut u1 = 5.0;
+        let mut u2 = 6.0;
+        elclib_adjust_periodic(u_first, u_last, 1e-7, &mut u1, &mut u2);
+        assert_eq!(u1, u_first, "U1 must be copied through, not wrapped");
+        assert_eq!(u2, u_last, "U2 must be copied through, not wrapped");
+        assert!(u1.is_finite() && u2.is_finite(), "no NaN / infinity");
+    }
+}

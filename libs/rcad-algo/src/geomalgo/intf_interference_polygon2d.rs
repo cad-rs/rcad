@@ -8,8 +8,8 @@
 //! Direct consumers: `IntCurve_IntPolyPolyGen.gxx` (2a-3 item 3).
 
 use glam::{DVec2, DVec3};
+use rcad_kernel::base::extrema_ext_elc::epsilon_of;
 use rcad_kernel::math::bnd::BndBox2d;
-use rcad_kernel::math::direct_polynomial_roots::epsilon;
 
 use super::intf::{IntfPIType, IntfSectionPoint};
 use super::intf_interference::{Interference, IntfPolygon2d};
@@ -19,11 +19,6 @@ use super::intf_tangent_zone::TangentZone;
 /// are considered as having a potential zone of tangency
 /// (Precision::Angular()).
 const PRCANG: f64 = 1.0e-12;
-
-/// OCCT gxx use: `Epsilon(value)` (Standard_Real.hxx L242-247).
-fn epsilon_of(value: f64) -> f64 {
-    epsilon(value)
-}
 
 /// OCCT Intf_InterferencePolygon2d — the 2D polygon interference engine.
 pub struct InterferencePolygon2d {

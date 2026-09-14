@@ -43,10 +43,12 @@ fn next_after(x: f64, to: f64) -> f64 {
         return x;
     }
     if x == 0.0 {
+        // OCCT std::nextafter(0, +Inf) is the smallest positive SUBNORMAL
+        // (5e-324), not MIN_POSITIVE (2.2e-308) — a factor of 4.5e16.
         return if to > 0.0 {
-            f64::MIN_POSITIVE
+            f64::from_bits(1)
         } else {
-            -f64::MIN_POSITIVE
+            -f64::from_bits(1)
         };
     }
     let bits = x.to_bits();
