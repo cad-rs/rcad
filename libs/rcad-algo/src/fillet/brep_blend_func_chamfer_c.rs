@@ -16,6 +16,7 @@
 
 use glam::{DVec2, DVec3};
 
+use rcad_kernel::base::proj_lib::{Adaptor2dCurve2d, Geom2dCurveAdaptor};
 use rcad_kernel::core::precision::is_infinite_value;
 use rcad_kernel::geom::{
     Curve2d, Curve2dEval as _, Curve3, CurveEval as _, Surface3, SurfaceEval as _,

@@ -20,8 +20,9 @@
 //    topalgo translations (topalgo::brep_tools_modifier /
 //    topalgo::brep_tools_modification); the OCCT `BRepTools_Modifier Modif;`
 //    default constructor is the rcad `new(false)`.
-// 4. gp_Trsf::SetRotation(Ax, Ang) — the trsf_set_rotation GAP helper of
-//    loc_ope_revol.rs is reused (arch. diff. #4 there).
+// 4. gp_Trsf::SetRotation(Ax, Ang) — the kernel translation
+//    (rcad-kernel/src/math/gp.rs `Trsf::set_rotation`, gp_Trsf.cxx
+//    L90-101).
 // 5. gp_Pnt -> glam::DVec3 (myPnt1/myPnt2/myVec/myTra are hxx-form fields
 //    never read by the OCCT IntPerf).
 //
@@ -34,7 +35,6 @@ use crate::brep_sweep::BRepSweepRevol;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_build_shape::LocOpeBuildShape;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
-use crate::feat::loc_ope_revol::trsf_set_rotation;
 use crate::topalgo::brep_tools_modification::BRepToolsTrsfModification;
 use crate::topalgo::brep_tools_modifier::BRepToolsModifier;
 use glam::DVec3;
@@ -120,9 +120,10 @@ impl LocOpeRevolutionForm {
         let mut the_base = self.my_base.clone();
         let mut modif = BRepToolsModifier::new(false);
         if self.my_is_trans {
-            // OCCT cxx L73-74 (arch. diff. #4).
+            // OCCT cxx L73-74: T.SetRotation(Ax, AngTra) — the kernel
+            // gp_Trsf::SetRotation translation (gp.rs, gp_Trsf.cxx L90-101).
             let mut t = Trsf::identity();
-            trsf_set_rotation(&mut t, &self.my_axis, self.my_ang_tra);
+            t.set_rotation(&self.my_axis, self.my_ang_tra);
             // OCCT cxx L75-78 (arch. diff. #3).
             let mut modbase = BRepToolsTrsfModification::new(t);
             modif.init(&the_base);

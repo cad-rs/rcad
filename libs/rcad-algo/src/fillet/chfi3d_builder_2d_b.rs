@@ -24,12 +24,12 @@
 //! down-cast is performed inside each body exactly as in OCCT.
 //!
 //! GAPs (each preserves the OCCT failure path, named in place):
-//!   - BRepBlend_CurvPointRadInv bound to an Adaptor3d_CurveOnSurface: the
-//!     plain-curve port (brep_blend_curv_point_rad_inv.rs) models curv2 as
-//!     &Curve3; the HC-bound call sites use the HC-payload port
-//!     brep_blend_curv_point_rad_inv_hc.rs whose GetTolerance keeps the
-//!     OCCT-pending Adaptor3d_Curve::Resolution / Adaptor2d_Curve2d::
-//!     Resolution failure path.
+//!   - (closed) BRepBlend_CurvPointRadInv bound to an Adaptor3d_CurveOnSurface:
+//!     the plain-curve port (brep_blend_curv_point_rad_inv.rs) models curv2
+//!     as &Curve3; the HC-bound call sites use the HC-payload port
+//!     brep_blend_curv_point_rad_inv_hc.rs whose GetTolerance resolves
+//!     through the real Adaptor3d_Curve / Adaptor2d_Curve2d Resolution
+//!     bodies.
 
 use glam::DVec2;
 

@@ -15,17 +15,13 @@
 //! consumed Adaptor3d_CurveOnSurface operations (D1/EvalD1 generic branch,
 //! FirstParameter/LastParameter L977-987, Resolution L1364-1370) in the
 //! `curv2_*` helpers.
-//!
-//! Pending kernel dependency (marked GAP, plan 0.6):
-//! Adaptor3d_Curve::Resolution for curv1 (same pending as the plain-curve
-//! port) and Adaptor2d_Curve2d::Resolution for the curv2 chain.
 
 use glam::DVec3;
 
+use rcad_kernel::base::proj_lib::{Adaptor2dCurve2d, Geom2dCurveAdaptor};
 use rcad_kernel::geom::{Curve2d, Curve2dEval as _, Curve3, CurveEval as _, Surface3, SurfaceEval as _};
 use rcad_kernel::math::function_set_root::FunctionSetWithDerivatives;
 
-use super::brep_blend_func_chamfer::adaptor2d_curve2d_resolution_pending;
 use super::brep_blend_func_inv::BlendCurvPointFuncInv;
 
 /// OCCT BRepBlend_CurvPointRadInv bound to an Adaptor3d_CurveOnSurface
@@ -55,17 +51,16 @@ impl<'a> BRepBlendCurvPointRadInvHc<'a> {
     }
 
     /// OCCT Adaptor3d_CurveOnSurface::Resolution bound to curv2
-    /// (Adaptor3d_CurveOnSurface.cxx L1364-1370).  GAP (plan 0.6): the
-    /// final Adaptor2d_Curve2d::Resolution step has no rcad equivalent; the
-    /// established pending marker preserves the OCCT failure path.  The
-    /// helper is reached once the GetTolerance pending Adaptor3d_Curve::
-    /// Resolution gap closes (see below); kept with its OCCT anchor.
-    #[allow(dead_code)]
+    /// (Adaptor3d_CurveOnSurface.cxx L1364-1370): the pcurve resolution at
+    /// min(u, v)-resolution of the wrapped surface — the final step is the
+    /// Geom2dAdaptor_Curve::Resolution over the pcurve (the OCCT myCurve
+    /// handle is a BRepAdaptor_Curve2d, a Geom2dAdaptor_Curve subclass
+    /// without a Resolution override).
     fn curv2_resolution(&self, r3d: f64) -> f64 {
         let ru = self.curv2_surf.u_resolution(r3d);
         let rv = self.curv2_surf.v_resolution(r3d);
-        let _ = ru.min(rv);
-        adaptor2d_curve2d_resolution_pending()
+        let my_curve = Geom2dCurveAdaptor::new(self.curv2_pcurve.clone());
+        my_curve.resolution(ru.min(rv))
     }
 
     /// OCCT BRepBlend_CurvPointRadInv(C1, C2)
@@ -153,14 +148,12 @@ impl<'a> BRepBlendCurvPointRadInvHc<'a> {
     /// OCCT GetTolerance(Tolerance, Tol)
     /// (BRepBlend_CurvPointRadInv.cxx L107-111) — Tolerance(1) =
     /// curv1->Resolution(Tol); Tolerance(2) = curv2->Resolution(Tol).
-    /// Pending: rcad Curve3 has no Resolution (Adaptor3d_Curve::Resolution /
-    /// per-type Geom resolution is an untranslated adaptor-layer subsystem;
-    /// same pending as the plain-curve port), and the curv2 chain ends at
-    /// Adaptor2d_Curve2d::Resolution (pending marker).
-    pub fn get_tolerance(&self, _tolerance: &mut [f64], _tol: f64) {
-        unimplemented!(
-            "BRepBlend_CurvPointRadInv::GetTolerance: pending Adaptor3d_Curve::Resolution"
-        );
+    pub fn get_tolerance(&self, tolerance: &mut [f64], tol: f64) {
+        // OCCT L109: Tolerance(1) = curv1->Resolution(Tol).
+        tolerance[0] = self.curv1.resolution(tol);
+        // OCCT L110: Tolerance(2) = curv2->Resolution(Tol) — the
+        // Adaptor3d_CurveOnSurface resolution bound to curv2.
+        tolerance[1] = self.curv2_resolution(tol);
     }
 
     /// OCCT GetBounds(InfBound, SupBound)

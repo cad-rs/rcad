@@ -20,10 +20,9 @@
 //    topalgo translations (topalgo::brep_tools_modifier /
 //    topalgo::brep_tools_modification); the OCCT `BRepTools_Modifier Modif;`
 //    default constructor is the rcad `new(false)`.
-// 4. gp_Trsf::SetRotation(Ax, Ang) has no rcad constructor (rcad Trsf
-//    carries only translation/scale/displacement forms) — the
-//    trsf_set_rotation helper below carries the GAP panic; it feeds the
-//    BRepTools_TrsfModification form.
+// 4. gp_Trsf::SetRotation(Ax, Ang) — the kernel translation
+//    (rcad-kernel/src/math/gp.rs `Trsf::set_rotation`, gp_Trsf.cxx
+//    L90-101); the former GAP helper is removed.
 // 5. gp_Circ -> geom::Circle3; the OCCT default gp_Circ CAX carrier is the
 //    zeroed Circle3 (gp_circ_default) — only read after FindCircle
 //    succeeds.
@@ -59,11 +58,6 @@ fn gp_circ_default() -> Circle3 {
         y_dir: DVec3::ZERO,
         radius: 0.0,
     }
-}
-
-/// OCCT gp_Trsf::SetRotation(Ax, Ang) (architecture difference #4 — GAP).
-pub(crate) fn trsf_set_rotation(_t: &mut Trsf, _ax: &Ax1, _ang: f64) {
-    panic!("GAP: gp_Trsf::SetRotation (no rcad rotation Trsf constructor)");
 }
 
 /// OCCT static FindCircle(Ax, Pt, Ci) (cxx L294-312).
@@ -183,9 +177,10 @@ impl LocOpeRevol {
         let mut the_base = self.my_base.clone();
         let mut modif = BRepToolsModifier::new(false);
         if self.my_is_trans {
-            // OCCT cxx L100-101 (arch. diff. #4).
+            // OCCT cxx L100-101: T.SetRotation(Ax, AngTr) — the kernel
+            // gp_Trsf::SetRotation translation (gp.rs, gp_Trsf.cxx L90-101).
             let mut t = Trsf::identity();
-            trsf_set_rotation(&mut t, &self.my_axis, self.my_ang_tra);
+            t.set_rotation(&self.my_axis, self.my_ang_tra);
             // OCCT cxx L102-105 (arch. diff. #3).
             let mut modbase = BRepToolsTrsfModification::new(t);
             modif.init(&the_base);

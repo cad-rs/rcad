@@ -484,19 +484,28 @@ impl BRepOffsetMakeOffset {
             }
             // OCCT L2753: BRepLib_MakeFace(aSphSurf, Ufirst, Ulast, Vfirst,
             // Vlast, Precision::Confusion()) — the UV-bounds face maker
-            // (GAP leaf; TKTopAlgo/BRepLib not translated).
-            let mut new_spherical_face = brep_lib_make_face_uv(
-                the_sphere_center,
-                the_sphere_axis,
-                the_sphere_ref_dir,
-                the_sphere_radius,
-                the_sphere_has_position,
+            // (make_face::init_bounds, L463-869); aSphSurf is the spherical
+            // surface folded into the rcad fields (arch. diff. #53).
+            let sph_surf = rcad_kernel::geom::Surface3::Sphere(
+                rcad_kernel::geom::SphericalSurface {
+                    center: the_sphere_center,
+                    axis: the_sphere_axis,
+                    radius: the_sphere_radius,
+                    ref_dir: the_sphere_ref_dir,
+                },
+            );
+            let mut a_mf = crate::topalgo::brep_lib::make_face::BRepLibMakeFace::new();
+            a_mf.init_bounds(
+                &mut self.my_brep,
+                &mut bb,
+                &sph_surf,
                 ufirst,
                 ulast,
                 vfirst,
                 vlast,
                 rcad_kernel::core::precision::CONFUSION,
             );
+            let mut new_spherical_face = a_mf.face();
             let mut old_edge = Shape::null();
             let mut deg_edge = Shape::null();
             for explo in
@@ -520,15 +529,17 @@ impl BRepOffsetMakeOffset {
             let (v1, v2) = super::brep_offset_tool::top_exp_vertices(&old_edge);
             let lv1: Vec<Shape> = vec![bat::oriented(&vf1, Orientation::Forward)];
             let lv2: Vec<Shape> = vec![bat::oriented(&cur_vertex, Orientation::Forward)];
-            // OCCT L2779-2790: BRepTools_Substitution theSubstitutor
-            // (GAP carrier; TKTopAlgo/BRepTools not translated).
-            let mut the_substitutor = BRepToolsSubstitution::new();
-            the_substitutor.substitute(&bat::oriented(&v1, Orientation::Forward), &lv1);
+            // OCCT L2779-2790: BRepTools_Substitution theSubstitutor — the
+            // real 1:1 body (topalgo/brep_tools_substitution.rs; arch. diff.
+            // #52 retired).
+            let mut the_substitutor =
+                crate::topalgo::brep_tools_substitution::BRepToolsSubstitution::new();
+            the_substitutor.substitute(&bat::oriented(&v1, Orientation::Forward), lv1);
             if !v1.is_same(&v2) {
-                the_substitutor.substitute(&bat::oriented(&v2, Orientation::Forward), &lv2);
+                the_substitutor.substitute(&bat::oriented(&v2, Orientation::Forward), lv2);
             }
-            the_substitutor.substitute(&bat::oriented(&old_edge, Orientation::Forward), &new_edges);
-            the_substitutor.build(&new_spherical_face);
+            the_substitutor.substitute(&bat::oriented(&old_edge, Orientation::Forward), new_edges);
+            the_substitutor.build(&mut self.my_brep, &new_spherical_face);
             if the_substitutor.is_copied(&new_spherical_face) {
                 let list_sh = the_substitutor.copy(&new_spherical_face);
                 new_spherical_face = list_sh[0].clone();
@@ -876,68 +887,26 @@ pub(crate) fn elslib_sphere_parameters_host(
     rcad_kernel::math::el::elslib_sphere_parameters(p, center, ref_dir, y_dir, axis)
 }
 
-/// OCCT Geom_SphericalSurface::VIso(V) (via ElSLib::SphereVIso) — GAP leaf
-/// (architecture difference #52: the TKMath iso constructors are not
-/// translated; the bi_tgte #28 precedent).
+/// OCCT Geom_SphericalSurface::VIso(V) (via ElSLib::SphereVIso) — the
+/// kernel translation (`base/proj_lib/elslib_iso.rs`, arch. diff. #52
+/// retired; the bi_tgte #28 precedent).
 pub(crate) fn elslib_sphere_viso(
-    _center: glam::DVec3,
-    _axis: glam::DVec3,
-    _ref_dir: glam::DVec3,
-    _radius: f64,
-    _v: f64,
+    center: glam::DVec3,
+    axis: glam::DVec3,
+    ref_dir: glam::DVec3,
+    radius: f64,
+    v: f64,
 ) -> rcad_kernel::geom::Curve3 {
-    panic!("GAP: ElSLib::SphereVIso / Geom_SphericalSurface::VIso (TKMath not translated)");
+    use rcad_kernel::base::proj_lib::elslib_iso::{elslib_sphere_v_iso, Ax3View};
+    let a_pos = Ax3View::from_axes(center, axis, ref_dir);
+    rcad_kernel::geom::Curve3::Circle(elslib_sphere_v_iso(&a_pos, radius, v))
 }
 
-/// OCCT BRepLib_MakeFace(Surface, U1, U2, V1, V2, Tol) — GAP leaf
-/// (architecture difference #52): the UV-bounds face maker of
-/// CorrectConicalFaces.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn brep_lib_make_face_uv(
-    _center: glam::DVec3,
-    _axis: glam::DVec3,
-    _ref_dir: glam::DVec3,
-    _radius: f64,
-    _has_position: bool,
-    _u1: f64,
-    _u2: f64,
-    _v1: f64,
-    _v2: f64,
-    _tol: f64,
-) -> Shape {
-    panic!("GAP: BRepLib_MakeFace(S, U1, U2, V1, V2, Tol) (TKTopAlgo/BRepLib not translated)");
-}
-
-/// OCCT BRepTools_Substitution (TKTopAlgo/BRepTools) — GAP carrier
-/// (architecture difference #52): the Substitutor of CorrectConicalFaces.
-pub(crate) struct BRepToolsSubstitution;
-
-impl BRepToolsSubstitution {
-    /// OCCT BRepTools_Substitution::BRepTools_Substitution().
-    pub fn new() -> Self {
-        BRepToolsSubstitution
-    }
-
-    /// OCCT BRepTools_Substitution::Substitute(S, L).
-    pub fn substitute(&mut self, _s: &Shape, _l: &[Shape]) {
-        panic!("GAP: BRepTools_Substitution::Substitute (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_Substitution::Build(S).
-    pub fn build(&mut self, _s: &Shape) {
-        panic!("GAP: BRepTools_Substitution::Build (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_Substitution::IsCopied(S).
-    pub fn is_copied(&self, _s: &Shape) -> bool {
-        panic!("GAP: BRepTools_Substitution::IsCopied (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_Substitution::Copy(S).
-    pub fn copy(&self, _s: &Shape) -> Vec<Shape> {
-        panic!("GAP: BRepTools_Substitution::Copy (TKTopAlgo/BRepTools not translated)");
-    }
-}
+// OCCT BRepLib_MakeFace(Surface, U1, U2, V1, V2, Tol) — the real UV-bounds
+// form is make_face::BRepLibMakeFace::init_bounds (the former GAP leaf is
+// deleted; arch. diff. #52).
+// OCCT BRepTools_Substitution — the real body is
+// topalgo/brep_tools_substitution.rs (the former GAP carrier is deleted).
 
 /// The OCCT `aPS.More()` probe — the flattened NoopProgress scope is never
 /// canceled and never exhausted, so `More()` always yields true (architecture

@@ -1,6 +1,13 @@
 # E3-W 交接：三域（TKFeat / TKFillet / TKOffset）翻译推进 —— 2026-09-12
 
-> **一句话（追加 39 收尾态，2026-09-14 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**。本轮单线（epsilon 同族全库收敛 + canonical 第三轮修正 + 队列 3 对拍）：**① canonical `epsilon_of` 修正为 OCCT 精确 nextafter 体**（位递增体在 x==±RealLast ⇒ OCCT 给 **0**、±inf ⇒ **-inf**、-0.0 ⇒ **+5e-324** 三类边缘偏离；`hlr/intrv::Interval::new()` 恰好用 `epsilon(±RealFirst/Last)` 作默认容差，先收敛后修 canonical 会把 HLR 区间容差从 0 污染成 +inf ⇒ **先修 canonical 再收敛是硬顺序**）· **② 16 份本地 Epsilon 副本全库收敛到 kernel canonical**（队列点名的 4 份 + 名无关终检兜底再抓 6 份漏网 + 普查扩大 6 份；每站点回源核验 OCCT 调用方；其中 3 份是 `f64::EPSILON*v` 相对式**公式真偏离**）· **③ `bspl_lib.rs` 6 处 `Epsilon(1.)*x` 公式偏离修复**（`Epsilon(1.)*x` ≠ `Epsilon(x)`，仅 x 为 2 的幂时相等；两处还多了非 OCCT 的 `.abs()`）· **④ 队列 3 对拍收口**（16 域网格逐格同基线；`feat_featlf` a3 失败层 = `tool_rehost.rs:1117` "Courbes non jointives"，不在 bean_face 爆炸半径链上；`loc_ope_split_drafts` 无直测——记档）。
+> **一句话（追加 40 收尾态，2026-09-14 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**。本轮为**载体收敛大轮（用户指令：先补全模块内 1:1 等价实现与底层依赖，越上层越 1:1；基本译完再调试修测试）**：**① 全量 GAP 普查**（两个探查代理按 OCCT 符号回源 grep：offset 域 231 个 panic 位点 / 60 个符号、feat+fillet 13 个位点 / 11 个符号；**约 104 处真身早已在库** = 文案过期载体，其余为真缺失）；**② 清零 104 处**（31 文件 + 1 新文件，净删 468 行）：bi_tgte 四真身接线（Inter3d take+resync、Inter2d 真签名、MakeLoops、EnLargeFace 默认参数展开）· `Geom2dAPI_ProjectPointOnCurve` 新译（geomalgo canonical，内核 ExtPC2d 引擎）· ElSLib 8 iso + gp_Circ::Rotate 接 elslib_iso（**球面 U-iso 第一段旋转轴 = X^Direction 而非 X^Y**，旧体 panic 之下藏错、本轮逐语句核对修正）· `BRepOffsetAPI` 四门面（PipeShell 27 / Filling 17 / Draft 6 / Pipe 3）重写到 brep_fill 真身并删本地载体 · fillet 16 文件（`adaptor2d_curve2d_resolution_pending` 标记删除：任务书写 7 处实为 13 处，逐位点回源核验；CurvPointRadInv GetTolerance；FilSpine::Law；**EvolRad/Law_S 全臂**按 ChFi3d_FilBuilder_C3.cxx L853-901 补译）· offset_offset + middle_path（Gabarit/GeomFill_Pipe 族/ExtremaCurveCurve/ExtendSurfByLength/Curve2d/UnifySameDomain+History/Inertia/BuildCurve3d）· BRepPrimAPI_MakePrism 接 brep_sweep（is_done 由恒 false 翻真，Analyse::CheckPrismatic 支路激活）· make_offset_c 三件（SphereVIso/MakeFace UV 窗口 init_bounds/Substitution）· feat 三件（Trsf::set_rotation 直连内核；LocOpePipe 换 BRepFillPipe 真身——**panic 层从 shape().expect 推进到引擎 Perform 内**）；**③ 保留 140 处 GAP（全部真缺失/需架构桥接，清单见 §0.0p）**。
+> **门槛（当前基线）**：**450/0/0 · 737/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110，exe 重编）；**16 个域网格逐格与追加 39 基线完全相同**（stash 双跑对拍：通过数与失败数逐格一致——载体全部处于 GAP 阻断的上游路径上，行为中性符合预期）。
+> **★ 本轮最值钱的发现：panic 载体下面藏着真错误。** 球面 U-iso（BiTgte KPartCurve3d）的第一段旋转轴 OCCT 是 `XDirection ^ Direction()`（BiTgte_Blend.cxx L321），第二段才是 `XDirection ^ YDirection()`（L326）——rcad 旧载体两段都传主方向；因载体先 panic，这个错误从未可见。**"接线到真身"必须逐语句对照 OCCT 调用块，不是只换函数名**（本轮同法核对出 EnLargeFace 的 9 个默认参数展开、MakePipe ctor 的 GeneratePartCase=false 缺省）。
+> **★ 第二条：任务前提必须按"位点"而非"符号"计数**——fillet resolution 标记的任务书写 7 个调用点，删除标记实际牵出 **13 个位点 / 11 个文件**（4 个文件不在普查清单内）；子代理按"删干净"原则逐个回源核验后全部接线。**"普查清单"本身也会过期**。
+> **★ 第三条（第十三轮"零可见翻转"，本轮为机制性预期）**：104 处接线在两套网格上逐格零翻转——被收敛的载体全部位于 GAP 阻断的上游（panic 层未推进到既有断言可达的路径）。**判断行为是否该翻转的方法：看 panic 层深度**（LocOpePipe 从 shape().expect 推进到 Perform 内部 = 预期不翻转；CheckPrismatic 支路激活 = 只影响 offset 失败层的失败形态）。
+> （历史：追加 21–39 收尾态见下方存档块；追加 39 = epsilon 同族全库收敛 + canonical 第三轮修正 + 队列 3 对拍收口；追加 38 = AdjustPeriodic gtest 移植 + 复制族收敛 + 误标翻译。）
+
+> **（存档）一句话（追加 39 收尾态，2026-09-14 —— 已被追加 40 取代）**：**工作口径仍是"先译后调"**。本轮单线（epsilon 同族全库收敛 + canonical 第三轮修正 + 队列 3 对拍）：**① canonical `epsilon_of` 修正为 OCCT 精确 nextafter 体**（位递增体在 x==±RealLast ⇒ OCCT 给 **0**、±inf ⇒ **-inf**、-0.0 ⇒ **+5e-324** 三类边缘偏离；`hlr/intrv::Interval::new()` 恰好用 `epsilon(±RealFirst/Last)` 作默认容差，先收敛后修 canonical 会把 HLR 区间容差从 0 污染成 +inf ⇒ **先修 canonical 再收敛是硬顺序**）· **② 16 份本地 Epsilon 副本全库收敛到 kernel canonical**（队列点名的 4 份 + 名无关终检兜底再抓 6 份漏网 + 普查扩大 6 份；每站点回源核验 OCCT 调用方；其中 3 份是 `f64::EPSILON*v` 相对式**公式真偏离**）· **③ `bspl_lib.rs` 6 处 `Epsilon(1.)*x` 公式偏离修复**（`Epsilon(1.)*x` ≠ `Epsilon(x)`，仅 x 为 2 的幂时相等；两处还多了非 OCCT 的 `.abs()`）· **④ 队列 3 对拍收口**（16 域网格逐格同基线；`feat_featlf` a3 失败层 = `tool_rehost.rs:1117` "Courbes non jointives"，不在 bean_face 爆炸半径链上；`loc_ope_split_drafts` 无直测——记档）。
 > **门槛（当前基线）**：**450/0/0 · 737/0 · 36/36 · 26/26 · 76/76 · 1/1**（kernel 736 → **737** = 1 个 canonical 边缘判别测试）；**八网格 8/8**（375/378/379/373/12/102/83/110）；**16 个域网格与基线逐项相同**。
 > **★★ 本轮最值钱的发现：canonical 的边缘语义必须对照 C 标准库逐输入推演。** "有限输入上等价"不等于"函数等价"——位递增体在全部正常输入（含追加 38 的 gtest 与判别性测试）上与 OCCT **逐位相同**，却在 x==y/±inf/-0.0 四类边缘上偏离，而**唯一的现役消费者恰好把这些边缘值当输入**（`Intrv_Interval` 默认容差 = `(float)Epsilon(±RealFirst/RealLast)` = OCCT 的 0.0）。另：**"测试失败先怀疑测试"再 +1**——canonical 边缘测试第一版期望值 `epsilon_of(+inf) == -RealLast` 写错，真值是 `-inf`（`RealLast() - inf` 的 IEEE 有限减无穷）。
 > **★ 第二条：名无关终检必须做两遍。** 先按实现拼写 grep（`nextafter`）普查得 17 文件；收敛完按函数名模式 `fn (epsilon|standard_epsilon|...)\(` 终检**又抓到 6 份漏网**（`next_up()`/位递增拼写，文本里没有 "next_after"）——坑 28/追加 33 第四次应验。共收敛 **16 份**，其中 3 份是 `f64::EPSILON*v` 相对式**公式真偏离**（自称 OCCT Epsilon、实为别的公式，阈值差 25%~57%）。
@@ -77,8 +84,8 @@
 ## 0. 新 session 一句话提示词（直接粘贴 —— 追加 39 收尾态，2026-09-14）
 
 > 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 坑清单；
-> **先读顶部"追加 39 收尾态"一行 + §0.0o**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–39
-> （权威脉络，**追加 39 是当前状态**）；
+> **先读顶部"追加 40 收尾态"一行 + §0.0p**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–40
+> （权威脉络，**追加 40 是当前状态**）；
 > 先 `cd rcad` 跑 6 条门槛确认 **450/0/0 · 737/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests`（**重编 exe，否则八网格会拿旧产物误判**）
 > 后 `bash output/run_eight_grids.sh` 确认**八网格 8/8**（375/378/379/373/12/102/83/110）；
@@ -138,7 +145,36 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0o 追加 39 收尾态（2026-09-14；**最新** —— 单线：epsilon 同族全库收敛（16 份）+ canonical 第三轮修正（OCCT 精确 nextafter 体）+ `bspl_lib` 6 处公式偏离 + 队列 3 对拍收口）
+### 0.0p 追加 40 收尾态（2026-09-14；**最新** —— 载体收敛大轮：全量 GAP 普查 + 104 处陈旧载体清零 + Geom2dAPI_ProjectPointOnCurve 新译）
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
+> 追加 40 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **450/0/0 · 737/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110，`cargo test --no-run -p occt-generated-tests` 重编后实测）；**16 个域网格逐格与追加 39 基线完全相同**——本轮做了 **stash 双跑对拍**（改后跑一遍、`git stash push -u -- libs/rcad-algo/src` 后基线再跑一遍），通过数/失败数逐格一致：`blend_simple` 12/10 · `draft_angle` 50/48 · `feat_featrevol` 46/44 · `offset_shape_type_i` 12/12 · `offset_faces_type_i` 8/8 · `offset_shape_type_a` 1/1 · `blend_complex` 2/2 · `feat_featlf` 15/15 · `feat_featprism` 6/6 · `feat_featrf` 5/5 · `thrusection_specific` 26/26 · `mkface_after_offset` 4/0 绿 · `mkface_after_extsurf_and_offset` 32/0 绿 · `fillet2d_fillet2d` 10/0 绿 · `fillet2d_chamfer2d` 2/0 绿 · `offset_shape_type_i_c` 19/19。探针 = 0；扰动 = 无（本轮纯载体收敛，预期零翻转）。净删 468 行（31 文件 +1 新文件）。
+- **★ 批次 0（全量普查，两个探查代理）**：offset 域 **231 个 panic 位点 / 60 个符号**、feat+fillet **13 位点 / 11 符号**，逐符号回源 grep 分类"真身已在库（陈旧载体）vs 真缺失"。结论：**约 104 处真身早已在库**——GAP 文案会过期的大规模实证（坑：立卡前按函数名 grep 全库，本规模第一次量化）。
+- **★ 批次 A（主代理，BiTgte + feat + Geom2dAPI）**：
+  - `bi_tgte_blended(_b)`：`BRepOffsetInter3d/Inter2d/MakeLoops` 本地 stub 删除 → 真身 re-export（`Inter3d::new` 用 take + 边界 resync（架构差异 #39）；**intersect 内的 AsDes 读改经 `inter.as_des()`**——OCCT Handle 别名的 Rust 映射）；`my_edges` 从 `IndexMap<Shape, ()>` 改 `IndexedShapeMap`（忠实 OCCT `TopTools_IndexedMapOfShape`）；`AncestorsMap` 收敛为 `DmvvMap` 别名；`EnLargeFace` 真身（hxx L145-156 默认参数展开为 12 参显式调用）。
+  - **`Geom2dAPI_ProjectPointOnCurve` 新译**：`geomalgo/geom2d_api_project_point_on_curve.rs`（cxx L25-186 全方法；引擎 = 内核 `ExtPC2d`，tolerance 取 GGExtPC hxx 默认 **1.0e-10**——与 3D 真身同约定）。
+  - ElSLib 8 iso + `gp_Circ::Rotate` 接 `base/proj_lib/elslib_iso.rs`；**球面 U-iso 第一段旋转轴修正**：OCCT L321 是 `XDir ^ Direction()`、L326 才是 `XDir ^ YDir`，旧载体两段都传主方向（panic 之下藏错，接线时逐语句核对抓出）。
+  - feat：`loc_ope_revol/revolution_form` 的 `trsf_set_rotation` GAP → 内核 `Trsf::set_rotation`（gp.rs，追加 33 修过转置的那份真身）；`loc_ope_pipe` 本地 `BRepFillPipe` stub 删除 → `brep_fill::brep_fill_pipe` 真身（**panic 层从 `shape().expect` 推进到引擎 Perform 内部**——引擎的 my_loc law 层还有本地 stub，见队列）。
+  - `bi_tgte_curve_on_edge` 的 3D 投影 stub → geomalgo 真身 re-export（`init` → `init_point_curve` 改名同步）。
+- **★ 批次 B（子代理，BRepOffsetAPI 四门面）**：`brep_offset_api_make_pipe_shell`（532→362 行，27 GAP 清零；本地 `BRepFillPipeShell` + 两个错误/过渡枚举删除，`PipeError` 落到 `trihedron_law`，过渡样式按 BRepFill_Sweep.cxx L3914/C3656 对齐真身命名）；`make_filling`（17 清零）；`make_draft`（6 清零，`BRepFillTransitionStyle` 变 re-export）；`make_pipe`（3 清零 + 本地枚举删除；ctor 按 hxx L55-59 默认参数补 `GeneratePartCase=false`）。
+- **★ 批次 C（子代理，fillet 16 文件）**：`adaptor2d_curve2d_resolution_pending` 标记删除——**任务书写 7 个调用点，实为 13 个位点/11 个文件**（4 个文件在普查清单外），逐位点回源核验（BRepAdaptor_Curve2d 是 Geom2dAdaptor_Curve 子类且无 Resolution override ⇒ `Geom2dCurveAdaptor::resolution` 是忠实真身）；`brep_blend_curv_point_rad_inv(_hc)` GetTolerance → `CurveEval::resolution`；`ChFiDS_FilSpine::Law` → `law_of`；**EvolRad/Law_S 全臂按 ChFi3d_FilBuilder_C3.cxx L853-901 补译**（LawS + BlendFuncEvolRad/EvolRadInv 构造链，与邻位 const-radius 臂同构）。
+- **★ 批次 C2（子代理，offset_offset + middle_path）**：Gabarit（tool.rs:544）、GeomFill_Pipe new_from_curve 族（geomfill/pipe.rs）、GeomAPI_ExtremaCurveCurve（两 Geom_Line 的凸二次 ⇒ 采样+Newton 即全局极小，语义成立）、ExtendSurfByLength、GeomProjLib::Curve2d（2 参重载 → `curve2d_auto`）、UnifySameDomain + History（hxx 默认 UnifyEdges/UnifyFaces=true 展开）、GeomLib::Inertia、BuildCurve3d。
+- **★ 批次 D（主代理续）**：`brep_offset_analyse` 的 `BRepPrimAPI_MakePrism` 接 `brep_sweep::BRepSweepPrism` 真身（ctor 默认 Copy=false/Canonize=true；Generated 按 cxx L88-96 的 IsUsed/GenIsUsed 双门；**is_done 由恒 false 翻真 = Analyse::CheckPrismatic 的棱柱支路激活**）；`brep_offset_make_offset_c` 三件：SphereVIso（elslib_iso 真身）、`BRepLib_MakeFace(S,U1,U2,V1,V2,Tol)`（= `make_face::init_bounds`，cxx L463-869 已译）、`BRepTools_Substitution`（topalgo 真身；build 需 `&mut BRep` → 传 `self.my_brep`）。
+- **★ 保留 GAP（140 处，全部真缺失或需架构桥接——按此清单立卡，勿再按文案猜）**：Sewing 15 · CompCurveToBSplineCurve 2d/3d 12 · GeomFill_AppSurf/AppBlend 8（thru_sections_b 最大簇）· DistShapeShape 4 · Approx_FitAndDivide 3 · LocalAnalysis_SurfaceContinuity 2 · BRepFill_AdvancedEvolved 2 · BRepAdaptor_Curve(E,F) 3D fallback 2 · GProp GProps/COM 形式 6（kernel 只有长度/面积 f64）· BRepLib::SameParameter 边真体（需 ComputeTol/EvalTol/C0BSplineToC1 级联）· ShapeFix_Shape 3（arena 形式：perform 要 `&mut BRep`，池外调用点会搁浅 TShape）· GeomFillPipe Adaptor3d ctor（CurveOnSurface 无 Curve3 视图）· approx_surface 完整参数形式 · Geom_BSplineSurface 面级 Segment/LocateU/UIso/VIso · GeomAPI_Interpolate 类形式（切点 Load）· BRepAlgo::ConvertWire · BRepTools::IsReallyClosed · ShapeCustom_Curve2d::ConvertToLine2d · `brep_lib_build_curve3d` 池外形式 · bi_tgte 的 `curve/point_transformed_gap`（u32 location → DAffine3 应用层）。
+- **★ 方法学（本轮新增/再验证）**：① **panic 载体下藏真错**——接线必须逐语句对照 OCCT 调用块（球面 U-iso 旋转轴例）；② **普查清单按位点不按符号**——7 处写 13 处；③ **stash 双跑对拍**是"载体收敛轮"的最低成本验收（逐格 diff 通过/失败数，本轮 16/16 全同）；④ 子代理任务书必须写明"若签名不匹配就停"——本轮 4 个代理 0 次硬凑（ShapeFix_Shape arena 不匹配即保留并报告，Rule 4 不冤枉）。
+- **⏭ 下一轮队列（按序）**：
+  1. **GeomFill_AppSurf/AppBlend 翻译**（8 处，thru_sections_b 的 18 个 GAP 的上游；AppBlend_SweepApproximation + AppSurf 参数面逼近——TKGeomBase/Approx 级联，最大单块）。
+  2. **BRepLib::SameParameter 边真体**（先译 Geom2dConvert::C0BSplineToC1BSplineCurve + BRepLib::ComputeTol/EvalTol 两个静态助手；Approx_SameParameter/GeomLib::SameRange/PrecCurve 已在库）——解锁 bi_tgte ComputeShape 尾段。
+  3. **BRepBuilderAPI_Sewing 翻译**（15 处消费；BiTgte Perform/ComputeShape + find_contigous_edges；预期 ~2700 行 cxx）。
+  4. **brep_fill_pipe 引擎的 my_loc law 层收敛**（brep_fill_pipe.rs:139/:185 本地 stub → 真身 brep_fill_location_law.rs:273 / shape_law.rs:102）——推进 LocOpe_Pipe/BRepFeat_MakePipe 的 panic 层。
+  5. **CompCurveToBSplineCurve 2d/3d**（12 处；chfi3d_filbuilder_c2 的 CurveToBSplineCurve/SplitBSplineCurve 薄包装 + engine segment_bspline_curve 已在库）。
+  6. **GProp_GProps 形式**（COM/矩 —— kernel linear/surface 只返回标量；middle_path 的 6 处消费）。
+  7. 追加 39 队列顺延（canonical epsilon_of 消费者阈值抽查、`loc_ope_split_drafts` 直测、endless_loop_prevention panic、`intrv::Interval::new()` 消费点判别、REAL_FIRST/REAL_LAST 收敛、`builder.rs`/`pave_filler.rs` 拆分等）。
+- **复测脚本**：`rcad/temp/run_gates.sh` · `rcad/temp/run_domain_grids.sh`（本轮实装 stash 双跑对拍）· `rcad/temp/validate_round5.sh`；八网格 = 根仓库 `output/run_eight_grids.sh`（先 `cargo test --no-run -p occt-generated-tests` 重编 exe）。
+
+### 0.0o 追加 39 收尾态（2026-09-14；**已被追加 40 取代 —— 见 §0.0p** —— 单线：epsilon 同族全库收敛（16 份）+ canonical 第三轮修正（OCCT 精确 nextafter 体）+ `bspl_lib` 6 处公式偏离 + 队列 3 对拍收口）
 
 > **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**（`cd rcad && git log --oneline -1` 即得）；根仓库指针 = 本文件所在的根提交。
 > 追加 39 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）

@@ -21,32 +21,11 @@ use super::brep_offset_offset::GeomAbsShapeKind;
 use rcad_kernel::core::precision::{ANGULAR as PRECISION_ANGULAR, CONFUSION as PRECISION_CONFUSION};
 
 // ---------------------------------------------------------------------------
-// GAP carrier (architecture difference #12 of brep_offset_offset.rs):
-// OCCT GeomAPI_ProjectPointOnCurve (TKTopAlgo/GeomAPI) — not translated.
-// The default ctor + Init(P, Curve) form (BiTgte_Blend.cxx L2110, L173).
+// OCCT GeomAPI_ProjectPointOnCurve (TKTopAlgo/GeomAPI) — the real 1:1 body
+// lives in crate::geomalgo::geom_api_project_point_on_curve (arch. diff. #12
+// of brep_offset_offset.rs retired); the local GAP carrier is deleted.
 // ---------------------------------------------------------------------------
-#[derive(Default)]
-pub struct GeomApiProjectPointOnCurve;
-
-impl GeomApiProjectPointOnCurve {
-    /// OCCT GeomAPI_ProjectPointOnCurve::GeomAPI_ProjectPointOnCurve().
-    pub fn new() -> Self {
-        GeomApiProjectPointOnCurve
-    }
-
-    /// OCCT GeomAPI_ProjectPointOnCurve::Init(P, Curve).
-    pub fn init(&mut self, _the_p: DVec3, _the_curve: &Curve3) {}
-
-    /// OCCT GeomAPI_ProjectPointOnCurve::NearestPoint().
-    pub fn nearest_point(&self) -> DVec3 {
-        panic!("GAP: GeomAPI_ProjectPointOnCurve::NearestPoint (TKTopAlgo/GeomAPI not translated)");
-    }
-
-    /// OCCT GeomAPI_ProjectPointOnCurve::LowerDistanceParameter().
-    pub fn lower_distance_parameter(&self) -> f64 {
-        panic!("GAP: GeomAPI_ProjectPointOnCurve::LowerDistanceParameter (TKTopAlgo/GeomAPI not translated)");
-    }
-}
+pub use crate::geomalgo::geom_api_project_point_on_curve::GeomAPIProjectPointOnCurve;
 
 /// OCCT Geom_Curve::ResD1 (Geom_Curve.hxx L62-66) — the D0/D1 result carrier.
 pub struct ResD1 {
@@ -273,8 +252,8 @@ impl BiTgteCurveOnEdge {
         let my_conf = self.my_conf.as_ref().expect("BiTgte_CurveOnEdge: null myConF");
         let my_curv = self.my_curv.as_ref().expect("BiTgte_CurveOnEdge: null myCurv");
         let a_p = use_point_at(my_conf, the_u);
-        let mut a_projector = GeomApiProjectPointOnCurve::new();
-        a_projector.init(a_p, my_curv);
+        let mut a_projector = GeomAPIProjectPointOnCurve::new();
+        a_projector.init_point_curve(a_p, my_curv);
         a_projector.nearest_point()
     }
 

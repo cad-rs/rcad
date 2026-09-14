@@ -30,7 +30,7 @@ use crate::offset::brep_offset_offset::{
     GeomAbsShapeKind,
 };
 use crate::offset::brep_offset_offset_b::BRepOffsetOffset;
-use crate::offset::bi_tgte_curve_on_edge::{BiTgteCurveOnEdge, GeomApiProjectPointOnCurve};
+use crate::offset::bi_tgte_curve_on_edge::{BiTgteCurveOnEdge, GeomAPIProjectPointOnCurve};
 
 use super::{
     add, brep_lib_make_edge_3d, brep_lib_make_edge_pcurve, brep_lib_same_parameter,
@@ -93,7 +93,11 @@ impl BiTgteBlend {
         if self.my_radius < 0.0 {
             side = State::Out;
         }
-        let mut inter = BRepOffsetInter3d::new(&self.my_as_des, side, self.my_tol);
+        // OCCT L1307: BRepOffset_Inter3d Inter(myAsDes, Side, myTol) — the
+        // OCCT Handle aliasing maps to the take + boundary-resync form
+        // (architecture difference #39).
+        let mut inter =
+            BRepOffsetInter3d::new(std::mem::take(&mut self.my_as_des), side, self.my_tol);
 
         // OCCT L1309-1311: MapSBox / Done.
         let mut map_s_box: HashMap<Shape, BndBox> = HashMap::new();
@@ -126,7 +130,7 @@ impl BiTgteBlend {
                 // OCCT L1339-1368.
                 let nb_edges = self.my_edges.len();
                 for i in 0..nb_edges {
-                    let e = self.my_edges.get_index(i).expect("index").0.clone();
+                    let e = self.my_edges.get_index(i).expect("index").1.clone();
                     if brep_tool_degenerated(&e) {
                         continue;
                     }
@@ -169,14 +173,30 @@ impl BiTgteBlend {
                         let f = as_.clone();
                         if touched_by_cork.contains(&f) {
                             // OCCT L1391: BRepOffset_Tool::EnLargeFace(F,
-                            // BigF, true) — GAP (arch. diff. #23).
-                            let enlarged = brep_offset_tool_en_large_face(&f, true);
+                            // BigF, true) — the real body (hxx L145-156: the
+                            // defaults UpDatePCurve=false, enlargeU/Vfirst/
+                            // Vlast=true, theExtensionMode=1, the lens=-1).
+                            let mut big_f = Shape::null();
+                            let _ = crate::offset::brep_offset_tool_c::en_large_face(
+                                &f,
+                                &mut big_f,
+                                true,
+                                false,
+                                true,
+                                true,
+                                true,
+                                1,
+                                -1.0,
+                                -1.0,
+                                -1.0,
+                                -1.0,
+                            );
                             // OCCT L1392: OF1.Init(BigF, myRadius, EdgeTgt)
                             // — the (F, Offset, Created) Init form (the
                             // defaults OffsetOutside=true, Join=Arc).
                             of1.init_face_created(
                                 &mut self.my_brep,
-                                &enlarged,
+                                &big_f,
                                 self.my_radius,
                                 &edge_tgt,
                                 true,
@@ -390,10 +410,12 @@ impl BiTgteBlend {
 
         // OCCT L1577-1578.
         self.my_edges.clear();
-        let new_edges = inter.new_edges();
-        for ne in new_edges {
-            self.my_edges.insert(ne, ());
+        for ne in inter.new_edges().iter() {
+            self.my_edges.insert(shape_key(ne), ne.clone());
         }
+        // OCCT aliasing resync — give the AsDes back before the Inter2d /
+        // MakeLoops phase (architecture difference #39).
+        std::mem::swap(&mut self.my_as_des, inter.as_des_mut());
 
         // -------------------------------------------------------------------
         // now it is necessary to limit edges on the neighbors (otherwise one
@@ -463,14 +485,15 @@ impl BiTgteBlend {
                     }
                 }
                 // OCCT L1650-1658: the empty EdgeInt map + aDMVV.
-                let mut an_empty_map: HashMap<Shape, Vec<Shape>> = HashMap::new();
+                let an_empty_map: HashMap<ShapeKey, Vec<Shape>> = HashMap::new();
                 BRepOffsetInter2d::compute(
-                    &self.my_as_des,
+                    &mut self.my_as_des,
                     &cur_of,
                     &self.my_edges,
                     self.my_tol,
-                    &mut an_empty_map,
+                    &an_empty_map,
                     &mut a_dmvv,
+                    (),
                 );
             }
         }
@@ -506,30 +529,31 @@ impl BiTgteBlend {
                 self.my_as_des.add(&cur_of, &cur_oe);
             }
 
-            let mut an_empty_map: HashMap<Shape, Vec<Shape>> = HashMap::new();
+            let an_empty_map: HashMap<ShapeKey, Vec<Shape>> = HashMap::new();
             BRepOffsetInter2d::compute(
-                &self.my_as_des,
+                &mut self.my_as_des,
                 &cur_of,
                 &self.my_edges,
                 self.my_tol,
-                &mut an_empty_map,
+                &an_empty_map,
                 &mut a_dmvv,
+                (),
             );
         }
         //
         // fuse vertices on edges stored in AsDes
         // OCCT L1708-1709.
         let mut an_empty_image = BRepAlgoImage::new();
-        BRepOffsetInter2d::fuse_vertices(&a_dmvv, &self.my_as_des, &mut an_empty_image);
+        let _ = BRepOffsetInter2d::fuse_vertices(&a_dmvv, &mut self.my_as_des, &mut an_empty_image);
         // ------------
         // unwinding
         // ------------
         // OCCT L1713-1714.
         let mut make_loops = BRepOffsetMakeLoops::new();
         make_loops.build(
-            &mut lof,
-            &self.my_as_des,
-            &self.my_image_offset,
+            &lof,
+            &mut self.my_as_des,
+            &mut self.my_image_offset,
             &mut an_empty_image,
         );
 
@@ -609,9 +633,9 @@ impl BiTgteBlend {
         // --------------------------------------------------------------------
 
         // OCCT L1802-2218.
-        let nb_edges = self.my_edges.len();
-        for i in 0..nb_edges {
-            let cur_e = self.my_edges.get_index(i).expect("index").0.clone();
+            let nb_edges = self.my_edges.len();
+            for i in 0..nb_edges {
+                let cur_e = self.my_edges.get_index(i).expect("index").1.clone();
 
             // OCCT L1806: L = myAsDes->Ascendant(CurE).
             let l = self.my_as_des.ascendant(&cur_e).to_vec();
@@ -978,7 +1002,7 @@ impl BiTgteBlend {
                     // method based ONLY on the construction of fillet:
                     // the first edge of the tube is exactly on Shape1.
                     // OCCT L2110: GeomAPI_ProjectPointOnCurve Projector.
-                    let mut projector = GeomApiProjectPointOnCurve::new();
+                    let mut projector = GeomAPIProjectPointOnCurve::new();
                     let exp: Vec<Shape> =
                         explorer(&tuyo, ShapeType::Edge, ShapeType::Shape);
                     let mut v1 = Shape::null();
@@ -994,11 +1018,11 @@ impl BiTgteBlend {
 
                         // OCCT L2118-2124.
                         let p1 = brep_tool_pnt(&v1).expect("null vertex point");
-                        projector.init(p1, gc1.as_ref().expect("null GC1"));
+                        projector.init_point_curve(p1, gc1.as_ref().expect("null GC1"));
                         let u1 = projector.lower_distance_parameter();
 
                         let p2 = brep_tool_pnt(&v2).expect("null vertex point");
-                        projector.init(p2, gc1.as_ref().expect("null GC1"));
+                        projector.init_point_curve(p2, gc1.as_ref().expect("null GC1"));
                         let u2 = projector.lower_distance_parameter();
 
                         // OCCT L2126-2129.
@@ -1035,11 +1059,11 @@ impl BiTgteBlend {
 
                         // OCCT L2150-2156.
                         let p1 = brep_tool_pnt(&v1).expect("null vertex point");
-                        projector.init(p1, gc2.as_ref().expect("null GC2"));
+                        projector.init_point_curve(p1, gc2.as_ref().expect("null GC2"));
                         let u1 = projector.lower_distance_parameter();
 
                         let p2 = brep_tool_pnt(&v2).expect("null vertex point");
-                        projector.init(p2, gc2.as_ref().expect("null GC2"));
+                        projector.init_point_curve(p2, gc2.as_ref().expect("null GC2"));
                         let u2 = projector.lower_distance_parameter();
 
                         // OCCT L2158-2161.
@@ -1565,7 +1589,10 @@ impl BiTgteBlend {
             // OCCT L2583-2661.
             let mut l_int: Vec<Shape> = Vec::new();
             done.clear();
-            if self.my_as_des.has_common_descendant(face, &f2, &mut l_int) {
+            // OCCT L2586: myAsDes->HasCommonDescendant(Face, F2, LInt) — the
+            // AsDes is the Inter-owned object while the intersector lives
+            // (the OCCT Handle aliasing; architecture difference #39).
+            if inter.as_des().has_common_descendant(face, &f2, &mut l_int) {
                 for cur_e in &l_int {
                     let (v1, v2) = top_exp_vertices_shape(cur_e);
 
@@ -1657,12 +1684,6 @@ impl BiTgteBlend {
     }
 }
 
-/// OCCT BRep_Builder::UpdateFace(F, S, L, Tol) — the shared real carrier
-/// lives in brep_offset_offset::update_face_surface (BRep_Builder.cxx
-/// L564-578).
-
-/// OCCT BRepOffset_Tool::EnLargeFace(F, BigF, AddToShape) — GAP static
-/// (arch. diff. #23); the out-param BigF becomes the return value.
-fn brep_offset_tool_en_large_face(_the_f: &Shape, _add_to_shape: bool) -> Shape {
-    panic!("GAP: BRepOffset_Tool::EnLargeFace (TKOffset/BRepOffset not translated)");
-}
+// OCCT BRep_Builder::UpdateFace(F, S, L, Tol) — the shared real carrier
+// lives in brep_offset_offset::update_face_surface (BRep_Builder.cxx
+// L564-578).

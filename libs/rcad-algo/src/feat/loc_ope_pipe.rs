@@ -196,71 +196,12 @@ fn bspline_segment(c: &BSplineCurve3, u1: f64, u2: f64) -> BSplineCurve3 {
         .unwrap_or_else(|| c.clone())
 }
 
-/// OCCT BRepFill_Pipe (BRepFill_Pipe.hxx L40-120) — NOT YET PORTED
-/// (architecture difference #1).  Only the interface consumed by
-/// LocOpe_Pipe is declared; every body is the pending BRepFill sweep port
-/// (BRepFill_Sweep / BRepFill_SectionPlacement / GeomFill_Sweep chain).
-pub struct BRepFillPipe {
-    // OCCT BRepFill_Pipe.hxx members relevant to the consumed interface.
-    my_spine: Shape,       // OCCT: mySpine
-    my_profile: Shape,     // OCCT: myProfile
-    my_shape: Option<Shape>,       // OCCT: myShape
-    my_first_shape: Option<Shape>, // OCCT: myFirstShape
-    my_last_shape: Option<Shape>,  // OCCT: myLastShape
-}
-
-impl BRepFillPipe {
-    /// OCCT BRepFill_Pipe::BRepFill_Pipe(Spine, Profile) (hxx L56).
-    pub fn new(the_spine: &Shape, the_profile: &Shape) -> Self {
-        BRepFillPipe {
-            my_spine: the_spine.clone(),
-            my_profile: the_profile.clone(),
-            my_shape: None,
-            my_first_shape: None,
-            my_last_shape: None,
-        }
-    }
-
-    /// OCCT BRepFill_Pipe::Spine() (hxx L66).
-    pub fn spine(&self) -> Shape {
-        self.my_spine.clone()
-    }
-
-    /// OCCT BRepFill_Pipe::Profile() (hxx L68).
-    pub fn profile(&self) -> Shape {
-        self.my_profile.clone()
-    }
-
-    /// OCCT BRepFill_Pipe::Shape() (hxx L70).
-    pub fn shape(&self) -> Option<Shape> {
-        self.my_shape.clone()
-    }
-
-    /// OCCT BRepFill_Pipe::FirstShape() (hxx L74).
-    pub fn first_shape(&self) -> Option<Shape> {
-        self.my_first_shape.clone()
-    }
-
-    /// OCCT BRepFill_Pipe::LastShape() (hxx L76).
-    pub fn last_shape(&self) -> Option<Shape> {
-        self.my_last_shape.clone()
-    }
-
-    /// OCCT BRepFill_Pipe::Face(ESpine, EProfile) (hxx L85).
-    pub fn face(&mut self, _e_spine: &Shape, _e_profile: &Shape) -> Shape {
-        unimplemented!("BRepFill_Pipe port pending (architecture difference #1)");
-    }
-
-    /// OCCT BRepFill_Pipe::Edge(ESpine, VProfile) (hxx L91).
-    pub fn edge(&mut self, _e_spine: &Shape, _v_profile: &Shape) -> Shape {
-        unimplemented!("BRepFill_Pipe port pending (architecture difference #1)");
-    }
-
-    /// OCCT BRepFill_Pipe::PipeLine(Point) (hxx L100).
-    pub fn pipe_line(&mut self, _point: DVec3) -> Shape {
-        unimplemented!("BRepFill_Pipe port pending (architecture difference #1)");
-    }
-}
+// OCCT BRepFill_Pipe (BRepFill_Pipe.hxx L40-120) — the real 1:1 body is
+// the crate::brep_fill translation (brep_fill/brep_fill_pipe.rs); the
+// former local interface-only stub is deleted (architecture difference #1
+// retired).
+use crate::brep_fill::brep_fill_pipe::BRepFillPipe;
+use crate::brep_fill::brep_fill_pipe::GeomFillTrihedron;
 
 /// OCCT LocOpe_Pipe (LocOpe_Pipe.hxx L37-69) — defines a pipe (near from
 /// BRepFill_Pipe), with modifications provided for the Pipe feature.
@@ -281,12 +222,21 @@ pub struct LocOpePipe {
 impl LocOpePipe {
     /// OCCT LocOpe_Pipe::LocOpe_Pipe(Spine, Profile) (cxx L51-274).
     pub fn new(the_spine: &Shape, the_profile: &Shape) -> Self {
-        let mut my_pipe = BRepFillPipe::new(the_spine, the_profile);
+        // OCCT cxx L52: myPipe(Spine, Profile) — the BRepFill_Pipe ctor
+        // (hxx L56-60) with the defaults aMode = GeomFill_IsCorrectedFrenet,
+        // ForceApproxC1 = false, GeneratePartCase = false.
+        let mut my_pipe = BRepFillPipe::new(
+            the_spine,
+            the_profile,
+            GeomFillTrihedron::IsCorrectedFrenet,
+            false,
+            false,
+        );
         let mut my_map: HashMap<(u64, u32), Vec<Shape>> = HashMap::new();
         let my_gshap: Vec<Shape> = Vec::new();
 
         // OCCT cxx L55: TopoDS_Shape Result = myPipe.Shape();
-        let result = my_pipe.shape().expect("myPipe.Shape()");
+        let result = my_pipe.shape();
 
         // OCCT cxx L57-58: "On enleve les faces generees par les edges de
         // connexite du profile, et on fusionne les plans si possible".
@@ -581,14 +531,20 @@ impl LocOpePipe {
 
         // OCCT cxx L263-270.
         let mut first_shape_faces: Vec<Shape> = Vec::new();
-        if let Some(fs) = my_pipe.first_shape() {
+        // OCCT cxx L263: exp.Init(myPipe.FirstShape(), FACE) — the null
+        // shape clears the explorer (no exploration).
+        let fs = my_pipe.first_shape();
+        if !fs.is_null() {
             first_shape_faces = explorer(&fs, ShapeType::Face, ShapeType::Shape);
         }
         for f in first_shape_faces {
             goodfaces.push(f);
         }
         let mut last_shape_faces: Vec<Shape> = Vec::new();
-        if let Some(ls) = my_pipe.last_shape() {
+        // OCCT cxx L267: exp.Init(myPipe.LastShape(), FACE) — the null
+        // shape clears the explorer (no exploration).
+        let ls = my_pipe.last_shape();
+        if !ls.is_null() {
             last_shape_faces = explorer(&ls, ShapeType::Face, ShapeType::Shape);
         }
         for f in last_shape_faces {
@@ -620,14 +576,26 @@ impl LocOpePipe {
         self.my_pipe.profile()
     }
 
-    /// OCCT LocOpe_Pipe::FirstShape() (lxx L33-36).
+    /// OCCT LocOpe_Pipe::FirstShape() (lxx L33-36) — the null shape maps
+    /// to None (the rcad Option<Shape> = null handle convention).
     pub fn first_shape(&self) -> Option<Shape> {
-        self.my_pipe.first_shape()
+        let s = self.my_pipe.first_shape();
+        if s.is_null() {
+            None
+        } else {
+            Some(s)
+        }
     }
 
-    /// OCCT LocOpe_Pipe::LastShape() (lxx L40-43).
+    /// OCCT LocOpe_Pipe::LastShape() (lxx L40-43) — the null shape maps
+    /// to None (the rcad Option<Shape> = null handle convention).
     pub fn last_shape(&self) -> Option<Shape> {
-        self.my_pipe.last_shape()
+        let s = self.my_pipe.last_shape();
+        if s.is_null() {
+            None
+        } else {
+            Some(s)
+        }
     }
 
     /// OCCT LocOpe_Pipe::Shape() (cxx L278-281).

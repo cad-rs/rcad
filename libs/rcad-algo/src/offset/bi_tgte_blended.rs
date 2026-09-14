@@ -17,24 +17,30 @@
 //     feat::loc_ope_glued_shape::map_shapes_and_ancestors keyed by
 //     (TShape ptr, Location). myIndices (HArray1<int> 1-based) -> Vec<i32>
 //     0-based with an explicit -1 offset at the access sites.
-// 22. BRepOffset_Analyse (TKOffset/BRepOffset) — GAP carrier (the Stage 2b
-//     unit owns the translation; the leaves panic until it lands).
+// 22. BRepOffset_Analyse — real body (super::brep_offset_analyse; the E0
+//     carrier switch).
 // 23. BRepOffset_Inter3d / BRepOffset_Inter2d / BRepOffset_MakeLoops /
-//     BRepOffset_Tool::EnLargeFace / BRepOffset_Interval — GAP carriers
-//     (same Stage 2b unit).
-// 24. BRepBuilderAPI_Sewing (TKTopAlgo/BRepBuilderAPI) — GAP carrier.
-// 25. BRepLib::SameParameter — GAP static leaf.  (BRepLib::BuildCurves3d
-//     is translated — topalgo/brep_lib/build_curves3d.rs; the call sites
-//     call the real body over my_brep.)
+//     BRepOffset_Tool::EnLargeFace / BRepOffset_Interval — real bodies
+//     (super::brep_offset_inter3d, super::brep_offset_inter2d_b,
+//     super::brep_offset_make_offset_loops, super::brep_offset_tool_c).
+// 24. BRepBuilderAPI_Sewing (TKTopAlgo/BRepBuilderAPI) — GAP carrier (the
+//     class is untranslated; the only consumer is ComputeShape/Perform).
+// 25. BRepLib::SameParameter — GAP static leaf (the OCCT body additionally
+//     needs BRepLib::ComputeTol / EvalTol and
+//     Geom2dConvert::C0BSplineToC1BSplineCurve — queued).
+//     (BRepLib::BuildCurves3d is translated —
+//     topalgo/brep_lib/build_curves3d.rs; the call sites call the real body
+//     over my_brep.)
 // 26. Approx_FitAndDivide + AppCont_Function + AppParCurves_MultiCurve +
-//     Convert_CompBezierCurvesToBSplineCurve (TKGeomBase) — GAP carriers;
-//     BSplCLib::Reparametrize is translated (bspl_lib::reparametrize).
+//     Convert_CompBezierCurvesToBSplineCurve (TKGeomBase) — GAP carriers
+//     (only Approx_FitAndDivide is still missing; the MultiCurve and the
+//     CompBezier converter live in geomalgo/approx_int.rs).
 // 27. GeomAPI_ProjectPointOnCurve / Geom2dAPI_ProjectPointOnCurve
-//     (TKTopAlgo/GeomAPI) — GAP carriers (the Init/NearestPoint form is the
-//     #12 carrier of brep_offset_offset.rs).
-// 28. GeomAPI::To3d + ElSLib::*VIso/*UIso + gp_Circ::Rotate + gp_Lin::
-//     Translate — GAP leaves inside KPartCurve3d (the TKMath/ElSLib iso
-//     constructors are not translated; cf. #20 of brep_offset_offset.rs).
+//     (TKTopAlgo/GeomAPI) — real bodies (geomalgo/geom_api_project_point_on_
+//     curve.rs, geomalgo/geom2d_api_project_point_on_curve.rs).
+// 28. GeomAPI::To3d (geomalgo/geom_api.rs) + ElSLib::*VIso/*UIso +
+//     gp_Circ::Rotate (elslib_iso) — real bodies; the KPartCurve3d leaf
+//     carriers are retired (cf. #20 of brep_offset_offset.rs).
 // 29. BRepLib_MakeEdge -> BRepBuilder::add_edge over the class-local BRep
 //     pool (arch. diff. #4/#19); the (PC, S, V1, V2, f, l) pcurve form has
 //     no face-less pcurve storage in rcad — GAP leaf.
@@ -57,9 +63,13 @@ use rcad_kernel::topo_shape::Shape;
 
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
-use crate::feat::loc_ope_wires_on_shape::brep_tool_pnt;
+use crate::feat::loc_ope_wires_on_shape::{brep_tool_pnt, shape_key};
 use crate::feat::loc_ope_wires_on_shape_b::{
     brep_tool_curve_on_surface, brep_tool_degenerated, brep_tool_tolerance, ShapeKey,
+};
+use rcad_kernel::base::proj_lib::elslib_iso::{
+    circ_rotated, elslib_cone_u_iso, elslib_cone_v_iso, elslib_cylinder_u_iso,
+    elslib_cylinder_v_iso, elslib_sphere_u_iso, elslib_sphere_v_iso, elslib_torus_v_iso, Ax3View,
 };
 
 use super::brep_offset_make_simple_offset::{edge_curve_of, top_exp_vertices_shape};
@@ -80,7 +90,9 @@ use rcad_kernel::core::precision::{
     CONFUSION as PRECISION_CONFUSION,
 };
 
-type AncestorsMap = IndexMap<ShapeKey, (Shape, Vec<Shape>)>;
+// OCCT DataMap<Shape, List<Shape>> (myAncestors / the DMVV map) — the same
+// canonical alias the BRepOffset_Inter2d real body consumes.
+pub type AncestorsMap = super::brep_offset_inter2d::DmvvMap;
 
 // ===========================================================================
 // GAP carriers (architecture differences #22-#27, #29).
@@ -90,93 +102,19 @@ type AncestorsMap = IndexMap<ShapeKey, (Shape, Vec<Shape>)>;
 // super::brep_offset_analyse (the E0 carrier-switch list; the local panic
 // carriers are deleted).  Re-exported for the Blended consumers.
 pub use super::brep_offset_analyse::{BRepOffsetAnalyse, BRepOffsetInterval};
-
-/// OCCT BRepOffset_Inter3d (TKOffset/BRepOffset/BRepOffset_Inter3d.hxx /
-/// .cxx) — GAP carrier (arch. diff. #23).
-pub struct BRepOffsetInter3d;
-
-impl BRepOffsetInter3d {
-    /// OCCT BRepOffset_Inter3d::BRepOffset_Inter3d(AsDes, Side, Tol).
-    pub fn new(_as_des: &BRepAlgoAsDes, _side: State, _tol: f64) -> Self {
-        BRepOffsetInter3d
-    }
-
-    /// OCCT BRepOffset_Inter3d::IsDone(F1, F2).
-    pub fn is_done(&self, _f1: &Shape, _f2: &Shape) -> bool {
-        panic!("GAP: BRepOffset_Inter3d::IsDone (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_Inter3d::FaceInter(F1, F2, InitOffset).
-    pub fn face_inter(
-        &mut self,
-        _f1: &Shape,
-        _f2: &Shape,
-        _init_offset: &BRepAlgoImage,
-    ) {
-        panic!("GAP: BRepOffset_Inter3d::FaceInter (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_Inter3d::NewEdges() -> const TopTools_MapOfShape&.
-    pub fn new_edges(&self) -> Vec<Shape> {
-        panic!("GAP: BRepOffset_Inter3d::NewEdges (TKOffset/BRepOffset not translated)");
-    }
-}
-
-/// OCCT BRepOffset_Inter2d (TKOffset/BRepOffset/BRepOffset_Inter2d.hxx /
-/// .cxx) — GAP statics (arch. diff. #23).
-pub struct BRepOffsetInter2d;
-
-impl BRepOffsetInter2d {
-    /// OCCT BRepOffset_Inter2d::Compute(AsDes, F, NewEdges, Tol, EdgeInt,
-    /// DMVV, theProgress).
-    #[allow(clippy::too_many_arguments)]
-    pub fn compute(
-        _as_des: &BRepAlgoAsDes,
-        _f: &Shape,
-        _new_edges: &IndexMap<Shape, ()>,
-        _tol: f64,
-        _edge_int: &mut HashMap<Shape, Vec<Shape>>,
-        _dmvv: &mut AncestorsMap,
-    ) {
-        panic!("GAP: BRepOffset_Inter2d::Compute (TKOffset/BRepOffset not translated)");
-    }
-
-    /// OCCT BRepOffset_Inter2d::FuseVertices(DMVV, AsDes, Image).
-    pub fn fuse_vertices(
-        _dmvv: &AncestorsMap,
-        _as_des: &BRepAlgoAsDes,
-        _image: &mut BRepAlgoImage,
-    ) {
-        panic!("GAP: BRepOffset_Inter2d::FuseVertices (TKOffset/BRepOffset not translated)");
-    }
-}
-
-/// OCCT BRepOffset_MakeLoops (TKOffset/BRepOffset/BRepOffset_MakeLoops.hxx /
-/// .cxx) — GAP carrier (arch. diff. #23).
-#[derive(Default)]
-pub struct BRepOffsetMakeLoops;
-
-impl BRepOffsetMakeLoops {
-    /// OCCT BRepOffset_MakeLoops::BRepOffset_MakeLoops().
-    pub fn new() -> Self {
-        BRepOffsetMakeLoops
-    }
-
-    /// OCCT BRepOffset_MakeLoops::Build(LOF, AsDes, ImageOffset, Image,
-    /// theProgress).
-    pub fn build(
-        &mut self,
-        _lof: &mut Vec<Shape>,
-        _as_des: &BRepAlgoAsDes,
-        _image_offset: &BRepAlgoImage,
-        _image: &mut BRepAlgoImage,
-    ) {
-        panic!("GAP: BRepOffset_MakeLoops::Build (TKOffset/BRepOffset not translated)");
-    }
-}
+// OCCT BRepOffset_Inter3d / BRepOffset_Inter2d / BRepOffset_MakeLoops — the
+// real 1:1 bodies live in super::brep_offset_inter3d (arch. diff. #23
+// retired), super::brep_offset_inter2d_b and
+// super::brep_offset_make_offset_loops; the local panic carriers are deleted.
+pub use super::brep_offset_inter3d::BRepOffsetInter3d;
+pub use super::brep_offset_inter2d_b::BRepOffsetInter2d;
+pub(crate) use super::brep_offset_make_offset_loops::BRepOffsetMakeLoops;
+pub use super::brep_offset_inter2d::{DmvvMap, IndexedShapeMap};
 
 /// OCCT BRepBuilderAPI_Sewing (TKTopAlgo/BRepBuilderAPI/
-/// BRepBuilderAPI_Sewing.hxx / .cxx) — GAP carrier (arch. diff. #24).
+/// BRepBuilderAPI_Sewing.hxx / .cxx) — GAP carrier (arch. diff. #24); the
+/// class is not translated yet (the consumer is BiTgte_Blend::ComputeShape
+/// cxx L2481-2506 only).
 #[derive(Default)]
 pub struct BRepBuilderAPISewing;
 
@@ -213,6 +151,12 @@ impl BRepBuilderAPISewing {
 }
 
 /// OCCT BRepLib::SameParameter(E, Tol) — GAP static leaf (arch. diff. #25).
+/// The OCCT body is BRepLib.cxx L1237-1247 (the void edge overload) +
+/// L1251+ (the 4-arg engine); `Approx_SameParameter` (geomalgo) and
+/// `GeomLib::SameRange` (geom_lib_same_range) are translated, but the body
+/// additionally needs `BRepLib::ComputeTol` / `EvalTol` and
+/// `Geom2dConvert::C0BSplineToC1BSplineCurve` (all untranslated) — the
+/// translation is queued.
 pub fn brep_lib_same_parameter(_the_e: &Shape, _the_tol: f64) {
     panic!("GAP: BRepLib::SameParameter (TKTopAlgo/BRepLib not translated)");
 }
@@ -254,25 +198,11 @@ fn brep_lib_make_edge_pcurve(
     panic!("GAP: BRepLib_MakeEdge(PCurve, Surface, V1, V2, f, l) (arch. diff. #29)");
 }
 
-/// OCCT Geom2dAPI_ProjectPointOnCurve (TKTopAlgo/GeomAPI) — GAP carrier
-/// (arch. diff. #27); the Init(P, PC, f, l) form of IsOnRestriction.
-#[derive(Default)]
-pub struct Geom2dApiProjectPointOnCurve;
-
-impl Geom2dApiProjectPointOnCurve {
-    /// OCCT Geom2dAPI_ProjectPointOnCurve::Init(P, Curve, Uf, Ul).
-    pub fn init(&mut self, _the_p: DVec2, _the_curve: &Curve2d, _uf: f64, _ul: f64) {}
-
-    /// OCCT Geom2dAPI_ProjectPointOnCurve::NbPoints().
-    pub fn nb_points(&self) -> i32 {
-        panic!("GAP: Geom2dAPI_ProjectPointOnCurve::NbPoints (TKTopAlgo/GeomAPI not translated)");
-    }
-
-    /// OCCT Geom2dAPI_ProjectPointOnCurve::LowerDistance().
-    pub fn lower_distance(&self) -> f64 {
-        panic!("GAP: Geom2dAPI_ProjectPointOnCurve::LowerDistance (TKTopAlgo/GeomAPI not translated)");
-    }
-}
+// OCCT Geom2dAPI_ProjectPointOnCurve (TKTopAlgo/GeomAPI) — the real 1:1
+// body lives in crate::geomalgo::geom2d_api_project_point_on_curve (arch.
+// diff. #27 retired); the local GAP carrier is deleted.  The consumer below
+// is the Init(P, PC, f, l) form of IsOnRestriction.
+use crate::geomalgo::geom2d_api_project_point_on_curve::Geom2dAPIProjectPointOnCurve;
 
 // ---------------------------------------------------------------------------
 // OCCT statics (BiTgte_Blend.cxx L88-703).
@@ -300,7 +230,7 @@ fn is_on_restriction(v: &Shape, cur_e: &Shape, f: &Shape, e: &mut Shape) -> bool
     let p = cur_c.point_at(u);
 
     // OCCT L115: Geom2dAPI_ProjectPointOnCurve Proj.
-    let mut proj = Geom2dApiProjectPointOnCurve::default();
+    let mut proj = Geom2dAPIProjectPointOnCurve::new();
 
     // The tolerance is exaggerated : it is better to construct too many
     // tubes than to miss intersections.
@@ -314,7 +244,7 @@ fn is_on_restriction(v: &Shape, cur_e: &Shape, f: &Shape, e: &mut Shape) -> bool
         let Some((pc, pf, pl)) = brep_tool_curve_on_surface(e, f) else {
             continue;
         };
-        proj.init(p, &pc, pf, pl);
+        proj.init_point_curve_ranged(p, &pc, pf, pl);
         if proj.nb_points() > 0 {
             if proj.lower_distance() < tol {
                 return true;
@@ -327,7 +257,7 @@ fn is_on_restriction(v: &Shape, cur_e: &Shape, f: &Shape, e: &mut Shape) -> bool
 // OCCT BiTgte_Blend.cxx L140-195 — Add.
 fn add(
     e: &Shape,
-    map: &mut IndexMap<Shape, ()>,
+    map: &mut IndexedShapeMap,
     s: &Shape,
     of: &BRepOffsetOffset,
     analyse: &BRepOffsetAnalyse,
@@ -351,7 +281,7 @@ fn add(
                         break; // Nothing is done.
                     }
                 }
-                map.insert(ori_e, ());
+                map.insert(shape_key(&ori_e), ori_e);
                 break;
             }
         }
@@ -364,7 +294,7 @@ fn add(
                 // OCCT L185: L = Analyse.Ancestors(exp.Current()).
                 let l = analyse.ancestors(&a_local_vertex).clone();
                 for it_value in l {
-                    map.insert(it_value, ());
+                    map.insert(shape_key(&it_value), it_value);
                 }
                 break;
             }
@@ -419,39 +349,51 @@ fn k_part_curve_3d(edge: &Shape, curve: &Curve2d, surf: &Surface3, the_brep: &mu
                         // OCCT L243: TheBuilder.Degenerated(Edge, true).
                         the_builder.set_edge_degenerated(the_brep, edge.clone(), true);
                     } else {
-                        // OCCT L247-258: SphereVIso + Rotate + Reverse +
-                        // UpdateEdge — the ElSLib iso/GP rotation leaves.
-                        let circle = elslib_sphere_v_iso(sph, p.y);
-                        let circle = circle_rotate(circle, sph.axis, p.x);
-                        let mut circle = circle;
+                        // OCCT L247-252: Axis = Sph.Position(); Ci =
+                        // SphereVIso(Axis, Radius, P.Y()); DRev = X ^ Y;
+                        // AxeRev(Location, DRev); Ci.Rotate(AxeRev, P.X()).
+                        let a_pos = Ax3View::from_axes(sph.center, sph.axis, sph.ref_dir);
+                        let ci = elslib_sphere_v_iso(&a_pos, sph.radius, p.y);
+                        let d_rev = sph.ref_dir.cross(a_pos.y_direction);
+                        let ci = circ_rotated(&ci, sph.center, d_rev, p.x);
+                        let mut circle = ci;
                         if d.x < 0.0 {
+                            // OCCT L254-257: Circle->Reverse().
                             circle = circle_reversed(circle);
                         }
                         update_edge_curve3d_gap(edge, &Curve3::Circle(circle), loc, tol);
                     }
                 } else if let Surface3::Cylinder(cyl) = surf {
                     // OCCT L261-276.
-                    let circle = elslib_cylinder_v_iso(cyl, cyl.radius, p.y);
-                    let circle = circle_rotate(circle, cyl.axis, p.x);
-                    let mut circle = circle;
+                    let a_pos = Ax3View::from_axes(cyl.origin, cyl.axis, cyl.ref_dir);
+                    let ci = elslib_cylinder_v_iso(&a_pos, cyl.radius, p.y);
+                    let d_rev = cyl.ref_dir.cross(a_pos.y_direction);
+                    let ci = circ_rotated(&ci, cyl.origin, d_rev, p.x);
+                    let mut circle = ci;
                     if d.x < 0.0 {
                         circle = circle_reversed(circle);
                     }
                     update_edge_curve3d_gap(edge, &Curve3::Circle(circle), loc, tol);
                 } else if let Surface3::Cone(cone) = surf {
-                    // OCCT L277-292.
-                    let circle = elslib_cone_v_iso(cone, cone.radius, cone.half_angle_rad, p.y);
-                    let circle = circle_rotate(circle, cone.axis, p.x);
-                    let mut circle = circle;
+                    // OCCT L277-292: ConeVIso(Position, RefRadius,
+                    // SemiAngle, P.Y()).
+                    let a_pos = Ax3View::from_axes(cone.apex, cone.axis, cone.ref_dir);
+                    let ci = elslib_cone_v_iso(&a_pos, cone.radius, cone.half_angle_rad, p.y);
+                    let d_rev = cone.ref_dir.cross(a_pos.y_direction);
+                    let ci = circ_rotated(&ci, cone.apex, d_rev, p.x);
+                    let mut circle = ci;
                     if d.x < 0.0 {
                         circle = circle_reversed(circle);
                     }
                     update_edge_curve3d_gap(edge, &Curve3::Circle(circle), loc, tol);
                 } else if let Surface3::Torus(tore) = surf {
                     // OCCT L293-308.
-                    let circle = elslib_torus_v_iso(tore, tore.major_radius, tore.minor_radius, p.y);
-                    let circle = circle_rotate(circle, tore.axis, p.x);
-                    let mut circle = circle;
+                    let a_pos = Ax3View::from_axes(tore.center, tore.axis, tore.ref_dir);
+                    let ci =
+                        elslib_torus_v_iso(&a_pos, tore.major_radius, tore.minor_radius, p.y);
+                    let d_rev = tore.ref_dir.cross(a_pos.y_direction);
+                    let ci = circ_rotated(&ci, tore.center, d_rev, p.x);
+                    let mut circle = ci;
                     if d.x < 0.0 {
                         circle = circle_reversed(circle);
                     }
@@ -463,30 +405,42 @@ fn k_part_curve_3d(edge: &Shape, curve: &Curve2d, surf: &Surface3, the_brep: &mu
                     // OCCT L312-335: calculate iso 0; set to sameparameter
                     // (rotation of the circle - offset from Y);
                     // transformation by iso U (= P.X()).
-                    let circle = elslib_sphere_u_iso(sph, sph.radius, 0.0);
-                    let circle = circle_rotate(circle, sph.axis, p.y);
-                    let circle = circle_rotate(circle, sph.axis, p.x);
-                    let mut circle = circle;
+                    let a_pos = Ax3View::from_axes(sph.center, sph.axis, sph.ref_dir);
+                    let ci = elslib_sphere_u_iso(&a_pos, sph.radius, 0.0);
+                    // OCCT L321-323: DRev = XDirection ^ Direction();
+                    // Rotate(AxeRev, P.Y()).
+                    let d_rev_y = sph.ref_dir.cross(sph.axis);
+                    let ci = circ_rotated(&ci, sph.center, d_rev_y, p.y);
+                    // OCCT L326-328: DRev = XDirection ^ YDirection;
+                    // Rotate(AxeRev, P.X()).
+                    let d_rev_x = sph.ref_dir.cross(a_pos.y_direction);
+                    let ci = circ_rotated(&ci, sph.center, d_rev_x, p.x);
+                    let mut circle = ci;
                     if d.y < 0.0 {
                         circle = circle_reversed(circle);
                     }
                     update_edge_curve3d_gap(edge, &Curve3::Circle(circle), loc, tol);
                 } else if let Surface3::Cylinder(cyl) = surf {
-                    // OCCT L337-350.
-                    let line = elslib_cylinder_u_iso(cyl, cyl.radius, p.x);
-                    let tr = line.direction * p.y;
-                    let line = line3_translate(line, tr);
-                    let mut line = line;
+                    // OCCT L337-350: CylinderUIso(Position, Radius, P.X());
+                    // Tr = L.Direction() * P.Y(); L.Translate(Tr).
+                    let a_pos = Ax3View::from_axes(cyl.origin, cyl.axis, cyl.ref_dir);
+                    let l = elslib_cylinder_u_iso(&a_pos, cyl.radius, p.x);
+                    let tr = l.direction * p.y;
+                    let l = line3_translated(l, tr);
+                    let mut line = l;
                     if d.y < 0.0 {
+                        // OCCT L346-349: Line->Reverse().
                         line.direction = -line.direction;
                     }
                     update_edge_curve3d_gap(edge, &Curve3::Line(line), loc, tol);
                 } else if let Surface3::Cone(cone) = surf {
-                    // OCCT L352-366.
-                    let line = elslib_cone_u_iso(cone, cone.radius, cone.half_angle_rad, p.x);
-                    let tr = line.direction * p.y;
-                    let line = line3_translate(line, tr);
-                    let mut line = line;
+                    // OCCT L352-366: ConeUIso(Position, RefRadius,
+                    // SemiAngle, P.X()); Tr = L.Direction() * P.Y().
+                    let a_pos = Ax3View::from_axes(cone.apex, cone.axis, cone.ref_dir);
+                    let l = elslib_cone_u_iso(&a_pos, cone.radius, cone.half_angle_rad, p.x);
+                    let tr = l.direction * p.y;
+                    let l = line3_translated(l, tr);
+                    let mut line = l;
                     if d.y < 0.0 {
                         line.direction = -line.direction;
                     }
@@ -515,87 +469,20 @@ fn update_edge_curve3d_gap(_the_e: &Shape, _the_c: &Curve3, _the_loc: u32, _the_
 // OCCT GeomAPI::To3d lives in its OCCT toolkit home now:
 // `crate::geomalgo::geom_api::to3d`.
 
-// --- KPartCurve3d GAP leaves (architecture difference #28; the same leaf
-// --- family as the #20 stand-ins of brep_offset_offset.rs) ---
+// --- KPartCurve3d leaves — the ElSLib iso / gp rotation / gp translation
+// --- carriers are retired onto the kernel translation
+// --- (`base/proj_lib/elslib_iso.rs`; arch. diff. #28) ---
 
 type GpCirc = Circle3;
 type GpLin = Line3;
 
-/// OCCT ElSLib::SphereVIso(Axis, Radius, V) — GAP.
-fn elslib_sphere_v_iso(_sph: &rcad_kernel::geom::SphericalSurface, _v: f64) -> GpCirc {
-    panic!("GAP: ElSLib::SphereVIso (TKMath/ElSLib not translated)");
-}
-
-/// OCCT ElSLib::CylinderVIso(Axis, Radius, V) — GAP.
-fn elslib_cylinder_v_iso(
-    _cyl: &rcad_kernel::geom::CylindricalSurface,
-    _radius: f64,
-    _v: f64,
-) -> GpCirc {
-    panic!("GAP: ElSLib::CylinderVIso (TKMath/ElSLib not translated)");
-}
-
-/// OCCT ElSLib::ConeVIso(Axis, RefRadius, SemiAngle, V) — GAP.
-fn elslib_cone_v_iso(
-    _cone: &rcad_kernel::geom::ConicalSurface,
-    _ref_radius: f64,
-    _semi_angle: f64,
-    _v: f64,
-) -> GpCirc {
-    panic!("GAP: ElSLib::ConeVIso (TKMath/ElSLib not translated)");
-}
-
-/// OCCT ElSLib::TorusVIso(Axis, MajorR, MinorR, V) — GAP.
-fn elslib_torus_v_iso(
-    _tore: &rcad_kernel::geom::ToroidalSurface,
-    _major: f64,
-    _minor: f64,
-    _v: f64,
-) -> GpCirc {
-    panic!("GAP: ElSLib::TorusVIso (TKMath/ElSLib not translated)");
-}
-
-/// OCCT ElSLib::SphereUIso(Axis, Radius, U) — GAP.
-fn elslib_sphere_u_iso(
-    _sph: &rcad_kernel::geom::SphericalSurface,
-    _radius: f64,
-    _u: f64,
-) -> GpCirc {
-    panic!("GAP: ElSLib::SphereUIso (TKMath/ElSLib not translated)");
-}
-
-/// OCCT ElSLib::CylinderUIso(Position, Radius, U) — GAP.
-fn elslib_cylinder_u_iso(
-    _cyl: &rcad_kernel::geom::CylindricalSurface,
-    _radius: f64,
-    _u: f64,
-) -> GpLin {
-    panic!("GAP: ElSLib::CylinderUIso (TKMath/ElSLib not translated)");
-}
-
-/// OCCT ElSLib::ConeUIso(Position, RefRadius, SemiAngle, U) — GAP.
-fn elslib_cone_u_iso(
-    _cone: &rcad_kernel::geom::ConicalSurface,
-    _ref_radius: f64,
-    _semi_angle: f64,
-    _u: f64,
-) -> GpLin {
-    panic!("GAP: ElSLib::ConeUIso (TKMath/ElSLib not translated)");
-}
-
-/// OCCT ElSLib::TorusUIso(Axis, MajorR, MinorR, U) — GAP.
-fn elslib_torus_u_iso(
-    _tore: &rcad_kernel::geom::ToroidalSurface,
-    _major: f64,
-    _minor: f64,
-    _u: f64,
-) -> GpCirc {
-    panic!("GAP: ElSLib::TorusUIso (TKMath/ElSLib not translated)");
-}
-
-/// OCCT gp_Circ::Rotate(gp_Ax1, Angle) — GAP.
-fn circle_rotate(_c: GpCirc, _axis: DVec3, _angle: f64) -> GpCirc {
-    panic!("GAP: gp_Circ::Rotate (gp_Trsf rotation not translated)");
+/// OCCT gp_Lin::Translate(gp_Vec) (gp_Lin.hxx Translate -> the gp_Ax1
+/// location shift) — the origin moved by the vector.
+fn line3_translated(l: GpLin, tr: DVec3) -> GpLin {
+    Line3 {
+        origin: l.origin + tr,
+        direction: l.direction,
+    }
 }
 
 /// OCCT Geom_Circle::Reverse() — the parameter reversal (the rcad Circle3
@@ -603,11 +490,6 @@ fn circle_rotate(_c: GpCirc, _axis: DVec3, _angle: f64) -> GpCirc {
 fn circle_reversed(mut c: GpCirc) -> GpCirc {
     std::mem::swap(&mut c.x_dir, &mut c.y_dir);
     c
-}
-
-/// OCCT gp_Lin::Translate(gp_Vec) — GAP.
-fn line3_translate(_l: GpLin, _tr: DVec3) -> GpLin {
-    panic!("GAP: gp_Lin::Translate (gp_Trsf translation not translated)");
 }
 
 /// OCCT Geom_Curve::FirstParameter() — the rcad curve-bound read (the
@@ -1098,7 +980,7 @@ pub struct BiTgteBlend {
     my_created: HashMap<Shape, HashMap<Shape, Vec<Shape>>>, // OCCT: myCreated (hxx L142-146)
     my_cut_edges: HashMap<Shape, Vec<Shape>>,               // OCCT: myCutEdges (hxx L147-149)
     my_faces: IndexMap<Shape, ()>,               // OCCT: myFaces (hxx L150)
-    my_edges: IndexMap<Shape, ()>,               // OCCT: myEdges (hxx L151)
+    my_edges: IndexedShapeMap,                   // OCCT: myEdges (hxx L151)
     my_stop_faces: HashSet<Shape>,               // OCCT: myStopFaces (hxx L152)
     my_analyse: BRepOffsetAnalyse,               // OCCT: myAnalyse (hxx L153)
     my_centers: IndexMap<Shape, ()>,             // OCCT: myCenters (hxx L154)
@@ -1203,7 +1085,7 @@ impl BiTgteBlend {
     /// OCCT BiTgte_Blend::SetEdge(Edge) (cxx L779-782) — Set an edge of
     /// <myShape> to be rounded.
     pub fn set_edge(&mut self, edge: &Shape) {
-        self.my_edges.insert(edge.clone(), ());
+        self.my_edges.insert(shape_key(edge), edge.clone());
     }
 
     /// OCCT BiTgte_Blend::Perform(BuildShape) (cxx L786-940) — Compute the

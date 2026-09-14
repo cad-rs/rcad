@@ -11,18 +11,25 @@
 //!
 //! Architecture differences:
 //! 1. NCollection_List<TopoDS_Shape> -> Vec<Shape>.
-//! 2. The engine member BRepFill_Draft myDraft (TKBool/BRepFill) has no rcad
-//!    translation yet — the BRepFillDraft carrier below keeps the OCCT
-//!    constructor/accessor surface with GAP panics (port plan section 0.6);
-//!    every facade body around the engine calls is translated 1:1.
-//! 3. OCCT enums BRepBuilderAPI_TransitionMode (TKBRep/BRepBuilderAPI) and
-//!    BRepFill_TransitionStyle (TKBool/BRepFill) are the local enums below
-//!    (no rcad BRepBuilderAPI/BRepFill enum modules yet).
+//! 2. The engine member BRepFill_Draft myDraft (TKBool/BRepFill) is the
+//!    brep_fill/brep_fill_draft.rs translation (imported below following
+//!    the OCCT hxx member form).
+//! 3. OCCT enum BRepBuilderAPI_TransitionMode (TKBRep/BRepBuilderAPI) is the
+//!    local enum below (no rcad BRepBuilderAPI enum module yet);
+//!    BRepFill_TransitionStyle (TKBool/BRepFill) is the engine enum,
+//!    re-exported under its OCCT-named path (the sibling facade
+//!    brep_offset_api_make_pipe_shell.rs imports it from here).
 
 use rcad_kernel::geom::Surface3;
 use rcad_kernel::topo_shape::Shape;
 
 use glam::DVec3;
+
+use crate::brep_fill::brep_fill_draft::BRepFillDraft;
+
+// OCCT BRepFill_TransitionStyle (TKBool/BRepFill_TransitionStyle.hxx L23-27)
+// — the engine enum, re-exported for the sibling facades.
+pub use crate::brep_fill::brep_fill_pipe::BRepFillTransitionStyle;
 
 /// OCCT BRepBuilderAPI_TransitionMode (TKBRep/BRepBuilderAPI_TransitionMode.hxx).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,99 +38,6 @@ pub enum BRepBuilderAPITransitionMode {
     TransitionMode_Transformed,
     RightCorner,
     RoundCorner,
-}
-
-/// OCCT BRepFill_TransitionStyle (TKBool/BRepFill_TransitionStyle.hxx L23-27).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
-pub enum BRepFillTransitionStyle {
-    TransitionStyle_Modified,
-    TransitionStyle_Right,
-    TransitionStyle_Round,
-}
-
-// ---------------------------------------------------------------------------
-// GAP carrier (architecture difference #2).
-// ---------------------------------------------------------------------------
-
-/// OCCT BRepFill_Draft (TKBool/BRepFill, BRepFill_Draft.hxx L42-99) — the
-/// draft-surface engine of MakeDraft (architecture difference #2; GAP: no
-/// rcad translation yet — the GAP panics are the section 0.6 annotation; the
-/// constructor and field storage keep the OCCT form).
-pub struct BRepFillDraft {
-    my_shape: Shape,         // OCCT: myShape
-    my_shell: Shape,         // OCCT: myShell
-    #[allow(dead_code)]
-    my_generated: Vec<Shape>, // OCCT: myGenerated
-    my_done: bool,           // OCCT: myDone
-}
-
-impl BRepFillDraft {
-    /// OCCT BRepFill_Draft::BRepFill_Draft(Shape, Dir, Angle)
-    /// (BRepFill_Draft.hxx L42) — GAP: the engine computation is not
-    /// translated; the storage form is kept.
-    pub fn new(_the_shape: &Shape, _the_dir: &DVec3, _the_angle: f64) -> Self {
-        BRepFillDraft {
-            my_shape: Shape::null(),
-            my_shell: Shape::null(),
-            my_generated: Vec::new(),
-            my_done: false,
-        }
-    }
-
-    /// OCCT BRepFill_Draft::SetOptions(Style, AngleMin, AngleMax)
-    /// (BRepFill_Draft.hxx L44) — GAP.
-    pub fn set_options(
-        &mut self,
-        _the_style: BRepFillTransitionStyle,
-        _the_angle_min: f64,
-        _the_angle_max: f64,
-    ) {
-        panic!("GAP: BRepFill_Draft::SetOptions (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Draft::SetDraft(IsInternal) (BRepFill_Draft.hxx L48) —
-    /// GAP.
-    pub fn set_draft(&mut self, _the_is_internal: bool) {
-        panic!("GAP: BRepFill_Draft::SetDraft (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Draft::Perform(LengthMax) (BRepFill_Draft.hxx L50) — GAP.
-    pub fn perform(&mut self, _the_length_max: f64) {
-        panic!("GAP: BRepFill_Draft::Perform (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Draft::Perform(Surface, KeepInsideSurface)
-    /// (BRepFill_Draft.hxx L52) — GAP.
-    pub fn perform_with_surface(&mut self, _the_surface: &Surface3, _the_keep_inside: bool) {
-        panic!("GAP: BRepFill_Draft::Perform (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Draft::Perform(StopShape, KeepOutSide)
-    /// (BRepFill_Draft.hxx L55) — GAP.
-    pub fn perform_with_shape(&mut self, _the_stop_shape: &Shape, _the_keep_outside: bool) {
-        panic!("GAP: BRepFill_Draft::Perform (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Draft::IsDone() (BRepFill_Draft.hxx L57).
-    pub fn is_done(&self) -> bool {
-        self.my_done
-    }
-
-    /// OCCT BRepFill_Draft::Shape() (BRepFill_Draft.hxx L68).
-    pub fn shape(&self) -> Shape {
-        self.my_shape.clone()
-    }
-
-    /// OCCT BRepFill_Draft::Shell() (BRepFill_Draft.hxx L62).
-    pub fn shell(&self) -> Shape {
-        self.my_shell.clone()
-    }
-
-    /// OCCT BRepFill_Draft::Generated(S) (BRepFill_Draft.hxx L66).
-    pub fn generated(&self, _the_s: &Shape) -> &Vec<Shape> {
-        panic!("GAP: BRepFill_Draft::Generated (TKBool/BRepFill not translated)");
-    }
 }
 
 /// OCCT BRepOffsetAPI_MakeDraft (hxx L121-182).
@@ -145,7 +59,8 @@ impl BRepOffsetAPIMakeDraft {
             my_done: false,
             my_shape: Shape::null(),
             my_generated: Vec::new(),
-            my_draft: BRepFillDraft::new(the_shape, the_dir, the_angle),
+            // OCCT L24: myDraft(Shape, Dir, Angle).
+            my_draft: BRepFillDraft::new(the_shape, *the_dir, the_angle),
         };
         // OCCT L26: NotDone().
         r.my_done = false;
@@ -213,7 +128,7 @@ impl BRepOffsetAPIMakeDraft {
 
     /// OCCT BRepOffsetAPI_MakeDraft::Generated(S) (cxx L82-85).
     pub fn generated(&mut self, s: &Shape) -> Vec<Shape> {
-        self.my_draft.generated(s).clone()
+        self.my_draft.generated(s)
     }
 
     /// OCCT BRepBuilderAPI_Command::IsDone() — a PUBLIC member of the OCCT

@@ -18,16 +18,13 @@
 //! Adaptor3d_Curve operations from Adaptor3d_CurveOnSurface.cxx (Value /
 //! EvalD0, D1 / EvalD1 generic branch, FirstParameter / LastParameter
 //! L977-987, Resolution L1364-1370) in the `curv_*` helpers below.
-//!
-//! Pending kernel dependency (marked GAP, plan 0.6):
-//! Adaptor2d_Curve2d::Resolution.
 
 use glam::DVec3;
 
+use rcad_kernel::base::proj_lib::{Adaptor2dCurve2d, Geom2dCurveAdaptor};
 use rcad_kernel::geom::{Curve2d, Curve2dEval as _, Curve3, CurveEval as _, Surface3, SurfaceEval as _};
 use rcad_kernel::math::function_set_root::FunctionSetWithDerivatives;
 
-use super::brep_blend_func_chamfer::adaptor2d_curve2d_resolution_pending;
 use super::brep_blend_func_inv::BlendSurfCurvFuncInv;
 
 /// OCCT BRepBlend_SurfCurvConstRadInv.
@@ -65,14 +62,15 @@ impl<'a> BlendSurfCurvConstRadInv<'a> {
 
     /// OCCT Adaptor3d_CurveOnSurface::Resolution bound to curv
     /// (Adaptor3d_CurveOnSurface.cxx L1364-1370): the pcurve resolution at
-    /// min(u, v)-resolution of the wrapped surface.  GAP (plan 0.6): the
-    /// final Adaptor2d_Curve2d::Resolution step has no rcad equivalent; the
-    /// established pending marker preserves the OCCT failure path.
+    /// min(u, v)-resolution of the wrapped surface — the final step is the
+    /// Geom2dAdaptor_Curve::Resolution over the pcurve (the OCCT myCurve
+    /// handle is a BRepAdaptor_Curve2d, a Geom2dAdaptor_Curve subclass
+    /// without a Resolution override).
     fn curv_resolution(&self, r3d: f64) -> f64 {
         let ru = self.curv_surf.u_resolution(r3d);
         let rv = self.curv_surf.v_resolution(r3d);
-        let _ = ru.min(rv);
-        adaptor2d_curve2d_resolution_pending()
+        let my_curve = Geom2dCurveAdaptor::new(self.curv_pcurve.clone());
+        my_curve.resolution(ru.min(rv))
     }
 
     /// OCCT BRepBlend_SurfCurvConstRadInv(S, C, Cg) (…SurfCurvConstRadInv.cxx
@@ -317,14 +315,12 @@ impl<'a> BlendSurfCurvConstRadInv<'a> {
         // OCCT L257: Tolerance(2) = curv->Resolution(Tol) — the
         // Adaptor3d_CurveOnSurface resolution bound to curv.
         tolerance[1] = self.curv_resolution(tol);
-        // OCCT L258-261: Tolerance(3) = rst->Resolution(std::min(ru, rv)).
-        // GAP (plan 0.6): the final Adaptor2d_Curve2d::Resolution step has no
-        // rcad equivalent; the established pending marker preserves the OCCT
-        // failure path.
+        // OCCT L258-261: Tolerance(3) = rst->Resolution(std::min(ru, rv)) —
+        // the Geom2dAdaptor_Curve::Resolution over the restriction pcurve.
         let ru = self.surf.u_resolution(tol);
         let rv = self.surf.v_resolution(tol);
-        let _ = ru.min(rv);
-        tolerance[2] = adaptor2d_curve2d_resolution_pending();
+        let rst = Geom2dCurveAdaptor::new(self.rst.expect("rst").clone());
+        tolerance[2] = rst.resolution(ru.min(rv));
     }
 
     /// OCCT GetBounds(InfBound, SupBound) (…SurfCurvConstRadInv.cxx L266-274).

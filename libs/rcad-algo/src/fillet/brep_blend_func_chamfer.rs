@@ -25,6 +25,7 @@
 
 use glam::{DVec2, DVec3};
 
+use rcad_kernel::base::proj_lib::{Adaptor2dCurve2d, Geom2dCurveAdaptor};
 use rcad_kernel::core::precision::is_infinite_value;
 use rcad_kernel::geom::{Curve3, CurveEval as _, Curve2d, Curve2dEval as _, Surface3, SurfaceEval as _};
 use rcad_kernel::math::function_set_root::FunctionSetWithDerivatives;
@@ -1399,16 +1400,6 @@ impl<'a> BlendFuncChamfInv<'a> {
 }
 
 
-/// GAP (plan 0.6): OCCT csurf->Resolution(Tol)
-/// (Adaptor2d_Curve2d::Resolution) — pending in rcad-kernel.  The helper
-/// wraps the pending marker so that the following OCCT statements stay
-/// reachable for the compiler (no unreachable-code noise at the call sites).
-pub(crate) fn adaptor2d_curve2d_resolution_pending() -> f64 {
-    unimplemented!("Adaptor2d_Curve2d::Resolution pending in rcad-kernel")
-}
-
-/// GAP (plan 0.6): GeomFill::GetCircle etc. share the marker convention.
-
 /// Stamps the concrete methods inherited from BlendFunc_GenChamfInv
 /// (BlendFunc_GenChamfInv.cxx L36-123) onto a subclass.  OCCT expresses the
 /// sharing through C++ inheritance; the single OCCT body is stamped verbatim
@@ -1430,12 +1421,13 @@ macro_rules! gen_chamf_inv_common {
             /// OCCT GetTolerance(Tolerance, Tol)
             /// (BlendFunc_GenChamfInv.cxx L51-65).
             pub fn get_tolerance(&self, tolerance: &mut [f64], tol: f64) {
-                // OCCT L53: Tolerance(1) = csurf->Resolution(Tol).
-                // GAP (plan 0.6): rcad-kernel has no Adaptor2d_Curve2d::
-                // Resolution equivalent yet; the call panics with the pending
-                // marker until the kernel exposes it (same treatment as
-                // BRepBlend_CurvPointRadInv::GetTolerance).
-                tolerance[0] = crate::fillet::brep_blend_func_chamfer::adaptor2d_curve2d_resolution_pending();
+                // OCCT L53: Tolerance(1) = csurf->Resolution(Tol) — the
+                // Geom2dAdaptor_Curve::Resolution over the restriction
+                // pcurve (the OCCT csurf handle is a BRepAdaptor_Curve2d,
+                // a Geom2dAdaptor_Curve subclass without a Resolution
+                // override).
+                let csurf = Geom2dCurveAdaptor::new(self.csurf.expect("csurf").clone());
+                tolerance[0] = csurf.resolution(tol);
                 // OCCT L54: Tolerance(2) = curv->Resolution(Tol).
                 tolerance[1] = self.curv.resolution(tol);
                 if self.first {

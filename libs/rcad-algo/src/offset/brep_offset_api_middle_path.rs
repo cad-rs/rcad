@@ -14,14 +14,24 @@
 //! Architecture differences:
 //! 1. NCollection_Sequence -> Vec; NCollection_Map<TopoDS_Shape> ->
 //!    HashMap<u64, Shape> (the TopTools_ShapeMapHasher key).
-//! 2. ShapeUpgrade_UnifySameDomain (TKShHealing) has no rcad translation
-//!    yet — the carrier below keeps the OCCT constructor/Build/Shape/
-//!    History surface with GAP panics (port plan section 0.6); every facade
-//!    body around the engine calls is translated 1:1.
-//! 3. BRepExtrema_DistShapeShape (TKTopAlgo/BRepExtrema), BRepGProp
-//!    (TKTopAlgo/BRepGProp), GeomAPI_Interpolate and GeomLib::Inertia
-//!    (TKGeomAlgo) and BRepLib::BuildCurve3d (TKBRep) — the GAP carriers
-//!    below keep the call sites (reported gap).
+//! 2. ShapeUpgrade_UnifySameDomain (TKShHealing) — rewired to the real
+//!    body crate::shhealing::shape_upgrade::unify_same_domain::
+//!    ShapeUpgradeUnifySameDomain (the GAP carrier is retired, Rule 4);
+//!    the real Build is the arena form (cxx L4454-4469), so the
+//!    constructor's pool becomes the class my_brep (architecture
+//!    difference #4).
+//! 3. BRepExtrema_DistShapeShape (TKTopAlgo/BRepExtrema) and
+//!    GeomAPI_Interpolate (TKGeomAlgo — the kernel carries the fn-form
+//!    interpolate_points only, no tangent-Load class form) — GAP.  The
+//!    BRepGProp::SurfaceProperties / LinearProperties calls feed
+//!    Properties.CentreOfMass() (cxx L875-890) — GAP (the kernel gprop
+//!    re-hosts carry the mass only, no GProp_GProps COM).  GeomLib::
+//!    Inertia — rewired to the kernel base::geom_lib::inertia real body.
+//!    BRepLib::BuildCurve3d — the arena-form real body
+//!    (topalgo::brep_lib::BRepLib::build_curve3d) needs the &mut BRep
+//!    pool while the Build call sites carry pool-free Arc<TShape>
+//!    handles; the brep_offset_offset.rs (E, Tol) re-host serves the
+//!    calls (the brep_offset_inter2d.rs:85 convention).
 //! 4. GeomAbs_CurveType -> the canonical rcad_kernel::math enum (re-exported
 //!    below); the BRepAdaptor_Curve::GetType
 //!    reads map to the Curve3 variant discriminant; the Geom_Line/Bezier/
@@ -56,50 +66,10 @@ use rcad_kernel::topo::topods::TShape;
 pub use rcad_kernel::math::GeomAbsCurveType;
 
 // ---------------------------------------------------------------------------
-// GAP carriers (architecture differences #2/#3).
+// GAP carriers (architecture difference #3).
 // ---------------------------------------------------------------------------
 
-/// OCCT ShapeUpgrade_UnifySameDomain (TKShHealing) — the same-domain
-/// unifier of the MiddlePath constructor (architecture difference #2; GAP:
-/// no rcad translation yet — the GAP panics are the section 0.6 annotation;
-/// the constructor keeps the storage form).
-pub struct ShapeUpgradeUnifySameDomain {
-    my_shape: Shape, // OCCT: myShape
-}
-
-impl ShapeUpgradeUnifySameDomain {
-    /// OCCT ShapeUpgrade_UnifySameDomain::ShapeUpgrade_UnifySameDomain(S).
-    pub fn new(the_shape: &Shape) -> Self {
-        ShapeUpgradeUnifySameDomain {
-            my_shape: the_shape.clone(),
-        }
-    }
-
-    /// OCCT ShapeUpgrade_UnifySameDomain::Build() — GAP.
-    pub fn build(&mut self) {
-        panic!("GAP: ShapeUpgrade_UnifySameDomain::Build (TKShHealing not translated)")
-    }
-
-    /// OCCT ShapeUpgrade_UnifySameDomain::Shape().
-    pub fn shape(&self) -> &Shape {
-        &self.my_shape
-    }
-
-    /// OCCT ShapeUpgrade_UnifySameDomain::History() — GAP.
-    pub fn history(&self) -> UnifySameDomainHistory {
-        panic!("GAP: ShapeUpgrade_UnifySameDomain::History (TKShHealing not translated)")
-    }
-}
-
-/// OCCT BRepTools_History (the History()->Modified vehicle) — GAP.
-pub struct UnifySameDomainHistory;
-
-impl UnifySameDomainHistory {
-    /// OCCT BRepTools_History::Modified(S) — GAP.
-    pub fn modified(&self, _the_s: &Shape) -> Vec<Shape> {
-        panic!("GAP: BRepTools_History::Modified (TKShHealing not translated)")
-    }
-}
+use crate::shhealing::shape_upgrade::unify_same_domain::ShapeUpgradeUnifySameDomain;
 
 /// OCCT BRepExtrema_SupportType (TKTopAlgo/BRepExtrema_SupportType.hxx).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,16 +125,20 @@ impl GPropGProps {
 }
 
 /// OCCT BRepGProp (TKTopAlgo/BRepGProp) — the shape properties driver
-/// (architecture difference #3; GAP: no rcad translation yet).
+/// (architecture difference #3; GAP): the calls of cxx L875-890 fill
+/// GProp_GProps and read Properties.CentreOfMass(), while the kernel
+/// base::gprop re-hosts carry only the mass (base::gprop::surface::
+/// surface_area f64 / base::gprop::linear::linear_properties f64) — no
+/// GProp_GProps centre of mass.
 pub struct BRepGProp;
 
 impl BRepGProp {
-    /// OCCT BRepGProp::SurfaceProperties(S, Props) — GAP.
+    /// OCCT BRepGProp::SurfaceProperties(S, Props) — GAP (see above).
     pub fn surface_properties(_the_s: &Shape) -> GPropGProps {
         panic!("GAP: BRepGProp::SurfaceProperties (TKTopAlgo/BRepGProp not translated)")
     }
 
-    /// OCCT BRepGProp::LinearProperties(S, Props) — GAP.
+    /// OCCT BRepGProp::LinearProperties(S, Props) — GAP (see above).
     pub fn linear_properties(_the_s: &Shape) -> GPropGProps {
         panic!("GAP: BRepGProp::LinearProperties (TKTopAlgo/BRepGProp not translated)")
     }
@@ -204,23 +178,40 @@ impl GeomAPIInterpolate {
 }
 
 /// OCCT GeomLib::Inertia(Pnts, Bary, Xdir, Ydir, Xgap, Ygap, Zgap)
-/// (TKGeomAlgo/GeomLib) — GAP.
+/// (TKGeomAlgo/GeomLib, GeomLib.cxx L1976-2093; the call of cxx L1086) —
+/// rewired to the kernel base::geom_lib::inertia real body (the exact OCCT
+/// out-param signature).
 pub fn geom_lib_inertia(
-    _the_pnts: &[DVec3],
-    _the_bary: &mut DVec3,
-    _the_xdir: &mut DVec3,
-    _the_ydir: &mut DVec3,
-    _the_xgap: &mut f64,
-    _the_ygap: &mut f64,
-    _the_zgap: &mut f64,
+    the_pnts: &[DVec3],
+    the_bary: &mut DVec3,
+    the_xdir: &mut DVec3,
+    the_ydir: &mut DVec3,
+    the_xgap: &mut f64,
+    the_ygap: &mut f64,
+    the_zgap: &mut f64,
 ) {
-    panic!("GAP: GeomLib::Inertia (TKGeomAlgo not translated)")
+    rcad_kernel::base::geom_lib::inertia(
+        the_pnts,
+        the_bary,
+        the_xdir,
+        the_ydir,
+        the_xgap,
+        the_ygap,
+        the_zgap,
+    )
 }
 
-/// OCCT BRepLib::BuildCurve3d(E) (TKBRep/BRepLib) — GAP leaf (the
-/// chfi2d_builder.rs precedent).
-pub fn brep_lib_build_curve3d(_the_e: &Shape) {
-    panic!("GAP: BRepLib::BuildCurve3d (TKBRep/BRepLib not translated)")
+/// OCCT BRepLib::BuildCurve3d(E) (TKBRep/BRepLib; BRepLib.hxx L90-95 — the
+/// defaulted form Tolerance = 1.0e-5, Continuity = GeomAbs_C1, MaxDegree =
+/// 14, MaxSegment = 0; the calls of cxx L697/L735/L743/L747) — the real
+/// arena-form body (topalgo::brep_lib::BRepLib::build_curve3d) needs the
+/// &mut BRep pool while the Build call sites carry pool-free Arc<TShape>
+/// handles (architecture differences #19/#22 of brep_offset_offset.rs), so
+/// the brep_offset_offset.rs (E, Tol) re-host serves the call (the
+/// brep_offset_inter2d.rs:85 convention); the OCCT bool result is
+/// discarded at these call sites.
+pub fn brep_lib_build_curve3d(the_e: &Shape) {
+    super::brep_offset_offset::brep_lib_build_curve3d(the_e, 1.0e-5);
 }
 
 // ---------------------------------------------------------------------------
@@ -378,39 +369,45 @@ fn explorer_shapes(the_s: &Shape, to_find: ShapeType) -> Vec<Shape> {
     crate::brep_algo::tool::explorer(the_s, to_find, ShapeType::Shape)
 }
 
-/// OCCT static GetUnifiedWire(theWire, theUnifier) (cxx L280-310).
+/// OCCT static GetUnifiedWire(theWire, theUnifier) (cxx L263-293).
 pub(crate) fn get_unified_wire(
     the_wire: &Shape,
     the_unifier: &mut ShapeUpgradeUnifySameDomain,
 ) -> Shape {
-    // OCCT L281: BRepLib_MakeWire aWMaker.
+    // OCCT L266: BRepLib_MakeWire aWMaker.
     let mut a_wmaker = crate::brep_algo::normal_projection::BRepLibMakeWire::new();
-    // OCCT L282-284: BRepTools_WireExplorer wexp + aGeneratedEdges.
+    // OCCT L267-269: BRepTools_WireExplorer wexp + aGeneratedEdges.
     let mut wexp = crate::offset::brep_offset_inter2d::BRepToolsWireExplorer::new();
     wexp.init(the_wire, &Shape::null());
     let mut a_generated_edges: HashMap<u64, Shape> = HashMap::new();
-    // OCCT L285-306.
+    // OCCT L269-291.
     while wexp.more() {
         let an_edge = wexp.current();
-        // OCCT L287: theUnifier.History()->Modified(anEdge).
-        let a_ls = the_unifier.history().modified(&an_edge);
+        // OCCT L272: theUnifier.History()->Modified(anEdge) — the History()
+        // handle of the algorithm (never null here: the constructor
+        // installs its own history; the rcad None is the null-handle case
+        // the OCCT dereference would fault on).
+        let a_ls = the_unifier
+            .history()
+            .expect("ShapeUpgrade_UnifySameDomain::History() is null")
+            .modified(&an_edge);
         if !a_ls.is_empty() {
-            // OCCT L290-301: wire shouldn't contain duplicated generated
+            // OCCT L274-285: wire shouldn't contain duplicated generated
             // edges.
             for a_shape in a_ls {
                 if !a_generated_edges.contains_key(&a_shape.ptr_id()) {
                     a_generated_edges.insert(a_shape.ptr_id(), a_shape.clone());
-                    // OCCT L296: aWMaker.Add(TopoDS::Edge(aShape)).
+                    // OCCT L280: aWMaker.Add(TopoDS::Edge(aShape)).
                     a_wmaker.add(&[a_shape]);
                 }
             }
         } else {
-            // OCCT L303-307: no change, put original edge.
+            // OCCT L287-289: no change, put original edge.
             a_wmaker.add(&[an_edge]);
         }
         wexp.next();
     }
-    // OCCT L308.
+    // OCCT L292.
     a_wmaker.shape().clone()
 }
 
@@ -440,40 +437,46 @@ pub struct BRepOffsetAPIMiddlePath {
 
 impl BRepOffsetAPIMiddlePath {
     /// OCCT BRepOffsetAPI_MiddlePath::BRepOffsetAPI_MiddlePath(aShape,
-    /// StartShape, EndShape) (cxx L312-341).
+    /// StartShape, EndShape) (cxx L297-331).
     pub fn new(a_shape: &Shape, start_shape: &Shape, end_shape: &Shape) -> Self {
-        // OCCT L313-316.
-        let mut unifier = ShapeUpgradeUnifySameDomain::new(a_shape);
-        unifier.build();
+        // OCCT L301-303: ShapeUpgrade_UnifySameDomain Unifier(aShape) — the
+        // hxx L81-86 defaults UnifyEdges = true, UnifyFaces = true,
+        // ConcatBSplines = false; Unifier.Build(); myInitialShape =
+        // Unifier.Shape().  The real Build is the arena form (cxx
+        // L4454-4469): the pool created here becomes the class my_brep
+        // arena (architecture difference #4).
+        let mut my_brep = rcad_kernel::topo::topods::BRep::new();
+        let mut unifier = ShapeUpgradeUnifySameDomain::with_shape(a_shape, true, true, false);
+        unifier.build(&mut my_brep);
         let my_initial_shape = unifier.shape().clone();
 
-        // OCCT L318-330: the start/end wire extraction.
+        // OCCT L305-318: the start/end wire extraction.
         let a_start_wire = if start_shape.shape_type() == ShapeType::Face {
-            // OCCT L321-323: BRepTools::OuterWire(StartFace).
+            // OCCT L308-310: BRepTools::OuterWire(StartFace).
             outer_wire(start_shape)
         } else {
             start_shape.clone()
         };
 
         let an_end_wire = if end_shape.shape_type() == ShapeType::Face {
-            // OCCT L328-330.
+            // OCCT L315-317.
             outer_wire(end_shape)
         } else {
             end_shape.clone()
         };
 
-        // OCCT L332-333.
+        // OCCT L326-327.
         let my_start_wire = get_unified_wire(&a_start_wire, &mut unifier);
         let my_end_wire = get_unified_wire(&an_end_wire, &mut unifier);
 
-        // OCCT L335-336.
+        // OCCT L329-330.
         let my_closed_section = crate::brep_algo::tool::shape_is_closed(&my_start_wire);
         let my_closed_ring = my_start_wire.is_same(&my_end_wire);
 
         BRepOffsetAPIMiddlePath {
             my_done: false,
             my_shape: Shape::null(),
-            my_brep: rcad_kernel::topo::topods::BRep::new(),
+            my_brep,
             my_initial_shape,
             my_start_wire,
             my_end_wire,

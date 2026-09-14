@@ -35,12 +35,12 @@
 //!   - (closed) BRepBlend_SurfCurvEvolRadInv
 //!     (brep_blend_surf_curv_evol_rad_inv.rs) and SurfPointEvolRadInv
 //!     (brep_blend_surf_point_evol_rad_inv.rs) — translated 1:1.
-//!   - BRepBlend_CurvPointRadInv bound to an Adaptor3d_CurveOnSurface: the
-//!     plain-curve port (brep_blend_curv_point_rad_inv.rs) models curv2 as
-//!     &Curve3; the HC-bound call sites use the HC-payload port
-//!     brep_blend_curv_point_rad_inv_hc.rs whose GetTolerance keeps the
-//!     OCCT-pending Adaptor3d_Curve::Resolution / Adaptor2d_Curve2d::
-//!     Resolution failure path.
+//!   - (closed) BRepBlend_CurvPointRadInv bound to an Adaptor3d_CurveOnSurface:
+//!     the plain-curve port (brep_blend_curv_point_rad_inv.rs) models curv2
+//!     as &Curve3; the HC-bound call sites use the HC-payload port
+//!     brep_blend_curv_point_rad_inv_hc.rs whose GetTolerance resolves
+//!     through the real Adaptor3d_Curve / Adaptor2d_Curve2d Resolution
+//!     bodies.
 //!   - (closed) BlendFunc_EvolRadInv — translated 1:1 in
 //!     blend_func_evol_rad_inv.rs; both 2-face EvolRad arms call the real
 //!     SimulData / ComputeData statements.

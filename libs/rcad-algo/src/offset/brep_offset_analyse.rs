@@ -372,39 +372,42 @@ impl LocalAnalysisSurfaceContinuity {
     }
 }
 
-/// OCCT BRepPrimAPI_MakePrism(S, V) (TKPrim/BRepPrimAPI) — GAP carrier
-/// (arch. diff. #66).  The pending state reports IsDone() == false (the
-/// chfi3d.rs LocalAnalysis precedent), so the OCCT
-/// `if (!aMP.IsDone()) continue;` branch is taken and the sweep-dependent
-/// tail stays inert until the TKPrim unit lands.
+/// OCCT BRepPrimAPI_MakePrism(S, V) (TKPrim/BRepPrimAPI/BRepPrimAPI_MakePrism.cxx
+/// L36-43) — the engine is the crate::brep_sweep translation
+/// ([`BRepSweepPrism`], arch. diff. #66 retired; the former inert carrier is
+/// deleted).
 struct BRepPrimAPIMakePrism {
-    my_shape: Shape,
-    my_vec: DVec3,
+    my_prism: crate::brep_sweep::BRepSweepPrism, // OCCT: myPrism
 }
 
 impl BRepPrimAPIMakePrism {
+    /// OCCT ctor L36-43: myPrism(check(S), V, Copy=false, Canonize=true);
+    /// Build().
     fn new(the_shape: &Shape, the_vec: DVec3) -> Self {
         BRepPrimAPIMakePrism {
-            my_shape: the_shape.clone(),
-            my_vec: the_vec,
+            my_prism: crate::brep_sweep::BRepSweepPrism::with_vec(the_shape, the_vec, false, true),
         }
     }
 
+    /// OCCT BRepBuilderAPI_Command::IsDone — Done() is set by the ctor's
+    /// Build().
     fn is_done(&self) -> bool {
-        let _ = (&self.my_shape, &self.my_vec);
-        false
+        true
     }
 
-    /// OCCT BRepPrimAPI_MakePrism::Shape — unreachable while IsDone() is
-    /// false; the panic keeps the OCCT failure path.
-    fn shape(&self) -> Shape {
-        panic!("GAP: BRepPrimAPI_MakePrism::Shape (TKPrim not translated)");
+    /// OCCT BRepPrimAPI_MakePrism::Shape (cxx L80-83): return myPrism.Shape().
+    fn shape(&mut self) -> Shape {
+        self.my_prism.shape()
     }
 
-    /// OCCT BRepPrimAPI_MakePrism::Generated(S) (TopTools_ListOfShape) —
-    /// see Shape.
-    fn generated(&self, _the_s: &Shape) -> Vec<Shape> {
-        panic!("GAP: BRepPrimAPI_MakePrism::Generated (TKPrim not translated)");
+    /// OCCT BRepPrimAPI_MakePrism::Generated(S) (cxx L88-96): the used
+    /// check then myPrism.Shape(S).
+    fn generated(&mut self, the_s: &Shape) -> Vec<Shape> {
+        let mut a_generated: Vec<Shape> = Vec::new();
+        if self.my_prism.is_used(the_s) && self.my_prism.gen_is_used(the_s) {
+            a_generated.push(self.my_prism.shape_of(the_s));
+        }
+        a_generated
     }
 }
 
@@ -998,7 +1001,7 @@ impl BRepOffsetAnalyse {
                 }
 
                 // OCCT L567-568: make the prism
-                let a_mp = BRepPrimAPIMakePrism::new(&a_block, a_dn1 * an_offset);
+                let mut a_mp = BRepPrimAPIMakePrism::new(&a_block, a_dn1 * an_offset);
                 // OCCT L569-572: if (!aMP.IsDone()) { continue; }
                 if !a_mp.is_done() {
                     continue;

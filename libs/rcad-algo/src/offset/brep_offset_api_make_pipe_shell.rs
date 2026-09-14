@@ -13,33 +13,38 @@
 //! Architecture differences:
 //! 1. NCollection_List<TopoDS_Shape> -> Vec<Shape>.
 //! 2. The engine member Handle(BRepFill_PipeShell) myPipe (TKBool/BRepFill)
-//!    has no rcad translation yet — the BRepFillPipeShell carrier below
-//!    keeps the OCCT constructor/method surface with GAP panics (port plan
-//!    section 0.6); every facade body around the engine calls is translated
-//!    1:1, including the GeomFill_PipeError -> BRepBuilderAPI_PipeError
-//!    switch (cxx L157-181).
-//! 3. OCCT enums BRepBuilderAPI_PipeError (BRepBuilderAPI_PipeError.hxx),
-//!    GeomFill_PipeError (GeomFill_PipeError.hxx),
-//!    BRepFill_TypeOfContact (TKBool/BRepFill_TypeOfContact.hxx) and the
-//!    BRepBuilderAPI_TransitionMode / BRepFill_TransitionStyle pair are the
-//!    local enums below (the transition pair is shared with
-//!    brep_offset_api_make_draft.rs).
-//! 4. occ::handle<Law_Function> L -> &dyn LawFunction (the landed
-//!    geomalgo::law::law_function trait).
+//!    is the landed translation
+//!    crate::brep_fill::brep_fill_pipe_shell::BRepFillPipeShell; every
+//!    facade body forwards to it following the OCCT facade statements,
+//!    including the GeomFill_PipeError -> BRepBuilderAPI_PipeError switch
+//!    (cxx L138-156).
+//! 3. The rcad BRep-pool architecture difference #4: OCCT shapes carry
+//!    their arena implicitly while the rcad engine methods take the pool
+//!    as an explicit argument — the facade owns its pool (`my_brep`, the
+//!    BRepOffsetAPI_ThruSections facade precedent).
+//! 4. OCCT enums BRepBuilderAPI_PipeError (BRepBuilderAPI_PipeError.hxx)
+//!    is the local enum below; GeomFill_PipeError is the landed
+//!    crate::geomalgo::geomfill::trihedron_law::PipeError and
+//!    BRepFill_TypeOfContact / BRepFill_TransitionStyle are the landed
+//!    crate::brep_fill::brep_fill_pipe_shell_b enums.
+//! 5. const occ::handle<Law_Function>& L -> &LawFunctionHandle (the landed
+//!    geomalgo::law::law_function handle type).
 
 use rcad_kernel::math::gp::Ax2;
+use rcad_kernel::topo::topods::BRep;
 use rcad_kernel::topo_shape::Shape;
 
 use glam::DVec3;
 
-use crate::geomalgo::law::law_function::LawFunction;
+use crate::brep_fill::brep_fill_pipe_shell::BRepFillPipeShell;
+use crate::brep_fill::brep_fill_pipe_shell_b::{BRepFillTransitionStyle, BRepFillTypeOfContact};
+use crate::geomalgo::geomfill::trihedron_law::PipeError;
+use crate::geomalgo::law::law_function::LawFunctionHandle;
 
-use super::brep_offset_api_make_draft::{
-    BRepBuilderAPITransitionMode, BRepFillTransitionStyle,
-};
+use super::brep_offset_api_make_draft::BRepBuilderAPITransitionMode;
 
 // ---------------------------------------------------------------------------
-// OCCT enums (architecture difference #3).
+// OCCT enum (architecture difference #5).
 // ---------------------------------------------------------------------------
 
 /// OCCT BRepBuilderAPI_PipeError (BRepBuilderAPI_PipeError.hxx L25-30).
@@ -51,211 +56,15 @@ pub enum BRepBuilderAPIPipeError {
     ImpossibleContact,
 }
 
-/// OCCT GeomFill_PipeError (GeomFill_PipeError.hxx L25-34).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeomFillPipeError {
-    PipeOk,
-    PipeNotDone,
-    PlaneNotIntersectGuide,
-    ImpossibleContact,
-}
-
-/// OCCT BRepFill_TypeOfContact (TKBool/BRepFill_TypeOfContact.hxx L23-27).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BRepFillTypeOfContact {
-    NoContact,
-    Contact,
-    ContactOnBorder,
-}
-
-// ---------------------------------------------------------------------------
-// GAP carrier (architecture difference #2).
-// ---------------------------------------------------------------------------
-
-/// OCCT BRepFill_PipeShell (TKBool/BRepFill, BRepFill_PipeShell.hxx) — the
-/// shell-along-a-spine engine of MakePipeShell (architecture difference #2;
-/// GAP: no rcad translation yet — the GAP panics are the section 0.6
-/// annotation; the constructor and field storage keep the OCCT form).
-pub struct BRepFillPipeShell {
-    #[allow(dead_code)]
-    my_is_done: bool, // OCCT: myIsDone
-}
-
-impl BRepFillPipeShell {
-    /// OCCT BRepFill_PipeShell::BRepFill_PipeShell(Spine)
-    /// (BRepFill_PipeShell.cxx L43) — GAP.
-    pub fn new(_the_spine: &Shape) -> Self {
-        BRepFillPipeShell { my_is_done: false }
-    }
-
-    /// OCCT BRepFill_PipeShell::Set(IsFrenet) — GAP.
-    pub fn set(&mut self, _is_frenet: bool) {
-        panic!("GAP: BRepFill_PipeShell::Set (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::SetDiscrete() — GAP.
-    pub fn set_discrete(&mut self) {
-        panic!("GAP: BRepFill_PipeShell::SetDiscrete (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Set(Axe) — GAP.
-    pub fn set_with_axe(&mut self, _axe: &Ax2) {
-        panic!("GAP: BRepFill_PipeShell::Set (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Set(BiNormal) — GAP.
-    pub fn set_with_binormal(&mut self, _binormal: &DVec3) {
-        panic!("GAP: BRepFill_PipeShell::Set (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Set(SpineSupport) — GAP.
-    pub fn set_with_support(&mut self, _spine_support: &Shape) -> bool {
-        panic!("GAP: BRepFill_PipeShell::Set (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Set(AuxiliarySpine, CurvilinearEquivalence,
-    /// KeepContact) — GAP.
-    pub fn set_with_auxiliary_spine(
-        &mut self,
-        _auxiliary_spine: &Shape,
-        _curvilinear_equivalence: bool,
-        _keep_contact: BRepFillTypeOfContact,
-    ) {
-        panic!("GAP: BRepFill_PipeShell::Set (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Add(Profile, WithContact, WithCorrection) —
-    /// GAP.
-    pub fn add(&mut self, _profile: &Shape, _with_contact: bool, _with_correction: bool) {
-        panic!("GAP: BRepFill_PipeShell::Add (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Add(Profile, Location, WithContact,
-    /// WithCorrection) — GAP.
-    pub fn add_with_location(
-        &mut self,
-        _profile: &Shape,
-        _location: &Shape,
-        _with_contact: bool,
-        _with_correction: bool,
-    ) {
-        panic!("GAP: BRepFill_PipeShell::Add (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::SetLaw(Profile, L, WithContact,
-    /// WithCorrection) — GAP.
-    pub fn set_law(
-        &mut self,
-        _profile: &Shape,
-        _l: &dyn LawFunction,
-        _with_contact: bool,
-        _with_correction: bool,
-    ) {
-        panic!("GAP: BRepFill_PipeShell::SetLaw (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::SetLaw(Profile, L, Location, WithContact,
-    /// WithCorrection) — GAP.
-    pub fn set_law_with_location(
-        &mut self,
-        _profile: &Shape,
-        _l: &dyn LawFunction,
-        _location: &Shape,
-        _with_contact: bool,
-        _with_correction: bool,
-    ) {
-        panic!("GAP: BRepFill_PipeShell::SetLaw (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::DeleteProfile(Profile) — GAP.
-    pub fn delete_profile(&mut self, _profile: &Shape) {
-        panic!("GAP: BRepFill_PipeShell::DeleteProfile (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::IsReady() — GAP.
-    pub fn is_ready(&self) -> bool {
-        panic!("GAP: BRepFill_PipeShell::IsReady (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::GetStatus() — GAP.
-    pub fn get_status(&self) -> GeomFillPipeError {
-        panic!("GAP: BRepFill_PipeShell::GetStatus (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::SetTolerance(Tol3d, BoundTol, TolAngular) —
-    /// GAP.
-    pub fn set_tolerance(&mut self, _tol3d: f64, _bound_tol: f64, _tol_angular: f64) {
-        panic!("GAP: BRepFill_PipeShell::SetTolerance (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::SetMaxDegree(NewMaxDegree) — GAP.
-    pub fn set_max_degree(&mut self, _new_max_degree: i32) {
-        panic!("GAP: BRepFill_PipeShell::SetMaxDegree (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::SetMaxSegments(NewMaxSegments) — GAP.
-    pub fn set_max_segments(&mut self, _new_max_segments: i32) {
-        panic!("GAP: BRepFill_PipeShell::SetMaxSegments (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::SetForceApproxC1(ForceApproxC1) — GAP.
-    pub fn set_force_approx_c1(&mut self, _force_approx_c1: bool) {
-        panic!("GAP: BRepFill_PipeShell::SetForceApproxC1 (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::SetTransition(Transition) — GAP.
-    pub fn set_transition(&mut self, _transition: BRepFillTransitionStyle) {
-        panic!("GAP: BRepFill_PipeShell::SetTransition (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Simulate(N, R) — GAP.
-    pub fn simulate(&mut self, _n: i32, _r: &mut Vec<Shape>) {
-        panic!("GAP: BRepFill_PipeShell::Simulate (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Build() — GAP.
-    pub fn build(&mut self) -> bool {
-        panic!("GAP: BRepFill_PipeShell::Build (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::MakeSolid() — GAP.
-    pub fn make_solid(&mut self) -> bool {
-        panic!("GAP: BRepFill_PipeShell::MakeSolid (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Shape().
-    pub fn shape(&self) -> Shape {
-        Shape::null()
-    }
-
-    /// OCCT BRepFill_PipeShell::FirstShape() — GAP.
-    pub fn first_shape(&mut self) -> Shape {
-        panic!("GAP: BRepFill_PipeShell::FirstShape (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::LastShape() — GAP.
-    pub fn last_shape(&mut self) -> Shape {
-        panic!("GAP: BRepFill_PipeShell::LastShape (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::Generated(S, L) — GAP.
-    pub fn generated(&mut self, _s: &Shape, _l: &mut Vec<Shape>) {
-        panic!("GAP: BRepFill_PipeShell::Generated (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_PipeShell::ErrorOnSurface() — GAP.
-    pub fn error_on_surface(&self) -> f64 {
-        panic!("GAP: BRepFill_PipeShell::ErrorOnSurface (TKBool/BRepFill not translated)");
-    }
-}
-
 /// OCCT BRepOffsetAPI_MakePipeShell (hxx L91-395).
 pub struct BRepOffsetAPIMakePipeShell {
     // OCCT BRepBuilderAPI base members.
     my_done: bool,            // OCCT BRepBuilderAPI_Command: myDone
     my_shape: Shape,          // OCCT BRepBuilderAPI_MakeShape: myShape
-    #[allow(dead_code)]
     my_generated: Vec<Shape>, // OCCT: myGenerated (NCollection_List)
+    // The rcad arena stand-in (architecture difference #3; the
+    // BRepOffsetAPI_ThruSections facade precedent).
+    my_brep: BRep, // rcad pool (arch. diff. #4)
     // OCCT private member (hxx L393): Handle(BRepFill_PipeShell) myPipe.
     my_pipe: BRepFillPipeShell, // OCCT: myPipe
 }
@@ -264,12 +73,16 @@ impl BRepOffsetAPIMakePipeShell {
     /// OCCT BRepOffsetAPI_MakePipeShell::BRepOffsetAPI_MakePipeShell(Spine)
     /// (cxx L28-34).
     pub fn new(the_spine: &Shape) -> Self {
-        // OCCT L30: myPipe = new (BRepFill_PipeShell)(Spine).
+        // OCCT L30: myPipe = new (BRepFill_PipeShell)(Spine) — the rcad pool
+        // (arch. diff. #4) is the arena the engine mutates.
+        let mut my_brep = BRep::new();
+        let my_pipe = BRepFillPipeShell::new(&mut my_brep, the_spine);
         let mut r = BRepOffsetAPIMakePipeShell {
             my_done: false,
             my_shape: Shape::null(),
             my_generated: Vec::new(),
-            my_pipe: BRepFillPipeShell::new(the_spine),
+            my_brep,
+            my_pipe,
         };
         // OCCT L31: SetTolerance().
         r.set_tolerance(1.0e-4, 1.0e-4, 1.0e-2);
@@ -280,52 +93,64 @@ impl BRepOffsetAPIMakePipeShell {
         r
     }
 
-    /// OCCT BRepOffsetAPI_MakePipeShell::SetMode(IsFrenet) (cxx L36-39).
+    /// OCCT BRepOffsetAPI_MakePipeShell::SetMode(IsFrenet) (cxx L36-39):
+    /// myPipe->Set(IsFrenet).
     pub fn set_mode(&mut self, is_frenet: bool) {
-        self.my_pipe.set(is_frenet);
+        self.my_pipe.set(&self.my_brep, is_frenet);
     }
 
-    /// OCCT BRepOffsetAPI_MakePipeShell::SetDiscreteMode() (cxx L41-44).
+    /// OCCT BRepOffsetAPI_MakePipeShell::SetDiscreteMode() (cxx L41-44):
+    /// myPipe->SetDiscrete().
     pub fn set_discrete_mode(&mut self) {
-        self.my_pipe.set_discrete();
+        self.my_pipe.set_discrete(&self.my_brep);
     }
 
-    /// OCCT BRepOffsetAPI_MakePipeShell::SetMode(Axe) (cxx L46-49).
+    /// OCCT BRepOffsetAPI_MakePipeShell::SetMode(Axe) (cxx L46-49):
+    /// myPipe->Set(Axe).
     pub fn set_mode_with_axe(&mut self, axe: &Ax2) {
-        self.my_pipe.set_with_axe(axe);
+        self.my_pipe.set_with_axe(&self.my_brep, *axe);
     }
 
-    /// OCCT BRepOffsetAPI_MakePipeShell::SetMode(BiNormal) (cxx L51-54).
+    /// OCCT BRepOffsetAPI_MakePipeShell::SetMode(BiNormal) (cxx L51-54):
+    /// myPipe->Set(BiNormal).
     pub fn set_mode_with_binormal(&mut self, binormal: &DVec3) {
-        self.my_pipe.set_with_binormal(binormal);
+        self.my_pipe.set_with_binormal(&self.my_brep, *binormal);
     }
 
     /// OCCT BRepOffsetAPI_MakePipeShell::SetMode(SpineSupport)
-    /// (cxx L56-59).
+    /// (cxx L56-59): return myPipe->Set(SpineSupport).
     pub fn set_mode_with_support(&mut self, spine_support: &Shape) -> bool {
-        self.my_pipe.set_with_support(spine_support)
+        self.my_pipe.set_spine_support(&self.my_brep, spine_support)
     }
 
     /// OCCT BRepOffsetAPI_MakePipeShell::SetMode(AuxiliarySpine,
-    /// CurvilinearEquivalence, KeepContact) (cxx L61-67).
+    /// CurvilinearEquivalence, KeepContact) (cxx L61-67):
+    /// myPipe->Set(AuxiliarySpine, CurvilinearEquivalence, KeepContact).
     pub fn set_mode_with_auxiliary_spine(
         &mut self,
         auxiliary_spine: &Shape,
         curvilinear_equivalence: bool,
         keep_contact: BRepFillTypeOfContact,
     ) {
-        self.my_pipe
-            .set_with_auxiliary_spine(auxiliary_spine, curvilinear_equivalence, keep_contact);
+        self.my_pipe.set_with_auxiliary_spine(
+            &mut self.my_brep,
+            auxiliary_spine,
+            curvilinear_equivalence,
+            keep_contact,
+        );
     }
 
     /// OCCT BRepOffsetAPI_MakePipeShell::Add(Profile, WithContact,
-    /// WithCorrection) (cxx L69-74).
+    /// WithCorrection) (cxx L69-74): myPipe->Add(Profile, WithContact,
+    /// WithCorrection).
     pub fn add(&mut self, profile: &Shape, with_contact: bool, with_correction: bool) {
-        self.my_pipe.add(profile, with_contact, with_correction);
+        self.my_pipe
+            .add(&mut self.my_brep, profile, with_contact, with_correction);
     }
 
     /// OCCT BRepOffsetAPI_MakePipeShell::Add(Profile, Location, WithContact,
-    /// WithCorrection) (cxx L76-82).
+    /// WithCorrection) (cxx L76-82): myPipe->Add(Profile, Location,
+    /// WithContact, WithCorrection).
     pub fn add_with_location(
         &mut self,
         profile: &Shape,
@@ -333,16 +158,22 @@ impl BRepOffsetAPIMakePipeShell {
         with_contact: bool,
         with_correction: bool,
     ) {
-        self.my_pipe
-            .add_with_location(profile, location, with_contact, with_correction);
+        self.my_pipe.add_with_location(
+            &mut self.my_brep,
+            profile,
+            location,
+            with_contact,
+            with_correction,
+        );
     }
 
     /// OCCT BRepOffsetAPI_MakePipeShell::SetLaw(Profile, L, WithContact,
-    /// WithCorrection) (cxx L84-90).
+    /// WithCorrection) (cxx L84-90): myPipe->SetLaw(Profile, L, WithContact,
+    /// WithCorrection).
     pub fn set_law(
         &mut self,
         profile: &Shape,
-        l: &dyn LawFunction,
+        l: &LawFunctionHandle,
         with_contact: bool,
         with_correction: bool,
     ) {
@@ -354,7 +185,7 @@ impl BRepOffsetAPIMakePipeShell {
     pub fn set_law_with_location(
         &mut self,
         profile: &Shape,
-        l: &dyn LawFunction,
+        l: &LawFunctionHandle,
         location: &Shape,
         with_contact: bool,
         with_correction: bool,
@@ -363,7 +194,8 @@ impl BRepOffsetAPIMakePipeShell {
             .set_law_with_location(profile, l, location, with_contact, with_correction);
     }
 
-    /// OCCT BRepOffsetAPI_MakePipeShell::Delete(Profile) (cxx L101-105).
+    /// OCCT BRepOffsetAPI_MakePipeShell::Delete(Profile) (cxx L101-105):
+    /// myPipe->DeleteProfile(Profile).
     pub fn delete(&mut self, profile: &Shape) {
         self.my_pipe.delete_profile(profile);
     }
@@ -379,11 +211,9 @@ impl BRepOffsetAPIMakePipeShell {
         let stat = self.my_pipe.get_status();
         // OCCT L118-133: the switch.
         match stat {
-            GeomFillPipeError::PipeOk => BRepBuilderAPIPipeError::PipeDone,
-            GeomFillPipeError::PlaneNotIntersectGuide => {
-                BRepBuilderAPIPipeError::PlaneNotIntersectGuide
-            }
-            GeomFillPipeError::ImpossibleContact => BRepBuilderAPIPipeError::ImpossibleContact,
+            PipeError::PipeOk => BRepBuilderAPIPipeError::PipeDone,
+            PipeError::PlaneNotIntersectGuide => BRepBuilderAPIPipeError::PlaneNotIntersectGuide,
+            PipeError::ImpossibleContact => BRepBuilderAPIPipeError::ImpossibleContact,
             _ => BRepBuilderAPIPipeError::PipeNotDone,
         }
     }
@@ -413,40 +243,42 @@ impl BRepOffsetAPIMakePipeShell {
     }
 
     /// OCCT BRepOffsetAPI_MakePipeShell::SetTransitionMode(Mode)
-    /// (cxx L167-171).
+    /// (cxx L167-171): myPipe->SetTransition((BRepFill_TransitionStyle)Mode).
+    /// The C++ cast is by ordinal: BRepBuilderAPI_Transformed(0) ->
+    /// BRepFill_Modified(0); BRepBuilderAPI_RightCorner(1) -> BRepFill_Right
+    /// (1) — the rcad engine enum spells BRepFill_Right "RightCorner"
+    /// (BRepFill_Sweep.cxx L3914 `Transition == BRepFill_Right` maps to
+    /// brep_fill_sweep.rs L1404 `transition == RightCorner`);
+    /// BRepBuilderAPI_RoundCorner(2) -> BRepFill_Round(2).  The engine
+    /// SetTransition default arguments (BRepFill_PipeShell.hxx L176-179:
+    /// Angmin = 1.0e-2, Angmax = 6.0) are stated explicitly.
     pub fn set_transition_mode(&mut self, mode: BRepBuilderAPITransitionMode) {
-        // OCCT L169: myPipe->SetTransition((BRepFill_TransitionStyle)Mode) —
-        // the enum cast maps TransitionMode_Transformed to
-        // TransitionStyle_Transformed (the identical ordinal form).
         let style = match mode {
             BRepBuilderAPITransitionMode::TransitionMode_Transformed => {
-                BRepFillTransitionStyle::TransitionStyle_Modified
+                BRepFillTransitionStyle::Modified
             }
-            BRepBuilderAPITransitionMode::RightCorner => {
-                BRepFillTransitionStyle::TransitionStyle_Right
-            }
-            BRepBuilderAPITransitionMode::RoundCorner => {
-                BRepFillTransitionStyle::TransitionStyle_Round
-            }
+            BRepBuilderAPITransitionMode::RightCorner => BRepFillTransitionStyle::RightCorner,
+            BRepBuilderAPITransitionMode::RoundCorner => BRepFillTransitionStyle::Round,
         };
-        self.my_pipe.set_transition(style);
+        self.my_pipe.set_transition(style, 1.0e-2, 6.0);
     }
 
-    /// OCCT BRepOffsetAPI_MakePipeShell::Simulate(N, R) (cxx L173-177).
+    /// OCCT BRepOffsetAPI_MakePipeShell::Simulate(N, R) (cxx L173-177):
+    /// myPipe->Simulate(N, R).
     pub fn simulate(&mut self, n: i32, r: &mut Vec<Shape>) {
-        self.my_pipe.simulate(n, r);
+        self.my_pipe.simulate(&mut self.my_brep, n, r);
     }
 
     /// OCCT BRepOffsetAPI_MakePipeShell::Build(...) (cxx L179-193).
     pub fn build(&mut self) {
         // OCCT L181-182: bool Ok; Ok = myPipe->Build().
-        let ok = self.my_pipe.build();
+        let ok = self.my_pipe.build(&mut self.my_brep);
         if ok {
-            // OCCT L184-186.
+            // OCCT L184-186: myShape = myPipe->Shape(); Done().
             self.my_shape = self.my_pipe.shape();
             self.my_done = true;
         } else {
-            // OCCT L188-191.
+            // OCCT L188-191: NotDone().
             self.my_done = false;
         }
     }
@@ -459,7 +291,7 @@ impl BRepOffsetAPIMakePipeShell {
             "BRepOffsetAPI_MakePipeShell::MakeSolid"
         );
         // OCCT L200-201: bool Ok; Ok = myPipe->MakeSolid().
-        let ok = self.my_pipe.make_solid();
+        let ok = self.my_pipe.make_solid(&mut self.my_brep);
         if ok {
             // OCCT L203: myShape = myPipe->Shape().
             self.my_shape = self.my_pipe.shape();
@@ -481,9 +313,8 @@ impl BRepOffsetAPIMakePipeShell {
     /// OCCT BRepOffsetAPI_MakePipeShell::Generated(S) (cxx L220-224).
     pub fn generated(&mut self, s: &Shape) -> Vec<Shape> {
         // OCCT L222: myPipe->Generated(S, myGenerated).
-        let mut my_generated = std::mem::take(&mut self.my_generated);
-        self.my_pipe.generated(s, &mut my_generated);
-        self.my_generated = my_generated;
+        self.my_generated = self.my_pipe.generated(s);
+        // OCCT L223: return myGenerated.
         self.my_generated.clone()
     }
 
@@ -503,7 +334,7 @@ impl BRepOffsetAPIMakePipeShell {
     /// OCCT BRepBuilderAPI_MakeShape::Shape() — a PUBLIC member of the OCCT
     /// API (BRepBuilderAPI_MakeShape.hxx: Standard_EXPORT const TopoDS_Shape&
     /// Shape() const; raises StdFail_NotDone when not done).  The engine-level
-    /// BRepFillPipeShell::shape() accessor above is the OCCT
+    /// BRepFillPipeShell::shape() accessor is the OCCT
     /// BRepFill_PipeShell::Shape() member.
     pub fn shape(&self) -> Shape {
         assert!(
@@ -529,4 +360,3 @@ impl BRepOffsetAPIMakePipeShell {
         ))
     }
 }
-

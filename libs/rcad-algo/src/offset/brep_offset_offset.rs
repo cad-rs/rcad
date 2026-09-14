@@ -16,19 +16,38 @@
 // 9. BRepOffset::Surface (BRepOffset.cxx L44-365) — the offset-surface
 //    factory; GAP: staged (the static is the next translation unit of this
 //    package; the Init(Face) body is translated 1:1 against the GAP panic).
-// 10. BRepOffset_Tool::Gabarit (BRepOffset_Tool.cxx L313-...) — GAP.
-// 11. GeomFill_Pipe (TKGeomAlgo/GeomFill) — GAP carrier (both the
-//     (Path, E1, E2, Offset) and (Curve, Offset) constructors).
-// 12. GeomAPI_ExtremaCurveCurve / GeomAPI_ProjectPointOnCurve (TKGeomBase/
-//     TKTopAlgo GeomAPI) — GAP carriers.
-// 13. GeomLib::ExtendSurfByLength (TKTopAlgo/GeomLib) — GAP.
-// 14. GeomProjLib::Curve2d (TKTopAlgo/GeomProjLib) — GAP (the
-//     loc_ope_wires_on_shape_b.rs #10 precedent).
-// 15. GeomConvert_ApproxSurface (TKGeomBase/GeomConvert) — GAP.
-// 16. ShapeFix_Shape (TKShHealing/ShapeFix) — GAP carrier.
+// 10. BRepOffset_Tool::Gabarit (BRepOffset_Tool.cxx L313-323) — rewired to
+//     the real body crate::offset::brep_offset_tool::gabarit.
+// 11. GeomFill_Pipe (TKGeomAlgo/GeomFill) — the (Path, Radius) constructor
+//     (GeomFill_Pipe.cxx L238-245) and the accessors are rewired to the
+//     geomalgo::geomfill::pipe::Pipe real body; the (Adaptor3d_Curve x3)
+//     constructor (GeomFill_Pipe.cxx L330-342, the call of
+//     BRepOffset_Offset.cxx L1194) stays the GAP — the real pipe stores
+//     plain Curve3 sections and the Adaptor3d_CurveOnSurface sections of
+//     BRepOffset_Offset.cxx L1150/L1179 have no Curve3 view.
+// 12. GeomAPI_ExtremaCurveCurve — rewired to the kernel
+//     base::extrema::extrema_curve_curve (the line-line call of
+//     BRepOffset_Offset.cxx L653-655).  GeomAPI_ProjectPointOnCurve — GAP.
+// 13. GeomLib::ExtendSurfByLength (TKTopAlgo/GeomLib) — rewired to the
+//     geomalgo::geom_lib_same_range::extend_surf_by_length entry of the
+//     fillet::chfi3d_builder_c2_geomlib real body.
+// 14. GeomProjLib::Curve2d (TKTopAlgo/GeomProjLib) — rewired to the kernel
+//     base::geom_proj_lib::curve2d_auto (the 2-argument overload,
+//     GeomProjLib.cxx L185-192).
+// 15. GeomConvert_ApproxSurface (TKGeomBase/GeomConvert) — GAP (the kernel
+//     base::approx::approx_surface is the reduced sampling form: no
+//     Continuity/MaxDegree/NbMaxSegment control and no IsDone semantics,
+//     while the call of BRepOffset_Offset.cxx L1626 passes
+//     (TolApp, Conti, Conti, 10, 10, 10, 1)).
+// 16. ShapeFix_Shape (TKShHealing/ShapeFix) — GAP (the real body
+//     shape_fix::shape_fix_shape::ShapeFixShape is the arena form
+//     perform(&mut BRep, progress); the pool-less offset call of
+//     BRepOffset_Offset.cxx L1597-1599 cannot hand it the pool — the
+//     architecture difference #19 boundary).
 // 17. BRepGProp::LinearProperties + GProp_GProps::CentreOfMass
 //     (TKTopAlgo/BRepGProp) — GAP carrier (the kernel base::gprop linear
-//     re-host carries only the length).
+//     re-host carries only the total length, while the call of
+//     BRepOffset_Offset.cxx L1601-1604 consumes the centre of mass).
 // 18. GeomAdaptor_Surface/Geom2dAdaptor_Curve GetType() -> the rcad Surface3
 //     / Curve2d variant matches (the same stand-in as the fillet
 //     chfi3d_builder_0.rs surface_type_of).
@@ -71,59 +90,76 @@ pub enum BRepOffsetStatus {
 /// hxx default is `allowC0 = false` (BRepOffset.hxx L44-47).
 pub use super::brep_offset_surface::brep_offset_surface;
 
-/// OCCT BRepOffset_Tool::Gabarit(aCurve) (BRepOffset_Tool.cxx L313-...) —
-/// GAP (architecture difference #10).
+/// OCCT BRepOffset_Tool::Gabarit(aCurve) (BRepOffset_Tool.cxx L313-323,
+/// the calls of BRepOffset_Offset.cxx L640/L681/L722/L765) — the real body
+/// lives in [`crate::offset::brep_offset_tool::gabarit`].
 pub(super) fn brep_offset_tool_gabarit(the_curve: &Curve3) -> f64 {
-    let _ = the_curve;
-    panic!("GAP: BRepOffset_Tool::Gabarit (BRepOffset_Tool.cxx not translated)");
+    crate::offset::brep_offset_tool::gabarit(the_curve)
 }
 
-/// OCCT GeomFill_Pipe (TKGeomAlgo/GeomFill) — GAP carrier (architecture
-/// difference #11).
-pub struct GeomFillPipe;
+/// OCCT GeomFill_Pipe (TKGeomAlgo/GeomFill) — the offset-module carrier
+/// over the real body [`crate::geomalgo::geomfill::pipe::Pipe`]
+/// (architecture difference #11).
+pub struct GeomFillPipe {
+    my_pipe: crate::geomalgo::geomfill::pipe::Pipe,
+}
 
 impl GeomFillPipe {
-    /// OCCT GeomFill_Pipe::GeomFill_Pipe(Path, Edge1, Edge2, Offset).
+    /// OCCT GeomFill_Pipe::GeomFill_Pipe(Path, Edge1, Edge2, Offset)
+    /// (GeomFill_Pipe.cxx L330-342, the Adaptor3d_Curve overload; the call
+    /// of BRepOffset_Offset.cxx L1194) — GAP (architecture difference #11):
+    /// the real pipe stores plain Curve3 sections, while the sections of
+    /// this call may be Adaptor3d_CurveOnSurface (BRepOffset_Offset.cxx
+    /// L1150/L1179), which has no Curve3 view in the rcad data model.
     pub fn new(
         _the_path: &Curve3,
         _the_edge1: &Adaptor3dCurve,
         _the_edge2: &Adaptor3dCurve,
         _the_offset: f64,
     ) -> Self {
-        panic!("GAP: GeomFill_Pipe (TKGeomAlgo/GeomFill not translated)");
+        panic!("GAP: GeomFill_Pipe(Adaptor3d_Curve x3) (GeomFill_Pipe.cxx L330-342)");
     }
 
-    /// OCCT GeomFill_Pipe::GeomFill_Pipe(Curve, Offset).
-    pub fn new_from_curve(_the_curve: &Curve3, _the_offset: f64) -> Self {
-        panic!("GAP: GeomFill_Pipe (TKGeomAlgo/GeomFill not translated)");
+    /// OCCT GeomFill_Pipe::GeomFill_Pipe(Path, Radius) (GeomFill_Pipe.cxx
+    /// L238-245; the (Curve, Offset) call of BRepOffset_Offset.cxx L1710).
+    pub fn new_from_curve(the_curve: &Curve3, the_offset: f64) -> Self {
+        GeomFillPipe {
+            my_pipe: crate::geomalgo::geomfill::pipe::Pipe::new_with_radius(the_curve, the_offset),
+        }
     }
 
-    /// OCCT GeomFill_Pipe::Perform(Tol, Polynomial, Conti) /
-    /// Perform() — the rcad carrier merges the two forms (the no-arg
-    /// Perform passes the defaults).
-    pub fn perform(&mut self, the_tol: f64, the_polynomial: bool, the_conti: GeomAbsShapeKind) {
-        let _ = (the_tol, the_polynomial, the_conti);
-        panic!("GAP: GeomFill_Pipe::Perform (TKGeomAlgo/GeomFill not translated)");
+    /// OCCT GeomFill_Pipe::Perform(Tol, Polynomial, Conti) (L772) /
+    /// Perform() = Perform(false, false) (L748) — the rcad carrier merges
+    /// the two forms: the only reachable constructor here is the (Path,
+    /// Radius) one, whose OCCT call performs the no-argument Perform()
+    /// (BRepOffset_Offset.cxx L1711), i.e. the defaulted
+    /// (WithParameters = false, Polynomial = false) form.
+    pub fn perform(&mut self, _the_tol: f64, _the_polynomial: bool, _the_conti: GeomAbsShapeKind) {
+        self.my_pipe.perform(false, false);
     }
 
-    /// OCCT GeomFill_Pipe::IsDone().
+    /// OCCT GeomFill_Pipe::IsDone() (lxx L51-55).
     pub fn is_done(&self) -> bool {
-        panic!("GAP: GeomFill_Pipe::IsDone (unreachable while the engine is a GAP)");
+        self.my_pipe.is_done()
     }
 
-    /// OCCT GeomFill_Pipe::ErrorOnSurf().
+    /// OCCT GeomFill_Pipe::ErrorOnSurf() (lxx L44-48).
     pub fn error_on_surf(&self) -> f64 {
-        panic!("GAP: GeomFill_Pipe::ErrorOnSurf (unreachable while the engine is a GAP)");
+        self.my_pipe.error_on_surf()
     }
 
-    /// OCCT GeomFill_Pipe::Surface().
+    /// OCCT GeomFill_Pipe::Surface() (lxx L18-22) — non-null on the path
+    /// past the IsDone() check of BRepOffset_Offset.cxx L1196-1199 / L1712.
     pub fn surface(&self) -> Surface3 {
-        panic!("GAP: GeomFill_Pipe::Surface (unreachable while the engine is a GAP)");
+        self.my_pipe
+            .surface()
+            .cloned()
+            .expect("GeomFill_Pipe::Surface after IsDone")
     }
 
-    /// OCCT GeomFill_Pipe::ExchangeUV().
+    /// OCCT GeomFill_Pipe::ExchangeUV() (lxx L25-29).
     pub fn exchange_uv(&self) -> bool {
-        panic!("GAP: GeomFill_Pipe::ExchangeUV (unreachable while the engine is a GAP)");
+        self.my_pipe.exchange_uv()
     }
 }
 
@@ -149,19 +185,36 @@ pub enum Adaptor3dCurve {
     CurveOnSurface(Curve2d, Surface3),
 }
 
-/// OCCT GeomAPI_ExtremaCurveCurve (TKTopAlgo/GeomAPI) — GAP carrier
-/// (architecture difference #12).
-pub struct GeomApiExtremaCurveCurve;
+/// OCCT GeomAPI_ExtremaCurveCurve (TKTopAlgo/GeomAPI) — rewired to the
+/// kernel base::extrema::extrema_curve_curve (architecture difference #12).
+/// The OCCT computation runs in the constructor and NearestPoints reads the
+/// result.
+pub struct GeomApiExtremaCurveCurve {
+    my_pairs: Vec<rcad_kernel::base::extrema::ExtremaPair>,
+}
 
 impl GeomApiExtremaCurveCurve {
-    /// OCCT GeomAPI_ExtremaCurveCurve(C1, C2).
-    pub fn new(_the_c1: &Curve3, _the_c2: &Curve3) -> Self {
-        panic!("GAP: GeomAPI_ExtremaCurveCurve (TKTopAlgo/GeomAPI not translated)");
+    /// OCCT GeomAPI_ExtremaCurveCurve(C1, C2) — the extrema computation.
+    /// The kernel sampling form (32-seed grid + Newton refinement, the
+    /// chfi3d_builder_c1.rs:1108 convention) honors the exact-extrema
+    /// semantics of the only call site (BRepOffset_Offset.cxx L653-655,
+    /// L694-696, L735-737, L778-780): both curves are Geom_Lines, so the
+    /// squared distance is a convex quadratic and the refined minimum is
+    /// the global one.
+    pub fn new(the_c1: &Curve3, the_c2: &Curve3) -> Self {
+        GeomApiExtremaCurveCurve {
+            my_pairs: rcad_kernel::base::extrema::extrema_curve_curve(the_c1, the_c2, 32).pairs,
+        }
     }
 
-    /// OCCT GeomAPI_ExtremaCurveCurve::NearestPoints(P1, P2).
+    /// OCCT GeomAPI_ExtremaCurveCurve::NearestPoints(P1, P2) — the global
+    /// minimum pair (the ascending-sorted first).
     pub fn nearest_points(&self) -> (DVec3, DVec3) {
-        panic!("GAP: GeomAPI_ExtremaCurveCurve::NearestPoints (not translated)");
+        let a_pair = self
+            .my_pairs
+            .first()
+            .expect("GeomAPI_ExtremaCurveCurve::NearestPoints: no extrema pairs");
+        (a_pair.point1, a_pair.point2)
     }
 }
 
@@ -181,10 +234,12 @@ impl GeomApiProjectPointOnCurve {
     }
 }
 
-/// OCCT GeomLib::ExtendSurfByLength(ProvokingSurf, Length, Contour,
-/// InU, After) (TKTopAlgo/GeomLib, GeomLib.cxx) — GAP (architecture
-/// difference #13); the OCCT in/out `occ::handle<Geom_BoundedSurface>&`
-/// form becomes the (surf, u1, u2, v1, v2) tuple return.
+/// OCCT GeomLib::ExtendSurfByLength(ProvokingSurf, Length, Contour, InU,
+/// After) (TKTopAlgo/GeomLib, GeomLib.cxx L1485-1972; the calls of
+/// BRepOffset_Offset.cxx L661/L702/L743/L786) — the real body is
+/// fillet::chfi3d_builder_c2_geomlib::geom_lib_extend_surf_by_length; the
+/// geomalgo::geom_lib_same_range::extend_surf_by_length entry carries the
+/// OCCT in/out-handle value form (architecture difference #13).
 pub(super) fn geom_lib_extend_surf_by_length(
     the_surf: &Surface3,
     the_length: f64,
@@ -192,18 +247,30 @@ pub(super) fn geom_lib_extend_surf_by_length(
     in_u: bool,
     after: bool,
 ) -> Surface3 {
-    let _ = (the_surf, the_length, the_contour, in_u, after);
-    panic!("GAP: GeomLib::ExtendSurfByLength (TKTopAlgo/GeomLib not translated)");
+    crate::geomalgo::geom_lib_same_range::extend_surf_by_length(
+        the_surf,
+        the_length,
+        the_contour,
+        in_u,
+        after,
+    )
 }
 
-/// OCCT GeomProjLib::Curve2d(C, S) (TKTopAlgo/GeomProjLib) — GAP
-/// (architecture difference #14).
-pub(super) fn geom_proj_lib_curve2d(_the_c: &Curve3, _the_s: &Surface3) -> Option<Curve2d> {
-    panic!("GAP: GeomProjLib::Curve2d (TKTopAlgo/GeomProjLib not translated)");
+/// OCCT GeomProjLib::Curve2d(C, S) (TKTopAlgo/GeomProjLib; GeomProjLib.cxx
+/// L185-192 — the 2-argument overload: the curve First/Last parameters and
+/// the surface natural bounds; the call of BRepOffset_Offset.cxx L1651) —
+/// the kernel base::geom_proj_lib::curve2d_auto real body (architecture
+/// difference #14).
+pub(super) fn geom_proj_lib_curve2d(the_c: &Curve3, the_s: &Surface3) -> Option<Curve2d> {
+    rcad_kernel::base::geom_proj_lib::curve2d_auto(the_c, the_s)
 }
 
-/// OCCT GeomConvert_ApproxSurface (TKGeomBase/GeomConvert) — GAP
-/// (architecture difference #15).
+/// OCCT GeomConvert_ApproxSurface (TKGeomBase/GeomConvert; the call of
+/// BRepOffset_Offset.cxx L1626-1631 — Approx(S, TolApp, Conti, Conti, 10,
+/// 10, 10, 1) guarded by IsDone()) — GAP (architecture difference #15): the
+/// kernel base::approx::approx_surface is the reduced sampling form without
+/// the Continuity/MaxDegree/NbMaxSegment control or the IsDone semantics
+/// the OCCT statements carry, so it does not cover this call.
 pub(super) fn geom_convert_approx_surface(
     _the_surf: &Surface3,
     _the_tol: f64,
@@ -213,7 +280,11 @@ pub(super) fn geom_convert_approx_surface(
 }
 
 /// OCCT ShapeFix_Shape (TKShHealing/ShapeFix) — the Init(Vertex) wire fixer
-/// GAP carrier (architecture difference #16).
+/// GAP carrier (architecture difference #16): the real body
+/// shape_fix::shape_fix_shape::ShapeFixShape exists, but its Perform is the
+/// arena form perform(&mut BRep, progress) while the pool-less offset call
+/// of BRepOffset_Offset.cxx L1597-1599 cannot hand it the pool
+/// (architecture difference #19).
 pub struct ShapeFixShape;
 
 impl ShapeFixShape {
@@ -239,7 +310,11 @@ pub struct GPropGProps {
     pub centre_of_mass: DVec3, // OCCT: CentreOfMass
 }
 
-/// OCCT BRepGProp::LinearProperties(S, VProps) — GAP.
+/// OCCT BRepGProp::LinearProperties(S, VProps) — GAP (architecture
+/// difference #17): the kernel base::gprop::linear::linear_properties
+/// re-host returns only the total length, while the call of
+/// BRepOffset_Offset.cxx L1601-1604 consumes
+/// GlobalProps.CentreOfMass() (no GProp_GProps COM in the re-host).
 pub(super) fn brep_gprop_linear_properties(_the_s: &Shape) -> GPropGProps {
     panic!("GAP: BRepGProp::LinearProperties (TKTopAlgo/BRepGProp not translated)");
 }

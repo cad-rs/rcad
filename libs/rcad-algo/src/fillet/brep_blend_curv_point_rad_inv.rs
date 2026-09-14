@@ -105,13 +105,12 @@ impl<'a> BRepBlendCurvPointRadInv<'a> {
 
     /// OCCT GetTolerance(Tolerance, Tol) (BRepBlend_CurvPointRadInv.cxx
     /// L107-111) — Tolerance(1) = curv1->Resolution(Tol); Tolerance(2) =
-    /// curv2->Resolution(Tol).  Pending: rcad Curve3 has no Resolution
-    /// (Adaptor3d_Curve::Resolution / per-type Geom resolution is an
-    /// untranslated adaptor-layer subsystem).
-    pub fn get_tolerance(&self, _tolerance: &mut [f64], _tol: f64) {
-        unimplemented!(
-            "BRepBlend_CurvPointRadInv::GetTolerance: pending Adaptor3d_Curve::Resolution"
-        );
+    /// curv2->Resolution(Tol).
+    pub fn get_tolerance(&self, tolerance: &mut [f64], tol: f64) {
+        // OCCT L109: Tolerance(1) = curv1->Resolution(Tol).
+        tolerance[0] = self.curv1.resolution(tol);
+        // OCCT L110: Tolerance(2) = curv2->Resolution(Tol).
+        tolerance[1] = self.curv2.resolution(tol);
     }
 
     /// OCCT GetBounds(InfBound, SupBound) (BRepBlend_CurvPointRadInv.cxx

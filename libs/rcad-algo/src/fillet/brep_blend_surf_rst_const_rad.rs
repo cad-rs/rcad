@@ -21,14 +21,14 @@
 //! FirstParameter/LastParameter L977-987, Resolution L1364-1370) in the
 //! `cons_*` helpers below.
 //!
-//! Pending kernel dependency (marked GAP, plan 0.6): Adaptor2d_Curve2d::
-//! Resolution (the last step of the cons Resolution chain). math_SVD is
+//! Pending kernel dependency (marked GAP, plan 0.6): math_SVD is
 //! available (`rcad_kernel::math::math_svd::MathSvd`) and used by the
 //! IsSolution / Section-d1 second-chance solvers.
 
 use glam::{DVec2, DVec3};
 
 use rcad_kernel::base::convert::ConvertParameterisation;
+use rcad_kernel::base::proj_lib::{Adaptor2dCurve2d, Geom2dCurveAdaptor};
 use rcad_kernel::core::precision::{is_infinite_value, p_confusion};
 use rcad_kernel::geom::{Circle3, Curve2d, Curve2dEval as _, Curve3, CurveEval as _, Surface3, SurfaceEval as _};
 use rcad_kernel::math::math_gauss::MathGauss;
@@ -43,7 +43,6 @@ use super::brep_blend_func::{
     blend_func_get_minimal_weights, blend_func_get_shape, blend_func_next_shape,
     BlendFuncSectionShape, ConvertParameterisationType,
 };
-use super::brep_blend_func_chamfer::adaptor2d_curve2d_resolution_pending;
 use super::brep_blend_func_consrad::{
     elclib_circle_parameter, geomfill_get_tolerance, geomfill_knots, geomfill_mults,
 };
@@ -156,14 +155,15 @@ impl<'a> BlendSurfRstConstRad<'a> {
 
     /// OCCT Adaptor3d_CurveOnSurface::Resolution (Adaptor3d_CurveOnSurface.cxx
     /// L1364-1370): `ru = mySurface->UResolution(R3d); rv = ...; return
-    /// myCurve->Resolution(std::min(ru, rv));`  GAP (plan 0.6): the final
-    /// Adaptor2d_Curve2d::Resolution step has no rcad equivalent; the
-    /// established pending marker preserves the OCCT failure path.
+    /// myCurve->Resolution(std::min(ru, rv));` — the final step is the
+    /// Geom2dAdaptor_Curve::Resolution over the restriction pcurve (the
+    /// OCCT myCurve handle is a BRepAdaptor_Curve2d, a Geom2dAdaptor_Curve
+    /// subclass without a Resolution override).
     fn cons_resolution(&self, r3d: f64) -> f64 {
         let ru = self.surfrst.u_resolution(r3d);
         let rv = self.surfrst.v_resolution(r3d);
-        let _ = ru.min(rv);
-        adaptor2d_curve2d_resolution_pending()
+        let my_curve = Geom2dCurveAdaptor::new(self.rst.clone());
+        my_curve.resolution(ru.min(rv))
     }
 
     /// OCCT BRepBlend_SurfRstConstRad(Surf, SurfRst, Rst, CGuide)

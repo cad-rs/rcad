@@ -11,172 +11,21 @@
 //!
 //! Architecture differences:
 //! 1. NCollection_List<TopoDS_Shape> -> Vec<Shape>.
-//! 2. The engine member BRepFill_Filling myFilling (TKBool/BRepFill) has no
-//!    rcad translation yet — the BRepFillFilling carrier below keeps the
-//!    OCCT constructor/method surface with GAP panics (port plan section
-//!    0.6); every facade body around the engine calls is translated 1:1.
+//! 2. The engine member BRepFill_Filling myFilling (TKBool/BRepFill) is the
+//!    brep_fill/brep_fill_filling.rs translation (imported below following
+//!    the OCCT hxx member form).
+//! 3. The engine consumes the rcad BRep pool (the BRepAdaptor_Surface read
+//!    in Add(U, V, Support, Order) and the BRepLib_MakeFace writes in
+//!    Build): the class holds my_brep (the brep_offset_api_draft_angle.rs
+//!    facade precedent, architecture difference #4).
 
-use rcad_kernel::geom::Surface3;
+use rcad_kernel::topo::topods::BRep;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::GeomAbsShape;
 
 use glam::DVec3;
 
-// ---------------------------------------------------------------------------
-// GAP carrier (architecture difference #2).
-// ---------------------------------------------------------------------------
-
-/// OCCT BRepFill_Filling (TKBool/BRepFill, BRepFill_Filling.hxx) — the
-/// N-side filling engine of MakeFilling (architecture difference #2; GAP: no
-/// rcad translation yet — the GAP panics are the section 0.6 annotation; the
-/// constructor and field storage keep the OCCT form).
-pub struct BRepFillFilling {
-    my_is_done: bool, // OCCT: myIsDone
-}
-
-impl BRepFillFilling {
-    /// OCCT BRepFill_Filling::BRepFill_Filling(Degree, NbPtsOnCur, NbIter,
-    /// Anisotropie, Tol2d, Tol3d, TolAng, TolCurv, MaxDeg, MaxSegments)
-    /// (BRepFill_Filling.cxx L43-63) — GAP: the parameter storage keeps the
-    /// OCCT form, the engine computation is not translated.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        _degree: i32,
-        _nb_pts_on_cur: i32,
-        _nb_iter: i32,
-        _anisotropie: bool,
-        _tol2d: f64,
-        _tol3d: f64,
-        _tolang: f64,
-        _tolcurv: f64,
-        _max_deg: i32,
-        _max_segments: i32,
-    ) -> Self {
-        BRepFillFilling { my_is_done: false }
-    }
-
-    /// OCCT BRepFill_Filling::SetConstrParam(Tol2d, Tol3d, TolAng, TolCurv)
-    /// — GAP.
-    pub fn set_constr_param(&mut self, _tol2d: f64, _tol3d: f64, _tolang: f64, _tolcurv: f64) {
-        panic!("GAP: BRepFill_Filling::SetConstrParam (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::SetResolParam(Degree, NbPtsOnCur, NbIter,
-    /// Anisotropie) — GAP.
-    pub fn set_resol_param(
-        &mut self,
-        _degree: i32,
-        _nb_pts_on_cur: i32,
-        _nb_iter: i32,
-        _anisotropie: bool,
-    ) {
-        panic!("GAP: BRepFill_Filling::SetResolParam (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::SetApproxParam(MaxDeg, MaxSegments) — GAP.
-    pub fn set_approx_param(&mut self, _max_deg: i32, _max_segments: i32) {
-        panic!("GAP: BRepFill_Filling::SetApproxParam (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::LoadInitSurface(Surf) — GAP.
-    pub fn load_init_surface(&mut self, _surf: &Shape) {
-        panic!("GAP: BRepFill_Filling::LoadInitSurface (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::Add(Constr, Order, IsBound) — GAP.
-    pub fn add(&mut self, _constr: &Shape, _order: GeomAbsShape, _is_bound: bool) -> i32 {
-        panic!("GAP: BRepFill_Filling::Add (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::Add(Constr, Support, Order, IsBound) — GAP.
-    pub fn add_with_support(
-        &mut self,
-        _constr: &Shape,
-        _support: &Shape,
-        _order: GeomAbsShape,
-        _is_bound: bool,
-    ) -> i32 {
-        panic!("GAP: BRepFill_Filling::Add (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::Add(Support, Order) — GAP.
-    pub fn add_free_constraint(&mut self, _support: &Shape, _order: GeomAbsShape) -> i32 {
-        panic!("GAP: BRepFill_Filling::Add (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::Add(Point) — GAP.
-    pub fn add_point(&mut self, _point: &DVec3) -> i32 {
-        panic!("GAP: BRepFill_Filling::Add (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::Add(U, V, Support, Order) — GAP.
-    pub fn add_point_on_support(
-        &mut self,
-        _u: f64,
-        _v: f64,
-        _support: &Shape,
-        _order: GeomAbsShape,
-    ) -> i32 {
-        panic!("GAP: BRepFill_Filling::Add (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::Build() — GAP.
-    pub fn build(&mut self) {
-        panic!("GAP: BRepFill_Filling::Build (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::IsDone().
-    pub fn is_done(&self) -> bool {
-        self.my_is_done
-    }
-
-    /// OCCT BRepFill_Filling::Generated(S) — GAP.
-    pub fn generated(&mut self, _s: &Shape) -> Vec<Shape> {
-        panic!("GAP: BRepFill_Filling::Generated (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::Face().
-    pub fn face(&self) -> Shape {
-        Shape::null()
-    }
-
-    /// OCCT BRepFill_Filling::G0Error() — GAP.
-    pub fn g0_error(&self) -> f64 {
-        panic!("GAP: BRepFill_Filling::G0Error (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::G1Error() — GAP.
-    pub fn g1_error(&self) -> f64 {
-        panic!("GAP: BRepFill_Filling::G1Error (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::G2Error() — GAP.
-    pub fn g2_error(&self) -> f64 {
-        panic!("GAP: BRepFill_Filling::G2Error (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::G0Error(Index) — GAP.
-    pub fn g0_error_at(&mut self, _index: i32) -> f64 {
-        panic!("GAP: BRepFill_Filling::G0Error (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::G1Error(Index) — GAP.
-    pub fn g1_error_at(&mut self, _index: i32) -> f64 {
-        panic!("GAP: BRepFill_Filling::G1Error (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::G2Error(Index) — GAP.
-    pub fn g2_error_at(&mut self, _index: i32) -> f64 {
-        panic!("GAP: BRepFill_Filling::G2Error (TKBool/BRepFill not translated)");
-    }
-
-    /// OCCT BRepFill_Filling::Surface() — the deformation carrier of
-    /// MakeFilling (BRepFill_Filling.hxx Surface()); kept null under the
-    /// same GAP.
-    pub fn surface(&self) -> Option<Surface3> {
-        None
-    }
-}
+use crate::brep_fill::brep_fill_filling::BRepFillFilling;
 
 /// OCCT BRepOffsetAPI_MakeFilling (hxx L75-343).
 pub struct BRepOffsetAPIMakeFilling {
@@ -188,6 +37,9 @@ pub struct BRepOffsetAPIMakeFilling {
     my_generated: Vec<Shape>, // OCCT: myGenerated (NCollection_List)
     // OCCT private member (hxx L341).
     my_filling: BRepFillFilling, // OCCT: myFilling
+    // The rcad pool stand-in consumed by the engine (architecture
+    // difference #4; the brep_offset_api_draft_angle.rs precedent).
+    my_brep: BRep,
 }
 
 impl BRepOffsetAPIMakeFilling {
@@ -215,10 +67,11 @@ impl BRepOffsetAPIMakeFilling {
             my_done: false,
             my_shape: Shape::null(),
             my_generated: Vec::new(),
-            my_filling: BRepFillFilling::new(
+            my_filling: BRepFillFilling::new_with_args(
                 degree, nb_pts_on_cur, nb_iter, anisotropie, tol2d, tol3d, tolang, tolcurv,
                 max_deg, max_segments,
             ),
+            my_brep: BRep::new(),
         }
     }
 
@@ -279,7 +132,7 @@ impl BRepOffsetAPIMakeFilling {
 
     /// OCCT BRepOffsetAPI_MakeFilling::Add(Point) (cxx L102-107).
     pub fn add_point(&mut self, point: &DVec3) -> i32 {
-        self.my_filling.add_point(point)
+        self.my_filling.add_point(*point)
     }
 
     /// OCCT BRepOffsetAPI_MakeFilling::Add(U, V, Support, Order)
@@ -291,13 +144,16 @@ impl BRepOffsetAPIMakeFilling {
         support: &Shape,
         order: GeomAbsShape,
     ) -> i32 {
-        self.my_filling.add_point_on_support(u, v, support, order)
+        // The engine reads the support surface through the BRep pool
+        // (BRepAdaptor_Surface; architecture difference #4).
+        self.my_filling
+            .add_point_on_support(&self.my_brep, u, v, support, order)
     }
 
     /// OCCT BRepOffsetAPI_MakeFilling::Build(...) (cxx L117-122).
     pub fn build(&mut self) {
         // OCCT L119: myFilling.Build().
-        self.my_filling.build();
+        self.my_filling.build(&mut self.my_brep);
         // OCCT L120: myShape = myFilling.Face().
         self.my_shape = self.my_filling.face();
     }
@@ -310,7 +166,7 @@ impl BRepOffsetAPIMakeFilling {
     /// OCCT BRepOffsetAPI_MakeFilling::Generated(S) (cxx L129-133) —
     /// returns the new edge (first in list) made from old edge "S".
     pub fn generated(&mut self, s: &Shape) -> Vec<Shape> {
-        self.my_filling.generated(s)
+        self.my_filling.generated(s).clone()
     }
 
     /// OCCT BRepOffsetAPI_MakeFilling::G0Error() (cxx L135-140) — returns
@@ -337,21 +193,21 @@ impl BRepOffsetAPIMakeFilling {
     /// returns maximum distance between the constraint number Index and the
     /// resulting surface.
     pub fn g0_error_at(&mut self, index: i32) -> f64 {
-        self.my_filling.g0_error_at(index)
+        self.my_filling.g0_error_index(index)
     }
 
     /// OCCT BRepOffsetAPI_MakeFilling::G1Error(Index) (cxx L163-168) —
     /// returns maximum angle between the constraint number Index and the
     /// resulting surface.
     pub fn g1_error_at(&mut self, index: i32) -> f64 {
-        self.my_filling.g1_error_at(index)
+        self.my_filling.g1_error_index(index)
     }
 
     /// OCCT BRepOffsetAPI_MakeFilling::G2Error(Index) (cxx L170-175) —
     /// returns maximum difference of curvature between the constraint number
     /// Index and the resulting surface.
     pub fn g2_error_at(&mut self, index: i32) -> f64 {
-        self.my_filling.g2_error_at(index)
+        self.my_filling.g2_error_index(index)
     }
 
     /// OCCT BRepBuilderAPI_MakeShape::Shape() — a PUBLIC member of the OCCT
@@ -366,18 +222,19 @@ impl BRepOffsetAPIMakeFilling {
     }
 
     /// Test-world extraction bridge (the FilletResult.brep pattern,
-    /// algo_ext::topods_ext::extract_result_brep): flattens the result root
-    /// shape into the self-contained BRep the test world consumes
-    /// (StepWriter / total_surface_area).  OCCT has no equivalent (the
-    /// TopoDS_Shape carries its arena implicitly) — the rcad BRep-pool
-    /// architecture difference #4 glue.
+    /// algo_ext::topods_ext::extract_result_brep): flattens the
+    /// (my_brep arena, my_shape root) pair into the self-contained BRep the
+    /// test world consumes (StepWriter / total_surface_area).  OCCT has no
+    /// equivalent (the TopoDS_Shape carries its arena implicitly) — the
+    /// rcad BRep-pool architecture difference #4 glue.
     pub fn result_brep(&mut self) -> Option<rcad_kernel::topo::topods::BRep> {
         if !self.is_done() || self.my_shape.is_null() {
             return None;
         }
+        let locations = self.my_brep.locations.clone();
         Some(crate::algo_ext::topods_ext::extract_result_brep(
             &self.my_shape,
-            Vec::new(),
+            locations,
         ))
     }
 }

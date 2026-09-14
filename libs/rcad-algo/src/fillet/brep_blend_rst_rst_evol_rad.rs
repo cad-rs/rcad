@@ -29,6 +29,7 @@
 
 use glam::{DVec2, DVec3};
 
+use rcad_kernel::base::proj_lib::{Adaptor2dCurve2d, Geom2dCurveAdaptor};
 use rcad_kernel::core::precision::p_confusion;
 use rcad_kernel::geom::{Circle3, Curve2d, Curve2dEval as _, Curve3, CurveEval as _, Surface3, SurfaceEval as _};
 use rcad_kernel::math::math_gauss::MathGauss;
@@ -45,7 +46,6 @@ use super::brep_blend_func::{
     blend_func_get_minimal_weights, blend_func_get_shape, blend_func_next_shape,
     BlendFuncSectionShape, ConvertParameterisationType,
 };
-use super::brep_blend_func_chamfer::adaptor2d_curve2d_resolution_pending;
 use super::brep_blend_func_consrad::{
     elclib_circle_parameter, geomfill_get_tolerance, geomfill_knots, geomfill_mults,
 };
@@ -193,14 +193,15 @@ impl<'a> BlendRstRstEvolRad<'a> {
 
     /// OCCT Adaptor3d_CurveOnSurface::Resolution (Adaptor3d_CurveOnSurface.cxx
     /// L1364-1370): `ru = mySurface->UResolution(R3d); rv = ...; return
-    /// myCurve->Resolution(std::min(ru, rv));`  GAP (plan 0.6): the final
-    /// Adaptor2d_Curve2d::Resolution step has no rcad equivalent; the
-    /// established pending marker preserves the OCCT failure path.
-    fn cons_resolution(&self, surf: &Surface3, r3d: f64) -> f64 {
+    /// myCurve->Resolution(std::min(ru, rv));` — the final step is the
+    /// Geom2dAdaptor_Curve::Resolution over the restriction pcurve (the
+    /// OCCT myCurve handle is a BRepAdaptor_Curve2d, a Geom2dAdaptor_Curve
+    /// subclass without a Resolution override).
+    fn cons_resolution(&self, pcurve: &Curve2d, surf: &Surface3, r3d: f64) -> f64 {
         let ru = surf.u_resolution(r3d);
         let rv = surf.v_resolution(r3d);
-        let _ = ru.min(rv);
-        adaptor2d_curve2d_resolution_pending()
+        let my_curve = Geom2dCurveAdaptor::new(pcurve.clone());
+        my_curve.resolution(ru.min(rv))
     }
 
     /// OCCT BRepBlend_RstRstEvolRad(Surf1, Rst1, Surf2, Rst2, CGuide, Evol)
@@ -358,9 +359,9 @@ impl<'a> BlendRstRstEvolRad<'a> {
     /// L236-240).
     pub fn get_tolerance(&self, tolerance: &mut [f64], tol: f64) {
         // OCCT L238: Tolerance(1) = cons1.Resolution(Tol).
-        tolerance[0] = self.cons_resolution(self.surf1, tol);
+        tolerance[0] = self.cons_resolution(self.rst1, self.surf1, tol);
         // OCCT L239: Tolerance(2) = cons2.Resolution(Tol).
-        tolerance[1] = self.cons_resolution(self.surf2, tol);
+        tolerance[1] = self.cons_resolution(self.rst2, self.surf2, tol);
     }
 
     /// OCCT GetBounds(InfBound, SupBound) (BRepBlend_RstRstEvolRad.cxx

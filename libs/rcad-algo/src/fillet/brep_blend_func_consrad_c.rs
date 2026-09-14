@@ -8,11 +8,11 @@
 //! Blend_FuncInv` is expressed by implementing the [`BlendFuncInv`] trait
 //! and the `math_FunctionSetWithDerivatives` base; `math_Vector` /
 //! `math_Matrix` map to `[f64; 4]` / `Vec<Vec<f64>>` (OCCT D(i, j) ->
-//! d[i - 1][j - 1]).  Pending kernel dependency (marked GAP, plan 0.6):
-//! Adaptor2d_Curve2d::Resolution.
+//! d[i - 1][j - 1]).
 
 use glam::{DVec2, DVec3};
 
+use rcad_kernel::base::proj_lib::{Adaptor2dCurve2d, Geom2dCurveAdaptor};
 use rcad_kernel::core::precision::is_infinite_value;
 use rcad_kernel::geom::{Curve2d, Curve2dEval as _, Curve3, CurveEval as _, Surface3, SurfaceEval as _};
 use rcad_kernel::math::function_set_root::FunctionSetWithDerivatives;
@@ -79,11 +79,12 @@ impl<'a> BlendFuncConstRadInv<'a> {
 
     /// OCCT GetTolerance(Tolerance, Tol) (BlendFunc_ConstRadInv.cxx L84-98).
     pub fn get_tolerance(&self, tolerance: &mut [f64], tol: f64) {
-        // OCCT L86: Tolerance(1) = csurf->Resolution(Tol).
-        // GAP (plan 0.6): rcad-kernel has no Adaptor2d_Curve2d::Resolution
-        // equivalent yet; the call panics with the pending marker until the
-        // kernel exposes it.
-        tolerance[0] = super::brep_blend_func_chamfer::adaptor2d_curve2d_resolution_pending();
+        // OCCT L86: Tolerance(1) = csurf->Resolution(Tol) — the
+        // Geom2dAdaptor_Curve::Resolution over the restriction pcurve
+        // (the OCCT csurf handle is a BRepAdaptor_Curve2d, a
+        // Geom2dAdaptor_Curve subclass without a Resolution override).
+        let csurf = Geom2dCurveAdaptor::new(self.csurf.expect("csurf").clone());
+        tolerance[0] = csurf.resolution(tol);
         // OCCT L87: Tolerance(2) = curv->Resolution(Tol).
         tolerance[1] = self.curv.resolution(tol);
         if self.first {

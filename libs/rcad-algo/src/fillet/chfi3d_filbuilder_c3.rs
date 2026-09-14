@@ -20,10 +20,10 @@
 //!
 //! Small ChFi3d_Builder_0.cxx helpers missing from the existing translation
 //! (ChFi3d_ExtrSpineCarac L773-836, ChFi3d_CircularSpine L846-881,
-//! ChFi3d_Spine L888-905) are translated here with anchors.  GAP carriers
-//! (outside TKFillet or pending architecture): BlendFunc_EvolRad / Law_S
-//! (the variable-radius branch), the ChFiDS_ElSpine curve storage accessors.
+//! ChFi3d_Spine L888-905) are translated here with anchors.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use glam::{DVec2, DVec3};
@@ -32,6 +32,8 @@ use rcad_kernel::geom::{BezierCurve3, Circle3, Curve2d, Curve2dEval as _, Curve3
 use rcad_kernel::math::el::elclib_line_value;
 use rcad_kernel::math::math_matrix::Vector;
 use rcad_kernel::topo::topods::{Orientation, Shape, TShape};
+
+use crate::geomalgo::law::{LawFunction, LawFunctionHandle, LawS};
 
 use super::chfi3d::{chfi3d_index_of_surf_data, chfi3d_index_point_in_ds, next_side, ChFi3dBuilder};
 use super::chfi3d_builder_0::{
@@ -45,7 +47,9 @@ use super::chfi3d_builder_6b::{elspine_guide_curve, ChFiDSElSpineHandle};
 use super::chfi3d_ds::{TopOpeBRepDSCurve, TopOpeBRepDSHDataStructure};
 use super::chfi_ds::{ChFiDSElSpine, ChFiDSStripe, SharedStripe};
 use super::chfi_kpart_gp::{elslib_cylinder_d1, elslib_torus_d1, GpAx3};
+use super::blend_func_evol_rad_inv::BlendFuncEvolRadInv;
 use super::brep_blend_func_consrad::{BlendFuncConstRad, BlendFuncConstRadInv};
+use super::brep_blend_func_evolrad::BlendFuncEvolRad;
 use super::brep_blend_line::BRepBlendLine;
 
 use super::chfi3d_filbuilder_c2::{
@@ -261,14 +265,17 @@ pub(crate) fn chfi3d_extr_spine_carac(
             let _ = nbelspine;
             if let Some(fsp) = &fsp {
                 if fsp.is_constant() {
-                    // OCCT L812-815: R = fsp->Radius().
+                    // OCCT L821-823: R = fsp->Radius().
                     *out_r = fsp.radius();
                 } else {
-                    // OCCT L817: R = fsp->Law(hels)->Value(p).
-                    // GAP carrier: ChFiDS_FilSpine::Law / Law_Function
-                    // (TKMath/Law) is pending; the panic preserves the OCCT
-                    // path boundary for the variable-radius corner.
-                    panic!("GAP: ChFiDS_FilSpine::Law pending (OCCT ChFi3d_Builder_0.cxx L817)");
+                    // OCCT L827: R = fsp->Law(hels)->Value(p) — the OCCT
+                    // Law() null composite deref raises Standard_NullObject;
+                    // the rcad Option models the null and the expect mirrors
+                    // the raise (pattern of chfi3d_builder_2d.rs).
+                    let law = fsp
+                        .law_of(hels.as_ref().expect("ElSpine"))
+                        .expect("ChFiDS_FilSpine::Law: no law for this elspine");
+                    *out_r = law.borrow_mut().value(p);
                 }
             }
             // OCCT L820: hels->D1(p, Pbid, V).
@@ -1057,12 +1064,84 @@ pub fn perform_three_corner(
                 }
             } else {
                 // OCCT L851-903: the variable-radius ComputeData through
-                // Law_S + BRepBlend_EvolRad (= typedef BlendFunc_EvolRad).
-                // GAP carrier: BlendFunc_EvolRad (OCCT BlendFunc/
-                // BlendFunc_EvolRad.cxx) and Law_S (TKMath/Law/Law_S.cxx)
-                // are not translated; the panic preserves the OCCT path
-                // boundary until the variable-radius batch lands.
-                panic!("GAP: BlendFunc_EvolRad / Law_S pending (OCCT ChFi3d_FilBuilder_C3.cxx L853-903)");
+                // Law_S + BRepBlend_EvolRad (= typedef BlendFunc_EvolRad,
+                // BRepBlend_EvolRad.hxx L21) and BRepBlend_EvolRadInv
+                // (= typedef BlendFunc_EvolRadInv).
+                // OCCT L853: occ::handle<Law_S> law = new Law_S().
+                let mut law = LawS::new();
+                // OCCT L854: law->Set(WFirst, Rdeb, WLast, Rfin).
+                law.set(w_first, rdeb, w_last, rfin);
+                let law: LawFunctionHandle = Rc::new(RefCell::new(law));
+                // OCCT L855-856: BRepBlend_EvolRad func(Fac, Surf,
+                // cornerspine, law); BRepBlend_EvolRadInv finv(Fac, Surf,
+                // cornerspine, law) — the rcad ctor receives the elspine
+                // guide curve (ChFiDS_ElSpine is-a Adaptor3d_Curve in OCCT).
+                let guide = elspine_guide_curve(&cornerspine);
+                let mut func = BlendFuncEvolRad::new(&fac.surface, &surf.surface, &guide, law.clone());
+                let mut finv = BlendFuncEvolRadInv::new(&fac.surface, &surf.surface, &guide, law);
+                // OCCT L857: func.Set(choix).
+                func.set(choix);
+                // OCCT L858: func.Set(myShape).
+                func.set_section_shape(my_shape);
+                // OCCT L859: finv.Set(choix).
+                finv.set(choix);
+                // OCCT L860: TolGuide = cornerspine->Resolution(tolapp3d).
+                let tol_guide = elspine_resolution(&cornerspine, fb.tolapp3d);
+                // OCCT L861: intf = 3, intl = 3.
+                let mut intf = 3i32;
+                let mut intl = 3i32;
+                done = fb.compute_data(
+                    &mut coin.write().expect("surfdata lock"),
+                    &cornerspine,
+                    null_spine,
+                    &mut lin,
+                    &fac,
+                    &ifac,
+                    &surf,
+                    &isurf,
+                    &mut func,
+                    &mut finv,
+                    ffi,
+                    pasmax,
+                    locfleche,
+                    tol_guide,
+                    &mut ffi,
+                    &mut lla,
+                    false,
+                    false,
+                    true,
+                    &soldep,
+                    &mut intf,
+                    &mut intl,
+                    &mut gd1,
+                    &mut gd2,
+                    &mut gf1,
+                    &mut gf2,
+                    false,
+                    true,
+                );
+                if done && gf2 {
+                    // OCCT L896: CompleteData(coin, func, lin, Fac, Surf,
+                    // OFac, Gd1, false, Gf1, false).
+                    let line_guard = lin.clone().expect("Lin");
+                    done = fb.complete_data_function(
+                        &mut coin.write().expect("surfdata lock"),
+                        &mut func,
+                        &line_guard,
+                        &fac,
+                        Some(&surf),
+                        ofac,
+                        gd1,
+                        false,
+                        gf1,
+                        false,
+                        false,
+                    );
+                    filling = !done;
+                } else {
+                    // OCCT L900-901: else filling = true.
+                    filling = true;
+                }
             }
         }
 
