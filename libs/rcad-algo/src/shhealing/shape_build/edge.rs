@@ -653,8 +653,6 @@ impl ShapeBuildEdge {
                         pcurve,
                         c2d.as_ref().unwrap(),
                         face,
-                        f_par,
-                        l_par,
                         0.0,
                     );
                 } else {
@@ -665,8 +663,6 @@ impl ShapeBuildEdge {
                         c2d.as_ref().unwrap(),
                         pcurve,
                         face,
-                        f_par,
-                        l_par,
                         0.0,
                     );
                 }
@@ -745,10 +741,10 @@ impl ShapeBuildEdge {
             if edge.orientation == Orientation::Reversed {
                 // because B.UpdateEdge does not check edge orientation:
                 // B.UpdateEdge(edge, pcs, pc, sub, 0.)
-                builder_update_edge_pcurves(brep, edge, &pcs, &pc, sub, f, l, 0.0);
+                builder_update_edge_pcurves(brep, edge, &pcs, &pc, sub, 0.0);
             } else {
                 // B.UpdateEdge(edge, pc, pcs, sub, 0.)
-                builder_update_edge_pcurves(brep, edge, &pc, &pcs, sub, f, l, 0.0);
+                builder_update_edge_pcurves(brep, edge, &pc, &pcs, sub, 0.0);
             }
         }
 
@@ -1074,6 +1070,12 @@ impl ShapeBuildEdge {
             // RemovePCurve(E, S).
             self.remove_pcurve_surface(brep, &e, s);
             // B.UpdateEdge(E, pcurve, S, L, 0.); B.Range(E, S, L, p1, p2).
+            // (ShapeBuild_Edge.cxx L869-872.)
+            //
+            // The two OCCT calls land in one write: UpdateEdge stores the
+            // static UpdateCurves interval (BRep_Builder.cxx L104-167) and the
+            // Range call that follows overwrites it with (p1, p2), so the net
+            // stored interval is (p1, p2) — the same value written here.
             {
                 // GAP/architecture: OCCT keys the pcurve by (S, L); the rcad
                 // pcurve map is face-keyed, so the surfaceless representation
@@ -1282,16 +1284,18 @@ pub fn builder_update_edge_pcurve(
     b.update_edge_pcurve(brep, edge.clone(), pcurve.clone(), face.clone(), tol);
 }
 
-/// OCCT BRep_Builder::UpdateEdge(E, C1, C2, F, aFirst, aLast, Tol)
-/// (BRep_Builder.cxx L703-757): set the seam pcurve pair on the face.
+/// OCCT BRep_Builder::UpdateEdge(E, C1, C2, F, Tol) (BRep_Builder.lxx
+/// L100-110 -> BRep_Builder.cxx L704-741 -> the two-curve UpdateCurves
+/// L251-308): set the seam pcurve pair on the face.  The OCCT overload
+/// carries no f/l arguments; a following `B.Range(E, F, f, l)` (see
+/// [`builder_range_on_face`], ShapeBuild_Edge.cxx L502) sets the final
+/// interval.
 pub fn builder_update_edge_pcurves(
     brep: &mut BRep,
     edge: &Shape,
     pcurve1: &Curve2d,
     pcurve2: &Curve2d,
     face: &Shape,
-    a_first: f64,
-    a_last: f64,
     tol: f64,
 ) {
     let mut b = make_builder(brep);
@@ -1301,8 +1305,6 @@ pub fn builder_update_edge_pcurves(
         pcurve1.clone(),
         pcurve2.clone(),
         face.clone(),
-        a_first,
-        a_last,
         tol,
     );
 }

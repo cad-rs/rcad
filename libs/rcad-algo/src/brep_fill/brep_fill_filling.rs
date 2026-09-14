@@ -1178,11 +1178,12 @@ fn update_edge_pcurve_standalone(brep: &mut BRep, e: &Shape, pcurve: Curve2d, to
     // OCCT BRep_Builder.cxx L104-167 (UpdateCurves, reached through
     // BRep_Builder::UpdateEdge(E, C2d, S, L, Tol) L655-671, called from
     // BRepFill_Filling.cxx L768).  NewEdge is `anEdge.EmptyCopied()`
-    // (BRepFill_Filling.cxx L733), so its curve representation list is empty:
-    // there is no Curve3D entry (f/l stay -/+Precision::Infinite() at L112)
-    // and the new CurveOnSurface keeps the 2D curve's own range (L151-153)
-    // with no finite 3D override.
-    let [ta, tb] = pcurve.default_domain();
+    // (BRepFill_Filling.cxx L733) and BRep_TEdge::EmptyCopy COPIES the curve
+    // representations (BRep_TEdge.cxx L105-125), so the fresh edge still
+    // carries the source Curve3D entry: `GC->Range(f, l)` at L121-129 reads it
+    // and the per-end finite override at L154-162 applies.  The canonical body
+    // is rcad_kernel::topods::update_curves_range.
+    let [ta, tb] = rcad_kernel::topods::update_curves_range(pcurve.default_domain(), ed);
     ed.pcurves.insert((0u64, 0u32), (pcurve, ta, tb));
     ed.tolerance = ed.tolerance.max(tol);
 }

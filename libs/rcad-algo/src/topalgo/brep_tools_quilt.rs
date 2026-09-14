@@ -198,8 +198,10 @@ fn builder_update_edge_pcurve(
     the_tol: f64,
 ) {
     if pool_owns_shape(brep, the_e) {
-        let (f0, l0) = bat::brep_tool_range(the_e);
         let ed = brep.edge_mut_inplace(the_e.clone());
+        // OCCT static UpdateCurves two-step rule (BRep_Builder.cxx L104-167).
+        let [f0, l0] =
+            rcad_kernel::topods::update_curves_range(the_c2d.default_domain(), ed);
         ed.pcurves.insert(bat::shape_key(the_f), (the_c2d.clone(), f0, l0));
         ed.tolerance = ed.tolerance.max(the_tol);
     } else {

@@ -247,11 +247,15 @@ fn distinct_knot_count(flat: &[f64]) -> i32 {
     distinct_knots(flat).len() as i32
 }
 
-/// OCCT `Geom_Surface::D1(U, V, P, D1U, D1V)` over the rcad surface value —
-/// the ElSLib::DN arms for the quadrics and the `Geom_BSplineSurface::EvalDN`
-/// / `Geom_BezierSurface::EvalDN` (`BSplSLib::DN`) arms for the polynomial
-/// kinds ([`crate::geom::offset_surface_utils::eval_dn`], i.e.
-/// [`crate::geom::eval_b`]).
+/// OCCT `Geom_Surface::EvalD1(U, V)` over the rcad surface value — the union
+/// of the translated per-type bodies: the ElSLib::DN arms for the quadrics,
+/// the `Geom_BSplineSurface::EvalDN` / `Geom_BezierSurface::EvalDN`
+/// (`BSplSLib::DN`) arms for the polynomial kinds
+/// ([`crate::geom::offset_surface_utils::eval_dn`], i.e.
+/// [`crate::geom::eval_b`]), and the swept / GeomEval / offset arms translated
+/// with them ([`crate::geom::extrusion_utils`],
+/// [`crate::geom::revolution_utils`], [`crate::geom::eval_c`],
+/// [`crate::geom::offset_surface_utils`]).
 pub(crate) fn surface_d1(the_s: &Surface3, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
     match the_s {
         // The exact per-type D1 of the rcad GeomAdaptor_Surface DN engine
@@ -272,10 +276,36 @@ pub(crate) fn surface_d1(the_s: &Surface3, u: f64, v: f64) -> (DVec3, DVec3, DVe
             crate::geom::offset_surface_utils::eval_dn(the_s, u, v, 1, 0),
             crate::geom::offset_surface_utils::eval_dn(the_s, u, v, 0, 1),
         ),
+        // Geom_SurfaceOfLinearExtrusion::EvalD1 / Geom_SurfaceOfRevolution::
+        // EvalD1 / GeomEval_EllipsoidSurface::EvalD1 /
+        // GeomEval_CircularHelicoidSurface::EvalD1 / Geom_OffsetSurface::EvalD1
+        // (the leaves are called directly: `eval_d1` itself routes here).
+        Surface3::LinearExtrusion(le) => {
+            let d1 = crate::geom::extrusion_utils::linear_extrusion_eval_d1(le, u, v);
+            (d1.point, d1.d1u, d1.d1v)
+        }
+        Surface3::Revolution(rev) => {
+            let d1 = crate::geom::revolution_utils::revolution_eval_d1(rev, u, v);
+            (d1.point, d1.d1u, d1.d1v)
+        }
+        Surface3::Ellipsoid(el) => {
+            let d1 = crate::geom::eval_c::ellipsoid_eval_d1(el, u, v);
+            (d1.point, d1.d1u, d1.d1v)
+        }
+        Surface3::Helicoid(h) => {
+            let d1 = crate::geom::eval_c::helicoid_eval_d1(h, u, v);
+            (d1.point, d1.d1u, d1.d1v)
+        }
+        Surface3::Offset(of) => {
+            let d1 = crate::geom::offset_surface_utils::offset_payload_eval_d1(of, u, v);
+            (d1.point, d1.d1u, d1.d1v)
+        }
         _ => panic!(
             "GAP: Geom_Surface::EvalD1 (TKG3d/Geom) is not translated for this surface \
              type (the rcad GeomAdaptor_Surface DN engine covers the ElSLib surfaces, \
-             Geom_BSplineSurface and Geom_BezierSurface) — \
+             Geom_BSplineSurface, Geom_BezierSurface, Geom_SurfaceOfLinearExtrusion, \
+             Geom_SurfaceOfRevolution, GeomEval_EllipsoidSurface, \
+             GeomEval_CircularHelicoidSurface and Geom_OffsetSurface) — \
              Geom_OsculatingSurface::isQPunctual"
         ),
     }

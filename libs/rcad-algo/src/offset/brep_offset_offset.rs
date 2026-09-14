@@ -446,21 +446,16 @@ pub(super) fn update_edge_2d_seam(
         Curve2d::Trimmed(bc2) => (*bc2.curve).clone(),
         _ => the_c2.clone(),
     };
-    // OCCT L182: B.UpdateEdge(E, NC1, NC2, F, Tol) — the rcad closed-surface
-    // (seam) pcurve carrier takes the current edge range as the shared
-    // parameter interval.
-    let [a_first, a_last] = match the_e.as_edge() {
-        Some(ed) => ed.range,
-        None => [0.0, 0.0],
-    };
+    // OCCT L182: B.UpdateEdge(E, NC1, NC2, F, Tol) — no f/l arguments; the
+    // stored interval follows the static UpdateCurves rule
+    // (BRep_Builder.cxx L251-308): seeded from C1, overridden per end by the
+    // edge's finite Curve3D range.
     b.update_edge_pcurve_closed(
         the_brep,
         the_e.clone(),
         nc1,
         nc2,
         the_f.clone(),
-        a_first,
-        a_last,
         the_tol,
     );
     let _ = &mut b;

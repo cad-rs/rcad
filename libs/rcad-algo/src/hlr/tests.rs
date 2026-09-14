@@ -1497,6 +1497,9 @@ pub(crate) fn smoke_cylinder_solid() -> (rcad_kernel::BRep, rcad_kernel::topods:
         0.0,
         tau,
     );
+    // OCCT BRep_Builder::UpdateEdge(E, C1, C2, F, tol) — the OCCT overload
+    // takes no f/l; the seam line's Curve3D range [0, h] drives the stored
+    // interval through the UpdateCurves rule.
     b.update_edge_pcurve_closed(
         &mut brep,
         seam.clone(),
@@ -1509,8 +1512,6 @@ pub(crate) fn smoke_cylinder_solid() -> (rcad_kernel::BRep, rcad_kernel::topods:
             direction: glam::DVec2::new(0.0, 1.0),
         }),
         side.clone(),
-        0.0,
-        h,
         1e-7,
     );
     // OCCT BRepPrim_Builder::SetPCurve(E, F, L1, L2) (BRepPrim_Builder.cxx

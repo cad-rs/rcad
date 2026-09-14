@@ -1,7 +1,7 @@
-use crate::geom::{Curve2d, Curve3, Surface3, SurfaceEval};
+use crate::geom::{Curve2d, Curve2dEval, Curve3, Surface3, SurfaceEval};
 use crate::core::precision::{
-    CONFUSION, REAL_FIRST, REAL_LAST, is_negative_infinite_value, is_positive_infinite_value,
-    parametric_default,
+    CONFUSION, REAL_FIRST, REAL_LAST, is_infinite_value, is_negative_infinite_value,
+    is_positive_infinite_value, parametric_default,
 };
 use crate::math::bspl::{
     bezier_curve_resolution, bezier_surface_resolution, bspline_curve_resolution,
@@ -246,6 +246,21 @@ impl CurveRepresentation {
                         && *location2 == l1)
             }
             _ => false,
+        }
+    }
+
+    /// OCCT BRep_GCurve::SetRange(First, Last) (BRep_GCurve.hxx L34) — the
+    /// parameter interval of the curve representation.  The non-geometric
+    /// kinds (BRep_CurveRepresentation base: polygon, triangulation, ...) are
+    /// not BRep_GCurve and keep no range (BRep_Builder::Range skips them via
+    /// the down_cast null test, BRep_Builder.cxx L1106-1112).
+    pub fn set_range(&mut self, the_first: f64, the_last: f64) {
+        match self {
+            CurveRepresentation::CurveOnSurface { range, .. } => *range = [the_first, the_last],
+            CurveRepresentation::CurveOnClosedSurface { range, .. } => {
+                *range = [the_first, the_last]
+            }
+            _ => {}
         }
     }
 }
@@ -3338,7 +3353,11 @@ impl BRepBuilder {
         ed.tolerance = ed.tolerance.max(tol);
     }
 
-    /// OCCT BRep_Builder::UpdateEdge(aE, aC2d, aF, theTol) �?set pcurve on face.
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC2d, aF, theTol) — set pcurve on
+    /// the face (BRep_Builder.lxx L92-98 -> UpdateEdge(E, C2d, S, L, Tol)
+    /// BRep_Builder.cxx L655-671 -> static UpdateCurves L104-167).  The
+    /// overload carries NO f/l arguments; the stored interval comes from
+    /// [`update_curves_range`].
     pub fn update_edge_pcurve(
         &mut self,
         brep: &mut BRep,
@@ -3357,7 +3376,8 @@ impl BRepBuilder {
                 compose_pcurve_location(face.location, el, &brep.locations),
             ));
         }
-        let (ta, tb) = pc_parameter_range(&pcurve);
+        // OCCT static UpdateCurves L104-167: the two-step interval rule.
+        let [ta, tb] = update_curves_range(pcurve.default_domain(), brep.edge(edge.clone()));
         let ed = brep.edge_mut_inplace(edge);
         for k in &fkeys {
             ed.pcurves
@@ -3371,15 +3391,17 @@ impl BRepBuilder {
         }
         ed.tolerance = ed.tolerance.max(tol);
     }
-    /// pcurves of an edge on the same face. The edge lies on the closing curve
-    /// (seam) of a closed surface and carries a BRep_CurveOnClosedSurface
-    /// representation (BRepPrim_OneAxis::LateralFace L434-438).
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC1, aC2, aF, theTol) — set the seam
+    /// pcurve pair on the face (the two-curve UpdateCurves, BRep_Builder.cxx
+    /// L251-308).  The overload carries NO f/l arguments; the stored interval
+    /// is seeded from C1 and then overridden by the edge's Curve3D range
+    /// ([`update_curves_range`]).
     ///
-    /// `aFirst`/`aLast` are the edge's first and last parameter (BRep_Tool::Range);
-    /// both pcurves are evaluated over the same parameter interval as the edge
-    /// (same-parameter edge). The second pcurve is not stored separately — the
-    /// BRep_CurveOnClosedSurface representation holds both (read by
-    /// [`BRepTool::curve_on_surface_second`]).
+    /// The edge lies on the closing curve (seam) of a closed surface and
+    /// carries a BRep_CurveOnClosedSurface representation
+    /// (BRepPrim_OneAxis::LateralFace L434-438).  The second pcurve is not
+    /// stored separately — the BRep_CurveOnClosedSurface representation holds
+    /// both (read by [`BRepTool::curve_on_surface_second`]).
     pub fn update_edge_pcurve_closed(
         &mut self,
         brep: &mut BRep,
@@ -3387,8 +3409,6 @@ impl BRepBuilder {
         pcurve1: Curve2d,
         pcurve2: Curve2d,
         face: Shape,
-        a_first: f64,
-        a_last: f64,
         tol: f64,
     ) {
         // Same per-wrapper-location variants as update_edge_pcurve.
@@ -3400,6 +3420,10 @@ impl BRepBuilder {
                 compose_pcurve_location(face.location, el, &brep.locations),
             ));
         }
+        // OCCT static UpdateCurves L251-308: seed from C1, then the per-end
+        // finite Curve3D override.
+        let [a_first, a_last] =
+            update_curves_range(pcurve1.default_domain(), brep.edge(edge.clone()));
         let ed = brep.edge_mut_inplace(edge);
         for k in &fkeys {
             ed.pcurves
@@ -3565,13 +3589,15 @@ impl BRepBuilder {
     ) -> Shape {
         let e = brep.add_tedge(curve, v1, v2, range);
         if let (Some(pc), Some(fa)) = (pc_a, face_a) {
-            let (t1, t2) = pc_parameter_range(pc);
+            // OCCT static UpdateCurves (BRep_Builder.cxx L104-167) — the
+            // two-step interval rule.
+            let [t1, t2] = update_curves_range(pc.default_domain(), brep.edge(e.clone()));
             brep.edge_mut(e.clone())
                 .pcurves
                 .insert((fa.ptr_id(), fa.location), (pc.clone(), t1, t2));
         }
         if let (Some(pc), Some(fb)) = (pc_b, face_b) {
-            let (t1, t2) = pc_parameter_range(pc);
+            let [t1, t2] = update_curves_range(pc.default_domain(), brep.edge(e.clone()));
             brep.edge_mut(e.clone())
                 .pcurves
                 .insert((fb.ptr_id(), fb.location), (pc.clone(), t1, t2));
@@ -3877,13 +3903,44 @@ impl BRepBuilder {
     }
 }
 
-/// Get the parameter range for a Curve2d (Trimmed -> stored range, Circle -> [0, 2pi]).
-fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
-    match curve {
-        Curve2d::Trimmed(tc) => (tc.t_min, tc.t_max),
-        Curve2d::Circle(_) => (0.0, std::f64::consts::TAU),
-        _ => (0.0, 1.0),
+/// OCCT static `UpdateCurves` (BRep_Builder.cxx L104-167, the 2D overload;
+/// L251-308, the two-curve overload) — the parameter interval stored on the
+/// curve-on-surface representation that [`BRepBuilder::update_edge_pcurve`]
+/// attaches to an edge:
+///
+/// 1. seeded with the 2D curve's own `FirstParameter()/LastParameter()`
+///    (L151-153 `new BRep_CurveOnSurface(C, S, L)` -> `COS->Range(aFCur,
+///    aLCur)`; BRep_CurveOnSurface.cxx L31-38 seeds BRep_GCurve from the
+///    curve).  The two-curve overload seeds from C1 in the same way
+///    (L286-289 -> BRep_CurveOnClosedSurface.cxx L30-39, which chains the
+///    BRep_CurveOnSurface(PC1, S, L) base constructor);
+/// 2. then OVERWRITTEN per end by the range of the edge's Curve3D
+///    representation whenever that end is finite (L112 seeds `f`/`l` to
+///    `-/+Precision::Infinite()`; L121-129 `GC->Range(f, l)` runs on the
+///    `GC->IsCurve3D()` entry; L154-162 `if (!Precision::IsInfinite(f))
+///    aFCur = f;` / `if (!Precision::IsInfinite(l)) aLCur = l;`).
+///
+/// This is the single canonical body of the rule: the OCCT `UpdateEdge`
+/// overloads carry no f/l arguments (`BRep_Builder.lxx` L92-98), so every
+/// caller must derive the interval here.  rcad carries the Curve3D
+/// representation as `TEdgeData::curve` + `TEdgeData::range` (the OCCT
+/// `BRep_Curve3D`), and the seed is the 2D curve's `default_domain()` (the
+/// `FirstParameter()/LastParameter()` values).
+pub fn update_curves_range(the_2d_range: [f64; 2], the_edge: &TEdgeData) -> [f64; 2] {
+    let [mut a_f_cur, mut a_l_cur] = the_2d_range;
+    // OCCT L121-129: only a Curve3D representation carries the overriding
+    // range (`GC->IsCurve3D()`); a degenerated edge has no 3D curve (OCCT
+    // removes the representation) and keeps the 2D seed.
+    if the_edge.curve.is_some() {
+        // OCCT L154-162: the per-end finiteness guard.
+        if !is_infinite_value(the_edge.range[0]) {
+            a_f_cur = the_edge.range[0];
+        }
+        if !is_infinite_value(the_edge.range[1]) {
+            a_l_cur = the_edge.range[1];
+        }
     }
+    [a_f_cur, a_l_cur]
 }
 
 /// The face surface value of a face Shape (OCCT BRep_Tool::Surface(F) —
@@ -4729,5 +4786,70 @@ mod tests {
             brep.edge(e.clone()).curve.is_none(),
             "3D curve should be cleared when setting degenerated"
         );
+    }
+
+    /// OCCT static UpdateCurves (BRep_Builder.cxx L104-167) — the two-step
+    /// interval rule pinned end by end:
+    ///   * no Curve3D representation -> the 2D curve's own parameter range
+    ///     (L112 seed -/+Precision::Infinite() survives the L154-162 guard);
+    ///   * a Curve3D representation with a FINITE range -> that range
+    ///     (L121-129 + L154-162);
+    ///   * a finite end on one side only -> a per-end override (the two
+    ///     comparisons are independent).
+    #[test]
+    fn test_update_curves_range_two_step_rule() {
+        // A Line2d seeds -/+Precision::Infinite() (Geom2d_Line
+        // FirstParameter/LastParameter); a TrimmedCurve2 seeds its own range.
+        let line2d = Curve2d::Line(Line2d::new(glam::DVec2::ZERO, glam::DVec2::X));
+        assert_eq!(
+            update_curves_range(line2d.default_domain(), &empty_edge_data()),
+            [-crate::precision::INFINITE_VALUE, crate::precision::INFINITE_VALUE]
+        );
+
+        let trimmed = Curve2d::Trimmed(crate::geom::TrimmedCurve2 {
+            curve: Box::new(line2d.clone()),
+            t_min: 0.25,
+            t_max: 0.75,
+        });
+        // No Curve3D: the seed is kept.
+        assert_eq!(
+            update_curves_range(trimmed.default_domain(), &empty_edge_data()),
+            [0.25, 0.75]
+        );
+
+        // A finite Curve3D range overrides BOTH ends.
+        let mut ed = empty_edge_data();
+        ed.curve = Some(Curve3::Line(Line3::new(DVec3::ZERO, DVec3::X)));
+        ed.range = [2.0, 5.0];
+        assert_eq!(update_curves_range(trimmed.default_domain(), &ed), [2.0, 5.0]);
+
+        // Only the last end finite: only that end is overridden.
+        ed.range = [f64::NEG_INFINITY, 5.0];
+        assert_eq!(update_curves_range(trimmed.default_domain(), &ed), [0.25, 5.0]);
+
+        // OCCT Precision::IsInfinite is an absolute test: the +/-Infinite()
+        // sentinel is treated as "not set" even though it is finite in f64.
+        ed.range = [-crate::precision::INFINITE_VALUE, 5.0];
+        assert_eq!(update_curves_range(trimmed.default_domain(), &ed), [0.25, 5.0]);
+    }
+
+    /// The BRep_TEdge default state (OCCT BRep_TEdge.cxx ctor): no curves, the
+    /// BRep_GCurve default range.
+    fn empty_edge_data() -> TEdgeData {
+        TEdgeData {
+            my_shapes: Vec::new(),
+            flags: tshape_flags::DEFAULT,
+            curve: None,
+            first: Shape::null(),
+            last: Shape::null(),
+            range: [0.0, 0.0],
+            degenerated: false,
+            pcurves: indexmap::IndexMap::new(),
+            representations: Vec::new(),
+            vertex_params: HashMap::new(),
+            tolerance: 0.0,
+            same_parameter: false,
+            same_range: false,
+        }
     }
 }

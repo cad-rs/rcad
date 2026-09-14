@@ -49,7 +49,7 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use rcad_kernel::geom::{Curve2d, Curve3, Surface3};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3};
 use rcad_kernel::precision::{is_negative_infinite_value, is_positive_infinite_value};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{
@@ -1508,9 +1508,8 @@ fn builder_range_edge(the_e: &Shape, the_first: f64, the_last: f64) {
 /// OCCT BRep_Builder::UpdateEdge(E, C2d, S, L, Tol) (BRep_Builder.cxx
 /// L655-672) -> UpdateCurves(lcr, C, S, L) (BRep_Builder.cxx L104-172): the
 /// pcurve of the edge on the face (a BRep_CurveOnSurface representation) plus
-/// the tolerance update.  The representation range is the 3D curve range when
-/// the edge carries one, otherwise the pcurve's own range (BRep_Builder.cxx
-/// L152-168).
+/// the tolerance update.  The representation range follows the canonical
+/// two-step rule (rcad_kernel::topods::update_curves_range).
 fn builder_update_edge_pcurve(the_e: &Shape, the_c2d: &Curve2d, the_f: &Shape, the_tol: f64) {
     let key = bat::shape_key(the_f);
     let a_range = pcurve_range_of(the_e, the_c2d);
@@ -1530,7 +1529,8 @@ fn builder_update_edge_pcurve(the_e: &Shape, the_c2d: &Curve2d, the_f: &Shape, t
 
 /// OCCT BRep_Builder::UpdateEdge(E, C1, C2, S, L, Tol) (BRep_Builder.cxx
 /// L679-697) — the two-pcurve (seam) form: a BRep_CurveOnClosedSurface
-/// representation with the same range rule as [`builder_update_edge_pcurve`].
+/// representation with the same range rule as [`builder_update_edge_pcurve`],
+/// seeded from C1.
 fn builder_update_edge_pcurve2(
     the_e: &Shape,
     the_c2d1: &Curve2d,
@@ -1556,19 +1556,18 @@ fn builder_update_edge_pcurve2(
 }
 
 /// The BRep_CurveOnSurface range rule of the static UpdateCurves
-/// (BRep_Builder.cxx L112-168): the 3D curve range of the edge when it
-/// carries one (`f` stays `-Precision::Infinite()` when no BRep_Curve3D
-/// representation is found), otherwise the pcurve's own
-/// FirstParameter/LastParameter (BRep_CurveOnSurface::Range).
+/// (BRep_Builder.cxx L112-168) — delegated to the canonical body
+/// rcad_kernel::topods::update_curves_range (the 2D curve's own
+/// FirstParameter/LastParameter seeded, then overridden per end by the edge's
+/// finite Curve3D range).
 fn pcurve_range_of(the_e: &Shape, the_c2d: &Curve2d) -> [f64; 2] {
-    if let TShape::Edge(ed) = the_e.data.as_ref() {
-        if ed.curve.is_some() {
-            return ed.range;
-        }
+    match the_e.data.as_ref() {
+        TShape::Edge(ed) => rcad_kernel::topods::update_curves_range(
+            the_c2d.default_domain(),
+            ed,
+        ),
+        _ => the_c2d.default_domain(),
     }
-    use rcad_kernel::geom::Curve2dEval;
-    let d = the_c2d.default_domain();
-    [d[0], d[1]]
 }
 
 /// OCCT BRep_Builder::UpdateVertex(V, Par, E, Tol) (BRep_Builder.cxx

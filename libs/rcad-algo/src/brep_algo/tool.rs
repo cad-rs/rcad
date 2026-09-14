@@ -668,24 +668,26 @@ pub(crate) fn builder_update_edge_pcurve(
 ) {
     let key = shape_key(the_f);
     if let TShape::Edge(ed) = Arc::make_mut(&mut the_e.data) {
-        let [mut a_f, mut a_l] = the_c2d.default_domain();
-        if ed.curve.is_some() {
-            if !rcad_kernel::precision::is_infinite_value(ed.range[0]) {
-                a_f = ed.range[0];
-            }
-            if !rcad_kernel::precision::is_infinite_value(ed.range[1]) {
-                a_l = ed.range[1];
-            }
-        }
+        let [a_f, a_l] =
+            rcad_kernel::topods::update_curves_range(the_c2d.default_domain(), ed);
         ed.pcurves.insert(key, (the_c2d.clone(), a_f, a_l));
         ed.tolerance = ed.tolerance.max(the_tol);
     }
 }
 
-/// OCCT BRep_Builder::Range(E, First, Last).
+/// OCCT BRep_Builder::Range(E, First, Last) (BRep_Builder.cxx L1091-1117) —
+/// "set the range to all the representations if Only3d=FALSE": the 3D range
+/// AND every curve representation of the edge TShape take (First, Last).
 pub(crate) fn builder_range_edge(the_e: &mut Shape, the_first: f64, the_last: f64) {
     if let TShape::Edge(ed) = Arc::make_mut(&mut the_e.data) {
         ed.range = [the_first, the_last];
+        for (_, entry) in ed.pcurves.iter_mut() {
+            entry.1 = the_first;
+            entry.2 = the_last;
+        }
+        for cr in ed.representations.iter_mut() {
+            cr.set_range(the_first, the_last);
+        }
     }
 }
 

@@ -796,25 +796,28 @@ impl LocOpeGenerator {
                                     } else if c2d1.is_none() {
                                         c2d1 = c2d.clone();
                                     } else if orient == Orientation::Forward {
+                                        // OCCT LocOpe_Generator.cxx L757:
+                                        // B.UpdateEdge(newedg, C2d, C2d1,
+                                        // newface, tol) — no f/l arguments; the
+                                        // interval follows the UpdateCurves rule.
                                         b.update_edge_pcurve_closed(
                                             &mut pool,
                                             newedg.clone(),
                                             c2d.clone().expect("C2d"),
                                             c2d1.clone().expect("C2d1"),
                                             newface.clone(),
-                                            f,
-                                            l,
                                             tol,
                                         );
                                     } else {
+                                        // OCCT LocOpe_Generator.cxx L761:
+                                        // B.UpdateEdge(newedg, C2d1, C2d,
+                                        // newface, tol).
                                         b.update_edge_pcurve_closed(
                                             &mut pool,
                                             newedg.clone(),
                                             c2d1.clone().expect("C2d1"),
                                             c2d.clone().expect("C2d"),
                                             newface.clone(),
-                                            f,
-                                            l,
                                             tol,
                                         );
                                     }

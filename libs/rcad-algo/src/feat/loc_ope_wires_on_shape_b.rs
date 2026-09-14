@@ -383,20 +383,24 @@ fn builder_update_edge_tolerance(the_e: &mut Shape, the_tol: f64) {
     }
 }
 
-/// OCCT BRep_Builder::UpdateEdge(E, C2d, F, Tol) — bind the pcurve on the
-/// face. The pcurve range is the edge 3D range (OCCT BRep_Tool::CurveOnSurface
-/// returns the edge's First/Last for the pcurve bounds).
+/// OCCT BRep_Builder::UpdateEdge(E, C2d, F, Tol) (LocOpe_WiresOnShape.cxx
+/// L905, L1095) — bind the pcurve on the face.  The stored interval is the
+/// static UpdateCurves two-step rule (BRep_Builder.cxx L104-167): the 2D
+/// curve's own range, overridden per end by the edge's finite Curve3D range.
+/// The OCCT overload carries no f/l arguments.
 fn builder_update_edge_pcurve(the_e: &mut Shape, the_c2d: &Curve2d, the_f: &Shape, the_tol: f64) {
     let key = shape_key(the_f);
     if let TShape::Edge(ed) = Arc::make_mut(&mut the_e.data) {
-        let (f0, l0) = (ed.range[0], ed.range[1]);
+        let [f0, l0] = rcad_kernel::topods::update_curves_range(the_c2d.default_domain(), ed);
         ed.pcurves.insert(key, (the_c2d.clone(), f0, l0));
         ed.tolerance = ed.tolerance.max(the_tol);
     }
 }
 
-/// OCCT BRep_Builder::UpdateEdge(E, C2df, C2dr, F, Tol) — the seam variant
-/// (two pcurves on the closed surface).
+/// OCCT BRep_Builder::UpdateEdge(E, C2df, C2dr, F, Tol) (LocOpe_WiresOnShape.cxx
+/// L1285) — the seam variant (two pcurves on the closed surface).  The stored
+/// interval is the two-curve UpdateCurves rule (BRep_Builder.cxx L251-308),
+/// seeded from C2df and overridden per end by the finite Curve3D range.
 fn builder_update_edge_pcurves_seam(
     the_e: &mut Shape,
     the_c2d_f: &Curve2d,
@@ -406,7 +410,7 @@ fn builder_update_edge_pcurves_seam(
 ) {
     let key = shape_key(the_f);
     if let TShape::Edge(ed) = Arc::make_mut(&mut the_e.data) {
-        let (f0, l0) = (ed.range[0], ed.range[1]);
+        let [f0, l0] = rcad_kernel::topods::update_curves_range(the_c2d_f.default_domain(), ed);
         ed.pcurves.insert(key, (the_c2d_f.clone(), f0, l0));
         ed.representations
             .push(rcad_kernel::topo::topods::CurveRepresentation::CurveOnClosedSurface {

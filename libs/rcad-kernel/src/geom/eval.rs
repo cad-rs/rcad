@@ -950,6 +950,9 @@ impl ToroidalSurface {
 }
 
 impl SurfaceEval for EllipsoidalSurface {
+    /// See [`crate::geom::eval_c::ellipsoid_eval_d1`] for the parameterisation
+    /// mapping between the rcad colatitude payload and the OCCT
+    /// `GeomEval_EllipsoidSurface` latitude.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let (axis, x_axis, y_axis) = orthonormal_frame(self.axis, self.ref_dir);
         self.center
@@ -971,9 +974,21 @@ impl SurfaceEval for EllipsoidalSurface {
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, 0.0, PI]
     }
+    /// OCCT `GeomEval_EllipsoidSurface::EvalD1` (GeomEval_EllipsoidSurface.cxx
+    /// L197-221) instead of the trait's finite-difference default.
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let d1 = crate::geom::eval_c::ellipsoid_eval_d1(self, u, v);
+        (d1.point, d1.d1u, d1.d1v)
+    }
+    /// OCCT `GeomEval_EllipsoidSurface::EvalD2` (cxx L225-259).
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        let d2 = crate::geom::eval_c::ellipsoid_eval_d2(self, u, v);
+        (d2.point, d2.d1u, d2.d1v, d2.d2u, d2.d2uv, d2.d2v)
+    }
 }
 
 impl SurfaceEval for HelicoidSurface {
+    /// OCCT `GeomEval_CircularHelicoidSurface::EvalD0` (cxx L143-156).
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let (axis, x_axis, y_axis) = orthonormal_frame(self.axis, self.ref_dir);
         let lead = self.pitch / (2.0 * PI);
@@ -989,12 +1004,24 @@ impl SurfaceEval for HelicoidSurface {
     fn default_domain(&self) -> [f64; 4] {
         [-2.0 * PI, 2.0 * PI, -10.0, 10.0]
     }
+    /// OCCT `GeomEval_CircularHelicoidSurface::EvalD1` (cxx L160-183) instead
+    /// of the trait's finite-difference default.
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let d1 = crate::geom::eval_c::helicoid_eval_d1(self, u, v);
+        (d1.point, d1.d1u, d1.d1v)
+    }
+    /// OCCT `GeomEval_CircularHelicoidSurface::EvalD2` (cxx L187-217).
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        let d2 = crate::geom::eval_c::helicoid_eval_d2(self, u, v);
+        (d2.point, d2.d1u, d2.d1v, d2.d2u, d2.d2uv, d2.d2v)
+    }
 }
 
 impl SurfaceEval for LinearExtrusionSurface {
     /// u = profile parameter, v = extrusion distance along direction.
+    /// OCCT `Geom_SurfaceOfLinearExtrusion::EvalD0` (cxx L150-163).
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        self.profile.point_at(u) + v * self.direction
+        crate::geom::extrusion_utils::linear_extrusion_eval_d0(self, u, v)
     }
     fn normal_at(&self, u: f64, _v: f64) -> DVec3 {
         let tangent = self.profile.tangent_at(u);
@@ -1011,16 +1038,28 @@ impl SurfaceEval for LinearExtrusionSurface {
         let [t1, t2] = self.profile.default_domain();
         [t1, t2, -INFINITE_VALUE, INFINITE_VALUE]
     }
+    /// OCCT `Geom_SurfaceOfLinearExtrusion::EvalD1` (cxx L166-184) —
+    /// `Geom_ExtrusionUtils::CalculateD1` instead of the trait's
+    /// finite-difference default.
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let d1 = crate::geom::extrusion_utils::linear_extrusion_eval_d1(self, u, v);
+        (d1.point, d1.d1u, d1.d1v)
+    }
+    /// OCCT `Geom_SurfaceOfLinearExtrusion::EvalD2` (cxx L188-210) —
+    /// `Geom_ExtrusionUtils::CalculateD2` instead of the trait's
+    /// finite-difference default.
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        let d2 = crate::geom::extrusion_utils::linear_extrusion_eval_d2(self, u, v);
+        (d2.point, d2.d1u, d2.d1v, d2.d2u, d2.d2uv, d2.d2v)
+    }
 }
 
 impl SurfaceEval for RevolutionSurface {
     /// u = azimuth angle [0, 2π], v = profile parameter.
+    /// OCCT `Geom_SurfaceOfRevolution::EvalD0` (cxx L236-248) —
+    /// `Geom_RevolutionUtils::CalculateD0`.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let p = self.profile.point_at(v);
-        let d = p - self.axis_origin;
-        let d_par = self.axis_dir * d.dot(self.axis_dir);
-        let d_perp = d - d_par;
-        self.axis_origin + d_par + d_perp * u.cos() + self.axis_dir.cross(d_perp) * u.sin()
+        crate::geom::revolution_utils::revolution_eval_d0(self, u, v)
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
         let eps = 1e-6;
@@ -1035,6 +1074,20 @@ impl SurfaceEval for RevolutionSurface {
     fn default_domain(&self) -> [f64; 4] {
         let [t1, t2] = self.profile.default_domain();
         [0.0, 2.0 * PI, t1, t2]
+    }
+    /// OCCT `Geom_SurfaceOfRevolution::EvalD1` (cxx L252-270) —
+    /// `Geom_RevolutionUtils::CalculateD1` instead of the trait's
+    /// finite-difference default.
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let d1 = crate::geom::revolution_utils::revolution_eval_d1(self, u, v);
+        (d1.point, d1.d1u, d1.d1v)
+    }
+    /// OCCT `Geom_SurfaceOfRevolution::EvalD2` (cxx L274-296) —
+    /// `Geom_RevolutionUtils::CalculateD2` instead of the trait's
+    /// finite-difference default.
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        let d2 = crate::geom::revolution_utils::revolution_eval_d2(self, u, v);
+        (d2.point, d2.d1u, d2.d1v, d2.d2u, d2.d2uv, d2.d2v)
     }
 }
 
@@ -2299,10 +2352,9 @@ impl CurveEval for OffsetCurve3 {
 }
 
 impl SurfaceEval for OffsetSurface {
+    /// OCCT `Geom_OffsetSurface::EvalD0` (Geom_OffsetSurface.cxx L338-358).
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let base_pt = self.basis.point_at(u, v);
-        let n = self.basis.normal_at(u, v);
-        base_pt + self.offset_distance * n
+        crate::geom::offset_surface_utils::offset_payload_eval_d0(self, u, v)
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
         // Offset preserves the normal direction (first-order approximation)
@@ -2310,6 +2362,20 @@ impl SurfaceEval for OffsetSurface {
     }
     fn default_domain(&self) -> [f64; 4] {
         self.basis.default_domain()
+    }
+    /// OCCT `Geom_OffsetSurface::EvalD1` (Geom_OffsetSurface.cxx L362-389) —
+    /// the `Geom_OffsetSurfaceUtils::EvaluateD1` body instead of the trait's
+    /// finite-difference default.
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let d1 = crate::geom::offset_surface_utils::offset_payload_eval_d1(self, u, v);
+        (d1.point, d1.d1u, d1.d1v)
+    }
+    /// OCCT `Geom_OffsetSurface::EvalD2` (Geom_OffsetSurface.cxx L393-424) —
+    /// the `Geom_OffsetSurfaceUtils::EvaluateD2` body instead of the trait's
+    /// finite-difference default.
+    fn derivatives2(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3, DVec3, DVec3, DVec3) {
+        let d2 = crate::geom::offset_surface_utils::offset_payload_eval_d2(self, u, v);
+        (d2.point, d2.d1u, d2.d1v, d2.d2u, d2.d2uv, d2.d2v)
     }
 }
 impl Curve2dEval for Line2d {
@@ -3739,10 +3805,15 @@ impl Surface3 {
 
     /// OCCT GeomAdaptor_Surface::DN(U, V, Nu, Nv)
     /// (GeomAdaptor_Surface.cxx L1690-1815) — dispatch to the per-type
-    /// derivative: ElSLib::DN forms for the quadrics, Geom_BSplineSurface::
-    /// EvalDN / Geom_BezierSurface::EvalDN (both `BSplSLib::DN`) for the
-    /// polynomial kinds (the OCCT arms at L1731-1752 and, via the default arm
-    /// at L1807-1813, L1796-1805); remaining types are staged.
+    /// derivative: ElSLib::DN forms for the quadrics (L1796-1805),
+    /// Geom_BSplineSurface::EvalDN / Geom_BezierSurface::EvalDN (both
+    /// `BSplSLib::DN`) for the polynomial kinds (L1731-1752 /
+    /// L1807-1813), Geom_OffsetSurface (L1782), the swept surfaces
+    /// (L1754 / L1768) and — through the default arm at L1807-1813 — the
+    /// `GeomEval` ellipsoid / circular helicoid.  The rcad-only
+    /// Ruled / Coons / Pipe / TriBezier kinds (and the `Trimmed` wrapper) have
+    /// no OCCT `Geom_Surface::EvalDN` counterpart / translation and raise the
+    /// explicit gap below.
     pub fn dn(&self, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
         match self {
             Surface3::Plane(p) => plane_dn(p.u_dir, p.v_dir, nu, nv),
@@ -3780,15 +3851,27 @@ impl Surface3 {
             }
             Surface3::BSpline(bs) => bspline_surface_dn(bs, u, v, nu, nv),
             Surface3::Bezier(bez) => bezier_surface_dn(bez, u, v, nu, nv),
+            Surface3::Offset(of) => {
+                crate::geom::offset_surface_utils::offset_payload_eval_dn(of, u, v, nu, nv)
+            }
+            Surface3::LinearExtrusion(le) => {
+                crate::geom::extrusion_utils::linear_extrusion_eval_dn(le, u, v, nu, nv)
+            }
+            Surface3::Ellipsoid(el) => crate::geom::eval_c::ellipsoid_eval_dn(el, u, v, nu, nv),
+            Surface3::Helicoid(h) => crate::geom::eval_c::helicoid_eval_dn(h, u, v, nu, nv),
+            Surface3::Revolution(rev) => {
+                crate::geom::revolution_utils::revolution_eval_dn(rev, u, v, nu, nv)
+            }
             _ => {
                 panic!(
                     "GAP: GeomAdaptor_Surface::DN (GeomAdaptor_Surface.cxx L1690-1815): the \
                      rcad GeomAdaptor_Surface DN engine covers ElSLib surfaces \
-                     (L1796-1805), Geom_BSplineSurface (L1731-1752) and Geom_BezierSurface \
-                     (L1807-1813; Geom_BezierSurface::EvalDN); the extrusion (L1754, \
-                     Geom_ExtrusionUtils::DN), revolution (L1768, Geom_RevolutionUtils::DN), \
-                     offset (L1782) and the remaining Geom_Surface::EvalDN implementations \
-                     are staged"
+                     (L1796-1805), Geom_BSplineSurface (L1731-1752), Geom_BezierSurface \
+                     (L1807-1813; Geom_BezierSurface::EvalDN), Geom_OffsetSurface (L1782), \
+                     the extrusion (L1754), the revolution (L1768) and the GeomEval \
+                     ellipsoid / circular helicoid (the L1807-1813 default arm); the \
+                     rcad-only Ruled / Coons / Pipe / TriBezier kinds have no OCCT \
+                     Geom_Surface::EvalDN counterpart"
                 );
             }
         }

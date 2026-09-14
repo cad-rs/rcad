@@ -18,7 +18,7 @@
 //! edge_mut_inplace / wire_mut unsafe pattern (identity is preserved across
 //! the aliased myShapes slots and parent containers).
 
-use rcad_kernel::geom::{Curve2d, Curve3, Surface3};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3};
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{tshape_flags, GeomAbsShape, Orientation, ShapeType, TShape, TVertexData, TEdgeData, TWireData, TFaceData, TShellData, TSolidData, PointRepresentation, CurveRepresentation};
 use std::collections::HashMap;
@@ -259,16 +259,18 @@ impl BRepSweepBRepBuilder {
         }
     }
 
-    /// OCCT BRep_Builder::UpdateEdge(E, C2d, F, Tol) (BRep_Builder.cxx
-    /// L692-748): the pcurve representation keyed by the face (the
+    /// OCCT BRep_Builder::UpdateEdge(E, C2d, F, Tol) (BRep_Builder.lxx
+    /// L92-98 -> BRep_Builder.cxx L657-671 -> static UpdateCurves L104-167):
+    /// the pcurve representation keyed by the face (the
     /// L.Predivided(E.Location()) form — identity locations in this
-    /// pipeline).
+    /// pipeline).  The stored interval is the canonical two-step rule
+    /// (rcad_kernel::topods::update_curves_range); the OCCT overload takes no
+    /// f/l.
     pub fn update_edge_pcurve(&self, the_e: &Shape, the_c2d: &Curve2d, the_f: &Shape, the_tol: f64) {
         let key = crate::brep_algo::tool::shape_key(the_f);
         let ed = edge_data_mut(the_e);
-        // OCCT: the pcurve range is the edge's current range (UpdateCurves
-        // keeps the first GCurve range; a fresh edge carries the 3D range).
-        let (f0, l0) = (ed.range[0], ed.range[1]);
+        let [f0, l0] =
+            rcad_kernel::topods::update_curves_range(the_c2d.default_domain(), ed);
         ed.pcurves
             .insert(key, (the_c2d.clone(), f0, l0));
         ed.representations
@@ -280,9 +282,11 @@ impl BRepSweepBRepBuilder {
         ed.tolerance = ed.tolerance.max(the_tol);
     }
 
-    /// OCCT BRep_Builder::UpdateEdge(E, C1, C2, F, Tol) (BRep_Builder.cxx
-    /// L750-812): the seam pair — the two pcurves land in one
-    /// BRep_CurveOnClosedSurface representation.
+    /// OCCT BRep_Builder::UpdateEdge(E, C1, C2, F, Tol) (BRep_Builder.lxx
+    /// L100-110 -> BRep_Builder.cxx L704-741 -> the two-curve UpdateCurves
+    /// L251-308): the seam pair — the two pcurves land in one
+    /// BRep_CurveOnClosedSurface representation, with the interval seeded from
+    /// C1 by the canonical rule.  The OCCT overload takes no f/l.
     pub fn update_edge_two_pcurves(
         &self,
         the_e: &Shape,
@@ -293,7 +297,8 @@ impl BRepSweepBRepBuilder {
     ) {
         let key = crate::brep_algo::tool::shape_key(the_f);
         let ed = edge_data_mut(the_e);
-        let (f0, l0) = (ed.range[0], ed.range[1]);
+        let [f0, l0] =
+            rcad_kernel::topods::update_curves_range(the_c1.default_domain(), ed);
         ed.pcurves
             .insert(key, (the_c1.clone(), f0, l0));
         ed.representations

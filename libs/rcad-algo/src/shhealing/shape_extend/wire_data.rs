@@ -19,6 +19,7 @@
 //! - `handle(NCollection_HSequence(TopoDS_Shape))` maps to `Vec<Shape>`.
 
 use crate::brep_algo::tool::top_exp_vertices_wire;
+use crate::shhealing::shape_build::edge::builder_range_on_face;
 use crate::shhealing::shape_build::brep_tool::{
     builder_add, iter_subshapes, set_flag_inplace, shape_is_null,
 };
@@ -722,11 +723,10 @@ impl WireData {
 /// REVERSED-oriented occurrence returns early).  When a pcurve is missing
 /// the swap is skipped (the `:q0` protection, cxx L534-537).
 ///
-/// `B.UpdateEdge(E, c2dr, c2df, theface, 0.)` + `B.Range(E, theface, uff,
-/// ulf)` map to `BRepBuilder::update_edge_pcurve_closed(E, c2dr, c2df, F,
-/// uff, ulf, 0.)`: the rcad CurveOnClosedSurface carrier stores one shared
-/// range field, so the UpdateEdge + Range pair lands in one call with the
-/// same net state (FORWARD side carries c2dr over the range (uff, ulf)).
+/// `B.UpdateEdge(E, c2dr, c2df, theface, 0.)` (the OCCT overload takes no
+/// f/l) followed by `B.Range(E, theface, uff, ulf)` — the two calls are
+/// carried out in that order here (the UpdateEdge interval rule, then the
+/// range write), matching ShapeExtend_WireData.cxx L541-542.
 fn swap_seam(brep: &mut BRep, s: &Shape, f: &Shape) {
     let mut e = s.clone();
     if shape_is_null(&e) || f.is_null() {
@@ -753,7 +753,11 @@ fn swap_seam(brep: &mut BRep, s: &Shape, f: &Shape) {
     // On permute
     e.orientation = Orientation::Forward;
     let mut b = BRepBuilder::new();
-    b.update_edge_pcurve_closed(brep, e, c2dr, c2df, theface, uff, ulf, 0.); //: S4136: Tol
+    // OCCT ShapeExtend_WireData.cxx L541: B.UpdateEdge(E, c2dr, c2df, theface,
+    // 0.) — no f/l arguments (the UpdateCurves interval rule), followed by
+    // L542: B.Range(E, theface, uff, ulf).
+    b.update_edge_pcurve_closed(brep, e.clone(), c2dr, c2df, theface.clone(), 0.); //: S4136: Tol
+    builder_range_on_face(brep, &e, &theface, uff, ulf);
 }
 
 /// GAP carrier for OCCT BRepTools_WireExplorer (TKBRep) — the

@@ -472,9 +472,9 @@ pub fn reconstruct_missed_seam(
                     let (a_surf, a_loc) = brep_tool_surface_loc(brep, the_fref_face);
                     if let (Some(pc1), Some(pc2), Some(a_surf)) = (pc1, pc2, a_surf) {
                         // OCCT L888: aBB.UpdateEdge(anEdge, aPC2, aPC1, aSurf,
-                        // aLoc, aTol) — the closed-surface pcurve pair (the
-                        // kernel form carries the edge range).
-                        let rng = brep_tool_range(brep, &an_edge);
+                        // aLoc, aTol) — the OCCT overload takes no f/l; the
+                        // stored interval follows the UpdateCurves rule
+                        // (BRep_Builder.cxx L251-308).
                         let mut builder = BRepBuilder::new();
                         builder.update_edge_pcurve_closed(
                             brep,
@@ -482,8 +482,6 @@ pub fn reconstruct_missed_seam(
                             pc2.clone(),
                             pc1.clone(),
                             the_fref_face.clone(),
-                            rng[0],
-                            rng[1],
                             a_tol,
                         );
                     }
@@ -847,25 +845,26 @@ pub fn transform_pcurves(
                     // OCCT L1243-1255.
                     builder_update_edge_pcurve_null(brep, &an_edge, the_ref_face);
                     if an_or == Orientation::Forward {
+                        // OCCT L1247: BB.UpdateEdge(anEdge, NewPCurves[0],
+                        // PCurveOnRef, theRefFace, 0.) — no f/l; L1264 then
+                        // applies BB.Range(anEdge, fpar, lpar).
                         builder.update_edge_pcurve_closed(
                             brep,
                             an_edge.clone(),
                             npc.clone(),
                             pcr.clone(),
                             the_ref_face.clone(),
-                            fpar,
-                            lpar,
                             0.0,
                         );
                     } else {
+                        // OCCT L1251: BB.UpdateEdge(anEdge, PCurveOnRef,
+                        // NewPCurves[0], theRefFace, 0.).
                         builder.update_edge_pcurve_closed(
                             brep,
                             an_edge.clone(),
                             pcr.clone(),
                             npc.clone(),
                             the_ref_face.clone(),
-                            fpar,
-                            lpar,
                             0.0,
                         );
                     }
@@ -873,15 +872,14 @@ pub fn transform_pcurves(
                 }
             }
         } else if let (Some(np0), Some(np1)) = (new_pcurves[0].as_ref(), new_pcurves[1].as_ref()) {
-            // OCCT L1258-1262.
+            // OCCT L1260: BB.UpdateEdge(anEdge, NewPCurves[0],
+            // NewPCurves[1], theRefFace, 0.) — no f/l.
             builder.update_edge_pcurve_closed(
                 brep,
                 an_edge.clone(),
                 np0.clone(),
                 np1.clone(),
                 the_ref_face.clone(),
-                fpar,
-                lpar,
                 0.0,
             );
             map_add(the_map_edges_with_temporary_pcurves, &an_edge);

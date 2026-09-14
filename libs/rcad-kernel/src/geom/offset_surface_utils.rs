@@ -1,14 +1,9 @@
 //! OCCT Geom_OffsetSurfaceUtils (TKG3d/Geom/Geom_OffsetSurfaceUtils.pxx,
 //! L41-1833) — 1:1 translation of the internal helper namespace of
-//! Geom_OffsetSurface, plus the rcad re-hosts of the Geom_OffsetSurface
-//! bodies that consume it:
-//!   - `Geom_OffsetSurface::Surface()` (Geom_OffsetSurface.cxx L867-993) —
-//!     [`offset_equivalent_surface`], the equivalent non-offset surface;
-//!   - `Geom_OffsetSurface::SetBasisSurface` unwrap (L143-170) —
-//!     [`offset_basis_and_value`] and the `myOscSurf` construction condition
-//!     (L258-267) — [`offset_surface_osculating`];
-//!   - `Geom_OffsetSurface::EvalD0` / `EvalD1` (L338-389) —
-//!     [`offset_surface_eval_d0`] / [`offset_surface_eval_d1`].
+//! Geom_OffsetSurface.  The rcad re-hosts of the `Geom_OffsetSurface` class
+//! bodies that consume the namespace (the `SetBasisSurface` unwrap, `Surface()`
+//! and `EvalD0`/`EvalD1`/`EvalD2`/`EvalDN`) live in
+//! `offset_surface_utils_b.rs` and are re-exported from here.
 //!
 //! Architecture differences (rcad value model):
 //!   - `Geom_Surface::ResD1/ResD2/ResD3` (Geom_Surface.hxx nested structs) map
@@ -39,10 +34,7 @@ use glam::DVec3;
 
 use super::osculating_surface::OsculatingSurface;
 use crate::core::precision::CONFUSION;
-use crate::geom::{
-    BSplineSurface, ConicalSurface, CylindricalSurface, OffsetSurface, Plane, SphericalSurface,
-    Surface3, SurfaceEval, ToroidalSurface,
-};
+use crate::geom::{BSplineSurface, Surface3, SurfaceEval};
 use crate::math::cs_lib::{
     dnnormal, dnnuv_array2, normal_from_derivatives_mag, normal_max_order, NormalStatus,
 };
@@ -56,6 +48,20 @@ pub struct ResD1 {
     pub point: DVec3,
     pub d1u: DVec3,
     pub d1v: DVec3,
+}
+
+/// OCCT `Geom_Surface::ResD2` (Geom_Surface.hxx) — point + partials up to 2nd
+/// order.  The member order is the OCCT one (`Point, D1U, D1V, D2U, D2V,
+/// D2UV`); the [`SurfaceEval::derivatives2`] tuple form used by the rcad
+/// surfaces is the same data with `D2UV` and `D2V` swapped.
+#[derive(Debug, Clone, Copy)]
+pub struct ResD2 {
+    pub point: DVec3,
+    pub d1u: DVec3,
+    pub d1v: DVec3,
+    pub d2u: DVec3,
+    pub d2v: DVec3,
+    pub d2uv: DVec3,
 }
 
 /// OCCT `Geom_OffsetSurfaceUtils::OsculatingInfo` (pxx L49-60).
@@ -102,10 +108,21 @@ pub fn eval_dn(the_s: &Surface3, u: f64, v: f64, nu: i32, nv: i32) -> DVec3 {
         | Surface3::Torus(_) => the_s.dn(u, v, nu, nv),
         Surface3::BSpline(bs) => bspl_slib_dn(bs, u, v, nu, nv),
         Surface3::Bezier(bez) => crate::geom::eval::bezier_surface_dn(bez, u, v, nu, nv),
+        Surface3::Offset(of) => offset_payload_eval_dn(of, u, v, nu, nv),
+        Surface3::LinearExtrusion(le) => {
+            crate::geom::extrusion_utils::linear_extrusion_eval_dn(le, u, v, nu, nv)
+        }
+        Surface3::Revolution(rev) => {
+            crate::geom::revolution_utils::revolution_eval_dn(rev, u, v, nu, nv)
+        }
+        Surface3::Ellipsoid(el) => crate::geom::eval_c::ellipsoid_eval_dn(el, u, v, nu, nv),
+        Surface3::Helicoid(h) => crate::geom::eval_c::helicoid_eval_dn(h, u, v, nu, nv),
         _ => panic!(
             "GAP: Geom_Surface::EvalDN (TKG3d/Geom) is not translated for this surface type \
              (the rcad GeomAdaptor_Surface DN engine covers the ElSLib surfaces, \
-             Geom_BSplineSurface and Geom_BezierSurface) — \
+             Geom_BSplineSurface, Geom_BezierSurface, Geom_OffsetSurface, \
+             Geom_SurfaceOfLinearExtrusion, Geom_SurfaceOfRevolution, \
+             GeomEval_EllipsoidSurface and GeomEval_CircularHelicoidSurface) — \
              Geom_OffsetSurfaceUtils::ComputeDerivatives"
         ),
     }
@@ -1080,251 +1097,431 @@ pub fn evaluate_d1(
 }
 
 // =========================================================================
-// Geom_OffsetSurface::SetBasisSurface unwrap + Surface() + EvalD0/EvalD1
+// Geom_OffsetSurfaceUtils::EvaluateD2 / EvaluateDN (pxx L1161-1831)
 // =========================================================================
 
-/// OCCT `Geom_OffsetSurface::SetBasisSurface` unwrap (cxx L150-170): the
-/// nested `Geom_RectangularTrimmedSurface` / `Geom_OffsetSurface` wrappers are
-/// unwrapped and the offset values are accumulated into a single
-/// `offsetValue`.  Returns `(aCheckingSurf, accumulated_offset)`.
-pub fn offset_basis_and_value(the_surf: &Surface3, the_offset: f64) -> (Surface3, f64) {
-    let mut a_checking_surf = the_surf.clone();
-    let mut offset_value = the_offset;
-    while matches!(
-        a_checking_surf,
-        Surface3::Trimmed(_) | Surface3::Offset(_)
-    ) {
-        if let Surface3::Trimmed(t) = &a_checking_surf {
-            let basis = t.basis.as_ref().clone();
-            a_checking_surf = basis;
-        }
-        if let Surface3::Offset(o) = &a_checking_surf {
-            let basis = o.basis.as_ref().clone();
-            offset_value += o.offset_distance;
-            a_checking_surf = basis;
-        }
-    }
-    (a_checking_surf, offset_value)
-}
-
-/// OCCT `Geom_OffsetSurface::Surface()` (cxx L867-993) — the equivalent
-/// non-offset surface of this offset surface, or `None` when none exists.
-///
-/// The rcad counterpart of the OCCT `myEvalRep` member
-/// (`GeomEval_RepSurfaceDesc::Full`, built by `makeFullSurfaceRep(Surface())`
-/// in `SetBasisSurface` L255-256) is this recomputation; `directRepSurface`
-/// (cxx L83-95) is therefore `offset_equivalent_surface(...) != None` for a
-/// freshly constructed surface.
-pub fn offset_equivalent_surface(the_surf: &Surface3, the_offset: f64) -> Option<Surface3> {
-    if the_offset == 0.0 {
-        // Direct case - no offset.
-        return Some(the_surf.clone());
-    }
-
-    let tol = CONFUSION;
-    let mut result: Option<Surface3> = None;
-
-    // Handle trimmed surfaces - extract the basis surface and bounds.
-    let (base, is_trimmed, u1, u2, v1, v2) = match the_surf {
-        Surface3::Trimmed(t) => {
-            let b = t.basis.as_ref();
-            (b.clone(), true, t.trim[0], t.trim[1], t.trim[2], t.trim[3])
-        }
-        other => (other.clone(), false, 0., 0., 0., 0.),
-    };
-
-    // Handle canonical surfaces - compute the equivalent offset surface.
-    // For direct orientation, offset is along the outward normal; for
-    // indirect, it is reversed.
-    match &base {
-        Surface3::Plane(p) => {
-            // Plane normal is already available as Position().Direction().
-            let t = p.normal * the_offset;
-            // OCCT Geom_Plane::Translated(T) — the translated geometry.
-            result = Some(Surface3::Plane(Plane {
-                origin: p.origin + t,
-                ..p.clone()
-            }));
-        }
-        Surface3::Cylinder(c) => {
-            // OCCT: gp_Ax3 Axis = C->Position(); aSign = Axis.Direct() ? 1 : -1.
-            let a_sign = ax3_direct(c.y_dir, c.ref_dir, c.axis);
-            let radius = c.radius + a_sign * the_offset;
-            if radius >= tol {
-                result = Some(Surface3::Cylinder(CylindricalSurface {
-                    radius,
-                    ..c.clone()
-                }));
-            } else if radius <= -tol {
-                // Negative radius: flip the X-axis to reverse the normal
-                // orientation.
-                result = Some(Surface3::Cylinder(CylindricalSurface {
-                    radius: -radius,
-                    ref_dir: -c.ref_dir,
-                    y_dir: c.y_dir.map(|y| -y),
-                    ..c.clone()
-                }));
-            }
-            // else: degenerate surface - radius is too small.
-        }
-        Surface3::Cone(c) => {
-            // OCCT: gp_Ax3 anAxis = C->Position(); aSign = anAxis.Direct() ? 1 : -1.
-            let a_sign = ax3_direct(None, c.ref_dir, c.axis);
-            let an_alpha = c.half_angle_rad;
-            let a_cos = an_alpha.cos();
-            let a_sin = an_alpha.sin();
-            let a_radius = c.radius + a_sign * the_offset * a_cos;
-            if a_radius >= 0. {
-                // Translate the apex along the axis by the offset component
-                // (anAxis.Translate(aZ) moves the gp_Ax3 location).
-                let a_z = c.axis * (-a_sign * the_offset * a_sin);
-                result = Some(Surface3::Cone(ConicalSurface {
-                    apex: c.apex + a_z,
-                    radius: a_radius,
-                    ..c.clone()
-                }));
-            }
-            // else: degenerate surface - radius is negative.
-        }
-        Surface3::Sphere(s) => {
-            let a_sign = ax3_direct(None, s.ref_dir, s.axis);
-            let radius = s.radius + a_sign * the_offset;
-            if radius >= tol {
-                result = Some(Surface3::Sphere(SphericalSurface {
-                    radius,
-                    ..s.clone()
-                }));
-            } else if radius <= -tol {
-                // Negative radius: flip both X and Z axes to reverse the
-                // normal orientation.
-                result = Some(Surface3::Sphere(SphericalSurface {
-                    radius: -radius,
-                    axis: -s.axis,
-                    ref_dir: -s.ref_dir,
-                    ..s.clone()
-                }));
-            }
-            // else: degenerate surface - radius is too small.
-        }
-        Surface3::Torus(t) => {
-            let major_radius = t.major_radius;
-            let a_sign = ax3_direct(None, t.ref_dir, t.axis);
-            let minor_radius = t.minor_radius + a_sign * the_offset;
-            // Only handle the non-self-intersecting torus
-            // (MinorRadius <= MajorRadius).
-            if minor_radius >= tol && minor_radius <= major_radius {
-                result = Some(Surface3::Torus(ToroidalSurface {
-                    minor_radius,
-                    ..t.clone()
-                }));
-            } else if minor_radius <= -tol && -minor_radius <= major_radius {
-                // Negative minor radius: flip the X-axis to reverse the
-                // normal orientation.
-                result = Some(Surface3::Torus(ToroidalSurface {
-                    minor_radius: -minor_radius,
-                    ref_dir: -t.ref_dir,
-                    ..t.clone()
-                }));
-            }
-            // else: degenerate or self-intersecting torus - no equivalent
-            // surface.
-        }
-        _ => {}
-    }
-
-    // Trim the result if the basis surface was trimmed.
-    if is_trimmed {
-        if let Some(b) = result.take() {
-            result = Some(Surface3::Trimmed(super::TrimmedSurface::new(
-                b, u1, u2, v1, v2,
-            )));
-        }
-    }
-
-    result
-}
-
-/// OCCT `gp_Ax3::Direct()` for the rcad surface frames: the frame
-/// (X = `ref_dir`, Y, Z = `axis`) is right-handed (gp_Ax3.hxx L57-58
-/// `Y = Z ^ X` for the direct form; the indirect form reverses Y,
-/// gp_Ax3.cxx L44-46).
-///
-/// Architecture difference: only [`CylindricalSurface`] carries an explicit
-/// frame Y direction in the rcad payload (`y_dir`), so a cylinder handedness
-/// is decoded from `det(ref_dir, y_dir, axis)`; the
-/// [`ConicalSurface`] / [`SphericalSurface`] / [`ToroidalSurface`] payloads
-/// store `ref_dir` + `axis` only and can therefore represent the right-handed
-/// frames exclusively — the OCCT `aSign = -1` arms of the cone / sphere /
-/// torus are unreachable in rcad.
-fn ax3_direct(y_dir: Option<DVec3>, ref_dir: DVec3, axis: DVec3) -> f64 {
-    match y_dir {
-        None => 1.0,
-        Some(y) => {
-            if ref_dir.dot(y.cross(axis)) > 0.0 {
-                1.0
-            } else {
-                -1.0
-            }
-        }
-    }
-}
-
-/// OCCT `Geom_OffsetSurface::SetBasisSurface` osculating-surface construction
-/// (cxx L258-267): `myOscSurf` is built only for a BSpline / Bezier basis
-/// (after the wrapper unwrap), with the hard-coded `Precision::Confusion()`
-/// tolerance of `SetBasisSurface`.  `None` is the OCCT null `myOscSurf`.
-pub fn offset_surface_osculating(the_basis: &Surface3) -> Option<OsculatingSurface> {
-    // OCCT: constexpr double Tol = Precision::Confusion();
-    let tol = CONFUSION;
-    match the_basis {
-        Surface3::BSpline(_) | Surface3::Bezier(_) => {
-            Some(OsculatingSurface::with_surface(the_basis, tol))
-        }
-        _ => None,
-    }
-}
-
-/// OCCT `Geom_OffsetSurface::EvalD0` (cxx L338-358) — the point of the offset
-/// surface, without the `GeomEval_RepUtils::TryEvalSurfaceD0(myEvalRep, ...)`
-/// short circuit (that member is recomputed by
-/// [`offset_equivalent_surface`]; the caller decides whether to take it).
-pub fn offset_surface_eval_d0(
-    the_basis: &Surface3,
+/// OCCT `EvaluateD2` (pxx L1161-1350) — the pre-computed-D3 overload.  `None`
+/// is the OCCT `false` return (the caller raises Geom_UndefinedDerivative).
+#[allow(clippy::too_many_arguments)]
+fn evaluate_d2_precomputed(
+    the_u0: f64,
+    the_v0: f64,
+    the_basis_surf: &Surface3,
     the_offset: f64,
     the_osc_query: Option<&OsculatingSurface>,
+    the_value_in: DVec3,
+    the_d1u_in: DVec3,
+    the_d1v_in: DVec3,
+    the_d2u_in: DVec3,
+    the_d2v_in: DVec3,
+    the_d2uv_in: DVec3,
+    the_d3u_in: DVec3,
+    the_d3v_in: DVec3,
+    the_d3uuv_in: DVec3,
+    the_d3uvv_in: DVec3,
+) -> Option<ResD2> {
+    let a_u_start = the_u0;
+    let a_v_start = the_v0;
+    let mut the_u = the_u0;
+    let mut the_v = the_v0;
+    let bounds = SurfaceEval::default_domain(the_basis_surf);
+    let (a_umin, a_umax, a_vmin, a_vmax) = (bounds[0], bounds[1], bounds[2], bounds[3]);
+    let is_u_per = SurfaceEval::is_u_periodic(the_basis_surf);
+    let is_v_per = SurfaceEval::is_v_periodic(the_basis_surf);
+
+    let mut the_value = the_value_in;
+    let mut the_d1u = the_d1u_in;
+    let mut the_d1v = the_d1v_in;
+    let mut the_d2u = the_d2u_in;
+    let mut the_d2v = the_d2v_in;
+    let mut the_d2uv = the_d2uv_in;
+    // Use pre-computed D3 for the first iteration.
+    let mut a_d3u = the_d3u_in;
+    let mut a_d3v = the_d3v_in;
+    let mut a_d3uuv = the_d3uuv_in;
+    let mut a_d3uvv = the_d3uvv_in;
+    let mut is_first_iteration = true;
+
+    loop {
+        // For subsequent iterations, recompute D3 at the shifted point.
+        if !is_first_iteration {
+            let a_d3_result = eval_d3(the_basis_surf, the_u, the_v);
+            the_value = a_d3_result.0;
+            the_d1u = a_d3_result.1;
+            the_d1v = a_d3_result.2;
+            the_d2u = a_d3_result.3;
+            the_d2v = a_d3_result.5;
+            the_d2uv = a_d3_result.4;
+            a_d3u = a_d3_result.6;
+            a_d3v = a_d3_result.7;
+            a_d3uuv = a_d3_result.8;
+            a_d3uvv = a_d3_result.9;
+        }
+        is_first_iteration = false;
+
+        if is_infinite_coord(the_d1u) || is_infinite_coord(the_d1v) {
+            return None;
+        }
+
+        // Check if singular using CSLib::Normal on the first-order derivatives.
+        let (_a_normal0, a_n_status0) =
+            normal_from_derivatives_mag(the_d1u, the_d1v, THE_D1_MAGNITUDE_TOL);
+
+        // MaxOrder = 0 for non-singular, 3 for singular.
+        let a_max_order = if a_n_status0 == NormalStatus::Defined { 0 } else { 3 };
+
+        // Get the osculating surface info (singular case only).
+        let mut a_osc_info = OsculatingInfo::default();
+        let mut a_osc_surf: Option<Surface3> = None;
+        if a_n_status0 != NormalStatus::Defined {
+            if let Some(query) = the_osc_query {
+                let (along_u, opposite_u, l_u) = query.u_osculating_surface(the_u, the_v);
+                let (along_v, opposite_v, l_v) = query.v_osculating_surface(the_u, the_v);
+                a_osc_info.along_u = along_u;
+                a_osc_info.along_v = along_v;
+                a_osc_info.is_opposite = opposite_u || opposite_v;
+                a_osc_surf = l_u.or(l_v).map(Surface3::BSpline);
+            }
+        }
+
+        // NCollection_Array2<gp_Vec> aDerNUV(buffer, 0, aMaxOrder + 2,
+        // 0, aMaxOrder + 2) / aDerSurf(buffer, 0, aMaxOrder + 3,
+        // 0, aMaxOrder + 3).
+        let mut a_der_nuv = make_table(
+            (a_max_order + 2) as usize,
+            (a_max_order + 2) as usize,
+        );
+        let mut a_der_surf = make_table(
+            (a_max_order + 3) as usize,
+            (a_max_order + 3) as usize,
+        );
+
+        a_der_surf[1][0] = the_d1u;
+        a_der_surf[0][1] = the_d1v;
+        a_der_surf[1][1] = the_d2uv;
+        a_der_surf[2][0] = the_d2u;
+        a_der_surf[0][2] = the_d2v;
+        a_der_surf[3][0] = a_d3u;
+        a_der_surf[2][1] = a_d3uuv;
+        a_der_surf[1][2] = a_d3uvv;
+        a_der_surf[0][3] = a_d3v;
+
+        // Use ComputeDerivatives to populate DerNUV.
+        let ok = if a_osc_info.has_osculating() && a_osc_surf.is_some() {
+            compute_derivatives(
+                a_max_order,
+                3,
+                the_u,
+                the_v,
+                the_basis_surf,
+                2,
+                2,
+                a_osc_info.along_u,
+                a_osc_info.along_v,
+                a_osc_surf.as_ref(),
+                &mut a_der_nuv,
+                &mut a_der_surf,
+            )
+        } else {
+            compute_derivatives(
+                a_max_order,
+                3,
+                the_u,
+                the_v,
+                the_basis_surf,
+                2,
+                2,
+                false,
+                false,
+                None,
+                &mut a_der_nuv,
+                &mut a_der_surf,
+            )
+        };
+        if !ok {
+            return None;
+        }
+
+        // Compute the normal using CSLib with MaxOrder.
+        let (a_n_status, a_normal, a_order_u, a_order_v) = normal_max_order(
+            a_max_order,
+            &a_der_nuv,
+            THE_D1_MAGNITUDE_TOL,
+            the_u,
+            the_v,
+            a_umin,
+            a_umax,
+            a_vmin,
+            a_vmax,
+        );
+
+        if a_n_status == NormalStatus::Defined {
+            let n = a_normal.expect("CSLib::Normal(Defined) without a direction");
+            let a_sign = the_offset * a_osc_info.sign();
+
+            // Compute the offset point.
+            let value = the_value + a_sign * n;
+
+            // Compute D1 using CSLib::DNNormal.
+            let d1u = a_der_surf[1][0] + dnnormal(1, 0, &a_der_nuv, a_order_u, a_order_v) * a_sign;
+            let d1v = a_der_surf[0][1] + dnnormal(0, 1, &a_der_nuv, a_order_u, a_order_v) * a_sign;
+
+            // For D2, re-fetch from the basis surface.
+            let a_dn20 = eval_dn(the_basis_surf, the_u, the_v, 2, 0);
+            let a_dn02 = eval_dn(the_basis_surf, the_u, the_v, 0, 2);
+            let a_dn11 = eval_dn(the_basis_surf, the_u, the_v, 1, 1);
+            let d2u = a_dn20 + dnnormal(2, 0, &a_der_nuv, a_order_u, a_order_v) * a_sign;
+            let d2v = a_dn02 + dnnormal(0, 2, &a_der_nuv, a_order_u, a_order_v) * a_sign;
+            let d2uv = a_dn11 + dnnormal(1, 1, &a_der_nuv, a_order_u, a_order_v) * a_sign;
+            return Some(ResD2 {
+                point: value,
+                d1u,
+                d1v,
+                d2u,
+                d2v,
+                d2uv,
+            });
+        }
+
+        // Try shifting the point towards the center - false when overpassed.
+        if !shift_point(
+            a_u_start,
+            a_v_start,
+            &mut the_u,
+            &mut the_v,
+            a_umin,
+            a_umax,
+            a_vmin,
+            a_vmax,
+            is_u_per,
+            is_v_per,
+            the_d1u,
+            the_d1v,
+        ) {
+            return None;
+        }
+    }
+}
+
+/// OCCT `EvaluateD2` (pxx L1370-1404) — the convenience overload that computes
+/// the basis D3 first.
+pub fn evaluate_d2(
     the_u: f64,
     the_v: f64,
+    the_basis_surf: &Surface3,
+    the_offset: f64,
+    the_osc_query: Option<&OsculatingSurface>,
+) -> Option<ResD2> {
+    let a_basis_d3 = eval_d3(the_basis_surf, the_u, the_v);
+    evaluate_d2_precomputed(
+        the_u,
+        the_v,
+        the_basis_surf,
+        the_offset,
+        the_osc_query,
+        a_basis_d3.0,
+        a_basis_d3.1,
+        a_basis_d3.2,
+        a_basis_d3.3,
+        a_basis_d3.5,
+        a_basis_d3.4,
+        a_basis_d3.6,
+        a_basis_d3.7,
+        a_basis_d3.8,
+        a_basis_d3.9,
+    )
+}
+
+/// OCCT `EvaluateDN` (pxx L1637-1794) — the pre-computed-D1 overload.  `None`
+/// is the OCCT `false` return (the caller raises Geom_UndefinedDerivative).
+#[allow(clippy::too_many_arguments)]
+fn evaluate_dn_precomputed(
+    the_u0: f64,
+    the_v0: f64,
+    the_nu: i32,
+    the_nv: i32,
+    the_basis_surf: &Surface3,
+    the_offset: f64,
+    the_osc_query: Option<&OsculatingSurface>,
+    the_d1u_in: DVec3,
+    the_d1v_in: DVec3,
 ) -> Option<DVec3> {
-    evaluate_d0(the_u, the_v, the_basis, the_offset, the_osc_query)
+    let a_u_start = the_u0;
+    let a_v_start = the_v0;
+    let mut the_u = the_u0;
+    let mut the_v = the_v0;
+    let bounds = SurfaceEval::default_domain(the_basis_surf);
+    let (a_umin, a_umax, a_vmin, a_vmax) = (bounds[0], bounds[1], bounds[2], bounds[3]);
+    let is_u_per = SurfaceEval::is_u_periodic(the_basis_surf);
+    let is_v_per = SurfaceEval::is_v_periodic(the_basis_surf);
+
+    // Use pre-computed D1 for the first iteration.
+    let mut a_d1u = the_d1u_in;
+    let mut a_d1v = the_d1v_in;
+    let mut is_first_iteration = true;
+
+    loop {
+        // For subsequent iterations, recompute D1 at the shifted point.
+        if !is_first_iteration {
+            let a_d1_result = eval_d1(the_basis_surf, the_u, the_v);
+            a_d1u = a_d1_result.d1u;
+            a_d1v = a_d1_result.d1v;
+        }
+        is_first_iteration = false;
+
+        if is_infinite_coord(a_d1u) || is_infinite_coord(a_d1v) {
+            return None;
+        }
+
+        // Check if singular to determine MaxOrder.
+        let (_a_normal0, a_n_status0) =
+            normal_from_derivatives_mag(a_d1u, a_d1v, THE_D1_MAGNITUDE_TOL);
+        let a_max_order = if a_n_status0 == NormalStatus::Defined { 0 } else { 3 };
+
+        // NCollection_Array2<gp_Vec> aDerNUV(buffer, 0, aMaxOrder + theNu,
+        // 0, aMaxOrder + theNv) / aDerSurf(buffer, 0, aMaxOrder + theNu + 1,
+        // 0, aMaxOrder + theNv + 1).
+        let mut a_der_nuv = make_table(
+            (a_max_order + the_nu) as usize,
+            (a_max_order + the_nv) as usize,
+        );
+        let mut a_der_surf = make_table(
+            (a_max_order + the_nu + 1) as usize,
+            (a_max_order + the_nv + 1) as usize,
+        );
+
+        a_der_surf[1][0] = a_d1u;
+        a_der_surf[0][1] = a_d1v;
+
+        // Check the osculating surface only in the singular case.
+        let mut a_osc_info = OsculatingInfo::default();
+        let mut a_osc_surf: Option<Surface3> = None;
+        if a_n_status0 != NormalStatus::Defined {
+            if let Some(query) = the_osc_query {
+                let (along_u, opposite_u, l_u) = query.u_osculating_surface(the_u, the_v);
+                let (along_v, opposite_v, l_v) = query.v_osculating_surface(the_u, the_v);
+                a_osc_info.along_u = along_u;
+                a_osc_info.along_v = along_v;
+                a_osc_info.is_opposite = opposite_u || opposite_v;
+                a_osc_surf = l_u.or(l_v).map(Surface3::BSpline);
+            }
+        }
+
+        // Use ComputeDerivatives.
+        let ok = if a_osc_info.has_osculating() && a_osc_surf.is_some() {
+            compute_derivatives(
+                a_max_order,
+                1,
+                the_u,
+                the_v,
+                the_basis_surf,
+                the_nu,
+                the_nv,
+                a_osc_info.along_u,
+                a_osc_info.along_v,
+                a_osc_surf.as_ref(),
+                &mut a_der_nuv,
+                &mut a_der_surf,
+            )
+        } else {
+            compute_derivatives(
+                a_max_order,
+                1,
+                the_u,
+                the_v,
+                the_basis_surf,
+                the_nu,
+                the_nv,
+                false,
+                false,
+                None,
+                &mut a_der_nuv,
+                &mut a_der_surf,
+            )
+        };
+        if !ok {
+            return None;
+        }
+
+        // Compute the normal with CSLib.
+        let (a_n_status, a_normal, a_order_u, a_order_v) = normal_max_order(
+            a_max_order,
+            &a_der_nuv,
+            THE_D1_MAGNITUDE_TOL,
+            the_u,
+            the_v,
+            a_umin,
+            a_umax,
+            a_vmin,
+            a_vmax,
+        );
+
+        if a_n_status == NormalStatus::Defined {
+            let _n = a_normal.expect("CSLib::Normal(Defined) without a direction");
+            let a_sign = the_offset * a_osc_info.sign();
+
+            // Compute the DN result: basis DN + offset * DNNormal.
+            let a_basis_dn = eval_dn(the_basis_surf, the_u, the_v, the_nu, the_nv);
+            return Some(
+                a_basis_dn + dnnormal(the_nu, the_nv, &a_der_nuv, a_order_u, a_order_v) * a_sign,
+            );
+        }
+
+        // Try shifting the point towards the center - false when overpassed.
+        if !shift_point(
+            a_u_start,
+            a_v_start,
+            &mut the_u,
+            &mut the_v,
+            a_umin,
+            a_umax,
+            a_vmin,
+            a_vmax,
+            is_u_per,
+            is_v_per,
+            a_d1u,
+            a_d1v,
+        ) {
+            return None;
+        }
+    }
 }
 
-/// OCCT `Geom_OffsetSurface::EvalD1` (cxx L362-389) — the point + first
-/// partials of the offset surface, without the
-/// `GeomEval_RepUtils::TryEvalSurfaceD1(myEvalRep, ...)` short circuit.
-pub fn offset_surface_eval_d1(
-    the_basis: &Surface3,
-    the_offset: f64,
-    the_osc_query: Option<&OsculatingSurface>,
+/// OCCT `EvaluateDN` (pxx L1811-1831) — the convenience overload that computes
+/// the basis D1 first.
+pub fn evaluate_dn(
     the_u: f64,
     the_v: f64,
-) -> Option<ResD1> {
-    evaluate_d1(the_u, the_v, the_basis, the_offset, the_osc_query)
+    the_nu: i32,
+    the_nv: i32,
+    the_basis_surf: &Surface3,
+    the_offset: f64,
+    the_osc_query: Option<&OsculatingSurface>,
+) -> Option<DVec3> {
+    let a_basis_d1 = eval_d1(the_basis_surf, the_u, the_v);
+    evaluate_dn_precomputed(
+        the_u,
+        the_v,
+        the_nu,
+        the_nv,
+        the_basis_surf,
+        the_offset,
+        the_osc_query,
+        a_basis_d1.d1u,
+        a_basis_d1.d1v,
+    )
 }
 
-/// OCCT `Geom_OffsetSurface::Offset()`-driven payload convenience: the
-/// rcad `Geom_OffsetSurface`-equivalent evaluation of a rcad
-/// [`OffsetSurface`] payload (the `offset_basis_and_value` unwrap + the
-/// `offset_surface_osculating` member rebuild).
-pub fn offset_payload_osculating(of: &OffsetSurface) -> Option<OsculatingSurface> {
-    let (a_checking_surf, _offset_value) =
-        offset_basis_and_value(of.basis.as_ref(), of.offset_distance);
-    offset_surface_osculating(&a_checking_surf)
-}
+// The `Geom_OffsetSurface` class bodies (the `SetBasisSurface` unwrap,
+// `Surface()` and the `EvalD0`/`EvalD1`/`EvalD2`/`EvalDN` re-hosts) live in
+// `offset_surface_utils_b.rs` and are re-exported here so that the existing
+// `crate::geom::offset_surface_utils::*` import paths keep working.
+pub use super::offset_surface_utils_b::*;
 
 #[cfg(test)]
 mod eval_tests {
     use super::*;
-    use crate::geom::BezierSurface;
+    use crate::geom::{BezierSurface, CylindricalSurface, OffsetSurface, SurfaceEval};
 
     /// The unit quarter circle as a degree-2 rational Bezier: poles
     /// `{(1,0), (1,1), (0,1)}`, weights `{1, sqrt(2)/2, 1}`, extruded along Z
@@ -1410,5 +1607,136 @@ mod eval_tests {
             assert!((d2.4 - eval_dn(&s, 0.0, 0.5, 1, 1)).length() < 1e-12);
             assert!((d2.5 - eval_dn(&s, 0.0, 0.5, 0, 2)).length() < 1e-12);
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Geom_OffsetSurface::EvalD0/EvalD1/EvalD2/EvalDN (cxx L338-497)
+    // ---------------------------------------------------------------------
+
+    /// A cylindrical basis short-circuits through `Geom_OffsetSurface::Surface()`
+    /// (cxx L908-925): the equivalent surface is the cylinder of radius
+    /// `R + aSign * offset`, whose exact derivatives are known in closed form
+    /// (`P = ((R+d) cos u, (R+d) sin u, v)`).
+    #[test]
+    fn offset_payload_d1_d2_dn_cylinder_basis() {
+        use crate::geom::offset_surface_utils as utils;
+        let radius = 2.0;
+        let offset = 0.5;
+        let of = OffsetSurface {
+            basis: Box::new(Surface3::Cylinder(CylindricalSurface {
+                origin: DVec3::ZERO,
+                axis: DVec3::Z,
+                radius,
+                ref_dir: DVec3::X,
+                y_dir: None,
+            })),
+            offset_distance: offset,
+        };
+        let r = radius + offset;
+        let (u, v) = (0.3f64, 1.5f64);
+        let (su, cu) = u.sin_cos();
+        let want_p = DVec3::new(r * cu, r * su, v);
+        let want_d1u = DVec3::new(-r * su, r * cu, 0.0);
+        let want_d1v = DVec3::Z;
+
+        let p = utils::offset_payload_eval_d0(&of, u, v);
+        assert!((p - want_p).length() < 1e-14, "p={p:?} want={want_p:?}");
+        let d1 = utils::offset_payload_eval_d1(&of, u, v);
+        assert!((d1.point - want_p).length() < 1e-14);
+        assert!((d1.d1u - want_d1u).length() < 1e-14, "d1u={:?}", d1.d1u);
+        assert!((d1.d1v - want_d1v).length() < 1e-14, "d1v={:?}", d1.d1v);
+        let d2 = utils::offset_payload_eval_d2(&of, u, v);
+        assert!((d2.point - want_p).length() < 1e-13);
+        assert!((d2.d1u - want_d1u).length() < 1e-13);
+        assert!((d2.d1v - want_d1v).length() < 1e-13);
+        let want_d2u = DVec3::new(-r * cu, -r * su, 0.0);
+        // The equivalent-surface `derivatives2` of a cylinder is the trait's
+        // finite-difference default (only `derivatives` is analytic there), so
+        // the D2 terms are only accurate to the default step.
+        assert!((d2.d2u - want_d2u).length() < 1e-5, "d2u={:?}", d2.d2u);
+        assert!(d2.d2v.length() < 1e-5, "d2v={:?}", d2.d2v);
+        assert!(d2.d2uv.length() < 1e-5, "d2uv={:?}", d2.d2uv);
+        // Geom_Surface::EvalDN goes through the equivalent cylinder's ElSLib
+        // form, which is exact.
+        assert!((utils::offset_payload_eval_dn(&of, u, v, 1, 0) - want_d1u).length() < 1e-13);
+        assert!((utils::offset_payload_eval_dn(&of, u, v, 0, 1) - want_d1v).length() < 1e-13);
+        assert!((utils::offset_payload_eval_dn(&of, u, v, 2, 0) - want_d2u).length() < 1e-13);
+    }
+
+    /// The parabolic cylinder patch `S(u, v) = (u, u^2, v)` as a degree-2
+    /// Bezier in U (poles `(0,0)`, `(0.5,0)`, `(1,1)` in the XY plane) and
+    /// degree 1 in V.  A BSpline basis has no equivalent surface, so this
+    /// exercises the `Geom_OffsetSurfaceUtils::EvaluateD0/D1/D2/DN` bodies:
+    /// with `s = sqrt(1 + 4u^2)` the surface normal
+    /// `N = dS/du ^ dS/dv = (2u, -1, 0)/s` gives
+    ///   `P   = (u + 2du/s, u^2 - d/s, v)`
+    ///   `Pu  = (1 + 2d/s^3, 2u + 4du/s^3, 0)`
+    ///   `Puu = (-24du/s^5, 2 + 4d/s^3 - 48du^2/s^5, 0)`
+    /// with `Pv = (0, 0, 1)` and all V/V-mixed second derivatives zero.
+    #[test]
+    fn offset_payload_d1_d2_dn_parabolic_bspline_basis() {
+        use crate::geom::offset_surface_utils as utils;
+        let basis = Surface3::BSpline(BSplineSurface {
+            degree_u: 2,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 1.0)],
+                vec![DVec3::new(0.5, 0.0, 0.0), DVec3::new(0.5, 0.0, 1.0)],
+                vec![DVec3::new(1.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 1.0)],
+            ],
+            weights: vec![vec![1.0, 1.0], vec![1.0, 1.0], vec![1.0, 1.0]],
+            is_periodic_u: false,
+            is_periodic_v: false,
+        });
+        let d = 0.7;
+        let of = OffsetSurface {
+            basis: Box::new(basis),
+            offset_distance: d,
+        };
+        let (u, v) = (0.4f64, 0.3f64);
+        let s = (1.0 + 4.0 * u * u).sqrt();
+        let s3 = s * s * s;
+        let s5 = s3 * s * s;
+        let want_p = DVec3::new(u + 2.0 * d * u / s, u * u - d / s, v);
+        let want_d1u = DVec3::new(1.0 + 2.0 * d / s3, 2.0 * u + 4.0 * d * u / s3, 0.0);
+        let want_d1v = DVec3::Z;
+        let want_d2u = DVec3::new(
+            -24.0 * d * u / s5,
+            2.0 + 4.0 * d / s3 - 48.0 * d * u * u / s5,
+            0.0,
+        );
+
+        let p = utils::offset_payload_eval_d0(&of, u, v);
+        assert!((p - want_p).length() < 1e-12, "p={p:?} want={want_p:?}");
+        let d1 = utils::offset_payload_eval_d1(&of, u, v);
+        assert!((d1.point - want_p).length() < 1e-12);
+        assert!((d1.d1u - want_d1u).length() < 1e-12, "d1u={:?}", d1.d1u);
+        assert!((d1.d1v - want_d1v).length() < 1e-12, "d1v={:?}", d1.d1v);
+        let d2 = utils::offset_payload_eval_d2(&of, u, v);
+        assert!((d2.point - want_p).length() < 1e-11);
+        assert!((d2.d1u - want_d1u).length() < 1e-11);
+        assert!((d2.d1v - want_d1v).length() < 1e-11);
+        assert!((d2.d2u - want_d2u).length() < 1e-11, "d2u={:?}", d2.d2u);
+        assert!(d2.d2v.length() < 1e-11, "d2v={:?}", d2.d2v);
+        assert!(d2.d2uv.length() < 1e-11, "d2uv={:?}", d2.d2uv);
+        assert!(
+            (utils::offset_payload_eval_dn(&of, u, v, 0, 1) - want_d1v).length() < 1e-11,
+            "dn(0,1)={:?}",
+            utils::offset_payload_eval_dn(&of, u, v, 0, 1)
+        );
+        assert!((utils::offset_payload_eval_dn(&of, u, v, 1, 1) - d2.d2uv).length() < 1e-11);
+        // Nu > Nv: OCCT's derivative table loop only visits the `j >= i`
+        // triangle (Geom_OffsetSurfaceUtils.pxx L389-404), so for a non-square
+        // table the transposed cell `DerSurf(2,0)` is never written and
+        // `CSLib::DNNormal` yields zero — the result is the basis derivative.
+        // The translated body reproduces that asymmetry verbatim.
+        let basis_d1u = DVec3::new(1.0, 2.0 * u, 0.0);
+        assert!(
+            (utils::offset_payload_eval_dn(&of, u, v, 1, 0) - basis_d1u).length() < 1e-11,
+            "dn(1,0)={:?}",
+            utils::offset_payload_eval_dn(&of, u, v, 1, 0)
+        );
     }
 }

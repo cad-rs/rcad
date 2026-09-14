@@ -1306,10 +1306,12 @@ mod tests {
         // The two Contap vertices became the edge endpoints.
         let seg_vs = brep.edge(new_e.clone()).my_shapes.clone();
         assert_eq!(seg_vs.len(), 2);
-        // The pcurve: the 2d BSpline over the walked points (the kernel
-        // pc_parameter_range stores the normalized [0, 1] range for a
-        // BSpline pcurve — the OCCT UpdateEdge would carry the pcurve knot
-        // domain [1, 4]; noted as the kernel approximation).
+        // The pcurve: the 2d BSpline over the walked points. The stored
+        // interval follows the OCCT static UpdateCurves rule
+        // (BRep_Builder.cxx L104-167): seeded with the 2D curve's own
+        // FirstParameter/LastParameter (the BSpline knot domain [1, 4]) and
+        // overridden per end only by a finite Curve3D range
+        // (rcad_kernel::topods::update_curves_range).
         let (pc, _pc_first, _pc_last) = brep
             .curve_on_surface(&new_e, &face)
             .expect("walking pcurve");

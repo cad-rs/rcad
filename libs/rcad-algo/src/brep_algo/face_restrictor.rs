@@ -80,13 +80,12 @@ fn builder_update_edge_pcurve(
     the_tol: f64,
 ) {
     if pool_owns_shape(brep, the_e) {
-        let (f0, l0) = {
-            let range = brep.edge(the_e.clone()).range;
-            (range[0], range[1])
-        };
         let ed = brep.edge_mut_inplace(the_e.clone());
+        // OCCT static UpdateCurves (BRep_Builder.cxx L104-167).
+        let [a_f, a_l] =
+            rcad_kernel::topods::update_curves_range(the_c2d.default_domain(), ed);
         ed.pcurves
-            .insert(shape_key(the_f), (the_c2d.clone(), f0, l0));
+            .insert(shape_key(the_f), (the_c2d.clone(), a_f, a_l));
         ed.tolerance = ed.tolerance.max(the_tol);
     } else {
         crate::brep_algo::tool::builder_update_edge_pcurve(the_e, the_c2d, the_f, the_tol);

@@ -27,6 +27,27 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
+### 0.0h 追加 32 收尾态（2026-09-13；**最新** —— 翻译优先轮第四批 + 一次回归的从根修复）
+
+- **门槛与网格（全部在树实测）**：六门槛 **427/0/0 · 712/0 · 36/36 · 26/26 · 76/76 · 1/1**；**八网格 8/8**（375/378/379/373/12/102/83/110）；**15 个域网格与追加 31 基线逐项相同**。
+- **★ 本轮最重要的产出：修掉一个真正的 kernel 缺陷 —— `gp_Trsf::SetRotation` 的 `loc` 用了转置矩阵。**
+  OCCT `gp_Trsf::SetRotation`（`gp_Trsf.cxx` L90-99）里 `loc.Multiply(matrix)` 的语义由 `gp_XYZ::Multiply(const gp_Mat&)` 定义为 **`<me> = theMatrix * <me>`**（`gp_XYZ.hxx` **L308-309**，**矩阵左乘**）。rcad 写成了行向量右乘（= `M^T l`），且注释自称"row-vector times matrix" ⇒ **任何「轴不过原点」的旋转平移项都是错的**（轴过原点时 `loc = 0`，缺陷不可见）。
+  **发现路径**：子代理接入解析 `Geom_SurfaceOfRevolution::EvalD0`（走 `Trsf`）后，八网格 `bcut_simple` 由 110/0 **回归**为 109/1（`g6` 面积 41187.4 → 61953.63，**拓扑全过只有面积错**）。`git stash -- libs/rcad-kernel/src/geom/` ⇒ g6 通过 ⇒ 定位到该批次；组内二分后**关键判读**是「差分导数与 `point_at` 恒自洽 ⇒ 旧 `point_at`+差分 = 41187.4 正确、新 `point_at`+差分 = 72764.7 错误 ⇒ **新解析体不等价**」；再用临时单测把 `revolution_eval_d0` 与 Rodrigues 式直接对拍，得 `diff = (38.94, 0, 0)`（**纯平移项偏移**）⇒ 追到 `set_rotation`。修正后临时测试 **`diff = 0`**，g6 通过且**批次 2 的解析体全部保留**。
+  **为何长期潜伏**：旧 `RevolutionSurface::point_at` 是手搓 Rodrigues、**绕过了 `Trsf`**，掩盖了内核缺陷；既有的 `set_rotation_keeps_axis_location_invariant` 用 **π 旋转**，而 `M(π)` 对称 ⇒ `M^T L == M L`，**该测试原理上抓不到**。已补判别性测试 `set_rotation_about_off_origin_axis_matches_rodrigues`。
+- **本轮另外三批**：
+  1. **`UpdateEdge` 家族收敛成唯一真身** `rcad_kernel::topods::update_curves_range`（`topods.rs:3919`；缺陷前身 `pc_parameter_range` 删除）：两个 kernel 方法再宿主（`update_edge_pcurve_closed` **删掉 OCCT 本就没有的形参**）、**16 个调用点**随之改、另收敛 **7 处**散手副本（含审计清单外的 `brep_sweep/brep_sweep_builder.rs`）；`brep_algo/tool.rs::builder_range_edge` **修好**（OCCT 会把区间写到**每一个**表示）；`brep_fill_filling.rs` 修掉一个真缺陷（`BRep_TEdge::EmptyCopy` **会**拷 curve 表示，故有限 3D 覆盖必须生效）。
+  2. **`Surface3::dn` 余留五面型补全**（Offset / LinearExtrusion / Ellipsoid / Helicoid / Revolution，全部解析体）：新增 `geom/{eval_c,revolution_utils,curve_dn,offset_surface_utils_b}.rs`。**Ellipsoid 的参数化差异（OCCT 纬度 vs rcad 余纬）已显式转换并双锚点记档**，未用等价替换糊过去。Ruled/Coons/Pipe/TriBezier **确认无 OCCT 对应**（枚举了全部 `Geom_Surface` 子类与 `GeomEval_*`），保留 GAP。
+  3. **两处接线（主代理）**：`EvalAndUpdateTol` 真调 `GeomLibCheckCurveOnSurface`；`CurveOnSurface::ShallowCopy` 归位为 trait override。
+- **★ 方法学（本批给出了与前三批不同的证据）**：本轮的**内核修复是真实行为修正**（所有轴不过原点的旋转），但在域网格上仍**零可见翻转**。
+  ⇒ 八网格里**能感知内核几何修正的用例极少**，而这次覆盖是**回归逼出来的**、不是用例设计出来的。**"触发用例缺口"卡的优先级应再提一档**（第五次重申）。
+- **⏭ 下一轮队列（按序）**：
+  1. **★ 触发用例缺口 + 与 OCCT 参考对拍**（最高优先，第五次）。
+  2. **★ `gp.rs` 同类「转置/左右乘」审计**（新立，高优先）：本轮证明这类手写矩阵约定极易写反且长期不可见 ⇒ 逐个核对 `Trsf`/`Mat`/`Ax2`/`Ax3` 里所有矩阵助手（`multiply`/`transformed`/`apply`/`transform_vec`/`set_displacement`/`set_rotation` …）的 OCCT 语义。
+  3. **`UpdateEdge` 家族最后收敛**：`fillet/hbuilder_face/classify.rs:1344` + `fillet/hbuilder_face.rs:1022` 重定向到 `update_curves_range`；`bop/**` 三处内联体归并；`fillet` 的 `bb_update_edge_pcurve` 归并。
+  4. **`Surface3::dn` 的 `Trimmed` 臂**（便宜）+ `geom_adaptor_surface.rs::dn_at` 全阶。
+  5. **`mySn` 的构造**（TKFeat，`feat_featrf` 前墙）。
+  6. 追加 31 余项不变（`extrema_gen_ext_cs.rs` 过期 PSO 栈 · BSpline VIso 两处内嵌副本 · 池外读取链复核 · blend 剩余十例 · `elclib_adjust_periodic` 残留两份 · `builder.rs`/`pave_filler.rs` 拆分 · `builder_set_degenerated` 的 fork 风险 · `BRepFill_Pipe` 收敛 · `BRepExtrema*`/`GeomIntIntSS` 重复 · `brep_tool_curve_on_surface` 缺 `CurveOnPlane` 回退 · 过期锚点勘误）。
+
 ### 0.0g 追加 31 收尾态（2026-09-13；**最新** —— 翻译优先轮第三批）
 
 - **门槛与网格（全部在树实测）**：六门槛 **427/0/0 · 701/0 · 36/36 · 26/26 · 76/76 · 1/1**（⚠ `rcad-kernel --lib` 691 → **701**）**；八网格 8/8**（375/378/379/373/12/102/83/110）—— **本批改了 `bop/**` 布尔核心，八网格仍零回归**；**15 个域网格与追加 30 基线逐项相同**。

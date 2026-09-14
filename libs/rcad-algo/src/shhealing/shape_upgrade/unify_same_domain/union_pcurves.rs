@@ -514,15 +514,15 @@ impl ShapeUpgradeUnifySameDomain {
         // OCCT L2146-2156: the UpdateEdge dispatch.
         let mut a_builder = BRepBuilder::new();
         if an_is_seam && res_pcurves.len() >= 2 {
-            let range = super::topexp::brep_tool_range(brep, the_edge);
+            // OCCT L2148: aBuilder.UpdateEdge(theEdge, ResPCurves(1),
+            // ResPCurves(2), Face(aFaceSeq(1)), aTolEdge) — no f/l; no
+            // Range call follows in UnionPCurves.
             a_builder.update_edge_pcurve_closed(
                 brep,
                 the_edge.clone(),
                 res_pcurves[0].clone(),
                 res_pcurves[1].clone(),
                 a_face_seq[0].clone(),
-                range[0],
-                range[1],
                 a_tol_edge,
             );
         } else {

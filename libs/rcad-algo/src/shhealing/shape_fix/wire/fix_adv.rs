@@ -324,7 +324,10 @@ impl ShapeFixWire {
         let face = self.face();
         //: S4136: BRep_Tool::Tolerance(E) — OCCT passes 0.
         if let (Some(c2v), Some(c1v)) = (c2.clone(), c1.clone()) {
-            b.update_edge_pcurve_closed(brep, e.clone(), c2v, c1v, face.clone(), cf, cl, 0.0);
+            // OCCT ShapeFix_Wire.cxx L1632: B.UpdateEdge(E, C2, C1, Face(), 0.)
+            // — the OCCT overload takes no f/l (the UpdateCurves interval
+            // rule); L1633 then applies B.Range(E, Face(), cf, cl) below.
+            b.update_edge_pcurve_closed(brep, e.clone(), c2v, c1v, face.clone(), 0.0);
         }
         builder_range_on_face(brep, &e, &face, cf, cl);
         self.my_last_fix_status |= encode_status(ShapeExtendStatus::Done1);

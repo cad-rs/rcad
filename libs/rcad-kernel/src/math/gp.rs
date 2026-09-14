@@ -346,12 +346,16 @@ impl Trsf {
         // OCCT L95: matrix.SetRotation(A1.Direction().XYZ(), Ang).
         mat_set_rotation(&mut self.matrix, ax1.direction, ang);
         self.loc = -self.loc; // OCCT L96: loc.Reverse().
-        // OCCT L97: loc.Multiply(matrix) — row-vector times matrix, in place.
+        // OCCT L97: loc.Multiply(matrix).  gp_XYZ::Multiply(const gp_Mat&) is
+        // documented as "<me> = theMatrix * <me>" (gp_XYZ.hxx L308-309), i.e.
+        // the matrix acts on the left.  The previous row-vector form computed
+        // the transpose (M^T * loc) and therefore produced a wrong offset for
+        // every axis that does not pass through the origin.
         let l = self.loc;
         self.loc = DVec3::new(
-            l.x * self.matrix[0][0] + l.y * self.matrix[1][0] + l.z * self.matrix[2][0],
-            l.x * self.matrix[0][1] + l.y * self.matrix[1][1] + l.z * self.matrix[2][1],
-            l.x * self.matrix[0][2] + l.y * self.matrix[1][2] + l.z * self.matrix[2][2],
+            self.matrix[0][0] * l.x + self.matrix[0][1] * l.y + self.matrix[0][2] * l.z,
+            self.matrix[1][0] * l.x + self.matrix[1][1] * l.y + self.matrix[1][2] * l.z,
+            self.matrix[2][0] * l.x + self.matrix[2][1] * l.y + self.matrix[2][2] * l.z,
         );
         self.loc += ax1.location; // OCCT L98: loc.Add(A1.Location().XYZ()).
     }
@@ -747,6 +751,37 @@ mod tests {
             (p - expected).length() < 1e-12,
             "rotation moved the point to {p:?}"
         );
+    }
+
+    /// OCCT gp_Trsf::SetRotation(A1, Ang) with a non-origin axis and an angle
+    /// whose matrix is *not* symmetric: the result must be the Rodrigues
+    /// rotation about the axis line.  The `PI` case above cannot detect a
+    /// transposed `loc.Multiply(matrix)` (gp_XYZ::Multiply(const gp_Mat&) is
+    /// `<me> = theMatrix * <me>`, gp_XYZ.hxx L308-309), because `M(PI)` is
+    /// symmetric and `M^T L == M L` there.
+    #[test]
+    fn set_rotation_about_off_origin_axis_matches_rodrigues() {
+        let loc = DVec3::new(0.0, 0.0, 50.0);
+        let dir = DVec3::new(0.0, 1.0, 0.0);
+        let axis = Ax1::new(loc, dir);
+        let ang = 0.4_f64;
+        let mut t = Trsf::identity();
+        t.set_rotation(&axis, ang);
+        for &p in &[
+            DVec3::new(50.0, 20.3, 40.0),
+            DVec3::new(-13.0, 7.5, 3.0),
+            DVec3::new(30.0, -2.0, 99.0),
+        ] {
+            let d = p - loc;
+            let d_par = dir * d.dot(dir);
+            let d_perp = d - d_par;
+            let expected = loc + d_par + d_perp * ang.cos() + dir.cross(d_perp) * ang.sin();
+            let got = t.apply(p);
+            assert!(
+                (got - expected).length() < 1e-12,
+                "p={p:?} got={got:?} expected={expected:?}"
+            );
+        }
     }
 
     /// OCCT gp_Trsf::SetRotation(A1, Ang) with a non-origin axis: the axis

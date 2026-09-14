@@ -165,20 +165,24 @@ fn builder_update_edge_pcurve_surface(
 ) {
     let keys = surface_face_keys(brep, edge, surf, loc);
     let ed = brep.edge_mut_inplace(edge.clone());
+    // OCCT static UpdateCurves (BRep_Builder.cxx L104-167) — the canonical
+    // two-step interval rule; the OCCT overload takes no f/l.
+    let [a_f, a_l] = rcad_kernel::topods::update_curves_range(pcurve.default_domain(), ed);
     for k in &keys {
-        ed.pcurves.insert(*k, (pcurve.clone(), 0.0, 0.0));
+        ed.pcurves.insert(*k, (pcurve.clone(), a_f, a_l));
         ed.representations.push(CurveRepresentation::CurveOnSurface {
             face: *k,
             pcurve: pcurve.clone(),
-            range: [0.0, 0.0],
+            range: [a_f, a_l],
         });
     }
     ed.tolerance = ed.tolerance.max(tol);
 }
 
 /// OCCT BRep_Builder::UpdateEdge(E, C1, C2, S, L, Tol) (BRep_Builder.cxx
-/// L702-757): sets the seam (closed-surface) pcurve pair on the
-/// (surface, location) pair.
+/// L704-741 -> the two-curve UpdateCurves L251-308): sets the seam
+/// (closed-surface) pcurve pair on the (surface, location) pair; the interval
+/// is seeded from C1 by the canonical rule.
 fn builder_update_edge_pcurves_surface(
     brep: &mut BRep,
     edge: &Shape,
@@ -190,14 +194,15 @@ fn builder_update_edge_pcurves_surface(
 ) {
     let keys = surface_face_keys(brep, edge, surf, loc);
     let ed = brep.edge_mut_inplace(edge.clone());
+    let [a_f, a_l] = rcad_kernel::topods::update_curves_range(pcurve1.default_domain(), ed);
     for k in &keys {
-        ed.pcurves.insert(*k, (pcurve1.clone(), 0.0, 0.0));
+        ed.pcurves.insert(*k, (pcurve1.clone(), a_f, a_l));
         ed.representations
             .push(CurveRepresentation::CurveOnClosedSurface {
                 face: *k,
                 pcurve1: pcurve1.clone(),
                 pcurve2: pcurve2.clone(),
-                range: [0.0, 0.0],
+                range: [a_f, a_l],
             });
     }
     ed.tolerance = ed.tolerance.max(tol);

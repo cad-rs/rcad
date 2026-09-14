@@ -779,11 +779,17 @@ fn brep_make_edge() -> TEdgeData {
 /// the lxx (E, C, F, Tol) overload) — the pcurve is stored under
 /// `L.Predivided(E.Location())` (a fresh edge has an identity location, so
 /// the face location value); the fresh BRep_CurveOnSurface range is the
-/// BRep_GCurve default (0,0) until UpdateVertex sets it.  The edge tolerance
-/// is max-ed with Tol (BRep_TEdge::UpdateTolerance).
+/// static UpdateCurves interval (BRep_Builder.cxx L104-167) — the 2D curve's
+/// own FirstParameter/LastParameter, because the fresh BRep_TEdge carries no
+/// Curve3D representation (BRep_TEdge.cxx L48-73) and the L154-162 override
+/// therefore does not fire.  The edge tolerance is max-ed with Tol
+/// (BRep_TEdge::UpdateTolerance).
 fn brep_update_edge_pcurve(ed: &mut TEdgeData, pc: &Curve2d, f: &Shape, tol: f64) {
     let key = (f.ptr_id(), f.location);
-    ed.pcurves.insert(key, (pc.clone(), 0.0, 0.0));
+    // OCCT static UpdateCurves (BRep_Builder.cxx L104-167) — the canonical
+    // body is rcad_kernel::topods::update_curves_range.
+    let [a_f, a_l] = rcad_kernel::topods::update_curves_range(pc.default_domain(), ed);
+    ed.pcurves.insert(key, (pc.clone(), a_f, a_l));
     ed.tolerance = ed.tolerance.max(tol);
 }
 
