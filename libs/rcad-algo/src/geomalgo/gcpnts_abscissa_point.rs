@@ -17,17 +17,17 @@
 //! instance machinery (Init/Perform/AdvPerform) and the GCPnts
 //! constructors (compute/advCompute drivers).
 //!
-//! The template parameter `TheCurve` is [`GCPntsCurve`] (see
-//! [`super::gcpnts_curve`]); the 2D flavor is [`GCPntsCurve2d`].  In OCCT
-//! the 3d/2d flavor is resolved by C++ overload resolution on the adaptor
-//! static type; here it is carried by the `*_3d` / `*_2d` function pairs.
+//! The template parameter `TheCurve` is [`GCPntsCurve`] (see the kernel
+//! `rcad_kernel::base::gcpnts::gcpnts_curve`); the 2D flavor is
+//! [`GCPntsCurve2d`].  In OCCT the 3d/2d flavor is resolved by C++ overload
+//! resolution on the adaptor static type; here it is carried by the `*_3d` /
+//! `*_2d` function pairs.
 
 use glam::DVec3;
 
+use rcad_kernel::base::gcpnts::gcpnts_curve::GCPntsCurve;
 use rcad_kernel::math::gauss_points::{gauss_points, gauss_points_max, gauss_weights};
 use rcad_kernel::math::VecD;
-
-use super::gcpnts_curve::GCPntsCurve;
 
 /// OCCT GCPnts_AbscissaType.hxx — compute/length classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

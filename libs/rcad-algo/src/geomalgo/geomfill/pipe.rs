@@ -10,10 +10,10 @@
 //! - `handle(GeomFill_LocationLaw/SectionLaw)` map to
 //!   `Rc<RefCell<...>>` (shared mutable handles, the sweep_function.rs
 //!   convention).
-//! - GAP carriers: [`GeomFillAppSweep`] (TKGeomAlgo/GeomFill) for the
-//!   ApproxSurf approximation and the shared [`ApproxSweepApproximation`]
-//!   (sweep.rs) for the Perform(Tol) path; [`GeomFillLine`] is the trivial
-//!   GeomFill_Line data re-host.
+//! - The ApproxSurf approximation is the landed AppBlend_AppSurf engine
+//!   (app_blend_app_surf.rs) instantiated over the sweep generator — the
+//!   OCCT GeomFill_AppSweep form; [`ApproxSweepApproximation`] (sweep.rs)
+//!   stays the shared carrier of the Perform(Tol) path.
 //! - `GeomFill_Trihedron` is the existing [`Trihedron`] enum
 //!   (corrected_frenet.rs).
 
@@ -38,6 +38,8 @@ use super::curve_and_trihedron::CurveAndTrihedron;
 use super::circular_blend_func::CircularBlendFunc;
 use super::frenet::Frenet;
 use super::fixed::Fixed;
+use super::app_blend_app_surf::AppBlendAppSurf;
+use super::line::Line;
 use super::location_law::LocationLaw;
 use super::nsections::NSections;
 use super::section_law::SectionLaw;
@@ -52,115 +54,6 @@ use super::uniform_section::UniformSection;
 // ---------------------------------------------------------------------------
 // File statics and pure-math gp re-hosts
 // ---------------------------------------------------------------------------
-
-/// OCCT GeomFill_Line (TKGeomAlgo/GeomFill) — the trivial section-count
-/// carrier consumed by GeomFill_AppSweep::Perform.
-pub struct GeomFillLine {
-    /// OCCT int myNbSections.
-    my_nb_sections: usize,
-}
-
-impl GeomFillLine {
-    /// OCCT GeomFill_Line::GeomFill_Line(NbSections).
-    pub fn new(nb_sections: usize) -> Self {
-        GeomFillLine {
-            my_nb_sections: nb_sections,
-        }
-    }
-
-    /// OCCT GeomFill_Line::NbSections().
-    pub fn nb_sections(&self) -> usize {
-        self.my_nb_sections
-    }
-}
-
-/// GAP carrier: OCCT GeomFill_AppSweep (TKGeomAlgo/GeomFill) — the
-/// sweeping-line approximation is not translated; construction/Perform keep
-/// the OCCT failure path.
-pub struct GeomFillAppSweep;
-
-impl GeomFillAppSweep {
-    /// OCCT GeomFill_AppSweep(DegMin, DegMax, T3d, T2d, NbIt, WithParameters).
-    pub fn new(
-        _deg_min: i32,
-        _deg_max: i32,
-        _t3d: f64,
-        _t2d: f64,
-        _nb_it: i32,
-        _with_parameters: bool,
-    ) -> Self {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::Perform(Line, Section, NbIterations).
-    pub fn perform(&mut self, _line: &GeomFillLine, _section: &mut SweepSectionGenerator, _nb_iterations: i32) {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::IsDone().
-    pub fn is_done(&self) -> bool {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::SurfShape(...).
-    #[allow(clippy::too_many_arguments)]
-    pub fn surf_shape(
-        &self,
-        _u_degree: &mut i32,
-        _v_degree: &mut i32,
-        _nb_u_poles: &mut i32,
-        _nb_v_poles: &mut i32,
-        _nb_u_knots: &mut i32,
-        _nb_v_knots: &mut i32,
-    ) {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::SurfPoles().
-    pub fn surf_poles(&self) -> Vec<Vec<DVec3>> {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::SurfWeights().
-    pub fn surf_weights(&self) -> Vec<Vec<f64>> {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::SurfUKnots().
-    pub fn surf_u_knots(&self) -> Vec<f64> {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::SurfVKnots().
-    pub fn surf_v_knots(&self) -> Vec<f64> {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::SurfUMults().
-    pub fn surf_u_mults(&self) -> Vec<i32> {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::SurfVMults().
-    pub fn surf_v_mults(&self) -> Vec<i32> {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::UDegree().
-    pub fn u_degree(&self) -> i32 {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::VDegree().
-    pub fn v_degree(&self) -> i32 {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-
-    /// OCCT GeomFill_AppSweep::TolReached(Tol3d, Tol2d).
-    pub fn tol_reached(&self, _tol3d: &mut f64, _tol2d: &mut f64) {
-        panic!("GAP: GeomFill_AppSweep (TKGeomAlgo/GeomFill) is not translated — see file header")
-    }
-}
 
 /// OCCT gp_Vec::AngleWithRef (gp_Dir.cxx L55-84) — the same signed-angle
 /// re-host as sweep_section_generator (local copy over foreign values).
@@ -1172,13 +1065,20 @@ impl Pipe {
 
         section.perform(self.my_polynomial);
 
-        let line = GeomFillLine::new(section.nb_sections());
+        // OCCT L1026: handle(GeomFill_Line) Line = new
+        // GeomFill_Line(Section.NbSections()).
+        let line = Line::with_points(section.nb_sections() as i32);
         let nb_it = 0i32;
         let t3d = APPROXIMATION;
         let t2d = APPROXIMATION * 0.01; // Precision::PApproximation()
-        let mut app = GeomFillAppSweep::new(4, 8, t3d, t2d, nb_it, with_parameters);
+        // OCCT L1029: GeomFill_AppSweep App(4, 8, T3d, T2d, NbIt,
+        // WithParameters) — the AppBlend_AppSurf engine instantiated over
+        // the GeomFill_SweepSectionGenerator.
+        let mut app =
+            AppBlendAppSurf::new_with_parameters(4, 8, t3d, t2d, nb_it, with_parameters);
 
-        app.perform(&line, &mut section, 30);
+        // OCCT L1031: App.Perform(Line, Section, 30).
+        app.perform_nb_max_p(&line, &mut section, 30);
 
         if !app.is_done() {
             // OCCT keeps the throw commented — the literal empty body.
@@ -1195,16 +1095,14 @@ impl Pipe {
                 &mut nb_v_knots,
             );
 
-            let u_knots = app.surf_u_knots();
-            let v_knots = app.surf_v_knots();
             let mut flat_u = Vec::new();
-            for (k, m) in u_knots.iter().zip(app.surf_u_mults().iter()) {
+            for (k, m) in app.surf_u_knots().iter().zip(app.surf_u_mults().iter()) {
                 for _ in 0..*m {
                     flat_u.push(*k);
                 }
             }
             let mut flat_v = Vec::new();
-            for (k, m) in v_knots.iter().zip(app.surf_v_mults().iter()) {
+            for (k, m) in app.surf_v_knots().iter().zip(app.surf_v_mults().iter()) {
                 for _ in 0..*m {
                     flat_v.push(*k);
                 }
@@ -1214,14 +1112,13 @@ impl Pipe {
                 degree_v: app.v_degree() as usize,
                 knots_u: flat_u,
                 knots_v: flat_v,
-                control_points: app.surf_poles(),
-                weights: app.surf_weights(),
+                control_points: app.surf_poles().clone(),
+                weights: app.surf_weights().clone(),
                 is_periodic_u: false,
                 is_periodic_v: false,
             }));
-            let mut t2d = 0.0;
-            let mut my_error = 0.0;
-            app.tol_reached(&mut my_error, &mut t2d);
+            // OCCT L1096: App.TolReached(myError, t2d).
+            let (my_error, _t2d) = app.tol_reached();
             self.my_error = my_error;
             self.my_status = PipeError::PipeOk;
         }

@@ -17,11 +17,15 @@
 //!    geom/bspline_surface_ops.rs module (the TKGeomBase surface-level
 //!    bodies); they sit behind the TotalSurf null-surface exit that the
 //!    AppSurf GAP keeps open (the OCCT failure path).
-//! 2. GeomFill_SectionGenerator -> the GeomFillProfiler carrier of
-//!    brep_fill/generator.rs (AddCurve/Perform); GeomFill_Line and
-//!    GeomFill_AppSurf -> the local carriers below (the approximation
-//!    engine is not translated — IsDone() = false is the OCCT no-surface
-//!    exit; the Surf* result accessors are the never-reached branch).
+//! 2. GeomFill_SectionGenerator -> the landed
+//!    geomalgo/geomfill/section_generator.rs translation (the profiler base
+//!    qualified through `.base`); GeomFill_Line -> the landed
+//!    geomalgo/geomfill/line.rs value; GeomFill_AppSurf -> the landed
+//!    AppBlend_AppSurf engine (geomalgo/geomfill/app_blend_app_surf.rs,
+//!    instantiated over the SectionGenerator).  GAP kept: the
+//!    PerformSmoothing branch drives AppDef_Variational, which has no rcad
+//!    port yet — the engine preserves the OCCT failure path (IsDone false,
+//!    the OCCT no-surface exit of TotalSurf).
 //! 3. GeomConvert_ApproxCurve -> the local GAP carrier (HasResult() = false
 //!    keeps the EdgeToBSpline fall-through to CurveToBSplineCurve);
 //!    GeomConvert::CurveToBSplineCurve -> the base::convert carrier (the
@@ -54,7 +58,11 @@ use crate::brep_algo::tool::{
     builder_add_wire_edge, builder_make_wire, builder_set_closed, empty_copied, explorer,
     reversed, shape_is_closed, builder_update_edge_pcurve,
 };
-use crate::brep_fill::generator::{BRepFillThruSectionErrorStatus, GeomFillProfiler};
+use crate::brep_fill::generator::BRepFillThruSectionErrorStatus;
+use crate::geomalgo::approx_int::ApproxParamType as EngineApproxParamType;
+use crate::geomalgo::geomfill::app_blend_app_surf::AppBlendAppSurf;
+use crate::geomalgo::geomfill::line::Line;
+use crate::geomalgo::geomfill::section_generator::SectionGenerator;
 use crate::offset::brep_offset_api_thru_sections::{
     brep_tool_degenerated,
     make_solid, precise_upar, ApproxParametrizationType, BRepOffsetAPIThruSections,
@@ -232,122 +240,11 @@ impl GeomBSplineSurface {
     }
 }
 
-/// OCCT GeomFill_Line (TKGeomAlgo/GeomFill_Line.hxx) — the section-count
-/// carrier of the AppSurf Perform.
-pub(crate) struct GeomFillLine {
-    #[allow(dead_code)]
-    my_nb: i32, // OCCT: myNb
-}
-
-impl GeomFillLine {
-    /// OCCT GeomFill_Line(Nb).
-    pub(crate) fn new(the_nb: i32) -> Self {
-        GeomFillLine { my_nb: the_nb }
-    }
-}
-
-/// OCCT GeomFill_AppSurf (TKGeomAlgo) — the surface approximation engine of
-/// TotalSurf (architecture difference #2; GAP: no rcad translation yet —
-/// IsDone() = false carries the OCCT no-surface exit of TotalSurf; the
-/// parameter storage keeps the OCCT constructor form; the Surf* result
-/// accessors are the never-reached branch behind IsDone).
-pub(crate) struct GeomFillAppSurf {
-    my_continuity: rcad_kernel::topods::GeomAbsShape, // OCCT: myContinuity
-    #[allow(dead_code)]
-    my_par_type: ApproxParametrizationType,           // OCCT: myParType
-}
-
-impl GeomFillAppSurf {
-    /// OCCT GeomFill_AppSurf(Degmin, Degmax, Tol3d, Tol2d, NbIt).
-    pub(crate) fn new(
-        _the_degmin: i32,
-        _the_degmax: i32,
-        _the_tol3d: f64,
-        _the_tol2d: f64,
-        _the_nb_it: i32,
-    ) -> Self {
-        GeomFillAppSurf {
-            my_continuity: rcad_kernel::topods::GeomAbsShape::C0,
-            my_par_type: ApproxParametrizationType::ChordLength,
-        }
-    }
-
-    /// OCCT GeomFill_AppSurf::SetContinuity(C).
-    pub(crate) fn set_continuity(&mut self, the_c: rcad_kernel::topods::GeomAbsShape) {
-        self.my_continuity = the_c;
-    }
-
-    /// OCCT GeomFill_AppSurf::SetCriteriumWeight(W1, W2, W3).
-    pub(crate) fn set_criterium_weight(&mut self, _w1: f64, _w2: f64, _w3: f64) {
-        // The criterion weights storage (the smoothing branch).
-    }
-
-    /// OCCT GeomFill_AppSurf::SetParType(Type).
-    pub(crate) fn set_par_type(&mut self, the_type: ApproxParametrizationType) {
-        self.my_par_type = the_type;
-    }
-
-    /// OCCT GeomFill_AppSurf::PerformSmoothing(Line, Section) — GAP.
-    pub(crate) fn perform_smoothing(
-        &mut self,
-        _line: &GeomFillLine,
-        _section: &GeomFillProfiler,
-    ) {
-        // The smoothing engine is not translated; the approximator stays
-        // not-done (the OCCT no-surface exit of TotalSurf).
-    }
-
-    /// OCCT GeomFill_AppSurf::Perform(Line, Section, SpApprox) — GAP.
-    pub(crate) fn perform(&mut self, _line: &GeomFillLine, _section: &GeomFillProfiler, _sp_approx: bool) {
-        // The approximation engine is not translated; the approximator stays
-        // not-done (the OCCT no-surface exit of TotalSurf).
-    }
-
-    /// OCCT GeomFill_AppSurf::IsDone() — GAP (false).
-    pub(crate) fn is_done(&self) -> bool {
-        false
-    }
-
-    /// OCCT GeomFill_AppSurf::SurfPoles() — GAP (never reached).
-    pub(crate) fn surf_poles(&self) -> Vec<Vec<glam::DVec3>> {
-        panic!("GAP: GeomFill_AppSurf::SurfPoles (TKGeomAlgo not translated)")
-    }
-
-    /// OCCT GeomFill_AppSurf::SurfWeights() — GAP (never reached).
-    pub(crate) fn surf_weights(&self) -> Vec<Vec<f64>> {
-        panic!("GAP: GeomFill_AppSurf::SurfWeights (TKGeomAlgo not translated)")
-    }
-
-    /// OCCT GeomFill_AppSurf::SurfUKnots() — GAP (never reached).
-    pub(crate) fn surf_u_knots(&self) -> Vec<f64> {
-        panic!("GAP: GeomFill_AppSurf::SurfUKnots (TKGeomAlgo not translated)")
-    }
-
-    /// OCCT GeomFill_AppSurf::SurfVKnots() — GAP (never reached).
-    pub(crate) fn surf_v_knots(&self) -> Vec<f64> {
-        panic!("GAP: GeomFill_AppSurf::SurfVKnots (TKGeomAlgo not translated)")
-    }
-
-    /// OCCT GeomFill_AppSurf::SurfUMults() — GAP (never reached).
-    pub(crate) fn surf_u_mults(&self) -> Vec<usize> {
-        panic!("GAP: GeomFill_AppSurf::SurfUMults (TKGeomAlgo not translated)")
-    }
-
-    /// OCCT GeomFill_AppSurf::SurfVMults() — GAP (never reached).
-    pub(crate) fn surf_v_mults(&self) -> Vec<usize> {
-        panic!("GAP: GeomFill_AppSurf::SurfVMults (TKGeomAlgo not translated)")
-    }
-
-    /// OCCT GeomFill_AppSurf::UDegree() — GAP (never reached).
-    pub(crate) fn u_degree(&self) -> usize {
-        panic!("GAP: GeomFill_AppSurf::UDegree (TKGeomAlgo not translated)")
-    }
-
-    /// OCCT GeomFill_AppSurf::VDegree() — GAP (never reached).
-    pub(crate) fn v_degree(&self) -> usize {
-        panic!("GAP: GeomFill_AppSurf::VDegree (TKGeomAlgo not translated)")
-    }
-}
+// OCCT GeomFill_AppSurf (TKGeomAlgo) — the surface approximation engine of
+// TotalSurf: the AppBlend_AppSurf instantiation over
+// GeomFill_SectionGenerator (GeomFill_AppSurf.hxx L180-186), now the
+// landed engine (geomalgo/geomfill/app_blend_app_surf.rs).
+use AppBlendAppSurf as GeomFillAppSurf;
 
 /// OCCT GeomConvert_ApproxCurve (TKTopAlgo/GeomConvert_ApproxCurve) — the
 /// conic approximator of EdgeToBSpline (architecture difference #3; GAP:
@@ -762,8 +659,10 @@ impl BRepOffsetAPIThruSections {
         let mut jdeb = 1usize;
         let mut jfin = nb_sects;
 
-        // OCCT L1196: GeomFill_SectionGenerator section.
-        let mut section = GeomFillProfiler::new();
+        // OCCT L1196: GeomFill_SectionGenerator section — the landed
+        // geomfill/section_generator.rs translation (the profiler base is
+        // reached through `.base`).
+        let mut section = SectionGenerator::new();
         // OCCT L1197-1200.
         let mut surface: Option<GeomBSplineSurface> = None;
         let mut bs1: Option<BSplineCurve3> = None;
@@ -782,7 +681,7 @@ impl BRepOffsetAPIThruSections {
                 weights: vec![1.0, 1.0],
                 is_periodic: false,
             };
-            section.add_curve(&Curve3::BSpline(bs_point));
+            section.base.add_curve(&Curve3::BSpline(bs_point));
         }
 
         // OCCT L1220-1223.
@@ -795,7 +694,7 @@ impl BRepOffsetAPIThruSections {
             // OCCT L1228-1231: the looping-section case.
             if j == jfin && v_closed {
                 if let Some(bs1_c) = bs1.clone() {
-                    section.add_curve(&Curve3::BSpline(bs1_c));
+                    section.base.add_curve(&Curve3::BSpline(bs1_c));
                 }
             } else {
                 // OCCT L1234-1241: read the first edge to initialize CompBS.
@@ -827,7 +726,7 @@ impl BRepOffsetAPIThruSections {
 
                 // OCCT L1277-1280: return the final section.
                 let bs = comp_bs.bspline_curve();
-                section.add_curve(&Curve3::BSpline(bs.clone()));
+                section.base.add_curve(&Curve3::BSpline(bs.clone()));
 
                 // OCCT L1282-1286: the looping-section case.
                 if j == jdeb && v_closed {
@@ -849,13 +748,13 @@ impl BRepOffsetAPIThruSections {
                 weights: vec![1.0, 1.0],
                 is_periodic: false,
             };
-            section.add_curve(&Curve3::BSpline(bs_point));
+            section.base.add_curve(&Curve3::BSpline(bs_point));
         }
 
         // OCCT L1312-1313.
-        section.perform(rcad_kernel::precision::PCONFUSION);
+        section.base.perform(rcad_kernel::precision::PCONFUSION);
         // OCCT L1313: GeomFill_Line line = new GeomFill_Line(NbSects).
-        let line = GeomFillLine::new(nb_sects as i32);
+        let line = Line::with_points(nb_sects as i32);
 
         // OCCT L1315-1319.
         let mut nb_it = 3;
@@ -868,10 +767,24 @@ impl BRepOffsetAPIThruSections {
         let degmax = self.my_deg_max.max(degmin);
         let sp_approx = true;
 
-        // OCCT L1326-1330.
+        // OCCT L1326-1330: GeomFill_AppSurf anApprox(degmin, degmax,
+        // myPres3d, myPres3d, nbIt) — KnownParameters defaults to false.
         let mut an_approx =
-            GeomFillAppSurf::new(degmin, degmax, self.my_pres3d, self.my_pres3d, nb_it);
-        an_approx.set_continuity(self.my_continuity);
+            GeomFillAppSurf::new_with_parameters(degmin, degmax, self.my_pres3d, self.my_pres3d, nb_it, false);
+        // OCCT L1327: anApprox.SetContinuity(myContinuity); the BRepOffsetAPI
+        // continuity (topods GeomAbsShape, G-forms included) narrows to the
+        // engine math GeomAbsShape C-forms.
+        an_approx.set_continuity(match self.my_continuity {
+            rcad_kernel::topods::GeomAbsShape::C0 => rcad_kernel::math::GeomAbsShape::C0,
+            rcad_kernel::topods::GeomAbsShape::G1 | rcad_kernel::topods::GeomAbsShape::C1 => {
+                rcad_kernel::math::GeomAbsShape::C1
+            }
+            rcad_kernel::topods::GeomAbsShape::G2 | rcad_kernel::topods::GeomAbsShape::C2 => {
+                rcad_kernel::math::GeomAbsShape::C2
+            }
+            rcad_kernel::topods::GeomAbsShape::C3 => rcad_kernel::math::GeomAbsShape::C3,
+            rcad_kernel::topods::GeomAbsShape::CN => rcad_kernel::math::GeomAbsShape::CN,
+        });
 
         if self.my_use_smoothing {
             // OCCT L1333-1335.
@@ -880,24 +793,34 @@ impl BRepOffsetAPIThruSections {
                 self.my_crit_weights[1],
                 self.my_crit_weights[2],
             );
-            an_approx.perform_smoothing(&line, &section);
+            an_approx.perform_smoothing(&line, &mut section);
         } else {
             // OCCT L1337-1340.
-            an_approx.set_par_type(self.my_param_type);
-            an_approx.perform(&line, &section, sp_approx);
+            an_approx.set_par_type(match self.my_param_type {
+                ApproxParametrizationType::IsoParametric => EngineApproxParamType::IsoParametric,
+                ApproxParametrizationType::ChordLength => EngineApproxParamType::ChordLength,
+                ApproxParametrizationType::Centripetal => EngineApproxParamType::Centripetal,
+            });
+            an_approx.perform(&line, &mut section, sp_approx);
         }
 
-        // OCCT L1342-1355.
+        // OCCT L1342-1355.  The OCCT SurfUMults/SurfVMults are int arrays;
+        // the rcad BSplineSurface carrier stores usize multiplicities — the
+        // conversion is the only adaptation at this call.
         if an_approx.is_done() {
+            let u_mults: Vec<usize> =
+                an_approx.surf_u_mults().iter().map(|m| *m as usize).collect();
+            let v_mults: Vec<usize> =
+                an_approx.surf_v_mults().iter().map(|m| *m as usize).collect();
             surface = Some(GeomBSplineSurface::from_poles(
-                &an_approx.surf_poles(),
-                &an_approx.surf_weights(),
-                &an_approx.surf_u_knots(),
-                &an_approx.surf_v_knots(),
-                &an_approx.surf_u_mults(),
-                &an_approx.surf_v_mults(),
-                an_approx.u_degree(),
-                an_approx.v_degree(),
+                an_approx.surf_poles(),
+                an_approx.surf_weights(),
+                an_approx.surf_u_knots(),
+                an_approx.surf_v_knots(),
+                &u_mults,
+                &v_mults,
+                an_approx.u_degree() as usize,
+                an_approx.v_degree() as usize,
             ));
         }
 

@@ -30,8 +30,9 @@ use rcad_kernel::base::proj_lib::adaptor::{
 };
 use rcad_kernel::geom::Curve2d;
 
+use rcad_kernel::base::gcpnts::gcpnts_curve::{GCPntsCurve, GCPntsCurve3dHandle};
+
 use crate::geomalgo::gcpnts_abscissa_point::gcpnts_length_3d;
-use crate::geomalgo::gcpnts_curve::{GCPntsCurve, GCPntsCurve3dHandle};
 use crate::geomalgo::law::law_function::LawFunctionHandle;
 
 /// OCCT ctor-1 parameter `const handle<Adaptor3d_Curve>& Boundary` — the

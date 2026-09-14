@@ -97,6 +97,26 @@ pub trait ExtremaCurveTool {
     /// `Geom_BSplineCurve` knot/degree view `Extrema_GGExtPC::Perform` walks
     /// (Extrema_GGExtPC.hxx L190-192).
     fn bspline(&self) -> BSplineView;
+    /// OCCT `Extrema_CurveTool::Degree(theC)` (hxx L128) — `theC.Degree()`.
+    /// The `Adaptor3d_Curve` default (Adaptor3d_Curve.cxx L160-163) raises
+    /// Standard_NotImplemented; only the BSpline/Bezier adaptors answer it
+    /// (consumed by the GCPnts_TangentialDeflection dispatch through the
+    /// `gcpnts::gcpnts_curve_bridge` adapter).
+    fn curve_degree(&self) -> i32 {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::Degree")
+    }
+    /// OCCT `Extrema_CurveTool::IsRational(theC)` (hxx L130) —
+    /// `theC.IsRational()`; the `Adaptor3d_Curve` default
+    /// (Adaptor3d_Curve.cxx L167-170) raises Standard_NotImplemented.
+    fn is_rational(&self) -> bool {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::IsRational")
+    }
+    /// OCCT `Extrema_CurveTool::NbPoles(theC)` (hxx L132) — `theC.NbPoles()`;
+    /// the `Adaptor3d_Curve` default (Adaptor3d_Curve.cxx L174-177) raises
+    /// Standard_NotImplemented.
+    fn nb_poles(&self) -> i32 {
+        panic!("Standard_NotImplemented: Adaptor3d_Curve::NbPoles")
+    }
     /// OCCT `GCPnts_AbscissaPoint::Length(C)` (CPnts_AbscissaPoint.cxx
     /// L103-106) — the arc length of the adaptor over its whole domain.
     ///
@@ -344,6 +364,42 @@ impl ExtremaCurveTool for CurveToolHandle<'_> {
                 }
             }
             _ => panic!("Standard_NoSuchObject: Extrema_CurveTool::BSpline on a non-bspline adaptor"),
+        }
+    }
+
+    /// OCCT `Extrema_CurveTool::Degree(theC)` (hxx L128) — the
+    /// `Geom_BSplineCurve::Degree()` / `Geom_BezierCurve::Degree()` of the
+    /// wrapped kernel curve (the `GeomAdaptor_Curve` override); the
+    /// `Adaptor3d_Curve` default (Adaptor3d_Curve.cxx L160-163) otherwise.
+    fn curve_degree(&self) -> i32 {
+        match self.curve3 {
+            Some(crate::geom::Curve3::BSpline(bs)) => bs.degree as i32,
+            Some(crate::geom::Curve3::Bezier(b)) => (b.control_points.len() - 1) as i32,
+            _ => panic!("Standard_NotImplemented: Adaptor3d_Curve::Degree"),
+        }
+    }
+
+    /// OCCT `Extrema_CurveTool::IsRational(theC)` (hxx L130) — the
+    /// rationality of the wrapped kernel curve (the `GeomAdaptor_Curve`
+    /// override); the `Adaptor3d_Curve` default
+    /// (Adaptor3d_Curve.cxx L167-170) otherwise.
+    fn is_rational(&self) -> bool {
+        match self.curve3 {
+            Some(crate::geom::Curve3::BSpline(bs)) => bs.weights.iter().any(|&w| w != 1.0),
+            Some(crate::geom::Curve3::Bezier(b)) => b.weights.iter().any(|&w| w != 1.0),
+            _ => panic!("Standard_NotImplemented: Adaptor3d_Curve::IsRational"),
+        }
+    }
+
+    /// OCCT `Extrema_CurveTool::NbPoles(theC)` (hxx L132) — the
+    /// `Geom_BSplineCurve::NbPoles()` / `Geom_BezierCurve::NbPoles()` of the
+    /// wrapped kernel curve (the `GeomAdaptor_Curve` override); the
+    /// `Adaptor3d_Curve` default (Adaptor3d_Curve.cxx L174-177) otherwise.
+    fn nb_poles(&self) -> i32 {
+        match self.curve3 {
+            Some(crate::geom::Curve3::BSpline(bs)) => bs.control_points.len() as i32,
+            Some(crate::geom::Curve3::Bezier(b)) => b.control_points.len() as i32,
+            _ => panic!("Standard_NotImplemented: Adaptor3d_Curve::NbPoles"),
         }
     }
 }

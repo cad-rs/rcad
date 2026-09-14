@@ -24,6 +24,8 @@ use glam::DVec3;
 
 use crate::base::extrema::POnCurve;
 use crate::base::extrema_curve_tool::{CurveToolHandle, ExtremaCurveTool};
+use crate::base::gcpnts::gcpnts_curve_bridge::CurveToolAsGCPnts;
+use crate::base::gcpnts::gcpnts_tangential_deflection::TangentialDeflection;
 use crate::base::extrema_ext_elc::{elclib_in_period, PRECISION_INFINITE, REAL_LAST};
 use crate::base::extrema_ext_p_elc::ExtremaExtPElC;
 use crate::base::extrema_gen_ext_pc::GenExtPC;
@@ -66,14 +68,11 @@ pub struct BSplineView {
 /// — the parameters bounding the intervals of subdivision of the curve
 /// according to the curvature deflection.
 ///
-/// GAP carrier: the GCPnts_TangentialDeflection engine the OCCT body builds
-/// at cxx L83 is translated 1:1 in
-/// `rcad-algo/src/geomalgo/gcpnts_tangential_deflection.rs`, which
-/// rcad-kernel cannot reach (crate dependency direction; the geomalgo home
-/// note records the pending move into the kernel).  The prologue (cxx L44-81)
-/// is translated exactly, including both early-return paths; at cxx L83 the
-/// carrier raises Standard_NotImplemented — the OCCT flow is preserved up to
-/// the untranslated dependency.
+/// The GCPnts_TangentialDeflection engine the OCCT body builds at cxx L83 is
+/// the kernel translation `base::gcpnts::gcpnts_tangential_deflection`; the
+/// `&dyn ExtPCurveTool` facade rides onto the GCPnts adaptor interface
+/// through `base::gcpnts::gcpnts_curve_bridge` (the OCCT template is
+/// instantiated directly over the `Adaptor3d_Curve&`).
 fn extrema_curve_tool_defl_curv_intervals(the_c: &dyn ExtPCurveTool) -> Vec<f64> {
     // cxx L44-48.
     let epsd = 1.0e-3;
@@ -111,17 +110,31 @@ fn extrema_curve_tool_defl_curv_intervals(the_c: &dyn ExtPCurveTool) -> Vec<f64>
         return intervals;
     }
 
-    // cxx L80-83: aMinLen / aTol feed the GCPnts_TangentialDeflection
-    // construction — the untranslated kernel dependency (see the GAP note).
+    // cxx L80-81.
     let a_min_len = (0.00001 * l).max(CONFUSION);
     let a_tol = (0.00001 * (tl - tf)).max(PCONFUSION);
-    let _ = (a_min_len, a_tol);
-    panic!(
-        "Standard_NotImplemented: GCPnts_TangentialDeflection is not available in \
-         rcad-kernel (Extrema_CurveTool::DeflCurvIntervals L83); the 1:1 engine \
-         lives in rcad-algo/geomalgo/gcpnts_tangential_deflection.rs pending the \
-         kernel move"
+    //
+    // cxx L83: GCPnts_TangentialDeflection aPntGen(C, M_PI/6, aDefl, 2, aTol,
+    // aMinLen) — the OCCT template instantiates directly over the
+    // Adaptor3d_Curve&; the rcad kernel rides the Extrema_CurveTool facade
+    // onto the GCPnts adaptor interface (see gcpnts::gcpnts_curve_bridge).
+    let a_pnt_gen = TangentialDeflection::new(
+        &CurveToolAsGCPnts { the_c },
+        std::f64::consts::PI / 6.0,
+        a_defl,
+        2,
+        a_tol,
+        a_min_len,
     );
+    // cxx L84.
+    nbpnts = a_pnt_gen.parameters().len() as i32;
+    // cxx L85-91: Intervals = new NCollection_HArray1<double>(1, nbpnts);
+    // Intervals->SetValue(i, aPntGen.Parameter(i)).
+    let mut intervals = vec![0.0f64; nbpnts as usize];
+    for i in 1..=nbpnts {
+        intervals[(i - 1) as usize] = a_pnt_gen.parameters()[(i - 1) as usize];
+    }
+    intervals
 }
 
 /// OCCT Extrema_GGExtPC (hxx L47-654); the `Extrema_ExtPC` alias.

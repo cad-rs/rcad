@@ -65,7 +65,9 @@ impl SnglrFunc {
     /// D2 = ((D2 x D3) + (D1 x D4)) * ratio.
     pub fn eval_d2(&self, u: f64) -> (DVec3, DVec3, DVec3) {
         let (_, d1, d2, d3) = self.d3_parts(u);
-        let d4 = self.dn(u, 4);
+        // OCCT L110: aD4 = myHCurve->EvalDN(theU, 4) — the BASE curve's
+        // 4th derivative (not the SnglrFunc wrapper's own DN).
+        let d4 = self.base_dn(u, 4);
         (
             (d1.cross(d2)) * self.ratio,
             d1.cross(d3) * self.ratio,
@@ -77,8 +79,8 @@ impl SnglrFunc {
     #[allow(dead_code)]
     pub fn eval_d3(&self, u: f64) -> (DVec3, DVec3, DVec3, DVec3) {
         let (_, d1, d2, d3) = self.d3_parts(u);
-        let d4 = self.dn(u, 4);
-        let d5 = self.dn(u, 5);
+        let d4 = self.base_dn(u, 4);
+        let d5 = self.base_dn(u, 5);
         (
             (d1.cross(d2)) * self.ratio,
             d1.cross(d3) * self.ratio,
@@ -95,6 +97,18 @@ impl SnglrFunc {
             3 => self.eval_d3(u).3,
             _ => panic!(
                 "Exception: Derivative order is greater than 3. Cannot compute of derivative."
+            ),
+        }
+    }
+
+    /// OCCT myHCurve->EvalDN(theU, N) — the base curve's DN evaluation
+    /// (the BSpline homogeneous DN kernel; the analytic bases stay
+    /// anchor-out-of-scope exactly as in `d3_parts`).
+    fn base_dn(&self, u: f64, n: usize) -> DVec3 {
+        match &self.my_hcurve {
+            Curve3::BSpline(bs) => bs.dn(u, n),
+            _ => unimplemented!(
+                "GeomFill_SnglrFunc base DN for non-BSpline bases is anchor-out-of-scope"
             ),
         }
     }

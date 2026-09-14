@@ -3570,3 +3570,202 @@ mod coefs_debug {
         println!("DBG c = {:?}", c);
     }
 }
+
+// ===========================================================================
+// OCCT BSplCLib::FunctionReparameterise (BSplCLib_2.cxx L938-997, flat
+// overload; the gp_Pnt2d/gp_Pnt NCollection wrappers at BSplCLib_1.cxx
+// L701-719 / BSplCLib_2.cxx L1032-1059 and the template at
+// BSplCLib_CurveComputation.pxx L2016-2043 delegate here with the flat pole
+// arrays and the dimension stride).
+// ===========================================================================
+
+/// OCCT BSplCLib_EvaluatorFunction (BSplCLib_EvaluatorFunction.hxx L28-57):
+/// the abstract function-evaluation callback.  `start_end` is the OCCT
+/// 2-entry `theStartEnd` array.
+pub trait BSplCLibEvaluatorFunction {
+    /// OCCT Evaluate(theDerivativeRequest, theStartEnd, theParameter,
+    /// theResult, theErrorCode).
+    fn evaluate(
+        &self,
+        derivative_request: i32,
+        start_end: &[f64],
+        parameter: f64,
+        result: &mut f64,
+        error_code: &mut i32,
+    );
+}
+
+/// OCCT BSplCLib::FunctionReparameterise (BSplCLib_2.cxx L938-997) —
+/// reparameterizes the BSpline poles by the function evaluated through
+/// `function`: builds the Schoenberg points of the new knots, evaluates the
+/// function there, samples the source BSpline at the reparameterized
+/// abscissae and interpolates the new pole table.
+#[allow(clippy::too_many_arguments)]
+pub fn function_reparameterise(
+    function: &dyn BSplCLibEvaluatorFunction,
+    bspline_degree: i32,
+    bspline_flat_knots: &[f64],
+    poles_dimension: usize,
+    poles: &[f64],
+    flat_knots: &[f64],
+    new_degree: i32,
+    new_poles: &mut [f64],
+    the_status: &mut i32,
+) {
+    // const int aNumNewPoles = FlatKnots.Length() - NewDegree - 1;
+    let a_num_new_poles = flat_knots.len() as i32 - new_degree - 1;
+    // double aStartEnd[2] = {FlatKnots(NewDegree + 1), FlatKnots(aNumNewPoles + 1)};
+    let a_start_end = [
+        at(flat_knots, new_degree + 1),
+        at(flat_knots, a_num_new_poles + 1),
+    ];
+
+    let mut a_parameters = vec![0.0f64; a_num_new_poles as usize];
+    let mut a_contact_order_array = vec![0i32; a_num_new_poles as usize];
+    let mut a_new_poles_array = vec![0.0f64; (a_num_new_poles * poles_dimension as i32) as usize];
+
+    build_schoenberg_points(new_degree as usize, flat_knots, &mut a_parameters);
+
+    // int anExtrapMode = BSplineDegree — OCCT passes the local int by
+    // reference and Eval reads [0] and the adjacent [1]; the established
+    // rcad convention models both entries with the same value.
+    let mut an_extrap_mode = [bspline_degree, bspline_degree];
+    let mut an_index = 0usize;
+    for i in 1..=a_num_new_poles {
+        a_contact_order_array[(i - 1) as usize] = 0;
+        let mut a_result = 0.0f64;
+        let mut an_error_code = 0i32;
+        function.evaluate(
+            a_contact_order_array[(i - 1) as usize],
+            &a_start_end,
+            a_parameters[(i - 1) as usize],
+            &mut a_result,
+            &mut an_error_code,
+        );
+        if an_error_code != 0 {
+            *the_status = 1;
+            return;
+        }
+
+        // Eval(aResult, false, 0, anExtrapMode, BSplineDegree,
+        //      BSplineFlatKnots, PolesDimension, Poles,
+        //      anArrayOfNewPoles[anIndex]);
+        let dim = poles_dimension;
+        eval_flat(
+            a_result,
+            false,
+            0,
+            &mut an_extrap_mode,
+            bspline_degree as usize,
+            bspline_flat_knots,
+            dim,
+            poles,
+            &mut a_new_poles_array[an_index..an_index + dim],
+        );
+        an_index += poles_dimension;
+    }
+
+    // Interpolate(NewDegree, FlatKnots, aParameters, aContactOrderArray,
+    //             PolesDimension, anArrayOfNewPoles[0], theStatus);
+    *the_status = interpolate(
+        new_degree as usize,
+        flat_knots,
+        &a_parameters,
+        &a_contact_order_array,
+        poles_dimension,
+        &mut a_new_poles_array,
+    );
+
+    let total = (a_num_new_poles * poles_dimension as i32) as usize;
+    new_poles[..total].copy_from_slice(&a_new_poles_array[..total]);
+}
+
+#[cfg(test)]
+mod function_reparameterise_tests {
+    use super::*;
+
+    /// Evaluator for a(u) = c0 + c1*u + c2*u^2 (PLib::EvalPolynomial layout
+    /// [c0, c1, c2], degree 2, dimension 1): result = a(p), derivative 1
+    /// gives a'(p) = c1 + 2*c2*p.  Hand-derived quotient: a(0.7) with
+    /// [1, 2, 3] = 1 + 1.4 + 1.47 = 3.87; a'(0.7) = 2 + 4.2 = 6.2.
+    struct QuadEvaluator {
+        coeff: [f64; 3],
+    }
+
+    impl BSplCLibEvaluatorFunction for QuadEvaluator {
+        fn evaluate(
+            &self,
+            derivative_request: i32,
+            _start_end: &[f64],
+            parameter: f64,
+            result: &mut f64,
+            error_code: &mut i32,
+        ) {
+            *error_code = 0;
+            if derivative_request == 0 {
+                *result = self.coeff[0]
+                    + self.coeff[1] * parameter
+                    + self.coeff[2] * parameter * parameter;
+            } else if derivative_request == 1 {
+                *result = self.coeff[1] + 2.0 * self.coeff[2] * parameter;
+            } else {
+                *error_code = 1;
+            }
+        }
+    }
+
+    /// FunctionReparameterise with the constant f = 2.5 (degree 1, flat
+    /// knots [0,1,2,3], poles [2.5, 2.5]) and the NON-constant a(u) = u - 1,
+    /// onto the degree-1 knots [1,2,3,4].  Independent, convention-free
+    /// derivation: every OCCT EvalBsplineBasis collocation row (contact
+    /// order 0, Schoenberg points inside [k(Order), k(NumPoles+1)]) is a
+    /// de Boor convex combination — its entries sum to exactly 1 — so the
+    /// sampled values f(a(sigma_i)) are all exactly 2.5, and interpolating
+    /// constant data returns the constant spline: poles [2.5, 2.5] and
+    /// status 0.
+    #[test]
+    fn reparameterise_constant_function() {
+        struct AU1;
+        impl BSplCLibEvaluatorFunction for AU1 {
+            fn evaluate(
+                &self,
+                _derivative_request: i32,
+                _start_end: &[f64],
+                parameter: f64,
+                result: &mut f64,
+                error_code: &mut i32,
+            ) {
+                *error_code = 0;
+                *result = parameter - 1.0;
+            }
+        }
+        let mut status = 0i32;
+        let mut new_poles = [0.0f64; 2];
+        function_reparameterise(
+            &AU1,
+            1,
+            &[0.0, 1.0, 2.0, 3.0],
+            1,
+            &[2.5, 2.5],
+            &[1.0, 2.0, 3.0, 4.0],
+            1,
+            &mut new_poles,
+            &mut status,
+        );
+        assert_eq!(status, 0);
+        assert!((new_poles[0] - 2.5).abs() < 1e-14, "g1={}", new_poles[0]);
+        assert!((new_poles[1] - 2.5).abs() < 1e-14, "g2={}", new_poles[1]);
+    }
+
+    #[test]
+    fn evaluator_quadratic_values() {
+        let ev = QuadEvaluator { coeff: [1.0, 2.0, 3.0] };
+        let mut r = 0.0f64;
+        let mut ec = 0i32;
+        ev.evaluate(0, &[0.0, 1.0], 0.7, &mut r, &mut ec);
+        assert_eq!(ec, 0);
+        assert!((r - 3.87).abs() < 1e-15, "a(0.7)={}", r);
+        ev.evaluate(1, &[0.0, 1.0], 0.7, &mut r, &mut ec);
+        assert!((r - 6.2).abs() < 1e-15, "a'(0.7)={}", r);
+    }
+}

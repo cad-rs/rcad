@@ -17,6 +17,7 @@ fn domain_is_unbounded(dom: &[f64; 2]) -> bool {
 
 pub mod bspline_curve;
 pub mod bspline_curve_to_bezier_curve;
+pub mod c1_concat;
 pub mod comp_curve_to_bspline_2d;
 
 pub use bspline_curve::Geom2dBSplineCurve;

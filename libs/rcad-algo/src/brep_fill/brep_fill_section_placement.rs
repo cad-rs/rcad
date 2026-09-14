@@ -12,9 +12,13 @@
 //!   owning `BRep` pool is passed as the leading `brep` argument.
 //! - `TopExp_Explorer(S, TopAbs_EDGE / TopAbs_VERTEX)` maps to
 //!   `feat::brep_feat_builder::explorer`.
-//! - `BRepAdaptor_CompCurve` (TKBRep adaptor) is a GAP carrier
-//!   ([`BRepAdaptorCompCurve`]) — the comp-curve adaptor is not translated;
-//!   the construction site (cxx L168) keeps the OCCT failure path.
+//! - `BRepAdaptor_CompCurve` (TKBRep adaptor) is the real
+//!   `topalgo::brep_top_adaptor::BRepAdaptorCompCurve` translation
+//!   (re-exported below as [`BRepAdaptorCompCurve`]); the construction site
+//!   (cxx L167) builds it over `myLaw->Wire()`.  The remaining bridge is
+//!   the GeomFill feed: `GeomFill_SectionPlacement::Perform` consumes the
+//!   `handle(Adaptor3d_Curve)` in OCCT while the rcad Perform port accepts
+//!   only `Curve3` — see the adaptor's `comp_curve` note.
 //! - `GeomConvert_CompCurveToBSplineCurve` reuses the offset-package carrier
 //!   (offset::brep_offset_inter2d::GeomConvertCompCurveToBSplineCurve).
 //! - The GeomFill engine is the batch-2
@@ -370,40 +374,12 @@ impl BRepFillSectionPlacement {
 }
 
 // ---------------------------------------------------------------------------
-// GAP carrier
+// BRepAdaptor_CompCurve — the real TKBRep adaptor translation
 // ---------------------------------------------------------------------------
 
-/// GAP carrier: OCCT BRepAdaptor_CompCurve (TKBRep/BRepAdaptor,
-/// BRepAdaptor_CompCurve.cxx) — the comp-curve adaptor over a wire is not
-/// translated (plan D3); the construction site
-/// (BRepFill_SectionPlacement.cxx L168) keeps the OCCT failure path.
-pub struct BRepAdaptorCompCurve;
-
-impl BRepAdaptorCompCurve {
-    /// OCCT new BRepAdaptor_CompCurve(W).
-    pub fn new(_brep: &BRep, _w: &Shape) -> Self {
-        panic!(
-            "GAP: BRepAdaptor_CompCurve (TKBRep) is not translated — \
-             BRepFill_SectionPlacement::Perform (BRepFill_SectionPlacement.cxx L168)"
-        )
-    }
-
-    /// The comp-curve as the rcad Curve3 view consumed by
-    /// GeomFill_SectionPlacement::Perform(Path, Tol).
-    pub fn comp_curve(&self) -> Curve3 {
-        panic!(
-            "GAP: BRepAdaptor_CompCurve (TKBRep) is not translated — \
-             BRepFill_SectionPlacement::Perform (BRepFill_SectionPlacement.cxx L168)"
-        )
-    }
-
-    /// OCCT BRepAdaptor_CompCurve::D1(U, P, V) — the point/derivative form
-    /// consumed by BRepFill_PipeShell::Set(AuxiliarySpine, ...)
-    /// (BRepFill_PipeShell.cxx L392-393).
-    pub fn d1(&self, _u: f64, _p: &mut DVec3, _v: &mut DVec3) {
-        panic!(
-            "GAP: BRepAdaptor_CompCurve (TKBRep) is not translated — \
-             BRepFill_PipeShell::Set (BRepFill_PipeShell.cxx L392)"
-        )
-    }
-}
+/// OCCT BRepAdaptor_CompCurve (TKBRep/BRepAdaptor, BRepAdaptor_CompCurve.hxx
+/// L56-186 + .cxx L39-597) — the Adaptor3d_Curve over the law wire.  The
+/// 1:1 translation lives in topalgo::brep_top_adaptor (the rcad home of the
+/// BRep adaptor re-hosts); this module keeps the historical re-export path
+/// alive for the BRepFill_PipeShell consumers.
+pub use crate::topalgo::brep_top_adaptor::brep_adaptor_comp_curve::BRepAdaptorCompCurve;

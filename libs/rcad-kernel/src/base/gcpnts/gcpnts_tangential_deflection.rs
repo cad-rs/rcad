@@ -20,16 +20,15 @@
 //! Vecs through the `-1` offset, exactly as printed in the OCCT source.
 //!
 //! Home note: OCCT GCPnts lives in ModelingData/TKGeomBase and the rcad
-//! kernel hosts the GCPnts package (rcad-kernel/src/base/gcpnts,
-//! rcad-kernel/src/math/gcpnts); the kernel tree is outside this batch's
-//! exclusive file domain, so the adaptor-based GCPnts translations land in
-//! geomalgo pending the move (see the interface-change report).
+//! kernel hosts the GCPnts package; this translation sits at its home
+//! `rcad-kernel/src/base/gcpnts` (moved out of rcad-algo/geomalgo, whose only
+//! kernel caller `Extrema_CurveTool::DeflCurvIntervals` could not reach it).
 
 use glam::DVec3;
 
-use rcad_kernel::core::precision::{ANGULAR, CONFUSION};
-use rcad_kernel::math::opt::{pso_minimize, BrentMinimum};
-use rcad_kernel::math::root::FunctionValue;
+use crate::core::precision::{ANGULAR, CONFUSION};
+use crate::math::opt::{pso_minimize, BrentMinimum};
+use crate::math::root::FunctionValue;
 
 use super::gcpnts_curve::GCPntsCurve;
 
@@ -371,7 +370,7 @@ impl TangentialDeflection {
         the_utol: f64,
         the_min_len: f64,
     ) {
-        use rcad_kernel::base::proj_lib::CurveType;
+        use crate::base::proj_lib::CurveType;
         if the_curvature_deflection < CONFUSION || the_angular_deflection < ANGULAR {
             panic!("GCPnts_TangentialDeflection::Initialize - Zero Deflection");
         }
@@ -528,7 +527,7 @@ impl TangentialDeflection {
                 } else {
                     3
                 };
-                use rcad_kernel::base::proj_lib::CurveType;
+                use crate::base::proj_lib::CurveType;
                 match the_c.get_type() {
                     CurveType::BSpline => {
                         // NbPoints = std::max(BS->Degree() + 1, NbPoints).

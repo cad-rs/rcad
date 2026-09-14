@@ -20,12 +20,12 @@
 
 use glam::DVec3;
 
-use rcad_kernel::base::proj_lib::adaptor::Adaptor3dCurve;
-use rcad_kernel::base::proj_lib::adaptor::CurveHandle;
-use rcad_kernel::base::proj_lib::adaptor::CurveOnSurface;
-use rcad_kernel::base::proj_lib::CurveType;
-use rcad_kernel::geom::Curve2d;
-use rcad_kernel::Curve2dEval;
+use crate::base::proj_lib::adaptor::Adaptor3dCurve;
+use crate::base::proj_lib::adaptor::CurveHandle;
+use crate::base::proj_lib::adaptor::CurveOnSurface;
+use crate::base::proj_lib::CurveType;
+use crate::geom::Curve2d;
+use crate::Curve2dEval;
 
 /// OCCT GCPnts/GCPnts_TangentialDeflection template interface over
 /// `Adaptor3d_Curve` / `Adaptor2d_Curve2d` (with the L46-67 2D shims).
@@ -206,11 +206,11 @@ impl GCPntsCurve for CurveOnSurface {
     }
 
     fn nb_intervals_cn(&self) -> usize {
-        Adaptor3dCurve::nb_intervals(self, rcad_kernel::math::GeomAbsShape::CN)
+        Adaptor3dCurve::nb_intervals(self, crate::math::GeomAbsShape::CN)
     }
 
     fn intervals_cn(&self) -> Vec<f64> {
-        Adaptor3dCurve::intervals(self, rcad_kernel::math::GeomAbsShape::CN)
+        Adaptor3dCurve::intervals(self, crate::math::GeomAbsShape::CN)
     }
 
     fn circle_radius(&self) -> f64 {
@@ -268,11 +268,11 @@ impl GCPntsCurve for GCPntsCurve3dHandle {
     }
 
     fn nb_intervals_cn(&self) -> usize {
-        self.0.nb_intervals(rcad_kernel::math::GeomAbsShape::CN)
+        self.0.nb_intervals(crate::math::GeomAbsShape::CN)
     }
 
     fn intervals_cn(&self) -> Vec<f64> {
-        self.0.intervals(rcad_kernel::math::GeomAbsShape::CN)
+        self.0.intervals(crate::math::GeomAbsShape::CN)
     }
 
     fn circle_radius(&self) -> f64 {
@@ -328,12 +328,12 @@ impl GCPntsCurve for dyn Adaptor3dCurve {
 
     /// OCCT NbIntervals(GeomAbs_CN).
     fn nb_intervals_cn(&self) -> usize {
-        Adaptor3dCurve::nb_intervals(self, rcad_kernel::math::GeomAbsShape::CN)
+        Adaptor3dCurve::nb_intervals(self, crate::math::GeomAbsShape::CN)
     }
 
     /// OCCT Intervals(T, GeomAbs_CN).
     fn intervals_cn(&self) -> Vec<f64> {
-        Adaptor3dCurve::intervals(self, rcad_kernel::math::GeomAbsShape::CN)
+        Adaptor3dCurve::intervals(self, crate::math::GeomAbsShape::CN)
     }
 
     /// OCCT Circle().Radius() — raises NoSuchObject for the non-circle type

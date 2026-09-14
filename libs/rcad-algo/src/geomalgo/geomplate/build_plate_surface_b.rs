@@ -23,9 +23,10 @@ use rcad_kernel::geom::{Curve2d, Surface3, SurfaceEval};
 use rcad_kernel::Curve2dEval;
 use rcad_kernel::math::GeomAbsShape;
 
+use rcad_kernel::base::gcpnts::gcpnts_curve::{GCPntsCurve, GCPntsCurve2d};
+
 use crate::geomalgo::approx_curve_on_surface::ApproxCurveOnSurface;
 use crate::geomalgo::gcpnts_abscissa_point::gcpnts_length_2d_range;
-use crate::geomalgo::gcpnts_curve::{GCPntsCurve, GCPntsCurve2d};
 use crate::geomalgo::geom2d_int::{Curve2dAdaptor, GInter};
 use crate::geomalgo::law::law_function::LawFunction;
 use crate::geomalgo::law::law_interpol::LawInterpol;

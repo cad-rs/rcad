@@ -12,6 +12,7 @@
 //! sweep / Gordon.
 
 pub mod approx_curvlin_func;
+pub mod app_blend_app_surf;
 pub mod approx_sweep_function;
 pub mod bspline_curves;
 pub mod circular_blend_func;

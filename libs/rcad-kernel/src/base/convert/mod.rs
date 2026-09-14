@@ -45,6 +45,12 @@ pub use comp_curve_to_bspline_3d::{
     curve_to_bspline_curve_3d, GeomConvertCompCurveToBSplineCurve,
 };
 
+pub mod convert_conic_to_bspline;
+pub use convert_conic_to_bspline::{
+    convert_ellipse_arc_to_bspline, convert_ellipse_to_bspline_periodic,
+    convert_hyperbola_to_bspline, convert_parabola_to_bspline,
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Curve conversions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1657,7 +1663,7 @@ fn algorithmic_cos_and_sin(
 /// (Convert_ConicToBSplineCurve.cxx L155-620).  The Polynomial branch is
 /// staged (not reachable from the blend consumers).
 #[allow(clippy::too_many_arguments)]
-fn build_cos_and_sin(
+pub(crate) fn build_cos_and_sin(
     parameterisation: ConvertParameterisation,
     u_first: f64,
     u_last: f64,
@@ -1948,6 +1954,85 @@ pub fn convert_circle_arc_to_bspline(
     }
 }
 
+/// OCCT GeomConvert.cxx L56-83 — BSplineCurveBuilder(TheConic, Convert):
+/// the 2d poles lifted to (x, y, 0), the Geom_BSplineCurve built from
+/// (poles, weights, knots, mults, degree, periodic) and placed by
+/// T.SetTransformation(TheConic->Position(), gp::XOY()).  For the rcad
+/// conic carrier the position frame is right-handed with the implicit
+/// YDirection (y = normal x x), so the placement is
+/// Loc + x*XDir + y*YDir (the trimmed-circle branch precedent above).
+fn bspline_curve_builder_3d(
+    loc: DVec3,
+    x_dir: DVec3,
+    y_dir: DVec3,
+    conv: &ConvertConicToBspline,
+) -> BSplineCurve3 {
+    let control_points = conv
+        .poles_2d
+        .iter()
+        .map(|p| loc + p.x * x_dir + p.y * y_dir)
+        .collect();
+    BSplineCurve3 {
+        degree: conv.degree as usize,
+        knots: BSplineCurve3::from_knots_mults(
+            conv.degree as usize,
+            conv.knots.clone(),
+            conv.mults.clone(),
+            vec![DVec3::ZERO; conv.poles_2d.len()],
+        )
+        .knots,
+        control_points,
+        weights: conv.weights.clone(),
+        is_periodic: conv.is_periodic,
+    }
+}
+
+/// OCCT GeomConvert.cxx L246-282 — the trimmed ellipse branch.  The
+/// canonical ellipse arc is converted by `Convert_EllipseToBSplineCurve`
+/// (`convert_ellipse_arc_to_bspline`) and placed by BSplineCurveBuilder;
+/// the RationalC1 over-length split (L262-281) joins the two halves through
+/// the 3D concatenator itself.
+fn ellipse_arc_to_bspline_3d(
+    the_conic: &crate::geom::Ellipse3,
+    u1: f64,
+    u2: f64,
+    parameterisation: ConvertParameterisation,
+) -> BSplineCurve3 {
+    let y_dir = the_conic.normal.cross(the_conic.major_dir).normalize_or_zero();
+    let build = |a: f64, b: f64| -> BSplineCurve3 {
+        let conv = convert_ellipse_arc_to_bspline(
+            the_conic.major_radius,
+            the_conic.minor_radius,
+            a,
+            b,
+            parameterisation,
+        );
+        bspline_curve_builder_3d(the_conic.center, the_conic.major_dir, y_dir, &conv)
+    };
+    if parameterisation != ConvertParameterisation::RationalC1 {
+        // OCCT L250-254.
+        build(u1, u2)
+    } else if u2 - u1 < 6.0 {
+        // OCCT L257-261.
+        build(u1, u2)
+    } else {
+        // OCCT L262-281: split the ellipse to avoid numerical overflow when
+        // U2 - U1 =~ 2*PI.
+        let umed = (u1 + u2) * 0.5;
+        let the_curve1 = build(u1, umed);
+        let the_curve2 = build(umed, u2);
+
+        let mut cctbspl = GeomConvertCompCurveToBSplineCurve::with_basis_curve(
+            &Curve3::BSpline(the_curve1),
+            parameterisation,
+        );
+        cctbspl.add_after(&Curve3::BSpline(the_curve2), crate::core::precision::PCONFUSION, true);
+        cctbspl
+            .bspline_curve()
+            .expect("GeomConvert_CompCurveToBSplineCurve result after Add")
+    }
+}
+
 /// OCCT GeomConvert::CurveToBSplineCurve(C, Parameterisation)
 /// (GeomConvert.cxx L163-380) restricted to the branches reachable from the
 /// blend pipeline (trimmed line and circle); the ellipse, hyperbola,
@@ -2009,17 +2094,67 @@ pub fn geom_convert_curve_to_bspline_curve(
                         is_periodic: conv.is_periodic,
                     }
                 }
+                crate::geom::Curve3::Ellipse(the_conic) => {
+                    // OCCT L246-282: gp_Elips2d E2d(gp::OX2d(),
+                    // MajorRadius, MinorRadius) + the RationalC1 split.
+                    ellipse_arc_to_bspline_3d(the_conic, u1, u2, parameterisation)
+                }
+                crate::geom::Curve3::Hyperbola(the_conic) => {
+                    // OCCT L284-290: gp_Hypr2d H2d(gp::OX2d(), MajorRadius,
+                    // MinorRadius); Convert(H2d, U1, U2) + BSplineCurveBuilder.
+                    let conv =
+                        convert_hyperbola_to_bspline(the_conic.semi_major, the_conic.semi_minor, u1, u2);
+                    bspline_curve_builder_3d(
+                        the_conic.center,
+                        the_conic.major_dir,
+                        the_conic.normal.cross(the_conic.major_dir).normalize_or_zero(),
+                        &conv,
+                    )
+                }
+                crate::geom::Curve3::Parabola(the_conic) => {
+                    // OCCT L292-298: gp_Parab2d Prb2d(gp::OX2d(), Focal);
+                    // the rcad focal_param is Prb.Parameter().
+                    let conv = convert_parabola_to_bspline(the_conic.focal_param, u1, u2);
+                    bspline_curve_builder_3d(
+                        the_conic.vertex,
+                        the_conic.axis_dir,
+                        the_conic.normal.cross(the_conic.axis_dir).normalize_or_zero(),
+                        &conv,
+                    )
+                }
                 _ => {
                     panic!(
-                        "Staged: GeomConvert::CurveToBSplineCurve ellipse/hyperbola/parabola/bezier/bspline/offset branches (GeomConvert.cxx L283-380)"
+                        "Staged: GeomConvert::CurveToBSplineCurve trimmed bezier/offset branches (GeomConvert.cxx L300-357)"
                     );
                 }
             }
         }
         _ => {
-            panic!(
-                "Staged: GeomConvert::CurveToBSplineCurve non-trimmed input (GeomConvert.cxx L382+)"
-            );
+            match curve {
+                // OCCT L363-385: the full ellipse — periodic conversion,
+                // then TheCurve->SetPeriodic() (L383, "for polynomial and
+                // quasi angular").
+                crate::geom::Curve3::Ellipse(the_conic) => {
+                    let conv = convert_ellipse_to_bspline_periodic(
+                        the_conic.major_radius,
+                        the_conic.minor_radius,
+                        parameterisation,
+                    );
+                    let mut the_curve = bspline_curve_builder_3d(
+                        the_conic.center,
+                        the_conic.major_dir,
+                        the_conic.normal.cross(the_conic.major_dir).normalize_or_zero(),
+                        &conv,
+                    );
+                    convert_conic_to_bspline::bspline3_set_periodic(&mut the_curve);
+                    the_curve
+                }
+                _ => {
+                    panic!(
+                        "Staged: GeomConvert::CurveToBSplineCurve full circle/bezier/bspline/offset branches (GeomConvert.cxx L388+)"
+                    );
+                }
+            }
         }
     }
 }

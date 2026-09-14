@@ -976,3 +976,212 @@ fn unflatten_poles(flat: &[f64], dim: usize) -> (Vec<DVec2>, Vec<f64>) {
     }
 }
 
+
+// ===========================================================================
+// OCCT Geom2d_BSplineCurve evaluators and SetPeriodic (this batch's named
+// append).  The kernels live in crate::math::hermit::bspl_eval_kernels —
+// see that module for the hosting rationale.
+// ===========================================================================
+
+impl Geom2dBSplineCurve {
+    /// OCCT Geom2d_BSplineCurve::EvalD0 (Geom2d_BSplineCurve_1.cxx L175-195).
+    /// The OCCT 8.0 deferred-evaluation probe
+    /// (Geom2dEval_RepUtils::TryEvalCurveD0(myEvalRep, ...), L177-181) is
+    /// omitted: the kernel struct carries no myEvalRep member (architecture
+    /// note in the module docs), so the BSpline path always runs.
+    pub fn eval_d0(&self, u: f64) -> DVec2 {
+        let mut p = DVec2::ZERO;
+        let mut a_span_index = 0i32;
+        let mut a_new_u = u;
+        self.periodic_normalization(&mut a_new_u);
+        crate::math::hermit::bspl_eval_kernels::locate_parameter_span(
+            self.my_deg,
+            &self.my_knots,
+            &self.my_mults,
+            u,
+            self.my_periodic,
+            &mut a_span_index,
+            &mut a_new_u,
+        );
+        if a_new_u < at_knot(&self.my_knots, a_span_index) {
+            a_span_index -= 1;
+        }
+
+        crate::math::hermit::bspl_eval_kernels::bspl_clib_d0_point2d(
+            a_new_u,
+            a_span_index,
+            self.my_deg,
+            self.my_periodic,
+            &self.my_poles,
+            Some(&self.my_weights),
+            &self.my_knots,
+            &self.my_mults,
+            &mut p,
+        );
+        p
+    }
+
+    /// OCCT Geom2d_BSplineCurve::EvalD1 (Geom2d_BSplineCurve_1.cxx L199-228)
+    /// — returns (Point, D1); the OCCT ResD1 aggregate.
+    pub fn eval_d1(&self, u: f64) -> (DVec2, DVec2) {
+        let mut a_result = (DVec2::ZERO, DVec2::ZERO);
+        let mut a_span_index = 0i32;
+        let mut a_new_u = u;
+        self.periodic_normalization(&mut a_new_u);
+        crate::math::hermit::bspl_eval_kernels::locate_parameter_span(
+            self.my_deg,
+            &self.my_knots,
+            &self.my_mults,
+            u,
+            self.my_periodic,
+            &mut a_span_index,
+            &mut a_new_u,
+        );
+        if a_new_u < at_knot(&self.my_knots, a_span_index) {
+            a_span_index -= 1;
+        }
+
+        crate::math::hermit::bspl_eval_kernels::bspl_clib_d1_point2d(
+            a_new_u,
+            a_span_index,
+            self.my_deg,
+            self.my_periodic,
+            &self.my_poles,
+            Some(&self.my_weights),
+            &self.my_knots,
+            &self.my_mults,
+            &mut a_result.0,
+            &mut a_result.1,
+        );
+        a_result
+    }
+
+    /// OCCT Geom2d_BSplineCurve::SetPeriodic (Geom2d_BSplineCurve.cxx
+    /// L948-985).  The myMaxDerivInvOk reset (L983) is omitted: the kernel
+    /// struct carries no resolution cache.
+    pub fn set_periodic(&mut self) {
+        let first = self.first_uknot_index();
+        let last = self.last_uknot_index();
+
+        let mut cknots = vec![0.0f64; (last - first + 1) as usize];
+        for k in first..=last {
+            cknots[(k - first) as usize] = at_knot(&self.my_knots, k);
+        }
+        self.my_knots = cknots;
+
+        let mut cmults = vec![0i32; (last - first + 1) as usize];
+        for k in first..=last {
+            cmults[(k - first) as usize] = self.my_mults[(k - 1) as usize];
+        }
+        let upper = cmults.len() as i32;
+        // cmults(1) = cmults(Upper) = min(myDeg, max(cmults(1), cmults(Upper))).
+        let clamped = (self.my_deg as i32).min(cmults[0].max(cmults[(upper - 1) as usize]));
+        cmults[0] = clamped;
+        cmults[(upper - 1) as usize] = clamped;
+        self.my_mults = cmults;
+
+        // compute new number of poles;
+        let nbp = crate::math::bspl_lib::nb_poles(self.my_deg, true, &self.my_mults);
+
+        self.my_poles.truncate(nbp);
+        if self.my_rational {
+            self.my_weights.truncate(nbp);
+        } else {
+            self.my_weights = unit_weights(nbp);
+        }
+
+        self.my_periodic = true;
+
+        self.update_knots();
+    }
+}
+
+#[cfg(test)]
+mod eval_tests {
+    use super::*;
+
+    /// Hand-derived evaluations of the cubic non-rational Bezier
+    /// (0,0)-(1,1)-(2,0)-(3,1): Bernstein at u=1/2 gives
+    /// P(1/2) = (1/8)P0 + (3/8)P1 + (3/8)P2 + (1/8)P3 = (3/2, 1/2), and
+    /// P'(u) = 3*sum (P_{i+1}-P_i) B_i^2(u) gives P'(1/2) = 3*[1/4, 1/2,
+    /// 1/4] weighted x-differences = (3, 0).
+    #[test]
+    fn eval_d0_d1_cubic_bezier() {
+        let bs = Geom2dBSplineCurve::new(
+            vec![
+                DVec2::new(0.0, 0.0),
+                DVec2::new(1.0, 1.0),
+                DVec2::new(2.0, 0.0),
+                DVec2::new(3.0, 1.0),
+            ],
+            vec![0.0, 1.0],
+            vec![4, 4],
+            3,
+            false,
+        );
+        let p = bs.eval_d0(0.5);
+        assert!((p.x - 1.5).abs() < 1e-14 && (p.y - 0.5).abs() < 1e-14, "p={:?}", p);
+        let (p, v) = bs.eval_d1(0.5);
+        assert!((p.x - 1.5).abs() < 1e-14 && (p.y - 0.5).abs() < 1e-14, "p={:?}", p);
+        assert!((v.x - 3.0).abs() < 1e-13 && v.y.abs() < 1e-13, "v={:?}", v);
+    }
+
+    /// Rational evaluation, hand-derived from the homogeneous quotient with
+    /// weights [1, 2, 3, 4] and poles (0,0), (1,0), (0,1), (0,0):
+    /// at u=1/2 the Bernstein values are [1/8, 3/8, 3/8, 1/8], so
+    /// w = 1/8 + 6/8 + 9/8 + 4/8 = 5/2, num_x = 2*3/8 = 3/4,
+    /// num_y = 3*3/8 = 9/8 and P = (3/10, 9/20).
+    #[test]
+    fn eval_d0_rational_bezier() {
+        let bs = Geom2dBSplineCurve::new_rational(
+            vec![
+                DVec2::new(0.0, 0.0),
+                DVec2::new(1.0, 0.0),
+                DVec2::new(0.0, 1.0),
+                DVec2::new(0.0, 0.0),
+            ],
+            vec![1.0, 2.0, 3.0, 4.0],
+            vec![0.0, 1.0],
+            vec![4, 4],
+            3,
+            false,
+        );
+        let p = bs.eval_d0(0.5);
+        assert!((p.x - 0.3).abs() < 1e-14, "x={}", p.x);
+        assert!((p.y - 0.45).abs() < 1e-14, "y={}", p.y);
+    }
+
+    /// SetPeriodic of the clamped cubic with knots [0,1,2] x mults [4,1,4]
+    /// (5 poles), hand-derived from the OCCT body: the knot/mult arrays are
+    /// trimmed to [first..last] with the end multiplicities clamped to
+    /// min(Deg, max(m1, ml)) = min(3, 4) = 3, giving mults [3,1,3]; the
+    /// pole count is BSplCLib::NbPoles(3, periodic, [3,1,3]) = 3 + 1 = 4;
+    /// the periodic flat knot sequence has length
+    /// sum(3+1+3) + 2*(4-3) = 9 entries, so FirstParameter = FlatKnots(4)
+    /// = 0 and LastParameter = FlatKnots(6) = 2.
+    #[test]
+    fn set_periodic_clamps_mults_and_poles() {
+        let mut bs = Geom2dBSplineCurve::new(
+            vec![
+                DVec2::new(0.0, 1.0),
+                DVec2::new(1.0, 2.0),
+                DVec2::new(2.0, 3.0),
+                DVec2::new(3.0, 4.0),
+                DVec2::new(4.0, 5.0),
+            ],
+            vec![0.0, 1.0, 2.0],
+            vec![4, 1, 4],
+            3,
+            false,
+        );
+        bs.set_periodic();
+        assert!(bs.is_periodic());
+        assert_eq!(bs.nb_knots(), 3);
+        assert_eq!((bs.knot(1), bs.knot(2), bs.knot(3)), (0.0, 1.0, 2.0));
+        assert_eq!((bs.multiplicity(1), bs.multiplicity(2), bs.multiplicity(3)), (3, 1, 3));
+        assert_eq!(bs.nb_poles_curve(), 4);
+        assert!((bs.first_parameter() - 0.0).abs() < 1e-14);
+        assert!((bs.last_parameter() - 2.0).abs() < 1e-14);
+    }
+}
+

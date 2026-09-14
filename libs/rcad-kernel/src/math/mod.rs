@@ -11,6 +11,7 @@ pub mod el;
 pub mod gauss_points;
 pub mod gauss_tables;
 pub mod gp;
+pub mod hermit;
 pub mod math_gauss;
 pub mod math_jacobi;
 pub mod math_poly;
