@@ -3089,7 +3089,30 @@ impl PaveFiller {
                     self.ds.mutate_shape_data(ei, |ts| {
                         if let topods::TShape::Edge(ed) = ts {
                             if let Some(k) = key {
-                                ed.pcurves.insert(k, (pc, f, l));
+                                // Map insert retained for the map-era readers
+                                // during the writer migration; the
+                                // representation below is the authority.
+                                ed.pcurves.insert(k, (pc.clone(), f, l));
+                                // OCCT static UpdateCurves (BRep_Builder.cxx
+                                // L104-167, reached through
+                                // BRepLib::BuildPCurveForEdgeOnPlane ->
+                                // BRep_Builder::UpdateEdge(E, C2d, F, Tol)):
+                                // L133-146 removes any existing
+                                // curve-on-surface representation of the same
+                                // (S, L), then L149-167 appends the new
+                                // BRep_CurveOnSurface(C, S, L) representation.
+                                ed.representations
+                                    .retain(|a_cr| match a_cr {
+                                        topods::CurveRepresentation::CurveOnSurface { face, .. }
+                                        | topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != k,
+                                        _ => true,
+                                    });
+                                ed.representations
+                                    .push(topods::CurveRepresentation::CurveOnSurface {
+                                        face: k,
+                                        pcurve: pc,
+                                        range: [f, l],
+                                    });
                             }
                         }
                     });

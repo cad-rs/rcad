@@ -3344,7 +3344,30 @@ impl BRepBuilder {
         // OCCT BRep_Builder::UpdateEdge (BRep_Builder.cxx L692): the pcurve is
         // stored under `L.Predivided(E.Location())` — see curve_on_surface.
         let key = (face.ptr_id(), compose_pcurve_location(face.location, edge.location, &brep.locations));
-        brep.edge_mut_inplace(edge).pcurves.insert(key, (pc, t1, t2));
+        // Map insert retained for the map-era readers during the writer
+        // migration; the representation below is the authority.
+        let ed = brep.edge_mut_inplace(edge);
+        ed.pcurves.insert(key, (pc.clone(), t1, t2));
+        // OCCT static UpdateCurves (BRep_Builder.cxx L104-167): the loop at
+        // L133-146 REMOVES any existing curve-on-surface representation of
+        // the same (S, L), then L149-167 appends the new
+        // BRep_CurveOnSurface(C, S, L) representation to the edge TShape's
+        // single curve-representation list (BRep_TEdge myCurves).  The
+        // explicit t1/t2 arguments follow the site's established
+        // explicit-range encoding (the UpdateCurves range arguments of the
+        // XML-persistence overloads, BRep_Builder.cxx L315-374).
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                CurveRepresentation::CurveOnSurface { face, .. }
+                | CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != key,
+                _ => true,
+            });
+        ed.representations
+            .push(CurveRepresentation::CurveOnSurface {
+                face: key,
+                pcurve: pc,
+                range: [t1, t2],
+            });
     }
 
     /// OCCT BRep_Builder::UpdateEdge(aE, theTol) �?update edge tolerance.

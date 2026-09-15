@@ -36,7 +36,9 @@ use std::collections::HashMap;
 use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::geom::Curve2dEval as _;
 use rcad_kernel::geom::CurveEval as _;
-use rcad_kernel::topo::topods::{self, BRep, BRepBuilder, BRepTool as _, Orientation, Shape};
+use rcad_kernel::topo::topods::{
+    self, BRep, BRepBuilder, BRepTool as _, CurveRepresentation, Orientation, Shape,
+};
 use rcad_kernel::topods::TShape;
 
 use super::chfi3d_builder_2::TopAbsState;
@@ -466,7 +468,31 @@ impl TopOpeBRepBuildHBuilder {
                         // rcad_kernel::topods::update_curves_range.
                         let [a_f, a_l] =
                             rcad_kernel::topods::update_curves_range(pc.default_domain(), edp);
-                        edp.pcurves.insert((f.ptr_id(), f.location), (pc, a_f, a_l));
+                        // Map insert retained for the map-era readers during
+                        // the writer migration; the representation below is
+                        // the authority.
+                        let key = (f.ptr_id(), f.location);
+                        edp.pcurves.insert(key, (pc.clone(), a_f, a_l));
+                        // OCCT static UpdateCurves (BRep_Builder.cxx L104-167,
+                        // through TopOpeBRepDS_BuildTool::PCurve ->
+                        // BRep_Builder::UpdateEdge(E, C2d, F, Tol)): L133-146
+                        // removes any existing curve-on-surface representation
+                        // of the same (S, L), then L149-167 appends the new
+                        // BRep_CurveOnSurface(C, S, L) representation.
+                        edp.representations
+                            .retain(|a_cr| match a_cr {
+                                CurveRepresentation::CurveOnSurface { face, .. }
+                                | CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                    *face != key
+                                }
+                                _ => true,
+                            });
+                        edp.representations
+                            .push(CurveRepresentation::CurveOnSurface {
+                                face: key,
+                                pcurve: pc,
+                                range: [a_f, a_l],
+                            });
                     }
                 }
                 faces.push(f);

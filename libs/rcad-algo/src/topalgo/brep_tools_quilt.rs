@@ -42,7 +42,9 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use rcad_kernel::geom::{Curve2d, Curve2dEval};
-use rcad_kernel::topo::topods::{tshape_flags, BRep, Orientation, ShapeType, TShape};
+use rcad_kernel::topo::topods::{
+    tshape_flags, BRep, CurveRepresentation, Orientation, ShapeType, TShape,
+};
 use rcad_kernel::topo_shape::Shape;
 
 use crate::brep_algo::tool as bat;
@@ -202,7 +204,27 @@ fn builder_update_edge_pcurve(
         // OCCT static UpdateCurves two-step rule (BRep_Builder.cxx L104-167).
         let [f0, l0] =
             rcad_kernel::topods::update_curves_range(the_c2d.default_domain(), ed);
+        // Map insert retained for the map-era readers during the writer
+        // migration; the representation below is the authority.
         ed.pcurves.insert(bat::shape_key(the_f), (the_c2d.clone(), f0, l0));
+        // OCCT static UpdateCurves (BRep_Builder.cxx L104-167): L133-146
+        // removes any existing curve-on-surface representation of the same
+        // (S, L), then L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+        // representation.
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                CurveRepresentation::CurveOnSurface { face, .. }
+                | CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != bat::shape_key(the_f)
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(CurveRepresentation::CurveOnSurface {
+                face: bat::shape_key(the_f),
+                pcurve: the_c2d.clone(),
+                range: [f0, l0],
+            });
         ed.tolerance = ed.tolerance.max(the_tol);
     } else {
         bat::builder_update_edge_pcurve(the_e, the_c2d, the_f, the_tol);
@@ -233,6 +255,21 @@ fn builder_range_edge_on_face(
         if let Some(entry) = ed.pcurves.get_mut(&key) {
             entry.1 = the_first;
             entry.2 = the_last;
+        }
+        // OCCT Range(E, S, L, First, Last) (BRep_Builder.cxx L1121-1160):
+        // GC->SetRange(First, Last) on the FIRST representation with
+        // IsCurveOnSurface(S, l) (the L1152 break).
+        for a_cr in ed.representations.iter_mut() {
+            match a_cr {
+                CurveRepresentation::CurveOnSurface { face, .. }
+                | CurveRepresentation::CurveOnClosedSurface { face, .. }
+                    if *face == key =>
+                {
+                    a_cr.set_range(the_first, the_last);
+                    break;
+                }
+                _ => {}
+            }
         }
     } else {
         bat::builder_range_edge_on_face(the_e, the_f, the_first, the_last);

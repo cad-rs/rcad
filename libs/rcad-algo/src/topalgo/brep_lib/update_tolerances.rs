@@ -32,7 +32,7 @@
 //! - `Epsilon(tol)` -> `rcad_kernel::base::extrema_ext_elc::epsilon_of`
 //!   (the kernel keeps the single canonical `std::nextafter` definition).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use indexmap::IndexMap;
@@ -49,7 +49,7 @@ use rcad_kernel::topo_shape::Shape;
 
 use crate::brep_algo::tool::{
     brep_tool_curve, brep_tool_parameter, brep_tool_pnt, brep_tool_surface, brep_tool_tolerance,
-    explorer, sub_shapes,
+    empty_copied, explorer, sub_shapes,
 };
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
 use crate::offset::brep_offset_make_offset::top_exp_map_shapes_and_unique_ancestors;
@@ -95,7 +95,17 @@ fn upd_sh_tol(
         // OCCT L851: TopoDS_Shape aNsh.
         let mut a_nsh;
         // OCCT L852: const TopoDS_Shape& aVsh = theReshaper.Value(aSh).
-        let a_vsh = the_reshaper.value(the_brep, a_sh);
+        let mut a_vsh = the_reshaper.value(the_brep, a_sh);
+        // Architecture difference (the rcad null encoding): the reshaper's
+        // IsNull guard tests `index == usize::MAX`, which is also the
+        // pool-free marker, so Value() answers a NULL shape for a pool-free
+        // input.  A pool-free shape can never carry a recorded replacement
+        // (Replace() runs the same guard and silently drops the record), so
+        // the OCCT Value — the shape ITSELF for an unrecorded shape
+        // (BRepTools_ReShape.cxx L243-253) — is re-normalized to the input.
+        if a_vsh.is_null() && !shape_is_in_pool(the_brep, a_sh) {
+            a_vsh = a_sh.clone();
+        }
         // OCCT L853.
         let use_old_sh =
             is_mutable_input || the_reshaper.is_new_shape(a_sh) || !a_vsh.is_same(a_sh);
@@ -104,11 +114,21 @@ fn upd_sh_tol(
             a_nsh = a_vsh;
         } else {
             // OCCT L860: aNsh = aSh.EmptyCopied().
-            a_nsh = the_brep.empty_copied(a_sh);
+            a_nsh = if shape_is_in_pool(the_brep, a_sh) {
+                the_brep.empty_copied(a_sh)
+            } else {
+                // The pool-free source (index == usize::MAX): the data-based
+                // EmptyCopied re-host.  BRep::empty_copy indexes the pool
+                // slot `tshapes[r.index]` and would panic on the pool-free
+                // index; the copy is pool-free, the same encoding as
+                // brep_algo::tool::empty_copied (OCCT has no pool — the
+                // empty copy of the TShape is the TShape).
+                empty_copied(a_sh)
+            };
             // OCCT L861-866: add subshapes from the original shape
             // (TopoDS_Iterator sit(aSh); aB.Add(aNsh, sit.Value())).
             for a_sub in sub_shapes(a_sh) {
-                builder_add_shape(the_brep, &a_nsh, &a_sub);
+                builder_add_shape(the_brep, &mut a_nsh, &a_sub);
             }
             //
             // OCCT L868-873: aNsh.Free(aSh.Free()) ...
@@ -275,6 +295,19 @@ pub fn internal_update_tolerances(
     let a_big_tol = 1.0e10f64;
     let mut parents: ParentsMap = ParentsMap::new();
 
+    // The pool-free owning-face index for gcurve_surface (architecture
+    // difference: OCCT's BRep_CurveOnSurface carries the surface handle in
+    // the representation; the rcad representation carries the owning face
+    // KEY, resolved against the pool.  A pool-free owning face — index ==
+    // usize::MAX, its TShape Arc absent from the pool — is resolved from
+    // this walk over theOldShape, the same bridge as edge_data_pool_free).
+    let mut a_graph_faces: HashMap<u64, Surface3> = HashMap::new();
+    for a_f in explorer(the_old_shape, ShapeType::Face, ShapeType::Shape) {
+        if let Some(a_s) = brep_tool_surface(&a_f) {
+            a_graph_faces.entry(a_f.ptr_id()).or_insert(a_s);
+        }
+    }
+
     // OCCT L1862.
     top_exp_map_shapes_and_unique_ancestors(
         the_old_shape,
@@ -341,7 +374,7 @@ pub fn internal_update_tolerances(
                     // PC2 = IsCurveOnClosedSurface() ? PCurve2() : null — the
                     // surface is resolved from the owning face key (the
                     // gcurve_surface encoding of same_parameter.rs).
-                    let a_su = gcurve_surface(the_brep, a_cr);
+                    let a_su = gcurve_surface(the_brep, a_cr, &a_graph_faces);
                     let a_pc = gcurve_pcurve(a_cr);
                     let a_pc2 = if gcurve_is_curve_on_closed_surface(a_cr) {
                         gcurve_pcurve2(a_cr)
@@ -401,6 +434,12 @@ pub fn internal_update_tolerances(
 
 /// OCCT BRepLib::UpdateTolerances(S, verifyFaceTolerance) (cxx L1966-1970).
 pub fn update_tolerances(the_brep: &mut BRep, the_s: &Shape, verify_face_tolerance: bool) {
+    // The pcurves-writer-migration sweep: materialize every map-only
+    // pcurve entry as the OCCT-faithful CurveOnSurface representation
+    // before the walk, so the engine's representation-based reads engage
+    // on map-era edges too (the topo_builder::migrate_map_to_representations
+    // contract; a no-op on pool-free graphs and on already-dual edges).
+    rcad_kernel::topo::topo_builder::migrate_map_to_representations(the_brep, the_s);
     // OCCT L1968: BRepTools_ReShape aReshaper.
     let mut a_reshaper = ShapeBuildReShape::new();
     // OCCT L1969.
@@ -432,7 +471,21 @@ fn builder_update_face_tol(the_brep: &mut BRep, the_f: &mut Shape, the_tol: f64)
         let a_tf = the_brep.face_mut(the_f.clone());
         a_tf.tolerance = the_tol;
         a_tf.flags |= tshape_flags::MODIFIED;
-    } else if let TShape::Face(a_tf) = Arc::make_mut(&mut the_f.data) {
+    } else {
+        // The pool-free arm: the SAME in-place TShape write as the pool
+        // arm, through the shape's own Arc.  SAFETY: single-threaded; the
+        // caller holds &mut BRep and no &TShape borrow of this Arc is
+        // alive; every referencing shape observes the change, matching the
+        // OCCT TShape handle mutation.  (An Arc::make_mut write would
+        // clone-on-write and detach the update from the adopted mixed
+        // graph — the harmonization would not engage.)
+        let a_ptr = Arc::as_ptr(&the_f.data) as *mut TShape;
+        let a_tf = unsafe {
+            match &mut *a_ptr {
+                TShape::Face(a_tf) => a_tf,
+                _ => return,
+            }
+        };
         a_tf.tolerance = the_tol;
         a_tf.flags |= tshape_flags::MODIFIED;
     }
@@ -445,7 +498,17 @@ fn builder_update_edge_tol(the_brep: &mut BRep, the_e: &mut Shape, the_tol: f64)
         let a_te = the_brep.edge_mut_inplace(the_e.clone());
         a_te.tolerance = a_te.tolerance.max(the_tol);
         a_te.flags |= tshape_flags::MODIFIED;
-    } else if let TShape::Edge(a_te) = Arc::make_mut(&mut the_e.data) {
+    } else {
+        // The pool-free arm: the SAME in-place TShape write as the pool
+        // arm (see builder_update_face_tol for the SAFETY / engagement
+        // rationale — the Arc::make_mut encoding would detach the update).
+        let a_ptr = Arc::as_ptr(&the_e.data) as *mut TShape;
+        let a_te = unsafe {
+            match &mut *a_ptr {
+                TShape::Edge(a_te) => a_te,
+                _ => return,
+            }
+        };
         a_te.tolerance = a_te.tolerance.max(the_tol);
         a_te.flags |= tshape_flags::MODIFIED;
     }
@@ -478,12 +541,26 @@ fn tvertex_set_tolerance(the_brep: &mut BRep, the_v: &mut Shape, the_tol: f64, t
         }
         // OCCT L897: aTV->Modified(true).
         a_tv.flags |= tshape_flags::MODIFIED;
-    } else if let TShape::Vertex(a_tv) = Arc::make_mut(&mut the_v.data) {
+    } else {
+        // The pool-free arm: the SAME in-place TShape write as the pool
+        // arm, through the shape's own Arc (see builder_update_face_tol
+        // for the SAFETY / engagement rationale — the Arc::make_mut
+        // encoding would detach the update from the shared graph).
+        let a_ptr = Arc::as_ptr(&the_v.data) as *mut TShape;
+        let a_tv = unsafe {
+            match &mut *a_ptr {
+                TShape::Vertex(a_tv) => a_tv,
+                _ => return,
+            }
+        };
         if the_force_set {
+            // OCCT L891: aTV->Tolerance(aTol).
             a_tv.tolerance = the_tol;
         } else {
+            // OCCT L895: aTV->UpdateTolerance(aTol) — keep-max.
             a_tv.tolerance = a_tv.tolerance.max(the_tol);
         }
+        // OCCT L897: aTV->Modified(true).
         a_tv.flags |= tshape_flags::MODIFIED;
     }
 }
@@ -527,7 +604,30 @@ fn set_shape_flags(the_brep: &mut BRep, the_s: &mut Shape, the_flags: u16) {
 /// OCCT L862-866: aB.Add(aNsh, sit.Value()) — the TopoDS_Builder::Add ->
 /// virtual TShape::Add dispatch over the tolerance-map shape kinds
 /// (Edge<-Vertex, Wire<-Edge, Face<-Wire).
-fn builder_add_shape(the_brep: &mut BRep, the_nsh: &Shape, the_sub: &Shape) {
+fn builder_add_shape(the_brep: &mut BRep, the_nsh: &mut Shape, the_sub: &Shape) {
+    if !shape_is_in_pool(the_brep, the_nsh) {
+        // The pool-free arm: the same OCCT TShape::Add writes through the
+        // shape's own Arc (the established pool-free setter pattern, the
+        // encoding of brep_algo::tool::builder_add_edge_vertex et al.).
+        // The raw-slot accessors below (edge_mut_inplace / wire_mut /
+        // face_mut) index `tshapes[usize::MAX]` and would panic.
+        match Arc::make_mut(&mut the_nsh.data) {
+            TShape::Edge(a_ed) => match the_sub.orientation {
+                Orientation::Reversed => a_ed.last = the_sub.clone(),
+                _ => a_ed.first = the_sub.clone(),
+            },
+            TShape::Wire(a_wd) => {
+                a_wd.edges.push(the_sub.clone());
+                a_wd.my_shapes.push(the_sub.clone());
+            }
+            TShape::Face(a_fd) => {
+                a_fd.inner_wires.push(the_sub.clone());
+                a_fd.my_shapes.push(the_sub.clone());
+            }
+            _ => {}
+        }
+        return;
+    }
     match the_nsh.data.as_ref() {
         TShape::Edge(_) => {
             // BRep_TEdge::Add(V) — the extremity assignment by orientation
@@ -654,20 +754,32 @@ fn gcurve_pcurve2(a_cr: &CurveRepresentation) -> Option<rcad_kernel::geom::Curve
 
 /// OCCT BRep_CurveOnSurface::Surface() — the support surface resolved from
 /// the owning face key (the same encoding as same_parameter.rs L894-908).
-fn gcurve_surface(the_brep: &BRep, a_cr: &CurveRepresentation) -> Option<Surface3> {
+/// Primary read: the pool scan (a pool-resident owning face, including one
+/// outside theOldShape's tree).  Fallback: the graph index `the_graph_faces`
+/// (built from the InternalUpdateTolerances walk over theOldShape) — a
+/// pool-free owning face (index == usize::MAX) has its TShape Arc absent
+/// from the pool, and the OCCT handle is carried by the graph; without the
+/// fallback the OCCT L1909-1937 distance term would be silently skipped.
+fn gcurve_surface(
+    the_brep: &BRep,
+    a_cr: &CurveRepresentation,
+    the_graph_faces: &HashMap<u64, Surface3>,
+) -> Option<Surface3> {
     let a_face_key = match a_cr {
         CurveRepresentation::CurveOnSurface { face, .. } => *face,
         CurveRepresentation::CurveOnClosedSurface { face, .. } => *face,
         _ => return None,
     };
-    let a_ts = the_brep
+    if let Some(a_ts) = the_brep
         .tshapes
         .iter()
-        .find(|a_ts| std::sync::Arc::as_ptr(a_ts) as u64 == a_face_key.0)?;
-    match a_ts.as_ref() {
-        TShape::Face(a_fd) => a_fd.surface.clone(),
-        _ => None,
+        .find(|a_ts| std::sync::Arc::as_ptr(a_ts) as u64 == a_face_key.0)
+    {
+        if let TShape::Face(a_fd) = a_ts.as_ref() {
+            return a_fd.surface.clone();
+        }
     }
+    the_graph_faces.get(&a_face_key.0).cloned()
 }
 
 // =========================================================================
@@ -677,8 +789,15 @@ fn gcurve_surface(the_brep: &BRep, a_cr: &CurveRepresentation) -> Option<Surface
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::DVec3;
-    use rcad_kernel::geom::{BSplineCurve3, Curve3, Plane};
+    use glam::{DVec2, DVec3};
+    use rcad_kernel::geom::{BSplineCurve3, Curve2d, Curve3, Line2d, Plane};
+    use rcad_kernel::topo::topods::TFaceData;
+
+    use crate::brep_algo::tool::{
+        builder_add_compound_shape, builder_add_edge_vertex, builder_add_face_wire,
+        builder_add_wire_edge, builder_make_compound, builder_make_edge, builder_make_vertex,
+        builder_make_wire, oriented,
+    };
 
     /// A straight unit X segment edge (degree-1 BSpline on [0, len]) built
     /// between two vertices, with the raw edge tolerance set.
@@ -919,5 +1038,128 @@ mod tests {
         // The replacement carries the updated tolerance (the max over the
         // faces).
         assert_eq!(a_brep.edge(a_replacement.clone()).tolerance, 2.0e-3);
+    }
+
+    /// An all-pool-free two-faces-one-edge fixture (every shape carries
+    /// index == usize::MAX and the engine BRep stays EMPTY): face 1 is the
+    /// z = 0 plane (the representation's support surface), face 2 carries no
+    /// surface; the shared pool-free edge has SameRange and a
+    /// CurveOnSurface representation on face 1 whose pcurve at the vertex
+    /// parameter 0 maps to the plane point (5, 0, 0), so the VERTEX walk
+    /// distance term (cxx L1909-1937) is exactly 5 from the ZERO vertex.
+    fn pool_free_two_faces_one_edge(f1_tol: f64, f2_tol: f64) -> (Shape, Shape, Shape) {
+        // Face 1: the z = 0 plane carrying the representation's surface.
+        let a_f1 = Shape {
+            data: Arc::new(TShape::Face(TFaceData {
+                my_shapes: Vec::new(),
+                flags: tshape_flags::DEFAULT,
+                surface: Some(Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z))),
+                surface_location: 0,
+                outer_wire: Shape::null(),
+                inner_wires: Vec::new(),
+                sample_point: None,
+                uv_domain: None,
+                internal_vertices: Vec::new(),
+                tolerance: f1_tol,
+                natural_restriction: false,
+            })),
+            index: usize::MAX,
+            location: 0,
+            orientation: Orientation::Forward,
+        };
+        // Face 2: no surface (the EDGE walk reads only its tolerance).
+        let a_f2 = Shape {
+            data: Arc::new(TShape::Face(TFaceData {
+                my_shapes: Vec::new(),
+                flags: tshape_flags::DEFAULT,
+                surface: None,
+                surface_location: 0,
+                outer_wire: Shape::null(),
+                inner_wires: Vec::new(),
+                sample_point: None,
+                uv_domain: None,
+                internal_vertices: Vec::new(),
+                tolerance: f2_tol,
+                natural_restriction: false,
+            })),
+            index: usize::MAX,
+            location: 0,
+            orientation: Orientation::Forward,
+        };
+        // The vertices (ZERO point) and the shared pool-free edge.
+        let a_v1 = builder_make_vertex();
+        let a_v2 = builder_make_vertex();
+        let mut a_edge = builder_make_edge();
+        builder_add_edge_vertex(&mut a_edge, &a_v1);
+        builder_add_edge_vertex(&mut a_edge, &oriented(&a_v2, Orientation::Reversed));
+        {
+            let a_te = Arc::make_mut(&mut a_edge.data);
+            if let TShape::Edge(a_ed) = a_te {
+                a_ed.tolerance = CONFUSION;
+                a_ed.same_range = true;
+                a_ed.representations.push(CurveRepresentation::CurveOnSurface {
+                    face: shape_key(&a_f1),
+                    pcurve: Curve2d::Line(Line2d::new(
+                        DVec2::new(5.0, 0.0),
+                        DVec2::new(1.0, 0.0),
+                    )),
+                    range: [0.0, 1.0],
+                });
+            }
+        }
+        // The wires and the faces (each face holds the shared edge once).
+        let mut a_w1 = builder_make_wire();
+        builder_add_wire_edge(&mut a_w1, &a_edge);
+        let mut a_w2 = builder_make_wire();
+        builder_add_wire_edge(&mut a_w2, &a_edge);
+        let mut a_f1 = a_f1;
+        builder_add_face_wire(&mut a_f1, &a_w1);
+        let mut a_f2 = a_f2;
+        builder_add_face_wire(&mut a_f2, &a_w2);
+        // The root compound.
+        let mut a_root = builder_make_compound();
+        builder_add_compound_shape(&mut a_root, &a_f1);
+        builder_add_compound_shape(&mut a_root, &a_f2);
+        (a_root, a_edge, a_v1)
+    }
+
+    /// The pool-free mirror of `edge_below_faces_is_raised_to_max_face`:
+    /// an all-pool-free graph (every shape built pool-free, never pooled;
+    /// the engine BRep stays EMPTY) — the harmonization ENGAGES exactly as
+    /// on the pool-resident fixture.  The EDGE below its faces' tolerances
+    /// is raised to max(face) = 2e-3 (the EDGE walk keep-max write,
+    /// observed through the same TShape — the in-place write reaches every
+    /// handle), and the VERTEX gets 5 + 2*Epsilon(5) — the CurveOnSurface
+    /// distance term (cxx L1909-1937) engaged through the pool-free
+    /// owning-face resolution plus the force-set vertex write
+    /// (theVForceUpdate = true).
+    #[test]
+    fn pool_free_edge_below_faces_is_raised_to_max_face() {
+        let mut a_brep = BRep::new();
+        let (a_root, a_edge, a_v1) = pool_free_two_faces_one_edge(1.0e-3, 2.0e-3);
+        update_tolerances(&mut a_brep, &a_root, false);
+        // The EDGE walk: the raw pool-free edge tolerance landed exactly on
+        // max(face) = 2e-3 (the UpdateEdge keep-max write of UpdShTol).
+        assert_eq!(
+            edge_data_pool_free(&a_edge)
+                .expect("pool-free edge")
+                .tolerance,
+            2.0e-3
+        );
+        // The VERTEX walk: the pcurve-on-plane distance term is 5 (the
+        // pcurve at the vertex parameter 0 maps to the plane point
+        // (5, 0, 0), the ZERO vertex), so tol = 5 + 2*Epsilon(5) — the
+        // force-set arm of UpdShTol.
+        let a_expected = 5.0 + 2.0 * epsilon_of(5.0);
+        let a_v_tol = match a_v1.data.as_ref() {
+            TShape::Vertex(a_vd) => a_vd.tolerance,
+            _ => panic!("the fixture vertex is not a vertex"),
+        };
+        assert!(
+            (a_v_tol - a_expected).abs() < 1.0e-18,
+            "pool-free vertex tolerance {} != {}",
+            a_v_tol,
+            a_expected
+        );
     }
 }

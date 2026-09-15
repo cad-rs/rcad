@@ -45,7 +45,9 @@ use std::sync::Arc;
 use glam::{DAffine3, DVec2, DVec3};
 
 use rcad_kernel::geom::{Curve2d, Curve2dEval as _, CurveEval as _, Line2d};
-use rcad_kernel::topods::{BRep, BRepTool as _, Orientation, Shape, ShapeType, State, TShape};
+use rcad_kernel::topods::{
+    BRep, BRepTool as _, CurveRepresentation, Orientation, Shape, ShapeType, State, TShape,
+};
 
 use crate::topalgo::brep_class::edge::ClassEdge;
 use crate::topalgo::brep_class::face_classifier::{FClass2dOfFClassifier, FClassifier};
@@ -1343,7 +1345,25 @@ pub(crate) fn bb_update_edge_pcurve(
     // interval rule - the canonical body lives in
     // rcad_kernel::topods::update_curves_range.
     let [a_f, a_l] = rcad_kernel::topods::update_curves_range(c2d.default_domain(), ed);
+    // Map insert retained for the map-era readers during the writer
+    // migration; the representation below is the authority.
     ed.pcurves.insert(key, (c2d.clone(), a_f, a_l));
+    // OCCT static UpdateCurves (BRep_Builder.cxx L104-167, through
+    // BRep_Builder::UpdateEdge(E, C2d, F, Tol) L655-671): L133-146 removes
+    // any existing curve-on-surface representation of the same (S, L), then
+    // L149-167 appends the new BRep_CurveOnSurface(C, S, L) representation.
+    ed.representations
+        .retain(|a_cr| match a_cr {
+            CurveRepresentation::CurveOnSurface { face, .. }
+            | CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != key,
+            _ => true,
+        });
+    ed.representations
+        .push(CurveRepresentation::CurveOnSurface {
+            face: key,
+            pcurve: c2d.clone(),
+            range: [a_f, a_l],
+        });
     if ed.tolerance < tol {
         ed.tolerance = tol;
     }

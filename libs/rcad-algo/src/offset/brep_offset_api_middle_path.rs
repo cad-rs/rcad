@@ -48,7 +48,7 @@
 use std::collections::HashMap;
 
 use rcad_kernel::geom::{Curve3, CurveEval};
-use rcad_kernel::topo::topods::ShapeType;
+use rcad_kernel::topo::topods::{CurveRepresentation, ShapeType};
 use rcad_kernel::topo_shape::Shape;
 
 use glam::DVec3;
@@ -530,7 +530,20 @@ impl BRepOffsetAPIMiddlePath {
     ) -> Shape {
         let mut e = brep.add_tedge(None, the_v1.clone(), the_v2.clone(), [the_f, the_l]);
         if let TShape::Edge(ed) = std::sync::Arc::make_mut(&mut e.data) {
-            ed.pcurves.insert((0, 0), (the_pcurve.clone(), the_f, the_l));
+            // Map insert retained for the map-era readers during the writer
+            // migration; the representation below is the authority.
+            ed.pcurves
+                .insert((0, 0), (the_pcurve.clone(), the_f, the_l));
+            // OCCT BRepLib_MakeEdge(C, S, V1, V2, p1, p2) (BRepLib_MakeEdge.cxx
+            // L1077 `B.UpdateEdge(E, C, S, TopLoc_Location(), preci)` + L1087
+            // `B.Range(E, p1, p2)`): the BRep_CurveOnSurface representation is
+            // appended to the edge's curve list and takes the (p1, p2) range.
+            ed.representations
+                .push(CurveRepresentation::CurveOnSurface {
+                    face: (0, 0),
+                    pcurve: the_pcurve.clone(),
+                    range: [the_f, the_l],
+                });
         }
         e
     }

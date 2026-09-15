@@ -33,8 +33,9 @@ use std::sync::Arc;
 
 use glam::DAffine3;
 
+use crate::geom::Curve2d;
 use crate::topo::topo_shape::Shape;
-use crate::topo::topods::{BRep, TShape, TVertexData};
+use crate::topo::topods::{BRep, CurveRepresentation, TShape, TVertexData};
 
 /// The pool slot filler for source indices that are not reachable from the
 /// adopted root (no OCCT counterpart: OCCT has no pool, hence no flat index
@@ -149,6 +150,129 @@ fn place(brep: &mut BRep, sr: &Shape, visited: &mut HashSet<u64>) {
         // SOLID / FACE / EDGE into a VERTEX) and rcad keeps those children in
         // the untyped TVertexData::my_shapes, which no rcad builder
         // populates — an empty walk.
+        TShape::Vertex(_) => {}
+    }
+}
+
+/// Materialize the OCCT invariant "a pcurve IS a BRep_CurveOnSurface
+/// representation" over the rcad transition store.
+///
+/// OCCT anchor: a BRep_TEdge carries ONE curve-representation list
+/// (`BRep_TEdge.cxx` L109-122 region — `myCurves`, copied whole by
+/// `EmptyCopy`) and `BRep_Tool::CurveOnSurface` reads pcurves from it
+/// (BRep_Tool.cxx L339-364).  The rcad `TEdgeData::pcurves` map is the extra
+/// transition store still fed by map-only writers; this helper closes the
+/// gap left by those writers by pushing, for every map entry whose face key
+/// has NO matching `CurveOnSurface` / `CurveOnClosedSurface` representation,
+/// the equivalent `CurveOnSurface` representation (pcurve and range taken
+/// from the map entry).
+///
+/// Closed-surface pairs: an entry already backed by a
+/// `CurveOnClosedSurface` representation is skipped — that representation
+/// is authoritative and carries both pcurves.  A map-only entry cannot
+/// reconstruct a second pcurve (the map store holds one pcurve per face
+/// key), so it materializes as the single `CurveOnSurface` representation —
+/// exactly the answer the map-era reader produced for it.
+///
+/// The walk mirrors [`place`]: visited set on `ptr_id`, and pool-free
+/// children (`index == usize::MAX`) are skipped — their TShapes are not
+/// slots of `brep`, so there is nothing to migrate.
+pub fn migrate_map_to_representations(brep: &mut BRep, shape: &Shape) {
+    let mut visited: HashSet<u64> = HashSet::new();
+    let mut edge_indices: Vec<usize> = Vec::new();
+    collect_edge_indices(shape, &mut visited, &mut edge_indices);
+    for idx in edge_indices {
+        let Some(slot) = brep.tshapes.get_mut(idx) else {
+            continue;
+        };
+        if let TShape::Edge(ed) = Arc::make_mut(slot) {
+            // Collect the map entries without a matching representation
+            // first (the push below borrows the representations field).
+            let missing: Vec<((u64, u32), Curve2d, [f64; 2])> = ed
+                .pcurves
+                .iter()
+                .filter(|(face_key, _)| {
+                    !ed.representations.iter().any(|a_cr| match a_cr {
+                        CurveRepresentation::CurveOnSurface { face, .. }
+                        | CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                            face == *face_key
+                        }
+                        _ => false,
+                    })
+                })
+                .map(|(face_key, (pcurve, a_f, a_l))| {
+                    (*face_key, pcurve.clone(), [*a_f, *a_l])
+                })
+                .collect();
+            for (face_key, pcurve, range) in missing {
+                ed.representations
+                    .push(CurveRepresentation::CurveOnSurface {
+                        face: face_key,
+                        pcurve,
+                        range,
+                    });
+            }
+        }
+    }
+}
+
+/// The edge collector of [`migrate_map_to_representations`] — one
+/// TopoDS_Iterator::updateCurrentShape step (TopoDS_Iterator.cxx L72-80)
+/// over the same typed component fields `place` walks.
+fn collect_edge_indices(sr: &Shape, visited: &mut HashSet<u64>, out: &mut Vec<usize>) {
+    if !visited.insert(sr.ptr_id()) {
+        return;
+    }
+    // The pool-free skip of `place` (see the recorded pool-model note there).
+    if sr.index == usize::MAX {
+        return;
+    }
+    match &*sr.data {
+        TShape::Solid(sd) => {
+            for sh in &sd.shells {
+                collect_edge_indices(sh, visited, out);
+            }
+            for v in &sd.internal_vertices {
+                collect_edge_indices(v, visited, out);
+            }
+            for e in &sd.internal_edges {
+                collect_edge_indices(e, visited, out);
+            }
+        }
+        TShape::Shell(sd) => {
+            for f in &sd.faces {
+                collect_edge_indices(f, visited, out);
+            }
+        }
+        TShape::Face(fd) => {
+            collect_edge_indices(&fd.outer_wire, visited, out);
+            for w in &fd.inner_wires {
+                collect_edge_indices(w, visited, out);
+            }
+            for v in &fd.internal_vertices {
+                collect_edge_indices(v, visited, out);
+            }
+        }
+        TShape::Wire(wd) => {
+            for e in &wd.edges {
+                collect_edge_indices(e, visited, out);
+            }
+        }
+        TShape::Edge(ed) => {
+            out.push(sr.index);
+            collect_edge_indices(&ed.first, visited, out);
+            collect_edge_indices(&ed.last, visited, out);
+        }
+        TShape::CompSolid(cs) => {
+            for s in cs {
+                collect_edge_indices(s, visited, out);
+            }
+        }
+        TShape::Compound(cd) => {
+            for s in cd {
+                collect_edge_indices(s, visited, out);
+            }
+        }
         TShape::Vertex(_) => {}
     }
 }

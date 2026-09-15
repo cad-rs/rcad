@@ -26,7 +26,9 @@ use rcad_kernel::geom::{
     Curve2d, Curve2dEval, Line2d, Plane, Point3, Surface3, SurfaceEval, TrimmedCurve2, Vec3,
 };
 use rcad_kernel::precision::{is_negative_infinite_value, is_positive_infinite_value, PCONFUSION};
-use rcad_kernel::topods::{tshape_flags, Orientation, Shape, TEdgeData, TShape, TVertexData};
+use rcad_kernel::topods::{
+    tshape_flags, CurveRepresentation, Orientation, Shape, TEdgeData, TShape, TVertexData,
+};
 
 use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::geomalgo::geom2d_int::Curve2dAdaptor;
@@ -789,7 +791,25 @@ fn brep_update_edge_pcurve(ed: &mut TEdgeData, pc: &Curve2d, f: &Shape, tol: f64
     // OCCT static UpdateCurves (BRep_Builder.cxx L104-167) — the canonical
     // body is rcad_kernel::topods::update_curves_range.
     let [a_f, a_l] = rcad_kernel::topods::update_curves_range(pc.default_domain(), ed);
+    // Map insert retained for the map-era readers during the writer
+    // migration; the representation below is the authority.
     ed.pcurves.insert(key, (pc.clone(), a_f, a_l));
+    // OCCT static UpdateCurves (BRep_Builder.cxx L104-167, through
+    // BRep_Builder::UpdateEdge(E, C, F, Tol) L679-701): L133-146 removes any
+    // existing curve-on-surface representation of the same (S, L), then
+    // L149-167 appends the new BRep_CurveOnSurface(C, S, L) representation.
+    ed.representations
+        .retain(|a_cr| match a_cr {
+            CurveRepresentation::CurveOnSurface { face, .. }
+            | CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != key,
+            _ => true,
+        });
+    ed.representations
+        .push(CurveRepresentation::CurveOnSurface {
+            face: key,
+            pcurve: pc.clone(),
+            range: [a_f, a_l],
+        });
     ed.tolerance = ed.tolerance.max(tol);
 }
 
@@ -957,7 +977,24 @@ mod tests {
                 t_min: 0.0,
                 t_max: 1.0,
             });
-            ed.pcurves.insert(key, (wrapped, 0.0, 1.0));
+            // The same UpdateEdge dual store the production writer keeps (the
+            // map insert + the BRep_CurveOnSurface representation of OCCT
+            // UpdateCurves, BRep_Builder.cxx L104-167: L133-146 removes the
+            // previous (S, L) representation, L149-167 appends the new one):
+            // this test scaffolding re-attaches the range-trimmed pcurve.
+            ed.pcurves.insert(key, (wrapped.clone(), 0.0, 1.0));
+            ed.representations
+                .retain(|a_cr| match a_cr {
+                    CurveRepresentation::CurveOnSurface { face, .. }
+                    | CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != key,
+                    _ => true,
+                });
+            ed.representations
+                .push(CurveRepresentation::CurveOnSurface {
+                    face: key,
+                    pcurve: wrapped,
+                    range: [0.0, 1.0],
+                });
         }
         let mut ds = Data::new();
         perform(0, &face, &mut ds, 1);

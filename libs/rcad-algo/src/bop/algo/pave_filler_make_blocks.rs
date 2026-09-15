@@ -695,7 +695,28 @@ impl PaveFiller {
                                         a_c2d.default_domain(),
                                         ed,
                                     );
-                                    ed.pcurves.insert(k, (a_c2d, a_f, a_l));
+                                    // Map insert retained for the map-era readers
+                                    // during the writer migration; the
+                                    // representation below is the authority.
+                                    ed.pcurves.insert(k, (a_c2d.clone(), a_f, a_l));
+                                    // OCCT UpdateCurves (BRep_Builder.cxx
+                                    // L104-167): L133-146 removes any existing
+                                    // curve-on-surface representation of the
+                                    // same (S, L), then L149-167 appends the new
+                                    // BRep_CurveOnSurface(C, S, L)
+                                    // representation.
+                                    ed.representations
+                                        .retain(|a_cr| match a_cr {
+                                            topods::CurveRepresentation::CurveOnSurface { face, .. }
+                                            | topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != k,
+                                            _ => true,
+                                        });
+                                    ed.representations
+                                        .push(topods::CurveRepresentation::CurveOnSurface {
+                                            face: k,
+                                            pcurve: a_c2d,
+                                            range: [a_f, a_l],
+                                        });
                                 }
                             }
                         });
@@ -723,7 +744,28 @@ impl PaveFiller {
                                         a_c2d.default_domain(),
                                         ed,
                                     );
-                                    ed.pcurves.insert(k, (a_c2d, a_f, a_l));
+                                    // Map insert retained for the map-era readers
+                                    // during the writer migration; the
+                                    // representation below is the authority.
+                                    ed.pcurves.insert(k, (a_c2d.clone(), a_f, a_l));
+                                    // OCCT UpdateCurves (BRep_Builder.cxx
+                                    // L104-167): L133-146 removes any existing
+                                    // curve-on-surface representation of the
+                                    // same (S, L), then L149-167 appends the new
+                                    // BRep_CurveOnSurface(C, S, L)
+                                    // representation.
+                                    ed.representations
+                                        .retain(|a_cr| match a_cr {
+                                            topods::CurveRepresentation::CurveOnSurface { face, .. }
+                                            | topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != k,
+                                            _ => true,
+                                        });
+                                    ed.representations
+                                        .push(topods::CurveRepresentation::CurveOnSurface {
+                                            face: k,
+                                            pcurve: a_c2d,
+                                            range: [a_f, a_l],
+                                        });
                                 }
                             }
                         });

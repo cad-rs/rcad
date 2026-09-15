@@ -48,7 +48,7 @@ use std::sync::Arc;
 
 use rcad_kernel::geom::{Curve2d, Curve3, Line2d, Surface3, BSplineCurve3, BSplineSurface};
 use rcad_kernel::precision::CONFUSION;
-use rcad_kernel::topo::topods::{BRep, Orientation, ShapeType, TShape};
+use rcad_kernel::topo::topods::{BRep, CurveRepresentation, Orientation, ShapeType, TShape};
 use rcad_kernel::topo_shape::Shape;
 
 use glam::DVec2;
@@ -376,7 +376,7 @@ fn brep_builder_range_on_face(the_e: &mut Shape, _the_f: &Shape, f: f64, l: f64)
 fn brep_builder_update_edge_pcurves(
     the_e: &mut Shape,
     the_c1: &rcad_kernel::geom::Curve2d,
-    _the_c2: &rcad_kernel::geom::Curve2d,
+    the_c2: &rcad_kernel::geom::Curve2d,
     the_f: &Shape,
     the_tol: f64,
 ) {
@@ -385,8 +385,28 @@ fn brep_builder_update_edge_pcurves(
         let (f0, l0) = (ed.range[0], ed.range[1]);
         // OCCT stores both pcurves of the closed surface; the rcad pcurve
         // index is keyed by face — the second curve lands with the Geom
-        // batch.
+        // batch.  Map insert retained for the map-era readers during the
+        // writer migration; the representation below is the authority.
         ed.pcurves.insert(key, (the_c1.clone(), f0, l0));
+        // OCCT UpdateCurves two-pcurve form (BRep_Builder.cxx L251-306,
+        // through UpdateEdge(E, C1, C2, S, L, Tol) L704-741): the scan+remove
+        // at L266-288 drops any existing curve-on-surface representation of
+        // the same (S, L), then L290-305 appends the
+        // BRep_CurveOnClosedSurface(C1, C2, S, L, GeomAbs_C0)
+        // representation carrying both pcurves.
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                CurveRepresentation::CurveOnSurface { face, .. }
+                | CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != key,
+                _ => true,
+            });
+        ed.representations
+            .push(CurveRepresentation::CurveOnClosedSurface {
+                face: key,
+                pcurve1: the_c1.clone(),
+                pcurve2: the_c2.clone(),
+                range: [f0, l0],
+            });
         ed.tolerance = ed.tolerance.max(the_tol);
     }
 }

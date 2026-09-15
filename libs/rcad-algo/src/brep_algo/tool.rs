@@ -726,7 +726,27 @@ pub(crate) fn builder_update_edge_pcurve(
     if let TShape::Edge(ed) = Arc::make_mut(&mut the_e.data) {
         let [a_f, a_l] =
             rcad_kernel::topods::update_curves_range(the_c2d.default_domain(), ed);
+        // Map insert retained for the map-era readers during the writer
+        // migration; the representation below is the authority.
         ed.pcurves.insert(key, (the_c2d.clone(), a_f, a_l));
+        // OCCT static UpdateCurves (BRep_Builder.cxx L104-167): the loop at
+        // L133-146 REMOVES any existing curve-on-surface representation of
+        // the same (S, L) (IsCurveOnSurface answers for the plain and the
+        // closed-surface kinds alike), then L149-167 appends the new
+        // BRep_CurveOnSurface(C, S, L) representation to the edge TShape's
+        // single curve-representation list (BRep_TEdge myCurves).
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                CurveRepresentation::CurveOnSurface { face, .. }
+                | CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != key,
+                _ => true,
+            });
+        ed.representations
+            .push(CurveRepresentation::CurveOnSurface {
+                face: key,
+                pcurve: the_c2d.clone(),
+                range: [a_f, a_l],
+            });
         ed.tolerance = ed.tolerance.max(the_tol);
     }
 }
@@ -809,8 +829,11 @@ pub(crate) fn shape_is_closed(the_s: &Shape) -> bool {
     flags & tshape_flags::CLOSED != 0
 }
 
-/// OCCT BRep_Builder::Range(E, F, First, Last) — the pcurve range of the
-/// edge on the face (BRep_Builder.cxx Range CurveOnSurface branch).
+/// OCCT BRep_Builder::Range(E, F, First, Last) -> Range(E, S, L, First, Last)
+/// (BRep_Builder.cxx L1121-1160): GC->SetRange(First, Last) on the FIRST
+/// representation with IsCurveOnSurface(S, l) (the L1152 break).  The rcad
+/// pcurves-map entry is the same data under the face key; both stores take
+/// the range.
 pub(crate) fn builder_range_edge_on_face(
     the_e: &mut Shape,
     the_f: &Shape,
@@ -822,6 +845,19 @@ pub(crate) fn builder_range_edge_on_face(
         if let Some(entry) = ed.pcurves.get_mut(&key) {
             entry.1 = the_first;
             entry.2 = the_last;
+        }
+        for a_cr in ed.representations.iter_mut() {
+            match a_cr {
+                CurveRepresentation::CurveOnSurface { face, .. }
+                | CurveRepresentation::CurveOnClosedSurface { face, .. }
+                    if *face == key =>
+                {
+                    // OCCT L1152: GC->SetRange(First, Last); break.
+                    a_cr.set_range(the_first, the_last);
+                    break;
+                }
+                _ => {}
+            }
         }
     }
 }

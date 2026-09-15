@@ -35,7 +35,9 @@ use glam::DVec3;
 use rcad_kernel::base::geom_api::project_on_surf::ProjectPointOnSurf;
 use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3};
-use rcad_kernel::topo::topods::{BRep, BRepBuilder, GeomAbsShape, Orientation, Shape, TShape};
+use rcad_kernel::topo::topods::{
+    BRep, BRepBuilder, CurveRepresentation, GeomAbsShape, Orientation, Shape, TShape,
+};
 
 use crate::brep_fill::generator::{shape_key, shape_oriented, top_exp_vertices, ShapeKey};
 use crate::brep_fill::offset_wire::append_edge_to_wire;
@@ -1192,7 +1194,19 @@ fn make_edge_pcurve(brep: &mut BRep, c2d: Curve2d, v1: &Shape, v2: &Shape) -> Sh
     let [ta, tb] = c2d.default_domain();
     let e = brep.add_tedge(None, v1_fwd, v2_rev, [ta, tb]);
     let ed = brep.edge_mut_inplace(e.clone());
-    ed.pcurves.insert((0u64, 0u32), (c2d, ta, tb));
+    // Map insert retained for the map-era readers during the writer
+    // migration; the representation below is the authority.
+    ed.pcurves.insert((0u64, 0u32), (c2d.clone(), ta, tb));
+    // OCCT BRep_Builder::UpdateEdge(E, C, S, L, preci) (BRep_Builder.cxx
+    // L655-671 -> static UpdateCurves L149-167): the new
+    // BRep_CurveOnSurface(C, S, L) representation is appended to the edge's
+    // curve list; the B.Range(E, p1, p2) tail fixes the range.
+    ed.representations
+        .push(CurveRepresentation::CurveOnSurface {
+            face: (0u64, 0u32),
+            pcurve: c2d,
+            range: [ta, tb],
+        });
     e
 }
 
@@ -1224,7 +1238,29 @@ fn update_edge_pcurve_standalone(brep: &mut BRep, e: &Shape, pcurve: Curve2d, to
     // and the per-end finite override at L154-162 applies.  The canonical body
     // is rcad_kernel::topods::update_curves_range.
     let [ta, tb] = rcad_kernel::topods::update_curves_range(pcurve.default_domain(), ed);
-    ed.pcurves.insert((0u64, 0u32), (pcurve, ta, tb));
+    // Map insert retained for the map-era readers during the writer
+    // migration; the representation below is the authority.
+    ed.pcurves.insert((0u64, 0u32), (pcurve.clone(), ta, tb));
+    // OCCT static UpdateCurves (BRep_Builder.cxx L104-167, through the
+    // UpdateEdge(E, C2d, S, L, Tol) call of BRepFill_Filling.cxx L768):
+    // L133-146 removes any existing curve-on-surface representation of the
+    // same (S, L) — the EmptyCopied NewEdge may carry the source's copied
+    // representation — then L149-167 appends the new
+    // BRep_CurveOnSurface(C, S, L) representation.
+    ed.representations
+        .retain(|a_cr| match a_cr {
+            CurveRepresentation::CurveOnSurface { face, .. }
+            | CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                *face != (0u64, 0u32)
+            }
+            _ => true,
+        });
+    ed.representations
+        .push(CurveRepresentation::CurveOnSurface {
+            face: (0u64, 0u32),
+            pcurve,
+            range: [ta, tb],
+        });
     ed.tolerance = ed.tolerance.max(tol);
 }
 

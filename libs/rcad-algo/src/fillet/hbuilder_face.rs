@@ -62,7 +62,9 @@ use std::sync::Arc;
 
 use rcad_kernel::core::precision::CONFUSION;
 use rcad_kernel::geom::{Curve2dEval as _, CurveEval as _};
-use rcad_kernel::topods::{BRep, BRepBuilder, BRepTool as _, Orientation, Shape, ShapeType, TShape};
+use rcad_kernel::topods::{
+    BRep, BRepBuilder, BRepTool as _, CurveRepresentation, Orientation, Shape, ShapeType, TShape,
+};
 
 use super::chfi3d_builder_2::TopAbsState;
 use super::chfi3d_ds::{TopOpeBRepDSHDataStructure, TopOpeBRepDSInterference, TopOpeBRepDSKind};
@@ -1024,7 +1026,30 @@ impl TopOpeBRepBuildHBuilder {
                     // rcad_kernel::topods::update_curves_range.
                     let [a_f, a_l] =
                         rcad_kernel::topods::update_curves_range(pc.default_domain(), ed);
-                    ed.pcurves.insert(key, (pc, a_f, a_l));
+                    // Map insert retained for the map-era readers during the
+                    // writer migration; the representation below is the
+                    // authority.
+                    ed.pcurves.insert(key, (pc.clone(), a_f, a_l));
+                    // OCCT static UpdateCurves (BRep_Builder.cxx L104-167,
+                    // through TopOpeBRepDS_BuildTool::PCurve ->
+                    // BRep_Builder::UpdateEdge(E, C2d, F, Tol)): L133-146
+                    // removes any existing curve-on-surface representation of
+                    // the same (S, L), then L149-167 appends the new
+                    // BRep_CurveOnSurface(C, S, L) representation.
+                    ed.representations
+                        .retain(|a_cr| match a_cr {
+                            CurveRepresentation::CurveOnSurface { face, .. }
+                            | CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                *face != key
+                            }
+                            _ => true,
+                        });
+                    ed.representations
+                        .push(CurveRepresentation::CurveOnSurface {
+                            face: key,
+                            pcurve: pc,
+                            range: [a_f, a_l],
+                        });
                 }
                 // WES.AddStartElement(anEdge).
                 wes.add_start_element(brep, &an_edge);

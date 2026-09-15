@@ -1298,12 +1298,13 @@ impl TopOpeBRepBuildHBuilder {
             // L541: myBuildTool.CopyEdge(anEdge, newEdge) — the empty copy
             // carrying the source curve, tolerance, pcurve representations
             // and range (BuildTool.cxx L293-316).
-            let (curve, src_tol, src_pcurves, src_degenerated) = {
+            let (curve, src_tol, src_pcurves, src_representations, src_degenerated) = {
                 let src = an_edge.as_edge().expect("MakeEdges source edge");
                 (
                     src.curve.clone(),
                     src.tolerance,
                     src.pcurves.clone(),
+                    src.representations.clone(),
                     src.degenerated,
                 )
             };
@@ -1389,8 +1390,17 @@ impl TopOpeBRepBuildHBuilder {
                         pd.tolerance = src_tol;
                         pd.degenerated = src_degenerated;
                         for (fk, (pcv, t1, t2)) in &src_pcurves {
+                            // Map insert retained for the map-era readers
+                            // during the writer migration; the representation
+                            // copy below is the authority.
                             pd.pcurves.insert(*fk, (pcv.clone(), *t1, *t2));
                         }
+                        // OCCT CopyEdge (TopOpeBRepDS_BuildTool.cxx L293-316:
+                        // `Eou = Ein.EmptyCopied()`) -> BRep_TEdge::EmptyCopy
+                        // (BRep_TEdge.cxx L107-129) copies the edge's curve
+                        // representation list — a pcurve IS a
+                        // BRep_CurveOnSurface representation on that list.
+                        pd.representations = src_representations.clone();
                         pd.vertex_params.insert(added[0].0.ptr_id(), pa);
                         pd.vertex_params.insert(added[1].0.ptr_id(), pb);
                     }
