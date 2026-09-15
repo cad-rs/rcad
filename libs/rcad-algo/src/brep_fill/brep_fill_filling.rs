@@ -1013,9 +1013,9 @@ impl BRepFillFilling {
             // pool-resident in `brep` (created by brep.empty_copied above),
             // so the engine's in-place TShape writes (BRep_TEdge::Modified /
             // Tolerance, cxx L1733-1734) reach the NewEdge handle the way
-            // the OCCT builder mutates the shared TShape.  The cxx L1007
-            // InternalUpdateTolerances tail has no rcad port yet (no
-            // BRepLib::UpdateTolerances translation exists) — recorded gap.
+            // the OCCT builder mutates the shared TShape.  The cxx L1005 /
+            // L1007 tails (UpdShTol + InternalUpdateTolerances) run below
+            // after the engine call.
             {
                 // cxx L931: if (IsForced && (SameRange(aCE) || SameParameter(aCE))).
                 let a_forced_reset = {
@@ -1030,6 +1030,18 @@ impl BRepFillFilling {
                 }
             }
             crate::topalgo::brep_lib::same_parameter::same_parameter(brep, &new_edge, dmax);
+            // cxx L1007: InternalUpdateTolerances(theSh, false,
+            // IsMutableInput, theReshaper) — the InternalSameParameter tail
+            // over the same single-edge shape: IsVerifyTolerance = false,
+            // IsMutableInput = true, the local reshaper of the shape-level
+            // call (a fresh BRepTools_ReShape, cxx L1018).
+            crate::topalgo::brep_lib::update_tolerances::internal_update_tolerances(
+                brep,
+                &new_edge,
+                false,
+                true,
+                &mut crate::shhealing::shape_build::ShapeBuildReShape::new(),
+            );
             // OCCT L771.
             final_edges.push(new_edge.clone());
             // OCCT L772.

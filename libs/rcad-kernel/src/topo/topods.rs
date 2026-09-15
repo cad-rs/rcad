@@ -3985,6 +3985,50 @@ pub fn surface_same(a: &Surface3, b: &Surface3) -> bool {
                 && (a.major_radius - b.major_radius).abs() < T
                 && (a.minor_radius - b.minor_radius).abs() < T
         }
+        // The Freeform kinds: the same per-kind field walk at the
+        // handle-comparison tolerance.  Two faces built on ONE surface
+        // handle carry value-identical payloads after the rcad
+        // clone-on-read — the dominant sewing case (two sections on the
+        // same BSpline face) must answer true, mirroring the OCCT handle
+        // identity `surf2 == surf1` (BBuilderAPI_Sewing.cxx L991) on the
+        // value world.
+        (Surface3::BSpline(a), Surface3::BSpline(b)) => {
+            a.degree_u == b.degree_u
+                && a.degree_v == b.degree_v
+                && a.is_u_periodic() == b.is_u_periodic()
+                && a.is_v_periodic() == b.is_v_periodic()
+                && a.knots_u.len() == b.knots_u.len()
+                && a.knots_v.len() == b.knots_v.len()
+                && a
+                    .knots_u
+                    .iter()
+                    .zip(b.knots_u.iter())
+                    .all(|(x, y)| (x - y).abs() < T)
+                && a
+                    .knots_v
+                    .iter()
+                    .zip(b.knots_v.iter())
+                    .all(|(x, y)| (x - y).abs() < T)
+                && a.control_points.len() == b.control_points.len()
+                && a.control_points.iter().zip(b.control_points.iter()).all(
+                    |(ra, rb)| {
+                        ra.len() == rb.len()
+                            && ra.iter().zip(rb.iter()).all(|(p, q)| v(*p, *q))
+                    },
+                )
+        }
+        (Surface3::Bezier(a), Surface3::Bezier(b)) => {
+            a.control_points.len() == b.control_points.len()
+                && a.control_points.iter().zip(b.control_points.iter()).all(
+                    |(ra, rb)| {
+                        ra.len() == rb.len()
+                            && ra.iter().zip(rb.iter()).all(|(p, q)| v(*p, *q))
+                    },
+                )
+        }
+        (Surface3::Trimmed(a), Surface3::Trimmed(b)) => {
+            surface_same(a.basis.as_ref(), b.basis.as_ref()) && a.trim == b.trim
+        }
         _ => false,
     }
 }

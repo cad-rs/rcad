@@ -22,6 +22,7 @@ use glam::{DVec2, DVec3};
 
 use rcad_kernel::base::bnd_lib::curve_box_range_fn;
 use rcad_kernel::base::geom_lib::{axe_of_inertia, fuse_intervals};
+use rcad_kernel::base::proj_lib::{Adaptor3dCurve, CurveType, GeomCurveAdaptor};
 use rcad_kernel::geom::{Curve3, CurveEval, Plane};
 use rcad_kernel::math::gp::Ax2;
 use rcad_kernel::math::GeomAbsShape;
@@ -627,25 +628,30 @@ impl TrihedronLaw for CorrectedFrenet {
     }
 
     /// OCCT SetCurve (L332-356) — base call through the shared helper.
+    /// The type switch reads `C->GetType()` — the ADAPTOR type; the
+    /// `GeomAdaptor_Curve::load` unwrapping (cxx L252-255) answers the
+    /// BASIS type for a trimmed curve, so a trimmed elementary curve takes
+    /// the analytic branch exactly as OCCT.
     fn set_curve(&mut self, c: Curve3) -> bool {
         super::trihedron_law::trihedron_law_base_set_curve(self, c.clone());
         // frenet->SetCurve(C)
         TrihedronLaw::set_curve(&mut self.frenet, c.clone());
-        let analytic = matches!(
-            c,
-            Curve3::Line(_)
-                | Curve3::Circle(_)
-                | Curve3::Ellipse(_)
-                | Curve3::Hyperbola(_)
-                | Curve3::Parabola(_)
-        );
-        if analytic {
-            // No probleme isFrenet
-            self.is_frenet = true;
-        } else {
-            // We have to search singularities
-            self.is_frenet = true;
-            self.init();
+        // OCCT L336-337: type = C->GetType().
+        let curve_type = GeomCurveAdaptor::new(c).curve_type();
+        match curve_type {
+            CurveType::Circle
+            | CurveType::Ellipse
+            | CurveType::Hyperbola
+            | CurveType::Parabola
+            | CurveType::Line => {
+                // No probleme isFrenet
+                self.is_frenet = true;
+            }
+            _ => {
+                // We have to search singularities
+                self.is_frenet = true;
+                self.init();
+            }
         }
         self.is_frenet
     }

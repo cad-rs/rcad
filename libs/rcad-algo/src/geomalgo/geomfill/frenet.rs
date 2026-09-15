@@ -16,7 +16,8 @@ use glam::DVec3;
 use rcad_kernel::base::extrema_curve_tool::ExtremaCurveTool;
 use rcad_kernel::base::extrema_ext_pc::{BSplineView, ExtremaExtPC, ExtPCurveTool};
 use rcad_kernel::base::geom_lib::fuse_intervals;
-use rcad_kernel::base::proj_lib::CurveType;
+use rcad_kernel::base::proj_lib::{Adaptor3dCurve, CurveType, GeomCurveAdaptor};
+use rcad_kernel::geom::curve_dn::curve_dn;
 use rcad_kernel::geom::{Curve3, CurveEval, TrimmedCurve3};
 use rcad_kernel::math::gp::Ax2;
 use rcad_kernel::math::GeomAbsShape;
@@ -296,7 +297,20 @@ pub(crate) fn law_d3(c: &Curve3, u: f64) -> (DVec3, DVec3, DVec3, DVec3) {
             (p, d1, d2, d3)
         }
         Curve3::Trimmed(tc) => law_d3(&tc.curve, u),
-        _ => unimplemented!("GeomFill_Frenet D3 for non-BSpline bases is anchor-out-of-scope"),
+        // OCCT myTrimmed->D3(theU) — the Adaptor3d_Curve D3; the kernel
+        // `Geom_Curve::EvalDN` union answers the ElCLib closed forms for
+        // the elementary kinds (the Line null vector above D1, the
+        // Parabola null vector above D2, as in the
+        // `GeomAdaptor_Curve::EvalD3` arms).
+        other => {
+            let p = other.point_at(u);
+            (
+                p,
+                curve_dn(other, u, 1),
+                curve_dn(other, u, 2),
+                curve_dn(other, u, 3),
+            )
+        }
     }
 }
 
@@ -304,7 +318,10 @@ pub(crate) fn law_dn(c: &Curve3, u: f64, n: usize) -> DVec3 {
     match c {
         Curve3::BSpline(bs) => bs.dn(u, n),
         Curve3::Trimmed(tc) => law_dn(&tc.curve, u, n),
-        _ => unimplemented!("GeomFill_Frenet DN for non-BSpline bases is anchor-out-of-scope"),
+        // OCCT myTrimmed->DN(theU, N) — the Adaptor3d_Curve DN; the kernel
+        // `Geom_Curve::EvalDN` union answers the ElCLib closed forms at
+        // any order (exactly the `GeomAdaptor_Curve::EvalDN` arms).
+        other => curve_dn(other, u, n as i32),
     }
 }
 
@@ -898,24 +915,28 @@ impl TrihedronLaw for Frenet {
         Box::new(copy)
     }
 
-    /// OCCT SetCurve (L127-154) — base call through the shared helper.
+    /// OCCT SetCurve (L118-143) — base call through the shared helper.
+    /// The type switch reads `C->GetType()` — the ADAPTOR type; the
+    /// `GeomAdaptor_Curve::load` unwrapping (cxx L252-255) answers the
+    /// BASIS type for a trimmed curve, so a trimmed elementary curve takes
+    /// the analytic branch exactly as OCCT.
     fn set_curve(&mut self, c: Curve3) -> bool {
         super::trihedron_law::trihedron_law_base_set_curve(self, c.clone());
-        // GeomAbs_Circle/Ellipse/Hyperbola/Parabola/Line — no problem;
-        // the other types need a singularity search.
-        let analytic = matches!(
-            c,
-            Curve3::Line(_)
-                | Curve3::Circle(_)
-                | Curve3::Ellipse(_)
-                | Curve3::Hyperbola(_)
-                | Curve3::Parabola(_)
-        );
-        if analytic {
-            self.is_sngl = false;
-        } else {
-            // We have to search singularities
-            self.init();
+        // OCCT L121-122: type = C->GetType().
+        let curve_type = GeomCurveAdaptor::new(c).curve_type();
+        match curve_type {
+            CurveType::Circle
+            | CurveType::Ellipse
+            | CurveType::Hyperbola
+            | CurveType::Parabola
+            | CurveType::Line => {
+                // No problem
+                self.is_sngl = false;
+            }
+            _ => {
+                // We have to search singularities
+                self.init();
+            }
         }
         true
     }
@@ -1255,6 +1276,52 @@ impl TrihedronLaw for Frenet {
     /// OCCT IsOnlyBy3dCurve (L886-889).
     fn is_only_by3d_curve(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::geom::{Circle3, Line3};
+
+    /// OCCT GeomFill_Frenet::SetCurve (L118-143) over a Geom_TrimmedCurve
+    /// of a line: `C->GetType()` answers the BASIS type (the
+    /// `GeomAdaptor_Curve::load` unwrapping, cxx L252-255), so the analytic
+    /// branch runs — `isSngl = false`, no singularity search.  The singularity
+    /// wrapper (GeomFill_SnglrFunc) cannot evaluate an elementary base, which
+    /// is exactly where the pre-fix raw-enum dispatch used to raise.
+    #[test]
+    fn set_curve_trimmed_line_takes_the_analytic_branch() {
+        let line = Curve3::Line(Line3::new(
+            DVec3::new(1.0, 2.0, 3.0),
+            DVec3::new(2.0, 0.0, 0.0),
+        ));
+        let trimmed = Curve3::Trimmed(TrimmedCurve3::new(line, 0.25, 0.75));
+        let mut law = Frenet::new();
+        assert!(TrihedronLaw::set_curve(&mut law, trimmed));
+        // OCCT L129-131: the analytic branch answers isSngl = false with no
+        // singularity bookkeeping.
+        assert!(!law.is_sngl);
+        assert!(law.my_sngl.is_none());
+        assert!(law.my_sngl_len.is_none());
+        // The law evaluates over the trimmed line (tangent = unit X).
+        let mut tangent = DVec3::ZERO;
+        let mut normal = DVec3::ZERO;
+        let mut binormal = DVec3::ZERO;
+        assert!(law.d0(0.5, &mut tangent, &mut normal, &mut binormal));
+        assert!((tangent - DVec3::X).length() < 1e-12);
+    }
+
+    /// OCCT GeomFill_Frenet::SetCurve (L118-143) over a trimmed circle: the
+    /// adaptor type answers GeomAbs_Circle — the analytic branch again.
+    #[test]
+    fn set_curve_trimmed_circle_takes_the_analytic_branch() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ONE, DVec3::Z, 2.5));
+        let trimmed = Curve3::Trimmed(TrimmedCurve3::new(circle, 0.1, 1.2));
+        let mut law = Frenet::new();
+        assert!(TrihedronLaw::set_curve(&mut law, trimmed));
+        assert!(!law.is_sngl);
+        assert!(law.my_sngl.is_none());
     }
 }
 

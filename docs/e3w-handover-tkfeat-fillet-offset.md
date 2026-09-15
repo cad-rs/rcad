@@ -1,6 +1,11 @@
 # E3-W 交接：三域（TKFeat / TKFillet / TKOffset）翻译推进 —— 2026-09-12
 
-> **一句话（追加 45 收尾态，2026-09-15 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**。本轮为**翻译推进轮（并行 3 代理 + 主代理）**，落在追加 44 之上：**① IntCurveSurface_HInter 生产化**（79 行 GAP 载体 → 761 行 re-host：`TheCurveTool` = IntCurveSurface_TheHCurveTool（hxx L41-191 + cxx L34-311）+ `TheSurfaceTool` = Adaptor3d_HSurfaceTool（hxx L40-293 + cxx L27-115）over 擦除 adaptor 束；引擎本体（int_curve_surface/ 4710 行）本就在库，缺的只是生产标记——**"立卡前 grep 全库"再 +2**（ExtCC 亦然）；`IntersectionPointGap` 删除，引擎真类型接管）· **② section_placement 双层解锁**：平面层 cxx L468-524 全语句接线（`Intersector.Perform(Path, adplan)` + 消费循环——死代码 L473-524 激活；cxx L526-594 是注释态旧块，非翻译对象），一般层 cxx L641-672 接内核既有 `ExtremaExtCC::new_curves_ranged`（`ExtCCGap` 整体删除）；invented bbox 回退改记档 GAP panic（真 `BndLib_Add3dCurve` 已在库且已接线）· **③ OffsetCurve2d 解析 D0-D3/DN**（新文件 geom/offset2d_dn.rs 750 行：Geom2d_OffsetCurveUtils.pxx L43-364 的 IICURV/EUCLID-IS 公式 + AdjustDerivative Taylor 攀升 + cxx L214-371 EvalD0-DN；守卫不对称忠实——EvalD1 无 AdjustDerivative 回退、奇异点 raise UndefinedDerivative；**顺带修 Curve2d 枚举缺 derivative3_at 覆写的预存缺口**（基线 D3 曾走差分））· **④ SameParameter 旧 stub 退役 + 5 调用者接真引擎**（43 号队列第 1 项；前提工作证实 `brep_from_shape` 共享 Arc ⇒ OCCT 共享 TShape 就地变异语义可保持；filling 调用点 OCCT 绑定的是**形状级 3 参重载** `(S, Tol, forced=true)`（hxx L182-186 → InternalSameParameter L1016-1019）非边重载 + forced 旗标重置（cxx L931/L944）必须保留（empty_copied 复制源旗标会让引擎早退）；Sewing 的 SameParameter(edge) 默认容差 = **1.0e-5**（hxx L161-162）非边容差——旧载体偏离已修）· **⑤ 内核 Resolution 双缺陷修复**：FK 指针折叠是 0 基 `flat[ii+degree]`（旧 dim-1 体 1 基读法在夹持节点上 inverse=inf→resolution=0，**潜伏内核缺陷**，全库唯一消费者正是本轮新接的 2d 路径）+ dim-2 case 臂新译（曼哈顿联合范数 L4329-4445，非逐轴 min）+ dim-1 有理臂补窗口（L4472-4481）· **⑥ 审计低优先清账**：2d Resolution 联合范数（低 #7，被 ⑤ 吸收）、updatepc 句柄恒等（低 #10——`same_range` 返回值语义即 OCCT 同句柄 no-op，记档保留）、bbox invented 回退（低 #11，见 ②）。
+> **一句话（追加 46 收尾态，2026-09-15 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**。本轮为**审计收口 + 缺口翻译轮（并行 3 代理 + 主代理）**，落在追加 45 之上：**① Frenet 链三缺口全修**（45 号队列第 1 项）：`frenet.rs`/`corrected_frenet.rs` 的 SetCurve 改经 `GeomCurveAdaptor::curve_type()` 分派（OCCT L121-143——trimmed 经 load 解包报基线类型，修剪直线/圆不再误入奇点搜索）+ `sngrl_func.rs` 的 EvalD1/D2/D3 按 OCCT L106-131 全部委托基线 DN（**前提细化：OCCT EvalDN 经 ElCLib 支持全部解析类型任意阶**——旧头部"只有 BSpline 基"注记是错的；顺带修同管第三缺口 law_d3/law_dn 非 BSpline unimplemented——Gap 1 修后一调用即踩中）· **② BRepLib::UpdateTolerances 全家新译**（45 号队列第 2 项；新文件 topalgo/brep_lib/update_tolerances.rs 920 行：UpdShTol L837-909 + InternalUpdateTolerances L1744-1962（VERTEX≥EDGE≥FACE 调和 + verifyFaceTolerance 面容差下限表 Confusion/×2/×4 + dMax 的 aYmin/aZmin 复用 quirk + 0.99 上限 + BigTol=1e10 + `tol += 2*Epsilon(tol)` 走 kernel canonical）+ 双公开重载 L1966-1979；**filling 尾段 L1007 接线**（`(NewEdge, false, true, fresh reshaper)` 精确实参）；另报 5 个 OCCT 调用者（evolved/dprism/make_offset/make_face/ShapeProcess）待后续轮）· **③ Sewing 五文件未审面只读审计**（45 号队列第 5 项）：9 发现（1 高 / 2 中 / 6 低），三处已修——**高危**：CreateCuttingNodes 被喂 arr_pnt 而非 arrProj（cxx L4544-4552 形参名与实参不一致的 OCCT 陷阱：投影点驱动最近顶点搜索/贴近判据/切割顶点位置——旧体直接改切割拓扑）；EvaluateAngulars 守卫 CONFUSION → **REAL_SMALL**（gp::Resolution() = DBL_MIN 非 Confusion）；`surface_same` 补 BSpline/Bezier/Trimmed 值等价臂（旧体只认五个解析面型——**BSpline 是缝合计论主输入，same-face 合并分支对主输入恒 false**）· **④ 低优先处置**：2D full-ellipse 周期标志记档顺延（BSplineCurve2 加字段 = 97 个构造点的机械战役，当前无路径触达）；sewing 的 6 个低发现（crash-path 替代/死存储/形式分歧）逐条记档于审计报告，处置随下轮。
+> **门槛（当前基线）**：六门槛 **495/0/0 · 796/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 483→495 = U2 7 + U1 5；kernel 786→796 = 45 号轮 T2 +7 与主代理 resolution 3 已计入）；tkgeom_algo_gtests **135/0**；八网格 **8/8**（375/378/379/373/12/102/83/110，exe 重编）；16 域网格**逐格同追加 42–45 基线**（12/10 · 50/48 · 46/44 · 12/12 · 8/8 · 1/1 · 2/2 · 15/15 · 6/6 · 5/5 · 26/26 · 4/0 · 32/0 · 10/0 · 2/0 · 19/19——"零可见翻转"第十六轮）。
+> **★ 本轮发现**：① **OCCT 形参名陷阱再 +1**：CreateCuttingNodes 的形参叫 arrPnt、实参传 arrProj——按形参名接线（老体的做法）正好接错；**接线只看调用点实参，不看形参名**；② `surface_same` 类"值等价替身"必须**逐面型补全**——只写解析五型 = 对 Freeform 主输入恒 false，比"方向可能偏"糟得多；③ U1 的前提细化（EvalDN 全解析类型）再次证明**头部件注记会过期**，以源码为准；④ U2 依赖普查零停报（ReShape/UniqueAncestors/Epsilon canonical/BndBox 全在库）——**前置轮的基建沉淀开始复利**。
+> （历史：追加 21–45 收尾态见下方存档块；追加 45 = HInter 生产化 + section_placement 双层解锁 + OffsetCurve2d 解析导数 + SameParameter stub 退役 + Resolution 双缺陷。）
+
+> **（存档）一句话（追加 45 收尾态，2026-09-15 —— 已被追加 46 取代）**：**工作口径仍是"先译后调"**。本轮为**翻译推进轮（并行 3 代理 + 主代理）**，落在追加 44 之上：**① IntCurveSurface_HInter 生产化**（79 行 GAP 载体 → 761 行 re-host：`TheCurveTool` = IntCurveSurface_TheHCurveTool（hxx L41-191 + cxx L34-311）+ `TheSurfaceTool` = Adaptor3d_HSurfaceTool（hxx L40-293 + cxx L27-115）over 擦除 adaptor 束；引擎本体（int_curve_surface/ 4710 行）本就在库，缺的只是生产标记——**"立卡前 grep 全库"再 +2**（ExtCC 亦然）；`IntersectionPointGap` 删除，引擎真类型接管）· **② section_placement 双层解锁**：平面层 cxx L468-524 全语句接线（`Intersector.Perform(Path, adplan)` + 消费循环——死代码 L473-524 激活；cxx L526-594 是注释态旧块，非翻译对象），一般层 cxx L641-672 接内核既有 `ExtremaExtCC::new_curves_ranged`（`ExtCCGap` 整体删除）；invented bbox 回退改记档 GAP panic（真 `BndLib_Add3dCurve` 已在库且已接线）· **③ OffsetCurve2d 解析 D0-D3/DN**（新文件 geom/offset2d_dn.rs 750 行：Geom2d_OffsetCurveUtils.pxx L43-364 的 IICURV/EUCLID-IS 公式 + AdjustDerivative Taylor 攀升 + cxx L214-371 EvalD0-DN；守卫不对称忠实——EvalD1 无 AdjustDerivative 回退、奇异点 raise UndefinedDerivative；**顺带修 Curve2d 枚举缺 derivative3_at 覆写的预存缺口**（基线 D3 曾走差分））· **④ SameParameter 旧 stub 退役 + 5 调用者接真引擎**（43 号队列第 1 项；前提工作证实 `brep_from_shape` 共享 Arc ⇒ OCCT 共享 TShape 就地变异语义可保持；filling 调用点 OCCT 绑定的是**形状级 3 参重载** `(S, Tol, forced=true)`（hxx L182-186 → InternalSameParameter L1016-1019）非边重载 + forced 旗标重置（cxx L931/L944）必须保留（empty_copied 复制源旗标会让引擎早退）；Sewing 的 SameParameter(edge) 默认容差 = **1.0e-5**（hxx L161-162）非边容差——旧载体偏离已修）· **⑤ 内核 Resolution 双缺陷修复**：FK 指针折叠是 0 基 `flat[ii+degree]`（旧 dim-1 体 1 基读法在夹持节点上 inverse=inf→resolution=0，**潜伏内核缺陷**，全库唯一消费者正是本轮新接的 2d 路径）+ dim-2 case 臂新译（曼哈顿联合范数 L4329-4445，非逐轴 min）+ dim-1 有理臂补窗口（L4472-4481）· **⑥ 审计低优先清账**：2d Resolution 联合范数（低 #7，被 ⑤ 吸收）、updatepc 句柄恒等（低 #10——`same_range` 返回值语义即 OCCT 同句柄 no-op，记档保留）、bbox invented 回退（低 #11，见 ②）。
 > **门槛（当前基线）**：六门槛 **483/0/0 · 796/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 476→483 = T1 5 + T3 1 + 主代理 1；kernel 786→796 = offset2d_dn 7 + resolution 3 + bspline2d_dn 既有 4 计入基线已含）；tkgeom_algo_gtests **135/0**；八网格 **8/8**（375/378/379/373/12/102/83/110，exe 重编）；16 域网格**逐格同追加 42/43/44 基线**（12/10 · 50/48 · 46/44 · 12/12 · 8/8 · 1/1 · 2/2 · 15/15 · 6/6 · 5/5 · 26/26 · 4/0 · 32/0 · 10/0 · 2/0 · 19/19——新激活的平面/一般层、SameParameter 接线与 Resolution 修复全部在既有断言层之下，"零可见翻转"第十五轮）。
 > **★ 本轮发现**：① **T1 的 Frenet 链预存 GAP（记卡待修）**：`sngrl_func.rs` D3 对非 BSpline 基 unimplemented + `frenet.rs::set_curve` 对 `Curve3::Trimmed` 不前递基线类型（OCCT 把 trimmed 类型转发给基线，修剪直线 + Frenet 律会在 SetCurve panic）——测试用 Fixed 律绕过，Frenet 拥有者下轮修；② **指针折叠语义再 +1**：OCCT `FK = &FlatKnots(Lower())` 使 `FK[k]` = **0 基** `flat[k]`——上一轮同型的 at() 惯性读法这轮在 Resolution 上翻车（潜伏缺陷被新消费者的判别测试当场抓住，"判别性单测是唯一验收"第 15 次）；③ **jj=ii 自项**：Resolution 有理臂的窗口包含 jj=ii，权值不等时自项非零（手推期望又错一次，OCCT 公式逐步重算是终审）；④ SameParameter 池线程化的**关键前提**是 `brep_from_shape` 共享 Arc（brep topo_builder.rs L70-144 有恒等单测）而 `adopt_subgraph_into` 系克隆——选错收养器变异就不传播。
 > （历史：追加 21–44 收尾态见下方存档块；追加 44 = 审计修复轮：11 发现全处置 + EncodeRegularity 真身 + ApproxCurve + Curve2d 精确 DN + 空 weights 除零。）
@@ -96,15 +101,15 @@
 > 另有两条"旧笔记会过期"（坑 29/30）：**架构难点要回查 OCCT 基类**、**`GetType()` 常量返回决定分支**。
 > （前三轮：**追加 18** = 翻译补全轮；**追加 17** = D3 结案 + `featrf_a1` init 首次通过；**追加 16** = 0a 收尾 / a1 拓扑全等 / TKOffset 定界。）
 
-## 0. 新 session 一句话提示词（直接粘贴 —— 追加 45 收尾态，2026-09-15）
+## 0. 新 session 一句话提示词（直接粘贴 —— 追加 46 收尾态，2026-09-15）
 
 > 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 坑清单；
-> **先读顶部"追加 45 收尾态"一行 + §0.0u**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–45
-> （权威脉络，**追加 45 是当前状态**）；
-> 先 `cd rcad` 跑 6 条门槛确认 **483/0/0 · 796/0 · 36/36 · 26/26 · 76/76 · 1/1**，
+> **先读顶部"追加 46 收尾态"一行 + §0.0v**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–46
+> （权威脉络，**追加 46 是当前状态**）；
+> 先 `cd rcad` 跑 6 条门槛确认 **495/0/0 · 796/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests`（**重编 exe，否则八网格会拿旧产物误判**）
 > 后 `bash output/run_eight_grids.sh` 确认**八网格 8/8**（375/378/379/373/12/102/83/110）；
-> 然后**按 §0.0u 的队列继续"先译后调"**——**先只做 1:1 翻译/接线**（逐行语句对照 + OCCT 行号锚点 +
+> 然后**按 §0.0v 的队列继续"先译后调"**——**先只做 1:1 翻译/接线**（逐行语句对照 + OCCT 行号锚点 +
 > 禁载体/禁等价替换/禁凑结果 + 架构差异先消灭再对齐），**代码基本译完前不针对性修测试数值**；
 > **涉及布尔层的代码直接复用已对齐的 `bop/**`（TKBO）实现、不要重写第二份**（`BRepAlgoAPI_*` 包装层按 OCCT 形式接线到既有真身）；
 > **立卡前先按 OCCT 函数名 grep 全库**（`panic!("GAP…")`/`unimplemented!` 的文案会过期，多例真身其实早已在库）；
@@ -160,7 +165,25 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0u 追加 45 收尾态（2026-09-15；**最新** —— 翻译推进轮：HInter 生产化 + section_placement 双层解锁 + OffsetCurve2d 解析导数 + SameParameter stub 退役 + Resolution 双缺陷）
+### 0.0v 追加 46 收尾态（2026-09-15；**最新** —— 审计收口 + 缺口翻译轮：Frenet 链三缺口 + UpdateTolerances 全家 + Sewing 五文件审计 9 发现（1H/2M/6L）三修余记档）
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**；根仓库指针 = 本文件所在的根提交。追加 46 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **495/0/0 · 796/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 483→495 = U1 5 + U2 7）；tkgeom_algo_gtests **135/0**；八网格 **8/8**（375/378/379/373/12/102/83/110，exe 重编）；16 域网格**逐格同追加 42–45 基线**。探针 = 0；改动 8 文件 + 1 新文件（update_tolerances.rs 920 行）。
+- **★ 批次 U1（Frenet 链，45 队列 1）**：`frenet.rs`/`corrected_frenet.rs` SetCurve 经 `GeomCurveAdaptor::curve_type()` 分派（OCCT Frenet.cxx L118-143 / CorrectedFrenet.cxx L332-356——**双胞胎同型**，trimmed 经 load 解包报基线类型）；`sngrl_func.rs` EvalD1/D2/D3 全委托基线 DN（SnglrFunc.cxx L106-131；**前提细化：OCCT EvalDN 经 ElCLib 支持全部解析类型任意阶**——旧头部注记"只有 BSpline 基"是错的）；顺带修同管第三缺口 law_d3/law_dn（非 BSpline unimplemented——Gap 1 修后一调用即踩中）。kernel `GeomCurveAdaptor::dn_at` N>3 非 BSpline panic（预存，内核文件，**记卡**）；law_d2 通用臂 FD 形态记卡（OCCT 是 ElCLib 闭型，改动会移既有绿值）。5 闭式测试，扰动实证（回退组合态 5 测试全 FAILED）。
+- **★ 批次 U2（UpdateTolerances，45 队列 2）**：新文件 `topalgo/brep_lib/update_tolerances.rs`（920 行）= `UpdShTol`（L837-909）+ `InternalUpdateTolerances`（L1744-1962：VERTEX≥EDGE≥FACE 调和；verifyFaceTolerance 面下限表 Plane/Cyl/Cone=Confusion、Sphere/Torus=×2、默认 ×4；dMax 的 aYmin/aZmin 复用 quirk 逐字保留；>1→0.99 上限；EDGE walk keep-max；VERTEX walk BigTol=1e10 + SameRange 门 + 逐表示平方距离 + `tol += 2*Epsilon(tol)` 走 kernel canonical）+ 双公开重载（L1966-1970 fresh reshaper / L1974-1979 caller reshaper）。**filling 尾段接线**（cxx L1007 实参 `(NewEdge, false, true, fresh reshaper)`）。UpdTolMap（L799-831） deliberately 不译——InternalSameParameter 助手非本链。**另报 5 个 OCCT 调用者待后续轮**：evolved L541/L2860（rcad no-op stub）、LocOpe_DPrism L359/L550（panic stub）、MakeOffset L1050（no-op stub）、BRepLib_MakeFace L250（GAP 叶）。依赖普查零停报（ReShape/UniqueAncestors/Epsilon canonical/BndBox 全在库）。
+- **★ 批次 U3（Sewing 五文件审计，45 队列 5）**：9 发现（1 高 / 2 中 / 6 低），三修：**高危** CreateCuttingNodes 实参 arr_pnt → **arrProj**（cxx L4544-4552 形参名与实参不一致——投影点驱动最近顶点搜索/贴近判据/切割顶点位置，旧体直接改切割拓扑）；EvaluateAngulars 守卫 → **REAL_SMALL**（gp::Resolution() = DBL_MIN 非 Confusion；文件内 L992 的 REAL_SMALL 就是它）；kernel `surface_same` **补 BSpline/Bezier/Trimmed 值等价臂**（旧体只认解析五型——BSpline 是缝合主输入，SameParameterEdge 的 same-face 合并分支 cxx L991 对主输入恒 false）。6 低发现逐条记档于审计报告（crash-path 替代/死存储/形式分歧；`if let Some` 守卫经可达性分析行为保持）。审计面：23 函数/区域全部对照；KEY/VALUE 惯例、变异语义（edge_mut_inplace 恒等就地）全部复核正确。
+- **★ 方法学**：① **OCCT 形参名陷阱**（CreateCuttingNodes 形参 arrPnt 实参 arrProj）——接线只看调用点实参，不看形参名；② 值等价替身必须**逐面型补全**，半成品替身对主输入恒 false 比方向偏差更糟；③ 头部件注记会过期（EvalDN 全解析类型）；④ 基建复利：U2 依赖普查零停报。
+- **⏭ 下一轮队列（按序）**：
+  1. **UpdateTolerances 其余 5 调用者**（evolved / loc_ope_d_prism / make_offset / make_face——各 rcad 孪生的 stub/GAP 叶接线；U2 报出）。
+  2. **U3 六低发现处置**（crash-path 替代与形式分歧逐条裁决：改记档或改形态）。
+  3. **kernel GeomCurveAdaptor::dn_at N>3 非 BSpline + law_d2 通用臂 ElCLib 闭型**（U1 记卡）。
+  4. **2D full-ellipse 臂**（BSplineCurve2 周期标志架构决策——97 构造点机械战役，需专门 session）。
+  5. **feat 边 pcurves-map 与 representations 双存储归一**（T3 记档顺延）。
+  6. **thru_sections/pipe 域网格推进观察**（failure-map 深度自看）。
+- **复测脚本**：`rcad/temp/run_gates.sh` · `rcad/temp/run_domain_grids.sh` · 根 `output/run_eight_grids.sh`；单测 tkgeom_algo_gtests（135/0）。
+
+### 0.0u 追加 45 收尾态（2026-09-15；**已被追加 46 取代 —— 见 §0.0v** —— 翻译推进轮：HInter 生产化 + section_placement 双层解锁 + OffsetCurve2d 解析导数 + SameParameter stub 退役 + Resolution 双缺陷）
 
 > **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**；根仓库指针 = 本文件所在的根提交。追加 45 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
 

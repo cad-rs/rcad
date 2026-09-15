@@ -9,3 +9,4 @@ pub mod build_curves3d;
 pub mod make_face;
 pub mod make_wire;
 pub mod same_parameter;
+pub mod update_tolerances;

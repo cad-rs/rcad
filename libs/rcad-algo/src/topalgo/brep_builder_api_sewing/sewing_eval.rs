@@ -118,9 +118,11 @@ impl BRepBuilderAPISewing {
                 let n: DVec3 = w1.cross(w2);
                 if i == ind_ref {
                     norm_ref[j - 1] = n;
-                } else if n.length() > rcad_kernel::core::precision::CONFUSION
-                    && norm_ref[j - 1].length() > rcad_kernel::core::precision::CONFUSION
-                {
+                } else if n.length() > REAL_SMALL && norm_ref[j - 1].length() > REAL_SMALL {
+                    // OCCT L1263: the guards are gp::Resolution() ==
+                    // RealSmall() (DBL_MIN), NOT Precision::Confusion — the
+                    // file-local REAL_SMALL mirror (L992) is the same
+                    // constant.
                     // OCCT L1265-1271: angular = n.Angle(normRef(j)).
                     nb_computed_angle += 1;
                     let mut angular =

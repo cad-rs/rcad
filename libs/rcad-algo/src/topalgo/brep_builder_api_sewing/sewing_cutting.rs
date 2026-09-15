@@ -169,7 +169,12 @@ impl BRepBuilderAPISewing {
                         &v2,
                         &arr_dist,
                         &arr_para,
-                        &arr_pnt,
+                        // OCCT L4544-4552: the formal parameter is named arrPnt
+                        // but the call passes arrProj — the PROJECTED points
+                        // on the bound curve (they drive the closest-vertex
+                        // search L5570-5577, the closeness test L5582 and the
+                        // created cutting-vertex position L5603).
+                        &arr_proj,
                         &mut seq_node,
                         &mut seq_para,
                     );
