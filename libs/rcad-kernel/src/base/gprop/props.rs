@@ -1618,3 +1618,73 @@ pub fn volume_properties(brep: &crate::topo::topods::BRep) -> GProps {
     );
     v_props
 }
+
+/// OCCT BRepGProp::VolumeProperties(S, Props, OnlyClosed, SkipShared = false,
+/// UseTriangulation = false) (BRepGProp.cxx L555-589) — the closed-shells
+/// variant: only the CLOSED shells of S contribute (BRep_Tool::IsClosed,
+/// BRep_Tool.cxx L1707-1729); each contributes its per-shell Vinert
+/// (`volumeProperties(Sh, Props, 1.0, SkipShared, UseTriangulation)`).
+pub fn volume_properties_only_closed(
+    brep: &crate::topo::topods::BRep,
+    s: &crate::topo::topods::Shape,
+) -> GProps {
+    use crate::base::gprop::volume::{brep_tool_is_closed_shell, shell_vinert, VinertFace};
+    use crate::topo::topods::TShape;
+
+    // OCCT L560-561: the origin — gp_Pnt P(0, 0, 0).
+    let mut v_props = GProps::with_location(DVec3::ZERO);
+    // OCCT L565-585: TopExp_Explorer ex(S, TopAbs_SHELL) — the shell
+    // occurrences under S (through compounds/solids), each shell contributing
+    // once.
+    let mut total = VinertFace::default();
+    let mut stack: Vec<crate::topo::topods::Shape> = vec![s.clone()];
+    let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    while let Some(cur) = stack.pop() {
+        if !visited.insert(cur.ptr_id()) {
+            continue;
+        }
+        match &*cur.data {
+            TShape::Solid(sd) => {
+                for sh in &sd.shells {
+                    stack.push(sh.clone());
+                }
+            }
+            TShape::Shell(_) => {
+                // OCCT L578: if (BRep_Tool::IsClosed(Sh)).
+                if brep_tool_is_closed_shell(brep, &cur) {
+                    total = total.add(shell_vinert(brep, &cur));
+                }
+            }
+            TShape::Compound(cd) => {
+                for c in &**cd {
+                    stack.push(c.clone());
+                }
+            }
+            TShape::CompSolid(cs) => {
+                for c in &**cs {
+                    stack.push(c.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    // The same Vinert -> GProps conversion as [`volume_properties`].
+    v_props.dim = total.mass;
+    if total.mass.abs() >= EPS_DIM {
+        let an_inv_mass = 1.0 / total.mass;
+        v_props.g = DVec3::new(
+            total.ix * an_inv_mass,
+            total.iy * an_inv_mass,
+            total.iz * an_inv_mass,
+        );
+    } else {
+        v_props.g = DVec3::ZERO;
+        v_props.dim = 0.0;
+    }
+    v_props.inertia = GpMat::from_cols(
+        DVec3::new(total.ixx, total.ixy, total.ixz),
+        DVec3::new(total.ixy, total.iyy, total.iyz),
+        DVec3::new(total.ixz, total.iyz, total.izz),
+    );
+    v_props
+}

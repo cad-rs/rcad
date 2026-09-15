@@ -1310,29 +1310,55 @@ impl GeomConvertCompCurveToBSplineCurve {
     }
 }
 
-/// OCCT Geom2dConvert_ApproxCurve (TKGeomBase/Geom2dConvert) — GAP carrier
-/// (architecture difference #24).
-pub(crate) struct Geom2dConvertApproxCurve;
+/// OCCT Geom2dConvert_ApproxCurve (TKGeomBase/Geom2dConvert) — the real body
+/// is rcad_kernel::base::geom2d_convert::Geom2dConvertApproxCurve; this is
+/// the OCCT-signature wrapper (arch. diff. #24 carrier retired).
+pub(crate) struct Geom2dConvertApproxCurve {
+    inner: rcad_kernel::base::geom2d_convert::Geom2dConvertApproxCurve,
+}
 
 impl Geom2dConvertApproxCurve {
     /// OCCT Geom2dConvert_ApproxCurve(Curve, Tol, Order, MaxSegments,
     /// MaxDegree).
     pub fn new(
-        _curve: &Curve2d,
-        _tol: f64,
-        _order: GeomAbsShapeKind,
-        _max_segments: i32,
-        _max_degree: i32,
+        curve: &Curve2d,
+        tol: f64,
+        order: GeomAbsShapeKind,
+        max_segments: i32,
+        max_degree: i32,
     ) -> Self {
-        panic!("GAP: Geom2dConvert_ApproxCurve (TKGeomBase not translated)");
+        // OCCT GeomAbs_Shape — the kind maps to the kernel GeomAbsShape;
+        // the kernel enum has no G1 (the offset flows pass C0/C1/C2/CN).
+        let order = match order {
+            GeomAbsShapeKind::C0 => rcad_kernel::math::GeomAbsShape::C0,
+            GeomAbsShapeKind::G1 => {
+                panic!("Geom2dConvert_ApproxCurve: GeomAbs_G1 is not representable in the kernel GeomAbsShape (recorded)")
+            }
+            GeomAbsShapeKind::C1 => rcad_kernel::math::GeomAbsShape::C1,
+            GeomAbsShapeKind::C2 => rcad_kernel::math::GeomAbsShape::C2,
+            GeomAbsShapeKind::C3 => rcad_kernel::math::GeomAbsShape::C3,
+            GeomAbsShapeKind::CN => rcad_kernel::math::GeomAbsShape::CN,
+        };
+        Self {
+            inner: rcad_kernel::base::geom2d_convert::Geom2dConvertApproxCurve::new(
+                curve,
+                tol,
+                order,
+                max_segments,
+                max_degree,
+            ),
+        }
     }
     /// OCCT Geom2dConvert_ApproxCurve::HasResult().
     pub fn has_result(&self) -> bool {
-        panic!("GAP: Geom2dConvert_ApproxCurve::HasResult");
+        self.inner.has_result()
     }
     /// OCCT Geom2dConvert_ApproxCurve::Curve().
     pub fn curve(&self) -> Curve2d {
-        panic!("GAP: Geom2dConvert_ApproxCurve::Curve");
+        self.inner
+            .curve()
+            .map(Curve2d::BSpline)
+            .unwrap_or_else(|| panic!("Geom2dConvert_ApproxCurve::Curve: no result"))
     }
 }
 
@@ -1366,54 +1392,17 @@ impl GeomConvertApproxCurve {
 /// GeomAbsShapeKind carrier from brep_offset_offset.rs.
 pub(crate) use super::brep_offset_offset::GeomAbsShapeKind;
 
-/// OCCT ProjLib_ProjectedCurve (TKTopAlgo/ProjLib) — GAP carrier
-/// (architecture difference #24).
-pub(crate) struct ProjLibProjectedCurve;
+// OCCT ProjLib_ProjectedCurve — the real body is
+// rcad_kernel::base::proj_lib::proj_lib_projected_curve{,_b} (the local
+// zero-caller panic carrier is deleted per Rule 4).
 
-impl ProjLibProjectedCurve {
-    /// OCCT ProjLib_ProjectedCurve(S, C, Tol).
-    pub fn new(_s: &Surface3, _c: &Curve3, _tol: f64) -> Self {
-        panic!("GAP: ProjLib_ProjectedCurve (TKTopAlgo not translated)");
-    }
-}
+// OCCT GCPnts_AbscissaPoint — the real body is
+// rcad_kernel::base::gcpnts::abscissa_point (the local zero-caller panic
+// carrier is deleted per Rule 4).
 
-/// OCCT GCPnts_AbscissaPoint (TKGeomAlgo/GCPnts) — GAP carrier (architecture
-/// difference #24).
-pub(crate) struct GCPntsAbscissaPoint;
-
-impl GCPntsAbscissaPoint {
-    /// OCCT GCPnts_AbscissaPoint::Length(C).
-    pub fn length(_c: &Curve3) -> f64 {
-        panic!("GAP: GCPnts_AbscissaPoint::Length (TKGeomAlgo not translated)");
-    }
-}
-
-/// OCCT ShapeCustom_Curve2d::ConvertToLine2d (TKShHealing/ShapeCustom) —
-/// GAP carrier (architecture difference #24).
-pub(crate) struct ShapeCustomCurve2d;
-
-impl ShapeCustomCurve2d {
-    /// OCCT ShapeCustom_Curve2d::ConvertToLine2d(Curve, f, l, TolConv,
-    /// newFpar, newLpar, deviation).
-    pub fn convert_to_line2d(
-        _curve: &Curve2d,
-        _f: f64,
-        _l: f64,
-        _tol_conv: f64,
-        _new_fpar: &mut f64,
-        _new_lpar: &mut f64,
-        _deviation: &mut f64,
-    ) -> Option<Line2d> {
-        panic!("GAP: ShapeCustom_Curve2d::ConvertToLine2d (TKShHealing not translated)");
-    }
-}
-
-/// OCCT GeomProjLib::Curve2d(C3d, f, l, Surface) (TKTopAlgo/GeomProjLib) —
-/// GAP carrier (architecture difference #24; the
-/// loc_ope_wires_on_shape_b.rs #10 precedent).
-pub(crate) fn geom_proj_lib_curve2d(_c3d: &Curve3, _f: f64, _l: f64, _surf: &Surface3) -> Option<Curve2d> {
-    panic!("GAP: GeomProjLib::Curve2d (TKTopAlgo not translated)");
-}
+// OCCT ShapeCustom_Curve2d::ConvertToLine2d — the real body is
+// crate::shhealing::shape_custom_curve2d (the local zero-caller panic
+// carrier is deleted per Rule 4).
 
 // OCCT GeomAPI::To3d / GeomAPI::To2d (TKGeomAlgo/GeomAPI) live in their OCCT
 // toolkit home now: `crate::geomalgo::geom_api::{to3d, to2d}`.  The former

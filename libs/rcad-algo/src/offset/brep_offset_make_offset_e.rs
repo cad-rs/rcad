@@ -365,7 +365,8 @@ impl BRepOffsetMakeOffset {
                         } else {
                             // case of cone
                             // OCCT L3427-3428: gce_MakeCone(L1, L2, R1, R2)
-                            // (GAP leaf, arch. diff. #52).
+                            // — the real body is
+                            // rcad_kernel::base::gc::make_cone_2p_2r.
                             let mut the_cone = super::brep_offset_make_offset::gce_make_cone(
                                 a_circ.center,
                                 a_circ_oe.center,
@@ -375,12 +376,20 @@ impl BRepOffsetMakeOffset {
                             // OCCT L3429: gp_Ax3 theAx3(aCirc.Position()).
                             let mut cone_axis = the_cone.axis;
                             if circ_axis_dir.dot(the_cone.axis) < 0. {
-                                // OCCT L3431: theAx3.ZReverse().
+                                // OCCT L3431: theAx3.ZReverse() — the axis
+                                // flips, the X direction is untouched
+                                // (gp_Ax3.hxx L131).
                                 cone_axis = -cone_axis;
                                 the_cone.axis = cone_axis;
                                 // OCCT L3433: CircAxisDir.Reverse().
                                 circ_axis_dir = -circ_axis_dir;
                             }
+                            // OCCT L3435: theCone.SetPosition(theAx3) — the
+                            // cone adopts the circle's full frame, so the
+                            // reference direction is the circle's
+                            // XDirection (the location stays aCirc.Location()
+                            // = P1 of the gce ctor).
+                            the_cone.ref_dir = a_circ.x_dir;
                             the_surf = Some(Surface3::Cone(the_cone));
                         }
                         if !is_planar {
@@ -528,9 +537,11 @@ impl BRepOffsetMakeOffset {
                     if !is_planar {
                         // Extrusion (by thrusections)
                         // OCCT L3532-3543: the trimmed curves + the
-                        // GeomFill_Generator (GAP carrier, arch. diff. #52).
+                        // GeomFill_Generator — the real body is
+                        // crate::brep_fill::generator::GeomFillGenerator
+                        // (arch. diff. #52 carrier retired).
                         let mut thrusec_generator =
-                            super::brep_offset_make_offset::GeomFillGenerator;
+                            crate::brep_fill::generator::GeomFillGenerator::new();
                         if let Some((c, _, _)) = brep_tool_curve(&an_edge) {
                             thrusec_generator.add_curve(&c);
                         }
@@ -538,7 +549,14 @@ impl BRepOffsetMakeOffset {
                             thrusec_generator.add_curve(&c);
                         }
                         thrusec_generator.perform(PRECISION_PCONFUSION);
-                        let the_surf_gen = thrusec_generator.surface();
+                        // OCCT Surface() raises StdFail_NotDone on a null
+                        // surface; the rcad Option is the raise form.
+                        let the_surf_gen = thrusec_generator
+                            .surface()
+                            .map(Surface3::BSpline)
+                            .unwrap_or_else(|| {
+                                panic!("GeomFill_Generator::Surface: no surface")
+                            });
                         // OCCT L3545: theSurf->Bounds(Uf, Ul, Vf, Vl).
                         let bounds = the_surf_gen.default_domain();
                         let (uf, ul, vf, vl) = (bounds[0], bounds[1], bounds[2], bounds[3]);
@@ -630,23 +648,43 @@ impl BRepOffsetMakeOffset {
                         a_line2d2 = Some(line2d2.clone());
                         let first_par = 0.;
                         let last_par = fp2d.distance(fp2d_oe);
-                        // OCCT L3607-3618: the
-                        // Geom2dAdaptor_Curve / GeomAdaptor_Surface /
-                        // Adaptor3d_CurveOnSurface + GeomLib::BuildCurve3d
-                        // chain (the carriers of arch. diff. #52).
-                        let con_s =
-                            super::brep_offset_make_offset::Adaptor3dCurveOnSurface::new(
-                                &line2d2,
-                                the_surf.as_ref().unwrap(),
-                            );
+                        // OCCT L3607-3618: the Geom2dAdaptor_Curve /
+                        // GeomAdaptor_Surface / Adaptor3d_CurveOnSurface
+                        // chain + GeomLib::BuildCurve3d — the real bodies
+                        // (arch. diff. #52 carriers retired).  The OCCT
+                        // BuildCurve3d defaults (GeomLib.hxx L92-94):
+                        // Continuity = GeomAbs_C1, MaxDegree = 14,
+                        // MaxSegment = 30.
+                        let surf_adaptor = std::sync::Arc::new(
+                            rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor::new(
+                                the_surf.as_ref().unwrap().clone(),
+                            ),
+                        );
+                        let curve2d_adaptor = std::sync::Arc::new(
+                            rcad_kernel::base::proj_lib::Geom2dCurveAdaptor::with_range(
+                                line2d2.clone(),
+                                first_par,
+                                last_par,
+                            ),
+                        );
+                        let con_s = rcad_kernel::base::proj_lib::CurveOnSurface::new(
+                            curve2d_adaptor,
+                            surf_adaptor,
+                        );
                         let mut a_curve: Option<Curve3> = None;
                         let mut max_deviation = 0.;
                         let mut average_deviation = 0.;
-                        let _ = (&con_s, first_par, last_par);
-                        super::brep_offset_make_offset::geom_lib_build_curve3d_cons(
+                        crate::geomalgo::geom_lib::build_curve3d(
+                            PRECISION_CONFUSION,
+                            &con_s,
+                            first_par,
+                            last_par,
                             &mut a_curve,
                             &mut max_deviation,
                             &mut average_deviation,
+                            rcad_kernel::math::GeomAbsShape::C1,
+                            14,
+                            30,
                         );
                         if let Some(a_curve) = a_curve {
                             update_edge_3d_host(&mut an_e4, &a_curve, max_deviation);
@@ -674,19 +712,38 @@ impl BRepOffsetMakeOffset {
                         a_line2d = Some(line2d.clone());
                         let first_par = 0.;
                         let last_par = lp2d.distance(lp2d_oe);
-                        let con_s =
-                            super::brep_offset_make_offset::Adaptor3dCurveOnSurface::new(
-                                &line2d,
-                                the_surf.as_ref().unwrap(),
-                            );
+                        // OCCT L3660-3671: the same adaptor chain +
+                        // BuildCurve3d (see the fp2d block for the defaults).
+                        let surf_adaptor = std::sync::Arc::new(
+                            rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor::new(
+                                the_surf.as_ref().unwrap().clone(),
+                            ),
+                        );
+                        let curve2d_adaptor = std::sync::Arc::new(
+                            rcad_kernel::base::proj_lib::Geom2dCurveAdaptor::with_range(
+                                line2d.clone(),
+                                first_par,
+                                last_par,
+                            ),
+                        );
+                        let con_s = rcad_kernel::base::proj_lib::CurveOnSurface::new(
+                            curve2d_adaptor,
+                            surf_adaptor,
+                        );
                         let mut a_curve: Option<Curve3> = None;
                         let mut max_deviation = 0.;
                         let mut average_deviation = 0.;
-                        let _ = (&con_s, first_par, last_par);
-                        super::brep_offset_make_offset::geom_lib_build_curve3d_cons(
+                        crate::geomalgo::geom_lib::build_curve3d(
+                            PRECISION_CONFUSION,
+                            &con_s,
+                            first_par,
+                            last_par,
                             &mut a_curve,
                             &mut max_deviation,
                             &mut average_deviation,
+                            rcad_kernel::math::GeomAbsShape::C1,
+                            14,
+                            30,
                         );
                         if let Some(a_curve) = a_curve {
                             update_edge_3d_host(&mut an_e3, &a_curve, max_deviation);
@@ -760,10 +817,16 @@ impl BRepOffsetMakeOffset {
                     brep_lib_build_curves3d_tol(&mut self.my_brep, &arc_wire, self.my_tol);
                     bat::builder_set_closed(&mut arc_wire, true);
                     // OCCT L3659: BRepLib_MakeFace(arcWire, true) — the
-                    // only-plane face maker (GAP leaf, arch. diff. #52).
-                    let mut arc_face = super::brep_offset_make_offset::brep_lib_make_face_wire_only_plane(
+                    // only-plane face maker; the real body is
+                    // crate::topalgo::brep_lib::make_face::BRepLibMakeFace
+                    // (arch. diff. #52 carrier retired).
+                    let mut arc_face = crate::topalgo::brep_lib::make_face::BRepLibMakeFace::new_with_wire(
+                        &mut self.my_brep,
+                        &mut bb,
                         &arc_wire,
-                    );
+                        true,
+                    )
+                    .face();
                     super::brep_offset_make_offset::brep_tools_update(&mut arc_face);
                     self.my_walls.push(arc_face);
                     let cea2 = bat::oriented(&ea2, Orientation::Forward);
@@ -924,10 +987,16 @@ impl BRepOffsetMakeOffset {
         let mut sol_is_null = nbs == 0;
         // Checking solid
         if nbs > 1 {
-            // OCCT L3857: BRepCheck_Analyzer aCheck(Sol, false) (GAP
-            // carrier, arch. diff. #49).
-            let a_check = super::brep_offset_make_offset::BRepCheckAnalyzer::new(&sol, false);
-            if !a_check.is_valid() {
+            // OCCT L3857: BRepCheck_Analyzer aCheck(Sol, false) — the real
+            // body is crate::topalgo::brep_check::brep_check_analyzer::
+            // BRepCheckAnalyzer (the carrier is retired; the pool argument
+            // is the rcad BRep-resolution necessity).
+            let a_check = crate::topalgo::brep_check::brep_check_analyzer::BRepCheckAnalyzer::new(
+                &self.my_brep,
+                &sol,
+                false,
+            );
+            if !a_check.is_valid(&self.my_brep, &sol) {
                 let mut a_sol_list: Vec<Shape> = Vec::new();
                 super::brep_offset_make_offset_d::correct_solid(
                     &mut self.my_brep,

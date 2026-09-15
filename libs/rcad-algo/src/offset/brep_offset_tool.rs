@@ -579,11 +579,12 @@ fn gabarit_range(c: &Curve3) -> (f64, f64) {
 // ---------------------------------------------------------------------------
 
 /// OCCT static BuildPCurves(E, F) (cxx L327-482) — compute the pcurve of E
-/// on F when absent.  GAP leaves: ProjLib_ProjectedCurve and Extrema_ExtPC
-/// are not translated (architecture difference #24); the reduced re-host
-/// keeps the OCCT control flow, takes the OCCT "no bound edge found"
-/// fall-through of the BSpline/Bezier branch, and the projection GAP keeps
-/// the OCCT Standard_ConstructionError path.
+/// on F when absent.  The projection section runs the real
+/// ProjLib_ProjectedCurve over the type switch; the L350-428 bound-edge
+/// search branch (Extrema_ExtPC of the edge endpoints onto the face-bounds
+/// edges for BSpline/Bezier faces) is still a recorded GAP and takes the
+/// OCCT "no bound edge found" fall-through into the projection (the same
+/// pcurve results through the approximation path).
 pub(crate) fn build_pcurves(e: &Shape, f: &Shape) {
     // OCCT L330: C2d = BRep_Tool::CurveOnSurface(E, F, ff, ll).
     let c2d = brep_tool_curve_on_surface(e, f);
@@ -620,15 +621,41 @@ pub(crate) fn build_pcurves(e: &Shape, f: &Shape) {
         // takes the OCCT "no edge found" fall-through (theEdge stays null).
     } // OCCT L428: } // if (typS == ...
 
-    // OCCT L430-433: ProjLib_ProjectedCurve Proj(HS, HC, Tolerance) — GAP
-    // (architecture difference #24).
-    //
-    // OCCT L435-467: switch (Proj.GetType()) — the Line / Circle / Ellipse /
-    // Parabola / Hyperbola / Bezier / BSpline pcurve constructors; with the
-    // GAP the projection yields no curve, so C2d stays null and the OCCT
-    // L473-481 null-C2d path is taken.
-    let c2d_new: Option<Curve2d> = None;
-    let _ = tolerance;
+    // OCCT L430-433: ProjLib_ProjectedCurve Proj(HS, HC, Tolerance) — the
+    // real body is rcad_kernel::base::proj_lib::proj_lib_projected_curve_b::
+    // ProjLibProjectedCurve (arch. diff. #24 carrier retired).  The rcad
+    // direct surface/curve reads stand in for the adaptors (HS =
+    // BRepAdaptor_Surface(F, false), HC = BRepAdaptor_Curve(E)).
+    let c2d_new: Option<Curve2d> = the_surf.and_then(|surf| {
+        let (hc_curve, _hc_f, _hc_l) = brep_tool_curve(e)?;
+        let hs: rcad_kernel::base::proj_lib::proj_lib_projected_curve_b::GeomSurfaceHandle =
+            std::sync::Arc::new(rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor::new(surf));
+        let hc: rcad_kernel::base::proj_lib::proj_lib_projected_curve_b::GeomCurveHandle =
+            std::sync::Arc::new(rcad_kernel::base::proj_lib::geom_adaptor_curve::GeomCurveAdaptor::new(hc_curve));
+        let proj = rcad_kernel::base::proj_lib::proj_lib_projected_curve_b::ProjLibProjectedCurve::with_surface_curve_tol(
+            hs, hc, tolerance,
+        );
+        // OCCT L435-467: switch (Proj.GetType()) — the analytic arms wrap the
+        // ProjLib results; the Bezier/BSpline arms take the approximated
+        // curves (a null BSpline stays null); the default arm leaves C2d
+        // null (the OCCT L478-481 throw follows).
+        match proj.get_type() {
+            rcad_kernel::base::proj_lib::CurveType::Line => Some(Curve2d::Line(proj.line())),
+            rcad_kernel::base::proj_lib::CurveType::Circle => Some(Curve2d::Circle(proj.circle())),
+            rcad_kernel::base::proj_lib::CurveType::Ellipse => {
+                Some(Curve2d::Ellipse(proj.ellipse()))
+            }
+            rcad_kernel::base::proj_lib::CurveType::Parabola => {
+                Some(Curve2d::Parabola(proj.parabola()))
+            }
+            rcad_kernel::base::proj_lib::CurveType::Hyperbola => {
+                Some(Curve2d::Hyperbola(proj.hyperbola()))
+            }
+            rcad_kernel::base::proj_lib::CurveType::Bezier => proj.bezier().map(Curve2d::Bezier),
+            rcad_kernel::base::proj_lib::CurveType::BSpline => proj.bspline().map(Curve2d::BSpline),
+            rcad_kernel::base::proj_lib::CurveType::Other => None,
+        }
+    });
 
     if let Some(mut cc) = c2d_new {
         // OCCT L469-472: if (AS.IsUPeriodic() || AS.IsVPeriodic())
@@ -642,9 +669,8 @@ pub(crate) fn build_pcurves(e: &Shape, f: &Shape) {
         return;
     }
     // OCCT L478-481: throw Standard_ConstructionError(
-    //   "BRepOffset_Tool::BuildPCurves") — the GAP keeps the OCCT failure
-    // form (the plan §0.6 annotation).
-    panic!("GAP: BRepOffset_Tool::BuildPCurves (ProjLib_ProjectedCurve not translated)");
+    //   "BRepOffset_Tool::BuildPCurves").
+    panic!("Standard_ConstructionError: BRepOffset_Tool::BuildPCurves");
 }
 
 // ---------------------------------------------------------------------------

@@ -532,3 +532,87 @@ pub fn centroid(brep: &topods::BRep) -> DVec3 {
         DVec3::ZERO
     }
 }
+
+/// OCCT BRep_Tool::IsClosed(S) (BRep_Tool.cxx L1707-1729), the SHELL arm:
+/// every non-degenerated, non-INTERNAL/EXTERNAL edge occurrence of the shell
+/// must appear EXACTLY twice (the OCCT aMap.Add/Remove trick — an edge seen
+/// once stays in the map, an edge seen twice is removed; closed = has bound
+/// edges and an empty map).
+pub fn brep_tool_is_closed_shell(brep: &topods::BRep, shell: &Shape) -> bool {
+    let mut seen: std::collections::HashSet<(u64, u32)> = std::collections::HashSet::new();
+    let mut has_bound = false;
+    if let topods::TShape::Shell(shd) = &*brep.tshapes[shell.index] {
+        for face_sr in &shd.faces {
+            if let topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                let wires = std::iter::once(&fd.outer_wire).chain(fd.inner_wires.iter());
+                for wire in wires {
+                    if let topods::TShape::Wire(wd) = &*brep.tshapes[wire.index] {
+                        for edge_sr in &wd.edges {
+                            // OCCT L1717-1721: the cumulative orientation of
+                            // the occurrence (shell is FORWARD by
+                            // theShape.Oriented(TopAbs_FORWARD)):
+                            // shell * face * wire * edge.
+                            let ori = face_sr
+                                .orientation
+                                .compose(wire.orientation)
+                                .compose(edge_sr.orientation);
+                            if ori == crate::topo::topods::Orientation::Internal
+                                || ori == crate::topo::topods::Orientation::External
+                            {
+                                continue;
+                            }
+                            let is_degenerated = match &*brep.tshapes[edge_sr.index] {
+                                topods::TShape::Edge(ed) => ed.degenerated,
+                                _ => false,
+                            };
+                            if is_degenerated {
+                                continue;
+                            }
+                            has_bound = true;
+                            // OCCT L1723-1726: add on first sight, remove on
+                            // second.
+                            let key = (edge_sr.ptr_id(), edge_sr.location);
+                            if !seen.insert(key) {
+                                seen.remove(&key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    has_bound && seen.is_empty()
+}
+
+/// The per-shell Vinert accumulation (the free-shell arm of
+/// [`shape_vinert`]): the faces of ONE shell, each integrated once with the
+/// shell * face cumulative orientation.
+pub fn shell_vinert(brep: &topods::BRep, shell: &Shape) -> VinertFace {
+    let faces = face_flat_iter(brep);
+    let face_by_idx: std::collections::HashMap<usize, &Face> =
+        faces.iter().map(|(i, f)| (*i, f)).collect();
+    let integrate = |fi: usize, face: &Face| -> VinertFace {
+        let is_nat_restr = face.outer_wire.edges.is_empty() && face.inner_wires.is_empty();
+        if is_nat_restr {
+            face_volume_gauss_natural_full(brep, fi)
+        } else {
+            face_volume_gauss_domain_full(brep, face, fi)
+        }
+    };
+    let mut total = VinertFace::default();
+    if let topods::TShape::Shell(shd) = &*brep.tshapes[shell.index] {
+        for face_sr in &shd.faces {
+            let fi = face_sr.index;
+            let ori = shell.orientation.compose(face_sr.orientation);
+            if let Some(face) = face_by_idx.get(&fi) {
+                let v = integrate(fi, face);
+                if ori.is_reversed() {
+                    total = total.sub(v);
+                } else {
+                    total = total.add(v);
+                }
+            }
+        }
+    }
+    total
+}

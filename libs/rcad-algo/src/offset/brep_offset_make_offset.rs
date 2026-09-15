@@ -553,54 +553,18 @@ pub(crate) fn brep_tools_uv_bounds(the_brep: &BRep, _f: &Shape) -> (f64, f64, f6
 /// #47): recomputes the pcurves/tolerances of the face.
 pub(crate) fn brep_tools_update(_f: &mut Shape) {}
 
-/// OCCT BRepTools::IsReallyClosed(E, F) — GAP static leaf (architecture
-/// difference #47): true when E is a seam edge of F.
-pub(crate) fn brep_tools_is_really_closed(_e: &Shape, _f: &Shape) -> bool {
-    panic!("GAP: BRepTools::IsReallyClosed (TKTopAlgo/BRepTools not translated)");
-}
+// OCCT BRepTools::IsReallyClosed(E, F) — the real body is
+// crate::brep_sweep::tool_rehost::brep_tools_is_really_closed (the local
+// zero-caller panic carrier is deleted per Rule 4).
 
-/// OCCT BRepTools_WireExplorer (TKTopAlgo/BRepTools) — GAP carrier
-/// (architecture difference #48): the ordered edge walk of a wire on a
-/// face.
-pub(crate) struct BRepToolsWireExplorer;
+// OCCT BRepTools_WireExplorer — the real body is
+// crate::topalgo::brep_tools_wire_explorer (and the
+// brep_offset_inter2d::BRepToolsWireExplorer cluster form); the local
+// zero-caller panic carrier is deleted per Rule 4.
 
-impl BRepToolsWireExplorer {
-    /// OCCT BRepTools_WireExplorer::Init(W, F).
-    pub fn init(&mut self, _w: &Shape, _f: &Shape) {
-        panic!("GAP: BRepTools_WireExplorer::Init (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_WireExplorer::More().
-    pub fn more(&self) -> bool {
-        panic!("GAP: BRepTools_WireExplorer::More (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_WireExplorer::Current().
-    pub fn current(&self) -> Shape {
-        panic!("GAP: BRepTools_WireExplorer::Current (TKTopAlgo/BRepTools not translated)");
-    }
-
-    /// OCCT BRepTools_WireExplorer::Next().
-    pub fn next(&mut self) {
-        panic!("GAP: BRepTools_WireExplorer::Next (TKTopAlgo/BRepTools not translated)");
-    }
-}
-
-/// OCCT BRepCheck_Analyzer(S, GeomChecks) (TKTopAlgo/BRepCheck) — GAP
-/// carrier (architecture difference #49): the overall validity probe.
-pub(crate) struct BRepCheckAnalyzer;
-
-impl BRepCheckAnalyzer {
-    /// OCCT BRepCheck_Analyzer::BRepCheck_Analyzer(S, GeomChecks = false).
-    pub fn new(_s: &Shape, _geom_checks: bool) -> Self {
-        BRepCheckAnalyzer
-    }
-
-    /// OCCT BRepCheck_Analyzer::IsValid().
-    pub fn is_valid(&self) -> bool {
-        panic!("GAP: BRepCheck_Analyzer::IsValid (TKTopAlgo/BRepCheck not translated)");
-    }
-}
+// OCCT BRepCheck_Analyzer(S, GeomChecks) — the real body is
+// crate::topalgo::brep_check::brep_check_analyzer::BRepCheckAnalyzer (the
+// local panic carrier is deleted per Rule 4).
 
 /// OCCT BRepCheck_Edge(E)::Tolerance() (BRepCheck_Edge.cxx L598-707) — the
 /// edge validity tolerance. The 1:1 body is
@@ -620,10 +584,12 @@ pub(crate) fn brep_check_vertex_tolerance(the_brep: &BRep, v: &Shape) -> f64 {
         .tolerance(the_brep)
 }
 
-/// OCCT BRepGProp::VolumeProperties(S, VProps, OnlyClosed) + GProp_GProps::
-/// Mass() — GAP leaf (architecture difference #51).
-pub(crate) fn brep_gprop_volume_properties(_s: &Shape) -> f64 {
-    panic!("GAP: BRepGProp::VolumeProperties (TKTopAlgo/BRepGProp not translated)");
+/// OCCT BRepGProp::VolumeProperties(S, VProps, OnlyClosed = true) +
+/// GProp_GProps::Mass() — the real body is rcad_kernel::base::gprop::props::
+/// volume_properties_only_closed (the local panic carrier is retired; the
+/// pool argument is the rcad BRep-resolution necessity).
+pub(crate) fn brep_gprop_volume_properties(brep: &BRep, s: &Shape) -> f64 {
+    rcad_kernel::base::gprop::props::volume_properties_only_closed(brep, s).mass()
 }
 
 /// OCCT BRepLib_FindSurface (TKTopAlgo/BRepLib_FindSurface.hxx / .cxx) — the
@@ -639,27 +605,9 @@ pub(crate) use crate::topalgo::brep_lib_find_surface::BRepLibFindSurface;
 /// re-export.
 pub(crate) use crate::geomalgo::geom_lib_is_planar_surface::GeomLibIsPlanarSurface;
 
-/// OCCT GeomFill_Generator (TKGeomAlgo/GeomFill) — GAP carrier
-/// (architecture difference #52): the two-section ruled-surface generator
-/// of MakeMissingWalls (the OCCT Extrusion path).
-pub(crate) struct GeomFillGenerator;
-
-impl GeomFillGenerator {
-    /// OCCT GeomFill_Generator::AddCurve(C).
-    pub fn add_curve(&mut self, _c: &Curve3) {
-        panic!("GAP: GeomFill_Generator::AddCurve (TKGeomAlgo/GeomFill not translated)");
-    }
-
-    /// OCCT GeomFill_Generator::Perform(Tol3d).
-    pub fn perform(&mut self, _tol3d: f64) {
-        panic!("GAP: GeomFill_Generator::Perform (TKGeomAlgo/GeomFill not translated)");
-    }
-
-    /// OCCT GeomFill_Generator::Surface().
-    pub fn surface(&self) -> Surface3 {
-        panic!("GAP: GeomFill_Generator::Surface (TKGeomAlgo/GeomFill not translated)");
-    }
-}
+// OCCT GeomFill_Generator — the real body is
+// crate::brep_fill::generator::GeomFillGenerator (the local panic carrier is
+// deleted per Rule 4).
 
 // OCCT IntTools_FClass2d — the real body lives in
 // crate::bop::int_tools::int_tools_fclass2d (the C.3 carrier switch; the
@@ -746,58 +694,53 @@ pub(crate) fn bop_algo_tools_make_split_edge(
     source_edge.orientation = ne.orientation;
 }
 
-/// OCCT GeomLib::BuildCurve3d(Tol, ConS, FirstPar, LastPar, C3d,
-/// MaxDeviation, AverageDeviation) (the Adaptor3d_CurveOnSurface form) —
-/// GAP leaf (architecture difference #52; the inter2d.rs #29 form).
-pub(crate) fn geom_lib_build_curve3d_cons(
-    _the_c3d: &mut Option<Curve3>,
-    _the_max_deviation: &mut f64,
-    _the_average_deviation: &mut f64,
-) {
-    panic!("GAP: GeomLib::BuildCurve3d (TKTopAlgo/GeomLib not translated)");
+// OCCT GeomLib::BuildCurve3d(Tol, ConS, FirstPar, LastPar, C3d, MaxDeviation,
+// AverageDeviation) — the real body is
+// crate::geomalgo::geom_lib::build_curve3d (the local panic carrier and the
+// local Adaptor3d_CurveOnSurface stub are deleted per Rule 4; the real
+// Adaptor3d_CurveOnSurface is rcad_kernel::base::proj_lib::adaptor::
+// CurveOnSurface).
+
+/// OCCT GC_MakeCylindricalSurface(Circ).Value() (GC_MakeCylindricalSurface
+/// .cxx L65-69: `gp_Cylinder Cyl = gce_MakeCylinder(Circ); TheCylinder =
+/// new Geom_CylindricalSurface(Cyl)` — the circle position frame and
+/// radius); the real constructor is
+/// `rcad_kernel::base::gc::make_cylindrical_surface`.
+pub(crate) fn gc_make_cylindrical_surface(c: &rcad_kernel::geom::Circle3) -> Surface3 {
+    rcad_kernel::base::gc::make_cylindrical_surface(c.center, c.normal, c.radius, c.x_dir)
+        .map(Surface3::Cylinder)
+        // OCCT Value() raises StdFail_NotDone when not done; the circle form
+        // fails only on a negative radius.
+        .unwrap_or_else(|e| panic!("GC_MakeCylindricalSurface: not done ({e})"))
 }
 
-/// OCCT Adaptor3d_CurveOnSurface(HC2d, HSurf) — GAP carrier (architecture
-/// difference #52): the pcurve-on-surface adapter consumed only by
-/// GeomLib::BuildCurve3d.
-pub(crate) struct Adaptor3dCurveOnSurface;
-
-impl Adaptor3dCurveOnSurface {
-    /// OCCT Adaptor3d_CurveOnSurface::Adaptor3d_CurveOnSurface(Curve2d,
-    /// Surface).
-    pub fn new(_c2d: &Curve2d, _s: &Surface3) -> Self {
-        Adaptor3dCurveOnSurface
-    }
+/// OCCT GC_MakeLine2d(P1, P2).Value() (GC_MakeLine2d.cxx: `gce_MakeLin2d
+/// ml(P1, P2)` + the NotDone raise) — the real constructor is
+/// `rcad_kernel::base::gc::make_line2d_2p`.
+pub(crate) fn gc_make_line2d(p1: DVec2, p2: DVec2) -> Curve2d {
+    rcad_kernel::base::gc::make_line2d_2p(p1, p2)
+        .map(Curve2d::Line)
+        .unwrap_or_else(|e| panic!("GC_MakeLine2d: not done ({e})"))
 }
 
-/// OCCT GC_MakeCylindricalSurface(Circ).Value() — GAP leaf (architecture
-/// difference #52): the cylinder of the circle.
-pub(crate) fn gc_make_cylindrical_surface(_c: &rcad_kernel::geom::Circle3) -> Surface3 {
-    panic!("GAP: GC_MakeCylindricalSurface (TKGeomBase/GC not translated)");
+/// OCCT gce_MakeDir(P1, P2).Value() (gce_MakeDir.cxx L29-41; the gce error
+/// surfaces as the Value() StdFail_NotDone raise); the real constructor is
+/// `rcad_kernel::base::gc::make_dir_2p`.
+pub(crate) fn gce_make_dir(p1: DVec3, p2: DVec3) -> DVec3 {
+    rcad_kernel::base::gc::make_dir_2p(p1, p2)
+        .unwrap_or_else(|e| panic!("gce_MakeDir: not done ({e})"))
 }
 
-/// OCCT GC_MakeLine2d(P1, P2).Value() — GAP leaf (architecture difference
-/// #52): the 2D line through two points.
-pub(crate) fn gc_make_line2d(_p1: DVec2, _p2: DVec2) -> Curve2d {
-    panic!("GAP: GC_MakeLine2d (TKGeomBase/GC not translated)");
-}
-
-/// OCCT gce_MakeDir(P1, P2).Value() — the unit direction P1 -> P2; the
-/// OCCT gce error (null distance) is the caller's NotDone path (architecture
-/// difference #52).
-pub(crate) fn gce_make_dir(_p1: DVec3, _p2: DVec3) -> DVec3 {
-    panic!("GAP: gce_MakeDir (TKMath/gce not translated)");
-}
-
-/// OCCT gce_MakeCone(P1, P2, R1, R2).Value() — GAP leaf (architecture
-/// difference #52): the cone through two circles.
+/// OCCT gce_MakeCone(P1, P2, R1, R2).Value() (gce_MakeCone.cxx L228-280);
+/// the real constructor is `rcad_kernel::base::gc::make_cone_2p_2r`.
 pub(crate) fn gce_make_cone(
-    _p1: DVec3,
-    _p2: DVec3,
-    _r1: f64,
-    _r2: f64,
+    p1: DVec3,
+    p2: DVec3,
+    r1: f64,
+    r2: f64,
 ) -> rcad_kernel::geom::ConicalSurface {
-    panic!("GAP: gce_MakeCone (TKMath/gce not translated)");
+    rcad_kernel::base::gc::make_cone_2p_2r(p1, p2, r1, r2)
+        .unwrap_or_else(|e| panic!("gce_MakeCone: not done ({e})"))
 }
 
 /// OCCT BRepLib::SameParameter(S) — the face form — GAP static leaf
@@ -805,11 +748,9 @@ pub(crate) fn gce_make_cone(
 /// failure-path structure).
 pub(crate) fn brep_lib_same_parameter_face(_the_s: &mut Shape) {}
 
-/// OCCT BRepLib_MakeFace(W, OnlyPlane = true) — GAP leaf (architecture
-/// difference #52): the only-plane face maker of MakeMissingWalls.
-pub(crate) fn brep_lib_make_face_wire_only_plane(_the_w: &Shape) -> Shape {
-    panic!("GAP: BRepLib_MakeFace(W, OnlyPlane) (TKTopAlgo/BRepLib not translated)");
-}
+// OCCT BRepLib_MakeFace(W, OnlyPlane = true) — the real body is
+// crate::topalgo::brep_lib::make_face::BRepLibMakeFace::new_with_wire (the
+// local panic carrier is deleted per Rule 4).
 
 // ---------------------------------------------------------------------------
 // TopExp / BRep_Tool re-hosts local to the MakeOffset cluster.
@@ -1093,12 +1034,13 @@ pub(crate) fn fill_contours(
         let a_face = explo;
         for itf in bat::sub_shapes(&a_face) {
             let a_wire = itf;
-            // OCCT L552: BRepTools_WireExplorer Wexp (GAP carrier,
-            // architecture difference #48).
-            let mut wexp = BRepToolsWireExplorer;
-            wexp.init(&a_wire, &a_face);
+            // OCCT L552: BRepTools_WireExplorer Wexp — the real body is
+            // crate::topalgo::brep_tools_wire_explorer (arch. diff. #48
+            // carrier retired).
+            let mut wexp = crate::topalgo::brep_tools_wire_explorer::WireExplorer::new();
+            wexp.init_wire_face(&a_wire, &a_face);
             while wexp.more() {
-                let an_edge = wexp.current();
+                let an_edge = wexp.current().clone();
                 if brep_tool_degenerated(&an_edge) {
                     wexp.next();
                     continue;

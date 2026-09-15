@@ -14,11 +14,13 @@ use std::fmt;
 // Re-export all public constructors
 mod curves;
 mod curves2d;
+mod dirs;
 mod surfaces;
 mod transforms;
 
 pub use curves::*;
 pub use curves2d::*;
+pub use dirs::*;
 pub use surfaces::*;
 pub use transforms::*;
 

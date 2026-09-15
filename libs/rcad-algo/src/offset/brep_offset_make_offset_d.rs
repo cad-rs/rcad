@@ -21,9 +21,10 @@ use rcad_kernel::topo_shape::Shape;
 
 use super::brep_offset_inter2d_b::BRepOffsetInter2d;
 use super::brep_offset_make_offset_1::BuilderRef;
+use crate::brep_sweep::tool_rehost::brep_tools_is_really_closed;
 use super::brep_offset_make_offset::{
     brep_check_edge_tolerance, brep_check_vertex_tolerance, brep_gprop_volume_properties,
-    brep_lib_same_parameter_3, brep_tools_is_really_closed, bop_algo_tools_make_split_edge,
+    brep_lib_same_parameter_3, bop_algo_tools_make_split_edge,
     find_parameter, top_exp_vertices_cum_ori, BRepOffset_Error,
     DataMapOfShapeListOfShape, DataMapOfShapeShape,
     IndexedDataMapOfShapeListOfShape, MapSF,
@@ -280,9 +281,11 @@ pub(crate) fn correct_solid(
 
     for an_it in bat::sub_shapes(the_sol) {
         let a_sh = an_it;
-        // OCCT L4322: BRepGProp::VolumeProperties(aSh, aVProps, true)
-        // (GAP leaf, arch. diff. #51).
-        let a_mass = brep_gprop_volume_properties(&a_sh);
+        // OCCT L4322: BRepGProp::VolumeProperties(aSh, aVProps, true) — the
+        // OnlyClosed variant; the real body is rcad_kernel::base::gprop::
+        // props::volume_properties_only_closed (arch. diff. #51 carrier
+        // retired; aVProps.Mass()).
+        let a_mass = brep_gprop_volume_properties(brep, &a_sh);
         if a_mass.abs() > a_vol_max {
             an_outer_vol = a_mass;
             a_vol_max = an_outer_vol.abs();

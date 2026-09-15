@@ -599,9 +599,17 @@ impl BRepOffsetMakeOffset {
             let mut sol_is_null = nbs == 0;
             // Checking solid
             if nbs > 1 {
-                // OCCT L2890-2891: BRepCheck_Analyzer aCheck(Sol, false).
-                let a_check = super::brep_offset_make_offset::BRepCheckAnalyzer::new(&sol, false);
-                if !a_check.is_valid() {
+                // OCCT L2890-2891: BRepCheck_Analyzer aCheck(Sol, false) —
+                // the real body is crate::topalgo::brep_check::
+                // brep_check_analyzer::BRepCheckAnalyzer (the carrier is
+                // retired; the pool argument is the rcad BRep-resolution
+                // necessity).
+                let a_check = crate::topalgo::brep_check::brep_check_analyzer::BRepCheckAnalyzer::new(
+                    &self.my_brep,
+                    &sol,
+                    false,
+                );
+                if !a_check.is_valid(&self.my_brep, &sol) {
                     let mut a_sol_list: Vec<Shape> = Vec::new();
                     let mut sol_for_check = sol.clone();
                     super::brep_offset_make_offset_d::correct_solid(

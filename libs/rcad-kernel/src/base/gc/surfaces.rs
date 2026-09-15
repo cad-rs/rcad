@@ -252,8 +252,108 @@ pub fn make_trimmed_cone(
 }
 
 // ============================================================================
+// gce_MakeCone
+// ============================================================================
+
+/// OCCT gce_MakeCone::gce_MakeCone(const gp_Pnt& P1, const gp_Pnt& P2,
+/// const double R1, const double R2) (gce_MakeCone.cxx L228-280): the cone
+/// defined by two points (axis) and two radii (section radii at each point).
+///
+/// The error ladder keeps the OCCT order (NullAxis on a sub-Resolution
+/// distance — note the STRICT `<` here, the gce_MakeDir form uses `<=` —
+/// then NegativeRadius, then NullAngle).  The D2 reference direction is the
+/// OCCT L258-270 perpendicular selection over (x, y, z); for a normalized
+/// D1 at least one component exceeds gp::Resolution, so the trailing
+/// unreachable arm mirrors the OCCT uninitialized-D2 UB.
+pub fn make_cone_2p_2r(p1: Point3, p2: Point3, r1: f64, r2: f64) -> Result<ConicalSurface, GceError> {
+    const GP_RESOLUTION: f64 = f64::MIN_POSITIVE;
+    let dist = p1.distance(p2);
+    if dist < GP_RESOLUTION {
+        return Err(GceError::NullAxis);
+    }
+    if r1 < 0.0 || r2 < 0.0 {
+        return Err(GceError::NegativeRadius);
+    }
+    // OCCT L241: Angle = std::abs(atan((R1 - R2) / dist)).
+    let mut angle = ((r1 - r2) / dist).atan().abs();
+    if (std::f64::consts::FRAC_PI_2 - angle).abs() < GP_RESOLUTION || angle.abs() < GP_RESOLUTION
+    {
+        return Err(GceError::NullAngle);
+    }
+    // OCCT L243: D1(P2.XYZ() - P1.XYZ()) — normalized by the gp_Dir ctor.
+    let d1 = (p2 - p1).normalize_or_zero();
+    // OCCT L245-270: the D2 perpendicular selection.
+    let x = d1.x;
+    let y = d1.y;
+    let z = d1.z;
+    let d2 = if x.abs() > GP_RESOLUTION {
+        Vec3::new(-y, x, 0.0).normalize_or_zero()
+    } else if y.abs() > GP_RESOLUTION {
+        Vec3::new(0.0, -z, y).normalize_or_zero()
+    } else if z.abs() > GP_RESOLUTION {
+        Vec3::new(z, 0.0, -x).normalize_or_zero()
+    } else {
+        unreachable!("a normalized D1 has a component above gp::Resolution");
+    };
+    // OCCT L272-275: R1 > R2 flips the (signed) semi-angle.
+    if r1 > r2 {
+        angle = -angle;
+    }
+    // OCCT L276: gp_Cone(gp_Ax2(P1, D1, D2), Angle, R1) — the Ax2 location
+    // P1 is the reference point at radius R1 (the rcad `apex` field), D1 the
+    // axis, D2 the X direction.
+    Ok(ConicalSurface {
+        apex: p1,
+        axis: d1,
+        radius: r1,
+        half_angle_rad: angle,
+        ref_dir: d2,
+    })
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
+
+#[cfg(test)]
+mod gce_cone_tests {
+    use super::*;
+
+    // The OCCT (P1, P2, R1, R2) ctor: the cone of axis P1->P2, R1 at P1 and
+    // R2 at P2; the semi-angle atan((R1-R2)/dist) is SIGNED POSITIVE when
+    // R1 < R2 (the cone opens along +axis) and flips when R1 > R2 (cxx
+    // L272-275).  The D2 reference direction is the (z,0,-x) arm for a
+    // +Z axis.
+    #[test]
+    fn make_cone_2p_2r_opens_along_axis_and_selects_d2() {
+        let cone = make_cone_2p_2r(DVec3::ZERO, DVec3::new(0.0, 0.0, 2.0), 1.0, 2.0).unwrap();
+        let expected: f64 = (0.5f64).atan().abs();
+        assert!((cone.half_angle_rad - expected).abs() < 1e-15);
+        assert!((cone.axis - DVec3::Z).length() < 1e-15);
+        assert!((cone.ref_dir - DVec3::X).length() < 1e-15);
+        assert_eq!(cone.radius, 1.0);
+        assert_eq!(cone.apex, DVec3::ZERO);
+
+        // R1 > R2: the semi-angle flips (cxx L272-275).
+        let cone2 = make_cone_2p_2r(DVec3::ZERO, DVec3::new(0.0, 0.0, 2.0), 2.0, 1.0).unwrap();
+        assert!((cone2.half_angle_rad + expected).abs() < 1e-15);
+
+        // Error ladder: sub-Resolution distance -> NullAxis; negative
+        // radius -> NegativeRadius; degenerate angle -> NullAngle.
+        assert!(matches!(
+            make_cone_2p_2r(DVec3::ZERO, DVec3::ZERO, 1.0, 2.0),
+            Err(GceError::NullAxis)
+        ));
+        assert!(matches!(
+            make_cone_2p_2r(DVec3::ZERO, DVec3::new(0.0, 0.0, 2.0), -1.0, 2.0),
+            Err(GceError::NegativeRadius)
+        ));
+        assert!(matches!(
+            make_cone_2p_2r(DVec3::ZERO, DVec3::new(0.0, 0.0, 2.0), 1.0, 1.0),
+            Err(GceError::NullAngle)
+        ));
+    }
+}
 
 #[cfg(test)]
 mod tests {

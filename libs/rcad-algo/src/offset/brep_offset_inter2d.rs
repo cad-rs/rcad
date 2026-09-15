@@ -113,10 +113,22 @@ pub use super::brep_offset_analyse::BRepOffsetAnalyse;
 /// (architecture difference #26; the brep_offset_offset_b.rs precedent).
 pub fn brep_lib_same_parameter(_the_e: &Shape, _the_tol: f64) {}
 
-/// OCCT GeomProjLib::Curve2d(C, f, l, S) — GAP leaf (architecture difference
-/// #28).
-pub fn geom_proj_lib_curve2d(_the_c: &Curve3, _the_f: f64, _the_l: f64, _the_s: &Surface3) -> Option<Curve2d> {
-    panic!("GAP: GeomProjLib::Curve2d (TKTopAlgo/GeomProjLib not translated)");
+/// OCCT GeomProjLib::Curve2d(C, f, l, S) — the real body is
+/// rcad_kernel::base::geom_proj_lib::curve2d over the surface natural UV
+/// bounds (arch. diff. #28 carrier retired).
+pub fn geom_proj_lib_curve2d(the_c: &Curve3, the_f: f64, the_l: f64, the_s: &Surface3) -> Option<Curve2d> {
+    use rcad_kernel::geom::SurfaceEval;
+    let dom = the_s.default_domain();
+    rcad_kernel::base::geom_proj_lib::curve2d(
+        the_c,
+        the_f,
+        the_l,
+        the_s,
+        dom[0],
+        dom[1],
+        dom[2],
+        dom[3],
+    )
 }
 
 /// OCCT GeomLib::BuildCurve3d(Tol, ConS, f, l, C3d, MaxDeviation,
