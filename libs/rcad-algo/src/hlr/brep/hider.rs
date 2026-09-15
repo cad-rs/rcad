@@ -29,7 +29,7 @@ use crate::topalgo::brep_top_adaptor::tool::BRepTopAdaptorTool;
 use super::data::Data;
 
 /// OCCT Standard_Real RealLast() (cxx L533 `pmin = RealLast();`).
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 /// OCCT HLRBRep_Hider (hxx L31-52) — the hiding engine over the HLRBRep_Data
 /// structure.

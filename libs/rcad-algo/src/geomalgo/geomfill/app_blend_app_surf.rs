@@ -15,12 +15,12 @@
 //! `TheLine` = GeomFill_Line (rcad [`Line`], a plain value — the OCCT
 //! `handle` null check of Perform is unrepresentable and kept as a comment).
 //!
-//! GAP: the `UseSmoothing` branch of InternalPerform (gxx L474-541) drives
-//! `AppDef_Variational`, which has no rcad port yet; the translated call
-//! shape is kept verbatim and the [`AppDefVariational`] carrier (file
-//! `app_blend_app_surf_b.rs`) preserves the OCCT failure path
-//! (IsCreated() = false -> the early return with done = false), the same
-//! convention as `shhealing/shape_construct/points_to_bspline.rs`.
+//! The `UseSmoothing` branch of InternalPerform (gxx L474-541) drives the
+//! real `AppDef_Variational` engine
+//! ([`crate::geomalgo::app_def_variational::AppDefVariational`], wired in
+//! file `app_blend_app_surf_b.rs`); the OCCT
+//! `catch (Standard_Failure)` around `Approximate()` maps to the
+//! `catch_unwind` convention (hider.rs precedent).
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::math::bspl_lib::reparametrize;
@@ -43,9 +43,9 @@ mod app_blend_app_surf_c;
 const SCAL: bool = true;
 
 /// OCCT Standard_Real RealLast() (Standard_Real.hxx L179-182) == DBL_MAX.
-const REAL_LAST: f64 = f64::MAX;
 /// OCCT Standard_Real RealFirst() (Standard_Real.hxx L167-170) == -DBL_MAX.
-const REAL_FIRST: f64 = f64::MIN;
+/// — the canonical kernel constants (local duplicates retired).
+use rcad_kernel::core::precision::{REAL_FIRST, REAL_LAST};
 
 /// OCCT gp::Resolution() == RealSmall() (gp.hxx L59-60) — the smallest
 /// positive normalized double.

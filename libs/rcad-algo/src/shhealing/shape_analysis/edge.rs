@@ -54,7 +54,7 @@ use crate::topalgo::brep_lib_validate_edge::{
 };
 
 // OCCT Standard_Real.hxx L179-186: RealLast() - the biggest representable real.
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 // ---------------------------------------------------------------------------
 // BRep_Tool re-hosts (architecture bridge #1; the loc_ope_* precedents).

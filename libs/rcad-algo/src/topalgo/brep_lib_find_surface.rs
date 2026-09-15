@@ -42,7 +42,7 @@ use crate::brep_algo::tool::brep_tool_tolerance;
 // gp::Resolution() = RealSmall() = DBL_MIN.
 const REAL_SMALL: f64 = f64::MIN_POSITIVE;
 // OCCT Standard_Real.hxx L182-185: RealLast() = DBL_MAX.
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 // ---------------------------------------------------------------------------
 // BRep_Tool / TopoDS re-hosts (architecture bridges #1-#3)

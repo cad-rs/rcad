@@ -15,10 +15,10 @@
 //! - `BRepAdaptor_CompCurve` (TKBRep adaptor) is the real
 //!   `topalgo::brep_top_adaptor::BRepAdaptorCompCurve` translation
 //!   (re-exported below as [`BRepAdaptorCompCurve`]); the construction site
-//!   (cxx L167) builds it over `myLaw->Wire()`.  The remaining bridge is
-//!   the GeomFill feed: `GeomFill_SectionPlacement::Perform` consumes the
-//!   `handle(Adaptor3d_Curve)` in OCCT while the rcad Perform port accepts
-//!   only `Curve3` — see the adaptor's `comp_curve` note.
+//!   (cxx L167) builds it over `myLaw->Wire()` and the resulting
+//!   `Arc<dyn Adaptor3dCurve>` feeds `GeomFill_SectionPlacement::Perform`
+//!   directly (the rcad Perform port takes the kernel
+//!   `CurveHandle = Arc<dyn Adaptor3dCurve>`).
 //! - `GeomConvert_CompCurveToBSplineCurve` reuses the offset-package carrier
 //!   (offset::brep_offset_inter2d::GeomConvertCompCurveToBSplineCurve).
 //! - The GeomFill engine is the batch-2
@@ -262,10 +262,12 @@ impl BRepFillSectionPlacement {
         };
 
         // occ::handle<BRepAdaptor_CompCurve> aWireAdaptor =
-        //   new BRepAdaptor_CompCurve(myLaw->Wire());
-        // aSectionPlacement.Perform(aWireAdaptor, Precision::Confusion());
+        //   new BRepAdaptor_CompCurve(myLaw->Wire());                     (L167)
+        // aSectionPlacement.Perform(aWireAdaptor, Precision::Confusion()); (L168)
+        // — the handle(Adaptor3d_Curve) feeds the GeomFill Perform directly
+        // (the rcad kernel `CurveHandle = Arc<dyn Adaptor3dCurve>`).
         let a_wire_adaptor = BRepAdaptorCompCurve::new(brep, &self.my_law.borrow().base().wire());
-        a_section_placement.perform_with_path(Some(a_wire_adaptor.comp_curve()), CONFUSION);
+        a_section_placement.perform_with_path(std::sync::Arc::new(a_wire_adaptor), CONFUSION);
 
         let a_section_param = a_section_placement.parameter_on_path();
         let a_param_confusion = PCONFUSION;

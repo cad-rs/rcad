@@ -59,7 +59,7 @@ use crate::geomalgo::geom2d_int::{curve2d_type_of, Curve2dAdaptor, Curve2dType};
 use crate::topalgo::brep_lib_validate_edge::{Adaptor3dCurveOnSurface, GeomAdaptorCurve};
 
 // OCCT Standard_Real.hxx L176-179 / L182-185.
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 // OCCT gp.hxx L59-60: gp::Resolution() = RealSmall() = DBL_MIN.
 const REAL_SMALL: f64 = f64::MIN_POSITIVE;
 

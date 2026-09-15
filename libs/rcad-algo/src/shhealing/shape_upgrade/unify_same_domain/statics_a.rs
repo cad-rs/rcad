@@ -21,8 +21,7 @@ use super::topexp::{
 use super::{map_add, shape_key, IndexedDataMapOfShapeListOfShape, MapOfShape};
 
 /// OCCT RealLast() / RealFirst().
-pub(crate) const REAL_LAST: f64 = f64::MAX;
-pub(crate) const REAL_FIRST: f64 = -f64::MAX;
+pub(crate) use rcad_kernel::core::precision::{REAL_LAST, REAL_FIRST};
 
 /// OCCT static IsOnSingularity (cxx L93-106): true when the list carries a
 /// degenerated edge.

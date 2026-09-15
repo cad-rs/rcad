@@ -32,7 +32,7 @@ use super::project_curve_on_surface_ns::{
 };
 
 /// OCCT `RealLast()` (Standard_Real.hxx).
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 /// 1-based coordinate setter for the `IndCoord` (1=U, 2=V) OCCT idiom.
 fn set_coord(the_p: &mut DVec2, the_ind_coord: usize, the_val: f64) {

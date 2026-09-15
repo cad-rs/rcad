@@ -271,8 +271,8 @@ impl BRepOffsetMakeOffset {
         // Result solid should be computed in MakeOffset scope.
         if self.my_thickening && self.my_is_perform_sewing {
             let mut a_sew = super::bi_tgte_blended::BRepBuilderAPISewing::new(self.my_tol);
-            a_sew.add(&self.my_offset_shape);
-            a_sew.perform();
+            a_sew.add(&mut self.my_brep, &self.my_offset_shape);
+            a_sew.perform(&mut self.my_brep);
             if a_ps.user_break() {
                 self.my_error = BRepOffset_Error::UserBreak;
                 return;

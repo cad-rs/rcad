@@ -1,8 +1,7 @@
 //! OCCT AppBlend_AppSurf — the InternalPerform body
 //! (AppBlend_AppSurf.gxx L188-593) of the engine declared in the parent
-//! module `app_blend_app_surf`.  GAP note: the UseSmoothing branch drives
-//! AppDef_Variational, kept as the [`AppDefVariational`] failure-path
-//! carrier (see the parent module header).
+//! module `app_blend_app_surf`.  The UseSmoothing branch drives the real
+//! AppDef_Variational translation (geomalgo::app_def_variational).
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::math::math_matrix::Vector as RVector;
@@ -10,6 +9,7 @@ use rcad_kernel::math::GeomAbsShape;
 
 use crate::geomalgo::app_def::{MultiLine, MultiPointConstraint};
 use crate::geomalgo::app_def_compute::Compute;
+use crate::geomalgo::app_def_variational::{AppDefVariational, CoupleArray1};
 use crate::geomalgo::approx_int::{
     ApproxParamType, AppParConstraint, ConstraintCouple, MultiBSpCurve,
 };
@@ -17,90 +17,6 @@ use crate::geomalgo::bspl_compute_line::BSplineCompute;
 
 use super::{AppBlendAppSurf, TheSectionGenerator, GP_RESOLUTION};
 use super::super::line::Line;
-
-/// GAP carrier: OCCT AppDef_Variational (TKGeomBase/AppDef) — the
-/// variational-smoothing approximation has no rcad port yet.  The carrier
-/// preserves the OCCT failure path of the gxx flow: IsCreated() = false
-/// makes the translated body return early with done = false, exactly like a
-/// non-created Variational run (the points_to_bspline.rs convention).  The
-/// OCCT call shape is recorded at the use site.
-pub(super) struct AppDefVariational;
-
-impl AppDefVariational {
-    /// OCCT AppDef_Variational(MultiLine, FirstPoint, LastPoint,
-    /// Constraints) (AppDef_Variational.cxx).
-    #[allow(unused_variables)]
-    pub(super) fn new(
-        line: &MultiLine,
-        first_point: i32,
-        last_point: i32,
-        constraints: &[ConstraintCouple],
-    ) -> Self {
-        AppDefVariational
-    }
-
-    /// OCCT SetMaxDegree(Degree).
-    #[allow(unused_variables)]
-    pub(super) fn set_max_degree(&mut self, degree: i32) {}
-
-    /// OCCT SetContinuity(Continuity).
-    #[allow(unused_variables)]
-    pub(super) fn set_continuity(&mut self, continuity: GeomAbsShape) {}
-
-    /// OCCT SetMaxSegment(MaxSegment).
-    #[allow(unused_variables)]
-    pub(super) fn set_max_segment(&mut self, max_segment: i32) {}
-
-    /// OCCT SetTolerance(Tol).
-    #[allow(unused_variables)]
-    pub(super) fn set_tolerance(&mut self, tol: f64) {}
-
-    /// OCCT SetWithMinMax(WithMinMax).
-    #[allow(unused_variables)]
-    pub(super) fn set_with_min_max(&mut self, with_min_max: bool) {}
-
-    /// OCCT SetWithCutting(WithCutting).
-    #[allow(unused_variables)]
-    pub(super) fn set_with_cutting(&mut self, with_cutting: bool) {}
-
-    /// OCCT SetNbIterations(NbIterations).
-    #[allow(unused_variables)]
-    pub(super) fn set_nb_iterations(&mut self, nb_iterations: i32) {}
-
-    /// OCCT SetCriteriumWeight(W1, W2, W3).
-    #[allow(unused_variables)]
-    pub(super) fn set_criterium_weight(&mut self, w1: f64, w2: f64, w3: f64) {}
-
-    /// OCCT IsCreated() — the GAP failure path (false).
-    pub(super) fn is_created(&self) -> bool {
-        false
-    }
-
-    /// OCCT IsOverConstrained() — behind the IsCreated() early return.
-    pub(super) fn is_over_constrained(&self) -> bool {
-        false
-    }
-
-    /// OCCT Approximate() — behind the IsCreated() early return.
-    pub(super) fn approximate(&mut self) {
-        panic!("GAP: AppDef_Variational (TKGeomBase/AppDef) is not translated — see file header")
-    }
-
-    /// OCCT IsDone() — behind the IsCreated() early return.
-    pub(super) fn is_done(&self) -> bool {
-        panic!("GAP: AppDef_Variational (TKGeomBase/AppDef) is not translated — see file header")
-    }
-
-    /// OCCT MaxError() — behind the IsCreated() early return.
-    pub(super) fn max_error(&self) -> f64 {
-        panic!("GAP: AppDef_Variational (TKGeomBase/AppDef) is not translated — see file header")
-    }
-
-    /// OCCT Value() — behind the IsCreated() early return.
-    pub(super) fn value(&self) -> MultiBSpCurve {
-        panic!("GAP: AppDef_Variational (TKGeomBase/AppDef) is not translated — see file header")
-    }
-}
 
 impl AppBlendAppSurf {
     /// OCCT AppBlend_AppSurf::InternalPerform (gxx L188-593).
@@ -446,11 +362,9 @@ impl AppBlendAppSurf {
                 mult_c = theapprox.value().clone();
             } else {
                 // Variational algo
-                // OCCT L476-477: the (1, NbPoint) array of constraint
-                // couples.
-                let mut tabofcc: Vec<ConstraintCouple> =
-                    vec![ConstraintCouple { index: 0, constraint: AppParConstraint::NoConstraint };
-                        nb_point as usize];
+                // OCCT L474-475: handle<HArray1<ConstraintCouple>> TABofCC =
+                //                new HArray1<ConstraintCouple>(1, NbPoint);
+                let mut tabof_cc = CoupleArray1::new(1, nb_point);
                 let constraint = AppParConstraint::NoConstraint;
 
                 for i in 1..=nb_point {
@@ -458,17 +372,19 @@ impl AppBlendAppSurf {
                         index: i,
                         constraint,
                     };
-                    tabofcc[(i - 1) as usize] = acc;
+                    tabof_cc.set_value(i, acc);
                 }
 
-                tabofcc[0].constraint = cfirst;
-                tabofcc[(nb_point - 1) as usize].constraint = clast;
+                // OCCT L485-486:
+                // TABofCC->ChangeValue(1).SetConstraint(Cfirst);
+                // TABofCC->ChangeValue(NbPoint).SetConstraint(Clast);
+                tabof_cc.change_value(1).constraint = cfirst;
+                tabof_cc.change_value(nb_point).constraint = clast;
 
-                // GAP: AppDef_Variational not ported — the translated call
-                // shape below keeps the OCCT flow; IsCreated() = false makes
-                // every arm behave like the OCCT failure path (done = false).
+                // OCCT L487: AppDef_Variational Variation(multL, 1, NbPoint,
+                // TABofCC);
                 let mut variation =
-                    AppDefVariational::new(&mult_l, 1, nb_point, &tabofcc);
+                    AppDefVariational::new(&mult_l, 1, nb_point, tabof_cc);
 
                 //===================================
                 let the_max_segments = 1000i32;
@@ -500,8 +416,13 @@ impl AppBlendAppSurf {
                 }
 
                 // OCCT L518-525: try { Variation.Approximate(); }
-                // catch (Standard_Failure const&) { return; }
-                variation.approximate();
+                // catch (Standard_Failure const&) { return; } — the
+                // catch_unwind is the Standard_Failure catch (the
+                // hider.rs convention); the failure path degrades to the
+                // done = false return like OCCT.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    variation.approximate();
+                }));
 
                 if !variation.is_done() {
                     return;

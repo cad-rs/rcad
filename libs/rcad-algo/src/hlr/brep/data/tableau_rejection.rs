@@ -18,7 +18,7 @@ use super::MASK32;
 use super::SIZEUV;
 
 /// OCCT Standard_Real RealLast() (Standard_Real.hxx).
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 /// OCCT class TableauRejection (cxx L77-492).
 pub struct TableauRejection {

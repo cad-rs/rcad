@@ -20,7 +20,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::precision::{square_p_confusion, CONFUSION, SQUARE_CONFUSION};
 
 // OCCT Standard_Real.hxx L179-186: RealLast() - the biggest representable real.
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 // OCCT Standard_Real.hxx L132-140: RealSmall() - the smallest positive real.
 const REAL_SMALL: f64 = f64::MIN_POSITIVE;
 

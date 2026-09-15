@@ -167,9 +167,9 @@ pub(crate) type IndexedDataMapOfShapeListOfShape = indexmap::IndexMap<
 /// OCCT Precision::Infinite().
 pub(crate) const PRECISION_INFINITE: f64 = f64::INFINITY;
 /// OCCT RealLast().
-pub(crate) const REAL_LAST: f64 = f64::MAX;
+pub(crate) use rcad_kernel::core::precision::REAL_LAST;
 /// OCCT RealFirst().
-pub(crate) const REAL_FIRST: f64 = f64::MIN;
+pub(crate) use rcad_kernel::core::precision::REAL_FIRST;
 /// OCCT M_PI.
 pub(crate) const OCCT_PI: f64 = std::f64::consts::PI;
 /// OCCT M_PI_4.

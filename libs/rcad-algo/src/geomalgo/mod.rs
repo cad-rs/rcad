@@ -40,6 +40,9 @@ pub mod int_conic_curve_gen; // IntCurve_IntConicCurveGen gxx/.lxx (conic x pcur
 pub mod user_int_conic_curve_gen; // IntCurve_UserIntConicCurveGen (conic x pcurve kind dispatch)
 pub mod inter_cc;    // Geom2dAPI_InterCurveCurve (2D curve-curve intersection API)
 pub mod app_def;     // AppDef (MultiLine + MultiPointConstraint approximation input)
+pub mod app_def_smooth_criterion; // AppDef_SmoothCriterion (abstract variational smoothing criterion)
+pub mod app_def_linear_criteria; // AppDef_LinearCriteria (concrete criteria over FEmTool_Assembly/Curve)
+pub mod app_def_variational; // AppDef_Variational (variational smoothing approximation)
 pub mod app_par_curves; // AppParCurves (Bernstein/SplineFunction + LeastSquare template)
 pub mod app_par_curves_bsp; // AppParCurves BSP variants (BSpFunction + BSpGradient gxx)
 pub mod brep_approx; // BRepApprox (TheMultiLineOfApprox + LineTool + SurfaceTool + ApproxLine)
@@ -69,6 +72,8 @@ pub use intf::{
 pub use int_curv_surf::{IntPatchPolyhedron, ThePolygonOfHInter, ThePolyhedronOfHInter};
 pub use int_curve_surface::HInter;
 pub mod approx_same_parameter;
+pub mod approx_curvilinear_parameter;
+pub mod approx_curvlin_func;
 pub mod geom_lib_is_planar_surface;
 pub mod geom_lib_same_range;
 pub mod geom_api_project_point_on_curve; // GeomAPI_ProjectPointOnCurve (TKGeomAlgo/GeomAPI)

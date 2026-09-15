@@ -2554,13 +2554,21 @@ impl Curve2dEval for BSplineCurve2 {
         )
     }
     fn derivative_at(&self, t: f64) -> DVec2 {
-        crate::math::bspl::bspline_tangent_2d(
-            self.degree,
-            &self.knots,
-            &self.control_points,
-            &self.weights,
-            t,
-        )
+        // OCCT Geom2d_BSplineCurve::D1 -> EvalD1 (Geom2d_BSplineCurve_1.cxx
+        // L199-226) — the exact BSplCLib evaluation (LocateParameter /
+        // BuildKnots / Bohm / PLib::RationalDerivative); the rcad engine
+        // lives in bspline2d_dn.
+        super::bspline2d_dn::eval_d1(self, t).d1
+    }
+    fn derivative2_at(&self, t: f64) -> DVec2 {
+        // OCCT Geom2d_BSplineCurve::D2 -> EvalD2 (Geom2d_BSplineCurve_1.cxx
+        // L232-264) — the exact BSplCLib evaluation (bspline2d_dn).
+        super::bspline2d_dn::eval_d2(self, t).d2
+    }
+    fn derivative3_at(&self, t: f64) -> DVec2 {
+        // OCCT Geom2d_BSplineCurve::D3 -> EvalD3 (Geom2d_BSplineCurve_1.cxx
+        // L266-299) — the exact BSplCLib evaluation (bspline2d_dn).
+        super::bspline2d_dn::eval_d3(self, t).d3
     }
     fn tangent_at(&self, t: f64) -> DVec2 {
         self.derivative_at(t).normalize_or_zero()

@@ -1497,7 +1497,7 @@ pub fn move_point_and_tangent(
 
 /// OCCT BSplCLib::BuildKnots — builds the 2*Degree local knot array around
 /// index `index`.  `mults` may be None (flat knots).
-fn build_knots_local(
+pub fn build_knots_local(
     degree: usize,
     index: i32,
     periodic: bool,
@@ -3538,6 +3538,678 @@ pub fn coefs_d1_2d(u: f64, poles: &[DVec2], point: &mut DVec2, vec: &mut DVec2) 
     cache_d1_2d(u, poles.len() as i32 - 1, 0.0, 1.0, poles, point, vec);
 }
 
+// ---------------------------------------------------------------------------
+// BSplCLib::Bohm + BSplCLib::BuildCache (Point version)
+// ---------------------------------------------------------------------------
+
+/// OCCT BSplCLib::Bohm (BSplCLib.cxx L1197-1535) — in-place Bohm scheme on
+/// the flat local arrays: `poles` holds (Degree+1) blocks of `dimension`
+/// doubles, `knots` the 2*Degree local knot window (raw C arrays in OCCT,
+/// addressed 0-based here through isize cursor arithmetic).  Replaces the
+/// pole blocks by the Taylor coefficients of the B-spline at `u` (the
+/// derivatives up to order N).  The per-dimension switch is kept verbatim:
+/// case 1 uses the DIVISION form while cases 2-4 and the default use the
+/// reciprocal-multiply form (not bit-identical), so the branches are not
+/// merged.  Pointer walks are translated as isize cursors.
+pub fn bohm(u: f64, degree: i32, n: i32, knots: &[f64], dimension: usize, poles: &mut [f64]) {
+    // First phase independent of U, compute the poles of the derivatives.
+    let deg = degree as usize;
+    let min = if n < degree { n } else { degree }; // OCCT min = (N < Degree) ? N : Degree.
+    let degm1 = deg as i32 - 1;
+    let mut ddmi: i32 = (deg << 1) as i32 + 1; // OCCT DDmi = (Degree << 1) + 1.
+    match dimension {
+        1 => {
+            let ps_dd: isize = deg as isize;
+            let ps_dd_mdim: isize = ps_dd - 1;
+
+            for i in 0..deg {
+                ddmi -= 1;
+                let mut pole = ps_dd;
+                let mut tbis = ps_dd_mdim;
+                let mut jdmi = ddmi;
+
+                let mut j = degm1;
+                while j >= i as i32 {
+                    jdmi -= 1;
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] = if knots[jdmi as usize] == knots[j as usize] {
+                        0.0
+                    } else {
+                        poles[pole as usize] / (knots[jdmi as usize] - knots[j as usize])
+                    };
+                    pole -= 1;
+                    tbis -= 1;
+                    j -= 1;
+                }
+            }
+            // Second phase, dependant of U.
+            let mut idim: isize = -1;
+
+            for i in 0..deg {
+                idim += 1;
+                let mut pole = idim;
+                let mut tbis = pole + 1;
+                let coef = u - knots[i];
+
+                let mut j = i as i32;
+                while j >= 0 {
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole -= 1;
+                    tbis -= 1;
+                    j -= 1;
+                }
+            }
+            // multiply by the degrees.
+            let mut coef = degree as f64;
+            let mut dmi = degree;
+            let mut pole = 1isize; // OCCT: pole = psav + 1 (base pointer).
+
+            for _i in 1..=min {
+                poles[pole as usize] *= coef;
+                pole += 1;
+                dmi -= 1;
+                coef *= dmi as f64;
+            }
+        }
+        2 => {
+            let ps_dd: isize = (deg << 1) as isize;
+            let ps_dd_mdim: isize = ps_dd - 2;
+
+            for i in 0..deg {
+                ddmi -= 1;
+                let mut pole = ps_dd;
+                let mut tbis = ps_dd_mdim;
+                let mut jdmi = ddmi;
+
+                let mut j = degm1;
+                while j >= i as i32 {
+                    jdmi -= 1;
+                    let coef = if knots[jdmi as usize] == knots[j as usize] {
+                        0.0
+                    } else {
+                        1.0 / (knots[jdmi as usize] - knots[j as usize])
+                    };
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] *= coef;
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] *= coef;
+                    pole -= 3;
+                    tbis -= 3;
+                    j -= 1;
+                }
+            }
+            // Second phase, dependant of U.
+            let mut idim: isize = -2;
+
+            for i in 0..deg {
+                idim += 2;
+                let mut pole = idim;
+                let mut tbis = pole + 2;
+                let coef = u - knots[i];
+
+                let mut j = i as i32;
+                while j >= 0 {
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole -= 3;
+                    tbis -= 3;
+                    j -= 1;
+                }
+            }
+            // multiply by the degrees.
+            let mut coef = degree as f64;
+            let mut dmi = degree;
+            let mut pole = 2isize; // OCCT: pole = psav + 2 (base pointer).
+
+            for _i in 1..=min {
+                poles[pole as usize] *= coef;
+                pole += 1;
+                poles[pole as usize] *= coef;
+                pole += 1;
+                dmi -= 1;
+                coef *= dmi as f64;
+            }
+        }
+        3 => {
+            let ps_dd: isize = ((deg << 1) + deg) as isize;
+            let ps_dd_mdim: isize = ps_dd - 3;
+
+            for i in 0..deg {
+                ddmi -= 1;
+                let mut pole = ps_dd;
+                let mut tbis = ps_dd_mdim;
+                let mut jdmi = ddmi;
+
+                let mut j = degm1;
+                while j >= i as i32 {
+                    jdmi -= 1;
+                    let coef = if knots[jdmi as usize] == knots[j as usize] {
+                        0.0
+                    } else {
+                        1.0 / (knots[jdmi as usize] - knots[j as usize])
+                    };
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] *= coef;
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] *= coef;
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] *= coef;
+                    pole -= 5;
+                    tbis -= 5;
+                    j -= 1;
+                }
+            }
+            // Second phase, dependant of U.
+            let mut idim: isize = -3;
+
+            for i in 0..deg {
+                idim += 3;
+                let mut pole = idim;
+                let mut tbis = pole + 3;
+                let coef = u - knots[i];
+
+                let mut j = i as i32;
+                while j >= 0 {
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole -= 5;
+                    tbis -= 5;
+                    j -= 1;
+                }
+            }
+            // multiply by the degrees.
+            let mut coef = degree as f64;
+            let mut dmi = degree;
+            let mut pole = 3isize; // OCCT: pole = psav + 3 (base pointer).
+
+            for _i in 1..=min {
+                poles[pole as usize] *= coef;
+                pole += 1;
+                poles[pole as usize] *= coef;
+                pole += 1;
+                poles[pole as usize] *= coef;
+                pole += 1;
+                dmi -= 1;
+                coef *= dmi as f64;
+            }
+        }
+        4 => {
+            let ps_dd: isize = (deg << 2) as isize;
+            let ps_dd_mdim: isize = ps_dd - 4;
+
+            for i in 0..deg {
+                ddmi -= 1;
+                let mut pole = ps_dd;
+                let mut tbis = ps_dd_mdim;
+                let mut jdmi = ddmi;
+
+                let mut j = degm1;
+                while j >= i as i32 {
+                    jdmi -= 1;
+                    let coef = if knots[jdmi as usize] == knots[j as usize] {
+                        0.0
+                    } else {
+                        1.0 / (knots[jdmi as usize] - knots[j as usize])
+                    };
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] *= coef;
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] *= coef;
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] *= coef;
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] -= poles[tbis as usize];
+                    poles[pole as usize] *= coef;
+                    pole -= 7;
+                    tbis -= 7;
+                    j -= 1;
+                }
+            }
+            // Second phase, dependant of U.
+            let mut idim: isize = -4;
+
+            for i in 0..deg {
+                idim += 4;
+                let mut pole = idim;
+                let mut tbis = pole + 4;
+                let coef = u - knots[i];
+
+                let mut j = i as i32;
+                while j >= 0 {
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole += 1;
+                    tbis += 1;
+                    poles[pole as usize] += coef * poles[tbis as usize];
+                    pole -= 7;
+                    tbis -= 7;
+                    j -= 1;
+                }
+            }
+            // multiply by the degrees.
+            let mut coef = degree as f64;
+            let mut dmi = degree;
+            let mut pole = 4isize; // OCCT: pole = psav + 4 (base pointer).
+
+            for _i in 1..=min {
+                poles[pole as usize] *= coef;
+                pole += 1;
+                poles[pole as usize] *= coef;
+                pole += 1;
+                poles[pole as usize] *= coef;
+                pole += 1;
+                poles[pole as usize] *= coef;
+                pole += 1;
+                dmi -= 1;
+                coef *= dmi as f64;
+            }
+        }
+        _ => {
+            // OCCT default case (L1429-1533) — the general-dimension form.
+            let dim = dimension;
+            let dim2 = (dim << 1) as isize;
+            let ps_dd: isize = (deg * dim) as isize;
+            let ps_dd_mdim: isize = ps_dd - dim as isize;
+
+            for i in 0..deg {
+                ddmi -= 1;
+                let mut pole = ps_dd;
+                let mut tbis = ps_dd_mdim;
+                let mut jdmi = ddmi;
+
+                let mut j = degm1;
+                while j >= i as i32 {
+                    jdmi -= 1;
+                    let coef = if knots[jdmi as usize] == knots[j as usize] {
+                        0.0
+                    } else {
+                        1.0 / (knots[jdmi as usize] - knots[j as usize])
+                    };
+
+                    for _k in 0..dim {
+                        poles[pole as usize] -= poles[tbis as usize];
+                        poles[pole as usize] *= coef;
+                        pole += 1;
+                        tbis += 1;
+                    }
+                    pole -= dim2;
+                    tbis -= dim2;
+                    j -= 1;
+                }
+            }
+            // Second phase, dependant of U.
+            let mut idim: isize = -(dim as isize);
+
+            for i in 0..deg {
+                idim += dim as isize;
+                let mut pole = idim;
+                let mut tbis = pole + dim as isize;
+                let coef = u - knots[i];
+
+                let mut j = i as i32;
+                while j >= 0 {
+                    for _k in 0..dim {
+                        poles[pole as usize] += coef * poles[tbis as usize];
+                        pole += 1;
+                        tbis += 1;
+                    }
+                    pole -= dim2;
+                    tbis -= dim2;
+                    j -= 1;
+                }
+            }
+            // multiply by the degrees.
+            let mut coef = degree as f64;
+            let mut dmi = degree;
+            let mut pole = dim as isize; // OCCT: pole = psav + Dimension.
+
+            for _i in 1..=min {
+                for _k in 0..dim {
+                    poles[pole as usize] *= coef;
+                    pole += 1;
+                }
+                dmi -= 1;
+                coef *= dmi as f64;
+            }
+        }
+    }
+}
+
+/// OCCT BSplCLib::BuildCache (Point version, BSplCLib_CurveComputation.pxx
+/// L1517-1604; dispatched for gp_Pnt2d from BSplCLib_1.cxx L522-542) — the
+/// 2D form.  Computes the Taylor expansion of the B-spline in the located
+/// span normalized between 0 and 1: `cache_poles[ii-1]` receives the
+/// (ii-1)-th span-start derivative over (ii-1)!, scaled by
+/// SpanDomain^(ii-1); rational curves produce the homogeneous Taylor
+/// expansion split between `cache_poles` and `cache_weights`.  The
+/// PrepareEval_T statements (CurveComputation.pxx L777-852, with Mults ==
+/// nullptr) are inlined.
+#[allow(clippy::too_many_arguments)]
+pub fn build_cache_2d(
+    u: f64,
+    span_domain: f64,
+    periodic: bool,
+    degree: i32,
+    flat_knots: &[f64],
+    poles: &[DVec2],
+    weights: Option<&[f64]>,
+    cache_poles: &mut [DVec2],
+    mut cache_weights: Option<&mut [f64]>,
+) {
+    // OCCT validateBSplineDegree (CurveComputation.pxx L254-258),
+    // THE_MAX_DEGREE == 25.
+    if degree > 25 {
+        panic!("Standard_OutOfRange: BSplCLib: bspline degree is greater than maximum supported");
+    }
+    let deg = degree as usize;
+    // OCCT BSplCLib_BuildCache: int ii, LocalDimension, LocalIndex, index = 0;
+    //   double u = U, LocalValue; bool rational;
+    let mut u_local = u;
+    let mut index = 0i32;
+
+    // PrepareEval_T (Mults == nullptr):
+    // LocateParameter(Degree, Knots, NoMults, u, Periodic, index, u)
+    // (BSplCLib.cxx L321-355): first = Lower + Degree, last = Upper - Degree;
+    // the incoming index == 0 is always outside [first, last], so the inner
+    // flat locate (BSplCLib.cxx L189-217) runs.
+    {
+        let first = 1 + degree;
+        let last = flat_knots.len() as i32 - degree;
+        locate_parameter_flat(
+            deg,
+            flat_knots,
+            u_local,
+            periodic,
+            first,
+            last,
+            &mut index,
+            &mut u_local,
+        );
+    }
+    // BuildKnots(Degree, index, Periodic, Knots, NoMults, *dc.knots).
+    let mut local_knots = vec![0.0f64; 2 * deg];
+    build_knots_local(deg, index, periodic, flat_knots, None, &mut local_knots);
+    // Mults == nullptr: index -= Knots.Lower() + Degree.
+    index -= 1 + degree;
+
+    // rational = (Weights != nullptr) && IsRational(*Weights, WLower,
+    // WLower + Degree) — the consecutive-weight comparison
+    // (BSplCLib.cxx L842-859), WLower = Lower + index (Lower == 1).
+    let rational = match weights {
+        None => false,
+        Some(w) => {
+            let mut rat = false;
+            let i1 = index as usize;
+            for i in i1..(i1 + deg) {
+                if w[i] != w[i + 1] {
+                    rat = true;
+                    break;
+                }
+            }
+            rat
+        }
+    };
+
+    // Make the poles (BSplCLib_BuildEval, CurveComputation.pxx L742-774):
+    // Degree+1 local poles, homogeneous (dim 3) when rational.  The OCCT
+    // cursor `ip = Poles.Lower() + Index - 1` with the wrap
+    // `if (ip > PUpper) ip = PLower;` is kept (1-based).
+    let local_dimension = if rational { 3 } else { 2 };
+    let mut local_poles = vec![0.0f64; (deg + 1) * local_dimension];
+    {
+        let poles_upper = poles.len() as i32; // Poles.Upper() (Lower == 1).
+        let mut ip = index; // OCCT: ip = Poles.Lower() + Index - 1, Lower == 1.
+        let mut ptr = 0usize;
+        for _i in 0..=deg {
+            ip += 1;
+            if ip > poles_upper {
+                ip = 1;
+            }
+            if rational {
+                let w = weights.map_or(1.0, |w| w[(ip - 1) as usize]);
+                let p = poles[(ip - 1) as usize];
+                local_poles[ptr] = p.x * w;
+                local_poles[ptr + 1] = p.y * w;
+                local_poles[ptr + 2] = w;
+                ptr += 3;
+            } else {
+                let p = poles[(ip - 1) as usize];
+                local_poles[ptr] = p.x;
+                local_poles[ptr + 1] = p.y;
+                ptr += 2;
+            }
+        }
+    }
+
+    // BSplCLib::Bohm(u, Degree, Degree, *dc.knots, dim, *dc.poles).
+    bohm(
+        u_local,
+        degree,
+        degree,
+        &local_knots,
+        local_dimension,
+        &mut local_poles,
+    );
+
+    // The cache assembly (CurveComputation.pxx L1568-1603).  OCCT Dimension
+    // is the curve dimension (2); the rational stride Dimension+1 equals
+    // `local_dimension` (3), and the weight loop starts at LocalIndex =
+    // Dimension — the weight slot of the first homogeneous block.
+    let mut local_value = 1.0f64;
+    let mut local_index = 0usize;
+    if rational {
+        for ii in 1..=(deg + 1) {
+            cache_poles[ii - 1] =
+                DVec2::new(local_poles[local_index], local_poles[local_index + 1]) * local_value;
+            local_index += local_dimension;
+            local_value *= span_domain / ii as f64;
+        }
+
+        local_index = local_dimension - 1;
+        local_value = 1.0f64;
+        for ii in 1..=(deg + 1) {
+            if let Some(w) = cache_weights.as_deref_mut() {
+                w[ii - 1] = local_poles[local_index] * local_value;
+            }
+            local_index += local_dimension;
+            local_value *= span_domain / ii as f64;
+        }
+    } else {
+        for ii in 1..=(deg + 1) {
+            cache_poles[ii - 1] =
+                DVec2::new(local_poles[local_index], local_poles[local_index + 1]) * local_value;
+            local_index += local_dimension;
+            local_value *= span_domain / ii as f64;
+        }
+
+        if weights.is_some() {
+            if let Some(w) = cache_weights.as_deref_mut() {
+                for e in w.iter_mut().take(deg + 1) {
+                    *e = 0.0;
+                }
+                w[0] = 1.0;
+            }
+        }
+    }
+}
+
+/// OCCT BSplCLib::BuildCache (Point version) — the 3D form (dispatched for
+/// gp_Pnt from BSplCLib_3.cxx L525-545).  Same statements as `build_cache_2d`
+/// with Dimension = 3 (local dim 4 when rational).
+#[allow(clippy::too_many_arguments)]
+pub fn build_cache_3d(
+    u: f64,
+    span_domain: f64,
+    periodic: bool,
+    degree: i32,
+    flat_knots: &[f64],
+    poles: &[DVec3],
+    weights: Option<&[f64]>,
+    cache_poles: &mut [DVec3],
+    mut cache_weights: Option<&mut [f64]>,
+) {
+    // OCCT validateBSplineDegree (CurveComputation.pxx L254-258).
+    if degree > 25 {
+        panic!("Standard_OutOfRange: BSplCLib: bspline degree is greater than maximum supported");
+    }
+    let deg = degree as usize;
+    let mut u_local = u;
+    let mut index = 0i32;
+
+    {
+        let first = 1 + degree;
+        let last = flat_knots.len() as i32 - degree;
+        locate_parameter_flat(
+            deg,
+            flat_knots,
+            u_local,
+            periodic,
+            first,
+            last,
+            &mut index,
+            &mut u_local,
+        );
+    }
+    let mut local_knots = vec![0.0f64; 2 * deg];
+    build_knots_local(deg, index, periodic, flat_knots, None, &mut local_knots);
+    index -= 1 + degree;
+
+    let rational = match weights {
+        None => false,
+        Some(w) => {
+            let mut rat = false;
+            let i1 = index as usize;
+            for i in i1..(i1 + deg) {
+                if w[i] != w[i + 1] {
+                    rat = true;
+                    break;
+                }
+            }
+            rat
+        }
+    };
+
+    let local_dimension = if rational { 4 } else { 3 };
+    let mut local_poles = vec![0.0f64; (deg + 1) * local_dimension];
+    {
+        let poles_upper = poles.len() as i32;
+        let mut ip = index;
+        let mut ptr = 0usize;
+        for _i in 0..=deg {
+            ip += 1;
+            if ip > poles_upper {
+                ip = 1;
+            }
+            if rational {
+                let w = weights.map_or(1.0, |w| w[(ip - 1) as usize]);
+                let p = poles[(ip - 1) as usize];
+                local_poles[ptr] = p.x * w;
+                local_poles[ptr + 1] = p.y * w;
+                local_poles[ptr + 2] = p.z * w;
+                local_poles[ptr + 3] = w;
+                ptr += 4;
+            } else {
+                let p = poles[(ip - 1) as usize];
+                local_poles[ptr] = p.x;
+                local_poles[ptr + 1] = p.y;
+                local_poles[ptr + 2] = p.z;
+                ptr += 3;
+            }
+        }
+    }
+
+    bohm(
+        u_local,
+        degree,
+        degree,
+        &local_knots,
+        local_dimension,
+        &mut local_poles,
+    );
+
+    // The cache assembly — OCCT Dimension = 3; the rational stride
+    // Dimension+1 equals `local_dimension` (4), and the weight loop starts
+    // at LocalIndex = Dimension — the weight slot of the first block.
+    let mut local_value = 1.0f64;
+    let mut local_index = 0usize;
+    if rational {
+        for ii in 1..=(deg + 1) {
+            cache_poles[ii - 1] = DVec3::new(
+                local_poles[local_index],
+                local_poles[local_index + 1],
+                local_poles[local_index + 2],
+            ) * local_value;
+            local_index += local_dimension;
+            local_value *= span_domain / ii as f64;
+        }
+
+        local_index = local_dimension - 1;
+        local_value = 1.0f64;
+        for ii in 1..=(deg + 1) {
+            if let Some(w) = cache_weights.as_deref_mut() {
+                w[ii - 1] = local_poles[local_index] * local_value;
+            }
+            local_index += local_dimension;
+            local_value *= span_domain / ii as f64;
+        }
+    } else {
+        for ii in 1..=(deg + 1) {
+            cache_poles[ii - 1] = DVec3::new(
+                local_poles[local_index],
+                local_poles[local_index + 1],
+                local_poles[local_index + 2],
+            ) * local_value;
+            local_index += local_dimension;
+            local_value *= span_domain / ii as f64;
+        }
+
+        if weights.is_some() {
+            if let Some(w) = cache_weights.as_deref_mut() {
+                for e in w.iter_mut().take(deg + 1) {
+                    *e = 0.0;
+                }
+                w[0] = 1.0;
+            }
+        }
+    }
+}
+
+/// OCCT BSplCLib::FlatBezierKnots(Degree) (BSplCLib.cxx L4971-4977) — the
+/// static flat knot table `knots[25 - Degree]`: Degree+1 zeros followed by
+/// Degree+1 ones (the static table holds 25 of each).
+pub fn flat_bezier_knots(degree: i32) -> Vec<f64> {
+    // Standard_OutOfRange_Raise_if(Degree < 1 || Degree > MaxDegree()).
+    if !(1..=25).contains(&degree) {
+        panic!("Standard_OutOfRange: Bezier curve degree greater than maximal supported");
+    }
+    let mut knots = vec![0.0f64; degree as usize + 1];
+    knots.extend(std::iter::repeat_n(1.0, degree as usize + 1));
+    knots
+}
+
 #[cfg(test)]
 mod coefs_tests {
     use super::*;
@@ -3767,5 +4439,26 @@ mod function_reparameterise_tests {
         assert!((r - 3.87).abs() < 1e-15, "a(0.7)={}", r);
         ev.evaluate(1, &[0.0, 1.0], 0.7, &mut r, &mut ec);
         assert!((r - 6.2).abs() < 1e-15, "a'(0.7)={}", r);
+    }
+}
+
+#[cfg(test)]
+mod build_cache_tests {
+    use super::*;
+
+    /// Closed-form check of the Point-version BuildCache: the quadratic
+    /// (0,0),(2,4),(4,0) has the Taylor coefficients at 0
+    /// c0 = P(0), c1 = P'(0), c2 = P''(0)/2 = (0,0),(4,8),(0,-8)
+    /// (x(u) = 4u, y(u) = 8u(1-u)).
+    #[test]
+    fn build_cache_quadratic_taylor() {
+        let poles = [DVec2::new(0.0, 0.0), DVec2::new(2.0, 4.0), DVec2::new(4.0, 0.0)];
+        let knots = flat_bezier_knots(2);
+        let mut coeffs = poles.to_vec();
+        build_cache_2d(0.0, 1.0, false, 2, &knots, &poles, None, &mut coeffs, None);
+        let want = [DVec2::new(0.0, 0.0), DVec2::new(4.0, 8.0), DVec2::new(0.0, -8.0)];
+        for (c, w) in coeffs.iter().zip(want.iter()) {
+            assert!((c - w).length() < 1.0e-12, "coeff {c:?} vs {w:?}");
+        }
     }
 }

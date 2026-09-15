@@ -13,6 +13,7 @@
 //! solved analytically by reducing to a polynomial in u = tan(t/2).
 
 use glam::{DVec2, DVec3};
+use rcad_kernel::core::precision::{REAL_FIRST, REAL_LAST};
 use rcad_kernel::geom::{Circle3, CurveEval, Ellipse3, Hyperbola3, Line3, Parabola3, Plane};
 use rcad_kernel::math::direct_polynomial_roots::{epsilon, DirectPolynomialRoots};
 use rcad_kernel::math::el::elclib_ellipse_value;
@@ -78,8 +79,6 @@ fn trig_function_roots(
     const TOL1: f64 = 1.0e-15;
     const NIT: i32 = 10;
     const DEPI: f64 = 2.0 * std::f64::consts::PI;
-    const REAL_FIRST: f64 = -f64::MAX;
-    const REAL_LAST: f64 = f64::MAX;
 
     // OCCT L95-123: bound setup (MyBorneInf / Delta / Mod).
     let (my_borne_inf, delta, mod_) = if inf_bound <= REAL_FIRST && sup_bound >= REAL_LAST {

@@ -7,8 +7,15 @@
 //! - `GeomAdaptor_Curve myAdpSection` maps to the rcad `Curve3` view plus
 //!   the first/last parameter helpers.
 //! - OCCT Perform overloads map to `perform_confusion` (Perform(Tol)),
-//!   `perform_with_path` (Perform(Path, Tol)) and `perform_at`
+//!   `perform_with_path` (Perform(Path, Tol) — the
+//!   `occ::handle<Adaptor3d_Curve>` Path, the kernel
+//!   `CurveHandle = Arc<dyn Adaptor3dCurve>`) and `perform_at`
 //!   (Perform(ParamOnPath, Tol)).
+//! - `IntCurveSurface_HInter Intersector.Perform(Path, adplan)` (cxx
+//!   L471-472) — the handle-typed statement keeps the OCCT failure path in
+//!   place: the rcad carrier
+//!   (`geomalgo::geomfill::int_curve_surface_h_inter`, outside this unit)
+//!   pins its staged GAP signature to `&Curve3`.
 //! - `Extrema_ExtPC myExt` maps to the kernel real body
 //!   [`ExtremaExtPC`]: the OCCT Initialize (cxx L375-379) + Perform pair is
 //!   replayed at each Perform site over the same range (the OCCT member
@@ -23,6 +30,7 @@
 use std::cell::RefCell;
 use std::f64::consts::PI;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use glam::{DAffine3, DVec3};
 
@@ -31,7 +39,9 @@ use rcad_kernel::base::extrema_curve_tool::{CurveToolHandle, ExtremaCurveTool};
 use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
 use rcad_kernel::base::geom_lib::axe_of_inertia;
 use rcad_kernel::base::geom_lprop::CLProps;
+use rcad_kernel::base::proj_lib::adaptor::{Adaptor3dCurve, CurveHandle};
 use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
+use rcad_kernel::base::proj_lib::CurveType;
 use rcad_kernel::core::precision::{CONFUSION, PCONFUSION, SQUARE_CONFUSION};
 use rcad_kernel::geom::{transform_curve, Curve3, CurveEval, Surface3};
 use rcad_kernel::math::gp::{Ax1, Ax2, Ax3};
@@ -82,21 +92,20 @@ fn curve_resolution(c: &Curve3, r3d: f64) -> f64 {
     }
 }
 
-/// OCCT static Tangente (L54-69) — the normalized D1 (or the first
-/// non-vanishing higher derivative).  Architecture: the rcad CurveEval
-/// carries derivatives up to the 3rd order; DN beyond the 3rd evaluates the
-/// 3rd.
-fn tangente(path: &Curve3, param: f64, p: &mut DVec3, tang: &mut DVec3) {
-    *p = path.point_at(param);
-    *tang = path.derivative_at(param);
+/// OCCT static Tangente (L54-69) — Path.D1(Param, P, Tang), then the first
+/// non-vanishing higher derivative through Path.DN(Param, ii).
+fn tangente(path: &dyn Adaptor3dCurve, param: f64, p: &mut DVec3, tang: &mut DVec3) {
+    // OCCT L56: Path.D1(Param, P, Tang).
+    let (p1, d1) = path.d1(param);
+    *p = p1;
+    *tang = d1;
     let mut norm = tang.length();
 
+    // OCCT L59-63: for (ii = 2; ii < 12 && Norm < Confusion; ii++)
+    // Tang = Path.DN(Param, ii).
     let mut ii = 2;
     while ii < 12 && norm < CONFUSION {
-        *tang = match ii {
-            2 => path.derivative2_at(param),
-            _ => path.derivative3_at(param),
-        };
+        *tang = path.dn(param, ii);
         norm = tang.length();
         ii += 1;
     }
@@ -261,10 +270,12 @@ fn curve_last_parameter(c: &Curve3) -> f64 {
 struct ExtCCGap;
 
 impl ExtCCGap {
-    /// OCCT Extrema_ExtCC(C1, C2, U1, U2, V1, V2, Tol1, Tol2).
+    /// OCCT Extrema_ExtCC(C1, C2, U1, U2, V1, V2, Tol1, Tol2) — C1 is the
+    /// `*Path` handle(Adaptor3d_Curve), C2 the myAdpSection (the rcad
+    /// `Curve3` view).
     #[allow(clippy::too_many_arguments)]
     fn new(
-        _c1: &Curve3,
+        _c1: &dyn Adaptor3dCurve,
         _c2: &Curve3,
         _u1: f64,
         _u2: f64,
@@ -398,8 +409,11 @@ impl SectionPlacement {
         {
             let mut p = DVec3::ZERO;
             let mut v = DVec3::ZERO;
+            // OCCT L209-212: Tangente(myAdpSection, ...) — the
+            // GeomAdaptor_Curve view of the stored section.
+            let a_section_adaptor = GeomCurveAdaptor::new(adp.clone());
             tangente(
-                adp,
+                &a_section_adaptor,
                 (curve_first_parameter(adp) + curve_last_parameter(adp)) / 2.0,
                 &mut p,
                 &mut v,
@@ -581,27 +595,38 @@ impl SectionPlacement {
 
     /// OCCT Perform(Tol) (L391-396).
     pub fn perform_confusion(&mut self, tol: f64) {
+        // OCCT L393-394: Path = myLaw->GetCurve().
         let path = self.my_law.borrow().get_curve();
-        self.perform_with_path_impl(path, tol);
+        let path = match path {
+            Some(c) => c,
+            None => return,
+        };
+        // Architecture: the rcad law stores the kernel Curve3; the OCCT
+        // GetCurve() answers the law's handle(Adaptor3d_Curve) — lifted here
+        // over the GeomAdaptor_Curve encoding.
+        self.perform_with_path_impl(Arc::new(GeomCurveAdaptor::new(path)), tol);
     }
 
-    /// OCCT Perform(Path, Tol) (L400-705).
-    pub fn perform_with_path(&mut self, path: Option<Curve3>, tol: f64) {
+    /// OCCT Perform(Path, Tol) (L400-705) — the handle(Adaptor3d_Curve) Path.
+    pub fn perform_with_path(&mut self, path: CurveHandle, tol: f64) {
         self.perform_with_path_impl(path, tol);
     }
 
     /// OCCT Perform(ParamOnPath, Tol) (L711-754).
     pub fn perform_at(&mut self, param: f64, tol: f64) {
         self.done = true;
+        // OCCT L714-715: Path = myLaw->GetCurve() (lifted over the
+        // GeomAdaptor_Curve encoding, see perform_confusion).
         let path = self.my_law.borrow().get_curve();
         let path = match path {
-            Some(p) => p,
+            Some(c) => Arc::new(GeomCurveAdaptor::new(c)) as CurveHandle,
             None => return,
         };
 
         self.path_param = param;
         if self.my_is_point {
-            let pon_path = path.point_at(self.path_param);
+            // OCCT L720: PonPath = Path->Value(PathParam).
+            let pon_path = path.value(self.path_param);
             self.dist = pon_path.distance(self.my_point);
             self.angle_max = PI / 2.0;
         } else {
@@ -614,7 +639,8 @@ impl SectionPlacement {
             v_ref = self.the_axe.direction;
 
             let mut p = DVec3::ZERO;
-            tangente(&path, self.path_param, &mut p, &mut dp1);
+            // OCCT L734: Tangente(*Path, PathParam, PonPath, dp1).
+            tangente(path.as_ref(), self.path_param, &mut p, &mut dp1);
             pon_path = p;
             let adp = self.my_adp_section.as_ref().expect("null section").clone();
             let adp = &adp;
@@ -650,20 +676,28 @@ impl SectionPlacement {
     }
 
     /// The shared Perform(Path, Tol) body (L400-705).
-    fn perform_with_path_impl(&mut self, path: Option<Curve3>, tol: f64) {
-        let path = match path {
-            Some(p) => p,
-            None => return,
-        };
+    fn perform_with_path_impl(&mut self, path: CurveHandle, tol: f64) {
         let int_tol = 1.0e-5;
         let mut dist_center = INFINITE;
 
         if self.my_is_point {
-            // OCCT L412: Extrema_ExtPC Projector(myPoint, *Path,
-            // Precision::Confusion()) — the full-range construction over Path.
-            let a_path_adaptor = GeomCurveAdaptor::new(path.clone());
-            let a_path_tool = CurveToolHandle::for_curve3(&path, &a_path_adaptor, &a_path_adaptor);
+            // OCCT L407: Extrema_ExtPC Projector(myPoint, *Path,
+            // Precision::Confusion()) — the Extrema internals build the
+            // CurveTool facade over the adaptor handle.  The erased handle
+            // answers GeomAbs_OtherCurve here — the OCCT value of the
+            // CompCurve adaptor (BRepAdaptor_CompCurve.cxx L425-430), the
+            // Perform(Path, Tol) caller type; the remaining queries come off
+            // the Adaptor3d_Curve trait half.
+            let a_path_tool = CurveToolHandle::new(
+                path.as_ref(),
+                CurveType::Other,
+                path.is_periodic(),
+                path.period(),
+                path.resolution(CONFUSION),
+                path.is_closed(),
+            );
             let projector = ExtremaExtPC::new_point_curve(self.my_point, &a_path_tool, CONFUSION);
+            // OCCT L408: DistMini(Projector, *Path, Dist, PathParam).
             let mut d = self.dist;
             let mut pp = self.path_param;
             dist_mini(&projector, &a_path_tool, &mut d, &mut pp);
@@ -671,7 +705,8 @@ impl SectionPlacement {
             self.path_param = pp;
             self.angle_max = PI / 2.0;
         } else {
-            self.path_param = curve_first_parameter(&path);
+            // OCCT L413: PathParam = Path->FirstParameter().
+            self.path_param = path.first_parameter();
             self.sec_param =
                 curve_first_parameter(self.my_adp_section.as_ref().expect("null section"));
 
@@ -682,7 +717,8 @@ impl SectionPlacement {
             let v_ref = self.the_axe.direction;
             let mut dp1 = DVec3::ZERO;
 
-            tangente(&path, self.path_param, &mut pon_path, &mut dp1);
+            // OCCT L421: Tangente(*Path, PathParam, PonPath, dp1).
+            tangente(path.as_ref(), self.path_param, &mut pon_path, &mut dp1);
             let adp = self.my_adp_section.as_ref().expect("null section").clone();
             let adp = &adp;
             // OCCT: the GeomAdaptor view of myAdpSection the Extrema_ExtPC
@@ -721,7 +757,8 @@ impl SectionPlacement {
                     dist_center = v1.length();
                 }
 
-                let plast = path.point_at(curve_last_parameter(&path));
+                // OCCT L453: Plast = Path->Value(Path->LastParameter()).
+                let plast = path.value(path.last_parameter());
                 let v1 = self.the_axe.location - plast;
                 let dist_plan = v1.dot(v_ref).abs();
                 if dist_plan <= int_tol {
@@ -729,7 +766,8 @@ impl SectionPlacement {
                     if a_dist < dist_center {
                         dist_center = a_dist;
                         pon_path = plast;
-                        self.path_param = curve_last_parameter(&path);
+                        // OCCT L463: PathParam = Path->LastParameter().
+                        self.path_param = path.last_parameter();
                     }
                 }
 
@@ -747,13 +785,27 @@ impl SectionPlacement {
                     u_dir: axe.x_direction,
                     v_dir: axe.y_direction,
                 });
-                let mut intersector = IntCurveSurfaceHInter::default();
-                intersector.perform(&path, &plan);
+                // OCCT L471: IntCurveSurface_HInter Intersector.
+                let intersector = IntCurveSurfaceHInter::default();
+                // OCCT L472: Intersector.Perform(Path, adplan) — Path is the
+                // handle(Adaptor3d_Curve).  The rcad carrier
+                // (geomalgo::geomfill::int_curve_surface_h_inter, outside
+                // this unit) keeps the staged GAP — every entry panics — and
+                // pins its signature to &Curve3: the handle-typed statement
+                // keeps the OCCT failure path at this statement until the
+                // carrier is re-typed over the adaptor handle.
+                panic!(
+                    "GAP: IntCurveSurface_HInter::Perform(Path, adplan) over the \
+                     handle(Adaptor3d_Curve) Path — the rcad carrier pins &Curve3 \
+                     (GeomFill_SectionPlacement.cxx L472); the host-tool re-type \
+                     is pending"
+                );
                 let intersector_done = intersector.is_done();
                 if intersector_done {
                     for ii in 1..=intersector.nb_points() {
                         let w = intersector.point(ii).w();
-                        let p = path.point_at(w);
+                        // OCCT L480: P = Path->Value(w).
+                        let p = path.value(w);
                         let a_dist = p.distance(self.the_axe.location);
                         if a_dist < dist_center {
                             dist_center = a_dist;
@@ -765,8 +817,10 @@ impl SectionPlacement {
                 if !intersector_done || intersector.nb_points() == 0 {
                     // Comparing the distances from the path's endpoints to
                     // the best matching plane of the profile.
-                    let first_point = path.point_at(curve_first_parameter(&path));
-                    let last_point = path.point_at(curve_last_parameter(&path));
+                    // OCCT L494-495: Path->Value(Path->FirstParameter()) /
+                    // Path->Value(Path->LastParameter()).
+                    let first_point = path.value(path.first_parameter());
+                    let last_point = path.value(path.last_parameter());
                     let plane_origin = axe.axis.location;
                     let plane_normal = axe.direction();
                     let first_distance = (first_point - plane_origin).dot(plane_normal).powi(2);
@@ -776,10 +830,13 @@ impl SectionPlacement {
                         && last_distance.abs() < SQUARE_CONFUSION)
                         || first_distance < last_distance
                     {
-                        self.path_param = curve_first_parameter(&path);
+                        // OCCT L504: PathParam = Path->FirstParameter().
+                        self.path_param = path.first_parameter();
                     } else {
-                        self.path_param = curve_last_parameter(&path);
-                        tangente(&path, self.path_param, &mut pon_path, &mut dp1);
+                        // OCCT L508: PathParam = Path->LastParameter().
+                        self.path_param = path.last_parameter();
+                        // OCCT L509: Tangente(*Path, PathParam, PonPath, dp1).
+                        tangente(path.as_ref(), self.path_param, &mut pon_path, &mut dp1);
                         pon_sec = adp.point_at(self.sec_param);
                         self.dist = pon_path.distance(pon_sec);
                         if self.dist > tol {
@@ -822,7 +879,8 @@ impl SectionPlacement {
                 trouve = self.dist <= tol;
                 if !trouve {
                     let mut plast = DVec3::ZERO;
-                    tangente(&path, curve_last_parameter(&path), &mut plast, &mut dp1);
+                    // OCCT L620: Tangente(*Path, Path->LastParameter(), P, dp1).
+                    tangente(path.as_ref(), path.last_parameter(), &mut plast, &mut dp1);
                     let alpha = eval_angle(v_ref, dp1);
                     // OCCT L639-643: myExt.Perform(P); if (myExt.IsDone())
                     // DistMini(myExt, myAdpSection, distaux, taux).
@@ -834,11 +892,13 @@ impl SectionPlacement {
                             dist_mini(&ext, &a_section_tool, &mut d, &mut sp);
                             distaux = d;
                             taux = sp;
-                            if self.choix(distaux, alpha) {                                self.dist = distaux;
+                            if self.choix(distaux, alpha) {
+                                self.dist = distaux;
                                 self.sec_param = taux;
                                 self.angle_max = alpha;
                                 pon_path = plast;
-                                self.path_param = curve_last_parameter(&path);
+                                // OCCT L634: PathParam = Path->LastParameter().
+                                self.path_param = path.last_parameter();
                             }
                         }
                     }
@@ -847,14 +907,20 @@ impl SectionPlacement {
 
                 // (2.2) Distance courbe-courbe.
                 if !trouve {
+                    // OCCT L644-651: Extrema_ExtCC Ext(*Path, myAdpSection,
+                    // Path->FirstParameter(), Path->LastParameter(),
+                    // myAdpSection.FirstParameter(),
+                    // myAdpSection.LastParameter(), Path->Resolution(Tol/100),
+                    // myAdpSection.Resolution(Tol/100)).
                     let ext = ExtCCGap::new(
-                        &path,
+                        path.as_ref(),
                         adp,
-                        curve_first_parameter(&path),
-                        curve_last_parameter(&path),
+                        path.first_parameter(),
+                        path.last_parameter(),
                         curve_first_parameter(adp),
                         curve_last_parameter(adp),
-                        curve_resolution(&path, tol / 100.0),
+                        // OCCT L650: Path->Resolution(Tol / 100).
+                        path.resolution(tol / 100.0),
                         curve_resolution(adp, tol / 100.0),
                     );
                     if ext.is_done() && !ext.is_parallel() {
@@ -862,7 +928,8 @@ impl SectionPlacement {
                             distaux = ext.square_distance(ii).sqrt();
                             let (p1_param, _p1_val, p2_param, p2_val) = ext.points(ii);
                             let mut pp = DVec3::ZERO;
-                            tangente(&path, p1_param, &mut pp, &mut dp1);
+                            // OCCT L659: Tangente(*Path, P1.Parameter(), P, dp1).
+                            tangente(path.as_ref(), p1_param, &mut pp, &mut dp1);
                             let alpha = eval_angle(v_ref, dp1);
                             if self.choix(distaux, alpha) {
                                 trouve = true;
@@ -878,12 +945,18 @@ impl SectionPlacement {
                     if !trouve {
                         // Si l'on a toujours rien, on essai une distance
                         // point/path c'est la derniere chance.
-                        // OCCT L667-673: Extrema_ExtPC PExt;
+                        // OCCT L677-682: Extrema_ExtPC PExt;
                         // PExt.Initialize(*Path, First, Last, Confusion);
-                        // PExt.Perform(PonSec).
-                        let a_path_adaptor = GeomCurveAdaptor::new(path.clone());
-                        let a_path_tool =
-                            CurveToolHandle::for_curve3(&path, &a_path_adaptor, &a_path_adaptor);
+                        // PExt.Perform(PonSec) — the CurveTool facade over the
+                        // adaptor handle (see the myIsPoint note).
+                        let a_path_tool = CurveToolHandle::new(
+                            path.as_ref(),
+                            CurveType::Other,
+                            path.is_periodic(),
+                            path.period(),
+                            path.resolution(CONFUSION),
+                            path.is_closed(),
+                        );
                         let pext = ext_initialize_perform(&a_path_tool, pon_sec);
                         if pext.is_done() {
                             // modified for OCC13595: DistMini(PExt, *Path, ...).
@@ -893,7 +966,8 @@ impl SectionPlacement {
                             distaux = d;
                             taux = sp;
                             let mut pp = DVec3::ZERO;
-                            tangente(&path, taux, &mut pp, &mut dp1);
+                            // OCCT L689: Tangente(*Path, taux, P, dp1).
+                            tangente(path.as_ref(), taux, &mut pp, &mut dp1);
                             let alpha = eval_angle(v_ref, dp1);
                             if self.choix(distaux, alpha) {
                                 self.dist = distaux;

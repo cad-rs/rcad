@@ -111,55 +111,16 @@ pub use super::brep_offset_inter2d_b::BRepOffsetInter2d;
 pub(crate) use super::brep_offset_make_offset_loops::BRepOffsetMakeLoops;
 pub use super::brep_offset_inter2d::{DmvvMap, IndexedShapeMap};
 
-/// OCCT BRepBuilderAPI_Sewing (TKTopAlgo/BRepBuilderAPI/
-/// BRepBuilderAPI_Sewing.hxx / .cxx) — GAP carrier (arch. diff. #24); the
-/// class is not translated yet (the consumer is BiTgte_Blend::ComputeShape
-/// cxx L2481-2506 only).
-#[derive(Default)]
-pub struct BRepBuilderAPISewing;
+// OCCT BRepBuilderAPI_Sewing (TKTopAlgo/BRepBuilderAPI/
+// BRepBuilderAPI_Sewing.hxx / .cxx) — the real 1:1 body lives in
+// crate::topalgo::brep_builder_api_sewing (arch. diff. #24 retired); the
+// local GAP carrier is deleted.
+pub use crate::topalgo::brep_builder_api_sewing::BRepBuilderAPISewing;
 
-impl BRepBuilderAPISewing {
-    /// OCCT BRepBuilderAPI_Sewing::BRepBuilderAPI_Sewing(Tolerance).
-    pub fn new(_tolerance: f64) -> Self {
-        BRepBuilderAPISewing
-    }
-
-    /// OCCT BRepBuilderAPI_Sewing::Add(shape).
-    pub fn add(&mut self, _shape: &Shape) {
-        panic!("GAP: BRepBuilderAPI_Sewing::Add (TKTopAlgo/BRepBuilderAPI not translated)");
-    }
-
-    /// OCCT BRepBuilderAPI_Sewing::Perform(theProgress).
-    pub fn perform(&mut self) {
-        panic!("GAP: BRepBuilderAPI_Sewing::Perform (TKTopAlgo/BRepBuilderAPI not translated)");
-    }
-
-    /// OCCT BRepBuilderAPI_Sewing::SewedShape().
-    pub fn sewed_shape(&self) -> Shape {
-        panic!("GAP: BRepBuilderAPI_Sewing::SewedShape (TKTopAlgo/BRepBuilderAPI not translated)");
-    }
-
-    /// OCCT BRepBuilderAPI_Sewing::IsModified(shape).
-    pub fn is_modified(&self, _shape: &Shape) -> bool {
-        panic!("GAP: BRepBuilderAPI_Sewing::IsModified (TKTopAlgo/BRepBuilderAPI not translated)");
-    }
-
-    /// OCCT BRepBuilderAPI_Sewing::Modified(shape).
-    pub fn modified(&self, _shape: &Shape) -> Shape {
-        panic!("GAP: BRepBuilderAPI_Sewing::Modified (TKTopAlgo/BRepBuilderAPI not translated)");
-    }
-}
-
-/// OCCT BRepLib::SameParameter(E, Tol) — GAP static leaf (arch. diff. #25).
-/// The OCCT body is BRepLib.cxx L1237-1247 (the void edge overload) +
-/// L1251+ (the 4-arg engine); `Approx_SameParameter` (geomalgo) and
-/// `GeomLib::SameRange` (geom_lib_same_range) are translated, but the body
-/// additionally needs `BRepLib::ComputeTol` / `EvalTol` and
-/// `Geom2dConvert::C0BSplineToC1BSplineCurve` (all untranslated) — the
-/// translation is queued.
-pub fn brep_lib_same_parameter(_the_e: &Shape, _the_tol: f64) {
-    panic!("GAP: BRepLib::SameParameter (TKTopAlgo/BRepLib not translated)");
-}
+// OCCT BRepLib::SameParameter(E, Tol) — the 1:1 body lives in
+// `topalgo::brep_lib::same_parameter` (BRepLib.cxx L1237-1247 + the 4-arg
+// engine L1251-1740); the GAP carrier is retired and the call sites call the
+// engine directly with the `my_brep` pool.
 
 /// OCCT BRepTools::Update(S) — GAP no-op re-host (the same re-host as the
 /// brep_offset_offset.rs one; the face storage it refreshes is carried by
@@ -1104,9 +1065,9 @@ impl BiTgteBlend {
         );
         // OCCT L794-799.
         for a_face in explorer(&self.my_shape, ShapeType::Face, ShapeType::Shape) {
-            sew.add(&a_face);
+            sew.add(&mut self.my_brep, &a_face);
         }
-        sew.perform();
+        sew.perform(&mut self.my_brep);
         let mut sewed_shape = sew.sewed_shape();
         if sewed_shape.is_null() {
             // OCCT L801-804: throw Standard_Failure("Sewing aux fraises").
@@ -1136,7 +1097,7 @@ impl BiTgteBlend {
         // OCCT L827-832.
         for sec in explorer(&sewed_shape, ShapeType::Edge, ShapeType::Shape) {
             let tol = brep_tool_tolerance(&sec);
-            brep_lib_same_parameter(&sec, tol);
+            crate::topalgo::brep_lib::same_parameter::same_parameter(&mut self.my_brep, &sec, tol);
         }
 
         // OCCT L834: TopExp::MapShapesAndAncestors(SewedShape, EDGE, FACE,

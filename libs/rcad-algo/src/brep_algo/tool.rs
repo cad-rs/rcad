@@ -220,6 +220,15 @@ pub(crate) fn brep_tool_is_closed_edge(edg: &Shape) -> bool {
     }
 }
 
+/// OCCT BRep_Tool::Degenerated(E) (BRep_Tool.cxx L923-928): the
+/// degenerated flag of the edge TShape.
+pub(crate) fn brep_tool_degenerated(edg: &Shape) -> bool {
+    match edg.data.as_ref() {
+        TShape::Edge(ed) => ed.degenerated,
+        _ => false,
+    }
+}
+
 /// OCCT BRep_Tool::IsClosed(E, S, L) (BRep_Tool.cxx L814-841): a seam edge on
 /// the closed surface — a CurveOnClosedSurface representation matching the
 /// surface (rcad keys the pcurves by face; the caller passes the face whose

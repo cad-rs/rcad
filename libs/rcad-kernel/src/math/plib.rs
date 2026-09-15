@@ -5,6 +5,14 @@
 //!
 //! OCCT source: src/FoundationClasses/TKMath/PLib/PLib.cxx
 
+// PLib class modules (PLib_JacobiPolynomial / PLib_HermitJacobi, OCCT
+// PLib_JacobiPolynomial.cxx / PLib_HermitJacobi.cxx).  Declared here because
+// this flat file owns the `math::plib` module name (a sibling
+// `plib/mod.rs` would be an E0761 ambiguous-module error).
+pub mod hermit_jacobi;
+pub mod jacobi_polynomial;
+pub mod jacobi_coefficients_data;
+
 use glam::{DVec2, DVec3};
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -620,6 +628,228 @@ pub fn coefficients_poles(coefs: &[DVec3]) -> Vec<DVec3> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// PLib::Trimming + PLib::CoefficientsPoles (rational, dimension core) —
+// the trimmed-Bezier segment pipeline used by Geom2d_BezierCurve::Segment
+// (Geom2d_BezierCurve.cxx L356-387) / Geom_BezierCurve::Segment
+// (Geom_BezierCurve.cxx L388-425).
+// ══════════════════════════════════════════════════════════════════════════
+
+/// OCCT PLib::Trimming (dim core, PLib.cxx L1642-1725) — performs the
+/// change of variable v = (u - U1) / (U2 - U1) on the power-basis
+/// coefficients (`coefs` holds len/dim blocks of `dim` doubles, degree
+/// ascending; 0-based blocks here as in the OCCT raw storage).  `wcoefs`
+/// carries the homogeneous weight coefficients when present.
+pub fn trimming_dim(u1: f64, u2: f64, dim: usize, coefs: &mut [f64], mut wcoefs: Option<&mut [f64]>) {
+    // principe :
+    // on fait le changement de variable v = (u-U1) / (U2-U1)
+    // on exprime u = f(v) que l'on remplace dans l'expression polynomiale
+    // decomposee sous la forme du schema iteratif de horner.
+
+    let lsp = u2 - u1;
+    // OCCT (1-based): upc = Coefs.Upper() - dim + 1 — the highest-degree
+    // block start; 0-based: len - dim.
+    let upc = coefs.len() - dim;
+    let mut len = coefs.len() / dim;
+    let rat = wcoefs.is_some();
+    let upw = if rat {
+        let w = wcoefs.as_deref().expect("wcoefs");
+        if len != w.len() {
+            panic!("PLib::Trimming : nbcoefs/dim != nbweights !!!");
+        }
+        w.len() - 1 // OCCT (1-based): upw = WCoefs->Upper().
+    } else {
+        0
+    };
+    let upw0 = upw as isize; // 0-based upper cursor of the OCCT 1-based indw.
+    len -= 1;
+
+    for i in 1..=len {
+        let mut indc: isize = upc as isize - (dim as isize) * (i as isize - 1);
+        // OCCT (1-based): indw = upw - i + 1; 0-based: upw - (i - 1).
+        let mut indw = if rat { upw0 - (i as isize - 1) } else { 0 };
+        // calcul du coefficient de degre le plus faible a l'iteration i.
+
+        for j in 0..dim {
+            coefs[(indc - dim as isize + j as isize) as usize] +=
+                u1 * coefs[(indc + j as isize) as usize];
+        }
+        if rat {
+            let w = wcoefs.as_deref_mut().expect("wcoefs");
+            w[(indw - 1) as usize] += u1 * w[indw as usize];
+        }
+
+        // calcul des coefficients intermediaires :
+
+        while indc < upc as isize {
+            indc += dim as isize;
+
+            for k in 0..dim {
+                coefs[(indc - dim as isize + k as isize) as usize] = u1
+                    * coefs[(indc + k as isize) as usize]
+                    + lsp * coefs[(indc - dim as isize + k as isize) as usize];
+            }
+            if rat {
+                let w = wcoefs.as_deref_mut().expect("wcoefs");
+                indw += 1;
+                w[(indw - 1) as usize] =
+                    u1 * w[indw as usize] + lsp * w[(indw - 1) as usize];
+            }
+        }
+
+        // calcul du coefficient de degre le plus eleve :
+
+        for j in 0..dim {
+            coefs[(upc as isize + j as isize) as usize] *= lsp;
+        }
+        if rat {
+            let w = wcoefs.as_deref_mut().expect("wcoefs");
+            w[upw] *= lsp;
+        }
+    }
+}
+
+/// OCCT PLib::Trimming gp_Pnt2d wrapper (PLib.cxx L1618-1627) — flatten
+/// (SetPoles), the dim = 2 core, restore (GetPoles).
+pub fn trimming_2d(u1: f64, u2: f64, coefs: &mut [DVec2], wcoefs: Option<&mut [f64]>) {
+    let mut temp = Vec::with_capacity(2 * coefs.len());
+    for c in coefs.iter() {
+        temp.push(c.x);
+        temp.push(c.y);
+    }
+    trimming_dim(u1, u2, 2, &mut temp, wcoefs);
+    for (c, ch) in coefs.iter_mut().zip(temp.chunks_exact(2)) {
+        *c = DVec2::new(ch[0], ch[1]);
+    }
+}
+
+/// OCCT PLib::Trimming gp_Pnt wrapper (PLib.cxx L1606-1615) — the dim = 3
+/// form.
+pub fn trimming_3d(u1: f64, u2: f64, coefs: &mut [DVec3], wcoefs: Option<&mut [f64]>) {
+    let mut temp = Vec::with_capacity(3 * coefs.len());
+    for c in coefs.iter() {
+        temp.push(c.x);
+        temp.push(c.y);
+        temp.push(c.z);
+    }
+    trimming_dim(u1, u2, 3, &mut temp, wcoefs);
+    for (c, ch) in coefs.iter_mut().zip(temp.chunks_exact(3)) {
+        *c = DVec3::new(ch[0], ch[1], ch[2]);
+    }
+}
+
+/// OCCT PLib::CoefficientsPoles (dim core, PLib.cxx L1522-1603) — converts
+/// the power-basis coefficients into the Bezier poles (binomial scaling
+/// followed by the Pascal recombination), normalizing by the weights in the
+/// rational case.
+pub fn coefficients_poles_dim(
+    dim: usize,
+    coefs: &[f64],
+    wcoefs: Option<&[f64]>,
+    poles: &mut [f64],
+    mut weights: Option<&mut [f64]>,
+) {
+    let rat = wcoefs.is_some();
+    // OCCT loc/lop = Lower() == 1, lowc/lowp = 0 in the flat 0-based view.
+    let upc = coefs.len() - 1; // OCCT (1-based) Upper(); 0-based len-1.
+    let upp = poles.len() - 1;
+    let reflen = coefs.len() / dim;
+
+    // Les Extremites.
+    for i in 0..dim {
+        poles[i] = coefs[i];
+        poles[upp - i] = coefs[upc - i];
+    }
+    if rat {
+        let wc = wcoefs.expect("wcoefs");
+        let w = weights.as_deref_mut().expect("weights");
+        let upwp = w.len() - 1; // OCCT (1-based) upwp = Weights->Upper().
+        w[0] = wc[0];
+        w[upwp] = wc[wc.len() - 1];
+    }
+
+    let mut cnp;
+    for i in 2..reflen {
+        cnp = binomial(reflen - 1, i - 1);
+        if rat {
+            let wc = wcoefs.expect("wcoefs");
+            let w = weights.as_deref_mut().expect("weights");
+            w[i - 1] = wc[i - 1] / cnp;
+        }
+
+        for j in 0..dim {
+            poles[dim * (i - 1) + j] = coefs[dim * (i - 1) + j] / cnp;
+        }
+    }
+
+    for i in 1..=reflen - 1 {
+        let mut j = reflen - 1;
+        while j >= i {
+            if rat {
+                let w = weights.as_deref_mut().expect("weights");
+                w[j] += w[j - 1];
+            }
+
+            for k in 0..dim {
+                poles[dim * j + k] += poles[dim * (j - 1) + k];
+            }
+            j -= 1;
+        }
+    }
+    if rat {
+        for i in 1..=reflen {
+            let w = weights.as_deref().expect("weights");
+            for j in 0..dim {
+                poles[dim * (i - 1) + j] /= w[i - 1];
+            }
+        }
+    }
+}
+
+/// OCCT PLib::CoefficientsPoles gp_Pnt2d wrapper (PLib.cxx L1497-1510) —
+/// flatten (SetPoles), the dim = 2 core, restore (GetPoles).  `wcoefs` /
+/// `weights` carry the homogeneous weight coefficients when rational.
+pub fn coefficients_poles_2d(
+    coefs: &[DVec2],
+    wcoefs: Option<&[f64]>,
+    poles: &mut [DVec2],
+    weights: Option<&mut [f64]>,
+) {
+    let mut temp_c = Vec::with_capacity(2 * coefs.len());
+    for c in coefs.iter() {
+        temp_c.push(c.x);
+        temp_c.push(c.y);
+    }
+    // OCCT initializes tempP from Coefs as well (L1503); the dim core
+    // overwrites every slot.
+    let mut temp_p = temp_c.clone();
+    coefficients_poles_dim(2, &temp_c, wcoefs, &mut temp_p, weights);
+    for (p, ch) in poles.iter_mut().zip(temp_p.chunks_exact(2)) {
+        *p = DVec2::new(ch[0], ch[1]);
+    }
+}
+
+/// OCCT PLib::CoefficientsPoles gp_Pnt wrapper (PLib.cxx L1482-1493) — the
+/// dim = 3 form.
+pub fn coefficients_poles_3d(
+    coefs: &[DVec3],
+    wcoefs: Option<&[f64]>,
+    poles: &mut [DVec3],
+    weights: Option<&mut [f64]>,
+) {
+    let mut temp_c = Vec::with_capacity(3 * coefs.len());
+    for c in coefs.iter() {
+        temp_c.push(c.x);
+        temp_c.push(c.y);
+        temp_c.push(c.z);
+    }
+    let mut temp_p = temp_c.clone();
+    coefficients_poles_dim(3, &temp_c, wcoefs, &mut temp_p, weights);
+    for (p, ch) in poles.iter_mut().zip(temp_p.chunks_exact(3)) {
+        *p = DVec3::new(ch[0], ch[1], ch[2]);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // Hermite coefficients
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -716,4 +946,255 @@ pub fn hermite_coefficients(
         b.set(ii, 0.0);
     }
     true
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// RationalDerivative
+// ══════════════════════════════════════════════════════════════════════════
+
+/// OCCT PLib::RationalDerivative (PLib.cxx L274-563) — converts the
+/// homogeneous derivatives of a ratio f = u/v into the rational (divided)
+/// derivatives, from the quotient rule
+///
+/// ```text
+///   (q)         (   (q)                           (p)   (q-p)   )
+///  f    = (1/v) (  u    -   SUM  C(q,p) f     v          )
+///                     p = 0 to q-1
+/// ```
+///
+/// `ders` is the OCCT `Ders` buffer: `(Degree+1)` derivative blocks of
+/// stride `Dimension + 1` (the `Dimension` coordinates followed by the
+/// weight derivative of the same order, exactly the BSplCLib::Bohm output
+/// on the homogeneous local poles).  `r_ders` is the OCCT `RDers` buffer:
+/// with `all == true` (the PLib.hxx default, used by the BSplCLib_D1/D2/D3
+/// callers) it receives the `(DerivativeRequest+1)` blocks of stride
+/// `Dimension`; with `all == false` (the BSplCLib_DN caller) only the
+/// requested N-th block is written.
+pub fn rational_derivative(
+    degree: i32,
+    derivative_request: i32,
+    dimension: usize,
+    ders: &[f64],
+    r_ders: &mut [f64],
+    all: bool,
+) {
+    let poles_array = ders; // OCCT L316: PolesArray = &Ders.
+    let de_request1 = (derivative_request + 1) as usize;
+    let mut binomial_array = vec![1.0f64; de_request1];
+
+    // OCCT L318-319/L424: the !All redirect RationalArray = derivative_storage.
+    let storage_len = if dimension == 3 {
+        ((de_request1 << 1) + de_request1) as usize // OCCT L332: 3*DeRequest1.
+    } else {
+        dimension * de_request1 // OCCT L437: DimDeRequ1.
+    };
+    let mut derivative_storage = vec![0.0f64; if all { 0 } else { storage_len }];
+    let rational_array: &mut [f64] = if all {
+        r_ders
+    } else {
+        derivative_storage.as_mut_slice()
+    };
+
+    if dimension == 3 {
+        // OCCT L318-427: the Dimension == 3 body.
+        let min_deg_requ = if derivative_request > degree {
+            degree
+        } else {
+            derivative_request
+        };
+
+        let inverse = 1.0 / poles_array[3];
+        let mut index: i32 = 0;
+        let mut index1: i32;
+        let mut index2: i32 = -6;
+        let mut other_index: i32 = 0;
+
+        for ii in 0..=min_deg_requ {
+            index2 += 3;
+            index1 = index2;
+            rational_array[index as usize] = poles_array[other_index as usize];
+            index += 1;
+            other_index += 1;
+            rational_array[index as usize] = poles_array[other_index as usize];
+            index += 1;
+            other_index += 1;
+            rational_array[index as usize] = poles_array[other_index as usize];
+            index -= 2;
+            other_index += 2;
+
+            let mut jj = ii - 1;
+            while jj >= 0 {
+                let factor = binomial_array[jj as usize] * poles_array[(((ii - jj) << 2) + 3) as usize];
+                rational_array[index as usize] -= factor * rational_array[index1 as usize];
+                index += 1;
+                index1 += 1;
+                rational_array[index as usize] -= factor * rational_array[index1 as usize];
+                index += 1;
+                index1 += 1;
+                rational_array[index as usize] -= factor * rational_array[index1 as usize];
+                index -= 2;
+                index1 -= 5;
+                jj -= 1;
+            }
+
+            let mut jj = ii;
+            while jj >= 1 {
+                binomial_array[jj as usize] += binomial_array[(jj - 1) as usize];
+                jj -= 1;
+            }
+            rational_array[index as usize] *= inverse;
+            index += 1;
+            rational_array[index as usize] *= inverse;
+            index += 1;
+            rational_array[index as usize] *= inverse;
+            index += 1;
+        }
+
+        for ii in (min_deg_requ + 1)..=derivative_request {
+            index2 += 3;
+            index1 = index2;
+            rational_array[index as usize] = 0.0;
+            index += 1;
+            rational_array[index as usize] = 0.0;
+            index += 1;
+            rational_array[index as usize] = 0.0;
+            index -= 2;
+
+            let mut jj = ii - 1;
+            while jj >= ii - min_deg_requ {
+                let factor = binomial_array[jj as usize] * poles_array[(((ii - jj) << 2) + 3) as usize];
+                rational_array[index as usize] -= factor * rational_array[index1 as usize];
+                index += 1;
+                index1 += 1;
+                rational_array[index as usize] -= factor * rational_array[index1 as usize];
+                index += 1;
+                index1 += 1;
+                rational_array[index as usize] -= factor * rational_array[index1 as usize];
+                index -= 2;
+                index1 -= 5;
+                jj -= 1;
+            }
+
+            let mut jj = ii;
+            while jj >= 1 {
+                binomial_array[jj as usize] += binomial_array[(jj - 1) as usize];
+                jj -= 1;
+            }
+            rational_array[index as usize] *= inverse;
+            index += 1;
+            rational_array[index as usize] *= inverse;
+            index += 1;
+            rational_array[index as usize] *= inverse;
+            index += 1;
+        }
+
+        if !all {
+            // OCCT L419-427.
+            let mut dim_de_requ = 3 * derivative_request;
+            for kk in 0..3 {
+                r_ders[kk] = derivative_storage[dim_de_requ as usize];
+                dim_de_requ += 1;
+            }
+        }
+    } else {
+        // OCCT L428-563: the general-dimension body.
+        let dimension1 = dimension as i32 + 1;
+        let dimension2 = (dimension << 1) as i32;
+        let min_deg_requ = if derivative_request > degree {
+            degree
+        } else {
+            derivative_request
+        };
+
+        let inverse = 1.0 / poles_array[dimension];
+        let mut index: i32 = 0;
+        let mut index1: i32;
+        let mut index2: i32 = -dimension2;
+        let mut other_index: i32 = 0;
+
+        for ii in 0..=min_deg_requ {
+            index2 += dimension as i32;
+            index1 = index2;
+
+            for _kk in 0..dimension {
+                rational_array[index as usize] = poles_array[other_index as usize];
+                index += 1;
+                other_index += 1;
+            }
+            index -= dimension as i32;
+            other_index += 1; // OCCT L463: ++OtherIndex — skip the weight slot.
+
+            let mut jj = ii - 1;
+            while jj >= 0 {
+                let factor =
+                    binomial_array[jj as usize] * poles_array[((ii - jj) * dimension1 + dimension as i32) as usize];
+
+                for _kk in 0..dimension {
+                    rational_array[index as usize] -= factor * rational_array[index1 as usize];
+                    index += 1;
+                    index1 += 1;
+                }
+                index -= dimension as i32;
+                index1 -= dimension2;
+                jj -= 1;
+            }
+
+            let mut jj = ii;
+            while jj >= 1 {
+                binomial_array[jj as usize] += binomial_array[(jj - 1) as usize];
+                jj -= 1;
+            }
+
+            for _kk in 0..dimension {
+                rational_array[index as usize] *= inverse;
+                index += 1;
+            }
+        }
+
+        for ii in (min_deg_requ + 1)..=derivative_request {
+            index2 += dimension as i32;
+            index1 = index2;
+
+            for _kk in 0..dimension {
+                rational_array[index as usize] = 0.0;
+                index += 1;
+            }
+            index -= dimension as i32;
+
+            let mut jj = ii - 1;
+            while jj >= ii - min_deg_requ {
+                let factor =
+                    binomial_array[jj as usize] * poles_array[((ii - jj) * dimension1 + dimension as i32) as usize];
+
+                for _kk in 0..dimension {
+                    rational_array[index as usize] -= factor * rational_array[index1 as usize];
+                    index += 1;
+                    index1 += 1;
+                }
+                index -= dimension as i32;
+                index1 -= dimension2;
+                jj -= 1;
+            }
+
+            let mut jj = ii;
+            while jj >= 1 {
+                binomial_array[jj as usize] += binomial_array[(jj - 1) as usize];
+                jj -= 1;
+            }
+
+            for _kk in 0..dimension {
+                rational_array[index as usize] *= inverse;
+                index += 1;
+            }
+        }
+
+        if !all {
+            // OCCT L554-562.
+            let mut dim_de_requ = dimension as i32 * derivative_request;
+            for kk in 0..dimension {
+                r_ders[kk] = derivative_storage[dim_de_requ as usize];
+                dim_de_requ += 1;
+            }
+        }
+    }
 }

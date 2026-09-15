@@ -33,11 +33,11 @@ use crate::offset::brep_offset_offset_b::BRepOffsetOffset;
 use crate::offset::bi_tgte_curve_on_edge::{BiTgteCurveOnEdge, GeomAPIProjectPointOnCurve};
 
 use super::{
-    add, brep_lib_make_edge_3d, brep_lib_make_edge_pcurve, brep_lib_same_parameter,
-    brep_tools_update, curve_first_parameter, curve_last_parameter, find_created_edge, find_vertex,
-    is_in_face, is_on_restriction, k_part_curve_3d, make_curve, make_degenerated_edge,
-    orientation_of, oriented_shape, shape_reversed, touched, AncestorsMap, BRepOffsetAnalyse,
-    BRepOffsetInter2d, BRepOffsetInter3d, BRepOffsetMakeLoops, BRepBuilderAPISewing, BiTgteBlend,
+    add, brep_lib_make_edge_3d, brep_lib_make_edge_pcurve, brep_tools_update,
+    curve_first_parameter, curve_last_parameter, find_created_edge, find_vertex, is_in_face,
+    is_on_restriction, k_part_curve_3d, make_curve, make_degenerated_edge, orientation_of,
+    oriented_shape, shape_reversed, touched, AncestorsMap, BRepOffsetAnalyse, BRepOffsetInter2d,
+    BRepOffsetInter3d, BRepOffsetMakeLoops, BRepBuilderAPISewing, BiTgteBlend,
 };
 
 use crate::brep_algo::image::BRepAlgoImage;
@@ -1494,10 +1494,10 @@ impl BiTgteBlend {
         );
 
         for a_face in explorer(&self.my_result, ShapeType::Face, ShapeType::Shape) {
-            sew.add(&a_face);
+            sew.add(&mut self.my_brep, &a_face);
         }
 
-        sew.perform();
+        sew.perform(&mut self.my_brep);
 
         // SameParameter is done in case Sew does not do it (Detect that the
         // edges are not sameparameter but does nothing.)
@@ -1506,7 +1506,13 @@ impl BiTgteBlend {
         if !sewed_shape.is_null() {
             for sec in explorer(&sewed_shape, ShapeType::Edge, ShapeType::Shape) {
                 let tol = brep_tool_tolerance(&sec);
-                brep_lib_same_parameter(&sec, tol);
+                // OCCT L2497-2500: BRepLib::SameParameter(sec, tol) — the
+                // topalgo::brep_lib engine over the my_brep pool.
+                crate::topalgo::brep_lib::same_parameter::same_parameter(
+                    &mut self.my_brep,
+                    &sec,
+                    tol,
+                );
             }
             self.my_result = sewed_shape;
         }

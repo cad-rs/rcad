@@ -69,7 +69,6 @@ use crate::offset::brep_offset_api_thru_sections::{
     TOPABS_IN,
 };
 use crate::offset::brep_offset_inter2d::BRepToolsWireExplorer;
-use crate::offset::brep_offset_inter2d::brep_lib_same_parameter;
 use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
 
 // ---------------------------------------------------------------------------
@@ -441,17 +440,6 @@ impl GeomConvertCompCurveToBSplineCurveCarrier {
     pub(crate) fn bspline_curve(&self) -> BSplineCurve3 {
         self.inner.bspline_curve()
     }
-}
-
-/// OCCT BRepLib::SameParameter(E, Tol, NewTol, WithCorrection) — the 4-arg
-/// form (the inter2d stub leaf).
-pub(crate) fn brep_lib_same_parameter_with_result(
-    _the_e: &Shape,
-    _the_tol: f64,
-    _the_new_tol: &mut f64,
-    _the_with_correction: bool,
-) {
-    // The brep_lib_same_parameter stub form (the inter2d GAP leaf).
 }
 
 impl BRepOffsetAPIThruSections {
@@ -1165,13 +1153,24 @@ impl BRepOffsetAPIThruSections {
             // OCCT L1056.
             let a_tolerance = brep_tool_tolerance(&a_cur_edge);
             if self.my_mutable_input {
-                // OCCT L1058: BRepLib::SameParameter(aCurEdge, aTolerance).
-                brep_lib_same_parameter(&a_cur_edge, a_tolerance);
+                // OCCT L1058: BRepLib::SameParameter(aCurEdge, aTolerance) —
+                // the topalgo::brep_lib engine over the my_brep pool.
+                crate::topalgo::brep_lib::same_parameter::same_parameter(
+                    &mut self.my_brep,
+                    &a_cur_edge,
+                    a_tolerance,
+                );
             } else {
                 // OCCT L1060-1081: all edges of myShape can be safely updated;
                 // all vertices of myShape are part of the original wires.
                 let mut a_new_tolerance = -1.0;
-                brep_lib_same_parameter_with_result(&a_cur_edge, a_tolerance, &mut a_new_tolerance, true);
+                crate::topalgo::brep_lib::same_parameter::same_parameter_with_result(
+                    &mut self.my_brep,
+                    &a_cur_edge,
+                    a_tolerance,
+                    &mut a_new_tolerance,
+                    true,
+                );
                 if a_new_tolerance > 0.0 {
                     let (a_vertex1, a_vertex2) = top_exp_vertices_local(&a_cur_edge);
                     if !a_vertex1.is_null() {

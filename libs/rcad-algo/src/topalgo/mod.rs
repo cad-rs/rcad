@@ -26,6 +26,7 @@ pub mod brep_tools_modifier;       // BRepTools_Modifier
 pub mod thru_sections;      // BRepOffsetAPI_ThruSections (loft — BRepFill port pending)
 pub mod brep_tools_substitution;
 pub mod brep_tools_wire_explorer; // BRepTools_WireExplorer
+pub mod brep_builder_api_sewing;   // BRepBuilderAPI_Sewing
 pub mod brep_lib_make_wire;       // BRepLib_MakeWire
 pub mod brep_tools_quilt;
 pub mod brep_lib_find_surface;

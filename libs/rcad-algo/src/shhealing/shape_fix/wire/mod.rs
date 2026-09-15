@@ -94,7 +94,7 @@ use crate::shhealing::shape_fix::edge::ShapeFixEdge;
 use crate::shhealing::shape_fix::root::ShapeFixRoot;
 
 /// OCCT `RealLast()` — the greatest finite double.
-pub(crate) const REAL_LAST: f64 = f64::MAX;
+pub(crate) use rcad_kernel::core::precision::REAL_LAST;
 
 // ---------------------------------------------------------------------------
 // BRep_Tool re-hosts shared by the wire submodules (bridge #3; the

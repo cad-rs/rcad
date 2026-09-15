@@ -31,10 +31,11 @@ use crate::geom::{
     turn_2d, BezierCurve2, BSplineCurve2, Circle2d, Curve2d, Curve2dEval, Ellipse2d,
 };
 use crate::math::bspl_lib::{
-    at, ati, first_uknot_index_mults, insert_knots, increase_degree,
-    increase_degree_count_knots, last_uknot_index_mults, locate_parameter_knots_mults,
-    pole_index, prepare_insert_knots, remove_knot,
+    at, ati, build_cache_2d, first_uknot_index_mults, flat_bezier_knots, insert_knots,
+    increase_degree, increase_degree_count_knots, last_uknot_index_mults,
+    locate_parameter_knots_mults, pole_index, prepare_insert_knots, remove_knot,
 };
+use crate::math::plib::{coefficients_poles_2d, trimming_2d};
 
 /// OCCT BSplCLib::MaxDegree() == 25.
 const BSPLIB_MAX_DEGREE: usize = 25;
@@ -436,10 +437,18 @@ fn bspline2_segment(c: &mut BSplineCurve2, au1: f64, au2: f64, tolerance: f64) {
 // conic position (handedness mirror + frame transformation).
 // ---------------------------------------------------------------------------
 
-/// OCCT BSplineCurveBuilder(TheConic, Convert) reduced to its 2D data flow:
-/// the canonical poles are mirrored about OX when the conic frame is
-/// left-handed (L84-91), then mapped P = Loc + x*XDir + y*YDir
-/// (SetTransformation(XAxis, OX2d), L93-96).
+/// OCCT BSplineCurveBuilder(TheConic, Convert) reduced to its 2D data flow
+/// (Geom2dConvert.cxx L70-98): the canonical poles are mirrored about OX2d
+/// when the conic frame is left-handed (L84-91), then mapped by
+/// `T.SetTransformation(TheConic->XAxis(), gp::OX2d())` (L92-96).
+///
+/// The two gp_Trsf2d statements collapse (gp_Trsf2d.cxx L48-84): the OX
+/// mirror is (x, y) -> (x, -y) and the XAxis transform with ToA2 = OX2d is
+/// P = Loc + x*XDir + y*(-XDir.y, XDir.x) (matrix columns (XDir, perp(XDir)),
+/// translation Loc; gp_XY::Multiply is the column-vector convention).  Over
+/// the conic's own frame the net effect is P = Loc + x*XDir + y*YDir — the
+/// left-handed YDir already carries the mirror, so the y-offset is NOT
+/// flipped a second time.
 fn bspline_curve_builder_2d(
     loc: DVec2,
     x_dir: DVec2,
@@ -449,12 +458,19 @@ fn bspline_curve_builder_2d(
     // OCCT L84-91: (Axis.XDirection() ^ Axis.YDirection()) < 0 -> mirror.
     let cross = x_dir.x * y_dir.y - x_dir.y * y_dir.x;
     let mirror = cross < 0.0;
+    // OCCT L93-96: the SetTransformation(XAxis, OX2d) collapse — the
+    // transform maps through perp(XDir), not YDir; YDir enters only the
+    // handedness test above.
+    let perp_x = DVec2::new(-x_dir.y, x_dir.x);
     let control_points = conv
         .poles_2d
         .iter()
         .map(|p| {
+            // OCCT L87-89: Sym.SetMirror(gp::OX2d()) + Transform —
+            // gp_Trsf2d.cxx L48-62: (x, y) -> (x, -y).
             let y = if mirror { -p.y } else { p.y };
-            loc + p.x * x_dir + y * y_dir
+            // gp_Trsf2d.cxx L64-84: P = Loc + x*XDir + y*perp(XDir).
+            loc + p.x * x_dir + y * perp_x
         })
         .collect();
     BSplineCurve2 {
@@ -557,13 +573,14 @@ pub fn curve_to_bspline_curve_2d(
                     &conv,
                 )
             }
-            // OCCT L323-345: the trimmed Bezier — Geom2d_BezierCurve::Segment
-            // (BuildCache + PLib::Trimming + PLib::CoefficientsPoles) pending.
-            Curve2d::Bezier(_) => {
-                panic!(
-                    "Staged: Geom2dConvert::CurveToBSplineCurve trimmed bezier branch \
-                     (Geom2dConvert.cxx L323-345, Geom2d_BezierCurve::Segment pending)"
-                );
+            // OCCT L323-345: the trimmed Bezier — Copy +
+            // Geom2d_BezierCurve::Segment (BuildCache + PLib::Trimming +
+            // PLib::CoefficientsPoles), then the clamped-knot BSpline build
+            // (knots 0/1, mults Degree+1, over the segmented poles).
+            Curve2d::Bezier(cbez) => {
+                let mut the_bez = cbez.clone(); // OCCT L325: Curv->Copy().
+                bezier2_segment(&mut the_bez, u1, u2); // OCCT L326.
+                bezier_to_bspline_2d(&the_bez) // OCCT L327-345.
             }
             // OCCT L347-351: the trimmed BSpline — Copy + Segment.
             Curve2d::BSpline(bs) => {
@@ -752,14 +769,74 @@ fn ellipse_arc_to_bspline_2d(
 /// multiplicity Degree+1 over the Bezier poles.
 fn bezier_to_bspline_2d(cbez: &BezierCurve2) -> BSplineCurve2 {
     let degree = cbez.control_points.len() - 1;
-    let knots = vec![0.0, 0.0, 1.0, 1.0];
-    let mults = vec![degree as i32 + 1, degree as i32 + 1];
+    let kts = [0.0f64, 1.0];
+    let mults = [degree as i32 + 1, degree as i32 + 1];
     BSplineCurve2 {
         degree,
-        knots: flat_knots_of(&knots, &mults),
+        knots: flat_knots_of(&kts, &mults),
         control_points: cbez.control_points.clone(),
         weights: cbez.weights.clone(),
     }
+}
+
+/// OCCT Geom2d_BezierCurve::Segment(U1, U2) (Geom2d_BezierCurve.cxx
+/// L356-387): reparameterizes the Bezier onto the sub-interval [U1, U2] of
+/// [0, 1] — BSplCLib::BuildCache(0, 1, false, Degree, KnotSequence(), ...)
+/// produces the Taylor (power) coefficients at 0, PLib::Trimming performs
+/// the substitution u = U1 + v*(U2-U1), PLib::CoefficientsPoles converts
+/// the power coefficients back to Bernstein poles.
+fn bezier2_segment(c: &mut BezierCurve2, u1: f64, u2: f64) {
+    // OCCT L357: myClosed = (|Value(U1).Distance(Value(U2))| <=
+    // gp::Resolution()) — the legacy BezierCurve2 carrier carries no closed
+    // flag (architecture note); the statement has no other observable
+    // effect here.
+    // OCCT L359: NCollection_Array1<gp_Pnt2d> coeffs(1, myPoles.Length()).
+    let degree = c.control_points.len() as i32 - 1;
+    // KnotSequence() — BSplCLib::FlatBezierKnots(Degree) (BSplCLib.cxx
+    // L4971-4977): Degree+1 zeros followed by Degree+1 ones.
+    let knot_sequence = flat_bezier_knots(degree);
+    let mut coeffs = c.control_points.clone();
+    if c.weights.iter().any(|&w| w != 1.0) {
+        // OCCT L360-375: the rational arm — BuildCache with &myWeights,
+        // PLib::Trimming with &wcoeffs, PLib::CoefficientsPoles with
+        // &myWeights.
+        let mut wcoeffs = c.weights.clone();
+        build_cache_2d(
+            0.0,
+            1.0,
+            false,
+            degree,
+            &knot_sequence,
+            &c.control_points,
+            Some(&c.weights),
+            &mut coeffs,
+            Some(&mut wcoeffs),
+        );
+        trimming_2d(u1, u2, &mut coeffs, Some(&mut wcoeffs));
+        coefficients_poles_2d(
+            &coeffs,
+            Some(&wcoeffs),
+            &mut c.control_points,
+            Some(&mut c.weights),
+        );
+    } else {
+        // OCCT L376-386: the non-rational arm — NoWeights throughout.
+        build_cache_2d(
+            0.0,
+            1.0,
+            false,
+            degree,
+            &knot_sequence,
+            &c.control_points,
+            None,
+            &mut coeffs,
+            None,
+        );
+        trimming_2d(u1, u2, &mut coeffs, None);
+        coefficients_poles_2d(&coeffs, None, &mut c.control_points, None);
+    }
+    // OCCT L387: myMaxDerivInvOk = false — no carrier field
+    // (architecture note).
 }
 
 // ---------------------------------------------------------------------------
@@ -1244,5 +1321,158 @@ mod tests {
         let seg_asc = split_bspline_curve_2d(&bs, 0.25, 0.75, 1.0e-9, true);
         assert!((seg_asc.control_points[0] - DVec2::new(0.25, 0.0)).length() < 1.0e-9);
         assert!((seg_asc.control_points[1] - DVec2::new(0.75, 0.0)).length() < 1.0e-9);
+    }
+
+    /// LEFT-HANDED frame (mirror placement) — the discriminating test for
+    /// the BSplineCurveBuilder transform collapse.
+    ///
+    /// OCCT statement chain (Geom2dConvert.cxx L84-96): the left-handed
+    /// conic first takes Sym.SetMirror(gp::OX2d()) — gp_Trsf2d.cxx L48-62:
+    /// (x, y) -> (x, -y) — then T.SetTransformation(XAxis, OX2d) —
+    /// gp_Trsf2d.cxx L64-84 with ToA2 = OX2d: matrix columns (XDir,
+    /// perp(XDir)), translation Loc, column-vector application
+    /// (gp_XY::Multiply = M*x).  The collapse is therefore
+    ///   P = Loc + x*XDir + y*perp(XDir)
+    /// and with the LEFT-HANDED frame's own YDir = -perp(XDir):
+    ///   P = Loc + x*XDir + y*YDir  (no second y flip).
+    ///
+    /// Hand-derived expectation: canonical TgtThetaOver2 quarter arc of the
+    /// radius-2 circle has numerator poles (2,0), (2,2), (0,2) with weights
+    /// (1, sqrt(2)/2, 1).  With Loc = (5,0), X = (1,0), Y = (0,-1):
+    ///   (2,0) -> (5,0) + (2,0)            = (7, 0)
+    ///   (2,2) -> (5,0) + (2,0) + (0,-2)   = (7,-2)
+    ///   (0,2) -> (5,0) + 0     + (0,-2)   = (5,-2)
+    /// The pre-fix body (flipping the y-offset through YDir) produced
+    /// (7,0), (7,2), (5,2) — the mirrored arc.
+    #[test]
+    fn left_handed_circle_placement_matches_occt_collapse() {
+        let sq2 = std::f64::consts::SQRT_2;
+        let circ = Circle2d {
+            center: DVec2::new(5.0, 0.0),
+            x_dir: DVec2::new(1.0, 0.0),
+            y_dir: DVec2::new(0.0, -1.0), // left-handed frame.
+            radius: 2.0,
+        };
+        let trc = Curve2d::Trimmed(TrimmedCurve2 {
+            curve: Box::new(Curve2d::Circle(circ)),
+            t_min: 0.0,
+            t_max: std::f64::consts::FRAC_PI_2,
+        });
+        let bs = curve_to_bspline_curve_2d(&trc, ConvertParameterisation::TgtThetaOver2);
+
+        assert_eq!(bs.degree, 2);
+        let want_poles = [
+            DVec2::new(7.0, 0.0),
+            DVec2::new(7.0, -2.0),
+            DVec2::new(5.0, -2.0),
+        ];
+        assert_eq!(bs.control_points.len(), 3);
+        for (p, w) in bs.control_points.iter().zip(want_poles.iter()) {
+            assert!((p - w).length() < 1.0e-12, "pole {p:?} vs {w:?}");
+        }
+        let want_weights = [1.0, sq2 / 2.0, 1.0];
+        for (w, want) in bs.weights.iter().zip(want_weights.iter()) {
+            assert!((w - want).abs() < 1.0e-15);
+        }
+        // Endpoints: Value(0) = Loc + R*XDir = (7,0); the trim end is the
+        // collapse-mapped canonical (0, 2) = (5,-2).
+        assert!(Curve2dEval::point_at(&bs, 0.0).distance(DVec2::new(7.0, 0.0)) < 1.0e-12);
+        assert!(
+            Curve2dEval::point_at(&bs, std::f64::consts::FRAC_PI_2).distance(DVec2::new(5.0, -2.0))
+                < 1.0e-12
+        );
+        // The arc lies on the placed circle (exact rational form).
+        for k in 0..=8 {
+            let t = std::f64::consts::FRAC_PI_2 * (k as f64) / 8.0;
+            let p = Curve2dEval::point_at(&bs, t);
+            let r = (p - DVec2::new(5.0, 0.0)).length();
+            assert!((r - 2.0).abs() < 1.0e-12, "u={t}: radius deviation {}", r - 2.0);
+        }
+    }
+
+    /// The trimmed-Bezier branch (Geom2dConvert.cxx L323-345): Copy +
+    /// Geom2d_BezierCurve::Segment.  For the quadratic (0,0),(2,4),(4,0)
+    /// (x(u) = 4u, y(u) = 8u(1-u)) trimmed to [0.5, 1] (u = 1/2 + v/2):
+    ///   x(v) = 2 + 2v      -> power coeffs (2, 2)
+    ///   y(v) = 2 - 2v^2    -> power coeffs (2, 0, -2)
+    /// and the PLib::CoefficientsPoles Pascal recombination over both
+    /// passes turns the power form into the Bezier poles
+    /// (2,2), (3,2), (4,0) over the clamped knots [0, 1], mults 3.
+    #[test]
+    fn trimmed_bezier_segment_poles() {
+        use crate::geom::BezierCurve2 as Bez2;
+        let cbez = Bez2 {
+            control_points: vec![DVec2::new(0.0, 0.0), DVec2::new(2.0, 4.0), DVec2::new(4.0, 0.0)],
+            weights: vec![1.0, 1.0, 1.0],
+        };
+        let trc = Curve2d::Trimmed(TrimmedCurve2 {
+            curve: Box::new(Curve2d::Bezier(cbez)),
+            t_min: 0.5,
+            t_max: 1.0,
+        });
+        let bs = curve_to_bspline_curve_2d(&trc, ConvertParameterisation::TgtThetaOver2);
+        assert_eq!(bs.degree, 2);
+        // OCCT L327-344: knots 0/1, mults Degree+1 = 3.
+        assert_eq!(bs.knots, vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
+        let want_poles = [
+            DVec2::new(2.0, 2.0),
+            DVec2::new(3.0, 2.0),
+            DVec2::new(4.0, 0.0),
+        ];
+        assert_eq!(bs.control_points.len(), 3);
+        for (p, w) in bs.control_points.iter().zip(want_poles.iter()) {
+            assert!((p - w).length() < 1.0e-12, "pole {p:?} vs {w:?}");
+        }
+        for w in bs.weights.iter() {
+            assert!((w - 1.0).abs() < 1.0e-15);
+        }
+        // Endpoints exact; on-curve check at v = 1/2: u = 3/4,
+        // x(3/4) = 3, y(3/4) = 8*(3/4)*(1/4) = 1.5.
+        let mid = Curve2dEval::point_at(&bs, 0.5);
+        assert!((mid - DVec2::new(3.0, 1.5)).length() < 1.0e-12, "mid {mid:?}");
+    }
+
+    /// The RATIONAL Segment arm (Geom2d_BezierCurve.cxx L360-375):
+    /// homogeneous BuildCache -> PLib::Trimming with wcoeffs ->
+    /// PLib::CoefficientsPoles with weights.  Quadratic (0,0),(2,4),(4,0)
+    /// with weights (1,2,1) — homogeneous poles (0,0,1),(4,8,2),(4,0,1),
+    /// Taylor coefficients at 0: (0,0,1),(8,16,2),(-4,-16,-2) — trimmed to
+    /// [1/2, 1] (u = 1/2 + v/2) gives the power form
+    ///   xW = 3 + 2v - v^2,  yW = 4 - 4v^2,  W = 1.5 - 0.5v^2
+    /// and the Pascal recombination + weight normalization yields the poles
+    /// (2, 8/3), (8/3, 8/3), (4, 0) with weights (1.5, 1.5, 1).
+    #[test]
+    fn trimmed_rational_bezier_segment_poles() {
+        use crate::geom::BezierCurve2 as Bez2;
+        let cbez = Bez2 {
+            control_points: vec![DVec2::new(0.0, 0.0), DVec2::new(2.0, 4.0), DVec2::new(4.0, 0.0)],
+            weights: vec![1.0, 2.0, 1.0],
+        };
+        let trc = Curve2d::Trimmed(TrimmedCurve2 {
+            curve: Box::new(Curve2d::Bezier(cbez)),
+            t_min: 0.5,
+            t_max: 1.0,
+        });
+        let bs = curve_to_bspline_curve_2d(&trc, ConvertParameterisation::TgtThetaOver2);
+        assert_eq!(bs.degree, 2);
+        assert_eq!(bs.knots, vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
+        let want_poles = [
+            DVec2::new(2.0, 8.0 / 3.0),
+            DVec2::new(8.0 / 3.0, 8.0 / 3.0),
+            DVec2::new(4.0, 0.0),
+        ];
+        for (p, w) in bs.control_points.iter().zip(want_poles.iter()) {
+            assert!((p - w).length() < 1.0e-12, "pole {p:?} vs {w:?}");
+        }
+        let want_weights = [1.5, 1.5, 1.0];
+        for (w, want) in bs.weights.iter().zip(want_weights.iter()) {
+            assert!((w - want).abs() < 1.0e-12, "weight {w} vs {want}");
+        }
+        // Endpoint values: y(u) = 16u(1-u) / (1 + 2u - 2u^2); y(1/2) = 8/3,
+        // y(1) = 0.
+        let p0 = Curve2dEval::point_at(&bs, 0.0);
+        assert!((p0 - DVec2::new(2.0, 8.0 / 3.0)).length() < 1.0e-12);
+        let p1 = Curve2dEval::point_at(&bs, 1.0);
+        assert!((p1 - DVec2::new(4.0, 0.0)).length() < 1.0e-12);
     }
 }

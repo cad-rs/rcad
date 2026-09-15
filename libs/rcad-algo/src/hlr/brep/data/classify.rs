@@ -31,7 +31,7 @@ use super::tableau_rejection::TableauRejection;
 use super::{CUT_BIG, CUT_LAR, DERIVEE_PREMIERE_NULLE, counters};
 
 /// OCCT Standard_Real RealLast() (Standard_Real.hxx).
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 /// OCCT Epsilon(1.) — the double machine epsilon.
 const EPSILON_1: f64 = f64::EPSILON;
 /// OCCT Precision::Infinite() (Precision.hxx) = 2.e+100.

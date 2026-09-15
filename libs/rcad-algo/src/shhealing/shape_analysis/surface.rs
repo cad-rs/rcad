@@ -45,7 +45,7 @@ use super::analysis::adjust_by_period;
 use super::curve::ShapeAnalysisCurve;
 
 // OCCT Standard_Real.hxx L182-185.
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 /// The GeomAdaptor_Surface::GetType() dispatch over the rcad Surface3
 /// (bridge #2) — the surface kinds the switch statements distinguish.

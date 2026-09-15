@@ -16,7 +16,7 @@ use crate::topalgo::mat2d::mat2d_connexion::{HandleMat2dConnexion, Mat2dConnexio
 use crate::topalgo::mat2d::Geom2dGeometry;
 
 /// OCCT RealLast().
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 /// GAP carrier (dependency of another package).
 ///

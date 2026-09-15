@@ -28,8 +28,7 @@ use crate::geomalgo::int_res2d::{
 };
 
 /// OCCT RealFirst()/RealLast().
-const REAL_FIRST: f64 = -f64::MAX;
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::{REAL_FIRST, REAL_LAST};
 
 /// OCCT static ConstructSegment(PMin, PMax, UMin, UMax) (L61-71).
 fn construct_segment(

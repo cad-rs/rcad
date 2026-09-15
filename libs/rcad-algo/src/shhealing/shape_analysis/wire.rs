@@ -62,7 +62,7 @@ fn bnd2d_is_out(a: &BndBox2d, b: &BndBox2d) -> bool {
 // OCCT gp.hxx L59-60: gp::Resolution() = RealSmall() = DBL_MIN.
 const GP_RESOLUTION: f64 = f64::MIN_POSITIVE;
 // OCCT Standard_Real.hxx L182-185.
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 // ---------------------------------------------------------------------------
 // Local re-hosts

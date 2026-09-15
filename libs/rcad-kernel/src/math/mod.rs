@@ -28,6 +28,7 @@ pub mod function_set_root;
 pub mod p_lib_jacobi;
 pub mod p_lib_jacobi_data;
 pub mod plib;
+pub mod fem_tool;
 pub mod root;
 pub mod poly;
 pub mod opt;

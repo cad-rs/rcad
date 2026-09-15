@@ -37,7 +37,7 @@ use super::approx_int::{
 };
 
 /// OCCT Standard_Real RealLast() (Standard_Real.hxx).
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 /// OCCT gp::Resolution() == RealSmall() (gp.hxx L59-60) — the smallest
 /// positive normalized double.

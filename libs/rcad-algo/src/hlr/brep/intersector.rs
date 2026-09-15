@@ -32,7 +32,7 @@ use super::surface_tool::{LineTool, SurfaceTool};
 /// OCCT Precision::Confusion() (Precision.hxx).
 const PRECISION_CONFUSION: f64 = 1.0e-7;
 /// OCCT Standard_Real RealLast() (Standard_Real.hxx).
-const REAL_LAST: f64 = f64::MAX;
+use rcad_kernel::core::precision::REAL_LAST;
 
 /// OCCT `myC1->D1(u, pa, va)` — the 2D D1 of the projected curve.
 fn curve_d1_2d(c: &Curve<'_>, u: f64) -> (DVec2, DVec2) {

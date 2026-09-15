@@ -26,12 +26,13 @@ use glam::DVec3;
 
 use crate::base::convert::ConvertParameterisation;
 use crate::base::extrema_ext_elc::epsilon_of;
-use crate::geom::{BSplineCurve3, Curve3, CurveEval};
+use crate::geom::{BezierCurve3, BSplineCurve3, Curve3, CurveEval};
 use crate::math::bspl_lib::{
-    at, ati, first_uknot_index_mults, insert_knots, increase_degree,
-    increase_degree_count_knots, last_uknot_index_mults, locate_parameter_knots_mults,
-    pole_index, prepare_insert_knots, remove_knot,
+    at, ati, build_cache_3d, first_uknot_index_mults, flat_bezier_knots, insert_knots,
+    increase_degree, increase_degree_count_knots, last_uknot_index_mults,
+    locate_parameter_knots_mults, pole_index, prepare_insert_knots, remove_knot,
 };
+use crate::math::plib::{coefficients_poles_3d, trimming_3d};
 
 /// OCCT BSplCLib::MaxDegree() == 25.
 const BSPLIB_MAX_DEGREE: usize = 25;
@@ -437,8 +438,94 @@ pub fn curve_to_bspline_curve_3d(
             bspline3_segment(&mut the_curve, u1, u2, 0.0);
             return the_curve;
         }
+        if let Curve3::Bezier(cbez) = curv {
+            // OCCT L177-188: the clamp (a Geom_BezierCurve is never
+            // periodic; FirstParameter() == 0, LastParameter() == 1).
+            let mut u1 = ctrim.first;
+            let mut u2 = ctrim.last;
+            if !curv.is_periodic() {
+                if u1 < 0.0 {
+                    u1 = 0.0;
+                }
+                if u2 > 1.0 {
+                    u2 = 1.0;
+                }
+            }
+            // OCCT L300-321: Copy + Geom_BezierCurve::Segment, then the
+            // clamped-knot BSpline build (knots 0/1, mults Degree+1).
+            let mut the_bez = cbez.clone();
+            bezier3_segment(&mut the_bez, u1, u2);
+            let degree = the_bez.control_points.len() - 1;
+            let kts = [0.0f64, 1.0];
+            let mults = [degree as i32 + 1, degree as i32 + 1];
+            return BSplineCurve3 {
+                degree,
+                knots: flat_knots_of(&kts, &mults),
+                control_points: the_bez.control_points,
+                weights: the_bez.weights,
+                is_periodic: false,
+            };
+        }
     }
     crate::base::convert::geom_convert_curve_to_bspline_curve(c, parameterisation)
+}
+
+/// OCCT Geom_BezierCurve::Segment(U1, U2) (Geom_BezierCurve.cxx L388-425):
+/// reparameterizes the Bezier onto the sub-interval [U1, U2] of [0, 1] —
+/// BSplCLib::BuildCache(0, 1, false, aDeg, KnotSequence(), ...) produces
+/// the Taylor (power) coefficients at 0, PLib::Trimming performs the
+/// substitution u = U1 + v*(U2-U1), PLib::CoefficientsPoles converts the
+/// power coefficients back to Bernstein poles.
+fn bezier3_segment(c: &mut BezierCurve3, u1: f64, u2: f64) {
+    // OCCT L390: myClosed = (|Value(U1).Distance(Value(U2))| <=
+    // Precision::Confusion()) — the legacy BezierCurve3 carrier carries no
+    // closed flag (architecture note).
+    // OCCT L392: const int aDeg = myPoles.Length() - 1.
+    let degree = c.control_points.len() as i32 - 1;
+    // KnotSequence() — BSplCLib::FlatBezierKnots(Degree) (BSplCLib.cxx
+    // L4971-4977).
+    let knot_sequence = flat_bezier_knots(degree);
+    // OCCT L394: NCollection_Array1<gp_Pnt> coeffs(1, myPoles.Length()).
+    let mut coeffs = c.control_points.clone();
+    if c.weights.iter().any(|&w| w != 1.0) {
+        // OCCT L395-409: the rational arm.
+        let mut wcoeffs = c.weights.clone();
+        build_cache_3d(
+            0.0,
+            1.0,
+            false,
+            degree,
+            &knot_sequence,
+            &c.control_points,
+            Some(&c.weights),
+            &mut coeffs,
+            Some(&mut wcoeffs),
+        );
+        trimming_3d(u1, u2, &mut coeffs, Some(&mut wcoeffs));
+        coefficients_poles_3d(
+            &coeffs,
+            Some(&wcoeffs),
+            &mut c.control_points,
+            Some(&mut c.weights),
+        );
+    } else {
+        // OCCT L410-423: the non-rational arm — NoWeights throughout.
+        build_cache_3d(
+            0.0,
+            1.0,
+            false,
+            degree,
+            &knot_sequence,
+            &c.control_points,
+            None,
+            &mut coeffs,
+            None,
+        );
+        trimming_3d(u1, u2, &mut coeffs, None);
+        coefficients_poles_3d(&coeffs, None, &mut c.control_points, None);
+    }
+    // OCCT L424: myMaxDerivInvOk = false — no carrier field
+    // (architecture note).
 }
 
 // ---------------------------------------------------------------------------
@@ -779,5 +866,48 @@ mod tests {
         );
         assert!((out.control_points[0] - DVec3::new(0.25, 0.0, 0.0)).length() < 1.0e-9);
         assert!((out.control_points[1] - DVec3::new(0.75, 0.0, 0.0)).length() < 1.0e-9);
+    }
+
+    /// The trimmed-Bezier branch (GeomConvert.cxx L300-321): Copy +
+    /// Geom_BezierCurve::Segment — the quadratic (0,0,0),(2,4,0),(4,0,0)
+    /// (x(u) = 4u, y(u) = 8u(1-u)) trimmed to [0.25, 0.75]
+    /// (u = (1 + 2v)/4):
+    ///   x(v) = 1 + 2v                    -> power coeffs (1, 2, 0)
+    ///   y(v) = 8(1+2v)(3-2v)/16 = 1.5 + 2v - 2v^2
+    ///                                    -> power coeffs (1.5, 2, -2)
+    /// and the PLib::CoefficientsPoles Pascal recombination over both passes
+    /// gives the poles (1, 1.5, 0), (2, 2.5, 0), (3, 1.5, 0) over the
+    /// clamped knots [0, 1], mults 3.
+    #[test]
+    fn trimmed_bezier_branch_segments() {
+        let cbez = BezierCurve3 {
+            control_points: vec![
+                DVec3::ZERO,
+                DVec3::new(2.0, 4.0, 0.0),
+                DVec3::new(4.0, 0.0, 0.0),
+            ],
+            weights: vec![1.0, 1.0, 1.0],
+        };
+        let out = curve_to_bspline_curve_3d(
+            &Curve3::Trimmed(crate::geom::TrimmedCurve3::new(
+                Curve3::Bezier(cbez),
+                0.25,
+                0.75,
+            )),
+            ConvertParameterisation::TgtThetaOver2,
+        );
+        assert_eq!(out.degree, 2);
+        assert_eq!(out.knots, vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
+        let want_poles = [
+            DVec3::new(1.0, 1.5, 0.0),
+            DVec3::new(2.0, 2.5, 0.0),
+            DVec3::new(3.0, 1.5, 0.0),
+        ];
+        for (p, w) in out.control_points.iter().zip(want_poles.iter()) {
+            assert!((p - w).length() < 1.0e-12, "pole {p:?} vs {w:?}");
+        }
+        // On-curve check at v = 1/2: u = 1/2, x = 2, y = 8*(1/2)*(1/2) = 2.
+        let mid = CurveEval::point_at(&out, 0.5);
+        assert!((mid - DVec3::new(2.0, 2.0, 0.0)).length() < 1.0e-12, "mid {mid:?}");
     }
 }
