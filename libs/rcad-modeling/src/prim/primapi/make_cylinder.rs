@@ -12,6 +12,8 @@ use rcad_kernel::topods::{self, CurveRepresentation, GeomAbsShape, Orientation, 
 use rcad_kernel::BRep;
 use rcad_kernel::CurveEval;
 
+use super::pcurve_bind::bind_pcurve_representation;
+
 pub struct MakeCylinder {
     radius: f64, height: f64,
     x_axis: DVec3, y_axis: DVec3, z_axis: DVec3,
@@ -123,15 +125,32 @@ impl MakeCylinder {
         // stored as a CurveOnClosedSurface representation (L434-438). The top
         // and bottom circles are V-isolines v=VMax / v=VMin (L401-414).
         let lat_key = (f_lat.ptr_id(), f_lat.location);
-        // EBOTTOM: gp_Lin2d((0, myVMin), X)
-        t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
+        // EBOTTOM: gp_Lin2d((0, myVMin), X).  Dual write: the map insert is
+        // retained for the map-era readers during the writer migration; the
+        // representation is the authority (OCCT static UpdateCurves,
+        // BRep_Builder.cxx L104-167).
+        let ed = t.edge_mut_inplace(e_bot.clone());
+        ed.pcurves.insert(
             lat_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
         );
+        bind_pcurve_representation(
+            ed,
+            lat_key,
+            Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)),
+            [0.0, std::f64::consts::TAU],
+        );
         // ETOP: gp_Lin2d((0, myVMax), X)
-        t.edge_mut_inplace(e_top.clone()).pcurves.insert(
+        let ed = t.edge_mut_inplace(e_top.clone());
+        ed.pcurves.insert(
             lat_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, h), DVec2::X)), 0.0, std::f64::consts::TAU),
+        );
+        bind_pcurve_representation(
+            ed,
+            lat_key,
+            Curve2d::Line(Line2d::new(DVec2::new(0.0, h), DVec2::X)),
+            [0.0, std::f64::consts::TAU],
         );
         // ESTART seam closed edge: pcurve1 at u=myAngle, pcurve2 at u=0.
         t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
@@ -151,14 +170,30 @@ impl MakeCylinder {
         // regularity — myBuilder.Continuity(E, F, F, GeomAbs_CN).
         BRepBuilder::new().continuity(&mut t, &e_seam, &f_lat, &f_lat, GeomAbsShape::CN);
         // OCCT BRepPrim_OneAxis::TopFace/BottomFace (L465-468/L506-509): cap
-        // circle pcurves — gp_Circ2d((0,0), MeridianValue(V).X()).
-        t.edge_mut_inplace(e_top.clone()).pcurves.insert(
+        // circle pcurves — gp_Circ2d((0,0), MeridianValue(V).X()).  Dual
+        // write: the map insert is retained for the map-era readers; the
+        // representation is the authority (BRep_Builder.cxx L104-167).
+        let ed = t.edge_mut_inplace(e_top.clone());
+        ed.pcurves.insert(
             (f_top.ptr_id(), f_top.location),
             (Curve2d::Circle(Circle2d::new(DVec2::ZERO, r)), 0.0, std::f64::consts::TAU),
         );
-        t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
+        bind_pcurve_representation(
+            ed,
+            (f_top.ptr_id(), f_top.location),
+            Curve2d::Circle(Circle2d::new(DVec2::ZERO, r)),
+            [0.0, std::f64::consts::TAU],
+        );
+        let ed = t.edge_mut_inplace(e_bot.clone());
+        ed.pcurves.insert(
             (f_bot.ptr_id(), f_bot.location),
             (Curve2d::Circle(Circle2d::new(DVec2::ZERO, r)), 0.0, std::f64::consts::TAU),
+        );
+        bind_pcurve_representation(
+            ed,
+            (f_bot.ptr_id(), f_bot.location),
+            Curve2d::Circle(Circle2d::new(DVec2::ZERO, r)),
+            [0.0, std::f64::consts::TAU],
         );
 
         let shell = t.add_tshell(vec![f_lat, f_top, f_bot]);
@@ -399,9 +434,19 @@ pub fn prism_face_solid_brep(
     // Lateral-face pcurves (bottom instance; the located top instance reads
     // the same TShape representation, as in OCCT).
     let lat_key = (f_lat.ptr_id(), f_lat.location);
-    t.edge_mut_inplace(e_circ_bottom.clone()).pcurves.insert(
+    // Dual write: the map insert is retained for the map-era readers during
+    // the writer migration; the representation is the authority (OCCT static
+    // UpdateCurves, BRep_Builder.cxx L104-167).
+    let ed = t.edge_mut_inplace(e_circ_bottom.clone());
+    ed.pcurves.insert(
         lat_key,
         (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
+    );
+    bind_pcurve_representation(
+        ed,
+        lat_key,
+        Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)),
+        [0.0, std::f64::consts::TAU],
     );
     // The located top circle instance (same TShape, Location = theExtr) has
     // its own pcurve key (L.Predivided(E.Location()), BRep_Builder.cxx
@@ -414,9 +459,16 @@ pub fn prism_face_solid_brep(
         f_lat.ptr_id(),
         t.compose_pcurve_location(f_lat.location, e_circ_top.location),
     );
-    t.edge_mut_inplace(e_circ_top.clone()).pcurves.insert(
+    let ed = t.edge_mut_inplace(e_circ_top.clone());
+    ed.pcurves.insert(
         top_lat_key,
         (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
+    );
+    bind_pcurve_representation(
+        ed,
+        top_lat_key,
+        Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)),
+        [0.0, std::f64::consts::TAU],
     );
     t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
         lat_key,
@@ -431,14 +483,30 @@ pub fn prism_face_solid_brep(
             range: [0.0, ext_len],
         });
     // Cap circle pcurves (planes self-heal via BuildPCurveForEdgesOnPlane;
-    // inserted for parity with make_cylinder).
-    t.edge_mut_inplace(e_circ_top.clone()).pcurves.insert(
+    // inserted for parity with make_cylinder).  Dual write: the map insert is
+    // retained for the map-era readers; the representation is the authority
+    // (BRep_Builder.cxx L104-167).
+    let ed = t.edge_mut_inplace(e_circ_top.clone());
+    ed.pcurves.insert(
         (f_top.ptr_id(), f_top.location),
         (Curve2d::Circle(Circle2d::new(DVec2::ZERO, circle.radius)), 0.0, std::f64::consts::TAU),
     );
-    t.edge_mut_inplace(e_circ_bottom.clone()).pcurves.insert(
+    bind_pcurve_representation(
+        ed,
+        (f_top.ptr_id(), f_top.location),
+        Curve2d::Circle(Circle2d::new(DVec2::ZERO, circle.radius)),
+        [0.0, std::f64::consts::TAU],
+    );
+    let ed = t.edge_mut_inplace(e_circ_bottom.clone());
+    ed.pcurves.insert(
         (f_bot.ptr_id(), f_bot.location),
         (Curve2d::Circle(Circle2d::new(DVec2::ZERO, circle.radius)), 0.0, std::f64::consts::TAU),
+    );
+    bind_pcurve_representation(
+        ed,
+        (f_bot.ptr_id(), f_bot.location),
+        Curve2d::Circle(Circle2d::new(DVec2::ZERO, circle.radius)),
+        [0.0, std::f64::consts::TAU],
     );
 
     let shell = t.add_tshell(vec![f_lat, f_top, f_bot]);

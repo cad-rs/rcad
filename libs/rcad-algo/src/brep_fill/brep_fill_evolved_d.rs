@@ -177,6 +177,30 @@ fn builder_make_edge_pcurve_surface(
     if let TShape::Edge(ed) = Arc::make_mut(&mut e.data) {
         let key = (owner_face.ptr_id(), owner_face.location);
         ed.pcurves.insert(key, (the_c2d.clone(), f, l));
+        // Map insert retained for the map-era readers during the writer
+        // migration; the representation below is the authority.  OCCT static
+        // UpdateCurves (BRep_Builder.cxx L104-167, through
+        // BRep_Builder::UpdateEdge(E, C2d, F, Tol)): L133-146 removes any
+        // existing curve-on-surface representation of the same (S, L), then
+        // L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+        // representation.  The explicit (f, l) arguments follow the site's
+        // established explicit-range encoding (the UpdateCurves range
+        // arguments of the XML-persistence overloads, BRep_Builder.cxx
+        // L315-374).
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != key
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                face: key,
+                pcurve: the_c2d.clone(),
+                range: [f, l],
+            });
     }
     e
 }

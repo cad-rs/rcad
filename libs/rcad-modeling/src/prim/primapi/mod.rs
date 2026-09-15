@@ -19,6 +19,7 @@ pub mod make_edge;
 pub mod make_wire;
 pub mod make_face;
 pub mod make_polygon;
+mod pcurve_bind;
 
 pub use make_box::{MakeBox, box_brep, make_box_brep};
 pub use make_cylinder::{MakeCylinder, cylinder_brep, make_cylinder_brep, prism_face_solid_brep};

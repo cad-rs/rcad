@@ -791,22 +791,54 @@ pub(super) fn bezier2(p0: [f64; 2], p1: [f64; 2]) -> Curve2d {
 /// OCCT BRep_Builder::UpdateEdge(E, C2d, F, Tol) + Range(E, F, f, l) — bind
 /// the single pcurve on the face.
 pub(super) fn bind_pcurve(brep: &mut BRep, e: &Shape, fkey: (u64, u32), pc: Curve2d, f: f64, l: f64) {
-    brep.edge_mut_inplace(e.clone())
-        .pcurves
-        .insert(fkey, (pc, f, l));
+    let ed = brep.edge_mut_inplace(e.clone());
+    // Map insert retained for the map-era readers during the writer
+    // migration; the representation below is the authority.
+    ed.pcurves.insert(fkey, (pc.clone(), f, l));
+    // OCCT static UpdateCurves (BRep_Builder.cxx L104-167): L133-146 removes
+    // any existing curve-on-surface representation of the same (S, L), then
+    // L149-167 appends the new BRep_CurveOnSurface(C, S, L) representation.
+    ed.representations
+        .retain(|a_cr| match a_cr {
+            rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+            | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                *face != fkey
+            }
+            _ => true,
+        });
+    ed.representations
+        .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+            face: fkey,
+            pcurve: pc,
+            range: [f, l],
+        });
 }
 
 /// OCCT BRep_Builder::UpdateEdge(E, C1, C2, F, Tol) — the seam (closed
 /// surface) representation carrying the two pcurves.
 pub(super) fn bind_seam_pcurves(brep: &mut BRep, e: &Shape, fkey: (u64, u32), pc1: Curve2d, pc2: Curve2d, f: f64, l: f64) {
-    brep.edge_mut_inplace(e.clone())
-        .representations
+    let ed = brep.edge_mut_inplace(e.clone());
+    // OCCT two-pcurve UpdateCurves (BRep_Builder.cxx L251-308): L266-288
+    // removes any existing curve-on-surface representation of the same (S, L),
+    // then L290-305 appends the BRep_CurveOnClosedSurface(C1, C2, S, L,
+    // GeomAbs_C0) representation carrying both pcurves.  The map entry mirrors
+    // PCurve1 for the map-era readers during the writer migration.
+    ed.representations
+        .retain(|a_cr| match a_cr {
+            rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+            | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                *face != fkey
+            }
+            _ => true,
+        });
+    ed.representations
         .push(rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
             face: fkey,
-            pcurve1: pc1,
+            pcurve1: pc1.clone(),
             pcurve2: pc2,
             range: [f, l],
         });
+    ed.pcurves.insert(fkey, (pc1, f, l));
 }
 
 /// OCCT BRep_Builder::MakeEdge — always a NEW edge TShape; the kernel

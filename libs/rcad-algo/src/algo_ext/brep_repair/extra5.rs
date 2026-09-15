@@ -163,7 +163,28 @@ pub fn fix_edge_pcurve_uv_bounds(
    if let Some(wrapped) = wrap_pcurve_to_domain(curve2d, range, &domain, config) {
     // Update the pcurve on the edge's TEdgeData
     let mut new_ed = edge_td.clone();
-    new_ed.pcurves.insert(result.pcurve_key(*face_ti), (wrapped, range[0], range[1]));
+    let fkey = result.pcurve_key(*face_ti);
+    // Dual write: the map insert is retained for the map-era readers
+    // during the writer migration; the representation is the authority
+    // (OCCT static UpdateCurves, BRep_Builder.cxx L104-167: L133-146
+    // removes any existing curve-on-surface representation of the same
+    // (S, L), then L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+    // representation).
+    new_ed.pcurves.insert(fkey, (wrapped.clone(), range[0], range[1]));
+    new_ed.representations
+     .retain(|a_cr| match a_cr {
+      rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+      | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+       *face != fkey
+      }
+      _ => true,
+     });
+    new_ed.representations
+     .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+      face: fkey,
+      pcurve: wrapped,
+      range: [range[0], range[1]],
+     });
     result.tshapes[edge_idx] = Arc::new(TShape::Edge(new_ed));
     repaired = true;
    }
@@ -1072,6 +1093,23 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
      new_pcurves.insert((new_ptr, loc), (c.clone(), *t1, *t2));
     }
     new_ed.pcurves = new_pcurves;
+    // The representations store the same (face ptr, location) keys — remap
+    // them through the same table so both stores stay consistent (the
+    // pcurves-map remap above alone would leave the representations keyed to
+    // stale face pointers).
+    for r in new_ed.representations.iter_mut() {
+     let face_key = match r {
+      rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+      | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => face,
+      _ => continue,
+     };
+     let (ptr, loc) = *face_key;
+     let old_idx = brep.index_by_ptr(ptr).unwrap_or(usize::MAX);
+     let new_fi = global_remap.get(&old_idx).copied().unwrap_or(old_idx);
+     if new_fi < new_tshapes.len() {
+      *face_key = (std::sync::Arc::as_ptr(&new_tshapes[new_fi]) as u64, loc);
+     }
+    }
     TShape::Edge(new_ed)
    }
    TShape::Wire(wd) => {

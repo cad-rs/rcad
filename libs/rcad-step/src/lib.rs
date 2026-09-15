@@ -5763,10 +5763,31 @@ fn build_topods_with_face_map(
             };
             let default_range = [0.0_f64, 1.0];
             let fkey = (face_ref.ptr_id(), face_ref.location);
-            t.edge_mut(edge_ref.clone()).pcurves.insert(
+            // Dual write: the map insert is retained for the map-era readers
+            // during the writer migration; the representation is the authority
+            // (OCCT static UpdateCurves, BRep_Builder.cxx L104-167: L133-146
+            // removes any existing curve-on-surface representation of the same
+            // (S, L), then L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+            // representation).
+            let ed = t.edge_mut(edge_ref.clone());
+            ed.pcurves.insert(
                 fkey,
-                (curve2d, default_range[0], default_range[1]),
+                (curve2d.clone(), default_range[0], default_range[1]),
             );
+            ed.representations
+                .retain(|a_cr| match a_cr {
+                    rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                    | rcad_kernel::topo::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                        *face != fkey
+                    }
+                    _ => true,
+                });
+            ed.representations
+                .push(rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface {
+                    face: fkey,
+                    pcurve: curve2d,
+                    range: default_range,
+                });
         }
     }
 

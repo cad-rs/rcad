@@ -21,6 +21,8 @@ use rcad_kernel::geom::{
 };
 use rcad_kernel::topods::{self, CurveRepresentation, Orientation};
 
+use super::pcurve_bind::bind_pcurve_representation;
+
 /// Rotate `p` around the axis `(origin, dir)` by `angle` radians.
 fn rotate_point(p: DVec3, origin: DVec3, dir: DVec3, angle: f64) -> DVec3 {
     let v = p - origin;
@@ -257,7 +259,16 @@ pub fn revolve_polygon_full_turn(
                         centers[i], u_dir, v_dir, profile_verts[k],
                     );
                     let key = (face.ptr_id(), brep.compose_pcurve_location(face.location, arc.location));
-                    brep.edge_mut_inplace(arc).pcurves.insert(key, (pcurve, 0.0, std::f64::consts::TAU));
+                    // Dual write: the map insert is retained for the map-era
+                    // readers during the writer migration; the representation
+                    // is the authority (OCCT static UpdateCurves,
+                    // BRep_Builder.cxx L104-167: L133-146 removes any existing
+                    // curve-on-surface representation of the same (S, L), then
+                    // L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+                    // representation).
+                    let ed = brep.edge_mut_inplace(arc);
+                    ed.pcurves.insert(key, (pcurve.clone(), 0.0, std::f64::consts::TAU));
+                    bind_pcurve_representation(ed, key, pcurve, [0.0, std::f64::consts::TAU]);
                 }
                 faces.push(face);
             } else {
@@ -289,7 +300,16 @@ pub fn revolve_polygon_full_turn(
                         centers[i], u_dir, v_dir, profile_verts[k],
                     );
                     let key = (face.ptr_id(), brep.compose_pcurve_location(face.location, arc.location));
-                    brep.edge_mut_inplace(arc).pcurves.insert(key, (pcurve, 0.0, std::f64::consts::TAU));
+                    // Dual write: the map insert is retained for the map-era
+                    // readers during the writer migration; the representation
+                    // is the authority (OCCT static UpdateCurves,
+                    // BRep_Builder.cxx L104-167: L133-146 removes any existing
+                    // curve-on-surface representation of the same (S, L), then
+                    // L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+                    // representation).
+                    let ed = brep.edge_mut_inplace(arc);
+                    ed.pcurves.insert(key, (pcurve.clone(), 0.0, std::f64::consts::TAU));
+                    bind_pcurve_representation(ed, key, pcurve, [0.0, std::f64::consts::TAU]);
                 }
                 faces.push(face);
             }
@@ -340,13 +360,27 @@ pub fn revolve_polygon_full_turn(
                     range: [0.0, seam_len],
                 });
             // Circle edges are V-isolines on the lateral face.
-            brep.edge_mut_inplace(circ[lo].clone().unwrap()).pcurves.insert(
+            let ed = brep.edge_mut_inplace(circ[lo].clone().unwrap());
+            ed.pcurves.insert(
                 lat_key,
                 (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
             );
-            brep.edge_mut_inplace(circ[hi].clone().unwrap()).pcurves.insert(
+            bind_pcurve_representation(
+                ed,
+                lat_key,
+                Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)),
+                [0.0, std::f64::consts::TAU],
+            );
+            let ed = brep.edge_mut_inplace(circ[hi].clone().unwrap());
+            ed.pcurves.insert(
                 lat_key,
                 (Curve2d::Line(Line2d::new(DVec2::new(0.0, seam_len), DVec2::X)), 0.0, std::f64::consts::TAU),
+            );
+            bind_pcurve_representation(
+                ed,
+                lat_key,
+                Curve2d::Line(Line2d::new(DVec2::new(0.0, seam_len), DVec2::X)),
+                [0.0, std::f64::consts::TAU],
             );
             faces.push(face);
         } else if hits_axis && ri > EPS && rj > EPS {
@@ -399,13 +433,29 @@ pub fn revolve_polygon_full_turn(
                     pcurve2: pc2,
                     range: [0.0, seam_len],
                 });
-            brep.edge_mut_inplace(circ[lo].clone().unwrap()).pcurves.insert(
+            // Circle edges are V-isolines on the cone lateral (the cylinder
+            // convention).
+            let ed = brep.edge_mut_inplace(circ[lo].clone().unwrap());
+            ed.pcurves.insert(
                 lat_key,
                 (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
             );
-            brep.edge_mut_inplace(circ[hi].clone().unwrap()).pcurves.insert(
+            bind_pcurve_representation(
+                ed,
+                lat_key,
+                Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)),
+                [0.0, std::f64::consts::TAU],
+            );
+            let ed = brep.edge_mut_inplace(circ[hi].clone().unwrap());
+            ed.pcurves.insert(
                 lat_key,
                 (Curve2d::Line(Line2d::new(DVec2::new(0.0, seam_len), DVec2::X)), 0.0, std::f64::consts::TAU),
+            );
+            bind_pcurve_representation(
+                ed,
+                lat_key,
+                Curve2d::Line(Line2d::new(DVec2::new(0.0, seam_len), DVec2::X)),
+                [0.0, std::f64::consts::TAU],
             );
             faces.push(face);
         } else {
@@ -684,7 +734,13 @@ pub fn revolve_polygon_partial(
                         face.ptr_id(),
                         brep.compose_pcurve_location(face.location, arc.location),
                     );
-                    brep.edge_mut_inplace(arc).pcurves.insert(key, (pcurve, 0.0, angle));
+                    // Dual write: see the disk/annulus plane branch (the map
+                    // insert is retained for the map-era readers; the
+                    // representation is the authority, BRep_Builder.cxx
+                    // L104-167).
+                    let ed = brep.edge_mut_inplace(arc);
+                    ed.pcurves.insert(key, (pcurve.clone(), 0.0, angle));
+                    bind_pcurve_representation(ed, key, pcurve, [0.0, angle]);
                 }
             }
             None => {
@@ -780,13 +836,23 @@ fn set_sweep_arc_pcurves(
             f.ptr_id(),
             brep.compose_pcurve_location(f.location, arc.location),
         );
-        brep.edge_mut_inplace(arc).pcurves.insert(
+        // Dual write: the map insert is retained for the map-era readers
+        // during the writer migration; the representation is the authority
+        // (OCCT static UpdateCurves, BRep_Builder.cxx L104-167).
+        let ed = brep.edge_mut_inplace(arc);
+        ed.pcurves.insert(
             key,
             (
                 Curve2d::Line(Line2d::new(DVec2::new(0.0, v), DVec2::X)),
                 0.0,
                 umax,
             ),
+        );
+        bind_pcurve_representation(
+            ed,
+            key,
+            Curve2d::Line(Line2d::new(DVec2::new(0.0, v), DVec2::X)),
+            [0.0, umax],
         );
     }
 }
@@ -814,9 +880,13 @@ fn set_sweep_seam_pcurve(
         DVec2::new(u_const, v_start),
         DVec2::new(0.0, sign),
     ));
-    brep.edge_mut_inplace(seam.clone())
-        .pcurves
-        .insert(key, (pcurve, 0.0, span));
+    // Dual write: the map insert is retained for the map-era readers during
+    // the writer migration; the representation is the authority (OCCT static
+    // UpdateCurves, BRep_Builder.cxx L104-167).
+    let ed = brep.edge_mut_inplace(seam.clone());
+    ed.pcurves
+        .insert(key, (pcurve.clone(), 0.0, span));
+    bind_pcurve_representation(ed, key, pcurve, [0.0, span]);
 }
 
 /// The closed-seam form of [`set_sweep_seam_pcurve`] for a full revolution:

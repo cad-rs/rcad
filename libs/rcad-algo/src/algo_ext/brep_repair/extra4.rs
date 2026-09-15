@@ -1890,7 +1890,28 @@ fn repair_single_gap(
  let edge_arc = ts.clone(); // clone Arc to avoid ownership issue
  let fkey = result.pcurve_key(face_idx);
  if let TShape::Edge(ed) = &mut *Arc::make_mut(&mut result.tshapes[gap.edge_idx]) {
- ed.pcurves.insert(fkey, (new_curve, t_min, t_max));
+ // Dual write: the map insert is retained for the map-era
+ // readers during the writer migration; the representation
+ // is the authority (OCCT static UpdateCurves,
+ // BRep_Builder.cxx L104-167: L133-146 removes any existing
+ // curve-on-surface representation of the same (S, L), then
+ // L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+ // representation).
+ ed.pcurves.insert(fkey, (new_curve.clone(), t_min, t_max));
+ ed.representations
+  .retain(|a_cr| match a_cr {
+   rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+   | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+    *face != fkey
+   }
+   _ => true,
+  });
+ ed.representations
+  .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+   face: fkey,
+   pcurve: new_curve,
+   range: [t_min, t_max],
+  });
  }
  }
  Ok(true)

@@ -3141,7 +3141,18 @@ impl BRep {
                 // Compute pcurve if missing (planar surfaces only).  The key
                 // is the composed location VALUE id of this located pair.
                 let face_key = (fptr, kid);
-                let has_pcurve = edge_data.pcurves.contains_key(&face_key);
+                // Both stores count: a representation-only row (map-era
+                // divergence) already provides the pcurve for readers, and
+                // replacing it with the computed planar line below would
+                // change what they see.
+                let has_pcurve = edge_data.pcurves.contains_key(&face_key)
+                    || edge_data.representations.iter().any(|a_cr| match a_cr {
+                        CurveRepresentation::CurveOnSurface { face, .. }
+                        | CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                            *face == face_key
+                        }
+                        _ => false,
+                    });
                 if !has_pcurve {
                     if let Surface3::Plane(p) = surf {
                         let p0 = curve3.point_at(t_range[0]);
@@ -3167,6 +3178,31 @@ impl BRep {
                             // Insert pcurve into edge
                             if let TShape::Edge(ed) = Arc::make_mut(&mut self.tshapes[*ei]) {
                                 ed.pcurves.insert(face_key, (pc.clone(), t_range[0], t_range[1]));
+                                // Map insert retained for the map-era readers
+                                // during the writer migration; the
+                                // representation below is the authority.
+                                // OCCT static UpdateCurves (BRep_Builder.cxx
+                                // L104-167, through
+                                // BRepLib::BuildPCurveForEdgeOnPlane ->
+                                // BRep_Builder::UpdateEdge): L133-146 removes
+                                // any existing curve-on-surface representation
+                                // of the same (S, L), then L149-167 appends
+                                // the new BRep_CurveOnSurface(C, S, L)
+                                // representation.
+                                ed.representations
+                                    .retain(|a_cr| match a_cr {
+                                        CurveRepresentation::CurveOnSurface { face, .. }
+                                        | CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                            *face != face_key
+                                        }
+                                        _ => true,
+                                    });
+                                ed.representations
+                                    .push(CurveRepresentation::CurveOnSurface {
+                                        face: face_key,
+                                        pcurve: pc.clone(),
+                                        range: [t_range[0], t_range[1]],
+                                    });
                             }
                             // Sample deviation
                             let n_samples = 7;

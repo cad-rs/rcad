@@ -228,7 +228,28 @@ fn bounded_face(
         let d = b - a;
         let len = d.length();
         let pc = Curve2d::Line(Line2d::new(a, if len > 1e-30 { d / len } else { DVec2::X }));
-        brep.edge_mut_inplace(e).pcurves.insert(face_key, (pc, 0.0, len));
+        // Dual write: the map insert is retained for the map-era readers
+        // during the writer migration; the representation is the authority
+        // (OCCT static UpdateCurves, BRep_Builder.cxx L104-167: L133-146
+        // removes any existing curve-on-surface representation of the same
+        // (S, L), then L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+        // representation).
+        let ed = brep.edge_mut_inplace(e);
+        ed.pcurves.insert(face_key, (pc.clone(), 0.0, len));
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                | rcad_kernel::topo::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != face_key
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface {
+                face: face_key,
+                pcurve: pc,
+                range: [0.0, len],
+            });
     }
     Ok(brep)
 }

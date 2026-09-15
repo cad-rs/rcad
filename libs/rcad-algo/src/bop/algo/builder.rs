@@ -2899,7 +2899,19 @@ impl<'a> Builder<'a> {
                         continue;
                     }
                     let k = (*fptr, lhash);
-                    if !ed.pcurves.contains_key(&k) {
+                    // Both stores count as "the edge already carries the
+                    // pcurve for this face": a representation-only row must
+                    // not be replaced by the materialized copy (the
+                    // representation is the authority for the readers).
+                    if !ed.pcurves.contains_key(&k)
+                        && !ed.representations.iter().any(|a_cr| match a_cr {
+                            topods::CurveRepresentation::CurveOnSurface { face, .. }
+                            | topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                *face == k
+                            }
+                            _ => false,
+                        })
+                    {
                         add.push((k, v.clone()));
                     }
                 }
@@ -2922,7 +2934,34 @@ impl<'a> Builder<'a> {
             unsafe {
                 if let topods::TShape::Edge(ed) = &mut *raw {
                     for (k, v) in add {
-                        ed.pcurves.entry(*k).or_insert_with(|| v.clone());
+                        // The push below runs ONLY on actual insertion: the
+                        // pass-A guard checks the map, and an edge whose
+                        // representation already carries key k must keep it
+                        // (the map-era no-op of or_insert).
+                        if let indexmap::map::Entry::Vacant(slot) = ed.pcurves.entry(*k) {
+                            slot.insert(v.clone());
+                            // Map insert retained for the map-era readers
+                            // during the writer migration; the representation
+                            // below is the authority.  OCCT static UpdateCurves
+                            // (BRep_Builder.cxx L104-167): L133-146 removes any
+                            // existing curve-on-surface representation of the
+                            // same (S, L), then L149-167 appends the new
+                            // BRep_CurveOnSurface(C, S, L) representation.
+                            ed.representations
+                                .retain(|a_cr| match a_cr {
+                                    topods::CurveRepresentation::CurveOnSurface { face, .. }
+                                    | topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                        *face != *k
+                                    }
+                                    _ => true,
+                                });
+                            ed.representations
+                                .push(topods::CurveRepresentation::CurveOnSurface {
+                                    face: *k,
+                                    pcurve: v.0.clone(),
+                                    range: [v.1, v.2],
+                                });
+                        }
                     }
                 }
             }
@@ -3657,7 +3696,37 @@ impl<'a> Builder<'a> {
                                     best.cloned()
                                 });
                             if let Some(v) = row {
-                                ed.pcurves.entry(ar_key).or_insert(v);
+                                // The push below runs ONLY on actual
+                                // insertion: an occupied map key keeps its row
+                                // and its representation (the map-era no-op of
+                                // or_insert).
+                                if let indexmap::map::Entry::Vacant(slot) = ed.pcurves.entry(ar_key) {
+                                    slot.insert(v.clone());
+                                    // Map insert retained for the map-era
+                                    // readers during the writer migration; the
+                                    // representation below is the authority.
+                                    // OCCT static UpdateCurves
+                                    // (BRep_Builder.cxx L104-167): L133-146
+                                    // removes any existing curve-on-surface
+                                    // representation of the same (S, L), then
+                                    // L149-167 appends the new
+                                    // BRep_CurveOnSurface(C, S, L)
+                                    // representation.
+                                    ed.representations
+                                        .retain(|a_cr| match a_cr {
+                                            rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                                            | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                                *face != ar_key
+                                            }
+                                            _ => true,
+                                        });
+                                    ed.representations
+                                        .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                                            face: ar_key,
+                                            pcurve: v.0,
+                                            range: [v.1, v.2],
+                                        });
+                                }
                             }
                         }
                     }

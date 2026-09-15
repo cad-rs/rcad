@@ -367,7 +367,27 @@ pub fn populate_boolean_result_pcurves(brep: &mut rcad_kernel::BRep) {
         };
         // Use a reasonable default parameter range for the pcurve.
         let prange = t_range_opt.unwrap_or([0.0, 1.0]);
+        // Dual write: the map insert is retained for the map-era readers
+        // during the writer migration; the representation is the authority
+        // (OCCT static UpdateCurves, BRep_Builder.cxx L104-167: L133-146
+        // removes any existing curve-on-surface representation of the same
+        // (S, L), then L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+        // representation).
         ed.pcurves
-            .insert(fkey, (pcurve2d, prange[0], prange[1]));
+            .insert(fkey, (pcurve2d.clone(), prange[0], prange[1]));
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != fkey
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                face: fkey,
+                pcurve: pcurve2d,
+                range: prange,
+            });
     }
 }

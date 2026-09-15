@@ -1496,18 +1496,89 @@ fn apply_cylinder_fillet(
     let key_start = edge_loc_key(contact_at_param_start);
     let key_v1 = edge_loc_key(arc_v1);
     let key_v2 = edge_loc_key(arc_v2);
-    brep.edge_mut(edge_shape_ref(brep, contact_at_param_end, Orientation::Forward))
-        .pcurves
-        .insert(key_end, (contact_pcurve(t_end), 0.0, edge_len));
-    brep.edge_mut(edge_shape_ref(brep, contact_at_param_start, Orientation::Reversed))
-        .pcurves
-        .insert(key_start, (contact_pcurve(t_start), 0.0, edge_len));
-    brep.edge_mut(edge_shape_ref(brep, arc_v1, Orientation::Forward))
-        .pcurves
-        .insert(key_v1, (arc_pcurve(0.0), t_start, t_end));
-    brep.edge_mut(edge_shape_ref(brep, arc_v2, Orientation::Reversed))
-        .pcurves
-        .insert(key_v2, (arc_pcurve(edge_len), t_start, t_end));
+    // Each bind below dual-writes: the map insert is retained for the
+    // map-era readers during the writer migration; the representation is the
+    // authority (OCCT static UpdateCurves, BRep_Builder.cxx L104-167:
+    // L133-146 removes any existing curve-on-surface representation of the
+    // same (S, L), then L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+    // representation).
+    {
+        let ed = brep.edge_mut(edge_shape_ref(brep, contact_at_param_end, Orientation::Forward));
+        let pc = contact_pcurve(t_end);
+        ed.pcurves.insert(key_end, (pc.clone(), 0.0, edge_len));
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != key_end
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                face: key_end,
+                pcurve: pc,
+                range: [0.0, edge_len],
+            });
+    }
+    {
+        let ed =
+            brep.edge_mut(edge_shape_ref(brep, contact_at_param_start, Orientation::Reversed));
+        let pc = contact_pcurve(t_start);
+        ed.pcurves.insert(key_start, (pc.clone(), 0.0, edge_len));
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != key_start
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                face: key_start,
+                pcurve: pc,
+                range: [0.0, edge_len],
+            });
+    }
+    {
+        let ed = brep.edge_mut(edge_shape_ref(brep, arc_v1, Orientation::Forward));
+        let pc = arc_pcurve(0.0);
+        ed.pcurves.insert(key_v1, (pc.clone(), t_start, t_end));
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != key_v1
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                face: key_v1,
+                pcurve: pc,
+                range: [t_start, t_end],
+            });
+    }
+    {
+        let ed = brep.edge_mut(edge_shape_ref(brep, arc_v2, Orientation::Reversed));
+        let pc = arc_pcurve(edge_len);
+        ed.pcurves.insert(key_v2, (pc.clone(), t_start, t_end));
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != key_v2
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                face: key_v2,
+                pcurve: pc,
+                range: [t_start, t_end],
+            });
+    }
 
     // Add fillet face to the shell
     if let TShape::Shell(shd) = Arc::make_mut(&mut brep.tshapes[shell_idx]) {

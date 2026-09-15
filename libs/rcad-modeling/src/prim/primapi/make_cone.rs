@@ -23,6 +23,8 @@ use rcad_kernel::geom::{
 use rcad_kernel::topods::{self, CurveRepresentation, GeomAbsShape, Orientation, Shape, BRepBuilder};
 use rcad_kernel::BRep;
 
+use super::pcurve_bind::bind_pcurve_representation;
+
 pub struct MakeCone {
     r1: f64, r2: f64, h: f64,
     x_axis: DVec3, y_axis: DVec3, z_axis: DVec3,
@@ -146,15 +148,32 @@ impl MakeCone {
         // seam is a closed edge of a full revolution — two pcurves at u=2*PI and
         // u=0 as a CurveOnClosedSurface (L434-438); the cap circles are V-isolines.
         let lat_key = (f_lat.ptr_id(), f_lat.location);
-        // EBOTTOM: gp_Lin2d((0, myVMin), X)
-        t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
+        // EBOTTOM: gp_Lin2d((0, myVMin), X).  Dual write: the map insert is
+        // retained for the map-era readers during the writer migration; the
+        // representation is the authority (OCCT static UpdateCurves,
+        // BRep_Builder.cxx L104-167).
+        let ed = t.edge_mut_inplace(e_bot.clone());
+        ed.pcurves.insert(
             lat_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)), 0.0, std::f64::consts::TAU),
         );
+        bind_pcurve_representation(
+            ed,
+            lat_key,
+            Curve2d::Line(Line2d::new(DVec2::new(0.0, 0.0), DVec2::X)),
+            [0.0, std::f64::consts::TAU],
+        );
         // ETOP: gp_Lin2d((0, myVMax), X)
-        t.edge_mut_inplace(e_top.clone()).pcurves.insert(
+        let ed = t.edge_mut_inplace(e_top.clone());
+        ed.pcurves.insert(
             lat_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, seam_len), DVec2::X)), 0.0, std::f64::consts::TAU),
+        );
+        bind_pcurve_representation(
+            ed,
+            lat_key,
+            Curve2d::Line(Line2d::new(DVec2::new(0.0, seam_len), DVec2::X)),
+            [0.0, std::f64::consts::TAU],
         );
         // ESTART seam closed edge: pcurve1 at u=myAngle, pcurve2 at u=0.
         t.edge_mut_inplace(e_seam.clone()).pcurves.insert(
@@ -174,15 +193,31 @@ impl MakeCone {
         // regularity -- myBuilder.Continuity(E, F, F, GeomAbs_CN).
         BRepBuilder::new().continuity(&mut t, &e_seam, &f_lat, &f_lat, GeomAbsShape::CN);
         // OCCT BRepPrim_OneAxis::TopFace/BottomFace (L465-468/L506-509): cap
-        // circle pcurves — gp_Circ2d((0,0), MeridianValue(V).X()).
-        t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
+        // circle pcurves — gp_Circ2d((0,0), MeridianValue(V).X()).  Dual
+        // write: the map insert is retained for the map-era readers; the
+        // representation is the authority (BRep_Builder.cxx L104-167).
+        let ed = t.edge_mut_inplace(e_bot.clone());
+        ed.pcurves.insert(
             (f_bot.ptr_id(), f_bot.location),
             (Curve2d::Circle(Circle2d::new(DVec2::ZERO, self.r1)), 0.0, std::f64::consts::TAU),
         );
+        bind_pcurve_representation(
+            ed,
+            (f_bot.ptr_id(), f_bot.location),
+            Curve2d::Circle(Circle2d::new(DVec2::ZERO, self.r1)),
+            [0.0, std::f64::consts::TAU],
+        );
         if let Some(f_top) = f_top {
-            t.edge_mut_inplace(e_top.clone()).pcurves.insert(
+            let ed = t.edge_mut_inplace(e_top.clone());
+            ed.pcurves.insert(
                 (f_top.ptr_id(), f_top.location),
                 (Curve2d::Circle(Circle2d::new(DVec2::ZERO, self.r2)), 0.0, std::f64::consts::TAU),
+            );
+            bind_pcurve_representation(
+                ed,
+                (f_top.ptr_id(), f_top.location),
+                Curve2d::Circle(Circle2d::new(DVec2::ZERO, self.r2)),
+                [0.0, std::f64::consts::TAU],
             );
         }
         let shell = t.add_tshell(shell_faces);

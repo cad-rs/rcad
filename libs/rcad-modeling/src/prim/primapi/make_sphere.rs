@@ -7,6 +7,8 @@ use rcad_kernel::geom::{Circle3, Curve2d, Curve3, Line2d, SphericalSurface, Surf
 use rcad_kernel::topods::{self, CurveRepresentation, GeomAbsShape, Orientation, Shape, BRepBuilder};
 use rcad_kernel::BRep;
 
+use super::pcurve_bind::bind_pcurve_representation;
+
 const TAU: f64 = std::f64::consts::TAU;
 
 pub struct MakeSphere {
@@ -98,15 +100,32 @@ impl MakeSphere {
         // L434-438), offset in V by -myMeridianOffset. The pole degenerate edges
         // are V-isolines v=PI/2 / v=-PI/2 (L401-414).
         let face_key = (face.ptr_id(), face.location);
-        // EBOTTOM (south pole): gp_Lin2d((0, myVMin), X)
-        t.edge_mut_inplace(e_bot.clone()).pcurves.insert(
+        // EBOTTOM (south pole): gp_Lin2d((0, myVMin), X).  Dual write: the map
+        // insert is retained for the map-era readers during the writer
+        // migration; the representation is the authority (OCCT static
+        // UpdateCurves, BRep_Builder.cxx L104-167).
+        let ed = t.edge_mut_inplace(e_bot.clone());
+        ed.pcurves.insert(
             face_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, -pi / 2.0), DVec2::X)), 0.0, TAU),
         );
+        bind_pcurve_representation(
+            ed,
+            face_key,
+            Curve2d::Line(Line2d::new(DVec2::new(0.0, -pi / 2.0), DVec2::X)),
+            [0.0, TAU],
+        );
         // ETOP (north pole): gp_Lin2d((0, myVMax), X)
-        t.edge_mut_inplace(e_top.clone()).pcurves.insert(
+        let ed = t.edge_mut_inplace(e_top.clone());
+        ed.pcurves.insert(
             face_key,
             (Curve2d::Line(Line2d::new(DVec2::new(0.0, pi / 2.0), DVec2::X)), 0.0, TAU),
+        );
+        bind_pcurve_representation(
+            ed,
+            face_key,
+            Curve2d::Line(Line2d::new(DVec2::new(0.0, pi / 2.0), DVec2::X)),
+            [0.0, TAU],
         );
         // ESTART seam closed edge: pcurve1 at u=myAngle, pcurve2 at u=0.
         let t_lo = 3.0 * pi / 2.0;

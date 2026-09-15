@@ -95,17 +95,13 @@ fn upd_sh_tol(
         // OCCT L851: TopoDS_Shape aNsh.
         let mut a_nsh;
         // OCCT L852: const TopoDS_Shape& aVsh = theReshaper.Value(aSh).
-        let mut a_vsh = the_reshaper.value(the_brep, a_sh);
-        // Architecture difference (the rcad null encoding): the reshaper's
-        // IsNull guard tests `index == usize::MAX`, which is also the
-        // pool-free marker, so Value() answers a NULL shape for a pool-free
-        // input.  A pool-free shape can never carry a recorded replacement
-        // (Replace() runs the same guard and silently drops the record), so
-        // the OCCT Value — the shape ITSELF for an unrecorded shape
-        // (BRepTools_ReShape.cxx L243-253) — is re-normalized to the input.
-        if a_vsh.is_null() && !shape_is_in_pool(the_brep, a_sh) {
-            a_vsh = a_sh.clone();
-        }
+        let a_vsh = the_reshaper.value(the_brep, a_sh);
+        // (The addendum-48 W2 engine-side normalization — "Value() answered a
+        // NULL shape for a pool-free input" — is retired here: the reshape
+        // IsNull gates are pool-free-aware since the addendum-49 reshape fix
+        // (the null-sentinel signature match), so Value() returns the shape
+        // itself for an unrecorded pool-free shape, exactly the OCCT
+        // L243-253 contract.)
         // OCCT L853.
         let use_old_sh =
             is_mutable_input || the_reshaper.is_new_shape(a_sh) || !a_vsh.is_same(a_sh);

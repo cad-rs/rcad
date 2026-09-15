@@ -273,6 +273,15 @@ impl BRepSweepBRepBuilder {
             rcad_kernel::topods::update_curves_range(the_c2d.default_domain(), ed);
         ed.pcurves
             .insert(key, (the_c2d.clone(), f0, l0));
+        // OCCT UpdateCurves (BRep_Builder.cxx L104-167): L133-146 removes any
+        // existing curve-on-surface representation of the same (S, L), then
+        // L149-167 appends the new BRep_CurveOnSurface(C, S, L) representation.
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                CurveRepresentation::CurveOnSurface { face, .. }
+                | CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != key,
+                _ => true,
+            });
         ed.representations
             .push(CurveRepresentation::CurveOnSurface {
                 face: key,
@@ -301,6 +310,16 @@ impl BRepSweepBRepBuilder {
             rcad_kernel::topods::update_curves_range(the_c1.default_domain(), ed);
         ed.pcurves
             .insert(key, (the_c1.clone(), f0, l0));
+        // OCCT two-pcurve UpdateCurves (BRep_Builder.cxx L251-308): L266-288
+        // removes any existing curve-on-surface representation of the same
+        // (S, L), then L290-305 appends the BRep_CurveOnClosedSurface(C1, C2,
+        // S, L, GeomAbs_C0) representation carrying both pcurves.
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                CurveRepresentation::CurveOnSurface { face, .. }
+                | CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != key,
+                _ => true,
+            });
         ed.representations
             .push(CurveRepresentation::CurveOnClosedSurface {
                 face: key,

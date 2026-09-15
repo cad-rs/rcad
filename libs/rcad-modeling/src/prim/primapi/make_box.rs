@@ -204,10 +204,35 @@ impl MakeBox {
                 let d = DVec2::new(dir.dot(plane.u_dir), dir.dot(plane.v_dir));
                 let dl = d.length();
                 let dir2 = if dl > 1e-15 { d / dl } else { DVec2::X };
-                t.edge_mut_inplace(e.clone()).pcurves.insert(
+                // Dual write: the map insert is retained for the map-era
+                // readers during the writer migration; the representation is
+                // the authority (OCCT static UpdateCurves, BRep_Builder.cxx
+                // L104-167: L133-146 removes any existing curve-on-surface
+                // representation of the same (S, L), then L149-167 appends the
+                // new BRep_CurveOnSurface(C, S, L) representation).
+                let ed = t.edge_mut_inplace(e.clone());
+                ed.pcurves.insert(
                     face_key,
-                    (Curve2d::Line(Line2d::new(p0, dir2)), range[0], range[1]),
+                    (
+                        Curve2d::Line(Line2d::new(p0, dir2)),
+                        range[0],
+                        range[1],
+                    ),
                 );
+                ed.representations
+                    .retain(|a_cr| match a_cr {
+                        rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                        | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                            *face != face_key
+                        }
+                        _ => true,
+                    });
+                ed.representations
+                    .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                        face: face_key,
+                        pcurve: Curve2d::Line(Line2d::new(p0, dir2)),
+                        range: [range[0], range[1]],
+                    });
             }
         }
         let shell = t.add_tshell(f.to_vec());

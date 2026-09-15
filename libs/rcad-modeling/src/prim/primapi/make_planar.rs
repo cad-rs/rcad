@@ -78,10 +78,16 @@ pub fn make_planar_rect_brep(
         let d = uv1 - uv0;
         let length = d.length();
         let dir2d = if length > 0.0 { d / length } else { DVec2::X };
-        brep.edge_mut_inplace(e).pcurves.insert(
-            face_key,
-            (Curve2d::Line(Line2d::new(uv0, dir2d)), 0.0, length),
-        );
+        // Dual write: the map insert is retained for the map-era readers
+        // during the writer migration; the representation is the authority
+        // (OCCT static UpdateCurves, BRep_Builder.cxx L104-167: L133-146
+        // removes any existing curve-on-surface representation of the same
+        // (S, L), then L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+        // representation).
+        let ed = brep.edge_mut_inplace(e);
+        let pc = Curve2d::Line(Line2d::new(uv0, dir2d));
+        ed.pcurves.insert(face_key, (pc.clone(), 0.0, length));
+        bind_pcurve_representation(ed, face_key, pc, [0.0, length]);
     }
     Ok(brep)
 }
@@ -149,10 +155,13 @@ pub fn make_planar_polygon_brep(
                 DVec2::X
             };
             let len = (poly[(k + 1) % poly.len()] - poly[k]).length();
-            brep.edge_mut_inplace(e).pcurves.insert(
-                face_key,
-                (Curve2d::Line(Line2d::new(p0, dir)), 0.0, len),
-            );
+            // Dual write: the map insert is retained for the map-era readers
+            // during the writer migration; the representation is the authority
+            // (OCCT static UpdateCurves, BRep_Builder.cxx L104-167).
+            let ed = brep.edge_mut_inplace(e);
+            let pc = Curve2d::Line(Line2d::new(p0, dir));
+            ed.pcurves.insert(face_key, (pc.clone(), 0.0, len));
+            bind_pcurve_representation(ed, face_key, pc, [0.0, len]);
         }
     }
     // OCCT CheckInside (BRepLib_MakeFace.cxx L903-925): a bounded planar wire
@@ -203,4 +212,29 @@ fn make_polygon_wire(
     }
     let wire = brep.add_twire(edges.clone());
     Ok((wire, edges))
+}
+
+/// The representation arm of the UpdateCurves single-pcurve write
+/// (BRep_Builder.cxx L104-167): L133-146 removes any existing
+/// curve-on-surface representation of the same (S, L), then L149-167 appends
+/// the new BRep_CurveOnSurface(C, S, L) representation.
+fn bind_pcurve_representation(
+    ed: &mut rcad_kernel::topods::TEdgeData,
+    key: (u64, u32),
+    pc: Curve2d,
+    range: [f64; 2],
+) {
+    ed.representations.retain(|a_cr| match a_cr {
+        rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+        | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+            *face != key
+        }
+        _ => true,
+    });
+    ed.representations
+        .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+            face: key,
+            pcurve: pc,
+            range,
+        });
 }

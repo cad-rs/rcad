@@ -315,3 +315,87 @@ fn builder_add_preserves_arc_identity() {
 fn raw_children_count(brep: &BRep, s: &Shape) -> usize {
     crate::shhealing::shape_build::brep_tool::raw_subshapes(brep, s).len()
 }
+
+// ---------------------------------------------------------------------------
+// The pool-free awareness of the IsNull gates (the addendum-49 fix).  The
+// rcad null sentinel and a pool-free REAL shape share the index == usize::MAX
+// encoding (the kernel-level conflation recorded in addendum-48 W2); before
+// the fix every gate treated a pool-free shape as null, so Replace() silently
+// dropped pool-free records and Value()/Status() answered NULL for them.
+// ---------------------------------------------------------------------------
+
+/// A pool-free edge: a real edge TShape re-hosted outside any pool (the
+/// engine-side encoding, index == usize::MAX with the real data Arc).  The
+/// tolerance is the builder CONFUSION, NOT the null sentinel's zero — the
+/// signature the pool-free-aware IsNull gate discriminates on.
+fn pool_free_edge() -> Shape {
+    let mut brep = BRep::new();
+    let v1 = make_vertex(&mut brep, 0.0, 0.0, 0.0);
+    let v2 = make_vertex(&mut brep, 1.0, 0.0, 0.0);
+    let e = make_edge(&mut brep, &v1, &v2);
+    Shape {
+        data: e.data.clone(),
+        index: usize::MAX,
+        location: e.location,
+        orientation: e.orientation,
+    }
+}
+
+// Discriminating against the pre-fix behavior: an unrecorded pool-free shape
+// must answer the shape ITSELF from Value() (OCCT BRepTools_ReShape.cxx
+// L243-253), not a null shape.  Perturbation proof: reverting the gates to
+// `shape_is_null` makes this test FAIL (Value returned Shape::null()).
+#[test]
+fn value_unrecorded_pool_free_shape_is_identity() {
+    let mut brep = BRep::new();
+    let e = pool_free_edge();
+    let rs = ShapeBuildReShape::new();
+    let v = rs.value(&mut brep, &e);
+    assert!(
+        v.is_same(&e),
+        "an unrecorded pool-free shape is its own Value"
+    );
+    assert_eq!(v.index, usize::MAX, "the pool-free encoding is carried");
+}
+
+// Discriminating: Replace() must RECORD a pool-free shape (pre-fix it
+// silently dropped the record), so IsRecorded answers true and Value
+// returns the replacement.
+#[test]
+fn replace_records_pool_free_shape() {
+    let mut brep = BRep::new();
+    let e = pool_free_edge();
+    let mut rs = ShapeBuildReShape::new();
+    rs.replace(&mut brep, &e, &Shape::null());
+    assert!(
+        rs.is_recorded(&e),
+        "a pool-free shape is recordable after the gate fix"
+    );
+    assert!(
+        rs.value(&mut brep, &e).is_null(),
+        "a recorded Remove answers null (the removal is not masked)"
+    );
+}
+
+// Discriminating: Status() on an unrecorded pool-free shape answers
+// (0, the shape itself) — pre-fix it answered (0, NULL).
+#[test]
+fn status_unrecorded_pool_free_shape_is_identity() {
+    let mut brep = BRep::new();
+    let e = pool_free_edge();
+    let mut rs = ShapeBuildReShape::new();
+    let (res, newsh) = rs.status(&mut brep, &e, false);
+    assert_eq!(res, 0, "an unrecorded shape is not modified");
+    assert!(newsh.is_same(&e), "Status returns the shape itself");
+}
+
+// The null SENTINEL itself still answers null from Value(): the
+// sentinel-signature discriminator must not open the gate for Shape::null().
+#[test]
+fn value_null_sentinel_stays_null() {
+    let mut brep = BRep::new();
+    let nul = Shape::null();
+    let rs = ShapeBuildReShape::new();
+    assert!(rs.value(&mut brep, &nul).is_null());
+    assert!(!rs.is_recorded(&nul));
+}

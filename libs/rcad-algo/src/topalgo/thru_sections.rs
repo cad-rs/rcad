@@ -374,25 +374,73 @@ fn create_ruled(brep: &mut BRep, wires: &[Shape]) -> Option<Shape> {
     for i in 0..n {
         let face = &faces[i];
         let fkey = (face.ptr_id(), face.location);
+        // Each bind below dual-writes: the map insert is retained for the
+        // map-era readers during the writer migration; the representation is
+        // the authority (OCCT static UpdateCurves, BRep_Builder.cxx L104-167:
+        // L133-146 removes any existing curve-on-surface representation of
+        // the same (S, L), then L149-167 appends the new
+        // BRep_CurveOnSurface(C, S, L) representation).
         // Edge1: (t, f2=0) — the U axis at V = 0.
-        brep.edge_mut_inplace(e1s[i].clone())
-            .pcurves
-            .insert(fkey, (Curve2d::Line(Line2d::new(DVec3::ZERO.truncate(), DVec3::X.truncate())), 0.0, 1.0));
+        {
+            let ed = brep.edge_mut_inplace(e1s[i].clone());
+            let pc = Curve2d::Line(Line2d::new(DVec3::ZERO.truncate(), DVec3::X.truncate()));
+            ed.pcurves.insert(fkey, (pc.clone(), 0.0, 1.0));
+            bind_representation(ed, fkey, pc, [0.0, 1.0]);
+        }
         // Edge2: (t, l2=1).
-        brep.edge_mut_inplace(e2s[i].clone())
-            .pcurves
-            .insert(fkey, (Curve2d::Line(Line2d::new(DVec3::new(0.0, 1.0, 0.0).truncate(), DVec3::X.truncate())), 0.0, 1.0));
+        {
+            let ed = brep.edge_mut_inplace(e2s[i].clone());
+            let pc = Curve2d::Line(Line2d::new(
+                DVec3::new(0.0, 1.0, 0.0).truncate(),
+                DVec3::X.truncate(),
+            ));
+            ed.pcurves.insert(fkey, (pc.clone(), 0.0, 1.0));
+            bind_representation(ed, fkey, pc, [0.0, 1.0]);
+        }
         // left edge: (f1=0, t).
-        brep.edge_mut_inplace(left[i].clone())
-            .pcurves
-            .insert(fkey, (Curve2d::Line(Line2d::new(DVec3::ZERO.truncate(), DVec3::Y.truncate())), 0.0, 1.0));
+        {
+            let ed = brep.edge_mut_inplace(left[i].clone());
+            let pc = Curve2d::Line(Line2d::new(DVec3::ZERO.truncate(), DVec3::Y.truncate()));
+            ed.pcurves.insert(fkey, (pc.clone(), 0.0, 1.0));
+            bind_representation(ed, fkey, pc, [0.0, 1.0]);
+        }
         // right edge: (l1=1, t).
-        brep.edge_mut_inplace(right[i].clone())
-            .pcurves
-            .insert(fkey, (Curve2d::Line(Line2d::new(DVec3::new(1.0, 0.0, 0.0).truncate(), DVec3::Y.truncate())), 0.0, 1.0));
+        {
+            let ed = brep.edge_mut_inplace(right[i].clone());
+            let pc = Curve2d::Line(Line2d::new(
+                DVec3::new(1.0, 0.0, 0.0).truncate(),
+                DVec3::Y.truncate(),
+            ));
+            ed.pcurves.insert(fkey, (pc.clone(), 0.0, 1.0));
+            bind_representation(ed, fkey, pc, [0.0, 1.0]);
+        }
     }
 
     Some(brep.add_tshell(faces))
+}
+
+/// The representation arm of the UpdateCurves single-pcurve write
+/// (BRep_Builder.cxx L104-167): L133-146 removes any existing
+/// curve-on-surface representation of the same (S, L), then L149-167 appends
+/// the new BRep_CurveOnSurface(C, S, L) representation.
+fn bind_representation(
+    ed: &mut rcad_kernel::topo::topods::TEdgeData,
+    fkey: (u64, u32),
+    pc: rcad_kernel::geom::Curve2d,
+    range: [f64; 2],
+) {
+    use rcad_kernel::topods::CurveRepresentation;
+    ed.representations.retain(|a_cr| match a_cr {
+        CurveRepresentation::CurveOnSurface { face, .. }
+        | CurveRepresentation::CurveOnClosedSurface { face, .. } => *face != fkey,
+        _ => true,
+    });
+    ed.representations
+        .push(CurveRepresentation::CurveOnSurface {
+            face: fkey,
+            pcurve: pc,
+            range,
+        });
 }
 
 // =============================================================================

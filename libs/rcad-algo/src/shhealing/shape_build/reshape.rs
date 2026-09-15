@@ -26,7 +26,7 @@
 use crate::bop::history::{BRepToolsHistory, TRelationType, is_supported_type};
 use crate::shhealing::shape_build::brep_tool::{
     brep_tool_is_closed, builder_add, iter_subshapes, occt_is_partner, occt_is_same,
-    set_flag_inplace, shape_is_null, topexp_explorer,
+    set_flag_inplace, topexp_explorer,
 };
 use crate::shhealing::shape_build::edge::ShapeBuildEdge;
 use crate::shhealing::shape_extend::{ShapeExtendStatus, decode_status, encode_status};
@@ -38,6 +38,37 @@ use std::collections::{HashMap, HashSet};
 /// reverse order so the rank is `8 - value`.
 fn occt_type_rank(t: ShapeType) -> i32 {
     8 - (t as i32)
+}
+
+/// The OCCT `TopoDS_Shape::IsNull()` guard (TopoDS_Shape.hxx: the TShape
+/// handle is null).  The rcad null sentinel is `Shape::null()`: index ==
+/// usize::MAX over a default-constructed Vertex TShape (zero point, zero
+/// tolerance, the free-construction flags).  A pool-free REAL shape shares
+/// the index encoding — the kernel-level null/pool-free conflation recorded
+/// in the addendum-48 W2 batch (the kernel is_null semantics change is a
+/// separate senior decision) — so the full sentinel signature is matched
+/// here: a real pool-free vertex carries the builder tolerance
+/// (`Precision::Confusion`), and non-vertex TShapes never match, so the two
+/// encodings cannot collide.
+fn occt_shape_is_null(s: &Shape) -> bool {
+    if s.index != usize::MAX {
+        return false;
+    }
+    match s.data.as_ref() {
+        rcad_kernel::topo::topods::TShape::Vertex(vd) => {
+            vd.my_shapes.is_empty()
+                && vd.points.is_empty()
+                && vd.point == glam::DVec3::ZERO
+                && vd.tolerance == 0.0
+                && vd.flags
+                    == (rcad_kernel::topo::topods::tshape_flags::FREE
+                        | rcad_kernel::topo::topods::tshape_flags::MODIFIED
+                        | rcad_kernel::topo::topods::tshape_flags::ORIENTABLE
+                        | rcad_kernel::topo::topods::tshape_flags::CLOSED
+                        | rcad_kernel::topo::topods::tshape_flags::CONVEX)
+        }
+        _ => false,
+    }
 }
 
 /// Map key with TopTools_ShapeMapHasher semantics (IsSame: TShape + Location;
@@ -180,7 +211,7 @@ impl ShapeBuildReShape {
     ) {
         let mut shape = ashape.clone();
         let mut newshape = anewshape.clone();
-        if shape_is_null(&shape) || shape.is_equal(&newshape) {
+        if occt_shape_is_null(&shape) || shape.is_equal(&newshape) {
             return;
         }
 
@@ -230,7 +261,7 @@ impl ShapeBuildReShape {
     /// OCCT BRepTools_ReShape::IsRecorded (L213-226): tells if a shape is
     /// recorded for Replace/Remove.
     pub fn is_recorded(&self, ashape: &Shape) -> bool {
-        if shape_is_null(ashape) {
+        if occt_shape_is_null(ashape) {
             return false;
         }
         self.my_shape_to_replacement.contains_key(&shape_key(ashape))
@@ -240,7 +271,7 @@ impl ShapeBuildReShape {
     /// individual shape. If not recorded, returns the original shape itself;
     /// if to be removed, returns a null shape; else the replacing item.
     pub fn value(&self, brep: &mut BRep, ashape: &Shape) -> Shape {
-        if shape_is_null(ashape) {
+        if occt_shape_is_null(ashape) {
             return Shape::null();
         }
         let mut shape = ashape.clone();
@@ -289,7 +320,7 @@ impl ShapeBuildReShape {
     /// replacement, the original shape if not recorded, or a null shape when
     /// the chain terminates in a Remove.
     pub fn value_leaf(&self, brep: &mut BRep, the_shape: &Shape) -> Shape {
-        if shape_is_null(the_shape) {
+        if occt_shape_is_null(the_shape) {
             return Shape::null();
         }
         // Visited TShapes (handle identity = ptr only), per OCCT's
@@ -300,7 +331,7 @@ impl ShapeBuildReShape {
 
         loop {
             let a_next = self.value(brep, &a_current);
-            if shape_is_null(&a_next) {
+            if occt_shape_is_null(&a_next) {
                 return a_next;
             }
             if occt_is_same(brep, &a_next, &a_current) {
@@ -322,7 +353,7 @@ impl ShapeBuildReShape {
     /// recursively via Apply.
     pub fn status(&mut self, brep: &mut BRep, ashape: &Shape, last: bool) -> (i32, Shape) {
         let mut res: i32;
-        if shape_is_null(ashape) {
+        if occt_shape_is_null(ashape) {
             return (0, Shape::null());
         }
 
@@ -347,7 +378,7 @@ impl ShapeBuildReShape {
             }
         }
         if res > 0 {
-            if shape_is_null(&newsh) {
+            if occt_shape_is_null(&newsh) {
                 res = -1;
             } else if newsh.is_equal(&shape) {
                 res = 0;
@@ -357,7 +388,7 @@ impl ShapeBuildReShape {
             {
                 // sln 29.11.01 Bug24: iterate to the final replacement.
                 newsh = self.apply(brep, &shape, ShapeType::Shape);
-                if shape_is_null(&newsh) {
+                if occt_shape_is_null(&newsh) {
                     res = -1;
                 }
                 if newsh.is_equal(&shape) {
@@ -365,7 +396,7 @@ impl ShapeBuildReShape {
                 }
             }
         }
-        if self.my_consider_location && !shape_is_null(&newsh) {
+        if self.my_consider_location && !occt_shape_is_null(&newsh) {
             let a_res_loc = if res > 0 && newsh.location != 0 {
                 brep.get_location(a_loc_sh) * brep.get_location(newsh.location)
             } else {
@@ -471,7 +502,7 @@ impl ShapeBuildReShape {
                         // chain with its relation result.
                         if a_replacement.relation_kind() != TRelationType::Removed {
                             let a_result = a_replacement.relation_result();
-                            if !shape_is_null(&a_result) {
+                            if !occt_shape_is_null(&a_result) {
                                 a_intermediates.insert(shape_key(&a_result), a_result);
                             }
                         }
@@ -510,7 +541,7 @@ impl ShapeBuildReShape {
         until: ShapeType,
         buildmode: i32,
     ) -> Shape {
-        if shape_is_null(shape) {
+        if occt_shape_is_null(shape) {
             return shape.clone();
         }
         let (stat, newsh) = self.status(brep, shape, false);
@@ -549,7 +580,7 @@ impl ShapeBuildReShape {
             let s = brep.add_tsolid(Vec::new());
             for sh in iter_subshapes(brep, shape, true, true) {
                 let newsh = self.apply_buildmode(brep, &sh, until, buildmode);
-                if shape_is_null(&newsh) {
+                if occt_shape_is_null(&newsh) {
                     modif = -1;
                 } else if newsh.shape_type() != ShapeType::Shell {
                     let mut nbsub = 0;
@@ -581,7 +612,7 @@ impl ShapeBuildReShape {
             let s = brep.add_tshell(Vec::new());
             for sh in iter_subshapes(brep, shape, true, true) {
                 let newsh = self.apply_buildmode(brep, &sh, until, buildmode);
-                if shape_is_null(&newsh) {
+                if occt_shape_is_null(&newsh) {
                     modif = -1;
                 } else if newsh.shape_type() != ShapeType::Face {
                     let mut nbsub = 0;
@@ -629,7 +660,7 @@ impl ShapeBuildReShape {
         the_in_flight: &mut HashSet<u64>,
     ) -> Shape {
         self.my_status = encode_status(ShapeExtendStatus::Ok);
-        if shape_is_null(the_shape) {
+        if occt_shape_is_null(the_shape) {
             return the_shape.clone();
         }
 
@@ -637,7 +668,7 @@ impl ShapeBuildReShape {
         let mut a_new_shape = self.value(brep, the_shape);
 
         // If shape removed, return NULL.
-        if shape_is_null(&a_new_shape) {
+        if occt_shape_is_null(&a_new_shape) {
             self.my_status = encode_status(ShapeExtendStatus::Done2);
             return a_new_shape;
         }
@@ -687,7 +718,7 @@ impl ShapeBuildReShape {
                 }
                 a_modif = true;
             }
-            if shape_is_null(&a_new_shape) {
+            if occt_shape_is_null(&a_new_shape) {
                 a_loc_status |= encode_status(ShapeExtendStatus::Done4);
                 continue;
             }
@@ -734,7 +765,7 @@ impl ShapeBuildReShape {
         a_result.orientation = an_orient;
         self.my_status = a_loc_status;
 
-        let kind = if shape_is_null(&a_result) {
+        let kind = if occt_shape_is_null(&a_result) {
             TReplacementKind::Remove
         } else {
             TReplacementKind::Modify

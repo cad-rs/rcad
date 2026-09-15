@@ -86,6 +86,25 @@ fn builder_update_edge_pcurve(
             rcad_kernel::topods::update_curves_range(the_c2d.default_domain(), ed);
         ed.pcurves
             .insert(shape_key(the_f), (the_c2d.clone(), a_f, a_l));
+        // Map insert retained for the map-era readers during the writer
+        // migration; the representation below is the authority.
+        // OCCT UpdateCurves: L133-146 removes any existing curve-on-surface
+        // representation of the same (S, L), then L149-167 appends the new
+        // BRep_CurveOnSurface(C, S, L) representation.
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != shape_key(the_f)
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                face: shape_key(the_f),
+                pcurve: the_c2d.clone(),
+                range: [a_f, a_l],
+            });
         ed.tolerance = ed.tolerance.max(the_tol);
     } else {
         crate::brep_algo::tool::builder_update_edge_pcurve(the_e, the_c2d, the_f, the_tol);

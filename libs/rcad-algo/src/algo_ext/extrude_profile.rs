@@ -498,19 +498,55 @@ pub fn extrude_profile_solid(
             };
             if let Some((gp, t0p, t1p)) = gen_pc(a, b) {
                 let k0 = rcad_kernel::topo::topods::compose_pcurve_location(0, 0, &brep.locations);
-                brep.edge_mut_inplace(b_ed[i].clone())
-                    .pcurves
-                    .insert((fp, k0), (gp.clone(), t0p, t1p));
+                // Dual write: the map insert is retained for the map-era
+                // readers during the writer migration; the representation is
+                // the authority (OCCT static UpdateCurves, BRep_Builder.cxx
+                // L104-167: L133-146 removes any existing curve-on-surface
+                // representation of the same (S, L), then L149-167 appends the
+                // new BRep_CurveOnSurface(C, S, L) representation).
+                {
+                    let ed = brep.edge_mut_inplace(b_ed[i].clone());
+                    ed.pcurves.insert((fp, k0), (gp.clone(), t0p, t1p));
+                    ed.representations
+                        .retain(|a_cr| match a_cr {
+                            rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                            | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                *face != (fp, k0)
+                            }
+                            _ => true,
+                        });
+                    ed.representations
+                        .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                            face: (fp, k0),
+                            pcurve: gp.clone(),
+                            range: [t0p, t1p],
+                        });
+                }
                 let k1 =
                     rcad_kernel::topo::topods::compose_pcurve_location(0, loc, &brep.locations);
-                if let Some((gp_top, t0t, t1t)) = gen_pc(a + dir * depth, b + dir * depth) {
-                    brep.edge_mut_inplace(t_ed[i].clone())
-                        .pcurves
-                        .insert((fp, k1), (gp_top, t0t, t1t));
+                let top_pc = if let Some((gp_top, t0t, t1t)) = gen_pc(a + dir * depth, b + dir * depth)
+                {
+                    Some((gp_top, t0t, t1t))
                 } else {
-                    brep.edge_mut_inplace(t_ed[i].clone())
-                        .pcurves
-                        .insert((fp, k1), (gp.clone(), t0p, t1p));
+                    Some((gp.clone(), t0p, t1p))
+                };
+                if let Some((gp_top, t0t, t1t)) = top_pc {
+                    let ed = brep.edge_mut_inplace(t_ed[i].clone());
+                    ed.pcurves.insert((fp, k1), (gp_top.clone(), t0t, t1t));
+                    ed.representations
+                        .retain(|a_cr| match a_cr {
+                            rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                            | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                *face != (fp, k1)
+                            }
+                            _ => true,
+                        });
+                    ed.representations
+                        .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                            face: (fp, k1),
+                            pcurve: gp_top,
+                            range: [t0t, t1t],
+                        });
                 }
             }
             // Directing edges: the vertical sweep edges at the segment's
@@ -523,17 +559,54 @@ pub fn extrude_profile_solid(
             let v0 = profile[i].p0();
             let v1 = v0 + dir * depth;
             if let Some((dp, t0p, t1p)) = pc_of(t_seg0, t_seg0, v0, v1) {
-                brep.edge_mut_inplace(e_ver[i].clone())
-                    .pcurves
-                    .insert((fp, 0), (dp.clone(), t0p, t1p));
+                let closed_seam = e_ver[i].ptr_id() == e_ver[j].ptr_id();
+                {
+                    let ed = brep.edge_mut_inplace(e_ver[i].clone());
+                    ed.pcurves.insert((fp, 0), (dp.clone(), t0p, t1p));
+                    // Open case: the single-pcurve representation backs the
+                    // map entry (the closed case is backed by the
+                    // CurveOnClosedSurface representation below, whose
+                    // pcurve1 IS this pcurve — OCCT stores one
+                    // BRep_CurveOnClosedSurface, not an extra
+                    // BRep_CurveOnSurface).
+                    if !closed_seam {
+                        ed.representations
+                            .retain(|a_cr| match a_cr {
+                                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                    *face != (fp, 0)
+                                }
+                                _ => true,
+                            });
+                        ed.representations
+                            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                                face: (fp, 0),
+                                pcurve: dp.clone(),
+                                range: [t0p, t1p],
+                            });
+                    }
+                }
                 let w0 = profile[i].p1();
                 let w1 = w0 + dir * depth;
                 let dp_end = pc_of(t_seg1, t_seg1, w0, w1);
-                if e_ver[i].ptr_id() != e_ver[j].ptr_id() {
+                if !closed_seam {
                     if let Some((dp1, t0p1, t1p1)) = dp_end {
-                        brep.edge_mut_inplace(e_ver[j].clone())
-                            .pcurves
-                            .insert((fp, 0), (dp1, t0p1, t1p1));
+                        let ed = brep.edge_mut_inplace(e_ver[j].clone());
+                        ed.pcurves.insert((fp, 0), (dp1.clone(), t0p1, t1p1));
+                        ed.representations
+                            .retain(|a_cr| match a_cr {
+                                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                    *face != (fp, 0)
+                                }
+                                _ => true,
+                            });
+                        ed.representations
+                            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                                face: (fp, 0),
+                                pcurve: dp1,
+                                range: [t0p1, t1p1],
+                            });
                     }
                 } else {
                     // A closed profile sweeps the directing edge twice in the
@@ -544,7 +617,9 @@ pub fn extrude_profile_solid(
                     // instance, the west side of the UV region), pcurve2 at
                     // u=az+2*pi (the REVERSED instance, the east side), as a
                     // CurveOnClosedSurface representation keyed by the lateral
-                    // face.
+                    // face.  UpdateCurves replace semantics (BRep_Builder.cxx
+                    // L266-288): the removal arm drops any prior
+                    // curve-on-surface representation of the same (S, L).
                     let dp2 = match &dp {
                         Curve2d::Line(l) => Curve2d::Line(rcad_kernel::geom::Line2d {
                             origin: glam::DVec2::new(l.origin.x + std::f64::consts::TAU, l.origin.y),
@@ -553,6 +628,14 @@ pub fn extrude_profile_solid(
                         other => other.clone(),
                     };
                     let e_seam = brep.edge_mut_inplace(e_ver[i].clone());
+                    e_seam.representations
+                        .retain(|a_cr| match a_cr {
+                            rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                            | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                *face != (fp, 0)
+                            }
+                            _ => true,
+                        });
                     e_seam.representations.push(rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface {
                         face: (fp, 0),
                         pcurve1: dp.clone(),

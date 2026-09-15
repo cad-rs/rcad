@@ -1083,7 +1083,27 @@ impl ShapeBuildEdge {
                 // ShapeFix_Edge consumer revisits this key.
                 let key_loc = pcurve_location_id(&brep.get_location(l));
                 let ed = brep.edge_mut_inplace(e.clone());
+                // Dual write: the map insert is retained for the map-era
+                // readers during the writer migration; the representation is
+                // the authority (OCCT static UpdateCurves, BRep_Builder.cxx
+                // L104-167: L133-146 removes any existing curve-on-surface
+                // representation of the same (S, L), then L149-167 appends the
+                // new BRep_CurveOnSurface(C, S, L) representation).
                 ed.pcurves.insert((0, key_loc), (pcurve.clone(), p1, p2));
+                ed.representations
+                    .retain(|a_cr| match a_cr {
+                        rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                        | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                            *face != (0, key_loc)
+                        }
+                        _ => true,
+                    });
+                ed.representations
+                    .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                        face: (0, key_loc),
+                        pcurve: pcurve.clone(),
+                        range: [p1, p2],
+                    });
             }
             // TopExp::Vertices(E, V1, V2); P1/P2 world points transformed by
             // L; B.UpdateVertex(V1/V2, ..., 0.).
@@ -1798,8 +1818,28 @@ fn make_pcurve_edge(
     let e = brep.add_tedge(None, v1.clone(), v2.clone(), [p1, p2]);
     {
         let ed = brep.edge_mut_inplace(e.clone());
+        // Dual write: the map insert is retained for the map-era readers
+        // during the writer migration; the representation is the authority
+        // (OCCT static UpdateCurves, BRep_Builder.cxx L104-167: L133-146
+        // removes any existing curve-on-surface representation of the same
+        // (S, L), then L149-167 appends the new BRep_CurveOnSurface(C, S, L)
+        // representation).
         ed.pcurves
             .insert((0, 0), (c.clone(), p1, p2));
+        ed.representations
+            .retain(|a_cr| match a_cr {
+                rcad_kernel::topods::CurveRepresentation::CurveOnSurface { face, .. }
+                | rcad_kernel::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                    *face != (0, 0)
+                }
+                _ => true,
+            });
+        ed.representations
+            .push(rcad_kernel::topods::CurveRepresentation::CurveOnSurface {
+                face: (0, 0),
+                pcurve: c.clone(),
+                range: [p1, p2],
+            });
     }
     if closed {
         crate::shhealing::shape_build::brep_tool::set_flag_inplace(

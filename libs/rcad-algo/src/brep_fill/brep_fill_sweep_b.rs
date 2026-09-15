@@ -236,6 +236,17 @@ pub(super) fn update_edge_pcurve_on_surf(
     // rcad_kernel::topods::update_curves_range.
     let [ta, tb] = rcad_kernel::topods::update_curves_range(c2d.default_domain(), ed);
     ed.pcurves.insert(key, (c2d.clone(), ta, tb));
+    // OCCT UpdateCurves (BRep_Builder.cxx L104-167): L133-146 removes any
+    // existing curve-on-surface representation of the same (S, L), then
+    // L149-167 appends the new BRep_CurveOnSurface(C, S, L) representation.
+    ed.representations
+        .retain(|a_cr| match a_cr {
+            rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface { face, .. }
+            | rcad_kernel::topo::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                *face != key
+            }
+            _ => true,
+        });
     ed.representations
         .push(rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface {
             face: key,
@@ -265,6 +276,18 @@ pub(super) fn update_edge_pcurve2_on_surf(
     // rcad_kernel::topods::update_curves_range.
     let [ta, tb] = rcad_kernel::topods::update_curves_range(c2d1.default_domain(), ed);
     ed.pcurves.insert(key, (c2d1.clone(), ta, tb));
+    // OCCT two-pcurve UpdateCurves (BRep_Builder.cxx L251-308): L266-288
+    // removes any existing curve-on-surface representation of the same (S, L),
+    // then L290-305 appends the BRep_CurveOnClosedSurface(C1, C2, S, L,
+    // GeomAbs_C0) representation carrying both pcurves.
+    ed.representations
+        .retain(|a_cr| match a_cr {
+            rcad_kernel::topo::topods::CurveRepresentation::CurveOnSurface { face, .. }
+            | rcad_kernel::topo::topods::CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                *face != key
+            }
+            _ => true,
+        });
     ed.representations
         .push(rcad_kernel::topo::topods::CurveRepresentation::CurveOnClosedSurface {
             face: key,
