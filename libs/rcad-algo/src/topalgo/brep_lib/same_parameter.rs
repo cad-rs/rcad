@@ -529,7 +529,10 @@ pub fn same_parameter_with_result(
                     if matches!(a_bs2d.continuity(), SmoothShapeQ::C0) {
                         let mut a_tolbail = 0.0f64;
                         if eval_tol(
-                            a_pc[a_i].as_ref().unwrap(),
+                            // OCCT L1446: EvalTol(curPC, ...) — the current
+                            // (SameRange-reparametrized) pcurve, not the
+                            // original PC[i].
+                            &a_cur_pc,
                             a_s.as_ref().unwrap(),
                             &a_hc,
                             the_tolerance,

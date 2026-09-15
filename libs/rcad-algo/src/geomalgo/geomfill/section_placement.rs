@@ -457,11 +457,16 @@ impl SectionPlacement {
             let mut last = curve_last_parameter(adp);
             if adp.is_periodic() {
                 // Correct boundaries to avoid mistake of LocateU.
-                // OCCT: the trimmed basis curve recovery — the rcad form
-                // reads the underlying curve domain through the same
-                // helpers.
-                let ufirst = curve_first_parameter(adp);
-                let a_period = curve_last_parameter(adp) - curve_first_parameter(adp);
+                // OCCT L260-270: aCurve = myAdpSection.Curve(); the
+                // Geom_TrimmedCurve instance unwraps to its basis, and
+                // Ufirst/Period come off the (possibly untrimmed) basis.
+                let a_basis = match adp {
+                    Curve3::Trimmed(a_tc) => a_tc.curve.as_ref(),
+                    a_c => a_c,
+                };
+                let [a_udeb, a_ufin] = CurveEval::default_domain(a_basis);
+                let ufirst = a_udeb;
+                let a_period = a_ufin - a_udeb; // OCCT: aCurve->Period().
                 let u1 = ufirst + ((first - ufirst) / a_period).floor() * a_period;
                 let u2 = u1 + a_period;
                 if (first - u1).abs() <= PCONFUSION {

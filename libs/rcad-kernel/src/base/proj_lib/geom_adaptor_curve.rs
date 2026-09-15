@@ -779,6 +779,24 @@ impl GeomCurveAdaptor {
 // =========================================================================
 
 impl Adaptor3dCurve for GeomCurveAdaptor {
+    /// OCCT GeomAdaptor_Curve::GetType() — the loaded myTypeCurve
+    /// (GeomAdaptor_Curve.cxx L231-289 assignment; the accessor per the
+    /// hxx).  The proj_lib CurveType has no Offset arm — the OCCT
+    /// GeomAbs_OffsetCurve folds into Other (the CPnts order default-10
+    /// arm answers identically).
+    fn curve_type(&self) -> super::CurveType {
+        match self.my_type_curve {
+            GeomAbsCurveType::Line => super::CurveType::Line,
+            GeomAbsCurveType::Circle => super::CurveType::Circle,
+            GeomAbsCurveType::Ellipse => super::CurveType::Ellipse,
+            GeomAbsCurveType::Hyperbola => super::CurveType::Hyperbola,
+            GeomAbsCurveType::Parabola => super::CurveType::Parabola,
+            GeomAbsCurveType::BezierCurve => super::CurveType::Bezier,
+            GeomAbsCurveType::BSplineCurve => super::CurveType::BSpline,
+            GeomAbsCurveType::OffsetCurve | GeomAbsCurveType::OtherCurve => super::CurveType::Other,
+        }
+    }
+
     /// OCCT FirstParameter() — the restricted first parameter.
     fn first_parameter(&self) -> f64 {
         self.first

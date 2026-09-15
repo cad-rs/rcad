@@ -5,7 +5,9 @@
 //! (L3302-3547) and `VerticesAssembling` (L3549-3606).
 
 use glam::DVec3;
-use rcad_kernel::topo::topods::{BRep, BRepBuilder, Orientation, ShapeType};
+use rcad_kernel::topo::topods::{
+    BRep, BRepBuilder, CurveRepresentation, Orientation, ShapeType,
+};
 use rcad_kernel::topo_shape::Shape;
 use std::sync::Arc;
 
@@ -36,9 +38,11 @@ impl BRepBuilderAPISewing {
         // OCCT L2611-2615: the myOldShapes walk.
         let nb_shapes = self.my_old_shapes.len();
         for i in 1..=nb_shapes {
-            let (old_key_shape, _) = super::idx_shape_get(&self.my_old_shapes, i - 1);
+            // OCCT L2616: myOldShapes(i) is the map VALUE (Add stored
+            // Apply(aShape) as the value, cxx L2177-2178).
+            let (_, old_shape) = super::idx_shape_get(&self.my_old_shapes, i - 1);
             // OCCT L2616: for (TopExp_Explorer fexp(myOldShapes(i), TopAbs_FACE)...).
-            for fexp in bat::explorer(&old_key_shape, ShapeType::Face, ShapeType::Shape) {
+            for fexp in bat::explorer(&old_shape, ShapeType::Face, ShapeType::Shape) {
                 // Retrieve current face
                 // OCCT L2619-2621.
                 let face = fexp;
@@ -328,7 +332,9 @@ impl BRepBuilderAPISewing {
         let nb_shapes = self.my_old_shapes.len();
         for i in 1..=nb_shapes {
             // Retrieve new shape
-            let (shape, _) = super::idx_shape_get(&self.my_old_shapes, i - 1);
+            // OCCT L2899: const TopoDS_Shape& shape = myOldShapes(i) — the map
+            // VALUE (Add stored Apply(aShape) as the value, cxx L2177-2178).
+            let (_, shape) = super::idx_shape_get(&self.my_old_shapes, i - 1);
             if shape.is_null() {
                 continue;
             }
@@ -402,20 +408,45 @@ impl BRepBuilderAPISewing {
                     // OCCT L2983-2989.
                     let c2dold = bat::brep_tool_curve_on_surface(&edge, &face0);
 
-                    // OCCT L2991-2992: B.UpdateEdge(anewEdge, c2d, c2d, face, 0)
-                    // + B.UpdateEdge(anewEdge, c2dold, face, 0).
-                    if let Some((c2d, first2d, last2d)) = &c2dold {
+                    // OCCT L2990: occ::handle<Geom2d_Curve> c2d; — a NULL
+                    // pcurve pair.
+                    // OCCT L2991 (statement (1)): B.UpdateEdge(anewEdge, c2d,
+                    // c2d, face, 0) (BRep_Builder.cxx L702-725 ->
+                    // UpdateCurves(TE->ChangeCurves(), C1, C2, S, L)
+                    // L251-308): the first on-face representation matching
+                    // (S, L) is REMOVED and the null pair appends NOTHING.
+                    {
+                        let fkeys: Vec<(u64, u32)> = brep
+                            .edge_wrapper_locations(&an_edge)
+                            .iter()
+                            .map(|&el| {
+                                (
+                                    face0.ptr_id(),
+                                    brep.compose_pcurve_location(face0.location, el),
+                                )
+                            })
+                            .collect();
+                        let ed = brep.edge_mut_inplace(an_edge.clone());
+                        for k in &fkeys {
+                            ed.pcurves.shift_remove(k);
+                        }
+                        ed.representations.retain(|r| match r {
+                            CurveRepresentation::CurveOnSurface { face, .. }
+                            | CurveRepresentation::CurveOnClosedSurface { face, .. } => {
+                                !fkeys.contains(face)
+                            }
+                            _ => true,
+                        });
+                    }
+                    // OCCT L2992 (statement (2)): B.UpdateEdge(anewEdge,
+                    // c2dold, face, 0) (BRep_Builder.cxx L655-671 ->
+                    // UpdateCurves(TE->ChangeCurves(), C, S, L) L104-167): the
+                    // remaining on-face representations are removed while
+                    // scanning, then the single plain CurveOnSurface(c2dold)
+                    // is appended.
+                    if let Some((c2d, _, _)) = &c2dold {
                         let mut b = BRepBuilder::new();
-                        b.update_edge_pcurve_closed(
-                            brep,
-                            an_edge.clone(),
-                            c2d.clone(),
-                            c2d.clone(),
-                            face0.clone(),
-                            0.0,
-                        );
                         b.update_edge_pcurve(brep, an_edge.clone(), c2d.clone(), face0.clone(), 0.0);
-                        let _ = (first2d, last2d);
                     }
 
                     // OCCT L2994-2998.

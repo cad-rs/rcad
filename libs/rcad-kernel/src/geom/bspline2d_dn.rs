@@ -151,6 +151,12 @@ fn prepare_eval_2d(
     knots: &[f64],
     mults: &[i32],
 ) -> (usize, bool, Vec<f64>, Vec<f64>) {
+    // The rcad BSplineCurve2 carries an EMPTY weights vec for the
+    // non-rational encoding — that is the OCCT null Weights handle
+    // (`Weights != nullptr`, pxx L805): an empty slice must read as None,
+    // or the span-local IsRational probe divides by a zero length.
+    let weights = weights.filter(|the_w| !the_w.is_empty());
+
     // OCCT L798: LocateParameter(Degree, Knots, Mults, u, Periodic, index, u).
     locate_parameter_bspline(degree, knots, mults, *u, is_periodic, index, u);
 
@@ -517,208 +523,205 @@ pub fn eval_d3(bs: &BSplineCurve2, u: f64) -> ResD3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The tests drive the Curve2dEval trait methods so they exercise the
+    // override dispatch (not the module functions directly).
+    use crate::geom::Curve2dEval;
 
-    /// A degree-2 non-rational BSpline of two parabola segments joined C1 at
-    /// u = 1:
-    ///   segment [0, 1]: poles (0,0), (1,2), (2,0) — P(u) = (2u, 4u(1-u)),
-    ///     D1 = (2, 4-8u), D2 = (0, -8) constant;
-    ///   segment [1, 2]: poles (2,0), (3,-2), (4,0) — with v = u-1,
-    ///     P = (2+2v, -4v(1-v)), D1 = (2, -4+8v), D2 = (0, +8) constant.
-    /// The D2 jump at the interior knot makes the finite-difference
-    /// default non-discriminative there and at the clamped ends.
-    fn two_segment_parabola() -> BSplineCurve2 {
-        BSplineCurve2 {
-            degree: 2,
-            knots: vec![0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0],
-            control_points: vec![
-                DVec2::new(0.0, 0.0),
-                DVec2::new(1.0, 2.0),
-                DVec2::new(2.0, 0.0),
-                DVec2::new(3.0, -2.0),
-                DVec2::new(4.0, 0.0),
-            ],
-            weights: vec![1.0; 5],
-        }
+/// Trait-dispatched D1 (the eval.rs override of BSplineCurve2).
+fn d1_of(bs: &BSplineCurve2, t: f64) -> (DVec2, DVec2) {
+    (bs.point_at(t), bs.derivative_at(t))
+}
+
+/// Trait-dispatched D2.
+fn d2_of(bs: &BSplineCurve2, t: f64) -> DVec2 {
+    bs.derivative2_at(t)
+}
+
+/// Trait-dispatched D3.
+fn d3_of(bs: &BSplineCurve2, t: f64) -> DVec2 {
+    bs.derivative3_at(t)
+}
+
+fn make_two_segment() -> BSplineCurve2 {
+    BSplineCurve2 {
+        degree: 2,
+        knots: vec![0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0],
+        control_points: vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(1.0, 2.0),
+            DVec2::new(2.0, 0.0),
+            DVec2::new(3.0, -2.0),
+            DVec2::new(4.0, 0.0),
+        ],
+        weights: vec![1.0; 5],
     }
+}
 
-    #[test]
-    fn non_rational_d2_constant_per_segment() {
-        let bs = two_segment_parabola();
-        // Interior of segment 1.
-        for &t in &[0.0_f64, 0.1, 0.5, 0.9] {
-            let r2 = eval_d2(&bs, t);
-            assert!(
-                (r2.d2 - DVec2::new(0.0, -8.0)).length() < 1.0e-12,
-                "D2({t}) = {:?}, want (0, -8)",
-                r2.d2
-            );
-            let r1 = eval_d1(&bs, t);
-            assert!((r1.d1 - DVec2::new(2.0, 4.0 - 8.0 * t)).length() < 1.0e-12);
-            let r3 = eval_d3(&bs, t);
-            assert!(r3.d3.length() < 1.0e-12, "degree-2 D3 must be zero");
-        }
-        // Interior of segment 2.
-        for &t in &[1.1, 1.5, 1.9, 2.0] {
-            let r2 = eval_d2(&bs, t);
-            assert!(
-                (r2.d2 - DVec2::new(0.0, 8.0)).length() < 1.0e-12,
-                "D2({t}) = {:?}, want (0, +8)",
-                r2.d2
-            );
-        }
+fn make_quarter_circle() -> BSplineCurve2 {
+    let s2 = std::f64::consts::SQRT_2;
+    BSplineCurve2 {
+        degree: 2,
+        knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        control_points: vec![
+            DVec2::new(1.0, 0.0),
+            DVec2::new(1.0, 1.0),
+            DVec2::new(0.0, 1.0),
+        ],
+        weights: vec![1.0, s2 / 2.0, 1.0],
     }
+}
 
-    #[test]
-    fn c1_continuity_and_right_span_at_the_knot() {
-        let bs = two_segment_parabola();
-        // C1: D1 matches from both sides.
-        let r_left = eval_d1(&bs, 1.0 - 1.0e-9);
-        let r_at = eval_d1(&bs, 1.0);
-        let r_right = eval_d1(&bs, 1.0 + 1.0e-9);
-        assert!((r_at.d1 - r_left.d1).length() < 1.0e-8);
-        assert!((r_at.d1 - r_right.d1).length() < 1.0e-8);
-        // OCCT semantics: U = knot locates the RIGHT span — D2(1) is the
-        // second segment's constant (the finite-difference default would
-        // return the jump average).
-        let r2 = eval_d2(&bs, 1.0);
+/// Closed-form (P, D1, D2, D3) of the rational quarter circle over the
+/// clamped knots [0,0,0,1,1,1] (the rational quadratic Bezier in the
+/// plain [0,1] parameter), by the quotient rule over the degree-2 power
+/// forms  X = 1 + (s2-2)t + (1-s2)t^2,  Y = s2 t + (1-s2)t^2,
+/// W = 1 - (2-s2) t + (2-s2) t^2.  The third numerator derivative is
+/// zero, so the third quotient derivative is (-3 f2 W1 - 3 f1 W2) / W.
+fn circle_ref(t: f64) -> (DVec2, DVec2, DVec2, DVec2) {
+    let s2 = std::f64::consts::SQRT_2;
+    let b = 2.0 - s2;
+    let c = s2 / 2.0;
+    let (x0, x1, x2) = (1.0, 2.0 * c - 2.0, 1.0 - 2.0 * c);
+    let (y0, y1, y2) = (0.0, 2.0 * c, 1.0 - 2.0 * c);
+    let (w0, w1, w2) = (1.0, -b, b);
+    let (x, xd) = (x0 + t * (x1 + t * x2), x1 + 2.0 * t * x2);
+    let (y, yd) = (y0 + t * (y1 + t * y2), y1 + 2.0 * t * y2);
+    let (w, wd) = (w0 + t * (w1 + t * w2), w1 + 2.0 * t * w2);
+    let wdd = 2.0 * w2;
+    let xdd = 2.0 * x2;
+    let ydd = 2.0 * y2;
+    let p = DVec2::new(x / w, y / w);
+    let d1 = DVec2::new((xd * w - x * wd) / (w * w), (yd * w - y * wd) / (w * w));
+    let d2 = DVec2::new(
+        (xdd * w - x * wdd) / (w * w) - 2.0 * wd * d1.x / w,
+        (ydd * w - y * wdd) / (w * w) - 2.0 * wd * d1.y / w,
+    );
+    let d3 = DVec2::new(
+        (-3.0 * d2.x * wd - 3.0 * d1.x * wdd) / w,
+        (-3.0 * d2.y * wd - 3.0 * d1.y * wdd) / w,
+    );
+    (p, d1, d2, d3)
+}
+
+/// (a) degree-2 non-rational: D2 is constant per segment; the constants
+/// and the linear D1 come from the derivative-pole recursion
+///   D_i = 2 (P_{i+1} - P_i) / (T_{i+3} - T_{i+1}):
+/// D_1 = (2,4), D_2 = (1,-2), D_3 = (2,-4)  =>
+/// on (0,1): D1(u) = (2-u, 4-6u), D2 = (-1,-6);
+/// on (1,2): D1(u) = (1+v, -2-2v), v = u-1, D2 = (1,-2).
+#[test]
+fn non_rational_d2_constant_per_segment() {
+    let bs = make_two_segment();
+    for &t in &[0.0_f64, 0.1, 0.3, 0.5, 0.9] {
+        let (p, d1) = d1_of(&bs, t);
+        let p_ref = bs.point_at(t);
+        assert!((p - p_ref).length() < 1.0e-12);
         assert!(
-            (r2.d2 - DVec2::new(0.0, 8.0)).length() < 1.0e-12,
-            "D2 at the knot takes the right span: {:?}",
-            r2.d2
+            (d1 - DVec2::new(2.0 - t, 4.0 - 6.0 * t)).length() < 1.0e-12,
+            "D1({t}) = {:?}",
+            d1
         );
-    }
-
-    /// The rational quarter circle (degree 2, poles (1,0), (1,1), (0,1),
-    /// weights (1, sqrt(2)/2, 1)) and the exact closed form of the rational
-    /// quadratic parameterization, evaluated by the quotient rule over the
-    /// polynomial (X, Y, W) with
-    ///   W = 1 - b*t + b*t^2 (b = 2 - sqrt(2)),
-    ///   X = W - b/2 * 2*t*(1-t) ... computed directly from the homogeneous
-    /// de Boor coefficients.
-    fn quarter_circle() -> BSplineCurve2 {
-        let s2 = std::f64::consts::SQRT_2;
-        BSplineCurve2 {
-            degree: 2,
-            knots: vec![
-                0.0,
-                0.0,
-                0.0,
-                std::f64::consts::FRAC_PI_2,
-                std::f64::consts::FRAC_PI_2,
-                std::f64::consts::FRAC_PI_2,
-            ],
-            control_points: vec![
-                DVec2::new(1.0, 0.0),
-                DVec2::new(1.0, 1.0),
-                DVec2::new(0.0, 1.0),
-            ],
-            weights: vec![1.0, s2 / 2.0, 1.0],
-        }
-    }
-
-    /// The closed-form (point, D1, D2) of the rational quadratic
-    /// parameterization at parameter t, from the quotient rule over the
-    /// Bernstein numerator (X, Y) and denominator W (polynomial evaluation
-    /// in the power basis — machine-precision accurate).
-    fn circle_reference(t: f64) -> (DVec2, DVec2, DVec2) {
-        let s2 = std::f64::consts::SQRT_2;
-        let b = 2.0 - s2; // W(t) = 1 - b t + b t^2.
-        let c = s2 / 2.0; // the middle homogeneous coordinate pair.
-        // Power-basis coefficients:
-        // W  = 1 - b t + b t^2
-        // X  = 1 + (c*2 - 2) t + (2 - 2c) t^2 ... expand:
-        //   X = 1*(1-t)^2 + 2c*t(1-t)*1 + 0*t^2 (numerator x)
-        //     = 1 + (2c - 2) t + (1 - 2c) t^2
-        //   Y = 2c*t(1-t)*1 + t^2
-        //     = 2c t + (1 - 2c) t^2
-        let w0 = 1.0;
-        let w1 = -b;
-        let w2 = b;
-        let x0 = 1.0;
-        let x1 = 2.0 * c - 2.0;
-        let x2 = 1.0 - 2.0 * c;
-        let y0 = 0.0;
-        let y1 = 2.0 * c;
-        let y2 = 1.0 - 2.0 * c;
-        // Evaluate the polynomials and their derivatives (Horner).
-        let (x, xd) = (x0 + t * (x1 + t * x2), x1 + 2.0 * t * x2);
-        let (y, yd) = (y0 + t * (y1 + t * y2), y1 + 2.0 * t * y2);
-        let (w, wd) = (w0 + t * (w1 + t * w2), w1 + 2.0 * t * w2);
-        // f = N/W: f' = (N'W - N W') / W^2; f'' = (N''W - N W'')/W^2 - 2 W' f' / W.
-        let wdd = 2.0 * w2;
-        let xdd = 2.0 * x2;
-        let ydd = 2.0 * y2;
-        let p = DVec2::new(x / w, y / w);
-        let d1 = DVec2::new((xd * w - x * wd) / (w * w), (yd * w - y * wd) / (w * w));
-        let d2 = DVec2::new(
-            (xdd * w - x * wdd) / (w * w) - 2.0 * wd * d1.x / w,
-            (ydd * w - y * wdd) / (w * w) - 2.0 * wd * d1.y / w,
-        );
-        (p, d1, d2)
-    }
-
-    #[test]
-    fn rational_circle_d1_d2_matches_closed_form() {
-        let bs = quarter_circle();
-        for k in 0..=8 {
-            let t = std::f64::consts::FRAC_PI_2 * (k as f64) / 8.0;
-            let (p_ref, d1_ref, d2_ref) = circle_reference(t);
-            let r1 = eval_d1(&bs, t);
-            assert!((r1.point - p_ref).length() < 1.0e-12, "P({t})");
-            assert!(
-                (r1.d1 - d1_ref).length() < 1.0e-10,
-                "D1({t}): got {:?}, want {:?}",
-                r1.d1,
-                d1_ref
-            );
-            let r2 = eval_d2(&bs, t);
-            assert!(
-                (r2.d2 - d2_ref).length() < 1.0e-9,
-                "D2({t}): got {:?}, want {:?}",
-                r2.d2,
-                d2_ref
-            );
-        }
-    }
-
-    /// Endpoint semantics — OCCT LocateParameter clamps U into the first /
-    /// last span, so D1/D2/D3 at U = First/Last evaluate the clamped span
-    /// boundary exactly.  On the circle the endpoint derivatives are the
-    /// exact axis-aligned vectors.
-    #[test]
-    fn endpoint_semantics() {
-        let bs = quarter_circle();
-        let half_pi = std::f64::consts::FRAC_PI_2;
-        // At t = 0: P = (1, 0); D1 = (0, 2c)/W(0) = (0, sqrt(2)); D2 from
-        // the reference.
-        let (_, _, d2_ref0) = circle_reference(0.0);
-        let r1 = eval_d1(&bs, 0.0);
-        assert!((r1.point - DVec2::new(1.0, 0.0)).length() < 1.0e-12);
-        assert!(r1.d1.x.abs() < 1.0e-12, "D1(0).x = {}", r1.d1.x);
-        assert!(r1.d1.y > 0.0);
-        let r2 = eval_d2(&bs, 0.0);
+        let d2 = d2_of(&bs, t);
         assert!(
-            (r2.d2 - d2_ref0).length() < 1.0e-9,
-            "D2(0): got {:?}, want {:?} (the finite-difference default would \
-             blow up on the clamped end)",
-            r2.d2,
-            d2_ref0
+            (d2 - DVec2::new(-1.0, -6.0)).length() < 1.0e-12,
+            "D2({t}) = {:?}, want (-1, -6)",
+            d2
         );
-        let r3 = eval_d3(&bs, 0.0);
-        assert!(r3.d3.length() < 1.0e-7, "D3(0) = {:?}", r3.d3);
-        // At t = half_pi: P = (0, 1), D1 = (-sqrt(2), 0).
-        let r1e = eval_d1(&bs, half_pi);
-        assert!((r1e.point - DVec2::new(0.0, 1.0)).length() < 1.0e-12);
-        assert!(r1e.d1.y.abs() < 1.0e-12 && r1e.d1.x < 0.0);
-        // Slightly outside the domain clamps into the end spans (OCCT
-        // LocateParameter clamps NewU into [Knots(first), Knots(last)]).
-        let r_out = eval_d1(&bs, half_pi + 0.01);
-        assert!((r_out.d1 - r1e.d1).length() < 1.0e-9, "clamped end");
-        // The non-rational curve D2 at its ends is the segment constant.
-        let bs2 = two_segment_parabola();
-        let r2a = eval_d2(&bs2, 0.0);
-        assert!((r2a.d2 - DVec2::new(0.0, -8.0)).length() < 1.0e-12);
-        let r2b = eval_d2(&bs2, 2.0);
-        assert!((r2b.d2 - DVec2::new(0.0, 8.0)).length() < 1.0e-12);
+        let d3 = d3_of(&bs, t);
+        assert!(d3.length() < 1.0e-12, "degree-2 D3 must be zero");
     }
+    for &v in &[0.1_f64, 0.5, 0.9, 1.0] {
+        let t = 1.0 + v;
+        let (_, d1) = d1_of(&bs, t);
+        assert!(
+            (d1 - DVec2::new(1.0 + v, -2.0 - 2.0 * v)).length() < 1.0e-12,
+            "D1({t}) = {:?}",
+            d1
+        );
+        let d2 = d2_of(&bs, t);
+        assert!(
+            (d2 - DVec2::new(1.0, -2.0)).length() < 1.0e-12,
+            "D2({t}) = {:?}, want (1, -2)",
+            d2
+        );
+    }
+}
+
+/// C1 continuity across the knot and the OCCT right-span semantics for
+/// D2 at the knot (the stencil default would average the jump).
+#[test]
+fn c1_continuity_and_right_span_at_the_knot() {
+    let bs = make_two_segment();
+    let d_left = bs.derivative_at(1.0 - 1.0e-9);
+    let d_at = bs.derivative_at(1.0);
+    let d_right = bs.derivative_at(1.0 + 1.0e-9);
+    assert!((d_at - d_left).length() < 1.0e-8);
+    assert!((d_at - d_right).length() < 1.0e-8);
+    assert!((d_at - DVec2::new(1.0, -2.0)).length() < 1.0e-12);
+    let d2 = d2_of(&bs, 1.0);
+    assert!(
+        (d2 - DVec2::new(1.0, -2.0)).length() < 1.0e-12,
+        "D2 at the knot takes the right span: {:?}",
+        d2
+    );
+}
+
+/// (b) rational quarter circle: D1/D2 match the closed form at sampled
+/// parameters to 1e-10 / 1e-9.
+#[test]
+fn rational_circle_d1_d2_matches_closed_form() {
+    let bs = make_quarter_circle();
+    for k in 0..=8 {
+        let t = k as f64 / 8.0;
+        let (p_ref, d1_ref, d2_ref, _) = circle_ref(t);
+        let (p, d1) = d1_of(&bs, t);
+        assert!((p - p_ref).length() < 1.0e-12, "P({t})");
+        assert!(
+            (d1 - d1_ref).length() < 1.0e-10,
+            "D1({t}): got {:?}, want {:?}",
+            d1,
+            d1_ref
+        );
+        let d2 = d2_of(&bs, t);
+        assert!(
+            (d2 - d2_ref).length() < 1.0e-9,
+            "D2({t}): got {:?}, want {:?}",
+            d2,
+            d2_ref
+        );
+    }
+}
+
+/// (c) endpoint behavior: exact one-sided boundary derivatives at
+/// U = First / Last (the point-clamped stencil default returns a
+/// half-length D1 and O(1/h) noise on D2 there); beyond the domain the
+/// D-kernels clamp the located SPAN INDEX, not the parameter
+/// (LocateParameter assigns NewU = U), so the evaluation follows the
+/// polynomial continuation.
+#[test]
+fn endpoint_semantics() {
+    let bs = make_quarter_circle();
+    let (_, d1_ref0, d2_ref0, d3_ref0) = circle_ref(0.0);
+    let (p0, d1_0) = d1_of(&bs, 0.0);
+    assert!((p0 - DVec2::new(1.0, 0.0)).length() < 1.0e-12);
+    assert!((d1_0 - d1_ref0).length() < 1.0e-10, "D1(0) = {:?}", d1_0);
+    let d2_0 = d2_of(&bs, 0.0);
+    assert!((d2_0 - d2_ref0).length() < 1.0e-9, "D2(0) = {:?}", d2_0);
+    let d3_0 = d3_of(&bs, 0.0);
+    assert!((d3_0 - d3_ref0).length() < 1.0e-8, "D3(0) = {:?}", d3_0);
+
+    let (_, d1_ref1, _, _) = circle_ref(1.0);
+    let (p1, d1_1) = d1_of(&bs, 1.0);
+    assert!((p1 - DVec2::new(0.0, 1.0)).length() < 1.0e-12);
+    assert!((d1_1 - d1_ref1).length() < 1.0e-10, "D1(1) = {:?}", d1_1);
+
+    let d1_out = bs.derivative_at(1.0 + 0.01);
+    let (_, d1_cont, _, _) = circle_ref(1.01);
+    assert!((d1_out - d1_cont).length() < 1.0e-9, "continuation");
+
+    // The non-rational curve D2 at its ends are the segment constants.
+    let bs2 = make_two_segment();
+    assert!((d2_of(&bs2, 0.0) - DVec2::new(-1.0, -6.0)).length() < 1.0e-12);
+    assert!((d2_of(&bs2, 2.0) - DVec2::new(1.0, -2.0)).length() < 1.0e-12);
+}
 }

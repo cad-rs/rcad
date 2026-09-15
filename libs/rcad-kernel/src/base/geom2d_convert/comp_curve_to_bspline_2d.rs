@@ -588,13 +588,28 @@ pub fn curve_to_bspline_curve_2d(
                 bspline2_segment(&mut the_curve, u1, u2, 0.0);
                 the_curve
             }
-            // OCCT L353-368: the offset branch — Geom2dConvert_ApproxCurve is
-            // pending (staged).
+            // OCCT L353-368: the offset branch — the whole trimmed curve C
+            // is approximated by Geom2dConvert_ApproxCurve (Tol2d = 1e-4,
+            // GeomAbs_C2, MaxSegments = 16, MaxDegree = 14); without a
+            // result the OCCT failure path throws
+            // Standard_ConstructionError.
             Curve2d::Offset(_) => {
-                panic!(
-                    "Staged: Geom2dConvert::CurveToBSplineCurve trimmed offset branch \
-                     (Geom2dConvert.cxx L353-368, Geom2dConvert_ApproxCurve pending)"
+                let tol2d = 1.0e-4;
+                let order = crate::math::GeomAbsShape::C2;
+                let max_segments = 16i32;
+                let max_degree = 14i32;
+                let appr_c_offs = super::approx_curve::Geom2dConvertApproxCurve::new(
+                    c, tol2d, order, max_segments, max_degree,
                 );
+                if appr_c_offs.has_result() {
+                    appr_c_offs
+                        .curve()
+                        .expect("Geom2dConvert_ApproxCurve result after HasResult")
+                } else {
+                    panic!(
+                        "Standard_ConstructionError: Geom2dConvert::CurveToBSplineCurve"
+                    );
+                }
             }
             // OCCT L370-373: throw Standard_DomainError("No such curve").
             _ => panic!("Standard_DomainError: Geom2dConvert::CurveToBSplineCurve: No such curve"),
@@ -627,12 +642,26 @@ pub fn curve_to_bspline_curve_2d(
             Curve2d::Bezier(cbez) => bezier_to_bspline_2d(cbez),
             // OCCT L420-423: the full BSpline — Copy.
             Curve2d::BSpline(bs) => bs.clone(),
-            // OCCT L425-440: the offset branch — ApproxCurve pending (staged).
+            // OCCT L425-440: the offset branch — Geom2dConvert_ApproxCurve
+            // over the whole curve C; without a result the OCCT failure
+            // path throws Standard_ConstructionError.
             Curve2d::Offset(_) => {
-                panic!(
-                    "Staged: Geom2dConvert::CurveToBSplineCurve offset branch \
-                     (Geom2dConvert.cxx L425-440, Geom2dConvert_ApproxCurve pending)"
+                let tol2d = 1.0e-4;
+                let order = crate::math::GeomAbsShape::C2;
+                let max_segments = 16i32;
+                let max_degree = 14i32;
+                let appr_c_offs = super::approx_curve::Geom2dConvertApproxCurve::new(
+                    c, tol2d, order, max_segments, max_degree,
                 );
+                if appr_c_offs.has_result() {
+                    appr_c_offs
+                        .curve()
+                        .expect("Geom2dConvert_ApproxCurve result after HasResult")
+                } else {
+                    panic!(
+                        "Standard_ConstructionError: Geom2dConvert::CurveToBSplineCurve"
+                    );
+                }
             }
             // OCCT L442-445: throw Standard_DomainError.
             _ => panic!("Standard_DomainError: Geom2dConvert::CurveToBSplineCurve"),

@@ -15,11 +15,13 @@ fn domain_is_unbounded(dom: &[f64; 2]) -> bool {
     is_infinite_value(dom[0]) || is_infinite_value(dom[1])
 }
 
+pub mod approx_curve;
 pub mod bspline_curve;
 pub mod bspline_curve_to_bezier_curve;
 pub mod c1_concat;
 pub mod comp_curve_to_bspline_2d;
 
+pub use approx_curve::Geom2dConvertApproxCurve;
 pub use bspline_curve::Geom2dBSplineCurve;
 pub use bspline_curve_to_bezier_curve::BSplineCurveToBezierCurve;
 pub use comp_curve_to_bspline_2d::{

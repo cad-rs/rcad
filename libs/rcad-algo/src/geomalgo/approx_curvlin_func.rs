@@ -256,13 +256,14 @@ impl FunctionWithDerivative for CPntsMyRootFunction<'_> {
 }
 
 /// OCCT CPnts_AbscissaPoint::order(C) — the Adaptor3d_Curve flavor
-/// (CPnts_AbscissaPoint.cxx L57-77).
+/// (CPnts_AbscissaPoint.cxx L57-77); no clamp in OCCT (the degree-0 /
+/// single-pole degenerate cases cannot reach here through the callers).
 fn cpnts_order_3d(the_c: &dyn GCPntsCurve) -> usize {
     match the_c.get_type() {
         CurveType::Line => 2,
         CurveType::Parabola => 5,
-        CurveType::Bezier => 24.min(2 * the_c.curve_degree()).max(1) as usize,
-        CurveType::BSpline => 24.min(2 * the_c.nb_poles() - 1).max(1) as usize,
+        CurveType::Bezier => (24).min(2 * the_c.curve_degree()) as usize,
+        CurveType::BSpline => (24).min(2 * the_c.nb_poles() - 1) as usize,
         _ => 10,
     }
 }
@@ -438,12 +439,12 @@ impl GCPntsCurve for AdaptorAsGCPnts<'_> {
         self.0.d2(u)
     }
 
-    /// OCCT GetType() — the kernel adaptor trait carries no curve-type
-    /// accessor; `GeomAbs_OtherCurve` is reported (the same encoding as the
-    /// kernel `GCPntsCurve3dHandle` / `dyn Adaptor3dCurve` impls,
-    /// gcpnts_curve.rs L267-270).
+    /// OCCT GetType() — the erased handle answers through the trait
+    /// `curve_type` accessor (the GeomCurveAdaptor override reads the
+    /// loaded myTypeCurve; the trait default is the OCCT base
+    /// GeomAbs_OtherCurve).
     fn get_type(&self) -> CurveType {
-        CurveType::Other
+        self.0.curve_type()
     }
 
     fn nb_intervals_cn(&self) -> usize {
@@ -459,15 +460,15 @@ impl GCPntsCurve for AdaptorAsGCPnts<'_> {
     }
 
     fn curve_degree(&self) -> i32 {
-        panic!("GCPntsCurve: Degree() on a non-bspline/bezier curve");
+        self.0.degree() as i32
     }
 
     fn nb_poles(&self) -> i32 {
-        panic!("GCPntsCurve: NbPoles() on a non-bspline/bezier curve");
+        self.0.nb_poles() as i32
     }
 
     fn is_rational(&self) -> bool {
-        panic!("GCPntsCurve: IsRational() on a non-bspline/bezier curve");
+        self.0.is_rational()
     }
 
     fn dn1(&self, u: f64) -> DVec3 {
@@ -1067,12 +1068,17 @@ impl ApproxCurvlinFunc {
                 let a_t2 = a_cur_on_sur2.intervals(the_s);
 
                 let mut a_fusion: Vec<f64> = Vec::new();
+                // OCCT Approx_CurvlinFunc.cxx L338: GeomLib::FuseIntervals(T1,
+                // T2, Fusion) — the GeomLib.hxx L206-210 defaults are
+                // Confusion = 1.0e-9 and IsAdjustToFirstInterval = false
+                // (not the PConfusion/true pair the nb_intervals site uses
+                // with its own OCCT call shape).
                 fuse_intervals(
                     &a_t1[..(a_nb_int1 + 1).min(a_t1.len())],
                     &a_t2,
                     &mut a_fusion,
-                    rcad_kernel::precision::PCONFUSION,
-                    true,
+                    1.0e-9,
+                    false,
                 );
                 a_fusion
             }

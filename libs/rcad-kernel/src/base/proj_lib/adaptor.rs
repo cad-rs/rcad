@@ -175,6 +175,14 @@ pub trait Adaptor3dCurve {
     fn d2(&self, u: f64) -> (DVec3, DVec3, DVec3);
     /// OCCT Continuity().
     fn continuity(&self) -> GeomAbsShape;
+    /// OCCT Adaptor3d_Curve::GetType() — the dynamic curve type.  The OCCT
+    /// base adaptor answers GeomAbs_OtherCurve (Adaptor3d_Curve.cxx L49-52,
+    /// the `Standard_NoSuchObject`-flavored default); the concrete adaptors
+    /// override (e.g. GeomAdaptor_Curve answers its myTypeCurve,
+    /// GeomAdaptor_Curve.cxx L231-289).
+    fn curve_type(&self) -> CurveType {
+        CurveType::Other
+    }
     /// OCCT NbIntervals(S).
     fn nb_intervals(&self, s: GeomAbsShape) -> usize;
     /// OCCT Intervals(T, S) — the S-discontinuity parameters.

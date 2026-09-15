@@ -26,7 +26,6 @@
 //!   records by surface value (`BRep_CurveRepresentation::IsRegularity`
 //!   reduces to the value match — the rcad surfaces travel as values).
 
-use std::rc::Rc;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
@@ -34,9 +33,9 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::base::extrema_curve_tool::CurveToolHandle;
 use rcad_kernel::base::extrema_locate_ext_pc::LocateExtPC;
 use rcad_kernel::base::geom_lprop::SLProps;
-use rcad_kernel::base::proj_lib::adaptor::{CurveOnSurface, CurveType};
-use rcad_kernel::base::proj_lib::{Geom2dCurveAdaptor, GeomSurfaceAdaptor};
-use rcad_kernel::core::precision::{is_infinite_value, CONFUSION, PCONFUSION, SQUARE_CONFUSION};
+use rcad_kernel::base::proj_lib::adaptor::{Adaptor3dCurve, CurveOnSurface};
+use rcad_kernel::base::proj_lib::{CurveType, Geom2dCurveAdaptor, GeomSurfaceAdaptor};
+use rcad_kernel::core::precision::{CONFUSION, PCONFUSION, SQUARE_CONFUSION};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3, SurfaceEval};
 use rcad_kernel::topo::topods::{
     edge_data_pool_free, face_surface_value, shape_is_in_pool, surface_same, BRep, BRepBuilder,
@@ -366,14 +365,13 @@ pub fn continuity_of_faces(
     };
     let mut a_cur_cont;
 
-    // OCCT L2303-2325: the projector (built lazily on the first refinement,
-    // exactly like the OCCT `aHC2` null check).  The adaptor trio is kept
-    // alive next to the projector (the OCCT shared handles).
-    let mut a_projector: Option<(
-        Box<CurveOnSurface>,
-        Box<CurveToolHandle>,
-        Box<LocateExtPC>,
-    )> = None;
+    // OCCT L2301-2302: `Extrema_LocateExtPC ext; occ::handle<BRepAdaptor_Curve>
+    // aHC2;` — the projector is built lazily on the first refinement pass
+    // (the OCCT `aHC2.IsNull()` gate, L2338).  The construction is replayed
+    // at each refinement pass over the same range — the
+    // `section_placement` replay convention (the OCCT member handle
+    // persists; the observable behavior is identical).
+    let mut a_refined = false;
 
     // OCCT L2302: for (int i = 0; i <= 20 && aCont > GeomAbs_C0; i++).
     for a_i in 0..=20i32 {
@@ -415,37 +413,40 @@ pub fn continuity_of_faces(
 
         if !a_is_smooth_suspect {
             // OCCT L2336-2351: refine by projection — the pcurve adaptor on
-            // the second surface, built once.
-            if a_projector.is_none() {
-                // OCCT L2340: aHC2 = new BRepAdaptor_Curve(anEdgeInFace2,
-                // theFace2) — the CurveOnSurface adaptor over the pcurve.
-                let (a_pc2, a_f2, a_l2) = match curve_on_surface_in_face(
-                    the_brep,
-                    &an_edge_in_face2,
-                    &the_face2,
-                ) {
-                    Some(a_c) => a_c,
-                    None => return GeomAbsShape::C0,
-                };
-                let a_cs = Box::new(CurveOnSurface::new(
-                    Arc::new(Geom2dCurveAdaptor::with_range(a_pc2, a_f2, a_l2)),
-                    Arc::new(GeomSurfaceAdaptor::new(a_surface2_raw.clone())),
-                ));
-                // OCCT L2341: ext.Initialize(*aHC2, f, l,
-                // Precision::PConfusion()) — over the shrunk window.
-                let a_cth = Box::new(CurveToolHandle::new(
-                    a_cs.as_ref(),
-                    CurveType::Other,
-                    Adaptor3dQueries::is_periodic(a_cs.as_ref()),
-                    Adaptor3dQueries::period(a_cs.as_ref()),
-                    Adaptor3dQueries::resolution(a_cs.as_ref(), CONFUSION),
-                    Adaptor3dQueries::is_closed(a_cs.as_ref()),
-                ));
-                let mut a_ext = Box::new(LocateExtPC::new());
-                a_ext.initialize(a_cth.as_ref(), a_f, a_l, PCONFUSION);
-                a_projector = Some((a_cs, a_cth, a_ext));
+            // the second surface, built on the first pass (the aHC2 null
+            // gate).  The construction is replayed at each refinement pass
+            // over the same range — the section_placement replay
+            // convention (the OCCT member handle persists; the observable
+            // behavior is identical).
+            if !a_refined {
+                a_refined = true;
             }
-            let a_ext = a_projector.as_mut().unwrap().2.as_mut();
+            // OCCT L2340: aHC2 = new BRepAdaptor_Curve(anEdgeInFace2,
+            // theFace2) — the CurveOnSurface adaptor over the pcurve.
+            let (a_pc2, a_f2, a_l2) = match curve_on_surface_in_face(
+                the_brep,
+                &an_edge_in_face2,
+                &the_face2,
+            ) {
+                Some(a_c) => a_c,
+                None => return GeomAbsShape::C0,
+            };
+            let a_cs = Box::new(CurveOnSurface::new(
+                Arc::new(Geom2dCurveAdaptor::with_range(a_pc2, a_f2, a_l2)),
+                Arc::new(GeomSurfaceAdaptor::new(a_surface2_raw.clone())),
+            ));
+            // OCCT L2341: ext.Initialize(*aHC2, f, l,
+            // Precision::PConfusion()) — over the shrunk window.
+            let a_cth = Box::new(CurveToolHandle::new(
+                a_cs.as_ref(),
+                CurveType::Other,
+                a_cs.is_periodic(),
+                a_cs.period(),
+                a_cs.resolution(CONFUSION),
+                a_cs.is_closed(),
+            ));
+            let mut a_ext = Box::new(LocateExtPC::new());
+            a_ext.initialize(a_cth.as_ref(), a_f, a_l, PCONFUSION);
             // OCCT L2342: ext.Perform(aSP1.Value(), u).
             a_ext.perform(a_sp1.value(), a_u);
             if a_ext.is_done() && a_ext.is_min() {
@@ -479,19 +480,19 @@ pub fn continuity_of_faces(
             continue;
         }
 
-        // OCCT L2372-2377: the principal curvatures on each surface.
-        a_sp1.curvature(
-            &mut a_crv_dir1[0],
-            &mut a_crv_len1[0],
-            &mut a_crv_dir1[1],
-            &mut a_crv_len1[1],
-        );
-        a_sp2.curvature(
-            &mut a_crv_dir2[0],
-            &mut a_crv_len2[0],
-            &mut a_crv_dir2[1],
-            &mut a_crv_len2[1],
-        );
+        // OCCT L2372-2377: the principal curvatures on each surface (the
+        // carriers are locals — the two mutable out-parameters cannot alias
+        // the array slots).
+        let (mut a_d10, mut a_l10, mut a_d11, mut a_l11) =
+            (DVec3::ZERO, 0.0f64, DVec3::ZERO, 0.0f64);
+        a_sp1.curvature(&mut a_d10, &mut a_l10, &mut a_d11, &mut a_l11);
+        a_crv_dir1 = [a_d10, a_d11];
+        a_crv_len1 = [a_l10, a_l11];
+        let (mut a_d20, mut a_l20, mut a_d21, mut a_l21) =
+            (DVec3::ZERO, 0.0f64, DVec3::ZERO, 0.0f64);
+        a_sp2.curvature(&mut a_d20, &mut a_l20, &mut a_d21, &mut a_l21);
+        a_crv_dir2 = [a_d20, a_d21];
+        a_crv_len2 = [a_l20, a_l21];
 
         // OCCT L2378-2404: the G2/C2 classification — the directions of
         // principal curvatures parallel and the curvature values equal.
@@ -526,29 +527,6 @@ pub fn continuity_of_faces(
         a_cont = GeomAbsShape::CN;
     }
     a_cont
-}
-
-/// The trait-object query bundle over the erased `Adaptor3dCurve` — the
-/// named shorthand for the handle queries the projector facade needs (the
-/// same shape as the `section_placement` erased-handle construction).
-struct Adaptor3dQueries;
-
-impl Adaptor3dQueries {
-    fn is_periodic(a_c: &dyn rcad_kernel::base::proj_lib::adaptor::Adaptor3dCurve) -> bool {
-        a_c.is_periodic()
-    }
-    fn period(a_c: &dyn rcad_kernel::base::proj_lib::adaptor::Adaptor3dCurve) -> f64 {
-        a_c.period()
-    }
-    fn resolution(
-        a_c: &dyn rcad_kernel::base::proj_lib::adaptor::Adaptor3dCurve,
-        the_tol: f64,
-    ) -> f64 {
-        a_c.resolution(the_tol)
-    }
-    fn is_closed(a_c: &dyn rcad_kernel::base::proj_lib::adaptor::Adaptor3dCurve) -> bool {
-        a_c.is_closed()
-    }
 }
 
 // =========================================================================
@@ -632,7 +610,8 @@ fn encode_regularity_impl(
     }
 
     // OCCT L2441-2450: the compound / compsolid recursion.
-    if the_shape.shape_type == ShapeType::Compound || the_shape.shape_type == ShapeType::CompSolid
+    if the_shape.shape_type() == ShapeType::Compound
+        || the_shape.shape_type() == ShapeType::CompSolid
     {
         for a_child in bat::sub_shapes(the_shape) {
             encode_regularity_impl(the_brep, &a_child, the_tol_ang, the_map, the_edges_to_encode);
@@ -729,35 +708,207 @@ pub fn encode_regularity_edge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::geom::{BSplineSurface, Plane};
-    use rcad_kernel::topo::topods::BRepTool;
+    use rcad_kernel::geom::{Curve3, Line2d, Line3, Plane};
 
-    /// Two coplanar faces sharing an edge: ContinuityOfFaces answers C1 —
-    /// the derivatives in the tangent plane are equal (the planar analytic
-    /// closed form), never G2 (the principal curvatures are 0 == 0, so the
-    /// G2 parallel/equal test also holds; the OCCT ordering keeps C1 as the
-    /// minimum carried through when aCont < G2 short-circuits... with
-    /// aCont = C2 for the non-elementary pair the loop runs to the G2
-    /// block: for planes the curvatures are 0, directions zero — the
-    /// cross-square-magnitude test `0 <= 0` passes and C1 codirectionality
-    /// promotes to C2).
-    #[test]
-    fn coplanar_bspline_faces_are_c2() {
-        let mut a_brep = BRep::new();
-        let a_bs = BSplineSurface {
-            degree_u: 1,
-            degree_v: 1,
-            knots_u: vec![0.0, 0.0, 1.0, 1.0],
-            knots_v: vec![0.0, 0.0, 1.0, 1.0],
-            control_points: vec![vec![DVec3::ZERO, DVec3::new(0.0, 2.0, 0.0)]],
-            weights: vec![vec![1.0]],
-            is_u_periodic: false,
-            is_v_periodic: false,
+    /// One rectangular boundary edge: the 3d line from (x0, y0) along
+    /// `dir`, with the plane pcurve (origin UV + the same direction).
+    fn add_rect_edge(
+        the_brep: &mut BRep,
+        the_v1: Shape,
+        the_v2: Shape,
+        the_x0: f64,
+        the_y0: f64,
+        the_dir: DVec3,
+        the_len: f64,
+    ) -> Shape {
+        the_brep.add_tedge(
+            Some(Curve3::Line(Line3::new(
+                DVec3::new(the_x0, the_y0, 0.0),
+                the_dir,
+            ))),
+            the_v1,
+            the_v2,
+            [0.0, the_len],
+        )
+    }
+
+    /// The plane pcurve representation pushed on the edge for the face
+    /// (the global plane UV of the z = 0 plane).
+    fn push_plane_pcurve(the_brep: &mut BRep, the_e: &Shape, the_face: &Shape) {
+        let a_te = the_brep.edge(the_e.clone());
+        let Some(Curve3::Line(a_ln)) = &a_te.curve else {
+            panic!("expected a line edge");
         };
-        let a_surf = Rc::new(a_bs);
-        let _ = &a_surf;
-        let _ = a_brep;
-        let _ = BRepTool::vertex_tolerance(&BRep::new(), &Shape::null());
-        // (placeholder assertions live in the two tests below)
+        let a_pc = Curve2d::Line(Line2d::new(
+            DVec2::new(a_ln.origin.x, a_ln.origin.y),
+            DVec2::new(a_ln.direction.x, a_ln.direction.y),
+        ));
+        let a_te2 = the_brep.edge(the_e.clone());
+        let a_r = (a_te2.range[0], a_te2.range[1]);
+        drop(a_te2);
+        drop(a_te);
+        the_brep
+            .edge_mut_inplace(the_e.clone())
+            .representations
+            .push(CurveRepresentation::CurveOnSurface {
+                face: (the_face.ptr_id(), the_face.location),
+                pcurve: a_pc,
+                range: [a_r.0, a_r.1],
+            });
+    }
+
+    /// The shared construction: two coplanar rectangular faces on z = 0 —
+    /// face 1 over [0,2]x[0,2], face 2 over [2,4]x[0,2] — sharing the ONE
+    /// edge TShape at x = 2 (the same Shape in both wires, two
+    /// CurveOnSurface representations).  Returns the compound of the two
+    /// faces.
+    fn make_coplanar_pair(the_brep: &mut BRep) -> Shape {
+        let a_plane = Surface3::Plane(Plane::new(DVec3::ZERO, DVec3::Z));
+        let mut a_b = BRepBuilder::new();
+
+        let a_p00 = the_brep.add_tvertex(DVec3::new(0.0, 0.0, 0.0));
+        let a_vs = the_brep.add_tvertex(DVec3::new(2.0, 0.0, 0.0));
+        let a_p20 = the_brep.add_tvertex(DVec3::new(4.0, 0.0, 0.0));
+        let a_p01 = the_brep.add_tvertex(DVec3::new(0.0, 2.0, 0.0));
+        let a_ve = the_brep.add_tvertex(DVec3::new(2.0, 2.0, 0.0));
+        let a_p21 = the_brep.add_tvertex(DVec3::new(4.0, 2.0, 0.0));
+
+        // Face 1: bottom / shared / top / left.
+        let a_bottom1 =
+            add_rect_edge(the_brep, a_p00.clone(), a_vs.clone(), 0.0, 0.0, DVec3::X, 2.0);
+        let a_shared = add_rect_edge(the_brep, a_vs.clone(), a_ve.clone(), 2.0, 0.0, DVec3::Y, 2.0);
+        let a_top1 = add_rect_edge(the_brep, a_p01.clone(), a_ve.clone(), 0.0, 2.0, DVec3::X, 2.0);
+        let a_left = add_rect_edge(the_brep, a_p00.clone(), a_p01.clone(), 0.0, 0.0, DVec3::Y, 2.0);
+        let a_wire1 = a_b.build_wire(
+            the_brep,
+            vec![
+                a_bottom1.clone(),
+                a_shared.clone(),
+                a_top1.clone(),
+                a_left.clone(),
+            ],
+        );
+        let a_face1 = a_b.make_face(the_brep, Some(a_plane.clone()), a_wire1);
+
+        // Face 2: bottom / right / top / the SAME shared edge.
+        let a_bottom2 =
+            add_rect_edge(the_brep, a_vs.clone(), a_p20.clone(), 2.0, 0.0, DVec3::X, 2.0);
+        let a_right = add_rect_edge(the_brep, a_p20.clone(), a_p21.clone(), 4.0, 0.0, DVec3::Y, 2.0);
+        let a_top2 = add_rect_edge(the_brep, a_ve.clone(), a_p21.clone(), 2.0, 2.0, DVec3::X, 2.0);
+        let a_wire2 = a_b.build_wire(
+            the_brep,
+            vec![
+                a_bottom2.clone(),
+                a_right.clone(),
+                a_top2.clone(),
+                a_shared.clone(),
+            ],
+        );
+        let a_face2 = a_b.make_face(the_brep, Some(a_plane.clone()), a_wire2);
+
+        // The pcurves (after the faces exist — the representations key on
+        // the face shapes).
+        for (a_e, a_f) in [
+            (&a_bottom1, &a_face1),
+            (&a_shared, &a_face1),
+            (&a_top1, &a_face1),
+            (&a_left, &a_face1),
+            (&a_bottom2, &a_face2),
+            (&a_right, &a_face2),
+            (&a_top2, &a_face2),
+            (&a_shared, &a_face2),
+        ] {
+            push_plane_pcurve(the_brep, a_e, a_f);
+        }
+
+        // The SHELL of the two faces — the OCCT static recurses through
+        // COMPOUND/COMPSOLID only (cxx L2442-2450), so a compound of faces
+        // would map each face alone with EMPTY ancestor lists; the shell is
+        // the OCCT input form where the EDGE/FACE ancestors map sees both
+        // faces.
+        let a_shell = a_b.make_shell(the_brep);
+        a_b.add_to_shell(the_brep, a_shell.clone(), a_face1.clone());
+        a_b.add_to_shell(the_brep, a_shell.clone(), a_face2.clone());
+        a_shell
+    }
+
+    /// The probe: the edge carrying two CurveOnSurface representations
+    /// (the shared x = 2 edge).
+    fn find_shared_edge(the_brep: &BRep, the_comp: &Shape) -> Shape {
+        for a_f in bat::sub_shapes(the_comp) {
+            for a_e in bat::explorer(&a_f, ShapeType::Edge, ShapeType::Shape) {
+                if shape_is_in_pool(the_brep, &a_e) {
+                    let a_te = the_brep.edge(a_e.clone());
+                    let a_pcs = a_te
+                        .representations
+                        .iter()
+                        .filter(|a_cr| {
+                            matches!(a_cr, CurveRepresentation::CurveOnSurface { .. })
+                        })
+                        .count();
+                    if a_pcs > 1 {
+                        return a_e;
+                    }
+                }
+            }
+        }
+        Shape::null()
+    }
+
+    /// Two coplanar forward faces (elementary surfaces): the orthogonal
+    /// derivatives are equal (C1); the principal directions of the SAME
+    /// plane are identical (dot = 1 > Confusion), so the codirectionality
+    /// promotion (cxx L2391-2397) raises C1 to C2; aCont = min(CN, C2) = C2
+    /// through the loop, and the elementary tail (cxx L2412-2418) promotes
+    /// the C2 to CN.  (First expectation was G2 — wrong: the zero-curvature
+    /// directions of one plane are NOT zero vectors, they coincide.)
+    #[test]
+    fn coplanar_forward_faces_code_cn() {
+        let mut a_brep = BRep::new();
+        let a_comp = make_coplanar_pair(&mut a_brep);
+        encode_regularity(&mut a_brep, &a_comp, CONFUSION);
+
+        let a_shared = find_shared_edge(&a_brep, &a_comp);
+        assert!(
+            !a_shared.is_null(),
+            "the shared edge must carry two pcurve representations"
+        );
+        let a_te = a_brep.edge(a_shared.clone());
+        let a_rec = a_te.representations.iter().find_map(|a_cr| match a_cr {
+            CurveRepresentation::CurveOn2Surfaces { continuity, .. } => Some(*continuity),
+            _ => None,
+        });
+        assert_eq!(a_rec, Some(GeomAbsShape::CN), "the coplanar pair codes CN");
+    }
+
+    /// The reversed second face: opposing normals answer GeomAbs_C0
+    /// directly (cxx L2324-2335).
+    #[test]
+    fn reversed_second_face_answers_c0() {
+        let mut a_brep = BRep::new();
+        let a_comp = make_coplanar_pair(&mut a_brep);
+        let a_children = bat::sub_shapes(&a_comp);
+        assert_eq!(a_children.len(), 2);
+        let a_face1 = a_children[0].clone();
+        let a_face2 = bat::oriented(&a_children[1], Orientation::Reversed);
+        let a_shared = find_shared_edge(&a_brep, &a_comp);
+        let a_cont = continuity_of_faces(&a_brep, &a_shared, &a_face1, &a_face2, CONFUSION);
+        assert_eq!(a_cont, GeomAbsShape::C0);
+    }
+
+    /// The reader: after the coding, BRep_Tool::Continuity(E, F1, F2)
+    /// answers CN (the elementary-surface coplanar outcome, see the walk
+    /// test above).
+    #[test]
+    fn continuity_reader_answers_the_coded_record() {
+        let mut a_brep = BRep::new();
+        let a_comp = make_coplanar_pair(&mut a_brep);
+        let a_children = bat::sub_shapes(&a_comp);
+        let a_shared = find_shared_edge(&a_brep, &a_comp);
+        encode_regularity_edge(&mut a_brep, &a_shared, &a_children[0], &a_children[1], CONFUSION);
+        assert_eq!(
+            brep_tool_continuity(&a_brep, &a_shared, &a_children[0], &a_children[1]),
+            GeomAbsShape::CN
+        );
     }
 }
