@@ -29,10 +29,11 @@
 //    below (the DPrism test curve is a Geom_Line; Geom_Line::Reversed
 //    reverses the direction).
 // 7. The myNewEdges fixing pass tail of Perform(Until) (cxx L403-413) calls
-//    BRepAlgo::IsValid (the brep_algo_is_valid GAP marker), then
-//    BRep_Builder::SameRange/SameParameter (the rcad kernel edge flags —
-//    the Arc-shared TShape is not mutated through the handle) and
-//    BRepLib::SameParameter (the topalgo BRepLib stub).
+//    BRepAlgo::IsValid (the brep_algo_is_valid GAP marker) and then drives
+//    BRep_Builder::SameRange/SameParameter + BRepLib::SameParameter on an
+//    edge outside any live pool: the edge graph is adopted into a standalone
+//    pool with the Arc SHARED (topo_builder::brep_from_shape), so the
+//    builder/engine writes mutate the shared TShape in place.
 
 use crate::brep_algo::tool::brep_tool_tolerance;
 use crate::bop::algo::builder::BooleanOpType;
@@ -44,7 +45,6 @@ use crate::feat::brep_feat_form_2::{
 use crate::feat::brep_feat_status::{BRepFeatPerfSelection, BRepFeatStatusError};
 use crate::feat::loc_ope_cs_intersector::LocOpeCSIntersector;
 use crate::feat::loc_ope_d_prism::LocOpeDPrism;
-use crate::topalgo::brep_lib::brep_lib::BRepLib;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, TShape};
@@ -506,7 +506,28 @@ impl BRepFeatMakeDPrism {
                 // bB.SameParameter(ledg, false); BRepLib::SameParameter(ledg,
                 // BRep_Tool::Tolerance(ledg)).
                 let tolerance = brep_tool_tolerance(&ledg);
-                BRepLib::same_parameter(&ledg, tolerance);
+                // The edge lives outside any live pool (the feat pipeline
+                // shapes carry their source flat index, the building pool is
+                // gone): adopt the edge graph into a standalone pool with the
+                // Arc SHARED (topo_builder::brep_from_shape, the
+                // loc_ope_find_edges_in_face.rs L226 precedent), so the
+                // engine's in-place edge writes (BRep_TEdge::Modified /
+                // Tolerance, BRepLib.cxx L1733-1734) reach every handle of
+                // the TShape the way the OCCT builder mutates the shared
+                // TShape in place through the handle.
+                let mut a_brep = rcad_kernel::topo::topo_builder::brep_from_shape(&ledg, &[]);
+                // OCCT L409: bB.SameRange(ledg, false).
+                a_brep.edge_mut_inplace(ledg.clone()).same_range = false;
+                // OCCT L410: bB.SameParameter(ledg, false).
+                a_brep.edge_mut_inplace(ledg.clone()).same_parameter = false;
+                // OCCT L411: BRepLib::SameParameter(ledg, tolerance) — the
+                // topalgo::brep_lib engine (the 2-arg edge overload,
+                // BRepLib.cxx L1237-1247).
+                crate::topalgo::brep_lib::same_parameter::same_parameter(
+                    &mut a_brep,
+                    &ledg,
+                    tolerance,
+                );
             }
         }
     }

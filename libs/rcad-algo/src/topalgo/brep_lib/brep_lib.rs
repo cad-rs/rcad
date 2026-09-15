@@ -18,13 +18,6 @@ use crate::geomalgo::int_patch::{classify_surface_type, GeomAbsSurfaceType};
 pub struct BRepLib;
 
 impl BRepLib {
-    /// OCCT: SameParameter(edge, tol) — ensures the edge has the same
-    /// parameterization for its 3D curve and pcurve.
-    /// rcad: stub — edge parameterization handled by kernel.
-    pub fn same_parameter(edge: &Shape, _tol: f64) {
-        let _ = edge;
-    }
-
     /// OCCT: FindValidRange(edge, first, last) — finds valid parametric
     /// range for the edge within the given bounds.
     /// rcad: stub — returns true with unchanged range.
@@ -194,5 +187,67 @@ fn geom_adaptor_surface_get_type(s: &Surface3) -> GeomAbsSurfaceType {
     match s {
         Surface3::Trimmed(a_ts) => classify_surface_type(&a_ts.basis),
         _ => classify_surface_type(s),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::topo::topo_builder::brep_from_shape;
+    use rcad_kernel::topo::topods::{edge_data_pool_free, BRep, BRepBuilder};
+
+    /// The pool-free caller wiring of BRepLib::SameParameter (the
+    /// brep_feat_make_d_prism.rs / loc_ope_wires_on_shape_b.rs pattern):
+    /// the edge graph is adopted into a standalone pool with the Arc SHARED
+    /// (topo_builder::brep_from_shape), the builder flag resets and the
+    /// topalgo::brep_lib engine run over the adopted pool, and the writes
+    /// must be observable through the CALLER's own Shape handle — the OCCT
+    /// in-place TShape mutation through the handle (BRep_TEdge::Modified /
+    /// Tolerance, BRepLib.cxx L1719-1737).
+    #[test]
+    fn same_parameter_adoption_reaches_pool_free_caller() {
+        // A straight edge built in a source pool that is then dropped: the
+        // caller-side Shape keeps its source flat index (the feat pipeline
+        // provenance of the two wiring sites).
+        let a_edge = {
+            let mut a_src = BRep::new();
+            let mut a_b = BRepBuilder::new();
+            let a_v0 = a_b.add_vertex(&mut a_src, glam::DVec3::ZERO, 1.0e-7);
+            let a_v1 = a_b.add_vertex(&mut a_src, glam::DVec3::X, 1.0e-7);
+            a_b.add_edge(
+                &mut a_src,
+                Some(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3::new(
+                    glam::DVec3::ZERO,
+                    glam::DVec3::X,
+                ))),
+                a_v0.clone(),
+                a_v1.clone(),
+                [0.0, 1.0],
+            )
+        };
+        assert!(a_edge.index != usize::MAX, "pool-free by dropped pool, not synthetic");
+
+        // The wiring: adopt with the Arc SHARED and run the engine.
+        let mut a_brep = brep_from_shape(&a_edge, &[]);
+        // OCCT BRepFeat_MakeDPrism.cxx L409-410: bB.SameRange(ledg, false);
+        // bB.SameParameter(ledg, false) — in place through the shared Arc.
+        a_brep.edge_mut_inplace(a_edge.clone()).same_range = false;
+        a_brep.edge_mut_inplace(a_edge.clone()).same_parameter = false;
+        // OCCT LocOpe_WiresOnShape.cxx L908: BRepLib::SameParameter(Edg, tol).
+        crate::topalgo::brep_lib::same_parameter::same_parameter(&mut a_brep, &a_edge, 1.0e-5);
+
+        // The adoption must not have cloned the TShape (the precondition of
+        // the in-place propagation).
+        assert_eq!(
+            std::sync::Arc::as_ptr(&a_brep.tshapes[a_edge.index]),
+            std::sync::Arc::as_ptr(&a_edge.data),
+            "brep_from_shape shares the TShape Arc"
+        );
+        // The OCCT in-place semantics: the caller's handle observes the
+        // engine writes without any write-back step.
+        let a_ed = edge_data_pool_free(&a_edge).expect("edge payload");
+        assert!(a_ed.same_range, "SameRange flag (cxx L1720)");
+        assert!(a_ed.same_parameter, "SameParameter flag (cxx L1736)");
+        assert_eq!(a_ed.range, [0.0, 1.0], "Range(aNE, f3d, l3d) (cxx L1719)");
     }
 }

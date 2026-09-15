@@ -1000,8 +1000,36 @@ impl BRepFillFilling {
             // make_edge_pcurve time.
             update_edge_pcurve_standalone(brep, &new_edge, a_curve_on_plate, dmax);
             // OCCT L769 (commented-out SameRange) — skipped as in OCCT.
-            // OCCT L770: BRepLib::SameParameter(NewEdge, dmax, true).
-            crate::topalgo::brep_lib::brep_lib::BRepLib::same_parameter(&new_edge, dmax);
+            // OCCT L770: BRepLib::SameParameter(NewEdge, dmax, true) — the
+            // 3-arg call binds to the shape-level overload (BRepLib.hxx
+            // L182-186) -> InternalSameParameter(S, reshaper, Tol,
+            // forced=true, IsMutableInput=true) (BRepLib.cxx L1016-1019).
+            // For the single-edge S: the forced flag reset (cxx L931-946 —
+            // UseOldEdge is true through IsMutableInput, so only the builder
+            // resets run), then the 4-arg engine with IsUseOldEdge=true
+            // (cxx L948) and the vertex tolerance raise (cxx L950-962
+            // UpdTolMap -> UpdShTol, the same UpdateTolerance-keeps-max
+            // semantics as the engine's UpdateVTol tail).  NewEdge is
+            // pool-resident in `brep` (created by brep.empty_copied above),
+            // so the engine's in-place TShape writes (BRep_TEdge::Modified /
+            // Tolerance, cxx L1733-1734) reach the NewEdge handle the way
+            // the OCCT builder mutates the shared TShape.  The cxx L1007
+            // InternalUpdateTolerances tail has no rcad port yet (no
+            // BRepLib::UpdateTolerances translation exists) — recorded gap.
+            {
+                // cxx L931: if (IsForced && (SameRange(aCE) || SameParameter(aCE))).
+                let a_forced_reset = {
+                    let a_ed = brep.edge(new_edge.clone());
+                    a_ed.same_range || a_ed.same_parameter
+                };
+                if a_forced_reset {
+                    // cxx L944: aB.SameRange(aNE, false).
+                    brep.edge_mut_inplace(new_edge.clone()).same_range = false;
+                    // cxx L945: aB.SameParameter(aNE, false).
+                    brep.edge_mut_inplace(new_edge.clone()).same_parameter = false;
+                }
+            }
+            crate::topalgo::brep_lib::same_parameter::same_parameter(brep, &new_edge, dmax);
             // OCCT L771.
             final_edges.push(new_edge.clone());
             // OCCT L772.

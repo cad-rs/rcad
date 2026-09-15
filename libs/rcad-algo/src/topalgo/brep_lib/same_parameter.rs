@@ -13,8 +13,9 @@
 //! rcad mirrors this through the BRep pool (`BRep::edge_mut_inplace`) —
 //! the engine takes `&mut BRep` where OCCT mutates, `&BRep` where OCCT only
 //! reads.  These are free functions (the OCCT statics of BRepLib.cxx); the
-//! pre-existing `BRepLib::same_parameter` method stub on the BRepLib struct
-//! serves callers outside this module's rewiring scope.
+//! pool-free callers adopt the edge graph into a standalone pool with the
+//! Arc SHARED (topo_builder::brep_from_shape), so the in-place writes stay
+//! observable through the caller's own Shape handle.
 //!
 //! Encodings recorded along the way:
 //! - `occ::handle<GeomAdaptor_Curve> HC` -> [`GeomCurveAdaptor`] (the
@@ -1042,12 +1043,14 @@ fn geom2d_bspline_to_curve2d(the_bs: &Geom2dBSplineCurve) -> Curve2d {
     })
 }
 
-/// OCCT Geom2d_BSplineCurve::Resolution(Tolerance3D, U) — the
-/// BSplCLib::Resolution call with the 2d poles.  The kernel
-/// `bspl_lib::resolution` carries the dim-1 specialized branch; the 2d
-/// query evaluates the coordinate-wise resolutions and keeps the binding
-/// one (the largest curvature direction wins), which matches the dim-2
-/// branch on the non-rational polynomials the pipeline feeds.
+/// OCCT Geom2d_BSplineCurve::Resolution(Tolerance3D, U) — the BSplCLib
+/// case-2 `Resolution` arm (BSplCLib.cxx L4329-4445): the per-pole value
+/// is the MANHATTAN sum of the two coordinate differences maximized over
+/// the wrapped pole pairs (rational: normalized by the minimal weight),
+/// then UTolerance = Tolerance3D / (Degree * max).  This is the JOINT 2d
+/// result — NOT the min of two dim-1 resolutions (the joint
+/// max_derivative is at least each per-axis one, so the joint parametric
+/// tolerance is at most each per-axis one).
 fn geom2d_bspline_resolution(the_bs: &Geom2dBSplineCurve, the_tolerance3d: f64) -> f64 {
     let mut a_flat_knots: Vec<f64> = Vec::new();
     for a_i in 1..=the_bs.nb_knots() {
@@ -1056,12 +1059,13 @@ fn geom2d_bspline_resolution(the_bs: &Geom2dBSplineCurve, the_tolerance3d: f64) 
             a_flat_knots.push(a_k);
         }
     }
-    let a_poles_x: Vec<f64> = (1..=the_bs.nb_poles_curve())
-        .map(|a_i| the_bs.pole(a_i).x)
-        .collect();
-    let a_poles_y: Vec<f64> = (1..=the_bs.nb_poles_curve())
-        .map(|a_i| the_bs.pole(a_i).y)
-        .collect();
+    // The OCCT flat PA layout: x0, y0, x1, y1, ...
+    let mut a_poles_xy: Vec<f64> = Vec::with_capacity(2 * the_bs.nb_poles_curve() as usize);
+    for a_i in 1..=the_bs.nb_poles_curve() {
+        let a_p = the_bs.pole(a_i);
+        a_poles_xy.push(a_p.x);
+        a_poles_xy.push(a_p.y);
+    }
     let a_weights: Option<Vec<f64>> = if the_bs.is_rational() {
         Some(
             (1..=the_bs.nb_poles_curve())
@@ -1071,23 +1075,14 @@ fn geom2d_bspline_resolution(the_bs: &Geom2dBSplineCurve, the_tolerance3d: f64) 
     } else {
         None
     };
-    let a_u_x = bspl_lib::resolution(
-        1,
-        &a_poles_x,
+    bspl_lib::resolution(
+        2,
+        &a_poles_xy,
         a_weights.as_deref(),
         &a_flat_knots,
         the_bs.degree(),
         the_tolerance3d,
-    );
-    let a_u_y = bspl_lib::resolution(
-        1,
-        &a_poles_y,
-        a_weights.as_deref(),
-        &a_flat_knots,
-        the_bs.degree(),
-        the_tolerance3d,
-    );
-    a_u_x.min(a_u_y)
+    )
 }
 
 // =========================================================================
@@ -1278,6 +1273,35 @@ mod tests {
             "vertex tolerance raised: {} -> {}",
             a_tol_before,
             a_tol_after
+        );
+    }
+
+    /// The 2d Resolution joint-norm form (BSplCLib.cxx L4413-4445): a
+    /// degree-1 curve with poles (0,0), (1,100) answers
+    /// Tolerance3D/(Degree*(|dx|+|dy|)) = Tolerance3D/101 — the Manhattan
+    /// sum over both coordinates, NOT the per-axis min (Tolerance3D/100
+    /// from the y extent) the retired min-of-two-dim-1 body produced.
+    #[test]
+    fn geom2d_bspline_resolution_is_the_joint_manhattan_norm() {
+        let a_bs = Geom2dBSplineCurve::new(
+            vec![DVec2::ZERO, DVec2::new(1.0, 100.0)],
+            vec![0.0, 1.0],
+            vec![2, 2],
+            1,
+            false,
+        );
+        let a_u = geom2d_bspline_resolution(&a_bs, 1.0e-3);
+        let a_expected = 1.0e-3 / 101.0;
+        assert!(
+            (a_u - a_expected).abs() < 1.0e-18,
+            "joint 2d Resolution: {} vs {}",
+            a_u,
+            a_expected
+        );
+        assert!(
+            a_u < 1.0e-5,
+            "the joint form is tighter than the per-axis min {}",
+            1.0e-5
         );
     }
 }

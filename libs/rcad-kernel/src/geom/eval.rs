@@ -2663,6 +2663,29 @@ impl Curve2dEval for Curve2d {
             Curve2d::TBezier(c) => c.derivative2_at(t),
         }
     }
+    fn derivative3_at(&self, t: f64) -> DVec2 {
+        // OCCT Geom2d_Curve::D3 is virtual: forward per variant (the same
+        // union dispatch as the 3D Curve3 enum).  Without this arm the
+        // offset EvalD2 read the basis D3 through the finite-difference
+        // trait default even for the exact BSpline basis.
+        match self {
+            Curve2d::Trimmed(tc) => tc.derivative3_at(t),
+            Curve2d::Line(c) => c.derivative3_at(t),
+            Curve2d::Circle(c) => c.derivative3_at(t),
+            Curve2d::Ellipse(c) => c.derivative3_at(t),
+            Curve2d::CircleInvolute(c) => c.derivative3_at(t),
+            Curve2d::Parabola(c) => c.derivative3_at(t),
+            Curve2d::Hyperbola(c) => c.derivative3_at(t),
+            Curve2d::ArchimedeanSpiral(c) => c.derivative3_at(t),
+            Curve2d::LogarithmicSpiral(c) => c.derivative3_at(t),
+            Curve2d::SineWave(c) => c.derivative3_at(t),
+            Curve2d::BSpline(c) => c.derivative3_at(t),
+            Curve2d::Bezier(c) => c.derivative3_at(t),
+            Curve2d::Offset(c) => c.derivative3_at(t),
+            Curve2d::AHTBezier(c) => c.derivative3_at(t),
+            Curve2d::TBezier(c) => c.derivative3_at(t),
+        }
+    }
     fn default_domain(&self) -> [f64; 2] {
         match self {
             Curve2d::Trimmed(tc) => [tc.t_min, tc.t_max],
@@ -2777,16 +2800,41 @@ impl Curve2dEval for TrimmedCurve2 {
 
 impl Curve2dEval for OffsetCurve2d {
     fn point_at(&self, t: f64) -> DVec2 {
-        let base_pt = self.basis.point_at(t);
-        // Compute tangent via finite differences
-        let eps = 1e-6;
-        let t_hi = t + eps;
-        let t_lo = t - eps;
-        let dp = self.basis.point_at(t_hi) - self.basis.point_at(t_lo);
-        let tangent = dp.normalize_or_zero();
-        // OCCT-aligned right-hand normal: Z_cross_tangent = (Ty, -Tx)
-        let normal = DVec2::new(tangent.y, -tangent.x);
-        base_pt + self.offset_distance * normal
+        // OCCT Geom2d_OffsetCurve::EvalD0 (Geom2d_OffsetCurve.cxx L214-229)
+        // — the basis point plus Geom2d_OffsetCurveUtils::CalculateD0 over
+        // the basis D1; the analytic engine lives in offset2d_dn.
+        super::offset2d_dn::eval_d0(self, t)
+    }
+    fn derivative_at(&self, t: f64) -> DVec2 {
+        // OCCT Geom2d_OffsetCurve::EvalD1 (Geom2d_OffsetCurve.cxx L233-249)
+        // — the basis D2 through CalculateD1 (offset2d_dn).
+        super::offset2d_dn::eval_d1(self, t).d1
+    }
+    fn derivative2_at(&self, t: f64) -> DVec2 {
+        // OCCT Geom2d_OffsetCurve::EvalD2 (Geom2d_OffsetCurve.cxx L253-285)
+        // — the basis D3, the AdjustDerivative(3) singular guard and
+        // CalculateD2 (offset2d_dn).
+        super::offset2d_dn::eval_d2(self, t).d2
+    }
+    fn derivative3_at(&self, t: f64) -> DVec2 {
+        // OCCT Geom2d_OffsetCurve::EvalD3 (Geom2d_OffsetCurve.cxx L289-328)
+        // — the basis D3/DN(4), the AdjustDerivative(4) singular guard and
+        // CalculateD3 (offset2d_dn).
+        super::offset2d_dn::eval_d3(self, t).d3
+    }
+    fn derivative_n_at(&self, t: f64, n: i32) -> DVec2 {
+        // OCCT Geom2d_OffsetCurve::EvalDN (Geom2d_OffsetCurve.cxx L332-357).
+        super::offset2d_dn::eval_dn(self, t, n)
+    }
+    fn tangent_at(&self, t: f64) -> DVec2 {
+        // The rcad tangent_at is the normalized D1 (the BSplineCurve2 impl
+        // convention); no separate OCCT counterpart.
+        self.derivative_at(t).normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        // OCCT FirstParameter/LastParameter (Geom2d_OffsetCurve.cxx
+        // L361-371) delegate to the basis curve.
+        self.basis.default_domain()
     }
 }
 

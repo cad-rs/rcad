@@ -885,8 +885,16 @@ pub(crate) fn put_pcurve(the_edg: &mut Shape, the_fac: &Shape) {
     builder_update_edge_pcurve(the_edg, &c2d, the_fac, tol_edg);
     // OCCT L907: B.SameParameter(Edg, false) — the TEdgeData flag.
     builder_set_same_parameter(the_edg, false);
-    // OCCT L908: BRepLib::SameParameter(Edg, tol2d).
-    crate::topalgo::brep_lib::brep_lib::BRepLib::same_parameter(the_edg, tol2d);
+    // OCCT L908: BRepLib::SameParameter(Edg, tol2d) — the topalgo::brep_lib
+    // engine (the 2-arg edge overload, BRepLib.cxx L1237-1247).  The edge
+    // lives outside any live pool: adopt the edge graph into a standalone
+    // pool with the Arc SHARED (topo_builder::brep_from_shape, the
+    // loc_ope_find_edges_in_face.rs L226 precedent), so the engine's
+    // in-place edge writes (BRep_TEdge::Modified / Tolerance, cxx
+    // L1733-1734) reach the_edg the way the OCCT engine mutates the shared
+    // TShape in place through the handle.
+    let mut a_brep = rcad_kernel::topo::topo_builder::brep_from_shape(the_edg, &[]);
+    crate::topalgo::brep_lib::same_parameter::same_parameter(&mut a_brep, the_edg, tol2d);
 }
 
 /// OCCT static PutPCurves(Efrom, Eto, myShape) (cxx L913-1287).

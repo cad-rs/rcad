@@ -3118,9 +3118,11 @@ pub fn remove_knot(
 }
 
 /// OCCT BSplCLib::Resolution (BSplCLib.cxx L4316-4825) — the parametric
-/// tolerance corresponding to `tolerance3d`.  Only the `default` switch
-/// branch (ArrayDimension = 1, used by Law_BSpline) is exercised; the
-/// specialized 2/3/4-dimensional branches are anchor-out-of-scope.
+/// tolerance corresponding to `tolerance3d`.  The `ArrayDimension` = 1
+/// (the `default` switch branch, used by Law_BSpline) and = 2 (case 2,
+/// L4329-4445, used by the Geom2d_BSplineCurve::Resolution route) arms
+/// are translated; 3/4 remain anchor-out-of-scope.  The poles are the
+/// flat interleaved coordinate array (PA[2i], PA[2i+1] for dim 2).
 pub fn resolution(
     array_dimension: usize,
     poles: &[f64],
@@ -3129,14 +3131,82 @@ pub fn resolution(
     degree: usize,
     tolerance3d: f64,
 ) -> f64 {
-    assert!(
-        array_dimension == 1,
-        "BSplCLib::Resolution: only ArrayDimension 1 is ported"
-    );
     let deg1 = degree as i32 + 1;
     let num_poles = (flat_knots.len() as i32 - deg1) as usize;
     let mut max_derivative = 0.0f64;
-    match weights {
+    match array_dimension {
+        // OCCT case 2 (BSplCLib.cxx L4329-4445) — the 2d joint-pole form:
+        // the per-pole value is the MANHATTAN sum of the two coordinate
+        // differences (abs applied per coordinate, then summed), maximized
+        // over the wrapped pole pairs; the rational arm normalizes by the
+        // minimal weight.  (The joint result is NOT the min of two dim-1
+        // resolutions.)
+        2 => match weights {
+            Some(wg) => {
+                // OCCT L4332-4342: min_weights = min(WG[0..NumPoles)).
+                let mut min_weights = wg[0];
+                for ii in 1..num_poles {
+                    let w = wg[ii];
+                    if w < min_weights {
+                        min_weights = w;
+                    }
+                }
+                // OCCT L4344-4411: the windowed pole-pair walk.
+                let deg2 = (degree << 1) + 1;
+                for ii in 1..num_poles {
+                    let ii_index = ii % num_poles;
+                    let ii_in_dim = ii_index << 1;
+                    let ii_minus = (ii - 1) % num_poles;
+                    let ii_mi_dim = ii_minus << 1;
+                    let pa_ii_in_dim_0 = poles[ii_in_dim];
+                    let pa_ii_in_dim_1 = poles[ii_in_dim + 1];
+                    let pa_ii_mi_dim_0 = poles[ii_mi_dim];
+                    let pa_ii_mi_dim_1 = poles[ii_mi_dim + 1];
+                    let wg_ii_index = wg[ii_index];
+                    let wg_ii_minus = wg[ii_minus];
+                    let inverse =
+                        1.0 / (flat_knots[ii + degree] - flat_knots[ii]);
+                    // OCCT L4383-4392: lower = max(0, ii - Deg1);
+                    // upper = min(Deg2 + ii, num_poles).
+                    let lower = (ii as i64 - deg1 as i64).max(0) as usize;
+                    let upper = (deg2 + ii).min(num_poles);
+                    for jj in lower..upper {
+                        let jj_index = (jj % num_poles) << 1;
+                        let mut value = 0.0f64;
+                        let factor = ((poles[jj_index] - pa_ii_in_dim_0) * wg_ii_index)
+                            - ((poles[jj_index] - pa_ii_mi_dim_0) * wg_ii_minus);
+                        value += factor.abs();
+                        let factor = ((poles[jj_index + 1] - pa_ii_in_dim_1) * wg_ii_index)
+                            - ((poles[jj_index + 1] - pa_ii_mi_dim_1) * wg_ii_minus);
+                        value += factor.abs();
+                        value *= inverse;
+                        if max_derivative < value {
+                            max_derivative = value;
+                        }
+                    }
+                }
+                // OCCT L4410: max_derivative /= min_weights.
+                max_derivative /= min_weights;
+            }
+            None => {
+                // OCCT L4413-4445: the non-rational arm.
+                for ii in 1..num_poles {
+                    let ii_index = (ii % num_poles) << 1;
+                    let ii_minus = ((ii - 1) % num_poles) << 1;
+                    let inverse =
+                        1.0 / (flat_knots[ii + degree] - flat_knots[ii]);
+                    let mut value = (poles[ii_index] - poles[ii_minus]).abs();
+                    value += (poles[ii_index + 1] - poles[ii_minus + 1]).abs();
+                    value *= inverse;
+                    if max_derivative < value {
+                        max_derivative = value;
+                    }
+                }
+            }
+        },
+        // OCCT `default` switch branch (L4446+, dim 1).
+        1 => {
+            match weights {
         Some(wg) => {
             let mut min_weights = wg[0];
             for ii in 1..num_poles {
@@ -3145,12 +3215,20 @@ pub fn resolution(
                     min_weights = w;
                 }
             }
+            // OCCT L4461-4486 (the default branch, dim 1): the FK pointer
+            // fold — `FK = &FlatKnots(Lower())` makes FK[k] the 0-BASED
+            // flat_knots[k] — so the span is flat_knots[ii+degree] -
+            // flat_knots[ii] (a prior `at(flat, ii+degree)` form read one
+            // element lower and answered inf/0 on clamped knots), and the
+            // rational walk is windowed (L4472-4481: lower = max(0,
+            // ii-Deg1), upper = min(Deg2+ii, num_poles)).
             for ii in 1..num_poles {
                 let ii_index = ii % num_poles;
                 let ii_minus = (ii - 1) % num_poles;
-                let inverse = 1.0
-                    / (at(flat_knots, ii as i32 + degree as i32) - at(flat_knots, ii as i32));
-                for jj in 0..num_poles {
+                let inverse = 1.0 / (flat_knots[ii + degree] - flat_knots[ii]);
+                let lower = (ii as i64 - deg1 as i64).max(0) as usize;
+                let upper = ((degree << 1) + 1 + ii).min(num_poles);
+                for jj in lower..upper {
                     let jj_index = jj % num_poles;
                     let mut value = 0.0f64;
                     let factor = ((poles[jj_index] - poles[ii_index]) * wg[ii_index])
@@ -3168,8 +3246,7 @@ pub fn resolution(
             for ii in 1..num_poles {
                 let ii_index = ii % num_poles;
                 let ii_minus = (ii - 1) % num_poles;
-                let inverse = 1.0
-                    / (at(flat_knots, ii as i32 + degree as i32) - at(flat_knots, ii as i32));
+                let inverse = 1.0 / (flat_knots[ii + degree] - flat_knots[ii]);
                 let factor = poles[ii_index] - poles[ii_minus];
                 let mut value = factor.abs();
                 value *= inverse;
@@ -3178,6 +3255,13 @@ pub fn resolution(
                 }
             }
         }
+        }
+        }
+        // OCCT L4813-4821: max_derivative *= Degree;
+        // UTolerance = Tolerance3D / max_derivative (guarded by RealSmall).
+        _ => panic!(
+            "BSplCLib::Resolution: ArrayDimension {array_dimension} is not ported"
+        ),
     }
     max_derivative *= degree as f64;
     if max_derivative > real_small() {
@@ -4229,6 +4313,48 @@ mod coefs_tests {
         coefs_d1_2d(0.5, &c, &mut pt, &mut v);
         assert!((pt.x - 2.0).abs() < 1e-12 && (pt.y - 2.0).abs() < 1e-12, "pt={:?}", pt);
         assert!((v.x - 4.0).abs() < 1e-12 && (v.y - 0.0).abs() < 1e-12, "v={:?}", v);
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    use super::*;
+
+    /// The dim-1 `default`-branch FK fold: a clamped degree-1 curve
+    /// answers Tolerance3D/(Degree*(P1-P0)) with the span
+    /// flat[2]-flat[1] = 1-0 = 1.  The prior off-by-one read
+    /// (`at(flat, ii+degree) - at(flat, ii)` = flat[1]-flat[0] = 0)
+    /// answered inf/0.
+    #[test]
+    fn resolution_dim1_clamped_span() {
+        let u = resolution(1, &[0.0, 2.0], None, &[0.0, 0.0, 1.0, 1.0], 1, 1.0e-3);
+        assert!((u - 1.0e-3 / 2.0).abs() < 1.0e-18, "u = {u}");
+    }
+
+    /// The dim-2 case-2 arm (BSplCLib.cxx L4413-4445): the Manhattan sum
+    /// over both coordinates, maximized over the wrapped pole pairs.
+    #[test]
+    fn resolution_dim2_joint_manhattan_norm() {
+        let u = resolution(2, &[0.0, 0.0, 1.0, 100.0], None, &[0.0, 0.0, 1.0, 1.0], 1, 1.0e-3);
+        assert!((u - 1.0e-3 / 101.0).abs() < 1.0e-18, "u = {u}");
+    }
+
+    /// The dim-2 rational arm normalizes by the minimal weight
+    /// (BSplCLib.cxx L4332-4411): poles (0,0),(3,4), weights (2,1), the
+    /// window jj∈{0,1} — jj=0 gives 3+4=7, the jj=ii self-pair gives
+    /// (0-(3)*2)+(0-(4)*2) = 6+8 = 14 (nonzero because the weights
+    /// differ), so max = 14 and utol = Tolerance3D/14.
+    #[test]
+    fn resolution_dim2_rational_min_weight_normalization() {
+        let u = resolution(
+            2,
+            &[0.0, 0.0, 3.0, 4.0],
+            Some(&[2.0, 1.0]),
+            &[0.0, 0.0, 1.0, 1.0],
+            1,
+            1.0e-3,
+        );
+        assert!((u - 1.0e-3 / 14.0).abs() < 1.0e-18, "u = {u}");
     }
 }
 

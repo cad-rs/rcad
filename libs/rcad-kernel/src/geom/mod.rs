@@ -1723,6 +1723,24 @@ pub trait Curve2dEval {
         (self.derivative2_at(t + h) - self.derivative2_at(t - h)) / (2.0 * h)
     }
 
+    /// OCCT-aligned: EvalDN(t, N) — the N-th derivative, N >= 1
+    /// (Geom2d_Curve::EvalDN).  Default: the exact D1..D3 overrides for
+    /// N <= 3; for N > 3 a central finite difference of `derivative3_at`
+    /// (the per-type DN engines beyond D3 are not re-hosted yet; reached
+    /// only by the offset `AdjustDerivative` Taylor climb at singular
+    /// points).
+    fn derivative_n_at(&self, t: f64, n: i32) -> DVec2 {
+        match n {
+            1 => self.derivative_at(t),
+            2 => self.derivative2_at(t),
+            3 => self.derivative3_at(t),
+            _ => {
+                let h = 1e-4;
+                (self.derivative3_at(t + h) - self.derivative3_at(t - h)) / (2.0 * h)
+            }
+        }
+    }
+
     /// Signed curvature at parameter `t` in the 2D plane.
     ///
     /// `k = (x'y'' - y'x'') / (x'² + y'²)^(3/2)`.
@@ -2204,6 +2222,7 @@ pub mod eval;
 pub mod eval_b;
 pub mod eval_c;
 pub mod extrusion_utils;
+pub mod offset2d_dn;
 pub mod offset_surface_utils;
 pub mod offset_surface_utils_b;
 pub mod osculating_surface;

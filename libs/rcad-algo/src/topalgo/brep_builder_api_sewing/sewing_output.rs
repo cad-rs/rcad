@@ -323,13 +323,17 @@ impl BRepBuilderAPISewing {
         for exp in bat::explorer(&self.my_sewed_shape, ShapeType::Edge, ShapeType::Shape) {
             let sec = exp;
             // OCCT L5894-5906: BRepLib::SameParameter(sec, Tol(sec)) inside
-            // try/catch — the rcad carrier does not throw.
-            crate::topalgo::brep_lib::brep_lib::BRepLib::same_parameter(
+            // try/catch — the rcad carrier does not throw.  The sewed-shape
+            // edges are pool-resident in `brep` (my_sewed_shape was created
+            // by create_sewed_shape over the same pool), so the engine's
+            // in-place TShape writes reach the sec handle the way the OCCT
+            // engine mutates the shared TShape through the handle.
+            crate::topalgo::brep_lib::same_parameter::same_parameter(
+                brep,
                 &sec,
                 bat::brep_tool_tolerance(&sec),
             );
         }
-        let _ = brep;
     }
 }
 

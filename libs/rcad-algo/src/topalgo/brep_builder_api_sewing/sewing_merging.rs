@@ -8,8 +8,7 @@
 //! GAP note (BRepLib::EncodeRegularity(E, F1, F2, Tol)): the OCCT body
 //! delegates to `ContinuityOfFaces` (BRepLib.cxx L2385-2565, the G1/G2
 //! face-continuity classification) which is untranslated; the local re-host
-//! keeps the call form and is a documented no-op, the same policy as the
-//! crate `topalgo::brep_lib::BRepLib::same_parameter` stub.
+//! keeps the call form and is a documented no-op.
 
 use rcad_kernel::core::precision::PCONFUSION;
 use rcad_kernel::geom::{Curve2d, CurveEval};

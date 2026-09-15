@@ -12,19 +12,19 @@
 //!   `CurveHandle = Arc<dyn Adaptor3dCurve>`) and `perform_at`
 //!   (Perform(ParamOnPath, Tol)).
 //! - `IntCurveSurface_HInter Intersector.Perform(Path, adplan)` (cxx
-//!   L471-472) — the handle-typed statement keeps the OCCT failure path in
-//!   place: the rcad carrier
-//!   (`geomalgo::geomfill::int_curve_surface_h_inter`, outside this unit)
-//!   pins its staged GAP signature to `&Curve3`.
+//!   L471-472) — the real engine host [`IntCurveSurfaceHInter`] drives the
+//!   Inter.pxx templates over the erased Adaptor3d_Curve handle and the
+//!   GeomAdaptor_Surface of the profile plane (see the host header for the
+//!   split-view encoding).
+//! - `Extrema_ExtCC` (cxx L644-651) — the kernel real body
+//!   [`ExtremaExtCC`] over the Extrema_CurveTool facades of *Path and
+//!   myAdpSection.
+//! - `gp_Trsf` results map to `DAffine3` (rigid transforms here).
 //! - `Extrema_ExtPC myExt` maps to the kernel real body
 //!   [`ExtremaExtPC`]: the OCCT Initialize (cxx L375-379) + Perform pair is
 //!   replayed at each Perform site over the same range (the OCCT member
 //!   aliases the section adaptor, which the rcad local section owner
 //!   forbids).  TrimmedSquareDistances is read through the real-body API.
-//! - GAP carriers: `ExtCCGap` (OCCT Extrema_ExtCC over two bounded curves —
-//!   the general curve-curve extremum is not translated) and the shared
-//!   [`IntCurveSurfaceHInter`] plane-curve intersection carrier (staged
-//!   batch-1 GAP, see its header).
 //! - `gp_Trsf` results map to `DAffine3` (rigid transforms here).
 
 use std::cell::RefCell;
@@ -35,11 +35,15 @@ use std::sync::Arc;
 use glam::{DAffine3, DVec3};
 
 use rcad_kernel::base::bnd_lib::curve_bounding_box_range;
+use rcad_kernel::base::extrema::POnCurve;
 use rcad_kernel::base::extrema_curve_tool::{CurveToolHandle, ExtremaCurveTool};
+use rcad_kernel::base::extrema_ext_cc::ExtremaExtCC;
 use rcad_kernel::base::extrema_ext_pc::ExtremaExtPC;
 use rcad_kernel::base::geom_lib::axe_of_inertia;
 use rcad_kernel::base::geom_lprop::CLProps;
 use rcad_kernel::base::proj_lib::adaptor::{Adaptor3dCurve, CurveHandle};
+use rcad_kernel::base::proj_lib::geom_adaptor_curve::Adaptor3dCurveGeom;
+use rcad_kernel::base::proj_lib::geom_adaptor_surface::GeomSurfaceAdaptor;
 use rcad_kernel::base::proj_lib::proj_lib_projected_curve::GeomCurveAdaptor;
 use rcad_kernel::base::proj_lib::CurveType;
 use rcad_kernel::core::precision::{CONFUSION, PCONFUSION, SQUARE_CONFUSION};
@@ -47,7 +51,7 @@ use rcad_kernel::geom::{transform_curve, Curve3, CurveEval, Surface3};
 use rcad_kernel::math::gp::{Ax1, Ax2, Ax3};
 
 use super::gp_mat::GpMat;
-use super::int_curve_surface_h_inter::IntCurveSurfaceHInter;
+use super::int_curve_surface_h_inter::{CurveHost, IntCurveSurfaceHInter};
 use super::location_law::LocationLaw;
 
 /// OCCT Precision::Infinite().
@@ -264,56 +268,6 @@ fn curve_last_parameter(c: &Curve3) -> f64 {
     }
 }
 
-/// GAP carrier: OCCT Extrema_ExtCC over two bounded curves (TKGeomBase/
-/// Extrema) — the general curve-curve extremum is not translated; the
-/// construction keeps the OCCT failure path.
-struct ExtCCGap;
-
-impl ExtCCGap {
-    /// OCCT Extrema_ExtCC(C1, C2, U1, U2, V1, V2, Tol1, Tol2) — C1 is the
-    /// `*Path` handle(Adaptor3d_Curve), C2 the myAdpSection (the rcad
-    /// `Curve3` view).
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        _c1: &dyn Adaptor3dCurve,
-        _c2: &Curve3,
-        _u1: f64,
-        _u2: f64,
-        _v1: f64,
-        _v2: f64,
-        _tol1: f64,
-        _tol2: f64,
-    ) -> Self {
-        panic!("GAP: Extrema_ExtCC (TKGeomBase/Extrema) is not translated — see file header")
-    }
-
-    /// OCCT IsDone().
-    fn is_done(&self) -> bool {
-        panic!("GAP: Extrema_ExtCC (TKGeomBase/Extrema) is not translated — see file header")
-    }
-
-    /// OCCT IsParallel().
-    fn is_parallel(&self) -> bool {
-        panic!("GAP: Extrema_ExtCC (TKGeomBase/Extrema) is not translated — see file header")
-    }
-
-    /// OCCT NbExt().
-    fn nb_ext(&self) -> usize {
-        panic!("GAP: Extrema_ExtCC (TKGeomBase/Extrema) is not translated — see file header")
-    }
-
-    /// OCCT SquareDistance(ii).
-    fn square_distance(&self, _ii: usize) -> f64 {
-        panic!("GAP: Extrema_ExtCC (TKGeomBase/Extrema) is not translated — see file header")
-    }
-
-    /// OCCT Points(ii, P1, P2) — (param1, point1, param2, point2).
-    #[allow(clippy::type_complexity)]
-    fn points(&self, _ii: usize) -> (f64, DVec3, f64, DVec3) {
-        panic!("GAP: Extrema_ExtCC (TKGeomBase/Extrema) is not translated — see file header")
-    }
-}
-
 /// OCCT GeomFill_SectionPlacement (hxx private members L84-98).
 pub struct SectionPlacement {
     /// OCCT bool done.
@@ -385,15 +339,16 @@ impl SectionPlacement {
                 a_zmax = pmax.z;
             }
             None => {
-                // Degenerate bounding box — the whole box collapses on the
-                // first point.
-                let p = adp.point_at(curve_first_parameter(adp));
-                a_xmin = p.x;
-                a_ymin = p.y;
-                a_zmin = p.z;
-                a_xmax = p.x;
-                a_ymax = p.y;
-                a_zmax = p.z;
+                // OCCT BndLib_Add3dCurve::Add(myAdpSection, 1.e-4, box)
+                // followed by box.Get(...) never fails; the rcad kernel
+                // BndLib answers None only for the infinite-parameter
+                // ranges OCCT routes through GeomBndLib_InfiniteHelpers —
+                // the invented box-collapse recovery is not kept.
+                panic!(
+                    "GAP: BndLib_Add3dCurve::Add over an infinite-range \
+                     section curve (GeomFill_SectionPlacement ctor) is not \
+                     representable"
+                );
             }
         }
 
@@ -608,13 +563,21 @@ impl SectionPlacement {
         };
         // Architecture: the rcad law stores the kernel Curve3; the OCCT
         // GetCurve() answers the law's handle(Adaptor3d_Curve) — lifted here
-        // over the GeomAdaptor_Curve encoding.
-        self.perform_with_path_impl(Arc::new(GeomCurveAdaptor::new(path)), tol);
+        // over the GeomAdaptor_Curve encoding.  The adaptor view and the
+        // kernel payload stay in scope to feed the Perform's split adaptor
+        // views (see perform_with_path_impl).
+        let a_adaptor = GeomCurveAdaptor::new(path.clone());
+        let a_handle: CurveHandle = Arc::new(a_adaptor.clone());
+        self.perform_with_path_impl(a_handle, Some(&a_adaptor), Some(&path), tol);
     }
 
     /// OCCT Perform(Path, Tol) (L400-705) — the handle(Adaptor3d_Curve) Path.
     pub fn perform_with_path(&mut self, path: CurveHandle, tol: f64) {
-        self.perform_with_path_impl(path, tol);
+        // The erased handle carries no geometry-accessor half and no kernel
+        // payload (the OCCT CompCurve adaptor answers GeomAbs_OtherCurve,
+        // BRepAdaptor_CompCurve.cxx L425-430, and raises on the analytic
+        // downcasts).
+        self.perform_with_path_impl(path, None, None, tol);
     }
 
     /// OCCT Perform(ParamOnPath, Tol) (L711-754).
@@ -681,7 +644,19 @@ impl SectionPlacement {
     }
 
     /// The shared Perform(Path, Tol) body (L400-705).
-    fn perform_with_path_impl(&mut self, path: CurveHandle, tol: f64) {
+    ///
+    /// Architecture: the OCCT handle(Adaptor3d_Curve) carries the whole
+    /// adaptor; the rcad split-traits encoding passes the geometry-accessor
+    /// half and the kernel payload the caller holds (the GeomAdaptor_Curve
+    /// lift in Perform(Tol), nothing for the erased handle in
+    /// Perform(Path, Tol)).
+    fn perform_with_path_impl(
+        &mut self,
+        path: CurveHandle,
+        a_path_geom: Option<&dyn Adaptor3dCurveGeom>,
+        a_path_curve3: Option<&Curve3>,
+        tol: f64,
+    ) {
         let int_tol = 1.0e-5;
         let mut dist_center = INFINITE;
 
@@ -790,21 +765,19 @@ impl SectionPlacement {
                     u_dir: axe.x_direction,
                     v_dir: axe.y_direction,
                 });
+                // OCCT L470: adplan = new GeomAdaptor_Surface(plan).
+                let adplan = GeomSurfaceAdaptor::new(plan);
                 // OCCT L471: IntCurveSurface_HInter Intersector.
-                let intersector = IntCurveSurfaceHInter::default();
+                let mut intersector = IntCurveSurfaceHInter::new();
                 // OCCT L472: Intersector.Perform(Path, adplan) — Path is the
-                // handle(Adaptor3d_Curve).  The rcad carrier
-                // (geomalgo::geomfill::int_curve_surface_h_inter, outside
-                // this unit) keeps the staged GAP — every entry panics — and
-                // pins its signature to &Curve3: the handle-typed statement
-                // keeps the OCCT failure path at this statement until the
-                // carrier is re-typed over the adaptor handle.
-                panic!(
-                    "GAP: IntCurveSurface_HInter::Perform(Path, adplan) over the \
-                     handle(Adaptor3d_Curve) Path — the rcad carrier pins &Curve3 \
-                     (GeomFill_SectionPlacement.cxx L472); the host-tool re-type \
-                     is pending"
-                );
+                // handle(Adaptor3d_Curve); the rcad host bundles the split
+                // adaptor views (see perform_with_path_impl).
+                let a_host = CurveHost {
+                    curve: path.as_ref(),
+                    geom: a_path_geom,
+                    curve3: a_path_curve3,
+                };
+                intersector.perform_adaptors(&a_host, &adplan);
                 let intersector_done = intersector.is_done();
                 if intersector_done {
                     for ii in 1..=intersector.nb_points() {
@@ -916,32 +889,60 @@ impl SectionPlacement {
                     // Path->FirstParameter(), Path->LastParameter(),
                     // myAdpSection.FirstParameter(),
                     // myAdpSection.LastParameter(), Path->Resolution(Tol/100),
-                    // myAdpSection.Resolution(Tol/100)).
-                    let ext = ExtCCGap::new(
+                    // myAdpSection.Resolution(Tol/100)) — the kernel real
+                    // body over the Extrema_CurveTool facades: *Path over the
+                    // erased adaptor (the CompCurve queries, see the
+                    // myIsPoint note) and myAdpSection over the GeomAdaptor
+                    // view built above.
+                    let a_path_tool = CurveToolHandle::new(
                         path.as_ref(),
-                        adp,
+                        CurveType::Other,
+                        path.is_periodic(),
+                        path.period(),
+                        path.resolution(tol / 100.0),
+                        path.is_closed(),
+                    );
+                    let ext = ExtremaExtCC::new_curves_ranged(
+                        &a_path_tool,
+                        &a_section_tool,
                         path.first_parameter(),
                         path.last_parameter(),
                         curve_first_parameter(adp),
                         curve_last_parameter(adp),
                         // OCCT L650: Path->Resolution(Tol / 100).
                         path.resolution(tol / 100.0),
+                        // OCCT L651: myAdpSection.Resolution(Tol / 100)
+                        // (the GeomAdaptor_Curve::Resolution mapping).
                         curve_resolution(adp, tol / 100.0),
                     );
                     if ext.is_done() && !ext.is_parallel() {
+                        // OCCT L654: Extrema_POnCurv P1, P2.
+                        let mut p1 = POnCurve {
+                            param: 0.0,
+                            point: DVec3::ZERO,
+                        };
+                        let mut p2 = POnCurve {
+                            param: 0.0,
+                            point: DVec3::ZERO,
+                        };
                         for ii in 1..=ext.nb_ext() {
+                            // OCCT L657: distaux = sqrt(Ext.SquareDistance(ii)).
                             distaux = ext.square_distance(ii).sqrt();
-                            let (p1_param, _p1_val, p2_param, p2_val) = ext.points(ii);
+                            // OCCT L658: Ext.Points(ii, P1, P2).
+                            ext.points(ii, &mut p1, &mut p2);
                             let mut pp = DVec3::ZERO;
                             // OCCT L659: Tangente(*Path, P1.Parameter(), P, dp1).
-                            tangente(path.as_ref(), p1_param, &mut pp, &mut dp1);
+                            tangente(path.as_ref(), p1.param, &mut pp, &mut dp1);
                             let alpha = eval_angle(v_ref, dp1);
                             if self.choix(distaux, alpha) {
                                 trouve = true;
                                 self.dist = distaux;
-                                self.path_param = p1_param;
-                                self.sec_param = p2_param;
-                                pon_sec = p2_val;
+                                // OCCT L665: PathParam = P1.Parameter().
+                                self.path_param = p1.param;
+                                // OCCT L666: SecParam = P2.Parameter().
+                                self.sec_param = p2.param;
+                                // OCCT L667: PonSec = P2.Value().
+                                pon_sec = p2.point;
                                 pon_path = pp;
                                 self.angle_max = alpha;
                             }
@@ -1197,4 +1198,75 @@ fn trsf_rotation_ax1(loc: DVec3, axis_dir: DVec3, angle: f64) -> DAffine3 {
     ));
     f.translation = loc - rotate(loc);
     f
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geomalgo::geomfill::curve_and_trihedron::CurveAndTrihedron;
+    use crate::geomalgo::geomfill::fixed::Fixed;
+    use rcad_kernel::geom::{Circle3, Line3, TrimmedCurve3};
+
+    /// OCCT Perform(Tol) on the planar branch (cxx L442-524): the circular
+    /// section sets isplan with TheAxe = (origin, Z); the trimmed line path
+    /// C(w) = (0,0,1) + w*(1,0,-1)/sqrt(2) over [0, 4] crosses the profile
+    /// plane z = 0 at w = sqrt(2) — the (1.2) IntCurveSurface_HInter
+    /// statement (L472) must drive PathParam (L486).
+    #[test]
+    fn section_placement_planar_line_crossing_anchor() {
+        let line = Curve3::Line(Line3::new(
+            DVec3::new(0.0, 0.0, 1.0),
+            DVec3::new(1.0, 0.0, -1.0).normalize(),
+        ));
+        // The Fixed trihedron law (no singularity search on SetCurve — the
+        // Frenet Init over a trimmed basis is a separate pre-existing GAP).
+        let mut law = CurveAndTrihedron::new(Box::new(Fixed::new(DVec3::X, DVec3::Y)));
+        assert!(LocationLaw::set_curve(
+            &mut law,
+            Curve3::Trimmed(TrimmedCurve3::new(line, 0.0, 4.0))
+        ));
+
+        let section = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
+        let mut place = SectionPlacement::new_loc(
+            Rc::new(RefCell::new(law)),
+            &section,
+        );
+        place.perform_confusion(CONFUSION);
+
+        assert!(place.is_done());
+        let w = place.parameter_on_path();
+        assert!(
+            (w - std::f64::consts::SQRT_2).abs() < 1e-9,
+            "parameter_on_path={} vs sqrt(2)",
+            w
+        );
+    }
+
+    /// The same anchor perturbed: direction (2,0,-1)/sqrt(5) over [0, 10]
+    /// crosses z = 0 at w = sqrt(5), point (2, 0, 0) — the result tracks the
+    /// path geometry (the intersection, not the endpoint shortcut, decides).
+    #[test]
+    fn section_placement_planar_line_crossing_perturbed() {
+        let line = Curve3::Line(Line3::new(
+            DVec3::new(0.0, 0.0, 1.0),
+            DVec3::new(2.0, 0.0, -1.0).normalize(),
+        ));
+        let mut law = CurveAndTrihedron::new(Box::new(Fixed::new(DVec3::X, DVec3::Y)));
+        assert!(LocationLaw::set_curve(
+            &mut law,
+            Curve3::Trimmed(TrimmedCurve3::new(line, 0.0, 10.0))
+        ));
+
+        let section = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
+        let mut place = SectionPlacement::new_loc(
+            Rc::new(RefCell::new(law)),
+            &section,
+        );
+        place.perform_confusion(CONFUSION);
+
+        assert!(place.is_done());
+        let w = place.parameter_on_path();
+        let expected = 5.0f64.sqrt();
+        assert!((w - expected).abs() < 1e-9, "parameter_on_path={} vs {}", w, expected);
+    }
 }

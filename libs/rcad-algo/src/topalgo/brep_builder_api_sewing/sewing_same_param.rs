@@ -88,14 +88,17 @@ impl BRepBuilderAPISewing {
         new_curve_ptr
     }
 
-    /// OCCT BRepBuilderAPI_Sewing::SameParameter(edge) (cxx L329-356).
-    pub(crate) fn same_parameter(&self, edge: &Shape) {
-        // OCCT L334: BRepLib::SameParameter(edge) inside try/catch (the void
-        // overload reads the edge tolerance itself).
-        crate::topalgo::brep_lib::brep_lib::BRepLib::same_parameter(
-            edge,
-            bat::brep_tool_tolerance(edge),
-        );
+    /// OCCT BRepBuilderAPI_Sewing::SameParameter(edge) (cxx L329-341).
+    pub(crate) fn same_parameter(&self, brep: &mut BRep, edge: &Shape) {
+        // OCCT L334: BRepLib::SameParameter(edge) inside try/catch — the
+        // 1-arg call binds the BRepLib.hxx L161-162 default
+        // Tolerance = 1.0e-5; the topalgo::brep_lib engine is the 2-arg
+        // edge overload (BRepLib.cxx L1237-1247).  The sewing edges are
+        // pool-resident in `brep` (built/updated through the brep-bound
+        // builder calls), so the engine's in-place TShape writes reach the
+        // edge the way the OCCT engine mutates the shared TShape through
+        // the handle.
+        crate::topalgo::brep_lib::same_parameter::same_parameter(brep, edge, 1.0e-5);
     }
 
     /// OCCT BRepBuilderAPI_Sewing::SameParameterEdge(edge, seqEdges,
@@ -723,7 +726,7 @@ impl BRepBuilderAPISewing {
         // (BRep_Tool::SameParameter(edge)) {...} } catch { isSamePar =
         // false; } — the rcad SameParameter carrier does not throw.
         if is_res_edge {
-            self.same_parameter(&edge);
+            self.same_parameter(brep, &edge);
         }
         if edge_same_parameter(&edge) {
             is_same_par = true;
