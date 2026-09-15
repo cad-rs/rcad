@@ -39,3 +39,7 @@ include!("transform_topods_inc.rs");
 
 // Topods-native I/O + remaining variants (migration)
 include!("io_topods_inc.rs");
+
+// BRepTools triangulation persistence (Write/Clean withTriangles/withNormals,
+// BRepTools_ShapeSet v2/v3 mesh record set)
+include!("io_tri_inc.rs");

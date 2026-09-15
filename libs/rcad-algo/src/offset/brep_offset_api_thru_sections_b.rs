@@ -26,8 +26,8 @@
 //!    PerformSmoothing branch drives AppDef_Variational, which has no rcad
 //!    port yet — the engine preserves the OCCT failure path (IsDone false,
 //!    the OCCT no-surface exit of TotalSurf).
-//! 3. GeomConvert_ApproxCurve -> the local GAP carrier (HasResult() = false
-//!    keeps the EdgeToBSpline fall-through to CurveToBSplineCurve);
+//! 3. GeomConvert_ApproxCurve -> the landed kernel engine
+//!    (rcad_kernel::base::geom_convert::GeomConvertApproxCurve);
 //!    GeomConvert::CurveToBSplineCurve -> the base::convert carrier (the
 //!    loc_ope_pipe.rs precedent); GeomConvert_CompCurveToBSplineCurve ->
 //!    the draft_modification_1_b.rs carrier (Add is the GAP there).
@@ -245,35 +245,9 @@ impl GeomBSplineSurface {
 // landed engine (geomalgo/geomfill/app_blend_app_surf.rs).
 use AppBlendAppSurf as GeomFillAppSurf;
 
-/// OCCT GeomConvert_ApproxCurve (TKTopAlgo/GeomConvert_ApproxCurve) — the
-/// conic approximator of EdgeToBSpline (architecture difference #3; GAP:
-/// HasResult() = false keeps the OCCT fall-through to
-/// GeomConvert::CurveToBSplineCurve).
-pub(crate) struct GeomConvertApproxCurve;
-
-impl GeomConvertApproxCurve {
-    /// OCCT GeomConvert_ApproxCurve(Curve, Tol, Order, MaxSegments,
-    /// MaxDegree).
-    pub(crate) fn new(
-        _the_curve: &Curve3,
-        _the_tol: f64,
-        _the_order: rcad_kernel::topods::GeomAbsShape,
-        _the_max_segments: i32,
-        _the_max_degree: i32,
-    ) -> Self {
-        GeomConvertApproxCurve
-    }
-
-    /// OCCT GeomConvert_ApproxCurve::HasResult() — GAP (false).
-    pub(crate) fn has_result(&self) -> bool {
-        false
-    }
-
-    /// OCCT GeomConvert_ApproxCurve::Curve() — GAP.
-    pub(crate) fn curve(&self) -> BSplineCurve3 {
-        panic!("GAP: GeomConvert_ApproxCurve::Curve (TKTopAlgo not translated)")
-    }
-}
+/// OCCT GeomConvert_ApproxCurve (TKGeomBase/GeomConvert) — the conic
+/// approximator of EdgeToBSpline: the landed kernel engine.
+use rcad_kernel::base::geom_convert::GeomConvertApproxCurve;
 
 /// OCCT GeomConvert::CurveToBSplineCurve(Trimmed) — the base::convert
 /// carrier (the loc_ope_pipe.rs geomconvert_curve_to_bspline precedent).
@@ -615,12 +589,12 @@ pub(crate) fn edge_to_bspline(the_edge: &Shape) -> Option<BSplineCurve3> {
             let an_appr = GeomConvertApproxCurve::new(
                 &a_trim_curve,
                 CONFUSION,
-                rcad_kernel::topods::GeomAbsShape::C1,
+                rcad_kernel::math::GeomAbsShape::C1,
                 16,
                 14,
             );
             if an_appr.has_result() {
-                a_bs_curve = Some(an_appr.curve());
+                a_bs_curve = an_appr.curve();
             }
         }
 

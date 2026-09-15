@@ -869,6 +869,11 @@ fn gcurve_range(the_brep: &BRep, the_e: &Shape, a_cr: &CurveRepresentation) -> O
         CurveRepresentation::CurveOnSurface { range, .. } => Some((range[0], range[1])),
         CurveRepresentation::CurveOnClosedSurface { range, .. } => Some((range[0], range[1])),
         CurveRepresentation::CurveOn2Surfaces { .. } => None,
+        // BRep_Polygon3D / BRep_PolygonOnTriangulation are not BRep_GCurve
+        // (no First/Last range); the OCCT down_cast<BRep_GCurve> yields null.
+        CurveRepresentation::Polygon3D { .. } => None,
+        CurveRepresentation::PolygonOnTriangulation { .. } => None,
+        CurveRepresentation::PolygonOnClosedTriangulation { .. } => None,
     }
 }
 

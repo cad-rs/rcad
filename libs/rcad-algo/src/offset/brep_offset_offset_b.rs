@@ -22,6 +22,8 @@ use crate::feat::loc_ope_wires_on_shape::{brep_tool_pnt, shape_key};
 use crate::feat::loc_ope_wires_on_shape_b::{
     brep_tool_curve_on_surface, brep_tool_degenerated, brep_tool_tolerance, ShapeKey,
 };
+use crate::shhealing::shape_fix::shape_fix::MessageProgressRange;
+use crate::shhealing::shape_fix::shape_fix_shape::ShapeFixShape;
 
 use super::brep_offset_make_simple_offset::{edge_curve_of, oriented_vertex, top_exp_vertices_shape};
 use super::brep_offset_offset::*;
@@ -206,10 +208,10 @@ impl BRepOffsetOffset {
                 | Surface3::Offset(_)
         ) && l_loc != 0
         {
-            // GAP: the Geom_Surface::Copy/Transform vehicle has no rcad
-            // translation (the rcad surfaces travel as values); the branch
-            // keeps the OCCT shape.
-            s = geom_surface_transformed(&s);
+            // OCCT L490-499: S->Copy() + S->Transform(L.Transformation()) —
+            // the kernel location-bake real body (the pool location table
+            // resolves the face location; the accepted rcad necessity).
+            s = rcad_kernel::geom::transform_surface(&s, &the_brep.get_location(l_loc));
             is_transformed = true;
         }
         // particular case of cone
@@ -637,7 +639,9 @@ impl BRepOffsetOffset {
                     } else {
                         p1 = the_surf.point_at(p2d1.x, p2d1.y);
                         if l_loc != 0 && !is_transformed {
-                            p1 = point_transformed_gap(p1);
+                            // OCCT: P.Transform(L.Transformation()) — the face
+                            // location bake (the pool location table vehicle).
+                            p1 = the_brep.get_location(l_loc).transform_point3(p1);
                         }
                         vstart = p2d1.y;
                     }
@@ -654,7 +658,9 @@ impl BRepOffsetOffset {
                     } else {
                         p2 = the_surf.point_at(p2d2.x, p2d2.y);
                         if l_loc != 0 && !is_transformed {
-                            p2 = point_transformed_gap(p2);
+                            // OCCT: P.Transform(L.Transformation()) — the face
+                            // location bake (the pool location table vehicle).
+                            p2 = the_brep.get_location(l_loc).transform_point3(p2);
                         }
                         vend = p2d2.y;
                     }
@@ -1328,10 +1334,12 @@ impl BRepOffsetOffset {
         let mut the_wire = mw.build_wire(the_brep, l_edge.to_vec());
 
         // OCCT L1597-1599: ShapeFix_Shape Fixer(theWire); Fixer.Perform();
-        // theWire = TopoDS::Wire(Fixer.Shape()).
-        let mut fixer = ShapeFixShape::new(&the_wire);
-        fixer.perform();
-        the_wire = fixer.shape();
+        // theWire = TopoDS::Wire(Fixer.Shape()) — the shhealing::shape_fix
+        // real body (the owning pool is the accepted rcad necessity; the
+        // progress range keeps the OCCT default-empty form).
+        let mut fixer = ShapeFixShape::with_shape(&the_wire);
+        fixer.perform(the_brep, MessageProgressRange::default());
+        the_wire = fixer.shape_result();
 
         // OCCT L1601-1604.
         let global_props = brep_gprop_linear_properties(&the_wire);
@@ -1678,24 +1686,23 @@ fn brep_tool_parameter_vfe(the_v: &Shape, the_e: &Shape, the_f: &Shape) -> f64 {
     a_f
 }
 
-/// OCCT S->Copy() + S->Transform(L.Transformation()) — GAP (arch. diff. #9
-/// vehicle: the rcad surfaces travel as values, no transform-on-copy yet).
-fn geom_surface_transformed(the_s: &Surface3) -> Surface3 {
-    let _ = the_s;
-    panic!("GAP: Geom_Surface::Copy + Transform (location bake not translated)");
-}
-
-/// OCCT S1->Transformed(Loc.Transformation()) — GAP.
+// OCCT S->Copy() + S->Transform(L.Transformation()) — the former GAP
+// carrier is retired: the Init(Face) call of BRepOffset_Offset.cxx L490-499
+// is wired to the kernel location-bake real body
+// rcad_kernel::geom::transform_surface over the pool location table.
+//
+// OCCT gp_Pnt::Transform(L.Transformation()) — the former GAP carrier is
+// retired: the Init(Face) call of BRepOffset_Offset.cxx L890-907 applies the
+// face location through the pool location table (DAffine3 application).
+//
+// OCCT S1->Transformed(Loc.Transformation()) — GAP (the Init(Path...) call
+// sites of BRepOffset_Offset.cxx L1139-1151 sit behind the unreachable
+// BRep_Tool::CurveOnSurface re-host and carry no pool to resolve the edge
+// location index; the kernel real body rcad_kernel::geom::transform_surface
+// awaits the pool threading).
 fn surface_transformed_loc(the_s: &Surface3, the_loc: u32) -> Surface3 {
     let _ = (the_s, the_loc);
     panic!("GAP: Geom_Surface::Transformed (location bake not translated)");
-}
-
-/// OCCT gp_Pnt::Transform(L.Transformation()) — GAP (the identity-location
-/// identity).
-fn point_transformed_gap(the_p: DVec3) -> DVec3 {
-    let _ = the_p;
-    panic!("GAP: gp_Pnt::Transform (location bake not translated)");
 }
 
 /// OCCT BRep_Tool::Curve(E, L, f, l) — the located curve read (the rcad edge

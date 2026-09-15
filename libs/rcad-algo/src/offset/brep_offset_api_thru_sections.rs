@@ -24,10 +24,11 @@
 //! 4. BRepTools_WireExplorer -> the brep_offset_inter2d re-host; the
 //!    CurrentVertex() access is the oriented last vertex of the current
 //!    edge (the wexp traversal form).
-//! 5. BRepBuilderAPI_FindPlane / BRepLib::EncodeRegularity (TKTopAlgo /
-//!    TKBRep) have no rcad translation yet — the FindPlane carrier keeps
-//!    the OCCT Found()=false exit (the PerformPlan flow), EncodeRegularity
-//!    is the GAP leaf (reported gap).
+//! 5. BRepBuilderAPI_FindPlane (TKTopAlgo) has no rcad translation yet —
+//!    the FindPlane carrier keeps the OCCT Found()=false exit (the
+//!    PerformPlan flow).  BRepLib::EncodeRegularity (TKBRep) — wired to the
+//!    real body crate::topalgo::brep_lib_encode_regularity (the TolAng
+//!    default 1.0e-10; the owning pool is the accepted rcad necessity).
 //! 6. BRepClass3d_SolidClassifier -> the landed solid_classifier (the
 //!    TopAbs state u8: 0 = IN).
 //! 7. TopoDS_Shell::Closed flag -> the shape flag read/write carriers.
@@ -82,11 +83,10 @@ impl BRepBuilderAPIFindPlane {
     }
 }
 
-/// OCCT BRepLib::EncodeRegularity(S) (TKBRep/BRepLib) — GAP leaf (the
-/// chfi2d_builder.rs precedent).
-fn brep_lib_encode_regularity(_the_s: &Shape) {
-    panic!("GAP: BRepLib::EncodeRegularity (TKBRep/BRepLib not translated)")
-}
+// OCCT BRepLib::EncodeRegularity(S) — the former GAP leaf is retired: the
+// Build call of BRepOffsetAPI_ThruSections.cxx L537 is wired to the real
+// body crate::topalgo::brep_lib_encode_regularity::encode_regularity (the
+// TolAng default is 1.0e-10).
 
 /// OCCT BRep_Tool::Degenerated(E).
 pub(crate) fn brep_tool_degenerated(the_e: &Shape) -> bool {
@@ -600,8 +600,14 @@ impl BRepOffsetAPIThruSections {
             self.my_done = false;
             return;
         }
-        // OCCT L504-505: Encode the Regularities.
-        brep_lib_encode_regularity(&self.my_shape.clone());
+        // OCCT L504-505: Encode the Regularities — BRepLib::EncodeRegularity(S)
+        // (the TolAng default 1.0e-10); the topalgo real body (the owning
+        // pool is the accepted rcad necessity).
+        crate::topalgo::brep_lib_encode_regularity::encode_regularity(
+            &mut self.my_brep,
+            &self.my_shape,
+            1.0e-10,
+        );
     }
 
     /// OCCT BRepBuilderAPI_Command::IsDone() — a PUBLIC member of the OCCT

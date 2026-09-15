@@ -43,10 +43,14 @@
 //!      crate::bop::tools::algo_tools::is_split_to_reverse_edge (the
 //!      OCCT-context-free rcad form; theIntTools context is bound as a_ctx
 //!      to keep the call structure).
-//!  66. BRepPrimAPI_MakePrism (TKPrim) / BOPTools_AlgoTools3D::
-//!      GetNormalToFaceOnEdge + PointNearEdge (TKBO/BOPTools, the rcad bop
-//!      forms are BOPDS-index re-hosts private to the Builder) /
-//!      LocalAnalysis_SurfaceContinuity (TKGeomAlgo) — GAP carriers; each
+//!  66. BRepPrimAPI_MakePrism (TKPrim) — translated (the brep_sweep engine).
+//!      BOPTools_AlgoTools3D::GetNormalToFaceOnEdge (TKBO/BOPTools) — wired
+//!      to the crate-local re-host brep_offset_make_offset_1_c::
+//!      get_normal_to_face_on_edge (the Option<DVec3> return folds the OCCT
+//!      out-parameter).  BOPTools_AlgoTools3D::PointNearEdge (TKBO/BOPTools)
+//!      — the only rcad body is the BOPDS-pool form of bop/algo/builder.rs,
+//!      unreachable from the pool-free Analyse context — GAP carrier.
+//!      LocalAnalysis_SurfaceContinuity (TKGeomAlgo) — GAP carrier; each
 //!      keeps the OCCT call form and takes the OCCT failure path (the
 //!      IsDone() == false stubs follow the chfi3d.rs LocalAnalysis
 //!      precedent) until the units land.
@@ -76,6 +80,7 @@ use crate::fillet::chfi3d_builder_0::GeomAbsSurfaceType;
 use crate::fillet::chfi_ds::ChFiDS_TypeOfConcavity;
 
 use super::brep_offset_make_offset_1::empty_compound;
+use super::brep_offset_make_offset_1_c::get_normal_to_face_on_edge;
 use super::brep_offset_tool::{
     brep_tool_curve, edge_vertices, face_surface_of, oriented, set_add, set_contains,
     shape_data_map, shape_indexed_data_map, top_exp_vertices, OcctShapeSet, ShapeDataMap,
@@ -411,13 +416,10 @@ impl BRepPrimAPIMakePrism {
     }
 }
 
-/// OCCT BOPTools_AlgoTools3D::GetNormalToFaceOnEdge(E, F, DN)
-/// (BOPTools_AlgoTools3D.cxx L351-376) — GAP carrier (arch. diff. #66);
-/// the rcad bop form is the BOPDS-index re-host private to
-/// bop/algo/builder.rs, pending the BOPTools_AlgoTools3D unit.
-fn get_normal_to_face_on_edge(_the_e: &Shape, _the_f: &Shape, _the_dn: &mut DVec3) {
-    panic!("GAP: BOPTools_AlgoTools3D::GetNormalToFaceOnEdge (TKBO/BOPTools not translated)");
-}
+// OCCT BOPTools_AlgoTools3D::GetNormalToFaceOnEdge(E, F, DN) — the former
+// GAP carrier is retired: the calls are wired to the crate-local re-host
+// brep_offset_make_offset_1_c::get_normal_to_face_on_edge (the OCCT
+// out-parameter form is folded into its Option<DVec3> return).
 
 /// OCCT BOPTools_AlgoTools3D::PointNearEdge(E, F, T, Tol, P2d, P)
 /// (BOPTools_AlgoTools3D.cxx L525-612, the 6-parameter overload) — GAP
@@ -964,12 +966,14 @@ impl BRepOffsetAnalyse {
                 let a_lf1 = self.ancestors(a_e1);
 
                 // OCCT L542-543: GetNormalToFaceOnEdge(aE1, Face(aLF1.First()), aDN1)
-                let mut a_dn1 = DVec3::ZERO;
-                get_normal_to_face_on_edge(
+                // — the crate-local re-host returns the normal as
+                // Option<DVec3>; ZERO keeps the pre-call out-param init on
+                // the no-pcurve fallback.
+                let a_dn1 = get_normal_to_face_on_edge(
                     a_e1,
                     a_lf1.first().expect("Ancestors First: empty list"),
-                    &mut a_dn1,
-                );
+                )
+                .unwrap_or(DVec3::ZERO);
 
                 // OCCT L545-546: NCollection_List::Iterator itCB2 = itCB1;
                 // for (itCB2.Next(); itCB2.More(); itCB2.Next())
@@ -984,12 +988,11 @@ impl BRepOffsetAnalyse {
                     let a_lf2 = self.ancestors(a_e2);
 
                     // OCCT L556-557: GetNormalToFaceOnEdge(aE2, Face(aLF2.First()), aDN2)
-                    let mut a_dn2 = DVec3::ZERO;
-                    get_normal_to_face_on_edge(
+                    let a_dn2 = get_normal_to_face_on_edge(
                         a_e2,
                         a_lf2.first().expect("Ancestors First: empty list"),
-                        &mut a_dn2,
-                    );
+                    )
+                    .unwrap_or(DVec3::ZERO);
 
                     // OCCT L559: if (aDN1.XYZ().Crossed(aDN2.XYZ()).Modulus() < aSinTol)
                     if a_dn1.cross(a_dn2).length() < a_sin_tol {
@@ -1062,8 +1065,8 @@ impl BRepOffsetAnalyse {
                     // to the smaller offset face
                     {
                         // OCCT L602-604: get the normal of the new face
-                        let mut a_dn = DVec3::ZERO;
-                        get_normal_to_face_on_edge(&a_e, &a_f_new, &mut a_dn);
+                        let a_dn = get_normal_to_face_on_edge(&a_e, &a_f_new)
+                            .unwrap_or(DVec3::ZERO);
 
                         // OCCT L606-615: get the bi-normal for the aFOpposite
                         let mut a_e_in_f: Option<Shape> = None;

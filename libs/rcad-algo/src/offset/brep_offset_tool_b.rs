@@ -1362,31 +1362,10 @@ impl Geom2dConvertApproxCurve {
     }
 }
 
-/// OCCT GeomConvert_ApproxCurve (TKGeomBase/GeomConvert) — GAP carrier
-/// (architecture difference #24).
-pub(crate) struct GeomConvertApproxCurve;
-
-impl GeomConvertApproxCurve {
-    /// OCCT GeomConvert_ApproxCurve(Curve, Tol, Order, MaxSegments,
-    /// MaxDegree).
-    pub fn new(
-        _curve: &Curve3,
-        _tol: f64,
-        _order: GeomAbsShapeKind,
-        _max_segments: i32,
-        _max_degree: i32,
-    ) -> Self {
-        panic!("GAP: GeomConvert_ApproxCurve (TKGeomBase not translated)");
-    }
-    /// OCCT GeomConvert_ApproxCurve::HasResult().
-    pub fn has_result(&self) -> bool {
-        panic!("GAP: GeomConvert_ApproxCurve::HasResult");
-    }
-    /// OCCT GeomConvert_ApproxCurve::Curve().
-    pub fn curve(&self) -> Curve3 {
-        panic!("GAP: GeomConvert_ApproxCurve::Curve");
-    }
-}
+// OCCT GeomConvert_ApproxCurve — the real body is
+// rcad_kernel::base::geom_convert::GeomConvertApproxCurve; the local
+// zero-caller panic carrier is deleted per Rule 4 (both callers wired to the
+// kernel engine).
 
 /// OCCT GeomAbs_Shape (the continuity kind) — the offset-module alias of the
 /// GeomAbsShapeKind carrier from brep_offset_offset.rs.

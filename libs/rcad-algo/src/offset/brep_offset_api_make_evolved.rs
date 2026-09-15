@@ -21,7 +21,9 @@
 //!    constructor/method surface with GAP panics (port plan section 0.6);
 //!    every facade body around the engine calls is translated 1:1.
 //! 3. The static BRepFill::Axe(Spine, Profil, Axis, POS, Tol)
-//!    (TKBool/BRepFill, BRepFill.cxx) is the GAP fn below.
+//!    (TKBool/BRepFill, BRepFill.cxx) — wired to the real body
+//!    crate::brep_fill::brep_fill_axe (the fresh local pool follows the
+//!    brep_fill_evolved.rs convention; the axe products are temporaries).
 //! 4. TopoDS_Iterator(Spine).Value() maps to the single-child wire read of
 //!    the face (the tool.rs sub_shapes carrier).
 
@@ -87,18 +89,6 @@ impl Default for BRepFillAdvancedEvolved {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// OCCT static BRepFill::Axe(Spine, Profil, Axe, POS, Tol)
-/// (TKBool/BRepFill, BRepFill.cxx) — computes the profile axis; GAP.
-pub fn brep_fill_axe(
-    _the_spine: &Shape,
-    _the_profil: &Shape,
-    _the_axe: &mut Ax3,
-    _the_pos: &mut bool,
-    _the_tol: f64,
-) {
-    panic!("GAP: BRepFill::Axe (TKBool/BRepFill not translated)");
 }
 
 /// OCCT BRepOffsetAPI_MakeEvolved (hxx L76-151).
@@ -190,8 +180,13 @@ impl BRepOffsetAPIMakeEvolved {
             if !the_is_axe_prof {
                 let mut pos = false;
                 // OCCT L69: BRepFill::Axe(Spine, Profil, Axis, POS,
-                // max(Tol, Precision::Confusion())).
-                brep_fill_axe(
+                // max(Tol, Precision::Confusion())) — the
+                // brep_fill::brep_fill_axe real body (the owning pool is the
+                // accepted rcad necessity; the fresh local pool follows the
+                // brep_fill_evolved.rs convention — the axe products are
+                // temporaries).
+                crate::brep_fill::brep_fill_axe::brep_fill_axe(
+                    &mut rcad_kernel::topo::topods::BRep::new(),
                     the_spine,
                     the_profil,
                     &mut axis,

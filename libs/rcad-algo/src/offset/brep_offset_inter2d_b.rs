@@ -39,12 +39,11 @@ use super::brep_offset_tool::{shape_data_map, ShapeDataMap};
 // GAP leaves local to this part.
 // ---------------------------------------------------------------------------
 
-/// OCCT theSurf->Transformed(theLoc.Transformation()) — GAP (architecture
-/// difference #32: the identity-location convention carries the surface
-/// through; the location bake is not translated).
-fn geom_surface_transformed_loc(_the_s: &Surface3) -> Surface3 {
-    panic!("GAP: Geom_Surface::Transformed (location bake not translated)");
-}
+// OCCT theSurf->Transformed(theLoc.Transformation()) — the former GAP
+// carrier is retired: the call of BRepOffset_Inter2d.cxx L1550-1551 is wired
+// to the kernel real body rcad_kernel::geom::transform_surface over the
+// identity transform (architecture difference #32: the rcad
+// CurveRepresentation carries no location — curve_rep_location == identity).
 
 /// OCCT BRep_CurveRepresentation::Location() — the identity-location
 /// convention (architecture difference #32).
@@ -548,9 +547,17 @@ impl BRepOffsetInter2d {
                             if (first_par - first_par_on_pc).abs() > rcad_kernel::precision::PCONFUSION
                                 || (last_par - last_par_on_pc).abs() > rcad_kernel::precision::PCONFUSION
                             {
-                                // OCCT L1550-1551: theLoc/theSurf — the
-                                // transformed surface — GAP.
-                                let the_surf = geom_surface_transformed_loc(&the_surf);
+                            // OCCT L1550-1551: theLoc/theSurf — the
+                            // transformed surface.  The rcad
+                            // CurveRepresentation carries no location
+                            // (architecture difference #32:
+                            // curve_rep_location == identity), so the bake
+                            // runs through the kernel real body over the
+                            // identity transform.
+                            let the_surf = rcad_kernel::geom::transform_surface(
+                                &the_surf,
+                                &glam::DAffine3::IDENTITY,
+                            );
                                 // OCCT L1553-1572.
                                 if let Curve2d::Line(the_line) = &the_curve {
                                     if matches!(

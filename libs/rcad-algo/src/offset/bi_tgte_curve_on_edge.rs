@@ -59,6 +59,29 @@ pub struct ResD3 {
     pub d3: DVec3,
 }
 
+/// OCCT gp_Dir::Angle (gp_Dir.cxx L27-50) — the angle in [0, PI]: arccos of
+/// the dot above 45 degrees, arcsin of the cross magnitude below.
+fn dir_angle(coord: DVec3, other_coord: DVec3) -> f64 {
+    // OCCT L36: Cosinus = coord.Dot(Other.coord).
+    let cosinus = coord.dot(other_coord);
+    // OCCT L37-39: above 45 degrees arccos gives the best precision.
+    if cosinus > -0.70710678118655 && cosinus < 0.70710678118655 {
+        return cosinus.acos();
+    }
+    // OCCT L40-49: below 45 degrees, arcsin on the crossed magnitude.
+    let sinus = coord.cross(other_coord).length();
+    if cosinus < 0.0 {
+        std::f64::consts::PI - sinus.asin()
+    } else {
+        sinus.asin()
+    }
+}
+
+/// OCCT gp_Dir::IsEqual (gp_Dir.hxx L164-167) — Angle(Other) <= tolerance.
+fn dir_is_equal(coord: DVec3, other_coord: DVec3, angular_tolerance: f64) -> bool {
+    dir_angle(coord, other_coord) <= angular_tolerance
+}
+
 /// OCCT gp_Ax1::IsCoaxial (gp_Ax1.cxx L30-44) — the coaxiality test of the
 /// (location, direction) axis pair.
 fn ax1_is_coaxial(
@@ -69,16 +92,17 @@ fn ax1_is_coaxial(
     angular_tolerance: f64,
     linear_tolerance: f64,
 ) -> bool {
-    // OCCT L34-41: the two crossed momenta of the offsets.
+    // OCCT L34-37: XYZ1 = (loc - Other.loc) ^ Other.vdir; D1 = |XYZ1|.
     let xyz1 = (the_loc1 - the_loc2).cross(the_dir2);
     let d1 = xyz1.length();
+    // OCCT L38-41: XYZ2 = (Other.loc - loc) ^ vdir; D2 = |XYZ2|.
     let xyz2 = (the_loc2 - the_loc1).cross(the_dir1);
     let d2 = xyz2.length();
-    // OCCT L42: vdir.IsEqual(Other.vdir, AngularTolerance) — the angle
-    // between the unit directions (the |cross| stand-in, cf. the
-    // IsParallel form of brep_offset_offset.rs compute_curve3d).
-    let dirs_equal = the_dir1.cross(the_dir2).length() <= angular_tolerance;
-    dirs_equal && d1 <= linear_tolerance && d2 <= linear_tolerance
+    // OCCT L42-43: vdir.IsEqual(Other.vdir, AngularTolerance)
+    //              && D1 <= LinearTolerance && D2 <= LinearTolerance.
+    dir_is_equal(the_dir1, the_dir2, angular_tolerance)
+        && d1 <= linear_tolerance
+        && d2 <= linear_tolerance
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +151,21 @@ impl BiTgteCurveOnEdge {
         };
         res.init(the_eon_f, the_edge);
         res
+    }
+
+    /// OCCT BiTgte_CurveOnEdge::ShallowCopy() (cxx L59-71) — the member-wise
+    /// copy (architecture difference: value semantics, no handle indirection).
+    pub fn shallow_copy(&self) -> Self {
+        // OCCT L61: aCopy = new BiTgte_CurveOnEdge().
+        let mut a_copy = BiTgteCurveOnEdge::new();
+        // OCCT L63-68: myEdge, myEonF, myCurv, myConF, myType, myCirc.
+        a_copy.my_edge = self.my_edge.clone();
+        a_copy.my_eon_f = self.my_eon_f.clone();
+        a_copy.my_curv = self.my_curv.clone();
+        a_copy.my_conf = self.my_conf.clone();
+        a_copy.my_type = self.my_type;
+        a_copy.my_circ = self.my_circ.clone();
+        a_copy
     }
 
     /// OCCT BiTgte_CurveOnEdge::Init(EonF, Edge) (cxx L75-102).
@@ -352,4 +391,131 @@ impl BiTgteCurveOnEdge {
 fn use_point_at(c: &Curve3, the_u: f64) -> DVec3 {
     use rcad_kernel::geom::CurveEval;
     c.point_at(the_u)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use rcad_kernel::topods::{tshape_flags, Orientation, TEdgeData, TShape};
+
+    /// An edge TShape carrying (curve, range) — the BRep_Tool::Curve /
+    /// BRep_Tool::Range stand-in input of edge_curve_of.
+    fn edge_shape(curve: Option<Curve3>, range: [f64; 2]) -> Shape {
+        Shape {
+            data: Arc::new(TShape::Edge(TEdgeData {
+                my_shapes: Vec::new(),
+                flags: tshape_flags::DEFAULT,
+                curve,
+                first: Shape::null(),
+                last: Shape::null(),
+                range,
+                degenerated: false,
+                pcurves: indexmap::IndexMap::new(),
+                representations: Vec::new(),
+                vertex_params: std::collections::HashMap::new(),
+                tolerance: 0.0,
+                same_parameter: false,
+                same_range: false,
+            })),
+            index: usize::MAX,
+            location: 0,
+            orientation: Orientation::Forward,
+        }
+    }
+
+    /// OCCT gp_Lin(gp_Pnt(5, 0, 0), gp_Dir(0, 0, 1)) — the X = 5 Z-axis line
+    /// edge on [0, 10].
+    fn line_edge() -> Shape {
+        edge_shape(
+            Some(Curve3::Line(Line3::new(
+                DVec3::new(5.0, 0.0, 0.0),
+                DVec3::new(0.0, 0.0, 1.0),
+            ))),
+            [0.0, 10.0],
+        )
+    }
+
+    /// OCCT gp_Circ(gp_Ax2(gp_Pnt(5, 0, 10), N), 2.5) — the blend circle
+    /// edge on [0, 2*PI].
+    fn circle_edge(normal: DVec3, center: DVec3) -> Shape {
+        edge_shape(
+            Some(Curve3::Circle(Circle3::new(center, normal, 2.5))),
+            [0.0, std::f64::consts::TAU],
+        )
+    }
+
+    #[test]
+    fn coaxial_line_and_circle_yields_zero_radius_circle() {
+        // OCCT Init L91-101: GeomAbs_Line on a Z axis + GeomAbs_Circle around
+        // the same axis -> myType = GeomAbs_Circle,
+        // myCirc = gp_Circ(ConF.Circle().Position(), 0.).
+        let c =
+            BiTgteCurveOnEdge::with_edges(&circle_edge(DVec3::Z, DVec3::new(5.0, 0.0, 10.0)), &line_edge());
+        assert_eq!(c.get_type(), CurveType::Circle);
+        let circ = c.circle();
+        assert_eq!(circ.radius, 0.0);
+        assert_eq!(circ.center, DVec3::new(5.0, 0.0, 10.0));
+        assert_eq!(circ.normal, DVec3::Z);
+        // OCCT L106-116: FirstParameter/LastParameter delegate to myConF.
+        assert_eq!(c.first_parameter(), 0.0);
+        assert_eq!(c.last_parameter(), std::f64::consts::TAU);
+        // OCCT EvalD0 L171-177: project myConF->Value(u) onto myCurv — the
+        // circle point at u = 0 is (7.5, 0, 10); its projection on the axis
+        // line is the (5, 0, 10) point of the circle plane.
+        let p = c.eval_d0(0.0);
+        assert!((p - DVec3::new(5.0, 0.0, 10.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn shallow_copy_preserves_the_members() {
+        // OCCT ShallowCopy (cxx L59-71): the member-wise copy.
+        let c =
+            BiTgteCurveOnEdge::with_edges(&circle_edge(DVec3::Z, DVec3::new(5.0, 0.0, 10.0)), &line_edge());
+        let copy = c.shallow_copy();
+        assert_eq!(copy.get_type(), c.get_type());
+        assert_eq!(copy.first_parameter(), c.first_parameter());
+        assert_eq!(copy.last_parameter(), c.last_parameter());
+        let a = c.circle();
+        let b = copy.circle();
+        assert_eq!(a.radius, b.radius);
+        assert_eq!(a.center, b.center);
+        assert_eq!(a.normal, b.normal);
+    }
+
+    #[test]
+    fn anti_parallel_axis_is_not_coaxial() {
+        // OCCT gp_Dir::IsEqual (gp_Dir.hxx L164) rejects the PI angle; the
+        // former |v1 x v2| stand-in wrongly accepted the anti-parallel axis
+        // (zero cross product).
+        let c = BiTgteCurveOnEdge::with_edges(
+            &circle_edge(-DVec3::Z, DVec3::new(5.0, 0.0, 10.0)),
+            &line_edge(),
+        );
+        assert_eq!(c.get_type(), CurveType::Other);
+    }
+
+    #[test]
+    fn offset_axis_is_not_coaxial() {
+        // OCCT gp_Ax1.cxx L42-43: the crossed momentum D1 = 5 exceeds
+        // Precision::Confusion.
+        let c = BiTgteCurveOnEdge::with_edges(
+            &circle_edge(DVec3::Z, DVec3::new(0.0, 0.0, 10.0)),
+            &line_edge(),
+        );
+        assert_eq!(c.get_type(), CurveType::Other);
+    }
+
+    #[test]
+    fn dir_angle_matches_the_three_branch_form() {
+        // OCCT gp_Dir.cxx L27-50: 60 degrees -> the arccos branch.
+        let a = DVec3::new(1.0, 0.0, 0.0);
+        let b = DVec3::new(0.5, 0.5_f64.sqrt(), 0.0);
+        assert!((dir_angle(a, b) - std::f64::consts::FRAC_PI_3).abs() < 1e-15);
+        // Anti-parallel: PI (the asin branch with cosinus < 0).
+        assert!((dir_angle(a, -a) - std::f64::consts::PI).abs() < 1e-15);
+        assert!(dir_is_equal(a, a, PRECISION_ANGULAR));
+        assert!(!dir_is_equal(a, -a, PRECISION_ANGULAR));
+    }
 }

@@ -191,6 +191,8 @@ pub fn top_loc_move(s: &Shape, t: &glam::DAffine3, memo: &mut IndexMap<u64, Shap
                     .collect(),
                 tolerance: fd.tolerance,
                 natural_restriction: fd.natural_restriction,
+                triangulations: Vec::new(),
+                active_triangulation: None,
             })
         }
         TShape::Shell(sd) => {

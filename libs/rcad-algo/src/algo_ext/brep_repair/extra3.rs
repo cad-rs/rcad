@@ -1007,6 +1007,8 @@ pub fn merge_bspline_faces(
         internal_vertices: Vec::new(),
         tolerance: fd1.tolerance,
         natural_restriction: fd1.natural_restriction,
+        triangulations: fd1.triangulations.clone(),
+        active_triangulation: fd1.active_triangulation,
     };
     let merged_tshape = Arc::new(TShape::Face(merged_fd));
 

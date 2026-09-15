@@ -461,6 +461,8 @@ impl<'a> BuilderFace<'a> {
                     internal_vertices: vec![],
                     tolerance: a_tol,
                     natural_restriction,
+                    triangulations: Vec::new(),
+                    active_triangulation: None,
                 });
                 self.my_areas.push(Shape::new(
                     std::sync::Arc::new(face_tshape),
@@ -488,6 +490,7 @@ impl<'a> BuilderFace<'a> {
                 sample_point: None, uv_domain: None,
                 internal_vertices: vec![], tolerance: a_tol,
                 natural_restriction: false,
+                triangulations: Vec::new(), active_triangulation: None,
             });
             let a_face = Shape::new(
                 std::sync::Arc::new(face_tshape),
@@ -609,6 +612,7 @@ impl<'a> BuilderFace<'a> {
                         sample_point: None, uv_domain: None,
                         internal_vertices: vec![], tolerance: a_tol,
                         natural_restriction: false,
+                        triangulations: Vec::new(), active_triangulation: None,
                     })),
                     0, rcad_kernel::topods::Orientation::Forward,
                 );
@@ -635,6 +639,7 @@ impl<'a> BuilderFace<'a> {
                             inner_wires, sample_point: None, uv_domain: None,
                             internal_vertices: vec![], tolerance: a_tol,
                             natural_restriction: false,
+                            triangulations: Vec::new(), active_triangulation: None,
                         })),
                         0, rcad_kernel::topods::Orientation::Forward,
                     );
@@ -745,6 +750,8 @@ impl<'a> BuilderFace<'a> {
                             inner_wires, sample_point: None, uv_domain: None,
                             internal_vertices: vec![], tolerance: fd.tolerance,
                             natural_restriction: fd.natural_restriction,
+                            triangulations: fd.triangulations.clone(),
+                            active_triangulation: fd.active_triangulation,
                         })),
                         0, rcad_kernel::topods::Orientation::Forward,
                     );
@@ -1101,6 +1108,8 @@ mod tests {
                 internal_vertices: vec![],
                 tolerance: 0.0,
                 natural_restriction: false,
+                triangulations: Vec::new(),
+                active_triangulation: None,
             })),
             0,
             Orientation::Forward,

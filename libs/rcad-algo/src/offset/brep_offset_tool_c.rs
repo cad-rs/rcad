@@ -105,6 +105,8 @@ fn b_make_face_surface(s: &Surface3, tol: f64) -> Shape {
                 internal_vertices: Vec::new(),
                 tolerance: tol,
                 natural_restriction: false,
+                triangulations: Vec::new(),
+                active_triangulation: None,
             },
         )),
         index: usize::MAX,

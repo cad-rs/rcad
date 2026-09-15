@@ -412,6 +412,11 @@ pub fn edge_curve_reps(brep: &BRep, edge: &Shape) -> Vec<EdgeCurveRep> {
             rcad_kernel::topods::CurveRepresentation::CurveOn2Surfaces { .. } => {
                 out.push(EdgeCurveRep::Regularity);
             }
+            // Polygon representations are not BRep_GCurve kinds and carry no
+            // pcurve row — skipped exactly like the OCCT GCurve down-cast.
+            rcad_kernel::topods::CurveRepresentation::Polygon3D { .. } => {}
+            rcad_kernel::topods::CurveRepresentation::PolygonOnTriangulation { .. } => {}
+            rcad_kernel::topods::CurveRepresentation::PolygonOnClosedTriangulation { .. } => {}
         }
     }
     // Pcurve rows whose representation is not already listed above (the

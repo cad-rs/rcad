@@ -32,9 +32,12 @@
 //     topalgo/brep_lib/build_curves3d.rs; the call sites call the real body
 //     over my_brep.)
 // 26. Approx_FitAndDivide + AppCont_Function + AppParCurves_MultiCurve +
-//     Convert_CompBezierCurvesToBSplineCurve (TKGeomBase) — GAP carriers
-//     (only Approx_FitAndDivide is still missing; the MultiCurve and the
-//     CompBezier converter live in geomalgo/approx_int.rs).
+//     Convert_CompBezierCurvesToBSplineCurve (TKGeomBase) — real bodies
+//     (arch. diff. #26 retired): geomalgo::approx_fit_and_divide (the
+//     Approx_ComputeCLine.gxx engine) + geomalgo::app_cont (the
+//     AppCont_Function interface + AppCont_LeastSquare + the ContMatrices)
+//     + geomalgo::approx_int::MultiCurve + the kernel Convert package home
+//     base::convert::comp_bezier_curves_to_bspline.
 // 27. GeomAPI_ProjectPointOnCurve / Geom2dAPI_ProjectPointOnCurve
 //     (TKTopAlgo/GeomAPI) — real bodies (geomalgo/geom_api_project_point_on_
 //     curve.rs, geomalgo/geom2d_api_project_point_on_curve.rs).
@@ -474,8 +477,8 @@ fn curve_last_parameter(c: &Curve3) -> f64 {
 
 // ---------------------------------------------------------------------------
 // OCCT MakeCurve_Function (BiTgte_Blend.cxx L382-412) — the AppCont_Function
-// subclass; the base class is carried by the plain struct (the GAP carrier
-// of Approx_FitAndDivide consumes it).
+// subclass; the base-class interface is the kernel-translated
+// `AppContFunction` trait (crate::geomalgo::app_cont).
 // ---------------------------------------------------------------------------
 
 /// OCCT MakeCurve_Function (BiTgte_Blend.cxx L382-412).
@@ -486,9 +489,17 @@ struct MakeCurveFunction {
 impl MakeCurveFunction {
     /// OCCT MakeCurve_Function::MakeCurve_Function(C).
     fn new(c: &BiTgteCurveOnEdge) -> Self {
-        // OCCT L390-391: myNbPnt = 1; myNbPnt2d = 0 — carried by the GAP
-        // base (the approximation machinery is not translated).
         MakeCurveFunction { my_curve: c.clone() }
+    }
+}
+
+impl AppContFunction for MakeCurveFunction {
+    // OCCT L390-391: myNbPnt = 1; myNbPnt2d = 0.
+    fn my_nb_pnt(&self) -> i32 {
+        1
+    }
+    fn my_nb_pnt2d(&self) -> i32 {
+        0
     }
 
     /// OCCT L394: FirstParameter().
@@ -502,108 +513,32 @@ impl MakeCurveFunction {
     }
 
     /// OCCT L398-404: Value(theT, thePnt2d, thePnt).
-    fn value(&self, the_t: f64, the_pnt: &mut [DVec3]) -> bool {
+    fn value(&self, the_t: f64, _the_pnt2d: &mut [DVec2], the_pnt: &mut [DVec3]) -> bool {
         the_pnt[0] = self.my_curve.eval_d0(the_t);
         true
     }
 
     /// OCCT L406-411: D1(theT, theVec2d, theVec).
-    fn d1(&self, _the_t: f64, _the_vec: &mut [DVec3]) -> bool {
+    fn d1(&self, _the_t: f64, _the_vec2d: &mut [DVec2], _the_vec: &mut [DVec3]) -> bool {
         false
     }
 }
 
-// OCCT Approx_FitAndDivide (TKGeomBase/Approx) — GAP carrier (arch. diff.
-// #26).
-struct ApproxFitAndDivide;
+// OCCT Approx_FitAndDivide (TKGeomBase/Approx) — the 1:1 body lives in
+// crate::geomalgo::approx_fit_and_divide (arch. diff. #26 retired); the
+// local GAP carrier is deleted.
+use crate::geomalgo::app_cont::AppContFunction;
+use crate::geomalgo::approx_fit_and_divide::ApproxFitAndDivide;
 
-impl ApproxFitAndDivide {
-    /// OCCT Approx_FitAndDivide(Func, DegMin, DegMax, Tol3D, Tol2D, Warning).
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        _f: &MakeCurveFunction,
-        _deg_min: i32,
-        _deg_max: i32,
-        _tol3d: f64,
-        _tol2d: f64,
-        _warning: bool,
-    ) -> Self {
-        panic!("GAP: Approx_FitAndDivide (TKGeomBase/Approx not translated)");
-    }
+// OCCT AppParCurves_MultiCurve — the 1:1 body lives in
+// crate::geomalgo::approx_int::MultiCurve (Degree()/Curve() included).
+use crate::geomalgo::approx_int::MultiCurve as AppParCurvesMultiCurve;
 
-    /// OCCT Approx_FitAndDivide::NbMultiCurves().
-    fn nb_multi_curves(&self) -> i32 {
-        panic!("GAP: Approx_FitAndDivide::NbMultiCurves (TKGeomBase/Approx not translated)");
-    }
-
-    /// OCCT Approx_FitAndDivide::Value(Index) -> AppParCurves_MultiCurve.
-    fn value(&self, _index: i32) -> AppParCurvesMultiCurve {
-        panic!("GAP: Approx_FitAndDivide::Value (TKGeomBase/Approx not translated)");
-    }
-}
-
-/// OCCT AppParCurves_MultiCurve — GAP carrier (arch. diff. #26).
-struct AppParCurvesMultiCurve;
-
-impl AppParCurvesMultiCurve {
-    /// OCCT AppParCurves_MultiCurve::Degree().
-    fn degree(&self) -> i32 {
-        panic!("GAP: AppParCurves_MultiCurve::Degree (TKGeomBase/AppParCurves not translated)");
-    }
-
-    /// OCCT AppParCurves_MultiCurve::Curve(Index, TPoints).
-    fn curve(&self, _index: i32, _tpoints: &mut [DVec3]) {
-        panic!("GAP: AppParCurves_MultiCurve::Curve (TKGeomBase/AppParCurves not translated)");
-    }
-}
-
-/// OCCT Convert_CompBezierCurvesToBSplineCurve (TKGeomBase/Convert) — GAP
-/// carrier (arch. diff. #26).
-#[derive(Default)]
-struct ConvertCompBezierCurvesToBSplineCurve;
-
-impl ConvertCompBezierCurvesToBSplineCurve {
-    /// OCCT ctor.
-    fn new() -> Self {
-        ConvertCompBezierCurvesToBSplineCurve
-    }
-
-    /// OCCT Convert_CompBezierCurvesToBSplineCurve::AddCurve(Poles).
-    fn add_curve(&mut self, _poles: &[DVec3]) {
-        panic!("GAP: Convert_CompBezierCurvesToBSplineCurve::AddCurve (TKGeomBase/Convert not translated)");
-    }
-
-    /// OCCT Convert_CompBezierCurvesToBSplineCurve::Perform().
-    fn perform(&mut self) {
-        panic!("GAP: Convert_CompBezierCurvesToBSplineCurve::Perform (TKGeomBase/Convert not translated)");
-    }
-
-    /// OCCT Convert_CompBezierCurvesToBSplineCurve::NbPoles().
-    fn nb_poles(&self) -> i32 {
-        panic!("GAP: Convert_CompBezierCurvesToBSplineCurve::NbPoles (TKGeomBase/Convert not translated)");
-    }
-
-    /// OCCT Convert_CompBezierCurvesToBSplineCurve::NbKnots().
-    fn nb_knots(&self) -> i32 {
-        panic!("GAP: Convert_CompBezierCurvesToBSplineCurve::NbKnots (TKGeomBase/Convert not translated)");
-    }
-
-    /// OCCT Convert_CompBezierCurvesToBSplineCurve::KnotsAndMults(SKnots,
-    /// SMults).
-    fn knots_and_mults(&self, _s_knots: &mut Vec<f64>, _s_mults: &mut Vec<i32>) {
-        panic!("GAP: Convert_CompBezierCurvesToBSplineCurve::KnotsAndMults (TKGeomBase/Convert not translated)");
-    }
-
-    /// OCCT Convert_CompBezierCurvesToBSplineCurve::Poles(Poles).
-    fn poles(&self, _poles: &mut Vec<DVec3>) {
-        panic!("GAP: Convert_CompBezierCurvesToBSplineCurve::Poles (TKGeomBase/Convert not translated)");
-    }
-
-    /// OCCT Convert_CompBezierCurvesToBSplineCurve::Degree().
-    fn degree(&self) -> i32 {
-        panic!("GAP: Convert_CompBezierCurvesToBSplineCurve::Degree (TKGeomBase/Convert not translated)");
-    }
-}
+// OCCT Convert_CompBezierCurvesToBSplineCurve (TKGeomBase/Convert) — the
+// 1:1 body lives in the kernel Convert package home
+// rcad_kernel::base::convert::comp_bezier_curves_to_bspline (arch. diff. #26
+// retired); the local GAP carrier is deleted.
+use rcad_kernel::base::convert::ConvertCompBezierCurvesToBSplineCurve;
 
 // OCCT BiTgte_Blend.cxx L414-470 — MakeCurve.
 fn make_curve(hc: &BiTgteCurveOnEdge) -> Option<Curve3> {
@@ -620,7 +555,9 @@ fn make_curve(hc: &BiTgteCurveOnEdge) -> Option<Curve3> {
         }));
     } else {
         // the approximation is done
-        // OCCT L430-436.
+        // OCCT L430-436: MakeCurve_Function F(HC); Deg1 = Deg2 = 8; Tol =
+        // Precision::Approximation(); Approx_FitAndDivide Fit(F, Deg1, Deg2,
+        // Tol, Tol, true).
         let f = MakeCurveFunction::new(hc);
         let deg1: i32 = 8;
         let deg2: i32 = 8;
@@ -634,7 +571,7 @@ fn make_curve(hc: &BiTgteCurveOnEdge) -> Option<Curve3> {
             // OCCT L442-444: MC = Fit.Value(i); Poles(1, MC.Degree()+1);
             // MC.Curve(1, Poles).
             let mc = fit.value(i);
-            let mut poles: Vec<DVec3> = vec![DVec3::ZERO; (mc.degree() + 1) as usize];
+            let mut poles: Vec<DVec3> = vec![DVec3::ZERO; mc.degree() + 1];
             mc.curve(1, &mut poles);
 
             // OCCT L446: Conv.AddCurve(Poles).

@@ -4694,6 +4694,8 @@ impl<'a> Builder<'a> {
                 internal_vertices: vec![],
                 tolerance: a_tol,
                 natural_restriction: false,
+                triangulations: Vec::new(),
+                active_triangulation: None,
             })),
             0,
             topods::Orientation::Forward,

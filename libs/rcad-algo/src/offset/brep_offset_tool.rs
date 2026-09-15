@@ -69,9 +69,14 @@ use rcad_kernel::topo_shape::Shape;
 
 use super::brep_offset_offset::GeomAbsShapeKind;
 use super::brep_offset_tool_b::{
-    Geom2dConvertApproxCurve, Geom2dConvertCompCurveToBSplineCurve, GeomConvertApproxCurve,
+    Geom2dConvertApproxCurve, Geom2dConvertCompCurveToBSplineCurve,
     GeomConvertCompCurveToBSplineCurve,
 };
+
+// OCCT GeomConvert_ApproxCurve — the landed kernel engine (the local panic
+// carrier of tool_b is now zero-caller; report its Rule-4 deletion to the
+// module owner).
+use rcad_kernel::base::geom_convert::GeomConvertApproxCurve;
 
 use crate::brep_algo::tool as bat;
 use crate::feat::brep_feat_builder::explorer;
@@ -1633,7 +1638,9 @@ fn glue(
     // OCCT L1178-1181: Tol = 1e-7; Continuity = GeomAbs_C1; MaxDeg = 14;
     // MaxSeg = 16.
     let tol = 1e-7;
-    let continuity = GeomAbsShapeKind::C1;
+    // The engine continuity kind (math::GeomAbsShape — the AdvApprox enum;
+    // the C-forms coincide with the offset-module GeomAbsShapeKind).
+    let continuity = rcad_kernel::math::GeomAbsShape::C1;
     let max_deg = 14;
     let max_seg = 16;
 
@@ -1683,7 +1690,7 @@ fn glue(
                 let approx3d =
                     GeomConvertApproxCurve::new(&new_curve, tol, continuity, max_seg, max_deg);
                 if approx3d.has_result() {
-                    new_curve = approx3d.curve();
+                    new_curve = Curve3::BSpline(approx3d.curve().expect("HasResult -> curve"));
                 }
             }
             let fparam = 0.0;

@@ -12,6 +12,7 @@ pub use topo::topods;
 pub use topo::topology;
 pub use topo::topo_query;
 pub use topo::topo_shape;
+pub use topo::poly;
 pub use topo::brep_graph;
 pub use core::precision;
 pub use core::precision as tolerance;

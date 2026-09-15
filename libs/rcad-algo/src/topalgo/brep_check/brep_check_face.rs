@@ -1097,6 +1097,8 @@ fn empty_copied_face(my_shape: &Shape, wir1: &Shape) -> Option<Shape> {
         internal_vertices: Vec::new(),
         tolerance: fd.tolerance,
         natural_restriction: fd.natural_restriction,
+        triangulations: Vec::new(),
+        active_triangulation: None,
     };
     Some(Shape {
         data: Arc::new(TShape::Face(new_data)),

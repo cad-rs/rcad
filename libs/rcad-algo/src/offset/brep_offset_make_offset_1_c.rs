@@ -105,28 +105,36 @@ fn edge_is_degenerated(the_e: &Shape) -> bool {
 }
 
 /// OCCT BOPTools_AlgoTools3D::GetNormalToFaceOnEdge(E, F, Dir)
-/// (BOPTools_AlgoTools3D.cxx L351-376) — the 3-argument form: the surface
-/// normal at the middle parameter of the edge, computed via the edge's
-/// pcurve on the face and the surface first derivatives (the local re-host
-/// of the bop Builder re-host body).
+/// (BOPTools_AlgoTools3D.cxx L329-343) — the 3-argument form: the surface
+/// normal at the pcurve intermediate parameter, computed via the edge's
+/// pcurve on the face and the surface first derivatives, REVERSED for a
+/// REVERSED face.
 pub(crate) fn get_normal_to_face_on_edge(the_e: &Shape, the_f: &Shape) -> Option<glam::DVec3> {
-    // OCCT L352-355: BRep_Tool::Range(aE, aT1, aT2); aT = (aT1 + aT2)/2.
-    let (a_t1, a_t2) = bat::brep_tool_range(the_e);
-    let a_t = 0.5 * (a_t1 + a_t2);
+    // OCCT L333-334: BRep_Tool::CurveOnSurface(aE, aF, aT1, aT2) — the
+    // PCURVE range (not the 3D edge range).
+    // OCCT L335: aT = BOPTools_AlgoTools2D::IntermediatePoint(aT1, aT2)
+    // (BOPTools_AlgoTools2D.cxx L404-411: the PAR_T = 0.43213918 weighted
+    // point — NOT the midpoint).
     let surf = the_f.as_face().and_then(|fd| fd.surface.clone())?;
-    // OCCT L365: aC2D1 = BRep_Tool::CurveOnSurface(aE, aF1, aTolPC).
-    let pc = bat::brep_tool_curve_on_surface(the_e, the_f);
-    if let Some((pc, _, _)) = pc {
-        // OCCT L367-369: aC2D1->D0(aT, aP2D).
-        let uv = Curve2dEval::point_at(&pc, a_t);
-        // OCCT L371-375: aDNF1 = aDD1U ^ aDD1V.
-        let (_p, d1u, d1v) = surf.derivatives(uv.x, uv.y);
-        let n = d1u.cross(d1v);
-        if n.length_squared() >= 1e-24 {
-            return Some(n.normalize());
-        }
+    // OCCT L336-337 (the 4-arg form, L344-369): aC2D1 =
+    // BOPTools_AlgoTools2D::CurveOnSurface(aE, aF1, aTolPC, theContext) —
+    // the rcad read-only BRep_Tool::CurveOnSurface stand-in.
+    let (pc, a_t1, a_t2) = bat::brep_tool_curve_on_surface(the_e, the_f)?;
+    const PAR_T: f64 = 0.43213918;
+    let a_t = (1.0 - PAR_T) * a_t1 + PAR_T * a_t2;
+    // OCCT L367-369: aC2D1->D0(aT, aP2D); aDNF1 = aDD1U ^ aDD1V.
+    let uv = Curve2dEval::point_at(&pc, a_t);
+    let (_p, d1u, d1v) = surf.derivatives(uv.x, uv.y);
+    let n = d1u.cross(d1v);
+    if n.length_squared() < 1e-24 {
+        return None;
     }
-    None
+    let mut a_dnf = n.normalize();
+    // OCCT L338-340: if (aF.Orientation() == TopAbs_REVERSED) aDNF.Reverse().
+    if the_f.orientation == Orientation::Reversed {
+        a_dnf = -a_dnf;
+    }
+    Some(a_dnf)
 }
 
 /// OCCT gp_Vec::IsParallel(theOther, theAngularTolerance) — the parallelism

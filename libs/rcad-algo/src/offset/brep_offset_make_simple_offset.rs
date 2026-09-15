@@ -24,12 +24,18 @@
 //    (the hasher ignores the orientation, so the key is shape_key).
 // 2.2 occ::handle<Geom_Curve|Geom_Surface|Geom2d_Curve> members map to
 //    Option<...> (None = the OCCT null handle).
-// 3. ShapeAnalysis_FreeBounds (TKShHealing), BRepTools_Quilt (TKTopAlgo),
-//    ShapeFix_Edge::FixSameParameter (TKShHealing), GeomFill_Generator
-//    (TKGeomAlgo) and the planar BRepLib_MakeFace(W, OnlyPlane) constructor
-//    have no rcad translation yet — GAP carriers below.  (BRepLib::
-//    BuildCurves3d is translated — topalgo/brep_lib/build_curves3d.rs;
-//    the call sites call the real body over my_brep.)
+// 3. ShapeAnalysis_FreeBounds (TKShHealing) — wired to the real body
+//    shhealing/shape_analysis/free_bounds.rs (the 1-argument constructor of
+//    cxx L411 resolves to the actual free bounds form; the pool argument is
+//    the accepted rcad necessity).  ShapeFix_Edge::FixSameParameter
+//    (TKShHealing) — wired to the real body shhealing/shape_fix/edge.rs.
+//    GeomFill_Generator (TKGeomAlgo) — wired to the real body
+//    brep_fill/generator.rs.  BRepTools_Quilt (TKTopAlgo) — the real body of
+//    topalgo/brep_tools_quilt.rs.  The planar BRepLib_MakeFace(W, OnlyPlane)
+//    constructor has no rcad translation yet — the carrier keeps IsDone() =
+//    false (the OCCT failure branch).  (BRepLib::BuildCurves3d is translated
+//    — topalgo/brep_lib/build_curves3d.rs; the call sites call the real body
+//    over my_brep.)
 // 4. OCCT mutates TShapes in place through a global arena; rcad carries the
 //    arena as the BRep pool.  The class holds my_brep (the pool stand-in for
 //    the arena; consumed by BRepBuilder mutations and the rcad
@@ -56,6 +62,7 @@ use rcad_kernel::topo::topods::{tshape_flags, BRep, BRepBuilder, GeomAbsShape, O
 use rcad_kernel::topo_shape::Shape;
 
 use crate::brep_fill::brep_fill_sweep::surface_uiso;
+use crate::brep_fill::generator::GeomFillGenerator;
 use crate::feat::brep_feat_builder::explorer;
 use crate::feat::loc_ope_glued_shape::map_shapes_and_ancestors;
 use crate::feat::loc_ope_wires_on_shape::{brep_tool_pnt, shape_key, top_exp_vertices};
@@ -65,8 +72,10 @@ use crate::feat::loc_ope_wires_on_shape_b::{
 };
 use crate::offset::brep_offset_offset::BRepOffsetStatus;
 use crate::offset::brep_offset_surface::{brep_offset_surface, collapse_singularities};
+use crate::shhealing::shape_analysis::free_bounds::ShapeAnalysisFreeBounds;
 use crate::shhealing::shape_build::edge::ShapeBuildEdge;
 use crate::shhealing::shape_build::reshape::ShapeBuildReShape;
+use crate::shhealing::shape_fix::edge::ShapeFixEdge;
 use crate::topalgo::brep_lib_validate_edge::{
     Adaptor3dCurveOnSurface, BRepLibValidateEdge, Geom2dAdaptorCurve, GeomAdaptorCurve,
     GeomAdaptorSurface,
@@ -748,64 +757,10 @@ impl BRepToolsModification for BRepOffsetSimpleOffset {
     }
 }
 
-/// OCCT ShapeAnalysis_FreeBounds (TKShHealing) — the free-bounds explorer of
-/// BuildMissingWalls (architecture difference #3; GAP: no rcad translation
-/// yet — the GAP panic is the §0.6 annotation; GetClosedWires keeps the OCCT
-/// accessor surface).
-pub struct ShapeAnalysisFreeBounds {
-    my_closed_wires: Shape, // OCCT: myClosedWires
-}
-
-impl ShapeAnalysisFreeBounds {
-    /// OCCT ShapeAnalysis_FreeBounds::ShapeAnalysis_FreeBounds(theShape)
-    /// (defaults: theSewConnected = false, theShared = false, theSetProjPCur
-    /// = false).  GAP: the free-bounds computation is not translated.
-    pub fn new(_the_shape: &Shape) -> Self {
-        panic!("GAP: ShapeAnalysis_FreeBounds (TKShHealing not translated)");
-    }
-
-    /// OCCT ShapeAnalysis_FreeBounds::GetClosedWires().
-    pub fn get_closed_wires(&self) -> Shape {
-        self.my_closed_wires.clone()
-    }
-}
-
 /// OCCT BRepTools_Quilt (TKBRep/BRepTools/BRepTools_Quilt.hxx / .cxx) — the
 /// real body lives in crate::topalgo::brep_tools_quilt; the sewing of
 /// BuildMissingWalls keeps the OCCT import path through the re-export.
 pub use crate::topalgo::brep_tools_quilt::BRepToolsQuilt;
-
-/// OCCT ShapeFix_Edge (TKShHealing) — the FixSameParameter of
-/// BuildMissingWalls (architecture difference #3; GAP: no rcad translation
-/// yet; the context argument keeps the OCCT SetContext form).
-fn shape_fix_edge_fix_same_parameter(the_context: &mut ShapeBuildReShape, the_e: &Shape) {
-    let _ = (the_context, the_e);
-    panic!("GAP: ShapeFix_Edge::FixSameParameter (TKShHealing not translated)");
-}
-
-/// OCCT GeomFill_Generator (TKGeomAlgo/GeomFill) — the thrusection generator
-/// of BuildWallFace (architecture difference #3; GAP: no rcad translation yet
-/// — the GAP panics are the §0.6 annotation).
-pub struct GeomFillGenerator;
-
-impl GeomFillGenerator {
-    /// OCCT GeomFill_Generator::AddCurve(Curve).
-    pub fn add_curve(&mut self, the_curve: &TrimmedCurve3) {
-        let _ = the_curve;
-        panic!("GAP: GeomFill_Generator::AddCurve (TKGeomAlgo/GeomFill not translated)");
-    }
-
-    /// OCCT GeomFill_Generator::Perform(Pres3d).
-    pub fn perform(&mut self, the_pres3d: f64) {
-        let _ = the_pres3d;
-        panic!("GAP: GeomFill_Generator::Perform (TKGeomAlgo/GeomFill not translated)");
-    }
-
-    /// OCCT GeomFill_Generator::Surface().
-    pub fn surface(&self) -> Surface3 {
-        panic!("GAP: GeomFill_Generator::Surface (TKGeomAlgo/GeomFill not translated)");
-    }
-}
 
 /// OCCT BRepLib_MakeFace(W, OnlyPlane) (TKTopAlgo/BRepLib_MakeFace) — the
 /// planar face maker of BuildWallFace (architecture difference #3; GAP: the
@@ -1378,9 +1333,19 @@ impl BRepOffsetMakeSimpleOffset {
 
         // Compute outer bounds of original shape.
         // OCCT L411-412: ShapeAnalysis_FreeBounds aFB(myInputShape);
-        // GetClosedWires.
-        let a_fb = ShapeAnalysisFreeBounds::new(&self.my_input_shape);
-        let a_free_wires = a_fb.get_closed_wires();
+        // GetClosedWires.  The 1-argument form resolves to the
+        // (shape, splitclosed = false, splitopen = true, checkinternaledges
+        // = false) constructor — the actual free bounds form; the real body
+        // is the shhealing::shape_analysis translation (the owning &mut BRep
+        // pool argument is the accepted rcad necessity).
+        let a_fb = ShapeAnalysisFreeBounds::new_actual(
+            &mut self.my_brep,
+            &self.my_input_shape,
+            false,
+            true,
+            false,
+        );
+        let a_free_wires = a_fb.get_closed_wires().clone();
 
         // Build linear faces on each edge and its image.
         let an_exp_cw = explorer(&a_free_wires, ShapeType::Wire, ShapeType::Shape);
@@ -1402,10 +1367,15 @@ impl BRepOffsetMakeSimpleOffset {
 
         // Update edges from wall faces.
         // OCCT L439-447: ShapeFix_Edge aSFE; aSFE.SetContext(myReShape);
-        // aSFE.FixSameParameter(aCurrEdge).
+        // aSFE.FixSameParameter(aCurrEdge) — the shhealing::shape_fix real
+        // body (the FixSameParameter tolerance keeps the OCCT 0.0 default;
+        // the pool argument is the accepted rcad necessity and the context
+        // clone follows the shape_fix_shape.rs convention).
+        let mut a_sfe = ShapeFixEdge::new();
+        a_sfe.set_context(self.my_re_shape.clone());
         for a_curr_edge in explorer(&a_new_faces, ShapeType::Edge, ShapeType::Shape) {
             // Fix same parameter and same range flags.
-            shape_fix_edge_fix_same_parameter(&mut self.my_re_shape, &a_curr_edge);
+            a_sfe.fix_same_parameter(&mut self.my_brep, &a_curr_edge, 0.0);
         }
 
         // Update result to be compound.
@@ -1597,12 +1567,20 @@ impl BRepOffsetMakeSimpleOffset {
 
             // OCCT L620-624: GeomFill_Generator ThrusecGenerator;
             // AddCurve x2; Perform(Precision::PConfusion()); theSurf =
-            // Surface().
-            let mut thrusec_generator = GeomFillGenerator;
-            thrusec_generator.add_curve(&tr_edge_curve);
-            thrusec_generator.add_curve(&tr_offset_curve);
+            // Surface() — the brep_fill::generator real body (the trimmed
+            // sections are passed as the Curve3::Trimmed form the profiler
+            // strips, the OCCT Geom_TrimmedCurve path).
+            let mut thrusec_generator = GeomFillGenerator::new();
+            thrusec_generator.add_curve(&Curve3::Trimmed(tr_edge_curve));
+            thrusec_generator.add_curve(&Curve3::Trimmed(tr_offset_curve));
             thrusec_generator.perform(rcad_kernel::core::precision::PCONFUSION);
-            let the_surf = thrusec_generator.surface();
+            // OCCT L624: theSurf = ThrusecGenerator.Surface() — the real
+            // body reports the not-done Perform as None; the missing surface
+            // keeps the null-face failure class of the caller.
+            let the_surf = match thrusec_generator.surface() {
+                Some(a_bs) => Surface3::BSpline(a_bs),
+                None => return a_res_face,
+            };
             // OCCT L626-627: theSurf->Bounds(Uf, Ul, Vf, Vl).
             let (uf, ul, vf, vl) = surface_bounds(&the_surf);
             // OCCT L628: TopLoc_Location Loc; — the rcad location index

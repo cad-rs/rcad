@@ -727,6 +727,7 @@ fn brep_deep_clone(brep: &BRep) -> BRep {
  BRep {
   tshapes: brep.tshapes.iter().map(|ts| std::sync::Arc::new((**ts).clone())).collect(),
   locations: brep.locations.clone(),
+  triangulations: brep.triangulations.clone(),
   vert_by_pos: std::collections::HashMap::new(),
   face_by_key: std::collections::HashMap::new(),
   edge_by_key: std::collections::HashMap::new(),

@@ -541,6 +541,8 @@ pub(crate) fn empty_copied(r: &Shape) -> Shape {
             internal_vertices: Vec::new(),
             tolerance: fd.tolerance,
             natural_restriction: false,
+            triangulations: Vec::new(),
+            active_triangulation: None,
         })),
         TShape::Shell(_) => Arc::new(TShape::Shell(rcad_kernel::topods::TShellData {
             my_shapes: Vec::new(),
@@ -919,6 +921,8 @@ mod tests {
                 internal_vertices: Vec::new(),
                 tolerance: CONFUSION,
                 natural_restriction: false,
+                triangulations: Vec::new(),
+                active_triangulation: None,
             })),
             0,
             Orientation::Forward,

@@ -208,3 +208,69 @@ impl BiTgteCurveOnVertex {
         panic!("NotImplemented: BiTgte_CurveOnVertex");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use rcad_kernel::topods::{tshape_flags, Orientation, TEdgeData, TShape, TVertexData};
+
+    /// OCCT TopoDS_Vertex with the stored gp_Pnt.
+    fn vertex_shape(pnt: DVec3) -> Shape {
+        Shape {
+            data: Arc::new(TShape::Vertex(TVertexData {
+                my_shapes: Vec::new(),
+                flags: tshape_flags::DEFAULT,
+                point: pnt,
+                tolerance: 0.0,
+                points: Vec::new(),
+            })),
+            index: usize::MAX,
+            location: 0,
+            orientation: Orientation::Forward,
+        }
+    }
+
+    /// OCCT TopoDS_Edge carrying only a range (BRep_Tool::Range stand-in).
+    fn edge_shape(range: [f64; 2]) -> Shape {
+        Shape {
+            data: Arc::new(TShape::Edge(TEdgeData {
+                my_shapes: Vec::new(),
+                flags: tshape_flags::DEFAULT,
+                curve: None,
+                first: Shape::null(),
+                last: Shape::null(),
+                range,
+                degenerated: false,
+                pcurves: indexmap::IndexMap::new(),
+                representations: Vec::new(),
+                vertex_params: std::collections::HashMap::new(),
+                tolerance: 0.0,
+                same_parameter: false,
+                same_range: false,
+            })),
+            index: usize::MAX,
+            location: 0,
+            orientation: Orientation::Forward,
+        }
+    }
+
+    #[test]
+    fn eval_d0_returns_the_vertex_point_for_any_parameter() {
+        // OCCT Init L58-62: Range(EonF, myFirst, myLast); myPnt = Pnt(V).
+        let mut c = BiTgteCurveOnVertex::new();
+        c.init(
+            &edge_shape([1.5, 4.25]),
+            &vertex_shape(DVec3::new(3.0, -2.0, 7.0)),
+        );
+        // OCCT L66-76: the parameters come from the edge range.
+        assert_eq!(c.first_parameter(), 1.5);
+        assert_eq!(c.last_parameter(), 4.25);
+        // OCCT EvalD0 L131-134: return myPnt regardless of theU.
+        assert_eq!(c.eval_d0(1.5), DVec3::new(3.0, -2.0, 7.0));
+        assert_eq!(c.eval_d0(4.25), DVec3::new(3.0, -2.0, 7.0));
+        // OCCT L173-176: GetType -> GeomAbs_OtherCurve.
+        assert_eq!(c.get_type(), CurveType::Other);
+    }
+}

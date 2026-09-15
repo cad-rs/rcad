@@ -1,4 +1,8 @@
 use crate::geom::{Curve2d, Curve2dEval, Curve3, Surface3, SurfaceEval};
+use crate::topo::poly::{
+    PolyMeshPurpose, PolyPolygon3D, PolyPolygonOnTriangulation, POLY_MESH_PURPOSE_ACTIVE,
+    POLY_MESH_PURPOSE_ANY_FALLBACK, POLY_MESH_PURPOSE_NONE,
+};
 use crate::core::precision::{
     CONFUSION, REAL_FIRST, REAL_LAST, is_infinite_value, is_negative_infinite_value,
     is_positive_infinite_value, parametric_default,
@@ -207,6 +211,36 @@ pub enum CurveRepresentation {
         location2: u32,
         continuity: GeomAbsShape,
     },
+    /// OCCT BRep_Polygon3D (BRep_Polygon3D.hxx L30-46) — a representation by
+    /// a 3D polygon. The polygon travels by value (the
+    /// `occ::handle<Poly_Polygon3D>` stand-in); the base
+    /// BRep_CurveRepresentation location (L.Predivided(E.Location())) is the
+    /// BRep location-table index (0 = identity).
+    Polygon3D {
+        polygon: crate::topo::poly::PolyPolygon3D,
+        location: u32,
+    },
+    /// OCCT BRep_PolygonOnTriangulation (BRep_PolygonOnTriangulation.hxx
+    /// L30-66) — a representation by an array of nodes on a triangulation.
+    /// `triangulation` is the BRep triangulation-pool index standing for the
+    /// shared `occ::handle<Poly_Triangulation>` (identity compare
+    /// `T == myTriangulation` becomes an index compare, BRep_PolygonOnTriangulation.cxx
+    /// L47-51).
+    PolygonOnTriangulation {
+        polygon: crate::topo::poly::PolyPolygonOnTriangulation,
+        triangulation: usize,
+        location: u32,
+    },
+    /// OCCT BRep_PolygonOnClosedTriangulation
+    /// (BRep_PolygonOnClosedTriangulation.hxx L31-60) — a representation by
+    /// TWO arrays of nodes on one triangulation (the seam double-string: P1
+    /// for FORWARD, P2 for REVERSED edge orientation).
+    PolygonOnClosedTriangulation {
+        polygon: crate::topo::poly::PolyPolygonOnTriangulation,
+        polygon2: crate::topo::poly::PolyPolygonOnTriangulation,
+        triangulation: usize,
+        location: u32,
+    },
 }
 
 impl CurveRepresentation {
@@ -262,6 +296,47 @@ impl CurveRepresentation {
             }
             _ => {}
         }
+    }
+
+    /// OCCT BRep_Polygon3D::IsPolygon3D() — true only for the BRep_Polygon3D
+    /// kind (the base BRep_CurveRepresentation::IsPolygon3D returns false).
+    pub fn is_polygon3d(&self) -> bool {
+        matches!(self, CurveRepresentation::Polygon3D { .. })
+    }
+
+    /// OCCT BRep_PolygonOnTriangulation::IsPolygonOnTriangulation()
+    /// (BRep_PolygonOnTriangulation.cxx L40-43) — true for both the single-
+    /// and the closed-string kinds (the closed kind inherits the base).
+    pub fn is_polygon_on_triangulation(&self) -> bool {
+        matches!(
+            self,
+            CurveRepresentation::PolygonOnTriangulation { .. }
+                | CurveRepresentation::PolygonOnClosedTriangulation { .. }
+        )
+    }
+
+    /// OCCT BRep_PolygonOnTriangulation::IsPolygonOnTriangulation(T, L)
+    /// (BRep_PolygonOnTriangulation.cxx L47-51):
+    /// `(T == myTriangulation) && (L == myLocation)`. The rcad handle compare
+    /// is a triangulation-pool index compare; the TopLoc_Location compare is
+    /// a location-table index compare.
+    pub fn is_polygon_on_triangulation_on(&self, the_triangulation: usize, the_location: u32) -> bool {
+        match self {
+            CurveRepresentation::PolygonOnTriangulation { triangulation, location, .. }
+            | CurveRepresentation::PolygonOnClosedTriangulation {
+                triangulation,
+                location,
+                ..
+            } => *triangulation == the_triangulation && *location == the_location,
+            _ => false,
+        }
+    }
+
+    /// OCCT BRep_PolygonOnClosedTriangulation::IsPolygonOnClosedTriangulation()
+    /// (BRep_PolygonOnClosedTriangulation.cxx L40-43) — true only for the
+    /// closed (seam double-string) kind.
+    pub fn is_polygon_on_closed_triangulation(&self) -> bool {
+        matches!(self, CurveRepresentation::PolygonOnClosedTriangulation { .. })
     }
 }
 
@@ -319,6 +394,18 @@ pub struct TFaceData {
     /// has natural boundaries (full untrimmed sphere, cylinder, cone, etc.).
     #[serde(default)]
     pub natural_restriction: bool,
+    /// OCCT BRep_TFace::myTriangulations (BRep_TFace.hxx L139) — the optional
+    /// list of triangulations mounted on the face, stored as indices into the
+    /// BRep triangulation pool (`BRep::triangulations`; handle identity =
+    /// pool-index identity). OCCT: "If there are any triangulations the
+    /// surface can be absent" and "the triangulation is in the same reference
+    /// system than the TFace" (BRep_TFace.hxx L38-46).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub triangulations: Vec<usize>,
+    /// OCCT BRep_TFace::myActiveTriangulation (BRep_TFace.hxx L140) — index
+    /// into `triangulations`; None = null active handle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_triangulation: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -345,6 +432,15 @@ pub struct BRep {
     /// 3D transformations (TopLoc_Location equivalent). Index 0 = identity.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub locations: Vec<glam::DAffine3>,
+    /// OCCT-aligned triangulation pool — the value table behind the
+    /// `occ::handle<Poly_Triangulation>` identity shared by BRep_TFace and
+    /// BRep_PolygonOnTriangulation (a handle compare `T == myTriangulation`
+    /// becomes a pool-index compare). Index 0 is the first inserted
+    /// triangulation; faces reference entries from
+    /// `TFaceData::triangulations`, edge representations from
+    /// `CurveRepresentation::PolygonOnTriangulation.triangulation`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub triangulations: Vec<crate::topo::poly::PolyTriangulation>,
     /// OCCT-aligned: vertex identity cache �?quantized position �?Shape.
     /// Same geometric point �?same TShape::Vertex across all code paths.
     #[serde(skip)]
@@ -370,6 +466,7 @@ impl BRep {
         Self {
             tshapes: Vec::new(),
             locations: Vec::new(),
+            triangulations: Vec::new(),
             vert_by_pos: HashMap::new(),
             face_by_key: HashMap::new(),
             edge_by_key: HashMap::new(),
@@ -826,6 +923,9 @@ impl BRep {
             // negligible tolerance until BRep_Builder::UpdateFace sets it.
             tolerance,
             natural_restriction,
+            // OCCT BRep_TFace.hxx L139-140: a fresh face has no triangulations.
+            triangulations: Vec::new(),
+            active_triangulation: None,
         }));
 
         self.tshapes.push(tshape);
@@ -837,6 +937,407 @@ impl BRep {
         };
         self.face_by_key.insert(key, sr.clone());
         sr
+    }
+
+    // -----------------------------------------------------------------------
+    // OCCT Poly mount semantics (A0: BRep_TFace / BRep_PolygonOnTriangulation)
+    // -----------------------------------------------------------------------
+
+    /// Insert a triangulation into the BRep pool and return its index.
+    /// Architecture note: OCCT shares `occ::handle<Poly_Triangulation>`
+    /// objects between BRep_TFace and the edge representations; the rcad pool
+    /// index is the handle identity (pool tables play the handle-table role,
+    /// the same way `locations` stands in for TopLoc_Location).
+    pub fn add_triangulation(&mut self, the_triangulation: crate::topo::poly::PolyTriangulation) -> usize {
+        let idx = self.triangulations.len();
+        self.triangulations.push(the_triangulation);
+        idx
+    }
+
+    /// OCCT BRep_Builder::UpdateFace(F, Triangulation, ToReset)
+    /// (BRep_Builder.cxx L582-593) — delegates to the
+    /// BRep_TFace::Triangulation(list, toReset) body (BRep_TFace.cxx L75-135).
+    /// The locked-shape throw (L587-590) has no rcad counterpart (pool
+    /// TShapes are never locked) and `Modified(true)` maps to the flags
+    /// system already handled by the mutators.
+    pub fn update_face_triangulation(
+        &mut self,
+        the_face: &Shape,
+        the_triangulation: Option<usize>,
+        the_to_reset: bool,
+    ) {
+        // BRep_TFace.cxx L78: theToReset || theTriangulation.IsNull()
+        if the_to_reset || the_triangulation.is_none() {
+            let fd = match Arc::make_mut(&mut self.tshapes[the_face.index]) {
+                TShape::Face(fd) => fd,
+                _ => panic!("update_face_triangulation: Shape {} is not a Face", the_face.index),
+            };
+            if let Some(active) = fd.active_triangulation {
+                // Reset Active bit (BRep_TFace.cxx L82-85)
+                let handle = fd.triangulations[active];
+                self.triangulations[handle].my_purpose &= !POLY_MESH_PURPOSE_ACTIVE;
+                fd.active_triangulation = None; // Nullify (L85)
+            }
+            fd.triangulations.clear(); // L87
+            if let Some(tri) = the_triangulation {
+                assert!(
+                    tri < self.triangulations.len(),
+                    "update_face_triangulation: triangulation {} out of pool range",
+                    tri
+                );
+                // L90-96: reset list to the single input triangulation, active
+                fd.triangulations.push(tri);
+                fd.active_triangulation = Some(fd.triangulations.len() - 1);
+                self.triangulations[tri].my_purpose |= POLY_MESH_PURPOSE_ACTIVE;
+            }
+            return;
+        }
+        let tri = the_triangulation.unwrap();
+        assert!(
+            tri < self.triangulations.len(),
+            "update_face_triangulation: triangulation {} out of pool range",
+            tri
+        );
+        let fd = match Arc::make_mut(&mut self.tshapes[the_face.index]) {
+            TShape::Face(fd) => fd,
+            _ => panic!("update_face_triangulation: Shape {} is not a Face", the_face.index),
+        };
+        // BRep_TFace.cxx L99-117: make input triangulation active if it is
+        // already contained in the list
+        for i in 0..fd.triangulations.len() {
+            if fd.triangulations[i] == tri {
+                if let Some(active) = fd.active_triangulation {
+                    let handle = fd.triangulations[active];
+                    self.triangulations[handle].my_purpose &= !POLY_MESH_PURPOSE_ACTIVE;
+                }
+                fd.active_triangulation = Some(i);
+                self.triangulations[tri].my_purpose |= POLY_MESH_PURPOSE_ACTIVE;
+                return;
+            }
+        }
+        // BRep_TFace.cxx L118-134: replace the active triangulation entry by
+        // the input one
+        for i in 0..fd.triangulations.len() {
+            if Some(i) == fd.active_triangulation {
+                if let Some(active) = fd.active_triangulation {
+                    let handle = fd.triangulations[active];
+                    self.triangulations[handle].my_purpose &= !POLY_MESH_PURPOSE_ACTIVE;
+                }
+                fd.triangulations[i] = tri;
+                fd.active_triangulation = Some(i);
+                self.triangulations[tri].my_purpose |= POLY_MESH_PURPOSE_ACTIVE;
+                return;
+            }
+        }
+    }
+
+    /// OCCT BRep_TFace::Triangulations(theTriangulations, theActiveTriangulation)
+    /// (BRep_TFace.cxx L139-178): set the list of face triangulations and the
+    /// active one. Empty list clears everything; a NULL active selects the
+    /// first entry; a non-NULL active MUST be part of the list
+    /// (Standard_ASSERT_RAISE at L164-165 -> assert!).
+    pub fn set_face_triangulations(
+        &mut self,
+        the_face: &Shape,
+        the_triangulations: Vec<usize>,
+        the_active_triangulation: Option<usize>,
+    ) {
+        let fd = match Arc::make_mut(&mut self.tshapes[the_face.index]) {
+            TShape::Face(fd) => fd,
+            _ => panic!("set_face_triangulations: Shape {} is not a Face", the_face.index),
+        };
+        if the_triangulations.is_empty() {
+            // BRep_TFace.cxx L143-148
+            fd.active_triangulation = None;
+            fd.triangulations.clear();
+            return;
+        }
+        let mut an_active_in_list = false;
+        for &tri in &the_triangulations {
+            // L155-156: Standard_ASSERT_RAISE(!aTriangulation.IsNull()) — the
+            // pool-index stand-in checks the range instead of the null handle.
+            assert!(
+                tri < self.triangulations.len(),
+                "set_face_triangulations: triangulation {} out of pool range",
+                tri
+            );
+            if Some(tri) == the_active_triangulation {
+                an_active_in_list = true;
+            }
+            // L161-162: Reset Active bit
+            self.triangulations[tri].my_purpose &= !POLY_MESH_PURPOSE_ACTIVE;
+        }
+        assert!(
+            the_active_triangulation.is_none() || an_active_in_list,
+            "Active triangulation isn't part of triangulations list"
+        );
+        fd.triangulations = the_triangulations; // L166
+        match the_active_triangulation {
+            // L167-171: save the first one as active
+            None => fd.active_triangulation = Some(0),
+            Some(active) => {
+                // L173-174: myActiveTriangulation = theActiveTriangulation —
+                // the list position of the handle.
+                let pos = fd
+                    .triangulations
+                    .iter()
+                    .position(|&t| t == active)
+                    .expect("Active triangulation isn't part of triangulations list");
+                fd.active_triangulation = Some(pos);
+            }
+        }
+        // L176-177: Set Active bit on the active triangulation
+        let active_handle = fd.triangulations[fd.active_triangulation.unwrap()];
+        self.triangulations[active_handle].my_purpose |= POLY_MESH_PURPOSE_ACTIVE;
+    }
+
+    /// OCCT BRep_Builder::UpdateEdge(E, P, T, L)
+    /// (BRep_Builder.cxx L787-832): attach a PolygonOnTriangulation to the
+    /// edge for the triangulation T with location L. A NULL polygon removes
+    /// the existing representation (L806-825 remove + L822 null guard).
+    pub fn update_edge_polygon_on_triangulation(
+        &mut self,
+        the_edge: &Shape,
+        the_polygon: Option<PolyPolygonOnTriangulation>,
+        the_triangulation: usize,
+        the_location: u32,
+    ) {
+        // L802: const TopLoc_Location l = L.Predivided(E.Location());
+        let l = self.compose_pcurve_location(the_location, the_edge.location);
+        let ed = match Arc::make_mut(&mut self.tshapes[the_edge.index]) {
+            TShape::Edge(ed) => ed,
+            _ => panic!("update_edge_polygon_on_triangulation: Shape {} is not an Edge", the_edge.index),
+        };
+        let mut is_modified = false;
+        // L806-821: find the representation for (T, l) and remove it ("cr is
+        // used to keep a reference on the curve representation" — the rcad
+        // value remove has no dangling-handle concern).
+        if let Some(pos) = ed
+            .representations
+            .iter()
+            .position(|cr| cr.is_polygon_on_triangulation_on(the_triangulation, l))
+        {
+            ed.representations.remove(pos);
+            is_modified = true;
+        }
+        if let Some(polygon) = the_polygon {
+            // L822-826: append the new representation at the end of the list
+            ed.representations.push(CurveRepresentation::PolygonOnTriangulation {
+                polygon,
+                triangulation: the_triangulation,
+                location: l,
+            });
+            is_modified = true;
+        }
+        // L828-831: if (isModified) TE->Modified(true) — flag-only effect.
+    }
+
+    /// OCCT BRep_Builder::UpdateEdge(E, P1, P2, T, L)
+    /// (BRep_Builder.cxx L837-882): the seam double-string — attach TWO
+    /// polygons (FORWARD / REVERSED edge orientation) on ONE triangulation.
+    /// Both polygons must be non-null to append (L866).
+    pub fn update_edge_polygon_on_closed_triangulation(
+        &mut self,
+        the_edge: &Shape,
+        the_polygon1: Option<PolyPolygonOnTriangulation>,
+        the_polygon2: Option<PolyPolygonOnTriangulation>,
+        the_triangulation: usize,
+        the_location: u32,
+    ) {
+        // L855: const TopLoc_Location l = L.Predivided(E.Location());
+        let l = self.compose_pcurve_location(the_location, the_edge.location);
+        let ed = match Arc::make_mut(&mut self.tshapes[the_edge.index]) {
+            TShape::Edge(ed) => ed,
+            _ => panic!(
+                "update_edge_polygon_on_closed_triangulation: Shape {} is not an Edge",
+                the_edge.index
+            ),
+        };
+        let mut is_modified = false;
+        // L862-877: remove the existing representation for (T, l)
+        if let Some(pos) = ed
+            .representations
+            .iter()
+            .position(|cr| cr.is_polygon_on_triangulation_on(the_triangulation, l))
+        {
+            ed.representations.remove(pos);
+            is_modified = true;
+        }
+        if let (Some(polygon), Some(polygon2)) = (the_polygon1, the_polygon2) {
+            // L866-873: append BRep_PolygonOnClosedTriangulation
+            ed.representations
+                .push(CurveRepresentation::PolygonOnClosedTriangulation {
+                    polygon,
+                    polygon2,
+                    triangulation: the_triangulation,
+                    location: l,
+                });
+            is_modified = true;
+        }
+        // L878-881: if (isModified) TE->Modified(true)
+    }
+
+    /// OCCT BRep_Builder::UpdateEdge(E, P, L) for a 3D polygon
+    /// (BRep_Builder.cxx L751-779): attach/replace/remove the Polygon3D
+    /// representation of the edge.
+    pub fn update_edge_polygon3d(
+        &mut self,
+        the_edge: &Shape,
+        the_polygon: Option<PolyPolygon3D>,
+        the_location: u32,
+    ) {
+        let the_location_key = self.compose_pcurve_location(the_location, the_edge.location);
+        let ed = match Arc::make_mut(&mut self.tshapes[the_edge.index]) {
+            TShape::Edge(ed) => ed,
+            _ => panic!("update_edge_polygon3d: Shape {} is not an Edge", the_edge.index),
+        };
+        // L761-777: find the existing Polygon3D representation
+        if let Some(pos) = ed.representations.iter().position(|cr| cr.is_polygon3d()) {
+            match the_polygon {
+                // L765-768: null polygon removes the representation
+                None => {
+                    ed.representations.remove(pos);
+                }
+                // L771-772: itcr.Value()->Polygon3D(P) — replace the handle
+                Some(polygon) => {
+                    if let CurveRepresentation::Polygon3D { polygon: dst, .. } =
+                        &mut ed.representations[pos]
+                    {
+                        *dst = polygon;
+                    }
+                }
+            }
+            return;
+        }
+        // L775-778: const TopLoc_Location l = L.Predivided(E.Location());
+        // then append BRep_Polygon3D(P, l) at the end of the list (the key is
+        // precomputed above purely to satisfy the Rust borrow checker — the
+        // compose is a pure table lookup, so the OCCT statement order is
+        // behaviorally preserved).
+        let l = the_location_key;
+        if let Some(polygon) = the_polygon {
+            ed.representations.push(CurveRepresentation::Polygon3D { polygon, location: l });
+        }
+    }
+
+    /// OCCT BRep_TFace::Triangulation(thePurpose) (BRep_TFace.cxx L47-71):
+    /// the active triangulation for NONE purpose, else the first
+    /// triangulation matching the purpose bits, the first one under
+    /// AnyFallback, or null.
+    pub fn face_triangulation(
+        &self,
+        fd: &TFaceData,
+        the_purpose: PolyMeshPurpose,
+    ) -> Option<&crate::topo::poly::PolyTriangulation> {
+        if the_purpose == POLY_MESH_PURPOSE_NONE {
+            // L50-53: return ActiveTriangulation()
+            return fd
+                .active_triangulation
+                .map(|i| &self.triangulations[fd.triangulations[i]]);
+        }
+        for &tri in &fd.triangulations {
+            // L54-63: first triangulation with a matching purpose bit
+            if (self.triangulations[tri].mesh_purpose() & the_purpose) != 0 {
+                return Some(&self.triangulations[tri]);
+            }
+        }
+        if (the_purpose & POLY_MESH_PURPOSE_ANY_FALLBACK) != 0 && !fd.triangulations.is_empty() {
+            // L64-68: if none matching other criteria was found return the
+            // first defined triangulation
+            return Some(&self.triangulations[fd.triangulations[0]]);
+        }
+        // L69-70: static empty handle -> None
+        None
+    }
+
+    /// OCCT BRep_Tool::Triangulation(F, L, purpose) (BRep_Tool.cxx L111-119):
+    /// returns the face triangulation and the face location
+    /// (`theLocation = theFace.Location()`; the triangulation itself is in
+    /// the TFace reference system, BRep_TFace.hxx L43-46).
+    pub fn triangulation(
+        &self,
+        the_face: &Shape,
+        the_purpose: PolyMeshPurpose,
+    ) -> Option<(&crate::topo::poly::PolyTriangulation, glam::DAffine3)> {
+        let the_location = self.get_location(the_face.location);
+        match &*self.tshapes[the_face.index] {
+            TShape::Face(fd) => self
+                .face_triangulation(fd, the_purpose)
+                .map(|tri| (tri, the_location)),
+            _ => panic!("triangulation: Shape {} is not a Face", the_face.index),
+        }
+    }
+
+    /// OCCT BRep_Tool::Triangulations(F, L) (BRep_Tool.cxx L123-130): the
+    /// whole triangulation list of the face (pool indices) plus the face
+    /// location.
+    pub fn face_triangulations(&self, the_face: &Shape) -> (&[usize], glam::DAffine3) {
+        let the_location = self.get_location(the_face.location);
+        match &*self.tshapes[the_face.index] {
+            TShape::Face(fd) => (&fd.triangulations, the_location),
+            _ => panic!("face_triangulations: Shape {} is not a Face", the_face.index),
+        }
+    }
+
+    /// OCCT BRep_Tool::PolygonOnTriangulation(E, T, L)
+    /// (BRep_Tool.cxx L683-714): the polygon of the edge on triangulation T
+    /// with face location L. For a closed (seam) representation on a REVERSED
+    /// edge the second string is returned (L700-703).
+    pub fn polygon_on_triangulation(
+        &self,
+        the_edge: &Shape,
+        the_triangulation: usize,
+        the_location: u32,
+    ) -> Option<&PolyPolygonOnTriangulation> {
+        // L687: TopLoc_Location l = L.Predivided(E.Location());
+        let l = self.compose_pcurve_location(the_location, the_edge.location);
+        // L688: bool Eisreversed = (E.Orientation() == TopAbs_REVERSED);
+        let eisreversed = the_edge.orientation == Orientation::Reversed;
+        let ed = self.edge(the_edge.clone());
+        for cr in &ed.representations {
+            if cr.is_polygon_on_triangulation_on(the_triangulation, l) {
+                if cr.is_polygon_on_closed_triangulation() && eisreversed {
+                    // L701-702: return cr->PolygonOnTriangulation2()
+                    return match cr {
+                        CurveRepresentation::PolygonOnClosedTriangulation { polygon2, .. } => {
+                            Some(polygon2)
+                        }
+                        _ => None,
+                    };
+                } else {
+                    // L705: return cr->PolygonOnTriangulation()
+                    return match cr {
+                        CurveRepresentation::PolygonOnTriangulation { polygon, .. }
+                        | CurveRepresentation::PolygonOnClosedTriangulation { polygon, .. } => {
+                            Some(polygon)
+                        }
+                        _ => None,
+                    };
+                }
+            }
+        }
+        // L713: return nullArray
+        None
+    }
+
+    /// OCCT BRep_Tool::Polygon3D(E, L) (BRep_Tool.cxx L272-291): the 3D
+    /// polygon of the edge (null when absent) and the composed location
+    /// `L = E.Location() * GC->Location()` (identity when absent, L289).
+    pub fn polygon3d(&self, the_edge: &Shape) -> (Option<&PolyPolygon3D>, glam::DAffine3) {
+        let ed = self.edge(the_edge.clone());
+        for cr in &ed.representations {
+            if cr.is_polygon3d() {
+                let (polygon, loc) = match cr {
+                    CurveRepresentation::Polygon3D { polygon, location } => (polygon, *location),
+                    _ => continue,
+                };
+                // L285: L = E.Location() * GC->Location()
+                let l = self.get_location(the_edge.location) * self.get_location(loc);
+                return (Some(polygon), l);
+            }
+        }
+        // L288-290: L.Identity(); return nullPolygon3D
+        (None, glam::DAffine3::IDENTITY)
     }
 
     /// Ensure a Vertex TShape exists at the given flat index.
@@ -1034,6 +1535,9 @@ impl BRep {
             // Precision::Confusion() tolerance (1e-7), not zero.
             tolerance: CONFUSION,
             natural_restriction,
+            // OCCT BRep_TFace.hxx L139-140: a fresh face has no triangulations.
+            triangulations: Vec::new(),
+            active_triangulation: None,
         }));
 
         let dummy = Arc::new(TShape::Vertex(TVertexData {
@@ -1669,8 +2173,11 @@ impl BRep {
                 internal_vertices: Vec::new(),
                 tolerance: fd.tolerance,
                 // OCCT BRep_TFace::EmptyCopy copies Surface/Location/Tolerance
-                // only; NaturalRestriction stays at its default (false).
+                // only; NaturalRestriction stays at its default (false). "The
+                // new Face has no triangulation" (BRep_TFace.cxx L103-105).
                 natural_restriction: false,
+                triangulations: Vec::new(),
+                active_triangulation: None,
             })),
             TShape::Shell(sd) => Arc::new(TShape::Shell(TShellData {
                 my_shapes: Vec::new(),

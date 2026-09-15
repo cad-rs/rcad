@@ -210,6 +210,8 @@ pub(super) fn intern_surface_face(brep: &mut BRep, s: &Surface3) -> Shape {
         internal_vertices: Vec::new(),
         tolerance: 0.0,
         natural_restriction: false,
+        triangulations: Vec::new(),
+        active_triangulation: None,
     }));
     let index = brep.tshapes.len();
     brep.tshapes.push(tshape);

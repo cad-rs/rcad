@@ -6,6 +6,7 @@ pub mod extend;
 pub mod gc;
 pub mod gcpnts;
 pub mod geom2d_convert;
+pub mod geom_convert;
 pub mod geom_api;
 pub mod geom_bnd_lib;
 pub mod geom_lib;

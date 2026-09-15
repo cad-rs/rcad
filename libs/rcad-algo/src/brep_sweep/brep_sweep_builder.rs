@@ -252,6 +252,8 @@ impl BRepSweepBRepBuilder {
                 internal_vertices: Vec::new(),
                 tolerance: tol,
                 natural_restriction: false,
+                triangulations: Vec::new(),
+                active_triangulation: None,
             })),
             index: usize::MAX,
             location: 0,

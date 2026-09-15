@@ -2752,6 +2752,7 @@ impl DS {
             internal_vertices: Vec::new(),
             surface_location: 0,
             my_shapes: Vec::new(), flags: 0,
+            triangulations: Vec::new(), active_triangulation: None,
         };
         let s = Shape::new(Arc::new(TShape::Face(fd)), 0, Orientation::Forward);
         self.append_shape(s)

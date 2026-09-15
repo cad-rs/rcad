@@ -27,7 +27,9 @@
 //     BRepOffset_Offset.cxx L1150/L1179 have no Curve3 view.
 // 12. GeomAPI_ExtremaCurveCurve — rewired to the kernel
 //     base::extrema::extrema_curve_curve (the line-line call of
-//     BRepOffset_Offset.cxx L653-655).  GeomAPI_ProjectPointOnCurve — GAP.
+//     BRepOffset_Offset.cxx L653-655).  GeomAPI_ProjectPointOnCurve —
+//     rewired to the kernel base::extrema::closest_point_on_curve real
+//     body.
 // 13. GeomLib::ExtendSurfByLength (TKTopAlgo/GeomLib) — rewired to the
 //     geomalgo::geom_lib_same_range::extend_surf_by_length entry of the
 //     fillet::chfi3d_builder_c2_geomlib real body.
@@ -39,11 +41,11 @@
 //     Continuity/MaxDegree/NbMaxSegment control and no IsDone semantics,
 //     while the call of BRepOffset_Offset.cxx L1626 passes
 //     (TolApp, Conti, Conti, 10, 10, 10, 1)).
-// 16. ShapeFix_Shape (TKShHealing/ShapeFix) — GAP (the real body
-//     shape_fix::shape_fix_shape::ShapeFixShape is the arena form
-//     perform(&mut BRep, progress); the pool-less offset call of
-//     BRepOffset_Offset.cxx L1597-1599 cannot hand it the pool — the
-//     architecture difference #19 boundary).
+// 16. ShapeFix_Shape (TKShHealing/ShapeFix) — the Init(Vertex) call of
+//     BRepOffset_Offset.cxx L1597-1599 is wired to the real body
+//     shape_fix::shape_fix_shape::ShapeFixShape (the arena form
+//     perform(&mut BRep, progress); the owning pool is in scope at the call
+//     site — the accepted rcad necessity).
 // 17. BRepGProp::LinearProperties + GProp_GProps::CentreOfMass
 //     (TKTopAlgo/BRepGProp) — rewired to the kernel GProp_GProps real body
 //     (base::gprop::props::linear_properties; the BRepGProp_Cinert edge
@@ -218,19 +220,32 @@ impl GeomApiExtremaCurveCurve {
     }
 }
 
-/// OCCT GeomAPI_ProjectPointOnCurve (TKTopAlgo/GeomAPI) — GAP carrier
-/// (architecture difference #12).
-pub struct GeomApiProjectPointOnCurve;
+/// OCCT GeomAPI_ProjectPointOnCurve (TKTopAlgo/GeomAPI) — rewired to the
+/// kernel base::extrema::closest_point_on_curve real body (architecture
+/// difference #12).  The OCCT computation runs in the constructor over the
+/// curve's natural parameter domain and LowerDistanceParameter reads the
+/// result.
+pub struct GeomApiProjectPointOnCurve {
+    my_projection: rcad_kernel::base::extrema::CurveProjection,
+}
 
 impl GeomApiProjectPointOnCurve {
-    /// OCCT GeomAPI_ProjectPointOnCurve(P, Curve).
-    pub fn new(_the_p: DVec3, _the_curve: &Curve3) -> Self {
-        panic!("GAP: GeomAPI_ProjectPointOnCurve (TKTopAlgo/GeomAPI not translated)");
+    /// OCCT GeomAPI_ProjectPointOnCurve(P, Curve) — the projection over the
+    /// curve's natural domain (the kernel sampling form, the
+    /// GeomApiExtremaCurveCurve 32-seed convention).
+    pub fn new(the_p: DVec3, the_curve: &Curve3) -> Self {
+        GeomApiProjectPointOnCurve {
+            my_projection: rcad_kernel::base::extrema::closest_point_on_curve(
+                the_curve,
+                the_p,
+                32,
+            ),
+        }
     }
 
     /// OCCT GeomAPI_ProjectPointOnCurve::LowerDistanceParameter().
     pub fn lower_distance_parameter(&self) -> f64 {
-        panic!("GAP: GeomAPI_ProjectPointOnCurve::LowerDistanceParameter (not translated)");
+        self.my_projection.param
     }
 }
 
@@ -279,30 +294,12 @@ pub(super) fn geom_convert_approx_surface(
     panic!("GAP: GeomConvert_ApproxSurface (TKGeomBase/GeomConvert not translated)");
 }
 
-/// OCCT ShapeFix_Shape (TKShHealing/ShapeFix) — the Init(Vertex) wire fixer
-/// GAP carrier (architecture difference #16): the real body
-/// shape_fix::shape_fix_shape::ShapeFixShape exists, but its Perform is the
-/// arena form perform(&mut BRep, progress) while the pool-less offset call
-/// of BRepOffset_Offset.cxx L1597-1599 cannot hand it the pool
-/// (architecture difference #19).
-pub struct ShapeFixShape;
-
-impl ShapeFixShape {
-    /// OCCT ShapeFix_Shape::ShapeFix_Shape(S).
-    pub fn new(_the_s: &Shape) -> Self {
-        panic!("GAP: ShapeFix_Shape (TKShHealing/ShapeFix not translated)");
-    }
-
-    /// OCCT ShapeFix_Shape::Perform().
-    pub fn perform(&mut self) {
-        panic!("GAP: ShapeFix_Shape::Perform (TKShHealing/ShapeFix not translated)");
-    }
-
-    /// OCCT ShapeFix_Shape::Shape().
-    pub fn shape(&self) -> Shape {
-        panic!("GAP: ShapeFix_Shape::Shape (unreachable while the fixer is a GAP)");
-    }
-}
+// OCCT ShapeFix_Shape (TKShHealing/ShapeFix) — the former GAP carrier is
+// retired: the Init(Vertex) call of BRepOffset_Offset.cxx L1597-1599 is
+// wired directly to the real body
+// shhealing::shape_fix::shape_fix_shape::ShapeFixShape (the owning pool is
+// in scope at the call site; the arena form perform(&mut BRep, progress) is
+// the accepted rcad necessity).
 
 /// OCCT GProp_GProps::CentreOfMass() read-view consumed by
 /// BRepOffset_Offset.cxx L1601-1604 (BaryCenter).  Filled by the kernel

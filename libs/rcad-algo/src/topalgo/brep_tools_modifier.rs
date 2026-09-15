@@ -1356,6 +1356,8 @@ fn make_face(the_surface: Option<Surface3>, the_loc: u32, the_tol: f64) -> Shape
             internal_vertices: Vec::new(),
             tolerance: the_tol,
             natural_restriction: false,
+            triangulations: Vec::new(),
+            active_triangulation: None,
         })),
         index: usize::MAX,
         location: 0,

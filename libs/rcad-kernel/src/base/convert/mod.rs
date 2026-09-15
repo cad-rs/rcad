@@ -45,6 +45,10 @@ pub use comp_curve_to_bspline_3d::{
     curve_to_bspline_curve_3d, GeomConvertCompCurveToBSplineCurve,
 };
 
+// OCCT Convert_CompBezierCurvesToBSplineCurve (TKMath/Convert).
+pub mod comp_bezier_curves_to_bspline;
+pub use comp_bezier_curves_to_bspline::ConvertCompBezierCurvesToBSplineCurve;
+
 pub mod convert_conic_to_bspline;
 pub use convert_conic_to_bspline::{
     convert_ellipse_arc_to_bspline, convert_ellipse_to_bspline_periodic,
