@@ -123,6 +123,7 @@ pub(crate) fn bspline2_from_poles(
         knots: expand_knots(knots, mults),
         control_points: poles,
         weights: vec![],
+        is_periodic: false,
     })
 }
 

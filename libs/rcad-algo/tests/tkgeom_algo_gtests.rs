@@ -1144,6 +1144,7 @@ mod geom2d_hatch_intersector_tests {
             knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
             control_points: vec![DVec2::ONE; 4],
             weights: vec![1.0; 4],
+            is_periodic: false,
         };
         let a_curve_adaptor = Curve2d::BSpline(a_degenerate_curve);
 

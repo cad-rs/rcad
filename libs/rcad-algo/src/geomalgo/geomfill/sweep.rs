@@ -738,6 +738,7 @@ impl Sweep {
                         knots: flat,
                         control_points: poles.to_vec(),
                         weights: vec![1.0; poles.len()],
+                        is_periodic: false,
                     };
                     self.my_curve2d.as_mut().expect("myCurve2d")[ii - 1] =
                         Some(Curve2d::BSpline(c));

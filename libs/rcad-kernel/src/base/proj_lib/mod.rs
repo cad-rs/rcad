@@ -395,6 +395,8 @@ impl PlaneProjector {
             knots: curve.knots.clone(),
             control_points,
             weights: curve.weights.clone(),
+            // The plane map keeps the parameterization — periodicity included.
+            is_periodic: curve.is_periodic,
         }));
         self.projector.done();
     }

@@ -1624,6 +1624,7 @@ fn multibsp_to_curves(
             knots: knots.clone(),
             control_points: p2,
             weights: vec![],
+            is_periodic: false,
         }))
     } else {
         None
@@ -1636,6 +1637,7 @@ fn multibsp_to_curves(
             knots,
             control_points: p2,
             weights: vec![],
+            is_periodic: false,
         }))
     } else {
         None
@@ -1732,6 +1734,7 @@ fn wline_part_bspline2d(line: &IntPatchLine, fprm: f64, lprm: f64, on_first: boo
         knots,
         control_points: ctrl,
         weights: vec![],
+        is_periodic: false,
     }))
 }
 

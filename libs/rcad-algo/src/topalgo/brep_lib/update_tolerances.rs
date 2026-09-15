@@ -289,8 +289,11 @@ pub fn internal_update_tolerances(
     for (_a_key, (a_v, a_list)) in parents.iter() {
         // OCCT L1867.
         tol = 0.0;
-        // OCCT L1868: gp_Pnt aPV = BRep_Tool::Pnt(V).
-        let a_pv = the_brep.vertex_position(a_v);
+        // OCCT L1868: gp_Pnt aPV = BRep_Tool::Pnt(V) — the pool-free
+        // BRep_Tool::Pnt re-host (the walk may reach pool-free vertices in
+        // a mixed adopted graph; the pool-only vertex_position would
+        // index out of bounds).
+        let a_pv = brep_tool_pnt(a_v).unwrap_or(glam::DVec3::ZERO);
         // OCCT L1870-1871.
         let mut a_max_dist = 0.0f64;
         let mut a_p3d;

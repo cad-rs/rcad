@@ -1842,6 +1842,7 @@ mod tests {
                 DVec2::new(0.0, 2.0),
             ],
             weights: vec![1.0; 4],
+            is_periodic: false,
         };
         let c1 = Curve2d::BSpline(bs);
         let d1 = Res2dDomain::bounded(c1.value(0.0), 0.0, TOL, c1.value(1.0), 1.0, TOL);

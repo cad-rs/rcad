@@ -413,6 +413,7 @@ pub(crate) fn insert_face(
                                             },
                                             control_points: points2d,
                                             weights: vec![],
+                                            is_periodic: false,
                                         }));
                                     }
                                     first = 1.0;
@@ -524,6 +525,7 @@ pub(crate) fn insert_face(
                                             },
                                             control_points: points2d,
                                             weights: vec![],
+                                            is_periodic: false,
                                         }));
                                     }
                                     first = 1.0;
@@ -666,6 +668,7 @@ pub(crate) fn insert_face(
                                             knots: knots_flat,
                                             control_points: poles2d,
                                             weights: vec![],
+                                            is_periodic: false,
                                         };
                                         // first = C2d->FirstParameter();
                                         // last = C2d->LastParameter();

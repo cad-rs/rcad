@@ -676,6 +676,7 @@ pub fn bspline_to_bezier_curves_2d(
             knots: seg_knots,
             control_points: c.control_points[i..=j].to_vec(),
             weights: c.weights[i..=j].to_vec(),
+            is_periodic: false,
         });
         i = j;
     }
@@ -725,6 +726,7 @@ fn insert_knot_to_multiplicity_2d(
             knots: new_knots,
             control_points: new_ctrl,
             weights: new_w,
+            is_periodic: false,
         };
     }
     result

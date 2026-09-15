@@ -1029,6 +1029,8 @@ fn to_bspline2(bs: &Geom2dBSplineCurve) -> BSplineCurve2 {
         knots,
         control_points: (1..=bs.nb_poles_curve()).map(|i| bs.pole(i)).collect(),
         weights: (1..=bs.nb_poles_curve()).map(|i| bs.weight(i)).collect(),
+        // Geom2d_BSplineCurve::IsPeriodic() — carried from the kernel curve.
+        is_periodic: bs.is_periodic(),
     }
 }
 

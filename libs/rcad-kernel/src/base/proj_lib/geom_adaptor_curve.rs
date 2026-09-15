@@ -28,6 +28,7 @@ use glam::DVec3;
 use super::adaptor::Adaptor3dCurve;
 use super::CurveType;
 use crate::core::precision;
+use crate::geom::curve_dn::curve_dn;
 use crate::geom::{Circle3, Curve3, CurveEval, Ellipse3, Hyperbola3, Line3, Parabola3};
 use crate::math::bspl_lib::locate_parameter_knots_mults;
 use crate::math::{GeomAbsCurveType, GeomAbsShape};
@@ -746,23 +747,65 @@ impl GeomCurveAdaptor {
     }
 
     /// OCCT GeomAdaptor_Curve::EvalDN (L1049-1112) — the N-th derivative at
-    /// U.  N <= 3 answers the derivative chain shared with D1/D2/D3; the
-    /// BSpline arm rides the kernel BSpline DN (the OCCT LocalDN boundary
-    /// branch answers the same values for the clamped kernel encoding).
+    /// U.  The dispatch is type-first: the five analytic kinds answer the
+    /// `ElCLib::DN` closed form at ANY order N (ElCLib.cxx L911-1047) and the
+    /// polynomial kinds ride the BSplCLib::DN engines at any order.
     pub fn dn_at(&self, u: f64, n: i32) -> glam::DVec3 {
-        match n {
-            1 => self.d1_at(u).1,
-            2 => self.d2_at(u).2,
-            3 => self.d3_at(u).3,
-            _ => {
-                if self.my_type_curve == GeomAbsCurveType::BSplineCurve {
-                    let Curve3::BSpline(b) = &self.curve else {
-                        unreachable!()
-                    };
-                    return b.dn(u, n as usize);
+        match self.my_type_curve {
+            // OCCT L1054-1055: ElCLib::DN(U, gp_Lin, N).
+            GeomAbsCurveType::Line => curve_dn(&self.curve, u, n),
+            // OCCT L1057-1058: ElCLib::DN(U, gp_Circ, N).
+            GeomAbsCurveType::Circle => curve_dn(&self.curve, u, n),
+            // OCCT L1060-1061: ElCLib::DN(U, gp_Elips, N).
+            GeomAbsCurveType::Ellipse => curve_dn(&self.curve, u, n),
+            // OCCT L1063-1064: ElCLib::DN(U, gp_Hypr, N).
+            GeomAbsCurveType::Hyperbola => curve_dn(&self.curve, u, n),
+            // OCCT L1066-1067: ElCLib::DN(U, gp_Parab, N).
+            GeomAbsCurveType::Parabola => curve_dn(&self.curve, u, n),
+            // OCCT L1069-1070: myCurve->EvalDN(U, N) — the Geom_BezierCurve
+            // body, BSplCLib::DN over the Bezier's own knots/multiplicities.
+            GeomAbsCurveType::BezierCurve => curve_dn(&self.curve, u, n),
+            // OCCT L1072-1086: the BSpline arm — hasEvalRep / the IsBoundary
+            // LocalDN branch / myCurve->EvalDN all answer the BSplCLib::DN
+            // values for the clamped kernel encoding; N < 1 raises
+            // Geom_UndefinedDerivative (Geom_BSplineCurve_1.cxx L302-306).
+            GeomAbsCurveType::BSplineCurve => {
+                let Curve3::BSpline(b) = &self.curve else {
+                    unreachable!()
+                };
+                if n < 1 {
+                    panic!("Geom_UndefinedDerivative: Geom_BSplineCurve::EvalDN");
                 }
-                // OCCT L1108-1111: default -> myCurve->EvalDN.
-                panic!("Standard_NotImplemented: GeomAdaptor_Curve::EvalDN order {n}")
+                b.dn(u, n as usize)
+            }
+            GeomAbsCurveType::OffsetCurve => {
+                // OCCT L1088-1105: Geom_OffsetCurveUtils::EvaluateDN — any
+                // order.  The rcad offset engine hosts the D1..D3 evaluations
+                // (the EvalD1/D2/D3 translations); the general-N EvaluateDN
+                // body is an open gap and the orders above 3 keep the raise.
+                match n {
+                    1 => self.d1_at(u).1,
+                    2 => self.d2_at(u).2,
+                    3 => self.d3_at(u).3,
+                    _ => {
+                        panic!("Standard_NotImplemented: GeomAdaptor_Curve::EvalDN offset order {n}")
+                    }
+                }
+            }
+            _ => {
+                // OCCT L1107-1111: default -> myCurve->EvalDN(U, N).  The
+                // rcad-only kinds (CircularHelix / SineWave) have no
+                // translated Geom_Curve::EvalDN union member: the orders 1..3
+                // keep the myCurve->Eval* fall-through evaluation, the other
+                // orders keep the explicit raise.
+                match n {
+                    1 => self.d1_at(u).1,
+                    2 => self.d2_at(u).2,
+                    3 => self.d3_at(u).3,
+                    _ => {
+                        panic!("Standard_NotImplemented: GeomAdaptor_Curve::EvalDN order {n}")
+                    }
+                }
             }
         }
     }
@@ -980,5 +1023,86 @@ impl Adaptor3dCurveGeom for GeomCurveAdaptor {
     /// OCCT Trim().
     fn trim_geom(&self, first: f64, last: f64, _tol: f64) -> std::sync::Arc<dyn Adaptor3dCurveGeom> {
         std::sync::Arc::new(GeomCurveAdaptor::with_range(self.curve.clone(), first, last))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OCCT GeomAdaptor_Curve::EvalDN (L1049-1112) — the Circle arm answers
+    /// the `ElCLib::DN` closed form at ANY order.  Hand-derived circle
+    /// derivatives over C(u) = center + r*(cos u * XDir + sin u * YDir):
+    ///   D1 = r*(-sin, cos);  D2 = r*(-cos, -sin);
+    ///   D3 = r*( sin, -cos); D4 = r*( cos,  sin)
+    /// (the derivative cycle is 4, matching the `N % 4 == 0` branch of
+    /// `ElCLib::CircleDN`, ElCLib.cxx L940-944).  The N = 4 call used to
+    /// raise Standard_NotImplemented on the non-BSpline kinds.
+    #[test]
+    fn dn_at_circle_any_order_matches_the_elclib_dn_closed_form() {
+        let r = 2.5f64;
+        let u = 0.7f64;
+        let circle = Curve3::Circle(Circle3::new(DVec3::ONE, DVec3::Z, r));
+        let a = GeomCurveAdaptor::new(circle);
+
+        let d1 = a.dn_at(u, 1);
+        assert!((d1 - DVec3::new(-r * u.sin(), r * u.cos(), 0.0)).length() < 1e-12);
+
+        let d4 = a.dn_at(u, 4);
+        assert!((d4 - DVec3::new(r * u.cos(), r * u.sin(), 0.0)).length() < 1e-12);
+
+        let d5 = a.dn_at(u, 5);
+        assert!((d5 - DVec3::new(-r * u.sin(), r * u.cos(), 0.0)).length() < 1e-12);
+    }
+
+    /// OCCT `ElCLib::LineDN` (ElCLib.cxx L911-918) — the direction at N == 1,
+    /// the null vector above; `ElCLib::ParabolaDN` (ElCLib.cxx L1020-1026) —
+    /// the null vector for N > 2.
+    #[test]
+    fn dn_at_line_and_parabola_high_order_answers_the_null_vector() {
+        let line = Curve3::Line(Line3::new(DVec3::new(1.0, 2.0, 3.0), DVec3::new(2.0, 0.0, 0.0)));
+        let a_line = GeomCurveAdaptor::new(line);
+        assert_eq!(a_line.dn_at(0.3, 4), glam::DVec3::ZERO);
+
+        let parabola = Curve3::Parabola(Parabola3 {
+            vertex: DVec3::ZERO,
+            normal: DVec3::Z,
+            axis_dir: DVec3::X,
+            focal_param: 2.0,
+        });
+        let a_par = GeomCurveAdaptor::new(parabola);
+        assert_eq!(a_par.dn_at(0.3, 4), glam::DVec3::ZERO);
+    }
+
+    /// OCCT `ElCLib::HyperbolaDN` (ElCLib.cxx L996-1018) — the IsEven(N)
+    /// branch.  Hand-derived over H(u) = (a*cosh u, b*sinh u): the derivative
+    /// cycle is 2, so D4 = D2 = (a*cosh u, b*sinh u).
+    #[test]
+    fn dn_at_hyperbola_d4_matches_the_elclib_even_branch() {
+        let (a_ax, b_ax) = (3.0f64, 2.0f64);
+        let u = 0.7f64;
+        let hypr = Curve3::Hyperbola(Hyperbola3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            semi_major: a_ax,
+            semi_minor: b_ax,
+        });
+        let a = GeomCurveAdaptor::new(hypr);
+        let d4 = a.dn_at(u, 4);
+        assert!((d4 - DVec3::new(a_ax * u.cosh(), b_ax * u.sinh(), 0.0)).length() < 1e-12);
+    }
+
+    /// The orders 1..3 keep answering the same values as the D1/D2/D3 chain
+    /// (the ElCLib::DN closed forms equal the ElCLib::D1/D2/D3 expressions
+    /// term by term for the analytic kinds).
+    #[test]
+    fn dn_at_orders_1_to_3_match_the_d1_d2_d3_chain() {
+        let u = 0.7f64;
+        let circle = Curve3::Circle(Circle3::new(DVec3::ONE, DVec3::Z, 2.5));
+        let a = GeomCurveAdaptor::new(circle);
+        assert!(a.dn_at(u, 1).distance(a.d1_at(u).1) < 1e-12);
+        assert!(a.dn_at(u, 2).distance(a.d2_at(u).2) < 1e-12);
+        assert!(a.dn_at(u, 3).distance(a.d3_at(u).3) < 1e-12);
     }
 }

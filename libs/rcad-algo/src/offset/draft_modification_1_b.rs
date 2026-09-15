@@ -803,6 +803,8 @@ fn bspline2_reversed(b: &rcad_kernel::geom::BSplineCurve2) -> rcad_kernel::geom:
         knots,
         control_points,
         weights,
+        // Geom2d_BSplineCurve::Reverse keeps myPeriodic.
+        is_periodic: b.is_periodic,
     }
 }
 

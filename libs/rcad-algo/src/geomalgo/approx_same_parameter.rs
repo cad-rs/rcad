@@ -1449,6 +1449,7 @@ mod tests {
             knots: vec![0.0, 0.0, 0.5, 1.0, 1.0],
             control_points: vec![DVec2::ZERO, DVec2::new(0.5, 0.0), DVec2::new(1.0, 0.0)],
             weights: vec![1.0, 1.0, 1.0],
+            is_periodic: false,
         });
 
         let sp = ApproxSameParameter::new(&c3d, 0.0, 1.0, &pcurv, &s, CONFUSION);

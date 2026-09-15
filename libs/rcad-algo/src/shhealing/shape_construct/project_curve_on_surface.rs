@@ -577,6 +577,7 @@ impl ProjectCurveOnSurface {
             knots: vec![a_k1, a_k1, a_k2, a_k2],
             control_points: vec![a_p2d[0], a_p2d[3]],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         });
         Some(a_c2d)
     }

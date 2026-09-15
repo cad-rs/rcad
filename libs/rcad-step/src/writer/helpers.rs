@@ -734,6 +734,7 @@ pub(super) fn plane_line_pcurve_as_bspline(curve2d: &Curve2d) -> Curve2d {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![line.origin, line.origin + line.direction],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         }),
         _ => curve2d.clone(),
     }

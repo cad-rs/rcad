@@ -7583,6 +7583,9 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
                     knots,
                     control_points,
                     weights,
+                    // STEP B_SPLINE_CURVE_WITH_KNOTS carries no periodic
+                    // attribute — the read curve is non-periodic.
+                    is_periodic: false,
                 }));
             }
         }

@@ -84,6 +84,7 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec2::new(1.0, 2.0), DVec2::new(4.0, 8.0)],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         };
 
         let derivative = curve.derivative_at(0.4);
@@ -897,6 +898,7 @@ mod eval_tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec2::ZERO, DVec2::X],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         };
         assert!((c.point_at(0.0) - DVec2::ZERO).length() < 1e-12);
         assert!((c.point_at(1.0) - DVec2::X).length() < 1e-12);

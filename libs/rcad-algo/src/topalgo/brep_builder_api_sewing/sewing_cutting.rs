@@ -246,6 +246,16 @@ impl BRepBuilderAPISewing {
         // OCCT L5379-5381.
         for i1 in find..=lind {
             let pt = arr_pnt[i1 - 1];
+            // OCCT L5390: double worktol = myTolerance.  INFO (cxx
+            // L5447-5456): OCCT wraps the projection in try/catch and on a
+            // Standard_Failure from Perform or the result accessors
+            // degrades worktol to MinTolerance() for the end-point
+            // fallback below.  The rcad carrier (ExtremaExtPC) surfaces
+            // those same conditions as panics, not catchable results
+            // (rcad-kernel extrema_ext_pc.rs mirrors Standard_OutOfRange /
+            // StdFail_NotDone as panic!), so the catch-and-degrade path is
+            // unrepresentable here and worktol stays at myTolerance —
+            // no invented recovery.
             let mut worktol = self.my_tolerance;
             let dist_f2 = pfirst.distance_squared(pt);
             let dist_l2 = plast.distance_squared(pt);
@@ -310,6 +320,10 @@ impl BRepBuilderAPISewing {
                 }
             }
             // OCCT L5445-5463.
+            // INFO: the fallback threshold uses worktol, which OCCT may
+            // have degraded to MinTolerance() by the L5447-5456 catch —
+            // see the worktol declaration above for why rcad keeps it at
+            // myTolerance (the carrier panics instead of throwing).
             if !is_projected && is_consider_ends {
                 if dist_f2.min(dist_l2) < worktol * worktol {
                     if dist_f2 < dist_l2 {
@@ -642,6 +656,12 @@ impl BRepBuilderAPISewing {
                 }
 
                 // OCCT L5844-5876.
+                // INFO: in the else arm OCCT calls UpdateEdge with
+                // (c2dNew, c2d1New) UNCONDITIONALLY (L5869/L5873); c2d1New
+                // is non-null there because isSeam forces the L5797-5800
+                // continue on a null c2d1, and the !isSeam state never
+                // reaches the else arm (c2d1New is only set under isSeam) —
+                // so the expect below never fires in reachable states.
                 if !is_seam && c2d1_new.is_none() {
                     a_builder.update_edge_pcurve(
                         brep, edge.clone(), c2d_new.clone(), fac.clone(), tol_edge,
@@ -652,13 +672,14 @@ impl BRepBuilderAPISewing {
                         ori = super::top_abs_reverse(ori);
                     }
 
+                    let c1n = c2d1_new.clone().expect(
+                        "sewing CreateSections: null c2d1New in the seam UpdateEdge (unreachable; OCCT L5869/L5873 pass it unconditionally)",
+                    );
                     if ori == Orientation::Forward {
-                        if let Some(c1n) = c2d1_new.clone() {
-                            a_builder.update_edge_pcurve_closed(
-                                brep, edge.clone(), c2d_new.clone(), c1n, fac.clone(), tol_edge,
-                            );
-                        }
-                    } else if let Some(c1n) = c2d1_new.clone() {
+                        a_builder.update_edge_pcurve_closed(
+                            brep, edge.clone(), c2d_new.clone(), c1n, fac.clone(), tol_edge,
+                        );
+                    } else {
                         a_builder.update_edge_pcurve_closed(
                             brep, edge.clone(), c1n, c2d_new.clone(), fac.clone(), tol_edge,
                         );

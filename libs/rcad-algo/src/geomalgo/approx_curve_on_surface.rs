@@ -629,6 +629,7 @@ impl ApproxCurveOnSurface {
                     knots: full_knots(&knots, &mults),
                     control_points: poles2d,
                     weights: vec![1.0; a_nb_poles],
+                    is_periodic: false,
                 }));
 
                 self.my_error2d_u = a_approx.max_error_at(1, 1);

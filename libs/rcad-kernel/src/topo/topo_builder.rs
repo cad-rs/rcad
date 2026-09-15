@@ -82,6 +82,16 @@ fn place(brep: &mut BRep, sr: &Shape, visited: &mut HashSet<u64>) {
     if !visited.insert(sr.ptr_id()) {
         return;
     }
+    if sr.index == usize::MAX {
+        // A pool-free child (the rcad free-standing encoding carries
+        // index == usize::MAX): pad-to-index would grow the arena toward
+        // usize::MAX and exhaust memory (observed: the 2^36-byte OOM on
+        // the offset a3 path).  Skip the materialization — the original
+        // handle stays pool-free and the engine dual-path reads it through
+        // the pool-free accessors; engine WRITES to such children require
+        // the pool-model migration (recorded).
+        return;
+    }
     if brep.tshapes.len() <= sr.index {
         let dummy = unused_tshape_slot();
         while brep.tshapes.len() <= sr.index {

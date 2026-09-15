@@ -229,13 +229,14 @@ fn scale_tangents(
 }
 
 /// Build a `BSplineCurve2` from poles, distinct knots and multiplicities
-/// (OCCT `new Geom2d_BSplineCurve(Poles, Knots, Mults, Degree[, Periodic])`).
+/// (OCCT `new Geom2d_BSplineCurve(Poles, Knots, Mults, Degree, Periodic)`).
 /// The full (expanded) knot vector is stored.
 fn bspline_from_poles_knots_mults(
     poles: &[DVec2],
     knots: &[f64],
     mults: &[usize],
     degree: usize,
+    is_periodic: bool,
 ) -> BSplineCurve2 {
     let mut expanded = Vec::with_capacity(knots.len() + degree + 1);
     for (i, &k) in knots.iter().enumerate() {
@@ -248,6 +249,7 @@ fn bspline_from_poles_knots_mults(
         knots: expanded,
         control_points: poles.to_vec(),
         weights: vec![1.0; poles.len()],
+        is_periodic,
     }
 }
 
@@ -390,7 +392,13 @@ impl Geom2dInterpolate {
             let degree = 1usize;
             let mults = vec![1usize; num_poles];
             let poles: Vec<DVec2> = self.points.clone();
-            self.curve = Some(bspline_from_poles_knots_mults(&poles, &self.parameters, &mults, degree));
+            self.curve = Some(bspline_from_poles_knots_mults(
+                &poles,
+                &self.parameters,
+                &mults,
+                degree,
+                true,
+            ));
             self.is_done = true;
         } else {
             let num_distinct_knots = num_points + 1;
@@ -499,6 +507,7 @@ impl Geom2dInterpolate {
                     &self.parameters,
                     &mults,
                     degree,
+                    true,
                 ));
                 self.is_done = true;
             }
@@ -551,7 +560,13 @@ impl Geom2dInterpolate {
                 for ii in 0..num_poles {
                     poles[ii] = self.points[ii];
                 }
-                self.curve = Some(bspline_from_poles_knots_mults(&poles, &self.parameters, &mults, degree));
+                self.curve = Some(bspline_from_poles_knots_mults(
+                    &poles,
+                    &self.parameters,
+                    &mults,
+                    degree,
+                    false,
+                ));
                 self.is_done = true;
             }
             2 => {
@@ -578,7 +593,13 @@ impl Geom2dInterpolate {
                         .chunks_exact(2)
                         .map(|c| DVec2::new(c[0], c[1]))
                         .collect();
-                    self.curve = Some(bspline_from_poles_knots_mults(&solved, &knots, &mults, degree));
+                    self.curve = Some(bspline_from_poles_knots_mults(
+                        &solved,
+                        &knots,
+                        &mults,
+                        degree,
+                        false,
+                    ));
                     self.is_done = true;
                 }
             }
@@ -663,6 +684,7 @@ impl Geom2dInterpolate {
                         &self.parameters,
                         &mults,
                         degree,
+                        false,
                     ));
                     self.is_done = true;
                 }

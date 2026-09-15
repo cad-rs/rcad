@@ -298,7 +298,9 @@ fn parse_curve3(c: &mut Cursor<'_>) -> Result<Curve3, OcctBrepError> {
         }
         "7" => {
             let rat = c.parse_i32()? != 0;
-            c.expect("0")?;
+            // GeomTools_CurveSet.cxx L442-451: the periodic flag follows the
+            // rational flag (compact form 0/1).
+            let periodic = c.parse_i32()? != 0;
             let deg = c.parse_usize()?;
             let pole_count = c.parse_usize()?;
             let mk_count = c.parse_usize()?;
@@ -314,7 +316,7 @@ fn parse_curve3(c: &mut Cursor<'_>) -> Result<Curve3, OcctBrepError> {
                 knots: expand_knots(&mk),
                 control_points: pts,
                 weights: wts,
-                is_periodic: false,
+                is_periodic: periodic,
             }))
         }
         "8" => Err(OcctBrepError::Unsupported(
@@ -389,7 +391,9 @@ fn parse_curve2d(c: &mut Cursor<'_>) -> Result<Curve2d, OcctBrepError> {
         }
         "7" => {
             let rat = c.parse_i32()? != 0;
-            c.expect("0")?;
+            // GeomTools_Curve2dSet.cxx L414-417: the periodic flag follows
+            // the rational flag (compact form 0/1).
+            let periodic = c.parse_i32()? != 0;
             let deg = c.parse_usize()?;
             let pole_count = c.parse_usize()?;
             let mk_count = c.parse_usize()?;
@@ -405,6 +409,7 @@ fn parse_curve2d(c: &mut Cursor<'_>) -> Result<Curve2d, OcctBrepError> {
                 knots: expand_knots(&mk),
                 control_points: pts,
                 weights: wts,
+                is_periodic: periodic,
             }))
         }
         "8" | "9" => Err(OcctBrepError::Unsupported(

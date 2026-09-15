@@ -14,7 +14,7 @@
 
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3};
 use rcad_kernel::topo_shape::Shape;
-use rcad_kernel::topods::{tshape_flags, Orientation, ShapeType, TShape};
+use rcad_kernel::topods::{tshape_flags, CurveRepresentation, Orientation, ShapeType, TShape};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -166,13 +166,60 @@ pub(crate) fn brep_tool_surface(face: &Shape) -> Option<Surface3> {
 }
 
 /// OCCT BRep_Tool::CurveOnSurface(E, F, f, l) — the pcurve of the edge on
-/// the face with its range.
+/// the face with its range (BRep_Tool.cxx L301-312 -> L327-374).
+///
+/// Primary read: the OCCT-faithful representation scan (L339-364) — the
+/// face key matches `CurveOnSurface{face}` / `CurveOnClosedSurface{face}`
+/// exactly as `encode_regularity.rs::curve_from_representations`; the
+/// closed-surface representation answers PCurve2 for a REVERSED local edge
+/// (L356-359).  OCCT has ONE curve-representation list on BRep_TEdge and a
+/// pcurve IS a BRep_CurveOnSurface representation, so the representation is
+/// the authority.  Fallback: the rcad `pcurves` map — the extra per-face
+/// store (architecture difference) still fed by map-only writers; retained
+/// until the writer migration.
 pub(crate) fn brep_tool_curve_on_surface(edg: &Shape, face: &Shape) -> Option<(Curve2d, f64, f64)> {
     match edg.data.as_ref() {
-        TShape::Edge(ed) => ed
-            .pcurves
-            .get(&shape_key(face))
-            .map(|(c, f, l)| (c.clone(), *f, *l)),
+        TShape::Edge(ed) => {
+            // OCCT L334: Eisreversed = (E.Orientation() == TopAbs_REVERSED)
+            // — the local edge orientation (the L303-310 face-orientation
+            // reversal branch is structural: callers pass the edge with its
+            // in-wire orientation, following the encode_regularity
+            // precedent).
+            let a_e_is_reversed = edg.orientation == Orientation::Reversed;
+            let a_face_key = shape_key(face);
+            // OCCT L339-364: the representation scan.
+            for a_cr in &ed.representations {
+                match a_cr {
+                    CurveRepresentation::CurveOnSurface {
+                        face,
+                        pcurve,
+                        range,
+                    } if face == &a_face_key => {
+                        // OCCT L355-356: GC->Range(First, Last);
+                        // return GC->PCurve().
+                        return Some((pcurve.clone(), range[0], range[1]));
+                    }
+                    CurveRepresentation::CurveOnClosedSurface {
+                        face,
+                        pcurve1,
+                        pcurve2,
+                        range,
+                    } if face == &a_face_key => {
+                        // OCCT L357-359: IsCurveOnClosedSurface() &&
+                        // Eisreversed -> PCurve2(); else PCurve().
+                        let a_c = if a_e_is_reversed { pcurve2 } else { pcurve1 };
+                        return Some((a_c.clone(), range[0], range[1]));
+                    }
+                    _ => {}
+                }
+            }
+            // Curve is not found in the representations (OCCT L372 would
+            // fall through to CurveOnPlane): the rcad pcurves-map fallback
+            // for map-only edges.
+            ed.pcurves
+                .get(&a_face_key)
+                .map(|(c, f, l)| (c.clone(), *f, *l))
+        }
         _ => None,
     }
 }
@@ -776,5 +823,190 @@ pub(crate) fn builder_range_edge_on_face(
             entry.1 = the_first;
             entry.2 = the_last;
         }
+    }
+}
+
+// =========================================================================
+// Tests (hand-derived closed forms) — brep_tool_curve_on_surface storage
+// authority: the OCCT-faithful representation scan (BRep_Tool.cxx L339-364)
+// is the primary read, the rcad pcurves map is the fallback for map-only
+// edges.
+// =========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::DVec2;
+    use rcad_kernel::geom::Line2d;
+    use rcad_kernel::precision::CONFUSION;
+    use rcad_kernel::topods::{TFaceData, TEdgeData};
+
+    /// A bare TShape::Edge (no vertices, no 3d curve) carrying the given
+    /// pcurve stores.
+    fn make_edge(
+        the_pcurves: indexmap::IndexMap<(u64, u32), (Curve2d, f64, f64)>,
+        the_representations: Vec<CurveRepresentation>,
+    ) -> Shape {
+        Shape::new(
+            Arc::new(TShape::Edge(TEdgeData {
+                my_shapes: Vec::new(),
+                flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
+                curve: None,
+                first: Shape::null(),
+                last: Shape::null(),
+                range: [0.0, 1.0],
+                degenerated: false,
+                pcurves: the_pcurves,
+                representations: the_representations,
+                vertex_params: HashMap::new(),
+                tolerance: CONFUSION,
+                same_parameter: false,
+                same_range: false,
+            })),
+            0,
+            Orientation::Forward,
+        )
+    }
+
+    /// A bare TShape::Face with no surface.
+    fn make_face() -> Shape {
+        Shape::new(
+            Arc::new(TShape::Face(TFaceData {
+                my_shapes: Vec::new(),
+                flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE,
+                surface: None,
+                surface_location: 0,
+                outer_wire: Shape::null(),
+                inner_wires: Vec::new(),
+                sample_point: None,
+                uv_domain: None,
+                internal_vertices: Vec::new(),
+                tolerance: CONFUSION,
+                natural_restriction: false,
+            })),
+            0,
+            Orientation::Forward,
+        )
+    }
+
+    /// The line pcurve through (x0, y0) along +U: point_at(t) = (x0 + t, y0).
+    fn line_pcurve(the_x0: f64, the_y0: f64) -> Curve2d {
+        Curve2d::Line(Line2d::new(
+            DVec2::new(the_x0, the_y0),
+            DVec2::new(1.0, 0.0),
+        ))
+    }
+
+    /// OCCT BRep_Tool.cxx L339-364: an edge whose only pcurve storage is a
+    /// CurveOnSurface representation (empty map) answers from the
+    /// representation.
+    #[test]
+    fn curve_on_surface_reads_representation_without_map_entry() {
+        let a_f = make_face();
+        let a_key = shape_key(&a_f);
+        let a_e = make_edge(
+            indexmap::IndexMap::new(),
+            vec![CurveRepresentation::CurveOnSurface {
+                face: a_key,
+                pcurve: line_pcurve(0.0, 0.0),
+                range: [1.0, 2.0],
+            }],
+        );
+        let (a_c, a_first, a_last) =
+            brep_tool_curve_on_surface(&a_e, &a_f).expect("representation-only edge");
+        assert_eq!(a_c.point_at(1.0), DVec2::new(1.0, 0.0));
+        assert_eq!((a_first, a_last), (1.0, 2.0));
+    }
+
+    /// An edge with a pcurves-map entry and no representation (the
+    /// map-only writer encoding) still answers via the map fallback.
+    #[test]
+    fn curve_on_surface_map_fallback_for_map_only_edge() {
+        let a_f = make_face();
+        let a_key = shape_key(&a_f);
+        let mut a_pcs = indexmap::IndexMap::new();
+        a_pcs.insert(a_key, (line_pcurve(5.0, 5.0), 3.0, 4.0));
+        let a_e = make_edge(a_pcs, Vec::new());
+        let (a_c, a_first, a_last) =
+            brep_tool_curve_on_surface(&a_e, &a_f).expect("map-only edge");
+        assert_eq!(a_c.point_at(1.0), DVec2::new(6.0, 5.0));
+        assert_eq!((a_first, a_last), (3.0, 4.0));
+    }
+
+    /// A both-present edge answers the representation — the OCCT authority
+    /// order (OCCT BRep_TEdge has ONE curve-representation list; the rcad
+    /// map is a shadow store, so a disagreement resolves to the
+    /// representation).
+    #[test]
+    fn curve_on_surface_representation_is_authority_when_both_present() {
+        let a_f = make_face();
+        let a_key = shape_key(&a_f);
+        let mut a_pcs = indexmap::IndexMap::new();
+        // Stale map entry: a different curve and range.
+        a_pcs.insert(a_key, (line_pcurve(5.0, 5.0), 3.0, 4.0));
+        let a_e = make_edge(
+            a_pcs,
+            vec![CurveRepresentation::CurveOnSurface {
+                face: a_key,
+                pcurve: line_pcurve(0.0, 0.0),
+                range: [1.0, 2.0],
+            }],
+        );
+        let (a_c, a_first, a_last) =
+            brep_tool_curve_on_surface(&a_e, &a_f).expect("both-present edge");
+        assert_eq!(a_c.point_at(1.0), DVec2::new(1.0, 0.0));
+        assert_eq!((a_first, a_last), (1.0, 2.0));
+    }
+
+    /// OCCT BRep_Tool.cxx L357-359: a REVERSED local edge on a
+    /// CurveOnClosedSurface representation answers PCurve2; FORWARD answers
+    /// PCurve.
+    #[test]
+    fn curve_on_closed_surface_reversed_answers_pcurve2() {
+        let a_f = make_face();
+        let a_key = shape_key(&a_f);
+        let a_e = make_edge(
+            indexmap::IndexMap::new(),
+            vec![CurveRepresentation::CurveOnClosedSurface {
+                face: a_key,
+                pcurve1: line_pcurve(0.0, 0.0),
+                pcurve2: line_pcurve(10.0, 10.0),
+                range: [1.0, 2.0],
+            }],
+        );
+        // FORWARD edge: PCurve().
+        let (a_c, _, _) = brep_tool_curve_on_surface(&a_e, &a_f).expect("forward seam");
+        assert_eq!(a_c.point_at(1.0), DVec2::new(1.0, 0.0));
+        // REVERSED edge: PCurve2().
+        let a_e_rev = oriented(&a_e, Orientation::Reversed);
+        let (a_c2, _, _) = brep_tool_curve_on_surface(&a_e_rev, &a_f).expect("reversed seam");
+        assert_eq!(a_c2.point_at(1.0), DVec2::new(11.0, 10.0));
+    }
+
+    /// An edge carrying a representation for a DIFFERENT face and a map
+    /// entry for the queried face answers from the map (the scan misses the
+    /// non-matching representation — the OCCT `IsCurveOnSurface(S, loc)`
+    /// face-key filter).
+    #[test]
+    fn curve_on_surface_scan_skips_other_face_representation() {
+        let a_f1 = make_face();
+        let a_f2 = make_face();
+        assert_ne!(a_f1.ptr_id(), a_f2.ptr_id());
+        let mut a_pcs = indexmap::IndexMap::new();
+        a_pcs.insert(shape_key(&a_f2), (line_pcurve(5.0, 5.0), 3.0, 4.0));
+        let a_e = make_edge(
+            a_pcs,
+            vec![CurveRepresentation::CurveOnSurface {
+                face: shape_key(&a_f1),
+                pcurve: line_pcurve(0.0, 0.0),
+                range: [1.0, 2.0],
+            }],
+        );
+        // Query face 2: the face-1 representation does not match; the map
+        // entry for face 2 answers.
+        let (a_c, a_first, a_last) =
+            brep_tool_curve_on_surface(&a_e, &a_f2).expect("face-2 query");
+        assert_eq!(a_c.point_at(1.0), DVec2::new(6.0, 5.0));
+        assert_eq!((a_first, a_last), (3.0, 4.0));
     }
 }

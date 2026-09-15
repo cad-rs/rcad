@@ -10,10 +10,11 @@
 //! - `BRep_Builder::Add(aFace, aWire)` -> the outer wire slot for the first
 //!   wire and the inner-wire list for the following ones.
 //! - `Geom_Surface::Bounds` -> `SurfaceEval::default_domain`.
-//! - `BRepLib::UpdateTolerances(myShape)` / `BRepLib::SameParameter(myShape,
-//!   tol, WithPCurve)` (the shape-level statics) -> GAP leaves recorded as
-//!   no-ops (the shape-level forms are pending; the edge-level SameParameter
-//!   home is brep_lib.rs).
+//! - `BRepLib::SameParameter(myShape, tol, WithPCurve)` (the shape-level
+//!   static) -> GAP leaf recorded as a no-op (the shape-level form is
+//!   pending; the edge-level SameParameter home is brep_lib.rs);
+//!   `BRepLib::UpdateTolerances(myShape)` (cxx L250) is wired to the
+//!   topalgo::brep_lib::update_tolerances engine.
 //! - `Geom_Surface::UIso/VIso` -> the canonical
 //!   `brep_fill::brep_fill_sweep::{surface_uiso, surface_viso}` body, called
 //!   at the OCCT sites (BRepLib_MakeFace.cxx L575/L580/L585/L590).
@@ -214,9 +215,15 @@ impl BRepLibMakeFace {
 
         // L248: Add(aW).
         r.add_wire(brep, bb, &a_w);
-        // L250: BRepLib::UpdateTolerances(myShape) — GAP leaf, see the module
-        // header.
-        brep_lib_update_tolerances_gap(&r.my_shape);
+        // L250: BRepLib::UpdateTolerances(myShape) — the one-arg overload
+        // (the verifyFaceTolerance = false default, BRepLib.hxx L203-205);
+        // the topalgo::brep_lib engine over the live pool (myShape is
+        // pool-resident — it was built through brep.add_tface_tol above).
+        crate::topalgo::brep_lib::update_tolerances::update_tolerances(
+            brep,
+            &r.my_shape,
+            false,
+        );
         // L252: BRepLib::SameParameter(myShape, tol, true) — GAP leaf, see
         // the module header.
         brep_lib_same_parameter_shape_gap(&r.my_shape, tol, true);
@@ -1016,12 +1023,87 @@ fn elclib_adjust_periodic(u_first: f64, u_last: f64, preci: f64, u1: &mut f64, u
     }
 }
 
-/// OCCT BRepLib::UpdateTolerances(myShape) (BRepLib.cxx) — GAP leaf recorded
-/// as a no-op: the shape-level tolerance update is pending; consumers of the
-/// plane ctor do not depend on the adjustment.
-fn brep_lib_update_tolerances_gap(_shape: &Shape) {}
-
 /// OCCT BRepLib::SameParameter(myShape, tol, WithPCurve) (BRepLib.cxx
 /// L301-456 is the edge-level body) — GAP leaf recorded as a no-op at the
 /// shape-level entry; the edge-level home is topalgo/brep_lib/brep_lib.rs.
 fn brep_lib_same_parameter_shape_gap(_shape: &Shape, _tol: f64, _with_pcurve: bool) {}
+
+// =========================================================================
+// Tests (the wired BRepLib::UpdateTolerances call of cxx L250).
+// =========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::DVec3;
+    use rcad_kernel::base::extrema_ext_elc::epsilon_of;
+    use rcad_kernel::geom::Line3;
+    use rcad_kernel::topo::topods::ShapeType;
+
+    use crate::brep_algo::tool::explorer;
+
+    /// The cxx L250 wiring: inside new_with_wire the L250 statement runs
+    /// the topalgo::brep_lib engine over the just-built planar face.  With
+    /// verifyFaceTolerance = false the face table is skipped; the EDGE walk
+    /// binds nothing here (the face tolerance is Confusion and
+    /// BRep_Tool::Tolerance clamps every sub-Confusion edge read up to
+    /// Confusion, so max(face) == effective(edge) and the strict `>`
+    /// binds nothing — the OCCT behavior); the VERTEX walk fires and
+    /// force-sets every wire vertex to Confusion + 2*Epsilon(Confusion)
+    /// (the engine cxx L1858-1958 + the UpdShTol force-set arm).
+    #[test]
+    fn update_tolerances_raises_wire_edges_to_face_tolerance() {
+        let mut brep = BRep::new();
+        // The 2 x 1 rectangle on z = 0.
+        let a_pts = [
+            DVec3::ZERO,
+            DVec3::new(2.0, 0.0, 0.0),
+            DVec3::new(2.0, 1.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
+        ];
+        let a_vs: Vec<Shape> = a_pts.iter().map(|p| brep.add_tvertex(*p)).collect();
+        let mut a_edges = Vec::new();
+        for i in 0..4 {
+            let a_q = a_pts[(i + 1) % 4];
+            let a_dir = a_q - a_pts[i];
+            let a_len = a_dir.length();
+            let a_e = brep.add_tedge(
+                Some(Curve3::Line(Line3::new(a_pts[i], a_dir))),
+                a_vs[i].clone(),
+                a_vs[(i + 1) % 4].clone(),
+                [0.0, a_len],
+            );
+            // Seed the raw edge tolerance below the BRep_Tool::Tolerance
+            // floor (the clamped read keeps it at Confusion).
+            brep.edge_mut_inplace(a_e.clone()).tolerance = 1.0e-12;
+            a_edges.push(a_e);
+        }
+        let a_wire = brep.add_twire(a_edges);
+
+        // OCCT L189-258: BRepLib_MakeFace(W, OnlyPlane = true) — the L250
+        // UpdateTolerances statement runs inside.
+        let mut bb = BRepBuilder::new();
+        let a_mk = BRepLibMakeFace::new_with_wire(&mut brep, &mut bb, &a_wire, true);
+        assert_eq!(a_mk.my_error, BRepLibFaceError::FaceDone);
+        assert!(a_mk.done);
+
+        // The face tolerance floor (the L204 construction tolerance).
+        let a_face_tol = brep.face(a_mk.my_shape.clone()).tolerance;
+        assert!(a_face_tol > 1.0e-12);
+
+        // The EDGE walk bound nothing (see above): the raw sub-Confusion
+        // seeds survive — the clamped-read no-op of the strict max rule.
+        let a_face_edges = explorer(&a_mk.my_shape, ShapeType::Edge, ShapeType::Shape);
+        assert!(!a_face_edges.is_empty());
+        for a_e in &a_face_edges {
+            assert_eq!(brep.edge(a_e.clone()).tolerance, 1.0e-12);
+        }
+
+        // The VERTEX walk force-set every wire vertex to
+        // Confusion + 2*Epsilon(Confusion).
+        let a_expected_v = CONFUSION + 2.0 * epsilon_of(CONFUSION);
+        for a_v in &a_vs {
+            assert_eq!(brep.vertex(a_v.clone()).tolerance, a_expected_v);
+        }
+    }
+}

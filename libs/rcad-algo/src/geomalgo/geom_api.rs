@@ -369,6 +369,8 @@ fn proj_lib_projected_curve_plane(the_hc: &GeomCurveAdaptor, the_p: &Plane) -> O
                 .map(|p| plane_projector_project(the_p, *p))
                 .collect(),
             weights: b.weights.clone(),
+            // The plane map keeps the parameterization — periodicity included.
+            is_periodic: b.is_periodic,
         })),
         // ProjLib_ComputeApprox.cxx L1229-1255:
         // else if (CType == GeomAbs_BezierCurve && SType == GeomAbs_Plane).

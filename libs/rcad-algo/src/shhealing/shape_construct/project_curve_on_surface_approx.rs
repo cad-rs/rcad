@@ -1248,18 +1248,18 @@ impl ProjectCurveOnSurface {
                 ));
             }
 
-            // OCCT L2264-2273: weights = crv3d->WeightsArray();
+            // OCCT L2264-2274: weights = crv3d->WeightsArray();
             // knots = crv3d->Knots(); multiplicities = crv3d->Multiplicities();
             // aC2D = new Geom2d_BSplineCurve(poles2d, weights, knots,
-            // multiplicities, degree, periodic).  The rcad BSplineCurve2
-            // stores the flat knot vector (the OCCT Knots() array is flat as
-            // well) and has no periodic flag (arch. diff.); the
-            // PointsToBSpline result is non-periodic.
+            // multiplicities, crv3d->Degree(), crv3d->IsPeriodic()).  The
+            // rcad BSplineCurve2 stores the flat knot vector (the OCCT
+            // Knots() array is flat as well) and carries the periodic flag.
             Some(Curve2d::BSpline(BSplineCurve2 {
                 degree: crv3d.degree,
                 knots: crv3d.knots.clone(),
                 control_points: poles2d,
                 weights: crv3d.weights.clone(),
+                is_periodic: crv3d.is_periodic,
             }))
         }));
         match attempted {

@@ -1040,6 +1040,8 @@ fn geom2d_bspline_to_curve2d(the_bs: &Geom2dBSplineCurve) -> Curve2d {
         weights: (1..=the_bs.nb_poles_curve())
             .map(|a_i| the_bs.weight(a_i))
             .collect(),
+        // Geom2d_BSplineCurve::IsPeriodic() — carried from the kernel curve.
+        is_periodic: the_bs.is_periodic(),
     })
 }
 
@@ -1127,6 +1129,7 @@ mod tests {
             knots: vec![0.0, 0.0, 2.0, 2.0],
             control_points: vec![DVec2::ZERO, DVec2::new(2.0, 0.0)],
             weights: vec![1.0; 2],
+            is_periodic: false,
         });
         {
             let a_ed = brep.edge_mut_inplace(a_edge.clone());
@@ -1197,6 +1200,7 @@ mod tests {
             knots: vec![10.0, 10.0, 14.0, 14.0],
             control_points: vec![DVec2::ZERO, DVec2::new(2.0, 0.0)],
             weights: vec![1.0; 2],
+            is_periodic: false,
         });
         {
             let a_ed = brep.edge_mut_inplace(a_edge.clone());

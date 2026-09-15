@@ -325,6 +325,7 @@ impl BRepAlgoNormalProjection {
                                 knots: vec![knots[0], knots[0], knots[1], knots[1]],
                                 control_points: vec![poles[0], poles[1]],
                                 weights: vec![1.0, 1.0],
+                                is_periodic: false,
                             });
                             // OCCT L290: PCur2d = new Geom2d_TrimmedCurve(
                             // BS2d, Udeb, Ufin).
@@ -353,6 +354,7 @@ impl BRepAlgoNormalProjection {
                                 knots: vec![knots[0], knots[0], knots[1], knots[1]],
                                 control_points: vec![poles[0], poles[1]],
                                 weights: vec![1.0, 1.0],
+                                is_periodic: false,
                             });
                             // OCCT L308: PCur2d = new Geom2d_TrimmedCurve(
                             // BS2d, Udeb, Ufin).

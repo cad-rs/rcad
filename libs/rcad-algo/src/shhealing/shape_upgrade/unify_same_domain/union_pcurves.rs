@@ -65,6 +65,8 @@ fn geom2d_reverse(c: &Curve2d) -> Curve2d {
                 knots,
                 control_points,
                 weights,
+                // Reverse keeps myPeriodic.
+                is_periodic: b.is_periodic,
             })
         }
         Curve2d::Bezier(be) => {

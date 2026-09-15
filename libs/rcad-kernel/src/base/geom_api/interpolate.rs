@@ -147,6 +147,7 @@ pub fn interpolate_points_2d(pts: &[DVec2]) -> Result<BSplineCurve2, FitError> {
         knots,
         control_points: ctrl,
         weights: vec![1.0; n],
+        is_periodic: false,
     })
 }
 

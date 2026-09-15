@@ -186,6 +186,7 @@ impl BSplineCurve2Approx {
                 knots: vec![0.0, 0.0, 1.0, 1.0],
                 control_points: pts.to_vec(),
                 weights: vec![],
+                is_periodic: false,
             };
         }
 
@@ -222,6 +223,7 @@ impl BSplineCurve2Approx {
             knots,
             control_points: pts.to_vec(),
             weights: vec![],
+            is_periodic: false,
         }
     }
 }

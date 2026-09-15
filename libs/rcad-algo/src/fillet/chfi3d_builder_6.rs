@@ -591,6 +591,7 @@ fn make_bspline_curve2d(poles: &[DVec2], knots: &[f64], mults: &[i32], degree: i
         knots: expanded,
         control_points: poles.to_vec(),
         weights: vec![1.0; poles.len()],
+        is_periodic: false,
     })
 }
 

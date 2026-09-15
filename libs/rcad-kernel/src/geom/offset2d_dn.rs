@@ -485,6 +485,7 @@ mod tests {
                 DVec2::new(0.0, 1.0),
             ],
             weights: vec![1.0, s2 / 2.0, 1.0],
+            is_periodic: false,
         }
     }
 
@@ -508,6 +509,7 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec2::new(0.0, 0.0), DVec2::new(4.0, 0.0)],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         };
         let off = offset_of(line, d);
         for k in 0..=5 {
@@ -665,6 +667,7 @@ mod tests {
                 DVec2::new(1.0, 0.0),
             ],
             weights: vec![1.0; 4],
+            is_periodic: false,
         };
         let off = offset_of(basis, 1.0);
         // EvalD2 through the singular point: the adjusted D1 and the
@@ -696,6 +699,7 @@ mod tests {
                 DVec2::new(1.0, 0.0),
             ],
             weights: vec![1.0; 4],
+            is_periodic: false,
         };
         let off = offset_of(basis, 1.0);
         off.derivative_at(0.0);
@@ -711,6 +715,7 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec2::new(0.0, 0.0), DVec2::new(4.0, 0.0)],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         };
         let off = offset_of(line, 2.5);
         let t = 0.3;
@@ -728,6 +733,7 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec2::new(0.0, 0.0), DVec2::new(4.0, 0.0)],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         };
         let off = offset_of(line, 2.5);
         eval_dn(&off, 0.5, 0);
@@ -743,6 +749,7 @@ mod tests {
             knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
             control_points: vec![DVec2::new(1.0, 1.0); 4],
             weights: vec![1.0; 4],
+            is_periodic: false,
         };
         let off = offset_of(basis, 1.0);
         off.point_at(0.5);

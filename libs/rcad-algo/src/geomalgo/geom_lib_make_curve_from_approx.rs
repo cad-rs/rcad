@@ -203,6 +203,7 @@ impl<'a> GeomLibMakeCurvefromApprox<'a> {
             ),
             control_points: poles,
             weights: vec![1.0; self.my_approx.nb_poles()],
+            is_periodic: false,
         }
     }
 

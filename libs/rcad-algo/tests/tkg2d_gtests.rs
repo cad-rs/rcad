@@ -267,6 +267,7 @@ mod geom2d_bspline_tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![Point2::ZERO, Point2::new(10.0, 0.0)],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         });
         let mid = bs.point_at(0.5);
         assert!((mid - Point2::new(5.0, 0.0)).length() < 1e-7);

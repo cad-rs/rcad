@@ -261,6 +261,7 @@ impl Geom2dConvertApproxCurve {
                 knots: knots_flat,
                 control_points,
                 weights,
+                is_periodic: false,
             });
             // OCCT L181.
             self.my_max_error = a_approx.max_error_at(2, 1);

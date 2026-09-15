@@ -846,6 +846,9 @@ fn perform_plan(brep: &mut BRep, wire: &Shape) -> Option<Shape> {
                     knots: b.knots.clone(),
                     control_points: cpts,
                     weights,
+                    // The UV map keeps the parameterization — periodicity
+                    // included.
+                    is_periodic: b.is_periodic,
                 })
             }
             _ => Curve2d::Line(Line2d::new(

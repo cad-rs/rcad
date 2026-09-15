@@ -120,6 +120,7 @@ use glam::{DVec2, DVec3};
 
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::math::bnd::BndBox2d;
+use rcad_kernel::topo::topo_builder::brep_from_shape;
 use rcad_kernel::topo::topods::{BRep, BRepBuilder, BRepTool, Orientation, ShapeType};
 use rcad_kernel::topo::topods::curve_on_surface_pool_free as brep_tool_curve_on_surface_uv;
 use rcad_kernel::topo_shape::Shape;
@@ -299,9 +300,27 @@ pub(crate) fn brep_lib_build_curve3d_edge(
 /// default DoAlsoMinmax = false, so the leaf is a no-op there too).
 pub(crate) fn brep_lib_same_parameter_3(_e: &Shape, _tol: f64) {}
 
-/// OCCT BRepLib::UpdateTolerances(S, Strict = false) — GAP static leaf
-/// (architecture difference #46).
-pub(crate) fn brep_lib_update_tolerances(_s: &mut Shape) {}
+/// OCCT BRepLib::UpdateTolerances(myOffsetShape) (BRepOffset_MakeOffset.cxx
+/// L1050) — the one-arg overload (the verifyFaceTolerance = false default,
+/// BRepLib.hxx L203-205) — the topalgo::brep_lib engine over the adopted
+/// standalone pool.  The adoption (topo_builder::brep_from_shape, the
+/// loc_ope_find_edges_in_face.rs L226 precedent) shares the Arcs, so the
+/// engine's in-place tolerance writes reach every handle of the TShape the
+/// way OCCT mutates the shared TShape in place through the handle — both
+/// for the pool-free and the live-pool offsets shapes (the call site in
+/// module b guards the null shape just above the statement).
+pub(crate) fn brep_lib_update_tolerances(s: &mut Shape) {
+    // Architecture difference #4 (the dprism guard): a pool-free offset
+    // shape (index == usize::MAX) cannot feed brep_from_shape — its pad
+    // loop would never terminate; the harmonization on the pool-free
+    // encoding awaits the pool-model migration (behavior-neutral vs the
+    // pre-round no-op stub).
+    if s.is_null() || s.index == usize::MAX {
+        return;
+    }
+    let mut a_brep = brep_from_shape(s, &[]);
+    crate::topalgo::brep_lib::update_tolerances::update_tolerances(&mut a_brep, s, false);
+}
 
 /// OCCT BRep_Tool::CurveOnSurface(E, F) (BRep_Tool.cxx L339-401) — the
 /// pool-free offset form: the edge's representations are matched by

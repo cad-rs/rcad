@@ -614,6 +614,20 @@ impl BRepBuilderAPISewing {
                     c2d11 = bat::brep_tool_curve_on_surface(&a_tmp_shape, &fac1)
                         .map(|(c, _f, _l)| c);
                     // OCCT L972-978.
+                    // INFO: unlike the UpdateEdge sites below, c2d1 here may
+                    // be null in OCCT — L966 has no null-check continue
+                    // before the L984/L988/L993 calls.  A null pcurve in
+                    // BRep_Builder::UpdateEdge does NOT raise: UpdateCurves
+                    // treats it as a REMOVAL ("remove the pcurves on <S>
+                    // from <lcr> if <C1> or <C2> is null", BRep_Builder.cxx
+                    // L248/L288 and L101/L149) plus a no-op
+                    // UpdateTolerance(0), and on the freshly created merged
+                    // edge (no prior representation on fac1's surface) that
+                    // removal is a no-op.  rcad cannot store a null-pcurve
+                    // representation (update_edge_pcurve takes Curve2d by
+                    // value), so the skip below is the equivalent outcome;
+                    // the L985-988 continue (both null) matches OCCT
+                    // L996-999.
                     if let Some(c1) = c2d1.clone() {
                         if let Some(c11) = c2d11.clone() {
                             if ori == Orientation::Forward {
@@ -645,25 +659,30 @@ impl BRepBuilderAPISewing {
                         let uclosed = self.is_u_closed_surface(brep, &surf2, &edge2, &fac2, loc2);
                         let vclosed = self.is_v_closed_surface(brep, &surf2, &edge2, &fac2, loc2);
                         if uclosed || vclosed {
-                            if let Some(c1) = c2d1.clone() {
-                                // OCCT L1000-1004.
-                                let pf = c1.default_domain()[0];
-                                let p1n = c1.point_at(first.max(pf));
-                                let [c2f, _] = c2d2.default_domain();
-                                let p21n = c2d2.point_at(first.max(c2f));
-                                let [_, c2l] = c2d2.default_domain();
-                                let p22n = c2d2.point_at(last.min(c2l));
-                                let a_dist = (p1n.distance(p21n)).min(p1n.distance(p22n));
-                                // OCCT L1005-1006: surf2->Bounds(U1, U2, V1, V2).
-                                let [su1, su2, sv1, sv2] = surf2.default_domain();
-                                let is_seam_v = (uclosed
-                                    && a_dist > 0.75 * (su2 - su1).abs())
-                                    || (vclosed && a_dist > 0.75 * (sv2 - sv1).abs());
-                                is_seam = is_seam_v;
-                                // OCCT L1007-1010.
-                                if !is_seam && bat::brep_tool_is_closed_on_surface(&edge, &fac1) {
-                                    continue;
-                                }
+                            // OCCT L1000-1004: c2d1 is non-null here — the
+                            // L985-988 continue (cxx L996-999) filtered the
+                            // both-null state and the rcad lookups are
+                            // orientation-independent, so c2d1/c2d11 are
+                            // Some/None together; the unwrap below never
+                            // fires.
+                            let c1 = c2d1
+                                .clone()
+                                .expect("sewing SameParameterEdge: null c2d1 past the both-null continue (unreachable; cxx L1010 dereferences it)");
+                            let pf = c1.default_domain()[0];
+                            let p1n = c1.point_at(first.max(pf));
+                            let [c2f, _] = c2d2.default_domain();
+                            let p21n = c2d2.point_at(first.max(c2f));
+                            let [_, c2l] = c2d2.default_domain();
+                            let p22n = c2d2.point_at(last.min(c2l));
+                            let a_dist = (p1n.distance(p21n)).min(p1n.distance(p22n));
+                            // OCCT L1005-1006: surf2->Bounds(U1, U2, V1, V2).
+                            let [su1, su2, sv1, sv2] = surf2.default_domain();
+                            let is_seam_v = (uclosed && a_dist > 0.75 * (su2 - su1).abs())
+                                || (vclosed && a_dist > 0.75 * (sv2 - sv1).abs());
+                            is_seam = is_seam_v;
+                            // OCCT L1007-1010.
+                            if !is_seam && bat::brep_tool_is_closed_on_surface(&edge, &fac1) {
+                                continue;
                             }
                         }
                     }
@@ -672,24 +691,39 @@ impl BRepBuilderAPISewing {
                 // OCCT L1013: isResEdge = true;
                 is_res_edge = true;
                 // OCCT L1014-1046.
+                // INFO: c2d1 is non-null in every state reaching this point
+                // (the L985-988 continue filters the both-null state; see
+                // the surf2==surf1 block above) — OCCT L1010 dereferences
+                // c2d1 before isSeam can become true, so the unwraps below
+                // never fire.
                 if is_seam {
-                    if let Some(c1) = c2d1.clone() {
-                        if ori == Orientation::Forward {
-                            // OCCT L1016-1018: UpdateEdge(edge, c2d1, c2d2,
-                            // surf2, loc2, Confusion) — stored on fac2 (the
-                            // face whose surface is surf2); the sibling-face
-                            // reads resolve through the surface walk.
-                            a_builder.update_edge_pcurve_closed(
-                                brep, edge.clone(), c1, c2d2.clone(), fac2.clone(), CONFUSION,
-                            );
-                        } else {
-                            a_builder.update_edge_pcurve_closed(
-                                brep, edge.clone(), c2d2.clone(), c1, fac2.clone(), CONFUSION,
-                            );
-                        }
+                    let c1 = c2d1
+                        .clone()
+                        .expect("sewing SameParameterEdge: null c2d1 in the isSeam UpdateEdge (unreachable; cxx L1010 dereferences it before L1018)");
+                    if ori == Orientation::Forward {
+                        // OCCT L1016-1018: UpdateEdge(edge, c2d1, c2d2,
+                        // surf2, loc2, Confusion) — stored on fac2 (the
+                        // face whose surface is surf2); the sibling-face
+                        // reads resolve through the surface walk.
+                        a_builder.update_edge_pcurve_closed(
+                            brep, edge.clone(), c1, c2d2.clone(), fac2.clone(), CONFUSION,
+                        );
+                    } else {
+                        a_builder.update_edge_pcurve_closed(
+                            brep, edge.clone(), c2d2.clone(), c1, fac2.clone(), CONFUSION,
+                        );
                     }
                 } else if is_seam2 {
                     // OCCT L1030-1044.
+                    // INFO: c2d21 is non-null whenever is_seam2 holds — the
+                    // rcad pcurve lookup is orientation-independent, so the
+                    // L498-503 reversed-edge read succeeds exactly when the
+                    // L506 edge2/fac2 read does, and its None arm continued
+                    // (cxx L896-899); on the OCCT side IsClosed(E, F) (cxx
+                    // L884-885) already implies a matching closed
+                    // representation whose PCurve/PCurve2 the reversed read
+                    // returns non-null (BRep_Tool.cxx L354-357).  The
+                    // unwraps below never fire.
                     let mut init_ori = edge2.orientation;
                     let mut sec_ori = edge.orientation;
                     if fac2.orientation == Orientation::Reversed {
@@ -700,13 +734,14 @@ impl BRepBuilderAPISewing {
                         init_ori = top_abs_reverse(init_ori);
                     }
 
+                    let c21 = c2d21
+                        .clone()
+                        .expect("sewing SameParameterEdge: null c2d21 in the isSeam2 UpdateEdge (unreachable; cxx L893 fills it whenever isSeam2)");
                     if init_ori == Orientation::Forward {
-                        if let Some(c21) = c2d21.clone() {
-                            a_builder.update_edge_pcurve_closed(
-                                brep, edge.clone(), c2d2.clone(), c21, fac2.clone(), CONFUSION,
-                            );
-                        }
-                    } else if let Some(c21) = c2d21.clone() {
+                        a_builder.update_edge_pcurve_closed(
+                            brep, edge.clone(), c2d2.clone(), c21, fac2.clone(), CONFUSION,
+                        );
+                    } else {
                         a_builder.update_edge_pcurve_closed(
                             brep, edge.clone(), c21, c2d2.clone(), fac2.clone(), CONFUSION,
                         );

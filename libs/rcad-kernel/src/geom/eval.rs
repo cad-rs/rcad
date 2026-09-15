@@ -2545,6 +2545,14 @@ impl Curve2dEval for SineWave2d {
 
 impl Curve2dEval for BSplineCurve2 {
     fn point_at(&self, t: f64) -> DVec2 {
+        if self.is_periodic {
+            // OCCT Geom2d_BSplineCurve::Value -> D0 -> EvalD0
+            // (Geom2d_BSplineCurve_1.cxx L175-201): the PeriodicNormalization
+            // wrap and the periodic PoleIndex/BuildKnots arms of the BSplCLib
+            // evaluation — the legacy de Boor stencil has no pole wrap, so a
+            // periodic curve routes through the exact DN engine.
+            return super::bspline2d_dn::eval_d0(self, t);
+        }
         crate::math::bspl::de_boor_2d(
             self.degree,
             &self.knots,
@@ -2576,6 +2584,15 @@ impl Curve2dEval for BSplineCurve2 {
     fn default_domain(&self) -> [f64; 2] {
         let d = self.degree;
         let n = self.knots.len();
+        if self.is_periodic {
+            // OCCT FirstParameter/LastParameter of a periodic curve:
+            // myFlatKnots.Value(myDeg + 1) / Value(Upper - myDeg) — on the
+            // wrapped OCCT knot sequence these are Knots(1) / Knots(NbKnots);
+            // the carrier stores the plain expansion whose first/last entries
+            // are exactly those knots (the end multiplicities equal the
+            // degree).
+            return [self.knots[0], self.knots[n - 1]];
+        }
         if n > 2 * d {
             [self.knots[d], self.knots[n - d - 1]]
         } else if n >= 2 {
@@ -2583,6 +2600,10 @@ impl Curve2dEval for BSplineCurve2 {
         } else {
             [0.0, 1.0]
         }
+    }
+    // OCCT Geom2d_BSplineCurve::IsPeriodic() — the carrier flag.
+    fn is_periodic(&self) -> bool {
+        self.is_periodic
     }
 }
 

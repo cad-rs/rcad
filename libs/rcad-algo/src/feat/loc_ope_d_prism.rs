@@ -59,6 +59,7 @@ use glam::DVec3;
 use indexmap::IndexMap;
 use rcad_kernel::geom::{ Curve3, Line3, Surface3, TrimmedCurve3, CurveEval, SurfaceEval };
 use rcad_kernel::math::gp::{ Ax1, Ax3, GP_RESOLUTION };
+use rcad_kernel::topo::topo_builder::brep_from_shape;
 use rcad_kernel::topo::topods::{ BRep, BRepBuilder };
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{ Orientation, ShapeType, TShape };
@@ -152,9 +153,27 @@ fn brep_tools_uv_bounds(face: &Shape) -> [f64; 4] {
     }
 }
 
-/// OCCT BRepLib::UpdateTolerances(S) (architecture difference #5 — GAP).
-fn brep_lib_update_tolerances(_s: &mut Shape) {
-    panic!("GAP: BRepLib::UpdateTolerances (TKTopAlgo/BRepLib not translated)");
+/// OCCT BRepLib::UpdateTolerances(myRes) (LocOpe_DPrism.cxx L359 and L550)
+/// — the one-arg overload (the verifyFaceTolerance = false default,
+/// BRepLib.hxx L203-205) — the topalgo::brep_lib engine over the adopted
+/// standalone pool.  The LocOpe pipeline shapes live pool-free; the
+/// adoption (topo_builder::brep_from_shape, the
+/// loc_ope_find_edges_in_face.rs L226 precedent) shares the Arcs, so the
+/// engine's in-place tolerance writes reach every handle of the TShape the
+/// way OCCT mutates the shared TShape in place through the handle.
+fn brep_lib_update_tolerances(s: &mut Shape) {
+    if s.is_null() || s.index == usize::MAX {
+        // OCCT walks a null shape as empty explorer / ancestor lists (a
+        // no-op); the pool adoption glue cannot represent a null shape
+        // (architecture difference #4).  A pool-free shape carries
+        // index == usize::MAX — brep_from_shape's pad loop would never
+        // terminate feeding on it, so the harmonization on the pool-free
+        // encoding awaits the pool-model migration (behavior-neutral vs
+        // the pre-round no-op stub).
+        return;
+    }
+    let mut a_brep = brep_from_shape(s, &[]);
+    crate::topalgo::brep_lib::update_tolerances::update_tolerances(&mut a_brep, s, false);
 }
 
 /// OCCT LocOpe_DPrism (LocOpe_DPrism.hxx L38-85).

@@ -27,9 +27,20 @@ use super::{gcpnts_abscissa_length, gcpnts_uniform_abscissa_parameters, set_add,
 
 impl BRepBuilderAPISewing {
     // OCCT note: EvaluateAngulars' call sites are commented out in this
-    // OCCT revision; the method surface is kept (dead-code allowed).
+    // OCCT revision (the sole call L1973 sits inside the commented block
+    // L1926-2004); the method surface is kept (dead-code allowed).
     /// OCCT BRepBuilderAPI_Sewing::EvaluateAngulars(sequenceSec, secForward,
     /// tabAng, indRef) (cxx L1190-1286) — called from MergingOfSections only.
+    ///
+    /// INFO (cxx L1199-1206): OCCT declares edge/face/loc/first/last/c3d/
+    /// c2d/surf OUTSIDE the loop, but no later iteration ever reads a stale
+    /// earlier value — the `myBoundFaces` miss path (L1229-1236) reads none
+    /// of them and every read (L1221-1254) is preceded by a same-iteration
+    /// assignment — so the rcad per-iteration locals are equivalent.  The
+    /// rcad `None => continue` guards on surf/c2d/c3d stand for states
+    /// where OCCT would dereference the null handle (L1254/L1257 and the
+    /// GeomAdaptor_Curve construction L1245) — unreachable divergences in
+    /// a method with no live OCCT call site.
     #[allow(dead_code)]
     pub(crate) fn evaluate_angulars(
         &self,
@@ -287,7 +298,18 @@ impl BRepBuilderAPISewing {
                 let mut arr_proj = vec![DVec3::ZERO; npt];
                 let mut arr_dist = vec![-1.0f64; npt];
                 let mut arr_para = vec![0.0f64; npt];
-                let c3d_ref_v = c3d_ref.clone().unwrap_or_else(|| c3d.clone());
+                // OCCT L1433: ProjectPointsOnCurve(ptsSec, c3dRef, ...) passes
+                // the reference curve through.  c3dRef is null only when the
+                // reference edge had no 3D curve (the L1317-1320 continue
+                // left it unset and arrLen(indRef) at its Init value); OCCT
+                // then raises Standard_NullObject constructing
+                // GeomAdaptor_Curve inside ProjectPointsOnCurve (cxx L5378;
+                // GeomAdaptor_Curve.hxx Load L117-122).  rcad panics
+                // likewise — no invented substitution of the current
+                // section curve.
+                let c3d_ref_v = c3d_ref.clone().expect(
+                    "BRepBuilderAPI_Sewing::EvaluateDistances: null c3dRef passed to ProjectPointsOnCurve (OCCT Standard_NullObject, cxx L1433/L5378)",
+                );
                 if arr_len[ind_ref - 1] >= arr_len[i - 1] {
                     self.project_points_on_curve(
                         &pts_sec, &c3d_ref_v, first_ref, last_ref, &mut arr_dist, &mut arr_para,
@@ -940,7 +962,15 @@ impl BRepBuilderAPISewing {
                 for i in 1..=nb_section {
                     let len = match bat::brep_tool_curve(&seq_edges[i - 1]) {
                         Some((c, f, l)) => gcpnts_abscissa_length(&c, f, l),
-                        None => 0.0,
+                        // OCCT L4388-4390: the null 3D curve raises
+                        // Standard_NullObject in the GeomAdaptor_Curve
+                        // construction before Length is computed
+                        // (GeomAdaptor_Curve.hxx Load L117-122); rcad
+                        // panics likewise instead of defaulting the
+                        // length to 0.
+                        None => panic!(
+                            "BRepBuilderAPI_Sewing::MergedNearestEdges: null 3D curve (OCCT Standard_NullObject, cxx L4389)"
+                        ),
                     };
                     if len > len_ref {
                         ind_ref = i;

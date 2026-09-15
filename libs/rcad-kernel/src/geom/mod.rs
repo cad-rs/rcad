@@ -1219,11 +1219,25 @@ pub struct BSplineCurve2 {
     pub control_points: Vec<DVec2>,
     /// Homogeneous weights; 1.0 for non-rational.
     pub weights: Vec<f64>,
+    /// OCCT Geom2d_BSplineCurve::IsPeriodic() — true for a periodic (unclamped)
+    /// B-spline whose first/last knot multiplicity equals the degree and whose
+    /// poles wrap with the period. When true, the effective parameter range is
+    /// [knots[0], knots[len-1]] (FirstParameter = Knots(1), LastParameter =
+    /// Knots(NbKnots)) and evaluations wrap across the seam.
+    /// OCCT: Geom2d_BSplineCurve.hxx myPeriodic / IsPeriodic().
+    #[serde(default)]
+    pub is_periodic: bool,
 }
 
 impl BSplineCurve2 {
     /// Returns the unnormalized first derivative at parameter `t`.
     pub fn derivative_at(&self, t: f64) -> DVec2 {
+        if self.is_periodic {
+            // OCCT Geom2d_BSplineCurve::D1 -> EvalD1 (Geom2d_BSplineCurve_1.cxx
+            // L199-226): the periodic PeriodicNormalization/LocateParameter
+            // wrap — the analytic stencil has no pole wrap.
+            return crate::geom::bspline2d_dn::eval_d1(self, t).d1;
+        }
         bspline_tangent_analytic_2d(
             self.degree,
             &self.knots,
@@ -1249,6 +1263,7 @@ impl BSplineCurve2 {
                 knots,
                 control_points: vec![points[0], points[1]],
                 weights: vec![1.0, 1.0],
+                is_periodic: false,
             };
         }
         if n == 3 {
@@ -1259,6 +1274,7 @@ impl BSplineCurve2 {
                 knots,
                 control_points: points.to_vec(),
                 weights: vec![1.0; n],
+                is_periodic: false,
             };
         }
 
@@ -1304,6 +1320,7 @@ impl BSplineCurve2 {
             knots,
             control_points: points.to_vec(),
             weights: vec![1.0; n],
+            is_periodic: false,
         }
     }
 
@@ -1326,6 +1343,7 @@ impl BSplineCurve2 {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec2::ZERO, DVec2::ZERO],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         }
     }
 }
@@ -2000,6 +2018,8 @@ pub fn reverse_curve2d(curve: &Curve2d) -> Curve2d {
                 knots,
                 control_points: b.control_points.iter().rev().cloned().collect(),
                 weights: b.weights.iter().rev().cloned().collect(),
+                // Geom2d_BSplineCurve::Reverse keeps myPeriodic.
+                is_periodic: b.is_periodic,
             })
         }
         Curve2d::Bezier(b) => Curve2d::Bezier(BezierCurve2 {
@@ -2136,6 +2156,7 @@ fn curve_to_bspline_2d(c: &Curve2d) -> Option<BSplineCurve2> {
                 knots: vec![t0, t0, t1, t1],
                 control_points: vec![p0, p1],
                 weights: vec![1.0, 1.0],
+                is_periodic: false,
             })
         }
         _ => {

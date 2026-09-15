@@ -813,6 +813,7 @@ mod hlr_brep {
                         knots: knots_flat,
                         control_points: poles,
                         weights,
+                        is_periodic: false,
                     }
                 };
                 // BRepLib_MakeEdge2d mke2d(ec2d, sta, end);
@@ -868,6 +869,7 @@ mod hlr_brep {
                     knots: knots_flat,
                     control_points: poles,
                     weights: vec![1.0; NB_PNT],
+                    is_periodic: false,
                 };
                 // BRepLib_MakeEdge2d mke2d(ec2d, sta, end);
                 // if (mke2d.IsDone()) { Edg = mke2d.Edge(); }

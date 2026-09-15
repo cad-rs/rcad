@@ -21,9 +21,12 @@
 //!    while the OCCT D-kernels read the (Knots, Mults) pair; the pair is
 //!    reconstructed by run-length compression (the same bijection as
 //!    `geom::bspline_ops` / `geom2d_convert::comp_curve_to_bspline_2d`).
-//! 2. `BSplineCurve2` carries no periodic flag — every OCCT `myPeriodic`
-//!    site below passes `false` (the same architecture annotation as
-//!    `geom2d_convert::comp_curve_to_bspline_2d`).
+//! 2. `BSplineCurve2` carries the `is_periodic` flag (the carrier mirror of
+//!    OCCT `myPeriodic`); every OCCT `myPeriodic` site below reads it.  The
+//!    carrier stores the PLAIN (non-wrapped) flat knot expansion, while the
+//!    OCCT object keeps the wrapped `myFlatKnots` sequence — where that
+//!    difference changes an index (`PeriodicNormalization` endpoints) the
+//!    carrier equivalent is annotated at the statement.
 //! 3. OCCT passes `Weights()` (a null handle for a non-rational curve);
 //!    the rcad carrier always stores a weight vector (all 1.0 when
 //!    non-rational).  The span-local `IsRational` probe inside
@@ -101,7 +104,9 @@ fn bsplclib_is_rational(weights: &[f64], i1: i32, i2: i32) -> bool {
 
 /// OCCT BSplCLib::LocateParameter(Degree, Knots, Mults, U, Periodic,
 /// KnotIndex, NewU) (BSplCLib.cxx L321-356) — the (knots, mults) form:
-/// first/last from FirstUKnotIndex/LastUKnotIndex, the inner locate runs
+/// periodic curves locate over the full knot range (first = Knots.Lower(),
+/// last = Knots.Upper(), L332-337), non-periodic curves over the
+/// FirstUKnotIndex/LastUKnotIndex pair (L338-341); the inner locate runs
 /// only when the incoming index is outside [first, last], otherwise
 /// NewU = U.
 fn locate_parameter_bspline(
@@ -113,8 +118,16 @@ fn locate_parameter_bspline(
     knot_index: &mut i32,
     new_u: &mut f64,
 ) {
-    let first = first_uknot_index_mults(degree as usize, mults);
-    let last = last_uknot_index_mults(degree as usize, mults);
+    // OCCT L331-345.
+    let first;
+    let last;
+    if is_periodic {
+        first = 1i32;
+        last = knots.len() as i32;
+    } else {
+        first = first_uknot_index_mults(degree as usize, mults);
+        last = last_uknot_index_mults(degree as usize, mults);
+    }
     if *knot_index < first || *knot_index > last {
         // OCCT L351-355: LocateParameter(Knots, U, Periodic, first, last,
         // KnotIndex, NewU, Knots(first), Knots(last)).
@@ -377,23 +390,26 @@ fn bsplclib_d3(
 
 /// OCCT Geom2d_BSplineCurve::PeriodicNormalization(Parameter)
 /// (Geom2d_BSplineCurve.cxx L1328-1346) — wraps the parameter into the
-/// flat-knot period.  The carrier carries no periodic flag (architecture
-/// note): `is_periodic` is false from every caller, matching the OCCT
-/// `if (myPeriodic)` guard on the non-periodic curves the carrier holds.
+/// flat-knot period.  `is_periodic` is the carrier mirror of OCCT
+/// `myPeriodic`; the carrier stores the PLAIN (non-wrapped) flat knot
+/// expansion (module architecture note 2), whose first/last entries are
+/// exactly the wrapped-sequence endpoints the OCCT statement reads:
+/// myFlatKnots.Value(myDeg + 1) == Knots(1) == flat[0] and
+/// myFlatKnots.Value(Upper - myDeg) == Knots(NbKnots) == flat[Upper]
+/// (the end multiplicities of a periodic layout equal the degree).
 fn periodic_normalization(bs: &BSplineCurve2, is_periodic: bool, parameter: &mut f64) {
     if is_periodic {
         let flat = &bs.knots;
-        let deg = bs.degree as i32;
         let k_upper = flat.len() as i32;
         // OCCT L1332: Period = myFlatKnots.Value(Upper - myDeg)
         // - myFlatKnots.Value(myDeg + 1).
-        let period = at(flat, k_upper - deg) - at(flat, deg + 1);
+        let period = at(flat, k_upper) - at(flat, 1);
         // OCCT L1333-1339.
-        while *parameter > at(flat, k_upper - deg) {
+        while *parameter > at(flat, k_upper) {
             *parameter -= period;
         }
         // OCCT L1340-1345.
-        while *parameter < at(flat, deg + 1) {
+        while *parameter < at(flat, 1) {
             *parameter += period;
         }
     }
@@ -413,11 +429,11 @@ pub fn eval_d0(bs: &BSplineCurve2, u: f64) -> DVec2 {
     let mut a_span_index = 0i32;
     let mut a_new_u = u;
     // OCCT L192: PeriodicNormalization(aNewU).
-    periodic_normalization(bs, false, &mut a_new_u);
+    periodic_normalization(bs, bs.is_periodic, &mut a_new_u);
     let (knots, mults) = knots_mults_of(&bs.knots);
     // OCCT L193: LocateParameter(myDeg, myKnots, &myMults, U, myPeriodic,
     // aSpanIndex, aNewU).
-    locate_parameter_bspline(bs.degree as i32, &knots, &mults, u, false, &mut a_span_index, &mut a_new_u);
+    locate_parameter_bspline(bs.degree as i32, &knots, &mults, u, bs.is_periodic, &mut a_span_index, &mut a_new_u);
     // OCCT L195-198.
     if a_new_u < at(&knots, a_span_index) {
         a_span_index -= 1;
@@ -427,7 +443,7 @@ pub fn eval_d0(bs: &BSplineCurve2, u: f64) -> DVec2 {
         a_new_u,
         a_span_index,
         bs.degree as i32,
-        false,
+        bs.is_periodic,
         &bs.control_points,
         curve_weights(bs),
         &knots,
@@ -441,10 +457,10 @@ pub fn eval_d1(bs: &BSplineCurve2, u: f64) -> ResD1 {
     let mut a_span_index = 0i32;
     let mut a_new_u = u;
     // OCCT L207: PeriodicNormalization(aNewU).
-    periodic_normalization(bs, false, &mut a_new_u);
+    periodic_normalization(bs, bs.is_periodic, &mut a_new_u);
     let (knots, mults) = knots_mults_of(&bs.knots);
     // OCCT L208: LocateParameter(...).
-    locate_parameter_bspline(bs.degree as i32, &knots, &mults, u, false, &mut a_span_index, &mut a_new_u);
+    locate_parameter_bspline(bs.degree as i32, &knots, &mults, u, bs.is_periodic, &mut a_span_index, &mut a_new_u);
     // OCCT L210-213.
     if a_new_u < at(&knots, a_span_index) {
         a_span_index -= 1;
@@ -454,7 +470,7 @@ pub fn eval_d1(bs: &BSplineCurve2, u: f64) -> ResD1 {
         a_new_u,
         a_span_index,
         bs.degree as i32,
-        false,
+        bs.is_periodic,
         &bs.control_points,
         curve_weights(bs),
         &knots,
@@ -468,10 +484,10 @@ pub fn eval_d2(bs: &BSplineCurve2, u: f64) -> ResD2 {
     let mut a_span_index = 0i32;
     let mut a_new_u = u;
     // OCCT L240: PeriodicNormalization(aNewU).
-    periodic_normalization(bs, false, &mut a_new_u);
+    periodic_normalization(bs, bs.is_periodic, &mut a_new_u);
     let (knots, mults) = knots_mults_of(&bs.knots);
     // OCCT L241: LocateParameter(...).
-    locate_parameter_bspline(bs.degree as i32, &knots, &mults, u, false, &mut a_span_index, &mut a_new_u);
+    locate_parameter_bspline(bs.degree as i32, &knots, &mults, u, bs.is_periodic, &mut a_span_index, &mut a_new_u);
     // OCCT L243-246.
     if a_new_u < at(&knots, a_span_index) {
         a_span_index -= 1;
@@ -481,7 +497,7 @@ pub fn eval_d2(bs: &BSplineCurve2, u: f64) -> ResD2 {
         a_new_u,
         a_span_index,
         bs.degree as i32,
-        false,
+        bs.is_periodic,
         &bs.control_points,
         curve_weights(bs),
         &knots,
@@ -495,10 +511,10 @@ pub fn eval_d3(bs: &BSplineCurve2, u: f64) -> ResD3 {
     let mut a_span_index = 0i32;
     let mut a_new_u = u;
     // OCCT L274: PeriodicNormalization(aNewU).
-    periodic_normalization(bs, false, &mut a_new_u);
+    periodic_normalization(bs, bs.is_periodic, &mut a_new_u);
     let (knots, mults) = knots_mults_of(&bs.knots);
     // OCCT L275: LocateParameter(...).
-    locate_parameter_bspline(bs.degree as i32, &knots, &mults, u, false, &mut a_span_index, &mut a_new_u);
+    locate_parameter_bspline(bs.degree as i32, &knots, &mults, u, bs.is_periodic, &mut a_span_index, &mut a_new_u);
     // OCCT L277-280.
     if a_new_u < at(&knots, a_span_index) {
         a_span_index -= 1;
@@ -508,7 +524,7 @@ pub fn eval_d3(bs: &BSplineCurve2, u: f64) -> ResD3 {
         a_new_u,
         a_span_index,
         bs.degree as i32,
-        false,
+        bs.is_periodic,
         &bs.control_points,
         curve_weights(bs),
         &knots,
@@ -554,6 +570,7 @@ fn make_two_segment() -> BSplineCurve2 {
             DVec2::new(4.0, 0.0),
         ],
         weights: vec![1.0; 5],
+        is_periodic: false,
     }
 }
 
@@ -568,6 +585,7 @@ fn make_quarter_circle() -> BSplineCurve2 {
             DVec2::new(0.0, 1.0),
         ],
         weights: vec![1.0, s2 / 2.0, 1.0],
+        is_periodic: false,
     }
 }
 
@@ -723,5 +741,41 @@ fn endpoint_semantics() {
     let bs2 = make_two_segment();
     assert!((d2_of(&bs2, 0.0) - DVec2::new(-1.0, -6.0)).length() < 1.0e-12);
     assert!((d2_of(&bs2, 2.0) - DVec2::new(1.0, -2.0)).length() < 1.0e-12);
+}
+
+/// Periodic DN evaluation (the `myPeriodic` arms now reachable through
+/// `BSplineCurve2::is_periodic`): a degree-1 CLOSED bspline over knots
+/// [0, 1, 2], mults [1, 1, 1] (end multiplicities = Degree), poles
+/// (0,0), (1,1) — the closed polyline P(u) = (u, u) on [0, 1] and
+/// P(u) = (2-u, 2-u) on [1, 2], period 2.  The wrapped-span samples:
+///   P(2.5) = P(0.5) = (0.5, 0.5)   (PeriodicNormalization -1 x period)
+///   P(-0.5) = P(1.5) = (0.5, 0.5)  (PeriodicNormalization +1 x period)
+///   P(0) = P(2) = (0, 0)           (the seam), D1 wraps the same way.
+/// Without the flag the evaluation follows the clamped continuation
+/// (span index clamped to the last span) and none of these hold.
+#[test]
+fn periodic_wrapped_span_evaluation() {
+    let bs = BSplineCurve2 {
+        degree: 1,
+        knots: vec![0.0, 1.0, 2.0],
+        control_points: vec![DVec2::new(0.0, 0.0), DVec2::new(1.0, 1.0)],
+        weights: vec![1.0, 1.0],
+        is_periodic: true,
+    };
+    // Wrapped samples (hand-computed closed form above).
+    let (p, d1) = d1_of(&bs, 2.5);
+    assert!(p.distance(DVec2::new(0.5, 0.5)) < 1.0e-12, "P(2.5) = {:?}", p);
+    assert!(d1.distance(DVec2::new(1.0, 1.0)) < 1.0e-12, "D1(2.5) = {:?}", d1);
+    let (p, d1) = d1_of(&bs, -0.5);
+    assert!(p.distance(DVec2::new(0.5, 0.5)) < 1.0e-12, "P(-0.5) = {:?}", p);
+    assert!(d1.distance(DVec2::new(-1.0, -1.0)) < 1.0e-12, "D1(-0.5) = {:?}", d1);
+    // The seam: first and last knot evaluate identically.
+    let p_first = bs.point_at(0.0);
+    let p_last = bs.point_at(2.0);
+    assert!(p_first.distance(DVec2::new(0.0, 0.0)) < 1.0e-12);
+    assert!(p_last.distance(p_first) < 1.0e-12, "seam wrap");
+    // D2/D3 stay zero (degree 1) across the wrap.
+    assert!(d2_of(&bs, 2.5).length() < 1.0e-12);
+    assert!(d3_of(&bs, 2.5).length() < 1.0e-12);
 }
 }

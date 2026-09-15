@@ -277,12 +277,17 @@ pub(crate) fn law_d2(c: &Curve3, u: f64) -> (DVec3, DVec3, DVec3) {
             (p, d1, d2)
         }
         Curve3::Trimmed(tc) => law_d2(&tc.curve, u),
+        // OCCT myTrimmed->D2(theU) — the Adaptor3d_Curve D2; the kernel
+        // `Geom_Curve::EvalDN` union answers the ElCLib closed forms (the
+        // Line null vector above D1 and the Parabola null vector above D2,
+        // as in the `GeomAdaptor_Curve::EvalD2` arms).
         other => {
             let p = other.point_at(u);
-            let d1 = other.derivative_at(u);
-            let h = 1e-6;
-            let d2 = (other.derivative_at(u + h) - other.derivative_at(u - h)) / (2.0 * h);
-            (p, d1, d2)
+            (
+                p,
+                curve_dn(other, u, 1),
+                curve_dn(other, u, 2),
+            )
         }
     }
 }
@@ -1322,6 +1327,36 @@ mod tests {
         assert!(TrihedronLaw::set_curve(&mut law, trimmed));
         assert!(!law.is_sngl);
         assert!(law.my_sngl.is_none());
+    }
+
+    /// OCCT myTrimmed->D2(theU) — the analytic base answers the ElCLib
+    /// closed-form D2 (the `curve_dn` union).  Hand-derived over the circle
+    /// C(u) = center + r*(cos u, sin u, 0):
+    ///   P = center + r*(cos u, sin u, 0),  D1 = r*(-sin u, cos u, 0),
+    ///   D2 = r*(-cos u, -sin u, 0).
+    /// The closed form replaces the former central finite difference
+    /// ((D1(u+h) - D1(u-h)) / 2h, h = 1e-6) whose subtraction noise is about
+    /// 3e-10 — far above the 1e-12 tolerance, so the assertion is
+    /// discriminative.
+    #[test]
+    fn law_d2_trimmed_circle_matches_the_basis_closed_form() {
+        let r = 2.5f64;
+        let u = 0.7f64;
+        let circle = Curve3::Circle(Circle3::new(DVec3::ONE, DVec3::Z, r));
+        let trimmed = Curve3::Trimmed(TrimmedCurve3::new(circle, 0.1, 1.2));
+
+        let (p, d1, d2) = law_d2(&trimmed, u);
+
+        let expected_p = DVec3::new(
+            1.0 + r * u.cos(),
+            1.0 + r * u.sin(),
+            1.0,
+        );
+        let expected_d1 = DVec3::new(-r * u.sin(), r * u.cos(), 0.0);
+        let expected_d2 = DVec3::new(-r * u.cos(), -r * u.sin(), 0.0);
+        assert!(p.distance(expected_p) < 1e-12);
+        assert!(d1.distance(expected_d1) < 1e-12);
+        assert!(d2.distance(expected_d2) < 1e-12);
     }
 }
 

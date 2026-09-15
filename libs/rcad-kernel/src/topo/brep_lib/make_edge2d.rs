@@ -811,6 +811,7 @@ mod tests {
             knots: knots.clone(),
             control_points: poles.to_vec(),
             weights: vec![1.0; 4],
+            is_periodic: false,
         };
         let c = Curve2d::BSpline(b);
         let (p1, p2) = (0.25, 1.75);

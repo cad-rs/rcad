@@ -1,6 +1,11 @@
 # E3-W 交接：三域（TKFeat / TKFillet / TKOffset）翻译推进 —— 2026-09-12
 
-> **一句话（追加 46 收尾态，2026-09-15 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**。本轮为**审计收口 + 缺口翻译轮（并行 3 代理 + 主代理）**，落在追加 45 之上：**① Frenet 链三缺口全修**（45 号队列第 1 项）：`frenet.rs`/`corrected_frenet.rs` 的 SetCurve 改经 `GeomCurveAdaptor::curve_type()` 分派（OCCT L121-143——trimmed 经 load 解包报基线类型，修剪直线/圆不再误入奇点搜索）+ `sngrl_func.rs` 的 EvalD1/D2/D3 按 OCCT L106-131 全部委托基线 DN（**前提细化：OCCT EvalDN 经 ElCLib 支持全部解析类型任意阶**——旧头部"只有 BSpline 基"注记是错的；顺带修同管第三缺口 law_d3/law_dn 非 BSpline unimplemented——Gap 1 修后一调用即踩中）· **② BRepLib::UpdateTolerances 全家新译**（45 号队列第 2 项；新文件 topalgo/brep_lib/update_tolerances.rs 920 行：UpdShTol L837-909 + InternalUpdateTolerances L1744-1962（VERTEX≥EDGE≥FACE 调和 + verifyFaceTolerance 面容差下限表 Confusion/×2/×4 + dMax 的 aYmin/aZmin 复用 quirk + 0.99 上限 + BigTol=1e10 + `tol += 2*Epsilon(tol)` 走 kernel canonical）+ 双公开重载 L1966-1979；**filling 尾段 L1007 接线**（`(NewEdge, false, true, fresh reshaper)` 精确实参）；另报 5 个 OCCT 调用者（evolved/dprism/make_offset/make_face/ShapeProcess）待后续轮）· **③ Sewing 五文件未审面只读审计**（45 号队列第 5 项）：9 发现（1 高 / 2 中 / 6 低），三处已修——**高危**：CreateCuttingNodes 被喂 arr_pnt 而非 arrProj（cxx L4544-4552 形参名与实参不一致的 OCCT 陷阱：投影点驱动最近顶点搜索/贴近判据/切割顶点位置——旧体直接改切割拓扑）；EvaluateAngulars 守卫 CONFUSION → **REAL_SMALL**（gp::Resolution() = DBL_MIN 非 Confusion）；`surface_same` 补 BSpline/Bezier/Trimmed 值等价臂（旧体只认五个解析面型——**BSpline 是缝合计论主输入，same-face 合并分支对主输入恒 false**）· **④ 低优先处置**：2D full-ellipse 周期标志记档顺延（BSplineCurve2 加字段 = 97 个构造点的机械战役，当前无路径触达）；sewing 的 6 个低发现（crash-path 替代/死存储/形式分歧）逐条记档于审计报告，处置随下轮。
+> **一句话（追加 47 收尾态，2026-09-15 —— 最新，读这一行即可开工）**：**工作口径仍是"先译后调"**。本轮为**五代理全队列轮**，落在追加 46 之上：**① BSplineCurve2 周期标志落地**（46 号顺延的架构决策正式执行：`is_periodic` 字段 serde 兼容 + **34 文件 ~50 构造点清扫**（11 个站点携带标志：Reverse/Transform 保持 myPeriodic、PerformPeriodic 转 true、ProjLib/chfi_kpart/thru_sections/union_pcurves 等）+ 周期求值接通（bspline2d_dn 的 PeriodicNormalization/LocateParameter 周期臂可达；**顺带修 LocateParameter 潜在错位：旧体恒用 First/LastUKnotIndex**）+ **full-ellipse/full-circle 两 staged 臂退役**（新增 convert_circle_to_bspline_periodic = Convert_CircleToBSplineCurve.cxx L47-104 1:1 + bspline2_set_periodic = Geom2d_BSplineCurve.cxx L948-985）+ **rcad-step 的 BRep 读取器开始解析 OCCT 周期字节**（2D/3D 臂，此前硬编码丢弃）+ **根工作区 974 个生成测试构造点补字段**（tools/occt-test-gen 模板同步修——**清扫任务书必须写明"根工作区 tests/ 也在射程内"**））· **② UpdateTolerances 四调用者接线**（46 号队列第 1 项：evolved（覆盖 OCCT 两调用点）/LocOpe_DPrism（panic stub → 引擎+null 守卫）/MakeOffset/MakeFace（stub 删除）；**make_face 测试仲裁一次：OCCT brep_tool_tolerance 对亚 Confusion 边读数钳到 Confusion，面容差 == 有效边容差 ⇒ 严格 > 不绑定任何边——测试改为编码该行为**）· **③ dn_at N>3 + law_d2 闭型**（46 号记卡两清：GeomAdaptor_Curve::EvalDN L1049-1112 的类型优先分派（解析类型经 ElCLib 任意阶、Bezier 走 EvalDN、Offset N>3 记档）；law_d2 FD → curve_dn 闭型，**无既有绿值移动**）· **④ pcurves 双存储读者归一**（brep_tool_curve_on_surface 按 BRep_Tool.cxx L327-374 升级：表示扫描主路径 + PCurve2-on-reversed + 地图回退；**全库写者普查矩阵入报告**——核心盲点是 builder_update_edge_pcurve 本身（BRep_Builder::UpdateEdge 的 re-host 竟 map-only）+ primapi ~30 站点 + STEP 导入；写者迁移三步设计已写好下轮执行；5 闭式测试零翻转 = 实证无双写分歧对）· **⑤ Sewing 六低发现全裁决**（46 号队列第 2 项）：两项忠实改动（closed 递归直接解析基线闭性——平面兜底"等积直线 ⇒ IsClosedByIsos 恒假"完整证明；None → panic 对齐 NullObject）、两项 KEEP+INFO（持久性不可观测、catch 路径不可表示）、F6 **分置**且带来关键发现：**OCCT UpdateEdge 传空 pcurve 是静默移除非 raise**（BRep_Builder.cxx L99-102/L245-248）——逐位点可达性证明后分置）。
+> **门槛（当前基线）**：六门槛 **502/0/0 · 803/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 495→502 = V4 sweep 测试 + V1 1 + V5 sewing 1；kernel 796→803 = V2 4 + V4 3）；tkgeom_algo_gtests **135/0**；八网格 **8/8**（375/378/379/373/12/102/83/110，**最终 exe 重编后实测**）；16 域网格**逐格同追加 42–46 基线**（12/10 · 50/48 · 46/44 · 12/12 · 8/8 · 1/1 · 2/2 · 15/15 · 6/6 · 5/5 · 26/26 · 4/0 · 32/0 · 10/0 · 2/0 · 19/19——**offset_shape_type_i/a 曾因 OOM 崩溃全 grid 报 TIMEOUT，定位为 brep_from_shape 对 usize::MAX 子形状的 pad 循环，修复后恢复基线计数；a3 的 volume 断言失败经 stash 双跑仲裁 = 基线既有失败非本轮回归**）。
+> **★ 本轮发现**：① **brep_from_shape 的 usize::MAX 陷阱**：池外子形状（index == usize::MAX）混入池驻图时，adoption 的 pad 循环向 2^33 槽增长（恰好 2^36 字节 OOM）——`place` 现跳过 usize::MAX 子形状的物化（引擎经池外访问器读它们；写需等池模型迁移）；**三处 UpdateTolerances 收养点全部补 `index == usize::MAX` 根守卫**；② **清扫任务的射程必须写全**：V4 任务书只扫了 `libs/`，根工作区 tests/occt 的生成测试构造点漏网 → 11 域网格 TIMEOUT/NO-TARGET（编译错误而非测试失败）+ 八网格差点用旧 exe 误判——**"生成代码也是代码"**；③ **OCCT UpdateEdge 空 pcurve = 静默移除**（V5 关键发现，"去守卫让 None panic"在可达处反而不忠实——逐位点可达性证明后分置）；④ stash 双跑仲裁要给足编译时间（300s 掐掉了重编，误以为没跑）。
+> （历史：追加 21–46 收尾态见下方存档块；追加 46 = Frenet 链三缺口 + UpdateTolerances 全家 + Sewing 五文件审计 9 发现三修。）
+
+> **（存档）一句话（追加 46 收尾态，2026-09-15 —— 已被追加 47 取代）**：**工作口径仍是"先译后调"**。本轮为**审计收口 + 缺口翻译轮（并行 3 代理 + 主代理）**，落在追加 45 之上：**① Frenet 链三缺口全修**（45 号队列第 1 项）：`frenet.rs`/`corrected_frenet.rs` 的 SetCurve 改经 `GeomCurveAdaptor::curve_type()` 分派（OCCT L121-143——trimmed 经 load 解包报基线类型，修剪直线/圆不再误入奇点搜索）+ `sngrl_func.rs` 的 EvalD1/D2/D3 按 OCCT L106-131 全部委托基线 DN（**前提细化：OCCT EvalDN 经 ElCLib 支持全部解析类型任意阶**——旧头部"只有 BSpline 基"注记是错的；顺带修同管第三缺口 law_d3/law_dn 非 BSpline unimplemented——Gap 1 修后一调用即踩中）· **② BRepLib::UpdateTolerances 全家新译**（45 号队列第 2 项；新文件 topalgo/brep_lib/update_tolerances.rs 920 行：UpdShTol L837-909 + InternalUpdateTolerances L1744-1962（VERTEX≥EDGE≥FACE 调和 + verifyFaceTolerance 面容差下限表 Confusion/×2/×4 + dMax 的 aYmin/aZmin 复用 quirk + 0.99 上限 + BigTol=1e10 + `tol += 2*Epsilon(tol)` 走 kernel canonical）+ 双公开重载 L1966-1979；**filling 尾段 L1007 接线**（`(NewEdge, false, true, fresh reshaper)` 精确实参）；另报 5 个 OCCT 调用者（evolved/dprism/make_offset/make_face/ShapeProcess）待后续轮）· **③ Sewing 五文件未审面只读审计**（45 号队列第 5 项）：9 发现（1 高 / 2 中 / 6 低），三处已修——**高危**：CreateCuttingNodes 被喂 arr_pnt 而非 arrProj（cxx L4544-4552 形参名与实参不一致的 OCCT 陷阱：投影点驱动最近顶点搜索/贴近判据/切割顶点位置——旧体直接改切割拓扑）；EvaluateAngulars 守卫 CONFUSION → **REAL_SMALL**（gp::Resolution() = DBL_MIN 非 Confusion）；`surface_same` 补 BSpline/Bezier/Trimmed 值等价臂（旧体只认五个解析面型——**BSpline 是缝合计论主输入，same-face 合并分支对主输入恒 false**）· **④ 低优先处置**：2D full-ellipse 周期标志记档顺延（BSplineCurve2 加字段 = 97 个构造点的机械战役，当前无路径触达）；sewing 的 6 个低发现（crash-path 替代/死存储/形式分歧）逐条记档于审计报告，处置随下轮。
 > **门槛（当前基线）**：六门槛 **495/0/0 · 796/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 483→495 = U2 7 + U1 5；kernel 786→796 = 45 号轮 T2 +7 与主代理 resolution 3 已计入）；tkgeom_algo_gtests **135/0**；八网格 **8/8**（375/378/379/373/12/102/83/110，exe 重编）；16 域网格**逐格同追加 42–45 基线**（12/10 · 50/48 · 46/44 · 12/12 · 8/8 · 1/1 · 2/2 · 15/15 · 6/6 · 5/5 · 26/26 · 4/0 · 32/0 · 10/0 · 2/0 · 19/19——"零可见翻转"第十六轮）。
 > **★ 本轮发现**：① **OCCT 形参名陷阱再 +1**：CreateCuttingNodes 的形参叫 arrPnt、实参传 arrProj——按形参名接线（老体的做法）正好接错；**接线只看调用点实参，不看形参名**；② `surface_same` 类"值等价替身"必须**逐面型补全**——只写解析五型 = 对 Freeform 主输入恒 false，比"方向可能偏"糟得多；③ U1 的前提细化（EvalDN 全解析类型）再次证明**头部件注记会过期**，以源码为准；④ U2 依赖普查零停报（ReShape/UniqueAncestors/Epsilon canonical/BndBox 全在库）——**前置轮的基建沉淀开始复利**。
 > （历史：追加 21–45 收尾态见下方存档块；追加 45 = HInter 生产化 + section_placement 双层解锁 + OffsetCurve2d 解析导数 + SameParameter stub 退役 + Resolution 双缺陷。）
@@ -101,15 +106,15 @@
 > 另有两条"旧笔记会过期"（坑 29/30）：**架构难点要回查 OCCT 基类**、**`GetType()` 常量返回决定分支**。
 > （前三轮：**追加 18** = 翻译补全轮；**追加 17** = D3 结案 + `featrf_a1` init 首次通过；**追加 16** = 0a 收尾 / a1 拓扑全等 / TKOffset 定界。）
 
-## 0. 新 session 一句话提示词（直接粘贴 —— 追加 46 收尾态，2026-09-15）
+## 0. 新 session 一句话提示词（直接粘贴 —— 追加 47 收尾态，2026-09-15）
 
 > 读 `rcad/docs/e3w-handover-tkfeat-fillet-offset.md`（本交接：门槛实测值 / 提交链 / 三域队列 / 配方 / 坑清单；
-> **先读顶部"追加 46 收尾态"一行 + §0.0v**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–46
-> （权威脉络，**追加 46 是当前状态**）；
-> 先 `cd rcad` 跑 6 条门槛确认 **495/0/0 · 796/0 · 36/36 · 26/26 · 76/76 · 1/1**，
+> **先读顶部"追加 47 收尾态"一行 + §0.0w**）与 `rcad/docs/tkfeat-fillet-offset-port-plan.md` §E3-W 追加 11–47
+> （权威脉络，**追加 47 是当前状态**）；
+> 先 `cd rcad` 跑 6 条门槛确认 **502/0/0 · 803/0 · 36/36 · 26/26 · 76/76 · 1/1**，
 > 再 `cd /c/Users/lilu/works/rcad-pro && cargo test --no-run -p occt-generated-tests`（**重编 exe，否则八网格会拿旧产物误判**）
 > 后 `bash output/run_eight_grids.sh` 确认**八网格 8/8**（375/378/379/373/12/102/83/110）；
-> 然后**按 §0.0v 的队列继续"先译后调"**——**先只做 1:1 翻译/接线**（逐行语句对照 + OCCT 行号锚点 +
+> 然后**按 §0.0w 的队列继续"先译后调"**——**先只做 1:1 翻译/接线**（逐行语句对照 + OCCT 行号锚点 +
 > 禁载体/禁等价替换/禁凑结果 + 架构差异先消灭再对齐），**代码基本译完前不针对性修测试数值**；
 > **涉及布尔层的代码直接复用已对齐的 `bop/**`（TKBO）实现、不要重写第二份**（`BRepAlgoAPI_*` 包装层按 OCCT 形式接线到既有真身）；
 > **立卡前先按 OCCT 函数名 grep 全库**（`panic!("GAP…")`/`unimplemented!` 的文案会过期，多例真身其实早已在库）；
@@ -165,7 +170,26 @@
 > 每批做完跑**六门槛 + 八网格 + 该域网格**，按坑 21 的**失败层深度**（不是通过数）自检，更新 port-plan §E3-W 追加，
 > 并提交**两仓库**（rcad + 根仓库指针，rcad 推得上就推）。
 
-### 0.0v 追加 46 收尾态（2026-09-15；**最新** —— 审计收口 + 缺口翻译轮：Frenet 链三缺口 + UpdateTolerances 全家 + Sewing 五文件审计 9 发现（1H/2M/6L）三修余记档）
+### 0.0w 追加 47 收尾态（2026-09-15；**最新** —— 五代理全队列轮：BSplineCurve2 周期标志 + UpdateTolerances 四调用者 + dn_at/law_d2 闭型 + pcurves 读者归一 + Sewing 低发现裁决）
+
+> **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**；根仓库指针 = 本文件所在的根提交。追加 47 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
+
+- **门槛与网格（全部在树实测）**：六门槛 **502/0/0 · 803/0 · 36/36 · 26/26 · 76/76 · 1/1**（algo 495→502、kernel 796→803）；tkgeom_algo_gtests **135/0**；八网格 **8/8**（375/378/379/373/12/102/83/110，最终 exe 重编后实测）；16 域网格**逐格同追加 42–46 基线**（offset_shape_type_i/a 曾 OOM 崩 grid，修复后恢复）。探针 = 0。
+- **★ 批次 V4（周期标志，架构决策执行）**：`BSplineCurve2.is_periodic`（serde 兼容）+ 34 文件 ~50 构造点清扫（11 站点携带：Reverse/Transform 保持、PerformPeriodic 转 true、ProjLib/chfi_kpart/thru_sections/union_pcurves/gap_deps/draft_modification_1_b/geom2d_interpolate/geom_api/geom_proj_lib/c1_concat/same_parameter to_bspline2）+ 周期求值接通（**顺带修 LocateParameter 潜在错位：旧体恒用 First/LastUKnotIndex，OCCT L332-345 周期分支用 Knots.Lower/Upper**）+ full-ellipse/full-circle 臂退役（新增 Convert_CircleToBSplineCurve.cxx L47-104 1:1 + Geom2d_BSplineCurve.cxx L948-985 set_periodic）+ **rcad-step BRep 读取器解析周期字节**（2D/3D）+ **根工作区 974 生成测试构造点补字段**（227 文件；tools/occt-test-gen 模板同步修）。3 测试 + 扰动实证。
+- **★ 批次 V1（UpdateTolerances 四调用者，46 队列 1）**：evolved（stub → 收养+引擎，覆盖 OCCT L541/L2860 两调用点）、LocOpe_DPrism（panic stub → 引擎 + null 守卫）、MakeOffset（no-op stub → 引擎）、MakeFace（GAP 叶删除，直接调用）。**make_face 测试仲裁**：OCCT brep_tool_tolerance 对亚 Confusion 边读数钳到 Confusion ⇒ 面容差 == 有效边容差，严格 > 不绑定——测试编码该行为。所有收养点补 `index == usize::MAX` 根守卫（见 ★发现①）。
+- **★ 批次 V2（dn_at + law_d2，46 队列 3）**：kernel `dn_at` 换 OCCT EvalDN L1049-1112 的类型优先分派（解析→ElCLib 任意阶闭型经 curve_dn、Bezier→EvalDN、BSpline 保持精确核 + N<1 raise、Offset N>3 记档）；algo `law_d2` FD → curve_dn 闭型（无既有绿值移动，gtests 135 不变）。4+1 闭式测试。
+- **★ 批次 V3（pcurves 读者归一，46 队列 5 第一步）**：`brep_tool_curve_on_surface` 按 BRep_Tool.cxx L327-374 升级（表示扫描主路径 + PCurve2-on-reversed + 地图回退）；**全库写者普查矩阵**（双写 ~15 站点 vs map-only ~30 站点——核心盲点 = `builder_update_edge_pcurve` 本身 + primapi ~30 + STEP 导入）；写者迁移三步设计入报告（路由到 DS::update_edge_pcurve_shared 等三个规范形 + builder re-host 双写 + 迁移扫尾后删地图）。5 闭式测试零翻转。
+- **★ 批次 V5（Sewing 六低裁决，46 队列 2）**：F1 closed 递归忠实化（基线闭性直接解析；平面兜底 ⇒ IsClosedByIsos 恒假的完整证明）；F2/F5 None → panic（对齐 NullObject raise）；F3/F4 KEEP+INFO（持久性不可观测 / catch 路径不可表示）；F6 分置——**OCCT UpdateEdge 空 pcurve = 静默移除**（BRep_Builder.cxx L99-102/L245-248），可达处保留守卫、不可达处去守卫（逐位点证明）。
+- **★ 发现与修复（合并期）**：**offset_shape_type_i/a 全 grid OOM 崩溃**（0xc0000409）——根因 = `brep_from_shape::place` 对 index == usize::MAX 的**子形状**做 pad-to-index（增长到 2^32 槽后 2^36 字节 OOM；根守卫只查了根）。kernel `place` 现跳过 usize::MAX 子形状的物化（池外访问器可读；写需池模型迁移）+ 三处收养点补根守卫。**a3 的 volume 断言失败经 stash 双跑仲裁 = 基线既有**。**教训**：① 清扫任务书射程必须写全（`libs/` 之外还有根工作区 tests/ 的生成代码）；② 域网格 TIMEOUT/NO-TARGET ≠ 测试慢，先查编译；③ 八网格必须在**最终代码**的 exe 上跑（管道掩盖 --no-run 失败差点误判）。
+- **⏭ 下一轮队列（按序）**：
+  1. **pcurves 写者迁移**（V3 三步设计：路由 map-only 写者到三规范形 + builder re-host 双写 + migrate_map_to_representations 扫尾；完成后删地图）。
+  2. **UpdateTolerances 收养点的池外写**（mixed-graph 下引擎写池外子形状仍 panic——池模型迁移的一部分；本伦 guard 是行为中性过渡）。
+  3. **kernel GeomCurveAdaptor::dn_at Offset N>3 + law_d2 通用臂复核**（V2 记档）。
+  4. **geom/mod.rs 与 eval.rs 超 2000 行拆分**（V4 记档：2252/4248 行，#[path] 子模块惯例）。
+  5. **thru_sections/pipe 域网格 failure-map 深度观察**（本轮仍零可见翻转——offset_shape_type_i 的 12 失败里 a3 类 volume 断言是基线既有，层推进看 backtrace）。
+- **复测脚本**：`rcad/temp/run_gates.sh` · `rcad/temp/run_domain_grids.sh` · 根 `output/run_eight_grids.sh`；单测 tkgeom_algo_gtests（135/0）。
+
+### 0.0v 追加 46 收尾态（2026-09-15；**已被追加 47 取代 —— 见 §0.0w** —— 审计收口 + 缺口翻译轮：Frenet 链三缺口 + UpdateTolerances 全家 + Sewing 五文件审计 9 发现（1H/2M/6L）三修余记档）
 
 > **提交链**：规则不变 —— **rcad 顶尖 = 本交接文件所在提交**；根仓库指针 = 本文件所在的根提交。追加 46 的成对 hash 按 §0.0h 同格式追加。（开工前两个 hash **必须成对**各自确认一遍。）
 

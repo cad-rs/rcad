@@ -793,6 +793,7 @@ mod tests {
             knots: vec![10.0, 10.0, 10.0, 14.0, 14.0, 14.0],
             control_points: poles,
             weights: vec![1.0; 3],
+            is_periodic: false,
         };
         let a_c2d: Curve2dHandle = Arc::new(Geom2dCurveAdaptor::new(Curve2d::BSpline(bs2)));
         let a_surf: SurfaceHandle = Arc::new(GeomSurfaceAdaptor::new(Surface3::Plane(Plane::new(

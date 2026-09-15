@@ -13,18 +13,24 @@
 //! Architecture note (same adaptation as `geom::bspline_ops`): the rcad
 //! legacy `BSplineCurve2` carries the flat (expanded) knot vector instead of
 //! OCCT's (knots, mults) pairs; the two are bijective and the conversions
-//! here preserve OCCT semantics exactly.  The legacy struct carries no
-//! periodic flag — the concatenation result is always built non-periodic in
-//! OCCT (`Geom2dConvert_CompCurveToBSplineCurve.cxx` L220 uses the
-//! non-periodic constructor) and the pipeline feeds clamped/trimmed inputs,
-//! so the periodic-only branches (SetOrigin/SetNotPeriodic inside Segment)
-//! carry the architecture annotation where OCCT would take them.
+//! here preserve OCCT semantics exactly.  The carrier's `is_periodic` flag
+//! (the mirror of OCCT `myPeriodic`) is carried through the conic branches
+//! (BSplineCurveBuilder passes `Convert.IsPeriodic()`; the full-ellipse /
+//! full-circle branches apply the `SetPeriodic` statement).  The
+//! concatenation result is always built non-periodic in OCCT
+//! (`Geom2dConvert_CompCurveToBSplineCurve.cxx` L220 uses the non-periodic
+//! constructor) and the pipeline feeds clamped/trimmed inputs, so the
+//! periodic-only branches (SetOrigin/SetNotPeriodic inside Segment) carry
+//! the architecture annotation where OCCT would take them.
+
+use std::f64::consts::PI;
 
 use glam::{DVec2, DVec3};
 
 use crate::base::convert::{
-    convert_circle_arc_to_bspline, convert_ellipse_arc_to_bspline, convert_hyperbola_to_bspline,
-    convert_parabola_to_bspline, ConvertConicToBspline, ConvertParameterisation,
+    build_cos_and_sin, convert_circle_arc_to_bspline, convert_ellipse_arc_to_bspline,
+    convert_ellipse_to_bspline_periodic, convert_hyperbola_to_bspline, convert_parabola_to_bspline,
+    ConvertConicToBspline, ConvertParameterisation,
 };
 use crate::base::extrema_ext_elc::epsilon_of;
 use crate::geom::{
@@ -32,7 +38,7 @@ use crate::geom::{
 };
 use crate::math::bspl_lib::{
     at, ati, build_cache_2d, first_uknot_index_mults, flat_bezier_knots, insert_knots,
-    increase_degree, increase_degree_count_knots, last_uknot_index_mults,
+    increase_degree, increase_degree_count_knots, last_uknot_index_mults, nb_poles,
     locate_parameter_knots_mults, pole_index, prepare_insert_knots, remove_knot,
 };
 use crate::math::plib::{coefficients_poles_2d, trimming_2d};
@@ -478,6 +484,8 @@ fn bspline_curve_builder_2d(
         knots: flat_knots_of(&conv.knots, &conv.mults),
         control_points,
         weights: conv.weights.clone(),
+        // OCCT L76-82: the ctor receives Convert.IsPeriodic().
+        is_periodic: conv.is_periodic,
     }
 }
 
@@ -492,6 +500,114 @@ fn canonical_circle(radius: f64) -> crate::geom::Circle3 {
         y_dir: DVec3::Y,
         radius,
     }
+}
+
+/// OCCT Convert_CircleToBSplineCurve(C, Parameterisation)
+/// (Convert_CircleToBSplineCurve.cxx L47-104) — the full circle on the
+/// canonical `gp::OX2d()` frame (the caller builds Circ2d(gp::OX2d(), R),
+/// Geom2dConvert.cxx L393).  TgtThetaOver2 / RationalC1 take the periodic
+/// BuildCosAndSin overload; the other parameterisations are trimmed on
+/// [0, 2*PI] with myIsPeriodic = false and the caller SetPeriodic statement
+/// performs the periodic conversion.
+fn convert_circle_to_bspline_periodic(
+    radius: f64,
+    parameterisation: ConvertParameterisation,
+) -> ConvertConicToBspline {
+    let is_periodic;
+    // OCCT L55: NCollection_Array1<double> CosNumerator, SinNumerator.
+    let (cos_numerator, sin_numerator, weights, degree, knots, mults);
+    if parameterisation != ConvertParameterisation::TgtThetaOver2
+        && parameterisation != ConvertParameterisation::RationalC1
+    {
+        // OCCT L59-70: if BuildCosAndSin cannot manage the periodicity
+        // => trim on 0, 2*PI.
+        is_periodic = false;
+        let built = build_cos_and_sin(parameterisation, 0.0, 2.0 * PI);
+        cos_numerator = built.0;
+        sin_numerator = built.1;
+        weights = built.2;
+        degree = built.3;
+        knots = built.4;
+        mults = built.5;
+    } else {
+        // OCCT L71-78.
+        is_periodic = true;
+        let built =
+            crate::base::convert::convert_conic_to_bspline::build_cos_and_sin_periodic(
+                parameterisation,
+            );
+        cos_numerator = built.0;
+        sin_numerator = built.1;
+        weights = built.2;
+        degree = built.3;
+        knots = built.4;
+        mults = built.5;
+    }
+
+    // OCCT L88-101: Ox / Oy are the canonical gp::OX2d() directions (1, 0) /
+    // (0, 1): the cross product is +1 > 0, so value = +R, and the Trsf2d
+    // built from C.XAxis() (L91) is the identity.  The real frame placement
+    // happens in the caller's BSplineCurveBuilder.
+    let value = radius;
+
+    // OCCT L103-108: poles in the canonical frame, weights from the
+    // Denominator output.
+    let poles_2d = cos_numerator
+        .iter()
+        .zip(sin_numerator.iter())
+        .map(|(&c, &s)| DVec2::new(radius * c, value * s))
+        .collect::<Vec<DVec2>>();
+
+    ConvertConicToBspline {
+        poles_2d,
+        weights,
+        knots,
+        mults,
+        degree,
+        is_periodic,
+    }
+}
+
+/// OCCT Geom2d_BSplineCurve::SetPeriodic (Geom2d_BSplineCurve.cxx
+/// L948-985) over the legacy BSplineCurve2 carrier — the full-conic caller
+/// statement (Geom2dConvert.cxx L386 / L396).  The knot/mult copy spans
+/// FirstUKnotIndex() .. LastUKnotIndex() — the curve-level accessors return
+/// 1 / NbKnots for the carrier's clamped data — the end multiplicities are
+/// clamped to `min(Degree, max(Mults(1), Mults(n)))`, the poles are
+/// truncated to `BSplCLib::NbPoles(Degree, true, Mults)` and the periodic
+/// flag is set (the `bspline3_set_periodic` precedent in
+/// `base::convert::convert_conic_to_bspline`).
+fn bspline2_set_periodic(curve: &mut BSplineCurve2) {
+    // OCCT L950-958: first = FirstUKnotIndex(); last = LastUKnotIndex();
+    // cknots over [first, last].
+    let (knots, mults) = knots_mults_of(&curve.knots);
+    let first = 1i32;
+    let last = knots.len() as i32;
+    let cknots: Vec<f64> = ((first - 1)..last).map(|k| knots[k as usize]).collect();
+    // OCCT L960-966: cmults over [first, last] with the end clamp.
+    let mut cmults: Vec<i32> = ((first - 1)..last).map(|k| mults[k as usize]).collect();
+    let nb = cknots.len();
+    let end_mult = (curve.degree as i32).min(cmults[0].max(cmults[nb - 1]));
+    cmults[0] = end_mult;
+    cmults[nb - 1] = end_mult;
+
+    // OCCT L968-969: compute the new number of poles.
+    let nbp = nb_poles(curve.degree, true, &cmults);
+
+    // OCCT L971-979: resize the poles (and weights) keeping the leading nbp
+    // entries (UnitWeights for the non-rational case — the carrier always
+    // materialises the weight array).
+    curve.control_points.truncate(nbp);
+    curve.weights.truncate(nbp);
+
+    // OCCT L981: myPeriodic = true (L983 myMaxDerivInvOk = false omitted: no
+    // resolution cache on the carrier).
+    curve.is_periodic = true;
+    curve.knots = cknots
+        .iter()
+        .zip(cmults.iter())
+        .flat_map(|(&k, &m)| std::iter::repeat(k).take(m as usize))
+        .collect();
 }
 
 // ---------------------------------------------------------------------------
@@ -535,6 +651,7 @@ pub fn curve_to_bspline_curve_2d(
                     knots: vec![ctrim.t_min, ctrim.t_min, ctrim.t_max, ctrim.t_max],
                     control_points: vec![pdeb, pfin],
                     weights: vec![1.0, 1.0],
+                    is_periodic: false,
                 }
             }
             // OCCT L228-264: the trimmed circle.
@@ -616,27 +733,42 @@ pub fn curve_to_bspline_curve_2d(
         }
     } else {
         match c {
-            // OCCT L379-387: the full ellipse — the Convert engine
-            // (`convert_ellipse_to_bspline_periodic`) is translated, but
-            // the caller statement `TheCurve->SetPeriodic()` (L386) has no
-            // equivalent on the legacy BSplineCurve2 carrier: the struct
-            // carries no periodic flag, so the periodic knot layout the
-            // engine produces cannot be represented (architecture
-            // difference; BSplineCurve3 carries is_periodic and the 3D
-            // twin branch is wired).
-            Curve2d::Ellipse(_) => {
-                panic!(
-                    "Staged: Geom2dConvert::CurveToBSplineCurve periodic ellipse branch \
-                     (Geom2dConvert.cxx L379-387, SetPeriodic unrepresentable on \
-                     BSplineCurve2 — engine available in convert_conic_to_bspline)"
+            // OCCT L379-387: the full ellipse — Convert_EllipseToBSplineCurve
+            // on the canonical gp::OX2d() frame (kernel
+            // `convert_ellipse_to_bspline_periodic`), placed by
+            // BSplineCurveBuilder, then TheCurve->SetPeriodic() (L386).
+            Curve2d::Ellipse(the_conic) => {
+                let conv = convert_ellipse_to_bspline_periodic(
+                    the_conic.major_radius,
+                    the_conic.minor_radius,
+                    parameterisation,
                 );
+                let mut the_curve = bspline_curve_builder_2d(
+                    the_conic.center,
+                    the_conic.major_dir,
+                    the_conic.minor_dir,
+                    &conv,
+                );
+                // OCCT L386: TheCurve->SetPeriodic().
+                bspline2_set_periodic(&mut the_curve);
+                the_curve
             }
-            // OCCT L389-397: the full circle -> SetPeriodic — pending (staged).
-            Curve2d::Circle(_) => {
-                panic!(
-                    "Staged: Geom2dConvert::CurveToBSplineCurve periodic circle branch \
-                     (Geom2dConvert.cxx L389-397, full-circle Convert pending)"
+            // OCCT L389-397: the full circle — Convert_CircleToBSplineCurve on
+            // the canonical gp::OX2d() frame (kernel
+            // `convert_circle_to_bspline_periodic`), placed by
+            // BSplineCurveBuilder, then TheCurve->SetPeriodic() (L396).
+            Curve2d::Circle(the_conic) => {
+                let conv =
+                    convert_circle_to_bspline_periodic(the_conic.radius, parameterisation);
+                let mut the_curve = bspline_curve_builder_2d(
+                    the_conic.center,
+                    the_conic.x_dir,
+                    the_conic.y_dir,
+                    &conv,
                 );
+                // OCCT L396: TheCurve->SetPeriodic().
+                bspline2_set_periodic(&mut the_curve);
+                the_curve
             }
             // OCCT L399-419: the full Bezier — clamped knots of the poles.
             Curve2d::Bezier(cbez) => bezier_to_bspline_2d(cbez),
@@ -805,6 +937,7 @@ fn bezier_to_bspline_2d(cbez: &BezierCurve2) -> BSplineCurve2 {
         knots: flat_knots_of(&kts, &mults),
         control_points: cbez.control_points.clone(),
         weights: cbez.weights.clone(),
+        is_periodic: false,
     }
 }
 
@@ -1176,6 +1309,9 @@ fn add_concat(
         knots: flat_knots_of(&noeuds, &mults),
         control_points: poles,
         weights: poids,
+        // OCCT L220: the concatenation ctor is the non-periodic
+        // Geom2d_BSplineCurve constructor.
+        is_periodic: false,
     };
 
     // Optionally reduce multiplicity (OCCT L222-229).
@@ -1338,6 +1474,7 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 1.0],
             control_points: vec![DVec2::ZERO, DVec2::new(1.0, 0.0)],
             weights: vec![1.0, 1.0],
+            is_periodic: false,
         };
         // FromU1 = 0.75 > ToU2 = 0.25: the result is oriented from 0.75 to
         // 0.25 (reversed).
@@ -1503,5 +1640,96 @@ mod tests {
         assert!((p0 - DVec2::new(2.0, 8.0 / 3.0)).length() < 1.0e-12);
         let p1 = Curve2dEval::point_at(&bs, 1.0);
         assert!((p1 - DVec2::new(4.0, 0.0)).length() < 1.0e-12);
+    }
+
+    /// The FULL circle branch (Geom2dConvert.cxx L389-397):
+    /// Convert_CircleToBSplineCurve(gp::OX2d() frame) + BSplineCurveBuilder +
+    /// TheCurve->SetPeriodic().  The TgtThetaOver2 periodic layout (the same
+    /// closed forms as the kernel full-ellipse engine test): 6 poles, 4
+    /// knots over [0, 2*PI] with ALL multiplicities = Degree = 2 (the
+    /// periodic end clamp), weights (1, 0.5, 1, 0.5, 1, 0.5); weight-1
+    /// poles on the circle at 0/120/240 degrees, interior poles at
+    /// 60/180/300 scaled by 1/cos(PI/3) = 2 with weight cos(PI/3) = 0.5.
+    /// Circle R = 5 at (2, 3).  The evaluation wraps the seam:
+    /// P(first) = P(last), P(u + 2*PI) = P(u), and every wrapped sample
+    /// lies exactly on the circle.
+    #[test]
+    fn full_circle_to_bspline_is_periodic_and_wraps() {
+        let circ = Circle2d {
+            center: DVec2::new(2.0, 3.0),
+            x_dir: DVec2::new(1.0, 0.0),
+            y_dir: DVec2::new(0.0, 1.0),
+            radius: 5.0,
+        };
+        let bs = curve_to_bspline_curve_2d(&Curve2d::Circle(circ), ConvertParameterisation::TgtThetaOver2);
+
+        // The exact OCCT periodic layout.
+        assert!(bs.is_periodic, "full circle conversion must be periodic");
+        assert_eq!(bs.degree, 2);
+        assert_eq!(bs.control_points.len(), 6);
+        let sq3 = 3.0f64.sqrt();
+        let want_poles = [
+            DVec2::new(7.0, 3.0),
+            DVec2::new(7.0, 3.0 + 5.0 * sq3),
+            DVec2::new(-0.5, 3.0 + 2.5 * sq3),
+            DVec2::new(-8.0, 3.0),
+            DVec2::new(-0.5, 3.0 - 2.5 * sq3),
+            DVec2::new(7.0, 3.0 - 5.0 * sq3),
+        ];
+        for (p, w) in bs.control_points.iter().zip(want_poles.iter()) {
+            assert!((p - w).length() < 1.0e-12, "pole {p:?} vs {w:?}");
+        }
+        let want_weights = [1.0, 0.5, 1.0, 0.5, 1.0, 0.5];
+        for (w, want) in bs.weights.iter().zip(want_weights.iter()) {
+            assert!((w - want).abs() < 1.0e-15);
+        }
+        // Knots [0, 2PI/3, 4PI/3, 2PI], multiplicities clamped at Degree = 2.
+        let two_pi = 2.0 * PI;
+        assert_eq!(bs.knots, vec![0.0, 0.0, two_pi / 3.0, two_pi / 3.0, 4.0 * PI / 3.0, 4.0 * PI / 3.0, two_pi, two_pi]);
+        // First/last parameter = Knots(1) / Knots(NbKnots); the domain wraps.
+        assert_eq!(bs.default_domain(), [0.0, two_pi]);
+        let p_first = Curve2dEval::point_at(&bs, 0.0);
+        let p_last = Curve2dEval::point_at(&bs, two_pi);
+        assert!(p_first.distance(DVec2::new(7.0, 3.0)) < 1.0e-12);
+        assert!(p_last.distance(p_first) < 1.0e-12, "seam wrap");
+        // Wrapped parameters answer the in-domain evaluation.
+        for &u in &[0.1, 1.0, 3.0, 5.5] {
+            let p_in = Curve2dEval::point_at(&bs, u);
+            let p_up = Curve2dEval::point_at(&bs, u + two_pi);
+            let p_down = Curve2dEval::point_at(&bs, u - two_pi);
+            assert!(p_up.distance(p_in) < 1.0e-9, "wrap up at u={u}");
+            assert!(p_down.distance(p_in) < 1.0e-9, "wrap down at u={u}");
+        }
+        // Every sample (wrapped or not) lies exactly on the circle.
+        for k in -8..=16 {
+            let u = two_pi * (k as f64) / 8.0;
+            let p = Curve2dEval::point_at(&bs, u);
+            let r = (p - DVec2::new(2.0, 3.0)).length();
+            assert!((r - 5.0).abs() < 1.0e-12, "u={u}: radius deviation {}", r - 5.0);
+        }
+    }
+
+    /// The legacy-carrier `is_periodic` flag is serde-defaulted: a
+    /// non-periodic curve round-trips unchanged, and legacy serialized
+    /// payloads without the field deserialize with the false default
+    /// (backward compatibility).
+    #[test]
+    fn bspline2_serde_round_trip_with_periodic_default() {
+        let bs = BSplineCurve2 {
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: vec![DVec2::new(1.0, 0.0), DVec2::new(1.0, 1.0), DVec2::new(0.0, 1.0)],
+            weights: vec![1.0, 0.5, 1.0],
+            is_periodic: false,
+        };
+        let json = serde_json::to_string(&bs).expect("serialize");
+        let back: BSplineCurve2 = serde_json::from_str(&json).expect("deserialize");
+        assert!(!back.is_periodic);
+        assert!(back.control_points == bs.control_points && back.knots == bs.knots);
+
+        // Legacy payload without the flag: the serde default applies.
+        let legacy = r#"{"degree":1,"knots":[0.0,0.0,1.0,1.0],"control_points":[[0.0,0.0],[1.0,0.0]],"weights":[1.0,1.0]}"#;
+        let old: BSplineCurve2 = serde_json::from_str(legacy).expect("legacy deserialize");
+        assert!(!old.is_periodic);
     }
 }

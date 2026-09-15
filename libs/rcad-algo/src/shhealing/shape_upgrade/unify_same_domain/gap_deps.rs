@@ -228,6 +228,7 @@ pub fn geom2d_convert_curve_to_bspline(c: &Curve2d, first: f64, last: f64) -> BS
                 knots: vec![first, first, last, last],
                 control_points: vec![l.point_at(first), l.point_at(last)],
                 weights: vec![1.0, 1.0],
+                is_periodic: false,
             }
         }
         Curve2d::BSpline(b) => b.clone(),
@@ -355,6 +356,7 @@ fn bspline2_concat(a: &BSplineCurve2, b: &BSplineCurve2) -> Option<BSplineCurve2
         knots,
         control_points,
         weights,
+        is_periodic: false,
     })
 }
 
@@ -567,6 +569,8 @@ pub fn geom2d_translate(c: &Curve2d, t: DVec2) -> Curve2d {
             knots: b.knots.clone(),
             control_points: b.control_points.iter().map(|p| *p + t).collect(),
             weights: b.weights.clone(),
+            // Transform keeps myPeriodic.
+            is_periodic: b.is_periodic,
         }),
         Curve2d::Bezier(b) => Curve2d::Bezier(BezierCurve2 {
             control_points: b.control_points.iter().map(|p| *p + t).collect(),
@@ -601,6 +605,8 @@ pub fn geom2d_mirror_ox2d(c: &Curve2d) -> Curve2d {
             knots: b.knots.clone(),
             control_points: b.control_points.iter().map(|p| mir(*p)).collect(),
             weights: b.weights.clone(),
+            // Transform keeps myPeriodic.
+            is_periodic: b.is_periodic,
         }),
         Curve2d::Bezier(b) => Curve2d::Bezier(BezierCurve2 {
             control_points: b.control_points.iter().map(|p| mir(*p)).collect(),
@@ -635,6 +641,8 @@ pub fn geom2d_mirror_oy2d(c: &Curve2d) -> Curve2d {
             knots: b.knots.clone(),
             control_points: b.control_points.iter().map(|p| mir(*p)).collect(),
             weights: b.weights.clone(),
+            // Transform keeps myPeriodic.
+            is_periodic: b.is_periodic,
         }),
         Curve2d::Bezier(b) => Curve2d::Bezier(BezierCurve2 {
             control_points: b.control_points.iter().map(|p| mir(*p)).collect(),

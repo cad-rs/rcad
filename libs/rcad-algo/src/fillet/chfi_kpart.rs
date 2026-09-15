@@ -58,6 +58,7 @@ pub fn chfi_kpart_pcurve(
         knots: vec![pardeb, parfin],
         control_points: vec![uv1, uv2],
         weights: vec![1.0, 1.0],
+        is_periodic: false,
     })
 }
 
@@ -123,6 +124,8 @@ pub fn chfi_kpart_proj_pc(
                         knots: b.knots,
                         control_points: b.control_points,
                         weights: b.weights,
+                        // Geom2d_BSplineCurve::IsPeriodic() carried.
+                        is_periodic: b.is_periodic,
                     });
                 } else {
                     panic!("Standard_NotImplemented: failed approximation of the pcurve ");

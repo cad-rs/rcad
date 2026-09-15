@@ -581,6 +581,7 @@ mod tests {
             .knots,
             control_points: conv.poles_2d.clone(),
             weights: conv.weights.clone(),
+            is_periodic: false,
         };
         let pt = crate::math::bspl::de_boor_2d(
             conv2.degree,

@@ -1552,6 +1552,7 @@ mod tests {
                 DVec2::new(0.5, 0.6),
             ],
             weights: vec![1.0; 3],
+            is_periodic: false,
         });
         let cuv2 = Arc::new(BSplineCurve2 {
             degree: 1,
@@ -1562,6 +1563,7 @@ mod tests {
                 DVec2::new(1.5, 1.6),
             ],
             weights: vec![1.0; 3],
+            is_periodic: false,
         });
 
         let line = ApproxLine::new(

@@ -154,15 +154,30 @@ impl BRepBuilderAPISewing {
         the_loc: u32,
     ) -> bool {
         let mut tmpsurf = surf.clone();
-        // OCCT L263-274: unwrap the rectangular trimmed / offset basis.
+        // OCCT L263-274: unwrap the rectangular trimmed / offset basis, then
+        // recurse with it (L289).  INFO (cxx L280-282 vs L289): at the
+        // recursion level the pcurve lookup `BRep_Tool::CurveOnSurface(edge,
+        // surf, theloc, ...)` matches the representation BY SURFACE
+        // (BRep_Tool.cxx L347-364); the edge's pcurve is stored against the
+        // ORIGINAL trimmed/offset surface of the face, so the basis-surface
+        // lookup nulls for every non-planar basis (the CurveOnPlane
+        // fallback, BRep_Tool.cxx L379-450, returns null for non-planes).
+        // A planar basis does take that fallback, but plane isos are
+        // straight lines, so the IsClosedByIsos endpoint test
+        // (|p11-p12| == 2*|p11-p1m|) is identically false.  The observable
+        // OCCT outcome of the recursion is therefore exactly
+        // `basis->IsUClosed()`.  The rcad pcurve map is keyed by the owning
+        // face (mod.rs arch. diff. #1) and cannot express the by-surface
+        // miss, so the recursion resolves the basis closedness directly
+        // instead of re-running the face-keyed IsClosedByIsos on the basis.
         if let Surface3::Trimmed(ts) = &tmpsurf {
-            tmpsurf = (*ts.basis).clone();
-            return self.is_u_closed_surface(brep, &tmpsurf, the_edge, the_face, the_loc);
+            return Self::is_u_closed_surface_basis(&ts.basis);
         } else if let Surface3::Offset(os) = &tmpsurf {
-            tmpsurf = (*os.basis).clone();
-            return self.is_u_closed_surface(brep, &tmpsurf, the_edge, the_face, the_loc);
+            return Self::is_u_closed_surface_basis(&os.basis);
         }
-        // OCCT L276-290 (the else branch).
+        // OCCT L276-290 (the else branch) — level 0: `surf` IS the face's
+        // own surface, so the OCCT by-surface lookup is exactly the
+        // face-keyed read below.
         let mut is_closed = tmpsurf.is_u_closed();
         if !is_closed {
             // OCCT L280-282: BRep_Tool::CurveOnSurface(edge, surf, theloc,
@@ -176,6 +191,22 @@ impl BRepBuilderAPISewing {
         is_closed
     }
 
+    /// OCCT L289 recursion (iterated for nested trimmed/offset bases): the
+    /// by-surface pcurve lookup cannot match the unwrapped basis (see
+    /// `is_u_closed_surface`), so the recursion outcome is the basis
+    /// closedness.
+    fn is_u_closed_surface_basis(basis: &Surface3) -> bool {
+        let mut tmpsurf = basis.clone();
+        loop {
+            match &tmpsurf {
+                Surface3::Trimmed(ts) => tmpsurf = (*ts.basis).clone(),
+                Surface3::Offset(os) => tmpsurf = (*os.basis).clone(),
+                _ => break,
+            }
+        }
+        tmpsurf.is_u_closed()
+    }
+
     /// OCCT BRepBuilderAPI_Sewing::IsVClosedSurface(surf, theEdge, theloc)
     /// (cxx L295-327) — defines if surface is V closed.
     pub(crate) fn is_v_closed_surface(
@@ -187,15 +218,21 @@ impl BRepBuilderAPISewing {
         the_loc: u32,
     ) -> bool {
         let mut tmpsurf = surf.clone();
-        // OCCT L297-308: unwrap the rectangular trimmed / offset basis.
+        // OCCT L297-308: unwrap the rectangular trimmed / offset basis, then
+        // recurse with it (L323).  INFO (cxx L314-316 vs L323): at the
+        // recursion level the by-surface pcurve lookup nulls for every
+        // non-planar basis and nets false on a planar basis (straight plane
+        // isos make the IsClosedByIsos endpoint test identically false) —
+        // see the U-variant note above; the recursion outcome is exactly
+        // `basis->IsVClosed()`.
         if let Surface3::Trimmed(ts) = &tmpsurf {
-            tmpsurf = (*ts.basis).clone();
-            return self.is_v_closed_surface(brep, &tmpsurf, the_edge, the_face, the_loc);
+            return Self::is_v_closed_surface_basis(&ts.basis);
         } else if let Surface3::Offset(os) = &tmpsurf {
-            tmpsurf = (*os.basis).clone();
-            return self.is_v_closed_surface(brep, &tmpsurf, the_edge, the_face, the_loc);
+            return Self::is_v_closed_surface_basis(&os.basis);
         }
-        // OCCT L310-324 (the else branch).
+        // OCCT L310-324 (the else branch) — level 0: `surf` IS the face's
+        // own surface, so the OCCT by-surface lookup is exactly the
+        // face-keyed read below.
         let mut is_closed = tmpsurf.is_v_closed();
         if !is_closed {
             if let Some((acrv2d, f2d, l2d)) = bat::brep_tool_curve_on_surface(the_edge, the_face) {
@@ -205,6 +242,22 @@ impl BRepBuilderAPISewing {
         let _ = (the_loc, brep);
         // OCCT L325: return isClosed.
         return is_closed;
+    }
+
+    /// OCCT L323 recursion (iterated for nested trimmed/offset bases): the
+    /// by-surface pcurve lookup cannot match the unwrapped basis (see
+    /// `is_v_closed_surface`), so the recursion outcome is the basis
+    /// closedness.
+    fn is_v_closed_surface_basis(basis: &Surface3) -> bool {
+        let mut tmpsurf = basis.clone();
+        loop {
+            match &tmpsurf {
+                Surface3::Trimmed(ts) => tmpsurf = (*ts.basis).clone(),
+                Surface3::Offset(os) => tmpsurf = (*os.basis).clone(),
+                _ => break,
+            }
+        }
+        tmpsurf.is_v_closed()
     }
 }
 

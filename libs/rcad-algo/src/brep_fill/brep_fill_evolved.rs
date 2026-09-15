@@ -56,6 +56,7 @@ use std::sync::Arc;
 
 use glam::{DAffine3, DVec3};
 
+use rcad_kernel::topo::topo_builder::brep_from_shape;
 use rcad_kernel::topo_shape::Shape;
 use rcad_kernel::topods::{BRep, Orientation, ShapeType, TShape};
 
@@ -519,9 +520,31 @@ pub(super) fn brep_lib_make_wire_from_edge(e: &Shape) -> Shape {
     w
 }
 
-/// OCCT BRepLib::UpdateTolerances(S, WithShape) — no-op (the rcad kernel
-/// keeps the tolerance invariants inline; the brep_lib.rs stub precedent).
-pub(super) fn brep_lib_update_tolerances(_s: &Shape, _with_shape: bool) {}
+/// OCCT BRepLib::UpdateTolerances(S, verifyFaceTolerance) (BRepLib.cxx
+/// L1966-1970; the two call sites BRepFill_Evolved.cxx L541 and L2860 pass
+/// verifyFaceTolerance = false) — the topalgo::brep_lib engine over the
+/// adopted standalone pool.  The Evolved pipeline shapes live pool-free
+/// (the feat-pipeline flat-index encoding); the adoption
+/// (topo_builder::brep_from_shape, the loc_ope_find_edges_in_face.rs L226
+/// precedent) shares the Arcs, so the engine's in-place tolerance writes
+/// reach every handle of the TShape the way OCCT mutates the shared TShape
+/// in place through the handle.
+pub(super) fn brep_lib_update_tolerances(s: &Shape, verify_face_tolerance: bool) {
+    // Architecture difference #4 (the dprism guard): a pool-free shape
+    // (index == usize::MAX) cannot feed brep_from_shape — its pad loop
+    // would never terminate; the harmonization on the pool-free encoding
+    // awaits the pool-model migration (behavior-neutral vs the pre-round
+    // no-op stub).
+    if s.is_null() || s.index == usize::MAX {
+        return;
+    }
+    let mut a_brep = brep_from_shape(s, &[]);
+    crate::topalgo::brep_lib::update_tolerances::update_tolerances(
+        &mut a_brep,
+        s,
+        verify_face_tolerance,
+    );
+}
 
 /// OCCT BRepLib::SameParameter(E) — no-op (the brep_lib.rs stub precedent).
 pub(super) fn brep_lib_same_parameter(_e: &Shape) {}
